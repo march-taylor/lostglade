@@ -1,0 +1,13 @@
+# Runtime server files
+server-instance/
+.fabric/
+libraries/
+versions/
+world/
+logs/
+
+# IDE/system
+.idea/
+.vscode/
+*.iml
+.DS_Store
