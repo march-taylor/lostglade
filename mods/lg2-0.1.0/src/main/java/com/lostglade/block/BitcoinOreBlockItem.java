@@ -5,6 +5,7 @@ import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
@@ -15,6 +16,11 @@ import xyz.nucleoid.packettweaker.PacketContext;
 public class BitcoinOreBlockItem extends PolymerBlockItem {
 	public BitcoinOreBlockItem(Block block, Item.Properties settings, Item polymerItem, boolean polymerUseModel) {
 		super(block, settings, polymerItem, polymerUseModel);
+	}
+
+	@Override
+	public Identifier getPolymerItemModel(ItemStack stack, PacketContext context) {
+		return PolymerResourcePackUtils.hasMainPack(context) ? super.getPolymerItemModel(stack, context) : null;
 	}
 
 	@Override
@@ -43,7 +49,7 @@ public class BitcoinOreBlockItem extends PolymerBlockItem {
 
 		String normalized = lang.toLowerCase();
 		if (normalized.startsWith("rpr")) {
-			return Component.literal(deepslate ? "золотыя монѣта въ черномъ камнѣ" : "золотыя монѣта въ камнѣ");
+			return Component.literal(deepslate ? "Золотыя монѣта въ черномъ камнѣ" : "Золотыя монѣта въ камнѣ");
 		}
 		if (normalized.startsWith("uk")) {
 			return Component.literal(deepslate ? "Глибинносланцева біткоїнова руда" : "Біткоїнова руда");

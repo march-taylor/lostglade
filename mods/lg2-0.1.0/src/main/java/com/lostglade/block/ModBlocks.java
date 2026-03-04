@@ -32,13 +32,13 @@ public final class ModBlocks {
 	public static final Block BITCOIN_ORE = Registry.register(
 			BuiltInRegistries.BLOCK,
 			BITCOIN_ORE_ID,
-			new BitcoinOreBlock(createNormalOreProperties(), Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/bitcoin_ore"))
+			new BitcoinOreBlock(createNormalOreProperties(), Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/bitcoin_ore"), false)
 	);
 
 	public static final Block DEEPSLATE_BITCOIN_ORE = Registry.register(
 			BuiltInRegistries.BLOCK,
 			DEEPSLATE_BITCOIN_ORE_ID,
-			new BitcoinOreBlock(createDeepslateOreProperties(), Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/deepslate_bitcoin_ore"))
+			new BitcoinOreBlock(createDeepslateOreProperties(), Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/deepslate_bitcoin_ore"), true)
 	);
 
 	public static final Item BITCOIN_ORE_ITEM = Registry.register(

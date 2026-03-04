@@ -3,8 +3,10 @@ package com.lostglade.block;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.item.ModItems;
 import eu.pb4.polymer.blocks.api.BlockModelType;
+import eu.pb4.polymer.blocks.api.BlockResourceCreator;
 import eu.pb4.polymer.blocks.api.PolymerBlockModel;
 import eu.pb4.polymer.blocks.api.PolymerBlockResourceUtils;
+import eu.pb4.polymer.blocks.api.PolymerTexturedBlock;
 import eu.pb4.polymer.core.api.block.SimplePolymerBlock;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.BlockPos;
@@ -19,20 +21,23 @@ import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.NoteBlock;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.NoteBlockInstrument;
 import net.minecraft.world.level.storage.loot.LootParams;
 import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
 import xyz.nucleoid.packettweaker.PacketContext;
 
+import java.lang.reflect.Field;
 import java.util.List;
 
-public class BitcoinOreBlock extends SimplePolymerBlock {
+public class BitcoinOreBlock extends SimplePolymerBlock implements PolymerTexturedBlock {
 	private final BlockState polymerPackState;
 
-	public BitcoinOreBlock(BlockBehaviour.Properties settings, Identifier modelId) {
+	public BitcoinOreBlock(BlockBehaviour.Properties settings, Identifier modelId, boolean poweredNoteState) {
 		super(settings, Blocks.RAW_GOLD_BLOCK);
-		this.polymerPackState = PolymerBlockResourceUtils.requestBlock(BlockModelType.FULL_BLOCK, PolymerBlockModel.of(modelId));
+		this.polymerPackState = requestTargetNoteState(modelId, poweredNoteState);
 	}
 
 	@Override
@@ -110,5 +115,41 @@ public class BitcoinOreBlock extends SimplePolymerBlock {
 			bonus = 0;
 		}
 		return baseCount * (bonus + 1);
+	}
+
+	private static BlockState requestTargetNoteState(Identifier modelId, boolean powered) {
+		PolymerBlockModel model = PolymerBlockModel.of(modelId);
+
+		// Use deterministic note-block states so resource-pack clients render ore via:
+		// instrument=custom_head,note=1,powered=false/true.
+		BlockState targetState = requestStateWithPredicate(model, powered);
+		if (targetState != null) {
+			return targetState;
+		}
+
+		BlockState fallback = PolymerBlockResourceUtils.requestBlock(BlockModelType.FULL_BLOCK, model);
+		if (fallback == null) {
+			throw new IllegalStateException("Unable to allocate polymer block state for model " + modelId);
+		}
+		return fallback;
+	}
+
+	private static BlockState requestStateWithPredicate(PolymerBlockModel model, boolean powered) {
+		try {
+			Field creatorField = PolymerBlockResourceUtils.class.getDeclaredField("CREATOR");
+			creatorField.setAccessible(true);
+			BlockResourceCreator creator = (BlockResourceCreator) creatorField.get(null);
+
+			return creator.requestBlock(
+					BlockModelType.FULL_BLOCK,
+					state -> state.is(Blocks.NOTE_BLOCK)
+							&& state.getValue(NoteBlock.INSTRUMENT) == NoteBlockInstrument.CUSTOM_HEAD
+							&& state.getValue(NoteBlock.NOTE) == 1
+							&& state.getValue(NoteBlock.POWERED) == powered,
+					model
+			);
+		} catch (ReflectiveOperationException ignored) {
+			return null;
+		}
 	}
 }
