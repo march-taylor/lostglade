@@ -10,13 +10,19 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.particles.ParticleType;
 import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.core.particles.SimpleParticleType;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerBossEvent;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.BossEvent;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
@@ -40,10 +46,14 @@ public final class ServerStabilitySystem {
 	private static final int BITCOIN_FEED_SCAN_RADIUS = 1;
 	private static final double BITCOIN_FEED_HORIZONTAL_RANGE = 1.35D;
 	private static final double BITCOIN_FEED_VERTICAL_RANGE = 1.25D;
+	private static final long FEED_SOUND_DURATION_TICKS = 240L;
+	private static final float FEED_SOUND_VOLUME = 0.55F;
+	private static final SimpleParticleType FEED_PARTICLE = resolveFeedParticle();
 
 	private static int stability = 100;
 	private static long decayTickCounter = 0L;
 	private static double pendingStabilityFraction = 0.0D;
+	private static long nextFeedSoundAllowedTick = Long.MIN_VALUE;
 
 	private ServerStabilitySystem() {
 	}
@@ -52,6 +62,7 @@ public final class ServerStabilitySystem {
 		setStability(getMaxStability());
 		decayTickCounter = 0L;
 		pendingStabilityFraction = 0.0D;
+		nextFeedSoundAllowedTick = Long.MIN_VALUE;
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 				dispatcher.register(
@@ -237,14 +248,21 @@ public final class ServerStabilitySystem {
 				continue;
 			}
 
-			if (consumeBitcoinOffering(itemEntity, serverLevel)) {
+			consumeBitcoinOffering(itemEntity, serverLevel);
+
+			if (itemEntity.isRemoved()
+					|| itemEntity.getItem().isEmpty()
+					|| !itemEntity.getItem().is(ModItems.BITCOIN)) {
 				TRACKED_BITCOIN_ITEMS.remove(itemEntity);
 			}
 		}
 	}
 
 	private static boolean consumeBitcoinOffering(ItemEntity itemEntity, ServerLevel level) {
-		if (getStability() >= getMaxStability()) {
+		int max = getMaxStability();
+		int before = getStability();
+		int missing = max - before;
+		if (missing <= 0) {
 			return false;
 		}
 
@@ -253,37 +271,72 @@ public final class ServerStabilitySystem {
 			return false;
 		}
 
-		int bitcoinCount = stack.getCount();
-		double totalGain = pendingStabilityFraction + (bitcoinCount / getBitcoinsPerStability());
-		int gainedPoints = (int) Math.floor(totalGain);
-		pendingStabilityFraction = totalGain - gainedPoints;
+		int availableBitcoins = stack.getCount();
+		double bitcoinsPerStability = getBitcoinsPerStability();
+		int bitcoinsToConsume = availableBitcoins;
 
-		int max = getMaxStability();
-		int before = getStability();
-		int applied = Math.min(gainedPoints, max - before);
-
-		if (applied > 0) {
-			setStability(before + applied);
+		double requiredGain = missing - pendingStabilityFraction;
+		if (requiredGain > 0.0D) {
+			int neededToFill = (int) Math.ceil(requiredGain * bitcoinsPerStability - 1.0E-9D);
+			bitcoinsToConsume = Math.min(availableBitcoins, Math.max(1, neededToFill));
 		}
-		if (applied < gainedPoints) {
+
+		double totalGain = pendingStabilityFraction + (bitcoinsToConsume / bitcoinsPerStability);
+		int gainedPoints = Math.min((int) Math.floor(totalGain), missing);
+		double nextFraction = totalGain - gainedPoints;
+
+		if (gainedPoints > 0) {
+			setStability(before + gainedPoints);
+		}
+
+		if (getStability() >= max) {
 			pendingStabilityFraction = 0.0D;
+		} else {
+			pendingStabilityFraction = nextFraction;
 		}
 
-		spawnFeedParticles(level, itemEntity, bitcoinCount, Math.max(applied, 1));
-		itemEntity.discard();
+		if (bitcoinsToConsume >= availableBitcoins) {
+			itemEntity.discard();
+		} else {
+			stack.shrink(bitcoinsToConsume);
+			itemEntity.setItem(stack);
+		}
+
+		handleFeedFeedback(level, itemEntity);
 		return true;
 	}
 
-	private static void spawnFeedParticles(ServerLevel level, ItemEntity itemEntity, int bitcoinCount, int gainedPoints) {
+	private static void handleFeedFeedback(ServerLevel level, ItemEntity itemEntity) {
 		double x = itemEntity.getX();
-		double y = itemEntity.getY() + 0.1D;
+		double y = itemEntity.getY();
 		double z = itemEntity.getZ();
 
-		int enchantCount = Math.min(90, 16 + bitcoinCount);
-		int poofCount = Math.min(34, 6 + gainedPoints * 4);
+		long tickNow = level.getGameTime();
+		level.sendParticles(FEED_PARTICLE, x + 0.1D, y + 1.0D, z + 0.1D, 10, 0.1D, 0.0D, 0.1D, 0.0D);
 
-		level.sendParticles(ParticleTypes.ENCHANT, x, y + 0.15D, z, enchantCount, 0.38D, 0.25D, 0.38D, 0.02D);
-		level.sendParticles(ParticleTypes.POOF, x, y + 0.08D, z, poofCount, 0.28D, 0.14D, 0.28D, 0.02D);
+		if (tickNow >= nextFeedSoundAllowedTick) {
+			nextFeedSoundAllowedTick = tickNow + FEED_SOUND_DURATION_TICKS;
+			level.playSound(
+					null,
+					x,
+					y,
+					z,
+					SoundEvents.MUSIC_DISC_13,
+					SoundSource.RECORDS,
+					FEED_SOUND_VOLUME,
+					1.0F
+			);
+		}
+	}
+
+	private static SimpleParticleType resolveFeedParticle() {
+		ParticleType<?> byId = BuiltInRegistries.PARTICLE_TYPE.getValue(
+				Identifier.fromNamespaceAndPath("minecraft", "trial_spawner_detection")
+		);
+		if (byId instanceof SimpleParticleType simpleParticleType) {
+			return simpleParticleType;
+		}
+		return ParticleTypes.TRIAL_SPAWNER_DETECTED_PLAYER;
 	}
 
 	private static boolean isOnServerBlock(ItemEntity itemEntity, ServerLevel level) {

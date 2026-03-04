@@ -39,13 +39,21 @@ public final class ModBlocks {
 	public static final Block BITCOIN_ORE = Registry.register(
 			BuiltInRegistries.BLOCK,
 			BITCOIN_ORE_ID,
-			new BitcoinOreBlock(createNormalOreProperties(), Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/bitcoin_ore"), false)
+			new BitcoinOreBlock(
+					createNormalOreProperties(),
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/bitcoin_ore"),
+					net.minecraft.world.level.block.Blocks.INFESTED_STONE
+			)
 	);
 
 	public static final Block DEEPSLATE_BITCOIN_ORE = Registry.register(
 			BuiltInRegistries.BLOCK,
 			DEEPSLATE_BITCOIN_ORE_ID,
-			new BitcoinOreBlock(createDeepslateOreProperties(), Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/deepslate_bitcoin_ore"), true)
+			new BitcoinOreBlock(
+					createDeepslateOreProperties(),
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/deepslate_bitcoin_ore"),
+					net.minecraft.world.level.block.Blocks.INFESTED_DEEPSLATE
+			)
 	);
 
 	public static final Block SERVER = Registry.register(

@@ -20,11 +20,10 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.Enchantments;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.NoteBlock;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.NoteBlockInstrument;
 import net.minecraft.world.level.storage.loot.LootParams;
 import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
 import xyz.nucleoid.packettweaker.PacketContext;
@@ -35,9 +34,9 @@ import java.util.List;
 public class BitcoinOreBlock extends SimplePolymerBlock implements PolymerTexturedBlock {
 	private final BlockState polymerPackState;
 
-	public BitcoinOreBlock(BlockBehaviour.Properties settings, Identifier modelId, boolean poweredNoteState) {
+	public BitcoinOreBlock(BlockBehaviour.Properties settings, Identifier modelId, Block preferredPolymerBlock) {
 		super(settings, Blocks.RAW_GOLD_BLOCK);
-		this.polymerPackState = requestTargetNoteState(modelId, poweredNoteState);
+		this.polymerPackState = requestTargetState(modelId, preferredPolymerBlock);
 	}
 
 	@Override
@@ -117,12 +116,11 @@ public class BitcoinOreBlock extends SimplePolymerBlock implements PolymerTextur
 		return baseCount * (bonus + 1);
 	}
 
-	private static BlockState requestTargetNoteState(Identifier modelId, boolean powered) {
+	private static BlockState requestTargetState(Identifier modelId, Block preferredPolymerBlock) {
 		PolymerBlockModel model = PolymerBlockModel.of(modelId);
 
-		// Use deterministic note-block states so resource-pack clients render ore via:
-		// instrument=custom_head,note=1,powered=false/true.
-		BlockState targetState = requestStateWithPredicate(model, powered);
+		// Prefer block states with matching vanilla sound groups (stone / deepslate).
+		BlockState targetState = requestStateWithPredicate(model, preferredPolymerBlock);
 		if (targetState != null) {
 			return targetState;
 		}
@@ -134,7 +132,7 @@ public class BitcoinOreBlock extends SimplePolymerBlock implements PolymerTextur
 		return fallback;
 	}
 
-	private static BlockState requestStateWithPredicate(PolymerBlockModel model, boolean powered) {
+	private static BlockState requestStateWithPredicate(PolymerBlockModel model, Block preferredPolymerBlock) {
 		try {
 			Field creatorField = PolymerBlockResourceUtils.class.getDeclaredField("CREATOR");
 			creatorField.setAccessible(true);
@@ -142,10 +140,7 @@ public class BitcoinOreBlock extends SimplePolymerBlock implements PolymerTextur
 
 			return creator.requestBlock(
 					BlockModelType.FULL_BLOCK,
-					state -> state.is(Blocks.NOTE_BLOCK)
-							&& state.getValue(NoteBlock.INSTRUMENT) == NoteBlockInstrument.CUSTOM_HEAD
-							&& state.getValue(NoteBlock.NOTE) == 1
-							&& state.getValue(NoteBlock.POWERED) == powered,
+					state -> state.is(preferredPolymerBlock),
 					model
 			);
 		} catch (ReflectiveOperationException ignored) {
