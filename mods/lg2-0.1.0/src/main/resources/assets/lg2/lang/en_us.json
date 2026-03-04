@@ -2,6 +2,8 @@
   "item.lg2.bitcoin": "Bitcoin",
   "item.lg2.bitcoin_ore": "Bitcoin Ore",
   "item.lg2.deepslate_bitcoin_ore": "Deepslate Bitcoin Ore",
+  "item.lg2.server": "Server",
+  "block.lg2.server": "Server",
   "block.lg2.bitcoin_ore": "Bitcoin Ore",
   "block.lg2.deepslate_bitcoin_ore": "Deepslate Bitcoin Ore"
 }
