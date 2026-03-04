@@ -1,6 +1,9 @@
 package com.lostglade;
 
+import com.lostglade.block.ModBlocks;
+import com.lostglade.config.Lg2Config;
 import com.lostglade.item.ModItems;
+import com.lostglade.worldgen.ModWorldGen;
 import net.fabricmc.api.ModInitializer;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 
@@ -18,8 +21,12 @@ public class Lg2 implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		Lg2Config.load();
 		PolymerResourcePackUtils.addModAssets(MOD_ID);
+
 		ModItems.register();
+		ModBlocks.register();
+		ModWorldGen.register();
 
 		LOGGER.info("Initialized {}", MOD_ID);
 	}

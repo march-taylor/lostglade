@@ -1,0 +1,14 @@
+{
+  "oresPerChunkMin": 8,
+  "oresPerChunkMax": 14,
+  "veinSizeMin": 3,
+  "veinSizeMax": 8,
+  "dropMin": 1,
+  "dropMax": 1,
+  "xpMin": 1,
+  "xpMax": 3,
+  "spawnMinY": -64,
+  "spawnMaxY": 32,
+  "silkTouchEnabled": true,
+  "fortuneEnabled": true
+}

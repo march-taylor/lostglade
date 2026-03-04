@@ -55,6 +55,7 @@ dependencies {
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 	modImplementation "eu.pb4:polymer-core:${project.polymer_version}"
+	modImplementation "eu.pb4:polymer-blocks:${project.polymer_version}"
 	modImplementation "eu.pb4:polymer-resource-pack:${project.polymer_version}"
 	modRuntimeOnly files("${serverRootDir}/mods/cardinal-components-api-${project.cardinal_components_version}.jar")
 	
@@ -62,6 +63,9 @@ dependencies {
 
 tasks.register("prepareDevResourcePack", Sync) {
 	from(layout.projectDirectory.dir("resourcepack"))
+	from(layout.projectDirectory.dir("src/main/resources/assets")) {
+		into("assets")
+	}
 	into(polymerSourceAssetsDir)
 	includeEmptyDirs = true
 }

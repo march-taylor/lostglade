@@ -35,6 +35,7 @@
 		"java": ">=21",
 		"fabric-api": "*",
 		"polymer-core": "*",
+		"polymer-blocks": "*",
 		"polymer-resource-pack": "*",
 		"cardinal-components": "*"
 	}
