@@ -47,8 +47,7 @@ public final class ServerStabilitySystem {
 	private static final Map<UUID, ServerBossEvent> PLAYER_SPACER_HUDS = new HashMap<>();
 	private static final Set<ItemEntity> TRACKED_BITCOIN_ITEMS = ConcurrentHashMap.newKeySet();
 	private static final int BITCOIN_FEED_SCAN_RADIUS = 1;
-	private static final double BITCOIN_FEED_HORIZONTAL_RANGE = 1.35D;
-	private static final double BITCOIN_FEED_VERTICAL_RANGE = 1.25D;
+	private static final double BITCOIN_FEED_RADIUS = 0.3D;
 	private static final long FEED_SOUND_BASE_DURATION_TICKS = 240L;
 	private static final float FEED_MUSIC_SOUND_VOLUME = 0.55F;
 	private static final float FEED_XP_SOUND_VOLUME = 1.0F;
@@ -109,7 +108,7 @@ public final class ServerStabilitySystem {
 		});
 
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
-			tickStabilityDecay();
+			tickStabilityDecay(server);
 			tickBitcoinOfferings();
 
 			Set<UUID> online = new HashSet<>();
@@ -283,13 +282,24 @@ public final class ServerStabilitySystem {
 		stability = clamp(value);
 	}
 
-	private static void tickStabilityDecay() {
+	private static void tickStabilityDecay(net.minecraft.server.MinecraftServer server) {
 		long intervalTicks = Math.max(1L, (long) getDecayIntervalSeconds() * 20L);
+		int maxStability = getMaxStability();
+		long tickNow = server.overworld().getGameTime();
 		decayTickCounter++;
 
 		while (decayTickCounter >= intervalTicks) {
 			decayTickCounter -= intervalTicks;
-			setStability(getStability() - 1);
+			int before = getStability();
+			setStability(before - 1);
+			int after = getStability();
+			if (before >= maxStability && after < maxStability) {
+				// Leaving max should not force an immediate replay; keep at most one full-track cooldown.
+				long relaxedCooldownTick = tickNow + FEED_SOUND_BASE_DURATION_TICKS;
+				if (nextFeedSoundAllowedTick > relaxedCooldownTick) {
+					nextFeedSoundAllowedTick = relaxedCooldownTick;
+				}
+			}
 		}
 	}
 
@@ -329,6 +339,11 @@ public final class ServerStabilitySystem {
 		int before = getStability();
 		int missing = max - before;
 		if (missing <= 0) {
+			// Prevent very long pitch-based cooldowns from blocking playback after stability drops from max.
+			long relaxedCooldownTick = level.getGameTime() + FEED_SOUND_BASE_DURATION_TICKS;
+			if (nextFeedSoundAllowedTick > relaxedCooldownTick) {
+				nextFeedSoundAllowedTick = relaxedCooldownTick;
+			}
 			return false;
 		}
 
@@ -438,22 +453,11 @@ public final class ServerStabilitySystem {
 	}
 
 	private static boolean isOnServerBlock(ItemEntity itemEntity, ServerLevel level) {
-		BlockPos onPos = itemEntity.getOnPos();
-		if (level.getBlockState(onPos).is(ModBlocks.SERVER)) {
-			return true;
-		}
-
-		BlockPos entityPos = itemEntity.blockPosition();
-		if (level.getBlockState(entityPos).is(ModBlocks.SERVER)
-				|| level.getBlockState(entityPos.below()).is(ModBlocks.SERVER)) {
-			return true;
-		}
-
-		// The server model is visually larger than one cube, so accept offerings near side faces as well.
 		double itemX = itemEntity.getX();
 		double itemY = itemEntity.getY();
 		double itemZ = itemEntity.getZ();
-		double maxHorizontalDistanceSq = BITCOIN_FEED_HORIZONTAL_RANGE * BITCOIN_FEED_HORIZONTAL_RANGE;
+		double maxDistanceSq = BITCOIN_FEED_RADIUS * BITCOIN_FEED_RADIUS;
+		BlockPos entityPos = itemEntity.blockPosition();
 
 		for (int dx = -BITCOIN_FEED_SCAN_RADIUS; dx <= BITCOIN_FEED_SCAN_RADIUS; dx++) {
 			for (int dy = -1; dy <= 1; dy++) {
@@ -463,14 +467,19 @@ public final class ServerStabilitySystem {
 						continue;
 					}
 
-					double centerX = candidatePos.getX() + 0.5D;
-					double centerY = candidatePos.getY() + 0.5D;
-					double centerZ = candidatePos.getZ() + 0.5D;
-					double horizontalDistanceSq = (itemX - centerX) * (itemX - centerX)
-							+ (itemZ - centerZ) * (itemZ - centerZ);
+					double minX = candidatePos.getX();
+					double minY = candidatePos.getY();
+					double minZ = candidatePos.getZ();
+					double maxX = minX + 1.0D;
+					double maxY = minY + 1.0D;
+					double maxZ = minZ + 1.0D;
 
-					if (horizontalDistanceSq <= maxHorizontalDistanceSq
-							&& Math.abs(itemY - centerY) <= BITCOIN_FEED_VERTICAL_RANGE) {
+					double deltaX = axisDistance(itemX, minX, maxX);
+					double deltaY = axisDistance(itemY, minY, maxY);
+					double deltaZ = axisDistance(itemZ, minZ, maxZ);
+					double distanceSq = deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
+
+					if (distanceSq <= maxDistanceSq) {
 						return true;
 					}
 				}
@@ -478,6 +487,16 @@ public final class ServerStabilitySystem {
 		}
 
 		return false;
+	}
+
+	private static double axisDistance(double value, double min, double max) {
+		if (value < min) {
+			return min - value;
+		}
+		if (value > max) {
+			return value - max;
+		}
+		return 0.0D;
 	}
 
 	private static boolean isLookingAtServerBlock(ServerPlayer player) {

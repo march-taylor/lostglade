@@ -2,8 +2,9 @@
   "item.lg2.bitcoin": "Биткоин",
   "item.lg2.bitcoin_ore": "Биткоиновая руда",
   "item.lg2.deepslate_bitcoin_ore": "Глубинносланцевая биткоиновая руда",
-  "item.lg2.server": "Server",
-  "block.lg2.server": "Server",
+  "item.lg2.special_pickaxe": "Особая кирка",
+  "item.lg2.server": "Сервер",
+  "block.lg2.server": "Сервер",
   "block.lg2.bitcoin_ore": "Биткоиновая руда",
   "block.lg2.deepslate_bitcoin_ore": "Глубинносланцевая биткоиновая руда"
 }

@@ -5,7 +5,9 @@ import eu.pb4.polymer.core.api.item.PolymerBlockItem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
@@ -28,8 +30,32 @@ public class ServerBlockItem extends PolymerBlockItem {
 		if (!PolymerResourcePackUtils.hasMainPack(context)) {
 			out.set(
 					DataComponents.CUSTOM_NAME,
-					Component.literal("Server").withStyle(style -> style.withItalic(false))
+					getLocalizedFallbackName(context).withStyle(style -> style.withItalic(false))
 			);
 		}
+	}
+
+	private static MutableComponent getLocalizedFallbackName(PacketContext context) {
+		ServerPlayer player = context.getPlayer();
+		if (player == null) {
+			return Component.literal("Server");
+		}
+
+		String lang = player.clientInformation().language();
+		if (lang == null) {
+			return Component.literal("Server");
+		}
+
+		String normalized = lang.toLowerCase();
+		if (normalized.startsWith("rdr") || normalized.startsWith("rpr")) {
+			return Component.literal("Жѣлѣзный разум");
+		}
+		if (normalized.startsWith("ru") || normalized.startsWith("uk")) {
+			return Component.literal("Сервер");
+		}
+		if (normalized.startsWith("ja")) {
+			return Component.literal("サーバ");
+		}
+		return Component.literal("Server");
 	}
 }
