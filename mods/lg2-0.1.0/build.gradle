@@ -10,12 +10,23 @@ base {
 	archivesName = project.archives_base_name
 }
 
+def serverRootDir = file("${projectDir}/../..").canonicalFile
+def polymerSourceAssetsDir = file("${serverRootDir}/polymer/source_assets")
+
 repositories {
 	// Add repositories to retrieve artifacts from in here.
 	// You should only use this when depending on other mods because
 	// Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
 	// See https://docs.gradle.org/current/userguide/declaring_repositories.html
 	// for more information about repositories.
+	maven {
+		name = "Nucleoid"
+		url = "https://maven.nucleoid.xyz/"
+	}
+	maven {
+		name = "Ladysnake Releases"
+		url = "https://maven.ladysnake.org/releases"
+	}
 }
 
 loom {
@@ -28,6 +39,11 @@ loom {
 		}
 	}
 
+	runs {
+		named("server") {
+			runDir("../../")
+		}
+	}
 }
 
 dependencies {
@@ -38,7 +54,20 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+	modImplementation "eu.pb4:polymer-core:${project.polymer_version}"
+	modImplementation "eu.pb4:polymer-resource-pack:${project.polymer_version}"
+	modRuntimeOnly files("${serverRootDir}/mods/cardinal-components-api-${project.cardinal_components_version}.jar")
 	
+}
+
+tasks.register("prepareDevResourcePack", Sync) {
+	from(layout.projectDirectory.dir("resourcepack"))
+	into(polymerSourceAssetsDir)
+	includeEmptyDirs = true
+}
+
+tasks.matching { it.name == "runServer" }.configureEach {
+	dependsOn(tasks.named("prepareDevResourcePack"))
 }
 
 processResources {

@@ -12,12 +12,6 @@
 - `cardinal-components-api`
 - `polymer-bundled`
 
-## Кастомный мод: Lostglade Bitcoin
-серверный предмет `lostglade:bitcoin` через Polymer:
-- базовый клиентский предмет: `minecraft:gold_ingot`
-- текстура: `src/main/resources/assets/lostglade/textures/item/bitcoin.png`
-- item model id: `lostglade:bitcoin`
-
 ## Зависимости мода
 Зависимости зафиксированы в `build.gradle` и `fabric.mod.json`:
 - Fabric API
@@ -26,4 +20,14 @@
 - Cardinal Components API
 
 
-- мод хранить в виде папки
+- мод хранить в виде папки и запускать только как dev сервер без сборки мода в директории основного сервера lostglade через gradle
+
+## Dev запуск сервера
+- Команда запуска: `cd ~/Desktop/lostglade/mods/lg2-0.1.0 && ./gradlew runServer`
+- Скрипт запуска: `cd ~/Desktop/lostglade/mods/lg2-0.1.0 && ./scripts/run-dev-server.sh`
+- `runServer` запускается из корня сервера: `~/Desktop/lostglade`
+
+## Серверный ресурспак
+- Исходник пустого pack хранится как папка: `mods/lg2-0.1.0/resourcepack/`
+- Перед запуском gradle-задача `prepareDevResourcePack` копирует его в `polymer/source_assets/`
+- Polymer AutoHost включён в `config/polymer/auto-host.json`, поэтому клиенту предлагается загрузка ресурспака при заходе
