@@ -1,18 +1,25 @@
 package com.lostglade.server;
 
-import com.lostglade.Lg2;
 import com.lostglade.block.ModBlocks;
+import com.lostglade.config.Lg2Config;
+import com.lostglade.item.ModItems;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.commands.Commands;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
 import net.minecraft.server.level.ServerBossEvent;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.world.BossEvent;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 
@@ -22,37 +29,51 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class ServerStabilitySystem {
 	private static final String STABILITY_SYMBOL = "\uE903";
 	private static final int TITLE_COLOR = 0xF2CD26;
 
 	private static final Map<UUID, ServerBossEvent> PLAYER_HUDS = new HashMap<>();
+	private static final Set<ItemEntity> TRACKED_BITCOIN_ITEMS = ConcurrentHashMap.newKeySet();
+	private static final int BITCOIN_FEED_SCAN_RADIUS = 1;
+	private static final double BITCOIN_FEED_HORIZONTAL_RANGE = 1.35D;
+	private static final double BITCOIN_FEED_VERTICAL_RANGE = 1.25D;
 
 	private static int stability = 100;
+	private static long decayTickCounter = 0L;
+	private static double pendingStabilityFraction = 0.0D;
 
 	private ServerStabilitySystem() {
 	}
 
 	public static void register() {
+		setStability(getMaxStability());
+		decayTickCounter = 0L;
+		pendingStabilityFraction = 0.0D;
+
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 				dispatcher.register(
 						Commands.literal("serverstability")
 								.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
 								.executes(context -> {
 									int value = getStability();
+									int max = getMaxStability();
 									context.getSource().sendSuccess(
-											() -> Component.literal("Server stability: " + value),
+											() -> Component.literal("Server stability: " + value + "/" + max),
 											false
 									);
 									return value;
 								})
-								.then(Commands.argument("value", IntegerArgumentType.integer(0, 100))
+								.then(Commands.argument("value", IntegerArgumentType.integer(0))
 										.executes(context -> {
 											int value = IntegerArgumentType.getInteger(context, "value");
 											setStability(value);
+											int current = getStability();
+											int max = getMaxStability();
 											context.getSource().sendSuccess(
-													() -> Component.literal("Set server stability to " + value),
+													() -> Component.literal("Set server stability to " + current + "/" + max),
 													true
 											);
 											return 1;
@@ -60,7 +81,22 @@ public final class ServerStabilitySystem {
 				)
 		);
 
+		ServerEntityEvents.ENTITY_LOAD.register((entity, world) -> {
+			if (entity instanceof ItemEntity itemEntity && itemEntity.getItem().is(ModItems.BITCOIN)) {
+				TRACKED_BITCOIN_ITEMS.add(itemEntity);
+			}
+		});
+
+		ServerEntityEvents.ENTITY_UNLOAD.register((entity, world) -> {
+			if (entity instanceof ItemEntity itemEntity) {
+				TRACKED_BITCOIN_ITEMS.remove(itemEntity);
+			}
+		});
+
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			tickStabilityDecay();
+			tickBitcoinOfferings();
+
 			Set<UUID> online = new HashSet<>();
 
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -86,7 +122,8 @@ public final class ServerStabilitySystem {
 
 	private static void showHud(ServerPlayer player, boolean hasPack) {
 		ServerBossEvent hud = PLAYER_HUDS.computeIfAbsent(player.getUUID(), id -> createHudEvent());
-		float progress = getStability() / 100.0f;
+		float progress = (float) getStability() / (float) getMaxStability();
+		progress = Math.max(0.0F, Math.min(1.0F, progress));
 
 		hud.setName(getHudTitle(player, hasPack));
 		hud.setColor(BossEvent.BossBarColor.YELLOW);
@@ -169,6 +206,129 @@ public final class ServerStabilitySystem {
 		stability = clamp(value);
 	}
 
+	private static void tickStabilityDecay() {
+		long intervalTicks = Math.max(1L, (long) getDecayIntervalSeconds() * 20L);
+		decayTickCounter++;
+
+		while (decayTickCounter >= intervalTicks) {
+			decayTickCounter -= intervalTicks;
+			setStability(getStability() - 1);
+		}
+	}
+
+	private static void tickBitcoinOfferings() {
+		for (ItemEntity itemEntity : TRACKED_BITCOIN_ITEMS) {
+			if (itemEntity.isRemoved() || !itemEntity.isAlive()) {
+				TRACKED_BITCOIN_ITEMS.remove(itemEntity);
+				continue;
+			}
+
+			ItemStack stack = itemEntity.getItem();
+			if (!stack.is(ModItems.BITCOIN) || stack.isEmpty()) {
+				TRACKED_BITCOIN_ITEMS.remove(itemEntity);
+				continue;
+			}
+
+			if (!(itemEntity.level() instanceof ServerLevel serverLevel)) {
+				continue;
+			}
+
+			if (!isOnServerBlock(itemEntity, serverLevel)) {
+				continue;
+			}
+
+			if (consumeBitcoinOffering(itemEntity, serverLevel)) {
+				TRACKED_BITCOIN_ITEMS.remove(itemEntity);
+			}
+		}
+	}
+
+	private static boolean consumeBitcoinOffering(ItemEntity itemEntity, ServerLevel level) {
+		if (getStability() >= getMaxStability()) {
+			return false;
+		}
+
+		ItemStack stack = itemEntity.getItem();
+		if (!stack.is(ModItems.BITCOIN) || stack.isEmpty()) {
+			return false;
+		}
+
+		int bitcoinCount = stack.getCount();
+		double totalGain = pendingStabilityFraction + (bitcoinCount / getBitcoinsPerStability());
+		int gainedPoints = (int) Math.floor(totalGain);
+		pendingStabilityFraction = totalGain - gainedPoints;
+
+		int max = getMaxStability();
+		int before = getStability();
+		int applied = Math.min(gainedPoints, max - before);
+
+		if (applied > 0) {
+			setStability(before + applied);
+		}
+		if (applied < gainedPoints) {
+			pendingStabilityFraction = 0.0D;
+		}
+
+		spawnFeedParticles(level, itemEntity, bitcoinCount, Math.max(applied, 1));
+		itemEntity.discard();
+		return true;
+	}
+
+	private static void spawnFeedParticles(ServerLevel level, ItemEntity itemEntity, int bitcoinCount, int gainedPoints) {
+		double x = itemEntity.getX();
+		double y = itemEntity.getY() + 0.1D;
+		double z = itemEntity.getZ();
+
+		int enchantCount = Math.min(90, 16 + bitcoinCount);
+		int poofCount = Math.min(34, 6 + gainedPoints * 4);
+
+		level.sendParticles(ParticleTypes.ENCHANT, x, y + 0.15D, z, enchantCount, 0.38D, 0.25D, 0.38D, 0.02D);
+		level.sendParticles(ParticleTypes.POOF, x, y + 0.08D, z, poofCount, 0.28D, 0.14D, 0.28D, 0.02D);
+	}
+
+	private static boolean isOnServerBlock(ItemEntity itemEntity, ServerLevel level) {
+		BlockPos onPos = itemEntity.getOnPos();
+		if (level.getBlockState(onPos).is(ModBlocks.SERVER)) {
+			return true;
+		}
+
+		BlockPos entityPos = itemEntity.blockPosition();
+		if (level.getBlockState(entityPos).is(ModBlocks.SERVER)
+				|| level.getBlockState(entityPos.below()).is(ModBlocks.SERVER)) {
+			return true;
+		}
+
+		// The server model is visually larger than one cube, so accept offerings near side faces as well.
+		double itemX = itemEntity.getX();
+		double itemY = itemEntity.getY();
+		double itemZ = itemEntity.getZ();
+		double maxHorizontalDistanceSq = BITCOIN_FEED_HORIZONTAL_RANGE * BITCOIN_FEED_HORIZONTAL_RANGE;
+
+		for (int dx = -BITCOIN_FEED_SCAN_RADIUS; dx <= BITCOIN_FEED_SCAN_RADIUS; dx++) {
+			for (int dy = -1; dy <= 1; dy++) {
+				for (int dz = -BITCOIN_FEED_SCAN_RADIUS; dz <= BITCOIN_FEED_SCAN_RADIUS; dz++) {
+					BlockPos candidatePos = entityPos.offset(dx, dy, dz);
+					if (!level.getBlockState(candidatePos).is(ModBlocks.SERVER)) {
+						continue;
+					}
+
+					double centerX = candidatePos.getX() + 0.5D;
+					double centerY = candidatePos.getY() + 0.5D;
+					double centerZ = candidatePos.getZ() + 0.5D;
+					double horizontalDistanceSq = (itemX - centerX) * (itemX - centerX)
+							+ (itemZ - centerZ) * (itemZ - centerZ);
+
+					if (horizontalDistanceSq <= maxHorizontalDistanceSq
+							&& Math.abs(itemY - centerY) <= BITCOIN_FEED_VERTICAL_RANGE) {
+						return true;
+					}
+				}
+			}
+		}
+
+		return false;
+	}
+
 	private static boolean isLookingAtServerBlock(ServerPlayer player) {
 		HitResult hit = player.pick(6.0D, 0.0F, false);
 		if (hit.getType() != HitResult.Type.BLOCK) {
@@ -179,7 +339,23 @@ public final class ServerStabilitySystem {
 		return player.level().getBlockState(blockHit.getBlockPos()).is(ModBlocks.SERVER);
 	}
 
+	private static int getMaxStability() {
+		return Math.max(1, Lg2Config.get().stabilityMax);
+	}
+
+	private static int getDecayIntervalSeconds() {
+		return Math.max(1, Lg2Config.get().stabilityDecayIntervalSeconds);
+	}
+
+	private static double getBitcoinsPerStability() {
+		double value = Lg2Config.get().bitcoinsPerStability;
+		if (!Double.isFinite(value) || value <= 0.0D) {
+			return 1.0D;
+		}
+		return value;
+	}
+
 	private static int clamp(int value) {
-		return Math.max(0, Math.min(100, value));
+		return Math.max(0, Math.min(getMaxStability(), value));
 	}
 }

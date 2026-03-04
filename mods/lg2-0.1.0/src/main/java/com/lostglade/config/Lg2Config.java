@@ -19,6 +19,13 @@ public final class Lg2Config {
 	private static final int MAX_XP = 100;
 	private static final int MIN_WORLD_Y = -64;
 	private static final int MAX_WORLD_Y = 320;
+	private static final int MIN_STABILITY_MAX = 1;
+	private static final int MAX_STABILITY_MAX = 1_000_000;
+	private static final int MIN_STABILITY_DECAY_INTERVAL_SECONDS = 1;
+	private static final int MAX_STABILITY_DECAY_INTERVAL_SECONDS = 2_592_000;
+	private static final double DEFAULT_BITCOINS_PER_STABILITY = 6.4D;
+	private static final double MIN_BITCOINS_PER_STABILITY = 0.001D;
+	private static final double MAX_BITCOINS_PER_STABILITY = 1_000_000.0D;
 
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve(Lg2.MOD_ID + ".json");
@@ -81,8 +88,43 @@ public final class Lg2Config {
 		changed |= clampRange(configData, RangeType.DROP, 0, MAX_DROP);
 		changed |= clampRange(configData, RangeType.XP, 0, MAX_XP);
 		changed |= clampRange(configData, RangeType.SPAWN_Y, MIN_WORLD_Y, MAX_WORLD_Y);
+		changed |= clampSingleValue(configData.stabilityMax, MIN_STABILITY_MAX, MAX_STABILITY_MAX,
+				newValue -> configData.stabilityMax = newValue);
+		changed |= clampSingleValue(configData.stabilityDecayIntervalSeconds,
+				MIN_STABILITY_DECAY_INTERVAL_SECONDS, MAX_STABILITY_DECAY_INTERVAL_SECONDS,
+				newValue -> configData.stabilityDecayIntervalSeconds = newValue);
+		changed |= sanitizeBitcoinsPerStability(configData);
 
 		return changed;
+	}
+
+	private static boolean clampSingleValue(int value, int minLimit, int maxLimit, java.util.function.IntConsumer consumer) {
+		int clamped = clamp(value, minLimit, maxLimit);
+		if (clamped == value) {
+			return false;
+		}
+		consumer.accept(clamped);
+		return true;
+	}
+
+	private static boolean sanitizeBitcoinsPerStability(ConfigData configData) {
+		double value = configData.bitcoinsPerStability;
+		double sanitized = value;
+
+		if (!Double.isFinite(value) || value <= 0.0D) {
+			sanitized = DEFAULT_BITCOINS_PER_STABILITY;
+		} else if (value < MIN_BITCOINS_PER_STABILITY) {
+			sanitized = MIN_BITCOINS_PER_STABILITY;
+		} else if (value > MAX_BITCOINS_PER_STABILITY) {
+			sanitized = MAX_BITCOINS_PER_STABILITY;
+		}
+
+		if (Double.compare(sanitized, value) == 0) {
+			return false;
+		}
+
+		configData.bitcoinsPerStability = sanitized;
+		return true;
 	}
 
 	private static boolean clampRange(ConfigData configData, RangeType type, int minLimit, int maxLimit) {
@@ -176,6 +218,9 @@ public final class Lg2Config {
 		public int spawnMaxY = 32;
 		public boolean silkTouchEnabled = true;
 		public boolean fortuneEnabled = true;
+		public int stabilityMax = 100;
+		public int stabilityDecayIntervalSeconds = 864;
+		public double bitcoinsPerStability = DEFAULT_BITCOINS_PER_STABILITY;
 
 		private ConfigData() {
 		}
