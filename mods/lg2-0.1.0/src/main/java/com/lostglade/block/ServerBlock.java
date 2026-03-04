@@ -58,7 +58,6 @@ public class ServerBlock extends SimplePolymerBlock {
 				(syncId, inventory, menuPlayer) -> ChestMenu.threeRows(syncId, inventory, container),
 				Component.literal("Server")
 		));
-		serverPlayer.sendSystemMessage(Component.literal("Server block clicked"));
 
 		return InteractionResult.CONSUME;
 	}

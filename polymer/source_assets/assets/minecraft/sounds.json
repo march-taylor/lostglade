@@ -3,8 +3,14 @@
     "replace": true,
     "sounds": [
       {
-        "name": "minecraft:custom/bitcoin_billionaire_meloboom",
-        "stream": true
+        "name": "minecraft:custom/bitcoin_billionaire_meloboom"
+      }
+    ]
+  },
+  "custom.bitcoin_billionaire_meloboom": {
+    "sounds": [
+      {
+        "name": "minecraft:custom/bitcoin_billionaire_meloboom"
       }
     ]
   }

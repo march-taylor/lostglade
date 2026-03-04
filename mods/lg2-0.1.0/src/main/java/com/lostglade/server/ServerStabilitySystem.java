@@ -10,12 +10,14 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
 import net.minecraft.core.particles.ParticleType;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.particles.SimpleParticleType;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerBossEvent;
 import net.minecraft.server.level.ServerLevel;
@@ -42,12 +44,14 @@ public final class ServerStabilitySystem {
 	private static final int TITLE_COLOR = 0xF2CD26;
 
 	private static final Map<UUID, ServerBossEvent> PLAYER_HUDS = new HashMap<>();
+	private static final Map<UUID, ServerBossEvent> PLAYER_SPACER_HUDS = new HashMap<>();
 	private static final Set<ItemEntity> TRACKED_BITCOIN_ITEMS = ConcurrentHashMap.newKeySet();
 	private static final int BITCOIN_FEED_SCAN_RADIUS = 1;
 	private static final double BITCOIN_FEED_HORIZONTAL_RANGE = 1.35D;
 	private static final double BITCOIN_FEED_VERTICAL_RANGE = 1.25D;
-	private static final long FEED_SOUND_DURATION_TICKS = 240L;
-	private static final float FEED_SOUND_VOLUME = 0.55F;
+	private static final long FEED_SOUND_BASE_DURATION_TICKS = 240L;
+	private static final float FEED_MUSIC_SOUND_VOLUME = 0.55F;
+	private static final float FEED_XP_SOUND_VOLUME = 1.0F;
 	private static final SimpleParticleType FEED_PARTICLE = resolveFeedParticle();
 
 	private static int stability = 100;
@@ -128,10 +132,22 @@ public final class ServerStabilitySystem {
 				entry.getValue().removeAllPlayers();
 				return true;
 			});
+			PLAYER_SPACER_HUDS.entrySet().removeIf(entry -> {
+				if (online.contains(entry.getKey())) {
+					return false;
+				}
+				entry.getValue().removeAllPlayers();
+				return true;
+			});
 		});
 	}
 
 	private static void showHud(ServerPlayer player, boolean hasPack) {
+		boolean spacerBecameVisible = hasPack && showSpacerHud(player);
+		if (!hasPack) {
+			hideSpacerHud(player);
+		}
+
 		ServerBossEvent hud = PLAYER_HUDS.computeIfAbsent(player.getUUID(), id -> createHudEvent());
 		float progress = (float) getStability() / (float) getMaxStability();
 		progress = Math.max(0.0F, Math.min(1.0F, progress));
@@ -142,6 +158,10 @@ public final class ServerStabilitySystem {
 
 		if (!hud.getPlayers().contains(player)) {
 			hud.addPlayer(player);
+		} else if (spacerBecameVisible) {
+			// Re-add so main bar is rendered below the spacer bar.
+			hud.removePlayer(player);
+			hud.addPlayer(player);
 		}
 
 		hud.setVisible(true);
@@ -149,13 +169,19 @@ public final class ServerStabilitySystem {
 
 	private static void hideHud(ServerPlayer player) {
 		ServerBossEvent hud = PLAYER_HUDS.get(player.getUUID());
-		if (hud == null) {
-			return;
+		if (hud != null) {
+			hud.removePlayer(player);
+			if (hud.getPlayers().isEmpty()) {
+				PLAYER_HUDS.remove(player.getUUID());
+			}
 		}
 
-		hud.removePlayer(player);
-		if (hud.getPlayers().isEmpty()) {
-			PLAYER_HUDS.remove(player.getUUID());
+		ServerBossEvent spacer = PLAYER_SPACER_HUDS.get(player.getUUID());
+		if (spacer != null) {
+			spacer.removePlayer(player);
+			if (spacer.getPlayers().isEmpty()) {
+				PLAYER_SPACER_HUDS.remove(player.getUUID());
+			}
 		}
 	}
 
@@ -169,6 +195,46 @@ public final class ServerStabilitySystem {
 		event.setPlayBossMusic(false);
 		event.setCreateWorldFog(false);
 		return event;
+	}
+
+	private static ServerBossEvent createSpacerHudEvent() {
+		ServerBossEvent event = new ServerBossEvent(
+				Component.empty(),
+				BossEvent.BossBarColor.PINK,
+				BossEvent.BossBarOverlay.PROGRESS
+		);
+		event.setDarkenScreen(false);
+		event.setPlayBossMusic(false);
+		event.setCreateWorldFog(false);
+		event.setProgress(0.0F);
+		return event;
+	}
+
+	private static boolean showSpacerHud(ServerPlayer player) {
+		ServerBossEvent spacer = PLAYER_SPACER_HUDS.computeIfAbsent(player.getUUID(), id -> createSpacerHudEvent());
+		spacer.setName(Component.empty());
+		spacer.setColor(BossEvent.BossBarColor.PINK);
+		spacer.setProgress(0.0F);
+		spacer.setVisible(true);
+
+		if (spacer.getPlayers().contains(player)) {
+			return false;
+		}
+
+		spacer.addPlayer(player);
+		return true;
+	}
+
+	private static void hideSpacerHud(ServerPlayer player) {
+		ServerBossEvent spacer = PLAYER_SPACER_HUDS.get(player.getUUID());
+		if (spacer == null) {
+			return;
+		}
+
+		spacer.removePlayer(player);
+		if (spacer.getPlayers().isEmpty()) {
+			PLAYER_SPACER_HUDS.remove(player.getUUID());
+		}
 	}
 
 	private static Component getHudTitle(ServerPlayer player, boolean hasPack) {
@@ -314,19 +380,51 @@ public final class ServerStabilitySystem {
 		long tickNow = level.getGameTime();
 		level.sendParticles(FEED_PARTICLE, x + 0.1D, y + 1.0D, z + 0.1D, 10, 0.1D, 0.0D, 0.1D, 0.0D);
 
-		if (tickNow >= nextFeedSoundAllowedTick) {
-			nextFeedSoundAllowedTick = tickNow + FEED_SOUND_DURATION_TICKS;
-			level.playSound(
-					null,
-					x,
-					y,
-					z,
-					SoundEvents.MUSIC_DISC_13,
-					SoundSource.RECORDS,
-					FEED_SOUND_VOLUME,
-					1.0F
-			);
+		float pitch = getFeedSoundPitch();
+		if (pitch <= 0.01F) {
+			return;
 		}
+
+		boolean canPlayPackMusic = tickNow >= nextFeedSoundAllowedTick;
+		if (canPlayPackMusic) {
+			nextFeedSoundAllowedTick = tickNow + getFeedSoundCooldownTicks(pitch);
+		}
+
+		long seed = level.getRandom().nextLong();
+		for (ServerPlayer player : level.players()) {
+			if (PolymerResourcePackUtils.hasMainPack(player)) {
+				if (canPlayPackMusic) {
+					sendSoundToPlayer(player, SoundEvents.MUSIC_DISC_13, SoundSource.RECORDS, x, y, z, FEED_MUSIC_SOUND_VOLUME, pitch, seed);
+				}
+			} else {
+				// No resource pack: use vanilla xp sound and allow overlaps on every feeding tick.
+				sendSoundToPlayer(
+						player,
+						BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.EXPERIENCE_ORB_PICKUP),
+						SoundSource.PLAYERS,
+						x,
+						y,
+						z,
+						FEED_XP_SOUND_VOLUME,
+						pitch,
+						seed
+				);
+			}
+		}
+	}
+
+	private static void sendSoundToPlayer(
+			ServerPlayer player,
+			Holder<net.minecraft.sounds.SoundEvent> sound,
+			SoundSource source,
+			double x,
+			double y,
+			double z,
+			float volume,
+			float pitch,
+			long seed
+	) {
+		player.connection.send(new ClientboundSoundPacket(sound, source, x, y, z, volume, pitch, seed));
 	}
 
 	private static SimpleParticleType resolveFeedParticle() {
@@ -406,6 +504,30 @@ public final class ServerStabilitySystem {
 			return 1.0D;
 		}
 		return value;
+	}
+
+	private static float getFeedSoundPitch() {
+		int max = getMaxStability();
+		if (max <= 0) {
+			return 1.0F;
+		}
+
+		float normalized = (float) getStability() / (float) max;
+		if (normalized >= 0.5F) {
+			return 1.0F;
+		}
+
+		float pitch = normalized / 0.5F;
+		return Math.max(0.0F, Math.min(1.0F, pitch));
+	}
+
+	private static long getFeedSoundCooldownTicks(float pitch) {
+		if (pitch <= 0.01F) {
+			return FEED_SOUND_BASE_DURATION_TICKS;
+		}
+
+		long scaled = (long) Math.ceil(FEED_SOUND_BASE_DURATION_TICKS / pitch);
+		return Math.max(FEED_SOUND_BASE_DURATION_TICKS, scaled);
 	}
 
 	private static int clamp(int value) {
