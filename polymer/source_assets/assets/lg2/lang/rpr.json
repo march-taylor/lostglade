@@ -1,7 +1,7 @@
 {
   "item.lg2.bitcoin": "Золотыя монѣта",
-  "item.lg2.bitcoin_ore": "золотыя монѣта въ камнѣ",
-  "item.lg2.deepslate_bitcoin_ore": "золотыя монѣта въ черномъ камнѣ",
-  "block.lg2.bitcoin_ore": "золотыя монѣта въ камнѣ",
-  "block.lg2.deepslate_bitcoin_ore": "золотыя монѣта въ черномъ камнѣ"
+  "item.lg2.bitcoin_ore": "Золотыя монѣта въ камнѣ",
+  "item.lg2.deepslate_bitcoin_ore": "Золотыя монѣта въ черномъ камнѣ",
+  "block.lg2.bitcoin_ore": "Золотыя монѣта въ камнѣ",
+  "block.lg2.deepslate_bitcoin_ore": "Золотыя монѣта въ черномъ камнѣ"
 }
