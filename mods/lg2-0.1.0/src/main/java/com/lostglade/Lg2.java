@@ -1,6 +1,8 @@
 package com.lostglade;
 
+import com.lostglade.item.ModItems;
 import net.fabricmc.api.ModInitializer;
+import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,10 +18,9 @@ public class Lg2 implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
-		// This code runs as soon as Minecraft is in a mod-load-ready state.
-		// However, some things (like resources) may still be uninitialized.
-		// Proceed with mild caution.
+		PolymerResourcePackUtils.addModAssets(MOD_ID);
+		ModItems.register();
 
-		LOGGER.info("Hello Fabric world!");
+		LOGGER.info("Initialized {}", MOD_ID);
 	}
 }
