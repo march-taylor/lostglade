@@ -1,6 +1,7 @@
 package com.lostglade.block;
 
 import eu.pb4.polymer.core.api.block.SimplePolymerBlock;
+import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
@@ -17,10 +18,18 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
+import xyz.nucleoid.packettweaker.PacketContext;
 
 public class ServerBlock extends SimplePolymerBlock {
 	public ServerBlock(BlockBehaviour.Properties settings) {
-		super(settings, Blocks.BARRIER);
+		super(settings, Blocks.COMMAND_BLOCK);
+	}
+
+	@Override
+	public BlockState getPolymerBlockState(BlockState state, PacketContext context) {
+		return PolymerResourcePackUtils.hasMainPack(context)
+				? Blocks.BARRIER.defaultBlockState()
+				: Blocks.COMMAND_BLOCK.defaultBlockState();
 	}
 
 	@Override
@@ -43,13 +52,13 @@ public class ServerBlock extends SimplePolymerBlock {
 		}
 
 		SimpleContainer container = new SimpleContainer(27);
-		container.setItem(13, new ItemStack(Items.CHEST));
+		container.setItem(13, new ItemStack(Items.COMMAND_BLOCK));
 
 		serverPlayer.openMenu(new SimpleMenuProvider(
 				(syncId, inventory, menuPlayer) -> ChestMenu.threeRows(syncId, inventory, container),
 				Component.literal("Server")
 		));
-		serverPlayer.sendSystemMessage(Component.literal("Test message from server block"));
+		serverPlayer.sendSystemMessage(Component.literal("Server block clicked"));
 
 		return InteractionResult.CONSUME;
 	}

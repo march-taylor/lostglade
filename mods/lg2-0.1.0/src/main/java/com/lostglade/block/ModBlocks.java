@@ -82,7 +82,7 @@ public final class ModBlocks {
 			new ServerBlockItem(
 					SERVER,
 					new Item.Properties().setId(SERVER_ITEM_KEY).useBlockDescriptionPrefix(),
-					Items.BARRIER,
+					Items.COMMAND_BLOCK,
 					true
 			)
 	);
