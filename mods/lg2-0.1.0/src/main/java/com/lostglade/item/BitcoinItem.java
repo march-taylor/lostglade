@@ -49,11 +49,14 @@ public class BitcoinItem extends SimplePolymerItem {
 		}
 
 		String normalized = lang.toLowerCase();
+		if (normalized.startsWith("rpr")) {
+			return Component.literal("Золотыя монѣта");
+		}
 		if (normalized.startsWith("uk")) {
 			return Component.literal("Біткоїн");
 		}
 		if (normalized.startsWith("ru")) {
-			return Component.literal("Золотыя монѣта");
+			return Component.literal("Биткоин");
 		}
 		if (normalized.startsWith("ja")) {
 			return Component.literal("ビットコイン");

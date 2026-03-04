@@ -31,3 +31,7 @@
 - Исходник пустого pack хранится как папка: `mods/lg2-0.1.0/resourcepack/`
 - Перед запуском gradle-задача `prepareDevResourcePack` копирует его в `polymer/source_assets/`
 - Polymer AutoHost включён в `config/polymer/auto-host.json`, поэтому клиенту предлагается загрузка ресурспака при заходе
+
+## Языки
+- названия предметов/блоков отображается даже когда нет ресурспака
+- языки: ru_ru, rpr, uk_ua, ja_jp, en_us (default)
