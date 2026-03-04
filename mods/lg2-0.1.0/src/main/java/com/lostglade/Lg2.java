@@ -3,6 +3,7 @@ package com.lostglade;
 import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.item.ModItems;
+import com.lostglade.server.ServerStabilitySystem;
 import com.lostglade.worldgen.ModWorldGen;
 import net.fabricmc.api.ModInitializer;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
@@ -27,6 +28,7 @@ public class Lg2 implements ModInitializer {
 		ModItems.register();
 		ModBlocks.register();
 		ModWorldGen.register();
+		ServerStabilitySystem.register();
 
 		LOGGER.info("Initialized {}", MOD_ID);
 	}
