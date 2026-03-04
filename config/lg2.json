@@ -11,7 +11,8 @@
   "spawnMaxY": 32,
   "silkTouchEnabled": false,
   "fortuneEnabled": false,
-  "stabilityMax": 100,
-  "stabilityDecayIntervalSeconds": 1,
-  "bitcoinsPerStability": 5
+
+  "stabilityMax": 1280,
+  "stabilityDecayIntervalSeconds": 68,
+  "bitcoinsPerStability": 1
 }
