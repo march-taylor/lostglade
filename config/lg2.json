@@ -13,6 +13,7 @@
   "fortuneEnabled": false,
 
   "stabilityMax": 1280,
-  "stabilityDecayIntervalSeconds": 68,
+  "stabilityDecayIntervalSeconds": 59,
+  "stabilityDecayIntervalSecondsPerPlayer": 30,
   "bitcoinsPerStability": 1
 }

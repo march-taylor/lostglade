@@ -1,5 +1,8 @@
 package com.lostglade.server;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.lostglade.Lg2;
 import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.item.ModItems;
@@ -7,6 +10,7 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
@@ -19,6 +23,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerBossEvent;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -30,7 +35,13 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.level.storage.LevelResource;
 
+import java.io.IOException;
+import java.io.Reader;
+import java.io.Writer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Locale;
@@ -52,20 +63,33 @@ public final class ServerStabilitySystem {
 	private static final float FEED_MUSIC_SOUND_VOLUME = 0.55F;
 	private static final float FEED_XP_SOUND_VOLUME = 1.0F;
 	private static final SimpleParticleType FEED_PARTICLE = resolveFeedParticle();
+	private static final Gson STABILITY_STATE_GSON = new GsonBuilder().setPrettyPrinting().create();
+	private static final String STABILITY_STATE_FILE_NAME = "lg2-stability.json";
 
 	private static int stability = 100;
 	private static long decayTickCounter = 0L;
 	private static double pendingStabilityFraction = 0.0D;
 	private static long nextFeedSoundAllowedTick = Long.MIN_VALUE;
+	private static boolean stabilityStateLoaded = false;
+	private static boolean stabilityDirty = false;
+
+	private static final class StabilityState {
+		int stability;
+	}
 
 	private ServerStabilitySystem() {
 	}
 
 	public static void register() {
+		stabilityStateLoaded = false;
+		stabilityDirty = false;
 		setStability(getMaxStability());
 		decayTickCounter = 0L;
 		pendingStabilityFraction = 0.0D;
 		nextFeedSoundAllowedTick = Long.MIN_VALUE;
+
+		ServerLifecycleEvents.SERVER_STARTED.register(ServerStabilitySystem::loadPersistedStability);
+		ServerLifecycleEvents.SERVER_STOPPING.register(ServerStabilitySystem::savePersistedStability);
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 				dispatcher.register(
@@ -279,11 +303,19 @@ public final class ServerStabilitySystem {
 	}
 
 	public static void setStability(int value) {
-		stability = clamp(value);
+		int clamped = clamp(value);
+		if (stability == clamped) {
+			return;
+		}
+
+		stability = clamped;
+		if (stabilityStateLoaded) {
+			stabilityDirty = true;
+		}
 	}
 
-	private static void tickStabilityDecay(net.minecraft.server.MinecraftServer server) {
-		long intervalTicks = Math.max(1L, (long) getDecayIntervalSeconds() * 20L);
+	private static void tickStabilityDecay(MinecraftServer server) {
+		long intervalTicks = Math.max(1L, (long) getEffectiveDecayIntervalSeconds(server) * 20L);
 		int maxStability = getMaxStability();
 		long tickNow = server.overworld().getGameTime();
 		decayTickCounter++;
@@ -517,6 +549,18 @@ public final class ServerStabilitySystem {
 		return Math.max(1, Lg2Config.get().stabilityDecayIntervalSeconds);
 	}
 
+	private static int getDecayIntervalSecondsPerPlayer() {
+		return Math.max(0, Lg2Config.get().stabilityDecayIntervalSecondsPerPlayer);
+	}
+
+	private static int getEffectiveDecayIntervalSeconds(MinecraftServer server) {
+		int baseIntervalSeconds = getDecayIntervalSeconds();
+		int onlinePlayers = server.getPlayerList().getPlayerCount();
+		long reductionSeconds = (long) onlinePlayers * getDecayIntervalSecondsPerPlayer();
+		long effectiveIntervalSeconds = (long) baseIntervalSeconds - reductionSeconds;
+		return (int) Math.max(1L, effectiveIntervalSeconds);
+	}
+
 	private static double getBitcoinsPerStability() {
 		double value = Lg2Config.get().bitcoinsPerStability;
 		if (!Double.isFinite(value) || value <= 0.0D) {
@@ -551,5 +595,57 @@ public final class ServerStabilitySystem {
 
 	private static int clamp(int value) {
 		return Math.max(0, Math.min(getMaxStability(), value));
+	}
+
+	private static Path getStabilityStatePath(MinecraftServer server) {
+		return server.getWorldPath(LevelResource.ROOT).resolve(STABILITY_STATE_FILE_NAME);
+	}
+
+	private static void loadPersistedStability(MinecraftServer server) {
+		Path path = getStabilityStatePath(server);
+
+		if (!Files.exists(path)) {
+			setStability(getMaxStability());
+			stabilityStateLoaded = true;
+			stabilityDirty = true;
+			return;
+		}
+
+		try (Reader reader = Files.newBufferedReader(path)) {
+			StabilityState state = STABILITY_STATE_GSON.fromJson(reader, StabilityState.class);
+			if (state == null) {
+				setStability(getMaxStability());
+			} else {
+				setStability(state.stability);
+			}
+
+			stabilityStateLoaded = true;
+			stabilityDirty = false;
+		} catch (Exception e) {
+			Lg2.LOGGER.warn("Failed to read persisted stability from {}", path, e);
+			setStability(getMaxStability());
+			stabilityStateLoaded = true;
+			stabilityDirty = true;
+		}
+	}
+
+	private static void savePersistedStability(MinecraftServer server) {
+		if (!stabilityStateLoaded || !stabilityDirty) {
+			return;
+		}
+
+		Path path = getStabilityStatePath(server);
+		StabilityState state = new StabilityState();
+		state.stability = getStability();
+
+		try {
+			Files.createDirectories(path.getParent());
+			try (Writer writer = Files.newBufferedWriter(path)) {
+				STABILITY_STATE_GSON.toJson(state, writer);
+			}
+			stabilityDirty = false;
+		} catch (IOException e) {
+			Lg2.LOGGER.warn("Failed to save persisted stability to {}", path, e);
+		}
 	}
 }

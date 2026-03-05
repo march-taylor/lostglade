@@ -23,6 +23,8 @@ public final class Lg2Config {
 	private static final int MAX_STABILITY_MAX = 1_000_000;
 	private static final int MIN_STABILITY_DECAY_INTERVAL_SECONDS = 1;
 	private static final int MAX_STABILITY_DECAY_INTERVAL_SECONDS = 2_592_000;
+	private static final int MIN_STABILITY_DECAY_INTERVAL_SECONDS_PER_PLAYER = 0;
+	private static final int MAX_STABILITY_DECAY_INTERVAL_SECONDS_PER_PLAYER = 2_592_000;
 	private static final double DEFAULT_BITCOINS_PER_STABILITY = 6.4D;
 	private static final double MIN_BITCOINS_PER_STABILITY = 0.001D;
 	private static final double MAX_BITCOINS_PER_STABILITY = 1_000_000.0D;
@@ -93,6 +95,10 @@ public final class Lg2Config {
 		changed |= clampSingleValue(configData.stabilityDecayIntervalSeconds,
 				MIN_STABILITY_DECAY_INTERVAL_SECONDS, MAX_STABILITY_DECAY_INTERVAL_SECONDS,
 				newValue -> configData.stabilityDecayIntervalSeconds = newValue);
+		changed |= clampSingleValue(configData.stabilityDecayIntervalSecondsPerPlayer,
+				MIN_STABILITY_DECAY_INTERVAL_SECONDS_PER_PLAYER,
+				MAX_STABILITY_DECAY_INTERVAL_SECONDS_PER_PLAYER,
+				newValue -> configData.stabilityDecayIntervalSecondsPerPlayer = newValue);
 		changed |= sanitizeBitcoinsPerStability(configData);
 
 		return changed;
@@ -220,6 +226,7 @@ public final class Lg2Config {
 		public boolean fortuneEnabled = true;
 		public int stabilityMax = 100;
 		public int stabilityDecayIntervalSeconds = 864;
+		public int stabilityDecayIntervalSecondsPerPlayer = 0;
 		public double bitcoinsPerStability = DEFAULT_BITCOINS_PER_STABILITY;
 
 		private ConfigData() {
