@@ -1,14 +1,7 @@
-[22:04:45] [main/INFO] (FabricLoader/GameProvider) Loading Minecraft 1.21.11 with Fabric Loader 0.18.4
-[22:04:45] [main/INFO] (FabricLoader) Loading 56 mods:
+[18:13:06] [main/INFO] (FabricLoader/GameProvider) Loading Minecraft 1.21.11 with Fabric Loader 0.18.4
+[18:13:06] [main/INFO] (FabricLoader) Loading 56 mods:
 	- cardinal-components 7.3.0
 	- fabric-api 0.141.3+1.21.11
-	   |-- fabric-key-binding-api-v1 1.1.7+4fc5413f3e
-	   |-- fabric-model-loading-api-v1 6.0.15+4fc5413f3e
-	   |-- fabric-renderer-api-v1 8.0.3+f4ffd2e53e
-	   |-- fabric-renderer-indigo 5.0.3+f4ffd2e53e
-	   |-- fabric-rendering-v1 16.2.10+0290ad933e
-	   |-- fabric-screen-api-v1 3.1.7+4ebb5c083e
-	   \-- fabric-sound-api-v1 1.0.51+4fc5413f3e
 	- fabric-api-base 1.0.5+4ebb5c083e
 	- fabric-api-lookup-api-v1 1.6.114+20dc27073e
 	- fabric-biome-api-v1 17.1.1+4fc5413f3e
@@ -63,34 +56,32 @@
 	- polymer-networking 0.15.2+1.21.11
 	- polymer-registry-sync-manipulator 0.15.2+1.21.11
 	- polymer-resource-pack 0.15.2+1.21.11
-[22:04:48] [main/INFO] (FabricLoader/Mixin) SpongePowered MIXIN Subsystem Version=0.8.7 Source=file:/home/mart/.gradle/caches/modules-2/files-2.1/net.fabricmc/sponge-mixin/0.17.0+mixin.0.8.7/cf31463202f72d03b0ef1e1e38e8ee71b7faaab6/sponge-mixin-0.17.0+mixin.0.8.7.jar Service=Knot/Fabric Env=SERVER
-[22:04:48] [main/INFO] (FabricLoader/Mixin) Loaded Fabric development mappings for mixin remapper!
-[22:04:48] [main/INFO] (FabricLoader/Mixin) Compatibility level set to JAVA_21
-[22:04:49] [main/INFO] (FabricLoader/MixinExtras|Service) Initializing MixinExtras via com.llamalad7.mixinextras.service.MixinExtrasServiceImpl(version=0.5.0).
-[22:04:53] [main/INFO] (lg2) Initialized lg2
-[22:04:53] [main/INFO] (Minecraft) Environment: Environment[sessionHost=https://sessionserver.mojang.com, servicesHost=https://api.minecraftservices.com, profilesHost=https://api.mojang.com, name=PROD]
-[22:04:54] [main/INFO] (Minecraft) Loaded 1470 recipes
-[22:04:54] [main/INFO] (Minecraft) Loaded 1584 advancements
-[22:04:54] [main/INFO] (BiomeModificationImpl) Applied 54 biome modifications to 54 of 65 new biomes in 5.695 ms
-[22:04:54] [IO-Worker-1/INFO] (Minecraft) [Polymer] Starting resource pack generation...
-[22:04:54] [Server thread/INFO] (Minecraft) Starting minecraft server version 1.21.11
-[22:04:54] [Server thread/INFO] (Minecraft) Loading properties
-[22:04:54] [Server thread/INFO] (Minecraft) Default game type: SURVIVAL
-[22:04:54] [Server thread/INFO] (Minecraft) Generating keypair
-[22:04:54] [Server thread/INFO] (Minecraft) Starting Minecraft server on *:25565
-[22:04:55] [Server thread/INFO] (Minecraft) Preparing level "world"
-[22:04:55] [Server thread/INFO] (Minecraft) Loading 0 persistent chunks...
-[22:04:55] [Server thread/INFO] (Minecraft) Preparing spawn area: 100%
-[22:04:55] [Server thread/INFO] (Minecraft) [Polymer] Resource pack created successfully! You can find it in game folder as polymer/resource_pack.zip
-[22:04:55] [Server thread/INFO] (Minecraft) Time elapsed: 63 ms
-[22:04:55] [Server thread/INFO] (Minecraft) Done (0.337s)! For help, type "help"
-[22:04:56] [User Authenticator #1/INFO] (Minecraft) UUID of player Rajas_YT is 7ecbe746-51f6-4498-8c30-28839a8bdd3b
-[22:04:58] [User Authenticator #2/INFO] (Minecraft) UUID of player march_taylor is 9009332d-532e-4492-9a3d-7f21f3639f17
-[22:04:58] [Server thread/INFO] (Minecraft) Rajas_YT[/10.255.240.41:60112] logged in with entity id 37 at (3.3149228177211527, 75.24987649640656, -6.688588857353459)
-[22:04:58] [Server thread/INFO] (Minecraft) Rajas_YT joined the game
-[22:05:00] [Server thread/INFO] (Minecraft) march_taylor[/127.0.0.1:36548] logged in with entity id 220 at (-3.79752304204985, 72.0, -0.7679972282830468)
-[22:05:00] [Server thread/INFO] (Minecraft) march_taylor joined the game
-[22:05:03] [Server thread/INFO] (Minecraft) [Rajas_YT: Set server stability to 0/1280]
-[22:05:18] [Server thread/INFO] (Minecraft) [march_taylor: Removed 686 item(s) from player march_taylor]
-[22:05:52] [Server thread/INFO] (Minecraft) [Rajas_YT: Gave 1 [Bitcoin] to Rajas_YT]
-[22:05:56] [Server thread/INFO] (Minecraft) [march_taylor: Gave 64 [Bitcoin] to 2]
+[18:13:10] [main/INFO] (FabricLoader/Mixin) SpongePowered MIXIN Subsystem Version=0.8.7 Source=file:/home/mart/.gradle/caches/modules-2/files-2.1/net.fabricmc/sponge-mixin/0.17.0+mixin.0.8.7/cf31463202f72d03b0ef1e1e38e8ee71b7faaab6/sponge-mixin-0.17.0+mixin.0.8.7.jar Service=Knot/Fabric Env=SERVER
+[18:13:10] [main/INFO] (FabricLoader/Mixin) Loaded Fabric development mappings for mixin remapper!
+[18:13:10] [main/INFO] (FabricLoader/Mixin) Compatibility level set to JAVA_21
+[18:13:10] [main/INFO] (FabricLoader/MixinExtras|Service) Initializing MixinExtras via com.llamalad7.mixinextras.service.MixinExtrasServiceImpl(version=0.5.0).
+[18:13:15] [main/INFO] (lg2) Initialized lg2
+[18:13:15] [main/INFO] (Minecraft) Environment: Environment[sessionHost=https://sessionserver.mojang.com, servicesHost=https://api.minecraftservices.com, profilesHost=https://api.mojang.com, name=PROD]
+[18:13:16] [main/INFO] (Minecraft) Loaded 1470 recipes
+[18:13:16] [main/INFO] (Minecraft) Loaded 1584 advancements
+[18:13:16] [main/INFO] (BiomeModificationImpl) Applied 54 biome modifications to 54 of 65 new biomes in 7.020 ms
+[18:13:16] [IO-Worker-1/INFO] (Minecraft) [Polymer] Starting resource pack generation...
+[18:13:16] [Server thread/INFO] (Minecraft) Starting minecraft server version 1.21.11
+[18:13:16] [Server thread/INFO] (Minecraft) Loading properties
+[18:13:16] [Server thread/INFO] (Minecraft) Default game type: SURVIVAL
+[18:13:16] [Server thread/INFO] (Minecraft) Generating keypair
+[18:13:16] [Server thread/INFO] (Minecraft) Starting Minecraft server on *:25565
+[18:13:16] [Server thread/INFO] (Minecraft) Preparing level "world"
+[18:13:17] [Server thread/INFO] (Minecraft) Loading 0 persistent chunks...
+[18:13:17] [Server thread/INFO] (Minecraft) Preparing spawn area: 100%
+[18:13:17] [Server thread/INFO] (Minecraft) [Polymer] Resource pack created successfully! You can find it in game folder as polymer/resource_pack.zip
+[18:13:17] [Server thread/INFO] (Minecraft) Time elapsed: 79 ms
+[18:13:17] [Server thread/INFO] (Minecraft) Done (0.332s)! For help, type "help"
+[18:13:19] [User Authenticator #1/INFO] (Minecraft) UUID of player march_taylor is 9009332d-532e-4492-9a3d-7f21f3639f17
+[18:13:20] [Server thread/INFO] (Minecraft) march_taylor[/127.0.0.1:50778] logged in with entity id 73 at (67.37158384397065, 71.0, 115.023200983176)
+[18:13:20] [Server thread/INFO] (Minecraft) march_taylor joined the game
+[18:13:23] [Server thread/INFO] (Minecraft) march_taylor lost connection: Disconnected
+[18:13:23] [Server thread/INFO] (Minecraft) march_taylor left the game
+[18:13:27] [User Authenticator #2/INFO] (Minecraft) UUID of player march_taylor is 9009332d-532e-4492-9a3d-7f21f3639f17
+[18:13:29] [Server thread/INFO] (Minecraft) march_taylor[/127.0.0.1:50798] logged in with entity id 297 at (67.37158384397065, 71.0, 115.023200983176)
+[18:13:29] [Server thread/INFO] (Minecraft) march_taylor joined the game
