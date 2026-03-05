@@ -66,6 +66,14 @@ public class ServerBlock extends SimplePolymerBlock {
 	}
 
 	@Override
+	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
+		if (!ServerStructureBreakSystem.isInternalStructureRemoval(level, pos)) {
+			ServerStructureBreakSystem.onStructureBlockRemoved(level, pos);
+		}
+		super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
+	}
+
+	@Override
 	public void setPlacedBy(Level level, BlockPos pos, BlockState state, LivingEntity placer, ItemStack stack) {
 		super.setPlacedBy(level, pos, state, placer, stack);
 		if (!(level instanceof ServerLevel serverLevel)) {

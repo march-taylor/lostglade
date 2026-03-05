@@ -1,0 +1,88 @@
+package com.lostglade.mixin;
+
+import com.lostglade.block.ModBlocks;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.level.Explosion;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+@Mixin(ItemEntity.class)
+public abstract class ServerItemEntityMixin {
+	@Inject(method = "tick", at = @At("HEAD"))
+	private void lg2$protectServerItem(CallbackInfo ci) {
+		ItemEntity self = (ItemEntity) (Object) this;
+		if (!lg2$isProtectedServerItem(self) || self.level().isClientSide()) {
+			return;
+		}
+
+		self.setInvulnerable(true);
+		self.setUnlimitedLifetime();
+		lg2$clampFloor(self);
+	}
+
+	@Inject(method = "hurtClient", at = @At("HEAD"), cancellable = true)
+	private void lg2$ignoreClientDamage(DamageSource source, CallbackInfoReturnable<Boolean> cir) {
+		if (lg2$isProtectedServerItem((ItemEntity) (Object) this)) {
+			cir.setReturnValue(false);
+		}
+	}
+
+	@Inject(method = "hurtServer", at = @At("HEAD"), cancellable = true)
+	private void lg2$ignoreServerDamage(ServerLevel level, DamageSource source, float amount, CallbackInfoReturnable<Boolean> cir) {
+		if (lg2$isProtectedServerItem((ItemEntity) (Object) this)) {
+			cir.setReturnValue(false);
+		}
+	}
+
+	@Inject(method = "ignoreExplosion", at = @At("HEAD"), cancellable = true)
+	private void lg2$ignoreExplosion(Explosion explosion, CallbackInfoReturnable<Boolean> cir) {
+		if (lg2$isProtectedServerItem((ItemEntity) (Object) this)) {
+			cir.setReturnValue(true);
+		}
+	}
+
+	@Inject(method = "fireImmune", at = @At("HEAD"), cancellable = true)
+	private void lg2$forceFireImmunity(CallbackInfoReturnable<Boolean> cir) {
+		if (lg2$isProtectedServerItem((ItemEntity) (Object) this)) {
+			cir.setReturnValue(true);
+		}
+	}
+
+	private static boolean lg2$isProtectedServerItem(ItemEntity itemEntity) {
+		return itemEntity.getItem().is(ModBlocks.SERVER_ITEM);
+	}
+
+	private static void lg2$clampFloor(ItemEntity itemEntity) {
+		double floorY = lg2$getFloorY(itemEntity.level());
+		if (itemEntity.getY() > floorY) {
+			if (itemEntity.isNoGravity()) {
+				itemEntity.setNoGravity(false);
+			}
+			return;
+		}
+
+		Vec3 velocity = itemEntity.getDeltaMovement();
+		itemEntity.setNoGravity(true);
+		itemEntity.setPos(itemEntity.getX(), floorY, itemEntity.getZ());
+		itemEntity.setDeltaMovement(velocity.x, Math.max(0.0D, velocity.y), velocity.z);
+	}
+
+	private static double lg2$getFloorY(Level level) {
+		ResourceKey<Level> dimension = level.dimension();
+		if (Level.OVERWORLD.equals(dimension)) {
+			return -64.0D;
+		}
+		if (Level.NETHER.equals(dimension) || Level.END.equals(dimension)) {
+			return 0.0D;
+		}
+		return level.getMinY();
+	}
+}

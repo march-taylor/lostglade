@@ -2,6 +2,7 @@ package com.lostglade.server;
 
 import com.lostglade.block.ModBlocks;
 import com.lostglade.item.ModItems;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.minecraft.core.BlockPos;
@@ -48,6 +49,7 @@ public final class ServerStructureBreakSystem {
 	private static final String DISPLAY_AXIS_PREFIX = "lg2_axis:";
 
 	private static final Map<StructureKey, ActiveBreakSession> ACTIVE_BREAKS = new HashMap<>();
+	private static final Set<GuardedBlockPos> INTERNAL_REMOVAL_POSITIONS = new HashSet<>();
 	private static int nextCrackIdBase = 420_000;
 
 	private ServerStructureBreakSystem() {
@@ -81,6 +83,15 @@ public final class ServerStructureBreakSystem {
 		});
 
 		ServerTickEvents.END_SERVER_TICK.register(ServerStructureBreakSystem::tickBreakSessions);
+		ServerEntityEvents.ENTITY_LOAD.register((entity, world) -> {
+			if (!(entity instanceof ItemEntity itemEntity)) {
+				return;
+			}
+			if (!itemEntity.getItem().is(ModBlocks.SERVER_ITEM)) {
+				return;
+			}
+			hardenServerItemEntity(itemEntity);
+		});
 	}
 
 	public static List<BlockPos> getStructurePositions(BlockPos anchor, Direction.Axis axis) {
@@ -104,6 +115,31 @@ public final class ServerStructureBreakSystem {
 		display.addTag(DISPLAY_ROOT_TAG);
 		display.addTag(DISPLAY_ANCHOR_PREFIX + anchor.getX() + "," + anchor.getY() + "," + anchor.getZ());
 		display.addTag(DISPLAY_AXIS_PREFIX + (axis == Direction.Axis.X ? "x" : "z"));
+	}
+
+	public static boolean isInternalStructureRemoval(ServerLevel level, BlockPos pos) {
+		return INTERNAL_REMOVAL_POSITIONS.contains(new GuardedBlockPos(level.dimension(), pos.immutable()));
+	}
+
+	public static void onStructureBlockRemoved(ServerLevel level, BlockPos removedPos) {
+		if (isInternalStructureRemoval(level, removedPos)) {
+			return;
+		}
+
+		Optional<ResolvedStructure> resolved = resolveBrokenStructure(level, removedPos);
+		if (resolved.isEmpty()) {
+			return;
+		}
+
+		ResolvedStructure structure = resolved.get();
+		StructureKey key = new StructureKey(level.dimension(), structure.anchor());
+		ActiveBreakSession existingSession = ACTIVE_BREAKS.remove(key);
+		if (existingSession != null) {
+			clearCracks(level, existingSession.positions(), existingSession.crackIdBase());
+		}
+
+		removeStructureDisplays(level, structure.anchor(), structure.axis());
+		destroyStructureAndDropCenter(level, structure.anchor(), structure.positions());
 	}
 
 	private static void tryStartBreak(ServerLevel level, ResolvedStructure structure) {
@@ -176,10 +212,15 @@ public final class ServerStructureBreakSystem {
 	}
 
 	private static void destroyStructureAndDropCenter(ServerLevel level, BlockPos anchor, List<BlockPos> positions) {
-		for (BlockPos pos : positions) {
-			if (level.getBlockState(pos).is(ModBlocks.SERVER)) {
-				level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+		markInternalRemoval(level, positions, true);
+		try {
+			for (BlockPos pos : positions) {
+				if (level.getBlockState(pos).is(ModBlocks.SERVER)) {
+					level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+				}
 			}
+		} finally {
+			markInternalRemoval(level, positions, false);
 		}
 
 		level.playSound(
@@ -199,7 +240,13 @@ public final class ServerStructureBreakSystem {
 				new ItemStack(ModBlocks.SERVER_ITEM)
 		);
 		drop.setDefaultPickUpDelay();
+		hardenServerItemEntity(drop);
 		level.addFreshEntity(drop);
+	}
+
+	private static void hardenServerItemEntity(ItemEntity itemEntity) {
+		itemEntity.setInvulnerable(true);
+		itemEntity.setUnlimitedLifetime();
 	}
 
 	private static Optional<ResolvedStructure> resolveStructure(ServerLevel level, BlockPos hitPos) {
@@ -209,6 +256,15 @@ public final class ServerStructureBreakSystem {
 		}
 
 		return resolveByGeometryFallback(level, hitPos);
+	}
+
+	private static Optional<ResolvedStructure> resolveBrokenStructure(ServerLevel level, BlockPos brokenPos) {
+		Optional<ResolvedStructure> byDisplay = resolveBrokenByDisplayTags(level, brokenPos);
+		if (byDisplay.isPresent()) {
+			return byDisplay;
+		}
+
+		return resolveBrokenByGeometry(level, brokenPos);
 	}
 
 	private static Optional<ResolvedStructure> resolveByDisplayTags(ServerLevel level, BlockPos hitPos) {
@@ -263,6 +319,60 @@ public final class ServerStructureBreakSystem {
 		return Optional.empty();
 	}
 
+	private static Optional<ResolvedStructure> resolveBrokenByDisplayTags(ServerLevel level, BlockPos brokenPos) {
+		AABB searchBox = new AABB(brokenPos).inflate(8.0D, 6.0D, 8.0D);
+		List<Display.ItemDisplay> displays = level.getEntities(
+				EntityType.ITEM_DISPLAY,
+				searchBox,
+				display -> display.getTags().contains(DISPLAY_ROOT_TAG)
+		);
+
+		for (Display.ItemDisplay display : displays) {
+			Optional<BlockPos> anchor = parseAnchorTag(display);
+			Optional<Direction.Axis> axis = parseAxisTag(display);
+			if (anchor.isEmpty() || axis.isEmpty()) {
+				continue;
+			}
+
+			List<BlockPos> positions = getStructurePositions(anchor.get(), axis.get());
+			if (!positions.contains(brokenPos) || !containsAnyStructureBlock(level, positions)) {
+				continue;
+			}
+
+			return Optional.of(new ResolvedStructure(anchor.get(), axis.get(), positions));
+		}
+
+		return Optional.empty();
+	}
+
+	private static Optional<ResolvedStructure> resolveBrokenByGeometry(ServerLevel level, BlockPos brokenPos) {
+		Set<CandidateAnchor> checkedAnchors = new HashSet<>();
+		for (Direction.Axis axis : List.of(Direction.Axis.Z, Direction.Axis.X)) {
+			for (int dy = 0; dy < STRUCTURE_HEIGHT; dy++) {
+				for (int depth = -STRUCTURE_HALF_DEPTH; depth <= STRUCTURE_HALF_DEPTH; depth++) {
+					for (int width = -STRUCTURE_HALF_WIDTH; width <= STRUCTURE_HALF_WIDTH; width++) {
+						BlockPos anchor = axis == Direction.Axis.X
+								? brokenPos.offset(-depth, -dy, -width)
+								: brokenPos.offset(-width, -dy, -depth);
+
+						if (!checkedAnchors.add(new CandidateAnchor(anchor, axis))) {
+							continue;
+						}
+
+						List<BlockPos> positions = getStructurePositions(anchor, axis);
+						if (!positions.contains(brokenPos) || !isSingleMissingStructureBlock(level, positions)) {
+							continue;
+						}
+
+						return Optional.of(new ResolvedStructure(anchor, axis, positions));
+					}
+				}
+			}
+		}
+
+		return Optional.empty();
+	}
+
 	private static boolean isWholeStructurePresent(ServerLevel level, List<BlockPos> positions) {
 		for (BlockPos pos : positions) {
 			if (!level.getBlockState(pos).is(ModBlocks.SERVER)) {
@@ -270,6 +380,41 @@ public final class ServerStructureBreakSystem {
 			}
 		}
 		return true;
+	}
+
+	private static boolean containsAnyStructureBlock(ServerLevel level, List<BlockPos> positions) {
+		for (BlockPos pos : positions) {
+			if (level.getBlockState(pos).is(ModBlocks.SERVER)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean isSingleMissingStructureBlock(ServerLevel level, List<BlockPos> positions) {
+		int missing = 0;
+		for (BlockPos pos : positions) {
+			if (level.getBlockState(pos).is(ModBlocks.SERVER)) {
+				continue;
+			}
+
+			missing++;
+			if (missing > 1) {
+				return false;
+			}
+		}
+		return missing == 1;
+	}
+
+	private static void markInternalRemoval(ServerLevel level, List<BlockPos> positions, boolean removing) {
+		for (BlockPos pos : positions) {
+			GuardedBlockPos key = new GuardedBlockPos(level.dimension(), pos.immutable());
+			if (removing) {
+				INTERNAL_REMOVAL_POSITIONS.add(key);
+			} else {
+				INTERNAL_REMOVAL_POSITIONS.remove(key);
+			}
+		}
 	}
 
 	private static void removeStructureDisplays(ServerLevel level, BlockPos anchor, Direction.Axis axis) {
@@ -348,6 +493,9 @@ public final class ServerStructureBreakSystem {
 	}
 
 	private record CandidateAnchor(BlockPos anchor, Direction.Axis axis) {
+	}
+
+	private record GuardedBlockPos(ResourceKey<Level> dimension, BlockPos pos) {
 	}
 
 	private record ResolvedStructure(BlockPos anchor, Direction.Axis axis, List<BlockPos> positions) {

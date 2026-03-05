@@ -89,7 +89,7 @@ public final class ModBlocks {
 			SERVER_ID,
 			new ServerBlockItem(
 					SERVER,
-					new Item.Properties().setId(SERVER_ITEM_KEY).useBlockDescriptionPrefix(),
+					new Item.Properties().setId(SERVER_ITEM_KEY).useBlockDescriptionPrefix().fireResistant(),
 					Items.COMMAND_BLOCK,
 					true
 			)

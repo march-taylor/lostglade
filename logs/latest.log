@@ -1,5 +1,5 @@
-[19:43:15] [main/INFO] (FabricLoader/GameProvider) Loading Minecraft 1.21.11 with Fabric Loader 0.18.4
-[19:43:15] [main/INFO] (FabricLoader) Loading 64 mods:
+[20:25:31] [main/INFO] (FabricLoader/GameProvider) Loading Minecraft 1.21.11 with Fabric Loader 0.18.4
+[20:25:31] [main/INFO] (FabricLoader) Loading 64 mods:
 	- cardinal-components 7.3.0
 	   |-- cardinal-components-base 7.3.0
 	   |-- cardinal-components-block 7.3.0
@@ -10,13 +10,6 @@
 	   |-- cardinal-components-scoreboard 7.3.0
 	   \-- cardinal-components-world 7.3.0
 	- fabric-api 0.141.3+1.21.11
-	   |-- fabric-key-binding-api-v1 1.1.7+4fc5413f3e
-	   |-- fabric-model-loading-api-v1 6.0.15+4fc5413f3e
-	   |-- fabric-renderer-api-v1 8.0.3+f4ffd2e53e
-	   |-- fabric-renderer-indigo 5.0.3+f4ffd2e53e
-	   |-- fabric-rendering-v1 16.2.10+0290ad933e
-	   |-- fabric-screen-api-v1 3.1.7+4ebb5c083e
-	   \-- fabric-sound-api-v1 1.0.51+4fc5413f3e
 	- fabric-api-base 1.0.5+4ebb5c083e
 	- fabric-api-lookup-api-v1 1.6.114+20dc27073e
 	- fabric-biome-api-v1 17.1.1+4fc5413f3e
@@ -71,27 +64,110 @@
 	- polymer-networking 0.15.2+1.21.11
 	- polymer-registry-sync-manipulator 0.15.2+1.21.11
 	- polymer-resource-pack 0.15.2+1.21.11
-[19:43:18] [main/INFO] (FabricLoader/Mixin) SpongePowered MIXIN Subsystem Version=0.8.7 Source=file:/home/mart/.gradle/caches/modules-2/files-2.1/net.fabricmc/sponge-mixin/0.17.0+mixin.0.8.7/cf31463202f72d03b0ef1e1e38e8ee71b7faaab6/sponge-mixin-0.17.0+mixin.0.8.7.jar Service=Knot/Fabric Env=SERVER
-[19:43:18] [main/INFO] (FabricLoader/Mixin) Loaded Fabric development mappings for mixin remapper!
-[19:43:19] [main/INFO] (FabricLoader/Mixin) Compatibility level set to JAVA_21
-[19:43:19] [main/INFO] (FabricLoader/MixinExtras|Service) Initializing MixinExtras via com.llamalad7.mixinextras.service.MixinExtrasServiceImpl(version=0.5.0).
-[19:43:24] [main/INFO] (lg2) Initialized lg2
-[19:43:24] [main/INFO] (Minecraft) Environment: Environment[sessionHost=https://sessionserver.mojang.com, servicesHost=https://api.minecraftservices.com, profilesHost=https://api.mojang.com, name=PROD]
-[19:43:25] [main/INFO] (Minecraft) Loaded 1470 recipes
-[19:43:25] [main/INFO] (Minecraft) Loaded 1584 advancements
-[19:43:25] [main/INFO] (BiomeModificationImpl) Applied 54 biome modifications to 54 of 65 new biomes in 5.713 ms
-[19:43:25] [IO-Worker-1/INFO] (Minecraft) [Polymer] Starting resource pack generation...
-[19:43:25] [Server thread/INFO] (Minecraft) Starting minecraft server version 1.21.11
-[19:43:25] [Server thread/INFO] (Minecraft) Loading properties
-[19:43:25] [Server thread/INFO] (Minecraft) Default game type: SURVIVAL
-[19:43:25] [Server thread/INFO] (Minecraft) Generating keypair
-[19:43:25] [Server thread/INFO] (Minecraft) Starting Minecraft server on *:25565
-[19:43:25] [Server thread/INFO] (Minecraft) Preparing level "world"
-[19:43:25] [Server thread/INFO] (Minecraft) Loading 0 persistent chunks...
-[19:43:25] [Server thread/INFO] (Minecraft) Preparing spawn area: 100%
-[19:43:25] [Server thread/INFO] (Minecraft) [Polymer] Resource pack created successfully! You can find it in game folder as polymer/resource_pack.zip
-[19:43:26] [Server thread/INFO] (Minecraft) Time elapsed: 78 ms
-[19:43:26] [Server thread/INFO] (Minecraft) Done (0.310s)! For help, type "help"
-[19:43:29] [User Authenticator #1/INFO] (Minecraft) UUID of player march_taylor is 9009332d-532e-4492-9a3d-7f21f3639f17
-[19:43:31] [Server thread/INFO] (Minecraft) march_taylor[/127.0.0.1:37894] logged in with entity id 63 at (76.87546772299767, 71.0, 128.5350983678121)
-[19:43:31] [Server thread/INFO] (Minecraft) march_taylor joined the game
+[20:25:34] [main/INFO] (FabricLoader/Mixin) SpongePowered MIXIN Subsystem Version=0.8.7 Source=file:/home/mart/.gradle/caches/modules-2/files-2.1/net.fabricmc/sponge-mixin/0.17.0+mixin.0.8.7/cf31463202f72d03b0ef1e1e38e8ee71b7faaab6/sponge-mixin-0.17.0+mixin.0.8.7.jar Service=Knot/Fabric Env=SERVER
+[20:25:34] [main/INFO] (FabricLoader/Mixin) Loaded Fabric development mappings for mixin remapper!
+[20:25:34] [main/INFO] (FabricLoader/Mixin) Compatibility level set to JAVA_21
+[20:25:35] [main/INFO] (FabricLoader/MixinExtras|Service) Initializing MixinExtras via com.llamalad7.mixinextras.service.MixinExtrasServiceImpl(version=0.5.0).
+[20:25:39] [main/INFO] (lg2) Initialized lg2
+[20:25:39] [main/INFO] (Minecraft) Environment: Environment[sessionHost=https://sessionserver.mojang.com, servicesHost=https://api.minecraftservices.com, profilesHost=https://api.mojang.com, name=PROD]
+[20:25:41] [main/INFO] (Minecraft) Loaded 1470 recipes
+[20:25:41] [main/INFO] (Minecraft) Loaded 1584 advancements
+[20:25:41] [main/INFO] (BiomeModificationImpl) Applied 54 biome modifications to 54 of 65 new biomes in 5.628 ms
+[20:25:41] [IO-Worker-1/INFO] (Minecraft) [Polymer] Starting resource pack generation...
+[20:25:41] [Server thread/INFO] (Minecraft) Starting minecraft server version 1.21.11
+[20:25:41] [Server thread/INFO] (Minecraft) Loading properties
+[20:25:41] [Server thread/INFO] (Minecraft) Default game type: SURVIVAL
+[20:25:41] [Server thread/INFO] (Minecraft) Generating keypair
+[20:25:41] [Server thread/INFO] (Minecraft) Starting Minecraft server on *:25565
+[20:25:41] [Server thread/INFO] (Minecraft) Preparing level "world"
+[20:25:41] [Server thread/INFO] (Minecraft) Loading 0 persistent chunks...
+[20:25:41] [Server thread/INFO] (Minecraft) [Polymer] Resource pack created successfully! You can find it in game folder as polymer/resource_pack.zip
+[20:25:41] [Server thread/INFO] (Minecraft) Time elapsed: 11 ms
+[20:25:41] [Server thread/INFO] (Minecraft) Done (0.258s)! For help, type "help"
+[20:25:44] [User Authenticator #1/INFO] (Minecraft) UUID of player march_taylor is 9009332d-532e-4492-9a3d-7f21f3639f17
+[20:25:45] [User Authenticator #2/INFO] (Minecraft) UUID of player Rajas_YT is 7ecbe746-51f6-4498-8c30-28839a8bdd3b
+[20:25:46] [Server thread/INFO] (Minecraft) march_taylor[/127.0.0.1:50880] logged in with entity id 57 at (69.42376786729542, -0.05604654035423287, 132.31581314101834)
+[20:25:46] [Server thread/INFO] (Minecraft) march_taylor joined the game
+[20:25:47] [Server thread/INFO] (Minecraft) Rajas_YT[/10.255.240.41:57865] logged in with entity id 129 at (70.69999998807907, 0.5900000631809235, 143.61097921475837)
+[20:25:47] [Server thread/INFO] (Minecraft) Rajas_YT joined the game
+[20:25:59] [Server thread/INFO] (Minecraft) [Rajas_YT: Teleported Rajas_YT to march_taylor]
+[20:26:46] [Server thread/INFO] (Minecraft) [Rajas_YT: Set own game mode to Survival Mode]
+[20:26:50] [Server thread/INFO] (Minecraft) Rajas_YT fell out of the world
+[20:26:57] [Server thread/INFO] (Minecraft) [Rajas_YT: Set own game mode to Creative Mode]
+[20:26:58] [Server thread/INFO] (Minecraft) [Rajas_YT: Teleported Rajas_YT to march_taylor]
+[20:27:05] [Server thread/INFO] (Minecraft) [Rajas_YT: Applied effect Night Vision to Rajas_YT]
+[20:27:05] [Server thread/INFO] (Minecraft) march_taylor fell out of the world
+[20:27:16] [Server thread/INFO] (Minecraft) [Rajas_YT: Set own game mode to Survival Mode]
+[20:27:16] [Server thread/INFO] (Minecraft) [march_taylor: Teleported march_taylor to Rajas_YT]
+[20:27:25] [Server thread/INFO] (Minecraft) Rajas_YT fell out of the world
+[20:27:31] [Server thread/INFO] (Minecraft) [Rajas_YT: Applied effect Night Vision to 2 targets]
+[20:27:35] [Server thread/INFO] (Minecraft) [Rajas_YT: Teleported Rajas_YT to march_taylor]
+[20:27:37] [Server thread/INFO] (Minecraft) [Rajas_YT: Set own game mode to Creative Mode]
+[20:27:50] [Server thread/INFO] (Minecraft) [Rajas_YT: Killed 30 entities]
+[20:27:51] [Server thread/INFO] (Minecraft) [Rajas_YT: Killed 20 entities]
+[20:27:52] [Server thread/INFO] (Minecraft) [Rajas_YT: Killed 20 entities]
+[20:27:52] [Server thread/INFO] (Minecraft) [Rajas_YT: Killed 20 entities]
+[20:27:53] [Server thread/INFO] (Minecraft) [Rajas_YT: Killed 21 entities]
+[20:27:53] [Server thread/INFO] (Minecraft) [Rajas_YT: Killed 21 entities]
+[20:28:11] [Server thread/INFO] (Minecraft) [march_taylor: Set own game mode to Survival Mode]
+[20:28:16] [Server thread/INFO] (Minecraft) march_taylor fell out of the world
+[20:28:25] [Server thread/INFO] (Minecraft) [march_taylor: Set own game mode to Creative Mode]
+[20:28:32] [Server thread/INFO] (Minecraft) [march_taylor: Teleported march_taylor to Rajas_YT]
+[20:28:50] [Server thread/INFO] (Minecraft) [Rajas_YT: Set own game mode to Survival Mode]
+[20:28:52] [Server thread/INFO] (Minecraft) [Rajas_YT: Applied effect Night Vision to 2 targets]
+[20:28:55] [Server thread/INFO] (Minecraft) Rajas_YT fell out of the world
+[20:28:58] [Server thread/INFO] (Minecraft) [Rajas_YT: Set own game mode to Creative Mode]
+[20:29:04] [Server thread/INFO] (Minecraft) march_taylor lost connection: Disconnected
+[20:29:04] [Server thread/INFO] (Minecraft) march_taylor left the game
+[20:29:09] [User Authenticator #3/INFO] (Minecraft) UUID of player march_taylor is 9009332d-532e-4492-9a3d-7f21f3639f17
+[20:29:11] [Server thread/INFO] (Minecraft) march_taylor[/127.0.0.1:42746] logged in with entity id 2104 at (68.77625930146391, -72.42000924667522, 132.05064379398794)
+[20:29:11] [Server thread/INFO] (Minecraft) march_taylor joined the game
+[20:29:11] [Server thread/INFO] (Minecraft) [Rajas_YT: Teleported Rajas_YT to march_taylor]
+[20:29:15] [Server thread/INFO] (Minecraft) [Rajas_YT: Applied effect Night Vision to 2 targets]
+[20:29:22] [Server thread/INFO] (Minecraft) [march_taylor: Set own game mode to Survival Mode]
+[20:29:27] [Server thread/INFO] (Minecraft) march_taylor fell out of the world
+[20:29:29] [Server thread/INFO] (Minecraft) Rajas_YT lost connection: Disconnected
+[20:29:29] [Server thread/INFO] (Minecraft) Rajas_YT left the game
+[20:29:33] [User Authenticator #4/INFO] (Minecraft) UUID of player Rajas_YT is 7ecbe746-51f6-4498-8c30-28839a8bdd3b
+[20:29:34] [Server thread/INFO] (Minecraft) [march_taylor: Set own game mode to Creative Mode]
+[20:29:34] [Server thread/INFO] (Minecraft) Rajas_YT[/10.255.240.41:62887] logged in with entity id 2655 at (71.22994896042528, -60.799999952316284, 126.02053983645978)
+[20:29:34] [Server thread/INFO] (Minecraft) Rajas_YT joined the game
+[20:29:39] [Server thread/INFO] (Minecraft) [Rajas_YT: Teleported march_taylor to Rajas_YT]
+[20:29:42] [Server thread/INFO] (Minecraft) [Rajas_YT: Applied effect Night Vision to 2 targets]
+[20:30:06] [Server thread/INFO] (Minecraft) [Rajas_YT: Changed the block at 65, -62, 133]
+[20:30:08] [Server thread/INFO] (Minecraft) Rajas_YT has made the advancement [We Need to Go Deeper]
+[20:30:08] [Server thread/INFO] (Minecraft) march_taylor has made the advancement [We Need to Go Deeper]
+[20:30:13] [Server thread/INFO] (Minecraft) [Rajas_YT: Set own game mode to Spectator Mode]
+[20:30:22] [Server thread/INFO] (Minecraft) [Rajas_YT: Set own game mode to Creative Mode]
+[20:30:28] [Server thread/INFO] (Minecraft) [march_taylor: Teleported march_taylor to Rajas_YT]
+[20:31:33] [Server thread/INFO] (Minecraft) [march_taylor: Changed the block at -15, 0, -25]
+[20:31:35] [Server thread/INFO] (Minecraft) Rajas_YT has made the advancement [The End?]
+[20:31:35] [Server thread/INFO] (Minecraft) Scanning for legacy world dragon fight...
+[20:31:35] [Server thread/INFO] (Minecraft) Found that the dragon has not yet been killed in this world.
+[20:31:36] [Server thread/INFO] (Minecraft) march_taylor has made the advancement [The End?]
+[20:32:10] [Server thread/INFO] (Minecraft) [Rajas_YT: Gave 1288 [Server] to Rajas_YT]
+[20:32:42] [Server thread/INFO] (Minecraft) Rajas_YT was killed
+[20:32:42] [Server thread/INFO] (Minecraft) [Rajas_YT: Killed Rajas_YT]
+[20:32:47] [Server thread/INFO] (Minecraft) [Rajas_YT: Changed the block at -48, 62, 114]
+[20:32:49] [Server thread/INFO] (Minecraft) Rajas_YT was killed
+[20:32:49] [Server thread/INFO] (Minecraft) [Rajas_YT: Killed Rajas_YT]
+[20:32:50] [Server thread/INFO] (Minecraft) [march_taylor: Killed 73 entities]
+[20:32:53] [Server thread/INFO] (Minecraft) [march_taylor: Killed 114 entities]
+[20:32:57] [Server thread/INFO] (Minecraft) [Rajas_YT: Applied effect Night Vision to 2 targets]
+[20:33:00] [Server thread/INFO] (Minecraft) [Rajas_YT: Set the weather to clear]
+[20:33:03] [Server thread/INFO] (Minecraft) [Rajas_YT: Set the time to 0]
+[20:33:07] [Server thread/INFO] (Minecraft) [Rajas_YT: Gamerule advance_time is now set to: false]
+[20:33:10] [Server thread/INFO] (Minecraft) [Rajas_YT: Gamerule advance_weather is now set to: false]
+[20:33:16] [Server thread/INFO] (Minecraft) [Rajas_YT: Set the time to 6000]
+[20:33:18] [Server thread/INFO] (Minecraft) [march_taylor: Removed 944 item(s) from player march_taylor]
+[20:33:52] [Server thread/INFO] (Minecraft) [Rajas_YT: Teleported Rajas_YT to march_taylor]
+[20:33:58] [Server thread/INFO] (Minecraft) [Rajas_YT: Set the weather to rain]
+[20:34:04] [Server thread/INFO] (Minecraft) [Rajas_YT: Set the time to 18000]
+[20:34:07] [Server thread/INFO] (Minecraft) [Rajas_YT: Set the time to 6000]
+[20:34:14] [Server thread/INFO] (Minecraft) [Rajas_YT: Set the weather to clear]
+[20:35:00] [Server thread/INFO] (Minecraft) [Rajas_YT: Applied effect Strength to Rajas_YT]
+[20:35:10] [Server thread/INFO] (Minecraft) Rajas_YT has made the advancement [Free the End]
+[20:35:10] [Server thread/INFO] (Minecraft) Rajas_YT has made the advancement [Monster Hunter]
+[20:35:28] [Server thread/INFO] (Minecraft) [Rajas_YT: Set own game mode to Spectator Mode]
+[20:35:32] [Server thread/INFO] (Minecraft) [Rajas_YT: Set own game mode to Creative Mode]
+[20:36:06] [Server thread/INFO] (Minecraft) [Rajas_YT: Teleported Rajas_YT to march_taylor]

@@ -3,7 +3,9 @@
 	"package": "com.lostglade.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"mixins": [
-		"ExampleMixin"
+		"EntityKillProtectionMixin",
+		"ExampleMixin",
+		"ServerItemEntityMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
