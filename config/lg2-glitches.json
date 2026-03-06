@@ -6,10 +6,10 @@
     "phantom_sounds": {
       "enabled": true,
       "minStabilityPercent": 0.0,
-      "maxStabilityPercent": 70.0,
+      "maxStabilityPercent": 60.0,
       "chancePerCheck": 0.2,
       "stabilityInfluence": 1.0,
-      "minCooldownTicks": 300,
+      "minCooldownTicks": 200,
       "maxCooldownTicks": 3600,
       "settings": {
         "minTargetPlayers": 1,
@@ -20,6 +20,27 @@
         "maxVolume": 1.5,
         "pitchMin": 0.75,
         "pitchMax": 1.25
+      }
+    },
+    "chat_interference": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 80.0,
+      "chancePerCheck": 0.95,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 0,
+      "maxCooldownTicks": 0,
+      "settings": {
+        "minMutations": 1,
+        "maxMutations": 6,
+        "maxDuplicateExtra": 3,
+        "replaceWeight": 1.0,
+        "insertWeight": 1.0,
+        "duplicateWeight": 0.5,
+        "reverseWeight": 0.5,
+        "shuffleWeight": 1.0,
+        "caseWeight": 0.5,
+        "swapNicknameWeight": 0.5
       }
     }
   }

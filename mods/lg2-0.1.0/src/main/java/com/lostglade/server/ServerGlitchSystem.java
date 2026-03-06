@@ -3,14 +3,20 @@ package com.lostglade.server;
 import com.google.gson.JsonObject;
 import com.lostglade.Lg2;
 import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.glitch.ChatInterferenceGlitch;
+import com.lostglade.server.glitch.ChatMessageGlitchHandler;
 import com.lostglade.server.glitch.PhantomSoundGlitch;
 import com.lostglade.server.glitch.ServerGlitchHandler;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.util.RandomSource;
 
@@ -24,6 +30,8 @@ import java.util.Map;
 import java.util.Set;
 
 public final class ServerGlitchSystem {
+	private static final String CHAT_INTERFERENCE_ID = "chat_interference";
+
 	private static final Map<String, ServerGlitchHandler> HANDLERS = new LinkedHashMap<>();
 	private static final Map<String, Long> NEXT_ALLOWED_TICKS = new HashMap<>();
 	private static final Set<String> UNKNOWN_CONFIG_IDS_LOGGED = new HashSet<>();
@@ -41,6 +49,7 @@ public final class ServerGlitchSystem {
 
 		// Add new glitch types here: implement ServerGlitchHandler and register once.
 		registerHandler(new PhantomSoundGlitch());
+		registerHandler(new ChatInterferenceGlitch());
 		reloadConfig();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
@@ -65,6 +74,7 @@ public final class ServerGlitchSystem {
 		);
 
 		ServerTickEvents.END_SERVER_TICK.register(ServerGlitchSystem::tick);
+		ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(ServerGlitchSystem::onAllowChatMessage);
 	}
 
 	private static void registerHandler(ServerGlitchHandler handler) {
@@ -133,6 +143,72 @@ public final class ServerGlitchSystem {
 		checkTicker = 0L;
 
 		triggerGlitches(server, config);
+	}
+
+	private static boolean onAllowChatMessage(PlayerChatMessage message, ServerPlayer sender, ChatType.Bound params) {
+		GlitchConfig.ConfigData config = GlitchConfig.get();
+		if (!config.enabled || sender == null) {
+			return true;
+		}
+
+		ServerGlitchHandler baseHandler = HANDLERS.get(CHAT_INTERFERENCE_ID);
+		if (!(baseHandler instanceof ChatMessageGlitchHandler chatHandler)) {
+			return true;
+		}
+
+		if (config.glitches == null || config.glitches.isEmpty()) {
+			return true;
+		}
+
+		GlitchConfig.GlitchEntry entry = config.glitches.get(CHAT_INTERFERENCE_ID);
+		if (entry == null || !entry.enabled) {
+			return true;
+		}
+
+		MinecraftServer server = sender.level().getServer();
+		if (server == null) {
+			return true;
+		}
+
+		double stabilityPercent = ServerStabilitySystem.getStabilityPercent();
+		if (stabilityPercent < entry.minStabilityPercent || stabilityPercent > entry.maxStabilityPercent) {
+			return true;
+		}
+
+		long gameTime = server.overworld().getGameTime();
+		long nextAllowedTick = NEXT_ALLOWED_TICKS.getOrDefault(CHAT_INTERFERENCE_ID, Long.MIN_VALUE);
+		if (gameTime < nextAllowedTick) {
+			return true;
+		}
+
+		RandomSource random = server.overworld().getRandom();
+		double baseChance = clamp01(entry.chancePerCheck);
+		double influence = clamp01(entry.stabilityInfluence);
+		double rangeInstabilityFactor = getRangeInstabilityFactor(
+				stabilityPercent,
+				entry.minStabilityPercent,
+				entry.maxStabilityPercent
+		);
+		double effectiveChance = baseChance * ((1.0D - influence) + (rangeInstabilityFactor * influence));
+		if (effectiveChance <= 0.0D) {
+			return true;
+		}
+
+		if (random.nextDouble() > effectiveChance) {
+			return true;
+		}
+
+		boolean triggered = chatHandler.triggerChat(server, random, entry, stabilityPercent, sender, message, params);
+		if (!triggered) {
+			return true;
+		}
+
+		long cooldownTicks = Math.max(
+				0L,
+				getCooldownTicksForStability(entry, stabilityPercent)
+		);
+		NEXT_ALLOWED_TICKS.put(CHAT_INTERFERENCE_ID, gameTime + cooldownTicks);
+		return false;
 	}
 
 	private static void triggerGlitches(MinecraftServer server, GlitchConfig.ConfigData config) {
