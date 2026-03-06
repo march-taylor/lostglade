@@ -302,6 +302,16 @@ public final class ServerStabilitySystem {
 		return stability;
 	}
 
+	public static double getStabilityPercent() {
+		int max = getMaxStability();
+		if (max <= 0) {
+			return 0.0D;
+		}
+
+		double percent = ((double) stability / (double) max) * 100.0D;
+		return Math.max(0.0D, Math.min(100.0D, percent));
+	}
+
 	public static void setStability(int value) {
 		int clamped = clamp(value);
 		if (stability == clamped) {

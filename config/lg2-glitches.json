@@ -1,0 +1,26 @@
+{
+  "enabled": true,
+  "checkIntervalTicks": 20,
+  "maxActivationsPerCheck": 1,
+  "glitches": {
+    "phantom_sounds": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 70.0,
+      "chancePerCheck": 0.2,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 300,
+      "maxCooldownTicks": 3600,
+      "settings": {
+        "minTargetPlayers": 1,
+        "maxTargetPlayers": 8,
+        "minDistance": 1.0,
+        "maxDistance": 16.0,
+        "minVolume": 0.5,
+        "maxVolume": 1.5,
+        "pitchMin": 0.75,
+        "pitchMax": 1.25
+      }
+    }
+  }
+}

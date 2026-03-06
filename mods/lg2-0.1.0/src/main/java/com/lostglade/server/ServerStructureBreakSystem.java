@@ -246,7 +246,13 @@ public final class ServerStructureBreakSystem {
 
 	private static void hardenServerItemEntity(ItemEntity itemEntity) {
 		itemEntity.setInvulnerable(true);
-		itemEntity.setUnlimitedLifetime();
+		if (!isCommandGiveFakeItem(itemEntity)) {
+			itemEntity.setUnlimitedLifetime();
+		}
+	}
+
+	private static boolean isCommandGiveFakeItem(ItemEntity itemEntity) {
+		return itemEntity.hasPickUpDelay() && itemEntity.getAge() >= 5999;
 	}
 
 	private static Optional<ResolvedStructure> resolveStructure(ServerLevel level, BlockPos hitPos) {

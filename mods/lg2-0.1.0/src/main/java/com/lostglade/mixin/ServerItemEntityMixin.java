@@ -19,7 +19,7 @@ public abstract class ServerItemEntityMixin {
 	@Inject(method = "tick", at = @At("HEAD"))
 	private void lg2$protectServerItem(CallbackInfo ci) {
 		ItemEntity self = (ItemEntity) (Object) this;
-		if (!lg2$isProtectedServerItem(self) || self.level().isClientSide()) {
+		if (!lg2$isProtectedServerItem(self) || self.level().isClientSide() || lg2$isCommandGiveFakeItem(self)) {
 			return;
 		}
 
@@ -58,6 +58,10 @@ public abstract class ServerItemEntityMixin {
 
 	private static boolean lg2$isProtectedServerItem(ItemEntity itemEntity) {
 		return itemEntity.getItem().is(ModBlocks.SERVER_ITEM);
+	}
+
+	private static boolean lg2$isCommandGiveFakeItem(ItemEntity itemEntity) {
+		return itemEntity.hasPickUpDelay() && itemEntity.getAge() >= 5999;
 	}
 
 	private static void lg2$clampFloor(ItemEntity itemEntity) {

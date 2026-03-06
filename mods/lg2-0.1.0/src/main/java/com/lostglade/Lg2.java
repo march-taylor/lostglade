@@ -2,6 +2,7 @@ package com.lostglade;
 
 import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
+import com.lostglade.server.ServerGlitchSystem;
 import com.lostglade.item.ModItems;
 import com.lostglade.server.ServerStabilitySystem;
 import com.lostglade.server.ServerStructureBreakSystem;
@@ -30,6 +31,7 @@ public class Lg2 implements ModInitializer {
 		ModBlocks.register();
 		ModWorldGen.register();
 		ServerStabilitySystem.register();
+		ServerGlitchSystem.register();
 		ServerStructureBreakSystem.register();
 
 		LOGGER.info("Initialized {}", MOD_ID);
