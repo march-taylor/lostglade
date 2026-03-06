@@ -165,6 +165,11 @@ public final class PhantomSoundGlitch implements ServerGlitchHandler {
 		double maxVolume = GlitchSettingsHelper.getDouble(settings, MAX_VOLUME, fallbackVolume);
 		double pitchMin = GlitchSettingsHelper.getDouble(settings, PITCH_MIN, 0.70D);
 		double pitchMax = GlitchSettingsHelper.getDouble(settings, PITCH_MAX, 1.25D);
+		SoundEvent sound = VANILLA_SOUND_POOL.get(random.nextInt(VANILLA_SOUND_POOL.size()));
+		Identifier soundId = BuiltInRegistries.SOUND_EVENT.getKey(sound);
+		if (soundId == null) {
+			return false;
+		}
 
 		boolean appliedAny = false;
 		for (int i = 0; i < targetPlayers; i++) {
@@ -178,11 +183,6 @@ public final class PhantomSoundGlitch implements ServerGlitchHandler {
 
 			float pitch = (float) sampleRange(random, pitchMin, pitchMax);
 			float volume = (float) sampleRange(random, minVolume, maxVolume);
-			SoundEvent sound = VANILLA_SOUND_POOL.get(random.nextInt(VANILLA_SOUND_POOL.size()));
-			Identifier soundId = BuiltInRegistries.SOUND_EVENT.getKey(sound);
-			if (soundId == null) {
-				continue;
-			}
 
 			stopPreviousSoundForPlayer(player);
 			sendSoundToPlayer(player, sound, x, y, z, volume, pitch, random.nextLong());
