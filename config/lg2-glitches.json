@@ -42,6 +42,16 @@
         "caseWeight": 0.5,
         "swapNicknameWeight": 0.5
       }
+    },
+    "checkpoint_desync": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 100.0,
+      "chancePerCheck": 1.0,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 0,
+      "maxCooldownTicks": 0,
+      "settings": {}
     }
   }
 }

@@ -5,9 +5,12 @@ import com.lostglade.Lg2;
 import com.lostglade.config.GlitchConfig;
 import com.lostglade.server.glitch.ChatInterferenceGlitch;
 import com.lostglade.server.glitch.ChatMessageGlitchHandler;
+import com.lostglade.server.glitch.CheckpointDesyncGlitch;
 import com.lostglade.server.glitch.PhantomSoundGlitch;
+import com.lostglade.server.glitch.RespawnGlitchHandler;
 import com.lostglade.server.glitch.ServerGlitchHandler;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
@@ -31,6 +34,7 @@ import java.util.Set;
 
 public final class ServerGlitchSystem {
 	private static final String CHAT_INTERFERENCE_ID = "chat_interference";
+	private static final String CHECKPOINT_DESYNC_ID = "checkpoint_desync";
 
 	private static final Map<String, ServerGlitchHandler> HANDLERS = new LinkedHashMap<>();
 	private static final Map<String, Long> NEXT_ALLOWED_TICKS = new HashMap<>();
@@ -50,6 +54,7 @@ public final class ServerGlitchSystem {
 		// Add new glitch types here: implement ServerGlitchHandler and register once.
 		registerHandler(new PhantomSoundGlitch());
 		registerHandler(new ChatInterferenceGlitch());
+		registerHandler(new CheckpointDesyncGlitch());
 		reloadConfig();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
@@ -75,6 +80,7 @@ public final class ServerGlitchSystem {
 
 		ServerTickEvents.END_SERVER_TICK.register(ServerGlitchSystem::tick);
 		ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(ServerGlitchSystem::onAllowChatMessage);
+		ServerPlayerEvents.AFTER_RESPAWN.register(ServerGlitchSystem::onAfterRespawn);
 	}
 
 	private static void registerHandler(ServerGlitchHandler handler) {
@@ -209,6 +215,74 @@ public final class ServerGlitchSystem {
 		);
 		NEXT_ALLOWED_TICKS.put(CHAT_INTERFERENCE_ID, gameTime + cooldownTicks);
 		return false;
+	}
+
+	private static void onAfterRespawn(ServerPlayer oldPlayer, ServerPlayer newPlayer, boolean alive) {
+		if (alive || newPlayer == null) {
+			return;
+		}
+
+		GlitchConfig.ConfigData config = GlitchConfig.get();
+		if (!config.enabled) {
+			return;
+		}
+
+		ServerGlitchHandler baseHandler = HANDLERS.get(CHECKPOINT_DESYNC_ID);
+		if (!(baseHandler instanceof RespawnGlitchHandler respawnHandler)) {
+			return;
+		}
+
+		if (config.glitches == null || config.glitches.isEmpty()) {
+			return;
+		}
+
+		GlitchConfig.GlitchEntry entry = config.glitches.get(CHECKPOINT_DESYNC_ID);
+		if (entry == null || !entry.enabled) {
+			return;
+		}
+
+		MinecraftServer server = newPlayer.level().getServer();
+		if (server == null) {
+			return;
+		}
+
+		double stabilityPercent = ServerStabilitySystem.getStabilityPercent();
+		if (stabilityPercent < entry.minStabilityPercent || stabilityPercent > entry.maxStabilityPercent) {
+			return;
+		}
+
+		long gameTime = server.overworld().getGameTime();
+		long nextAllowedTick = NEXT_ALLOWED_TICKS.getOrDefault(CHECKPOINT_DESYNC_ID, Long.MIN_VALUE);
+		if (gameTime < nextAllowedTick) {
+			return;
+		}
+
+		RandomSource random = server.overworld().getRandom();
+		double baseChance = clamp01(entry.chancePerCheck);
+		double influence = clamp01(entry.stabilityInfluence);
+		double rangeInstabilityFactor = getRangeInstabilityFactor(
+				stabilityPercent,
+				entry.minStabilityPercent,
+				entry.maxStabilityPercent
+		);
+		double effectiveChance = baseChance * ((1.0D - influence) + (rangeInstabilityFactor * influence));
+		if (effectiveChance <= 0.0D) {
+			return;
+		}
+		if (random.nextDouble() > effectiveChance) {
+			return;
+		}
+
+		boolean triggered = respawnHandler.triggerAfterRespawn(server, random, entry, stabilityPercent, oldPlayer, newPlayer);
+		if (!triggered) {
+			return;
+		}
+
+		long cooldownTicks = Math.max(
+				0L,
+				getCooldownTicksForStability(entry, stabilityPercent)
+		);
+		NEXT_ALLOWED_TICKS.put(CHECKPOINT_DESYNC_ID, gameTime + cooldownTicks);
 	}
 
 	private static void triggerGlitches(MinecraftServer server, GlitchConfig.ConfigData config) {
