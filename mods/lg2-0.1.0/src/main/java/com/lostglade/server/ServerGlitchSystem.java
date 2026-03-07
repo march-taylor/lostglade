@@ -80,6 +80,7 @@ public final class ServerGlitchSystem {
 
 		ServerTickEvents.END_SERVER_TICK.register(ServerGlitchSystem::tick);
 		ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(ServerGlitchSystem::onAllowChatMessage);
+		ServerPlayerEvents.COPY_FROM.register(ServerGlitchSystem::onCopyFrom);
 		ServerPlayerEvents.AFTER_RESPAWN.register(ServerGlitchSystem::onAfterRespawn);
 	}
 
@@ -217,7 +218,7 @@ public final class ServerGlitchSystem {
 		return false;
 	}
 
-	private static void onAfterRespawn(ServerPlayer oldPlayer, ServerPlayer newPlayer, boolean alive) {
+	private static void onCopyFrom(ServerPlayer oldPlayer, ServerPlayer newPlayer, boolean alive) {
 		if (alive || newPlayer == null) {
 			return;
 		}
@@ -241,7 +242,7 @@ public final class ServerGlitchSystem {
 			return;
 		}
 
-		MinecraftServer server = newPlayer.level().getServer();
+		MinecraftServer server = oldPlayer == null ? newPlayer.level().getServer() : oldPlayer.level().getServer();
 		if (server == null) {
 			return;
 		}
@@ -273,7 +274,15 @@ public final class ServerGlitchSystem {
 			return;
 		}
 
-		boolean triggered = respawnHandler.triggerAfterRespawn(server, random, entry, stabilityPercent, oldPlayer, newPlayer);
+		boolean triggered = respawnHandler.triggerOnCopyFrom(
+				server,
+				random,
+				entry,
+				stabilityPercent,
+				oldPlayer,
+				newPlayer,
+				alive
+		);
 		if (!triggered) {
 			return;
 		}
@@ -283,6 +292,22 @@ public final class ServerGlitchSystem {
 				getCooldownTicksForStability(entry, stabilityPercent)
 		);
 		NEXT_ALLOWED_TICKS.put(CHECKPOINT_DESYNC_ID, gameTime + cooldownTicks);
+	}
+
+	private static void onAfterRespawn(ServerPlayer oldPlayer, ServerPlayer newPlayer, boolean alive) {
+		ServerGlitchHandler baseHandler = HANDLERS.get(CHECKPOINT_DESYNC_ID);
+		if (!(baseHandler instanceof RespawnGlitchHandler respawnHandler)) {
+			return;
+		}
+
+		MinecraftServer server = oldPlayer == null
+				? (newPlayer == null ? null : newPlayer.level().getServer())
+				: oldPlayer.level().getServer();
+		if (server == null) {
+			return;
+		}
+
+		respawnHandler.onAfterRespawn(server, oldPlayer, newPlayer, alive);
 	}
 
 	private static void triggerGlitches(MinecraftServer server, GlitchConfig.ConfigData config) {
