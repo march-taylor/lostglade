@@ -63,18 +63,13 @@ public final class TimeOfDayJumpGlitch implements ServerGlitchHandler {
 		JsonObject settings = entry.settings == null ? new JsonObject() : entry.settings;
 		int minJump = GlitchSettingsHelper.getInt(settings, MIN_JUMP_TICKS, 80);
 		int maxJump = GlitchSettingsHelper.getInt(settings, MAX_JUMP_TICKS, 12000);
-		double instabilityFactor = getRangeInstabilityFactor(
+		int dynamicUpperBound = getDynamicUpperBoundForStability(
 				stabilityPercent,
-				entry.minStabilityPercent,
-				entry.maxStabilityPercent
+				entry.maxStabilityPercent,
+				minJump,
+				maxJump
 		);
-
-		int scaledMaxJump = minJump + (int) Math.round((maxJump - minJump) * clamp01(instabilityFactor));
-		if (scaledMaxJump < minJump) {
-			scaledMaxJump = minJump;
-		}
-
-		int jumpTicks = sampleRangeInt(random, minJump, scaledMaxJump);
+		int jumpTicks = sampleRangeInt(random, minJump, dynamicUpperBound);
 		if (jumpTicks <= 0) {
 			return false;
 		}
@@ -93,14 +88,31 @@ public final class TimeOfDayJumpGlitch implements ServerGlitchHandler {
 		return min + random.nextInt(max - min + 1);
 	}
 
-	private static double getRangeInstabilityFactor(double stabilityPercent, double minStabilityPercent, double maxStabilityPercent) {
-		double range = maxStabilityPercent - minStabilityPercent;
-		if (range <= 1.0E-9D) {
-			return 1.0D;
+	private static int getDynamicUpperBoundForStability(
+			double stabilityPercent,
+			double maxStabilityPercent,
+			int minJumpTicks,
+			int maxJumpTicks
+	) {
+		if (maxJumpTicks <= minJumpTicks) {
+			return minJumpTicks;
 		}
 
-		double normalized = (stabilityPercent - minStabilityPercent) / range;
-		return clamp01(1.0D - normalized);
+		double startStability = Math.max(0.0D, maxStabilityPercent);
+		if (startStability <= 1.0E-9D) {
+			return maxJumpTicks;
+		}
+
+		double normalized = clamp01(stabilityPercent / startStability);
+		double growthFactor = 1.0D - normalized;
+		int upperBound = minJumpTicks + (int) Math.round((maxJumpTicks - minJumpTicks) * growthFactor);
+		if (upperBound < minJumpTicks) {
+			return minJumpTicks;
+		}
+		if (upperBound > maxJumpTicks) {
+			return maxJumpTicks;
+		}
+		return upperBound;
 	}
 
 	private static double clamp01(double value) {

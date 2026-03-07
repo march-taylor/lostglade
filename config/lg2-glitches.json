@@ -63,7 +63,7 @@
       "maxCooldownTicks": 2400,
       "settings": {
         "minJumpTicks": 100,
-        "maxJumpTicks": 23000
+        "maxJumpTicks": 23900
       }
     }
   }
