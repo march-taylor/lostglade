@@ -57,9 +57,9 @@
       "enabled": true,
       "minStabilityPercent": 0.0,
       "maxStabilityPercent": 60.0,
-      "chancePerCheck": 0.2,
+      "chancePerCheck": 0.5,
       "stabilityInfluence": 1.0,
-      "minCooldownTicks": 60,
+      "minCooldownTicks": 40,
       "maxCooldownTicks": 2400,
       "settings": {
         "minJumpTicks": 100,

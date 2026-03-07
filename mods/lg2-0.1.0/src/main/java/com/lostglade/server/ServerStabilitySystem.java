@@ -53,6 +53,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class ServerStabilitySystem {
 	private static final String STABILITY_SYMBOL = "\uE903";
 	private static final int TITLE_COLOR = 0xF2CD26;
+	private static final int PACK_SYMBOL_COLOR = 0xFFFFFF;
 
 	private static final Map<UUID, ServerBossEvent> PLAYER_HUDS = new HashMap<>();
 	private static final Map<UUID, ServerBossEvent> PLAYER_SPACER_HUDS = new HashMap<>();
@@ -295,7 +296,7 @@ public final class ServerStabilitySystem {
 	}
 
 	private static Style applyPackStyle(Style style) {
-		return style.withColor(TITLE_COLOR).withBold(false).withItalic(false);
+		return style.withColor(PACK_SYMBOL_COLOR).withBold(false).withItalic(false);
 	}
 
 	public static int getStability() {
