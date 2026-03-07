@@ -8,6 +8,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.entity.Relative;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.LevelData;
 
@@ -16,10 +17,11 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public final class CheckpointDesyncGlitch implements RespawnGlitchHandler {
-	private static final Map<UUID, ServerPlayer.RespawnConfig> PENDING_RESPAWN_RESTORE = new HashMap<>();
+	private static final Map<UUID, SpawnTarget> PENDING_RESPAWN_TARGET = new HashMap<>();
 
 	@Override
 	public String id() {
@@ -75,30 +77,33 @@ public final class CheckpointDesyncGlitch implements RespawnGlitchHandler {
 
 		List<SpawnTarget> targets = new ArrayList<>(uniqueTargets.values());
 		SpawnTarget picked = targets.get(random.nextInt(targets.size()));
-
-		ServerPlayer.RespawnConfig originalConfig = normalizeRespawnConfig(newPlayer.getRespawnConfig());
-		if (oldPlayer != null) {
-			originalConfig = normalizeRespawnConfig(oldPlayer.getRespawnConfig());
-		}
-
-		ServerPlayer.RespawnConfig glitchConfig = new ServerPlayer.RespawnConfig(picked.respawnData(), picked.forced());
-		newPlayer.setRespawnPosition(glitchConfig, false);
-		PENDING_RESPAWN_RESTORE.put(newPlayer.getUUID(), originalConfig);
+		picked.level().getChunkAt(picked.blockPos());
+		PENDING_RESPAWN_TARGET.put(newPlayer.getUUID(), picked);
 		return true;
 	}
 
 	@Override
 	public void onAfterRespawn(MinecraftServer server, ServerPlayer oldPlayer, ServerPlayer newPlayer, boolean alive) {
-		if (newPlayer == null) {
+		if (alive || newPlayer == null) {
 			return;
 		}
 
-		ServerPlayer.RespawnConfig originalConfig = PENDING_RESPAWN_RESTORE.remove(newPlayer.getUUID());
-		if (originalConfig == null) {
+		SpawnTarget target = PENDING_RESPAWN_TARGET.remove(newPlayer.getUUID());
+		if (target == null) {
 			return;
 		}
 
-		newPlayer.setRespawnPosition(originalConfig, false);
+		target.level().getChunkAt(target.blockPos());
+		newPlayer.teleportTo(
+				target.level(),
+				target.x(),
+				target.y(),
+				target.z(),
+				Set.<Relative>of(),
+				target.yaw(),
+				target.pitch(),
+				false
+		);
 	}
 
 	private static Map<SpawnPointKey, SpawnTarget> collectUniqueForeignSpawnTargets(MinecraftServer server, ServerPlayer respawnedPlayer) {
@@ -121,8 +126,13 @@ public final class CheckpointDesyncGlitch implements RespawnGlitchHandler {
 	}
 
 	private static SpawnTarget resolveSpawnTarget(MinecraftServer server, ServerPlayer player) {
-		ServerPlayer.RespawnConfig respawnConfig = normalizeRespawnConfig(player.getRespawnConfig());
-		LevelData.RespawnData respawnData = respawnConfig.respawnData();
+		ServerPlayer.RespawnConfig respawnConfig = player.getRespawnConfig();
+		LevelData.RespawnData respawnData = respawnConfig == null
+				? LevelData.RespawnData.DEFAULT
+				: respawnConfig.respawnData();
+		if (respawnData == null) {
+			respawnData = LevelData.RespawnData.DEFAULT;
+		}
 
 		ResourceKey<Level> dimension = respawnData.dimension();
 		ServerLevel level = server.getLevel(dimension);
@@ -137,28 +147,29 @@ public final class CheckpointDesyncGlitch implements RespawnGlitchHandler {
 		}
 
 		return new SpawnTarget(
+				level,
 				dimension,
 				blockPos.immutable(),
-				respawnData,
-				respawnConfig.forced()
+				blockPos.getX() + 0.5D,
+				blockPos.getY() + 0.1D,
+				blockPos.getZ() + 0.5D,
+				respawnData.yaw(),
+				respawnData.pitch()
 		);
-	}
-
-	private static ServerPlayer.RespawnConfig normalizeRespawnConfig(ServerPlayer.RespawnConfig config) {
-		if (config != null) {
-			return config;
-		}
-		return new ServerPlayer.RespawnConfig(LevelData.RespawnData.DEFAULT, false);
 	}
 
 	private record SpawnPointKey(ResourceKey<Level> dimension, BlockPos blockPos) {
 	}
 
 	private record SpawnTarget(
+			ServerLevel level,
 			ResourceKey<Level> dimension,
 			BlockPos blockPos,
-			LevelData.RespawnData respawnData,
-			boolean forced
+			double x,
+			double y,
+			double z,
+			float yaw,
+			float pitch
 	) {
 	}
 }
