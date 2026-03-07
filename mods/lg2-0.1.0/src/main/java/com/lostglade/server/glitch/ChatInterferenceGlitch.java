@@ -121,10 +121,6 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 
 		double intensity = getRangeInstabilityFactor(stabilityPercent, entry.minStabilityPercent, entry.maxStabilityPercent);
 		boolean canSwapNickname = hasAlternativeOnlinePlayer(server, sender);
-		TextEffect effect = pickEffect(random, settings, canSwapNickname);
-		if (effect == null) {
-			return false;
-		}
 
 		int minMutations = GlitchSettingsHelper.getInt(settings, MIN_MUTATIONS, 1);
 		int maxMutations = GlitchSettingsHelper.getInt(settings, MAX_MUTATIONS, 5);
@@ -132,18 +128,52 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 
 		String finalContent = original;
 		Component displayNameOverride = null;
+		int maxDuplicateExtra = GlitchSettingsHelper.getInt(settings, MAX_DUPLICATE_EXTRA, 3);
+		int targetMutations = Math.max(1, mutationCount);
+		int appliedMutations = 0;
+		int attempts = 0;
+		boolean reverseUsed = false;
 
-		switch (effect) {
-			case REPLACE -> finalContent = applyReplacementEffect(random, original, mutationCount);
-			case INSERT -> finalContent = applyInsertEffect(random, original, mutationCount);
-			case DUPLICATE -> {
-				int maxDuplicateExtra = GlitchSettingsHelper.getInt(settings, MAX_DUPLICATE_EXTRA, 3);
-				finalContent = applyDuplicateEffect(random, original, mutationCount, maxDuplicateExtra, intensity);
+		while (appliedMutations < targetMutations && attempts < targetMutations * 6) {
+			attempts++;
+
+			boolean canPickNicknameSwap = canSwapNickname && displayNameOverride == null;
+			TextEffect stepEffect = pickEffect(random, settings, canPickNicknameSwap);
+			if (stepEffect == null) {
+				break;
 			}
-			case REVERSE -> finalContent = applyReverseEffect(random, original, intensity);
-			case SHUFFLE -> finalContent = applyShuffleEffect(random, original, mutationCount);
-			case CASE -> finalContent = applyCaseEffect(random, original, mutationCount, intensity);
-			case SWAP_NICKNAME -> displayNameOverride = pickRandomOtherDisplayName(server, sender, random);
+			if (reverseUsed && stepEffect == TextEffect.REVERSE) {
+				continue;
+			}
+
+			String before = finalContent;
+			boolean appliedStep = false;
+
+			switch (stepEffect) {
+				case REPLACE -> finalContent = applyReplacementEffect(random, finalContent, 1);
+				case INSERT -> finalContent = applyInsertEffect(random, finalContent, 1);
+				case DUPLICATE -> finalContent = applyDuplicateEffect(random, finalContent, 1, maxDuplicateExtra, intensity);
+				case REVERSE -> {
+					finalContent = applyReverseEffect(random, finalContent, intensity);
+					reverseUsed = true;
+				}
+				case SHUFFLE -> finalContent = applyShuffleEffect(random, finalContent, 1);
+				case CASE -> finalContent = applyCaseEffect(random, finalContent, 1, intensity);
+				case SWAP_NICKNAME -> {
+					Component picked = pickRandomOtherDisplayName(server, sender, random);
+					if (picked != null) {
+						displayNameOverride = picked;
+						appliedStep = true;
+					}
+				}
+			}
+
+			if (!appliedStep && !finalContent.equals(before)) {
+				appliedStep = true;
+			}
+			if (appliedStep) {
+				appliedMutations++;
+			}
 		}
 
 		if (displayNameOverride == null && finalContent.equals(original)) {
