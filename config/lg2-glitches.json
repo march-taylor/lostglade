@@ -25,7 +25,7 @@
     "chat_interference": {
       "enabled": true,
       "minStabilityPercent": 0.0,
-      "maxStabilityPercent": 80.0,
+      "maxStabilityPercent": 70.0,
       "chancePerCheck": 0.95,
       "stabilityInfluence": 1.0,
       "minCooldownTicks": 0,

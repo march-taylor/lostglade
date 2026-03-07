@@ -1,10 +1,10 @@
 {
-  "oresPerChunkMin": 24,
-  "oresPerChunkMax": 32,
+  "oresPerChunkMin": 8,
+  "oresPerChunkMax": 14,
   "veinSizeMin": 2,
   "veinSizeMax": 12,
-  "dropMin": 3,
-  "dropMax": 4,
+  "dropMin": 1,
+  "dropMax": 3,
   "xpMin": 5,
   "xpMax": 10,
   "spawnMinY": -64,
@@ -13,7 +13,7 @@
   "fortuneEnabled": false,
 
   "stabilityMax": 1280,
-  "stabilityDecayIntervalSeconds": 59,
-  "stabilityDecayIntervalSecondsPerPlayer": 30,
+  "stabilityDecayIntervalSeconds": 135,
+  "stabilityDecayIntervalSecondsPerPlayer": 8,
   "bitcoinsPerStability": 1
 }
