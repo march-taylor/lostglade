@@ -9,6 +9,7 @@ import com.lostglade.server.glitch.CheckpointDesyncGlitch;
 import com.lostglade.server.glitch.PhantomSoundGlitch;
 import com.lostglade.server.glitch.RespawnGlitchHandler;
 import com.lostglade.server.glitch.ServerGlitchHandler;
+import com.lostglade.server.glitch.TimeOfDayJumpGlitch;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -55,6 +56,7 @@ public final class ServerGlitchSystem {
 		registerHandler(new PhantomSoundGlitch());
 		registerHandler(new ChatInterferenceGlitch());
 		registerHandler(new CheckpointDesyncGlitch());
+		registerHandler(new TimeOfDayJumpGlitch());
 		reloadConfig();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {

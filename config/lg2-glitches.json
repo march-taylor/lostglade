@@ -48,10 +48,23 @@
       "minStabilityPercent": 0.0,
       "maxStabilityPercent": 100.0,
       "chancePerCheck": 1.0,
-      "stabilityInfluence": 1.0,
+      "stabilityInfluence": 0.95,
       "minCooldownTicks": 0,
       "maxCooldownTicks": 0,
       "settings": {}
+    },
+    "time_of_day_jumps": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 60.0,
+      "chancePerCheck": 0.2,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 60,
+      "maxCooldownTicks": 2400,
+      "settings": {
+        "minJumpTicks": 100,
+        "maxJumpTicks": 23000
+      }
     }
   }
 }
