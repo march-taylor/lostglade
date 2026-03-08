@@ -3,9 +3,11 @@ package com.lostglade.server;
 import com.google.gson.JsonObject;
 import com.lostglade.Lg2;
 import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.glitch.BlockUseGlitchHandler;
 import com.lostglade.server.glitch.ChatInterferenceGlitch;
 import com.lostglade.server.glitch.ChatMessageGlitchHandler;
 import com.lostglade.server.glitch.BlackoutGlitch;
+import com.lostglade.server.glitch.ChestDesyncGlitch;
 import com.lostglade.server.glitch.CheckpointDesyncGlitch;
 import com.lostglade.server.glitch.InventoryTextureShuffleGlitch;
 import com.lostglade.server.glitch.PhantomSoundGlitch;
@@ -17,14 +19,23 @@ import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
+import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.minecraft.core.BlockPos;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -61,6 +72,7 @@ public final class ServerGlitchSystem {
 		registerHandler(new TimeOfDayJumpGlitch());
 		registerHandler(new InventoryTextureShuffleGlitch());
 		registerHandler(new BlackoutGlitch());
+		registerHandler(new ChestDesyncGlitch());
 		reloadConfig();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
@@ -88,6 +100,7 @@ public final class ServerGlitchSystem {
 		ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(ServerGlitchSystem::onAllowChatMessage);
 		ServerPlayerEvents.COPY_FROM.register(ServerGlitchSystem::onCopyFrom);
 		ServerPlayerEvents.AFTER_RESPAWN.register(ServerGlitchSystem::onAfterRespawn);
+		UseBlockCallback.EVENT.register(ServerGlitchSystem::onUseBlock);
 	}
 
 	private static void registerHandler(ServerGlitchHandler handler) {
@@ -317,6 +330,93 @@ public final class ServerGlitchSystem {
 		}
 
 		respawnHandler.onAfterRespawn(server, oldPlayer, newPlayer, alive);
+	}
+
+	private static InteractionResult onUseBlock(Player player, Level world, InteractionHand hand, BlockHitResult hitResult) {
+		if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer) || !(world instanceof ServerLevel serverLevel)) {
+			return InteractionResult.PASS;
+		}
+
+		GlitchConfig.ConfigData config = GlitchConfig.get();
+		if (!config.enabled || config.glitches == null || config.glitches.isEmpty()) {
+			return InteractionResult.PASS;
+		}
+
+		MinecraftServer server = serverLevel.getServer();
+		if (server == null || server.getPlayerList().getPlayerCount() <= 0) {
+			return InteractionResult.PASS;
+		}
+
+		long gameTime = server.overworld().getGameTime();
+		double stabilityPercent = ServerStabilitySystem.getStabilityPercent();
+		RandomSource random = server.overworld().getRandom();
+		BlockPos pos = hitResult.getBlockPos();
+		BlockState state = serverLevel.getBlockState(pos);
+
+		List<Map.Entry<String, GlitchConfig.GlitchEntry>> entries = new ArrayList<>(config.glitches.entrySet());
+		shuffle(entries, random);
+
+		for (Map.Entry<String, GlitchConfig.GlitchEntry> mapEntry : entries) {
+			String id = mapEntry.getKey();
+			GlitchConfig.GlitchEntry entry = mapEntry.getValue();
+			ServerGlitchHandler handler = HANDLERS.get(id);
+
+			if (handler == null) {
+				logUnknownGlitchId(id);
+				continue;
+			}
+			if (!(handler instanceof BlockUseGlitchHandler blockUseHandler)) {
+				continue;
+			}
+			if (entry == null || !entry.enabled) {
+				continue;
+			}
+			if (stabilityPercent < entry.minStabilityPercent || stabilityPercent > entry.maxStabilityPercent) {
+				continue;
+			}
+
+			long nextAllowedTick = NEXT_ALLOWED_TICKS.getOrDefault(id, Long.MIN_VALUE);
+			if (gameTime < nextAllowedTick) {
+				continue;
+			}
+
+			double baseChance = clamp01(entry.chancePerCheck);
+			double influence = clamp01(entry.stabilityInfluence);
+			double rangeInstabilityFactor = getRangeInstabilityFactor(
+					stabilityPercent,
+					entry.minStabilityPercent,
+					entry.maxStabilityPercent
+			);
+			double effectiveChance = baseChance * ((1.0D - influence) + (rangeInstabilityFactor * influence));
+			if (effectiveChance <= 0.0D) {
+				continue;
+			}
+			if (random.nextDouble() > effectiveChance) {
+				continue;
+			}
+
+			boolean triggered = blockUseHandler.triggerOnUseBlock(
+					server,
+					random,
+					entry,
+					stabilityPercent,
+					serverPlayer,
+					serverLevel,
+					pos,
+					state,
+					hand,
+					hitResult
+			);
+			if (!triggered) {
+				continue;
+			}
+
+			long cooldownTicks = Math.max(0L, getCooldownTicksForStability(entry, stabilityPercent));
+			NEXT_ALLOWED_TICKS.put(id, gameTime + cooldownTicks);
+			return InteractionResult.SUCCESS;
+		}
+
+		return InteractionResult.PASS;
 	}
 
 	private static void triggerGlitches(MinecraftServer server, GlitchConfig.ConfigData config) {
