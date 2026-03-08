@@ -183,21 +183,7 @@ public final class ServerGlitchSystem {
 
 	private static boolean onAllowChatMessage(PlayerChatMessage message, ServerPlayer sender, ChatType.Bound params) {
 		GlitchConfig.ConfigData config = GlitchConfig.get();
-		if (!config.enabled || sender == null) {
-			return true;
-		}
-
-		ServerGlitchHandler baseHandler = HANDLERS.get(CHAT_INTERFERENCE_ID);
-		if (!(baseHandler instanceof ChatMessageGlitchHandler chatHandler)) {
-			return true;
-		}
-
-		if (config.glitches == null || config.glitches.isEmpty()) {
-			return true;
-		}
-
-		GlitchConfig.GlitchEntry entry = config.glitches.get(CHAT_INTERFERENCE_ID);
-		if (entry == null || !entry.enabled) {
+		if (!config.enabled || sender == null || message == null || params == null) {
 			return true;
 		}
 
@@ -206,44 +192,49 @@ public final class ServerGlitchSystem {
 			return true;
 		}
 
-		double stabilityPercent = ServerStabilitySystem.getStabilityPercent();
-		if (stabilityPercent < entry.minStabilityPercent || stabilityPercent > entry.maxStabilityPercent) {
-			return true;
+		boolean triggered = false;
+
+		ServerGlitchHandler baseHandler = HANDLERS.get(CHAT_INTERFERENCE_ID);
+		if (baseHandler instanceof ChatMessageGlitchHandler chatHandler
+				&& config.glitches != null
+				&& !config.glitches.isEmpty()) {
+			GlitchConfig.GlitchEntry entry = config.glitches.get(CHAT_INTERFERENCE_ID);
+			if (entry != null && entry.enabled) {
+				double stabilityPercent = ServerStabilitySystem.getStabilityPercent();
+				if (stabilityPercent >= entry.minStabilityPercent && stabilityPercent <= entry.maxStabilityPercent) {
+					long gameTime = server.overworld().getGameTime();
+					long nextAllowedTick = NEXT_ALLOWED_TICKS.getOrDefault(CHAT_INTERFERENCE_ID, Long.MIN_VALUE);
+					if (gameTime >= nextAllowedTick) {
+						RandomSource random = server.overworld().getRandom();
+						double baseChance = clamp01(entry.chancePerCheck);
+						double influence = clamp01(entry.stabilityInfluence);
+						double rangeInstabilityFactor = getRangeInstabilityFactor(
+								stabilityPercent,
+								entry.minStabilityPercent,
+								entry.maxStabilityPercent
+						);
+						double effectiveChance = baseChance * ((1.0D - influence) + (rangeInstabilityFactor * influence));
+						if (effectiveChance > 0.0D && random.nextDouble() <= effectiveChance) {
+							triggered = chatHandler.triggerChat(server, random, entry, stabilityPercent, sender, message, params);
+							if (triggered) {
+								long cooldownTicks = Math.max(
+										0L,
+										getCooldownTicksForStability(entry, stabilityPercent)
+								);
+								NEXT_ALLOWED_TICKS.put(CHAT_INTERFERENCE_ID, gameTime + cooldownTicks);
+							}
+						}
+					}
+				}
+			}
 		}
 
-		long gameTime = server.overworld().getGameTime();
-		long nextAllowedTick = NEXT_ALLOWED_TICKS.getOrDefault(CHAT_INTERFERENCE_ID, Long.MIN_VALUE);
-		if (gameTime < nextAllowedTick) {
-			return true;
+		if (triggered) {
+			return false;
 		}
 
-		RandomSource random = server.overworld().getRandom();
-		double baseChance = clamp01(entry.chancePerCheck);
-		double influence = clamp01(entry.stabilityInfluence);
-		double rangeInstabilityFactor = getRangeInstabilityFactor(
-				stabilityPercent,
-				entry.minStabilityPercent,
-				entry.maxStabilityPercent
-		);
-		double effectiveChance = baseChance * ((1.0D - influence) + (rangeInstabilityFactor * influence));
-		if (effectiveChance <= 0.0D) {
-			return true;
-		}
-
-		if (random.nextDouble() > effectiveChance) {
-			return true;
-		}
-
-		boolean triggered = chatHandler.triggerChat(server, random, entry, stabilityPercent, sender, message, params);
-		if (!triggered) {
-			return true;
-		}
-
-		long cooldownTicks = Math.max(
-				0L,
-				getCooldownTicksForStability(entry, stabilityPercent)
-		);
-		NEXT_ALLOWED_TICKS.put(CHAT_INTERFERENCE_ID, gameTime + cooldownTicks);
+		Component decorated = params.decorate(Component.literal(message.signedContent()));
+		server.getPlayerList().broadcastSystemMessage(decorated, false);
 		return false;
 	}
 
