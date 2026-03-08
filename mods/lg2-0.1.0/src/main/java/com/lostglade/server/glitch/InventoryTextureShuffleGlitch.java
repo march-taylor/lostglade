@@ -6,15 +6,19 @@ import com.lostglade.server.ServerStabilitySystem;
 import eu.pb4.polymer.core.api.item.PolymerItemUtils;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.Container;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.CustomData;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.ArrayList;
@@ -33,10 +37,15 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 	private static final String MAX_TARGET_PLAYERS = "maxTargetPlayers";
 	private static final String MIN_SHUFFLED_PERCENT = "minShuffledPercent";
 	private static final String MAX_SHUFFLED_PERCENT = "maxShuffledPercent";
+	private static final String SHUFFLED_PERCENT_PRIORITY = "shuffledPercentPriority";
 	private static final String MIN_DURATION_SECONDS = "minDurationSeconds";
 	private static final String MAX_DURATION_SECONDS = "maxDurationSeconds";
 	private static final String MIN_RESHUFFLE_INTERVAL_TICKS = "minReshuffleIntervalTicks";
 	private static final String MAX_RESHUFFLE_INTERVAL_TICKS = "maxReshuffleIntervalTicks";
+	private static final String SHUFFLE_META_TAG = "lg2InventoryTextureShuffle";
+	private static final String SHUFFLE_META_TOKEN = "token";
+	private static final String SHUFFLE_META_HAS_ORIGINAL_MODEL = "hasOriginalModel";
+	private static final String SHUFFLE_META_ORIGINAL_MODEL = "originalModel";
 
 	private static final int PLAYER_INVENTORY_SLOT_COUNT = 41;
 	private static final int RESEND_INTERVAL_TICKS = 5;
@@ -64,6 +73,7 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 		settings.addProperty(MAX_TARGET_PLAYERS, 4);
 		settings.addProperty(MIN_SHUFFLED_PERCENT, 8.0D);
 		settings.addProperty(MAX_SHUFFLED_PERCENT, 75.0D);
+		settings.addProperty(SHUFFLED_PERCENT_PRIORITY, 2.0D);
 		settings.addProperty(MIN_DURATION_SECONDS, 3);
 		settings.addProperty(MAX_DURATION_SECONDS, 20);
 		settings.addProperty(MIN_RESHUFFLE_INTERVAL_TICKS, 8);
@@ -83,6 +93,7 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 		changed |= GlitchSettingsHelper.sanitizeInt(entry.settings, MAX_TARGET_PLAYERS, 4, 1, 100);
 		changed |= GlitchSettingsHelper.sanitizeDouble(entry.settings, MIN_SHUFFLED_PERCENT, 8.0D, 0.0D, 100.0D);
 		changed |= GlitchSettingsHelper.sanitizeDouble(entry.settings, MAX_SHUFFLED_PERCENT, 75.0D, 0.0D, 100.0D);
+		changed |= GlitchSettingsHelper.sanitizeDouble(entry.settings, SHUFFLED_PERCENT_PRIORITY, 2.0D, 0.1D, 10.0D);
 		changed |= GlitchSettingsHelper.sanitizeInt(entry.settings, MIN_DURATION_SECONDS, 3, 1, 7200);
 		changed |= GlitchSettingsHelper.sanitizeInt(entry.settings, MAX_DURATION_SECONDS, 20, 1, 7200);
 		changed |= GlitchSettingsHelper.sanitizeInt(entry.settings, MIN_RESHUFFLE_INTERVAL_TICKS, 8, 1, 1200);
@@ -140,7 +151,8 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 
 		double minShuffledPercent = GlitchSettingsHelper.getDouble(settings, MIN_SHUFFLED_PERCENT, 8.0D);
 		double maxShuffledPercent = GlitchSettingsHelper.getDouble(settings, MAX_SHUFFLED_PERCENT, 75.0D);
-		double shuffledPercent = pickRandomShuffledPercent(random, minShuffledPercent, maxShuffledPercent, instability);
+		double shuffledPercentPriority = GlitchSettingsHelper.getDouble(settings, SHUFFLED_PERCENT_PRIORITY, 2.0D);
+		double shuffledPercent = pickRandomShuffledPercent(random, minShuffledPercent, maxShuffledPercent, instability, shuffledPercentPriority);
 
 		int minDurationSeconds = GlitchSettingsHelper.getInt(settings, MIN_DURATION_SECONDS, 3);
 		int maxDurationSeconds = GlitchSettingsHelper.getInt(settings, MAX_DURATION_SECONDS, 20);
@@ -157,6 +169,7 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 		for (int i = 0; i < targetPlayers; i++) {
 			ServerPlayer player = players.get(i);
 			if (activateForPlayer(
+					server,
 					player,
 					random,
 					shuffledPercent,
@@ -168,6 +181,7 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 					maxReshuffleInterval,
 					minShuffledPercent,
 					maxShuffledPercent,
+					shuffledPercentPriority,
 					entry.maxStabilityPercent,
 					entry.maxStabilityPercent + 10.0D
 			)) {
@@ -190,13 +204,15 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 		while (iterator.hasNext()) {
 			Map.Entry<UUID, ActiveShuffleState> stateEntry = iterator.next();
 			ServerPlayer player = server.getPlayerList().getPlayer(stateEntry.getKey());
+			ActiveShuffleState state = stateEntry.getValue();
 			if (player == null) {
+				restoreGlitchedModelsForToken(server, state.shuffleToken);
 				iterator.remove();
 				continue;
 			}
 
-			ActiveShuffleState state = stateEntry.getValue();
 			if (stabilityPercent > state.expireAboveStabilityPercent) {
+				restoreGlitchedModelsForToken(server, state.shuffleToken);
 				restoreFullInventoryVisuals(player);
 				iterator.remove();
 				continue;
@@ -206,6 +222,7 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 			int currentDurationSeconds = interpolateInt(state.minDurationSeconds, state.maxDurationSeconds, currentInstability);
 			long currentDurationTicks = Math.max(1L, currentDurationSeconds) * 20L;
 			if (nowTick >= state.startedAtTick + currentDurationTicks) {
+				restoreGlitchedModelsForToken(server, state.shuffleToken);
 				restoreFullInventoryVisuals(player);
 				iterator.remove();
 				continue;
@@ -216,9 +233,16 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 			boolean inventoryChanged = !currentInventoryModels.equals(state.inventoryModelsSnapshot);
 
 			if (inventoryChanged || nowTick >= state.lastReshuffleAtTick + state.reshuffleIntervalTicks) {
-				double shuffledPercent = pickRandomShuffledPercent(random, state.minShuffledPercent, state.maxShuffledPercent, currentInstability);
+				double shuffledPercent = pickRandomShuffledPercent(
+						random,
+						state.minShuffledPercent,
+						state.maxShuffledPercent,
+						currentInstability,
+						state.shuffledPercentPriority
+				);
 				Map<Integer, Identifier> newModels = buildShuffledModelMap(player, random, shuffledPercent);
 				if (newModels.isEmpty()) {
+					restoreGlitchedModelsForToken(server, state.shuffleToken);
 					restoreFullInventoryVisuals(player);
 					iterator.remove();
 					continue;
@@ -227,12 +251,13 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 				Set<Integer> toRestore = new HashSet<>(state.modelBySlot.keySet());
 				toRestore.removeAll(newModels.keySet());
 				if (!toRestore.isEmpty()) {
+					restoreModelsInSlots(player, toRestore, state.shuffleToken);
 					restoreRealVisuals(player, toRestore);
 				}
 
-				applyModelMap(player, newModels);
+				applyModelMap(player, newModels, state.shuffleToken);
 				state.modelBySlot = newModels;
-				state.inventoryModelsSnapshot = currentInventoryModels;
+				state.inventoryModelsSnapshot = captureInventoryModels(player.getInventory());
 				state.shuffledPercent = shuffledPercent;
 				state.lastReshuffleAtTick = nowTick;
 				state.nextResendAtTick = nowTick + RESEND_INTERVAL_TICKS;
@@ -240,13 +265,14 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 			}
 
 			if (nowTick >= state.nextResendAtTick) {
-				applyModelMap(player, state.modelBySlot);
+				applyModelMap(player, state.modelBySlot, state.shuffleToken);
 				state.nextResendAtTick = nowTick + RESEND_INTERVAL_TICKS;
 			}
 		}
 	}
 
 	private static boolean activateForPlayer(
+			MinecraftServer server,
 			ServerPlayer player,
 			RandomSource random,
 			double shuffledPercent,
@@ -258,17 +284,19 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 			int maxReshuffleIntervalTicks,
 			double minShuffledPercent,
 			double maxShuffledPercent,
+			double shuffledPercentPriority,
 			double maxStabilityPercent,
 			double expireAboveStabilityPercent
 	) {
-		clearState(player);
+		clearState(server, player);
 
 		Map<Integer, Identifier> modelBySlot = buildShuffledModelMap(player, random, shuffledPercent);
 		if (modelBySlot.isEmpty()) {
 			return false;
 		}
 
-		applyModelMap(player, modelBySlot);
+		UUID shuffleToken = UUID.randomUUID();
+		applyModelMap(player, modelBySlot, shuffleToken);
 		ACTIVE_STATES.put(player.getUUID(), new ActiveShuffleState(
 				nowTick,
 				nowTick,
@@ -281,15 +309,17 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 				Math.max(1, maxReshuffleIntervalTicks),
 				minShuffledPercent,
 				maxShuffledPercent,
+				shuffledPercentPriority,
 				maxStabilityPercent,
 				expireAboveStabilityPercent,
+				shuffleToken,
 				captureInventoryModels(player.getInventory()),
 				modelBySlot
 		));
 		return true;
 	}
 
-	private static void clearState(ServerPlayer player) {
+	private static void clearState(MinecraftServer server, ServerPlayer player) {
 		if (player == null) {
 			return;
 		}
@@ -299,6 +329,7 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 			return;
 		}
 
+		restoreGlitchedModelsForToken(server, oldState.shuffleToken);
 		restoreFullInventoryVisuals(player);
 	}
 
@@ -351,7 +382,7 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 		return changedAny ? result : Collections.emptyMap();
 	}
 
-	private static void applyModelMap(ServerPlayer player, Map<Integer, Identifier> modelBySlot) {
+	private static void applyModelMap(ServerPlayer player, Map<Integer, Identifier> modelBySlot, UUID shuffleToken) {
 		if (modelBySlot.isEmpty()) {
 			return;
 		}
@@ -365,6 +396,7 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 			if (realStack.isEmpty()) {
 				continue;
 			}
+			applyModelToRealStack(realStack, mapEntry.getValue(), shuffleToken);
 
 			ItemStack clientStack = toClientVisualStack(realStack, context);
 			if (clientStack.isEmpty()) {
@@ -403,6 +435,65 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 
 	private static void restoreFullInventoryVisuals(ServerPlayer player) {
 		restoreRealVisuals(player, FULL_INVENTORY_SLOTS);
+	}
+
+	private static void restoreModelsInSlots(ServerPlayer player, Set<Integer> slots, UUID shuffleToken) {
+		Inventory inventory = player.getInventory();
+		for (Integer slot : slots) {
+			restoreModelFromRealStack(inventory.getItem(slot), shuffleToken);
+		}
+	}
+
+	private static void restoreGlitchedModelsForToken(MinecraftServer server, UUID shuffleToken) {
+		if (server == null || shuffleToken == null) {
+			return;
+		}
+
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			boolean inventoryChanged = false;
+			Inventory inventory = player.getInventory();
+			for (int slot = 0; slot < PLAYER_INVENTORY_SLOT_COUNT; slot++) {
+				if (restoreModelFromRealStack(inventory.getItem(slot), shuffleToken)) {
+					inventoryChanged = true;
+				}
+			}
+
+			ItemStack carried = player.containerMenu.getCarried();
+			if (restoreModelFromRealStack(carried, shuffleToken)) {
+				player.containerMenu.setCarried(carried);
+				inventoryChanged = true;
+			}
+
+			if (inventoryChanged) {
+				restoreFullInventoryVisuals(player);
+			}
+		}
+
+		for (var level : server.getAllLevels()) {
+			level.getChunkSource().chunkMap.forEachReadyToSendChunk(chunk -> {
+				for (var blockEntity : chunk.getBlockEntities().values()) {
+					if (blockEntity instanceof Container container) {
+						restoreContainerModels(container, shuffleToken);
+					}
+				}
+			});
+
+			for (var entity : level.getAllEntities()) {
+				if (!(entity instanceof ItemEntity itemEntity)) {
+					if (entity instanceof Container container && !(entity instanceof ServerPlayer)) {
+						restoreContainerModels(container, shuffleToken);
+					}
+					continue;
+				}
+
+				ItemStack stack = itemEntity.getItem();
+				if (!restoreModelFromRealStack(stack, shuffleToken)) {
+					continue;
+				}
+
+				itemEntity.setItem(stack.copy());
+			}
+		}
 	}
 
 	private static void sendVisualOverridesForMenu(
@@ -475,6 +566,115 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 		return true;
 	}
 
+	private static void applyModelToRealStack(ItemStack stack, Identifier shuffledModel, UUID shuffleToken) {
+		if (stack == null || stack.isEmpty() || shuffledModel == null || shuffleToken == null) {
+			return;
+		}
+
+		String token = shuffleToken.toString();
+		ShuffleStackMetadata metadata = readShuffleMetadata(stack);
+		if (metadata != null && !token.equals(metadata.token)) {
+			restoreModelFromMetadata(stack, metadata);
+			metadata = null;
+		}
+
+		Identifier currentModel = stack.get(DataComponents.ITEM_MODEL);
+		if (metadata == null || !token.equals(metadata.token)) {
+			boolean hasOriginalModel = currentModel != null;
+			String originalModel = hasOriginalModel ? currentModel.toString() : "";
+			CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+				CompoundTag glitchTag = tag.getCompoundOrEmpty(SHUFFLE_META_TAG);
+				glitchTag.putString(SHUFFLE_META_TOKEN, token);
+				glitchTag.putBoolean(SHUFFLE_META_HAS_ORIGINAL_MODEL, hasOriginalModel);
+				if (hasOriginalModel) {
+					glitchTag.putString(SHUFFLE_META_ORIGINAL_MODEL, originalModel);
+				} else {
+					glitchTag.remove(SHUFFLE_META_ORIGINAL_MODEL);
+				}
+				tag.put(SHUFFLE_META_TAG, glitchTag);
+			});
+		}
+
+		stack.set(DataComponents.ITEM_MODEL, shuffledModel);
+	}
+
+	private static boolean restoreModelFromRealStack(ItemStack stack, UUID shuffleToken) {
+		if (stack == null || stack.isEmpty() || shuffleToken == null) {
+			return false;
+		}
+
+		ShuffleStackMetadata metadata = readShuffleMetadata(stack);
+		if (metadata == null || !shuffleToken.toString().equals(metadata.token)) {
+			return false;
+		}
+
+		restoreModelFromMetadata(stack, metadata);
+		return true;
+	}
+
+	private static ShuffleStackMetadata readShuffleMetadata(ItemStack stack) {
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData == null || customData.isEmpty()) {
+			return null;
+		}
+
+		CompoundTag rootTag = customData.copyTag();
+		if (!rootTag.contains(SHUFFLE_META_TAG)) {
+			return null;
+		}
+
+		CompoundTag glitchTag = rootTag.getCompoundOrEmpty(SHUFFLE_META_TAG);
+		String token = glitchTag.getStringOr(SHUFFLE_META_TOKEN, "");
+		if (token.isEmpty()) {
+			return null;
+		}
+
+		boolean hasOriginalModel = glitchTag.getBooleanOr(SHUFFLE_META_HAS_ORIGINAL_MODEL, false);
+		String originalModel = glitchTag.getStringOr(SHUFFLE_META_ORIGINAL_MODEL, "");
+		return new ShuffleStackMetadata(token, hasOriginalModel, originalModel);
+	}
+
+	private static void restoreModelFromMetadata(ItemStack stack, ShuffleStackMetadata metadata) {
+		if (metadata == null) {
+			return;
+		}
+
+		if (metadata.hasOriginalModel) {
+			Identifier originalModel = Identifier.tryParse(metadata.originalModel);
+			if (originalModel != null) {
+				stack.set(DataComponents.ITEM_MODEL, originalModel);
+			} else {
+				stack.remove(DataComponents.ITEM_MODEL);
+			}
+		} else {
+			stack.remove(DataComponents.ITEM_MODEL);
+		}
+
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> tag.remove(SHUFFLE_META_TAG));
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData != null && customData.isEmpty()) {
+			stack.remove(DataComponents.CUSTOM_DATA);
+		}
+	}
+
+	private static boolean restoreContainerModels(Container container, UUID shuffleToken) {
+		boolean changed = false;
+		for (int slot = 0; slot < container.getContainerSize(); slot++) {
+			ItemStack stack = container.getItem(slot);
+			if (!restoreModelFromRealStack(stack, shuffleToken)) {
+				continue;
+			}
+
+			container.setItem(slot, stack);
+			changed = true;
+		}
+
+		if (changed) {
+			container.setChanged();
+		}
+		return changed;
+	}
+
 	private static Map<Integer, Identifier> captureInventoryModels(Inventory inventory) {
 		Map<Integer, Identifier> snapshot = new HashMap<>();
 		for (int slot = 0; slot < PLAYER_INVENTORY_SLOT_COUNT; slot++) {
@@ -523,7 +723,8 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 			RandomSource random,
 			double minShuffledPercent,
 			double maxShuffledPercent,
-			double instabilityFactor
+			double instabilityFactor,
+			double shuffledPercentPriority
 	) {
 		double dynamicMax = interpolateDouble(minShuffledPercent, maxShuffledPercent, instabilityFactor);
 		double lower = Math.min(minShuffledPercent, dynamicMax);
@@ -531,7 +732,10 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 		if (upper - lower <= 1.0E-9D) {
 			return lower;
 		}
-		return lower + (random.nextDouble() * (upper - lower));
+
+		double clampedPriority = Math.max(0.1D, shuffledPercentPriority);
+		double weightedRoll = 1.0D - Math.pow(1.0D - random.nextDouble(), clampedPriority);
+		return lower + (weightedRoll * (upper - lower));
 	}
 
 	private static void shuffle(List<?> list, RandomSource random) {
@@ -562,6 +766,18 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 		return Math.max(0.0D, Math.min(1.0D, value));
 	}
 
+	private static final class ShuffleStackMetadata {
+		private final String token;
+		private final boolean hasOriginalModel;
+		private final String originalModel;
+
+		private ShuffleStackMetadata(String token, boolean hasOriginalModel, String originalModel) {
+			this.token = token;
+			this.hasOriginalModel = hasOriginalModel;
+			this.originalModel = originalModel;
+		}
+	}
+
 	private static final class ActiveShuffleState {
 		private long startedAtTick;
 		private long lastReshuffleAtTick;
@@ -574,8 +790,10 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 		private int maxReshuffleIntervalTicks;
 		private double minShuffledPercent;
 		private double maxShuffledPercent;
+		private double shuffledPercentPriority;
 		private double maxStabilityPercent;
 		private double expireAboveStabilityPercent;
+		private UUID shuffleToken;
 		private Map<Integer, Identifier> inventoryModelsSnapshot;
 		private Map<Integer, Identifier> modelBySlot;
 
@@ -591,8 +809,10 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 				int maxReshuffleIntervalTicks,
 				double minShuffledPercent,
 				double maxShuffledPercent,
+				double shuffledPercentPriority,
 				double maxStabilityPercent,
 				double expireAboveStabilityPercent,
+				UUID shuffleToken,
 				Map<Integer, Identifier> inventoryModelsSnapshot,
 				Map<Integer, Identifier> modelBySlot
 		) {
@@ -607,8 +827,10 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 			this.maxReshuffleIntervalTicks = maxReshuffleIntervalTicks;
 			this.minShuffledPercent = minShuffledPercent;
 			this.maxShuffledPercent = maxShuffledPercent;
+			this.shuffledPercentPriority = shuffledPercentPriority;
 			this.maxStabilityPercent = maxStabilityPercent;
 			this.expireAboveStabilityPercent = expireAboveStabilityPercent;
+			this.shuffleToken = shuffleToken;
 			this.inventoryModelsSnapshot = inventoryModelsSnapshot;
 			this.modelBySlot = modelBySlot;
 		}
