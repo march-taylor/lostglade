@@ -85,6 +85,21 @@
         "minReshuffleIntervalTicks": 10,
         "maxReshuffleIntervalTicks": 240
       }
+    },
+    "blackout": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 25.0,
+      "chancePerCheck": 0.2,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 480,
+      "maxCooldownTicks": 3600,
+      "settings": {
+        "minTargetPlayers": 1,
+        "maxTargetPlayers": "whitelistCount",
+        "minDurationSeconds": 8,
+        "maxDurationSeconds": 12
+      }
     }
   }
 }

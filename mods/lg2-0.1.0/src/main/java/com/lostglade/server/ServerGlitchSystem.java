@@ -5,6 +5,7 @@ import com.lostglade.Lg2;
 import com.lostglade.config.GlitchConfig;
 import com.lostglade.server.glitch.ChatInterferenceGlitch;
 import com.lostglade.server.glitch.ChatMessageGlitchHandler;
+import com.lostglade.server.glitch.BlackoutGlitch;
 import com.lostglade.server.glitch.CheckpointDesyncGlitch;
 import com.lostglade.server.glitch.InventoryTextureShuffleGlitch;
 import com.lostglade.server.glitch.PhantomSoundGlitch;
@@ -59,6 +60,7 @@ public final class ServerGlitchSystem {
 		registerHandler(new CheckpointDesyncGlitch());
 		registerHandler(new TimeOfDayJumpGlitch());
 		registerHandler(new InventoryTextureShuffleGlitch());
+		registerHandler(new BlackoutGlitch());
 		reloadConfig();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
