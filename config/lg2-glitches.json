@@ -105,13 +105,14 @@
       "enabled": true,
       "minStabilityPercent": 0.0,
       "maxStabilityPercent": 30.0,
-      "chancePerCheck": 0.5,
+      "chancePerCheck": 0.75,
       "stabilityInfluence": 1.0,
       "minCooldownTicks": 0,
       "maxCooldownTicks": 0,
       "settings": {
         "physicalStorageWeight": 1.0,
-        "enderChestWeight": 1.0
+        "enderChestWeight": 1.0,
+        "includeGeneratedStorages": false
       }
     }
   }

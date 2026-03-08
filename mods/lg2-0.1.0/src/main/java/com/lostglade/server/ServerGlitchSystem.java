@@ -9,6 +9,7 @@ import com.lostglade.server.glitch.ChatMessageGlitchHandler;
 import com.lostglade.server.glitch.BlackoutGlitch;
 import com.lostglade.server.glitch.ChestDesyncGlitch;
 import com.lostglade.server.glitch.CheckpointDesyncGlitch;
+import com.lostglade.server.glitch.EntityUseGlitchHandler;
 import com.lostglade.server.glitch.InventoryTextureShuffleGlitch;
 import com.lostglade.server.glitch.PhantomSoundGlitch;
 import com.lostglade.server.glitch.RespawnGlitchHandler;
@@ -20,6 +21,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.minecraft.core.BlockPos;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.ChatType;
@@ -32,10 +34,12 @@ import net.minecraft.server.permissions.Permissions;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -78,6 +82,7 @@ public final class ServerGlitchSystem {
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			checkTicker = 0L;
 			NEXT_ALLOWED_TICKS.clear();
+			ChestDesyncGlitch.resetTracking();
 		});
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
@@ -101,6 +106,7 @@ public final class ServerGlitchSystem {
 		ServerPlayerEvents.COPY_FROM.register(ServerGlitchSystem::onCopyFrom);
 		ServerPlayerEvents.AFTER_RESPAWN.register(ServerGlitchSystem::onAfterRespawn);
 		UseBlockCallback.EVENT.register(ServerGlitchSystem::onUseBlock);
+		UseEntityCallback.EVENT.register(ServerGlitchSystem::onUseEntity);
 	}
 
 	private static void registerHandler(ServerGlitchHandler handler) {
@@ -152,6 +158,7 @@ public final class ServerGlitchSystem {
 	}
 
 	private static void tick(MinecraftServer server) {
+		ChestDesyncGlitch.tickPlacementTracking(server);
 		InventoryTextureShuffleGlitch.tickActiveStates(server);
 		BlackoutGlitch.tickActiveStates(server);
 
@@ -337,6 +344,10 @@ public final class ServerGlitchSystem {
 			return InteractionResult.PASS;
 		}
 
+		BlockPos pos = hitResult.getBlockPos();
+		BlockState state = serverLevel.getBlockState(pos);
+		ChestDesyncGlitch.noteBlockInteraction(serverPlayer, serverLevel, pos, state, hand, hitResult);
+
 		GlitchConfig.ConfigData config = GlitchConfig.get();
 		if (!config.enabled || config.glitches == null || config.glitches.isEmpty()) {
 			return InteractionResult.PASS;
@@ -350,8 +361,6 @@ public final class ServerGlitchSystem {
 		long gameTime = server.overworld().getGameTime();
 		double stabilityPercent = ServerStabilitySystem.getStabilityPercent();
 		RandomSource random = server.overworld().getRandom();
-		BlockPos pos = hitResult.getBlockPos();
-		BlockState state = serverLevel.getBlockState(pos);
 
 		List<Map.Entry<String, GlitchConfig.GlitchEntry>> entries = new ArrayList<>(config.glitches.entrySet());
 		shuffle(entries, random);
@@ -404,6 +413,96 @@ public final class ServerGlitchSystem {
 					serverLevel,
 					pos,
 					state,
+					hand,
+					hitResult
+			);
+			if (!triggered) {
+				continue;
+			}
+
+			long cooldownTicks = Math.max(0L, getCooldownTicksForStability(entry, stabilityPercent));
+			NEXT_ALLOWED_TICKS.put(id, gameTime + cooldownTicks);
+			return InteractionResult.SUCCESS;
+		}
+
+		return InteractionResult.PASS;
+	}
+
+	private static InteractionResult onUseEntity(
+			Player player,
+			Level world,
+			InteractionHand hand,
+			Entity entity,
+			EntityHitResult hitResult
+	) {
+		if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer)) {
+			return InteractionResult.PASS;
+		}
+		ChestDesyncGlitch.noteEntityInteraction(serverPlayer, entity, hand);
+
+		GlitchConfig.ConfigData config = GlitchConfig.get();
+		if (!config.enabled || config.glitches == null || config.glitches.isEmpty()) {
+			return InteractionResult.PASS;
+		}
+
+		MinecraftServer server = serverPlayer.level().getServer();
+		if (server == null || server.getPlayerList().getPlayerCount() <= 0) {
+			return InteractionResult.PASS;
+		}
+
+		long gameTime = server.overworld().getGameTime();
+		double stabilityPercent = ServerStabilitySystem.getStabilityPercent();
+		RandomSource random = server.overworld().getRandom();
+
+		List<Map.Entry<String, GlitchConfig.GlitchEntry>> entries = new ArrayList<>(config.glitches.entrySet());
+		shuffle(entries, random);
+
+		for (Map.Entry<String, GlitchConfig.GlitchEntry> mapEntry : entries) {
+			String id = mapEntry.getKey();
+			GlitchConfig.GlitchEntry entry = mapEntry.getValue();
+			ServerGlitchHandler handler = HANDLERS.get(id);
+
+			if (handler == null) {
+				logUnknownGlitchId(id);
+				continue;
+			}
+			if (!(handler instanceof EntityUseGlitchHandler entityUseHandler)) {
+				continue;
+			}
+			if (entry == null || !entry.enabled) {
+				continue;
+			}
+			if (stabilityPercent < entry.minStabilityPercent || stabilityPercent > entry.maxStabilityPercent) {
+				continue;
+			}
+
+			long nextAllowedTick = NEXT_ALLOWED_TICKS.getOrDefault(id, Long.MIN_VALUE);
+			if (gameTime < nextAllowedTick) {
+				continue;
+			}
+
+			double baseChance = clamp01(entry.chancePerCheck);
+			double influence = clamp01(entry.stabilityInfluence);
+			double rangeInstabilityFactor = getRangeInstabilityFactor(
+					stabilityPercent,
+					entry.minStabilityPercent,
+					entry.maxStabilityPercent
+			);
+			double effectiveChance = baseChance * ((1.0D - influence) + (rangeInstabilityFactor * influence));
+			if (effectiveChance <= 0.0D) {
+				continue;
+			}
+			if (random.nextDouble() > effectiveChance) {
+				continue;
+			}
+
+			boolean triggered = entityUseHandler.triggerOnUseEntity(
+					server,
+					random,
+					entry,
+					stabilityPercent,
+					serverPlayer,
+					entity,
 					hand,
 					hitResult
 			);
