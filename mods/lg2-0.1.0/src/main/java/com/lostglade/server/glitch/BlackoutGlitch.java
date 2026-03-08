@@ -10,7 +10,11 @@ import net.minecraft.world.effect.MobEffects;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 public final class BlackoutGlitch implements ServerGlitchHandler {
 	private static final String MIN_TARGET_PLAYERS = "minTargetPlayers";
@@ -19,6 +23,45 @@ public final class BlackoutGlitch implements ServerGlitchHandler {
 	private static final String MAX_DURATION_SECONDS = "maxDurationSeconds";
 	private static final int BLINDNESS_AMPLIFIER = 3;
 	private static final int DARKNESS_AMPLIFIER = 1;
+	private static final int EFFECT_REAPPLY_INTERVAL_TICKS = 4;
+	private static final int EFFECT_WINDOW_TICKS = 16;
+	private static final int MIN_FADE_IN_TICKS = 20;
+	private static final int MAX_FADE_IN_TICKS = 120;
+	private static final double FLICKER_WAVE_BASE = 0.78D;
+	private static final double FLICKER_WAVE_AMPLITUDE = 0.22D;
+	private static final double FLICKER_WAVE_SPEED = 0.40D;
+	private static final double FLICKER_NOISE_MIN = 0.75D;
+	private static final Map<UUID, ActiveBlackoutState> ACTIVE_STATES = new HashMap<>();
+
+	public static void tickActiveStates(MinecraftServer server) {
+		if (server == null || ACTIVE_STATES.isEmpty()) {
+			return;
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		Iterator<Map.Entry<UUID, ActiveBlackoutState>> iterator = ACTIVE_STATES.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, ActiveBlackoutState> mapEntry = iterator.next();
+			ServerPlayer player = server.getPlayerList().getPlayer(mapEntry.getKey());
+			if (player == null || !player.isAlive() || player.isSpectator()) {
+				iterator.remove();
+				continue;
+			}
+
+			ActiveBlackoutState state = mapEntry.getValue();
+			if (nowTick >= state.endTick) {
+				iterator.remove();
+				continue;
+			}
+
+			if (nowTick < state.nextApplyTick) {
+				continue;
+			}
+
+			applyScaledEffects(player, state, nowTick);
+			state.nextApplyTick = nowTick + EFFECT_REAPPLY_INTERVAL_TICKS;
+		}
+	}
 
 	@Override
 	public String id() {
@@ -78,6 +121,8 @@ public final class BlackoutGlitch implements ServerGlitchHandler {
 
 	@Override
 	public boolean trigger(MinecraftServer server, RandomSource random, GlitchConfig.GlitchEntry entry, double stabilityPercent) {
+		tickActiveStates(server);
+
 		List<ServerPlayer> targets = collectTargets(server);
 		if (targets.isEmpty()) {
 			return false;
@@ -95,17 +140,96 @@ public final class BlackoutGlitch implements ServerGlitchHandler {
 		int maxDurationSeconds = GlitchSettingsHelper.getInt(settings, MAX_DURATION_SECONDS, 12);
 		int durationSeconds = interpolateInt(minDurationSeconds, maxDurationSeconds, instability);
 		int durationTicks = Math.max(20, durationSeconds * 20);
+		int fadeInTicks = Math.max(MIN_FADE_IN_TICKS, Math.min(MAX_FADE_IN_TICKS, durationTicks / 2));
+		long nowTick = server.overworld().getGameTime();
 
 		shuffle(targets, random);
 		boolean appliedAny = false;
 		for (int i = 0; i < targetCount; i++) {
 			ServerPlayer player = targets.get(i);
-			player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, durationTicks, BLINDNESS_AMPLIFIER, false, false, false));
-			player.addEffect(new MobEffectInstance(MobEffects.DARKNESS, durationTicks, DARKNESS_AMPLIFIER, false, false, false));
+			ActiveBlackoutState state = new ActiveBlackoutState(
+					nowTick,
+					nowTick + durationTicks,
+					nowTick,
+					fadeInTicks,
+					calculatePlayerPhase(player)
+			);
+			ACTIVE_STATES.put(player.getUUID(), state);
+			applyScaledEffects(player, state, nowTick);
+			state.nextApplyTick = nowTick + EFFECT_REAPPLY_INTERVAL_TICKS;
 			appliedAny = true;
 		}
 
 		return appliedAny;
+	}
+
+	private static void applyScaledEffects(ServerPlayer player, ActiveBlackoutState state, long nowTick) {
+		int remainingTicks = (int) Math.max(1L, state.endTick - nowTick);
+		int effectDurationTicks = Math.max(2, Math.min(EFFECT_WINDOW_TICKS, remainingTicks));
+
+		double fadeProgress = getFadeProgress(state, nowTick);
+		double flicker = getFlickerFactor(state, nowTick, player.getUUID());
+		double intensity = clamp01(fadeProgress * flicker);
+		int blindnessAmplifier = scaleAmplifier(BLINDNESS_AMPLIFIER, intensity);
+		int darknessAmplifier = scaleAmplifier(DARKNESS_AMPLIFIER, intensity);
+
+		player.addEffect(new MobEffectInstance(
+				MobEffects.BLINDNESS,
+				effectDurationTicks,
+				blindnessAmplifier,
+				false,
+				false,
+				false
+		));
+		player.addEffect(new MobEffectInstance(
+				MobEffects.DARKNESS,
+				effectDurationTicks,
+				darknessAmplifier,
+				false,
+				false,
+				false
+		));
+	}
+
+	private static double getFadeProgress(ActiveBlackoutState state, long nowTick) {
+		if (state.fadeInTicks <= 0) {
+			return 1.0D;
+		}
+		double elapsed = Math.max(0L, nowTick - state.startTick);
+		return clamp01(elapsed / (double) state.fadeInTicks);
+	}
+
+	private static double getFlickerFactor(ActiveBlackoutState state, long nowTick, UUID playerId) {
+		double wave = FLICKER_WAVE_BASE + (FLICKER_WAVE_AMPLITUDE * Math.sin((nowTick + state.phaseOffset) * FLICKER_WAVE_SPEED));
+		double noise = FLICKER_NOISE_MIN + ((1.0D - FLICKER_NOISE_MIN) * pseudoRandom01(playerId, nowTick / EFFECT_REAPPLY_INTERVAL_TICKS));
+		return clamp01(wave * noise);
+	}
+
+	private static int scaleAmplifier(int maxAmplifier, double intensity) {
+		if (maxAmplifier <= 0) {
+			return 0;
+		}
+		return Math.max(0, Math.min(maxAmplifier, (int) Math.round(maxAmplifier * clamp01(intensity))));
+	}
+
+	private static int calculatePlayerPhase(ServerPlayer player) {
+		UUID uuid = player.getUUID();
+		long mixed = uuid.getMostSignificantBits() ^ Long.rotateLeft(uuid.getLeastSignificantBits(), 17);
+		return (int) (mixed & 1023L);
+	}
+
+	private static double pseudoRandom01(UUID playerId, long step) {
+		long seed = step
+				^ playerId.getMostSignificantBits()
+				^ Long.rotateLeft(playerId.getLeastSignificantBits(), 29)
+				^ 0x9E3779B97F4A7C15L;
+		seed ^= (seed >>> 33);
+		seed *= 0xff51afd7ed558ccdL;
+		seed ^= (seed >>> 33);
+		seed *= 0xc4ceb9fe1a85ec53L;
+		seed ^= (seed >>> 33);
+		long mantissa = (seed >>> 11) & ((1L << 53) - 1);
+		return mantissa / (double) (1L << 53);
 	}
 
 	private static List<ServerPlayer> collectTargets(MinecraftServer server) {
@@ -127,6 +251,10 @@ public final class BlackoutGlitch implements ServerGlitchHandler {
 		return min + (int) Math.round((max - min) * clamped);
 	}
 
+	private static double clamp01(double value) {
+		return Math.max(0.0D, Math.min(1.0D, value));
+	}
+
 	private static double getRangeInstabilityFactor(double stabilityPercent, double minStabilityPercent, double maxStabilityPercent) {
 		double range = maxStabilityPercent - minStabilityPercent;
 		if (range <= 1.0E-9D) {
@@ -140,6 +268,22 @@ public final class BlackoutGlitch implements ServerGlitchHandler {
 		for (int i = list.size() - 1; i > 0; i--) {
 			int swapWith = random.nextInt(i + 1);
 			Collections.swap(list, i, swapWith);
+		}
+	}
+
+	private static final class ActiveBlackoutState {
+		private final long startTick;
+		private final long endTick;
+		private long nextApplyTick;
+		private final int fadeInTicks;
+		private final int phaseOffset;
+
+		private ActiveBlackoutState(long startTick, long endTick, long nextApplyTick, int fadeInTicks, int phaseOffset) {
+			this.startTick = startTick;
+			this.endTick = endTick;
+			this.nextApplyTick = nextApplyTick;
+			this.fadeInTicks = fadeInTicks;
+			this.phaseOffset = phaseOffset;
 		}
 	}
 }

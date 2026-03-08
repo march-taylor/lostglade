@@ -93,12 +93,12 @@
       "chancePerCheck": 0.2,
       "stabilityInfluence": 1.0,
       "minCooldownTicks": 480,
-      "maxCooldownTicks": 3600,
+      "maxCooldownTicks": 4800,
       "settings": {
         "minTargetPlayers": 1,
         "maxTargetPlayers": "whitelistCount",
-        "minDurationSeconds": 8,
-        "maxDurationSeconds": 12
+        "minDurationSeconds": 4,
+        "maxDurationSeconds": 8
       }
     }
   }

@@ -140,6 +140,7 @@ public final class ServerGlitchSystem {
 
 	private static void tick(MinecraftServer server) {
 		InventoryTextureShuffleGlitch.tickActiveStates(server);
+		BlackoutGlitch.tickActiveStates(server);
 
 		GlitchConfig.ConfigData config = GlitchConfig.get();
 		if (!config.enabled) {
