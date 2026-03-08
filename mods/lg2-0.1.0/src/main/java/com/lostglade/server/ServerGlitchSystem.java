@@ -6,6 +6,7 @@ import com.lostglade.config.GlitchConfig;
 import com.lostglade.server.glitch.ChatInterferenceGlitch;
 import com.lostglade.server.glitch.ChatMessageGlitchHandler;
 import com.lostglade.server.glitch.CheckpointDesyncGlitch;
+import com.lostglade.server.glitch.InventoryTextureShuffleGlitch;
 import com.lostglade.server.glitch.PhantomSoundGlitch;
 import com.lostglade.server.glitch.RespawnGlitchHandler;
 import com.lostglade.server.glitch.ServerGlitchHandler;
@@ -57,6 +58,7 @@ public final class ServerGlitchSystem {
 		registerHandler(new ChatInterferenceGlitch());
 		registerHandler(new CheckpointDesyncGlitch());
 		registerHandler(new TimeOfDayJumpGlitch());
+		registerHandler(new InventoryTextureShuffleGlitch());
 		reloadConfig();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
@@ -135,6 +137,8 @@ public final class ServerGlitchSystem {
 	}
 
 	private static void tick(MinecraftServer server) {
+		InventoryTextureShuffleGlitch.tickActiveStates(server);
+
 		GlitchConfig.ConfigData config = GlitchConfig.get();
 		if (!config.enabled) {
 			return;

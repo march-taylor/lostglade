@@ -3,6 +3,7 @@ package com.lostglade.server.glitch;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
+import com.lostglade.config.ConfigVariableResolver;
 
 public final class GlitchSettingsHelper {
 	private GlitchSettingsHelper() {
@@ -10,12 +11,19 @@ public final class GlitchSettingsHelper {
 
 	public static int getInt(JsonObject settings, String key, int fallback) {
 		JsonElement element = settings.get(key);
-		if (!(element instanceof JsonPrimitive primitive) || !primitive.isNumber()) {
+		if (!(element instanceof JsonPrimitive primitive)) {
 			return fallback;
 		}
 
 		try {
-			return primitive.getAsInt();
+			if (primitive.isNumber()) {
+				return primitive.getAsInt();
+			}
+			if (primitive.isString()) {
+				Double evaluated = ConfigVariableResolver.evaluateStringExpression(primitive.getAsString());
+				return evaluated == null ? fallback : (int) Math.round(evaluated);
+			}
+			return fallback;
 		} catch (Exception ignored) {
 			return fallback;
 		}
@@ -23,16 +31,35 @@ public final class GlitchSettingsHelper {
 
 	public static double getDouble(JsonObject settings, String key, double fallback) {
 		JsonElement element = settings.get(key);
-		if (!(element instanceof JsonPrimitive primitive) || !primitive.isNumber()) {
+		if (!(element instanceof JsonPrimitive primitive)) {
 			return fallback;
 		}
 
 		try {
-			double value = primitive.getAsDouble();
+			double value;
+			if (primitive.isNumber()) {
+				value = primitive.getAsDouble();
+			} else if (primitive.isString()) {
+				Double evaluated = ConfigVariableResolver.evaluateStringExpression(primitive.getAsString());
+				if (evaluated == null) {
+					return fallback;
+				}
+				value = evaluated;
+			} else {
+				return fallback;
+			}
 			return Double.isFinite(value) ? value : fallback;
 		} catch (Exception ignored) {
 			return fallback;
 		}
+	}
+
+	public static boolean isExpression(JsonObject settings, String key) {
+		JsonElement element = settings.get(key);
+		if (!(element instanceof JsonPrimitive primitive) || !primitive.isString()) {
+			return false;
+		}
+		return ConfigVariableResolver.evaluateStringExpression(primitive.getAsString()) != null;
 	}
 
 	public static boolean sanitizeInt(
@@ -42,6 +69,13 @@ public final class GlitchSettingsHelper {
 			int minInclusive,
 			int maxInclusive
 	) {
+		JsonElement current = settings.get(key);
+		if (current instanceof JsonPrimitive primitive && primitive.isString()) {
+			if (ConfigVariableResolver.evaluateStringExpression(primitive.getAsString()) != null) {
+				return false;
+			}
+		}
+
 		int value = getInt(settings, key, defaultValue);
 		int clamped = Math.max(minInclusive, Math.min(maxInclusive, value));
 		if (value == clamped && settings.has(key)) {
@@ -59,6 +93,13 @@ public final class GlitchSettingsHelper {
 			double minInclusive,
 			double maxInclusive
 	) {
+		JsonElement current = settings.get(key);
+		if (current instanceof JsonPrimitive primitive && primitive.isString()) {
+			if (ConfigVariableResolver.evaluateStringExpression(primitive.getAsString()) != null) {
+				return false;
+			}
+		}
+
 		double value = getDouble(settings, key, defaultValue);
 		double clamped = Math.max(minInclusive, Math.min(maxInclusive, value));
 		if (Double.compare(value, clamped) == 0 && settings.has(key)) {

@@ -113,7 +113,9 @@ public final class PhantomSoundGlitch implements ServerGlitchHandler {
 
 		int minTargetPlayers = GlitchSettingsHelper.getInt(entry.settings, MIN_TARGET_PLAYERS, fallbackTargetPlayers);
 		int maxTargetPlayers = GlitchSettingsHelper.getInt(entry.settings, MAX_TARGET_PLAYERS, fallbackTargetPlayers);
-		if (maxTargetPlayers < minTargetPlayers) {
+		boolean minTargetExpression = GlitchSettingsHelper.isExpression(entry.settings, MIN_TARGET_PLAYERS);
+		boolean maxTargetExpression = GlitchSettingsHelper.isExpression(entry.settings, MAX_TARGET_PLAYERS);
+		if (!minTargetExpression && !maxTargetExpression && maxTargetPlayers < minTargetPlayers) {
 			entry.settings.addProperty(MAX_TARGET_PLAYERS, minTargetPlayers);
 			changed = true;
 		}

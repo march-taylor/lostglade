@@ -1,0 +1,560 @@
+package com.lostglade.server.glitch;
+
+import com.google.gson.JsonObject;
+import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.ServerStabilitySystem;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
+import net.minecraft.resources.Identifier;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.item.ItemStack;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
+public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler {
+	private static final String MIN_TARGET_PLAYERS = "minTargetPlayers";
+	private static final String MAX_TARGET_PLAYERS = "maxTargetPlayers";
+	private static final String MIN_SHUFFLED_PERCENT = "minShuffledPercent";
+	private static final String MAX_SHUFFLED_PERCENT = "maxShuffledPercent";
+	private static final String MIN_DURATION_SECONDS = "minDurationSeconds";
+	private static final String MAX_DURATION_SECONDS = "maxDurationSeconds";
+	private static final String MIN_RESHUFFLE_INTERVAL_TICKS = "minReshuffleIntervalTicks";
+	private static final String MAX_RESHUFFLE_INTERVAL_TICKS = "maxReshuffleIntervalTicks";
+
+	private static final int PLAYER_INVENTORY_SLOT_COUNT = 36;
+	private static final int RESEND_INTERVAL_TICKS = 5;
+	private static final Set<Integer> FULL_INVENTORY_SLOTS = buildFullInventorySlotSet();
+	private static final Map<UUID, ActiveShuffleState> ACTIVE_STATES = new HashMap<>();
+
+	@Override
+	public String id() {
+		return "inventory_texture_shuffle";
+	}
+
+	@Override
+	public GlitchConfig.GlitchEntry defaultEntry() {
+		GlitchConfig.GlitchEntry entry = new GlitchConfig.GlitchEntry();
+		entry.enabled = true;
+		entry.minStabilityPercent = 0.0D;
+		entry.maxStabilityPercent = 70.0D;
+		entry.chancePerCheck = 0.2D;
+		entry.stabilityInfluence = 1.0D;
+		entry.minCooldownTicks = 80;
+		entry.maxCooldownTicks = 1200;
+
+		JsonObject settings = new JsonObject();
+		settings.addProperty(MIN_TARGET_PLAYERS, 1);
+		settings.addProperty(MAX_TARGET_PLAYERS, 4);
+		settings.addProperty(MIN_SHUFFLED_PERCENT, 8.0D);
+		settings.addProperty(MAX_SHUFFLED_PERCENT, 75.0D);
+		settings.addProperty(MIN_DURATION_SECONDS, 3);
+		settings.addProperty(MAX_DURATION_SECONDS, 20);
+		settings.addProperty(MIN_RESHUFFLE_INTERVAL_TICKS, 8);
+		settings.addProperty(MAX_RESHUFFLE_INTERVAL_TICKS, 50);
+		entry.settings = settings;
+		return entry;
+	}
+
+	@Override
+	public boolean sanitizeSettings(GlitchConfig.GlitchEntry entry) {
+		if (entry.settings == null) {
+			entry.settings = new JsonObject();
+		}
+
+		boolean changed = false;
+		changed |= GlitchSettingsHelper.sanitizeInt(entry.settings, MIN_TARGET_PLAYERS, 1, 1, 100);
+		changed |= GlitchSettingsHelper.sanitizeInt(entry.settings, MAX_TARGET_PLAYERS, 4, 1, 100);
+		changed |= GlitchSettingsHelper.sanitizeDouble(entry.settings, MIN_SHUFFLED_PERCENT, 8.0D, 0.0D, 100.0D);
+		changed |= GlitchSettingsHelper.sanitizeDouble(entry.settings, MAX_SHUFFLED_PERCENT, 75.0D, 0.0D, 100.0D);
+		changed |= GlitchSettingsHelper.sanitizeInt(entry.settings, MIN_DURATION_SECONDS, 3, 1, 7200);
+		changed |= GlitchSettingsHelper.sanitizeInt(entry.settings, MAX_DURATION_SECONDS, 20, 1, 7200);
+		changed |= GlitchSettingsHelper.sanitizeInt(entry.settings, MIN_RESHUFFLE_INTERVAL_TICKS, 8, 1, 1200);
+		changed |= GlitchSettingsHelper.sanitizeInt(entry.settings, MAX_RESHUFFLE_INTERVAL_TICKS, 50, 1, 1200);
+
+		int minTargetPlayers = GlitchSettingsHelper.getInt(entry.settings, MIN_TARGET_PLAYERS, 1);
+		int maxTargetPlayers = GlitchSettingsHelper.getInt(entry.settings, MAX_TARGET_PLAYERS, 4);
+		boolean minTargetExpression = GlitchSettingsHelper.isExpression(entry.settings, MIN_TARGET_PLAYERS);
+		boolean maxTargetExpression = GlitchSettingsHelper.isExpression(entry.settings, MAX_TARGET_PLAYERS);
+		if (!minTargetExpression && !maxTargetExpression && maxTargetPlayers < minTargetPlayers) {
+			entry.settings.addProperty(MAX_TARGET_PLAYERS, minTargetPlayers);
+			changed = true;
+		}
+
+		double minPercent = GlitchSettingsHelper.getDouble(entry.settings, MIN_SHUFFLED_PERCENT, 8.0D);
+		double maxPercent = GlitchSettingsHelper.getDouble(entry.settings, MAX_SHUFFLED_PERCENT, 75.0D);
+		if (maxPercent < minPercent) {
+			entry.settings.addProperty(MAX_SHUFFLED_PERCENT, minPercent);
+			changed = true;
+		}
+
+		int minDuration = GlitchSettingsHelper.getInt(entry.settings, MIN_DURATION_SECONDS, 3);
+		int maxDuration = GlitchSettingsHelper.getInt(entry.settings, MAX_DURATION_SECONDS, 20);
+		if (maxDuration < minDuration) {
+			entry.settings.addProperty(MAX_DURATION_SECONDS, minDuration);
+			changed = true;
+		}
+
+		int minInterval = GlitchSettingsHelper.getInt(entry.settings, MIN_RESHUFFLE_INTERVAL_TICKS, 8);
+		int maxInterval = GlitchSettingsHelper.getInt(entry.settings, MAX_RESHUFFLE_INTERVAL_TICKS, 50);
+		if (maxInterval < minInterval) {
+			entry.settings.addProperty(MAX_RESHUFFLE_INTERVAL_TICKS, minInterval);
+			changed = true;
+		}
+
+		return changed;
+	}
+
+	@Override
+	public boolean trigger(MinecraftServer server, RandomSource random, GlitchConfig.GlitchEntry entry, double stabilityPercent) {
+		tickActiveStates(server);
+
+		List<ServerPlayer> players = collectEligiblePlayers(server);
+		if (players.isEmpty()) {
+			return false;
+		}
+
+		JsonObject settings = entry.settings == null ? new JsonObject() : entry.settings;
+		double instability = getRangeInstabilityFactor(stabilityPercent, entry.minStabilityPercent, entry.maxStabilityPercent);
+
+		int minTargetPlayers = GlitchSettingsHelper.getInt(settings, MIN_TARGET_PLAYERS, 1);
+		int maxTargetPlayers = GlitchSettingsHelper.getInt(settings, MAX_TARGET_PLAYERS, 4);
+		int targetPlayers = interpolateInt(minTargetPlayers, maxTargetPlayers, instability);
+		targetPlayers = Math.max(1, Math.min(players.size(), targetPlayers));
+
+		double minShuffledPercent = GlitchSettingsHelper.getDouble(settings, MIN_SHUFFLED_PERCENT, 8.0D);
+		double maxShuffledPercent = GlitchSettingsHelper.getDouble(settings, MAX_SHUFFLED_PERCENT, 75.0D);
+		double shuffledPercent = interpolateDouble(minShuffledPercent, maxShuffledPercent, instability);
+
+		int minDurationSeconds = GlitchSettingsHelper.getInt(settings, MIN_DURATION_SECONDS, 3);
+		int maxDurationSeconds = GlitchSettingsHelper.getInt(settings, MAX_DURATION_SECONDS, 20);
+
+		int minReshuffleInterval = GlitchSettingsHelper.getInt(settings, MIN_RESHUFFLE_INTERVAL_TICKS, 8);
+		int maxReshuffleInterval = GlitchSettingsHelper.getInt(settings, MAX_RESHUFFLE_INTERVAL_TICKS, 50);
+		int reshuffleIntervalTicks = interpolateInt(maxReshuffleInterval, minReshuffleInterval, instability);
+
+		long nowTick = server.overworld().getGameTime();
+
+		shuffle(players, random);
+
+		boolean appliedAny = false;
+		for (int i = 0; i < targetPlayers; i++) {
+			ServerPlayer player = players.get(i);
+			if (activateForPlayer(
+					player,
+					random,
+					shuffledPercent,
+					reshuffleIntervalTicks,
+					nowTick,
+					minDurationSeconds,
+					maxDurationSeconds,
+					minReshuffleInterval,
+					maxReshuffleInterval,
+					minShuffledPercent,
+					maxShuffledPercent,
+					entry.maxStabilityPercent,
+					entry.maxStabilityPercent + 10.0D
+			)) {
+				appliedAny = true;
+			}
+		}
+
+		return appliedAny;
+	}
+
+	public static void tickActiveStates(MinecraftServer server) {
+		if (server == null || ACTIVE_STATES.isEmpty()) {
+			return;
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		RandomSource random = server.overworld().getRandom();
+		double stabilityPercent = ServerStabilitySystem.getStabilityPercent();
+		Iterator<Map.Entry<UUID, ActiveShuffleState>> iterator = ACTIVE_STATES.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, ActiveShuffleState> stateEntry = iterator.next();
+			ServerPlayer player = server.getPlayerList().getPlayer(stateEntry.getKey());
+			if (player == null) {
+				iterator.remove();
+				continue;
+			}
+
+			ActiveShuffleState state = stateEntry.getValue();
+			if (stabilityPercent > state.expireAboveStabilityPercent) {
+				restoreFullInventoryVisuals(player);
+				iterator.remove();
+				continue;
+			}
+
+			double currentInstability = getStabilityScaledInstability(stabilityPercent, state.maxStabilityPercent);
+			int currentDurationSeconds = interpolateInt(state.minDurationSeconds, state.maxDurationSeconds, currentInstability);
+			long currentDurationTicks = Math.max(1L, currentDurationSeconds) * 20L;
+			if (nowTick >= state.startedAtTick + currentDurationTicks) {
+				restoreFullInventoryVisuals(player);
+				iterator.remove();
+				continue;
+			}
+
+			state.shuffledPercent = interpolateDouble(state.minShuffledPercent, state.maxShuffledPercent, currentInstability);
+			state.reshuffleIntervalTicks = interpolateInt(state.maxReshuffleIntervalTicks, state.minReshuffleIntervalTicks, currentInstability);
+
+			if (nowTick >= state.lastReshuffleAtTick + state.reshuffleIntervalTicks) {
+				Map<Integer, Identifier> newModels = buildShuffledModelMap(player, random, state.shuffledPercent);
+				if (newModels.isEmpty()) {
+					restoreFullInventoryVisuals(player);
+					iterator.remove();
+					continue;
+				}
+
+				Set<Integer> toRestore = new HashSet<>(state.modelBySlot.keySet());
+				toRestore.removeAll(newModels.keySet());
+				if (!toRestore.isEmpty()) {
+					restoreRealVisuals(player, toRestore);
+				}
+
+				applyModelMap(player, newModels);
+				state.modelBySlot = newModels;
+				state.lastReshuffleAtTick = nowTick;
+				state.nextResendAtTick = nowTick + RESEND_INTERVAL_TICKS;
+				continue;
+			}
+
+			if (nowTick >= state.nextResendAtTick) {
+				applyModelMap(player, state.modelBySlot);
+				state.nextResendAtTick = nowTick + RESEND_INTERVAL_TICKS;
+			}
+		}
+	}
+
+	private static boolean activateForPlayer(
+			ServerPlayer player,
+			RandomSource random,
+			double shuffledPercent,
+			int reshuffleIntervalTicks,
+			long nowTick,
+			int minDurationSeconds,
+			int maxDurationSeconds,
+			int minReshuffleIntervalTicks,
+			int maxReshuffleIntervalTicks,
+			double minShuffledPercent,
+			double maxShuffledPercent,
+			double maxStabilityPercent,
+			double expireAboveStabilityPercent
+	) {
+		clearState(player);
+
+		Map<Integer, Identifier> modelBySlot = buildShuffledModelMap(player, random, shuffledPercent);
+		if (modelBySlot.isEmpty()) {
+			return false;
+		}
+
+		applyModelMap(player, modelBySlot);
+		ACTIVE_STATES.put(player.getUUID(), new ActiveShuffleState(
+				nowTick,
+				nowTick,
+				nowTick + RESEND_INTERVAL_TICKS,
+				Math.max(1, reshuffleIntervalTicks),
+				shuffledPercent,
+				minDurationSeconds,
+				maxDurationSeconds,
+				Math.max(1, minReshuffleIntervalTicks),
+				Math.max(1, maxReshuffleIntervalTicks),
+				minShuffledPercent,
+				maxShuffledPercent,
+				maxStabilityPercent,
+				expireAboveStabilityPercent,
+				modelBySlot
+		));
+		return true;
+	}
+
+	private static void clearState(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+
+		ActiveShuffleState oldState = ACTIVE_STATES.remove(player.getUUID());
+		if (oldState == null) {
+			return;
+		}
+
+		restoreFullInventoryVisuals(player);
+	}
+
+	private static Map<Integer, Identifier> buildShuffledModelMap(ServerPlayer player, RandomSource random, double shuffledPercent) {
+		Inventory inventory = player.getInventory();
+		List<Integer> nonEmptySlots = new ArrayList<>();
+		for (int slot = 0; slot < PLAYER_INVENTORY_SLOT_COUNT; slot++) {
+			if (!inventory.getItem(slot).isEmpty()) {
+				nonEmptySlots.add(slot);
+			}
+		}
+
+		if (nonEmptySlots.size() < 2 || shuffledPercent <= 0.0D) {
+			return Collections.emptyMap();
+		}
+
+		int slotsToShuffle = (int) Math.round(nonEmptySlots.size() * (shuffledPercent / 100.0D));
+		slotsToShuffle = Math.min(nonEmptySlots.size(), Math.max(0, slotsToShuffle));
+		if (slotsToShuffle > 0 && slotsToShuffle < 2) {
+			slotsToShuffle = 2;
+		}
+		if (slotsToShuffle < 2) {
+			return Collections.emptyMap();
+		}
+
+		shuffle(nonEmptySlots, random);
+		List<Integer> selectedSlots = new ArrayList<>(nonEmptySlots.subList(0, slotsToShuffle));
+		List<Identifier> sourceModels = new ArrayList<>(selectedSlots.size());
+		for (Integer slot : selectedSlots) {
+			sourceModels.add(resolveCurrentModelId(inventory.getItem(slot)));
+		}
+
+		List<Identifier> shuffledModels = new ArrayList<>(sourceModels);
+		shuffle(shuffledModels, random);
+		if (sameOrder(sourceModels, shuffledModels) && shuffledModels.size() > 1) {
+			Collections.rotate(shuffledModels, 1);
+		}
+
+		Map<Integer, Identifier> result = new LinkedHashMap<>();
+		boolean changedAny = false;
+		for (int i = 0; i < selectedSlots.size(); i++) {
+			Identifier sourceModel = sourceModels.get(i);
+			Identifier shuffledModel = shuffledModels.get(i);
+			if (!sourceModel.equals(shuffledModel)) {
+				changedAny = true;
+			}
+			result.put(selectedSlots.get(i), shuffledModel);
+		}
+
+		return changedAny ? result : Collections.emptyMap();
+	}
+
+	private static void applyModelMap(ServerPlayer player, Map<Integer, Identifier> modelBySlot) {
+		if (modelBySlot.isEmpty()) {
+			return;
+		}
+
+		Inventory inventory = player.getInventory();
+		Map<Integer, ItemStack> fakeVisualBySlot = new LinkedHashMap<>();
+		for (Map.Entry<Integer, Identifier> mapEntry : modelBySlot.entrySet()) {
+			int slot = mapEntry.getKey();
+			ItemStack realStack = inventory.getItem(slot);
+			if (realStack.isEmpty()) {
+				continue;
+			}
+
+			ItemStack fakeStack = realStack.copy();
+			fakeStack.set(DataComponents.ITEM_MODEL, mapEntry.getValue());
+			fakeVisualBySlot.put(slot, fakeStack);
+		}
+
+		if (fakeVisualBySlot.isEmpty()) {
+			return;
+		}
+
+		sendVisualOverridesForMenu(player, player.inventoryMenu, fakeVisualBySlot, null);
+		if (player.containerMenu != player.inventoryMenu) {
+			sendVisualOverridesForMenu(player, player.containerMenu, fakeVisualBySlot, null);
+		}
+	}
+
+	private static void restoreRealVisuals(ServerPlayer player, Set<Integer> slots) {
+		if (slots.isEmpty()) {
+			return;
+		}
+
+		Map<Integer, ItemStack> realVisualBySlot = new LinkedHashMap<>();
+		for (Integer slot : slots) {
+			realVisualBySlot.put(slot, player.getInventory().getItem(slot).copy());
+		}
+
+		sendVisualOverridesForMenu(player, player.inventoryMenu, realVisualBySlot, slots);
+		if (player.containerMenu != player.inventoryMenu) {
+			sendVisualOverridesForMenu(player, player.containerMenu, realVisualBySlot, slots);
+		}
+	}
+
+	private static void restoreFullInventoryVisuals(ServerPlayer player) {
+		restoreRealVisuals(player, FULL_INVENTORY_SLOTS);
+	}
+
+	private static void sendVisualOverridesForMenu(
+			ServerPlayer player,
+			AbstractContainerMenu menu,
+			Map<Integer, ItemStack> visualBySlot,
+			Set<Integer> allowedSlots
+	) {
+		if (menu == null) {
+			return;
+		}
+
+		Inventory inventory = player.getInventory();
+		int stateId = menu.incrementStateId();
+		for (int menuSlot = 0; menuSlot < menu.slots.size(); menuSlot++) {
+			Slot slot = menu.getSlot(menuSlot);
+			if (slot.container != inventory) {
+				continue;
+			}
+
+			int inventorySlot = slot.getContainerSlot();
+			if (allowedSlots != null && !allowedSlots.contains(inventorySlot)) {
+				continue;
+			}
+
+			ItemStack visual = visualBySlot.get(inventorySlot);
+			if (visual == null) {
+				continue;
+			}
+
+			player.connection.send(new ClientboundContainerSetSlotPacket(
+					menu.containerId,
+					stateId,
+					menuSlot,
+					visual.copy()
+			));
+		}
+	}
+
+	private static List<ServerPlayer> collectEligiblePlayers(MinecraftServer server) {
+		List<ServerPlayer> result = new ArrayList<>();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (player.isSpectator() || !player.isAlive()) {
+				continue;
+			}
+			result.add(player);
+		}
+		return result;
+	}
+
+	private static Identifier resolveCurrentModelId(ItemStack stack) {
+		Identifier explicitModel = stack.get(DataComponents.ITEM_MODEL);
+		return explicitModel == null ? BuiltInRegistries.ITEM.getKey(stack.getItem()) : explicitModel;
+	}
+
+	private static boolean sameOrder(List<Identifier> first, List<Identifier> second) {
+		if (first.size() != second.size()) {
+			return false;
+		}
+		for (int i = 0; i < first.size(); i++) {
+			if (!first.get(i).equals(second.get(i))) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static int interpolateInt(int min, int max, double factor) {
+		if (max <= min) {
+			return min;
+		}
+		return min + (int) Math.round((max - min) * clamp01(factor));
+	}
+
+	private static double interpolateDouble(double min, double max, double factor) {
+		if (max <= min) {
+			return min;
+		}
+		return min + ((max - min) * clamp01(factor));
+	}
+
+	private static double getRangeInstabilityFactor(double stabilityPercent, double minStabilityPercent, double maxStabilityPercent) {
+		double range = maxStabilityPercent - minStabilityPercent;
+		if (range <= 1.0E-9D) {
+			return 1.0D;
+		}
+		double normalized = (stabilityPercent - minStabilityPercent) / range;
+		return 1.0D - clamp01(normalized);
+	}
+
+	private static double getStabilityScaledInstability(double stabilityPercent, double maxStabilityPercent) {
+		if (maxStabilityPercent <= 1.0E-9D) {
+			return 1.0D;
+		}
+
+		double clampedStability = Math.max(0.0D, Math.min(maxStabilityPercent, stabilityPercent));
+		return 1.0D - (clampedStability / maxStabilityPercent);
+	}
+
+	private static void shuffle(List<?> list, RandomSource random) {
+		for (int i = list.size() - 1; i > 0; i--) {
+			int swapWith = random.nextInt(i + 1);
+			Collections.swap(list, i, swapWith);
+		}
+	}
+
+	private static Set<Integer> buildFullInventorySlotSet() {
+		Set<Integer> slots = new HashSet<>();
+		for (int i = 0; i < PLAYER_INVENTORY_SLOT_COUNT; i++) {
+			slots.add(i);
+		}
+		return Set.copyOf(slots);
+	}
+
+	private static double clamp01(double value) {
+		return Math.max(0.0D, Math.min(1.0D, value));
+	}
+
+	private static final class ActiveShuffleState {
+		private long startedAtTick;
+		private long lastReshuffleAtTick;
+		private long nextResendAtTick;
+		private int reshuffleIntervalTicks;
+		private double shuffledPercent;
+		private int minDurationSeconds;
+		private int maxDurationSeconds;
+		private int minReshuffleIntervalTicks;
+		private int maxReshuffleIntervalTicks;
+		private double minShuffledPercent;
+		private double maxShuffledPercent;
+		private double maxStabilityPercent;
+		private double expireAboveStabilityPercent;
+		private Map<Integer, Identifier> modelBySlot;
+
+		private ActiveShuffleState(
+				long startedAtTick,
+				long lastReshuffleAtTick,
+				long nextResendAtTick,
+				int reshuffleIntervalTicks,
+				double shuffledPercent,
+				int minDurationSeconds,
+				int maxDurationSeconds,
+				int minReshuffleIntervalTicks,
+				int maxReshuffleIntervalTicks,
+				double minShuffledPercent,
+				double maxShuffledPercent,
+				double maxStabilityPercent,
+				double expireAboveStabilityPercent,
+				Map<Integer, Identifier> modelBySlot
+		) {
+			this.startedAtTick = startedAtTick;
+			this.lastReshuffleAtTick = lastReshuffleAtTick;
+			this.nextResendAtTick = nextResendAtTick;
+			this.reshuffleIntervalTicks = reshuffleIntervalTicks;
+			this.shuffledPercent = shuffledPercent;
+			this.minDurationSeconds = minDurationSeconds;
+			this.maxDurationSeconds = maxDurationSeconds;
+			this.minReshuffleIntervalTicks = minReshuffleIntervalTicks;
+			this.maxReshuffleIntervalTicks = maxReshuffleIntervalTicks;
+			this.minShuffledPercent = minShuffledPercent;
+			this.maxShuffledPercent = maxShuffledPercent;
+			this.maxStabilityPercent = maxStabilityPercent;
+			this.expireAboveStabilityPercent = expireAboveStabilityPercent;
+			this.modelBySlot = modelBySlot;
+		}
+	}
+}

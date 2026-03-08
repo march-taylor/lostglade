@@ -13,7 +13,7 @@
       "maxCooldownTicks": 3600,
       "settings": {
         "minTargetPlayers": 1,
-        "maxTargetPlayers": 8,
+        "maxTargetPlayers": "round(whitelistCount*0.75)",
         "minDistance": 1.0,
         "maxDistance": 16.0,
         "minVolume": 0.5,
@@ -64,6 +64,25 @@
       "settings": {
         "minJumpTicks": 100,
         "maxJumpTicks": 23900
+      }
+    },
+    "inventory_texture_shuffle": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 40.0,
+      "chancePerCheck": 0.4,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 0,
+      "maxCooldownTicks": 3600,
+      "settings": {
+        "minTargetPlayers": 1,
+        "maxTargetPlayers": "whitelistCount",
+        "minShuffledPercent": 10.0,
+        "maxShuffledPercent": 100.0,
+        "minDurationSeconds": 30,
+        "maxDurationSeconds": 60,
+        "minReshuffleIntervalTicks": 10,
+        "maxReshuffleIntervalTicks": 240
       }
     }
   }

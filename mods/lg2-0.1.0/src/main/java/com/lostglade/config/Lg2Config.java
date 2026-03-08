@@ -59,7 +59,7 @@ public final class Lg2Config {
 		}
 
 		try (Reader reader = Files.newBufferedReader(PATH)) {
-			ConfigData parsed = GSON.fromJson(reader, ConfigData.class);
+			ConfigData parsed = ConfigVariableResolver.fromJsonWithVariables(GSON, reader, ConfigData.class);
 			if (parsed == null) {
 				Lg2.LOGGER.warn("Config {} is empty, resetting to defaults", PATH);
 				return ConfigData.defaults();
