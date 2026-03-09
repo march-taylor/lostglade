@@ -11,6 +11,7 @@ import com.lostglade.server.glitch.BlackoutGlitch;
 import com.lostglade.server.glitch.ChestDesyncGlitch;
 import com.lostglade.server.glitch.CheckpointDesyncGlitch;
 import com.lostglade.server.glitch.EntityUseGlitchHandler;
+import com.lostglade.server.glitch.GravitySurgeGlitch;
 import com.lostglade.server.glitch.InventoryTextureShuffleGlitch;
 import com.lostglade.server.glitch.PhantomSoundGlitch;
 import com.lostglade.server.glitch.RespawnGlitchHandler;
@@ -83,6 +84,7 @@ public final class ServerGlitchSystem {
 		registerHandler(new TimeOfDayJumpGlitch());
 		registerHandler(new InventoryTextureShuffleGlitch());
 		registerHandler(new BlackoutGlitch());
+		registerHandler(new GravitySurgeGlitch());
 		registerHandler(new ChestDesyncGlitch());
 		registerHandler(new BitcoinOvercookGlitch());
 		reloadConfig();
@@ -92,6 +94,7 @@ public final class ServerGlitchSystem {
 			NEXT_ALLOWED_TICKS.clear();
 			ChestDesyncGlitch.resetTracking();
 			BitcoinOvercookGlitch.resetRuntimeState();
+			GravitySurgeGlitch.resetRuntimeState();
 		});
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
@@ -170,6 +173,7 @@ public final class ServerGlitchSystem {
 		ChestDesyncGlitch.tickPlacementTracking(server);
 		InventoryTextureShuffleGlitch.tickActiveStates(server);
 		BlackoutGlitch.tickActiveStates(server);
+		GravitySurgeGlitch.tickActiveStates(server);
 
 		GlitchConfig.ConfigData config = GlitchConfig.get();
 		if (!config.enabled) {

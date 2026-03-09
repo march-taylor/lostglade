@@ -6,10 +6,10 @@
     "phantom_sounds": {
       "enabled": true,
       "minStabilityPercent": 0.0,
-      "maxStabilityPercent": 60.0,
+      "maxStabilityPercent": 70.0,
       "chancePerCheck": 0.2,
       "stabilityInfluence": 1.0,
-      "minCooldownTicks": 60,
+      "minCooldownTicks": 20,
       "maxCooldownTicks": 3600,
       "settings": {
         "minTargetPlayers": 1,
@@ -89,7 +89,7 @@
     "blackout": {
       "enabled": true,
       "minStabilityPercent": 0.0,
-      "maxStabilityPercent": 25.0,
+      "maxStabilityPercent": 40.0,
       "chancePerCheck": 0.2,
       "stabilityInfluence": 1.0,
       "minCooldownTicks": 320,
@@ -101,12 +101,36 @@
         "maxDurationSeconds": 8
       }
     },
+    "gravity_surges": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 30.0,
+      "chancePerCheck": 0.1,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 800,
+      "maxCooldownTicks": 6000,
+      "settings": {
+        "minEntityPercent": 10.0,
+        "maxEntityPercent": 100.0,
+        "minItemPercent": 10.0,
+        "maxItemPercent": 100.0,
+        "minDurationSeconds": 5,
+        "maxDurationSeconds": 15,
+        "upwardDirectionWeight": 0.80,
+        "downwardDirectionWeight": 0.20,
+        "minDirectionCount": 1,
+        "maxDirectionCount": 10,
+        "playerControlRatio": 0.7,
+        "minForce": 0.1,
+        "maxForce": 1.0
+      }
+    },
     "chest_desync": {
       "enabled": true,
       "minStabilityPercent": 0.0,
       "maxStabilityPercent": 30.0,
       "chancePerCheck": 0.75,
-      "stabilityInfluence": 1.0,
+      "stabilityInfluence": 0.75,
       "minCooldownTicks": 0,
       "maxCooldownTicks": 0,
       "settings": {
