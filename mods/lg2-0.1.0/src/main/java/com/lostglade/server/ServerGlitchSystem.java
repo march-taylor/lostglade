@@ -54,6 +54,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 public final class ServerGlitchSystem {
 	private static final String CHAT_INTERFERENCE_ID = "chat_interference";
@@ -90,6 +91,7 @@ public final class ServerGlitchSystem {
 			checkTicker = 0L;
 			NEXT_ALLOWED_TICKS.clear();
 			ChestDesyncGlitch.resetTracking();
+			BitcoinOvercookGlitch.resetRuntimeState();
 		});
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
@@ -279,18 +281,22 @@ public final class ServerGlitchSystem {
 
 		RandomSource random = server.overworld().getRandom();
 		overcookHandler.accumulateExperience(furnace, entry);
+		UUID responsiblePlayerId = overcookHandler.getResponsiblePlayerId(level, pos);
 
 		double stabilityPercent = ServerStabilitySystem.getStabilityPercent();
 		long gameTime = server.overworld().getGameTime();
-		boolean canTrigger = entry.enabled
+		boolean guaranteedFirstTrigger = entry.enabled
+				&& responsiblePlayerId != null
+				&& overcookHandler.hasGuaranteedFirstTrigger(server, responsiblePlayerId);
+		boolean canTrigger = guaranteedFirstTrigger || (entry.enabled
 				&& stabilityPercent >= entry.minStabilityPercent
-				&& stabilityPercent <= entry.maxStabilityPercent;
+				&& stabilityPercent <= entry.maxStabilityPercent);
 		if (canTrigger) {
 			long nextAllowedTick = NEXT_ALLOWED_TICKS.getOrDefault(BITCOIN_OVERCOOK_ID, Long.MIN_VALUE);
-			canTrigger = gameTime >= nextAllowedTick;
+			canTrigger = guaranteedFirstTrigger || gameTime >= nextAllowedTick;
 		}
 
-		if (canTrigger) {
+		if (canTrigger && !guaranteedFirstTrigger) {
 			double baseChance = clamp01(entry.chancePerCheck);
 			double influence = clamp01(entry.stabilityInfluence);
 			double rangeInstabilityFactor = getRangeInstabilityFactor(
@@ -314,6 +320,9 @@ public final class ServerGlitchSystem {
 				recipeHolder,
 				input
 		)) {
+			if (guaranteedFirstTrigger) {
+				overcookHandler.markGuaranteedFirstTriggerUsed(server, responsiblePlayerId);
+			}
 			long cooldownTicks = Math.max(0L, getCooldownTicksForStability(entry, stabilityPercent));
 			NEXT_ALLOWED_TICKS.put(BITCOIN_OVERCOOK_ID, gameTime + cooldownTicks);
 			return;
@@ -422,6 +431,9 @@ public final class ServerGlitchSystem {
 		BlockPos pos = hitResult.getBlockPos();
 		BlockState state = serverLevel.getBlockState(pos);
 		ChestDesyncGlitch.noteBlockInteraction(serverPlayer, serverLevel, pos, state, hand, hitResult);
+		if (hand == InteractionHand.MAIN_HAND) {
+			BitcoinOvercookGlitch.notePotentialOwner(serverLevel, pos, serverPlayer);
+		}
 
 		GlitchConfig.ConfigData config = GlitchConfig.get();
 		if (!config.enabled || config.glitches == null || config.glitches.isEmpty()) {
