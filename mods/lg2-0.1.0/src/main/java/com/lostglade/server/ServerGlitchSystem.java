@@ -4,6 +4,7 @@ import com.google.gson.JsonObject;
 import com.lostglade.Lg2;
 import com.lostglade.config.GlitchConfig;
 import com.lostglade.server.glitch.BlockUseGlitchHandler;
+import com.lostglade.server.glitch.BitcoinOvercookGlitch;
 import com.lostglade.server.glitch.ChatInterferenceGlitch;
 import com.lostglade.server.glitch.ChatMessageGlitchHandler;
 import com.lostglade.server.glitch.BlackoutGlitch;
@@ -36,7 +37,11 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.crafting.AbstractCookingRecipe;
+import net.minecraft.world.item.crafting.RecipeHolder;
+import net.minecraft.world.item.crafting.SingleRecipeInput;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
@@ -53,6 +58,7 @@ import java.util.Set;
 public final class ServerGlitchSystem {
 	private static final String CHAT_INTERFERENCE_ID = "chat_interference";
 	private static final String CHECKPOINT_DESYNC_ID = "checkpoint_desync";
+	private static final String BITCOIN_OVERCOOK_ID = "bitcoin_overcook";
 
 	private static final Map<String, ServerGlitchHandler> HANDLERS = new LinkedHashMap<>();
 	private static final Map<String, Long> NEXT_ALLOWED_TICKS = new HashMap<>();
@@ -77,6 +83,7 @@ public final class ServerGlitchSystem {
 		registerHandler(new InventoryTextureShuffleGlitch());
 		registerHandler(new BlackoutGlitch());
 		registerHandler(new ChestDesyncGlitch());
+		registerHandler(new BitcoinOvercookGlitch());
 		reloadConfig();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
@@ -236,6 +243,83 @@ public final class ServerGlitchSystem {
 		Component decorated = params.decorate(Component.literal(message.signedContent()));
 		server.getPlayerList().broadcastSystemMessage(decorated, false);
 		return false;
+	}
+
+	public static void onFurnaceSmelt(
+			ServerLevel level,
+			BlockPos pos,
+			BlockState state,
+			AbstractFurnaceBlockEntity furnace,
+			RecipeHolder<? extends AbstractCookingRecipe> recipeHolder,
+			SingleRecipeInput input
+	) {
+		GlitchConfig.ConfigData config = GlitchConfig.get();
+		if (!config.enabled || config.glitches == null || config.glitches.isEmpty()) {
+			return;
+		}
+
+		ServerGlitchHandler baseHandler = HANDLERS.get(BITCOIN_OVERCOOK_ID);
+		if (!(baseHandler instanceof BitcoinOvercookGlitch overcookHandler)) {
+			return;
+		}
+
+		GlitchConfig.GlitchEntry entry = config.glitches.get(BITCOIN_OVERCOOK_ID);
+		if (entry == null) {
+			return;
+		}
+
+		MinecraftServer server = level.getServer();
+		if (server == null) {
+			return;
+		}
+
+		if (!overcookHandler.matches(furnace, input)) {
+			return;
+		}
+
+		RandomSource random = server.overworld().getRandom();
+		overcookHandler.accumulateExperience(furnace, entry);
+
+		double stabilityPercent = ServerStabilitySystem.getStabilityPercent();
+		long gameTime = server.overworld().getGameTime();
+		boolean canTrigger = entry.enabled
+				&& stabilityPercent >= entry.minStabilityPercent
+				&& stabilityPercent <= entry.maxStabilityPercent;
+		if (canTrigger) {
+			long nextAllowedTick = NEXT_ALLOWED_TICKS.getOrDefault(BITCOIN_OVERCOOK_ID, Long.MIN_VALUE);
+			canTrigger = gameTime >= nextAllowedTick;
+		}
+
+		if (canTrigger) {
+			double baseChance = clamp01(entry.chancePerCheck);
+			double influence = clamp01(entry.stabilityInfluence);
+			double rangeInstabilityFactor = getRangeInstabilityFactor(
+					stabilityPercent,
+					entry.minStabilityPercent,
+					entry.maxStabilityPercent
+			);
+			double effectiveChance = baseChance * ((1.0D - influence) + (rangeInstabilityFactor * influence));
+			canTrigger = effectiveChance > 0.0D && random.nextDouble() <= effectiveChance;
+		}
+
+		if (canTrigger && overcookHandler.triggerOnFurnaceSmelt(
+				server,
+				random,
+				entry,
+				stabilityPercent,
+				level,
+				pos,
+				state,
+				furnace,
+				recipeHolder,
+				input
+		)) {
+			long cooldownTicks = Math.max(0L, getCooldownTicksForStability(entry, stabilityPercent));
+			NEXT_ALLOWED_TICKS.put(BITCOIN_OVERCOOK_ID, gameTime + cooldownTicks);
+			return;
+		}
+
+		overcookHandler.clearResult(furnace);
 	}
 
 	private static void onCopyFrom(ServerPlayer oldPlayer, ServerPlayer newPlayer, boolean alive) {
