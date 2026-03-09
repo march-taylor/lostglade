@@ -101,7 +101,7 @@ public final class BlackoutGlitch implements ServerGlitchHandler {
 		changed |= GlitchSettingsHelper.sanitizeInt(entry.settings, MAX_DURATION_SECONDS, 12, 1, 120);
 
 		int minTargets = GlitchSettingsHelper.getInt(entry.settings, MIN_TARGET_PLAYERS, 1);
-		int maxTargets = GlitchSettingsHelper.getInt(entry.settings, MAX_TARGET_PLAYERS, 3);
+		int maxTargets = Math.max(1, GlitchSettingsHelper.getInt(entry.settings, MAX_TARGET_PLAYERS, 3));
 		boolean minTargetExpression = GlitchSettingsHelper.isExpression(entry.settings, MIN_TARGET_PLAYERS);
 		boolean maxTargetExpression = GlitchSettingsHelper.isExpression(entry.settings, MAX_TARGET_PLAYERS);
 		if (!minTargetExpression && !maxTargetExpression && maxTargets < minTargets) {
@@ -132,7 +132,7 @@ public final class BlackoutGlitch implements ServerGlitchHandler {
 		double instability = getRangeInstabilityFactor(stabilityPercent, entry.minStabilityPercent, entry.maxStabilityPercent);
 
 		int minTargets = GlitchSettingsHelper.getInt(settings, MIN_TARGET_PLAYERS, 1);
-		int maxTargets = GlitchSettingsHelper.getInt(settings, MAX_TARGET_PLAYERS, 3);
+		int maxTargets = Math.max(1, GlitchSettingsHelper.getInt(settings, MAX_TARGET_PLAYERS, 3));
 		int targetCount = interpolateInt(minTargets, maxTargets, instability);
 		targetCount = Math.max(1, Math.min(targets.size(), targetCount));
 

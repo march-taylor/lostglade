@@ -100,7 +100,7 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 		changed |= GlitchSettingsHelper.sanitizeInt(entry.settings, MAX_RESHUFFLE_INTERVAL_TICKS, 50, 1, 1200);
 
 		int minTargetPlayers = GlitchSettingsHelper.getInt(entry.settings, MIN_TARGET_PLAYERS, 1);
-		int maxTargetPlayers = GlitchSettingsHelper.getInt(entry.settings, MAX_TARGET_PLAYERS, 4);
+		int maxTargetPlayers = Math.max(1, GlitchSettingsHelper.getInt(entry.settings, MAX_TARGET_PLAYERS, 4));
 		boolean minTargetExpression = GlitchSettingsHelper.isExpression(entry.settings, MIN_TARGET_PLAYERS);
 		boolean maxTargetExpression = GlitchSettingsHelper.isExpression(entry.settings, MAX_TARGET_PLAYERS);
 		if (!minTargetExpression && !maxTargetExpression && maxTargetPlayers < minTargetPlayers) {
@@ -145,7 +145,7 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 		double instability = getRangeInstabilityFactor(stabilityPercent, entry.minStabilityPercent, entry.maxStabilityPercent);
 
 		int minTargetPlayers = GlitchSettingsHelper.getInt(settings, MIN_TARGET_PLAYERS, 1);
-		int maxTargetPlayers = GlitchSettingsHelper.getInt(settings, MAX_TARGET_PLAYERS, 4);
+		int maxTargetPlayers = Math.max(1, GlitchSettingsHelper.getInt(settings, MAX_TARGET_PLAYERS, 4));
 		int targetPlayers = interpolateInt(minTargetPlayers, maxTargetPlayers, instability);
 		targetPlayers = Math.max(1, Math.min(players.size(), targetPlayers));
 

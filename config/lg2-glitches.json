@@ -121,8 +121,30 @@
         "minDirectionCount": 1,
         "maxDirectionCount": 10,
         "playerControlRatio": 0.7,
-        "minForce": 0.1,
+        "minForce": 0.3,
         "maxForce": 1.0
+      }
+    },
+    "phantom_mobs": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 50.0,
+      "chancePerCheck": 0.2,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 100,
+      "maxCooldownTicks": 4800,
+      "settings": {
+        "minTargetPlayers": 1,
+        "maxTargetPlayers": "round(whitelistCount*0.5)",
+        "minSpawnDistance": 4.0,
+        "maxSpawnDistance": 12.0,
+        "minDurationSeconds": 12,
+        "maxDurationSeconds": 24,
+        "minChasingSpeed": 0.3,
+        "maxChasingSpeed": 0.5,
+        "standingWeight": 1.0,
+        "chasingWeight": 0.75,
+        "wanderingWeight": 1.0
       }
     },
     "chest_desync": {

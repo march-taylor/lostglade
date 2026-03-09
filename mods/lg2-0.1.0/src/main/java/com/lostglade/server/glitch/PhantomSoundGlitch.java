@@ -112,7 +112,7 @@ public final class PhantomSoundGlitch implements ServerGlitchHandler {
 		changed |= GlitchSettingsHelper.sanitizeDouble(entry.settings, PITCH_MAX, 1.25D, 0.1D, 2.0D);
 
 		int minTargetPlayers = GlitchSettingsHelper.getInt(entry.settings, MIN_TARGET_PLAYERS, fallbackTargetPlayers);
-		int maxTargetPlayers = GlitchSettingsHelper.getInt(entry.settings, MAX_TARGET_PLAYERS, fallbackTargetPlayers);
+		int maxTargetPlayers = Math.max(1, GlitchSettingsHelper.getInt(entry.settings, MAX_TARGET_PLAYERS, fallbackTargetPlayers));
 		boolean minTargetExpression = GlitchSettingsHelper.isExpression(entry.settings, MIN_TARGET_PLAYERS);
 		boolean maxTargetExpression = GlitchSettingsHelper.isExpression(entry.settings, MAX_TARGET_PLAYERS);
 		if (!minTargetExpression && !maxTargetExpression && maxTargetPlayers < minTargetPlayers) {
@@ -158,7 +158,7 @@ public final class PhantomSoundGlitch implements ServerGlitchHandler {
 
 		int fallbackTargetPlayers = GlitchSettingsHelper.getInt(settings, TARGET_PLAYERS, 2);
 		int minTargetPlayers = GlitchSettingsHelper.getInt(settings, MIN_TARGET_PLAYERS, fallbackTargetPlayers);
-		int maxTargetPlayers = GlitchSettingsHelper.getInt(settings, MAX_TARGET_PLAYERS, fallbackTargetPlayers);
+		int maxTargetPlayers = Math.max(1, GlitchSettingsHelper.getInt(settings, MAX_TARGET_PLAYERS, fallbackTargetPlayers));
 		int targetPlayers = Math.min(players.size(), sampleRangeInt(random, minTargetPlayers, maxTargetPlayers));
 		double minDistance = GlitchSettingsHelper.getDouble(settings, MIN_DISTANCE, 4.0D);
 		double maxDistance = GlitchSettingsHelper.getDouble(settings, MAX_DISTANCE, 12.0D);

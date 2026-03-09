@@ -13,15 +13,18 @@ import com.lostglade.server.glitch.CheckpointDesyncGlitch;
 import com.lostglade.server.glitch.EntityUseGlitchHandler;
 import com.lostglade.server.glitch.GravitySurgeGlitch;
 import com.lostglade.server.glitch.InventoryTextureShuffleGlitch;
+import com.lostglade.server.glitch.PhantomMobGlitch;
 import com.lostglade.server.glitch.PhantomSoundGlitch;
 import com.lostglade.server.glitch.RespawnGlitchHandler;
 import com.lostglade.server.glitch.ServerGlitchHandler;
 import com.lostglade.server.glitch.TimeOfDayJumpGlitch;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
+import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.minecraft.core.BlockPos;
@@ -85,6 +88,7 @@ public final class ServerGlitchSystem {
 		registerHandler(new InventoryTextureShuffleGlitch());
 		registerHandler(new BlackoutGlitch());
 		registerHandler(new GravitySurgeGlitch());
+		registerHandler(new PhantomMobGlitch());
 		registerHandler(new ChestDesyncGlitch());
 		registerHandler(new BitcoinOvercookGlitch());
 		reloadConfig();
@@ -95,6 +99,8 @@ public final class ServerGlitchSystem {
 			ChestDesyncGlitch.resetTracking();
 			BitcoinOvercookGlitch.resetRuntimeState();
 			GravitySurgeGlitch.resetRuntimeState();
+			PhantomMobGlitch.resetRuntimeState();
+			PhantomMobGlitch.discardLingeringPhantoms(server);
 		});
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
@@ -119,6 +125,8 @@ public final class ServerGlitchSystem {
 		ServerPlayerEvents.AFTER_RESPAWN.register(ServerGlitchSystem::onAfterRespawn);
 		UseBlockCallback.EVENT.register(ServerGlitchSystem::onUseBlock);
 		UseEntityCallback.EVENT.register(ServerGlitchSystem::onUseEntity);
+		AttackEntityCallback.EVENT.register(ServerGlitchSystem::onAttackEntity);
+		ServerEntityEvents.ENTITY_LOAD.register((entity, world) -> PhantomMobGlitch.handleEntityLoad(entity));
 	}
 
 	private static void registerHandler(ServerGlitchHandler handler) {
@@ -174,6 +182,7 @@ public final class ServerGlitchSystem {
 		InventoryTextureShuffleGlitch.tickActiveStates(server);
 		BlackoutGlitch.tickActiveStates(server);
 		GravitySurgeGlitch.tickActiveStates(server);
+		PhantomMobGlitch.tickActiveStates(server);
 
 		GlitchConfig.ConfigData config = GlitchConfig.get();
 		if (!config.enabled) {
@@ -607,6 +616,22 @@ public final class ServerGlitchSystem {
 		}
 
 		return InteractionResult.PASS;
+	}
+
+	private static InteractionResult onAttackEntity(
+			Player player,
+			Level world,
+			InteractionHand hand,
+			Entity entity,
+			EntityHitResult hitResult
+	) {
+		if (world.isClientSide() || !(player instanceof ServerPlayer)) {
+			return InteractionResult.PASS;
+		}
+
+		return PhantomMobGlitch.handleAttack(entity)
+				? InteractionResult.SUCCESS
+				: InteractionResult.PASS;
 	}
 
 	private static void triggerGlitches(MinecraftServer server, GlitchConfig.ConfigData config) {
