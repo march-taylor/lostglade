@@ -120,7 +120,7 @@
         "downwardDirectionWeight": 0.20,
         "minDirectionCount": 1,
         "maxDirectionCount": 10,
-        "playerControlRatio": 0.7,
+        "playerControlRatio": 0.9,
         "minForce": 0.3,
         "maxForce": 1.0
       }
