@@ -102,6 +102,15 @@
       ]
     },
     {
+      "type": "bitmap",
+      "file": "minecraft:font/vanilla_shulker.png",
+      "ascent": 13,
+      "height": 167,
+      "chars": [
+        "\ue915"
+      ]
+    },
+    {
       "type": "reference",
       "id": "minecraft:include/space"
     },

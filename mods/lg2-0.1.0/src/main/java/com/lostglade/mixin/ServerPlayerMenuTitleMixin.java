@@ -25,6 +25,7 @@ public abstract class ServerPlayerMenuTitleMixin {
 	private static final String TITLE_SHIFT = "\ue905";
 	private static final String VANILLA_3ROW_GLYPH = "\ue913";
 	private static final String VANILLA_6ROW_GLYPH = "\ue914";
+	private static final String VANILLA_SHULKER_GLYPH = "\ue915";
 	private static final String TITLE_RESET = "\ue940\ue940\ue941\ue943";
 
 	@Shadow
@@ -74,7 +75,9 @@ public abstract class ServerPlayerMenuTitleMixin {
 
 		MenuType<?> menuType = menu.getType();
 		String overlayGlyph;
-		if (menuType == MenuType.GENERIC_9x3 || menuType == MenuType.SHULKER_BOX) {
+		if (menuType == MenuType.SHULKER_BOX) {
+			overlayGlyph = VANILLA_SHULKER_GLYPH;
+		} else if (menuType == MenuType.GENERIC_9x3) {
 			overlayGlyph = VANILLA_3ROW_GLYPH;
 		} else if (menuType == MenuType.GENERIC_9x6) {
 			overlayGlyph = VANILLA_6ROW_GLYPH;
