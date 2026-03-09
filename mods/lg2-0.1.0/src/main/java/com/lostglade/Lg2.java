@@ -6,6 +6,7 @@ import com.lostglade.server.ServerGlitchSystem;
 import com.lostglade.item.ModItems;
 import com.lostglade.server.ServerStabilitySystem;
 import com.lostglade.server.ServerStructureBreakSystem;
+import com.lostglade.server.ServerUpgradeUiSystem;
 import com.lostglade.worldgen.ModWorldGen;
 import net.fabricmc.api.ModInitializer;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
@@ -33,6 +34,7 @@ public class Lg2 implements ModInitializer {
 		ServerStabilitySystem.register();
 		ServerGlitchSystem.register();
 		ServerStructureBreakSystem.register();
+		ServerUpgradeUiSystem.register();
 
 		LOGGER.info("Initialized {}", MOD_ID);
 	}

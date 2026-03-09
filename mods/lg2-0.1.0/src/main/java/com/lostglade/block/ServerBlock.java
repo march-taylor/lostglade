@@ -1,6 +1,7 @@
 package com.lostglade.block;
 
 import com.lostglade.server.ServerStructureBreakSystem;
+import com.lostglade.server.ServerUpgradeUiSystem;
 import eu.pb4.polymer.core.api.block.SimplePolymerBlock;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.BlockPos;
@@ -10,7 +11,6 @@ import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.particles.SimpleParticleType;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -20,16 +20,12 @@ import net.minecraft.util.Mth;
 import net.minecraft.util.ProblemReporter;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
-import net.minecraft.world.SimpleContainer;
-import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.TagValueInput;
 import net.minecraft.world.level.storage.TagValueOutput;
@@ -104,14 +100,7 @@ public class ServerBlock extends SimplePolymerBlock {
 		if (!(player instanceof ServerPlayer serverPlayer)) {
 			return InteractionResult.PASS;
 		}
-
-		SimpleContainer container = new SimpleContainer(27);
-		container.setItem(13, new ItemStack(Items.COMMAND_BLOCK));
-
-		serverPlayer.openMenu(new SimpleMenuProvider(
-				(syncId, inventory, menuPlayer) -> ChestMenu.threeRows(syncId, inventory, container),
-				Component.literal("Server")
-		));
+		ServerUpgradeUiSystem.openRootScreen(serverPlayer);
 
 		return InteractionResult.CONSUME;
 	}

@@ -1,0 +1,3754 @@
+{
+  "enabled": true,
+  "rootScreenId": "main",
+  "themes": {
+    "default": {
+      "fillEmptySlots": false,
+      "fillerIcon": {
+        "fallbackItem": "minecraft:black_stained_glass_pane",
+        "packModel": ""
+      }
+    },
+    "main_overlay": {
+      "fillEmptySlots": false,
+      "packTitlePrefix": "",
+      "packTitleSuffix": ""
+    },
+    "it_tree_overlay": {
+      "fillEmptySlots": false,
+      "packTitlePrefix": "",
+      "packTitleSuffix": ""
+    },
+    "template_3row": {
+      "fillEmptySlots": false,
+      "packTitlePrefix": "",
+      "packTitleSuffix": ""
+    },
+    "template_4row": {
+      "fillEmptySlots": false,
+      "packTitlePrefix": "",
+      "packTitleSuffix": ""
+    },
+    "template_5row": {
+      "fillEmptySlots": false,
+      "packTitlePrefix": "",
+      "packTitleSuffix": ""
+    }
+  },
+  "screens": {
+    "main": {
+      "rows": 4,
+      "title": {
+        "values": {
+          "en_us": "Server Upgrades",
+          "ru_ru": "Прокачка сервера",
+          "uk_ua": "Прокачування сервера",
+          "ja_jp": "サーバー強化",
+          "rdr": "Устроенiе жѣлѣзнаго разума",
+          "rpr": "Устроенiе жѣлѣзнаго разума"
+        }
+      },
+      "buttons": {
+        "worlds": {
+          "slot": 0,
+          "hitboxWidth": 2,
+          "hitboxHeight": 2,
+          "type": "open_screen",
+          "targetScreenId": "worlds",
+          "icon": {
+            "fallbackItem": "minecraft:obsidian",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Worlds",
+              "ru_ru": "Миры",
+              "uk_ua": "Світи",
+              "ja_jp": "世界",
+              "rdr": "Мiры",
+              "rpr": "Мiры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Open Nether and End access.",
+                "Portals stay locked until tickets are bought."
+              ],
+              "ru_ru": [
+                "Открывает ветку доступа в Незер и Энд.",
+                "Порталы не заработают, пока билеты не куплены."
+              ],
+              "uk_ua": [
+                "Відкриває гілку доступу до Незеру та Енду.",
+                "Портали не запрацюють, доки квитки не куплені."
+              ],
+              "ja_jp": [
+                "ネザーとエンドへのアクセスを開きます。",
+                "許可を買うまでポータルは動きません。"
+              ],
+              "rdr": [
+                "Отворяет ходъ въ Нижнiй мiръ и въ Край.",
+                "Безъ грамотъ порталы молчатъ."
+              ],
+              "rpr": [
+                "Отворяет ходъ въ Нижнiй мiръ и въ Край.",
+                "Безъ грамотъ порталы молчатъ."
+              ]
+            }
+          }
+        },
+        "eras": {
+          "slot": 2,
+          "hitboxWidth": 2,
+          "hitboxHeight": 2,
+          "type": "open_screen",
+          "targetScreenId": "eras",
+          "icon": {
+            "fallbackItem": "minecraft:smithing_table",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Eras",
+              "ru_ru": "Эры",
+              "uk_ua": "Ери",
+              "ja_jp": "時代",
+              "rdr": "Поры",
+              "rpr": "Поры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Stone, copper, iron, diamond and netherite.",
+                "This branch decides which gear tier exists on the server."
+              ],
+              "ru_ru": [
+                "Камень, медь, железо, алмазы и незрит.",
+                "Эта ветка решает, какие уровни снаряжения вообще существуют."
+              ],
+              "uk_ua": [
+                "Камінь, мідь, залізо, алмази та незрит.",
+                "Ця гілка визначає, які рівні спорядження існують на сервері."
+              ],
+              "ja_jp": [
+                "石・銅・鉄・ダイヤ・ネザライト。",
+                "サーバーで使える装備段階を決めます。"
+              ],
+              "rdr": [
+                "Камень, мѣдь, желѣзо, алмазы да незритъ.",
+                "Сiя вѣтвь рѣшаетъ, какiе чины сбруи дозволены."
+              ],
+              "rpr": [
+                "Камень, мѣдь, желѣзо, алмазы да незритъ.",
+                "Сiя вѣтвь рѣшаетъ, какiе чины сбруи дозволены."
+              ]
+            }
+          }
+        },
+        "mechanics": {
+          "slot": 5,
+          "hitboxWidth": 3,
+          "hitboxHeight": 2,
+          "type": "open_screen",
+          "targetScreenId": "mechanics",
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Mechanics",
+              "ru_ru": "Механики",
+              "uk_ua": "Механіки",
+              "ja_jp": "仕組み",
+              "rdr": "Механiки",
+              "rpr": "Механiки"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Redstone, brewing, anvils, enchanting and villager trade.",
+                "These unlock independently wherever material gates allow it."
+              ],
+              "ru_ru": [
+                "Редстоун, зелья, наковальня, чары и торговля.",
+                "Они открываются независимо друг от друга, если хватает материальной эпохи."
+              ],
+              "uk_ua": [
+                "Редстоун, зілля, ковадло, чари й торгівля.",
+                "Вони відкриваються незалежно, якщо вистачає матеріальної епохи."
+              ],
+              "ja_jp": [
+                "レッドストーン、醸造、金床、エンチャント、交易。",
+                "素材条件さえ満たせば独立して解放されます。"
+              ],
+              "rdr": [
+                "Красный камень, зелья, наковальня, чары да торгъ.",
+                "Всякiя штуки отворяются порознь, коли пора матерiаловъ дозволяетъ."
+              ],
+              "rpr": [
+                "Красный камень, зелья, наковальня, чары да торгъ.",
+                "Всякiя штуки отворяются порознь, коли пора матерiаловъ дозволяетъ."
+              ]
+            }
+          }
+        },
+        "it": {
+          "slot": 19,
+          "hitboxWidth": 3,
+          "hitboxHeight": 2,
+          "type": "open_screen",
+          "targetScreenId": "it_hub",
+          "icon": {
+            "fallbackItem": "minecraft:observer",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "IT Branch",
+              "ru_ru": "IT-ветка",
+              "uk_ua": "IT-гілка",
+              "ja_jp": "IT系統",
+              "rdr": "Машинная вѣтвь",
+              "rpr": "Машинная вѣтвь"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Electronics, sensors, the screen, jammer and drones.",
+                "The most technical branch of the whole server."
+              ],
+              "ru_ru": [
+                "Электроника, сенсоры, экран, глушилка и дроны.",
+                "Самая техническая ветка всего сервера."
+              ],
+              "uk_ua": [
+                "Електроніка, сенсори, екран, глушилка та дрони.",
+                "Найтехнічніша гілка всього сервера."
+              ],
+              "ja_jp": [
+                "電子機器、センサー、画面、ジャマー、ドローン。",
+                "サーバー全体で最も技術的な枝です。"
+              ],
+              "rdr": [
+                "Электрическiя хитрости, датчики, экранъ, глушилка да дроны.",
+                "Сiя вѣтвь самая мудрёная на всёмъ серверѣ."
+              ],
+              "rpr": [
+                "Электрическiя хитрости, датчики, экранъ, глушилка да дроны.",
+                "Сiя вѣтвь самая мудрёная на всёмъ серверѣ."
+              ]
+            }
+          }
+        },
+        "races": {
+          "slot": 23,
+          "hitboxWidth": 2,
+          "hitboxHeight": 2,
+          "type": "open_screen",
+          "targetScreenId": "races",
+          "icon": {
+            "fallbackItem": "minecraft:totem_of_undying",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Racial Gifts",
+              "ru_ru": "Способности рас",
+              "uk_ua": "Здібності рас",
+              "ja_jp": "種族能力",
+              "rdr": "Дары племёнъ",
+              "rpr": "Дары племёнъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Four tiers of racial perks.",
+                "From cheap starter powers to elite gifts."
+              ],
+              "ru_ru": [
+                "Четыре уровня расовых способностей.",
+                "От дешёвых стартовых бонусов до элитных даров."
+              ],
+              "uk_ua": [
+                "Чотири рівні расових здібностей.",
+                "Від дешевих стартових бонусів до елітних дарів."
+              ],
+              "ja_jp": [
+                "種族能力の4段階です。",
+                "安価な初級段階から精鋭級の贈り物まで。"
+              ],
+              "rdr": [
+                "Четыре чина даровъ племенныхъ.",
+                "Отъ дешёвыхъ поблажекъ до даровъ элитныхъ."
+              ],
+              "rpr": [
+                "Четыре чина даровъ племенныхъ.",
+                "Отъ дешёвыхъ поблажекъ до даровъ элитныхъ."
+              ]
+            }
+          }
+        },
+        "info": {
+          "slot": 27,
+          "type": "none",
+          "icon": {
+            "fallbackItem": "minecraft:knowledge_book",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Info",
+              "ru_ru": "Инфо",
+              "uk_ua": "Інфо",
+              "ja_jp": "情報",
+              "rdr": "Вѣдомость",
+              "rpr": "Вѣдомость"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Spend bitcoins to unlock systems for your own character.",
+                "Hover the large panels to read what each branch does."
+              ],
+              "ru_ru": [
+                "Трать биткоины, чтобы открывать ветки отдельно для своего персонажа.",
+                "Наводи курсор на большие секции, чтобы читать описание каждой ветки."
+              ],
+              "uk_ua": [
+                "Витрачай біткоїни, щоб відкривати гілки окремо для свого персонажа.",
+                "Наводь курсор на великі секції, щоб читати опис кожної гілки."
+              ],
+              "ja_jp": [
+                "ビットコインで各自の進行を解放します。",
+                "大きなパネルにカーソルを合わせると各枝の説明が出ます。"
+              ],
+              "rdr": [
+                "Монѣты трать, дабы ветви отворялись особо для твоего лица.",
+                "Наводи перо на большiя доски и читай, что каждая вѣтвь творитъ."
+              ],
+              "rpr": [
+                "Монѣты трать, дабы ветви отворялись особо для твоего лица.",
+                "Наводи перо на большiя доски и читай, что каждая вѣтвь творитъ."
+              ]
+            }
+          }
+        },
+        "close": {
+          "slot": 35,
+          "type": "close",
+          "icon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Close",
+              "ru_ru": "Закрыть",
+              "uk_ua": "Закрити",
+              "ja_jp": "閉じる",
+              "rdr": "Затворить",
+              "rpr": "Затворить"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Close this interface."
+              ],
+              "ru_ru": [
+                "Закрыть этот интерфейс."
+              ],
+              "uk_ua": [
+                "Закрити цей інтерфейс."
+              ],
+              "ja_jp": [
+                "この画面を閉じます。"
+              ],
+              "rdr": [
+                "Затворить сей приборъ."
+              ],
+              "rpr": [
+                "Затворить сей приборъ."
+              ]
+            }
+          }
+        }
+      },
+      "theme": "template_4row",
+      "hideTitleTextWhenPack": true
+    },
+    "worlds": {
+      "rows": 3,
+      "title": {
+        "values": {
+          "en_us": "World Access",
+          "ru_ru": "Доступ к мирам",
+          "uk_ua": "Доступ до світів",
+          "ja_jp": "世界へのアクセス",
+          "rdr": "Доступъ ко мiрамъ",
+          "rpr": "Доступъ ко мiрамъ"
+        }
+      },
+      "buttons": {
+        "info": {
+          "slot": 18,
+          "type": "none",
+          "icon": {
+            "fallbackItem": "minecraft:knowledge_book",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "World Tickets",
+              "ru_ru": "Билеты в миры",
+              "uk_ua": "Квитки до світів",
+              "ja_jp": "世界の билет",
+              "rdr": "Мiровыя грамоты",
+              "rpr": "Мiровыя грамоты"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Nether and End are now two separate tickets.",
+                "Buy whichever world your team wants first."
+              ],
+              "ru_ru": [
+                "Незер и Энд теперь покупаются как два независимых билета.",
+                "Покупайте сначала тот мир, который нужен вашей команде."
+              ],
+              "uk_ua": [
+                "Незер і Енд тепер купуються як два незалежні квитки.",
+                "Купуйте спершу той світ, який потрібен вашій команді."
+              ],
+              "ja_jp": [
+                "ネザーとエンドは別々のチケットになりました。",
+                "必要な世界から先に買えます。"
+              ],
+              "rdr": [
+                "Нижнiй мiръ и Край нынѣ продаются двумя особыми грамотами.",
+                "Бери сперва тотъ мiръ, что надобенъ вашей артѣли."
+              ],
+              "rpr": [
+                "Нижнiй мiръ и Край нынѣ продаются двумя особыми грамотами.",
+                "Бери сперва тотъ мiръ, что надобенъ вашей артѣли."
+              ]
+            }
+          }
+        },
+        "nether": {
+          "slot": 11,
+          "type": "purchase_upgrade",
+          "upgradeId": "world_nether",
+          "pricesBitcoins": [
+            1000
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:obsidian",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:obsidian",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Nether",
+              "ru_ru": "Незер",
+              "uk_ua": "Незер",
+              "ja_jp": "ネザー",
+              "rdr": "Нижнiй мiръ",
+              "rpr": "Нижнiй мiръ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks the Nether.",
+                "Portals do not work without this ticket.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает доступ к Нижнему миру.",
+                "Без этого билета портал работать не будет.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває доступ до Нижнього світу.",
+                "Без цього квитка портал не запрацює.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "ネザーへのアクセスを開きます。",
+                "これがないとポータルは動きません。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ путь въ Нижнiй мiръ.",
+                "Безъ сей грамоты порталъ молчитъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ путь въ Нижнiй мiръ.",
+                "Безъ сей грамоты порталъ молчитъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          }
+        },
+        "end": {
+          "slot": 15,
+          "type": "purchase_upgrade",
+          "upgradeId": "world_end",
+          "pricesBitcoins": [
+            1200
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:ender_eye",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:ender_eye",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "End",
+              "ru_ru": "Энд",
+              "uk_ua": "Енд",
+              "ja_jp": "エンド",
+              "rdr": "Край свѣта",
+              "rpr": "Край свѣта"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks the End.",
+                "Unlocks the End as a separate destination.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает доступ к Краю.",
+                "Открывает Энд как отдельное направление.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває доступ до Краю.",
+                "Відкриває Енд як окремий напрямок.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "エンドへのアクセスを開きます。",
+                "エンドを独立した行き先として開放します。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ путь ко Краю.",
+                "Отворяетъ Край какъ особое направленiе.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ путь ко Краю.",
+                "Отворяетъ Край какъ особое направленiе.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": []
+        },
+        "back": {
+          "slot": 26,
+          "type": "open_screen",
+          "targetScreenId": "main",
+          "icon": {
+            "fallbackItem": "minecraft:arrow",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Back",
+              "ru_ru": "Назад",
+              "uk_ua": "Назад",
+              "ja_jp": "戻る",
+              "rdr": "Назадъ",
+              "rpr": "Назадъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Return to the previous branch."
+              ],
+              "ru_ru": [
+                "Вернуться в предыдущий раздел."
+              ],
+              "uk_ua": [
+                "Повернутися до попередньої гілки."
+              ],
+              "ja_jp": [
+                "前の画面に戻ります。"
+              ],
+              "rdr": [
+                "Возвратиться во прежнiй разделъ."
+              ],
+              "rpr": [
+                "Возвратиться во прежнiй разделъ."
+              ]
+            }
+          }
+        }
+      },
+      "theme": "template_3row",
+      "hideTitleTextWhenPack": true
+    },
+    "eras": {
+      "rows": 3,
+      "title": {
+        "values": {
+          "en_us": "Eras",
+          "ru_ru": "Эры",
+          "uk_ua": "Ери",
+          "ja_jp": "時代",
+          "rdr": "Поры",
+          "rpr": "Поры"
+        }
+      },
+      "buttons": {
+        "info": {
+          "slot": 18,
+          "type": "none",
+          "icon": {
+            "fallbackItem": "minecraft:knowledge_book",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Material Ladder",
+              "ru_ru": "Лестница материалов",
+              "uk_ua": "Сходи матеріалів",
+              "ja_jp": "素材の階段",
+              "rdr": "Лѣствица матерiаловъ",
+              "rpr": "Лѣствица матерiаловъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "This branch controls which vanilla gear tiers may exist.",
+                "Each next era depends on the previous one."
+              ],
+              "ru_ru": [
+                "Эта ветка решает, какие уровни ванильного снаряжения вообще существуют.",
+                "Каждая следующая эра зависит от предыдущей."
+              ],
+              "uk_ua": [
+                "Ця гілка вирішує, які рівні ванільного спорядження взагалі існують.",
+                "Кожна наступна ера залежить від попередньої."
+              ],
+              "ja_jp": [
+                "この枝は利用可能な装備段階を決めます。",
+                "次の時代は前の時代に依存します。"
+              ],
+              "rdr": [
+                "Сiя вѣтвь рѣшаетъ, какие чины сбруи вообще дозволены.",
+                "Всякая слѣдующая пора держится на прежней."
+              ],
+              "rpr": [
+                "Сiя вѣтвь рѣшаетъ, какие чины сбруи вообще дозволены.",
+                "Всякая слѣдующая пора держится на прежней."
+              ]
+            }
+          }
+        },
+        "stone": {
+          "slot": 10,
+          "type": "purchase_upgrade",
+          "upgradeId": "era_stone",
+          "pricesBitcoins": [
+            150
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:stone_pickaxe",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:stone_pickaxe",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Stone Era",
+              "ru_ru": "Каменная эра",
+              "uk_ua": "Кам’яна ера",
+              "ja_jp": "石の時代",
+              "rdr": "Каменная пора",
+              "rpr": "Каменная пора"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks stone tools and weapons.",
+                "This is where real progress begins.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает крафт каменных инструментов и оружия.",
+                "С этого всё начинается.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває крафт кам’яних інструментів і зброї.",
+                "Із цього все починається.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "石の道具と武器を解放します。",
+                "ここから本当の発展が始まります。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ каменныя орудiя и оружiе.",
+                "Съ сего начинается всякое дѣло.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ каменныя орудiя и оружiе.",
+                "Съ сего начинается всякое дѣло.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          }
+        },
+        "copper": {
+          "slot": 11,
+          "type": "purchase_upgrade",
+          "upgradeId": "era_copper",
+          "pricesBitcoins": [
+            300
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:copper_ingot",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:copper_ingot",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Copper Era",
+              "ru_ru": "Медная эра",
+              "uk_ua": "Мідна ера",
+              "ja_jp": "銅の時代",
+              "rdr": "Мѣдная пора",
+              "rpr": "Мѣдная пора"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks copper gear.",
+                "Requires Stone Era. It also opens the road to brewing.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает крафт медных инструментов и брони.",
+                "Требует Каменную эру. С неё открывается путь к зельеварению.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває крафт мідних інструментів і броні.",
+                "Потребує Кам’яної ери. Від неї відкривається шлях до зіллєваріння.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "銅の道具と防具を解放します。",
+                "石の時代が必要で、醸造への道も開きます。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ мѣдныя орудiя и броню.",
+                "Требуетъ каменной поры; отъ нея путь ко зельямъ идётъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ мѣдныя орудiя и броню.",
+                "Требуетъ каменной поры; отъ нея путь ко зельямъ идётъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "era_stone",
+              "minLevel": 1
+            }
+          ]
+        },
+        "iron_gold": {
+          "slot": 12,
+          "type": "purchase_upgrade",
+          "upgradeId": "era_iron_gold",
+          "pricesBitcoins": [
+            600
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:iron_ingot",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:iron_ingot",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Iron + Gold Era",
+              "ru_ru": "Железная + Золотая",
+              "uk_ua": "Залізна + Золота",
+              "ja_jp": "鉄と金の時代",
+              "rdr": "Желѣзо да злато",
+              "rpr": "Желѣзо да злато"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks iron and gold gear.",
+                "Requires Copper Era. Iron is strength, gold is speed and special recipes.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает крафт железных и золотых инструментов и брони.",
+                "Требует Медную эру. Железо даёт силу, золото — скорость и особые рецепты.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває крафт залізних і золотих інструментів та броні.",
+                "Потребує Мідної ери. Залізо дає силу, золото — швидкість і особливі рецепти.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "鉄と金の装備を解放します。",
+                "銅の時代が必要です。鉄は力、金は速度と特殊レシピです。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ желѣзныя и златыя снасти.",
+                "Требуетъ мѣди; желѣзо даётъ силу, а злато — прыть да хитрыя варки.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ желѣзныя и златыя снасти.",
+                "Требуетъ мѣди; желѣзо даётъ силу, а злато — прыть да хитрыя варки.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "era_copper",
+              "minLevel": 1
+            }
+          ]
+        },
+        "diamond": {
+          "slot": 13,
+          "type": "purchase_upgrade",
+          "upgradeId": "era_diamond",
+          "pricesBitcoins": [
+            1200
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:diamond",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:diamond",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Diamond Era",
+              "ru_ru": "Алмазная эра",
+              "uk_ua": "Алмазна ера",
+              "ja_jp": "ダイヤの時代",
+              "rdr": "Алмазная пора",
+              "rpr": "Алмазная пора"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks diamond tools and armor.",
+                "Requires Iron + Gold Era. Vanilla peak of raw durability.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает крафт алмазных инструментов и брони.",
+                "Требует Железную + Золотую эру. Это вершина ванильной прочности.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває крафт алмазних інструментів і броні.",
+                "Потребує Залізну + Золоту еру. Це вершина ванільної міцності.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "ダイヤ装備を解放します。",
+                "鉄と金の時代が必要です。耐久力の頂点です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ алмазныя орудiя и броню.",
+                "Требуетъ желѣза да злата; то верхъ простой крепости.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ алмазныя орудiя и броню.",
+                "Требуетъ желѣза да злата; то верхъ простой крепости.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "era_iron_gold",
+              "minLevel": 1
+            }
+          ]
+        },
+        "netherite": {
+          "slot": 14,
+          "type": "purchase_upgrade",
+          "upgradeId": "era_netherite",
+          "pricesBitcoins": [
+            2200
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:netherite_ingot",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:netherite_ingot",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Netherite Era",
+              "ru_ru": "Незритовая эра",
+              "uk_ua": "Незритова ера",
+              "ja_jp": "ネザライトの時代",
+              "rdr": "Незритовая пора",
+              "rpr": "Незритовая пора"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks netherite tools and armor.",
+                "Requires Diamond Era. It does not burn in lava and gives the best protection.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает крафт незритовых инструментов и брони.",
+                "Требует Алмазную эру. Не горит в лаве и даёт лучшую защиту.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває крафт незритових інструментів і броні.",
+                "Потребує Алмазну еру. Не горить у лаві та дає найкращий захист.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "ネザライト装備を解放します。",
+                "ダイヤの時代が必要です。溶岩で燃えず、最高の防御を与えます。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ незритовыя орудiя и броню.",
+                "Требуетъ алмазной поры; въ лавѣ не горитъ и защищаетъ лучше всѣхъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ незритовыя орудiя и броню.",
+                "Требуетъ алмазной поры; въ лавѣ не горитъ и защищаетъ лучше всѣхъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "era_diamond",
+              "minLevel": 1
+            }
+          ]
+        },
+        "back": {
+          "slot": 26,
+          "type": "open_screen",
+          "targetScreenId": "main",
+          "icon": {
+            "fallbackItem": "minecraft:arrow",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Back",
+              "ru_ru": "Назад",
+              "uk_ua": "Назад",
+              "ja_jp": "戻る",
+              "rdr": "Назадъ",
+              "rpr": "Назадъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Return to the previous branch."
+              ],
+              "ru_ru": [
+                "Вернуться в предыдущий раздел."
+              ],
+              "uk_ua": [
+                "Повернутися до попередньої гілки."
+              ],
+              "ja_jp": [
+                "前の画面に戻ります。"
+              ],
+              "rdr": [
+                "Возвратиться во прежнiй разделъ."
+              ],
+              "rpr": [
+                "Возвратиться во прежнiй разделъ."
+              ]
+            }
+          }
+        }
+      },
+      "theme": "template_3row",
+      "hideTitleTextWhenPack": true
+    },
+    "mechanics": {
+      "rows": 3,
+      "title": {
+        "values": {
+          "en_us": "Mechanics",
+          "ru_ru": "Механики",
+          "uk_ua": "Механіки",
+          "ja_jp": "仕組み",
+          "rdr": "Механiки",
+          "rpr": "Механiки"
+        }
+      },
+      "buttons": {
+        "info": {
+          "slot": 18,
+          "type": "none",
+          "icon": {
+            "fallbackItem": "minecraft:knowledge_book",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Practical Systems",
+              "ru_ru": "Практические системы",
+              "uk_ua": "Практичні системи",
+              "ja_jp": "実用システム",
+              "rdr": "Системы житейскiя",
+              "rpr": "Системы житейскiя"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "These upgrades decide which survival mechanics are legal on the server.",
+                "These mechanics unlock independently; only material gates remain where needed."
+              ],
+              "ru_ru": [
+                "Эти улучшения решают, какие механики выживания вообще разрешены на сервере.",
+                "Эти механики открываются независимо друг от друга; остаются только нужные материальные пороги."
+              ],
+              "uk_ua": [
+                "Ці покращення вирішують, які механіки виживання взагалі дозволені на сервері.",
+                "Ці механіки відкриваються незалежно одна від одної; лишаються тільки потрібні матеріальні пороги."
+              ],
+              "ja_jp": [
+                "この強化は利用可能なサバイバル機能を決めます。",
+                "この機能群は順番ではなく、必要な素材条件だけで開きます。"
+              ],
+              "rdr": [
+                "Сiи улучшенiя рѣшаютъ, какие житейскiя хитрости дозволены на серверѣ.",
+                "Сiи механiки нынѣ отворяются порознь; остаются лишь нужныя матерiальныя пороги."
+              ],
+              "rpr": [
+                "Сiи улучшенiя рѣшаютъ, какие житейскiя хитрости дозволены на серверѣ.",
+                "Сiи механiки нынѣ отворяются порознь; остаются лишь нужныя матерiальныя пороги."
+              ]
+            }
+          }
+        },
+        "redstone": {
+          "slot": 10,
+          "type": "purchase_upgrade",
+          "upgradeId": "mechanic_redstone",
+          "pricesBitcoins": [
+            400
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Redstone",
+              "ru_ru": "Редстоун",
+              "uk_ua": "Редстоун",
+              "ja_jp": "レッドストーン",
+              "rdr": "Красный камень",
+              "rpr": "Красный камень"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks redstone components and automation.",
+                "Repeaters, comparators, pistons, droppers and more.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает крафт и использование редстоун-компонентов.",
+                "Повторители, компараторы, поршни, раздатчики и многое другое.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває крафт і використання редстоун-компонентів.",
+                "Повторювачі, компаратори, поршні, роздавачі й інше.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "レッドストーン部品と自動化を解放します。",
+                "リピーター、コンパレーター、ピストンなど。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ краснокаменныя снасти и хитрыя механизмы.",
+                "Повторители, сравники, поршни, раздатчики и прочiя чудеса.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ краснокаменныя снасти и хитрыя механизмы.",
+                "Повторители, сравники, поршни, раздатчики и прочiя чудеса.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          }
+        },
+        "brewing": {
+          "slot": 11,
+          "type": "purchase_upgrade",
+          "upgradeId": "mechanic_brewing",
+          "pricesBitcoins": [
+            700
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:brewing_stand",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:brewing_stand",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Brewing",
+              "ru_ru": "Зельеварение",
+              "uk_ua": "Зіллєваріння",
+              "ja_jp": "醸造",
+              "rdr": "Зельеварнiе",
+              "rpr": "Зельеварнiе"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks brewing stands and potion making.",
+                "Requires Copper Era. From regeneration to invisibility.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает варочную стойку и возможность варить зелья.",
+                "Требует Медную эру. От регенерации до невидимости.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває варильну стійку та можливість варити зілля.",
+                "Потребує Мідну еру. Від регенерації до невидимості.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "醸造台とポーション作成を解放します。",
+                "銅の時代が必要です。再生から透明化まで。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ варильню и всякое зелье.",
+                "Требуетъ мѣдной поры; отъ возрожденiя до невидимости.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ варильню и всякое зелье.",
+                "Требуетъ мѣдной поры; отъ возрожденiя до невидимости.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "era_copper",
+              "minLevel": 1
+            }
+          ]
+        },
+        "anvil": {
+          "slot": 12,
+          "type": "purchase_upgrade",
+          "upgradeId": "mechanic_anvil",
+          "pricesBitcoins": [
+            1000
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:anvil",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:anvil",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Anvil",
+              "ru_ru": "Наковальня",
+              "uk_ua": "Ковадло",
+              "ja_jp": "金床",
+              "rdr": "Наковалня",
+              "rpr": "Наковалня"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks anvils.",
+                "Requires Iron + Gold Era. Repair, merge enchants and rename items.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает крафт и использование наковальни.",
+                "Требует Железную + Золотую эру. Можно чинить, объединять чары и переименовывать вещи.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває крафт і використання ковадла.",
+                "Потребує Залізну + Золоту еру. Можна лагодити, об’єднувати чари й перейменовувати речі.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "金床を解放します。",
+                "鉄と金の時代が必要です。修理、合成、名前変更ができます。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ наковалню.",
+                "Требуетъ желѣза да злата; можно чинить, венчать чары и давать имена.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ наковалню.",
+                "Требуетъ желѣза да злата; можно чинить, венчать чары и давать имена.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "era_iron_gold",
+              "minLevel": 1
+            }
+          ]
+        },
+        "enchanting": {
+          "slot": 13,
+          "type": "purchase_upgrade",
+          "upgradeId": "mechanic_enchanting",
+          "pricesBitcoins": [
+            1500
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:enchanted_book",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:enchanted_book",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Enchanting",
+              "ru_ru": "Зачарования",
+              "uk_ua": "Зачарування",
+              "ja_jp": "エンチャント",
+              "rdr": "Чародѣйства",
+              "rpr": "Чародѣйства"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks enchanting tables and enchanting.",
+                "Requires Diamond Era and Anvil. Diamond gear becomes real protection.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает стол зачарований и возможность зачаровывать вещи.",
+                "Требует Алмазную эру и Наковальню. Алмазная броня становится настоящей защитой.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває стіл зачарування та можливість чарувати речі.",
+                "Потребує Алмазну еру та Ковадло. Алмазна броня стає справжнім захистом.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "エンチャント台とエンチャントを解放します。",
+                "ダイヤ時代と金床が必要です。防具が本当に強くなります。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ столъ чаръ и само чародѣйство.",
+                "Требуетъ алмазной поры и наковални; тогда броня воистину держитъ ударъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ столъ чаръ и само чародѣйство.",
+                "Требуетъ алмазной поры и наковални; тогда броня воистину держитъ ударъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "era_diamond",
+              "minLevel": 1
+            }
+          ]
+        },
+        "villagers": {
+          "slot": 14,
+          "type": "purchase_upgrade",
+          "upgradeId": "mechanic_villagers",
+          "pricesBitcoins": [
+            2500
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Villager Trading",
+              "ru_ru": "Торговля с жителями",
+              "uk_ua": "Торгівля з жителями",
+              "ja_jp": "村人取引",
+              "rdr": "Торгъ съ жителями",
+              "rpr": "Торгъ съ жителями"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks trading with villagers.",
+                "Requires Enchanting. Books, diamonds, tools and patience.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает возможность торговать с жителями.",
+                "Требует Зачарования. Книги, алмазы, инструменты и терпение.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває можливість торгувати з жителями.",
+                "Потребує Зачарування. Книги, алмази, інструменти й терпіння.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "村人との取引を解放します。",
+                "エンチャントが必要です。本、ダイヤ、道具、そして忍耐。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ торгъ съ жителями.",
+                "Требуетъ чаръ; тутъ и книги, и алмазы, и снасти, коли терпѣнiя достанетъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ торгъ съ жителями.",
+                "Требуетъ чаръ; тутъ и книги, и алмазы, и снасти, коли терпѣнiя достанетъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          }
+        },
+        "back": {
+          "slot": 26,
+          "type": "open_screen",
+          "targetScreenId": "main",
+          "icon": {
+            "fallbackItem": "minecraft:arrow",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Back",
+              "ru_ru": "Назад",
+              "uk_ua": "Назад",
+              "ja_jp": "戻る",
+              "rdr": "Назадъ",
+              "rpr": "Назадъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Return to the previous branch."
+              ],
+              "ru_ru": [
+                "Вернуться в предыдущий раздел."
+              ],
+              "uk_ua": [
+                "Повернутися до попередньої гілки."
+              ],
+              "ja_jp": [
+                "前の画面に戻ります。"
+              ],
+              "rdr": [
+                "Возвратиться во прежнiй разделъ."
+              ],
+              "rpr": [
+                "Возвратиться во прежнiй разделъ."
+              ]
+            }
+          }
+        }
+      },
+      "theme": "template_3row",
+      "hideTitleTextWhenPack": true
+    },
+    "it_hub": {
+      "rows": 5,
+      "title": {
+        "values": {
+          "en_us": "IT Branch",
+          "ru_ru": "IT-ветка",
+          "uk_ua": "IT-гілка",
+          "ja_jp": "IT系統",
+          "rdr": "Машинная вѣтвь",
+          "rpr": "Машинная вѣтвь"
+        }
+      },
+      "buttons": {
+        "info": {
+          "slot": 36,
+          "type": "none",
+          "icon": {
+            "fallbackItem": "minecraft:knowledge_book",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Signal Tree",
+              "ru_ru": "Дерево сигналов",
+              "uk_ua": "Дерево сигналів",
+              "ja_jp": "信号ツリー",
+              "rdr": "Древо сигналовъ",
+              "rpr": "Древо сигналовъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Three sensors feed Communication Systems.",
+                "From there the branch splits into displays and drones."
+              ],
+              "ru_ru": [
+                "Три сенсора питают Системы связи.",
+                "От них ветка расходится на экраны, глушилку и дронов."
+              ],
+              "uk_ua": [
+                "Три сенсори живлять Системи зв’язку.",
+                "Від них гілка розходиться на екрани, глушилку та дрони."
+              ],
+              "ja_jp": [
+                "3つのセンサーが通信システムに流れ込みます。",
+                "そこから画面系とドローン系に分岐します。"
+              ],
+              "rdr": [
+                "Три чувствилища питаютъ вѣсть-проводы.",
+                "Отъ нихъ вѣтвь расходится къ экранамъ, глушилкѣ и дронамъ."
+              ],
+              "rpr": [
+                "Три чувствилища питаютъ вѣсть-проводы.",
+                "Отъ нихъ вѣтвь расходится къ экранамъ, глушилкѣ и дронамъ."
+              ]
+            }
+          }
+        },
+        "electronics": {
+          "slot": 4,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_electronics",
+          "pricesBitcoins": [
+            300
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:lightning_rod",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:lightning_rod",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Electronics",
+              "ru_ru": "Электроника",
+              "uk_ua": "Електроніка",
+              "ja_jp": "電子機器",
+              "rdr": "Электрическiя хитрости",
+              "rpr": "Электрическiя хитрости"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Basic knowledge of circuits and electricity.",
+                "Without it, no cameras, screens or drones exist.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Базовые знания о схемах и электричестве.",
+                "Без неё никаких камер, экранов и дронов не будет.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Базові знання про схеми та електрику.",
+                "Без неї не буде ні камер, ні екранів, ні дронів.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "回路と電気の基礎知識です。",
+                "これがないとカメラも画面もドローンもありません。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Начала о проводахъ и молнiи ручной.",
+                "Безъ нея ни камеръ, ни экрановъ, ни дроновъ не сыщешь.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Начала о проводахъ и молнiи ручной.",
+                "Безъ нея ни камеръ, ни экрановъ, ни дроновъ не сыщешь.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          }
+        },
+        "camera": {
+          "slot": 10,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_camera",
+          "pricesBitcoins": [
+            600
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:spyglass",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:spyglass",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Camera",
+              "ru_ru": "Камера",
+              "uk_ua": "Камера",
+              "ja_jp": "カメラ",
+              "rdr": "Глазъ стеклянный",
+              "rpr": "Глазъ стеклянный"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Takes photos and records video.",
+                "Requires Electronics. Needed for scouting and drones.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Позволяет делать снимки и записывать видео.",
+                "Требует Электронику. Нужна для разведки и дронов.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Дозволяє робити знімки й записувати відео.",
+                "Потребує Електроніку. Потрібна для розвідки й дронів.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "写真と動画を記録できます。",
+                "電子機器が必要で、偵察とドローンに使います。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Снимаетъ образы и записуетъ движенiя.",
+                "Требуетъ электроники; нужна на развѣдку и дроновъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Снимаетъ образы и записуетъ движенiя.",
+                "Требуетъ электроники; нужна на развѣдку и дроновъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_electronics",
+              "minLevel": 1
+            }
+          ]
+        },
+        "microphone": {
+          "slot": 13,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_microphone",
+          "pricesBitcoins": [
+            450
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:goat_horn",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:goat_horn",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Microphone",
+              "ru_ru": "Микрофон",
+              "uk_ua": "Мікрофон",
+              "ja_jp": "マイク",
+              "rdr": "Слухачъ",
+              "rpr": "Слухачъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Captures sound.",
+                "Requires Electronics. One of the parts for communication systems.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Записывает звук.",
+                "Требует Электронику. Один из элементов для систем связи.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Записує звук.",
+                "Потребує Електроніку. Один з елементів для систем зв’язку.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "音を記録します。",
+                "電子機器が必要で、通信システムの部品です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Ловитъ голосы и шумы.",
+                "Требуетъ электроники; одна изъ частей вѣсть-проводовъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Ловитъ голосы и шумы.",
+                "Требуетъ электроники; одна изъ частей вѣсть-проводовъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_electronics",
+              "minLevel": 1
+            }
+          ]
+        },
+        "speaker": {
+          "slot": 16,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_speaker",
+          "pricesBitcoins": [
+            450
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:note_block",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:note_block",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Speaker",
+              "ru_ru": "Динамик",
+              "uk_ua": "Динамік",
+              "ja_jp": "スピーカー",
+              "rdr": "Громкогласъ",
+              "rpr": "Громкогласъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Plays sound.",
+                "Requires Electronics. One of the parts for communication systems.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Воспроизводит звук.",
+                "Требует Электронику. Один из элементов для систем связи.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відтворює звук.",
+                "Потребує Електроніку. Один з елементів для систем зв’язку.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "音を再生します。",
+                "電子機器が必要で、通信システムの部品です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Гремитъ и вещаетъ вслухъ.",
+                "Требуетъ электроники; тоже часть вѣсть-проводовъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Гремитъ и вещаетъ вслухъ.",
+                "Требуетъ электроники; тоже часть вѣсть-проводовъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_electronics",
+              "minLevel": 1
+            }
+          ]
+        },
+        "communications": {
+          "slot": 22,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_communications",
+          "pricesBitcoins": [
+            800
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:comparator",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:comparator",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Communication Systems",
+              "ru_ru": "Системы связи",
+              "uk_ua": "Системи зв’язку",
+              "ja_jp": "通信システム",
+              "rdr": "Вѣсть-проводы",
+              "rpr": "Вѣсть-проводы"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks remote data transfer and control.",
+                "Needs any 2 of: Camera, Microphone, Speaker.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает удалённую передачу данных и управление.",
+                "Требует любые 2 из 3: Камера, Микрофон, Динамик.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває віддалену передачу даних і керування.",
+                "Потребує будь-які 2 з 3: Камера, Мікрофон, Динамік.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "遠隔データ伝送と制御を解放します。",
+                "カメラ・マイク・スピーカーのうち2つが必要です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ дальнюю передачу вѣстей и повелѣнiй.",
+                "Надобны двое изъ троихъ: камера, слухачъ, громкогласъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ дальнюю передачу вѣстей и повелѣнiй.",
+                "Надобны двое изъ троихъ: камера, слухачъ, громкогласъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirementGroups": [
+            {
+              "mode": "at_least",
+              "minSatisfiedRequirements": 2,
+              "requirements": [
+                {
+                  "upgradeId": "it_camera",
+                  "minLevel": 1
+                },
+                {
+                  "upgradeId": "it_microphone",
+                  "minLevel": 1
+                },
+                {
+                  "upgradeId": "it_speaker",
+                  "minLevel": 1
+                }
+              ]
+            }
+          ]
+        },
+        "screen": {
+          "slot": 30,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_screen",
+          "pricesBitcoins": [
+            1000
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:map",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:map",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Screen",
+              "ru_ru": "Экран",
+              "uk_ua": "Екран",
+              "ja_jp": "画面",
+              "rdr": "Экранъ",
+              "rpr": "Экранъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "A balanced general-purpose display.",
+                "Requires Communication Systems. This is the single display tier.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Сбалансированный универсальный экран.",
+                "Требует Системы связи. Это единственный уровень экрана.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Збалансований універсальний екран.",
+                "Потребує Системи зв’язку. Це єдиний рівень екрана.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "扱いやすい экранです。",
+                "通信システムが必要です。画面段階はこれ一つです。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Сбалансированный общий экранъ.",
+                "Требуетъ вѣсть-проводовъ. Экранный чинъ нынѣ одинъ-единственный.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Сбалансированный общий экранъ.",
+                "Требуетъ вѣсть-проводовъ. Экранный чинъ нынѣ одинъ-единственный.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_communications",
+              "minLevel": 1
+            }
+          ]
+        },
+        "jammer": {
+          "slot": 39,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_jammer",
+          "pricesBitcoins": [
+            1300
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:lodestone",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:lodestone",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Jammer",
+              "ru_ru": "Глушилка",
+              "uk_ua": "Глушилка",
+              "ja_jp": "ジャマー",
+              "rdr": "Глушилка",
+              "rpr": "Глушилка"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Creates a 20-block zone where drones lose control.",
+                "Requires the Screen. Creates a 20-block anti-drone field.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Создаёт зону в 20 блоков, где дроны теряют управление.",
+                "Требует Экран. Создаёт антидронное поле радиусом 20 блоков.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Створює зону в 20 блоків, де дрони втрачають керування.",
+                "Потребує Екран. Створює антидронне поле радіусом 20 блоків.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "20ブロック圏でドローン制御を失わせます。",
+                "画面が必要です。半径20ブロックの対ドローン領域を作ります。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Творитъ кругъ въ 20 блоковъ, гдѣ дроны остаются безъ воли.",
+                "Требуетъ экранъ. Творитъ антидронное поле на двадцать блоковъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Творитъ кругъ въ 20 блоковъ, гдѣ дроны остаются безъ воли.",
+                "Требуетъ экранъ. Творитъ антидронное поле на двадцать блоковъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_screen",
+              "minLevel": 1
+            }
+          ]
+        },
+        "scout": {
+          "slot": 33,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_drone_scout",
+          "pricesBitcoins": [
+            1800
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:firework_rocket",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:firework_rocket",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Scout Drone",
+              "ru_ru": "Дрон-разведчик",
+              "uk_ua": "Дрон-розвідник",
+              "ja_jp": "偵察ドローン",
+              "rdr": "Дронъ-развѣдчикъ",
+              "rpr": "Дронъ-развѣдчикъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "A remote drone for caves, mines and hostile bases.",
+                "Requires Camera and the Screen.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Управляемый дрон для разведки пещер, шахт и чужих баз.",
+                "Требует Камеру и Экран.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Керований дрон для розвідки печер, шахт і чужих баз.",
+                "Потребує Камеру та Екран.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "洞窟・鉱山・敵拠点向けの偵察ドローンです。",
+                "カメラと画面が必要です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Управляемый летунъ для пещеръ, шахтъ и вражьих дворовъ.",
+                "Требуетъ камеру и экранъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Управляемый летунъ для пещеръ, шахтъ и вражьих дворовъ.",
+                "Требуетъ камеру и экранъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_camera",
+              "minLevel": 1
+            },
+            {
+              "upgradeId": "it_screen",
+              "minLevel": 1
+            }
+          ]
+        },
+        "kamikaze": {
+          "slot": 34,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_drone_kamikaze",
+          "pricesBitcoins": [
+            2700
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:tnt",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:tnt",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Kamikaze Drone",
+              "ru_ru": "Дрон-камикадзе",
+              "uk_ua": "Дрон-камікадзе",
+              "ja_jp": "特攻ドローン",
+              "rdr": "Дронъ-камикадзе",
+              "rpr": "Дронъ-камикадзе"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "A one-use drone that explodes on contact.",
+                "Requires Scout Drone.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Одноразовый дрон, который взрывается при контакте.",
+                "Требует Дрона-разведчика.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Одноразовий дрон, що вибухає при контакті.",
+                "Потребує Дрона-розвідника.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "接触で爆発する使い捨てドローンです。",
+                "偵察ドローンが必要です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Одноразовый летунъ, что рвётся при соприкосновенiи.",
+                "Требуетъ дрона-развѣдчика.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Одноразовый летунъ, что рвётся при соприкосновенiи.",
+                "Требуетъ дрона-развѣдчика.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_drone_scout",
+              "minLevel": 1
+            }
+          ]
+        },
+        "combat": {
+          "slot": 35,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_drone_combat",
+          "pricesBitcoins": [
+            3000
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:crossbow",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:crossbow",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Combat Drone",
+              "ru_ru": "Боевой дрон",
+              "uk_ua": "Бойовий дрон",
+              "ja_jp": "戦闘ドローン",
+              "rdr": "Боевой дронъ",
+              "rpr": "Боевой дронъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "An autonomous guard unit with ranged attacks.",
+                "Requires Kamikaze Drone. The most expensive toy in the branch.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Автономный боевой юнит с дальними атаками.",
+                "Требует Дрона-камикадзе. Самая дорогая игрушка ветки.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Автономний бойовий юніт із дальніми атаками.",
+                "Потребує Дрона-камікадзе. Найдорожча іграшка гілки.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "遠距離攻撃を行う自律警備ドローンです。",
+                "特攻ドローンが必要です。この枝で最も高価なおもちゃです。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Самостоятельный стражъ съ дальнiмъ боемъ.",
+                "Требуетъ камикадзе; самая дорогая игрушка во всѣй вѣтви.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Самостоятельный стражъ съ дальнiмъ боемъ.",
+                "Требуетъ камикадзе; самая дорогая игрушка во всѣй вѣтви.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_drone_kamikaze",
+              "minLevel": 1
+            }
+          ]
+        },
+        "back": {
+          "slot": 44,
+          "type": "open_screen",
+          "targetScreenId": "main",
+          "icon": {
+            "fallbackItem": "minecraft:arrow",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Back",
+              "ru_ru": "Назад",
+              "uk_ua": "Назад",
+              "ja_jp": "戻る",
+              "rdr": "Назадъ",
+              "rpr": "Назадъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Return to the previous branch."
+              ],
+              "ru_ru": [
+                "Вернуться в предыдущий раздел."
+              ],
+              "uk_ua": [
+                "Повернутися до попередньої гілки."
+              ],
+              "ja_jp": [
+                "前の画面に戻ります。"
+              ],
+              "rdr": [
+                "Возвратиться во прежнiй разделъ."
+              ],
+              "rpr": [
+                "Возвратиться во прежнiй разделъ."
+              ]
+            }
+          }
+        }
+      },
+      "theme": "template_5row",
+      "hideTitleTextWhenPack": true
+    },
+    "it_devices": {
+      "rows": 4,
+      "title": {
+        "values": {
+          "en_us": "Input Devices",
+          "ru_ru": "Устройства ввода",
+          "uk_ua": "Пристрої вводу",
+          "ja_jp": "入力装置",
+          "rdr": "Приборы ввода",
+          "rpr": "Приборы ввода"
+        }
+      },
+      "buttons": {
+        "info": {
+          "slot": 27,
+          "type": "none",
+          "icon": {
+            "fallbackItem": "minecraft:knowledge_book",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Sensor Bench",
+              "ru_ru": "Стенд сенсоров",
+              "uk_ua": "Стенд сенсорів",
+              "ja_jp": "センサーベンチ",
+              "rdr": "Столъ чувствилищъ",
+              "rpr": "Столъ чувствилищъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "These parts feed the communication branch.",
+                "Buy any two of the three to unlock Communication Systems."
+              ],
+              "ru_ru": [
+                "Эти детали питают ветку связи.",
+                "Купи любые две из трёх, чтобы открыть Системы связи."
+              ],
+              "uk_ua": [
+                "Ці деталі живлять гілку зв’язку.",
+                "Купи будь-які дві з трьох, щоб відкрити Системи зв’язку."
+              ],
+              "ja_jp": [
+                "これらの部品が通信枝を支えます。",
+                "3つのうち2つで通信システムが開きます。"
+              ],
+              "rdr": [
+                "Сiи части питаютъ вѣтвь вѣсти.",
+                "Возьми двое изъ троихъ, и вѣсть-проводы отворятся."
+              ],
+              "rpr": [
+                "Сiи части питаютъ вѣтвь вѣсти.",
+                "Возьми двое изъ троихъ, и вѣсть-проводы отворятся."
+              ]
+            }
+          }
+        },
+        "camera": {
+          "slot": 10,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_camera",
+          "pricesBitcoins": [
+            600
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:spyglass",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:spyglass",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Camera",
+              "ru_ru": "Камера",
+              "uk_ua": "Камера",
+              "ja_jp": "カメラ",
+              "rdr": "Глазъ стеклянный",
+              "rpr": "Глазъ стеклянный"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Takes photos and records video.",
+                "Requires Electronics. Needed for scouting and drones.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Позволяет делать снимки и записывать видео.",
+                "Требует Электронику. Нужна для разведки и дронов.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Дозволяє робити знімки й записувати відео.",
+                "Потребує Електроніку. Потрібна для розвідки й дронів.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "写真と動画を記録できます。",
+                "電子機器が必要で、偵察とドローンに使います。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Снимаетъ образы и записуетъ движенiя.",
+                "Требуетъ электроники; нужна на развѣдку и дроновъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Снимаетъ образы и записуетъ движенiя.",
+                "Требуетъ электроники; нужна на развѣдку и дроновъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_electronics",
+              "minLevel": 1
+            }
+          ]
+        },
+        "microphone": {
+          "slot": 13,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_microphone",
+          "pricesBitcoins": [
+            450
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:goat_horn",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:goat_horn",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Microphone",
+              "ru_ru": "Микрофон",
+              "uk_ua": "Мікрофон",
+              "ja_jp": "マイク",
+              "rdr": "Слухачъ",
+              "rpr": "Слухачъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Captures sound.",
+                "Requires Electronics. One of the parts for communication systems.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Записывает звук.",
+                "Требует Электронику. Один из элементов для систем связи.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Записує звук.",
+                "Потребує Електроніку. Один з елементів для систем зв’язку.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "音を記録します。",
+                "電子機器が必要で、通信システムの部品です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Ловитъ голосы и шумы.",
+                "Требуетъ электроники; одна изъ частей вѣсть-проводовъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Ловитъ голосы и шумы.",
+                "Требуетъ электроники; одна изъ частей вѣсть-проводовъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_electronics",
+              "minLevel": 1
+            }
+          ]
+        },
+        "speaker": {
+          "slot": 16,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_speaker",
+          "pricesBitcoins": [
+            450
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:note_block",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:note_block",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Speaker",
+              "ru_ru": "Динамик",
+              "uk_ua": "Динамік",
+              "ja_jp": "スピーカー",
+              "rdr": "Громкогласъ",
+              "rpr": "Громкогласъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Plays sound.",
+                "Requires Electronics. One of the parts for communication systems.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Воспроизводит звук.",
+                "Требует Электронику. Один из элементов для систем связи.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відтворює звук.",
+                "Потребує Електроніку. Один з елементів для систем зв’язку.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "音を再生します。",
+                "電子機器が必要で、通信システムの部品です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Гремитъ и вещаетъ вслухъ.",
+                "Требуетъ электроники; тоже часть вѣсть-проводовъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Гремитъ и вещаетъ вслухъ.",
+                "Требуетъ электроники; тоже часть вѣсть-проводовъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_electronics",
+              "minLevel": 1
+            }
+          ]
+        },
+        "hint": {
+          "slot": 22,
+          "type": "none",
+          "icon": {
+            "fallbackItem": "minecraft:comparator",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Rule of Two",
+              "ru_ru": "Правило двух",
+              "uk_ua": "Правило двох",
+              "ja_jp": "二つの法則",
+              "rdr": "Правило двоихъ",
+              "rpr": "Правило двоихъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Communication Systems unlock only after any two sensors are bought.",
+                "Camera + microphone, camera + speaker, or microphone + speaker all work."
+              ],
+              "ru_ru": [
+                "Системы связи откроются только после покупки любых двух сенсоров.",
+                "Камера + микрофон, камера + динамик или микрофон + динамик — всё сработает."
+              ],
+              "uk_ua": [
+                "Системи зв’язку відкриються лише після покупки будь-яких двох сенсорів.",
+                "Камера + мікрофон, камера + динамік або мікрофон + динамік — усе спрацює."
+              ],
+              "ja_jp": [
+                "通信システムは任意の2つのセンサー購入後に開きます。",
+                "カメラ+マイク、カメラ+スピーカー、マイク+スピーカーのどれでも可。"
+              ],
+              "rdr": [
+                "Вѣсть-проводы явятся лишь когда куплены будутъ любые двое чувствилищъ.",
+                "Камера со слухачомъ, камера съ громкогласомъ, аль слухачъ съ громкогласомъ — всё годится."
+              ],
+              "rpr": [
+                "Вѣсть-проводы явятся лишь когда куплены будутъ любые двое чувствилищъ.",
+                "Камера со слухачомъ, камера съ громкогласомъ, аль слухачъ съ громкогласомъ — всё годится."
+              ]
+            }
+          }
+        },
+        "back": {
+          "slot": 35,
+          "type": "open_screen",
+          "targetScreenId": "it_hub",
+          "icon": {
+            "fallbackItem": "minecraft:arrow",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Back",
+              "ru_ru": "Назад",
+              "uk_ua": "Назад",
+              "ja_jp": "戻る",
+              "rdr": "Назадъ",
+              "rpr": "Назадъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Return to the previous branch."
+              ],
+              "ru_ru": [
+                "Вернуться в предыдущий раздел."
+              ],
+              "uk_ua": [
+                "Повернутися до попередньої гілки."
+              ],
+              "ja_jp": [
+                "前の画面に戻ります。"
+              ],
+              "rdr": [
+                "Возвратиться во прежнiй разделъ."
+              ],
+              "rpr": [
+                "Возвратиться во прежнiй разделъ."
+              ]
+            }
+          }
+        }
+      },
+      "theme": "template_4row",
+      "hideTitleTextWhenPack": true
+    },
+    "it_displays": {
+      "rows": 3,
+      "title": {
+        "values": {
+          "en_us": "Displays",
+          "ru_ru": "Экраны",
+          "uk_ua": "Екрани",
+          "ja_jp": "画面",
+          "rdr": "Экраны",
+          "rpr": "Экраны"
+        }
+      },
+      "buttons": {
+        "info": {
+          "slot": 18,
+          "type": "none",
+          "icon": {
+            "fallbackItem": "minecraft:knowledge_book",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Display Wall",
+              "ru_ru": "Стена экранов",
+              "uk_ua": "Стіна екранів",
+              "ja_jp": "画面の壁",
+              "rdr": "Стѣна экрановъ",
+              "rpr": "Стѣна экрановъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "All display upgrades require Communication Systems.",
+                "This one screen is enough to unlock the drone branch."
+              ],
+              "ru_ru": [
+                "Все экранные улучшения требуют Системы связи.",
+                "Этого одного экрана уже достаточно, чтобы открыть ветку дронов."
+              ],
+              "uk_ua": [
+                "Усі екранні покращення потребують Системи зв’язку.",
+                "Цього одного екрана вже досить, щоб відкрити гілку дронів."
+              ],
+              "ja_jp": [
+                "すべての画面系強化は通信システムが必要です。",
+                "この一つの画面だけでドローン枝が開きます。"
+              ],
+              "rdr": [
+                "Всякiй экранъ требуетъ вѣсть-проводовъ.",
+                "Сего одного экрана уже довольно, дабы отворить вѣтвь дроновъ."
+              ],
+              "rpr": [
+                "Всякiй экранъ требуетъ вѣсть-проводовъ.",
+                "Сего одного экрана уже довольно, дабы отворить вѣтвь дроновъ."
+              ]
+            }
+          }
+        },
+        "jammer": {
+          "slot": 14,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_jammer",
+          "pricesBitcoins": [
+            1300
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:lodestone",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:lodestone",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Jammer",
+              "ru_ru": "Глушилка",
+              "uk_ua": "Глушилка",
+              "ja_jp": "ジャマー",
+              "rdr": "Глушилка",
+              "rpr": "Глушилка"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Creates a 20-block zone where drones lose control.",
+                "Requires Communication Systems.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Создаёт зону в 20 блоков, где дроны теряют управление.",
+                "Требует Системы связи.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Створює зону в 20 блоків, де дрони втрачають керування.",
+                "Потребує Системи зв’язку.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "20ブロック圏でドローン制御を失わせます。",
+                "通信システムが必要です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Творитъ кругъ въ 20 блоковъ, гдѣ дроны остаются безъ воли.",
+                "Требуетъ вѣсть-проводовъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Творитъ кругъ въ 20 блоковъ, гдѣ дроны остаются безъ воли.",
+                "Требуетъ вѣсть-проводовъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_communications",
+              "minLevel": 1
+            }
+          ]
+        },
+        "back": {
+          "slot": 26,
+          "type": "open_screen",
+          "targetScreenId": "it_hub",
+          "icon": {
+            "fallbackItem": "minecraft:arrow",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Back",
+              "ru_ru": "Назад",
+              "uk_ua": "Назад",
+              "ja_jp": "戻る",
+              "rdr": "Назадъ",
+              "rpr": "Назадъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Return to the previous branch."
+              ],
+              "ru_ru": [
+                "Вернуться в предыдущий раздел."
+              ],
+              "uk_ua": [
+                "Повернутися до попередньої гілки."
+              ],
+              "ja_jp": [
+                "前の画面に戻ります。"
+              ],
+              "rdr": [
+                "Возвратиться во прежнiй разделъ."
+              ],
+              "rpr": [
+                "Возвратиться во прежнiй разделъ."
+              ]
+            }
+          }
+        },
+        "screen": {
+          "slot": 12,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_screen",
+          "pricesBitcoins": [
+            1000
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:map",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:map",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Screen",
+              "ru_ru": "Экран",
+              "uk_ua": "Екран",
+              "ja_jp": "画面",
+              "rdr": "Экранъ",
+              "rpr": "Экранъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "A balanced general-purpose display.",
+                "Requires Communication Systems. This is the single display tier.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Сбалансированный универсальный экран.",
+                "Требует Системы связи. Это единственный уровень экрана.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Збалансований універсальний екран.",
+                "Потребує Системи зв’язку. Це єдиний рівень екрана.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "扱いやすい экранです。",
+                "通信システムが必要です。画面段階はこれ一つです。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Сбалансированный общий экранъ.",
+                "Требуетъ вѣсть-проводовъ. Экранный чинъ нынѣ одинъ-единственный.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Сбалансированный общий экранъ.",
+                "Требуетъ вѣсть-проводовъ. Экранный чинъ нынѣ одинъ-единственный.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_communications",
+              "minLevel": 1
+            }
+          ]
+        }
+      },
+      "theme": "template_3row",
+      "hideTitleTextWhenPack": true
+    },
+    "it_drones": {
+      "rows": 4,
+      "title": {
+        "values": {
+          "en_us": "Drones",
+          "ru_ru": "Дроны",
+          "uk_ua": "Дрони",
+          "ja_jp": "ドローン",
+          "rdr": "Дроны",
+          "rpr": "Дроны"
+        }
+      },
+      "buttons": {
+        "info": {
+          "slot": 27,
+          "type": "none",
+          "icon": {
+            "fallbackItem": "minecraft:knowledge_book",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Drone Hangar",
+              "ru_ru": "Ангар дронов",
+              "uk_ua": "Ангар дронів",
+              "ja_jp": "ドローン格納庫",
+              "rdr": "Ангаръ дроновъ",
+              "rpr": "Ангаръ дроновъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "This branch needs a camera and the screen.",
+                "Only then does remote flight make sense."
+              ],
+              "ru_ru": [
+                "Этой ветке нужны камера и экран.",
+                "Только тогда удалённый полёт вообще имеет смысл."
+              ],
+              "uk_ua": [
+                "Цій гілці потрібні камера та екран.",
+                "Лише тоді віддалений політ має сенс."
+              ],
+              "ja_jp": [
+                "この枝にはカメラと画面が必要です。",
+                "その時だけ遠隔飛行に意味があります。"
+              ],
+              "rdr": [
+                "Сей вѣтви надобны камера и экранъ.",
+                "Только тогда дальнiй полётъ имеетъ здравiе."
+              ],
+              "rpr": [
+                "Сей вѣтви надобны камера и экранъ.",
+                "Только тогда дальнiй полётъ имеетъ здравiе."
+              ]
+            }
+          }
+        },
+        "scout": {
+          "slot": 12,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_drone_scout",
+          "pricesBitcoins": [
+            1800
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:firework_rocket",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:firework_rocket",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Scout Drone",
+              "ru_ru": "Дрон-разведчик",
+              "uk_ua": "Дрон-розвідник",
+              "ja_jp": "偵察ドローン",
+              "rdr": "Дронъ-развѣдчикъ",
+              "rpr": "Дронъ-развѣдчикъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "A remote drone for caves, mines and hostile bases.",
+                "Requires Camera and the Screen.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Управляемый дрон для разведки пещер, шахт и чужих баз.",
+                "Требует Камеру и Экран.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Керований дрон для розвідки печер, шахт і чужих баз.",
+                "Потребує Камеру та Екран.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "洞窟・鉱山・敵拠点向けの偵察ドローンです。",
+                "カメラと画面が必要です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Управляемый летунъ для пещеръ, шахтъ и вражьих дворовъ.",
+                "Требуетъ камеру и экранъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Управляемый летунъ для пещеръ, шахтъ и вражьих дворовъ.",
+                "Требуетъ камеру и экранъ.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_camera",
+              "minLevel": 1
+            },
+            {
+              "upgradeId": "it_screen",
+              "minLevel": 1
+            }
+          ]
+        },
+        "scout_hint": {
+          "slot": 13,
+          "type": "none",
+          "icon": {
+            "fallbackItem": "minecraft:spyglass",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "default": " "
+            }
+          }
+        },
+        "kamikaze": {
+          "slot": 22,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_drone_kamikaze",
+          "pricesBitcoins": [
+            2700
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:tnt",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:tnt",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Kamikaze Drone",
+              "ru_ru": "Дрон-камикадзе",
+              "uk_ua": "Дрон-камікадзе",
+              "ja_jp": "特攻ドローン",
+              "rdr": "Дронъ-камикадзе",
+              "rpr": "Дронъ-камикадзе"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "A one-use drone that explodes on contact.",
+                "Requires Scout Drone.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Одноразовый дрон, который взрывается при контакте.",
+                "Требует Дрона-разведчика.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Одноразовий дрон, що вибухає при контакті.",
+                "Потребує Дрона-розвідника.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "接触で爆発する使い捨てドローンです。",
+                "偵察ドローンが必要です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Одноразовый летунъ, что рвётся при соприкосновенiи.",
+                "Требуетъ дрона-развѣдчика.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Одноразовый летунъ, что рвётся при соприкосновенiи.",
+                "Требуетъ дрона-развѣдчика.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_drone_scout",
+              "minLevel": 1
+            }
+          ]
+        },
+        "kamikaze_hint": {
+          "slot": 23,
+          "type": "none",
+          "icon": {
+            "fallbackItem": "minecraft:gunpowder",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "default": " "
+            }
+          }
+        },
+        "combat_hint": {
+          "slot": 30,
+          "type": "none",
+          "icon": {
+            "fallbackItem": "minecraft:shield",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "default": " "
+            }
+          }
+        },
+        "combat": {
+          "slot": 31,
+          "type": "purchase_upgrade",
+          "upgradeId": "it_drone_combat",
+          "pricesBitcoins": [
+            3000
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:crossbow",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:crossbow",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Combat Drone",
+              "ru_ru": "Боевой дрон",
+              "uk_ua": "Бойовий дрон",
+              "ja_jp": "戦闘ドローン",
+              "rdr": "Боевой дронъ",
+              "rpr": "Боевой дронъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "An autonomous guard unit with ranged attacks.",
+                "Requires Kamikaze Drone. The most expensive toy in the branch.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Автономный боевой юнит с дальними атаками.",
+                "Требует Дрона-камикадзе. Самая дорогая игрушка ветки.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Автономний бойовий юніт із дальніми атаками.",
+                "Потребує Дрона-камікадзе. Найдорожча іграшка гілки.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "遠距離攻撃を行う自律警備ドローンです。",
+                "特攻ドローンが必要です。この枝で最も高価なおもちゃです。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Самостоятельный стражъ съ дальнiмъ боемъ.",
+                "Требуетъ камикадзе; самая дорогая игрушка во всѣй вѣтви.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Самостоятельный стражъ съ дальнiмъ боемъ.",
+                "Требуетъ камикадзе; самая дорогая игрушка во всѣй вѣтви.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_drone_kamikaze",
+              "minLevel": 1
+            }
+          ]
+        },
+        "back": {
+          "slot": 35,
+          "type": "open_screen",
+          "targetScreenId": "it_hub",
+          "icon": {
+            "fallbackItem": "minecraft:arrow",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Back",
+              "ru_ru": "Назад",
+              "uk_ua": "Назад",
+              "ja_jp": "戻る",
+              "rdr": "Назадъ",
+              "rpr": "Назадъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Return to the previous branch."
+              ],
+              "ru_ru": [
+                "Вернуться в предыдущий раздел."
+              ],
+              "uk_ua": [
+                "Повернутися до попередньої гілки."
+              ],
+              "ja_jp": [
+                "前の画面に戻ります。"
+              ],
+              "rdr": [
+                "Возвратиться во прежнiй разделъ."
+              ],
+              "rpr": [
+                "Возвратиться во прежнiй разделъ."
+              ]
+            }
+          }
+        }
+      },
+      "theme": "template_4row",
+      "hideTitleTextWhenPack": true
+    },
+    "races": {
+      "rows": 4,
+      "title": {
+        "values": {
+          "en_us": "Racial Gifts",
+          "ru_ru": "Способности рас",
+          "uk_ua": "Здібності рас",
+          "ja_jp": "種族能力",
+          "rdr": "Дары племёнъ",
+          "rpr": "Дары племёнъ"
+        }
+      },
+      "buttons": {
+        "info": {
+          "slot": 27,
+          "type": "none",
+          "icon": {
+            "fallbackItem": "minecraft:knowledge_book",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Tiered Talents",
+              "ru_ru": "Уровни талантов",
+              "uk_ua": "Рівні талантів",
+              "ja_jp": "段階的才能",
+              "rdr": "Чины даровъ",
+              "rpr": "Чины даровъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "All four racial tiers are independent purchases now.",
+                "Choose by price and effect, not by linear order."
+              ],
+              "ru_ru": [
+                "Все четыре расовых уровня теперь покупаются независимо.",
+                "Выбирай по цене и эффекту, а не по линейной цепочке."
+              ],
+              "uk_ua": [
+                "Усі чотири расові рівні тепер купуються незалежно.",
+                "Обирай за ціною та ефектом, а не за лінійним ланцюгом."
+              ],
+              "ja_jp": [
+                "4つの種族段階は独立購入になりました。",
+                "順番ではなく、価格と効果で選べます。"
+              ],
+              "rdr": [
+                "Всѣ четыре племянныхъ чина нынѣ выкупаются порознь.",
+                "Избирай по мздѣ да пользѣ, а не по линiи строгой."
+              ],
+              "rpr": [
+                "Всѣ четыре племянныхъ чина нынѣ выкупаются порознь.",
+                "Избирай по мздѣ да пользѣ, а не по линiи строгой."
+              ]
+            }
+          }
+        },
+        "budget": {
+          "slot": 11,
+          "type": "purchase_upgrade",
+          "upgradeId": "race_tier_budget",
+          "pricesBitcoins": [
+            300
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:rabbit_foot",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:rabbit_foot",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Budget Tier",
+              "ru_ru": "Дешман",
+              "uk_ua": "Дешман",
+              "ja_jp": "格安段階",
+              "rdr": "Дешманъ",
+              "rpr": "Дешманъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks the cheapest racial ability tier.",
+                "This tier is bought independently.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает самый дешёвый уровень расовых способностей.",
+                "Этот уровень покупается независимо.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває найдешевший рівень расових здібностей.",
+                "Цей рівень купується незалежно.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "最も安い種族能力段階を解放します。",
+                "この段階は独立購入です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ самый дешманскiй чинъ племянныхъ даровъ.",
+                "Сей чинъ выкупается порознь.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ самый дешманскiй чинъ племянныхъ даровъ.",
+                "Сей чинъ выкупается порознь.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": []
+        },
+        "medium": {
+          "slot": 12,
+          "type": "purchase_upgrade",
+          "upgradeId": "race_tier_mid",
+          "pricesBitcoins": [
+            600
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:golden_carrot",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:golden_carrot",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Medium Tier",
+              "ru_ru": "Средний",
+              "uk_ua": "Середній",
+              "ja_jp": "中級段階",
+              "rdr": "Среднiй чинъ",
+              "rpr": "Среднiй чинъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks the medium racial tier.",
+                "This tier is bought independently.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает средний уровень расовых способностей.",
+                "Этот уровень покупается независимо.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває середній рівень расових здібностей.",
+                "Цей рівень купується незалежно.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "中級の種族能力段階を解放します。",
+                "この段階は独立購入です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ среднiй чинъ племянныхъ даровъ.",
+                "Сей чинъ выкупается порознь.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ среднiй чинъ племянныхъ даровъ.",
+                "Сей чинъ выкупается порознь.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": []
+        },
+        "expensive": {
+          "slot": 13,
+          "type": "purchase_upgrade",
+          "upgradeId": "race_tier_expensive",
+          "pricesBitcoins": [
+            1000
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:ender_pearl",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:ender_pearl",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Expensive Tier",
+              "ru_ru": "Дорогой",
+              "uk_ua": "Дорогий",
+              "ja_jp": "高価な段階",
+              "rdr": "Дорогой чинъ",
+              "rpr": "Дорогой чинъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks the expensive racial tier.",
+                "This tier is bought independently.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает дорогой уровень расовых способностей.",
+                "Этот уровень покупается независимо.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває дорогий рівень расових здібностей.",
+                "Цей рівень купується незалежно.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "高価な種族能力段階を解放します。",
+                "この段階は独立購入です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ дорогой чинъ племянныхъ даровъ.",
+                "Сей чинъ выкупается порознь.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ дорогой чинъ племянныхъ даровъ.",
+                "Сей чинъ выкупается порознь.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": []
+        },
+        "elite": {
+          "slot": 14,
+          "type": "purchase_upgrade",
+          "upgradeId": "race_tier_elite",
+          "pricesBitcoins": [
+            1500
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:nether_star",
+            "packModel": ""
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:nether_star",
+            "packModel": "",
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Elite Tier",
+              "ru_ru": "Элитный",
+              "uk_ua": "Елітний",
+              "ja_jp": "精鋭段階",
+              "rdr": "Элитный чинъ",
+              "rpr": "Элитный чинъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks the elite racial tier.",
+                "This tier is bought independently.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC | Status: %status%"
+              ],
+              "ru_ru": [
+                "Открывает элитный уровень расовых способностей.",
+                "Этот уровень покупается независимо.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC | Статус: %status%"
+              ],
+              "uk_ua": [
+                "Відкриває елітний рівень расових здібностей.",
+                "Цей рівень купується незалежно.",
+                "Рівень: %level%/%max_level%",
+                "Ціна: %cost% BTC | Стан: %status%"
+              ],
+              "ja_jp": [
+                "精鋭の種族能力段階を解放します。",
+                "この段階は独立購入です。",
+                "レベル: %level%/%max_level%",
+                "価格: %cost% BTC | 状態: %status%"
+              ],
+              "rdr": [
+                "Отворяетъ элитный чинъ племянныхъ даровъ.",
+                "Сей чинъ выкупается порознь.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ],
+              "rpr": [
+                "Отворяетъ элитный чинъ племянныхъ даровъ.",
+                "Сей чинъ выкупается порознь.",
+                "Чинъ: %level%/%max_level%",
+                "Мзда: %cost% BTC | Состоянiе: %status%"
+              ]
+            }
+          },
+          "requirements": []
+        },
+        "back": {
+          "slot": 35,
+          "type": "open_screen",
+          "targetScreenId": "main",
+          "icon": {
+            "fallbackItem": "minecraft:arrow",
+            "packModel": ""
+          },
+          "name": {
+            "values": {
+              "en_us": "Back",
+              "ru_ru": "Назад",
+              "uk_ua": "Назад",
+              "ja_jp": "戻る",
+              "rdr": "Назадъ",
+              "rpr": "Назадъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Return to the previous branch."
+              ],
+              "ru_ru": [
+                "Вернуться в предыдущий раздел."
+              ],
+              "uk_ua": [
+                "Повернутися до попередньої гілки."
+              ],
+              "ja_jp": [
+                "前の画面に戻ります。"
+              ],
+              "rdr": [
+                "Возвратиться во прежнiй разделъ."
+              ],
+              "rpr": [
+                "Возвратиться во прежнiй разделъ."
+              ]
+            }
+          }
+        }
+      },
+      "theme": "template_4row",
+      "hideTitleTextWhenPack": true
+    }
+  }
+}

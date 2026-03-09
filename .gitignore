@@ -11,3 +11,4 @@ logs/
 .vscode/
 *.iml
 .DS_Store
+usercache.json

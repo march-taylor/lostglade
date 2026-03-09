@@ -1,12 +1,104 @@
 {
   "providers": [
     {
+      "type": "space",
+      "advances": {
+        "\ue905": -8,
+        "\ue940": -64,
+        "\ue941": -32,
+        "\ue942": -16,
+        "\ue943": -8,
+        "\ue944": -4,
+        "\ue945": -2,
+        "\ue946": -1,
+        "\ue947": 1,
+        "\ue948": 2,
+        "\ue949": 4,
+        "\ue94a": 8,
+        "\ue94b": 16,
+        "\ue94c": 32,
+        "\ue94d": 64
+      }
+    },
+    {
       "type": "bitmap",
       "file": "minecraft:font/stability.png",
       "ascent": 13,
       "height": 55,
       "chars": [
         "\ue903"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/main_menu_4row.png",
+      "ascent": 14,
+      "height": 222,
+      "chars": [
+        "\ue904"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/it_tree_5row.png",
+      "ascent": 14,
+      "height": 240,
+      "chars": [
+        "\ue906"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/upgrade_balance_digits.png",
+      "ascent": 14,
+      "height": 240,
+      "chars": [
+        "\ue920\ue921\ue922\ue923\ue924\ue925\ue926\ue927\ue928\ue929"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/template_3row.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue910"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/template_4row.png",
+      "ascent": 14,
+      "height": 222,
+      "chars": [
+        "\ue911"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/template_5row.png",
+      "ascent": 14,
+      "height": 240,
+      "chars": [
+        "\ue912"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/vanilla_generic_3row.png",
+      "ascent": 13,
+      "height": 168,
+      "chars": [
+        "\ue913"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/vanilla_generic_6row.png",
+      "ascent": 13,
+      "height": 222,
+      "chars": [
+        "\ue914"
       ]
     },
     {
