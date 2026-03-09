@@ -40,12 +40,9 @@ import java.nio.file.Path;
 public final class BitcoinOvercookGlitch implements FurnaceSmeltGlitchHandler {
 	private static final int RESULT_SLOT = 2;
 	private static final String EXPERIENCE = "experience";
-	private static final String VANILLA_WEIGHT = "vanillaWeight";
-	private static final String LG2_WEIGHT = "lg2Weight";
 	private static final Item TECHNICAL_RESULT_ITEM = Items.BARRIER;
 	private static final String FIRST_TRIGGER_FILE_NAME = "lg2-bitcoin-overcook-first-players.json";
-	private static final List<Item> VANILLA_ITEM_POOL = collectItemPool("minecraft");
-	private static final List<Item> LG2_ITEM_POOL = collectItemPool(Lg2.MOD_ID);
+	private static final List<Item> ITEM_POOL = collectItemPool();
 	private static final Gson FIRST_TRIGGER_GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final Map<String, UUID> FURNACE_OWNER_BY_KEY = new HashMap<>();
 	private static Set<UUID> firstTriggerPlayers;
@@ -67,8 +64,6 @@ public final class BitcoinOvercookGlitch implements FurnaceSmeltGlitchHandler {
 		entry.maxCooldownTicks = 0;
 		JsonObject settings = new JsonObject();
 		settings.addProperty(EXPERIENCE, 0.1D);
-		settings.addProperty(VANILLA_WEIGHT, 1.0D);
-		settings.addProperty(LG2_WEIGHT, 1.0D);
 		entry.settings = settings;
 		return entry;
 	}
@@ -81,8 +76,8 @@ public final class BitcoinOvercookGlitch implements FurnaceSmeltGlitchHandler {
 
 		boolean changed = false;
 		changed |= GlitchSettingsHelper.sanitizeDouble(entry.settings, EXPERIENCE, 0.1D, 0.0D, 100.0D);
-		changed |= GlitchSettingsHelper.sanitizeDouble(entry.settings, VANILLA_WEIGHT, 1.0D, 0.0D, 1000.0D);
-		changed |= GlitchSettingsHelper.sanitizeDouble(entry.settings, LG2_WEIGHT, 1.0D, 0.0D, 1000.0D);
+		changed |= entry.settings.remove("vanillaWeight") != null;
+		changed |= entry.settings.remove("lg2Weight") != null;
 		return changed;
 	}
 
@@ -202,28 +197,13 @@ public final class BitcoinOvercookGlitch implements FurnaceSmeltGlitchHandler {
 	}
 
 	private static Item selectRandomItem(RandomSource random, GlitchConfig.GlitchEntry entry) {
-		double vanillaWeight = GlitchSettingsHelper.getDouble(entry.settings, VANILLA_WEIGHT, 1.0D);
-		double lg2Weight = GlitchSettingsHelper.getDouble(entry.settings, LG2_WEIGHT, 1.0D);
-		boolean vanillaAvailable = vanillaWeight > 0.0D && !VANILLA_ITEM_POOL.isEmpty();
-		boolean lg2Available = lg2Weight > 0.0D && !LG2_ITEM_POOL.isEmpty();
-		if (!vanillaAvailable && !lg2Available) {
+		if (ITEM_POOL.isEmpty()) {
 			return null;
 		}
-		if (!vanillaAvailable) {
-			return LG2_ITEM_POOL.get(random.nextInt(LG2_ITEM_POOL.size()));
-		}
-		if (!lg2Available) {
-			return VANILLA_ITEM_POOL.get(random.nextInt(VANILLA_ITEM_POOL.size()));
-		}
-
-		double totalWeight = vanillaWeight + lg2Weight;
-		if (random.nextDouble() * totalWeight < vanillaWeight) {
-			return VANILLA_ITEM_POOL.get(random.nextInt(VANILLA_ITEM_POOL.size()));
-		}
-		return LG2_ITEM_POOL.get(random.nextInt(LG2_ITEM_POOL.size()));
+		return ITEM_POOL.get(random.nextInt(ITEM_POOL.size()));
 	}
 
-	private static List<Item> collectItemPool(String namespace) {
+	private static List<Item> collectItemPool() {
 		List<Item> items = new ArrayList<>();
 		for (Item item : BuiltInRegistries.ITEM) {
 			if (item == Items.AIR || item == TECHNICAL_RESULT_ITEM) {
@@ -231,7 +211,7 @@ public final class BitcoinOvercookGlitch implements FurnaceSmeltGlitchHandler {
 			}
 
 			Identifier id = BuiltInRegistries.ITEM.getKey(item);
-			if (id != null && namespace.equals(id.getNamespace())) {
+			if (id != null && ("minecraft".equals(id.getNamespace()) || Lg2.MOD_ID.equals(id.getNamespace()))) {
 				items.add(item);
 			}
 		}

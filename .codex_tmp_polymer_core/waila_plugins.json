@@ -1,0 +1,8 @@
+{
+  "polymer:core": {
+    "entrypoints": {
+      "client": "eu.pb4.polymer.core.impl.client.compat.WthitCompatibility"
+    },
+    "side": "client"
+  }
+}

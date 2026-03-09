@@ -1,11 +1,24 @@
 package com.lostglade.server.glitch;
 
+import com.google.common.collect.ImmutableMultimap;
 import com.google.gson.JsonObject;
+import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.lostglade.config.GlitchConfig;
+import com.mojang.authlib.GameProfile;
+import com.mojang.authlib.properties.PropertyMap;
+import eu.pb4.polymer.core.api.entity.PolymerEntity;
+import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.RemoteChatSession;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
+import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -17,18 +30,25 @@ import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.scores.PlayerTeam;
+import net.minecraft.world.scores.Scoreboard;
+import net.minecraft.world.scores.Team;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.VoxelShape;
+import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -148,7 +168,7 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 			return false;
 		}
 
-		discardPhantom(entity, true, true);
+		discardPhantom(entity, true, true, true);
 		return true;
 	}
 
@@ -202,6 +222,8 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 		changed |= GlitchSettingsHelper.sanitizeDouble(entry.settings, STANDING_WEIGHT, 1.0D, 0.0D, 1000.0D);
 		changed |= GlitchSettingsHelper.sanitizeDouble(entry.settings, CHASING_WEIGHT, 1.0D, 0.0D, 1000.0D);
 		changed |= GlitchSettingsHelper.sanitizeDouble(entry.settings, WANDERING_WEIGHT, 1.0D, 0.0D, 1000.0D);
+		changed |= entry.settings.remove("mobModelWeight") != null;
+		changed |= entry.settings.remove("playerModelWeight") != null;
 
 		int minTargets = GlitchSettingsHelper.getInt(entry.settings, MIN_TARGET_PLAYERS, 1);
 		int maxTargets = Math.max(1, GlitchSettingsHelper.getInt(entry.settings, MAX_TARGET_PLAYERS, 3));
@@ -280,12 +302,18 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 		int durationSeconds = sampleRangeInt(random, minDurationSeconds, maxDurationSeconds);
 		long durationTicks = Math.max(20L, durationSeconds * 20L);
 		MovementType movementType = pickMovementType(random, settings);
+		MinecraftServer server = level.getServer();
+		ServerPlayer skinSource = pickRandomSkinSource(server, random);
+		boolean usePlayerAppearance = skinSource != null && random.nextInt(pool.size() + 1) == pool.size();
+		EntityType<?> selectedMobType = usePlayerAppearance ? null : pool.get(random.nextInt(pool.size()));
 		double minChasingSpeed = GlitchSettingsHelper.getDouble(settings, MIN_CHASING_SPEED, DEFAULT_MIN_CHASING_SPEED);
 		double maxChasingSpeed = GlitchSettingsHelper.getDouble(settings, MAX_CHASING_SPEED, DEFAULT_MAX_CHASING_SPEED);
 		double chasingSpeed = sampleRange(random, minChasingSpeed, maxChasingSpeed);
 
 		for (int attempt = 0; attempt < MAX_MOB_SPAWN_ATTEMPTS; attempt++) {
-			Mob mob = createRandomMob(level, random, pool);
+			Mob mob = usePlayerAppearance
+					? createPlayerAppearanceBaseMob(level)
+					: createMobFromType(level, selectedMobType);
 			if (mob == null) {
 				continue;
 			}
@@ -302,6 +330,11 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 			if (!level.noCollision(mob) || level.containsAnyLiquid(mob.getBoundingBox())) {
 				mob.discard();
 				continue;
+			}
+
+			if (usePlayerAppearance && skinSource != null) {
+				GameProfile profile = createPhantomPlayerProfile(skinSource.getGameProfile(), mob.getUUID());
+				PolymerEntityUtils.setPolymerEntity(mob, new PhantomPlayerOverlay(profile));
 			}
 
 			ActivePhantomState state = new ActivePhantomState(
@@ -361,16 +394,22 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 		return mobPool;
 	}
 
-	private static Mob createRandomMob(ServerLevel level, RandomSource random, List<EntityType<?>> pool) {
-		for (int attempt = 0; attempt < pool.size(); attempt++) {
-			EntityType<?> entityType = pool.get(random.nextInt(pool.size()));
-			Entity entity = entityType.create(level, EntitySpawnReason.TRIGGERED);
-			if (entity instanceof Mob mob) {
-				return mob;
-			}
-			if (entity != null) {
-				entity.discard();
-			}
+	private static Mob createPlayerAppearanceBaseMob(ServerLevel level) {
+		Entity entity = EntityType.ZOMBIE.create(level, EntitySpawnReason.TRIGGERED);
+		return entity instanceof Mob mob ? mob : null;
+	}
+
+	private static Mob createMobFromType(ServerLevel level, EntityType<?> entityType) {
+		if (entityType == null) {
+			return null;
+		}
+
+		Entity entity = entityType.create(level, EntitySpawnReason.TRIGGERED);
+		if (entity instanceof Mob mob) {
+			return mob;
+		}
+		if (entity != null) {
+			entity.discard();
 		}
 		return null;
 	}
@@ -382,6 +421,46 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 		mob.setCanPickUpLoot(false);
 		mob.setTarget(null);
 		mob.addTag(PHANTOM_MOB_TAG);
+	}
+
+	private static ServerPlayer pickRandomSkinSource(MinecraftServer server, RandomSource random) {
+		if (server == null) {
+			return null;
+		}
+
+		List<ServerPlayer> candidates = new ArrayList<>();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (player == null || !player.isAlive() || player.isSpectator()) {
+				continue;
+			}
+			candidates.add(player);
+		}
+
+		if (candidates.isEmpty()) {
+			return null;
+		}
+		if (random == null) {
+			return candidates.getFirst();
+		}
+		return candidates.get(random.nextInt(candidates.size()));
+	}
+
+	private static GameProfile createPhantomPlayerProfile(GameProfile sourceProfile, UUID fakeProfileId) {
+		String safeName = buildPhantomProfileName(fakeProfileId);
+		PropertyMap properties = sourceProfile != null
+				? new PropertyMap(ImmutableMultimap.copyOf(sourceProfile.properties()))
+				: new PropertyMap(ImmutableMultimap.of());
+		return new GameProfile(fakeProfileId, safeName, properties);
+	}
+
+	private static String buildPhantomProfileName(UUID fakeProfileId) {
+		String compact = fakeProfileId == null ? UUID.randomUUID().toString().replace("-", "") : fakeProfileId.toString().replace("-", "");
+		return "ph" + compact.substring(0, 14);
+	}
+
+	private static String buildPhantomTeamName(UUID profileId) {
+		String compact = profileId == null ? UUID.randomUUID().toString().replace("-", "") : profileId.toString().replace("-", "");
+		return "lg2pm_" + compact.substring(0, 10);
 	}
 
 	private static Vec3 findSpawnPosition(
@@ -568,15 +647,15 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 		discardEntityOnly(entity, particles, false);
 	}
 
-	private static void discardEntityOnly(Entity entity, boolean particles, boolean contactWithPlayer) {
-		discardPhantom(entity, false, particles, contactWithPlayer);
+	private static void discardEntityOnly(Entity entity, boolean particles, boolean playDespawnSound) {
+		discardPhantom(entity, false, particles, playDespawnSound);
 	}
 
 	private static void discardPhantom(Entity entity, boolean removeState, boolean particles) {
 		discardPhantom(entity, removeState, particles, false);
 	}
 
-	private static void discardPhantom(Entity entity, boolean removeState, boolean particles, boolean contactWithPlayer) {
+	private static void discardPhantom(Entity entity, boolean removeState, boolean particles, boolean playDespawnSound) {
 		if (entity == null) {
 			return;
 		}
@@ -584,11 +663,14 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 		if (removeState) {
 			ACTIVE_STATES.remove(entity.getUUID());
 		}
+		if (entity.level() instanceof ServerLevel level && hasPlayerAppearance(entity)) {
+			sendPlayerAppearanceRemoval(level, entity.getUUID());
+		}
 		if (entity.level() instanceof ServerLevel level && entity.isAlive() && !entity.isRemoved()) {
 			if (particles) {
 				spawnDespawnParticles(level, entity);
 			}
-			if (contactWithPlayer) {
+			if (playDespawnSound) {
 				playContactDespawnSound(level, entity);
 			}
 		}
@@ -620,6 +702,36 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 				0.55F,
 				1.15F
 		);
+	}
+
+	private static boolean hasPlayerAppearance(Entity entity) {
+		return PolymerEntity.get(entity) instanceof PhantomPlayerOverlay;
+	}
+
+	private static void sendPlayerAppearanceRemoval(ServerLevel level, UUID profileId) {
+		if (level == null || profileId == null) {
+			return;
+		}
+
+		PlayerTeam team = createPhantomNameHiddenTeam(profileId, buildPhantomProfileName(profileId));
+		ClientboundSetPlayerTeamPacket teamPacket = ClientboundSetPlayerTeamPacket.createRemovePacket(team);
+		ClientboundPlayerInfoRemovePacket packet = new ClientboundPlayerInfoRemovePacket(List.of(profileId));
+		for (ServerPlayer player : level.players()) {
+			player.connection.send(teamPacket);
+			player.connection.send(packet);
+		}
+	}
+
+	private static PlayerTeam createPhantomNameHiddenTeam(UUID profileId, String profileName) {
+		PlayerTeam team = new PlayerTeam(new Scoreboard(), buildPhantomTeamName(profileId));
+		team.setDisplayName(Component.empty());
+		team.setPlayerPrefix(Component.empty());
+		team.setPlayerSuffix(Component.empty());
+		team.setNameTagVisibility(Team.Visibility.NEVER);
+		team.setDeathMessageVisibility(Team.Visibility.NEVER);
+		team.setCollisionRule(Team.CollisionRule.NEVER);
+		team.getPlayers().add(profileName);
+		return team;
 	}
 
 	private static MovementType pickMovementType(RandomSource random, JsonObject settings) {
@@ -778,6 +890,68 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 			this.wanderDirection = wanderDirection;
 			this.currentMotion = currentMotion;
 			this.chasingSpeed = chasingSpeed;
+		}
+	}
+
+	private static final class PhantomPlayerOverlay implements PolymerEntity {
+		private static final byte ALL_PLAYER_SKIN_PARTS = (byte) 0x7F;
+		private final GameProfile profile;
+
+		private PhantomPlayerOverlay(GameProfile profile) {
+			this.profile = profile;
+		}
+
+		@Override
+		public EntityType<?> getPolymerEntityType(PacketContext context) {
+			return EntityType.PLAYER;
+		}
+
+		@Override
+		public void onBeforeSpawnPacket(ServerPlayer player, java.util.function.Consumer<Packet<?>> packetConsumer) {
+			packetConsumer.accept(ClientboundSetPlayerTeamPacket.createAddOrModifyPacket(
+					createPhantomNameHiddenTeam(this.profile.id(), this.profile.name()),
+					true
+			));
+			EnumSet<ClientboundPlayerInfoUpdatePacket.Action> actions = EnumSet.of(
+					ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER,
+					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED,
+					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE,
+					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LATENCY,
+					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME,
+					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LIST_ORDER,
+					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_HAT
+			);
+			ClientboundPlayerInfoUpdatePacket packet = PolymerEntityUtils.createMutablePlayerListPacket(actions);
+			ClientboundPlayerInfoUpdatePacket.Entry entry = new ClientboundPlayerInfoUpdatePacket.Entry(
+					this.profile.id(),
+					this.profile,
+					false,
+					0,
+					GameType.SURVIVAL,
+					null,
+					true,
+					0,
+					(RemoteChatSession.Data) null
+			);
+			packet.entries().add(entry);
+			packetConsumer.accept(packet);
+		}
+
+		@Override
+		public void modifyRawTrackedData(List<SynchedEntityData.DataValue<?>> data, ServerPlayer player, boolean initial) {
+			upsertTrackedData(data, SynchedEntityData.DataValue.create(PlayerTrackedDataAccessor.lg2$getDataPlayerMainHand(), HumanoidArm.RIGHT));
+			upsertTrackedData(data, SynchedEntityData.DataValue.create(PlayerTrackedDataAccessor.lg2$getDataPlayerModeCustomisation(), ALL_PLAYER_SKIN_PARTS));
+		}
+
+		private static void upsertTrackedData(List<SynchedEntityData.DataValue<?>> data, SynchedEntityData.DataValue<?> replacement) {
+			for (int i = 0; i < data.size(); i++) {
+				SynchedEntityData.DataValue<?> current = data.get(i);
+				if (current.id() == replacement.id()) {
+					data.set(i, replacement);
+					return;
+				}
+			}
+			data.add(replacement);
 		}
 	}
 }

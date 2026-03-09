@@ -23,11 +23,12 @@ import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
-import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
+import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.minecraft.core.BlockPos;
+import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
@@ -121,6 +122,7 @@ public final class ServerGlitchSystem {
 
 		ServerTickEvents.END_SERVER_TICK.register(ServerGlitchSystem::tick);
 		ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(ServerGlitchSystem::onAllowChatMessage);
+		ServerMessageEvents.ALLOW_COMMAND_MESSAGE.register(ServerGlitchSystem::onAllowCommandMessage);
 		ServerPlayerEvents.COPY_FROM.register(ServerGlitchSystem::onCopyFrom);
 		ServerPlayerEvents.AFTER_RESPAWN.register(ServerGlitchSystem::onAfterRespawn);
 		UseBlockCallback.EVENT.register(ServerGlitchSystem::onUseBlock);
@@ -204,6 +206,17 @@ public final class ServerGlitchSystem {
 	}
 
 	private static boolean onAllowChatMessage(PlayerChatMessage message, ServerPlayer sender, ChatType.Bound params) {
+		return handleBroadcastedPlayerMessage(message, sender, params);
+	}
+
+	private static boolean onAllowCommandMessage(PlayerChatMessage message, CommandSourceStack source, ChatType.Bound params) {
+		if (source == null || !(source.getEntity() instanceof ServerPlayer sender)) {
+			return true;
+		}
+		return handleBroadcastedPlayerMessage(message, sender, params);
+	}
+
+	private static boolean handleBroadcastedPlayerMessage(PlayerChatMessage message, ServerPlayer sender, ChatType.Bound params) {
 		GlitchConfig.ConfigData config = GlitchConfig.get();
 		if (!config.enabled || sender == null || message == null || params == null) {
 			return true;

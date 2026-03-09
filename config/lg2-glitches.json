@@ -25,7 +25,7 @@
     "chat_interference": {
       "enabled": true,
       "minStabilityPercent": 0.0,
-      "maxStabilityPercent": 70.0,
+      "maxStabilityPercent": 80.0,
       "chancePerCheck": 0.95,
       "stabilityInfluence": 1.0,
       "minCooldownTicks": 0,
@@ -170,9 +170,7 @@
       "minCooldownTicks": 0,
       "maxCooldownTicks": 0,
       "settings": {
-        "experience": 0.4,
-        "vanillaWeight": 1.0,
-        "lg2Weight": 1.0
+        "experience": 0.4
       }
     }
   }

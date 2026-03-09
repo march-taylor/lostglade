@@ -1,0 +1,22 @@
+package eu.pb4.polymer.virtualentity.impl;
+
+import eu.pb4.polymer.virtualentity.api.attachment.BlockBoundAttachment;
+import eu.pb4.polymer.virtualentity.api.attachment.HolderAttachment;
+import eu.pb4.polymer.virtualentity.api.attachment.UniqueIdentifiableAttachment;
+import java.util.Collection;
+import net.minecraft.class_2338;
+import net.minecraft.class_2960;
+
+public interface HolderAttachmentHolder {
+    void polymerVE$addHolder(HolderAttachment holderAttachment);
+    void polymerVE$removeHolder(HolderAttachment holderAttachment);
+
+    default UniqueIdentifiableAttachment polymerVE$getIdHolder(class_2960 identifier) {
+        return null;
+    }
+    default void polymerVE$removePosHolder(class_2338 pos) {}
+    default BlockBoundAttachment polymerVE$getPosHolder(class_2338 pos) {
+        return null;
+    }
+    Collection<HolderAttachment> polymerVE$getHolders();
+}

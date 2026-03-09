@@ -8,6 +8,7 @@
 		"EntityKillProtectionMixin",
 		"ExampleMixin",
 		"PlayerContainerMenuAccessor",
+		"PlayerTrackedDataAccessor",
 		"ServerItemEntityMixin",
 		"ServerPlayerMenuTitleMixin"
 	],

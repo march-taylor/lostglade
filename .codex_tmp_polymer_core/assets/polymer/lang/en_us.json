@@ -1,0 +1,7 @@
+{
+  "itemGroup.polymer.server_items": "Server items",
+  "text.polymer.server_items": "Server item",
+  "text.polymer.server": "Server",
+  "config.jade.plugin_polymer.blockstate": "Enable blocks",
+  "config.jade.plugin_polymer.entities": "Enable entities"
+}
