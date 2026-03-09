@@ -92,7 +92,7 @@
       "maxStabilityPercent": 25.0,
       "chancePerCheck": 0.2,
       "stabilityInfluence": 1.0,
-      "minCooldownTicks": 480,
+      "minCooldownTicks": 320,
       "maxCooldownTicks": 4800,
       "settings": {
         "minTargetPlayers": 1,
@@ -124,7 +124,9 @@
       "minCooldownTicks": 0,
       "maxCooldownTicks": 0,
       "settings": {
-        "experience": 0.4
+        "experience": 0.4,
+        "vanillaWeight": 1.0,
+        "lg2Weight": 1.0
       }
     }
   }
