@@ -1,0 +1,13 @@
+{
+  "type": "minecraft:smelting",
+  "group": "lg2_bitcoin_overcook",
+  "category": "misc",
+  "cookingtime": 200,
+  "experience": 0.0,
+  "ingredient": [
+    "lg2:bitcoin"
+  ],
+  "result": {
+    "id": "minecraft:barrier"
+  }
+}

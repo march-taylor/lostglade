@@ -3,6 +3,8 @@
 	"package": "com.lostglade.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"mixins": [
+		"AbstractCookingRecipeMixin",
+		"AbstractFurnaceBlockEntityMixin",
 		"EntityKillProtectionMixin",
 		"ExampleMixin",
 		"ServerItemEntityMixin"
