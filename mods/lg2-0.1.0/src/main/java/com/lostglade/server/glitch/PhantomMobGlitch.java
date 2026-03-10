@@ -2,10 +2,14 @@ package com.lostglade.server.glitch;
 
 import com.google.common.collect.ImmutableMultimap;
 import com.google.gson.JsonObject;
+import com.lostglade.Lg2;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.lostglade.config.GlitchConfig;
 import com.mojang.authlib.GameProfile;
+import com.mojang.authlib.properties.Property;
 import com.mojang.authlib.properties.PropertyMap;
+import net.lionarius.skinrestorer.SkinRestorer;
+import net.lionarius.skinrestorer.skin.SkinValue;
 import eu.pb4.polymer.core.api.entity.PolymerEntity;
 import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
 import net.minecraft.core.BlockPos;
@@ -123,6 +127,10 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 
 			if (mob.level() instanceof ServerLevel level) {
 				state.dimension = level.dimension();
+			}
+			if (hasPlayerAppearance(mob) && mob.isOnFire()) {
+				mob.setRemainingFireTicks(0);
+				mob.clearFire();
 			}
 
 			boolean touchedPlayer = touchesPlayer(mob);
@@ -286,6 +294,17 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 	}
 
 	private static boolean spawnForPlayer(ServerPlayer player, RandomSource random, JsonObject settings, long nowTick) {
+		return spawnForPlayer(player, random, settings, nowTick, null, null);
+	}
+
+	private static boolean spawnForPlayer(
+			ServerPlayer player,
+			RandomSource random,
+			JsonObject settings,
+			long nowTick,
+			Boolean forcePlayerAppearance,
+			ServerPlayer forcedSkinSource
+	) {
 		if (player == null || !(player.level() instanceof ServerLevel level)) {
 			return false;
 		}
@@ -303,8 +322,13 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 		long durationTicks = Math.max(20L, durationSeconds * 20L);
 		MovementType movementType = pickMovementType(random, settings);
 		MinecraftServer server = level.getServer();
-		ServerPlayer skinSource = pickRandomSkinSource(server, random);
-		boolean usePlayerAppearance = skinSource != null && random.nextInt(pool.size() + 1) == pool.size();
+		ServerPlayer skinSource = forcedSkinSource != null ? forcedSkinSource : pickRandomSkinSource(server, random);
+		boolean usePlayerAppearance;
+		if (forcePlayerAppearance != null) {
+			usePlayerAppearance = forcePlayerAppearance && skinSource != null;
+		} else {
+			usePlayerAppearance = skinSource != null && random.nextInt(pool.size() + 1) == pool.size();
+		}
 		EntityType<?> selectedMobType = usePlayerAppearance ? null : pool.get(random.nextInt(pool.size()));
 		double minChasingSpeed = GlitchSettingsHelper.getDouble(settings, MIN_CHASING_SPEED, DEFAULT_MIN_CHASING_SPEED);
 		double maxChasingSpeed = GlitchSettingsHelper.getDouble(settings, MAX_CHASING_SPEED, DEFAULT_MAX_CHASING_SPEED);
@@ -333,7 +357,7 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 			}
 
 			if (usePlayerAppearance && skinSource != null) {
-				GameProfile profile = createPhantomPlayerProfile(skinSource.getGameProfile(), mob.getUUID());
+				GameProfile profile = createPhantomPlayerProfile(skinSource, mob.getUUID());
 				PolymerEntityUtils.setPolymerEntity(mob, new PhantomPlayerOverlay(profile));
 			}
 
@@ -395,7 +419,7 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 	}
 
 	private static Mob createPlayerAppearanceBaseMob(ServerLevel level) {
-		Entity entity = EntityType.ZOMBIE.create(level, EntitySpawnReason.TRIGGERED);
+		Entity entity = EntityType.HUSK.create(level, EntitySpawnReason.TRIGGERED);
 		return entity instanceof Mob mob ? mob : null;
 	}
 
@@ -445,12 +469,37 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 		return candidates.get(random.nextInt(candidates.size()));
 	}
 
-	private static GameProfile createPhantomPlayerProfile(GameProfile sourceProfile, UUID fakeProfileId) {
+	private static GameProfile createPhantomPlayerProfile(ServerPlayer sourcePlayer, UUID fakeProfileId) {
+		GameProfile sourceProfile = sourcePlayer.getGameProfile();
 		String safeName = buildPhantomProfileName(fakeProfileId);
 		PropertyMap properties = sourceProfile != null
 				? new PropertyMap(ImmutableMultimap.copyOf(sourceProfile.properties()))
 				: new PropertyMap(ImmutableMultimap.of());
+		applySkinRestorerSkin(sourcePlayer, properties);
 		return new GameProfile(fakeProfileId, safeName, properties);
+	}
+
+	private static void applySkinRestorerSkin(ServerPlayer sourcePlayer, PropertyMap properties) {
+		if (sourcePlayer == null || properties == null) {
+			return;
+		}
+
+		try {
+			SkinValue skinValue = SkinRestorer.getSkinStorage().getSkin(sourcePlayer.getUUID());
+			if (skinValue == null) {
+				return;
+			}
+
+			Property textures = skinValue.value();
+			if (textures == null) {
+				return;
+			}
+
+			properties.removeAll("textures");
+			properties.put("textures", textures);
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to resolve SkinRestorer skin for {}", sourcePlayer.getScoreboardName(), exception);
+		}
 	}
 
 	private static String buildPhantomProfileName(UUID fakeProfileId) {

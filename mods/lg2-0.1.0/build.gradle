@@ -12,6 +12,9 @@ base {
 
 def serverRootDir = file("${projectDir}/../..").canonicalFile
 def polymerSourceAssetsDir = file("${serverRootDir}/polymer/source_assets")
+def skinRestorerJars = fileTree(dir: "${serverRootDir}/mods", include: "skinrestorer-*.jar")
+def skinRestorerNestedLibDir = file("${buildDir}/skinrestorer-libs")
+def skinRestorerJavaClientJars = fileTree(dir: skinRestorerNestedLibDir, include: "java-client-*.jar")
 
 repositories {
 	// Add repositories to retrieve artifacts from in here.
@@ -57,8 +60,20 @@ dependencies {
 	modImplementation "eu.pb4:polymer-core:${project.polymer_version}"
 	modImplementation "eu.pb4:polymer-blocks:${project.polymer_version}"
 	modImplementation "eu.pb4:polymer-resource-pack:${project.polymer_version}"
+	modImplementation files(skinRestorerJars)
+	runtimeOnly files(skinRestorerJavaClientJars)
 	modRuntimeOnly files("${serverRootDir}/mods/cardinal-components-api-${project.cardinal_components_version}.jar")
 	
+}
+
+tasks.register("extractSkinRestorerNestedLibraries", Copy) {
+	from({
+		skinRestorerJars.files.collect { zipTree(it) }
+	})
+	include("META-INF/jars/java-client-*.jar")
+	eachFile { it.path = it.name }
+	includeEmptyDirs = false
+	into(skinRestorerNestedLibDir)
 }
 
 tasks.register("prepareDevResourcePack", Sync) {
@@ -72,6 +87,7 @@ tasks.register("prepareDevResourcePack", Sync) {
 
 tasks.matching { it.name == "runServer" }.configureEach {
 	dependsOn(tasks.named("prepareDevResourcePack"))
+	dependsOn(tasks.named("extractSkinRestorerNestedLibraries"))
 }
 
 processResources {
