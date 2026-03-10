@@ -2,6 +2,7 @@ package com.lostglade.server.glitch;
 
 import com.google.gson.JsonObject;
 import com.lostglade.config.GlitchConfig;
+import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.PlayerChatMessage;
@@ -10,6 +11,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -113,10 +115,72 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 			return false;
 		}
 
+		ChatMutationResult mutation = mutateMessage(server, random, entry, stabilityPercent, sender, message);
+		if (mutation == null) {
+			return false;
+		}
+
+		ChatType.Bound outgoingParams = params;
+		if (mutation.displayNameOverride() != null) {
+			Optional<Component> targetName = params.targetName();
+			outgoingParams = new ChatType.Bound(params.chatType(), mutation.displayNameOverride(), targetName);
+		}
+
+		Component decorated = outgoingParams.decorate(Component.literal(mutation.content()));
+		server.getPlayerList().broadcastSystemMessage(decorated, false);
+		return true;
+	}
+
+	@Override
+	public boolean triggerPrivateMessage(
+			MinecraftServer server,
+			RandomSource random,
+			GlitchConfig.GlitchEntry entry,
+			double stabilityPercent,
+			CommandSourceStack source,
+			ServerPlayer sender,
+			Collection<ServerPlayer> targets,
+			PlayerChatMessage message
+	) {
+		if (sender == null || source == null || message == null || targets == null || targets.isEmpty()) {
+			return false;
+		}
+
+		ChatMutationResult mutation = mutateMessage(server, random, entry, stabilityPercent, sender, message);
+		if (mutation == null) {
+			return false;
+		}
+
+		Component senderName = mutation.displayNameOverride() != null
+				? mutation.displayNameOverride()
+				: source.getDisplayName();
+		ChatType.Bound incomingParams = ChatType.bind(ChatType.MSG_COMMAND_INCOMING, source.registryAccess(), senderName);
+
+		for (ServerPlayer target : targets) {
+			if (target == null) {
+				continue;
+			}
+
+			ChatType.Bound outgoingParams = ChatType.bind(ChatType.MSG_COMMAND_OUTGOING, source.registryAccess(), senderName)
+					.withTargetName(target.getDisplayName());
+			sender.sendSystemMessage(outgoingParams.decorate(Component.literal(mutation.content())));
+			target.sendSystemMessage(incomingParams.decorate(Component.literal(mutation.content())));
+		}
+		return true;
+	}
+
+	private static ChatMutationResult mutateMessage(
+			MinecraftServer server,
+			RandomSource random,
+			GlitchConfig.GlitchEntry entry,
+			double stabilityPercent,
+			ServerPlayer sender,
+			PlayerChatMessage message
+	) {
 		JsonObject settings = entry.settings == null ? new JsonObject() : entry.settings;
 		String original = message.signedContent();
 		if (original == null || original.isEmpty()) {
-			return false;
+			return null;
 		}
 
 		double intensity = getRangeInstabilityFactor(stabilityPercent, entry.minStabilityPercent, entry.maxStabilityPercent);
@@ -177,18 +241,10 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 		}
 
 		if (displayNameOverride == null && finalContent.equals(original)) {
-			return false;
+			return null;
 		}
 
-		ChatType.Bound outgoingParams = params;
-		if (displayNameOverride != null) {
-			Optional<Component> targetName = params.targetName();
-			outgoingParams = new ChatType.Bound(params.chatType(), displayNameOverride, targetName);
-		}
-
-		Component decorated = outgoingParams.decorate(Component.literal(finalContent));
-		server.getPlayerList().broadcastSystemMessage(decorated, false);
-		return true;
+		return new ChatMutationResult(finalContent, displayNameOverride);
 	}
 
 	private static boolean hasAlternativeOnlinePlayer(MinecraftServer server, ServerPlayer sender) {
@@ -596,6 +652,9 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 	}
 
 	private record WordRange(int start, int end) {
+	}
+
+	private record ChatMutationResult(String content, Component displayNameOverride) {
 	}
 }
 

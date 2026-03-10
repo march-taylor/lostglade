@@ -7,6 +7,7 @@
 		"AbstractFurnaceBlockEntityMixin",
 		"EntityKillProtectionMixin",
 		"ExampleMixin",
+		"MsgCommandMixin",
 		"PlayerContainerMenuAccessor",
 		"PlayerTrackedDataAccessor",
 		"ServerItemEntityMixin",

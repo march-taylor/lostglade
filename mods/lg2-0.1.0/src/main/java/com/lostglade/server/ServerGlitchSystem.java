@@ -52,6 +52,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -271,6 +272,84 @@ public final class ServerGlitchSystem {
 		Component decorated = params.decorate(Component.literal(message.signedContent()));
 		server.getPlayerList().broadcastSystemMessage(decorated, false);
 		return false;
+	}
+
+	public static boolean handlePrivatePlayerMessageCommand(
+			CommandSourceStack source,
+			Collection<ServerPlayer> targets,
+			PlayerChatMessage message
+	) {
+		if (source == null
+				|| !(source.getEntity() instanceof ServerPlayer sender)
+				|| targets == null
+				|| targets.isEmpty()
+				|| message == null) {
+			return false;
+		}
+
+		GlitchConfig.ConfigData config = GlitchConfig.get();
+		if (!config.enabled) {
+			return false;
+		}
+
+		MinecraftServer server = sender.level().getServer();
+		if (server == null) {
+			return false;
+		}
+
+		ServerGlitchHandler baseHandler = HANDLERS.get(CHAT_INTERFERENCE_ID);
+		if (!(baseHandler instanceof ChatMessageGlitchHandler chatHandler)
+				|| config.glitches == null
+				|| config.glitches.isEmpty()) {
+			return false;
+		}
+
+		GlitchConfig.GlitchEntry entry = config.glitches.get(CHAT_INTERFERENCE_ID);
+		if (entry == null || !entry.enabled) {
+			return false;
+		}
+
+		double stabilityPercent = ServerStabilitySystem.getStabilityPercent();
+		if (stabilityPercent < entry.minStabilityPercent || stabilityPercent > entry.maxStabilityPercent) {
+			return false;
+		}
+
+		long gameTime = server.overworld().getGameTime();
+		long nextAllowedTick = NEXT_ALLOWED_TICKS.getOrDefault(CHAT_INTERFERENCE_ID, Long.MIN_VALUE);
+		if (gameTime < nextAllowedTick) {
+			return false;
+		}
+
+		RandomSource random = server.overworld().getRandom();
+		double baseChance = clamp01(entry.chancePerCheck);
+		double influence = clamp01(entry.stabilityInfluence);
+		double rangeInstabilityFactor = getRangeInstabilityFactor(
+				stabilityPercent,
+				entry.minStabilityPercent,
+				entry.maxStabilityPercent
+		);
+		double effectiveChance = baseChance * ((1.0D - influence) + (rangeInstabilityFactor * influence));
+		if (effectiveChance <= 0.0D || random.nextDouble() > effectiveChance) {
+			return false;
+		}
+
+		boolean triggered = chatHandler.triggerPrivateMessage(
+				server,
+				random,
+				entry,
+				stabilityPercent,
+				source,
+				sender,
+				targets,
+				message
+		);
+		if (!triggered) {
+			return false;
+		}
+
+		long cooldownTicks = Math.max(0L, getCooldownTicksForStability(entry, stabilityPercent));
+		NEXT_ALLOWED_TICKS.put(CHAT_INTERFERENCE_ID, gameTime + cooldownTicks);
+		return true;
 	}
 
 	public static void onFurnaceSmelt(
