@@ -15,6 +15,7 @@ import com.lostglade.server.glitch.GravitySurgeGlitch;
 import com.lostglade.server.glitch.InventoryTextureShuffleGlitch;
 import com.lostglade.server.glitch.PhantomMobGlitch;
 import com.lostglade.server.glitch.PhantomSoundGlitch;
+import com.lostglade.server.glitch.PlayerShuffleGlitch;
 import com.lostglade.server.glitch.RespawnGlitchHandler;
 import com.lostglade.server.glitch.ServerGlitchHandler;
 import com.lostglade.server.glitch.TimeOfDayJumpGlitch;
@@ -93,6 +94,7 @@ public final class ServerGlitchSystem {
 		registerHandler(new GravitySurgeGlitch());
 		registerHandler(new PhantomMobGlitch());
 		registerHandler(new UpsideDownMobGlitch());
+		registerHandler(new PlayerShuffleGlitch());
 		registerHandler(new ChestDesyncGlitch());
 		registerHandler(new BitcoinOvercookGlitch());
 		reloadConfig();
@@ -107,8 +109,11 @@ public final class ServerGlitchSystem {
 			PhantomMobGlitch.discardLingeringPhantoms(server);
 			UpsideDownMobGlitch.resetRuntimeState();
 			UpsideDownMobGlitch.restoreAll(server);
+			PlayerShuffleGlitch.resetRuntimeState();
+			PlayerShuffleGlitch.restoreAll(server);
 		});
 		ServerLifecycleEvents.SERVER_STOPPING.register(UpsideDownMobGlitch::restoreAll);
+		ServerLifecycleEvents.SERVER_STOPPING.register(PlayerShuffleGlitch::restoreAll);
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 				dispatcher.register(
@@ -195,6 +200,7 @@ public final class ServerGlitchSystem {
 		GravitySurgeGlitch.tickActiveStates(server);
 		PhantomMobGlitch.tickActiveStates(server);
 		UpsideDownMobGlitch.tickActiveStates(server);
+		PlayerShuffleGlitch.tickActiveStates(server);
 
 		GlitchConfig.ConfigData config = GlitchConfig.get();
 		if (!config.enabled) {

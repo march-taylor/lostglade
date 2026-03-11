@@ -162,6 +162,20 @@
         "maxDurationSeconds": 16
       }
     },
+    "player_shuffle": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 30.0,
+      "chancePerCheck": 0.2,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 200,
+      "maxCooldownTicks": 6000,
+      "settings": {
+        "minTargetPlayers": 2,
+        "maxTargetPlayers": "round(whitelistCount*0.75)",
+        "positionShuffleChance": 0.25
+      }
+    },
     "chest_desync": {
       "enabled": true,
       "minStabilityPercent": 0.0,
