@@ -125,6 +125,25 @@
         "maxForce": 1.0
       }
     },
+    "phantom_chunk": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 40.0,
+      "chancePerCheck": 0.2,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 160,
+      "maxCooldownTicks": 6000,
+      "settings": {
+        "minTargetPlayers": 1,
+        "maxTargetPlayers": "round(whitelistCount*0.5)",
+        "minDurationSeconds": 8,
+        "maxDurationSeconds": 32,
+        "minTargetDistanceChunks": 2,
+        "maxTargetDistanceChunks": 6,
+        "replacementChunkWeight": 0.75,
+        "intangibleChunkWeight": 0.25
+      }
+    },
     "phantom_mobs": {
       "enabled": true,
       "minStabilityPercent": 0.0,

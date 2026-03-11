@@ -13,6 +13,7 @@ import com.lostglade.server.glitch.CheckpointDesyncGlitch;
 import com.lostglade.server.glitch.EntityUseGlitchHandler;
 import com.lostglade.server.glitch.GravitySurgeGlitch;
 import com.lostglade.server.glitch.InventoryTextureShuffleGlitch;
+import com.lostglade.server.glitch.PhantomChunkGlitch;
 import com.lostglade.server.glitch.PhantomMobGlitch;
 import com.lostglade.server.glitch.PhantomSoundGlitch;
 import com.lostglade.server.glitch.PlayerShuffleGlitch;
@@ -92,6 +93,7 @@ public final class ServerGlitchSystem {
 		registerHandler(new InventoryTextureShuffleGlitch());
 		registerHandler(new BlackoutGlitch());
 		registerHandler(new GravitySurgeGlitch());
+		registerHandler(new PhantomChunkGlitch());
 		registerHandler(new PhantomMobGlitch());
 		registerHandler(new UpsideDownMobGlitch());
 		registerHandler(new PlayerShuffleGlitch());
@@ -105,6 +107,7 @@ public final class ServerGlitchSystem {
 			ChestDesyncGlitch.resetTracking();
 			BitcoinOvercookGlitch.resetRuntimeState();
 			GravitySurgeGlitch.resetRuntimeState();
+			PhantomChunkGlitch.resetRuntimeState();
 			PhantomMobGlitch.resetRuntimeState();
 			PhantomMobGlitch.discardLingeringPhantoms(server);
 			UpsideDownMobGlitch.resetRuntimeState();
@@ -112,6 +115,7 @@ public final class ServerGlitchSystem {
 			PlayerShuffleGlitch.resetRuntimeState();
 			PlayerShuffleGlitch.restoreAll(server);
 		});
+		ServerLifecycleEvents.SERVER_STOPPING.register(PhantomChunkGlitch::restoreAll);
 		ServerLifecycleEvents.SERVER_STOPPING.register(UpsideDownMobGlitch::restoreAll);
 		ServerLifecycleEvents.SERVER_STOPPING.register(PlayerShuffleGlitch::restoreAll);
 
@@ -198,6 +202,7 @@ public final class ServerGlitchSystem {
 		InventoryTextureShuffleGlitch.tickActiveStates(server);
 		BlackoutGlitch.tickActiveStates(server);
 		GravitySurgeGlitch.tickActiveStates(server);
+		PhantomChunkGlitch.tickActiveStates(server);
 		PhantomMobGlitch.tickActiveStates(server);
 		UpsideDownMobGlitch.tickActiveStates(server);
 		PlayerShuffleGlitch.tickActiveStates(server);
