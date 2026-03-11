@@ -1,12 +1,14 @@
-{
-  "item.lg2.bitcoin": "Биткоин",
-  "item.lg2.bitcoin_ore": "Биткоиновая руда",
-  "item.lg2.deepslate_bitcoin_ore": "Глубинносланцевая биткоиновая руда",
-  "item.lg2.special_pickaxe": "Особая кирка",
-  "item.lg2.backrooms_block": "Блок закулисья",
-  "item.lg2.server": "Сервер",
-  "block.lg2.server": "Сервер",
-  "block.lg2.bitcoin_ore": "Биткоиновая руда",
-  "block.lg2.deepslate_bitcoin_ore": "Глубинносланцевая биткоиновая руда",
-  "block.lg2.backrooms_block": "Блок закулисья"
+﻿{
+    "item.lg2.bitcoin":  "Р‘РёС‚РєРѕРёРЅ",
+    "item.lg2.bitcoin_ore":  "Р‘РёС‚РєРѕРёРЅРѕРІР°СЏ СЂСѓРґР°",
+    "item.lg2.deepslate_bitcoin_ore":  "Р“Р»СѓР±РёРЅРЅРѕСЃР»Р°РЅС†РµРІР°СЏ Р±РёС‚РєРѕРёРЅРѕРІР°СЏ СЂСѓРґР°",
+    "item.lg2.special_pickaxe":  "РћСЃРѕР±Р°СЏ РєРёСЂРєР°",
+    "item.lg2.backrooms_block":  "Р‘Р»РѕРє Р·Р°РєСѓР»РёСЃСЊСЏ",
+    "item.lg2.server":  "РЎРµСЂРІРµСЂ",
+    "block.lg2.server":  "РЎРµСЂРІРµСЂ",
+    "block.lg2.bitcoin_ore":  "Р‘РёС‚РєРѕРёРЅРѕРІР°СЏ СЂСѓРґР°",
+    "block.lg2.deepslate_bitcoin_ore":  "Р“Р»СѓР±РёРЅРЅРѕСЃР»Р°РЅС†РµРІР°СЏ Р±РёС‚РєРѕРёРЅРѕРІР°СЏ СЂСѓРґР°",
+    "block.lg2.backrooms_block":  "Р‘Р»РѕРє Р·Р°РєСѓР»РёСЃСЊСЏ",
+    "block.lg2.backrooms_lightblock":  "Свет закулисья",
+    "item.lg2.backrooms_lightblock":  "Свет закулисья"
 }

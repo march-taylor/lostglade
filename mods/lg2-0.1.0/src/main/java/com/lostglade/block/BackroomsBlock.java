@@ -21,17 +21,24 @@ import java.util.List;
 
 public class BackroomsBlock extends SimplePolymerBlock implements PolymerTexturedBlock {
 	private final BlockState polymerPackState;
+	private final BlockState fallbackState;
 
-	public BackroomsBlock(BlockBehaviour.Properties settings, Identifier modelId, Block preferredPolymerBlock) {
-		super(settings, Blocks.STRIPPED_BIRCH_LOG);
+	public BackroomsBlock(
+			BlockBehaviour.Properties settings,
+			Identifier modelId,
+			Block preferredPolymerBlock,
+			Block fallbackBlock
+	) {
+		super(settings, fallbackBlock);
 		this.polymerPackState = requestTargetState(modelId, preferredPolymerBlock);
+		this.fallbackState = fallbackBlock.defaultBlockState();
 	}
 
 	@Override
 	public BlockState getPolymerBlockState(BlockState state, PacketContext context) {
 		return PolymerResourcePackUtils.hasMainPack(context)
 				? this.polymerPackState
-				: Blocks.STRIPPED_BIRCH_LOG.defaultBlockState();
+				: this.fallbackState;
 	}
 
 	@Override

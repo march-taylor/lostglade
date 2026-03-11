@@ -23,7 +23,7 @@ public final class ServerBackroomsBlockBreakSystem {
 			}
 
 			BlockState state = world.getBlockState(pos);
-			if (!state.is(ModBlocks.BACKROOMS_BLOCK)) {
+			if (!state.is(ModBlocks.BACKROOMS_BLOCK) && !state.is(ModBlocks.BACKROOMS_LIGHTBLOCK)) {
 				return InteractionResult.PASS;
 			}
 			if (serverPlayer.isCreative()) {
@@ -40,7 +40,7 @@ public final class ServerBackroomsBlockBreakSystem {
 		});
 
 		PlayerBlockBreakEvents.BEFORE.register((world, player, pos, state, blockEntity) -> {
-			if (!state.is(ModBlocks.BACKROOMS_BLOCK)) {
+			if (!state.is(ModBlocks.BACKROOMS_BLOCK) && !state.is(ModBlocks.BACKROOMS_LIGHTBLOCK)) {
 				return true;
 			}
 			if (!(player instanceof ServerPlayer serverPlayer)) {

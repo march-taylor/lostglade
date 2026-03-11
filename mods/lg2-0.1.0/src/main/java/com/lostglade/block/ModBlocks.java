@@ -20,15 +20,18 @@ public final class ModBlocks {
 	private static final Identifier BITCOIN_ORE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "bitcoin_ore");
 	private static final Identifier DEEPSLATE_BITCOIN_ORE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "deepslate_bitcoin_ore");
 	private static final Identifier BACKROOMS_BLOCK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_block");
+	private static final Identifier BACKROOMS_LIGHTBLOCK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_lightblock");
 	private static final Identifier SERVER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "server");
 
 	private static final ResourceKey<Block> BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, BITCOIN_ORE_ID);
 	private static final ResourceKey<Block> DEEPSLATE_BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, DEEPSLATE_BITCOIN_ORE_ID);
 	private static final ResourceKey<Block> BACKROOMS_BLOCK_KEY = ResourceKey.create(Registries.BLOCK, BACKROOMS_BLOCK_ID);
+	private static final ResourceKey<Block> BACKROOMS_LIGHTBLOCK_KEY = ResourceKey.create(Registries.BLOCK, BACKROOMS_LIGHTBLOCK_ID);
 	private static final ResourceKey<Block> SERVER_KEY = ResourceKey.create(Registries.BLOCK, SERVER_ID);
 	private static final ResourceKey<Item> BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> DEEPSLATE_BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, DEEPSLATE_BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> BACKROOMS_BLOCK_ITEM_KEY = ResourceKey.create(Registries.ITEM, BACKROOMS_BLOCK_ID);
+	private static final ResourceKey<Item> BACKROOMS_LIGHTBLOCK_ITEM_KEY = ResourceKey.create(Registries.ITEM, BACKROOMS_LIGHTBLOCK_ID);
 	private static final ResourceKey<Item> SERVER_ITEM_KEY = ResourceKey.create(Registries.ITEM, SERVER_ID);
 
 	private static final ResourceKey<CreativeModeTab> NATURAL_BLOCKS_TAB = ResourceKey.create(
@@ -72,7 +75,19 @@ public final class ModBlocks {
 			new BackroomsBlock(
 					createBackroomsBlockProperties(),
 					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/backrooms_block"),
+					Blocks.STRIPPED_BIRCH_LOG,
 					Blocks.STRIPPED_BIRCH_LOG
+			)
+	);
+
+	public static final Block BACKROOMS_LIGHTBLOCK = Registry.register(
+			BuiltInRegistries.BLOCK,
+			BACKROOMS_LIGHTBLOCK_ID,
+			new BackroomsBlock(
+					createBackroomsLightBlockProperties(),
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/backrooms_lightblock"),
+					Blocks.SEA_LANTERN,
+					Blocks.SEA_LANTERN
 			)
 	);
 
@@ -105,7 +120,26 @@ public final class ModBlocks {
 					BACKROOMS_BLOCK,
 					new Item.Properties().setId(BACKROOMS_BLOCK_ITEM_KEY).useBlockDescriptionPrefix(),
 					Items.STRIPPED_BIRCH_LOG,
-					true
+					true,
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_block"),
+					"Backrooms Block",
+					"Блок закулисья",
+					"バックルームズブロック"
+			)
+	);
+
+	public static final Item BACKROOMS_LIGHTBLOCK_ITEM = Registry.register(
+			BuiltInRegistries.ITEM,
+			BACKROOMS_LIGHTBLOCK_ID,
+			new BackroomsBlockItem(
+					BACKROOMS_LIGHTBLOCK,
+					new Item.Properties().setId(BACKROOMS_LIGHTBLOCK_ITEM_KEY).useBlockDescriptionPrefix(),
+					Items.SEA_LANTERN,
+					true,
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_lightblock"),
+					"Backrooms Light",
+					"Свет закулисья",
+					"バックルームズライト"
 			)
 	);
 
@@ -125,6 +159,7 @@ public final class ModBlocks {
 
 	public static void register() {
 		ItemGroupEvents.modifyEntriesEvent(NATURAL_BLOCKS_TAB).register(entries -> {
+			entries.prepend(BACKROOMS_LIGHTBLOCK_ITEM);
 			entries.prepend(BACKROOMS_BLOCK_ITEM);
 			entries.prepend(DEEPSLATE_BITCOIN_ORE_ITEM);
 			entries.prepend(BITCOIN_ORE_ITEM);
@@ -167,5 +202,16 @@ public final class ModBlocks {
 				.requiresCorrectToolForDrops()
 				.noLootTable()
 				.setId(BACKROOMS_BLOCK_KEY);
+	}
+
+	private static BlockBehaviour.Properties createBackroomsLightBlockProperties() {
+		return BlockBehaviour.Properties.of()
+				.mapColor(MapColor.SAND)
+				.strength(30.0f, 1200.0f)
+				.sound(SoundType.GLASS)
+				.lightLevel(state -> 13)
+				.requiresCorrectToolForDrops()
+				.noLootTable()
+				.setId(BACKROOMS_LIGHTBLOCK_KEY);
 	}
 }

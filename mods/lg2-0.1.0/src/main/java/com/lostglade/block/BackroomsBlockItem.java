@@ -1,6 +1,5 @@
 package com.lostglade.block;
 
-import com.lostglade.Lg2;
 import eu.pb4.polymer.core.api.item.PolymerBlockItem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.component.DataComponents;
@@ -14,15 +13,31 @@ import net.minecraft.world.level.block.Block;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 public class BackroomsBlockItem extends PolymerBlockItem {
-	private static final Identifier MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_block");
+	private final Identifier modelId;
+	private final String englishName;
+	private final String slavicName;
+	private final String japaneseName;
 
-	public BackroomsBlockItem(Block block, Item.Properties settings, Item polymerItem, boolean polymerUseModel) {
+	public BackroomsBlockItem(
+			Block block,
+			Item.Properties settings,
+			Item polymerItem,
+			boolean polymerUseModel,
+			Identifier modelId,
+			String englishName,
+			String slavicName,
+			String japaneseName
+	) {
 		super(block, settings, polymerItem, polymerUseModel);
+		this.modelId = modelId;
+		this.englishName = englishName;
+		this.slavicName = slavicName;
+		this.japaneseName = japaneseName;
 	}
 
 	@Override
 	public Identifier getPolymerItemModel(ItemStack stack, PacketContext context) {
-		return PolymerResourcePackUtils.hasMainPack(context) ? MODEL_ID : null;
+		return PolymerResourcePackUtils.hasMainPack(context) ? this.modelId : null;
 	}
 
 	@Override
@@ -35,24 +50,24 @@ public class BackroomsBlockItem extends PolymerBlockItem {
 		}
 	}
 
-	private static MutableComponent getLocalizedFallbackName(PacketContext context) {
+	private MutableComponent getLocalizedFallbackName(PacketContext context) {
 		ServerPlayer player = context.getPlayer();
 		if (player == null) {
-			return Component.literal("Backrooms Block");
+			return Component.literal(this.englishName);
 		}
 
 		String lang = player.clientInformation().language();
 		if (lang == null) {
-			return Component.literal("Backrooms Block");
+			return Component.literal(this.englishName);
 		}
 
 		String normalized = lang.toLowerCase();
 		if (normalized.startsWith("ru") || normalized.startsWith("uk")) {
-			return Component.literal("Блок закулисья");
+			return Component.literal(this.slavicName);
 		}
 		if (normalized.startsWith("ja")) {
-			return Component.literal("バックルームズブロック");
+			return Component.literal(this.japaneseName);
 		}
-		return Component.literal("Backrooms Block");
+		return Component.literal(this.englishName);
 	}
 }

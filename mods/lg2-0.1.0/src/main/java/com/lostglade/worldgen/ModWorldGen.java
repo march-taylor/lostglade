@@ -11,9 +11,13 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.levelgen.GenerationStep;
 import net.minecraft.world.level.levelgen.feature.Feature;
 import net.minecraft.world.level.levelgen.placement.PlacedFeature;
+import net.minecraft.world.level.chunk.ChunkGenerator;
+
+import com.mojang.serialization.MapCodec;
 
 public final class ModWorldGen {
 	public static final Identifier BITCOIN_ORE_FEATURE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "bitcoin_ore_feature");
+	public static final Identifier BACKROOMS_CHUNK_GENERATOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms");
 	public static final ResourceKey<PlacedFeature> BITCOIN_ORE_PLACED_KEY = ResourceKey.create(
 			Registries.PLACED_FEATURE,
 			Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "bitcoin_ore")
@@ -23,6 +27,11 @@ public final class ModWorldGen {
 			BuiltInRegistries.FEATURE,
 			BITCOIN_ORE_FEATURE_ID,
 			new BitcoinOreFeature()
+	);
+	public static final MapCodec<? extends ChunkGenerator> BACKROOMS_CHUNK_GENERATOR = Registry.register(
+			BuiltInRegistries.CHUNK_GENERATOR,
+			BACKROOMS_CHUNK_GENERATOR_ID,
+			BackroomsChunkGenerator.CODEC
 	);
 
 	private ModWorldGen() {

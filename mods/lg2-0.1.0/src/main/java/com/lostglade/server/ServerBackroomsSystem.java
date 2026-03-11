@@ -3,6 +3,7 @@ package com.lostglade.server;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.lostglade.Lg2;
+import com.lostglade.block.ModBlocks;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -53,6 +54,7 @@ public final class ServerBackroomsSystem {
 	private static final int RESPAWN_MAX_COORD = 4096;
 	private static final int BACKROOMS_RESPAWN_DELAY_TICKS = 2;
 	private static final int PLATFORM_RADIUS = 2;
+	private static final int PLATFORM_CLEAR_HEIGHT = 4;
 	private static final Map<UUID, ReturnPointState> RETURN_POINTS = new HashMap<>();
 	private static final Map<UUID, Integer> PENDING_RESPAWNS = new HashMap<>();
 
@@ -240,9 +242,10 @@ public final class ServerBackroomsSystem {
 		for (int dx = -PLATFORM_RADIUS; dx <= PLATFORM_RADIUS; dx++) {
 			for (int dz = -PLATFORM_RADIUS; dz <= PLATFORM_RADIUS; dz++) {
 				BlockPos floorPos = base.offset(dx, 0, dz);
-				level.setBlockAndUpdate(floorPos, Blocks.SMOOTH_SANDSTONE.defaultBlockState());
-				level.setBlockAndUpdate(floorPos.above(), Blocks.AIR.defaultBlockState());
-				level.setBlockAndUpdate(floorPos.above(2), Blocks.AIR.defaultBlockState());
+				level.setBlockAndUpdate(floorPos, ModBlocks.BACKROOMS_BLOCK.defaultBlockState());
+				for (int dy = 1; dy <= PLATFORM_CLEAR_HEIGHT; dy++) {
+					level.setBlockAndUpdate(floorPos.above(dy), Blocks.AIR.defaultBlockState());
+				}
 			}
 		}
 	}
@@ -366,9 +369,10 @@ public final class ServerBackroomsSystem {
 		for (int dx = -PLATFORM_RADIUS; dx <= PLATFORM_RADIUS; dx++) {
 			for (int dz = -PLATFORM_RADIUS; dz <= PLATFORM_RADIUS; dz++) {
 				BlockPos floorPos = center.offset(dx, 0, dz);
-				level.setBlockAndUpdate(floorPos, Blocks.SMOOTH_SANDSTONE.defaultBlockState());
-				level.setBlockAndUpdate(floorPos.above(), Blocks.AIR.defaultBlockState());
-				level.setBlockAndUpdate(floorPos.above(2), Blocks.AIR.defaultBlockState());
+				level.setBlockAndUpdate(floorPos, ModBlocks.BACKROOMS_BLOCK.defaultBlockState());
+				for (int dy = 1; dy <= PLATFORM_CLEAR_HEIGHT; dy++) {
+					level.setBlockAndUpdate(floorPos.above(dy), Blocks.AIR.defaultBlockState());
+				}
 			}
 		}
 	}
