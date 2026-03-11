@@ -2,6 +2,7 @@ package com.lostglade.server.glitch;
 
 import com.google.gson.JsonObject;
 import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.ServerBackroomsSystem;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.MinecraftServer;
@@ -227,7 +228,7 @@ public final class PhantomChunkGlitch implements ServerGlitchHandler {
 	private static List<ServerPlayer> collectEligiblePlayers(MinecraftServer server) {
 		List<ServerPlayer> players = new ArrayList<>();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player == null || !player.isAlive() || player.isSpectator()) {
+			if (player == null || !player.isAlive() || player.isSpectator() || ServerBackroomsSystem.isInBackrooms(player)) {
 				continue;
 			}
 			players.add(player);
@@ -238,6 +239,9 @@ public final class PhantomChunkGlitch implements ServerGlitchHandler {
 	private static List<LoadedChunkSource> collectWorldChunkSources(MinecraftServer server, Set<ChunkKey> occupiedChunks) {
 		List<LoadedChunkSource> sources = new ArrayList<>();
 		for (ServerLevel level : server.getAllLevels()) {
+			if (ServerBackroomsSystem.isBackrooms(level)) {
+				continue;
+			}
 			level.getChunkSource().chunkMap.forEachReadyToSendChunk(chunk -> {
 				ChunkKey key = new ChunkKey(level.dimension(), chunk.getPos());
 				if (!occupiedChunks.contains(key)) {

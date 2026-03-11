@@ -11,6 +11,7 @@ import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.material.MapColor;
@@ -18,13 +19,16 @@ import net.minecraft.world.level.material.MapColor;
 public final class ModBlocks {
 	private static final Identifier BITCOIN_ORE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "bitcoin_ore");
 	private static final Identifier DEEPSLATE_BITCOIN_ORE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "deepslate_bitcoin_ore");
+	private static final Identifier BACKROOMS_BLOCK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_block");
 	private static final Identifier SERVER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "server");
 
 	private static final ResourceKey<Block> BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, BITCOIN_ORE_ID);
 	private static final ResourceKey<Block> DEEPSLATE_BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, DEEPSLATE_BITCOIN_ORE_ID);
+	private static final ResourceKey<Block> BACKROOMS_BLOCK_KEY = ResourceKey.create(Registries.BLOCK, BACKROOMS_BLOCK_ID);
 	private static final ResourceKey<Block> SERVER_KEY = ResourceKey.create(Registries.BLOCK, SERVER_ID);
 	private static final ResourceKey<Item> BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> DEEPSLATE_BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, DEEPSLATE_BITCOIN_ORE_ID);
+	private static final ResourceKey<Item> BACKROOMS_BLOCK_ITEM_KEY = ResourceKey.create(Registries.ITEM, BACKROOMS_BLOCK_ID);
 	private static final ResourceKey<Item> SERVER_ITEM_KEY = ResourceKey.create(Registries.ITEM, SERVER_ID);
 
 	private static final ResourceKey<CreativeModeTab> NATURAL_BLOCKS_TAB = ResourceKey.create(
@@ -62,6 +66,16 @@ public final class ModBlocks {
 			new ServerBlock(createServerProperties())
 	);
 
+	public static final Block BACKROOMS_BLOCK = Registry.register(
+			BuiltInRegistries.BLOCK,
+			BACKROOMS_BLOCK_ID,
+			new BackroomsBlock(
+					createBackroomsBlockProperties(),
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/backrooms_block"),
+					Blocks.STRIPPED_BIRCH_LOG
+			)
+	);
+
 	public static final Item BITCOIN_ORE_ITEM = Registry.register(
 			BuiltInRegistries.ITEM,
 			BITCOIN_ORE_ID,
@@ -84,6 +98,17 @@ public final class ModBlocks {
 			)
 	);
 
+	public static final Item BACKROOMS_BLOCK_ITEM = Registry.register(
+			BuiltInRegistries.ITEM,
+			BACKROOMS_BLOCK_ID,
+			new BackroomsBlockItem(
+					BACKROOMS_BLOCK,
+					new Item.Properties().setId(BACKROOMS_BLOCK_ITEM_KEY).useBlockDescriptionPrefix(),
+					Items.STRIPPED_BIRCH_LOG,
+					true
+			)
+	);
+
 	public static final Item SERVER_ITEM = Registry.register(
 			BuiltInRegistries.ITEM,
 			SERVER_ID,
@@ -100,6 +125,7 @@ public final class ModBlocks {
 
 	public static void register() {
 		ItemGroupEvents.modifyEntriesEvent(NATURAL_BLOCKS_TAB).register(entries -> {
+			entries.prepend(BACKROOMS_BLOCK_ITEM);
 			entries.prepend(DEEPSLATE_BITCOIN_ORE_ITEM);
 			entries.prepend(BITCOIN_ORE_ITEM);
 		});
@@ -131,5 +157,15 @@ public final class ModBlocks {
 				.noLootTable()
 				.noOcclusion()
 				.setId(SERVER_KEY);
+	}
+
+	private static BlockBehaviour.Properties createBackroomsBlockProperties() {
+		return BlockBehaviour.Properties.of()
+				.mapColor(MapColor.SAND)
+				.strength(30.0f, 1200.0f)
+				.sound(SoundType.WOOD)
+				.requiresCorrectToolForDrops()
+				.noLootTable()
+				.setId(BACKROOMS_BLOCK_KEY);
 	}
 }

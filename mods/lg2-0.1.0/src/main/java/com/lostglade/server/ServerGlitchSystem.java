@@ -212,7 +212,7 @@ public final class ServerGlitchSystem {
 			return;
 		}
 
-		if (server.getPlayerList().getPlayerCount() <= 0) {
+		if (ServerBackroomsSystem.countPlayersOutsideBackrooms(server) <= 0) {
 			return;
 		}
 
@@ -249,11 +249,13 @@ public final class ServerGlitchSystem {
 		}
 
 		boolean triggered = false;
+		boolean senderInBackrooms = ServerBackroomsSystem.isInBackrooms(sender);
 
 		ServerGlitchHandler baseHandler = HANDLERS.get(CHAT_INTERFERENCE_ID);
 		if (baseHandler instanceof ChatMessageGlitchHandler chatHandler
 				&& config.glitches != null
-				&& !config.glitches.isEmpty()) {
+				&& !config.glitches.isEmpty()
+				&& !senderInBackrooms) {
 			GlitchConfig.GlitchEntry entry = config.glitches.get(CHAT_INTERFERENCE_ID);
 			if (entry != null && entry.enabled) {
 				double stabilityPercent = ServerStabilitySystem.getStabilityPercent();
@@ -309,6 +311,9 @@ public final class ServerGlitchSystem {
 
 		GlitchConfig.ConfigData config = GlitchConfig.get();
 		if (!config.enabled) {
+			return false;
+		}
+		if (ServerBackroomsSystem.isInBackrooms(sender)) {
 			return false;
 		}
 
@@ -380,6 +385,10 @@ public final class ServerGlitchSystem {
 			RecipeHolder<? extends AbstractCookingRecipe> recipeHolder,
 			SingleRecipeInput input
 	) {
+		if (ServerBackroomsSystem.isBackrooms(level)) {
+			return;
+		}
+
 		GlitchConfig.ConfigData config = GlitchConfig.get();
 		if (!config.enabled || config.glitches == null || config.glitches.isEmpty()) {
 			return;
@@ -458,6 +467,10 @@ public final class ServerGlitchSystem {
 
 	private static void onCopyFrom(ServerPlayer oldPlayer, ServerPlayer newPlayer, boolean alive) {
 		if (alive || newPlayer == null) {
+			return;
+		}
+		if ((oldPlayer != null && ServerBackroomsSystem.isInBackrooms(oldPlayer))
+				|| ServerBackroomsSystem.isInBackrooms(newPlayer)) {
 			return;
 		}
 
@@ -550,6 +563,9 @@ public final class ServerGlitchSystem {
 
 	private static InteractionResult onUseBlock(Player player, Level world, InteractionHand hand, BlockHitResult hitResult) {
 		if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer) || !(world instanceof ServerLevel serverLevel)) {
+			return InteractionResult.PASS;
+		}
+		if (ServerBackroomsSystem.isInBackrooms(serverPlayer) || ServerBackroomsSystem.isBackrooms(serverLevel)) {
 			return InteractionResult.PASS;
 		}
 
@@ -648,6 +664,9 @@ public final class ServerGlitchSystem {
 			EntityHitResult hitResult
 	) {
 		if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer)) {
+			return InteractionResult.PASS;
+		}
+		if (ServerBackroomsSystem.isInBackrooms(serverPlayer) || ServerBackroomsSystem.isInBackrooms(entity)) {
 			return InteractionResult.PASS;
 		}
 		ChestDesyncGlitch.noteEntityInteraction(serverPlayer, entity, hand);

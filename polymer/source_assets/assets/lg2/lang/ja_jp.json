@@ -1,10 +1,12 @@
-{
-  "item.lg2.bitcoin": "ビットコイン",
-  "item.lg2.bitcoin_ore": "ビットコイン鉱石",
-  "item.lg2.deepslate_bitcoin_ore": "深層ビットコイン鉱石",
-  "item.lg2.special_pickaxe": "特殊なツルハシ",
-  "item.lg2.server": "サーバ",
-  "block.lg2.server": "サーバ",
-  "block.lg2.bitcoin_ore": "ビットコイン鉱石",
-  "block.lg2.deepslate_bitcoin_ore": "深層ビットコイン鉱石"
+﻿{
+    "item.lg2.bitcoin":  "ビットコイン",
+    "item.lg2.bitcoin_ore":  "ビットコイン鉱石",
+    "item.lg2.deepslate_bitcoin_ore":  "深層ビットコイン鉱石",
+    "item.lg2.special_pickaxe":  "特殊なツルハシ",
+    "item.lg2.server":  "サーバ",
+    "block.lg2.server":  "サーバ",
+    "block.lg2.bitcoin_ore":  "ビットコイン鉱石",
+    "block.lg2.deepslate_bitcoin_ore":  "深層ビットコイン鉱石",
+    "item.lg2.backrooms_block":  "バックルームズブロック",
+    "block.lg2.backrooms_block":  "バックルームズブロック"
 }

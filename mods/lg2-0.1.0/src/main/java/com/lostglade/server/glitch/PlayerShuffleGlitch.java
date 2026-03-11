@@ -10,6 +10,7 @@ import net.lionarius.skinrestorer.skin.SkinValue;
 import net.lionarius.skinrestorer.skin.SkinVariant;
 import net.lionarius.skinrestorer.util.PlayerUtils;
 import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.ServerBackroomsSystem;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -154,7 +155,7 @@ public final class PlayerShuffleGlitch implements ServerGlitchHandler {
 	private static List<ServerPlayer> collectEligiblePlayers(MinecraftServer server) {
 		List<ServerPlayer> players = new ArrayList<>();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player == null || !player.isAlive() || player.isSpectator()) {
+			if (player == null || !player.isAlive() || player.isSpectator() || ServerBackroomsSystem.isInBackrooms(player)) {
 				continue;
 			}
 			players.add(player);

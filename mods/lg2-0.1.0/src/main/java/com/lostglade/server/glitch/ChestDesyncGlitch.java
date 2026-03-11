@@ -4,6 +4,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.ServerBackroomsSystem;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
@@ -278,6 +279,9 @@ public final class ChestDesyncGlitch implements BlockUseGlitchHandler, EntityUse
 		Set<String> visited = new HashSet<>();
 
 		for (ServerLevel level : server.getAllLevels()) {
+			if (ServerBackroomsSystem.isBackrooms(level)) {
+				continue;
+			}
 			level.getChunkSource().chunkMap.forEachReadyToSendChunk(chunk -> {
 				for (BlockEntity blockEntity : chunk.getBlockEntities().values()) {
 					if (!(blockEntity instanceof Container container)) {
@@ -335,7 +339,7 @@ public final class ChestDesyncGlitch implements BlockUseGlitchHandler, EntityUse
 	private static List<ServerPlayer> collectEnderChestTargets(MinecraftServer server) {
 		List<ServerPlayer> targets = new ArrayList<>();
 		for (ServerPlayer target : server.getPlayerList().getPlayers()) {
-			if (target.isSpectator() || !target.isAlive()) {
+			if (target.isSpectator() || !target.isAlive() || ServerBackroomsSystem.isInBackrooms(target)) {
 				continue;
 			}
 			targets.add(target);

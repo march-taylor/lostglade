@@ -2,6 +2,7 @@ package com.lostglade.server.glitch;
 
 import com.google.gson.JsonObject;
 import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.ServerBackroomsSystem;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -59,7 +60,7 @@ public final class GravitySurgeGlitch implements ServerGlitchHandler {
 			Map.Entry<UUID, ActiveGravityState> mapEntry = iterator.next();
 			ActiveGravityState state = mapEntry.getValue();
 			Entity entity = findEntity(server, state.dimension, state.entityUuid);
-			if (!isTrackedEntityValid(entity)) {
+			if (!isTrackedEntityValid(entity) || ServerBackroomsSystem.isInBackrooms(entity)) {
 				iterator.remove();
 				continue;
 			}
@@ -311,6 +312,9 @@ public final class GravitySurgeGlitch implements ServerGlitchHandler {
 
 	private static void collectTargets(MinecraftServer server, List<Entity> entities, List<ItemEntity> items) {
 		for (ServerLevel level : server.getAllLevels()) {
+			if (ServerBackroomsSystem.isBackrooms(level)) {
+				continue;
+			}
 			for (Entity entity : level.getAllEntities()) {
 				if (entity instanceof ItemEntity itemEntity) {
 					if (isEligibleItem(itemEntity)) {

@@ -2,6 +2,7 @@ package com.lostglade.server.glitch;
 
 import com.google.gson.JsonObject;
 import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.ServerBackroomsSystem;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
@@ -212,7 +213,7 @@ public final class PhantomSoundGlitch implements ServerGlitchHandler {
 	private static List<ServerPlayer> collectTargets(MinecraftServer server) {
 		List<ServerPlayer> players = new ArrayList<>();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player.isSpectator() || !player.isAlive()) {
+			if (player.isSpectator() || !player.isAlive() || ServerBackroomsSystem.isInBackrooms(player)) {
 				continue;
 			}
 			players.add(player);

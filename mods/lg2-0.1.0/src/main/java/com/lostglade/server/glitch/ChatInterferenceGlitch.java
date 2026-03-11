@@ -2,6 +2,7 @@ package com.lostglade.server.glitch;
 
 import com.google.gson.JsonObject;
 import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.ServerBackroomsSystem;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
@@ -126,8 +127,13 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 			outgoingParams = new ChatType.Bound(params.chatType(), mutation.displayNameOverride(), targetName);
 		}
 
-		Component decorated = outgoingParams.decorate(Component.literal(mutation.content()));
-		server.getPlayerList().broadcastSystemMessage(decorated, false);
+		Component glitchedDecorated = outgoingParams.decorate(Component.literal(mutation.content()));
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (player == null) {
+				continue;
+			}
+			player.sendSystemMessage(glitchedDecorated);
+		}
 		return true;
 	}
 
@@ -155,6 +161,7 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 				? mutation.displayNameOverride()
 				: source.getDisplayName();
 		ChatType.Bound incomingParams = ChatType.bind(ChatType.MSG_COMMAND_INCOMING, source.registryAccess(), senderName);
+		Component glitchedContent = Component.literal(mutation.content());
 
 		for (ServerPlayer target : targets) {
 			if (target == null) {
@@ -163,8 +170,8 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 
 			ChatType.Bound outgoingParams = ChatType.bind(ChatType.MSG_COMMAND_OUTGOING, source.registryAccess(), senderName)
 					.withTargetName(target.getDisplayName());
-			sender.sendSystemMessage(outgoingParams.decorate(Component.literal(mutation.content())));
-			target.sendSystemMessage(incomingParams.decorate(Component.literal(mutation.content())));
+			sender.sendSystemMessage(outgoingParams.decorate(glitchedContent));
+			target.sendSystemMessage(incomingParams.decorate(glitchedContent));
 		}
 		return true;
 	}
@@ -249,7 +256,7 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 
 	private static boolean hasAlternativeOnlinePlayer(MinecraftServer server, ServerPlayer sender) {
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (!player.getUUID().equals(sender.getUUID())) {
+			if (!player.getUUID().equals(sender.getUUID()) && !ServerBackroomsSystem.isInBackrooms(player)) {
 				return true;
 			}
 		}
@@ -259,7 +266,7 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 	private static Component pickRandomOtherDisplayName(MinecraftServer server, ServerPlayer sender, RandomSource random) {
 		List<ServerPlayer> candidates = new ArrayList<>();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player.getUUID().equals(sender.getUUID())) {
+			if (player.getUUID().equals(sender.getUUID()) || ServerBackroomsSystem.isInBackrooms(player)) {
 				continue;
 			}
 			candidates.add(player);

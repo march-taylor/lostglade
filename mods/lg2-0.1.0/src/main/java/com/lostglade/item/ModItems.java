@@ -9,6 +9,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ToolMaterial;
 
 public final class ModItems {
 	private static final Identifier BITCOIN_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "bitcoin");
@@ -28,7 +29,13 @@ public final class ModItems {
 	public static final Item SPECIAL_PICKAXE = Registry.register(
 			BuiltInRegistries.ITEM,
 			SPECIAL_PICKAXE_ID,
-			new SpecialPickaxeItem(new Item.Properties().setId(SPECIAL_PICKAXE_KEY).stacksTo(1))
+			new SpecialPickaxeItem(
+					new Item.Properties()
+							.setId(SPECIAL_PICKAXE_KEY)
+							.stacksTo(1)
+							.pickaxe(ToolMaterial.NETHERITE, 1.0F, -2.8F)
+							.fireResistant()
+			)
 	);
 
 	private ModItems() {

@@ -2,6 +2,7 @@ package com.lostglade.server.glitch;
 
 import com.google.gson.JsonObject;
 import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.ServerBackroomsSystem;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
@@ -76,6 +77,9 @@ public final class TimeOfDayJumpGlitch implements ServerGlitchHandler {
 
 		long newDayTime = overworld.getDayTime() + jumpTicks;
 		for (ServerLevel level : server.getAllLevels()) {
+			if (ServerBackroomsSystem.isBackrooms(level)) {
+				continue;
+			}
 			level.setDayTime(newDayTime);
 		}
 		return true;

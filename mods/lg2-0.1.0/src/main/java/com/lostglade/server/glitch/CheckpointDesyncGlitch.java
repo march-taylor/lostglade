@@ -2,6 +2,7 @@ package com.lostglade.server.glitch;
 
 import com.google.gson.JsonObject;
 import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.ServerBackroomsSystem;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -67,6 +68,10 @@ public final class CheckpointDesyncGlitch implements RespawnGlitchHandler {
 			boolean alive
 	) {
 		if (alive || newPlayer == null) {
+			return false;
+		}
+		if ((oldPlayer != null && ServerBackroomsSystem.isInBackrooms(oldPlayer))
+				|| ServerBackroomsSystem.isInBackrooms(newPlayer)) {
 			return false;
 		}
 
@@ -137,6 +142,9 @@ public final class CheckpointDesyncGlitch implements RespawnGlitchHandler {
 		ResourceKey<Level> dimension = respawnData.dimension();
 		ServerLevel level = server.getLevel(dimension);
 		if (level == null) {
+			return null;
+		}
+		if (ServerBackroomsSystem.isBackrooms(level)) {
 			return null;
 		}
 

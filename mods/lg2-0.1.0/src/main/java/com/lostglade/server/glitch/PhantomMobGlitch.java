@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import com.lostglade.Lg2;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.ServerBackroomsSystem;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.Property;
 import com.mojang.authlib.properties.PropertyMap;
@@ -114,11 +115,17 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 				iterator.remove();
 				continue;
 			}
+			if (ServerBackroomsSystem.isInBackrooms(mob)) {
+				discardEntityOnly(mob, true);
+				iterator.remove();
+				continue;
+			}
 
 			ServerPlayer targetPlayer = server.getPlayerList().getPlayer(state.targetPlayerUuid);
 			if (targetPlayer == null
 					|| !targetPlayer.isAlive()
 					|| targetPlayer.isSpectator()
+					|| ServerBackroomsSystem.isInBackrooms(targetPlayer)
 					|| targetPlayer.level() != mob.level()) {
 				discardEntityOnly(mob, true);
 				iterator.remove();
@@ -454,7 +461,7 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 
 		List<ServerPlayer> candidates = new ArrayList<>();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player == null || !player.isAlive() || player.isSpectator()) {
+			if (player == null || !player.isAlive() || player.isSpectator() || ServerBackroomsSystem.isInBackrooms(player)) {
 				continue;
 			}
 			candidates.add(player);
@@ -806,7 +813,7 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 	private static List<ServerPlayer> collectEligiblePlayers(MinecraftServer server) {
 		List<ServerPlayer> players = new ArrayList<>();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player.isSpectator() || !player.isAlive()) {
+			if (player.isSpectator() || !player.isAlive() || ServerBackroomsSystem.isInBackrooms(player)) {
 				continue;
 			}
 			players.add(player);

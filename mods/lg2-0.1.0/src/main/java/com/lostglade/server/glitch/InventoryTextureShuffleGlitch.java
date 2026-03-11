@@ -2,6 +2,7 @@ package com.lostglade.server.glitch;
 
 import com.google.gson.JsonObject;
 import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.ServerBackroomsSystem;
 import com.lostglade.server.ServerStabilitySystem;
 import eu.pb4.polymer.core.api.item.PolymerItemUtils;
 import net.minecraft.core.component.DataComponents;
@@ -207,6 +208,12 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 			ActiveShuffleState state = stateEntry.getValue();
 			if (player == null) {
 				restoreGlitchedModelsForToken(server, state.shuffleToken);
+				iterator.remove();
+				continue;
+			}
+			if (ServerBackroomsSystem.isInBackrooms(player)) {
+				restoreGlitchedModelsForToken(server, state.shuffleToken);
+				restoreFullInventoryVisuals(player);
 				iterator.remove();
 				continue;
 			}
@@ -541,7 +548,7 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 	private static List<ServerPlayer> collectEligiblePlayers(MinecraftServer server) {
 		List<ServerPlayer> result = new ArrayList<>();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player.isSpectator() || !player.isAlive()) {
+			if (player.isSpectator() || !player.isAlive() || ServerBackroomsSystem.isInBackrooms(player)) {
 				continue;
 			}
 			result.add(player);

@@ -2,6 +2,7 @@ package com.lostglade.server.glitch;
 
 import com.google.gson.JsonObject;
 import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.ServerBackroomsSystem;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -45,6 +46,11 @@ public final class UpsideDownMobGlitch implements ServerGlitchHandler {
 			Entity target = findTargetEntity(server, state.dimension, state.entityUuid);
 			if (target != null && target.level() instanceof ServerLevel serverLevel) {
 				state.dimension = serverLevel.dimension();
+			}
+			if (target != null && ServerBackroomsSystem.isInBackrooms(target)) {
+				restoreEntity(target, state);
+				iterator.remove();
+				continue;
 			}
 
 			if (nowTick >= state.endTick) {
@@ -93,6 +99,10 @@ public final class UpsideDownMobGlitch implements ServerGlitchHandler {
 		}
 
 		if (!entity.getTags().contains(UPSIDE_DOWN_MOB_TAG) || !isEligibleEntityType(entity)) {
+			return;
+		}
+		if (ServerBackroomsSystem.isInBackrooms(entity)) {
+			restoreEntity(entity, ACTIVE_STATES.remove(entity.getUUID()));
 			return;
 		}
 
@@ -212,6 +222,9 @@ public final class UpsideDownMobGlitch implements ServerGlitchHandler {
 	private static List<Entity> collectEligibleTargets(MinecraftServer server) {
 		List<Entity> targets = new ArrayList<>();
 		for (ServerLevel level : server.getAllLevels()) {
+			if (ServerBackroomsSystem.isBackrooms(level)) {
+				continue;
+			}
 			for (Entity entity : level.getAllEntities()) {
 				if (!isEligibleTarget(entity)) {
 					continue;

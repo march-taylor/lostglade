@@ -1,10 +1,12 @@
-{
-  "item.lg2.bitcoin": "Золотыя монѣта",
-  "item.lg2.bitcoin_ore": "Золотыя монѣта въ камнѣ",
-  "item.lg2.deepslate_bitcoin_ore": "Золотыя монѣта въ черномъ камнѣ",
-  "item.lg2.special_pickaxe": "Кудѣсный молотокъ",
-  "item.lg2.server": "Жѣлѣзный разум",
-  "block.lg2.server": "Жѣлѣзный разум",
-  "block.lg2.bitcoin_ore": "Золотыя монѣта въ камнѣ",
-  "block.lg2.deepslate_bitcoin_ore": "Золотыя монѣта въ черномъ камнѣ"
+﻿{
+    "item.lg2.bitcoin":  "Золотыя монѣта",
+    "item.lg2.bitcoin_ore":  "Золотыя монѣта въ камнѣ",
+    "item.lg2.deepslate_bitcoin_ore":  "Золотыя монѣта въ черномъ камнѣ",
+    "item.lg2.special_pickaxe":  "Кудѣсный молотокъ",
+    "item.lg2.server":  "Жѣлѣзный разум",
+    "block.lg2.server":  "Жѣлѣзный разум",
+    "block.lg2.bitcoin_ore":  "Золотыя монѣта въ камнѣ",
+    "block.lg2.deepslate_bitcoin_ore":  "Золотыя монѣта въ черномъ камнѣ",
+    "item.lg2.backrooms_block":  "Конструкцiя Вѣчнаго Коридора",
+    "block.lg2.backrooms_block":  "Конструкцiя Вѣчнаго Коридора"
 }

@@ -2,6 +2,7 @@ package com.lostglade.server.glitch;
 
 import com.google.gson.JsonObject;
 import com.lostglade.config.GlitchConfig;
+import com.lostglade.server.ServerBackroomsSystem;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
@@ -43,7 +44,7 @@ public final class BlackoutGlitch implements ServerGlitchHandler {
 		while (iterator.hasNext()) {
 			Map.Entry<UUID, ActiveBlackoutState> mapEntry = iterator.next();
 			ServerPlayer player = server.getPlayerList().getPlayer(mapEntry.getKey());
-			if (player == null || !player.isAlive() || player.isSpectator()) {
+			if (player == null || !player.isAlive() || player.isSpectator() || ServerBackroomsSystem.isInBackrooms(player)) {
 				iterator.remove();
 				continue;
 			}
@@ -235,7 +236,7 @@ public final class BlackoutGlitch implements ServerGlitchHandler {
 	private static List<ServerPlayer> collectTargets(MinecraftServer server) {
 		List<ServerPlayer> players = new ArrayList<>();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player.isSpectator() || !player.isAlive()) {
+			if (player.isSpectator() || !player.isAlive() || ServerBackroomsSystem.isInBackrooms(player)) {
 				continue;
 			}
 			players.add(player);
