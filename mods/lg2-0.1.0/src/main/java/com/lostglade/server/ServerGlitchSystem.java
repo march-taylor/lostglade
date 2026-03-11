@@ -250,12 +250,15 @@ public final class ServerGlitchSystem {
 
 		boolean triggered = false;
 		boolean senderInBackrooms = ServerBackroomsSystem.isInBackrooms(sender);
+		if (senderInBackrooms) {
+			return false;
+		}
 
 		ServerGlitchHandler baseHandler = HANDLERS.get(CHAT_INTERFERENCE_ID);
 		if (baseHandler instanceof ChatMessageGlitchHandler chatHandler
 				&& config.glitches != null
 				&& !config.glitches.isEmpty()
-				&& !senderInBackrooms) {
+		) {
 			GlitchConfig.GlitchEntry entry = config.glitches.get(CHAT_INTERFERENCE_ID);
 			if (entry != null && entry.enabled) {
 				double stabilityPercent = ServerStabilitySystem.getStabilityPercent();
@@ -314,7 +317,7 @@ public final class ServerGlitchSystem {
 			return false;
 		}
 		if (ServerBackroomsSystem.isInBackrooms(sender)) {
-			return false;
+			return true;
 		}
 
 		MinecraftServer server = sender.level().getServer();
@@ -895,3 +898,5 @@ public final class ServerGlitchSystem {
 		return (int) Math.round(cooldown);
 	}
 }
+
+

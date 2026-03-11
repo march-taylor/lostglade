@@ -5,6 +5,8 @@ import com.google.gson.GsonBuilder;
 import com.lostglade.Lg2;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.BlockPos;
@@ -16,6 +18,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
@@ -46,8 +49,12 @@ public final class ServerBackroomsSystem {
 	private static final String RETURNS_FILE_NAME = "lg2-backrooms-returns.json";
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
 	private static final BlockPos BACKROOMS_PLATFORM_CENTER = new BlockPos(0, 64, 0);
+	private static final int RESPAWN_MIN_COORD = -4096;
+	private static final int RESPAWN_MAX_COORD = 4096;
+	private static final int BACKROOMS_RESPAWN_DELAY_TICKS = 2;
 	private static final int PLATFORM_RADIUS = 2;
 	private static final Map<UUID, ReturnPointState> RETURN_POINTS = new HashMap<>();
+	private static final Map<UUID, Integer> PENDING_RESPAWNS = new HashMap<>();
 
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
@@ -59,9 +66,12 @@ public final class ServerBackroomsSystem {
 		stateLoaded = false;
 		stateDirty = false;
 		RETURN_POINTS.clear();
+		PENDING_RESPAWNS.clear();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerBackroomsSystem::loadState);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerBackroomsSystem::saveState);
+		ServerPlayerEvents.AFTER_RESPAWN.register(ServerBackroomsSystem::onAfterRespawn);
+		ServerTickEvents.END_SERVER_TICK.register(ServerBackroomsSystem::tickPendingRespawns);
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 				dispatcher.register(
@@ -264,6 +274,14 @@ public final class ServerBackroomsSystem {
 		}
 	}
 
+	private static void onAfterRespawn(ServerPlayer oldPlayer, ServerPlayer newPlayer, boolean alive) {
+		if (alive || oldPlayer == null || newPlayer == null || !isInBackrooms(oldPlayer)) {
+			return;
+		}
+
+		PENDING_RESPAWNS.put(newPlayer.getUUID(), BACKROOMS_RESPAWN_DELAY_TICKS);
+	}
+
 	private static void saveState(MinecraftServer server) {
 		if (!stateLoaded || !stateDirty) {
 			return;
@@ -289,6 +307,70 @@ public final class ServerBackroomsSystem {
 
 	private static Path getStateFilePath(MinecraftServer server) {
 		return server.getWorldPath(LevelResource.ROOT).resolve(RETURNS_FILE_NAME);
+	}
+
+	private static void tickPendingRespawns(MinecraftServer server) {
+		if (PENDING_RESPAWNS.isEmpty()) {
+			return;
+		}
+
+		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
+		if (backrooms == null) {
+			PENDING_RESPAWNS.clear();
+			return;
+		}
+
+		var iterator = PENDING_RESPAWNS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, Integer> entry = iterator.next();
+			int ticksRemaining = entry.getValue() - 1;
+			if (ticksRemaining > 0) {
+				entry.setValue(ticksRemaining);
+				continue;
+			}
+
+			iterator.remove();
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			if (player == null || !player.isAlive()) {
+				continue;
+			}
+
+			teleportToRandomBackroomsRespawn(backrooms, player);
+		}
+	}
+
+	private static void teleportToRandomBackroomsRespawn(ServerLevel backrooms, ServerPlayer player) {
+		BlockPos platformCenter = pickRandomRespawnCenter(backrooms);
+		backrooms.getChunkAt(platformCenter);
+		ensurePlatform(backrooms, platformCenter);
+		player.teleportTo(
+				backrooms,
+				platformCenter.getX() + 0.5D,
+				platformCenter.getY() + 1.0D,
+				platformCenter.getZ() + 0.5D,
+				ABSOLUTE_TELEPORT,
+				player.getYRot(),
+				player.getXRot(),
+				false
+		);
+		player.fallDistance = 0.0F;
+	}
+
+	private static BlockPos pickRandomRespawnCenter(ServerLevel level) {
+		int x = Mth.nextInt(level.random, RESPAWN_MIN_COORD, RESPAWN_MAX_COORD);
+		int z = Mth.nextInt(level.random, RESPAWN_MIN_COORD, RESPAWN_MAX_COORD);
+		return new BlockPos(x, BACKROOMS_PLATFORM_CENTER.getY(), z);
+	}
+
+	private static void ensurePlatform(ServerLevel level, BlockPos center) {
+		for (int dx = -PLATFORM_RADIUS; dx <= PLATFORM_RADIUS; dx++) {
+			for (int dz = -PLATFORM_RADIUS; dz <= PLATFORM_RADIUS; dz++) {
+				BlockPos floorPos = center.offset(dx, 0, dz);
+				level.setBlockAndUpdate(floorPos, Blocks.SMOOTH_SANDSTONE.defaultBlockState());
+				level.setBlockAndUpdate(floorPos.above(), Blocks.AIR.defaultBlockState());
+				level.setBlockAndUpdate(floorPos.above(2), Blocks.AIR.defaultBlockState());
+			}
+		}
 	}
 
 	private static final class ReturnStateFile {
