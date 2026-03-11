@@ -147,6 +147,21 @@
         "wanderingWeight": 1.0
       }
     },
+    "upside_down_mobs": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 60.0,
+      "chancePerCheck": 0.4,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 240,
+      "maxCooldownTicks": 2400,
+      "settings": {
+        "minMobPercent": 0.0,
+        "maxMobPercent": 70.0,
+        "minDurationSeconds": 8,
+        "maxDurationSeconds": 16
+      }
+    },
     "chest_desync": {
       "enabled": true,
       "minStabilityPercent": 0.0,

@@ -18,6 +18,7 @@ import com.lostglade.server.glitch.PhantomSoundGlitch;
 import com.lostglade.server.glitch.RespawnGlitchHandler;
 import com.lostglade.server.glitch.ServerGlitchHandler;
 import com.lostglade.server.glitch.TimeOfDayJumpGlitch;
+import com.lostglade.server.glitch.UpsideDownMobGlitch;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
@@ -91,6 +92,7 @@ public final class ServerGlitchSystem {
 		registerHandler(new BlackoutGlitch());
 		registerHandler(new GravitySurgeGlitch());
 		registerHandler(new PhantomMobGlitch());
+		registerHandler(new UpsideDownMobGlitch());
 		registerHandler(new ChestDesyncGlitch());
 		registerHandler(new BitcoinOvercookGlitch());
 		reloadConfig();
@@ -103,7 +105,10 @@ public final class ServerGlitchSystem {
 			GravitySurgeGlitch.resetRuntimeState();
 			PhantomMobGlitch.resetRuntimeState();
 			PhantomMobGlitch.discardLingeringPhantoms(server);
+			UpsideDownMobGlitch.resetRuntimeState();
+			UpsideDownMobGlitch.restoreAll(server);
 		});
+		ServerLifecycleEvents.SERVER_STOPPING.register(UpsideDownMobGlitch::restoreAll);
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 				dispatcher.register(
@@ -129,7 +134,10 @@ public final class ServerGlitchSystem {
 		UseBlockCallback.EVENT.register(ServerGlitchSystem::onUseBlock);
 		UseEntityCallback.EVENT.register(ServerGlitchSystem::onUseEntity);
 		AttackEntityCallback.EVENT.register(ServerGlitchSystem::onAttackEntity);
-		ServerEntityEvents.ENTITY_LOAD.register((entity, world) -> PhantomMobGlitch.handleEntityLoad(entity));
+		ServerEntityEvents.ENTITY_LOAD.register((entity, world) -> {
+			PhantomMobGlitch.handleEntityLoad(entity);
+			UpsideDownMobGlitch.handleEntityLoad(entity);
+		});
 	}
 
 	private static void registerHandler(ServerGlitchHandler handler) {
@@ -186,6 +194,7 @@ public final class ServerGlitchSystem {
 		BlackoutGlitch.tickActiveStates(server);
 		GravitySurgeGlitch.tickActiveStates(server);
 		PhantomMobGlitch.tickActiveStates(server);
+		UpsideDownMobGlitch.tickActiveStates(server);
 
 		GlitchConfig.ConfigData config = GlitchConfig.get();
 		if (!config.enabled) {
