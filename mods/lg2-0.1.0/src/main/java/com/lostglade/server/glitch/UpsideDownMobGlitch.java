@@ -27,6 +27,7 @@ public final class UpsideDownMobGlitch implements ServerGlitchHandler {
 	private static final String MIN_DURATION_SECONDS = "minDurationSeconds";
 	private static final String MAX_DURATION_SECONDS = "maxDurationSeconds";
 	private static final String UPSIDE_DOWN_MOB_TAG = "lg2_upside_down_mob";
+	private static final String PHANTOM_MOB_TAG = "lg2_phantom_mob";
 	private static final Component UPSIDE_DOWN_NAME = Component.literal("Dinnerbone");
 	private static final double VALUE_PRIORITY = 2.4D;
 	private static final Map<UUID, ActiveUpsideDownState> ACTIVE_STATES = new HashMap<>();
@@ -41,29 +42,29 @@ public final class UpsideDownMobGlitch implements ServerGlitchHandler {
 		while (iterator.hasNext()) {
 			Map.Entry<UUID, ActiveUpsideDownState> mapEntry = iterator.next();
 			ActiveUpsideDownState state = mapEntry.getValue();
-			Mob mob = findMob(server, state.dimension, state.entityUuid);
-			if (mob != null && mob.level() instanceof ServerLevel serverLevel) {
+			Entity target = findTargetEntity(server, state.dimension, state.entityUuid);
+			if (target != null && target.level() instanceof ServerLevel serverLevel) {
 				state.dimension = serverLevel.dimension();
 			}
 
 			if (nowTick >= state.endTick) {
-				if (mob != null) {
-					restoreMob(mob, state);
+				if (target != null) {
+					restoreEntity(target, state);
 				}
 				iterator.remove();
 				continue;
 			}
 
-			if (mob == null) {
+			if (target == null) {
 				continue;
 			}
 
-			if (!mob.isAlive() || mob.isRemoved()) {
+			if (!target.isAlive() || target.isRemoved()) {
 				iterator.remove();
 				continue;
 			}
 
-			applyUpsideDown(mob);
+			applyUpsideDown(target);
 		}
 	}
 
@@ -75,9 +76,9 @@ public final class UpsideDownMobGlitch implements ServerGlitchHandler {
 		if (server != null) {
 			for (ServerLevel level : server.getAllLevels()) {
 				for (Entity entity : level.getAllEntities()) {
-					if (entity instanceof Mob mob && mob.getTags().contains(UPSIDE_DOWN_MOB_TAG)) {
-						ActiveUpsideDownState state = ACTIVE_STATES.get(mob.getUUID());
-						restoreMob(mob, state);
+					if (entity.getTags().contains(UPSIDE_DOWN_MOB_TAG) && isEligibleEntityType(entity)) {
+						ActiveUpsideDownState state = ACTIVE_STATES.get(entity.getUUID());
+						restoreEntity(entity, state);
 					}
 				}
 			}
@@ -91,19 +92,19 @@ public final class UpsideDownMobGlitch implements ServerGlitchHandler {
 			return;
 		}
 
-		if (!(entity instanceof Mob mob) || !mob.getTags().contains(UPSIDE_DOWN_MOB_TAG)) {
+		if (!entity.getTags().contains(UPSIDE_DOWN_MOB_TAG) || !isEligibleEntityType(entity)) {
 			return;
 		}
 
-		ActiveUpsideDownState state = ACTIVE_STATES.get(mob.getUUID());
-		long nowTick = mob.level().getGameTime();
+		ActiveUpsideDownState state = ACTIVE_STATES.get(entity.getUUID());
+		long nowTick = entity.level().getGameTime();
 		if (state == null || nowTick >= state.endTick) {
-			restoreMob(mob, state);
+			restoreEntity(entity, state);
 			return;
 		}
 
-		applyUpsideDown(mob);
-		if (mob.level() instanceof ServerLevel serverLevel) {
+		applyUpsideDown(entity);
+		if (entity.level() instanceof ServerLevel serverLevel) {
 			state.dimension = serverLevel.dimension();
 		}
 	}
@@ -166,8 +167,8 @@ public final class UpsideDownMobGlitch implements ServerGlitchHandler {
 	public boolean trigger(MinecraftServer server, RandomSource random, GlitchConfig.GlitchEntry entry, double stabilityPercent) {
 		tickActiveStates(server);
 
-		List<Mob> mobs = collectEligibleMobs(server);
-		if (mobs.isEmpty()) {
+		List<Entity> targets = collectEligibleTargets(server);
+		if (targets.isEmpty()) {
 			return false;
 		}
 
@@ -177,7 +178,7 @@ public final class UpsideDownMobGlitch implements ServerGlitchHandler {
 		double maxMobPercent = GlitchSettingsHelper.getDouble(settings, MAX_MOB_PERCENT, 28.0D);
 		double dynamicMaxMobPercent = interpolateDouble(minMobPercent, maxMobPercent, instability);
 		double selectedMobPercent = sampleWeightedRange(random, minMobPercent, dynamicMaxMobPercent, VALUE_PRIORITY);
-		int targetCount = getTargetCount(mobs.size(), selectedMobPercent);
+		int targetCount = getTargetCount(targets.size(), selectedMobPercent);
 		if (targetCount <= 0) {
 			return false;
 		}
@@ -189,71 +190,81 @@ public final class UpsideDownMobGlitch implements ServerGlitchHandler {
 		long durationTicks = Math.max(20L, durationSeconds * 20L);
 		long nowTick = server.overworld().getGameTime();
 
-		shuffle(mobs, random);
+		shuffle(targets, random);
 		boolean appliedAny = false;
 		for (int i = 0; i < targetCount; i++) {
-			Mob mob = mobs.get(i);
+			Entity target = targets.get(i);
 			ActiveUpsideDownState state = new ActiveUpsideDownState(
-					mob.getUUID(),
-					getDimension(mob),
+					target.getUUID(),
+					getDimension(target),
 					nowTick + durationTicks,
-					copyComponent(mob.getCustomName()),
-					mob.isCustomNameVisible()
+					copyComponent(target.getCustomName()),
+					target.isCustomNameVisible()
 			);
-			applyUpsideDown(mob);
-			ACTIVE_STATES.put(mob.getUUID(), state);
+			applyUpsideDown(target);
+			ACTIVE_STATES.put(target.getUUID(), state);
 			appliedAny = true;
 		}
 
 		return appliedAny;
 	}
 
-	private static List<Mob> collectEligibleMobs(MinecraftServer server) {
-		List<Mob> mobs = new ArrayList<>();
+	private static List<Entity> collectEligibleTargets(MinecraftServer server) {
+		List<Entity> targets = new ArrayList<>();
 		for (ServerLevel level : server.getAllLevels()) {
 			for (Entity entity : level.getAllEntities()) {
-				if (!(entity instanceof Mob mob)) {
+				if (!isEligibleTarget(entity)) {
 					continue;
 				}
-				if (!isEligibleMob(mob)) {
-					continue;
-				}
-				mobs.add(mob);
+				targets.add(entity);
 			}
 		}
-		return mobs;
+		return targets;
 	}
 
-	private static boolean isEligibleMob(Mob mob) {
-		if (mob == null || !mob.isAlive() || mob.isRemoved()) {
+	private static boolean isEligibleTarget(Entity entity) {
+		if (entity == null || !entity.isAlive() || entity.isRemoved()) {
 			return false;
 		}
-		if (ACTIVE_STATES.containsKey(mob.getUUID())) {
+		if (entity.getTags().contains(PHANTOM_MOB_TAG)) {
+			return false;
+		}
+		if (ACTIVE_STATES.containsKey(entity.getUUID())) {
+			return false;
+		}
+		if (!isEligibleEntityType(entity)) {
+			return false;
+		}
+		return true;
+	}
+
+	private static boolean isEligibleEntityType(Entity entity) {
+		if (!(entity instanceof Mob)) {
 			return false;
 		}
 
-		Identifier entityId = BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType());
+		Identifier entityId = BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType());
 		return entityId != null && "minecraft".equals(entityId.getNamespace());
 	}
 
-	private static void applyUpsideDown(Mob mob) {
-		mob.addTag(UPSIDE_DOWN_MOB_TAG);
-		mob.setCustomName(UPSIDE_DOWN_NAME.copy());
-		mob.setCustomNameVisible(false);
+	private static void applyUpsideDown(Entity entity) {
+		entity.addTag(UPSIDE_DOWN_MOB_TAG);
+		entity.setCustomName(UPSIDE_DOWN_NAME.copy());
+		entity.setCustomNameVisible(false);
 	}
 
-	private static void restoreMob(Mob mob, ActiveUpsideDownState state) {
-		mob.removeTag(UPSIDE_DOWN_MOB_TAG);
+	private static void restoreEntity(Entity entity, ActiveUpsideDownState state) {
+		entity.removeTag(UPSIDE_DOWN_MOB_TAG);
 		if (state != null && state.originalCustomName != null) {
-			mob.setCustomName(state.originalCustomName.copy());
-			mob.setCustomNameVisible(state.originalCustomNameVisible);
+			entity.setCustomName(state.originalCustomName.copy());
+			entity.setCustomNameVisible(state.originalCustomNameVisible);
 			return;
 		}
 
-		if (isUpsideDownName(mob.getCustomName())) {
-			mob.setCustomName(null);
+		if (isUpsideDownName(entity.getCustomName())) {
+			entity.setCustomName(null);
 		}
-		mob.setCustomNameVisible(false);
+		entity.setCustomNameVisible(false);
 	}
 
 	private static boolean isUpsideDownName(Component component) {
@@ -268,14 +279,14 @@ public final class UpsideDownMobGlitch implements ServerGlitchHandler {
 		return component == null ? null : component.copy();
 	}
 
-	private static Mob findMob(MinecraftServer server, ResourceKey<Level> dimension, UUID uuid) {
+	private static Entity findTargetEntity(MinecraftServer server, ResourceKey<Level> dimension, UUID uuid) {
 		ServerLevel level = server.getLevel(dimension);
 		if (level == null) {
 			return null;
 		}
 
 		Entity entity = level.getEntity(uuid);
-		return entity instanceof Mob mob ? mob : null;
+		return isEligibleEntityType(entity) ? entity : null;
 	}
 
 	private static ResourceKey<Level> getDimension(Entity entity) {
@@ -341,7 +352,7 @@ public final class UpsideDownMobGlitch implements ServerGlitchHandler {
 		return clamp01(1.0D - normalized);
 	}
 
-	private static void shuffle(List<Mob> list, RandomSource random) {
+	private static void shuffle(List<Entity> list, RandomSource random) {
 		Collections.shuffle(list, new java.util.Random(random.nextLong()));
 	}
 
