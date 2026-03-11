@@ -6,13 +6,11 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.server.level.WorldGenRegion;
 import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.NoiseColumn;
-import net.minecraft.world.level.StructureManager;
-import net.minecraft.world.level.biome.BiomeSource;
-import net.minecraft.world.level.biome.FixedBiomeSource;
-import net.minecraft.server.level.WorldGenRegion;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.StructureManager;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
@@ -24,6 +22,7 @@ import net.minecraft.world.level.levelgen.blending.Blender;
 import net.minecraft.world.level.levelgen.structure.StructureSet;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
@@ -31,8 +30,9 @@ import java.util.stream.Stream;
 public final class BackroomsChunkGenerator extends ChunkGenerator {
 	public static final MapCodec<BackroomsChunkGenerator> CODEC = RecordCodecBuilder.mapCodec(instance ->
 			instance.group(
-					Biome.CODEC.fieldOf("biome").forGetter(generator -> generator.biome)
-			).apply(instance, BackroomsChunkGenerator::new)
+					BackroomsBiomeSource.CODEC.codec().optionalFieldOf("biome_source").forGetter(generator -> Optional.of(generator.backroomsBiomeSource)),
+					Biome.CODEC.optionalFieldOf("biome").forGetter(generator -> Optional.empty())
+			).apply(instance, BackroomsChunkGenerator::fromCodec)
 	);
 
 	private static final Set<Heightmap.Types> HEIGHTMAP_TYPES = Set.of(
@@ -47,21 +47,23 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	private static final BlockState BACKROOMS_BLOCK = ModBlocks.BACKROOMS_BLOCK.defaultBlockState();
 	private static final BlockState BACKROOMS_LIGHT_BLOCK = ModBlocks.BACKROOMS_LIGHTBLOCK.defaultBlockState();
 	private static final BlockState AIR = Blocks.AIR.defaultBlockState();
-	private static final int FLOOR_Y = 64;
-	private static final int CEILING_Y = 69;
-	private static final int WALL_MIN_Y = FLOOR_Y + 1;
-	private static final int WALL_MAX_Y = CEILING_Y - 1;
-	private static final int CELL_SIZE = 8;
-	private static final int DOOR_WIDTH = 2;
-	private final Holder<Biome> biome;
 
-	public BackroomsChunkGenerator(Holder<Biome> biome) {
-		super(createBiomeSource(biome));
-		this.biome = biome;
+	private final BackroomsBiomeSource backroomsBiomeSource;
+
+	public BackroomsChunkGenerator(BackroomsBiomeSource biomeSource) {
+		super(biomeSource);
+		this.backroomsBiomeSource = biomeSource;
 	}
 
-	private static BiomeSource createBiomeSource(Holder<Biome> biome) {
-		return new FixedBiomeSource(biome);
+	private static BackroomsChunkGenerator fromCodec(Optional<BackroomsBiomeSource> biomeSource, Optional<Holder<Biome>> legacyBiome) {
+		BackroomsBiomeSource resolvedBiomeSource = biomeSource.orElseGet(() -> legacyBiome
+				.map(BackroomsChunkGenerator::createLegacyBiomeSource)
+				.orElseThrow(() -> new IllegalStateException("Backrooms chunk generator requires biome_source or biome")));
+		return new BackroomsChunkGenerator(resolvedBiomeSource);
+	}
+
+	private static BackroomsBiomeSource createLegacyBiomeSource(Holder<Biome> biome) {
+		return new BackroomsBiomeSource(biome, biome, biome, biome, biome, biome);
 	}
 
 	@Override
@@ -89,7 +91,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			int worldX = minBlockX + localX;
 			for (int localZ = 0; localZ < 16; localZ++) {
 				int worldZ = minBlockZ + localZ;
-				for (int y = FLOOR_Y; y <= CEILING_Y; y++) {
+				for (int y = BackroomsLayout.FLOOR_Y; y <= BackroomsLayout.CEILING_Y; y++) {
 					BlockState state = getBlockState(worldX, y, worldZ);
 					if (state.isAir()) {
 						continue;
@@ -130,7 +132,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 
 	@Override
 	public int getSeaLevel() {
-		return FLOOR_Y;
+		return BackroomsLayout.FLOOR_Y;
 	}
 
 	@Override
@@ -140,7 +142,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 
 	@Override
 	public int getSpawnHeight(LevelHeightAccessor levelHeightAccessor) {
-		return FLOOR_Y + 1;
+		return BackroomsLayout.FLOOR_Y + 1;
 	}
 
 	@Override
@@ -151,7 +153,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			LevelHeightAccessor levelHeightAccessor,
 			RandomState randomState
 	) {
-		for (int y = CEILING_Y; y >= FLOOR_Y; y--) {
+		for (int y = BackroomsLayout.CEILING_Y; y >= BackroomsLayout.FLOOR_Y; y--) {
 			BlockState state = getBlockState(x, y, z);
 			if (heightmapType.isOpaque().test(state)) {
 				return y + 1;
@@ -177,77 +179,23 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	@Override
 	public void addDebugScreenInfo(List<String> lines, RandomState randomState, BlockPos pos) {
 		lines.add("Backrooms Generator");
+		lines.add("Backrooms Zone: " + BackroomsLayout.getZoneAtBlock(pos.getX(), pos.getZ()).debugName);
 	}
 
 	private static BlockState getBlockState(int x, int y, int z) {
-		if (y == FLOOR_Y) {
+		BackroomsLayout.ZoneType zone = BackroomsLayout.getZoneAtBlock(x, z);
+		if (y == BackroomsLayout.FLOOR_Y) {
 			return BACKROOMS_BLOCK;
 		}
 
-		if (y == CEILING_Y) {
-			return hasCeilingLight(x, z) ? BACKROOMS_LIGHT_BLOCK : BACKROOMS_BLOCK;
+		if (y == BackroomsLayout.CEILING_Y) {
+			return BackroomsLayout.hasCeilingLight(zone, x, z) ? BACKROOMS_LIGHT_BLOCK : BACKROOMS_BLOCK;
 		}
 
-		if (y >= WALL_MIN_Y && y <= WALL_MAX_Y && isWall(x, z)) {
+		if (y >= BackroomsLayout.WALL_MIN_Y && y <= BackroomsLayout.WALL_MAX_Y && !BackroomsLayout.isCorridor(zone, x, z)) {
 			return BACKROOMS_BLOCK;
 		}
 
 		return AIR;
-	}
-
-	private static boolean isWall(int x, int z) {
-		int localX = Math.floorMod(x, CELL_SIZE);
-		int localZ = Math.floorMod(z, CELL_SIZE);
-		int cellX = Math.floorDiv(x, CELL_SIZE);
-		int cellZ = Math.floorDiv(z, CELL_SIZE);
-
-		boolean verticalWall = localX == 0 && !isOpening(cellX, cellZ, localZ, 0x632BE59BD9B4E019L);
-		boolean horizontalWall = localZ == 0 && !isOpening(cellX, cellZ, localX, 0x9E3779B97F4A7C15L);
-		boolean pillar = hasPillar(cellX, cellZ)
-				&& localX >= 3 && localX <= 4
-				&& localZ >= 3 && localZ <= 4;
-
-		return verticalWall || horizontalWall || pillar;
-	}
-
-	private static boolean isOpening(int cellX, int cellZ, int localCoordinate, long salt) {
-		int maxStart = CELL_SIZE - DOOR_WIDTH - 1;
-		if (maxStart <= 1) {
-			return false;
-		}
-
-		int openingStart = 1 + positiveMod(mix(cellX, cellZ, salt), maxStart - 1);
-		return localCoordinate >= openingStart && localCoordinate < openingStart + DOOR_WIDTH;
-	}
-
-	private static boolean hasPillar(int cellX, int cellZ) {
-		return positiveMod(mix(cellX, cellZ, 0x4F1BBCDCBFA54001L), 5) == 0;
-	}
-
-	private static boolean hasCeilingLight(int x, int z) {
-		int localX = Math.floorMod(x, CELL_SIZE);
-		int localZ = Math.floorMod(z, CELL_SIZE);
-		int cellX = Math.floorDiv(x, CELL_SIZE);
-		int cellZ = Math.floorDiv(z, CELL_SIZE);
-
-		return localX == (CELL_SIZE / 2)
-				&& localZ == (CELL_SIZE / 2)
-				&& positiveMod(mix(cellX, cellZ, 0x2C1B3C6D5E7F91A3L), 4) == 0;
-	}
-
-	private static int positiveMod(long value, int modulo) {
-		return (int) Math.floorMod(value, modulo);
-	}
-
-	private static long mix(int a, int b, long salt) {
-		long value = salt;
-		value ^= (long) a * 341873128712L;
-		value ^= (long) b * 132897987541L;
-		value ^= value >>> 33;
-		value *= 0xff51afd7ed558ccdl;
-		value ^= value >>> 33;
-		value *= 0xc4ceb9fe1a85ec53L;
-		value ^= value >>> 33;
-		return value;
 	}
 }

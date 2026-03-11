@@ -2,6 +2,14 @@
   "type": "minecraft:overworld",
   "generator": {
     "type": "lg2:backrooms",
-    "biome": "minecraft:the_void"
+    "biome_source": {
+      "type": "lg2:backrooms",
+      "wide_lit_biome": "lg2:backrooms_wide_lit",
+      "wide_dark_biome": "lg2:backrooms_wide_dark",
+      "middle_lit_biome": "lg2:backrooms_middle_lit",
+      "middle_dark_biome": "lg2:backrooms_middle_dark",
+      "narrow_lit_biome": "lg2:backrooms_narrow_lit",
+      "narrow_dark_biome": "lg2:backrooms_narrow_dark"
+    }
   }
 }

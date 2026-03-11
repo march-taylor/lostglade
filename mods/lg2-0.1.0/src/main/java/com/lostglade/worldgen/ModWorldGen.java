@@ -17,6 +17,7 @@ import com.mojang.serialization.MapCodec;
 
 public final class ModWorldGen {
 	public static final Identifier BITCOIN_ORE_FEATURE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "bitcoin_ore_feature");
+	public static final Identifier BACKROOMS_BIOME_SOURCE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms");
 	public static final Identifier BACKROOMS_CHUNK_GENERATOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms");
 	public static final ResourceKey<PlacedFeature> BITCOIN_ORE_PLACED_KEY = ResourceKey.create(
 			Registries.PLACED_FEATURE,
@@ -32,6 +33,11 @@ public final class ModWorldGen {
 			BuiltInRegistries.CHUNK_GENERATOR,
 			BACKROOMS_CHUNK_GENERATOR_ID,
 			BackroomsChunkGenerator.CODEC
+	);
+	public static final MapCodec<? extends net.minecraft.world.level.biome.BiomeSource> BACKROOMS_BIOME_SOURCE = Registry.register(
+			BuiltInRegistries.BIOME_SOURCE,
+			BACKROOMS_BIOME_SOURCE_ID,
+			BackroomsBiomeSource.CODEC
 	);
 
 	private ModWorldGen() {

@@ -209,7 +209,7 @@ public final class ModBlocks {
 				.mapColor(MapColor.SAND)
 				.strength(30.0f, 1200.0f)
 				.sound(SoundType.GLASS)
-				.lightLevel(state -> 13)
+				.lightLevel(state -> 15)
 				.requiresCorrectToolForDrops()
 				.noLootTable()
 				.setId(BACKROOMS_LIGHTBLOCK_KEY);
