@@ -157,7 +157,7 @@
       "maxCooldownTicks": 2400,
       "settings": {
         "minMobPercent": 0.0,
-        "maxMobPercent": 100.0,
+        "maxMobPercent": 70.0,
         "minDurationSeconds": 8,
         "maxDurationSeconds": 16
       }
