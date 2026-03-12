@@ -242,7 +242,7 @@ public final class ServerBackroomsSystem {
 		for (int dx = -PLATFORM_RADIUS; dx <= PLATFORM_RADIUS; dx++) {
 			for (int dz = -PLATFORM_RADIUS; dz <= PLATFORM_RADIUS; dz++) {
 				BlockPos floorPos = base.offset(dx, 0, dz);
-				level.setBlockAndUpdate(floorPos, ModBlocks.BACKROOMS_BLOCK.defaultBlockState());
+				level.setBlockAndUpdate(floorPos, ModBlocks.getRandomizedBackroomsBlockState(floorPos.asLong()));
 				for (int dy = 1; dy <= PLATFORM_CLEAR_HEIGHT; dy++) {
 					level.setBlockAndUpdate(floorPos.above(dy), Blocks.AIR.defaultBlockState());
 				}
@@ -389,7 +389,7 @@ public final class ServerBackroomsSystem {
 		for (int dx = -PLATFORM_RADIUS; dx <= PLATFORM_RADIUS; dx++) {
 			for (int dz = -PLATFORM_RADIUS; dz <= PLATFORM_RADIUS; dz++) {
 				BlockPos floorPos = center.offset(dx, 0, dz);
-				level.setBlockAndUpdate(floorPos, ModBlocks.BACKROOMS_BLOCK.defaultBlockState());
+				level.setBlockAndUpdate(floorPos, ModBlocks.getRandomizedBackroomsBlockState(floorPos.asLong()));
 				for (int dy = 1; dy <= PLATFORM_CLEAR_HEIGHT; dy++) {
 					level.setBlockAndUpdate(floorPos.above(dy), Blocks.AIR.defaultBlockState());
 				}

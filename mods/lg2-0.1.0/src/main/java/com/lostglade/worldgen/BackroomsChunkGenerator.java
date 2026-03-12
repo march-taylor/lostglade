@@ -44,8 +44,9 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			Heightmap.Types.MOTION_BLOCKING_NO_LEAVES
 	);
 
-	private static final BlockState BACKROOMS_BLOCK = ModBlocks.BACKROOMS_BLOCK.defaultBlockState();
 	private static final BlockState BACKROOMS_LIGHT_BLOCK = ModBlocks.BACKROOMS_LIGHTBLOCK.defaultBlockState();
+	private static final BlockState BACKROOMS_BLOCK = ModBlocks.BACKROOMS_BLOCK.defaultBlockState();
+	private static final long BACKROOMS_VARIANT_SALT = 0x4c47324241434b52L;
 	private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
 	private final BackroomsBiomeSource backroomsBiomeSource;
@@ -185,17 +186,21 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	private static BlockState getBlockState(int x, int y, int z) {
 		BackroomsLayout.ZoneType zone = BackroomsLayout.getZoneAtBlock(x, z);
 		if (y == BackroomsLayout.FLOOR_Y) {
-			return BACKROOMS_BLOCK;
+			return randomizedBackroomsBlock(x, y, z);
 		}
 
 		if (y == BackroomsLayout.CEILING_Y) {
-			return BackroomsLayout.hasCeilingLight(zone, x, z) ? BACKROOMS_LIGHT_BLOCK : BACKROOMS_BLOCK;
+			return BackroomsLayout.hasCeilingLight(zone, x, z) ? BACKROOMS_LIGHT_BLOCK : randomizedBackroomsBlock(x, y, z);
 		}
 
 		if (y >= BackroomsLayout.WALL_MIN_Y && y <= BackroomsLayout.WALL_MAX_Y && !BackroomsLayout.isCorridor(zone, x, z)) {
-			return BACKROOMS_BLOCK;
+			return randomizedBackroomsBlock(x, y, z);
 		}
 
 		return AIR;
+	}
+
+	private static BlockState randomizedBackroomsBlock(int x, int y, int z) {
+		return ModBlocks.getRandomizedBackroomsBlockState(BlockPos.asLong(x, y, z) ^ BACKROOMS_VARIANT_SALT);
 	}
 }

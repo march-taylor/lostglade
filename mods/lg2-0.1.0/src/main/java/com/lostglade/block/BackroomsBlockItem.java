@@ -15,7 +15,9 @@ import xyz.nucleoid.packettweaker.PacketContext;
 public class BackroomsBlockItem extends PolymerBlockItem {
 	private final Identifier modelId;
 	private final String englishName;
-	private final String slavicName;
+	private final String russianName;
+	private final String rprName;
+	private final String ukrainianName;
 	private final String japaneseName;
 
 	public BackroomsBlockItem(
@@ -25,13 +27,17 @@ public class BackroomsBlockItem extends PolymerBlockItem {
 			boolean polymerUseModel,
 			Identifier modelId,
 			String englishName,
-			String slavicName,
+			String russianName,
+			String rprName,
+			String ukrainianName,
 			String japaneseName
 	) {
 		super(block, settings, polymerItem, polymerUseModel);
 		this.modelId = modelId;
 		this.englishName = englishName;
-		this.slavicName = slavicName;
+		this.russianName = russianName;
+		this.rprName = rprName;
+		this.ukrainianName = ukrainianName;
 		this.japaneseName = japaneseName;
 	}
 
@@ -62,8 +68,14 @@ public class BackroomsBlockItem extends PolymerBlockItem {
 		}
 
 		String normalized = lang.toLowerCase();
-		if (normalized.startsWith("ru") || normalized.startsWith("uk")) {
-			return Component.literal(this.slavicName);
+		if (normalized.startsWith("rpr")) {
+			return Component.literal(this.rprName);
+		}
+		if (normalized.startsWith("ru")) {
+			return Component.literal(this.russianName);
+		}
+		if (normalized.startsWith("uk")) {
+			return Component.literal(this.ukrainianName);
 		}
 		if (normalized.startsWith("ja")) {
 			return Component.literal(this.japaneseName);

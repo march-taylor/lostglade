@@ -20,8 +20,8 @@ import java.lang.reflect.Field;
 import java.util.List;
 
 public class BackroomsBlock extends SimplePolymerBlock implements PolymerTexturedBlock {
-	private final BlockState polymerPackState;
-	private final BlockState fallbackState;
+	protected final BlockState polymerPackState;
+	protected final BlockState fallbackState;
 
 	public BackroomsBlock(
 			BlockBehaviour.Properties settings,
@@ -46,7 +46,7 @@ public class BackroomsBlock extends SimplePolymerBlock implements PolymerTexture
 		return List.of(new ItemStack(this));
 	}
 
-	private static BlockState requestTargetState(Identifier modelId, Block preferredPolymerBlock) {
+	protected static BlockState requestTargetState(Identifier modelId, Block preferredPolymerBlock) {
 		PolymerBlockModel model = PolymerBlockModel.of(modelId);
 
 		BlockState targetState = requestStateWithPredicate(model, preferredPolymerBlock);

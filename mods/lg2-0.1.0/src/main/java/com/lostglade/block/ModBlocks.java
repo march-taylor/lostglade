@@ -14,6 +14,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.MapColor;
 
 public final class ModBlocks {
@@ -72,9 +73,15 @@ public final class ModBlocks {
 	public static final Block BACKROOMS_BLOCK = Registry.register(
 			BuiltInRegistries.BLOCK,
 			BACKROOMS_BLOCK_ID,
-			new BackroomsBlock(
+			new RandomizedBackroomsBlock(
 					createBackroomsBlockProperties(),
-					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/backrooms_block"),
+					new Identifier[] {
+							Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/backrooms_block"),
+							Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/backrooms_block_1"),
+							Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/backrooms_block_2"),
+							Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/backrooms_block_3"),
+							Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/backrooms_block_4")
+					},
 					Blocks.STRIPPED_BIRCH_LOG,
 					Blocks.STRIPPED_BIRCH_LOG
 			)
@@ -83,7 +90,7 @@ public final class ModBlocks {
 	public static final Block BACKROOMS_LIGHTBLOCK = Registry.register(
 			BuiltInRegistries.BLOCK,
 			BACKROOMS_LIGHTBLOCK_ID,
-			new BackroomsBlock(
+			new BackroomsLightBlock(
 					createBackroomsLightBlockProperties(),
 					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/backrooms_lightblock"),
 					Blocks.SEA_LANTERN,
@@ -123,8 +130,10 @@ public final class ModBlocks {
 					true,
 					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_block"),
 					"Backrooms Block",
-					"Блок закулисья",
-					"バックルームズブロック"
+					"\u0411\u043b\u043e\u043a \u0437\u0430\u043a\u0443\u043b\u0438\u0441\u044c\u044f",
+					"\u041a\u043e\u043d\u0441\u0442\u0440\u0443\u043a\u0446i\u044f \u0412\u0463\u0447\u043d\u0430\u0433\u043e \u041a\u043e\u0440\u0438\u0434\u043e\u0440\u0430",
+					"\u0411\u043b\u043e\u043a \u0437\u0430\u043a\u0443\u043b\u0456\u0441\u0441\u044f",
+					"\u30d0\u30c3\u30af\u30eb\u30fc\u30e0\u30ba\u30d6\u30ed\u30c3\u30af"
 			)
 	);
 
@@ -138,8 +147,10 @@ public final class ModBlocks {
 					true,
 					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_lightblock"),
 					"Backrooms Light",
-					"Свет закулисья",
-					"バックルームズライト"
+					"\u0421\u0432\u0435\u0442 \u0437\u0430\u043a\u0443\u043b\u0438\u0441\u044c\u044f",
+					"\u0421\u0432\u0463\u0442\u044a \u0412\u0463\u0447\u043d\u0430\u0433\u043e \u041a\u043e\u0440\u0438\u0434\u043e\u0440\u0430",
+					"\u0421\u0432\u0456\u0442\u043b\u043e \u0437\u0430\u043a\u0443\u043b\u0456\u0441\u0441\u044f",
+					"\u30d0\u30c3\u30af\u30eb\u30fc\u30e0\u30ba\u30e9\u30a4\u30c8"
 			)
 	);
 
@@ -192,6 +203,10 @@ public final class ModBlocks {
 				.noLootTable()
 				.noOcclusion()
 				.setId(SERVER_KEY);
+	}
+
+	public static BlockState getRandomizedBackroomsBlockState(long seed) {
+		return ((RandomizedBackroomsBlock) BACKROOMS_BLOCK).getRandomizedState(seed);
 	}
 
 	private static BlockBehaviour.Properties createBackroomsBlockProperties() {
