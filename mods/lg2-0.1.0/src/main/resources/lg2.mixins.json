@@ -5,6 +5,8 @@
 	"mixins": [
 		"AbstractCookingRecipeMixin",
 		"AbstractFurnaceBlockEntityMixin",
+		"BackroomsDayTimeMixin",
+		"BackroomsServerLevelTimeMixin",
 		"EntityKillProtectionMixin",
 		"ExampleMixin",
 		"MsgCommandMixin",

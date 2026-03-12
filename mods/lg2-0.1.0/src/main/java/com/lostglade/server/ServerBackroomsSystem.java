@@ -73,7 +73,7 @@ public final class ServerBackroomsSystem {
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerBackroomsSystem::loadState);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerBackroomsSystem::saveState);
 		ServerPlayerEvents.AFTER_RESPAWN.register(ServerBackroomsSystem::onAfterRespawn);
-		ServerTickEvents.END_SERVER_TICK.register(ServerBackroomsSystem::tickPendingRespawns);
+		ServerTickEvents.END_SERVER_TICK.register(ServerBackroomsSystem::tickServer);
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 				dispatcher.register(
@@ -340,6 +340,26 @@ public final class ServerBackroomsSystem {
 
 			teleportToRandomBackroomsRespawn(backrooms, player);
 		}
+	}
+
+	private static void tickServer(MinecraftServer server) {
+		enforceClearWeather(server);
+		tickPendingRespawns(server);
+	}
+
+	private static void enforceClearWeather(MinecraftServer server) {
+		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
+		if (backrooms == null) {
+			return;
+		}
+
+		if (!backrooms.isRaining() && !backrooms.isThundering() && backrooms.getRainLevel(1.0F) <= 0.0F && backrooms.getThunderLevel(1.0F) <= 0.0F) {
+			return;
+		}
+
+		backrooms.setWeatherParameters(12000, 0, false, false);
+		backrooms.setRainLevel(0.0F);
+		backrooms.setThunderLevel(0.0F);
 	}
 
 	private static void teleportToRandomBackroomsRespawn(ServerLevel backrooms, ServerPlayer player) {
