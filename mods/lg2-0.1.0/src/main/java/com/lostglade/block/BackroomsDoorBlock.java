@@ -1,13 +1,20 @@
 package com.lostglade.block;
 
+import com.lostglade.server.ServerBackroomsSystem;
 import eu.pb4.polymer.blocks.api.BlockModelType;
 import eu.pb4.polymer.blocks.api.BlockResourceCreator;
 import eu.pb4.polymer.blocks.api.PolymerBlockModel;
 import eu.pb4.polymer.blocks.api.PolymerTexturedBlock;
 import eu.pb4.polymer.blocks.api.PolymerBlockResourceUtils;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.DoorBlock;
@@ -17,6 +24,7 @@ import net.minecraft.world.level.block.state.properties.BlockSetType;
 import net.minecraft.world.level.block.state.properties.DoorHingeSide;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.storage.loot.LootParams;
+import net.minecraft.world.phys.BlockHitResult;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import xyz.nucleoid.packettweaker.PacketContext;
 
@@ -64,6 +72,30 @@ public final class BackroomsDoorBlock extends DoorBlock implements PolymerTextur
 		return state.getValue(HALF) == DoubleBlockHalf.LOWER
 				? List.of(new ItemStack(this))
 				: List.of();
+	}
+
+	@Override
+	protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hitResult) {
+		return this.teleportViaDoor(level, player);
+	}
+
+	@Override
+	protected InteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hitResult) {
+		return this.teleportViaDoor(level, player);
+	}
+
+	private InteractionResult teleportViaDoor(Level level, Player player) {
+		if (level.isClientSide()) {
+			return InteractionResult.SUCCESS;
+		}
+
+		if (!(player instanceof ServerPlayer serverPlayer) || !ServerBackroomsSystem.isInBackrooms(serverPlayer)) {
+			return InteractionResult.PASS;
+		}
+
+		return ServerBackroomsSystem.teleportPlayerToNormalSpawn(serverPlayer)
+				? InteractionResult.CONSUME
+				: InteractionResult.PASS;
 	}
 
 	private Map<DoorVisualKey, BlockState> createPolymerStates(Identifier modelBaseId) {

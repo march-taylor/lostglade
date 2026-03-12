@@ -24,6 +24,7 @@ import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.IOException;
@@ -150,6 +151,47 @@ public final class ServerBackroomsSystem {
 		return true;
 	}
 
+	public static boolean teleportPlayerToNormalSpawn(ServerPlayer player) {
+		if (player == null) {
+			return false;
+		}
+
+		MinecraftServer server = player.level().getServer();
+		if (server == null) {
+			return false;
+		}
+
+		ServerLevel targetLevel = server.overworld();
+		BlockPos targetPos = targetLevel.getRespawnData().pos();
+		float targetYaw = targetLevel.getRespawnData().yaw();
+		float targetPitch = targetLevel.getRespawnData().pitch();
+
+		ServerPlayer.RespawnConfig respawnConfig = player.getRespawnConfig();
+		LevelData.RespawnData respawnData = respawnConfig == null ? null : respawnConfig.respawnData();
+		if (respawnData != null && Level.OVERWORLD.equals(respawnData.dimension())) {
+			BlockPos respawnPos = respawnData.pos();
+			if (respawnPos != null) {
+				targetPos = respawnPos;
+				targetYaw = respawnData.yaw();
+				targetPitch = respawnData.pitch();
+			}
+		}
+
+		targetLevel.getChunkAt(targetPos);
+		player.teleportTo(
+				targetLevel,
+				targetPos.getX() + 0.5D,
+				targetPos.getY() + 0.1D,
+				targetPos.getZ() + 0.5D,
+				ABSOLUTE_TELEPORT,
+				targetYaw,
+				targetPitch,
+				false
+		);
+		player.fallDistance = 0.0F;
+		return true;
+	}
+
 	private static int enterPlayers(MinecraftServer server, Collection<ServerPlayer> players, boolean singleFeedback) {
 		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
 		if (backrooms == null) {
@@ -213,19 +255,7 @@ public final class ServerBackroomsSystem {
 	}
 
 	private static void teleportToFallback(MinecraftServer server, ServerPlayer player) {
-		ServerLevel overworld = server.overworld();
-		BlockPos spawnPos = overworld.getRespawnData().pos();
-		overworld.getChunkAt(spawnPos);
-		player.teleportTo(
-				overworld,
-				spawnPos.getX() + 0.5D,
-				spawnPos.getY() + 0.1D,
-				spawnPos.getZ() + 0.5D,
-				ABSOLUTE_TELEPORT,
-				overworld.getRespawnData().yaw(),
-				overworld.getRespawnData().pitch(),
-				false
-		);
+		teleportPlayerToNormalSpawn(player);
 	}
 
 	private static void storeReturnPoint(ServerPlayer player) {

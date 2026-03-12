@@ -1,5 +1,8 @@
 package com.lostglade.worldgen;
 
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.state.properties.DoorHingeSide;
+
 final class BackroomsLayout {
 	static final int FLOOR_Y = 64;
 	static final int CEILING_Y = 69;
@@ -8,6 +11,8 @@ final class BackroomsLayout {
 
 	private static final int STYLE_REGION_SIZE = 96;
 	private static final int LAYOUT_CELL_SIZE = 24;
+	private static final int DOOR_CHANCE_PERCENT = 9;
+	private static final long DOOR_LAYOUT_SALT = 0x6B41524F4F4D4452L;
 
 	private BackroomsLayout() {
 	}
@@ -41,6 +46,22 @@ final class BackroomsLayout {
 		}
 
 		return isLightAnchor(zone, candidateX, candidateZ);
+	}
+
+	static DoorPlacement getRoomDoorAt(ZoneType zone, int x, int z) {
+		int cellX = Math.floorDiv(x, LAYOUT_CELL_SIZE);
+		int cellZ = Math.floorDiv(z, LAYOUT_CELL_SIZE);
+
+		for (int offsetX = -1; offsetX <= 1; offsetX++) {
+			for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
+				DoorPlacement placement = getDoorPlacementForCell(zone, cellX + offsetX, cellZ + offsetZ);
+				if (placement != null && placement.matches(x, z)) {
+					return placement;
+				}
+			}
+		}
+
+		return null;
 	}
 
 	private static boolean isLightAnchor(ZoneType zone, int x, int z) {
@@ -147,6 +168,54 @@ final class BackroomsLayout {
 		);
 	}
 
+	private static DoorPlacement getDoorPlacementForCell(ZoneType zone, int cellX, int cellZ) {
+		long sample = mix(cellX, cellZ, zone.layoutSalt ^ DOOR_LAYOUT_SALT);
+		if (positiveMod(sample ^ 0x4A6D9A1FB77C53E1L, 100) >= DOOR_CHANCE_PERCENT) {
+			return null;
+		}
+
+		CellData current = getCell(zone, cellX, cellZ);
+		RoomSide[] eligibleSides = collectEligibleDoorSides(zone, cellX, cellZ, current);
+		if (eligibleSides.length == 0) {
+			return null;
+		}
+
+		RoomSide side = eligibleSides[positiveMod(sample ^ 0x23E5FA97C14B72D3L, eligibleSides.length)];
+		int doorX = current.roomCenterX + side.doorOffsetX(current);
+		int doorZ = current.roomCenterZ + side.doorOffsetZ(current);
+		if (!isOpenSpace(zone, doorX - side.stepX, doorZ - side.stepZ)) {
+			return null;
+		}
+		if (isOpenSpace(zone, doorX + side.stepX, doorZ + side.stepZ)) {
+			return null;
+		}
+
+		DoorHingeSide hinge = ((sample >>> 9) & 1L) == 0L ? DoorHingeSide.LEFT : DoorHingeSide.RIGHT;
+		return new DoorPlacement(doorX, doorZ, side.facing, hinge);
+	}
+
+	private static RoomSide[] collectEligibleDoorSides(ZoneType zone, int cellX, int cellZ, CellData current) {
+		RoomSide[] sides = new RoomSide[4];
+		int count = 0;
+
+		if (!getCell(zone, cellX, cellZ - 1).connectSouth) {
+			sides[count++] = RoomSide.NORTH;
+		}
+		if (!current.connectSouth) {
+			sides[count++] = RoomSide.SOUTH;
+		}
+		if (!getCell(zone, cellX - 1, cellZ).connectEast) {
+			sides[count++] = RoomSide.WEST;
+		}
+		if (!current.connectEast) {
+			sides[count++] = RoomSide.EAST;
+		}
+
+		RoomSide[] result = new RoomSide[count];
+		System.arraycopy(sides, 0, result, 0, count);
+		return result;
+	}
+
 	private static int positiveMod(long value, int modulo) {
 		return (int) Math.floorMod(value, modulo);
 	}
@@ -225,5 +294,72 @@ final class BackroomsLayout {
 		private boolean containsRoom(int x, int z) {
 			return Math.abs(x - this.roomCenterX) <= this.roomHalfWidth && Math.abs(z - this.roomCenterZ) <= this.roomHalfHeight;
 		}
+	}
+
+	record DoorPlacement(int x, int z, Direction facing, DoorHingeSide hinge) {
+		private boolean matches(int x, int z) {
+			return this.x == x && this.z == z;
+		}
+	}
+
+	private enum RoomSide {
+		NORTH(0, -1, Direction.NORTH) {
+			@Override
+			int doorOffsetX(CellData cell) {
+				return 0;
+			}
+
+			@Override
+			int doorOffsetZ(CellData cell) {
+				return -(cell.roomHalfHeight + 1);
+			}
+		},
+		SOUTH(0, 1, Direction.SOUTH) {
+			@Override
+			int doorOffsetX(CellData cell) {
+				return 0;
+			}
+
+			@Override
+			int doorOffsetZ(CellData cell) {
+				return cell.roomHalfHeight + 1;
+			}
+		},
+		WEST(-1, 0, Direction.WEST) {
+			@Override
+			int doorOffsetX(CellData cell) {
+				return -(cell.roomHalfWidth + 1);
+			}
+
+			@Override
+			int doorOffsetZ(CellData cell) {
+				return 0;
+			}
+		},
+		EAST(1, 0, Direction.EAST) {
+			@Override
+			int doorOffsetX(CellData cell) {
+				return cell.roomHalfWidth + 1;
+			}
+
+			@Override
+			int doorOffsetZ(CellData cell) {
+				return 0;
+			}
+		};
+
+		final int stepX;
+		final int stepZ;
+		final Direction facing;
+
+		RoomSide(int stepX, int stepZ, Direction facing) {
+			this.stepX = stepX;
+			this.stepZ = stepZ;
+			this.facing = facing;
+		}
+
+		abstract int doorOffsetX(CellData cell);
+
+		abstract int doorOffsetZ(CellData cell);
 	}
 }

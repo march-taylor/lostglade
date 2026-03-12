@@ -13,6 +13,8 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.StructureManager;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.DoorHingeSide;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
@@ -46,6 +48,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 
 	private static final BlockState BACKROOMS_LIGHT_BLOCK = ModBlocks.BACKROOMS_LIGHTBLOCK.defaultBlockState();
 	private static final BlockState BACKROOMS_BLOCK = ModBlocks.BACKROOMS_BLOCK.defaultBlockState();
+	private static final BlockState BACKROOMS_DOOR_BLOCK = ModBlocks.BACKROOMS_DOOR.defaultBlockState();
 	private static final long BACKROOMS_VARIANT_SALT = 0x4c47324241434b52L;
 	private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
@@ -185,12 +188,22 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 
 	private static BlockState getBlockState(int x, int y, int z) {
 		BackroomsLayout.ZoneType zone = BackroomsLayout.getZoneAtBlock(x, z);
+		BackroomsLayout.DoorPlacement doorPlacement = BackroomsLayout.getRoomDoorAt(zone, x, z);
 		if (y == BackroomsLayout.FLOOR_Y) {
 			return randomizedBackroomsBlock(x, y, z);
 		}
 
 		if (y == BackroomsLayout.CEILING_Y) {
 			return BackroomsLayout.hasCeilingLight(zone, x, z) ? BACKROOMS_LIGHT_BLOCK : randomizedBackroomsBlock(x, y, z);
+		}
+
+		if (doorPlacement != null) {
+			if (y == BackroomsLayout.FLOOR_Y + 1) {
+				return createDoorState(doorPlacement, DoubleBlockHalf.LOWER);
+			}
+			if (y == BackroomsLayout.FLOOR_Y + 2) {
+				return createDoorState(doorPlacement, DoubleBlockHalf.UPPER);
+			}
 		}
 
 		if (y >= BackroomsLayout.WALL_MIN_Y && y <= BackroomsLayout.WALL_MAX_Y && !BackroomsLayout.isCorridor(zone, x, z)) {
@@ -202,5 +215,14 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 
 	private static BlockState randomizedBackroomsBlock(int x, int y, int z) {
 		return ModBlocks.getRandomizedBackroomsBlockState(BlockPos.asLong(x, y, z) ^ BACKROOMS_VARIANT_SALT);
+	}
+
+	private static BlockState createDoorState(BackroomsLayout.DoorPlacement placement, DoubleBlockHalf half) {
+		return BACKROOMS_DOOR_BLOCK
+				.setValue(net.minecraft.world.level.block.DoorBlock.FACING, placement.facing())
+				.setValue(net.minecraft.world.level.block.DoorBlock.HINGE, placement.hinge())
+				.setValue(net.minecraft.world.level.block.DoorBlock.OPEN, false)
+				.setValue(net.minecraft.world.level.block.DoorBlock.POWERED, false)
+				.setValue(net.minecraft.world.level.block.DoorBlock.HALF, half);
 	}
 }
