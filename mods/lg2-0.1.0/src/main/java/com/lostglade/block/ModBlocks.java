@@ -267,9 +267,10 @@ public final class ModBlocks {
 	private static BlockBehaviour.Properties createBackroomsDoorProperties() {
 		return BlockBehaviour.Properties.of()
 				.mapColor(MapColor.WOOD)
-				.strength(3.0f)
+				.strength(30.0f, 1200.0f)
 				.sound(SoundType.WOOD)
 				.noOcclusion()
+				.requiresCorrectToolForDrops()
 				.ignitedByLava()
 				.setId(BACKROOMS_DOOR_KEY);
 	}

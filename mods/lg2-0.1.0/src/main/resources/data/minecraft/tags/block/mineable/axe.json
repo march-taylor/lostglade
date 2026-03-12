@@ -1,6 +1,4 @@
-﻿{
-    "replace":  false,
-    "values":  [
-                   "lg2:backrooms_door"
-               ]
+{
+  "replace": false,
+  "values": []
 }

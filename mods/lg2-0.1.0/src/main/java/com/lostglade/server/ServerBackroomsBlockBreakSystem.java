@@ -5,8 +5,8 @@ import com.lostglade.item.ModItems;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.level.block.state.BlockState;
 
 public final class ServerBackroomsBlockBreakSystem {
@@ -23,7 +23,7 @@ public final class ServerBackroomsBlockBreakSystem {
 			}
 
 			BlockState state = world.getBlockState(pos);
-			if (!state.is(ModBlocks.BACKROOMS_BLOCK) && !state.is(ModBlocks.BACKROOMS_LIGHTBLOCK)) {
+			if (!isProtectedBackroomsBlock(state) && !state.is(ModBlocks.BACKROOMS_DOOR)) {
 				return InteractionResult.PASS;
 			}
 			if (serverPlayer.isCreative()) {
@@ -32,7 +32,7 @@ public final class ServerBackroomsBlockBreakSystem {
 			if (serverPlayer.isSpectator() || hand != InteractionHand.MAIN_HAND) {
 				return InteractionResult.PASS;
 			}
-			if (!serverPlayer.getMainHandItem().is(ModItems.SPECIAL_PICKAXE)) {
+			if (!isSpecialPickaxe(serverPlayer)) {
 				return InteractionResult.SUCCESS;
 			}
 
@@ -40,7 +40,7 @@ public final class ServerBackroomsBlockBreakSystem {
 		});
 
 		PlayerBlockBreakEvents.BEFORE.register((world, player, pos, state, blockEntity) -> {
-			if (!state.is(ModBlocks.BACKROOMS_BLOCK) && !state.is(ModBlocks.BACKROOMS_LIGHTBLOCK)) {
+			if (!isProtectedBackroomsBlock(state) && !state.is(ModBlocks.BACKROOMS_DOOR)) {
 				return true;
 			}
 			if (!(player instanceof ServerPlayer serverPlayer)) {
@@ -49,7 +49,15 @@ public final class ServerBackroomsBlockBreakSystem {
 			if (serverPlayer.isCreative()) {
 				return true;
 			}
-			return serverPlayer.getMainHandItem().is(ModItems.SPECIAL_PICKAXE);
+			return isSpecialPickaxe(serverPlayer);
 		});
+	}
+
+	private static boolean isProtectedBackroomsBlock(BlockState state) {
+		return state.is(ModBlocks.BACKROOMS_BLOCK) || state.is(ModBlocks.BACKROOMS_LIGHTBLOCK);
+	}
+
+	private static boolean isSpecialPickaxe(ServerPlayer player) {
+		return player.getMainHandItem().is(ModItems.SPECIAL_PICKAXE);
 	}
 }
