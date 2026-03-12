@@ -1,10 +1,12 @@
 package com.lostglade.server.glitch;
 
 import com.google.gson.JsonObject;
+import com.lostglade.Lg2;
 import com.lostglade.config.GlitchConfig;
 import com.lostglade.server.ServerBackroomsSystem;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -17,7 +19,22 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.chunk.PalettedContainerFactory;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+import net.minecraft.world.level.chunk.storage.RegionStorageInfo;
+import net.minecraft.world.level.chunk.storage.SerializableChunkData;
+import net.minecraft.world.level.chunk.storage.SimpleRegionStorage;
+import net.minecraft.world.level.storage.LevelResource;
+import net.minecraft.util.datafix.DataFixTypes;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.channels.FileChannel;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -26,6 +43,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 public final class PhantomChunkGlitch implements ServerGlitchHandler {
@@ -190,41 +208,56 @@ public final class PhantomChunkGlitch implements ServerGlitchHandler {
 		double backroomsTeleportChance = GlitchSettingsHelper.getDouble(settings, BACKROOMS_TELEPORT_CHANCE, 0.35D);
 
 		Set<ChunkKey> occupiedChunks = new HashSet<>(ACTIVE_STATES.keySet());
-		List<LoadedChunkSource> worldSources = collectWorldChunkSources(server, occupiedChunks);
+		Map<net.minecraft.resources.ResourceKey<Level>, Map<Long, LevelChunk>> loadedChunkSourcesByDimension = new HashMap<>();
+		Map<net.minecraft.resources.ResourceKey<Level>, List<ChunkPos>> diskChunkSourcesByDimension = new HashMap<>();
+		Map<net.minecraft.resources.ResourceKey<Level>, SimpleRegionStorage> chunkStoragesByDimension = new HashMap<>();
 		long nowTick = server.overworld().getGameTime();
 
 		shuffle(players, random);
 		boolean appliedAny = false;
 		int appliedCount = 0;
-		for (int i = 0; i < players.size() && appliedCount < targetCount; i++) {
-			ServerPlayer player = players.get(i);
-			if (!(player.level() instanceof ServerLevel level)) {
-				continue;
-			}
+		try {
+			for (int i = 0; i < players.size() && appliedCount < targetCount; i++) {
+				ServerPlayer player = players.get(i);
+				if (!(player.level() instanceof ServerLevel level)) {
+					continue;
+				}
 
-			int targetDistanceChunks = pickTargetDistanceChunks(random, minTargetDistanceChunks, maxTargetDistanceChunks);
-			LevelChunk targetChunk = pickTargetChunk(level, player, targetDistanceChunks, random, occupiedChunks);
-			if (targetChunk == null) {
-				continue;
-			}
+				int targetDistanceChunks = pickTargetDistanceChunks(random, minTargetDistanceChunks, maxTargetDistanceChunks);
+				LevelChunk targetChunk = pickTargetChunk(level, player, targetDistanceChunks, random, occupiedChunks);
+				if (targetChunk == null) {
+					continue;
+				}
 
-			ChunkMode mode = pickChunkMode(random, replacementWeight, intangibleWeight);
-			ChunkSnapshot snapshot = captureChunkSnapshot(level, targetChunk);
-			ChunkSnapshot appliedSnapshot = switch (mode) {
-				case REPLACEMENT -> buildReplacementSnapshot(level, targetChunk, worldSources, random);
-				case INTANGIBLE -> buildAirSnapshot(level, targetChunk);
-			};
-			if (appliedSnapshot == null) {
-				continue;
-			}
+				ChunkMode mode = pickChunkMode(random, replacementWeight, intangibleWeight);
+				ChunkSnapshot snapshot = captureChunkSnapshot(level, targetChunk);
+				ChunkSnapshot appliedSnapshot = switch (mode) {
+					case REPLACEMENT -> buildReplacementSnapshot(
+							level,
+							targetChunk,
+							snapshot,
+							loadedChunkSourcesByDimension.computeIfAbsent(level.dimension(), ignored -> collectLoadedChunkSources(level, occupiedChunks)),
+							diskChunkSourcesByDimension.computeIfAbsent(level.dimension(), ignored -> collectSavedChunkPositions(server, level)),
+							getOrOpenChunkStorage(server, level, chunkStoragesByDimension),
+							occupiedChunks,
+							random
+					);
+					case INTANGIBLE -> buildAirSnapshot(level, targetChunk);
+				};
+				if (appliedSnapshot == null) {
+					continue;
+				}
 
-			applySnapshot(level, targetChunk.getPos(), appliedSnapshot);
-			tryTeleportPlayersStuckInChangedChunk(level, targetChunk.getPos(), backroomsTeleportChance);
-			ChunkKey chunkKey = new ChunkKey(level.dimension(), targetChunk.getPos());
-			ACTIVE_STATES.put(chunkKey, new ActivePhantomChunkState(level.dimension(), targetChunk.getPos(), nowTick + durationTicks, backroomsTeleportChance, snapshot));
-			occupiedChunks.add(chunkKey);
-			appliedCount++;
-			appliedAny = true;
+				applySnapshot(level, targetChunk.getPos(), appliedSnapshot);
+				tryTeleportPlayersStuckInChangedChunk(level, targetChunk.getPos(), backroomsTeleportChance);
+				ChunkKey chunkKey = new ChunkKey(level.dimension(), targetChunk.getPos());
+				ACTIVE_STATES.put(chunkKey, new ActivePhantomChunkState(level.dimension(), targetChunk.getPos(), nowTick + durationTicks, backroomsTeleportChance, snapshot));
+				occupiedChunks.add(chunkKey);
+				appliedCount++;
+				appliedAny = true;
+			}
+		} finally {
+			closeChunkStorages(chunkStoragesByDimension.values());
 		}
 
 		return appliedAny;
@@ -311,20 +344,46 @@ public final class PhantomChunkGlitch implements ServerGlitchHandler {
 		return players;
 	}
 
-	private static List<LoadedChunkSource> collectWorldChunkSources(MinecraftServer server, Set<ChunkKey> occupiedChunks) {
-		List<LoadedChunkSource> sources = new ArrayList<>();
-		for (ServerLevel level : server.getAllLevels()) {
-			if (ServerBackroomsSystem.isBackrooms(level)) {
-				continue;
-			}
-			level.getChunkSource().chunkMap.forEachReadyToSendChunk(chunk -> {
-				ChunkKey key = new ChunkKey(level.dimension(), chunk.getPos());
-				if (!occupiedChunks.contains(key)) {
-					sources.add(new LoadedChunkSource(level, chunk));
-				}
-			});
+	private static Map<Long, LevelChunk> collectLoadedChunkSources(ServerLevel level, Set<ChunkKey> occupiedChunks) {
+		Map<Long, LevelChunk> sources = new LinkedHashMap<>();
+		if (level == null || ServerBackroomsSystem.isBackrooms(level)) {
+			return sources;
 		}
+
+		level.getChunkSource().chunkMap.forEachReadyToSendChunk(chunk -> {
+			ChunkKey key = new ChunkKey(level.dimension(), chunk.getPos());
+			if (!occupiedChunks.contains(key)) {
+				sources.put(chunk.getPos().toLong(), chunk);
+			}
+		});
 		return sources;
+	}
+
+	private static List<ChunkPos> collectSavedChunkPositions(MinecraftServer server, ServerLevel level) {
+		if (server == null || level == null || ServerBackroomsSystem.isBackrooms(level)) {
+			return List.of();
+		}
+
+		Path regionFolder = getRegionFolderPath(server, level.dimension());
+		if (regionFolder == null || !Files.isDirectory(regionFolder)) {
+			return List.of();
+		}
+
+		List<ChunkPos> positions = new ArrayList<>();
+		try (DirectoryStream<Path> stream = Files.newDirectoryStream(regionFolder, "r.*.*.mca")) {
+			for (Path regionFile : stream) {
+				RegionCoordinates regionCoordinates = parseRegionCoordinates(regionFile.getFileName().toString());
+				if (regionCoordinates == null) {
+					continue;
+				}
+
+				collectRegionChunkPositions(regionFile, regionCoordinates.regionX, regionCoordinates.regionZ, positions);
+			}
+		} catch (IOException exception) {
+			Lg2.LOGGER.debug("Failed to scan phantom chunk region directory {}", regionFolder, exception);
+		}
+
+		return positions;
 	}
 
 	private static LevelChunk pickTargetChunk(
@@ -375,17 +434,51 @@ public final class PhantomChunkGlitch implements ServerGlitchHandler {
 	private static ChunkSnapshot buildReplacementSnapshot(
 			ServerLevel targetLevel,
 			LevelChunk targetChunk,
-			List<LoadedChunkSource> worldSources,
+			ChunkSnapshot targetSnapshot,
+			Map<Long, LevelChunk> loadedChunkSources,
+			List<ChunkPos> savedChunkPositions,
+			SimpleRegionStorage chunkStorage,
+			Set<ChunkKey> occupiedChunks,
 			RandomSource random
 	) {
-		LoadedChunkSource worldSource = pickWorldSource(random, worldSources, targetLevel.dimension(), targetChunk.getPos());
-		if (worldSource == null) {
+		if (targetLevel == null || targetChunk == null) {
 			return null;
 		}
-		return new ChunkSnapshot(
-				copySections(targetLevel, targetChunk, worldSource.level, worldSource.chunk),
-				copyBlockEntityTags(worldSource.level, worldSource.chunk, targetChunk.getPos())
-		);
+
+		Map<Long, ChunkPos> candidatePositions = new LinkedHashMap<>();
+		for (ChunkPos savedChunkPos : savedChunkPositions) {
+			candidatePositions.putIfAbsent(savedChunkPos.toLong(), savedChunkPos);
+		}
+		for (Map.Entry<Long, LevelChunk> entry : loadedChunkSources.entrySet()) {
+			candidatePositions.putIfAbsent(entry.getKey(), entry.getValue().getPos());
+		}
+		if (candidatePositions.isEmpty()) {
+			return null;
+		}
+
+		List<ChunkPos> candidates = new ArrayList<>(candidatePositions.values());
+		while (!candidates.isEmpty()) {
+			ChunkPos sourceChunkPos = candidates.remove(random.nextInt(candidates.size()));
+			if (sourceChunkPos.equals(targetChunk.getPos())) {
+				continue;
+			}
+			if (occupiedChunks.contains(new ChunkKey(targetLevel.dimension(), sourceChunkPos))) {
+				continue;
+			}
+
+			LevelChunk loadedChunk = loadedChunkSources.get(sourceChunkPos.toLong());
+			ChunkSnapshot snapshot = loadedChunk != null
+					? new ChunkSnapshot(
+							copySections(targetLevel, targetChunk, targetLevel, loadedChunk),
+							copyBlockEntityTags(targetLevel, loadedChunk, targetChunk.getPos())
+					)
+					: readChunkSnapshotFromDisk(targetLevel, targetChunk, sourceChunkPos, chunkStorage);
+			if (snapshot != null && hasVisibleDifference(targetSnapshot, snapshot)) {
+				return snapshot;
+			}
+		}
+
+		return null;
 	}
 
 	private static ChunkSnapshot buildAirSnapshot(ServerLevel level, LevelChunk targetChunk) {
@@ -420,6 +513,23 @@ public final class PhantomChunkGlitch implements ServerGlitchHandler {
 		return copies;
 	}
 
+	private static LevelChunkSection[] copySectionsFromSerializedChunk(ServerLevel targetLevel, LevelChunk targetChunk, SerializableChunkData serializedChunkData) {
+		LevelChunkSection[] copies = createAirSections(targetLevel, targetChunk);
+		for (SerializableChunkData.SectionData sectionData : serializedChunkData.sectionData()) {
+			LevelChunkSection chunkSection = sectionData.chunkSection();
+			if (chunkSection == null) {
+				continue;
+			}
+
+			int targetSectionIndex = targetLevel.getSectionIndexFromSectionY(sectionData.y());
+			if (targetSectionIndex < 0 || targetSectionIndex >= copies.length) {
+				continue;
+			}
+			copies[targetSectionIndex] = chunkSection.copy();
+		}
+		return copies;
+	}
+
 	private static Map<BlockPos, CompoundTag> copyBlockEntityTags(ServerLevel sourceLevel, LevelChunk sourceChunk, ChunkPos targetChunkPos) {
 		Map<BlockPos, CompoundTag> tags = new HashMap<>();
 		for (BlockEntity blockEntity : sourceChunk.getBlockEntities().values()) {
@@ -429,6 +539,26 @@ public final class PhantomChunkGlitch implements ServerGlitchHandler {
 					targetChunkPos.getMinBlockX() + (sourcePos.getX() & 15),
 					sourcePos.getY(),
 					targetChunkPos.getMinBlockZ() + (sourcePos.getZ() & 15)
+			);
+			tag.putInt("x", targetPos.getX());
+			tag.putInt("y", targetPos.getY());
+			tag.putInt("z", targetPos.getZ());
+			tags.put(targetPos.immutable(), tag);
+		}
+		return tags;
+	}
+
+	private static Map<BlockPos, CompoundTag> copySerializedBlockEntityTags(SerializableChunkData serializedChunkData, ChunkPos targetChunkPos) {
+		Map<BlockPos, CompoundTag> tags = new HashMap<>();
+		for (CompoundTag sourceTag : serializedChunkData.blockEntities()) {
+			CompoundTag tag = sourceTag.copy();
+			int sourceX = tag.getIntOr("x", 0);
+			int sourceY = tag.getIntOr("y", 0);
+			int sourceZ = tag.getIntOr("z", 0);
+			BlockPos targetPos = new BlockPos(
+					targetChunkPos.getMinBlockX() + (sourceX & 15),
+					sourceY,
+					targetChunkPos.getMinBlockZ() + (sourceZ & 15)
 			);
 			tag.putInt("x", targetPos.getX());
 			tag.putInt("y", targetPos.getY());
@@ -496,25 +626,36 @@ public final class PhantomChunkGlitch implements ServerGlitchHandler {
 		return new BlockStateSnapshot(section.getBlockState(localX, worldY & 15, localZ));
 	}
 
-	private static LoadedChunkSource pickWorldSource(
-			RandomSource random,
-			List<LoadedChunkSource> worldSources,
-			net.minecraft.resources.ResourceKey<Level> targetDimension,
-			ChunkPos targetChunkPos
-	) {
-		List<LoadedChunkSource> candidates = new ArrayList<>();
-		for (LoadedChunkSource source : worldSources) {
-			if (source.dimension.equals(targetDimension) && source.chunk.getPos().equals(targetChunkPos)) {
+	private static boolean hasVisibleDifference(ChunkSnapshot first, ChunkSnapshot second) {
+		if (first == null || second == null) {
+			return false;
+		}
+
+		LevelChunkSection[] firstSections = first.sections;
+		LevelChunkSection[] secondSections = second.sections;
+		int sectionCount = Math.min(firstSections.length, secondSections.length);
+		for (int sectionIndex = 0; sectionIndex < sectionCount; sectionIndex++) {
+			LevelChunkSection firstSection = firstSections[sectionIndex];
+			LevelChunkSection secondSection = secondSections[sectionIndex];
+			if (firstSection == null || secondSection == null) {
+				if (firstSection != secondSection) {
+					return true;
+				}
 				continue;
 			}
-			candidates.add(source);
+
+			for (int x = 0; x < 16; x++) {
+				for (int y = 0; y < 16; y++) {
+					for (int z = 0; z < 16; z++) {
+						if (!firstSection.getBlockState(x, y, z).equals(secondSection.getBlockState(x, y, z))) {
+							return true;
+						}
+					}
+				}
+			}
 		}
 
-		if (candidates.isEmpty()) {
-			return null;
-		}
-
-		return candidates.get(random.nextInt(candidates.size()));
+		return first.blockEntityTags.size() != second.blockEntityTags.size();
 	}
 
 	private static LevelChunkSection createAirSection(LevelChunkSection template) {
@@ -604,6 +745,161 @@ public final class PhantomChunkGlitch implements ServerGlitchHandler {
 		}
 	}
 
+	private static SimpleRegionStorage getOrOpenChunkStorage(
+			MinecraftServer server,
+			ServerLevel level,
+			Map<net.minecraft.resources.ResourceKey<Level>, SimpleRegionStorage> storagesByDimension
+	) {
+		SimpleRegionStorage existing = storagesByDimension.get(level.dimension());
+		if (existing != null) {
+			return existing;
+		}
+
+		SimpleRegionStorage opened = openChunkStorage(server, level);
+		if (opened != null) {
+			storagesByDimension.put(level.dimension(), opened);
+		}
+		return opened;
+	}
+
+	private static SimpleRegionStorage openChunkStorage(MinecraftServer server, ServerLevel level) {
+		if (server == null || level == null || ServerBackroomsSystem.isBackrooms(level)) {
+			return null;
+		}
+
+		Path regionFolder = getRegionFolderPath(server, level.dimension());
+		if (regionFolder == null || !Files.isDirectory(regionFolder)) {
+			return null;
+		}
+
+		try {
+			return new SimpleRegionStorage(
+					new RegionStorageInfo(server.getWorldData().getLevelName(), level.dimension(), "chunk"),
+					regionFolder,
+					server.getFixerUpper(),
+					false,
+					DataFixTypes.CHUNK
+			);
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to open phantom chunk storage for {}", level.dimension().identifier(), exception);
+			return null;
+		}
+	}
+
+	private static void closeChunkStorages(Iterable<SimpleRegionStorage> storages) {
+		for (SimpleRegionStorage storage : storages) {
+			if (storage == null) {
+				continue;
+			}
+			try {
+				storage.close();
+			} catch (IOException exception) {
+				Lg2.LOGGER.debug("Failed to close phantom chunk storage", exception);
+			}
+		}
+	}
+
+	private static ChunkSnapshot readChunkSnapshotFromDisk(
+			ServerLevel targetLevel,
+			LevelChunk targetChunk,
+			ChunkPos sourceChunkPos,
+			SimpleRegionStorage chunkStorage
+	) {
+		try {
+			Optional<CompoundTag> optionalChunkTag = chunkStorage.read(sourceChunkPos).join();
+			if (optionalChunkTag.isEmpty()) {
+				return null;
+			}
+
+			CompoundTag chunkTag = optionalChunkTag.get();
+			ChunkStatus chunkStatus = SerializableChunkData.getChunkStatusFromTag(chunkTag);
+			if (chunkStatus != null && chunkStatus.isBefore(ChunkStatus.FULL)) {
+				return null;
+			}
+
+			SerializableChunkData serializedChunkData = SerializableChunkData.parse(
+					targetLevel,
+					PalettedContainerFactory.create(targetLevel.registryAccess()),
+					chunkTag
+			);
+			return new ChunkSnapshot(
+					copySectionsFromSerializedChunk(targetLevel, targetChunk, serializedChunkData),
+					copySerializedBlockEntityTags(serializedChunkData, targetChunk.getPos())
+			);
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to read phantom chunk source {} from disk", sourceChunkPos, exception);
+			return null;
+		}
+	}
+
+	private static Path getRegionFolderPath(MinecraftServer server, net.minecraft.resources.ResourceKey<Level> dimension) {
+		if (server == null || dimension == null || ServerBackroomsSystem.isBackrooms(dimension)) {
+			return null;
+		}
+
+		Path worldRoot = server.getWorldPath(LevelResource.ROOT);
+		if (Level.OVERWORLD.equals(dimension)) {
+			return worldRoot.resolve("region");
+		}
+		if (Level.NETHER.equals(dimension)) {
+			return worldRoot.resolve("DIM-1").resolve("region");
+		}
+		if (Level.END.equals(dimension)) {
+			return worldRoot.resolve("DIM1").resolve("region");
+		}
+
+		Identifier dimensionId = dimension.identifier();
+		return worldRoot
+				.resolve("dimensions")
+				.resolve(dimensionId.getNamespace())
+				.resolve(dimensionId.getPath())
+				.resolve("region");
+	}
+
+	private static RegionCoordinates parseRegionCoordinates(String fileName) {
+		String[] parts = fileName.split("\\.");
+		if (parts.length != 4 || !"r".equals(parts[0]) || !"mca".equals(parts[3])) {
+			return null;
+		}
+
+		try {
+			return new RegionCoordinates(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
+		} catch (NumberFormatException exception) {
+			return null;
+		}
+	}
+
+	private static void collectRegionChunkPositions(Path regionFile, int regionX, int regionZ, List<ChunkPos> positions) {
+		try (FileChannel channel = FileChannel.open(regionFile, StandardOpenOption.READ)) {
+			if (channel.size() < 4096L) {
+				return;
+			}
+
+			ByteBuffer header = ByteBuffer.allocate(4096).order(ByteOrder.BIG_ENDIAN);
+			while (header.hasRemaining()) {
+				if (channel.read(header) < 0) {
+					return;
+				}
+			}
+			header.flip();
+
+			for (int index = 0; index < 1024; index++) {
+				int locationEntry = header.getInt();
+				int sectorOffset = (locationEntry >>> 8) & 0xFFFFFF;
+				int sectorCount = locationEntry & 0xFF;
+				if (sectorOffset <= 0 || sectorCount <= 0) {
+					continue;
+				}
+
+				int localX = index & 31;
+				int localZ = index >> 5;
+				positions.add(new ChunkPos((regionX << 5) + localX, (regionZ << 5) + localZ));
+			}
+		} catch (IOException exception) {
+			Lg2.LOGGER.debug("Failed to scan phantom chunk region file {}", regionFile, exception);
+		}
+	}
+
 	private record ChunkKey(net.minecraft.resources.ResourceKey<Level> dimension, ChunkPos pos) {
 	}
 
@@ -619,13 +915,10 @@ public final class PhantomChunkGlitch implements ServerGlitchHandler {
 	) {
 	}
 
-	private record LoadedChunkSource(net.minecraft.resources.ResourceKey<Level> dimension, ServerLevel level, LevelChunk chunk) {
-		private LoadedChunkSource(ServerLevel level, LevelChunk chunk) {
-			this(level.dimension(), level, chunk);
-		}
+	private record BlockStateSnapshot(BlockState state) {
 	}
 
-	private record BlockStateSnapshot(BlockState state) {
+	private record RegionCoordinates(int regionX, int regionZ) {
 	}
 
 	private enum ChunkMode {

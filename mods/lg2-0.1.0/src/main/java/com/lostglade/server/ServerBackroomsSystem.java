@@ -142,24 +142,11 @@ public final class ServerBackroomsSystem {
 			return false;
 		}
 
-		ensureEntryPlatform(backrooms);
-
 		if (!player.level().dimension().equals(BACKROOMS_LEVEL)) {
 			storeReturnPoint(player);
 		}
 
-		backrooms.getChunkAt(BACKROOMS_PLATFORM_CENTER);
-		player.teleportTo(
-				backrooms,
-				BACKROOMS_PLATFORM_CENTER.getX() + 0.5D,
-				BACKROOMS_PLATFORM_CENTER.getY() + 1.0D,
-				BACKROOMS_PLATFORM_CENTER.getZ() + 0.5D,
-				ABSOLUTE_TELEPORT,
-				player.getYRot(),
-				player.getXRot(),
-				false
-		);
-		player.fallDistance = 0.0F;
+		teleportToRandomBackroomsRespawn(backrooms, player);
 		return true;
 	}
 
@@ -168,8 +155,6 @@ public final class ServerBackroomsSystem {
 		if (backrooms == null) {
 			throw new IllegalStateException("Dimension lg2:backrooms is not loaded. Restart the server after updating the mod resources.");
 		}
-
-		ensureEntryPlatform(backrooms);
 
 		int moved = 0;
 		for (ServerPlayer player : players) {
@@ -253,19 +238,6 @@ public final class ServerBackroomsSystem {
 		state.pitch = player.getXRot();
 		RETURN_POINTS.put(player.getUUID(), state);
 		stateDirty = true;
-	}
-
-	private static void ensureEntryPlatform(ServerLevel level) {
-		BlockPos base = BACKROOMS_PLATFORM_CENTER;
-		for (int dx = -PLATFORM_RADIUS; dx <= PLATFORM_RADIUS; dx++) {
-			for (int dz = -PLATFORM_RADIUS; dz <= PLATFORM_RADIUS; dz++) {
-				BlockPos floorPos = base.offset(dx, 0, dz);
-				level.setBlockAndUpdate(floorPos, ModBlocks.getRandomizedBackroomsBlockState(floorPos.asLong()));
-				for (int dy = 1; dy <= PLATFORM_CLEAR_HEIGHT; dy++) {
-					level.setBlockAndUpdate(floorPos.above(dy), Blocks.AIR.defaultBlockState());
-				}
-			}
-		}
 	}
 
 	private static void loadState(MinecraftServer server) {

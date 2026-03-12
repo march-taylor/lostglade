@@ -136,13 +136,13 @@
       "settings": {
         "minTargetPlayers": 1,
         "maxTargetPlayers": "round(whitelistCount*0.5)",
-        "minDurationSeconds": 8,
+        "minDurationSeconds": 16,
         "maxDurationSeconds": 32,
         "minTargetDistanceChunks": 2,
         "maxTargetDistanceChunks": 6,
         "replacementChunkWeight": 0.75,
         "intangibleChunkWeight": 0.25,
-        "backroomsTeleportChance": 1.0
+        "backroomsTeleportChance": 0.15
       }
     },
     "phantom_mobs": {
