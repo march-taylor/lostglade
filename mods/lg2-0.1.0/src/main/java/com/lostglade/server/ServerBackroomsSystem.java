@@ -127,6 +127,42 @@ public final class ServerBackroomsSystem {
 		return count;
 	}
 
+	public static boolean teleportPlayerToBackrooms(ServerPlayer player) {
+		if (player == null) {
+			return false;
+		}
+
+		MinecraftServer server = player.level().getServer();
+		if (server == null) {
+			return false;
+		}
+
+		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
+		if (backrooms == null) {
+			return false;
+		}
+
+		ensureEntryPlatform(backrooms);
+
+		if (!player.level().dimension().equals(BACKROOMS_LEVEL)) {
+			storeReturnPoint(player);
+		}
+
+		backrooms.getChunkAt(BACKROOMS_PLATFORM_CENTER);
+		player.teleportTo(
+				backrooms,
+				BACKROOMS_PLATFORM_CENTER.getX() + 0.5D,
+				BACKROOMS_PLATFORM_CENTER.getY() + 1.0D,
+				BACKROOMS_PLATFORM_CENTER.getZ() + 0.5D,
+				ABSOLUTE_TELEPORT,
+				player.getYRot(),
+				player.getXRot(),
+				false
+		);
+		player.fallDistance = 0.0F;
+		return true;
+	}
+
 	private static int enterPlayers(MinecraftServer server, Collection<ServerPlayer> players, boolean singleFeedback) {
 		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
 		if (backrooms == null) {
@@ -137,27 +173,9 @@ public final class ServerBackroomsSystem {
 
 		int moved = 0;
 		for (ServerPlayer player : players) {
-			if (player == null) {
-				continue;
+			if (teleportPlayerToBackrooms(player)) {
+				moved++;
 			}
-
-			if (!player.level().dimension().equals(BACKROOMS_LEVEL)) {
-				storeReturnPoint(player);
-			}
-
-			backrooms.getChunkAt(BACKROOMS_PLATFORM_CENTER);
-			player.teleportTo(
-					backrooms,
-					BACKROOMS_PLATFORM_CENTER.getX() + 0.5D,
-					BACKROOMS_PLATFORM_CENTER.getY() + 1.0D,
-					BACKROOMS_PLATFORM_CENTER.getZ() + 0.5D,
-					ABSOLUTE_TELEPORT,
-					player.getYRot(),
-					player.getXRot(),
-					false
-			);
-			player.fallDistance = 0.0F;
-			moved++;
 		}
 
 		if (singleFeedback && moved == 1) {

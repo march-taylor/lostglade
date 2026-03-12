@@ -1,4 +1,4 @@
-{
+﻿{
   "enabled": true,
   "checkIntervalTicks": 20,
   "maxActivationsPerCheck": 1,
@@ -15,7 +15,7 @@
         "minTargetPlayers": 1,
         "maxTargetPlayers": "round(whitelistCount*0.75)",
         "minDistance": 1.0,
-        "maxDistance": 16.0,
+        "maxDistance": 8.0,
         "minVolume": 0.5,
         "maxVolume": 1.5,
         "pitchMin": 0.75,
@@ -131,7 +131,7 @@
       "maxStabilityPercent": 40.0,
       "chancePerCheck": 0.2,
       "stabilityInfluence": 1.0,
-      "minCooldownTicks": 160,
+      "minCooldownTicks": 80,
       "maxCooldownTicks": 6000,
       "settings": {
         "minTargetPlayers": 1,
@@ -141,7 +141,8 @@
         "minTargetDistanceChunks": 2,
         "maxTargetDistanceChunks": 6,
         "replacementChunkWeight": 0.75,
-        "intangibleChunkWeight": 0.25
+        "intangibleChunkWeight": 0.25,
+        "backroomsTeleportChance": 1.0
       }
     },
     "phantom_mobs": {
@@ -221,3 +222,4 @@
     }
   }
 }
+
