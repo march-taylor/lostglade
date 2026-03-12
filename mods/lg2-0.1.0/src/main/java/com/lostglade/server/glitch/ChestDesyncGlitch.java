@@ -62,8 +62,6 @@ import java.util.Set;
 import java.util.UUID;
 
 public final class ChestDesyncGlitch implements BlockUseGlitchHandler, EntityUseGlitchHandler {
-	private static final String PHYSICAL_STORAGE_WEIGHT = "physicalStorageWeight";
-	private static final String ENDER_CHEST_WEIGHT = "enderChestWeight";
 	private static final String INCLUDE_GENERATED_STORAGES = "includeGeneratedStorages";
 	private static final int PENDING_PLACEMENT_LIFETIME_TICKS = 3;
 	private static final Set<String> PLAYER_TOUCHED_BLOCK_STORAGES = new HashSet<>();
@@ -87,8 +85,6 @@ public final class ChestDesyncGlitch implements BlockUseGlitchHandler, EntityUse
 		entry.maxCooldownTicks = 600;
 
 		JsonObject settings = new JsonObject();
-		settings.addProperty(PHYSICAL_STORAGE_WEIGHT, 1.0D);
-		settings.addProperty(ENDER_CHEST_WEIGHT, 0.7D);
 		settings.addProperty(INCLUDE_GENERATED_STORAGES, false);
 		entry.settings = settings;
 		return entry;
@@ -101,8 +97,8 @@ public final class ChestDesyncGlitch implements BlockUseGlitchHandler, EntityUse
 		}
 
 		boolean changed = false;
-		changed |= GlitchSettingsHelper.sanitizeDouble(entry.settings, PHYSICAL_STORAGE_WEIGHT, 1.0D, 0.0D, 10.0D);
-		changed |= GlitchSettingsHelper.sanitizeDouble(entry.settings, ENDER_CHEST_WEIGHT, 0.7D, 0.0D, 10.0D);
+		changed |= removeSetting(entry.settings, "physicalStorageWeight");
+		changed |= removeSetting(entry.settings, "enderChestWeight");
 		changed |= sanitizeBoolean(entry.settings, INCLUDE_GENERATED_STORAGES, false);
 		return changed;
 	}
@@ -246,23 +242,7 @@ public final class ChestDesyncGlitch implements BlockUseGlitchHandler, EntityUse
 			return false;
 		}
 
-		double physicalWeight = GlitchSettingsHelper.getDouble(settings, PHYSICAL_STORAGE_WEIGHT, 1.0D);
-		double enderWeight = GlitchSettingsHelper.getDouble(settings, ENDER_CHEST_WEIGHT, 0.7D);
-		boolean choosePhysical = pickPhysicalStorageFirst(
-				random,
-				!physicalTargets.isEmpty(),
-				!enderTargets.isEmpty(),
-				physicalWeight,
-				enderWeight
-		);
-
-		if (choosePhysical) {
-			return openRandomPhysicalStorage(opener, random, physicalTargets, source, includeGeneratedStorages)
-					|| openRandomEnderChest(opener, random, enderTargets, source.fromEnderChest);
-		}
-
-		return openRandomEnderChest(opener, random, enderTargets, source.fromEnderChest)
-				|| openRandomPhysicalStorage(opener, random, physicalTargets, source, includeGeneratedStorages);
+		return openRandomStorage(opener, random, physicalTargets, enderTargets, source, includeGeneratedStorages);
 	}
 
 	private static boolean isStorageTriggerBlock(ServerLevel level, BlockPos pos, BlockState state) {
@@ -347,32 +327,46 @@ public final class ChestDesyncGlitch implements BlockUseGlitchHandler, EntityUse
 		return targets;
 	}
 
-	private static boolean pickPhysicalStorageFirst(
+	private static boolean openRandomStorage(
+			ServerPlayer opener,
 			RandomSource random,
-			boolean hasPhysical,
-			boolean hasEnder,
-			double physicalWeight,
-			double enderWeight
+			List<PhysicalStorageTarget> physicalTargets,
+			List<ServerPlayer> enderTargets,
+			TriggerSource source,
+			boolean includeGeneratedStorages
 	) {
-		if (hasPhysical && !hasEnder) {
-			return true;
+		List<StorageTarget> combinedTargets = new ArrayList<>(physicalTargets.size() + enderTargets.size());
+		for (PhysicalStorageTarget physicalTarget : physicalTargets) {
+			combinedTargets.add(new PhysicalCandidate(physicalTarget));
 		}
-		if (!hasPhysical && hasEnder) {
-			return false;
-		}
-		if (!hasPhysical) {
-			return false;
+		for (ServerPlayer enderTarget : enderTargets) {
+			combinedTargets.add(new EnderCandidate(enderTarget));
 		}
 
-		double normalizedPhysicalWeight = Math.max(0.0D, physicalWeight);
-		double normalizedEnderWeight = Math.max(0.0D, enderWeight);
-		double total = normalizedPhysicalWeight + normalizedEnderWeight;
-		if (total <= 1.0E-9D) {
-			return random.nextBoolean();
+		while (!combinedTargets.isEmpty()) {
+			int index = random.nextInt(combinedTargets.size());
+			StorageTarget target = combinedTargets.remove(index);
+			if (target instanceof PhysicalCandidate physicalCandidate) {
+				if (isSameStorageAsSource(physicalCandidate.target, source)) {
+					continue;
+				}
+				if (openPhysicalStorage(opener, physicalCandidate.target, includeGeneratedStorages)) {
+					return true;
+				}
+				continue;
+			}
+
+			if (target instanceof EnderCandidate enderCandidate) {
+				if (source.fromEnderChest && enderCandidate.target.getUUID().equals(opener.getUUID())) {
+					continue;
+				}
+				if (openEnderChest(opener, enderCandidate.target)) {
+					return true;
+				}
+			}
 		}
 
-		double physicalChance = normalizedPhysicalWeight / total;
-		return random.nextDouble() < physicalChance;
+		return false;
 	}
 
 	private static boolean openRandomPhysicalStorage(
@@ -398,6 +392,15 @@ public final class ChestDesyncGlitch implements BlockUseGlitchHandler, EntityUse
 			}
 		}
 		return false;
+	}
+
+	private interface StorageTarget {
+	}
+
+	private record PhysicalCandidate(PhysicalStorageTarget target) implements StorageTarget {
+	}
+
+	private record EnderCandidate(ServerPlayer target) implements StorageTarget {
 	}
 
 	private static boolean openRandomEnderChest(
@@ -886,6 +889,14 @@ public final class ChestDesyncGlitch implements BlockUseGlitchHandler, EntityUse
 		}
 
 		settings.addProperty(key, defaultValue);
+		return true;
+	}
+
+	private static boolean removeSetting(JsonObject settings, String key) {
+		if (!settings.has(key)) {
+			return false;
+		}
+		settings.remove(key);
 		return true;
 	}
 
