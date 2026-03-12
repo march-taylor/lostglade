@@ -1,14 +1,16 @@
 ﻿{
-  "item.lg2.bitcoin": "\u0411\u0456\u0442\u043a\u043e\u0457\u043d",
-  "item.lg2.bitcoin_ore": "\u0411\u0456\u0442\u043a\u043e\u0457\u043d\u043e\u0432\u0430 \u0440\u0443\u0434\u0430",
-  "item.lg2.deepslate_bitcoin_ore": "\u0413\u043b\u0438\u0431\u0438\u043d\u043d\u043e\u0441\u043b\u0430\u043d\u0446\u0435\u0432\u0430 \u0431\u0456\u0442\u043a\u043e\u0457\u043d\u043e\u0432\u0430 \u0440\u0443\u0434\u0430",
-  "item.lg2.special_pickaxe": "\u041e\u0441\u043e\u0431\u043b\u0438\u0432\u0430 \u043a\u0438\u0440\u043a\u0430",
-  "item.lg2.server": "\u0421\u0435\u0440\u0432\u0435\u0440",
-  "block.lg2.server": "\u0421\u0435\u0440\u0432\u0435\u0440",
-  "block.lg2.bitcoin_ore": "\u0411\u0456\u0442\u043a\u043e\u0457\u043d\u043e\u0432\u0430 \u0440\u0443\u0434\u0430",
-  "block.lg2.deepslate_bitcoin_ore": "\u0413\u043b\u0438\u0431\u0438\u043d\u043d\u043e\u0441\u043b\u0430\u043d\u0446\u0435\u0432\u0430 \u0431\u0456\u0442\u043a\u043e\u0457\u043d\u043e\u0432\u0430 \u0440\u0443\u0434\u0430",
-  "item.lg2.backrooms_block": "\u0411\u043b\u043e\u043a \u0437\u0430\u043a\u0443\u043b\u0456\u0441\u0441\u044f",
-  "block.lg2.backrooms_block": "\u0411\u043b\u043e\u043a \u0437\u0430\u043a\u0443\u043b\u0456\u0441\u0441\u044f",
-  "block.lg2.backrooms_lightblock": "\u0421\u0432\u0456\u0442\u043b\u043e \u0437\u0430\u043a\u0443\u043b\u0456\u0441\u0441\u044f",
-  "item.lg2.backrooms_lightblock": "\u0421\u0432\u0456\u0442\u043b\u043e \u0437\u0430\u043a\u0443\u043b\u0456\u0441\u0441\u044f"
+    "block.lg2.backrooms_block":  "Блок закулісся",
+    "block.lg2.backrooms_door":  "Двері закулісся",
+    "block.lg2.backrooms_lightblock":  "Світло закулісся",
+    "block.lg2.bitcoin_ore":  "Біткоїнова руда",
+    "block.lg2.deepslate_bitcoin_ore":  "Глибинносланцева біткоїнова руда",
+    "block.lg2.server":  "Сервер",
+    "item.lg2.backrooms_block":  "Блок закулісся",
+    "item.lg2.backrooms_door":  "Двері закулісся",
+    "item.lg2.backrooms_lightblock":  "Світло закулісся",
+    "item.lg2.bitcoin":  "Біткоїн",
+    "item.lg2.bitcoin_ore":  "Біткоїнова руда",
+    "item.lg2.deepslate_bitcoin_ore":  "Глибинносланцева біткоїнова руда",
+    "item.lg2.server":  "Сервер",
+    "item.lg2.special_pickaxe":  "Особлива кирка"
 }

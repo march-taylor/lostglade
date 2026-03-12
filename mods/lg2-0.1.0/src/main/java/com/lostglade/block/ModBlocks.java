@@ -22,17 +22,20 @@ public final class ModBlocks {
 	private static final Identifier DEEPSLATE_BITCOIN_ORE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "deepslate_bitcoin_ore");
 	private static final Identifier BACKROOMS_BLOCK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_block");
 	private static final Identifier BACKROOMS_LIGHTBLOCK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_lightblock");
+	private static final Identifier BACKROOMS_DOOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_door");
 	private static final Identifier SERVER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "server");
 
 	private static final ResourceKey<Block> BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, BITCOIN_ORE_ID);
 	private static final ResourceKey<Block> DEEPSLATE_BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, DEEPSLATE_BITCOIN_ORE_ID);
 	private static final ResourceKey<Block> BACKROOMS_BLOCK_KEY = ResourceKey.create(Registries.BLOCK, BACKROOMS_BLOCK_ID);
 	private static final ResourceKey<Block> BACKROOMS_LIGHTBLOCK_KEY = ResourceKey.create(Registries.BLOCK, BACKROOMS_LIGHTBLOCK_ID);
+	private static final ResourceKey<Block> BACKROOMS_DOOR_KEY = ResourceKey.create(Registries.BLOCK, BACKROOMS_DOOR_ID);
 	private static final ResourceKey<Block> SERVER_KEY = ResourceKey.create(Registries.BLOCK, SERVER_ID);
 	private static final ResourceKey<Item> BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> DEEPSLATE_BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, DEEPSLATE_BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> BACKROOMS_BLOCK_ITEM_KEY = ResourceKey.create(Registries.ITEM, BACKROOMS_BLOCK_ID);
 	private static final ResourceKey<Item> BACKROOMS_LIGHTBLOCK_ITEM_KEY = ResourceKey.create(Registries.ITEM, BACKROOMS_LIGHTBLOCK_ID);
+	private static final ResourceKey<Item> BACKROOMS_DOOR_ITEM_KEY = ResourceKey.create(Registries.ITEM, BACKROOMS_DOOR_ID);
 	private static final ResourceKey<Item> SERVER_ITEM_KEY = ResourceKey.create(Registries.ITEM, SERVER_ID);
 
 	private static final ResourceKey<CreativeModeTab> NATURAL_BLOCKS_TAB = ResourceKey.create(
@@ -98,6 +101,17 @@ public final class ModBlocks {
 			)
 	);
 
+	public static final Block BACKROOMS_DOOR = Registry.register(
+			BuiltInRegistries.BLOCK,
+			BACKROOMS_DOOR_ID,
+			new BackroomsDoorBlock(
+					net.minecraft.world.level.block.state.properties.BlockSetType.BIRCH,
+					createBackroomsDoorProperties(),
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/backrooms_door"),
+					Blocks.WARPED_DOOR
+			)
+	);
+
 	public static final Item BITCOIN_ORE_ITEM = Registry.register(
 			BuiltInRegistries.ITEM,
 			BITCOIN_ORE_ID,
@@ -154,6 +168,23 @@ public final class ModBlocks {
 			)
 	);
 
+	public static final Item BACKROOMS_DOOR_ITEM = Registry.register(
+			BuiltInRegistries.ITEM,
+			BACKROOMS_DOOR_ID,
+			new BackroomsBlockItem(
+					BACKROOMS_DOOR,
+					new Item.Properties().setId(BACKROOMS_DOOR_ITEM_KEY).useBlockDescriptionPrefix(),
+					Items.WARPED_DOOR,
+					true,
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_door"),
+					"Backrooms Door",
+					"\u0414\u0432\u0435\u0440\u044c \u0438\u0437 \u0437\u0430\u043a\u0443\u043b\u0438\u0441\u044c\u044f",
+					"\u0414\u0432\u0463\u0440\u044c \u0412\u0463\u0447\u043d\u0430\u0433\u043e \u041a\u043e\u0440\u0438\u0434\u043e\u0440\u0430",
+					"\u0414\u0432\u0435\u0440\u0456 \u0437\u0430\u043a\u0443\u043b\u0456\u0441\u0441\u044f",
+					"\u30d0\u30c3\u30af\u30eb\u30fc\u30e0\u30ba\u306e\u6249"
+			)
+	);
+
 	public static final Item SERVER_ITEM = Registry.register(
 			BuiltInRegistries.ITEM,
 			SERVER_ID,
@@ -175,7 +206,10 @@ public final class ModBlocks {
 			entries.prepend(DEEPSLATE_BITCOIN_ORE_ITEM);
 			entries.prepend(BITCOIN_ORE_ITEM);
 		});
-		ItemGroupEvents.modifyEntriesEvent(FUNCTIONAL_BLOCKS_TAB).register(entries -> entries.prepend(SERVER_ITEM));
+		ItemGroupEvents.modifyEntriesEvent(FUNCTIONAL_BLOCKS_TAB).register(entries -> {
+			entries.prepend(BACKROOMS_DOOR_ITEM);
+			entries.prepend(SERVER_ITEM);
+		});
 	}
 
 	private static BlockBehaviour.Properties createNormalOreProperties() {
@@ -228,5 +262,15 @@ public final class ModBlocks {
 				.requiresCorrectToolForDrops()
 				.noLootTable()
 				.setId(BACKROOMS_LIGHTBLOCK_KEY);
+	}
+
+	private static BlockBehaviour.Properties createBackroomsDoorProperties() {
+		return BlockBehaviour.Properties.of()
+				.mapColor(MapColor.WOOD)
+				.strength(3.0f)
+				.sound(SoundType.WOOD)
+				.noOcclusion()
+				.ignitedByLava()
+				.setId(BACKROOMS_DOOR_KEY);
 	}
 }

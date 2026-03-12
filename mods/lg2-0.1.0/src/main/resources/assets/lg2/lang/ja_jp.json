@@ -1,14 +1,16 @@
 ﻿{
-  "item.lg2.bitcoin": "\u30d3\u30c3\u30c8\u30b3\u30a4\u30f3",
-  "item.lg2.bitcoin_ore": "\u30d3\u30c3\u30c8\u30b3\u30a4\u30f3\u9263\u77f3",
-  "item.lg2.deepslate_bitcoin_ore": "\u6df1\u5c64\u30d3\u30c3\u30c8\u30b3\u30a4\u30f3\u9263\u77f3",
-  "item.lg2.special_pickaxe": "\u7279\u6b8a\u306a\u30c4\u30eb\u30cf\u30b7",
-  "item.lg2.server": "\u30b5\u30fc\u30d0",
-  "block.lg2.server": "\u30b5\u30fc\u30d0",
-  "block.lg2.bitcoin_ore": "\u30d3\u30c3\u30c8\u30b3\u30a4\u30f3\u9263\u77f3",
-  "block.lg2.deepslate_bitcoin_ore": "\u6df1\u5c64\u30d3\u30c3\u30c8\u30b3\u30a4\u30f3\u9263\u77f3",
-  "item.lg2.backrooms_block": "\u30d0\u30c3\u30af\u30eb\u30fc\u30e0\u30ba\u30d6\u30ed\u30c3\u30af",
-  "block.lg2.backrooms_block": "\u30d0\u30c3\u30af\u30eb\u30fc\u30e0\u30ba\u30d6\u30ed\u30c3\u30af",
-  "block.lg2.backrooms_lightblock": "\u30d0\u30c3\u30af\u30eb\u30fc\u30e0\u30ba\u30e9\u30a4\u30c8",
-  "item.lg2.backrooms_lightblock": "\u30d0\u30c3\u30af\u30eb\u30fc\u30e0\u30ba\u30e9\u30a4\u30c8"
+    "block.lg2.backrooms_block":  "バックルームズブロック",
+    "block.lg2.backrooms_door":  "バックルームズの扉",
+    "block.lg2.backrooms_lightblock":  "バックルームズライト",
+    "block.lg2.bitcoin_ore":  "ビットコイン鉣石",
+    "block.lg2.deepslate_bitcoin_ore":  "深層ビットコイン鉣石",
+    "block.lg2.server":  "サーバ",
+    "item.lg2.backrooms_block":  "バックルームズブロック",
+    "item.lg2.backrooms_door":  "バックルームズの扉",
+    "item.lg2.backrooms_lightblock":  "バックルームズライト",
+    "item.lg2.bitcoin":  "ビットコイン",
+    "item.lg2.bitcoin_ore":  "ビットコイン鉣石",
+    "item.lg2.deepslate_bitcoin_ore":  "深層ビットコイン鉣石",
+    "item.lg2.server":  "サーバ",
+    "item.lg2.special_pickaxe":  "特殊なツルハシ"
 }

@@ -1,14 +1,16 @@
-{
-  "item.lg2.bitcoin": "Bitcoin",
-  "item.lg2.bitcoin_ore": "Bitcoin Ore",
-  "item.lg2.deepslate_bitcoin_ore": "Deepslate Bitcoin Ore",
-  "item.lg2.special_pickaxe": "Special Pickaxe",
-  "item.lg2.backrooms_block": "Backrooms Block",
-  "item.lg2.server": "Server",
-  "block.lg2.server": "Server",
-  "block.lg2.bitcoin_ore": "Bitcoin Ore",
-  "block.lg2.deepslate_bitcoin_ore": "Deepslate Bitcoin Ore",
-  "block.lg2.backrooms_block": "Backrooms Block",
-  "block.lg2.backrooms_lightblock": "Backrooms Light",
-  "item.lg2.backrooms_lightblock": "Backrooms Light"
+﻿{
+    "block.lg2.backrooms_block":  "Backrooms Block",
+    "block.lg2.backrooms_door":  "Backrooms Door",
+    "block.lg2.backrooms_lightblock":  "Backrooms Light",
+    "block.lg2.bitcoin_ore":  "Bitcoin Ore",
+    "block.lg2.deepslate_bitcoin_ore":  "Deepslate Bitcoin Ore",
+    "block.lg2.server":  "Server",
+    "item.lg2.backrooms_block":  "Backrooms Block",
+    "item.lg2.backrooms_door":  "Backrooms Door",
+    "item.lg2.backrooms_lightblock":  "Backrooms Light",
+    "item.lg2.bitcoin":  "Bitcoin",
+    "item.lg2.bitcoin_ore":  "Bitcoin Ore",
+    "item.lg2.deepslate_bitcoin_ore":  "Deepslate Bitcoin Ore",
+    "item.lg2.server":  "Server",
+    "item.lg2.special_pickaxe":  "Special Pickaxe"
 }

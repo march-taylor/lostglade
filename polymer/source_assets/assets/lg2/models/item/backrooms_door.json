@@ -1,0 +1,6 @@
+﻿{
+    "textures":  {
+                     "layer0":  "lg2:block/backrooms_door_bottom"
+                 },
+    "parent":  "minecraft:item/generated"
+}
