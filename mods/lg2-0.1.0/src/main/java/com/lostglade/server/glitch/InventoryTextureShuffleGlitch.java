@@ -4,6 +4,7 @@ import com.google.gson.JsonObject;
 import com.lostglade.config.GlitchConfig;
 import com.lostglade.server.ServerBackroomsSystem;
 import com.lostglade.server.ServerStabilitySystem;
+import com.lostglade.server.ServerUpgradeUiSystem;
 import eu.pb4.polymer.core.api.item.PolymerItemUtils;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -218,6 +219,43 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 				continue;
 			}
 
+			if (ServerUpgradeUiSystem.isUpgradeMenu(player.containerMenu)) {
+				if (!state.pausedForUpgradeMenu) {
+					restoreGlitchedModelsForToken(server, state.shuffleToken);
+					restoreFullInventoryVisuals(player);
+					state.pausedForUpgradeMenu = true;
+				}
+				state.nextResendAtTick = nowTick + RESEND_INTERVAL_TICKS;
+				continue;
+			}
+
+			if (state.pausedForUpgradeMenu) {
+				state.pausedForUpgradeMenu = false;
+
+				double shuffledPercent = pickRandomShuffledPercent(
+						random,
+						state.minShuffledPercent,
+						state.maxShuffledPercent,
+						getStabilityScaledInstability(stabilityPercent, state.maxStabilityPercent),
+						state.shuffledPercentPriority
+				);
+				Map<Integer, Identifier> resumedModels = buildShuffledModelMap(player, random, shuffledPercent);
+				if (resumedModels.isEmpty()) {
+					restoreFullInventoryVisuals(player);
+					iterator.remove();
+					continue;
+				}
+
+				state.shuffleToken = UUID.randomUUID();
+				applyModelMap(player, resumedModels, state.shuffleToken);
+				state.modelBySlot = resumedModels;
+				state.inventoryModelsSnapshot = captureInventoryModels(player.getInventory());
+				state.shuffledPercent = shuffledPercent;
+				state.lastReshuffleAtTick = nowTick;
+				state.nextResendAtTick = nowTick + RESEND_INTERVAL_TICKS;
+				continue;
+			}
+
 			if (stabilityPercent > state.expireAboveStabilityPercent) {
 				restoreGlitchedModelsForToken(server, state.shuffleToken);
 				restoreFullInventoryVisuals(player);
@@ -324,6 +362,26 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 				modelBySlot
 		));
 		return true;
+	}
+
+	public static void onUpgradeMenuOpened(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+
+		ActiveShuffleState state = ACTIVE_STATES.get(player.getUUID());
+		if (state == null || state.pausedForUpgradeMenu) {
+			return;
+		}
+
+		MinecraftServer server = player.level().getServer();
+		if (server == null) {
+			return;
+		}
+
+		restoreGlitchedModelsForToken(server, state.shuffleToken);
+		restoreFullInventoryVisuals(player);
+		state.pausedForUpgradeMenu = true;
 	}
 
 	private static void clearState(MinecraftServer server, ServerPlayer player) {
@@ -509,7 +567,7 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 			Map<Integer, ItemStack> visualBySlot,
 			Set<Integer> allowedSlots
 	) {
-		if (menu == null) {
+		if (menu == null || ServerUpgradeUiSystem.isUpgradeMenu(menu)) {
 			return;
 		}
 
@@ -803,6 +861,7 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 		private UUID shuffleToken;
 		private Map<Integer, Identifier> inventoryModelsSnapshot;
 		private Map<Integer, Identifier> modelBySlot;
+		private boolean pausedForUpgradeMenu;
 
 		private ActiveShuffleState(
 				long startedAtTick,
@@ -840,6 +899,7 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 			this.shuffleToken = shuffleToken;
 			this.inventoryModelsSnapshot = inventoryModelsSnapshot;
 			this.modelBySlot = modelBySlot;
+			this.pausedForUpgradeMenu = false;
 		}
 	}
 }

@@ -1,5 +1,6 @@
 package com.lostglade.mixin;
 
+import com.lostglade.server.ServerUpgradeUiSystem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
@@ -104,8 +105,7 @@ public abstract class ServerPlayerMenuTitleMixin {
 			return null;
 		}
 
-		String menuClassName = menu.getClass().getName();
-		if (menuClassName.startsWith("com.lostglade.")) {
+		if (ServerUpgradeUiSystem.isUpgradeMenu(menu)) {
 			return null;
 		}
 

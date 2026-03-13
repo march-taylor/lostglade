@@ -6,6 +6,7 @@ import com.mojang.datafixers.util.Pair;
 import com.lostglade.Lg2;
 import com.lostglade.config.UpgradeUiConfig;
 import com.lostglade.item.ModItems;
+import com.lostglade.server.glitch.InventoryTextureShuffleGlitch;
 import eu.pb4.polymer.core.api.item.PolymerItemUtils;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -118,6 +119,7 @@ public final class ServerUpgradeUiSystem {
 				: theme;
 
 		boolean hasPack = PolymerResourcePackUtils.hasMainPack(player);
+		InventoryTextureShuffleGlitch.onUpgradeMenuOpened(player);
 		Component title = buildTitle(player, screenId, hasPack, screen, resolvedTheme);
 		player.openMenu(new SimpleMenuProvider(
 				(syncId, inventory, menuPlayer) -> createMenu(syncId, inventory, player, screenId, screen, resolvedTheme, hasPack),
@@ -125,6 +127,10 @@ public final class ServerUpgradeUiSystem {
 		));
 		hideLowerInventoryVisuals(player, player.containerMenu);
 		return true;
+	}
+
+	public static boolean isUpgradeMenu(AbstractContainerMenu menu) {
+		return menu instanceof UpgradeMenu;
 	}
 
 	private static ChestMenu createMenu(
