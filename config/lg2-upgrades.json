@@ -1169,42 +1169,37 @@
             "values": {
               "en_us": [
                 "Unlocks brewing stands and potion making.",
-                "Requires Copper Era. From regeneration to invisibility.",
+                "From regeneration to invisibility.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
                 "Открывает варочную стойку и возможность варить зелья.",
-                "Требует Медную эру. От регенерации до невидимости.",
+                "От регенерации до невидимости.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],
               "uk_ua": [
                 "Відкриває варильну стійку та можливість варити зілля.",
-                "Потребує Мідну еру. Від регенерації до невидимості.",
+                "Від регенерації до невидимості.",
                 "Рівень: %level%/%max_level%",
                 "Ціна: %cost% BTC | Стан: %status%"
               ],
               "ja_jp": [
                 "醸造台とポーション作成を解放します。",
-                "銅の時代が必要です。再生から透明化まで。",
+                "再生から透明化まで。",
                 "レベル: %level%/%max_level%",
                 "価格: %cost% BTC | 状態: %status%"
               ],
               "rpr": [
                 "Отворяетъ варильню и всякое зелье.",
-                "Требуетъ мѣдной поры; отъ возрожденiя до невидимости.",
+                "Отъ возрожденiя до невидимости.",
                 "Чинъ: %level%/%max_level%",
                 "Мзда: %cost% BTC | Состоянiе: %status%"
               ]
             }
           },
-          "requirements": [
-            {
-              "upgradeId": "era_copper",
-              "minLevel": 1
-            }
-          ]
+          "requirements": []
         },
         "anvil": {
           "slot": 12,
@@ -1235,42 +1230,37 @@
             "values": {
               "en_us": [
                 "Unlocks anvils.",
-                "Requires Iron + Gold Era. Repair, merge enchants and rename items.",
+                "Repair, merge enchants and rename items.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
                 "Открывает крафт и использование наковальни.",
-                "Требует Железную + Золотую эру. Можно чинить, объединять чары и переименовывать вещи.",
+                "Можно чинить, объединять чары и переименовывать вещи.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],
               "uk_ua": [
                 "Відкриває крафт і використання ковадла.",
-                "Потребує Залізну + Золоту еру. Можна лагодити, об’єднувати чари й перейменовувати речі.",
+                "Можна лагодити, об’єднувати чари й перейменовувати речі.",
                 "Рівень: %level%/%max_level%",
                 "Ціна: %cost% BTC | Стан: %status%"
               ],
               "ja_jp": [
                 "金床を解放します。",
-                "鉄と金の時代が必要です。修理、合成、名前変更ができます。",
+                "修理、合成、名前変更ができます。",
                 "レベル: %level%/%max_level%",
                 "価格: %cost% BTC | 状態: %status%"
               ],
               "rpr": [
                 "Отворяетъ наковалню.",
-                "Требуетъ желѣза да злата; можно чинить, венчать чары и давать имена.",
+                "Можно чинить, венчать чары и давать имена.",
                 "Чинъ: %level%/%max_level%",
                 "Мзда: %cost% BTC | Состоянiе: %status%"
               ]
             }
           },
-          "requirements": [
-            {
-              "upgradeId": "era_iron_gold",
-              "minLevel": 1
-            }
-          ]
+          "requirements": []
         },
         "enchanting": {
           "slot": 13,
@@ -1301,42 +1291,37 @@
             "values": {
               "en_us": [
                 "Unlocks enchanting tables and enchanting.",
-                "Requires Diamond Era and Anvil. Diamond gear becomes real protection.",
+                "Diamond gear becomes real protection.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
                 "Открывает стол зачарований и возможность зачаровывать вещи.",
-                "Требует Алмазную эру и Наковальню. Алмазная броня становится настоящей защитой.",
+                "Алмазная броня становится настоящей защитой.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],
               "uk_ua": [
                 "Відкриває стіл зачарування та можливість чарувати речі.",
-                "Потребує Алмазну еру та Ковадло. Алмазна броня стає справжнім захистом.",
+                "Алмазна броня стає справжнім захистом.",
                 "Рівень: %level%/%max_level%",
                 "Ціна: %cost% BTC | Стан: %status%"
               ],
               "ja_jp": [
                 "エンチャント台とエンチャントを解放します。",
-                "ダイヤ時代と金床が必要です。防具が本当に強くなります。",
+                "防具が本当に強くなります。",
                 "レベル: %level%/%max_level%",
                 "価格: %cost% BTC | 状態: %status%"
               ],
               "rpr": [
                 "Отворяетъ столъ чаръ и само чародѣйство.",
-                "Требуетъ алмазной поры и наковални; тогда броня воистину держитъ ударъ.",
+                "Тогда броня воистину держитъ ударъ.",
                 "Чинъ: %level%/%max_level%",
                 "Мзда: %cost% BTC | Состоянiе: %status%"
               ]
             }
           },
-          "requirements": [
-            {
-              "upgradeId": "era_diamond",
-              "minLevel": 1
-            }
-          ]
+          "requirements": []
         },
         "villagers": {
           "slot": 14,
@@ -1367,31 +1352,31 @@
             "values": {
               "en_us": [
                 "Unlocks trading with villagers.",
-                "Requires Enchanting. Books, diamonds, tools and patience.",
+                "Books, diamonds, tools and patience.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
                 "Открывает возможность торговать с жителями.",
-                "Требует Зачарования. Книги, алмазы, инструменты и терпение.",
+                "Книги, алмазы, инструменты и терпение.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],
               "uk_ua": [
                 "Відкриває можливість торгувати з жителями.",
-                "Потребує Зачарування. Книги, алмази, інструменти й терпіння.",
+                "Книги, алмази, інструменти й терпіння.",
                 "Рівень: %level%/%max_level%",
                 "Ціна: %cost% BTC | Стан: %status%"
               ],
               "ja_jp": [
                 "村人との取引を解放します。",
-                "エンチャントが必要です。本、ダイヤ、道具、そして忍耐。",
+                "本、ダイヤ、道具、そして忍耐。",
                 "レベル: %level%/%max_level%",
                 "価格: %cost% BTC | 状態: %status%"
               ],
               "rpr": [
                 "Отворяетъ торгъ съ жителями.",
-                "Требуетъ чаръ; тутъ и книги, и алмазы, и снасти, коли терпѣнiя достанетъ.",
+                "Тутъ и книги, и алмазы, и снасти, коли терпѣнiя достанетъ.",
                 "Чинъ: %level%/%max_level%",
                 "Мзда: %cost% BTC | Состоянiе: %status%"
               ]

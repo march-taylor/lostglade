@@ -3,6 +3,7 @@ package com.lostglade.server;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.mojang.datafixers.util.Pair;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import com.lostglade.Lg2;
 import com.lostglade.config.UpgradeUiConfig;
 import com.lostglade.item.ModItems;
@@ -11,7 +12,9 @@ import eu.pb4.polymer.core.api.item.PolymerItemUtils;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -49,7 +52,9 @@ import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -99,6 +104,35 @@ public final class ServerUpgradeUiSystem {
 											context.getSource().sendSuccess(() -> Component.literal("Reloaded upgrade UI config"), true);
 											return 1;
 										}))
+								.then(Commands.literal("reset")
+										.then(Commands.argument("targets", EntityArgument.players())
+												.then(Commands.literal("all")
+														.executes(context -> {
+															int changed = resetAllPurchases(
+																	context.getSource().getServer(),
+																	EntityArgument.getPlayers(context, "targets")
+															);
+															context.getSource().sendSuccess(
+																	() -> Component.literal("Reset all purchases for " + changed + " player(s)"),
+																	true
+															);
+															return changed;
+														}))
+												.then(Commands.argument("upgrade_id", StringArgumentType.word())
+														.suggests((context, builder) -> SharedSuggestionProvider.suggest(collectKnownUpgradeIds(), builder))
+														.executes(context -> {
+															String upgradeId = StringArgumentType.getString(context, "upgrade_id");
+															int changed = resetSinglePurchase(
+																	context.getSource().getServer(),
+																	EntityArgument.getPlayers(context, "targets"),
+																	upgradeId
+															);
+															context.getSource().sendSuccess(
+																	() -> Component.literal("Reset '" + upgradeId + "' for " + changed + " player(s)"),
+																	true
+															);
+															return changed;
+														}))))
 				)
 		);
 	}
@@ -147,6 +181,86 @@ public final class ServerUpgradeUiSystem {
 
 	public static boolean isUpgradeMenuOpen(ServerPlayer player) {
 		return player != null && isUpgradeMenu(player.containerMenu);
+	}
+
+	public static boolean hasUpgrade(ServerPlayer player, String upgradeId) {
+		return getUpgradeLevel(player, upgradeId) >= 1;
+	}
+
+	private static int resetAllPurchases(MinecraftServer server, Collection<ServerPlayer> targets) {
+		if (server == null || targets == null || targets.isEmpty()) {
+			return 0;
+		}
+
+		int changedPlayers = 0;
+		for (ServerPlayer player : targets) {
+			if (player == null) {
+				continue;
+			}
+
+			Map<String, Integer> removed = PLAYER_UPGRADE_LEVELS.remove(player.getUUID().toString());
+			if (removed == null || removed.isEmpty()) {
+				continue;
+			}
+
+			changedPlayers++;
+			stateDirty = true;
+			refreshUpgradeMenu(player);
+		}
+
+		saveState(server);
+		return changedPlayers;
+	}
+
+	private static int resetSinglePurchase(MinecraftServer server, Collection<ServerPlayer> targets, String upgradeId) {
+		if (server == null || targets == null || targets.isEmpty() || upgradeId == null || upgradeId.isBlank()) {
+			return 0;
+		}
+
+		int changedPlayers = 0;
+		for (ServerPlayer player : targets) {
+			if (player == null) {
+				continue;
+			}
+
+			Map<String, Integer> levels = PLAYER_UPGRADE_LEVELS.get(player.getUUID().toString());
+			if (levels == null || levels.remove(upgradeId) == null) {
+				continue;
+			}
+
+			if (levels.isEmpty()) {
+				PLAYER_UPGRADE_LEVELS.remove(player.getUUID().toString());
+			}
+			changedPlayers++;
+			stateDirty = true;
+			refreshUpgradeMenu(player);
+		}
+
+		saveState(server);
+		return changedPlayers;
+	}
+
+	private static Iterable<String> collectKnownUpgradeIds() {
+		LinkedHashSet<String> ids = new LinkedHashSet<>();
+		for (UpgradeUiConfig.ScreenConfig screen : UpgradeUiConfig.get().screens.values()) {
+			if (screen == null || screen.buttons == null) {
+				continue;
+			}
+			for (UpgradeUiConfig.ButtonConfig button : screen.buttons.values()) {
+				if (button == null || button.upgradeId == null || button.upgradeId.isBlank()) {
+					continue;
+				}
+				ids.add(button.upgradeId);
+			}
+		}
+		return ids;
+	}
+
+	private static void refreshUpgradeMenu(ServerPlayer player) {
+		if (!(player.containerMenu instanceof UpgradeMenu menu)) {
+			return;
+		}
+		openScreen(player, menu.screenId);
 	}
 
 	private static ChestMenu createMenu(
