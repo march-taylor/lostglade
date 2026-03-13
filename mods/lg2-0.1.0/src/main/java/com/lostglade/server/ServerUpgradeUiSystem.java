@@ -15,6 +15,7 @@ import net.minecraft.commands.Commands;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
@@ -47,6 +48,7 @@ import java.io.Reader;
 import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,8 +59,18 @@ import java.util.Objects;
 public final class ServerUpgradeUiSystem {
 	private static final String STATE_FILE_NAME = "lg2-upgrade-state.json";
 	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
+	private static final Identifier TOOLTIP_STYLE_ID = Objects.requireNonNull(Identifier.tryParse("lg2:upgrade_card"));
+	private static final FontDescription TOOLTIP_FONT = new FontDescription.Resource(
+			Objects.requireNonNull(Identifier.tryParse("lg2:upgrade_tooltip"))
+	);
+	private static final String TOOLTIP_ICON_INFO = "\ue980";
+	private static final String TOOLTIP_ICON_COIN = "\ue981";
 	private static final int MAIN_BALANCE_CENTER_X = 127;
 	private static final int BALANCE_DIGIT_WIDTH = 6;
+	private static final int TOOLTIP_DESCRIPTION_WRAP = 42;
+	private static final int TOOLTIP_DESCRIPTION_WRAP_CJK = 22;
+	private static final int TOOLTIP_REQUIREMENTS_WRAP = 46;
+	private static final int TOOLTIP_REQUIREMENTS_WRAP_CJK = 24;
 	private static final Gson STATE_GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final Map<String, Map<String, Integer>> PLAYER_UPGRADE_LEVELS = new HashMap<>();
 	private static final Map<String, Integer> LEGACY_GLOBAL_UPGRADE_LEVELS = new HashMap<>();
@@ -219,19 +231,283 @@ public final class ServerUpgradeUiSystem {
 
 		ItemStack stack = createBaseStack(icon, hasPack);
 		Map<String, String> placeholders = buildPlaceholders(viewer, screenId, buttonId, button, state);
-		String name = applyPlaceholders(resolveLocalizedText(viewer, button.name.values), placeholders);
-		stack.set(DataComponents.CUSTOM_NAME, Component.literal(name).withStyle(style -> style.withItalic(false)));
+		stack.set(DataComponents.CUSTOM_NAME, buildTooltipNameComponent(viewer, button, state, placeholders, hasPack));
 
-		List<String> loreLines = resolveLocalizedLines(viewer, button.lore.values);
+		List<Component> loreLines = buildTooltipLore(viewer, button, state, placeholders, hasPack);
 		if (!loreLines.isEmpty()) {
 			ItemLore lore = ItemLore.EMPTY;
-			for (String line : loreLines) {
-				lore = lore.withLineAdded(Component.literal(applyPlaceholders(line, placeholders)).withStyle(style -> style.withItalic(false)));
+			for (Component line : loreLines) {
+				lore = lore.withLineAdded(line);
 			}
 			stack.set(DataComponents.LORE, lore);
 		}
+		if (hasPack) {
+			stack.set(DataComponents.TOOLTIP_STYLE, TOOLTIP_STYLE_ID);
+		}
 
 		return stack;
+	}
+
+	private static Component buildTooltipNameComponent(
+			ServerPlayer viewer,
+			UpgradeUiConfig.ButtonConfig button,
+			ButtonState state,
+			Map<String, String> placeholders,
+			boolean hasPack
+	) {
+		String name = applyPlaceholders(resolveLocalizedText(viewer, button.name.values), placeholders);
+		int color = switch (state) {
+			case LOCKED -> 0xB6C0D0;
+			case MAXED -> 0xA8F2C0;
+			case ACTIVE -> 0xF4E3BA;
+		};
+		return styledTooltipText(name, color, true, hasPack);
+	}
+
+	private static List<Component> buildTooltipLore(
+			ServerPlayer viewer,
+			UpgradeUiConfig.ButtonConfig button,
+			ButtonState state,
+			Map<String, String> placeholders,
+			boolean hasPack
+	) {
+		List<Component> result = new ArrayList<>();
+		List<String> description = compactLocalizedLines(
+				resolveLocalizedLines(viewer, button.lore.values),
+				placeholders,
+				tooltipWrapWidth(viewer, TOOLTIP_DESCRIPTION_WRAP, TOOLTIP_DESCRIPTION_WRAP_CJK),
+				2
+		);
+		for (int i = 0; i < description.size(); i++) {
+			String prefix = i == 0 ? tooltipIconOrFallback(hasPack, TOOLTIP_ICON_INFO, "i") : "";
+			result.add(buildTooltipLine(
+					prefix,
+					0x91B8D9,
+					description.get(i),
+					0xD8E0EA,
+					hasPack
+			));
+		}
+
+		UpgradeUiConfig.ButtonType type = UpgradeUiConfig.ButtonType.byId(button.type);
+		if (type == UpgradeUiConfig.ButtonType.NONE) {
+			return result;
+		}
+
+		if (type == UpgradeUiConfig.ButtonType.PURCHASE_UPGRADE) {
+			result.add(buildPriceLine(viewer, button, state, hasPack));
+		}
+		return result;
+	}
+
+	private static Component buildPriceLine(
+			ServerPlayer viewer,
+			UpgradeUiConfig.ButtonConfig button,
+			ButtonState state,
+			boolean hasPack
+	) {
+		if (button.pricesBitcoins == null || button.pricesBitcoins.isEmpty()) {
+			return styledTooltipText("", 0xFFFFFF, false, hasPack);
+		}
+
+		int currentLevel = getUpgradeLevel(viewer, button.upgradeId);
+		int index = Math.max(0, Math.min(button.pricesBitcoins.size() - 1, state == ButtonState.MAXED ? button.pricesBitcoins.size() - 1 : currentLevel));
+		int price = button.pricesBitcoins.get(index);
+
+		if (!hasPack) {
+			String text = localizeTooltip(
+					viewer,
+					"Price: " + price + " BTC",
+					"Цена: " + price + " BTC",
+					"Цiна: " + price + " BTC",
+					"価格: " + price + " BTC",
+					"Цена: " + price + " BTC"
+			);
+			return styledTooltipText(text, 0xDCC89A, false, false);
+		}
+
+		MutableComponent line = Component.empty();
+		line.append(styledTooltipText(TOOLTIP_ICON_COIN + " ", 0xFFFFFF, false, true));
+		line.append(styledTooltipText(localizeTooltip(viewer, "Price", "Цена", "Цiна", "価格", "Цена") + ": ", 0xD7C49B, false, true));
+		line.append(styledTooltipText(Integer.toString(price), 0xFFF0CB, true, true));
+		line.append(styledTooltipText(" BTC", 0xF0D39B, false, true));
+		return line;
+	}
+
+	private static Component buildTooltipLine(
+			String prefix,
+			int prefixColor,
+			String text,
+			int textColor,
+			boolean hasPack
+	) {
+		MutableComponent line = Component.empty();
+		if (prefix != null && !prefix.isBlank()) {
+			line.append(styledTooltipText(prefix + " ", prefixColor, false, hasPack));
+		}
+		line.append(styledTooltipText(text, textColor, false, hasPack));
+		return line;
+	}
+
+	private static Component styledTooltipText(String text, int color, boolean bold, boolean hasPack) {
+		return Component.literal(safeString(text)).withStyle(style -> {
+			style = style.withColor(color).withItalic(false).withBold(bold);
+			if (hasPack) {
+				style = style.withFont(TOOLTIP_FONT);
+			}
+			return style;
+		});
+	}
+
+	private static List<String> compactLocalizedLines(
+			List<String> lines,
+			Map<String, String> placeholders,
+			int wrapWidth,
+			int maxLines
+	) {
+		List<String> cleaned = new ArrayList<>();
+		if (lines != null) {
+			for (String line : lines) {
+				String resolved = applyPlaceholders(safeString(line).trim(), placeholders);
+				if (!resolved.isBlank()) {
+					cleaned.add(resolved);
+				}
+			}
+		}
+		if (cleaned.isEmpty()) {
+			return List.of();
+		}
+		return wrapText(String.join(" ", cleaned), wrapWidth, maxLines);
+	}
+
+	private static List<String> wrapText(String text, int maxWidth, int maxLines) {
+		String normalized = safeString(text).replaceAll("\\s+", " ").trim();
+		if (normalized.isEmpty()) {
+			return List.of();
+		}
+
+		List<String> lines = new ArrayList<>();
+		StringBuilder current = new StringBuilder();
+		for (String word : normalized.split(" ")) {
+			if (current.isEmpty()) {
+				current.append(word);
+				continue;
+			}
+			if (current.length() + 1 + word.length() <= Math.max(8, maxWidth)) {
+				current.append(' ').append(word);
+				continue;
+			}
+			lines.add(current.toString());
+			if (lines.size() >= maxLines) {
+				return trimWrappedLines(lines, current.toString(), word, normalized);
+			}
+			current = new StringBuilder(word);
+		}
+		if (!current.isEmpty() && lines.size() < maxLines) {
+			lines.add(current.toString());
+		}
+		return lines;
+	}
+
+	private static List<String> trimWrappedLines(
+			List<String> lines,
+			String overflowedLine,
+			String currentWord,
+			String originalText
+	) {
+		if (lines.isEmpty()) {
+			return List.of(ellipsis(originalText));
+		}
+		int lastIndex = lines.size() - 1;
+		lines.set(lastIndex, ellipsis(lines.get(lastIndex)));
+		return lines;
+	}
+
+	private static String ellipsis(String value) {
+		String trimmed = safeString(value).trim();
+		if (trimmed.isEmpty() || trimmed.endsWith("...")) {
+			return trimmed;
+		}
+		if (trimmed.endsWith(".")) {
+			return trimmed.substring(0, trimmed.length() - 1) + "...";
+		}
+		return trimmed + "...";
+	}
+
+	private static int tooltipWrapWidth(ServerPlayer player, int regularWidth, int cjkWidth) {
+		String locale = normalizeLocale(player);
+		return locale.startsWith("ja") || locale.startsWith("ko") || locale.startsWith("zh") ? cjkWidth : regularWidth;
+	}
+
+	private static String tooltipIconOrFallback(boolean hasPack, String icon, String fallback) {
+		return hasPack ? icon : fallback;
+	}
+
+	private static String buildRequirementSummary(ServerPlayer player, UpgradeUiConfig.ButtonConfig button) {
+		List<String> parts = new ArrayList<>();
+		for (UpgradeUiConfig.RequirementConfig requirement : button.requirements) {
+			if (requirement == null || requirement.upgradeId == null || requirement.upgradeId.isBlank()) {
+				continue;
+			}
+			parts.add(resolveUpgradeDisplayName(player, requirement.upgradeId));
+		}
+		for (UpgradeUiConfig.RequirementGroupConfig group : button.requirementGroups) {
+			String summary = summarizeRequirementGroup(player, group);
+			if (!summary.isBlank()) {
+				parts.add(summary);
+			}
+		}
+		return String.join("; ", parts);
+	}
+
+	private static String summarizeRequirementGroup(ServerPlayer player, UpgradeUiConfig.RequirementGroupConfig group) {
+		if (group == null || group.requirements == null || group.requirements.isEmpty()) {
+			return "";
+		}
+
+		List<String> names = new ArrayList<>();
+		for (UpgradeUiConfig.RequirementConfig requirement : group.requirements) {
+			if (requirement == null || requirement.upgradeId == null || requirement.upgradeId.isBlank()) {
+				continue;
+			}
+			names.add(resolveUpgradeDisplayName(player, requirement.upgradeId));
+		}
+		if (names.isEmpty()) {
+			return "";
+		}
+
+		if (UpgradeUiConfig.RequirementMode.AT_LEAST.id.equals(group.mode)) {
+			return localizeTooltip(
+					player,
+					group.minSatisfiedRequirements + " of: " + String.join(", ", names),
+					group.minSatisfiedRequirements + " из: " + String.join(", ", names),
+					group.minSatisfiedRequirements + " з: " + String.join(", ", names),
+					group.minSatisfiedRequirements + " 個: " + String.join("、", names),
+					group.minSatisfiedRequirements + " изъ: " + String.join(", ", names)
+			);
+		}
+		return String.join(", ", names);
+	}
+
+	private static String resolveUpgradeDisplayName(ServerPlayer player, String upgradeId) {
+		if (upgradeId == null || upgradeId.isBlank()) {
+			return "";
+		}
+		for (UpgradeUiConfig.ScreenConfig screen : UpgradeUiConfig.get().screens.values()) {
+			if (screen == null || screen.buttons == null) {
+				continue;
+			}
+			for (UpgradeUiConfig.ButtonConfig candidate : screen.buttons.values()) {
+				if (candidate == null || !upgradeId.equals(candidate.upgradeId) || candidate.name == null || candidate.name.values == null) {
+					continue;
+				}
+				String localized = resolveLocalizedText(player, candidate.name.values);
+				if (!localized.isBlank()) {
+					return localized;
+				}
+			}
+		}
+		return upgradeId.replace('_', ' ');
 	}
 
 	private static ItemStack createBaseStack(UpgradeUiConfig.IconConfig icon, boolean hasPack) {
@@ -789,6 +1065,30 @@ public final class ServerUpgradeUiSystem {
 					? localizeSystem(player, "Not enough bitcoins", "Недостаточно биткоинов")
 					: localizeSystem(player, "Ready to purchase", "Можно купить");
 		};
+	}
+
+	private static String localizeTooltip(
+			ServerPlayer player,
+			String enUs,
+			String ruRu,
+			String ukUa,
+			String jaJp,
+			String rpr
+	) {
+		String locale = normalizeLocale(player);
+		if (locale.startsWith("rpr")) {
+			return rpr;
+		}
+		if (locale.startsWith("uk")) {
+			return ukUa;
+		}
+		if (locale.startsWith("ja")) {
+			return jaJp;
+		}
+		if (locale.startsWith("ru")) {
+			return ruRu;
+		}
+		return enUs;
 	}
 
 	private static String localizeSystem(ServerPlayer player, String enUs, String ruRu) {
