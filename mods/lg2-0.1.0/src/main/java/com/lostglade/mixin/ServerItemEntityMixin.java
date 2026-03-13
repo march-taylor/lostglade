@@ -1,10 +1,13 @@
 package com.lostglade.mixin;
 
 import com.lostglade.block.ModBlocks;
+import com.lostglade.server.ServerUpgradeUiSystem;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Explosion;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
@@ -53,6 +56,13 @@ public abstract class ServerItemEntityMixin {
 	private void lg2$forceFireImmunity(CallbackInfoReturnable<Boolean> cir) {
 		if (lg2$isProtectedServerItem((ItemEntity) (Object) this)) {
 			cir.setReturnValue(true);
+		}
+	}
+
+	@Inject(method = "playerTouch", at = @At("HEAD"), cancellable = true)
+	private void lg2$blockPickupWhileUpgradeMenuOpen(Player player, CallbackInfo ci) {
+		if (player instanceof ServerPlayer serverPlayer && ServerUpgradeUiSystem.isUpgradeMenuOpen(serverPlayer)) {
+			ci.cancel();
 		}
 	}
 

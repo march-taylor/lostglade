@@ -133,6 +133,10 @@ public final class ServerUpgradeUiSystem {
 		return menu instanceof UpgradeMenu;
 	}
 
+	public static boolean isUpgradeMenuOpen(ServerPlayer player) {
+		return player != null && isUpgradeMenu(player.containerMenu);
+	}
+
 	private static ChestMenu createMenu(
 			int syncId,
 			Inventory inventory,

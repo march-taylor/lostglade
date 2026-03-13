@@ -333,6 +333,10 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 			double maxStabilityPercent,
 			double expireAboveStabilityPercent
 	) {
+		if (player == null || ServerUpgradeUiSystem.isUpgradeMenuOpen(player)) {
+			return false;
+		}
+
 		clearState(server, player);
 
 		Map<Integer, Identifier> modelBySlot = buildShuffledModelMap(player, random, shuffledPercent);
@@ -606,7 +610,10 @@ public final class InventoryTextureShuffleGlitch implements ServerGlitchHandler 
 	private static List<ServerPlayer> collectEligiblePlayers(MinecraftServer server) {
 		List<ServerPlayer> result = new ArrayList<>();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player.isSpectator() || !player.isAlive() || ServerBackroomsSystem.isInBackrooms(player)) {
+			if (player.isSpectator()
+					|| !player.isAlive()
+					|| ServerBackroomsSystem.isInBackrooms(player)
+					|| ServerUpgradeUiSystem.isUpgradeMenuOpen(player)) {
 				continue;
 			}
 			result.add(player);
