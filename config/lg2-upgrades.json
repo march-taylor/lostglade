@@ -37,7 +37,7 @@
   },
   "screens": {
     "main": {
-      "rows": 4,
+      "rows": 3,
       "title": {
         "values": {
           "en_us": "Server Upgrades",
@@ -50,14 +50,14 @@
       },
       "buttons": {
         "worlds": {
-          "slot": 0,
-          "hitboxWidth": 2,
-          "hitboxHeight": 2,
+          "slot": 14,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "worlds",
           "icon": {
             "fallbackItem": "minecraft:obsidian",
-            "packModel": ""
+            "packModel": "lg2:gui/button/invisible"
           },
           "name": {
             "values": {
@@ -99,14 +99,14 @@
           }
         },
         "eras": {
-          "slot": 2,
-          "hitboxWidth": 2,
-          "hitboxHeight": 2,
+          "slot": 10,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "eras",
           "icon": {
             "fallbackItem": "minecraft:smithing_table",
-            "packModel": ""
+            "packModel": "lg2:gui/button/invisible"
           },
           "name": {
             "values": {
@@ -148,14 +148,14 @@
           }
         },
         "mechanics": {
-          "slot": 5,
-          "hitboxWidth": 3,
-          "hitboxHeight": 2,
+          "slot": 11,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "mechanics",
           "icon": {
             "fallbackItem": "minecraft:redstone",
-            "packModel": ""
+            "packModel": "lg2:gui/button/invisible"
           },
           "name": {
             "values": {
@@ -197,14 +197,14 @@
           }
         },
         "it": {
-          "slot": 19,
-          "hitboxWidth": 3,
-          "hitboxHeight": 2,
+          "slot": 12,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "it_hub",
           "icon": {
             "fallbackItem": "minecraft:observer",
-            "packModel": ""
+            "packModel": "lg2:gui/button/invisible"
           },
           "name": {
             "values": {
@@ -246,14 +246,14 @@
           }
         },
         "races": {
-          "slot": 23,
-          "hitboxWidth": 2,
-          "hitboxHeight": 2,
+          "slot": 16,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "races",
           "icon": {
             "fallbackItem": "minecraft:totem_of_undying",
-            "packModel": ""
+            "packModel": "lg2:gui/button/invisible"
           },
           "name": {
             "values": {
@@ -295,11 +295,11 @@
           }
         },
         "info": {
-          "slot": 27,
+          "slot": 0,
           "type": "none",
           "icon": {
             "fallbackItem": "minecraft:knowledge_book",
-            "packModel": ""
+            "packModel": "lg2:gui/button/invisible"
           },
           "name": {
             "values": {
@@ -338,14 +338,16 @@
                 "Наводи перо на большiя доски и читай, что каждая вѣтвь творитъ."
               ]
             }
-          }
+          },
+          "hitboxWidth": 1,
+          "hitboxHeight": 1
         },
         "close": {
-          "slot": 35,
+          "slot": 8,
           "type": "close",
           "icon": {
             "fallbackItem": "minecraft:barrier",
-            "packModel": ""
+            "packModel": "lg2:gui/button/invisible"
           },
           "name": {
             "values": {
@@ -378,10 +380,58 @@
                 "Затворить сей приборъ."
               ]
             }
+          },
+          "hitboxWidth": 1,
+          "hitboxHeight": 1
+        },
+        "balance": {
+          "slot": 7,
+          "type": "none",
+          "icon": {
+            "fallbackItem": "lg2:bitcoin",
+            "packModel": "lg2:gui/button/invisible"
+          },
+          "name": {
+            "values": {
+              "en_us": "Balance: %bitcoins% BTC",
+              "ru_ru": "Баланс: %bitcoins% BTC",
+              "uk_ua": "Баланс: %bitcoins% BTC",
+              "ja_jp": "残高: %bitcoins% BTC",
+              "rdr": "Монѣтъ: %bitcoins% BTC",
+              "rpr": "Монѣтъ: %bitcoins% BTC"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Your personal bitcoin balance.",
+                "All purchases in this menu use these coins."
+              ],
+              "ru_ru": [
+                "Твой личный баланс биткоинов.",
+                "Все покупки в этом меню тратят именно эти монеты."
+              ],
+              "uk_ua": [
+                "Твій особистий баланс біткоїнів.",
+                "Усі покупки в цьому меню витрачають саме ці монети."
+              ],
+              "ja_jp": [
+                "あなた個人のビットコイン残高です。",
+                "この画面の購入はここから支払われます。"
+              ],
+              "rdr": [
+                "Твой личный запасъ монѣтъ биткоиновыхъ.",
+                "Сии монѣты и идутъ на всякую покупку въ семъ окнѣ."
+              ],
+              "rpr": [
+                "Твой личный запасъ монѣтъ биткоиновыхъ.",
+                "Сии монѣты и идутъ на всякую покупку въ семъ окнѣ."
+              ]
+            }
           }
         }
       },
-      "theme": "template_4row",
+      "theme": "main_overlay",
       "hideTitleTextWhenPack": true
     },
     "worlds": {

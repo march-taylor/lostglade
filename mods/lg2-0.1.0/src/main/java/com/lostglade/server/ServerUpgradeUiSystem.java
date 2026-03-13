@@ -55,6 +55,9 @@ import java.util.Objects;
 
 public final class ServerUpgradeUiSystem {
 	private static final String STATE_FILE_NAME = "lg2-upgrade-state.json";
+	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
+	private static final int MAIN_BALANCE_CENTER_X = 127;
+	private static final int BALANCE_DIGIT_WIDTH = 6;
 	private static final Gson STATE_GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final Map<String, Map<String, Integer>> PLAYER_UPGRADE_LEVELS = new HashMap<>();
 	private static final Map<String, Integer> LEGACY_GLOBAL_UPGRADE_LEVELS = new HashMap<>();
@@ -115,7 +118,7 @@ public final class ServerUpgradeUiSystem {
 				: theme;
 
 		boolean hasPack = PolymerResourcePackUtils.hasMainPack(player);
-		Component title = buildTitle(player, hasPack, screen, resolvedTheme);
+		Component title = buildTitle(player, screenId, hasPack, screen, resolvedTheme);
 		player.openMenu(new SimpleMenuProvider(
 				(syncId, inventory, menuPlayer) -> createMenu(syncId, inventory, player, screenId, screen, resolvedTheme, hasPack),
 				title
@@ -157,6 +160,9 @@ public final class ServerUpgradeUiSystem {
 			String buttonId = entry.getKey();
 			UpgradeUiConfig.ButtonConfig button = entry.getValue();
 			if (button == null || !button.enabled || button.slot < 0 || button.slot >= container.getContainerSize()) {
+				continue;
+			}
+			if (shouldHidePackButtonVisual(screenId, buttonId, hasPack)) {
 				continue;
 			}
 			if (isPureDecorButton(button)) {
@@ -222,6 +228,13 @@ public final class ServerUpgradeUiSystem {
 		Identifier itemId = Identifier.tryParse(icon.fallbackItem);
 		Item fallbackItem = itemId == null ? Items.PAPER : BuiltInRegistries.ITEM.getOptional(itemId).orElse(Items.PAPER);
 		ItemStack stack = new ItemStack(fallbackItem, Math.max(1, Math.min(64, icon.count)));
+
+		if (hasPack && icon.packModel != null && !icon.packModel.isBlank()) {
+			Identifier modelId = Identifier.tryParse(icon.packModel);
+			if (modelId != null) {
+				stack.set(DataComponents.ITEM_MODEL, modelId);
+			}
+		}
 
 		if (icon.foil) {
 			stack.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, true);
@@ -515,6 +528,10 @@ public final class ServerUpgradeUiSystem {
 		return true;
 	}
 
+	private static boolean shouldHidePackButtonVisual(String screenId, String buttonId, boolean hasPack) {
+		return hasPack && "main".equals(screenId) && "balance".equals(buttonId);
+	}
+
 	private static void hideLowerInventoryVisuals(ServerPlayer player, AbstractContainerMenu menu) {
 		sendLowerInventoryVisuals(player, menu, true);
 		syncHeldEquipmentVisuals(player, true);
@@ -581,6 +598,7 @@ public final class ServerUpgradeUiSystem {
 
 	private static Component buildTitle(
 			ServerPlayer player,
+			String screenId,
 			boolean hasPack,
 			UpgradeUiConfig.ScreenConfig screen,
 			UpgradeUiConfig.ThemeConfig theme
@@ -593,6 +611,11 @@ public final class ServerUpgradeUiSystem {
 		MutableComponent title = Component.empty();
 		if (theme.packTitlePrefix != null && !theme.packTitlePrefix.isBlank()) {
 			title.append(packStyledLiteral(theme.packTitlePrefix));
+		}
+		if ("main".equals(screenId)) {
+			title.append(packStyledLiteral(TITLE_OVERLAY_RESET));
+			title.append(packStyledLiteral(buildHorizontalAdvance(centeredBalanceStartX(countBitcoins(player)))));
+			title.append(packStyledLiteral(toPackDigitString(countBitcoins(player))));
 		}
 		if (!screen.hideTitleTextWhenPack && !localizedTitle.isBlank()) {
 			if (!title.getString().isBlank()) {
@@ -608,6 +631,48 @@ public final class ServerUpgradeUiSystem {
 
 	private static MutableComponent packStyledLiteral(String value) {
 		return Component.literal(value).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false));
+	}
+
+	private static int centeredBalanceStartX(int bitcoinCount) {
+		int digits = Integer.toString(Math.max(0, bitcoinCount)).length();
+		int width = digits * BALANCE_DIGIT_WIDTH;
+		return Math.max(0, MAIN_BALANCE_CENTER_X - (width / 2));
+	}
+
+	private static String buildHorizontalAdvance(int pixels) {
+		if (pixels == 0) {
+			return "";
+		}
+
+		int remaining = pixels;
+		StringBuilder result = new StringBuilder();
+		int[] values = remaining > 0
+				? new int[]{64, 32, 16, 8, 4, 2, 1}
+				: new int[]{-64, -32, -16, -8, -4, -2, -1};
+		String[] glyphs = remaining > 0
+				? new String[]{"\ue94d", "\ue94c", "\ue94b", "\ue94a", "\ue949", "\ue948", "\ue947"}
+				: new String[]{"\ue940", "\ue941", "\ue942", "\ue943", "\ue944", "\ue945", "\ue946"};
+
+		for (int index = 0; index < values.length; index++) {
+			int step = values[index];
+			while ((remaining > 0 && remaining >= step) || (remaining < 0 && remaining <= step)) {
+				result.append(glyphs[index]);
+				remaining -= step;
+			}
+		}
+		return result.toString();
+	}
+
+	private static String toPackDigitString(int value) {
+		String digits = Integer.toString(Math.max(0, value));
+		StringBuilder result = new StringBuilder(digits.length());
+		for (int i = 0; i < digits.length(); i++) {
+			char digit = digits.charAt(i);
+			if (digit >= '0' && digit <= '9') {
+				result.append((char) ('\ue920' + (digit - '0')));
+			}
+		}
+		return result.toString();
 	}
 
 	private static String resolveLocalizedText(ServerPlayer player, Map<String, String> values) {

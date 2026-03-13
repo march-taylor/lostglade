@@ -31,9 +31,9 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/main_menu_4row.png",
+      "file": "minecraft:font/main_menu_3row.png",
       "ascent": 14,
-      "height": 222,
+      "height": 204,
       "chars": [
         "\ue904"
       ]
@@ -50,7 +50,7 @@
     {
       "type": "bitmap",
       "file": "minecraft:font/upgrade_balance_digits.png",
-      "ascent": 14,
+      "ascent": 5,
       "height": 240,
       "chars": [
         "\ue920\ue921\ue922\ue923\ue924\ue925\ue926\ue927\ue928\ue929"
