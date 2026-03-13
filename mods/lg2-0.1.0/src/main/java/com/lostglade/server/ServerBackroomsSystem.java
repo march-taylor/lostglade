@@ -11,6 +11,7 @@ import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -56,6 +57,9 @@ public final class ServerBackroomsSystem {
 	private static final int BACKROOMS_RESPAWN_DELAY_TICKS = 2;
 	private static final int PLATFORM_RADIUS = 2;
 	private static final int PLATFORM_CLEAR_HEIGHT = 4;
+	private static final int PLATFORM_EXIT_LENGTH = 12;
+	private static final int RESPAWN_SEARCH_ATTEMPTS = 48;
+	private static final int RESPAWN_SEARCH_RADIUS = 12;
 	private static final Map<UUID, ReturnPointState> RETURN_POINTS = new HashMap<>();
 	private static final Map<UUID, Integer> PENDING_RESPAWNS = new HashMap<>();
 
@@ -383,9 +387,16 @@ public final class ServerBackroomsSystem {
 	}
 
 	private static void teleportToRandomBackroomsRespawn(ServerLevel backrooms, ServerPlayer player) {
-		BlockPos platformCenter = pickRandomRespawnCenter(backrooms);
-		backrooms.getChunkAt(platformCenter);
-		ensurePlatform(backrooms, platformCenter);
+		BlockPos safeSpawn = findRandomSafeRespawn(backrooms);
+		BlockPos platformCenter;
+		if (safeSpawn != null) {
+			platformCenter = safeSpawn.below();
+		} else {
+			platformCenter = pickRandomRespawnCenter(backrooms);
+			backrooms.getChunkAt(platformCenter);
+			ensurePlatform(backrooms, platformCenter);
+		}
+
 		player.teleportTo(
 				backrooms,
 				platformCenter.getX() + 0.5D,
@@ -397,6 +408,88 @@ public final class ServerBackroomsSystem {
 				false
 		);
 		player.fallDistance = 0.0F;
+	}
+
+	private static BlockPos findRandomSafeRespawn(ServerLevel level) {
+		for (int attempt = 0; attempt < RESPAWN_SEARCH_ATTEMPTS; attempt++) {
+			BlockPos center = pickRandomRespawnCenter(level);
+			level.getChunkAt(center);
+			BlockPos safePos = findNearbySafeRespawn(level, center);
+			if (safePos != null) {
+				return safePos;
+			}
+		}
+
+		return null;
+	}
+
+	private static BlockPos findNearbySafeRespawn(ServerLevel level, BlockPos center) {
+		if (isSafeRespawnPosition(level, center)) {
+			return center.above();
+		}
+
+		for (int radius = 1; radius <= RESPAWN_SEARCH_RADIUS; radius++) {
+			for (int dx = -radius; dx <= radius; dx++) {
+				int worldX = center.getX() + dx;
+
+				BlockPos north = new BlockPos(worldX, center.getY(), center.getZ() - radius);
+				if (isSafeRespawnPosition(level, north)) {
+					return north.above();
+				}
+
+				BlockPos south = new BlockPos(worldX, center.getY(), center.getZ() + radius);
+				if (isSafeRespawnPosition(level, south)) {
+					return south.above();
+				}
+			}
+
+			for (int dz = -radius + 1; dz <= radius - 1; dz++) {
+				int worldZ = center.getZ() + dz;
+
+				BlockPos west = new BlockPos(center.getX() - radius, center.getY(), worldZ);
+				if (isSafeRespawnPosition(level, west)) {
+					return west.above();
+				}
+
+				BlockPos east = new BlockPos(center.getX() + radius, center.getY(), worldZ);
+				if (isSafeRespawnPosition(level, east)) {
+					return east.above();
+				}
+			}
+		}
+
+		return null;
+	}
+
+	private static boolean isSafeRespawnPosition(ServerLevel level, BlockPos floorPos) {
+		if (!level.getBlockState(floorPos).isFaceSturdy(level, floorPos, Direction.UP)) {
+			return false;
+		}
+
+		BlockPos feetPos = floorPos.above();
+		BlockPos headPos = feetPos.above();
+		if (!level.isEmptyBlock(feetPos) || !level.isEmptyBlock(headPos)) {
+			return false;
+		}
+
+		return hasAdjacentOpenSpace(level, floorPos);
+	}
+
+	private static boolean hasAdjacentOpenSpace(ServerLevel level, BlockPos floorPos) {
+		for (Direction direction : Direction.Plane.HORIZONTAL) {
+			BlockPos adjacentFloor = floorPos.relative(direction);
+			if (!level.getBlockState(adjacentFloor).isFaceSturdy(level, adjacentFloor, Direction.UP)) {
+				continue;
+			}
+
+			BlockPos adjacentFeet = adjacentFloor.above();
+			BlockPos adjacentHead = adjacentFeet.above();
+			if (level.isEmptyBlock(adjacentFeet) && level.isEmptyBlock(adjacentHead)) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	private static BlockPos pickRandomRespawnCenter(ServerLevel level) {
@@ -413,6 +506,20 @@ public final class ServerBackroomsSystem {
 				for (int dy = 1; dy <= PLATFORM_CLEAR_HEIGHT; dy++) {
 					level.setBlockAndUpdate(floorPos.above(dy), Blocks.AIR.defaultBlockState());
 				}
+			}
+		}
+
+		for (Direction direction : Direction.Plane.HORIZONTAL) {
+			carvePlatformExit(level, center, direction);
+		}
+	}
+
+	private static void carvePlatformExit(ServerLevel level, BlockPos center, Direction direction) {
+		for (int step = PLATFORM_RADIUS + 1; step <= PLATFORM_RADIUS + PLATFORM_EXIT_LENGTH; step++) {
+			BlockPos floorPos = center.relative(direction, step);
+			level.setBlockAndUpdate(floorPos, ModBlocks.getRandomizedBackroomsBlockState(floorPos.asLong()));
+			for (int dy = 1; dy <= PLATFORM_CLEAR_HEIGHT; dy++) {
+				level.setBlockAndUpdate(floorPos.above(dy), Blocks.AIR.defaultBlockState());
 			}
 		}
 	}
