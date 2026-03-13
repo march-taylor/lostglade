@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import com.lostglade.config.GlitchConfig;
 import com.lostglade.server.ServerBackroomsSystem;
+import com.lostglade.server.ServerMechanicsGateSystem;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
@@ -38,6 +39,7 @@ import net.minecraft.world.inventory.SmokerMenu;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.EnderChestBlock;
 import net.minecraft.world.level.block.entity.BlastFurnaceBlockEntity;
@@ -582,11 +584,29 @@ public final class ChestDesyncGlitch implements BlockUseGlitchHandler, EntityUse
 			StorageMenuKind kind,
 			ContainerData data
 	) {
+		if (!canOpenLockedMenuKind(opener, kind)) {
+			return false;
+		}
+
 		SimpleMenuProvider provider = new SimpleMenuProvider(
 				(syncId, inventory, menuPlayer) -> createMenu(kind, syncId, inventory, container, data),
 				title
 		);
 		return opener.openMenu(provider).isPresent();
+	}
+
+	private static boolean canOpenLockedMenuKind(ServerPlayer opener, StorageMenuKind kind) {
+		if (opener == null || kind == null) {
+			return false;
+		}
+
+		return switch (kind) {
+			case BREWING -> ServerMechanicsGateSystem.canInteractWithBlock(opener, Blocks.BREWING_STAND);
+			case HOPPER -> ServerMechanicsGateSystem.canInteractWithBlock(opener, Blocks.HOPPER);
+			case DISPENSER -> ServerMechanicsGateSystem.canInteractWithBlock(opener, Blocks.DISPENSER);
+			case CRAFTER -> ServerMechanicsGateSystem.canInteractWithBlock(opener, Blocks.CRAFTER);
+			case CHEST_DYNAMIC, GENERIC_BY_SIZE, SHULKER, FURNACE, BLAST_FURNACE, SMOKER -> true;
+		};
 	}
 
 	private static AbstractContainerMenu createMenu(

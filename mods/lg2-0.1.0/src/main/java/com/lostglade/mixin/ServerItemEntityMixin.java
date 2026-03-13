@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.block.ModBlocks;
+import com.lostglade.server.ServerMechanicsGateSystem;
 import com.lostglade.server.ServerUpgradeUiSystem;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
@@ -61,7 +62,17 @@ public abstract class ServerItemEntityMixin {
 
 	@Inject(method = "playerTouch", at = @At("HEAD"), cancellable = true)
 	private void lg2$blockPickupWhileUpgradeMenuOpen(Player player, CallbackInfo ci) {
-		if (player instanceof ServerPlayer serverPlayer && ServerUpgradeUiSystem.isUpgradeMenuOpen(serverPlayer)) {
+		if (!(player instanceof ServerPlayer serverPlayer)) {
+			return;
+		}
+
+		if (ServerUpgradeUiSystem.isUpgradeMenuOpen(serverPlayer)) {
+			ci.cancel();
+			return;
+		}
+
+		ItemEntity self = (ItemEntity) (Object) this;
+		if (!ServerMechanicsGateSystem.canOwnItem(serverPlayer, self.getItem())) {
 			ci.cancel();
 		}
 	}

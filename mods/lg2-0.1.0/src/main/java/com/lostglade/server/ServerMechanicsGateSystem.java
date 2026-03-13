@@ -4,10 +4,15 @@ import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.npc.villager.AbstractVillager;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.vehicle.minecart.MinecartHopper;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.AnvilBlock;
@@ -105,6 +110,8 @@ public final class ServerMechanicsGateSystem {
 
 			return InteractionResult.PASS;
 		});
+
+		ServerTickEvents.END_SERVER_TICK.register(ServerMechanicsGateSystem::tickIllegalItems);
 	}
 
 	public static boolean canTakeCraftResult(ServerPlayer player, ItemStack stack) {
@@ -114,6 +121,19 @@ public final class ServerMechanicsGateSystem {
 
 	public static boolean canPlaceBlock(ServerPlayer player, Block block) {
 		String requirement = requiredUpgradeForBlock(block);
+		return requirement == null || ServerUpgradeUiSystem.hasUpgrade(player, requirement);
+	}
+
+	public static boolean canInteractWithBlock(ServerPlayer player, Block block) {
+		if (player == null || block == null) {
+			return true;
+		}
+		String requirement = requiredUpgradeForInteraction(block.defaultBlockState());
+		return requirement == null || ServerUpgradeUiSystem.hasUpgrade(player, requirement);
+	}
+
+	public static boolean canOwnItem(ServerPlayer player, ItemStack stack) {
+		String requirement = requiredUpgradeForCraftResult(stack);
 		return requirement == null || ServerUpgradeUiSystem.hasUpgrade(player, requirement);
 	}
 
@@ -149,6 +169,9 @@ public final class ServerMechanicsGateSystem {
 		if (entity instanceof AbstractVillager) {
 			return VILLAGERS;
 		}
+		if (entity instanceof MinecartHopper) {
+			return REDSTONE;
+		}
 		return null;
 	}
 
@@ -169,5 +192,64 @@ public final class ServerMechanicsGateSystem {
 			return REDSTONE;
 		}
 		return null;
+	}
+
+	private static void tickIllegalItems(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			sanitizeIllegalInventory(player);
+		}
+	}
+
+	private static void sanitizeIllegalInventory(ServerPlayer player) {
+		if (player == null || player.level().isClientSide()) {
+			return;
+		}
+
+		boolean changed = false;
+		Inventory inventory = player.getInventory();
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			ItemStack stack = inventory.getItem(slot);
+			if (stack.isEmpty() || canOwnItem(player, stack)) {
+				continue;
+			}
+
+			ItemStack removed = inventory.removeItemNoUpdate(slot);
+			if (!removed.isEmpty()) {
+				dropIllegalStack(player, removed);
+				changed = true;
+			}
+		}
+
+		ItemStack carried = player.containerMenu.getCarried();
+		if (!carried.isEmpty() && !canOwnItem(player, carried)) {
+			player.containerMenu.setCarried(ItemStack.EMPTY);
+			dropIllegalStack(player, carried);
+			changed = true;
+		}
+
+		if (!changed) {
+			return;
+		}
+
+		inventory.setChanged();
+		player.inventoryMenu.broadcastChanges();
+		if (player.containerMenu != player.inventoryMenu) {
+			player.containerMenu.broadcastChanges();
+		}
+	}
+
+	private static void dropIllegalStack(ServerPlayer player, ItemStack stack) {
+		if (player == null || stack == null || stack.isEmpty()) {
+			return;
+		}
+
+		ItemEntity dropped = player.drop(stack, true);
+		if (dropped != null) {
+			dropped.setPickUpDelay(20);
+		}
 	}
 }
