@@ -283,7 +283,7 @@ public final class ServerStabilitySystem {
 		if (normalized.startsWith("ja")) {
 			return textTitle("サーバー安定性");
 		}
-		if (normalized.startsWith("rdr") || normalized.startsWith("rpr")) {
+		if (normalized.startsWith("rpr")) {
 			return textTitle("Послушанiя жѣлѣзнаго разума");
 		}
 		return textTitle("Stability");

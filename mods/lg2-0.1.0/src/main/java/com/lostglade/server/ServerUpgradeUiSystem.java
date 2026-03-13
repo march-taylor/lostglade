@@ -751,7 +751,7 @@ public final class ServerUpgradeUiSystem {
 
 	private static String getLocalizedStatus(ServerPlayer player, ButtonState state, int cost, int bitcoins) {
 		String locale = normalizeLocale(player);
-		if (locale.startsWith("rdr") || locale.startsWith("rpr")) {
+		if (locale.startsWith("rpr")) {
 			return switch (state) {
 				case LOCKED -> "Подъ замкомъ";
 				case MAXED -> "До предѣла";
@@ -783,7 +783,7 @@ public final class ServerUpgradeUiSystem {
 
 	private static String localizeSystem(ServerPlayer player, String enUs, String ruRu) {
 		String locale = normalizeLocale(player);
-		if (locale.startsWith("ru") || locale.startsWith("rpr") || locale.startsWith("rdr")) {
+		if (locale.startsWith("ru") || locale.startsWith("rpr")) {
 			return ruRu;
 		}
 		return enUs;

@@ -44,7 +44,7 @@ public class SpecialPickaxeItem extends SimplePolymerItem {
 		}
 
 		String normalized = lang.toLowerCase();
-		if (normalized.startsWith("rdr") || normalized.startsWith("rpr")) {
+		if (normalized.startsWith("rpr")) {
 			return Component.literal("Кудѣсный молотокъ");
 		}
 		if (normalized.startsWith("uk")) {

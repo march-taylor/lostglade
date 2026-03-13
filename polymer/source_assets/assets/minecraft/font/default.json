@@ -3,21 +3,21 @@
     {
       "type": "space",
       "advances": {
-        "\ue905": -8,
-        "\ue940": -64,
-        "\ue941": -32,
-        "\ue942": -16,
-        "\ue943": -8,
-        "\ue944": -4,
-        "\ue945": -2,
-        "\ue946": -1,
-        "\ue947": 1,
-        "\ue948": 2,
-        "\ue949": 4,
-        "\ue94a": 8,
-        "\ue94b": 16,
-        "\ue94c": 32,
-        "\ue94d": 64
+        "": -8,
+        "": -64,
+        "": -32,
+        "": -16,
+        "": -8,
+        "": -4,
+        "": -2,
+        "": -1,
+        "": 1,
+        "": 2,
+        "": 4,
+        "": 8,
+        "": 16,
+        "": 32,
+        "": 64
       }
     },
     {
@@ -26,7 +26,7 @@
       "ascent": 13,
       "height": 55,
       "chars": [
-        "\ue903"
+        ""
       ]
     },
     {
@@ -35,7 +35,7 @@
       "ascent": 14,
       "height": 204,
       "chars": [
-        "\ue904"
+        ""
       ]
     },
     {
@@ -44,7 +44,7 @@
       "ascent": 14,
       "height": 240,
       "chars": [
-        "\ue906"
+        ""
       ]
     },
     {
@@ -53,7 +53,7 @@
       "ascent": 5,
       "height": 240,
       "chars": [
-        "\ue920\ue921\ue922\ue923\ue924\ue925\ue926\ue927\ue928\ue929"
+        ""
       ]
     },
     {
@@ -62,7 +62,7 @@
       "ascent": 14,
       "height": 204,
       "chars": [
-        "\ue910"
+        ""
       ]
     },
     {
@@ -71,7 +71,7 @@
       "ascent": 14,
       "height": 222,
       "chars": [
-        "\ue911"
+        ""
       ]
     },
     {
@@ -80,7 +80,7 @@
       "ascent": 14,
       "height": 240,
       "chars": [
-        "\ue912"
+        ""
       ]
     },
     {
@@ -89,7 +89,7 @@
       "ascent": 13,
       "height": 168,
       "chars": [
-        "\ue913"
+        ""
       ]
     },
     {
@@ -98,7 +98,7 @@
       "ascent": 13,
       "height": 222,
       "chars": [
-        "\ue914"
+        ""
       ]
     },
     {
@@ -107,7 +107,142 @@
       "ascent": 13,
       "height": 167,
       "chars": [
-        "\ue915"
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_generic_3row_en_us.png",
+      "ascent": 13,
+      "height": 168,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_generic_3row_ru_ru.png",
+      "ascent": 13,
+      "height": 168,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_generic_3row_uk_ua.png",
+      "ascent": 13,
+      "height": 168,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_generic_3row_ja_jp.png",
+      "ascent": 13,
+      "height": 168,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_generic_3row_rpr.png",
+      "ascent": 13,
+      "height": 168,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_generic_6row_en_us.png",
+      "ascent": 13,
+      "height": 222,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_generic_6row_ru_ru.png",
+      "ascent": 13,
+      "height": 222,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_generic_6row_uk_ua.png",
+      "ascent": 13,
+      "height": 222,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_generic_6row_ja_jp.png",
+      "ascent": 13,
+      "height": 222,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_generic_6row_rpr.png",
+      "ascent": 13,
+      "height": 222,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_shulker_en_us.png",
+      "ascent": 13,
+      "height": 167,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_shulker_ru_ru.png",
+      "ascent": 13,
+      "height": 167,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_shulker_uk_ua.png",
+      "ascent": 13,
+      "height": 167,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_shulker_ja_jp.png",
+      "ascent": 13,
+      "height": 167,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/inventory_label_shulker_rpr.png",
+      "ascent": 13,
+      "height": 167,
+      "chars": [
+        ""
       ]
     },
     {

@@ -47,7 +47,7 @@ public class ServerBlockItem extends PolymerBlockItem {
 		}
 
 		String normalized = lang.toLowerCase();
-		if (normalized.startsWith("rdr") || normalized.startsWith("rpr")) {
+		if (normalized.startsWith("rpr")) {
 			return Component.literal("Жѣлѣзный разум");
 		}
 		if (normalized.startsWith("ru") || normalized.startsWith("uk")) {
