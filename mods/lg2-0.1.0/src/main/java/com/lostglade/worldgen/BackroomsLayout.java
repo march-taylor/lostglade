@@ -11,7 +11,7 @@ final class BackroomsLayout {
 
 	private static final int STYLE_REGION_SIZE = 96;
 	private static final int LAYOUT_CELL_SIZE = 24;
-	private static final int DOOR_CHANCE_PERCENT = 9;
+	private static final int DOOR_CHANCE_PERCENT = 4;
 	private static final long DOOR_LAYOUT_SALT = 0x6B41524F4F4D4452L;
 
 	private BackroomsLayout() {
