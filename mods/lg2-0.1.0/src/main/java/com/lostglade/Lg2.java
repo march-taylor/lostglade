@@ -8,6 +8,7 @@ import com.lostglade.server.ServerBackroomsBlockBreakSystem;
 import com.lostglade.item.ModItems;
 import com.lostglade.server.ServerStabilitySystem;
 import com.lostglade.server.ServerStructureBreakSystem;
+import com.lostglade.server.ServerMechanicsGateSystem;
 import com.lostglade.server.ServerUpgradeUiSystem;
 import com.lostglade.worldgen.ModWorldGen;
 import net.fabricmc.api.ModInitializer;
@@ -38,6 +39,7 @@ public class Lg2 implements ModInitializer {
 		ServerBackroomsSystem.register();
 		ServerBackroomsBlockBreakSystem.register();
 		ServerStructureBreakSystem.register();
+		ServerMechanicsGateSystem.register();
 		ServerUpgradeUiSystem.register();
 
 		LOGGER.info("Initialized {}", MOD_ID);
