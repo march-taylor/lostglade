@@ -69,7 +69,7 @@ public final class BackroomsDoorBlock extends DoorBlock implements PolymerTextur
 
 	@Override
 	protected List<ItemStack> getDrops(BlockState state, LootParams.Builder builder) {
-		return List.of();
+		return List.of(new ItemStack(this.asItem()));
 	}
 
 	@Override
@@ -87,11 +87,15 @@ public final class BackroomsDoorBlock extends DoorBlock implements PolymerTextur
 			return InteractionResult.SUCCESS;
 		}
 
-		if (!(player instanceof ServerPlayer serverPlayer) || !ServerBackroomsSystem.isInBackrooms(serverPlayer)) {
+		if (!(player instanceof ServerPlayer serverPlayer)) {
 			return InteractionResult.PASS;
 		}
 
-		return ServerBackroomsSystem.teleportPlayerToNormalSpawn(serverPlayer)
+		boolean teleported = ServerBackroomsSystem.isInBackrooms(serverPlayer)
+				? ServerBackroomsSystem.teleportPlayerToNormalSpawn(serverPlayer)
+				: ServerBackroomsSystem.teleportPlayerToBackrooms(serverPlayer);
+
+		return teleported
 				? InteractionResult.CONSUME
 				: InteractionResult.PASS;
 	}
