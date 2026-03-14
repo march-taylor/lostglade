@@ -65,7 +65,11 @@ public final class ServerBackroomsBlockBreakSystem {
 			if (serverPlayer.isCreative()) {
 				return true;
 			}
-			return isSpecialPickaxe(serverPlayer);
+			boolean allowed = isSpecialPickaxe(serverPlayer);
+			if (!allowed && world instanceof ServerLevel serverLevel) {
+				resetDeniedBreakFeedback(serverPlayer, serverLevel, pos, state);
+			}
+			return allowed;
 		});
 
 		PlayerBlockBreakEvents.CANCELED.register((world, player, pos, state, blockEntity) -> {

@@ -69,6 +69,9 @@ public final class BackroomsDoorBlock extends DoorBlock implements PolymerTextur
 
 	@Override
 	protected List<ItemStack> getDrops(BlockState state, LootParams.Builder builder) {
+		if (state.getValue(HALF) != DoubleBlockHalf.LOWER) {
+			return List.of();
+		}
 		return List.of(new ItemStack(this.asItem()));
 	}
 
