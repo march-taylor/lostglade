@@ -24,6 +24,8 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
@@ -69,6 +71,11 @@ public final class ServerBackroomsSystem {
 	private static final Identifier BACKROOMS_AMBIENT_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "custom.backrooms_ambient_loop");
 	private static final int BACKROOMS_AMBIENT_LOOP_TICKS = 40;
 	private static final float[] BACKROOMS_AMBIENT_FADE_IN = new float[]{0.35F, 0.55F, 0.75F, 0.85F};
+	private static final float BACKROOMS_LOW_PITCH_CHANCE = 0.09F;
+	private static final float BACKROOMS_LOW_PITCH = 0.944F;
+	private static final float BACKROOMS_DIP_VOLUME_MULTIPLIER = 0.82F;
+	private static final int BACKROOMS_VOLTAGE_DIP_TICKS = 8;
+	private static final int BACKROOMS_DARKNESS_REFRESH_TICKS = 6;
 	private static final Map<UUID, ReturnPointState> RETURN_POINTS = new HashMap<>();
 	private static final Map<UUID, Integer> PENDING_RESPAWNS = new HashMap<>();
 	private static final Map<UUID, AmbientLoopState> AMBIENT_LOOP_STATES = new HashMap<>();
@@ -447,16 +454,27 @@ public final class ServerBackroomsSystem {
 
 			if (gameTime >= state.nextPlayTick) {
 				float volume = BACKROOMS_AMBIENT_FADE_IN[Math.min(state.fadeStep, BACKROOMS_AMBIENT_FADE_IN.length - 1)];
-				playBackroomsAmbient(player, volume);
+				boolean lowPitchTick = player.getRandom().nextFloat() < BACKROOMS_LOW_PITCH_CHANCE;
+				float pitch = lowPitchTick ? BACKROOMS_LOW_PITCH : 1.0F;
+				if (lowPitchTick) {
+					volume *= BACKROOMS_DIP_VOLUME_MULTIPLIER;
+					state.voltageDipTicks = BACKROOMS_VOLTAGE_DIP_TICKS;
+				}
+				playBackroomsAmbient(player, volume, pitch);
 				state.fadeStep = Math.min(state.fadeStep + 1, BACKROOMS_AMBIENT_FADE_IN.length - 1);
 				state.nextPlayTick = gameTime + BACKROOMS_AMBIENT_LOOP_TICKS;
+			}
+
+			if (state.voltageDipTicks > 0) {
+				applyVoltageDip(player);
+				state.voltageDipTicks--;
 			}
 		}
 
 		AMBIENT_LOOP_STATES.keySet().removeIf(uuid -> server.getPlayerList().getPlayer(uuid) == null);
 	}
 
-	private static void playBackroomsAmbient(ServerPlayer player, float volume) {
+	private static void playBackroomsAmbient(ServerPlayer player, float volume, float pitch) {
 		Holder<SoundEvent> sound = Holder.direct(SoundEvent.createVariableRangeEvent(BACKROOMS_AMBIENT_SOUND_ID));
 		long seed = player.level().random.nextLong();
 		player.connection.send(
@@ -467,10 +485,14 @@ public final class ServerBackroomsSystem {
 						player.getY(),
 						player.getZ(),
 						volume,
-						1.0F,
+						pitch,
 						seed
 				)
 		);
+	}
+
+	private static void applyVoltageDip(ServerPlayer player) {
+		player.addEffect(new MobEffectInstance(MobEffects.DARKNESS, BACKROOMS_DARKNESS_REFRESH_TICKS, 0, true, false, false));
 	}
 
 	private static void stopBackroomsAmbient(ServerPlayer player) {
@@ -607,5 +629,6 @@ public final class ServerBackroomsSystem {
 	private static final class AmbientLoopState {
 		long nextPlayTick;
 		int fadeStep;
+		int voltageDipTicks;
 	}
 }
