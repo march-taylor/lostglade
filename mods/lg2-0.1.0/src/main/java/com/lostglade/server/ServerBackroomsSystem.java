@@ -69,16 +69,30 @@ public final class ServerBackroomsSystem {
 	private static final int RESPAWN_SEARCH_ATTEMPTS = 48;
 	private static final int RESPAWN_SEARCH_RADIUS = 12;
 	private static final Identifier BACKROOMS_AMBIENT_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "custom.backrooms_ambient_loop");
-	private static final int BACKROOMS_AMBIENT_LOOP_TICKS = 40;
+	// 12s file at 20 TPS ~= 240 ticks. Start every 200 ticks for ~2s overlap.
+	private static final int BACKROOMS_AMBIENT_LOOP_TICKS = 200;
 	private static final float[] BACKROOMS_AMBIENT_FADE_IN = new float[]{0.35F, 0.55F, 0.75F, 0.85F};
-	private static final float BACKROOMS_LOW_PITCH_CHANCE = 0.09F;
+	private static final float BACKROOMS_LOW_PITCH_CHANCE = 0.06F;
 	private static final float BACKROOMS_LOW_PITCH = 0.944F;
 	private static final float BACKROOMS_DIP_VOLUME_MULTIPLIER = 0.82F;
-	private static final int BACKROOMS_VOLTAGE_DIP_TICKS = 8;
+	private static final int BACKROOMS_VOLTAGE_DIP_TICKS = BACKROOMS_AMBIENT_LOOP_TICKS + 6;
 	private static final int BACKROOMS_DARKNESS_REFRESH_TICKS = 6;
+	private static final int BACKROOMS_VOLTAGE_DIP_MIN_LOOPS = 2;
+	private static final int BACKROOMS_VOLTAGE_DIP_MAX_LOOPS = 3;
+	private static final int LAMP_FLICKER_RADIUS_HORIZONTAL = 14;
+	private static final int LAMP_FLICKER_RADIUS_VERTICAL = 4;
+	private static final int LAMP_FLICKER_SEARCH_ATTEMPTS = 18;
+	private static final int LAMP_FLICKER_MAX_PER_TRIGGER = 2;
+	private static final int LAMP_FLICKER_MIN_OFF_TICKS = 3;
+	private static final int LAMP_FLICKER_MAX_OFF_TICKS = 9;
+	private static final int LAMP_FLICKER_RESTORE_BUDGET_PER_TICK = 28;
+	private static final int LAMP_FLICKER_MAX_ACTIVE = 640;
+	private static final float LAMP_FLICKER_TRIGGER_CHANCE = 0.40F;
+	private static final int LAMP_FLICKER_TRIGGER_COOLDOWN_TICKS = 2;
 	private static final Map<UUID, ReturnPointState> RETURN_POINTS = new HashMap<>();
 	private static final Map<UUID, Integer> PENDING_RESPAWNS = new HashMap<>();
 	private static final Map<UUID, AmbientLoopState> AMBIENT_LOOP_STATES = new HashMap<>();
+	private static final Map<Long, Long> ACTIVE_LAMP_OUTAGES = new HashMap<>();
 
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
@@ -92,6 +106,7 @@ public final class ServerBackroomsSystem {
 		RETURN_POINTS.clear();
 		PENDING_RESPAWNS.clear();
 		AMBIENT_LOOP_STATES.clear();
+		ACTIVE_LAMP_OUTAGES.clear();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerBackroomsSystem::loadState);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerBackroomsSystem::saveState);
@@ -388,6 +403,7 @@ public final class ServerBackroomsSystem {
 		enforceClearWeather(server);
 		tickPendingRespawns(server);
 		tickBackroomsAmbientLoop(server);
+		tickLampRestores(server);
 	}
 
 	private static void enforceClearWeather(MinecraftServer server) {
@@ -454,11 +470,15 @@ public final class ServerBackroomsSystem {
 
 			if (gameTime >= state.nextPlayTick) {
 				float volume = BACKROOMS_AMBIENT_FADE_IN[Math.min(state.fadeStep, BACKROOMS_AMBIENT_FADE_IN.length - 1)];
-				boolean lowPitchTick = player.getRandom().nextFloat() < BACKROOMS_LOW_PITCH_CHANCE;
+				if (state.voltageDipLoopsRemaining <= 0 && player.getRandom().nextFloat() < BACKROOMS_LOW_PITCH_CHANCE) {
+					state.voltageDipLoopsRemaining = Mth.nextInt(player.getRandom(), BACKROOMS_VOLTAGE_DIP_MIN_LOOPS, BACKROOMS_VOLTAGE_DIP_MAX_LOOPS);
+				}
+				boolean lowPitchTick = state.voltageDipLoopsRemaining > 0;
 				float pitch = lowPitchTick ? BACKROOMS_LOW_PITCH : 1.0F;
 				if (lowPitchTick) {
 					volume *= BACKROOMS_DIP_VOLUME_MULTIPLIER;
-					state.voltageDipTicks = BACKROOMS_VOLTAGE_DIP_TICKS;
+					state.voltageDipTicks = Math.max(state.voltageDipTicks, BACKROOMS_VOLTAGE_DIP_TICKS);
+					state.voltageDipLoopsRemaining--;
 				}
 				playBackroomsAmbient(player, volume, pitch);
 				state.fadeStep = Math.min(state.fadeStep + 1, BACKROOMS_AMBIENT_FADE_IN.length - 1);
@@ -466,7 +486,7 @@ public final class ServerBackroomsSystem {
 			}
 
 			if (state.voltageDipTicks > 0) {
-				applyVoltageDip(player);
+				applyVoltageDip(server, player, state, gameTime);
 				state.voltageDipTicks--;
 			}
 		}
@@ -491,8 +511,92 @@ public final class ServerBackroomsSystem {
 		);
 	}
 
-	private static void applyVoltageDip(ServerPlayer player) {
+	private static void applyVoltageDip(MinecraftServer server, ServerPlayer player, AmbientLoopState state, long gameTime) {
 		player.addEffect(new MobEffectInstance(MobEffects.DARKNESS, BACKROOMS_DARKNESS_REFRESH_TICKS, 0, true, false, false));
+
+		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
+		if (backrooms == null || !backrooms.dimension().equals(player.level().dimension())) {
+			return;
+		}
+
+		if (ACTIVE_LAMP_OUTAGES.size() >= LAMP_FLICKER_MAX_ACTIVE) {
+			return;
+		}
+
+		if (gameTime < state.nextLampFlickerTick) {
+			return;
+		}
+
+		if (player.getRandom().nextFloat() > LAMP_FLICKER_TRIGGER_CHANCE) {
+			return;
+		}
+
+		state.nextLampFlickerTick = gameTime + LAMP_FLICKER_TRIGGER_COOLDOWN_TICKS;
+		triggerLampFlickerNearPlayer(backrooms, player, gameTime);
+	}
+
+	private static void triggerLampFlickerNearPlayer(ServerLevel level, ServerPlayer player, long gameTime) {
+		int centerX = Mth.floor(player.getX());
+		int centerY = Mth.floor(player.getY());
+		int centerZ = Mth.floor(player.getZ());
+		int turnedOff = 0;
+
+		for (int attempt = 0; attempt < LAMP_FLICKER_SEARCH_ATTEMPTS; attempt++) {
+			if (turnedOff >= LAMP_FLICKER_MAX_PER_TRIGGER || ACTIVE_LAMP_OUTAGES.size() >= LAMP_FLICKER_MAX_ACTIVE) {
+				break;
+			}
+
+			int x = centerX + Mth.nextInt(level.random, -LAMP_FLICKER_RADIUS_HORIZONTAL, LAMP_FLICKER_RADIUS_HORIZONTAL);
+			int y = centerY + Mth.nextInt(level.random, -LAMP_FLICKER_RADIUS_VERTICAL, LAMP_FLICKER_RADIUS_VERTICAL);
+			int z = centerZ + Mth.nextInt(level.random, -LAMP_FLICKER_RADIUS_HORIZONTAL, LAMP_FLICKER_RADIUS_HORIZONTAL);
+			BlockPos pos = new BlockPos(x, y, z);
+			long packedPos = pos.asLong();
+
+			if (ACTIVE_LAMP_OUTAGES.containsKey(packedPos) || !level.hasChunkAt(pos)) {
+				continue;
+			}
+
+			if (!level.getBlockState(pos).is(ModBlocks.BACKROOMS_LIGHTBLOCK)) {
+				continue;
+			}
+
+			level.setBlockAndUpdate(pos, ModBlocks.getRandomizedBackroomsBlockState(packedPos));
+			long restoreAt = gameTime + Mth.nextInt(level.random, LAMP_FLICKER_MIN_OFF_TICKS, LAMP_FLICKER_MAX_OFF_TICKS);
+			ACTIVE_LAMP_OUTAGES.put(packedPos, restoreAt);
+			turnedOff++;
+		}
+	}
+
+	private static void tickLampRestores(MinecraftServer server) {
+		if (ACTIVE_LAMP_OUTAGES.isEmpty()) {
+			return;
+		}
+
+		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
+		if (backrooms == null) {
+			ACTIVE_LAMP_OUTAGES.clear();
+			return;
+		}
+
+		long gameTime = backrooms.getGameTime();
+		int restoreBudget = LAMP_FLICKER_RESTORE_BUDGET_PER_TICK;
+		var iterator = ACTIVE_LAMP_OUTAGES.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<Long, Long> entry = iterator.next();
+			if (entry.getValue() > gameTime) {
+				continue;
+			}
+
+			BlockPos pos = BlockPos.of(entry.getKey());
+			if (backrooms.hasChunkAt(pos) && backrooms.getBlockState(pos).is(ModBlocks.BACKROOMS_BLOCK)) {
+				backrooms.setBlockAndUpdate(pos, ModBlocks.BACKROOMS_LIGHTBLOCK.defaultBlockState());
+			}
+			iterator.remove();
+			restoreBudget--;
+			if (restoreBudget <= 0) {
+				break;
+			}
+		}
 	}
 
 	private static void stopBackroomsAmbient(ServerPlayer player) {
@@ -630,5 +734,7 @@ public final class ServerBackroomsSystem {
 		long nextPlayTick;
 		int fadeStep;
 		int voltageDipTicks;
+		int voltageDipLoopsRemaining;
+		long nextLampFlickerTick;
 	}
 }
