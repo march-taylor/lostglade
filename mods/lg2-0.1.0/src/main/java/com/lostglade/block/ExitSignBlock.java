@@ -33,7 +33,8 @@ import java.util.List;
 
 public final class ExitSignBlock extends StandingSignBlock implements PolymerBlock {
 	public static final MapCodec<StandingSignBlock> CODEC = simpleCodec(ExitSignBlock::new);
-	private static final Component FIXED_MESSAGE = Component.literal("EXIT ->");
+	private static final Component FRONT_MESSAGE = Component.literal("EXIT ->");
+	private static final Component BACK_MESSAGE = Component.literal("<- EXIT");
 
 	public ExitSignBlock(BlockBehaviour.Properties settings) {
 		super(WoodType.PALE_OAK, settings);
@@ -112,30 +113,38 @@ public final class ExitSignBlock extends StandingSignBlock implements PolymerBlo
 		}
 
 		SignText currentFront = sign.getFrontText();
-		if (isFixedText(currentFront) && sign.isWaxed()) {
+		SignText currentBack = sign.getBackText();
+		if (isFixedText(currentFront, FRONT_MESSAGE) && isFixedText(currentBack, BACK_MESSAGE) && sign.isWaxed()) {
 			return;
 		}
 
-		SignText text = new SignText()
+		SignText frontText = new SignText()
 				.setMessage(0, Component.empty())
-				.setMessage(1, FIXED_MESSAGE)
+				.setMessage(1, FRONT_MESSAGE)
 				.setMessage(2, Component.empty())
 				.setMessage(3, Component.empty())
 				.setColor(DyeColor.GREEN)
-				.setHasGlowingText(true);
-		sign.setText(text, true);
-		sign.setText(text, false);
+				.setHasGlowingText(false);
+		SignText backText = new SignText()
+				.setMessage(0, Component.empty())
+				.setMessage(1, BACK_MESSAGE)
+				.setMessage(2, Component.empty())
+				.setMessage(3, Component.empty())
+				.setColor(DyeColor.GREEN)
+				.setHasGlowingText(false);
+		sign.setText(frontText, true);
+		sign.setText(backText, false);
 		sign.setWaxed(true);
 		sign.setChanged();
 	}
 
-	private static boolean isFixedText(SignText text) {
+	private static boolean isFixedText(SignText text, Component expectedMessage) {
 		return text.getMessage(0, false).getString().isEmpty()
-				&& text.getMessage(1, false).getString().equals(FIXED_MESSAGE.getString())
+				&& text.getMessage(1, false).getString().equals(expectedMessage.getString())
 				&& text.getMessage(2, false).getString().isEmpty()
 				&& text.getMessage(3, false).getString().isEmpty()
 				&& text.getColor() == DyeColor.GREEN
-				&& text.hasGlowingText();
+				&& !text.hasGlowingText();
 	}
 
 	static <T extends BlockEntity> void tickExitSign(Level level, BlockPos pos, BlockState state, T blockEntity) {

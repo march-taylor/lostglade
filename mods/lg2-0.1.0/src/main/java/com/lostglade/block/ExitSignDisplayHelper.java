@@ -76,7 +76,7 @@ public final class ExitSignDisplayHelper {
 				pos.getZ() + hitboxCenter.z()
 		);
 
-		float yRot = signBlock.getYRotationDegrees(state);
+		float yRot = signBlock.getYRotationDegrees(state) + 180.0F;
 		display.setPos(worldCenter.x, worldCenter.y, worldCenter.z);
 		display.setYRot(yRot);
 		display.setXRot(0.0F);
