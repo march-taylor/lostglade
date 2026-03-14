@@ -83,8 +83,8 @@ public final class ExitSignBlock extends StandingSignBlock implements PolymerBlo
 		}
 
 		SignText text = new SignText()
-				.setMessage(0, FIXED_MESSAGE)
-				.setMessage(1, Component.empty())
+				.setMessage(0, Component.empty())
+				.setMessage(1, FIXED_MESSAGE)
 				.setMessage(2, Component.empty())
 				.setMessage(3, Component.empty())
 				.setColor(DyeColor.GREEN)
@@ -96,8 +96,8 @@ public final class ExitSignBlock extends StandingSignBlock implements PolymerBlo
 	}
 
 	private static boolean isFixedText(SignText text) {
-		return text.getMessage(0, false).getString().equals(FIXED_MESSAGE.getString())
-				&& text.getMessage(1, false).getString().isEmpty()
+		return text.getMessage(0, false).getString().isEmpty()
+				&& text.getMessage(1, false).getString().equals(FIXED_MESSAGE.getString())
 				&& text.getMessage(2, false).getString().isEmpty()
 				&& text.getMessage(3, false).getString().isEmpty()
 				&& text.getColor() == DyeColor.GREEN
