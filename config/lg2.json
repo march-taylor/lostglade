@@ -15,5 +15,6 @@
   "stabilityMax": 1280,
   "stabilityDecayIntervalSeconds": 135,
   "stabilityDecayIntervalSecondsPerPlayer": 8,
+  "backroomsEntityRadiusChunks": 6,
   "bitcoinsPerStability": 1
 }

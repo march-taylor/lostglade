@@ -5,6 +5,7 @@ import com.lostglade.config.Lg2Config;
 import com.lostglade.server.ServerGlitchSystem;
 import com.lostglade.server.ServerBackroomsSystem;
 import com.lostglade.server.ServerBackroomsBlockBreakSystem;
+import com.lostglade.server.ServerBackroomsStalkerSystem;
 import com.lostglade.item.ModItems;
 import com.lostglade.server.ServerStabilitySystem;
 import com.lostglade.server.ServerStructureBreakSystem;
@@ -38,6 +39,7 @@ public class Lg2 implements ModInitializer {
 		ServerGlitchSystem.register();
 		ServerBackroomsSystem.register();
 		ServerBackroomsBlockBreakSystem.register();
+		ServerBackroomsStalkerSystem.register();
 		ServerStructureBreakSystem.register();
 		ServerMechanicsGateSystem.register();
 		ServerUpgradeUiSystem.register();
