@@ -47,6 +47,7 @@ public final class ServerBackroomsStalkerSystem {
 			}
 			stalker.setInvulnerable(true);
 			stalker.setSilent(true);
+			stalker.attachPolymerAppearance();
 		});
 	}
 

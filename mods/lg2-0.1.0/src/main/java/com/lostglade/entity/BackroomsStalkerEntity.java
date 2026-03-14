@@ -7,7 +7,6 @@ import com.lostglade.server.ServerBackroomsSystem;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.Property;
 import com.mojang.authlib.properties.PropertyMap;
-import eu.pb4.polymer.core.api.entity.PolymerEntity;
 import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
 import net.lionarius.skinrestorer.SkinRestorer;
 import net.lionarius.skinrestorer.skin.SkinStorage;
@@ -52,7 +51,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
 
-public final class BackroomsStalkerEntity extends Monster implements PolymerEntity {
+public final class BackroomsStalkerEntity extends Monster {
 	private static final byte ALL_PLAYER_SKIN_PARTS = (byte) 0x7F;
 	private static final double WALK_SPEED = 0.23D;
 	private static final double CHASE_SPEED_MODIFIER = 1.65D;
@@ -108,6 +107,7 @@ public final class BackroomsStalkerEntity extends Monster implements PolymerEnti
 		stalker.getAttribute(Attributes.ATTACK_DAMAGE).setBaseValue(0.0D);
 		stalker.getAttribute(Attributes.KNOCKBACK_RESISTANCE).setBaseValue(1.0D);
 		stalker.setHealth(stalker.getMaxHealth());
+		stalker.attachPolymerAppearance();
 		return stalker;
 	}
 
@@ -165,6 +165,10 @@ public final class BackroomsStalkerEntity extends Monster implements PolymerEnti
 	public void discardFromSystem() {
 		sendRemovalPackets();
 		this.discard();
+	}
+
+	public void attachPolymerAppearance() {
+		PolymerEntityUtils.setPolymerEntity(this, new StalkerPlayerOverlay(this.getUUID()));
 	}
 
 	private ServerPlayer updateTrackedTarget(ServerLevel level, long nowTick) {
@@ -475,57 +479,13 @@ public final class BackroomsStalkerEntity extends Monster implements PolymerEnti
 		}
 	}
 
-	@Override
-	public EntityType<?> getPolymerEntityType(PacketContext context) {
-		return EntityType.PLAYER;
-	}
-
-	@Override
-	public void onBeforeSpawnPacket(ServerPlayer player, java.util.function.Consumer<Packet<?>> packetConsumer) {
-		GameProfile profile = buildViewerProfile(player);
-		packetConsumer.accept(ClientboundSetPlayerTeamPacket.createAddOrModifyPacket(
-				createHiddenTeam(profile.id(), profile.name()),
-				true
-		));
-
-		EnumSet<ClientboundPlayerInfoUpdatePacket.Action> actions = EnumSet.of(
-				ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER,
-				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED,
-				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE,
-				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LATENCY,
-				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME,
-				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LIST_ORDER,
-				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_HAT
-		);
-		ClientboundPlayerInfoUpdatePacket packet = PolymerEntityUtils.createMutablePlayerListPacket(actions);
-		ClientboundPlayerInfoUpdatePacket.Entry entry = new ClientboundPlayerInfoUpdatePacket.Entry(
-				profile.id(),
-				profile,
-				false,
-				0,
-				GameType.SURVIVAL,
-				null,
-				true,
-				0,
-				(RemoteChatSession.Data) null
-		);
-		packet.entries().add(entry);
-		packetConsumer.accept(packet);
-	}
-
-	@Override
-	public void modifyRawTrackedData(List<SynchedEntityData.DataValue<?>> data, ServerPlayer player, boolean initial) {
-		upsertTrackedData(data, SynchedEntityData.DataValue.create(PlayerTrackedDataAccessor.lg2$getDataPlayerMainHand(), HumanoidArm.RIGHT));
-		upsertTrackedData(data, SynchedEntityData.DataValue.create(PlayerTrackedDataAccessor.lg2$getDataPlayerModeCustomisation(), ALL_PLAYER_SKIN_PARTS));
-	}
-
-	private GameProfile buildViewerProfile(ServerPlayer viewer) {
+	private static GameProfile buildViewerProfile(UUID profileId, ServerPlayer viewer) {
 		PropertyMap properties = new PropertyMap(ImmutableMultimap.copyOf(viewer.getGameProfile().properties()));
 		applyViewerSkin(viewer, properties);
-		return new GameProfile(this.getUUID(), buildProfileName(this.getUUID()), properties);
+		return new GameProfile(profileId, buildProfileName(profileId), properties);
 	}
 
-	private void applyViewerSkin(ServerPlayer viewer, PropertyMap properties) {
+	private static void applyViewerSkin(ServerPlayer viewer, PropertyMap properties) {
 		try {
 			Property current = PlayerUtils.getPlayerSkin(viewer.getGameProfile());
 			if (current != null) {
@@ -579,5 +539,57 @@ public final class BackroomsStalkerEntity extends Monster implements PolymerEnti
 			}
 		}
 		data.add(replacement);
+	}
+
+	public static final class StalkerPlayerOverlay implements eu.pb4.polymer.core.api.entity.PolymerEntity {
+		private final UUID profileId;
+
+		private StalkerPlayerOverlay(UUID profileId) {
+			this.profileId = profileId;
+		}
+
+		@Override
+		public EntityType<?> getPolymerEntityType(PacketContext context) {
+			return EntityType.PLAYER;
+		}
+
+		@Override
+		public void onBeforeSpawnPacket(ServerPlayer player, java.util.function.Consumer<Packet<?>> packetConsumer) {
+			GameProfile profile = buildViewerProfile(this.profileId, player);
+			packetConsumer.accept(ClientboundSetPlayerTeamPacket.createAddOrModifyPacket(
+					createHiddenTeam(profile.id(), profile.name()),
+					true
+			));
+
+			EnumSet<ClientboundPlayerInfoUpdatePacket.Action> actions = EnumSet.of(
+					ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER,
+					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED,
+					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE,
+					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LATENCY,
+					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME,
+					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LIST_ORDER,
+					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_HAT
+			);
+			ClientboundPlayerInfoUpdatePacket packet = PolymerEntityUtils.createMutablePlayerListPacket(actions);
+			ClientboundPlayerInfoUpdatePacket.Entry entry = new ClientboundPlayerInfoUpdatePacket.Entry(
+					profile.id(),
+					profile,
+					false,
+					0,
+					GameType.SURVIVAL,
+					null,
+					true,
+					0,
+					(RemoteChatSession.Data) null
+			);
+			packet.entries().add(entry);
+			packetConsumer.accept(packet);
+		}
+
+		@Override
+		public void modifyRawTrackedData(List<SynchedEntityData.DataValue<?>> data, ServerPlayer player, boolean initial) {
+			upsertTrackedData(data, SynchedEntityData.DataValue.create(PlayerTrackedDataAccessor.lg2$getDataPlayerMainHand(), HumanoidArm.RIGHT));
+			upsertTrackedData(data, SynchedEntityData.DataValue.create(PlayerTrackedDataAccessor.lg2$getDataPlayerModeCustomisation(), ALL_PLAYER_SKIN_PARTS));
+		}
 	}
 }
