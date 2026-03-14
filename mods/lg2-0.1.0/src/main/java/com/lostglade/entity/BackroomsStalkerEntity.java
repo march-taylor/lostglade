@@ -1,0 +1,583 @@
+package com.lostglade.entity;
+
+import com.google.common.collect.ImmutableMultimap;
+import com.lostglade.Lg2;
+import com.lostglade.mixin.PlayerTrackedDataAccessor;
+import com.lostglade.server.ServerBackroomsSystem;
+import com.mojang.authlib.GameProfile;
+import com.mojang.authlib.properties.Property;
+import com.mojang.authlib.properties.PropertyMap;
+import eu.pb4.polymer.core.api.entity.PolymerEntity;
+import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
+import net.lionarius.skinrestorer.SkinRestorer;
+import net.lionarius.skinrestorer.skin.SkinStorage;
+import net.lionarius.skinrestorer.skin.SkinValue;
+import net.lionarius.skinrestorer.util.PlayerUtils;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.RemoteChatSession;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
+import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
+import net.minecraft.world.entity.ai.navigation.PathNavigation;
+import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.TrapDoorBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.pathfinder.Path;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.scores.PlayerTeam;
+import net.minecraft.world.scores.Scoreboard;
+import net.minecraft.world.scores.Team;
+import xyz.nucleoid.packettweaker.PacketContext;
+
+import java.util.EnumSet;
+import java.util.List;
+import java.util.UUID;
+
+public final class BackroomsStalkerEntity extends Monster implements PolymerEntity {
+	private static final byte ALL_PLAYER_SKIN_PARTS = (byte) 0x7F;
+	private static final double WALK_SPEED = 0.23D;
+	private static final double CHASE_SPEED_MODIFIER = 1.65D;
+	private static final int FORGET_TARGET_AFTER_TICKS = 100;
+	private static final int ATTACK_COOLDOWN_TICKS = 20;
+	private static final int MIN_WANDER_DISTANCE = 8;
+	private static final int MAX_WANDER_DISTANCE = 24;
+	private static final int MAX_WANDER_ATTEMPTS = 30;
+	private static final int WANDER_REPATH_TICKS = 10;
+	private static final int MAX_VERTICAL_SEARCH = 3;
+	private static final int STUCK_REPATH_TICKS = 15;
+	private static final float WANDER_HEAD_PITCH = 45.0F;
+	private static final String STALKER_TAG = "lg2_backrooms_stalker";
+
+	private UUID trackedTargetUuid;
+	private long lastSeenTargetTick = Long.MIN_VALUE;
+	private long nextAttackTick = 0L;
+	private long nextWanderRefreshTick = 0L;
+	private int stationaryTicks = 0;
+	private Vec3 lastTickPos = Vec3.ZERO;
+	private Vec3 wanderTarget;
+	private boolean removalPacketsSent = false;
+	private boolean chasingTarget = false;
+
+	public BackroomsStalkerEntity(EntityType<? extends Monster> entityType, Level level) {
+		super(entityType, level);
+		this.xpReward = 0;
+		this.setPersistenceRequired();
+		this.setInvulnerable(true);
+		this.setSilent(true);
+		this.setCanPickUpLoot(false);
+		this.addTag(STALKER_TAG);
+	}
+
+	public static AttributeSupplier.Builder createAttributes() {
+		return Monster.createMonsterAttributes()
+				.add(Attributes.MAX_HEALTH, 20.0D)
+				.add(Attributes.MOVEMENT_SPEED, WALK_SPEED)
+				.add(Attributes.FOLLOW_RANGE, 1024.0D)
+				.add(Attributes.ATTACK_DAMAGE, 0.0D)
+				.add(Attributes.KNOCKBACK_RESISTANCE, 1.0D);
+	}
+
+	public static boolean isStalker(Entity entity) {
+		return entity instanceof BackroomsStalkerEntity || (entity != null && entity.getTags().contains(STALKER_TAG));
+	}
+
+	public static BackroomsStalkerEntity create(Level level) {
+		BackroomsStalkerEntity stalker = new BackroomsStalkerEntity(EntityType.HUSK, level);
+		stalker.getAttribute(Attributes.MAX_HEALTH).setBaseValue(20.0D);
+		stalker.getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(WALK_SPEED);
+		stalker.getAttribute(Attributes.FOLLOW_RANGE).setBaseValue(1024.0D);
+		stalker.getAttribute(Attributes.ATTACK_DAMAGE).setBaseValue(0.0D);
+		stalker.getAttribute(Attributes.KNOCKBACK_RESISTANCE).setBaseValue(1.0D);
+		stalker.setHealth(stalker.getMaxHealth());
+		return stalker;
+	}
+
+	@Override
+	protected void registerGoals() {
+	}
+
+	@Override
+	protected PathNavigation createNavigation(Level level) {
+		GroundPathNavigation navigation = new GroundPathNavigation(this, level);
+		navigation.setCanOpenDoors(true);
+		return navigation;
+	}
+
+	@Override
+	public void checkDespawn() {
+	}
+
+	@Override
+	public void remove(Entity.RemovalReason reason) {
+		sendRemovalPackets();
+		super.remove(reason);
+	}
+
+	@Override
+	public void tick() {
+		super.tick();
+		if (!this.level().isClientSide() && !this.chasingTarget) {
+			setHeadPitch(WANDER_HEAD_PITCH);
+		}
+	}
+
+	@Override
+	protected void customServerAiStep(ServerLevel level) {
+		super.customServerAiStep(level);
+
+		if (!ServerBackroomsSystem.isBackrooms(level)) {
+			this.discard();
+			return;
+		}
+
+		long nowTick = level.getGameTime();
+		ServerPlayer target = updateTrackedTarget(level, nowTick);
+		if (target != null) {
+			this.chasingTarget = true;
+			updateChaseMovement(target);
+			updateTouchDamage(level, nowTick);
+			return;
+		}
+
+		this.chasingTarget = false;
+		updateWanderMovement(level, nowTick);
+	}
+
+	public void discardFromSystem() {
+		sendRemovalPackets();
+		this.discard();
+	}
+
+	private ServerPlayer updateTrackedTarget(ServerLevel level, long nowTick) {
+		ServerPlayer currentTarget = resolveTrackedTarget(level);
+		ServerPlayer visibleTarget = findVisibleTarget(level, currentTarget);
+		if (visibleTarget != null) {
+			this.trackedTargetUuid = visibleTarget.getUUID();
+			this.lastSeenTargetTick = nowTick;
+			return visibleTarget;
+		}
+
+		if (currentTarget == null) {
+			clearTrackedTarget();
+			return null;
+		}
+
+		if (nowTick - this.lastSeenTargetTick > FORGET_TARGET_AFTER_TICKS) {
+			clearTrackedTarget();
+			return null;
+		}
+
+		return currentTarget;
+	}
+
+	private ServerPlayer resolveTrackedTarget(ServerLevel level) {
+		if (this.trackedTargetUuid == null) {
+			return null;
+		}
+
+		ServerPlayer player = level.getServer().getPlayerList().getPlayer(this.trackedTargetUuid);
+		if (!isEligibleTarget(player)) {
+			clearTrackedTarget();
+			return null;
+		}
+		return player;
+	}
+
+	private ServerPlayer findVisibleTarget(ServerLevel level, ServerPlayer preferredTarget) {
+		if (isEligibleTarget(preferredTarget) && hasTransparentAwareSight(preferredTarget)) {
+			return preferredTarget;
+		}
+
+		ServerPlayer nearest = null;
+		double nearestDistanceSqr = Double.MAX_VALUE;
+		for (ServerPlayer player : level.players()) {
+			if (!isEligibleTarget(player) || !hasTransparentAwareSight(player)) {
+				continue;
+			}
+
+			double distanceSqr = this.distanceToSqr(player);
+			if (distanceSqr < nearestDistanceSqr) {
+				nearest = player;
+				nearestDistanceSqr = distanceSqr;
+			}
+		}
+
+		return nearest;
+	}
+
+	private boolean hasTransparentAwareSight(ServerPlayer player) {
+		if (!isEligibleTarget(player) || !(this.level() instanceof ServerLevel level)) {
+			return false;
+		}
+
+		Vec3 start = this.getEyePosition();
+		Vec3 end = player.getEyePosition();
+		Vec3 direction = end.subtract(start);
+		double distance = direction.length();
+		if (distance <= 1.0E-6D) {
+			return true;
+		}
+
+		Vec3 unit = direction.normalize();
+		Vec3 rayStart = start;
+		for (int i = 0; i < 256; i++) {
+			BlockHitResult hit = level.clip(new net.minecraft.world.level.ClipContext(
+					rayStart,
+					end,
+					net.minecraft.world.level.ClipContext.Block.COLLIDER,
+					net.minecraft.world.level.ClipContext.Fluid.NONE,
+					this
+			));
+			if (hit.getType() == HitResult.Type.MISS) {
+				return true;
+			}
+
+			BlockPos hitPos = hit.getBlockPos();
+			if (blocksSight(level, hitPos)) {
+				return false;
+			}
+
+			Vec3 nextStart = hit.getLocation().add(unit.scale(0.03125D));
+			if (nextStart.distanceToSqr(rayStart) < 1.0E-8D || nextStart.distanceToSqr(end) < 1.0E-8D) {
+				return true;
+			}
+			rayStart = nextStart;
+		}
+
+		return false;
+	}
+
+	private boolean blocksSight(ServerLevel level, BlockPos pos) {
+		BlockState state = level.getBlockState(pos);
+		if (state.isAir()) {
+			return false;
+		}
+		if (state.getBlock() instanceof DoorBlock || state.getBlock() instanceof TrapDoorBlock) {
+			return true;
+		}
+		if (state.getCollisionShape(level, pos).isEmpty()) {
+			return false;
+		}
+		return state.isSolidRender();
+	}
+
+	private boolean isEligibleTarget(ServerPlayer player) {
+		return player != null
+				&& player.isAlive()
+				&& !player.isCreative()
+				&& !player.isSpectator()
+				&& player.level() == this.level()
+				&& ServerBackroomsSystem.isInBackrooms(player);
+	}
+
+	private void clearTrackedTarget() {
+		this.trackedTargetUuid = null;
+		this.lastSeenTargetTick = Long.MIN_VALUE;
+		this.wanderTarget = null;
+		this.stationaryTicks = 0;
+	}
+
+	private void updateChaseMovement(ServerPlayer target) {
+		this.getNavigation().moveTo(target.getX(), target.getY(), target.getZ(), CHASE_SPEED_MODIFIER);
+		lookAtTarget(target);
+	}
+
+	private void updateWanderMovement(ServerLevel level, long nowTick) {
+		Vec3 currentPos = this.position();
+		if (currentPos.distanceToSqr(this.lastTickPos) < 0.0025D) {
+			this.stationaryTicks++;
+		} else {
+			this.stationaryTicks = 0;
+		}
+		this.lastTickPos = currentPos;
+
+		boolean needsNewTarget = this.wanderTarget == null
+				|| this.getNavigation().isDone()
+				|| currentPos.distanceToSqr(this.wanderTarget) < 2.25D
+				|| this.stationaryTicks >= STUCK_REPATH_TICKS
+				|| nowTick >= this.nextWanderRefreshTick;
+		if (needsNewTarget) {
+			this.wanderTarget = pickWanderTarget(level);
+			this.stationaryTicks = 0;
+			this.nextWanderRefreshTick = nowTick + WANDER_REPATH_TICKS;
+			if (this.wanderTarget != null) {
+				this.getNavigation().moveTo(this.wanderTarget.x, this.wanderTarget.y, this.wanderTarget.z, 1.0D);
+			} else {
+				this.getNavigation().stop();
+			}
+		}
+
+		lookInMovementDirection();
+		setHeadPitch(WANDER_HEAD_PITCH);
+	}
+
+	private Vec3 pickWanderTarget(ServerLevel level) {
+		RandomSource random = this.getRandom();
+		for (int attempt = 0; attempt < MAX_WANDER_ATTEMPTS; attempt++) {
+			double angle = random.nextDouble() * (Math.PI * 2.0D);
+			int distance = MIN_WANDER_DISTANCE + random.nextInt(MAX_WANDER_DISTANCE - MIN_WANDER_DISTANCE + 1);
+			int x = net.minecraft.util.Mth.floor(this.getX() + (Math.cos(angle) * distance));
+			int z = net.minecraft.util.Mth.floor(this.getZ() + (Math.sin(angle) * distance));
+
+			for (int yOffset = MAX_VERTICAL_SEARCH; yOffset >= -MAX_VERTICAL_SEARCH; yOffset--) {
+				Vec3 candidate = findWalkablePosition(level, x, this.blockPosition().getY() + yOffset, z);
+				if (candidate == null) {
+					continue;
+				}
+				if (candidate.distanceToSqr(this.position()) < (MIN_WANDER_DISTANCE * MIN_WANDER_DISTANCE)) {
+					continue;
+				}
+
+				Path path = this.getNavigation().createPath(net.minecraft.core.BlockPos.containing(candidate), 0);
+				if (path != null && path.canReach()) {
+					return candidate;
+				}
+			}
+		}
+
+		return null;
+	}
+
+	private Vec3 findWalkablePosition(ServerLevel level, int x, int y, int z) {
+		for (int scanY = y + MAX_VERTICAL_SEARCH; scanY >= y - MAX_VERTICAL_SEARCH; scanY--) {
+			net.minecraft.core.BlockPos feetPos = new net.minecraft.core.BlockPos(x, scanY, z);
+			if (!canStandAt(level, feetPos)) {
+				continue;
+			}
+			return Vec3.atBottomCenterOf(feetPos);
+		}
+		return null;
+	}
+
+	private boolean canStandAt(ServerLevel level, net.minecraft.core.BlockPos feetPos) {
+		if (!level.getWorldBorder().isWithinBounds(feetPos)) {
+			return false;
+		}
+
+		BlockState feetState = level.getBlockState(feetPos);
+		BlockState headState = level.getBlockState(feetPos.above());
+		BlockState floorState = level.getBlockState(feetPos.below());
+		FluidState feetFluid = level.getFluidState(feetPos);
+		FluidState headFluid = level.getFluidState(feetPos.above());
+		if (!feetState.getCollisionShape(level, feetPos).isEmpty()) {
+			return false;
+		}
+		if (!headState.getCollisionShape(level, feetPos.above()).isEmpty()) {
+			return false;
+		}
+		if (!feetFluid.isEmpty() || !headFluid.isEmpty()) {
+			return false;
+		}
+		if (floorState.getCollisionShape(level, feetPos.below()).isEmpty()) {
+			return false;
+		}
+
+		AABB standingBox = this.getDimensions(this.getPose()).makeBoundingBox(
+				feetPos.getX() + 0.5D,
+				feetPos.getY(),
+				feetPos.getZ() + 0.5D
+		);
+		return level.noCollision(this, standingBox);
+	}
+
+	private void updateTouchDamage(ServerLevel level, long nowTick) {
+		if (nowTick < this.nextAttackTick) {
+			return;
+		}
+
+		AABB hitBox = this.getBoundingBox().inflate(0.1D);
+		for (ServerPlayer player : level.players()) {
+			if (!isEligibleTarget(player) || !player.getBoundingBox().intersects(hitBox)) {
+				continue;
+			}
+
+			applyUnstoppableHit(player);
+			this.nextAttackTick = nowTick + ATTACK_COOLDOWN_TICKS;
+			return;
+		}
+	}
+
+	private void applyUnstoppableHit(ServerPlayer player) {
+		float remainingHealth = player.getHealth() - 6.0F;
+		if (remainingHealth > 0.0F) {
+			player.setHealth(remainingHealth);
+			return;
+		}
+
+		player.kill((ServerLevel) player.level());
+	}
+
+	private void lookAtTarget(ServerPlayer target) {
+		Vec3 eyes = target.getEyePosition();
+		Vec3 ownEyes = this.getEyePosition();
+		Vec3 delta = eyes.subtract(ownEyes);
+		double horizontalDistance = Math.sqrt((delta.x * delta.x) + (delta.z * delta.z));
+		float yaw = (float) (net.minecraft.util.Mth.atan2(delta.z, delta.x) * (180.0D / Math.PI)) - 90.0F;
+		float pitch = (float) (-(net.minecraft.util.Mth.atan2(delta.y, horizontalDistance) * (180.0D / Math.PI)));
+
+		this.setYRot(yaw);
+		this.setYHeadRot(yaw);
+		this.setYBodyRot(yaw);
+		this.getLookControl().setLookAt(target, 360.0F, 360.0F);
+		setHeadPitch(pitch);
+	}
+
+	private void lookInMovementDirection() {
+		Vec3 velocity = this.getDeltaMovement();
+		Vec3 navigationDelta = this.wanderTarget == null ? Vec3.ZERO : this.wanderTarget.subtract(this.position());
+		Vec3 direction = velocity.horizontalDistanceSqr() > 1.0E-4D ? velocity : navigationDelta;
+		if (direction.horizontalDistanceSqr() <= 1.0E-4D) {
+			return;
+		}
+
+		float yaw = (float) (net.minecraft.util.Mth.atan2(direction.z, direction.x) * (180.0D / Math.PI)) - 90.0F;
+		this.setYRot(yaw);
+		this.setYHeadRot(yaw);
+		this.setYBodyRot(yaw);
+	}
+
+	private void setHeadPitch(float pitch) {
+		this.setXRot(pitch);
+		this.xRotO = pitch;
+	}
+
+	private void sendRemovalPackets() {
+		if (this.removalPacketsSent || !(this.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		this.removalPacketsSent = true;
+		PlayerTeam team = createHiddenTeam(this.getUUID(), buildProfileName(this.getUUID()));
+		ClientboundSetPlayerTeamPacket teamPacket = ClientboundSetPlayerTeamPacket.createRemovePacket(team);
+		ClientboundPlayerInfoRemovePacket removePacket = new ClientboundPlayerInfoRemovePacket(List.of(this.getUUID()));
+		for (ServerPlayer player : level.players()) {
+			player.connection.send(teamPacket);
+			player.connection.send(removePacket);
+		}
+	}
+
+	@Override
+	public EntityType<?> getPolymerEntityType(PacketContext context) {
+		return EntityType.PLAYER;
+	}
+
+	@Override
+	public void onBeforeSpawnPacket(ServerPlayer player, java.util.function.Consumer<Packet<?>> packetConsumer) {
+		GameProfile profile = buildViewerProfile(player);
+		packetConsumer.accept(ClientboundSetPlayerTeamPacket.createAddOrModifyPacket(
+				createHiddenTeam(profile.id(), profile.name()),
+				true
+		));
+
+		EnumSet<ClientboundPlayerInfoUpdatePacket.Action> actions = EnumSet.of(
+				ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER,
+				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED,
+				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE,
+				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LATENCY,
+				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME,
+				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LIST_ORDER,
+				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_HAT
+		);
+		ClientboundPlayerInfoUpdatePacket packet = PolymerEntityUtils.createMutablePlayerListPacket(actions);
+		ClientboundPlayerInfoUpdatePacket.Entry entry = new ClientboundPlayerInfoUpdatePacket.Entry(
+				profile.id(),
+				profile,
+				false,
+				0,
+				GameType.SURVIVAL,
+				null,
+				true,
+				0,
+				(RemoteChatSession.Data) null
+		);
+		packet.entries().add(entry);
+		packetConsumer.accept(packet);
+	}
+
+	@Override
+	public void modifyRawTrackedData(List<SynchedEntityData.DataValue<?>> data, ServerPlayer player, boolean initial) {
+		upsertTrackedData(data, SynchedEntityData.DataValue.create(PlayerTrackedDataAccessor.lg2$getDataPlayerMainHand(), HumanoidArm.RIGHT));
+		upsertTrackedData(data, SynchedEntityData.DataValue.create(PlayerTrackedDataAccessor.lg2$getDataPlayerModeCustomisation(), ALL_PLAYER_SKIN_PARTS));
+	}
+
+	private GameProfile buildViewerProfile(ServerPlayer viewer) {
+		PropertyMap properties = new PropertyMap(ImmutableMultimap.copyOf(viewer.getGameProfile().properties()));
+		applyViewerSkin(viewer, properties);
+		return new GameProfile(this.getUUID(), buildProfileName(this.getUUID()), properties);
+	}
+
+	private void applyViewerSkin(ServerPlayer viewer, PropertyMap properties) {
+		try {
+			Property current = PlayerUtils.getPlayerSkin(viewer.getGameProfile());
+			if (current != null) {
+				properties.removeAll("textures");
+				properties.put("textures", current);
+				return;
+			}
+
+			SkinStorage skinStorage = SkinRestorer.getSkinStorage();
+			if (skinStorage != null) {
+				SkinValue stored = skinStorage.getSkin(viewer.getUUID());
+				Property textures = stored == null ? null : stored.value();
+				if (textures != null) {
+					properties.removeAll("textures");
+					properties.put("textures", textures);
+				}
+			}
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to resolve viewer skin for backrooms stalker and {}", viewer.getScoreboardName(), exception);
+		}
+	}
+
+	private static String buildProfileName(UUID uuid) {
+		String compact = (uuid == null ? UUID.randomUUID() : uuid).toString().replace("-", "");
+		return "st" + compact.substring(0, 14);
+	}
+
+	private static String buildTeamName(UUID uuid) {
+		String compact = (uuid == null ? UUID.randomUUID() : uuid).toString().replace("-", "");
+		return "lg2st_" + compact.substring(0, 10);
+	}
+
+	private static PlayerTeam createHiddenTeam(UUID profileId, String profileName) {
+		PlayerTeam team = new PlayerTeam(new Scoreboard(), buildTeamName(profileId));
+		team.setDisplayName(Component.empty());
+		team.setPlayerPrefix(Component.empty());
+		team.setPlayerSuffix(Component.empty());
+		team.setNameTagVisibility(Team.Visibility.NEVER);
+		team.setDeathMessageVisibility(Team.Visibility.NEVER);
+		team.setCollisionRule(Team.CollisionRule.NEVER);
+		team.getPlayers().add(profileName);
+		return team;
+	}
+
+	private static void upsertTrackedData(List<SynchedEntityData.DataValue<?>> data, SynchedEntityData.DataValue<?> replacement) {
+		for (int i = 0; i < data.size(); i++) {
+			SynchedEntityData.DataValue<?> current = data.get(i);
+			if (current.id() == replacement.id()) {
+				data.set(i, replacement);
+				return;
+			}
+		}
+		data.add(replacement);
+	}
+}
