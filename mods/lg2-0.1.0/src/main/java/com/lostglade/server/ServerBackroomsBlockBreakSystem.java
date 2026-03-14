@@ -5,10 +5,13 @@ import com.lostglade.block.ExitSignSoundHelper;
 import com.lostglade.item.ModItems;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.HashMap;
@@ -42,7 +45,8 @@ public final class ServerBackroomsBlockBreakSystem {
 				return InteractionResult.PASS;
 			}
 			if (!isSpecialPickaxe(serverPlayer)) {
-				return InteractionResult.SUCCESS;
+				resetDeniedBreakFeedback(serverPlayer, (ServerLevel) world, pos, state);
+				return InteractionResult.FAIL;
 			}
 			if (world instanceof ServerLevel serverLevel && isExitSign(state) && shouldPlayExitSignHitSound(serverPlayer, pos)) {
 				ExitSignSoundHelper.playHitSound(serverLevel, pos);
@@ -62,6 +66,16 @@ public final class ServerBackroomsBlockBreakSystem {
 				return true;
 			}
 			return isSpecialPickaxe(serverPlayer);
+		});
+
+		PlayerBlockBreakEvents.CANCELED.register((world, player, pos, state, blockEntity) -> {
+			if (!(world instanceof ServerLevel serverLevel) || !(player instanceof ServerPlayer serverPlayer)) {
+				return;
+			}
+			if (!isProtectedBackroomsBlock(state) && !isProtectedBackroomsUtility(state)) {
+				return;
+			}
+			resetDeniedBreakFeedback(serverPlayer, serverLevel, pos, state);
 		});
 
 		PlayerBlockBreakEvents.AFTER.register((world, player, pos, state, blockEntity) -> {
@@ -102,6 +116,18 @@ public final class ServerBackroomsBlockBreakSystem {
 		}
 		LAST_EXIT_SIGN_HIT.put(uuid, new ExitSignHitState(pos.immutable(), tick));
 		return true;
+	}
+
+	private static void resetDeniedBreakFeedback(ServerPlayer player, ServerLevel level, net.minecraft.core.BlockPos pos, BlockState state) {
+		level.destroyBlockProgress(player.getId(), pos, -1);
+		player.connection.send(new ClientboundBlockUpdatePacket(pos, state));
+		BlockEntity blockEntity = level.getBlockEntity(pos);
+		if (blockEntity != null) {
+			Packet<?> packet = blockEntity.getUpdatePacket();
+			if (packet != null) {
+				player.connection.send(packet);
+			}
+		}
 	}
 
 	private record ExitSignHitState(net.minecraft.core.BlockPos pos, long tick) {

@@ -4,6 +4,7 @@ import com.lostglade.block.ModBlocks;
 import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.server.level.WorldGenRegion;
@@ -11,7 +12,10 @@ import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.NoiseColumn;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.StructureManager;
+import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.WallSignBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoorHingeSide;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
@@ -49,6 +53,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	private static final BlockState BACKROOMS_LIGHT_BLOCK = ModBlocks.BACKROOMS_LIGHTBLOCK.defaultBlockState();
 	private static final BlockState BACKROOMS_BLOCK = ModBlocks.BACKROOMS_BLOCK.defaultBlockState();
 	private static final BlockState BACKROOMS_DOOR_BLOCK = ModBlocks.BACKROOMS_DOOR.defaultBlockState();
+	private static final BlockState EXIT_SIGN_WALL_BLOCK = ModBlocks.EXIT_WALL_SIGN.defaultBlockState();
 	private static final long BACKROOMS_VARIANT_SALT = 0x4c47324241434b52L;
 	private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
@@ -102,6 +107,13 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 					}
 
 					chunk.setBlockState(mutablePos.set(localX, y, localZ), state);
+					if ((state.is(ModBlocks.EXIT_SIGN) || state.is(ModBlocks.EXIT_WALL_SIGN))
+							&& state.getBlock() instanceof EntityBlock entityBlock) {
+						BlockEntity blockEntity = entityBlock.newBlockEntity(new BlockPos(worldX, y, worldZ), state);
+						if (blockEntity != null) {
+							chunk.setBlockEntity(blockEntity);
+						}
+					}
 				}
 			}
 		}
@@ -206,6 +218,13 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			}
 		}
 
+		if (y == BackroomsLayout.FLOOR_Y + 3) {
+			Direction exitSignFacing = getExitSignFacingAt(x, z);
+			if (exitSignFacing != null) {
+				return createExitSignState(exitSignFacing);
+			}
+		}
+
 		if (y >= BackroomsLayout.WALL_MIN_Y && y <= BackroomsLayout.WALL_MAX_Y && !BackroomsLayout.isCorridor(zone, x, z)) {
 			return randomizedBackroomsBlock(x, y, z);
 		}
@@ -224,5 +243,23 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 				.setValue(net.minecraft.world.level.block.DoorBlock.OPEN, false)
 				.setValue(net.minecraft.world.level.block.DoorBlock.POWERED, false)
 				.setValue(net.minecraft.world.level.block.DoorBlock.HALF, half);
+	}
+
+	private static Direction getExitSignFacingAt(int x, int z) {
+		for (Direction corridorDirection : Direction.Plane.HORIZONTAL) {
+			int doorX = x - corridorDirection.getStepX();
+			int doorZ = z - corridorDirection.getStepZ();
+			BackroomsLayout.ZoneType zone = BackroomsLayout.getZoneAtBlock(doorX, doorZ);
+			BackroomsLayout.DoorPlacement placement = BackroomsLayout.getRoomDoorAt(zone, doorX, doorZ);
+			if (placement != null && placement.facing().getOpposite() == corridorDirection) {
+				return corridorDirection;
+			}
+		}
+
+		return null;
+	}
+
+	private static BlockState createExitSignState(Direction facing) {
+		return EXIT_SIGN_WALL_BLOCK.setValue(WallSignBlock.FACING, facing);
 	}
 }
