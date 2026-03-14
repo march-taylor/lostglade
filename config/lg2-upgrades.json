@@ -40,11 +40,11 @@
       "rows": 3,
       "title": {
         "values": {
-          "en_us": "Server Upgrades",
-          "ru_ru": "Прокачка сервера",
-          "uk_ua": "Прокачування сервера",
-          "ja_jp": "サーバー強化",
-          "rpr": "Устроенiе жѣлѣзнаго разума"
+          "en_us": "Server",
+          "ru_ru": "Сервер",
+          "uk_ua": "Сервер",
+          "ja_jp": "サーバー",
+          "rpr": "Серверъ"
         }
       },
       "buttons": {
@@ -158,12 +158,10 @@
           "lore": {
             "values": {
               "en_us": [
-                "Redstone, brewing, anvils, enchanting and villager trade.",
-                "These unlock independently wherever material gates allow it."
+                "Redstone, brewing, anvils, enchanting and villager trade."
               ],
               "ru_ru": [
-                "Редстоун, зелья, наковальня, чары и торговля.",
-                "Они открываются независимо друг от друга, если хватает материальной эпохи."
+                "Редстоун, зелья, наковальня, чары и торговля."
               ],
               "uk_ua": [
                 "Редстоун, зілля, ковадло, чари й торгівля.",
@@ -429,7 +427,6 @@
                 "Buy whichever world your team wants first."
               ],
               "ru_ru": [
-                "Незер и Энд теперь покупаются как два независимых билета.",
                 "Покупайте сначала тот мир, который нужен вашей команде."
               ],
               "uk_ua": [
@@ -1058,12 +1055,10 @@
           "lore": {
             "values": {
               "en_us": [
-                "These upgrades decide which survival mechanics are legal on the server.",
-                "These mechanics unlock independently; only material gates remain where needed."
+                "These upgrades decide which survival mechanics are legal on the server."
               ],
               "ru_ru": [
-                "Эти улучшения решают, какие механики выживания вообще разрешены на сервере.",
-                "Эти механики открываются независимо друг от друга; остаются только нужные материальные пороги."
+                "Эти улучшения решают, какие механики выживания вообще разрешены на сервере."
               ],
               "uk_ua": [
                 "Ці покращення вирішують, які механіки виживання взагалі дозволені на сервері.",
@@ -3115,11 +3110,9 @@
           "lore": {
             "values": {
               "en_us": [
-                "All four racial tiers are independent purchases now.",
                 "Choose by price and effect, not by linear order."
               ],
               "ru_ru": [
-                "Все четыре расовых уровня теперь покупаются независимо.",
                 "Выбирай по цене и эффекту, а не по линейной цепочке."
               ],
               "uk_ua": [
@@ -3166,13 +3159,11 @@
             "values": {
               "en_us": [
                 "Unlocks the cheapest racial ability tier.",
-                "This tier is bought independently.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
                 "Открывает самый дешёвый уровень расовых способностей.",
-                "Этот уровень покупается независимо.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],
@@ -3227,13 +3218,11 @@
             "values": {
               "en_us": [
                 "Unlocks the medium racial tier.",
-                "This tier is bought independently.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
                 "Открывает средний уровень расовых способностей.",
-                "Этот уровень покупается независимо.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],
@@ -3288,13 +3277,11 @@
             "values": {
               "en_us": [
                 "Unlocks the expensive racial tier.",
-                "This tier is bought independently.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
                 "Открывает дорогой уровень расовых способностей.",
-                "Этот уровень покупается независимо.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],
@@ -3349,13 +3336,11 @@
             "values": {
               "en_us": [
                 "Unlocks the elite racial tier.",
-                "This tier is bought independently.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
                 "Открывает элитный уровень расовых способностей.",
-                "Этот уровень покупается независимо.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],

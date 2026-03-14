@@ -70,6 +70,7 @@ public final class ServerUpgradeUiSystem {
 	);
 	private static final String TOOLTIP_ICON_INFO = "\ue980";
 	private static final String TOOLTIP_ICON_COIN = "\ue981";
+	private static final String NO_PACK_COIN = "₿";
 	private static final int MAIN_BALANCE_CENTER_X = 127;
 	private static final int BALANCE_DIGIT_WIDTH = 6;
 	private static final int TOOLTIP_DESCRIPTION_WRAP = 42;
@@ -298,7 +299,7 @@ public final class ServerUpgradeUiSystem {
 			if (button == null || !button.enabled || button.slot < 0 || button.slot >= container.getContainerSize()) {
 				continue;
 			}
-			if (shouldHidePackButtonVisual(screenId, buttonId, hasPack)) {
+			if (shouldHideButtonVisual(screenId, buttonId)) {
 				continue;
 			}
 			if (isPureDecorButton(button)) {
@@ -427,24 +428,21 @@ public final class ServerUpgradeUiSystem {
 		int currentLevel = getUpgradeLevel(viewer, button.upgradeId);
 		int index = Math.max(0, Math.min(button.pricesBitcoins.size() - 1, state == ButtonState.MAXED ? button.pricesBitcoins.size() - 1 : currentLevel));
 		int price = button.pricesBitcoins.get(index);
+		boolean affordable = countBitcoins(viewer) >= price;
+		int priceColor = state == ButtonState.MAXED
+				? 0xBFAE89
+				: (affordable ? 0xF0D39B : 0x8E98A3);
 
 		if (!hasPack) {
-			String text = localizeTooltip(
-					viewer,
-					"Price: " + price + " BTC",
-					"Цена: " + price + " BTC",
-					"Цiна: " + price + " BTC",
-					"価格: " + price + " BTC",
-					"Цена: " + price + " BTC"
-			);
-			return styledTooltipText(text, 0xDCC89A, false, false);
+			MutableComponent line = Component.empty();
+			line.append(styledTooltipText(NO_PACK_COIN + " ", priceColor, false, false));
+			line.append(styledTooltipText(Integer.toString(price), priceColor, true, false, state == ButtonState.MAXED));
+			return line;
 		}
 
 		MutableComponent line = Component.empty();
 		line.append(styledTooltipText(TOOLTIP_ICON_COIN + " ", 0xFFFFFF, false, true));
-		line.append(styledTooltipText(localizeTooltip(viewer, "Price", "Цена", "Цiна", "価格", "Цена") + ": ", 0xD7C49B, false, true));
-		line.append(styledTooltipText(Integer.toString(price), 0xFFF0CB, true, true));
-		line.append(styledTooltipText(" BTC", 0xF0D39B, false, true));
+		line.append(styledTooltipText(Integer.toString(price), priceColor, true, true, state == ButtonState.MAXED));
 		return line;
 	}
 
@@ -464,8 +462,12 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	private static Component styledTooltipText(String text, int color, boolean bold, boolean hasPack) {
+		return styledTooltipText(text, color, bold, hasPack, false);
+	}
+
+	private static Component styledTooltipText(String text, int color, boolean bold, boolean hasPack, boolean strikethrough) {
 		return Component.literal(safeString(text)).withStyle(style -> {
-			style = style.withColor(color).withItalic(false).withBold(bold);
+			style = style.withColor(color).withItalic(false).withBold(bold).withStrikethrough(strikethrough);
 			if (hasPack) {
 				style = style.withFont(TOOLTIP_FONT);
 			}
@@ -689,7 +691,11 @@ public final class ServerUpgradeUiSystem {
 		Map.Entry<String, UpgradeUiConfig.ButtonConfig> matched = null;
 		for (Map.Entry<String, UpgradeUiConfig.ButtonConfig> entry : screen.buttons.entrySet()) {
 			UpgradeUiConfig.ButtonConfig button = entry.getValue();
-			if (button != null && button.enabled && !isPureDecorButton(button) && isWithinButtonHitbox(slot, button, hasPack)) {
+			if (button != null
+					&& button.enabled
+					&& !isPureDecorButton(button)
+					&& !shouldHideButtonVisual(screenId, entry.getKey())
+					&& isWithinButtonHitbox(slot, button, hasPack)) {
 				matched = entry;
 				break;
 			}
@@ -705,30 +711,31 @@ public final class ServerUpgradeUiSystem {
 		if (type == null) {
 			return false;
 		}
+		boolean suppressClickSound = shouldSuppressClickSound(screenId, buttonId);
 
 		ButtonState state = getButtonState(player, button);
 
 		switch (type) {
 			case NONE -> {
-				playUiClick(player, false);
+				playUiClick(player, false, suppressClickSound);
 				return true;
 			}
 			case CLOSE -> {
 				player.closeContainer();
-				playUiClick(player, true);
+				playUiClick(player, true, suppressClickSound);
 				return true;
 			}
 			case OPEN_SCREEN -> {
 				if (state == ButtonState.LOCKED) {
-					playUiClick(player, false);
+					playUiClick(player, false, suppressClickSound);
 					sendPlayerMessage(player, localizeSystem(player, "This section is locked.", "Этот раздел пока заблокирован."));
 					return true;
 				}
 				if (button.targetScreenId == null || button.targetScreenId.isBlank()) {
-					playUiClick(player, false);
+					playUiClick(player, false, suppressClickSound);
 					return true;
 				}
-				playUiClick(player, true);
+				playUiClick(player, true, suppressClickSound);
 				return openScreen(player, button.targetScreenId);
 			}
 			case PURCHASE_UPGRADE -> {
@@ -738,6 +745,10 @@ public final class ServerUpgradeUiSystem {
 				return false;
 			}
 		}
+	}
+
+	private static boolean shouldSuppressClickSound(String screenId, String buttonId) {
+		return "main".equals(screenId) && "balance".equals(buttonId);
 	}
 
 	private static boolean handlePurchaseClick(
@@ -928,8 +939,8 @@ public final class ServerUpgradeUiSystem {
 		return true;
 	}
 
-	private static boolean shouldHidePackButtonVisual(String screenId, String buttonId, boolean hasPack) {
-		return hasPack && "main".equals(screenId) && "balance".equals(buttonId);
+	private static boolean shouldHideButtonVisual(String screenId, String buttonId) {
+		return "main".equals(screenId) && "balance".equals(buttonId);
 	}
 
 	private static void hideLowerInventoryVisuals(ServerPlayer player, AbstractContainerMenu menu) {
@@ -1005,6 +1016,9 @@ public final class ServerUpgradeUiSystem {
 	) {
 		String localizedTitle = resolveLocalizedText(player, screen.title.values);
 		if (!hasPack) {
+			if ("main".equals(screenId)) {
+				return Component.literal(buildNoPackMainTitle(player, localizedTitle));
+			}
 			return Component.literal(localizedTitle);
 		}
 
@@ -1027,6 +1041,22 @@ public final class ServerUpgradeUiSystem {
 			title.append(packStyledLiteral(theme.packTitleSuffix));
 		}
 		return title.getString().isBlank() ? Component.literal(localizedTitle) : title;
+	}
+
+	private static String buildNoPackMainTitle(ServerPlayer player, String localizedTitle) {
+		String baseTitle = safeString(localizedTitle).isBlank() ? "Server" : localizedTitle;
+		String balanceText = NO_PACK_COIN + " " + countBitcoins(player);
+		int targetColumns = noPackTitleColumns(player);
+		int spaces = Math.max(2, targetColumns - baseTitle.length() - balanceText.length());
+		return baseTitle + " ".repeat(spaces) + balanceText;
+	}
+
+	private static int noPackTitleColumns(ServerPlayer player) {
+		String locale = normalizeLocale(player);
+		if (locale.startsWith("ja") || locale.startsWith("ko") || locale.startsWith("zh")) {
+			return 29;
+		}
+		return 35;
 	}
 
 	private static MutableComponent packStyledLiteral(String value) {
@@ -1218,6 +1248,13 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	private static void playUiClick(ServerPlayer player, boolean success) {
+		playUiClick(player, success, false);
+	}
+
+	private static void playUiClick(ServerPlayer player, boolean success, boolean suppress) {
+		if (suppress) {
+			return;
+		}
 		player.level().playSound(
 				null,
 				player.blockPosition(),
