@@ -27,6 +27,10 @@ public final class ExitSignSoundHelper {
 		playSound(level, pos, SoundEvents.STONE_BREAK, SoundEvents.WOOD_BREAK);
 	}
 
+	public static void playHitSound(ServerLevel level, BlockPos pos) {
+		playSound(level, pos, SoundEvents.STONE_HIT, SoundEvents.WOOD_HIT);
+	}
+
 	private static void playSound(ServerLevel level, BlockPos pos, SoundEvent packSound, SoundEvent fallbackSound) {
 		double x = pos.getX() + 0.5D;
 		double y = pos.getY() + 0.5D;

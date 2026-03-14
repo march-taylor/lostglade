@@ -11,7 +11,14 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.level.block.state.BlockState;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
 public final class ServerBackroomsBlockBreakSystem {
+	private static final long EXIT_SIGN_HIT_SOUND_INTERVAL_TICKS = 4L;
+	private static final Map<UUID, ExitSignHitState> LAST_EXIT_SIGN_HIT = new HashMap<>();
+
 	private ServerBackroomsBlockBreakSystem() {
 	}
 
@@ -36,6 +43,9 @@ public final class ServerBackroomsBlockBreakSystem {
 			}
 			if (!isSpecialPickaxe(serverPlayer)) {
 				return InteractionResult.SUCCESS;
+			}
+			if (world instanceof ServerLevel serverLevel && isExitSign(state) && shouldPlayExitSignHitSound(serverPlayer, pos)) {
+				ExitSignSoundHelper.playHitSound(serverLevel, pos);
 			}
 
 			return InteractionResult.PASS;
@@ -75,7 +85,25 @@ public final class ServerBackroomsBlockBreakSystem {
 				|| state.is(ModBlocks.EXIT_WALL_SIGN);
 	}
 
+	private static boolean isExitSign(BlockState state) {
+		return state.is(ModBlocks.EXIT_SIGN) || state.is(ModBlocks.EXIT_WALL_SIGN);
+	}
+
 	private static boolean isSpecialPickaxe(ServerPlayer player) {
 		return player.getMainHandItem().is(ModItems.SPECIAL_PICKAXE);
+	}
+
+	private static boolean shouldPlayExitSignHitSound(ServerPlayer player, net.minecraft.core.BlockPos pos) {
+		long tick = ((ServerLevel) player.level()).getGameTime();
+		UUID uuid = player.getUUID();
+		ExitSignHitState previous = LAST_EXIT_SIGN_HIT.get(uuid);
+		if (previous != null && previous.pos().equals(pos) && tick - previous.tick() < EXIT_SIGN_HIT_SOUND_INTERVAL_TICKS) {
+			return false;
+		}
+		LAST_EXIT_SIGN_HIT.put(uuid, new ExitSignHitState(pos.immutable(), tick));
+		return true;
+	}
+
+	private record ExitSignHitState(net.minecraft.core.BlockPos pos, long tick) {
 	}
 }
