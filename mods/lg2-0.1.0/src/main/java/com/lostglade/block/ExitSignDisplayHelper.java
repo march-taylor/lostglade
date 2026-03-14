@@ -82,7 +82,7 @@ public final class ExitSignDisplayHelper {
 		display.setXRot(0.0F);
 		display.setYHeadRot(yRot);
 		display.setYBodyRot(yRot);
-		display.setItemStack(new ItemStack(ModBlocks.EXIT_SIGN_ITEM));
+		display.setItemStack(ExitSignItem.createDisplayStack());
 		display.setItemTransform(ItemDisplayContext.FIXED);
 		display.setBillboardConstraints(Display.BillboardConstraints.FIXED);
 		display.setTransformation(Transformation.identity());

@@ -3,11 +3,15 @@ package com.lostglade.block;
 import com.mojang.serialization.MapCodec;
 import eu.pb4.polymer.core.api.block.PolymerBlock;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LevelReader;
+import net.minecraft.world.level.ScheduledTickAccess;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.WallSignBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -53,6 +57,24 @@ public final class ExitWallSignBlock extends WallSignBlock implements PolymerBlo
 	}
 
 	@Override
+	protected BlockState updateShape(
+			BlockState state,
+			LevelReader level,
+			ScheduledTickAccess scheduledTickAccess,
+			BlockPos pos,
+			Direction direction,
+			BlockPos neighborPos,
+			BlockState neighborState,
+			RandomSource random
+	) {
+		BlockState updated = super.updateShape(state, level, scheduledTickAccess, pos, direction, neighborPos, neighborState, random);
+		if (!(updated.getBlock() instanceof ExitSignBlock) && !(updated.getBlock() instanceof ExitWallSignBlock)) {
+			removeDisplay(level, pos);
+		}
+		return updated;
+	}
+
+	@Override
 	protected List<ItemStack> getDrops(BlockState state, LootParams.Builder builder) {
 		return List.of(new ItemStack(ModBlocks.EXIT_SIGN_ITEM));
 	}
@@ -80,6 +102,12 @@ public final class ExitWallSignBlock extends WallSignBlock implements PolymerBlo
 	}
 
 	private static void removeDisplay(net.minecraft.world.level.LevelAccessor level, BlockPos pos) {
+		if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+			ExitSignDisplayHelper.remove(serverLevel, pos);
+		}
+	}
+
+	private static void removeDisplay(LevelReader level, BlockPos pos) {
 		if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
 			ExitSignDisplayHelper.remove(serverLevel, pos);
 		}

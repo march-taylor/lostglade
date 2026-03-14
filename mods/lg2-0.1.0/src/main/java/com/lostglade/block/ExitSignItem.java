@@ -11,7 +11,9 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.item.SignItem;
+import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
@@ -19,6 +21,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 public final class ExitSignItem extends SignItem implements PolymerItem {
+	private static final String HIDE_WITHOUT_PACK_TAG = "lg2_exit_sign_hide_without_pack";
 	private final Identifier modelId;
 	private final Item fallbackItem;
 	private final String englishName;
@@ -51,6 +54,9 @@ public final class ExitSignItem extends SignItem implements PolymerItem {
 
 	@Override
 	public Item getPolymerItem(ItemStack stack, PacketContext context) {
+		if (!PolymerResourcePackUtils.hasMainPack(context) && shouldHideWithoutPack(stack)) {
+			return Items.AIR;
+		}
 		return this.fallbackItem;
 	}
 
@@ -81,6 +87,21 @@ public final class ExitSignItem extends SignItem implements PolymerItem {
 			return true;
 		}
 		return false;
+	}
+
+	static ItemStack createDisplayStack() {
+		ItemStack stack = new ItemStack(ModBlocks.EXIT_SIGN_ITEM);
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> tag.putBoolean(HIDE_WITHOUT_PACK_TAG, true));
+		return stack;
+	}
+
+	private static boolean shouldHideWithoutPack(ItemStack stack) {
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData == null || customData.isEmpty()) {
+			return false;
+		}
+
+		return customData.copyTag().getBooleanOr(HIDE_WITHOUT_PACK_TAG, false);
 	}
 
 	private MutableComponent getLocalizedName(PacketContext context) {
