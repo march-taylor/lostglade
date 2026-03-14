@@ -1,6 +1,46 @@
 {
-  "parent": "minecraft:item/generated",
+  "credit": "Made with Blockbench",
+  "texture_size": [32, 32],
   "textures": {
-    "layer0": "minecraft:item/pale_oak_sign"
-  }
+    "0": "lg2:item/exit_sign_display",
+    "particle": "lg2:item/exit_sign_display"
+  },
+  "elements": [
+    {
+      "from": [-0.05, 11.7, 8.5],
+      "to": [16.05, 19.8, 10.05],
+      "rotation": {
+        "x": -180,
+        "y": 0,
+        "z": 0,
+        "origin": [7.0, 11.75, 8.75]
+      },
+      "faces": {
+        "north": {
+          "uv": [0.0, 0.0, 8.0, 4.0],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [8.0, 0.5, 8.5, 4.5],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [0.0, 4.0, 8.0, 8.0],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [8.0, 4.5, 8.5, 8.5],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [8.0, 8.5, 0.0, 8.0],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [16.0, 0.0, 8.0, 0.5],
+          "texture": "#0"
+        }
+      }
+    }
+  ]
 }

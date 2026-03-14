@@ -66,4 +66,22 @@ public final class ExitWallSignBlock extends WallSignBlock implements PolymerBlo
 	protected InteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hitResult) {
 		return level.isClientSide() ? InteractionResult.SUCCESS : InteractionResult.CONSUME;
 	}
+
+	@Override
+	public BlockState playerWillDestroy(Level level, BlockPos pos, BlockState state, Player player) {
+		removeDisplay(level, pos);
+		return super.playerWillDestroy(level, pos, state, player);
+	}
+
+	@Override
+	public void destroy(net.minecraft.world.level.LevelAccessor level, BlockPos pos, BlockState state) {
+		removeDisplay(level, pos);
+		super.destroy(level, pos, state);
+	}
+
+	private static void removeDisplay(net.minecraft.world.level.LevelAccessor level, BlockPos pos) {
+		if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+			ExitSignDisplayHelper.remove(serverLevel, pos);
+		}
+	}
 }

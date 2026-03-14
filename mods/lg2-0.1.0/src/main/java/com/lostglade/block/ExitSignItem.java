@@ -75,6 +75,7 @@ public final class ExitSignItem extends SignItem implements PolymerItem {
 			ExitSignBlock.applyFixedText(sign);
 			level.sendBlockUpdated(pos, state, state, Block.UPDATE_ALL);
 			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer) {
+				ExitSignDisplayHelper.spawnOrUpdate(serverLevel, pos, state);
 				ExitSignSoundHelper.playPlaceSound(serverLevel, pos);
 			}
 			return true;

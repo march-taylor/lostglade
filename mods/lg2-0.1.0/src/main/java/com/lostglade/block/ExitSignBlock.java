@@ -72,6 +72,18 @@ public final class ExitSignBlock extends StandingSignBlock implements PolymerBlo
 		return level.isClientSide() ? InteractionResult.SUCCESS : InteractionResult.CONSUME;
 	}
 
+	@Override
+	public BlockState playerWillDestroy(Level level, BlockPos pos, BlockState state, Player player) {
+		removeDisplay(level, pos);
+		return super.playerWillDestroy(level, pos, state, player);
+	}
+
+	@Override
+	public void destroy(net.minecraft.world.level.LevelAccessor level, BlockPos pos, BlockState state) {
+		removeDisplay(level, pos);
+		super.destroy(level, pos, state);
+	}
+
 	public static void applyFixedText(SignBlockEntity sign) {
 		if (sign.getLevel() == null) {
 			return;
@@ -107,7 +119,19 @@ public final class ExitSignBlock extends StandingSignBlock implements PolymerBlo
 	static <T extends BlockEntity> void tickExitSign(Level level, BlockPos pos, BlockState state, T blockEntity) {
 		if (blockEntity instanceof SignBlockEntity sign) {
 			applyFixedText(sign);
+			if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+				long gameTime = serverLevel.getGameTime();
+				if ((gameTime + pos.asLong()) % 20L == 0L) {
+					ExitSignDisplayHelper.ensureDisplay(serverLevel, pos, state);
+				}
+			}
 			SignBlockEntity.tick(level, pos, state, sign);
+		}
+	}
+
+	private static void removeDisplay(net.minecraft.world.level.LevelAccessor level, BlockPos pos) {
+		if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+			ExitSignDisplayHelper.remove(serverLevel, pos);
 		}
 	}
 }
