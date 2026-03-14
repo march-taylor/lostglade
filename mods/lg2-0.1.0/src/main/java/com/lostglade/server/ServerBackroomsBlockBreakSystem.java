@@ -1,10 +1,12 @@
 package com.lostglade.server;
 
 import com.lostglade.block.ModBlocks;
+import com.lostglade.block.ExitSignSoundHelper;
 import com.lostglade.item.ModItems;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.level.block.state.BlockState;
@@ -50,6 +52,16 @@ public final class ServerBackroomsBlockBreakSystem {
 				return true;
 			}
 			return isSpecialPickaxe(serverPlayer);
+		});
+
+		PlayerBlockBreakEvents.AFTER.register((world, player, pos, state, blockEntity) -> {
+			if (!(world instanceof ServerLevel serverLevel)) {
+				return;
+			}
+			if (!state.is(ModBlocks.EXIT_SIGN) && !state.is(ModBlocks.EXIT_WALL_SIGN)) {
+				return;
+			}
+			ExitSignSoundHelper.playBreakSound(serverLevel, pos);
 		});
 	}
 

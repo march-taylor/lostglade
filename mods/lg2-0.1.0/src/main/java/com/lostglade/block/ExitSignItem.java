@@ -1,10 +1,13 @@
 package com.lostglade.block;
 
 import eu.pb4.polymer.core.api.item.PolymerItem;
+import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.resources.Identifier;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -16,6 +19,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 public final class ExitSignItem extends SignItem implements PolymerItem {
+	private final Identifier modelId;
 	private final Item fallbackItem;
 	private final String englishName;
 	private final String russianName;
@@ -27,6 +31,7 @@ public final class ExitSignItem extends SignItem implements PolymerItem {
 			Block standingBlock,
 			Block wallBlock,
 			Item.Properties settings,
+			Identifier modelId,
 			Item fallbackItem,
 			String englishName,
 			String russianName,
@@ -35,6 +40,7 @@ public final class ExitSignItem extends SignItem implements PolymerItem {
 			String japaneseName
 	) {
 		super(standingBlock, wallBlock, settings);
+		this.modelId = modelId;
 		this.fallbackItem = fallbackItem;
 		this.englishName = englishName;
 		this.russianName = russianName;
@@ -49,11 +55,18 @@ public final class ExitSignItem extends SignItem implements PolymerItem {
 	}
 
 	@Override
+	public Identifier getPolymerItemModel(ItemStack stack, PacketContext context) {
+		return PolymerResourcePackUtils.hasMainPack(context) ? this.modelId : null;
+	}
+
+	@Override
 	public void modifyBasePolymerItemStack(ItemStack out, ItemStack original, PacketContext context) {
-		out.set(
-				DataComponents.CUSTOM_NAME,
-				getLocalizedName(context).withStyle(style -> style.withItalic(false))
-		);
+		if (!PolymerResourcePackUtils.hasMainPack(context)) {
+			out.set(
+					DataComponents.CUSTOM_NAME,
+					getLocalizedName(context).withStyle(style -> style.withItalic(false))
+			);
+		}
 	}
 
 	@Override
@@ -61,6 +74,9 @@ public final class ExitSignItem extends SignItem implements PolymerItem {
 		if (level.getBlockEntity(pos) instanceof SignBlockEntity sign) {
 			ExitSignBlock.applyFixedText(sign);
 			level.sendBlockUpdated(pos, state, state, Block.UPDATE_ALL);
+			if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer) {
+				ExitSignSoundHelper.playPlaceSound(serverLevel, pos);
+			}
 			return true;
 		}
 		return false;

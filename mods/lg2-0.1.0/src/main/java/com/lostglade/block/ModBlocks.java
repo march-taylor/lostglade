@@ -211,10 +211,11 @@ public final class ModBlocks {
 					EXIT_SIGN,
 					EXIT_WALL_SIGN,
 					new Item.Properties().setId(EXIT_SIGN_ITEM_KEY).useBlockDescriptionPrefix().stacksTo(16),
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "exit_sign"),
 					Items.PALE_OAK_SIGN,
 					"Exit Sign",
 					"\u0422\u0430\u0431\u043b\u0438\u0447\u043a\u0430 \u0432\u044b\u0445\u043e\u0434\u0430",
-					"\u0422\u0430\u0431\u043b\u0438\u0447\u043a\u0430 \u0412\u044b\u0445\u043e\u0434\u0430",
+					"\u0418\u0441\u0445\u043e\u0434\u044a \u043e\u0442\u0441\u044e\u0434\u043e\u0432\u0430",
 					"\u0422\u0430\u0431\u043b\u0438\u0447\u043a\u0430 \u0432\u0438\u0445\u043e\u0434\u0443",
 					"EXIT\u6a19\u8b58"
 			)
@@ -317,6 +318,7 @@ public final class ModBlocks {
 	private static BlockBehaviour.Properties createExitSignProperties() {
 		return BlockBehaviour.Properties.ofFullCopy(Blocks.PALE_OAK_SIGN)
 				.strength(30.0f, 1200.0f)
+				.sound(SoundType.EMPTY)
 				.requiresCorrectToolForDrops()
 				.noLootTable()
 				.setId(EXIT_SIGN_KEY);
@@ -325,6 +327,7 @@ public final class ModBlocks {
 	private static BlockBehaviour.Properties createExitWallSignProperties() {
 		return BlockBehaviour.Properties.ofFullCopy(Blocks.PALE_OAK_WALL_SIGN)
 				.strength(30.0f, 1200.0f)
+				.sound(SoundType.EMPTY)
 				.requiresCorrectToolForDrops()
 				.noLootTable()
 				.setId(EXIT_WALL_SIGN_KEY);
