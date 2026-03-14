@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.lostglade.Lg2;
 import com.lostglade.block.ModBlocks;
+import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -12,14 +13,19 @@ import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.Entity;
@@ -60,8 +66,12 @@ public final class ServerBackroomsSystem {
 	private static final int PLATFORM_EXIT_LENGTH = 12;
 	private static final int RESPAWN_SEARCH_ATTEMPTS = 48;
 	private static final int RESPAWN_SEARCH_RADIUS = 12;
+	private static final Identifier BACKROOMS_AMBIENT_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "custom.backrooms_ambient_loop");
+	private static final int BACKROOMS_AMBIENT_LOOP_TICKS = 40;
+	private static final float[] BACKROOMS_AMBIENT_FADE_IN = new float[]{0.35F, 0.55F, 0.75F, 0.85F};
 	private static final Map<UUID, ReturnPointState> RETURN_POINTS = new HashMap<>();
 	private static final Map<UUID, Integer> PENDING_RESPAWNS = new HashMap<>();
+	private static final Map<UUID, AmbientLoopState> AMBIENT_LOOP_STATES = new HashMap<>();
 
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
@@ -74,6 +84,7 @@ public final class ServerBackroomsSystem {
 		stateDirty = false;
 		RETURN_POINTS.clear();
 		PENDING_RESPAWNS.clear();
+		AMBIENT_LOOP_STATES.clear();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerBackroomsSystem::loadState);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerBackroomsSystem::saveState);
@@ -369,6 +380,7 @@ public final class ServerBackroomsSystem {
 	private static void tickServer(MinecraftServer server) {
 		enforceClearWeather(server);
 		tickPendingRespawns(server);
+		tickBackroomsAmbientLoop(server);
 	}
 
 	private static void enforceClearWeather(MinecraftServer server) {
@@ -408,6 +420,61 @@ public final class ServerBackroomsSystem {
 				false
 		);
 		player.fallDistance = 0.0F;
+	}
+
+	private static void tickBackroomsAmbientLoop(MinecraftServer server) {
+		long gameTime = server.overworld().getGameTime();
+
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			UUID uuid = player.getUUID();
+			boolean shouldPlay = isInBackrooms(player) && PolymerResourcePackUtils.hasMainPack(player);
+			AmbientLoopState state = AMBIENT_LOOP_STATES.get(uuid);
+
+			if (!shouldPlay) {
+				if (state != null) {
+					stopBackroomsAmbient(player);
+					AMBIENT_LOOP_STATES.remove(uuid);
+				}
+				continue;
+			}
+
+			if (state == null) {
+				state = new AmbientLoopState();
+				state.nextPlayTick = gameTime;
+				state.fadeStep = 0;
+				AMBIENT_LOOP_STATES.put(uuid, state);
+			}
+
+			if (gameTime >= state.nextPlayTick) {
+				float volume = BACKROOMS_AMBIENT_FADE_IN[Math.min(state.fadeStep, BACKROOMS_AMBIENT_FADE_IN.length - 1)];
+				playBackroomsAmbient(player, volume);
+				state.fadeStep = Math.min(state.fadeStep + 1, BACKROOMS_AMBIENT_FADE_IN.length - 1);
+				state.nextPlayTick = gameTime + BACKROOMS_AMBIENT_LOOP_TICKS;
+			}
+		}
+
+		AMBIENT_LOOP_STATES.keySet().removeIf(uuid -> server.getPlayerList().getPlayer(uuid) == null);
+	}
+
+	private static void playBackroomsAmbient(ServerPlayer player, float volume) {
+		Holder<SoundEvent> sound = Holder.direct(SoundEvent.createVariableRangeEvent(BACKROOMS_AMBIENT_SOUND_ID));
+		long seed = player.level().random.nextLong();
+		player.connection.send(
+				new ClientboundSoundPacket(
+						sound,
+						SoundSource.AMBIENT,
+						player.getX(),
+						player.getY(),
+						player.getZ(),
+						volume,
+						1.0F,
+						seed
+				)
+		);
+	}
+
+	private static void stopBackroomsAmbient(ServerPlayer player) {
+		player.connection.send(new ClientboundStopSoundPacket(BACKROOMS_AMBIENT_SOUND_ID, SoundSource.AMBIENT));
 	}
 
 	private static BlockPos findRandomSafeRespawn(ServerLevel level) {
@@ -535,5 +602,10 @@ public final class ServerBackroomsSystem {
 		double z;
 		float yaw;
 		float pitch;
+	}
+
+	private static final class AmbientLoopState {
+		long nextPlayTick;
+		int fadeStep;
 	}
 }

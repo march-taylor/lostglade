@@ -1,4 +1,13 @@
 {
+  "custom.backrooms_ambient_loop": {
+    "sounds": [
+      {
+        "name": "minecraft:custom/backrooms_ambient_loop",
+        "preload": true,
+        "volume": 0.85
+      }
+    ]
+  },
   "music_disc.13": {
     "replace": true,
     "sounds": [
