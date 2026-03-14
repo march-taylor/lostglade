@@ -28,6 +28,7 @@ public final class ServerBackroomsStalkerSystem {
 	private static final int MIN_SPAWN_DISTANCE_BLOCKS = 8;
 	private static final int MAX_SPAWN_ATTEMPTS_PER_PLAYER = 48;
 	private static final int MAX_VERTICAL_SEARCH = 4;
+	private static final int MAX_INTERIOR_FEET_Y = 65;
 
 	private ServerBackroomsStalkerSystem() {
 	}
@@ -218,6 +219,9 @@ public final class ServerBackroomsStalkerSystem {
 
 	private static boolean canSpawnAt(ServerLevel level, BackroomsStalkerEntity stalker, BlockPos feetPos) {
 		if (!level.getWorldBorder().isWithinBounds(feetPos)) {
+			return false;
+		}
+		if (feetPos.getY() > MAX_INTERIOR_FEET_Y) {
 			return false;
 		}
 

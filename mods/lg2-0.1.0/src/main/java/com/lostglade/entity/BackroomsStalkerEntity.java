@@ -55,6 +55,8 @@ public final class BackroomsStalkerEntity extends Monster {
 	private static final byte ALL_PLAYER_SKIN_PARTS = (byte) 0x7F;
 	private static final double WALK_SPEED = 0.23D;
 	private static final double CHASE_SPEED_MODIFIER = 1.65D;
+	private static final double ATTACK_RANGE = 2.2D;
+	private static final double ATTACK_RANGE_SQR = ATTACK_RANGE * ATTACK_RANGE;
 	private static final int FORGET_TARGET_AFTER_TICKS = 100;
 	private static final int ATTACK_COOLDOWN_TICKS = 20;
 	private static final int MIN_WANDER_DISTANCE = 8;
@@ -408,9 +410,8 @@ public final class BackroomsStalkerEntity extends Monster {
 			return;
 		}
 
-		AABB hitBox = this.getBoundingBox().inflate(0.1D);
 		for (ServerPlayer player : level.players()) {
-			if (!isEligibleTarget(player) || !player.getBoundingBox().intersects(hitBox)) {
+			if (!isEligibleTarget(player) || this.distanceToSqr(player) > ATTACK_RANGE_SQR) {
 				continue;
 			}
 
