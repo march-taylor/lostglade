@@ -23,7 +23,7 @@ public final class ServerBackroomsBlockBreakSystem {
 			}
 
 			BlockState state = world.getBlockState(pos);
-			if (!isProtectedBackroomsBlock(state) && !state.is(ModBlocks.BACKROOMS_DOOR)) {
+			if (!isProtectedBackroomsBlock(state) && !isProtectedBackroomsUtility(state)) {
 				return InteractionResult.PASS;
 			}
 			if (serverPlayer.isCreative()) {
@@ -40,7 +40,7 @@ public final class ServerBackroomsBlockBreakSystem {
 		});
 
 		PlayerBlockBreakEvents.BEFORE.register((world, player, pos, state, blockEntity) -> {
-			if (!isProtectedBackroomsBlock(state) && !state.is(ModBlocks.BACKROOMS_DOOR)) {
+			if (!isProtectedBackroomsBlock(state) && !isProtectedBackroomsUtility(state)) {
 				return true;
 			}
 			if (!(player instanceof ServerPlayer serverPlayer)) {
@@ -55,6 +55,12 @@ public final class ServerBackroomsBlockBreakSystem {
 
 	private static boolean isProtectedBackroomsBlock(BlockState state) {
 		return state.is(ModBlocks.BACKROOMS_BLOCK) || state.is(ModBlocks.BACKROOMS_LIGHTBLOCK);
+	}
+
+	private static boolean isProtectedBackroomsUtility(BlockState state) {
+		return state.is(ModBlocks.BACKROOMS_DOOR)
+				|| state.is(ModBlocks.EXIT_SIGN)
+				|| state.is(ModBlocks.EXIT_WALL_SIGN);
 	}
 
 	private static boolean isSpecialPickaxe(ServerPlayer player) {

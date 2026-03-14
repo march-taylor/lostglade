@@ -1,6 +1,7 @@
 package com.lostglade.block;
 
 import com.lostglade.Lg2;
+import com.lostglade.mixin.BlockEntityTypeAccessor;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -13,6 +14,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.MapColor;
@@ -23,6 +25,8 @@ public final class ModBlocks {
 	private static final Identifier BACKROOMS_BLOCK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_block");
 	private static final Identifier BACKROOMS_LIGHTBLOCK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_lightblock");
 	private static final Identifier BACKROOMS_DOOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_door");
+	private static final Identifier EXIT_SIGN_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "exit_sign");
+	private static final Identifier EXIT_WALL_SIGN_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "exit_wall_sign");
 	private static final Identifier SERVER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "server");
 
 	private static final ResourceKey<Block> BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, BITCOIN_ORE_ID);
@@ -30,12 +34,15 @@ public final class ModBlocks {
 	private static final ResourceKey<Block> BACKROOMS_BLOCK_KEY = ResourceKey.create(Registries.BLOCK, BACKROOMS_BLOCK_ID);
 	private static final ResourceKey<Block> BACKROOMS_LIGHTBLOCK_KEY = ResourceKey.create(Registries.BLOCK, BACKROOMS_LIGHTBLOCK_ID);
 	private static final ResourceKey<Block> BACKROOMS_DOOR_KEY = ResourceKey.create(Registries.BLOCK, BACKROOMS_DOOR_ID);
+	private static final ResourceKey<Block> EXIT_SIGN_KEY = ResourceKey.create(Registries.BLOCK, EXIT_SIGN_ID);
+	private static final ResourceKey<Block> EXIT_WALL_SIGN_KEY = ResourceKey.create(Registries.BLOCK, EXIT_WALL_SIGN_ID);
 	private static final ResourceKey<Block> SERVER_KEY = ResourceKey.create(Registries.BLOCK, SERVER_ID);
 	private static final ResourceKey<Item> BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> DEEPSLATE_BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, DEEPSLATE_BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> BACKROOMS_BLOCK_ITEM_KEY = ResourceKey.create(Registries.ITEM, BACKROOMS_BLOCK_ID);
 	private static final ResourceKey<Item> BACKROOMS_LIGHTBLOCK_ITEM_KEY = ResourceKey.create(Registries.ITEM, BACKROOMS_LIGHTBLOCK_ID);
 	private static final ResourceKey<Item> BACKROOMS_DOOR_ITEM_KEY = ResourceKey.create(Registries.ITEM, BACKROOMS_DOOR_ID);
+	private static final ResourceKey<Item> EXIT_SIGN_ITEM_KEY = ResourceKey.create(Registries.ITEM, EXIT_SIGN_ID);
 	private static final ResourceKey<Item> SERVER_ITEM_KEY = ResourceKey.create(Registries.ITEM, SERVER_ID);
 
 	private static final ResourceKey<CreativeModeTab> NATURAL_BLOCKS_TAB = ResourceKey.create(
@@ -112,6 +119,18 @@ public final class ModBlocks {
 			)
 	);
 
+	public static final Block EXIT_SIGN = Registry.register(
+			BuiltInRegistries.BLOCK,
+			EXIT_SIGN_ID,
+			new ExitSignBlock(createExitSignProperties())
+	);
+
+	public static final Block EXIT_WALL_SIGN = Registry.register(
+			BuiltInRegistries.BLOCK,
+			EXIT_WALL_SIGN_ID,
+			new ExitWallSignBlock(createExitWallSignProperties())
+	);
+
 	public static final Item BITCOIN_ORE_ITEM = Registry.register(
 			BuiltInRegistries.ITEM,
 			BITCOIN_ORE_ID,
@@ -185,6 +204,22 @@ public final class ModBlocks {
 			)
 	);
 
+	public static final Item EXIT_SIGN_ITEM = Registry.register(
+			BuiltInRegistries.ITEM,
+			EXIT_SIGN_ID,
+			new ExitSignItem(
+					EXIT_SIGN,
+					EXIT_WALL_SIGN,
+					new Item.Properties().setId(EXIT_SIGN_ITEM_KEY).useBlockDescriptionPrefix().stacksTo(16),
+					Items.PALE_OAK_SIGN,
+					"Exit Sign",
+					"\u0422\u0430\u0431\u043b\u0438\u0447\u043a\u0430 \u0432\u044b\u0445\u043e\u0434\u0430",
+					"\u0422\u0430\u0431\u043b\u0438\u0447\u043a\u0430 \u0412\u044b\u0445\u043e\u0434\u0430",
+					"\u0422\u0430\u0431\u043b\u0438\u0447\u043a\u0430 \u0432\u0438\u0445\u043e\u0434\u0443",
+					"EXIT\u6a19\u8b58"
+			)
+	);
+
 	public static final Item SERVER_ITEM = Registry.register(
 			BuiltInRegistries.ITEM,
 			SERVER_ID,
@@ -200,6 +235,9 @@ public final class ModBlocks {
 	}
 
 	public static void register() {
+		((BlockEntityTypeAccessor) (Object) BlockEntityType.SIGN).lg2$getValidBlocks().add(EXIT_SIGN);
+		((BlockEntityTypeAccessor) (Object) BlockEntityType.SIGN).lg2$getValidBlocks().add(EXIT_WALL_SIGN);
+
 		ItemGroupEvents.modifyEntriesEvent(NATURAL_BLOCKS_TAB).register(entries -> {
 			entries.prepend(BACKROOMS_LIGHTBLOCK_ITEM);
 			entries.prepend(BACKROOMS_BLOCK_ITEM);
@@ -207,6 +245,7 @@ public final class ModBlocks {
 			entries.prepend(BITCOIN_ORE_ITEM);
 		});
 		ItemGroupEvents.modifyEntriesEvent(FUNCTIONAL_BLOCKS_TAB).register(entries -> {
+			entries.prepend(EXIT_SIGN_ITEM);
 			entries.prepend(BACKROOMS_DOOR_ITEM);
 			entries.prepend(SERVER_ITEM);
 		});
@@ -273,5 +312,21 @@ public final class ModBlocks {
 				.requiresCorrectToolForDrops()
 				.ignitedByLava()
 				.setId(BACKROOMS_DOOR_KEY);
+	}
+
+	private static BlockBehaviour.Properties createExitSignProperties() {
+		return BlockBehaviour.Properties.ofFullCopy(Blocks.PALE_OAK_SIGN)
+				.strength(30.0f, 1200.0f)
+				.requiresCorrectToolForDrops()
+				.noLootTable()
+				.setId(EXIT_SIGN_KEY);
+	}
+
+	private static BlockBehaviour.Properties createExitWallSignProperties() {
+		return BlockBehaviour.Properties.ofFullCopy(Blocks.PALE_OAK_WALL_SIGN)
+				.strength(30.0f, 1200.0f)
+				.requiresCorrectToolForDrops()
+				.noLootTable()
+				.setId(EXIT_WALL_SIGN_KEY);
 	}
 }
