@@ -185,7 +185,6 @@ public final class ServerStabilitySystem {
 		if (!hud.getPlayers().contains(player)) {
 			hud.addPlayer(player);
 		} else if (spacerBecameVisible) {
-			// Re-add so main bar is rendered below the spacer bar.
 			hud.removePlayer(player);
 			hud.addPlayer(player);
 		}
@@ -226,7 +225,7 @@ public final class ServerStabilitySystem {
 	private static ServerBossEvent createSpacerHudEvent() {
 		ServerBossEvent event = new ServerBossEvent(
 				Component.empty(),
-				BossEvent.BossBarColor.PINK,
+				BossEvent.BossBarColor.GREEN,
 				BossEvent.BossBarOverlay.PROGRESS
 		);
 		event.setDarkenScreen(false);
@@ -239,7 +238,7 @@ public final class ServerStabilitySystem {
 	private static boolean showSpacerHud(ServerPlayer player) {
 		ServerBossEvent spacer = PLAYER_SPACER_HUDS.computeIfAbsent(player.getUUID(), id -> createSpacerHudEvent());
 		spacer.setName(Component.empty());
-		spacer.setColor(BossEvent.BossBarColor.PINK);
+		spacer.setColor(BossEvent.BossBarColor.GREEN);
 		spacer.setProgress(0.0F);
 		spacer.setVisible(true);
 
