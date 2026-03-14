@@ -8,6 +8,7 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.SignBlock;
+import net.minecraft.world.level.block.StandingSignBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -18,6 +19,7 @@ public final class ExitSignDisplayHelper {
 	private static final String ROOT_TAG = "lg2_exit_sign_display";
 	private static final String POS_TAG_PREFIX = "lg2_exit_sign_display_pos:";
 	private static final double SEARCH_RADIUS = 0.9D;
+	private static final double STANDING_SIGN_Y_OFFSET = 0.3375D;
 
 	private ExitSignDisplayHelper() {
 	}
@@ -75,6 +77,9 @@ public final class ExitSignDisplayHelper {
 				pos.getY() + hitboxCenter.y(),
 				pos.getZ() + hitboxCenter.z()
 		);
+		if (signBlock instanceof StandingSignBlock) {
+			worldCenter = worldCenter.add(0.0D, STANDING_SIGN_Y_OFFSET, 0.0D);
+		}
 
 		float yRot = signBlock.getYRotationDegrees(state) + 180.0F;
 		display.setPos(worldCenter.x, worldCenter.y, worldCenter.z);
