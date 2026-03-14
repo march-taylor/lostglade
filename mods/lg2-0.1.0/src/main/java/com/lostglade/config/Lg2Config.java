@@ -27,6 +27,8 @@ public final class Lg2Config {
 	private static final int MAX_STABILITY_DECAY_INTERVAL_SECONDS_PER_PLAYER = 2_592_000;
 	private static final int MIN_BACKROOMS_ENTITY_RADIUS_CHUNKS = 1;
 	private static final int MAX_BACKROOMS_ENTITY_RADIUS_CHUNKS = 64;
+	private static final int MIN_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS = 1;
+	private static final int MAX_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS = 32;
 	private static final double DEFAULT_BITCOINS_PER_STABILITY = 6.4D;
 	private static final double MIN_BITCOINS_PER_STABILITY = 0.001D;
 	private static final double MAX_BITCOINS_PER_STABILITY = 1_000_000.0D;
@@ -105,6 +107,10 @@ public final class Lg2Config {
 				MIN_BACKROOMS_ENTITY_RADIUS_CHUNKS,
 				MAX_BACKROOMS_ENTITY_RADIUS_CHUNKS,
 				newValue -> configData.backroomsEntityRadiusChunks = newValue);
+		changed |= clampSingleValue(configData.backroomsEntityGroupRadiusChunks,
+				MIN_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS,
+				MAX_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS,
+				newValue -> configData.backroomsEntityGroupRadiusChunks = newValue);
 		changed |= sanitizeBitcoinsPerStability(configData);
 
 		return changed;
@@ -234,6 +240,7 @@ public final class Lg2Config {
 		public int stabilityDecayIntervalSeconds = 864;
 		public int stabilityDecayIntervalSecondsPerPlayer = 0;
 		public int backroomsEntityRadiusChunks = 6;
+		public int backroomsEntityGroupRadiusChunks = 2;
 		public double bitcoinsPerStability = DEFAULT_BITCOINS_PER_STABILITY;
 
 		private ConfigData() {

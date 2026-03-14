@@ -22,7 +22,10 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 
 public final class ServerBackroomsStalkerSystem {
 	private static final int MIN_SPAWN_DISTANCE_BLOCKS = 8;
@@ -67,24 +70,24 @@ public final class ServerBackroomsStalkerSystem {
 			return;
 		}
 
-		BackroomsStalkerEntity primary = null;
-		for (BackroomsStalkerEntity stalker : stalkers) {
-			if (primary == null) {
-				primary = stalker;
+		int radiusBlocks = Math.max(16, Lg2Config.get().backroomsEntityRadiusChunks * 16);
+		int groupRadiusBlocks = Math.max(16, Lg2Config.get().backroomsEntityGroupRadiusChunks * 16);
+		List<PlayerCluster> clusters = buildClusters(players, groupRadiusBlocks);
+		Set<BackroomsStalkerEntity> assignedStalkers = new HashSet<>();
+
+		for (PlayerCluster cluster : clusters) {
+			BackroomsStalkerEntity assigned = findAssignedStalker(cluster, stalkers, assignedStalkers, radiusBlocks);
+			if (assigned != null) {
+				assignedStalkers.add(assigned);
 				continue;
 			}
-			stalker.discardFromSystem();
+			spawnNearPlayers(backrooms, cluster.players(), radiusBlocks);
 		}
 
-		int radiusBlocks = Math.max(16, Lg2Config.get().backroomsEntityRadiusChunks * 16);
-		if (primary == null || !primary.isAlive() || primary.isRemoved()) {
-			spawnNearPlayers(backrooms, players, radiusBlocks);
-			return;
-		}
-
-		if (!isWithinPresenceRadius(primary, players, radiusBlocks)) {
-			primary.discardFromSystem();
-			spawnNearPlayers(backrooms, players, radiusBlocks);
+		for (BackroomsStalkerEntity stalker : stalkers) {
+			if (!assignedStalkers.contains(stalker)) {
+				stalker.discardFromSystem();
+			}
 		}
 	}
 
@@ -144,6 +147,31 @@ public final class ServerBackroomsStalkerSystem {
 		}
 	}
 
+	private static BackroomsStalkerEntity findAssignedStalker(
+			PlayerCluster cluster,
+			List<BackroomsStalkerEntity> stalkers,
+			Set<BackroomsStalkerEntity> assigned,
+			int radiusBlocks
+	) {
+		BackroomsStalkerEntity nearest = null;
+		double nearestDistanceSqr = Double.MAX_VALUE;
+		for (BackroomsStalkerEntity stalker : stalkers) {
+			if (assigned.contains(stalker) || !stalker.isAlive() || stalker.isRemoved()) {
+				continue;
+			}
+			if (!isWithinPresenceRadius(stalker, cluster.players(), radiusBlocks)) {
+				continue;
+			}
+
+			double distanceSqr = stalker.position().distanceToSqr(cluster.center());
+			if (distanceSqr < nearestDistanceSqr) {
+				nearest = stalker;
+				nearestDistanceSqr = distanceSqr;
+			}
+		}
+		return nearest;
+	}
+
 	private static boolean isWithinPresenceRadius(BackroomsStalkerEntity stalker, List<ServerPlayer> players, int radiusBlocks) {
 		double maxDistanceSqr = (double) radiusBlocks * radiusBlocks;
 		for (ServerPlayer player : players) {
@@ -152,6 +180,54 @@ public final class ServerBackroomsStalkerSystem {
 			}
 		}
 		return false;
+	}
+
+	private static List<PlayerCluster> buildClusters(List<ServerPlayer> players, int groupRadiusBlocks) {
+		List<PlayerCluster> clusters = new ArrayList<>();
+		Set<UUID> visited = new HashSet<>();
+		double maxDistanceSqr = (double) groupRadiusBlocks * groupRadiusBlocks;
+
+		for (ServerPlayer start : players) {
+			if (!visited.add(start.getUUID())) {
+				continue;
+			}
+
+			List<ServerPlayer> clusterPlayers = new ArrayList<>();
+			List<ServerPlayer> queue = new ArrayList<>();
+			queue.add(start);
+
+			for (int i = 0; i < queue.size(); i++) {
+				ServerPlayer current = queue.get(i);
+				clusterPlayers.add(current);
+				for (ServerPlayer candidate : players) {
+					if (visited.contains(candidate.getUUID())) {
+						continue;
+					}
+					if (current.distanceToSqr(candidate) > maxDistanceSqr) {
+						continue;
+					}
+					visited.add(candidate.getUUID());
+					queue.add(candidate);
+				}
+			}
+
+			clusters.add(new PlayerCluster(clusterPlayers, computeCenter(clusterPlayers)));
+		}
+
+		return clusters;
+	}
+
+	private static Vec3 computeCenter(List<ServerPlayer> players) {
+		double sumX = 0.0D;
+		double sumY = 0.0D;
+		double sumZ = 0.0D;
+		for (ServerPlayer player : players) {
+			sumX += player.getX();
+			sumY += player.getY();
+			sumZ += player.getZ();
+		}
+		double size = players.isEmpty() ? 1.0D : players.size();
+		return new Vec3(sumX / size, sumY / size, sumZ / size);
 	}
 
 	private static void spawnNearPlayers(ServerLevel level, List<ServerPlayer> players, int radiusBlocks) {
@@ -245,5 +321,8 @@ public final class ServerBackroomsStalkerSystem {
 
 		stalker.setPos(feetPos.getX() + 0.5D, feetPos.getY(), feetPos.getZ() + 0.5D);
 		return level.noCollision(stalker, stalker.getBoundingBox());
+	}
+
+	private record PlayerCluster(List<ServerPlayer> players, Vec3 center) {
 	}
 }
