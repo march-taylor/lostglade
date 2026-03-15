@@ -17,6 +17,7 @@
 		"PlayerTrackedDataAccessor",
 		"ResultSlotMechanicsGateMixin",
 		"ServerItemEntityMixin",
+		"ServerPlayerBackroomsRespawnMixin",
 		"ServerPlayerMenuTitleMixin"
 	],
 	"injectors": {

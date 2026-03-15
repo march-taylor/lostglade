@@ -8,7 +8,6 @@ import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
-import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.BlockPos;
@@ -33,8 +32,10 @@ import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.portal.TeleportTransition;
 import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.level.storage.LevelResource;
+import net.minecraft.world.phys.Vec3;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -65,7 +66,6 @@ public final class ServerBackroomsSystem {
 	private static final int BACKROOMS_LEVEL_HEIGHT = 5;
 	private static final int RESPAWN_MIN_COORD = -4096;
 	private static final int RESPAWN_MAX_COORD = 4096;
-	private static final int BACKROOMS_RESPAWN_DELAY_TICKS = 2;
 	private static final int PLATFORM_RADIUS = 2;
 	private static final int PLATFORM_CLEAR_HEIGHT = 4;
 	private static final int PLATFORM_EXIT_LENGTH = 12;
@@ -96,7 +96,6 @@ public final class ServerBackroomsSystem {
 	private static final float LAMP_FLICKER_TRIGGER_CHANCE = 0.40F;
 	private static final int LAMP_FLICKER_TRIGGER_COOLDOWN_TICKS = 2;
 	private static final Map<UUID, ReturnPointState> RETURN_POINTS = new HashMap<>();
-	private static final Map<UUID, Integer> PENDING_RESPAWNS = new HashMap<>();
 	private static final Map<UUID, AmbientLoopState> AMBIENT_LOOP_STATES = new HashMap<>();
 	private static final Map<Long, Long> ACTIVE_LAMP_OUTAGES = new HashMap<>();
 	private static final List<BlockPos> PREWARMED_RESPAWNS = new ArrayList<>();
@@ -111,14 +110,12 @@ public final class ServerBackroomsSystem {
 		stateLoaded = false;
 		stateDirty = false;
 		RETURN_POINTS.clear();
-		PENDING_RESPAWNS.clear();
 		AMBIENT_LOOP_STATES.clear();
 		ACTIVE_LAMP_OUTAGES.clear();
 		PREWARMED_RESPAWNS.clear();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerBackroomsSystem::loadState);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerBackroomsSystem::saveState);
-		ServerPlayerEvents.AFTER_RESPAWN.register(ServerBackroomsSystem::onAfterRespawn);
 		ServerTickEvents.END_SERVER_TICK.register(ServerBackroomsSystem::tickServer);
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
@@ -344,14 +341,6 @@ public final class ServerBackroomsSystem {
 		fillPrewarmedRespawns(server, PREWARMED_RESPAWN_STARTUP_BATCH);
 	}
 
-	private static void onAfterRespawn(ServerPlayer oldPlayer, ServerPlayer newPlayer, boolean alive) {
-		if (alive || oldPlayer == null || newPlayer == null || !isInBackrooms(oldPlayer)) {
-			return;
-		}
-
-		PENDING_RESPAWNS.put(newPlayer.getUUID(), BACKROOMS_RESPAWN_DELAY_TICKS);
-	}
-
 	private static void saveState(MinecraftServer server) {
 		if (!stateLoaded || !stateDirty) {
 			return;
@@ -379,40 +368,9 @@ public final class ServerBackroomsSystem {
 		return server.getWorldPath(LevelResource.ROOT).resolve(RETURNS_FILE_NAME);
 	}
 
-	private static void tickPendingRespawns(MinecraftServer server) {
-		if (PENDING_RESPAWNS.isEmpty()) {
-			return;
-		}
-
-		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
-		if (backrooms == null) {
-			PENDING_RESPAWNS.clear();
-			return;
-		}
-
-		var iterator = PENDING_RESPAWNS.entrySet().iterator();
-		while (iterator.hasNext()) {
-			Map.Entry<UUID, Integer> entry = iterator.next();
-			int ticksRemaining = entry.getValue() - 1;
-			if (ticksRemaining > 0) {
-				entry.setValue(ticksRemaining);
-				continue;
-			}
-
-			iterator.remove();
-			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
-			if (player == null || !player.isAlive()) {
-				continue;
-			}
-
-			teleportToRandomBackroomsRespawn(backrooms, player);
-		}
-	}
-
 	private static void tickServer(MinecraftServer server) {
 		enforceClearWeather(server);
 		tickPrewarmedRespawns(server);
-		tickPendingRespawns(server);
 		tickBackroomsAmbientLoop(server);
 		tickLampRestores(server);
 	}
@@ -433,18 +391,7 @@ public final class ServerBackroomsSystem {
 	}
 
 	private static void teleportToRandomBackroomsRespawn(ServerLevel backrooms, ServerPlayer player) {
-		BlockPos safeSpawn = takePrewarmedRespawn(backrooms);
-		if (safeSpawn == null) {
-			safeSpawn = findRandomSafeRespawn(backrooms);
-		}
-		BlockPos platformCenter;
-		if (safeSpawn != null) {
-			platformCenter = safeSpawn.below();
-		} else {
-			platformCenter = pickRandomRespawnCenter(backrooms);
-			backrooms.getChunkAt(platformCenter);
-			ensurePlatform(backrooms, platformCenter);
-		}
+		BlockPos platformCenter = getRandomBackroomsRespawnFloor(backrooms);
 
 		player.teleportTo(
 				backrooms,
@@ -457,6 +404,37 @@ public final class ServerBackroomsSystem {
 				false
 		);
 		player.fallDistance = 0.0F;
+	}
+
+	public static TeleportTransition createImmediateBackroomsRespawnTransition(ServerPlayer player, TeleportTransition.PostTeleportTransition postTeleportTransition) {
+		if (player == null || !isInBackrooms(player)) {
+			return null;
+		}
+
+		MinecraftServer server = player.level().getServer();
+		if (server == null) {
+			return null;
+		}
+
+		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
+		if (backrooms == null) {
+			return null;
+		}
+
+		BlockPos platformCenter = getRandomBackroomsRespawnFloor(backrooms);
+		Vec3 targetPosition = new Vec3(
+				platformCenter.getX() + 0.5D,
+				platformCenter.getY() + 1.0D,
+				platformCenter.getZ() + 0.5D
+		);
+		return new TeleportTransition(
+				backrooms,
+				targetPosition,
+				Vec3.ZERO,
+				player.getYRot(),
+				player.getXRot(),
+				postTeleportTransition
+		);
 	}
 
 	private static void tickBackroomsAmbientLoop(MinecraftServer server) {
@@ -664,6 +642,21 @@ public final class ServerBackroomsSystem {
 		}
 
 		return null;
+	}
+
+	private static BlockPos getRandomBackroomsRespawnFloor(ServerLevel backrooms) {
+		BlockPos safeSpawn = takePrewarmedRespawn(backrooms);
+		if (safeSpawn == null) {
+			safeSpawn = findRandomSafeRespawn(backrooms);
+		}
+		if (safeSpawn != null) {
+			return safeSpawn.below();
+		}
+
+		BlockPos platformCenter = pickRandomRespawnCenter(backrooms);
+		backrooms.getChunkAt(platformCenter);
+		ensurePlatform(backrooms, platformCenter);
+		return platformCenter;
 	}
 
 	private static BlockPos findRandomSafeRespawn(ServerLevel level) {
