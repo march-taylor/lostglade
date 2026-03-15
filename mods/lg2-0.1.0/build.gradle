@@ -45,7 +45,7 @@ loom {
 	runs {
 		named("server") {
 			runDir("../../")
-			vmArgs("-Xms2G", "-Xmx8G")
+			vmArgs("-Xms8G", "-Xmx8G")
 		}
 	}
 }

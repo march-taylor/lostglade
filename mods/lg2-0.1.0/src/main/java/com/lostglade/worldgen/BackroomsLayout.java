@@ -13,6 +13,7 @@ final class BackroomsLayout {
 	private static final int LAYOUT_CELL_SIZE = 24;
 	private static final int INSET_REGION_SIZE = 56;
 	private static final int DOOR_CHANCE_PERCENT = 2;
+	private static final int INSET_DOOR_CHANCE_PERCENT = 10;
 	private static final long DOOR_LAYOUT_SALT = 0x6B41524F4F4D4452L;
 	private static final long INSET_LAYOUT_SALT = 0x494E534554524F4FL;
 
@@ -158,7 +159,7 @@ final class BackroomsLayout {
 		for (int offsetX = -1; offsetX <= 1; offsetX++) {
 			for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
 				InsetFeature feature = getInsetFeature(zone, regionX + offsetX, regionZ + offsetZ);
-				if (feature != null && feature.door().matches(x, z)) {
+				if (feature != null && feature.door() != null && feature.door().matches(x, z)) {
 					return feature.door();
 				}
 			}
@@ -258,9 +259,23 @@ final class BackroomsLayout {
 
 		PrimaryAnchor anchor = findNearestPrimaryAnchor(zone, centerX, centerZ);
 		boolean horizontalFirst = ((sample >>> 7) & 1L) == 0L;
-		RoomSide doorSide = chooseInsetDoorSide(sample, anchor, centerX, centerZ);
-		int doorX = centerX + doorSide.doorOffsetX(halfWidth, halfHeight);
-		int doorZ = centerZ + doorSide.doorOffsetZ(halfWidth, halfHeight);
+		RoomSide corridorSide = getInsetCorridorSide(anchor, centerX, centerZ);
+		DoorPlacement doorPlacement = null;
+		if (positiveMod(sample ^ 0x4F55B19L, 100) < INSET_DOOR_CHANCE_PERCENT) {
+			RoomSide doorSide = chooseInsetDoorSide(sample, corridorSide);
+			if (doorSide != null) {
+				int doorX = centerX + doorSide.doorOffsetX(halfWidth, halfHeight);
+				int doorZ = centerZ + doorSide.doorOffsetZ(halfWidth, halfHeight);
+				if (isValidInsetDoor(zone, centerX, centerZ, halfWidth, halfHeight, doorSide, doorX, doorZ)) {
+					doorPlacement = new DoorPlacement(
+							doorX,
+							doorZ,
+							doorSide.facing,
+							((sample >>> 15) & 1L) == 0L ? DoorHingeSide.LEFT : DoorHingeSide.RIGHT
+					);
+				}
+			}
+		}
 
 		return new InsetFeature(
 				centerX,
@@ -270,7 +285,7 @@ final class BackroomsLayout {
 				anchor.x(),
 				anchor.z(),
 				horizontalFirst,
-				new DoorPlacement(doorX, doorZ, doorSide.facing, ((sample >>> 15) & 1L) == 0L ? DoorHingeSide.LEFT : DoorHingeSide.RIGHT)
+				doorPlacement
 		);
 	}
 
@@ -296,20 +311,53 @@ final class BackroomsLayout {
 		return new PrimaryAnchor(bestCell.roomCenterX, bestCell.roomCenterZ);
 	}
 
-	private static RoomSide chooseInsetDoorSide(long sample, PrimaryAnchor anchor, int centerX, int centerZ) {
+	private static RoomSide getInsetCorridorSide(PrimaryAnchor anchor, int centerX, int centerZ) {
 		int deltaX = anchor.x() - centerX;
 		int deltaZ = anchor.z() - centerZ;
 		if (Math.abs(deltaX) > Math.abs(deltaZ)) {
-			if (deltaX > 0) {
-				return ((sample >>> 3) & 1L) == 0L ? RoomSide.NORTH : RoomSide.SOUTH;
-			}
-			return ((sample >>> 3) & 1L) == 0L ? RoomSide.SOUTH : RoomSide.NORTH;
+			return deltaX > 0 ? RoomSide.EAST : RoomSide.WEST;
 		}
 
-		if (deltaZ > 0) {
-			return ((sample >>> 3) & 1L) == 0L ? RoomSide.WEST : RoomSide.EAST;
+		return deltaZ > 0 ? RoomSide.SOUTH : RoomSide.NORTH;
+	}
+
+	private static RoomSide chooseInsetDoorSide(long sample, RoomSide excludedSide) {
+		RoomSide[] candidates = new RoomSide[3];
+		int index = 0;
+		for (RoomSide side : RoomSide.values()) {
+			if (side != excludedSide) {
+				candidates[index++] = side;
+			}
 		}
-		return ((sample >>> 3) & 1L) == 0L ? RoomSide.EAST : RoomSide.WEST;
+
+		return candidates[positiveMod(sample ^ 0x33E71DAL, index)];
+	}
+
+	private static boolean isValidInsetDoor(
+			ZoneType zone,
+			int centerX,
+			int centerZ,
+			int halfWidth,
+			int halfHeight,
+			RoomSide side,
+			int doorX,
+			int doorZ
+	) {
+		int insideX = doorX - side.stepX;
+		int insideZ = doorZ - side.stepZ;
+		int outsideX = doorX + side.stepX;
+		int outsideZ = doorZ + side.stepZ;
+
+		boolean insideRoom = Math.abs(insideX - centerX) <= halfWidth && Math.abs(insideZ - centerZ) <= halfHeight;
+		if (!insideRoom) {
+			return false;
+		}
+
+		if (Math.abs(outsideX - centerX) <= halfWidth && Math.abs(outsideZ - centerZ) <= halfHeight) {
+			return false;
+		}
+
+		return !isPrimaryOpenSpace(zone, outsideX, outsideZ);
 	}
 
 	private static DoorPlacement getDoorPlacementForCell(ZoneType zone, int cellX, int cellZ) {
