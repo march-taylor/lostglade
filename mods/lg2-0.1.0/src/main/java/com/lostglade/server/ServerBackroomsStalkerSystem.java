@@ -37,7 +37,6 @@ import java.util.Set;
 import java.util.UUID;
 
 public final class ServerBackroomsStalkerSystem {
-	private static final int MIN_SPAWN_DISTANCE_BLOCKS = 8;
 	private static final int MAX_SPAWN_ATTEMPTS_PER_PLAYER = 48;
 	private static final int MAX_VERTICAL_SEARCH = 4;
 	private static final int MAX_INTERIOR_FEET_Y = 65;
@@ -90,7 +89,12 @@ public final class ServerBackroomsStalkerSystem {
 			return;
 		}
 
-		int radiusBlocks = Math.max(16, Lg2Config.get().backroomsEntityRadiusChunks * 16);
+		int minSpawnRadiusBlocks = Math.max(0, Lg2Config.get().backroomsEntitySpawnMinRadiusChunks * 16);
+		int maxSpawnRadiusBlocks = Math.max(16, Lg2Config.get().backroomsEntitySpawnMaxRadiusChunks * 16);
+		if (maxSpawnRadiusBlocks < minSpawnRadiusBlocks) {
+			maxSpawnRadiusBlocks = minSpawnRadiusBlocks;
+		}
+		int radiusBlocks = maxSpawnRadiusBlocks;
 		int groupRadiusBlocks = Math.max(16, Lg2Config.get().backroomsEntityGroupRadiusChunks * 16);
 		List<PlayerCluster> clusters = buildClusters(players, groupRadiusBlocks);
 		Set<BackroomsStalkerEntity> assignedStalkers = new HashSet<>();
@@ -101,7 +105,7 @@ public final class ServerBackroomsStalkerSystem {
 				assignedStalkers.add(assigned);
 				continue;
 			}
-			spawnNearPlayers(backrooms, cluster.players(), radiusBlocks);
+			spawnNearPlayers(backrooms, cluster.players(), minSpawnRadiusBlocks, maxSpawnRadiusBlocks);
 		}
 
 		for (BackroomsStalkerEntity stalker : stalkers) {
@@ -357,10 +361,10 @@ public final class ServerBackroomsStalkerSystem {
 		return new Vec3(sumX / size, sumY / size, sumZ / size);
 	}
 
-	private static void spawnNearPlayers(ServerLevel level, List<ServerPlayer> players, int radiusBlocks) {
+	private static void spawnNearPlayers(ServerLevel level, List<ServerPlayer> players, int minRadiusBlocks, int maxRadiusBlocks) {
 		BackroomsStalkerEntity stalker = BackroomsStalkerEntity.create(level);
 
-		Vec3 spawnPos = findSpawnPosition(level, stalker, players, radiusBlocks);
+		Vec3 spawnPos = findSpawnPosition(level, stalker, players, minRadiusBlocks, maxRadiusBlocks);
 		if (spawnPos == null) {
 			stalker.discard();
 			return;
@@ -384,16 +388,18 @@ public final class ServerBackroomsStalkerSystem {
 			ServerLevel level,
 			BackroomsStalkerEntity stalker,
 			List<ServerPlayer> players,
-			int radiusBlocks
+			int minRadiusBlocks,
+			int maxRadiusBlocks
 	) {
 		List<ServerPlayer> shuffledPlayers = new ArrayList<>(players);
 		Collections.shuffle(shuffledPlayers, new java.util.Random(level.getGameTime()));
 		RandomSource random = level.random;
+		int effectiveMaxRadius = Math.max(minRadiusBlocks, maxRadiusBlocks);
 
 		for (ServerPlayer player : shuffledPlayers) {
 			for (int attempt = 0; attempt < MAX_SPAWN_ATTEMPTS_PER_PLAYER; attempt++) {
 				double angle = random.nextDouble() * (Math.PI * 2.0D);
-				int distance = MIN_SPAWN_DISTANCE_BLOCKS + random.nextInt(Math.max(1, radiusBlocks - MIN_SPAWN_DISTANCE_BLOCKS + 1));
+				int distance = minRadiusBlocks + random.nextInt(Math.max(1, effectiveMaxRadius - minRadiusBlocks + 1));
 				int x = net.minecraft.util.Mth.floor(player.getX() + (Math.cos(angle) * distance));
 				int z = net.minecraft.util.Mth.floor(player.getZ() + (Math.sin(angle) * distance));
 

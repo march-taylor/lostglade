@@ -2,6 +2,7 @@ package com.lostglade.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.annotations.SerializedName;
 import com.lostglade.Lg2;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.util.RandomSource;
@@ -25,8 +26,10 @@ public final class Lg2Config {
 	private static final int MAX_STABILITY_DECAY_INTERVAL_SECONDS = 2_592_000;
 	private static final int MIN_STABILITY_DECAY_INTERVAL_SECONDS_PER_PLAYER = 0;
 	private static final int MAX_STABILITY_DECAY_INTERVAL_SECONDS_PER_PLAYER = 2_592_000;
-	private static final int MIN_BACKROOMS_ENTITY_RADIUS_CHUNKS = 1;
-	private static final int MAX_BACKROOMS_ENTITY_RADIUS_CHUNKS = 64;
+	private static final int MIN_BACKROOMS_ENTITY_SPAWN_MIN_RADIUS_CHUNKS = 0;
+	private static final int MAX_BACKROOMS_ENTITY_SPAWN_MIN_RADIUS_CHUNKS = 64;
+	private static final int MIN_BACKROOMS_ENTITY_SPAWN_MAX_RADIUS_CHUNKS = 1;
+	private static final int MAX_BACKROOMS_ENTITY_SPAWN_MAX_RADIUS_CHUNKS = 64;
 	private static final int MIN_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS = 1;
 	private static final int MAX_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS = 32;
 	private static final double DEFAULT_BITCOINS_PER_STABILITY = 6.4D;
@@ -103,10 +106,18 @@ public final class Lg2Config {
 				MIN_STABILITY_DECAY_INTERVAL_SECONDS_PER_PLAYER,
 				MAX_STABILITY_DECAY_INTERVAL_SECONDS_PER_PLAYER,
 				newValue -> configData.stabilityDecayIntervalSecondsPerPlayer = newValue);
-		changed |= clampSingleValue(configData.backroomsEntityRadiusChunks,
-				MIN_BACKROOMS_ENTITY_RADIUS_CHUNKS,
-				MAX_BACKROOMS_ENTITY_RADIUS_CHUNKS,
-				newValue -> configData.backroomsEntityRadiusChunks = newValue);
+		changed |= clampSingleValue(configData.backroomsEntitySpawnMinRadiusChunks,
+				MIN_BACKROOMS_ENTITY_SPAWN_MIN_RADIUS_CHUNKS,
+				MAX_BACKROOMS_ENTITY_SPAWN_MIN_RADIUS_CHUNKS,
+				newValue -> configData.backroomsEntitySpawnMinRadiusChunks = newValue);
+		changed |= clampSingleValue(configData.backroomsEntitySpawnMaxRadiusChunks,
+				MIN_BACKROOMS_ENTITY_SPAWN_MAX_RADIUS_CHUNKS,
+				MAX_BACKROOMS_ENTITY_SPAWN_MAX_RADIUS_CHUNKS,
+				newValue -> configData.backroomsEntitySpawnMaxRadiusChunks = newValue);
+		if (configData.backroomsEntitySpawnMaxRadiusChunks < configData.backroomsEntitySpawnMinRadiusChunks) {
+			configData.backroomsEntitySpawnMaxRadiusChunks = configData.backroomsEntitySpawnMinRadiusChunks;
+			changed = true;
+		}
 		changed |= clampSingleValue(configData.backroomsEntityGroupRadiusChunks,
 				MIN_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS,
 				MAX_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS,
@@ -239,7 +250,10 @@ public final class Lg2Config {
 		public int stabilityMax = 100;
 		public int stabilityDecayIntervalSeconds = 864;
 		public int stabilityDecayIntervalSecondsPerPlayer = 0;
-		public int backroomsEntityRadiusChunks = 6;
+		@SerializedName("backroomsEntitySpawnMinRadiusChunks")
+		public int backroomsEntitySpawnMinRadiusChunks = 1;
+		@SerializedName(value = "backroomsEntitySpawnMaxRadiusChunks", alternate = {"backroomsEntityRadiusChunks"})
+		public int backroomsEntitySpawnMaxRadiusChunks = 6;
 		public int backroomsEntityGroupRadiusChunks = 2;
 		public double bitcoinsPerStability = DEFAULT_BITCOINS_PER_STABILITY;
 
