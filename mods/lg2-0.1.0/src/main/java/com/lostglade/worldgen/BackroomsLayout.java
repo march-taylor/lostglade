@@ -5,7 +5,8 @@ import net.minecraft.world.level.block.state.properties.DoorHingeSide;
 
 final class BackroomsLayout {
 	static final int FLOOR_Y = 64;
-	static final int CEILING_Y = 69;
+	static final int LEVEL_HEIGHT = 5;
+	static final int CEILING_Y = FLOOR_Y + LEVEL_HEIGHT - 1;
 	static final int WALL_MIN_Y = FLOOR_Y + 1;
 	static final int WALL_MAX_Y = CEILING_Y - 1;
 
@@ -16,14 +17,19 @@ final class BackroomsLayout {
 	private static final int INSET_DOOR_CHANCE_PERCENT = 10;
 	private static final long DOOR_LAYOUT_SALT = 0x6B41524F4F4D4452L;
 	private static final long INSET_LAYOUT_SALT = 0x494E534554524F4FL;
+	private static final long LEVEL_LAYOUT_SALT = 0x4C564C53414C5431L;
 
 	private BackroomsLayout() {
 	}
 
-	static ZoneType getZoneAtBlock(int x, int z) {
+	static int getLevelIndex(int y) {
+		return Math.floorDiv(y - FLOOR_Y, LEVEL_HEIGHT);
+	}
+
+	static ZoneType getZoneAtBlock(int x, int z, int levelIndex) {
 		int regionX = Math.floorDiv(x, STYLE_REGION_SIZE);
 		int regionZ = Math.floorDiv(z, STYLE_REGION_SIZE);
-		int roll = positiveMod(mix(regionX, regionZ, 0x74D8E1AB4C9F2601L), 100);
+		int roll = positiveMod(mix(regionX, regionZ, 0x74D8E1AB4C9F2601L ^ levelSalt(levelIndex)), 100);
 		if (roll < 12) {
 			return ZoneType.WIDE_LIT;
 		}
@@ -42,18 +48,18 @@ final class BackroomsLayout {
 		return ZoneType.NARROW_DARK;
 	}
 
-	static boolean isCorridor(ZoneType zone, int x, int z) {
-		return isOpenSpace(zone, x, z);
+	static boolean isCorridor(ZoneType zone, int x, int z, int levelIndex) {
+		return isOpenSpace(zone, x, z, levelIndex);
 	}
 
-	static boolean hasCeilingLight(ZoneType zone, int x, int z) {
-		if (!isOpenSpace(zone, x, z)) {
+	static boolean hasCeilingLight(ZoneType zone, int x, int z, int levelIndex) {
+		if (!isOpenSpace(zone, x, z, levelIndex)) {
 			return false;
 		}
 
 		int cellX = Math.floorDiv(x, zone.lightCellSize);
 		int cellZ = Math.floorDiv(z, zone.lightCellSize);
-		long sample = mix(cellX, cellZ, zone.lightSalt);
+		long sample = mix(cellX, cellZ, zone.lightSalt ^ levelSalt(levelIndex));
 		if (zone.lightChanceRarity > 1 && positiveMod(sample, zone.lightChanceRarity) != 0) {
 			return false;
 		}
@@ -64,31 +70,31 @@ final class BackroomsLayout {
 			return false;
 		}
 
-		return isLightAnchor(zone, candidateX, candidateZ);
+		return isLightAnchor(zone, candidateX, candidateZ, levelIndex);
 	}
 
-	static DoorPlacement getRoomDoorAt(ZoneType zone, int x, int z) {
-		DoorPlacement primaryPlacement = getPrimaryDoorAt(zone, x, z);
+	static DoorPlacement getRoomDoorAt(ZoneType zone, int x, int z, int levelIndex) {
+		DoorPlacement primaryPlacement = getPrimaryDoorAt(zone, x, z, levelIndex);
 		if (primaryPlacement != null) {
 			return primaryPlacement;
 		}
 
-		return getInsetDoorAt(zone, x, z);
+		return getInsetDoorAt(zone, x, z, levelIndex);
 	}
 
-	private static boolean isLightAnchor(ZoneType zone, int x, int z) {
-		return isOpenSpace(zone, x, z)
-				&& isOpenSpace(zone, x + 1, z)
-				&& isOpenSpace(zone, x - 1, z)
-				&& isOpenSpace(zone, x, z + 1)
-				&& isOpenSpace(zone, x, z - 1);
+	private static boolean isLightAnchor(ZoneType zone, int x, int z, int levelIndex) {
+		return isOpenSpace(zone, x, z, levelIndex)
+				&& isOpenSpace(zone, x + 1, z, levelIndex)
+				&& isOpenSpace(zone, x - 1, z, levelIndex)
+				&& isOpenSpace(zone, x, z + 1, levelIndex)
+				&& isOpenSpace(zone, x, z - 1, levelIndex);
 	}
 
-	private static boolean isOpenSpace(ZoneType zone, int x, int z) {
-		return isPrimaryOpenSpace(zone, x, z) || isInsetOpenSpace(zone, x, z);
+	private static boolean isOpenSpace(ZoneType zone, int x, int z, int levelIndex) {
+		return isPrimaryOpenSpace(zone, x, z, levelIndex) || isInsetOpenSpace(zone, x, z, levelIndex);
 	}
 
-	private static boolean isPrimaryOpenSpace(ZoneType zone, int x, int z) {
+	private static boolean isPrimaryOpenSpace(ZoneType zone, int x, int z, int levelIndex) {
 		int cellX = Math.floorDiv(x, LAYOUT_CELL_SIZE);
 		int cellZ = Math.floorDiv(z, LAYOUT_CELL_SIZE);
 
@@ -96,17 +102,17 @@ final class BackroomsLayout {
 			for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
 				int currentCellX = cellX + offsetX;
 				int currentCellZ = cellZ + offsetZ;
-				CellData current = getCell(zone, currentCellX, currentCellZ);
+				CellData current = getCell(zone, currentCellX, currentCellZ, levelIndex);
 				if (current.containsRoom(x, z)) {
 					return true;
 				}
 
-				CellData east = getCell(zone, currentCellX + 1, currentCellZ);
+				CellData east = getCell(zone, currentCellX + 1, currentCellZ, levelIndex);
 				if (current.connectEast && isInsideConnection(x, z, current, east, zone.corridorHalfWidth, current.eastHorizontalFirst)) {
 					return true;
 				}
 
-				CellData south = getCell(zone, currentCellX, currentCellZ + 1);
+				CellData south = getCell(zone, currentCellX, currentCellZ + 1, levelIndex);
 				if (current.connectSouth && isInsideConnection(x, z, current, south, zone.corridorHalfWidth, current.southHorizontalFirst)) {
 					return true;
 				}
@@ -116,13 +122,13 @@ final class BackroomsLayout {
 		return false;
 	}
 
-	private static boolean isInsetOpenSpace(ZoneType zone, int x, int z) {
+	private static boolean isInsetOpenSpace(ZoneType zone, int x, int z, int levelIndex) {
 		int regionX = Math.floorDiv(x, INSET_REGION_SIZE);
 		int regionZ = Math.floorDiv(z, INSET_REGION_SIZE);
 
 		for (int offsetX = -1; offsetX <= 1; offsetX++) {
 			for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
-				InsetFeature feature = getInsetFeature(zone, regionX + offsetX, regionZ + offsetZ);
+				InsetFeature feature = getInsetFeature(zone, regionX + offsetX, regionZ + offsetZ, levelIndex);
 				if (feature == null) {
 					continue;
 				}
@@ -136,13 +142,13 @@ final class BackroomsLayout {
 		return false;
 	}
 
-	private static DoorPlacement getPrimaryDoorAt(ZoneType zone, int x, int z) {
+	private static DoorPlacement getPrimaryDoorAt(ZoneType zone, int x, int z, int levelIndex) {
 		int cellX = Math.floorDiv(x, LAYOUT_CELL_SIZE);
 		int cellZ = Math.floorDiv(z, LAYOUT_CELL_SIZE);
 
 		for (int offsetX = -1; offsetX <= 1; offsetX++) {
 			for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
-				DoorPlacement placement = getDoorPlacementForCell(zone, cellX + offsetX, cellZ + offsetZ);
+				DoorPlacement placement = getDoorPlacementForCell(zone, cellX + offsetX, cellZ + offsetZ, levelIndex);
 				if (placement != null && placement.matches(x, z)) {
 					return placement;
 				}
@@ -152,13 +158,13 @@ final class BackroomsLayout {
 		return null;
 	}
 
-	private static DoorPlacement getInsetDoorAt(ZoneType zone, int x, int z) {
+	private static DoorPlacement getInsetDoorAt(ZoneType zone, int x, int z, int levelIndex) {
 		int regionX = Math.floorDiv(x, INSET_REGION_SIZE);
 		int regionZ = Math.floorDiv(z, INSET_REGION_SIZE);
 
 		for (int offsetX = -1; offsetX <= 1; offsetX++) {
 			for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
-				InsetFeature feature = getInsetFeature(zone, regionX + offsetX, regionZ + offsetZ);
+				InsetFeature feature = getInsetFeature(zone, regionX + offsetX, regionZ + offsetZ, levelIndex);
 				if (feature != null && feature.door() != null && feature.door().matches(x, z)) {
 					return feature.door();
 				}
@@ -197,8 +203,8 @@ final class BackroomsLayout {
 		return z >= minZ && z <= maxZ && Math.abs(x - centerX) <= halfWidth;
 	}
 
-	private static CellData getCell(ZoneType zone, int cellX, int cellZ) {
-		long sample = mix(cellX, cellZ, zone.layoutSalt);
+	private static CellData getCell(ZoneType zone, int cellX, int cellZ, int levelIndex) {
+		long sample = mix(cellX, cellZ, zone.layoutSalt ^ levelSalt(levelIndex));
 		int shiftX = positiveMod(sample ^ 0x0F91A4BL, 9) - 4;
 		int shiftZ = positiveMod(sample ^ 0x17B4D29L, 9) - 4;
 		int baseX = cellX * LAYOUT_CELL_SIZE + shiftX;
@@ -244,8 +250,8 @@ final class BackroomsLayout {
 		);
 	}
 
-	private static InsetFeature getInsetFeature(ZoneType zone, int regionX, int regionZ) {
-		long sample = mix(regionX, regionZ, zone.layoutSalt ^ INSET_LAYOUT_SALT);
+	private static InsetFeature getInsetFeature(ZoneType zone, int regionX, int regionZ, int levelIndex) {
+		long sample = mix(regionX, regionZ, zone.layoutSalt ^ INSET_LAYOUT_SALT ^ levelSalt(levelIndex));
 		if (positiveMod(sample ^ 0x2D51A19L, 100) >= 62) {
 			return null;
 		}
@@ -257,7 +263,7 @@ final class BackroomsLayout {
 		int halfWidth = 3 + positiveMod(sample ^ 0x18FA11L, 4);
 		int halfHeight = 3 + positiveMod(sample ^ 0x52DD77L, 4);
 
-		PrimaryAnchor anchor = findNearestPrimaryAnchor(zone, centerX, centerZ);
+		PrimaryAnchor anchor = findNearestPrimaryAnchor(zone, centerX, centerZ, levelIndex);
 		boolean horizontalFirst = ((sample >>> 7) & 1L) == 0L;
 		RoomSide corridorSide = getInsetCorridorSide(anchor, centerX, centerZ);
 		DoorPlacement doorPlacement = null;
@@ -266,7 +272,7 @@ final class BackroomsLayout {
 			if (doorSide != null) {
 				int doorX = centerX + doorSide.doorOffsetX(halfWidth, halfHeight);
 				int doorZ = centerZ + doorSide.doorOffsetZ(halfWidth, halfHeight);
-				if (isValidInsetDoor(zone, centerX, centerZ, halfWidth, halfHeight, doorSide, doorX, doorZ)) {
+				if (isValidInsetDoor(zone, centerX, centerZ, halfWidth, halfHeight, doorSide, doorX, doorZ, levelIndex)) {
 					doorPlacement = new DoorPlacement(
 							doorX,
 							doorZ,
@@ -289,7 +295,7 @@ final class BackroomsLayout {
 		);
 	}
 
-	private static PrimaryAnchor findNearestPrimaryAnchor(ZoneType zone, int x, int z) {
+	private static PrimaryAnchor findNearestPrimaryAnchor(ZoneType zone, int x, int z, int levelIndex) {
 		int cellX = Math.floorDiv(x, LAYOUT_CELL_SIZE);
 		int cellZ = Math.floorDiv(z, LAYOUT_CELL_SIZE);
 		CellData bestCell = null;
@@ -297,7 +303,7 @@ final class BackroomsLayout {
 
 		for (int offsetX = -2; offsetX <= 2; offsetX++) {
 			for (int offsetZ = -2; offsetZ <= 2; offsetZ++) {
-				CellData candidate = getCell(zone, cellX + offsetX, cellZ + offsetZ);
+				CellData candidate = getCell(zone, cellX + offsetX, cellZ + offsetZ, levelIndex);
 				int deltaX = candidate.roomCenterX - x;
 				int deltaZ = candidate.roomCenterZ - z;
 				int distance = deltaX * deltaX + deltaZ * deltaZ;
@@ -341,7 +347,8 @@ final class BackroomsLayout {
 			int halfHeight,
 			RoomSide side,
 			int doorX,
-			int doorZ
+			int doorZ,
+			int levelIndex
 	) {
 		int insideX = doorX - side.stepX;
 		int insideZ = doorZ - side.stepZ;
@@ -357,17 +364,17 @@ final class BackroomsLayout {
 			return false;
 		}
 
-		return !isPrimaryOpenSpace(zone, outsideX, outsideZ);
+		return !isPrimaryOpenSpace(zone, outsideX, outsideZ, levelIndex);
 	}
 
-	private static DoorPlacement getDoorPlacementForCell(ZoneType zone, int cellX, int cellZ) {
-		long sample = mix(cellX, cellZ, zone.layoutSalt ^ DOOR_LAYOUT_SALT);
+	private static DoorPlacement getDoorPlacementForCell(ZoneType zone, int cellX, int cellZ, int levelIndex) {
+		long sample = mix(cellX, cellZ, zone.layoutSalt ^ DOOR_LAYOUT_SALT ^ levelSalt(levelIndex));
 		if (positiveMod(sample ^ 0x4A6D9A1FB77C53E1L, 100) >= DOOR_CHANCE_PERCENT) {
 			return null;
 		}
 
-		CellData current = getCell(zone, cellX, cellZ);
-		RoomSide[] eligibleSides = collectEligibleDoorSides(zone, cellX, cellZ, current);
+		CellData current = getCell(zone, cellX, cellZ, levelIndex);
+		RoomSide[] eligibleSides = collectEligibleDoorSides(zone, cellX, cellZ, current, levelIndex);
 		if (eligibleSides.length == 0) {
 			return null;
 		}
@@ -375,10 +382,10 @@ final class BackroomsLayout {
 		RoomSide side = eligibleSides[positiveMod(sample ^ 0x23E5FA97C14B72D3L, eligibleSides.length)];
 		int doorX = current.roomCenterX + side.doorOffsetX(current);
 		int doorZ = current.roomCenterZ + side.doorOffsetZ(current);
-		if (!isOpenSpace(zone, doorX - side.stepX, doorZ - side.stepZ)) {
+		if (!isOpenSpace(zone, doorX - side.stepX, doorZ - side.stepZ, levelIndex)) {
 			return null;
 		}
-		if (isOpenSpace(zone, doorX + side.stepX, doorZ + side.stepZ)) {
+		if (isOpenSpace(zone, doorX + side.stepX, doorZ + side.stepZ, levelIndex)) {
 			return null;
 		}
 
@@ -386,17 +393,17 @@ final class BackroomsLayout {
 		return new DoorPlacement(doorX, doorZ, side.facing, hinge);
 	}
 
-	private static RoomSide[] collectEligibleDoorSides(ZoneType zone, int cellX, int cellZ, CellData current) {
+	private static RoomSide[] collectEligibleDoorSides(ZoneType zone, int cellX, int cellZ, CellData current, int levelIndex) {
 		RoomSide[] sides = new RoomSide[4];
 		int count = 0;
 
-		if (!getCell(zone, cellX, cellZ - 1).connectSouth) {
+		if (!getCell(zone, cellX, cellZ - 1, levelIndex).connectSouth) {
 			sides[count++] = RoomSide.NORTH;
 		}
 		if (!current.connectSouth) {
 			sides[count++] = RoomSide.SOUTH;
 		}
-		if (!getCell(zone, cellX - 1, cellZ).connectEast) {
+		if (!getCell(zone, cellX - 1, cellZ, levelIndex).connectEast) {
 			sides[count++] = RoomSide.WEST;
 		}
 		if (!current.connectEast) {
@@ -422,6 +429,10 @@ final class BackroomsLayout {
 		value *= 0xc4ceb9fe1a85ec53L;
 		value ^= value >>> 33;
 		return value;
+	}
+
+	private static long levelSalt(int levelIndex) {
+		return mix(levelIndex, levelIndex ^ 0x51F2A, LEVEL_LAYOUT_SALT);
 	}
 
 	enum ZoneType {

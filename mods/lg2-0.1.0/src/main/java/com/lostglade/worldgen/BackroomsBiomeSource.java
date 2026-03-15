@@ -65,8 +65,9 @@ public final class BackroomsBiomeSource extends BiomeSource {
 	@Override
 	public Holder<Biome> getNoiseBiome(int quartX, int quartY, int quartZ, Climate.Sampler sampler) {
 		int blockX = QuartPos.toBlock(quartX);
+		int blockY = QuartPos.toBlock(quartY);
 		int blockZ = QuartPos.toBlock(quartZ);
-		BackroomsLayout.ZoneType zone = BackroomsLayout.getZoneAtBlock(blockX, blockZ);
+		BackroomsLayout.ZoneType zone = BackroomsLayout.getZoneAtBlock(blockX, blockZ, BackroomsLayout.getLevelIndex(blockY));
 		return this.getBiomeForZone(zone);
 	}
 
