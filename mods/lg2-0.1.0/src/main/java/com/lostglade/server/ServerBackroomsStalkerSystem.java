@@ -38,8 +38,10 @@ import java.util.UUID;
 
 public final class ServerBackroomsStalkerSystem {
 	private static final int MAX_SPAWN_ATTEMPTS_PER_PLAYER = 48;
-	private static final int MAX_VERTICAL_SEARCH = 4;
 	private static final int MAX_INTERIOR_FEET_Y = 65;
+	// Must match BackroomsLayout floor model: floor index = floorDiv(y - 64, 5).
+	private static final int BACKROOMS_FLOOR_BASE_Y = 64;
+	private static final int BACKROOMS_FLOOR_HEIGHT = 5;
 	private static final Identifier STALKER_RUN_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "custom.backrooms_stalker_approach");
 	private static final double STALKER_RUN_HEAR_RADIUS_SQR = 32.0D * 32.0D;
 	private static final float STALKER_RUN_VOLUME = 1.50F;
@@ -305,7 +307,11 @@ public final class ServerBackroomsStalkerSystem {
 
 	private static boolean isWithinPresenceRadius(BackroomsStalkerEntity stalker, List<ServerPlayer> players, int radiusBlocks) {
 		double maxDistanceSqr = (double) radiusBlocks * radiusBlocks;
+		int stalkerFloor = getBackroomsFloorIndex(stalker.blockPosition().getY());
 		for (ServerPlayer player : players) {
+			if (stalkerFloor != getBackroomsFloorIndex(player.blockPosition().getY())) {
+				continue;
+			}
 			if (stalker.distanceToSqr(player) <= maxDistanceSqr) {
 				return true;
 			}
@@ -334,7 +340,10 @@ public final class ServerBackroomsStalkerSystem {
 					if (visited.contains(candidate.getUUID())) {
 						continue;
 					}
-					if (current.distanceToSqr(candidate) > maxDistanceSqr) {
+					if (getBackroomsFloorIndex(current.blockPosition().getY()) != getBackroomsFloorIndex(candidate.blockPosition().getY())) {
+						continue;
+					}
+					if (horizontalDistanceSqr(current, candidate) > maxDistanceSqr) {
 						continue;
 					}
 					visited.add(candidate.getUUID());
@@ -359,6 +368,16 @@ public final class ServerBackroomsStalkerSystem {
 		}
 		double size = players.isEmpty() ? 1.0D : players.size();
 		return new Vec3(sumX / size, sumY / size, sumZ / size);
+	}
+
+	private static int getBackroomsFloorIndex(int y) {
+		return Math.floorDiv(y - BACKROOMS_FLOOR_BASE_Y, BACKROOMS_FLOOR_HEIGHT);
+	}
+
+	private static double horizontalDistanceSqr(ServerPlayer first, ServerPlayer second) {
+		double dx = first.getX() - second.getX();
+		double dz = first.getZ() - second.getZ();
+		return (dx * dx) + (dz * dz);
 	}
 
 	private static void spawnNearPlayers(ServerLevel level, List<ServerPlayer> players, int minRadiusBlocks, int maxRadiusBlocks) {
@@ -402,12 +421,10 @@ public final class ServerBackroomsStalkerSystem {
 				int distance = minRadiusBlocks + random.nextInt(Math.max(1, effectiveMaxRadius - minRadiusBlocks + 1));
 				int x = net.minecraft.util.Mth.floor(player.getX() + (Math.cos(angle) * distance));
 				int z = net.minecraft.util.Mth.floor(player.getZ() + (Math.sin(angle) * distance));
-
-				for (int yOffset = MAX_VERTICAL_SEARCH; yOffset >= -MAX_VERTICAL_SEARCH; yOffset--) {
-					Vec3 spawnPos = findOpenPosition(level, stalker, x, player.blockPosition().getY() + yOffset, z);
-					if (spawnPos != null) {
-						return spawnPos;
-					}
+				int y = player.blockPosition().getY();
+				Vec3 spawnPos = findOpenPositionAtExactY(level, stalker, x, y, z);
+				if (spawnPos != null) {
+					return spawnPos;
 				}
 			}
 		}
@@ -415,15 +432,12 @@ public final class ServerBackroomsStalkerSystem {
 		return null;
 	}
 
-	private static Vec3 findOpenPosition(ServerLevel level, BackroomsStalkerEntity stalker, int x, int y, int z) {
-		for (int scanY = y + MAX_VERTICAL_SEARCH; scanY >= y - MAX_VERTICAL_SEARCH; scanY--) {
-			BlockPos feetPos = new BlockPos(x, scanY, z);
-			if (!canSpawnAt(level, stalker, feetPos)) {
-				continue;
-			}
-			return Vec3.atBottomCenterOf(feetPos);
+	private static Vec3 findOpenPositionAtExactY(ServerLevel level, BackroomsStalkerEntity stalker, int x, int y, int z) {
+		BlockPos feetPos = new BlockPos(x, y, z);
+		if (!canSpawnAt(level, stalker, feetPos)) {
+			return null;
 		}
-		return null;
+		return Vec3.atBottomCenterOf(feetPos);
 	}
 
 	private static boolean canSpawnAt(ServerLevel level, BackroomsStalkerEntity stalker, BlockPos feetPos) {
