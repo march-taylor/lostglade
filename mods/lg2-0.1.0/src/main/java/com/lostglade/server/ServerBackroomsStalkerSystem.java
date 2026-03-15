@@ -38,7 +38,7 @@ import java.util.UUID;
 
 public final class ServerBackroomsStalkerSystem {
 	private static final int MAX_SPAWN_ATTEMPTS_PER_PLAYER = 48;
-	private static final int MAX_INTERIOR_FEET_Y = 65;
+	private static final int OUTSIDE_BACKROOMS_SWEEP_INTERVAL_TICKS = 80;
 	// Must match BackroomsLayout floor model: floor index = floorDiv(y - 64, 5).
 	private static final int BACKROOMS_FLOOR_BASE_Y = 64;
 	private static final int BACKROOMS_FLOOR_HEIGHT = 5;
@@ -50,12 +50,14 @@ public final class ServerBackroomsStalkerSystem {
 	// 12s clip at 20 TPS; replay every 10s so fades overlap by 2s.
 	private static final int STALKER_RUN_LOOP_TICKS = 200;
 	private static final Map<UUID, RunLoopState> STALKER_RUN_LOOP_STATES = new HashMap<>();
+	private static long nextOutsideBackroomsSweepTick = 0L;
 
 	private ServerBackroomsStalkerSystem() {
 	}
 
 	public static void register() {
 		STALKER_RUN_LOOP_STATES.clear();
+		nextOutsideBackroomsSweepTick = 0L;
 		ServerTickEvents.END_SERVER_TICK.register(ServerBackroomsStalkerSystem::tickServer);
 		AttackEntityCallback.EVENT.register(ServerBackroomsStalkerSystem::onAttackEntity);
 		ServerEntityEvents.ENTITY_LOAD.register((entity, world) -> {
@@ -75,7 +77,9 @@ public final class ServerBackroomsStalkerSystem {
 	}
 
 	private static void tickServer(MinecraftServer server) {
-		discardOutsideBackrooms(server);
+		if (shouldSweepOutsideBackrooms(server)) {
+			discardOutsideBackrooms(server);
+		}
 
 		ServerLevel backrooms = server.getLevel(ServerBackroomsSystem.BACKROOMS_LEVEL);
 		if (backrooms == null) {
@@ -100,14 +104,19 @@ public final class ServerBackroomsStalkerSystem {
 		int groupRadiusBlocks = Math.max(16, Lg2Config.get().backroomsEntityGroupRadiusChunks * 16);
 		List<PlayerCluster> clusters = buildClusters(players, groupRadiusBlocks);
 		Set<BackroomsStalkerEntity> assignedStalkers = new HashSet<>();
+		List<BackroomsStalkerEntity> activeStalkers = new ArrayList<>(clusters.size());
 
 		for (PlayerCluster cluster : clusters) {
 			BackroomsStalkerEntity assigned = findAssignedStalker(cluster, stalkers, assignedStalkers, radiusBlocks);
 			if (assigned != null) {
 				assignedStalkers.add(assigned);
+				activeStalkers.add(assigned);
 				continue;
 			}
-			spawnNearPlayers(backrooms, cluster.players(), minSpawnRadiusBlocks, maxSpawnRadiusBlocks);
+			BackroomsStalkerEntity spawned = spawnNearPlayers(backrooms, cluster.players(), minSpawnRadiusBlocks, maxSpawnRadiusBlocks);
+			if (spawned != null) {
+				activeStalkers.add(spawned);
+			}
 		}
 
 		for (BackroomsStalkerEntity stalker : stalkers) {
@@ -116,7 +125,21 @@ public final class ServerBackroomsStalkerSystem {
 			}
 		}
 
-		tickStalkerRunLoopAudio(backrooms, players, collectStalkers(backrooms));
+		tickStalkerRunLoopAudio(backrooms, players, activeStalkers);
+	}
+
+	private static boolean shouldSweepOutsideBackrooms(MinecraftServer server) {
+		ServerLevel overworld = server.overworld();
+		if (overworld == null) {
+			return true;
+		}
+
+		long nowTick = overworld.getGameTime();
+		if (nowTick < nextOutsideBackroomsSweepTick) {
+			return false;
+		}
+		nextOutsideBackroomsSweepTick = nowTick + OUTSIDE_BACKROOMS_SWEEP_INTERVAL_TICKS;
+		return true;
 	}
 
 	private static void tickStalkerRunLoopAudio(
@@ -125,6 +148,13 @@ public final class ServerBackroomsStalkerSystem {
 			List<BackroomsStalkerEntity> stalkers
 	) {
 		long gameTime = level.getGameTime();
+		List<BackroomsStalkerEntity> chasingStalkers = new ArrayList<>();
+		for (BackroomsStalkerEntity stalker : stalkers) {
+			if (stalker.isAlive() && !stalker.isRemoved() && stalker.isChasingTarget()) {
+				chasingStalkers.add(stalker);
+			}
+		}
+
 		Set<UUID> processedPlayers = new HashSet<>();
 		for (ServerPlayer player : players) {
 			UUID playerId = player.getUUID();
@@ -134,7 +164,7 @@ public final class ServerBackroomsStalkerSystem {
 				continue;
 			}
 
-			BackroomsStalkerEntity nearestChasing = findNearestChasingStalker(player, stalkers);
+			BackroomsStalkerEntity nearestChasing = findNearestChasingStalker(player, chasingStalkers);
 			if (nearestChasing == null) {
 				RunLoopState state = STALKER_RUN_LOOP_STATES.get(playerId);
 				if (state != null && gameTime >= state.lastPlayTick + STALKER_RUN_CLIP_TICKS) {
@@ -170,10 +200,6 @@ public final class ServerBackroomsStalkerSystem {
 		BackroomsStalkerEntity nearest = null;
 		double nearestDistanceSqr = STALKER_RUN_HEAR_RADIUS_SQR + 1.0D;
 		for (BackroomsStalkerEntity stalker : stalkers) {
-			if (!stalker.isAlive() || stalker.isRemoved() || !stalker.isChasingTarget()) {
-				continue;
-			}
-
 			double distanceSqr = stalker.distanceToSqr(player);
 			if (distanceSqr > STALKER_RUN_HEAR_RADIUS_SQR || distanceSqr >= nearestDistanceSqr) {
 				continue;
@@ -380,13 +406,13 @@ public final class ServerBackroomsStalkerSystem {
 		return (dx * dx) + (dz * dz);
 	}
 
-	private static void spawnNearPlayers(ServerLevel level, List<ServerPlayer> players, int minRadiusBlocks, int maxRadiusBlocks) {
+	private static BackroomsStalkerEntity spawnNearPlayers(ServerLevel level, List<ServerPlayer> players, int minRadiusBlocks, int maxRadiusBlocks) {
 		BackroomsStalkerEntity stalker = BackroomsStalkerEntity.create(level);
 
 		Vec3 spawnPos = findSpawnPosition(level, stalker, players, minRadiusBlocks, maxRadiusBlocks);
 		if (spawnPos == null) {
 			stalker.discard();
-			return;
+			return null;
 		}
 
 		float yaw = level.random.nextFloat() * 360.0F;
@@ -397,10 +423,11 @@ public final class ServerBackroomsStalkerSystem {
 		stalker.setXRot(0.0F);
 		if (!level.noCollision(stalker) || level.containsAnyLiquid(stalker.getBoundingBox())) {
 			stalker.discard();
-			return;
+			return null;
 		}
 
 		level.addFreshEntity(stalker);
+		return stalker;
 	}
 
 	private static Vec3 findSpawnPosition(
@@ -442,9 +469,6 @@ public final class ServerBackroomsStalkerSystem {
 
 	private static boolean canSpawnAt(ServerLevel level, BackroomsStalkerEntity stalker, BlockPos feetPos) {
 		if (!level.getWorldBorder().isWithinBounds(feetPos)) {
-			return false;
-		}
-		if (feetPos.getY() > MAX_INTERIOR_FEET_Y) {
 			return false;
 		}
 
