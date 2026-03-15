@@ -1,6 +1,7 @@
 package com.lostglade.entity;
 
-import com.google.common.collect.ImmutableMultimap;
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.Multimap;
 import com.lostglade.Lg2;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.lostglade.server.ServerBackroomsSystem;
@@ -8,9 +9,13 @@ import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.Property;
 import com.mojang.authlib.properties.PropertyMap;
 import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
+import it.unimi.dsi.fastutil.Pair;
+import net.fabricmc.loader.api.FabricLoader;
 import net.lionarius.skinrestorer.SkinRestorer;
+import net.lionarius.skinrestorer.mineskin.MineskinService;
 import net.lionarius.skinrestorer.skin.SkinStorage;
 import net.lionarius.skinrestorer.skin.SkinValue;
+import net.lionarius.skinrestorer.skin.SkinVariant;
 import net.lionarius.skinrestorer.util.PlayerUtils;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.RemoteChatSession;
@@ -47,9 +52,24 @@ import net.minecraft.world.scores.Scoreboard;
 import net.minecraft.world.scores.Team;
 import xyz.nucleoid.packettweaker.PacketContext;
 
+import javax.imageio.ImageIO;
+import java.awt.AlphaComposite;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class BackroomsStalkerEntity extends Monster {
 	private static final byte ALL_PLAYER_SKIN_PARTS = (byte) 0x7F;
@@ -67,6 +87,17 @@ public final class BackroomsStalkerEntity extends Monster {
 	private static final int STUCK_REPATH_TICKS = 15;
 	private static final float WANDER_HEAD_PITCH = 45.0F;
 	private static final String STALKER_TAG = "lg2_backrooms_stalker";
+	private static final String STALKER_MASK_RESOURCE_PATH = "/stalker/skin_mask.png";
+	private static final int MASK_CUTOUT_RGB = 0x00FF00;
+	private static final java.nio.file.Path STALKER_MASK_FALLBACK_PATH = java.nio.file.Path.of("/home/mart/Pictures/Edited/skin1.png");
+	private static final java.nio.file.Path STALKER_MASKED_SKIN_CACHE_DIR = FabricLoader.getInstance()
+			.getGameDir()
+			.resolve("cache")
+			.resolve("lg2")
+			.resolve("stalker_masked_skins");
+	private static final Map<UUID, MaskedSkinCacheEntry> MASKED_VIEWER_SKIN_CACHE = new ConcurrentHashMap<>();
+	private static volatile BufferedImage STALKER_MASK_IMAGE;
+	private static volatile boolean MINESKIN_RELOADED_LAZILY = false;
 
 	private UUID trackedTargetUuid;
 	private long lastSeenTargetTick = Long.MIN_VALUE;
@@ -485,31 +516,258 @@ public final class BackroomsStalkerEntity extends Monster {
 	}
 
 	private static GameProfile buildViewerProfile(UUID profileId, ServerPlayer viewer) {
-		PropertyMap properties = new PropertyMap(ImmutableMultimap.copyOf(viewer.getGameProfile().properties()));
-		applyViewerSkin(viewer, properties);
+		PropertyMap properties = buildViewerProperties(viewer);
 		return new GameProfile(profileId, buildProfileName(profileId), properties);
 	}
 
-	private static void applyViewerSkin(ServerPlayer viewer, PropertyMap properties) {
+	private static PropertyMap buildViewerProperties(ServerPlayer viewer) {
+		Multimap<String, Property> mutableProperties = ArrayListMultimap.create();
+		if (viewer.getGameProfile() != null) {
+			mutableProperties.putAll(viewer.getGameProfile().properties());
+		}
+
 		try {
-			Property current = PlayerUtils.getPlayerSkin(viewer.getGameProfile());
-			if (current != null) {
-				properties.removeAll("textures");
-				properties.put("textures", current);
-				return;
+			Property sourceSkin = resolveViewerSourceSkin(viewer);
+			if (sourceSkin == null) {
+				return new PropertyMap(mutableProperties);
 			}
 
-			SkinStorage skinStorage = SkinRestorer.getSkinStorage();
-			if (skinStorage != null) {
-				SkinValue stored = skinStorage.getSkin(viewer.getUUID());
-				Property textures = stored == null ? null : stored.value();
-				if (textures != null) {
-					properties.removeAll("textures");
-					properties.put("textures", textures);
-				}
-			}
+			Property maskedSkin = resolveMaskedViewerSkin(viewer, sourceSkin);
+			mutableProperties.removeAll("textures");
+			mutableProperties.put("textures", maskedSkin != null ? maskedSkin : sourceSkin);
 		} catch (Exception exception) {
 			Lg2.LOGGER.debug("Failed to resolve viewer skin for backrooms stalker and {}", viewer.getScoreboardName(), exception);
+		}
+
+		return new PropertyMap(mutableProperties);
+	}
+
+	private static Property resolveViewerSourceSkin(ServerPlayer viewer) {
+		Property current = PlayerUtils.getPlayerSkin(viewer.getGameProfile());
+		if (current != null) {
+			return current;
+		}
+
+		SkinStorage skinStorage = SkinRestorer.getSkinStorage();
+		if (skinStorage == null) {
+			return null;
+		}
+
+		SkinValue stored = skinStorage.getSkin(viewer.getUUID());
+		return stored == null ? null : stored.value();
+	}
+
+	private static Property resolveMaskedViewerSkin(ServerPlayer viewer, Property sourceSkin) {
+		String sourceValue = sourceSkin.value();
+		MaskedSkinCacheEntry cached = MASKED_VIEWER_SKIN_CACHE.get(viewer.getUUID());
+		if (cached != null && Objects.equals(cached.sourceSkinValue(), sourceValue)) {
+			return cached.maskedSkinProperty();
+		}
+
+		Property generated = null;
+		try {
+			Pair<String, SkinVariant> skinData = PlayerUtils.getSkinUrl(sourceSkin);
+			if (skinData == null || skinData.first() == null || skinData.first().isBlank()) {
+				return null;
+			}
+
+			URI sourceSkinUri = new URI(skinData.first());
+			BufferedImage sourceSkinImage = loadSkinImage(sourceSkinUri);
+			BufferedImage maskImage = getStalkerMaskImage();
+			if (sourceSkinImage == null || maskImage == null) {
+				return null;
+			}
+
+			BufferedImage composed = composeMaskedSkin(sourceSkinImage, maskImage);
+			java.nio.file.Path composedPath = writeComposedSkin(sourceValue, composed);
+			SkinVariant variant = skinData.second() == null ? SkinVariant.CLASSIC : skinData.second();
+			generated = signMaskedSkin(composedPath.toUri(), variant);
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to build masked stalker skin for {}", viewer.getScoreboardName(), exception);
+		}
+
+		if (generated != null) {
+			MASKED_VIEWER_SKIN_CACHE.put(viewer.getUUID(), new MaskedSkinCacheEntry(sourceValue, generated));
+		} else {
+			MASKED_VIEWER_SKIN_CACHE.remove(viewer.getUUID());
+		}
+		return generated;
+	}
+
+	private static Property signMaskedSkin(URI skinUri, SkinVariant variant) {
+		try {
+			return MineskinService.INSTANCE.signSkin(skinUri, variant).orElse(null);
+		} catch (Exception firstFailure) {
+			if (!MINESKIN_RELOADED_LAZILY) {
+				MINESKIN_RELOADED_LAZILY = true;
+				try {
+					MineskinService.INSTANCE.reload();
+					return MineskinService.INSTANCE.signSkin(skinUri, variant).orElse(null);
+				} catch (Exception secondFailure) {
+					Lg2.LOGGER.debug("Failed to sign masked stalker skin after lazy Mineskin reload", secondFailure);
+				}
+			} else {
+				Lg2.LOGGER.debug("Failed to sign masked stalker skin", firstFailure);
+			}
+		}
+		return null;
+	}
+
+	private static BufferedImage loadSkinImage(URI uri) throws IOException {
+		try (InputStream stream = uri.toURL().openStream()) {
+			BufferedImage image = ImageIO.read(stream);
+			if (image == null) {
+				return null;
+			}
+			return normalizeSkinImage(toArgb(image));
+		}
+	}
+
+	private static BufferedImage getStalkerMaskImage() {
+		BufferedImage image = STALKER_MASK_IMAGE;
+		if (image != null) {
+			return image;
+		}
+
+		synchronized (BackroomsStalkerEntity.class) {
+			if (STALKER_MASK_IMAGE != null) {
+				return STALKER_MASK_IMAGE;
+			}
+			STALKER_MASK_IMAGE = loadMaskImage();
+			return STALKER_MASK_IMAGE;
+		}
+	}
+
+	private static BufferedImage loadMaskImage() {
+		try (InputStream resourceStream = BackroomsStalkerEntity.class.getResourceAsStream(STALKER_MASK_RESOURCE_PATH)) {
+			if (resourceStream != null) {
+				BufferedImage image = ImageIO.read(resourceStream);
+				if (image != null) {
+					return normalizeSkinImage(toArgb(image));
+				}
+			}
+		} catch (IOException exception) {
+			Lg2.LOGGER.debug("Failed to load stalker mask from classpath {}", STALKER_MASK_RESOURCE_PATH, exception);
+		}
+
+		if (Files.exists(STALKER_MASK_FALLBACK_PATH)) {
+			try (InputStream fileStream = Files.newInputStream(STALKER_MASK_FALLBACK_PATH)) {
+				BufferedImage image = ImageIO.read(fileStream);
+				if (image != null) {
+					return normalizeSkinImage(toArgb(image));
+				}
+			} catch (IOException exception) {
+				Lg2.LOGGER.debug("Failed to load stalker mask from {}", STALKER_MASK_FALLBACK_PATH, exception);
+			}
+		}
+
+		return null;
+	}
+
+	private static BufferedImage composeMaskedSkin(BufferedImage source, BufferedImage mask) {
+		int width = source.getWidth();
+		int height = source.getHeight();
+		BufferedImage result = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				int sourceArgb = source.getRGB(x, y);
+				int maskArgb = mask.getRGB(x, y);
+				int maskRgb = maskArgb & 0x00FFFFFF;
+
+				if (maskRgb == MASK_CUTOUT_RGB) {
+					result.setRGB(x, y, 0x00000000);
+					continue;
+				}
+
+				result.setRGB(x, y, blendSrcOver(sourceArgb, maskArgb));
+			}
+		}
+
+		return result;
+	}
+
+	private static int blendSrcOver(int baseArgb, int overlayArgb) {
+		int overlayAlpha = (overlayArgb >>> 24) & 0xFF;
+		if (overlayAlpha <= 0) {
+			return baseArgb;
+		}
+		if (overlayAlpha >= 255) {
+			return overlayArgb;
+		}
+
+		float oa = overlayAlpha / 255.0F;
+		float ba = ((baseArgb >>> 24) & 0xFF) / 255.0F;
+		float outA = oa + (ba * (1.0F - oa));
+		if (outA <= 1.0E-6F) {
+			return 0;
+		}
+
+		float br = ((baseArgb >>> 16) & 0xFF) / 255.0F;
+		float bg = ((baseArgb >>> 8) & 0xFF) / 255.0F;
+		float bb = (baseArgb & 0xFF) / 255.0F;
+
+		float or = ((overlayArgb >>> 16) & 0xFF) / 255.0F;
+		float og = ((overlayArgb >>> 8) & 0xFF) / 255.0F;
+		float ob = (overlayArgb & 0xFF) / 255.0F;
+
+		float outR = ((or * oa) + (br * ba * (1.0F - oa))) / outA;
+		float outG = ((og * oa) + (bg * ba * (1.0F - oa))) / outA;
+		float outB = ((ob * oa) + (bb * ba * (1.0F - oa))) / outA;
+
+		int a = Math.round(outA * 255.0F);
+		int r = Math.round(outR * 255.0F);
+		int g = Math.round(outG * 255.0F);
+		int b = Math.round(outB * 255.0F);
+		return ((a & 0xFF) << 24) | ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF);
+	}
+
+	private static java.nio.file.Path writeComposedSkin(String sourceValue, BufferedImage image) throws IOException {
+		Files.createDirectories(STALKER_MASKED_SKIN_CACHE_DIR);
+		String hash = shortSha1(sourceValue);
+		java.nio.file.Path output = STALKER_MASKED_SKIN_CACHE_DIR.resolve("stalker_masked_" + hash + ".png");
+		ImageIO.write(image, "PNG", output.toFile());
+		return output;
+	}
+
+	private static BufferedImage normalizeSkinImage(BufferedImage image) {
+		if (image.getWidth() == 64 && image.getHeight() == 64) {
+			return image;
+		}
+
+		BufferedImage normalized = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = normalized.createGraphics();
+		graphics.setComposite(AlphaComposite.Src);
+		graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+		graphics.drawImage(image, 0, 0, 64, 64, null);
+		graphics.dispose();
+		return normalized;
+	}
+
+	private static BufferedImage toArgb(BufferedImage image) {
+		if (image.getType() == BufferedImage.TYPE_INT_ARGB) {
+			return image;
+		}
+
+		BufferedImage converted = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = converted.createGraphics();
+		graphics.setComposite(AlphaComposite.Src);
+		graphics.drawImage(image, 0, 0, null);
+		graphics.dispose();
+		return converted;
+	}
+
+	private static String shortSha1(String value) {
+		try {
+			MessageDigest digest = MessageDigest.getInstance("SHA-1");
+			byte[] bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+			StringBuilder builder = new StringBuilder(bytes.length * 2);
+			for (byte b : bytes) {
+				builder.append(String.format("%02x", b));
+			}
+			return builder.toString();
+		} catch (NoSuchAlgorithmException exception) {
+			return Integer.toHexString(value.hashCode());
 		}
 	}
 
@@ -544,6 +802,9 @@ public final class BackroomsStalkerEntity extends Monster {
 			}
 		}
 		data.add(replacement);
+	}
+
+	private record MaskedSkinCacheEntry(String sourceSkinValue, Property maskedSkinProperty) {
 	}
 
 	public static final class StalkerPlayerOverlay implements eu.pb4.polymer.core.api.entity.PolymerEntity {
