@@ -8,6 +8,15 @@
       }
     ]
   },
+  "custom.backrooms_stalker_approach": {
+    "sounds": [
+      {
+        "name": "minecraft:custom/backrooms_stalker_approach",
+        "preload": true,
+        "volume": 0.75
+      }
+    ]
+  },
   "music_disc.13": {
     "replace": true,
     "sounds": [

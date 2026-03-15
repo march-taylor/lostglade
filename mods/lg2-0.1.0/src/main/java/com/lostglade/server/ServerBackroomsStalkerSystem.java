@@ -2,13 +2,20 @@ package com.lostglade.server;
 
 import com.lostglade.config.Lg2Config;
 import com.lostglade.entity.BackroomsStalkerEntity;
+import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -22,8 +29,10 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -32,11 +41,20 @@ public final class ServerBackroomsStalkerSystem {
 	private static final int MAX_SPAWN_ATTEMPTS_PER_PLAYER = 48;
 	private static final int MAX_VERTICAL_SEARCH = 4;
 	private static final int MAX_INTERIOR_FEET_Y = 65;
+	private static final Identifier STALKER_RUN_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "custom.backrooms_stalker_approach");
+	private static final double STALKER_RUN_HEAR_RADIUS_SQR = 32.0D * 32.0D;
+	private static final float STALKER_RUN_VOLUME = 1.50F;
+	private static final float STALKER_RUN_PITCH = 1.0F;
+	private static final int STALKER_RUN_CLIP_TICKS = 240;
+	// 12s clip at 20 TPS; replay every 10s so fades overlap by 2s.
+	private static final int STALKER_RUN_LOOP_TICKS = 200;
+	private static final Map<UUID, RunLoopState> STALKER_RUN_LOOP_STATES = new HashMap<>();
 
 	private ServerBackroomsStalkerSystem() {
 	}
 
 	public static void register() {
+		STALKER_RUN_LOOP_STATES.clear();
 		ServerTickEvents.END_SERVER_TICK.register(ServerBackroomsStalkerSystem::tickServer);
 		AttackEntityCallback.EVENT.register(ServerBackroomsStalkerSystem::onAttackEntity);
 		ServerEntityEvents.ENTITY_LOAD.register((entity, world) -> {
@@ -60,6 +78,7 @@ public final class ServerBackroomsStalkerSystem {
 
 		ServerLevel backrooms = server.getLevel(ServerBackroomsSystem.BACKROOMS_LEVEL);
 		if (backrooms == null) {
+			stopAllRunLoops(server);
 			return;
 		}
 
@@ -67,6 +86,7 @@ public final class ServerBackroomsStalkerSystem {
 		List<BackroomsStalkerEntity> stalkers = collectStalkers(backrooms);
 		if (players.isEmpty()) {
 			discardAll(stalkers);
+			stopAllRunLoops(server);
 			return;
 		}
 
@@ -89,6 +109,113 @@ public final class ServerBackroomsStalkerSystem {
 				stalker.discardFromSystem();
 			}
 		}
+
+		tickStalkerRunLoopAudio(backrooms, players, collectStalkers(backrooms));
+	}
+
+	private static void tickStalkerRunLoopAudio(
+			ServerLevel level,
+			List<ServerPlayer> players,
+			List<BackroomsStalkerEntity> stalkers
+	) {
+		long gameTime = level.getGameTime();
+		Set<UUID> processedPlayers = new HashSet<>();
+		for (ServerPlayer player : players) {
+			UUID playerId = player.getUUID();
+			processedPlayers.add(playerId);
+			if (!PolymerResourcePackUtils.hasMainPack(player)) {
+				stopRunLoopIfActive(player);
+				continue;
+			}
+
+			BackroomsStalkerEntity nearestChasing = findNearestChasingStalker(player, stalkers);
+			if (nearestChasing == null) {
+				RunLoopState state = STALKER_RUN_LOOP_STATES.get(playerId);
+				if (state != null && gameTime >= state.lastPlayTick + STALKER_RUN_CLIP_TICKS) {
+					STALKER_RUN_LOOP_STATES.remove(playerId);
+				}
+				continue;
+			}
+
+			RunLoopState state = STALKER_RUN_LOOP_STATES.computeIfAbsent(playerId, ignored -> new RunLoopState(gameTime));
+			if (gameTime >= state.nextPlayTick) {
+				playRunLoopSound(player, level, nearestChasing);
+				state.lastPlayTick = gameTime;
+				state.nextPlayTick = gameTime + STALKER_RUN_LOOP_TICKS;
+			}
+		}
+
+		var iterator = STALKER_RUN_LOOP_STATES.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, RunLoopState> entry = iterator.next();
+			if (processedPlayers.contains(entry.getKey())) {
+				continue;
+			}
+
+			ServerPlayer player = level.getServer().getPlayerList().getPlayer(entry.getKey());
+			if (player != null) {
+				stopRunLoopSound(player);
+			}
+			iterator.remove();
+		}
+	}
+
+	private static BackroomsStalkerEntity findNearestChasingStalker(ServerPlayer player, List<BackroomsStalkerEntity> stalkers) {
+		BackroomsStalkerEntity nearest = null;
+		double nearestDistanceSqr = STALKER_RUN_HEAR_RADIUS_SQR + 1.0D;
+		for (BackroomsStalkerEntity stalker : stalkers) {
+			if (!stalker.isAlive() || stalker.isRemoved() || !stalker.isChasingTarget()) {
+				continue;
+			}
+
+			double distanceSqr = stalker.distanceToSqr(player);
+			if (distanceSqr > STALKER_RUN_HEAR_RADIUS_SQR || distanceSqr >= nearestDistanceSqr) {
+				continue;
+			}
+
+			nearest = stalker;
+			nearestDistanceSqr = distanceSqr;
+		}
+		return nearest;
+	}
+
+	private static void playRunLoopSound(ServerPlayer player, ServerLevel level, BackroomsStalkerEntity stalker) {
+		Holder<SoundEvent> sound = Holder.direct(SoundEvent.createVariableRangeEvent(STALKER_RUN_SOUND_ID));
+		long seed = level.random.nextLong();
+		player.connection.send(new ClientboundSoundPacket(
+				sound,
+				SoundSource.AMBIENT,
+				stalker.getX(),
+				stalker.getY(),
+				stalker.getZ(),
+				STALKER_RUN_VOLUME,
+				STALKER_RUN_PITCH,
+				seed
+		));
+	}
+
+	private static void stopRunLoopIfActive(ServerPlayer player) {
+		if (STALKER_RUN_LOOP_STATES.remove(player.getUUID()) != null) {
+			stopRunLoopSound(player);
+		}
+	}
+
+	private static void stopRunLoopSound(ServerPlayer player) {
+		player.connection.send(new ClientboundStopSoundPacket(STALKER_RUN_SOUND_ID, SoundSource.AMBIENT));
+	}
+
+	private static void stopAllRunLoops(MinecraftServer server) {
+		if (STALKER_RUN_LOOP_STATES.isEmpty()) {
+			return;
+		}
+
+		for (UUID playerId : STALKER_RUN_LOOP_STATES.keySet()) {
+			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+			if (player != null) {
+				stopRunLoopSound(player);
+			}
+		}
+		STALKER_RUN_LOOP_STATES.clear();
 	}
 
 	private static InteractionResult onAttackEntity(
@@ -324,5 +451,15 @@ public final class ServerBackroomsStalkerSystem {
 	}
 
 	private record PlayerCluster(List<ServerPlayer> players, Vec3 center) {
+	}
+
+	private static final class RunLoopState {
+		long nextPlayTick;
+		long lastPlayTick;
+
+		RunLoopState(long nextPlayTick) {
+			this.nextPlayTick = nextPlayTick;
+			this.lastPlayTick = Long.MIN_VALUE;
+		}
 	}
 }

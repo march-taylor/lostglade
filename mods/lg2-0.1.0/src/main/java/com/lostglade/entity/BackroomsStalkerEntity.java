@@ -173,6 +173,10 @@ public final class BackroomsStalkerEntity extends Monster {
 		PolymerEntityUtils.setPolymerEntity(this, new StalkerPlayerOverlay(this.getUUID()));
 	}
 
+	public boolean isChasingTarget() {
+		return this.chasingTarget;
+	}
+
 	private ServerPlayer updateTrackedTarget(ServerLevel level, long nowTick) {
 		ServerPlayer currentTarget = resolveTrackedTarget(level);
 		ServerPlayer visibleTarget = findVisibleTarget(level, currentTarget);
