@@ -41,6 +41,7 @@ import java.io.Reader;
 import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -60,6 +61,8 @@ public final class ServerBackroomsSystem {
 	private static final String RETURNS_FILE_NAME = "lg2-backrooms-returns.json";
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
 	private static final BlockPos BACKROOMS_PLATFORM_CENTER = new BlockPos(0, 64, 0);
+	private static final int BACKROOMS_LEVEL_FLOOR_Y = 64;
+	private static final int BACKROOMS_LEVEL_HEIGHT = 5;
 	private static final int RESPAWN_MIN_COORD = -4096;
 	private static final int RESPAWN_MAX_COORD = 4096;
 	private static final int BACKROOMS_RESPAWN_DELAY_TICKS = 2;
@@ -68,6 +71,9 @@ public final class ServerBackroomsSystem {
 	private static final int PLATFORM_EXIT_LENGTH = 12;
 	private static final int RESPAWN_SEARCH_ATTEMPTS = 48;
 	private static final int RESPAWN_SEARCH_RADIUS = 12;
+	private static final int PREWARMED_RESPAWN_TARGET = 8;
+	private static final int PREWARMED_RESPAWN_STARTUP_BATCH = 3;
+	private static final int PREWARMED_RESPAWN_REFILL_INTERVAL_TICKS = 40;
 	private static final Identifier BACKROOMS_AMBIENT_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "custom.backrooms_ambient_loop");
 	// 12s file at 20 TPS ~= 240 ticks. Start every 200 ticks for ~2s overlap.
 	private static final int BACKROOMS_AMBIENT_LOOP_TICKS = 200;
@@ -93,6 +99,7 @@ public final class ServerBackroomsSystem {
 	private static final Map<UUID, Integer> PENDING_RESPAWNS = new HashMap<>();
 	private static final Map<UUID, AmbientLoopState> AMBIENT_LOOP_STATES = new HashMap<>();
 	private static final Map<Long, Long> ACTIVE_LAMP_OUTAGES = new HashMap<>();
+	private static final List<BlockPos> PREWARMED_RESPAWNS = new ArrayList<>();
 
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
@@ -107,6 +114,7 @@ public final class ServerBackroomsSystem {
 		PENDING_RESPAWNS.clear();
 		AMBIENT_LOOP_STATES.clear();
 		ACTIVE_LAMP_OUTAGES.clear();
+		PREWARMED_RESPAWNS.clear();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerBackroomsSystem::loadState);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerBackroomsSystem::saveState);
@@ -332,6 +340,8 @@ public final class ServerBackroomsSystem {
 		} catch (IOException exception) {
 			Lg2.LOGGER.error("Failed to load backrooms return points", exception);
 		}
+
+		fillPrewarmedRespawns(server, PREWARMED_RESPAWN_STARTUP_BATCH);
 	}
 
 	private static void onAfterRespawn(ServerPlayer oldPlayer, ServerPlayer newPlayer, boolean alive) {
@@ -401,6 +411,7 @@ public final class ServerBackroomsSystem {
 
 	private static void tickServer(MinecraftServer server) {
 		enforceClearWeather(server);
+		tickPrewarmedRespawns(server);
 		tickPendingRespawns(server);
 		tickBackroomsAmbientLoop(server);
 		tickLampRestores(server);
@@ -422,7 +433,10 @@ public final class ServerBackroomsSystem {
 	}
 
 	private static void teleportToRandomBackroomsRespawn(ServerLevel backrooms, ServerPlayer player) {
-		BlockPos safeSpawn = findRandomSafeRespawn(backrooms);
+		BlockPos safeSpawn = takePrewarmedRespawn(backrooms);
+		if (safeSpawn == null) {
+			safeSpawn = findRandomSafeRespawn(backrooms);
+		}
 		BlockPos platformCenter;
 		if (safeSpawn != null) {
 			platformCenter = safeSpawn.below();
@@ -603,6 +617,55 @@ public final class ServerBackroomsSystem {
 		player.connection.send(new ClientboundStopSoundPacket(BACKROOMS_AMBIENT_SOUND_ID, SoundSource.AMBIENT));
 	}
 
+	private static void tickPrewarmedRespawns(MinecraftServer server) {
+		if (server.getTickCount() % PREWARMED_RESPAWN_REFILL_INTERVAL_TICKS != 0) {
+			return;
+		}
+
+		fillPrewarmedRespawns(server, 1);
+	}
+
+	private static void fillPrewarmedRespawns(MinecraftServer server, int attempts) {
+		if (attempts <= 0 || PREWARMED_RESPAWNS.size() >= PREWARMED_RESPAWN_TARGET) {
+			return;
+		}
+
+		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
+		if (backrooms == null) {
+			return;
+		}
+
+		for (int i = 0; i < attempts && PREWARMED_RESPAWNS.size() < PREWARMED_RESPAWN_TARGET; i++) {
+			BlockPos safeSpawn = findRandomSafeRespawn(backrooms);
+			if (safeSpawn == null) {
+				continue;
+			}
+
+			BlockPos floorPos = safeSpawn.below().immutable();
+			if (!PREWARMED_RESPAWNS.contains(floorPos)) {
+				PREWARMED_RESPAWNS.add(floorPos);
+			}
+		}
+	}
+
+	private static BlockPos takePrewarmedRespawn(ServerLevel level) {
+		if (PREWARMED_RESPAWNS.isEmpty()) {
+			return null;
+		}
+
+		int attempts = PREWARMED_RESPAWNS.size();
+		for (int checked = 0; checked < attempts && !PREWARMED_RESPAWNS.isEmpty(); checked++) {
+			int index = level.random.nextInt(PREWARMED_RESPAWNS.size());
+			BlockPos floorPos = PREWARMED_RESPAWNS.remove(index);
+			level.getChunkAt(floorPos);
+			if (isSafeRespawnPosition(level, floorPos)) {
+				return floorPos.above();
+			}
+		}
+
+		return null;
+	}
+
 	private static BlockPos findRandomSafeRespawn(ServerLevel level) {
 		for (int attempt = 0; attempt < RESPAWN_SEARCH_ATTEMPTS; attempt++) {
 			BlockPos center = pickRandomRespawnCenter(level);
@@ -688,7 +751,15 @@ public final class ServerBackroomsSystem {
 	private static BlockPos pickRandomRespawnCenter(ServerLevel level) {
 		int x = Mth.nextInt(level.random, RESPAWN_MIN_COORD, RESPAWN_MAX_COORD);
 		int z = Mth.nextInt(level.random, RESPAWN_MIN_COORD, RESPAWN_MAX_COORD);
-		return new BlockPos(x, BACKROOMS_PLATFORM_CENTER.getY(), z);
+		int minLevelIndex = getBackroomsLevelIndex(level.getMinY());
+		int maxLevelIndex = getBackroomsLevelIndex(level.getMaxY() - 1);
+		int levelIndex = Mth.nextInt(level.random, minLevelIndex, maxLevelIndex);
+		int floorY = BACKROOMS_LEVEL_FLOOR_Y + levelIndex * BACKROOMS_LEVEL_HEIGHT;
+		return new BlockPos(x, floorY, z);
+	}
+
+	private static int getBackroomsLevelIndex(int y) {
+		return Math.floorDiv(y - BACKROOMS_LEVEL_FLOOR_Y, BACKROOMS_LEVEL_HEIGHT);
 	}
 
 	private static void ensurePlatform(ServerLevel level, BlockPos center) {
