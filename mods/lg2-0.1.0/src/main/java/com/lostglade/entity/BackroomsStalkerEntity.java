@@ -88,7 +88,7 @@ public final class BackroomsStalkerEntity extends Monster {
 	private static final float WANDER_HEAD_PITCH = 45.0F;
 	private static final String STALKER_TAG = "lg2_backrooms_stalker";
 	private static final String STALKER_MASK_RESOURCE_PATH = "/stalker/skin_mask.png";
-	private static final int MASK_CUTOUT_RGB = 0x00FF00;
+	private static final String STALKER_MASK_CACHE_VERSION = "v7-head-layer-blend-then-mask";
 	private static final java.nio.file.Path STALKER_MASK_FALLBACK_PATH = java.nio.file.Path.of("/home/mart/Pictures/Edited/skin1.png");
 	private static final java.nio.file.Path STALKER_MASKED_SKIN_CACHE_DIR = FabricLoader.getInstance()
 			.getGameDir()
@@ -559,8 +559,9 @@ public final class BackroomsStalkerEntity extends Monster {
 
 	private static Property resolveMaskedViewerSkin(ServerPlayer viewer, Property sourceSkin) {
 		String sourceValue = sourceSkin.value();
+		String sourceCacheKey = sourceValue + "|" + STALKER_MASK_CACHE_VERSION;
 		MaskedSkinCacheEntry cached = MASKED_VIEWER_SKIN_CACHE.get(viewer.getUUID());
-		if (cached != null && Objects.equals(cached.sourceSkinValue(), sourceValue)) {
+		if (cached != null && Objects.equals(cached.sourceSkinCacheKey(), sourceCacheKey)) {
 			return cached.maskedSkinProperty();
 		}
 
@@ -578,8 +579,9 @@ public final class BackroomsStalkerEntity extends Monster {
 				return null;
 			}
 
-			BufferedImage composed = composeMaskedSkin(sourceSkinImage, maskImage);
-			java.nio.file.Path composedPath = writeComposedSkin(sourceValue, composed);
+			BufferedImage preparedSkinImage = blendHeadOuterLayerOntoBaseAndClear(sourceSkinImage);
+			BufferedImage composed = composeMaskedSkin(preparedSkinImage, maskImage);
+			java.nio.file.Path composedPath = writeComposedSkin(sourceCacheKey, composed);
 			SkinVariant variant = skinData.second() == null ? SkinVariant.CLASSIC : skinData.second();
 			generated = signMaskedSkin(composedPath.toUri(), variant);
 		} catch (Exception exception) {
@@ -587,7 +589,7 @@ public final class BackroomsStalkerEntity extends Monster {
 		}
 
 		if (generated != null) {
-			MASKED_VIEWER_SKIN_CACHE.put(viewer.getUUID(), new MaskedSkinCacheEntry(sourceValue, generated));
+			MASKED_VIEWER_SKIN_CACHE.put(viewer.getUUID(), new MaskedSkinCacheEntry(sourceCacheKey, generated));
 		} else {
 			MASKED_VIEWER_SKIN_CACHE.remove(viewer.getUUID());
 		}
@@ -673,18 +675,41 @@ public final class BackroomsStalkerEntity extends Monster {
 			for (int x = 0; x < width; x++) {
 				int sourceArgb = source.getRGB(x, y);
 				int maskArgb = mask.getRGB(x, y);
-				int maskRgb = maskArgb & 0x00FFFFFF;
-
-				if (maskRgb == MASK_CUTOUT_RGB) {
-					result.setRGB(x, y, 0x00000000);
-					continue;
-				}
-
 				result.setRGB(x, y, blendSrcOver(sourceArgb, maskArgb));
 			}
 		}
 
 		return result;
+	}
+
+	private static BufferedImage blendHeadOuterLayerOntoBaseAndClear(BufferedImage source) {
+		BufferedImage merged = toArgb(source);
+		int[][] headLayerRegions = new int[][]{
+				{40, 0, 8, 0},   // top
+				{48, 0, 16, 0},  // bottom
+				{32, 8, 0, 8},   // right
+				{40, 8, 8, 8},   // front
+				{48, 8, 16, 8},  // left
+				{56, 8, 24, 8}   // back
+		};
+
+		for (int[] region : headLayerRegions) {
+			int sourceX = region[0];
+			int sourceY = region[1];
+			int targetX = region[2];
+			int targetY = region[3];
+
+			for (int y = 0; y < 8; y++) {
+				for (int x = 0; x < 8; x++) {
+					int baseArgb = merged.getRGB(targetX + x, targetY + y);
+					int overlayArgb = source.getRGB(sourceX + x, sourceY + y);
+					merged.setRGB(targetX + x, targetY + y, blendSrcOver(baseArgb, overlayArgb));
+					merged.setRGB(sourceX + x, sourceY + y, 0x00000000);
+				}
+			}
+		}
+
+		return merged;
 	}
 
 	private static int blendSrcOver(int baseArgb, int overlayArgb) {
@@ -722,9 +747,9 @@ public final class BackroomsStalkerEntity extends Monster {
 		return ((a & 0xFF) << 24) | ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF);
 	}
 
-	private static java.nio.file.Path writeComposedSkin(String sourceValue, BufferedImage image) throws IOException {
+	private static java.nio.file.Path writeComposedSkin(String cacheKey, BufferedImage image) throws IOException {
 		Files.createDirectories(STALKER_MASKED_SKIN_CACHE_DIR);
-		String hash = shortSha1(sourceValue);
+		String hash = shortSha1(cacheKey);
 		java.nio.file.Path output = STALKER_MASKED_SKIN_CACHE_DIR.resolve("stalker_masked_" + hash + ".png");
 		ImageIO.write(image, "PNG", output.toFile());
 		return output;
@@ -804,7 +829,7 @@ public final class BackroomsStalkerEntity extends Monster {
 		data.add(replacement);
 	}
 
-	private record MaskedSkinCacheEntry(String sourceSkinValue, Property maskedSkinProperty) {
+	private record MaskedSkinCacheEntry(String sourceSkinCacheKey, Property maskedSkinProperty) {
 	}
 
 	public static final class StalkerPlayerOverlay implements eu.pb4.polymer.core.api.entity.PolymerEntity {
