@@ -65,9 +65,11 @@ import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -79,6 +81,19 @@ public final class BackroomsStalkerEntity extends Monster {
 	private static final double ATTACK_RANGE_SQR = ATTACK_RANGE * ATTACK_RANGE;
 	private static final int FORGET_TARGET_AFTER_TICKS = 100;
 	private static final int ATTACK_COOLDOWN_TICKS = 20;
+	private static final int TARGET_SCAN_INTERVAL_TICKS = 3;
+	private static final int SIGHT_CACHE_TTL_TICKS = 2;
+	private static final int SIGHT_CACHE_MAX_ENTRIES = 32;
+	private static final double SKIN_SCREAMER_TRIGGER_RADIUS_SQR = 32.0D * 32.0D;
+	private static final double SKIN_SCREAMER_MIN_LOOK_DOT = 0.8660254D; // ~30 degrees from center
+	private static final float SKIN_SCREAMER_BLINK_CHANCE = 0.25F;
+	private static final int SKIN_SCREAMER_MIN_TOGGLES = 10;
+	private static final int SKIN_SCREAMER_MAX_TOGGLES = 18;
+	private static final int SKIN_SCREAMER_MASK_PHASE_MIN_TICKS = 1;
+	private static final int SKIN_SCREAMER_MASK_PHASE_MAX_TICKS = 3;
+	private static final int SKIN_SCREAMER_GAP_PHASE_MIN_TICKS = 1;
+	private static final int SKIN_SCREAMER_GAP_PHASE_MAX_TICKS = 5;
+	private static final long MASKED_SKIN_RETRY_COOLDOWN_MS = 15_000L;
 	private static final int MIN_WANDER_DISTANCE = 8;
 	private static final int MAX_WANDER_DISTANCE = 24;
 	private static final int MAX_WANDER_ATTEMPTS = 30;
@@ -95,17 +110,22 @@ public final class BackroomsStalkerEntity extends Monster {
 			.resolve("cache")
 			.resolve("lg2")
 			.resolve("stalker_masked_skins");
-	private static final Map<UUID, MaskedSkinCacheEntry> MASKED_VIEWER_SKIN_CACHE = new ConcurrentHashMap<>();
+	private static final Map<UUID, Map<UUID, Boolean>> MASKED_SKIN_VIEWER_STATE = new ConcurrentHashMap<>();
+	private static final Map<String, Property> MASKED_SKIN_BY_SOURCE_CACHE = new ConcurrentHashMap<>();
+	private static final Map<String, Long> MASKED_SKIN_RETRY_AT_MS = new ConcurrentHashMap<>();
 	private static volatile BufferedImage STALKER_MASK_IMAGE;
 	private static volatile boolean MINESKIN_RELOADED_LAZILY = false;
 
 	private UUID trackedTargetUuid;
 	private long lastSeenTargetTick = Long.MIN_VALUE;
 	private long nextAttackTick = 0L;
+	private long nextTargetScanTick = 0L;
 	private long nextWanderRefreshTick = 0L;
 	private int stationaryTicks = 0;
 	private Vec3 lastTickPos = Vec3.ZERO;
 	private Vec3 wanderTarget;
+	private final Map<UUID, SightCacheEntry> sightCache = new HashMap<>();
+	private final Map<UUID, ViewerSkinScreamerState> viewerSkinScreamerStates = new HashMap<>();
 	private boolean removalPacketsSent = false;
 	private boolean chasingTarget = false;
 
@@ -183,16 +203,35 @@ public final class BackroomsStalkerEntity extends Monster {
 		}
 
 		long nowTick = level.getGameTime();
-		ServerPlayer target = updateTrackedTarget(level, nowTick);
+		ServerPlayer target = resolveTargetForTick(level, nowTick);
 		if (target != null) {
 			this.chasingTarget = true;
 			updateChaseMovement(target);
-			updateTouchDamage(level, nowTick);
-			return;
+			updateTouchDamage(level, nowTick, target);
+		} else {
+			this.chasingTarget = false;
+			updateWanderMovement(level, nowTick);
 		}
 
-		this.chasingTarget = false;
-		updateWanderMovement(level, nowTick);
+		tickSkinScreamer(level, nowTick);
+	}
+
+	private ServerPlayer resolveTargetForTick(ServerLevel level, long nowTick) {
+		if (nowTick >= this.nextTargetScanTick || this.trackedTargetUuid == null) {
+			this.nextTargetScanTick = nowTick + TARGET_SCAN_INTERVAL_TICKS;
+			return updateTrackedTarget(level, nowTick);
+		}
+
+		ServerPlayer currentTarget = resolveTrackedTarget(level);
+		if (currentTarget == null) {
+			clearTrackedTarget();
+			return null;
+		}
+		if (nowTick - this.lastSeenTargetTick > FORGET_TARGET_AFTER_TICKS) {
+			clearTrackedTarget();
+			return null;
+		}
+		return currentTarget;
 	}
 
 	public void discardFromSystem() {
@@ -244,32 +283,52 @@ public final class BackroomsStalkerEntity extends Monster {
 	}
 
 	private ServerPlayer findVisibleTarget(ServerLevel level, ServerPlayer preferredTarget) {
-		if (isEligibleTarget(preferredTarget) && hasTransparentAwareSight(preferredTarget)) {
+		long nowTick = level.getGameTime();
+		if (isEligibleTarget(preferredTarget) && hasTransparentAwareSight(preferredTarget, nowTick)) {
 			return preferredTarget;
 		}
 
 		ServerPlayer nearest = null;
 		double nearestDistanceSqr = Double.MAX_VALUE;
 		for (ServerPlayer player : level.players()) {
-			if (!isEligibleTarget(player) || !hasTransparentAwareSight(player)) {
+			if (!isEligibleTarget(player)) {
 				continue;
 			}
 
 			double distanceSqr = this.distanceToSqr(player);
-			if (distanceSqr < nearestDistanceSqr) {
-				nearest = player;
-				nearestDistanceSqr = distanceSqr;
+			if (distanceSqr >= nearestDistanceSqr) {
+				continue;
 			}
+			if (!hasTransparentAwareSight(player, nowTick)) {
+				continue;
+			}
+
+			nearest = player;
+			nearestDistanceSqr = distanceSqr;
 		}
 
 		return nearest;
 	}
 
-	private boolean hasTransparentAwareSight(ServerPlayer player) {
+	private boolean hasTransparentAwareSight(ServerPlayer player, long nowTick) {
 		if (!isEligibleTarget(player) || !(this.level() instanceof ServerLevel level)) {
 			return false;
 		}
 
+		SightCacheEntry cached = this.sightCache.get(player.getUUID());
+		if (cached != null && nowTick - cached.tick <= SIGHT_CACHE_TTL_TICKS) {
+			return cached.hasSight;
+		}
+
+		boolean hasSight = computeTransparentAwareSight(level, player);
+		if (this.sightCache.size() >= SIGHT_CACHE_MAX_ENTRIES) {
+			this.sightCache.clear();
+		}
+		this.sightCache.put(player.getUUID(), new SightCacheEntry(nowTick, hasSight));
+		return hasSight;
+	}
+
+	private boolean computeTransparentAwareSight(ServerLevel level, ServerPlayer player) {
 		Vec3 start = this.getEyePosition();
 		Vec3 end = player.getEyePosition();
 		Vec3 direction = end.subtract(start);
@@ -335,6 +394,7 @@ public final class BackroomsStalkerEntity extends Monster {
 		this.lastSeenTargetTick = Long.MIN_VALUE;
 		this.wanderTarget = null;
 		this.stationaryTicks = 0;
+		this.sightCache.clear();
 	}
 
 	private void updateChaseMovement(ServerPlayer target) {
@@ -440,8 +500,14 @@ public final class BackroomsStalkerEntity extends Monster {
 		return level.noCollision(this, standingBox);
 	}
 
-	private void updateTouchDamage(ServerLevel level, long nowTick) {
+	private void updateTouchDamage(ServerLevel level, long nowTick, ServerPlayer trackedTarget) {
 		if (nowTick < this.nextAttackTick) {
+			return;
+		}
+
+		if (isEligibleTarget(trackedTarget) && this.distanceToSqr(trackedTarget) <= ATTACK_RANGE_SQR) {
+			applyUnstoppableHit(trackedTarget);
+			this.nextAttackTick = nowTick + ATTACK_COOLDOWN_TICKS;
 			return;
 		}
 
@@ -500,12 +566,124 @@ public final class BackroomsStalkerEntity extends Monster {
 		this.xRotO = pitch;
 	}
 
+	private void tickSkinScreamer(ServerLevel level, long nowTick) {
+		Set<UUID> activeViewers = new HashSet<>();
+		for (ServerPlayer viewer : level.players()) {
+			UUID viewerId = viewer.getUUID();
+			activeViewers.add(viewerId);
+			if (viewer.connection == null) {
+				continue;
+			}
+
+			ViewerSkinScreamerState state = this.viewerSkinScreamerStates.computeIfAbsent(viewerId, ignored -> new ViewerSkinScreamerState());
+			if (!isEligibleTarget(viewer)) {
+				if (state.showMasked) {
+					state.showMasked = false;
+					setMaskedSkinForViewer(this.getUUID(), viewerId, false);
+					applyViewerSkinState(viewer, false);
+				}
+				state.reset();
+				continue;
+			}
+
+			Property prewarmedMasked = prepareMaskedSkin(viewer);
+			boolean lookingNow = isViewerLookingAtStalker(viewer, nowTick);
+			boolean maskReady = prewarmedMasked != null;
+
+			if (!lookingNow) {
+				state.wasLooking = false;
+				state.togglesRemaining = 0;
+				state.nextToggleTick = 0L;
+				if (state.showMasked) {
+					state.showMasked = false;
+					setMaskedSkinForViewer(this.getUUID(), viewerId, false);
+					applyViewerSkinState(viewer, false);
+				}
+				continue;
+			}
+
+			if (!state.wasLooking && maskReady && level.random.nextFloat() < SKIN_SCREAMER_BLINK_CHANCE) {
+				state.togglesRemaining = randomInclusive(level.random, SKIN_SCREAMER_MIN_TOGGLES, SKIN_SCREAMER_MAX_TOGGLES);
+				state.nextToggleTick = nowTick;
+			}
+			state.wasLooking = true;
+
+			if (state.togglesRemaining > 0 && nowTick >= state.nextToggleTick) {
+				state.showMasked = !state.showMasked;
+				state.togglesRemaining--;
+				int phaseTicks = state.showMasked
+						? randomInclusive(level.random, SKIN_SCREAMER_MASK_PHASE_MIN_TICKS, SKIN_SCREAMER_MASK_PHASE_MAX_TICKS)
+						: randomInclusive(level.random, SKIN_SCREAMER_GAP_PHASE_MIN_TICKS, SKIN_SCREAMER_GAP_PHASE_MAX_TICKS);
+				state.nextToggleTick = nowTick + phaseTicks;
+
+				setMaskedSkinForViewer(this.getUUID(), viewerId, state.showMasked);
+				applyViewerSkinState(viewer, state.showMasked);
+
+				if (state.togglesRemaining == 0 && state.showMasked) {
+					state.showMasked = false;
+					setMaskedSkinForViewer(this.getUUID(), viewerId, false);
+					applyViewerSkinState(viewer, false);
+				}
+			}
+		}
+
+		this.viewerSkinScreamerStates.entrySet().removeIf(entry -> !activeViewers.contains(entry.getKey()));
+		Map<UUID, Boolean> perViewerState = MASKED_SKIN_VIEWER_STATE.get(this.getUUID());
+		if (perViewerState != null) {
+			perViewerState.keySet().removeIf(id -> !activeViewers.contains(id));
+			if (perViewerState.isEmpty()) {
+				MASKED_SKIN_VIEWER_STATE.remove(this.getUUID());
+			}
+		}
+	}
+
+	private static int randomInclusive(RandomSource random, int min, int max) {
+		if (max <= min) {
+			return min;
+		}
+		return min + random.nextInt((max - min) + 1);
+	}
+
+	private void applyViewerSkinState(ServerPlayer viewer, boolean useMaskedSkin) {
+		PolymerEntityUtils.refreshEntity(viewer, this);
+		GameProfile profile = buildViewerProfile(this.getUUID(), viewer, useMaskedSkin);
+		viewer.connection.send(new ClientboundPlayerInfoRemovePacket(List.of(profile.id())));
+		viewer.connection.send(createPlayerInfoUpdatePacket(profile));
+	}
+
+	private boolean isViewerLookingAtStalker(ServerPlayer viewer, long nowTick) {
+		Vec3 viewerEyes = viewer.getEyePosition();
+		Vec3 stalkerEyes = this.getEyePosition();
+		Vec3 toStalker = stalkerEyes.subtract(viewerEyes);
+		double toStalkerLengthSqr = toStalker.lengthSqr();
+		if (toStalkerLengthSqr > SKIN_SCREAMER_TRIGGER_RADIUS_SQR) {
+			return false;
+		}
+		if (toStalkerLengthSqr <= 1.0E-8D) {
+			return true;
+		}
+
+		Vec3 look = viewer.getViewVector(1.0F);
+		double lookLengthSqr = look.lengthSqr();
+		if (lookLengthSqr <= 1.0E-8D) {
+			return false;
+		}
+
+		double dot = look.normalize().dot(toStalker.normalize());
+		if (dot < SKIN_SCREAMER_MIN_LOOK_DOT) {
+			return false;
+		}
+
+		return hasTransparentAwareSight(viewer, nowTick);
+	}
+
 	private void sendRemovalPackets() {
 		if (this.removalPacketsSent || !(this.level() instanceof ServerLevel level)) {
 			return;
 		}
 
 		this.removalPacketsSent = true;
+		MASKED_SKIN_VIEWER_STATE.remove(this.getUUID());
 		PlayerTeam team = createHiddenTeam(this.getUUID(), buildProfileName(this.getUUID()));
 		ClientboundSetPlayerTeamPacket teamPacket = ClientboundSetPlayerTeamPacket.createRemovePacket(team);
 		ClientboundPlayerInfoRemovePacket removePacket = new ClientboundPlayerInfoRemovePacket(List.of(this.getUUID()));
@@ -515,12 +693,12 @@ public final class BackroomsStalkerEntity extends Monster {
 		}
 	}
 
-	private static GameProfile buildViewerProfile(UUID profileId, ServerPlayer viewer) {
-		PropertyMap properties = buildViewerProperties(viewer);
+	private static GameProfile buildViewerProfile(UUID profileId, ServerPlayer viewer, boolean useMaskedSkin) {
+		PropertyMap properties = buildViewerProperties(viewer, useMaskedSkin);
 		return new GameProfile(profileId, buildProfileName(profileId), properties);
 	}
 
-	private static PropertyMap buildViewerProperties(ServerPlayer viewer) {
+	private static PropertyMap buildViewerProperties(ServerPlayer viewer, boolean useMaskedSkin) {
 		Multimap<String, Property> mutableProperties = ArrayListMultimap.create();
 		if (viewer.getGameProfile() != null) {
 			mutableProperties.putAll(viewer.getGameProfile().properties());
@@ -532,9 +710,15 @@ public final class BackroomsStalkerEntity extends Monster {
 				return new PropertyMap(mutableProperties);
 			}
 
-			Property maskedSkin = resolveMaskedViewerSkin(viewer, sourceSkin);
+			Property selectedSkin = sourceSkin;
+			if (useMaskedSkin) {
+				Property maskedSkin = resolveMaskedViewerSkin(viewer, sourceSkin);
+				if (maskedSkin != null) {
+					selectedSkin = maskedSkin;
+				}
+			}
 			mutableProperties.removeAll("textures");
-			mutableProperties.put("textures", maskedSkin != null ? maskedSkin : sourceSkin);
+			mutableProperties.put("textures", selectedSkin);
 		} catch (Exception exception) {
 			Lg2.LOGGER.debug("Failed to resolve viewer skin for backrooms stalker and {}", viewer.getScoreboardName(), exception);
 		}
@@ -557,12 +741,26 @@ public final class BackroomsStalkerEntity extends Monster {
 		return stored == null ? null : stored.value();
 	}
 
+	private static Property prepareMaskedSkin(ServerPlayer viewer) {
+		Property sourceSkin = resolveViewerSourceSkin(viewer);
+		if (sourceSkin == null) {
+			return null;
+		}
+		return resolveMaskedViewerSkin(viewer, sourceSkin);
+	}
+
 	private static Property resolveMaskedViewerSkin(ServerPlayer viewer, Property sourceSkin) {
 		String sourceValue = sourceSkin.value();
 		String sourceCacheKey = sourceValue + "|" + STALKER_MASK_CACHE_VERSION;
-		MaskedSkinCacheEntry cached = MASKED_VIEWER_SKIN_CACHE.get(viewer.getUUID());
-		if (cached != null && Objects.equals(cached.sourceSkinCacheKey(), sourceCacheKey)) {
-			return cached.maskedSkinProperty();
+		Property cached = MASKED_SKIN_BY_SOURCE_CACHE.get(sourceCacheKey);
+		if (cached != null) {
+			return cached;
+		}
+
+		long nowMs = System.currentTimeMillis();
+		Long retryAtMs = MASKED_SKIN_RETRY_AT_MS.get(sourceCacheKey);
+		if (retryAtMs != null && nowMs < retryAtMs) {
+			return null;
 		}
 
 		Property generated = null;
@@ -589,9 +787,10 @@ public final class BackroomsStalkerEntity extends Monster {
 		}
 
 		if (generated != null) {
-			MASKED_VIEWER_SKIN_CACHE.put(viewer.getUUID(), new MaskedSkinCacheEntry(sourceCacheKey, generated));
+			MASKED_SKIN_BY_SOURCE_CACHE.put(sourceCacheKey, generated);
+			MASKED_SKIN_RETRY_AT_MS.remove(sourceCacheKey);
 		} else {
-			MASKED_VIEWER_SKIN_CACHE.remove(viewer.getUUID());
+			MASKED_SKIN_RETRY_AT_MS.put(sourceCacheKey, nowMs + MASKED_SKIN_RETRY_COOLDOWN_MS);
 		}
 		return generated;
 	}
@@ -806,6 +1005,61 @@ public final class BackroomsStalkerEntity extends Monster {
 		return "lg2st_" + compact.substring(0, 10);
 	}
 
+	private static void setMaskedSkinForViewer(UUID stalkerProfileId, UUID viewerId, boolean enabled) {
+		if (stalkerProfileId == null || viewerId == null) {
+			return;
+		}
+		if (!enabled) {
+			Map<UUID, Boolean> perViewer = MASKED_SKIN_VIEWER_STATE.get(stalkerProfileId);
+			if (perViewer == null) {
+				return;
+			}
+			perViewer.remove(viewerId);
+			if (perViewer.isEmpty()) {
+				MASKED_SKIN_VIEWER_STATE.remove(stalkerProfileId);
+			}
+			return;
+		}
+
+		MASKED_SKIN_VIEWER_STATE
+				.computeIfAbsent(stalkerProfileId, ignored -> new ConcurrentHashMap<>())
+				.put(viewerId, Boolean.TRUE);
+	}
+
+	private static boolean isMaskedSkinEnabledForViewer(UUID stalkerProfileId, UUID viewerId) {
+		Map<UUID, Boolean> perViewer = MASKED_SKIN_VIEWER_STATE.get(stalkerProfileId);
+		if (perViewer == null) {
+			return false;
+		}
+		return Boolean.TRUE.equals(perViewer.get(viewerId));
+	}
+
+	private static ClientboundPlayerInfoUpdatePacket createPlayerInfoUpdatePacket(GameProfile profile) {
+		EnumSet<ClientboundPlayerInfoUpdatePacket.Action> actions = EnumSet.of(
+				ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER,
+				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED,
+				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE,
+				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LATENCY,
+				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME,
+				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LIST_ORDER,
+				ClientboundPlayerInfoUpdatePacket.Action.UPDATE_HAT
+		);
+		ClientboundPlayerInfoUpdatePacket packet = PolymerEntityUtils.createMutablePlayerListPacket(actions);
+		ClientboundPlayerInfoUpdatePacket.Entry entry = new ClientboundPlayerInfoUpdatePacket.Entry(
+				profile.id(),
+				profile,
+				false,
+				0,
+				GameType.SURVIVAL,
+				null,
+				true,
+				0,
+				(RemoteChatSession.Data) null
+		);
+		packet.entries().add(entry);
+		return packet;
+	}
+
 	private static PlayerTeam createHiddenTeam(UUID profileId, String profileName) {
 		PlayerTeam team = new PlayerTeam(new Scoreboard(), buildTeamName(profileId));
 		team.setDisplayName(Component.empty());
@@ -829,7 +1083,28 @@ public final class BackroomsStalkerEntity extends Monster {
 		data.add(replacement);
 	}
 
-	private record MaskedSkinCacheEntry(String sourceSkinCacheKey, Property maskedSkinProperty) {
+	private static final class SightCacheEntry {
+		private final long tick;
+		private final boolean hasSight;
+
+		private SightCacheEntry(long tick, boolean hasSight) {
+			this.tick = tick;
+			this.hasSight = hasSight;
+		}
+	}
+
+	private static final class ViewerSkinScreamerState {
+		private boolean wasLooking = false;
+		private boolean showMasked = false;
+		private int togglesRemaining = 0;
+		private long nextToggleTick = 0L;
+
+		private void reset() {
+			this.wasLooking = false;
+			this.showMasked = false;
+			this.togglesRemaining = 0;
+			this.nextToggleTick = 0L;
+		}
 	}
 
 	public static final class StalkerPlayerOverlay implements eu.pb4.polymer.core.api.entity.PolymerEntity {
@@ -846,35 +1121,13 @@ public final class BackroomsStalkerEntity extends Monster {
 
 		@Override
 		public void onBeforeSpawnPacket(ServerPlayer player, java.util.function.Consumer<Packet<?>> packetConsumer) {
-			GameProfile profile = buildViewerProfile(this.profileId, player);
+			boolean useMaskedSkin = isMaskedSkinEnabledForViewer(this.profileId, player.getUUID());
+			GameProfile profile = buildViewerProfile(this.profileId, player, useMaskedSkin);
 			packetConsumer.accept(ClientboundSetPlayerTeamPacket.createAddOrModifyPacket(
 					createHiddenTeam(profile.id(), profile.name()),
 					true
 			));
-
-			EnumSet<ClientboundPlayerInfoUpdatePacket.Action> actions = EnumSet.of(
-					ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER,
-					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED,
-					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE,
-					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LATENCY,
-					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME,
-					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LIST_ORDER,
-					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_HAT
-			);
-			ClientboundPlayerInfoUpdatePacket packet = PolymerEntityUtils.createMutablePlayerListPacket(actions);
-			ClientboundPlayerInfoUpdatePacket.Entry entry = new ClientboundPlayerInfoUpdatePacket.Entry(
-					profile.id(),
-					profile,
-					false,
-					0,
-					GameType.SURVIVAL,
-					null,
-					true,
-					0,
-					(RemoteChatSession.Data) null
-			);
-			packet.entries().add(entry);
-			packetConsumer.accept(packet);
+			packetConsumer.accept(createPlayerInfoUpdatePacket(profile));
 		}
 
 		@Override
