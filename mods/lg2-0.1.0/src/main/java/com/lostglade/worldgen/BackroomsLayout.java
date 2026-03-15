@@ -1,7 +1,12 @@
 package com.lostglade.worldgen;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.state.properties.DoorHingeSide;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
 
 final class BackroomsLayout {
 	static final int FLOOR_Y = 64;
@@ -18,6 +23,11 @@ final class BackroomsLayout {
 	private static final long DOOR_LAYOUT_SALT = 0x6B41524F4F4D4452L;
 	private static final long INSET_LAYOUT_SALT = 0x494E534554524F4FL;
 	private static final long LEVEL_LAYOUT_SALT = 0x4C564C53414C5431L;
+	private static final long CELL_CACHE_SALT = 0x43454C4C43414348L;
+	private static final long INSET_CACHE_SALT = 0x494E534554434143L;
+	private static final long OPEN_CACHE_SALT = 0x4F50454E43414348L;
+	private static final long DOOR_CACHE_SALT = 0x444F4F5243414348L;
+	private static final ThreadLocal<LayoutCache> LAYOUT_CACHE = ThreadLocal.withInitial(LayoutCache::new);
 
 	private BackroomsLayout() {
 	}
@@ -91,7 +101,16 @@ final class BackroomsLayout {
 	}
 
 	private static boolean isOpenSpace(ZoneType zone, int x, int z, int levelIndex) {
-		return isPrimaryOpenSpace(zone, x, z, levelIndex) || isInsetOpenSpace(zone, x, z, levelIndex);
+		LayoutCache cache = layoutCache();
+		long key = cacheKey(x, z, levelIndex, zone, OPEN_CACHE_SALT);
+		Boolean cached = cache.openSpaceCache.get(key);
+		if (cached != null) {
+			return cached;
+		}
+
+		boolean result = isPrimaryOpenSpace(zone, x, z, levelIndex) || isInsetOpenSpace(zone, x, z, levelIndex);
+		cache.openSpaceCache.put(key, result);
+		return result;
 	}
 
 	private static boolean isPrimaryOpenSpace(ZoneType zone, int x, int z, int levelIndex) {
@@ -204,6 +223,13 @@ final class BackroomsLayout {
 	}
 
 	private static CellData getCell(ZoneType zone, int cellX, int cellZ, int levelIndex) {
+		LayoutCache cache = layoutCache();
+		long key = cacheKey(cellX, cellZ, levelIndex, zone, CELL_CACHE_SALT);
+		CellData cached = cache.cellCache.get(key);
+		if (cached != null) {
+			return cached;
+		}
+
 		long sample = mix(cellX, cellZ, zone.layoutSalt ^ levelSalt(levelIndex));
 		int shiftX = positiveMod(sample ^ 0x0F91A4BL, 9) - 4;
 		int shiftZ = positiveMod(sample ^ 0x17B4D29L, 9) - 4;
@@ -238,7 +264,7 @@ final class BackroomsLayout {
 		boolean eastHorizontalFirst = ((sample >>> 7) & 1L) == 0L;
 		boolean southHorizontalFirst = ((sample >>> 13) & 1L) == 0L;
 
-		return new CellData(
+		CellData cellData = new CellData(
 				roomCenterX,
 				roomCenterZ,
 				roomHalfWidth,
@@ -248,11 +274,21 @@ final class BackroomsLayout {
 				eastHorizontalFirst,
 				southHorizontalFirst
 		);
+		cache.cellCache.put(key, cellData);
+		return cellData;
 	}
 
 	private static InsetFeature getInsetFeature(ZoneType zone, int regionX, int regionZ, int levelIndex) {
+		LayoutCache cache = layoutCache();
+		long key = cacheKey(regionX, regionZ, levelIndex, zone, INSET_CACHE_SALT);
+		Optional<InsetFeature> cached = cache.insetFeatureCache.get(key);
+		if (cached != null) {
+			return cached.orElse(null);
+		}
+
 		long sample = mix(regionX, regionZ, zone.layoutSalt ^ INSET_LAYOUT_SALT ^ levelSalt(levelIndex));
 		if (positiveMod(sample ^ 0x2D51A19L, 100) >= 62) {
+			cache.insetFeatureCache.put(key, Optional.empty());
 			return null;
 		}
 
@@ -283,7 +319,7 @@ final class BackroomsLayout {
 			}
 		}
 
-		return new InsetFeature(
+		InsetFeature feature = new InsetFeature(
 				centerX,
 				centerZ,
 				halfWidth,
@@ -293,6 +329,8 @@ final class BackroomsLayout {
 				horizontalFirst,
 				doorPlacement
 		);
+		cache.insetFeatureCache.put(key, Optional.of(feature));
+		return feature;
 	}
 
 	private static PrimaryAnchor findNearestPrimaryAnchor(ZoneType zone, int x, int z, int levelIndex) {
@@ -368,14 +406,23 @@ final class BackroomsLayout {
 	}
 
 	private static DoorPlacement getDoorPlacementForCell(ZoneType zone, int cellX, int cellZ, int levelIndex) {
+		LayoutCache cache = layoutCache();
+		long key = cacheKey(cellX, cellZ, levelIndex, zone, DOOR_CACHE_SALT);
+		Optional<DoorPlacement> cached = cache.doorPlacementCache.get(key);
+		if (cached != null) {
+			return cached.orElse(null);
+		}
+
 		long sample = mix(cellX, cellZ, zone.layoutSalt ^ DOOR_LAYOUT_SALT ^ levelSalt(levelIndex));
 		if (positiveMod(sample ^ 0x4A6D9A1FB77C53E1L, 100) >= DOOR_CHANCE_PERCENT) {
+			cache.doorPlacementCache.put(key, Optional.empty());
 			return null;
 		}
 
 		CellData current = getCell(zone, cellX, cellZ, levelIndex);
 		RoomSide[] eligibleSides = collectEligibleDoorSides(zone, cellX, cellZ, current, levelIndex);
 		if (eligibleSides.length == 0) {
+			cache.doorPlacementCache.put(key, Optional.empty());
 			return null;
 		}
 
@@ -383,14 +430,18 @@ final class BackroomsLayout {
 		int doorX = current.roomCenterX + side.doorOffsetX(current);
 		int doorZ = current.roomCenterZ + side.doorOffsetZ(current);
 		if (!isOpenSpace(zone, doorX - side.stepX, doorZ - side.stepZ, levelIndex)) {
+			cache.doorPlacementCache.put(key, Optional.empty());
 			return null;
 		}
 		if (isOpenSpace(zone, doorX + side.stepX, doorZ + side.stepZ, levelIndex)) {
+			cache.doorPlacementCache.put(key, Optional.empty());
 			return null;
 		}
 
 		DoorHingeSide hinge = ((sample >>> 9) & 1L) == 0L ? DoorHingeSide.LEFT : DoorHingeSide.RIGHT;
-		return new DoorPlacement(doorX, doorZ, side.facing, hinge);
+		DoorPlacement placement = new DoorPlacement(doorX, doorZ, side.facing, hinge);
+		cache.doorPlacementCache.put(key, Optional.of(placement));
+		return placement;
 	}
 
 	private static RoomSide[] collectEligibleDoorSides(ZoneType zone, int cellX, int cellZ, CellData current, int levelIndex) {
@@ -433,6 +484,16 @@ final class BackroomsLayout {
 
 	private static long levelSalt(int levelIndex) {
 		return mix(levelIndex, levelIndex ^ 0x51F2A, LEVEL_LAYOUT_SALT);
+	}
+
+	private static LayoutCache layoutCache() {
+		LayoutCache cache = LAYOUT_CACHE.get();
+		cache.trimIfNeeded();
+		return cache;
+	}
+
+	private static long cacheKey(int x, int z, int levelIndex, ZoneType zone, long salt) {
+		return BlockPos.asLong(x, levelIndex, z) ^ (((long) zone.ordinal()) << 58) ^ salt;
 	}
 
 	enum ZoneType {
@@ -658,5 +719,32 @@ final class BackroomsLayout {
 
 		return isOnVerticalSegment(x, z, fromZ, toZ, fromX, halfWidth)
 				|| isOnHorizontalSegment(x, z, fromX, toX, toZ, halfWidth);
+	}
+
+	private static final class LayoutCache {
+		private static final int MAX_CELL_CACHE = 8192;
+		private static final int MAX_INSET_CACHE = 2048;
+		private static final int MAX_OPEN_SPACE_CACHE = 32768;
+		private static final int MAX_DOOR_CACHE = 8192;
+
+		final Map<Long, CellData> cellCache = new HashMap<>();
+		final Map<Long, Optional<InsetFeature>> insetFeatureCache = new HashMap<>();
+		final Map<Long, Boolean> openSpaceCache = new HashMap<>();
+		final Map<Long, Optional<DoorPlacement>> doorPlacementCache = new HashMap<>();
+
+		void trimIfNeeded() {
+			if (this.cellCache.size() > MAX_CELL_CACHE) {
+				this.cellCache.clear();
+			}
+			if (this.insetFeatureCache.size() > MAX_INSET_CACHE) {
+				this.insetFeatureCache.clear();
+			}
+			if (this.openSpaceCache.size() > MAX_OPEN_SPACE_CACHE) {
+				this.openSpaceCache.clear();
+			}
+			if (this.doorPlacementCache.size() > MAX_DOOR_CACHE) {
+				this.doorPlacementCache.clear();
+			}
+		}
 	}
 }
