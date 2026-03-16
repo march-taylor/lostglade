@@ -120,41 +120,47 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 					Direction exitSignFacing = layout.corridor
 							? null
 							: getExitSignFacingAt(worldX, worldZ, levelIndex, columnCache);
+					BackroomsSpecialRooms.ColumnStates columnStates = BackroomsSpecialRooms.createBaseStates(
+							layout.doorPlacement,
+							layout.corridor,
+							layout.ceilingLight,
+							worldX,
+							worldZ,
+							floorY,
+							ceilingY,
+							exitSignFacing,
+							BACKROOMS_LIGHT_BLOCK,
+							AIR
+					);
+					BackroomsSpecialRooms.applyColumnOverrides(layout.specialRoom, worldX, worldZ, floorY, ceilingY, columnStates);
 
 					if (floorY >= minY) {
-						setChunkBlock(chunk, mutablePos, localX, floorY, localZ, randomizedBackroomsBlock(worldX, floorY, worldZ));
+						setChunkBlock(chunk, mutablePos, localX, floorY, localZ, columnStates.floor());
 					}
 
 					if (floorY + 1 <= maxY) {
-						BlockState state = layout.doorPlacement != null
-								? createDoorState(layout.doorPlacement, DoubleBlockHalf.LOWER)
-								: (layout.corridor ? AIR : randomizedBackroomsBlock(worldX, floorY + 1, worldZ));
+						BlockState state = columnStates.lower();
 						if (!state.isAir()) {
 							setChunkBlock(chunk, mutablePos, localX, floorY + 1, localZ, state);
 						}
 					}
 
 					if (floorY + 2 <= maxY) {
-						BlockState state = layout.doorPlacement != null
-								? createDoorState(layout.doorPlacement, DoubleBlockHalf.UPPER)
-								: (layout.corridor ? AIR : randomizedBackroomsBlock(worldX, floorY + 2, worldZ));
+						BlockState state = columnStates.upper();
 						if (!state.isAir()) {
 							setChunkBlock(chunk, mutablePos, localX, floorY + 2, localZ, state);
 						}
 					}
 
 					if (floorY + 3 <= maxY) {
-						BlockState state = exitSignFacing != null
-								? createExitSignState(exitSignFacing)
-								: (layout.corridor ? AIR : randomizedBackroomsBlock(worldX, floorY + 3, worldZ));
+						BlockState state = columnStates.top();
 						if (!state.isAir()) {
 							setChunkBlock(chunk, mutablePos, localX, floorY + 3, localZ, state);
 						}
 					}
 
 					if (ceilingY <= maxY) {
-						BlockState state = layout.ceilingLight ? BACKROOMS_LIGHT_BLOCK : randomizedBackroomsBlock(worldX, ceilingY, worldZ);
-						setChunkBlock(chunk, mutablePos, localX, ceilingY, localZ, state);
+						setChunkBlock(chunk, mutablePos, localX, ceilingY, localZ, columnStates.ceiling());
 					}
 				}
 			}
@@ -245,19 +251,26 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			ColumnLayout layout = getColumnLayout(x, z, levelIndex, columnCache);
 			Direction exitSignFacing = layout.corridor
 					? null
-					: getExitSignFacingAt(x, z, levelIndex, columnCache);
+							: getExitSignFacingAt(x, z, levelIndex, columnCache);
+			BackroomsSpecialRooms.ColumnStates columnStates = BackroomsSpecialRooms.createBaseStates(
+					layout.doorPlacement,
+					layout.corridor,
+					layout.ceilingLight,
+					x,
+					z,
+					floorY,
+					ceilingY,
+					exitSignFacing,
+					BACKROOMS_LIGHT_BLOCK,
+					AIR
+			);
+			BackroomsSpecialRooms.applyColumnOverrides(layout.specialRoom, x, z, floorY, ceilingY, columnStates);
 
-			setColumnState(states, minY, floorY, randomizedBackroomsBlock(x, floorY, z));
-			setColumnState(states, minY, floorY + 1, layout.doorPlacement != null
-					? createDoorState(layout.doorPlacement, DoubleBlockHalf.LOWER)
-					: (layout.corridor ? AIR : randomizedBackroomsBlock(x, floorY + 1, z)));
-			setColumnState(states, minY, floorY + 2, layout.doorPlacement != null
-					? createDoorState(layout.doorPlacement, DoubleBlockHalf.UPPER)
-					: (layout.corridor ? AIR : randomizedBackroomsBlock(x, floorY + 2, z)));
-			setColumnState(states, minY, floorY + 3, exitSignFacing != null
-					? createExitSignState(exitSignFacing)
-					: (layout.corridor ? AIR : randomizedBackroomsBlock(x, floorY + 3, z)));
-			setColumnState(states, minY, ceilingY, layout.ceilingLight ? BACKROOMS_LIGHT_BLOCK : randomizedBackroomsBlock(x, ceilingY, z));
+			setColumnState(states, minY, floorY, columnStates.floor());
+			setColumnState(states, minY, floorY + 1, columnStates.lower());
+			setColumnState(states, minY, floorY + 2, columnStates.upper());
+			setColumnState(states, minY, floorY + 3, columnStates.top());
+			setColumnState(states, minY, ceilingY, columnStates.ceiling());
 		}
 
 		return new NoiseColumn(minY, states);
@@ -266,7 +279,12 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	@Override
 	public void addDebugScreenInfo(List<String> lines, RandomState randomState, BlockPos pos) {
 		lines.add("Backrooms Generator");
-		lines.add("Backrooms Zone: " + BackroomsLayout.getZoneAtBlock(pos.getX(), pos.getZ(), BackroomsLayout.getLevelIndex(pos.getY())).debugName);
+		BackroomsLayout.ZoneType zone = BackroomsLayout.getZoneAtBlock(pos.getX(), pos.getZ(), BackroomsLayout.getLevelIndex(pos.getY()));
+		lines.add("Backrooms Zone: " + zone.debugName);
+		BackroomsLayout.SpecialRoomPlacement specialRoom = BackroomsLayout.getSpecialRoomAt(zone, pos.getX(), pos.getZ(), BackroomsLayout.getLevelIndex(pos.getY()));
+		if (specialRoom != null) {
+			lines.add("Backrooms Special Room: " + specialRoom.type().id);
+		}
 	}
 
 	private static ColumnLayout getColumnLayout(int x, int z, int levelIndex, Map<Long, ColumnLayout> columnCache) {
@@ -285,11 +303,13 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 
 		BackroomsLayout.ZoneType zone = BackroomsLayout.getZoneAtBlock(x, z, levelIndex);
 		boolean corridor = BackroomsLayout.isCorridor(zone, x, z, levelIndex);
+		BackroomsLayout.SpecialRoomPlacement specialRoom = BackroomsLayout.getSpecialRoomAt(zone, x, z, levelIndex);
 		ColumnLayout layout = new ColumnLayout(
 				zone,
 				corridor ? null : BackroomsLayout.getRoomDoorAt(zone, x, z, levelIndex),
 				corridor,
-				corridor && BackroomsLayout.hasCeilingLight(zone, x, z, levelIndex)
+				corridor && BackroomsLayout.hasCeilingLight(zone, x, z, levelIndex),
+				specialRoom
 		);
 		columnCache.put(key, layout);
 		generatorCache.columnLayoutCache.put(key, layout);
@@ -363,7 +383,8 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			BackroomsLayout.ZoneType zone,
 			BackroomsLayout.DoorPlacement doorPlacement,
 			boolean corridor,
-			boolean ceilingLight
+			boolean ceilingLight,
+			BackroomsLayout.SpecialRoomPlacement specialRoom
 	) {
 	}
 

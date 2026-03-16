@@ -19,11 +19,14 @@ final class BackroomsLayout {
 	private static final int LAYOUT_CELL_SIZE = 24;
 	private static final int INSET_REGION_SIZE = 56;
 	private static final int DOOR_CHANCE_PERCENT = 2;
+	private static final int SPECIAL_ROOM_CHANCE_PERCENT = 1;
 	private static final int INSET_DOOR_CHANCE_PERCENT = 10;
 	private static final long DOOR_LAYOUT_SALT = 0x6B41524F4F4D4452L;
+	private static final long SPECIAL_ROOM_LAYOUT_SALT = 0x5350454349414C31L;
 	private static final long INSET_LAYOUT_SALT = 0x494E534554524F4FL;
 	private static final long LEVEL_LAYOUT_SALT = 0x4C564C53414C5431L;
 	private static final long CELL_CACHE_SALT = 0x43454C4C43414348L;
+	private static final long SPECIAL_ROOM_CACHE_SALT = 0x5350435243414348L;
 	private static final long INSET_CACHE_SALT = 0x494E534554434143L;
 	private static final long OPEN_CACHE_SALT = 0x4F50454E43414348L;
 	private static final long DOOR_CACHE_SALT = 0x444F4F5243414348L;
@@ -95,6 +98,22 @@ final class BackroomsLayout {
 		}
 
 		return getInsetDoorAt(zone, x, z, levelIndex);
+	}
+
+	static SpecialRoomPlacement getSpecialRoomAt(ZoneType zone, int x, int z, int levelIndex) {
+		int cellX = Math.floorDiv(x, LAYOUT_CELL_SIZE);
+		int cellZ = Math.floorDiv(z, LAYOUT_CELL_SIZE);
+
+		for (int offsetX = -1; offsetX <= 1; offsetX++) {
+			for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
+				SpecialRoomPlacement placement = getSpecialRoomForCell(zone, cellX + offsetX, cellZ + offsetZ, levelIndex);
+				if (placement != null && placement.contains(x, z)) {
+					return placement;
+				}
+			}
+		}
+
+		return null;
 	}
 
 	private static boolean isLightAnchor(ZoneType zone, int x, int z, int levelIndex) {
@@ -457,6 +476,41 @@ final class BackroomsLayout {
 		return placement;
 	}
 
+	private static SpecialRoomPlacement getSpecialRoomForCell(ZoneType zone, int cellX, int cellZ, int levelIndex) {
+		LayoutCache cache = layoutCache();
+		long key = cacheKey(cellX, cellZ, levelIndex, zone, SPECIAL_ROOM_CACHE_SALT);
+		Optional<SpecialRoomPlacement> cached = cache.specialRoomCache.get(key);
+		if (cached != null) {
+			return cached.orElse(null);
+		}
+
+		long sample = mix(cellX, cellZ, zone.layoutSalt ^ SPECIAL_ROOM_LAYOUT_SALT ^ levelSalt(levelIndex));
+		if (positiveMod(sample ^ 0x2A5C7D11E3A19F43L, 100) >= SPECIAL_ROOM_CHANCE_PERCENT) {
+			cache.specialRoomCache.put(key, Optional.empty());
+			return null;
+		}
+
+		CellData current = getCell(zone, cellX, cellZ, levelIndex);
+		SpecialRoomType[] eligibleTypes = SpecialRoomType.collectEligible(current);
+		if (eligibleTypes.length == 0) {
+			cache.specialRoomCache.put(key, Optional.empty());
+			return null;
+		}
+
+		SpecialRoomType type = eligibleTypes[positiveMod(sample ^ 0x61E2D34FA719BC25L, eligibleTypes.length)];
+		SpecialRoomPlacement placement = new SpecialRoomPlacement(
+				type,
+				cellX,
+				cellZ,
+				current.roomCenterX,
+				current.roomCenterZ,
+				current.roomHalfWidth,
+				current.roomHalfHeight
+		);
+		cache.specialRoomCache.put(key, Optional.of(placement));
+		return placement;
+	}
+
 	private static RoomSide[] collectEligibleDoorSides(ZoneType zone, int cellX, int cellZ, CellData current, int levelIndex) {
 		RoomSide[] sides = new RoomSide[4];
 		int count = 0;
@@ -614,6 +668,61 @@ final class BackroomsLayout {
 		}
 	}
 
+	record SpecialRoomPlacement(
+			SpecialRoomType type,
+			int cellX,
+			int cellZ,
+			int roomCenterX,
+			int roomCenterZ,
+			int roomHalfWidth,
+			int roomHalfHeight
+	) {
+		boolean contains(int x, int z) {
+			return Math.abs(x - this.roomCenterX) <= this.roomHalfWidth
+					&& Math.abs(z - this.roomCenterZ) <= this.roomHalfHeight;
+		}
+	}
+
+	enum SpecialRoomType {
+		TRASH_ROOM("trash_room", 3, 3, false),
+		FLOOR_HOLES("floor_holes", 4, 4, false),
+		VOID_HALL("void_hall", 6, 6, false),
+		HOUSE_HALL("house_hall", 5, 5, false),
+		STAIRS("stairs", 3, 4, true);
+
+		private static final SpecialRoomType[] VALUES = values();
+
+		final String id;
+		final int minHalfWidth;
+		final int minHalfHeight;
+		final boolean enabled;
+
+		SpecialRoomType(String id, int minHalfWidth, int minHalfHeight, boolean enabled) {
+			this.id = id;
+			this.minHalfWidth = minHalfWidth;
+			this.minHalfHeight = minHalfHeight;
+			this.enabled = enabled;
+		}
+
+		private boolean canFit(CellData cell) {
+			return cell.roomHalfWidth >= this.minHalfWidth && cell.roomHalfHeight >= this.minHalfHeight;
+		}
+
+		static SpecialRoomType[] collectEligible(CellData cell) {
+			SpecialRoomType[] result = new SpecialRoomType[VALUES.length];
+			int count = 0;
+			for (SpecialRoomType type : VALUES) {
+				if (type.enabled && type.canFit(cell)) {
+					result[count++] = type;
+				}
+			}
+
+			SpecialRoomType[] trimmed = new SpecialRoomType[count];
+			System.arraycopy(result, 0, trimmed, 0, count);
+			return trimmed;
+		}
+	}
+
 	private enum RoomSide {
 		NORTH(0, -1, Direction.NORTH) {
 			@Override
@@ -743,6 +852,7 @@ final class BackroomsLayout {
 		private static final int MAX_INSET_CACHE = 2048;
 		private static final int MAX_OPEN_SPACE_CACHE = 32768;
 		private static final int MAX_DOOR_CACHE = 8192;
+		private static final int MAX_SPECIAL_ROOM_CACHE = 4096;
 		private static final int MAX_ZONE_CACHE = 4096;
 
 		final Map<Long, ZoneType> zoneCache = new HashMap<>();
@@ -750,6 +860,7 @@ final class BackroomsLayout {
 		final Map<Long, Optional<InsetFeature>> insetFeatureCache = new HashMap<>();
 		final Map<Long, Boolean> openSpaceCache = new HashMap<>();
 		final Map<Long, Optional<DoorPlacement>> doorPlacementCache = new HashMap<>();
+		final Map<Long, Optional<SpecialRoomPlacement>> specialRoomCache = new HashMap<>();
 
 		void trimIfNeeded() {
 			if (this.zoneCache.size() > MAX_ZONE_CACHE) {
@@ -766,6 +877,9 @@ final class BackroomsLayout {
 			}
 			if (this.doorPlacementCache.size() > MAX_DOOR_CACHE) {
 				this.doorPlacementCache.clear();
+			}
+			if (this.specialRoomCache.size() > MAX_SPECIAL_ROOM_CACHE) {
+				this.specialRoomCache.clear();
 			}
 		}
 	}
