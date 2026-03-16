@@ -318,7 +318,8 @@ public final class ServerBackroomsStalkerSystem {
 			if (assigned.contains(stalker) || !stalker.isAlive() || stalker.isRemoved()) {
 				continue;
 			}
-			if (!isWithinPresenceRadius(stalker, cluster.players(), radiusBlocks)) {
+			if (!isAssignedToTrackedTarget(stalker, cluster.players())
+					&& !isWithinPresenceRadius(stalker, cluster.players(), radiusBlocks)) {
 				continue;
 			}
 
@@ -329,6 +330,19 @@ public final class ServerBackroomsStalkerSystem {
 			}
 		}
 		return nearest;
+	}
+
+	private static boolean isAssignedToTrackedTarget(BackroomsStalkerEntity stalker, List<ServerPlayer> players) {
+		if (!stalker.isChasingTarget()) {
+			return false;
+		}
+
+		for (ServerPlayer player : players) {
+			if (stalker.isTrackingPlayer(player)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static boolean isWithinPresenceRadius(BackroomsStalkerEntity stalker, List<ServerPlayer> players, int radiusBlocks) {

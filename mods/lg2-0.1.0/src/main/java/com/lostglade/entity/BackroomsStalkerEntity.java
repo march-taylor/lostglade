@@ -264,6 +264,10 @@ public final class BackroomsStalkerEntity extends Monster {
 		return this.chasingTarget;
 	}
 
+	public boolean isTrackingPlayer(ServerPlayer player) {
+		return player != null && this.trackedTargetUuid != null && this.trackedTargetUuid.equals(player.getUUID());
+	}
+
 	private ServerPlayer updateTrackedTarget(ServerLevel level, long nowTick) {
 		ServerPlayer currentTarget = resolveTrackedTarget(level);
 		ServerPlayer visibleTarget = findVisibleTarget(level, currentTarget);
