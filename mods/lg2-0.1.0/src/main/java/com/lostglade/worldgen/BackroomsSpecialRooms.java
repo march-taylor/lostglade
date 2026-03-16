@@ -102,8 +102,6 @@ final class BackroomsSpecialRooms {
 			}
 		}
 
-		int holeSlice = 1 + positiveMod(sample ^ 0x7AF491C3L, 3);
-		boolean holeLeadsDown = variant == BrokenStairsVariant.HOLES && ((sample >>> 11) & 1L) == 0L;
 		return new StairsProfile(
 				placement,
 				levelIndex,
@@ -112,9 +110,7 @@ final class BackroomsSpecialRooms {
 				width,
 				variant,
 				turnStepX,
-				turnStepZ,
-				holeSlice,
-				holeLeadsDown
+				turnStepZ
 		);
 	}
 
@@ -137,18 +133,17 @@ final class BackroomsSpecialRooms {
 			return;
 		}
 
-		if (profile.variant() == BrokenStairsVariant.HOLES && slice == profile.holeSlice()) {
-			if (profile.holeLeadsDown()) {
-				columnStates.setFloor(AIR);
-			}
-			return;
-		}
-
 		int heightIndex = slice;
 		if (heightIndex > 4) {
 			heightIndex = 4;
 		}
 		placeStep(columnStates, x, z, floorY, ceilingY, heightIndex);
+		if (profile.variant() == BrokenStairsVariant.HOLES) {
+			int holeIndex = getHoleIndexForColumn(profile, x, z);
+			if (holeIndex >= 0) {
+				carveHoleColumn(columnStates, x, z, floorY, holeLeadsDown(holeIndex));
+			}
+		}
 	}
 
 	private static void applyStairsUpperLevel(
@@ -165,10 +160,7 @@ final class BackroomsSpecialRooms {
 
 		int slice = getSliceIndex(profile, x, z);
 		if (profile.variant() == BrokenStairsVariant.INTO_WALL) {
-			if (isUpperShaftColumn(profile, x, z)) {
-				columnStates.setFloor(AIR);
-				clearInterior(columnStates);
-			}
+			// For "into wall" variant the upper opening must stay blocked, including above the top step.
 			return;
 		}
 
@@ -184,11 +176,12 @@ final class BackroomsSpecialRooms {
 			int ceilingY,
 			ColumnStates columnStates
 	) {
-		if (profile.variant() != BrokenStairsVariant.HOLES || !profile.holeLeadsDown()) {
+		if (profile.variant() != BrokenStairsVariant.HOLES) {
 			return;
 		}
 
-		if (!profile.room().contains(x, z) || !isHoleSliceColumn(profile, x, z)) {
+		int holeIndex = getHoleIndexForColumn(profile, x, z);
+		if (!profile.room().contains(x, z) || holeIndex < 0 || !holeLeadsDown(holeIndex)) {
 			return;
 		}
 
@@ -250,8 +243,70 @@ final class BackroomsSpecialRooms {
 		return isSliceColumn(profile, x, z, 4);
 	}
 
-	private static boolean isHoleSliceColumn(StairsProfile profile, int x, int z) {
-		return isSliceColumn(profile, x, z, profile.holeSlice());
+	private static int getHoleIndexForColumn(StairsProfile profile, int x, int z) {
+		if (profile.variant() != BrokenStairsVariant.HOLES) {
+			return -1;
+		}
+
+		int slice = getSliceIndex(profile, x, z);
+		if (slice < 1 || slice > 3) {
+			return -1;
+		}
+
+		Point center = getSliceCenter(profile, slice);
+		int lateralDelta = profile.xAxis() ? (z - center.z()) : (x - center.x());
+		int lateralMin = -(profile.width() / 2);
+		int lateralIndex = lateralDelta - lateralMin;
+		if (lateralIndex < 0 || lateralIndex >= profile.width()) {
+			return -1;
+		}
+
+		int slotCount = 3 * profile.width();
+		int targetSlot = ((slice - 1) * profile.width()) + lateralIndex;
+		int holeCount = getHoleCount(profile);
+		if (holeCount <= 0) {
+			return -1;
+		}
+
+		boolean[] used = new boolean[slotCount];
+		for (int holeIndex = 0; holeIndex < holeCount; holeIndex++) {
+			long holeSalt = 0x484F4C45534C4F4EL ^ levelSalt(profile.levelIndex()) ^ (31L * holeIndex);
+			int slot = positiveMod(
+					mix(profile.room().cellX() + (17 * holeIndex), profile.room().cellZ() - (23 * holeIndex), holeSalt),
+					slotCount
+			);
+			while (used[slot]) {
+				slot = (slot + 1) % slotCount;
+			}
+			used[slot] = true;
+			if (slot == targetSlot) {
+				return holeIndex;
+			}
+		}
+		return -1;
+	}
+
+	private static int getHoleCount(StairsProfile profile) {
+		long holeSalt = 0x484F4C45434F554EL ^ levelSalt(profile.levelIndex());
+		int holeCount = 2 + positiveMod(mix(profile.room().cellX(), profile.room().cellZ(), holeSalt), 4);
+		int maxHoles = 3 * profile.width();
+		return Math.min(holeCount, maxHoles);
+	}
+
+	private static boolean holeLeadsDown(int holeIndex) {
+		return (holeIndex % 2) == 0;
+	}
+
+	private static void carveHoleColumn(ColumnStates columnStates, int x, int z, int floorY, boolean leadsDown) {
+		columnStates.setLower(AIR);
+		columnStates.setUpper(AIR);
+		columnStates.setTop(AIR);
+		columnStates.setCeiling(AIR);
+		if (leadsDown) {
+			columnStates.setFloor(AIR);
+		} else {
+			columnStates.setFloor(randomizedBackroomsBlock(x, floorY, z));
+		}
 	}
 
 	private static int getSliceIndex(StairsProfile profile, int x, int z) {
@@ -266,12 +321,21 @@ final class BackroomsSpecialRooms {
 
 	private static boolean isSliceColumn(StairsProfile profile, int x, int z, int slice) {
 		Point center = getSliceCenter(profile, slice);
-		int lateralDelta = profile.xAxis()
-				? z - center.z()
-				: x - center.x();
-		int forwardDelta = profile.xAxis()
-				? x - center.x()
-				: z - center.z();
+		if (profile.variant() == BrokenStairsVariant.TWISTED && slice == 3) {
+			return matchesSliceFootprint(profile, center, x, z, profile.xAxis())
+					|| matchesSliceFootprint(profile, center, x, z, !profile.xAxis());
+		}
+
+		boolean useXAxis = profile.xAxis();
+		if (profile.variant() == BrokenStairsVariant.TWISTED && slice >= 4) {
+			useXAxis = !useXAxis;
+		}
+		return matchesSliceFootprint(profile, center, x, z, useXAxis);
+	}
+
+	private static boolean matchesSliceFootprint(StairsProfile profile, Point center, int x, int z, boolean useXAxis) {
+		int lateralDelta = useXAxis ? (z - center.z()) : (x - center.x());
+		int forwardDelta = useXAxis ? (x - center.x()) : (z - center.z());
 		if (forwardDelta != 0) {
 			return false;
 		}
@@ -288,13 +352,13 @@ final class BackroomsSpecialRooms {
 		if (profile.xAxis()) {
 			x += baseOffset * profile.forwardStep();
 			if (profile.variant() == BrokenStairsVariant.TWISTED && slice >= 3) {
-				x += (2 - slice) * profile.forwardStep();
+				x += (3 - slice) * profile.forwardStep();
 				z += (slice - 2) * profile.turnStepZ();
 			}
 		} else {
 			z += baseOffset * profile.forwardStep();
 			if (profile.variant() == BrokenStairsVariant.TWISTED && slice >= 3) {
-				z += (2 - slice) * profile.forwardStep();
+				z += (3 - slice) * profile.forwardStep();
 				x += (slice - 2) * profile.turnStepX();
 			}
 		}
@@ -405,9 +469,7 @@ final class BackroomsSpecialRooms {
 			int width,
 			BrokenStairsVariant variant,
 			int turnStepX,
-			int turnStepZ,
-			int holeSlice,
-			boolean holeLeadsDown
+			int turnStepZ
 	) {
 	}
 
