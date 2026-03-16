@@ -20,8 +20,10 @@ import net.lionarius.skinrestorer.util.PlayerUtils;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.RemoteChatSession;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.core.BlockPos;
@@ -74,7 +76,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class BackroomsStalkerEntity extends Monster {
-	private static final byte ALL_PLAYER_SKIN_PARTS = (byte) 0x7F;
+	private static final byte PLAYER_SKIN_PARTS_WITHOUT_CAPE = (byte) 0x7E;
 	private static final double WALK_SPEED = 0.23D;
 	private static final double CHASE_SPEED_MODIFIER = 1.65D;
 	private static final double ATTACK_RANGE = 2.2D;
@@ -541,7 +543,6 @@ public final class BackroomsStalkerEntity extends Monster {
 		float pitch = (float) (-(net.minecraft.util.Mth.atan2(delta.y, horizontalDistance) * (180.0D / Math.PI)));
 
 		this.setYRot(yaw);
-		this.setYHeadRot(yaw);
 		this.setYBodyRot(yaw);
 		this.getLookControl().setLookAt(target, 360.0F, 360.0F);
 		setHeadPitch(pitch);
@@ -557,8 +558,8 @@ public final class BackroomsStalkerEntity extends Monster {
 
 		float yaw = (float) (net.minecraft.util.Mth.atan2(direction.z, direction.x) * (180.0D / Math.PI)) - 90.0F;
 		this.setYRot(yaw);
-		this.setYHeadRot(yaw);
 		this.setYBodyRot(yaw);
+		this.setYHeadRot(net.minecraft.util.Mth.approachDegrees(this.getYHeadRot(), yaw, 20.0F));
 	}
 
 	private void setHeadPitch(float pitch) {
@@ -645,10 +646,21 @@ public final class BackroomsStalkerEntity extends Monster {
 	}
 
 	private void applyViewerSkinState(ServerPlayer viewer, boolean useMaskedSkin) {
+		viewer.connection.send(new ClientboundPlayerInfoRemovePacket(List.of(this.getUUID())));
 		PolymerEntityUtils.refreshEntity(viewer, this);
-		GameProfile profile = buildViewerProfile(this.getUUID(), viewer, useMaskedSkin);
-		viewer.connection.send(new ClientboundPlayerInfoRemovePacket(List.of(profile.id())));
-		viewer.connection.send(createPlayerInfoUpdatePacket(profile));
+		syncViewerRotationAfterSkinRefresh(viewer);
+	}
+
+	private void syncViewerRotationAfterSkinRefresh(ServerPlayer viewer) {
+		byte bodyYaw = toRotationByte(this.getYRot());
+		byte pitch = toRotationByte(this.getXRot());
+		byte headYaw = toRotationByte(this.getYHeadRot());
+		viewer.connection.send(new ClientboundMoveEntityPacket.Rot(this.getId(), bodyYaw, pitch, this.onGround()));
+		viewer.connection.send(new ClientboundRotateHeadPacket(this, headYaw));
+	}
+
+	private static byte toRotationByte(float degrees) {
+		return (byte) net.minecraft.util.Mth.floor((degrees * 256.0F) / 360.0F);
 	}
 
 	private boolean isViewerLookingAtStalker(ServerPlayer viewer, long nowTick) {
@@ -1133,7 +1145,7 @@ public final class BackroomsStalkerEntity extends Monster {
 		@Override
 		public void modifyRawTrackedData(List<SynchedEntityData.DataValue<?>> data, ServerPlayer player, boolean initial) {
 			upsertTrackedData(data, SynchedEntityData.DataValue.create(PlayerTrackedDataAccessor.lg2$getDataPlayerMainHand(), HumanoidArm.RIGHT));
-			upsertTrackedData(data, SynchedEntityData.DataValue.create(PlayerTrackedDataAccessor.lg2$getDataPlayerModeCustomisation(), ALL_PLAYER_SKIN_PARTS));
+			upsertTrackedData(data, SynchedEntityData.DataValue.create(PlayerTrackedDataAccessor.lg2$getDataPlayerModeCustomisation(), PLAYER_SKIN_PARTS_WITHOUT_CAPE));
 		}
 	}
 }
