@@ -224,7 +224,7 @@ public final class BackroomsStalkerEntity extends Monster {
 		if (target != null) {
 			this.chasingTarget = true;
 			updateChaseMovement(level, nowTick, target);
-			updateTouchDamage(level, nowTick, target);
+			updateTouchDamage(level, nowTick);
 		} else {
 			this.chasingTarget = false;
 			updateWanderMovement(level, nowTick);
@@ -241,10 +241,6 @@ public final class BackroomsStalkerEntity extends Monster {
 
 		ServerPlayer currentTarget = resolveTrackedTarget(level);
 		if (currentTarget == null) {
-			clearTrackedTarget();
-			return null;
-		}
-		if (nowTick - this.lastSeenTargetTick > FORGET_TARGET_AFTER_TICKS) {
 			clearTrackedTarget();
 			return null;
 		}
@@ -269,25 +265,15 @@ public final class BackroomsStalkerEntity extends Monster {
 	}
 
 	private ServerPlayer updateTrackedTarget(ServerLevel level, long nowTick) {
-		ServerPlayer currentTarget = resolveTrackedTarget(level);
-		ServerPlayer visibleTarget = findVisibleTarget(level, currentTarget);
-		if (visibleTarget != null) {
-			this.trackedTargetUuid = visibleTarget.getUUID();
+		ServerPlayer nearestTarget = findNearestTarget(level);
+		if (nearestTarget != null) {
+			this.trackedTargetUuid = nearestTarget.getUUID();
 			this.lastSeenTargetTick = nowTick;
-			return visibleTarget;
+			return nearestTarget;
 		}
 
-		if (currentTarget == null) {
-			clearTrackedTarget();
-			return null;
-		}
-
-		if (nowTick - this.lastSeenTargetTick > FORGET_TARGET_AFTER_TICKS) {
-			clearTrackedTarget();
-			return null;
-		}
-
-		return currentTarget;
+		clearTrackedTarget();
+		return null;
 	}
 
 	private ServerPlayer resolveTrackedTarget(ServerLevel level) {
@@ -303,12 +289,7 @@ public final class BackroomsStalkerEntity extends Monster {
 		return player;
 	}
 
-	private ServerPlayer findVisibleTarget(ServerLevel level, ServerPlayer preferredTarget) {
-		long nowTick = level.getGameTime();
-		if (isEligibleTarget(preferredTarget) && hasTransparentAwareSight(preferredTarget, nowTick)) {
-			return preferredTarget;
-		}
-
+	private ServerPlayer findNearestTarget(ServerLevel level) {
 		ServerPlayer nearest = null;
 		double nearestDistanceSqr = Double.MAX_VALUE;
 		for (ServerPlayer player : level.players()) {
@@ -318,9 +299,6 @@ public final class BackroomsStalkerEntity extends Monster {
 
 			double distanceSqr = this.distanceToSqr(player);
 			if (distanceSqr >= nearestDistanceSqr) {
-				continue;
-			}
-			if (!hasTransparentAwareSight(player, nowTick)) {
 				continue;
 			}
 
@@ -610,25 +588,29 @@ public final class BackroomsStalkerEntity extends Monster {
 		return level.noCollision(this, standingBox);
 	}
 
-	private void updateTouchDamage(ServerLevel level, long nowTick, ServerPlayer trackedTarget) {
+	private void updateTouchDamage(ServerLevel level, long nowTick) {
 		if (nowTick < this.nextAttackTick) {
 			return;
 		}
 
-		if (isEligibleTarget(trackedTarget) && this.distanceToSqr(trackedTarget) <= ATTACK_RANGE_SQR) {
-			applyUnstoppableHit(trackedTarget);
-			this.nextAttackTick = nowTick + ATTACK_COOLDOWN_TICKS;
-			return;
-		}
-
+		ServerPlayer nearestInRange = null;
+		double nearestDistanceSqr = ATTACK_RANGE_SQR + 1.0D;
 		for (ServerPlayer player : level.players()) {
-			if (!isEligibleTarget(player) || this.distanceToSqr(player) > ATTACK_RANGE_SQR) {
+			if (!isEligibleTarget(player)) {
 				continue;
 			}
 
-			applyUnstoppableHit(player);
+			double distanceSqr = this.distanceToSqr(player);
+			if (distanceSqr > ATTACK_RANGE_SQR || distanceSqr >= nearestDistanceSqr) {
+				continue;
+			}
+			nearestInRange = player;
+			nearestDistanceSqr = distanceSqr;
+		}
+
+		if (nearestInRange != null) {
+			applyUnstoppableHit(nearestInRange);
 			this.nextAttackTick = nowTick + ATTACK_COOLDOWN_TICKS;
-			return;
 		}
 	}
 
