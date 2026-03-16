@@ -59,6 +59,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	private static final BlockState EXIT_SIGN_WALL_BLOCK = ModBlocks.EXIT_WALL_SIGN.defaultBlockState();
 	private static final long BACKROOMS_VARIANT_SALT = 0x4c47324241434b52L;
 	private static final BlockState AIR = Blocks.AIR.defaultBlockState();
+	private static final ThreadLocal<GeneratorCache> GENERATOR_CACHE = ThreadLocal.withInitial(GeneratorCache::new);
 
 	private final BackroomsBiomeSource backroomsBiomeSource;
 
@@ -116,7 +117,9 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 					}
 
 					ColumnLayout layout = getColumnLayout(worldX, worldZ, levelIndex, columnCache);
-					Direction exitSignFacing = getExitSignFacingAt(worldX, worldZ, levelIndex, columnCache);
+					Direction exitSignFacing = layout.corridor
+							? null
+							: getExitSignFacingAt(worldX, worldZ, levelIndex, columnCache);
 
 					if (floorY >= minY) {
 						setChunkBlock(chunk, mutablePos, localX, floorY, localZ, randomizedBackroomsBlock(worldX, floorY, worldZ));
@@ -240,7 +243,9 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			}
 
 			ColumnLayout layout = getColumnLayout(x, z, levelIndex, columnCache);
-			Direction exitSignFacing = getExitSignFacingAt(x, z, levelIndex, columnCache);
+			Direction exitSignFacing = layout.corridor
+					? null
+					: getExitSignFacingAt(x, z, levelIndex, columnCache);
 
 			setColumnState(states, minY, floorY, randomizedBackroomsBlock(x, floorY, z));
 			setColumnState(states, minY, floorY + 1, layout.doorPlacement != null
@@ -271,14 +276,23 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			return cached;
 		}
 
+		GeneratorCache generatorCache = generatorCache();
+		ColumnLayout sharedCached = generatorCache.columnLayoutCache.get(key);
+		if (sharedCached != null) {
+			columnCache.put(key, sharedCached);
+			return sharedCached;
+		}
+
 		BackroomsLayout.ZoneType zone = BackroomsLayout.getZoneAtBlock(x, z, levelIndex);
+		boolean corridor = BackroomsLayout.isCorridor(zone, x, z, levelIndex);
 		ColumnLayout layout = new ColumnLayout(
 				zone,
-				BackroomsLayout.getRoomDoorAt(zone, x, z, levelIndex),
-				BackroomsLayout.isCorridor(zone, x, z, levelIndex),
-				BackroomsLayout.hasCeilingLight(zone, x, z, levelIndex)
+				corridor ? null : BackroomsLayout.getRoomDoorAt(zone, x, z, levelIndex),
+				corridor,
+				corridor && BackroomsLayout.hasCeilingLight(zone, x, z, levelIndex)
 		);
 		columnCache.put(key, layout);
+		generatorCache.columnLayoutCache.put(key, layout);
 		return layout;
 	}
 
@@ -296,16 +310,31 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	}
 
 	private static Direction getExitSignFacingAt(int x, int z, int levelIndex, Map<Long, ColumnLayout> columnCache) {
+		long key = BlockPos.asLong(x, levelIndex, z);
+		GeneratorCache generatorCache = generatorCache();
+		Optional<Direction> cached = generatorCache.exitSignCache.get(key);
+		if (cached != null) {
+			return cached.orElse(null);
+		}
+
 		for (Direction corridorDirection : Direction.Plane.HORIZONTAL) {
 			int doorX = x - corridorDirection.getStepX();
 			int doorZ = z - corridorDirection.getStepZ();
 			BackroomsLayout.DoorPlacement placement = getColumnLayout(doorX, doorZ, levelIndex, columnCache).doorPlacement;
 			if (placement != null && placement.facing().getOpposite() == corridorDirection) {
+				generatorCache.exitSignCache.put(key, Optional.of(corridorDirection));
 				return corridorDirection;
 			}
 		}
 
+		generatorCache.exitSignCache.put(key, Optional.empty());
 		return null;
+	}
+
+	private static GeneratorCache generatorCache() {
+		GeneratorCache cache = GENERATOR_CACHE.get();
+		cache.trimIfNeeded();
+		return cache;
 	}
 
 	private static BlockState createExitSignState(Direction facing) {
@@ -336,5 +365,22 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			boolean corridor,
 			boolean ceilingLight
 	) {
+	}
+
+	private static final class GeneratorCache {
+		private static final int MAX_COLUMN_LAYOUT_CACHE = 65536;
+		private static final int MAX_EXIT_SIGN_CACHE = 65536;
+
+		final Map<Long, ColumnLayout> columnLayoutCache = new HashMap<>();
+		final Map<Long, Optional<Direction>> exitSignCache = new HashMap<>();
+
+		void trimIfNeeded() {
+			if (this.columnLayoutCache.size() > MAX_COLUMN_LAYOUT_CACHE) {
+				this.columnLayoutCache.clear();
+			}
+			if (this.exitSignCache.size() > MAX_EXIT_SIGN_CACHE) {
+				this.exitSignCache.clear();
+			}
+		}
 	}
 }

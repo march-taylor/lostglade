@@ -27,6 +27,7 @@ final class BackroomsLayout {
 	private static final long INSET_CACHE_SALT = 0x494E534554434143L;
 	private static final long OPEN_CACHE_SALT = 0x4F50454E43414348L;
 	private static final long DOOR_CACHE_SALT = 0x444F4F5243414348L;
+	private static final long ZONE_CACHE_SALT = 0x5A4F4E4543414348L;
 	private static final ThreadLocal<LayoutCache> LAYOUT_CACHE = ThreadLocal.withInitial(LayoutCache::new);
 
 	private BackroomsLayout() {
@@ -39,23 +40,31 @@ final class BackroomsLayout {
 	static ZoneType getZoneAtBlock(int x, int z, int levelIndex) {
 		int regionX = Math.floorDiv(x, STYLE_REGION_SIZE);
 		int regionZ = Math.floorDiv(z, STYLE_REGION_SIZE);
+		LayoutCache cache = layoutCache();
+		long cacheKey = regionCacheKey(regionX, regionZ, levelIndex, ZONE_CACHE_SALT);
+		ZoneType cached = cache.zoneCache.get(cacheKey);
+		if (cached != null) {
+			return cached;
+		}
+
 		int roll = positiveMod(mix(regionX, regionZ, 0x74D8E1AB4C9F2601L ^ levelSalt(levelIndex)), 100);
+		ZoneType zone;
 		if (roll < 12) {
-			return ZoneType.WIDE_LIT;
+			zone = ZoneType.WIDE_LIT;
+		} else if (roll < 25) {
+			zone = ZoneType.WIDE_DARK;
+		} else if (roll < 50) {
+			zone = ZoneType.MIDDLE_LIT;
+		} else if (roll < 75) {
+			zone = ZoneType.MIDDLE_DARK;
+		} else if (roll < 87) {
+			zone = ZoneType.NARROW_LIT;
+		} else {
+			zone = ZoneType.NARROW_DARK;
 		}
-		if (roll < 25) {
-			return ZoneType.WIDE_DARK;
-		}
-		if (roll < 50) {
-			return ZoneType.MIDDLE_LIT;
-		}
-		if (roll < 75) {
-			return ZoneType.MIDDLE_DARK;
-		}
-		if (roll < 87) {
-			return ZoneType.NARROW_LIT;
-		}
-		return ZoneType.NARROW_DARK;
+
+		cache.zoneCache.put(cacheKey, zone);
+		return zone;
 	}
 
 	static boolean isCorridor(ZoneType zone, int x, int z, int levelIndex) {
@@ -63,10 +72,6 @@ final class BackroomsLayout {
 	}
 
 	static boolean hasCeilingLight(ZoneType zone, int x, int z, int levelIndex) {
-		if (!isOpenSpace(zone, x, z, levelIndex)) {
-			return false;
-		}
-
 		int cellX = Math.floorDiv(x, zone.lightCellSize);
 		int cellZ = Math.floorDiv(z, zone.lightCellSize);
 		long sample = mix(cellX, cellZ, zone.lightSalt ^ levelSalt(levelIndex));
@@ -402,6 +407,10 @@ final class BackroomsLayout {
 			return false;
 		}
 
+		if (isPrimaryOpenSpace(zone, doorX, doorZ, levelIndex)) {
+			return false;
+		}
+
 		return !isPrimaryOpenSpace(zone, outsideX, outsideZ, levelIndex);
 	}
 
@@ -429,6 +438,10 @@ final class BackroomsLayout {
 		RoomSide side = eligibleSides[positiveMod(sample ^ 0x23E5FA97C14B72D3L, eligibleSides.length)];
 		int doorX = current.roomCenterX + side.doorOffsetX(current);
 		int doorZ = current.roomCenterZ + side.doorOffsetZ(current);
+		if (isOpenSpace(zone, doorX, doorZ, levelIndex)) {
+			cache.doorPlacementCache.put(key, Optional.empty());
+			return null;
+		}
 		if (!isOpenSpace(zone, doorX - side.stepX, doorZ - side.stepZ, levelIndex)) {
 			cache.doorPlacementCache.put(key, Optional.empty());
 			return null;
@@ -494,6 +507,10 @@ final class BackroomsLayout {
 
 	private static long cacheKey(int x, int z, int levelIndex, ZoneType zone, long salt) {
 		return BlockPos.asLong(x, levelIndex, z) ^ (((long) zone.ordinal()) << 58) ^ salt;
+	}
+
+	private static long regionCacheKey(int x, int z, int levelIndex, long salt) {
+		return BlockPos.asLong(x, levelIndex, z) ^ salt;
 	}
 
 	enum ZoneType {
@@ -726,13 +743,18 @@ final class BackroomsLayout {
 		private static final int MAX_INSET_CACHE = 2048;
 		private static final int MAX_OPEN_SPACE_CACHE = 32768;
 		private static final int MAX_DOOR_CACHE = 8192;
+		private static final int MAX_ZONE_CACHE = 4096;
 
+		final Map<Long, ZoneType> zoneCache = new HashMap<>();
 		final Map<Long, CellData> cellCache = new HashMap<>();
 		final Map<Long, Optional<InsetFeature>> insetFeatureCache = new HashMap<>();
 		final Map<Long, Boolean> openSpaceCache = new HashMap<>();
 		final Map<Long, Optional<DoorPlacement>> doorPlacementCache = new HashMap<>();
 
 		void trimIfNeeded() {
+			if (this.zoneCache.size() > MAX_ZONE_CACHE) {
+				this.zoneCache.clear();
+			}
 			if (this.cellCache.size() > MAX_CELL_CACHE) {
 				this.cellCache.clear();
 			}
