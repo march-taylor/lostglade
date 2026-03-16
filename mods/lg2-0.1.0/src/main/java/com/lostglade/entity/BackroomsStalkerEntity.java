@@ -84,6 +84,14 @@ public final class BackroomsStalkerEntity extends Monster {
 	private static final int FORGET_TARGET_AFTER_TICKS = 100;
 	private static final int ATTACK_COOLDOWN_TICKS = 20;
 	private static final int TARGET_SCAN_INTERVAL_TICKS = 3;
+	private static final int CHASE_REPATH_TICKS = 8;
+	private static final int CHASE_STUCK_REPATH_INTERVAL_TICKS = 3;
+	private static final int CHASE_STUCK_REPATH_AFTER_TICKS = 12;
+	private static final double CHASE_STUCK_MOVE_THRESHOLD_SQR = 0.01D;
+	private static final int CHASE_DETOUR_ATTEMPTS = 18;
+	private static final int CHASE_DETOUR_MIN_DISTANCE = 5;
+	private static final int CHASE_DETOUR_MAX_DISTANCE = 14;
+	private static final float CHASE_MAX_VISITED_NODES_MULTIPLIER = 6.0F;
 	private static final int SIGHT_CACHE_TTL_TICKS = 2;
 	private static final int SIGHT_CACHE_MAX_ENTRIES = 32;
 	private static final double SKIN_SCREAMER_TRIGGER_RADIUS_SQR = 32.0D * 32.0D;
@@ -122,9 +130,13 @@ public final class BackroomsStalkerEntity extends Monster {
 	private long lastSeenTargetTick = Long.MIN_VALUE;
 	private long nextAttackTick = 0L;
 	private long nextTargetScanTick = 0L;
+	private long nextChaseRepathTick = 0L;
 	private long nextWanderRefreshTick = 0L;
+	private int chaseStuckTicks = 0;
+	private Vec3 lastChasePos = Vec3.ZERO;
 	private int stationaryTicks = 0;
 	private Vec3 lastTickPos = Vec3.ZERO;
+	private Vec3 chaseDetourTarget;
 	private Vec3 wanderTarget;
 	private final Map<UUID, SightCacheEntry> sightCache = new HashMap<>();
 	private final Map<UUID, ViewerSkinScreamerState> viewerSkinScreamerStates = new HashMap<>();
@@ -174,6 +186,7 @@ public final class BackroomsStalkerEntity extends Monster {
 	protected PathNavigation createNavigation(Level level) {
 		GroundPathNavigation navigation = new GroundPathNavigation(this, level);
 		navigation.setCanOpenDoors(true);
+		navigation.setMaxVisitedNodesMultiplier(CHASE_MAX_VISITED_NODES_MULTIPLIER);
 		return navigation;
 	}
 
@@ -208,7 +221,7 @@ public final class BackroomsStalkerEntity extends Monster {
 		ServerPlayer target = resolveTargetForTick(level, nowTick);
 		if (target != null) {
 			this.chasingTarget = true;
-			updateChaseMovement(target);
+			updateChaseMovement(level, nowTick, target);
 			updateTouchDamage(level, nowTick, target);
 		} else {
 			this.chasingTarget = false;
@@ -394,14 +407,78 @@ public final class BackroomsStalkerEntity extends Monster {
 	private void clearTrackedTarget() {
 		this.trackedTargetUuid = null;
 		this.lastSeenTargetTick = Long.MIN_VALUE;
+		this.nextChaseRepathTick = 0L;
+		this.chaseStuckTicks = 0;
+		this.lastChasePos = this.position();
+		this.chaseDetourTarget = null;
 		this.wanderTarget = null;
 		this.stationaryTicks = 0;
 		this.sightCache.clear();
 	}
 
-	private void updateChaseMovement(ServerPlayer target) {
-		this.getNavigation().moveTo(target.getX(), target.getY(), target.getZ(), CHASE_SPEED_MODIFIER);
+	private void updateChaseMovement(ServerLevel level, long nowTick, ServerPlayer target) {
+		Vec3 currentPos = this.position();
+		if (currentPos.distanceToSqr(this.lastChasePos) < CHASE_STUCK_MOVE_THRESHOLD_SQR) {
+			this.chaseStuckTicks++;
+		} else {
+			this.chaseStuckTicks = 0;
+		}
+		this.lastChasePos = currentPos;
+
+		boolean hardStuck = this.chaseStuckTicks >= CHASE_STUCK_REPATH_AFTER_TICKS;
+		boolean shouldRepath = nowTick >= this.nextChaseRepathTick
+				|| this.getNavigation().isDone()
+				|| this.getNavigation().isStuck()
+				|| hardStuck;
+		if (shouldRepath) {
+			boolean hasPathToTarget = this.getNavigation().moveTo(target, CHASE_SPEED_MODIFIER);
+			if (!hasPathToTarget || hardStuck) {
+				Vec3 detour = pickChaseDetourTarget(level, target);
+				if (detour != null) {
+					this.chaseDetourTarget = detour;
+					this.getNavigation().moveTo(detour.x, detour.y, detour.z, CHASE_SPEED_MODIFIER);
+				} else {
+					this.chaseDetourTarget = null;
+				}
+			} else {
+				this.chaseDetourTarget = null;
+			}
+			this.nextChaseRepathTick = nowTick + (hardStuck ? CHASE_STUCK_REPATH_INTERVAL_TICKS : CHASE_REPATH_TICKS);
+		}
+
+		if (this.chaseDetourTarget != null && currentPos.distanceToSqr(this.chaseDetourTarget) < 2.25D) {
+			this.chaseDetourTarget = null;
+			this.nextChaseRepathTick = nowTick;
+		}
+
 		lookAtTarget(target);
+	}
+
+	private Vec3 pickChaseDetourTarget(ServerLevel level, ServerPlayer target) {
+		RandomSource random = this.getRandom();
+		double baseAngle = Math.atan2(this.getZ() - target.getZ(), this.getX() - target.getX());
+		int targetY = target.blockPosition().getY();
+		for (int attempt = 0; attempt < CHASE_DETOUR_ATTEMPTS; attempt++) {
+			double direction = (attempt & 1) == 0 ? 1.0D : -1.0D;
+			double sweep = ((attempt / 2) + 1) * (Math.PI / 10.0D);
+			double angle = baseAngle + (direction * sweep) + ((random.nextDouble() - 0.5D) * 0.35D);
+			int distance = randomInclusive(random, CHASE_DETOUR_MIN_DISTANCE, CHASE_DETOUR_MAX_DISTANCE);
+			int x = net.minecraft.util.Mth.floor(target.getX() + (Math.cos(angle) * distance));
+			int z = net.minecraft.util.Mth.floor(target.getZ() + (Math.sin(angle) * distance));
+
+			for (int yOffset = 1; yOffset >= -1; yOffset--) {
+				Vec3 candidate = findWalkablePosition(level, x, targetY + yOffset, z);
+				if (candidate == null || candidate.distanceToSqr(this.position()) < 4.0D) {
+					continue;
+				}
+
+				Path path = this.getNavigation().createPath(net.minecraft.core.BlockPos.containing(candidate), 0);
+				if (path != null && path.canReach()) {
+					return candidate;
+				}
+			}
+		}
+		return null;
 	}
 
 	private void updateWanderMovement(ServerLevel level, long nowTick) {
