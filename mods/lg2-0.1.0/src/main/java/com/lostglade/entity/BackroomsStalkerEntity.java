@@ -88,10 +88,12 @@ public final class BackroomsStalkerEntity extends Monster {
 	private static final int CHASE_STUCK_REPATH_INTERVAL_TICKS = 3;
 	private static final int CHASE_STUCK_REPATH_AFTER_TICKS = 12;
 	private static final double CHASE_STUCK_MOVE_THRESHOLD_SQR = 0.01D;
-	private static final int CHASE_DETOUR_ATTEMPTS = 18;
-	private static final int CHASE_DETOUR_MIN_DISTANCE = 5;
-	private static final int CHASE_DETOUR_MAX_DISTANCE = 14;
-	private static final float CHASE_MAX_VISITED_NODES_MULTIPLIER = 6.0F;
+	private static final int CHASE_DETOUR_ATTEMPTS = 36;
+	private static final int CHASE_DETOUR_MIN_DISTANCE = 8;
+	private static final int CHASE_DETOUR_MAX_DISTANCE = 36;
+	private static final int CHASE_DETOUR_Y_SEARCH = 2;
+	private static final float CHASE_DIRECT_PATH_DIST_TOLERANCE = 1.5F;
+	private static final float CHASE_MAX_VISITED_NODES_MULTIPLIER = 10.0F;
 	private static final int SIGHT_CACHE_TTL_TICKS = 2;
 	private static final int SIGHT_CACHE_MAX_ENTRIES = 32;
 	private static final double SKIN_SCREAMER_TRIGGER_RADIUS_SQR = 32.0D * 32.0D;
@@ -431,16 +433,11 @@ public final class BackroomsStalkerEntity extends Monster {
 				|| this.getNavigation().isStuck()
 				|| hardStuck;
 		if (shouldRepath) {
-			boolean hasPathToTarget = this.getNavigation().moveTo(target, CHASE_SPEED_MODIFIER);
-			if (!hasPathToTarget || hardStuck) {
-				Vec3 detour = pickChaseDetourTarget(level, target);
-				if (detour != null) {
-					this.chaseDetourTarget = detour;
-					this.getNavigation().moveTo(detour.x, detour.y, detour.z, CHASE_SPEED_MODIFIER);
-				} else {
-					this.chaseDetourTarget = null;
-				}
+			ChasePathPlan plan = buildBestChasePlan(level, target);
+			if (plan != null && this.getNavigation().moveTo(plan.path(), CHASE_SPEED_MODIFIER)) {
+				this.chaseDetourTarget = plan.detourTarget();
 			} else {
+				this.getNavigation().stop();
 				this.chaseDetourTarget = null;
 			}
 			this.nextChaseRepathTick = nowTick + (hardStuck ? CHASE_STUCK_REPATH_INTERVAL_TICKS : CHASE_REPATH_TICKS);
@@ -451,34 +448,64 @@ public final class BackroomsStalkerEntity extends Monster {
 			this.nextChaseRepathTick = nowTick;
 		}
 
+		lookInMovementDirection();
 		lookAtTarget(target);
 	}
 
-	private Vec3 pickChaseDetourTarget(ServerLevel level, ServerPlayer target) {
+	private ChasePathPlan buildBestChasePlan(ServerLevel level, ServerPlayer target) {
+		Path directPath = this.getNavigation().createPath(target, 0);
+		if (directPath != null && directPath.canReach() && directPath.getDistToTarget() <= CHASE_DIRECT_PATH_DIST_TOLERANCE) {
+			return new ChasePathPlan(directPath, null);
+		}
+
+		Path bestPath = directPath;
+		Vec3 bestDetour = null;
+		double bestScore = directPath == null ? Double.POSITIVE_INFINITY : pathPlanScore(directPath, null, target.position());
+
 		RandomSource random = this.getRandom();
-		double baseAngle = Math.atan2(this.getZ() - target.getZ(), this.getX() - target.getX());
+		Vec3 targetPos = target.position();
+		double baseAngle = Math.atan2(this.getZ() - targetPos.z, this.getX() - targetPos.x);
 		int targetY = target.blockPosition().getY();
 		for (int attempt = 0; attempt < CHASE_DETOUR_ATTEMPTS; attempt++) {
 			double direction = (attempt & 1) == 0 ? 1.0D : -1.0D;
-			double sweep = ((attempt / 2) + 1) * (Math.PI / 10.0D);
+			double sweep = ((attempt / 2) + 1) * (Math.PI / 18.0D);
 			double angle = baseAngle + (direction * sweep) + ((random.nextDouble() - 0.5D) * 0.35D);
 			int distance = randomInclusive(random, CHASE_DETOUR_MIN_DISTANCE, CHASE_DETOUR_MAX_DISTANCE);
-			int x = net.minecraft.util.Mth.floor(target.getX() + (Math.cos(angle) * distance));
-			int z = net.minecraft.util.Mth.floor(target.getZ() + (Math.sin(angle) * distance));
+			int x = net.minecraft.util.Mth.floor(targetPos.x + (Math.cos(angle) * distance));
+			int z = net.minecraft.util.Mth.floor(targetPos.z + (Math.sin(angle) * distance));
 
-			for (int yOffset = 1; yOffset >= -1; yOffset--) {
+			for (int yOffset = CHASE_DETOUR_Y_SEARCH; yOffset >= -CHASE_DETOUR_Y_SEARCH; yOffset--) {
 				Vec3 candidate = findWalkablePosition(level, x, targetY + yOffset, z);
 				if (candidate == null || candidate.distanceToSqr(this.position()) < 4.0D) {
 					continue;
 				}
 
 				Path path = this.getNavigation().createPath(net.minecraft.core.BlockPos.containing(candidate), 0);
-				if (path != null && path.canReach()) {
-					return candidate;
+				if (path == null || !path.canReach()) {
+					continue;
+				}
+
+				double score = pathPlanScore(path, candidate, targetPos);
+				if (score < bestScore) {
+					bestScore = score;
+					bestPath = path;
+					bestDetour = candidate;
 				}
 			}
 		}
-		return null;
+
+		if (bestPath == null) {
+			return null;
+		}
+		return new ChasePathPlan(bestPath, bestDetour);
+	}
+
+	private static double pathPlanScore(Path path, Vec3 detourTarget, Vec3 chaseTargetPos) {
+		double distanceToTarget = detourTarget == null
+				? path.getDistToTarget()
+				: Math.sqrt(detourTarget.distanceToSqr(chaseTargetPos));
+		double reachPenalty = path.canReach() ? 0.0D : 128.0D;
+		return reachPenalty + (distanceToTarget * 3.0D) + path.getNodeCount();
 	}
 
 	private void updateWanderMovement(ServerLevel level, long nowTick) {
@@ -619,8 +646,7 @@ public final class BackroomsStalkerEntity extends Monster {
 		float yaw = (float) (net.minecraft.util.Mth.atan2(delta.z, delta.x) * (180.0D / Math.PI)) - 90.0F;
 		float pitch = (float) (-(net.minecraft.util.Mth.atan2(delta.y, horizontalDistance) * (180.0D / Math.PI)));
 
-		this.setYRot(yaw);
-		this.setYBodyRot(yaw);
+		this.setYHeadRot(net.minecraft.util.Mth.approachDegrees(this.getYHeadRot(), yaw, 24.0F));
 		this.getLookControl().setLookAt(target, 360.0F, 360.0F);
 		setHeadPitch(pitch);
 	}
@@ -1170,6 +1196,24 @@ public final class BackroomsStalkerEntity extends Monster {
 			}
 		}
 		data.add(replacement);
+	}
+
+	private static final class ChasePathPlan {
+		private final Path path;
+		private final Vec3 detourTarget;
+
+		private ChasePathPlan(Path path, Vec3 detourTarget) {
+			this.path = path;
+			this.detourTarget = detourTarget;
+		}
+
+		private Path path() {
+			return this.path;
+		}
+
+		private Vec3 detourTarget() {
+			return this.detourTarget;
+		}
 	}
 
 	private static final class SightCacheEntry {
