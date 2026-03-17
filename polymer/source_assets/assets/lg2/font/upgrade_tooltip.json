@@ -2,6 +2,15 @@
   "providers": [
     {
       "type": "bitmap",
+      "file": "lg2:font/tooltip_coin.png",
+      "ascent": 7,
+      "height": 8,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
       "file": "lg2:font/tooltip_icons.png",
       "ascent": 8,
       "height": 8,
