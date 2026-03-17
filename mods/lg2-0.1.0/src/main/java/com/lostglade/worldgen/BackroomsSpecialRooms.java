@@ -12,6 +12,7 @@ import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 final class BackroomsSpecialRooms {
 	private static final long BACKROOMS_VARIANT_SALT = 0x4c47324241434b52L;
 	private static final long STAIRS_LAYOUT_SALT = 0x535441495253524DL;
+	private static final long FLOOR_HOLES_LAYOUT_SALT = 0x464C4F4F52484F4CL;
 	private static final BlockState BACKROOMS_DOOR_BLOCK = ModBlocks.BACKROOMS_DOOR.defaultBlockState();
 	private static final BlockState EXIT_SIGN_WALL_BLOCK = ModBlocks.EXIT_WALL_SIGN.defaultBlockState();
 	private static final BlockState CHEST_BLOCK = Blocks.CHEST.defaultBlockState();
@@ -64,6 +65,32 @@ final class BackroomsSpecialRooms {
 				applyTrashRoom(specialRoom, levelIndex, x, z, floorY, columnStates);
 				return;
 			}
+			if (specialRoom.type() == BackroomsLayout.SpecialRoomType.FLOOR_HOLES) {
+				applyFloorHolesRoom(buildFloorHolesProfile(specialRoom, levelIndex), x, z, floorY, columnStates);
+				return;
+			}
+		}
+
+		FloorHolesProfile upperHolesProfile = getFloorHolesProfileAt(x, z, levelIndex + 1);
+		if (upperHolesProfile != null && upperHolesProfile.piercedFloors() >= 1) {
+			applyFloorHolesIntermediateLevel(upperHolesProfile, x, z, floorY, columnStates);
+			return;
+		}
+
+		FloorHolesProfile twoLevelsUpHolesProfile = getFloorHolesProfileAt(x, z, levelIndex + 2);
+		if (twoLevelsUpHolesProfile != null) {
+			if (twoLevelsUpHolesProfile.piercedFloors() >= 2) {
+				applyFloorHolesIntermediateLevel(twoLevelsUpHolesProfile, x, z, floorY, columnStates);
+			} else {
+				applyFloorHolesLandingLevel(twoLevelsUpHolesProfile, x, z, floorY, columnStates);
+			}
+			return;
+		}
+
+		FloorHolesProfile threeLevelsUpHolesProfile = getFloorHolesProfileAt(x, z, levelIndex + 3);
+		if (threeLevelsUpHolesProfile != null && threeLevelsUpHolesProfile.piercedFloors() >= 2) {
+			applyFloorHolesLandingLevel(threeLevelsUpHolesProfile, x, z, floorY, columnStates);
+			return;
 		}
 
 		StairsProfile lowerProfile = getStairsProfileAt(x, z, levelIndex - 1);
@@ -76,6 +103,123 @@ final class BackroomsSpecialRooms {
 		if (upperProfile != null) {
 			applyStairsReceivingShaft(upperProfile, x, z, floorY, ceilingY, columnStates);
 		}
+	}
+
+	private static FloorHolesProfile getFloorHolesProfileAt(int x, int z, int levelIndex) {
+		BackroomsLayout.ZoneType zone = BackroomsLayout.getZoneAtBlock(x, z, levelIndex);
+		BackroomsLayout.SpecialRoomPlacement placement = BackroomsLayout.getSpecialRoomAt(zone, x, z, levelIndex);
+		if (placement == null || placement.type() != BackroomsLayout.SpecialRoomType.FLOOR_HOLES) {
+			return null;
+		}
+
+		return buildFloorHolesProfile(placement, levelIndex);
+	}
+
+	private static FloorHolesProfile buildFloorHolesProfile(BackroomsLayout.SpecialRoomPlacement room, int levelIndex) {
+		long seed = mix(room.cellX(), room.cellZ(), FLOOR_HOLES_LAYOUT_SALT ^ levelSalt(levelIndex));
+		boolean tallRoom = positiveMod(seed ^ 0x4845494748544648L, 100) < 45;
+		int piercedFloors = 1 + positiveMod(seed ^ 0x5049455243454450L, 2);
+		return new FloorHolesProfile(room, levelIndex, tallRoom, piercedFloors);
+	}
+
+	private static void applyFloorHolesRoom(
+			FloorHolesProfile profile,
+			int x,
+			int z,
+			int floorY,
+			ColumnStates columnStates
+	) {
+		if (!profile.room().contains(x, z)) {
+			return;
+		}
+
+		clearInterior(columnStates);
+		if (profile.tallRoom()) {
+			columnStates.setCeiling(AIR);
+		}
+
+		if (isFloorHoleColumn(profile, x, z)) {
+			columnStates.setFloor(AIR);
+		} else {
+			columnStates.setFloor(randomizedBackroomsBlock(x, floorY, z));
+		}
+	}
+
+	private static void applyFloorHolesIntermediateLevel(
+			FloorHolesProfile profile,
+			int x,
+			int z,
+			int floorY,
+			ColumnStates columnStates
+	) {
+		if (!profile.room().contains(x, z)) {
+			return;
+		}
+
+		if (isFloorHoleColumn(profile, x, z)) {
+			columnStates.setFloor(AIR);
+			columnStates.setLower(AIR);
+			columnStates.setUpper(AIR);
+			columnStates.setTop(AIR);
+			columnStates.setCeiling(AIR);
+			return;
+		}
+
+		fillSolidBackroomsColumn(columnStates, x, z, floorY);
+	}
+
+	private static void applyFloorHolesLandingLevel(
+			FloorHolesProfile profile,
+			int x,
+			int z,
+			int floorY,
+			ColumnStates columnStates
+	) {
+		if (!profile.room().contains(x, z) || !isFloorHoleColumn(profile, x, z)) {
+			return;
+		}
+
+		columnStates.setFloor(randomizedBackroomsBlock(x, floorY, z));
+		columnStates.setLower(AIR);
+		columnStates.setUpper(AIR);
+		columnStates.setTop(AIR);
+		columnStates.setCeiling(AIR);
+	}
+
+	private static void fillSolidBackroomsColumn(ColumnStates columnStates, int x, int z, int floorY) {
+		columnStates.setFloor(randomizedBackroomsBlock(x, floorY, z));
+		columnStates.setLower(randomizedBackroomsBlock(x, floorY + 1, z));
+		columnStates.setUpper(randomizedBackroomsBlock(x, floorY + 2, z));
+		columnStates.setTop(randomizedBackroomsBlock(x, floorY + 3, z));
+		columnStates.setCeiling(randomizedBackroomsBlock(x, floorY + 4, z));
+	}
+
+	private static boolean isFloorHoleColumn(FloorHolesProfile profile, int x, int z) {
+		BackroomsLayout.SpecialRoomPlacement room = profile.room();
+		int localX = x - (room.roomCenterX() - room.roomHalfWidth());
+		int localZ = z - (room.roomCenterZ() - room.roomHalfHeight());
+		int width = room.roomHalfWidth() * 2 + 1;
+		int depth = room.roomHalfHeight() * 2 + 1;
+
+		if (localX < 0 || localX >= width || localZ < 0 || localZ >= depth) {
+			return false;
+		}
+
+		return isFloorHoleAxisCoordinate(localX, width) && isFloorHoleAxisCoordinate(localZ, depth);
+	}
+
+	private static boolean isFloorHoleAxisCoordinate(int local, int size) {
+		if (local <= 0) {
+			return false;
+		}
+
+		int innerSpan = size - 2;
+		if (local == size - 1) {
+			return innerSpan % 3 == 1;
+		}
+
+		int inner = local - 1;
+		return inner % 3 < 2;
 	}
 
 	private static void applyTrashRoom(
@@ -707,6 +851,14 @@ final class BackroomsSpecialRooms {
 			int levelIndex,
 			boolean tallRoom,
 			int pileCount
+	) {
+	}
+
+	private record FloorHolesProfile(
+			BackroomsLayout.SpecialRoomPlacement room,
+			int levelIndex,
+			boolean tallRoom,
+			int piercedFloors
 	) {
 	}
 

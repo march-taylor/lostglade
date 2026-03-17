@@ -685,7 +685,7 @@ final class BackroomsLayout {
 
 	enum SpecialRoomType {
 		TRASH_ROOM("trash_room", 3, 3, true),
-		FLOOR_HOLES("floor_holes", 4, 4, false),
+		FLOOR_HOLES("floor_holes", 4, 4, true),
 		VOID_HALL("void_hall", 6, 6, false),
 		HOUSE_HALL("house_hall", 5, 5, false),
 		STAIRS("stairs", 3, 4, true);
