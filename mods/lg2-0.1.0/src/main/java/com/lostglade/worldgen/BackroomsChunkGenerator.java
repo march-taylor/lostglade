@@ -368,8 +368,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	private static void setChunkBlock(ChunkAccess chunk, BlockPos.MutableBlockPos mutablePos, int localX, int y, int localZ, BlockState state) {
 		BlockPos worldPos = new BlockPos(chunk.getPos().getMinBlockX() + localX, y, chunk.getPos().getMinBlockZ() + localZ);
 		chunk.setBlockState(mutablePos.set(localX, y, localZ), state);
-		if (state.getBlock() instanceof EntityBlock entityBlock
-				&& (state.is(ModBlocks.EXIT_SIGN) || state.is(ModBlocks.EXIT_WALL_SIGN) || state.is(Blocks.CHEST))) {
+		if (state.getBlock() instanceof EntityBlock entityBlock) {
 			BlockEntity blockEntity = entityBlock.newBlockEntity(worldPos, state);
 			if (blockEntity != null) {
 				if (blockEntity instanceof ChestBlockEntity chestBlockEntity) {

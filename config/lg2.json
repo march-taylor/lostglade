@@ -15,8 +15,14 @@
   "stabilityMax": 1280,
   "stabilityDecayIntervalSeconds": 135,
   "stabilityDecayIntervalSecondsPerPlayer": 8,
+  "bitcoinsPerStability": 1,
+  
   "backroomsEntitySpawnMinRadiusChunks": 4,
   "backroomsEntitySpawnMaxRadiusChunks": 8,
   "backroomsEntityGroupRadiusChunks": 12,
-  "bitcoinsPerStability": 1
+  
+  "backroomsTrashRoomWeight": 2,
+  "backroomsFloorHolesRoomWeight": 2,
+  "backroomsHouseHallRoomWeight": 1,
+  "backroomsStairsRoomWeight": 2
 }

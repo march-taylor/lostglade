@@ -1,5 +1,6 @@
 package com.lostglade.worldgen;
 
+import com.lostglade.config.Lg2Config;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.state.properties.DoorHingeSide;
@@ -14,12 +15,16 @@ final class BackroomsLayout {
 	static final int CEILING_Y = FLOOR_Y + LEVEL_HEIGHT - 1;
 	static final int WALL_MIN_Y = FLOOR_Y + 1;
 	static final int WALL_MAX_Y = CEILING_Y - 1;
+	static final int WORLD_MIN_Y = 0;
+	static final int WORLD_HEIGHT = 384;
+	static final int WORLD_MAX_Y = WORLD_MIN_Y + WORLD_HEIGHT - 1;
+	static final int MAX_FULL_LEVEL_INDEX = computeMaxFullLevelIndex();
 
 	private static final int STYLE_REGION_SIZE = 96;
 	private static final int LAYOUT_CELL_SIZE = 24;
 	private static final int INSET_REGION_SIZE = 56;
 	private static final int DOOR_CHANCE_PERCENT = 2;
-	private static final int SPECIAL_ROOM_CHANCE_PERMILLE = 5;
+	private static final int SPECIAL_ROOM_CHANCE_PERMILLE = 2;
 	private static final int INSET_DOOR_CHANCE_PERCENT = 10;
 	private static final long DOOR_LAYOUT_SALT = 0x6B41524F4F4D4452L;
 	private static final long SPECIAL_ROOM_LAYOUT_SALT = 0x5350454349414C31L;
@@ -38,6 +43,19 @@ final class BackroomsLayout {
 
 	static int getLevelIndex(int y) {
 		return Math.floorDiv(y - FLOOR_Y, LEVEL_HEIGHT);
+	}
+
+	static boolean canFitFullLevels(int baseLevelIndex, int levelSpan) {
+		return levelSpan > 0
+				&& baseLevelIndex + levelSpan - 1 <= MAX_FULL_LEVEL_INDEX;
+	}
+
+	static int getMaxAvailableFullLevelSpan(int baseLevelIndex) {
+		return Math.max(0, (MAX_FULL_LEVEL_INDEX - baseLevelIndex) + 1);
+	}
+
+	static boolean isTopmostFullLevel(int levelIndex) {
+		return levelIndex >= MAX_FULL_LEVEL_INDEX;
 	}
 
 	static ZoneType getZoneAtBlock(int x, int z, int levelIndex) {
@@ -101,19 +119,77 @@ final class BackroomsLayout {
 	}
 
 	static SpecialRoomPlacement getSpecialRoomAt(ZoneType zone, int x, int z, int levelIndex) {
+		SpecialRoomPlacement best = findSpecialRoomAtLevel(zone, x, z, levelIndex, levelIndex, true);
+		for (int anchorLevel = levelIndex - 1; anchorLevel >= levelIndex - 3; anchorLevel--) {
+			SpecialRoomPlacement candidate = findSpecialRoomAtLevel(
+					getZoneAtBlock(x, z, anchorLevel),
+					x,
+					z,
+					anchorLevel,
+					levelIndex,
+					false
+			);
+			best = choosePreferredPlacement(best, candidate, x, z, levelIndex);
+		}
+		return best;
+	}
+
+	private static SpecialRoomPlacement findSpecialRoomAtLevel(
+			ZoneType zone,
+			int x,
+			int z,
+			int anchorLevelIndex,
+			int targetLevelIndex,
+			boolean includeSingleLevelRooms
+	) {
 		int cellX = Math.floorDiv(x, LAYOUT_CELL_SIZE);
 		int cellZ = Math.floorDiv(z, LAYOUT_CELL_SIZE);
+		SpecialRoomPlacement best = null;
 
 		for (int offsetX = -1; offsetX <= 1; offsetX++) {
 			for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
-				SpecialRoomPlacement placement = getSpecialRoomForCell(zone, cellX + offsetX, cellZ + offsetZ, levelIndex);
-				if (placement != null && placement.contains(x, z)) {
-					return placement;
+				SpecialRoomPlacement placement = getSpecialRoomForCell(zone, cellX + offsetX, cellZ + offsetZ, anchorLevelIndex);
+				if (placement == null
+						|| (!includeSingleLevelRooms && placement.levelSpan() <= 1)
+						|| !placement.contains(x, z, targetLevelIndex)) {
+					continue;
 				}
+				best = choosePreferredPlacement(best, placement, x, z, targetLevelIndex);
 			}
 		}
 
-		return null;
+		return best;
+	}
+
+	private static SpecialRoomPlacement choosePreferredPlacement(
+			SpecialRoomPlacement current,
+			SpecialRoomPlacement candidate,
+			int x,
+			int z,
+			int levelIndex
+	) {
+		if (candidate == null) {
+			return current;
+		}
+		if (current == null) {
+			return candidate;
+		}
+
+		int currentPriority = current.type() == SpecialRoomType.HOUSE_HALL ? 2 : 1;
+		int candidatePriority = candidate.type() == SpecialRoomType.HOUSE_HALL ? 2 : 1;
+		if (candidatePriority != currentPriority) {
+			return candidatePriority > currentPriority ? candidate : current;
+		}
+
+		int currentLevelDistance = Math.abs(levelIndex - current.baseLevelIndex());
+		int candidateLevelDistance = Math.abs(levelIndex - candidate.baseLevelIndex());
+		if (candidateLevelDistance != currentLevelDistance) {
+			return candidateLevelDistance < currentLevelDistance ? candidate : current;
+		}
+
+		int currentDistance = Math.abs(x - current.roomCenterX()) + Math.abs(z - current.roomCenterZ());
+		int candidateDistance = Math.abs(x - candidate.roomCenterX()) + Math.abs(z - candidate.roomCenterZ());
+		return candidateDistance < currentDistance ? candidate : current;
 	}
 
 	private static boolean isLightAnchor(ZoneType zone, int x, int z, int levelIndex) {
@@ -491,24 +567,126 @@ final class BackroomsLayout {
 		}
 
 		CellData current = getCell(zone, cellX, cellZ, levelIndex);
-		SpecialRoomType[] eligibleTypes = SpecialRoomType.collectEligible(current);
+		if (isCoveredByNeighboringHouseHall(current.roomCenterX, current.roomCenterZ, cellX, cellZ, levelIndex)) {
+			cache.specialRoomCache.put(key, Optional.empty());
+			return null;
+		}
+
+		SpecialRoomType[] eligibleTypes = SpecialRoomType.collectEligible(current, levelIndex);
 		if (eligibleTypes.length == 0) {
 			cache.specialRoomCache.put(key, Optional.empty());
 			return null;
 		}
 
-		SpecialRoomType type = eligibleTypes[positiveMod(sample ^ 0x61E2D34FA719BC25L, eligibleTypes.length)];
-		SpecialRoomPlacement placement = new SpecialRoomPlacement(
+		SpecialRoomType type = pickSpecialRoomType(sample ^ 0x61E2D34FA719BC25L, eligibleTypes);
+		SpecialRoomPlacement placement = buildSpecialRoomPlacement(type, current, cellX, cellZ, levelIndex, sample);
+		if (placement == null) {
+			cache.specialRoomCache.put(key, Optional.empty());
+			return null;
+		}
+		cache.specialRoomCache.put(key, Optional.of(placement));
+		return placement;
+	}
+
+	private static boolean isCoveredByNeighboringHouseHall(int x, int z, int cellX, int cellZ, int levelIndex) {
+		for (int anchorLevel = levelIndex; anchorLevel >= levelIndex - 3; anchorLevel--) {
+			ZoneType anchorZone = getZoneAtBlock(x, z, anchorLevel);
+			for (int offsetX = -2; offsetX <= 2; offsetX++) {
+				for (int offsetZ = -2; offsetZ <= 2; offsetZ++) {
+					int candidateCellX = cellX + offsetX;
+					int candidateCellZ = cellZ + offsetZ;
+					if (candidateCellX == cellX && candidateCellZ == cellZ && anchorLevel == levelIndex) {
+						continue;
+					}
+
+					SpecialRoomPlacement hall = getHouseHallPlacementForCell(anchorZone, candidateCellX, candidateCellZ, anchorLevel);
+					if (hall != null && hall.contains(x, z, levelIndex)) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
+
+	private static SpecialRoomPlacement getHouseHallPlacementForCell(ZoneType zone, int cellX, int cellZ, int levelIndex) {
+		long sample = mix(cellX, cellZ, zone.layoutSalt ^ SPECIAL_ROOM_LAYOUT_SALT ^ levelSalt(levelIndex));
+		if (positiveMod(sample ^ 0x2A5C7D11E3A19F43L, 1000) >= SPECIAL_ROOM_CHANCE_PERMILLE) {
+			return null;
+		}
+
+		CellData current = getCell(zone, cellX, cellZ, levelIndex);
+		SpecialRoomType[] eligibleTypes = SpecialRoomType.collectEligible(current, levelIndex);
+		if (eligibleTypes.length == 0) {
+			return null;
+		}
+
+		SpecialRoomType type = pickSpecialRoomType(sample ^ 0x61E2D34FA719BC25L, eligibleTypes);
+		if (type != SpecialRoomType.HOUSE_HALL) {
+			return null;
+		}
+
+		return buildSpecialRoomPlacement(type, current, cellX, cellZ, levelIndex, sample);
+	}
+
+	private static SpecialRoomType pickSpecialRoomType(long sample, SpecialRoomType[] eligibleTypes) {
+		int totalWeight = 0;
+		for (SpecialRoomType type : eligibleTypes) {
+			totalWeight += type.selectionWeight();
+		}
+		if (totalWeight <= 0) {
+			return eligibleTypes[positiveMod(sample, eligibleTypes.length)];
+		}
+
+		int roll = positiveMod(sample, totalWeight);
+		for (SpecialRoomType type : eligibleTypes) {
+			roll -= type.selectionWeight();
+			if (roll < 0) {
+				return type;
+			}
+		}
+		return eligibleTypes[0];
+	}
+
+	private static SpecialRoomPlacement buildSpecialRoomPlacement(
+			SpecialRoomType type,
+			CellData current,
+			int cellX,
+			int cellZ,
+			int levelIndex,
+			long sample
+	) {
+		if (type == SpecialRoomType.HOUSE_HALL) {
+			int hallHalf = 12 + positiveMod(sample ^ 0x484F55534548414CL, 9);
+			int maxLevelSpan = Math.min(4, getMaxAvailableFullLevelSpan(levelIndex));
+			if (maxLevelSpan < 3) {
+				return null;
+			}
+			int levelSpan = 3 + positiveMod(sample ^ 0x484F555345464C52L, maxLevelSpan - 2);
+			return new SpecialRoomPlacement(
+					type,
+					cellX,
+					cellZ,
+					levelIndex,
+					current.roomCenterX,
+					current.roomCenterZ,
+					hallHalf,
+					hallHalf,
+					levelSpan
+			);
+		}
+
+		return new SpecialRoomPlacement(
 				type,
 				cellX,
 				cellZ,
+				levelIndex,
 				current.roomCenterX,
 				current.roomCenterZ,
 				current.roomHalfWidth,
-				current.roomHalfHeight
+				current.roomHalfHeight,
+				1
 		);
-		cache.specialRoomCache.put(key, Optional.of(placement));
-		return placement;
 	}
 
 	private static RoomSide[] collectEligibleDoorSides(ZoneType zone, int cellX, int cellZ, CellData current, int levelIndex) {
@@ -547,6 +725,15 @@ final class BackroomsLayout {
 		value *= 0xc4ceb9fe1a85ec53L;
 		value ^= value >>> 33;
 		return value;
+	}
+
+	private static int computeMaxFullLevelIndex() {
+		int topLevelIndex = getLevelIndex(WORLD_MAX_Y);
+		int ceilingY = FLOOR_Y + topLevelIndex * LEVEL_HEIGHT + (LEVEL_HEIGHT - 1);
+		if (ceilingY > WORLD_MAX_Y) {
+			topLevelIndex--;
+		}
+		return topLevelIndex;
 	}
 
 	private static long levelSalt(int levelIndex) {
@@ -672,14 +859,22 @@ final class BackroomsLayout {
 			SpecialRoomType type,
 			int cellX,
 			int cellZ,
+			int baseLevelIndex,
 			int roomCenterX,
 			int roomCenterZ,
 			int roomHalfWidth,
-			int roomHalfHeight
-	) {
+			int roomHalfHeight,
+			int levelSpan
+		) {
 		boolean contains(int x, int z) {
 			return Math.abs(x - this.roomCenterX) <= this.roomHalfWidth
 					&& Math.abs(z - this.roomCenterZ) <= this.roomHalfHeight;
+		}
+
+		boolean contains(int x, int z, int levelIndex) {
+			return this.contains(x, z)
+					&& levelIndex >= this.baseLevelIndex
+					&& levelIndex < this.baseLevelIndex + this.levelSpan;
 		}
 	}
 
@@ -687,7 +882,7 @@ final class BackroomsLayout {
 		TRASH_ROOM("trash_room", 3, 3, true),
 		FLOOR_HOLES("floor_holes", 4, 4, true),
 		VOID_HALL("void_hall", 6, 6, false),
-		HOUSE_HALL("house_hall", 5, 5, false),
+		HOUSE_HALL("house_hall", 0, 0, true),
 		STAIRS("stairs", 3, 4, true);
 
 		private static final SpecialRoomType[] VALUES = values();
@@ -703,15 +898,32 @@ final class BackroomsLayout {
 			this.enabled = enabled;
 		}
 
-		private boolean canFit(CellData cell) {
+		private boolean canFit(CellData cell, int levelIndex) {
+			if (this == HOUSE_HALL && !canFitFullLevels(levelIndex, 3)) {
+				return false;
+			}
+			if (this == HOUSE_HALL) {
+				return true;
+			}
 			return cell.roomHalfWidth >= this.minHalfWidth && cell.roomHalfHeight >= this.minHalfHeight;
 		}
 
-		static SpecialRoomType[] collectEligible(CellData cell) {
+		private int selectionWeight() {
+			Lg2Config.ConfigData config = Lg2Config.get();
+			return switch (this) {
+				case TRASH_ROOM -> config.backroomsTrashRoomWeight;
+				case FLOOR_HOLES -> config.backroomsFloorHolesRoomWeight;
+				case HOUSE_HALL -> config.backroomsHouseHallRoomWeight;
+				case STAIRS -> config.backroomsStairsRoomWeight;
+				case VOID_HALL -> 0;
+			};
+		}
+
+		static SpecialRoomType[] collectEligible(CellData cell, int levelIndex) {
 			SpecialRoomType[] result = new SpecialRoomType[VALUES.length];
 			int count = 0;
 			for (SpecialRoomType type : VALUES) {
-				if (type.enabled && type.canFit(cell)) {
+				if (type.enabled && type.canFit(cell, levelIndex)) {
 					result[count++] = type;
 				}
 			}

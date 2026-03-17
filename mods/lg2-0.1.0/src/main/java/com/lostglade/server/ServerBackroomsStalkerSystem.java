@@ -2,6 +2,7 @@ package com.lostglade.server;
 
 import com.lostglade.config.Lg2Config;
 import com.lostglade.entity.BackroomsStalkerEntity;
+import com.lostglade.worldgen.BackroomsSpecialRooms;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -457,6 +458,18 @@ public final class ServerBackroomsStalkerSystem {
 		int effectiveMaxRadius = Math.max(minRadiusBlocks, maxRadiusBlocks);
 
 		for (ServerPlayer player : shuffledPlayers) {
+			BlockPos waitingPos = BackroomsSpecialRooms.getHouseHallWaitingStalkerPos(
+					player.blockPosition().getX(),
+					player.blockPosition().getY(),
+					player.blockPosition().getZ()
+			);
+			if (waitingPos != null) {
+				Vec3 waitingSpawn = findOpenPositionAtExactY(level, stalker, waitingPos.getX(), waitingPos.getY(), waitingPos.getZ());
+				if (waitingSpawn != null) {
+					return waitingSpawn;
+				}
+			}
+
 			for (int attempt = 0; attempt < MAX_SPAWN_ATTEMPTS_PER_PLAYER; attempt++) {
 				double angle = random.nextDouble() * (Math.PI * 2.0D);
 				int distance = minRadiusBlocks + random.nextInt(Math.max(1, effectiveMaxRadius - minRadiusBlocks + 1));
@@ -483,6 +496,9 @@ public final class ServerBackroomsStalkerSystem {
 
 	private static boolean canSpawnAt(ServerLevel level, BackroomsStalkerEntity stalker, BlockPos feetPos) {
 		if (!level.getWorldBorder().isWithinBounds(feetPos)) {
+			return false;
+		}
+		if (!level.hasChunkAt(feetPos) || !level.hasChunkAt(feetPos.above()) || !level.hasChunkAt(feetPos.below())) {
 			return false;
 		}
 

@@ -4,10 +4,12 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.lostglade.Lg2;
 import com.lostglade.block.ModBlocks;
+import com.lostglade.worldgen.BackroomsSpecialRooms;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.BlockPos;
@@ -30,12 +32,17 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.portal.TeleportTransition;
 import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.BlockHitResult;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -117,6 +124,7 @@ public final class ServerBackroomsSystem {
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerBackroomsSystem::loadState);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerBackroomsSystem::saveState);
 		ServerTickEvents.END_SERVER_TICK.register(ServerBackroomsSystem::tickServer);
+		UseBlockCallback.EVENT.register(ServerBackroomsSystem::onUseBlock);
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 				dispatcher.register(
@@ -373,6 +381,33 @@ public final class ServerBackroomsSystem {
 		tickPrewarmedRespawns(server);
 		tickBackroomsAmbientLoop(server);
 		tickLampRestores(server);
+	}
+
+	private static InteractionResult onUseBlock(Player player, Level world, InteractionHand hand, BlockHitResult hitResult) {
+		if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer) || !isBackrooms(world)) {
+			return InteractionResult.PASS;
+		}
+
+		BlockState state = world.getBlockState(hitResult.getBlockPos());
+		if (!state.is(Blocks.OAK_DOOR)) {
+			return InteractionResult.PASS;
+		}
+		if (!BackroomsSpecialRooms.isFakeHouseDoorAt(hitResult.getBlockPos().getX(), hitResult.getBlockPos().getY(), hitResult.getBlockPos().getZ())) {
+			return InteractionResult.PASS;
+		}
+
+		MinecraftServer server = world.getServer();
+		if (server == null) {
+			return InteractionResult.PASS;
+		}
+
+		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
+		if (backrooms == null) {
+			return InteractionResult.PASS;
+		}
+
+		teleportToRandomBackroomsRespawn(backrooms, serverPlayer);
+		return InteractionResult.CONSUME;
 	}
 
 	private static void enforceClearWeather(MinecraftServer server) {

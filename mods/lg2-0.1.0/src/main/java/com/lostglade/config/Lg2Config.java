@@ -32,6 +32,8 @@ public final class Lg2Config {
 	private static final int MAX_BACKROOMS_ENTITY_SPAWN_MAX_RADIUS_CHUNKS = 64;
 	private static final int MIN_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS = 1;
 	private static final int MAX_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS = 32;
+	private static final int MIN_BACKROOMS_SPECIAL_ROOM_WEIGHT = 0;
+	private static final int MAX_BACKROOMS_SPECIAL_ROOM_WEIGHT = 1000;
 	private static final double DEFAULT_BITCOINS_PER_STABILITY = 6.4D;
 	private static final double MIN_BITCOINS_PER_STABILITY = 0.001D;
 	private static final double MAX_BITCOINS_PER_STABILITY = 1_000_000.0D;
@@ -122,6 +124,22 @@ public final class Lg2Config {
 				MIN_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS,
 				MAX_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS,
 				newValue -> configData.backroomsEntityGroupRadiusChunks = newValue);
+		changed |= clampSingleValue(configData.backroomsTrashRoomWeight,
+				MIN_BACKROOMS_SPECIAL_ROOM_WEIGHT,
+				MAX_BACKROOMS_SPECIAL_ROOM_WEIGHT,
+				newValue -> configData.backroomsTrashRoomWeight = newValue);
+		changed |= clampSingleValue(configData.backroomsFloorHolesRoomWeight,
+				MIN_BACKROOMS_SPECIAL_ROOM_WEIGHT,
+				MAX_BACKROOMS_SPECIAL_ROOM_WEIGHT,
+				newValue -> configData.backroomsFloorHolesRoomWeight = newValue);
+		changed |= clampSingleValue(configData.backroomsHouseHallRoomWeight,
+				MIN_BACKROOMS_SPECIAL_ROOM_WEIGHT,
+				MAX_BACKROOMS_SPECIAL_ROOM_WEIGHT,
+				newValue -> configData.backroomsHouseHallRoomWeight = newValue);
+		changed |= clampSingleValue(configData.backroomsStairsRoomWeight,
+				MIN_BACKROOMS_SPECIAL_ROOM_WEIGHT,
+				MAX_BACKROOMS_SPECIAL_ROOM_WEIGHT,
+				newValue -> configData.backroomsStairsRoomWeight = newValue);
 		changed |= sanitizeBitcoinsPerStability(configData);
 
 		return changed;
@@ -255,6 +273,10 @@ public final class Lg2Config {
 		@SerializedName(value = "backroomsEntitySpawnMaxRadiusChunks", alternate = {"backroomsEntityRadiusChunks"})
 		public int backroomsEntitySpawnMaxRadiusChunks = 6;
 		public int backroomsEntityGroupRadiusChunks = 2;
+		public int backroomsTrashRoomWeight = 2;
+		public int backroomsFloorHolesRoomWeight = 2;
+		public int backroomsHouseHallRoomWeight = 1;
+		public int backroomsStairsRoomWeight = 2;
 		public double bitcoinsPerStability = DEFAULT_BITCOINS_PER_STABILITY;
 
 		private ConfigData() {
