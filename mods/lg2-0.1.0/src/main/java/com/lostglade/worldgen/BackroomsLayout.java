@@ -19,7 +19,7 @@ final class BackroomsLayout {
 	private static final int LAYOUT_CELL_SIZE = 24;
 	private static final int INSET_REGION_SIZE = 56;
 	private static final int DOOR_CHANCE_PERCENT = 2;
-	private static final int SPECIAL_ROOM_CHANCE_PERCENT = 1;
+	private static final int SPECIAL_ROOM_CHANCE_PERMILLE = 5;
 	private static final int INSET_DOOR_CHANCE_PERCENT = 10;
 	private static final long DOOR_LAYOUT_SALT = 0x6B41524F4F4D4452L;
 	private static final long SPECIAL_ROOM_LAYOUT_SALT = 0x5350454349414C31L;
@@ -485,7 +485,7 @@ final class BackroomsLayout {
 		}
 
 		long sample = mix(cellX, cellZ, zone.layoutSalt ^ SPECIAL_ROOM_LAYOUT_SALT ^ levelSalt(levelIndex));
-		if (positiveMod(sample ^ 0x2A5C7D11E3A19F43L, 100) >= SPECIAL_ROOM_CHANCE_PERCENT) {
+		if (positiveMod(sample ^ 0x2A5C7D11E3A19F43L, 1000) >= SPECIAL_ROOM_CHANCE_PERMILLE) {
 			cache.specialRoomCache.put(key, Optional.empty());
 			return null;
 		}
@@ -497,7 +497,7 @@ final class BackroomsLayout {
 			return null;
 		}
 
-		SpecialRoomType type = SpecialRoomType.pickWeighted(eligibleTypes, sample ^ 0x61E2D34FA719BC25L);
+		SpecialRoomType type = eligibleTypes[positiveMod(sample ^ 0x61E2D34FA719BC25L, eligibleTypes.length)];
 		SpecialRoomPlacement placement = new SpecialRoomPlacement(
 				type,
 				cellX,
@@ -684,11 +684,11 @@ final class BackroomsLayout {
 	}
 
 	enum SpecialRoomType {
-		TRASH_ROOM("trash_room", 3, 3, true, 2),
-		FLOOR_HOLES("floor_holes", 4, 4, false, 1),
-		VOID_HALL("void_hall", 6, 6, false, 1),
-		HOUSE_HALL("house_hall", 5, 5, false, 1),
-		STAIRS("stairs", 3, 4, true, 3);
+		TRASH_ROOM("trash_room", 3, 3, true),
+		FLOOR_HOLES("floor_holes", 4, 4, false),
+		VOID_HALL("void_hall", 6, 6, false),
+		HOUSE_HALL("house_hall", 5, 5, false),
+		STAIRS("stairs", 3, 4, true);
 
 		private static final SpecialRoomType[] VALUES = values();
 
@@ -696,14 +696,11 @@ final class BackroomsLayout {
 		final int minHalfWidth;
 		final int minHalfHeight;
 		final boolean enabled;
-		final int selectionWeight;
-
-		SpecialRoomType(String id, int minHalfWidth, int minHalfHeight, boolean enabled, int selectionWeight) {
+		SpecialRoomType(String id, int minHalfWidth, int minHalfHeight, boolean enabled) {
 			this.id = id;
 			this.minHalfWidth = minHalfWidth;
 			this.minHalfHeight = minHalfHeight;
 			this.enabled = enabled;
-			this.selectionWeight = selectionWeight;
 		}
 
 		private boolean canFit(CellData cell) {
@@ -722,23 +719,6 @@ final class BackroomsLayout {
 			SpecialRoomType[] trimmed = new SpecialRoomType[count];
 			System.arraycopy(result, 0, trimmed, 0, count);
 			return trimmed;
-		}
-
-		static SpecialRoomType pickWeighted(SpecialRoomType[] eligibleTypes, long sample) {
-			int totalWeight = 0;
-			for (SpecialRoomType type : eligibleTypes) {
-				totalWeight += Math.max(1, type.selectionWeight);
-			}
-
-			int roll = positiveMod(sample, totalWeight);
-			for (SpecialRoomType type : eligibleTypes) {
-				roll -= Math.max(1, type.selectionWeight);
-				if (roll < 0) {
-					return type;
-				}
-			}
-
-			return eligibleTypes[eligibleTypes.length - 1];
 		}
 	}
 
