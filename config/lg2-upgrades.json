@@ -687,14 +687,14 @@
           "lore": {
             "values": {
               "en_us": [
-                "Unlocks stone tools and weapons.",
-                "This is where real progress begins.",
+                "Unlocks all stone tools and weapons.",
+                "Base technology tier and the start of progression.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
-                "Открывает крафт каменных инструментов и оружия.",
-                "С этого всё начинается.",
+                "Открывает крафт всех каменных инструментов и оружия.",
+                "Базовый уровень развития и отправная точка веток.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],
@@ -747,14 +747,14 @@
           "lore": {
             "values": {
               "en_us": [
-                "Unlocks copper gear.",
-                "Requires Stone Era. It also opens the road to brewing.",
+                "Unlocks copper tools, armor and copper golem crafting.",
+                "Requires Stone Era and opens the metallurgy branch.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
-                "Открывает крафт медных инструментов и брони.",
-                "Требует Каменную эру. С неё открывается путь к зельеварению.",
+                "Открывает крафт медных инструментов, брони и создание голема.",
+                "Требует Каменную эру и открывает путь к металлургии.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],
@@ -813,14 +813,14 @@
           "lore": {
             "values": {
               "en_us": [
-                "Unlocks iron and gold gear.",
-                "Requires Copper Era. Iron is strength, gold is speed and special recipes.",
+                "Unlocks iron and gold tools/armor, iron golems and golden foods.",
+                "Requires Copper Era. Includes golden apple, carrot and glistering melon.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
-                "Открывает крафт железных и золотых инструментов и брони.",
-                "Требует Медную эру. Железо даёт силу, золото — скорость и особые рецепты.",
+                "Открывает железные и золотые инструменты/броню, железных големов и золотую еду.",
+                "Требует Медную эру. Включает яблоко, морковь и сверкающий ломтик арбуза.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],
@@ -879,14 +879,14 @@
           "lore": {
             "values": {
               "en_us": [
-                "Unlocks diamond tools and armor.",
-                "Requires Iron + Gold Era. Vanilla peak of raw durability.",
+                "Unlocks diamond tools, armor and shield.",
+                "Requires Iron + Gold Era and is needed before Netherite.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
-                "Открывает крафт алмазных инструментов и брони.",
-                "Требует Железную + Золотую эру. Это вершина ванильной прочности.",
+                "Открывает крафт алмазных инструментов, брони и щита.",
+                "Требует Железную + Золотую эру и нужен перед Незритовой эпохой.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],
@@ -922,7 +922,7 @@
           "type": "purchase_upgrade",
           "upgradeId": "era_netherite",
           "pricesBitcoins": [
-            2200
+            2000
           ],
           "icon": {
             "fallbackItem": "minecraft:netherite_ingot",
@@ -946,13 +946,13 @@
             "values": {
               "en_us": [
                 "Unlocks netherite tools and armor.",
-                "Requires Diamond Era. It does not burn in lava and gives the best protection.",
+                "Requires Diamond Era. Best durability and damage among vanilla tiers.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
                 "Открывает крафт незритовых инструментов и брони.",
-                "Требует Алмазную эру. Не горит в лаве и даёт лучшую защиту.",
+                "Требует Алмазную эру. Даёт лучшие показатели прочности и урона.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],

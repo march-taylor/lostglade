@@ -19,7 +19,7 @@ public abstract class BlockItemPlacementGateMixin {
 		}
 
 		BlockItem blockItem = (BlockItem) (Object) this;
-		if (!ServerMechanicsGateSystem.canPlaceBlock(serverPlayer, blockItem.getBlock())) {
+		if (!ServerMechanicsGateSystem.canPlaceBlock(serverPlayer, context, blockItem.getBlock())) {
 			cir.setReturnValue(InteractionResult.FAIL);
 		}
 	}
