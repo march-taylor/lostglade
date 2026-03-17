@@ -94,6 +94,8 @@ public final class BackroomsStalkerEntity extends Monster {
 	private static final int CHASE_DETOUR_Y_SEARCH = 2;
 	private static final float CHASE_DIRECT_PATH_DIST_TOLERANCE = 1.5F;
 	private static final float CHASE_MAX_VISITED_NODES_MULTIPLIER = 10.0F;
+	private static final double STEP_JUMP_MIN_DELTA_Y = 0.45D;
+	private static final double STEP_JUMP_MAX_DELTA_Y = 1.25D;
 	private static final int SIGHT_CACHE_TTL_TICKS = 2;
 	private static final int SIGHT_CACHE_MAX_ENTRIES = 32;
 	private static final double SKIN_SCREAMER_TRIGGER_RADIUS_SQR = 32.0D * 32.0D;
@@ -205,9 +207,17 @@ public final class BackroomsStalkerEntity extends Monster {
 	@Override
 	public void tick() {
 		super.tick();
-		if (!this.level().isClientSide() && !this.chasingTarget) {
-			setHeadPitch(WANDER_HEAD_PITCH);
+		if (!this.level().isClientSide()) {
+			tryJumpStepUp();
+			if (!this.chasingTarget) {
+				setHeadPitch(WANDER_HEAD_PITCH);
+			}
 		}
+	}
+
+	@Override
+	public float maxUpStep() {
+		return 1.0F;
 	}
 
 	@Override
@@ -654,6 +664,30 @@ public final class BackroomsStalkerEntity extends Monster {
 	private void setHeadPitch(float pitch) {
 		this.setXRot(pitch);
 		this.xRotO = pitch;
+	}
+
+	private void tryJumpStepUp() {
+		if (!this.onGround() || !this.horizontalCollision || this.isInWater() || this.isInLava()) {
+			return;
+		}
+
+		PathNavigation navigation = this.getNavigation();
+		if (navigation == null || !navigation.isInProgress()) {
+			return;
+		}
+
+		Path path = navigation.getPath();
+		if (path == null || path.isDone()) {
+			return;
+		}
+
+		Vec3 nextNodePos = path.getNextEntityPos(this);
+		double deltaY = nextNodePos.y - this.getY();
+		if (deltaY < STEP_JUMP_MIN_DELTA_Y || deltaY > STEP_JUMP_MAX_DELTA_Y) {
+			return;
+		}
+
+		this.jumpFromGround();
 	}
 
 	private void tickSkinScreamer(ServerLevel level, long nowTick) {
