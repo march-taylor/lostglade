@@ -68,7 +68,6 @@ public final class ServerUpgradeUiSystem {
 	private static final FontDescription TOOLTIP_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:upgrade_tooltip"))
 	);
-	private static final String TOOLTIP_ICON_INFO = "\ue980";
 	private static final String TOOLTIP_ICON_COIN = "\ue981";
 	private static final String NO_PACK_COIN = "₿";
 	private static final int MAIN_BALANCE_CENTER_X = 127;
@@ -393,8 +392,11 @@ public final class ServerUpgradeUiSystem {
 				tooltipWrapWidth(viewer, TOOLTIP_DESCRIPTION_WRAP, TOOLTIP_DESCRIPTION_WRAP_CJK),
 				2
 		);
+		if (!description.isEmpty()) {
+			result.add(buildSpacerLine(hasPack));
+		}
 		for (int i = 0; i < description.size(); i++) {
-			String prefix = i == 0 ? tooltipIconOrFallback(hasPack, TOOLTIP_ICON_INFO, "i") : "";
+			String prefix = "";
 			result.add(buildTooltipLine(
 					prefix,
 					0x91B8D9,
@@ -410,6 +412,9 @@ public final class ServerUpgradeUiSystem {
 		}
 
 		if (type == UpgradeUiConfig.ButtonType.PURCHASE_UPGRADE) {
+			if (!description.isEmpty()) {
+				result.add(buildSpacerLine(hasPack));
+			}
 			result.add(buildPriceLine(viewer, button, state, hasPack));
 		}
 		return result;
@@ -435,13 +440,13 @@ public final class ServerUpgradeUiSystem {
 
 		if (!hasPack) {
 			MutableComponent line = Component.empty();
-			line.append(styledTooltipText(NO_PACK_COIN + " ", priceColor, false, false));
+			line.append(styledTooltipText(NO_PACK_COIN, priceColor, false, false));
 			line.append(styledTooltipText(Integer.toString(price), priceColor, true, false, state == ButtonState.MAXED));
 			return line;
 		}
 
 		MutableComponent line = Component.empty();
-		line.append(styledTooltipText(TOOLTIP_ICON_COIN + " ", 0xFFFFFF, false, true));
+		line.append(styledTooltipText(TOOLTIP_ICON_COIN, 0xFFFFFF, false, true));
 		line.append(styledTooltipText(Integer.toString(price), priceColor, true, true, state == ButtonState.MAXED));
 		return line;
 	}
@@ -459,6 +464,10 @@ public final class ServerUpgradeUiSystem {
 		}
 		line.append(styledTooltipText(text, textColor, false, hasPack));
 		return line;
+	}
+
+	private static Component buildSpacerLine(boolean hasPack) {
+		return styledTooltipText(" ", 0xFFFFFF, false, hasPack);
 	}
 
 	private static Component styledTooltipText(String text, int color, boolean bold, boolean hasPack) {
@@ -553,10 +562,6 @@ public final class ServerUpgradeUiSystem {
 	private static int tooltipWrapWidth(ServerPlayer player, int regularWidth, int cjkWidth) {
 		String locale = normalizeLocale(player);
 		return locale.startsWith("ja") || locale.startsWith("ko") || locale.startsWith("zh") ? cjkWidth : regularWidth;
-	}
-
-	private static String tooltipIconOrFallback(boolean hasPack, String icon, String fallback) {
-		return hasPack ? icon : fallback;
 	}
 
 	private static String buildRequirementSummary(ServerPlayer player, UpgradeUiConfig.ButtonConfig button) {
@@ -1244,7 +1249,7 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	private static void sendPlayerMessage(ServerPlayer player, String message) {
-		player.displayClientMessage(Component.literal(message), true);
+		player.sendSystemMessage(Component.literal(message));
 	}
 
 	private static void playUiClick(ServerPlayer player, boolean success) {
@@ -1252,16 +1257,16 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	private static void playUiClick(ServerPlayer player, boolean success, boolean suppress) {
-		if (suppress) {
+		if (suppress || !success) {
 			return;
 		}
 		player.level().playSound(
 				null,
 				player.blockPosition(),
-				success ? SoundEvents.UI_BUTTON_CLICK.value() : SoundEvents.VILLAGER_NO,
+				SoundEvents.UI_BUTTON_CLICK.value(),
 				SoundSource.PLAYERS,
 				0.8F,
-				success ? 1.0F : 0.8F
+				1.0F
 		);
 	}
 
