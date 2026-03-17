@@ -3,6 +3,8 @@ package com.lostglade.worldgen;
 import com.lostglade.block.ModBlocks;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.WallSignBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
@@ -12,6 +14,7 @@ final class BackroomsSpecialRooms {
 	private static final long STAIRS_LAYOUT_SALT = 0x535441495253524DL;
 	private static final BlockState BACKROOMS_DOOR_BLOCK = ModBlocks.BACKROOMS_DOOR.defaultBlockState();
 	private static final BlockState EXIT_SIGN_WALL_BLOCK = ModBlocks.EXIT_WALL_SIGN.defaultBlockState();
+	private static final BlockState CHEST_BLOCK = Blocks.CHEST.defaultBlockState();
 	private static final BlockState AIR = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
 
 	private BackroomsSpecialRooms() {
@@ -52,9 +55,15 @@ final class BackroomsSpecialRooms {
 			ColumnStates columnStates
 	) {
 		int levelIndex = BackroomsLayout.getLevelIndex(floorY);
-		if (specialRoom != null && specialRoom.type() == BackroomsLayout.SpecialRoomType.STAIRS) {
-			applyStairsLowerLevel(buildStairsProfile(specialRoom, levelIndex), x, z, floorY, ceilingY, columnStates);
-			return;
+		if (specialRoom != null) {
+			if (specialRoom.type() == BackroomsLayout.SpecialRoomType.STAIRS) {
+				applyStairsLowerLevel(buildStairsProfile(specialRoom, levelIndex), x, z, floorY, ceilingY, columnStates);
+				return;
+			}
+			if (specialRoom.type() == BackroomsLayout.SpecialRoomType.TRASH_ROOM) {
+				applyTrashRoom(specialRoom, levelIndex, x, z, floorY, columnStates);
+				return;
+			}
 		}
 
 		StairsProfile lowerProfile = getStairsProfileAt(x, z, levelIndex - 1);
@@ -67,6 +76,238 @@ final class BackroomsSpecialRooms {
 		if (upperProfile != null) {
 			applyStairsReceivingShaft(upperProfile, x, z, floorY, ceilingY, columnStates);
 		}
+	}
+
+	private static void applyTrashRoom(
+			BackroomsLayout.SpecialRoomPlacement room,
+			int levelIndex,
+			int x,
+			int z,
+			int floorY,
+			ColumnStates columnStates
+	) {
+		if (!room.contains(x, z)) {
+			return;
+		}
+
+		TrashRoomProfile profile = buildTrashRoomProfile(room, levelIndex);
+		clearInterior(columnStates);
+		if (profile.tallRoom()) {
+			columnStates.setCeiling(AIR);
+		}
+
+		if (isTrashChestColumn(profile, x, z)) {
+			columnStates.setLower(createTrashChestState(profile, x, z));
+			columnStates.setUpper(AIR);
+			columnStates.setTop(AIR);
+			return;
+		}
+
+		int pileHeight = getTrashPileHeight(profile, x, z);
+		if (pileHeight <= 0) {
+			return;
+		}
+
+		columnStates.setLower(randomTrashBlock(x, floorY + 1, z, profile, 0));
+		if (pileHeight >= 2) {
+			columnStates.setUpper(randomTrashBlock(x, floorY + 2, z, profile, 1));
+		}
+		if (pileHeight >= 3) {
+			columnStates.setTop(randomTrashBlock(x, floorY + 3, z, profile, 2));
+		}
+		if (pileHeight >= 4 && profile.tallRoom()) {
+			columnStates.setCeiling(randomTrashBlock(x, floorY + 4, z, profile, 3));
+		}
+	}
+
+	private static TrashRoomProfile buildTrashRoomProfile(BackroomsLayout.SpecialRoomPlacement room, int levelIndex) {
+		long seed = trashSalt(room, levelIndex);
+		boolean tallRoom = positiveMod(seed ^ 0x4845494748543431L, 100) < 45;
+		int pileCount = 2 + positiveMod(seed ^ 0x50494C45434F554EL, 3);
+		return new TrashRoomProfile(room, levelIndex, tallRoom, pileCount);
+	}
+
+	private static boolean isTrashChestColumn(TrashRoomProfile profile, int x, int z) {
+		BackroomsLayout.SpecialRoomPlacement room = profile.room();
+		int localX = x - room.roomCenterX();
+		int localZ = z - room.roomCenterZ();
+		if (!isInsideTrashChestArea(room, localX, localZ)) {
+			return false;
+		}
+
+		int slotWidth = (Math.max(1, room.roomHalfWidth() - 1) * 2) + 1;
+		int slotHeight = (Math.max(1, room.roomHalfHeight() - 1) * 2) + 1;
+		int slotX = localX + Math.max(1, room.roomHalfWidth() - 1);
+		int slotZ = localZ + Math.max(1, room.roomHalfHeight() - 1);
+		int targetSlot = (slotZ * slotWidth) + slotX;
+
+		int chestCount = getTrashChestCount(profile);
+		int slotCount = slotWidth * slotHeight;
+		boolean[] used = new boolean[slotCount];
+		for (int index = 0; index < chestCount; index++) {
+			int slot = getTrashChestSlot(profile, index, slotCount, used);
+			if (slot == targetSlot) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean isInsideTrashChestArea(BackroomsLayout.SpecialRoomPlacement room, int localX, int localZ) {
+		int maxX = Math.max(1, room.roomHalfWidth() - 1);
+		int maxZ = Math.max(1, room.roomHalfHeight() - 1);
+		return Math.abs(localX) <= maxX && Math.abs(localZ) <= maxZ;
+	}
+
+	private static int getTrashChestCount(TrashRoomProfile profile) {
+		BackroomsLayout.SpecialRoomPlacement room = profile.room();
+		long seed = trashSalt(room, profile.levelIndex()) ^ 0x4348455354434F55L;
+		return 1 + positiveMod(mix(room.cellX(), room.cellZ(), seed), 3);
+	}
+
+	private static int getTrashChestSlot(
+			TrashRoomProfile profile,
+			int index,
+			int slotCount,
+			boolean[] used
+	) {
+		BackroomsLayout.SpecialRoomPlacement room = profile.room();
+		long salt = trashSalt(room, profile.levelIndex()) ^ (0x53504F544944584CL + (31L * index));
+		int slot = positiveMod(mix(room.cellX() + index * 13, room.cellZ() - index * 17, salt), slotCount);
+		while (used[slot]) {
+			slot = (slot + 1) % slotCount;
+		}
+		used[slot] = true;
+		return slot;
+	}
+
+	private static BlockState createTrashChestState(TrashRoomProfile profile, int x, int z) {
+		long seed = mix(x, z, trashSalt(profile.room(), profile.levelIndex()) ^ 0x4348455354464143L);
+		Direction[] directions = {Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST};
+		Direction facing = directions[positiveMod(seed, directions.length)];
+		return CHEST_BLOCK.setValue(ChestBlock.FACING, facing);
+	}
+
+	private static int getTrashPileHeight(TrashRoomProfile profile, int x, int z) {
+		int height = 0;
+		for (int pileIndex = 0; pileIndex < profile.pileCount(); pileIndex++) {
+			PileSpec pile = getPileSpec(profile, pileIndex);
+			int dx = Math.abs(x - pile.centerX());
+			int dz = Math.abs(z - pile.centerZ());
+			if (dx > pile.radiusX() || dz > pile.radiusZ()) {
+				continue;
+			}
+
+			int pileHeight = 1;
+			if (dx <= Math.max(0, pile.radiusX() - 1) && dz <= Math.max(0, pile.radiusZ() - 1)) {
+				pileHeight = 2;
+			}
+			if (pile.height() >= 3 && dx <= Math.max(0, pile.radiusX() - 2) && dz <= Math.max(0, pile.radiusZ() - 2)) {
+				pileHeight = 3;
+			}
+			if (pile.height() >= 4 && dx == 0 && dz == 0) {
+				pileHeight = 4;
+			}
+			pileHeight = applyTrashPileRoughness(profile, pileIndex, x, z, dx, dz, pileHeight);
+			height = Math.max(height, pileHeight);
+		}
+
+		if (height == 0) {
+			long debrisSeed = mix(x, z, trashSalt(profile.room(), profile.levelIndex()) ^ 0x4445425249535253L);
+			if (positiveMod(debrisSeed, 100) < 10) {
+				return 1;
+			}
+		}
+
+		return height;
+	}
+
+	private static int applyTrashPileRoughness(
+			TrashRoomProfile profile,
+			int pileIndex,
+			int x,
+			int z,
+			int dx,
+			int dz,
+			int pileHeight
+	) {
+		if (pileHeight <= 0) {
+			return 0;
+		}
+
+		long roughnessSeed = mix(
+				x + (pileIndex * 17),
+				z - (pileIndex * 19),
+				trashSalt(profile.room(), profile.levelIndex()) ^ 0x525547474544504CL
+		);
+		boolean centerColumn = dx == 0 && dz == 0;
+		int roll = positiveMod(roughnessSeed, 100);
+
+		// Keep pile peaks reliable, but make flanks and interior columns patchy.
+		if (!centerColumn && roll < 18) {
+			return 0;
+		}
+		if (pileHeight >= 3 && roll >= 18 && roll < 42) {
+			pileHeight--;
+		}
+		if (pileHeight >= 2 && roll >= 42 && roll < 56) {
+			pileHeight--;
+		}
+
+		return pileHeight;
+	}
+
+	private static PileSpec getPileSpec(TrashRoomProfile profile, int pileIndex) {
+		BackroomsLayout.SpecialRoomPlacement room = profile.room();
+		long salt = trashSalt(room, profile.levelIndex()) ^ (0x50494C4553504543L + (137L * pileIndex));
+		int minX = room.roomCenterX() - Math.max(1, room.roomHalfWidth() - 1);
+		int maxX = room.roomCenterX() + Math.max(1, room.roomHalfWidth() - 1);
+		int minZ = room.roomCenterZ() - Math.max(1, room.roomHalfHeight() - 1);
+		int maxZ = room.roomCenterZ() + Math.max(1, room.roomHalfHeight() - 1);
+		int centerX = minX + positiveMod(mix(room.cellX() + pileIndex, room.cellZ(), salt ^ 0x11L), maxX - minX + 1);
+		int centerZ = minZ + positiveMod(mix(room.cellX(), room.cellZ() - pileIndex, salt ^ 0x22L), maxZ - minZ + 1);
+		int radiusX = 1 + positiveMod(mix(room.cellX(), pileIndex, salt ^ 0x33L), 2);
+		int radiusZ = 1 + positiveMod(mix(room.cellZ(), pileIndex, salt ^ 0x44L), 2);
+		long heightSeed = mix(room.cellX() - pileIndex, room.cellZ() + pileIndex, salt ^ 0x55L);
+		int height = 2;
+		if (positiveMod(heightSeed ^ 0x66L, 100) < 34) {
+			height = 3;
+		}
+		if (profile.tallRoom() && positiveMod(heightSeed ^ 0x77L, 100) < 10) {
+			height = 4;
+		}
+		return new PileSpec(centerX, centerZ, radiusX, radiusZ, height);
+	}
+
+	private static BlockState randomTrashBlock(
+			int x,
+			int y,
+			int z,
+			TrashRoomProfile profile,
+			int layer
+	) {
+		long seed = mix(x, z, trashSalt(profile.room(), profile.levelIndex()) ^ (0x54524153484C4159L + layer * 97L));
+		return switch (positiveMod(seed, 15)) {
+			case 0 -> Blocks.DIRT.defaultBlockState();
+			case 1 -> Blocks.COARSE_DIRT.defaultBlockState();
+			case 2 -> Blocks.OAK_PLANKS.defaultBlockState();
+			case 3 -> Blocks.SPRUCE_PLANKS.defaultBlockState();
+			case 4 -> Blocks.OAK_LOG.defaultBlockState();
+			case 5 -> Blocks.SPRUCE_LOG.defaultBlockState();
+			case 6 -> Blocks.COBBLESTONE.defaultBlockState();
+			case 7 -> Blocks.MOSSY_COBBLESTONE.defaultBlockState();
+			case 8 -> Blocks.STONE.defaultBlockState();
+			case 9 -> Blocks.ANDESITE.defaultBlockState();
+			case 10 -> Blocks.GRAVEL.defaultBlockState();
+			case 11 -> Blocks.SAND.defaultBlockState();
+			case 12 -> Blocks.OAK_SLAB.defaultBlockState();
+			case 13 -> Blocks.COBBLESTONE_SLAB.defaultBlockState();
+			default -> Blocks.STONE_SLAB.defaultBlockState();
+		};
+	}
+
+	private static long trashSalt(BackroomsLayout.SpecialRoomPlacement room, int levelIndex) {
+		return mix(room.cellX(), room.cellZ(), 0x5452415348524F4FL ^ levelSalt(levelIndex));
 	}
 
 	private static StairsProfile getStairsProfileAt(int x, int z, int levelIndex) {
@@ -459,6 +700,23 @@ final class BackroomsSpecialRooms {
 	}
 
 	private record Point(int x, int z) {
+	}
+
+	private record TrashRoomProfile(
+			BackroomsLayout.SpecialRoomPlacement room,
+			int levelIndex,
+			boolean tallRoom,
+			int pileCount
+	) {
+	}
+
+	private record PileSpec(
+			int centerX,
+			int centerZ,
+			int radiusX,
+			int radiusZ,
+			int height
+	) {
 	}
 
 	private record StairsProfile(

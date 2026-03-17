@@ -497,7 +497,7 @@ final class BackroomsLayout {
 			return null;
 		}
 
-		SpecialRoomType type = eligibleTypes[positiveMod(sample ^ 0x61E2D34FA719BC25L, eligibleTypes.length)];
+		SpecialRoomType type = SpecialRoomType.pickWeighted(eligibleTypes, sample ^ 0x61E2D34FA719BC25L);
 		SpecialRoomPlacement placement = new SpecialRoomPlacement(
 				type,
 				cellX,
@@ -684,11 +684,11 @@ final class BackroomsLayout {
 	}
 
 	enum SpecialRoomType {
-		TRASH_ROOM("trash_room", 3, 3, false),
-		FLOOR_HOLES("floor_holes", 4, 4, false),
-		VOID_HALL("void_hall", 6, 6, false),
-		HOUSE_HALL("house_hall", 5, 5, false),
-		STAIRS("stairs", 3, 4, true);
+		TRASH_ROOM("trash_room", 3, 3, true, 2),
+		FLOOR_HOLES("floor_holes", 4, 4, false, 1),
+		VOID_HALL("void_hall", 6, 6, false, 1),
+		HOUSE_HALL("house_hall", 5, 5, false, 1),
+		STAIRS("stairs", 3, 4, true, 3);
 
 		private static final SpecialRoomType[] VALUES = values();
 
@@ -696,12 +696,14 @@ final class BackroomsLayout {
 		final int minHalfWidth;
 		final int minHalfHeight;
 		final boolean enabled;
+		final int selectionWeight;
 
-		SpecialRoomType(String id, int minHalfWidth, int minHalfHeight, boolean enabled) {
+		SpecialRoomType(String id, int minHalfWidth, int minHalfHeight, boolean enabled, int selectionWeight) {
 			this.id = id;
 			this.minHalfWidth = minHalfWidth;
 			this.minHalfHeight = minHalfHeight;
 			this.enabled = enabled;
+			this.selectionWeight = selectionWeight;
 		}
 
 		private boolean canFit(CellData cell) {
@@ -720,6 +722,23 @@ final class BackroomsLayout {
 			SpecialRoomType[] trimmed = new SpecialRoomType[count];
 			System.arraycopy(result, 0, trimmed, 0, count);
 			return trimmed;
+		}
+
+		static SpecialRoomType pickWeighted(SpecialRoomType[] eligibleTypes, long sample) {
+			int totalWeight = 0;
+			for (SpecialRoomType type : eligibleTypes) {
+				totalWeight += Math.max(1, type.selectionWeight);
+			}
+
+			int roll = positiveMod(sample, totalWeight);
+			for (SpecialRoomType type : eligibleTypes) {
+				roll -= Math.max(1, type.selectionWeight);
+				if (roll < 0) {
+					return type;
+				}
+			}
+
+			return eligibleTypes[eligibleTypes.length - 1];
 		}
 	}
 

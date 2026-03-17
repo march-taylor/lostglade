@@ -138,7 +138,7 @@
         "maxTargetPlayers": "round(whitelistCount*0.5)",
         "minDurationSeconds": 16,
         "maxDurationSeconds": 32,
-        "minTargetDistanceChunks": 2,
+        "minTargetDistanceChunks": 1,
         "maxTargetDistanceChunks": 6,
         "replacementChunkWeight": 0.75,
         "intangibleChunkWeight": 0.25,

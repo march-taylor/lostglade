@@ -8,6 +8,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.server.level.WorldGenRegion;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.NoiseColumn;
 import net.minecraft.world.level.biome.Biome;
@@ -16,6 +17,7 @@ import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.WallSignBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoorHingeSide;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
@@ -35,6 +37,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 
 public final class BackroomsChunkGenerator extends ChunkGenerator {
 	public static final MapCodec<BackroomsChunkGenerator> CODEC = RecordCodecBuilder.mapCodec(instance ->
@@ -362,14 +366,65 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	}
 
 	private static void setChunkBlock(ChunkAccess chunk, BlockPos.MutableBlockPos mutablePos, int localX, int y, int localZ, BlockState state) {
+		BlockPos worldPos = new BlockPos(chunk.getPos().getMinBlockX() + localX, y, chunk.getPos().getMinBlockZ() + localZ);
 		chunk.setBlockState(mutablePos.set(localX, y, localZ), state);
-		if ((state.is(ModBlocks.EXIT_SIGN) || state.is(ModBlocks.EXIT_WALL_SIGN))
-				&& state.getBlock() instanceof EntityBlock entityBlock) {
-			BlockEntity blockEntity = entityBlock.newBlockEntity(new BlockPos(chunk.getPos().getMinBlockX() + localX, y, chunk.getPos().getMinBlockZ() + localZ), state);
+		if (state.getBlock() instanceof EntityBlock entityBlock
+				&& (state.is(ModBlocks.EXIT_SIGN) || state.is(ModBlocks.EXIT_WALL_SIGN) || state.is(Blocks.CHEST))) {
+			BlockEntity blockEntity = entityBlock.newBlockEntity(worldPos, state);
 			if (blockEntity != null) {
+				if (blockEntity instanceof ChestBlockEntity chestBlockEntity) {
+					populateTrashChestLoot(chestBlockEntity, worldPos);
+				}
 				chunk.setBlockEntity(blockEntity);
 			}
 		}
+	}
+
+	private static void populateTrashChestLoot(ChestBlockEntity chest, BlockPos pos) {
+		RandomSource random = RandomSource.create(BlockPos.asLong(pos.getX(), pos.getY(), pos.getZ()) ^ 0x54524153484C4F4FL);
+		int entries = 3 + random.nextInt(6);
+		for (int i = 0; i < entries; i++) {
+			int slot = random.nextInt(chest.getContainerSize());
+			if (!chest.getItem(slot).isEmpty()) {
+				continue;
+			}
+			chest.setItem(slot, createTrashLootItem(random));
+		}
+	}
+
+	private static ItemStack createTrashLootItem(RandomSource random) {
+		int roll = random.nextInt(100);
+		if (roll < 42) {
+			return new ItemStack(Items.STICK, 1 + random.nextInt(8));
+		}
+		if (roll < 57) {
+			return new ItemStack(Items.ROTTEN_FLESH, 1 + random.nextInt(4));
+		}
+		if (roll < 66) {
+			return new ItemStack(Items.STRING, 1 + random.nextInt(5));
+		}
+		if (roll < 74) {
+			return new ItemStack(Items.PAPER, 1 + random.nextInt(6));
+		}
+		if (roll < 80) {
+			return new ItemStack(Items.COAL, 1 + random.nextInt(3));
+		}
+		if (roll < 84) {
+			return new ItemStack(Items.BREAD, 1 + random.nextInt(2));
+		}
+		if (roll < 87) {
+			return new ItemStack(Items.IRON_INGOT, 1 + random.nextInt(2));
+		}
+		if (roll < 90) {
+			return new ItemStack(Items.GOLD_INGOT, 1);
+		}
+		if (roll < 93) {
+			return new ItemStack(Items.OBSIDIAN, 1 + random.nextInt(2));
+		}
+		if (roll < 96) {
+			return new ItemStack(Items.WRITABLE_BOOK, 1);
+		}
+		return new ItemStack(Items.DIAMOND, 1);
 	}
 
 	private static void setColumnState(BlockState[] states, int minY, int y, BlockState state) {
