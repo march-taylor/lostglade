@@ -219,11 +219,11 @@ public final class BackroomsSpecialRooms {
 
 		int floorY = BackroomsLayout.FLOOR_Y + levelIndex * BackroomsLayout.LEVEL_HEIGHT;
 		int localY = y - floorY;
-		if (localY != 2 && localY != 3) {
-			return false;
+		if (placement.isLadderColumn(x, z)) {
+			return localY >= 1 && localY <= 3;
 		}
 
-		return placement.isLadderColumn(x, z) || placement.isTunnelColumn(x, z);
+		return placement.isTunnelColumn(x, z) && (localY == 2 || localY == 3);
 	}
 
 	private static FloorHolesProfile getFloorHolesProfileAt(int x, int z, int levelIndex) {
