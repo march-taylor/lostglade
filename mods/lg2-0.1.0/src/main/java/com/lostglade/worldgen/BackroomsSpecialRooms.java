@@ -7,6 +7,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.IronBarsBlock;
+import net.minecraft.world.level.block.LadderBlock;
 import net.minecraft.world.level.block.WallTorchBlock;
 import net.minecraft.world.level.block.WallSignBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -27,6 +28,7 @@ public final class BackroomsSpecialRooms {
 	private static final BlockState OAK_DOOR_BLOCK = Blocks.OAK_DOOR.defaultBlockState();
 	private static final BlockState OAK_WALL_SIGN_BLOCK = Blocks.OAK_WALL_SIGN.defaultBlockState();
 	private static final BlockState WALL_TORCH_BLOCK = Blocks.WALL_TORCH.defaultBlockState();
+	private static final BlockState LADDER_BLOCK = Blocks.LADDER.defaultBlockState();
 	private static final BlockState AIR = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
 
 	private BackroomsSpecialRooms() {
@@ -60,6 +62,7 @@ public final class BackroomsSpecialRooms {
 
 	static void applyColumnOverrides(
 			BackroomsLayout.SpecialRoomPlacement specialRoom,
+			BackroomsLayout.LadderRoomPlacement ladderRoom,
 			int x,
 			int z,
 			int floorY,
@@ -137,6 +140,11 @@ public final class BackroomsSpecialRooms {
 		StairsProfile upperProfile = getStairsProfileAt(x, z, levelIndex + 1);
 		if (upperProfile != null) {
 			applyStairsReceivingShaft(upperProfile, x, z, floorY, ceilingY, columnStates);
+			return;
+		}
+
+		if (ladderRoom != null) {
+			applyLadderRoom(ladderRoom, x, z, floorY, ceilingY, columnStates);
 		}
 	}
 
@@ -380,6 +388,30 @@ public final class BackroomsSpecialRooms {
 		columnStates.setUpper(randomizedBackroomsBlock(x, floorY + 2, z));
 		columnStates.setTop(randomizedBackroomsBlock(x, floorY + 3, z));
 		columnStates.setCeiling(randomizedBackroomsBlock(x, floorY + 4, z));
+	}
+
+	private static void applyLadderRoom(
+			BackroomsLayout.LadderRoomPlacement placement,
+			int x,
+			int z,
+			int floorY,
+			int ceilingY,
+			ColumnStates columnStates
+	) {
+		if (placement.isLadderColumn(x, z)) {
+			columnStates.setLower(createLadderState(placement.ladderFacing()));
+			columnStates.setUpper(createLadderState(placement.ladderFacing()));
+			columnStates.setTop(AIR);
+			return;
+		}
+
+		if (placement.isTunnelColumn(x, z)) {
+			columnStates.setFloor(randomizedBackroomsBlock(x, floorY, z));
+			columnStates.setLower(randomizedBackroomsBlock(x, floorY + 1, z));
+			columnStates.setUpper(randomizedBackroomsBlock(x, floorY + 2, z));
+			columnStates.setTop(AIR);
+			columnStates.setCeiling(randomizedBackroomsBlock(x, ceilingY, z));
+		}
 	}
 
 	private static boolean isFloorHoleColumn(FloorHolesProfile profile, int x, int z) {
@@ -2098,6 +2130,10 @@ public final class BackroomsSpecialRooms {
 
 	private static BlockState createExitSignState(Direction facing) {
 		return EXIT_SIGN_WALL_BLOCK.setValue(WallSignBlock.FACING, facing);
+	}
+
+	private static BlockState createLadderState(Direction facing) {
+		return LADDER_BLOCK.setValue(LadderBlock.FACING, facing);
 	}
 
 	private static int positiveMod(long value, int modulo) {

@@ -34,6 +34,8 @@ public final class Lg2Config {
 	private static final int MAX_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS = 32;
 	private static final int MIN_BACKROOMS_SPECIAL_ROOM_WEIGHT = 0;
 	private static final int MAX_BACKROOMS_SPECIAL_ROOM_WEIGHT = 1000;
+	private static final int MIN_BACKROOMS_LADDER_ROOM_WEIGHT = 0;
+	private static final int MAX_BACKROOMS_LADDER_ROOM_WEIGHT = 100;
 	private static final double DEFAULT_BITCOINS_PER_STABILITY = 6.4D;
 	private static final double MIN_BITCOINS_PER_STABILITY = 0.001D;
 	private static final double MAX_BITCOINS_PER_STABILITY = 1_000_000.0D;
@@ -124,6 +126,10 @@ public final class Lg2Config {
 				MIN_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS,
 				MAX_BACKROOMS_ENTITY_GROUP_RADIUS_CHUNKS,
 				newValue -> configData.backroomsEntityGroupRadiusChunks = newValue);
+		changed |= clampSingleValue(configData.backroomsLadderRoomWeight,
+				MIN_BACKROOMS_LADDER_ROOM_WEIGHT,
+				MAX_BACKROOMS_LADDER_ROOM_WEIGHT,
+				newValue -> configData.backroomsLadderRoomWeight = newValue);
 		changed |= clampSingleValue(configData.backroomsTrashRoomWeight,
 				MIN_BACKROOMS_SPECIAL_ROOM_WEIGHT,
 				MAX_BACKROOMS_SPECIAL_ROOM_WEIGHT,
@@ -281,6 +287,7 @@ public final class Lg2Config {
 		@SerializedName(value = "backroomsEntitySpawnMaxRadiusChunks", alternate = {"backroomsEntityRadiusChunks"})
 		public int backroomsEntitySpawnMaxRadiusChunks = 6;
 		public int backroomsEntityGroupRadiusChunks = 2;
+		public int backroomsLadderRoomWeight = 8;
 		public int backroomsTrashRoomWeight = 2;
 		public int backroomsFloorHolesRoomWeight = 2;
 		public int backroomsVoidHallRoomWeight = 2;

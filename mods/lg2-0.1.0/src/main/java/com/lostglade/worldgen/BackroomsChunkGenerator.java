@@ -139,7 +139,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 							BACKROOMS_LIGHT_BLOCK,
 							AIR
 					);
-					BackroomsSpecialRooms.applyColumnOverrides(layout.specialRoom, worldX, worldZ, floorY, ceilingY, columnStates);
+					BackroomsSpecialRooms.applyColumnOverrides(layout.specialRoom, layout.ladderRoom, worldX, worldZ, floorY, ceilingY, columnStates);
 
 					if (floorY >= minY) {
 						setChunkBlock(chunk, mutablePos, localX, floorY, localZ, columnStates.floor());
@@ -271,7 +271,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 					BACKROOMS_LIGHT_BLOCK,
 					AIR
 			);
-			BackroomsSpecialRooms.applyColumnOverrides(layout.specialRoom, x, z, floorY, ceilingY, columnStates);
+			BackroomsSpecialRooms.applyColumnOverrides(layout.specialRoom, layout.ladderRoom, x, z, floorY, ceilingY, columnStates);
 
 			setColumnState(states, minY, floorY, columnStates.floor());
 			setColumnState(states, minY, floorY + 1, columnStates.lower());
@@ -311,12 +311,16 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 		BackroomsLayout.ZoneType zone = BackroomsLayout.getZoneAtBlock(x, z, levelIndex);
 		boolean corridor = BackroomsLayout.isCorridor(zone, x, z, levelIndex);
 		BackroomsLayout.SpecialRoomPlacement specialRoom = BackroomsLayout.getSpecialRoomAt(zone, x, z, levelIndex);
+		BackroomsLayout.LadderRoomPlacement ladderRoom = specialRoom == null
+				? BackroomsLayout.getLadderRoomAt(x, z, levelIndex)
+				: null;
 		ColumnLayout layout = new ColumnLayout(
 				zone,
 				corridor ? null : BackroomsLayout.getRoomDoorAt(zone, x, z, levelIndex),
 				corridor,
 				corridor && BackroomsLayout.hasCeilingLight(zone, x, z, levelIndex),
-				specialRoom
+				specialRoom,
+				ladderRoom
 		);
 		columnCache.put(key, layout);
 		generatorCache.columnLayoutCache.put(key, layout);
@@ -445,7 +449,8 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			BackroomsLayout.DoorPlacement doorPlacement,
 			boolean corridor,
 			boolean ceilingLight,
-			BackroomsLayout.SpecialRoomPlacement specialRoom
+			BackroomsLayout.SpecialRoomPlacement specialRoom,
+			BackroomsLayout.LadderRoomPlacement ladderRoom
 	) {
 	}
 
