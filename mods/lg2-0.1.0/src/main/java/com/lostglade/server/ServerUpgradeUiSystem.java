@@ -75,7 +75,7 @@ public final class ServerUpgradeUiSystem {
 	private static final String TOOLTIP_ICON_COIN = "\ue981";
 	private static final String NO_PACK_COIN = "₿";
 	private static final int MAIN_BALANCE_CENTER_X = 127;
-	private static final int ERAS_BALANCE_CENTER_X = 127;
+	private static final int ERAS_BALANCE_CENTER_X = 135;
 	private static final int BALANCE_DIGIT_WIDTH = 6;
 	private static final int TOOLTIP_DESCRIPTION_WRAP = 42;
 	private static final int TOOLTIP_DESCRIPTION_WRAP_CJK = 22;
@@ -83,7 +83,7 @@ public final class ServerUpgradeUiSystem {
 	private static final int TOOLTIP_REQUIREMENTS_WRAP_CJK = 24;
 	private static final int ERAS_PROGRESS_GLYPHS_BASE = 0xE991;
 	private static final int ERAS_AVAILABLE_GLYPHS_BASE = 0xE9C0;
-	private static final int ERAS_PROGRESS_FRAME_COUNT = 45;
+	private static final int ERAS_PROGRESS_FRAME_COUNT = 35;
 	private static final int ERAS_PURCHASE_STAGE_COUNT = 5;
 	private static final int ERAS_PROGRESS_FRAMES_PER_STAGE = ERAS_PROGRESS_FRAME_COUNT / ERAS_PURCHASE_STAGE_COUNT;
 	private static final int ERAS_PROGRESS_FRAME_TICKS = 2;

@@ -29,7 +29,7 @@ MARKER_COLORS = {
 REAL_ENDS = [-1, -1, 41, 77, 113, 149]
 POTENTIAL_ENDS = [-1, 41, 77, 113, 149, 149]
 
-FRAMES_PER_STAGE = 9
+FRAMES_PER_STAGE = 7
 TOTAL_STAGES = 5
 TOTAL_FRAMES = FRAMES_PER_STAGE * TOTAL_STAGES
 
@@ -84,13 +84,14 @@ def compose_state(
     return image
 
 
-def eased_lerp(start: int, end: int, progress: float) -> int:
-    return round(start + (end - start) * progress)
-
-
 def ease_out_quart(progress: float) -> float:
     progress = max(0.0, min(1.0, progress))
     return 1.0 - pow(1.0 - progress, 4)
+
+
+def ease_out_cubic(progress: float) -> float:
+    progress = max(0.0, min(1.0, progress))
+    return 1.0 - pow(1.0 - progress, 3)
 
 
 def ease_in_out_cubic(progress: float) -> float:
@@ -98,6 +99,15 @@ def ease_in_out_cubic(progress: float) -> float:
     if progress < 0.5:
         return 4.0 * progress * progress * progress
     return 1.0 - pow(-2.0 * progress + 2.0, 3) / 2.0
+
+
+def delayed(progress: float, delay: float, easing) -> float:
+    progress = max(0.0, min(1.0, progress))
+    if progress <= delay:
+        return 0.0
+    if delay >= 1.0:
+        return 1.0
+    return easing((progress - delay) / (1.0 - delay))
 
 
 def reveal_path(start: int, end: int, columns: list[int]) -> list[int]:
@@ -108,42 +118,14 @@ def reveal_path(start: int, end: int, columns: list[int]) -> list[int]:
     return [start] + [column for column in reversed(columns) if end <= column < start]
 
 
-def sample_path(path: list[int], frame_count: int, easing) -> list[int]:
-    if not path:
-        return [-1] * frame_count
-    if len(path) == 1 or frame_count <= 1:
-        return [path[-1]] * frame_count
-
-    max_index = len(path) - 1
-    indices = []
-    for frame in range(frame_count):
-        progress = frame / (frame_count - 1)
-        indices.append(round(easing(progress) * max_index))
-
-    indices[0] = 0
-    indices[-1] = max_index
-
-    if len(path) >= frame_count:
-        for index in range(1, frame_count):
-            minimum = indices[index - 1] + 1
-            remaining_slots = frame_count - 1 - index
-            maximum = max_index - remaining_slots
-            indices[index] = max(minimum, min(indices[index], maximum))
-
-        for index in range(frame_count - 2, -1, -1):
-            maximum = indices[index + 1] - 1
-            indices[index] = min(indices[index], maximum)
-
-    return [path[index] for index in indices]
-
-
-def path_value(path: list[int], progress: float, easing) -> int:
+def path_value(path: list[int], progress: float) -> int:
     if not path:
         return -1
     if len(path) == 1:
         return path[0]
     max_index = len(path) - 1
-    index = round(easing(progress) * max_index)
+    progress = max(0.0, min(1.0, progress))
+    index = round(progress * max_index)
     index = max(0, min(max_index, index))
     return path[index]
 
@@ -178,7 +160,8 @@ def build_unique_stage_frames(
     filled: Image.Image,
     real_path: list[int],
     potential_path: list[int],
-    potential_easing,
+    real_progress,
+    potential_progress,
 ) -> list[Image.Image]:
     candidate_count = max(len(real_path), len(potential_path), FRAMES_PER_STAGE) * 8
     unique_frames: list[Image.Image] = []
@@ -190,8 +173,8 @@ def build_unique_stage_frames(
             empty,
             unlocked,
             filled,
-            path_value(real_path, progress, ease_in_out_cubic),
-            path_value(potential_path, progress, potential_easing),
+            path_value(real_path, real_progress(progress)),
+            path_value(potential_path, potential_progress(progress)),
         )
         signature = frame_signature(frame)
         if signature == previous_signature:
@@ -227,13 +210,27 @@ def generate_transition_frames(empty: Image.Image, unlocked: Image.Image, filled
 
         real_path = reveal_path(previous_real, next_real, reveal_columns)
         potential_path = reveal_path(previous_potential, next_potential, reveal_columns)
+        real_moves = len(real_path) > 1
+        potential_moves = len(potential_path) > 1
+
+        if real_moves and potential_moves:
+            real_progress = ease_out_cubic
+            potential_progress = lambda progress: delayed(progress, 0.28, ease_out_quart)
+        elif real_moves:
+            real_progress = ease_out_cubic
+            potential_progress = lambda progress: 1.0
+        else:
+            real_progress = lambda progress: 0.0
+            potential_progress = ease_out_quart
+
         stage_frames = build_unique_stage_frames(
             empty,
             unlocked,
             filled,
             real_path,
             potential_path,
-            ease_in_out_cubic if stage == TOTAL_STAGES else ease_out_quart,
+            real_progress,
+            potential_progress,
         )
 
         base_frame = (stage - 1) * FRAMES_PER_STAGE
