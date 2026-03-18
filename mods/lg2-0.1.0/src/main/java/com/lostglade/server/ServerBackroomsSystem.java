@@ -32,6 +32,7 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -53,6 +54,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -106,6 +108,7 @@ public final class ServerBackroomsSystem {
 	private static final Map<UUID, AmbientLoopState> AMBIENT_LOOP_STATES = new HashMap<>();
 	private static final Map<Long, Long> ACTIVE_LAMP_OUTAGES = new HashMap<>();
 	private static final List<BlockPos> PREWARMED_RESPAWNS = new ArrayList<>();
+	private static final Set<UUID> FORCED_LADDER_CRAWL_PLAYERS = new HashSet<>();
 
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
@@ -120,6 +123,7 @@ public final class ServerBackroomsSystem {
 		AMBIENT_LOOP_STATES.clear();
 		ACTIVE_LAMP_OUTAGES.clear();
 		PREWARMED_RESPAWNS.clear();
+		FORCED_LADDER_CRAWL_PLAYERS.clear();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerBackroomsSystem::loadState);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerBackroomsSystem::saveState);
@@ -379,8 +383,32 @@ public final class ServerBackroomsSystem {
 	private static void tickServer(MinecraftServer server) {
 		enforceClearWeather(server);
 		tickPrewarmedRespawns(server);
+		tickUpperLadderCrawl(server);
 		tickBackroomsAmbientLoop(server);
 		tickLampRestores(server);
+	}
+
+	private static void tickUpperLadderCrawl(MinecraftServer server) {
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			UUID uuid = player.getUUID();
+			boolean shouldForce = isInBackrooms(player)
+					&& BackroomsSpecialRooms.isUpperLadderCrawlZone(player.getX(), player.getY(), player.getZ());
+			if (shouldForce) {
+				FORCED_LADDER_CRAWL_PLAYERS.add(uuid);
+				player.setSwimming(true);
+				player.setPose(Pose.SWIMMING);
+				continue;
+			}
+
+			if (!FORCED_LADDER_CRAWL_PLAYERS.remove(uuid)) {
+				continue;
+			}
+
+			if (!player.isInWater() && !player.isUnderWater() && !player.isFallFlying()) {
+				player.setSwimming(false);
+				player.setPose(Pose.STANDING);
+			}
+		}
 	}
 
 	private static InteractionResult onUseBlock(Player player, Level world, InteractionHand hand, BlockHitResult hitResult) {

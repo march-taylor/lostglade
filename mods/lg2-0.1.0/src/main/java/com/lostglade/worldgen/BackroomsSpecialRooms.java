@@ -187,6 +187,23 @@ public final class BackroomsSpecialRooms {
 		);
 	}
 
+	public static boolean isUpperLadderCrawlZone(double x, double y, double z) {
+		BlockPos feetPos = BlockPos.containing(x, y + 0.5D, z);
+		return isUpperLadderCrawlZone(feetPos.getX(), feetPos.getY(), feetPos.getZ());
+	}
+
+	public static boolean isUpperLadderCrawlZone(int x, int y, int z) {
+		int levelIndex = BackroomsLayout.getLevelIndex(y);
+		BackroomsLayout.LadderRoomPlacement placement = BackroomsLayout.getLadderRoomAt(x, z, levelIndex);
+		if (placement == null || !placement.isLadderColumn(x, z)) {
+			return false;
+		}
+
+		int floorY = BackroomsLayout.FLOOR_Y + levelIndex * BackroomsLayout.LEVEL_HEIGHT;
+		int localY = y - floorY;
+		return localY == 2 || localY == 3;
+	}
+
 	private static FloorHolesProfile getFloorHolesProfileAt(int x, int z, int levelIndex) {
 		BackroomsLayout.ZoneType zone = BackroomsLayout.getZoneAtBlock(x, z, levelIndex);
 		BackroomsLayout.SpecialRoomPlacement placement = BackroomsLayout.getSpecialRoomAt(zone, x, z, levelIndex);
