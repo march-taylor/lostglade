@@ -9,6 +9,7 @@
 		"BackroomsServerLevelTimeMixin",
 		"BlockEntityTypeAccessor",
 		"BlockItemPlacementGateMixin",
+		"CarvedPumpkinBlockGolemGateMixin",
 		"EntityPortalAccessMixin",
 		"EntityKillProtectionMixin",
 		"ExampleMixin",

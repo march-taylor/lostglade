@@ -9,11 +9,14 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.npc.villager.AbstractVillager;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.vehicle.minecart.MinecartHopper;
 import net.minecraft.world.item.BlockItem;
@@ -22,12 +25,14 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.block.AnvilBlock;
 import net.minecraft.world.level.block.BasePressurePlateBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ButtonBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.Set;
 
@@ -42,6 +47,8 @@ public final class ServerMechanicsGateSystem {
 	private static final String ERA_IRON_GOLD = "era_iron_gold";
 	private static final String ERA_DIAMOND = "era_diamond";
 	private static final String ERA_NETHERITE = "era_netherite";
+	private static final double AUTOMATED_GOLEM_PLAYER_RADIUS = 16.0D;
+	private static final double AUTOMATED_GOLEM_PLAYER_RADIUS_SQR = AUTOMATED_GOLEM_PLAYER_RADIUS * AUTOMATED_GOLEM_PLAYER_RADIUS;
 
 	private static final Set<Block> REDSTONE_BLOCKS = Set.of(
 			Blocks.REDSTONE_WIRE,
@@ -74,7 +81,8 @@ public final class ServerMechanicsGateSystem {
 			Items.STONE_AXE,
 			Items.STONE_SHOVEL,
 			Items.STONE_HOE,
-			Items.STONE_SWORD
+			Items.STONE_SWORD,
+			Items.STONE_SPEAR
 	);
 	private static final Set<Item> IRON_AND_GOLD_ERA_ITEMS = Set.of(
 			Items.IRON_PICKAXE,
@@ -82,6 +90,7 @@ public final class ServerMechanicsGateSystem {
 			Items.IRON_SHOVEL,
 			Items.IRON_HOE,
 			Items.IRON_SWORD,
+			Items.IRON_SPEAR,
 			Items.IRON_HELMET,
 			Items.IRON_CHESTPLATE,
 			Items.IRON_LEGGINGS,
@@ -91,6 +100,7 @@ public final class ServerMechanicsGateSystem {
 			Items.GOLDEN_SHOVEL,
 			Items.GOLDEN_HOE,
 			Items.GOLDEN_SWORD,
+			Items.GOLDEN_SPEAR,
 			Items.GOLDEN_HELMET,
 			Items.GOLDEN_CHESTPLATE,
 			Items.GOLDEN_LEGGINGS,
@@ -105,6 +115,7 @@ public final class ServerMechanicsGateSystem {
 			Items.DIAMOND_SHOVEL,
 			Items.DIAMOND_HOE,
 			Items.DIAMOND_SWORD,
+			Items.DIAMOND_SPEAR,
 			Items.DIAMOND_HELMET,
 			Items.DIAMOND_CHESTPLATE,
 			Items.DIAMOND_LEGGINGS,
@@ -117,6 +128,7 @@ public final class ServerMechanicsGateSystem {
 			Items.NETHERITE_SHOVEL,
 			Items.NETHERITE_HOE,
 			Items.NETHERITE_SWORD,
+			Items.NETHERITE_SPEAR,
 			Items.NETHERITE_HELMET,
 			Items.NETHERITE_CHESTPLATE,
 			Items.NETHERITE_LEGGINGS,
@@ -128,22 +140,14 @@ public final class ServerMechanicsGateSystem {
 			"shovel",
 			"hoe",
 			"sword",
+			"spear",
 			"helmet",
 			"chestplate",
 			"leggings",
 			"boots"
 	);
-	private static final Set<Block> IRON_GOLEM_BODY_BLOCKS = Set.of(Blocks.IRON_BLOCK);
-	private static final Set<Block> COPPER_GOLEM_BODY_BLOCKS = Set.of(
-			Blocks.COPPER_BLOCK,
-			Blocks.EXPOSED_COPPER,
-			Blocks.WEATHERED_COPPER,
-			Blocks.OXIDIZED_COPPER,
-			Blocks.WAXED_COPPER_BLOCK,
-			Blocks.WAXED_EXPOSED_COPPER,
-			Blocks.WAXED_WEATHERED_COPPER,
-			Blocks.WAXED_OXIDIZED_COPPER
-	);
+	private static final ThreadLocal<TrackedGolemPlacement> TRACKED_GOLEM_PLACEMENT = new ThreadLocal<>();
+	private static final ThreadLocal<ItemStack> PENDING_GOLEM_HEAD_REFUND = new ThreadLocal<>();
 
 	private ServerMechanicsGateSystem() {
 	}
@@ -223,6 +227,74 @@ public final class ServerMechanicsGateSystem {
 		}
 		String requirement = requiredUpgradeForPlacedBlock(context, block);
 		return requirement == null || ServerUpgradeUiSystem.hasUpgrade(player, requirement);
+	}
+
+	public static void beginTrackedGolemHeadPlacement(ServerPlayer player, Item refundItem) {
+		if (player == null || refundItem == null || refundItem == Items.AIR) {
+			return;
+		}
+		TRACKED_GOLEM_PLACEMENT.set(new TrackedGolemPlacement(player, refundItem));
+		PENDING_GOLEM_HEAD_REFUND.remove();
+	}
+
+	public static boolean shouldCancelPlayerGolemHeadPlacement(ServerPlayer player, BlockPlaceContext context, Block block) {
+		if (player == null || context == null || !isGolemHeadBlock(block)) {
+			return false;
+		}
+		BlockPos headPos = resolvePlacementPos(context);
+		String requirement = requiredUpgradeForGolemSpawn(context.getLevel(), headPos);
+		return requirement != null && !ServerUpgradeUiSystem.hasUpgrade(player, requirement);
+	}
+
+	public static void completeTrackedGolemHeadPlacement() {
+		TrackedGolemPlacement placement = TRACKED_GOLEM_PLACEMENT.get();
+		ItemStack refund = PENDING_GOLEM_HEAD_REFUND.get();
+		TRACKED_GOLEM_PLACEMENT.remove();
+		PENDING_GOLEM_HEAD_REFUND.remove();
+		if (placement == null || refund == null || refund.isEmpty()) {
+			return;
+		}
+		refundTrackedGolemHead(placement.player(), refund);
+	}
+
+	public static ServerPlayer getTrackedGolemHeadPlacer() {
+		TrackedGolemPlacement placement = TRACKED_GOLEM_PLACEMENT.get();
+		return placement == null ? null : placement.player();
+	}
+
+	public static void queueTrackedGolemHeadRefund() {
+		TrackedGolemPlacement placement = TRACKED_GOLEM_PLACEMENT.get();
+		if (placement == null || placement.refundItem() == null || placement.refundItem() == Items.AIR) {
+			return;
+		}
+		PENDING_GOLEM_HEAD_REFUND.set(new ItemStack(placement.refundItem()));
+	}
+
+	public static boolean shouldCancelAutomatedGolemHeadPlacement(BlockPlaceContext context, Block block) {
+		if (context == null || !isGolemHeadBlock(block)) {
+			return false;
+		}
+		BlockPos headPos = resolvePlacementPos(context);
+		Level level = context.getLevel();
+		String requirement = requiredUpgradeForGolemSpawn(level, headPos);
+		if (requirement == null) {
+			return false;
+		}
+		ServerPlayer actor = findNearestAutomatedGolemActor(level, headPos);
+		return actor == null || !ServerUpgradeUiSystem.hasUpgrade(actor, requirement);
+	}
+
+	public static String requiredUpgradeForGolemSpawn(LevelReader level, BlockPos headPos) {
+		if (level == null || headPos == null) {
+			return null;
+		}
+		if (wouldFormIronGolem(level, headPos)) {
+			return ERA_IRON_GOLD;
+		}
+		if (wouldFormCopperGolem(level, headPos)) {
+			return ERA_COPPER;
+		}
+		return null;
 	}
 
 	public static boolean canInteractWithBlock(ServerPlayer player, Block block) {
@@ -348,30 +420,10 @@ public final class ServerMechanicsGateSystem {
 	}
 
 	private static String requiredUpgradeForPlacedBlock(BlockPlaceContext context, Block block) {
-		String requirement = requiredUpgradeForBlock(block);
-		if (requirement != null || context == null || !isGolemHeadBlock(block)) {
-			return requirement;
-		}
-
-		BlockPos headPos = resolvePlacementPos(context);
-		if (headPos == null) {
-			return null;
-		}
-		Level level = context.getLevel();
-		if (level == null) {
-			return null;
-		}
-
-		if (wouldFormGolem(level, headPos, IRON_GOLEM_BODY_BLOCKS)) {
-			return ERA_IRON_GOLD;
-		}
-		if (wouldFormGolem(level, headPos, COPPER_GOLEM_BODY_BLOCKS)) {
-			return ERA_COPPER;
-		}
-		return null;
+		return requiredUpgradeForBlock(block);
 	}
 
-	private static boolean isGolemHeadBlock(Block block) {
+	public static boolean isGolemHeadBlock(Block block) {
 		return block == Blocks.CARVED_PUMPKIN || block == Blocks.JACK_O_LANTERN;
 	}
 
@@ -390,29 +442,82 @@ public final class ServerMechanicsGateSystem {
 		return clickedPos.relative(context.getClickedFace());
 	}
 
-	private static boolean wouldFormGolem(Level level, BlockPos headPos, Set<Block> bodyBlocks) {
-		if (level == null || headPos == null || bodyBlocks == null || bodyBlocks.isEmpty()) {
+	private static boolean wouldFormIronGolem(LevelReader level, BlockPos headPos) {
+		if (level == null || headPos == null) {
 			return false;
 		}
 		BlockPos armLine = headPos.below();
 		BlockPos torso = armLine.below();
-		if (!isAnyOf(level.getBlockState(armLine).getBlock(), bodyBlocks)
-				|| !isAnyOf(level.getBlockState(torso).getBlock(), bodyBlocks)) {
+		if (!level.getBlockState(armLine).is(Blocks.IRON_BLOCK)
+				|| !level.getBlockState(torso).is(Blocks.IRON_BLOCK)) {
 			return false;
 		}
 
-		boolean eastWest = isAnyOf(level.getBlockState(armLine.west()).getBlock(), bodyBlocks)
-				&& isAnyOf(level.getBlockState(armLine.east()).getBlock(), bodyBlocks);
+		boolean eastWest = level.getBlockState(armLine.west()).is(Blocks.IRON_BLOCK)
+				&& level.getBlockState(armLine.east()).is(Blocks.IRON_BLOCK);
 		if (eastWest) {
 			return true;
 		}
 
-		return isAnyOf(level.getBlockState(armLine.north()).getBlock(), bodyBlocks)
-				&& isAnyOf(level.getBlockState(armLine.south()).getBlock(), bodyBlocks);
+		return level.getBlockState(armLine.north()).is(Blocks.IRON_BLOCK)
+				&& level.getBlockState(armLine.south()).is(Blocks.IRON_BLOCK);
 	}
 
-	private static boolean isAnyOf(Block block, Set<Block> candidates) {
-		return block != null && candidates.contains(block);
+	private static boolean wouldFormCopperGolem(LevelReader level, BlockPos headPos) {
+		return level != null
+				&& headPos != null
+				&& level.getBlockState(headPos.below()).is(BlockTags.COPPER);
+	}
+
+	private static ServerPlayer findNearestAutomatedGolemActor(Level level, BlockPos headPos) {
+		if (!(level instanceof ServerLevel serverLevel) || headPos == null) {
+			return null;
+		}
+		Vec3 center = Vec3.atCenterOf(headPos);
+		ServerPlayer nearest = null;
+		double bestDistance = Double.MAX_VALUE;
+		for (Player player : serverLevel.players()) {
+			if (!(player instanceof ServerPlayer serverPlayer) || serverPlayer.isSpectator()) {
+				continue;
+			}
+			double distance = serverPlayer.position().distanceToSqr(center);
+			if (distance > AUTOMATED_GOLEM_PLAYER_RADIUS_SQR || distance >= bestDistance) {
+				continue;
+			}
+			bestDistance = distance;
+			nearest = serverPlayer;
+		}
+		return nearest;
+	}
+
+	private static void refundTrackedGolemHead(ServerPlayer player, ItemStack refund) {
+		if (player == null || refund == null || refund.isEmpty()) {
+			return;
+		}
+		boolean inserted = player.getInventory().add(refund);
+		if (!inserted && !refund.isEmpty()) {
+			ItemEntity dropped = player.drop(refund, false);
+			if (dropped != null) {
+				dropped.setPickUpDelay(0);
+			}
+		}
+		syncPlayerInventory(player);
+	}
+
+	public static void syncPlayerInventory(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		player.getInventory().setChanged();
+		player.inventoryMenu.broadcastFullState();
+		player.inventoryMenu.sendAllDataToRemote();
+		if (player.containerMenu != player.inventoryMenu) {
+			player.containerMenu.broadcastFullState();
+			player.containerMenu.sendAllDataToRemote();
+		}
+	}
+
+	private record TrackedGolemPlacement(ServerPlayer player, Item refundItem) {
 	}
 
 	private static void tickIllegalItems(MinecraftServer server) {

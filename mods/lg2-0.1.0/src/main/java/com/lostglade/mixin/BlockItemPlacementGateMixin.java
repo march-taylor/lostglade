@@ -14,13 +14,38 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class BlockItemPlacementGateMixin {
 	@Inject(method = "place", at = @At("HEAD"), cancellable = true)
 	private void lg2$blockLockedMechanicPlacement(BlockPlaceContext context, CallbackInfoReturnable<InteractionResult> cir) {
-		if (context == null || !(context.getPlayer() instanceof ServerPlayer serverPlayer)) {
+		if (context == null || context.getLevel().isClientSide()) {
 			return;
 		}
 
 		BlockItem blockItem = (BlockItem) (Object) this;
-		if (!ServerMechanicsGateSystem.canPlaceBlock(serverPlayer, context, blockItem.getBlock())) {
+		boolean golemHead = ServerMechanicsGateSystem.isGolemHeadBlock(blockItem.getBlock());
+		if (context.getPlayer() instanceof ServerPlayer serverPlayer) {
+			if (golemHead) {
+				if (ServerMechanicsGateSystem.shouldCancelPlayerGolemHeadPlacement(serverPlayer, context, blockItem.getBlock())) {
+					ServerMechanicsGateSystem.syncPlayerInventory(serverPlayer);
+					cir.setReturnValue(InteractionResult.FAIL);
+					return;
+				}
+				ServerMechanicsGateSystem.beginTrackedGolemHeadPlacement(serverPlayer, blockItem);
+				return;
+			}
+			if (!ServerMechanicsGateSystem.canPlaceBlock(serverPlayer, context, blockItem.getBlock())) {
+				cir.setReturnValue(InteractionResult.FAIL);
+			}
+			return;
+		}
+
+		if (golemHead && ServerMechanicsGateSystem.shouldCancelAutomatedGolemHeadPlacement(context, blockItem.getBlock())) {
 			cir.setReturnValue(InteractionResult.FAIL);
+		}
+	}
+
+	@Inject(method = "place", at = @At("RETURN"))
+	private void lg2$completeTrackedGolemPlacement(BlockPlaceContext context, CallbackInfoReturnable<InteractionResult> cir) {
+		BlockItem blockItem = (BlockItem) (Object) this;
+		if (ServerMechanicsGateSystem.isGolemHeadBlock(blockItem.getBlock())) {
+			ServerMechanicsGateSystem.completeTrackedGolemHeadPlacement();
 		}
 	}
 }
