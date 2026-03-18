@@ -73,6 +73,20 @@
     },
     {
       "type": "bitmap",
+      "file": "minecraft:font/main_menu_logo_spin_anim.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\uec00\uec01\uec02\uec03\uec04\uec05\uec06\uec07",
+        "\uec08\uec09\uec0a\uec0b\uec0c\uec0d\uec0e\uec0f",
+        "\uec10\uec11\uec12\uec13\uec14\uec15\uec16\uec17",
+        "\uec18\uec19\uec1a\uec1b\uec1c\uec1d\uec1e\uec1f",
+        "\uec20\uec21\uec22\uec23\uec24\uec25\uec26\uec27",
+        "\uec28\uec29\uec2a\uec2b\uec2c\uec2d\uec2e\uec2f"
+      ]
+    },
+    {
+      "type": "bitmap",
       "file": "minecraft:font/main_menu_logo_archive_anim.png",
       "ascent": 14,
       "height": 204,

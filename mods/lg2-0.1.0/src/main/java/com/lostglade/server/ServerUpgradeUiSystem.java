@@ -89,6 +89,7 @@ public final class ServerUpgradeUiSystem {
 	private static final int MAIN_SCREEN_LOGO_GLYPHS_BASE = 0xE9D0;
 	private static final int MAIN_SCREEN_DVD_GLYPHS_BASE = 0xEA20;
 	private static final int MAIN_SCREEN_ARCHIVE_GLYPHS_BASE = 0xEB00;
+	private static final int MAIN_SCREEN_SPIN_GLYPHS_BASE = 0xEC00;
 	private static final int ERAS_PROGRESS_FRAME_COUNT = 35;
 	private static final int ERAS_PURCHASE_STAGE_COUNT = 5;
 	private static final int ERAS_PROGRESS_FRAMES_PER_STAGE = ERAS_PROGRESS_FRAME_COUNT / ERAS_PURCHASE_STAGE_COUNT;
@@ -96,15 +97,18 @@ public final class ServerUpgradeUiSystem {
 	private static final int MAIN_SCREEN_LOGO_FRAME_COUNT = 16;
 	private static final int MAIN_SCREEN_DVD_FRAME_COUNT = 130;
 	private static final int MAIN_SCREEN_ARCHIVE_FRAME_COUNT = 24;
+	private static final int MAIN_SCREEN_SPIN_FRAME_COUNT = 48;
 	private static final int MAIN_SCREEN_LOGO_FRAME_TICKS = 2;
 	private static final int MAIN_SCREEN_DVD_FRAME_TICKS = 4;
 	private static final int MAIN_SCREEN_ARCHIVE_FRAME_TICKS = 2;
+	private static final int MAIN_SCREEN_SPIN_FRAME_TICKS = 2;
 	private static final int MAIN_SCREEN_OVERLAY_GLYPH_ADVANCE = 119;
 	private static final int ERAS_OVERLAY_GLYPH_ADVANCE = 150;
 	private static final double MAIN_SCREEN_ARCHIVE_VARIANT_CHANCE = 0.0001D;
 	private static final int MAIN_SCREEN_VARIANT_GLITCH = 0;
 	private static final int MAIN_SCREEN_VARIANT_DVD = 1;
-	private static final int MAIN_SCREEN_VARIANT_ARCHIVE = 2;
+	private static final int MAIN_SCREEN_VARIANT_SPIN = 2;
+	private static final int MAIN_SCREEN_VARIANT_ARCHIVE = 3;
 	private static final int MENU_VISUAL_RESYNC_TICKS = 3;
 	private static final String[] ERAS_PROGRESS_GLYPHS = createGlyphSequence(
 			ERAS_PROGRESS_GLYPHS_BASE,
@@ -125,6 +129,10 @@ public final class ServerUpgradeUiSystem {
 	private static final String[] MAIN_SCREEN_ARCHIVE_GLYPHS = createGlyphSequence(
 			MAIN_SCREEN_ARCHIVE_GLYPHS_BASE,
 			MAIN_SCREEN_ARCHIVE_FRAME_COUNT
+	);
+	private static final String[] MAIN_SCREEN_SPIN_GLYPHS = createGlyphSequence(
+			MAIN_SCREEN_SPIN_GLYPHS_BASE,
+			MAIN_SCREEN_SPIN_FRAME_COUNT
 	);
 	private static final UpgradeUiConfig.IconConfig ERA_SLOT_INVISIBLE_ICON = createTransientIcon("minecraft:paper", "lg2:gui/button/invisible", false);
 	private static final UpgradeUiConfig.IconConfig ERA_SLOT_LOCK_ICON = createTransientIcon("minecraft:paper", "lg2:gui/button/eras_lock", false);
@@ -1256,7 +1264,11 @@ public final class ServerUpgradeUiSystem {
 		if (player.getRandom().nextDouble() < MAIN_SCREEN_ARCHIVE_VARIANT_CHANCE) {
 			return MAIN_SCREEN_VARIANT_ARCHIVE;
 		}
-		return player.getRandom().nextBoolean() ? MAIN_SCREEN_VARIANT_DVD : MAIN_SCREEN_VARIANT_GLITCH;
+		return switch (player.getRandom().nextInt(3)) {
+			case 1 -> MAIN_SCREEN_VARIANT_DVD;
+			case 2 -> MAIN_SCREEN_VARIANT_SPIN;
+			default -> MAIN_SCREEN_VARIANT_GLITCH;
+		};
 	}
 
 	private static int mainScreenVariant(ServerPlayer player) {
@@ -1271,6 +1283,10 @@ public final class ServerUpgradeUiSystem {
 		if (variant == MAIN_SCREEN_VARIANT_DVD) {
 			int frame = (int) Math.floorMod(gameTime / MAIN_SCREEN_DVD_FRAME_TICKS, MAIN_SCREEN_DVD_FRAME_COUNT);
 			return MAIN_SCREEN_DVD_GLYPHS[frame];
+		}
+		if (variant == MAIN_SCREEN_VARIANT_SPIN) {
+			int frame = (int) Math.floorMod(gameTime / MAIN_SCREEN_SPIN_FRAME_TICKS, MAIN_SCREEN_SPIN_FRAME_COUNT);
+			return MAIN_SCREEN_SPIN_GLYPHS[frame];
 		}
 		if (variant == MAIN_SCREEN_VARIANT_ARCHIVE) {
 			int frame = (int) Math.floorMod(gameTime / MAIN_SCREEN_ARCHIVE_FRAME_TICKS, MAIN_SCREEN_ARCHIVE_FRAME_COUNT);

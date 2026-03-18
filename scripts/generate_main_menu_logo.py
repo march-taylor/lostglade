@@ -17,8 +17,10 @@ OUTPUT_DIRS = [
 PREVIEW_DIR = ROOT / '.tmp'
 GLITCH_NAME = 'main_menu_logo_anim.png'
 DVD_NAME = 'main_menu_logo_dvd_anim.png'
+SPIN_NAME = 'main_menu_logo_spin_anim.png'
 PREVIEW_GLITCH = PREVIEW_DIR / 'main_menu_logo_preview_glitch.png'
 PREVIEW_DVD = PREVIEW_DIR / 'main_menu_logo_preview_dvd.png'
+PREVIEW_SPIN = PREVIEW_DIR / 'main_menu_logo_preview_spin.png'
 
 CANVAS_W = 176
 CANVAS_H = 204
@@ -39,6 +41,9 @@ GLITCH_GRID_ROWS = 4
 DVD_FRAME_COUNT = 130
 DVD_GRID_COLS = 10
 DVD_GRID_ROWS = 13
+SPIN_FRAME_COUNT = 48
+SPIN_GRID_COLS = 8
+SPIN_GRID_ROWS = 6
 
 GLITCH_LOGO_W = 48
 GLITCH_LOGO_H = 32
@@ -46,6 +51,13 @@ DVD_MARGIN_X = 0
 DVD_MARGIN_Y = 0
 DVD_SPEED_X = 6
 DVD_SPEED_Y = 7
+SPIN_RHOMBUS_HALF_W = 6.0
+SPIN_RHOMBUS_HALF_H = 4.4
+SPIN_MODEL_DEPTH = 8.4
+SPIN_MODEL_SCALE = 1.08
+SPIN_CAMERA_DISTANCE = 96.0
+SPIN_CENTER_X = SCREEN_X + SCREEN_W / 2 - 1.0
+SPIN_CENTER_Y = SCREEN_Y + SCREEN_H / 2 - 0.5
 
 SCREEN_BG = (0x18, 0x15, 0x14)
 SCREEN_FRAME = (0x29, 0x2F, 0x2F)
@@ -61,10 +73,80 @@ LOGO_PALETTE = [
     (0, 210, 137, 255),
     (0, 199, 241, 255),
 ]
+SPIN_CELL_COLORS = {
+    (0, 2): (0, 210, 137),
+    (1, 2): (0, 210, 137),
+    (2, 2): (0, 210, 137),
+    (0, 1): (0, 210, 137),
+    (1, 1): (0, 199, 241),
+    (0, 0): (0, 210, 137),
+}
+SPIN_LIGHT_DIR = (-0.35, 0.55, 0.92)
+SPIN_VIEW_DIR = (0.0, 0.0, 1.0)
 
 
 def clamp(value: int, low: int, high: int) -> int:
     return max(low, min(high, value))
+
+
+def normalize3(vector: tuple[float, float, float]) -> tuple[float, float, float]:
+    x, y, z = vector
+    length = math.sqrt((x * x) + (y * y) + (z * z))
+    if length == 0:
+        return 0.0, 0.0, 0.0
+    return x / length, y / length, z / length
+
+
+def sub3(a: tuple[float, float, float], b: tuple[float, float, float]) -> tuple[float, float, float]:
+    return a[0] - b[0], a[1] - b[1], a[2] - b[2]
+
+
+def dot3(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    return (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2])
+
+
+def cross3(a: tuple[float, float, float], b: tuple[float, float, float]) -> tuple[float, float, float]:
+    return (
+        (a[1] * b[2]) - (a[2] * b[1]),
+        (a[2] * b[0]) - (a[0] * b[2]),
+        (a[0] * b[1]) - (a[1] * b[0]),
+    )
+
+
+def scale_rgb(color: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
+    return tuple(clamp(int(round(channel * factor)), 0, 255) for channel in color)
+
+
+def diamond_grid_to_xy(u: float, v: float) -> tuple[float, float]:
+    return (
+        (u - v) * SPIN_RHOMBUS_HALF_W,
+        (u + v) * SPIN_RHOMBUS_HALF_H,
+    )
+
+
+def rotate_xy(point: tuple[float, float], angle: float) -> tuple[float, float]:
+    x, y = point
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    return (
+        (x * cos_a) - (y * sin_a),
+        (x * sin_a) + (y * cos_a),
+    )
+
+
+def spin_shape_center() -> tuple[float, float]:
+    points: list[tuple[float, float]] = []
+    for gx, gy in SPIN_CELL_COLORS:
+        for u, v in ((gx, gy), (gx + 1, gy), (gx + 1, gy + 1), (gx, gy + 1)):
+            points.append(rotate_xy(diamond_grid_to_xy(u, v), math.pi / 2))
+    min_x = min(point[0] for point in points)
+    max_x = max(point[0] for point in points)
+    min_y = min(point[1] for point in points)
+    max_y = max(point[1] for point in points)
+    return (min_x + max_x) / 2.0, (min_y + max_y) / 2.0
+
+
+SPIN_SHAPE_CENTER = spin_shape_center()
 
 
 def quantize_to_palette(image: Image.Image, palette: list[tuple[int, int, int, int]]) -> Image.Image:
@@ -199,6 +281,30 @@ def add_signal_overlay(
     return Image.alpha_composite(frame_img, overlay)
 
 
+def add_layer_glow(
+    canvas: Image.Image,
+    layer: Image.Image,
+    amber_strength: float = 0.12,
+    cyan_strength: float = 0.18,
+    core_strength: float = 0.10,
+) -> Image.Image:
+    alpha = layer.getchannel('A')
+    outer = dilate_alpha(alpha, [(-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1), (-1, 1), (1, -1)])
+    inner = dilate_alpha(alpha, [(-1, 0), (1, 0), (0, -1), (0, 1)])
+
+    amber = Image.new('RGBA', canvas.size, (*AMBER_GLOW, 0))
+    amber.putalpha(outer.point(lambda value: int(value * amber_strength)))
+    cyan = Image.new('RGBA', canvas.size, (*CYAN_GLOW, 0))
+    cyan.putalpha(outer.point(lambda value: int(value * cyan_strength)))
+    core = Image.new('RGBA', canvas.size, (*CORE_GLOW, 0))
+    core.putalpha(inner.point(lambda value: int(value * core_strength)))
+
+    composed = Image.alpha_composite(canvas, amber)
+    composed = Image.alpha_composite(composed, cyan)
+    composed = Image.alpha_composite(composed, core)
+    return Image.alpha_composite(composed, layer)
+
+
 def bend_logo(logo: Image.Image, phase: float) -> Image.Image:
     out = Image.new('RGBA', logo.size, (0, 0, 0, 0))
     for y in range(logo.height):
@@ -304,6 +410,186 @@ def build_dvd_frame(base_logo: Image.Image, frame: int, total_frames: int) -> Im
     return add_signal_overlay(frame_img, frame, total_frames, rows=1, snow_points=8)
 
 
+def rotate_point(
+    point: tuple[float, float, float],
+    yaw: float,
+    pitch: float,
+    roll: float,
+) -> tuple[float, float, float]:
+    x, y, z = point
+
+    cos_yaw = math.cos(yaw)
+    sin_yaw = math.sin(yaw)
+    x, z = (x * cos_yaw) + (z * sin_yaw), (-x * sin_yaw) + (z * cos_yaw)
+
+    cos_pitch = math.cos(pitch)
+    sin_pitch = math.sin(pitch)
+    y, z = (y * cos_pitch) - (z * sin_pitch), (y * sin_pitch) + (z * cos_pitch)
+
+    cos_roll = math.cos(roll)
+    sin_roll = math.sin(roll)
+    x, y = (x * cos_roll) - (y * sin_roll), (x * sin_roll) + (y * cos_roll)
+    return x, y, z
+
+
+def project_point(point: tuple[float, float, float]) -> tuple[float, float]:
+    x, y, z = point
+    factor = SPIN_CAMERA_DISTANCE / max(8.0, SPIN_CAMERA_DISTANCE - z)
+    return (
+        SPIN_CENTER_X + (x * factor * SPIN_MODEL_SCALE),
+        SPIN_CENTER_Y + (y * factor * SPIN_MODEL_SCALE),
+    )
+
+
+def cell_front_polygon(cell: tuple[int, int], z: float) -> list[tuple[float, float, float]]:
+    gx, gy = cell
+    points = []
+    for u, v in ((gx, gy), (gx + 1, gy), (gx + 1, gy + 1), (gx, gy + 1)):
+        x, y = rotate_xy(diamond_grid_to_xy(u, v), math.pi / 2)
+        points.append((x - SPIN_SHAPE_CENTER[0], y - SPIN_SHAPE_CENTER[1], z))
+    return points
+
+
+def polygon_normal(points: list[tuple[float, float, float]]) -> tuple[float, float, float]:
+    return cross3(sub3(points[1], points[0]), sub3(points[2], points[0]))
+
+
+def orient_side_face(
+    front_a: tuple[float, float, float],
+    front_b: tuple[float, float, float],
+    back_b: tuple[float, float, float],
+    back_a: tuple[float, float, float],
+) -> list[tuple[float, float, float]]:
+    midpoint = (
+        (front_a[0] + front_b[0]) / 2.0,
+        (front_a[1] + front_b[1]) / 2.0,
+        0.0,
+    )
+    outward_hint = normalize3(midpoint)
+    quad = [front_a, front_b, back_b, back_a]
+    normal = normalize3(polygon_normal(quad))
+    if dot3(normal, outward_hint) < 0:
+        return [front_b, front_a, back_a, back_b]
+    return quad
+
+
+def render_spin_model(frame: int, total_frames: int) -> Image.Image:
+    layer = Image.new('RGBA', (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer, 'RGBA')
+
+    phase = frame / total_frames
+    yaw = phase * math.tau
+    pitch = math.radians(14.0)
+    roll = 0.0
+
+    faces: list[tuple[float, list[tuple[float, float]], tuple[int, int, int, int], tuple[int, int, int, int], int]] = []
+    light_dir = normalize3(SPIN_LIGHT_DIR)
+    front_boundaries: list[list[tuple[float, float, float]]] = []
+    back_boundaries: list[list[tuple[float, float, float]]] = []
+
+    for cell, base_color in SPIN_CELL_COLORS.items():
+        front = cell_front_polygon(cell, SPIN_MODEL_DEPTH / 2)
+        back = cell_front_polygon(cell, -SPIN_MODEL_DEPTH / 2)
+        back_reversed = [back[0], back[3], back[2], back[1]]
+        side_faces = {
+            'top': orient_side_face(front[0], front[1], back[1], back[0]),
+            'right': orient_side_face(front[1], front[2], back[2], back[1]),
+            'bottom': orient_side_face(front[2], front[3], back[3], back[2]),
+            'left': orient_side_face(front[3], front[0], back[0], back[3]),
+        }
+        gx, gy = cell
+        neighbors = {
+            'top': (gx, gy - 1),
+            'right': (gx + 1, gy),
+            'bottom': (gx, gy + 1),
+            'left': (gx - 1, gy),
+        }
+        exposed_side_faces = [face for side, face in side_faces.items() if neighbors[side] not in SPIN_CELL_COLORS]
+
+        for points, base_factor, outline_alpha, priority in [
+            (back_reversed, 0.40, 200, 0),
+            *[(side, 0.52, 205, 1) for side in exposed_side_faces],
+            (front, 1.0, 255, 2),
+        ]:
+            rotated = [rotate_point(point, yaw, pitch, roll) for point in points]
+            normal = normalize3(polygon_normal(rotated))
+            if dot3(normal, SPIN_VIEW_DIR) <= 0.05:
+                continue
+
+            shade = 0.50 + (max(0.0, dot3(normal, light_dir)) * 0.72)
+            fill_rgb = scale_rgb(base_color, base_factor * shade)
+            outline_rgb = scale_rgb((0, 0, 0), 1.0)
+            projected = [project_point(point) for point in rotated]
+            avg_z = sum(point[2] for point in rotated) / len(rotated)
+            faces.append((
+                avg_z,
+                projected,
+                (*fill_rgb, 255),
+                (*outline_rgb, outline_alpha),
+                priority,
+            ))
+
+        rotated_front = [rotate_point(point, yaw, pitch, roll) for point in front]
+        front_normal = normalize3(polygon_normal(rotated_front))
+        if dot3(front_normal, SPIN_VIEW_DIR) > 0.05:
+            edges = {
+                'top': [front[0], front[1]],
+                'right': [front[1], front[2]],
+                'bottom': [front[2], front[3]],
+                'left': [front[3], front[0]],
+            }
+            for side, neighbor in neighbors.items():
+                if neighbor not in SPIN_CELL_COLORS or SPIN_CELL_COLORS[neighbor] != base_color:
+                    front_boundaries.append(edges[side])
+
+        rotated_back = [rotate_point(point, yaw, pitch, roll) for point in back_reversed]
+        back_normal = normalize3(polygon_normal(rotated_back))
+        if dot3(back_normal, SPIN_VIEW_DIR) > 0.05:
+            edges = {
+                'top': [back[0], back[1]],
+                'right': [back[1], back[2]],
+                'bottom': [back[2], back[3]],
+                'left': [back[3], back[0]],
+            }
+            for side, neighbor in neighbors.items():
+                if neighbor not in SPIN_CELL_COLORS or SPIN_CELL_COLORS[neighbor] != base_color:
+                    back_boundaries.append(edges[side])
+
+    faces.sort(key=lambda face: (face[0], face[4]))
+
+    for _, projected, fill, outline, _ in faces:
+        draw.polygon(projected, fill=fill)
+
+    for edge in front_boundaries:
+        rotated_edge = [rotate_point(point, yaw, pitch, roll) for point in edge]
+        projected_edge = [project_point(point) for point in rotated_edge]
+        draw.line(projected_edge, fill=(0, 0, 0, 235), width=1)
+
+    for edge in back_boundaries:
+        rotated_edge = [rotate_point(point, yaw, pitch, roll) for point in edge]
+        projected_edge = [project_point(point) for point in rotated_edge]
+        draw.line(projected_edge, fill=(0, 0, 0, 235), width=1)
+
+    shadow = Image.new('RGBA', layer.size, (0, 0, 0, 0))
+    shadow_alpha = layer.getchannel('A').point(lambda value: int(value * 0.22))
+    shadow.putalpha(shadow_alpha)
+    shadow = ImageChops.offset(shadow, 0, 3)
+    layer = Image.alpha_composite(shadow, layer)
+
+    outline_alpha = dilate_alpha(layer.getchannel('A'), [(-1, 0), (1, 0), (0, -1), (0, 1)])
+    outline_alpha = ImageChops.subtract(outline_alpha, layer.getchannel('A'))
+    outline = Image.new('RGBA', layer.size, (0, 0, 0, 0))
+    outline.putalpha(outline_alpha.point(lambda value: int(value * 0.95)))
+    return Image.alpha_composite(outline, layer)
+
+
+def build_spin_frame(_base_logo: Image.Image, frame: int, total_frames: int) -> Image.Image:
+    frame_img = make_screen_base(frame, total_frames)
+    model_layer = render_spin_model(frame, total_frames)
+    frame_img = add_layer_glow(frame_img, model_layer, amber_strength=0.08, cyan_strength=0.14, core_strength=0.07)
+    return add_signal_overlay(frame_img, frame, total_frames, rows=1, snow_points=9)
+
+
 def build_sheet(base_logo: Image.Image, builder, frame_count: int, cols: int, rows: int) -> Image.Image:
     sheet_w = GLYPH_W * cols
     sheet_h = GLYPH_H * rows
@@ -341,15 +627,18 @@ def main() -> None:
     )
     glitch_sheet = build_sheet(glitch_logo, build_glitch_frame, GLITCH_FRAME_COUNT, GLITCH_GRID_COLS, GLITCH_GRID_ROWS)
     dvd_sheet = build_sheet(dvd_logo, build_dvd_frame, DVD_FRAME_COUNT, DVD_GRID_COLS, DVD_GRID_ROWS)
+    spin_sheet = build_sheet(source_logo, build_spin_frame, SPIN_FRAME_COUNT, SPIN_GRID_COLS, SPIN_GRID_ROWS)
 
     save_outputs(GLITCH_NAME, glitch_sheet)
     save_outputs(DVD_NAME, dvd_sheet)
+    save_outputs(SPIN_NAME, spin_sheet)
     build_preview(glitch_sheet, PREVIEW_GLITCH)
     build_preview(dvd_sheet, PREVIEW_DVD)
+    build_preview(spin_sheet, PREVIEW_SPIN)
 
-    print(f'generated {GLITCH_NAME} and {DVD_NAME}')
+    print(f'generated {GLITCH_NAME}, {DVD_NAME} and {SPIN_NAME}')
     print(f'source {SOURCE_LOGO.relative_to(ROOT)}')
-    print(f'previews {PREVIEW_GLITCH.relative_to(ROOT)} {PREVIEW_DVD.relative_to(ROOT)}')
+    print(f'previews {PREVIEW_GLITCH.relative_to(ROOT)} {PREVIEW_DVD.relative_to(ROOT)} {PREVIEW_SPIN.relative_to(ROOT)}')
 
 
 if __name__ == '__main__':
