@@ -15,6 +15,7 @@ import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
+import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
@@ -24,6 +25,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.TicketType;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
@@ -37,6 +39,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.portal.TeleportTransition;
@@ -83,6 +86,7 @@ public final class ServerBackroomsSystem {
 	private static final int PREWARMED_RESPAWN_TARGET = 8;
 	private static final int PREWARMED_RESPAWN_STARTUP_BATCH = 3;
 	private static final int PREWARMED_RESPAWN_REFILL_INTERVAL_TICKS = 40;
+	private static final int PREWARMED_RESPAWN_CHUNK_RADIUS = 2;
 	private static final Identifier BACKROOMS_AMBIENT_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "custom.backrooms_ambient_loop");
 	// 12s file at 20 TPS ~= 240 ticks. Start every 200 ticks for ~2s overlap.
 	private static final int BACKROOMS_AMBIENT_LOOP_TICKS = 200;
@@ -108,6 +112,8 @@ public final class ServerBackroomsSystem {
 	private static final Map<UUID, AmbientLoopState> AMBIENT_LOOP_STATES = new HashMap<>();
 	private static final Map<Long, Long> ACTIVE_LAMP_OUTAGES = new HashMap<>();
 	private static final List<BlockPos> PREWARMED_RESPAWNS = new ArrayList<>();
+	private static final Set<Long> PREWARMED_RESPAWN_KEYS = new HashSet<>();
+	private static final Map<Long, Integer> PREWARMED_RESPAWN_CHUNK_REFS = new HashMap<>();
 	private static final Set<UUID> FORCED_LADDER_CRAWL_PLAYERS = new HashSet<>();
 
 	private static boolean stateLoaded = false;
@@ -123,6 +129,8 @@ public final class ServerBackroomsSystem {
 		AMBIENT_LOOP_STATES.clear();
 		ACTIVE_LAMP_OUTAGES.clear();
 		PREWARMED_RESPAWNS.clear();
+		PREWARMED_RESPAWN_KEYS.clear();
+		PREWARMED_RESPAWN_CHUNK_REFS.clear();
 		FORCED_LADDER_CRAWL_PLAYERS.clear();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerBackroomsSystem::loadState);
@@ -667,8 +675,13 @@ public final class ServerBackroomsSystem {
 		if (server.getTickCount() % PREWARMED_RESPAWN_REFILL_INTERVAL_TICKS != 0) {
 			return;
 		}
+		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
+		if (backrooms == null || backrooms.players().isEmpty()) {
+			return;
+		}
 
-		fillPrewarmedRespawns(server, 1);
+		int refillAttempts = PREWARMED_RESPAWNS.size() < (PREWARMED_RESPAWN_TARGET / 2) ? 2 : 1;
+		fillPrewarmedRespawns(server, refillAttempts);
 	}
 
 	private static void fillPrewarmedRespawns(MinecraftServer server, int attempts) {
@@ -688,8 +701,9 @@ public final class ServerBackroomsSystem {
 			}
 
 			BlockPos floorPos = safeSpawn.below().immutable();
-			if (!PREWARMED_RESPAWNS.contains(floorPos)) {
+			if (PREWARMED_RESPAWN_KEYS.add(floorPos.asLong())) {
 				PREWARMED_RESPAWNS.add(floorPos);
+				retainPrewarmedRespawnChunk(backrooms, floorPos);
 			}
 		}
 	}
@@ -719,8 +733,9 @@ public final class ServerBackroomsSystem {
 		for (int checked = 0; checked < attempts && !PREWARMED_RESPAWNS.isEmpty(); checked++) {
 			int index = level.random.nextInt(PREWARMED_RESPAWNS.size());
 			BlockPos floorPos = PREWARMED_RESPAWNS.remove(index);
-			level.getChunkAt(floorPos);
-			if (isSafeRespawnPosition(level, floorPos)) {
+			PREWARMED_RESPAWN_KEYS.remove(floorPos.asLong());
+			releasePrewarmedRespawnChunk(level, floorPos);
+			if (isSafeRespawnPositionLoaded(level, floorPos)) {
 				return floorPos.above();
 			}
 		}
@@ -730,6 +745,9 @@ public final class ServerBackroomsSystem {
 
 	private static BlockPos getRandomBackroomsRespawnFloor(ServerLevel backrooms) {
 		BlockPos safeSpawn = takePrewarmedRespawn(backrooms);
+		if (safeSpawn == null) {
+			safeSpawn = findRandomLoadedSafeRespawn(backrooms);
+		}
 		if (safeSpawn == null) {
 			safeSpawn = findRandomSafeRespawn(backrooms);
 		}
@@ -757,15 +775,19 @@ public final class ServerBackroomsSystem {
 	}
 
 	private static boolean isRespawnSearchAreaLoaded(ServerLevel level, BlockPos center) {
-		if (!level.hasChunkAt(center)) {
-			return false;
-		}
-
 		int radius = RESPAWN_SEARCH_RADIUS;
-		return level.hasChunkAt(center.offset(-radius, 0, -radius))
-				&& level.hasChunkAt(center.offset(-radius, 0, radius))
-				&& level.hasChunkAt(center.offset(radius, 0, -radius))
-				&& level.hasChunkAt(center.offset(radius, 0, radius));
+		int minChunkX = SectionPos.blockToSectionCoord(center.getX() - radius);
+		int maxChunkX = SectionPos.blockToSectionCoord(center.getX() + radius);
+		int minChunkZ = SectionPos.blockToSectionCoord(center.getZ() - radius);
+		int maxChunkZ = SectionPos.blockToSectionCoord(center.getZ() + radius);
+		for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+			for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+				if (!level.hasChunk(chunkX, chunkZ)) {
+					return false;
+				}
+			}
+		}
+		return true;
 	}
 
 	private static BlockPos findNearbyLoadedSafeRespawn(ServerLevel level, BlockPos center) {
@@ -923,6 +945,31 @@ public final class ServerBackroomsSystem {
 		int levelIndex = Mth.nextInt(level.random, minLevelIndex, maxLevelIndex);
 		int floorY = BACKROOMS_LEVEL_FLOOR_Y + levelIndex * BACKROOMS_LEVEL_HEIGHT;
 		return new BlockPos(x, floorY, z);
+	}
+
+	private static void retainPrewarmedRespawnChunk(ServerLevel level, BlockPos floorPos) {
+		ChunkPos chunkPos = new ChunkPos(floorPos);
+		long key = chunkPos.toLong();
+		int refCount = PREWARMED_RESPAWN_CHUNK_REFS.getOrDefault(key, 0);
+		if (refCount == 0) {
+			level.getChunkSource().addTicketWithRadius(TicketType.FORCED, chunkPos, PREWARMED_RESPAWN_CHUNK_RADIUS);
+		}
+		PREWARMED_RESPAWN_CHUNK_REFS.put(key, refCount + 1);
+	}
+
+	private static void releasePrewarmedRespawnChunk(ServerLevel level, BlockPos floorPos) {
+		ChunkPos chunkPos = new ChunkPos(floorPos);
+		long key = chunkPos.toLong();
+		Integer refCount = PREWARMED_RESPAWN_CHUNK_REFS.get(key);
+		if (refCount == null) {
+			return;
+		}
+		if (refCount <= 1) {
+			PREWARMED_RESPAWN_CHUNK_REFS.remove(key);
+			level.getChunkSource().removeTicketWithRadius(TicketType.FORCED, chunkPos, PREWARMED_RESPAWN_CHUNK_RADIUS);
+			return;
+		}
+		PREWARMED_RESPAWN_CHUNK_REFS.put(key, refCount - 1);
 	}
 
 	private static int getBackroomsLevelIndex(int y) {

@@ -86,7 +86,7 @@ public final class BackroomsStalkerEntity extends Monster {
 	private static final double ATTACK_RANGE_SQR = ATTACK_RANGE * ATTACK_RANGE;
 	private static final int FORGET_TARGET_AFTER_TICKS = 100;
 	private static final int ATTACK_COOLDOWN_TICKS = 20;
-	private static final int TARGET_SCAN_INTERVAL_TICKS = 3;
+	private static final int TARGET_SCAN_INTERVAL_TICKS = 1;
 	private static final int CHASE_REPATH_TICKS = 8;
 	private static final int CHASE_STUCK_REPATH_INTERVAL_TICKS = 3;
 	private static final int CHASE_STUCK_REPATH_AFTER_TICKS = 12;
@@ -240,9 +240,16 @@ public final class BackroomsStalkerEntity extends Monster {
 		}
 
 		long nowTick = level.getGameTime();
+		boolean wasChasingTarget = this.chasingTarget;
 		ServerPlayer target = resolveTargetForTick(level, nowTick);
 		if (target != null) {
 			this.chasingTarget = true;
+			if (!wasChasingTarget) {
+				this.nextChaseRepathTick = 0L;
+				this.chaseDetourTarget = null;
+				this.chaseStuckTicks = 0;
+				this.lastChasePos = this.position();
+			}
 			updateChaseMovement(level, nowTick, target);
 			updateTouchDamage(level, nowTick);
 		} else {
@@ -519,20 +526,22 @@ public final class BackroomsStalkerEntity extends Monster {
 		}
 		this.lastTickPos = currentPos;
 
-		boolean needsNewTarget = this.wanderTarget == null
-				|| this.getNavigation().isDone()
-				|| currentPos.distanceToSqr(this.wanderTarget) < 2.25D
-				|| this.stationaryTicks >= STUCK_REPATH_TICKS
-				|| nowTick >= this.nextWanderRefreshTick;
+		boolean reachedTarget = this.wanderTarget != null && currentPos.distanceToSqr(this.wanderTarget) < 2.25D;
+		boolean pathInvalid = this.getNavigation().isDone() || this.stationaryTicks >= STUCK_REPATH_TICKS;
+		boolean needsNewTarget = this.wanderTarget == null || reachedTarget || pathInvalid;
 		if (needsNewTarget) {
 			this.wanderTarget = pickWanderTarget(level);
 			this.stationaryTicks = 0;
+			this.nextWanderRefreshTick = 0L;
+		}
+
+		boolean shouldRefreshPath = this.wanderTarget != null
+				&& (needsNewTarget || nowTick >= this.nextWanderRefreshTick);
+		if (shouldRefreshPath) {
 			this.nextWanderRefreshTick = nowTick + WANDER_REPATH_TICKS;
-			if (this.wanderTarget != null) {
-				this.getNavigation().moveTo(this.wanderTarget.x, this.wanderTarget.y, this.wanderTarget.z, 1.0D);
-			} else {
-				this.getNavigation().stop();
-			}
+			this.getNavigation().moveTo(this.wanderTarget.x, this.wanderTarget.y, this.wanderTarget.z, 1.0D);
+		} else if (this.wanderTarget == null) {
+			this.getNavigation().stop();
 		}
 
 		lookInMovementDirection();

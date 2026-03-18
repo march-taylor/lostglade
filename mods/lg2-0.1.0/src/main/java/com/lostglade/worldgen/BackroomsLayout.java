@@ -6,6 +6,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.state.properties.DoorHingeSide;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -41,6 +42,7 @@ final class BackroomsLayout {
 	private static final long OPEN_CACHE_SALT = 0x4F50454E43414348L;
 	private static final long DOOR_CACHE_SALT = 0x444F4F5243414348L;
 	private static final long ZONE_CACHE_SALT = 0x5A4F4E4543414348L;
+	private static final long SPECIAL_ROOM_COLUMN_CACHE_SALT = 0x53504352434F4C31L;
 	private static final long VOID_HALL_COLUMN_CACHE_SALT = 0x564F494448434143L;
 	private static final long LADDER_ROOM_COLUMN_CACHE_SALT = 0x4C414444434F4C31L;
 	private static final ThreadLocal<LayoutCache> LAYOUT_CACHE = ThreadLocal.withInitial(LayoutCache::new);
@@ -132,6 +134,13 @@ final class BackroomsLayout {
 	}
 
 	static SpecialRoomPlacement getSpecialRoomAt(ZoneType zone, int x, int z, int levelIndex) {
+		LayoutCache cache = layoutCache();
+		long key = BlockPos.asLong(x, levelIndex, z) ^ SPECIAL_ROOM_COLUMN_CACHE_SALT;
+		Optional<SpecialRoomPlacement> cached = cache.specialRoomColumnCache.get(key);
+		if (cached != null) {
+			return cached.orElse(null);
+		}
+
 		SpecialRoomPlacement best = findSpecialRoomAtLevel(zone, x, z, levelIndex, levelIndex, true);
 		for (int anchorLevel = levelIndex - 1; anchorLevel >= levelIndex - 3; anchorLevel--) {
 			SpecialRoomPlacement candidate = findSpecialRoomAtLevel(
@@ -144,6 +153,7 @@ final class BackroomsLayout {
 			);
 			best = choosePreferredPlacement(best, candidate, x, z, levelIndex);
 		}
+		cache.specialRoomColumnCache.put(key, Optional.ofNullable(best));
 		return best;
 	}
 
@@ -1197,9 +1207,7 @@ final class BackroomsLayout {
 	}
 
 	private static LayoutCache layoutCache() {
-		LayoutCache cache = LAYOUT_CACHE.get();
-		cache.trimIfNeeded();
-		return cache;
+		return LAYOUT_CACHE.get();
 	}
 
 	private static long cacheKey(int x, int z, int levelIndex, ZoneType zone, long salt) {
@@ -1610,54 +1618,35 @@ final class BackroomsLayout {
 	}
 
 	private static final class LayoutCache {
-		private static final int MAX_CELL_CACHE = 8192;
-		private static final int MAX_INSET_CACHE = 2048;
-		private static final int MAX_OPEN_SPACE_CACHE = 32768;
-		private static final int MAX_DOOR_CACHE = 8192;
-		private static final int MAX_LADDER_ROOM_CACHE = 4096;
-		private static final int MAX_SPECIAL_ROOM_CACHE = 4096;
-		private static final int MAX_ZONE_CACHE = 4096;
-		private static final int MAX_VOID_HALL_COLUMN_CACHE = 4096;
-		private static final int MAX_LADDER_ROOM_COLUMN_CACHE = 8192;
+		private static final int MAX_CELL_CACHE = 32768;
+		private static final int MAX_INSET_CACHE = 8192;
+		private static final int MAX_OPEN_SPACE_CACHE = 262144;
+		private static final int MAX_DOOR_CACHE = 16384;
+		private static final int MAX_LADDER_ROOM_CACHE = 16384;
+		private static final int MAX_SPECIAL_ROOM_CACHE = 16384;
+		private static final int MAX_SPECIAL_ROOM_COLUMN_CACHE = 65536;
+		private static final int MAX_ZONE_CACHE = 8192;
+		private static final int MAX_VOID_HALL_COLUMN_CACHE = 16384;
+		private static final int MAX_LADDER_ROOM_COLUMN_CACHE = 65536;
 
-		final Map<Long, ZoneType> zoneCache = new HashMap<>();
-		final Map<Long, CellData> cellCache = new HashMap<>();
-		final Map<Long, Optional<InsetFeature>> insetFeatureCache = new HashMap<>();
-		final Map<Long, Boolean> openSpaceCache = new HashMap<>();
-		final Map<Long, Optional<DoorPlacement>> doorPlacementCache = new HashMap<>();
-		final Map<Long, Optional<LadderRoomPlacement>> ladderRoomCache = new HashMap<>();
-		final Map<Long, Optional<SpecialRoomPlacement>> specialRoomCache = new HashMap<>();
-		final Map<Long, Optional<SpecialRoomPlacement>> voidHallColumnCache = new HashMap<>();
-		final Map<Long, Optional<LadderRoomPlacement>> ladderRoomColumnCache = new HashMap<>();
+		final Map<Long, ZoneType> zoneCache = createCappedCache(MAX_ZONE_CACHE);
+		final Map<Long, CellData> cellCache = createCappedCache(MAX_CELL_CACHE);
+		final Map<Long, Optional<InsetFeature>> insetFeatureCache = createCappedCache(MAX_INSET_CACHE);
+		final Map<Long, Boolean> openSpaceCache = createCappedCache(MAX_OPEN_SPACE_CACHE);
+		final Map<Long, Optional<DoorPlacement>> doorPlacementCache = createCappedCache(MAX_DOOR_CACHE);
+		final Map<Long, Optional<LadderRoomPlacement>> ladderRoomCache = createCappedCache(MAX_LADDER_ROOM_CACHE);
+		final Map<Long, Optional<SpecialRoomPlacement>> specialRoomCache = createCappedCache(MAX_SPECIAL_ROOM_CACHE);
+		final Map<Long, Optional<SpecialRoomPlacement>> specialRoomColumnCache = createCappedCache(MAX_SPECIAL_ROOM_COLUMN_CACHE);
+		final Map<Long, Optional<SpecialRoomPlacement>> voidHallColumnCache = createCappedCache(MAX_VOID_HALL_COLUMN_CACHE);
+		final Map<Long, Optional<LadderRoomPlacement>> ladderRoomColumnCache = createCappedCache(MAX_LADDER_ROOM_COLUMN_CACHE);
 
-		void trimIfNeeded() {
-			if (this.zoneCache.size() > MAX_ZONE_CACHE) {
-				this.zoneCache.clear();
-			}
-			if (this.cellCache.size() > MAX_CELL_CACHE) {
-				this.cellCache.clear();
-			}
-			if (this.insetFeatureCache.size() > MAX_INSET_CACHE) {
-				this.insetFeatureCache.clear();
-			}
-			if (this.openSpaceCache.size() > MAX_OPEN_SPACE_CACHE) {
-				this.openSpaceCache.clear();
-			}
-			if (this.doorPlacementCache.size() > MAX_DOOR_CACHE) {
-				this.doorPlacementCache.clear();
-			}
-			if (this.ladderRoomCache.size() > MAX_LADDER_ROOM_CACHE) {
-				this.ladderRoomCache.clear();
-			}
-			if (this.specialRoomCache.size() > MAX_SPECIAL_ROOM_CACHE) {
-				this.specialRoomCache.clear();
-			}
-			if (this.voidHallColumnCache.size() > MAX_VOID_HALL_COLUMN_CACHE) {
-				this.voidHallColumnCache.clear();
-			}
-			if (this.ladderRoomColumnCache.size() > MAX_LADDER_ROOM_COLUMN_CACHE) {
-				this.ladderRoomColumnCache.clear();
-			}
+		private static <K, V> Map<K, V> createCappedCache(int maxSize) {
+			return new LinkedHashMap<>(256, 0.75F, true) {
+				@Override
+				protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
+					return this.size() > maxSize;
+				}
+			};
 		}
 	}
 }

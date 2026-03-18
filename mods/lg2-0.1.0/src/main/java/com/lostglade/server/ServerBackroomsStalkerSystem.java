@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -53,6 +54,8 @@ public final class ServerBackroomsStalkerSystem {
 	// 12s clip at 20 TPS; replay every 10s so fades overlap by 2s.
 	private static final int STALKER_RUN_LOOP_TICKS = 200;
 	private static final Map<UUID, RunLoopState> STALKER_RUN_LOOP_STATES = new HashMap<>();
+	private static final Set<BackroomsStalkerEntity> TRACKED_STALKERS = Collections.newSetFromMap(new IdentityHashMap<>());
+	private static final Map<UUID, BlockPos> HOUSE_WAITING_ASSIGNMENTS = new HashMap<>();
 	private static long nextOutsideBackroomsSweepTick = 0L;
 
 	private ServerBackroomsStalkerSystem() {
@@ -60,6 +63,8 @@ public final class ServerBackroomsStalkerSystem {
 
 	public static void register() {
 		STALKER_RUN_LOOP_STATES.clear();
+		TRACKED_STALKERS.clear();
+		HOUSE_WAITING_ASSIGNMENTS.clear();
 		nextOutsideBackroomsSweepTick = 0L;
 		ServerTickEvents.END_SERVER_TICK.register(ServerBackroomsStalkerSystem::tickServer);
 		AttackEntityCallback.EVENT.register(ServerBackroomsStalkerSystem::onAttackEntity);
@@ -70,12 +75,23 @@ public final class ServerBackroomsStalkerSystem {
 			if (!(entity instanceof BackroomsStalkerEntity stalker)
 					|| !(world instanceof ServerLevel level)
 					|| !ServerBackroomsSystem.isBackrooms(level)) {
+				TRACKED_STALKERS.remove(entity);
+				if (entity != null) {
+					HOUSE_WAITING_ASSIGNMENTS.remove(entity.getUUID());
+				}
 				entity.discard();
 				return;
 			}
+			TRACKED_STALKERS.add(stalker);
 			stalker.setInvulnerable(true);
 			stalker.setSilent(true);
 			stalker.attachPolymerAppearance();
+		});
+		ServerEntityEvents.ENTITY_UNLOAD.register((entity, world) -> {
+			if (entity instanceof BackroomsStalkerEntity stalker) {
+				TRACKED_STALKERS.remove(stalker);
+				HOUSE_WAITING_ASSIGNMENTS.remove(stalker.getUUID());
+			}
 		});
 	}
 
@@ -115,6 +131,8 @@ public final class ServerBackroomsStalkerSystem {
 			if (assigned != null) {
 				if (houseWaitingPos != null && !assigned.isChasingTarget()) {
 					moveStalkerToHouseWaitingPos(backrooms, assigned, houseWaitingPos);
+				} else {
+					HOUSE_WAITING_ASSIGNMENTS.remove(assigned.getUUID());
 				}
 				assignedStalkers.add(assigned);
 				activeStalkers.add(assigned);
@@ -271,15 +289,18 @@ public final class ServerBackroomsStalkerSystem {
 	}
 
 	private static void discardOutsideBackrooms(MinecraftServer server) {
-		for (ServerLevel level : server.getAllLevels()) {
-			if (ServerBackroomsSystem.isBackrooms(level)) {
+		List<BackroomsStalkerEntity> toDiscard = new ArrayList<>();
+		for (BackroomsStalkerEntity stalker : TRACKED_STALKERS) {
+			if (stalker == null || stalker.isRemoved() || !stalker.isAlive()) {
 				continue;
 			}
-			for (Entity entity : level.getAllEntities()) {
-				if (BackroomsStalkerEntity.isStalker(entity)) {
-					entity.discard();
-				}
+			if (!ServerBackroomsSystem.isBackrooms(stalker.level())) {
+				toDiscard.add(stalker);
 			}
+		}
+		for (BackroomsStalkerEntity stalker : toDiscard) {
+			HOUSE_WAITING_ASSIGNMENTS.remove(stalker.getUUID());
+			stalker.discard();
 		}
 	}
 
@@ -298,9 +319,15 @@ public final class ServerBackroomsStalkerSystem {
 	}
 
 	private static List<BackroomsStalkerEntity> collectStalkers(ServerLevel level) {
-		List<BackroomsStalkerEntity> stalkers = new ArrayList<>();
-		for (Entity entity : level.getAllEntities()) {
-			if (entity instanceof BackroomsStalkerEntity stalker) {
+		List<BackroomsStalkerEntity> stalkers = new ArrayList<>(TRACKED_STALKERS.size());
+		var iterator = TRACKED_STALKERS.iterator();
+		while (iterator.hasNext()) {
+			BackroomsStalkerEntity stalker = iterator.next();
+			if (stalker == null || stalker.isRemoved()) {
+				iterator.remove();
+				continue;
+			}
+			if (stalker.level() == level) {
 				stalkers.add(stalker);
 			}
 		}
@@ -513,6 +540,12 @@ public final class ServerBackroomsStalkerSystem {
 	private static void moveStalkerToHouseWaitingPos(ServerLevel level, BackroomsStalkerEntity stalker, BlockPos waitingPos) {
 		Vec3 waitingSpawn = findOpenPositionAtExactY(level, stalker, waitingPos.getX(), waitingPos.getY(), waitingPos.getZ());
 		if (waitingSpawn == null) {
+			return;
+		}
+
+		BlockPos waitingAnchor = BlockPos.containing(waitingSpawn);
+		BlockPos previousAssignment = HOUSE_WAITING_ASSIGNMENTS.put(stalker.getUUID(), waitingAnchor);
+		if (waitingAnchor.equals(previousAssignment)) {
 			return;
 		}
 

@@ -34,7 +34,7 @@ import net.minecraft.world.level.levelgen.structure.StructureSet;
 
 import java.util.List;
 import java.util.Arrays;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -66,6 +66,8 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	private static final BlockState EXIT_SIGN_WALL_BLOCK = ModBlocks.EXIT_WALL_SIGN.defaultBlockState();
 	private static final long BACKROOMS_VARIANT_SALT = 0x4c47324241434b52L;
 	private static final BlockState AIR = Blocks.AIR.defaultBlockState();
+	private static final int CHUNK_LAYOUT_BORDER = 1;
+	private static final int CHUNK_LAYOUT_SIZE = 16 + (CHUNK_LAYOUT_BORDER * 2);
 	private static final ThreadLocal<GeneratorCache> GENERATOR_CACHE = ThreadLocal.withInitial(GeneratorCache::new);
 
 	private final BackroomsBiomeSource backroomsBiomeSource;
@@ -104,13 +106,13 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			ChunkAccess chunk
 	) {
 		BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
-		Map<Long, ColumnLayout> columnCache = new HashMap<>();
 		int minBlockX = chunk.getPos().getMinBlockX();
 		int minBlockZ = chunk.getPos().getMinBlockZ();
 		int minY = chunk.getMinY();
 		int maxY = minY + chunk.getHeight() - 1;
 		int firstLevelIndex = BackroomsLayout.getLevelIndex(minY);
 		int lastLevelIndex = BackroomsLayout.getLevelIndex(maxY);
+		ChunkLayoutGrid layoutGrid = new ChunkLayoutGrid(minBlockX, minBlockZ, firstLevelIndex, lastLevelIndex);
 
 		for (int localX = 0; localX < 16; localX++) {
 			int worldX = minBlockX + localX;
@@ -123,9 +125,9 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 						continue;
 					}
 
-					ColumnLayout layout = getColumnLayout(worldX, worldZ, levelIndex, columnCache);
+					ColumnLayout layout = layoutGrid.get(localX, localZ, levelIndex);
 					Direction exitSignFacing = layout.corridor
-							? getExitSignFacingAt(worldX, worldZ, levelIndex, columnCache)
+							? layoutGrid.getExitSignFacing(localX, localZ, levelIndex)
 							: null;
 					BackroomsSpecialRooms.ColumnStates columnStates = BackroomsSpecialRooms.createBaseStates(
 							layout.doorPlacement,
@@ -141,7 +143,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 					);
 					BackroomsSpecialRooms.applyColumnOverrides(layout.specialRoom, layout.ladderRoom, worldX, worldZ, floorY, ceilingY, columnStates);
 
-					if (floorY >= minY) {
+					if (floorY >= minY && !columnStates.floor().isAir()) {
 						setChunkBlock(chunk, mutablePos, localX, floorY, localZ, columnStates.floor());
 					}
 
@@ -166,7 +168,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 						}
 					}
 
-					if (ceilingY <= maxY) {
+					if (ceilingY <= maxY && !columnStates.ceiling().isAir()) {
 						setChunkBlock(chunk, mutablePos, localX, ceilingY, localZ, columnStates.ceiling());
 					}
 				}
@@ -241,7 +243,6 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	public NoiseColumn getBaseColumn(int x, int z, LevelHeightAccessor levelHeightAccessor, RandomState randomState) {
 		int minY = levelHeightAccessor.getMinY();
 		int height = levelHeightAccessor.getHeight();
-		Map<Long, ColumnLayout> columnCache = new HashMap<>();
 		BlockState[] states = new BlockState[height];
 		Arrays.fill(states, AIR);
 
@@ -255,9 +256,9 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 				continue;
 			}
 
-			ColumnLayout layout = getColumnLayout(x, z, levelIndex, columnCache);
+			ColumnLayout layout = getSharedColumnLayout(x, z, levelIndex);
 			Direction exitSignFacing = layout.corridor
-					? getExitSignFacingAt(x, z, levelIndex, columnCache)
+					? getExitSignFacingAt(x, z, levelIndex)
 					: null;
 			BackroomsSpecialRooms.ColumnStates columnStates = BackroomsSpecialRooms.createBaseStates(
 					layout.doorPlacement,
@@ -273,11 +274,21 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			);
 			BackroomsSpecialRooms.applyColumnOverrides(layout.specialRoom, layout.ladderRoom, x, z, floorY, ceilingY, columnStates);
 
-			setColumnState(states, minY, floorY, columnStates.floor());
-			setColumnState(states, minY, floorY + 1, columnStates.lower());
-			setColumnState(states, minY, floorY + 2, columnStates.upper());
-			setColumnState(states, minY, floorY + 3, columnStates.top());
-			setColumnState(states, minY, ceilingY, columnStates.ceiling());
+			if (!columnStates.floor().isAir()) {
+				setColumnState(states, minY, floorY, columnStates.floor());
+			}
+			if (!columnStates.lower().isAir()) {
+				setColumnState(states, minY, floorY + 1, columnStates.lower());
+			}
+			if (!columnStates.upper().isAir()) {
+				setColumnState(states, minY, floorY + 2, columnStates.upper());
+			}
+			if (!columnStates.top().isAir()) {
+				setColumnState(states, minY, floorY + 3, columnStates.top());
+			}
+			if (!columnStates.ceiling().isAir()) {
+				setColumnState(states, minY, ceilingY, columnStates.ceiling());
+			}
 		}
 
 		return new NoiseColumn(minY, states);
@@ -294,18 +305,12 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 		}
 	}
 
-	private static ColumnLayout getColumnLayout(int x, int z, int levelIndex, Map<Long, ColumnLayout> columnCache) {
+	private static ColumnLayout getSharedColumnLayout(int x, int z, int levelIndex) {
 		long key = BlockPos.asLong(x, levelIndex, z);
-		ColumnLayout cached = columnCache.get(key);
+		GeneratorCache generatorCache = generatorCache();
+		ColumnLayout cached = generatorCache.columnLayoutCache.get(key);
 		if (cached != null) {
 			return cached;
-		}
-
-		GeneratorCache generatorCache = generatorCache();
-		ColumnLayout sharedCached = generatorCache.columnLayoutCache.get(key);
-		if (sharedCached != null) {
-			columnCache.put(key, sharedCached);
-			return sharedCached;
 		}
 
 		BackroomsLayout.ZoneType zone = BackroomsLayout.getZoneAtBlock(x, z, levelIndex);
@@ -322,7 +327,6 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 				specialRoom,
 				ladderRoom
 		);
-		columnCache.put(key, layout);
 		generatorCache.columnLayoutCache.put(key, layout);
 		return layout;
 	}
@@ -340,7 +344,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 				.setValue(net.minecraft.world.level.block.DoorBlock.HALF, half);
 	}
 
-	private static Direction getExitSignFacingAt(int x, int z, int levelIndex, Map<Long, ColumnLayout> columnCache) {
+	private static Direction getExitSignFacingAt(int x, int z, int levelIndex) {
 		long key = BlockPos.asLong(x, levelIndex, z);
 		GeneratorCache generatorCache = generatorCache();
 		Optional<Direction> cached = generatorCache.exitSignCache.get(key);
@@ -351,7 +355,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 		for (Direction supportDirection : Direction.Plane.HORIZONTAL) {
 			int supportX = x + supportDirection.getStepX();
 			int supportZ = z + supportDirection.getStepZ();
-			BackroomsLayout.DoorPlacement placement = getColumnLayout(supportX, supportZ, levelIndex, columnCache).doorPlacement;
+			BackroomsLayout.DoorPlacement placement = getSharedColumnLayout(supportX, supportZ, levelIndex).doorPlacement;
 			if (placement != null && placement.facing() == supportDirection) {
 				Direction facing = supportDirection.getOpposite();
 				generatorCache.exitSignCache.put(key, Optional.of(facing));
@@ -364,9 +368,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	}
 
 	private static GeneratorCache generatorCache() {
-		GeneratorCache cache = GENERATOR_CACHE.get();
-		cache.trimIfNeeded();
-		return cache;
+		return GENERATOR_CACHE.get();
 	}
 
 	private static BlockState createExitSignState(Direction facing) {
@@ -374,9 +376,9 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	}
 
 	private static void setChunkBlock(ChunkAccess chunk, BlockPos.MutableBlockPos mutablePos, int localX, int y, int localZ, BlockState state) {
-		BlockPos worldPos = new BlockPos(chunk.getPos().getMinBlockX() + localX, y, chunk.getPos().getMinBlockZ() + localZ);
 		chunk.setBlockState(mutablePos.set(localX, y, localZ), state);
 		if (state.getBlock() instanceof EntityBlock entityBlock) {
+			BlockPos worldPos = new BlockPos(chunk.getPos().getMinBlockX() + localX, y, chunk.getPos().getMinBlockZ() + localZ);
 			BlockEntity blockEntity = entityBlock.newBlockEntity(worldPos, state);
 			if (blockEntity != null) {
 				if (blockEntity instanceof ChestBlockEntity chestBlockEntity) {
@@ -454,20 +456,72 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	) {
 	}
 
+	private static final class ChunkLayoutGrid {
+		private final int minBlockX;
+		private final int minBlockZ;
+		private final int firstLevelIndex;
+		private final int levelCount;
+		private final ColumnLayout[] layouts;
+
+		ChunkLayoutGrid(int minBlockX, int minBlockZ, int firstLevelIndex, int lastLevelIndex) {
+			this.minBlockX = minBlockX;
+			this.minBlockZ = minBlockZ;
+			this.firstLevelIndex = firstLevelIndex;
+			this.levelCount = lastLevelIndex - firstLevelIndex + 1;
+			this.layouts = new ColumnLayout[CHUNK_LAYOUT_SIZE * CHUNK_LAYOUT_SIZE * this.levelCount];
+
+			for (int levelOffset = 0; levelOffset < this.levelCount; levelOffset++) {
+				int levelIndex = this.firstLevelIndex + levelOffset;
+				for (int gridX = 0; gridX < CHUNK_LAYOUT_SIZE; gridX++) {
+					int worldX = this.minBlockX + gridX - CHUNK_LAYOUT_BORDER;
+					for (int gridZ = 0; gridZ < CHUNK_LAYOUT_SIZE; gridZ++) {
+						int worldZ = this.minBlockZ + gridZ - CHUNK_LAYOUT_BORDER;
+						this.layouts[index(gridX, gridZ, levelOffset)] = getSharedColumnLayout(worldX, worldZ, levelIndex);
+					}
+				}
+			}
+		}
+
+		ColumnLayout get(int localX, int localZ, int levelIndex) {
+			return this.layouts[index(localX + CHUNK_LAYOUT_BORDER, localZ + CHUNK_LAYOUT_BORDER, levelIndex - this.firstLevelIndex)];
+		}
+
+		Direction getExitSignFacing(int localX, int localZ, int levelIndex) {
+			int levelOffset = levelIndex - this.firstLevelIndex;
+			int gridX = localX + CHUNK_LAYOUT_BORDER;
+			int gridZ = localZ + CHUNK_LAYOUT_BORDER;
+			for (Direction supportDirection : Direction.Plane.HORIZONTAL) {
+				ColumnLayout support = this.layouts[index(
+						gridX + supportDirection.getStepX(),
+						gridZ + supportDirection.getStepZ(),
+						levelOffset
+				)];
+				if (support.doorPlacement != null && support.doorPlacement.facing() == supportDirection) {
+					return supportDirection.getOpposite();
+				}
+			}
+			return null;
+		}
+
+		private int index(int gridX, int gridZ, int levelOffset) {
+			return (levelOffset * CHUNK_LAYOUT_SIZE * CHUNK_LAYOUT_SIZE) + (gridX * CHUNK_LAYOUT_SIZE) + gridZ;
+		}
+	}
+
 	private static final class GeneratorCache {
-		private static final int MAX_COLUMN_LAYOUT_CACHE = 65536;
+		private static final int MAX_COLUMN_LAYOUT_CACHE = 131072;
 		private static final int MAX_EXIT_SIGN_CACHE = 65536;
 
-		final Map<Long, ColumnLayout> columnLayoutCache = new HashMap<>();
-		final Map<Long, Optional<Direction>> exitSignCache = new HashMap<>();
+		final Map<Long, ColumnLayout> columnLayoutCache = createCappedCache(MAX_COLUMN_LAYOUT_CACHE);
+		final Map<Long, Optional<Direction>> exitSignCache = createCappedCache(MAX_EXIT_SIGN_CACHE);
 
-		void trimIfNeeded() {
-			if (this.columnLayoutCache.size() > MAX_COLUMN_LAYOUT_CACHE) {
-				this.columnLayoutCache.clear();
-			}
-			if (this.exitSignCache.size() > MAX_EXIT_SIGN_CACHE) {
-				this.exitSignCache.clear();
-			}
+		private static <K, V> Map<K, V> createCappedCache(int maxSize) {
+			return new LinkedHashMap<>(256, 0.75F, true) {
+				@Override
+				protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
+					return this.size() > maxSize;
+				}
+			};
 		}
 	}
 }

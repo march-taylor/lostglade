@@ -16,6 +16,9 @@ import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 public final class BackroomsSpecialRooms {
 	private static final long BACKROOMS_VARIANT_SALT = 0x4c47324241434b52L;
 	private static final long STAIRS_LAYOUT_SALT = 0x535441495253524DL;
@@ -24,6 +27,7 @@ public final class BackroomsSpecialRooms {
 	private static final long HOUSE_HALL_LAYOUT_SALT = 0x484F55534548414CL;
 	private static final long PLUS_MAZE_LAYOUT_SALT = 0x504C55534D415A45L;
 	private static final double UPPER_LADDER_CRAWL_Y_OFFSET = 0.8D;
+	private static final ThreadLocal<ProfileCache> PROFILE_CACHE = ThreadLocal.withInitial(ProfileCache::new);
 	private static final BlockState BACKROOMS_DOOR_BLOCK = ModBlocks.BACKROOMS_DOOR.defaultBlockState();
 	private static final BlockState EXIT_SIGN_WALL_BLOCK = ModBlocks.EXIT_WALL_SIGN.defaultBlockState();
 	private static final BlockState CHEST_BLOCK = Blocks.CHEST.defaultBlockState();
@@ -257,10 +261,19 @@ public final class BackroomsSpecialRooms {
 	}
 
 	private static VoidHallProfile buildVoidHallProfile(BackroomsLayout.SpecialRoomPlacement room) {
+		long key = roomProfileKey(room, VOID_HALL_LAYOUT_SALT, room.baseLevelIndex());
+		ProfileCache cache = PROFILE_CACHE.get();
+		VoidHallProfile cached = cache.voidHallProfiles.get(key);
+		if (cached != null) {
+			return cached;
+		}
+
 		long seed = mix(room.cellX(), room.cellZ(), VOID_HALL_LAYOUT_SALT ^ levelSalt(room.baseLevelIndex()));
 		int borderWidth = 3 + positiveMod(seed ^ 0x564F4944424F5244L, 3);
 		int holeRadius = Math.max(1, Math.min(room.roomHalfWidth(), room.roomHalfHeight()) - borderWidth);
-		return new VoidHallProfile(room, borderWidth, holeRadius);
+		VoidHallProfile profile = new VoidHallProfile(room, borderWidth, holeRadius);
+		cache.voidHallProfiles.put(key, profile);
+		return profile;
 	}
 
 	private static void applyVoidHall(
@@ -311,16 +324,34 @@ public final class BackroomsSpecialRooms {
 	}
 
 	private static FloorHolesProfile buildFloorHolesProfile(BackroomsLayout.SpecialRoomPlacement room, int levelIndex) {
+		long key = roomProfileKey(room, FLOOR_HOLES_LAYOUT_SALT, levelIndex);
+		ProfileCache cache = PROFILE_CACHE.get();
+		FloorHolesProfile cached = cache.floorHolesProfiles.get(key);
+		if (cached != null) {
+			return cached;
+		}
+
 		long seed = mix(room.cellX(), room.cellZ(), FLOOR_HOLES_LAYOUT_SALT ^ levelSalt(levelIndex));
 		boolean tallRoom = !BackroomsLayout.isTopmostFullLevel(levelIndex)
 				&& positiveMod(seed ^ 0x4845494748544648L, 100) < 45;
 		int piercedFloors = 1 + positiveMod(seed ^ 0x5049455243454450L, 2);
-		return new FloorHolesProfile(room, levelIndex, tallRoom, piercedFloors);
+		FloorHolesProfile profile = new FloorHolesProfile(room, levelIndex, tallRoom, piercedFloors);
+		cache.floorHolesProfiles.put(key, profile);
+		return profile;
 	}
 
 	private static PlusMazeProfile buildPlusMazeProfile(BackroomsLayout.SpecialRoomPlacement room) {
+		long key = roomProfileKey(room, PLUS_MAZE_LAYOUT_SALT, room.baseLevelIndex());
+		ProfileCache cache = PROFILE_CACHE.get();
+		PlusMazeProfile cached = cache.plusMazeProfiles.get(key);
+		if (cached != null) {
+			return cached;
+		}
+
 		long seed = mix(room.cellX(), room.cellZ(), PLUS_MAZE_LAYOUT_SALT ^ levelSalt(room.baseLevelIndex()));
-		return new PlusMazeProfile(room, seed, 6);
+		PlusMazeProfile profile = new PlusMazeProfile(room, seed, 6);
+		cache.plusMazeProfiles.put(key, profile);
+		return profile;
 	}
 
 	private static void applyPlusMaze(
@@ -535,11 +566,20 @@ public final class BackroomsSpecialRooms {
 	}
 
 	private static TrashRoomProfile buildTrashRoomProfile(BackroomsLayout.SpecialRoomPlacement room, int levelIndex) {
+		long key = roomProfileKey(room, 0x5452415348505246L, levelIndex);
+		ProfileCache cache = PROFILE_CACHE.get();
+		TrashRoomProfile cached = cache.trashRoomProfiles.get(key);
+		if (cached != null) {
+			return cached;
+		}
+
 		long seed = trashSalt(room, levelIndex);
 		boolean tallRoom = !BackroomsLayout.isTopmostFullLevel(levelIndex)
 				&& positiveMod(seed ^ 0x4845494748543431L, 100) < 45;
 		int pileCount = 2 + positiveMod(seed ^ 0x50494C45434F554EL, 3);
-		return new TrashRoomProfile(room, levelIndex, tallRoom, pileCount);
+		TrashRoomProfile profile = new TrashRoomProfile(room, levelIndex, tallRoom, pileCount);
+		cache.trashRoomProfiles.put(key, profile);
+		return profile;
 	}
 
 	private static boolean isTrashChestColumn(TrashRoomProfile profile, int x, int z) {
@@ -1173,6 +1213,13 @@ public final class BackroomsSpecialRooms {
 	}
 
 	private static HouseHallProfile buildHouseHallProfile(BackroomsLayout.SpecialRoomPlacement room) {
+		long key = roomProfileKey(room, HOUSE_HALL_LAYOUT_SALT, room.baseLevelIndex());
+		ProfileCache cache = PROFILE_CACHE.get();
+		HouseHallProfile cached = cache.houseHallProfiles.get(key);
+		if (cached != null) {
+			return cached;
+		}
+
 		long seed = mix(room.cellX(), room.cellZ(), HOUSE_HALL_LAYOUT_SALT ^ levelSalt(room.baseLevelIndex()));
 		Direction[] directions = {Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST};
 		Block[] carpetPalette = {Blocks.RED_CARPET, Blocks.GREEN_CARPET, Blocks.BROWN_CARPET, Blocks.GRAY_CARPET};
@@ -1292,7 +1339,7 @@ public final class BackroomsSpecialRooms {
 		}
 		Direction chestFacing = getWallFacingFromDepthSide(doorFacing, houseHalf, chestDepth, chestSide);
 		Direction secondChestFacing = getWallFacingFromDepthSide(doorFacing, houseHalf, secondChestDepth, secondChestSide);
-		return new HouseHallProfile(
+		HouseHallProfile profile = new HouseHallProfile(
 				room,
 				seed,
 				room.roomCenterX(),
@@ -1335,6 +1382,8 @@ public final class BackroomsSpecialRooms {
 				1 + positiveMod(seed ^ 0x4341525052445349L, 2),
 				carpetPalette[positiveMod(seed ^ 0x4341525045545344L, carpetPalette.length)]
 		);
+		cache.houseHallProfiles.put(key, profile);
+		return profile;
 	}
 
 	private static boolean[] chooseHouseHallFeatures(long seed, int structureCount) {
@@ -1880,6 +1929,13 @@ public final class BackroomsSpecialRooms {
 	}
 
 	private static StairsProfile buildStairsProfile(BackroomsLayout.SpecialRoomPlacement placement, int levelIndex) {
+		long key = roomProfileKey(placement, STAIRS_LAYOUT_SALT, levelIndex);
+		ProfileCache cache = PROFILE_CACHE.get();
+		StairsProfile cached = cache.stairsProfiles.get(key);
+		if (cached != null) {
+			return cached;
+		}
+
 		long sample = mix(placement.cellX(), placement.cellZ(), STAIRS_LAYOUT_SALT ^ levelSalt(levelIndex));
 		boolean xAxis = placement.roomHalfWidth() > placement.roomHalfHeight()
 				|| (placement.roomHalfWidth() == placement.roomHalfHeight() && ((sample >>> 1) & 1L) == 0L);
@@ -1902,7 +1958,7 @@ public final class BackroomsSpecialRooms {
 			}
 		}
 
-		return new StairsProfile(
+		StairsProfile profile = new StairsProfile(
 				placement,
 				levelIndex,
 				xAxis,
@@ -1912,6 +1968,8 @@ public final class BackroomsSpecialRooms {
 				turnStepX,
 				turnStepZ
 		);
+		cache.stairsProfiles.put(key, profile);
+		return profile;
 	}
 
 	private static void applyStairsLowerLevel(
@@ -2206,6 +2264,12 @@ public final class BackroomsSpecialRooms {
 		return mix(levelIndex, levelIndex ^ 0x51F2A, 0x4C564C53414C5431L);
 	}
 
+	private static long roomProfileKey(BackroomsLayout.SpecialRoomPlacement room, long salt, int levelIndex) {
+		return BlockPos.asLong(room.cellX(), levelIndex, room.cellZ())
+				^ (((long) room.type().ordinal()) << 60)
+				^ salt;
+	}
+
 	static final class ColumnStates {
 		private BlockState floor;
 		private BlockState lower;
@@ -2263,6 +2327,31 @@ public final class BackroomsSpecialRooms {
 	}
 
 	private record Point(int x, int z) {
+	}
+
+	private static final class ProfileCache {
+		private static final int MAX_TRASH_ROOM_PROFILES = 2048;
+		private static final int MAX_FLOOR_HOLES_PROFILES = 2048;
+		private static final int MAX_PLUS_MAZE_PROFILES = 1024;
+		private static final int MAX_VOID_HALL_PROFILES = 1024;
+		private static final int MAX_STAIRS_PROFILES = 2048;
+		private static final int MAX_HOUSE_HALL_PROFILES = 1024;
+
+		final Map<Long, TrashRoomProfile> trashRoomProfiles = createCappedCache(MAX_TRASH_ROOM_PROFILES);
+		final Map<Long, FloorHolesProfile> floorHolesProfiles = createCappedCache(MAX_FLOOR_HOLES_PROFILES);
+		final Map<Long, PlusMazeProfile> plusMazeProfiles = createCappedCache(MAX_PLUS_MAZE_PROFILES);
+		final Map<Long, VoidHallProfile> voidHallProfiles = createCappedCache(MAX_VOID_HALL_PROFILES);
+		final Map<Long, StairsProfile> stairsProfiles = createCappedCache(MAX_STAIRS_PROFILES);
+		final Map<Long, HouseHallProfile> houseHallProfiles = createCappedCache(MAX_HOUSE_HALL_PROFILES);
+
+		private static <K, V> Map<K, V> createCappedCache(int maxSize) {
+			return new LinkedHashMap<>(128, 0.75F, true) {
+				@Override
+				protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
+					return this.size() > maxSize;
+				}
+			};
+		}
 	}
 
 	private record TrashRoomProfile(
