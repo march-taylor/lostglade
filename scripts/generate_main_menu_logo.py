@@ -1,44 +1,59 @@
 from __future__ import annotations
 
 import math
-import random
 from pathlib import Path
-from typing import Iterable
 
 from PIL import Image, ImageChops, ImageDraw
 
-ROOT = Path('/home/mart/Desktop/lostglade')
-SOURCE_LOGO = Path('/home/mart/Pictures/logos/lostglade_px.png')
-OUTPUT_SHEET = ROOT / 'mods/lg2-0.1.0/src/main/resources/assets/minecraft/textures/font/main_menu_logo_anim.png'
-PREVIEW = Path('/tmp/main_menu_logo_preview.png')
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_DIR = Path(__file__).resolve().parent
+ASSETS_DIR = SCRIPT_DIR / 'assets'
+SOURCE_LOGO = ASSETS_DIR / 'lostglade_px.png'
+OUTPUT_DIRS = [
+    ROOT / 'mods/lg2-0.1.0/src/main/resources/assets/minecraft/textures/font',
+    ROOT / 'polymer/source_assets/assets/minecraft/textures/font',
+]
+PREVIEW_DIR = ROOT / '.tmp'
+GLITCH_NAME = 'main_menu_logo_anim.png'
+DVD_NAME = 'main_menu_logo_dvd_anim.png'
+PREVIEW_GLITCH = PREVIEW_DIR / 'main_menu_logo_preview_glitch.png'
+PREVIEW_DVD = PREVIEW_DIR / 'main_menu_logo_preview_dvd.png'
 
 CANVAS_W = 176
 CANVAS_H = 204
 SCREEN_X = 19
 SCREEN_Y = 82
-SCREEN_W = 101
+SCREEN_W = 100
 SCREEN_H = 51
 INNER_X = SCREEN_X + 1
 INNER_Y = SCREEN_Y + 1
 INNER_W = SCREEN_W - 2
 INNER_H = SCREEN_H - 2
-FRAME_COUNT = 16
-GRID_COLS = 4
-GRID_ROWS = 4
 GLYPH_W = CANVAS_W
 GLYPH_H = CANVAS_H
-SHEET_W = GLYPH_W * GRID_COLS
-SHEET_H = GLYPH_H * GRID_ROWS
 
-# Pixel-art friendly target that still fills the screen nicely.
-LOGO_W = 54
-LOGO_H = 36
+GLITCH_FRAME_COUNT = 16
+GLITCH_GRID_COLS = 4
+GLITCH_GRID_ROWS = 4
+DVD_FRAME_COUNT = 130
+DVD_GRID_COLS = 10
+DVD_GRID_ROWS = 13
+
+GLITCH_LOGO_W = 48
+GLITCH_LOGO_H = 32
+DVD_MARGIN_X = 0
+DVD_MARGIN_Y = 0
+DVD_SPEED_X = 6
+DVD_SPEED_Y = 7
+
 SCREEN_BG = (0x18, 0x15, 0x14)
 SCREEN_FRAME = (0x29, 0x2F, 0x2F)
-
-
-def lerp(a: float, b: float, t: float) -> float:
-    return a + (b - a) * t
+SIGNAL_BRIGHT = (0x22, 0x1B, 0x14)
+SIGNAL_DARK = (0x15, 0x12, 0x11)
+REFLECTION = (0x5C, 0x5E, 0x5C, 14)
+AMBER_GLOW = (255, 154, 44)
+CYAN_GLOW = (68, 255, 234)
+CORE_GLOW = (110, 255, 240)
 
 
 def clamp(value: int, low: int, high: int) -> int:
@@ -60,52 +75,45 @@ def inside_screen_mask(x: int, y: int) -> bool:
     }
 
 
-def make_gradient_background(frame: int) -> Image.Image:
+def make_screen_base(frame: int, total_frames: int) -> Image.Image:
     img = Image.new('RGBA', (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     px = img.load()
-    sweep = (frame / FRAME_COUNT) * (INNER_H + 14) - 7
-    phase = frame / FRAME_COUNT * math.tau
+    phase = frame / total_frames * math.tau
+    sweep = (frame / total_frames) * (INNER_H + 12) - 6
 
     for y in range(SCREEN_Y, SCREEN_Y + SCREEN_H):
         for x in range(SCREEN_X, SCREEN_X + SCREEN_W):
             if not inside_screen_mask(x, y):
                 continue
-            border = x in (SCREEN_X, SCREEN_X + SCREEN_W - 1) or y in (SCREEN_Y, SCREEN_Y + SCREEN_H - 1)
-            if border:
+
+            if x in (SCREEN_X, SCREEN_X + SCREEN_W - 1) or y in (SCREEN_Y, SCREEN_Y + SCREEN_H - 1):
                 px[x, y] = (*SCREEN_FRAME, 255)
                 continue
 
             r, g, b = SCREEN_BG
-
-            # Very light scanline movement like unstable signal.
             if ((y + frame) % 4) in (0, 1):
-                r -= 1
-                g -= 1
-                b -= 1
+                r, g, b = SIGNAL_DARK
 
-            # Soft horizontal sweep without leaving the original palette family.
             distance = abs((y - INNER_Y) - sweep)
-            if distance < 3.5:
-                glow = 1.0 - (distance / 3.5)
-                r += int(7 * glow)
-                g += int(6 * glow)
-                b += int(6 * glow)
+            if distance < 3.2:
+                glow = 1.0 - (distance / 3.2)
+                r = clamp(r + int(4 * glow), 0, 255)
+                g = clamp(g + int(4 * glow), 0, 255)
+                b = clamp(b + int(3 * glow), 0, 255)
 
-            # Weak signal shimmer.
-            signal = math.sin((x * 0.19) + phase * 1.1) + math.sin((y * 0.37) + phase * 0.8)
-            signal += math.sin(((x + y) * 0.11) - phase * 0.6)
-            signal = signal / 3.0
-            signal_delta = int(round(signal * 2.0))
-            r += signal_delta
-            g += signal_delta
-            b += signal_delta
-
-            px[x, y] = (clamp(r, 0, 255), clamp(g, 0, 255), clamp(b, 0, 255), 255)
+            signal = math.sin((x * 0.17) + phase * 1.1)
+            signal += math.sin((y * 0.31) + phase * 0.8)
+            signal += math.sin(((x + y) * 0.09) - phase * 0.7)
+            signal_delta = int(round((signal / 3.0) * 1.1))
+            r = clamp(r + signal_delta, 0, 255)
+            g = clamp(g + signal_delta, 0, 255)
+            b = clamp(b + signal_delta, 0, 255)
+            px[x, y] = (r, g, b, 255)
 
     return img
 
 
-def dilate_alpha(alpha: Image.Image, offsets: Iterable[tuple[int, int]]) -> Image.Image:
+def dilate_alpha(alpha: Image.Image, offsets: list[tuple[int, int]]) -> Image.Image:
     result = Image.new('L', alpha.size, 0)
     for dx, dy in offsets:
         shifted = ImageChops.offset(alpha, dx, dy)
@@ -121,132 +129,136 @@ def dilate_alpha(alpha: Image.Image, offsets: Iterable[tuple[int, int]]) -> Imag
     return result
 
 
-def bend_logo(logo: Image.Image, phase: float) -> Image.Image:
-    out = Image.new('RGBA', logo.size, (0, 0, 0, 0))
-    for y in range(logo.height):
-        wave = math.sin((y / max(1, logo.height - 1)) * math.tau * 0.9 + phase)
-        drift = math.sin((y / max(1, logo.height - 1)) * math.tau * 2.1 + phase * 1.2)
-        shift = int(round(wave * 0.8 + drift * 0.35))
-        row = logo.crop((0, y, logo.width, y + 1))
-        out.alpha_composite(row, (shift, y))
-    return out
-
-
-def glitch_logo(logo: Image.Image, frame: int) -> Image.Image:
-    glitched = logo.copy()
-    if frame not in {5, 13}:
-        return glitched
-
-    y = 8 + ((frame * 5) % max(1, logo.height - 16))
-    h = 3
-    shift = -2 if frame == 5 else 2
-    band = glitched.crop((0, y, logo.width, min(logo.height, y + h)))
-    glitched.paste((0, 0, 0, 0), (0, y, logo.width, min(logo.height, y + h)))
-    glitched.alpha_composite(band, (shift, y))
-    return glitched
-
-
-def make_logo_frame(base_logo: Image.Image, frame: int) -> Image.Image:
-    phase = frame / FRAME_COUNT * math.tau
-    logo = bend_logo(base_logo, phase)
-    logo = glitch_logo(logo, frame)
-
-    canvas = Image.new('RGBA', (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
-    cx = SCREEN_X + (SCREEN_W - LOGO_W) // 2
-    cy = SCREEN_Y + (SCREEN_H - LOGO_H) // 2 + 1
-    bob_x = 0
-    bob_y = 0
-    x = cx + bob_x
-    y = cy + bob_y
-
+def add_logo_glow(canvas: Image.Image, logo: Image.Image, x: int, y: int, glow_boost: float = 1.0) -> None:
     alpha = logo.getchannel('A')
-    outer_glow = dilate_alpha(alpha, [(-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1), (-1, 1), (1, -1)])
-    inner_glow = dilate_alpha(alpha, [(-1, 0), (1, 0), (0, -1), (0, 1)])
+    outer = dilate_alpha(alpha, [(-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1), (-1, 1), (1, -1)])
+    inner = dilate_alpha(alpha, [(-1, 0), (1, 0), (0, -1), (0, 1)])
 
-    amber = Image.new('RGBA', logo.size, (255, 154, 44, 0))
-    amber.putalpha(outer_glow.point(lambda v: int(v * 0.18)))
-    cyan = Image.new('RGBA', logo.size, (68, 255, 234, 0))
-    cyan.putalpha(outer_glow.point(lambda v: int(v * 0.35)))
-    core_glow = Image.new('RGBA', logo.size, (110, 255, 240, 0))
-    core_glow.putalpha(inner_glow.point(lambda v: int(v * 0.22)))
-
-    # RGB split ghosts on stronger glitch frames.
-    ghost_shift = 1 if frame in {5, 13} else 0
-    if ghost_shift:
-        red_ghost = Image.new('RGBA', logo.size, (255, 110, 90, 0))
-        red_ghost.putalpha(alpha.point(lambda v: int(v * 0.12)))
-        blue_ghost = Image.new('RGBA', logo.size, (70, 220, 255, 0))
-        blue_ghost.putalpha(alpha.point(lambda v: int(v * 0.14)))
-        canvas.alpha_composite(red_ghost, (x - ghost_shift, y))
-        canvas.alpha_composite(blue_ghost, (x + ghost_shift, y))
+    amber = Image.new('RGBA', logo.size, (*AMBER_GLOW, 0))
+    amber.putalpha(outer.point(lambda v: int(v * 0.11 * glow_boost)))
+    cyan = Image.new('RGBA', logo.size, (*CYAN_GLOW, 0))
+    cyan.putalpha(outer.point(lambda v: int(v * 0.18 * glow_boost)))
+    core = Image.new('RGBA', logo.size, (*CORE_GLOW, 0))
+    core.putalpha(inner.point(lambda v: int(v * 0.14 * glow_boost)))
 
     canvas.alpha_composite(amber, (x + 1, y + 1))
     canvas.alpha_composite(cyan, (x, y))
-    canvas.alpha_composite(core_glow, (x, y))
+    canvas.alpha_composite(core, (x, y))
     canvas.alpha_composite(logo, (x, y))
 
-    return canvas
 
-
-def add_screen_effects(frame_img: Image.Image, frame: int) -> Image.Image:
-    img = frame_img.copy()
-    overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+def add_signal_overlay(
+    frame_img: Image.Image,
+    frame: int,
+    total_frames: int,
+    rows: int = 2,
+    snow_points: int = 12,
+) -> Image.Image:
+    overlay = Image.new('RGBA', frame_img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay, 'RGBA')
-    rng = random.Random(9000 + frame)
 
-    # Thin phosphor bars.
-    for idx in range(2):
+    for idx in range(rows):
         bar_y = INNER_Y + ((frame * 4 + idx * 15) % max(1, INNER_H - 2))
-        color = (255, 176, 64, 13) if idx == 0 else (90, 255, 235, 10)
-        draw.line((INNER_X + 2, bar_y, INNER_X + INNER_W - 3, bar_y), fill=color, width=1)
+        alpha = 18 if idx == 0 else 12
+        draw.line((INNER_X + 2, bar_y, INNER_X + INNER_W - 3, bar_y), fill=(*SIGNAL_BRIGHT, alpha), width=1)
 
-    # Random tiny static.
-    for _ in range(24):
-        x = rng.randint(INNER_X + 1, INNER_X + INNER_W - 2)
-        y = rng.randint(INNER_Y + 1, INNER_Y + INNER_H - 2)
-        if not inside_screen_mask(x, y):
-            continue
-        if rng.random() < 0.86:
-            continue
-        color = rng.choice([
-            (55, 57, 56, 22),
-            (74, 77, 76, 18),
-            (33, 35, 34, 18),
-        ])
-        draw.point((x, y), fill=color)
+    for seed in range(snow_points):
+        x = INNER_X + 2 + ((frame * 11 + seed * 7) % max(1, INNER_W - 4))
+        y = INNER_Y + 2 + ((frame * 5 + seed * 13) % max(1, INNER_H - 4))
+        if inside_screen_mask(x, y):
+            tone = 45 + ((seed * 9 + frame * 3) % 10)
+            draw.point((x, y), fill=(tone, tone, tone, 16))
 
-    # Glass reflection.
-    reflection_y = INNER_Y + 5 + int((math.sin(frame / FRAME_COUNT * math.tau) + 1) * 2)
-    draw.line((INNER_X + 10, reflection_y, INNER_X + INNER_W - 14, reflection_y + 6), fill=(92, 94, 92, 14), width=1)
-    return Image.alpha_composite(img, overlay)
+    reflection_y = INNER_Y + 5 + int((math.sin(frame / total_frames * math.tau) + 1) * 2)
+    draw.line((INNER_X + 10, reflection_y, INNER_X + INNER_W - 14, reflection_y + 6), fill=REFLECTION, width=1)
+    return Image.alpha_composite(frame_img, overlay)
 
 
-def build_frame(base_logo: Image.Image, frame: int) -> Image.Image:
-    frame_img = make_gradient_background(frame)
-    frame_img.alpha_composite(make_logo_frame(base_logo, frame))
-    frame_img = add_screen_effects(frame_img, frame)
-    return frame_img
+def build_glitch_frame(base_logo: Image.Image, frame: int, total_frames: int) -> Image.Image:
+    frame_img = make_screen_base(frame, total_frames)
+    x = SCREEN_X + (SCREEN_W - base_logo.width) // 2
+    y = SCREEN_Y + (SCREEN_H - base_logo.height) // 2 + 1
+    glow_boost = 0.96 + (math.sin((frame / total_frames) * math.tau) * 0.06)
+
+    if frame in {4, 11}:
+        alpha = base_logo.getchannel('A')
+        cyan = Image.new('RGBA', base_logo.size, (*CYAN_GLOW, 0))
+        cyan.putalpha(alpha.point(lambda v: int(v * 0.07)))
+        amber = Image.new('RGBA', base_logo.size, (*AMBER_GLOW, 0))
+        amber.putalpha(alpha.point(lambda v: int(v * 0.05)))
+        frame_img.alpha_composite(cyan, (x + 1, y))
+        frame_img.alpha_composite(amber, (x - 1, y))
+
+    add_logo_glow(frame_img, base_logo, x, y, glow_boost=glow_boost)
+    return add_signal_overlay(frame_img, frame, total_frames)
+
+
+def reflect_step(frame: int, speed: int, span: int) -> int:
+    if span <= 0:
+        return 0
+    period = span * 2
+    reflected = (frame * speed) % period
+    return reflected if reflected <= span else period - reflected
+
+
+def build_dvd_frame(base_logo: Image.Image, frame: int, total_frames: int) -> Image.Image:
+    frame_img = make_screen_base(frame, total_frames)
+
+    travel_x = max(0, INNER_W - base_logo.width - (DVD_MARGIN_X * 2))
+    travel_y = max(0, INNER_H - base_logo.height - (DVD_MARGIN_Y * 2))
+    x = INNER_X + DVD_MARGIN_X + reflect_step(frame, DVD_SPEED_X, travel_x)
+    y = INNER_Y + DVD_MARGIN_Y + reflect_step(frame, DVD_SPEED_Y, travel_y)
+
+    frame_img.alpha_composite(base_logo, (x, y))
+    return add_signal_overlay(frame_img, frame, total_frames, rows=1, snow_points=8)
+
+
+def build_sheet(base_logo: Image.Image, builder, frame_count: int, cols: int, rows: int) -> Image.Image:
+    sheet_w = GLYPH_W * cols
+    sheet_h = GLYPH_H * rows
+    sheet = Image.new('RGBA', (sheet_w, sheet_h), (0, 0, 0, 0))
+    for frame in range(frame_count):
+        image = builder(base_logo, frame, frame_count)
+        col = frame % cols
+        row = frame // cols
+        sheet.alpha_composite(image, (col * GLYPH_W, row * GLYPH_H))
+    return sheet
+
+
+def build_preview(sheet: Image.Image, output: Path) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    preview = Image.new('RGBA', sheet.size, (8, 8, 8, 255))
+    preview.alpha_composite(sheet)
+    preview.save(output)
+
+
+def save_outputs(filename: str, image: Image.Image) -> None:
+    for directory in OUTPUT_DIRS:
+        directory.mkdir(parents=True, exist_ok=True)
+        image.save(directory / filename)
 
 
 def main() -> None:
-    OUTPUT_SHEET.parent.mkdir(parents=True, exist_ok=True)
-    logo = Image.open(SOURCE_LOGO).convert('RGBA').resize((LOGO_W, LOGO_H), Image.Resampling.NEAREST)
+    if not SOURCE_LOGO.exists():
+        raise FileNotFoundError(f'Missing source logo: {SOURCE_LOGO}')
 
-    sheet = Image.new('RGBA', (SHEET_W, SHEET_H), (0, 0, 0, 0))
-    preview = Image.new('RGBA', (SHEET_W, SHEET_H), (8, 8, 8, 255))
+    source_logo = Image.open(SOURCE_LOGO).convert('RGBA')
+    glitch_logo = source_logo.resize((GLITCH_LOGO_W, GLITCH_LOGO_H), Image.Resampling.NEAREST)
+    dvd_logo = source_logo.resize(
+        (max(1, source_logo.width // 2), max(1, math.ceil(source_logo.height / 2))),
+        Image.Resampling.NEAREST,
+    )
+    glitch_sheet = build_sheet(glitch_logo, build_glitch_frame, GLITCH_FRAME_COUNT, GLITCH_GRID_COLS, GLITCH_GRID_ROWS)
+    dvd_sheet = build_sheet(dvd_logo, build_dvd_frame, DVD_FRAME_COUNT, DVD_GRID_COLS, DVD_GRID_ROWS)
 
-    for frame in range(FRAME_COUNT):
-        image = build_frame(logo, frame)
-        col = frame % GRID_COLS
-        row = frame // GRID_COLS
-        pos = (col * GLYPH_W, row * GLYPH_H)
-        sheet.alpha_composite(image, pos)
-        preview.alpha_composite(image, pos)
+    save_outputs(GLITCH_NAME, glitch_sheet)
+    save_outputs(DVD_NAME, dvd_sheet)
+    build_preview(glitch_sheet, PREVIEW_GLITCH)
+    build_preview(dvd_sheet, PREVIEW_DVD)
 
-    sheet.save(OUTPUT_SHEET)
-    preview.save(PREVIEW)
-    print(f'generated {OUTPUT_SHEET}')
-    print(f'preview {PREVIEW}')
+    print(f'generated {GLITCH_NAME} and {DVD_NAME}')
+    print(f'source {SOURCE_LOGO.relative_to(ROOT)}')
+    print(f'previews {PREVIEW_GLITCH.relative_to(ROOT)} {PREVIEW_DVD.relative_to(ROOT)}')
 
 
 if __name__ == '__main__':

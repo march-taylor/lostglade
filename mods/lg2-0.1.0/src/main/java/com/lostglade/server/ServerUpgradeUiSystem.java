@@ -84,12 +84,22 @@ public final class ServerUpgradeUiSystem {
 	private static final int ERAS_PROGRESS_GLYPHS_BASE = 0xE991;
 	private static final int ERAS_AVAILABLE_GLYPHS_BASE = 0xE9C0;
 	private static final int MAIN_SCREEN_LOGO_GLYPHS_BASE = 0xE9D0;
+	private static final int MAIN_SCREEN_DVD_GLYPHS_BASE = 0xEA20;
+	private static final int MAIN_SCREEN_ARCHIVE_GLYPHS_BASE = 0xEB00;
 	private static final int ERAS_PROGRESS_FRAME_COUNT = 35;
 	private static final int ERAS_PURCHASE_STAGE_COUNT = 5;
 	private static final int ERAS_PROGRESS_FRAMES_PER_STAGE = ERAS_PROGRESS_FRAME_COUNT / ERAS_PURCHASE_STAGE_COUNT;
 	private static final int ERAS_PROGRESS_FRAME_TICKS = 2;
 	private static final int MAIN_SCREEN_LOGO_FRAME_COUNT = 16;
+	private static final int MAIN_SCREEN_DVD_FRAME_COUNT = 130;
+	private static final int MAIN_SCREEN_ARCHIVE_FRAME_COUNT = 24;
 	private static final int MAIN_SCREEN_LOGO_FRAME_TICKS = 2;
+	private static final int MAIN_SCREEN_DVD_FRAME_TICKS = 2;
+	private static final int MAIN_SCREEN_ARCHIVE_FRAME_TICKS = 2;
+	private static final double MAIN_SCREEN_ARCHIVE_VARIANT_CHANCE = 0.0001D;
+	private static final int MAIN_SCREEN_VARIANT_GLITCH = 0;
+	private static final int MAIN_SCREEN_VARIANT_DVD = 1;
+	private static final int MAIN_SCREEN_VARIANT_ARCHIVE = 2;
 	private static final int MENU_VISUAL_RESYNC_TICKS = 3;
 	private static final String[] ERAS_PROGRESS_GLYPHS = createGlyphSequence(
 			ERAS_PROGRESS_GLYPHS_BASE,
@@ -103,6 +113,14 @@ public final class ServerUpgradeUiSystem {
 			MAIN_SCREEN_LOGO_GLYPHS_BASE,
 			MAIN_SCREEN_LOGO_FRAME_COUNT
 	);
+	private static final String[] MAIN_SCREEN_DVD_GLYPHS = createGlyphSequence(
+			MAIN_SCREEN_DVD_GLYPHS_BASE,
+			MAIN_SCREEN_DVD_FRAME_COUNT
+	);
+	private static final String[] MAIN_SCREEN_ARCHIVE_GLYPHS = createGlyphSequence(
+			MAIN_SCREEN_ARCHIVE_GLYPHS_BASE,
+			MAIN_SCREEN_ARCHIVE_FRAME_COUNT
+	);
 	private static final UpgradeUiConfig.IconConfig ERA_SLOT_INVISIBLE_ICON = createTransientIcon("minecraft:paper", "lg2:gui/button/invisible", false);
 	private static final UpgradeUiConfig.IconConfig ERA_SLOT_LOCK_ICON = createTransientIcon("minecraft:paper", "lg2:gui/button/eras_lock", false);
 	private static final Gson STATE_GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -111,6 +129,7 @@ public final class ServerUpgradeUiSystem {
 	private static final Map<UUID, EraProgressAnimation> ERAS_PROGRESS_ANIMATIONS = new HashMap<>();
 	private static final Map<UUID, String> ERAS_TITLE_SIGNATURES = new HashMap<>();
 	private static final Map<UUID, String> MAIN_TITLE_SIGNATURES = new HashMap<>();
+	private static final Map<UUID, Integer> MAIN_SCREEN_LOGO_VARIANTS = new HashMap<>();
 	private static final Map<UUID, Integer> PENDING_MENU_VISUAL_RESYNCS = new HashMap<>();
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
@@ -198,6 +217,11 @@ public final class ServerUpgradeUiSystem {
 		final UpgradeUiConfig.ThemeConfig resolvedTheme = resolveTheme(config, screen);
 
 		boolean hasPack = PolymerResourcePackUtils.hasMainPack(player);
+		if ("main".equals(screenId)) {
+			MAIN_SCREEN_LOGO_VARIANTS.put(player.getUUID(), chooseMainScreenVariant(player));
+		} else {
+			MAIN_SCREEN_LOGO_VARIANTS.remove(player.getUUID());
+		}
 		InventoryTextureShuffleGlitch.onUpgradeMenuOpened(player);
 		Component title = buildTitle(player, screenId, hasPack, screen, resolvedTheme);
 		player.openMenu(new SimpleMenuProvider(
@@ -1131,7 +1155,7 @@ public final class ServerUpgradeUiSystem {
 			title.append(packStyledLiteral(theme.packTitlePrefix));
 		}
 		if ("main".equals(screenId)) {
-			title.append(packStyledLiteral(TITLE_OVERLAY_RESET + TITLE_OVERLAY_SHIFT + mainScreenLogoGlyph(currentGameTime(player))));
+			title.append(packStyledLiteral(TITLE_OVERLAY_RESET + TITLE_OVERLAY_SHIFT + mainScreenLogoGlyph(player, currentGameTime(player))));
 		}
 		if ("eras".equals(screenId)) {
 			title.append(packStyledLiteral(TITLE_OVERLAY_RESET + TITLE_OVERLAY_SHIFT + erasBarGlyph(player, currentGameTime(player))));
@@ -1200,7 +1224,33 @@ public final class ServerUpgradeUiSystem {
 		return Math.max(0, centerX - (width / 2));
 	}
 
-	private static String mainScreenLogoGlyph(long gameTime) {
+	private static int chooseMainScreenVariant(ServerPlayer player) {
+		if (player == null) {
+			return MAIN_SCREEN_VARIANT_GLITCH;
+		}
+		if (player.getRandom().nextDouble() < MAIN_SCREEN_ARCHIVE_VARIANT_CHANCE) {
+			return MAIN_SCREEN_VARIANT_ARCHIVE;
+		}
+		return player.getRandom().nextBoolean() ? MAIN_SCREEN_VARIANT_DVD : MAIN_SCREEN_VARIANT_GLITCH;
+	}
+
+	private static int mainScreenVariant(ServerPlayer player) {
+		if (player == null) {
+			return MAIN_SCREEN_VARIANT_GLITCH;
+		}
+		return MAIN_SCREEN_LOGO_VARIANTS.getOrDefault(player.getUUID(), MAIN_SCREEN_VARIANT_GLITCH);
+	}
+
+	private static String mainScreenLogoGlyph(ServerPlayer player, long gameTime) {
+		int variant = mainScreenVariant(player);
+		if (variant == MAIN_SCREEN_VARIANT_DVD) {
+			int frame = (int) Math.floorMod(gameTime / MAIN_SCREEN_DVD_FRAME_TICKS, MAIN_SCREEN_DVD_FRAME_COUNT);
+			return MAIN_SCREEN_DVD_GLYPHS[frame];
+		}
+		if (variant == MAIN_SCREEN_VARIANT_ARCHIVE) {
+			int frame = (int) Math.floorMod(gameTime / MAIN_SCREEN_ARCHIVE_FRAME_TICKS, MAIN_SCREEN_ARCHIVE_FRAME_COUNT);
+			return MAIN_SCREEN_ARCHIVE_GLYPHS[frame];
+		}
 		int frame = (int) Math.floorMod(gameTime / MAIN_SCREEN_LOGO_FRAME_TICKS, MAIN_SCREEN_LOGO_FRAME_COUNT);
 		return MAIN_SCREEN_LOGO_GLYPHS[frame];
 	}
@@ -1297,7 +1347,7 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	private static String mainTitleSignature(ServerPlayer player, long gameTime) {
-		return mainScreenLogoGlyph(gameTime) + "|" + countBitcoins(player);
+		return mainScreenVariant(player) + "|" + mainScreenLogoGlyph(player, gameTime) + "|" + countBitcoins(player);
 	}
 
 	private static void startEraProgressAnimation(ServerPlayer player, String upgradeId) {
@@ -1345,6 +1395,7 @@ public final class ServerUpgradeUiSystem {
 				ERAS_TITLE_SIGNATURES.remove(player.getUUID());
 				ERAS_PROGRESS_ANIMATIONS.remove(player.getUUID());
 				MAIN_TITLE_SIGNATURES.remove(playerId);
+				MAIN_SCREEN_LOGO_VARIANTS.remove(playerId);
 				continue;
 			}
 
@@ -1384,6 +1435,7 @@ public final class ServerUpgradeUiSystem {
 			}
 
 			MAIN_TITLE_SIGNATURES.remove(playerId);
+			MAIN_SCREEN_LOGO_VARIANTS.remove(playerId);
 			if (!"eras".equals(menu.screenId)) {
 				ERAS_TITLE_SIGNATURES.remove(playerId);
 				ERAS_PROGRESS_ANIMATIONS.remove(playerId);
