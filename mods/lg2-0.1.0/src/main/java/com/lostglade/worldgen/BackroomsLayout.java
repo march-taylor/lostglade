@@ -716,6 +716,20 @@ final class BackroomsLayout {
 		} else if (type == SpecialRoomType.VOID_HALL) {
 			hallHalf = 15 + positiveMod(sample ^ 0x564F494448414C4CL, 10);
 			levelSpan = 3 + positiveMod(sample ^ 0x564F4944464C4F52L, maxLevelSpan - 2);
+		} else if (type == SpecialRoomType.PLUS_MAZE) {
+			int hallHalfWidth = 25 + positiveMod(sample ^ 0x504C55534D415A58L, 5);
+			int hallHalfHeight = 25 + positiveMod(sample ^ 0x504C55534D415A5AL, 5);
+			return new SpecialRoomPlacement(
+					type,
+					cellX,
+					cellZ,
+					levelIndex,
+					current.roomCenterX,
+					current.roomCenterZ,
+					hallHalfWidth,
+					hallHalfHeight,
+					1
+			);
 		} else {
 			return null;
 		}
@@ -745,7 +759,7 @@ final class BackroomsLayout {
 		int maxLevel = MAX_FULL_LEVEL_INDEX;
 
 		for (int anchorLevel = minLevel; anchorLevel <= maxLevel; anchorLevel++) {
-			if (!canFitFullLevels(anchorLevel, 3)) {
+			if (!canFitFullLevels(anchorLevel, 2)) {
 				continue;
 			}
 			for (int candidateCellX = minCellX; candidateCellX <= maxCellX; candidateCellX++) {
@@ -1032,6 +1046,7 @@ final class BackroomsLayout {
 		FLOOR_HOLES("floor_holes", 4, 4, true),
 		VOID_HALL("void_hall", 0, 0, true),
 		HOUSE_HALL("house_hall", 0, 0, true),
+		PLUS_MAZE("plus_maze", 0, 0, true),
 		STAIRS("stairs", 3, 4, true);
 
 		private static final SpecialRoomType[] VALUES = values();
@@ -1051,14 +1066,17 @@ final class BackroomsLayout {
 			if ((this == HOUSE_HALL || this == VOID_HALL) && !canFitFullLevels(levelIndex, 3)) {
 				return false;
 			}
-			if (this == HOUSE_HALL || this == VOID_HALL) {
+			if (this == PLUS_MAZE && !canFitFullLevels(levelIndex, 2)) {
+				return false;
+			}
+			if (this == HOUSE_HALL || this == VOID_HALL || this == PLUS_MAZE) {
 				return true;
 			}
 			return cell.roomHalfWidth >= this.minHalfWidth && cell.roomHalfHeight >= this.minHalfHeight;
 		}
 
 		private boolean isLargeHall() {
-			return this == HOUSE_HALL || this == VOID_HALL;
+			return this == HOUSE_HALL || this == VOID_HALL || this == PLUS_MAZE;
 		}
 
 		private int selectionWeight() {
@@ -1068,6 +1086,7 @@ final class BackroomsLayout {
 				case FLOOR_HOLES -> config.backroomsFloorHolesRoomWeight;
 				case VOID_HALL -> config.backroomsVoidHallRoomWeight;
 				case HOUSE_HALL -> config.backroomsHouseHallRoomWeight;
+				case PLUS_MAZE -> config.backroomsPlusMazeRoomWeight;
 				case STAIRS -> config.backroomsStairsRoomWeight;
 			};
 		}

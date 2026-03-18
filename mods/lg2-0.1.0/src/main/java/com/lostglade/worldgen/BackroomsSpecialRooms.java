@@ -20,6 +20,7 @@ public final class BackroomsSpecialRooms {
 	private static final long FLOOR_HOLES_LAYOUT_SALT = 0x464C4F4F52484F4CL;
 	private static final long VOID_HALL_LAYOUT_SALT = 0x564F494448414C4CL;
 	private static final long HOUSE_HALL_LAYOUT_SALT = 0x484F55534548414CL;
+	private static final long PLUS_MAZE_LAYOUT_SALT = 0x504C55534D415A45L;
 	private static final BlockState BACKROOMS_DOOR_BLOCK = ModBlocks.BACKROOMS_DOOR.defaultBlockState();
 	private static final BlockState EXIT_SIGN_WALL_BLOCK = ModBlocks.EXIT_WALL_SIGN.defaultBlockState();
 	private static final BlockState CHEST_BLOCK = Blocks.CHEST.defaultBlockState();
@@ -81,6 +82,10 @@ public final class BackroomsSpecialRooms {
 		if (specialRoom != null) {
 			if (specialRoom.type() == BackroomsLayout.SpecialRoomType.STAIRS) {
 				applyStairsLowerLevel(buildStairsProfile(specialRoom, levelIndex), x, z, floorY, ceilingY, columnStates);
+				return;
+			}
+			if (specialRoom.type() == BackroomsLayout.SpecialRoomType.PLUS_MAZE) {
+				applyPlusMaze(buildPlusMazeProfile(specialRoom), x, z, floorY, columnStates);
 				return;
 			}
 			if (specialRoom.type() == BackroomsLayout.SpecialRoomType.VOID_HALL) {
@@ -253,6 +258,56 @@ public final class BackroomsSpecialRooms {
 				&& positiveMod(seed ^ 0x4845494748544648L, 100) < 45;
 		int piercedFloors = 1 + positiveMod(seed ^ 0x5049455243454450L, 2);
 		return new FloorHolesProfile(room, levelIndex, tallRoom, piercedFloors);
+	}
+
+	private static PlusMazeProfile buildPlusMazeProfile(BackroomsLayout.SpecialRoomPlacement room) {
+		long seed = mix(room.cellX(), room.cellZ(), PLUS_MAZE_LAYOUT_SALT ^ levelSalt(room.baseLevelIndex()));
+		return new PlusMazeProfile(room, seed, 6);
+	}
+
+	private static void applyPlusMaze(
+			PlusMazeProfile profile,
+			int x,
+			int z,
+			int floorY,
+			ColumnStates columnStates
+	) {
+		int levelIndex = BackroomsLayout.getLevelIndex(floorY);
+		if (!profile.room().contains(x, z, levelIndex)) {
+			return;
+		}
+
+		clearInterior(columnStates);
+		columnStates.setCeiling(AIR);
+		columnStates.setFloor(randomizedBackroomsBlock(x, floorY, z));
+		if (isPlusMazeColumn(profile, x, z)) {
+			fillSolidBackroomsColumn(columnStates, x, z, floorY);
+		}
+	}
+
+	private static boolean isPlusMazeColumn(PlusMazeProfile profile, int x, int z) {
+		BackroomsLayout.SpecialRoomPlacement room = profile.room();
+		int localX = x - room.roomCenterX();
+		int localZ = z - room.roomCenterZ();
+		int maxCenterX = Math.max(0, room.roomHalfWidth() - 1);
+		int maxCenterZ = Math.max(0, room.roomHalfHeight() - 1);
+		int step = profile.gridStep();
+
+		for (int centerX = firstGridCoordinate(-maxCenterX, step); centerX <= maxCenterX; centerX += step) {
+			for (int centerZ = firstGridCoordinate(-maxCenterZ, step); centerZ <= maxCenterZ; centerZ += step) {
+				if ((localX == centerX && Math.abs(localZ - centerZ) <= 1)
+						|| (localZ == centerZ && Math.abs(localX - centerX) <= 1)) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	private static int firstGridCoordinate(int min, int step) {
+		int remainder = Math.floorMod(min, step);
+		return remainder == 0 ? min : min + (step - remainder);
 	}
 
 	private static void applyFloorHolesRoom(
@@ -2137,6 +2192,13 @@ public final class BackroomsSpecialRooms {
 			int levelIndex,
 			boolean tallRoom,
 			int piercedFloors
+	) {
+	}
+
+	private record PlusMazeProfile(
+			BackroomsLayout.SpecialRoomPlacement room,
+			long seed,
+			int gridStep
 	) {
 	}
 

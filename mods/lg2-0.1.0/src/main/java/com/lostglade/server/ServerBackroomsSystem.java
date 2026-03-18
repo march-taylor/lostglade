@@ -649,7 +649,7 @@ public final class ServerBackroomsSystem {
 		}
 
 		for (int i = 0; i < attempts && PREWARMED_RESPAWNS.size() < PREWARMED_RESPAWN_TARGET; i++) {
-			BlockPos safeSpawn = findRandomSafeRespawn(backrooms);
+			BlockPos safeSpawn = findRandomLoadedSafeRespawn(backrooms);
 			if (safeSpawn == null) {
 				continue;
 			}
@@ -659,6 +659,22 @@ public final class ServerBackroomsSystem {
 				PREWARMED_RESPAWNS.add(floorPos);
 			}
 		}
+	}
+
+	private static BlockPos findRandomLoadedSafeRespawn(ServerLevel level) {
+		for (int attempt = 0; attempt < RESPAWN_SEARCH_ATTEMPTS; attempt++) {
+			BlockPos center = pickRandomRespawnCenter(level);
+			if (!isRespawnSearchAreaLoaded(level, center)) {
+				continue;
+			}
+
+			BlockPos safePos = findNearbyLoadedSafeRespawn(level, center);
+			if (safePos != null) {
+				return safePos;
+			}
+		}
+
+		return null;
 	}
 
 	private static BlockPos takePrewarmedRespawn(ServerLevel level) {
@@ -701,6 +717,56 @@ public final class ServerBackroomsSystem {
 			BlockPos safePos = findNearbySafeRespawn(level, center);
 			if (safePos != null) {
 				return safePos;
+			}
+		}
+
+		return null;
+	}
+
+	private static boolean isRespawnSearchAreaLoaded(ServerLevel level, BlockPos center) {
+		if (!level.hasChunkAt(center)) {
+			return false;
+		}
+
+		int radius = RESPAWN_SEARCH_RADIUS;
+		return level.hasChunkAt(center.offset(-radius, 0, -radius))
+				&& level.hasChunkAt(center.offset(-radius, 0, radius))
+				&& level.hasChunkAt(center.offset(radius, 0, -radius))
+				&& level.hasChunkAt(center.offset(radius, 0, radius));
+	}
+
+	private static BlockPos findNearbyLoadedSafeRespawn(ServerLevel level, BlockPos center) {
+		if (isSafeRespawnPositionLoaded(level, center)) {
+			return center.above();
+		}
+
+		for (int radius = 1; radius <= RESPAWN_SEARCH_RADIUS; radius++) {
+			for (int dx = -radius; dx <= radius; dx++) {
+				int worldX = center.getX() + dx;
+
+				BlockPos north = new BlockPos(worldX, center.getY(), center.getZ() - radius);
+				if (isSafeRespawnPositionLoaded(level, north)) {
+					return north.above();
+				}
+
+				BlockPos south = new BlockPos(worldX, center.getY(), center.getZ() + radius);
+				if (isSafeRespawnPositionLoaded(level, south)) {
+					return south.above();
+				}
+			}
+
+			for (int dz = -radius + 1; dz <= radius - 1; dz++) {
+				int worldZ = center.getZ() + dz;
+
+				BlockPos west = new BlockPos(center.getX() - radius, center.getY(), worldZ);
+				if (isSafeRespawnPositionLoaded(level, west)) {
+					return west.above();
+				}
+
+				BlockPos east = new BlockPos(center.getX() + radius, center.getY(), worldZ);
+				if (isSafeRespawnPositionLoaded(level, east)) {
+					return east.above();
+				}
 			}
 		}
 
@@ -759,6 +825,27 @@ public final class ServerBackroomsSystem {
 		return hasAdjacentOpenSpace(level, floorPos);
 	}
 
+	private static boolean isSafeRespawnPositionLoaded(ServerLevel level, BlockPos floorPos) {
+		if (!level.hasChunkAt(floorPos)) {
+			return false;
+		}
+
+		if (!level.getBlockState(floorPos).isFaceSturdy(level, floorPos, Direction.UP)) {
+			return false;
+		}
+
+		BlockPos feetPos = floorPos.above();
+		BlockPos headPos = feetPos.above();
+		if (!level.hasChunkAt(feetPos) || !level.hasChunkAt(headPos)) {
+			return false;
+		}
+		if (!level.isEmptyBlock(feetPos) || !level.isEmptyBlock(headPos)) {
+			return false;
+		}
+
+		return hasAdjacentOpenSpaceLoaded(level, floorPos);
+	}
+
 	private static boolean hasAdjacentOpenSpace(ServerLevel level, BlockPos floorPos) {
 		for (Direction direction : Direction.Plane.HORIZONTAL) {
 			BlockPos adjacentFloor = floorPos.relative(direction);
@@ -768,6 +855,25 @@ public final class ServerBackroomsSystem {
 
 			BlockPos adjacentFeet = adjacentFloor.above();
 			BlockPos adjacentHead = adjacentFeet.above();
+			if (level.isEmptyBlock(adjacentFeet) && level.isEmptyBlock(adjacentHead)) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static boolean hasAdjacentOpenSpaceLoaded(ServerLevel level, BlockPos floorPos) {
+		for (Direction direction : Direction.Plane.HORIZONTAL) {
+			BlockPos adjacentFloor = floorPos.relative(direction);
+			BlockPos adjacentFeet = adjacentFloor.above();
+			BlockPos adjacentHead = adjacentFeet.above();
+			if (!level.hasChunkAt(adjacentFloor) || !level.hasChunkAt(adjacentFeet) || !level.hasChunkAt(adjacentHead)) {
+				continue;
+			}
+			if (!level.getBlockState(adjacentFloor).isFaceSturdy(level, adjacentFloor, Direction.UP)) {
+				continue;
+			}
 			if (level.isEmptyBlock(adjacentFeet) && level.isEmptyBlock(adjacentHead)) {
 				return true;
 			}
