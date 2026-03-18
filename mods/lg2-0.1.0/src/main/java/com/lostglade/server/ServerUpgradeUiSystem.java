@@ -83,10 +83,13 @@ public final class ServerUpgradeUiSystem {
 	private static final int TOOLTIP_REQUIREMENTS_WRAP_CJK = 24;
 	private static final int ERAS_PROGRESS_GLYPHS_BASE = 0xE991;
 	private static final int ERAS_AVAILABLE_GLYPHS_BASE = 0xE9C0;
+	private static final int MAIN_SCREEN_LOGO_GLYPHS_BASE = 0xE9D0;
 	private static final int ERAS_PROGRESS_FRAME_COUNT = 35;
 	private static final int ERAS_PURCHASE_STAGE_COUNT = 5;
 	private static final int ERAS_PROGRESS_FRAMES_PER_STAGE = ERAS_PROGRESS_FRAME_COUNT / ERAS_PURCHASE_STAGE_COUNT;
 	private static final int ERAS_PROGRESS_FRAME_TICKS = 2;
+	private static final int MAIN_SCREEN_LOGO_FRAME_COUNT = 16;
+	private static final int MAIN_SCREEN_LOGO_FRAME_TICKS = 2;
 	private static final int MENU_VISUAL_RESYNC_TICKS = 3;
 	private static final String[] ERAS_PROGRESS_GLYPHS = createGlyphSequence(
 			ERAS_PROGRESS_GLYPHS_BASE,
@@ -96,6 +99,10 @@ public final class ServerUpgradeUiSystem {
 			ERAS_AVAILABLE_GLYPHS_BASE,
 			ERAS_PURCHASE_STAGE_COUNT + 1
 	);
+	private static final String[] MAIN_SCREEN_LOGO_GLYPHS = createGlyphSequence(
+			MAIN_SCREEN_LOGO_GLYPHS_BASE,
+			MAIN_SCREEN_LOGO_FRAME_COUNT
+	);
 	private static final UpgradeUiConfig.IconConfig ERA_SLOT_INVISIBLE_ICON = createTransientIcon("minecraft:paper", "lg2:gui/button/invisible", false);
 	private static final UpgradeUiConfig.IconConfig ERA_SLOT_LOCK_ICON = createTransientIcon("minecraft:paper", "lg2:gui/button/eras_lock", false);
 	private static final Gson STATE_GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -103,6 +110,7 @@ public final class ServerUpgradeUiSystem {
 	private static final Map<String, Integer> LEGACY_GLOBAL_UPGRADE_LEVELS = new HashMap<>();
 	private static final Map<UUID, EraProgressAnimation> ERAS_PROGRESS_ANIMATIONS = new HashMap<>();
 	private static final Map<UUID, String> ERAS_TITLE_SIGNATURES = new HashMap<>();
+	private static final Map<UUID, String> MAIN_TITLE_SIGNATURES = new HashMap<>();
 	private static final Map<UUID, Integer> PENDING_MENU_VISUAL_RESYNCS = new HashMap<>();
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
@@ -200,9 +208,15 @@ public final class ServerUpgradeUiSystem {
 		PENDING_MENU_VISUAL_RESYNCS.put(player.getUUID(), MENU_VISUAL_RESYNC_TICKS);
 		if ("eras".equals(screenId)) {
 			ERAS_TITLE_SIGNATURES.put(player.getUUID(), erasTitleSignature(player, currentGameTime(player)));
+			MAIN_TITLE_SIGNATURES.remove(player.getUUID());
+		} else if ("main".equals(screenId)) {
+			MAIN_TITLE_SIGNATURES.put(player.getUUID(), mainTitleSignature(player, currentGameTime(player)));
+			ERAS_TITLE_SIGNATURES.remove(player.getUUID());
+			ERAS_PROGRESS_ANIMATIONS.remove(player.getUUID());
 		} else {
 			ERAS_TITLE_SIGNATURES.remove(player.getUUID());
 			ERAS_PROGRESS_ANIMATIONS.remove(player.getUUID());
+			MAIN_TITLE_SIGNATURES.remove(player.getUUID());
 		}
 		return true;
 	}
@@ -1116,6 +1130,9 @@ public final class ServerUpgradeUiSystem {
 		if (theme.packTitlePrefix != null && !theme.packTitlePrefix.isBlank()) {
 			title.append(packStyledLiteral(theme.packTitlePrefix));
 		}
+		if ("main".equals(screenId)) {
+			title.append(packStyledLiteral(TITLE_OVERLAY_RESET + TITLE_OVERLAY_SHIFT + mainScreenLogoGlyph(currentGameTime(player))));
+		}
 		if ("eras".equals(screenId)) {
 			title.append(packStyledLiteral(TITLE_OVERLAY_RESET + TITLE_OVERLAY_SHIFT + erasBarGlyph(player, currentGameTime(player))));
 		}
@@ -1181,6 +1198,11 @@ public final class ServerUpgradeUiSystem {
 		int digits = Integer.toString(Math.max(0, bitcoinCount)).length();
 		int width = digits * BALANCE_DIGIT_WIDTH;
 		return Math.max(0, centerX - (width / 2));
+	}
+
+	private static String mainScreenLogoGlyph(long gameTime) {
+		int frame = (int) Math.floorMod(gameTime / MAIN_SCREEN_LOGO_FRAME_TICKS, MAIN_SCREEN_LOGO_FRAME_COUNT);
+		return MAIN_SCREEN_LOGO_GLYPHS[frame];
 	}
 
 	private static String erasBarGlyph(ServerPlayer player, long gameTime) {
@@ -1274,6 +1296,10 @@ public final class ServerUpgradeUiSystem {
 		return erasBarGlyph(player, gameTime) + "|" + countBitcoins(player);
 	}
 
+	private static String mainTitleSignature(ServerPlayer player, long gameTime) {
+		return mainScreenLogoGlyph(gameTime) + "|" + countBitcoins(player);
+	}
+
 	private static void startEraProgressAnimation(ServerPlayer player, String upgradeId) {
 		if (player == null || !isEraUpgrade(upgradeId)) {
 			return;
@@ -1318,6 +1344,7 @@ public final class ServerUpgradeUiSystem {
 				PENDING_MENU_VISUAL_RESYNCS.remove(playerId);
 				ERAS_TITLE_SIGNATURES.remove(player.getUUID());
 				ERAS_PROGRESS_ANIMATIONS.remove(player.getUUID());
+				MAIN_TITLE_SIGNATURES.remove(playerId);
 				continue;
 			}
 
@@ -1331,12 +1358,38 @@ public final class ServerUpgradeUiSystem {
 				}
 			}
 
+			if ("main".equals(menu.screenId)) {
+				ERAS_TITLE_SIGNATURES.remove(playerId);
+				ERAS_PROGRESS_ANIMATIONS.remove(playerId);
+				if (!PolymerResourcePackUtils.hasMainPack(player)) {
+					MAIN_TITLE_SIGNATURES.remove(playerId);
+					continue;
+				}
+
+				UpgradeUiConfig.ScreenConfig screen = config.screens.get(menu.screenId);
+				if (screen == null || !screen.enabled) {
+					continue;
+				}
+
+				long gameTime = currentGameTime(player);
+				String signature = mainTitleSignature(player, gameTime);
+				if (signature.equals(MAIN_TITLE_SIGNATURES.get(playerId))) {
+					continue;
+				}
+
+				Component title = buildTitle(player, menu.screenId, true, screen, resolveTheme(config, screen));
+				player.connection.send(new ClientboundOpenScreenPacket(menu.containerId, menu.getType(), title));
+				MAIN_TITLE_SIGNATURES.put(playerId, signature);
+				continue;
+			}
+
+			MAIN_TITLE_SIGNATURES.remove(playerId);
 			if (!"eras".equals(menu.screenId)) {
 				ERAS_TITLE_SIGNATURES.remove(playerId);
 				ERAS_PROGRESS_ANIMATIONS.remove(playerId);
 				continue;
 			}
-			if (!menu.hasPack || !PolymerResourcePackUtils.hasMainPack(player)) {
+			if (!PolymerResourcePackUtils.hasMainPack(player)) {
 				ERAS_TITLE_SIGNATURES.remove(playerId);
 				ERAS_PROGRESS_ANIMATIONS.remove(playerId);
 				continue;

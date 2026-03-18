@@ -40,6 +40,18 @@
     },
     {
       "type": "bitmap",
+      "file": "minecraft:font/main_menu_logo_anim.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
       "file": "minecraft:font/it_tree_5row.png",
       "ascent": 14,
       "height": 240,
