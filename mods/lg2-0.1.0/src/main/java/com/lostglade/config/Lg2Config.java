@@ -132,6 +132,10 @@ public final class Lg2Config {
 				MIN_BACKROOMS_SPECIAL_ROOM_WEIGHT,
 				MAX_BACKROOMS_SPECIAL_ROOM_WEIGHT,
 				newValue -> configData.backroomsFloorHolesRoomWeight = newValue);
+		changed |= clampSingleValue(configData.backroomsVoidHallRoomWeight,
+				MIN_BACKROOMS_SPECIAL_ROOM_WEIGHT,
+				MAX_BACKROOMS_SPECIAL_ROOM_WEIGHT,
+				newValue -> configData.backroomsVoidHallRoomWeight = newValue);
 		changed |= clampSingleValue(configData.backroomsHouseHallRoomWeight,
 				MIN_BACKROOMS_SPECIAL_ROOM_WEIGHT,
 				MAX_BACKROOMS_SPECIAL_ROOM_WEIGHT,
@@ -275,6 +279,7 @@ public final class Lg2Config {
 		public int backroomsEntityGroupRadiusChunks = 2;
 		public int backroomsTrashRoomWeight = 2;
 		public int backroomsFloorHolesRoomWeight = 2;
+		public int backroomsVoidHallRoomWeight = 2;
 		public int backroomsHouseHallRoomWeight = 1;
 		public int backroomsStairsRoomWeight = 2;
 		public double bitcoinsPerStability = DEFAULT_BITCOINS_PER_STABILITY;

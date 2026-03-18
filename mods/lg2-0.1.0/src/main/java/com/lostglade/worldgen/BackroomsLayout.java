@@ -36,6 +36,7 @@ final class BackroomsLayout {
 	private static final long OPEN_CACHE_SALT = 0x4F50454E43414348L;
 	private static final long DOOR_CACHE_SALT = 0x444F4F5243414348L;
 	private static final long ZONE_CACHE_SALT = 0x5A4F4E4543414348L;
+	private static final long VOID_HALL_COLUMN_CACHE_SALT = 0x564F494448434143L;
 	private static final ThreadLocal<LayoutCache> LAYOUT_CACHE = ThreadLocal.withInitial(LayoutCache::new);
 
 	private BackroomsLayout() {
@@ -184,8 +185,8 @@ final class BackroomsLayout {
 			return candidate;
 		}
 
-		int currentPriority = current.type() == SpecialRoomType.HOUSE_HALL ? 2 : 1;
-		int candidatePriority = candidate.type() == SpecialRoomType.HOUSE_HALL ? 2 : 1;
+		int currentPriority = current.type().isLargeHall() ? 2 : 1;
+		int candidatePriority = candidate.type().isLargeHall() ? 2 : 1;
 		if (candidatePriority != currentPriority) {
 			return candidatePriority > currentPriority ? candidate : current;
 		}
@@ -576,7 +577,7 @@ final class BackroomsLayout {
 		}
 
 		CellData current = getCell(zone, cellX, cellZ, levelIndex);
-		if (isCoveredByNeighboringHouseHall(current.roomCenterX, current.roomCenterZ, cellX, cellZ, levelIndex)) {
+		if (isCoveredByNeighboringLargeHall(current.roomCenterX, current.roomCenterZ, cellX, cellZ, levelIndex)) {
 			cache.specialRoomCache.put(key, Optional.empty());
 			return null;
 		}
@@ -597,8 +598,9 @@ final class BackroomsLayout {
 		return placement;
 	}
 
-	private static boolean isCoveredByNeighboringHouseHall(int x, int z, int cellX, int cellZ, int levelIndex) {
-		for (int anchorLevel = levelIndex; anchorLevel >= levelIndex - 3; anchorLevel--) {
+	private static boolean isCoveredByNeighboringLargeHall(int x, int z, int cellX, int cellZ, int levelIndex) {
+		int minLevelIndex = getLevelIndex(WORLD_MIN_Y);
+		for (int anchorLevel = MAX_FULL_LEVEL_INDEX; anchorLevel >= minLevelIndex; anchorLevel--) {
 			for (int offsetX = -2; offsetX <= 2; offsetX++) {
 				for (int offsetZ = -2; offsetZ <= 2; offsetZ++) {
 					int candidateCellX = cellX + offsetX;
@@ -608,8 +610,8 @@ final class BackroomsLayout {
 					}
 
 					ZoneType candidateZone = getZoneAtCell(candidateCellX, candidateCellZ, anchorLevel);
-					SpecialRoomPlacement hall = getHouseHallPlacementForCell(candidateZone, candidateCellX, candidateCellZ, anchorLevel);
-					if (hall != null && hall.contains(x, z, levelIndex)) {
+					SpecialRoomPlacement hall = getLargeHallPlacementForCell(candidateZone, candidateCellX, candidateCellZ, anchorLevel);
+					if (hall != null && largeHallCoversLevel(hall, x, z, levelIndex)) {
 						return true;
 					}
 				}
@@ -618,15 +620,15 @@ final class BackroomsLayout {
 		return false;
 	}
 
-	private static SpecialRoomPlacement getHouseHallPlacementForCell(ZoneType zone, int cellX, int cellZ, int levelIndex) {
-		SpecialRoomPlacement placement = getHouseHallPlacementForCellUnchecked(zone, cellX, cellZ, levelIndex);
-		if (placement == null || hasHouseHallConflict(placement)) {
+	private static SpecialRoomPlacement getLargeHallPlacementForCell(ZoneType zone, int cellX, int cellZ, int levelIndex) {
+		SpecialRoomPlacement placement = getLargeHallPlacementForCellUnchecked(zone, cellX, cellZ, levelIndex);
+		if (placement == null || hasLargeHallConflict(placement)) {
 			return null;
 		}
 		return placement;
 	}
 
-	private static SpecialRoomPlacement getHouseHallPlacementForCellUnchecked(ZoneType zone, int cellX, int cellZ, int levelIndex) {
+	private static SpecialRoomPlacement getLargeHallPlacementForCellUnchecked(ZoneType zone, int cellX, int cellZ, int levelIndex) {
 		long sample = mix(cellX, cellZ, zone.layoutSalt ^ SPECIAL_ROOM_LAYOUT_SALT ^ levelSalt(levelIndex));
 		if (positiveMod(sample ^ 0x2A5C7D11E3A19F43L, 10000) >= SPECIAL_ROOM_CHANCE_BASIS_POINTS) {
 			return null;
@@ -639,11 +641,11 @@ final class BackroomsLayout {
 		}
 
 		SpecialRoomType type = pickSpecialRoomType(sample ^ 0x61E2D34FA719BC25L, eligibleTypes);
-		if (type != SpecialRoomType.HOUSE_HALL) {
+		if (!type.isLargeHall()) {
 			return null;
 		}
 
-		return buildHouseHallPlacementUnchecked(current, cellX, cellZ, levelIndex, sample);
+		return buildLargeHallPlacementUnchecked(type, current, cellX, cellZ, levelIndex, sample);
 	}
 
 	private static SpecialRoomType pickSpecialRoomType(long sample, SpecialRoomType[] eligibleTypes) {
@@ -673,9 +675,9 @@ final class BackroomsLayout {
 			int levelIndex,
 			long sample
 	) {
-		if (type == SpecialRoomType.HOUSE_HALL) {
-			SpecialRoomPlacement placement = buildHouseHallPlacementUnchecked(current, cellX, cellZ, levelIndex, sample);
-			if (placement == null || hasHouseHallConflict(placement)) {
+		if (type.isLargeHall()) {
+			SpecialRoomPlacement placement = buildLargeHallPlacementUnchecked(type, current, cellX, cellZ, levelIndex, sample);
+			if (placement == null || hasLargeHallConflict(placement)) {
 				return null;
 			}
 			return placement;
@@ -694,21 +696,31 @@ final class BackroomsLayout {
 		);
 	}
 
-	private static SpecialRoomPlacement buildHouseHallPlacementUnchecked(
+	private static SpecialRoomPlacement buildLargeHallPlacementUnchecked(
+			SpecialRoomType type,
 			CellData current,
 			int cellX,
 			int cellZ,
 			int levelIndex,
 			long sample
 	) {
-		int hallHalf = 12 + positiveMod(sample ^ 0x484F55534548414CL, 9);
 		int maxLevelSpan = Math.min(4, getMaxAvailableFullLevelSpan(levelIndex));
 		if (maxLevelSpan < 3) {
 			return null;
 		}
-		int levelSpan = 3 + positiveMod(sample ^ 0x484F555345464C52L, maxLevelSpan - 2);
+		int hallHalf;
+		int levelSpan;
+		if (type == SpecialRoomType.HOUSE_HALL) {
+			hallHalf = 12 + positiveMod(sample ^ 0x484F55534548414CL, 9);
+			levelSpan = 3 + positiveMod(sample ^ 0x484F555345464C52L, maxLevelSpan - 2);
+		} else if (type == SpecialRoomType.VOID_HALL) {
+			hallHalf = 15 + positiveMod(sample ^ 0x564F494448414C4CL, 10);
+			levelSpan = 3 + positiveMod(sample ^ 0x564F4944464C4F52L, maxLevelSpan - 2);
+		} else {
+			return null;
+		}
 		return new SpecialRoomPlacement(
-				SpecialRoomType.HOUSE_HALL,
+				type,
 				cellX,
 				cellZ,
 				levelIndex,
@@ -720,7 +732,7 @@ final class BackroomsLayout {
 		);
 	}
 
-	private static boolean hasHouseHallConflict(SpecialRoomPlacement candidate) {
+	private static boolean hasLargeHallConflict(SpecialRoomPlacement candidate) {
 		int minX = candidate.roomCenterX() - candidate.roomHalfWidth();
 		int maxX = candidate.roomCenterX() + candidate.roomHalfWidth();
 		int minZ = candidate.roomCenterZ() - candidate.roomHalfHeight();
@@ -729,8 +741,8 @@ final class BackroomsLayout {
 		int maxCellX = Math.floorDiv(maxX, LAYOUT_CELL_SIZE) + 1;
 		int minCellZ = Math.floorDiv(minZ, LAYOUT_CELL_SIZE) - 1;
 		int maxCellZ = Math.floorDiv(maxZ, LAYOUT_CELL_SIZE) + 1;
-		int minLevel = candidate.baseLevelIndex() - 3;
-		int maxLevel = candidate.baseLevelIndex() + candidate.levelSpan() - 1;
+		int minLevel = getLevelIndex(WORLD_MIN_Y);
+		int maxLevel = MAX_FULL_LEVEL_INDEX;
 
 		for (int anchorLevel = minLevel; anchorLevel <= maxLevel; anchorLevel++) {
 			if (!canFitFullLevels(anchorLevel, 3)) {
@@ -745,8 +757,8 @@ final class BackroomsLayout {
 					}
 
 					ZoneType candidateZone = getZoneAtCell(candidateCellX, candidateCellZ, anchorLevel);
-					SpecialRoomPlacement other = getHouseHallPlacementForCellUnchecked(candidateZone, candidateCellX, candidateCellZ, anchorLevel);
-					if (other != null && houseHallPlacementsOverlap(candidate, other)) {
+					SpecialRoomPlacement other = getLargeHallPlacementForCellUnchecked(candidateZone, candidateCellX, candidateCellZ, anchorLevel);
+					if (other != null && largeHallPlacementsOverlap(candidate, other)) {
 						return true;
 					}
 				}
@@ -756,14 +768,74 @@ final class BackroomsLayout {
 		return false;
 	}
 
-	private static boolean houseHallPlacementsOverlap(SpecialRoomPlacement first, SpecialRoomPlacement second) {
-		if (first.baseLevelIndex() >= second.baseLevelIndex() + second.levelSpan()
-				|| second.baseLevelIndex() >= first.baseLevelIndex() + first.levelSpan()) {
+	private static boolean largeHallPlacementsOverlap(SpecialRoomPlacement first, SpecialRoomPlacement second) {
+		if (!largeHallHorizontalOverlap(first, second)) {
 			return false;
 		}
 
+		return largeHallAffectsLevels(first, second)
+				|| largeHallAffectsLevels(second, first);
+	}
+
+	private static boolean largeHallHorizontalOverlap(SpecialRoomPlacement first, SpecialRoomPlacement second) {
 		return Math.abs(first.roomCenterX() - second.roomCenterX()) <= first.roomHalfWidth() + second.roomHalfWidth()
 				&& Math.abs(first.roomCenterZ() - second.roomCenterZ()) <= first.roomHalfHeight() + second.roomHalfHeight();
+	}
+
+	private static boolean largeHallAffectsLevels(SpecialRoomPlacement source, SpecialRoomPlacement target) {
+		int sourceTopExclusive = source.baseLevelIndex() + source.levelSpan();
+		if (source.type() == SpecialRoomType.VOID_HALL) {
+			return target.baseLevelIndex() < sourceTopExclusive;
+		}
+
+		int targetTopExclusive = target.baseLevelIndex() + target.levelSpan();
+		return source.baseLevelIndex() < targetTopExclusive
+				&& target.baseLevelIndex() < sourceTopExclusive;
+	}
+
+	private static boolean largeHallCoversLevel(SpecialRoomPlacement placement, int x, int z, int levelIndex) {
+		if (!placement.contains(x, z)) {
+			return false;
+		}
+		if (placement.contains(x, z, levelIndex)) {
+			return true;
+		}
+		return placement.type() == SpecialRoomType.VOID_HALL
+				&& levelIndex < placement.baseLevelIndex() + placement.levelSpan();
+	}
+
+	static SpecialRoomPlacement getVoidHallForColumn(int x, int z) {
+		LayoutCache cache = layoutCache();
+		long key = BlockPos.asLong(x, 0, z) ^ VOID_HALL_COLUMN_CACHE_SALT;
+		Optional<SpecialRoomPlacement> cached = cache.voidHallColumnCache.get(key);
+		if (cached != null) {
+			return cached.orElse(null);
+		}
+
+		int cellX = Math.floorDiv(x, LAYOUT_CELL_SIZE);
+		int cellZ = Math.floorDiv(z, LAYOUT_CELL_SIZE);
+		SpecialRoomPlacement result = null;
+		int minLevelIndex = getLevelIndex(WORLD_MIN_Y);
+		for (int anchorLevel = MAX_FULL_LEVEL_INDEX; anchorLevel >= minLevelIndex; anchorLevel--) {
+			for (int offsetX = -2; offsetX <= 2; offsetX++) {
+				for (int offsetZ = -2; offsetZ <= 2; offsetZ++) {
+					int candidateCellX = cellX + offsetX;
+					int candidateCellZ = cellZ + offsetZ;
+					ZoneType candidateZone = getZoneAtCell(candidateCellX, candidateCellZ, anchorLevel);
+					SpecialRoomPlacement placement = getLargeHallPlacementForCell(candidateZone, candidateCellX, candidateCellZ, anchorLevel);
+					if (placement != null
+							&& placement.type() == SpecialRoomType.VOID_HALL
+							&& placement.contains(x, z)) {
+						result = placement;
+						cache.voidHallColumnCache.put(key, Optional.of(result));
+						return result;
+					}
+				}
+			}
+		}
+
+		cache.voidHallColumnCache.put(key, Optional.empty());
+		return null;
 	}
 
 	private static RoomSide[] collectEligibleDoorSides(ZoneType zone, int cellX, int cellZ, CellData current, int levelIndex) {
@@ -958,7 +1030,7 @@ final class BackroomsLayout {
 	enum SpecialRoomType {
 		TRASH_ROOM("trash_room", 3, 3, true),
 		FLOOR_HOLES("floor_holes", 4, 4, true),
-		VOID_HALL("void_hall", 6, 6, false),
+		VOID_HALL("void_hall", 0, 0, true),
 		HOUSE_HALL("house_hall", 0, 0, true),
 		STAIRS("stairs", 3, 4, true);
 
@@ -976,13 +1048,17 @@ final class BackroomsLayout {
 		}
 
 		private boolean canFit(CellData cell, int levelIndex) {
-			if (this == HOUSE_HALL && !canFitFullLevels(levelIndex, 3)) {
+			if ((this == HOUSE_HALL || this == VOID_HALL) && !canFitFullLevels(levelIndex, 3)) {
 				return false;
 			}
-			if (this == HOUSE_HALL) {
+			if (this == HOUSE_HALL || this == VOID_HALL) {
 				return true;
 			}
 			return cell.roomHalfWidth >= this.minHalfWidth && cell.roomHalfHeight >= this.minHalfHeight;
+		}
+
+		private boolean isLargeHall() {
+			return this == HOUSE_HALL || this == VOID_HALL;
 		}
 
 		private int selectionWeight() {
@@ -990,9 +1066,9 @@ final class BackroomsLayout {
 			return switch (this) {
 				case TRASH_ROOM -> config.backroomsTrashRoomWeight;
 				case FLOOR_HOLES -> config.backroomsFloorHolesRoomWeight;
+				case VOID_HALL -> config.backroomsVoidHallRoomWeight;
 				case HOUSE_HALL -> config.backroomsHouseHallRoomWeight;
 				case STAIRS -> config.backroomsStairsRoomWeight;
-				case VOID_HALL -> 0;
 			};
 		}
 
@@ -1142,6 +1218,7 @@ final class BackroomsLayout {
 		private static final int MAX_DOOR_CACHE = 8192;
 		private static final int MAX_SPECIAL_ROOM_CACHE = 4096;
 		private static final int MAX_ZONE_CACHE = 4096;
+		private static final int MAX_VOID_HALL_COLUMN_CACHE = 4096;
 
 		final Map<Long, ZoneType> zoneCache = new HashMap<>();
 		final Map<Long, CellData> cellCache = new HashMap<>();
@@ -1149,6 +1226,7 @@ final class BackroomsLayout {
 		final Map<Long, Boolean> openSpaceCache = new HashMap<>();
 		final Map<Long, Optional<DoorPlacement>> doorPlacementCache = new HashMap<>();
 		final Map<Long, Optional<SpecialRoomPlacement>> specialRoomCache = new HashMap<>();
+		final Map<Long, Optional<SpecialRoomPlacement>> voidHallColumnCache = new HashMap<>();
 
 		void trimIfNeeded() {
 			if (this.zoneCache.size() > MAX_ZONE_CACHE) {
@@ -1168,6 +1246,9 @@ final class BackroomsLayout {
 			}
 			if (this.specialRoomCache.size() > MAX_SPECIAL_ROOM_CACHE) {
 				this.specialRoomCache.clear();
+			}
+			if (this.voidHallColumnCache.size() > MAX_VOID_HALL_COLUMN_CACHE) {
+				this.voidHallColumnCache.clear();
 			}
 		}
 	}
