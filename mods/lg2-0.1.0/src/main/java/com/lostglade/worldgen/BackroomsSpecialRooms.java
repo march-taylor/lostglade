@@ -22,6 +22,7 @@ public final class BackroomsSpecialRooms {
 	private static final long VOID_HALL_LAYOUT_SALT = 0x564F494448414C4CL;
 	private static final long HOUSE_HALL_LAYOUT_SALT = 0x484F55534548414CL;
 	private static final long PLUS_MAZE_LAYOUT_SALT = 0x504C55534D415A45L;
+	private static final double UPPER_LADDER_CRAWL_Y_OFFSET = 0.8D;
 	private static final BlockState BACKROOMS_DOOR_BLOCK = ModBlocks.BACKROOMS_DOOR.defaultBlockState();
 	private static final BlockState EXIT_SIGN_WALL_BLOCK = ModBlocks.EXIT_WALL_SIGN.defaultBlockState();
 	private static final BlockState CHEST_BLOCK = Blocks.CHEST.defaultBlockState();
@@ -188,8 +189,13 @@ public final class BackroomsSpecialRooms {
 	}
 
 	public static boolean isUpperLadderCrawlZone(double x, double y, double z) {
-		BlockPos feetPos = BlockPos.containing(x, y + 0.5D, z);
+		BlockPos feetPos = BlockPos.containing(x, y + UPPER_LADDER_CRAWL_Y_OFFSET, z);
 		return isUpperLadderCrawlZone(feetPos.getX(), feetPos.getY(), feetPos.getZ());
+	}
+
+	public static boolean isUpperLadderOrTunnelCrawlZone(double x, double y, double z) {
+		BlockPos feetPos = BlockPos.containing(x, y + UPPER_LADDER_CRAWL_Y_OFFSET, z);
+		return isUpperLadderOrTunnelCrawlZone(feetPos.getX(), feetPos.getY(), feetPos.getZ());
 	}
 
 	public static boolean isUpperLadderCrawlZone(int x, int y, int z) {
@@ -202,6 +208,22 @@ public final class BackroomsSpecialRooms {
 		int floorY = BackroomsLayout.FLOOR_Y + levelIndex * BackroomsLayout.LEVEL_HEIGHT;
 		int localY = y - floorY;
 		return localY == 2 || localY == 3;
+	}
+
+	public static boolean isUpperLadderOrTunnelCrawlZone(int x, int y, int z) {
+		int levelIndex = BackroomsLayout.getLevelIndex(y);
+		BackroomsLayout.LadderRoomPlacement placement = BackroomsLayout.getLadderRoomAt(x, z, levelIndex);
+		if (placement == null) {
+			return false;
+		}
+
+		int floorY = BackroomsLayout.FLOOR_Y + levelIndex * BackroomsLayout.LEVEL_HEIGHT;
+		int localY = y - floorY;
+		if (localY != 2 && localY != 3) {
+			return false;
+		}
+
+		return placement.isLadderColumn(x, z) || placement.isTunnelColumn(x, z);
 	}
 
 	private static FloorHolesProfile getFloorHolesProfileAt(int x, int z, int levelIndex) {
