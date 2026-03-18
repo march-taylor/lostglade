@@ -31,8 +31,10 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
@@ -76,6 +78,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class BackroomsStalkerEntity extends Monster {
+	private static final EntityDimensions PLAYER_SIZED_DIMENSIONS = EntityDimensions.fixed(0.6F, 1.8F);
 	private static final byte PLAYER_SKIN_PARTS_WITHOUT_CAPE = (byte) 0x7E;
 	private static final double WALK_SPEED = 0.23D;
 	private static final double CHASE_SPEED_MODIFIER = 1.65D;
@@ -155,6 +158,7 @@ public final class BackroomsStalkerEntity extends Monster {
 		this.setSilent(true);
 		this.setCanPickUpLoot(false);
 		this.addTag(STALKER_TAG);
+		this.refreshDimensions();
 	}
 
 	public static AttributeSupplier.Builder createAttributes() {
@@ -178,12 +182,18 @@ public final class BackroomsStalkerEntity extends Monster {
 		stalker.getAttribute(Attributes.ATTACK_DAMAGE).setBaseValue(0.0D);
 		stalker.getAttribute(Attributes.KNOCKBACK_RESISTANCE).setBaseValue(1.0D);
 		stalker.setHealth(stalker.getMaxHealth());
+		stalker.refreshDimensions();
 		stalker.attachPolymerAppearance();
 		return stalker;
 	}
 
 	@Override
 	protected void registerGoals() {
+	}
+
+	@Override
+	public EntityDimensions getDefaultDimensions(Pose pose) {
+		return PLAYER_SIZED_DIMENSIONS;
 	}
 
 	@Override
