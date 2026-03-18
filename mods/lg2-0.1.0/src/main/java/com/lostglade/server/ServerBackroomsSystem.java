@@ -391,11 +391,16 @@ public final class ServerBackroomsSystem {
 	private static void tickUpperLadderCrawl(MinecraftServer server) {
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			UUID uuid = player.getUUID();
-			boolean shouldForce = isInBackrooms(player)
+			boolean inBackrooms = isInBackrooms(player);
+			boolean shouldStart = inBackrooms
 					&& BackroomsSpecialRooms.isUpperLadderCrawlZone(player.getX(), player.getY(), player.getZ());
-			if (shouldForce) {
-				FORCED_LADDER_CRAWL_PLAYERS.add(uuid);
-				player.setSwimming(true);
+			boolean shouldKeep = inBackrooms
+					&& FORCED_LADDER_CRAWL_PLAYERS.contains(uuid)
+					&& BackroomsSpecialRooms.isUpperLadderOrTunnelCrawlZone(player.getX(), player.getY(), player.getZ());
+			if (shouldStart || shouldKeep) {
+				if (FORCED_LADDER_CRAWL_PLAYERS.add(uuid)) {
+					player.setSwimming(true);
+				}
 				player.setPose(Pose.SWIMMING);
 				continue;
 			}
