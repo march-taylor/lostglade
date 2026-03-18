@@ -550,16 +550,6 @@ public final class UpgradeUiConfig {
 					),
 					IconConfig.upgrade()
 			));
-			screen.buttons.put("back", ButtonConfig.openScreen(
-					31,
-					"main",
-					LocalizedText.of("Back", "Назад"),
-					LocalizedLines.of(
-							List.of("Return to the main screen."),
-							List.of("Вернуться на главный экран.")
-					),
-					IconConfig.back()
-			));
 			return screen;
 		}
 
@@ -599,16 +589,6 @@ public final class UpgradeUiConfig {
 							List.of("Стабилизирует системы, чувствительные ко времени.", "Уровень: %level%/%max_level%", "Цена: %cost% BTC")
 					),
 					IconConfig.upgrade()
-			));
-			screen.buttons.put("back", ButtonConfig.openScreen(
-					40,
-					"main",
-					LocalizedText.of("Back", "Назад"),
-					LocalizedLines.of(
-							List.of("Return to the main screen."),
-							List.of("Вернуться на главный экран.")
-					),
-					IconConfig.back()
 			));
 			return screen;
 		}

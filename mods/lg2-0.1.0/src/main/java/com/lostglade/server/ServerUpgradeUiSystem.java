@@ -78,6 +78,7 @@ public final class ServerUpgradeUiSystem {
 	private static final String TOOLTIP_ICON_COIN = "\ue981";
 	private static final String NO_PACK_COIN = "₿";
 	private static final int MAIN_BALANCE_CENTER_X = 127;
+	private static final int ERAS_BALANCE_CENTER_X = 127;
 	private static final int BALANCE_DIGIT_WIDTH = 6;
 	private static final int TOOLTIP_DESCRIPTION_WRAP = 42;
 	private static final int TOOLTIP_DESCRIPTION_WRAP_CJK = 22;
@@ -410,14 +411,15 @@ public final class ServerUpgradeUiSystem {
 			UpgradeUiConfig.ButtonConfig button,
 			boolean hasPack
 	) {
+		boolean useCustomTooltip = usesCustomTooltipPresentation(button, hasPack);
 		ButtonState state = getButtonState(viewer, button);
 		UpgradeUiConfig.IconConfig icon = resolveButtonIcon(viewer, screenId, button, state);
 
 		ItemStack stack = createBaseStack(icon, hasPack);
 		Map<String, String> placeholders = buildPlaceholders(viewer, screenId, buttonId, button, state);
-		stack.set(DataComponents.CUSTOM_NAME, buildTooltipNameComponent(viewer, button, state, placeholders, hasPack));
+		stack.set(DataComponents.CUSTOM_NAME, buildTooltipNameComponent(viewer, button, state, placeholders, useCustomTooltip));
 
-		List<Component> loreLines = buildTooltipLore(viewer, button, state, placeholders, hasPack);
+		List<Component> loreLines = buildTooltipLore(viewer, button, state, placeholders, useCustomTooltip);
 		if (!loreLines.isEmpty()) {
 			ItemLore lore = ItemLore.EMPTY;
 			for (Component line : loreLines) {
@@ -425,11 +427,17 @@ public final class ServerUpgradeUiSystem {
 			}
 			stack.set(DataComponents.LORE, lore);
 		}
-		if (hasPack) {
+		if (useCustomTooltip) {
 			stack.set(DataComponents.TOOLTIP_STYLE, TOOLTIP_STYLE_ID);
 		}
 
 		return stack;
+	}
+
+	private static boolean usesCustomTooltipPresentation(UpgradeUiConfig.ButtonConfig button, boolean hasPack) {
+		return hasPack
+				&& button != null
+				&& UpgradeUiConfig.ButtonType.PURCHASE_UPGRADE.id.equals(button.type);
 	}
 
 	private static UpgradeUiConfig.IconConfig resolveButtonIcon(
@@ -1055,7 +1063,7 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	private static boolean shouldHideButtonVisual(String screenId, String buttonId) {
-		return "balance".equals(buttonId) && ("main".equals(screenId) || "eras".equals(screenId));
+		return "balance".equals(buttonId);
 	}
 
 	private static void hideLowerInventoryVisuals(ServerPlayer player, AbstractContainerMenu menu) {
@@ -1171,7 +1179,7 @@ public final class ServerUpgradeUiSystem {
 		}
 		if (usesMainStyleBalance(screenId)) {
 			title.append(packStyledLiteral(TITLE_OVERLAY_RESET));
-			title.append(packStyledLiteral(buildHorizontalAdvance(centeredMainStyleBalanceStartX(countBitcoins(player)))));
+			title.append(packStyledLiteral(buildHorizontalAdvance(balanceStartX(screenId, countBitcoins(player)))));
 			title.append(packStyledLiteral(toPackDigitString(countBitcoins(player))));
 		}
 		if (!screen.hideTitleTextWhenPack && !localizedTitle.isBlank()) {
@@ -1228,13 +1236,17 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	private static boolean usesMainStyleBalance(String screenId) {
-		return "main".equals(screenId) || "eras".equals(screenId);
+		return true;
 	}
 
-	private static int centeredMainStyleBalanceStartX(int bitcoinCount) {
+	private static int balanceStartX(String screenId, int bitcoinCount) {
+		int centerX = "eras".equals(screenId) ? ERAS_BALANCE_CENTER_X : MAIN_BALANCE_CENTER_X;
+		if (!"main".equals(screenId) && !"eras".equals(screenId)) {
+			centerX += 1;
+		}
 		int digits = Integer.toString(Math.max(0, bitcoinCount)).length();
 		int width = digits * BALANCE_DIGIT_WIDTH;
-		return Math.max(0, MAIN_BALANCE_CENTER_X - (width / 2));
+		return Math.max(0, centerX - (width / 2));
 	}
 
 	private static int chooseMainScreenVariant(ServerPlayer player) {
@@ -1454,7 +1466,7 @@ public final class ServerUpgradeUiSystem {
 				ERAS_PROGRESS_ANIMATIONS.remove(playerId);
 				continue;
 			}
-			if (!PolymerResourcePackUtils.hasMainPack(player)) {
+			if (!menu.hasPack || !PolymerResourcePackUtils.hasMainPack(player)) {
 				ERAS_TITLE_SIGNATURES.remove(playerId);
 				ERAS_PROGRESS_ANIMATIONS.remove(playerId);
 				continue;
@@ -1870,12 +1882,6 @@ public final class ServerUpgradeUiSystem {
 				return;
 			}
 			if (player instanceof ServerPlayer serverPlayer) {
-				UUID playerId = serverPlayer.getUUID();
-				PENDING_MENU_VISUAL_RESYNCS.remove(playerId);
-				ERAS_TITLE_SIGNATURES.remove(playerId);
-				ERAS_PROGRESS_ANIMATIONS.remove(playerId);
-				MAIN_TITLE_SIGNATURES.remove(playerId);
-				MAIN_SCREEN_LOGO_VARIANTS.remove(playerId);
 				serverPlayer.connection.send(new ClientboundContainerClosePacket(this.containerId));
 			}
 			restoreLowerInventoryVisuals(this.viewer, this);

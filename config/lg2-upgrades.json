@@ -613,7 +613,7 @@
     "worlds": {
       "enabled": true,
       "rows": 3,
-      "theme": "template_3row",
+      "theme": "main_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
@@ -688,9 +688,450 @@
           "requirementGroups": [],
           "closeAfterClick": false
         },
-        "nether": {
+        "close": {
+          "enabled": true,
+          "slot": 8,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "close",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Close",
+              "ru_ru": "Закрыть",
+              "uk_ua": "Закрити",
+              "ja_jp": "閉じる",
+              "rpr": "Затворить"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Close this interface."
+              ],
+              "ru_ru": [
+                "Закрыть этот интерфейс."
+              ],
+              "uk_ua": [
+                "Закрити цей інтерфейс."
+              ],
+              "ja_jp": [
+                "この画面を閉じます。"
+              ],
+              "rpr": [
+                "Затворить сей приборъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "balance": {
+          "enabled": true,
+          "slot": 7,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "lg2:bitcoin",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Balance: %bitcoins% BTC",
+              "ru_ru": "Баланс: %bitcoins% BTC",
+              "uk_ua": "Баланс: %bitcoins% BTC",
+              "ja_jp": "残高: %bitcoins% BTC",
+              "rpr": "Монѣтъ: %bitcoins% BTC"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Your personal bitcoin balance.",
+                "All purchases in this menu use these coins."
+              ],
+              "ru_ru": [
+                "Твой личный баланс биткоинов.",
+                "Все покупки в этом меню тратят именно эти монеты."
+              ],
+              "uk_ua": [
+                "Твій особистий баланс біткоїнів.",
+                "Усі покупки в цьому меню витрачають саме ці монети."
+              ],
+              "ja_jp": [
+                "あなた個人のビットコイン残高です。",
+                "この画面の購入はここから支払われます。"
+              ],
+              "rpr": [
+                "Твой личный запасъ монѣтъ биткоиновыхъ.",
+                "Сии монѣты и идутъ на всякую покупку въ семъ окнѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "worlds": {
+          "enabled": true,
+          "slot": 14,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "worlds",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:obsidian",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Worlds",
+              "ru_ru": "Миры",
+              "uk_ua": "Світи",
+              "ja_jp": "世界",
+              "rpr": "Мiры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Open Nether and End access.",
+                "Portals stay locked until tickets are bought."
+              ],
+              "ru_ru": [
+                "Открывает ветку доступа в Незер и Энд.",
+                "Порталы не заработают, пока билеты не куплены."
+              ],
+              "uk_ua": [
+                "Відкриває гілку доступу до Незеру та Енду.",
+                "Портали не запрацюють, доки квитки не куплені."
+              ],
+              "ja_jp": [
+                "ネザーとエンドへのアクセスを開きます。",
+                "許可を買うまでポータルは動きません。"
+              ],
+              "rpr": [
+                "Отворяет ходъ въ Нижнiй мiръ и въ Край.",
+                "Безъ грамотъ порталы молчатъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "eras": {
+          "enabled": true,
+          "slot": 10,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "eras",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:smithing_table",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Eras",
+              "ru_ru": "Эры",
+              "uk_ua": "Ери",
+              "ja_jp": "時代",
+              "rpr": "Поры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Stone, copper, iron, diamond and netherite.",
+                "This branch decides which gear tier exists on the server."
+              ],
+              "ru_ru": [
+                "Камень, медь, железо, алмазы и незрит.",
+                "Эта ветка решает, какие уровни снаряжения вообще существуют."
+              ],
+              "uk_ua": [
+                "Камінь, мідь, залізо, алмази та незрит.",
+                "Ця гілка визначає, які рівні спорядження існують на сервері."
+              ],
+              "ja_jp": [
+                "石・銅・鉄・ダイヤ・ネザライト。",
+                "サーバーで使える装備段階を決めます。"
+              ],
+              "rpr": [
+                "Камень, мѣдь, желѣзо, алмазы да незритъ.",
+                "Сiя вѣтвь рѣшаетъ, какiе чины сбруи дозволены."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "mechanics": {
           "enabled": true,
           "slot": 11,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "mechanics",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Mechanics",
+              "ru_ru": "Механики",
+              "uk_ua": "Механіки",
+              "ja_jp": "仕組み",
+              "rpr": "Механiки"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Redstone, brewing, anvils, enchanting and villager trade."
+              ],
+              "ru_ru": [
+                "Редстоун, зелья, наковальня, чары и торговля."
+              ],
+              "uk_ua": [
+                "Редстоун, зілля, ковадло, чари й торгівля.",
+                "Вони відкриваються незалежно, якщо вистачає матеріальної епохи."
+              ],
+              "ja_jp": [
+                "レッドストーン、醸造、金床、エンチャント、交易。",
+                "素材条件さえ満たせば独立して解放されます。"
+              ],
+              "rpr": [
+                "Красный камень, зелья, наковальня, чары да торгъ.",
+                "Всякiя штуки отворяются порознь, коли пора матерiаловъ дозволяетъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "it": {
+          "enabled": true,
+          "slot": 12,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "it_hub",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:observer",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "IT Branch",
+              "ru_ru": "IT-ветка",
+              "uk_ua": "IT-гілка",
+              "ja_jp": "IT系統",
+              "rpr": "Машинная вѣтвь"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Electronics, sensors, the screen, jammer and drones.",
+                "The most technical branch of the whole server."
+              ],
+              "ru_ru": [
+                "Электроника, сенсоры, экран, глушилка и дроны.",
+                "Самая техническая ветка всего сервера."
+              ],
+              "uk_ua": [
+                "Електроніка, сенсори, екран, глушилка та дрони.",
+                "Найтехнічніша гілка всього сервера."
+              ],
+              "ja_jp": [
+                "電子機器、センサー、画面、ジャマー、ドローン。",
+                "サーバー全体で最も技術的な枝です。"
+              ],
+              "rpr": [
+                "Электрическiя хитрости, датчики, экранъ, глушилка да дроны.",
+                "Сiя вѣтвь самая мудрёная на всёмъ серверѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "races": {
+          "enabled": true,
+          "slot": 16,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "races",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:totem_of_undying",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Racial Gifts",
+              "ru_ru": "Способности рас",
+              "uk_ua": "Здібності рас",
+              "ja_jp": "種族能力",
+              "rpr": "Дары племёнъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Four tiers of racial perks.",
+                "From cheap starter powers to elite gifts."
+              ],
+              "ru_ru": [
+                "Четыре уровня расовых способностей.",
+                "От дешёвых стартовых бонусов до элитных даров."
+              ],
+              "uk_ua": [
+                "Чотири рівні расових здібностей.",
+                "Від дешевих стартових бонусів до елітних дарів."
+              ],
+              "ja_jp": [
+                "種族能力の4段階です。",
+                "安価な初級段階から精鋭級の贈り物まで。"
+              ],
+              "rpr": [
+                "Четыре чина даровъ племенныхъ.",
+                "Отъ дешёвыхъ поблажекъ до даровъ элитныхъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "nether": {
+          "enabled": true,
+          "slot": 38,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -766,7 +1207,7 @@
         },
         "end": {
           "enabled": true,
-          "slot": 15,
+          "slot": 42,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -833,65 +1274,6 @@
                 "Отворяетъ Край какъ особое направленiе.",
                 "Чинъ: %level%/%max_level%",
                 "Мзда: %cost% BTC | Состоянiе: %status%"
-              ]
-            }
-          },
-          "requirements": [],
-          "requirementGroups": [],
-          "closeAfterClick": false
-        },
-        "back": {
-          "enabled": true,
-          "slot": 26,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "open_screen",
-          "targetScreenId": "main",
-          "upgradeId": "",
-          "pricesBitcoins": [],
-          "icon": {
-            "fallbackItem": "minecraft:arrow",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:emerald",
-            "packModel": "lg2:gui/button/maxed",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "en_us": "Back",
-              "ru_ru": "Назад",
-              "uk_ua": "Назад",
-              "ja_jp": "戻る",
-              "rpr": "Назадъ"
-            }
-          },
-          "lore": {
-            "values": {
-              "en_us": [
-                "Return to the previous branch."
-              ],
-              "ru_ru": [
-                "Вернуться в предыдущий раздел."
-              ],
-              "uk_ua": [
-                "Повернутися до попередньої гілки."
-              ],
-              "ja_jp": [
-                "前の画面に戻ります。"
-              ],
-              "rpr": [
-                "Возвратиться во прежнiй разделъ."
               ]
             }
           },
@@ -973,6 +1355,447 @@
               "rpr": [
                 "Сiя вѣтвь рѣшаетъ, какие чины сбруи вообще дозволены.",
                 "Всякая слѣдующая пора держится на прежней."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "close": {
+          "enabled": true,
+          "slot": 8,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "close",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Close",
+              "ru_ru": "Закрыть",
+              "uk_ua": "Закрити",
+              "ja_jp": "閉じる",
+              "rpr": "Затворить"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Close this interface."
+              ],
+              "ru_ru": [
+                "Закрыть этот интерфейс."
+              ],
+              "uk_ua": [
+                "Закрити цей інтерфейс."
+              ],
+              "ja_jp": [
+                "この画面を閉じます。"
+              ],
+              "rpr": [
+                "Затворить сей приборъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "balance": {
+          "enabled": true,
+          "slot": 7,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "lg2:bitcoin",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Balance: %bitcoins% BTC",
+              "ru_ru": "Баланс: %bitcoins% BTC",
+              "uk_ua": "Баланс: %bitcoins% BTC",
+              "ja_jp": "残高: %bitcoins% BTC",
+              "rpr": "Монѣтъ: %bitcoins% BTC"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Your personal bitcoin balance.",
+                "All purchases in this menu use these coins."
+              ],
+              "ru_ru": [
+                "Твой личный баланс биткоинов.",
+                "Все покупки в этом меню тратят именно эти монеты."
+              ],
+              "uk_ua": [
+                "Твій особистий баланс біткоїнів.",
+                "Усі покупки в цьому меню витрачають саме ці монети."
+              ],
+              "ja_jp": [
+                "あなた個人のビットコイン残高です。",
+                "この画面の購入はここから支払われます。"
+              ],
+              "rpr": [
+                "Твой личный запасъ монѣтъ биткоиновыхъ.",
+                "Сии монѣты и идутъ на всякую покупку въ семъ окнѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "worlds": {
+          "enabled": true,
+          "slot": 14,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "worlds",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:obsidian",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Worlds",
+              "ru_ru": "Миры",
+              "uk_ua": "Світи",
+              "ja_jp": "世界",
+              "rpr": "Мiры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Open Nether and End access.",
+                "Portals stay locked until tickets are bought."
+              ],
+              "ru_ru": [
+                "Открывает ветку доступа в Незер и Энд.",
+                "Порталы не заработают, пока билеты не куплены."
+              ],
+              "uk_ua": [
+                "Відкриває гілку доступу до Незеру та Енду.",
+                "Портали не запрацюють, доки квитки не куплені."
+              ],
+              "ja_jp": [
+                "ネザーとエンドへのアクセスを開きます。",
+                "許可を買うまでポータルは動きません。"
+              ],
+              "rpr": [
+                "Отворяет ходъ въ Нижнiй мiръ и въ Край.",
+                "Безъ грамотъ порталы молчатъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "eras": {
+          "enabled": true,
+          "slot": 10,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "eras",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:smithing_table",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Eras",
+              "ru_ru": "Эры",
+              "uk_ua": "Ери",
+              "ja_jp": "時代",
+              "rpr": "Поры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Stone, copper, iron, diamond and netherite.",
+                "This branch decides which gear tier exists on the server."
+              ],
+              "ru_ru": [
+                "Камень, медь, железо, алмазы и незрит.",
+                "Эта ветка решает, какие уровни снаряжения вообще существуют."
+              ],
+              "uk_ua": [
+                "Камінь, мідь, залізо, алмази та незрит.",
+                "Ця гілка визначає, які рівні спорядження існують на сервері."
+              ],
+              "ja_jp": [
+                "石・銅・鉄・ダイヤ・ネザライト。",
+                "サーバーで使える装備段階を決めます。"
+              ],
+              "rpr": [
+                "Камень, мѣдь, желѣзо, алмазы да незритъ.",
+                "Сiя вѣтвь рѣшаетъ, какiе чины сбруи дозволены."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "mechanics": {
+          "enabled": true,
+          "slot": 11,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "mechanics",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Mechanics",
+              "ru_ru": "Механики",
+              "uk_ua": "Механіки",
+              "ja_jp": "仕組み",
+              "rpr": "Механiки"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Redstone, brewing, anvils, enchanting and villager trade."
+              ],
+              "ru_ru": [
+                "Редстоун, зелья, наковальня, чары и торговля."
+              ],
+              "uk_ua": [
+                "Редстоун, зілля, ковадло, чари й торгівля.",
+                "Вони відкриваються незалежно, якщо вистачає матеріальної епохи."
+              ],
+              "ja_jp": [
+                "レッドストーン、醸造、金床、エンチャント、交易。",
+                "素材条件さえ満たせば独立して解放されます。"
+              ],
+              "rpr": [
+                "Красный камень, зелья, наковальня, чары да торгъ.",
+                "Всякiя штуки отворяются порознь, коли пора матерiаловъ дозволяетъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "it": {
+          "enabled": true,
+          "slot": 12,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "it_hub",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:observer",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "IT Branch",
+              "ru_ru": "IT-ветка",
+              "uk_ua": "IT-гілка",
+              "ja_jp": "IT系統",
+              "rpr": "Машинная вѣтвь"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Electronics, sensors, the screen, jammer and drones.",
+                "The most technical branch of the whole server."
+              ],
+              "ru_ru": [
+                "Электроника, сенсоры, экран, глушилка и дроны.",
+                "Самая техническая ветка всего сервера."
+              ],
+              "uk_ua": [
+                "Електроніка, сенсори, екран, глушилка та дрони.",
+                "Найтехнічніша гілка всього сервера."
+              ],
+              "ja_jp": [
+                "電子機器、センサー、画面、ジャマー、ドローン。",
+                "サーバー全体で最も技術的な枝です。"
+              ],
+              "rpr": [
+                "Электрическiя хитрости, датчики, экранъ, глушилка да дроны.",
+                "Сiя вѣтвь самая мудрёная на всёмъ серверѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "races": {
+          "enabled": true,
+          "slot": 16,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "races",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:totem_of_undying",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Racial Gifts",
+              "ru_ru": "Способности рас",
+              "uk_ua": "Здібності рас",
+              "ja_jp": "種族能力",
+              "rpr": "Дары племёнъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Four tiers of racial perks.",
+                "From cheap starter powers to elite gifts."
+              ],
+              "ru_ru": [
+                "Четыре уровня расовых способностей.",
+                "От дешёвых стартовых бонусов до элитных даров."
+              ],
+              "uk_ua": [
+                "Чотири рівні расових здібностей.",
+                "Від дешевих стартових бонусів до елітних дарів."
+              ],
+              "ja_jp": [
+                "種族能力の4段階です。",
+                "安価な初級段階から精鋭級の贈り物まで。"
+              ],
+              "rpr": [
+                "Четыре чина даровъ племенныхъ.",
+                "Отъ дешёвыхъ поблажекъ до даровъ элитныхъ."
               ]
             }
           },
@@ -1379,6 +2202,144 @@
           ],
           "requirementGroups": [],
           "closeAfterClick": false
+        }
+      }
+    },
+    "mechanics": {
+      "enabled": true,
+      "rows": 3,
+      "theme": "main_overlay",
+      "hideTitleTextWhenPack": true,
+      "title": {
+        "values": {
+          "en_us": "Mechanics",
+          "ru_ru": "Механики",
+          "uk_ua": "Механіки",
+          "ja_jp": "仕組み",
+          "rpr": "Механiки"
+        }
+      },
+      "buttons": {
+        "info": {
+          "enabled": true,
+          "slot": 0,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:knowledge_book",
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Practical Systems",
+              "ru_ru": "Практические системы",
+              "uk_ua": "Практичні системи",
+              "ja_jp": "実用システム",
+              "rpr": "Системы житейскiя"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "These upgrades decide which survival mechanics are legal on the server."
+              ],
+              "ru_ru": [
+                "Эти улучшения решают, какие механики выживания вообще разрешены на сервере."
+              ],
+              "uk_ua": [
+                "Ці покращення вирішують, які механіки виживання взагалі дозволені на сервері.",
+                "Ці механіки відкриваються незалежно одна від одної; лишаються тільки потрібні матеріальні пороги."
+              ],
+              "ja_jp": [
+                "この強化は利用可能なサバイバル機能を決めます。",
+                "この機能群は順番ではなく、必要な素材条件だけで開きます。"
+              ],
+              "rpr": [
+                "Сiи улучшенiя рѣшаютъ, какие житейскiя хитрости дозволены на серверѣ.",
+                "Сiи механiки нынѣ отворяются порознь; остаются лишь нужныя матерiальныя пороги."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "close": {
+          "enabled": true,
+          "slot": 8,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "close",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Close",
+              "ru_ru": "Закрыть",
+              "uk_ua": "Закрити",
+              "ja_jp": "閉じる",
+              "rpr": "Затворить"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Close this interface."
+              ],
+              "ru_ru": [
+                "Закрыть этот интерфейс."
+              ],
+              "uk_ua": [
+                "Закрити цей інтерфейс."
+              ],
+              "ja_jp": [
+                "この画面を閉じます。"
+              ],
+              "rpr": [
+                "Затворить сей приборъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "balance": {
           "enabled": true,
@@ -1444,17 +2405,17 @@
           "requirementGroups": [],
           "closeAfterClick": false
         },
-        "back": {
+        "worlds": {
           "enabled": true,
-          "slot": 8,
+          "slot": 14,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "open_screen",
-          "targetScreenId": "main",
+          "targetScreenId": "worlds",
           "upgradeId": "",
           "pricesBitcoins": [],
           "icon": {
-            "fallbackItem": "minecraft:arrow",
+            "fallbackItem": "minecraft:obsidian",
             "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": false
@@ -1473,65 +2434,53 @@
           },
           "name": {
             "values": {
-              "en_us": "Back",
-              "ru_ru": "Назад",
-              "uk_ua": "Назад",
-              "ja_jp": "戻る",
-              "rpr": "Назадъ"
+              "en_us": "Worlds",
+              "ru_ru": "Миры",
+              "uk_ua": "Світи",
+              "ja_jp": "世界",
+              "rpr": "Мiры"
             }
           },
           "lore": {
             "values": {
               "en_us": [
-                "Return to the previous branch."
+                "Open Nether and End access.",
+                "Portals stay locked until tickets are bought."
               ],
               "ru_ru": [
-                "Вернуться в предыдущий раздел."
+                "Открывает ветку доступа в Незер и Энд.",
+                "Порталы не заработают, пока билеты не куплены."
               ],
               "uk_ua": [
-                "Повернутися до попередньої гілки."
+                "Відкриває гілку доступу до Незеру та Енду.",
+                "Портали не запрацюють, доки квитки не куплені."
               ],
               "ja_jp": [
-                "前の画面に戻ります。"
+                "ネザーとエンドへのアクセスを開きます。",
+                "許可を買うまでポータルは動きません。"
               ],
               "rpr": [
-                "Возвратиться во прежнiй разделъ."
+                "Отворяет ходъ въ Нижнiй мiръ и въ Край.",
+                "Безъ грамотъ порталы молчатъ."
               ]
             }
           },
           "requirements": [],
           "requirementGroups": [],
           "closeAfterClick": false
-        }
-      }
-    },
-    "mechanics": {
-      "enabled": true,
-      "rows": 3,
-      "theme": "template_3row",
-      "hideTitleTextWhenPack": true,
-      "title": {
-        "values": {
-          "en_us": "Mechanics",
-          "ru_ru": "Механики",
-          "uk_ua": "Механіки",
-          "ja_jp": "仕組み",
-          "rpr": "Механiки"
-        }
-      },
-      "buttons": {
-        "info": {
+        },
+        "eras": {
           "enabled": true,
-          "slot": 18,
+          "slot": 10,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
-          "type": "none",
-          "targetScreenId": "",
+          "type": "open_screen",
+          "targetScreenId": "eras",
           "upgradeId": "",
           "pricesBitcoins": [],
           "icon": {
-            "fallbackItem": "minecraft:knowledge_book",
-            "packModel": "",
+            "fallbackItem": "minecraft:smithing_table",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": false
           },
@@ -1549,32 +2498,224 @@
           },
           "name": {
             "values": {
-              "en_us": "Practical Systems",
-              "ru_ru": "Практические системы",
-              "uk_ua": "Практичні системи",
-              "ja_jp": "実用システム",
-              "rpr": "Системы житейскiя"
+              "en_us": "Eras",
+              "ru_ru": "Эры",
+              "uk_ua": "Ери",
+              "ja_jp": "時代",
+              "rpr": "Поры"
             }
           },
           "lore": {
             "values": {
               "en_us": [
-                "These upgrades decide which survival mechanics are legal on the server."
+                "Stone, copper, iron, diamond and netherite.",
+                "This branch decides which gear tier exists on the server."
               ],
               "ru_ru": [
-                "Эти улучшения решают, какие механики выживания вообще разрешены на сервере."
+                "Камень, медь, железо, алмазы и незрит.",
+                "Эта ветка решает, какие уровни снаряжения вообще существуют."
               ],
               "uk_ua": [
-                "Ці покращення вирішують, які механіки виживання взагалі дозволені на сервері.",
-                "Ці механіки відкриваються незалежно одна від одної; лишаються тільки потрібні матеріальні пороги."
+                "Камінь, мідь, залізо, алмази та незрит.",
+                "Ця гілка визначає, які рівні спорядження існують на сервері."
               ],
               "ja_jp": [
-                "この強化は利用可能なサバイバル機能を決めます。",
-                "この機能群は順番ではなく、必要な素材条件だけで開きます。"
+                "石・銅・鉄・ダイヤ・ネザライト。",
+                "サーバーで使える装備段階を決めます。"
               ],
               "rpr": [
-                "Сiи улучшенiя рѣшаютъ, какие житейскiя хитрости дозволены на серверѣ.",
-                "Сiи механiки нынѣ отворяются порознь; остаются лишь нужныя матерiальныя пороги."
+                "Камень, мѣдь, желѣзо, алмазы да незритъ.",
+                "Сiя вѣтвь рѣшаетъ, какiе чины сбруи дозволены."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "mechanics": {
+          "enabled": true,
+          "slot": 11,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "mechanics",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Mechanics",
+              "ru_ru": "Механики",
+              "uk_ua": "Механіки",
+              "ja_jp": "仕組み",
+              "rpr": "Механiки"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Redstone, brewing, anvils, enchanting and villager trade."
+              ],
+              "ru_ru": [
+                "Редстоун, зелья, наковальня, чары и торговля."
+              ],
+              "uk_ua": [
+                "Редстоун, зілля, ковадло, чари й торгівля.",
+                "Вони відкриваються незалежно, якщо вистачає матеріальної епохи."
+              ],
+              "ja_jp": [
+                "レッドストーン、醸造、金床、エンチャント、交易。",
+                "素材条件さえ満たせば独立して解放されます。"
+              ],
+              "rpr": [
+                "Красный камень, зелья, наковальня, чары да торгъ.",
+                "Всякiя штуки отворяются порознь, коли пора матерiаловъ дозволяетъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "it": {
+          "enabled": true,
+          "slot": 12,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "it_hub",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:observer",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "IT Branch",
+              "ru_ru": "IT-ветка",
+              "uk_ua": "IT-гілка",
+              "ja_jp": "IT系統",
+              "rpr": "Машинная вѣтвь"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Electronics, sensors, the screen, jammer and drones.",
+                "The most technical branch of the whole server."
+              ],
+              "ru_ru": [
+                "Электроника, сенсоры, экран, глушилка и дроны.",
+                "Самая техническая ветка всего сервера."
+              ],
+              "uk_ua": [
+                "Електроніка, сенсори, екран, глушилка та дрони.",
+                "Найтехнічніша гілка всього сервера."
+              ],
+              "ja_jp": [
+                "電子機器、センサー、画面、ジャマー、ドローン。",
+                "サーバー全体で最も技術的な枝です。"
+              ],
+              "rpr": [
+                "Электрическiя хитрости, датчики, экранъ, глушилка да дроны.",
+                "Сiя вѣтвь самая мудрёная на всёмъ серверѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "races": {
+          "enabled": true,
+          "slot": 16,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "races",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:totem_of_undying",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Racial Gifts",
+              "ru_ru": "Способности рас",
+              "uk_ua": "Здібності рас",
+              "ja_jp": "種族能力",
+              "rpr": "Дары племёнъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Four tiers of racial perks.",
+                "From cheap starter powers to elite gifts."
+              ],
+              "ru_ru": [
+                "Четыре уровня расовых способностей.",
+                "От дешёвых стартовых бонусов до элитных даров."
+              ],
+              "uk_ua": [
+                "Чотири рівні расових здібностей.",
+                "Від дешевих стартових бонусів до елітних дарів."
+              ],
+              "ja_jp": [
+                "種族能力の4段階です。",
+                "安価な初級段階から精鋭級の贈り物まで。"
+              ],
+              "rpr": [
+                "Четыре чина даровъ племенныхъ.",
+                "Отъ дешёвыхъ поблажекъ до даровъ элитныхъ."
               ]
             }
           },
@@ -1584,7 +2725,7 @@
         },
         "redstone": {
           "enabled": true,
-          "slot": 10,
+          "slot": 36,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -1660,7 +2801,7 @@
         },
         "brewing": {
           "enabled": true,
-          "slot": 11,
+          "slot": 38,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -1736,7 +2877,7 @@
         },
         "anvil": {
           "enabled": true,
-          "slot": 12,
+          "slot": 40,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -1812,7 +2953,7 @@
         },
         "enchanting": {
           "enabled": true,
-          "slot": 13,
+          "slot": 42,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -1888,7 +3029,7 @@
         },
         "villagers": {
           "enabled": true,
-          "slot": 14,
+          "slot": 44,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -1961,72 +3102,13 @@
           "requirements": [],
           "requirementGroups": [],
           "closeAfterClick": false
-        },
-        "back": {
-          "enabled": true,
-          "slot": 26,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "open_screen",
-          "targetScreenId": "main",
-          "upgradeId": "",
-          "pricesBitcoins": [],
-          "icon": {
-            "fallbackItem": "minecraft:arrow",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:emerald",
-            "packModel": "lg2:gui/button/maxed",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "en_us": "Back",
-              "ru_ru": "Назад",
-              "uk_ua": "Назад",
-              "ja_jp": "戻る",
-              "rpr": "Назадъ"
-            }
-          },
-          "lore": {
-            "values": {
-              "en_us": [
-                "Return to the previous branch."
-              ],
-              "ru_ru": [
-                "Вернуться в предыдущий раздел."
-              ],
-              "uk_ua": [
-                "Повернутися до попередньої гілки."
-              ],
-              "ja_jp": [
-                "前の画面に戻ります。"
-              ],
-              "rpr": [
-                "Возвратиться во прежнiй разделъ."
-              ]
-            }
-          },
-          "requirements": [],
-          "requirementGroups": [],
-          "closeAfterClick": false
         }
       }
     },
     "it_hub": {
       "enabled": true,
-      "rows": 5,
-      "theme": "template_5row",
+      "rows": 3,
+      "theme": "main_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
@@ -2040,7 +3122,7 @@
       "buttons": {
         "info": {
           "enabled": true,
-          "slot": 36,
+          "slot": 0,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "none",
@@ -2102,9 +3184,450 @@
           "requirementGroups": [],
           "closeAfterClick": false
         },
+        "close": {
+          "enabled": true,
+          "slot": 8,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "close",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Close",
+              "ru_ru": "Закрыть",
+              "uk_ua": "Закрити",
+              "ja_jp": "閉じる",
+              "rpr": "Затворить"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Close this interface."
+              ],
+              "ru_ru": [
+                "Закрыть этот интерфейс."
+              ],
+              "uk_ua": [
+                "Закрити цей інтерфейс."
+              ],
+              "ja_jp": [
+                "この画面を閉じます。"
+              ],
+              "rpr": [
+                "Затворить сей приборъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "balance": {
+          "enabled": true,
+          "slot": 7,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "lg2:bitcoin",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Balance: %bitcoins% BTC",
+              "ru_ru": "Баланс: %bitcoins% BTC",
+              "uk_ua": "Баланс: %bitcoins% BTC",
+              "ja_jp": "残高: %bitcoins% BTC",
+              "rpr": "Монѣтъ: %bitcoins% BTC"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Your personal bitcoin balance.",
+                "All purchases in this menu use these coins."
+              ],
+              "ru_ru": [
+                "Твой личный баланс биткоинов.",
+                "Все покупки в этом меню тратят именно эти монеты."
+              ],
+              "uk_ua": [
+                "Твій особистий баланс біткоїнів.",
+                "Усі покупки в цьому меню витрачають саме ці монети."
+              ],
+              "ja_jp": [
+                "あなた個人のビットコイン残高です。",
+                "この画面の購入はここから支払われます。"
+              ],
+              "rpr": [
+                "Твой личный запасъ монѣтъ биткоиновыхъ.",
+                "Сии монѣты и идутъ на всякую покупку въ семъ окнѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "worlds": {
+          "enabled": true,
+          "slot": 14,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "worlds",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:obsidian",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Worlds",
+              "ru_ru": "Миры",
+              "uk_ua": "Світи",
+              "ja_jp": "世界",
+              "rpr": "Мiры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Open Nether and End access.",
+                "Portals stay locked until tickets are bought."
+              ],
+              "ru_ru": [
+                "Открывает ветку доступа в Незер и Энд.",
+                "Порталы не заработают, пока билеты не куплены."
+              ],
+              "uk_ua": [
+                "Відкриває гілку доступу до Незеру та Енду.",
+                "Портали не запрацюють, доки квитки не куплені."
+              ],
+              "ja_jp": [
+                "ネザーとエンドへのアクセスを開きます。",
+                "許可を買うまでポータルは動きません。"
+              ],
+              "rpr": [
+                "Отворяет ходъ въ Нижнiй мiръ и въ Край.",
+                "Безъ грамотъ порталы молчатъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "eras": {
+          "enabled": true,
+          "slot": 10,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "eras",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:smithing_table",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Eras",
+              "ru_ru": "Эры",
+              "uk_ua": "Ери",
+              "ja_jp": "時代",
+              "rpr": "Поры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Stone, copper, iron, diamond and netherite.",
+                "This branch decides which gear tier exists on the server."
+              ],
+              "ru_ru": [
+                "Камень, медь, железо, алмазы и незрит.",
+                "Эта ветка решает, какие уровни снаряжения вообще существуют."
+              ],
+              "uk_ua": [
+                "Камінь, мідь, залізо, алмази та незрит.",
+                "Ця гілка визначає, які рівні спорядження існують на сервері."
+              ],
+              "ja_jp": [
+                "石・銅・鉄・ダイヤ・ネザライト。",
+                "サーバーで使える装備段階を決めます。"
+              ],
+              "rpr": [
+                "Камень, мѣдь, желѣзо, алмазы да незритъ.",
+                "Сiя вѣтвь рѣшаетъ, какiе чины сбруи дозволены."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "mechanics": {
+          "enabled": true,
+          "slot": 11,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "mechanics",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Mechanics",
+              "ru_ru": "Механики",
+              "uk_ua": "Механіки",
+              "ja_jp": "仕組み",
+              "rpr": "Механiки"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Redstone, brewing, anvils, enchanting and villager trade."
+              ],
+              "ru_ru": [
+                "Редстоун, зелья, наковальня, чары и торговля."
+              ],
+              "uk_ua": [
+                "Редстоун, зілля, ковадло, чари й торгівля.",
+                "Вони відкриваються незалежно, якщо вистачає матеріальної епохи."
+              ],
+              "ja_jp": [
+                "レッドストーン、醸造、金床、エンチャント、交易。",
+                "素材条件さえ満たせば独立して解放されます。"
+              ],
+              "rpr": [
+                "Красный камень, зелья, наковальня, чары да торгъ.",
+                "Всякiя штуки отворяются порознь, коли пора матерiаловъ дозволяетъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "it": {
+          "enabled": true,
+          "slot": 12,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "it_hub",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:observer",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "IT Branch",
+              "ru_ru": "IT-ветка",
+              "uk_ua": "IT-гілка",
+              "ja_jp": "IT系統",
+              "rpr": "Машинная вѣтвь"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Electronics, sensors, the screen, jammer and drones.",
+                "The most technical branch of the whole server."
+              ],
+              "ru_ru": [
+                "Электроника, сенсоры, экран, глушилка и дроны.",
+                "Самая техническая ветка всего сервера."
+              ],
+              "uk_ua": [
+                "Електроніка, сенсори, екран, глушилка та дрони.",
+                "Найтехнічніша гілка всього сервера."
+              ],
+              "ja_jp": [
+                "電子機器、センサー、画面、ジャマー、ドローン。",
+                "サーバー全体で最も技術的な枝です。"
+              ],
+              "rpr": [
+                "Электрическiя хитрости, датчики, экранъ, глушилка да дроны.",
+                "Сiя вѣтвь самая мудрёная на всёмъ серверѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "races": {
+          "enabled": true,
+          "slot": 16,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "races",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:totem_of_undying",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Racial Gifts",
+              "ru_ru": "Способности рас",
+              "uk_ua": "Здібності рас",
+              "ja_jp": "種族能力",
+              "rpr": "Дары племёнъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Four tiers of racial perks.",
+                "From cheap starter powers to elite gifts."
+              ],
+              "ru_ru": [
+                "Четыре уровня расовых способностей.",
+                "От дешёвых стартовых бонусов до элитных даров."
+              ],
+              "uk_ua": [
+                "Чотири рівні расових здібностей.",
+                "Від дешевих стартових бонусів до елітних дарів."
+              ],
+              "ja_jp": [
+                "種族能力の4段階です。",
+                "安価な初級段階から精鋭級の贈り物まで。"
+              ],
+              "rpr": [
+                "Четыре чина даровъ племенныхъ.",
+                "Отъ дешёвыхъ поблажекъ до даровъ элитныхъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
         "electronics": {
           "enabled": true,
-          "slot": 4,
+          "slot": 27,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -2180,7 +3703,7 @@
         },
         "camera": {
           "enabled": true,
-          "slot": 10,
+          "slot": 36,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -2261,7 +3784,7 @@
         },
         "microphone": {
           "enabled": true,
-          "slot": 13,
+          "slot": 38,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -2342,7 +3865,7 @@
         },
         "speaker": {
           "enabled": true,
-          "slot": 16,
+          "slot": 40,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -2423,7 +3946,7 @@
         },
         "communications": {
           "enabled": true,
-          "slot": 22,
+          "slot": 42,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -2518,7 +4041,7 @@
         },
         "screen": {
           "enabled": true,
-          "slot": 30,
+          "slot": 44,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -2599,7 +4122,7 @@
         },
         "jammer": {
           "enabled": true,
-          "slot": 39,
+          "slot": 45,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -2680,7 +4203,7 @@
         },
         "scout": {
           "enabled": true,
-          "slot": 33,
+          "slot": 47,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -2765,7 +4288,7 @@
         },
         "kamikaze": {
           "enabled": true,
-          "slot": 34,
+          "slot": 49,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -2846,7 +4369,7 @@
         },
         "combat": {
           "enabled": true,
-          "slot": 35,
+          "slot": 51,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -2924,72 +4447,13 @@
           ],
           "requirementGroups": [],
           "closeAfterClick": false
-        },
-        "back": {
-          "enabled": true,
-          "slot": 44,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "open_screen",
-          "targetScreenId": "main",
-          "upgradeId": "",
-          "pricesBitcoins": [],
-          "icon": {
-            "fallbackItem": "minecraft:arrow",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:emerald",
-            "packModel": "lg2:gui/button/maxed",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "en_us": "Back",
-              "ru_ru": "Назад",
-              "uk_ua": "Назад",
-              "ja_jp": "戻る",
-              "rpr": "Назадъ"
-            }
-          },
-          "lore": {
-            "values": {
-              "en_us": [
-                "Return to the previous branch."
-              ],
-              "ru_ru": [
-                "Вернуться в предыдущий раздел."
-              ],
-              "uk_ua": [
-                "Повернутися до попередньої гілки."
-              ],
-              "ja_jp": [
-                "前の画面に戻ります。"
-              ],
-              "rpr": [
-                "Возвратиться во прежнiй разделъ."
-              ]
-            }
-          },
-          "requirements": [],
-          "requirementGroups": [],
-          "closeAfterClick": false
         }
       }
     },
     "it_devices": {
       "enabled": true,
-      "rows": 4,
-      "theme": "template_4row",
+      "rows": 3,
+      "theme": "main_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
@@ -3003,7 +4467,7 @@
       "buttons": {
         "info": {
           "enabled": true,
-          "slot": 27,
+          "slot": 0,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "none",
@@ -3065,9 +4529,450 @@
           "requirementGroups": [],
           "closeAfterClick": false
         },
-        "camera": {
+        "close": {
+          "enabled": true,
+          "slot": 8,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "close",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Close",
+              "ru_ru": "Закрыть",
+              "uk_ua": "Закрити",
+              "ja_jp": "閉じる",
+              "rpr": "Затворить"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Close this interface."
+              ],
+              "ru_ru": [
+                "Закрыть этот интерфейс."
+              ],
+              "uk_ua": [
+                "Закрити цей інтерфейс."
+              ],
+              "ja_jp": [
+                "この画面を閉じます。"
+              ],
+              "rpr": [
+                "Затворить сей приборъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "balance": {
+          "enabled": true,
+          "slot": 7,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "lg2:bitcoin",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Balance: %bitcoins% BTC",
+              "ru_ru": "Баланс: %bitcoins% BTC",
+              "uk_ua": "Баланс: %bitcoins% BTC",
+              "ja_jp": "残高: %bitcoins% BTC",
+              "rpr": "Монѣтъ: %bitcoins% BTC"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Your personal bitcoin balance.",
+                "All purchases in this menu use these coins."
+              ],
+              "ru_ru": [
+                "Твой личный баланс биткоинов.",
+                "Все покупки в этом меню тратят именно эти монеты."
+              ],
+              "uk_ua": [
+                "Твій особистий баланс біткоїнів.",
+                "Усі покупки в цьому меню витрачають саме ці монети."
+              ],
+              "ja_jp": [
+                "あなた個人のビットコイン残高です。",
+                "この画面の購入はここから支払われます。"
+              ],
+              "rpr": [
+                "Твой личный запасъ монѣтъ биткоиновыхъ.",
+                "Сии монѣты и идутъ на всякую покупку въ семъ окнѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "worlds": {
+          "enabled": true,
+          "slot": 14,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "worlds",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:obsidian",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Worlds",
+              "ru_ru": "Миры",
+              "uk_ua": "Світи",
+              "ja_jp": "世界",
+              "rpr": "Мiры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Open Nether and End access.",
+                "Portals stay locked until tickets are bought."
+              ],
+              "ru_ru": [
+                "Открывает ветку доступа в Незер и Энд.",
+                "Порталы не заработают, пока билеты не куплены."
+              ],
+              "uk_ua": [
+                "Відкриває гілку доступу до Незеру та Енду.",
+                "Портали не запрацюють, доки квитки не куплені."
+              ],
+              "ja_jp": [
+                "ネザーとエンドへのアクセスを開きます。",
+                "許可を買うまでポータルは動きません。"
+              ],
+              "rpr": [
+                "Отворяет ходъ въ Нижнiй мiръ и въ Край.",
+                "Безъ грамотъ порталы молчатъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "eras": {
           "enabled": true,
           "slot": 10,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "eras",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:smithing_table",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Eras",
+              "ru_ru": "Эры",
+              "uk_ua": "Ери",
+              "ja_jp": "時代",
+              "rpr": "Поры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Stone, copper, iron, diamond and netherite.",
+                "This branch decides which gear tier exists on the server."
+              ],
+              "ru_ru": [
+                "Камень, медь, железо, алмазы и незрит.",
+                "Эта ветка решает, какие уровни снаряжения вообще существуют."
+              ],
+              "uk_ua": [
+                "Камінь, мідь, залізо, алмази та незрит.",
+                "Ця гілка визначає, які рівні спорядження існують на сервері."
+              ],
+              "ja_jp": [
+                "石・銅・鉄・ダイヤ・ネザライト。",
+                "サーバーで使える装備段階を決めます。"
+              ],
+              "rpr": [
+                "Камень, мѣдь, желѣзо, алмазы да незритъ.",
+                "Сiя вѣтвь рѣшаетъ, какiе чины сбруи дозволены."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "mechanics": {
+          "enabled": true,
+          "slot": 11,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "mechanics",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Mechanics",
+              "ru_ru": "Механики",
+              "uk_ua": "Механіки",
+              "ja_jp": "仕組み",
+              "rpr": "Механiки"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Redstone, brewing, anvils, enchanting and villager trade."
+              ],
+              "ru_ru": [
+                "Редстоун, зелья, наковальня, чары и торговля."
+              ],
+              "uk_ua": [
+                "Редстоун, зілля, ковадло, чари й торгівля.",
+                "Вони відкриваються незалежно, якщо вистачає матеріальної епохи."
+              ],
+              "ja_jp": [
+                "レッドストーン、醸造、金床、エンチャント、交易。",
+                "素材条件さえ満たせば独立して解放されます。"
+              ],
+              "rpr": [
+                "Красный камень, зелья, наковальня, чары да торгъ.",
+                "Всякiя штуки отворяются порознь, коли пора матерiаловъ дозволяетъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "it": {
+          "enabled": true,
+          "slot": 12,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "it_hub",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:observer",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "IT Branch",
+              "ru_ru": "IT-ветка",
+              "uk_ua": "IT-гілка",
+              "ja_jp": "IT系統",
+              "rpr": "Машинная вѣтвь"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Electronics, sensors, the screen, jammer and drones.",
+                "The most technical branch of the whole server."
+              ],
+              "ru_ru": [
+                "Электроника, сенсоры, экран, глушилка и дроны.",
+                "Самая техническая ветка всего сервера."
+              ],
+              "uk_ua": [
+                "Електроніка, сенсори, екран, глушилка та дрони.",
+                "Найтехнічніша гілка всього сервера."
+              ],
+              "ja_jp": [
+                "電子機器、センサー、画面、ジャマー、ドローン。",
+                "サーバー全体で最も技術的な枝です。"
+              ],
+              "rpr": [
+                "Электрическiя хитрости, датчики, экранъ, глушилка да дроны.",
+                "Сiя вѣтвь самая мудрёная на всёмъ серверѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "races": {
+          "enabled": true,
+          "slot": 16,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "races",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:totem_of_undying",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Racial Gifts",
+              "ru_ru": "Способности рас",
+              "uk_ua": "Здібності рас",
+              "ja_jp": "種族能力",
+              "rpr": "Дары племёнъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Four tiers of racial perks.",
+                "From cheap starter powers to elite gifts."
+              ],
+              "ru_ru": [
+                "Четыре уровня расовых способностей.",
+                "От дешёвых стартовых бонусов до элитных даров."
+              ],
+              "uk_ua": [
+                "Чотири рівні расових здібностей.",
+                "Від дешевих стартових бонусів до елітних дарів."
+              ],
+              "ja_jp": [
+                "種族能力の4段階です。",
+                "安価な初級段階から精鋭級の贈り物まで。"
+              ],
+              "rpr": [
+                "Четыре чина даровъ племенныхъ.",
+                "Отъ дешёвыхъ поблажекъ до даровъ элитныхъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "camera": {
+          "enabled": true,
+          "slot": 36,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -3148,7 +5053,7 @@
         },
         "microphone": {
           "enabled": true,
-          "slot": 13,
+          "slot": 40,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -3229,7 +5134,7 @@
         },
         "speaker": {
           "enabled": true,
-          "slot": 16,
+          "slot": 44,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -3310,7 +5215,7 @@
         },
         "hint": {
           "enabled": true,
-          "slot": 22,
+          "slot": 49,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "none",
@@ -3371,72 +5276,13 @@
           "requirements": [],
           "requirementGroups": [],
           "closeAfterClick": false
-        },
-        "back": {
-          "enabled": true,
-          "slot": 35,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "open_screen",
-          "targetScreenId": "it_hub",
-          "upgradeId": "",
-          "pricesBitcoins": [],
-          "icon": {
-            "fallbackItem": "minecraft:arrow",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:emerald",
-            "packModel": "lg2:gui/button/maxed",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "en_us": "Back",
-              "ru_ru": "Назад",
-              "uk_ua": "Назад",
-              "ja_jp": "戻る",
-              "rpr": "Назадъ"
-            }
-          },
-          "lore": {
-            "values": {
-              "en_us": [
-                "Return to the previous branch."
-              ],
-              "ru_ru": [
-                "Вернуться в предыдущий раздел."
-              ],
-              "uk_ua": [
-                "Повернутися до попередньої гілки."
-              ],
-              "ja_jp": [
-                "前の画面に戻ります。"
-              ],
-              "rpr": [
-                "Возвратиться во прежнiй разделъ."
-              ]
-            }
-          },
-          "requirements": [],
-          "requirementGroups": [],
-          "closeAfterClick": false
         }
       }
     },
     "it_displays": {
       "enabled": true,
       "rows": 3,
-      "theme": "template_3row",
+      "theme": "main_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
@@ -3450,7 +5296,7 @@
       "buttons": {
         "info": {
           "enabled": true,
-          "slot": 18,
+          "slot": 0,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "none",
@@ -3512,9 +5358,450 @@
           "requirementGroups": [],
           "closeAfterClick": false
         },
-        "jammer": {
+        "close": {
+          "enabled": true,
+          "slot": 8,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "close",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Close",
+              "ru_ru": "Закрыть",
+              "uk_ua": "Закрити",
+              "ja_jp": "閉じる",
+              "rpr": "Затворить"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Close this interface."
+              ],
+              "ru_ru": [
+                "Закрыть этот интерфейс."
+              ],
+              "uk_ua": [
+                "Закрити цей інтерфейс."
+              ],
+              "ja_jp": [
+                "この画面を閉じます。"
+              ],
+              "rpr": [
+                "Затворить сей приборъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "balance": {
+          "enabled": true,
+          "slot": 7,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "lg2:bitcoin",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Balance: %bitcoins% BTC",
+              "ru_ru": "Баланс: %bitcoins% BTC",
+              "uk_ua": "Баланс: %bitcoins% BTC",
+              "ja_jp": "残高: %bitcoins% BTC",
+              "rpr": "Монѣтъ: %bitcoins% BTC"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Your personal bitcoin balance.",
+                "All purchases in this menu use these coins."
+              ],
+              "ru_ru": [
+                "Твой личный баланс биткоинов.",
+                "Все покупки в этом меню тратят именно эти монеты."
+              ],
+              "uk_ua": [
+                "Твій особистий баланс біткоїнів.",
+                "Усі покупки в цьому меню витрачають саме ці монети."
+              ],
+              "ja_jp": [
+                "あなた個人のビットコイン残高です。",
+                "この画面の購入はここから支払われます。"
+              ],
+              "rpr": [
+                "Твой личный запасъ монѣтъ биткоиновыхъ.",
+                "Сии монѣты и идутъ на всякую покупку въ семъ окнѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "worlds": {
           "enabled": true,
           "slot": 14,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "worlds",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:obsidian",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Worlds",
+              "ru_ru": "Миры",
+              "uk_ua": "Світи",
+              "ja_jp": "世界",
+              "rpr": "Мiры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Open Nether and End access.",
+                "Portals stay locked until tickets are bought."
+              ],
+              "ru_ru": [
+                "Открывает ветку доступа в Незер и Энд.",
+                "Порталы не заработают, пока билеты не куплены."
+              ],
+              "uk_ua": [
+                "Відкриває гілку доступу до Незеру та Енду.",
+                "Портали не запрацюють, доки квитки не куплені."
+              ],
+              "ja_jp": [
+                "ネザーとエンドへのアクセスを開きます。",
+                "許可を買うまでポータルは動きません。"
+              ],
+              "rpr": [
+                "Отворяет ходъ въ Нижнiй мiръ и въ Край.",
+                "Безъ грамотъ порталы молчатъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "eras": {
+          "enabled": true,
+          "slot": 10,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "eras",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:smithing_table",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Eras",
+              "ru_ru": "Эры",
+              "uk_ua": "Ери",
+              "ja_jp": "時代",
+              "rpr": "Поры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Stone, copper, iron, diamond and netherite.",
+                "This branch decides which gear tier exists on the server."
+              ],
+              "ru_ru": [
+                "Камень, медь, железо, алмазы и незрит.",
+                "Эта ветка решает, какие уровни снаряжения вообще существуют."
+              ],
+              "uk_ua": [
+                "Камінь, мідь, залізо, алмази та незрит.",
+                "Ця гілка визначає, які рівні спорядження існують на сервері."
+              ],
+              "ja_jp": [
+                "石・銅・鉄・ダイヤ・ネザライト。",
+                "サーバーで使える装備段階を決めます。"
+              ],
+              "rpr": [
+                "Камень, мѣдь, желѣзо, алмазы да незритъ.",
+                "Сiя вѣтвь рѣшаетъ, какiе чины сбруи дозволены."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "mechanics": {
+          "enabled": true,
+          "slot": 11,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "mechanics",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Mechanics",
+              "ru_ru": "Механики",
+              "uk_ua": "Механіки",
+              "ja_jp": "仕組み",
+              "rpr": "Механiки"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Redstone, brewing, anvils, enchanting and villager trade."
+              ],
+              "ru_ru": [
+                "Редстоун, зелья, наковальня, чары и торговля."
+              ],
+              "uk_ua": [
+                "Редстоун, зілля, ковадло, чари й торгівля.",
+                "Вони відкриваються незалежно, якщо вистачає матеріальної епохи."
+              ],
+              "ja_jp": [
+                "レッドストーン、醸造、金床、エンチャント、交易。",
+                "素材条件さえ満たせば独立して解放されます。"
+              ],
+              "rpr": [
+                "Красный камень, зелья, наковальня, чары да торгъ.",
+                "Всякiя штуки отворяются порознь, коли пора матерiаловъ дозволяетъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "it": {
+          "enabled": true,
+          "slot": 12,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "it_hub",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:observer",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "IT Branch",
+              "ru_ru": "IT-ветка",
+              "uk_ua": "IT-гілка",
+              "ja_jp": "IT系統",
+              "rpr": "Машинная вѣтвь"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Electronics, sensors, the screen, jammer and drones.",
+                "The most technical branch of the whole server."
+              ],
+              "ru_ru": [
+                "Электроника, сенсоры, экран, глушилка и дроны.",
+                "Самая техническая ветка всего сервера."
+              ],
+              "uk_ua": [
+                "Електроніка, сенсори, екран, глушилка та дрони.",
+                "Найтехнічніша гілка всього сервера."
+              ],
+              "ja_jp": [
+                "電子機器、センサー、画面、ジャマー、ドローン。",
+                "サーバー全体で最も技術的な枝です。"
+              ],
+              "rpr": [
+                "Электрическiя хитрости, датчики, экранъ, глушилка да дроны.",
+                "Сiя вѣтвь самая мудрёная на всёмъ серверѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "races": {
+          "enabled": true,
+          "slot": 16,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "races",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:totem_of_undying",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Racial Gifts",
+              "ru_ru": "Способности рас",
+              "uk_ua": "Здібності рас",
+              "ja_jp": "種族能力",
+              "rpr": "Дары племёнъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Four tiers of racial perks.",
+                "From cheap starter powers to elite gifts."
+              ],
+              "ru_ru": [
+                "Четыре уровня расовых способностей.",
+                "От дешёвых стартовых бонусов до элитных даров."
+              ],
+              "uk_ua": [
+                "Чотири рівні расових здібностей.",
+                "Від дешевих стартових бонусів до елітних дарів."
+              ],
+              "ja_jp": [
+                "種族能力の4段階です。",
+                "安価な初級段階から精鋭級の贈り物まで。"
+              ],
+              "rpr": [
+                "Четыре чина даровъ племенныхъ.",
+                "Отъ дешёвыхъ поблажекъ до даровъ элитныхъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "jammer": {
+          "enabled": true,
+          "slot": 42,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -3593,68 +5880,9 @@
           "requirementGroups": [],
           "closeAfterClick": false
         },
-        "back": {
-          "enabled": true,
-          "slot": 26,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "open_screen",
-          "targetScreenId": "it_hub",
-          "upgradeId": "",
-          "pricesBitcoins": [],
-          "icon": {
-            "fallbackItem": "minecraft:arrow",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:emerald",
-            "packModel": "lg2:gui/button/maxed",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "en_us": "Back",
-              "ru_ru": "Назад",
-              "uk_ua": "Назад",
-              "ja_jp": "戻る",
-              "rpr": "Назадъ"
-            }
-          },
-          "lore": {
-            "values": {
-              "en_us": [
-                "Return to the previous branch."
-              ],
-              "ru_ru": [
-                "Вернуться в предыдущий раздел."
-              ],
-              "uk_ua": [
-                "Повернутися до попередньої гілки."
-              ],
-              "ja_jp": [
-                "前の画面に戻ります。"
-              ],
-              "rpr": [
-                "Возвратиться во прежнiй разделъ."
-              ]
-            }
-          },
-          "requirements": [],
-          "requirementGroups": [],
-          "closeAfterClick": false
-        },
         "screen": {
           "enabled": true,
-          "slot": 12,
+          "slot": 38,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -3737,8 +5965,8 @@
     },
     "it_drones": {
       "enabled": true,
-      "rows": 4,
-      "theme": "template_4row",
+      "rows": 3,
+      "theme": "main_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
@@ -3752,7 +5980,7 @@
       "buttons": {
         "info": {
           "enabled": true,
-          "slot": 27,
+          "slot": 0,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "none",
@@ -3814,9 +6042,450 @@
           "requirementGroups": [],
           "closeAfterClick": false
         },
-        "scout": {
+        "close": {
+          "enabled": true,
+          "slot": 8,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "close",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Close",
+              "ru_ru": "Закрыть",
+              "uk_ua": "Закрити",
+              "ja_jp": "閉じる",
+              "rpr": "Затворить"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Close this interface."
+              ],
+              "ru_ru": [
+                "Закрыть этот интерфейс."
+              ],
+              "uk_ua": [
+                "Закрити цей інтерфейс."
+              ],
+              "ja_jp": [
+                "この画面を閉じます。"
+              ],
+              "rpr": [
+                "Затворить сей приборъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "balance": {
+          "enabled": true,
+          "slot": 7,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "lg2:bitcoin",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Balance: %bitcoins% BTC",
+              "ru_ru": "Баланс: %bitcoins% BTC",
+              "uk_ua": "Баланс: %bitcoins% BTC",
+              "ja_jp": "残高: %bitcoins% BTC",
+              "rpr": "Монѣтъ: %bitcoins% BTC"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Your personal bitcoin balance.",
+                "All purchases in this menu use these coins."
+              ],
+              "ru_ru": [
+                "Твой личный баланс биткоинов.",
+                "Все покупки в этом меню тратят именно эти монеты."
+              ],
+              "uk_ua": [
+                "Твій особистий баланс біткоїнів.",
+                "Усі покупки в цьому меню витрачають саме ці монети."
+              ],
+              "ja_jp": [
+                "あなた個人のビットコイン残高です。",
+                "この画面の購入はここから支払われます。"
+              ],
+              "rpr": [
+                "Твой личный запасъ монѣтъ биткоиновыхъ.",
+                "Сии монѣты и идутъ на всякую покупку въ семъ окнѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "worlds": {
+          "enabled": true,
+          "slot": 14,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "worlds",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:obsidian",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Worlds",
+              "ru_ru": "Миры",
+              "uk_ua": "Світи",
+              "ja_jp": "世界",
+              "rpr": "Мiры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Open Nether and End access.",
+                "Portals stay locked until tickets are bought."
+              ],
+              "ru_ru": [
+                "Открывает ветку доступа в Незер и Энд.",
+                "Порталы не заработают, пока билеты не куплены."
+              ],
+              "uk_ua": [
+                "Відкриває гілку доступу до Незеру та Енду.",
+                "Портали не запрацюють, доки квитки не куплені."
+              ],
+              "ja_jp": [
+                "ネザーとエンドへのアクセスを開きます。",
+                "許可を買うまでポータルは動きません。"
+              ],
+              "rpr": [
+                "Отворяет ходъ въ Нижнiй мiръ и въ Край.",
+                "Безъ грамотъ порталы молчатъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "eras": {
+          "enabled": true,
+          "slot": 10,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "eras",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:smithing_table",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Eras",
+              "ru_ru": "Эры",
+              "uk_ua": "Ери",
+              "ja_jp": "時代",
+              "rpr": "Поры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Stone, copper, iron, diamond and netherite.",
+                "This branch decides which gear tier exists on the server."
+              ],
+              "ru_ru": [
+                "Камень, медь, железо, алмазы и незрит.",
+                "Эта ветка решает, какие уровни снаряжения вообще существуют."
+              ],
+              "uk_ua": [
+                "Камінь, мідь, залізо, алмази та незрит.",
+                "Ця гілка визначає, які рівні спорядження існують на сервері."
+              ],
+              "ja_jp": [
+                "石・銅・鉄・ダイヤ・ネザライト。",
+                "サーバーで使える装備段階を決めます。"
+              ],
+              "rpr": [
+                "Камень, мѣдь, желѣзо, алмазы да незритъ.",
+                "Сiя вѣтвь рѣшаетъ, какiе чины сбруи дозволены."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "mechanics": {
+          "enabled": true,
+          "slot": 11,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "mechanics",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Mechanics",
+              "ru_ru": "Механики",
+              "uk_ua": "Механіки",
+              "ja_jp": "仕組み",
+              "rpr": "Механiки"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Redstone, brewing, anvils, enchanting and villager trade."
+              ],
+              "ru_ru": [
+                "Редстоун, зелья, наковальня, чары и торговля."
+              ],
+              "uk_ua": [
+                "Редстоун, зілля, ковадло, чари й торгівля.",
+                "Вони відкриваються незалежно, якщо вистачає матеріальної епохи."
+              ],
+              "ja_jp": [
+                "レッドストーン、醸造、金床、エンチャント、交易。",
+                "素材条件さえ満たせば独立して解放されます。"
+              ],
+              "rpr": [
+                "Красный камень, зелья, наковальня, чары да торгъ.",
+                "Всякiя штуки отворяются порознь, коли пора матерiаловъ дозволяетъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "it": {
           "enabled": true,
           "slot": 12,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "it_hub",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:observer",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "IT Branch",
+              "ru_ru": "IT-ветка",
+              "uk_ua": "IT-гілка",
+              "ja_jp": "IT系統",
+              "rpr": "Машинная вѣтвь"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Electronics, sensors, the screen, jammer and drones.",
+                "The most technical branch of the whole server."
+              ],
+              "ru_ru": [
+                "Электроника, сенсоры, экран, глушилка и дроны.",
+                "Самая техническая ветка всего сервера."
+              ],
+              "uk_ua": [
+                "Електроніка, сенсори, екран, глушилка та дрони.",
+                "Найтехнічніша гілка всього сервера."
+              ],
+              "ja_jp": [
+                "電子機器、センサー、画面、ジャマー、ドローン。",
+                "サーバー全体で最も技術的な枝です。"
+              ],
+              "rpr": [
+                "Электрическiя хитрости, датчики, экранъ, глушилка да дроны.",
+                "Сiя вѣтвь самая мудрёная на всёмъ серверѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "races": {
+          "enabled": true,
+          "slot": 16,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "races",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:totem_of_undying",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Racial Gifts",
+              "ru_ru": "Способности рас",
+              "uk_ua": "Здібності рас",
+              "ja_jp": "種族能力",
+              "rpr": "Дары племёнъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Four tiers of racial perks.",
+                "From cheap starter powers to elite gifts."
+              ],
+              "ru_ru": [
+                "Четыре уровня расовых способностей.",
+                "От дешёвых стартовых бонусов до элитных даров."
+              ],
+              "uk_ua": [
+                "Чотири рівні расових здібностей.",
+                "Від дешевих стартових бонусів до елітних дарів."
+              ],
+              "ja_jp": [
+                "種族能力の4段階です。",
+                "安価な初級段階から精鋭級の贈り物まで。"
+              ],
+              "rpr": [
+                "Четыре чина даровъ племенныхъ.",
+                "Отъ дешёвыхъ поблажекъ до даровъ элитныхъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "scout": {
+          "enabled": true,
+          "slot": 36,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -3901,7 +6570,7 @@
         },
         "scout_hint": {
           "enabled": true,
-          "slot": 13,
+          "slot": 37,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "none",
@@ -3940,7 +6609,7 @@
         },
         "kamikaze": {
           "enabled": true,
-          "slot": 22,
+          "slot": 39,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -4021,7 +6690,7 @@
         },
         "kamikaze_hint": {
           "enabled": true,
-          "slot": 23,
+          "slot": 40,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "none",
@@ -4060,7 +6729,7 @@
         },
         "combat_hint": {
           "enabled": true,
-          "slot": 30,
+          "slot": 43,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "none",
@@ -4099,7 +6768,7 @@
         },
         "combat": {
           "enabled": true,
-          "slot": 31,
+          "slot": 42,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -4177,72 +6846,13 @@
           ],
           "requirementGroups": [],
           "closeAfterClick": false
-        },
-        "back": {
-          "enabled": true,
-          "slot": 35,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "open_screen",
-          "targetScreenId": "it_hub",
-          "upgradeId": "",
-          "pricesBitcoins": [],
-          "icon": {
-            "fallbackItem": "minecraft:arrow",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:emerald",
-            "packModel": "lg2:gui/button/maxed",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "en_us": "Back",
-              "ru_ru": "Назад",
-              "uk_ua": "Назад",
-              "ja_jp": "戻る",
-              "rpr": "Назадъ"
-            }
-          },
-          "lore": {
-            "values": {
-              "en_us": [
-                "Return to the previous branch."
-              ],
-              "ru_ru": [
-                "Вернуться в предыдущий раздел."
-              ],
-              "uk_ua": [
-                "Повернутися до попередньої гілки."
-              ],
-              "ja_jp": [
-                "前の画面に戻ります。"
-              ],
-              "rpr": [
-                "Возвратиться во прежнiй разделъ."
-              ]
-            }
-          },
-          "requirements": [],
-          "requirementGroups": [],
-          "closeAfterClick": false
         }
       }
     },
     "races": {
       "enabled": true,
-      "rows": 4,
-      "theme": "template_4row",
+      "rows": 3,
+      "theme": "main_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
@@ -4256,7 +6866,7 @@
       "buttons": {
         "info": {
           "enabled": true,
-          "slot": 27,
+          "slot": 0,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "none",
@@ -4316,9 +6926,450 @@
           "requirementGroups": [],
           "closeAfterClick": false
         },
-        "budget": {
+        "close": {
+          "enabled": true,
+          "slot": 8,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "close",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Close",
+              "ru_ru": "Закрыть",
+              "uk_ua": "Закрити",
+              "ja_jp": "閉じる",
+              "rpr": "Затворить"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Close this interface."
+              ],
+              "ru_ru": [
+                "Закрыть этот интерфейс."
+              ],
+              "uk_ua": [
+                "Закрити цей інтерфейс."
+              ],
+              "ja_jp": [
+                "この画面を閉じます。"
+              ],
+              "rpr": [
+                "Затворить сей приборъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "balance": {
+          "enabled": true,
+          "slot": 7,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "lg2:bitcoin",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Balance: %bitcoins% BTC",
+              "ru_ru": "Баланс: %bitcoins% BTC",
+              "uk_ua": "Баланс: %bitcoins% BTC",
+              "ja_jp": "残高: %bitcoins% BTC",
+              "rpr": "Монѣтъ: %bitcoins% BTC"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Your personal bitcoin balance.",
+                "All purchases in this menu use these coins."
+              ],
+              "ru_ru": [
+                "Твой личный баланс биткоинов.",
+                "Все покупки в этом меню тратят именно эти монеты."
+              ],
+              "uk_ua": [
+                "Твій особистий баланс біткоїнів.",
+                "Усі покупки в цьому меню витрачають саме ці монети."
+              ],
+              "ja_jp": [
+                "あなた個人のビットコイン残高です。",
+                "この画面の購入はここから支払われます。"
+              ],
+              "rpr": [
+                "Твой личный запасъ монѣтъ биткоиновыхъ.",
+                "Сии монѣты и идутъ на всякую покупку въ семъ окнѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "worlds": {
+          "enabled": true,
+          "slot": 14,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "worlds",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:obsidian",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Worlds",
+              "ru_ru": "Миры",
+              "uk_ua": "Світи",
+              "ja_jp": "世界",
+              "rpr": "Мiры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Open Nether and End access.",
+                "Portals stay locked until tickets are bought."
+              ],
+              "ru_ru": [
+                "Открывает ветку доступа в Незер и Энд.",
+                "Порталы не заработают, пока билеты не куплены."
+              ],
+              "uk_ua": [
+                "Відкриває гілку доступу до Незеру та Енду.",
+                "Портали не запрацюють, доки квитки не куплені."
+              ],
+              "ja_jp": [
+                "ネザーとエンドへのアクセスを開きます。",
+                "許可を買うまでポータルは動きません。"
+              ],
+              "rpr": [
+                "Отворяет ходъ въ Нижнiй мiръ и въ Край.",
+                "Безъ грамотъ порталы молчатъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "eras": {
+          "enabled": true,
+          "slot": 10,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "eras",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:smithing_table",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Eras",
+              "ru_ru": "Эры",
+              "uk_ua": "Ери",
+              "ja_jp": "時代",
+              "rpr": "Поры"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Stone, copper, iron, diamond and netherite.",
+                "This branch decides which gear tier exists on the server."
+              ],
+              "ru_ru": [
+                "Камень, медь, железо, алмазы и незрит.",
+                "Эта ветка решает, какие уровни снаряжения вообще существуют."
+              ],
+              "uk_ua": [
+                "Камінь, мідь, залізо, алмази та незрит.",
+                "Ця гілка визначає, які рівні спорядження існують на сервері."
+              ],
+              "ja_jp": [
+                "石・銅・鉄・ダイヤ・ネザライト。",
+                "サーバーで使える装備段階を決めます。"
+              ],
+              "rpr": [
+                "Камень, мѣдь, желѣзо, алмазы да незритъ.",
+                "Сiя вѣтвь рѣшаетъ, какiе чины сбруи дозволены."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "mechanics": {
           "enabled": true,
           "slot": 11,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "mechanics",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Mechanics",
+              "ru_ru": "Механики",
+              "uk_ua": "Механіки",
+              "ja_jp": "仕組み",
+              "rpr": "Механiки"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Redstone, brewing, anvils, enchanting and villager trade."
+              ],
+              "ru_ru": [
+                "Редстоун, зелья, наковальня, чары и торговля."
+              ],
+              "uk_ua": [
+                "Редстоун, зілля, ковадло, чари й торгівля.",
+                "Вони відкриваються незалежно, якщо вистачає матеріальної епохи."
+              ],
+              "ja_jp": [
+                "レッドストーン、醸造、金床、エンチャント、交易。",
+                "素材条件さえ満たせば独立して解放されます。"
+              ],
+              "rpr": [
+                "Красный камень, зелья, наковальня, чары да торгъ.",
+                "Всякiя штуки отворяются порознь, коли пора матерiаловъ дозволяетъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "it": {
+          "enabled": true,
+          "slot": 12,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "it_hub",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:observer",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "IT Branch",
+              "ru_ru": "IT-ветка",
+              "uk_ua": "IT-гілка",
+              "ja_jp": "IT系統",
+              "rpr": "Машинная вѣтвь"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Electronics, sensors, the screen, jammer and drones.",
+                "The most technical branch of the whole server."
+              ],
+              "ru_ru": [
+                "Электроника, сенсоры, экран, глушилка и дроны.",
+                "Самая техническая ветка всего сервера."
+              ],
+              "uk_ua": [
+                "Електроніка, сенсори, екран, глушилка та дрони.",
+                "Найтехнічніша гілка всього сервера."
+              ],
+              "ja_jp": [
+                "電子機器、センサー、画面、ジャマー、ドローン。",
+                "サーバー全体で最も技術的な枝です。"
+              ],
+              "rpr": [
+                "Электрическiя хитрости, датчики, экранъ, глушилка да дроны.",
+                "Сiя вѣтвь самая мудрёная на всёмъ серверѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "races": {
+          "enabled": true,
+          "slot": 16,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "races",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:totem_of_undying",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Racial Gifts",
+              "ru_ru": "Способности рас",
+              "uk_ua": "Здібності рас",
+              "ja_jp": "種族能力",
+              "rpr": "Дары племёнъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Four tiers of racial perks.",
+                "From cheap starter powers to elite gifts."
+              ],
+              "ru_ru": [
+                "Четыре уровня расовых способностей.",
+                "От дешёвых стартовых бонусов до элитных даров."
+              ],
+              "uk_ua": [
+                "Чотири рівні расових здібностей.",
+                "Від дешевих стартових бонусів до елітних дарів."
+              ],
+              "ja_jp": [
+                "種族能力の4段階です。",
+                "安価な初級段階から精鋭級の贈り物まで。"
+              ],
+              "rpr": [
+                "Четыре чина даровъ племенныхъ.",
+                "Отъ дешёвыхъ поблажекъ до даровъ элитныхъ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "budget": {
+          "enabled": true,
+          "slot": 36,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -4392,7 +7443,7 @@
         },
         "medium": {
           "enabled": true,
-          "slot": 12,
+          "slot": 38,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -4466,7 +7517,7 @@
         },
         "expensive": {
           "enabled": true,
-          "slot": 13,
+          "slot": 40,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -4540,7 +7591,7 @@
         },
         "elite": {
           "enabled": true,
-          "slot": 14,
+          "slot": 42,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -4605,65 +7656,6 @@
                 "Сей чинъ выкупается порознь.",
                 "Чинъ: %level%/%max_level%",
                 "Мзда: %cost% BTC | Состоянiе: %status%"
-              ]
-            }
-          },
-          "requirements": [],
-          "requirementGroups": [],
-          "closeAfterClick": false
-        },
-        "back": {
-          "enabled": true,
-          "slot": 35,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "open_screen",
-          "targetScreenId": "main",
-          "upgradeId": "",
-          "pricesBitcoins": [],
-          "icon": {
-            "fallbackItem": "minecraft:arrow",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:emerald",
-            "packModel": "lg2:gui/button/maxed",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "en_us": "Back",
-              "ru_ru": "Назад",
-              "uk_ua": "Назад",
-              "ja_jp": "戻る",
-              "rpr": "Назадъ"
-            }
-          },
-          "lore": {
-            "values": {
-              "en_us": [
-                "Return to the previous branch."
-              ],
-              "ru_ru": [
-                "Вернуться в предыдущий раздел."
-              ],
-              "uk_ua": [
-                "Повернутися до попередньої гілки."
-              ],
-              "ja_jp": [
-                "前の画面に戻ります。"
-              ],
-              "rpr": [
-                "Возвратиться во прежнiй разделъ."
               ]
             }
           },
