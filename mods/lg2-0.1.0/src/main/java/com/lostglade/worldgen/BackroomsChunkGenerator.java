@@ -1,6 +1,8 @@
 package com.lostglade.worldgen;
 
 import com.lostglade.block.ModBlocks;
+import com.lostglade.block.ExitSignBlock;
+import com.lostglade.block.ExitWallSignBlock;
 import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
@@ -18,6 +20,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.WallSignBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoorHingeSide;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
@@ -122,8 +125,8 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 
 					ColumnLayout layout = getColumnLayout(worldX, worldZ, levelIndex, columnCache);
 					Direction exitSignFacing = layout.corridor
-							? null
-							: getExitSignFacingAt(worldX, worldZ, levelIndex, columnCache);
+							? getExitSignFacingAt(worldX, worldZ, levelIndex, columnCache)
+							: null;
 					BackroomsSpecialRooms.ColumnStates columnStates = BackroomsSpecialRooms.createBaseStates(
 							layout.doorPlacement,
 							layout.corridor,
@@ -254,8 +257,8 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 
 			ColumnLayout layout = getColumnLayout(x, z, levelIndex, columnCache);
 			Direction exitSignFacing = layout.corridor
-					? null
-							: getExitSignFacingAt(x, z, levelIndex, columnCache);
+					? getExitSignFacingAt(x, z, levelIndex, columnCache)
+					: null;
 			BackroomsSpecialRooms.ColumnStates columnStates = BackroomsSpecialRooms.createBaseStates(
 					layout.doorPlacement,
 					layout.corridor,
@@ -341,13 +344,14 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			return cached.orElse(null);
 		}
 
-		for (Direction corridorDirection : Direction.Plane.HORIZONTAL) {
-			int doorX = x - corridorDirection.getStepX();
-			int doorZ = z - corridorDirection.getStepZ();
-			BackroomsLayout.DoorPlacement placement = getColumnLayout(doorX, doorZ, levelIndex, columnCache).doorPlacement;
-			if (placement != null && placement.facing().getOpposite() == corridorDirection) {
-				generatorCache.exitSignCache.put(key, Optional.of(corridorDirection));
-				return corridorDirection;
+		for (Direction supportDirection : Direction.Plane.HORIZONTAL) {
+			int supportX = x + supportDirection.getStepX();
+			int supportZ = z + supportDirection.getStepZ();
+			BackroomsLayout.DoorPlacement placement = getColumnLayout(supportX, supportZ, levelIndex, columnCache).doorPlacement;
+			if (placement != null && placement.facing() == supportDirection) {
+				Direction facing = supportDirection.getOpposite();
+				generatorCache.exitSignCache.put(key, Optional.of(facing));
+				return facing;
 			}
 		}
 
@@ -373,6 +377,9 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			if (blockEntity != null) {
 				if (blockEntity instanceof ChestBlockEntity chestBlockEntity) {
 					populateTrashChestLoot(chestBlockEntity, worldPos);
+				} else if ((state.getBlock() instanceof ExitSignBlock || state.getBlock() instanceof ExitWallSignBlock)
+						&& blockEntity instanceof SignBlockEntity signBlockEntity) {
+					ExitSignBlock.applyFixedText(signBlockEntity);
 				}
 				chunk.setBlockEntity(blockEntity);
 			}
