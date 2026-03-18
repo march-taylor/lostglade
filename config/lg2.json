@@ -21,8 +21,8 @@
   "backroomsEntitySpawnMaxRadiusChunks": 8,
   "backroomsEntityGroupRadiusChunks": 12,
   
-  "backroomsTrashRoomWeight": 2,
-  "backroomsFloorHolesRoomWeight": 2,
+  "backroomsTrashRoomWeight": 0,
+  "backroomsFloorHolesRoomWeight": 0,
   "backroomsHouseHallRoomWeight": 1,
-  "backroomsStairsRoomWeight": 2
+  "backroomsStairsRoomWeight": 0
 }

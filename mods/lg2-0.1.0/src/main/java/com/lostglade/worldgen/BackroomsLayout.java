@@ -24,7 +24,7 @@ final class BackroomsLayout {
 	private static final int LAYOUT_CELL_SIZE = 24;
 	private static final int INSET_REGION_SIZE = 56;
 	private static final int DOOR_CHANCE_PERCENT = 2;
-	private static final int SPECIAL_ROOM_CHANCE_PERMILLE = 2;
+	private static final int SPECIAL_ROOM_CHANCE_BASIS_POINTS = 25;
 	private static final int INSET_DOOR_CHANCE_PERCENT = 10;
 	private static final long DOOR_LAYOUT_SALT = 0x6B41524F4F4D4452L;
 	private static final long SPECIAL_ROOM_LAYOUT_SALT = 0x5350454349414C31L;
@@ -88,6 +88,12 @@ final class BackroomsLayout {
 		return zone;
 	}
 
+	private static ZoneType getZoneAtCell(int cellX, int cellZ, int levelIndex) {
+		int sampleX = cellX * LAYOUT_CELL_SIZE + (LAYOUT_CELL_SIZE / 2);
+		int sampleZ = cellZ * LAYOUT_CELL_SIZE + (LAYOUT_CELL_SIZE / 2);
+		return getZoneAtBlock(sampleX, sampleZ, levelIndex);
+	}
+
 	static boolean isCorridor(ZoneType zone, int x, int z, int levelIndex) {
 		return isOpenSpace(zone, x, z, levelIndex);
 	}
@@ -135,7 +141,7 @@ final class BackroomsLayout {
 	}
 
 	private static SpecialRoomPlacement findSpecialRoomAtLevel(
-			ZoneType zone,
+			ZoneType ignoredZone,
 			int x,
 			int z,
 			int anchorLevelIndex,
@@ -148,7 +154,10 @@ final class BackroomsLayout {
 
 		for (int offsetX = -1; offsetX <= 1; offsetX++) {
 			for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
-				SpecialRoomPlacement placement = getSpecialRoomForCell(zone, cellX + offsetX, cellZ + offsetZ, anchorLevelIndex);
+				int candidateCellX = cellX + offsetX;
+				int candidateCellZ = cellZ + offsetZ;
+				ZoneType candidateZone = getZoneAtCell(candidateCellX, candidateCellZ, anchorLevelIndex);
+				SpecialRoomPlacement placement = getSpecialRoomForCell(candidateZone, candidateCellX, candidateCellZ, anchorLevelIndex);
 				if (placement == null
 						|| (!includeSingleLevelRooms && placement.levelSpan() <= 1)
 						|| !placement.contains(x, z, targetLevelIndex)) {
@@ -561,7 +570,7 @@ final class BackroomsLayout {
 		}
 
 		long sample = mix(cellX, cellZ, zone.layoutSalt ^ SPECIAL_ROOM_LAYOUT_SALT ^ levelSalt(levelIndex));
-		if (positiveMod(sample ^ 0x2A5C7D11E3A19F43L, 1000) >= SPECIAL_ROOM_CHANCE_PERMILLE) {
+		if (positiveMod(sample ^ 0x2A5C7D11E3A19F43L, 10000) >= SPECIAL_ROOM_CHANCE_BASIS_POINTS) {
 			cache.specialRoomCache.put(key, Optional.empty());
 			return null;
 		}
@@ -590,7 +599,6 @@ final class BackroomsLayout {
 
 	private static boolean isCoveredByNeighboringHouseHall(int x, int z, int cellX, int cellZ, int levelIndex) {
 		for (int anchorLevel = levelIndex; anchorLevel >= levelIndex - 3; anchorLevel--) {
-			ZoneType anchorZone = getZoneAtBlock(x, z, anchorLevel);
 			for (int offsetX = -2; offsetX <= 2; offsetX++) {
 				for (int offsetZ = -2; offsetZ <= 2; offsetZ++) {
 					int candidateCellX = cellX + offsetX;
@@ -599,7 +607,8 @@ final class BackroomsLayout {
 						continue;
 					}
 
-					SpecialRoomPlacement hall = getHouseHallPlacementForCell(anchorZone, candidateCellX, candidateCellZ, anchorLevel);
+					ZoneType candidateZone = getZoneAtCell(candidateCellX, candidateCellZ, anchorLevel);
+					SpecialRoomPlacement hall = getHouseHallPlacementForCell(candidateZone, candidateCellX, candidateCellZ, anchorLevel);
 					if (hall != null && hall.contains(x, z, levelIndex)) {
 						return true;
 					}
@@ -610,8 +619,16 @@ final class BackroomsLayout {
 	}
 
 	private static SpecialRoomPlacement getHouseHallPlacementForCell(ZoneType zone, int cellX, int cellZ, int levelIndex) {
+		SpecialRoomPlacement placement = getHouseHallPlacementForCellUnchecked(zone, cellX, cellZ, levelIndex);
+		if (placement == null || hasHouseHallConflict(placement)) {
+			return null;
+		}
+		return placement;
+	}
+
+	private static SpecialRoomPlacement getHouseHallPlacementForCellUnchecked(ZoneType zone, int cellX, int cellZ, int levelIndex) {
 		long sample = mix(cellX, cellZ, zone.layoutSalt ^ SPECIAL_ROOM_LAYOUT_SALT ^ levelSalt(levelIndex));
-		if (positiveMod(sample ^ 0x2A5C7D11E3A19F43L, 1000) >= SPECIAL_ROOM_CHANCE_PERMILLE) {
+		if (positiveMod(sample ^ 0x2A5C7D11E3A19F43L, 10000) >= SPECIAL_ROOM_CHANCE_BASIS_POINTS) {
 			return null;
 		}
 
@@ -626,7 +643,7 @@ final class BackroomsLayout {
 			return null;
 		}
 
-		return buildSpecialRoomPlacement(type, current, cellX, cellZ, levelIndex, sample);
+		return buildHouseHallPlacementUnchecked(current, cellX, cellZ, levelIndex, sample);
 	}
 
 	private static SpecialRoomType pickSpecialRoomType(long sample, SpecialRoomType[] eligibleTypes) {
@@ -657,23 +674,11 @@ final class BackroomsLayout {
 			long sample
 	) {
 		if (type == SpecialRoomType.HOUSE_HALL) {
-			int hallHalf = 12 + positiveMod(sample ^ 0x484F55534548414CL, 9);
-			int maxLevelSpan = Math.min(4, getMaxAvailableFullLevelSpan(levelIndex));
-			if (maxLevelSpan < 3) {
+			SpecialRoomPlacement placement = buildHouseHallPlacementUnchecked(current, cellX, cellZ, levelIndex, sample);
+			if (placement == null || hasHouseHallConflict(placement)) {
 				return null;
 			}
-			int levelSpan = 3 + positiveMod(sample ^ 0x484F555345464C52L, maxLevelSpan - 2);
-			return new SpecialRoomPlacement(
-					type,
-					cellX,
-					cellZ,
-					levelIndex,
-					current.roomCenterX,
-					current.roomCenterZ,
-					hallHalf,
-					hallHalf,
-					levelSpan
-			);
+			return placement;
 		}
 
 		return new SpecialRoomPlacement(
@@ -687,6 +692,78 @@ final class BackroomsLayout {
 				current.roomHalfHeight,
 				1
 		);
+	}
+
+	private static SpecialRoomPlacement buildHouseHallPlacementUnchecked(
+			CellData current,
+			int cellX,
+			int cellZ,
+			int levelIndex,
+			long sample
+	) {
+		int hallHalf = 12 + positiveMod(sample ^ 0x484F55534548414CL, 9);
+		int maxLevelSpan = Math.min(4, getMaxAvailableFullLevelSpan(levelIndex));
+		if (maxLevelSpan < 3) {
+			return null;
+		}
+		int levelSpan = 3 + positiveMod(sample ^ 0x484F555345464C52L, maxLevelSpan - 2);
+		return new SpecialRoomPlacement(
+				SpecialRoomType.HOUSE_HALL,
+				cellX,
+				cellZ,
+				levelIndex,
+				current.roomCenterX,
+				current.roomCenterZ,
+				hallHalf,
+				hallHalf,
+				levelSpan
+		);
+	}
+
+	private static boolean hasHouseHallConflict(SpecialRoomPlacement candidate) {
+		int minX = candidate.roomCenterX() - candidate.roomHalfWidth();
+		int maxX = candidate.roomCenterX() + candidate.roomHalfWidth();
+		int minZ = candidate.roomCenterZ() - candidate.roomHalfHeight();
+		int maxZ = candidate.roomCenterZ() + candidate.roomHalfHeight();
+		int minCellX = Math.floorDiv(minX, LAYOUT_CELL_SIZE) - 1;
+		int maxCellX = Math.floorDiv(maxX, LAYOUT_CELL_SIZE) + 1;
+		int minCellZ = Math.floorDiv(minZ, LAYOUT_CELL_SIZE) - 1;
+		int maxCellZ = Math.floorDiv(maxZ, LAYOUT_CELL_SIZE) + 1;
+		int minLevel = candidate.baseLevelIndex() - 3;
+		int maxLevel = candidate.baseLevelIndex() + candidate.levelSpan() - 1;
+
+		for (int anchorLevel = minLevel; anchorLevel <= maxLevel; anchorLevel++) {
+			if (!canFitFullLevels(anchorLevel, 3)) {
+				continue;
+			}
+			for (int candidateCellX = minCellX; candidateCellX <= maxCellX; candidateCellX++) {
+				for (int candidateCellZ = minCellZ; candidateCellZ <= maxCellZ; candidateCellZ++) {
+					if (candidateCellX == candidate.cellX()
+							&& candidateCellZ == candidate.cellZ()
+							&& anchorLevel == candidate.baseLevelIndex()) {
+						continue;
+					}
+
+					ZoneType candidateZone = getZoneAtCell(candidateCellX, candidateCellZ, anchorLevel);
+					SpecialRoomPlacement other = getHouseHallPlacementForCellUnchecked(candidateZone, candidateCellX, candidateCellZ, anchorLevel);
+					if (other != null && houseHallPlacementsOverlap(candidate, other)) {
+						return true;
+					}
+				}
+			}
+		}
+
+		return false;
+	}
+
+	private static boolean houseHallPlacementsOverlap(SpecialRoomPlacement first, SpecialRoomPlacement second) {
+		if (first.baseLevelIndex() >= second.baseLevelIndex() + second.levelSpan()
+				|| second.baseLevelIndex() >= first.baseLevelIndex() + first.levelSpan()) {
+			return false;
+		}
+
+		return Math.abs(first.roomCenterX() - second.roomCenterX()) <= first.roomHalfWidth() + second.roomHalfWidth()
+				&& Math.abs(first.roomCenterZ() - second.roomCenterZ()) <= first.roomHalfHeight() + second.roomHalfHeight();
 	}
 
 	private static RoomSide[] collectEligibleDoorSides(ZoneType zone, int cellX, int cellZ, CellData current, int levelIndex) {
