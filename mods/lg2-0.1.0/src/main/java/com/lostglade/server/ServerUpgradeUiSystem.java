@@ -69,6 +69,8 @@ public final class ServerUpgradeUiSystem {
 	private static final String STATE_FILE_NAME = "lg2-upgrade-state.json";
 	private static final String TITLE_OVERLAY_SHIFT = "\ue905";
 	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
+	private static final int TITLE_OVERLAY_TARGET_ADVANCE = 168;
+	private static final int TITLE_OVERLAY_SHIFT_ADVANCE = -8;
 	private static final Identifier TOOLTIP_STYLE_ID = Objects.requireNonNull(Identifier.tryParse("lg2:upgrade_card"));
 	private static final FontDescription TOOLTIP_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:upgrade_tooltip"))
@@ -76,7 +78,6 @@ public final class ServerUpgradeUiSystem {
 	private static final String TOOLTIP_ICON_COIN = "\ue981";
 	private static final String NO_PACK_COIN = "₿";
 	private static final int MAIN_BALANCE_CENTER_X = 127;
-	private static final int ERAS_BALANCE_CENTER_X = 135;
 	private static final int BALANCE_DIGIT_WIDTH = 6;
 	private static final int TOOLTIP_DESCRIPTION_WRAP = 42;
 	private static final int TOOLTIP_DESCRIPTION_WRAP_CJK = 22;
@@ -97,6 +98,8 @@ public final class ServerUpgradeUiSystem {
 	private static final int MAIN_SCREEN_LOGO_FRAME_TICKS = 2;
 	private static final int MAIN_SCREEN_DVD_FRAME_TICKS = 4;
 	private static final int MAIN_SCREEN_ARCHIVE_FRAME_TICKS = 2;
+	private static final int MAIN_SCREEN_OVERLAY_GLYPH_ADVANCE = 119;
+	private static final int ERAS_OVERLAY_GLYPH_ADVANCE = 150;
 	private static final double MAIN_SCREEN_ARCHIVE_VARIANT_CHANCE = 0.0001D;
 	private static final int MAIN_SCREEN_VARIANT_GLITCH = 0;
 	private static final int MAIN_SCREEN_VARIANT_DVD = 1;
@@ -1161,14 +1164,14 @@ public final class ServerUpgradeUiSystem {
 			title.append(packStyledLiteral(theme.packTitlePrefix));
 		}
 		if ("main".equals(screenId)) {
-			title.append(packStyledLiteral(TITLE_OVERLAY_RESET + TITLE_OVERLAY_SHIFT + mainScreenLogoGlyph(player, currentGameTime(player))));
+			title.append(packStyledLiteral(buildOverlayGlyph(mainScreenLogoGlyph(player, currentGameTime(player)), MAIN_SCREEN_OVERLAY_GLYPH_ADVANCE)));
 		}
 		if ("eras".equals(screenId)) {
-			title.append(packStyledLiteral(TITLE_OVERLAY_RESET + TITLE_OVERLAY_SHIFT + erasBarGlyph(player, currentGameTime(player))));
+			title.append(packStyledLiteral(buildOverlayGlyph(erasBarGlyph(player, currentGameTime(player)), ERAS_OVERLAY_GLYPH_ADVANCE)));
 		}
 		if (usesMainStyleBalance(screenId)) {
 			title.append(packStyledLiteral(TITLE_OVERLAY_RESET));
-			title.append(packStyledLiteral(buildHorizontalAdvance(balanceStartX(screenId, countBitcoins(player)))));
+			title.append(packStyledLiteral(buildHorizontalAdvance(centeredMainStyleBalanceStartX(countBitcoins(player)))));
 			title.append(packStyledLiteral(toPackDigitString(countBitcoins(player))));
 		}
 		if (!screen.hideTitleTextWhenPack && !localizedTitle.isBlank()) {
@@ -1203,6 +1206,11 @@ public final class ServerUpgradeUiSystem {
 		return Component.literal(value).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false));
 	}
 
+	private static String buildOverlayGlyph(String glyph, int glyphAdvance) {
+		int compensation = TITLE_OVERLAY_TARGET_ADVANCE - TITLE_OVERLAY_SHIFT_ADVANCE - glyphAdvance;
+		return TITLE_OVERLAY_RESET + TITLE_OVERLAY_SHIFT + glyph + buildHorizontalAdvance(compensation);
+	}
+
 	private static String[] createGlyphSequence(int baseCodePoint, int count) {
 		String[] glyphs = new String[count];
 		for (int index = 0; index < count; index++) {
@@ -1223,11 +1231,10 @@ public final class ServerUpgradeUiSystem {
 		return "main".equals(screenId) || "eras".equals(screenId);
 	}
 
-	private static int balanceStartX(String screenId, int bitcoinCount) {
-		int centerX = "eras".equals(screenId) ? ERAS_BALANCE_CENTER_X : MAIN_BALANCE_CENTER_X;
+	private static int centeredMainStyleBalanceStartX(int bitcoinCount) {
 		int digits = Integer.toString(Math.max(0, bitcoinCount)).length();
 		int width = digits * BALANCE_DIGIT_WIDTH;
-		return Math.max(0, centerX - (width / 2));
+		return Math.max(0, MAIN_BALANCE_CENTER_X - (width / 2));
 	}
 
 	private static int chooseMainScreenVariant(ServerPlayer player) {
