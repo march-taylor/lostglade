@@ -25,18 +25,24 @@ final class BackroomsLayout {
 	private static final int INSET_REGION_SIZE = 56;
 	private static final int DOOR_CHANCE_PERCENT = 2;
 	private static final int SPECIAL_ROOM_CHANCE_BASIS_POINTS = 25;
+	private static final int MAX_LADDER_TUNNEL_LENGTH = 48;
+	private static final int ANGLED_LADDER_TUNNEL_CHANCE_PERCENT = 40;
+	private static final int LADDER_ROOM_CELL_SEARCH_RADIUS = 3;
 	private static final int INSET_DOOR_CHANCE_PERCENT = 10;
 	private static final long DOOR_LAYOUT_SALT = 0x6B41524F4F4D4452L;
 	private static final long SPECIAL_ROOM_LAYOUT_SALT = 0x5350454349414C31L;
+	private static final long LADDER_ROOM_LAYOUT_SALT = 0x4C4144444552524DL;
 	private static final long INSET_LAYOUT_SALT = 0x494E534554524F4FL;
 	private static final long LEVEL_LAYOUT_SALT = 0x4C564C53414C5431L;
 	private static final long CELL_CACHE_SALT = 0x43454C4C43414348L;
 	private static final long SPECIAL_ROOM_CACHE_SALT = 0x5350435243414348L;
+	private static final long LADDER_ROOM_CACHE_SALT = 0x4C41444443414348L;
 	private static final long INSET_CACHE_SALT = 0x494E534554434143L;
 	private static final long OPEN_CACHE_SALT = 0x4F50454E43414348L;
 	private static final long DOOR_CACHE_SALT = 0x444F4F5243414348L;
 	private static final long ZONE_CACHE_SALT = 0x5A4F4E4543414348L;
 	private static final long VOID_HALL_COLUMN_CACHE_SALT = 0x564F494448434143L;
+	private static final long LADDER_ROOM_COLUMN_CACHE_SALT = 0x4C414444434F4C31L;
 	private static final ThreadLocal<LayoutCache> LAYOUT_CACHE = ThreadLocal.withInitial(LayoutCache::new);
 
 	private BackroomsLayout() {
@@ -141,6 +147,33 @@ final class BackroomsLayout {
 		return best;
 	}
 
+	static LadderRoomPlacement getLadderRoomAt(int x, int z, int levelIndex) {
+		LayoutCache cache = layoutCache();
+		long key = BlockPos.asLong(x, levelIndex, z) ^ LADDER_ROOM_COLUMN_CACHE_SALT;
+		Optional<LadderRoomPlacement> cached = cache.ladderRoomColumnCache.get(key);
+		if (cached != null) {
+			return cached.orElse(null);
+		}
+
+		int cellX = Math.floorDiv(x, LAYOUT_CELL_SIZE);
+		int cellZ = Math.floorDiv(z, LAYOUT_CELL_SIZE);
+		LadderRoomPlacement best = null;
+		for (int offsetX = -LADDER_ROOM_CELL_SEARCH_RADIUS; offsetX <= LADDER_ROOM_CELL_SEARCH_RADIUS; offsetX++) {
+			for (int offsetZ = -LADDER_ROOM_CELL_SEARCH_RADIUS; offsetZ <= LADDER_ROOM_CELL_SEARCH_RADIUS; offsetZ++) {
+				int candidateCellX = cellX + offsetX;
+				int candidateCellZ = cellZ + offsetZ;
+				ZoneType candidateZone = getZoneAtCell(candidateCellX, candidateCellZ, levelIndex);
+				LadderRoomPlacement placement = getLadderRoomForCell(candidateZone, candidateCellX, candidateCellZ, levelIndex);
+				if (placement != null && placement.contains(x, z, levelIndex)) {
+					best = choosePreferredLadderPlacement(best, placement, x, z);
+				}
+			}
+		}
+
+		cache.ladderRoomColumnCache.put(key, Optional.ofNullable(best));
+		return best;
+	}
+
 	private static SpecialRoomPlacement findSpecialRoomAtLevel(
 			ZoneType ignoredZone,
 			int x,
@@ -199,6 +232,24 @@ final class BackroomsLayout {
 
 		int currentDistance = Math.abs(x - current.roomCenterX()) + Math.abs(z - current.roomCenterZ());
 		int candidateDistance = Math.abs(x - candidate.roomCenterX()) + Math.abs(z - candidate.roomCenterZ());
+		return candidateDistance < currentDistance ? candidate : current;
+	}
+
+	private static LadderRoomPlacement choosePreferredLadderPlacement(
+			LadderRoomPlacement current,
+			LadderRoomPlacement candidate,
+			int x,
+			int z
+	) {
+		if (candidate == null) {
+			return current;
+		}
+		if (current == null) {
+			return candidate;
+		}
+
+		int currentDistance = Math.abs(x - current.ladderX()) + Math.abs(z - current.ladderZ());
+		int candidateDistance = Math.abs(x - candidate.ladderX()) + Math.abs(z - candidate.ladderZ());
 		return candidateDistance < currentDistance ? candidate : current;
 	}
 
@@ -560,6 +611,248 @@ final class BackroomsLayout {
 		DoorPlacement placement = new DoorPlacement(doorX, doorZ, side.facing, hinge);
 		cache.doorPlacementCache.put(key, Optional.of(placement));
 		return placement;
+	}
+
+	private static LadderRoomPlacement getLadderRoomForCell(ZoneType zone, int cellX, int cellZ, int levelIndex) {
+		LayoutCache cache = layoutCache();
+		long key = cacheKey(cellX, cellZ, levelIndex, zone, LADDER_ROOM_CACHE_SALT);
+		Optional<LadderRoomPlacement> cached = cache.ladderRoomCache.get(key);
+		if (cached != null) {
+			return cached.orElse(null);
+		}
+
+		if (getSpecialRoomForCell(zone, cellX, cellZ, levelIndex) != null) {
+			cache.ladderRoomCache.put(key, Optional.empty());
+			return null;
+		}
+
+		long sample = mix(cellX, cellZ, zone.layoutSalt ^ LADDER_ROOM_LAYOUT_SALT ^ levelSalt(levelIndex));
+		if (positiveMod(sample ^ 0x4C44445243484E43L, 100) >= Lg2Config.get().backroomsLadderRoomWeight) {
+			cache.ladderRoomCache.put(key, Optional.empty());
+			return null;
+		}
+
+		CellData current = getCell(zone, cellX, cellZ, levelIndex);
+		DoorPlacement doorPlacement = getDoorPlacementForCell(zone, cellX, cellZ, levelIndex);
+		RoomSide[] sides = collectEligibleDoorSides(zone, cellX, cellZ, current, levelIndex);
+		if (sides.length == 0) {
+			cache.ladderRoomCache.put(key, Optional.empty());
+			return null;
+		}
+		int sideStart = positiveMod(sample ^ 0x1D4A7B33C591E0A2L, sides.length);
+		for (int sideOffset = 0; sideOffset < sides.length; sideOffset++) {
+			RoomSide side = sides[(sideStart + sideOffset) % sides.length];
+			int positionCount = getLadderPositionCount(current, side);
+			if (positionCount <= 0) {
+				continue;
+			}
+
+			int positionStart = positiveMod(sample ^ (0x6E5D2A71B438C1F5L + side.ordinal()), positionCount);
+			for (int positionOffset = 0; positionOffset < positionCount; positionOffset++) {
+				int index = (positionStart + positionOffset) % positionCount;
+				int ladderX = getLadderX(current, side, index);
+				int ladderZ = getLadderZ(current, side, index);
+				if (conflictsWithDoor(side, ladderX, ladderZ, doorPlacement)) {
+					continue;
+				}
+
+				LadderTunnelPath tunnelPath = findLadderTunnelPath(sample, ladderX, ladderZ, side, levelIndex);
+				if (tunnelPath == null) {
+					continue;
+				}
+
+				LadderRoomPlacement placement = new LadderRoomPlacement(
+						cellX,
+						cellZ,
+						levelIndex,
+						side,
+						ladderX,
+						ladderZ,
+						tunnelPath.straightLength(),
+						tunnelPath.turnDirection(),
+						tunnelPath.turnLength()
+				);
+				cache.ladderRoomCache.put(key, Optional.of(placement));
+				return placement;
+			}
+		}
+
+		cache.ladderRoomCache.put(key, Optional.empty());
+		return null;
+	}
+
+	private static boolean conflictsWithDoor(RoomSide side, int ladderX, int ladderZ, DoorPlacement doorPlacement) {
+		if (doorPlacement == null || doorPlacement.facing() != side.facing) {
+			return false;
+		}
+
+		return Math.abs(doorPlacement.x - (ladderX + side.stepX)) <= 1
+				&& Math.abs(doorPlacement.z - (ladderZ + side.stepZ)) <= 1;
+	}
+
+	private static int getLadderPositionCount(CellData cell, RoomSide side) {
+		return switch (side) {
+			case NORTH, SOUTH -> Math.max(0, cell.roomHalfWidth * 2 - 3);
+			case WEST, EAST -> Math.max(0, cell.roomHalfHeight * 2 - 3);
+		};
+	}
+
+	private static int getLadderX(CellData cell, RoomSide side, int index) {
+		return switch (side) {
+			case NORTH, SOUTH -> cell.roomCenterX - cell.roomHalfWidth + 2 + index;
+			case WEST -> cell.roomCenterX - cell.roomHalfWidth;
+			case EAST -> cell.roomCenterX + cell.roomHalfWidth;
+		};
+	}
+
+	private static int getLadderZ(CellData cell, RoomSide side, int index) {
+		return switch (side) {
+			case NORTH -> cell.roomCenterZ - cell.roomHalfHeight;
+			case SOUTH -> cell.roomCenterZ + cell.roomHalfHeight;
+			case WEST, EAST -> cell.roomCenterZ - cell.roomHalfHeight + 2 + index;
+		};
+	}
+
+	private static LadderTunnelPath findLadderTunnelPath(long sample, int ladderX, int ladderZ, RoomSide side, int levelIndex) {
+		int entranceX = ladderX + side.stepX;
+		int entranceZ = ladderZ + side.stepZ;
+		if (!isTunnelCellEnclosed(entranceX, entranceZ, side.facing, levelIndex)) {
+			return null;
+		}
+
+		if (positiveMod(sample ^ 0x414E474C45444C31L, 100) < ANGLED_LADDER_TUNNEL_CHANCE_PERCENT) {
+			LadderTunnelPath angled = findAngledLadderTunnelPath(sample, ladderX, ladderZ, side, levelIndex);
+			if (angled != null) {
+				return angled;
+			}
+		}
+
+		int straightLength = findStraightLadderTunnelLength(ladderX, ladderZ, side.stepX, side.stepZ, side.facing, levelIndex);
+		return straightLength > 0 ? new LadderTunnelPath(straightLength, null, 0) : null;
+	}
+
+	private static LadderTunnelPath findAngledLadderTunnelPath(long sample, int ladderX, int ladderZ, RoomSide side, int levelIndex) {
+		Direction left = rotateLeft(side.facing);
+		Direction right = rotateRight(side.facing);
+		Direction firstTurn = ((sample >>> 11) & 1L) == 0L ? left : right;
+		Direction secondTurn = firstTurn == left ? right : left;
+
+		LadderTunnelPath preferred = findAngledLadderTunnelPathInDirection(ladderX, ladderZ, side, firstTurn, levelIndex);
+		if (preferred != null) {
+			return preferred;
+		}
+
+		return findAngledLadderTunnelPathInDirection(ladderX, ladderZ, side, secondTurn, levelIndex);
+	}
+
+	private static LadderTunnelPath findAngledLadderTunnelPathInDirection(
+			int ladderX,
+			int ladderZ,
+			RoomSide side,
+			Direction turnDirection,
+			int levelIndex
+	) {
+		for (int turnDistance = 1; turnDistance <= MAX_LADDER_TUNNEL_LENGTH - 2; turnDistance++) {
+			int cornerX = ladderX + side.stepX * turnDistance;
+			int cornerZ = ladderZ + side.stepZ * turnDistance;
+			ZoneType cornerZone = getZoneAtBlock(cornerX, cornerZ, levelIndex);
+			if (isOpenSpace(cornerZone, cornerX, cornerZ, levelIndex)) {
+				return null;
+			}
+			if (!isTunnelSegmentEnclosed(ladderX, ladderZ, side.stepX, side.stepZ, side.facing, turnDistance, levelIndex)) {
+				continue;
+			}
+
+			int turnLength = findStraightLadderTunnelLength(
+					cornerX,
+					cornerZ,
+					turnDirection.getStepX(),
+					turnDirection.getStepZ(),
+					turnDirection,
+					levelIndex
+			);
+			if (turnLength > 0) {
+				return new LadderTunnelPath(turnDistance, turnDirection, turnLength);
+			}
+		}
+
+		return null;
+	}
+
+	private static int findStraightLadderTunnelLength(
+			int startX,
+			int startZ,
+			int stepX,
+			int stepZ,
+			Direction direction,
+			int levelIndex
+	) {
+		for (int distance = 1; distance <= MAX_LADDER_TUNNEL_LENGTH; distance++) {
+			int targetX = startX + stepX * distance;
+			int targetZ = startZ + stepZ * distance;
+			ZoneType targetZone = getZoneAtBlock(targetX, targetZ, levelIndex);
+			if (isOpenSpace(targetZone, targetX, targetZ, levelIndex)) {
+				return distance - 1;
+			}
+			if (!isTunnelCellEnclosed(targetX, targetZ, direction, levelIndex)) {
+				return -1;
+			}
+		}
+
+		return -1;
+	}
+
+	private static boolean isTunnelSegmentEnclosed(
+			int startX,
+			int startZ,
+			int stepX,
+			int stepZ,
+			Direction direction,
+			int length,
+			int levelIndex
+	) {
+		for (int distance = 1; distance <= length; distance++) {
+			int targetX = startX + stepX * distance;
+			int targetZ = startZ + stepZ * distance;
+			if (!isTunnelCellEnclosed(targetX, targetZ, direction, levelIndex)) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	private static boolean isTunnelCellEnclosed(int x, int z, Direction direction, int levelIndex) {
+		Direction left = rotateLeft(direction);
+		Direction right = rotateRight(direction);
+		int leftX = x + left.getStepX();
+		int leftZ = z + left.getStepZ();
+		int rightX = x + right.getStepX();
+		int rightZ = z + right.getStepZ();
+		ZoneType leftZone = getZoneAtBlock(leftX, leftZ, levelIndex);
+		ZoneType rightZone = getZoneAtBlock(rightX, rightZ, levelIndex);
+		return !isOpenSpace(leftZone, leftX, leftZ, levelIndex)
+				&& !isOpenSpace(rightZone, rightX, rightZ, levelIndex);
+	}
+
+	private static Direction rotateLeft(Direction direction) {
+		return switch (direction) {
+			case NORTH -> Direction.WEST;
+			case SOUTH -> Direction.EAST;
+			case WEST -> Direction.SOUTH;
+			case EAST -> Direction.NORTH;
+			default -> direction;
+		};
+	}
+
+	private static Direction rotateRight(Direction direction) {
+		return switch (direction) {
+			case NORTH -> Direction.EAST;
+			case SOUTH -> Direction.WEST;
+			case WEST -> Direction.NORTH;
+			case EAST -> Direction.SOUTH;
+			default -> direction;
+		};
 	}
 
 	private static SpecialRoomPlacement getSpecialRoomForCell(ZoneType zone, int cellX, int cellZ, int levelIndex) {
@@ -1041,6 +1334,92 @@ final class BackroomsLayout {
 		}
 	}
 
+	record LadderRoomPlacement(
+			int cellX,
+			int cellZ,
+			int levelIndex,
+			RoomSide wallSide,
+			int ladderX,
+			int ladderZ,
+			int straightLength,
+			Direction turnDirection,
+			int turnLength
+	) {
+		boolean contains(int x, int z, int levelIndex) {
+			if (this.levelIndex != levelIndex) {
+				return false;
+			}
+			if (x == this.ladderX && z == this.ladderZ) {
+				return true;
+			}
+
+			for (int distance = 1; distance <= this.straightLength; distance++) {
+				int tunnelX = this.ladderX + this.wallSide.stepX * distance;
+				int tunnelZ = this.ladderZ + this.wallSide.stepZ * distance;
+				if (x == tunnelX && z == tunnelZ) {
+					return true;
+				}
+			}
+
+			if (this.turnDirection != null) {
+				int cornerX = this.ladderX + this.wallSide.stepX * this.straightLength;
+				int cornerZ = this.ladderZ + this.wallSide.stepZ * this.straightLength;
+				for (int distance = 1; distance <= this.turnLength; distance++) {
+					int tunnelX = cornerX + this.turnDirection.getStepX() * distance;
+					int tunnelZ = cornerZ + this.turnDirection.getStepZ() * distance;
+					if (x == tunnelX && z == tunnelZ) {
+						return true;
+					}
+				}
+			}
+
+			return false;
+		}
+
+		boolean isLadderColumn(int x, int z) {
+			return x == this.ladderX && z == this.ladderZ;
+		}
+
+		Direction ladderFacing() {
+			return this.wallSide.facing.getOpposite();
+		}
+
+		boolean isTunnelColumn(int x, int z) {
+			if (this.isLadderColumn(x, z)) {
+				return false;
+			}
+
+			for (int distance = 1; distance <= this.straightLength; distance++) {
+				int tunnelX = this.ladderX + this.wallSide.stepX * distance;
+				int tunnelZ = this.ladderZ + this.wallSide.stepZ * distance;
+				if (x == tunnelX && z == tunnelZ) {
+					return true;
+				}
+			}
+
+			if (this.turnDirection != null) {
+				int cornerX = this.ladderX + this.wallSide.stepX * this.straightLength;
+				int cornerZ = this.ladderZ + this.wallSide.stepZ * this.straightLength;
+				for (int distance = 1; distance <= this.turnLength; distance++) {
+					int tunnelX = cornerX + this.turnDirection.getStepX() * distance;
+					int tunnelZ = cornerZ + this.turnDirection.getStepZ() * distance;
+					if (x == tunnelX && z == tunnelZ) {
+						return true;
+					}
+				}
+			}
+
+			return false;
+		}
+	}
+
+	private record LadderTunnelPath(
+			int straightLength,
+			Direction turnDirection,
+			int turnLength
+	) {
+	}
+
 	enum SpecialRoomType {
 		TRASH_ROOM("trash_room", 3, 3, true),
 		FLOOR_HOLES("floor_holes", 4, 4, true),
@@ -1235,17 +1614,21 @@ final class BackroomsLayout {
 		private static final int MAX_INSET_CACHE = 2048;
 		private static final int MAX_OPEN_SPACE_CACHE = 32768;
 		private static final int MAX_DOOR_CACHE = 8192;
+		private static final int MAX_LADDER_ROOM_CACHE = 4096;
 		private static final int MAX_SPECIAL_ROOM_CACHE = 4096;
 		private static final int MAX_ZONE_CACHE = 4096;
 		private static final int MAX_VOID_HALL_COLUMN_CACHE = 4096;
+		private static final int MAX_LADDER_ROOM_COLUMN_CACHE = 8192;
 
 		final Map<Long, ZoneType> zoneCache = new HashMap<>();
 		final Map<Long, CellData> cellCache = new HashMap<>();
 		final Map<Long, Optional<InsetFeature>> insetFeatureCache = new HashMap<>();
 		final Map<Long, Boolean> openSpaceCache = new HashMap<>();
 		final Map<Long, Optional<DoorPlacement>> doorPlacementCache = new HashMap<>();
+		final Map<Long, Optional<LadderRoomPlacement>> ladderRoomCache = new HashMap<>();
 		final Map<Long, Optional<SpecialRoomPlacement>> specialRoomCache = new HashMap<>();
 		final Map<Long, Optional<SpecialRoomPlacement>> voidHallColumnCache = new HashMap<>();
+		final Map<Long, Optional<LadderRoomPlacement>> ladderRoomColumnCache = new HashMap<>();
 
 		void trimIfNeeded() {
 			if (this.zoneCache.size() > MAX_ZONE_CACHE) {
@@ -1263,11 +1646,17 @@ final class BackroomsLayout {
 			if (this.doorPlacementCache.size() > MAX_DOOR_CACHE) {
 				this.doorPlacementCache.clear();
 			}
+			if (this.ladderRoomCache.size() > MAX_LADDER_ROOM_CACHE) {
+				this.ladderRoomCache.clear();
+			}
 			if (this.specialRoomCache.size() > MAX_SPECIAL_ROOM_CACHE) {
 				this.specialRoomCache.clear();
 			}
 			if (this.voidHallColumnCache.size() > MAX_VOID_HALL_COLUMN_CACHE) {
 				this.voidHallColumnCache.clear();
+			}
+			if (this.ladderRoomColumnCache.size() > MAX_LADDER_ROOM_COLUMN_CACHE) {
+				this.ladderRoomColumnCache.clear();
 			}
 		}
 	}
