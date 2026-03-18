@@ -8,6 +8,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
@@ -17,6 +18,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -108,8 +110,12 @@ public final class ServerBackroomsStalkerSystem {
 		List<BackroomsStalkerEntity> activeStalkers = new ArrayList<>(clusters.size());
 
 		for (PlayerCluster cluster : clusters) {
+			BlockPos houseWaitingPos = findHouseWaitingPos(cluster.players());
 			BackroomsStalkerEntity assigned = findAssignedStalker(cluster, stalkers, assignedStalkers, radiusBlocks);
 			if (assigned != null) {
+				if (houseWaitingPos != null && !assigned.isChasingTarget()) {
+					moveStalkerToHouseWaitingPos(backrooms, assigned, houseWaitingPos);
+				}
 				assignedStalkers.add(assigned);
 				activeStalkers.add(assigned);
 				continue;
@@ -463,13 +469,17 @@ public final class ServerBackroomsStalkerSystem {
 					player.blockPosition().getY(),
 					player.blockPosition().getZ()
 			);
-			if (waitingPos != null) {
-				Vec3 waitingSpawn = findOpenPositionAtExactY(level, stalker, waitingPos.getX(), waitingPos.getY(), waitingPos.getZ());
-				if (waitingSpawn != null) {
-					return waitingSpawn;
-				}
+			if (waitingPos == null) {
+				continue;
 			}
 
+			Vec3 waitingSpawn = findOpenPositionAtExactY(level, stalker, waitingPos.getX(), waitingPos.getY(), waitingPos.getZ());
+			if (waitingSpawn != null) {
+				return waitingSpawn;
+			}
+		}
+
+		for (ServerPlayer player : shuffledPlayers) {
 			for (int attempt = 0; attempt < MAX_SPAWN_ATTEMPTS_PER_PLAYER; attempt++) {
 				double angle = random.nextDouble() * (Math.PI * 2.0D);
 				int distance = minRadiusBlocks + random.nextInt(Math.max(1, effectiveMaxRadius - minRadiusBlocks + 1));
@@ -486,20 +496,45 @@ public final class ServerBackroomsStalkerSystem {
 		return null;
 	}
 
-	private static Vec3 findOpenPositionAtExactY(ServerLevel level, BackroomsStalkerEntity stalker, int x, int y, int z) {
-		BlockPos feetPos = new BlockPos(x, y, z);
-		if (!canSpawnAt(level, stalker, feetPos)) {
-			return null;
+	private static BlockPos findHouseWaitingPos(List<ServerPlayer> players) {
+		for (ServerPlayer player : players) {
+			BlockPos waitingPos = BackroomsSpecialRooms.getHouseHallWaitingStalkerPos(
+					player.blockPosition().getX(),
+					player.blockPosition().getY(),
+					player.blockPosition().getZ()
+			);
+			if (waitingPos != null) {
+				return waitingPos;
+			}
 		}
-		return Vec3.atBottomCenterOf(feetPos);
+		return null;
 	}
 
-	private static boolean canSpawnAt(ServerLevel level, BackroomsStalkerEntity stalker, BlockPos feetPos) {
+	private static void moveStalkerToHouseWaitingPos(ServerLevel level, BackroomsStalkerEntity stalker, BlockPos waitingPos) {
+		Vec3 waitingSpawn = findOpenPositionAtExactY(level, stalker, waitingPos.getX(), waitingPos.getY(), waitingPos.getZ());
+		if (waitingSpawn == null) {
+			return;
+		}
+
+		float yaw = level.random.nextFloat() * 360.0F;
+		stalker.teleportTo(waitingSpawn.x, waitingSpawn.y, waitingSpawn.z);
+		stalker.setYRot(yaw);
+		stalker.setYHeadRot(yaw);
+		stalker.setYBodyRot(yaw);
+		stalker.setXRot(0.0F);
+	}
+
+	private static Vec3 findOpenPositionAtExactY(ServerLevel level, BackroomsStalkerEntity stalker, int x, int y, int z) {
+		BlockPos feetPos = new BlockPos(x, y, z);
+		return resolveSpawnPosition(level, stalker, feetPos);
+	}
+
+	private static Vec3 resolveSpawnPosition(ServerLevel level, BackroomsStalkerEntity stalker, BlockPos feetPos) {
 		if (!level.getWorldBorder().isWithinBounds(feetPos)) {
-			return false;
+			return null;
 		}
 		if (!level.hasChunkAt(feetPos) || !level.hasChunkAt(feetPos.above()) || !level.hasChunkAt(feetPos.below())) {
-			return false;
+			return null;
 		}
 
 		BlockState feetState = level.getBlockState(feetPos);
@@ -507,21 +542,31 @@ public final class ServerBackroomsStalkerSystem {
 		BlockState floorState = level.getBlockState(feetPos.below());
 		FluidState feetFluid = level.getFluidState(feetPos);
 		FluidState headFluid = level.getFluidState(feetPos.above());
-		if (!feetState.getCollisionShape(level, feetPos).isEmpty()) {
-			return false;
+		var feetCollision = feetState.getCollisionShape(level, feetPos);
+		boolean carpetAtFeet = feetState.is(BlockTags.WOOL_CARPETS);
+		if (!carpetAtFeet && !feetCollision.isEmpty()) {
+			return null;
 		}
 		if (!headState.getCollisionShape(level, feetPos.above()).isEmpty()) {
-			return false;
+			return null;
 		}
 		if (!feetFluid.isEmpty() || !headFluid.isEmpty()) {
-			return false;
+			return null;
 		}
 		if (floorState.getCollisionShape(level, feetPos.below()).isEmpty()) {
-			return false;
+			return null;
 		}
 
-		stalker.setPos(feetPos.getX() + 0.5D, feetPos.getY(), feetPos.getZ() + 0.5D);
-		return level.noCollision(stalker, stalker.getBoundingBox());
+		double spawnY = feetPos.getY();
+		if (carpetAtFeet) {
+			spawnY += feetCollision.max(Direction.Axis.Y);
+		}
+
+		stalker.setPos(feetPos.getX() + 0.5D, spawnY, feetPos.getZ() + 0.5D);
+		if (!level.noCollision(stalker, stalker.getBoundingBox())) {
+			return null;
+		}
+		return new Vec3(feetPos.getX() + 0.5D, spawnY, feetPos.getZ() + 0.5D);
 	}
 
 	private record PlayerCluster(List<ServerPlayer> players, Vec3 center) {

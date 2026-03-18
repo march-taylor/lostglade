@@ -18,6 +18,7 @@ public final class BackroomsSpecialRooms {
 	private static final long BACKROOMS_VARIANT_SALT = 0x4c47324241434b52L;
 	private static final long STAIRS_LAYOUT_SALT = 0x535441495253524DL;
 	private static final long FLOOR_HOLES_LAYOUT_SALT = 0x464C4F4F52484F4CL;
+	private static final long VOID_HALL_LAYOUT_SALT = 0x564F494448414C4CL;
 	private static final long HOUSE_HALL_LAYOUT_SALT = 0x484F55534548414CL;
 	private static final BlockState BACKROOMS_DOOR_BLOCK = ModBlocks.BACKROOMS_DOOR.defaultBlockState();
 	private static final BlockState EXIT_SIGN_WALL_BLOCK = ModBlocks.EXIT_WALL_SIGN.defaultBlockState();
@@ -65,9 +66,25 @@ public final class BackroomsSpecialRooms {
 			ColumnStates columnStates
 	) {
 		int levelIndex = BackroomsLayout.getLevelIndex(floorY);
+		VoidHallProfile voidHallProfile = getVoidHallProfileForColumn(x, z);
+		if (voidHallProfile != null
+				&& isInsideVoidHallHole(voidHallProfile, x, z)
+				&& levelIndex < voidHallProfile.room().baseLevelIndex() + voidHallProfile.room().levelSpan()) {
+			if (levelIndex >= voidHallProfile.room().baseLevelIndex()) {
+				applyVoidHall(voidHallProfile, x, z, floorY, ceilingY, columnStates);
+			} else {
+				applyVoidHallShaft(columnStates);
+			}
+			return;
+		}
+
 		if (specialRoom != null) {
 			if (specialRoom.type() == BackroomsLayout.SpecialRoomType.STAIRS) {
 				applyStairsLowerLevel(buildStairsProfile(specialRoom, levelIndex), x, z, floorY, ceilingY, columnStates);
+				return;
+			}
+			if (specialRoom.type() == BackroomsLayout.SpecialRoomType.VOID_HALL) {
+				applyVoidHall(buildVoidHallProfile(specialRoom), x, z, floorY, ceilingY, columnStates);
 				return;
 			}
 			if (specialRoom.type() == BackroomsLayout.SpecialRoomType.HOUSE_HALL) {
@@ -165,6 +182,69 @@ public final class BackroomsSpecialRooms {
 		}
 
 		return buildFloorHolesProfile(placement, levelIndex);
+	}
+
+	private static VoidHallProfile getVoidHallProfileForColumn(int x, int z) {
+		BackroomsLayout.SpecialRoomPlacement placement = BackroomsLayout.getVoidHallForColumn(x, z);
+		if (placement == null) {
+			return null;
+		}
+
+		return buildVoidHallProfile(placement);
+	}
+
+	private static VoidHallProfile buildVoidHallProfile(BackroomsLayout.SpecialRoomPlacement room) {
+		long seed = mix(room.cellX(), room.cellZ(), VOID_HALL_LAYOUT_SALT ^ levelSalt(room.baseLevelIndex()));
+		int borderWidth = 3 + positiveMod(seed ^ 0x564F4944424F5244L, 3);
+		int holeRadius = Math.max(1, Math.min(room.roomHalfWidth(), room.roomHalfHeight()) - borderWidth);
+		return new VoidHallProfile(room, borderWidth, holeRadius);
+	}
+
+	private static void applyVoidHall(
+			VoidHallProfile profile,
+			int x,
+			int z,
+			int floorY,
+			int ceilingY,
+			ColumnStates columnStates
+	) {
+		int levelIndex = BackroomsLayout.getLevelIndex(floorY);
+		if (!profile.room().contains(x, z, levelIndex)) {
+			return;
+		}
+
+		int levelOffset = levelIndex - profile.room().baseLevelIndex();
+		boolean inHole = isInsideVoidHallHole(profile, x, z);
+		if (levelOffset <= 0) {
+			columnStates.setFloor(inHole ? AIR : randomizedBackroomsBlock(x, floorY, z));
+			columnStates.setLower(AIR);
+			columnStates.setUpper(AIR);
+			columnStates.setTop(AIR);
+			columnStates.setCeiling(AIR);
+			return;
+		}
+
+		columnStates.setFloor(AIR);
+		columnStates.setLower(AIR);
+		columnStates.setUpper(AIR);
+		columnStates.setTop(AIR);
+		columnStates.setCeiling(levelOffset == profile.room().levelSpan() - 1
+				? randomizedBackroomsBlock(x, ceilingY, z)
+				: AIR);
+	}
+
+	private static void applyVoidHallShaft(ColumnStates columnStates) {
+		columnStates.setFloor(AIR);
+		columnStates.setLower(AIR);
+		columnStates.setUpper(AIR);
+		columnStates.setTop(AIR);
+		columnStates.setCeiling(AIR);
+	}
+
+	private static boolean isInsideVoidHallHole(VoidHallProfile profile, int x, int z) {
+		int dx = x - profile.room().roomCenterX();
+		int dz = z - profile.room().roomCenterZ();
+		return dx * dx + dz * dz <= profile.holeRadius() * profile.holeRadius();
 	}
 
 	private static FloorHolesProfile buildFloorHolesProfile(BackroomsLayout.SpecialRoomPlacement room, int levelIndex) {
@@ -1084,8 +1164,8 @@ public final class BackroomsSpecialRooms {
 				3 + positiveMod(seed ^ 0x484F55534557414CL, 2),
 				doorFacing,
 				WoodTheme.OAK,
-				positiveMod(seed ^ 0x46414B45444F4F52L, 100) < 28,
-				positiveMod(seed ^ 0x5741495453544B52L, 100) < 35,
+				positiveMod(seed ^ 0x46414B45444F4F52L, 100) < 20,
+				positiveMod(seed ^ 0x5741495453544B52L, 100) < 20,
 				chosenFeatures[0] ? 1 + positiveMod(seed ^ 0x4F55545349444550L, 2) : 0,
 				chosenFeatures[0],
 				chosenFeatures[1],
@@ -2057,6 +2137,13 @@ public final class BackroomsSpecialRooms {
 			int levelIndex,
 			boolean tallRoom,
 			int piercedFloors
+	) {
+	}
+
+	private record VoidHallProfile(
+			BackroomsLayout.SpecialRoomPlacement room,
+			int borderWidth,
+			int holeRadius
 	) {
 	}
 
