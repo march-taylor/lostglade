@@ -393,10 +393,10 @@ public final class ServerBackroomsSystem {
 			UUID uuid = player.getUUID();
 			boolean inBackrooms = isInBackrooms(player);
 			boolean shouldStart = inBackrooms
-					&& BackroomsSpecialRooms.isUpperLadderCrawlZone(player.getX(), player.getY(), player.getZ());
+					&& BackroomsSpecialRooms.isUpperLadderCrawlZone(player.level(), player.getX(), player.getY(), player.getZ());
 			boolean shouldKeep = inBackrooms
 					&& FORCED_LADDER_CRAWL_PLAYERS.contains(uuid)
-					&& BackroomsSpecialRooms.isUpperLadderOrTunnelCrawlZone(player.getX(), player.getY(), player.getZ());
+					&& BackroomsSpecialRooms.isUpperLadderOrTunnelCrawlZone(player.level(), player.getX(), player.getY(), player.getZ());
 			if (shouldStart || shouldKeep) {
 				if (FORCED_LADDER_CRAWL_PLAYERS.add(uuid)) {
 					player.setSwimming(true);

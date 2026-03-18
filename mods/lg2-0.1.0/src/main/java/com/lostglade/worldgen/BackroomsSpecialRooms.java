@@ -10,6 +10,7 @@ import net.minecraft.world.level.block.IronBarsBlock;
 import net.minecraft.world.level.block.LadderBlock;
 import net.minecraft.world.level.block.WallTorchBlock;
 import net.minecraft.world.level.block.WallSignBlock;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.properties.ChestType;
@@ -188,17 +189,17 @@ public final class BackroomsSpecialRooms {
 		);
 	}
 
-	public static boolean isUpperLadderCrawlZone(double x, double y, double z) {
+	public static boolean isUpperLadderCrawlZone(Level level, double x, double y, double z) {
 		BlockPos feetPos = BlockPos.containing(x, y + UPPER_LADDER_CRAWL_Y_OFFSET, z);
-		return isUpperLadderCrawlZone(feetPos.getX(), feetPos.getY(), feetPos.getZ());
+		return isUpperLadderCrawlZone(level, feetPos.getX(), feetPos.getY(), feetPos.getZ());
 	}
 
-	public static boolean isUpperLadderOrTunnelCrawlZone(double x, double y, double z) {
+	public static boolean isUpperLadderOrTunnelCrawlZone(Level level, double x, double y, double z) {
 		BlockPos feetPos = BlockPos.containing(x, y + UPPER_LADDER_CRAWL_Y_OFFSET, z);
-		return isUpperLadderOrTunnelCrawlZone(feetPos.getX(), feetPos.getY(), feetPos.getZ());
+		return isUpperLadderOrTunnelCrawlZone(level, feetPos.getX(), feetPos.getY(), feetPos.getZ());
 	}
 
-	public static boolean isUpperLadderCrawlZone(int x, int y, int z) {
+	public static boolean isUpperLadderCrawlZone(Level level, int x, int y, int z) {
 		int levelIndex = BackroomsLayout.getLevelIndex(y);
 		BackroomsLayout.LadderRoomPlacement placement = BackroomsLayout.getLadderRoomAt(x, z, levelIndex);
 		if (placement == null || !placement.isLadderColumn(x, z)) {
@@ -207,10 +208,10 @@ public final class BackroomsSpecialRooms {
 
 		int floorY = BackroomsLayout.FLOOR_Y + levelIndex * BackroomsLayout.LEVEL_HEIGHT;
 		int localY = y - floorY;
-		return localY == 2 || localY == 3;
+		return (localY == 2 || localY == 3) && hasIntactLadder(level, placement, floorY);
 	}
 
-	public static boolean isUpperLadderOrTunnelCrawlZone(int x, int y, int z) {
+	public static boolean isUpperLadderOrTunnelCrawlZone(Level level, int x, int y, int z) {
 		int levelIndex = BackroomsLayout.getLevelIndex(y);
 		BackroomsLayout.LadderRoomPlacement placement = BackroomsLayout.getLadderRoomAt(x, z, levelIndex);
 		if (placement == null) {
@@ -218,12 +219,22 @@ public final class BackroomsSpecialRooms {
 		}
 
 		int floorY = BackroomsLayout.FLOOR_Y + levelIndex * BackroomsLayout.LEVEL_HEIGHT;
+		if (!hasIntactLadder(level, placement, floorY)) {
+			return false;
+		}
+
 		int localY = y - floorY;
 		if (placement.isLadderColumn(x, z)) {
 			return localY >= 1 && localY <= 3;
 		}
 
 		return placement.isTunnelColumn(x, z) && (localY == 2 || localY == 3);
+	}
+
+	private static boolean hasIntactLadder(Level level, BackroomsLayout.LadderRoomPlacement placement, int floorY) {
+		BlockPos lowerPos = new BlockPos(placement.ladderX(), floorY + 1, placement.ladderZ());
+		BlockPos upperPos = lowerPos.above();
+		return level.getBlockState(lowerPos).is(Blocks.LADDER) && level.getBlockState(upperPos).is(Blocks.LADDER);
 	}
 
 	private static FloorHolesProfile getFloorHolesProfileAt(int x, int z, int levelIndex) {
