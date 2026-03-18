@@ -94,7 +94,7 @@ public final class ServerUpgradeUiSystem {
 	private static final int MAIN_SCREEN_DVD_FRAME_COUNT = 130;
 	private static final int MAIN_SCREEN_ARCHIVE_FRAME_COUNT = 24;
 	private static final int MAIN_SCREEN_LOGO_FRAME_TICKS = 2;
-	private static final int MAIN_SCREEN_DVD_FRAME_TICKS = 2;
+	private static final int MAIN_SCREEN_DVD_FRAME_TICKS = 4;
 	private static final int MAIN_SCREEN_ARCHIVE_FRAME_TICKS = 2;
 	private static final double MAIN_SCREEN_ARCHIVE_VARIANT_CHANCE = 0.0001D;
 	private static final int MAIN_SCREEN_VARIANT_GLITCH = 0;

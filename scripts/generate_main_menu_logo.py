@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import random
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
@@ -54,10 +55,34 @@ REFLECTION = (0x5C, 0x5E, 0x5C, 14)
 AMBER_GLOW = (255, 154, 44)
 CYAN_GLOW = (68, 255, 234)
 CORE_GLOW = (110, 255, 240)
+LOGO_PALETTE = [
+    (0, 0, 0, 0),
+    (0, 0, 0, 255),
+    (0, 210, 137, 255),
+    (0, 199, 241, 255),
+]
 
 
 def clamp(value: int, low: int, high: int) -> int:
     return max(low, min(high, value))
+
+
+def quantize_to_palette(image: Image.Image, palette: list[tuple[int, int, int, int]]) -> Image.Image:
+    output = Image.new('RGBA', image.size)
+    pixels = []
+    for pixel in image.getdata():
+        best = min(
+            palette,
+            key=lambda color: (color[3] - pixel[3]) ** 2 + sum((color[index] - pixel[index]) ** 2 for index in range(3)),
+        )
+        pixels.append(best)
+    output.putdata(pixels)
+    return output
+
+
+def upscale_logo_clean(base_logo: Image.Image, size: tuple[int, int]) -> Image.Image:
+    resized = base_logo.resize(size, Image.Resampling.BICUBIC)
+    return quantize_to_palette(resized, LOGO_PALETTE)
 
 
 def inside_screen_mask(x: int, y: int) -> bool:
@@ -174,23 +199,89 @@ def add_signal_overlay(
     return Image.alpha_composite(frame_img, overlay)
 
 
-def build_glitch_frame(base_logo: Image.Image, frame: int, total_frames: int) -> Image.Image:
-    frame_img = make_screen_base(frame, total_frames)
+def bend_logo(logo: Image.Image, phase: float) -> Image.Image:
+    out = Image.new('RGBA', logo.size, (0, 0, 0, 0))
+    for y in range(logo.height):
+        # Softer than in 941a4bd: same character, lower amplitude.
+        wave = math.sin((y / max(1, logo.height - 1)) * math.tau * 0.9 + phase)
+        drift = math.sin((y / max(1, logo.height - 1)) * math.tau * 2.1 + phase * 1.2)
+        shift = int(round(wave * 0.45 + drift * 0.18))
+        row = logo.crop((0, y, logo.width, y + 1))
+        out.alpha_composite(row, (shift, y))
+    return out
+
+
+def glitch_logo(logo: Image.Image, frame: int) -> Image.Image:
+    glitched = logo.copy()
+    if frame not in {5, 13}:
+        return glitched
+
+    y = 8 + ((frame * 5) % max(1, logo.height - 16))
+    h = 3
+    shift = -2 if frame == 5 else 2
+    band = glitched.crop((0, y, logo.width, min(logo.height, y + h)))
+    glitched.paste((0, 0, 0, 0), (0, y, logo.width, min(logo.height, y + h)))
+    glitched.alpha_composite(band, (shift, y))
+    return glitched
+
+
+def make_logo_frame(base_logo: Image.Image, frame: int, total_frames: int) -> Image.Image:
+    phase = frame / total_frames * math.tau
+    logo = bend_logo(base_logo, phase)
+    logo = glitch_logo(logo, frame)
+
+    canvas = Image.new('RGBA', (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     x = SCREEN_X + (SCREEN_W - base_logo.width) // 2
     y = SCREEN_Y + (SCREEN_H - base_logo.height) // 2 + 1
-    glow_boost = 0.96 + (math.sin((frame / total_frames) * math.tau) * 0.06)
 
-    if frame in {4, 11}:
-        alpha = base_logo.getchannel('A')
-        cyan = Image.new('RGBA', base_logo.size, (*CYAN_GLOW, 0))
-        cyan.putalpha(alpha.point(lambda v: int(v * 0.07)))
-        amber = Image.new('RGBA', base_logo.size, (*AMBER_GLOW, 0))
-        amber.putalpha(alpha.point(lambda v: int(v * 0.05)))
-        frame_img.alpha_composite(cyan, (x + 1, y))
-        frame_img.alpha_composite(amber, (x - 1, y))
+    alpha = logo.getchannel('A')
+    ghost_shift = 1 if frame in {5, 13} else 0
+    if ghost_shift:
+        red_ghost = Image.new('RGBA', logo.size, (255, 110, 90, 0))
+        red_ghost.putalpha(alpha.point(lambda v: int(v * 0.12)))
+        blue_ghost = Image.new('RGBA', logo.size, (70, 220, 255, 0))
+        blue_ghost.putalpha(alpha.point(lambda v: int(v * 0.14)))
+        canvas.alpha_composite(red_ghost, (x - ghost_shift, y))
+        canvas.alpha_composite(blue_ghost, (x + ghost_shift, y))
 
-    add_logo_glow(frame_img, base_logo, x, y, glow_boost=glow_boost)
-    return add_signal_overlay(frame_img, frame, total_frames)
+    add_logo_glow(canvas, logo, x, y, glow_boost=1.0)
+    return canvas
+
+
+def add_screen_effects(frame_img: Image.Image, frame: int, total_frames: int) -> Image.Image:
+    img = frame_img.copy()
+    overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay, 'RGBA')
+    rng = random.Random(9000 + frame)
+
+    for idx in range(2):
+        bar_y = INNER_Y + ((frame * 4 + idx * 15) % max(1, INNER_H - 2))
+        color = (255, 176, 64, 13) if idx == 0 else (90, 255, 235, 10)
+        draw.line((INNER_X + 2, bar_y, INNER_X + INNER_W - 3, bar_y), fill=color, width=1)
+
+    for _ in range(24):
+        x = rng.randint(INNER_X + 1, INNER_X + INNER_W - 2)
+        y = rng.randint(INNER_Y + 1, INNER_Y + INNER_H - 2)
+        if not inside_screen_mask(x, y):
+            continue
+        if rng.random() < 0.86:
+            continue
+        color = rng.choice([
+            (55, 57, 56, 22),
+            (74, 77, 76, 18),
+            (33, 35, 34, 18),
+        ])
+        draw.point((x, y), fill=color)
+
+    reflection_y = INNER_Y + 5 + int((math.sin(frame / total_frames * math.tau) + 1) * 2)
+    draw.line((INNER_X + 10, reflection_y, INNER_X + INNER_W - 14, reflection_y + 6), fill=REFLECTION, width=1)
+    return Image.alpha_composite(img, overlay)
+
+
+def build_glitch_frame(base_logo: Image.Image, frame: int, total_frames: int) -> Image.Image:
+    frame_img = make_screen_base(frame, total_frames)
+    frame_img.alpha_composite(make_logo_frame(base_logo, frame, total_frames))
+    return add_screen_effects(frame_img, frame, total_frames)
 
 
 def reflect_step(frame: int, speed: int, span: int) -> int:
@@ -243,7 +334,7 @@ def main() -> None:
         raise FileNotFoundError(f'Missing source logo: {SOURCE_LOGO}')
 
     source_logo = Image.open(SOURCE_LOGO).convert('RGBA')
-    glitch_logo = source_logo.resize((GLITCH_LOGO_W, GLITCH_LOGO_H), Image.Resampling.NEAREST)
+    glitch_logo = upscale_logo_clean(source_logo, (GLITCH_LOGO_W, GLITCH_LOGO_H))
     dvd_logo = source_logo.resize(
         (max(1, source_logo.width // 2), max(1, math.ceil(source_logo.height / 2))),
         Image.Resampling.NEAREST,
