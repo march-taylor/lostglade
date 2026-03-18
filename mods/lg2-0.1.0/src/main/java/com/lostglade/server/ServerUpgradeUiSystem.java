@@ -22,6 +22,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
+import net.minecraft.network.protocol.game.ClientboundContainerClosePacket;
 import net.minecraft.network.protocol.game.ClientboundOpenScreenPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.resources.Identifier;
@@ -1060,9 +1061,14 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	private static void restoreLowerInventoryVisuals(ServerPlayer player, AbstractContainerMenu menu) {
-		sendLowerInventoryVisuals(player, menu, false);
-		if (player != null && player.inventoryMenu != null && player.inventoryMenu != menu) {
-			sendLowerInventoryVisuals(player, player.inventoryMenu, false);
+		if (player != null) {
+			AbstractContainerMenu targetMenu = player.containerMenu;
+			if (targetMenu == null || targetMenu == menu) {
+				targetMenu = player.inventoryMenu;
+			}
+			if (targetMenu != null) {
+				sendLowerInventoryVisuals(player, targetMenu, false);
+			}
 		}
 		syncHeldEquipmentVisuals(player, false);
 	}
@@ -1855,6 +1861,15 @@ public final class ServerUpgradeUiSystem {
 					&& serverPlayer.containerMenu != this
 					&& serverPlayer.containerMenu instanceof UpgradeMenu) {
 				return;
+			}
+			if (player instanceof ServerPlayer serverPlayer) {
+				UUID playerId = serverPlayer.getUUID();
+				PENDING_MENU_VISUAL_RESYNCS.remove(playerId);
+				ERAS_TITLE_SIGNATURES.remove(playerId);
+				ERAS_PROGRESS_ANIMATIONS.remove(playerId);
+				MAIN_TITLE_SIGNATURES.remove(playerId);
+				MAIN_SCREEN_LOGO_VARIANTS.remove(playerId);
+				serverPlayer.connection.send(new ClientboundContainerClosePacket(this.containerId));
 			}
 			restoreLowerInventoryVisuals(this.viewer, this);
 		}
