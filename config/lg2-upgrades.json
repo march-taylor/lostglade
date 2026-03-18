@@ -3,41 +3,96 @@
   "rootScreenId": "main",
   "themes": {
     "default": {
+      "enabled": true,
+      "packTitlePrefix": "",
+      "packTitleSuffix": "",
       "fillEmptySlots": false,
       "fillerIcon": {
         "fallbackItem": "minecraft:black_stained_glass_pane",
-        "packModel": ""
+        "packModel": "",
+        "count": 1,
+        "foil": false
       }
     },
     "main_overlay": {
-      "fillEmptySlots": false,
+      "enabled": true,
       "packTitlePrefix": "",
-      "packTitleSuffix": ""
+      "packTitleSuffix": "",
+      "fillEmptySlots": false,
+      "fillerIcon": {
+        "fallbackItem": "minecraft:gray_stained_glass_pane",
+        "packModel": "lg2:gui/button/filler",
+        "count": 1,
+        "foil": false
+      }
     },
     "it_tree_overlay": {
-      "fillEmptySlots": false,
+      "enabled": true,
       "packTitlePrefix": "",
-      "packTitleSuffix": ""
+      "packTitleSuffix": "",
+      "fillEmptySlots": false,
+      "fillerIcon": {
+        "fallbackItem": "minecraft:gray_stained_glass_pane",
+        "packModel": "lg2:gui/button/filler",
+        "count": 1,
+        "foil": false
+      }
     },
     "template_3row": {
-      "fillEmptySlots": false,
+      "enabled": true,
       "packTitlePrefix": "",
-      "packTitleSuffix": ""
+      "packTitleSuffix": "",
+      "fillEmptySlots": false,
+      "fillerIcon": {
+        "fallbackItem": "minecraft:gray_stained_glass_pane",
+        "packModel": "lg2:gui/button/filler",
+        "count": 1,
+        "foil": false
+      }
+    },
+    "eras_console_overlay": {
+      "enabled": true,
+      "packTitlePrefix": "",
+      "packTitleSuffix": "",
+      "fillEmptySlots": false,
+      "fillerIcon": {
+        "fallbackItem": "minecraft:gray_stained_glass_pane",
+        "packModel": "lg2:gui/button/filler",
+        "count": 1,
+        "foil": false
+      }
     },
     "template_4row": {
-      "fillEmptySlots": false,
+      "enabled": true,
       "packTitlePrefix": "",
-      "packTitleSuffix": ""
+      "packTitleSuffix": "",
+      "fillEmptySlots": false,
+      "fillerIcon": {
+        "fallbackItem": "minecraft:gray_stained_glass_pane",
+        "packModel": "lg2:gui/button/filler",
+        "count": 1,
+        "foil": false
+      }
     },
     "template_5row": {
-      "fillEmptySlots": false,
+      "enabled": true,
       "packTitlePrefix": "",
-      "packTitleSuffix": ""
+      "packTitleSuffix": "",
+      "fillEmptySlots": false,
+      "fillerIcon": {
+        "fallbackItem": "minecraft:gray_stained_glass_pane",
+        "packModel": "lg2:gui/button/filler",
+        "count": 1,
+        "foil": false
+      }
     }
   },
   "screens": {
     "main": {
+      "enabled": true,
       "rows": 3,
+      "theme": "main_overlay",
+      "hideTitleTextWhenPack": true,
       "title": {
         "values": {
           "en_us": "Server",
@@ -49,14 +104,31 @@
       },
       "buttons": {
         "worlds": {
+          "enabled": true,
           "slot": 14,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "worlds",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:obsidian",
-            "packModel": "lg2:gui/button/invisible"
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -90,17 +162,37 @@
                 "Безъ грамотъ порталы молчатъ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "eras": {
+          "enabled": true,
           "slot": 10,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "eras",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:smithing_table",
-            "packModel": "lg2:gui/button/invisible"
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -134,17 +226,37 @@
                 "Сiя вѣтвь рѣшаетъ, какiе чины сбруи дозволены."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "mechanics": {
+          "enabled": true,
           "slot": 11,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "mechanics",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:redstone",
-            "packModel": "lg2:gui/button/invisible"
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -176,17 +288,37 @@
                 "Всякiя штуки отворяются порознь, коли пора матерiаловъ дозволяетъ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "it": {
+          "enabled": true,
           "slot": 12,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "it_hub",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:observer",
-            "packModel": "lg2:gui/button/invisible"
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -220,17 +352,37 @@
                 "Сiя вѣтвь самая мудрёная на всёмъ серверѣ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "races": {
+          "enabled": true,
           "slot": 16,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "races",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:totem_of_undying",
-            "packModel": "lg2:gui/button/invisible"
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -264,14 +416,37 @@
                 "Отъ дешёвыхъ поблажекъ до даровъ элитныхъ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "info": {
+          "enabled": true,
           "slot": 0,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:knowledge_book",
-            "packModel": "lg2:gui/button/invisible"
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -306,15 +481,36 @@
               ]
             }
           },
-          "hitboxWidth": 1,
-          "hitboxHeight": 1
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "close": {
+          "enabled": true,
           "slot": 8,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "close",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/invisible"
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -344,15 +540,36 @@
               ]
             }
           },
-          "hitboxWidth": 1,
-          "hitboxHeight": 1
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "balance": {
+          "enabled": true,
           "slot": 7,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "lg2:bitcoin",
-            "packModel": "lg2:gui/button/invisible"
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -386,14 +603,18 @@
                 "Сии монѣты и идутъ на всякую покупку въ семъ окнѣ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         }
-      },
-      "theme": "main_overlay",
-      "hideTitleTextWhenPack": true
+      }
     },
     "worlds": {
+      "enabled": true,
       "rows": 3,
+      "theme": "template_3row",
+      "hideTitleTextWhenPack": true,
       "title": {
         "values": {
           "en_us": "World Access",
@@ -405,11 +626,31 @@
       },
       "buttons": {
         "info": {
-          "slot": 18,
+          "enabled": true,
+          "slot": 0,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:knowledge_book",
-            "packModel": ""
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -442,22 +683,38 @@
                 "Бери сперва тотъ мiръ, что надобенъ вашей артѣли."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "nether": {
+          "enabled": true,
           "slot": 11,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "world_nether",
           "pricesBitcoins": [
             1000
           ],
           "icon": {
             "fallbackItem": "minecraft:obsidian",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:obsidian",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -502,22 +759,38 @@
                 "Мзда: %cost% BTC | Состоянiе: %status%"
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "end": {
+          "enabled": true,
           "slot": 15,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "world_end",
           "pricesBitcoins": [
             1200
           ],
           "icon": {
             "fallbackItem": "minecraft:ender_eye",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:ender_eye",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -563,15 +836,36 @@
               ]
             }
           },
-          "requirements": []
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "back": {
+          "enabled": true,
           "slot": 26,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "main",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:arrow",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -600,14 +894,18 @@
                 "Возвратиться во прежнiй разделъ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         }
-      },
-      "theme": "template_3row",
-      "hideTitleTextWhenPack": true
+      }
     },
     "eras": {
+      "enabled": true,
       "rows": 3,
+      "theme": "eras_console_overlay",
+      "hideTitleTextWhenPack": true,
       "title": {
         "values": {
           "en_us": "Eras",
@@ -619,11 +917,31 @@
       },
       "buttons": {
         "info": {
-          "slot": 18,
+          "enabled": true,
+          "slot": 0,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:knowledge_book",
-            "packModel": ""
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -657,22 +975,38 @@
                 "Всякая слѣдующая пора держится на прежней."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "stone": {
-          "slot": 10,
+          "enabled": true,
+          "slot": 36,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "era_stone",
           "pricesBitcoins": [
             150
           ],
           "icon": {
             "fallbackItem": "minecraft:stone_pickaxe",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:stone_pickaxe",
+            "packModel": "",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:stone_pickaxe",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -717,22 +1051,38 @@
                 "Мзда: %cost% BTC | Состоянiе: %status%"
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "copper": {
-          "slot": 11,
+          "enabled": true,
+          "slot": 38,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "era_copper",
           "pricesBitcoins": [
             300
           ],
           "icon": {
             "fallbackItem": "minecraft:copper_ingot",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:copper_ingot",
+            "packModel": "",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:copper_ingot",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -783,22 +1133,37 @@
               "upgradeId": "era_stone",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "iron_gold": {
-          "slot": 12,
+          "enabled": true,
+          "slot": 40,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "era_iron_gold",
           "pricesBitcoins": [
             600
           ],
           "icon": {
             "fallbackItem": "minecraft:iron_ingot",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:iron_ingot",
+            "packModel": "",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:iron_ingot",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -849,22 +1214,37 @@
               "upgradeId": "era_copper",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "diamond": {
-          "slot": 13,
+          "enabled": true,
+          "slot": 42,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "era_diamond",
           "pricesBitcoins": [
             1200
           ],
           "icon": {
             "fallbackItem": "minecraft:diamond",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:diamond",
+            "packModel": "",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:diamond",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -915,22 +1295,37 @@
               "upgradeId": "era_iron_gold",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "netherite": {
-          "slot": 14,
+          "enabled": true,
+          "slot": 44,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "era_netherite",
           "pricesBitcoins": [
             2000
           ],
           "icon": {
             "fallbackItem": "minecraft:netherite_ingot",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:netherite_ingot",
+            "packModel": "",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:netherite_ingot",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -981,15 +1376,100 @@
               "upgradeId": "era_diamond",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "balance": {
+          "enabled": true,
+          "slot": 7,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "lg2:bitcoin",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Balance: %bitcoins% BTC",
+              "ru_ru": "Баланс: %bitcoins% BTC",
+              "uk_ua": "Баланс: %bitcoins% BTC",
+              "ja_jp": "残高: %bitcoins% BTC",
+              "rpr": "Монѣтъ: %bitcoins% BTC"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Your personal bitcoin balance.",
+                "All purchases in this menu use these coins."
+              ],
+              "ru_ru": [
+                "Твой личный баланс биткоинов.",
+                "Все покупки в этом меню тратят именно эти монеты."
+              ],
+              "uk_ua": [
+                "Твій особистий баланс біткоїнів.",
+                "Усі покупки в цьому меню витрачають саме ці монети."
+              ],
+              "ja_jp": [
+                "あなた個人のビットコイン残高です。",
+                "この画面の購入はここから支払われます。"
+              ],
+              "rpr": [
+                "Твой личный запасъ монѣтъ биткоиновыхъ.",
+                "Сии монѣты и идутъ на всякую покупку въ семъ окнѣ."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "back": {
-          "slot": 26,
+          "enabled": true,
+          "slot": 8,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "main",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:arrow",
-            "packModel": ""
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -1018,14 +1498,18 @@
                 "Возвратиться во прежнiй разделъ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         }
-      },
-      "theme": "template_3row",
-      "hideTitleTextWhenPack": true
+      }
     },
     "mechanics": {
+      "enabled": true,
       "rows": 3,
+      "theme": "template_3row",
+      "hideTitleTextWhenPack": true,
       "title": {
         "values": {
           "en_us": "Mechanics",
@@ -1037,11 +1521,31 @@
       },
       "buttons": {
         "info": {
+          "enabled": true,
           "slot": 18,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:knowledge_book",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -1073,22 +1577,38 @@
                 "Сiи механiки нынѣ отворяются порознь; остаются лишь нужныя матерiальныя пороги."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "redstone": {
+          "enabled": true,
           "slot": 10,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "mechanic_redstone",
           "pricesBitcoins": [
             400
           ],
           "icon": {
             "fallbackItem": "minecraft:redstone",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:redstone",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -1133,22 +1653,38 @@
                 "Мзда: %cost% BTC | Состоянiе: %status%"
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "brewing": {
+          "enabled": true,
           "slot": 11,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "mechanic_brewing",
           "pricesBitcoins": [
             700
           ],
           "icon": {
             "fallbackItem": "minecraft:brewing_stand",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:brewing_stand",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -1194,22 +1730,37 @@
               ]
             }
           },
-          "requirements": []
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "anvil": {
+          "enabled": true,
           "slot": 12,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "mechanic_anvil",
           "pricesBitcoins": [
             1000
           ],
           "icon": {
             "fallbackItem": "minecraft:anvil",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:anvil",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -1255,22 +1806,37 @@
               ]
             }
           },
-          "requirements": []
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "enchanting": {
+          "enabled": true,
           "slot": 13,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "mechanic_enchanting",
           "pricesBitcoins": [
             1500
           ],
           "icon": {
             "fallbackItem": "minecraft:enchanted_book",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:enchanted_book",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -1316,22 +1882,37 @@
               ]
             }
           },
-          "requirements": []
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "villagers": {
+          "enabled": true,
           "slot": 14,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "mechanic_villagers",
           "pricesBitcoins": [
             2500
           ],
           "icon": {
             "fallbackItem": "minecraft:emerald",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:emerald",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -1376,15 +1957,37 @@
                 "Мзда: %cost% BTC | Состоянiе: %status%"
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "back": {
+          "enabled": true,
           "slot": 26,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "main",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:arrow",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -1413,14 +2016,18 @@
                 "Возвратиться во прежнiй разделъ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         }
-      },
-      "theme": "template_3row",
-      "hideTitleTextWhenPack": true
+      }
     },
     "it_hub": {
+      "enabled": true,
       "rows": 5,
+      "theme": "template_5row",
+      "hideTitleTextWhenPack": true,
       "title": {
         "values": {
           "en_us": "IT Branch",
@@ -1432,11 +2039,31 @@
       },
       "buttons": {
         "info": {
+          "enabled": true,
           "slot": 36,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:knowledge_book",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -1470,22 +2097,38 @@
                 "Отъ нихъ вѣтвь расходится къ экранамъ, глушилкѣ и дронамъ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "electronics": {
+          "enabled": true,
           "slot": 4,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_electronics",
           "pricesBitcoins": [
             300
           ],
           "icon": {
             "fallbackItem": "minecraft:lightning_rod",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:lightning_rod",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -1530,22 +2173,38 @@
                 "Мзда: %cost% BTC | Состоянiе: %status%"
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "camera": {
+          "enabled": true,
           "slot": 10,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_camera",
           "pricesBitcoins": [
             600
           ],
           "icon": {
             "fallbackItem": "minecraft:spyglass",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:spyglass",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -1596,22 +2255,37 @@
               "upgradeId": "it_electronics",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "microphone": {
+          "enabled": true,
           "slot": 13,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_microphone",
           "pricesBitcoins": [
             450
           ],
           "icon": {
             "fallbackItem": "minecraft:goat_horn",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:goat_horn",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -1662,22 +2336,37 @@
               "upgradeId": "it_electronics",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "speaker": {
+          "enabled": true,
           "slot": 16,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_speaker",
           "pricesBitcoins": [
             450
           ],
           "icon": {
             "fallbackItem": "minecraft:note_block",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:note_block",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -1728,22 +2417,37 @@
               "upgradeId": "it_electronics",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "communications": {
+          "enabled": true,
           "slot": 22,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_communications",
           "pricesBitcoins": [
             800
           ],
           "icon": {
             "fallbackItem": "minecraft:comparator",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:comparator",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -1789,6 +2493,7 @@
               ]
             }
           },
+          "requirements": [],
           "requirementGroups": [
             {
               "mode": "at_least",
@@ -1808,22 +2513,36 @@
                 }
               ]
             }
-          ]
+          ],
+          "closeAfterClick": false
         },
         "screen": {
+          "enabled": true,
           "slot": 30,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_screen",
           "pricesBitcoins": [
             1000
           ],
           "icon": {
             "fallbackItem": "minecraft:map",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:map",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -1874,22 +2593,37 @@
               "upgradeId": "it_communications",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "jammer": {
+          "enabled": true,
           "slot": 39,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_jammer",
           "pricesBitcoins": [
             1300
           ],
           "icon": {
             "fallbackItem": "minecraft:lodestone",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:lodestone",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -1940,22 +2674,37 @@
               "upgradeId": "it_screen",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "scout": {
+          "enabled": true,
           "slot": 33,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_drone_scout",
           "pricesBitcoins": [
             1800
           ],
           "icon": {
             "fallbackItem": "minecraft:firework_rocket",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:firework_rocket",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -2010,22 +2759,37 @@
               "upgradeId": "it_screen",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "kamikaze": {
+          "enabled": true,
           "slot": 34,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_drone_kamikaze",
           "pricesBitcoins": [
             2700
           ],
           "icon": {
             "fallbackItem": "minecraft:tnt",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:tnt",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -2076,22 +2840,37 @@
               "upgradeId": "it_drone_scout",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "combat": {
+          "enabled": true,
           "slot": 35,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_drone_combat",
           "pricesBitcoins": [
             3000
           ],
           "icon": {
             "fallbackItem": "minecraft:crossbow",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:crossbow",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -2142,15 +2921,36 @@
               "upgradeId": "it_drone_kamikaze",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "back": {
+          "enabled": true,
           "slot": 44,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "main",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:arrow",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -2179,14 +2979,18 @@
                 "Возвратиться во прежнiй разделъ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         }
-      },
-      "theme": "template_5row",
-      "hideTitleTextWhenPack": true
+      }
     },
     "it_devices": {
+      "enabled": true,
       "rows": 4,
+      "theme": "template_4row",
+      "hideTitleTextWhenPack": true,
       "title": {
         "values": {
           "en_us": "Input Devices",
@@ -2198,11 +3002,31 @@
       },
       "buttons": {
         "info": {
+          "enabled": true,
           "slot": 27,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:knowledge_book",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -2236,22 +3060,38 @@
                 "Возьми двое изъ троихъ, и вѣсть-проводы отворятся."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "camera": {
+          "enabled": true,
           "slot": 10,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_camera",
           "pricesBitcoins": [
             600
           ],
           "icon": {
             "fallbackItem": "minecraft:spyglass",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:spyglass",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -2302,22 +3142,37 @@
               "upgradeId": "it_electronics",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "microphone": {
+          "enabled": true,
           "slot": 13,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_microphone",
           "pricesBitcoins": [
             450
           ],
           "icon": {
             "fallbackItem": "minecraft:goat_horn",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:goat_horn",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -2368,22 +3223,37 @@
               "upgradeId": "it_electronics",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "speaker": {
+          "enabled": true,
           "slot": 16,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_speaker",
           "pricesBitcoins": [
             450
           ],
           "icon": {
             "fallbackItem": "minecraft:note_block",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:note_block",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -2434,14 +3304,36 @@
               "upgradeId": "it_electronics",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "hint": {
+          "enabled": true,
           "slot": 22,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:comparator",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -2475,15 +3367,37 @@
                 "Камера со слухачомъ, камера съ громкогласомъ, аль слухачъ съ громкогласомъ — всё годится."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "back": {
+          "enabled": true,
           "slot": 35,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "it_hub",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:arrow",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -2512,14 +3426,18 @@
                 "Возвратиться во прежнiй разделъ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         }
-      },
-      "theme": "template_4row",
-      "hideTitleTextWhenPack": true
+      }
     },
     "it_displays": {
+      "enabled": true,
       "rows": 3,
+      "theme": "template_3row",
+      "hideTitleTextWhenPack": true,
       "title": {
         "values": {
           "en_us": "Displays",
@@ -2531,11 +3449,31 @@
       },
       "buttons": {
         "info": {
+          "enabled": true,
           "slot": 18,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:knowledge_book",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -2569,22 +3507,38 @@
                 "Сего одного экрана уже довольно, дабы отворить вѣтвь дроновъ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "jammer": {
+          "enabled": true,
           "slot": 14,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_jammer",
           "pricesBitcoins": [
             1300
           ],
           "icon": {
             "fallbackItem": "minecraft:lodestone",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:lodestone",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -2635,15 +3589,36 @@
               "upgradeId": "it_communications",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "back": {
+          "enabled": true,
           "slot": 26,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "it_hub",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:arrow",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -2672,22 +3647,38 @@
                 "Возвратиться во прежнiй разделъ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "screen": {
+          "enabled": true,
           "slot": 12,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_screen",
           "pricesBitcoins": [
             1000
           ],
           "icon": {
             "fallbackItem": "minecraft:map",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:map",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -2738,14 +3729,17 @@
               "upgradeId": "it_communications",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         }
-      },
-      "theme": "template_3row",
-      "hideTitleTextWhenPack": true
+      }
     },
     "it_drones": {
+      "enabled": true,
       "rows": 4,
+      "theme": "template_4row",
+      "hideTitleTextWhenPack": true,
       "title": {
         "values": {
           "en_us": "Drones",
@@ -2757,11 +3751,31 @@
       },
       "buttons": {
         "info": {
+          "enabled": true,
           "slot": 27,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:knowledge_book",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -2795,22 +3809,38 @@
                 "Только тогда дальнiй полётъ имеетъ здравiе."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "scout": {
+          "enabled": true,
           "slot": 12,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_drone_scout",
           "pricesBitcoins": [
             1800
           ],
           "icon": {
             "fallbackItem": "minecraft:firework_rocket",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:firework_rocket",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -2865,35 +3895,76 @@
               "upgradeId": "it_screen",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "scout_hint": {
+          "enabled": true,
           "slot": 13,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:spyglass",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
               "default": " "
             }
-          }
+          },
+          "lore": {
+            "values": {}
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "kamikaze": {
+          "enabled": true,
           "slot": 22,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_drone_kamikaze",
           "pricesBitcoins": [
             2700
           ],
           "icon": {
             "fallbackItem": "minecraft:tnt",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:tnt",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -2944,48 +4015,115 @@
               "upgradeId": "it_drone_scout",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "kamikaze_hint": {
+          "enabled": true,
           "slot": 23,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:gunpowder",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
               "default": " "
             }
-          }
+          },
+          "lore": {
+            "values": {}
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "combat_hint": {
+          "enabled": true,
           "slot": 30,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:shield",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
               "default": " "
             }
-          }
+          },
+          "lore": {
+            "values": {}
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "combat": {
+          "enabled": true,
           "slot": 31,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "it_drone_combat",
           "pricesBitcoins": [
             3000
           ],
           "icon": {
             "fallbackItem": "minecraft:crossbow",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:crossbow",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -3036,15 +4174,36 @@
               "upgradeId": "it_drone_kamikaze",
               "minLevel": 1
             }
-          ]
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "back": {
+          "enabled": true,
           "slot": 35,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "it_hub",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:arrow",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -3073,14 +4232,18 @@
                 "Возвратиться во прежнiй разделъ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         }
-      },
-      "theme": "template_4row",
-      "hideTitleTextWhenPack": true
+      }
     },
     "races": {
+      "enabled": true,
       "rows": 4,
+      "theme": "template_4row",
+      "hideTitleTextWhenPack": true,
       "title": {
         "values": {
           "en_us": "Racial Gifts",
@@ -3092,11 +4255,31 @@
       },
       "buttons": {
         "info": {
+          "enabled": true,
           "slot": 27,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "none",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:knowledge_book",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -3128,22 +4311,38 @@
                 "Избирай по мздѣ да пользѣ, а не по линiи строгой."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "budget": {
+          "enabled": true,
           "slot": 11,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "race_tier_budget",
           "pricesBitcoins": [
             300
           ],
           "icon": {
             "fallbackItem": "minecraft:rabbit_foot",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:rabbit_foot",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -3187,22 +4386,37 @@
               ]
             }
           },
-          "requirements": []
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "medium": {
+          "enabled": true,
           "slot": 12,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "race_tier_mid",
           "pricesBitcoins": [
             600
           ],
           "icon": {
             "fallbackItem": "minecraft:golden_carrot",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:golden_carrot",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -3246,22 +4460,37 @@
               ]
             }
           },
-          "requirements": []
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "expensive": {
+          "enabled": true,
           "slot": 13,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "race_tier_expensive",
           "pricesBitcoins": [
             1000
           ],
           "icon": {
             "fallbackItem": "minecraft:ender_pearl",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:ender_pearl",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -3305,22 +4534,37 @@
               ]
             }
           },
-          "requirements": []
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "elite": {
+          "enabled": true,
           "slot": 14,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "purchase_upgrade",
+          "targetScreenId": "",
           "upgradeId": "race_tier_elite",
           "pricesBitcoins": [
             1500
           ],
           "icon": {
             "fallbackItem": "minecraft:nether_star",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
           },
           "maxedIcon": {
             "fallbackItem": "minecraft:nether_star",
             "packModel": "",
+            "count": 1,
             "foil": true
           },
           "name": {
@@ -3364,15 +4608,36 @@
               ]
             }
           },
-          "requirements": []
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         },
         "back": {
+          "enabled": true,
           "slot": 35,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
           "type": "open_screen",
           "targetScreenId": "main",
+          "upgradeId": "",
+          "pricesBitcoins": [],
           "icon": {
             "fallbackItem": "minecraft:arrow",
-            "packModel": ""
+            "packModel": "",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
           },
           "name": {
             "values": {
@@ -3401,11 +4666,12 @@
                 "Возвратиться во прежнiй разделъ."
               ]
             }
-          }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
         }
-      },
-      "theme": "template_4row",
-      "hideTitleTextWhenPack": true
+      }
     }
   }
 }

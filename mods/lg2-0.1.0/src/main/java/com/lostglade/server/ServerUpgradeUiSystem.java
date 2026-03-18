@@ -12,6 +12,7 @@ import eu.pb4.polymer.core.api.item.PolymerItemUtils;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
@@ -21,6 +22,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
+import net.minecraft.network.protocol.game.ClientboundOpenScreenPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
@@ -60,9 +62,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 public final class ServerUpgradeUiSystem {
 	private static final String STATE_FILE_NAME = "lg2-upgrade-state.json";
+	private static final String TITLE_OVERLAY_SHIFT = "\ue905";
 	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
 	private static final Identifier TOOLTIP_STYLE_ID = Objects.requireNonNull(Identifier.tryParse("lg2:upgrade_card"));
 	private static final FontDescription TOOLTIP_FONT = new FontDescription.Resource(
@@ -71,14 +75,35 @@ public final class ServerUpgradeUiSystem {
 	private static final String TOOLTIP_ICON_COIN = "\ue981";
 	private static final String NO_PACK_COIN = "₿";
 	private static final int MAIN_BALANCE_CENTER_X = 127;
+	private static final int ERAS_BALANCE_CENTER_X = 127;
 	private static final int BALANCE_DIGIT_WIDTH = 6;
 	private static final int TOOLTIP_DESCRIPTION_WRAP = 42;
 	private static final int TOOLTIP_DESCRIPTION_WRAP_CJK = 22;
 	private static final int TOOLTIP_REQUIREMENTS_WRAP = 46;
 	private static final int TOOLTIP_REQUIREMENTS_WRAP_CJK = 24;
+	private static final int ERAS_PROGRESS_GLYPHS_BASE = 0xE991;
+	private static final int ERAS_AVAILABLE_GLYPHS_BASE = 0xE9C0;
+	private static final int ERAS_PROGRESS_FRAME_COUNT = 45;
+	private static final int ERAS_PURCHASE_STAGE_COUNT = 5;
+	private static final int ERAS_PROGRESS_FRAMES_PER_STAGE = ERAS_PROGRESS_FRAME_COUNT / ERAS_PURCHASE_STAGE_COUNT;
+	private static final int ERAS_PROGRESS_FRAME_TICKS = 2;
+	private static final int MENU_VISUAL_RESYNC_TICKS = 3;
+	private static final String[] ERAS_PROGRESS_GLYPHS = createGlyphSequence(
+			ERAS_PROGRESS_GLYPHS_BASE,
+			ERAS_PROGRESS_FRAME_COUNT
+	);
+	private static final String[] ERAS_AVAILABLE_GLYPHS = createGlyphSequence(
+			ERAS_AVAILABLE_GLYPHS_BASE,
+			ERAS_PURCHASE_STAGE_COUNT + 1
+	);
+	private static final UpgradeUiConfig.IconConfig ERA_SLOT_INVISIBLE_ICON = createTransientIcon("minecraft:paper", "lg2:gui/button/invisible", false);
+	private static final UpgradeUiConfig.IconConfig ERA_SLOT_LOCK_ICON = createTransientIcon("minecraft:paper", "lg2:gui/button/eras_lock", false);
 	private static final Gson STATE_GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final Map<String, Map<String, Integer>> PLAYER_UPGRADE_LEVELS = new HashMap<>();
 	private static final Map<String, Integer> LEGACY_GLOBAL_UPGRADE_LEVELS = new HashMap<>();
+	private static final Map<UUID, EraProgressAnimation> ERAS_PROGRESS_ANIMATIONS = new HashMap<>();
+	private static final Map<UUID, String> ERAS_TITLE_SIGNATURES = new HashMap<>();
+	private static final Map<UUID, Integer> PENDING_MENU_VISUAL_RESYNCS = new HashMap<>();
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
 
@@ -93,6 +118,7 @@ public final class ServerUpgradeUiSystem {
 			UpgradeUiConfig.load();
 		});
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerUpgradeUiSystem::saveState);
+		ServerTickEvents.END_SERVER_TICK.register(ServerUpgradeUiSystem::tickAnimatedErasTitles);
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 				dispatcher.register(
@@ -138,6 +164,7 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	public static boolean openRootScreen(ServerPlayer player) {
+		UpgradeUiConfig.load();
 		UpgradeUiConfig.ConfigData config = UpgradeUiConfig.get();
 		if (!config.enabled) {
 			sendPlayerMessage(player, localizeSystem(player, "Upgrade interface is disabled.", "Интерфейс прокачки отключён."));
@@ -152,6 +179,7 @@ public final class ServerUpgradeUiSystem {
 			return false;
 		}
 
+		UpgradeUiConfig.load();
 		UpgradeUiConfig.ConfigData config = UpgradeUiConfig.get();
 		UpgradeUiConfig.ScreenConfig screen = config.screens.get(screenId);
 		if (screen == null || !screen.enabled) {
@@ -159,10 +187,7 @@ public final class ServerUpgradeUiSystem {
 			return false;
 		}
 
-		UpgradeUiConfig.ThemeConfig theme = config.themes.get(screen.theme);
-		final UpgradeUiConfig.ThemeConfig resolvedTheme = theme == null || !theme.enabled
-				? UpgradeUiConfig.ThemeConfig.defaultTheme()
-				: theme;
+		final UpgradeUiConfig.ThemeConfig resolvedTheme = resolveTheme(config, screen);
 
 		boolean hasPack = PolymerResourcePackUtils.hasMainPack(player);
 		InventoryTextureShuffleGlitch.onUpgradeMenuOpened(player);
@@ -172,6 +197,13 @@ public final class ServerUpgradeUiSystem {
 				title
 		));
 		hideLowerInventoryVisuals(player, player.containerMenu);
+		PENDING_MENU_VISUAL_RESYNCS.put(player.getUUID(), MENU_VISUAL_RESYNC_TICKS);
+		if ("eras".equals(screenId)) {
+			ERAS_TITLE_SIGNATURES.put(player.getUUID(), erasTitleSignature(player, currentGameTime(player)));
+		} else {
+			ERAS_TITLE_SIGNATURES.remove(player.getUUID());
+			ERAS_PROGRESS_ANIMATIONS.remove(player.getUUID());
+		}
 		return true;
 	}
 
@@ -337,11 +369,7 @@ public final class ServerUpgradeUiSystem {
 			boolean hasPack
 	) {
 		ButtonState state = getButtonState(viewer, button);
-		UpgradeUiConfig.IconConfig icon = switch (state) {
-			case LOCKED -> button.lockedIcon;
-			case MAXED -> button.maxedIcon;
-			case ACTIVE -> button.icon;
-		};
+		UpgradeUiConfig.IconConfig icon = resolveButtonIcon(viewer, screenId, button, state);
 
 		ItemStack stack = createBaseStack(icon, hasPack);
 		Map<String, String> placeholders = buildPlaceholders(viewer, screenId, buttonId, button, state);
@@ -360,6 +388,23 @@ public final class ServerUpgradeUiSystem {
 		}
 
 		return stack;
+	}
+
+	private static UpgradeUiConfig.IconConfig resolveButtonIcon(
+			ServerPlayer viewer,
+			String screenId,
+			UpgradeUiConfig.ButtonConfig button,
+			ButtonState state
+	) {
+		if ("eras".equals(screenId) && isEraUpgrade(button.upgradeId)) {
+			return isEraLockSlot(viewer, button.upgradeId) ? ERA_SLOT_LOCK_ICON : ERA_SLOT_INVISIBLE_ICON;
+		}
+
+		return switch (state) {
+			case LOCKED -> button.lockedIcon;
+			case MAXED -> button.maxedIcon;
+			case ACTIVE -> button.icon;
+		};
 	}
 
 	private static Component buildTooltipNameComponent(
@@ -687,25 +732,8 @@ public final class ServerUpgradeUiSystem {
 		return ButtonState.ACTIVE;
 	}
 
-	private static boolean handleTopSlotClick(ServerPlayer player, String screenId, int slot, boolean hasPack) {
-		UpgradeUiConfig.ScreenConfig screen = UpgradeUiConfig.get().screens.get(screenId);
-		if (screen == null) {
-			return false;
-		}
-
-		Map.Entry<String, UpgradeUiConfig.ButtonConfig> matched = null;
-		for (Map.Entry<String, UpgradeUiConfig.ButtonConfig> entry : screen.buttons.entrySet()) {
-			UpgradeUiConfig.ButtonConfig button = entry.getValue();
-			if (button != null
-					&& button.enabled
-					&& !isPureDecorButton(button)
-					&& !shouldHideButtonVisual(screenId, entry.getKey())
-					&& isWithinButtonHitbox(slot, button, hasPack)) {
-				matched = entry;
-				break;
-			}
-		}
-
+	private static boolean handleScreenSlotClick(ServerPlayer player, String screenId, int slot, boolean hasPack) {
+		Map.Entry<String, UpgradeUiConfig.ButtonConfig> matched = findMatchedButton(screenId, slot, hasPack);
 		if (matched == null) {
 			return false;
 		}
@@ -752,6 +780,45 @@ public final class ServerUpgradeUiSystem {
 		}
 	}
 
+	private static Map.Entry<String, UpgradeUiConfig.ButtonConfig> findMatchedButton(String screenId, int slot, boolean hasPack) {
+		UpgradeUiConfig.ScreenConfig screen = UpgradeUiConfig.get().screens.get(screenId);
+		if (screen == null) {
+			return null;
+		}
+
+		for (Map.Entry<String, UpgradeUiConfig.ButtonConfig> entry : screen.buttons.entrySet()) {
+			UpgradeUiConfig.ButtonConfig button = entry.getValue();
+			if (button != null
+					&& button.enabled
+					&& !isPureDecorButton(button)
+					&& !shouldHideButtonVisual(screenId, entry.getKey())
+					&& isWithinButtonHitbox(slot, button, hasPack)) {
+				return entry;
+			}
+		}
+		return null;
+	}
+
+	private static ItemStack buildLowerInventoryButtonVisual(
+			ServerPlayer viewer,
+			String screenId,
+			int menuSlot,
+			int topSlotCount,
+			boolean hasPack
+	) {
+		Map.Entry<String, UpgradeUiConfig.ButtonConfig> matched = findMatchedButton(screenId, menuSlot, hasPack);
+		if (matched == null) {
+			return ItemStack.EMPTY;
+		}
+
+		UpgradeUiConfig.ButtonConfig button = matched.getValue();
+		if (button.slot < topSlotCount || getDisplaySlot(button) != menuSlot) {
+			return ItemStack.EMPTY;
+		}
+
+		return buildButtonStack(viewer, screenId, matched.getKey(), button, hasPack);
+	}
+
 	private static boolean shouldSuppressClickSound(String screenId, String buttonId) {
 		return "main".equals(screenId) && "balance".equals(buttonId);
 	}
@@ -783,6 +850,7 @@ public final class ServerUpgradeUiSystem {
 		}
 
 		setUpgradeLevel(player.level().getServer(), player, button.upgradeId, currentLevel + 1);
+		startEraProgressAnimation(player, button.upgradeId);
 		playPurchaseSound(player);
 		sendPlayerMessage(player, localizeSystem(player, "Upgrade purchased.", "Улучшение куплено."));
 
@@ -945,7 +1013,7 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	private static boolean shouldHideButtonVisual(String screenId, String buttonId) {
-		return "main".equals(screenId) && "balance".equals(buttonId);
+		return "balance".equals(buttonId) && ("main".equals(screenId) || "eras".equals(screenId));
 	}
 
 	private static void hideLowerInventoryVisuals(ServerPlayer player, AbstractContainerMenu menu) {
@@ -976,7 +1044,24 @@ public final class ServerUpgradeUiSystem {
 			}
 
 			int inventorySlot = slot.getContainerSlot();
-			ItemStack visual = hide ? ItemStack.EMPTY : inventory.getItem(inventorySlot).copy();
+			ItemStack visual;
+			if (hide) {
+				visual = ItemStack.EMPTY;
+				if (menu instanceof UpgradeMenu upgradeMenu) {
+					ItemStack buttonVisual = buildLowerInventoryButtonVisual(
+							upgradeMenu.viewer,
+							upgradeMenu.screenId,
+							menuSlot,
+							upgradeMenu.topSlotCount,
+							upgradeMenu.hasPack
+					);
+					if (!buttonVisual.isEmpty()) {
+						visual = buttonVisual;
+					}
+				}
+			} else {
+				visual = inventory.getItem(inventorySlot).copy();
+			}
 			player.connection.send(new ClientboundContainerSetSlotPacket(
 					menu.containerId,
 					stateId,
@@ -1031,9 +1116,12 @@ public final class ServerUpgradeUiSystem {
 		if (theme.packTitlePrefix != null && !theme.packTitlePrefix.isBlank()) {
 			title.append(packStyledLiteral(theme.packTitlePrefix));
 		}
-		if ("main".equals(screenId)) {
+		if ("eras".equals(screenId)) {
+			title.append(packStyledLiteral(TITLE_OVERLAY_RESET + TITLE_OVERLAY_SHIFT + erasBarGlyph(player, currentGameTime(player))));
+		}
+		if (usesMainStyleBalance(screenId)) {
 			title.append(packStyledLiteral(TITLE_OVERLAY_RESET));
-			title.append(packStyledLiteral(buildHorizontalAdvance(centeredBalanceStartX(countBitcoins(player)))));
+			title.append(packStyledLiteral(buildHorizontalAdvance(balanceStartX(screenId, countBitcoins(player)))));
 			title.append(packStyledLiteral(toPackDigitString(countBitcoins(player))));
 		}
 		if (!screen.hideTitleTextWhenPack && !localizedTitle.isBlank()) {
@@ -1068,10 +1156,217 @@ public final class ServerUpgradeUiSystem {
 		return Component.literal(value).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false));
 	}
 
-	private static int centeredBalanceStartX(int bitcoinCount) {
+	private static String[] createGlyphSequence(int baseCodePoint, int count) {
+		String[] glyphs = new String[count];
+		for (int index = 0; index < count; index++) {
+			glyphs[index] = String.valueOf((char) (baseCodePoint + index));
+		}
+		return glyphs;
+	}
+
+	private static UpgradeUiConfig.IconConfig createTransientIcon(String fallbackItem, String packModel, boolean foil) {
+		UpgradeUiConfig.IconConfig icon = new UpgradeUiConfig.IconConfig();
+		icon.fallbackItem = fallbackItem;
+		icon.packModel = packModel;
+		icon.foil = foil;
+		return icon;
+	}
+
+	private static boolean usesMainStyleBalance(String screenId) {
+		return "main".equals(screenId) || "eras".equals(screenId);
+	}
+
+	private static int balanceStartX(String screenId, int bitcoinCount) {
+		int centerX = "eras".equals(screenId) ? ERAS_BALANCE_CENTER_X : MAIN_BALANCE_CENTER_X;
 		int digits = Integer.toString(Math.max(0, bitcoinCount)).length();
 		int width = digits * BALANCE_DIGIT_WIDTH;
-		return Math.max(0, MAIN_BALANCE_CENTER_X - (width / 2));
+		return Math.max(0, centerX - (width / 2));
+	}
+
+	private static String erasBarGlyph(ServerPlayer player, long gameTime) {
+		if (player != null) {
+			EraProgressAnimation animation = ERAS_PROGRESS_ANIMATIONS.get(player.getUUID());
+			if (animation != null) {
+				if (gameTime > animation.endTick()) {
+					ERAS_PROGRESS_ANIMATIONS.remove(player.getUUID());
+				} else {
+					int step = (int) Math.min(
+							animation.totalSteps(),
+							Math.max(0L, (gameTime - animation.startTick()) / ERAS_PROGRESS_FRAME_TICKS)
+					);
+					int frameIndex = animation.startFrameIndex() + step;
+					return ERAS_PROGRESS_GLYPHS[Math.max(0, Math.min(ERAS_PROGRESS_GLYPHS.length - 1, frameIndex))];
+				}
+			}
+		}
+		int stage = erasProgressStage(player);
+		return ERAS_AVAILABLE_GLYPHS[Math.max(0, Math.min(ERAS_AVAILABLE_GLYPHS.length - 1, stage))];
+	}
+
+	private static int erasProgressStage(ServerPlayer player) {
+		return erasProgressStageForPurchasedCount(purchasedEraCount(player));
+	}
+
+	private static int erasProgressStageForPurchasedCount(int purchasedCount) {
+		return Math.max(0, Math.min(ERAS_PURCHASE_STAGE_COUNT, purchasedCount));
+	}
+
+	private static int purchasedEraCount(ServerPlayer player) {
+		if (player == null) {
+			return 0;
+		}
+
+		int count = 0;
+		if (getUpgradeLevel(player, "era_stone") >= 1) {
+			count++;
+		} else {
+			return count;
+		}
+		if (getUpgradeLevel(player, "era_copper") >= 1) {
+			count++;
+		} else {
+			return count;
+		}
+		if (getUpgradeLevel(player, "era_iron_gold") >= 1) {
+			count++;
+		} else {
+			return count;
+		}
+		if (getUpgradeLevel(player, "era_diamond") >= 1) {
+			count++;
+		} else {
+			return count;
+		}
+		if (getUpgradeLevel(player, "era_netherite") >= 1) {
+			count++;
+		}
+		return count;
+	}
+
+	private static boolean isEraLockSlot(ServerPlayer player, String upgradeId) {
+		return safeString(upgradeId).equals(nextUnavailableEraUpgradeId(player));
+	}
+
+	private static String nextUnavailableEraUpgradeId(ServerPlayer player) {
+		return switch (purchasedEraCount(player)) {
+			case 0 -> "era_stone";
+			case 1 -> "era_copper";
+			case 2 -> "era_iron_gold";
+			case 3 -> "era_diamond";
+			case 4 -> "era_netherite";
+			default -> "";
+		};
+	}
+
+	private static UpgradeUiConfig.ThemeConfig resolveTheme(UpgradeUiConfig.ConfigData config, UpgradeUiConfig.ScreenConfig screen) {
+		if (config == null || screen == null) {
+			return UpgradeUiConfig.ThemeConfig.defaultTheme();
+		}
+		UpgradeUiConfig.ThemeConfig theme = config.themes.get(screen.theme);
+		return theme == null || !theme.enabled ? UpgradeUiConfig.ThemeConfig.defaultTheme() : theme;
+	}
+
+	private static long currentGameTime(ServerPlayer player) {
+		return player == null ? 0L : player.level().getGameTime();
+	}
+
+	private static String erasTitleSignature(ServerPlayer player, long gameTime) {
+		return erasBarGlyph(player, gameTime) + "|" + countBitcoins(player);
+	}
+
+	private static void startEraProgressAnimation(ServerPlayer player, String upgradeId) {
+		if (player == null || !isEraUpgrade(upgradeId)) {
+			return;
+		}
+
+		int stage = erasProgressStage(player);
+		if (stage <= 0) {
+			ERAS_PROGRESS_ANIMATIONS.remove(player.getUUID());
+			return;
+		}
+
+		int startFrame = Math.max(0, (stage - 1) * ERAS_PROGRESS_FRAMES_PER_STAGE);
+		int endFrame = Math.min(ERAS_PROGRESS_FRAME_COUNT - 1, startFrame + ERAS_PROGRESS_FRAMES_PER_STAGE - 1);
+		if (startFrame >= endFrame) {
+			ERAS_PROGRESS_ANIMATIONS.remove(player.getUUID());
+			return;
+		}
+
+		ERAS_PROGRESS_ANIMATIONS.put(
+				player.getUUID(),
+				new EraProgressAnimation(startFrame, endFrame, currentGameTime(player))
+		);
+		ERAS_TITLE_SIGNATURES.remove(player.getUUID());
+	}
+
+	private static boolean isEraUpgrade(String upgradeId) {
+		return switch (safeString(upgradeId)) {
+			case "era_stone", "era_copper", "era_iron_gold", "era_diamond", "era_netherite" -> true;
+			default -> false;
+		};
+	}
+
+	private static void tickAnimatedErasTitles(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		UpgradeUiConfig.ConfigData config = UpgradeUiConfig.get();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			UUID playerId = player.getUUID();
+			if (!(player.containerMenu instanceof UpgradeMenu menu)) {
+				PENDING_MENU_VISUAL_RESYNCS.remove(playerId);
+				ERAS_TITLE_SIGNATURES.remove(player.getUUID());
+				ERAS_PROGRESS_ANIMATIONS.remove(player.getUUID());
+				continue;
+			}
+
+			Integer pendingVisualResyncs = PENDING_MENU_VISUAL_RESYNCS.get(playerId);
+			if (pendingVisualResyncs != null && pendingVisualResyncs > 0) {
+				hideLowerInventoryVisuals(player, menu);
+				if (pendingVisualResyncs <= 1) {
+					PENDING_MENU_VISUAL_RESYNCS.remove(playerId);
+				} else {
+					PENDING_MENU_VISUAL_RESYNCS.put(playerId, pendingVisualResyncs - 1);
+				}
+			}
+
+			if (!"eras".equals(menu.screenId)) {
+				ERAS_TITLE_SIGNATURES.remove(playerId);
+				ERAS_PROGRESS_ANIMATIONS.remove(playerId);
+				continue;
+			}
+			if (!menu.hasPack || !PolymerResourcePackUtils.hasMainPack(player)) {
+				ERAS_TITLE_SIGNATURES.remove(playerId);
+				ERAS_PROGRESS_ANIMATIONS.remove(playerId);
+				continue;
+			}
+
+			UpgradeUiConfig.ScreenConfig screen = config.screens.get(menu.screenId);
+			if (screen == null || !screen.enabled) {
+				continue;
+			}
+
+			long gameTime = currentGameTime(player);
+			String signature = erasTitleSignature(player, gameTime);
+			if (signature.equals(ERAS_TITLE_SIGNATURES.get(player.getUUID()))) {
+				continue;
+			}
+
+			Component title = buildTitle(player, menu.screenId, true, screen, resolveTheme(config, screen));
+			player.connection.send(new ClientboundOpenScreenPacket(menu.containerId, menu.getType(), title));
+			ERAS_TITLE_SIGNATURES.put(playerId, signature);
+		}
+	}
+
+	private record EraProgressAnimation(int startFrameIndex, int endFrameIndex, long startTick) {
+		private int totalSteps() {
+			return Math.max(0, this.endFrameIndex - this.startFrameIndex);
+		}
+
+		private long endTick() {
+			return this.startTick + ((long) totalSteps() * ERAS_PROGRESS_FRAME_TICKS);
+		}
 	}
 
 	private static String buildHorizontalAdvance(int pixels) {
@@ -1249,7 +1544,7 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	private static void sendPlayerMessage(ServerPlayer player, String message) {
-		player.sendSystemMessage(Component.literal(message));
+		// Shop UI is intentionally silent in chat.
 	}
 
 	private static void playUiClick(ServerPlayer player, boolean success) {
@@ -1423,13 +1718,11 @@ public final class ServerUpgradeUiSystem {
 
 		@Override
 		public void clicked(int slotId, int button, ClickType clickType, Player player) {
-			if (slotId >= 0 && slotId < this.topSlotCount) {
-				if (clickType == ClickType.PICKUP || clickType == ClickType.QUICK_MOVE || clickType == ClickType.SWAP) {
-					handleTopSlotClick(this.viewer, this.screenId, slotId, this.hasPack);
-				}
-				return;
+			if (slotId >= 0
+					&& (clickType == ClickType.PICKUP || clickType == ClickType.QUICK_MOVE || clickType == ClickType.SWAP)) {
+				handleScreenSlotClick(this.viewer, this.screenId, slotId, this.hasPack);
 			}
-			// Hidden lower inventory stays non-interactive while this UI is open.
+			// Hidden inventory stays non-interactive while this UI is open, except for virtual button slots.
 			return;
 		}
 
@@ -1453,6 +1746,11 @@ public final class ServerUpgradeUiSystem {
 		@Override
 		public void removed(Player player) {
 			super.removed(player);
+			if (player instanceof ServerPlayer serverPlayer
+					&& serverPlayer.containerMenu != this
+					&& serverPlayer.containerMenu instanceof UpgradeMenu) {
+				return;
+			}
 			restoreLowerInventoryVisuals(this.viewer, this);
 		}
 

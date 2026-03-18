@@ -201,7 +201,8 @@ public final class UpgradeUiConfig {
 
 	private static boolean sanitizeButton(ButtonConfig button, int rows) {
 		boolean changed = false;
-		int sanitizedSlot = clamp(button.slot, MIN_SLOT, (rows * 9) - 1, 0);
+		int totalMenuRows = rows + 4;
+		int sanitizedSlot = clamp(button.slot, MIN_SLOT, (totalMenuRows * 9) - 1, 0);
 		if (button.slot != sanitizedSlot) {
 			button.slot = sanitizedSlot;
 			changed = true;
@@ -213,7 +214,7 @@ public final class UpgradeUiConfig {
 			button.hitboxWidth = sanitizedWidth;
 			changed = true;
 		}
-		int sanitizedHeight = clamp(button.hitboxHeight, 1, Math.max(1, rows - row), 1);
+		int sanitizedHeight = clamp(button.hitboxHeight, 1, Math.max(1, totalMenuRows - row), 1);
 		if (button.hitboxHeight != sanitizedHeight) {
 			button.hitboxHeight = sanitizedHeight;
 			changed = true;

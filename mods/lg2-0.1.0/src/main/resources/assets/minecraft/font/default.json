@@ -85,6 +85,474 @@
     },
     {
       "type": "bitmap",
+      "file": "minecraft:font/template_2row.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue990"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_00.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue991"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_01.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue992"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_02.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue993"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_03.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue994"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_04.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue995"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_05.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue996"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_06.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue997"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_07.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue998"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_08.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue999"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_09.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue99a"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_10.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue99b"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_11.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue99c"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_12.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue99d"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_13.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue99e"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_14.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue99f"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_15.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9a0"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_16.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9a1"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_17.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9a2"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_18.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9a3"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_19.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9a4"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_20.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9a5"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_21.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9a6"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_22.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9a7"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_23.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9a8"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_24.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9a9"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_25.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9aa"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_26.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9ab"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_27.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9ac"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_28.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9ad"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_29.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9ae"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_30.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9af"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_31.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9b0"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_32.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9b1"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_33.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9b2"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_34.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9b3"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_35.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9b4"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_36.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9b5"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_37.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9b6"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_38.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9b7"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_39.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9b8"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_40.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9b9"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_41.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9ba"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_42.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9bb"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_43.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9bc"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_progress_44.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9bd"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_available_0.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9c0"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_available_1.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9c1"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_available_2.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9c2"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_available_3.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9c3"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_available_4.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9c4"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/eras_available_5.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\ue9c5"
+      ]
+    },
+    {
+      "type": "bitmap",
       "file": "minecraft:font/vanilla_generic_3row.png",
       "ascent": 13,
       "height": 168,
