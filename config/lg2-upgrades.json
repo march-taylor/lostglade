@@ -14,7 +14,7 @@
         "foil": false
       }
     },
-    "main_overlay": {
+    "main_screen_overlay": {
       "enabled": true,
       "packTitlePrefix": "",
       "packTitleSuffix": "",
@@ -26,19 +26,7 @@
         "foil": false
       }
     },
-    "it_tree_overlay": {
-      "enabled": true,
-      "packTitlePrefix": "",
-      "packTitleSuffix": "",
-      "fillEmptySlots": false,
-      "fillerIcon": {
-        "fallbackItem": "minecraft:gray_stained_glass_pane",
-        "packModel": "lg2:gui/button/filler",
-        "count": 1,
-        "foil": false
-      }
-    },
-    "template_3row": {
+    "worlds_screen_overlay": {
       "enabled": true,
       "packTitlePrefix": "",
       "packTitleSuffix": "",
@@ -50,7 +38,7 @@
         "foil": false
       }
     },
-    "eras_console_overlay": {
+    "eras_screen_overlay": {
       "enabled": true,
       "packTitlePrefix": "",
       "packTitleSuffix": "",
@@ -62,7 +50,7 @@
         "foil": false
       }
     },
-    "template_4row": {
+    "mechanics_screen_overlay": {
       "enabled": true,
       "packTitlePrefix": "",
       "packTitleSuffix": "",
@@ -74,9 +62,21 @@
         "foil": false
       }
     },
-    "template_5row": {
+    "races_screen_overlay": {
       "enabled": true,
       "packTitlePrefix": "",
+      "packTitleSuffix": "",
+      "fillEmptySlots": false,
+      "fillerIcon": {
+        "fallbackItem": "minecraft:gray_stained_glass_pane",
+        "packModel": "lg2:gui/button/filler",
+        "count": 1,
+        "foil": false
+      }
+    },
+    "it_branch_screen_overlay": {
+      "enabled": true,
+      "packTitlePrefix": "",
       "packTitleSuffix": "",
       "fillEmptySlots": false,
       "fillerIcon": {
@@ -91,7 +91,7 @@
     "main": {
       "enabled": true,
       "rows": 3,
-      "theme": "main_overlay",
+      "theme": "main_screen_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
@@ -613,7 +613,7 @@
     "worlds": {
       "enabled": true,
       "rows": 3,
-      "theme": "main_overlay",
+      "theme": "worlds_screen_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
@@ -1286,7 +1286,7 @@
     "eras": {
       "enabled": true,
       "rows": 3,
-      "theme": "eras_console_overlay",
+      "theme": "eras_screen_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
@@ -2208,7 +2208,7 @@
     "mechanics": {
       "enabled": true,
       "rows": 3,
-      "theme": "main_overlay",
+      "theme": "mechanics_screen_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
@@ -3108,7 +3108,7 @@
     "it_hub": {
       "enabled": true,
       "rows": 3,
-      "theme": "main_overlay",
+      "theme": "it_branch_screen_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
@@ -4453,7 +4453,7 @@
     "it_devices": {
       "enabled": true,
       "rows": 3,
-      "theme": "main_overlay",
+      "theme": "it_branch_screen_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
@@ -5282,7 +5282,7 @@
     "it_displays": {
       "enabled": true,
       "rows": 3,
-      "theme": "main_overlay",
+      "theme": "it_branch_screen_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
@@ -5966,7 +5966,7 @@
     "it_drones": {
       "enabled": true,
       "rows": 3,
-      "theme": "main_overlay",
+      "theme": "it_branch_screen_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
@@ -6852,7 +6852,7 @@
     "races": {
       "enabled": true,
       "rows": 3,
-      "theme": "main_overlay",
+      "theme": "races_screen_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {

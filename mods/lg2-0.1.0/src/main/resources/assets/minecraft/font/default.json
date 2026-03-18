@@ -31,7 +31,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/main_menu_3row.png",
+      "file": "minecraft:font/ui_main_menu_background.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -85,9 +85,9 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/it_tree_5row.png",
+      "file": "minecraft:font/ui_it_branch_background.png",
       "ascent": 14,
-      "height": 240,
+      "height": 204,
       "chars": [
         ""
       ]
@@ -103,7 +103,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/template_3row.png",
+      "file": "minecraft:font/ui_worlds_background.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -112,25 +112,25 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/template_4row.png",
+      "file": "minecraft:font/ui_mechanics_background.png",
       "ascent": 14,
-      "height": 222,
+      "height": 204,
       "chars": [
         ""
       ]
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/template_5row.png",
+      "file": "minecraft:font/ui_races_background.png",
       "ascent": 14,
-      "height": 240,
+      "height": 204,
       "chars": [
         ""
       ]
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/template_2row.png",
+      "file": "minecraft:font/ui_eras_background.png",
       "ascent": 14,
       "height": 204,
       "chars": [
