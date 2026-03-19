@@ -63,6 +63,7 @@ public final class ServerRespectSystem {
 			showRespectActionbar(actor);
 			showRespectActionbar(target);
 			spawnRespectParticles(target);
+			playRespectSound(actor);
 			playRespectSound(target);
 			return InteractionResult.SUCCESS;
 		});
@@ -138,26 +139,57 @@ public final class ServerRespectSystem {
 			return;
 		}
 
-		double x = target.getX();
-		double y = target.getY() + target.getBbHeight() * 0.6D;
-		double z = target.getZ();
+		double centerX = target.getX();
+		double centerY = target.getY();
+		double centerZ = target.getZ();
+		double height = target.getBbHeight();
+		double[] radii = {0.72D, 0.94D, 1.16D};
+		double[] heightFactors = {0.22D, 0.56D, 0.9D};
+		int pointsPerRing = 5;
 		for (ServerPlayer viewer : level.players()) {
-			if (viewer.distanceToSqr(x, y, z) > RESPECT_PARTICLE_VIEW_DISTANCE_SQR) {
+			if (viewer.distanceToSqr(centerX, centerY + height * 0.5D, centerZ) > RESPECT_PARTICLE_VIEW_DISTANCE_SQR) {
 				continue;
 			}
+
+			for (int ringIndex = 0; ringIndex < heightFactors.length; ringIndex++) {
+				double y = centerY + height * heightFactors[ringIndex];
+				double angleOffset = (Math.PI / pointsPerRing) * ringIndex;
+				for (double radius : radii) {
+					for (int point = 0; point < pointsPerRing; point++) {
+						double angle = angleOffset + (Math.PI * 2.0D * point / pointsPerRing);
+						double x = centerX + Math.cos(angle) * radius;
+						double z = centerZ + Math.sin(angle) * radius;
+						level.sendParticles(
+								viewer,
+								ParticleTypes.TOTEM_OF_UNDYING,
+								false,
+								true,
+								x,
+								y,
+								z,
+								1,
+								0.03D,
+								0.05D,
+								0.03D,
+								0.01D
+						);
+					}
+				}
+			}
+
 			level.sendParticles(
 					viewer,
 					ParticleTypes.TOTEM_OF_UNDYING,
 					false,
 					true,
-					x,
-					y,
-					z,
-					32,
-					0.55D,
-					0.85D,
-					0.55D,
-					0.08D
+					centerX,
+					centerY + height + 0.2D,
+					centerZ,
+					3,
+					0.1D,
+					0.06D,
+					0.1D,
+					0.02D
 			);
 		}
 	}
