@@ -29,7 +29,8 @@ import java.util.UUID;
 public final class ServerRespectSystem {
 	private static final String OBJECTIVE_NAME = "lg2_respects";
 	private static final String ACTIONBAR_TRANSLATION_KEY = "lg2.respect.actionbar";
-	private static final Component OBJECTIVE_TITLE = Component.literal("Респекты");
+	private static final Component OBJECTIVE_TITLE = Component.literal("Р РµСЃРїРµРєС‚С‹");
+	private static final double RESPECT_PARTICLE_VIEW_DISTANCE_SQR = 32.0D * 32.0D;
 	private static final Map<UUID, Long> NEXT_RESPECT_AT_MILLIS = new HashMap<>();
 
 	private ServerRespectSystem() {
@@ -137,17 +138,28 @@ public final class ServerRespectSystem {
 			return;
 		}
 
-		level.sendParticles(
-				ParticleTypes.TOTEM_OF_UNDYING,
-				target.getX(),
-				target.getY() + target.getBbHeight() * 0.55D,
-				target.getZ(),
-				24,
-				0.45D,
-				0.75D,
-				0.45D,
-				0.05D
-		);
+		double x = target.getX();
+		double y = target.getY() + target.getBbHeight() * 0.6D;
+		double z = target.getZ();
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer.distanceToSqr(x, y, z) > RESPECT_PARTICLE_VIEW_DISTANCE_SQR) {
+				continue;
+			}
+			level.sendParticles(
+					viewer,
+					ParticleTypes.TOTEM_OF_UNDYING,
+					false,
+					true,
+					x,
+					y,
+					z,
+					32,
+					0.55D,
+					0.85D,
+					0.55D,
+					0.08D
+			);
+		}
 	}
 
 	private static void playRespectSound(ServerPlayer target) {
@@ -185,3 +197,4 @@ public final class ServerRespectSystem {
 		);
 	}
 }
+
