@@ -266,7 +266,7 @@ public final class BackroomsStalkerEntity extends Monster {
 			return updateTrackedTarget(level, nowTick);
 		}
 
-		ServerPlayer currentTarget = resolveTrackedTarget(level);
+		ServerPlayer currentTarget = resolveTrackedTarget(level, nowTick);
 		if (currentTarget == null) {
 			clearTrackedTarget();
 			return null;
@@ -292,7 +292,12 @@ public final class BackroomsStalkerEntity extends Monster {
 	}
 
 	private ServerPlayer updateTrackedTarget(ServerLevel level, long nowTick) {
-		ServerPlayer nearestTarget = findNearestTarget(level);
+		ServerPlayer currentTarget = resolveTrackedTarget(level, nowTick);
+		if (currentTarget != null) {
+			return currentTarget;
+		}
+
+		ServerPlayer nearestTarget = findNearestTarget(level, nowTick);
 		if (nearestTarget != null) {
 			this.trackedTargetUuid = nearestTarget.getUUID();
 			this.lastSeenTargetTick = nowTick;
@@ -303,7 +308,7 @@ public final class BackroomsStalkerEntity extends Monster {
 		return null;
 	}
 
-	private ServerPlayer resolveTrackedTarget(ServerLevel level) {
+	private ServerPlayer resolveTrackedTarget(ServerLevel level, long nowTick) {
 		if (this.trackedTargetUuid == null) {
 			return null;
 		}
@@ -313,14 +318,26 @@ public final class BackroomsStalkerEntity extends Monster {
 			clearTrackedTarget();
 			return null;
 		}
-		return player;
+
+		if (hasTransparentAwareSight(player, nowTick)) {
+			this.lastSeenTargetTick = nowTick;
+			return player;
+		}
+
+		if (this.lastSeenTargetTick != Long.MIN_VALUE
+				&& nowTick - this.lastSeenTargetTick <= FORGET_TARGET_AFTER_TICKS) {
+			return player;
+		}
+
+		clearTrackedTarget();
+		return null;
 	}
 
-	private ServerPlayer findNearestTarget(ServerLevel level) {
+	private ServerPlayer findNearestTarget(ServerLevel level, long nowTick) {
 		ServerPlayer nearest = null;
 		double nearestDistanceSqr = Double.MAX_VALUE;
 		for (ServerPlayer player : level.players()) {
-			if (!isEligibleTarget(player)) {
+			if (!isEligibleTarget(player) || !hasTransparentAwareSight(player, nowTick)) {
 				continue;
 			}
 
@@ -630,7 +647,9 @@ public final class BackroomsStalkerEntity extends Monster {
 			}
 
 			double distanceSqr = this.distanceToSqr(player);
-			if (distanceSqr > ATTACK_RANGE_SQR || distanceSqr >= nearestDistanceSqr) {
+			if (distanceSqr > ATTACK_RANGE_SQR
+					|| distanceSqr >= nearestDistanceSqr
+					|| !hasTransparentAwareSight(player, nowTick)) {
 				continue;
 			}
 			nearestInRange = player;
