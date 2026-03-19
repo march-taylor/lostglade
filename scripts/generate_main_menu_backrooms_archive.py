@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import shutil
 import subprocess
@@ -13,9 +14,14 @@ OUTPUT_DIRS = [
     ROOT / 'mods/lg2-0.1.0/src/main/resources/assets/minecraft/textures/font',
     ROOT / 'polymer/source_assets/assets/minecraft/textures/font',
 ]
+ITEM_OUTPUT_DIRS = [
+    ROOT / 'mods/lg2-0.1.0/src/main/resources/assets/lg2/textures/item/gui/main_logo',
+    ROOT / 'polymer/source_assets/assets/lg2/textures/item/gui/main_logo',
+]
 TEMP_DIR = ROOT / '.tmp' / 'backrooms_archive_frames'
 PREVIEW_PATH = ROOT / '.tmp' / 'main_menu_logo_archive_preview.png'
 OUTPUT_NAME = 'main_menu_logo_archive_anim.png'
+ITEM_OUTPUT_NAME = 'archive_anim.png'
 
 CANVAS_W = 176
 CANVAS_H = 204
@@ -33,6 +39,7 @@ GRID_ROWS = 4
 SEGMENT_START = 108.0
 SEGMENT_DURATION = 4.0
 FPS = FRAME_COUNT / SEGMENT_DURATION
+FRAME_TIME = 2
 
 SCREEN_BG = (0x18, 0x15, 0x14)
 SCREEN_FRAME = (0x29, 0x2F, 0x2F)
@@ -169,6 +176,44 @@ def save_sheet(sheet: Image.Image) -> None:
         sheet.save(directory / OUTPUT_NAME)
 
 
+def sheet_to_vertical_strip(sheet: Image.Image) -> Image.Image:
+    strip = Image.new('RGBA', (CANVAS_W, CANVAS_H * FRAME_COUNT), (0, 0, 0, 0))
+    for index in range(FRAME_COUNT):
+        col = index % GRID_COLS
+        row = index // GRID_COLS
+        frame = sheet.crop((
+            col * CANVAS_W,
+            row * CANVAS_H,
+            (col + 1) * CANVAS_W,
+            (row + 1) * CANVAS_H,
+        ))
+        strip.alpha_composite(frame, (0, index * CANVAS_H))
+    return strip
+
+
+def save_animation_metadata(path: Path) -> None:
+    metadata = {
+        'animation': {
+            'interpolate': False,
+            'frametime': FRAME_TIME,
+            'width': CANVAS_W,
+            'height': CANVAS_H,
+        }
+    }
+    path.with_suffix(path.suffix + '.mcmeta').write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2) + '\n',
+        encoding='utf-8',
+    )
+
+
+def save_item_animation(strip: Image.Image) -> None:
+    for directory in ITEM_OUTPUT_DIRS:
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / ITEM_OUTPUT_NAME
+        strip.save(target)
+        save_animation_metadata(target)
+
+
 def main() -> None:
     frame_paths = extract_frames()
     images = [Image.open(path).convert('RGBA') for path in frame_paths]
@@ -181,6 +226,7 @@ def main() -> None:
         sheet.alpha_composite(composed, (x, y))
 
     save_sheet(sheet)
+    save_item_animation(sheet_to_vertical_strip(sheet))
     PREVIEW_PATH.parent.mkdir(parents=True, exist_ok=True)
     preview = Image.new('RGBA', sheet.size, (8, 8, 8, 255))
     preview.alpha_composite(sheet)

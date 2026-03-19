@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import random
 from pathlib import Path
@@ -14,10 +15,17 @@ OUTPUT_DIRS = [
     ROOT / 'mods/lg2-0.1.0/src/main/resources/assets/minecraft/textures/font',
     ROOT / 'polymer/source_assets/assets/minecraft/textures/font',
 ]
+ITEM_OUTPUT_DIRS = [
+    ROOT / 'mods/lg2-0.1.0/src/main/resources/assets/lg2/textures/item/gui/main_logo',
+    ROOT / 'polymer/source_assets/assets/lg2/textures/item/gui/main_logo',
+]
 PREVIEW_DIR = ROOT / '.tmp'
 GLITCH_NAME = 'main_menu_logo_anim.png'
 DVD_NAME = 'main_menu_logo_dvd_anim.png'
 SPIN_NAME = 'main_menu_logo_spin_anim.png'
+ITEM_GLITCH_NAME = 'glitch_anim.png'
+ITEM_DVD_NAME = 'dvd_anim.png'
+ITEM_SPIN_NAME = 'spin_anim.png'
 PREVIEW_GLITCH = PREVIEW_DIR / 'main_menu_logo_preview_glitch.png'
 PREVIEW_DVD = PREVIEW_DIR / 'main_menu_logo_preview_dvd.png'
 PREVIEW_SPIN = PREVIEW_DIR / 'main_menu_logo_preview_spin.png'
@@ -44,6 +52,9 @@ DVD_GRID_ROWS = 13
 SPIN_FRAME_COUNT = 48
 SPIN_GRID_COLS = 8
 SPIN_GRID_ROWS = 6
+GLITCH_FRAME_TIME = 2
+DVD_FRAME_TIME = 4
+SPIN_FRAME_TIME = 2
 
 GLITCH_LOGO_W = 48
 GLITCH_LOGO_H = 32
@@ -615,6 +626,44 @@ def save_outputs(filename: str, image: Image.Image) -> None:
         image.save(directory / filename)
 
 
+def sheet_to_vertical_strip(sheet: Image.Image, frame_count: int, cols: int) -> Image.Image:
+    strip = Image.new('RGBA', (GLYPH_W, GLYPH_H * frame_count), (0, 0, 0, 0))
+    for frame in range(frame_count):
+        col = frame % cols
+        row = frame // cols
+        frame_img = sheet.crop((
+            col * GLYPH_W,
+            row * GLYPH_H,
+            (col + 1) * GLYPH_W,
+            (row + 1) * GLYPH_H,
+        ))
+        strip.alpha_composite(frame_img, (0, frame * GLYPH_H))
+    return strip
+
+
+def save_animation_metadata(path: Path, frame_time: int) -> None:
+    metadata = {
+        'animation': {
+            'interpolate': False,
+            'frametime': frame_time,
+            'width': GLYPH_W,
+            'height': GLYPH_H,
+        }
+    }
+    path.with_suffix(path.suffix + '.mcmeta').write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2) + '\n',
+        encoding='utf-8',
+    )
+
+
+def save_item_animation_outputs(filename: str, image: Image.Image, frame_time: int) -> None:
+    for directory in ITEM_OUTPUT_DIRS:
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / filename
+        image.save(target)
+        save_animation_metadata(target, frame_time)
+
+
 def main() -> None:
     if not SOURCE_LOGO.exists():
         raise FileNotFoundError(f'Missing source logo: {SOURCE_LOGO}')
@@ -632,6 +681,21 @@ def main() -> None:
     save_outputs(GLITCH_NAME, glitch_sheet)
     save_outputs(DVD_NAME, dvd_sheet)
     save_outputs(SPIN_NAME, spin_sheet)
+    save_item_animation_outputs(
+        ITEM_GLITCH_NAME,
+        sheet_to_vertical_strip(glitch_sheet, GLITCH_FRAME_COUNT, GLITCH_GRID_COLS),
+        GLITCH_FRAME_TIME,
+    )
+    save_item_animation_outputs(
+        ITEM_DVD_NAME,
+        sheet_to_vertical_strip(dvd_sheet, DVD_FRAME_COUNT, DVD_GRID_COLS),
+        DVD_FRAME_TIME,
+    )
+    save_item_animation_outputs(
+        ITEM_SPIN_NAME,
+        sheet_to_vertical_strip(spin_sheet, SPIN_FRAME_COUNT, SPIN_GRID_COLS),
+        SPIN_FRAME_TIME,
+    )
     build_preview(glitch_sheet, PREVIEW_GLITCH)
     build_preview(dvd_sheet, PREVIEW_DVD)
     build_preview(spin_sheet, PREVIEW_SPIN)
