@@ -5,8 +5,16 @@ import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.minecraft.ChatFormatting;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.scores.Objective;
@@ -20,14 +28,15 @@ import java.util.UUID;
 
 public final class ServerRespectSystem {
 	private static final String OBJECTIVE_NAME = "lg2_respects";
-	private static final net.minecraft.network.chat.Component OBJECTIVE_TITLE = net.minecraft.network.chat.Component.literal("Респекты");
+	private static final String ACTIONBAR_TRANSLATION_KEY = "lg2.respect.actionbar";
+	private static final Component OBJECTIVE_TITLE = Component.literal("Респекты");
 	private static final Map<UUID, Long> NEXT_RESPECT_AT_MILLIS = new HashMap<>();
 
 	private ServerRespectSystem() {
 	}
 
 	public static void register() {
-		ServerLifecycleEvents.SERVER_STARTED.register(server -> refreshAllTabSuffixes(server));
+		ServerLifecycleEvents.SERVER_STARTED.register(ServerRespectSystem::refreshAllTabSuffixes);
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> NEXT_RESPECT_AT_MILLIS.clear());
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> refreshTabSuffix((ServerPlayer) handler.player));
 		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> refreshTabSuffix(newPlayer));
@@ -43,24 +52,17 @@ public final class ServerRespectSystem {
 			if (!actor.isShiftKeyDown() || actor == target || !actor.isAlive() || !target.isAlive()) {
 				return InteractionResult.PASS;
 			}
-
-			long remainingCooldownMillis = getRemainingCooldownMillis(actor);
-			if (remainingCooldownMillis > 0L) {
-				actor.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-						"Следующий респект можно отправить через " + formatRemainingTime(remainingCooldownMillis) + "."
-				));
+			if (getRemainingCooldownMillis(actor) > 0L) {
 				return InteractionResult.SUCCESS;
 			}
 
-			int totalRespects = addRespect(target);
+			addRespect(target);
 			applyCooldown(actor);
 			refreshTabSuffix(target);
-			actor.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-					"Вы добавили респект игроку " + target.getScoreboardName() + ". Всего респектов: " + totalRespects
-			));
-			target.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-					actor.getScoreboardName() + " добавил вам респект. Всего респектов: " + totalRespects
-			));
+			showRespectActionbar(actor);
+			showRespectActionbar(target);
+			spawnRespectParticles(target);
+			playRespectSound(target);
 			return InteractionResult.SUCCESS;
 		});
 	}
@@ -72,7 +74,7 @@ public final class ServerRespectSystem {
 	}
 
 	private static void refreshTabSuffix(ServerPlayer player) {
-		ServerTabIntegration.setTabSuffix(player, " &b[" + getRespectCount(player) + "]");
+		ServerTabIntegration.setTabSuffix(player, " &3[" + getRespectCount(player) + "]");
 	}
 
 	private static int addRespect(ServerPlayer target) {
@@ -122,17 +124,48 @@ public final class ServerRespectSystem {
 		return remaining;
 	}
 
-	private static String formatRemainingTime(long millis) {
-		long totalSeconds = Math.max(1L, (millis + 999L) / 1000L);
-		long minutes = totalSeconds / 60L;
-		long seconds = totalSeconds % 60L;
-		if (minutes <= 0L) {
-			return seconds + " сек.";
+	private static void showRespectActionbar(ServerPlayer player) {
+		player.displayClientMessage(
+				Component.translatable(ACTIONBAR_TRANSLATION_KEY).withStyle(ChatFormatting.DARK_AQUA),
+				true
+		);
+	}
+
+	private static void spawnRespectParticles(ServerPlayer target) {
+		ServerLevel level = target.level() instanceof ServerLevel serverLevel ? serverLevel : null;
+		if (level == null) {
+			return;
 		}
-		if (seconds <= 0L) {
-			return minutes + " мин.";
+
+		level.sendParticles(
+				ParticleTypes.TOTEM_OF_UNDYING,
+				target.getX(),
+				target.getY() + target.getBbHeight() * 0.55D,
+				target.getZ(),
+				24,
+				0.45D,
+				0.75D,
+				0.45D,
+				0.05D
+		);
+	}
+
+	private static void playRespectSound(ServerPlayer target) {
+		ServerLevel level = target.level() instanceof ServerLevel serverLevel ? serverLevel : null;
+		if (level == null) {
+			return;
 		}
-		return minutes + " мин. " + seconds + " сек.";
+
+		target.connection.send(new ClientboundSoundPacket(
+				BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.EXPERIENCE_ORB_PICKUP),
+				SoundSource.PLAYERS,
+				target.getX(),
+				target.getY(),
+				target.getZ(),
+				0.65F,
+				1.15F,
+				level.getRandom().nextLong()
+		));
 	}
 
 	private static Objective getOrCreateObjective(MinecraftServer server) {
