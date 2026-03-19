@@ -13,6 +13,7 @@ base {
 def serverRootDir = file("${projectDir}/../..").canonicalFile
 def polymerSourceAssetsDir = file("${serverRootDir}/polymer/source_assets")
 def skinRestorerJars = fileTree(dir: "${serverRootDir}/mods", include: "skinrestorer-*.jar")
+def tabJars = fileTree(dir: "${serverRootDir}/mods", include: "TAB*.jar")
 def skinRestorerNestedLibDir = file("${buildDir}/skinrestorer-libs")
 def skinRestorerJavaClientJars = fileTree(dir: skinRestorerNestedLibDir, include: "java-client-*.jar")
 
@@ -62,6 +63,7 @@ dependencies {
 	modImplementation "eu.pb4:polymer-blocks:${project.polymer_version}"
 	modImplementation "eu.pb4:polymer-resource-pack:${project.polymer_version}"
 	modImplementation files(skinRestorerJars)
+	compileOnly files(tabJars)
 	runtimeOnly files(skinRestorerJavaClientJars)
 	modRuntimeOnly files("${serverRootDir}/mods/cardinal-components-api-${project.cardinal_components_version}.jar")
 	
