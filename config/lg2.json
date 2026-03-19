@@ -29,5 +29,7 @@
   "backroomsPlusMazeRoomWeight": 2,
   "backroomsStairsRoomWeight": 4,
 
-  "respectCooldownSeconds": 300
+  "respectCooldownSeconds": 300,
+  
+  "giantZombieReplacementChance": 250
 }

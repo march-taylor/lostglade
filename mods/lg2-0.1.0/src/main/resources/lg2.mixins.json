@@ -13,13 +13,17 @@
 		"EntityPortalAccessMixin",
 		"EntityKillProtectionMixin",
 		"ExampleMixin",
+		"GiantMixin",
 		"MsgCommandMixin",
+		"MobDeathLootMixin",
 		"PlayerContainerMenuAccessor",
 		"PlayerTrackedDataAccessor",
+		"RabbitAccessor",
 		"ResultSlotMechanicsGateMixin",
 		"ServerItemEntityMixin",
 		"ServerPlayerBackroomsRespawnMixin",
-		"ServerPlayerMenuTitleMixin"
+		"ServerPlayerMenuTitleMixin",
+		"ZombieNaturalSpawnMarkerMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

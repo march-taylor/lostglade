@@ -12,6 +12,7 @@ import com.lostglade.server.ServerStructureBreakSystem;
 import com.lostglade.server.ServerMechanicsGateSystem;
 import com.lostglade.server.ServerRespectSystem;
 import com.lostglade.server.ServerTabIntegration;
+import com.lostglade.server.ServerUnusedMobSpawnSystem;
 import com.lostglade.server.ServerUpgradeUiSystem;
 import com.lostglade.worldgen.ModWorldGen;
 import net.fabricmc.api.ModInitializer;
@@ -45,6 +46,7 @@ public class Lg2 implements ModInitializer {
 		ServerStructureBreakSystem.register();
 		ServerMechanicsGateSystem.register();
 		ServerRespectSystem.register();
+		ServerUnusedMobSpawnSystem.register();
 		ServerTabIntegration.register();
 		ServerUpgradeUiSystem.register();
 
