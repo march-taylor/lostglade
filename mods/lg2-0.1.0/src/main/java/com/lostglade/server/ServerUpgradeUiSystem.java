@@ -1388,7 +1388,9 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	private static String mainTitleSignature(ServerPlayer player, long gameTime) {
-		return mainScreenVariant(player) + "|" + mainScreenLogoGlyph(player, gameTime) + "|" + countBitcoins(player);
+		// Keep main-menu title stable while the screen is open.
+		// Continuous re-open packets for every animation frame break hover tooltips on client.
+		return mainScreenVariant(player) + "|" + countBitcoins(player);
 	}
 
 	private static void startEraProgressAnimation(ServerPlayer player, String upgradeId) {
