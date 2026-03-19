@@ -18,16 +18,16 @@
   "bitcoinsPerStability": 1,
   
   "backroomsEntitySpawnMinRadiusChunks": 4,
-  "backroomsEntitySpawnMaxRadiusChunks": 8,
+  "backroomsEntitySpawnMaxRadiusChunks": 6,
   "backroomsEntityGroupRadiusChunks": 12,
 
-  "backroomsLadderRoomWeight": 2,
-  "backroomsTrashRoomWeight": 2,
-  "backroomsFloorHolesRoomWeight": 2,
+  "backroomsLadderRoomWeight": 4,
+  "backroomsTrashRoomWeight": 4,
+  "backroomsFloorHolesRoomWeight": 4,
   "backroomsVoidHallRoomWeight": 1,
-  "backroomsHouseHallRoomWeight": 1,
-  "backroomsPlusMazeRoomWeight": 1,
-  "backroomsStairsRoomWeight": 2,
+  "backroomsHouseHallRoomWeight": 2,
+  "backroomsPlusMazeRoomWeight": 2,
+  "backroomsStairsRoomWeight": 4,
 
   "respectCooldownSeconds": 300
 }

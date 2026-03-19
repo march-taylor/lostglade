@@ -2330,12 +2330,12 @@ public final class BackroomsSpecialRooms {
 	}
 
 	private static final class ProfileCache {
-		private static final int MAX_TRASH_ROOM_PROFILES = 2048;
-		private static final int MAX_FLOOR_HOLES_PROFILES = 2048;
-		private static final int MAX_PLUS_MAZE_PROFILES = 1024;
-		private static final int MAX_VOID_HALL_PROFILES = 1024;
-		private static final int MAX_STAIRS_PROFILES = 2048;
-		private static final int MAX_HOUSE_HALL_PROFILES = 1024;
+		private static final int MAX_TRASH_ROOM_PROFILES = 8192;
+		private static final int MAX_FLOOR_HOLES_PROFILES = 8192;
+		private static final int MAX_PLUS_MAZE_PROFILES = 4096;
+		private static final int MAX_VOID_HALL_PROFILES = 4096;
+		private static final int MAX_STAIRS_PROFILES = 8192;
+		private static final int MAX_HOUSE_HALL_PROFILES = 4096;
 
 		final Map<Long, TrashRoomProfile> trashRoomProfiles = createCappedCache(MAX_TRASH_ROOM_PROFILES);
 		final Map<Long, FloorHolesProfile> floorHolesProfiles = createCappedCache(MAX_FLOOR_HOLES_PROFILES);
