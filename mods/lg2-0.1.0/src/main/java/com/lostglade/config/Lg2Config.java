@@ -38,6 +38,8 @@ public final class Lg2Config {
 	private static final int MAX_BACKROOMS_LADDER_ROOM_WEIGHT = 100;
 	private static final int MIN_RESPECT_COOLDOWN_SECONDS = 0;
 	private static final int MAX_RESPECT_COOLDOWN_SECONDS = 86_400;
+	private static final int MIN_KILLER_RABBIT_REPLACEMENT_CHANCE = 1;
+	private static final int MAX_KILLER_RABBIT_REPLACEMENT_CHANCE = 100_000;
 	private static final int MIN_GIANT_ZOMBIE_REPLACEMENT_CHANCE = 1;
 	private static final int MAX_GIANT_ZOMBIE_REPLACEMENT_CHANCE = 100_000;
 	private static final double DEFAULT_BITCOINS_PER_STABILITY = 6.4D;
@@ -138,6 +140,10 @@ public final class Lg2Config {
 				MIN_RESPECT_COOLDOWN_SECONDS,
 				MAX_RESPECT_COOLDOWN_SECONDS,
 				newValue -> configData.respectCooldownSeconds = newValue);
+		changed |= clampSingleValue(configData.killerRabbitReplacementChance,
+				MIN_KILLER_RABBIT_REPLACEMENT_CHANCE,
+				MAX_KILLER_RABBIT_REPLACEMENT_CHANCE,
+				newValue -> configData.killerRabbitReplacementChance = newValue);
 		changed |= clampSingleValue(configData.giantZombieReplacementChance,
 				MIN_GIANT_ZOMBIE_REPLACEMENT_CHANCE,
 				MAX_GIANT_ZOMBIE_REPLACEMENT_CHANCE,
@@ -308,6 +314,7 @@ public final class Lg2Config {
 		public int backroomsPlusMazeRoomWeight = 2;
 		public int backroomsStairsRoomWeight = 2;
 		public double bitcoinsPerStability = DEFAULT_BITCOINS_PER_STABILITY;
+		public int killerRabbitReplacementChance = 150;
 		public int giantZombieReplacementChance = 250;
 
 		private ConfigData() {

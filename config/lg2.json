@@ -30,6 +30,7 @@
   "backroomsStairsRoomWeight": 4,
 
   "respectCooldownSeconds": 300,
-  
+
+  "killerRabbitReplacementChance": 150,
   "giantZombieReplacementChance": 250
 }
