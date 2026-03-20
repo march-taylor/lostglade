@@ -15,6 +15,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
+import net.minecraft.core.particles.ColorParticleOption;
 import net.minecraft.core.particles.ParticleType;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.particles.SimpleParticleType;
@@ -32,10 +33,13 @@ import net.minecraft.server.permissions.Permissions;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.BossEvent;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.IOException;
@@ -55,9 +59,15 @@ public final class ServerStabilitySystem {
 	private static final String STABILITY_SYMBOL = "\uE903";
 	private static final int TITLE_COLOR = 0xF2CD26;
 	private static final int PACK_SYMBOL_COLOR = 0xFFFFFF;
+	private static final int STABILITY_PARTICLE_COLOR = 0xFFFFD24D;
+	private static final ColorParticleOption STABILITY_POTION_PARTICLE = ColorParticleOption.create(
+			ParticleTypes.ENTITY_EFFECT,
+			STABILITY_PARTICLE_COLOR
+	);
 
 	private static final Map<UUID, ServerBossEvent> PLAYER_HUDS = new HashMap<>();
 	private static final Map<UUID, ServerBossEvent> PLAYER_SPACER_HUDS = new HashMap<>();
+	private static final Map<String, Set<String>> TRACKED_SERVER_ANCHORS = new HashMap<>();
 	private static final Set<ItemEntity> TRACKED_BITCOIN_ITEMS = ConcurrentHashMap.newKeySet();
 	private static final int BITCOIN_FEED_SCAN_RADIUS = 1;
 	private static final double BITCOIN_FEED_RADIUS = 0.3D;
@@ -78,6 +88,7 @@ public final class ServerStabilitySystem {
 
 	private static final class StabilityState {
 		int stability;
+		Map<String, Set<String>> trackedServerAnchors;
 	}
 
 	private ServerStabilitySystem() {
@@ -90,6 +101,7 @@ public final class ServerStabilitySystem {
 		decayTickCounter = 0L;
 		pendingStabilityFraction = 0.0D;
 		nextFeedSoundAllowedTick = Long.MIN_VALUE;
+		TRACKED_SERVER_ANCHORS.clear();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerStabilitySystem::loadPersistedStability);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerStabilitySystem::savePersistedStability);
@@ -142,11 +154,12 @@ public final class ServerStabilitySystem {
 
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 				online.add(player.getUUID());
+				spawnStabilityPotionParticles(player);
 
-				boolean lookingAtServer = isLookingAtServerBlock(player);
-				ServerBossBarVisibilitySystem.setServerHudFocus(player, lookingAtServer);
+				boolean shouldShowStabilityHud = isLookingAtServerBlock(player) || hasStabilityPotionVision(player);
+				ServerBossBarVisibilitySystem.setServerHudFocus(player, shouldShowStabilityHud);
 
-				if (!lookingAtServer) {
+				if (!shouldShowStabilityHud) {
 					hideHud(player);
 					continue;
 				}
@@ -571,6 +584,134 @@ public final class ServerStabilitySystem {
 		return player.level().getBlockState(blockHit.getBlockPos()).is(ModBlocks.SERVER);
 	}
 
+	public static void activateStabilityPotion(ServerPlayer player, int durationTicks, boolean anyWorldVisibility) {
+		if (durationTicks <= 0) {
+			return;
+		}
+		player.addEffect(createStabilityPotionEffect(durationTicks, anyWorldVisibility));
+	}
+
+	public static MobEffectInstance createStabilityPotionEffect(int durationTicks, boolean anyWorldVisibility) {
+		return new MobEffectInstance(MobEffects.UNLUCK, durationTicks, anyWorldVisibility ? 1 : 0, false, false, true);
+	}
+
+	public static void onServerStructurePlaced(ServerLevel level, BlockPos anchor) {
+		if (trackServerAnchor(level, anchor)) {
+			stabilityDirty = true;
+		}
+	}
+
+	public static void onServerStructureRemoved(ServerLevel level, BlockPos anchor) {
+		if (untrackServerAnchor(level, anchor)) {
+			stabilityDirty = true;
+		}
+	}
+
+	private static boolean hasStabilityPotionVision(ServerPlayer player) {
+		MobEffectInstance effect = getStabilityPotionEffect(player);
+		if (effect == null) {
+			return false;
+		}
+		if (effect.getAmplifier() >= 1) {
+			return true;
+		}
+		if (!(player.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		return hasTrackedServerInWorld(level);
+	}
+
+	private static MobEffectInstance getStabilityPotionEffect(ServerPlayer player) {
+		return player.getEffect(MobEffects.UNLUCK);
+	}
+
+	private static void spawnStabilityPotionParticles(ServerPlayer player) {
+		MobEffectInstance effect = getStabilityPotionEffect(player);
+		if (effect == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		long gameTime = level.getGameTime();
+		if ((gameTime + player.getId()) % 5L != 0L) {
+			return;
+		}
+
+		double halfWidth = player.getBbWidth() * 0.35D;
+		double height = player.getBbHeight();
+		level.sendParticles(
+				STABILITY_POTION_PARTICLE,
+				player.getX(),
+				player.getY() + height * 0.5D,
+				player.getZ(),
+				2,
+				halfWidth,
+				height * 0.35D,
+				halfWidth,
+				0.0D
+		);
+	}
+
+	private static boolean hasTrackedServerInWorld(ServerLevel level) {
+		String dimensionId = dimensionId(level.dimension());
+		Set<String> anchors = TRACKED_SERVER_ANCHORS.get(dimensionId);
+		if (anchors != null && !anchors.isEmpty()) {
+			return true;
+		}
+		return discoverLoadedServerAnchors(level);
+	}
+
+	private static boolean discoverLoadedServerAnchors(ServerLevel level) {
+		boolean discoveredAny = false;
+		for (var entity : level.getAllEntities()) {
+			if (!ServerStructureBreakSystem.isServerStructureDisplay(entity)) {
+				continue;
+			}
+			var anchor = ServerStructureBreakSystem.getServerStructureDisplayAnchor(entity);
+			if (anchor.isEmpty()) {
+				continue;
+			}
+			discoveredAny |= trackServerAnchor(level, anchor.get());
+		}
+		if (discoveredAny) {
+			stabilityDirty = true;
+		}
+		Set<String> anchors = TRACKED_SERVER_ANCHORS.get(dimensionId(level.dimension()));
+		return anchors != null && !anchors.isEmpty();
+	}
+
+	private static boolean trackServerAnchor(ServerLevel level, BlockPos anchor) {
+		return TRACKED_SERVER_ANCHORS
+				.computeIfAbsent(dimensionId(level.dimension()), ignored -> new HashSet<>())
+				.add(serializeBlockPos(anchor));
+	}
+
+	private static boolean untrackServerAnchor(ServerLevel level, BlockPos anchor) {
+		String dimensionId = dimensionId(level.dimension());
+		Set<String> anchors = TRACKED_SERVER_ANCHORS.get(dimensionId);
+		if (anchors == null) {
+			return false;
+		}
+		boolean removed = anchors.remove(serializeBlockPos(anchor));
+		if (anchors.isEmpty()) {
+			TRACKED_SERVER_ANCHORS.remove(dimensionId);
+		}
+		return removed;
+	}
+
+	private static void bootstrapTrackedServerAnchors(MinecraftServer server) {
+		for (ServerLevel level : server.getAllLevels()) {
+			discoverLoadedServerAnchors(level);
+		}
+	}
+
+	private static String dimensionId(net.minecraft.resources.ResourceKey<Level> dimension) {
+		return dimension.identifier().toString();
+	}
+
+	private static String serializeBlockPos(BlockPos pos) {
+		return pos.getX() + "," + pos.getY() + "," + pos.getZ();
+	}
+
 	public static boolean isHudBossBar(ServerPlayer player, UUID bossBarId) {
 		ServerBossEvent hud = PLAYER_HUDS.get(player.getUUID());
 		if (hud != null && hud.getId().equals(bossBarId)) {
@@ -643,9 +784,12 @@ public final class ServerStabilitySystem {
 
 	private static void loadPersistedStability(MinecraftServer server) {
 		Path path = getStabilityStatePath(server);
+		boolean dirtyAfterLoad = false;
+		TRACKED_SERVER_ANCHORS.clear();
 
 		if (!Files.exists(path)) {
 			setStability(getMaxStability());
+			bootstrapTrackedServerAnchors(server);
 			stabilityStateLoaded = true;
 			stabilityDirty = true;
 			return;
@@ -655,15 +799,33 @@ public final class ServerStabilitySystem {
 			StabilityState state = STABILITY_STATE_GSON.fromJson(reader, StabilityState.class);
 			if (state == null) {
 				setStability(getMaxStability());
+				dirtyAfterLoad = true;
 			} else {
 				setStability(state.stability);
+				if (state.trackedServerAnchors != null) {
+					for (Map.Entry<String, Set<String>> entry : state.trackedServerAnchors.entrySet()) {
+						Set<String> anchors = entry.getValue();
+						if (anchors == null || anchors.isEmpty()) {
+							continue;
+						}
+						TRACKED_SERVER_ANCHORS.put(entry.getKey(), new HashSet<>(anchors));
+					}
+				}
+			}
+
+			if (TRACKED_SERVER_ANCHORS.isEmpty()) {
+				bootstrapTrackedServerAnchors(server);
+				if (!TRACKED_SERVER_ANCHORS.isEmpty()) {
+					dirtyAfterLoad = true;
+				}
 			}
 
 			stabilityStateLoaded = true;
-			stabilityDirty = false;
+			stabilityDirty = dirtyAfterLoad;
 		} catch (Exception e) {
 			Lg2.LOGGER.warn("Failed to read persisted stability from {}", path, e);
 			setStability(getMaxStability());
+			bootstrapTrackedServerAnchors(server);
 			stabilityStateLoaded = true;
 			stabilityDirty = true;
 		}
@@ -677,6 +839,15 @@ public final class ServerStabilitySystem {
 		Path path = getStabilityStatePath(server);
 		StabilityState state = new StabilityState();
 		state.stability = getStability();
+		if (!TRACKED_SERVER_ANCHORS.isEmpty()) {
+			state.trackedServerAnchors = new HashMap<>();
+			for (Map.Entry<String, Set<String>> entry : TRACKED_SERVER_ANCHORS.entrySet()) {
+				if (entry.getValue().isEmpty()) {
+					continue;
+				}
+				state.trackedServerAnchors.put(entry.getKey(), new HashSet<>(entry.getValue()));
+			}
+		}
 
 		try {
 			Files.createDirectories(path.getParent());
