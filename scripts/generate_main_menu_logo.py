@@ -181,6 +181,43 @@ def upscale_logo_clean(base_logo: Image.Image, size: tuple[int, int]) -> Image.I
     return quantize_to_palette(resized, LOGO_PALETTE)
 
 
+def downscale_pixel_art(image: Image.Image, divisor: int) -> Image.Image:
+    if divisor <= 0:
+        raise ValueError('divisor must be positive')
+
+    padded_w = max(divisor, math.ceil(image.width / divisor) * divisor)
+    padded_h = max(divisor, math.ceil(image.height / divisor) * divisor)
+    if (padded_w, padded_h) == image.size:
+        padded = image
+    else:
+        padded = Image.new('RGBA', (padded_w, padded_h), (0, 0, 0, 0))
+        padded.alpha_composite(image, (0, 0))
+
+    return padded.resize(
+        (max(1, padded.width // divisor), max(1, padded.height // divisor)),
+        Image.Resampling.NEAREST,
+    )
+
+
+def mirror_logo_horizontally(image: Image.Image, keep_side: str = 'left') -> Image.Image:
+    if keep_side not in {'left', 'right'}:
+        raise ValueError("keep_side must be 'left' or 'right'")
+
+    mirrored = image.copy()
+    width = mirrored.width
+    half = width // 2
+
+    for y in range(mirrored.height):
+        for x in range(half):
+            opposite_x = width - 1 - x
+            source_x = x if keep_side == 'left' else opposite_x
+            pixel = image.getpixel((source_x, y))
+            mirrored.putpixel((x, y), pixel)
+            mirrored.putpixel((opposite_x, y), pixel)
+
+    return mirrored
+
+
 def inside_screen_mask(x: int, y: int) -> bool:
     sx0 = SCREEN_X
     sy0 = SCREEN_Y
@@ -688,9 +725,12 @@ def main() -> None:
 
     source_logo = Image.open(SOURCE_LOGO).convert('RGBA')
     glitch_logo = upscale_logo_clean(source_logo, (GLITCH_LOGO_W, GLITCH_LOGO_H))
-    dvd_logo = source_logo.resize(
-        (max(1, source_logo.width // 2), max(1, math.ceil(source_logo.height / 2))),
-        Image.Resampling.NEAREST,
+    # Keep the tiny DVD logo perfectly mirrored after the final NEAREST downscale.
+    # Doing this before resize is not enough, because center sampling can still skew
+    # the 20x14 result by one pixel on one side.
+    dvd_logo = mirror_logo_horizontally(
+        downscale_pixel_art(quantize_to_palette(source_logo, LOGO_PALETTE), 2),
+        keep_side='left',
     )
     glitch_sheet = build_sheet(glitch_logo, build_glitch_frame, GLITCH_FRAME_COUNT, GLITCH_GRID_COLS, GLITCH_GRID_ROWS)
     dvd_sheet = build_sheet(dvd_logo, build_dvd_frame, DVD_FRAME_COUNT, DVD_GRID_COLS, DVD_GRID_ROWS)
