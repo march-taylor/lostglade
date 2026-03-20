@@ -29,6 +29,7 @@ final class BackroomsLayout {
 	private static final int MAX_LADDER_TUNNEL_LENGTH = 48;
 	private static final int ANGLED_LADDER_TUNNEL_CHANCE_PERCENT = 40;
 	private static final int LADDER_ROOM_CELL_SEARCH_RADIUS = 3;
+	private static final int LARGE_HALL_CHUNK_SEARCH_MARGIN_CELLS = 3;
 	private static final int INSET_DOOR_CHANCE_PERCENT = 10;
 	private static final long DOOR_LAYOUT_SALT = 0x6B41524F4F4D4452L;
 	private static final long SPECIAL_ROOM_LAYOUT_SALT = 0x5350454349414C31L;
@@ -42,8 +43,9 @@ final class BackroomsLayout {
 	private static final long OPEN_CACHE_SALT = 0x4F50454E43414348L;
 	private static final long DOOR_CACHE_SALT = 0x444F4F5243414348L;
 	private static final long ZONE_CACHE_SALT = 0x5A4F4E4543414348L;
+	private static final long LARGE_HALL_CACHE_SALT = 0x4C4748414C4C4348L;
 	private static final long SPECIAL_ROOM_COLUMN_CACHE_SALT = 0x53504352434F4C31L;
-	private static final long VOID_HALL_COLUMN_CACHE_SALT = 0x564F494448434143L;
+	private static final long VOID_HALL_CHUNK_CACHE_SALT = 0x564F49444843484BL;
 	private static final long LADDER_ROOM_COLUMN_CACHE_SALT = 0x4C414444434F4C31L;
 	private static final ThreadLocal<LayoutCache> LAYOUT_CACHE = ThreadLocal.withInitial(LayoutCache::new);
 
@@ -924,10 +926,19 @@ final class BackroomsLayout {
 	}
 
 	private static SpecialRoomPlacement getLargeHallPlacementForCell(ZoneType zone, int cellX, int cellZ, int levelIndex) {
+		LayoutCache cache = layoutCache();
+		long key = cacheKey(cellX, cellZ, levelIndex, zone, LARGE_HALL_CACHE_SALT);
+		Optional<SpecialRoomPlacement> cached = cache.largeHallPlacementCache.get(key);
+		if (cached != null) {
+			return cached.orElse(null);
+		}
+
 		SpecialRoomPlacement placement = getLargeHallPlacementForCellUnchecked(zone, cellX, cellZ, levelIndex);
 		if (placement == null || hasLargeHallConflict(placement)) {
+			cache.largeHallPlacementCache.put(key, Optional.empty());
 			return null;
 		}
+		cache.largeHallPlacementCache.put(key, Optional.of(placement));
 		return placement;
 	}
 
@@ -1123,36 +1134,66 @@ final class BackroomsLayout {
 
 	static SpecialRoomPlacement getVoidHallForColumn(int x, int z) {
 		LayoutCache cache = layoutCache();
-		long key = BlockPos.asLong(x, 0, z) ^ VOID_HALL_COLUMN_CACHE_SALT;
-		Optional<SpecialRoomPlacement> cached = cache.voidHallColumnCache.get(key);
+		int chunkX = Math.floorDiv(x, 16);
+		int chunkZ = Math.floorDiv(z, 16);
+		long key = mix(chunkX, chunkZ, VOID_HALL_CHUNK_CACHE_SALT);
+		VoidHallChunkCoverage cached = cache.voidHallChunkCache.get(key);
 		if (cached != null) {
-			return cached.orElse(null);
+			return cached.get(x, z);
 		}
 
-		int cellX = Math.floorDiv(x, LAYOUT_CELL_SIZE);
-		int cellZ = Math.floorDiv(z, LAYOUT_CELL_SIZE);
-		SpecialRoomPlacement result = null;
+		VoidHallChunkCoverage coverage = buildVoidHallChunkCoverage(chunkX, chunkZ);
+		cache.voidHallChunkCache.put(key, coverage);
+		return coverage.get(x, z);
+	}
+
+	private static VoidHallChunkCoverage buildVoidHallChunkCoverage(int chunkX, int chunkZ) {
+		int minBlockX = chunkX << 4;
+		int minBlockZ = chunkZ << 4;
+		int maxBlockX = minBlockX + 15;
+		int maxBlockZ = minBlockZ + 15;
+		SpecialRoomPlacement[] placements = new SpecialRoomPlacement[16 * 16];
+		int unresolvedColumns = placements.length;
+		int minCellX = Math.floorDiv(minBlockX, LAYOUT_CELL_SIZE) - LARGE_HALL_CHUNK_SEARCH_MARGIN_CELLS;
+		int maxCellX = Math.floorDiv(maxBlockX, LAYOUT_CELL_SIZE) + LARGE_HALL_CHUNK_SEARCH_MARGIN_CELLS;
+		int minCellZ = Math.floorDiv(minBlockZ, LAYOUT_CELL_SIZE) - LARGE_HALL_CHUNK_SEARCH_MARGIN_CELLS;
+		int maxCellZ = Math.floorDiv(maxBlockZ, LAYOUT_CELL_SIZE) + LARGE_HALL_CHUNK_SEARCH_MARGIN_CELLS;
 		int minLevelIndex = getLevelIndex(WORLD_MIN_Y);
-		for (int anchorLevel = MAX_FULL_LEVEL_INDEX; anchorLevel >= minLevelIndex; anchorLevel--) {
-			for (int offsetX = -2; offsetX <= 2; offsetX++) {
-				for (int offsetZ = -2; offsetZ <= 2; offsetZ++) {
-					int candidateCellX = cellX + offsetX;
-					int candidateCellZ = cellZ + offsetZ;
+
+		for (int anchorLevel = MAX_FULL_LEVEL_INDEX; anchorLevel >= minLevelIndex && unresolvedColumns > 0; anchorLevel--) {
+			for (int candidateCellX = minCellX; candidateCellX <= maxCellX; candidateCellX++) {
+				for (int candidateCellZ = minCellZ; candidateCellZ <= maxCellZ; candidateCellZ++) {
 					ZoneType candidateZone = getZoneAtCell(candidateCellX, candidateCellZ, anchorLevel);
 					SpecialRoomPlacement placement = getLargeHallPlacementForCell(candidateZone, candidateCellX, candidateCellZ, anchorLevel);
-					if (placement != null
-							&& placement.type() == SpecialRoomType.VOID_HALL
-							&& placement.contains(x, z)) {
-						result = placement;
-						cache.voidHallColumnCache.put(key, Optional.of(result));
-						return result;
+					if (placement == null || placement.type() != SpecialRoomType.VOID_HALL) {
+						continue;
+					}
+
+					int overlapMinX = Math.max(minBlockX, placement.roomCenterX() - placement.roomHalfWidth());
+					int overlapMaxX = Math.min(maxBlockX, placement.roomCenterX() + placement.roomHalfWidth());
+					int overlapMinZ = Math.max(minBlockZ, placement.roomCenterZ() - placement.roomHalfHeight());
+					int overlapMaxZ = Math.min(maxBlockZ, placement.roomCenterZ() + placement.roomHalfHeight());
+					if (overlapMinX > overlapMaxX || overlapMinZ > overlapMaxZ) {
+						continue;
+					}
+
+					for (int worldX = overlapMinX; worldX <= overlapMaxX; worldX++) {
+						int localX = worldX - minBlockX;
+						for (int worldZ = overlapMinZ; worldZ <= overlapMaxZ; worldZ++) {
+							int index = (localX << 4) | (worldZ - minBlockZ);
+							if (placements[index] != null) {
+								continue;
+							}
+
+							placements[index] = placement;
+							unresolvedColumns--;
+						}
 					}
 				}
 			}
 		}
 
-		cache.voidHallColumnCache.put(key, Optional.empty());
-		return null;
+		return new VoidHallChunkCoverage(minBlockX, minBlockZ, placements);
 	}
 
 	private static RoomSide[] collectEligibleDoorSides(ZoneType zone, int cellX, int cellZ, CellData current, int levelIndex) {
@@ -1618,16 +1659,17 @@ final class BackroomsLayout {
 	}
 
 	private static final class LayoutCache {
-		private static final int MAX_CELL_CACHE = 32768;
-		private static final int MAX_INSET_CACHE = 8192;
-		private static final int MAX_OPEN_SPACE_CACHE = 262144;
-		private static final int MAX_DOOR_CACHE = 16384;
-		private static final int MAX_LADDER_ROOM_CACHE = 16384;
-		private static final int MAX_SPECIAL_ROOM_CACHE = 16384;
-		private static final int MAX_SPECIAL_ROOM_COLUMN_CACHE = 65536;
-		private static final int MAX_ZONE_CACHE = 8192;
-		private static final int MAX_VOID_HALL_COLUMN_CACHE = 16384;
-		private static final int MAX_LADDER_ROOM_COLUMN_CACHE = 65536;
+		private static final int MAX_CELL_CACHE = 131072;
+		private static final int MAX_INSET_CACHE = 32768;
+		private static final int MAX_OPEN_SPACE_CACHE = 1048576;
+		private static final int MAX_DOOR_CACHE = 65536;
+		private static final int MAX_LADDER_ROOM_CACHE = 32768;
+		private static final int MAX_SPECIAL_ROOM_CACHE = 32768;
+		private static final int MAX_LARGE_HALL_CACHE = 32768;
+		private static final int MAX_SPECIAL_ROOM_COLUMN_CACHE = 262144;
+		private static final int MAX_ZONE_CACHE = 32768;
+		private static final int MAX_VOID_HALL_CHUNK_CACHE = 4096;
+		private static final int MAX_LADDER_ROOM_COLUMN_CACHE = 262144;
 
 		final Map<Long, ZoneType> zoneCache = createCappedCache(MAX_ZONE_CACHE);
 		final Map<Long, CellData> cellCache = createCappedCache(MAX_CELL_CACHE);
@@ -1636,8 +1678,9 @@ final class BackroomsLayout {
 		final Map<Long, Optional<DoorPlacement>> doorPlacementCache = createCappedCache(MAX_DOOR_CACHE);
 		final Map<Long, Optional<LadderRoomPlacement>> ladderRoomCache = createCappedCache(MAX_LADDER_ROOM_CACHE);
 		final Map<Long, Optional<SpecialRoomPlacement>> specialRoomCache = createCappedCache(MAX_SPECIAL_ROOM_CACHE);
+		final Map<Long, Optional<SpecialRoomPlacement>> largeHallPlacementCache = createCappedCache(MAX_LARGE_HALL_CACHE);
 		final Map<Long, Optional<SpecialRoomPlacement>> specialRoomColumnCache = createCappedCache(MAX_SPECIAL_ROOM_COLUMN_CACHE);
-		final Map<Long, Optional<SpecialRoomPlacement>> voidHallColumnCache = createCappedCache(MAX_VOID_HALL_COLUMN_CACHE);
+		final Map<Long, VoidHallChunkCoverage> voidHallChunkCache = createCappedCache(MAX_VOID_HALL_CHUNK_CACHE);
 		final Map<Long, Optional<LadderRoomPlacement>> ladderRoomColumnCache = createCappedCache(MAX_LADDER_ROOM_COLUMN_CACHE);
 
 		private static <K, V> Map<K, V> createCappedCache(int maxSize) {
@@ -1647,6 +1690,27 @@ final class BackroomsLayout {
 					return this.size() > maxSize;
 				}
 			};
+		}
+	}
+
+	private static final class VoidHallChunkCoverage {
+		private final int minBlockX;
+		private final int minBlockZ;
+		private final SpecialRoomPlacement[] placements;
+
+		private VoidHallChunkCoverage(int minBlockX, int minBlockZ, SpecialRoomPlacement[] placements) {
+			this.minBlockX = minBlockX;
+			this.minBlockZ = minBlockZ;
+			this.placements = placements;
+		}
+
+		private SpecialRoomPlacement get(int x, int z) {
+			int localX = x - this.minBlockX;
+			int localZ = z - this.minBlockZ;
+			if (localX < 0 || localX >= 16 || localZ < 0 || localZ >= 16) {
+				return null;
+			}
+			return this.placements[(localX << 4) | localZ];
 		}
 	}
 }

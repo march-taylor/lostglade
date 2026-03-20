@@ -14,5 +14,7 @@
     "item.lg2.bitcoin_ore":  "ビットコイン鉣石",
     "item.lg2.deepslate_bitcoin_ore":  "深層ビットコイン鉣石",
     "item.lg2.server":  "サーバ",
-    "item.lg2.special_pickaxe":  "特殊なツルハシ"
+    "item.lg2.special_pickaxe":  "特殊なツルハシ",
+    "item.lg2.absolute_invisibility_potion":  "完全不可視のポーション",
+    "lg2.respect.actionbar":  "リスペクト!"
 }

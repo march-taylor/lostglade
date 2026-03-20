@@ -509,8 +509,8 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	}
 
 	private static final class GeneratorCache {
-		private static final int MAX_COLUMN_LAYOUT_CACHE = 131072;
-		private static final int MAX_EXIT_SIGN_CACHE = 65536;
+		private static final int MAX_COLUMN_LAYOUT_CACHE = 262144;
+		private static final int MAX_EXIT_SIGN_CACHE = 131072;
 
 		final Map<Long, ColumnLayout> columnLayoutCache = createCappedCache(MAX_COLUMN_LAYOUT_CACHE);
 		final Map<Long, Optional<Direction>> exitSignCache = createCappedCache(MAX_EXIT_SIGN_CACHE);
