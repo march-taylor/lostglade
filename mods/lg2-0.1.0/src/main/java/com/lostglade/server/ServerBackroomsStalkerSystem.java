@@ -57,7 +57,6 @@ public final class ServerBackroomsStalkerSystem {
 	private static final Set<BackroomsStalkerEntity> TRACKED_STALKERS = Collections.newSetFromMap(new IdentityHashMap<>());
 	private static final Map<UUID, BlockPos> HOUSE_WAITING_ASSIGNMENTS = new HashMap<>();
 	private static long nextOutsideBackroomsSweepTick = 0L;
-
 	private ServerBackroomsStalkerSystem() {
 	}
 
@@ -124,6 +123,7 @@ public final class ServerBackroomsStalkerSystem {
 		List<PlayerCluster> clusters = buildClusters(players, groupRadiusBlocks);
 		Set<BackroomsStalkerEntity> assignedStalkers = new HashSet<>();
 		List<BackroomsStalkerEntity> activeStalkers = new ArrayList<>(clusters.size());
+		Map<UUID, PlayerCluster> stalkerClusters = new HashMap<>();
 
 		for (PlayerCluster cluster : clusters) {
 			BlockPos houseWaitingPos = findHouseWaitingPos(cluster.players());
@@ -136,11 +136,13 @@ public final class ServerBackroomsStalkerSystem {
 				}
 				assignedStalkers.add(assigned);
 				activeStalkers.add(assigned);
+				stalkerClusters.put(assigned.getUUID(), cluster);
 				continue;
 			}
 			BackroomsStalkerEntity spawned = spawnNearPlayers(backrooms, cluster.players(), minSpawnRadiusBlocks, maxSpawnRadiusBlocks);
 			if (spawned != null) {
 				activeStalkers.add(spawned);
+				stalkerClusters.put(spawned.getUUID(), cluster);
 			}
 		}
 
@@ -150,7 +152,7 @@ public final class ServerBackroomsStalkerSystem {
 			}
 		}
 
-		tickStalkerRunLoopAudio(backrooms, players, activeStalkers);
+		tickStalkerRunLoopAudio(backrooms, players, activeStalkers, stalkerClusters);
 	}
 
 	private static boolean shouldSweepOutsideBackrooms(MinecraftServer server) {
@@ -170,7 +172,8 @@ public final class ServerBackroomsStalkerSystem {
 	private static void tickStalkerRunLoopAudio(
 			ServerLevel level,
 			List<ServerPlayer> players,
-			List<BackroomsStalkerEntity> stalkers
+			List<BackroomsStalkerEntity> stalkers,
+			Map<UUID, PlayerCluster> stalkerClusters
 	) {
 		long gameTime = level.getGameTime();
 		List<BackroomsStalkerEntity> chasingStalkers = new ArrayList<>();
@@ -189,8 +192,8 @@ public final class ServerBackroomsStalkerSystem {
 				continue;
 			}
 
-			BackroomsStalkerEntity nearestChasing = findNearestChasingStalker(player, chasingStalkers);
-			if (nearestChasing == null) {
+			BackroomsStalkerEntity desiredStalker = findRunLoopStalkerForPlayer(player, chasingStalkers, stalkerClusters);
+			if (desiredStalker == null) {
 				RunLoopState state = STALKER_RUN_LOOP_STATES.get(playerId);
 				if (state != null && gameTime >= state.lastPlayTick + STALKER_RUN_CLIP_TICKS) {
 					STALKER_RUN_LOOP_STATES.remove(playerId);
@@ -198,9 +201,18 @@ public final class ServerBackroomsStalkerSystem {
 				continue;
 			}
 
-			RunLoopState state = STALKER_RUN_LOOP_STATES.computeIfAbsent(playerId, ignored -> new RunLoopState(gameTime));
-			if (gameTime >= state.nextPlayTick) {
-				playRunLoopSound(player, level, nearestChasing);
+			RunLoopState state = STALKER_RUN_LOOP_STATES.get(playerId);
+			boolean shouldPlayImmediately = state == null || !desiredStalker.getUUID().equals(state.stalkerId);
+			if (state == null) {
+				state = new RunLoopState(desiredStalker.getUUID(), gameTime);
+				STALKER_RUN_LOOP_STATES.put(playerId, state);
+			} else if (shouldPlayImmediately) {
+				state.stalkerId = desiredStalker.getUUID();
+				state.nextPlayTick = gameTime;
+			}
+
+			if (shouldPlayImmediately || gameTime >= state.nextPlayTick) {
+				playRunLoopSound(player, level, desiredStalker);
 				state.lastPlayTick = gameTime;
 				state.nextPlayTick = gameTime + STALKER_RUN_LOOP_TICKS;
 			}
@@ -221,19 +233,55 @@ public final class ServerBackroomsStalkerSystem {
 		}
 	}
 
-	private static BackroomsStalkerEntity findNearestChasingStalker(ServerPlayer player, List<BackroomsStalkerEntity> stalkers) {
-		BackroomsStalkerEntity nearest = null;
-		double nearestDistanceSqr = STALKER_RUN_HEAR_RADIUS_SQR + 1.0D;
+	private static BackroomsStalkerEntity findRunLoopStalkerForPlayer(
+			ServerPlayer player,
+			List<BackroomsStalkerEntity> stalkers,
+			Map<UUID, PlayerCluster> stalkerClusters
+	) {
+		BackroomsStalkerEntity best = null;
+		boolean bestBelongsToCluster = false;
+		double bestDistanceSqr = Double.MAX_VALUE;
 		for (BackroomsStalkerEntity stalker : stalkers) {
 			double distanceSqr = stalker.distanceToSqr(player);
-			if (distanceSqr > STALKER_RUN_HEAR_RADIUS_SQR || distanceSqr >= nearestDistanceSqr) {
+			boolean inHearRadius = distanceSqr <= STALKER_RUN_HEAR_RADIUS_SQR;
+			boolean belongsToCluster = isPlayerInStalkerCluster(player, stalker, stalkerClusters);
+			if (!inHearRadius && !belongsToCluster) {
 				continue;
 			}
-
-			nearest = stalker;
-			nearestDistanceSqr = distanceSqr;
+			if (best == null) {
+				best = stalker;
+				bestBelongsToCluster = belongsToCluster;
+				bestDistanceSqr = distanceSqr;
+				continue;
+			}
+			if (belongsToCluster != bestBelongsToCluster) {
+				if (belongsToCluster) {
+					best = stalker;
+					bestBelongsToCluster = true;
+					bestDistanceSqr = distanceSqr;
+				}
+				continue;
+			}
+			if (distanceSqr < bestDistanceSqr) {
+				best = stalker;
+				bestBelongsToCluster = belongsToCluster;
+				bestDistanceSqr = distanceSqr;
+			}
 		}
-		return nearest;
+		return best;
+	}
+
+	private static boolean isPlayerInStalkerCluster(ServerPlayer player, BackroomsStalkerEntity stalker, Map<UUID, PlayerCluster> stalkerClusters) {
+		PlayerCluster cluster = stalkerClusters.get(stalker.getUUID());
+		if (cluster == null) {
+			return false;
+		}
+		for (ServerPlayer clusterPlayer : cluster.players()) {
+			if (clusterPlayer.getUUID().equals(player.getUUID())) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static void playRunLoopSound(ServerPlayer player, ServerLevel level, BackroomsStalkerEntity stalker) {
@@ -606,10 +654,12 @@ public final class ServerBackroomsStalkerSystem {
 	}
 
 	private static final class RunLoopState {
+		UUID stalkerId;
 		long nextPlayTick;
 		long lastPlayTick;
 
-		RunLoopState(long nextPlayTick) {
+		RunLoopState(UUID stalkerId, long nextPlayTick) {
+			this.stalkerId = stalkerId;
 			this.nextPlayTick = nextPlayTick;
 			this.lastPlayTick = Long.MIN_VALUE;
 		}

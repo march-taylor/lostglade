@@ -83,10 +83,11 @@ public final class ServerBackroomsSystem {
 	private static final int PLATFORM_EXIT_LENGTH = 12;
 	private static final int RESPAWN_SEARCH_ATTEMPTS = 48;
 	private static final int RESPAWN_SEARCH_RADIUS = 12;
-	private static final int PREWARMED_RESPAWN_TARGET = 8;
-	private static final int PREWARMED_RESPAWN_STARTUP_BATCH = 3;
-	private static final int PREWARMED_RESPAWN_REFILL_INTERVAL_TICKS = 40;
-	private static final int PREWARMED_RESPAWN_CHUNK_RADIUS = 2;
+	private static final int PREWARMED_RESPAWN_TARGET = 2;
+	private static final int PREWARMED_RESPAWN_STARTUP_BATCH = 1;
+	private static final int PREWARMED_RESPAWN_REFILL_INTERVAL_TICKS = 100;
+	private static final int PREWARMED_RESPAWN_CHUNK_RADIUS = 1;
+	private static final int BACKROOMS_SUPPORT_TICK_INTERVAL = 2;
 	private static final Identifier BACKROOMS_AMBIENT_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "custom.backrooms_ambient_loop");
 	// 12s file at 20 TPS ~= 240 ticks. Start every 200 ticks for ~2s overlap.
 	private static final int BACKROOMS_AMBIENT_LOOP_TICKS = 200;
@@ -391,6 +392,9 @@ public final class ServerBackroomsSystem {
 	private static void tickServer(MinecraftServer server) {
 		enforceClearWeather(server);
 		tickPrewarmedRespawns(server);
+		if ((server.overworld().getGameTime() % BACKROOMS_SUPPORT_TICK_INTERVAL) != 0L) {
+			return;
+		}
 		tickUpperLadderCrawl(server);
 		tickBackroomsAmbientLoop(server);
 		tickLampRestores(server);
