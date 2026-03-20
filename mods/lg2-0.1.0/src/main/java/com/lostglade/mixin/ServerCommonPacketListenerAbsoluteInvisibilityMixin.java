@@ -3,6 +3,8 @@ package com.lostglade.mixin;
 import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
 import io.netty.channel.ChannelFutureListener;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerCommonPacketListenerImpl;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
@@ -13,27 +15,57 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ServerCommonPacketListenerImpl.class)
 public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
+	private static final ThreadLocal<Boolean> LG2_BYPASS = ThreadLocal.withInitial(() -> false);
+
 	@Inject(method = "send(Lnet/minecraft/network/protocol/Packet;)V", at = @At("HEAD"), cancellable = true)
 	private void lg2$filterAbsoluteInvisibilityPackets(Packet<?> packet, CallbackInfo ci) {
-		if (lg2$shouldCancelPacket(packet)) {
-			ci.cancel();
-		}
+		lg2$processPacket(packet, null, ci);
 	}
 
 	@Inject(method = "send(Lnet/minecraft/network/protocol/Packet;Lio/netty/channel/ChannelFutureListener;)V", at = @At("HEAD"), cancellable = true)
 	private void lg2$filterAbsoluteInvisibilityPacketsWithListener(Packet<?> packet, ChannelFutureListener listener, CallbackInfo ci) {
-		if (lg2$shouldCancelPacket(packet)) {
-			ci.cancel();
-		}
+		lg2$processPacket(packet, listener, ci);
 	}
 
-	private boolean lg2$shouldCancelPacket(Packet<?> packet) {
+	private void lg2$processPacket(Packet<?> packet, ChannelFutureListener listener, CallbackInfo ci) {
+		if (LG2_BYPASS.get()) {
+			return;
+		}
+
 		Object self = this;
 		if (!(self instanceof ServerGamePacketListenerImpl gameListener)) {
-			return false;
+			return;
 		}
 
 		ServerPlayer receiver = gameListener.player;
-		return receiver != null && ServerAbsoluteInvisibilitySystem.shouldSuppressOutgoingPacket(receiver, packet);
+		if (receiver == null) {
+			return;
+		}
+
+		if (packet instanceof ClientboundSetEntityDataPacket entityDataPacket) {
+			ServerAbsoluteInvisibilitySystem.maskSprintingMetadataForViewer(receiver, entityDataPacket);
+		}
+
+		if (packet instanceof ClientboundSetEquipmentPacket equipmentPacket) {
+			ClientboundSetEquipmentPacket replacement = ServerAbsoluteInvisibilitySystem.maskArmorEquipmentForViewer(receiver, equipmentPacket);
+			if (replacement != equipmentPacket) {
+				ci.cancel();
+				LG2_BYPASS.set(true);
+				try {
+					if (listener == null) {
+						gameListener.send(replacement);
+					} else {
+						gameListener.send(replacement, listener);
+					}
+				} finally {
+					LG2_BYPASS.remove();
+				}
+				return;
+			}
+		}
+
+		if (ServerAbsoluteInvisibilitySystem.shouldSuppressOutgoingPacket(receiver, packet)) {
+			ci.cancel();
+		}
 	}
 }

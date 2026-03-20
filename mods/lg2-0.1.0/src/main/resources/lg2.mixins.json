@@ -14,6 +14,7 @@
 		"EntityKillProtectionMixin",
 		"EntityAbsoluteInvisibilityMixin",
 		"ExampleMixin",
+		"EntityTrackedDataAccessor",
 		"GiantMixin",
 		"MsgCommandMixin",
 		"MobDeathLootMixin",

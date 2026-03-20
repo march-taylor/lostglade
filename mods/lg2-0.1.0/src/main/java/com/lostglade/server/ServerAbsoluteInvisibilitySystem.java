@@ -4,13 +4,18 @@ import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import com.lostglade.mixin.EntityTrackedDataAccessor;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.BlockParticleOption;
 import net.minecraft.core.particles.ParticleOptions;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -20,15 +25,21 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import com.mojang.datafixers.util.Pair;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 public final class ServerAbsoluteInvisibilitySystem {
 	private static final int DURATION_TICKS = 8 * 60 * 20;
+	private static final byte SPRINTING_FLAG_MASK = 0x08;
 	private static final Map<UUID, Long> ACTIVE_UNTIL_TICK = new HashMap<>();
 	private static final Map<UUID, RecentBlockAction> RECENT_BLOCK_ACTIONS = new HashMap<>();
 	private static final int BLOCK_ACTION_SOUND_WINDOW_TICKS = 2;
@@ -57,6 +68,8 @@ public final class ServerAbsoluteInvisibilitySystem {
 
 	public static void activate(ServerPlayer player) {
 		ACTIVE_UNTIL_TICK.put(player.getUUID(), ((ServerLevel) player.level()).getGameTime() + DURATION_TICKS);
+		markSharedFlagsDirty(player);
+		broadcastArmorVisibilityUpdate(player, true);
 	}
 
 	public static MobEffectInstance createEffectInstance() {
@@ -103,6 +116,53 @@ public final class ServerAbsoluteInvisibilitySystem {
 		}
 
 		return false;
+	}
+
+	public static void maskSprintingMetadataForViewer(ServerPlayer receiver, ClientboundSetEntityDataPacket packet) {
+		ServerLevel viewerLevel = (ServerLevel) receiver.level();
+		Entity entity = viewerLevel.getEntity(packet.id());
+		if (!(entity instanceof ServerPlayer hiddenPlayer) || hiddenPlayer == receiver || !isActive(hiddenPlayer)) {
+			return;
+		}
+
+		List<SynchedEntityData.DataValue<?>> items = packet.packedItems();
+		EntityDataAccessor<Byte> sharedFlagsAccessor = EntityTrackedDataAccessor.lg2$getDataSharedFlagsId();
+		for (int i = 0; i < items.size(); i++) {
+			SynchedEntityData.DataValue<?> value = items.get(i);
+			if (value.id() != sharedFlagsAccessor.id() || !(value.value() instanceof Byte flags)) {
+				continue;
+			}
+
+			byte maskedFlags = (byte) (flags & ~SPRINTING_FLAG_MASK);
+			if (maskedFlags != flags) {
+				items.set(i, SynchedEntityData.DataValue.create(sharedFlagsAccessor, maskedFlags));
+			}
+			return;
+		}
+	}
+
+	public static ClientboundSetEquipmentPacket maskArmorEquipmentForViewer(ServerPlayer receiver, ClientboundSetEquipmentPacket packet) {
+		ServerLevel viewerLevel = (ServerLevel) receiver.level();
+		Entity entity = viewerLevel.getEntity(packet.getEntity());
+		if (!(entity instanceof ServerPlayer hiddenPlayer) || !isActive(hiddenPlayer)) {
+			return packet;
+		}
+
+		List<Pair<EquipmentSlot, ItemStack>> originalSlots = packet.getSlots();
+		List<Pair<EquipmentSlot, ItemStack>> rewrittenSlots = null;
+		for (int i = 0; i < originalSlots.size(); i++) {
+			Pair<EquipmentSlot, ItemStack> slot = originalSlots.get(i);
+			if (!isArmorSlot(slot.getFirst())) {
+				continue;
+			}
+
+			if (rewrittenSlots == null) {
+				rewrittenSlots = new ArrayList<>(originalSlots);
+			}
+			rewrittenSlots.set(i, Pair.of(slot.getFirst(), ItemStack.EMPTY));
+		}
+
+		return rewrittenSlots == null ? packet : new ClientboundSetEquipmentPacket(packet.getEntity(), rewrittenSlots);
 	}
 
 	public static boolean shouldSuppressParticlePacketFor(ServerPlayer viewer, ParticleOptions particle, double x, double y, double z, int count) {
@@ -227,6 +287,36 @@ public final class ServerAbsoluteInvisibilitySystem {
 		return (value & 1L) == 0L;
 	}
 
+	private static boolean isArmorSlot(EquipmentSlot slot) {
+		return slot == EquipmentSlot.HEAD
+				|| slot == EquipmentSlot.CHEST
+				|| slot == EquipmentSlot.LEGS
+				|| slot == EquipmentSlot.FEET;
+	}
+
+	private static void broadcastArmorVisibilityUpdate(ServerPlayer player, boolean hidden) {
+		ServerLevel level = (ServerLevel) player.level();
+		ClientboundSetEquipmentPacket packet = createArmorVisibilityPacket(player, hidden);
+		for (ServerPlayer viewer : level.players()) {
+			viewer.connection.send(packet);
+		}
+	}
+
+	private static ClientboundSetEquipmentPacket createArmorVisibilityPacket(ServerPlayer player, boolean hidden) {
+		List<Pair<EquipmentSlot, ItemStack>> slots = new ArrayList<>(4);
+		slots.add(Pair.of(EquipmentSlot.HEAD, hidden ? ItemStack.EMPTY : player.getItemBySlot(EquipmentSlot.HEAD).copy()));
+		slots.add(Pair.of(EquipmentSlot.CHEST, hidden ? ItemStack.EMPTY : player.getItemBySlot(EquipmentSlot.CHEST).copy()));
+		slots.add(Pair.of(EquipmentSlot.LEGS, hidden ? ItemStack.EMPTY : player.getItemBySlot(EquipmentSlot.LEGS).copy()));
+		slots.add(Pair.of(EquipmentSlot.FEET, hidden ? ItemStack.EMPTY : player.getItemBySlot(EquipmentSlot.FEET).copy()));
+		return new ClientboundSetEquipmentPacket(player.getId(), slots);
+	}
+
+	private static void markSharedFlagsDirty(ServerPlayer player) {
+		EntityDataAccessor<Byte> accessor = EntityTrackedDataAccessor.lg2$getDataSharedFlagsId();
+		byte current = player.getEntityData().get(accessor);
+		player.getEntityData().set(accessor, current, true);
+	}
+
 	private static void tick(MinecraftServer server) {
 		if (ACTIVE_UNTIL_TICK.isEmpty()) {
 			return;
@@ -238,6 +328,10 @@ public final class ServerAbsoluteInvisibilitySystem {
 			Map.Entry<UUID, Long> entry = iterator.next();
 			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
 			if (player == null || nowTick >= entry.getValue() || !player.isAlive() || !player.hasEffect(MobEffects.INVISIBILITY)) {
+				if (player != null) {
+					markSharedFlagsDirty(player);
+					broadcastArmorVisibilityUpdate(player, false);
+				}
 				iterator.remove();
 			}
 		}
