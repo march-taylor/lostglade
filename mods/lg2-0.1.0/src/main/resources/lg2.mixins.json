@@ -12,6 +12,7 @@
 		"CarvedPumpkinBlockGolemGateMixin",
 		"EntityPortalAccessMixin",
 		"EntityKillProtectionMixin",
+		"EntityAbsoluteInvisibilityMixin",
 		"ExampleMixin",
 		"GiantMixin",
 		"MsgCommandMixin",
