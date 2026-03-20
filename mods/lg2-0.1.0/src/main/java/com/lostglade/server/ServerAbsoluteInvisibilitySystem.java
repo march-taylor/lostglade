@@ -42,6 +42,7 @@ public final class ServerAbsoluteInvisibilitySystem {
 	private static final byte SPRINTING_FLAG_MASK = 0x08;
 	private static final Map<UUID, Long> ACTIVE_UNTIL_TICK = new HashMap<>();
 	private static final Map<UUID, RecentBlockAction> RECENT_BLOCK_ACTIONS = new HashMap<>();
+	private static final Map<UUID, Long> PENDING_SELF_INVENTORY_RESYNC = new HashMap<>();
 	private static final int BLOCK_ACTION_SOUND_WINDOW_TICKS = 2;
 
 	private ServerAbsoluteInvisibilitySystem() {
@@ -52,6 +53,7 @@ public final class ServerAbsoluteInvisibilitySystem {
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			ACTIVE_UNTIL_TICK.clear();
 			RECENT_BLOCK_ACTIONS.clear();
+			PENDING_SELF_INVENTORY_RESYNC.clear();
 		});
 		UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
 			if (!world.isClientSide() && player instanceof ServerPlayer serverPlayer) {
@@ -70,6 +72,7 @@ public final class ServerAbsoluteInvisibilitySystem {
 		ACTIVE_UNTIL_TICK.put(player.getUUID(), ((ServerLevel) player.level()).getGameTime() + DURATION_TICKS);
 		markSharedFlagsDirty(player);
 		broadcastArmorVisibilityUpdate(player, true);
+		scheduleSelfInventoryResync(player, 1L);
 	}
 
 	public static MobEffectInstance createEffectInstance() {
@@ -160,6 +163,10 @@ public final class ServerAbsoluteInvisibilitySystem {
 				rewrittenSlots = new ArrayList<>(originalSlots);
 			}
 			rewrittenSlots.set(i, Pair.of(slot.getFirst(), ItemStack.EMPTY));
+		}
+
+		if (rewrittenSlots != null && hiddenPlayer == receiver) {
+			scheduleSelfInventoryResync(receiver, 1L);
 		}
 
 		return rewrittenSlots == null ? packet : new ClientboundSetEquipmentPacket(packet.getEntity(), rewrittenSlots);
@@ -296,9 +303,8 @@ public final class ServerAbsoluteInvisibilitySystem {
 
 	private static void broadcastArmorVisibilityUpdate(ServerPlayer player, boolean hidden) {
 		ServerLevel level = (ServerLevel) player.level();
-		ClientboundSetEquipmentPacket packet = createArmorVisibilityPacket(player, hidden);
 		for (ServerPlayer viewer : level.players()) {
-			viewer.connection.send(packet);
+			viewer.connection.send(createArmorVisibilityPacket(player, hidden));
 		}
 	}
 
@@ -318,31 +324,48 @@ public final class ServerAbsoluteInvisibilitySystem {
 	}
 
 	private static void tick(MinecraftServer server) {
-		if (ACTIVE_UNTIL_TICK.isEmpty()) {
-			return;
-		}
-
 		long nowTick = server.overworld().getGameTime();
-		Iterator<Map.Entry<UUID, Long>> iterator = ACTIVE_UNTIL_TICK.entrySet().iterator();
-		while (iterator.hasNext()) {
-			Map.Entry<UUID, Long> entry = iterator.next();
-			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
-			if (player == null || nowTick >= entry.getValue() || !player.isAlive() || !player.hasEffect(MobEffects.INVISIBILITY)) {
-				if (player != null) {
-					markSharedFlagsDirty(player);
-					broadcastArmorVisibilityUpdate(player, false);
+		if (!ACTIVE_UNTIL_TICK.isEmpty()) {
+			Iterator<Map.Entry<UUID, Long>> iterator = ACTIVE_UNTIL_TICK.entrySet().iterator();
+			while (iterator.hasNext()) {
+				Map.Entry<UUID, Long> entry = iterator.next();
+				ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+				if (player == null || nowTick >= entry.getValue() || !player.isAlive() || !player.hasEffect(MobEffects.INVISIBILITY)) {
+					iterator.remove();
+					if (player != null) {
+						markSharedFlagsDirty(player);
+						broadcastArmorVisibilityUpdate(player, false);
+						scheduleSelfInventoryResync(player, 0L);
+					}
 				}
-				iterator.remove();
 			}
 		}
 
-		Iterator<Map.Entry<UUID, RecentBlockAction>> blockActionIterator = RECENT_BLOCK_ACTIONS.entrySet().iterator();
-		while (blockActionIterator.hasNext()) {
-			Map.Entry<UUID, RecentBlockAction> entry = blockActionIterator.next();
-			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
-			RecentBlockAction action = entry.getValue();
-			if (player == null || !player.isAlive() || !isActive(player) || nowTick > action.untilTick) {
-				blockActionIterator.remove();
+		if (!RECENT_BLOCK_ACTIONS.isEmpty()) {
+			Iterator<Map.Entry<UUID, RecentBlockAction>> blockActionIterator = RECENT_BLOCK_ACTIONS.entrySet().iterator();
+			while (blockActionIterator.hasNext()) {
+				Map.Entry<UUID, RecentBlockAction> entry = blockActionIterator.next();
+				ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+				RecentBlockAction action = entry.getValue();
+				if (player == null || !player.isAlive() || !isActive(player) || nowTick > action.untilTick) {
+					blockActionIterator.remove();
+				}
+			}
+		}
+
+		if (!PENDING_SELF_INVENTORY_RESYNC.isEmpty()) {
+			Iterator<Map.Entry<UUID, Long>> iterator = PENDING_SELF_INVENTORY_RESYNC.entrySet().iterator();
+			while (iterator.hasNext()) {
+				Map.Entry<UUID, Long> entry = iterator.next();
+				if (nowTick < entry.getValue()) {
+					continue;
+				}
+
+				ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+				if (player != null) {
+					syncPlayerInventory(player);
+				}
+				iterator.remove();
 			}
 		}
 	}
@@ -353,6 +376,21 @@ public final class ServerAbsoluteInvisibilitySystem {
 				player.getUUID(),
 				new RecentBlockAction(level.dimension(), pos.immutable(), level.getGameTime() + BLOCK_ACTION_SOUND_WINDOW_TICKS)
 		);
+	}
+
+	private static void scheduleSelfInventoryResync(ServerPlayer player, long delayTicks) {
+		ServerLevel level = (ServerLevel) player.level();
+		PENDING_SELF_INVENTORY_RESYNC.put(player.getUUID(), level.getGameTime() + Math.max(0L, delayTicks));
+	}
+
+	private static void syncPlayerInventory(ServerPlayer player) {
+		player.getInventory().setChanged();
+		player.inventoryMenu.broadcastFullState();
+		player.inventoryMenu.sendAllDataToRemote();
+		if (player.containerMenu != player.inventoryMenu) {
+			player.containerMenu.broadcastFullState();
+			player.containerMenu.sendAllDataToRemote();
+		}
 	}
 
 	private record RecentBlockAction(ResourceKey<Level> dimension, BlockPos pos, long untilTick) {
