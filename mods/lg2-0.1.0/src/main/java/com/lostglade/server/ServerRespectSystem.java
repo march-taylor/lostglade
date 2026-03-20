@@ -7,6 +7,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.ChatFormatting;
+import net.minecraft.core.particles.ColorParticleOption;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -52,6 +53,15 @@ public final class ServerRespectSystem {
 			ChatFormatting.LIGHT_PURPLE
 	};
 	private static final String[] RAINBOW_LEGACY_CODES = {"&c", "&6", "&e", "&a", "&b", "&9", "&d"};
+	private static final ColorParticleOption[] RESPECT_PARTICLES = {
+			createRespectParticle(0xFFFF2A40),
+			createRespectParticle(0xFFFF7C00),
+			createRespectParticle(0xFFFFD300),
+			createRespectParticle(0xFF4AD643),
+			createRespectParticle(0xFF008CFF),
+			createRespectParticle(0xFF685CFF),
+			createRespectParticle(0xFFCB47FF)
+	};
 	private static final Map<UUID, Long> NEXT_RESPECT_AT_MILLIS = new HashMap<>();
 
 	private ServerRespectSystem() {
@@ -303,7 +313,7 @@ public final class ServerRespectSystem {
 		double centerY = target.getY();
 		double centerZ = target.getZ();
 		double height = target.getBbHeight();
-		double[] radii = {0.72D, 0.94D, 1.16D};
+		double[] radii = {0.60D, 0.80D, 1.00D};
 		double[] heightFactors = {0.22D, 0.56D, 0.9D};
 		int pointsPerRing = 5;
 		for (ServerPlayer viewer : level.players()) {
@@ -314,14 +324,18 @@ public final class ServerRespectSystem {
 			for (int ringIndex = 0; ringIndex < heightFactors.length; ringIndex++) {
 				double y = centerY + height * heightFactors[ringIndex];
 				double angleOffset = (Math.PI / pointsPerRing) * ringIndex;
-				for (double radius : radii) {
+				for (int radiusIndex = 0; radiusIndex < radii.length; radiusIndex++) {
+					double radius = radii[radiusIndex];
 					for (int point = 0; point < pointsPerRing; point++) {
+						if (((ringIndex + radiusIndex + point) & 1) != 0) {
+							continue;
+						}
 						double angle = angleOffset + (Math.PI * 2.0D * point / pointsPerRing);
 						double x = centerX + Math.cos(angle) * radius;
 						double z = centerZ + Math.sin(angle) * radius;
 						level.sendParticles(
 								viewer,
-								ParticleTypes.TOTEM_OF_UNDYING,
+								getRespectParticle(ringIndex, radiusIndex, point),
 								false,
 								true,
 								x,
@@ -339,19 +353,28 @@ public final class ServerRespectSystem {
 
 			level.sendParticles(
 					viewer,
-					ParticleTypes.TOTEM_OF_UNDYING,
+					getRespectParticle(heightFactors.length, radii.length, 0),
 					false,
 					true,
 					centerX,
 					centerY + height + 0.2D,
 					centerZ,
-					3,
+					1,
 					0.1D,
 					0.06D,
 					0.1D,
 					0.02D
 			);
 		}
+	}
+
+	private static ColorParticleOption getRespectParticle(int ringIndex, int radiusIndex, int pointIndex) {
+		int index = Math.floorMod(ringIndex * 3 + radiusIndex * 2 + pointIndex, RESPECT_PARTICLES.length);
+		return RESPECT_PARTICLES[index];
+	}
+
+	private static ColorParticleOption createRespectParticle(int argbColor) {
+		return ColorParticleOption.create(ParticleTypes.ENTITY_EFFECT, argbColor);
 	}
 
 	private static void playRespectSound(ServerPlayer target) {
