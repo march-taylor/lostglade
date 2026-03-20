@@ -90,12 +90,7 @@ public final class ServerAbsoluteInvisibilitySystem {
 		}
 
 		long nowTick = ((ServerLevel) player.level()).getGameTime();
-		if (nowTick >= untilTick || !player.isAlive() || !player.hasEffect(MobEffects.INVISIBILITY)) {
-			ACTIVE_UNTIL_TICK.remove(player.getUUID());
-			return false;
-		}
-
-		return true;
+		return nowTick < untilTick && player.isAlive() && player.hasEffect(MobEffects.INVISIBILITY);
 	}
 
 	public static boolean shouldSuppressOutgoingPacket(ServerPlayer receiver, Packet<?> packet) {
