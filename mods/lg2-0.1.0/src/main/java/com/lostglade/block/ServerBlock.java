@@ -1,6 +1,7 @@
 package com.lostglade.block;
 
 import com.lostglade.server.ServerStructureBreakSystem;
+import com.lostglade.server.ServerStabilitySystem;
 import com.lostglade.server.ServerUpgradeUiSystem;
 import eu.pb4.polymer.core.api.block.SimplePolymerBlock;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
@@ -87,6 +88,7 @@ public class ServerBlock extends SimplePolymerBlock {
 			serverLevel.setBlock(targetPos, ModBlocks.SERVER.defaultBlockState(), 3);
 		}
 
+		ServerStabilitySystem.onServerStructurePlaced(serverLevel, pos);
 		spawnServerDisplay(serverLevel, pos, forward, axis);
 		serverLevel.playSound(null, pos, SoundEvents.UI_TOAST_CHALLENGE_COMPLETE, SoundSource.BLOCKS, 1.0F, 1.0F);
 		spawnStructureParticles(serverLevel, structurePositions);

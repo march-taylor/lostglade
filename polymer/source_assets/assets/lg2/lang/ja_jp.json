@@ -16,5 +16,8 @@
     "item.lg2.server":  "サーバ",
     "item.lg2.special_pickaxe":  "特殊なツルハシ",
     "item.lg2.absolute_invisibility_potion":  "完全不可視のポーション",
+    "item.lg2.stability_potion":  "安定性のポーション",
+    "item.lg2.long_stability_potion":  "安定性のポーション+",
+    "item.lg2.greater_stability_potion":  "安定性のポーションII",
     "lg2.respect.actionbar":  "リスペクト!"
 }

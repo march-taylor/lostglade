@@ -16,5 +16,8 @@
     "item.lg2.server":  "Сервер",
     "item.lg2.special_pickaxe":  "Особлива кирка",
     "item.lg2.absolute_invisibility_potion":  "Зілля абсолютної невидимості",
+    "item.lg2.stability_potion":  "Зілля стабільності",
+    "item.lg2.long_stability_potion":  "Зілля стабільності +",
+    "item.lg2.greater_stability_potion":  "Зілля стабільності II",
     "lg2.respect.actionbar":  "Повага!"
 }

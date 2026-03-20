@@ -117,6 +117,14 @@ public final class ServerStructureBreakSystem {
 		display.addTag(DISPLAY_AXIS_PREFIX + (axis == Direction.Axis.X ? "x" : "z"));
 	}
 
+	public static boolean isServerStructureDisplay(Entity entity) {
+		return entity.getTags().contains(DISPLAY_ROOT_TAG);
+	}
+
+	public static Optional<BlockPos> getServerStructureDisplayAnchor(Entity entity) {
+		return parseAnchorTag(entity);
+	}
+
 	public static boolean isInternalStructureRemoval(ServerLevel level, BlockPos pos) {
 		return INTERNAL_REMOVAL_POSITIONS.contains(new GuardedBlockPos(level.dimension(), pos.immutable()));
 	}
@@ -212,6 +220,7 @@ public final class ServerStructureBreakSystem {
 	}
 
 	private static void destroyStructureAndDropCenter(ServerLevel level, BlockPos anchor, List<BlockPos> positions) {
+		ServerStabilitySystem.onServerStructureRemoved(level, anchor);
 		markInternalRemoval(level, positions, true);
 		try {
 			for (BlockPos pos : positions) {
