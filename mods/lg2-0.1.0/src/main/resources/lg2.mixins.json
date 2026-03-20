@@ -22,6 +22,8 @@
 		"RabbitAccessor",
 		"RabbitNaturalSpawnMarkerMixin",
 		"ResultSlotMechanicsGateMixin",
+		"ServerCommonPacketListenerAbsoluteInvisibilityMixin",
+		"ServerLevelAbsoluteInvisibilityMixin",
 		"ServerItemEntityMixin",
 		"ServerPlayerBackroomsRespawnMixin",
 		"ServerPlayerMenuTitleMixin",
