@@ -195,7 +195,7 @@ public final class ServerAbsoluteInvisibilitySystem {
 			return false;
 		}
 
-		return shouldSuppressHalf(hiddenPlayer, packet.getSeed());
+		return shouldSuppressMostly(hiddenPlayer, packet.getSeed());
 	}
 
 	private static boolean shouldSuppressSoundPacketFor(ServerPlayer viewer, ClientboundSoundPacket packet) {
@@ -207,7 +207,7 @@ public final class ServerAbsoluteInvisibilitySystem {
 				}
 
 				if (isNearMovementSoundOrigin(hiddenPlayer, packet.getX(), packet.getY(), packet.getZ())) {
-					return shouldSuppressHalf(hiddenPlayer, packet.getSeed());
+					return shouldSuppressMostly(hiddenPlayer, packet.getSeed());
 				}
 			}
 
@@ -235,7 +235,7 @@ public final class ServerAbsoluteInvisibilitySystem {
 			}
 
 			if (isNearBlockActionSoundOrigin(action.pos, packet.getX(), packet.getY(), packet.getZ())) {
-				return shouldSuppressHalf(hiddenPlayer, packet.getSeed());
+				return shouldSuppressMostly(hiddenPlayer, packet.getSeed());
 			}
 		}
 
@@ -282,9 +282,9 @@ public final class ServerAbsoluteInvisibilitySystem {
 		return (dx * dx + dy * dy + dz * dz) <= 6.25D;
 	}
 
-	private static boolean shouldSuppressHalf(ServerPlayer player, long seed) {
+	private static boolean shouldSuppressMostly(ServerPlayer player, long seed) {
 		long value = player.getUUID().getMostSignificantBits() ^ player.getUUID().getLeastSignificantBits() ^ seed;
-		return (value & 1L) == 0L;
+		return Math.floorMod(value, 10L) < 8L;
 	}
 
 	private static boolean isArmorSlot(EquipmentSlot slot) {
