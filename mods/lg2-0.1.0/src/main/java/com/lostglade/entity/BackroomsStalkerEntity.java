@@ -87,19 +87,22 @@ public final class BackroomsStalkerEntity extends Monster {
 	private static final int FORGET_TARGET_AFTER_TICKS = 100;
 	private static final int ATTACK_COOLDOWN_TICKS = 20;
 	private static final int TARGET_SCAN_INTERVAL_TICKS = 1;
+	private static final int TARGET_IDLE_SCAN_INTERVAL_TICKS = 1;
 	private static final int CHASE_REPATH_TICKS = 8;
 	private static final int CHASE_STUCK_REPATH_INTERVAL_TICKS = 3;
 	private static final int CHASE_STUCK_REPATH_AFTER_TICKS = 12;
 	private static final double CHASE_STUCK_MOVE_THRESHOLD_SQR = 0.01D;
-	private static final int CHASE_DETOUR_ATTEMPTS = 36;
+	private static final int CHASE_DETOUR_ATTEMPTS = 12;
 	private static final int CHASE_DETOUR_MIN_DISTANCE = 8;
 	private static final int CHASE_DETOUR_MAX_DISTANCE = 36;
 	private static final int CHASE_DETOUR_Y_SEARCH = 2;
+	private static final int CHASE_DETOUR_COOLDOWN_TICKS = 8;
 	private static final float CHASE_DIRECT_PATH_DIST_TOLERANCE = 1.5F;
 	private static final float CHASE_MAX_VISITED_NODES_MULTIPLIER = 10.0F;
+	private static final float WANDER_MAX_VISITED_NODES_MULTIPLIER = 6.0F;
 	private static final double STEP_JUMP_MIN_DELTA_Y = 0.45D;
 	private static final double STEP_JUMP_MAX_DELTA_Y = 1.25D;
-	private static final int SIGHT_CACHE_TTL_TICKS = 2;
+	private static final int SIGHT_CACHE_TTL_TICKS = 3;
 	private static final int SIGHT_CACHE_MAX_ENTRIES = 32;
 	private static final double SKIN_SCREAMER_TRIGGER_RADIUS_SQR = 32.0D * 32.0D;
 	private static final double SKIN_SCREAMER_MIN_LOOK_DOT = 0.8660254D; // ~30 degrees from center
@@ -110,11 +113,16 @@ public final class BackroomsStalkerEntity extends Monster {
 	private static final int SKIN_SCREAMER_MASK_PHASE_MAX_TICKS = 3;
 	private static final int SKIN_SCREAMER_GAP_PHASE_MIN_TICKS = 1;
 	private static final int SKIN_SCREAMER_GAP_PHASE_MAX_TICKS = 5;
+	private static final int SKIN_SCREAMER_LOOK_CHECK_INTERVAL_TICKS = 4;
+	private static final int SKIN_SCREAMER_MASK_PREWARM_INTERVAL_TICKS = 20;
 	private static final long MASKED_SKIN_RETRY_COOLDOWN_MS = 15_000L;
-	private static final int MIN_WANDER_DISTANCE = 8;
-	private static final int MAX_WANDER_DISTANCE = 24;
-	private static final int MAX_WANDER_ATTEMPTS = 30;
-	private static final int WANDER_REPATH_TICKS = 10;
+	private static final int MIN_WANDER_DISTANCE = 10;
+	private static final int MAX_WANDER_DISTANCE = 30;
+	private static final int MAX_WANDER_ATTEMPTS = 20;
+	private static final int WANDER_REPATH_TICKS = 8;
+	private static final int WANDER_SEARCH_COOLDOWN_TICKS = 6;
+	private static final int MAX_WANDER_PATH_CHECKS = 3;
+	private static final double TRANSPARENT_SIGHT_STEP_BLOCKS = 0.35D;
 	private static final int MAX_VERTICAL_SEARCH = 3;
 	private static final int STUCK_REPATH_TICKS = 15;
 	private static final float WANDER_HEAD_PITCH = 45.0F;
@@ -138,7 +146,9 @@ public final class BackroomsStalkerEntity extends Monster {
 	private long nextAttackTick = 0L;
 	private long nextTargetScanTick = 0L;
 	private long nextChaseRepathTick = 0L;
+	private long nextChaseDetourTick = 0L;
 	private long nextWanderRefreshTick = 0L;
+	private long nextWanderSearchTick = 0L;
 	private int chaseStuckTicks = 0;
 	private Vec3 lastChasePos = Vec3.ZERO;
 	private int stationaryTicks = 0;
@@ -251,7 +261,7 @@ public final class BackroomsStalkerEntity extends Monster {
 				this.lastChasePos = this.position();
 			}
 			updateChaseMovement(level, nowTick, target);
-			updateTouchDamage(level, nowTick);
+			updateTouchDamage(level, nowTick, target);
 		} else {
 			this.chasingTarget = false;
 			updateWanderMovement(level, nowTick);
@@ -261,7 +271,15 @@ public final class BackroomsStalkerEntity extends Monster {
 	}
 
 	private ServerPlayer resolveTargetForTick(ServerLevel level, long nowTick) {
-		if (nowTick >= this.nextTargetScanTick || this.trackedTargetUuid == null) {
+		if (this.trackedTargetUuid == null) {
+			if (nowTick < this.nextTargetScanTick) {
+				return null;
+			}
+			this.nextTargetScanTick = nowTick + TARGET_IDLE_SCAN_INTERVAL_TICKS;
+			return updateTrackedTarget(level, nowTick);
+		}
+
+		if (nowTick >= this.nextTargetScanTick) {
 			this.nextTargetScanTick = nowTick + TARGET_SCAN_INTERVAL_TICKS;
 			return updateTrackedTarget(level, nowTick);
 		}
@@ -380,33 +398,24 @@ public final class BackroomsStalkerEntity extends Monster {
 			return true;
 		}
 
-		Vec3 unit = direction.normalize();
-		Vec3 rayStart = start;
-		for (int i = 0; i < 256; i++) {
-			BlockHitResult hit = level.clip(new net.minecraft.world.level.ClipContext(
-					rayStart,
-					end,
-					net.minecraft.world.level.ClipContext.Block.COLLIDER,
-					net.minecraft.world.level.ClipContext.Fluid.NONE,
-					this
-			));
-			if (hit.getType() == HitResult.Type.MISS) {
-				return true;
+		int steps = Math.max(1, net.minecraft.util.Mth.ceil(distance / TRANSPARENT_SIGHT_STEP_BLOCKS));
+		Vec3 step = direction.scale(1.0D / steps);
+		BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
+		BlockPos.MutableBlockPos lastPos = new BlockPos.MutableBlockPos(Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE);
+		Vec3 current = start;
+		for (int i = 1; i < steps; i++) {
+			current = current.add(step);
+			mutablePos.set(current.x, current.y, current.z);
+			if (mutablePos.equals(lastPos)) {
+				continue;
 			}
-
-			BlockPos hitPos = hit.getBlockPos();
-			if (blocksSight(level, hitPos)) {
+			lastPos.set(mutablePos);
+			if (blocksSight(level, mutablePos)) {
 				return false;
 			}
-
-			Vec3 nextStart = hit.getLocation().add(unit.scale(0.03125D));
-			if (nextStart.distanceToSqr(rayStart) < 1.0E-8D || nextStart.distanceToSqr(end) < 1.0E-8D) {
-				return true;
-			}
-			rayStart = nextStart;
 		}
 
-		return false;
+		return true;
 	}
 
 	private boolean blocksSight(ServerLevel level, BlockPos pos) {
@@ -436,15 +445,18 @@ public final class BackroomsStalkerEntity extends Monster {
 		this.trackedTargetUuid = null;
 		this.lastSeenTargetTick = Long.MIN_VALUE;
 		this.nextChaseRepathTick = 0L;
+		this.nextChaseDetourTick = 0L;
 		this.chaseStuckTicks = 0;
 		this.lastChasePos = this.position();
 		this.chaseDetourTarget = null;
 		this.wanderTarget = null;
+		this.nextWanderSearchTick = 0L;
 		this.stationaryTicks = 0;
 		this.sightCache.clear();
 	}
 
 	private void updateChaseMovement(ServerLevel level, long nowTick, ServerPlayer target) {
+		this.getNavigation().setMaxVisitedNodesMultiplier(CHASE_MAX_VISITED_NODES_MULTIPLIER);
 		Vec3 currentPos = this.position();
 		if (currentPos.distanceToSqr(this.lastChasePos) < CHASE_STUCK_MOVE_THRESHOLD_SQR) {
 			this.chaseStuckTicks++;
@@ -454,17 +466,28 @@ public final class BackroomsStalkerEntity extends Monster {
 		this.lastChasePos = currentPos;
 
 		boolean hardStuck = this.chaseStuckTicks >= CHASE_STUCK_REPATH_AFTER_TICKS;
+		boolean hasActivePath = this.getNavigation().isInProgress() && !this.getNavigation().isDone();
 		boolean shouldRepath = nowTick >= this.nextChaseRepathTick
 				|| this.getNavigation().isDone()
 				|| this.getNavigation().isStuck()
 				|| hardStuck;
 		if (shouldRepath) {
-			ChasePathPlan plan = buildBestChasePlan(level, target);
+			boolean allowDetourSearch = nowTick >= this.nextChaseDetourTick && (hardStuck || !hasActivePath);
+			ChasePathPlan plan = buildBestChasePlan(level, target, allowDetourSearch);
+			boolean moved = false;
 			if (plan != null && this.getNavigation().moveTo(plan.path(), CHASE_SPEED_MODIFIER)) {
+				moved = true;
 				this.chaseDetourTarget = plan.detourTarget();
-			} else {
+			}
+			if (!moved && !hasActivePath) {
+				moved = this.getNavigation().moveTo(target, CHASE_SPEED_MODIFIER);
+			}
+			if (!moved && !hasActivePath) {
 				this.getNavigation().stop();
 				this.chaseDetourTarget = null;
+			}
+			if (allowDetourSearch) {
+				this.nextChaseDetourTick = nowTick + CHASE_DETOUR_COOLDOWN_TICKS;
 			}
 			this.nextChaseRepathTick = nowTick + (hardStuck ? CHASE_STUCK_REPATH_INTERVAL_TICKS : CHASE_REPATH_TICKS);
 		}
@@ -478,10 +501,16 @@ public final class BackroomsStalkerEntity extends Monster {
 		lookAtTarget(target);
 	}
 
-	private ChasePathPlan buildBestChasePlan(ServerLevel level, ServerPlayer target) {
+	private ChasePathPlan buildBestChasePlan(ServerLevel level, ServerPlayer target, boolean allowDetourSearch) {
 		Path directPath = this.getNavigation().createPath(target, 0);
 		if (directPath != null && directPath.canReach() && directPath.getDistToTarget() <= CHASE_DIRECT_PATH_DIST_TOLERANCE) {
 			return new ChasePathPlan(directPath, null);
+		}
+		if (directPath != null && (!allowDetourSearch || directPath.canReach())) {
+			return new ChasePathPlan(directPath, null);
+		}
+		if (!allowDetourSearch) {
+			return null;
 		}
 
 		Path bestPath = directPath;
@@ -535,6 +564,7 @@ public final class BackroomsStalkerEntity extends Monster {
 	}
 
 	private void updateWanderMovement(ServerLevel level, long nowTick) {
+		this.getNavigation().setMaxVisitedNodesMultiplier(WANDER_MAX_VISITED_NODES_MULTIPLIER);
 		Vec3 currentPos = this.position();
 		if (currentPos.distanceToSqr(this.lastTickPos) < 0.0025D) {
 			this.stationaryTicks++;
@@ -546,17 +576,20 @@ public final class BackroomsStalkerEntity extends Monster {
 		boolean reachedTarget = this.wanderTarget != null && currentPos.distanceToSqr(this.wanderTarget) < 2.25D;
 		boolean pathInvalid = this.getNavigation().isDone() || this.stationaryTicks >= STUCK_REPATH_TICKS;
 		boolean needsNewTarget = this.wanderTarget == null || reachedTarget || pathInvalid;
-		if (needsNewTarget) {
+		if (needsNewTarget && nowTick >= this.nextWanderSearchTick) {
 			this.wanderTarget = pickWanderTarget(level);
 			this.stationaryTicks = 0;
 			this.nextWanderRefreshTick = 0L;
+			this.nextWanderSearchTick = nowTick + WANDER_SEARCH_COOLDOWN_TICKS;
 		}
 
 		boolean shouldRefreshPath = this.wanderTarget != null
 				&& (needsNewTarget || nowTick >= this.nextWanderRefreshTick);
 		if (shouldRefreshPath) {
 			this.nextWanderRefreshTick = nowTick + WANDER_REPATH_TICKS;
-			this.getNavigation().moveTo(this.wanderTarget.x, this.wanderTarget.y, this.wanderTarget.z, 1.0D);
+			if (!this.getNavigation().moveTo(this.wanderTarget.x, this.wanderTarget.y, this.wanderTarget.z, 1.0D)) {
+				this.wanderTarget = null;
+			}
 		} else if (this.wanderTarget == null) {
 			this.getNavigation().stop();
 		}
@@ -567,6 +600,9 @@ public final class BackroomsStalkerEntity extends Monster {
 
 	private Vec3 pickWanderTarget(ServerLevel level) {
 		RandomSource random = this.getRandom();
+		Vec3 fallback = null;
+		double fallbackDistanceSqr = Double.NEGATIVE_INFINITY;
+		int pathChecks = 0;
 		for (int attempt = 0; attempt < MAX_WANDER_ATTEMPTS; attempt++) {
 			double angle = random.nextDouble() * (Math.PI * 2.0D);
 			int distance = MIN_WANDER_DISTANCE + random.nextInt(MAX_WANDER_DISTANCE - MIN_WANDER_DISTANCE + 1);
@@ -578,10 +614,18 @@ public final class BackroomsStalkerEntity extends Monster {
 				if (candidate == null) {
 					continue;
 				}
-				if (candidate.distanceToSqr(this.position()) < (MIN_WANDER_DISTANCE * MIN_WANDER_DISTANCE)) {
+				double candidateDistanceSqr = candidate.distanceToSqr(this.position());
+				if (candidateDistanceSqr < (MIN_WANDER_DISTANCE * MIN_WANDER_DISTANCE)) {
 					continue;
 				}
-
+				if (candidateDistanceSqr > fallbackDistanceSqr) {
+					fallback = candidate;
+					fallbackDistanceSqr = candidateDistanceSqr;
+				}
+				if (pathChecks >= MAX_WANDER_PATH_CHECKS) {
+					continue;
+				}
+				pathChecks++;
 				Path path = this.getNavigation().createPath(net.minecraft.core.BlockPos.containing(candidate), 0);
 				if (path != null && path.canReach()) {
 					return candidate;
@@ -589,7 +633,7 @@ public final class BackroomsStalkerEntity extends Monster {
 			}
 		}
 
-		return null;
+		return fallback;
 	}
 
 	private Vec3 findWalkablePosition(ServerLevel level, int x, int y, int z) {
@@ -634,30 +678,16 @@ public final class BackroomsStalkerEntity extends Monster {
 		return level.noCollision(this, standingBox);
 	}
 
-	private void updateTouchDamage(ServerLevel level, long nowTick) {
+	private void updateTouchDamage(ServerLevel level, long nowTick, ServerPlayer target) {
 		if (nowTick < this.nextAttackTick) {
 			return;
 		}
 
-		ServerPlayer nearestInRange = null;
-		double nearestDistanceSqr = ATTACK_RANGE_SQR + 1.0D;
-		for (ServerPlayer player : level.players()) {
-			if (!isEligibleTarget(player)) {
-				continue;
-			}
-
-			double distanceSqr = this.distanceToSqr(player);
-			if (distanceSqr > ATTACK_RANGE_SQR
-					|| distanceSqr >= nearestDistanceSqr
-					|| !hasTransparentAwareSight(player, nowTick)) {
-				continue;
-			}
-			nearestInRange = player;
-			nearestDistanceSqr = distanceSqr;
-		}
-
-		if (nearestInRange != null) {
-			applyUnstoppableHit(nearestInRange);
+		if (target != null
+				&& isEligibleTarget(target)
+				&& this.distanceToSqr(target) <= ATTACK_RANGE_SQR
+				&& hasTransparentAwareSight(target, nowTick)) {
+			applyUnstoppableHit(target);
 			this.nextAttackTick = nowTick + ATTACK_COOLDOWN_TICKS;
 		}
 	}
@@ -748,9 +778,12 @@ public final class BackroomsStalkerEntity extends Monster {
 				continue;
 			}
 
-			Property prewarmedMasked = prepareMaskedSkin(viewer);
-			boolean lookingNow = isViewerLookingAtStalker(viewer, nowTick);
-			boolean maskReady = prewarmedMasked != null;
+			boolean lookingNow = state.lookingNow;
+			if (state.togglesRemaining > 0 || nowTick >= state.nextLookCheckTick) {
+				lookingNow = isViewerLookingAtStalker(viewer, nowTick);
+				state.lookingNow = lookingNow;
+				state.nextLookCheckTick = nowTick + (lookingNow ? 1L : SKIN_SCREAMER_LOOK_CHECK_INTERVAL_TICKS);
+			}
 
 			if (!lookingNow) {
 				state.wasLooking = false;
@@ -762,6 +795,13 @@ public final class BackroomsStalkerEntity extends Monster {
 					applyViewerSkinState(viewer, false);
 				}
 				continue;
+			}
+
+			boolean maskReady = state.maskReady;
+			if (!maskReady || nowTick >= state.nextMaskPrewarmTick) {
+				maskReady = prepareMaskedSkin(viewer) != null;
+				state.maskReady = maskReady;
+				state.nextMaskPrewarmTick = nowTick + SKIN_SCREAMER_MASK_PREWARM_INTERVAL_TICKS;
 			}
 
 			if (!state.wasLooking && maskReady && level.random.nextFloat() < SKIN_SCREAMER_BLINK_CHANCE) {
@@ -1286,14 +1326,22 @@ public final class BackroomsStalkerEntity extends Monster {
 
 	private static final class ViewerSkinScreamerState {
 		private boolean wasLooking = false;
+		private boolean lookingNow = false;
 		private boolean showMasked = false;
+		private boolean maskReady = false;
 		private int togglesRemaining = 0;
+		private long nextLookCheckTick = 0L;
+		private long nextMaskPrewarmTick = 0L;
 		private long nextToggleTick = 0L;
 
 		private void reset() {
 			this.wasLooking = false;
+			this.lookingNow = false;
 			this.showMasked = false;
+			this.maskReady = false;
 			this.togglesRemaining = 0;
+			this.nextLookCheckTick = 0L;
+			this.nextMaskPrewarmTick = 0L;
 			this.nextToggleTick = 0L;
 		}
 	}
