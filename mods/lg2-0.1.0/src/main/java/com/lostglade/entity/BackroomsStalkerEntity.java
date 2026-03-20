@@ -75,6 +75,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class BackroomsStalkerEntity extends Monster {
@@ -86,6 +87,7 @@ public final class BackroomsStalkerEntity extends Monster {
 	private static final double ATTACK_RANGE_SQR = ATTACK_RANGE * ATTACK_RANGE;
 	private static final double TARGET_ACQUIRE_DISTANCE_SQR = 96.0D * 96.0D;
 	private static final int FORGET_TARGET_AFTER_TICKS = 100;
+	private static final int CHASE_LAST_SEEN_DIRECT_MOVE_TICKS = 20;
 	private static final int ATTACK_COOLDOWN_TICKS = 20;
 	private static final int TARGET_SCAN_INTERVAL_TICKS = 1;
 	private static final int TARGET_IDLE_SCAN_INTERVAL_TICKS = 2;
@@ -140,6 +142,7 @@ public final class BackroomsStalkerEntity extends Monster {
 	private static final Map<UUID, Map<UUID, Boolean>> MASKED_SKIN_VIEWER_STATE = new ConcurrentHashMap<>();
 	private static final Map<String, Property> MASKED_SKIN_BY_SOURCE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, Long> MASKED_SKIN_RETRY_AT_MS = new ConcurrentHashMap<>();
+	private static final Set<String> MASKED_SKIN_BUILD_IN_FLIGHT = ConcurrentHashMap.newKeySet();
 	private static volatile BufferedImage STALKER_MASK_IMAGE;
 	private static volatile boolean MINESKIN_RELOADED_LAZILY = false;
 
@@ -154,6 +157,7 @@ public final class BackroomsStalkerEntity extends Monster {
 	private int chaseStuckTicks = 0;
 	private Vec3 lastChasePos = Vec3.ZERO;
 	private Vec3 lastChasePathTargetPos = Vec3.ZERO;
+	private Vec3 lastSeenTargetPos = Vec3.ZERO;
 	private int stationaryTicks = 0;
 	private Vec3 lastTickPos = Vec3.ZERO;
 	private Vec3 chaseDetourTarget;
@@ -322,6 +326,7 @@ public final class BackroomsStalkerEntity extends Monster {
 		if (nearestTarget != null) {
 			this.trackedTargetUuid = nearestTarget.getUUID();
 			this.lastSeenTargetTick = nowTick;
+			this.lastSeenTargetPos = nearestTarget.position();
 			return nearestTarget;
 		}
 
@@ -342,6 +347,7 @@ public final class BackroomsStalkerEntity extends Monster {
 
 		if (hasTransparentAwareSight(player, nowTick)) {
 			this.lastSeenTargetTick = nowTick;
+			this.lastSeenTargetPos = player.position();
 			return player;
 		}
 
@@ -452,6 +458,7 @@ public final class BackroomsStalkerEntity extends Monster {
 		this.chaseStuckTicks = 0;
 		this.lastChasePos = this.position();
 		this.lastChasePathTargetPos = Vec3.ZERO;
+		this.lastSeenTargetPos = Vec3.ZERO;
 		this.chaseDetourTarget = null;
 		this.wanderTarget = null;
 		this.nextWanderSearchTick = 0L;
@@ -475,7 +482,19 @@ public final class BackroomsStalkerEntity extends Monster {
 			this.getNavigation().stop();
 			this.chaseDetourTarget = null;
 			this.lastChasePathTargetPos = targetPos;
+			this.lastSeenTargetPos = targetPos;
 			this.getMoveControl().setWantedPosition(targetPos.x, targetPos.y, targetPos.z, CHASE_SPEED_MODIFIER);
+			lookInMovementDirection();
+			lookAtTarget(target);
+			return;
+		}
+
+		if (this.lastSeenTargetTick != Long.MIN_VALUE
+				&& nowTick - this.lastSeenTargetTick <= CHASE_LAST_SEEN_DIRECT_MOVE_TICKS
+				&& this.lastSeenTargetPos != Vec3.ZERO) {
+			this.getNavigation().stop();
+			this.chaseDetourTarget = null;
+			this.getMoveControl().setWantedPosition(this.lastSeenTargetPos.x, this.lastSeenTargetPos.y, this.lastSeenTargetPos.z, CHASE_SPEED_MODIFIER);
 			lookInMovementDirection();
 			lookAtTarget(target);
 			return;
@@ -492,24 +511,14 @@ public final class BackroomsStalkerEntity extends Monster {
 				|| !hasActivePath
 				|| targetMoved;
 		if (shouldRepath) {
-			boolean moved = false;
-			boolean allowDetourSearch = nowTick >= this.nextChaseDetourTick && hardStuck;
-			if (!moved) {
-				ChasePathPlan plan = buildBestChasePlan(level, target, allowDetourSearch);
-				if (plan != null && this.getNavigation().moveTo(plan.path(), CHASE_SPEED_MODIFIER)) {
-					moved = true;
-					this.chaseDetourTarget = plan.detourTarget();
-				}
-			}
+			boolean moved = this.getNavigation().moveTo(target, CHASE_SPEED_MODIFIER);
+			this.chaseDetourTarget = null;
 			if (!moved && !hasActivePath) {
 				this.getNavigation().stop();
 				this.chaseDetourTarget = null;
 			}
 			if (moved) {
 				this.lastChasePathTargetPos = targetPos;
-			}
-			if (allowDetourSearch) {
-				this.nextChaseDetourTick = nowTick + CHASE_DETOUR_COOLDOWN_TICKS;
 			}
 			this.nextChaseRepathTick = nowTick + (hardStuck ? CHASE_STUCK_REPATH_INTERVAL_TICKS : CHASE_REPATH_TICKS);
 		}
@@ -952,7 +961,7 @@ public final class BackroomsStalkerEntity extends Monster {
 
 			Property selectedSkin = sourceSkin;
 			if (useMaskedSkin) {
-				Property maskedSkin = resolveMaskedViewerSkin(viewer, sourceSkin);
+				Property maskedSkin = getCachedMaskedViewerSkin(sourceSkin);
 				if (maskedSkin != null) {
 					selectedSkin = maskedSkin;
 				}
@@ -986,12 +995,7 @@ public final class BackroomsStalkerEntity extends Monster {
 		if (sourceSkin == null) {
 			return null;
 		}
-		return resolveMaskedViewerSkin(viewer, sourceSkin);
-	}
-
-	private static Property resolveMaskedViewerSkin(ServerPlayer viewer, Property sourceSkin) {
-		String sourceValue = sourceSkin.value();
-		String sourceCacheKey = sourceValue + "|" + STALKER_MASK_CACHE_VERSION;
+		String sourceCacheKey = getMaskedSkinSourceCacheKey(sourceSkin);
 		Property cached = MASKED_SKIN_BY_SOURCE_CACHE.get(sourceCacheKey);
 		if (cached != null) {
 			return cached;
@@ -1003,7 +1007,40 @@ public final class BackroomsStalkerEntity extends Monster {
 			return null;
 		}
 
-		Property generated = null;
+		queueMaskedSkinBuild(viewer.getScoreboardName(), sourceSkin, sourceCacheKey, nowMs);
+		return null;
+	}
+
+	private static void queueMaskedSkinBuild(String viewerName, Property sourceSkin, String sourceCacheKey, long nowMs) {
+		if (!MASKED_SKIN_BUILD_IN_FLIGHT.add(sourceCacheKey)) {
+			return;
+		}
+
+		CompletableFuture.runAsync(() -> {
+			Property generated = null;
+			try {
+				generated = buildMaskedViewerSkin(sourceSkin, viewerName);
+			} finally {
+				if (generated != null) {
+					MASKED_SKIN_BY_SOURCE_CACHE.put(sourceCacheKey, generated);
+					MASKED_SKIN_RETRY_AT_MS.remove(sourceCacheKey);
+				} else {
+					MASKED_SKIN_RETRY_AT_MS.put(sourceCacheKey, nowMs + MASKED_SKIN_RETRY_COOLDOWN_MS);
+				}
+				MASKED_SKIN_BUILD_IN_FLIGHT.remove(sourceCacheKey);
+			}
+		});
+	}
+
+	private static String getMaskedSkinSourceCacheKey(Property sourceSkin) {
+		return sourceSkin.value() + "|" + STALKER_MASK_CACHE_VERSION;
+	}
+
+	private static Property getCachedMaskedViewerSkin(Property sourceSkin) {
+		return MASKED_SKIN_BY_SOURCE_CACHE.get(getMaskedSkinSourceCacheKey(sourceSkin));
+	}
+
+	private static Property buildMaskedViewerSkin(Property sourceSkin, String viewerName) {
 		try {
 			Pair<String, SkinVariant> skinData = PlayerUtils.getSkinUrl(sourceSkin);
 			if (skinData == null || skinData.first() == null || skinData.first().isBlank()) {
@@ -1019,20 +1056,13 @@ public final class BackroomsStalkerEntity extends Monster {
 
 			BufferedImage preparedSkinImage = blendHeadOuterLayerOntoBaseAndClear(sourceSkinImage);
 			BufferedImage composed = composeMaskedSkin(preparedSkinImage, maskImage);
-			java.nio.file.Path composedPath = writeComposedSkin(sourceCacheKey, composed);
+			java.nio.file.Path composedPath = writeComposedSkin(getMaskedSkinSourceCacheKey(sourceSkin), composed);
 			SkinVariant variant = skinData.second() == null ? SkinVariant.CLASSIC : skinData.second();
-			generated = signMaskedSkin(composedPath.toUri(), variant);
+			return signMaskedSkin(composedPath.toUri(), variant);
 		} catch (Exception exception) {
-			Lg2.LOGGER.debug("Failed to build masked stalker skin for {}", viewer.getScoreboardName(), exception);
+			Lg2.LOGGER.debug("Failed to build masked stalker skin for {}", viewerName, exception);
+			return null;
 		}
-
-		if (generated != null) {
-			MASKED_SKIN_BY_SOURCE_CACHE.put(sourceCacheKey, generated);
-			MASKED_SKIN_RETRY_AT_MS.remove(sourceCacheKey);
-		} else {
-			MASKED_SKIN_RETRY_AT_MS.put(sourceCacheKey, nowMs + MASKED_SKIN_RETRY_COOLDOWN_MS);
-		}
-		return generated;
 	}
 
 	private static Property signMaskedSkin(URI skinUri, SkinVariant variant) {
