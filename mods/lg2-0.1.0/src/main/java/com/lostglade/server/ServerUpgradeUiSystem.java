@@ -16,11 +16,13 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
+import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundContainerClosePacket;
 import net.minecraft.network.protocol.game.ClientboundOpenScreenPacket;
@@ -29,6 +31,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.Container;
@@ -78,7 +81,7 @@ public final class ServerUpgradeUiSystem {
 	private static final String TOOLTIP_ICON_COIN = "\ue981";
 	private static final String NO_PACK_COIN = "₿";
 	private static final int MAIN_BALANCE_CENTER_X = 127;
-	private static final int ERAS_BALANCE_CENTER_X = 127;
+	private static final int ERAS_BALANCE_CENTER_X = 129;
 	private static final int BALANCE_DIGIT_WIDTH = 6;
 	private static final int TOOLTIP_DESCRIPTION_WRAP = 42;
 	private static final int TOOLTIP_DESCRIPTION_WRAP_CJK = 22;
@@ -97,6 +100,11 @@ public final class ServerUpgradeUiSystem {
 	private static final int MAIN_SCREEN_VARIANT_SPIN = 2;
 	private static final int MAIN_SCREEN_VARIANT_ARCHIVE = 3;
 	private static final int MENU_VISUAL_RESYNC_TICKS = 3;
+	private static final Identifier PURCHASE_BLOCKED_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "ui_purchase_blocked");
+	private static final float PURCHASE_BLOCKED_SOUND_VOLUME = 0.8F;
+	private static final float PURCHASE_BLOCKED_SOUND_PITCH = 1.0F;
+	private static final float PURCHASE_BLOCKED_FALLBACK_VOLUME = 0.75F;
+	private static final float PURCHASE_BLOCKED_FALLBACK_PITCH = 0.95F;
 	private static final String[] ERAS_PROGRESS_GLYPHS = createGlyphSequence(
 			ERAS_PROGRESS_GLYPHS_BASE,
 			ERAS_PROGRESS_FRAME_COUNT
@@ -105,8 +113,8 @@ public final class ServerUpgradeUiSystem {
 			ERAS_AVAILABLE_GLYPHS_BASE,
 			ERAS_PURCHASE_STAGE_COUNT + 1
 	);
-	private static final UpgradeUiConfig.IconConfig ERA_SLOT_INVISIBLE_ICON = createTransientIcon("minecraft:paper", "lg2:gui/button/invisible", false);
-	private static final UpgradeUiConfig.IconConfig ERA_SLOT_LOCK_ICON = createTransientIcon("minecraft:paper", "lg2:gui/button/eras_lock", false);
+	private static final UpgradeUiConfig.IconConfig MENU_INVISIBLE_ICON = createTransientIcon("minecraft:paper", "lg2:gui/button/invisible", false);
+	private static final UpgradeUiConfig.IconConfig MENU_LOCK_ICON = createTransientIcon("minecraft:paper", "lg2:gui/button/eras_lock", false);
 	private static final UpgradeUiConfig.IconConfig MAIN_LOGO_GLITCH_ICON = createTransientIcon("minecraft:paper", "lg2:gui/main_logo/glitch", false);
 	private static final UpgradeUiConfig.IconConfig MAIN_LOGO_DVD_ICON = createTransientIcon("minecraft:paper", "lg2:gui/main_logo/dvd", false);
 	private static final UpgradeUiConfig.IconConfig MAIN_LOGO_ARCHIVE_ICON = createTransientIcon("minecraft:paper", "lg2:gui/main_logo/archive", false);
@@ -408,7 +416,7 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	private static ItemStack buildFillerStack(UpgradeUiConfig.IconConfig icon, boolean hasPack) {
-		ItemStack stack = createBaseStack(icon, hasPack);
+		ItemStack stack = createBaseStack(hasPack ? MENU_INVISIBLE_ICON : icon, hasPack);
 		stack.set(DataComponents.CUSTOM_NAME, Component.literal(" "));
 		return stack;
 	}
@@ -461,15 +469,28 @@ public final class ServerUpgradeUiSystem {
 			return mainLogoOverlayIcon(viewer);
 		}
 
-		if ("eras".equals(screenId) && isEraUpgrade(button.upgradeId)) {
-			return isEraLockSlot(viewer, button.upgradeId) ? ERA_SLOT_LOCK_ICON : ERA_SLOT_INVISIBLE_ICON;
+		if (shouldShowPurchaseLock(viewer, button, state)) {
+			return MENU_LOCK_ICON;
 		}
 
-		return switch (state) {
-			case LOCKED -> button.lockedIcon;
-			case MAXED -> button.maxedIcon;
-			case ACTIVE -> button.icon;
-		};
+		return hasPack ? MENU_INVISIBLE_ICON : button.icon;
+	}
+
+	private static boolean shouldShowPurchaseLock(
+			ServerPlayer player,
+			UpgradeUiConfig.ButtonConfig button,
+			ButtonState state
+	) {
+		if (button == null || !UpgradeUiConfig.ButtonType.PURCHASE_UPGRADE.id.equals(button.type)) {
+			return false;
+		}
+		if (state == ButtonState.MAXED) {
+			return false;
+		}
+		if (state == ButtonState.LOCKED) {
+			return true;
+		}
+		return getUpgradeLevel(player, button.upgradeId) <= 0;
 	}
 
 	private static Component buildTooltipNameComponent(
@@ -742,8 +763,13 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	private static ItemStack createBaseStack(UpgradeUiConfig.IconConfig icon, boolean hasPack) {
-		Identifier itemId = Identifier.tryParse(icon.fallbackItem);
-		Item fallbackItem = itemId == null ? Items.PAPER : BuiltInRegistries.ITEM.getOptional(itemId).orElse(Items.PAPER);
+		Item fallbackItem;
+		if (hasPack) {
+			fallbackItem = Items.PAPER;
+		} else {
+			Identifier itemId = Identifier.tryParse(icon.fallbackItem);
+			fallbackItem = itemId == null ? Items.PAPER : BuiltInRegistries.ITEM.getOptional(itemId).orElse(Items.PAPER);
+		}
 		ItemStack stack = new ItemStack(fallbackItem, Math.max(1, Math.min(64, icon.count)));
 
 		if (hasPack && icon.packModel != null && !icon.packModel.isBlank()) {
@@ -910,7 +936,7 @@ public final class ServerUpgradeUiSystem {
 			UpgradeUiConfig.ButtonConfig button
 	) {
 		if (!meetsRequirements(player, button)) {
-			playUiClick(player, false);
+			playPurchaseBlockedSound(player);
 			sendPlayerMessage(player, localizeSystem(player, "This upgrade is locked.", "Это улучшение пока заблокировано."));
 			return true;
 		}
@@ -924,7 +950,7 @@ public final class ServerUpgradeUiSystem {
 
 		int cost = button.pricesBitcoins.get(currentLevel);
 		if (!consumeBitcoins(player, cost)) {
-			playUiClick(player, false);
+			playPurchaseBlockedSound(player);
 			sendPlayerMessage(player, localizeSystem(player, "Not enough bitcoins.", "Недостаточно биткоинов."));
 			return true;
 		}
@@ -1275,9 +1301,7 @@ public final class ServerUpgradeUiSystem {
 
 	private static int balanceStartX(String screenId, int bitcoinCount) {
 		int centerX = "eras".equals(screenId) ? ERAS_BALANCE_CENTER_X : MAIN_BALANCE_CENTER_X;
-		if (!"main".equals(screenId) && !"eras".equals(screenId)) {
-			centerX += 1;
-		}
+		centerX += 1;
 		int digits = Integer.toString(Math.max(0, bitcoinCount)).length();
 		int width = digits * BALANCE_DIGIT_WIDTH;
 		return Math.max(0, centerX - (width / 2));
@@ -1728,6 +1752,39 @@ public final class ServerUpgradeUiSystem {
 				0.7F,
 				1.2F
 		);
+	}
+
+	private static void playPurchaseBlockedSound(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+
+		long seed = player.level().random.nextLong();
+		if (PolymerResourcePackUtils.hasMainPack(player)) {
+			Holder<SoundEvent> sound = Holder.direct(SoundEvent.createVariableRangeEvent(PURCHASE_BLOCKED_SOUND_ID));
+			player.connection.send(new ClientboundSoundPacket(
+					sound,
+					SoundSource.PLAYERS,
+					player.getX(),
+					player.getY(),
+					player.getZ(),
+					PURCHASE_BLOCKED_SOUND_VOLUME,
+					PURCHASE_BLOCKED_SOUND_PITCH,
+					seed
+			));
+			return;
+		}
+
+		player.connection.send(new ClientboundSoundPacket(
+				BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.VILLAGER_NO),
+				SoundSource.PLAYERS,
+				player.getX(),
+				player.getY(),
+				player.getZ(),
+				PURCHASE_BLOCKED_FALLBACK_VOLUME,
+				PURCHASE_BLOCKED_FALLBACK_PITCH,
+				seed
+		));
 	}
 
 	private static int getUpgradeLevel(ServerPlayer player, String upgradeId) {

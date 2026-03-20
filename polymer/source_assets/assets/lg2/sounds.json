@@ -1,0 +1,10 @@
+{
+  "ui_purchase_blocked": {
+    "sounds": [
+      {
+        "name": "lg2:ui_purchase_blocked",
+        "preload": true
+      }
+    ]
+  }
+}
