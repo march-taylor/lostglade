@@ -17,6 +17,8 @@
 		"EntityTrackedDataAccessor",
 		"GiantMixin",
 		"IllusionerMixin",
+		"LivingEntityAbsoluteInvisibilityCombatMixin",
+		"LivingEntityAbsoluteInvisibilityMixin",
 		"MsgCommandMixin",
 		"MobDeathLootMixin",
 		"PlayerContainerMenuAccessor",
@@ -30,6 +32,8 @@
 		"ServerItemEntityMixin",
 		"ServerPlayerBackroomsRespawnMixin",
 		"ServerPlayerMenuTitleMixin",
+		"TemptGoalAbsoluteInvisibilityMixin",
+		"TargetingConditionsAbsoluteInvisibilityMixin",
 		"WoodlandMansionIllusionerSpawnMixin",
 		"ZombieNaturalSpawnMarkerMixin"
 	],

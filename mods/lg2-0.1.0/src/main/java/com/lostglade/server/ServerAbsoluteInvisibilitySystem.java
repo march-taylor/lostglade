@@ -25,24 +25,32 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.AABB;
 import com.mojang.datafixers.util.Pair;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public final class ServerAbsoluteInvisibilitySystem {
 	private static final int DURATION_TICKS = 8 * 60 * 20;
 	private static final byte SPRINTING_FLAG_MASK = 0x08;
+	private static final long COMBAT_REVEAL_GRACE_TICKS = 100L;
 	private static final Map<UUID, Long> ACTIVE_UNTIL_TICK = new HashMap<>();
 	private static final Map<UUID, RecentBlockAction> RECENT_BLOCK_ACTIONS = new HashMap<>();
 	private static final Map<UUID, Long> PENDING_SELF_INVENTORY_RESYNC = new HashMap<>();
+	private static final Map<UUID, Map<UUID, Long>> COMBAT_REVEALS = new HashMap<>();
+	private static final Map<UUID, Set<UUID>> TEMPT_REVEALS = new HashMap<>();
 	private static final int BLOCK_ACTION_SOUND_WINDOW_TICKS = 2;
 
 	private ServerAbsoluteInvisibilitySystem() {
@@ -54,6 +62,8 @@ public final class ServerAbsoluteInvisibilitySystem {
 			ACTIVE_UNTIL_TICK.clear();
 			RECENT_BLOCK_ACTIONS.clear();
 			PENDING_SELF_INVENTORY_RESYNC.clear();
+			COMBAT_REVEALS.clear();
+			TEMPT_REVEALS.clear();
 		});
 		UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
 			if (!world.isClientSide() && player instanceof ServerPlayer serverPlayer) {
@@ -91,6 +101,52 @@ public final class ServerAbsoluteInvisibilitySystem {
 
 		long nowTick = ((ServerLevel) player.level()).getGameTime();
 		return nowTick < untilTick && player.isAlive() && player.hasEffect(MobEffects.INVISIBILITY);
+	}
+
+	public static boolean suppressesMobDetection(Entity entity) {
+		if (isActive(entity)) {
+			return true;
+		}
+		if (!(entity instanceof LivingEntity livingEntity)) {
+			return false;
+		}
+
+		MobEffectInstance effect = livingEntity.getEffect(MobEffects.INVISIBILITY);
+		return effect != null && !effect.isVisible();
+	}
+
+	public static boolean shouldSuppressMobDetection(Mob mob, LivingEntity target) {
+		return suppressesMobDetection(target) && !isRevealedToMob(mob, target);
+	}
+
+	public static void revealMobToPlayer(Mob mob, ServerPlayer player) {
+		if (!suppressesMobDetection(player)) {
+			return;
+		}
+
+		ServerLevel level = (ServerLevel) player.level();
+		COMBAT_REVEALS
+				.computeIfAbsent(player.getUUID(), ignored -> new HashMap<>())
+				.put(mob.getUUID(), level.getGameTime() + COMBAT_REVEAL_GRACE_TICKS);
+	}
+
+	public static void beginTemptReveal(Mob mob, ServerPlayer player) {
+		if (!suppressesMobDetection(player)) {
+			return;
+		}
+
+		TEMPT_REVEALS.computeIfAbsent(player.getUUID(), ignored -> new HashSet<>()).add(mob.getUUID());
+	}
+
+	public static void endTemptReveal(Mob mob, ServerPlayer player) {
+		Set<UUID> mobIds = TEMPT_REVEALS.get(player.getUUID());
+		if (mobIds == null) {
+			return;
+		}
+		mobIds.remove(mob.getUUID());
+		if (mobIds.isEmpty()) {
+			TEMPT_REVEALS.remove(player.getUUID());
+		}
 	}
 
 	public static boolean shouldSuppressOutgoingPacket(ServerPlayer receiver, Packet<?> packet) {
@@ -332,6 +388,65 @@ public final class ServerAbsoluteInvisibilitySystem {
 						broadcastArmorVisibilityUpdate(player, false);
 						scheduleSelfInventoryResync(player, 0L);
 					}
+					COMBAT_REVEALS.remove(entry.getKey());
+					TEMPT_REVEALS.remove(entry.getKey());
+				} else if ((nowTick & 7L) == 0L) {
+					clearNearbyMobTargets(player);
+				}
+			}
+		}
+
+		if (!COMBAT_REVEALS.isEmpty()) {
+			Iterator<Map.Entry<UUID, Map<UUID, Long>>> iterator = COMBAT_REVEALS.entrySet().iterator();
+			while (iterator.hasNext()) {
+				Map.Entry<UUID, Map<UUID, Long>> playerEntry = iterator.next();
+				ServerPlayer player = server.getPlayerList().getPlayer(playerEntry.getKey());
+				if (player == null || !player.isAlive() || !suppressesMobDetection(player)) {
+					iterator.remove();
+					continue;
+				}
+
+				Iterator<Map.Entry<UUID, Long>> revealIterator = playerEntry.getValue().entrySet().iterator();
+				while (revealIterator.hasNext()) {
+					Map.Entry<UUID, Long> revealEntry = revealIterator.next();
+					Mob mob = findMob(server, revealEntry.getKey());
+					if (mob == null || !mob.isAlive() || mob.level() != player.level()) {
+						revealIterator.remove();
+						continue;
+					}
+
+					if (mob.getTarget() == player) {
+						revealEntry.setValue(nowTick + COMBAT_REVEAL_GRACE_TICKS);
+						continue;
+					}
+
+					if (nowTick > revealEntry.getValue()) {
+						revealIterator.remove();
+					}
+				}
+
+				if (playerEntry.getValue().isEmpty()) {
+					iterator.remove();
+				}
+			}
+		}
+
+		if (!TEMPT_REVEALS.isEmpty()) {
+			Iterator<Map.Entry<UUID, Set<UUID>>> iterator = TEMPT_REVEALS.entrySet().iterator();
+			while (iterator.hasNext()) {
+				Map.Entry<UUID, Set<UUID>> entry = iterator.next();
+				ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+				if (player == null || !player.isAlive() || !suppressesMobDetection(player)) {
+					iterator.remove();
+					continue;
+				}
+
+				entry.getValue().removeIf(mobId -> {
+					Mob mob = findMob(server, mobId);
+					return mob == null || !mob.isAlive() || mob.level() != player.level();
+				});
+				if (entry.getValue().isEmpty()) {
+					iterator.remove();
 				}
 			}
 		}
@@ -386,6 +501,41 @@ public final class ServerAbsoluteInvisibilitySystem {
 			player.containerMenu.broadcastFullState();
 			player.containerMenu.sendAllDataToRemote();
 		}
+	}
+
+	private static void clearNearbyMobTargets(ServerPlayer hiddenPlayer) {
+		ServerLevel level = (ServerLevel) hiddenPlayer.level();
+		AABB searchArea = hiddenPlayer.getBoundingBox().inflate(96.0D, 32.0D, 96.0D);
+		for (Mob mob : level.getEntitiesOfClass(Mob.class, searchArea)) {
+			if (mob.getTarget() != hiddenPlayer || isRevealedToMob(mob, hiddenPlayer)) {
+				continue;
+			}
+			mob.setTarget(null);
+		}
+	}
+
+	private static boolean isRevealedToMob(Mob mob, LivingEntity target) {
+		if (!(target instanceof ServerPlayer player)) {
+			return false;
+		}
+
+		Set<UUID> temptMobIds = TEMPT_REVEALS.get(player.getUUID());
+		if (temptMobIds != null && temptMobIds.contains(mob.getUUID())) {
+			return true;
+		}
+
+		Map<UUID, Long> combatMobIds = COMBAT_REVEALS.get(player.getUUID());
+		return combatMobIds != null && combatMobIds.containsKey(mob.getUUID());
+	}
+
+	private static Mob findMob(MinecraftServer server, UUID mobId) {
+		for (ServerLevel level : server.getAllLevels()) {
+			Entity entity = level.getEntity(mobId);
+			if (entity instanceof Mob mob) {
+				return mob;
+			}
+		}
+		return null;
 	}
 
 	private record RecentBlockAction(ResourceKey<Level> dimension, BlockPos pos, long untilTick) {
