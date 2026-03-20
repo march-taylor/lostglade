@@ -683,6 +683,60 @@
       ]
     },
     {
+      "type": "bitmap",
+      "file": "minecraft:font/respect_rainbow_en_us.png",
+      "ascent": 7,
+      "height": 8,
+      "chars": [
+        "\uee00\uee01\uee02\uee03\uee04\uee05\uee06\uee07"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/respect_rainbow_ru_ru.png",
+      "ascent": 7,
+      "height": 8,
+      "chars": [
+        "\uee10\uee11\uee12\uee13\uee14\uee15\uee16\uee17"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/respect_rainbow_uk_ua.png",
+      "ascent": 7,
+      "height": 8,
+      "chars": [
+        "\uee20\uee21\uee22\uee23\uee24\uee25\uee26"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/respect_rainbow_rpr.png",
+      "ascent": 7,
+      "height": 8,
+      "chars": [
+        "\uee30\uee31\uee32\uee33\uee34\uee35\uee36\uee37\uee38"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/respect_rainbow_ja_jp.png",
+      "ascent": 7,
+      "height": 8,
+      "chars": [
+        "\uee40\uee41\uee42\uee43\uee44\uee45"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/respect_rainbow_digits.png",
+      "ascent": 7,
+      "height": 8,
+      "chars": [
+        "\uee80\uee81\uee82\uee83\uee84\uee85\uee86\uee87\uee88\uee89"
+      ]
+    },
+    {
       "type": "reference",
       "id": "minecraft:include/space"
     },

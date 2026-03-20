@@ -5,11 +5,13 @@ import me.neznamy.tab.api.TabAPI;
 import me.neznamy.tab.api.TabPlayer;
 import me.neznamy.tab.api.event.player.PlayerLoadEvent;
 import me.neznamy.tab.api.placeholder.PlaceholderManager;
+import me.neznamy.tab.api.placeholder.RelationalPlaceholder;
 import me.neznamy.tab.api.tablist.TabListFormatManager;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.server.level.ServerPlayer;
 
 import java.util.UUID;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -74,6 +76,25 @@ public final class ServerTabIntegration {
 		PlaceholderManager manager = api.getPlaceholderManager();
 		manager.unregisterPlaceholder(identifier);
 		manager.registerServerPlaceholder(identifier, refreshMillis, resolver);
+	}
+
+	public static RelationalPlaceholder registerRelationalPlaceholder(String identifier, int refreshMillis,
+			BiFunction<ServerPlayer, ServerPlayer, String> resolver) {
+		TabAPI api = getApi();
+		if (api == null) {
+			return null;
+		}
+
+		PlaceholderManager manager = api.getPlaceholderManager();
+		manager.unregisterPlaceholder(identifier);
+		return manager.registerRelationalPlaceholder(identifier, refreshMillis, (viewer, target) -> {
+			Object rawViewer = viewer.getPlayer();
+			Object rawTarget = target.getPlayer();
+			if (rawViewer instanceof ServerPlayer viewerPlayer && rawTarget instanceof ServerPlayer targetPlayer) {
+				return resolver.apply(viewerPlayer, targetPlayer);
+			}
+			return "";
+		});
 	}
 
 	public static void setTabSuffix(ServerPlayer player, String suffix) {

@@ -1,6 +1,7 @@
 package com.lostglade.server;
 
 import com.lostglade.config.Lg2Config;
+import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
@@ -9,6 +10,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -23,21 +25,47 @@ import net.minecraft.world.scores.Scoreboard;
 import net.minecraft.world.scores.criteria.ObjectiveCriteria;
 
 import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
 public final class ServerRespectSystem {
 	private static final String OBJECTIVE_NAME = "lg2_respects";
-	private static final String ACTIONBAR_TRANSLATION_KEY = "lg2.respect.actionbar";
+	private static final String TAB_RESPECT_RELATIONAL_PLACEHOLDER = "%rel_lg2_respect_suffix%";
 	private static final Component OBJECTIVE_TITLE = Component.literal("Р РµСЃРїРµРєС‚С‹");
 	private static final double RESPECT_PARTICLE_VIEW_DISTANCE_SQR = 32.0D * 32.0D;
+	private static final String PACK_ACTIONBAR_EN = "\uEE00\uEE01\uEE02\uEE03\uEE04\uEE05\uEE06\uEE07";
+	private static final String PACK_ACTIONBAR_RU = "\uEE10\uEE11\uEE12\uEE13\uEE14\uEE15\uEE16\uEE17";
+	private static final String PACK_ACTIONBAR_UK = "\uEE20\uEE21\uEE22\uEE23\uEE24\uEE25\uEE26";
+	private static final String PACK_ACTIONBAR_RPR = "\uEE30\uEE31\uEE32\uEE33\uEE34\uEE35\uEE36\uEE37\uEE38";
+	private static final String PACK_ACTIONBAR_JA = "\uEE40\uEE41\uEE42\uEE43\uEE44\uEE45";
+	private static final int DIGIT_GLYPH_BASE = 0xEE80;
+	private static final ChatFormatting[] RAINBOW_CHAT_COLORS = {
+			ChatFormatting.RED,
+			ChatFormatting.GOLD,
+			ChatFormatting.YELLOW,
+			ChatFormatting.GREEN,
+			ChatFormatting.AQUA,
+			ChatFormatting.BLUE,
+			ChatFormatting.LIGHT_PURPLE
+	};
+	private static final String[] RAINBOW_LEGACY_CODES = {"&c", "&6", "&e", "&a", "&b", "&9", "&d"};
 	private static final Map<UUID, Long> NEXT_RESPECT_AT_MILLIS = new HashMap<>();
 
 	private ServerRespectSystem() {
 	}
 
 	public static void register() {
-		ServerLifecycleEvents.SERVER_STARTED.register(ServerRespectSystem::refreshAllTabSuffixes);
+		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+			ServerTabIntegration.registerRelationalPlaceholder(
+					TAB_RESPECT_RELATIONAL_PLACEHOLDER,
+					250,
+					ServerRespectSystem::buildViewerAwareTabSuffix
+			);
+			refreshAllTabSuffixes(server);
+		});
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> NEXT_RESPECT_AT_MILLIS.clear());
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> refreshTabSuffix((ServerPlayer) handler.player));
 		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> refreshTabSuffix(newPlayer));
@@ -76,7 +104,49 @@ public final class ServerRespectSystem {
 	}
 
 	private static void refreshTabSuffix(ServerPlayer player) {
-		ServerTabIntegration.setTabSuffix(player, " &3[" + getRespectCount(player) + "]");
+		ServerTabIntegration.setTabSuffix(player, TAB_RESPECT_RELATIONAL_PLACEHOLDER);
+	}
+
+	private static String buildViewerAwareTabSuffix(ServerPlayer viewer, ServerPlayer target) {
+		int respectCount = getRespectCount(target);
+		return PolymerResourcePackUtils.hasMainPack(viewer)
+				? " &f" + toPackDigitString(respectCount)
+				: " " + rainbowLegacy(Integer.toString(respectCount), getFallbackRainbowOffset(viewer, target));
+	}
+
+	private static int getFallbackRainbowOffset(ServerPlayer viewer, ServerPlayer target) {
+		List<ServerPlayer> orderedPlayers = getOrderedTabPlayers(viewer);
+		int offset = 0;
+		for (ServerPlayer player : orderedPlayers) {
+			if (player.getUUID().equals(target.getUUID())) {
+				return offset;
+			}
+			offset += Integer.toString(Math.max(0, getRespectCount(player))).length();
+		}
+		return 0;
+	}
+
+	private static List<ServerPlayer> getOrderedTabPlayers(ServerPlayer viewer) {
+		List<ServerPlayer> orderedPlayers = new ArrayList<>();
+		var api = ServerTabIntegration.getApi();
+		if (api != null) {
+			for (var tabPlayer : api.getOnlinePlayers()) {
+				Object rawPlayer = tabPlayer.getPlayer();
+				if (rawPlayer instanceof ServerPlayer serverPlayer) {
+					orderedPlayers.add(serverPlayer);
+				}
+			}
+		}
+
+		if (!orderedPlayers.isEmpty()) {
+			return orderedPlayers;
+		}
+
+		MinecraftServer server = viewer.level().getServer();
+		if (server == null) {
+			return orderedPlayers;
+		}
+		return new ArrayList<>(server.getPlayerList().getPlayers());
 	}
 
 	private static int addRespect(ServerPlayer target) {
@@ -127,10 +197,100 @@ public final class ServerRespectSystem {
 	}
 
 	private static void showRespectActionbar(ServerPlayer player) {
-		player.displayClientMessage(
-				Component.translatable(ACTIONBAR_TRANSLATION_KEY).withStyle(ChatFormatting.DARK_AQUA),
-				true
-		);
+		if (PolymerResourcePackUtils.hasMainPack(player)) {
+			player.displayClientMessage(
+					Component.literal(packRespectActionbar(player))
+							.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)),
+					true
+			);
+			return;
+		}
+
+		player.displayClientMessage(buildRainbowActionbar(player), true);
+	}
+
+	private static MutableComponent buildRainbowActionbar(ServerPlayer player) {
+		return rainbowComponent(localizedRespectActionbar(player));
+	}
+
+	private static String packRespectActionbar(ServerPlayer player) {
+		String locale = normalizeLocale(player);
+		if (locale.startsWith("rpr")) {
+			return PACK_ACTIONBAR_RPR;
+		}
+		if (locale.startsWith("uk")) {
+			return PACK_ACTIONBAR_UK;
+		}
+		if (locale.startsWith("ja")) {
+			return PACK_ACTIONBAR_JA;
+		}
+		if (locale.startsWith("ru")) {
+			return PACK_ACTIONBAR_RU;
+		}
+		return PACK_ACTIONBAR_EN;
+	}
+
+	private static String localizedRespectActionbar(ServerPlayer player) {
+		String locale = normalizeLocale(player);
+		if (locale.startsWith("rpr")) {
+			return "Почтѣніе!";
+		}
+		if (locale.startsWith("uk")) {
+			return "Повага!";
+		}
+		if (locale.startsWith("ja")) {
+			return "リスペクト!";
+		}
+		if (locale.startsWith("ru")) {
+			return "Респект!";
+		}
+		return "Respect!";
+	}
+
+	private static String toPackDigitString(int value) {
+		String digits = Integer.toString(Math.max(0, value));
+		StringBuilder builder = new StringBuilder(digits.length());
+		for (int index = 0; index < digits.length(); index++) {
+			char digit = digits.charAt(index);
+			if (digit >= '0' && digit <= '9') {
+				builder.append((char) (DIGIT_GLYPH_BASE + (digit - '0')));
+			}
+		}
+		return builder.toString();
+	}
+
+	private static MutableComponent rainbowComponent(String text) {
+		MutableComponent result = Component.empty();
+		for (int index = 0; index < text.length(); index++) {
+			result.append(Component.literal(String.valueOf(text.charAt(index)))
+					.withStyle(RAINBOW_CHAT_COLORS[index % RAINBOW_CHAT_COLORS.length]));
+		}
+		return result;
+	}
+
+	private static String rainbowLegacy(String text) {
+		return rainbowLegacy(text, 0);
+	}
+
+	private static String rainbowLegacy(String text, int startOffset) {
+		StringBuilder result = new StringBuilder(text.length() * 3);
+		for (int index = 0; index < text.length(); index++) {
+			char character = text.charAt(index);
+			if (Character.isWhitespace(character)) {
+				result.append(character);
+				continue;
+			}
+			int colorIndex = Math.floorMod(startOffset + index, RAINBOW_LEGACY_CODES.length);
+			result.append(RAINBOW_LEGACY_CODES[colorIndex]).append(character);
+		}
+		return result.toString();
+	}
+
+	private static String normalizeLocale(ServerPlayer player) {
+		if (player == null || player.clientInformation() == null || player.clientInformation().language() == null) {
+			return "en_us";
+		}
+		return player.clientInformation().language().toLowerCase(Locale.ROOT);
 	}
 
 	private static void spawnRespectParticles(ServerPlayer target) {
@@ -229,4 +389,3 @@ public final class ServerRespectSystem {
 		);
 	}
 }
-
