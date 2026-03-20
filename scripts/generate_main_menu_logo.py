@@ -26,6 +26,9 @@ SPIN_NAME = 'main_menu_logo_spin_anim.png'
 ITEM_GLITCH_NAME = 'glitch_anim.png'
 ITEM_DVD_NAME = 'dvd_anim.png'
 ITEM_SPIN_NAME = 'spin_anim.png'
+ITEM_SCREEN_GLITCH_NAME = 'glitch_screen_anim.png'
+ITEM_SCREEN_DVD_NAME = 'dvd_screen_anim.png'
+ITEM_SCREEN_SPIN_NAME = 'spin_screen_anim.png'
 PREVIEW_GLITCH = PREVIEW_DIR / 'main_menu_logo_preview_glitch.png'
 PREVIEW_DVD = PREVIEW_DIR / 'main_menu_logo_preview_dvd.png'
 PREVIEW_SPIN = PREVIEW_DIR / 'main_menu_logo_preview_spin.png'
@@ -626,8 +629,15 @@ def save_outputs(filename: str, image: Image.Image) -> None:
         image.save(directory / filename)
 
 
-def sheet_to_vertical_strip(sheet: Image.Image, frame_count: int, cols: int) -> Image.Image:
-    strip = Image.new('RGBA', (GLYPH_W, GLYPH_H * frame_count), (0, 0, 0, 0))
+def sheet_to_vertical_strip(
+    sheet: Image.Image,
+    frame_count: int,
+    cols: int,
+    frame_width: int = GLYPH_W,
+    frame_height: int = GLYPH_H,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> Image.Image:
+    strip = Image.new('RGBA', (frame_width, frame_height * frame_count), (0, 0, 0, 0))
     for frame in range(frame_count):
         col = frame % cols
         row = frame // cols
@@ -637,17 +647,19 @@ def sheet_to_vertical_strip(sheet: Image.Image, frame_count: int, cols: int) -> 
             (col + 1) * GLYPH_W,
             (row + 1) * GLYPH_H,
         ))
-        strip.alpha_composite(frame_img, (0, frame * GLYPH_H))
+        if crop_box is not None:
+            frame_img = frame_img.crop(crop_box)
+        strip.alpha_composite(frame_img, (0, frame * frame_height))
     return strip
 
 
-def save_animation_metadata(path: Path, frame_time: int) -> None:
+def save_animation_metadata(path: Path, frame_time: int, frame_width: int, frame_height: int) -> None:
     metadata = {
         'animation': {
             'interpolate': False,
             'frametime': frame_time,
-            'width': GLYPH_W,
-            'height': GLYPH_H,
+            'width': frame_width,
+            'height': frame_height,
         }
     }
     path.with_suffix(path.suffix + '.mcmeta').write_text(
@@ -656,12 +668,18 @@ def save_animation_metadata(path: Path, frame_time: int) -> None:
     )
 
 
-def save_item_animation_outputs(filename: str, image: Image.Image, frame_time: int) -> None:
+def save_item_animation_outputs(
+    filename: str,
+    image: Image.Image,
+    frame_time: int,
+    frame_width: int = GLYPH_W,
+    frame_height: int = GLYPH_H,
+) -> None:
     for directory in ITEM_OUTPUT_DIRS:
         directory.mkdir(parents=True, exist_ok=True)
         target = directory / filename
         image.save(target)
-        save_animation_metadata(target, frame_time)
+        save_animation_metadata(target, frame_time, frame_width, frame_height)
 
 
 def main() -> None:
@@ -695,6 +713,49 @@ def main() -> None:
         ITEM_SPIN_NAME,
         sheet_to_vertical_strip(spin_sheet, SPIN_FRAME_COUNT, SPIN_GRID_COLS),
         SPIN_FRAME_TIME,
+    )
+    screen_crop_box = (SCREEN_X, SCREEN_Y, SCREEN_X + SCREEN_W, SCREEN_Y + SCREEN_H)
+    save_item_animation_outputs(
+        ITEM_SCREEN_GLITCH_NAME,
+        sheet_to_vertical_strip(
+            glitch_sheet,
+            GLITCH_FRAME_COUNT,
+            GLITCH_GRID_COLS,
+            SCREEN_W,
+            SCREEN_H,
+            screen_crop_box,
+        ),
+        GLITCH_FRAME_TIME,
+        SCREEN_W,
+        SCREEN_H,
+    )
+    save_item_animation_outputs(
+        ITEM_SCREEN_DVD_NAME,
+        sheet_to_vertical_strip(
+            dvd_sheet,
+            DVD_FRAME_COUNT,
+            DVD_GRID_COLS,
+            SCREEN_W,
+            SCREEN_H,
+            screen_crop_box,
+        ),
+        DVD_FRAME_TIME,
+        SCREEN_W,
+        SCREEN_H,
+    )
+    save_item_animation_outputs(
+        ITEM_SCREEN_SPIN_NAME,
+        sheet_to_vertical_strip(
+            spin_sheet,
+            SPIN_FRAME_COUNT,
+            SPIN_GRID_COLS,
+            SCREEN_W,
+            SCREEN_H,
+            screen_crop_box,
+        ),
+        SPIN_FRAME_TIME,
+        SCREEN_W,
+        SCREEN_H,
     )
     build_preview(glitch_sheet, PREVIEW_GLITCH)
     build_preview(dvd_sheet, PREVIEW_DVD)

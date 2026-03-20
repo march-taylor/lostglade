@@ -22,6 +22,7 @@ TEMP_DIR = ROOT / '.tmp' / 'backrooms_archive_frames'
 PREVIEW_PATH = ROOT / '.tmp' / 'main_menu_logo_archive_preview.png'
 OUTPUT_NAME = 'main_menu_logo_archive_anim.png'
 ITEM_OUTPUT_NAME = 'archive_anim.png'
+ITEM_SCREEN_OUTPUT_NAME = 'archive_screen_anim.png'
 
 CANVAS_W = 176
 CANVAS_H = 204
@@ -176,8 +177,13 @@ def save_sheet(sheet: Image.Image) -> None:
         sheet.save(directory / OUTPUT_NAME)
 
 
-def sheet_to_vertical_strip(sheet: Image.Image) -> Image.Image:
-    strip = Image.new('RGBA', (CANVAS_W, CANVAS_H * FRAME_COUNT), (0, 0, 0, 0))
+def sheet_to_vertical_strip(
+    sheet: Image.Image,
+    frame_width: int = CANVAS_W,
+    frame_height: int = CANVAS_H,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> Image.Image:
+    strip = Image.new('RGBA', (frame_width, frame_height * FRAME_COUNT), (0, 0, 0, 0))
     for index in range(FRAME_COUNT):
         col = index % GRID_COLS
         row = index // GRID_COLS
@@ -187,17 +193,19 @@ def sheet_to_vertical_strip(sheet: Image.Image) -> Image.Image:
             (col + 1) * CANVAS_W,
             (row + 1) * CANVAS_H,
         ))
-        strip.alpha_composite(frame, (0, index * CANVAS_H))
+        if crop_box is not None:
+            frame = frame.crop(crop_box)
+        strip.alpha_composite(frame, (0, index * frame_height))
     return strip
 
 
-def save_animation_metadata(path: Path) -> None:
+def save_animation_metadata(path: Path, frame_width: int, frame_height: int) -> None:
     metadata = {
         'animation': {
             'interpolate': False,
             'frametime': FRAME_TIME,
-            'width': CANVAS_W,
-            'height': CANVAS_H,
+            'width': frame_width,
+            'height': frame_height,
         }
     }
     path.with_suffix(path.suffix + '.mcmeta').write_text(
@@ -206,12 +214,12 @@ def save_animation_metadata(path: Path) -> None:
     )
 
 
-def save_item_animation(strip: Image.Image) -> None:
+def save_item_animation(filename: str, strip: Image.Image, frame_width: int, frame_height: int) -> None:
     for directory in ITEM_OUTPUT_DIRS:
         directory.mkdir(parents=True, exist_ok=True)
-        target = directory / ITEM_OUTPUT_NAME
+        target = directory / filename
         strip.save(target)
-        save_animation_metadata(target)
+        save_animation_metadata(target, frame_width, frame_height)
 
 
 def main() -> None:
@@ -226,7 +234,14 @@ def main() -> None:
         sheet.alpha_composite(composed, (x, y))
 
     save_sheet(sheet)
-    save_item_animation(sheet_to_vertical_strip(sheet))
+    save_item_animation(ITEM_OUTPUT_NAME, sheet_to_vertical_strip(sheet), CANVAS_W, CANVAS_H)
+    screen_crop_box = (SCREEN_X, SCREEN_Y, SCREEN_X + SCREEN_W, SCREEN_Y + SCREEN_H)
+    save_item_animation(
+        ITEM_SCREEN_OUTPUT_NAME,
+        sheet_to_vertical_strip(sheet, SCREEN_W, SCREEN_H, screen_crop_box),
+        SCREEN_W,
+        SCREEN_H,
+    )
     PREVIEW_PATH.parent.mkdir(parents=True, exist_ok=True)
     preview = Image.new('RGBA', sheet.size, (8, 8, 8, 255))
     preview.alpha_composite(sheet)

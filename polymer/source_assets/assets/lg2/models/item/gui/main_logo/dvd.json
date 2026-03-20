@@ -1,13 +1,7 @@
 {
-  "parent": "minecraft:item/generated",
+  "parent": "lg2:item/gui/main_logo/_display",
   "textures": {
-    "layer0": "lg2:item/gui/main_logo/dvd_anim"
-  },
-  "display": {
-    "gui": {
-      "rotation": [0, 0, 0],
-      "translation": [-72, 77, -16],
-      "scale": [11.0, 12.75, 1.0]
-    }
+    "complete": "lg2:item/gui/main_logo/dvd_screen_anim",
+    "particle": "lg2:item/gui/main_logo/dvd_screen_anim"
   }
 }
