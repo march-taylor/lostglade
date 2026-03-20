@@ -81,12 +81,12 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class BackroomsStalkerEntity extends Monster {
 	private static final EntityDimensions PLAYER_SIZED_DIMENSIONS = EntityDimensions.fixed(0.6F, 1.8F);
 	private static final byte PLAYER_SKIN_PARTS_WITHOUT_CAPE = (byte) 0x7E;
-	private static final double WALK_SPEED = 0.23D;
-	private static final double CHASE_SPEED_MODIFIER = 1.65D;
+	private static final double WALK_SPEED = 0.10D;
+	private static final double CHASE_SPEED_MODIFIER = 1.30D;
 	private static final double ATTACK_RANGE = 2.2D;
 	private static final double ATTACK_RANGE_SQR = ATTACK_RANGE * ATTACK_RANGE;
 	private static final double TARGET_ACQUIRE_DISTANCE_SQR = 96.0D * 96.0D;
-	private static final int FORGET_TARGET_AFTER_TICKS = 100;
+	private static final int FORGET_TARGET_AFTER_TICKS = 200;
 	private static final int CHASE_LAST_SEEN_DIRECT_MOVE_TICKS = 20;
 	private static final int ATTACK_COOLDOWN_TICKS = 20;
 	private static final int TARGET_SCAN_INTERVAL_TICKS = 1;
@@ -512,7 +512,16 @@ public final class BackroomsStalkerEntity extends Monster {
 				|| targetMoved;
 		if (shouldRepath) {
 			boolean moved = this.getNavigation().moveTo(target, CHASE_SPEED_MODIFIER);
+			boolean allowAlternatePath = nowTick >= this.nextChaseDetourTick && (!moved || hardStuck);
 			this.chaseDetourTarget = null;
+			if (!moved && allowAlternatePath) {
+				ChasePathPlan alternatePlan = buildBestChasePlan(level, target, true);
+				if (alternatePlan != null && this.getNavigation().moveTo(alternatePlan.path(), CHASE_SPEED_MODIFIER)) {
+					moved = true;
+					this.chaseDetourTarget = alternatePlan.detourTarget();
+				}
+				this.nextChaseDetourTick = nowTick + CHASE_DETOUR_COOLDOWN_TICKS;
+			}
 			if (!moved && !hasActivePath) {
 				this.getNavigation().stop();
 				this.chaseDetourTarget = null;
@@ -533,65 +542,40 @@ public final class BackroomsStalkerEntity extends Monster {
 	}
 
 	private ChasePathPlan buildBestChasePlan(ServerLevel level, ServerPlayer target, boolean allowDetourSearch) {
-		Path directPath = this.getNavigation().createPath(target, 0);
-		if (directPath != null && directPath.canReach() && directPath.getDistToTarget() <= CHASE_DIRECT_PATH_DIST_TOLERANCE) {
-			return new ChasePathPlan(directPath, null);
-		}
-		if (directPath != null && (!allowDetourSearch || directPath.canReach())) {
-			return new ChasePathPlan(directPath, null);
-		}
 		if (!allowDetourSearch) {
 			return null;
 		}
 
-		Path bestPath = directPath;
-		Vec3 bestDetour = null;
-		double bestScore = directPath == null ? Double.POSITIVE_INFINITY : pathPlanScore(directPath, null, target.position());
-
-		RandomSource random = this.getRandom();
+		Vec3 currentPos = this.position();
 		Vec3 targetPos = target.position();
-		double baseAngle = Math.atan2(this.getZ() - targetPos.z, this.getX() - targetPos.x);
-		int targetY = target.blockPosition().getY();
-		for (int attempt = 0; attempt < CHASE_DETOUR_ATTEMPTS; attempt++) {
-			double direction = (attempt & 1) == 0 ? 1.0D : -1.0D;
-			double sweep = ((attempt / 2) + 1) * (Math.PI / 18.0D);
-			double angle = baseAngle + (direction * sweep) + ((random.nextDouble() - 0.5D) * 0.35D);
-			int distance = randomInclusive(random, CHASE_DETOUR_MIN_DISTANCE, CHASE_DETOUR_MAX_DISTANCE);
-			int x = net.minecraft.util.Mth.floor(targetPos.x + (Math.cos(angle) * distance));
-			int z = net.minecraft.util.Mth.floor(targetPos.z + (Math.sin(angle) * distance));
-
-			for (int yOffset = CHASE_DETOUR_Y_SEARCH; yOffset >= -CHASE_DETOUR_Y_SEARCH; yOffset--) {
-				Vec3 candidate = findWalkablePosition(level, x, targetY + yOffset, z);
-				if (candidate == null || candidate.distanceToSqr(this.position()) < 4.0D) {
-					continue;
-				}
-
-				Path path = this.getNavigation().createPath(net.minecraft.core.BlockPos.containing(candidate), 0);
-				if (path == null || !path.canReach()) {
-					continue;
-				}
-
-				double score = pathPlanScore(path, candidate, targetPos);
-				if (score < bestScore) {
-					bestScore = score;
-					bestPath = path;
-					bestDetour = candidate;
-				}
-			}
-		}
-
-		if (bestPath == null) {
+		double dx = targetPos.x - currentPos.x;
+		double dz = targetPos.z - currentPos.z;
+		double horizontalLength = Math.sqrt((dx * dx) + (dz * dz));
+		if (horizontalLength <= 1.0E-6D) {
 			return null;
 		}
-		return new ChasePathPlan(bestPath, bestDetour);
-	}
 
-	private static double pathPlanScore(Path path, Vec3 detourTarget, Vec3 chaseTargetPos) {
-		double distanceToTarget = detourTarget == null
-				? path.getDistToTarget()
-				: Math.sqrt(detourTarget.distanceToSqr(chaseTargetPos));
-		double reachPenalty = path.canReach() ? 0.0D : 128.0D;
-		return reachPenalty + (distanceToTarget * 3.0D) + path.getNodeCount();
+		double forwardX = dx / horizontalLength;
+		double forwardZ = dz / horizontalLength;
+		double sideX = -forwardZ;
+		double sideZ = forwardX;
+		int forwardDistance = 6;
+		int[] sideOffsets = new int[]{6, -6, 10, -10};
+		int targetY = target.blockPosition().getY();
+		for (int sideOffset : sideOffsets) {
+			int x = net.minecraft.util.Mth.floor(currentPos.x + (forwardX * forwardDistance) + (sideX * sideOffset));
+			int z = net.minecraft.util.Mth.floor(currentPos.z + (forwardZ * forwardDistance) + (sideZ * sideOffset));
+			Vec3 candidate = findWalkablePosition(level, x, targetY, z);
+			if (candidate == null || candidate.distanceToSqr(currentPos) < 4.0D) {
+				continue;
+			}
+
+			Path path = this.getNavigation().createPath(net.minecraft.core.BlockPos.containing(candidate), 0);
+			if (path != null && path.canReach()) {
+				return new ChasePathPlan(path, candidate);
+			}
+		}
+		return null;
 	}
 
 	private void updateWanderMovement(ServerLevel level, long nowTick) {
@@ -754,32 +738,10 @@ public final class BackroomsStalkerEntity extends Monster {
 	}
 
 	private void tryJumpStepUp() {
-		if (!this.onGround() || !this.horizontalCollision || this.isInWater() || this.isInLava()) {
-			return;
-		}
+	}
 
-		if (this.chasingTarget) {
-			this.jumpFromGround();
-			return;
-		}
-
-		PathNavigation navigation = this.getNavigation();
-		if (navigation == null || !navigation.isInProgress()) {
-			return;
-		}
-
-		Path path = navigation.getPath();
-		if (path == null || path.isDone()) {
-			return;
-		}
-
-		Vec3 nextNodePos = path.getNextEntityPos(this);
-		double deltaY = nextNodePos.y - this.getY();
-		if (deltaY < STEP_JUMP_MIN_DELTA_Y || deltaY > STEP_JUMP_MAX_DELTA_Y) {
-			return;
-		}
-
-		this.jumpFromGround();
+	@Override
+	public void jumpFromGround() {
 	}
 
 	private void tickSkinScreamer(ServerLevel level, long nowTick) {
