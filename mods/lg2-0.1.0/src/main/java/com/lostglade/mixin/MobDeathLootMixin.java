@@ -1,11 +1,13 @@
 package com.lostglade.mixin;
 
+import com.lostglade.item.ModItems;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.Giant;
+import net.minecraft.world.entity.monster.illager.Illusioner;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.gamerules.GameRules;
@@ -57,5 +59,17 @@ public abstract class MobDeathLootMixin {
 
 		int count = 24 + giant.getRandom().nextInt(9);
 		giant.spawnAtLocation(level, new ItemStack(Items.ROTTEN_FLESH, count));
+	}
+
+	@Inject(method = "dropCustomDeathLoot", at = @At("TAIL"))
+	private void lg2$dropIllusionerLoot(ServerLevel level, DamageSource damageSource, boolean causedByPlayer, CallbackInfo ci) {
+		if (!((Object) this instanceof Illusioner illusioner)) {
+			return;
+		}
+
+		if (illusioner.getRandom().nextBoolean()) {
+			illusioner.spawnAtLocation(level, new ItemStack(Items.EMERALD));
+		}
+		illusioner.spawnAtLocation(level, new ItemStack(ModItems.ABSOLUTE_INVISIBILITY_POTION));
 	}
 }
