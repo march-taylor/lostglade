@@ -17,6 +17,7 @@
   "stabilityDecayIntervalSecondsPerPlayer": 8,
   "bitcoinsPerStability": 1,
   
+  "backroomsEntitySpawnEnabled": true,
   "backroomsEntitySpawnMinRadiusChunks": 4,
   "backroomsEntitySpawnMaxRadiusChunks": 6,
   "backroomsEntityGroupRadiusChunks": 12,
