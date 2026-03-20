@@ -1,8 +1,10 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
+import com.lostglade.server.ServerBossBarVisibilitySystem;
 import io.netty.channel.ChannelFutureListener;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundBossEventPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.server.level.ServerPlayer;
@@ -28,7 +30,7 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 	}
 
 	private void lg2$processPacket(Packet<?> packet, ChannelFutureListener listener, CallbackInfo ci) {
-		if (LG2_BYPASS.get()) {
+		if (LG2_BYPASS.get() || ServerBossBarVisibilitySystem.shouldBypassPacketFilter()) {
 			return;
 		}
 
@@ -62,6 +64,12 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 				}
 				return;
 			}
+		}
+
+		if (packet instanceof ClientboundBossEventPacket bossEventPacket
+				&& ServerBossBarVisibilitySystem.handleOutgoingBossEventPacket(receiver, bossEventPacket)) {
+			ci.cancel();
+			return;
 		}
 
 		if (ServerAbsoluteInvisibilitySystem.shouldSuppressOutgoingPacket(receiver, packet)) {

@@ -143,7 +143,10 @@ public final class ServerStabilitySystem {
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 				online.add(player.getUUID());
 
-				if (!isLookingAtServerBlock(player)) {
+				boolean lookingAtServer = isLookingAtServerBlock(player);
+				ServerBossBarVisibilitySystem.setServerHudFocus(player, lookingAtServer);
+
+				if (!lookingAtServer) {
 					hideHud(player);
 					continue;
 				}
@@ -565,6 +568,16 @@ public final class ServerStabilitySystem {
 
 		BlockHitResult blockHit = (BlockHitResult) hit;
 		return player.level().getBlockState(blockHit.getBlockPos()).is(ModBlocks.SERVER);
+	}
+
+	public static boolean isHudBossBar(ServerPlayer player, UUID bossBarId) {
+		ServerBossEvent hud = PLAYER_HUDS.get(player.getUUID());
+		if (hud != null && hud.getId().equals(bossBarId)) {
+			return true;
+		}
+
+		ServerBossEvent spacer = PLAYER_SPACER_HUDS.get(player.getUUID());
+		return spacer != null && spacer.getId().equals(bossBarId);
 	}
 
 	private static int getMaxStability() {
