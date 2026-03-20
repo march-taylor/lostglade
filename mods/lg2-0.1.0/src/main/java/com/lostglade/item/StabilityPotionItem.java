@@ -19,6 +19,7 @@ import net.minecraft.world.item.ItemUtils;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.PotionItem;
 import net.minecraft.world.item.alchemy.PotionContents;
+import net.minecraft.world.item.component.ItemLore;
 import net.minecraft.world.item.component.TooltipDisplay;
 import net.minecraft.world.level.Level;
 import xyz.nucleoid.packettweaker.PacketContext;
@@ -28,6 +29,7 @@ import java.util.Optional;
 
 public final class StabilityPotionItem extends PotionItem implements PolymerItem {
 	private static final int POTION_COLOR = 0xF2CD26;
+	private static final int VANILLA_POTION_TEXT_COLOR = 0x5555FF;
 
 	private final Identifier modelId;
 	private final PotionContents contents;
@@ -111,6 +113,7 @@ public final class StabilityPotionItem extends PotionItem implements PolymerItem
 	public void modifyBasePolymerItemStack(ItemStack out, ItemStack original, PacketContext context) {
 		out.set(DataComponents.POTION_CONTENTS, this.contents);
 		out.set(DataComponents.TOOLTIP_DISPLAY, TooltipDisplay.DEFAULT.withHidden(DataComponents.POTION_CONTENTS, true));
+		out.set(DataComponents.LORE, ItemLore.EMPTY.withLineAdded(buildEffectTooltipLine(context)));
 		if (!PolymerResourcePackUtils.hasMainPack(context) || !hasSupportedLanguage(context)) {
 			out.set(DataComponents.CUSTOM_NAME, getLocalizedName(context).withStyle(style -> style.withItalic(false)));
 		}
@@ -139,6 +142,46 @@ public final class StabilityPotionItem extends PotionItem implements PolymerItem
 			return Component.literal(this.fallbackJa);
 		}
 		return Component.literal(this.fallbackEn);
+	}
+
+	private MutableComponent getLocalizedEffectName(PacketContext context) {
+		String normalized = getNormalizedLanguage(context);
+		if (normalized == null) {
+			return Component.literal("Stability");
+		}
+		if (normalized.startsWith("rpr")) {
+			return Component.literal("Стабильность");
+		}
+		if (normalized.startsWith("uk")) {
+			return Component.literal("Стабільність");
+		}
+		if (normalized.startsWith("ru")) {
+			return Component.literal("Стабильность");
+		}
+		if (normalized.startsWith("ja")) {
+			return Component.literal("安定性");
+		}
+		return Component.literal("Stability");
+	}
+
+	private Component buildEffectTooltipLine(PacketContext context) {
+		MutableComponent line = getLocalizedEffectName(context)
+				.withStyle(style -> style.withColor(VANILLA_POTION_TEXT_COLOR).withItalic(false));
+		if (this.anyWorldVisibility) {
+			line.append(Component.literal(" II").withStyle(style -> style.withColor(VANILLA_POTION_TEXT_COLOR).withItalic(false)));
+		}
+		line.append(
+				Component.literal(" (" + formatDuration(this.durationTicks) + ")")
+						.withStyle(style -> style.withColor(VANILLA_POTION_TEXT_COLOR).withItalic(false))
+		);
+		return line;
+	}
+
+	private static String formatDuration(int durationTicks) {
+		int totalSeconds = Math.max(0, durationTicks / 20);
+		int minutes = totalSeconds / 60;
+		int seconds = totalSeconds % 60;
+		return String.format("%d:%02d", minutes, seconds);
 	}
 
 	private boolean hasSupportedLanguage(PacketContext context) {
