@@ -81,13 +81,14 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class BackroomsStalkerEntity extends Monster {
 	private static final EntityDimensions PLAYER_SIZED_DIMENSIONS = EntityDimensions.fixed(0.6F, 1.8F);
 	private static final byte PLAYER_SKIN_PARTS_WITHOUT_CAPE = (byte) 0x7E;
-	private static final double WALK_SPEED = 0.10D;
-	private static final double CHASE_SPEED_MODIFIER = 1.30D;
+	private static final double WALK_SPEED = 0.23D;
+	private static final double CHASE_SPEED_MODIFIER = 1.55D;
 	private static final double ATTACK_RANGE = 2.2D;
 	private static final double ATTACK_RANGE_SQR = ATTACK_RANGE * ATTACK_RANGE;
 	private static final double TARGET_ACQUIRE_DISTANCE_SQR = 96.0D * 96.0D;
 	private static final int FORGET_TARGET_AFTER_TICKS = 200;
 	private static final int CHASE_LAST_SEEN_DIRECT_MOVE_TICKS = 20;
+	private static final int CHASE_LAST_SEEN_DIRECT_MOVE_STUCK_TICKS = 3;
 	private static final int ATTACK_COOLDOWN_TICKS = 20;
 	private static final int TARGET_SCAN_INTERVAL_TICKS = 1;
 	private static final int TARGET_IDLE_SCAN_INTERVAL_TICKS = 2;
@@ -489,9 +490,11 @@ public final class BackroomsStalkerEntity extends Monster {
 			return;
 		}
 
+		boolean blockedDirectChase = this.horizontalCollision || this.chaseStuckTicks >= CHASE_LAST_SEEN_DIRECT_MOVE_STUCK_TICKS;
 		if (this.lastSeenTargetTick != Long.MIN_VALUE
 				&& nowTick - this.lastSeenTargetTick <= CHASE_LAST_SEEN_DIRECT_MOVE_TICKS
-				&& this.lastSeenTargetPos != Vec3.ZERO) {
+				&& this.lastSeenTargetPos != Vec3.ZERO
+				&& !blockedDirectChase) {
 			this.getNavigation().stop();
 			this.chaseDetourTarget = null;
 			this.getMoveControl().setWantedPosition(this.lastSeenTargetPos.x, this.lastSeenTargetPos.y, this.lastSeenTargetPos.z, CHASE_SPEED_MODIFIER);
@@ -515,7 +518,8 @@ public final class BackroomsStalkerEntity extends Monster {
 			boolean allowAlternatePath = nowTick >= this.nextChaseDetourTick && (!moved || hardStuck);
 			this.chaseDetourTarget = null;
 			if (!moved && allowAlternatePath) {
-				ChasePathPlan alternatePlan = buildBestChasePlan(level, target, true);
+				Vec3 chaseReferencePos = this.lastSeenTargetPos != Vec3.ZERO ? this.lastSeenTargetPos : target.position();
+				ChasePathPlan alternatePlan = buildBestChasePlan(level, chaseReferencePos, true);
 				if (alternatePlan != null && this.getNavigation().moveTo(alternatePlan.path(), CHASE_SPEED_MODIFIER)) {
 					moved = true;
 					this.chaseDetourTarget = alternatePlan.detourTarget();
@@ -541,15 +545,14 @@ public final class BackroomsStalkerEntity extends Monster {
 		lookAtTarget(target);
 	}
 
-	private ChasePathPlan buildBestChasePlan(ServerLevel level, ServerPlayer target, boolean allowDetourSearch) {
+	private ChasePathPlan buildBestChasePlan(ServerLevel level, Vec3 chaseTargetPos, boolean allowDetourSearch) {
 		if (!allowDetourSearch) {
 			return null;
 		}
 
 		Vec3 currentPos = this.position();
-		Vec3 targetPos = target.position();
-		double dx = targetPos.x - currentPos.x;
-		double dz = targetPos.z - currentPos.z;
+		double dx = chaseTargetPos.x - currentPos.x;
+		double dz = chaseTargetPos.z - currentPos.z;
 		double horizontalLength = Math.sqrt((dx * dx) + (dz * dz));
 		if (horizontalLength <= 1.0E-6D) {
 			return null;
@@ -561,7 +564,7 @@ public final class BackroomsStalkerEntity extends Monster {
 		double sideZ = forwardX;
 		int forwardDistance = 6;
 		int[] sideOffsets = new int[]{6, -6, 10, -10};
-		int targetY = target.blockPosition().getY();
+		int targetY = net.minecraft.util.Mth.floor(chaseTargetPos.y);
 		for (int sideOffset : sideOffsets) {
 			int x = net.minecraft.util.Mth.floor(currentPos.x + (forwardX * forwardDistance) + (sideX * sideOffset));
 			int z = net.minecraft.util.Mth.floor(currentPos.z + (forwardZ * forwardDistance) + (sideZ * sideOffset));

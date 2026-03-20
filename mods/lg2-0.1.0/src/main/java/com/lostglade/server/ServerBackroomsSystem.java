@@ -83,11 +83,14 @@ public final class ServerBackroomsSystem {
 	private static final int PLATFORM_EXIT_LENGTH = 12;
 	private static final int RESPAWN_SEARCH_ATTEMPTS = 48;
 	private static final int RESPAWN_SEARCH_RADIUS = 12;
-	private static final int PREWARMED_RESPAWN_TARGET = 2;
-	private static final int PREWARMED_RESPAWN_STARTUP_BATCH = 1;
-	private static final int PREWARMED_RESPAWN_REFILL_INTERVAL_TICKS = 100;
-	private static final int PREWARMED_RESPAWN_CHUNK_RADIUS = 1;
+	private static final int PREWARMED_RESPAWN_TARGET = 4;
+	private static final int PREWARMED_RESPAWN_STARTUP_BATCH = 2;
+	private static final int PREWARMED_RESPAWN_REFILL_INTERVAL_TICKS = 40;
+	private static final int PREWARMED_RESPAWN_CHUNK_RADIUS = 2;
+	private static final int PREWARMED_RESPAWN_FORCE_INTERVAL_TICKS = 200;
+	private static final int ACTIVE_RESPAWN_CHUNK_HOLD_TICKS = 200;
 	private static final int BACKROOMS_SUPPORT_TICK_INTERVAL = 2;
+	private static final int LADDER_CRAWL_GRACE_TICKS = 6;
 	private static final Identifier BACKROOMS_AMBIENT_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "custom.backrooms_ambient_loop");
 	// 12s file at 20 TPS ~= 240 ticks. Start every 200 ticks for ~2s overlap.
 	private static final int BACKROOMS_AMBIENT_LOOP_TICKS = 200;
@@ -115,10 +118,13 @@ public final class ServerBackroomsSystem {
 	private static final List<BlockPos> PREWARMED_RESPAWNS = new ArrayList<>();
 	private static final Set<Long> PREWARMED_RESPAWN_KEYS = new HashSet<>();
 	private static final Map<Long, Integer> PREWARMED_RESPAWN_CHUNK_REFS = new HashMap<>();
+	private static final Map<BlockPos, Long> ACTIVE_RESPAWN_CHUNK_HOLDS = new HashMap<>();
 	private static final Set<UUID> FORCED_LADDER_CRAWL_PLAYERS = new HashSet<>();
+	private static final Map<UUID, Long> FORCED_LADDER_CRAWL_GRACE_UNTIL = new HashMap<>();
 
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
+	private static long nextForcedRespawnPrewarmTick = 0L;
 
 	private ServerBackroomsSystem() {
 	}
@@ -132,7 +138,10 @@ public final class ServerBackroomsSystem {
 		PREWARMED_RESPAWNS.clear();
 		PREWARMED_RESPAWN_KEYS.clear();
 		PREWARMED_RESPAWN_CHUNK_REFS.clear();
+		ACTIVE_RESPAWN_CHUNK_HOLDS.clear();
 		FORCED_LADDER_CRAWL_PLAYERS.clear();
+		FORCED_LADDER_CRAWL_GRACE_UNTIL.clear();
+		nextForcedRespawnPrewarmTick = 0L;
 
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerBackroomsSystem::loadState);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerBackroomsSystem::saveState);
@@ -391,39 +400,54 @@ public final class ServerBackroomsSystem {
 
 	private static void tickServer(MinecraftServer server) {
 		enforceClearWeather(server);
+		tickActiveRespawnChunkHolds(server);
 		tickPrewarmedRespawns(server);
+		tickUpperLadderCrawl(server);
 		if ((server.overworld().getGameTime() % BACKROOMS_SUPPORT_TICK_INTERVAL) != 0L) {
 			return;
 		}
-		tickUpperLadderCrawl(server);
 		tickBackroomsAmbientLoop(server);
 		tickLampRestores(server);
 	}
 
 	private static void tickUpperLadderCrawl(MinecraftServer server) {
+		long nowTick = server.overworld().getGameTime();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			UUID uuid = player.getUUID();
 			boolean inBackrooms = isInBackrooms(player);
 			boolean shouldStart = inBackrooms
 					&& BackroomsSpecialRooms.isUpperLadderCrawlZone(player.level(), player.getX(), player.getY(), player.getZ());
+			boolean inKeepZone = inBackrooms
+					&& BackroomsSpecialRooms.isUpperLadderOrTunnelCrawlZone(player.level(), player.getX(), player.getY(), player.getZ());
+			boolean onLadder = inBackrooms && player.onClimbable();
+			if (shouldStart || inKeepZone || (FORCED_LADDER_CRAWL_PLAYERS.contains(uuid) && onLadder)) {
+				FORCED_LADDER_CRAWL_GRACE_UNTIL.put(uuid, nowTick + LADDER_CRAWL_GRACE_TICKS);
+			}
 			boolean shouldKeep = inBackrooms
 					&& FORCED_LADDER_CRAWL_PLAYERS.contains(uuid)
-					&& BackroomsSpecialRooms.isUpperLadderOrTunnelCrawlZone(player.level(), player.getX(), player.getY(), player.getZ());
+					&& (inKeepZone || onLadder || nowTick <= FORCED_LADDER_CRAWL_GRACE_UNTIL.getOrDefault(uuid, Long.MIN_VALUE));
 			if (shouldStart || shouldKeep) {
-				if (FORCED_LADDER_CRAWL_PLAYERS.add(uuid)) {
-					player.setSwimming(true);
+				FORCED_LADDER_CRAWL_PLAYERS.add(uuid);
+				player.setSwimming(true);
+				if (player.getPose() != Pose.SWIMMING) {
+					player.setPose(Pose.SWIMMING);
+					player.refreshDimensions();
 				}
-				player.setPose(Pose.SWIMMING);
+				player.fallDistance = 0.0F;
 				continue;
 			}
 
+			FORCED_LADDER_CRAWL_GRACE_UNTIL.remove(uuid);
 			if (!FORCED_LADDER_CRAWL_PLAYERS.remove(uuid)) {
 				continue;
 			}
 
 			if (!player.isInWater() && !player.isUnderWater() && !player.isFallFlying()) {
 				player.setSwimming(false);
-				player.setPose(Pose.STANDING);
+				if (player.getPose() == Pose.SWIMMING) {
+					player.setPose(Pose.STANDING);
+					player.refreshDimensions();
+				}
 			}
 		}
 	}
@@ -680,12 +704,16 @@ public final class ServerBackroomsSystem {
 			return;
 		}
 		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
-		if (backrooms == null || backrooms.players().isEmpty()) {
+		if (backrooms == null) {
 			return;
 		}
 
 		int refillAttempts = PREWARMED_RESPAWNS.size() < (PREWARMED_RESPAWN_TARGET / 2) ? 2 : 1;
 		fillPrewarmedRespawns(server, refillAttempts);
+		if (PREWARMED_RESPAWNS.size() < PREWARMED_RESPAWN_TARGET && server.getTickCount() >= nextForcedRespawnPrewarmTick) {
+			forcePrewarmedRespawn(server);
+			nextForcedRespawnPrewarmTick = server.getTickCount() + PREWARMED_RESPAWN_FORCE_INTERVAL_TICKS;
+		}
 	}
 
 	private static void fillPrewarmedRespawns(MinecraftServer server, int attempts) {
@@ -704,12 +732,33 @@ public final class ServerBackroomsSystem {
 				continue;
 			}
 
-			BlockPos floorPos = safeSpawn.below().immutable();
-			if (PREWARMED_RESPAWN_KEYS.add(floorPos.asLong())) {
-				PREWARMED_RESPAWNS.add(floorPos);
-				retainPrewarmedRespawnChunk(backrooms, floorPos);
-			}
+			addPrewarmedRespawn(backrooms, safeSpawn.below());
 		}
+	}
+
+	private static void forcePrewarmedRespawn(MinecraftServer server) {
+		if (PREWARMED_RESPAWNS.size() >= PREWARMED_RESPAWN_TARGET) {
+			return;
+		}
+
+		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
+		if (backrooms == null) {
+			return;
+		}
+
+		BlockPos safeSpawn = findRandomSafeRespawn(backrooms);
+		if (safeSpawn != null) {
+			addPrewarmedRespawn(backrooms, safeSpawn.below());
+		}
+	}
+
+	private static void addPrewarmedRespawn(ServerLevel level, BlockPos floorPos) {
+		BlockPos immutableFloorPos = floorPos.immutable();
+		if (!PREWARMED_RESPAWN_KEYS.add(immutableFloorPos.asLong())) {
+			return;
+		}
+		PREWARMED_RESPAWNS.add(immutableFloorPos);
+		retainPrewarmedRespawnChunk(level, immutableFloorPos);
 	}
 
 	private static BlockPos findRandomLoadedSafeRespawn(ServerLevel level) {
@@ -756,12 +805,15 @@ public final class ServerBackroomsSystem {
 			safeSpawn = findRandomSafeRespawn(backrooms);
 		}
 		if (safeSpawn != null) {
-			return safeSpawn.below();
+			BlockPos floorPos = safeSpawn.below().immutable();
+			holdRespawnChunkTemporarily(backrooms, floorPos);
+			return floorPos;
 		}
 
 		BlockPos platformCenter = pickRandomRespawnCenter(backrooms);
 		backrooms.getChunkAt(platformCenter);
 		ensurePlatform(backrooms, platformCenter);
+		holdRespawnChunkTemporarily(backrooms, platformCenter);
 		return platformCenter;
 	}
 
@@ -974,6 +1026,41 @@ public final class ServerBackroomsSystem {
 			return;
 		}
 		PREWARMED_RESPAWN_CHUNK_REFS.put(key, refCount - 1);
+	}
+
+	private static void holdRespawnChunkTemporarily(ServerLevel level, BlockPos floorPos) {
+		ChunkPos chunkPos = new ChunkPos(floorPos);
+		BlockPos holdKey = new BlockPos(chunkPos.getMinBlockX(), BACKROOMS_LEVEL_FLOOR_Y, chunkPos.getMinBlockZ());
+		long expiryTick = level.getGameTime() + ACTIVE_RESPAWN_CHUNK_HOLD_TICKS;
+		Long previousExpiry = ACTIVE_RESPAWN_CHUNK_HOLDS.put(holdKey, expiryTick);
+		if (previousExpiry == null) {
+			retainPrewarmedRespawnChunk(level, holdKey);
+		} else if (previousExpiry > expiryTick) {
+			ACTIVE_RESPAWN_CHUNK_HOLDS.put(holdKey, previousExpiry);
+		}
+	}
+
+	private static void tickActiveRespawnChunkHolds(MinecraftServer server) {
+		if (ACTIVE_RESPAWN_CHUNK_HOLDS.isEmpty()) {
+			return;
+		}
+
+		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
+		if (backrooms == null) {
+			ACTIVE_RESPAWN_CHUNK_HOLDS.clear();
+			return;
+		}
+
+		long gameTime = backrooms.getGameTime();
+		var iterator = ACTIVE_RESPAWN_CHUNK_HOLDS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<BlockPos, Long> entry = iterator.next();
+			if (gameTime < entry.getValue()) {
+				continue;
+			}
+			releasePrewarmedRespawnChunk(backrooms, entry.getKey());
+			iterator.remove();
+		}
 	}
 
 	private static int getBackroomsLevelIndex(int y) {

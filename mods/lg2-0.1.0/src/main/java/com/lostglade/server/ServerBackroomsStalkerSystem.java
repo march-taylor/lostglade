@@ -110,6 +110,10 @@ public final class ServerBackroomsStalkerSystem {
 			stopAllRunLoops(server);
 			return;
 		}
+		if (backrooms.players().isEmpty() && TRACKED_STALKERS.isEmpty()) {
+			stopAllRunLoops(server);
+			return;
+		}
 
 		if (!Lg2Config.get().backroomsEntitySpawnEnabled) {
 			discardAll(collectStalkers(backrooms));
