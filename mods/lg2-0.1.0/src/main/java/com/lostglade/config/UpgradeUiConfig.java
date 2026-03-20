@@ -24,6 +24,14 @@ public final class UpgradeUiConfig {
 	private static final int MAX_PRICE = 1_000_000;
 	private static final int MIN_STACK_COUNT = 1;
 	private static final int MAX_STACK_COUNT = 64;
+	private static final int INVENTORY_SLOT_SIZE_PIXELS = 18;
+	private static final int MAIN_LOGO_BASE_SLOT = 22;
+	private static final int MAIN_LOGO_BASE_COLUMN = MAIN_LOGO_BASE_SLOT % 9;
+	private static final int MAIN_LOGO_BASE_ROW = MAIN_LOGO_BASE_SLOT / 9;
+	private static final int MAIN_LOGO_MIN_OFFSET_X_PIXELS = -MAIN_LOGO_BASE_COLUMN * INVENTORY_SLOT_SIZE_PIXELS;
+	private static final int MAIN_LOGO_MAX_OFFSET_X_PIXELS = ((8 - MAIN_LOGO_BASE_COLUMN) * INVENTORY_SLOT_SIZE_PIXELS) + (INVENTORY_SLOT_SIZE_PIXELS - 1);
+	private static final int MAIN_LOGO_MIN_OFFSET_Y_PIXELS = -MAIN_LOGO_BASE_ROW * INVENTORY_SLOT_SIZE_PIXELS;
+	private static final int MAIN_LOGO_MAX_OFFSET_Y_PIXELS = INVENTORY_SLOT_SIZE_PIXELS - 1;
 
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve(Lg2.MOD_ID + "-upgrades.json");
@@ -90,6 +98,10 @@ public final class UpgradeUiConfig {
 			configData.screens = new LinkedHashMap<>();
 			changed = true;
 		}
+		if (configData.mainLogoLayout == null) {
+			configData.mainLogoLayout = MainLogoLayoutConfig.defaults();
+			changed = true;
+		}
 
 		if (configData.themes.isEmpty()) {
 			configData.themes.put("default", ThemeConfig.defaultTheme());
@@ -133,6 +145,7 @@ public final class UpgradeUiConfig {
 			changed = true;
 		}
 		configData.screens = sanitizedScreens;
+		changed |= sanitizeMainLogoLayout(configData.mainLogoLayout);
 
 		if (configData.rootScreenId == null || !configData.screens.containsKey(configData.rootScreenId)) {
 			configData.rootScreenId = configData.screens.keySet().iterator().next();
@@ -155,6 +168,21 @@ public final class UpgradeUiConfig {
 		}
 		if (theme.packTitleSuffix == null) {
 			theme.packTitleSuffix = "";
+			changed = true;
+		}
+		return changed;
+	}
+
+	private static boolean sanitizeMainLogoLayout(MainLogoLayoutConfig layout) {
+		boolean changed = false;
+		int sanitizedX = clamp(layout.inventoryOffsetXPixels, MAIN_LOGO_MIN_OFFSET_X_PIXELS, MAIN_LOGO_MAX_OFFSET_X_PIXELS, 0);
+		if (layout.inventoryOffsetXPixels != sanitizedX) {
+			layout.inventoryOffsetXPixels = sanitizedX;
+			changed = true;
+		}
+		int sanitizedY = clamp(layout.inventoryOffsetYPixels, MAIN_LOGO_MIN_OFFSET_Y_PIXELS, MAIN_LOGO_MAX_OFFSET_Y_PIXELS, 0);
+		if (layout.inventoryOffsetYPixels != sanitizedY) {
+			layout.inventoryOffsetYPixels = sanitizedY;
 			changed = true;
 		}
 		return changed;
@@ -414,6 +442,7 @@ public final class UpgradeUiConfig {
 	public static final class ConfigData {
 		public boolean enabled = true;
 		public String rootScreenId = "main";
+		public MainLogoLayoutConfig mainLogoLayout = MainLogoLayoutConfig.defaults();
 		public Map<String, ThemeConfig> themes = new LinkedHashMap<>();
 		public Map<String, ScreenConfig> screens = new LinkedHashMap<>();
 
@@ -433,6 +462,15 @@ public final class UpgradeUiConfig {
 			screens.put("systems", ScreenConfig.defaultSystemsScreen());
 			screens.put("advanced", ScreenConfig.defaultAdvancedScreen());
 			return screens;
+		}
+	}
+
+	public static final class MainLogoLayoutConfig {
+		public int inventoryOffsetXPixels = 0;
+		public int inventoryOffsetYPixels = 0;
+
+		public static MainLogoLayoutConfig defaults() {
+			return new MainLogoLayoutConfig();
 		}
 	}
 

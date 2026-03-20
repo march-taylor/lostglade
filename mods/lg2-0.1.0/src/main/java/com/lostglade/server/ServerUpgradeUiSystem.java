@@ -353,7 +353,14 @@ public final class ServerUpgradeUiSystem {
 		for (Map.Entry<String, UpgradeUiConfig.ButtonConfig> entry : screen.buttons.entrySet()) {
 			String buttonId = entry.getKey();
 			UpgradeUiConfig.ButtonConfig button = entry.getValue();
-			if (button == null || !button.enabled || button.slot < 0 || button.slot >= container.getContainerSize()) {
+			int anchorSlot = getButtonAnchorSlot(screenId, buttonId, button, hasPack);
+			int displaySlot = getDisplaySlot(screenId, buttonId, button, hasPack);
+			if (button == null
+					|| !button.enabled
+					|| anchorSlot < 0
+					|| anchorSlot >= container.getContainerSize()
+					|| displaySlot < 0
+					|| displaySlot >= container.getContainerSize()) {
 				continue;
 			}
 			if (shouldHideButtonVisual(screenId, buttonId)) {
@@ -363,19 +370,38 @@ public final class ServerUpgradeUiSystem {
 				continue;
 			}
 			ItemStack stack = buildButtonStack(viewer, screenId, buttonId, button, hasPack);
-			container.setItem(getDisplaySlot(button), stack);
+			container.setItem(displaySlot, stack);
 		}
 	}
 
-	private static int getDisplaySlot(UpgradeUiConfig.ButtonConfig button) {
+	private static int getButtonAnchorSlot(
+			String screenId,
+			String buttonId,
+			UpgradeUiConfig.ButtonConfig button,
+			boolean hasPack
+	) {
 		if (button == null) {
 			return 0;
 		}
 
+		return button.slot;
+	}
+
+	private static int getDisplaySlot(
+			String screenId,
+			String buttonId,
+			UpgradeUiConfig.ButtonConfig button,
+			boolean hasPack
+	) {
+		if (button == null) {
+			return 0;
+		}
+
+		int anchorSlot = getButtonAnchorSlot(screenId, buttonId, button, hasPack);
 		int width = Math.max(1, button.hitboxWidth);
 		int height = Math.max(1, button.hitboxHeight);
-		int startColumn = button.slot % 9;
-		int startRow = button.slot / 9;
+		int startColumn = anchorSlot % 9;
+		int startRow = anchorSlot / 9;
 		int centerColumn = startColumn + ((width - 1) / 2);
 		int centerRow = startRow + ((height - 1) / 2);
 		return (centerRow * 9) + centerColumn;
@@ -831,7 +857,7 @@ public final class ServerUpgradeUiSystem {
 					&& button.enabled
 					&& !isPureDecorButton(button)
 					&& !shouldHideButtonVisual(screenId, entry.getKey())
-					&& isWithinButtonHitbox(slot, button, hasPack)) {
+					&& isWithinButtonHitbox(slot, screenId, entry.getKey(), button, hasPack)) {
 				return entry;
 			}
 		}
@@ -851,7 +877,8 @@ public final class ServerUpgradeUiSystem {
 		}
 
 		UpgradeUiConfig.ButtonConfig button = matched.getValue();
-		if (button.slot < topSlotCount || getDisplaySlot(button) != menuSlot) {
+		int anchorSlot = getButtonAnchorSlot(screenId, matched.getKey(), button, hasPack);
+		if (anchorSlot < topSlotCount || getDisplaySlot(screenId, matched.getKey(), button, hasPack) != menuSlot) {
 			return ItemStack.EMPTY;
 		}
 
@@ -1020,12 +1047,18 @@ public final class ServerUpgradeUiSystem {
 		return remaining <= 0;
 	}
 
-	private static boolean isWithinButtonHitbox(int slot, UpgradeUiConfig.ButtonConfig button, boolean hasPack) {
+	private static boolean isWithinButtonHitbox(
+			int slot,
+			String screenId,
+			String buttonId,
+			UpgradeUiConfig.ButtonConfig button,
+			boolean hasPack
+	) {
 		if (button == null || slot < 0) {
 			return false;
 		}
 
-		int anchorSlot = button.slot;
+		int anchorSlot = getButtonAnchorSlot(screenId, buttonId, button, hasPack);
 		int width = Math.max(1, button.hitboxWidth);
 		int height = Math.max(1, button.hitboxHeight);
 		int startColumn = anchorSlot % 9;
