@@ -81,6 +81,12 @@ public final class ServerBackroomsStalkerSystem {
 				entity.discard();
 				return;
 			}
+			if (!Lg2Config.get().backroomsEntitySpawnEnabled) {
+				TRACKED_STALKERS.remove(stalker);
+				HOUSE_WAITING_ASSIGNMENTS.remove(stalker.getUUID());
+				stalker.discard();
+				return;
+			}
 			TRACKED_STALKERS.add(stalker);
 			stalker.setInvulnerable(true);
 			stalker.setSilent(true);
@@ -101,6 +107,12 @@ public final class ServerBackroomsStalkerSystem {
 
 		ServerLevel backrooms = server.getLevel(ServerBackroomsSystem.BACKROOMS_LEVEL);
 		if (backrooms == null) {
+			stopAllRunLoops(server);
+			return;
+		}
+
+		if (!Lg2Config.get().backroomsEntitySpawnEnabled) {
+			discardAll(collectStalkers(backrooms));
 			stopAllRunLoops(server);
 			return;
 		}

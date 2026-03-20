@@ -300,6 +300,7 @@ public final class Lg2Config {
 		public int stabilityMax = 100;
 		public int stabilityDecayIntervalSeconds = 864;
 		public int stabilityDecayIntervalSecondsPerPlayer = 0;
+		public boolean backroomsEntitySpawnEnabled = true;
 		@SerializedName("backroomsEntitySpawnMinRadiusChunks")
 		public int backroomsEntitySpawnMinRadiusChunks = 1;
 		@SerializedName(value = "backroomsEntitySpawnMaxRadiusChunks", alternate = {"backroomsEntityRadiusChunks"})
