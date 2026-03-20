@@ -38,14 +38,24 @@ public final class ServerBossBarVisibilitySystem {
 
 		state.serverHudFocused = focused;
 		if (focused) {
-			hideTrackedBossBars(player, state);
+			state.needsReorder = true;
 			return;
 		}
 
-		restoreTrackedBossBars(player, state);
+		state.needsReorder = false;
 		if (state.activeBossBars.isEmpty()) {
 			PLAYER_STATES.remove(player.getUUID());
 		}
+	}
+
+	public static void ensureServerHudPriority(ServerPlayer player) {
+		PlayerBossBarState state = PLAYER_STATES.get(player.getUUID());
+		if (state == null || !state.serverHudFocused || !state.needsReorder) {
+			return;
+		}
+
+		reorderTrackedBossBarsBelowServerHud(player, state);
+		state.needsReorder = false;
 	}
 
 	public static boolean handleOutgoingBossEventPacket(ServerPlayer receiver, ClientboundBossEventPacket packet) {
@@ -68,7 +78,7 @@ public final class ServerBossBarVisibilitySystem {
 			return false;
 		}
 
-		return !reservedHud;
+		return false;
 	}
 
 	private static void applyPacketUpdate(PlayerBossBarState state, BossBarPacketUpdate update) {
@@ -127,13 +137,10 @@ public final class ServerBossBarVisibilitySystem {
 		}
 	}
 
-	private static void hideTrackedBossBars(ServerPlayer player, PlayerBossBarState state) {
+	private static void reorderTrackedBossBarsBelowServerHud(ServerPlayer player, PlayerBossBarState state) {
 		for (UUID bossBarId : state.activeBossBars.keySet()) {
 			sendSyntheticPacket(player, ClientboundBossEventPacket.createRemovePacket(bossBarId));
 		}
-	}
-
-	private static void restoreTrackedBossBars(ServerPlayer player, PlayerBossBarState state) {
 		for (TrackedBossBar bossBar : state.activeBossBars.values()) {
 			sendSyntheticPacket(player, ClientboundBossEventPacket.createAddPacket(bossBar.toBossEvent()));
 		}
@@ -181,6 +188,7 @@ public final class ServerBossBarVisibilitySystem {
 
 	private static final class PlayerBossBarState {
 		private boolean serverHudFocused;
+		private boolean needsReorder;
 		private final Map<UUID, TrackedBossBar> activeBossBars = new LinkedHashMap<>();
 	}
 

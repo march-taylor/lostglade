@@ -152,6 +152,7 @@ public final class ServerStabilitySystem {
 				}
 
 				showHud(player, PolymerResourcePackUtils.hasMainPack(player));
+				ServerBossBarVisibilitySystem.ensureServerHudPriority(player);
 			}
 
 			PLAYER_HUDS.entrySet().removeIf(entry -> {
