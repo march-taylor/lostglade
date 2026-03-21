@@ -15,6 +15,7 @@ import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import java.util.Arrays;
 
 public final class BlockTintProvider {
+	private static final int BIOME_BLEND_RADIUS = 1;
 	private static final TextureAssetManager ASSETS = TextureAssetManager.get();
 	private static final int NO_TINT = -1;
 	private static final int MAX_TINT_LAYERS = 4;
@@ -122,18 +123,40 @@ public final class BlockTintProvider {
 	}
 
 	private static int averageGrass(ServerLevel level, BlockPos pos) {
-		return level.getBlockTint(pos, GRASS_RESOLVER);
+		return averageBiomeTint(level, pos, GRASS_RESOLVER);
 	}
 
 	private static int averageFoliage(ServerLevel level, BlockPos pos) {
-		return level.getBlockTint(pos, FOLIAGE_RESOLVER);
+		return averageBiomeTint(level, pos, FOLIAGE_RESOLVER);
 	}
 
 	private static int averageDryFoliage(ServerLevel level, BlockPos pos) {
-		return level.getBlockTint(pos, DRY_FOLIAGE_RESOLVER);
+		return averageBiomeTint(level, pos, DRY_FOLIAGE_RESOLVER);
 	}
 
 	private static int averageWater(ServerLevel level, BlockPos pos) {
-		return level.getBlockTint(pos, WATER_RESOLVER);
+		return averageBiomeTint(level, pos, WATER_RESOLVER);
+	}
+
+	private static int averageBiomeTint(ServerLevel level, BlockPos pos, ColorResolver resolver) {
+		BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+		int red = 0;
+		int green = 0;
+		int blue = 0;
+		int count = 0;
+		for (int dz = -BIOME_BLEND_RADIUS; dz <= BIOME_BLEND_RADIUS; dz++) {
+			for (int dx = -BIOME_BLEND_RADIUS; dx <= BIOME_BLEND_RADIUS; dx++) {
+				cursor.set(pos.getX() + dx, pos.getY(), pos.getZ() + dz);
+				int tint = resolver.getColor(level.getBiome(cursor).value(), cursor.getX(), cursor.getZ());
+				red += (tint >> 16) & 0xFF;
+				green += (tint >> 8) & 0xFF;
+				blue += tint & 0xFF;
+				count++;
+			}
+		}
+		if (count == 0) {
+			return 0;
+		}
+		return ((red / count) << 16) | ((green / count) << 8) | (blue / count);
 	}
 }

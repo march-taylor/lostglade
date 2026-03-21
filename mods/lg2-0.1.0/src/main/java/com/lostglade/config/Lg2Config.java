@@ -46,6 +46,8 @@ public final class Lg2Config {
 	private static final int MAX_CAMERA_RENDER_THREADS = 32;
 	private static final int MIN_CAMERA_RENDER_IN_FLIGHT_PIXELS = 8;
 	private static final int MAX_CAMERA_RENDER_IN_FLIGHT_PIXELS = 8192;
+	private static final int MIN_CAMERA_RENDER_SAMPLES_PER_AXIS = 1;
+	private static final int MAX_CAMERA_RENDER_SAMPLES_PER_AXIS = 4;
 	private static final double DEFAULT_BITCOINS_PER_STABILITY = 6.4D;
 	private static final double MIN_BITCOINS_PER_STABILITY = 0.001D;
 	private static final double MAX_BITCOINS_PER_STABILITY = 1_000_000.0D;
@@ -160,6 +162,10 @@ public final class Lg2Config {
 				MIN_CAMERA_RENDER_IN_FLIGHT_PIXELS,
 				MAX_CAMERA_RENDER_IN_FLIGHT_PIXELS,
 				newValue -> configData.cameraRenderInFlightPixels = newValue);
+		changed |= clampSingleValue(configData.cameraRenderSamplesPerAxis,
+				MIN_CAMERA_RENDER_SAMPLES_PER_AXIS,
+				MAX_CAMERA_RENDER_SAMPLES_PER_AXIS,
+				newValue -> configData.cameraRenderSamplesPerAxis = newValue);
 		changed |= clampSingleValue(configData.backroomsTrashRoomWeight,
 				MIN_BACKROOMS_SPECIAL_ROOM_WEIGHT,
 				MAX_BACKROOMS_SPECIAL_ROOM_WEIGHT,
@@ -331,6 +337,7 @@ public final class Lg2Config {
 		public int giantZombieReplacementChance = 250;
 		public int cameraRenderThreads = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
 		public int cameraRenderInFlightPixels = 1024;
+		public int cameraRenderSamplesPerAxis = 2;
 
 		private ConfigData() {
 		}
