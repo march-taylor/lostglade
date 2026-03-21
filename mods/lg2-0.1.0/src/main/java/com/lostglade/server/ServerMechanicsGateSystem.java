@@ -1,5 +1,6 @@
 package com.lostglade.server;
 
+import com.lostglade.item.ModItems;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
@@ -47,6 +48,7 @@ public final class ServerMechanicsGateSystem {
 	private static final String ERA_IRON_GOLD = "era_iron_gold";
 	private static final String ERA_DIAMOND = "era_diamond";
 	private static final String ERA_NETHERITE = "era_netherite";
+	private static final String IT_CAMERA = "it_camera";
 	private static final double AUTOMATED_GOLEM_PLAYER_RADIUS = 16.0D;
 	private static final double AUTOMATED_GOLEM_PLAYER_RADIUS_SQR = AUTOMATED_GOLEM_PLAYER_RADIUS * AUTOMATED_GOLEM_PLAYER_RADIUS;
 
@@ -318,6 +320,9 @@ public final class ServerMechanicsGateSystem {
 			return null;
 		}
 		Item item = stack.getItem();
+		if (item == ModItems.CAMERA) {
+			return IT_CAMERA;
+		}
 		String eraRequirement = requiredEraForItem(item);
 		if (eraRequirement != null) {
 			return eraRequirement;

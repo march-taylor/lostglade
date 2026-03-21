@@ -20,6 +20,7 @@ import net.minecraft.world.item.component.TooltipDisplay;
 public final class ModItems {
 	private static final Identifier BITCOIN_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "bitcoin");
 	private static final Identifier SPECIAL_PICKAXE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "special_pickaxe");
+	private static final Identifier CAMERA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera");
 	private static final Identifier ABSOLUTE_INVISIBILITY_POTION_ID = Identifier.fromNamespaceAndPath(
 			Lg2.MOD_ID,
 			"absolute_invisibility_potion"
@@ -29,6 +30,7 @@ public final class ModItems {
 	private static final Identifier GREATER_STABILITY_POTION_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "greater_stability_potion");
 	private static final ResourceKey<Item> BITCOIN_KEY = ResourceKey.create(Registries.ITEM, BITCOIN_ID);
 	private static final ResourceKey<Item> SPECIAL_PICKAXE_KEY = ResourceKey.create(Registries.ITEM, SPECIAL_PICKAXE_ID);
+	private static final ResourceKey<Item> CAMERA_KEY = ResourceKey.create(Registries.ITEM, CAMERA_ID);
 	private static final ResourceKey<Item> ABSOLUTE_INVISIBILITY_POTION_KEY = ResourceKey.create(
 			Registries.ITEM,
 			ABSOLUTE_INVISIBILITY_POTION_ID
@@ -59,6 +61,16 @@ public final class ModItems {
 							.stacksTo(1)
 							.pickaxe(ToolMaterial.NETHERITE, 1.0F, -2.8F)
 							.fireResistant()
+			)
+	);
+	public static final Item CAMERA = Registry.register(
+			BuiltInRegistries.ITEM,
+			CAMERA_ID,
+			new CameraItem(
+					new Item.Properties()
+							.setId(CAMERA_KEY)
+							.stacksTo(1)
+							.rarity(Rarity.UNCOMMON)
 			)
 	);
 	public static final Item ABSOLUTE_INVISIBILITY_POTION = Registry.register(
@@ -154,6 +166,7 @@ public final class ModItems {
 			entries.prepend(LONG_STABILITY_POTION);
 			entries.prepend(STABILITY_POTION);
 			entries.prepend(ABSOLUTE_INVISIBILITY_POTION);
+			entries.prepend(CAMERA);
 			entries.prepend(BITCOIN);
 		});
 	}

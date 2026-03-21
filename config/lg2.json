@@ -27,7 +27,7 @@
   "backroomsFloorHolesRoomWeight": 4,
   "backroomsVoidHallRoomWeight": 1,
   "backroomsHouseHallRoomWeight": 2,
-  "backroomsPlusMazeRoomWeight": 2,
+  "backroomsPlusMazeRoomWeight": 3,
   "backroomsStairsRoomWeight": 4,
 
   "respectCooldownSeconds": 0,

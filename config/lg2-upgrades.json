@@ -3794,7 +3794,7 @@
             450
           ],
           "icon": {
-            "fallbackItem": "minecraft:goat_horn",
+            "fallbackItem": "lg2:camera",
             "packModel": "",
             "count": 1,
             "foil": false
@@ -3806,7 +3806,7 @@
             "foil": false
           },
           "maxedIcon": {
-            "fallbackItem": "minecraft:goat_horn",
+            "fallbackItem": "lg2:camera",
             "packModel": "",
             "count": 1,
             "foil": true
@@ -5063,7 +5063,7 @@
             450
           ],
           "icon": {
-            "fallbackItem": "minecraft:goat_horn",
+            "fallbackItem": "lg2:camera",
             "packModel": "",
             "count": 1,
             "foil": false
@@ -5075,7 +5075,7 @@
             "foil": false
           },
           "maxedIcon": {
-            "fallbackItem": "minecraft:goat_horn",
+            "fallbackItem": "lg2:camera",
             "packModel": "",
             "count": 1,
             "foil": true
