@@ -125,7 +125,6 @@ public final class ServerBackroomsSystem {
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
 	private static long nextForcedRespawnPrewarmTick = 0L;
-
 	private ServerBackroomsSystem() {
 	}
 
@@ -1008,7 +1007,7 @@ public final class ServerBackroomsSystem {
 		long key = chunkPos.toLong();
 		int refCount = PREWARMED_RESPAWN_CHUNK_REFS.getOrDefault(key, 0);
 		if (refCount == 0) {
-			level.getChunkSource().addTicketWithRadius(TicketType.FORCED, chunkPos, PREWARMED_RESPAWN_CHUNK_RADIUS);
+			level.getChunkSource().addTicketWithRadius(TicketType.UNKNOWN, chunkPos, PREWARMED_RESPAWN_CHUNK_RADIUS);
 		}
 		PREWARMED_RESPAWN_CHUNK_REFS.put(key, refCount + 1);
 	}
@@ -1022,7 +1021,7 @@ public final class ServerBackroomsSystem {
 		}
 		if (refCount <= 1) {
 			PREWARMED_RESPAWN_CHUNK_REFS.remove(key);
-			level.getChunkSource().removeTicketWithRadius(TicketType.FORCED, chunkPos, PREWARMED_RESPAWN_CHUNK_RADIUS);
+			level.getChunkSource().removeTicketWithRadius(TicketType.UNKNOWN, chunkPos, PREWARMED_RESPAWN_CHUNK_RADIUS);
 			return;
 		}
 		PREWARMED_RESPAWN_CHUNK_REFS.put(key, refCount - 1);

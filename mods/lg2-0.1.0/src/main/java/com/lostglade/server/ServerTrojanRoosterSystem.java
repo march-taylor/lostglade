@@ -1,9 +1,15 @@
 package com.lostglade.server;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.lostglade.Lg2;
 import com.lostglade.entity.TrojanChickenAccess;
 import com.lostglade.item.ModItems;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.core.Holder;
 import net.minecraft.core.particles.ParticleType;
@@ -38,8 +44,14 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 
 public final class ServerTrojanRoosterSystem {
+	private static final DateTimeFormatter BAN_FILE_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss Z");
 	private static final int TROJAN_THRESHOLD = 64;
 	private static final double TOUCH_EPSILON = 0.01D;
 	private static final int AWAKENING_TICKS = 20;
@@ -105,6 +117,64 @@ public final class ServerTrojanRoosterSystem {
 			tickBitcoinOfferings();
 			tickTrojanChickens();
 		});
+		ServerLifecycleEvents.SERVER_STARTED.register(ServerTrojanRoosterSystem::cleanupExpiredTrojanBans);
+	}
+
+	private static void cleanupExpiredTrojanBans(net.minecraft.server.MinecraftServer server) {
+		Path path = Path.of("banned-players.json");
+		if (!Files.exists(path)) {
+			return;
+		}
+
+		try {
+			JsonElement root = JsonParser.parseString(Files.readString(path));
+			if (!root.isJsonArray()) {
+				return;
+			}
+
+			JsonArray source = root.getAsJsonArray();
+			JsonArray filtered = new JsonArray();
+			boolean changed = false;
+			OffsetDateTime now = OffsetDateTime.now();
+
+			for (JsonElement element : source) {
+				if (!element.isJsonObject()) {
+					filtered.add(element);
+					continue;
+				}
+
+				JsonObject object = element.getAsJsonObject();
+				if (isExpiredBanEntry(object, now)) {
+					changed = true;
+				} else {
+					filtered.add(object);
+				}
+			}
+
+			if (changed) {
+				Files.writeString(path, filtered.toString());
+			}
+		} catch (Exception exception) {
+			Lg2.LOGGER.warn("Failed to sanitize expired banned-players entries", exception);
+		}
+	}
+
+	private static boolean isExpiredBanEntry(JsonObject object, OffsetDateTime now) {
+		JsonElement expiresElement = object.get("expires");
+		if (expiresElement == null || expiresElement.isJsonNull()) {
+			return false;
+		}
+
+		String expires = expiresElement.getAsString();
+		if (expires.isBlank() || "forever".equalsIgnoreCase(expires)) {
+			return false;
+		}
+
+		try {
+			return OffsetDateTime.parse(expires, BAN_FILE_DATE_FORMAT).isBefore(now);
+		} catch (DateTimeParseException ignored) {
+			return false;
+		}
 	}
 
 	private static void tickBitcoinOfferings() {
