@@ -26,6 +26,7 @@
 		"LivingEntityStabilityLuckMixin",
 		"LivingEntityTrojanRoosterInvulnerabilityMixin",
 		"MsgCommandMixin",
+		"MobTrojanRoosterLeashMixin",
 		"MobDeathLootMixin",
 		"PlayerContainerMenuAccessor",
 		"PlayerTrackedDataAccessor",

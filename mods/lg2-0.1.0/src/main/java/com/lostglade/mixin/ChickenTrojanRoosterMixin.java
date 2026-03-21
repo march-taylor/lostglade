@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.entity.TrojanChickenAccess;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.entity.animal.chicken.Chicken;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
@@ -9,6 +10,7 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(Chicken.class)
 public abstract class ChickenTrojanRoosterMixin implements TrojanChickenAccess {
@@ -37,6 +39,13 @@ public abstract class ChickenTrojanRoosterMixin implements TrojanChickenAccess {
 		}
 		if (this.lg2$trojanRooster) {
 			output.putBoolean(LG2_TROJAN_ROOSTER_TAG, true);
+		}
+	}
+
+	@Inject(method = "isFood", at = @At("HEAD"), cancellable = true)
+	private void lg2$ignoreFoodForTrojanRooster(ItemStack stack, CallbackInfoReturnable<Boolean> cir) {
+		if (this.lg2$trojanRooster) {
+			cir.setReturnValue(false);
 		}
 	}
 

@@ -31,6 +31,7 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.Leashable;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.animal.chicken.Chicken;
 import net.minecraft.world.entity.item.ItemEntity;
@@ -49,6 +50,7 @@ import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.lang.reflect.Method;
 
 public final class ServerTrojanRoosterSystem {
 	private static final DateTimeFormatter BAN_FILE_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss Z");
@@ -123,40 +125,50 @@ public final class ServerTrojanRoosterSystem {
 
 	private static void cleanupExpiredTrojanBans(net.minecraft.server.MinecraftServer server) {
 		Path path = Path.of("banned-players.json");
-		if (!Files.exists(path)) {
-			return;
-		}
-
 		try {
-			JsonElement root = JsonParser.parseString(Files.readString(path));
-			if (!root.isJsonArray()) {
-				return;
-			}
+			if (Files.exists(path)) {
+				JsonElement root = JsonParser.parseString(Files.readString(path));
+				if (root.isJsonArray()) {
+					JsonArray source = root.getAsJsonArray();
+					JsonArray filtered = new JsonArray();
+					boolean changed = false;
+					OffsetDateTime now = OffsetDateTime.now();
 
-			JsonArray source = root.getAsJsonArray();
-			JsonArray filtered = new JsonArray();
-			boolean changed = false;
-			OffsetDateTime now = OffsetDateTime.now();
+					for (JsonElement element : source) {
+						if (!element.isJsonObject()) {
+							filtered.add(element);
+							continue;
+						}
 
-			for (JsonElement element : source) {
-				if (!element.isJsonObject()) {
-					filtered.add(element);
-					continue;
+						JsonObject object = element.getAsJsonObject();
+						if (isExpiredBanEntry(object, now)) {
+							changed = true;
+						} else {
+							filtered.add(object);
+						}
+					}
+
+					if (changed) {
+						Files.writeString(path, filtered.toString());
+					}
 				}
-
-				JsonObject object = element.getAsJsonObject();
-				if (isExpiredBanEntry(object, now)) {
-					changed = true;
-				} else {
-					filtered.add(object);
-				}
 			}
 
-			if (changed) {
-				Files.writeString(path, filtered.toString());
-			}
+			sanitizeRuntimeBanList(server);
 		} catch (Exception exception) {
 			Lg2.LOGGER.warn("Failed to sanitize expired banned-players entries", exception);
+		}
+	}
+
+	private static void sanitizeRuntimeBanList(net.minecraft.server.MinecraftServer server) {
+		try {
+			Object bans = server.getPlayerList().getBans();
+			Method removeExpired = bans.getClass().getMethod("removeExpired");
+			removeExpired.invoke(bans);
+		} catch (NoSuchMethodException ignored) {
+			Lg2.LOGGER.debug("User ban list does not expose removeExpired(); skipping runtime cleanup");
+		} catch (Exception exception) {
+			Lg2.LOGGER.warn("Failed to sanitize runtime banned-players entries", exception);
 		}
 	}
 
@@ -304,6 +316,9 @@ public final class ServerTrojanRoosterSystem {
 	private static void prepareTrojanChicken(Chicken chicken) {
 		if (!chicken.isInvulnerable()) {
 			chicken.setInvulnerable(true);
+		}
+		if (chicken instanceof Leashable leashable && leashable.isLeashed()) {
+			leashable.removeLeash();
 		}
 		chicken.setNoGravity(false);
 		if (!chicken.isPersistenceRequired()) {
@@ -497,7 +512,7 @@ public final class ServerTrojanRoosterSystem {
 		stopTheme(state, level);
 		ACTIVE_STATES.remove(chicken.getUUID());
 		TRACKED_TROJAN_CHICKENS.remove(chicken);
-		spawnCloud(level, chicken.position());
+		spawnVanishCloud(level, chicken.position());
 		chicken.discard();
 	}
 
@@ -511,7 +526,11 @@ public final class ServerTrojanRoosterSystem {
 
 	private static void spawnCloud(ServerLevel level, Vec3 pos) {
 		level.sendParticles(ParticleTypes.CLOUD, pos.x, pos.y + 0.3D, pos.z, 18, 0.25D, 0.2D, 0.25D, 0.01D);
-		level.playSound(null, pos.x, pos.y, pos.z, SoundEvents.CHICKEN_HURT, SoundSource.HOSTILE, 0.6F, 0.6F);
+	}
+
+	private static void spawnVanishCloud(ServerLevel level, Vec3 pos) {
+		level.sendParticles(ParticleTypes.CLOUD, pos.x, pos.y + 0.3D, pos.z, 18, 0.25D, 0.2D, 0.25D, 0.01D);
+		level.playSound(null, pos.x, pos.y, pos.z, SoundEvents.GENERIC_EXTINGUISH_FIRE, SoundSource.HOSTILE, 0.7F, 1.0F);
 	}
 
 	private static void teleportBehindTarget(Chicken chicken, ServerPlayer target) {
