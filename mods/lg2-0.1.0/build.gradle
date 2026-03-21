@@ -1,6 +1,3 @@
-import groovy.json.JsonOutput
-import groovy.json.JsonSlurper
-
 plugins {
 	id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
 	id 'maven-publish'
@@ -19,11 +16,6 @@ def skinRestorerJars = fileTree(dir: "${serverRootDir}/mods", include: "skinrest
 def tabJars = fileTree(dir: "${serverRootDir}/mods", include: "TAB*.jar")
 def skinRestorerNestedLibDir = file("${buildDir}/skinrestorer-libs")
 def skinRestorerJavaClientJars = fileTree(dir: skinRestorerNestedLibDir, include: "java-client-*.jar")
-def generatedUpgradeUiAssetsDir = file("${buildDir}/generated/upgrade-ui-assets")
-def upgradeUiConfigFile = file("${serverRootDir}/config/lg2-upgrades.json")
-def mainLogoTemplateFile = file("${projectDir}/src/main/resources/assets/lg2/models/item/gui/main_logo/_display.json")
-def generatedMainLogoModelRelativePath = "assets/lg2/models/item/gui/main_logo/_display.json"
-def generatedMainLogoModelFile = file("${generatedUpgradeUiAssetsDir}/${generatedMainLogoModelRelativePath}")
 
 repositories {
 	// Add repositories to retrieve artifacts from in here.
@@ -87,67 +79,11 @@ tasks.register("extractSkinRestorerNestedLibraries", Copy) {
 	into(skinRestorerNestedLibDir)
 }
 
-tasks.register("generateUpgradeUiAssets") {
-	inputs.file(mainLogoTemplateFile)
-	inputs.files(upgradeUiConfigFile)
-	outputs.dir(generatedUpgradeUiAssetsDir)
-
-	doLast {
-		def template = new JsonSlurper().parse(mainLogoTemplateFile)
-		def configData = upgradeUiConfigFile.exists() ? new JsonSlurper().parse(upgradeUiConfigFile) : [:]
-		def layout = (configData instanceof Map && configData.mainLogoLayout instanceof Map) ? configData.mainLogoLayout : [:]
-		double offsetX = layout.inventoryOffsetXPixels instanceof Number ? layout.inventoryOffsetXPixels.doubleValue() : 0D
-		double offsetY = layout.inventoryOffsetYPixels instanceof Number ? layout.inventoryOffsetYPixels.doubleValue() : 0D
-		double baseTranslationX = (template.display.gui.translation[0] as Number).doubleValue()
-		double baseTranslationY = (template.display.gui.translation[1] as Number).doubleValue()
-		double scaleX = (template.display.gui.scale[0] as Number).doubleValue()
-		double scaleZ = (template.display.gui.scale[2] as Number).doubleValue()
-		double desiredTranslationX = baseTranslationX + offsetX
-		double desiredTranslationY = baseTranslationY + offsetY
-		double translationX = Math.max(-80D, Math.min(80D, desiredTranslationX))
-		double translationY = Math.max(-80D, Math.min(80D, desiredTranslationY))
-		double overflowModelX = scaleX == 0D ? 0D : (desiredTranslationX - translationX) / scaleX
-		double overflowModelZ = scaleZ == 0D ? 0D : -(desiredTranslationY - translationY) / scaleZ
-		double minShiftX = Double.NEGATIVE_INFINITY
-		double maxShiftX = Double.POSITIVE_INFINITY
-		double minShiftZ = Double.NEGATIVE_INFINITY
-		double maxShiftZ = Double.POSITIVE_INFINITY
-
-		template.elements.each { element ->
-			double fromX = (element.from[0] as Number).doubleValue()
-			double toX = (element.to[0] as Number).doubleValue()
-			double fromZ = (element.from[2] as Number).doubleValue()
-			double toZ = (element.to[2] as Number).doubleValue()
-			minShiftX = Math.max(minShiftX, Math.max(-16D - fromX, -16D - toX))
-			maxShiftX = Math.min(maxShiftX, Math.min(32D - fromX, 32D - toX))
-			minShiftZ = Math.max(minShiftZ, Math.max(-16D - fromZ, -16D - toZ))
-			maxShiftZ = Math.min(maxShiftZ, Math.min(32D - fromZ, 32D - toZ))
-		}
-
-		double elementShiftX = Math.max(minShiftX, Math.min(maxShiftX, overflowModelX))
-		double elementShiftZ = Math.max(minShiftZ, Math.min(maxShiftZ, overflowModelZ))
-
-		template.display.gui.translation = [translationX, translationY, 0]
-		template.elements.each { element ->
-			element.from[0] = ((element.from[0] as Number).doubleValue() + elementShiftX)
-			element.to[0] = ((element.to[0] as Number).doubleValue() + elementShiftX)
-			element.from[2] = ((element.from[2] as Number).doubleValue() + elementShiftZ)
-			element.to[2] = ((element.to[2] as Number).doubleValue() + elementShiftZ)
-		}
-
-		generatedMainLogoModelFile.parentFile.mkdirs()
-		generatedMainLogoModelFile.text = JsonOutput.prettyPrint(JsonOutput.toJson(template)) + "\n"
-	}
-}
-
 tasks.register("prepareDevResourcePack", Sync) {
-	dependsOn(tasks.named("generateUpgradeUiAssets"))
 	from(layout.projectDirectory.dir("resourcepack"))
 	from(layout.projectDirectory.dir("src/main/resources/assets")) {
 		into("assets")
-		exclude("lg2/models/item/gui/main_logo/_display.json")
 	}
-	from(generatedUpgradeUiAssetsDir)
 	into(polymerSourceAssetsDir)
 	includeEmptyDirs = true
 }
@@ -158,10 +94,7 @@ tasks.matching { it.name == "runServer" }.configureEach {
 }
 
 processResources {
-	dependsOn(tasks.named("generateUpgradeUiAssets"))
 	inputs.property "version", project.version
-	exclude(generatedMainLogoModelRelativePath)
-	from(generatedUpgradeUiAssetsDir)
 
 	filesMatching("fabric.mod.json") {
 		expand "version": inputs.properties.version

@@ -1,10 +1,6 @@
 {
   "enabled": true,
   "rootScreenId": "main",
-  "mainLogoLayout": {
-    "inventoryOffsetXPixels": -10,
-    "inventoryOffsetYPixels": 0
-  },
   "themes": {
     "default": {
       "enabled": true,

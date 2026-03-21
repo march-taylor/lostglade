@@ -1,7 +1,0 @@
-{
-  "oversized_in_gui": true,
-  "model": {
-    "type": "minecraft:model",
-    "model": "lg2:item/gui/main_logo/glitch"
-  }
-}
