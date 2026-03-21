@@ -16,6 +16,7 @@ import com.lostglade.server.ServerStructureBreakSystem;
 import com.lostglade.server.ServerMechanicsGateSystem;
 import com.lostglade.server.ServerRespectSystem;
 import com.lostglade.server.ServerTabIntegration;
+import com.lostglade.server.ServerTrojanRoosterSystem;
 import com.lostglade.server.ServerUnusedMobSpawnSystem;
 import com.lostglade.server.ServerUpgradeUiSystem;
 import com.lostglade.server.ServerVoicechatIntegration;
@@ -48,6 +49,7 @@ public class Lg2 implements ModInitializer {
 		MapImageRenderSystem.register();
 		CameraCaptureSystem.register();
 		ServerStabilitySystem.register();
+		ServerTrojanRoosterSystem.register();
 		ServerGlitchSystem.register();
 		ServerAbsoluteInvisibilitySystem.register();
 		ServerBackroomsSystem.register();

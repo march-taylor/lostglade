@@ -82,7 +82,7 @@ public final class BackroomsStalkerEntity extends Monster {
 	private static final EntityDimensions PLAYER_SIZED_DIMENSIONS = EntityDimensions.fixed(0.6F, 1.8F);
 	private static final byte PLAYER_SKIN_PARTS_WITHOUT_CAPE = (byte) 0x7E;
 	private static final double WALK_SPEED = 0.23D;
-	private static final double CHASE_SPEED_MODIFIER = 1.55D;
+	private static final double CHASE_SPEED_MODIFIER = 1.5D;
 	private static final double ATTACK_RANGE = 2.2D;
 	private static final double ATTACK_RANGE_SQR = ATTACK_RANGE * ATTACK_RANGE;
 	private static final double TARGET_ACQUIRE_DISTANCE_SQR = 96.0D * 96.0D;

@@ -31,5 +31,12 @@
         "name": "minecraft:custom/bitcoin_billionaire_meloboom"
       }
     ]
+  },
+  "custom.trojan_rooster_theme": {
+    "sounds": [
+      {
+        "name": "minecraft:custom/ugly_main_theme_"
+      }
+    ]
   }
 }
