@@ -12,6 +12,8 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
 
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
@@ -32,13 +34,13 @@ public final class BlockTextureRaycaster {
 
 	public static BlockTraceResult trace(BlockState state, BlockPos pos, Vec3 worldOrigin, Vec3 worldDirection, int[] tintColors) {
 		ResolvedVariant variant = resolveVariant(state);
-		if (variant == null || variant.model() == null || variant.model().elements().isEmpty()) {
+		if (variant == null || variant.parts().isEmpty()) {
 			return null;
 		}
 
 		Vec3 localOrigin = worldOrigin.subtract(pos.getX(), pos.getY(), pos.getZ()).scale(16.0D);
 		Vec3 localDirection = worldDirection.scale(16.0D);
-		Ray localRay = inverseRotateVariant(localOrigin, localDirection, variant);
+		Ray localRay = new Ray(localOrigin, localDirection);
 		DoubleRange blockRange = intersectAabb(localRay.origin(), localRay.direction(), 0.0D, 0.0D, 0.0D, 16.0D, 16.0D, 16.0D);
 		if (blockRange == null) {
 			return null;
@@ -48,10 +50,16 @@ public final class BlockTextureRaycaster {
 		double maxT = blockRange.max();
 		for (int passes = 0; passes < 8 && minT <= maxT; passes++) {
 			FaceHit nearest = null;
-			for (ModelElement element : variant.model().elements()) {
-				FaceHit candidate = firstFaceHit(element, localRay, minT, maxT, variant.model());
-				if (candidate != null && (nearest == null || candidate.t() < nearest.t())) {
-					nearest = candidate;
+			for (ModelPart part : variant.parts()) {
+				if (part.model() == null || part.model().elements().isEmpty()) {
+					continue;
+				}
+				Ray partRay = inverseRotateVariant(localRay.origin(), localRay.direction(), part.transform());
+				for (ModelElement element : part.model().elements()) {
+					FaceHit candidate = firstFaceHit(element, partRay, minT, maxT, part.model(), part.transform());
+					if (candidate != null && (nearest == null || candidate.t() < nearest.t())) {
+						nearest = candidate;
+					}
 				}
 			}
 			if (nearest == null) {
@@ -59,10 +67,15 @@ public final class BlockTextureRaycaster {
 			}
 
 			int argb = sampleTexture(nearest, tintColors);
-			double worldT = nearest.t() / 16.0D;
-			Vec3 worldHit = worldOrigin.add(worldDirection.scale(worldT));
 			if (((argb >>> 24) & 0xFF) > 8) {
-				return new BlockTraceResult(argb & 0xFFFFFF, worldHit, nearest.direction());
+				Vec3 blockLocalHit = rotateVariantPointForward(nearest.hitPoint(), nearest.transform());
+				Vec3 worldHit = new Vec3(
+						pos.getX() + blockLocalHit.x / 16.0D,
+						pos.getY() + blockLocalHit.y / 16.0D,
+						pos.getZ() + blockLocalHit.z / 16.0D
+				);
+				Direction shadeDirection = rotateDirectionForward(nearest.direction(), nearest.transform(), nearest.elementRotation());
+				return new BlockTraceResult(argb & 0xFFFFFF, worldHit, shadeDirection, nearest.shade());
 			}
 			minT = nearest.t() + EPSILON;
 		}
@@ -108,10 +121,18 @@ public final class BlockTextureRaycaster {
 		return wrapped < 0.0D ? wrapped + 16.0D : wrapped;
 	}
 
-	private static FaceHit firstFaceHit(ModelElement element, Ray ray, double minT, double maxT, ResolvedModel model) {
+	private static FaceHit firstFaceHit(
+			ModelElement element,
+			Ray ray,
+			double minT,
+			double maxT,
+			ResolvedModel model,
+			ModelTransform transform
+	) {
+		Ray elementRay = inverseRotateElement(ray, element.rotation());
 		FaceHit nearest = null;
 		for (Map.Entry<Direction, ModelFace> entry : element.faces().entrySet()) {
-			FaceHit candidate = intersectFace(element, entry.getKey(), entry.getValue(), ray, minT, maxT, model);
+			FaceHit candidate = intersectFace(element, entry.getKey(), entry.getValue(), ray, elementRay, minT, maxT, model, transform);
 			if (candidate != null && (nearest == null || candidate.t() < nearest.t())) {
 				nearest = candidate;
 			}
@@ -124,9 +145,11 @@ public final class BlockTextureRaycaster {
 			Direction direction,
 			ModelFace face,
 			Ray ray,
+			Ray elementRay,
 			double minT,
 			double maxT,
-			ResolvedModel model
+			ResolvedModel model,
+			ModelTransform transform
 	) {
 		Vec3 from = element.from();
 		Vec3 to = element.to();
@@ -137,97 +160,79 @@ public final class BlockTextureRaycaster {
 		double z;
 		switch (direction) {
 			case NORTH -> {
-				if (Math.abs(ray.direction().z) < EPSILON) {
+				if (Math.abs(elementRay.direction().z) < EPSILON) {
 					return null;
 				}
 				plane = from.z;
-				t = (plane - ray.origin().z) / ray.direction().z;
-				if (t < minT || t > maxT) {
-					return null;
-				}
-				x = ray.origin().x + ray.direction().x * t;
-				y = ray.origin().y + ray.direction().y * t;
+				t = (plane - elementRay.origin().z) / elementRay.direction().z;
+				x = elementRay.origin().x + elementRay.direction().x * t;
+				y = elementRay.origin().y + elementRay.direction().y * t;
 				z = plane;
 				if (!between(x, from.x, to.x) || !between(y, from.y, to.y)) {
 					return null;
 				}
 			}
 			case SOUTH -> {
-				if (Math.abs(ray.direction().z) < EPSILON) {
+				if (Math.abs(elementRay.direction().z) < EPSILON) {
 					return null;
 				}
 				plane = to.z;
-				t = (plane - ray.origin().z) / ray.direction().z;
-				if (t < minT || t > maxT) {
-					return null;
-				}
-				x = ray.origin().x + ray.direction().x * t;
-				y = ray.origin().y + ray.direction().y * t;
+				t = (plane - elementRay.origin().z) / elementRay.direction().z;
+				x = elementRay.origin().x + elementRay.direction().x * t;
+				y = elementRay.origin().y + elementRay.direction().y * t;
 				z = plane;
 				if (!between(x, from.x, to.x) || !between(y, from.y, to.y)) {
 					return null;
 				}
 			}
 			case WEST -> {
-				if (Math.abs(ray.direction().x) < EPSILON) {
+				if (Math.abs(elementRay.direction().x) < EPSILON) {
 					return null;
 				}
 				plane = from.x;
-				t = (plane - ray.origin().x) / ray.direction().x;
-				if (t < minT || t > maxT) {
-					return null;
-				}
+				t = (plane - elementRay.origin().x) / elementRay.direction().x;
 				x = plane;
-				y = ray.origin().y + ray.direction().y * t;
-				z = ray.origin().z + ray.direction().z * t;
+				y = elementRay.origin().y + elementRay.direction().y * t;
+				z = elementRay.origin().z + elementRay.direction().z * t;
 				if (!between(z, from.z, to.z) || !between(y, from.y, to.y)) {
 					return null;
 				}
 			}
 			case EAST -> {
-				if (Math.abs(ray.direction().x) < EPSILON) {
+				if (Math.abs(elementRay.direction().x) < EPSILON) {
 					return null;
 				}
 				plane = to.x;
-				t = (plane - ray.origin().x) / ray.direction().x;
-				if (t < minT || t > maxT) {
-					return null;
-				}
+				t = (plane - elementRay.origin().x) / elementRay.direction().x;
 				x = plane;
-				y = ray.origin().y + ray.direction().y * t;
-				z = ray.origin().z + ray.direction().z * t;
+				y = elementRay.origin().y + elementRay.direction().y * t;
+				z = elementRay.origin().z + elementRay.direction().z * t;
 				if (!between(z, from.z, to.z) || !between(y, from.y, to.y)) {
 					return null;
 				}
 			}
 			case UP -> {
-				if (Math.abs(ray.direction().y) < EPSILON) {
+				if (Math.abs(elementRay.direction().y) < EPSILON) {
 					return null;
 				}
 				plane = to.y;
-				t = (plane - ray.origin().y) / ray.direction().y;
-				if (t < minT || t > maxT) {
-					return null;
-				}
-				x = ray.origin().x + ray.direction().x * t;
+				t = (plane - elementRay.origin().y) / elementRay.direction().y;
+				x = elementRay.origin().x + elementRay.direction().x * t;
 				y = plane;
-				z = ray.origin().z + ray.direction().z * t;
+				z = elementRay.origin().z + elementRay.direction().z * t;
 				if (!between(x, from.x, to.x) || !between(z, from.z, to.z)) {
 					return null;
 				}
 			}
 			case DOWN -> {
-				if (Math.abs(ray.direction().y) < EPSILON) {
+				if (Math.abs(elementRay.direction().y) < EPSILON) {
 					return null;
 				}
 				plane = from.y;
-				t = (plane - ray.origin().y) / ray.direction().y;
-				if (t < minT || t > maxT) {
-					return null;
-				}
-				x = ray.origin().x + ray.direction().x * t;
+				t = (plane - elementRay.origin().y) / elementRay.direction().y;
+				x = elementRay.origin().x + elementRay.direction().x * t;
 				y = plane;
-				z = ray.origin().z + ray.direction().z * t;
+				z = elementRay.origin().z + elementRay.direction().z * t;
 				if (!between(x, from.x, to.x) || !between(z, from.z, to.z)) {
 					return null;
 				}
@@ -243,7 +248,12 @@ public final class BlockTextureRaycaster {
 		if (resolvedTexture == null) {
 			return null;
 		}
-		return new FaceHit(t, direction, new ModelFace(resolvedTexture, uv, face.rotation(), face.tintIndex()), point.u(), point.v());
+		Vec3 hitPoint = transformElementPoint(new Vec3(x, y, z), element.rotation());
+		double rayT = projectRayParameter(ray, hitPoint);
+		if (rayT < minT || rayT > maxT) {
+			return null;
+		}
+		return new FaceHit(rayT, direction, new ModelFace(resolvedTexture, uv, face.rotation(), face.tintIndex()), point.u(), point.v(), hitPoint, element.shade(), element.rotation(), transform);
 	}
 
 	private static double[] defaultUv(Direction direction, Vec3 from, Vec3 to) {
@@ -323,11 +333,121 @@ public final class BlockTextureRaycaster {
 		return value >= Math.min(min, max) - EPSILON && value <= Math.max(min, max) + EPSILON;
 	}
 
-	private static Ray inverseRotateVariant(Vec3 origin, Vec3 direction, ResolvedVariant variant) {
+	private static double projectRayParameter(Ray ray, Vec3 point) {
+		Vec3 offset = point.subtract(ray.origin());
+		double lengthSqr = ray.direction().lengthSqr();
+		if (lengthSqr < EPSILON) {
+			return Double.POSITIVE_INFINITY;
+		}
+		return offset.dot(ray.direction()) / lengthSqr;
+	}
+
+	private static Ray inverseRotateVariant(Vec3 origin, Vec3 direction, ModelTransform transform) {
 		Vec3 center = new Vec3(8.0D, 8.0D, 8.0D);
-		Vec3 rotatedOrigin = rotateAroundY(rotateAroundX(origin.subtract(center), -variant.x()), -variant.y()).add(center);
-		Vec3 rotatedDirection = rotateAroundY(rotateAroundX(direction, -variant.x()), -variant.y());
+		Vec3 rotatedOrigin = rotateAroundY(rotateAroundX(origin.subtract(center), -transform.x()), transform.y()).add(center);
+		Vec3 rotatedDirection = rotateAroundY(rotateAroundX(direction, -transform.x()), transform.y());
 		return new Ray(rotatedOrigin, rotatedDirection);
+	}
+
+	private static Vec3 rotateVariantPointForward(Vec3 point, ModelTransform transform) {
+		Vec3 center = new Vec3(8.0D, 8.0D, 8.0D);
+		return rotateAroundX(rotateAroundY(point.subtract(center), -transform.y()), transform.x()).add(center);
+	}
+
+	private static Direction rotateDirectionForward(Direction direction, ModelTransform transform, ElementRotation elementRotation) {
+		Vec3 normal = new Vec3(direction.getStepX(), direction.getStepY(), direction.getStepZ());
+		normal = rotateElementVector(normal, elementRotation);
+		normal = rotateAroundX(rotateAroundY(normal, -transform.y()), transform.x());
+		return dominantDirection(normal);
+	}
+
+	private static Direction dominantDirection(Vec3 vector) {
+		double absX = Math.abs(vector.x);
+		double absY = Math.abs(vector.y);
+		double absZ = Math.abs(vector.z);
+		if (absY >= absX && absY >= absZ) {
+			return vector.y >= 0.0D ? Direction.UP : Direction.DOWN;
+		}
+		if (absX >= absZ) {
+			return vector.x >= 0.0D ? Direction.EAST : Direction.WEST;
+		}
+		return vector.z >= 0.0D ? Direction.SOUTH : Direction.NORTH;
+	}
+
+	private static Ray inverseRotateElement(Ray ray, ElementRotation rotation) {
+		if (rotation == null || Math.abs(rotation.angle()) < EPSILON) {
+			return ray;
+		}
+		Vector3f origin = new Vector3f(
+				(float) (ray.origin().x - rotation.origin().x),
+				(float) (ray.origin().y - rotation.origin().y),
+				(float) (ray.origin().z - rotation.origin().z)
+		);
+		rotation.inverse().transformPosition(origin);
+		origin.add((float) rotation.origin().x, (float) rotation.origin().y, (float) rotation.origin().z);
+		Vector3f direction = new Vector3f((float) ray.direction().x, (float) ray.direction().y, (float) ray.direction().z);
+		rotation.inverse().transformDirection(direction);
+		return new Ray(
+				new Vec3(origin.x, origin.y, origin.z),
+				new Vec3(direction.x, direction.y, direction.z)
+		);
+	}
+
+	private static Vec3 transformElementPoint(Vec3 point, ElementRotation rotation) {
+		if (rotation == null || Math.abs(rotation.angle()) < EPSILON) {
+			return point;
+		}
+		Vector3f vector = new Vector3f(
+				(float) (point.x - rotation.origin().x),
+				(float) (point.y - rotation.origin().y),
+				(float) (point.z - rotation.origin().z)
+		);
+		rotation.transform().transformPosition(vector);
+		vector.add((float) rotation.origin().x, (float) rotation.origin().y, (float) rotation.origin().z);
+		return new Vec3(vector.x, vector.y, vector.z);
+	}
+
+	private static Vec3 rotateElementVector(Vec3 vector, ElementRotation rotation) {
+		if (rotation == null || Math.abs(rotation.angle()) < EPSILON) {
+			return vector;
+		}
+		Vector3f transformed = new Vector3f((float) vector.x, (float) vector.y, (float) vector.z);
+		buildRotationMatrix(rotation.axis(), rotation.angle()).transformDirection(transformed);
+		return new Vec3(transformed.x, transformed.y, transformed.z);
+	}
+
+	private static ElementRotation buildElementRotation(Vec3 origin, Direction.Axis axis, float angle, boolean rescale) {
+		Matrix4f transform = buildRotationMatrix(axis, angle);
+		if (rescale && Math.abs(angle) >= EPSILON) {
+			Vector3f scale = computeRescale(transform);
+			transform.scale(scale);
+		}
+		Matrix4f inverse = new Matrix4f(transform).invert();
+		return new ElementRotation(origin, axis, angle, rescale, transform, inverse);
+	}
+
+	private static Matrix4f buildRotationMatrix(Direction.Axis axis, float angle) {
+		Vector3f axisVector = switch (axis) {
+			case X -> new Vector3f(1.0F, 0.0F, 0.0F);
+			case Y -> new Vector3f(0.0F, 1.0F, 0.0F);
+			case Z -> new Vector3f(0.0F, 0.0F, 1.0F);
+		};
+		return new Matrix4f().rotation((float) Math.toRadians(angle), axisVector);
+	}
+
+	private static Vector3f computeRescale(Matrix4f transform) {
+		return new Vector3f(
+				axisRescale(transform, new Vector3f(1.0F, 0.0F, 0.0F)),
+				axisRescale(transform, new Vector3f(0.0F, 1.0F, 0.0F)),
+				axisRescale(transform, new Vector3f(0.0F, 0.0F, 1.0F))
+		);
+	}
+
+	private static float axisRescale(Matrix4f transform, Vector3f axisVector) {
+		Vector3f transformed = new Vector3f(axisVector);
+		transform.transformDirection(transformed);
+		float max = Math.max(Math.max(Math.abs(transformed.x), Math.abs(transformed.y)), Math.abs(transformed.z));
+		return max <= 1.0E-6F ? 1.0F : 1.0F / max;
 	}
 
 	private static Vec3 rotateAroundX(Vec3 vector, int degrees) {
@@ -404,23 +524,24 @@ public final class BlockTextureRaycaster {
 		JsonObject blockStateJson = ASSETS.loadBlockState(blockId);
 		if (blockStateJson == null) {
 			ResolvedModel directModel = resolveModel(Identifier.fromNamespaceAndPath(blockId.getNamespace(), "block/" + blockId.getPath()));
-			return directModel == null ? null : new ResolvedVariant(directModel, 0, 0);
+			return directModel == null ? null : singleModelVariant(directModel, 0, 0, false);
 		}
 		if (blockStateJson.has("multipart")) {
 			return resolveMultipart(blockStateJson.getAsJsonArray("multipart"), state);
 		}
 		if (!blockStateJson.has("variants")) {
 			ResolvedModel directModel = resolveModel(Identifier.fromNamespaceAndPath(blockId.getNamespace(), "block/" + blockId.getPath()));
-			return directModel == null ? null : new ResolvedVariant(directModel, 0, 0);
+			return directModel == null ? null : singleModelVariant(directModel, 0, 0, false);
 		}
 		JsonObject variants = blockStateJson.getAsJsonObject("variants");
 		for (Map.Entry<String, JsonElement> entry : variants.entrySet()) {
 			if (!matchesVariantKey(state, entry.getKey())) {
 				continue;
 			}
-			JsonObject variantObject = entry.getValue().isJsonArray()
-					? entry.getValue().getAsJsonArray().get(0).getAsJsonObject()
-					: entry.getValue().getAsJsonObject();
+			JsonObject variantObject = firstVariantObject(entry.getValue());
+			if (variantObject == null) {
+				continue;
+			}
 			Identifier modelId = Identifier.tryParse(variantObject.get("model").getAsString());
 			if (modelId == null) {
 				continue;
@@ -431,16 +552,14 @@ public final class BlockTextureRaycaster {
 			}
 			int x = variantObject.has("x") ? variantObject.get("x").getAsInt() : 0;
 			int y = variantObject.has("y") ? variantObject.get("y").getAsInt() : 0;
-			return new ResolvedVariant(model, x, y);
+			boolean uvlock = variantObject.has("uvlock") && variantObject.get("uvlock").getAsBoolean();
+			return singleModelVariant(model, x, y, uvlock);
 		}
 		return null;
 	}
 
 	private static ResolvedVariant resolveMultipart(JsonArray multipart, BlockState state) {
-		Map<String, String> textures = new HashMap<>();
-		List<ModelElement> elements = new ArrayList<>();
-		int modelX = 0;
-		int modelY = 0;
+		List<ModelPart> parts = new ArrayList<>();
 		for (JsonElement element : multipart) {
 			JsonObject part = element.getAsJsonObject();
 			if (part.has("when") && !matchesMultipartCondition(state, part.get("when"))) {
@@ -450,21 +569,53 @@ public final class BlockTextureRaycaster {
 			if (apply == null) {
 				continue;
 			}
-			JsonObject applyObject = apply.isJsonArray() ? apply.getAsJsonArray().get(0).getAsJsonObject() : apply.getAsJsonObject();
-			Identifier modelId = Identifier.tryParse(applyObject.get("model").getAsString());
-			if (modelId == null) {
+			JsonObject applyObject = firstVariantObject(apply);
+			if (applyObject == null) {
 				continue;
 			}
-			ResolvedModel model = resolveModel(modelId);
-			if (model == null) {
-				continue;
+			ModelPart resolvedPart = resolveModelPart(applyObject);
+			if (resolvedPart != null) {
+				parts.add(resolvedPart);
 			}
-			textures.putAll(model.textures());
-			elements.addAll(model.elements());
-			modelX = applyObject.has("x") ? applyObject.get("x").getAsInt() : modelX;
-			modelY = applyObject.has("y") ? applyObject.get("y").getAsInt() : modelY;
 		}
-		return elements.isEmpty() ? null : new ResolvedVariant(new ResolvedModel(textures, elements), modelX, modelY);
+		return parts.isEmpty() ? null : new ResolvedVariant(parts);
+	}
+
+	private static ResolvedVariant singleModelVariant(ResolvedModel model, int x, int y, boolean uvlock) {
+		return new ResolvedVariant(List.of(new ModelPart(model, new ModelTransform(x, y, uvlock))));
+	}
+
+	private static ModelPart resolveModelPart(JsonObject applyObject) {
+		if (!applyObject.has("model")) {
+			return null;
+		}
+		Identifier modelId = Identifier.tryParse(applyObject.get("model").getAsString());
+		if (modelId == null) {
+			return null;
+		}
+		ResolvedModel model = resolveModel(modelId);
+		if (model == null) {
+			return null;
+		}
+		int x = applyObject.has("x") ? applyObject.get("x").getAsInt() : 0;
+		int y = applyObject.has("y") ? applyObject.get("y").getAsInt() : 0;
+		boolean uvlock = applyObject.has("uvlock") && applyObject.get("uvlock").getAsBoolean();
+		return new ModelPart(model, new ModelTransform(x, y, uvlock));
+	}
+
+	private static JsonObject firstVariantObject(JsonElement element) {
+		if (element == null || element.isJsonNull()) {
+			return null;
+		}
+		if (element.isJsonArray()) {
+			JsonArray array = element.getAsJsonArray();
+			if (array.isEmpty()) {
+				return null;
+			}
+			JsonElement first = array.get(0);
+			return first.isJsonObject() ? first.getAsJsonObject() : null;
+		}
+		return element.isJsonObject() ? element.getAsJsonObject() : null;
 	}
 
 	private static boolean matchesMultipartCondition(BlockState state, JsonElement whenElement) {
@@ -592,6 +743,8 @@ public final class BlockTextureRaycaster {
 				JsonObject object = elementJson.getAsJsonObject();
 				Vec3 from = readVec3(object.getAsJsonArray("from"));
 				Vec3 to = readVec3(object.getAsJsonArray("to"));
+				ElementRotation elementRotation = readElementRotation(object);
+				boolean shade = !object.has("shade") || object.get("shade").getAsBoolean();
 				Map<Direction, ModelFace> faces = new HashMap<>();
 				JsonObject facesJson = object.getAsJsonObject("faces");
 				for (Map.Entry<String, JsonElement> faceEntry : facesJson.entrySet()) {
@@ -601,14 +754,35 @@ public final class BlockTextureRaycaster {
 					}
 					JsonObject faceJson = faceEntry.getValue().getAsJsonObject();
 					double[] uv = faceJson.has("uv") ? readUv(faceJson.getAsJsonArray("uv")) : null;
-					int rotation = faceJson.has("rotation") ? faceJson.get("rotation").getAsInt() : 0;
+					int faceRotation = faceJson.has("rotation") ? faceJson.get("rotation").getAsInt() : 0;
 					int tintIndex = faceJson.has("tintindex") ? faceJson.get("tintindex").getAsInt() : -1;
-					faces.put(direction, new ModelFace(faceJson.get("texture").getAsString(), uv, rotation, tintIndex));
+					faces.put(direction, new ModelFace(faceJson.get("texture").getAsString(), uv, faceRotation, tintIndex));
 				}
-				elements.add(new ModelElement(from, to, faces));
+				elements.add(new ModelElement(from, to, faces, elementRotation, shade));
 			}
 		}
 		return new ResolvedModel(textures, elements);
+	}
+
+	private static ElementRotation readElementRotation(JsonObject object) {
+		if (!object.has("rotation")) {
+			return null;
+		}
+		JsonObject rotationJson = object.getAsJsonObject("rotation");
+		Vec3 origin = readVec3(rotationJson.getAsJsonArray("origin"));
+		String axisName = rotationJson.get("axis").getAsString();
+		Direction.Axis axis = switch (axisName) {
+			case "x" -> Direction.Axis.X;
+			case "y" -> Direction.Axis.Y;
+			case "z" -> Direction.Axis.Z;
+			default -> null;
+		};
+		if (axis == null) {
+			return null;
+		}
+		float angle = rotationJson.get("angle").getAsFloat();
+		boolean rescale = rotationJson.has("rescale") && rotationJson.get("rescale").getAsBoolean();
+		return buildElementRotation(origin, axis, angle, rescale);
 	}
 
 	private static Vec3 readVec3(JsonArray array) {
@@ -641,22 +815,31 @@ public final class BlockTextureRaycaster {
 		return current;
 	}
 
-	public record BlockTraceResult(int rgb, Vec3 worldHit, Direction face) {
+	public record BlockTraceResult(int rgb, Vec3 worldHit, Direction face, boolean shade) {
 	}
 
-	private record ResolvedVariant(ResolvedModel model, int x, int y) {
+	private record ResolvedVariant(List<ModelPart> parts) {
+	}
+
+	private record ModelPart(ResolvedModel model, ModelTransform transform) {
+	}
+
+	private record ModelTransform(int x, int y, boolean uvlock) {
 	}
 
 	private record ResolvedModel(Map<String, String> textures, List<ModelElement> elements) {
 	}
 
-	private record ModelElement(Vec3 from, Vec3 to, Map<Direction, ModelFace> faces) {
+	private record ModelElement(Vec3 from, Vec3 to, Map<Direction, ModelFace> faces, ElementRotation rotation, boolean shade) {
 	}
 
 	private record ModelFace(String texture, double[] uv, int rotation, int tintIndex) {
 	}
 
-	private record FaceHit(double t, Direction direction, ModelFace face, double u, double v) {
+	private record FaceHit(double t, Direction direction, ModelFace face, double u, double v, Vec3 hitPoint, boolean shade, ElementRotation elementRotation, ModelTransform transform) {
+	}
+
+	private record ElementRotation(Vec3 origin, Direction.Axis axis, float angle, boolean rescale, Matrix4f transform, Matrix4f inverse) {
 	}
 
 	private record UvPoint(double u, double v) {

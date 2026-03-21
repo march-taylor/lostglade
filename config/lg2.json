@@ -34,6 +34,8 @@
 
   "killerRabbitReplacementChance": 150,
   "giantZombieReplacementChance": 250,
-  "cameraRenderThreads": 7,
-  "cameraRenderInFlightPixels": 1024
+
+  "cameraRenderThreads": 10,
+  "cameraRenderInFlightPixels": 1024,
+  "cameraRenderSamplesPerAxis": 2
 }

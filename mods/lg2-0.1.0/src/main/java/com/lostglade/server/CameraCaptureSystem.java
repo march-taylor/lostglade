@@ -1,9 +1,11 @@
 package com.lostglade.server;
 
+import com.lostglade.config.Lg2Config;
 import com.lostglade.item.ModItems;
 import com.lostglade.server.map.BlockTintProvider;
 import com.lostglade.server.map.BlockTextureRaycaster;
 import com.lostglade.server.map.MapImageRenderSystem;
+import com.lostglade.server.map.MapPaletteQuantizer;
 import com.lostglade.server.map.MapPixelProvider;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -117,22 +119,70 @@ public final class CameraCaptureSystem {
 			ServerPlayer player = server.getPlayerList().getPlayer(this.playerId);
 			ServerLevel level = server.getLevel(this.dimension);
 			if (player == null || level == null) {
-				return new PreparedPixel(x, y, new SkySample(0));
+				return new PreparedPixel(x, y, new PixelSampleSet(new Object[]{new SkySample(0)}));
 			}
 
-			Vec3 direction = computeRayDirection(x, y);
-			int sky = skyColor(level, direction);
-			return new PreparedPixel(x, y, captureSample(level, player, direction, sky));
+			int samplesPerAxis = Mth.clamp(Lg2Config.get().cameraRenderSamplesPerAxis, 1, 4);
+			Object[] samples = new Object[samplesPerAxis * samplesPerAxis];
+			int sampleIndex = 0;
+			for (int sampleY = 0; sampleY < samplesPerAxis; sampleY++) {
+				for (int sampleX = 0; sampleX < samplesPerAxis; sampleX++) {
+					double pixelSampleX = x + (sampleX + 0.5D) / samplesPerAxis;
+					double pixelSampleY = y + (sampleY + 0.5D) / samplesPerAxis;
+					Vec3 direction = computeRayDirection(pixelSampleX, pixelSampleY);
+					int sky = skyColor(level, direction);
+					samples[sampleIndex++] = captureSample(level, player, direction, sky);
+				}
+			}
+			return new PreparedPixel(x, y, new PixelSampleSet(samples));
 		}
 
 		@Override
 		public byte renderPreparedPixel(PreparedPixel pixel) {
 			Object payload = pixel.payload();
+			if (payload instanceof PixelSampleSet sampleSet) {
+				Object[] samples = sampleSet.samples();
+				int[] colors = new int[samples.length];
+				int count = 0;
+				for (Object sample : samples) {
+					colors[count++] = renderSampleRgb(sample);
+				}
+				return MapPaletteQuantizer.quantizeAverage(colors, count);
+			}
 			if (payload instanceof SkySample skySample) {
-				return toPackedColor(skySample.rgb(), distanceBrightness(0.0D));
+				return MapPaletteQuantizer.quantize(skySample.rgb());
 			}
 			if (payload instanceof EntitySample entitySample) {
-				return toPackedColor(entitySample.rgb(), distanceBrightness(entitySample.distance()));
+				return MapPaletteQuantizer.quantize(entitySample.rgb());
+			}
+			if (payload instanceof BlockRaySample blockSample) {
+				return MapPaletteQuantizer.quantize(renderSampleRgb(blockSample));
+			}
+			return 0;
+		}
+
+		@Override
+		public Component completedMessage() {
+			return Component.literal("Снимок готов.");
+		}
+
+		private Vec3 computeRayDirection(double pixelX, double pixelY) {
+			double aspect = 1.0D;
+			double tanHalfFov = Math.tan(Math.toRadians(FOV_DEGREES * 0.5D));
+			double sensorX = (pixelX / 128.0D * 2.0D - 1.0D) * tanHalfFov * aspect;
+			double sensorY = (1.0D - pixelY / 128.0D * 2.0D) * tanHalfFov;
+			return this.forward
+					.add(this.right.scale(sensorX))
+					.add(this.up.scale(sensorY))
+					.normalize();
+		}
+
+		private int renderSampleRgb(Object payload) {
+			if (payload instanceof SkySample skySample) {
+				return skySample.rgb();
+			}
+			if (payload instanceof EntitySample entitySample) {
+				return entitySample.rgb();
 			}
 			if (payload instanceof BlockRaySample blockSample) {
 				for (BlockCandidate candidate : blockSample.candidates()) {
@@ -144,32 +194,15 @@ public final class CameraCaptureSystem {
 							candidate.tintLayers()
 					);
 					if (trace != null) {
-						int lit = applySnapshotLighting(trace.rgb(), trace.face(), candidate.canSeeSkyAbove(), candidate.distance());
-						return toPackedColor(lit, distanceBrightness(candidate.distance()));
+						return applySnapshotLighting(trace.rgb(), trace.face(), trace.shade(), candidate.canSeeSkyAbove(), candidate.distance());
 					}
 				}
 				if (blockSample.entityRgb() != null) {
-					return toPackedColor(blockSample.entityRgb(), distanceBrightness(blockSample.entityDistance()));
+					return blockSample.entityRgb();
 				}
-				return toPackedColor(blockSample.skyRgb(), distanceBrightness(0.0D));
+				return blockSample.skyRgb();
 			}
 			return 0;
-		}
-
-		@Override
-		public Component completedMessage() {
-			return Component.literal("Снимок готов.");
-		}
-
-		private Vec3 computeRayDirection(int pixelX, int pixelY) {
-			double aspect = 1.0D;
-			double tanHalfFov = Math.tan(Math.toRadians(FOV_DEGREES * 0.5D));
-			double sensorX = ((pixelX + 0.5D) / 128.0D * 2.0D - 1.0D) * tanHalfFov * aspect;
-			double sensorY = (1.0D - (pixelY + 0.5D) / 128.0D * 2.0D) * tanHalfFov;
-			return this.forward
-					.add(this.right.scale(sensorX))
-					.add(this.up.scale(sensorY))
-					.normalize();
 		}
 
 		private Object captureSample(ServerLevel level, ServerPlayer viewer, Vec3 direction, int skyRgb) {
@@ -230,28 +263,29 @@ public final class CameraCaptureSystem {
 			);
 		}
 
-		private int applySnapshotLighting(int rgb, net.minecraft.core.Direction face, boolean canSeeSkyAbove, double distance) {
-			float shade = switch (face) {
+		private int applySnapshotLighting(int rgb, net.minecraft.core.Direction face, boolean modelShade, boolean canSeeSkyAbove, double distance) {
+			float shade = modelShade ? switch (face) {
 				case UP -> 1.0F;
 				case DOWN -> 0.55F;
 				default -> 0.82F;
-			};
+			} : 1.0F;
 			if (!canSeeSkyAbove) {
-				shade *= 0.72F;
+				shade *= modelShade ? 0.72F : 0.86F;
 			}
-			if (distance > 64.0D) {
-				shade *= 0.75F;
+			if (distance > 48.0D) {
+				float fade = Mth.clamp((float) ((distance - 48.0D) / (MAX_DISTANCE - 48.0D)), 0.0F, 1.0F);
+				shade *= Mth.lerp(fade, 1.0F, 0.88F);
 			}
-			int r = Mth.clamp((int) (((rgb >> 16) & 0xFF) * shade), 0, 255);
-			int g = Mth.clamp((int) (((rgb >> 8) & 0xFF) * shade), 0, 255);
-			int b = Mth.clamp((int) ((rgb & 0xFF) * shade), 0, 255);
-			return (r << 16) | (g << 8) | b;
+			return MapPaletteQuantizer.scaleRgb(rgb, shade);
 		}
 
 		private record SkySample(int rgb) {
 		}
 
 		private record EntitySample(int rgb, double distance) {
+		}
+
+		private record PixelSampleSet(Object[] samples) {
 		}
 
 		private record BlockRaySample(Vec3 direction, int skyRgb, Integer entityRgb, double entityDistance, BlockCandidate[] candidates) {
@@ -302,43 +336,5 @@ public final class CameraCaptureSystem {
 		int g = Mth.floor(Mth.lerp(delta, fg, tg));
 		int b = Mth.floor(Mth.lerp(delta, fb, tb));
 		return (r << 16) | (g << 8) | b;
-	}
-
-	private static byte toPackedColor(int rgb, net.minecraft.world.level.material.MapColor.Brightness brightness) {
-		net.minecraft.world.level.material.MapColor nearest = net.minecraft.world.level.material.MapColor.NONE;
-		int bestDistance = Integer.MAX_VALUE;
-		for (int i = 0; i < 64; i++) {
-			net.minecraft.world.level.material.MapColor candidate = net.minecraft.world.level.material.MapColor.byId(i);
-			int candidateRgb = candidate.calculateARGBColor(net.minecraft.world.level.material.MapColor.Brightness.NORMAL) & 0xFFFFFF;
-			int distance = colorDistance(rgb, candidateRgb);
-			if (distance < bestDistance) {
-				bestDistance = distance;
-				nearest = candidate;
-			}
-		}
-		return nearest.getPackedId(brightness);
-	}
-
-	private static net.minecraft.world.level.material.MapColor.Brightness distanceBrightness(double distance) {
-		if (distance > 64.0D) {
-			return net.minecraft.world.level.material.MapColor.Brightness.LOWEST;
-		}
-		if (distance > 42.0D) {
-			return net.minecraft.world.level.material.MapColor.Brightness.LOW;
-		}
-		return net.minecraft.world.level.material.MapColor.Brightness.NORMAL;
-	}
-
-	private static int colorDistance(int a, int b) {
-		int ar = (a >> 16) & 0xFF;
-		int ag = (a >> 8) & 0xFF;
-		int ab = a & 0xFF;
-		int br = (b >> 16) & 0xFF;
-		int bg = (b >> 8) & 0xFF;
-		int bb = b & 0xFF;
-		int dr = ar - br;
-		int dg = ag - bg;
-		int db = ab - bb;
-		return dr * dr + dg * dg + db * db;
 	}
 }
