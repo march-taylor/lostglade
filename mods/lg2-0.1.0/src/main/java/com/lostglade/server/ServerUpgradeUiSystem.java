@@ -1189,6 +1189,29 @@ public final class ServerUpgradeUiSystem {
 		}
 	}
 
+	private static void sendTopMenuVisuals(ServerPlayer player, UpgradeMenu menu) {
+		if (player == null || menu == null) {
+			return;
+		}
+
+		Inventory inventory = player.getInventory();
+		PacketContext.NotNullWithPlayer context = PacketContext.create(player);
+		int stateId = menu.incrementStateId();
+		for (int menuSlot = 0; menuSlot < menu.slots.size(); menuSlot++) {
+			Slot slot = menu.getSlot(menuSlot);
+			if (slot.container == inventory) {
+				continue;
+			}
+
+			player.connection.send(new ClientboundContainerSetSlotPacket(
+					menu.containerId,
+					stateId,
+					menuSlot,
+					toClientVisualStack(slot.getItem().copy(), context)
+			));
+		}
+	}
+
 	private static void syncHeldEquipmentVisuals(ServerPlayer player, boolean hide) {
 		if (player == null) {
 			return;
@@ -1533,8 +1556,22 @@ public final class ServerUpgradeUiSystem {
 
 			Component title = buildTitle(player, menu.screenId, true, screen, resolveTheme(config, screen));
 			player.connection.send(new ClientboundOpenScreenPacket(menu.containerId, menu.getType(), title));
+			resyncMenuAfterTitleRefresh(player, menu);
 			ERAS_TITLE_SIGNATURES.put(playerId, signature);
 		}
+	}
+
+	private static void resyncMenuAfterTitleRefresh(ServerPlayer player, UpgradeMenu menu) {
+		if (player == null || menu == null) {
+			return;
+		}
+
+		// Refreshing the title with a new open-screen packet can clear the client-side
+		// visual stacks, so we resend only the intended visuals without revealing the
+		// real lower inventory contents.
+		sendTopMenuVisuals(player, menu);
+		hideLowerInventoryVisuals(player, menu);
+		PENDING_MENU_VISUAL_RESYNCS.put(player.getUUID(), MENU_VISUAL_RESYNC_TICKS);
 	}
 
 	private record EraProgressAnimation(int startFrameIndex, int endFrameIndex, long startTick) {
