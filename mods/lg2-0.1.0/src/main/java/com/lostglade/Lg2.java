@@ -17,6 +17,8 @@ import com.lostglade.server.ServerRespectSystem;
 import com.lostglade.server.ServerTabIntegration;
 import com.lostglade.server.ServerUnusedMobSpawnSystem;
 import com.lostglade.server.ServerUpgradeUiSystem;
+import com.lostglade.server.ServerVoicechatIntegration;
+import com.lostglade.server.ServerWebcamIntegration;
 import com.lostglade.worldgen.ModWorldGen;
 import net.fabricmc.api.ModInitializer;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
@@ -54,6 +56,8 @@ public class Lg2 implements ModInitializer {
 		ServerRespectSystem.register();
 		ServerUnusedMobSpawnSystem.register();
 		ServerTabIntegration.register();
+		ServerVoicechatIntegration.register();
+		ServerWebcamIntegration.register();
 		ServerUpgradeUiSystem.register();
 
 		LOGGER.info("Initialized {}", MOD_ID);

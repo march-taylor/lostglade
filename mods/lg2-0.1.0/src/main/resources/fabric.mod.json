@@ -20,6 +20,9 @@
 		],
 		"client": [
 			"com.lostglade.Lg2Client"
+		],
+		"voicechat": [
+			"com.lostglade.server.Lg2VoicechatPlugin"
 		]
 	},
 	"mixins": [
@@ -39,6 +42,8 @@
 		"polymer-blocks": "*",
 		"polymer-resource-pack": "*",
 		"cardinal-components": "*",
-		"skinrestorer": "*"
+		"skinrestorer": "*",
+		"voicechat": "*",
+		"webcam": "*"
 	}
 }
