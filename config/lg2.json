@@ -33,5 +33,7 @@
   "respectCooldownSeconds": 0,
 
   "killerRabbitReplacementChance": 150,
-  "giantZombieReplacementChance": 250
+  "giantZombieReplacementChance": 250,
+  "cameraRenderThreads": 7,
+  "cameraRenderInFlightPixels": 1024
 }

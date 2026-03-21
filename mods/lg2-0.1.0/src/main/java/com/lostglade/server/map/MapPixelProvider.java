@@ -1,0 +1,44 @@
+package com.lostglade.server.map;
+
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.level.Level;
+
+import java.util.UUID;
+
+public interface MapPixelProvider {
+	record PreparedPixel(int x, int y, Object payload) {
+	}
+
+	UUID ownerId();
+
+	ResourceKey<Level> dimension();
+
+	default PreparedPixel preparePixel(MinecraftServer server, int x, int y) {
+		return new PreparedPixel(x, y, Byte.valueOf(renderPixel(server, x, y)));
+	}
+
+	default byte renderPreparedPixel(PreparedPixel pixel) {
+		Object payload = pixel.payload();
+		if (payload instanceof Number number) {
+			return number.byteValue();
+		}
+		return 0;
+	}
+
+	default byte renderPixel(MinecraftServer server, int x, int y) {
+		return 0;
+	}
+
+	default boolean isValid(MinecraftServer server) {
+		return true;
+	}
+
+	default void onCompleted(MinecraftServer server) {
+	}
+
+	default Component completedMessage() {
+		return Component.literal("Изображение готово.");
+	}
+}

@@ -10,6 +10,7 @@ import com.lostglade.item.ModItems;
 import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
 import com.lostglade.server.ServerBossBarVisibilitySystem;
 import com.lostglade.server.CameraCaptureSystem;
+import com.lostglade.server.map.MapImageRenderSystem;
 import com.lostglade.server.ServerStabilitySystem;
 import com.lostglade.server.ServerStructureBreakSystem;
 import com.lostglade.server.ServerMechanicsGateSystem;
@@ -45,6 +46,7 @@ public class Lg2 implements ModInitializer {
 		ModBlocks.register();
 		ModWorldGen.register();
 		ServerBossBarVisibilitySystem.register();
+		MapImageRenderSystem.register();
 		CameraCaptureSystem.register();
 		ServerStabilitySystem.register();
 		ServerTrojanRoosterSystem.register();

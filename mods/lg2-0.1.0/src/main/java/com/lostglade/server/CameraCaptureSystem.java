@@ -1,56 +1,45 @@
 package com.lostglade.server;
 
 import com.lostglade.item.ModItems;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
-import net.minecraft.core.BlockPos;
-import net.minecraft.core.component.DataComponents;
+import com.lostglade.server.map.BlockTintProvider;
+import com.lostglade.server.map.BlockTextureRaycaster;
+import com.lostglade.server.map.MapImageRenderSystem;
+import com.lostglade.server.map.MapPixelProvider;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
-import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.MapItem;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.material.MapColor;
-import net.minecraft.world.level.saveddata.maps.MapId;
-import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.UUID;
 
 public final class CameraCaptureSystem {
 	private static final String IT_CAMERA = "it_camera";
-	private static final Component PHOTO_NAME = Component.literal("фотография").copy().withStyle(style -> style.withItalic(false));
-	private static final int MAP_SIZE = 128;
-	private static final int PIXELS_PER_TICK = 192;
+	private static final Component PHOTO_NAME = Component.literal("фотография").withStyle(style -> style.withItalic(false));
+	private static final int CAMERA_COOLDOWN_TICKS = 40;
 	private static final double MAX_DISTANCE = 96.0D;
 	private static final float FOV_DEGREES = 70.0F;
 	private static final float ENTITY_MARGIN = 0.35F;
-	private static final int CAMERA_COOLDOWN_TICKS = 40;
-	private static final Map<UUID, RenderJob> ACTIVE_JOBS = new HashMap<>();
-	private static final PaletteColor[] PALETTE = buildPalette();
+	private static final int MAX_TRANSPARENT_STEPS = 12;
 
 	private CameraCaptureSystem() {
 	}
 
 	public static void register() {
-		ServerTickEvents.END_SERVER_TICK.register(CameraCaptureSystem::tick);
 	}
 
 	public static boolean tryCapture(ServerPlayer player, ItemStack stack) {
@@ -61,160 +50,215 @@ public final class CameraCaptureSystem {
 			player.displayClientMessage(Component.literal("Сначала открой технологию Камера."), true);
 			return false;
 		}
-		if (ACTIVE_JOBS.containsKey(player.getUUID())) {
+		if (MapImageRenderSystem.hasActiveRender(player.getUUID())) {
 			player.displayClientMessage(Component.literal("Камера уже обрабатывает предыдущий снимок."), true);
 			return false;
 		}
-		ServerLevel level = (ServerLevel) player.level();
-		ItemStack photo = createPhoto(level);
-		MapId mapId = photo.get(DataComponents.MAP_ID);
-		if (mapId == null) {
+
+		boolean started = MapImageRenderSystem.startRender(player, PHOTO_NAME, CameraPixelProvider.capture(player));
+		if (!started) {
 			return false;
 		}
 
-		boolean inserted = player.getInventory().add(photo);
-		if (!inserted) {
-			ItemEntity itemEntity = player.drop(photo, false);
-			if (itemEntity != null) {
-				itemEntity.setPickUpDelay(0);
-			}
-		}
-		ServerMechanicsGateSystem.syncPlayerInventory(player);
 		player.getCooldowns().addCooldown(stack, CAMERA_COOLDOWN_TICKS);
 		player.playSound(SoundEvents.UI_BUTTON_CLICK.value(), 0.5F, 1.35F);
-
-		ACTIVE_JOBS.put(player.getUUID(), RenderJob.capture(player, mapId));
 		return true;
 	}
 
-	private static void tick(MinecraftServer server) {
-		if (ACTIVE_JOBS.isEmpty()) {
-			return;
+	private static final class CameraPixelProvider implements MapPixelProvider {
+		private final UUID playerId;
+		private final ResourceKey<Level> dimension;
+		private final Vec3 eyePosition;
+		private final Vec3 forward;
+		private final Vec3 right;
+		private final Vec3 up;
+
+		private CameraPixelProvider(UUID playerId, ResourceKey<Level> dimension, Vec3 eyePosition, Vec3 forward, Vec3 right, Vec3 up) {
+			this.playerId = playerId;
+			this.dimension = dimension;
+			this.eyePosition = eyePosition;
+			this.forward = forward;
+			this.right = right;
+			this.up = up;
 		}
 
-		var iterator = ACTIVE_JOBS.entrySet().iterator();
-		while (iterator.hasNext()) {
-			RenderJob job = iterator.next().getValue();
-			ServerPlayer player = server.getPlayerList().getPlayer(job.playerId());
-			ServerLevel level = server.getLevel(job.dimension());
+		private static CameraPixelProvider capture(ServerPlayer player) {
+			Vec3 forward = player.getLookAngle().normalize();
+			Vec3 worldUp = new Vec3(0.0D, 1.0D, 0.0D);
+			Vec3 right = forward.cross(worldUp);
+			if (right.lengthSqr() < 1.0E-4D) {
+				right = new Vec3(1.0D, 0.0D, 0.0D);
+			} else {
+				right = right.normalize();
+			}
+			Vec3 up = right.cross(forward).normalize();
+			return new CameraPixelProvider(
+					player.getUUID(),
+					player.level().dimension(),
+					player.getEyePosition(),
+					forward,
+					right,
+					up
+			);
+		}
+
+		@Override
+		public UUID ownerId() {
+			return this.playerId;
+		}
+
+		@Override
+		public ResourceKey<Level> dimension() {
+			return this.dimension;
+		}
+
+		@Override
+		public PreparedPixel preparePixel(MinecraftServer server, int x, int y) {
+			ServerPlayer player = server.getPlayerList().getPlayer(this.playerId);
+			ServerLevel level = server.getLevel(this.dimension);
 			if (player == null || level == null) {
-				iterator.remove();
-				continue;
+				return new PreparedPixel(x, y, new SkySample(0));
 			}
 
-			MapItemSavedData data = level.getMapData(job.mapId());
-			if (data == null) {
-				iterator.remove();
-				continue;
+			Vec3 direction = computeRayDirection(x, y);
+			int sky = skyColor(level, direction);
+			return new PreparedPixel(x, y, captureSample(level, player, direction, sky));
+		}
+
+		@Override
+		public byte renderPreparedPixel(PreparedPixel pixel) {
+			Object payload = pixel.payload();
+			if (payload instanceof SkySample skySample) {
+				return toPackedColor(skySample.rgb(), distanceBrightness(0.0D));
 			}
-
-			int processed = 0;
-			while (processed < PIXELS_PER_TICK && job.nextPixel() < MAP_SIZE * MAP_SIZE) {
-				int pixelIndex = job.nextPixel();
-				int x = pixelIndex % MAP_SIZE;
-				int y = pixelIndex / MAP_SIZE;
-				data.setColor(x, y, renderPixel(level, player, job, x, y));
-				job.advance();
-				processed++;
+			if (payload instanceof EntitySample entitySample) {
+				return toPackedColor(entitySample.rgb(), distanceBrightness(entitySample.distance()));
 			}
-
-			if (job.isDone()) {
-				player.displayClientMessage(Component.literal("Снимок готов."), true);
-				player.playSound(SoundEvents.EXPERIENCE_ORB_PICKUP, 0.4F, 1.4F);
-				iterator.remove();
+			if (payload instanceof BlockRaySample blockSample) {
+				for (BlockCandidate candidate : blockSample.candidates()) {
+					BlockTextureRaycaster.BlockTraceResult trace = BlockTextureRaycaster.trace(
+							candidate.state(),
+							candidate.blockPos(),
+							candidate.traceOrigin(),
+							blockSample.direction(),
+							candidate.tintLayers()
+					);
+					if (trace != null) {
+						int lit = applySnapshotLighting(trace.rgb(), trace.face(), candidate.canSeeSkyAbove(), candidate.distance());
+						return toPackedColor(lit, distanceBrightness(candidate.distance()));
+					}
+				}
+				if (blockSample.entityRgb() != null) {
+					return toPackedColor(blockSample.entityRgb(), distanceBrightness(blockSample.entityDistance()));
+				}
+				return toPackedColor(blockSample.skyRgb(), distanceBrightness(0.0D));
 			}
-		}
-	}
-
-	private static ItemStack createPhoto(ServerLevel level) {
-		ItemStack photo = MapItem.create(level, 0, 0, (byte) 0, false, false);
-		photo.set(DataComponents.CUSTOM_NAME, PHOTO_NAME);
-		return photo;
-	}
-
-	private static byte renderPixel(ServerLevel level, ServerPlayer player, RenderJob job, int pixelX, int pixelY) {
-		Vec3 direction = computeRayDirection(job, pixelX, pixelY);
-		Vec3 start = job.eyePosition();
-		Vec3 end = start.add(direction.scale(MAX_DISTANCE));
-
-		BlockHitResult blockHit = level.clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.ANY, player));
-		double blockDistance = blockHit.getType() == HitResult.Type.MISS ? Double.MAX_VALUE : start.distanceToSqr(blockHit.getLocation());
-
-		AABB searchBox = player.getBoundingBox().move(start.subtract(player.position())).expandTowards(direction.scale(MAX_DISTANCE)).inflate(ENTITY_MARGIN);
-		EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
-				player,
-				start,
-				end,
-				searchBox,
-				entity -> entity.isPickable() && entity != player && !entity.isSpectator(),
-				MAX_DISTANCE * MAX_DISTANCE
-		);
-		double entityDistance = entityHit == null ? Double.MAX_VALUE : start.distanceToSqr(entityHit.getLocation());
-
-		if (entityHit != null && entityDistance < blockDistance) {
-			return toPackedColor(entityRgb(entityHit.getEntity()), distanceBrightness(entityDistance));
-		}
-		if (blockHit.getType() == HitResult.Type.MISS) {
-			return skyColor(level, direction);
-		}
-		return blockColor(level, blockHit, blockDistance);
-	}
-
-	private static Vec3 computeRayDirection(RenderJob job, int pixelX, int pixelY) {
-		double aspect = 1.0D;
-		double tanHalfFov = Math.tan(Math.toRadians(FOV_DEGREES * 0.5D));
-		double sensorX = ((pixelX + 0.5D) / MAP_SIZE * 2.0D - 1.0D) * tanHalfFov * aspect;
-		double sensorY = (1.0D - (pixelY + 0.5D) / MAP_SIZE * 2.0D) * tanHalfFov;
-		return job.forward()
-				.add(job.right().scale(sensorX))
-				.add(job.up().scale(sensorY))
-				.normalize();
-	}
-
-	private static byte blockColor(ServerLevel level, BlockHitResult hit, double distanceSqr) {
-		BlockPos pos = hit.getBlockPos();
-		BlockState state = level.getBlockState(pos);
-		MapColor mapColor = state.getMapColor(level, pos);
-		if (mapColor == MapColor.NONE) {
-			return skyColor(level, Vec3.ZERO);
+			return 0;
 		}
 
-		MapColor.Brightness brightness = shadeForBlock(level, pos, hit, distanceSqr);
-		return mapColor.getPackedId(brightness);
-	}
-
-	private static MapColor.Brightness shadeForBlock(ServerLevel level, BlockPos pos, BlockHitResult hit, double distanceSqr) {
-		MapColor.Brightness faceBrightness = switch (hit.getDirection()) {
-			case UP -> MapColor.Brightness.HIGH;
-			case DOWN -> MapColor.Brightness.LOWEST;
-			default -> MapColor.Brightness.NORMAL;
-		};
-		if (distanceSqr > 60.0D * 60.0D) {
-			faceBrightness = darker(faceBrightness);
+		@Override
+		public Component completedMessage() {
+			return Component.literal("Снимок готов.");
 		}
-		if (!level.canSeeSky(pos.above())) {
-			faceBrightness = darker(faceBrightness);
-		}
-		return faceBrightness;
-	}
 
-	private static byte skyColor(ServerLevel level, Vec3 direction) {
-		int rgb;
-		if (level.dimension() == Level.NETHER) {
-			rgb = 0xA54B2A;
-		} else if (level.dimension() == Level.END) {
-			rgb = 0x6A5E8F;
-		} else {
-			float daylight = 1.0F - level.getSkyDarken() / 15.0F;
-			float vertical = (float) Mth.clamp((direction.y + 1.0D) * 0.5D, 0.0D, 1.0D);
-			int top = 0x8FC9FF;
-			int horizon = 0xD8F0FF;
-			rgb = lerpRgb(horizon, top, daylight * (0.45F + vertical * 0.55F));
-			if (level.isRaining()) {
-				rgb = lerpRgb(rgb, 0x7286A0, 0.45F);
+		private Vec3 computeRayDirection(int pixelX, int pixelY) {
+			double aspect = 1.0D;
+			double tanHalfFov = Math.tan(Math.toRadians(FOV_DEGREES * 0.5D));
+			double sensorX = ((pixelX + 0.5D) / 128.0D * 2.0D - 1.0D) * tanHalfFov * aspect;
+			double sensorY = (1.0D - (pixelY + 0.5D) / 128.0D * 2.0D) * tanHalfFov;
+			return this.forward
+					.add(this.right.scale(sensorX))
+					.add(this.up.scale(sensorY))
+					.normalize();
+		}
+
+		private Object captureSample(ServerLevel level, ServerPlayer viewer, Vec3 direction, int skyRgb) {
+			Vec3 current = this.eyePosition;
+			EntityHitResult nearestEntity = traceEntity(level, viewer, this.eyePosition, direction);
+			double nearestEntityDistance = nearestEntity == null ? Double.MAX_VALUE : this.eyePosition.distanceTo(nearestEntity.getLocation());
+			Integer entityRgb = nearestEntity == null ? null : entityRgb(nearestEntity.getEntity());
+			BlockCandidate[] candidates = new BlockCandidate[MAX_TRANSPARENT_STEPS];
+			int candidateCount = 0;
+			for (int steps = 0; steps < MAX_TRANSPARENT_STEPS; steps++) {
+				Vec3 end = this.eyePosition.add(direction.scale(MAX_DISTANCE));
+				BlockHitResult blockHit = level.clip(new ClipContext(current, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.ANY, viewer));
+				if (blockHit.getType() == HitResult.Type.MISS) {
+					if (candidateCount == 0) {
+						return entityRgb != null ? new EntitySample(entityRgb, nearestEntityDistance) : new SkySample(skyRgb);
+					}
+					break;
+				}
+				double traveled = this.eyePosition.distanceTo(blockHit.getLocation());
+				if (nearestEntity != null && nearestEntityDistance < traveled) {
+					if (candidateCount == 0) {
+						return new EntitySample(entityRgb, nearestEntityDistance);
+					}
+					break;
+				}
+				net.minecraft.world.level.block.state.BlockState hitState = level.getBlockState(blockHit.getBlockPos());
+				candidates[candidateCount++] = new BlockCandidate(
+						hitState,
+						blockHit.getBlockPos().immutable(),
+						current,
+						traveled,
+						level.canSeeSky(blockHit.getBlockPos().above()),
+						BlockTintProvider.capture(level, blockHit.getBlockPos(), hitState)
+				);
+				current = blockHit.getLocation().add(direction.scale(0.002D));
 			}
+			if (candidateCount == 0) {
+				return entityRgb != null ? new EntitySample(entityRgb, nearestEntityDistance) : new SkySample(skyRgb);
+			}
+			BlockCandidate[] resolved = new BlockCandidate[candidateCount];
+			System.arraycopy(candidates, 0, resolved, 0, candidateCount);
+			return new BlockRaySample(direction, skyRgb, entityRgb, nearestEntityDistance, resolved);
 		}
-		return toPackedColor(rgb, MapColor.Brightness.NORMAL);
+
+		private EntityHitResult traceEntity(ServerLevel level, ServerPlayer viewer, Vec3 start, Vec3 direction) {
+			Vec3 end = this.eyePosition.add(direction.scale(MAX_DISTANCE));
+			AABB box = viewer.getBoundingBox()
+					.move(start.subtract(viewer.position()))
+					.expandTowards(direction.scale(MAX_DISTANCE))
+					.inflate(ENTITY_MARGIN);
+			return ProjectileUtil.getEntityHitResult(
+					viewer,
+					start,
+					end,
+					box,
+					entity -> entity.isPickable() && entity != viewer && !entity.isSpectator(),
+					MAX_DISTANCE * MAX_DISTANCE
+			);
+		}
+
+		private int applySnapshotLighting(int rgb, net.minecraft.core.Direction face, boolean canSeeSkyAbove, double distance) {
+			float shade = switch (face) {
+				case UP -> 1.0F;
+				case DOWN -> 0.55F;
+				default -> 0.82F;
+			};
+			if (!canSeeSkyAbove) {
+				shade *= 0.72F;
+			}
+			if (distance > 64.0D) {
+				shade *= 0.75F;
+			}
+			int r = Mth.clamp((int) (((rgb >> 16) & 0xFF) * shade), 0, 255);
+			int g = Mth.clamp((int) (((rgb >> 8) & 0xFF) * shade), 0, 255);
+			int b = Mth.clamp((int) ((rgb & 0xFF) * shade), 0, 255);
+			return (r << 16) | (g << 8) | b;
+		}
+
+		private record SkySample(int rgb) {
+		}
+
+		private record EntitySample(int rgb, double distance) {
+		}
+
+		private record BlockRaySample(Vec3 direction, int skyRgb, Integer entityRgb, double entityDistance, BlockCandidate[] candidates) {
+		}
+
+		private record BlockCandidate(net.minecraft.world.level.block.state.BlockState state, net.minecraft.core.BlockPos blockPos, Vec3 traceOrigin, double distance, boolean canSeeSkyAbove, int[] tintLayers) {
+		}
 	}
 
 	private static int entityRgb(Entity entity) {
@@ -229,50 +273,22 @@ public final class CameraCaptureSystem {
 		return Mth.hsvToRgb(hue, saturation, brightness);
 	}
 
-	private static MapColor.Brightness distanceBrightness(double distanceSqr) {
-		double distance = Math.sqrt(distanceSqr);
-		if (distance > 64.0D) {
-			return MapColor.Brightness.LOWEST;
+	private static int skyColor(ServerLevel level, Vec3 direction) {
+		if (level.dimension() == Level.NETHER) {
+			return 0xA54B2A;
 		}
-		if (distance > 42.0D) {
-			return MapColor.Brightness.LOW;
+		if (level.dimension() == Level.END) {
+			return 0x6A5E8F;
 		}
-		return MapColor.Brightness.NORMAL;
-	}
-
-	private static MapColor.Brightness darker(MapColor.Brightness brightness) {
-		return switch (brightness) {
-			case HIGH -> MapColor.Brightness.NORMAL;
-			case NORMAL -> MapColor.Brightness.LOW;
-			case LOW -> MapColor.Brightness.LOWEST;
-			case LOWEST -> MapColor.Brightness.LOWEST;
-		};
-	}
-
-	private static byte toPackedColor(int rgb, MapColor.Brightness brightness) {
-		PaletteColor nearest = PALETTE[0];
-		int bestDistance = Integer.MAX_VALUE;
-		for (PaletteColor candidate : PALETTE) {
-			int distance = colorDistance(rgb, candidate.rgb());
-			if (distance < bestDistance) {
-				bestDistance = distance;
-				nearest = candidate;
-			}
+		float daylight = 1.0F - level.getSkyDarken() / 15.0F;
+		float vertical = (float) Mth.clamp((direction.y + 1.0D) * 0.5D, 0.0D, 1.0D);
+		int top = 0x8FC9FF;
+		int horizon = 0xD8F0FF;
+		int rgb = lerpRgb(horizon, top, daylight * (0.45F + vertical * 0.55F));
+		if (level.isRaining()) {
+			rgb = lerpRgb(rgb, 0x7286A0, 0.45F);
 		}
-		return nearest.mapColor().getPackedId(brightness);
-	}
-
-	private static int colorDistance(int a, int b) {
-		int ar = (a >> 16) & 0xFF;
-		int ag = (a >> 8) & 0xFF;
-		int ab = a & 0xFF;
-		int br = (b >> 16) & 0xFF;
-		int bg = (b >> 8) & 0xFF;
-		int bb = b & 0xFF;
-		int dr = ar - br;
-		int dg = ag - bg;
-		int db = ab - bb;
-		return dr * dr + dg * dg + db * db;
+		return rgb;
 	}
 
 	private static int lerpRgb(int from, int to, float delta) {
@@ -288,105 +304,41 @@ public final class CameraCaptureSystem {
 		return (r << 16) | (g << 8) | b;
 	}
 
-	private static PaletteColor[] buildPalette() {
-		PaletteColor[] colors = new PaletteColor[64];
-		for (int i = 0; i < colors.length; i++) {
-			MapColor mapColor = MapColor.byId(i);
-			colors[i] = new PaletteColor(mapColor, mapColor.calculateARGBColor(MapColor.Brightness.NORMAL) & 0xFFFFFF);
-		}
-		return colors;
-	}
-
-	private record PaletteColor(MapColor mapColor, int rgb) {
-	}
-
-	private static final class RenderJob {
-		private final UUID playerId;
-		private final net.minecraft.resources.ResourceKey<Level> dimension;
-		private final MapId mapId;
-		private final Vec3 eyePosition;
-		private final Vec3 forward;
-		private final Vec3 right;
-		private final Vec3 up;
-		private int nextPixel;
-
-		private RenderJob(
-				UUID playerId,
-				net.minecraft.resources.ResourceKey<Level> dimension,
-				MapId mapId,
-				Vec3 eyePosition,
-				Vec3 forward,
-				Vec3 right,
-				Vec3 up
-		) {
-			this.playerId = playerId;
-			this.dimension = dimension;
-			this.mapId = mapId;
-			this.eyePosition = eyePosition;
-			this.forward = forward;
-			this.right = right;
-			this.up = up;
-		}
-
-		private static RenderJob capture(ServerPlayer player, MapId mapId) {
-			Vec3 forward = player.getLookAngle().normalize();
-			Vec3 worldUp = new Vec3(0.0D, 1.0D, 0.0D);
-			Vec3 right = forward.cross(worldUp);
-			if (right.lengthSqr() < 1.0E-4D) {
-				right = new Vec3(1.0D, 0.0D, 0.0D);
-			} else {
-				right = right.normalize();
+	private static byte toPackedColor(int rgb, net.minecraft.world.level.material.MapColor.Brightness brightness) {
+		net.minecraft.world.level.material.MapColor nearest = net.minecraft.world.level.material.MapColor.NONE;
+		int bestDistance = Integer.MAX_VALUE;
+		for (int i = 0; i < 64; i++) {
+			net.minecraft.world.level.material.MapColor candidate = net.minecraft.world.level.material.MapColor.byId(i);
+			int candidateRgb = candidate.calculateARGBColor(net.minecraft.world.level.material.MapColor.Brightness.NORMAL) & 0xFFFFFF;
+			int distance = colorDistance(rgb, candidateRgb);
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				nearest = candidate;
 			}
-			Vec3 up = right.cross(forward).normalize();
-			return new RenderJob(
-					player.getUUID(),
-					player.level().dimension(),
-					mapId,
-					player.getEyePosition(),
-					forward,
-					right,
-					up
-			);
 		}
+		return nearest.getPackedId(brightness);
+	}
 
-		private UUID playerId() {
-			return this.playerId;
+	private static net.minecraft.world.level.material.MapColor.Brightness distanceBrightness(double distance) {
+		if (distance > 64.0D) {
+			return net.minecraft.world.level.material.MapColor.Brightness.LOWEST;
 		}
+		if (distance > 42.0D) {
+			return net.minecraft.world.level.material.MapColor.Brightness.LOW;
+		}
+		return net.minecraft.world.level.material.MapColor.Brightness.NORMAL;
+	}
 
-		private net.minecraft.resources.ResourceKey<Level> dimension() {
-			return this.dimension;
-		}
-
-		private MapId mapId() {
-			return this.mapId;
-		}
-
-		private Vec3 eyePosition() {
-			return this.eyePosition;
-		}
-
-		private Vec3 forward() {
-			return this.forward;
-		}
-
-		private Vec3 right() {
-			return this.right;
-		}
-
-		private Vec3 up() {
-			return this.up;
-		}
-
-		private int nextPixel() {
-			return this.nextPixel;
-		}
-
-		private void advance() {
-			this.nextPixel++;
-		}
-
-		private boolean isDone() {
-			return this.nextPixel >= MAP_SIZE * MAP_SIZE;
-		}
+	private static int colorDistance(int a, int b) {
+		int ar = (a >> 16) & 0xFF;
+		int ag = (a >> 8) & 0xFF;
+		int ab = a & 0xFF;
+		int br = (b >> 16) & 0xFF;
+		int bg = (b >> 8) & 0xFF;
+		int bb = b & 0xFF;
+		int dr = ar - br;
+		int dg = ag - bg;
+		int db = ab - bb;
+		return dr * dr + dg * dg + db * db;
 	}
 }
