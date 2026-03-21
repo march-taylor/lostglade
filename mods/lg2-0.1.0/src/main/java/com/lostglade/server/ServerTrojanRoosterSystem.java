@@ -59,6 +59,7 @@ public final class ServerTrojanRoosterSystem {
 	private static final int AMBUSH_REVEAL_TICKS = 20 * 3;
 	private static final double AMBUSH_BEHIND_DISTANCE = 5.0D;
 	private static final double CHASE_SPEED_PER_TICK = 0.23D * 1.5D;
+	private static final double MAX_TARGET_DISTANCE_SQR = 32.0D * 32.0D;
 	private static final double LOOK_DOT_THRESHOLD = 0.72D;
 	private static final int AMBUSH_SPAWN_STEPS = 8;
 	private static final String DISPLAY_ROOT_TAG = "lg2_trojan_rooster_display";
@@ -304,6 +305,7 @@ public final class ServerTrojanRoosterSystem {
 		if (!chicken.isInvulnerable()) {
 			chicken.setInvulnerable(true);
 		}
+		chicken.setNoGravity(false);
 		if (!chicken.isPersistenceRequired()) {
 			chicken.setPersistenceRequired();
 		}
@@ -342,7 +344,7 @@ public final class ServerTrojanRoosterSystem {
 			state.targetPlayerId = nearest == null ? null : nearest.getUUID();
 		}
 
-		chicken.setDeltaMovement(Vec3.ZERO);
+		stopHorizontalMovement(chicken);
 		if (nearest != null) {
 			faceChickenTowards(chicken, nearest.getX(), nearest.getY() + nearest.getBbHeight() * 0.5D, nearest.getZ());
 			float nodPitch = 10.0F + (float) (Math.sin((now - state.phaseStartTick) * 0.9D) * 18.0D);
@@ -353,7 +355,7 @@ public final class ServerTrojanRoosterSystem {
 			return;
 		}
 
-		ServerPlayer ambushTarget = pickRandomPlayer(level);
+		ServerPlayer ambushTarget = pickRandomPlayer(level, chicken);
 		if (ambushTarget == null) {
 			vanish(level, chicken, state);
 			return;
@@ -362,16 +364,16 @@ public final class ServerTrojanRoosterSystem {
 		spawnCloud(level, chicken.position());
 		teleportBehindTarget(chicken, ambushTarget);
 		spawnCloud(level, chicken.position());
-		playTheme(ambushTarget, chicken.position());
+		playSpawnHiss(ambushTarget, chicken.position());
 
 		state.targetPlayerId = ambushTarget.getUUID();
-		state.themePlaying = true;
+		state.themePlaying = false;
 		state.phase = TrojanPhase.AMBUSH_IDLE;
 		state.phaseStartTick = now;
 		state.phaseEndTick = now + AMBUSH_TIMEOUT_TICKS;
 		state.despawnTick = now + AMBUSH_TIMEOUT_TICKS;
 
-		chicken.setDeltaMovement(Vec3.ZERO);
+		stopHorizontalMovement(chicken);
 		chicken.setXRot(0.0F);
 		chicken.setYRot(ambushTarget.getYRot());
 		chicken.setYHeadRot(ambushTarget.getYRot());
@@ -385,19 +387,31 @@ public final class ServerTrojanRoosterSystem {
 			vanish(level, chicken, state);
 			return;
 		}
+		if (isTargetClaimedByAnotherRooster(level, target.getUUID(), chicken)) {
+			vanish(level, chicken, state);
+			return;
+		}
 
 		if (now >= state.despawnTick) {
 			vanish(level, chicken, state);
 			return;
 		}
+		if (chicken.distanceToSqr(target) > MAX_TARGET_DISTANCE_SQR) {
+			vanish(level, chicken, state);
+			return;
+		}
 
-		chicken.setDeltaMovement(Vec3.ZERO);
+		stopHorizontalMovement(chicken);
 		chicken.setXRot(0.0F);
 		chicken.setYRot(target.getYRot());
 		chicken.setYHeadRot(target.getYRot());
 		chicken.setYBodyRot(target.getYRot());
 
 		if (isTargetLookingAtChicken(target, chicken)) {
+			if (!state.themePlaying) {
+				playTheme(target, chicken.position());
+				state.themePlaying = true;
+			}
 			state.phase = TrojanPhase.AMBUSH_SEEN_DELAY;
 			state.phaseStartTick = now;
 			state.phaseEndTick = now + AMBUSH_REVEAL_TICKS;
@@ -413,13 +427,21 @@ public final class ServerTrojanRoosterSystem {
 			vanish(level, chicken, state);
 			return;
 		}
+		if (isTargetClaimedByAnotherRooster(level, target.getUUID(), chicken)) {
+			vanish(level, chicken, state);
+			return;
+		}
 
 		if (now >= state.despawnTick) {
 			vanish(level, chicken, state);
 			return;
 		}
+		if (chicken.distanceToSqr(target) > MAX_TARGET_DISTANCE_SQR) {
+			vanish(level, chicken, state);
+			return;
+		}
 
-		chicken.setDeltaMovement(Vec3.ZERO);
+		stopHorizontalMovement(chicken);
 		faceChickenTowards(chicken, target.getX(), target.getY() + target.getBbHeight() * 0.5D, target.getZ());
 		chicken.setXRot(0.0F);
 
@@ -437,8 +459,16 @@ public final class ServerTrojanRoosterSystem {
 			vanish(level, chicken, state);
 			return;
 		}
+		if (isTargetClaimedByAnotherRooster(level, target.getUUID(), chicken)) {
+			vanish(level, chicken, state);
+			return;
+		}
 
 		if (now >= state.despawnTick) {
+			vanish(level, chicken, state);
+			return;
+		}
+		if (chicken.distanceToSqr(target) > MAX_TARGET_DISTANCE_SQR) {
 			vanish(level, chicken, state);
 			return;
 		}
@@ -461,7 +491,6 @@ public final class ServerTrojanRoosterSystem {
 			state.lastTargetZ = targetZ;
 			state.nextNavigationRetargetTick = now + 3L;
 		}
-		chicken.fallDistance = 0.0F;
 	}
 
 	private static void vanish(ServerLevel level, Chicken chicken, TrojanRoosterState state) {
@@ -602,10 +631,10 @@ public final class ServerTrojanRoosterSystem {
 		return best;
 	}
 
-	private static ServerPlayer pickRandomPlayer(ServerLevel level) {
+	private static ServerPlayer pickRandomPlayer(ServerLevel level, Chicken sourceChicken) {
 		List<ServerPlayer> players = new ArrayList<>();
 		for (ServerPlayer player : level.players()) {
-			if (isEligiblePlayer(player)) {
+			if (isEligiblePlayer(player) && !isTargetClaimedByAnotherRooster(level, player.getUUID(), sourceChicken)) {
 				players.add(player);
 			}
 		}
@@ -614,6 +643,25 @@ public final class ServerTrojanRoosterSystem {
 			return null;
 		}
 		return players.get(level.random.nextInt(players.size()));
+	}
+
+	private static boolean isTargetClaimedByAnotherRooster(ServerLevel level, UUID targetPlayerId, Chicken sourceChicken) {
+		for (Chicken chicken : TRACKED_TROJAN_CHICKENS) {
+			if (chicken == sourceChicken || chicken.isRemoved() || !chicken.isAlive() || chicken.level() != level) {
+				continue;
+			}
+
+			TrojanRoosterState state = ACTIVE_STATES.get(chicken.getUUID());
+			if (state != null && targetPlayerId.equals(state.targetPlayerId)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static void stopHorizontalMovement(Chicken chicken) {
+		Vec3 movement = chicken.getDeltaMovement();
+		chicken.setDeltaMovement(0.0D, movement.y, 0.0D);
 	}
 
 	private static ServerPlayer resolvePlayer(ServerLevel level, UUID playerId) {
@@ -637,6 +685,20 @@ public final class ServerTrojanRoosterSystem {
 		}
 
 		sendSoundToPlayer(player, SoundEvents.MUSIC_DISC_LAVA_CHICKEN, SoundSource.RECORDS, pos.x, pos.y, pos.z, 1.0F, 1.0F, player.getUUID().getLeastSignificantBits());
+	}
+
+	private static void playSpawnHiss(ServerPlayer player, Vec3 pos) {
+		sendSoundToPlayer(
+				player,
+				Holder.direct(SoundEvents.CREEPER_PRIMED),
+				SoundSource.HOSTILE,
+				pos.x,
+				pos.y,
+				pos.z,
+				0.85F,
+				1.0F,
+				player.getUUID().getMostSignificantBits()
+		);
 	}
 
 	private static void stopTheme(TrojanRoosterState state, ServerLevel level) {

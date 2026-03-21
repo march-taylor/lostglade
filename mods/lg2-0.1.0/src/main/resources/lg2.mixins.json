@@ -12,6 +12,7 @@
 		"BrewingStandBlockEntityStabilityMixin",
 		"BrewingStandPotionSlotStabilityMixin",
 		"CarvedPumpkinBlockGolemGateMixin",
+		"ChickenTrojanRoosterAmbientSoundMixin",
 		"ChickenTrojanRoosterMixin",
 		"EntityPortalAccessMixin",
 		"EntityKillProtectionMixin",
