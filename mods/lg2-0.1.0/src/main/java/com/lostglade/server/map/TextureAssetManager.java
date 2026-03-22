@@ -76,6 +76,10 @@ public final class TextureAssetManager {
 		}
 	}
 
+	public Path clientJarPath() {
+		return this.clientJarPath;
+	}
+
 	private JsonObject loadJson(String assetPath) {
 		JsonObject cached = this.jsonCache.get(assetPath);
 		if (cached != null) {
