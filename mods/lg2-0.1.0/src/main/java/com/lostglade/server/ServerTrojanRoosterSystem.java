@@ -58,7 +58,7 @@ public final class ServerTrojanRoosterSystem {
 	private static final double TOUCH_EPSILON = 0.01D;
 	private static final int AWAKENING_TICKS = 20;
 	private static final int AMBUSH_TIMEOUT_TICKS = 20 * 90;
-	private static final int AMBUSH_REVEAL_TICKS = 20 * 3;
+	private static final int AMBUSH_REVEAL_TICKS = 20 * 5;
 	private static final double AMBUSH_BEHIND_DISTANCE = 5.0D;
 	private static final double CHASE_SPEED_PER_TICK = 0.23D * 1.5D;
 	private static final double MAX_TARGET_DISTANCE_SQR = 32.0D * 32.0D;
