@@ -11,9 +11,7 @@ import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 public final class RaceConfig {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -135,22 +133,6 @@ public final class RaceConfig {
 		changed |= normalizeString(ability.abilityId, slot.defaultAbilityId, value -> ability.abilityId = value);
 		changed |= normalizeString(ability.name, slot.defaultDisplayName, value -> ability.name = value);
 		changed |= normalizeString(ability.description, "", value -> ability.description = value);
-		changed |= clampNonNegative(ability.cooldownSeconds, value -> ability.cooldownSeconds = value);
-		changed |= clampNonNegative(ability.durationSeconds, value -> ability.durationSeconds = value);
-		changed |= clampNonNegative(ability.rangeBlocks, value -> ability.rangeBlocks = value);
-		changed |= clampChance(ability.chance, value -> ability.chance = value);
-		if (ability.flags == null) {
-			ability.flags = new LinkedHashMap<>();
-			changed = true;
-		}
-		if (ability.numbers == null) {
-			ability.numbers = new LinkedHashMap<>();
-			changed = true;
-		}
-		if (ability.strings == null) {
-			ability.strings = new LinkedHashMap<>();
-			changed = true;
-		}
 		return changed;
 	}
 
@@ -167,24 +149,6 @@ public final class RaceConfig {
 			return true;
 		}
 		setter.accept(normalized);
-		return true;
-	}
-
-	private static boolean clampNonNegative(double value, java.util.function.DoubleConsumer setter) {
-		double sanitized = Double.isFinite(value) ? Math.max(0.0D, value) : 0.0D;
-		if (Double.compare(sanitized, value) == 0) {
-			return false;
-		}
-		setter.accept(sanitized);
-		return true;
-	}
-
-	private static boolean clampChance(double value, java.util.function.DoubleConsumer setter) {
-		double sanitized = Double.isFinite(value) ? Math.max(0.0D, Math.min(1.0D, value)) : 0.0D;
-		if (Double.compare(sanitized, value) == 0) {
-			return false;
-		}
-		setter.accept(sanitized);
 		return true;
 	}
 
@@ -242,17 +206,6 @@ public final class RaceConfig {
 		public String abilityId;
 		public String name;
 		public String description = "";
-		public double cooldownSeconds = 0.0D;
-		public double durationSeconds = 0.0D;
-		public double rangeBlocks = 0.0D;
-		public double chance = 1.0D;
-		public int amplifier = 0;
-		public double primaryValue = 0.0D;
-		public double secondaryValue = 0.0D;
-		public double tertiaryValue = 0.0D;
-		public Map<String, Boolean> flags = new LinkedHashMap<>();
-		public Map<String, Double> numbers = new LinkedHashMap<>();
-		public Map<String, String> strings = new LinkedHashMap<>();
 
 		private RaceAbilityConfig() {
 		}

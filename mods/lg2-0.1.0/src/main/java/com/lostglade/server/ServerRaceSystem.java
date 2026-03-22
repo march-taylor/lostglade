@@ -9,6 +9,7 @@ import com.lostglade.config.RaceConfig.RaceAbilityConfig;
 import com.lostglade.config.RaceConfig.RaceAbilitySlot;
 import com.mojang.brigadier.context.CommandContext;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.commands.CommandSourceStack;
@@ -19,6 +20,8 @@ import net.minecraft.server.permissions.PermissionSet;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.SharedConstants;
 import net.minecraft.server.packs.PackType;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.IOException;
@@ -28,8 +31,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.EnumMap;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,7 +38,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Stream;
 
 import static net.minecraft.commands.Commands.literal;
@@ -53,12 +53,12 @@ public final class ServerRaceSystem {
 	private static final int DEFAULT_DIALOG_COLUMNS = 2;
 	private static final int DEFAULT_ACTION_WIDTH = 220;
 	private static final int EXIT_ACTION_WIDTH = 200;
+	private static final String MISTER_CARTEL_49_RACE_ID = "mister_cartel_49";
+	private static final int MISTER_CARTEL_49_STACK_LIMIT = 49;
 
 	private static final Map<String, PlayerRaceConfig> RACES_BY_NICKNAME = new LinkedHashMap<>();
 	private static final Map<String, String> DIALOG_ID_BY_NICKNAME = new LinkedHashMap<>();
 	private static final Map<String, String> GENERATED_DIALOG_JSON_BY_PATH = new LinkedHashMap<>();
-	private static final Map<UUID, EnumMap<RaceAbilitySlot, Long>> COOLDOWNS = new HashMap<>();
-
 	private ServerRaceSystem() {
 	}
 
@@ -76,13 +76,17 @@ public final class ServerRaceSystem {
 			RACES_BY_NICKNAME.clear();
 			DIALOG_ID_BY_NICKNAME.clear();
 			GENERATED_DIALOG_JSON_BY_PATH.clear();
-			COOLDOWNS.clear();
 		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
 				getRace(handler.player).ifPresent(race ->
 						Lg2.LOGGER.info("Assigned personal race '{}' to {}", race.id, handler.player.getGameProfile().name())
 				)
 		);
+		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+				enforceMrCartel49StackLimit(player);
+			}
+		});
 	}
 
 	public static void reload() {
@@ -162,35 +166,9 @@ public final class ServerRaceSystem {
 			return 0;
 		}
 
-		long now = player.level().getGameTime();
-		long readyAt = getCooldownReadyAt(player.getUUID(), slot);
-		if (readyAt > now) {
-			long ticksLeft = readyAt - now;
-			double secondsLeft = ticksLeft / 20.0D;
-			player.sendSystemMessage(Component.translatable("message.lg2.race.cooldown", Component.literal(ability.name), Component.literal(String.format(Locale.ROOT, "%.1f", secondsLeft))));
-			return 0;
-		}
-
-		double cooldownSeconds = Math.max(0.0D, ability.cooldownSeconds);
-		if (cooldownSeconds > 0.0D) {
-			setCooldownReadyAt(player.getUUID(), slot, now + (long)Math.ceil(cooldownSeconds * 20.0D));
-		}
-
 		player.sendSystemMessage(Component.translatable("message.lg2.race.used", Component.literal(ability.name), Component.literal(race.displayName)));
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
-	}
-
-	private static long getCooldownReadyAt(UUID playerId, RaceAbilitySlot slot) {
-		EnumMap<RaceAbilitySlot, Long> cooldowns = COOLDOWNS.get(playerId);
-		if (cooldowns == null) {
-			return 0L;
-		}
-		return cooldowns.getOrDefault(slot, 0L);
-	}
-
-	private static void setCooldownReadyAt(UUID playerId, RaceAbilitySlot slot, long readyAtTick) {
-		COOLDOWNS.computeIfAbsent(playerId, ignored -> new EnumMap<>(RaceAbilitySlot.class)).put(slot, readyAtTick);
 	}
 
 	public static Optional<PlayerRaceConfig> getRace(ServerPlayer player) {
@@ -475,6 +453,95 @@ public final class ServerRaceSystem {
 		sanitized = sanitized.replaceAll("^_+", "");
 		sanitized = sanitized.replaceAll("_+$", "");
 		return sanitized.isEmpty() ? "race" : sanitized;
+	}
+
+	private static void enforceMrCartel49StackLimit(ServerPlayer player) {
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isEmpty()) {
+			return;
+		}
+
+		PlayerRaceConfig race = raceOptional.get();
+		if (!MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id)) || race.stock == null || !race.stock.enabled) {
+			return;
+		}
+
+		Inventory inventory = player.getInventory();
+		boolean changed = false;
+
+		changed |= normalizeInventoryStacks(player, inventory);
+
+		if (changed) {
+			inventory.setChanged();
+			player.containerMenu.broadcastChanges();
+		}
+	}
+
+	private static boolean normalizeInventoryStacks(ServerPlayer player, Inventory inventory) {
+		boolean changed = false;
+		int size = inventory.getContainerSize();
+		for (int index = 0; index < size; index++) {
+			ItemStack stack = inventory.getItem(index);
+			if (stack.isEmpty() || stack.getMaxStackSize() != 64 || stack.getCount() <= MISTER_CARTEL_49_STACK_LIMIT) {
+				continue;
+			}
+
+			int overflow = stack.getCount() - MISTER_CARTEL_49_STACK_LIMIT;
+			stack.setCount(MISTER_CARTEL_49_STACK_LIMIT);
+			changed = true;
+
+			overflow = mergeOverflowIntoStacks(inventory, stack, index, overflow);
+			overflow = placeOverflowIntoEmpty(inventory, stack, overflow);
+
+			if (overflow > 0) {
+				ItemStack dropped = stack.copy();
+				dropped.setCount(overflow);
+				player.drop(dropped, false);
+			}
+		}
+		return changed;
+	}
+
+	private static int mergeOverflowIntoStacks(Inventory inventory, ItemStack source, int skipIndex, int overflow) {
+		int size = inventory.getContainerSize();
+		for (int index = 0; index < size && overflow > 0; index++) {
+			if (index == skipIndex) {
+				continue;
+			}
+			ItemStack target = inventory.getItem(index);
+			if (target.isEmpty() || target.getMaxStackSize() != 64 || target.getCount() >= MISTER_CARTEL_49_STACK_LIMIT) {
+				continue;
+			}
+			if (!ItemStack.isSameItemSameComponents(source, target)) {
+				continue;
+			}
+
+			int room = MISTER_CARTEL_49_STACK_LIMIT - target.getCount();
+			if (room <= 0) {
+				continue;
+			}
+			int moved = Math.min(room, overflow);
+			target.grow(moved);
+			overflow -= moved;
+		}
+		return overflow;
+	}
+
+	private static int placeOverflowIntoEmpty(Inventory inventory, ItemStack source, int overflow) {
+		int size = inventory.getContainerSize();
+		for (int index = 0; index < size && overflow > 0; index++) {
+			ItemStack target = inventory.getItem(index);
+			if (!target.isEmpty()) {
+				continue;
+			}
+
+			int moved = Math.min(MISTER_CARTEL_49_STACK_LIMIT, overflow);
+			ItemStack inserted = source.copy();
+			inserted.setCount(moved);
+			inventory.setItem(index, inserted);
+			overflow -= moved;
+		}
+		return overflow;
 	}
 }
 
