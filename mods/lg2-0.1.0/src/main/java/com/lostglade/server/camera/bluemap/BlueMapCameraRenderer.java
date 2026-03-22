@@ -1,6 +1,7 @@
 package com.lostglade.server.camera.bluemap;
 
 import com.lostglade.server.map.MapPaletteQuantizer;
+import com.lostglade.server.map.BlockTintProvider;
 import com.lostglade.server.map.TextureAssetManager;
 import de.bluecolored.bluemap.core.map.TextureGallery;
 import de.bluecolored.bluemap.core.map.hires.ArrayTileModel;
@@ -9,6 +10,7 @@ import de.bluecolored.bluemap.core.map.hires.RenderSettings;
 import de.bluecolored.bluemap.core.map.hires.TileModelView;
 import de.bluecolored.bluemap.core.map.hires.block.BlockStateModelRenderer;
 import de.bluecolored.bluemap.core.map.mask.Mask;
+import de.bluecolored.bluemap.core.resources.BlockColorCalculatorFactory;
 import de.bluecolored.bluemap.core.resources.ResourcePath;
 import de.bluecolored.bluemap.core.resources.pack.PackVersion;
 import de.bluecolored.bluemap.core.resources.pack.datapack.DataPack;
@@ -26,6 +28,7 @@ import de.bluecolored.bluemap.core.world.block.BlockNeighborhood;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.SectionPos;
@@ -33,11 +36,13 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.biome.BiomeSpecialEffects;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -61,6 +66,9 @@ public final class BlueMapCameraRenderer {
 	private static final int PACK_VERSION = 75;
 	private static final double NEAR_PLANE = 0.05D;
 	private static final int SNAPSHOT_MARGIN_BLOCKS = 2;
+	private static final int BIOME_CONTEXT_HORIZONTAL_RADIUS = 2;
+	private static final int BIOME_CONTEXT_VERTICAL_RADIUS = 1;
+	private static final int NO_TINT_RGB = -1;
 	private static final float[] SRGB_TO_LINEAR = buildSrgbToLinear();
 	private static final Map<net.minecraft.world.level.block.state.BlockState, BlockState> BLOCK_STATE_CACHE = new ConcurrentHashMap<>();
 	private static volatile RenderResources renderResources;
@@ -153,6 +161,13 @@ public final class BlueMapCameraRenderer {
 		return SRGB_TO_LINEAR[channel & 0xFF];
 	}
 
+	private static float toLinear(float srgb) {
+		float clamped = Mth.clamp(srgb, 0.0F, 1.0F);
+		return clamped <= 0.04045F
+				? clamped / 12.92F
+				: (float) Math.pow((clamped + 0.055F) / 1.055F, 2.4D);
+	}
+
 	private static int toSrgb(float linear) {
 		float clamped = Mth.clamp(linear, 0.0F, 1.0F);
 		float srgb = clamped <= 0.0031308F
@@ -240,8 +255,15 @@ public final class BlueMapCameraRenderer {
 		private static WorldSnapshot capture(ServerLevel level, CameraFrustum frustum, RenderResources resources) {
 			BlockBounds bounds = frustum.bounds();
 			Long2ObjectOpenHashMap<SnapshotBlock> blocks = new Long2ObjectOpenHashMap<>();
+			LongOpenHashSet airContext = new LongOpenHashSet();
 			Map<String, Biome> biomeCache = new HashMap<>();
 			BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+			int contextMinX = bounds.minX() - BIOME_CONTEXT_HORIZONTAL_RADIUS;
+			int contextMaxX = bounds.maxX() + BIOME_CONTEXT_HORIZONTAL_RADIUS;
+			int contextMinY = bounds.minY() - BIOME_CONTEXT_VERTICAL_RADIUS;
+			int contextMaxY = bounds.maxY() + BIOME_CONTEXT_VERTICAL_RADIUS;
+			int contextMinZ = bounds.minZ() - BIOME_CONTEXT_HORIZONTAL_RADIUS;
+			int contextMaxZ = bounds.maxZ() + BIOME_CONTEXT_HORIZONTAL_RADIUS;
 
 			int minChunkX = SectionPos.blockToSectionCoord(bounds.minX());
 			int maxChunkX = SectionPos.blockToSectionCoord(bounds.maxX());
@@ -300,17 +322,57 @@ public final class BlueMapCameraRenderer {
 									}
 
 									cursor.set(worldX, worldY, worldZ);
-										Biome biome = resolveBiome(level, cursor, biomeCache, resources.dataPack());
-										LightData light = new LightData(
-												level.getBrightness(LightLayer.SKY, cursor),
-												level.getBrightness(LightLayer.BLOCK, cursor)
+									Biome biome = resolveBiome(level, cursor, biomeCache, resources.dataPack());
+									LightData light = new LightData(
+											level.getBrightness(LightLayer.SKY, cursor),
+											level.getBrightness(LightLayer.BLOCK, cursor)
 									);
-									blocks.put(BlockPos.asLong(worldX, worldY, worldZ), new SnapshotBlock(toBlueMapState(state), light, biome));
+									int primaryTintRgb = firstTint(BlockTintProvider.capture(level, cursor, state));
+									int waterTintRgb = state.getFluidState().is(FluidTags.WATER)
+											? firstTint(BlockTintProvider.capture(level, cursor, Blocks.WATER.defaultBlockState()))
+											: NO_TINT_RGB;
+									blocks.put(
+											BlockPos.asLong(worldX, worldY, worldZ),
+											new SnapshotBlock(toBlueMapState(state), light, biome, primaryTintRgb, waterTintRgb)
+									);
+									collectAirContext(
+											worldX,
+											worldY,
+											worldZ,
+											contextMinX,
+											contextMaxX,
+											contextMinY,
+											contextMaxY,
+											contextMinZ,
+											contextMaxZ,
+											airContext
+									);
 								}
 							}
 						}
 					}
 				}
+			}
+
+			for (long packedPos : airContext) {
+				if (blocks.containsKey(packedPos)) {
+					continue;
+				}
+
+				int x = BlockPos.getX(packedPos);
+				int y = BlockPos.getY(packedPos);
+				int z = BlockPos.getZ(packedPos);
+				if (y < level.getMinY() || y >= level.getMaxY()) {
+					continue;
+				}
+
+				cursor.set(x, y, z);
+				Biome biome = resolveBiome(level, cursor, biomeCache, resources.dataPack());
+				LightData light = new LightData(
+						level.getBrightness(LightLayer.SKY, cursor),
+						level.getBrightness(LightLayer.BLOCK, cursor)
+				);
+				blocks.put(packedPos, new SnapshotBlock(BlockState.AIR, light, biome, NO_TINT_RGB, NO_TINT_RGB));
 			}
 
 			return new WorldSnapshot(
@@ -324,6 +386,54 @@ public final class BlueMapCameraRenderer {
 			);
 		}
 
+		private static void collectAirContext(
+				int x,
+				int y,
+				int z,
+				int minX,
+				int maxX,
+				int minY,
+				int maxY,
+				int minZ,
+				int maxZ,
+				LongOpenHashSet airContext
+		) {
+			for (int offsetY = -BIOME_CONTEXT_VERTICAL_RADIUS; offsetY <= BIOME_CONTEXT_VERTICAL_RADIUS; offsetY++) {
+				int worldY = y + offsetY;
+				if (worldY < minY || worldY > maxY) {
+					continue;
+				}
+
+				for (int offsetZ = -BIOME_CONTEXT_HORIZONTAL_RADIUS; offsetZ <= BIOME_CONTEXT_HORIZONTAL_RADIUS; offsetZ++) {
+					int worldZ = z + offsetZ;
+					if (worldZ < minZ || worldZ > maxZ) {
+						continue;
+					}
+
+					for (int offsetX = -BIOME_CONTEXT_HORIZONTAL_RADIUS; offsetX <= BIOME_CONTEXT_HORIZONTAL_RADIUS; offsetX++) {
+						if (offsetX == 0 && offsetY == 0 && offsetZ == 0) {
+							continue;
+						}
+
+						int worldX = x + offsetX;
+						if (worldX < minX || worldX > maxX) {
+							continue;
+						}
+						airContext.add(BlockPos.asLong(worldX, worldY, worldZ));
+					}
+				}
+			}
+		}
+
+		private static int firstTint(int[] tintLayers) {
+			for (int tint : tintLayers) {
+				if (tint >= 0) {
+					return tint;
+				}
+			}
+			return NO_TINT_RGB;
+		}
+
 		private SnapshotBlock blockAt(int x, int y, int z) {
 			return this.blocks.get(BlockPos.asLong(x, y, z));
 		}
@@ -333,7 +443,7 @@ public final class BlueMapCameraRenderer {
 		}
 	}
 
-	private record SnapshotBlock(BlockState state, LightData light, Biome biome) {
+	private record SnapshotBlock(BlockState state, LightData light, Biome biome, int primaryTintRgb, int waterTintRgb) {
 	}
 
 	private static Biome resolveBiome(ServerLevel level, BlockPos pos, Map<String, Biome> cache, DataPack dataPack) {
@@ -343,14 +453,12 @@ public final class BlueMapCameraRenderer {
 				.<String>map(resourceKey -> normalizeBiomeKey(resourceKey.toString()))
 				.orElse("minecraft:plains");
 		return cache.computeIfAbsent(key, ignored -> {
+			Biome dataPackBiome = null;
 			try {
-				Biome dataPackBiome = dataPack.getBiome(Key.parse(key));
-				if (dataPackBiome != null) {
-					return dataPackBiome;
-				}
+				dataPackBiome = dataPack.getBiome(Key.parse(key));
 			} catch (IllegalArgumentException ignoredException) {
 			}
-			return SnapshotBiome.from(key, minecraftBiome, pos);
+			return SnapshotBiome.from(key, dataPackBiome, minecraftBiome);
 		});
 	}
 
@@ -393,13 +501,14 @@ public final class BlueMapCameraRenderer {
 			this.grassColorModifier = grassColorModifier;
 		}
 
-		private static SnapshotBiome from(String key, net.minecraft.world.level.biome.Biome minecraftBiome, BlockPos pos) {
-			float temperature = invokeFloat(minecraftBiome, "getBaseTemperature", 0.8F);
-			float downfall = invokeFloat(minecraftBiome, "getDownfall", 0.4F);
-			int grass = minecraftBiome.getGrassColor(pos.getX(), pos.getZ());
-			int foliage = minecraftBiome.getFoliageColor();
-			int dryFoliage = minecraftBiome.getDryFoliageColor();
-			int water = minecraftBiome.getWaterColor();
+		private static SnapshotBiome from(String key, Biome dataPackBiome, net.minecraft.world.level.biome.Biome minecraftBiome) {
+			float temperature = dataPackBiome != null ? dataPackBiome.getTemperature() : invokeFloat(minecraftBiome, "getBaseTemperature", 0.8F);
+			float downfall = dataPackBiome != null ? dataPackBiome.getDownfall() : invokeFloat(minecraftBiome, "getDownfall", 0.4F);
+			BiomeSpecialEffects effects = minecraftBiome.getSpecialEffects();
+			Color runtimeFoliageOverride = resolveOptionalColor(effects, "getFoliageColorOverride");
+			Color runtimeDryFoliageOverride = resolveOptionalColor(effects, "getDryFoliageColorOverride");
+			Color runtimeGrassOverride = resolveOptionalColor(effects, "getGrassColorOverride");
+			GrassColorModifier runtimeGrassModifier = resolveGrassModifier(minecraftBiome);
 			Key biomeKey;
 			try {
 				biomeKey = Key.parse(key);
@@ -410,11 +519,11 @@ public final class BlueMapCameraRenderer {
 					biomeKey,
 					downfall,
 					temperature,
-					colorOf(water),
-					colorOf(foliage),
-					colorOf(dryFoliage),
-					colorOf(grass),
-					resolveGrassModifier(minecraftBiome)
+					colorOf(minecraftBiome.getWaterColor()),
+					preferRuntimeColor(runtimeFoliageOverride, dataPackBiome == null ? null : dataPackBiome.getOverlayFoliageColor()),
+					preferRuntimeColor(runtimeDryFoliageOverride, dataPackBiome == null ? null : dataPackBiome.getOverlayDryFoliageColor()),
+					preferRuntimeColor(runtimeGrassOverride, dataPackBiome == null ? null : dataPackBiome.getOverlayGrassColor()),
+					preferRuntimeModifier(runtimeGrassModifier, dataPackBiome == null ? null : dataPackBiome.getGrassColorModifier())
 			);
 		}
 
@@ -457,6 +566,32 @@ public final class BlueMapCameraRenderer {
 			}
 		}
 
+		private static Color resolveOptionalColor(Object target, String... methodNames) {
+			for (String methodName : methodNames) {
+				Color color = optionalColorOf(invokeObject(target, methodName));
+				if (color != null) {
+					return color;
+				}
+			}
+			return transparentColor();
+		}
+
+		private static Color optionalColorOf(Object value) {
+			if (value == null) {
+				return null;
+			}
+			if (value instanceof java.util.Optional<?> optional) {
+				return optional.map(SnapshotBiome::optionalColorOf).orElseGet(SnapshotBiome::transparentColor);
+			}
+			if (value instanceof java.util.OptionalInt optionalInt) {
+				return optionalInt.isPresent() ? colorOf(optionalInt.getAsInt()) : transparentColor();
+			}
+			if (value instanceof Number number) {
+				return colorOf(number.intValue());
+			}
+			return null;
+		}
+
 		private static Color colorOf(int rgb) {
 			return new Color().set(
 					((rgb >> 16) & 0xFF) / 255.0F,
@@ -465,6 +600,28 @@ public final class BlueMapCameraRenderer {
 					1.0F,
 					false
 			);
+		}
+
+		private static Color transparentColor() {
+			return new Color().set(0.0F, 0.0F, 0.0F, 0.0F, false);
+		}
+
+		private static Color preferRuntimeColor(Color runtimeColor, Color fallbackColor) {
+			if (runtimeColor != null && runtimeColor.a > 0.0F) {
+				return runtimeColor;
+			}
+			return copyColor(fallbackColor);
+		}
+
+		private static GrassColorModifier preferRuntimeModifier(GrassColorModifier runtimeModifier, GrassColorModifier fallbackModifier) {
+			if (runtimeModifier != null && runtimeModifier != GrassColorModifier.NONE) {
+				return runtimeModifier;
+			}
+			return fallbackModifier == null ? GrassColorModifier.NONE : fallbackModifier;
+		}
+
+		private static Color copyColor(Color color) {
+			return color == null ? transparentColor() : new Color().set(color);
 		}
 
 		@Override
@@ -816,6 +973,7 @@ public final class BlueMapCameraRenderer {
 			ArrayTileModel model = new ArrayTileModel(8192);
 			TileModelView tileModelView = new TileModelView(model);
 			BlockStateModelRenderer blockRenderer = new BlockStateModelRenderer(this.resources.resourcePack(), this.resources.textureGallery(), renderSettings);
+			BlockColorCalculatorFactory.BlockColorCalculator colorCalculator = this.resources.resourcePack().getColorCalculatorFactory().createCalculator();
 			BlockNeighborhood neighborhood = new BlockNeighborhood(
 					new SnapshotBlockAccess(snapshot, 0, 0, 0),
 					this.resources.resourcePack(),
@@ -823,21 +981,120 @@ public final class BlueMapCameraRenderer {
 					this.frame.environment().dimensionType()
 			);
 			Color scratchColor = new Color();
+			Color primaryTintColor = new Color();
+			Color waterTintColor = new Color();
 
 			for (Long2ObjectMap.Entry<SnapshotBlock> entry : snapshot.entries()) {
+				SnapshotBlock snapshotBlock = entry.getValue();
+				if (snapshotBlock == null || snapshotBlock.state().isAir()) {
+					continue;
+				}
+
 				long packedPos = entry.getLongKey();
 				int x = BlockPos.getX(packedPos);
 				int y = BlockPos.getY(packedPos);
 				int z = BlockPos.getZ(packedPos);
 				neighborhood.set(x, y, z);
 				tileModelView.initialize();
+				int triangleStart = tileModelView.getStart();
+				boolean hasPrimaryTintMarker = sampleTintColor(colorCalculator, neighborhood, snapshotBlock.state(), primaryTintColor);
+				boolean hasWaterTintMarker = snapshotBlock.waterTintRgb() != NO_TINT_RGB
+						&& sampleTintColor(colorCalculator, neighborhood, BlockState.WATER, waterTintColor);
 				blockRenderer.render(neighborhood, tileModelView, scratchColor);
 				if (tileModelView.getSize() > 0) {
+					applyWorldTint(
+							model,
+							triangleStart,
+							tileModelView.getSize(),
+							snapshotBlock,
+							hasPrimaryTintMarker ? primaryTintColor : null,
+							hasWaterTintMarker ? waterTintColor : null
+					);
 					tileModelView.translate(x, y, z);
 				}
 			}
 
 			return model;
+		}
+
+		private void applyWorldTint(
+				ArrayTileModel model,
+				int triangleStart,
+				int triangleCount,
+				SnapshotBlock snapshotBlock,
+				Color primaryTintColor,
+				Color waterTintColor
+		) {
+			boolean adjustPrimary = shouldAdjustTint(snapshotBlock.primaryTintRgb(), primaryTintColor);
+			boolean adjustWater = shouldAdjustTint(snapshotBlock.waterTintRgb(), waterTintColor);
+			if (!adjustPrimary && !adjustWater) {
+				return;
+			}
+
+			float[] colors = ArrayTileModelAccess.colors(model);
+			for (int triangleIndex = triangleStart; triangleIndex < triangleStart + triangleCount; triangleIndex++) {
+				int colorBase = triangleIndex * 3;
+				if (adjustPrimary && matchesTint(colors, colorBase, primaryTintColor)) {
+					applyTintRatio(colors, colorBase, primaryTintColor, snapshotBlock.primaryTintRgb());
+					continue;
+				}
+				if (adjustWater && matchesTint(colors, colorBase, waterTintColor)) {
+					applyTintRatio(colors, colorBase, waterTintColor, snapshotBlock.waterTintRgb());
+				}
+			}
+		}
+
+		private static boolean sampleTintColor(
+				BlockColorCalculatorFactory.BlockColorCalculator colorCalculator,
+				BlockNeighborhood neighborhood,
+				BlockState blockState,
+				Color tintColor
+		) {
+			colorCalculator.getBlockColor(neighborhood, blockState, tintColor);
+			return !isApproximatelyWhite(tintColor);
+		}
+
+		private static boolean shouldAdjustTint(int desiredTintRgb, Color markerTint) {
+			return desiredTintRgb != NO_TINT_RGB
+					&& markerTint != null
+					&& !matchesTintRgb(markerTint, desiredTintRgb);
+		}
+
+		private static boolean matchesTint(float[] colors, int colorBase, Color tintColor) {
+			float epsilon = 1.0F / 255.0F + 1.0E-4F;
+			return Math.abs(colors[colorBase] - tintColor.r) <= epsilon
+					&& Math.abs(colors[colorBase + 1] - tintColor.g) <= epsilon
+					&& Math.abs(colors[colorBase + 2] - tintColor.b) <= epsilon;
+		}
+
+		private static boolean matchesTintRgb(Color tintColor, int rgb) {
+			float epsilon = 1.0F / 255.0F + 1.0E-4F;
+			return Math.abs(tintColor.r - ((rgb >> 16) & 0xFF) / 255.0F) <= epsilon
+					&& Math.abs(tintColor.g - ((rgb >> 8) & 0xFF) / 255.0F) <= epsilon
+					&& Math.abs(tintColor.b - (rgb & 0xFF) / 255.0F) <= epsilon;
+		}
+
+		private static boolean isApproximatelyWhite(Color tintColor) {
+			float epsilon = 1.0F / 255.0F + 1.0E-4F;
+			return Math.abs(tintColor.r - 1.0F) <= epsilon
+					&& Math.abs(tintColor.g - 1.0F) <= epsilon
+					&& Math.abs(tintColor.b - 1.0F) <= epsilon;
+		}
+
+		private static void applyTintRatio(float[] colors, int colorBase, Color markerTint, int desiredRgb) {
+			float desiredR = ((desiredRgb >> 16) & 0xFF) / 255.0F;
+			float desiredG = ((desiredRgb >> 8) & 0xFF) / 255.0F;
+			float desiredB = (desiredRgb & 0xFF) / 255.0F;
+			colors[colorBase] = scaleTintChannel(colors[colorBase], markerTint.r, desiredR);
+			colors[colorBase + 1] = scaleTintChannel(colors[colorBase + 1], markerTint.g, desiredG);
+			colors[colorBase + 2] = scaleTintChannel(colors[colorBase + 2], markerTint.b, desiredB);
+		}
+
+		private static float scaleTintChannel(float original, float marker, float desired) {
+			if (marker <= 1.0E-5F) {
+				return original;
+			}
+			return Mth.clamp(original * (desired / marker), 0.0F, 1.0F);
 		}
 
 		private void renderModel(ArrayTileModel model) {
@@ -911,9 +1168,9 @@ public final class BlueMapCameraRenderer {
 				return List.of();
 			}
 
-			float colorR = colors[colorBase];
-			float colorG = colors[colorBase + 1];
-			float colorB = colors[colorBase + 2];
+			float colorR = toLinear(colors[colorBase]);
+			float colorG = toLinear(colors[colorBase + 1]);
+			float colorB = toLinear(colors[colorBase + 2]);
 			float triangleSunlight = Byte.toUnsignedInt(sunlight[triangleIndex]);
 			float triangleBlocklight = Byte.toUnsignedInt(blocklight[triangleIndex]);
 			List<RasterTriangle> result = new ArrayList<>(Math.max(1, polygon.size() - 2));
