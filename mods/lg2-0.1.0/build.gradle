@@ -94,6 +94,8 @@ tasks.register("prepareDevResourcePack", Sync) {
 	from(layout.projectDirectory.dir("src/main/resources/assets")) {
 		into("assets")
 	}
+	// Resource-pack overrides (e.g. lang keys for pack users) must win over base assets.
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 	into(polymerSourceAssetsDir)
 	includeEmptyDirs = true
 }

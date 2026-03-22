@@ -19,5 +19,62 @@
     "item.lg2.stability_potion":  "Potion of Stability",
     "item.lg2.long_stability_potion":  "Potion of Stability +",
     "item.lg2.greater_stability_potion":  "Potion of Stability II",
-    "lg2.respect.actionbar":  "Respect!"
+    "lg2.respect.actionbar":  "Respect!",
+    "dialog.lg2.race_quick_actions.title": "Race Abilities",
+    "dialog.lg2.race_quick_actions.external_title": "Race Abilities",
+    "dialog.lg2.race_quick_actions.attack": "Attack",
+    "dialog.lg2.race_quick_actions.attack.tooltip": "Activate the race attack ability",
+    "dialog.lg2.race_quick_actions.defense": "Defense",
+    "dialog.lg2.race_quick_actions.defense.tooltip": "Activate the race defense ability",
+    "dialog.lg2.race_quick_actions.ability": "Ability",
+    "dialog.lg2.race_quick_actions.ability.tooltip": "Activate the race unique ability",
+    "dialog.lg2.race_quick_actions.shnyaga": "Shnyaga",
+    "dialog.lg2.race_quick_actions.shnyaga.tooltip": "Activate the 4th race ability",
+    "dialog.lg2.race_quick_actions.attack_1": "",
+    "dialog.lg2.race_quick_actions.attack_2": "",
+    "dialog.lg2.race_quick_actions.attack_3": "✦",
+    "dialog.lg2.race_quick_actions.attack_4": "",
+    "dialog.lg2.race_quick_actions.attack_5": "",
+    "dialog.lg2.race_quick_actions.defense_1": "",
+    "dialog.lg2.race_quick_actions.defense_2": "",
+    "dialog.lg2.race_quick_actions.defense_3": "✦",
+    "dialog.lg2.race_quick_actions.defense_4": "",
+    "dialog.lg2.race_quick_actions.defense_5": "",
+    "dialog.lg2.race_quick_actions.ability_1": "",
+    "dialog.lg2.race_quick_actions.ability_2": "",
+    "dialog.lg2.race_quick_actions.ability_3": "✦",
+    "dialog.lg2.race_quick_actions.ability_4": "",
+    "dialog.lg2.race_quick_actions.ability_5": "",
+    "dialog.lg2.race_quick_actions.shnyaga_1": "",
+    "dialog.lg2.race_quick_actions.shnyaga_2": "",
+    "dialog.lg2.race_quick_actions.shnyaga_3": "✦",
+    "dialog.lg2.race_quick_actions.shnyaga_4": "",
+    "dialog.lg2.race_quick_actions.shnyaga_5": "",
+    "message.lg2.race.player_only": "Only a player can use this command",
+    "message.lg2.race.no_race": "You do not have a race assigned yet",
+    "message.lg2.race.no_menu": "Failed to open race menu. Run /race reload",
+    "message.lg2.race.ability_disabled": "Ability %s is currently unavailable",
+    "message.lg2.race.cooldown": "Ability %s will be ready in %s sec.",
+    "message.lg2.race.used": "Activated %s from race %s"
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -19,5 +19,62 @@
     "item.lg2.stability_potion":  "安定性のポーション",
     "item.lg2.long_stability_potion":  "安定性のポーション+",
     "item.lg2.greater_stability_potion":  "安定性のポーションII",
-    "lg2.respect.actionbar":  "リスペクト!"
+    "lg2.respect.actionbar":  "リスペクト!",
+    "dialog.lg2.race_quick_actions.title": "種族能力",
+    "dialog.lg2.race_quick_actions.external_title": "種族能力",
+    "dialog.lg2.race_quick_actions.attack": "攻撃",
+    "dialog.lg2.race_quick_actions.attack.tooltip": "種族の攻撃能力を発動",
+    "dialog.lg2.race_quick_actions.defense": "防御",
+    "dialog.lg2.race_quick_actions.defense.tooltip": "種族の防御能力を発動",
+    "dialog.lg2.race_quick_actions.ability": "アビリティ",
+    "dialog.lg2.race_quick_actions.ability.tooltip": "種族の固有能力を発動",
+    "dialog.lg2.race_quick_actions.shnyaga": "シュニャガ",
+    "dialog.lg2.race_quick_actions.shnyaga.tooltip": "種族の第4能力を発動",
+    "dialog.lg2.race_quick_actions.attack_1": "",
+    "dialog.lg2.race_quick_actions.attack_2": "",
+    "dialog.lg2.race_quick_actions.attack_3": "✦",
+    "dialog.lg2.race_quick_actions.attack_4": "",
+    "dialog.lg2.race_quick_actions.attack_5": "",
+    "dialog.lg2.race_quick_actions.defense_1": "",
+    "dialog.lg2.race_quick_actions.defense_2": "",
+    "dialog.lg2.race_quick_actions.defense_3": "✦",
+    "dialog.lg2.race_quick_actions.defense_4": "",
+    "dialog.lg2.race_quick_actions.defense_5": "",
+    "dialog.lg2.race_quick_actions.ability_1": "",
+    "dialog.lg2.race_quick_actions.ability_2": "",
+    "dialog.lg2.race_quick_actions.ability_3": "✦",
+    "dialog.lg2.race_quick_actions.ability_4": "",
+    "dialog.lg2.race_quick_actions.ability_5": "",
+    "dialog.lg2.race_quick_actions.shnyaga_1": "",
+    "dialog.lg2.race_quick_actions.shnyaga_2": "",
+    "dialog.lg2.race_quick_actions.shnyaga_3": "✦",
+    "dialog.lg2.race_quick_actions.shnyaga_4": "",
+    "dialog.lg2.race_quick_actions.shnyaga_5": "",
+    "message.lg2.race.player_only": "このコマンドはプレイヤーのみ使用できます",
+    "message.lg2.race.no_race": "まだ種族が割り当てられていません",
+    "message.lg2.race.no_menu": "種族メニューを開けませんでした。/race reload を実行してください",
+    "message.lg2.race.ability_disabled": "能力 %s は現在使用できません",
+    "message.lg2.race.cooldown": "能力 %s は %s 秒後に使用可能です",
+    "message.lg2.race.used": "種族 %2$s の能力 %1$s を発動しました"
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
