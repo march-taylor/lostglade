@@ -1,4 +1,4 @@
-﻿{
+{
     "block.lg2.backrooms_block":  "Блок закулисья",
     "block.lg2.backrooms_door":  "Дверь закулисья",
     "block.lg2.backrooms_lightblock":  "Свет закулисья",
@@ -20,61 +20,40 @@
     "item.lg2.long_stability_potion":  "Зелье стабильности +",
     "item.lg2.greater_stability_potion":  "Зелье стабильности II",
     "lg2.respect.actionbar":  "Респект!",
-    "dialog.lg2.race_quick_actions.title": "Способности расы",
-    "dialog.lg2.race_quick_actions.external_title": "Способности расы",
-    "dialog.lg2.race_quick_actions.attack": "Атака",
-    "dialog.lg2.race_quick_actions.attack.tooltip": "Активировать атакующую способность расы",
-    "dialog.lg2.race_quick_actions.defense": "Защита",
-    "dialog.lg2.race_quick_actions.defense.tooltip": "Активировать защитную способность расы",
-    "dialog.lg2.race_quick_actions.ability": "Абилка",
-    "dialog.lg2.race_quick_actions.ability.tooltip": "Активировать уникальную способность расы",
-    "dialog.lg2.race_quick_actions.shnyaga": "Шняга",
-    "dialog.lg2.race_quick_actions.shnyaga.tooltip": "Активировать 4-ю способность расы",
-    "dialog.lg2.race_quick_actions.attack_1": "",
-    "dialog.lg2.race_quick_actions.attack_2": "",
-    "dialog.lg2.race_quick_actions.attack_3": "✦",
-    "dialog.lg2.race_quick_actions.attack_4": "",
-    "dialog.lg2.race_quick_actions.attack_5": "",
-    "dialog.lg2.race_quick_actions.defense_1": "",
-    "dialog.lg2.race_quick_actions.defense_2": "",
-    "dialog.lg2.race_quick_actions.defense_3": "✦",
-    "dialog.lg2.race_quick_actions.defense_4": "",
-    "dialog.lg2.race_quick_actions.defense_5": "",
-    "dialog.lg2.race_quick_actions.ability_1": "",
-    "dialog.lg2.race_quick_actions.ability_2": "",
-    "dialog.lg2.race_quick_actions.ability_3": "✦",
-    "dialog.lg2.race_quick_actions.ability_4": "",
-    "dialog.lg2.race_quick_actions.ability_5": "",
-    "dialog.lg2.race_quick_actions.shnyaga_1": "",
-    "dialog.lg2.race_quick_actions.shnyaga_2": "",
-    "dialog.lg2.race_quick_actions.shnyaga_3": "✦",
-    "dialog.lg2.race_quick_actions.shnyaga_4": "",
-    "dialog.lg2.race_quick_actions.shnyaga_5": "",
-    "message.lg2.race.player_only": "Эту команду может использовать только игрок",
-    "message.lg2.race.no_race": "У тебя пока нет назначенной расы",
-    "message.lg2.race.no_menu": "Не удалось открыть меню расы. Выполни /race reload",
-    "message.lg2.race.ability_disabled": "Способность %s сейчас недоступна",
-    "message.lg2.race.cooldown": "Способность %s будет готова через %s сек.",
-    "message.lg2.race.used": "Активирована способность %s расы %s"
+    "dialog.lg2.race_quick_actions.title":  "Способности расы",
+    "dialog.lg2.race_quick_actions.external_title":  "Способности расы",
+    "dialog.lg2.race_quick_actions.attack":  "Атака",
+    "dialog.lg2.race_quick_actions.attack.tooltip":  "Активировать атакующую способность расы",
+    "dialog.lg2.race_quick_actions.defense":  "Защита",
+    "dialog.lg2.race_quick_actions.defense.tooltip":  "Активировать защитную способность расы",
+    "dialog.lg2.race_quick_actions.ability":  "Абилка",
+    "dialog.lg2.race_quick_actions.ability.tooltip":  "Активировать уникальную способность расы",
+    "dialog.lg2.race_quick_actions.shnyaga":  "Шняга",
+    "dialog.lg2.race_quick_actions.shnyaga.tooltip":  "Активировать 4-ю способность расы",
+    "dialog.lg2.race_quick_actions.attack_1":  "Атака",
+    "dialog.lg2.race_quick_actions.attack_2":  "Атака",
+    "dialog.lg2.race_quick_actions.attack_3":  "Атака",
+    "dialog.lg2.race_quick_actions.attack_4":  "Атака",
+    "dialog.lg2.race_quick_actions.attack_5":  "Атака",
+    "dialog.lg2.race_quick_actions.defense_1":  "Защита",
+    "dialog.lg2.race_quick_actions.defense_2":  "Защита",
+    "dialog.lg2.race_quick_actions.defense_3":  "Защита",
+    "dialog.lg2.race_quick_actions.defense_4":  "Защита",
+    "dialog.lg2.race_quick_actions.defense_5":  "Защита",
+    "dialog.lg2.race_quick_actions.ability_1":  "Абилка",
+    "dialog.lg2.race_quick_actions.ability_2":  "Абилка",
+    "dialog.lg2.race_quick_actions.ability_3":  "Абилка",
+    "dialog.lg2.race_quick_actions.ability_4":  "Абилка",
+    "dialog.lg2.race_quick_actions.ability_5":  "Абилка",
+    "dialog.lg2.race_quick_actions.shnyaga_1":  "Шняга",
+    "dialog.lg2.race_quick_actions.shnyaga_2":  "Шняга",
+    "dialog.lg2.race_quick_actions.shnyaga_3":  "Шняга",
+    "dialog.lg2.race_quick_actions.shnyaga_4":  "Шняга",
+    "dialog.lg2.race_quick_actions.shnyaga_5":  "Шняга",
+    "message.lg2.race.player_only":  "Эту команду может использовать только игрок",
+    "message.lg2.race.no_race":  "У тебя пока нет назначенной расы",
+    "message.lg2.race.no_menu":  "Не удалось открыть меню расы. Выполни /race reload",
+    "message.lg2.race.ability_disabled":  "Способность %s сейчас недоступна",
+    "message.lg2.race.cooldown":  "Способность %s будет готова через %s сек.",
+    "message.lg2.race.used":  "Активирована способность %s расы %s"
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

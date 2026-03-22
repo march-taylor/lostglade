@@ -1,140 +1,322 @@
 {
-  "type": "minecraft:multi_action",
-  "title": {
-    "translate": "dialog.lg2.race_quick_actions.title",
-    "fallback": "\u0421\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u0438 \u0440\u0430\u0441\u044b"
-  },
-  "external_title": {
-    "translate": "dialog.lg2.race_quick_actions.external_title",
-    "fallback": "\u0421\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u0438 \u0440\u0430\u0441\u044b"
-  },
-  "can_close_with_escape": true,
-  "pause": false,
-  "columns": 2,
-  "actions": [
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.attack_1", "fallback": "\u00a7c\u0410\u0442\u0430\u043a\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.attack.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0430\u0442\u0430\u043a\u0443\u044e\u0449\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use attack" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.defense_1", "fallback": "\u00a79\u0417\u0430\u0449\u0438\u0442\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.defense.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0437\u0430\u0449\u0438\u0442\u043d\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use defense" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.attack_2", "fallback": "\u00a7c\u0410\u0442\u0430\u043a\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.attack.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0430\u0442\u0430\u043a\u0443\u044e\u0449\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use attack" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.defense_2", "fallback": "\u00a79\u0417\u0430\u0449\u0438\u0442\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.defense.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0437\u0430\u0449\u0438\u0442\u043d\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use defense" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.attack_3", "fallback": "\u00a7c\u0410\u0442\u0430\u043a\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.attack.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0430\u0442\u0430\u043a\u0443\u044e\u0449\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use attack" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.defense_3", "fallback": "\u00a79\u0417\u0430\u0449\u0438\u0442\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.defense.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0437\u0430\u0449\u0438\u0442\u043d\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use defense" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.attack_4", "fallback": "\u00a7c\u0410\u0442\u0430\u043a\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.attack.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0430\u0442\u0430\u043a\u0443\u044e\u0449\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use attack" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.defense_4", "fallback": "\u00a79\u0417\u0430\u0449\u0438\u0442\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.defense.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0437\u0430\u0449\u0438\u0442\u043d\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use defense" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.attack_5", "fallback": "\u00a7c\u0410\u0442\u0430\u043a\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.attack.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0430\u0442\u0430\u043a\u0443\u044e\u0449\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use attack" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.defense_5", "fallback": "\u00a79\u0417\u0430\u0449\u0438\u0442\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.defense.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0437\u0430\u0449\u0438\u0442\u043d\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use defense" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.ability_1", "fallback": "\u00a75\u0410\u0431\u0438\u043b\u043a\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.ability.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0443\u043d\u0438\u043a\u0430\u043b\u044c\u043d\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use ability" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.shnyaga_1", "fallback": "\u00a7a\u0428\u043d\u044f\u0433\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.shnyaga.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c 4-\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use shnyaga" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.ability_2", "fallback": "\u00a75\u0410\u0431\u0438\u043b\u043a\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.ability.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0443\u043d\u0438\u043a\u0430\u043b\u044c\u043d\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use ability" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.shnyaga_2", "fallback": "\u00a7a\u0428\u043d\u044f\u0433\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.shnyaga.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c 4-\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use shnyaga" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.ability_3", "fallback": "\u00a75\u0410\u0431\u0438\u043b\u043a\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.ability.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0443\u043d\u0438\u043a\u0430\u043b\u044c\u043d\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use ability" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.shnyaga_3", "fallback": "\u00a7a\u0428\u043d\u044f\u0433\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.shnyaga.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c 4-\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use shnyaga" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.ability_4", "fallback": "\u00a75\u0410\u0431\u0438\u043b\u043a\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.ability.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0443\u043d\u0438\u043a\u0430\u043b\u044c\u043d\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use ability" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.shnyaga_4", "fallback": "\u00a7a\u0428\u043d\u044f\u0433\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.shnyaga.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c 4-\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use shnyaga" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.ability_5", "fallback": "\u00a75\u0410\u0431\u0438\u043b\u043a\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.ability.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0443\u043d\u0438\u043a\u0430\u043b\u044c\u043d\u0443\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use ability" }
-    },
-    {
-      "label": { "translate": "dialog.lg2.race_quick_actions.shnyaga_5", "fallback": "\u00a7a\u0428\u043d\u044f\u0433\u0430" },
-      "tooltip": { "translate": "dialog.lg2.race_quick_actions.shnyaga.tooltip", "fallback": "\u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c 4-\u044e \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u044c \u0440\u0430\u0441\u044b" },
-      "width": 180,
-      "action": { "type": "minecraft:run_command", "command": "/race use shnyaga" }
-    }
-  ],
-  "exit_action": {
-    "label": { "translate": "gui.back" },
-    "width": 200
-  }
+    "type":  "minecraft:multi_action",
+    "title":  {
+                  "translate":  "dialog.lg2.race_quick_actions.title",
+                  "fallback":  "Способности расы"
+              },
+    "external_title":  {
+                           "translate":  "dialog.lg2.race_quick_actions.external_title",
+                           "fallback":  "Способности расы"
+                       },
+    "can_close_with_escape":  true,
+    "pause":  false,
+    "columns":  2,
+    "actions":  [
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.attack_1",
+                                      "fallback":  "§cАтака"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.attack.tooltip",
+                                        "fallback":  "Активировать атакующую способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use attack"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.defense_1",
+                                      "fallback":  "§9Защита"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.defense.tooltip",
+                                        "fallback":  "Активировать защитную способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use defense"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.attack_2",
+                                      "fallback":  "§cАтака"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.attack.tooltip",
+                                        "fallback":  "Активировать атакующую способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use attack"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.defense_2",
+                                      "fallback":  "§9Защита"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.defense.tooltip",
+                                        "fallback":  "Активировать защитную способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use defense"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.attack_3",
+                                      "fallback":  "§cАтака"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.attack.tooltip",
+                                        "fallback":  "Активировать атакующую способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use attack"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.defense_3",
+                                      "fallback":  "§9Защита"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.defense.tooltip",
+                                        "fallback":  "Активировать защитную способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use defense"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.attack_4",
+                                      "fallback":  "§cАтака"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.attack.tooltip",
+                                        "fallback":  "Активировать атакующую способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use attack"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.defense_4",
+                                      "fallback":  "§9Защита"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.defense.tooltip",
+                                        "fallback":  "Активировать защитную способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use defense"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.attack_5",
+                                      "fallback":  "§cАтака"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.attack.tooltip",
+                                        "fallback":  "Активировать атакующую способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use attack"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.defense_5",
+                                      "fallback":  "§9Защита"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.defense.tooltip",
+                                        "fallback":  "Активировать защитную способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use defense"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.ability_1",
+                                      "fallback":  "§5Абилка"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.ability.tooltip",
+                                        "fallback":  "Активировать уникальную способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use ability"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.shnyaga_1",
+                                      "fallback":  "§aШняга"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.shnyaga.tooltip",
+                                        "fallback":  "Активировать шнягу расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use shnyaga"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.ability_2",
+                                      "fallback":  "§5Абилка"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.ability.tooltip",
+                                        "fallback":  "Активировать уникальную способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use ability"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.shnyaga_2",
+                                      "fallback":  "§aШняга"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.shnyaga.tooltip",
+                                        "fallback":  "Активировать шнягу расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use shnyaga"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.ability_3",
+                                      "fallback":  "§5Абилка"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.ability.tooltip",
+                                        "fallback":  "Активировать уникальную способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use ability"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.shnyaga_3",
+                                      "fallback":  "§aШняга"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.shnyaga.tooltip",
+                                        "fallback":  "Активировать шнягу расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use shnyaga"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.ability_4",
+                                      "fallback":  "§5Абилка"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.ability.tooltip",
+                                        "fallback":  "Активировать уникальную способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use ability"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.shnyaga_4",
+                                      "fallback":  "§aШняга"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.shnyaga.tooltip",
+                                        "fallback":  "Активировать шнягу расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use shnyaga"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.ability_5",
+                                      "fallback":  "§5Абилка"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.ability.tooltip",
+                                        "fallback":  "Активировать уникальную способность расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use ability"
+                                   }
+                    },
+                    {
+                        "label":  {
+                                      "translate":  "dialog.lg2.race_quick_actions.rp.shnyaga_5",
+                                      "fallback":  "§aШняга"
+                                  },
+                        "tooltip":  {
+                                        "translate":  "dialog.lg2.race_quick_actions.shnyaga.tooltip",
+                                        "fallback":  "Активировать шнягу расы"
+                                    },
+                        "width":  180,
+                        "action":  {
+                                       "type":  "minecraft:run_command",
+                                       "command":  "/race use shnyaga"
+                                   }
+                    }
+                ],
+    "exit_action":  {
+                        "label":  {
+                                      "translate":  "gui.back"
+                                  },
+                        "width":  200
+                    }
 }
