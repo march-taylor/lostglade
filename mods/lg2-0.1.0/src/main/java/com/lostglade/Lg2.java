@@ -2,6 +2,7 @@ package com.lostglade;
 
 import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
+import com.lostglade.config.RaceConfig;
 import com.lostglade.server.ServerGlitchSystem;
 import com.lostglade.server.ServerBackroomsSystem;
 import com.lostglade.server.ServerBackroomsBlockBreakSystem;
@@ -15,6 +16,7 @@ import com.lostglade.server.ServerStabilitySystem;
 import com.lostglade.server.ServerStructureBreakSystem;
 import com.lostglade.server.ServerMechanicsGateSystem;
 import com.lostglade.server.ServerRespectSystem;
+import com.lostglade.server.ServerRaceSystem;
 import com.lostglade.server.ServerTabIntegration;
 import com.lostglade.server.ServerTrojanRoosterSystem;
 import com.lostglade.server.ServerUnusedMobSpawnSystem;
@@ -40,6 +42,7 @@ public class Lg2 implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		Lg2Config.load();
+		RaceConfig.load();
 		PolymerResourcePackUtils.addModAssets(MOD_ID);
 
 		ModItems.register();
@@ -58,6 +61,7 @@ public class Lg2 implements ModInitializer {
 		ServerStructureBreakSystem.register();
 		ServerMechanicsGateSystem.register();
 		ServerRespectSystem.register();
+		ServerRaceSystem.register();
 		ServerUnusedMobSpawnSystem.register();
 		ServerTabIntegration.register();
 		ServerVoicechatIntegration.register();

@@ -1,0 +1,126 @@
+{
+  "races": [
+    {
+      "enabled": false,
+      "id": "example_race",
+      "displayName": "Пример Расы",
+      "ownerNickname": "PlayerNickname",
+      "description": "Шаблон персональной расы. Включи запись и настрой 5 категорий способностей.",
+      "attack": {
+        "enabled": true,
+        "abilityId": "attack_template",
+        "name": "Атака",
+        "description": "Категория offensive-способности расы.",
+        "cooldownSeconds": 0.0,
+        "durationSeconds": 0.0,
+        "rangeBlocks": 0.0,
+        "chance": 1.0,
+        "amplifier": 0,
+        "primaryValue": 0.0,
+        "secondaryValue": 0.0,
+        "tertiaryValue": 0.0,
+        "flags": {
+          "enabledInPvp": true
+        },
+        "numbers": {
+          "damageBonus": 0.0
+        },
+        "strings": {
+          "effect": "none"
+        }
+      },
+      "defense": {
+        "enabled": true,
+        "abilityId": "defense_template",
+        "name": "Защита",
+        "description": "Категория defensive-способности расы.",
+        "cooldownSeconds": 0.0,
+        "durationSeconds": 0.0,
+        "rangeBlocks": 0.0,
+        "chance": 1.0,
+        "amplifier": 0,
+        "primaryValue": 0.0,
+        "secondaryValue": 0.0,
+        "tertiaryValue": 0.0,
+        "flags": {
+          "ignoreFallDamage": false
+        },
+        "numbers": {
+          "damageReduction": 0.0
+        },
+        "strings": {
+          "effect": "none"
+        }
+      },
+      "uniqueAbility": {
+        "enabled": true,
+        "abilityId": "unique_ability_template",
+        "name": "Уникальная способность",
+        "description": "Главная активная абилка расы.",
+        "cooldownSeconds": 0.0,
+        "durationSeconds": 0.0,
+        "rangeBlocks": 0.0,
+        "chance": 1.0,
+        "amplifier": 0,
+        "primaryValue": 0.0,
+        "secondaryValue": 0.0,
+        "tertiaryValue": 0.0,
+        "flags": {
+          "requiresTarget": false
+        },
+        "numbers": {
+          "power": 0.0
+        },
+        "strings": {
+          "effect": "none"
+        }
+      },
+      "shnyaga": {
+        "enabled": true,
+        "abilityId": "shnyaga_template",
+        "name": "Шняга",
+        "description": "Гибрид между пассивкой и абилкой.",
+        "cooldownSeconds": 0.0,
+        "durationSeconds": 0.0,
+        "rangeBlocks": 0.0,
+        "chance": 1.0,
+        "amplifier": 0,
+        "primaryValue": 0.0,
+        "secondaryValue": 0.0,
+        "tertiaryValue": 0.0,
+        "flags": {
+          "toggleable": false
+        },
+        "numbers": {
+          "power": 0.0
+        },
+        "strings": {
+          "effect": "none"
+        }
+      },
+      "stock": {
+        "enabled": true,
+        "abilityId": "stock_template",
+        "name": "Сток",
+        "description": "Базовая пассивная способность расы.",
+        "cooldownSeconds": 0.0,
+        "durationSeconds": 0.0,
+        "rangeBlocks": 0.0,
+        "chance": 1.0,
+        "amplifier": 0,
+        "primaryValue": 0.0,
+        "secondaryValue": 0.0,
+        "tertiaryValue": 0.0,
+        "flags": {
+          "alwaysActive": true
+        },
+        "numbers": {
+          "power": 0.0
+        },
+        "strings": {
+          "effect": "none"
+        }
+      }
+    }
+  ]
+}
