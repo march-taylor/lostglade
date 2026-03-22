@@ -6,6 +6,16 @@ public final class MapPaletteQuantizer {
 	private static final double REF_X = 0.95047D;
 	private static final double REF_Y = 1.0D;
 	private static final double REF_Z = 1.08883D;
+	private static final int[] BAYER_8X8 = {
+			0, 48, 12, 60, 3, 51, 15, 63,
+			32, 16, 44, 28, 35, 19, 47, 31,
+			8, 56, 4, 52, 11, 59, 7, 55,
+			40, 24, 36, 20, 43, 27, 39, 23,
+			2, 50, 14, 62, 1, 49, 13, 61,
+			34, 18, 46, 30, 33, 17, 45, 29,
+			10, 58, 6, 54, 9, 57, 5, 53,
+			42, 26, 38, 22, 41, 25, 37, 21
+	};
 	private static final double[] SRGB_TO_LINEAR = buildSrgbToLinear();
 	private static final PaletteEntry[] PALETTE = buildPalette();
 
@@ -34,6 +44,23 @@ public final class MapPaletteQuantizer {
 			return 0;
 		}
 		return quantize(averageRgb(colors, count));
+	}
+
+	public static byte quantizeDithered(int rgb, int x, int y) {
+		int red = (rgb >> 16) & 0xFF;
+		int green = (rgb >> 8) & 0xFF;
+		int blue = rgb & 0xFF;
+		int max = Math.max(red, Math.max(green, blue));
+		int min = Math.min(red, Math.min(green, blue));
+		double saturation = max <= 0 ? 0.0D : (max - min) / (double) max;
+		double saturationWeight = clamp01(saturation / 0.35D);
+		double strength = 5.5D - 3.0D * saturationWeight;
+		int threshold = BAYER_8X8[((y & 7) << 3) | (x & 7)] - 31;
+		double delta = threshold * (strength / 31.0D);
+		int ditheredRed = clampByte((int) Math.round(red + delta));
+		int ditheredGreen = clampByte((int) Math.round(green + delta));
+		int ditheredBlue = clampByte((int) Math.round(blue + delta));
+		return quantize((ditheredRed << 16) | (ditheredGreen << 8) | ditheredBlue);
 	}
 
 	public static int averageRgb(int[] colors, int count) {
@@ -131,6 +158,14 @@ public final class MapPaletteQuantizer {
 				? clamped * 12.92D
 				: 1.055D * Math.pow(clamped, 1.0D / 2.4D) - 0.055D;
 		return Math.max(0, Math.min(255, (int) Math.round(srgb * 255.0D)));
+	}
+
+	private static double clamp01(double value) {
+		return Math.max(0.0D, Math.min(1.0D, value));
+	}
+
+	private static int clampByte(int value) {
+		return Math.max(0, Math.min(255, value));
 	}
 
 	private record PaletteEntry(byte packedId, double lightness, double a, double b) {

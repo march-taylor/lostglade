@@ -844,49 +844,9 @@ public final class BlueMapCameraRenderer {
 		private int sample(float u, float v) {
 			float wrappedU = u - (float) Math.floor(u);
 			float wrappedV = v - (float) Math.floor(v);
-			float x = wrappedU * (this.width - 1);
-			float y = wrappedV * (this.height - 1);
-			int x0 = Mth.floor(x);
-			int y0 = Mth.floor(y);
-			int x1 = (x0 + 1) % this.width;
-			int y1 = (y0 + 1) % this.height;
-			float tx = x - x0;
-			float ty = y - y0;
-			int c00 = this.pixels[y0 * this.width + x0];
-			int c10 = this.pixels[y0 * this.width + x1];
-			int c01 = this.pixels[y1 * this.width + x0];
-			int c11 = this.pixels[y1 * this.width + x1];
-			float a00 = ((c00 >>> 24) & 0xFF) / 255.0F;
-			float a10 = ((c10 >>> 24) & 0xFF) / 255.0F;
-			float a01 = ((c01 >>> 24) & 0xFF) / 255.0F;
-			float a11 = ((c11 >>> 24) & 0xFF) / 255.0F;
-			float r00 = ((c00 >> 16) & 0xFF) / 255.0F;
-			float r10 = ((c10 >> 16) & 0xFF) / 255.0F;
-			float r01 = ((c01 >> 16) & 0xFF) / 255.0F;
-			float r11 = ((c11 >> 16) & 0xFF) / 255.0F;
-			float g00 = ((c00 >> 8) & 0xFF) / 255.0F;
-			float g10 = ((c10 >> 8) & 0xFF) / 255.0F;
-			float g01 = ((c01 >> 8) & 0xFF) / 255.0F;
-			float g11 = ((c11 >> 8) & 0xFF) / 255.0F;
-			float b00 = (c00 & 0xFF) / 255.0F;
-			float b10 = (c10 & 0xFF) / 255.0F;
-			float b01 = (c01 & 0xFF) / 255.0F;
-			float b11 = (c11 & 0xFF) / 255.0F;
-
-			float a0 = Mth.lerp(tx, a00, a10);
-			float a1 = Mth.lerp(tx, a01, a11);
-			float r0 = Mth.lerp(tx, r00, r10);
-			float r1 = Mth.lerp(tx, r01, r11);
-			float g0 = Mth.lerp(tx, g00, g10);
-			float g1 = Mth.lerp(tx, g01, g11);
-			float b0 = Mth.lerp(tx, b00, b10);
-			float b1 = Mth.lerp(tx, b01, b11);
-
-			int alpha = Mth.clamp(Math.round(Mth.lerp(ty, a0, a1) * 255.0F), 0, 255);
-			int red = Mth.clamp(Math.round(Mth.lerp(ty, r0, r1) * 255.0F), 0, 255);
-			int green = Mth.clamp(Math.round(Mth.lerp(ty, g0, g1) * 255.0F), 0, 255);
-			int blue = Mth.clamp(Math.round(Mth.lerp(ty, b0, b1) * 255.0F), 0, 255);
-			return (alpha << 24) | (red << 16) | (green << 8) | blue;
+			int x = Mth.clamp(Mth.floor(wrappedU * this.width), 0, this.width - 1);
+			int y = Mth.clamp(Mth.floor(wrappedV * this.height), 0, this.height - 1);
+			return this.pixels[y * this.width + x];
 		}
 	}
 
@@ -951,16 +911,18 @@ public final class BlueMapCameraRenderer {
 			if (this.frame.environment().dimensionType() == DimensionType.END) {
 				return 0x6A5E8F;
 			}
+			if (!this.frame.environment().skylight()) {
+				float ambient = Mth.clamp(this.frame.environment().ambientLight() + 0.18F, 0.15F, 0.45F);
+				return scaleRgb(0x2B313A, ambient);
+			}
 
-			float sunlight = this.frame.environment().sunlightStrength();
-			float ambient = Math.max(this.frame.environment().ambientLight(), sunlight * sunlight);
+			float daylight = this.frame.environment().sunlightStrength();
 			float vertical = Mth.clamp((float) ((direction.y + 1.0D) * 0.5D), 0.0F, 1.0F);
-			int top = scaleRgb(0x8FC9FF, ambient);
-			int horizon = scaleRgb(0xD8F0FF, ambient);
-			int nadir = scaleRgb(0xA7C2D9, ambient * 0.9F);
-			int rgb = direction.y >= 0.0D
-					? lerpRgb(horizon, top, vertical)
-					: lerpRgb(nadir, horizon, vertical);
+			float gradient = Mth.clamp(daylight * (0.45F + vertical * 0.55F), 0.0F, 1.0F);
+			int rgb = lerpRgb(0xD8F0FF, 0x8FC9FF, gradient);
+			if (direction.y < 0.0D) {
+				rgb = lerpRgb(0xA7C2D9, rgb, vertical);
+			}
 			if (this.frame.environment().raining()) {
 				rgb = lerpRgb(rgb, 0x7286A0, 0.45F);
 			}
@@ -1168,6 +1130,17 @@ public final class BlueMapCameraRenderer {
 				return List.of();
 			}
 
+			float faceShade = faceShadeFor(
+					positions[positionBase],
+					positions[positionBase + 1],
+					positions[positionBase + 2],
+					positions[positionBase + 3],
+					positions[positionBase + 4],
+					positions[positionBase + 5],
+					positions[positionBase + 6],
+					positions[positionBase + 7],
+					positions[positionBase + 8]
+			);
 			float colorR = toLinear(colors[colorBase]);
 			float colorG = toLinear(colors[colorBase + 1]);
 			float colorB = toLinear(colors[colorBase + 2]);
@@ -1185,14 +1158,15 @@ public final class BlueMapCameraRenderer {
 						a,
 						b,
 						c,
-						colorR,
-						colorG,
-						colorB,
-						triangleSunlight,
-						triangleBlocklight,
-						material,
-						depthSum / 3.0F
-				));
+							colorR,
+							colorG,
+							colorB,
+							triangleSunlight,
+							triangleBlocklight,
+							faceShade,
+							material,
+							depthSum / 3.0F
+					));
 			}
 			return result;
 		}
@@ -1280,15 +1254,22 @@ public final class BlueMapCameraRenderer {
 						continue;
 					}
 
-					float light = Mth.lerp(
-							this.frame.environment().sunlightStrength(),
-							triangle.blocklight(),
-							Math.max(triangle.sunlight(), triangle.blocklight())
-					);
-					float shade = Mth.lerp(light / 15.0F, this.frame.environment().ambientLight(), 1.0F);
-					float redLinear = toLinear((argb >> 16) & 0xFF) * triangle.colorR() * ao * shade;
-					float greenLinear = toLinear((argb >> 8) & 0xFF) * triangle.colorG() * ao * shade;
-					float blueLinear = toLinear(argb & 0xFF) * triangle.colorB() * ao * shade;
+						float sunlightLevel = triangle.sunlight() / 15.0F;
+						float blocklightLevel = triangle.blocklight() / 15.0F;
+						float skylightMix = sunlightLevel * Mth.lerp(this.frame.environment().sunlightStrength(), 0.18F, 1.0F);
+						float blocklightMix = blocklightLevel <= 0.0F ? 0.0F : Mth.lerp(blocklightLevel, 0.15F, 1.0F);
+						float ambientFloor = Mth.clamp(this.frame.environment().ambientLight() * 0.45F + 0.22F, 0.22F, 0.42F);
+						float lightMix = Math.max(Math.max(skylightMix, blocklightMix), ambientFloor);
+						float aoShade = Mth.lerp(Mth.clamp(ao, 0.0F, 1.0F), 0.58F, 1.0F);
+						float shade = triangle.faceShade() * quantizeLight(lightMix) * aoShade;
+						if (depth > 64.0F && this.frame.maxDistance() > 64.0D) {
+							float fade = Mth.clamp((depth - 64.0F) / (float) (this.frame.maxDistance() - 64.0D), 0.0F, 1.0F);
+							shade *= Mth.lerp(fade, 1.0F, 0.78F);
+						}
+						shade = Mth.clamp(shade, 0.0F, 1.0F);
+						float redLinear = toLinear((argb >> 16) & 0xFF) * triangle.colorR() * shade;
+						float greenLinear = toLinear((argb >> 8) & 0xFF) * triangle.colorG() * shade;
+						float blueLinear = toLinear(argb & 0xFF) * triangle.colorB() * shade;
 
 					if (opaquePass) {
 						this.red[index] = redLinear;
@@ -1309,9 +1290,12 @@ public final class BlueMapCameraRenderer {
 			int scale = this.internalSize / MAP_SIZE;
 			byte[] output = new byte[MAP_SIZE * MAP_SIZE];
 			if (scale <= 1) {
-				for (int i = 0; i < output.length; i++) {
-					int rgb = (toSrgb(this.red[i]) << 16) | (toSrgb(this.green[i]) << 8) | toSrgb(this.blue[i]);
-					output[i] = MapPaletteQuantizer.quantize(rgb);
+				for (int mapY = 0; mapY < MAP_SIZE; mapY++) {
+					for (int mapX = 0; mapX < MAP_SIZE; mapX++) {
+						int index = mapY * MAP_SIZE + mapX;
+						int rgb = (toSrgb(this.red[index]) << 16) | (toSrgb(this.green[index]) << 8) | toSrgb(this.blue[index]);
+						output[index] = MapPaletteQuantizer.quantizeDithered(rgb, mapX, mapY);
+					}
 				}
 				return output;
 			}
@@ -1323,23 +1307,82 @@ public final class BlueMapCameraRenderer {
 					int sampleIndex = 0;
 					int startY = mapY * scale;
 					int startX = mapX * scale;
-					for (int dy = 0; dy < scale; dy++) {
-						int row = (startY + dy) * this.internalSize + startX;
-						for (int dx = 0; dx < scale; dx++) {
-							int index = row + dx;
+						for (int dy = 0; dy < scale; dy++) {
+							int row = (startY + dy) * this.internalSize + startX;
+							for (int dx = 0; dx < scale; dx++) {
+								int index = row + dx;
 							samples[sampleIndex++] = (toSrgb(this.red[index]) << 16)
 									| (toSrgb(this.green[index]) << 8)
-									| toSrgb(this.blue[index]);
+										| toSrgb(this.blue[index]);
+							}
 						}
+						int averagedRgb = MapPaletteQuantizer.averageRgb(samples, sampleIndex);
+						int centerX = startX + scale / 2;
+						int centerY = startY + scale / 2;
+						int centerIndex = centerY * this.internalSize + centerX;
+						int centerRgb = (toSrgb(this.red[centerIndex]) << 16)
+								| (toSrgb(this.green[centerIndex]) << 8)
+								| toSrgb(this.blue[centerIndex]);
+						int detailRgb = lerpRgb(averagedRgb, centerRgb, 0.50F);
+						output[mapY * MAP_SIZE + mapX] = MapPaletteQuantizer.quantizeDithered(detailRgb, mapX, mapY);
 					}
-					output[mapY * MAP_SIZE + mapX] = MapPaletteQuantizer.quantize(MapPaletteQuantizer.averageRgb(samples, sampleIndex));
 				}
-			}
-			return output;
+				return output;
 		}
 
 		private static float edge(float ax, float ay, float bx, float by, float px, float py) {
 			return (px - ax) * (by - ay) - (py - ay) * (bx - ax);
+		}
+
+		private static float faceShadeFor(
+				float ax, float ay, float az,
+				float bx, float by, float bz,
+				float cx, float cy, float cz
+		) {
+			float abx = bx - ax;
+			float aby = by - ay;
+			float abz = bz - az;
+			float acx = cx - ax;
+			float acy = cy - ay;
+			float acz = cz - az;
+			float nx = aby * acz - abz * acy;
+			float ny = abz * acx - abx * acz;
+			float nz = abx * acy - aby * acx;
+			float lengthSquared = nx * nx + ny * ny + nz * nz;
+			if (lengthSquared <= 1.0E-6F) {
+				return 0.8F;
+			}
+			float invLength = 1.0F / Mth.sqrt(lengthSquared);
+			float normalizedX = nx * invLength;
+			float normalizedY = ny * invLength;
+			float normalizedZ = nz * invLength;
+			float absX = Math.abs(normalizedX);
+			float absY = Math.abs(normalizedY);
+			float absZ = Math.abs(normalizedZ);
+			if (absY >= absX && absY >= absZ) {
+				if (normalizedY > 0.0F) {
+					return 1.0F;
+				}
+				return 0.55F;
+			}
+			if (absZ >= absX) {
+				return 0.8F;
+			}
+			return 0.6F;
+		}
+
+		private static float quantizeLight(float light) {
+			float clamped = Mth.clamp(light, 0.0F, 1.0F);
+			if (clamped < 0.625F) {
+				return 135.0F / 255.0F;
+			}
+			if (clamped < 0.785F) {
+				return 180.0F / 255.0F;
+			}
+			if (clamped < 0.93F) {
+				return 220.0F / 255.0F;
+			}
+			return 1.0F;
 		}
 
 		private static int lerpRgb(int from, int to, float delta) {
@@ -1403,6 +1446,7 @@ public final class BlueMapCameraRenderer {
 			float colorB,
 			float sunlight,
 			float blocklight,
+			float faceShade,
 			TextureMaterial material,
 			float sortDepth
 	) {
