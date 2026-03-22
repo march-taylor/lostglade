@@ -2,7 +2,6 @@ package com.lostglade.server.camera.bluemap;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.lostglade.Lg2;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.lostglade.server.map.TextureAssetManager;
 import com.mojang.authlib.properties.Property;
@@ -24,9 +23,6 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
-import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
-import net.minecraft.world.entity.boss.enderdragon.EnderDragonPart;
-import net.minecraft.world.entity.boss.wither.WitherBoss;
 import net.minecraft.world.entity.animal.chicken.Chicken;
 import net.minecraft.world.entity.animal.chicken.ChickenVariant;
 import net.minecraft.world.entity.animal.cow.Cow;
@@ -40,14 +36,11 @@ import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.monster.EnderMan;
 import net.minecraft.world.entity.monster.skeleton.AbstractSkeleton;
 import net.minecraft.world.entity.monster.spider.Spider;
-import net.minecraft.world.entity.monster.warden.Warden;
 import net.minecraft.world.entity.monster.zombie.Drowned;
 import net.minecraft.world.entity.monster.zombie.Husk;
 import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.entity.npc.villager.VillagerData;
-import net.minecraft.world.entity.npc.villager.VillagerProfession;
-import net.minecraft.world.entity.npc.villager.VillagerType;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.player.PlayerModelPart;
 import net.minecraft.world.item.ItemStack;
@@ -84,25 +77,13 @@ final class CameraEntityRenderer {
 	private static final Identifier SPIDER_EYES_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/spider_eyes");
 	private static final Identifier ENDERMAN_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/enderman/enderman");
 	private static final Identifier ENDERMAN_EYES_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/enderman/enderman_eyes");
-	private static final Identifier WITHER_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/wither/wither");
-	private static final Identifier WITHER_INVULNERABLE_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/wither/wither_invulnerable");
-	private static final Identifier ENDER_DRAGON_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/enderdragon/dragon");
-	private static final Identifier ENDER_DRAGON_EYES_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/enderdragon/dragon_eyes");
-	private static final Identifier WARDEN_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/warden/warden");
 	private static final Identifier SHEEP_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/sheep/sheep");
 	private static final Identifier SHEEP_WOOL_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/sheep/sheep_wool");
 	private static final Identifier ARMOR_STAND_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/armorstand/wood");
 	private static final Identifier VILLAGER_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/villager/villager");
-	private static final Identifier VILLAGER_TYPE_PLAINS_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/villager/type/plains");
-	private static final String VILLAGER_TYPE_TEXTURE_PREFIX = "entity/villager/type/";
-	private static final String VILLAGER_PROFESSION_TEXTURE_PREFIX = "entity/villager/profession/";
 	private static final Map<String, BlueMapCameraRenderer.TextureMaterial> STATIC_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, BlueMapCameraRenderer.TextureMaterial> PLAYER_SKIN_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, Identifier> ITEM_TEXTURE_CACHE = new ConcurrentHashMap<>();
-	private static final Map<String, TextureSize> TEXTURE_SIZE_CACHE = new ConcurrentHashMap<>();
-	private static final Set<String> UNSUPPORTED_ENTITY_LOGGED = ConcurrentHashMap.newKeySet();
-	private static final Set<String> SNAPSHOT_RENDER_ERRORS_LOGGED = ConcurrentHashMap.newKeySet();
-	private static final Set<String> VILLAGER_OVERLAY_ISSUES_LOGGED = ConcurrentHashMap.newKeySet();
 
 	private CameraEntityRenderer() {
 	}
@@ -194,44 +175,6 @@ final class CameraEntityRenderer {
 	) implements EntitySnapshot {
 	}
 
-	record WitherSnapshot(
-			Vec3 position,
-			float yaw,
-			float pitch,
-			float bodyYaw,
-			float[] sideHeadYaws,
-			float[] sideHeadPitches,
-			float ageInTicks,
-			int invulnerableTicks
-	) implements EntitySnapshot {
-	}
-
-	record WardenSnapshot(
-			Vec3 position,
-			float yaw,
-			float bodyYaw,
-			float headYaw,
-			float pitch,
-			float walkPos,
-			float walkSpeed,
-			float ageInTicks,
-			float tendrilAnimation
-	) implements EntitySnapshot {
-	}
-
-	record EnderDragonSnapshot(
-			Vec3 position,
-			float yaw,
-			float flapTime,
-			Vec3 headPos,
-			Vec3 neckPos,
-			Vec3 bodyPos,
-			Vec3 tail1Pos,
-			Vec3 tail2Pos,
-			Vec3 tail3Pos
-	) implements EntitySnapshot {
-	}
-
 	record ArmorStandSnapshot(
 			Vec3 position,
 			float yaw,
@@ -254,27 +197,12 @@ final class CameraEntityRenderer {
 	) implements EntitySnapshot {
 	}
 
-	record GenericLivingSnapshot(
-			Vec3 position,
-			float bodyYaw,
-			float headYaw,
-			float pitch,
-			float width,
-			float height,
-			Identifier texture,
-			String entityTypeId
-	) implements EntitySnapshot {
-	}
-
 	record PlayerSkinSnapshot(
 			String cacheKey,
 			String url,
 			Identifier fallbackTexture,
 			boolean slim
 	) {
-	}
-
-	private record TextureSize(int width, int height) {
 	}
 
 	enum HumanoidKind {
@@ -311,46 +239,25 @@ final class CameraEntityRenderer {
 	}
 
 	static EntitySnapshot captureEntity(Entity entity) {
-		if (entity == null || !entity.isAlive() || entity.isInvisible()) {
+		LivingEntity livingEntity = entity instanceof LivingEntity living ? living : null;
+		if (livingEntity == null && !(entity instanceof ItemEntity)) {
 			return null;
 		}
-		try {
-			if (entity instanceof ItemEntity itemEntity) {
-				return captureItemSnapshot(itemEntity);
-			}
-
-			if (entity instanceof LivingEntity livingEntity) {
-				EntitySnapshot specialized = captureSpecializedLivingEntity(entity, livingEntity);
-				if (specialized != null) {
-					return specialized;
-				}
-				logUnsupportedEntity(entity, "using generic living fallback");
-				return captureGenericLivingSnapshot(entity, livingEntity);
-			}
-
-			return null;
-		} catch (Exception exception) {
-			logUnsupportedEntity(entity, "capture failed: " + exception.getClass().getSimpleName());
-			if (entity instanceof LivingEntity livingEntity) {
-				return captureGenericLivingSnapshot(entity, livingEntity);
-			}
+		if (!entity.isAlive() || entity.isInvisible()) {
 			return null;
 		}
-	}
 
-	private static EntitySnapshot captureSpecializedLivingEntity(Entity entity, LivingEntity livingEntity) {
 		if (entity instanceof Player player) {
 			PlayerSkinSnapshot playerSkin = capturePlayerSkin(player);
 			HumanoidKind kind = playerSkin != null && playerSkin.slim() ? HumanoidKind.PLAYER_SLIM : HumanoidKind.PLAYER;
-			float playerYaw = entity.getYRot();
 			byte modelBits = player instanceof net.minecraft.world.entity.Avatar avatar
 					? avatar.getEntityData().get(PlayerTrackedDataAccessor.lg2$getDataPlayerModeCustomisation())
 					: 0;
 			return new HumanoidSnapshot(
 					entity.position(),
-					playerYaw,
-					playerYaw,
-					playerYaw,
+					entity.getYRot(),
+					livingEntity.yBodyRot,
+					livingEntity.yHeadRot,
 					entity.getXRot(),
 					livingEntity.walkAnimation.position(),
 					livingEntity.walkAnimation.speed(),
@@ -390,7 +297,12 @@ final class CameraEntityRenderer {
 		}
 
 		if (entity instanceof Villager villager) {
-			Identifier[] overlays = villagerOverlays(villager);
+			VillagerData villagerData = villager.getVillagerData();
+			Identifier[] overlays = new Identifier[]{
+					holderTexture(villagerData.type(), "entity/villager/type/"),
+					holderTexture(villagerData.profession(), "entity/villager/profession/"),
+					professionLevelTexture(villagerData.level())
+			};
 			return humanoidSnapshot(livingEntity, HumanoidKind.VILLAGER, VILLAGER_TEXTURE, overlays);
 		}
 
@@ -436,50 +348,6 @@ final class CameraEntityRenderer {
 
 		if (entity instanceof EnderMan) {
 			return humanoidSnapshot(livingEntity, HumanoidKind.ENDERMAN, ENDERMAN_TEXTURE, new Identifier[]{ENDERMAN_EYES_TEXTURE});
-		}
-
-		if (entity instanceof WitherBoss witherBoss) {
-			return new WitherSnapshot(
-					entity.position(),
-					entity.getYRot(),
-					entity.getXRot(),
-					livingEntity.yBodyRot,
-					copyHeadRotations(witherBoss.getHeadYRots()),
-					copyHeadRotations(witherBoss.getHeadXRots()),
-					entity.tickCount,
-					witherBoss.getInvulnerableTicks()
-			);
-		}
-
-		if (entity instanceof Warden warden) {
-			return new WardenSnapshot(
-					entity.position(),
-					entity.getYRot(),
-					livingEntity.yBodyRot,
-					livingEntity.yHeadRot,
-					entity.getXRot(),
-					livingEntity.walkAnimation.position(),
-					livingEntity.walkAnimation.speed(),
-					entity.tickCount,
-					warden.getTendrilAnimation(0.0F)
-			);
-		}
-
-		if (entity instanceof EnderDragon dragon) {
-			EnderDragonPart[] parts = dragon.getSubEntities();
-			if (parts.length >= 6) {
-				return new EnderDragonSnapshot(
-						entity.position(),
-						entity.getYRot(),
-						dragon.flapTime,
-						parts[0].position(),
-						parts[1].position(),
-						parts[2].position(),
-						parts[3].position(),
-						parts[4].position(),
-						parts[5].position()
-				);
-			}
 		}
 
 		if (entity instanceof Creeper creeper) {
@@ -574,66 +442,19 @@ final class CameraEntityRenderer {
 			);
 		}
 
-		return null;
-	}
-
-	private static ItemSnapshot captureItemSnapshot(ItemEntity itemEntity) {
-		Identifier texture = resolveItemTexture(itemEntity.getItem());
-		if (texture == null) {
-			return null;
-		}
-		return new ItemSnapshot(
-				itemEntity.position(),
-				ItemEntity.getSpin(0.0F, itemEntity.bobOffs),
-				texture
-		);
-	}
-
-	private static GenericLivingSnapshot captureGenericLivingSnapshot(Entity entity, LivingEntity livingEntity) {
-		return new GenericLivingSnapshot(
-				entity.position(),
-				livingEntity.yBodyRot,
-				livingEntity.yHeadRot,
-				entity.getXRot(),
-				Math.max(0.2F, livingEntity.getBbWidth()),
-				Math.max(0.2F, livingEntity.getBbHeight()),
-				resolveFallbackEntityTexture(entity),
-				entityTypeId(entity)
-		);
-	}
-
-	private static Identifier resolveFallbackEntityTexture(Entity entity) {
-		Identifier typeId = BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType());
-		if (typeId == null) {
-			return null;
-		}
-		String namespace = typeId.getNamespace();
-		String path = typeId.getPath();
-		List<Identifier> candidates = List.of(
-				Identifier.fromNamespaceAndPath(namespace, "entity/" + path + "/" + path),
-				Identifier.fromNamespaceAndPath(namespace, "entity/" + path),
-				Identifier.fromNamespaceAndPath(namespace, "entity/" + path + "/default"),
-				Identifier.fromNamespaceAndPath(namespace, "entity/" + path + "/" + path + "_default")
-		);
-		for (Identifier candidate : candidates) {
-			if (ASSETS.loadTexture(candidate) != null) {
-				return candidate;
+		if (entity instanceof ItemEntity itemEntity) {
+			Identifier texture = resolveItemTexture(itemEntity.getItem());
+			if (texture == null) {
+				return null;
 			}
+			return new ItemSnapshot(
+					itemEntity.position(),
+					ItemEntity.getSpin(0.0F, itemEntity.bobOffs),
+					texture
+			);
 		}
+
 		return null;
-	}
-
-	private static String entityTypeId(Entity entity) {
-		Identifier key = BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType());
-		return key == null ? entity.getType().toString() : key.toString();
-	}
-
-	private static void logUnsupportedEntity(Entity entity, String reason) {
-		String typeId = entityTypeId(entity);
-		String key = typeId + "|" + reason;
-		if (UNSUPPORTED_ENTITY_LOGGED.add(key)) {
-			Lg2.LOGGER.info("Camera entity renderer fallback for {} ({})", typeId, reason);
-		}
 	}
 
 	private static HumanoidSnapshot humanoidSnapshot(LivingEntity livingEntity, HumanoidKind kind, Identifier texture, Identifier[] overlays) {
@@ -662,128 +483,6 @@ final class CameraEntityRenderer {
 				null,
 				(byte) 0
 		);
-	}
-
-	private static Identifier[] villagerOverlays(Villager villager) {
-		List<Identifier> overlays = new ArrayList<>(3);
-		VillagerData villagerData = villager.getVillagerData();
-		if (villagerData == null) {
-			logVillagerOverlayIssue(villager, "missing VillagerData");
-			Identifier fallbackType = requireVillagerOverlay(villager, VILLAGER_TYPE_PLAINS_TEXTURE, "type:plains");
-			if (fallbackType != null) {
-				overlays.add(fallbackType);
-			}
-			return overlays.toArray(new Identifier[0]);
-		}
-
-		Identifier typeTexture = resolveVillagerTypeTexture(villager, villagerData.type());
-		if (typeTexture != null) {
-			overlays.add(typeTexture);
-		}
-
-		Holder<VillagerProfession> professionHolder = villagerData.profession();
-		Identifier professionId = holderIdentifier(professionHolder);
-		Identifier professionTexture = resolveVillagerProfessionTexture(villager, professionId);
-		if (professionTexture != null) {
-			overlays.add(professionTexture);
-		}
-
-		if (professionId != null && !isNoProfession(professionId) && !isNitwitProfession(professionId)) {
-			Identifier levelTexture = requireVillagerOverlay(villager, professionLevelTexture(villagerData.level()), "profession_level:" + villagerData.level());
-			if (levelTexture != null) {
-				overlays.add(levelTexture);
-			}
-		}
-
-		return overlays.toArray(new Identifier[0]);
-	}
-
-	private static Identifier resolveVillagerTypeTexture(Villager villager, Holder<VillagerType> typeHolder) {
-		Identifier typeId = holderIdentifier(typeHolder);
-		if (typeId == null) {
-			logVillagerOverlayIssue(villager, "missing villager type key");
-			return requireVillagerOverlay(villager, VILLAGER_TYPE_PLAINS_TEXTURE, "type:plains");
-		}
-		Identifier textureId = Identifier.fromNamespaceAndPath(typeId.getNamespace(), VILLAGER_TYPE_TEXTURE_PREFIX + typeId.getPath());
-		Identifier resolved = requireVillagerOverlay(villager, textureId, "type:" + typeId);
-		if (resolved != null) {
-			return resolved;
-		}
-		if (!typeId.equals(Identifier.fromNamespaceAndPath("minecraft", "plains"))) {
-			Identifier plainsFallback = requireVillagerOverlay(villager, VILLAGER_TYPE_PLAINS_TEXTURE, "type:plains");
-			if (plainsFallback != null) {
-				logVillagerOverlayIssue(villager, "fallback villager type overlay " + typeId + " -> minecraft:plains");
-			}
-			return plainsFallback;
-		}
-		return null;
-	}
-
-	private static Identifier resolveVillagerProfessionTexture(Villager villager, Identifier professionId) {
-		if (professionId == null) {
-			logVillagerOverlayIssue(villager, "missing villager profession key");
-			return null;
-		}
-		if (isNoProfession(professionId)) {
-			return null;
-		}
-		Identifier textureId = Identifier.fromNamespaceAndPath(professionId.getNamespace(), VILLAGER_PROFESSION_TEXTURE_PREFIX + professionId.getPath());
-		return requireVillagerOverlay(villager, textureId, "profession:" + professionId);
-	}
-
-	private static boolean isNoProfession(Identifier professionId) {
-		return "minecraft".equals(professionId.getNamespace()) && "none".equals(professionId.getPath());
-	}
-
-	private static boolean isNitwitProfession(Identifier professionId) {
-		return "minecraft".equals(professionId.getNamespace()) && "nitwit".equals(professionId.getPath());
-	}
-
-	private static Identifier holderIdentifier(Holder<?> holder) {
-		if (holder == null) {
-			return null;
-		}
-		Identifier fromHolder = holder.unwrapKey()
-				.map(resourceKey -> resourceKey.identifier())
-				.orElse(null);
-		if (fromHolder != null) {
-			return fromHolder;
-		}
-		Object value = holder.value();
-		if (value instanceof VillagerType villagerType) {
-			return BuiltInRegistries.VILLAGER_TYPE.getKey(villagerType);
-		}
-		if (value instanceof VillagerProfession villagerProfession) {
-			return BuiltInRegistries.VILLAGER_PROFESSION.getKey(villagerProfession);
-		}
-		return null;
-	}
-
-	private static Identifier requireVillagerOverlay(Villager villager, Identifier textureId, String layer) {
-		if (textureId == null) {
-			return null;
-		}
-		if (ASSETS.loadTexture(textureId) != null) {
-			return textureId;
-		}
-		logVillagerOverlayIssue(villager, "missing villager overlay " + layer + " -> " + textureId);
-		return null;
-	}
-
-	private static void logVillagerOverlayIssue(Villager villager, String reason) {
-		String key = entityTypeId(villager) + "|" + reason;
-		if (VILLAGER_OVERLAY_ISSUES_LOGGED.add(key)) {
-			Lg2.LOGGER.warn("Villager overlay issue: {} ({})", entityTypeId(villager), reason);
-		}
-	}
-
-	private static float[] copyHeadRotations(float[] rotations) {
-		if (rotations == null || rotations.length == 0) {
-			return new float[0];
-		}
-		float[] copy = new float[rotations.length];
-		System.arraycopy(rotations, 0, copy, 0, rotations.length);
-		return copy;
 	}
 
 	private static Direction sleepingDirection(LivingEntity livingEntity) {
@@ -826,50 +525,21 @@ final class CameraEntityRenderer {
 	) {
 		RenderContext context = new RenderContext(snapshot, model, materialResolver);
 		for (EntitySnapshot entitySnapshot : entities) {
-			try {
-				renderEntitySnapshot(context, entitySnapshot);
-			} catch (Exception exception) {
-				String snapshotType = snapshotType(entitySnapshot);
-				if (SNAPSHOT_RENDER_ERRORS_LOGGED.add(snapshotType)) {
-					Lg2.LOGGER.warn("Camera entity renderer failed for snapshot type {}", snapshotType, exception);
-				}
+			if (entitySnapshot instanceof HumanoidSnapshot humanoidSnapshot) {
+				renderHumanoid(context, humanoidSnapshot);
+			} else if (entitySnapshot instanceof QuadrupedSnapshot quadrupedSnapshot) {
+				renderQuadruped(context, quadrupedSnapshot);
+			} else if (entitySnapshot instanceof ChickenSnapshot chickenSnapshot) {
+				renderChicken(context, chickenSnapshot);
+			} else if (entitySnapshot instanceof CreeperSnapshot creeperSnapshot) {
+				renderCreeper(context, creeperSnapshot);
+			} else if (entitySnapshot instanceof SpiderSnapshot spiderSnapshot) {
+				renderSpider(context, spiderSnapshot);
+			} else if (entitySnapshot instanceof ArmorStandSnapshot armorStandSnapshot) {
+				renderArmorStand(context, armorStandSnapshot);
+			} else if (entitySnapshot instanceof ItemSnapshot itemSnapshot) {
+				renderItem(context, itemSnapshot);
 			}
-		}
-	}
-
-	private static String snapshotType(EntitySnapshot snapshot) {
-		if (snapshot == null) {
-			return "null";
-		}
-		if (snapshot instanceof GenericLivingSnapshot genericLivingSnapshot) {
-			return "generic_living:" + genericLivingSnapshot.entityTypeId();
-		}
-		return snapshot.getClass().getName();
-	}
-
-	private static void renderEntitySnapshot(RenderContext context, EntitySnapshot entitySnapshot) {
-		if (entitySnapshot instanceof HumanoidSnapshot humanoidSnapshot) {
-			renderHumanoid(context, humanoidSnapshot);
-		} else if (entitySnapshot instanceof QuadrupedSnapshot quadrupedSnapshot) {
-			renderQuadruped(context, quadrupedSnapshot);
-		} else if (entitySnapshot instanceof ChickenSnapshot chickenSnapshot) {
-			renderChicken(context, chickenSnapshot);
-		} else if (entitySnapshot instanceof CreeperSnapshot creeperSnapshot) {
-			renderCreeper(context, creeperSnapshot);
-		} else if (entitySnapshot instanceof SpiderSnapshot spiderSnapshot) {
-			renderSpider(context, spiderSnapshot);
-		} else if (entitySnapshot instanceof WitherSnapshot witherSnapshot) {
-			renderWither(context, witherSnapshot);
-		} else if (entitySnapshot instanceof WardenSnapshot wardenSnapshot) {
-			renderWarden(context, wardenSnapshot);
-		} else if (entitySnapshot instanceof EnderDragonSnapshot enderDragonSnapshot) {
-			renderEnderDragon(context, enderDragonSnapshot);
-		} else if (entitySnapshot instanceof ArmorStandSnapshot armorStandSnapshot) {
-			renderArmorStand(context, armorStandSnapshot);
-		} else if (entitySnapshot instanceof ItemSnapshot itemSnapshot) {
-			renderItem(context, itemSnapshot);
-		} else if (entitySnapshot instanceof GenericLivingSnapshot genericLivingSnapshot) {
-			renderGenericLiving(context, genericLivingSnapshot);
 		}
 	}
 
@@ -894,24 +564,6 @@ final class CameraEntityRenderer {
 			}
 			return BlueMapCameraRenderer.TextureMaterial.fromImage(image);
 		});
-	}
-
-	private static TextureSize textureSize(Identifier textureId, int fallbackWidth, int fallbackHeight) {
-		int safeFallbackWidth = Math.max(1, fallbackWidth);
-		int safeFallbackHeight = Math.max(1, fallbackHeight);
-		if (textureId == null) {
-			return new TextureSize(safeFallbackWidth, safeFallbackHeight);
-		}
-		TextureSize cached = TEXTURE_SIZE_CACHE.get(textureId.toString());
-		if (cached != null) {
-			return cached;
-		}
-		BufferedImage image = ASSETS.loadTexture(textureId);
-		TextureSize resolved = image == null
-				? new TextureSize(safeFallbackWidth, safeFallbackHeight)
-				: new TextureSize(Math.max(1, image.getWidth()), Math.max(1, image.getHeight()));
-		TEXTURE_SIZE_CACHE.putIfAbsent(textureId.toString(), resolved);
-		return resolved;
 	}
 
 	private static BufferedImage loadSkinImage(PlayerSkinSnapshot skinSnapshot) {
@@ -1039,11 +691,7 @@ final class CameraEntityRenderer {
 		float legWidth = snapshot.kind().legWidth;
 
 		Matrix4f head = rotateAround(root, 0.0F, 24.0F, 0.0F, headPitch, headYaw, 0.0F);
-		if (snapshot.kind() == HumanoidKind.PLAYER || snapshot.kind() == HumanoidKind.PLAYER_SLIM) {
-			addPlayerHeadBox(context, head, -4.0F, 24.0F, -4.0F, 8.0F, 8.0F, 8.0F, 0, 0, texWidth, texHeight, material, 0.0F);
-		} else {
-			addBox(context, head, -4.0F, 24.0F, -4.0F, 8.0F, 8.0F, 8.0F, 0, 0, texWidth, texHeight, material, false, 0.0F);
-		}
+		addBox(context, head, -4.0F, 24.0F, -4.0F, 8.0F, 8.0F, 8.0F, 0, 0, texWidth, texHeight, material, false, 0.0F);
 
 		addBox(context, root, -4.0F, 12.0F, -2.0F, 8.0F, 12.0F, 4.0F, 16, 16, texWidth, texHeight, material, false, 0.0F);
 
@@ -1081,7 +729,7 @@ final class CameraEntityRenderer {
 		byte bits = snapshot.playerModelBits();
 		if (showPlayerPart(bits, PlayerModelPart.HAT)) {
 			Matrix4f head = rotateAround(root, 0.0F, 24.0F, 0.0F, headPitch, headYaw, 0.0F);
-			addPlayerHeadBox(context, head, -4.0F, 24.0F, -4.0F, 8.0F, 8.0F, 8.0F, 32, 0, 64, 64, material, 0.5F);
+			addBox(context, head, -4.0F, 24.0F, -4.0F, 8.0F, 8.0F, 8.0F, 32, 0, 64, 64, material, false, 0.5F);
 		}
 		if (showPlayerPart(bits, PlayerModelPart.JACKET)) {
 			addBox(context, root, -4.0F, 12.0F, -2.0F, 8.0F, 12.0F, 4.0F, 16, 32, 64, 64, material, false, 0.25F);
@@ -1124,15 +772,12 @@ final class CameraEntityRenderer {
 	) {
 		Matrix4f head = rotateAround(root, 0.0F, 24.0F, 0.0F, headPitch, headYaw, 0.0F);
 		addBox(context, head, -4.0F, 24.0F, -4.0F, 8.0F, 10.0F, 8.0F, 0, 0, texWidth, texHeight, material, false, 0.0F);
-		addBox(context, head, -4.0F, 24.0F, -4.0F, 8.0F, 10.0F, 8.0F, 32, 0, texWidth, texHeight, material, false, 0.51F);
-		addBox(context, head, -1.0F, 27.0F, -6.0F, 2.0F, 4.0F, 2.0F, 24, 0, texWidth, texHeight, material, false, 0.0F);
-		addBox(context, root, -4.0F, 12.0F, -3.0F, 8.0F, 12.0F, 6.0F, 16, 20, texWidth, texHeight, material, false, 0.0F);
-		addBox(context, root, -4.0F, 12.0F, -3.0F, 8.0F, 20.0F, 6.0F, 0, 38, texWidth, texHeight, material, false, 0.5F);
+		addBox(context, head, -1.0F, 20.0F, -6.0F, 2.0F, 4.0F, 2.0F, 24, 0, texWidth, texHeight, material, false, 0.0F);
 
-		Matrix4f arms = rotateAround(root, 0.0F, 22.0F, -1.0F, -0.75F, 0.0F, 0.0F);
-		addBox(context, arms, -8.0F, 14.0F, -2.0F, 4.0F, 8.0F, 4.0F, 44, 22, texWidth, texHeight, material, false, 0.0F);
-		addBox(context, arms, 4.0F, 14.0F, -2.0F, 4.0F, 8.0F, 4.0F, 44, 22, texWidth, texHeight, material, true, 0.0F);
-		addBox(context, arms, -4.0F, 18.0F, -2.0F, 8.0F, 4.0F, 4.0F, 40, 38, texWidth, texHeight, material, false, 0.0F);
+		addBox(context, root, -4.0F, 12.0F, -3.0F, 8.0F, 12.0F, 6.0F, 16, 20, texWidth, texHeight, material, false, 0.0F);
+
+		Matrix4f arms = rotateAround(root, 0.0F, 22.0F, 0.0F, -0.75F, 0.0F, 0.0F);
+		addBox(context, arms, -8.0F, 14.0F, -2.0F, 8.0F, 4.0F, 4.0F, 44, 22, texWidth, texHeight, material, false, 0.0F);
 
 		Matrix4f rightLeg = rotateAround(root, -2.0F, 12.0F, 0.0F, rightLegPitch, 0.0F, 0.0F);
 		Matrix4f leftLeg = rotateAround(root, 2.0F, 12.0F, 0.0F, leftLegPitch, 0.0F, 0.0F);
@@ -1160,9 +805,6 @@ final class CameraEntityRenderer {
 
 	private static void renderQuadruped(RenderContext context, QuadrupedSnapshot snapshot) {
 		int material = context.materialResolver.materialForTexture(snapshot.texture());
-		TextureSize baseTextureSize = textureSize(snapshot.texture(), 64, 32);
-		int texWidth = baseTextureSize.width();
-		int texHeight = baseTextureSize.height();
 		Matrix4f root = new Matrix4f()
 				.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
 				.rotateY(radians(-snapshot.bodyYaw()))
@@ -1179,41 +821,35 @@ final class CameraEntityRenderer {
 		if (snapshot.headEatPositionScale() > 0.0F) {
 			head.translate(0.0F, snapshot.headEatPositionScale() * 4.0F * PX, snapshot.headEatPositionScale() * 2.0F * PX);
 		}
-		addBox(context, head, -4.0F, 8.0F, -14.0F, 8.0F, 8.0F, 8.0F, 0, 0, texWidth, texHeight, material, false, 0.0F);
+		addBox(context, head, -4.0F, 8.0F, -14.0F, 8.0F, 8.0F, 8.0F, 0, 0, 64, 32, material, false, 0.0F);
 		if (snapshot.kind() == QuadrupedKind.PIG) {
-			addBox(context, head, -2.0F, 10.0F, -15.0F, 4.0F, 3.0F, 1.0F, 16, 16, texWidth, texHeight, material, false, 0.0F);
+			addBox(context, head, -2.0F, 10.0F, -15.0F, 4.0F, 3.0F, 1.0F, 16, 16, 64, 32, material, false, 0.0F);
 		}
 
-		addBox(context, root, -5.0F, 6.0F, -8.0F, 10.0F, 8.0F, 16.0F, 28, 8, texWidth, texHeight, material, false, 0.0F);
+		addBox(context, root, -5.0F, 6.0F, -8.0F, 10.0F, 8.0F, 16.0F, 28, 8, 64, 32, material, false, 0.0F);
 
 		Matrix4f rightFront = rotateAround(root, -3.0F, 12.0F, -5.0F, frontLegPitch, 0.0F, 0.0F);
 		Matrix4f leftFront = rotateAround(root, 3.0F, 12.0F, -5.0F, backLegPitch, 0.0F, 0.0F);
 		Matrix4f rightBack = rotateAround(root, -3.0F, 12.0F, 7.0F, backLegPitch, 0.0F, 0.0F);
 		Matrix4f leftBack = rotateAround(root, 3.0F, 12.0F, 7.0F, frontLegPitch, 0.0F, 0.0F);
-		addBox(context, rightFront, -5.0F, 0.0F, -7.0F, 4.0F, 12.0F, 4.0F, 0, 16, texWidth, texHeight, material, false, 0.0F);
-		addBox(context, leftFront, 1.0F, 0.0F, -7.0F, 4.0F, 12.0F, 4.0F, 0, 16, texWidth, texHeight, material, true, 0.0F);
-		addBox(context, rightBack, -5.0F, 0.0F, 5.0F, 4.0F, 12.0F, 4.0F, 0, 16, texWidth, texHeight, material, false, 0.0F);
-		addBox(context, leftBack, 1.0F, 0.0F, 5.0F, 4.0F, 12.0F, 4.0F, 0, 16, texWidth, texHeight, material, true, 0.0F);
+		addBox(context, rightFront, -5.0F, 0.0F, -7.0F, 4.0F, 12.0F, 4.0F, 0, 16, 64, 32, material, false, 0.0F);
+		addBox(context, leftFront, 1.0F, 0.0F, -7.0F, 4.0F, 12.0F, 4.0F, 0, 16, 64, 32, material, true, 0.0F);
+		addBox(context, rightBack, -5.0F, 0.0F, 5.0F, 4.0F, 12.0F, 4.0F, 0, 16, 64, 32, material, false, 0.0F);
+		addBox(context, leftBack, 1.0F, 0.0F, 5.0F, 4.0F, 12.0F, 4.0F, 0, 16, 64, 32, material, true, 0.0F);
 
 		if (snapshot.kind() == QuadrupedKind.SHEEP && !snapshot.sheared() && snapshot.overlayTexture() != null) {
 			int overlayMaterial = context.materialResolver.materialForTexture(snapshot.overlayTexture());
-			TextureSize overlayTextureSize = textureSize(snapshot.overlayTexture(), texWidth, texHeight);
-			int overlayTexWidth = overlayTextureSize.width();
-			int overlayTexHeight = overlayTextureSize.height();
-			addBox(context, head, -4.0F, 8.0F, -14.0F, 8.0F, 8.0F, 8.0F, 0, 0, overlayTexWidth, overlayTexHeight, overlayMaterial, false, 0.8F);
-			addBox(context, root, -5.0F, 6.0F, -8.0F, 10.0F, 8.0F, 16.0F, 28, 8, overlayTexWidth, overlayTexHeight, overlayMaterial, false, 0.8F);
-			addBox(context, rightFront, -5.0F, 0.0F, -7.0F, 4.0F, 12.0F, 4.0F, 0, 16, overlayTexWidth, overlayTexHeight, overlayMaterial, false, 0.6F);
-			addBox(context, leftFront, 1.0F, 0.0F, -7.0F, 4.0F, 12.0F, 4.0F, 0, 16, overlayTexWidth, overlayTexHeight, overlayMaterial, true, 0.6F);
-			addBox(context, rightBack, -5.0F, 0.0F, 5.0F, 4.0F, 12.0F, 4.0F, 0, 16, overlayTexWidth, overlayTexHeight, overlayMaterial, false, 0.6F);
-			addBox(context, leftBack, 1.0F, 0.0F, 5.0F, 4.0F, 12.0F, 4.0F, 0, 16, overlayTexWidth, overlayTexHeight, overlayMaterial, true, 0.6F);
+			addBox(context, head, -4.0F, 8.0F, -14.0F, 8.0F, 8.0F, 8.0F, 0, 0, 64, 32, overlayMaterial, false, 0.8F);
+			addBox(context, root, -5.0F, 6.0F, -8.0F, 10.0F, 8.0F, 16.0F, 28, 8, 64, 32, overlayMaterial, false, 0.8F);
+			addBox(context, rightFront, -5.0F, 0.0F, -7.0F, 4.0F, 12.0F, 4.0F, 0, 16, 64, 32, overlayMaterial, false, 0.6F);
+			addBox(context, leftFront, 1.0F, 0.0F, -7.0F, 4.0F, 12.0F, 4.0F, 0, 16, 64, 32, overlayMaterial, true, 0.6F);
+			addBox(context, rightBack, -5.0F, 0.0F, 5.0F, 4.0F, 12.0F, 4.0F, 0, 16, 64, 32, overlayMaterial, false, 0.6F);
+			addBox(context, leftBack, 1.0F, 0.0F, 5.0F, 4.0F, 12.0F, 4.0F, 0, 16, 64, 32, overlayMaterial, true, 0.6F);
 		}
 	}
 
 	private static void renderChicken(RenderContext context, ChickenSnapshot snapshot) {
 		int material = context.materialResolver.materialForTexture(snapshot.texture());
-		TextureSize chickenTextureSize = textureSize(snapshot.texture(), 64, 32);
-		int texWidth = chickenTextureSize.width();
-		int texHeight = chickenTextureSize.height();
 		Matrix4f root = new Matrix4f()
 				.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
 				.rotateY(radians(-snapshot.bodyYaw()))
@@ -1227,22 +863,22 @@ final class CameraEntityRenderer {
 		float wingRoll = Mth.sin(snapshot.flap()) * 0.6F;
 
 		Matrix4f head = rotateAround(root, 0.0F, 15.0F, -4.0F, headPitch, headYaw, 0.0F);
-		addBox(context, head, -2.0F, 13.0F, -6.0F, 4.0F, 6.0F, 3.0F, 0, 0, texWidth, texHeight, material, false, 0.0F);
-		addBox(context, head, -1.0F, 14.0F, -7.0F, 2.0F, 2.0F, 1.0F, 14, 0, texWidth, texHeight, material, false, 0.0F);
-		addBox(context, head, -1.0F, 12.0F, -7.0F, 2.0F, 2.0F, 1.0F, 14, 4, texWidth, texHeight, material, false, 0.0F);
+		addBox(context, head, -2.0F, 13.0F, -6.0F, 4.0F, 6.0F, 3.0F, 0, 0, 32, 32, material, false, 0.0F);
+		addBox(context, head, -1.0F, 14.0F, -7.0F, 2.0F, 2.0F, 1.0F, 14, 0, 32, 32, material, false, 0.0F);
+		addBox(context, head, -1.0F, 12.0F, -7.0F, 2.0F, 2.0F, 1.0F, 14, 4, 32, 32, material, false, 0.0F);
 
 		Matrix4f body = rotateAround(root, 0.0F, 10.0F, 0.0F, (float) Math.PI * 0.5F, 0.0F, 0.0F);
-		addBox(context, body, -3.0F, 7.0F, -3.0F, 6.0F, 8.0F, 6.0F, 0, 9, texWidth, texHeight, material, false, 0.0F);
+		addBox(context, body, -3.0F, 7.0F, -3.0F, 6.0F, 8.0F, 6.0F, 0, 9, 32, 32, material, false, 0.0F);
 
 		Matrix4f rightWing = rotateAround(root, -3.0F, 13.0F, 0.0F, 0.0F, 0.0F, wingRoll);
 		Matrix4f leftWing = rotateAround(root, 3.0F, 13.0F, 0.0F, 0.0F, 0.0F, -wingRoll);
-		addBox(context, rightWing, -4.0F, 9.0F, -3.0F, 1.0F, 4.0F, 6.0F, 24, 13, texWidth, texHeight, material, false, 0.0F);
-		addBox(context, leftWing, 3.0F, 9.0F, -3.0F, 1.0F, 4.0F, 6.0F, 24, 13, texWidth, texHeight, material, true, 0.0F);
+		addBox(context, rightWing, -4.0F, 9.0F, -3.0F, 1.0F, 4.0F, 6.0F, 24, 13, 32, 32, material, false, 0.0F);
+		addBox(context, leftWing, 3.0F, 9.0F, -3.0F, 1.0F, 4.0F, 6.0F, 24, 13, 32, 32, material, true, 0.0F);
 
 		Matrix4f rightLeg = rotateAround(root, -1.0F, 5.0F, 1.0F, rightLegPitch, 0.0F, 0.0F);
 		Matrix4f leftLeg = rotateAround(root, 1.0F, 5.0F, 1.0F, leftLegPitch, 0.0F, 0.0F);
-		addBox(context, rightLeg, -1.5F, 0.0F, 0.0F, 3.0F, 5.0F, 3.0F, 26, 0, texWidth, texHeight, material, false, 0.0F);
-		addBox(context, leftLeg, -1.5F, 0.0F, 0.0F, 3.0F, 5.0F, 3.0F, 26, 0, texWidth, texHeight, material, false, 0.0F);
+		addBox(context, rightLeg, -1.5F, 0.0F, 0.0F, 3.0F, 5.0F, 3.0F, 26, 0, 32, 32, material, false, 0.0F);
+		addBox(context, leftLeg, -1.5F, 0.0F, 0.0F, 3.0F, 5.0F, 3.0F, 26, 0, 32, 32, material, false, 0.0F);
 	}
 
 	private static void renderCreeper(RenderContext context, CreeperSnapshot snapshot) {
@@ -1296,191 +932,6 @@ final class CameraEntityRenderer {
 		addBox(context, root, -4.0F, 8.0F, -10.0F, 8.0F, 8.0F, 8.0F, 32, 4, 64, 32, eyeMaterial, false, 0.05F, 15, 15);
 	}
 
-	private static void renderWither(RenderContext context, WitherSnapshot snapshot) {
-		Identifier texture = snapshot.invulnerableTicks() > 0 ? WITHER_INVULNERABLE_TEXTURE : WITHER_TEXTURE;
-		int material = context.materialResolver.materialForTexture(texture);
-		float scale = 2.0F;
-		if (snapshot.invulnerableTicks() > 0) {
-			scale -= (snapshot.invulnerableTicks() / 220.0F) * 0.5F;
-		}
-		Matrix4f root = new Matrix4f()
-				.translate((float) snapshot.position().x, (float) snapshot.position().y + 1.0F, (float) snapshot.position().z)
-				.rotateY(radians(-snapshot.bodyYaw()))
-				.scale(scale);
-
-		float sway = Mth.cos(snapshot.ageInTicks() * 0.1F);
-		float ribPitch = (0.065F + 0.05F * sway) * (float) Math.PI;
-		float tailPitch = (0.265F + 0.1F * sway) * (float) Math.PI;
-
-		addBox(context, root, -10.0F, 3.9F, -1.5F, 20.0F, 3.0F, 3.0F, 0, 16, 64, 64, material, false, 0.0F);
-
-		Matrix4f ribcage = rotateAround(root, -2.0F, 6.9F, -0.5F, ribPitch, 0.0F, 0.0F);
-		addBox(context, ribcage, 0.0F, 0.0F, 0.0F, 3.0F, 10.0F, 3.0F, 0, 22, 64, 64, material, false, 0.0F);
-		addBox(context, ribcage, -4.0F, 1.5F, 0.5F, 11.0F, 2.0F, 2.0F, 24, 22, 64, 64, material, false, 0.0F);
-		addBox(context, ribcage, -4.0F, 4.0F, 0.5F, 11.0F, 2.0F, 2.0F, 24, 22, 64, 64, material, false, 0.0F);
-		addBox(context, ribcage, -4.0F, 6.5F, 0.5F, 11.0F, 2.0F, 2.0F, 24, 22, 64, 64, material, false, 0.0F);
-
-		float tailPivotY = 6.9F + Mth.cos(ribPitch) * 10.0F;
-		float tailPivotZ = -0.5F + Mth.sin(ribPitch) * 10.0F;
-		Matrix4f tail = rotateAround(root, -2.0F, tailPivotY, tailPivotZ, tailPitch, 0.0F, 0.0F);
-		addBox(context, tail, 0.0F, 0.0F, 0.0F, 3.0F, 6.0F, 3.0F, 12, 22, 64, 64, material, false, 0.0F);
-
-		Matrix4f centerHead = rotateAround(root, 0.0F, 0.0F, 0.0F, radians(snapshot.pitch()), radians(wrapDegrees(snapshot.yaw() - snapshot.bodyYaw())), 0.0F);
-		addBox(context, centerHead, -4.0F, -4.0F, -4.0F, 8.0F, 8.0F, 8.0F, 0, 0, 64, 64, material, false, 0.0F);
-
-		if (snapshot.sideHeadYaws().length > 0 && snapshot.sideHeadPitches().length > 0) {
-			Matrix4f rightHead = rotateAround(root, -8.0F, 4.0F, 0.0F, radians(snapshot.sideHeadPitches()[0]), radians(wrapDegrees(snapshot.sideHeadYaws()[0] - snapshot.bodyYaw())), 0.0F);
-			addBox(context, rightHead, -4.0F, -4.0F, -4.0F, 6.0F, 6.0F, 6.0F, 32, 0, 64, 64, material, false, 0.0F);
-		}
-		if (snapshot.sideHeadYaws().length > 1 && snapshot.sideHeadPitches().length > 1) {
-			Matrix4f leftHead = rotateAround(root, 10.0F, 4.0F, 0.0F, radians(snapshot.sideHeadPitches()[1]), radians(wrapDegrees(snapshot.sideHeadYaws()[1] - snapshot.bodyYaw())), 0.0F);
-			addBox(context, leftHead, -4.0F, -4.0F, -4.0F, 6.0F, 6.0F, 6.0F, 32, 0, 64, 64, material, false, 0.0F);
-		}
-	}
-
-	private static void renderWarden(RenderContext context, WardenSnapshot snapshot) {
-		int material = context.materialResolver.materialForTexture(WARDEN_TEXTURE);
-		Matrix4f root = new Matrix4f()
-				.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
-				.rotateY(radians(-snapshot.bodyYaw()));
-
-		float phase = snapshot.walkPos() * 0.8662F;
-		float walkStrength = Math.min(0.5F, 3.0F * Mth.clamp(snapshot.walkSpeed(), 0.0F, 1.0F));
-		float strideAccent = Math.min(0.35F, walkStrength);
-		float age = snapshot.ageInTicks() * 0.1F;
-		float phaseCos = Mth.cos(phase);
-		float phaseSin = Mth.sin(phase);
-		float idleCos = Mth.cos(age);
-		float idleSin = Mth.sin(age);
-
-		float headYaw = radians(wrapDegrees(snapshot.headYaw() - snapshot.bodyYaw()));
-		float headPitch = radians(snapshot.pitch()) + 0.06F * idleSin + 1.2F * Mth.cos(phase + ((float) Math.PI * 0.5F)) * strideAccent;
-		float headRoll = 0.06F * idleCos + 0.3F * phaseSin * walkStrength;
-		float bodyPitch = 0.025F * idleCos + phaseCos * strideAccent;
-		float bodyRoll = 0.025F * idleSin + 0.1F * phaseSin * walkStrength;
-		float leftLegPitch = phaseCos * walkStrength;
-		float rightLegPitch = Mth.cos(phase + (float) Math.PI) * walkStrength;
-		float leftArmPitch = -0.8F * phaseCos * walkStrength;
-		float rightArmPitch = -0.8F * phaseSin * walkStrength;
-		float tendrilPitch = snapshot.tendrilAnimation() * (float) (Math.cos(snapshot.ageInTicks() * 2.25F) * Math.PI * 0.1F);
-
-		Matrix4f body = rotateAround(root, 0.0F, 24.0F, 0.0F, bodyPitch, 0.0F, bodyRoll);
-		addBox(context, body, -9.0F, 11.0F, -4.0F, 18.0F, 21.0F, 11.0F, 0, 0, 128, 128, material, false, 0.0F);
-		addBox(context, body, -9.0F, 12.0F, -4.5F, 2.0F, 21.0F, 1.0F, 90, 11, 128, 128, material, false, 0.0F);
-		addBox(context, body, 7.0F, 12.0F, -4.5F, 2.0F, 21.0F, 1.0F, 90, 11, 128, 128, material, true, 0.0F);
-
-		Matrix4f head = rotateAround(body, 0.0F, 30.0F, 0.0F, headPitch, headYaw, headRoll);
-		addBox(context, head, -8.0F, 22.0F, -5.0F, 16.0F, 16.0F, 10.0F, 0, 32, 128, 128, material, false, 0.0F);
-		addBox(context, head, -16.0F, 21.0F, -0.5F, 8.0F, 16.0F, 1.0F, 52, 32, 128, 128, material, false, 0.0F);
-		addBox(context, head, 8.0F, 21.0F, -0.5F, 8.0F, 16.0F, 1.0F, 58, 0, 128, 128, material, false, 0.0F);
-		Matrix4f rightTendril = rotateAround(head, -8.0F, 30.0F, 0.0F, -tendrilPitch, 0.0F, 0.0F);
-		Matrix4f leftTendril = rotateAround(head, 8.0F, 30.0F, 0.0F, tendrilPitch, 0.0F, 0.0F);
-		addBox(context, rightTendril, -16.0F, 18.0F, -0.5F, 8.0F, 16.0F, 1.0F, 52, 32, 128, 128, material, false, 0.0F);
-		addBox(context, leftTendril, 8.0F, 18.0F, -0.5F, 8.0F, 16.0F, 1.0F, 58, 0, 128, 128, material, false, 0.0F);
-
-		Matrix4f rightArm = rotateAround(body, -13.0F, 27.0F, 1.0F, rightArmPitch, 0.0F, 0.0F);
-		Matrix4f leftArm = rotateAround(body, 13.0F, 27.0F, 1.0F, leftArmPitch, 0.0F, 0.0F);
-		addBox(context, rightArm, -17.0F, 13.0F, -3.0F, 8.0F, 28.0F, 8.0F, 44, 50, 128, 128, material, false, 0.0F);
-		addBox(context, leftArm, 9.0F, 13.0F, -3.0F, 8.0F, 28.0F, 8.0F, 0, 58, 128, 128, material, false, 0.0F);
-
-		Matrix4f rightLeg = rotateAround(root, -5.9F, 13.0F, 0.0F, rightLegPitch, 0.0F, 0.0F);
-		Matrix4f leftLeg = rotateAround(root, 5.9F, 13.0F, 0.0F, leftLegPitch, 0.0F, 0.0F);
-		addBox(context, rightLeg, -9.0F, 0.0F, -3.0F, 6.0F, 13.0F, 6.0F, 76, 48, 128, 128, material, false, 0.0F);
-		addBox(context, leftLeg, 3.0F, 0.0F, -3.0F, 6.0F, 13.0F, 6.0F, 76, 76, 128, 128, material, false, 0.0F);
-	}
-
-	private static void renderEnderDragon(RenderContext context, EnderDragonSnapshot snapshot) {
-		int material = context.materialResolver.materialForTexture(ENDER_DRAGON_TEXTURE);
-		Matrix4f body = new Matrix4f()
-				.translate((float) snapshot.bodyPos().x, (float) snapshot.bodyPos().y, (float) snapshot.bodyPos().z)
-				.rotateY(radians(-snapshot.yaw()));
-
-		addBox(context, body, -12.0F, -11.0F, -32.0F, 24.0F, 24.0F, 64.0F, 0, 0, 256, 256, material, false, 0.0F);
-		addBox(context, body, -1.0F, -5.0F, -10.0F, 2.0F, 6.0F, 12.0F, 220, 53, 256, 256, material, false, 0.0F);
-		addBox(context, body, -1.0F, -5.0F, 10.0F, 2.0F, 6.0F, 12.0F, 220, 53, 256, 256, material, false, 0.0F);
-		addBox(context, body, -1.0F, -5.0F, 30.0F, 2.0F, 6.0F, 12.0F, 220, 53, 256, 256, material, false, 0.0F);
-
-		float flap = snapshot.flapTime() * ((float) Math.PI * 2.0F);
-		float wingXRot = -0.125F - Mth.cos(flap) * 0.2F;
-		float wingZRot = -(Mth.sin(flap) + 0.125F) * 0.8F;
-		float wingTipZRot = (Mth.sin(flap + 2.0F) + 0.5F) * 0.75F;
-
-		Matrix4f leftWing = rotateAround(body, 12.0F, 2.0F, -6.0F, wingXRot, -0.25F, wingZRot);
-		addBox(context, leftWing, 0.0F, -4.0F, -4.0F, 56.0F, 8.0F, 8.0F, 112, 88, 256, 256, material, true, 0.0F);
-		addBox(context, leftWing, 0.0F, 0.0F, 2.0F, 56.0F, 1.0F, 56.0F, 112, 88, 256, 256, material, true, 0.0F);
-		Matrix4f leftWingTip = rotateAround(leftWing, 56.0F, 0.0F, 0.0F, 0.0F, 0.0F, wingTipZRot);
-		addBox(context, leftWingTip, 0.0F, -2.0F, -2.0F, 56.0F, 4.0F, 4.0F, 112, 136, 256, 256, material, true, 0.0F);
-		addBox(context, leftWingTip, 0.0F, 0.0F, 2.0F, 56.0F, 1.0F, 56.0F, 112, 136, 256, 256, material, true, 0.0F);
-
-		Matrix4f rightWing = rotateAround(body, -12.0F, 2.0F, -6.0F, wingXRot, 0.25F, -wingZRot);
-		addBox(context, rightWing, -56.0F, -4.0F, -4.0F, 56.0F, 8.0F, 8.0F, 112, 88, 256, 256, material, false, 0.0F);
-		addBox(context, rightWing, -56.0F, 0.0F, 2.0F, 56.0F, 1.0F, 56.0F, 112, 88, 256, 256, material, false, 0.0F);
-		Matrix4f rightWingTip = rotateAround(rightWing, -56.0F, 0.0F, 0.0F, 0.0F, 0.0F, -wingTipZRot);
-		addBox(context, rightWingTip, -56.0F, -2.0F, -2.0F, 56.0F, 4.0F, 4.0F, 112, 136, 256, 256, material, false, 0.0F);
-		addBox(context, rightWingTip, -56.0F, 0.0F, 2.0F, 56.0F, 1.0F, 56.0F, 112, 136, 256, 256, material, false, 0.0F);
-
-		renderDragonLegs(context, body, material);
-		renderDragonSegment(context, snapshot.bodyPos(), snapshot.neckPos(), 10.0F, 10.0F, 192, 104, material);
-		renderDragonSegment(context, snapshot.neckPos(), snapshot.headPos(), 10.0F, 10.0F, 192, 104, material);
-		renderDragonSegment(context, snapshot.bodyPos(), snapshot.tail1Pos(), 12.0F, 12.0F, 192, 104, material);
-		renderDragonSegment(context, snapshot.tail1Pos(), snapshot.tail2Pos(), 10.0F, 10.0F, 192, 104, material);
-		renderDragonSegment(context, snapshot.tail2Pos(), snapshot.tail3Pos(), 8.0F, 8.0F, 192, 104, material);
-
-		Vec3 headDirection = snapshot.headPos().subtract(snapshot.neckPos());
-		Matrix4f head = orientedTransform(snapshot.headPos(), headDirection, 0.0F);
-		addBox(context, head, -6.0F, -1.0F, -24.0F, 12.0F, 5.0F, 16.0F, 176, 44, 256, 256, material, false, 0.0F);
-		addBox(context, head, -8.0F, -8.0F, -10.0F, 16.0F, 16.0F, 16.0F, 112, 30, 256, 256, material, false, 0.0F);
-		addBox(context, head, -5.0F, -12.0F, -4.0F, 2.0F, 4.0F, 6.0F, 0, 0, 256, 256, material, false, 0.0F);
-		addBox(context, head, 3.0F, -12.0F, -4.0F, 2.0F, 4.0F, 6.0F, 0, 0, 256, 256, material, false, 0.0F);
-		addBox(context, head, -5.0F, -3.0F, -22.0F, 2.0F, 2.0F, 4.0F, 112, 0, 256, 256, material, false, 0.0F);
-		addBox(context, head, 3.0F, -3.0F, -22.0F, 2.0F, 2.0F, 4.0F, 112, 0, 256, 256, material, false, 0.0F);
-		Matrix4f jaw = rotateAround(head, 0.0F, 4.0F, -8.0F, (Mth.sin(flap) + 1.0F) * 0.2F, 0.0F, 0.0F);
-		addBox(context, jaw, -6.0F, 0.0F, -16.0F, 12.0F, 4.0F, 16.0F, 176, 65, 256, 256, material, false, 0.0F);
-
-		int eyeMaterial = context.materialResolver.materialForTexture(ENDER_DRAGON_EYES_TEXTURE);
-		addBox(context, head, -8.0F, -8.0F, -10.0F, 16.0F, 16.0F, 16.0F, 112, 30, 256, 256, eyeMaterial, false, 0.05F, 15, 15);
-	}
-
-	private static void renderDragonLegs(RenderContext context, Matrix4f body, int material) {
-		Matrix4f leftFrontLeg = rotateAround(body, 12.0F, 17.0F, -6.0F, 1.3F, 0.0F, 0.0F);
-		addBox(context, leftFrontLeg, -4.0F, -4.0F, -4.0F, 8.0F, 24.0F, 8.0F, 112, 104, 256, 256, material, false, 0.0F);
-		Matrix4f leftFrontTip = rotateAround(leftFrontLeg, 0.0F, 20.0F, -1.0F, -0.5F, 0.0F, 0.0F);
-		addBox(context, leftFrontTip, -3.0F, -1.0F, -3.0F, 6.0F, 24.0F, 6.0F, 226, 138, 256, 256, material, false, 0.0F);
-		Matrix4f leftFrontFoot = rotateAround(leftFrontTip, 0.0F, 23.0F, 0.0F, 0.75F, 0.0F, 0.0F);
-		addBox(context, leftFrontFoot, -4.0F, 0.0F, -12.0F, 8.0F, 4.0F, 16.0F, 144, 104, 256, 256, material, false, 0.0F);
-
-		Matrix4f rightFrontLeg = rotateAround(body, -12.0F, 17.0F, -6.0F, 1.3F, 0.0F, 0.0F);
-		addBox(context, rightFrontLeg, -4.0F, -4.0F, -4.0F, 8.0F, 24.0F, 8.0F, 112, 104, 256, 256, material, false, 0.0F);
-		Matrix4f rightFrontTip = rotateAround(rightFrontLeg, 0.0F, 20.0F, -1.0F, -0.5F, 0.0F, 0.0F);
-		addBox(context, rightFrontTip, -3.0F, -1.0F, -3.0F, 6.0F, 24.0F, 6.0F, 226, 138, 256, 256, material, false, 0.0F);
-		Matrix4f rightFrontFoot = rotateAround(rightFrontTip, 0.0F, 23.0F, 0.0F, 0.75F, 0.0F, 0.0F);
-		addBox(context, rightFrontFoot, -4.0F, 0.0F, -12.0F, 8.0F, 4.0F, 16.0F, 144, 104, 256, 256, material, false, 0.0F);
-
-		Matrix4f leftRearLeg = rotateAround(body, 16.0F, 13.0F, 34.0F, 1.0F, 0.0F, 0.0F);
-		addBox(context, leftRearLeg, -8.0F, -4.0F, -8.0F, 16.0F, 32.0F, 16.0F, 0, 0, 256, 256, material, false, 0.0F);
-		Matrix4f leftRearTip = rotateAround(leftRearLeg, 0.0F, 32.0F, -4.0F, 0.5F, 0.0F, 0.0F);
-		addBox(context, leftRearTip, -6.0F, -2.0F, 0.0F, 12.0F, 32.0F, 12.0F, 196, 0, 256, 256, material, false, 0.0F);
-		Matrix4f leftRearFoot = rotateAround(leftRearTip, 0.0F, 31.0F, 4.0F, 0.75F, 0.0F, 0.0F);
-		addBox(context, leftRearFoot, -9.0F, 0.0F, -20.0F, 18.0F, 6.0F, 24.0F, 112, 0, 256, 256, material, false, 0.0F);
-
-		Matrix4f rightRearLeg = rotateAround(body, -16.0F, 13.0F, 34.0F, 1.0F, 0.0F, 0.0F);
-		addBox(context, rightRearLeg, -8.0F, -4.0F, -8.0F, 16.0F, 32.0F, 16.0F, 0, 0, 256, 256, material, false, 0.0F);
-		Matrix4f rightRearTip = rotateAround(rightRearLeg, 0.0F, 32.0F, -4.0F, 0.5F, 0.0F, 0.0F);
-		addBox(context, rightRearTip, -6.0F, -2.0F, 0.0F, 12.0F, 32.0F, 12.0F, 196, 0, 256, 256, material, false, 0.0F);
-		Matrix4f rightRearFoot = rotateAround(rightRearTip, 0.0F, 31.0F, 4.0F, 0.75F, 0.0F, 0.0F);
-		addBox(context, rightRearFoot, -9.0F, 0.0F, -20.0F, 18.0F, 6.0F, 24.0F, 112, 0, 256, 256, material, false, 0.0F);
-	}
-
-	private static void renderDragonSegment(RenderContext context, Vec3 start, Vec3 end, float width, float height, int texU, int texV, int material) {
-		Vec3 delta = end.subtract(start);
-		if (delta.lengthSqr() < 1.0E-4D) {
-			return;
-		}
-		float length = Math.max(6.0F, (float) (start.distanceTo(end) * 16.0D));
-		Matrix4f transform = orientedTransform(midpoint(start, end), delta, 0.0F);
-		addBox(context, transform, -width * 0.5F, -height * 0.5F, -length * 0.5F, width, height, length, texU, texV, 256, 256, material, false, 0.0F);
-	}
-
 	private static void renderArmorStand(RenderContext context, ArmorStandSnapshot snapshot) {
 		Matrix4f root = new Matrix4f()
 				.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
@@ -1514,68 +965,6 @@ final class CameraEntityRenderer {
 		addPlane(context, crossed, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
 	}
 
-	private static void renderGenericLiving(RenderContext context, GenericLivingSnapshot snapshot) {
-		int material = context.materialResolver.materialForTexture(snapshot.texture());
-		TextureSize textureSize = textureSize(snapshot.texture(), 64, 64);
-		int texWidth = textureSize.width();
-		int texHeight = textureSize.height();
-
-		float widthPx = Mth.clamp(snapshot.width() * 16.0F, 4.0F, 24.0F);
-		float depthPx = widthPx;
-		float heightPx = Mth.clamp(snapshot.height() * 16.0F, 6.0F, 48.0F);
-
-		Matrix4f root = new Matrix4f()
-				.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
-				.rotateY(radians(-snapshot.bodyYaw()));
-
-		addBox(
-				context,
-				root,
-				-widthPx * 0.5F,
-				0.0F,
-				-depthPx * 0.5F,
-				widthPx,
-				heightPx,
-				depthPx,
-				16,
-				16,
-				texWidth,
-				texHeight,
-				material,
-				false,
-				0.0F
-		);
-
-		float headSize = Mth.clamp(widthPx * 0.95F, 4.0F, 12.0F);
-		float headPivotY = Math.max(headSize, heightPx * 0.75F);
-		Matrix4f head = rotateAround(
-				root,
-				0.0F,
-				headPivotY,
-				0.0F,
-				radians(snapshot.pitch()),
-				radians(wrapDegrees(snapshot.headYaw() - snapshot.bodyYaw())),
-				0.0F
-		);
-		addBox(
-				context,
-				head,
-				-headSize * 0.5F,
-				heightPx - headSize * 0.2F,
-				-headSize * 0.5F,
-				headSize,
-				headSize,
-				headSize,
-				0,
-				0,
-				texWidth,
-				texHeight,
-				material,
-				false,
-				0.0F
-		);
-	}
-
 	private static Matrix4f applyPose(Matrix4f parent, Rotations rotations, float pivotX, float pivotY, float pivotZ) {
 		if (rotations == null) {
 			return parent;
@@ -1600,90 +989,13 @@ final class CameraEntityRenderer {
 		return Mth.wrapDegrees(degrees);
 	}
 
-	private static Matrix4f orientedTransform(Vec3 position, Vec3 direction, float roll) {
-		if (direction.lengthSqr() < 1.0E-4D) {
-			return new Matrix4f().translate((float) position.x, (float) position.y, (float) position.z);
-		}
-		double horizontal = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
-		float yaw = (float) Math.atan2(-direction.x, direction.z);
-		float pitch = (float) -Math.atan2(direction.y, horizontal);
-		return new Matrix4f()
-				.translate((float) position.x, (float) position.y, (float) position.z)
-				.rotateY(yaw)
-				.rotateX(pitch)
-				.rotateZ(roll);
-	}
-
-	private static Vec3 midpoint(Vec3 a, Vec3 b) {
-		return new Vec3(
-				(a.x + b.x) * 0.5D,
-				(a.y + b.y) * 0.5D,
-				(a.z + b.z) * 0.5D
-		);
-	}
-
 	private static void addPlane(RenderContext context, Matrix4f transform, float x, float y, float z, float width, float height, int material) {
 		Vector3f v0 = transformPosition(transform, x, y, z);
 		Vector3f v1 = transformPosition(transform, x + width, y, z);
 		Vector3f v2 = transformPosition(transform, x + width, y + height, z);
 		Vector3f v3 = transformPosition(transform, x, y + height, z);
 		LightSample lightSample = context.lightAt((v0.x + v2.x) * 0.5F, (v0.y + v2.y) * 0.5F, (v0.z + v2.z) * 0.5F);
-		addQuad(context, v0, v1, v2, v3, 0.0F, 1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 0.0F, 0.0F, material, lightSample.sky(), lightSample.block(), 1.0F, 1.0F, 1.0F);
-	}
-
-	// Player head uses the same atlas strip as vanilla, but side faces must stay bound to
-	// their dedicated left/right slots for both base head and hat overlay.
-	private static void addPlayerHeadBox(
-			RenderContext context,
-			Matrix4f transform,
-			float x,
-			float y,
-			float z,
-			float width,
-			float height,
-			float depth,
-			int texU,
-			int texV,
-			int texWidth,
-			int texHeight,
-			int material,
-			float inflate
-	) {
-		float minX = x - inflate;
-		float minY = y - inflate;
-		float minZ = z - inflate;
-		float maxX = x + width + inflate;
-		float maxY = y + height + inflate;
-		float maxZ = z + depth + inflate;
-
-		Vector3f nnn = transformPosition(transform, minX * PX, minY * PX, minZ * PX);
-		Vector3f pnn = transformPosition(transform, maxX * PX, minY * PX, minZ * PX);
-		Vector3f ppn = transformPosition(transform, maxX * PX, maxY * PX, minZ * PX);
-		Vector3f npn = transformPosition(transform, minX * PX, maxY * PX, minZ * PX);
-		Vector3f nnp = transformPosition(transform, minX * PX, minY * PX, maxZ * PX);
-		Vector3f pnp = transformPosition(transform, maxX * PX, minY * PX, maxZ * PX);
-		Vector3f ppp = transformPosition(transform, maxX * PX, maxY * PX, maxZ * PX);
-		Vector3f npp = transformPosition(transform, minX * PX, maxY * PX, maxZ * PX);
-
-		LightSample lightSample = context.lightAt((nnn.x + ppp.x) * 0.5F, (nnn.y + ppp.y) * 0.5F, (nnn.z + ppp.z) * 0.5F);
-		int skyLight = lightSample.sky();
-		int blockLight = lightSample.block();
-
-		float u0 = texU;
-		float v0 = texV;
-		float u1 = u0 + depth;
-		float u2 = u1 + width;
-		float u3 = u2 + depth;
-		float u4 = u3 + width;
-		float v1 = v0 + depth;
-		float v2 = v1 + height;
-
-		addVanillaQuad(context, new Vector3f[]{pnp, nnp, nnn, pnn}, uv(u1, texWidth), uv(u2, texWidth), uv(v0, texHeight), uv(v1, texHeight), false, material, skyLight, blockLight);
-		addVanillaQuad(context, new Vector3f[]{ppn, npn, npp, ppp}, uv(u2, texWidth), uv(u2 + width, texWidth), uv(v1, texHeight), uv(v0, texHeight), false, material, skyLight, blockLight);
-		addVanillaQuad(context, new Vector3f[]{nnn, nnp, npp, npn}, uv(u2, texWidth), uv(u3, texWidth), uv(v1, texHeight), uv(v2, texHeight), false, material, skyLight, blockLight);
-		addVanillaQuad(context, new Vector3f[]{pnn, nnn, npn, ppn}, uv(u1, texWidth), uv(u2, texWidth), uv(v1, texHeight), uv(v2, texHeight), false, material, skyLight, blockLight);
-		addVanillaQuad(context, new Vector3f[]{pnp, pnn, ppn, ppp}, uv(u0, texWidth), uv(u1, texWidth), uv(v1, texHeight), uv(v2, texHeight), false, material, skyLight, blockLight);
-		addVanillaQuad(context, new Vector3f[]{nnp, pnp, ppp, npp}, uv(u3, texWidth), uv(u4, texWidth), uv(v1, texHeight), uv(v2, texHeight), false, material, skyLight, blockLight);
+		addQuad(context, v0, v1, v2, v3, 0.0F, 1.0F, 1.0F, 0.0F, material, lightSample.sky(), lightSample.block(), 1.0F, 1.0F, 1.0F);
 	}
 
 	private static void addBox(
@@ -1759,12 +1071,12 @@ final class CameraEntityRenderer {
 		float v1 = v0 + depth;
 		float v2 = v1 + height;
 
-		addVanillaQuad(context, new Vector3f[]{pnp, nnp, nnn, pnn}, uv(u1, texWidth), uv(u2, texWidth), uv(v0, texHeight), uv(v1, texHeight), mirror, material, skyLight, blockLight);
-		addVanillaQuad(context, new Vector3f[]{ppn, npn, npp, ppp}, uv(u2, texWidth), uv(u2 + width, texWidth), uv(v1, texHeight), uv(v0, texHeight), mirror, material, skyLight, blockLight);
-		addVanillaQuad(context, new Vector3f[]{nnn, nnp, npp, npn}, uv(u0, texWidth), uv(u1, texWidth), uv(v1, texHeight), uv(v2, texHeight), mirror, material, skyLight, blockLight);
-		addVanillaQuad(context, new Vector3f[]{pnn, nnn, npn, ppn}, uv(u1, texWidth), uv(u2, texWidth), uv(v1, texHeight), uv(v2, texHeight), mirror, material, skyLight, blockLight);
-		addVanillaQuad(context, new Vector3f[]{pnp, pnn, ppn, ppp}, uv(u2, texWidth), uv(u3, texWidth), uv(v1, texHeight), uv(v2, texHeight), mirror, material, skyLight, blockLight);
-		addVanillaQuad(context, new Vector3f[]{nnp, pnp, ppp, npp}, uv(u3, texWidth), uv(u4, texWidth), uv(v1, texHeight), uv(v2, texHeight), mirror, material, skyLight, blockLight);
+		addQuad(context, pnp, nnp, npp, ppp, uv(u1, texWidth), uv(u2, texWidth), uv(v1, texHeight), uv(v2, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
+		addQuad(context, nnn, pnn, ppn, npn, uv(u3, texWidth), uv(u4, texWidth), uv(v1, texHeight), uv(v2, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
+		addQuad(context, nnp, nnn, npn, npp, uv(u0, texWidth), uv(u1, texWidth), uv(v1, texHeight), uv(v2, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
+		addQuad(context, pnn, pnp, ppp, ppn, uv(u2, texWidth), uv(u3, texWidth), uv(v1, texHeight), uv(v2, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
+		addQuad(context, pnn, nnn, nnp, pnp, uv(u1, texWidth), uv(u2, texWidth), uv(v0, texHeight), uv(v1, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
+		addQuad(context, npn, ppn, ppp, npp, uv(u2, texWidth), uv(u2 + width, texWidth), uv(v0, texHeight), uv(v1, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
 	}
 
 	private static float uv(float value, int size) {
@@ -1775,67 +1087,16 @@ final class CameraEntityRenderer {
 		return transform.transformPosition(new Vector3f(x, y, z));
 	}
 
-	private static void addVanillaQuad(
-			RenderContext context,
-			Vector3f[] vertices,
-			float left,
-			float right,
-			float top,
-			float bottom,
-			boolean mirror,
-			int material,
-			int skyLight,
-			int blockLight
-	) {
-		float[] uvs = new float[]{right, left, left, right};
-		float[] vvs = new float[]{top, top, bottom, bottom};
-		if (mirror) {
-			reverse(vertices);
-			reverse(uvs);
-			reverse(vvs);
-		}
-		addQuad(
-				context,
-				vertices[0], vertices[1], vertices[2], vertices[3],
-				uvs[0], vvs[0],
-				uvs[1], vvs[1],
-				uvs[2], vvs[2],
-				uvs[3], vvs[3],
-				material, skyLight, blockLight,
-				1.0F, 1.0F, 1.0F
-		);
-	}
-
-	private static void reverse(Vector3f[] values) {
-		for (int i = 0; i < values.length / 2; i++) {
-			Vector3f swap = values[i];
-			values[i] = values[values.length - 1 - i];
-			values[values.length - 1 - i] = swap;
-		}
-	}
-
-	private static void reverse(float[] values) {
-		for (int i = 0; i < values.length / 2; i++) {
-			float swap = values[i];
-			values[i] = values[values.length - 1 - i];
-			values[values.length - 1 - i] = swap;
-		}
-	}
-
 	private static void addQuad(
 			RenderContext context,
 			Vector3f a,
 			Vector3f b,
 			Vector3f c,
 			Vector3f d,
-			float ua,
-			float va,
-			float ub,
-			float vb,
-			float uc,
-			float vc,
-			float ud,
-			float vd,
+			float u0,
+			float u1,
+			float v0,
+			float v1,
 			int material,
 			int skyLight,
 			int blockLight,
@@ -1846,7 +1107,7 @@ final class CameraEntityRenderer {
 		int triangle = context.model.add(2);
 		context.model
 				.setPositions(triangle, a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z)
-				.setUvs(triangle, ua, va, ub, vb, uc, vc)
+				.setUvs(triangle, u0, v1, u1, v1, u1, v0)
 				.setAOs(triangle, 1.0F, 1.0F, 1.0F)
 				.setColor(triangle, red, green, blue)
 				.setSunlight(triangle, skyLight)
@@ -1854,7 +1115,7 @@ final class CameraEntityRenderer {
 				.setMaterialIndex(triangle, material);
 		context.model
 				.setPositions(triangle + 1, a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z)
-				.setUvs(triangle + 1, ua, va, uc, vc, ud, vd)
+				.setUvs(triangle + 1, u0, v1, u1, v0, u0, v0)
 				.setAOs(triangle + 1, 1.0F, 1.0F, 1.0F)
 				.setColor(triangle + 1, red, green, blue)
 				.setSunlight(triangle + 1, skyLight)
@@ -1877,6 +1138,18 @@ final class CameraEntityRenderer {
 			return chickenVariant.modelAndTexture().asset().id();
 		}
 		return fallback;
+	}
+
+	private static Identifier holderTexture(Holder<?> holder, String prefix) {
+		if (holder == null) {
+			return null;
+		}
+		return holder.unwrapKey()
+				.map(resourceKey -> {
+					Identifier identifier = resourceKey.identifier();
+					return Identifier.fromNamespaceAndPath(identifier.getNamespace(), prefix + identifier.getPath());
+				})
+				.orElse(null);
 	}
 
 	private static Identifier professionLevelTexture(int level) {
