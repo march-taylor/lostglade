@@ -46,7 +46,9 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.entity.Entity;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -82,8 +84,9 @@ public final class BlueMapCameraRenderer {
 		CameraFrustum frustum = CameraFrustum.create(eyePosition, forward, right, up, maxDistance, fovDegrees);
 		RenderResources resources = getRenderResources();
 		WorldSnapshot snapshot = WorldSnapshot.capture(level, frustum, resources);
+		List<CameraEntityRenderer.EntitySnapshot> entities = captureEntities(player, level, frustum);
 		FrameEnvironment environment = FrameEnvironment.capture(level);
-		return new PreparedFrame(eyePosition, forward, right, up, maxDistance, fovDegrees, supersampling, snapshot, environment);
+		return new PreparedFrame(eyePosition, forward, right, up, maxDistance, fovDegrees, supersampling, snapshot, entities, environment);
 	}
 
 	public static byte[] render(PreparedFrame preparedFrame) {
@@ -204,6 +207,7 @@ public final class BlueMapCameraRenderer {
 			float fovDegrees,
 			int supersampling,
 			WorldSnapshot snapshot,
+			List<CameraEntityRenderer.EntitySnapshot> entities,
 			FrameEnvironment environment
 	) {
 	}
@@ -233,7 +237,7 @@ public final class BlueMapCameraRenderer {
 		return level.dimensionType().hasCeiling() ? DimensionType.OVERWORLD_CAVES : DimensionType.OVERWORLD;
 	}
 
-	private static final class WorldSnapshot {
+	static final class WorldSnapshot {
 		private final Long2ObjectOpenHashMap<SnapshotBlock> blocks;
 		private final int minX;
 		private final int minY;
@@ -436,6 +440,11 @@ public final class BlueMapCameraRenderer {
 
 		private SnapshotBlock blockAt(int x, int y, int z) {
 			return this.blocks.get(BlockPos.asLong(x, y, z));
+		}
+
+		LightData sampleLight(BlockPos pos) {
+			SnapshotBlock block = blockAt(pos.getX(), pos.getY(), pos.getZ());
+			return block == null ? new LightData(15, 0) : block.light();
 		}
 
 		private Iterable<Long2ObjectMap.Entry<SnapshotBlock>> entries() {
@@ -802,7 +811,7 @@ public final class BlueMapCameraRenderer {
 	) {
 	}
 
-	private static final class TextureMaterial {
+	static final class TextureMaterial {
 		private final int width;
 		private final int height;
 		private final int[] pixels;
@@ -837,8 +846,25 @@ public final class BlueMapCameraRenderer {
 			}
 		}
 
-		private static TextureMaterial missing() {
+		static TextureMaterial missing() {
 			return new TextureMaterial(1, 1, new int[]{0xFFFF00FF}, false);
+		}
+
+		static TextureMaterial fromImage(BufferedImage image) {
+			if (image == null) {
+				return missing();
+			}
+			int width = Math.max(1, image.getWidth());
+			int height = Math.max(1, image.getHeight());
+			int[] pixels = image.getRGB(0, 0, width, height, null, 0, width);
+			boolean transparent = false;
+			for (int pixel : pixels) {
+				if (((pixel >>> 24) & 0xFF) < 255) {
+					transparent = true;
+					break;
+				}
+			}
+			return new TextureMaterial(width, height, pixels, transparent);
 		}
 
 		private int sample(float u, float v) {
@@ -855,6 +881,9 @@ public final class BlueMapCameraRenderer {
 		private final RenderResources resources;
 		private final int internalSize;
 		private final float tanHalfFov;
+		private final Int2ObjectOpenHashMap<TextureMaterial> dynamicMaterials;
+		private final Map<String, Integer> dynamicMaterialIds;
+		private int nextDynamicMaterialId;
 		private final float[] red;
 		private final float[] green;
 		private final float[] blue;
@@ -865,6 +894,9 @@ public final class BlueMapCameraRenderer {
 			this.resources = resources;
 			this.internalSize = MAP_SIZE * Mth.clamp(frame.supersampling(), 1, 4);
 			this.tanHalfFov = (float) Math.tan(Math.toRadians(frame.fovDegrees() * 0.5D));
+			this.dynamicMaterials = new Int2ObjectOpenHashMap<>();
+			this.dynamicMaterialIds = new HashMap<>();
+			this.nextDynamicMaterialId = -1;
 			int pixelCount = this.internalSize * this.internalSize;
 			this.red = new float[pixelCount];
 			this.green = new float[pixelCount];
@@ -976,7 +1008,39 @@ public final class BlueMapCameraRenderer {
 				}
 			}
 
+			CameraEntityRenderer.renderEntities(this.frame.entities(), snapshot, model, new CameraEntityRenderer.MaterialResolver() {
+				@Override
+				public int materialForTexture(Identifier textureId) {
+					return FrameRenderer.this.materialForTexture(textureId);
+				}
+
+				@Override
+				public int materialForPlayerSkin(CameraEntityRenderer.PlayerSkinSnapshot skinSnapshot) {
+					return FrameRenderer.this.materialForPlayerSkin(skinSnapshot);
+				}
+			});
+
 			return model;
+		}
+
+		private int materialForTexture(Identifier textureId) {
+			return registerDynamicMaterial(textureId == null ? "missing" : textureId.toString(), CameraEntityRenderer.loadTextureMaterial(textureId));
+		}
+
+		private int materialForPlayerSkin(CameraEntityRenderer.PlayerSkinSnapshot skinSnapshot) {
+			String key = skinSnapshot == null ? "player:missing" : "player:" + skinSnapshot.cacheKey();
+			return registerDynamicMaterial(key, CameraEntityRenderer.loadPlayerSkinMaterial(skinSnapshot));
+		}
+
+		private int registerDynamicMaterial(String key, TextureMaterial material) {
+			Integer cachedId = this.dynamicMaterialIds.get(key);
+			if (cachedId != null) {
+				return cachedId;
+			}
+			int materialId = this.nextDynamicMaterialId--;
+			this.dynamicMaterialIds.put(key, materialId);
+			this.dynamicMaterials.put(materialId, material == null ? TextureMaterial.missing() : material);
+			return materialId;
 		}
 
 		private void applyWorldTint(
@@ -1070,7 +1134,10 @@ public final class BlueMapCameraRenderer {
 
 			List<RasterTriangle> transparentTriangles = new ArrayList<>();
 			for (int triangleIndex = 0; triangleIndex < ArrayTileModelAccess.size(model); triangleIndex++) {
-				TextureMaterial material = this.resources.materials().getOrDefault(materials[triangleIndex], this.resources.materials().get(0));
+				TextureMaterial material = this.dynamicMaterials.get(materials[triangleIndex]);
+				if (material == null) {
+					material = this.resources.materials().getOrDefault(materials[triangleIndex], this.resources.materials().get(0));
+				}
 				List<RasterTriangle> clippedTriangles = buildTriangles(triangleIndex, positions, uvs, aos, colors, sunlight, blocklight, material);
 				if (clippedTriangles.isEmpty()) {
 					continue;
@@ -1560,5 +1627,30 @@ public final class BlueMapCameraRenderer {
 		private double distance(double x, double y, double z) {
 			return this.normalX * x + this.normalY * y + this.normalZ * z + this.distance;
 		}
+	}
+
+	private static List<CameraEntityRenderer.EntitySnapshot> captureEntities(ServerPlayer viewer, ServerLevel level, CameraFrustum frustum) {
+		BlockBounds bounds = frustum.bounds();
+		AABB searchBox = new AABB(
+				bounds.minX(),
+				bounds.minY(),
+				bounds.minZ(),
+				bounds.maxX() + 1.0D,
+				bounds.maxY() + 1.0D,
+				bounds.maxZ() + 1.0D
+		);
+		List<Entity> entities = level.getEntities(viewer, searchBox, entity -> entity != null && entity.isAlive() && !entity.isInvisible());
+		List<CameraEntityRenderer.EntitySnapshot> result = new ArrayList<>(entities.size());
+		for (Entity entity : entities) {
+			AABB box = entity.getBoundingBox();
+			if (!frustum.intersectsAabb(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)) {
+				continue;
+			}
+			CameraEntityRenderer.EntitySnapshot snapshot = CameraEntityRenderer.captureEntity(entity);
+			if (snapshot != null) {
+				result.add(snapshot);
+			}
+		}
+		return result;
 	}
 }
