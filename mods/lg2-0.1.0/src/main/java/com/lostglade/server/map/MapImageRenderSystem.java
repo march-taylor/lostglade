@@ -31,6 +31,7 @@ import java.util.concurrent.ThreadFactory;
 public final class MapImageRenderSystem {
 	private static final int MAP_SIZE = 128;
 	private static final int RESULTS_APPLIED_PER_TICK = 384;
+	private static final int FRAME_PIXELS_APPLIED_PER_TICK = 4096;
 	private static final int MAX_PIXEL_FAILURES = 64;
 	private static final long MAX_PREPARE_NANOS_PER_TICK = 1_000_000L;
 	private static final Map<UUID, RenderJob> PLAYER_JOBS = new HashMap<>();
@@ -115,6 +116,11 @@ public final class MapImageRenderSystem {
 			return;
 		}
 
+		if (job.provider().prefersWholeFrameRendering()) {
+			tickWholeFrameJob(server, player, level, mapData, job);
+			return;
+		}
+
 		int processed = 0;
 		PixelResult result;
 		while (processed < RESULTS_APPLIED_PER_TICK && (result = job.pollResult()) != null) {
@@ -180,6 +186,71 @@ public final class MapImageRenderSystem {
 		}
 
 		if (job.isDone() && !job.hasDispatchedPixels()) {
+			job.provider().onCompleted(server);
+			player.displayClientMessage(job.provider().completedMessage(), true);
+			player.playSound(SoundEvents.EXPERIENCE_ORB_PICKUP, 0.4F, 1.4F);
+			removeJob(job.playerId());
+			pollNextActive();
+		}
+	}
+
+	private static void tickWholeFrameJob(MinecraftServer server, ServerPlayer player, ServerLevel level, MapItemSavedData mapData, RenderJob job) {
+		if (!job.hasPreparedFrame()) {
+			try {
+				job.setPreparedFrame(job.provider().prepareFrame(server));
+			} catch (Exception exception) {
+				Lg2.LOGGER.error("Map frame prepare failed for player {}", job.playerId(), exception);
+				player.displayClientMessage(Component.literal("Подготовка снимка остановлена: ошибка кадра."), true);
+				removeJob(job.playerId());
+				pollNextActive();
+				return;
+			}
+		}
+
+		if (!job.hasDispatchedFrameTask()) {
+			job.markFrameTaskDispatched();
+			Object preparedFrame = job.preparedFrame();
+			MapPixelProvider provider = job.provider();
+			executor.submit(() -> {
+				try {
+					byte[] frame = provider.renderPreparedFrame(preparedFrame);
+					job.pushFrameResult(FrameResult.success(frame));
+				} catch (Throwable throwable) {
+					job.pushFrameResult(FrameResult.failure(throwable));
+				}
+			});
+		}
+
+		FrameResult frameResult = job.frameResult();
+		if (frameResult == null) {
+			return;
+		}
+		if (frameResult.failed()) {
+			Lg2.LOGGER.error("Map frame render failed for player {}", job.playerId(), frameResult.error());
+			player.displayClientMessage(Component.literal("Рендер снимка остановлен: ошибка кадра."), true);
+			removeJob(job.playerId());
+			pollNextActive();
+			return;
+		}
+
+		byte[] frame = frameResult.pixels();
+		if (frame == null || frame.length < MAP_SIZE * MAP_SIZE) {
+			Lg2.LOGGER.error("Map frame render returned invalid frame for player {}", job.playerId());
+			player.displayClientMessage(Component.literal("Рендер снимка остановлен: кадр повреждён."), true);
+			removeJob(job.playerId());
+			pollNextActive();
+			return;
+		}
+
+		int applied = 0;
+		while (applied < FRAME_PIXELS_APPLIED_PER_TICK && job.frameApplyIndex() < MAP_SIZE * MAP_SIZE) {
+			int pixelIndex = job.frameApplyIndex();
+			mapData.setColor(pixelIndex % MAP_SIZE, pixelIndex / MAP_SIZE, frame[pixelIndex]);
+			job.advanceFrameApplyIndex();
+			applied++;
+		}
+
+		if (job.frameApplyIndex() >= MAP_SIZE * MAP_SIZE) {
 			job.provider().onCompleted(server);
 			player.displayClientMessage(job.provider().completedMessage(), true);
 			player.playSound(SoundEvents.EXPERIENCE_ORB_PICKUP, 0.4F, 1.4F);
@@ -255,6 +326,11 @@ public final class MapImageRenderSystem {
 		private int failureCount;
 		private boolean failureLogged;
 		private int dispatchedPixels;
+		private Object preparedFrame;
+		private boolean framePrepared;
+		private boolean frameTaskDispatched;
+		private volatile FrameResult frameResult;
+		private int frameApplyIndex;
 
 		private RenderJob(UUID playerId, MapId mapId, MapPixelProvider provider) {
 			this.playerId = playerId;
@@ -316,6 +392,43 @@ public final class MapImageRenderSystem {
 			return this.dispatchedPixels > 0;
 		}
 
+		private boolean hasPreparedFrame() {
+			return this.framePrepared;
+		}
+
+		private void setPreparedFrame(Object preparedFrame) {
+			this.preparedFrame = preparedFrame;
+			this.framePrepared = true;
+		}
+
+		private Object preparedFrame() {
+			return this.preparedFrame;
+		}
+
+		private boolean hasDispatchedFrameTask() {
+			return this.frameTaskDispatched;
+		}
+
+		private void markFrameTaskDispatched() {
+			this.frameTaskDispatched = true;
+		}
+
+		private void pushFrameResult(FrameResult frameResult) {
+			this.frameResult = frameResult;
+		}
+
+		private FrameResult frameResult() {
+			return this.frameResult;
+		}
+
+		private int frameApplyIndex() {
+			return this.frameApplyIndex;
+		}
+
+		private void advanceFrameApplyIndex() {
+			this.frameApplyIndex++;
+		}
+
 		private void pushResult(PixelResult result) {
 			this.completedResults.offer(result);
 		}
@@ -336,6 +449,20 @@ public final class MapImageRenderSystem {
 
 		private static PixelResult failure(int x, int y, Throwable error) {
 			return new PixelResult(x, y, (byte) 0, error);
+		}
+
+		private boolean failed() {
+			return this.error != null;
+		}
+	}
+
+	private record FrameResult(byte[] pixels, Throwable error) {
+		private static FrameResult success(byte[] pixels) {
+			return new FrameResult(pixels, null);
+		}
+
+		private static FrameResult failure(Throwable error) {
+			return new FrameResult(null, error);
 		}
 
 		private boolean failed() {

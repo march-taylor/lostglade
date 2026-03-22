@@ -16,6 +16,7 @@ def skinRestorerJars = fileTree(dir: "${serverRootDir}/mods", include: "skinrest
 def tabJars = fileTree(dir: "${serverRootDir}/mods", include: "TAB*.jar")
 def voicechatJars = fileTree(dir: "${serverRootDir}/mods", include: "voicechat-fabric-*.jar")
 def webcamJars = fileTree(dir: "${serverRootDir}/mods", include: "webcam-fabric-*.jar")
+def bluemapJars = fileTree(dir: "${serverRootDir}/mods", include: "bluemap-*.jar")
 def skinRestorerNestedLibDir = file("${buildDir}/skinrestorer-libs")
 def skinRestorerJavaClientJars = fileTree(dir: skinRestorerNestedLibDir, include: "java-client-*.jar")
 
@@ -65,9 +66,14 @@ dependencies {
 	modImplementation "eu.pb4:polymer-blocks:${project.polymer_version}"
 	modImplementation "eu.pb4:polymer-resource-pack:${project.polymer_version}"
 	modImplementation files(skinRestorerJars)
+	modImplementation files(bluemapJars)
 	compileOnly files(tabJars)
 	modCompileOnly files(voicechatJars)
 	modCompileOnly files(webcamJars)
+	implementation files(
+			"libs/flow-math-1.0.3.jar",
+			"libs/bluenbt-3.5.0.jar"
+	)
 	runtimeOnly files(skinRestorerJavaClientJars)
 	modRuntimeOnly files("${serverRootDir}/mods/cardinal-components-api-${project.cardinal_components_version}.jar")
 	

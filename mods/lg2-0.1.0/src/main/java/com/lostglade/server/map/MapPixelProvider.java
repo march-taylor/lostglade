@@ -31,6 +31,18 @@ public interface MapPixelProvider {
 		return 0;
 	}
 
+	default boolean prefersWholeFrameRendering() {
+		return false;
+	}
+
+	default Object prepareFrame(MinecraftServer server) {
+		return null;
+	}
+
+	default byte[] renderPreparedFrame(Object preparedFrame) {
+		return new byte[0];
+	}
+
 	default boolean isValid(MinecraftServer server) {
 		return true;
 	}
