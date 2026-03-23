@@ -2,6 +2,7 @@ package com.lostglade.server.camera.bluemap;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.lostglade.Lg2;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.lostglade.server.map.TextureAssetManager;
 import com.mojang.authlib.properties.Property;
@@ -52,6 +53,7 @@ import net.minecraft.world.entity.monster.zombie.Husk;
 import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.entity.npc.villager.VillagerData;
+import net.minecraft.world.entity.npc.villager.VillagerProfession;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.player.PlayerModelPart;
 import net.minecraft.world.item.ItemStack;
@@ -179,7 +181,9 @@ final class CameraEntityRenderer {
 
 	record CreeperSnapshot(
 			Vec3 position,
-			float yaw,
+			float bodyYaw,
+			float headYaw,
+			float pitch,
 			float walkPos,
 			float walkSpeed,
 			boolean baby,
@@ -228,6 +232,7 @@ final class CameraEntityRenderer {
 	record ClientModelSnapshot(
 			Vec3 position,
 			float rootYaw,
+			float rootYawOffsetDegrees,
 			float rootScale,
 			Map<String, Object> stateFields,
 			ClientLayerSnapshot[] layers
@@ -281,6 +286,15 @@ final class CameraEntityRenderer {
 	}
 
 	static EntitySnapshot captureEntity(Entity entity) {
+		try {
+			return captureEntityUnsafe(entity);
+		} catch (Throwable throwable) {
+			Lg2.LOGGER.debug("Failed to capture camera snapshot for entity {}", entity, throwable);
+			return null;
+		}
+	}
+
+	private static EntitySnapshot captureEntityUnsafe(Entity entity) {
 		LivingEntity livingEntity = entity instanceof LivingEntity living ? living : null;
 		if (livingEntity == null && !(entity instanceof ItemEntity)) {
 			return null;
@@ -338,14 +352,10 @@ final class CameraEntityRenderer {
 			);
 		}
 
-		if (VanillaClientModels.isAvailable()) {
-			ClientModelSnapshot vanillaClientSnapshot = captureVanillaClientModel(livingEntity);
-			if (vanillaClientSnapshot != null) {
-				return vanillaClientSnapshot;
-			}
-		}
-
 		if (entity instanceof Villager villager) {
+			if (VanillaClientModels.isAvailable()) {
+				return captureVillagerClientModel(villager);
+			}
 			VillagerData villagerData = villager.getVillagerData();
 			Identifier[] overlays = new Identifier[]{
 					holderTexture(villagerData.type(), "entity/villager/type/"),
@@ -402,7 +412,9 @@ final class CameraEntityRenderer {
 		if (entity instanceof Creeper creeper) {
 			return new CreeperSnapshot(
 					entity.position(),
-					entity.getYRot(),
+					livingEntity.yBodyRot,
+					livingEntity.yHeadRot,
+					entity.getXRot(),
 					livingEntity.walkAnimation.position(),
 					livingEntity.walkAnimation.speed(),
 					false,
@@ -571,6 +583,13 @@ final class CameraEntityRenderer {
 			);
 		}
 
+		if (livingEntity != null && VanillaClientModels.isAvailable()) {
+			ClientModelSnapshot vanillaClientSnapshot = captureVanillaClientModel(livingEntity);
+			if (vanillaClientSnapshot != null) {
+				return vanillaClientSnapshot;
+			}
+		}
+
 		if (entity instanceof ItemEntity itemEntity) {
 			Identifier texture = resolveItemTexture(itemEntity.getItem());
 			if (texture == null) {
@@ -614,6 +633,25 @@ final class CameraEntityRenderer {
 		);
 	}
 
+	private static ClientModelSnapshot captureVillagerClientModel(Villager villager) {
+		VillagerData villagerData = villager.getVillagerData();
+		Map<String, Object> state = livingStateFields(villager);
+		state.put("villagerData", villagerData);
+
+		List<ClientLayerSnapshot> layers = new ArrayList<>();
+		String modelClassName = "net.minecraft.client.model.npc.VillagerModel";
+		layers.add(new ClientLayerSnapshot(modelClassName, VILLAGER_TEXTURE, 0xFFFFFF, false));
+		addClientLayerIfPresent(layers, modelClassName, holderTexture(villagerData.type(), "entity/villager/type/"), 0xFFFFFF, false);
+		if (!villager.isBaby() && !villagerData.profession().is(VillagerProfession.NONE)) {
+			addClientLayerIfPresent(layers, modelClassName, holderTexture(villagerData.profession(), "entity/villager/profession/"), 0xFFFFFF, false);
+			if (!villagerData.profession().is(VillagerProfession.NITWIT)) {
+				addClientLayerIfPresent(layers, modelClassName, professionLevelTexture(villagerData.level()), 0xFFFFFF, false);
+			}
+		}
+
+		return livingClientModelSnapshot(villager, villager.yBodyRot, state, layers.toArray(ClientLayerSnapshot[]::new));
+	}
+
 	private static ClientModelSnapshot captureSheepClientModel(Sheep sheep) {
 		Map<String, Object> state = livingStateFields(sheep);
 		state.put("headEatPositionScale", sheep.getHeadEatPositionScale(0.0F));
@@ -637,15 +675,14 @@ final class CameraEntityRenderer {
 					false
 			));
 		}
-		return new ClientModelSnapshot(sheep.position(), sheep.yBodyRot, sheep.getScale(), state, layers.toArray(ClientLayerSnapshot[]::new));
+		return livingClientModelSnapshot(sheep, sheep.yBodyRot, state, layers.toArray(ClientLayerSnapshot[]::new));
 	}
 
 	private static ClientModelSnapshot captureCowClientModel(Cow cow) {
 		Identifier texture = variantTexture(cow.getVariant(), Identifier.fromNamespaceAndPath("minecraft", "entity/cow/temperate_cow"));
-		return new ClientModelSnapshot(
-				cow.position(),
+		return livingClientModelSnapshot(
+				cow,
 				cow.yBodyRot,
-				cow.getScale(),
 				livingStateFields(cow),
 				new ClientLayerSnapshot[]{
 						new ClientLayerSnapshot(cowModelClass(texture), texture, 0xFFFFFF, false)
@@ -655,10 +692,9 @@ final class CameraEntityRenderer {
 
 	private static ClientModelSnapshot capturePigClientModel(Pig pig) {
 		Identifier texture = variantTexture(pig.getVariant(), Identifier.fromNamespaceAndPath("minecraft", "entity/pig/temperate_pig"));
-		return new ClientModelSnapshot(
-				pig.position(),
+		return livingClientModelSnapshot(
+				pig,
 				pig.yBodyRot,
-				pig.getScale(),
 				livingStateFields(pig),
 				new ClientLayerSnapshot[]{
 						new ClientLayerSnapshot(pigModelClass(texture), texture, 0xFFFFFF, false)
@@ -672,10 +708,9 @@ final class CameraEntityRenderer {
 		state.put("flap", chicken.flap);
 		state.put("flapSpeed", chicken.oFlapSpeed + (chicken.flapSpeed - chicken.oFlapSpeed));
 		state.put("variant", chicken.getVariant().value());
-		return new ClientModelSnapshot(
-				chicken.position(),
+		return livingClientModelSnapshot(
+				chicken,
 				chicken.yBodyRot,
-				chicken.getScale(),
 				state,
 				new ClientLayerSnapshot[]{
 						new ClientLayerSnapshot(chickenModelClass(texture), texture, 0xFFFFFF, false)
@@ -700,10 +735,9 @@ final class CameraEntityRenderer {
 		state.put("hasLeftHorn", goat.hasLeftHorn());
 		state.put("hasRightHorn", goat.hasRightHorn());
 		state.put("rammingXHeadRot", goat.getRammingXHeadRot());
-		return new ClientModelSnapshot(
-				goat.position(),
+		return livingClientModelSnapshot(
+				goat,
 				goat.yBodyRot,
-				goat.getScale(),
 				state,
 				new ClientLayerSnapshot[]{
 						new ClientLayerSnapshot(
@@ -740,10 +774,9 @@ final class CameraEntityRenderer {
 					false
 			));
 		}
-		return new ClientModelSnapshot(
-				horse.position(),
+		return livingClientModelSnapshot(
+				horse,
 				horse.yBodyRot,
-				horse.getScale(),
 				state,
 				layers.toArray(ClientLayerSnapshot[]::new)
 		);
@@ -754,15 +787,40 @@ final class CameraEntityRenderer {
 	}
 
 	private static ClientModelSnapshot captureSimpleClientModel(LivingEntity livingEntity, float rootYaw, String modelClassName, Identifier texture) {
-		return new ClientModelSnapshot(
-				livingEntity.position(),
+		return livingClientModelSnapshot(
+				livingEntity,
 				rootYaw,
-				livingEntity.getScale(),
 				livingStateFields(livingEntity),
 				new ClientLayerSnapshot[]{
 						new ClientLayerSnapshot(modelClassName, texture, 0xFFFFFF, false)
 				}
 		);
+	}
+
+	private static ClientModelSnapshot livingClientModelSnapshot(
+			LivingEntity livingEntity,
+			float rootYaw,
+			Map<String, Object> stateFields,
+			ClientLayerSnapshot[] layers
+	) {
+		return clientModelSnapshot(livingEntity.position(), rootYaw, 180.0F, livingEntity.getScale(), stateFields, layers);
+	}
+
+	private static ClientModelSnapshot clientModelSnapshot(
+			Vec3 position,
+			float rootYaw,
+			float rootYawOffsetDegrees,
+			float rootScale,
+			Map<String, Object> stateFields,
+			ClientLayerSnapshot[] layers
+	) {
+		return new ClientModelSnapshot(position, rootYaw, rootYawOffsetDegrees, rootScale, stateFields, layers);
+	}
+
+	private static void addClientLayerIfPresent(List<ClientLayerSnapshot> layers, String modelClassName, Identifier texture, int tintRgb, boolean emissive) {
+		if (texture != null) {
+			layers.add(new ClientLayerSnapshot(modelClassName, texture, tintRgb, emissive));
+		}
 	}
 
 	private static Map<String, Object> livingStateFields(LivingEntity livingEntity) {
@@ -820,7 +878,7 @@ final class CameraEntityRenderer {
 		rules.put("goat", livingEntity -> captureGoatClientModel((Goat) livingEntity));
 		rules.put("armadillo", livingEntity -> captureSimpleClientModel(
 				livingEntity,
-				livingEntity.getYRot(),
+				livingEntity.yBodyRot,
 				"net.minecraft.client.model.animal.armadillo.ArmadilloModel",
 				minecraftTexture("entity/armadillo")
 		));
@@ -908,7 +966,7 @@ final class CameraEntityRenderer {
 	}
 
 	private static void registerSimpleClientRule(Map<String, ClientModelResolver> rules, String typePath, String modelClassName, Identifier texture) {
-		rules.put(typePath, livingEntity -> captureSimpleClientModel(livingEntity, livingEntity.getYRot(), modelClassName, texture));
+		rules.put(typePath, livingEntity -> captureSimpleClientModel(livingEntity, livingEntity.yBodyRot, modelClassName, texture));
 	}
 
 	private static ClientModelSnapshot captureVanillaClientModel(LivingEntity livingEntity) {
@@ -932,7 +990,7 @@ final class CameraEntityRenderer {
 
 		for (String modelClassName : guessVanillaModelClasses(livingEntity, typePath)) {
 			if (VanillaClientModels.hasModelClass(modelClassName)) {
-				return captureSimpleClientModel(livingEntity, livingEntity.getYRot(), modelClassName, texture);
+				return captureSimpleClientModel(livingEntity, livingEntity.yBodyRot, modelClassName, texture);
 			}
 		}
 		return null;
@@ -983,9 +1041,10 @@ final class CameraEntityRenderer {
 		state.put("beamOffset", Vec3.ZERO);
 		state.put("deathTime", 0.0F);
 
-		return new ClientModelSnapshot(
+		return clientModelSnapshot(
 				livingEntity.position(),
-				livingEntity.getYRot(),
+				livingEntity.yBodyRot,
+				0.0F,
 				livingEntity.getScale(),
 				state,
 				new ClientLayerSnapshot[]{
@@ -1011,10 +1070,9 @@ final class CameraEntityRenderer {
 		state.put("yHeadRots", new float[]{0.0F, 0.0F});
 		state.put("invulnerableTicks", 0.0F);
 		state.put("isPowered", false);
-		return new ClientModelSnapshot(
-				livingEntity.position(),
-				livingEntity.getYRot(),
-				livingEntity.getScale(),
+		return livingClientModelSnapshot(
+				livingEntity,
+				livingEntity.yBodyRot,
 				state,
 				new ClientLayerSnapshot[]{
 						new ClientLayerSnapshot(
@@ -1167,22 +1225,26 @@ final class CameraEntityRenderer {
 	) {
 		RenderContext context = new RenderContext(snapshot, model, materialResolver);
 		for (EntitySnapshot entitySnapshot : entities) {
-			if (entitySnapshot instanceof HumanoidSnapshot humanoidSnapshot) {
-				renderHumanoid(context, humanoidSnapshot);
-			} else if (entitySnapshot instanceof ClientModelSnapshot clientModelSnapshot) {
-				VanillaClientModels.render(context, clientModelSnapshot);
-			} else if (entitySnapshot instanceof QuadrupedSnapshot quadrupedSnapshot) {
-				renderQuadruped(context, quadrupedSnapshot);
-			} else if (entitySnapshot instanceof ChickenSnapshot chickenSnapshot) {
-				renderChicken(context, chickenSnapshot);
-			} else if (entitySnapshot instanceof CreeperSnapshot creeperSnapshot) {
-				renderCreeper(context, creeperSnapshot);
-			} else if (entitySnapshot instanceof SpiderSnapshot spiderSnapshot) {
-				renderSpider(context, spiderSnapshot);
-			} else if (entitySnapshot instanceof ArmorStandSnapshot armorStandSnapshot) {
-				renderArmorStand(context, armorStandSnapshot);
-			} else if (entitySnapshot instanceof ItemSnapshot itemSnapshot) {
-				renderItem(context, itemSnapshot);
+			try {
+				if (entitySnapshot instanceof HumanoidSnapshot humanoidSnapshot) {
+					renderHumanoid(context, humanoidSnapshot);
+				} else if (entitySnapshot instanceof ClientModelSnapshot clientModelSnapshot) {
+					VanillaClientModels.render(context, clientModelSnapshot);
+				} else if (entitySnapshot instanceof QuadrupedSnapshot quadrupedSnapshot) {
+					renderQuadruped(context, quadrupedSnapshot);
+				} else if (entitySnapshot instanceof ChickenSnapshot chickenSnapshot) {
+					renderChicken(context, chickenSnapshot);
+				} else if (entitySnapshot instanceof CreeperSnapshot creeperSnapshot) {
+					renderCreeper(context, creeperSnapshot);
+				} else if (entitySnapshot instanceof SpiderSnapshot spiderSnapshot) {
+					renderSpider(context, spiderSnapshot);
+				} else if (entitySnapshot instanceof ArmorStandSnapshot armorStandSnapshot) {
+					renderArmorStand(context, armorStandSnapshot);
+				} else if (entitySnapshot instanceof ItemSnapshot itemSnapshot) {
+					renderItem(context, itemSnapshot);
+				}
+			} catch (Throwable throwable) {
+				Lg2.LOGGER.debug("Failed to render camera snapshot {}", entitySnapshot.getClass().getSimpleName(), throwable);
 			}
 		}
 	}
@@ -1285,11 +1347,11 @@ final class CameraEntityRenderer {
 		}
 	}
 
-	private static Matrix4f humanoidRoot(Vec3 position, float bodyYaw, Pose pose, Direction sleepingDirection, float scale) {
+	private static Matrix4f humanoidRoot(Vec3 position, float yaw, Pose pose, Direction sleepingDirection, float scale) {
 		Matrix4f root = new Matrix4f().translate((float) position.x, (float) position.y, (float) position.z);
 		if (sleepingDirection != null) {
 			root.translate(0.0F, 0.2F, 0.0F);
-			root.rotateY(radians(-bodyYaw));
+			root.rotateY(radians(-yaw));
 			switch (sleepingDirection) {
 				case NORTH -> root.rotateZ((float) Math.PI * 0.5F);
 				case SOUTH -> root.rotateZ((float) -Math.PI * 0.5F);
@@ -1299,7 +1361,7 @@ final class CameraEntityRenderer {
 				}
 			}
 		} else {
-			root.rotateY(radians(-bodyYaw));
+			root.rotateY(radians(-yaw));
 			if (pose == Pose.CROUCHING) {
 				root.translate(0.0F, -2.0F * PX, 2.0F * PX);
 			} else if (pose == Pose.SWIMMING || pose == Pose.FALL_FLYING) {
@@ -1528,7 +1590,7 @@ final class CameraEntityRenderer {
 	private static void renderCreeper(RenderContext context, CreeperSnapshot snapshot) {
 		Matrix4f root = new Matrix4f()
 				.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
-				.rotateY(radians(-snapshot.yaw()))
+				.rotateY(radians(-snapshot.bodyYaw()))
 				.scale(snapshot.baby() ? 0.5F : 1.0F);
 		float swellScale = 1.0F + snapshot.swelling() * 0.15F;
 		root.scale(swellScale);
@@ -1537,8 +1599,11 @@ final class CameraEntityRenderer {
 		float walkAmount = Mth.clamp(snapshot.walkSpeed(), 0.0F, 1.0F);
 		float frontLegPitch = Mth.cos(walkPhase) * 1.4F * walkAmount;
 		float backLegPitch = Mth.cos(walkPhase + (float) Math.PI) * 1.4F * walkAmount;
+		float headYaw = radians(wrapDegrees(snapshot.headYaw() - snapshot.bodyYaw()));
+		float headPitch = radians(snapshot.pitch());
 
-		addBox(context, root, -4.0F, 18.0F, -4.0F, 8.0F, 8.0F, 8.0F, 0, 0, 64, 32, material, false, 0.0F);
+		Matrix4f head = rotateAround(root, 0.0F, 18.0F, 0.0F, headPitch, headYaw, 0.0F);
+		addBox(context, head, -4.0F, 18.0F, -4.0F, 8.0F, 8.0F, 8.0F, 0, 0, 64, 32, material, false, 0.0F);
 		addBox(context, root, -4.0F, 6.0F, -2.0F, 8.0F, 12.0F, 4.0F, 16, 16, 64, 32, material, false, 0.0F);
 
 		Matrix4f rightFront = rotateAround(root, -2.0F, 6.0F, -2.0F, frontLegPitch, 0.0F, 0.0F);
@@ -1999,7 +2064,7 @@ final class CameraEntityRenderer {
 			Matrix4f root = new Matrix4f()
 					.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
 					.scale(snapshot.rootScale())
-					.rotateY(radians(-snapshot.rootYaw()))
+					.rotateY(radians(snapshot.rootYawOffsetDegrees() - snapshot.rootYaw()))
 					.scale(-1.0F, -1.0F, 1.0F)
 					.translate(0.0F, -1.501F, 0.0F);
 				boolean baby = Boolean.TRUE.equals(snapshot.stateFields().get("isBaby"))

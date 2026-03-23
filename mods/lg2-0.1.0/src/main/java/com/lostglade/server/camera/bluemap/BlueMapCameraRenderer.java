@@ -1,5 +1,6 @@
 package com.lostglade.server.camera.bluemap;
 
+import com.lostglade.Lg2;
 import com.lostglade.server.map.MapPaletteQuantizer;
 import com.lostglade.server.map.BlockTintProvider;
 import com.lostglade.server.map.TextureAssetManager;
@@ -1642,13 +1643,17 @@ public final class BlueMapCameraRenderer {
 		List<Entity> entities = level.getEntities(viewer, searchBox, entity -> entity != null && entity.isAlive() && !entity.isInvisible());
 		List<CameraEntityRenderer.EntitySnapshot> result = new ArrayList<>(entities.size());
 		for (Entity entity : entities) {
-			AABB box = entity.getBoundingBox();
-			if (!frustum.intersectsAabb(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)) {
-				continue;
-			}
-			CameraEntityRenderer.EntitySnapshot snapshot = CameraEntityRenderer.captureEntity(entity);
-			if (snapshot != null) {
-				result.add(snapshot);
+			try {
+				AABB box = entity.getBoundingBox();
+				if (!frustum.intersectsAabb(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)) {
+					continue;
+				}
+				CameraEntityRenderer.EntitySnapshot snapshot = CameraEntityRenderer.captureEntity(entity);
+				if (snapshot != null) {
+					result.add(snapshot);
+				}
+			} catch (Throwable throwable) {
+				Lg2.LOGGER.debug("Failed to prepare camera entity {}", entity, throwable);
 			}
 		}
 		return result;
