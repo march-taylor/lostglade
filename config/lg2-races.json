@@ -1,43 +1,6 @@
 ﻿{
   "races": [
     {
-      "enabled": false,
-      "id": "test_race",
-      "displayName": "Тестовая раса",
-      "ownerNickname": "MrPines",
-      "description": "Тестовая персональная раса для проверки меню и активных способностей.",
-      "attack": {
-        "enabled": true,
-        "abilityId": "test_attack_sword",
-        "name": "Атака: Клинок",
-        "description": "Выдаёт меч на 5 секунд."
-      },
-      "defense": {
-        "enabled": true,
-        "abilityId": "test_defense_resistance",
-        "name": "Защита: Стойкость II",
-        "description": "Даёт Resistance II на 5 секунд."
-      },
-      "uniqueAbility": {
-        "enabled": true,
-        "abilityId": "test_unique_speed",
-        "name": "Абилка: Ускорение III",
-        "description": "Даёт Speed III на 10 секунд."
-      },
-      "shnyaga": {
-        "enabled": true,
-        "abilityId": "test_shnyaga_bedrock",
-        "name": "Шняга: Крафт бедрока",
-        "description": "Открывает возможность крафта бедрока."
-      },
-      "stock": {
-        "enabled": true,
-        "abilityId": "test_stock_regen",
-        "name": "Сток: Регенерация I",
-        "description": "Пассивно даёт Regeneration I."
-      }
-    },
-    {
       "enabled": true,
       "id": "mister_cartel_49",
       "displayName": "Мистер Картель 49",
@@ -76,4 +39,3 @@
     }
   ]
 }
-
