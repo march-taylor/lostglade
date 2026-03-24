@@ -796,6 +796,7 @@ public final class ServerRaceSystem {
 		if (!level.addFreshEntity(lawyer)) {
 			return null;
 		}
+		emitSmoke(level, lawyer.position());
 		return lawyer;
 	}
 
@@ -818,7 +819,9 @@ public final class ServerRaceSystem {
 	}
 
 	private static void tickCartelLawyerMovement(ServerLevel level, ServerPlayer cartel, Mob lawyer, CartelDefenseSession session, long nowTick) {
-		double distanceSqr = horizontalDistanceToSqr(lawyer.position(), cartel.position());
+		Vec3 cartelPos = cartel.position();
+		Vec3 lawyerPos = lawyer.position();
+		double distanceSqr = horizontalDistanceToSqr(lawyerPos, cartelPos);
 		double minDistanceSqr = session.innerMinDistanceBlocks * session.innerMinDistanceBlocks;
 		double maxDistanceSqr = session.followMaxDistanceBlocks * session.followMaxDistanceBlocks;
 		if (distanceSqr > maxDistanceSqr) {
@@ -838,14 +841,17 @@ public final class ServerRaceSystem {
 		}
 
 		session.outsideSinceTick = null;
+		boolean pathCutsInnerRing = distanceSqr >= minDistanceSqr
+				&& session.wanderTarget != null
+				&& segmentIntersectsInnerRadius(cartelPos, lawyerPos, session.wanderTarget, session.innerMinDistanceBlocks + 0.2D);
 		if (
-				distanceSqr < minDistanceSqr
-						|| session.wanderTarget == null
+				session.wanderTarget == null
 						|| nowTick >= session.nextWanderRetargetTick
 						|| lawyer.position().distanceToSqr(session.wanderTarget) <= 1.0D
 						|| !isWithinLawyerBounds(cartel.position(), session, session.wanderTarget)
+						|| pathCutsInnerRing
 		) {
-			session.wanderTarget = sampleLawyerWanderTarget(level, cartel, session.innerMinDistanceBlocks, session.followMaxDistanceBlocks);
+			session.wanderTarget = sampleLawyerWanderTarget(level, cartel, lawyer.position(), session.innerMinDistanceBlocks, session.followMaxDistanceBlocks);
 			session.nextWanderRetargetTick = nowTick + 20L;
 		}
 
@@ -857,22 +863,13 @@ public final class ServerRaceSystem {
 	}
 
 	private static void moveLawyerBackTowardCartel(ServerLevel level, Mob lawyer, ServerPlayer cartel, CartelDefenseSession session) {
-		Vec3 delta = lawyer.position().subtract(cartel.position());
-		Vec3 horizontal = new Vec3(delta.x, 0.0D, delta.z);
-		if (horizontal.lengthSqr() < 1.0E-4D) {
-			horizontal = new Vec3(1.0D, 0.0D, 0.0D);
-		}
 		double targetDistance = Math.max(session.innerMinDistanceBlocks + 0.35D, session.followMaxDistanceBlocks - 0.35D);
-		Vec3 desired = cartel.position().add(horizontal.normalize().scale(targetDistance));
-		Vec3 target = resolveLawyerSpawnPosition(level, desired);
-		if (target == null) {
-			target = desired;
-		}
+		Vec3 target = projectLawyerToRing(level, cartel.position(), lawyer.position(), targetDistance);
 		lawyer.setTarget(null);
 		lawyer.getNavigation().moveTo(target.x, target.y, target.z, CARTEL_LAWYER_RETURN_SPEED);
 	}
 
-	private static Vec3 sampleLawyerWanderTarget(ServerLevel level, ServerPlayer cartel, double innerRadius, double outerRadius) {
+	private static Vec3 sampleLawyerWanderTarget(ServerLevel level, ServerPlayer cartel, Vec3 lawyerPosition, double innerRadius, double outerRadius) {
 		double minDistance = Math.max(0.35D, innerRadius + 0.35D);
 		double maxDistance = Math.max(minDistance, outerRadius - 0.35D);
 		for (int attempt = 0; attempt < 10; attempt++) {
@@ -884,7 +881,7 @@ public final class ServerRaceSystem {
 					cartel.getZ() + Math.sin(angle) * distance
 			);
 			Vec3 resolved = resolveLawyerSpawnPosition(level, desired);
-			if (resolved != null) {
+			if (resolved != null && (lawyerPosition == null || !segmentIntersectsInnerRadius(cartel.position(), lawyerPosition, resolved, innerRadius + 0.2D))) {
 				return resolved;
 			}
 		}
@@ -902,6 +899,34 @@ public final class ServerRaceSystem {
 		double dx = first.x - second.x;
 		double dz = first.z - second.z;
 		return dx * dx + dz * dz;
+	}
+
+	private static boolean segmentIntersectsInnerRadius(Vec3 center, Vec3 start, Vec3 end, double radius) {
+		double sx = start.x - center.x;
+		double sz = start.z - center.z;
+		double ex = end.x - center.x;
+		double ez = end.z - center.z;
+		double dx = ex - sx;
+		double dz = ez - sz;
+		double segmentLengthSqr = dx * dx + dz * dz;
+		if (segmentLengthSqr <= 1.0E-6D) {
+			return sx * sx + sz * sz < radius * radius;
+		}
+		double t = -(sx * dx + sz * dz) / segmentLengthSqr;
+		t = Math.max(0.0D, Math.min(1.0D, t));
+		double closestX = sx + dx * t;
+		double closestZ = sz + dz * t;
+		return closestX * closestX + closestZ * closestZ < radius * radius;
+	}
+
+	private static Vec3 projectLawyerToRing(ServerLevel level, Vec3 center, Vec3 currentPosition, double targetDistance) {
+		Vec3 horizontal = new Vec3(currentPosition.x - center.x, 0.0D, currentPosition.z - center.z);
+		if (horizontal.lengthSqr() < 1.0E-4D) {
+			horizontal = new Vec3(1.0D, 0.0D, 0.0D);
+		}
+		Vec3 desired = center.add(horizontal.normalize().scale(Math.max(0.35D, targetDistance)));
+		Vec3 resolved = resolveLawyerSpawnPosition(level, desired);
+		return resolved != null ? resolved : desired;
 	}
 
 	private static Vec3 resolveLawyerSpawnPosition(ServerLevel level, Vec3 desiredCenter) {
@@ -927,6 +952,7 @@ public final class ServerRaceSystem {
 		if (level != null) {
 			Entity entity = level.getEntity(session.lawyerEntityId);
 			if (entity != null) {
+				emitSmoke(level, entity.position());
 				entity.discard();
 			}
 			sendCartelLawyerAppearanceRemoval(level, session.lawyerProfileId);

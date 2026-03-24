@@ -22,11 +22,11 @@
         "name": "Защита",
         "description": "Рядом появляется адвокат и отражает часть урона нападающим.",
         "cooldownSeconds": 0.0,
-        "durationSeconds": 20.0,
+        "durationSeconds": 30.0,
         "innerMinDistanceBlocks": 2.0,
-        "followMaxDistanceBlocks": 5.0,
-        "maxOutsideAreaSeconds": 5.0,
-        "healthPoints": 0.0,
+        "followMaxDistanceBlocks": 6.0,
+        "maxOutsideAreaSeconds": 4.0,
+        "healthPoints": 100.0,
         "reflectedDamageRatio": 0.5
       },
       "uniqueAbility": {
