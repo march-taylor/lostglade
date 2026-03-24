@@ -881,16 +881,24 @@ public final class BlueMapCameraRenderer {
 	}
 
 	static final class TextureMaterial {
+		private static final float TINTED_GRAYSCALE_CONTRAST_BOOST = 1.40F;
+		private static final float TINTED_BIOME_BOOST = 1.45F;
 		private final int width;
 		private final int height;
 		private final int[] pixels;
 		private final boolean transparent;
+		private final boolean grayscale;
+		private final float averageLuma;
+		private final float detailContrast;
 
-		private TextureMaterial(int width, int height, int[] pixels, boolean transparent) {
+		private TextureMaterial(int width, int height, int[] pixels, boolean transparent, boolean grayscale, float averageLuma, float detailContrast) {
 			this.width = width;
 			this.height = height;
 			this.pixels = pixels;
 			this.transparent = transparent;
+			this.grayscale = grayscale;
+			this.averageLuma = averageLuma;
+			this.detailContrast = detailContrast;
 		}
 
 		private static TextureMaterial from(Texture texture) {
@@ -906,7 +914,7 @@ public final class BlueMapCameraRenderer {
 		}
 
 		static TextureMaterial missing() {
-			return new TextureMaterial(1, 1, new int[]{0xFFFF00FF}, false);
+			return new TextureMaterial(1, 1, new int[]{0xFFFF00FF}, false, false, 1.0F, 1.0F);
 		}
 
 		static TextureMaterial fromImage(BufferedImage image) {
@@ -917,13 +925,40 @@ public final class BlueMapCameraRenderer {
 			int height = Math.max(1, image.getHeight());
 			int[] pixels = image.getRGB(0, 0, width, height, null, 0, width);
 			boolean transparent = false;
+			boolean grayscale = true;
+			float lumaSum = 0.0F;
+			float minLuma = 1.0F;
+			float maxLuma = 0.0F;
+			int opaqueSamples = 0;
 			for (int pixel : pixels) {
-				if (((pixel >>> 24) & 0xFF) < 255) {
+				int alpha = (pixel >>> 24) & 0xFF;
+				if (alpha < 255) {
 					transparent = true;
-					break;
 				}
+				if (alpha <= 8) {
+					continue;
+				}
+				float red = ((pixel >> 16) & 0xFF) / 255.0F;
+				float green = ((pixel >> 8) & 0xFF) / 255.0F;
+				float blue = (pixel & 0xFF) / 255.0F;
+				if (grayscale) {
+					float maxChannelDelta = Math.max(Math.abs(red - green), Math.max(Math.abs(red - blue), Math.abs(green - blue)));
+					if (maxChannelDelta > 0.025F) {
+						grayscale = false;
+					}
+				}
+				float luma = (red + green + blue) / 3.0F;
+				lumaSum += luma;
+				minLuma = Math.min(minLuma, luma);
+				maxLuma = Math.max(maxLuma, luma);
+				opaqueSamples++;
 			}
-			return new TextureMaterial(width, height, pixels, transparent);
+			float averageLuma = opaqueSamples > 0 ? lumaSum / opaqueSamples : 1.0F;
+			float detailContrast = 1.0F;
+			if (grayscale && opaqueSamples > 0 && maxLuma - minLuma < 0.42F) {
+				detailContrast = TINTED_GRAYSCALE_CONTRAST_BOOST;
+			}
+			return new TextureMaterial(width, height, pixels, transparent, grayscale, averageLuma, detailContrast);
 		}
 
 		private static BufferedImage selectRenderableFrame(Texture texture, BufferedImage image) {
@@ -971,6 +1006,34 @@ public final class BlueMapCameraRenderer {
 				return imageSecondary;
 			}
 			return imagePrimary;
+		}
+
+		private boolean shouldEnhanceTintedDetail(float tintR, float tintG, float tintB) {
+			if (!this.grayscale || this.detailContrast <= 1.0F) {
+				return false;
+			}
+			float epsilon = 1.0F / 255.0F + 1.0E-4F;
+			return Math.abs(tintR - tintG) > epsilon
+					|| Math.abs(tintR - tintB) > epsilon
+					|| Math.abs(tintG - tintB) > epsilon;
+		}
+
+		private int enhanceTintedSample(int argb, float tintR, float tintG, float tintB) {
+			if (!this.grayscale || this.detailContrast <= 1.0F) {
+				return argb;
+			}
+			int alpha = (argb >>> 24) & 0xFF;
+			if (alpha <= 8) {
+				return argb;
+			}
+			float luma = (((argb >> 16) & 0xFF) + ((argb >> 8) & 0xFF) + (argb & 0xFF)) / (255.0F * 3.0F);
+			float adjusted = Mth.clamp(this.averageLuma + (luma - this.averageLuma) * this.detailContrast * TINTED_BIOME_BOOST, 0.0F, 1.0F);
+			if (!this.transparent) {
+				float blockTopBias = Mth.clamp((this.averageLuma - 0.42F) * 0.40F, 0.0F, 0.08F);
+				adjusted = Mth.clamp(adjusted - blockTopBias, 0.0F, 1.0F);
+			}
+			int channel = Mth.clamp(Math.round(adjusted * 255.0F), 0, 255);
+			return (alpha << 24) | (channel << 16) | (channel << 8) | channel;
 		}
 
 		private int sample(float u, float v) {
@@ -1458,7 +1521,11 @@ public final class BlueMapCameraRenderer {
 							+ w1 * triangle.b().ao() * triangle.b().inverseZ()
 							+ w2 * triangle.c().ao() * triangle.c().inverseZ()) / inverseZ;
 
-					int argb = triangle.material().sample(u, v);
+					TextureMaterial material = triangle.material();
+					int argb = material.sample(u, v);
+					if (material.shouldEnhanceTintedDetail(triangle.colorR(), triangle.colorG(), triangle.colorB())) {
+						argb = material.enhanceTintedSample(argb, triangle.colorR(), triangle.colorG(), triangle.colorB());
+					}
 					float alpha = ((argb >>> 24) & 0xFF) / 255.0F;
 					if (alpha <= 0.01F) {
 						continue;
