@@ -122,6 +122,7 @@ public final class ServerRaceSystem {
 	private static final double CARTEL_LAWYER_BASE_MOVE_SPEED = 0.23D;
 	private static final double CARTEL_LAWYER_WALK_SPEED = 1.0D;
 	private static final double CARTEL_LAWYER_RETURN_SPEED = 1.5D;
+	private static final long CARTEL_LAWYER_MOVEMENT_LOGIC_INTERVAL_TICKS = 2L;
 	private static final long CARTEL_LAWYER_WANDER_NAV_INTERVAL_TICKS = 8L;
 	private static final long CARTEL_LAWYER_RETURN_NAV_INTERVAL_TICKS = 3L;
 	private static final double CARTEL_LAWYER_NAV_REPATH_DISTANCE_SQR = 0.75D * 0.75D;
@@ -138,6 +139,8 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, CartelSummonSession> CARTEL_SUMMON_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, Long> CARTEL_DEFENSE_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelDefenseSession> CARTEL_DEFENSE_SESSIONS = new LinkedHashMap<>();
+	private static final Map<UUID, UUID> CARTEL_SUMMON_OWNER_BY_ENTITY = new LinkedHashMap<>();
+	private static final Map<UUID, UUID> CARTEL_LAWYER_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final ThreadLocal<Boolean> CARTEL_DEFENSE_REFLECTION_ACTIVE = ThreadLocal.withInitial(() -> Boolean.FALSE);
 	private static CompletableFuture<Property> CARTEL_LAWYER_SKIN_FUTURE;
 	private static volatile Property CARTEL_LAWYER_SKIN_PROPERTY;
@@ -170,6 +173,7 @@ public final class ServerRaceSystem {
 		private final double followMaxDistanceBlocks;
 		private final long maxOutsideTicks;
 		private final float reflectedDamageRatio;
+		private long nextMovementLogicTick;
 		private long nextWanderRetargetTick;
 		private long nextNavigationUpdateTick;
 		private Vec3 wanderTarget;
@@ -222,6 +226,8 @@ public final class ServerRaceSystem {
 			CARTEL_SUMMON_SESSIONS.clear();
 			CARTEL_DEFENSE_COOLDOWNS.clear();
 			CARTEL_DEFENSE_SESSIONS.clear();
+			CARTEL_SUMMON_OWNER_BY_ENTITY.clear();
+			CARTEL_LAWYER_OWNER_BY_ENTITY.clear();
 			CARTEL_LAWYER_SKIN_FUTURE = null;
 			CARTEL_LAWYER_SKIN_PROPERTY = null;
 		});
@@ -649,6 +655,7 @@ public final class ServerRaceSystem {
 				caster.sendSystemMessage(Component.literal("Failed to create lawyer."));
 				return 0;
 			}
+			CARTEL_LAWYER_OWNER_BY_ENTITY.put(lawyer.getUUID(), caster.getUUID());
 
 			CartelDefenseSession session = new CartelDefenseSession(
 					level.dimension(),
@@ -747,6 +754,25 @@ public final class ServerRaceSystem {
 		} finally {
 			CARTEL_DEFENSE_REFLECTION_ACTIVE.set(Boolean.FALSE);
 		}
+	}
+
+	public static boolean shouldCancelCartelOwnerDamage(LivingEntity victim, net.minecraft.world.damagesource.DamageSource damageSource) {
+		if (victim == null || damageSource == null) {
+			return false;
+		}
+
+		Entity attackerEntity = damageSource.getEntity();
+		if (!(attackerEntity instanceof ServerPlayer attacker)) {
+			return false;
+		}
+
+		UUID ownerId = null;
+		if (victim.getTags().contains(CARTEL_SUMMON_TAG)) {
+			ownerId = CARTEL_SUMMON_OWNER_BY_ENTITY.get(victim.getUUID());
+		} else if (victim.getTags().contains(CARTEL_LAWYER_TAG)) {
+			ownerId = CARTEL_LAWYER_OWNER_BY_ENTITY.get(victim.getUUID());
+		}
+		return ownerId != null && ownerId.equals(attacker.getUUID());
 	}
 
 	private static LivingEntity resolveDamageAttacker(net.minecraft.world.damagesource.DamageSource damageSource) {
@@ -852,6 +878,11 @@ public final class ServerRaceSystem {
 			}
 			return;
 		}
+
+		if (nowTick < session.nextMovementLogicTick) {
+			return;
+		}
+		session.nextMovementLogicTick = nowTick + CARTEL_LAWYER_MOVEMENT_LOGIC_INTERVAL_TICKS;
 
 		session.outsideSinceTick = null;
 		boolean pathCutsInnerRing = distanceSqr >= minDistanceSqr
@@ -986,6 +1017,7 @@ public final class ServerRaceSystem {
 		if (level != null) {
 			Entity entity = level.getEntity(session.lawyerEntityId);
 			if (entity != null) {
+				CARTEL_LAWYER_OWNER_BY_ENTITY.remove(entity.getUUID());
 				emitSmoke(level, entity.position());
 				entity.discard();
 			}
@@ -1141,7 +1173,7 @@ public final class ServerRaceSystem {
 		for (int i = 0; i < directions.size(); i++) {
 			Direction direction = directions.get(i);
 			BlockPos anchor = center.relative(direction, CARTEL_SPAWN_OFFSET_BLOCKS);
-			Raider raider = spawnCartelRaider(level, raiderTypes.get(i), anchor, target);
+			Raider raider = spawnCartelRaider(level, raiderTypes.get(i), anchor, target, caster.getUUID());
 			if (raider != null) {
 				session.raiderIds.add(raider.getUUID());
 			}
@@ -1199,6 +1231,7 @@ public final class ServerRaceSystem {
 			session.raiderIds.removeIf(raiderId -> {
 				Entity entity = level.getEntity(raiderId);
 				if (!(entity instanceof Raider raider) || !raider.isAlive()) {
+					CARTEL_SUMMON_OWNER_BY_ENTITY.remove(raiderId);
 					return true;
 				}
 
@@ -1255,7 +1288,7 @@ public final class ServerRaceSystem {
 		return best;
 	}
 
-	private static Raider spawnCartelRaider(ServerLevel level, EntityType<? extends Raider> type, BlockPos anchor, LivingEntity target) {
+	private static Raider spawnCartelRaider(ServerLevel level, EntityType<? extends Raider> type, BlockPos anchor, LivingEntity target, UUID ownerPlayerId) {
 		BlockPos spawnPos = resolveRaiderSpawnPos(level, type, anchor);
 		if (spawnPos == null) {
 			return null;
@@ -1281,6 +1314,7 @@ public final class ServerRaceSystem {
 			return null;
 		}
 
+		CARTEL_SUMMON_OWNER_BY_ENTITY.put(raider.getUUID(), ownerPlayerId);
 		emitSmoke(level, raider.position());
 		return raider;
 	}
@@ -1311,6 +1345,7 @@ public final class ServerRaceSystem {
 	}
 
 	private static void despawnRaiderWithSmoke(ServerLevel level, Raider raider) {
+		CARTEL_SUMMON_OWNER_BY_ENTITY.remove(raider.getUUID());
 		emitSmoke(level, raider.position());
 		raider.discard();
 	}
@@ -1442,6 +1477,7 @@ public final class ServerRaceSystem {
 					if (entity instanceof Raider raider && raider.isAlive()) {
 						despawnRaiderWithSmoke(level, raider);
 					}
+					CARTEL_SUMMON_OWNER_BY_ENTITY.remove(raiderId);
 				}
 			}
 			return true;

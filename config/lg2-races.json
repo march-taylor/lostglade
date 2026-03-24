@@ -21,12 +21,12 @@
         "abilityId": "cartel49_defense",
         "name": "Защита",
         "description": "Рядом появляется адвокат и отражает часть урона нападающим.",
-        "cooldownSeconds": 0.0,
+        "cooldownSeconds": 900.0,
         "durationSeconds": 30.0,
-        "innerMinDistanceBlocks": 2.0,
+        "innerMinDistanceBlocks": 1.0,
         "followMaxDistanceBlocks": 6.0,
         "maxOutsideAreaSeconds": 4.0,
-        "healthPoints": 200.0,
+        "healthPoints": 150.0,
         "reflectedDamageRatio": 0.5 
       },
       "uniqueAbility": {

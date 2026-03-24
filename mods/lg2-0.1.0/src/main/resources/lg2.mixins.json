@@ -24,6 +24,7 @@
 		"LivingEntityAbsoluteInvisibilityCombatMixin",
 		"LivingEntityAbsoluteInvisibilityMixin",
 		"LivingEntityCartelDefenseMixin",
+		"LivingEntityCartelOwnerFriendlyFireMixin",
 		"LivingEntityCartelLawyerInvulnerabilityMixin",
 		"LivingEntityCartelSummonLootMixin",
 		"LivingEntityStabilityLuckMixin",
