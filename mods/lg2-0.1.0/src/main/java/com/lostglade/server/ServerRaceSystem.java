@@ -121,12 +121,10 @@ public final class ServerRaceSystem {
 	private static final double CARTEL_DEFAULT_DEFENSE_HEALTH_POINTS = 0.0D;
 	private static final double CARTEL_DEFAULT_DEFENSE_REFLECT_RATIO = 0.5D;
 	private static final double CARTEL_LAWYER_BASE_MOVE_SPEED = 0.23D;
-	private static final double CARTEL_LAWYER_WALK_SPEED = 1.0D;
-	private static final double CARTEL_LAWYER_RETURN_SPEED = 1.5D;
-	private static final long CARTEL_LAWYER_MOVEMENT_LOGIC_INTERVAL_TICKS = 2L;
-	private static final long CARTEL_LAWYER_WANDER_NAV_INTERVAL_TICKS = 8L;
-	private static final long CARTEL_LAWYER_RETURN_NAV_INTERVAL_TICKS = 3L;
-	private static final double CARTEL_LAWYER_NAV_REPATH_DISTANCE_SQR = 0.75D * 0.75D;
+	private static final double CARTEL_LAWYER_WALK_SPEED = CARTEL_LAWYER_BASE_MOVE_SPEED;
+	private static final double CARTEL_LAWYER_RETURN_SPEED = CARTEL_LAWYER_BASE_MOVE_SPEED * 1.5D;
+	private static final long CARTEL_LAWYER_MOVEMENT_LOGIC_INTERVAL_TICKS = 1L;
+	private static final double CARTEL_LAWYER_STEERING_SMOOTHING = 0.35D;
 	private static final EntityDimensions CARTEL_LAWYER_DIMENSIONS = EntityDimensions.fixed(0.6F, 1.8F);
 	private static final Path CARTEL_LAWYER_SKIN_PATH = Path.of("C:\\Users\\User\\Downloads\\lawyer.png");
 	private static final String CARTEL_LAWYER_SKIN_VALUE = "ewogICJ0aW1lc3RhbXAiIDogMTc1MjAzMzk0NjY5MSwKICAicHJvZmlsZUlkIiA6ICI0ZWE3NGM1ZGUyZGI0OGY2YjViOTk1YTVhNTYzMmU0NCIsCiAgInByb2ZpbGVOYW1lIiA6ICJNclNjYXJ5U3BhY2VDYXQiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvMjRkNDQ3MDc4N2M4NWRlNWI5ODE5ODVkNDBmOTI5NzNhNmQxMmQ5ZDYxNzc0NGM3YWQzOGY4MWZmMTA3YTE5ZCIKICAgIH0KICB9Cn0=";
@@ -176,10 +174,7 @@ public final class ServerRaceSystem {
 		private final float reflectedDamageRatio;
 		private long nextMovementLogicTick;
 		private long nextWanderRetargetTick;
-		private long nextNavigationUpdateTick;
 		private Vec3 wanderTarget;
-		private Vec3 lastNavigationTarget;
-		private double lastNavigationSpeed;
 		private Long outsideSinceTick;
 
 		private CartelDefenseSession(
@@ -215,7 +210,6 @@ public final class ServerRaceSystem {
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			RaceConfig.load();
 			rebuildCache();
-			cleanupAllCartelRaceEntities(server, false);
 			syncGeneratedDialogs(server, true);
 			prewarmCartelLawyerSkinAsync();
 			Lg2.LOGGER.info("Loaded {} configured personal races", RACES_BY_NICKNAME.size());
@@ -870,73 +864,79 @@ public final class ServerRaceSystem {
 			if (session.outsideSinceTick == null) {
 				session.outsideSinceTick = nowTick;
 			}
-			moveLawyerBackTowardCartel(level, lawyer, cartel, session);
+			moveLawyerTowardTarget(
+					lawyer,
+					projectLawyerToRing(level, cartel.position(), lawyer.position(), Math.max(session.innerMinDistanceBlocks + 0.35D, session.followMaxDistanceBlocks - 0.35D)),
+					CARTEL_LAWYER_RETURN_SPEED
+			);
 			if (nowTick - session.outsideSinceTick >= session.maxOutsideTicks) {
 				Vec3 returnPos = findCartelLawyerSpawnPos(level, cartel, session.innerMinDistanceBlocks, session.followMaxDistanceBlocks);
 				lawyer.teleportTo(returnPos.x, returnPos.y, returnPos.z);
 				lawyer.getNavigation().stop();
 				session.outsideSinceTick = null;
 				session.nextWanderRetargetTick = nowTick + 20L;
-				session.nextNavigationUpdateTick = nowTick;
-				session.lastNavigationTarget = null;
 				session.wanderTarget = returnPos;
 			}
+			moveLawyerTowardTarget(lawyer, projectLawyerToRing(level, cartel.position(), lawyer.position(), Math.max(session.innerMinDistanceBlocks + 0.35D, session.followMaxDistanceBlocks - 0.35D)), CARTEL_LAWYER_RETURN_SPEED);
 			return;
 		}
-
-		if (nowTick < session.nextMovementLogicTick) {
-			return;
-		}
-		session.nextMovementLogicTick = nowTick + CARTEL_LAWYER_MOVEMENT_LOGIC_INTERVAL_TICKS;
 
 		session.outsideSinceTick = null;
-		boolean pathCutsInnerRing = distanceSqr >= minDistanceSqr
-				&& session.wanderTarget != null
-				&& segmentIntersectsInnerRadius(cartelPos, lawyerPos, session.wanderTarget, session.innerMinDistanceBlocks + 0.2D);
-		if (
-				session.wanderTarget == null
-						|| nowTick >= session.nextWanderRetargetTick
-						|| lawyer.position().distanceToSqr(session.wanderTarget) <= 1.0D
-						|| !isWithinLawyerBounds(cartel.position(), session, session.wanderTarget)
-						|| pathCutsInnerRing
-		) {
-			session.wanderTarget = sampleLawyerWanderTarget(level, cartel, lawyer.position(), session.innerMinDistanceBlocks, session.followMaxDistanceBlocks);
-			session.nextWanderRetargetTick = nowTick + 20L;
+		if (nowTick >= session.nextMovementLogicTick) {
+			session.nextMovementLogicTick = nowTick + CARTEL_LAWYER_MOVEMENT_LOGIC_INTERVAL_TICKS;
+			boolean pathCutsInnerRing = distanceSqr >= minDistanceSqr
+					&& session.wanderTarget != null
+					&& segmentIntersectsInnerRadius(cartelPos, lawyerPos, session.wanderTarget, session.innerMinDistanceBlocks + 0.2D);
+			if (
+					session.wanderTarget == null
+							|| nowTick >= session.nextWanderRetargetTick
+							|| lawyer.position().distanceToSqr(session.wanderTarget) <= 1.0D
+							|| !isWithinLawyerBounds(cartel.position(), session, session.wanderTarget)
+							|| pathCutsInnerRing
+			) {
+				session.wanderTarget = sampleLawyerWanderTarget(level, cartel, lawyer.position(), session.innerMinDistanceBlocks, session.followMaxDistanceBlocks);
+				session.nextWanderRetargetTick = nowTick + 20L;
+			}
 		}
 
 		lawyer.setTarget(null);
 		Vec3 target = session.wanderTarget == null
 				? findCartelLawyerSpawnPos(level, cartel, session.innerMinDistanceBlocks, session.followMaxDistanceBlocks)
 				: session.wanderTarget;
-		updateLawyerNavigation(lawyer, session, target, CARTEL_LAWYER_WALK_SPEED, nowTick, CARTEL_LAWYER_WANDER_NAV_INTERVAL_TICKS, false);
+		moveLawyerTowardTarget(lawyer, target, CARTEL_LAWYER_WALK_SPEED);
 	}
 
-	private static void moveLawyerBackTowardCartel(ServerLevel level, Mob lawyer, ServerPlayer cartel, CartelDefenseSession session) {
-		double targetDistance = Math.max(session.innerMinDistanceBlocks + 0.35D, session.followMaxDistanceBlocks - 0.35D);
-		Vec3 target = projectLawyerToRing(level, cartel.position(), lawyer.position(), targetDistance);
-		lawyer.setTarget(null);
-		updateLawyerNavigation(lawyer, session, target, CARTEL_LAWYER_RETURN_SPEED, lawyer.level().getGameTime(), CARTEL_LAWYER_RETURN_NAV_INTERVAL_TICKS, false);
-	}
-
-	private static void updateLawyerNavigation(Mob lawyer, CartelDefenseSession session, Vec3 target, double speed, long nowTick, long updateIntervalTicks, boolean force) {
-		if (lawyer == null || session == null || target == null) {
+	private static void moveLawyerTowardTarget(Mob lawyer, Vec3 target, double speed) {
+		if (lawyer == null || target == null) {
 			return;
 		}
 
-		boolean shouldRepath = force
-				|| session.lastNavigationTarget == null
-				|| session.lastNavigationTarget.distanceToSqr(target) > CARTEL_LAWYER_NAV_REPATH_DISTANCE_SQR
-				|| Math.abs(session.lastNavigationSpeed - speed) > 1.0E-4D
-				|| lawyer.getNavigation().isDone()
-				|| nowTick >= session.nextNavigationUpdateTick;
-		if (!shouldRepath) {
+		lawyer.getNavigation().stop();
+		Vec3 position = lawyer.position();
+		Vec3 horizontal = new Vec3(target.x - position.x, 0.0D, target.z - position.z);
+		double distance = horizontal.length();
+		if (distance <= 0.08D) {
+			Vec3 delta = lawyer.getDeltaMovement();
+			lawyer.setDeltaMovement(delta.x * 0.5D, delta.y, delta.z * 0.5D);
 			return;
 		}
 
-		lawyer.getNavigation().moveTo(target.x, target.y, target.z, speed);
-		session.lastNavigationTarget = target;
-		session.lastNavigationSpeed = speed;
-		session.nextNavigationUpdateTick = nowTick + Math.max(1L, updateIntervalTicks);
+		Vec3 desiredMovement = horizontal.scale(Math.min(speed, distance) / distance);
+		Vec3 delta = lawyer.getDeltaMovement();
+		Vec3 currentHorizontal = new Vec3(delta.x, 0.0D, delta.z);
+		Vec3 movement = currentHorizontal.scale(1.0D - CARTEL_LAWYER_STEERING_SMOOTHING).add(desiredMovement.scale(CARTEL_LAWYER_STEERING_SMOOTHING));
+		if (distance <= 0.4D) {
+			movement = movement.scale(0.65D);
+		}
+		lawyer.setDeltaMovement(movement.x, delta.y, movement.z);
+		if (lawyer.horizontalCollision && lawyer.onGround()) {
+			lawyer.jumpFromGround();
+		}
+		float yaw = (float) (Math.toDegrees(Math.atan2(movement.z, movement.x)) - 90.0D);
+		lawyer.setYRot(yaw);
+		lawyer.setYBodyRot(yaw);
+		lawyer.setYHeadRot(yaw);
+		lawyer.hurtMarked = true;
 	}
 
 	private static Vec3 sampleLawyerWanderTarget(ServerLevel level, ServerPlayer cartel, Vec3 lawyerPosition, double innerRadius, double outerRadius) {
@@ -1598,6 +1598,11 @@ public final class ServerRaceSystem {
 		@Override
 		public EntityDimensions getDefaultDimensions(Pose pose) {
 			return CARTEL_LAWYER_DIMENSIONS;
+		}
+
+		@Override
+		public float maxUpStep() {
+			return 1.0F;
 		}
 
 		@Override
