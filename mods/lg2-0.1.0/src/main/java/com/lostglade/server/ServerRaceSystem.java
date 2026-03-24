@@ -738,33 +738,34 @@ public final class ServerRaceSystem {
 	}
 
 	private static int useMrCartelUniqueAbility(ServerPlayer caster, PlayerRaceConfig race, RaceAbilityConfig ability) {
-		ServerLevel level = caster.level();
-		long nowTick = level.getGameTime();
-		long cooldownTicks = asTicks(positiveOrDefault(ability.cooldownSeconds, CARTEL_DEFAULT_UNIQUE_COOLDOWN_SECONDS));
-		long nextAllowedTick = CARTEL_UNIQUE_COOLDOWNS.getOrDefault(caster.getUUID(), 0L);
-		if (cooldownTicks > 0 && nowTick < nextAllowedTick) {
-			double remaining = (nextAllowedTick - nowTick) / 20.0D;
-			caster.displayClientMessage(
-					Component.literal(String.format(Locale.ROOT, "%.1fs", remaining))
-							.withStyle(ChatFormatting.RED),
-					true
+		try {
+			ServerLevel level = caster.level();
+			long nowTick = level.getGameTime();
+			long cooldownTicks = asTicks(positiveOrDefault(ability.cooldownSeconds, CARTEL_DEFAULT_UNIQUE_COOLDOWN_SECONDS));
+			long nextAllowedTick = CARTEL_UNIQUE_COOLDOWNS.getOrDefault(caster.getUUID(), 0L);
+			if (cooldownTicks > 0 && nowTick < nextAllowedTick) {
+				double remaining = (nextAllowedTick - nowTick) / 20.0D;
+				caster.displayClientMessage(
+						Component.literal(String.format(Locale.ROOT, "%.1fs", remaining))
+								.withStyle(ChatFormatting.RED),
+						true
+				);
+				return 0;
+			}
+
+			List<ServerPlayer> candidates = collectCartelDisguiseCandidates(caster);
+			openMrCartelDisguiseMenu(caster, candidates, 0, ability);
+			Lg2.LOGGER.info(
+					"Player {} opened mister cartel unique ability '{}' menu from race '{}'",
+					caster.getGameProfile().name(),
+					ability.abilityId,
+					race.id
 			);
+			return 1;
+		} catch (Exception exception) {
+			Lg2.LOGGER.error("Failed to open mister cartel unique ability menu for {}", caster.getGameProfile().name(), exception);
 			return 0;
 		}
-
-		List<ServerPlayer> candidates = collectCartelDisguiseCandidates(caster);
-		if (candidates.isEmpty()) {
-			return 0;
-		}
-
-		openMrCartelDisguiseMenu(caster, candidates, 0, ability);
-		Lg2.LOGGER.info(
-				"Player {} opened mister cartel unique ability '{}' menu from race '{}'",
-				caster.getGameProfile().name(),
-				ability.abilityId,
-				race.id
-		);
-		return 1;
 	}
 
 	private static List<ServerPlayer> collectCartelDisguiseCandidates(ServerPlayer caster) {
@@ -783,11 +784,11 @@ public final class ServerRaceSystem {
 	}
 
 	private static void openMrCartelDisguiseMenu(ServerPlayer caster, List<ServerPlayer> candidates, int selectedIndex, RaceAbilityConfig ability) {
-		if (caster == null || candidates == null || candidates.isEmpty()) {
+		if (caster == null) {
 			return;
 		}
 
-		int normalizedIndex = Math.floorMod(selectedIndex, candidates.size());
+		int normalizedIndex = candidates == null || candidates.isEmpty() ? 0 : Math.floorMod(selectedIndex, candidates.size());
 		caster.openMenu(new SimpleMenuProvider(
 				(syncId, inventory, menuPlayer) -> new CartelDisguiseMenu(syncId, inventory, caster, ability, normalizedIndex),
 				Component.literal("РџРµСЂРµРІРѕРїР»РѕС‰РµРЅРёРµ")
@@ -968,6 +969,7 @@ public final class ServerRaceSystem {
 	private static ItemStack buildCartelDisguiseHead(ServerPlayer target) {
 		ItemStack stack = new ItemStack(Items.PLAYER_HEAD);
 		if (target == null) {
+			stack.set(DataComponents.CUSTOM_NAME, Component.literal(" "));
 			return stack;
 		}
 
@@ -975,6 +977,12 @@ public final class ServerRaceSystem {
 		applySkinRestorerSkin(target, profile.properties());
 		stack.set(DataComponents.PROFILE, ResolvableProfile.createResolved(profile));
 		stack.set(DataComponents.CUSTOM_NAME, Component.literal(target.getGameProfile().name()));
+		return stack;
+	}
+
+	private static ItemStack buildCartelDisguiseEmptyState() {
+		ItemStack stack = new ItemStack(Items.BARRIER);
+		stack.set(DataComponents.CUSTOM_NAME, Component.literal("Нет игроков"));
 		return stack;
 	}
 
@@ -1908,7 +1916,6 @@ public final class ServerRaceSystem {
 
 			List<ServerPlayer> candidates = collectCartelDisguiseCandidates(this.viewer);
 			if (candidates.isEmpty()) {
-				this.viewer.closeContainer();
 				return;
 			}
 
@@ -1945,6 +1952,7 @@ public final class ServerRaceSystem {
 
 			List<ServerPlayer> candidates = collectCartelDisguiseCandidates(this.viewer);
 			if (candidates.isEmpty()) {
+				this.container.setItem(CARTEL_DISGUISE_HEAD_SLOT, buildCartelDisguiseEmptyState());
 				return;
 			}
 
@@ -1952,7 +1960,10 @@ public final class ServerRaceSystem {
 			this.container.setItem(CARTEL_DISGUISE_PREVIOUS_SLOT, buildCartelDisguiseArrow(false));
 			this.container.setItem(CARTEL_DISGUISE_HEAD_SLOT, buildCartelDisguiseHead(candidates.get(this.selectedIndex)));
 			this.container.setItem(CARTEL_DISGUISE_NEXT_SLOT, buildCartelDisguiseArrow(true));
-			this.broadcastFullState();
+			if (this.viewer.containerMenu == this) {
+				this.slotsChanged(this.container);
+				this.broadcastChanges();
+			}
 		}
 	}
 
