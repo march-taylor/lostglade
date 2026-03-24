@@ -754,10 +754,6 @@ public final class ServerRaceSystem {
 			}
 
 			List<ServerPlayer> candidates = collectCartelDisguiseCandidates(caster);
-			if (candidates.isEmpty()) {
-				return 0;
-			}
-
 			openMrCartelDisguiseMenu(caster, candidates, 0, ability);
 			Lg2.LOGGER.info(
 					"Player {} opened mister cartel unique ability '{}' menu from race '{}'",
@@ -788,11 +784,11 @@ public final class ServerRaceSystem {
 	}
 
 	private static void openMrCartelDisguiseMenu(ServerPlayer caster, List<ServerPlayer> candidates, int selectedIndex, RaceAbilityConfig ability) {
-		if (caster == null || candidates == null || candidates.isEmpty()) {
+		if (caster == null) {
 			return;
 		}
 
-		int normalizedIndex = Math.floorMod(selectedIndex, candidates.size());
+		int normalizedIndex = candidates == null || candidates.isEmpty() ? 0 : Math.floorMod(selectedIndex, candidates.size());
 		caster.openMenu(new SimpleMenuProvider(
 				(syncId, inventory, menuPlayer) -> new CartelDisguiseMenu(syncId, inventory, caster, ability, normalizedIndex),
 				Component.literal("РџРµСЂРµРІРѕРїР»РѕС‰РµРЅРёРµ")
@@ -973,6 +969,7 @@ public final class ServerRaceSystem {
 	private static ItemStack buildCartelDisguiseHead(ServerPlayer target) {
 		ItemStack stack = new ItemStack(Items.PLAYER_HEAD);
 		if (target == null) {
+			stack.set(DataComponents.CUSTOM_NAME, Component.literal(" "));
 			return stack;
 		}
 
@@ -980,6 +977,12 @@ public final class ServerRaceSystem {
 		applySkinRestorerSkin(target, profile.properties());
 		stack.set(DataComponents.PROFILE, ResolvableProfile.createResolved(profile));
 		stack.set(DataComponents.CUSTOM_NAME, Component.literal(target.getGameProfile().name()));
+		return stack;
+	}
+
+	private static ItemStack buildCartelDisguiseEmptyState() {
+		ItemStack stack = new ItemStack(Items.BARRIER);
+		stack.set(DataComponents.CUSTOM_NAME, Component.literal("Нет игроков"));
 		return stack;
 	}
 
@@ -1913,7 +1916,6 @@ public final class ServerRaceSystem {
 
 			List<ServerPlayer> candidates = collectCartelDisguiseCandidates(this.viewer);
 			if (candidates.isEmpty()) {
-				this.viewer.closeContainer();
 				return;
 			}
 
@@ -1950,6 +1952,7 @@ public final class ServerRaceSystem {
 
 			List<ServerPlayer> candidates = collectCartelDisguiseCandidates(this.viewer);
 			if (candidates.isEmpty()) {
+				this.container.setItem(CARTEL_DISGUISE_HEAD_SLOT, buildCartelDisguiseEmptyState());
 				return;
 			}
 
