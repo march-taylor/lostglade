@@ -741,7 +741,7 @@ public final class ServerRaceSystem {
 
 		CARTEL_DEFENSE_REFLECTION_ACTIVE.set(Boolean.TRUE);
 		try {
-			attacker.hurtServer(level, level.damageSources().magic(), reflectedDamage);
+			attacker.hurtServer(level, level.damageSources().genericKill(), reflectedDamage);
 		} finally {
 			CARTEL_DEFENSE_REFLECTION_ACTIVE.set(Boolean.FALSE);
 		}
