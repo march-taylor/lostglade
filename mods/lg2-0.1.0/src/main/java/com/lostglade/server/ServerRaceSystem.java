@@ -122,6 +122,9 @@ public final class ServerRaceSystem {
 	private static final double CARTEL_LAWYER_BASE_MOVE_SPEED = 0.23D;
 	private static final double CARTEL_LAWYER_WALK_SPEED = 1.0D;
 	private static final double CARTEL_LAWYER_RETURN_SPEED = 1.5D;
+	private static final long CARTEL_LAWYER_WANDER_NAV_INTERVAL_TICKS = 8L;
+	private static final long CARTEL_LAWYER_RETURN_NAV_INTERVAL_TICKS = 3L;
+	private static final double CARTEL_LAWYER_NAV_REPATH_DISTANCE_SQR = 0.75D * 0.75D;
 	private static final EntityDimensions CARTEL_LAWYER_DIMENSIONS = EntityDimensions.fixed(0.6F, 1.8F);
 	private static final Path CARTEL_LAWYER_SKIN_PATH = Path.of("C:\\Users\\User\\Downloads\\lawyer.png");
 	private static final String CARTEL_LAWYER_SKIN_VALUE = "ewogICJ0aW1lc3RhbXAiIDogMTc1MjAzMzk0NjY5MSwKICAicHJvZmlsZUlkIiA6ICI0ZWE3NGM1ZGUyZGI0OGY2YjViOTk1YTVhNTYzMmU0NCIsCiAgInByb2ZpbGVOYW1lIiA6ICJNclNjYXJ5U3BhY2VDYXQiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvMjRkNDQ3MDc4N2M4NWRlNWI5ODE5ODVkNDBmOTI5NzNhNmQxMmQ5ZDYxNzc0NGM3YWQzOGY4MWZmMTA3YTE5ZCIKICAgIH0KICB9Cn0=";
@@ -141,14 +144,16 @@ public final class ServerRaceSystem {
 
 	private static final class CartelSummonSession {
 		private final ResourceKey<Level> dimension;
+		private final UUID ownerPlayerId;
 		private final UUID targetPlayerId;
 		private final long normalExpireTick;
 		private final long afterKillTicks;
 		private final List<UUID> raiderIds = new ArrayList<>();
 		private Long afterKillExpireTick;
 
-		private CartelSummonSession(ResourceKey<Level> dimension, UUID targetPlayerId, long normalExpireTick, long afterKillTicks) {
+		private CartelSummonSession(ResourceKey<Level> dimension, UUID ownerPlayerId, UUID targetPlayerId, long normalExpireTick, long afterKillTicks) {
 			this.dimension = dimension;
+			this.ownerPlayerId = ownerPlayerId;
 			this.targetPlayerId = targetPlayerId;
 			this.normalExpireTick = normalExpireTick;
 			this.afterKillTicks = afterKillTicks;
@@ -166,7 +171,10 @@ public final class ServerRaceSystem {
 		private final long maxOutsideTicks;
 		private final float reflectedDamageRatio;
 		private long nextWanderRetargetTick;
+		private long nextNavigationUpdateTick;
 		private Vec3 wanderTarget;
+		private Vec3 lastNavigationTarget;
+		private double lastNavigationSpeed;
 		private Long outsideSinceTick;
 
 		private CartelDefenseSession(
@@ -221,6 +229,9 @@ public final class ServerRaceSystem {
 				getRace(handler.player).ifPresent(race ->
 						Lg2.LOGGER.info("Assigned personal race '{}' to {}", race.id, handler.player.getGameProfile().name())
 				)
+		);
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
+				cleanupCartelEntitiesForDisconnect(server, handler.player)
 		);
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -835,6 +846,8 @@ public final class ServerRaceSystem {
 				lawyer.getNavigation().stop();
 				session.outsideSinceTick = null;
 				session.nextWanderRetargetTick = nowTick + 20L;
+				session.nextNavigationUpdateTick = nowTick;
+				session.lastNavigationTarget = null;
 				session.wanderTarget = returnPos;
 			}
 			return;
@@ -859,14 +872,35 @@ public final class ServerRaceSystem {
 		Vec3 target = session.wanderTarget == null
 				? findCartelLawyerSpawnPos(level, cartel, session.innerMinDistanceBlocks, session.followMaxDistanceBlocks)
 				: session.wanderTarget;
-		lawyer.getNavigation().moveTo(target.x, target.y, target.z, CARTEL_LAWYER_WALK_SPEED);
+		updateLawyerNavigation(lawyer, session, target, CARTEL_LAWYER_WALK_SPEED, nowTick, CARTEL_LAWYER_WANDER_NAV_INTERVAL_TICKS, false);
 	}
 
 	private static void moveLawyerBackTowardCartel(ServerLevel level, Mob lawyer, ServerPlayer cartel, CartelDefenseSession session) {
 		double targetDistance = Math.max(session.innerMinDistanceBlocks + 0.35D, session.followMaxDistanceBlocks - 0.35D);
 		Vec3 target = projectLawyerToRing(level, cartel.position(), lawyer.position(), targetDistance);
 		lawyer.setTarget(null);
-		lawyer.getNavigation().moveTo(target.x, target.y, target.z, CARTEL_LAWYER_RETURN_SPEED);
+		updateLawyerNavigation(lawyer, session, target, CARTEL_LAWYER_RETURN_SPEED, lawyer.level().getGameTime(), CARTEL_LAWYER_RETURN_NAV_INTERVAL_TICKS, false);
+	}
+
+	private static void updateLawyerNavigation(Mob lawyer, CartelDefenseSession session, Vec3 target, double speed, long nowTick, long updateIntervalTicks, boolean force) {
+		if (lawyer == null || session == null || target == null) {
+			return;
+		}
+
+		boolean shouldRepath = force
+				|| session.lastNavigationTarget == null
+				|| session.lastNavigationTarget.distanceToSqr(target) > CARTEL_LAWYER_NAV_REPATH_DISTANCE_SQR
+				|| Math.abs(session.lastNavigationSpeed - speed) > 1.0E-4D
+				|| lawyer.getNavigation().isDone()
+				|| nowTick >= session.nextNavigationUpdateTick;
+		if (!shouldRepath) {
+			return;
+		}
+
+		lawyer.getNavigation().moveTo(target.x, target.y, target.z, speed);
+		session.lastNavigationTarget = target;
+		session.lastNavigationSpeed = speed;
+		session.nextNavigationUpdateTick = nowTick + Math.max(1L, updateIntervalTicks);
 	}
 
 	private static Vec3 sampleLawyerWanderTarget(ServerLevel level, ServerPlayer cartel, Vec3 lawyerPosition, double innerRadius, double outerRadius) {
@@ -1101,7 +1135,7 @@ public final class ServerRaceSystem {
 		List<Direction> directions = List.of(Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST);
 		long lifetimeTicks = asTicks(positiveOrDefault(ability.summonLifetimeSeconds, CARTEL_DEFAULT_LIFETIME_SECONDS));
 		long afterKillTicks = asTicks(positiveOrDefault(ability.summonAfterKillSeconds, CARTEL_DEFAULT_AFTER_KILL_SECONDS));
-		CartelSummonSession session = new CartelSummonSession(level.dimension(), target.getUUID(), nowTick + Math.max(1L, lifetimeTicks), Math.max(1L, afterKillTicks));
+		CartelSummonSession session = new CartelSummonSession(level.dimension(), caster.getUUID(), target.getUUID(), nowTick + Math.max(1L, lifetimeTicks), Math.max(1L, afterKillTicks));
 
 		BlockPos center = target.blockPosition();
 		for (int i = 0; i < directions.size(); i++) {
@@ -1383,6 +1417,35 @@ public final class ServerRaceSystem {
 			overflow -= moved;
 		}
 		return overflow;
+	}
+
+	private static void cleanupCartelEntitiesForDisconnect(MinecraftServer server, ServerPlayer player) {
+		if (server == null || player == null) {
+			return;
+		}
+
+		CartelDefenseSession defenseSession = CARTEL_DEFENSE_SESSIONS.remove(player.getUUID());
+		if (defenseSession != null) {
+			despawnCartelLawyer(server, defenseSession);
+		}
+
+		CARTEL_SUMMON_SESSIONS.entrySet().removeIf(entry -> {
+			CartelSummonSession session = entry.getValue();
+			if (!player.getUUID().equals(session.ownerPlayerId)) {
+				return false;
+			}
+
+			ServerLevel level = server.getLevel(session.dimension);
+			if (level != null) {
+				for (UUID raiderId : session.raiderIds) {
+					Entity entity = level.getEntity(raiderId);
+					if (entity instanceof Raider raider && raider.isAlive()) {
+						despawnRaiderWithSmoke(level, raider);
+					}
+				}
+			}
+			return true;
+		});
 	}
 
 	private static final class CartelLawyerEntity extends PathfinderMob {
