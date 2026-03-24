@@ -238,14 +238,28 @@ public final class ServerGlitchSystem {
 	}
 
 	private static boolean handleBroadcastedPlayerMessage(PlayerChatMessage message, ServerPlayer sender, ChatType.Bound params) {
-		GlitchConfig.ConfigData config = GlitchConfig.get();
-		if (!config.enabled || sender == null || message == null || params == null) {
+		if (sender == null || message == null || params == null) {
 			return true;
 		}
 
 		MinecraftServer server = sender.level().getServer();
 		if (server == null) {
 			return true;
+		}
+
+		Component raceDisplayNameOverride = ServerRaceSystem.getChatDisplayNameOverride(sender);
+		ChatType.Bound outgoingParams = raceDisplayNameOverride == null
+				? params
+				: new ChatType.Bound(params.chatType(), raceDisplayNameOverride, params.targetName());
+
+		GlitchConfig.ConfigData config = GlitchConfig.get();
+		if (!config.enabled) {
+			if (raceDisplayNameOverride == null) {
+				return true;
+			}
+			Component decorated = outgoingParams.decorate(Component.literal(message.signedContent()));
+			server.getPlayerList().broadcastSystemMessage(decorated, false);
+			return false;
 		}
 
 		boolean triggered = false;
@@ -276,7 +290,7 @@ public final class ServerGlitchSystem {
 						);
 						double effectiveChance = baseChance * ((1.0D - influence) + (rangeInstabilityFactor * influence));
 						if (effectiveChance > 0.0D && random.nextDouble() <= effectiveChance) {
-							triggered = chatHandler.triggerChat(server, random, entry, stabilityPercent, sender, message, params);
+							triggered = chatHandler.triggerChat(server, random, entry, stabilityPercent, sender, message, outgoingParams);
 							if (triggered) {
 								long cooldownTicks = Math.max(
 										0L,
@@ -294,7 +308,7 @@ public final class ServerGlitchSystem {
 			return false;
 		}
 
-		Component decorated = params.decorate(Component.literal(message.signedContent()));
+		Component decorated = outgoingParams.decorate(Component.literal(message.signedContent()));
 		server.getPlayerList().broadcastSystemMessage(decorated, false);
 		return false;
 	}

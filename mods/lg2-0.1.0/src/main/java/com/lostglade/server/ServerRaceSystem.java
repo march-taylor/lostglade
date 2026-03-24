@@ -16,13 +16,20 @@ import com.mojang.authlib.properties.PropertyMap;
 import com.mojang.brigadier.context.CommandContext;
 import eu.pb4.polymer.core.api.entity.PolymerEntity;
 import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
+import it.unimi.dsi.fastutil.Pair;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.lionarius.skinrestorer.SkinRestorer;
 import net.lionarius.skinrestorer.mineskin.MineskinService;
+import net.lionarius.skinrestorer.skin.SkinService;
+import net.lionarius.skinrestorer.skin.SkinStorage;
+import net.lionarius.skinrestorer.skin.SkinValue;
 import net.lionarius.skinrestorer.skin.SkinVariant;
+import net.lionarius.skinrestorer.util.PlayerUtils;
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
@@ -56,8 +63,17 @@ import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
 import net.minecraft.world.entity.ai.navigation.PathNavigation;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.Container;
+import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.raid.Raider;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
@@ -121,6 +137,8 @@ public final class ServerRaceSystem {
 	private static final double CARTEL_DEFAULT_DEFENSE_OUTSIDE_SECONDS = 5.0D;
 	private static final double CARTEL_DEFAULT_DEFENSE_HEALTH_POINTS = 0.0D;
 	private static final double CARTEL_DEFAULT_DEFENSE_REFLECT_RATIO = 0.5D;
+	private static final double CARTEL_DEFAULT_UNIQUE_DURATION_SECONDS = 300.0D;
+	private static final double CARTEL_DEFAULT_UNIQUE_COOLDOWN_SECONDS = 300.0D;
 	private static final long MISTER_CARTEL_STACK_CHECK_INTERVAL_TICKS = 8L;
 	private static final double CARTEL_LAWYER_BASE_MOVE_SPEED = 0.23D;
 	private static final double CARTEL_LAWYER_WALK_SPEED = CARTEL_LAWYER_BASE_MOVE_SPEED;
@@ -128,6 +146,10 @@ public final class ServerRaceSystem {
 	private static final long CARTEL_LAWYER_MOVEMENT_LOGIC_INTERVAL_TICKS = 1L;
 	private static final double CARTEL_LAWYER_STEERING_SMOOTHING = 0.35D;
 	private static final EntityDimensions CARTEL_LAWYER_DIMENSIONS = EntityDimensions.fixed(0.6F, 1.8F);
+	private static final int CARTEL_DISGUISE_MENU_ROWS = 3;
+	private static final int CARTEL_DISGUISE_PREVIOUS_SLOT = 11;
+	private static final int CARTEL_DISGUISE_HEAD_SLOT = 13;
+	private static final int CARTEL_DISGUISE_NEXT_SLOT = 15;
 	private static final String CARTEL_LAWYER_SKIN_VALUE = "ewogICJ0aW1lc3RhbXAiIDogMTc1MjAzMzk0NjY5MSwKICAicHJvZmlsZUlkIiA6ICI0ZWE3NGM1ZGUyZGI0OGY2YjViOTk1YTVhNTYzMmU0NCIsCiAgInByb2ZpbGVOYW1lIiA6ICJNclNjYXJ5U3BhY2VDYXQiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvMjRkNDQ3MDc4N2M4NWRlNWI5ODE5ODVkNDBmOTI5NzNhNmQxMmQ5ZDYxNzc0NGM3YWQzOGY4MWZmMTA3YTE5ZCIKICAgIH0KICB9Cn0=";
 	private static final URI CARTEL_LAWYER_SKIN_URI = URI.create("https://textures.minecraft.net/texture/24d4470787c85de5b981985d40f92973a6d12d9d617744c7ad38f81ff107a19d");
 	private static final Property CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY = new Property("textures", CARTEL_LAWYER_SKIN_VALUE);
@@ -139,6 +161,8 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, CartelSummonSession> CARTEL_SUMMON_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, Long> CARTEL_DEFENSE_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelDefenseSession> CARTEL_DEFENSE_SESSIONS = new LinkedHashMap<>();
+	private static final Map<UUID, Long> CARTEL_UNIQUE_COOLDOWNS = new LinkedHashMap<>();
+	private static final Map<UUID, CartelDisguiseSession> CARTEL_DISGUISE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> CARTEL_SUMMON_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> CARTEL_LAWYER_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final ThreadLocal<Boolean> CARTEL_DEFENSE_REFLECTION_ACTIVE = ThreadLocal.withInitial(() -> Boolean.FALSE);
@@ -200,6 +224,20 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private static final class CartelDisguiseSession {
+		private final SkinValue originalSkin;
+		private final SkinValue disguisedSkin;
+		private final String disguisedName;
+		private final long endTick;
+
+		private CartelDisguiseSession(SkinValue originalSkin, SkinValue disguisedSkin, String disguisedName, long endTick) {
+			this.originalSkin = originalSkin;
+			this.disguisedSkin = disguisedSkin;
+			this.disguisedName = disguisedName;
+			this.endTick = endTick;
+		}
+	}
+
 	private ServerRaceSystem() {
 	}
 
@@ -216,6 +254,7 @@ public final class ServerRaceSystem {
 		});
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			cleanupAllCartelRaceEntities(server, true);
+			restoreAllCartelDisguises(server);
 			RACES_BY_NICKNAME.clear();
 			DIALOG_ID_BY_NICKNAME.clear();
 			GENERATED_DIALOG_JSON_BY_PATH.clear();
@@ -223,6 +262,8 @@ public final class ServerRaceSystem {
 			CARTEL_SUMMON_SESSIONS.clear();
 			CARTEL_DEFENSE_COOLDOWNS.clear();
 			CARTEL_DEFENSE_SESSIONS.clear();
+			CARTEL_UNIQUE_COOLDOWNS.clear();
+			CARTEL_DISGUISE_SESSIONS.clear();
 			CARTEL_SUMMON_OWNER_BY_ENTITY.clear();
 			CARTEL_LAWYER_OWNER_BY_ENTITY.clear();
 			CARTEL_LAWYER_SKIN_FUTURE = null;
@@ -233,9 +274,10 @@ public final class ServerRaceSystem {
 						Lg2.LOGGER.info("Assigned personal race '{}' to {}", race.id, handler.player.getGameProfile().name())
 				)
 		);
-		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
-				cleanupCartelEntitiesForDisconnect(server, handler.player)
-		);
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+			cleanupCartelEntitiesForDisconnect(server, handler.player);
+			clearCartelDisguise(handler.player);
+		});
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			long nowTick = server.overworld().getGameTime();
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -245,6 +287,7 @@ public final class ServerRaceSystem {
 			}
 			tickCartelSummons(server);
 			tickCartelDefense(server);
+			tickCartelDisguises(server);
 		});
 	}
 
@@ -330,6 +373,9 @@ public final class ServerRaceSystem {
 		}
 		if (slot == RaceAbilitySlot.DEFENSE && MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id))) {
 			return useMrCartelDefense(player, race, ability);
+		}
+		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id))) {
+			return useMrCartelUniqueAbility(player, race, ability);
 		}
 
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
@@ -688,6 +734,274 @@ public final class ServerRaceSystem {
 			Lg2.LOGGER.error("Failed to activate mister cartel defense for {}", caster.getGameProfile().name(), exception);
 			caster.sendSystemMessage(Component.literal("Defense activation failed. Check server log."));
 			return 0;
+		}
+	}
+
+	private static int useMrCartelUniqueAbility(ServerPlayer caster, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		ServerLevel level = caster.level();
+		long nowTick = level.getGameTime();
+		long cooldownTicks = asTicks(positiveOrDefault(ability.cooldownSeconds, CARTEL_DEFAULT_UNIQUE_COOLDOWN_SECONDS));
+		long nextAllowedTick = CARTEL_UNIQUE_COOLDOWNS.getOrDefault(caster.getUUID(), 0L);
+		if (cooldownTicks > 0 && nowTick < nextAllowedTick) {
+			double remaining = (nextAllowedTick - nowTick) / 20.0D;
+			caster.displayClientMessage(
+					Component.literal(String.format(Locale.ROOT, "%.1fs", remaining))
+							.withStyle(ChatFormatting.RED),
+					true
+			);
+			return 0;
+		}
+
+		List<ServerPlayer> candidates = collectCartelDisguiseCandidates(caster);
+		if (candidates.isEmpty()) {
+			return 0;
+		}
+
+		openMrCartelDisguiseMenu(caster, candidates, 0, ability);
+		Lg2.LOGGER.info(
+				"Player {} opened mister cartel unique ability '{}' menu from race '{}'",
+				caster.getGameProfile().name(),
+				ability.abilityId,
+				race.id
+		);
+		return 1;
+	}
+
+	private static List<ServerPlayer> collectCartelDisguiseCandidates(ServerPlayer caster) {
+		if (caster == null || caster.level().getServer() == null) {
+			return List.of();
+		}
+
+		List<ServerPlayer> players = new ArrayList<>();
+		for (ServerPlayer player : caster.level().getServer().getPlayerList().getPlayers()) {
+			if (player == null || player == caster) {
+				continue;
+			}
+			players.add(player);
+		}
+		return players;
+	}
+
+	private static void openMrCartelDisguiseMenu(ServerPlayer caster, List<ServerPlayer> candidates, int selectedIndex, RaceAbilityConfig ability) {
+		if (caster == null || candidates == null || candidates.isEmpty()) {
+			return;
+		}
+
+		int normalizedIndex = Math.floorMod(selectedIndex, candidates.size());
+		caster.openMenu(new SimpleMenuProvider(
+				(syncId, inventory, menuPlayer) -> new CartelDisguiseMenu(syncId, inventory, caster, ability, normalizedIndex),
+				Component.literal("РџРµСЂРµРІРѕРїР»РѕС‰РµРЅРёРµ")
+		));
+	}
+
+	private static int activateMrCartelDisguise(ServerPlayer caster, ServerPlayer target, RaceAbilityConfig ability) {
+		if (caster == null || target == null || ability == null) {
+			return 0;
+		}
+		if (caster.getUUID().equals(target.getUUID())) {
+			return 0;
+		}
+
+		MinecraftServer server = caster.level().getServer();
+		if (server == null) {
+			return 0;
+		}
+
+		SkinValue targetSkin = captureCurrentSkinValue(target);
+		if (targetSkin == null) {
+			return 0;
+		}
+
+		CartelDisguiseSession existing = CARTEL_DISGUISE_SESSIONS.get(caster.getUUID());
+		SkinValue originalSkin = existing != null ? existing.originalSkin : captureCurrentSkinValue(caster);
+		if (originalSkin == null) {
+			return 0;
+		}
+
+		applySkin(server, caster, targetSkin);
+		long nowTick = caster.level().getGameTime();
+		long durationTicks = asTicks(positiveOrDefault(ability.durationSeconds, CARTEL_DEFAULT_UNIQUE_DURATION_SECONDS));
+		CARTEL_DISGUISE_SESSIONS.put(
+				caster.getUUID(),
+				new CartelDisguiseSession(
+						originalSkin,
+						targetSkin,
+						target.getGameProfile().name(),
+						nowTick + Math.max(1L, durationTicks)
+				)
+		);
+
+		long cooldownTicks = asTicks(positiveOrDefault(ability.cooldownSeconds, CARTEL_DEFAULT_UNIQUE_COOLDOWN_SECONDS));
+		if (cooldownTicks > 0L) {
+			CARTEL_UNIQUE_COOLDOWNS.put(caster.getUUID(), nowTick + cooldownTicks);
+		}
+
+		caster.closeContainer();
+		Lg2.LOGGER.info(
+				"Player {} disguised as {} using mister cartel unique ability '{}'",
+				caster.getGameProfile().name(),
+				target.getGameProfile().name(),
+				ability.abilityId
+		);
+		return 1;
+	}
+
+	private static void tickCartelDisguises(MinecraftServer server) {
+		long nowTick = server.overworld().getGameTime();
+		if (nowTick % 40L == 0L) {
+			CARTEL_UNIQUE_COOLDOWNS.entrySet().removeIf(entry -> entry.getValue() <= nowTick);
+		}
+		if (CARTEL_DISGUISE_SESSIONS.isEmpty()) {
+			return;
+		}
+
+		CARTEL_DISGUISE_SESSIONS.entrySet().removeIf(entry -> {
+			CartelDisguiseSession session = entry.getValue();
+			if (session == null) {
+				return true;
+			}
+
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			if (player == null) {
+				return true;
+			}
+			if (nowTick < session.endTick) {
+				return false;
+			}
+
+			restoreCartelDisguise(server, player, session);
+			return true;
+		});
+	}
+
+	private static void restoreAllCartelDisguises(MinecraftServer server) {
+		if (server == null || CARTEL_DISGUISE_SESSIONS.isEmpty()) {
+			return;
+		}
+
+		for (Map.Entry<UUID, CartelDisguiseSession> entry : new ArrayList<>(CARTEL_DISGUISE_SESSIONS.entrySet())) {
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			if (player != null) {
+				restoreCartelDisguise(server, player, entry.getValue());
+			}
+		}
+		CARTEL_DISGUISE_SESSIONS.clear();
+	}
+
+	private static void clearCartelDisguise(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		CartelDisguiseSession session = CARTEL_DISGUISE_SESSIONS.remove(player.getUUID());
+		if (session == null) {
+			return;
+		}
+		MinecraftServer server = player.level().getServer();
+		if (server != null) {
+			restoreCartelDisguise(server, player, session);
+		}
+	}
+
+	private static void restoreCartelDisguise(MinecraftServer server, ServerPlayer player, CartelDisguiseSession session) {
+		if (server == null || player == null || session == null || session.originalSkin == null) {
+			return;
+		}
+		applySkin(server, player, session.originalSkin);
+	}
+
+	private static void applySkin(MinecraftServer server, ServerPlayer player, SkinValue skinValue) {
+		if (server == null || player == null || skinValue == null) {
+			return;
+		}
+		SkinService.applySkin(server, List.of(player), skinValue, false);
+	}
+
+	private static SkinValue captureCurrentSkinValue(ServerPlayer player) {
+		if (player == null) {
+			return null;
+		}
+
+		SkinStorage skinStorage = SkinRestorer.getSkinStorage();
+		if (skinStorage != null && skinStorage.hasSavedSkin(player.getUUID())) {
+			SkinValue stored = skinStorage.getSkin(player.getUUID());
+			if (stored != null) {
+				return stored;
+			}
+		}
+
+		Property current = PlayerUtils.getPlayerSkin(player.getGameProfile());
+		if (current == null) {
+			return null;
+		}
+		SkinVariant variant = resolveSkinVariant(current);
+		return new SkinValue("lg2_cartel_disguise", player.getScoreboardName(), variant, current, current);
+	}
+
+	private static SkinVariant resolveSkinVariant(Property property) {
+		Pair<String, SkinVariant> skinData = PlayerUtils.getSkinUrl(property);
+		if (skinData != null && skinData.right() != null) {
+			return skinData.right();
+		}
+		return SkinVariant.CLASSIC;
+	}
+
+	private static Component getCartelDisguiseDisplayName(ServerPlayer player) {
+		if (player == null) {
+			return null;
+		}
+		CartelDisguiseSession session = CARTEL_DISGUISE_SESSIONS.get(player.getUUID());
+		return session == null || session.disguisedName == null || session.disguisedName.isBlank()
+				? null
+				: Component.literal(session.disguisedName);
+	}
+
+	public static Component getChatDisplayNameOverride(ServerPlayer player) {
+		return getCartelDisguiseDisplayName(player);
+	}
+
+	private static ItemStack buildCartelDisguiseArrow(boolean next) {
+		ItemStack stack = new ItemStack(Items.ARROW);
+		stack.set(DataComponents.CUSTOM_NAME, Component.literal(next ? "Р’РїРµСЂРµРґ" : "РќР°Р·Р°Рґ"));
+		return stack;
+	}
+
+	private static ItemStack buildCartelDisguiseHead(ServerPlayer target) {
+		ItemStack stack = new ItemStack(Items.PLAYER_HEAD);
+		if (target == null) {
+			return stack;
+		}
+
+		GameProfile profile = new GameProfile(target.getUUID(), target.getGameProfile().name());
+		applySkinRestorerSkin(target, profile.properties());
+		stack.set(DataComponents.PROFILE, ResolvableProfile.createResolved(profile));
+		stack.set(DataComponents.CUSTOM_NAME, Component.literal(target.getGameProfile().name()));
+		return stack;
+	}
+
+	private static void applySkinRestorerSkin(ServerPlayer sourcePlayer, PropertyMap properties) {
+		if (sourcePlayer == null || properties == null) {
+			return;
+		}
+
+		if (sourcePlayer.getGameProfile() != null) {
+			properties.putAll(sourcePlayer.getGameProfile().properties());
+		}
+
+		try {
+			SkinStorage skinStorage = SkinRestorer.getSkinStorage();
+			if (skinStorage == null) {
+				return;
+			}
+
+			SkinValue skinValue = skinStorage.getSkin(sourcePlayer.getUUID());
+			if (skinValue == null || skinValue.value() == null) {
+				return;
+			}
+
+			properties.removeAll("textures");
+			properties.put("textures", skinValue.value());
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to resolve disguise head skin for {}", sourcePlayer.getScoreboardName(), exception);
 		}
 	}
 
@@ -1169,7 +1483,7 @@ public final class ServerRaceSystem {
 		}
 
 		if (session.raiderIds.isEmpty()) {
-			caster.sendSystemMessage(Component.literal("Нет места для спавна разбойников вокруг цели."));
+			caster.sendSystemMessage(Component.literal("РќРµС‚ РјРµСЃС‚Р° РґР»СЏ СЃРїР°РІРЅР° СЂР°Р·Р±РѕР№РЅРёРєРѕРІ РІРѕРєСЂСѓРі С†РµР»Рё."));
 			return 0;
 		}
 
@@ -1558,6 +1872,88 @@ public final class ServerRaceSystem {
 			}
 			return true;
 		});
+	}
+
+	private static final class CartelDisguiseMenu extends ChestMenu {
+		private final SimpleContainer container;
+		private final ServerPlayer viewer;
+		private final RaceAbilityConfig ability;
+		private int selectedIndex;
+
+		private CartelDisguiseMenu(int syncId, Inventory inventory, ServerPlayer viewer, RaceAbilityConfig ability, int selectedIndex) {
+			this(syncId, inventory, new SimpleContainer(CARTEL_DISGUISE_MENU_ROWS * 9), viewer, ability, selectedIndex);
+		}
+
+		private CartelDisguiseMenu(
+				int syncId,
+				Inventory inventory,
+				SimpleContainer container,
+				ServerPlayer viewer,
+				RaceAbilityConfig ability,
+				int selectedIndex
+		) {
+			super(MenuType.GENERIC_9x3, syncId, inventory, container, CARTEL_DISGUISE_MENU_ROWS);
+			this.container = container;
+			this.viewer = viewer;
+			this.ability = ability;
+			this.selectedIndex = selectedIndex;
+			this.refreshContents();
+		}
+
+		@Override
+		public void clicked(int slotId, int button, ClickType clickType, Player player) {
+			if (slotId < 0 || !(clickType == ClickType.PICKUP || clickType == ClickType.QUICK_MOVE || clickType == ClickType.SWAP)) {
+				return;
+			}
+
+			List<ServerPlayer> candidates = collectCartelDisguiseCandidates(this.viewer);
+			if (candidates.isEmpty()) {
+				this.viewer.closeContainer();
+				return;
+			}
+
+			this.selectedIndex = Math.floorMod(this.selectedIndex, candidates.size());
+			if (slotId == CARTEL_DISGUISE_PREVIOUS_SLOT) {
+				this.selectedIndex = Math.floorMod(this.selectedIndex - 1, candidates.size());
+				this.refreshContents();
+				return;
+			}
+			if (slotId == CARTEL_DISGUISE_NEXT_SLOT) {
+				this.selectedIndex = Math.floorMod(this.selectedIndex + 1, candidates.size());
+				this.refreshContents();
+				return;
+			}
+			if (slotId == CARTEL_DISGUISE_HEAD_SLOT) {
+				activateMrCartelDisguise(this.viewer, candidates.get(this.selectedIndex), this.ability);
+			}
+		}
+
+		@Override
+		public ItemStack quickMoveStack(Player player, int index) {
+			return ItemStack.EMPTY;
+		}
+
+		@Override
+		public boolean stillValid(Player player) {
+			return player.isAlive();
+		}
+
+		private void refreshContents() {
+			for (int slot = 0; slot < this.container.getContainerSize(); slot++) {
+				this.container.setItem(slot, ItemStack.EMPTY);
+			}
+
+			List<ServerPlayer> candidates = collectCartelDisguiseCandidates(this.viewer);
+			if (candidates.isEmpty()) {
+				return;
+			}
+
+			this.selectedIndex = Math.floorMod(this.selectedIndex, candidates.size());
+			this.container.setItem(CARTEL_DISGUISE_PREVIOUS_SLOT, buildCartelDisguiseArrow(false));
+			this.container.setItem(CARTEL_DISGUISE_HEAD_SLOT, buildCartelDisguiseHead(candidates.get(this.selectedIndex)));
+			this.container.setItem(CARTEL_DISGUISE_NEXT_SLOT, buildCartelDisguiseArrow(true));
+			this.broadcastFullState();
+		}
 	}
 
 	private static final class CartelLawyerEntity extends PathfinderMob {
