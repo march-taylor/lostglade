@@ -682,6 +682,10 @@ final class CameraEntityRenderer {
 			return captureGoatClientModel(goat);
 		}
 
+		if (entity instanceof net.minecraft.world.entity.animal.happyghast.HappyGhast happyGhast && VanillaClientModels.isAvailable()) {
+			return captureHappyGhastClientModel(happyGhast);
+		}
+
 		if (entity instanceof Llama llama && VanillaClientModels.isAvailable()) {
 			return captureLlamaClientModel(llama);
 		}
@@ -904,6 +908,39 @@ final class CameraEntityRenderer {
 			addEquipmentLayers(layers, modelClassName, "llama_body", ItemStack.EMPTY, Identifier.fromNamespaceAndPath("minecraft", "trader_llama"), 1.0F);
 		}
 		return livingClientModelSnapshot(llama, llama.yBodyRot, state, layers.toArray(ClientLayerSnapshot[]::new));
+	}
+
+	private static ClientModelSnapshot captureHappyGhastClientModel(net.minecraft.world.entity.animal.happyghast.HappyGhast happyGhast) {
+		Map<String, Object> state = livingStateFields(happyGhast);
+		ItemStack bodyItem = happyGhast.getItemBySlot(EquipmentSlot.BODY).copy();
+		boolean baby = happyGhast.isBaby();
+		state.put("bodyItem", bodyItem);
+		state.put("isRidden", happyGhast.isVehicle());
+		state.put("isLeashHolder", happyGhast.isLeashHolder());
+
+		List<ClientLayerSnapshot> layers = new ArrayList<>();
+		layers.add(
+				new ClientLayerSnapshot(
+						"net.minecraft.client.model.animal.ghast.HappyGhastModel",
+						baby ? minecraftTexture("entity/ghast/happy_ghast_baby") : minecraftTexture("entity/ghast/happy_ghast"),
+						0xFFFFFF,
+						false
+				).withFactory("createBodyLayer").withModelFlag(baby)
+		);
+		if (!bodyItem.isEmpty()) {
+			addEquipmentLayers(
+					layers,
+					"net.minecraft.client.model.animal.ghast.HappyGhastHarnessModel",
+					"happy_ghast_body",
+					bodyItem,
+					null,
+					1.0F
+			);
+			layers.replaceAll(layer -> layer.modelClassName().equals("net.minecraft.client.model.animal.ghast.HappyGhastHarnessModel")
+					? layer.withFactory("createHarnessLayer").withModelFlag(baby)
+					: layer);
+		}
+		return livingClientModelSnapshot(happyGhast, happyGhast.yBodyRot, state, layers.toArray(ClientLayerSnapshot[]::new));
 	}
 
 	private static FishingHookSnapshot captureFishingHookSnapshot(FishingHook fishingHook) {
@@ -3628,7 +3665,8 @@ final class CameraEntityRenderer {
 			return switch (parameterTypes.length) {
 				case 0 -> true;
 				case 1 -> bridge.cubeDeformationClass.equals(parameterTypes[0]) || parameterTypes[0] == boolean.class;
-				case 2 -> bridge.cubeDeformationClass.equals(parameterTypes[0]) && parameterTypes[1] == boolean.class;
+				case 2 -> (bridge.cubeDeformationClass.equals(parameterTypes[0]) && parameterTypes[1] == boolean.class)
+						|| (parameterTypes[0] == boolean.class && bridge.cubeDeformationClass.equals(parameterTypes[1]));
 				default -> false;
 			};
 		}
@@ -3643,7 +3681,15 @@ final class CameraEntityRenderer {
 					}
 					yield method.invoke(null, modelFlag);
 				}
-				case 2 -> method.invoke(null, cubeDeformationObject(bridge, cubeDeformation), modelFlag);
+				case 2 -> {
+					Object first = bridge.cubeDeformationClass.equals(parameterTypes[0])
+							? cubeDeformationObject(bridge, cubeDeformation)
+							: modelFlag;
+					Object second = bridge.cubeDeformationClass.equals(parameterTypes[1])
+							? cubeDeformationObject(bridge, cubeDeformation)
+							: modelFlag;
+					yield method.invoke(null, first, second);
+				}
 				default -> null;
 			};
 		}
