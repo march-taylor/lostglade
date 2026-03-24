@@ -21,6 +21,7 @@ import de.bluecolored.bluemap.core.resources.pack.resourcepack.ResourcePack;
 import de.bluecolored.bluemap.core.resources.pack.resourcepack.blockstate.Variant;
 import de.bluecolored.bluemap.core.resources.pack.resourcepack.model.Model;
 import de.bluecolored.bluemap.core.resources.pack.resourcepack.model.TextureVariable;
+import de.bluecolored.bluemap.core.resources.pack.resourcepack.texture.AnimationMeta;
 import de.bluecolored.bluemap.core.resources.pack.resourcepack.texture.Texture;
 import de.bluecolored.bluemap.core.util.Key;
 import de.bluecolored.bluemap.core.util.math.Color;
@@ -898,17 +899,7 @@ public final class BlueMapCameraRenderer {
 				if (image == null) {
 					return missing();
 				}
-				int width = Math.max(1, image.getWidth());
-				int height = Math.max(1, image.getHeight());
-				int[] pixels = image.getRGB(0, 0, width, height, null, 0, width);
-				boolean transparent = false;
-				for (int pixel : pixels) {
-					if (((pixel >>> 24) & 0xFF) < 255) {
-						transparent = true;
-						break;
-					}
-				}
-				return new TextureMaterial(width, height, pixels, transparent);
+				return fromImage(selectRenderableFrame(texture, image));
 			} catch (IOException exception) {
 				return missing();
 			}
@@ -933,6 +924,53 @@ public final class BlueMapCameraRenderer {
 				}
 			}
 			return new TextureMaterial(width, height, pixels, transparent);
+		}
+
+		private static BufferedImage selectRenderableFrame(Texture texture, BufferedImage image) {
+			int imageWidth = Math.max(1, image.getWidth());
+			int imageHeight = Math.max(1, image.getHeight());
+			AnimationMeta animation = texture.getAnimation();
+			int frameWidth = resolveFrameDimension(animation == null ? 0 : animation.getWidth(), imageWidth, imageHeight);
+			int frameHeight = resolveFrameDimension(animation == null ? 0 : animation.getHeight(), imageHeight, imageWidth);
+			if (frameWidth <= 0 || frameHeight <= 0) {
+				int fallbackFrameSize = Math.min(imageWidth, imageHeight);
+				frameWidth = fallbackFrameSize;
+				frameHeight = fallbackFrameSize;
+			}
+
+			frameWidth = Math.min(frameWidth, imageWidth);
+			frameHeight = Math.min(frameHeight, imageHeight);
+			boolean looksLikeVerticalFrameStrip = imageHeight > imageWidth && imageHeight % imageWidth == 0;
+			boolean hasExplicitAnimationFrames = animation != null && animation.getFrames() != null && !animation.getFrames().isEmpty();
+			boolean usesAnimationGrid = frameWidth < imageWidth || frameHeight < imageHeight;
+			if (!looksLikeVerticalFrameStrip && !hasExplicitAnimationFrames && !usesAnimationGrid) {
+				return image;
+			}
+
+			int columns = Math.max(1, imageWidth / frameWidth);
+			int rows = Math.max(1, imageHeight / frameHeight);
+			if (columns * rows <= 1) {
+				return image;
+			}
+
+			int frameIndex = 0;
+			if (hasExplicitAnimationFrames) {
+				frameIndex = Math.max(0, animation.getFrames().get(0).getIndex());
+			}
+			frameIndex = Mth.clamp(frameIndex, 0, columns * rows - 1);
+			int frameX = (frameIndex % columns) * frameWidth;
+			int frameY = (frameIndex / columns) * frameHeight;
+			return image.getSubimage(frameX, frameY, frameWidth, frameHeight);
+		}
+
+		private static int resolveFrameDimension(int explicitSize, int imagePrimary, int imageSecondary) {
+			if (explicitSize > 1 && explicitSize <= imagePrimary) {
+				return explicitSize;
+			}
+			if (imagePrimary > imageSecondary && imagePrimary % imageSecondary == 0) {
+				return imageSecondary;
+			}
+			return imagePrimary;
 		}
 
 		private int sample(float u, float v) {
