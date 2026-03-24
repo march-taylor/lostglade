@@ -7,16 +7,27 @@
       "ownerNickname": "Rajas_YT",
       "description": "Сток: лимит обычных стаков 64 -> 49. Стаки 1 и 16 не изменяются.",
       "attack": {
-        "enabled": false,
+        "enabled": true,
         "abilityId": "cartel49_attack",
         "name": "Атака",
-        "description": ""
+        "description": "Вокруг цели по взгляду появляются 4 разбойника (2 pillager + 2 vindicator).",
+        "cooldownSeconds": 300.0,
+        "activationRangeBlocks": 7.0,
+        "summonLifetimeSeconds": 30.0,
+        "summonAfterKillSeconds": 2.0
       },
       "defense": {
-        "enabled": false,
+        "enabled": true,
         "abilityId": "cartel49_defense",
         "name": "Защита",
-        "description": ""
+        "description": "Рядом появляется адвокат и отражает часть урона нападающим.",
+        "cooldownSeconds": 0.0,
+        "durationSeconds": 20.0,
+        "innerMinDistanceBlocks": 2.0,
+        "followMaxDistanceBlocks": 5.0,
+        "maxOutsideAreaSeconds": 5.0,
+        "healthPoints": 0.0,
+        "reflectedDamageRatio": 0.5
       },
       "uniqueAbility": {
         "enabled": false,

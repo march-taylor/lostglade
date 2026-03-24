@@ -133,7 +133,26 @@ public final class RaceConfig {
 		changed |= normalizeString(ability.abilityId, slot.defaultAbilityId, value -> ability.abilityId = value);
 		changed |= normalizeString(ability.name, slot.defaultDisplayName, value -> ability.name = value);
 		changed |= normalizeString(ability.description, "", value -> ability.description = value);
+		changed |= normalizeNonNegative(ability.cooldownSeconds, value -> ability.cooldownSeconds = value);
+		changed |= normalizeNonNegative(ability.activationRangeBlocks, value -> ability.activationRangeBlocks = value);
+		changed |= normalizeNonNegative(ability.durationSeconds, value -> ability.durationSeconds = value);
+		changed |= normalizeNonNegative(ability.innerMinDistanceBlocks, value -> ability.innerMinDistanceBlocks = value);
+		changed |= normalizeNonNegative(ability.followMaxDistanceBlocks, value -> ability.followMaxDistanceBlocks = value);
+		changed |= normalizeNonNegative(ability.maxOutsideAreaSeconds, value -> ability.maxOutsideAreaSeconds = value);
+		changed |= normalizeNonNegative(ability.healthPoints, value -> ability.healthPoints = value);
+		changed |= normalizeNonNegative(ability.reflectedDamageRatio, value -> ability.reflectedDamageRatio = value);
+		changed |= normalizeNonNegative(ability.summonLifetimeSeconds, value -> ability.summonLifetimeSeconds = value);
+		changed |= normalizeNonNegative(ability.summonAfterKillSeconds, value -> ability.summonAfterKillSeconds = value);
 		return changed;
+	}
+
+	private static boolean normalizeNonNegative(double value, java.util.function.DoubleConsumer setter) {
+		double normalized = Double.isNaN(value) ? 0.0D : Math.max(0.0D, value);
+		if (Double.compare(value, normalized) == 0) {
+			return false;
+		}
+		setter.accept(normalized);
+		return true;
 	}
 
 	private static boolean normalizeString(String value, String fallback, java.util.function.Consumer<String> setter) {
@@ -206,6 +225,16 @@ public final class RaceConfig {
 		public String abilityId;
 		public String name;
 		public String description = "";
+		public double cooldownSeconds = 0.0D;
+		public double activationRangeBlocks = 0.0D;
+		public double durationSeconds = 0.0D;
+		public double innerMinDistanceBlocks = 0.0D;
+		public double followMaxDistanceBlocks = 0.0D;
+		public double maxOutsideAreaSeconds = 0.0D;
+		public double healthPoints = 0.0D;
+		public double reflectedDamageRatio = 0.0D;
+		public double summonLifetimeSeconds = 0.0D;
+		public double summonAfterKillSeconds = 0.0D;
 
 		private RaceAbilityConfig() {
 		}
