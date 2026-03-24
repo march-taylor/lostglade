@@ -1,6 +1,7 @@
 package com.lostglade.server;
 
 import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.ImmutableMultimap;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.lostglade.Lg2;
@@ -973,8 +974,12 @@ public final class ServerRaceSystem {
 			return stack;
 		}
 
-		GameProfile profile = new GameProfile(target.getUUID(), target.getGameProfile().name());
-		applySkinRestorerSkin(target, profile.properties());
+		GameProfile sourceProfile = target.getGameProfile();
+		PropertyMap properties = sourceProfile != null
+				? new PropertyMap(ImmutableMultimap.copyOf(sourceProfile.properties()))
+				: new PropertyMap(ImmutableMultimap.of());
+		applySkinRestorerSkin(target, properties);
+		GameProfile profile = new GameProfile(target.getUUID(), target.getGameProfile().name(), properties);
 		stack.set(DataComponents.PROFILE, ResolvableProfile.createResolved(profile));
 		stack.set(DataComponents.CUSTOM_NAME, Component.literal(target.getGameProfile().name()));
 		return stack;
@@ -989,10 +994,6 @@ public final class ServerRaceSystem {
 	private static void applySkinRestorerSkin(ServerPlayer sourcePlayer, PropertyMap properties) {
 		if (sourcePlayer == null || properties == null) {
 			return;
-		}
-
-		if (sourcePlayer.getGameProfile() != null) {
-			properties.putAll(sourcePlayer.getGameProfile().properties());
 		}
 
 		try {
