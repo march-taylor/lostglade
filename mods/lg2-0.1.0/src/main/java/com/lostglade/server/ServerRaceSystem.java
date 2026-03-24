@@ -20,6 +20,8 @@ import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.lionarius.skinrestorer.mineskin.MineskinService;
+import net.lionarius.skinrestorer.skin.SkinVariant;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -69,6 +71,7 @@ import net.minecraft.world.scores.Team;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -84,7 +87,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.Base64;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
 import static net.minecraft.commands.Commands.literal;
@@ -120,8 +123,10 @@ public final class ServerRaceSystem {
 	private static final double CARTEL_LAWYER_WALK_SPEED = 1.0D;
 	private static final double CARTEL_LAWYER_RETURN_SPEED = 1.5D;
 	private static final EntityDimensions CARTEL_LAWYER_DIMENSIONS = EntityDimensions.fixed(0.6F, 1.8F);
-	private static final String CARTEL_LAWYER_SKIN_URL = "https://textures.minecraft.net/texture/24d4470787c85de5b981985d40f92973a6d12d9d617744c7ad38f81ff107a19d";
-	private static final Property CARTEL_LAWYER_SKIN_PROPERTY = createCartelLawyerSkinProperty();
+	private static final Path CARTEL_LAWYER_SKIN_PATH = Path.of("C:\\Users\\User\\Downloads\\lawyer.png");
+	private static final String CARTEL_LAWYER_SKIN_VALUE = "ewogICJ0aW1lc3RhbXAiIDogMTc1MjAzMzk0NjY5MSwKICAicHJvZmlsZUlkIiA6ICI0ZWE3NGM1ZGUyZGI0OGY2YjViOTk1YTVhNTYzMmU0NCIsCiAgInByb2ZpbGVOYW1lIiA6ICJNclNjYXJ5U3BhY2VDYXQiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvMjRkNDQ3MDc4N2M4NWRlNWI5ODE5ODVkNDBmOTI5NzNhNmQxMmQ5ZDYxNzc0NGM3YWQzOGY4MWZmMTA3YTE5ZCIKICAgIH0KICB9Cn0=";
+	private static final URI CARTEL_LAWYER_SKIN_URI = URI.create("https://textures.minecraft.net/texture/24d4470787c85de5b981985d40f92973a6d12d9d617744c7ad38f81ff107a19d");
+	private static final Property CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY = new Property("textures", CARTEL_LAWYER_SKIN_VALUE);
 
 	private static final Map<String, PlayerRaceConfig> RACES_BY_NICKNAME = new LinkedHashMap<>();
 	private static final Map<String, String> DIALOG_ID_BY_NICKNAME = new LinkedHashMap<>();
@@ -131,6 +136,8 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, Long> CARTEL_DEFENSE_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelDefenseSession> CARTEL_DEFENSE_SESSIONS = new LinkedHashMap<>();
 	private static final ThreadLocal<Boolean> CARTEL_DEFENSE_REFLECTION_ACTIVE = ThreadLocal.withInitial(() -> Boolean.FALSE);
+	private static CompletableFuture<Property> CARTEL_LAWYER_SKIN_FUTURE;
+	private static volatile Property CARTEL_LAWYER_SKIN_PROPERTY;
 
 	private static final class CartelSummonSession {
 		private final ResourceKey<Level> dimension;
@@ -196,6 +203,7 @@ public final class ServerRaceSystem {
 			RaceConfig.load();
 			rebuildCache();
 			syncGeneratedDialogs(server, true);
+			prewarmCartelLawyerSkinAsync();
 			Lg2.LOGGER.info("Loaded {} configured personal races", RACES_BY_NICKNAME.size());
 		});
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
@@ -206,6 +214,8 @@ public final class ServerRaceSystem {
 			CARTEL_SUMMON_SESSIONS.clear();
 			CARTEL_DEFENSE_COOLDOWNS.clear();
 			CARTEL_DEFENSE_SESSIONS.clear();
+			CARTEL_LAWYER_SKIN_FUTURE = null;
+			CARTEL_LAWYER_SKIN_PROPERTY = null;
 		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
 				getRace(handler.player).ifPresent(race ->
@@ -924,22 +934,76 @@ public final class ServerRaceSystem {
 	}
 
 	private static GameProfile buildLawyerProfile(UUID profileId) {
-		PropertyMap properties = new PropertyMap(ArrayListMultimap.create());
+		var mutableProperties = ArrayListMultimap.<String, Property>create();
 		Property lawyerSkin = resolveCartelLawyerSkinProperty();
 		if (lawyerSkin != null) {
-			properties.put("textures", lawyerSkin);
+			mutableProperties.put("textures", lawyerSkin);
 		}
-		return new GameProfile(profileId, buildCartelLawyerProfileName(profileId), properties);
+		return new GameProfile(profileId, buildCartelLawyerProfileName(profileId), new PropertyMap(mutableProperties));
 	}
 
 	private static Property resolveCartelLawyerSkinProperty() {
-		return CARTEL_LAWYER_SKIN_PROPERTY;
+		Property property = CARTEL_LAWYER_SKIN_PROPERTY;
+		if (property != null) {
+			return property;
+		}
+		CompletableFuture<Property> future = prewarmCartelLawyerSkinAsync();
+		if (future != null && future.isDone()) {
+			property = future.getNow(CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY);
+			if (property != null) {
+				CARTEL_LAWYER_SKIN_PROPERTY = property;
+				return property;
+			}
+		}
+		return CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY;
 	}
 
-	private static Property createCartelLawyerSkinProperty() {
-		String payload = "{\"textures\":{\"SKIN\":{\"url\":\"" + CARTEL_LAWYER_SKIN_URL + "\",\"metadata\":{\"model\":\"classic\"}}}}";
-		String encoded = Base64.getEncoder().encodeToString(payload.getBytes(StandardCharsets.UTF_8));
-		return new Property("textures", encoded);
+	private static synchronized CompletableFuture<Property> prewarmCartelLawyerSkinAsync() {
+		if (CARTEL_LAWYER_SKIN_PROPERTY != null) {
+			return CompletableFuture.completedFuture(CARTEL_LAWYER_SKIN_PROPERTY);
+		}
+		if (CARTEL_LAWYER_SKIN_FUTURE != null && !CARTEL_LAWYER_SKIN_FUTURE.isCompletedExceptionally()) {
+			return CARTEL_LAWYER_SKIN_FUTURE;
+		}
+		CARTEL_LAWYER_SKIN_FUTURE = CompletableFuture.supplyAsync(ServerRaceSystem::loadCartelLawyerSkinProperty);
+		return CARTEL_LAWYER_SKIN_FUTURE;
+	}
+
+	private static Property loadCartelLawyerSkinProperty() {
+		Property localFileSkin = signCartelLawyerSkin(CARTEL_LAWYER_SKIN_PATH.toUri(), "local file");
+		if (localFileSkin != null) {
+			CARTEL_LAWYER_SKIN_PROPERTY = localFileSkin;
+			return localFileSkin;
+		}
+
+		Property textureUrlSkin = signCartelLawyerSkin(CARTEL_LAWYER_SKIN_URI, "texture url");
+		if (textureUrlSkin != null) {
+			CARTEL_LAWYER_SKIN_PROPERTY = textureUrlSkin;
+			return textureUrlSkin;
+		}
+
+		CARTEL_LAWYER_SKIN_PROPERTY = CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY;
+		return CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY;
+	}
+
+	private static Property signCartelLawyerSkin(URI uri, String sourceName) {
+		if (uri == null) {
+			return null;
+		}
+		if ("file".equalsIgnoreCase(uri.getScheme()) && !Files.isRegularFile(Path.of(uri))) {
+			return null;
+		}
+		try {
+			return MineskinService.INSTANCE.signSkin(uri, SkinVariant.CLASSIC).orElse(null);
+		} catch (Exception firstFailure) {
+			try {
+				MineskinService.INSTANCE.reload();
+				return MineskinService.INSTANCE.signSkin(uri, SkinVariant.CLASSIC).orElse(null);
+			} catch (Exception secondFailure) {
+				Lg2.LOGGER.warn("Failed to sign cartel lawyer skin from {}", sourceName, secondFailure);
+			}
+		}
+		return null;
 	}
 
 	private static String buildCartelLawyerProfileName(UUID profileId) {
