@@ -48,6 +48,10 @@ public final class TextureAssetManager {
 		return loadJson("assets/" + modelId.getNamespace() + "/models/" + modelId.getPath() + ".json");
 	}
 
+	public JsonObject loadJsonAsset(String assetPath) {
+		return loadJson(assetPath);
+	}
+
 	public BufferedImage loadTexture(Identifier textureId) {
 		String key = "assets/" + textureId.getNamespace() + "/textures/" + textureId.getPath() + ".png";
 		BufferedImage cached = this.imageCache.get(key);

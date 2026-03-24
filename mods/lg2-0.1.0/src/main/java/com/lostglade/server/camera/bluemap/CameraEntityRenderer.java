@@ -1,5 +1,6 @@
 package com.lostglade.server.camera.bluemap;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.lostglade.Lg2;
@@ -16,14 +17,19 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Rotations;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.ExperienceOrb;
 import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.Leashable;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.animal.chicken.Chicken;
 import net.minecraft.world.entity.animal.chicken.ChickenVariant;
 import net.minecraft.world.entity.animal.cow.Cow;
@@ -31,6 +37,7 @@ import net.minecraft.world.entity.animal.cow.CowVariant;
 import net.minecraft.world.entity.animal.cow.MushroomCow;
 import net.minecraft.world.entity.animal.armadillo.Armadillo;
 import net.minecraft.world.entity.animal.equine.Horse;
+import net.minecraft.world.entity.animal.equine.Llama;
 import net.minecraft.world.entity.animal.equine.Markings;
 import net.minecraft.world.entity.animal.fox.Fox;
 import net.minecraft.world.entity.animal.feline.Cat;
@@ -56,9 +63,17 @@ import net.minecraft.world.entity.npc.villager.VillagerData;
 import net.minecraft.world.entity.npc.villager.VillagerProfession;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.player.PlayerModelPart;
+import net.minecraft.world.entity.projectile.FishingHook;
+import net.minecraft.world.entity.vehicle.boat.AbstractBoat;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.component.DyedItemColor;
+import net.minecraft.world.item.equipment.EquipmentAsset;
+import net.minecraft.world.item.equipment.Equippable;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
+import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import javax.imageio.ImageIO;
@@ -78,6 +93,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -102,9 +118,14 @@ final class CameraEntityRenderer {
 	private static final Identifier SHEEP_WOOL_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/sheep/sheep_wool");
 	private static final Identifier ARMOR_STAND_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/armorstand/wood");
 	private static final Identifier VILLAGER_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/villager/villager");
+	private static final Identifier EXPERIENCE_ORB_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/experience_orb");
+	private static final Identifier FISHING_HOOK_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/fishing_hook");
+	private static final Identifier LEASH_SEGMENT_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "block/brown_wool");
+	private static final Identifier FISHING_LINE_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "block/light_gray_wool");
 	private static final Map<String, BlueMapCameraRenderer.TextureMaterial> STATIC_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, BlueMapCameraRenderer.TextureMaterial> PLAYER_SKIN_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, Identifier> ITEM_TEXTURE_CACHE = new ConcurrentHashMap<>();
+	private static final Map<String, ItemVisual> ITEM_VISUAL_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, ClientModelResolver> VANILLA_CLIENT_MODEL_RULES = buildVanillaClientModelRules();
 
 	private CameraEntityRenderer() {
@@ -135,6 +156,7 @@ final class CameraEntityRenderer {
 			boolean crouching,
 			boolean swimming,
 			boolean fallFlying,
+			boolean passenger,
 			boolean baby,
 			boolean aggressive,
 			boolean usingItem,
@@ -142,6 +164,8 @@ final class CameraEntityRenderer {
 			HumanoidKind kind,
 			Identifier texture,
 			Identifier[] overlayTextures,
+			ItemStack leftHandItem,
+			ItemStack rightHandItem,
 			PlayerSkinSnapshot playerSkin,
 			byte playerModelBits
 	) implements EntitySnapshot {
@@ -217,16 +241,79 @@ final class CameraEntityRenderer {
 	record ItemSnapshot(
 			Vec3 position,
 			float spin,
+			ItemVisual visual
+	) implements EntitySnapshot {
+	}
+
+	record ExperienceOrbSnapshot(
+			Vec3 position,
+			int icon,
+			float ageInTicks
+	) implements EntitySnapshot {
+	}
+
+	record FishingHookSnapshot(
+			Vec3 position,
+			Vec3 lineStartOffset
+	) implements EntitySnapshot {
+	}
+
+	record LineSnapshot(
+			Vec3 position,
+			Vec3 start,
+			Vec3 end,
+			float thickness,
+			float sag,
 			Identifier texture
+	) implements EntitySnapshot {
+	}
+
+	record CompositeSnapshot(
+			Vec3 position,
+			EntitySnapshot primary,
+			EntitySnapshot[] attachments
 	) implements EntitySnapshot {
 	}
 
 	record ClientLayerSnapshot(
 			String modelClassName,
 			Identifier texture,
+			PlayerSkinSnapshot playerSkin,
 			int tintRgb,
-			boolean emissive
+			boolean emissive,
+			String layerFactoryMethodName,
+			float cubeDeformation,
+			boolean modelFlag,
+			float renderScale
 	) {
+		ClientLayerSnapshot(String modelClassName, Identifier texture, int tintRgb, boolean emissive) {
+			this(modelClassName, texture, null, tintRgb, emissive, null, 0.0F, false, 1.0F);
+		}
+
+		ClientLayerSnapshot withFactory(String layerFactoryMethodName) {
+			return new ClientLayerSnapshot(this.modelClassName, this.texture, this.playerSkin, this.tintRgb, this.emissive, layerFactoryMethodName, this.cubeDeformation, this.modelFlag, this.renderScale);
+		}
+
+		ClientLayerSnapshot withCubeDeformation(float cubeDeformation) {
+			return new ClientLayerSnapshot(this.modelClassName, this.texture, this.playerSkin, this.tintRgb, this.emissive, this.layerFactoryMethodName, cubeDeformation, this.modelFlag, this.renderScale);
+		}
+
+		ClientLayerSnapshot withModelFlag(boolean modelFlag) {
+			return new ClientLayerSnapshot(this.modelClassName, this.texture, this.playerSkin, this.tintRgb, this.emissive, this.layerFactoryMethodName, this.cubeDeformation, modelFlag, this.renderScale);
+		}
+
+		ClientLayerSnapshot withRenderScale(float renderScale) {
+			return new ClientLayerSnapshot(this.modelClassName, this.texture, this.playerSkin, this.tintRgb, this.emissive, this.layerFactoryMethodName, this.cubeDeformation, this.modelFlag, renderScale);
+		}
+
+		ClientLayerSnapshot withPlayerSkin(PlayerSkinSnapshot playerSkin) {
+			return new ClientLayerSnapshot(this.modelClassName, this.texture, playerSkin, this.tintRgb, this.emissive, this.layerFactoryMethodName, this.cubeDeformation, this.modelFlag, this.renderScale);
+		}
+	}
+
+	enum ClientModelTransformKind {
+		LIVING,
+		BOAT
 	}
 
 	record ClientModelSnapshot(
@@ -234,6 +321,7 @@ final class CameraEntityRenderer {
 			float rootYaw,
 			float rootYawOffsetDegrees,
 			float rootScale,
+			ClientModelTransformKind transformKind,
 			Map<String, Object> stateFields,
 			ClientLayerSnapshot[] layers
 	) implements EntitySnapshot {
@@ -244,6 +332,42 @@ final class CameraEntityRenderer {
 			String url,
 			Identifier fallbackTexture,
 			boolean slim
+	) {
+	}
+
+	record ItemVisual(
+			Identifier flatTexture,
+			ResolvedItemModel model
+	) {
+	}
+
+	private record ResolvedItemModel(
+			Map<String, String> textures,
+			List<ItemModelElement> elements
+	) {
+	}
+
+	private record ItemModelElement(
+			Vec3 from,
+			Vec3 to,
+			Map<Direction, ItemModelFace> faces,
+			ElementRotation rotation
+	) {
+	}
+
+	private record ItemModelFace(
+			String texture,
+			double[] uv,
+			int rotation
+	) {
+	}
+
+	private record ElementRotation(
+			Vec3 origin,
+			Direction.Axis axis,
+			float angle,
+			boolean rescale,
+			Matrix4f transform
 	) {
 	}
 
@@ -287,7 +411,7 @@ final class CameraEntityRenderer {
 
 	static EntitySnapshot captureEntity(Entity entity) {
 		try {
-			return captureEntityUnsafe(entity);
+			return attachAuxiliarySnapshots(entity, captureEntityUnsafe(entity));
 		} catch (Throwable throwable) {
 			Lg2.LOGGER.debug("Failed to capture camera snapshot for entity {}", entity, throwable);
 			return null;
@@ -295,11 +419,14 @@ final class CameraEntityRenderer {
 	}
 
 	private static EntitySnapshot captureEntityUnsafe(Entity entity) {
-		LivingEntity livingEntity = entity instanceof LivingEntity living ? living : null;
-		if (livingEntity == null && !(entity instanceof ItemEntity)) {
+		if (!entity.isAlive() || entity.isInvisible()) {
 			return null;
 		}
-		if (!entity.isAlive() || entity.isInvisible()) {
+		if (entity instanceof AbstractBoat boat && VanillaClientModels.isAvailable()) {
+			return captureBoatClientModel(boat);
+		}
+		LivingEntity livingEntity = entity instanceof LivingEntity living ? living : null;
+		if (livingEntity == null && !(entity instanceof ItemEntity)) {
 			return null;
 		}
 
@@ -324,6 +451,7 @@ final class CameraEntityRenderer {
 					entity.isCrouching(),
 					entity.isVisuallySwimming(),
 					livingEntity.isFallFlying(),
+					entity.isPassenger(),
 					false,
 					false,
 					livingEntity.isUsingItem(),
@@ -331,12 +459,20 @@ final class CameraEntityRenderer {
 					kind,
 					playerSkin == null ? PLAYER_WIDE_FALLBACK : playerSkin.fallbackTexture(),
 					new Identifier[0],
+					leftHandItem(livingEntity),
+					rightHandItem(livingEntity),
 					playerSkin,
 					modelBits
 			);
 		}
 
 		if (entity instanceof ArmorStand armorStand) {
+			if (VanillaClientModels.isAvailable()) {
+				ClientModelSnapshot snapshot = captureArmorStandClientModel(armorStand);
+				if (snapshot != null) {
+					return snapshot;
+				}
+			}
 			return new ArmorStandSnapshot(
 					entity.position(),
 					entity.getYRot(),
@@ -350,6 +486,18 @@ final class CameraEntityRenderer {
 					armorStand.getLeftLegPose(),
 					armorStand.getRightLegPose()
 			);
+		}
+
+		if (entity instanceof ExperienceOrb experienceOrb) {
+			return new ExperienceOrbSnapshot(
+					experienceOrb.position(),
+					experienceOrb.getIcon(),
+					experienceOrb.tickCount
+			);
+		}
+
+		if (entity instanceof FishingHook fishingHook) {
+			return captureFishingHookSnapshot(fishingHook);
 		}
 
 		if (entity instanceof Villager villager) {
@@ -366,6 +514,9 @@ final class CameraEntityRenderer {
 		}
 
 		if (entity instanceof Zombie) {
+			if (VanillaClientModels.isAvailable()) {
+				return captureZombieClientModel((Zombie) entity);
+			}
 			Identifier texture = ZOMBIE_TEXTURE;
 			HumanoidKind kind = HumanoidKind.ZOMBIE;
 			Identifier[] overlays = new Identifier[0];
@@ -389,6 +540,7 @@ final class CameraEntityRenderer {
 					entity.isCrouching(),
 					entity.isVisuallySwimming(),
 					livingEntity.isFallFlying(),
+					entity.isPassenger(),
 					((Zombie) entity).isBaby(),
 					entity instanceof net.minecraft.world.entity.Mob mob && mob.isAggressive(),
 					livingEntity.isUsingItem(),
@@ -396,6 +548,8 @@ final class CameraEntityRenderer {
 					kind,
 					texture,
 					overlays,
+					leftHandItem(livingEntity),
+					rightHandItem(livingEntity),
 					null,
 					(byte) 0
 			);
@@ -523,6 +677,10 @@ final class CameraEntityRenderer {
 			return captureGoatClientModel(goat);
 		}
 
+		if (entity instanceof Llama llama && VanillaClientModels.isAvailable()) {
+			return captureLlamaClientModel(llama);
+		}
+
 		if (entity instanceof Armadillo armadillo && VanillaClientModels.isAvailable()) {
 			return captureSimpleClientModel(
 					armadillo,
@@ -583,6 +741,10 @@ final class CameraEntityRenderer {
 			);
 		}
 
+		if (entity instanceof net.minecraft.world.entity.animal.golem.IronGolem ironGolem && VanillaClientModels.isAvailable()) {
+			return captureIronGolemClientModel(ironGolem);
+		}
+
 		if (livingEntity != null && VanillaClientModels.isAvailable()) {
 			ClientModelSnapshot vanillaClientSnapshot = captureVanillaClientModel(livingEntity);
 			if (vanillaClientSnapshot != null) {
@@ -591,14 +753,14 @@ final class CameraEntityRenderer {
 		}
 
 		if (entity instanceof ItemEntity itemEntity) {
-			Identifier texture = resolveItemTexture(itemEntity.getItem());
-			if (texture == null) {
+			ItemVisual visual = resolveItemVisual(itemEntity.getItem());
+			if (visual == null || (visual.flatTexture() == null && (visual.model() == null || visual.model().elements().isEmpty()))) {
 				return null;
 			}
 			return new ItemSnapshot(
 					itemEntity.position(),
 					ItemEntity.getSpin(0.0F, itemEntity.bobOffs),
-					texture
+					visual
 			);
 		}
 
@@ -621,6 +783,7 @@ final class CameraEntityRenderer {
 				livingEntity.isCrouching(),
 				livingEntity.isVisuallySwimming(),
 				livingEntity.isFallFlying(),
+				livingEntity.isPassenger(),
 				livingEntity.isBaby(),
 				livingEntity instanceof net.minecraft.world.entity.Mob mob && mob.isAggressive(),
 				livingEntity.isUsingItem(),
@@ -628,9 +791,200 @@ final class CameraEntityRenderer {
 				kind,
 				texture,
 				overlays,
+				leftHandItem(livingEntity),
+				rightHandItem(livingEntity),
 				null,
 				(byte) 0
 		);
+	}
+
+	private static ItemStack rightHandItem(LivingEntity livingEntity) {
+		if (livingEntity == null) {
+			return ItemStack.EMPTY;
+		}
+		return livingEntity.getMainArm() == HumanoidArm.RIGHT
+				? livingEntity.getItemInHand(InteractionHand.MAIN_HAND).copy()
+				: livingEntity.getItemInHand(InteractionHand.OFF_HAND).copy();
+	}
+
+	private static ItemStack leftHandItem(LivingEntity livingEntity) {
+		if (livingEntity == null) {
+			return ItemStack.EMPTY;
+		}
+		return livingEntity.getMainArm() == HumanoidArm.RIGHT
+				? livingEntity.getItemInHand(InteractionHand.OFF_HAND).copy()
+				: livingEntity.getItemInHand(InteractionHand.MAIN_HAND).copy();
+	}
+
+	private static EntitySnapshot attachAuxiliarySnapshots(Entity entity, EntitySnapshot primary) {
+		if (primary == null) {
+			return null;
+		}
+		List<EntitySnapshot> attachments = new ArrayList<>();
+		LineSnapshot[] leashLines = captureLeashLines(entity);
+		if (leashLines != null) {
+			for (LineSnapshot leashLine : leashLines) {
+				if (leashLine != null) {
+					attachments.add(leashLine);
+				}
+			}
+		}
+		if (attachments.isEmpty()) {
+			return primary;
+		}
+		return new CompositeSnapshot(primary.position(), primary, attachments.toArray(EntitySnapshot[]::new));
+	}
+
+	private static ClientModelSnapshot capturePlayerClientModel(Player player, PlayerSkinSnapshot playerSkin, byte modelBits) {
+		Map<String, Object> state = livingStateFields(player);
+		state.put("showHat", showPlayerPart(modelBits, PlayerModelPart.HAT));
+		state.put("showJacket", showPlayerPart(modelBits, PlayerModelPart.JACKET));
+		state.put("showLeftPants", showPlayerPart(modelBits, PlayerModelPart.LEFT_PANTS_LEG));
+		state.put("showRightPants", showPlayerPart(modelBits, PlayerModelPart.RIGHT_PANTS_LEG));
+		state.put("showLeftSleeve", showPlayerPart(modelBits, PlayerModelPart.LEFT_SLEEVE));
+		state.put("showRightSleeve", showPlayerPart(modelBits, PlayerModelPart.RIGHT_SLEEVE));
+		state.put("showCape", showPlayerPart(modelBits, PlayerModelPart.CAPE));
+		state.put("isSpectator", false);
+		state.put("showExtraEars", false);
+		state.put("id", player.getId());
+
+		ClientLayerSnapshot layer = new ClientLayerSnapshot(
+				"net.minecraft.client.model.player.PlayerModel",
+				playerSkin == null ? PLAYER_WIDE_FALLBACK : playerSkin.fallbackTexture(),
+				0xFFFFFF,
+				false
+		).withFactory("createMesh").withModelFlag(playerSkin != null && playerSkin.slim());
+		if (playerSkin != null) {
+			layer = layer.withPlayerSkin(playerSkin);
+		}
+		return livingClientModelSnapshot(player, player.yBodyRot, state, new ClientLayerSnapshot[]{layer});
+	}
+
+	private static ClientModelSnapshot captureArmorStandClientModel(ArmorStand armorStand) {
+		Map<String, Object> state = livingStateFields(armorStand);
+		state.put("yRot", armorStand.getYRot());
+		state.put("isMarker", armorStand.isMarker());
+		state.put("isSmall", armorStand.isSmall());
+		state.put("showArms", armorStand.showArms());
+		state.put("showBasePlate", armorStand.showBasePlate());
+		state.put("bodyPose", armorStand.getBodyPose());
+		state.put("headPose", armorStand.getHeadPose());
+		state.put("leftArmPose", armorStand.getLeftArmPose());
+		state.put("rightArmPose", armorStand.getRightArmPose());
+		state.put("leftLegPose", armorStand.getLeftLegPose());
+		state.put("rightLegPose", armorStand.getRightLegPose());
+		state.put("wiggle", 0.0F);
+		return livingClientModelSnapshot(
+				armorStand,
+				armorStand.getYRot(),
+				state,
+				new ClientLayerSnapshot[]{
+						new ClientLayerSnapshot("net.minecraft.client.model.object.armorstand.ArmorStandModel", ARMOR_STAND_TEXTURE, 0xFFFFFF, false)
+				}
+		);
+	}
+
+	private static ClientModelSnapshot captureLlamaClientModel(Llama llama) {
+		Map<String, Object> state = livingStateFields(llama);
+		state.put("variant", llama.getVariant());
+		state.put("hasChest", !llama.isBaby() && llama.hasChest());
+		state.put("bodyItem", llama.getBodyArmorItem().copy());
+		state.put("isTraderLlama", llama.isTraderLlama());
+
+		List<ClientLayerSnapshot> layers = new ArrayList<>();
+		String modelClassName = "net.minecraft.client.model.animal.llama.LlamaModel";
+		layers.add(new ClientLayerSnapshot(modelClassName, llamaTexture(llama), 0xFFFFFF, false));
+		addEquipmentLayers(layers, modelClassName, "llama_body", llama.getBodyArmorItem(), null, 1.0F);
+		if (llama.isTraderLlama() && llama.getBodyArmorItem().isEmpty()) {
+			addEquipmentLayers(layers, modelClassName, "llama_body", ItemStack.EMPTY, Identifier.fromNamespaceAndPath("minecraft", "trader_llama"), 1.0F);
+		}
+		return livingClientModelSnapshot(llama, llama.yBodyRot, state, layers.toArray(ClientLayerSnapshot[]::new));
+	}
+
+	private static FishingHookSnapshot captureFishingHookSnapshot(FishingHook fishingHook) {
+		Player owner = fishingHook.getPlayerOwner();
+		if (owner == null) {
+			return null;
+		}
+		float attackAnim = owner.getAttackAnim(0.0F);
+		float swing = Mth.sin(Mth.sqrt(attackAnim) * (float) Math.PI);
+		Vec3 lineStart = fishingHookHandPosition(owner, swing);
+		Vec3 hookPos = fishingHook.getPosition(0.0F).add(0.0D, 0.25D, 0.0D);
+		return new FishingHookSnapshot(
+				fishingHook.position(),
+				lineStart.subtract(hookPos)
+		);
+	}
+
+	private static LineSnapshot[] captureLeashLines(Entity entity) {
+		if (!(entity instanceof Leashable leashable)) {
+			return null;
+		}
+		Entity holder = leashable.getLeashHolder();
+		if (holder == null) {
+			return null;
+		}
+
+		float entityYawRadians = entity.getPreciseBodyRotation(0.0F) * ((float) Math.PI / 180.0F);
+		Vec3 leashOffset = leashable.getLeashOffset(0.0F);
+		int blockLightStart = blockLight(entity, entity.getEyePosition(0.0F));
+		int blockLightEnd = blockLight(holder, holder.getEyePosition(0.0F));
+		int skyLightStart = skyLight(entity.level(), entity.getEyePosition(0.0F));
+		int skyLightEnd = skyLight(holder.level(), holder.getEyePosition(0.0F));
+
+		if (holder.supportQuadLeashAsHolder() && leashable.supportQuadLeash()) {
+			float holderYawRadians = holder.getPreciseBodyRotation(0.0F) * ((float) Math.PI / 180.0F);
+			Vec3[] offsets = leashable.getQuadLeashOffsets();
+			Vec3[] holderOffsets = holder.getQuadLeashHolderOffsets();
+			Vec3 holderPos = holder.getPosition(0.0F);
+			int count = Math.min(offsets.length, holderOffsets.length);
+			LineSnapshot[] lines = new LineSnapshot[count];
+			for (int i = 0; i < count; i++) {
+				Vec3 startOffset = offsets[i].yRot(-entityYawRadians);
+				Vec3 start = entity.getPosition(0.0F).add(startOffset);
+				Vec3 end = holderPos.add(holderOffsets[i].yRot(-holderYawRadians));
+				lines[i] = new LineSnapshot(
+						entity.position(),
+						start,
+						end,
+						0.7F,
+						0.02F,
+						LEASH_SEGMENT_TEXTURE
+				);
+			}
+			return lines;
+		}
+
+		Vec3 start = entity.getPosition(0.0F).add(leashOffset.yRot(-entityYawRadians));
+		Vec3 end = holder.getRopeHoldPosition(0.0F);
+		return new LineSnapshot[]{
+				new LineSnapshot(entity.position(), start, end, 0.7F, 0.02F, LEASH_SEGMENT_TEXTURE)
+		};
+	}
+
+	private static int blockLight(Entity entity, Vec3 position) {
+		if (entity.isOnFire()) {
+			return 15;
+		}
+		return entity.level().getBrightness(net.minecraft.world.level.LightLayer.BLOCK, BlockPos.containing(position));
+	}
+
+	private static int skyLight(net.minecraft.world.level.Level level, Vec3 position) {
+		return level.getBrightness(net.minecraft.world.level.LightLayer.SKY, BlockPos.containing(position));
+	}
+
+	private static Vec3 fishingHookHandPosition(Player player, float swing) {
+		HumanoidArm arm = player.getMainHandItem().getItem() instanceof net.minecraft.world.item.FishingRodItem
+				? player.getMainArm()
+				: player.getMainArm().getOpposite();
+		double armSide = arm == HumanoidArm.RIGHT ? -1.0D : 1.0D;
+		Vec3 bodyOffset = new Vec3(armSide * 0.35D, 0.8D * player.getScale(), 0.0D).yRot(-radians(player.getYRot()));
+		Vec3 hand = player.getEyePosition().add(bodyOffset);
+		if (swing == 0.0F) {
+			return hand;
+		}
+		Vec3 swingOffset = new Vec3(armSide * 0.2D * swing, -0.05D * swing, 0.15D * swing).yRot(-radians(player.getYRot()));
+		return hand.add(swingOffset);
 	}
 
 	private static ClientModelSnapshot captureVillagerClientModel(Villager villager) {
@@ -650,6 +1004,27 @@ final class CameraEntityRenderer {
 		}
 
 		return livingClientModelSnapshot(villager, villager.yBodyRot, state, layers.toArray(ClientLayerSnapshot[]::new));
+	}
+
+	private static ClientModelSnapshot captureZombieClientModel(Zombie zombie) {
+		Map<String, Object> state = livingStateFields(zombie);
+		state.put("isAggressive", zombie.isAggressive());
+		state.put("isConverting", zombie.isUnderWaterConverting());
+
+		String modelClassName = zombie instanceof Drowned
+				? "net.minecraft.client.model.monster.zombie.DrownedModel"
+				: "net.minecraft.client.model.monster.zombie.ZombieModel";
+		Identifier texture = zombie instanceof Husk
+				? HUSK_TEXTURE
+				: zombie instanceof Drowned ? DROWNED_TEXTURE : ZOMBIE_TEXTURE;
+		return livingClientModelSnapshot(
+				zombie,
+				zombie.yBodyRot,
+				state,
+				new ClientLayerSnapshot[]{
+						new ClientLayerSnapshot(modelClassName, texture, 0xFFFFFF, false)
+				}
+		);
 	}
 
 	private static ClientModelSnapshot captureSheepClientModel(Sheep sheep) {
@@ -673,7 +1048,7 @@ final class CameraEntityRenderer {
 					SHEEP_WOOL_TEXTURE,
 					sheep.getColor().getTextureDiffuseColor(),
 					false
-			));
+			).withRenderScale(1.01F));
 		}
 		return livingClientModelSnapshot(sheep, sheep.yBodyRot, state, layers.toArray(ClientLayerSnapshot[]::new));
 	}
@@ -692,14 +1067,17 @@ final class CameraEntityRenderer {
 
 	private static ClientModelSnapshot capturePigClientModel(Pig pig) {
 		Identifier texture = variantTexture(pig.getVariant(), Identifier.fromNamespaceAndPath("minecraft", "entity/pig/temperate_pig"));
-		return livingClientModelSnapshot(
-				pig,
-				pig.yBodyRot,
-				livingStateFields(pig),
-				new ClientLayerSnapshot[]{
-						new ClientLayerSnapshot(pigModelClass(texture), texture, 0xFFFFFF, false)
-				}
-		);
+		Map<String, Object> state = livingStateFields(pig);
+		ItemStack saddle = pig.getItemBySlot(EquipmentSlot.SADDLE).copy();
+		state.put("saddle", saddle);
+		state.put("variant", pig.getVariant().value());
+
+		List<ClientLayerSnapshot> layers = new ArrayList<>();
+		String modelClassName = pigModelClass(texture);
+		layers.add(new ClientLayerSnapshot(modelClassName, texture, 0xFFFFFF, false));
+		addEquipmentLayers(layers, modelClassName, "pig_saddle", saddle, null, 1.01F);
+
+		return livingClientModelSnapshot(pig, pig.yBodyRot, state, layers.toArray(ClientLayerSnapshot[]::new));
 	}
 
 	private static ClientModelSnapshot captureChickenClientModel(Chicken chicken) {
@@ -752,11 +1130,16 @@ final class CameraEntityRenderer {
 
 	private static ClientModelSnapshot captureHorseClientModel(Horse horse) {
 		Map<String, Object> state = livingStateFields(horse);
+		ItemStack saddle = horse.getItemBySlot(EquipmentSlot.SADDLE).copy();
+		state.put("saddle", saddle);
+		state.put("bodyArmorItem", horse.getBodyArmorItem().copy());
 		state.put("isRidden", horse.isVehicle());
 		state.put("animateTail", horse.tailCounter > 0);
 		state.put("eatAnimation", horse.getEatAnim(0.0F));
 		state.put("standAnimation", horse.getStandAnim(0.0F));
 		state.put("feedingAnimation", horse.getMouthAnim(0.0F));
+		state.put("variant", horse.getVariant());
+		state.put("markings", horse.getMarkings());
 
 		List<ClientLayerSnapshot> layers = new ArrayList<>();
 		layers.add(new ClientLayerSnapshot(
@@ -774,11 +1157,85 @@ final class CameraEntityRenderer {
 					false
 			));
 		}
+		addEquipmentLayers(
+				layers,
+				"net.minecraft.client.model.animal.equine.EquineSaddleModel",
+				"horse_saddle",
+				saddle,
+				null,
+				1.01F
+		);
+		addEquipmentLayers(
+				layers,
+				"net.minecraft.client.model.animal.equine.HorseModel",
+				"horse_body",
+				horse.getBodyArmorItem(),
+				null,
+				1.01F
+		);
 		return livingClientModelSnapshot(
 				horse,
 				horse.yBodyRot,
 				state,
 				layers.toArray(ClientLayerSnapshot[]::new)
+		);
+	}
+
+	private static ClientModelSnapshot captureIronGolemClientModel(net.minecraft.world.entity.animal.golem.IronGolem ironGolem) {
+		Map<String, Object> state = livingStateFields(ironGolem);
+		state.put("attackTicksRemaining", Math.max(ironGolem.getAttackAnimationTick(), 0));
+		state.put("offerFlowerTick", ironGolem.getOfferFlowerTick());
+		state.put("crackiness", ironGolem.getCrackiness());
+
+		List<ClientLayerSnapshot> layers = new ArrayList<>();
+		String modelClassName = "net.minecraft.client.model.animal.golem.IronGolemModel";
+		layers.add(new ClientLayerSnapshot(modelClassName, minecraftTexture("entity/iron_golem/iron_golem"), 0xFFFFFF, false));
+		addClientLayerIfPresent(layers, modelClassName, ironGolemCrackinessTexture(ironGolem.getCrackiness()), 0xFFFFFF, false);
+		return livingClientModelSnapshot(ironGolem, ironGolem.yBodyRot, state, layers.toArray(ClientLayerSnapshot[]::new));
+	}
+
+	private static ClientModelSnapshot captureBoatClientModel(AbstractBoat boat) {
+		Identifier typeId = BuiltInRegistries.ENTITY_TYPE.getKey(boat.getType());
+		if (typeId == null || !"minecraft".equals(typeId.getNamespace())) {
+			return null;
+		}
+
+		String typePath = typeId.getPath();
+		String woodType = boatWoodType(typePath);
+		if (woodType == null) {
+			return null;
+		}
+
+		boolean chest = typePath.contains("chest");
+		boolean raft = typePath.contains("raft");
+		String modelClassName = raft
+				? "net.minecraft.client.model.object.boat.RaftModel"
+				: "net.minecraft.client.model.object.boat.BoatModel";
+		String layerFactoryMethodName = raft
+				? chest ? "createChestRaftModel" : "createRaftModel"
+				: chest ? "createChestBoatModel" : "createBoatModel";
+		Identifier texture = minecraftTexture((chest ? "entity/chest_boat/" : "entity/boat/") + woodType);
+
+		Map<String, Object> state = entityStateFields(boat);
+		state.put("yRot", boat.getYRot(0.0F));
+		state.put("hurtTime", boat.getHurtTime());
+		state.put("hurtDir", boat.getHurtDir());
+		state.put("damageTime", boat.getDamage());
+		state.put("bubbleAngle", boat.getBubbleAngle(0.0F));
+		state.put("isUnderWater", boat.isUnderWater());
+		state.put("rowingTimeLeft", boat.getRowingTime(0, 0.0F));
+		state.put("rowingTimeRight", boat.getRowingTime(1, 0.0F));
+
+		return clientModelSnapshot(
+				boat.position(),
+				boat.getYRot(0.0F),
+				0.0F,
+				1.0F,
+				ClientModelTransformKind.BOAT,
+				state,
+				new ClientLayerSnapshot[]{
+						new ClientLayerSnapshot(modelClassName, texture, 0xFFFFFF, false).withFactory(layerFactoryMethodName)
+				}
 		);
 	}
 
@@ -803,7 +1260,7 @@ final class CameraEntityRenderer {
 			Map<String, Object> stateFields,
 			ClientLayerSnapshot[] layers
 	) {
-		return clientModelSnapshot(livingEntity.position(), rootYaw, 180.0F, livingEntity.getScale(), stateFields, layers);
+		return clientModelSnapshot(livingEntity.position(), rootYaw, 180.0F, livingEntity.getScale(), ClientModelTransformKind.LIVING, stateFields, layers);
 	}
 
 	private static ClientModelSnapshot clientModelSnapshot(
@@ -811,10 +1268,11 @@ final class CameraEntityRenderer {
 			float rootYaw,
 			float rootYawOffsetDegrees,
 			float rootScale,
+			ClientModelTransformKind transformKind,
 			Map<String, Object> stateFields,
 			ClientLayerSnapshot[] layers
 	) {
-		return new ClientModelSnapshot(position, rootYaw, rootYawOffsetDegrees, rootScale, stateFields, layers);
+		return new ClientModelSnapshot(position, rootYaw, rootYawOffsetDegrees, rootScale, transformKind, stateFields, layers);
 	}
 
 	private static void addClientLayerIfPresent(List<ClientLayerSnapshot> layers, String modelClassName, Identifier texture, int tintRgb, boolean emissive) {
@@ -823,17 +1281,26 @@ final class CameraEntityRenderer {
 		}
 	}
 
-	private static Map<String, Object> livingStateFields(LivingEntity livingEntity) {
+	private static Map<String, Object> entityStateFields(Entity entity) {
 		Map<String, Object> state = new HashMap<>();
-		state.put("entityType", livingEntity.getType());
-		state.put("x", livingEntity.getX());
-		state.put("y", livingEntity.getY());
-		state.put("z", livingEntity.getZ());
-		state.put("ageInTicks", (float) livingEntity.tickCount);
-		state.put("boundingBoxWidth", (float) livingEntity.getBoundingBox().getXsize());
-		state.put("boundingBoxHeight", (float) livingEntity.getBoundingBox().getYsize());
-		state.put("eyeHeight", livingEntity.getEyeHeight());
-		state.put("isInvisible", livingEntity.isInvisible());
+		state.put("entityType", entity.getType());
+		state.put("x", entity.getX());
+		state.put("y", entity.getY());
+		state.put("z", entity.getZ());
+		state.put("ageInTicks", (float) entity.tickCount);
+		state.put("boundingBoxWidth", entity.getBbWidth());
+		state.put("boundingBoxHeight", entity.getBbHeight());
+		state.put("eyeHeight", entity.getEyeHeight());
+		state.put("isInvisible", entity.isInvisible());
+		state.put("isDiscrete", entity.isDiscrete());
+		state.put("displayFireAnimation", entity.displayFireAnimation());
+		state.put("outlineColor", 0);
+		state.put("lightCoords", 0);
+		return state;
+	}
+
+	private static Map<String, Object> livingStateFields(LivingEntity livingEntity) {
+		Map<String, Object> state = entityStateFields(livingEntity);
 		state.put("bodyRot", livingEntity.yBodyRot);
 		state.put("yRot", wrapDegrees(livingEntity.yHeadRot - livingEntity.yBodyRot));
 		state.put("xRot", livingEntity.getXRot());
@@ -855,12 +1322,35 @@ final class CameraEntityRenderer {
 		state.put("isVisuallySwimming", livingEntity.isVisuallySwimming());
 		state.put("isPassenger", livingEntity.isPassenger());
 		state.put("isUsingItem", livingEntity.isUsingItem());
+		state.put("ticksUsingItem", livingEntity.isUsingItem() ? (float) livingEntity.getTicksUsingItem() : 0.0F);
 		state.put("speedValue", Mth.clamp(livingEntity.walkAnimation.speed(), 0.0F, 1.0F));
 		state.put("distanceToCameraSq", 0.0D);
 		state.put("eyePosition", livingEntity.getEyePosition());
 		state.put("lookDirection", livingEntity.getLookAngle());
 		state.put("lookAtPosition", livingEntity.getEyePosition().add(livingEntity.getLookAngle()));
 		state.put("attackTargetPosition", livingEntity.getEyePosition().add(livingEntity.getLookAngle()));
+		state.put("mainArm", livingEntity.getMainArm());
+		state.put("attackArm", livingEntity.getMainArm());
+		state.put("useItemHand", livingEntity.isUsingItem() ? livingEntity.getUsedItemHand() : InteractionHand.MAIN_HAND);
+		state.put("leftHandItemStack", livingEntity.getItemInHand(InteractionHand.OFF_HAND).copy());
+		state.put("rightHandItemStack", livingEntity.getItemInHand(InteractionHand.MAIN_HAND).copy());
+		state.put("headEquipment", livingEntity.getItemBySlot(EquipmentSlot.HEAD).copy());
+		state.put("chestEquipment", livingEntity.getItemBySlot(EquipmentSlot.CHEST).copy());
+		state.put("legsEquipment", livingEntity.getItemBySlot(EquipmentSlot.LEGS).copy());
+		state.put("feetEquipment", livingEntity.getItemBySlot(EquipmentSlot.FEET).copy());
+		String leftArmPose = !livingEntity.getItemInHand(InteractionHand.OFF_HAND).isEmpty() ? "ITEM" : "EMPTY";
+		String rightArmPose = !livingEntity.getItemInHand(InteractionHand.MAIN_HAND).isEmpty() ? "ITEM" : "EMPTY";
+		if (livingEntity.isUsingItem()) {
+			if (livingEntity.getUsedItemHand() == InteractionHand.MAIN_HAND) {
+				rightArmPose = livingEntity.getMainArm() == HumanoidArm.RIGHT ? "ITEM" : rightArmPose;
+				leftArmPose = livingEntity.getMainArm() == HumanoidArm.LEFT ? "ITEM" : leftArmPose;
+			} else {
+				rightArmPose = livingEntity.getMainArm() == HumanoidArm.LEFT ? "ITEM" : rightArmPose;
+				leftArmPose = livingEntity.getMainArm() == HumanoidArm.RIGHT ? "ITEM" : leftArmPose;
+			}
+		}
+		state.put("leftArmPose", leftArmPose);
+		state.put("rightArmPose", rightArmPose);
 		state.put("beamOffset", Vec3.ZERO);
 		state.put("renderOffset", Vec3.ZERO);
 		state.put("attachFace", Direction.DOWN);
@@ -934,9 +1424,9 @@ final class CameraEntityRenderer {
 		registerSimpleClientRule(rules, "endermite", "net.minecraft.client.model.monster.endermite.EndermiteModel", minecraftTexture("entity/endermite"));
 		registerSimpleClientRule(rules, "evoker", "net.minecraft.client.model.monster.illager.IllagerModel", minecraftTexture("entity/illager/evoker"));
 		registerSimpleClientRule(rules, "frog", "net.minecraft.client.model.animal.frog.FrogModel", minecraftTexture("entity/frog/temperate_frog"));
-		registerSimpleClientRule(rules, "iron_golem", "net.minecraft.client.model.animal.golem.IronGolemModel", minecraftTexture("entity/iron_golem/iron_golem"));
+		rules.put("iron_golem", livingEntity -> captureIronGolemClientModel((net.minecraft.world.entity.animal.golem.IronGolem) livingEntity));
 		registerSimpleClientRule(rules, "illusioner", "net.minecraft.client.model.monster.illager.IllagerModel", minecraftTexture("entity/illager/illusioner"));
-		registerSimpleClientRule(rules, "llama", "net.minecraft.client.model.animal.llama.LlamaModel", minecraftTexture("entity/llama/creamy"));
+		rules.put("llama", livingEntity -> captureLlamaClientModel((Llama) livingEntity));
 		registerSimpleClientRule(rules, "magma_cube", "net.minecraft.client.model.monster.slime.MagmaCubeModel", minecraftTexture("entity/slime/magmacube"));
 		registerSimpleClientRule(rules, "mule", "net.minecraft.client.model.animal.equine.DonkeyModel", minecraftTexture("entity/horse/mule"));
 		registerSimpleClientRule(rules, "parrot", "net.minecraft.client.model.animal.parrot.ParrotModel", minecraftTexture("entity/parrot/parrot_red_blue"));
@@ -950,7 +1440,7 @@ final class CameraEntityRenderer {
 		registerSimpleClientRule(rules, "snow_golem", "net.minecraft.client.model.animal.golem.SnowGolemModel", minecraftTexture("entity/snow_golem"));
 		registerSimpleClientRule(rules, "stray", "net.minecraft.client.model.monster.skeleton.SkeletonModel", minecraftTexture("entity/skeleton/stray"));
 		registerSimpleClientRule(rules, "tadpole", "net.minecraft.client.model.animal.frog.TadpoleModel", minecraftTexture("entity/frog/tadpole"));
-		registerSimpleClientRule(rules, "trader_llama", "net.minecraft.client.model.animal.llama.LlamaModel", minecraftTexture("entity/llama/trader_llama"));
+		rules.put("trader_llama", livingEntity -> captureLlamaClientModel((Llama) livingEntity));
 		registerSimpleClientRule(rules, "turtle", "net.minecraft.client.model.animal.turtle.TurtleModel", minecraftTexture("entity/turtle/big_sea_turtle"));
 		registerSimpleClientRule(rules, "vex", "net.minecraft.client.model.monster.vex.VexModel", minecraftTexture("entity/illager/vex"));
 		registerSimpleClientRule(rules, "vindicator", "net.minecraft.client.model.monster.illager.IllagerModel", minecraftTexture("entity/illager/vindicator"));
@@ -1046,6 +1536,7 @@ final class CameraEntityRenderer {
 				livingEntity.yBodyRot,
 				0.0F,
 				livingEntity.getScale(),
+				ClientModelTransformKind.LIVING,
 				state,
 				new ClientLayerSnapshot[]{
 						new ClientLayerSnapshot(
@@ -1168,6 +1659,15 @@ final class CameraEntityRenderer {
 		return texture != null ? texture : Identifier.fromNamespaceAndPath("minecraft", "entity/cat/tabby");
 	}
 
+	private static Identifier llamaTexture(Llama llama) {
+		return switch (llama.getVariant()) {
+			case WHITE -> minecraftTexture("entity/llama/white");
+			case BROWN -> minecraftTexture("entity/llama/brown");
+			case GRAY -> minecraftTexture("entity/llama/gray");
+			default -> minecraftTexture("entity/llama/creamy");
+		};
+	}
+
 	private static Identifier horseTexture(Horse horse) {
 		return Identifier.fromNamespaceAndPath(
 				"minecraft",
@@ -1183,6 +1683,94 @@ final class CameraEntityRenderer {
 			case BLACK_DOTS -> Identifier.fromNamespaceAndPath("minecraft", "entity/horse/horse_markings_blackdots");
 			default -> null;
 		};
+	}
+
+	private static void addEquipmentLayers(
+			List<ClientLayerSnapshot> layers,
+			String modelClassName,
+			String layerType,
+			ItemStack stack,
+			Identifier assetIdOverride,
+			float renderScale
+	) {
+		Identifier assetId = assetIdOverride != null ? assetIdOverride : equipmentAssetId(stack);
+		if (assetId == null) {
+			return;
+		}
+		JsonObject equipment = ASSETS.loadJsonAsset("assets/" + assetId.getNamespace() + "/equipment/" + assetId.getPath() + ".json");
+		if (equipment == null || !equipment.has("layers") || !equipment.get("layers").isJsonObject()) {
+			return;
+		}
+		JsonObject layerMap = equipment.getAsJsonObject("layers");
+		if (!layerMap.has(layerType) || !layerMap.get(layerType).isJsonArray()) {
+			return;
+		}
+		for (JsonElement element : layerMap.getAsJsonArray(layerType)) {
+			if (!element.isJsonObject()) {
+				continue;
+			}
+			JsonObject layerJson = element.getAsJsonObject();
+			if (!layerJson.has("texture")) {
+				continue;
+			}
+			Identifier textureId = Identifier.tryParse(layerJson.get("texture").getAsString());
+			if (textureId == null) {
+				continue;
+			}
+			int tintRgb = 0xFFFFFF;
+			if (layerJson.has("dyeable") && layerJson.get("dyeable").isJsonObject()) {
+				JsonObject dyeable = layerJson.getAsJsonObject("dyeable");
+				int fallback = dyeable.has("color_when_undyed") ? dyeable.get("color_when_undyed").getAsInt() : 0xFFFFFF;
+				tintRgb = DyedItemColor.getOrDefault(stack, fallback) & 0xFFFFFF;
+			}
+			layers.add(
+					new ClientLayerSnapshot(
+							modelClassName,
+							Identifier.fromNamespaceAndPath(textureId.getNamespace(), "entity/equipment/" + layerType + "/" + textureId.getPath()),
+							tintRgb,
+							false
+					).withRenderScale(renderScale)
+			);
+		}
+	}
+
+	private static Identifier equipmentAssetId(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return null;
+		}
+		Equippable equippable = stack.get(DataComponents.EQUIPPABLE);
+		if (equippable == null) {
+			return null;
+		}
+		return equippable.assetId().map(ResourceKey::identifier).orElse(null);
+	}
+
+	private static Identifier ironGolemCrackinessTexture(net.minecraft.world.entity.Crackiness.Level crackiness) {
+		return switch (crackiness) {
+			case LOW -> minecraftTexture("entity/iron_golem/iron_golem_crackiness_low");
+			case MEDIUM -> minecraftTexture("entity/iron_golem/iron_golem_crackiness_medium");
+			case HIGH -> minecraftTexture("entity/iron_golem/iron_golem_crackiness_high");
+			default -> null;
+		};
+	}
+
+	private static String boatWoodType(String typePath) {
+		if (typePath == null || typePath.isBlank()) {
+			return null;
+		}
+		if (typePath.endsWith("_chest_boat")) {
+			return typePath.substring(0, typePath.length() - "_chest_boat".length());
+		}
+		if (typePath.endsWith("_boat")) {
+			return typePath.substring(0, typePath.length() - "_boat".length());
+		}
+		if (typePath.endsWith("_chest_raft")) {
+			return typePath.substring(0, typePath.length() - "_chest_raft".length());
+		}
+		if (typePath.endsWith("_raft")) {
+			return typePath.substring(0, typePath.length() - "_raft".length());
+		}
+		return null;
 	}
 
 	private static Direction sleepingDirection(LivingEntity livingEntity) {
@@ -1226,26 +1814,43 @@ final class CameraEntityRenderer {
 		RenderContext context = new RenderContext(snapshot, model, materialResolver);
 		for (EntitySnapshot entitySnapshot : entities) {
 			try {
-				if (entitySnapshot instanceof HumanoidSnapshot humanoidSnapshot) {
-					renderHumanoid(context, humanoidSnapshot);
-				} else if (entitySnapshot instanceof ClientModelSnapshot clientModelSnapshot) {
-					VanillaClientModels.render(context, clientModelSnapshot);
-				} else if (entitySnapshot instanceof QuadrupedSnapshot quadrupedSnapshot) {
-					renderQuadruped(context, quadrupedSnapshot);
-				} else if (entitySnapshot instanceof ChickenSnapshot chickenSnapshot) {
-					renderChicken(context, chickenSnapshot);
-				} else if (entitySnapshot instanceof CreeperSnapshot creeperSnapshot) {
-					renderCreeper(context, creeperSnapshot);
-				} else if (entitySnapshot instanceof SpiderSnapshot spiderSnapshot) {
-					renderSpider(context, spiderSnapshot);
-				} else if (entitySnapshot instanceof ArmorStandSnapshot armorStandSnapshot) {
-					renderArmorStand(context, armorStandSnapshot);
-				} else if (entitySnapshot instanceof ItemSnapshot itemSnapshot) {
-					renderItem(context, itemSnapshot);
-				}
+				renderEntitySnapshot(context, entitySnapshot);
 			} catch (Throwable throwable) {
 				Lg2.LOGGER.debug("Failed to render camera snapshot {}", entitySnapshot.getClass().getSimpleName(), throwable);
 			}
+		}
+	}
+
+	private static void renderEntitySnapshot(RenderContext context, EntitySnapshot entitySnapshot) {
+		if (entitySnapshot instanceof CompositeSnapshot compositeSnapshot) {
+			renderEntitySnapshot(context, compositeSnapshot.primary());
+			for (EntitySnapshot attachment : compositeSnapshot.attachments()) {
+				renderEntitySnapshot(context, attachment);
+			}
+			return;
+		}
+		if (entitySnapshot instanceof HumanoidSnapshot humanoidSnapshot) {
+			renderHumanoid(context, humanoidSnapshot);
+		} else if (entitySnapshot instanceof ClientModelSnapshot clientModelSnapshot) {
+			VanillaClientModels.render(context, clientModelSnapshot);
+		} else if (entitySnapshot instanceof QuadrupedSnapshot quadrupedSnapshot) {
+			renderQuadruped(context, quadrupedSnapshot);
+		} else if (entitySnapshot instanceof ChickenSnapshot chickenSnapshot) {
+			renderChicken(context, chickenSnapshot);
+		} else if (entitySnapshot instanceof CreeperSnapshot creeperSnapshot) {
+			renderCreeper(context, creeperSnapshot);
+		} else if (entitySnapshot instanceof SpiderSnapshot spiderSnapshot) {
+			renderSpider(context, spiderSnapshot);
+		} else if (entitySnapshot instanceof ArmorStandSnapshot armorStandSnapshot) {
+			renderArmorStand(context, armorStandSnapshot);
+		} else if (entitySnapshot instanceof ItemSnapshot itemSnapshot) {
+			renderItem(context, itemSnapshot);
+		} else if (entitySnapshot instanceof ExperienceOrbSnapshot experienceOrbSnapshot) {
+			renderExperienceOrb(context, experienceOrbSnapshot);
+		} else if (entitySnapshot instanceof FishingHookSnapshot fishingHookSnapshot) {
+			renderFishingHook(context, fishingHookSnapshot);
+		} else if (entitySnapshot instanceof LineSnapshot lineSnapshot) {
+			renderLine(context, lineSnapshot);
 		}
 	}
 
@@ -1310,6 +1915,14 @@ final class CameraEntityRenderer {
 		float leftArmPitch = Mth.cos(walkPhase) * 1.4F * walkAmount;
 		float rightLegPitch = Mth.cos(walkPhase) * 1.4F * walkAmount;
 		float leftLegPitch = Mth.cos(walkPhase + (float) Math.PI) * 1.4F * walkAmount;
+		float rightArmYaw = 0.0F;
+		float leftArmYaw = 0.0F;
+		float rightArmRoll = 0.0F;
+		float leftArmRoll = 0.0F;
+		float rightLegYaw = 0.0F;
+		float leftLegYaw = 0.0F;
+		float rightLegRoll = 0.0F;
+		float leftLegRoll = 0.0F;
 		if (snapshot.aggressive()) {
 			rightArmPitch = -1.2F;
 			leftArmPitch = -1.2F;
@@ -1321,11 +1934,21 @@ final class CameraEntityRenderer {
 				leftArmPitch = -1.4F;
 			}
 		}
+		if (snapshot.passenger()) {
+			rightArmPitch -= (float) Math.PI / 5.0F;
+			leftArmPitch -= (float) Math.PI / 5.0F;
+			rightLegPitch = -1.4137167F;
+			leftLegPitch = -1.4137167F;
+			rightLegYaw = (float) Math.PI / 10.0F;
+			leftLegYaw = -((float) Math.PI / 10.0F);
+			rightLegRoll = 0.07853982F;
+			leftLegRoll = -0.07853982F;
+		}
 
-		renderHumanBase(context, snapshot, root, baseMaterial, texWidth, texHeight, headYaw, headPitch, rightArmPitch, leftArmPitch, rightLegPitch, leftLegPitch);
+		renderHumanBase(context, snapshot, root, baseMaterial, texWidth, texHeight, headYaw, headPitch, rightArmPitch, leftArmPitch, rightArmYaw, leftArmYaw, rightArmRoll, leftArmRoll, rightLegPitch, leftLegPitch, rightLegYaw, leftLegYaw, rightLegRoll, leftLegRoll);
 
 		if (snapshot.kind().outerLayers) {
-			renderPlayerOuterLayers(context, snapshot, root, baseMaterial, headYaw, headPitch, rightArmPitch, leftArmPitch, rightLegPitch, leftLegPitch);
+			renderPlayerOuterLayers(context, snapshot, root, baseMaterial, headYaw, headPitch, rightArmPitch, leftArmPitch, rightArmYaw, leftArmYaw, rightArmRoll, leftArmRoll, rightLegPitch, leftLegPitch, rightLegYaw, leftLegYaw, rightLegRoll, leftLegRoll);
 		}
 
 		if (snapshot.kind().villager) {
@@ -1342,9 +1965,11 @@ final class CameraEntityRenderer {
 			} else if (snapshot.kind() == HumanoidKind.ENDERMAN && overlayTexture.equals(ENDERMAN_EYES_TEXTURE)) {
 				renderEndermanEyes(context, snapshot, root, overlayMaterial, headYaw, headPitch);
 			} else {
-				renderHumanBase(context, snapshot, root, overlayMaterial, snapshot.kind().textureWidth, snapshot.kind().textureHeight, headYaw, headPitch, rightArmPitch, leftArmPitch, rightLegPitch, leftLegPitch);
+				renderHumanBase(context, snapshot, root, overlayMaterial, snapshot.kind().textureWidth, snapshot.kind().textureHeight, headYaw, headPitch, rightArmPitch, leftArmPitch, rightArmYaw, leftArmYaw, rightArmRoll, leftArmRoll, rightLegPitch, leftLegPitch, rightLegYaw, leftLegYaw, rightLegRoll, leftLegRoll);
 			}
 		}
+
+		renderHumanoidHeldItems(context, snapshot, root, rightArmPitch, leftArmPitch, rightArmYaw, leftArmYaw, rightArmRoll, leftArmRoll);
 	}
 
 	private static Matrix4f humanoidRoot(Vec3 position, float yaw, Pose pose, Direction sleepingDirection, float scale) {
@@ -1385,8 +2010,16 @@ final class CameraEntityRenderer {
 			float headPitch,
 			float rightArmPitch,
 			float leftArmPitch,
+			float rightArmYaw,
+			float leftArmYaw,
+			float rightArmRoll,
+			float leftArmRoll,
 			float rightLegPitch,
-			float leftLegPitch
+			float leftLegPitch,
+			float rightLegYaw,
+			float leftLegYaw,
+			float rightLegRoll,
+			float leftLegRoll
 	) {
 		if (snapshot.kind().villager) {
 			renderVillagerBody(context, root, material, texWidth, texHeight, headYaw, headPitch, rightLegPitch, leftLegPitch);
@@ -1397,26 +2030,26 @@ final class CameraEntityRenderer {
 		float legWidth = snapshot.kind().legWidth;
 
 		Matrix4f head = rotateAround(root, 0.0F, 24.0F, 0.0F, headPitch, headYaw, 0.0F);
-		addBox(context, head, -4.0F, 24.0F, -4.0F, 8.0F, 8.0F, 8.0F, 0, 0, texWidth, texHeight, material, false, 0.0F);
+		addHumanoidBox(context, snapshot, head, -4.0F, 24.0F, -4.0F, 8.0F, 8.0F, 8.0F, 0, 0, texWidth, texHeight, material, false, 0.0F);
 
-		addBox(context, root, -4.0F, 12.0F, -2.0F, 8.0F, 12.0F, 4.0F, 16, 16, texWidth, texHeight, material, false, 0.0F);
+		addHumanoidBox(context, snapshot, root, -4.0F, 12.0F, -2.0F, 8.0F, 12.0F, 4.0F, 16, 16, texWidth, texHeight, material, false, 0.0F);
 
-		Matrix4f rightArm = rotateAround(root, -5.0F, 22.0F, 0.0F, rightArmPitch, 0.0F, 0.0F);
-		Matrix4f leftArm = rotateAround(root, 5.0F, 22.0F, 0.0F, leftArmPitch, 0.0F, 0.0F);
-		addBox(context, rightArm, -8.0F, 12.0F, -2.0F, armWidth, 12.0F, 4.0F, 40, 16, texWidth, texHeight, material, false, 0.0F);
+		Matrix4f rightArm = rotateAround(root, -5.0F, 22.0F, 0.0F, rightArmPitch, rightArmYaw, rightArmRoll);
+		Matrix4f leftArm = rotateAround(root, 5.0F, 22.0F, 0.0F, leftArmPitch, leftArmYaw, leftArmRoll);
+		addHumanoidBox(context, snapshot, rightArm, -8.0F, 12.0F, -2.0F, armWidth, 12.0F, 4.0F, 40, 16, texWidth, texHeight, material, false, 0.0F);
 		if (snapshot.kind() == HumanoidKind.PLAYER_SLIM) {
-			addBox(context, leftArm, 5.0F, 12.0F, -2.0F, armWidth, 12.0F, 4.0F, 32, 48, texWidth, texHeight, material, false, 0.0F);
+			addHumanoidBox(context, snapshot, leftArm, 5.0F, 12.0F, -2.0F, armWidth, 12.0F, 4.0F, 32, 48, texWidth, texHeight, material, false, 0.0F);
 		} else {
-			addBox(context, leftArm, 4.0F, 12.0F, -2.0F, armWidth, 12.0F, 4.0F, snapshot.kind() == HumanoidKind.SKELETON || snapshot.kind() == HumanoidKind.ENDERMAN ? 40 : 32, snapshot.kind() == HumanoidKind.SKELETON || snapshot.kind() == HumanoidKind.ENDERMAN ? 16 : 48, texWidth, texHeight, material, snapshot.kind() != HumanoidKind.PLAYER && snapshot.kind() != HumanoidKind.PLAYER_SLIM, 0.0F);
+			addHumanoidBox(context, snapshot, leftArm, 4.0F, 12.0F, -2.0F, armWidth, 12.0F, 4.0F, snapshot.kind() == HumanoidKind.SKELETON || snapshot.kind() == HumanoidKind.ENDERMAN ? 40 : 32, snapshot.kind() == HumanoidKind.SKELETON || snapshot.kind() == HumanoidKind.ENDERMAN ? 16 : 48, texWidth, texHeight, material, snapshot.kind() != HumanoidKind.PLAYER && snapshot.kind() != HumanoidKind.PLAYER_SLIM, 0.0F);
 		}
 
-		Matrix4f rightLeg = rotateAround(root, -2.0F, 12.0F, 0.0F, rightLegPitch, 0.0F, 0.0F);
-		Matrix4f leftLeg = rotateAround(root, 2.0F, 12.0F, 0.0F, leftLegPitch, 0.0F, 0.0F);
-		addBox(context, rightLeg, -4.0F, 0.0F, -2.0F, legWidth, 12.0F, 4.0F, 0, 16, texWidth, texHeight, material, false, 0.0F);
+		Matrix4f rightLeg = rotateAround(root, -2.0F, 12.0F, 0.0F, rightLegPitch, rightLegYaw, rightLegRoll);
+		Matrix4f leftLeg = rotateAround(root, 2.0F, 12.0F, 0.0F, leftLegPitch, leftLegYaw, leftLegRoll);
+		addHumanoidBox(context, snapshot, rightLeg, -4.0F, 0.0F, -2.0F, legWidth, 12.0F, 4.0F, 0, 16, texWidth, texHeight, material, false, 0.0F);
 		if (snapshot.kind() == HumanoidKind.PLAYER || snapshot.kind() == HumanoidKind.PLAYER_SLIM) {
-			addBox(context, leftLeg, 0.0F, 0.0F, -2.0F, legWidth, 12.0F, 4.0F, 16, 48, texWidth, texHeight, material, false, 0.0F);
+			addHumanoidBox(context, snapshot, leftLeg, 0.0F, 0.0F, -2.0F, legWidth, 12.0F, 4.0F, 16, 48, texWidth, texHeight, material, false, 0.0F);
 		} else {
-			addBox(context, leftLeg, 0.0F, 0.0F, -2.0F, legWidth, 12.0F, 4.0F, 0, 16, texWidth, texHeight, material, true, 0.0F);
+			addHumanoidBox(context, snapshot, leftLeg, 0.0F, 0.0F, -2.0F, legWidth, 12.0F, 4.0F, 0, 16, texWidth, texHeight, material, true, 0.0F);
 		}
 	}
 
@@ -1429,36 +2062,118 @@ final class CameraEntityRenderer {
 			float headPitch,
 			float rightArmPitch,
 			float leftArmPitch,
+			float rightArmYaw,
+			float leftArmYaw,
+			float rightArmRoll,
+			float leftArmRoll,
 			float rightLegPitch,
-			float leftLegPitch
+			float leftLegPitch,
+			float rightLegYaw,
+			float leftLegYaw,
+			float rightLegRoll,
+			float leftLegRoll
 	) {
 		byte bits = snapshot.playerModelBits();
 		if (showPlayerPart(bits, PlayerModelPart.HAT)) {
 			Matrix4f head = rotateAround(root, 0.0F, 24.0F, 0.0F, headPitch, headYaw, 0.0F);
-			addBox(context, head, -4.0F, 24.0F, -4.0F, 8.0F, 8.0F, 8.0F, 32, 0, 64, 64, material, false, 0.5F);
+			addHumanoidBox(context, snapshot, head, -4.0F, 24.0F, -4.0F, 8.0F, 8.0F, 8.0F, 32, 0, 64, 64, material, false, 0.5F);
 		}
 		if (showPlayerPart(bits, PlayerModelPart.JACKET)) {
-			addBox(context, root, -4.0F, 12.0F, -2.0F, 8.0F, 12.0F, 4.0F, 16, 32, 64, 64, material, false, 0.25F);
+			addHumanoidBox(context, snapshot, root, -4.0F, 12.0F, -2.0F, 8.0F, 12.0F, 4.0F, 16, 32, 64, 64, material, false, 0.25F);
 		}
 
 		float armWidth = snapshot.kind() == HumanoidKind.PLAYER_SLIM ? 3.0F : 4.0F;
-		Matrix4f rightArm = rotateAround(root, -5.0F, 22.0F, 0.0F, rightArmPitch, 0.0F, 0.0F);
-		Matrix4f leftArm = rotateAround(root, 5.0F, 22.0F, 0.0F, leftArmPitch, 0.0F, 0.0F);
+		Matrix4f rightArm = rotateAround(root, -5.0F, 22.0F, 0.0F, rightArmPitch, rightArmYaw, rightArmRoll);
+		Matrix4f leftArm = rotateAround(root, 5.0F, 22.0F, 0.0F, leftArmPitch, leftArmYaw, leftArmRoll);
 		if (showPlayerPart(bits, PlayerModelPart.RIGHT_SLEEVE)) {
-			addBox(context, rightArm, -8.0F, 12.0F, -2.0F, armWidth, 12.0F, 4.0F, 40, 32, 64, 64, material, false, 0.25F);
+			addHumanoidBox(context, snapshot, rightArm, -8.0F, 12.0F, -2.0F, armWidth, 12.0F, 4.0F, 40, 32, 64, 64, material, false, 0.25F);
 		}
 		if (showPlayerPart(bits, PlayerModelPart.LEFT_SLEEVE)) {
-			addBox(context, leftArm, snapshot.kind() == HumanoidKind.PLAYER_SLIM ? 5.0F : 4.0F, 12.0F, -2.0F, armWidth, 12.0F, 4.0F, 48, 48, 64, 64, material, false, 0.25F);
+			addHumanoidBox(context, snapshot, leftArm, snapshot.kind() == HumanoidKind.PLAYER_SLIM ? 5.0F : 4.0F, 12.0F, -2.0F, armWidth, 12.0F, 4.0F, 48, 48, 64, 64, material, false, 0.25F);
 		}
 
-		Matrix4f rightLeg = rotateAround(root, -2.0F, 12.0F, 0.0F, rightLegPitch, 0.0F, 0.0F);
-		Matrix4f leftLeg = rotateAround(root, 2.0F, 12.0F, 0.0F, leftLegPitch, 0.0F, 0.0F);
+		Matrix4f rightLeg = rotateAround(root, -2.0F, 12.0F, 0.0F, rightLegPitch, rightLegYaw, rightLegRoll);
+		Matrix4f leftLeg = rotateAround(root, 2.0F, 12.0F, 0.0F, leftLegPitch, leftLegYaw, leftLegRoll);
 		if (showPlayerPart(bits, PlayerModelPart.RIGHT_PANTS_LEG)) {
-			addBox(context, rightLeg, -4.0F, 0.0F, -2.0F, 4.0F, 12.0F, 4.0F, 0, 32, 64, 64, material, false, 0.25F);
+			addHumanoidBox(context, snapshot, rightLeg, -4.0F, 0.0F, -2.0F, 4.0F, 12.0F, 4.0F, 0, 32, 64, 64, material, false, 0.25F);
 		}
 		if (showPlayerPart(bits, PlayerModelPart.LEFT_PANTS_LEG)) {
-			addBox(context, leftLeg, 0.0F, 0.0F, -2.0F, 4.0F, 12.0F, 4.0F, 0, 48, 64, 64, material, false, 0.25F);
+			addHumanoidBox(context, snapshot, leftLeg, 0.0F, 0.0F, -2.0F, 4.0F, 12.0F, 4.0F, 0, 48, 64, 64, material, false, 0.25F);
 		}
+	}
+
+	private static void renderHumanoidHeldItems(
+			RenderContext context,
+			HumanoidSnapshot snapshot,
+			Matrix4f root,
+			float rightArmPitch,
+			float leftArmPitch,
+			float rightArmYaw,
+			float leftArmYaw,
+			float rightArmRoll,
+			float leftArmRoll
+	) {
+		renderHumanoidHeldItem(context, snapshot.rightHandItem(), humanoidHandTransform(root, snapshot, HumanoidArm.RIGHT, rightArmPitch, rightArmYaw, rightArmRoll), ItemDisplayTransformContext.THIRD_PERSON_RIGHT_HAND);
+		renderHumanoidHeldItem(context, snapshot.leftHandItem(), humanoidHandTransform(root, snapshot, HumanoidArm.LEFT, leftArmPitch, leftArmYaw, leftArmRoll), ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND);
+	}
+
+	private static void renderHumanoidHeldItem(RenderContext context, ItemStack stack, Matrix4f handTransform, ItemDisplayTransformContext transformContext) {
+		if (stack == null || stack.isEmpty() || handTransform == null) {
+			return;
+		}
+		ItemVisual visual = resolveItemVisual(stack);
+		if (visual == null) {
+			return;
+		}
+		Matrix4f itemTransform = new Matrix4f(handTransform)
+				.rotateX(radians(-90.0F))
+				.rotateY(radians(180.0F))
+				.translate(transformContext == ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND ? -1.0F / 16.0F : 1.0F / 16.0F, 0.125F, -0.625F);
+		renderItemVisual(context, itemTransform, visual, transformContext);
+	}
+
+	private static Matrix4f humanoidHandTransform(
+			Matrix4f root,
+			HumanoidSnapshot snapshot,
+			HumanoidArm arm,
+			float armPitch,
+			float armYaw,
+			float armRoll
+	) {
+		float pivotX = arm == HumanoidArm.RIGHT ? -5.0F : 5.0F;
+		if (snapshot.kind() == HumanoidKind.PLAYER_SLIM) {
+			pivotX += arm == HumanoidArm.RIGHT ? 0.5F : -0.5F;
+		}
+		return new Matrix4f(root)
+				.translate(pivotX * PX, 22.0F * PX, 0.0F)
+				.rotateZ(armRoll)
+				.rotateY(armYaw)
+				.rotateX(armPitch);
+	}
+
+	private static void addHumanoidBox(
+			RenderContext context,
+			HumanoidSnapshot snapshot,
+			Matrix4f transform,
+			float x,
+			float y,
+			float z,
+			float width,
+			float height,
+			float depth,
+			int texU,
+			int texV,
+			int texWidth,
+			int texHeight,
+			int material,
+			boolean mirror,
+			float inflate
+	) {
+		if (snapshot.kind() == HumanoidKind.PLAYER || snapshot.kind() == HumanoidKind.PLAYER_SLIM) {
+			addPlayerSkinBox(context, transform, x, y, z, width, height, depth, texU, texV, texWidth, texHeight, material, mirror, inflate);
+			return;
+		}
+		addBox(context, transform, x, y, z, width, height, depth, texU, texV, texWidth, texHeight, material, mirror, inflate);
 	}
 
 	private static boolean showPlayerPart(byte bits, PlayerModelPart modelPart) {
@@ -1665,13 +2380,87 @@ final class CameraEntityRenderer {
 	}
 
 	private static void renderItem(RenderContext context, ItemSnapshot snapshot) {
-		int material = context.materialResolver.materialForTexture(snapshot.texture());
 		Matrix4f root = new Matrix4f()
 				.translate((float) snapshot.position().x, (float) snapshot.position().y + 0.125F, (float) snapshot.position().z)
 				.rotateY(snapshot.spin());
-		addPlane(context, root, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
+		if (snapshot.visual().model() != null && !snapshot.visual().model().elements().isEmpty()) {
+			renderItemModel(context, root, snapshot.visual().model());
+			return;
+		}
+		if (snapshot.visual().flatTexture() == null) {
+			return;
+		}
+		int material = context.materialResolver.materialForTexture(snapshot.visual().flatTexture());
+		addDoubleSidedPlane(context, root, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
 		Matrix4f crossed = new Matrix4f(root).rotateY((float) Math.PI * 0.5F);
-		addPlane(context, crossed, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
+		addDoubleSidedPlane(context, crossed, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
+	}
+
+	private static void renderExperienceOrb(RenderContext context, ExperienceOrbSnapshot snapshot) {
+		int material = context.materialResolver.materialForTexture(EXPERIENCE_ORB_TEXTURE);
+		int icon = Math.max(snapshot.icon(), 0);
+		float u0 = (icon % 4) * 16.0F / 64.0F;
+		float u1 = u0 + 16.0F / 64.0F;
+		float v0 = (icon / 4) * 16.0F / 64.0F;
+		float v1 = v0 + 16.0F / 64.0F;
+		float phase = snapshot.ageInTicks() * 0.5F;
+		float red = (Mth.sin(phase) + 1.0F) * 0.5F;
+		float blue = (Mth.sin(phase + 4.1887903F) + 1.0F) * 0.1F;
+		Matrix4f root = new Matrix4f()
+				.translate((float) snapshot.position().x, (float) snapshot.position().y + 0.1F, (float) snapshot.position().z)
+				.scale(0.3F);
+		addTexturedDoubleSidedPlane(context, root, -0.5F, -0.25F, 0.0F, 1.0F, 1.0F, u0, v0, u1, v1, material, red, 1.0F, blue);
+		Matrix4f crossed = new Matrix4f(root).rotateY((float) Math.PI * 0.5F);
+		addTexturedDoubleSidedPlane(context, crossed, -0.5F, -0.25F, 0.0F, 1.0F, 1.0F, u0, v0, u1, v1, material, red, 1.0F, blue);
+	}
+
+	private static void renderFishingHook(RenderContext context, FishingHookSnapshot snapshot) {
+		int material = context.materialResolver.materialForTexture(FISHING_HOOK_TEXTURE);
+		Matrix4f root = new Matrix4f()
+				.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
+				.scale(0.25F);
+		addTexturedDoubleSidedPlane(context, root, -0.5F, -0.5F, 0.0F, 1.0F, 1.0F, 0.0625F, 0.0F, 0.125F, 0.0625F, material, 1.0F, 1.0F, 1.0F);
+		Matrix4f crossed = new Matrix4f(root).rotateY((float) Math.PI * 0.5F);
+		addTexturedDoubleSidedPlane(context, crossed, -0.5F, -0.5F, 0.0F, 1.0F, 1.0F, 0.0625F, 0.0F, 0.125F, 0.0625F, material, 1.0F, 1.0F, 1.0F);
+		renderLine(
+				context,
+				new LineSnapshot(
+						snapshot.position(),
+						snapshot.position().add(0.0D, 0.25D, 0.0D),
+						snapshot.position().add(snapshot.lineStartOffset()),
+						0.55F,
+						0.03F,
+						FISHING_LINE_TEXTURE
+				)
+		);
+	}
+
+	private static void renderLine(RenderContext context, LineSnapshot snapshot) {
+		int material = context.materialResolver.materialForTexture(snapshot.texture());
+		int segments = Math.max(6, Mth.ceil((float) snapshot.start().distanceTo(snapshot.end()) * 24.0F));
+		for (int i = 0; i < segments; i++) {
+			float t = (i + 0.5F) / segments;
+			Vec3 point = linePoint(snapshot.start(), snapshot.end(), t, snapshot.sag());
+			Matrix4f cube = new Matrix4f().translate((float) point.x, (float) point.y, (float) point.z);
+			float half = snapshot.thickness() * 0.5F;
+			addBox(context, cube, -half, -half, -half, snapshot.thickness(), snapshot.thickness(), snapshot.thickness(), 0, 0, 16, 16, material, false, 0.0F);
+		}
+	}
+
+	private static Vec3 linePoint(Vec3 start, Vec3 end, float t, float sag) {
+		Vec3 point = start.lerp(end, t);
+		if (sag <= 0.0F) {
+			return point;
+		}
+		double sagOffset = sag * 4.0D * t * (1.0D - t);
+		return point.add(0.0D, -sagOffset, 0.0D);
+	}
+
+	private static void renderItemModel(RenderContext context, Matrix4f root, ResolvedItemModel model) {
+		Matrix4f transform = new Matrix4f(root).translate(-0.25F, 0.0F, -0.25F).scale(0.5F);
+		for (ItemModelElement element : model.elements()) {
+			renderItemModelElement(context, transform, model, element);
+		}
 	}
 
 	private static Matrix4f applyPose(Matrix4f parent, Rotations rotations, float pivotX, float pivotY, float pivotZ) {
@@ -1699,12 +2488,58 @@ final class CameraEntityRenderer {
 	}
 
 	private static void addPlane(RenderContext context, Matrix4f transform, float x, float y, float z, float width, float height, int material) {
-		Vector3f v0 = transformPosition(transform, x, y, z);
-		Vector3f v1 = transformPosition(transform, x + width, y, z);
-		Vector3f v2 = transformPosition(transform, x + width, y + height, z);
-		Vector3f v3 = transformPosition(transform, x, y + height, z);
-		LightSample lightSample = context.lightAt((v0.x + v2.x) * 0.5F, (v0.y + v2.y) * 0.5F, (v0.z + v2.z) * 0.5F);
-		addQuad(context, v0, v1, v2, v3, 0.0F, 1.0F, 1.0F, 0.0F, material, lightSample.sky(), lightSample.block(), 1.0F, 1.0F, 1.0F);
+		addTexturedPlane(context, transform, x, y, z, width, height, 0.0F, 0.0F, 1.0F, 1.0F, material, 1.0F, 1.0F, 1.0F);
+	}
+
+	private static void addDoubleSidedPlane(RenderContext context, Matrix4f transform, float x, float y, float z, float width, float height, int material) {
+		addTexturedDoubleSidedPlane(context, transform, x, y, z, width, height, 0.0F, 0.0F, 1.0F, 1.0F, material, 1.0F, 1.0F, 1.0F);
+	}
+
+	private static void addTexturedDoubleSidedPlane(
+			RenderContext context,
+			Matrix4f transform,
+			float x,
+			float y,
+			float z,
+			float width,
+			float height,
+			float u0,
+			float v0,
+			float u1,
+			float v1,
+			int material,
+			float red,
+			float green,
+			float blue
+	) {
+		addTexturedPlane(context, transform, x, y, z, width, height, u0, v0, u1, v1, material, red, green, blue);
+		Matrix4f back = new Matrix4f(transform).rotateY((float) Math.PI);
+		addTexturedPlane(context, back, -(x + width), y, -z, width, height, u0, v0, u1, v1, material, red, green, blue);
+	}
+
+	private static void addTexturedPlane(
+			RenderContext context,
+			Matrix4f transform,
+			float x,
+			float y,
+			float z,
+			float width,
+			float height,
+			float texU0,
+			float texV0,
+			float texU1,
+			float texV1,
+			int material,
+			float red,
+			float green,
+			float blue
+	) {
+		Vector3f p0 = transformPosition(transform, x, y, z);
+		Vector3f p1 = transformPosition(transform, x + width, y, z);
+		Vector3f p2 = transformPosition(transform, x + width, y + height, z);
+		Vector3f p3 = transformPosition(transform, x, y + height, z);
+		LightSample lightSample = context.lightAt((p0.x + p2.x) * 0.5F, (p0.y + p2.y) * 0.5F, (p0.z + p2.z) * 0.5F);
+		addQuad(context, p0, p1, p2, p3, texU0, texU1, texV1, texV0, material, lightSample.sky(), lightSample.block(), red, green, blue);
 	}
 
 	private static void addBox(
@@ -1725,6 +2560,65 @@ final class CameraEntityRenderer {
 			float inflate
 	) {
 		addBox(context, transform, x, y, z, width, height, depth, texU, texV, texWidth, texHeight, material, mirror, inflate, -1, -1);
+	}
+
+	private static void addPlayerSkinBox(
+			RenderContext context,
+			Matrix4f transform,
+			float x,
+			float y,
+			float z,
+			float width,
+			float height,
+			float depth,
+			int texU,
+			int texV,
+			int texWidth,
+			int texHeight,
+			int material,
+			boolean mirror,
+			float inflate
+	) {
+		float minX = x - inflate;
+		float minY = y - inflate;
+		float minZ = z - inflate;
+		float maxX = x + width + inflate;
+		float maxY = y + height + inflate;
+		float maxZ = z + depth + inflate;
+		if (mirror) {
+			float swap = minX;
+			minX = maxX;
+			maxX = swap;
+		}
+
+		Vector3f nnn = transformPosition(transform, minX * PX, minY * PX, minZ * PX);
+		Vector3f pnn = transformPosition(transform, maxX * PX, minY * PX, minZ * PX);
+		Vector3f ppn = transformPosition(transform, maxX * PX, maxY * PX, minZ * PX);
+		Vector3f npn = transformPosition(transform, minX * PX, maxY * PX, minZ * PX);
+		Vector3f nnp = transformPosition(transform, minX * PX, minY * PX, maxZ * PX);
+		Vector3f pnp = transformPosition(transform, maxX * PX, minY * PX, maxZ * PX);
+		Vector3f ppp = transformPosition(transform, maxX * PX, maxY * PX, maxZ * PX);
+		Vector3f npp = transformPosition(transform, minX * PX, maxY * PX, maxZ * PX);
+
+		LightSample lightSample = context.lightAt((nnn.x + ppp.x) * 0.5F, (nnn.y + ppp.y) * 0.5F, (nnn.z + ppp.z) * 0.5F);
+		int skyLight = lightSample.sky();
+		int blockLight = lightSample.block();
+
+		float u0 = texU;
+		float v0 = texV;
+		float u1 = u0 + depth;
+		float u2 = u1 + width;
+		float u3 = u2 + depth;
+		float u4 = u3 + width;
+		float v1 = v0 + depth;
+		float v2 = v1 + height;
+
+		addQuad(context, pnp, nnp, npp, ppp, uv(u1, texWidth), uv(u2, texWidth), uv(v1, texHeight), uv(v2, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
+		addQuad(context, nnn, pnn, ppn, npn, uv(u3, texWidth), uv(u4, texWidth), uv(v1, texHeight), uv(v2, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
+		addQuad(context, nnp, nnn, npn, npp, uv(u1, texWidth), uv(u0, texWidth), uv(v1, texHeight), uv(v2, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
+		addQuad(context, pnn, pnp, ppp, ppn, uv(u3, texWidth), uv(u2, texWidth), uv(v1, texHeight), uv(v2, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
+		addQuad(context, pnn, nnn, nnp, pnp, uv(u1, texWidth), uv(u2, texWidth), uv(v0, texHeight), uv(v1, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
+		addQuad(context, npn, ppn, ppp, npp, uv(u2, texWidth), uv(u2 + width, texWidth), uv(v0, texHeight), uv(v1, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
 	}
 
 	private static void addBox(
@@ -1872,6 +2766,152 @@ final class CameraEntityRenderer {
 				.setMaterialIndex(triangle + 1, material);
 	}
 
+	private static void renderItemModelElement(RenderContext context, Matrix4f root, ResolvedItemModel model, ItemModelElement element) {
+		Matrix4f transform = new Matrix4f(root);
+		if (element.rotation() != null) {
+			transform.translate(
+					(float) element.rotation().origin().x * PX,
+					(float) element.rotation().origin().y * PX,
+					(float) element.rotation().origin().z * PX
+			);
+			transform.mul(element.rotation().transform());
+			transform.translate(
+					(float) -element.rotation().origin().x * PX,
+					(float) -element.rotation().origin().y * PX,
+					(float) -element.rotation().origin().z * PX
+			);
+		}
+
+		for (Map.Entry<Direction, ItemModelFace> entry : element.faces().entrySet()) {
+			Identifier texture = resolveTextureIdentifier(model.textures(), entry.getValue().texture());
+			if (texture == null) {
+				continue;
+			}
+			Vector3f[] vertices = itemFaceVertices(entry.getKey(), element.from(), element.to(), transform);
+			double[] uv = entry.getValue().uv() != null ? entry.getValue().uv() : defaultItemFaceUv(entry.getKey(), element.from(), element.to());
+			float[] rotatedUv = rotateItemFaceUv(uv, entry.getValue().rotation());
+			LightSample light = context.lightAt(
+					(vertices[0].x + vertices[1].x + vertices[2].x + vertices[3].x) * 0.25F,
+					(vertices[0].y + vertices[1].y + vertices[2].y + vertices[3].y) * 0.25F,
+					(vertices[0].z + vertices[1].z + vertices[2].z + vertices[3].z) * 0.25F
+			);
+			addQuadExact(
+					context,
+					vertices[0],
+					vertices[1],
+					vertices[2],
+					vertices[3],
+					rotatedUv[0],
+					rotatedUv[1],
+					rotatedUv[2],
+					rotatedUv[3],
+					rotatedUv[4],
+					rotatedUv[5],
+					rotatedUv[6],
+					rotatedUv[7],
+					context.materialResolver.materialForTexture(texture),
+					light.sky(),
+					light.block(),
+					1.0F,
+					1.0F,
+					1.0F
+			);
+		}
+	}
+
+	private static Vector3f[] itemFaceVertices(Direction direction, Vec3 from, Vec3 to, Matrix4f transform) {
+		return switch (direction) {
+			case DOWN -> new Vector3f[]{
+					transformPosition(transform, (float) from.x * PX, (float) from.y * PX, (float) to.z * PX),
+					transformPosition(transform, (float) to.x * PX, (float) from.y * PX, (float) to.z * PX),
+					transformPosition(transform, (float) to.x * PX, (float) from.y * PX, (float) from.z * PX),
+					transformPosition(transform, (float) from.x * PX, (float) from.y * PX, (float) from.z * PX)
+			};
+			case UP -> new Vector3f[]{
+					transformPosition(transform, (float) from.x * PX, (float) to.y * PX, (float) from.z * PX),
+					transformPosition(transform, (float) to.x * PX, (float) to.y * PX, (float) from.z * PX),
+					transformPosition(transform, (float) to.x * PX, (float) to.y * PX, (float) to.z * PX),
+					transformPosition(transform, (float) from.x * PX, (float) to.y * PX, (float) to.z * PX)
+			};
+			case NORTH -> new Vector3f[]{
+					transformPosition(transform, (float) to.x * PX, (float) from.y * PX, (float) from.z * PX),
+					transformPosition(transform, (float) from.x * PX, (float) from.y * PX, (float) from.z * PX),
+					transformPosition(transform, (float) from.x * PX, (float) to.y * PX, (float) from.z * PX),
+					transformPosition(transform, (float) to.x * PX, (float) to.y * PX, (float) from.z * PX)
+			};
+			case SOUTH -> new Vector3f[]{
+					transformPosition(transform, (float) from.x * PX, (float) from.y * PX, (float) to.z * PX),
+					transformPosition(transform, (float) to.x * PX, (float) from.y * PX, (float) to.z * PX),
+					transformPosition(transform, (float) to.x * PX, (float) to.y * PX, (float) to.z * PX),
+					transformPosition(transform, (float) from.x * PX, (float) to.y * PX, (float) to.z * PX)
+			};
+			case WEST -> new Vector3f[]{
+					transformPosition(transform, (float) from.x * PX, (float) from.y * PX, (float) from.z * PX),
+					transformPosition(transform, (float) from.x * PX, (float) from.y * PX, (float) to.z * PX),
+					transformPosition(transform, (float) from.x * PX, (float) to.y * PX, (float) to.z * PX),
+					transformPosition(transform, (float) from.x * PX, (float) to.y * PX, (float) from.z * PX)
+			};
+			case EAST -> new Vector3f[]{
+					transformPosition(transform, (float) to.x * PX, (float) from.y * PX, (float) to.z * PX),
+					transformPosition(transform, (float) to.x * PX, (float) from.y * PX, (float) from.z * PX),
+					transformPosition(transform, (float) to.x * PX, (float) to.y * PX, (float) from.z * PX),
+					transformPosition(transform, (float) to.x * PX, (float) to.y * PX, (float) to.z * PX)
+			};
+		};
+	}
+
+	private static double[] defaultItemFaceUv(Direction direction, Vec3 from, Vec3 to) {
+		return switch (direction) {
+			case DOWN -> new double[]{from.x, 16.0D - to.z, to.x, 16.0D - from.z};
+			case UP -> new double[]{from.x, from.z, to.x, to.z};
+			case NORTH -> new double[]{16.0D - to.x, 16.0D - to.y, 16.0D - from.x, 16.0D - from.y};
+			case SOUTH -> new double[]{from.x, 16.0D - to.y, to.x, 16.0D - from.y};
+			case WEST -> new double[]{from.z, 16.0D - to.y, to.z, 16.0D - from.y};
+			case EAST -> new double[]{16.0D - to.z, 16.0D - to.y, 16.0D - from.z, 16.0D - from.y};
+		};
+	}
+
+	private static float[] rotateItemFaceUv(double[] uv, int rotation) {
+		float u0 = (float) (uv[0] / 16.0D);
+		float v0 = (float) (uv[1] / 16.0D);
+		float u1 = (float) (uv[2] / 16.0D);
+		float v1 = (float) (uv[3] / 16.0D);
+		float[] points = new float[]{
+				u0, v1,
+				u1, v1,
+				u1, v0,
+				u0, v0
+		};
+		int turns = Math.floorMod(rotation / 90, 4);
+		for (int i = 0; i < turns; i++) {
+			points = new float[]{
+					points[6], points[7],
+					points[0], points[1],
+					points[2], points[3],
+					points[4], points[5]
+			};
+		}
+		return points;
+	}
+
+	private static Matrix4f rotationMatrix(Direction.Axis axis, float angle, boolean rescale) {
+		float radians = radians(angle);
+		Matrix4f transform = switch (axis) {
+			case X -> new Matrix4f().rotateX(radians);
+			case Y -> new Matrix4f().rotateY(radians);
+			case Z -> new Matrix4f().rotateZ(radians);
+		};
+		if (rescale && !Mth.equal(angle, 0.0F)) {
+			float scale = 1.0F / Math.max(Math.abs(Mth.cos(radians)), 1.0E-4F);
+			switch (axis) {
+				case X -> transform.scale(1.0F, scale, scale);
+				case Y -> transform.scale(scale, 1.0F, scale);
+				case Z -> transform.scale(scale, scale, 1.0F);
+			}
+		}
+		return transform;
+	}
+
 	private static Identifier variantTexture(Holder<? extends Object> holder, Identifier fallback) {
 		if (holder == null || holder.value() == null) {
 			return fallback;
@@ -1911,6 +2951,35 @@ final class CameraEntityRenderer {
 		};
 	}
 
+	private static ItemVisual resolveItemVisual(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return null;
+		}
+		Identifier itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
+		if (itemId == null) {
+			return null;
+		}
+		return ITEM_VISUAL_CACHE.computeIfAbsent(itemId.toString(), ignored -> resolveItemVisualInternal(stack, itemId));
+	}
+
+	private static ItemVisual resolveItemVisualInternal(ItemStack stack, Identifier itemId) {
+		ResolvedItemModel model = resolveItemModel(itemId.withPrefix("item/"), new HashSet<>());
+		if ((model == null || model.elements().isEmpty()) && stack.getItem() instanceof BlockItem blockItem) {
+			Identifier blockId = BuiltInRegistries.BLOCK.getKey(blockItem.getBlock());
+			if (blockId != null) {
+				model = resolveItemModel(blockId.withPrefix("block/"), new HashSet<>());
+			}
+		}
+		Identifier flatTexture = resolveItemTexture(stack);
+		if (flatTexture == null && model != null) {
+			flatTexture = primaryTexture(model);
+		}
+		if ((model == null || model.elements().isEmpty()) && flatTexture == null) {
+			return null;
+		}
+		return new ItemVisual(flatTexture, model);
+	}
+
 	private static Identifier resolveItemTexture(ItemStack stack) {
 		if (stack == null || stack.isEmpty()) {
 			return null;
@@ -1924,6 +2993,78 @@ final class CameraEntityRenderer {
 
 	private static Identifier resolveItemTextureInternal(Identifier itemId) {
 		return resolveModelTexture(itemId.withPrefix("item/"), Set.of());
+	}
+
+	private static ResolvedItemModel resolveItemModel(Identifier modelId, Set<String> resolving) {
+		String cacheKey = "model:" + modelId;
+		ItemVisual cached = ITEM_VISUAL_CACHE.get(cacheKey);
+		if (cached != null) {
+			return cached.model();
+		}
+		if (!resolving.add(modelId.toString())) {
+			return null;
+		}
+		ResolvedItemModel resolved;
+		try {
+			resolved = doResolveItemModel(modelId, resolving);
+		} finally {
+			resolving.remove(modelId.toString());
+		}
+		ITEM_VISUAL_CACHE.putIfAbsent(cacheKey, new ItemVisual(primaryTexture(resolved), resolved));
+		return resolved;
+	}
+
+	private static ResolvedItemModel doResolveItemModel(Identifier modelId, Set<String> resolving) {
+		JsonObject json = ASSETS.loadModel(modelId);
+		if (json == null) {
+			return null;
+		}
+
+		Map<String, String> textures = new HashMap<>();
+		List<ItemModelElement> elements = new ArrayList<>();
+		if (json.has("parent")) {
+			Identifier parentId = Identifier.tryParse(json.get("parent").getAsString());
+			if (parentId != null && !"builtin/generated".equals(parentId.toString())) {
+				ResolvedItemModel parent = resolveItemModel(parentId, resolving);
+				if (parent != null) {
+					textures.putAll(parent.textures());
+					elements.addAll(parent.elements());
+				}
+			}
+		}
+		if (json.has("textures") && json.get("textures").isJsonObject()) {
+			for (Map.Entry<String, JsonElement> entry : json.getAsJsonObject("textures").entrySet()) {
+				textures.put(entry.getKey(), entry.getValue().getAsString());
+			}
+		}
+		if (json.has("elements") && json.get("elements").isJsonArray()) {
+			elements.clear();
+			for (JsonElement elementJson : json.getAsJsonArray("elements")) {
+				if (!elementJson.isJsonObject()) {
+					continue;
+				}
+				JsonObject object = elementJson.getAsJsonObject();
+				Vec3 from = readModelVec3(object.getAsJsonArray("from"));
+				Vec3 to = readModelVec3(object.getAsJsonArray("to"));
+				ElementRotation rotation = readItemModelRotation(object);
+				Map<Direction, ItemModelFace> faces = new HashMap<>();
+				JsonObject facesJson = object.getAsJsonObject("faces");
+				for (Map.Entry<String, JsonElement> faceEntry : facesJson.entrySet()) {
+					Direction direction = Direction.byName(faceEntry.getKey());
+					if (direction == null || !faceEntry.getValue().isJsonObject()) {
+						continue;
+					}
+					JsonObject faceJson = faceEntry.getValue().getAsJsonObject();
+					faces.put(direction, new ItemModelFace(
+							faceJson.get("texture").getAsString(),
+							faceJson.has("uv") ? readUv(faceJson.getAsJsonArray("uv")) : null,
+							faceJson.has("rotation") ? faceJson.get("rotation").getAsInt() : 0
+					));
+				}
+				elements.add(new ItemModelElement(from, to, faces, rotation));
+			}
+		}
+		return new ResolvedItemModel(Map.copyOf(textures), List.copyOf(elements));
 	}
 
 	private static Identifier resolveModelTexture(Identifier modelId, Set<String> visited) {
@@ -1953,6 +3094,33 @@ final class CameraEntityRenderer {
 		}
 
 		return itemTextureFallback(modelId);
+	}
+
+	private static Identifier primaryTexture(ResolvedItemModel model) {
+		if (model == null) {
+			return null;
+		}
+		for (String key : List.of("layer0", "particle", "all", "side", "top", "front")) {
+			Identifier texture = resolveTextureIdentifier(model.textures(), "#" + key);
+			if (texture != null) {
+				return texture;
+			}
+		}
+		for (String value : model.textures().values()) {
+			Identifier texture = resolveTextureIdentifier(model.textures(), value);
+			if (texture != null) {
+				return texture;
+			}
+		}
+		for (ItemModelElement element : model.elements()) {
+			for (ItemModelFace face : element.faces().values()) {
+				Identifier texture = resolveTextureIdentifier(model.textures(), face.texture());
+				if (texture != null) {
+					return texture;
+				}
+			}
+		}
+		return null;
 	}
 
 	private static Identifier firstTexture(JsonObject textures) {
@@ -1986,6 +3154,52 @@ final class CameraEntityRenderer {
 			return null;
 		}
 		return Identifier.tryParse(raw);
+	}
+
+	private static Identifier resolveTextureIdentifier(Map<String, String> textures, String ref) {
+		String current = ref;
+		for (int i = 0; i < 8 && current != null && current.startsWith("#"); i++) {
+			current = textures.get(current.substring(1));
+		}
+		if (current == null || current.isBlank()) {
+			return null;
+		}
+		return current.indexOf(':') >= 0
+				? Identifier.tryParse(current)
+				: Identifier.fromNamespaceAndPath("minecraft", current);
+	}
+
+	private static Vec3 readModelVec3(JsonArray array) {
+		return new Vec3(array.get(0).getAsDouble(), array.get(1).getAsDouble(), array.get(2).getAsDouble());
+	}
+
+	private static double[] readUv(JsonArray array) {
+		return new double[]{
+				array.get(0).getAsDouble(),
+				array.get(1).getAsDouble(),
+				array.get(2).getAsDouble(),
+				array.get(3).getAsDouble()
+		};
+	}
+
+	private static ElementRotation readItemModelRotation(JsonObject object) {
+		if (!object.has("rotation")) {
+			return null;
+		}
+		JsonObject rotationJson = object.getAsJsonObject("rotation");
+		Vec3 origin = readModelVec3(rotationJson.getAsJsonArray("origin"));
+		Direction.Axis axis = switch (rotationJson.get("axis").getAsString()) {
+			case "x" -> Direction.Axis.X;
+			case "y" -> Direction.Axis.Y;
+			case "z" -> Direction.Axis.Z;
+			default -> null;
+		};
+		if (axis == null) {
+			return null;
+		}
+		float angle = rotationJson.get("angle").getAsFloat();
+		boolean rescale = rotationJson.has("rescale") && rotationJson.get("rescale").getAsBoolean();
+		return new ElementRotation(origin, axis, angle, rescale, rotationMatrix(axis, angle, rescale));
 	}
 
 	private static Identifier itemTextureFallback(Identifier modelId) {
@@ -2061,19 +3275,16 @@ final class CameraEntityRenderer {
 				return;
 			}
 
-			Matrix4f root = new Matrix4f()
-					.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
-					.scale(snapshot.rootScale())
-					.rotateY(radians(snapshot.rootYawOffsetDegrees() - snapshot.rootYaw()))
-					.scale(-1.0F, -1.0F, 1.0F)
-					.translate(0.0F, -1.501F, 0.0F);
-				boolean baby = Boolean.TRUE.equals(snapshot.stateFields().get("isBaby"))
-						|| Boolean.TRUE.equals(snapshot.stateFields().get("baby"));
+			Matrix4f root = rootTransform(snapshot);
+			boolean baby = Boolean.TRUE.equals(snapshot.stateFields().get("isBaby"))
+					|| Boolean.TRUE.equals(snapshot.stateFields().get("baby"));
 			for (ClientLayerSnapshot layer : snapshot.layers()) {
 				if (layer == null) {
 					continue;
 				}
-				int material = context.materialResolver.materialForTexture(layer.texture());
+				int material = layer.playerSkin() != null
+						? context.materialResolver.materialForPlayerSkin(layer.playerSkin())
+						: context.materialResolver.materialForTexture(layer.texture());
 				renderLayer(bridge, context, root, snapshot.stateFields(), baby, layer, material);
 			}
 		}
@@ -2090,7 +3301,16 @@ final class CameraEntityRenderer {
 			try {
 				ClientModelAdapter adapter = ADAPTER_CACHE.computeIfAbsent(
 						modelCacheKey(layer, baby),
-						key -> createAdapter(bridge, key.modelClassName(), key.baby(), key.textureWidth(), key.textureHeight())
+						key -> createAdapter(
+								bridge,
+								key.modelClassName(),
+								key.baby(),
+								key.textureWidth(),
+								key.textureHeight(),
+								key.layerFactoryMethodName(),
+								key.cubeDeformation(),
+								key.modelFlag()
+						)
 				);
 				if (adapter == null) {
 					return;
@@ -2102,7 +3322,8 @@ final class CameraEntityRenderer {
 					float red = ((layer.tintRgb() >> 16) & 0xFF) / 255.0F;
 					float green = ((layer.tintRgb() >> 8) & 0xFF) / 255.0F;
 					float blue = (layer.tintRgb() & 0xFF) / 255.0F;
-					renderPartTree(bridge, context, adapter.rootPart, root, material, red, green, blue, layer.emissive());
+					Matrix4f layerRoot = Mth.equal(layer.renderScale(), 1.0F) ? root : new Matrix4f(root).scale(layer.renderScale());
+					renderPartTree(bridge, context, adapter.rootPart, layerRoot, material, red, green, blue, layer.emissive());
 				}
 			} catch (Exception ignored) {
 			}
@@ -2112,7 +3333,57 @@ final class CameraEntityRenderer {
 			BufferedImage texture = ASSETS.loadTexture(layer.texture());
 			int width = texture == null ? 64 : texture.getWidth();
 			int height = texture == null ? 64 : texture.getHeight();
-			return new ModelCacheKey(layer.modelClassName(), baby, width, height);
+			return new ModelCacheKey(layer.modelClassName(), baby, width, height, layer.layerFactoryMethodName(), layer.cubeDeformation(), layer.modelFlag());
+		}
+
+		private static Matrix4f rootTransform(ClientModelSnapshot snapshot) {
+			return switch (snapshot.transformKind()) {
+				case BOAT -> boatRootTransform(snapshot);
+				case LIVING -> new Matrix4f()
+						.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
+						.scale(snapshot.rootScale())
+						.rotateY(radians(snapshot.rootYawOffsetDegrees() - snapshot.rootYaw()))
+						.scale(-1.0F, -1.0F, 1.0F)
+						.translate(0.0F, -1.501F, 0.0F);
+			};
+		}
+
+		private static Matrix4f boatRootTransform(ClientModelSnapshot snapshot) {
+			float yRot = stateFloat(snapshot.stateFields(), "yRot", snapshot.rootYaw());
+			float hurtTime = Math.max(stateFloat(snapshot.stateFields(), "hurtTime", 0.0F), 0.0F);
+			float damageTime = Math.max(stateFloat(snapshot.stateFields(), "damageTime", 0.0F), 0.0F);
+			int hurtDir = stateInt(snapshot.stateFields(), "hurtDir", 1);
+			float bubbleAngle = stateFloat(snapshot.stateFields(), "bubbleAngle", 0.0F);
+			boolean underWater = stateBoolean(snapshot.stateFields(), "isUnderWater", false);
+
+			Matrix4f root = new Matrix4f()
+					.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
+					.translate(0.0F, 0.375F, 0.0F)
+					.rotateY(radians(180.0F - yRot));
+			if (hurtTime > 0.0F) {
+				root.rotateX(radians(Mth.sin(hurtTime) * hurtTime * damageTime / 10.0F * hurtDir));
+			}
+			if (!underWater && !Mth.equal(bubbleAngle, 0.0F)) {
+				root.rotate(new Quaternionf().setAngleAxis(radians(bubbleAngle), 1.0F, 0.0F, 1.0F));
+			}
+			root.scale(-snapshot.rootScale(), -snapshot.rootScale(), snapshot.rootScale());
+			root.rotateY(radians(90.0F));
+			return root;
+		}
+
+		private static float stateFloat(Map<String, Object> stateFields, String key, float fallback) {
+			Object value = stateFields.get(key);
+			return value instanceof Number number ? number.floatValue() : fallback;
+		}
+
+		private static int stateInt(Map<String, Object> stateFields, String key, int fallback) {
+			Object value = stateFields.get(key);
+			return value instanceof Number number ? number.intValue() : fallback;
+		}
+
+		private static boolean stateBoolean(Map<String, Object> stateFields, String key, boolean fallback) {
+			Object value = stateFields.get(key);
+			return value instanceof Boolean bool ? bool : fallback;
 		}
 
 		private static void renderPartTree(
@@ -2234,10 +3505,19 @@ final class CameraEntityRenderer {
 			);
 		}
 
-		private static ClientModelAdapter createAdapter(RuntimeBridge bridge, String modelClassName, boolean baby, int textureWidth, int textureHeight) {
+		private static ClientModelAdapter createAdapter(
+				RuntimeBridge bridge,
+				String modelClassName,
+				boolean baby,
+				int textureWidth,
+				int textureHeight,
+				String layerFactoryMethodName,
+				float cubeDeformation,
+				boolean modelFlag
+		) {
 			try {
 				Class<?> modelClass = Class.forName(modelClassName, true, bridge.classLoader);
-				Object layerDefinition = createLayerDefinition(bridge, modelClass, textureWidth, textureHeight);
+				Object layerDefinition = createLayerDefinition(bridge, modelClass, textureWidth, textureHeight, layerFactoryMethodName, cubeDeformation, modelFlag);
 				if (layerDefinition == null) {
 					return null;
 				}
@@ -2251,8 +3531,7 @@ final class CameraEntityRenderer {
 					}
 				}
 				Object rootPart = bridge.layerBakeRootMethod.invoke(layerDefinition);
-				Constructor<?> constructor = modelClass.getConstructor(bridge.modelPartClass);
-				Object model = constructor.newInstance(rootPart);
+				Object model = instantiateModel(modelClass, bridge, rootPart, modelFlag);
 				Method setupAnim = findSetupAnimMethod(modelClass);
 				if (setupAnim == null) {
 					return null;
@@ -2269,7 +3548,25 @@ final class CameraEntityRenderer {
 			}
 		}
 
-		private static Object createLayerDefinition(RuntimeBridge bridge, Class<?> modelClass, int textureWidth, int textureHeight) throws ReflectiveOperationException {
+		private static Object instantiateModel(Class<?> modelClass, RuntimeBridge bridge, Object rootPart, boolean modelFlag) throws ReflectiveOperationException {
+			try {
+				Constructor<?> constructor = modelClass.getConstructor(bridge.modelPartClass, boolean.class);
+				return constructor.newInstance(rootPart, modelFlag);
+			} catch (NoSuchMethodException ignored) {
+				Constructor<?> constructor = modelClass.getConstructor(bridge.modelPartClass);
+				return constructor.newInstance(rootPart);
+			}
+		}
+
+		private static Object createLayerDefinition(
+				RuntimeBridge bridge,
+				Class<?> modelClass,
+				int textureWidth,
+				int textureHeight,
+				String layerFactoryMethodName,
+				float cubeDeformation,
+				boolean modelFlag
+		) throws ReflectiveOperationException {
 			List<Method> candidates = new ArrayList<>();
 			for (Class<?> cursor = modelClass; cursor != null && cursor != Object.class; cursor = cursor.getSuperclass()) {
 				for (Method method : cursor.getDeclaredMethods()) {
@@ -2279,8 +3576,10 @@ final class CameraEntityRenderer {
 					if (!bridge.layerDefinitionClass.equals(method.getReturnType()) && !bridge.meshDefinitionClass.equals(method.getReturnType())) {
 						continue;
 					}
-					if (method.getParameterCount() == 0
-							|| (method.getParameterCount() == 1 && bridge.cubeDeformationClass.equals(method.getParameterTypes()[0]))) {
+					if (layerFactoryMethodName != null && !layerFactoryMethodName.equals(method.getName())) {
+						continue;
+					}
+					if (isSupportedLayerFactory(bridge, method)) {
 						candidates.add(method);
 					}
 				}
@@ -2288,12 +3587,7 @@ final class CameraEntityRenderer {
 			candidates.sort(Comparator.comparingInt(VanillaClientModels::layerMethodPriority));
 			for (Method method : candidates) {
 				method.setAccessible(true);
-				Object result;
-				if (method.getParameterCount() == 0) {
-					result = method.invoke(null);
-				} else {
-					result = method.invoke(null, bridge.cubeDeformationNone);
-				}
+				Object result = invokeLayerFactory(bridge, method, cubeDeformation, modelFlag);
 				if (result == null) {
 					continue;
 				}
@@ -2307,6 +3601,38 @@ final class CameraEntityRenderer {
 			return null;
 		}
 
+		private static boolean isSupportedLayerFactory(RuntimeBridge bridge, Method method) {
+			Class<?>[] parameterTypes = method.getParameterTypes();
+			return switch (parameterTypes.length) {
+				case 0 -> true;
+				case 1 -> bridge.cubeDeformationClass.equals(parameterTypes[0]) || parameterTypes[0] == boolean.class;
+				case 2 -> bridge.cubeDeformationClass.equals(parameterTypes[0]) && parameterTypes[1] == boolean.class;
+				default -> false;
+			};
+		}
+
+		private static Object invokeLayerFactory(RuntimeBridge bridge, Method method, float cubeDeformation, boolean modelFlag) throws ReflectiveOperationException {
+			Class<?>[] parameterTypes = method.getParameterTypes();
+			return switch (parameterTypes.length) {
+				case 0 -> method.invoke(null);
+				case 1 -> {
+					if (bridge.cubeDeformationClass.equals(parameterTypes[0])) {
+						yield method.invoke(null, cubeDeformationObject(bridge, cubeDeformation));
+					}
+					yield method.invoke(null, modelFlag);
+				}
+				case 2 -> method.invoke(null, cubeDeformationObject(bridge, cubeDeformation), modelFlag);
+				default -> null;
+			};
+		}
+
+		private static Object cubeDeformationObject(RuntimeBridge bridge, float cubeDeformation) throws ReflectiveOperationException {
+			if (Mth.equal(cubeDeformation, 0.0F)) {
+				return bridge.cubeDeformationNone;
+			}
+			return bridge.cubeDeformationConstructor.newInstance(cubeDeformation);
+		}
+
 		private static int layerMethodPriority(Method method) {
 			return switch (method.getName()) {
 				case "createBodyLayer" -> 0;
@@ -2317,6 +3643,11 @@ final class CameraEntityRenderer {
 				case "createBaseChickenModel" -> 5;
 				case "createBasePigModel" -> 6;
 				case "createBaseCowModel" -> 7;
+				case "createBoatModel" -> 8;
+				case "createChestBoatModel" -> 9;
+				case "createRaftModel" -> 10;
+				case "createChestRaftModel" -> 11;
+				case "createMesh" -> 12;
 				default -> 10;
 			};
 		}
@@ -2417,6 +3748,7 @@ final class CameraEntityRenderer {
 						layerDefinitionClass,
 						meshDefinitionClass,
 						cubeDeformationClass,
+						cubeDeformationClass.getConstructor(float.class),
 						cubeDeformationNone.get(null),
 						layerDefinitionClass.getMethod("apply", Class.forName("net.minecraft.client.model.geom.builders.MeshTransformer", true, classLoader)),
 						layerDefinitionClass.getMethod("create", meshDefinitionClass, int.class, int.class),
@@ -2469,7 +3801,15 @@ final class CameraEntityRenderer {
 			}
 		}
 
-		private record ModelCacheKey(String modelClassName, boolean baby, int textureWidth, int textureHeight) {
+		private record ModelCacheKey(
+				String modelClassName,
+				boolean baby,
+				int textureWidth,
+				int textureHeight,
+				String layerFactoryMethodName,
+				float cubeDeformation,
+				boolean modelFlag
+		) {
 		}
 
 		private record ClientModelAdapter(
@@ -2498,14 +3838,46 @@ final class CameraEntityRenderer {
 					if (field == null || entry.getValue() == null) {
 						continue;
 					}
-					Class<?> targetType = field.getType();
-					Object value = entry.getValue();
-					if (!targetType.isPrimitive() && !targetType.isInstance(value)) {
+					Object convertedValue = convertStateValue(field.getType(), entry.getValue());
+					if (convertedValue == null) {
 						continue;
 					}
-					field.set(state, value);
+					field.set(state, convertedValue);
 				}
 				return state;
+			}
+
+			@SuppressWarnings({"rawtypes", "unchecked"})
+			private Object convertStateValue(Class<?> targetType, Object value) {
+				if (value == null) {
+					return null;
+				}
+				if (!targetType.isPrimitive() && targetType.isInstance(value)) {
+					return value;
+				}
+				if ((targetType == float.class || targetType == Float.class) && value instanceof Number number) {
+					return number.floatValue();
+				}
+				if ((targetType == double.class || targetType == Double.class) && value instanceof Number number) {
+					return number.doubleValue();
+				}
+				if ((targetType == int.class || targetType == Integer.class) && value instanceof Number number) {
+					return number.intValue();
+				}
+				if ((targetType == long.class || targetType == Long.class) && value instanceof Number number) {
+					return number.longValue();
+				}
+				if ((targetType == boolean.class || targetType == Boolean.class) && value instanceof Boolean bool) {
+					return bool;
+				}
+				if (targetType.isEnum() && value instanceof String enumName) {
+					try {
+						return Enum.valueOf((Class<? extends Enum>) targetType.asSubclass(Enum.class), enumName);
+					} catch (IllegalArgumentException ignored) {
+						return null;
+					}
+				}
+				return null;
 			}
 		}
 
@@ -2516,6 +3888,7 @@ final class CameraEntityRenderer {
 				Class<?> layerDefinitionClass,
 				Class<?> meshDefinitionClass,
 				Class<?> cubeDeformationClass,
+				Constructor<?> cubeDeformationConstructor,
 				Object cubeDeformationNone,
 				Method layerApplyMethod,
 				Method layerCreateMethod,
