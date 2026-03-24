@@ -87,6 +87,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
 import static net.minecraft.commands.Commands.literal;
@@ -113,12 +114,14 @@ public final class ServerRaceSystem {
 	private static final double CARTEL_DEFAULT_LIFETIME_SECONDS = 30.0D;
 	private static final double CARTEL_DEFAULT_AFTER_KILL_SECONDS = 2.0D;
 	private static final double CARTEL_CHASE_SPEED = 1.0D;
+	private static final long CARTEL_RAIDER_NAV_INTERVAL_TICKS = 4L;
 	private static final double CARTEL_DEFAULT_DEFENSE_DURATION_SECONDS = 20.0D;
 	private static final double CARTEL_DEFAULT_DEFENSE_INNER_DISTANCE = 1.0D;
 	private static final double CARTEL_DEFAULT_DEFENSE_FOLLOW_DISTANCE = 5.0D;
 	private static final double CARTEL_DEFAULT_DEFENSE_OUTSIDE_SECONDS = 5.0D;
 	private static final double CARTEL_DEFAULT_DEFENSE_HEALTH_POINTS = 0.0D;
 	private static final double CARTEL_DEFAULT_DEFENSE_REFLECT_RATIO = 0.5D;
+	private static final long MISTER_CARTEL_STACK_CHECK_INTERVAL_TICKS = 8L;
 	private static final double CARTEL_LAWYER_BASE_MOVE_SPEED = 0.23D;
 	private static final double CARTEL_LAWYER_WALK_SPEED = CARTEL_LAWYER_BASE_MOVE_SPEED;
 	private static final double CARTEL_LAWYER_RETURN_SPEED = CARTEL_LAWYER_BASE_MOVE_SPEED * 1.5D;
@@ -139,6 +142,7 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, UUID> CARTEL_SUMMON_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> CARTEL_LAWYER_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final ThreadLocal<Boolean> CARTEL_DEFENSE_REFLECTION_ACTIVE = ThreadLocal.withInitial(() -> Boolean.FALSE);
+	private static CompletableFuture<Property> CARTEL_LAWYER_SKIN_FUTURE;
 	private static volatile Property CARTEL_LAWYER_SKIN_PROPERTY;
 	private static final class CartelSummonSession {
 		private final ResourceKey<Level> dimension;
@@ -206,6 +210,7 @@ public final class ServerRaceSystem {
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			RaceConfig.load();
 			rebuildCache();
+			prewarmCartelLawyerSkinAsync();
 			syncGeneratedDialogs(server, true);
 			Lg2.LOGGER.info("Loaded {} configured personal races", RACES_BY_NICKNAME.size());
 		});
@@ -220,6 +225,7 @@ public final class ServerRaceSystem {
 			CARTEL_DEFENSE_SESSIONS.clear();
 			CARTEL_SUMMON_OWNER_BY_ENTITY.clear();
 			CARTEL_LAWYER_OWNER_BY_ENTITY.clear();
+			CARTEL_LAWYER_SKIN_FUTURE = null;
 			CARTEL_LAWYER_SKIN_PROPERTY = null;
 		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
@@ -231,8 +237,11 @@ public final class ServerRaceSystem {
 				cleanupCartelEntitiesForDisconnect(server, handler.player)
 		);
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			long nowTick = server.overworld().getGameTime();
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-				enforceMrCartel49StackLimit(player);
+				if ((nowTick + player.getId()) % MISTER_CARTEL_STACK_CHECK_INTERVAL_TICKS == 0L) {
+					enforceMrCartel49StackLimit(player);
+				}
 			}
 			tickCartelSummons(server);
 			tickCartelDefense(server);
@@ -858,11 +867,13 @@ public final class ServerRaceSystem {
 			if (session.outsideSinceTick == null) {
 				session.outsideSinceTick = nowTick;
 			}
-			moveLawyerTowardTarget(
-					lawyer,
-					projectLawyerToRing(level, cartel.position(), lawyer.position(), Math.max(session.innerMinDistanceBlocks + 0.35D, session.followMaxDistanceBlocks - 0.35D)),
-					CARTEL_LAWYER_RETURN_SPEED
+			Vec3 returnTarget = projectLawyerToRing(
+					level,
+					cartelPos,
+					lawyerPos,
+					Math.max(session.innerMinDistanceBlocks + 0.35D, session.followMaxDistanceBlocks - 0.35D)
 			);
+			moveLawyerTowardTarget(lawyer, returnTarget, CARTEL_LAWYER_RETURN_SPEED);
 			if (nowTick - session.outsideSinceTick >= session.maxOutsideTicks) {
 				Vec3 returnPos = findCartelLawyerSpawnPos(level, cartel, session.innerMinDistanceBlocks, session.followMaxDistanceBlocks);
 				lawyer.teleportTo(returnPos.x, returnPos.y, returnPos.z);
@@ -871,7 +882,6 @@ public final class ServerRaceSystem {
 				session.nextWanderRetargetTick = nowTick + 20L;
 				session.wanderTarget = returnPos;
 			}
-			moveLawyerTowardTarget(lawyer, projectLawyerToRing(level, cartel.position(), lawyer.position(), Math.max(session.innerMinDistanceBlocks + 0.35D, session.followMaxDistanceBlocks - 0.35D)), CARTEL_LAWYER_RETURN_SPEED);
 			return;
 		}
 
@@ -1035,26 +1045,46 @@ public final class ServerRaceSystem {
 		if (cached != null) {
 			return cached;
 		}
-
-		synchronized (ServerRaceSystem.class) {
-			cached = CARTEL_LAWYER_SKIN_PROPERTY;
-			if (cached != null) {
-				return cached;
-			}
-
-			try {
-				Property signed = MineskinService.INSTANCE.signSkin(CARTEL_LAWYER_SKIN_URI, SkinVariant.CLASSIC).orElse(null);
-				if (signed != null) {
-					CARTEL_LAWYER_SKIN_PROPERTY = signed;
-					return signed;
-				}
-			} catch (Exception exception) {
-				Lg2.LOGGER.warn("Failed to sign cartel lawyer skin from fixed texture URL, using fallback value", exception);
-			}
-
-			CARTEL_LAWYER_SKIN_PROPERTY = CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY;
-			return CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY;
+		CompletableFuture<Property> future = prewarmCartelLawyerSkinAsync();
+		if (future.isDone()) {
+			Property resolved = future.getNow(CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY);
+			CARTEL_LAWYER_SKIN_PROPERTY = resolved;
+			return resolved;
 		}
+		return CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY;
+	}
+
+	private static synchronized CompletableFuture<Property> prewarmCartelLawyerSkinAsync() {
+		if (CARTEL_LAWYER_SKIN_PROPERTY != null) {
+			return CompletableFuture.completedFuture(CARTEL_LAWYER_SKIN_PROPERTY);
+		}
+		if (CARTEL_LAWYER_SKIN_FUTURE != null) {
+			return CARTEL_LAWYER_SKIN_FUTURE;
+		}
+
+		CARTEL_LAWYER_SKIN_FUTURE = CompletableFuture.supplyAsync(ServerRaceSystem::loadCartelLawyerSkinProperty)
+				.exceptionally(exception -> {
+					Lg2.LOGGER.warn("Failed to prewarm cartel lawyer skin, using fallback value", exception);
+					return CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY;
+				})
+				.thenApply(property -> {
+					CARTEL_LAWYER_SKIN_PROPERTY = property != null ? property : CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY;
+					return CARTEL_LAWYER_SKIN_PROPERTY;
+				});
+		return CARTEL_LAWYER_SKIN_FUTURE;
+	}
+
+	private static Property loadCartelLawyerSkinProperty() {
+		try {
+			Property signed = MineskinService.INSTANCE.signSkin(CARTEL_LAWYER_SKIN_URI, SkinVariant.CLASSIC).orElse(null);
+			if (signed != null) {
+				return signed;
+			}
+		} catch (Exception exception) {
+			Lg2.LOGGER.warn("Failed to sign cartel lawyer skin from fixed texture URL, using fallback value", exception);
+		}
+
+		return CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY;
 	}
 
 	private static String buildCartelLawyerProfileName(UUID profileId) {
@@ -1200,10 +1230,13 @@ public final class ServerRaceSystem {
 				}
 
 				if (chaseTarget != null) {
-					if (raider.getTarget() != chaseTarget) {
+					boolean targetChanged = raider.getTarget() != chaseTarget;
+					if (targetChanged) {
 						raider.setTarget(chaseTarget);
 					}
-					raider.getNavigation().moveTo(chaseTarget, CARTEL_CHASE_SPEED);
+					if (targetChanged || raider.getNavigation().isDone() || (nowTick + raider.getId()) % CARTEL_RAIDER_NAV_INTERVAL_TICKS == 0L) {
+						raider.getNavigation().moveTo(chaseTarget, CARTEL_CHASE_SPEED);
+					}
 				} else {
 					raider.setTarget(null);
 				}
@@ -1569,6 +1602,11 @@ public final class ServerRaceSystem {
 
 		@Override
 		public void checkDespawn() {
+		}
+
+		@Override
+		protected void customServerAiStep(ServerLevel level) {
+			// Lawyer movement is fully scripted in ServerRaceSystem; skip vanilla mob AI work.
 		}
 	}
 
