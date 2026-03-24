@@ -1507,7 +1507,7 @@ public final class BlueMapCameraRenderer {
 						if (depth >= this.opaqueDepth[index]) {
 							continue;
 						}
-					} else if (depth >= this.opaqueDepth[index] - 1.0E-4F) {
+					} else if (depth > this.opaqueDepth[index] + 1.0E-4F) {
 						continue;
 					}
 
