@@ -107,6 +107,7 @@ public final class ServerRaceSystem {
 	private static final int MISTER_CARTEL_49_STACK_LIMIT = 49;
 	private static final String CARTEL_SUMMON_TAG = "lg2.cartel_summon";
 	private static final String CARTEL_LAWYER_TAG = "lg2.cartel_lawyer";
+	private static final String CARTEL_LAWYER_MARKER_NAME = "lg2_cartel_lawyer_marker";
 	private static final double CARTEL_TARGET_RANGE = 7.0D;
 	private static final int CARTEL_SPAWN_OFFSET_BLOCKS = 3;
 	private static final double CARTEL_DEFAULT_COOLDOWN_SECONDS = 5.0D;
@@ -214,11 +215,13 @@ public final class ServerRaceSystem {
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			RaceConfig.load();
 			rebuildCache();
+			cleanupAllCartelRaceEntities(server, false);
 			syncGeneratedDialogs(server, true);
 			prewarmCartelLawyerSkinAsync();
 			Lg2.LOGGER.info("Loaded {} configured personal races", RACES_BY_NICKNAME.size());
 		});
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			cleanupAllCartelRaceEntities(server, true);
 			RACES_BY_NICKNAME.clear();
 			DIALOG_ID_BY_NICKNAME.clear();
 			GENERATED_DIALOG_JSON_BY_PATH.clear();
@@ -800,6 +803,8 @@ public final class ServerRaceSystem {
 		lawyer.setSilent(true);
 		lawyer.setCanPickUpLoot(false);
 		lawyer.addTag(CARTEL_LAWYER_TAG);
+		lawyer.setCustomName(Component.literal(CARTEL_LAWYER_MARKER_NAME));
+		lawyer.setCustomNameVisible(false);
 		for (EquipmentSlot slot : EquipmentSlot.values()) {
 			lawyer.setDropChance(slot, 0.0F);
 		}
@@ -1454,6 +1459,90 @@ public final class ServerRaceSystem {
 		return overflow;
 	}
 
+	private static void cleanupLoadedOrphanCartelRaceEntities(MinecraftServer server) {
+		if (server == null || server.overworld().getGameTime() % 40L != 0L) {
+			return;
+		}
+
+		Set<UUID> activeRaiderIds = new HashSet<>();
+		for (CartelSummonSession session : CARTEL_SUMMON_SESSIONS.values()) {
+			activeRaiderIds.addAll(session.raiderIds);
+		}
+
+		Set<UUID> activeLawyerIds = new HashSet<>();
+		for (CartelDefenseSession session : CARTEL_DEFENSE_SESSIONS.values()) {
+			activeLawyerIds.add(session.lawyerEntityId);
+		}
+
+		for (ServerLevel level : server.getAllLevels()) {
+			List<Entity> entities = new ArrayList<>();
+			for (Entity entity : level.getAllEntities()) {
+				entities.add(entity);
+			}
+
+			for (Entity entity : entities) {
+				if (entity == null) {
+					continue;
+				}
+				if (entity.getTags().contains(CARTEL_SUMMON_TAG) && entity instanceof Raider raider && !activeRaiderIds.contains(raider.getUUID())) {
+					CARTEL_SUMMON_OWNER_BY_ENTITY.remove(raider.getUUID());
+					raider.discard();
+					continue;
+				}
+				boolean markedLawyer = entity.getTags().contains(CARTEL_LAWYER_TAG)
+						|| entity.hasCustomName() && CARTEL_LAWYER_MARKER_NAME.equals(entity.getCustomName().getString());
+				if (markedLawyer && !activeLawyerIds.contains(entity.getUUID())) {
+					CARTEL_LAWYER_OWNER_BY_ENTITY.remove(entity.getUUID());
+					entity.discard();
+					sendCartelLawyerAppearanceRemoval(level, entity.getUUID());
+				}
+			}
+		}
+	}
+
+	private static void cleanupAllCartelRaceEntities(MinecraftServer server, boolean emitParticles) {
+		if (server == null) {
+			return;
+		}
+
+		for (ServerLevel level : server.getAllLevels()) {
+			List<Entity> entities = new ArrayList<>();
+			for (Entity entity : level.getAllEntities()) {
+				entities.add(entity);
+			}
+
+			for (Entity entity : entities) {
+				if (entity == null) {
+					continue;
+				}
+				if (entity.getTags().contains(CARTEL_SUMMON_TAG) && entity instanceof Raider raider) {
+					if (emitParticles) {
+						despawnRaiderWithSmoke(level, raider);
+					} else {
+						CARTEL_SUMMON_OWNER_BY_ENTITY.remove(raider.getUUID());
+						raider.discard();
+					}
+					continue;
+				}
+				boolean markedLawyer = entity.getTags().contains(CARTEL_LAWYER_TAG)
+						|| entity.hasCustomName() && CARTEL_LAWYER_MARKER_NAME.equals(entity.getCustomName().getString());
+				if (markedLawyer) {
+					CARTEL_LAWYER_OWNER_BY_ENTITY.remove(entity.getUUID());
+					if (emitParticles) {
+						emitSmoke(level, entity.position());
+					}
+					entity.discard();
+					sendCartelLawyerAppearanceRemoval(level, entity.getUUID());
+				}
+			}
+		}
+
+		CARTEL_SUMMON_SESSIONS.clear();
+		CARTEL_DEFENSE_SESSIONS.clear();
+		CARTEL_SUMMON_OWNER_BY_ENTITY.clear();
+		CARTEL_LAWYER_OWNER_BY_ENTITY.clear();
+	}
+
 	private static void cleanupCartelEntitiesForDisconnect(MinecraftServer server, ServerPlayer player) {
 		if (server == null || player == null) {
 			return;
@@ -1493,6 +1582,8 @@ public final class ServerRaceSystem {
 			this.setCanPickUpLoot(false);
 			this.setTarget(null);
 			this.addTag(CARTEL_LAWYER_TAG);
+			this.setCustomName(Component.literal(CARTEL_LAWYER_MARKER_NAME));
+			this.setCustomNameVisible(false);
 			this.refreshDimensions();
 		}
 

@@ -14,6 +14,7 @@
 		"CarvedPumpkinBlockGolemGateMixin",
 		"ChickenTrojanRoosterAmbientSoundMixin",
 		"ChickenTrojanRoosterMixin",
+		"EntityCartelNoSaveMixin",
 		"EntityPortalAccessMixin",
 		"EntityKillProtectionMixin",
 		"EntityAbsoluteInvisibilityMixin",
