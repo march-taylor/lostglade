@@ -9,13 +9,19 @@ import de.bluecolored.bluemap.core.map.hires.ArrayTileModel;
 import de.bluecolored.bluemap.core.map.hires.ArrayTileModelAccess;
 import de.bluecolored.bluemap.core.map.hires.RenderSettings;
 import de.bluecolored.bluemap.core.map.hires.TileModelView;
+import de.bluecolored.bluemap.core.map.hires.block.BlockRendererType;
 import de.bluecolored.bluemap.core.map.hires.block.BlockStateModelRenderer;
+import de.bluecolored.bluemap.core.map.hires.block.LiquidModelRenderer;
 import de.bluecolored.bluemap.core.map.mask.Mask;
 import de.bluecolored.bluemap.core.resources.BlockColorCalculatorFactory;
 import de.bluecolored.bluemap.core.resources.ResourcePath;
 import de.bluecolored.bluemap.core.resources.pack.PackVersion;
 import de.bluecolored.bluemap.core.resources.pack.datapack.DataPack;
 import de.bluecolored.bluemap.core.resources.pack.resourcepack.ResourcePack;
+import de.bluecolored.bluemap.core.resources.pack.resourcepack.blockstate.Variant;
+import de.bluecolored.bluemap.core.resources.pack.resourcepack.model.Model;
+import de.bluecolored.bluemap.core.resources.pack.resourcepack.model.TextureVariable;
+import de.bluecolored.bluemap.core.resources.pack.resourcepack.texture.AnimationMeta;
 import de.bluecolored.bluemap.core.resources.pack.resourcepack.texture.Texture;
 import de.bluecolored.bluemap.core.util.Key;
 import de.bluecolored.bluemap.core.util.math.Color;
@@ -47,6 +53,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.entity.Entity;
@@ -73,6 +80,8 @@ public final class BlueMapCameraRenderer {
 	private static final int BIOME_CONTEXT_VERTICAL_RADIUS = 1;
 	private static final int NO_TINT_RGB = -1;
 	private static final float[] SRGB_TO_LINEAR = buildSrgbToLinear();
+	private static final Variant VANILLA_WATER_LIQUID_VARIANT = createLiquidVariant("camera_water", "block/water_still", "block/water_flow");
+	private static final Variant VANILLA_LAVA_LIQUID_VARIANT = createLiquidVariant("camera_lava", "block/lava_still", "block/lava_flow");
 	private static final Map<net.minecraft.world.level.block.state.BlockState, BlockState> BLOCK_STATE_CACHE = new ConcurrentHashMap<>();
 	private static volatile RenderResources renderResources;
 
@@ -128,6 +137,10 @@ public final class BlueMapCameraRenderer {
 			}
 			resourcePack.loadResources(packs);
 			dataPack.loadResources(packs);
+			ensureTexturePresent(resourcePack, Identifier.fromNamespaceAndPath("minecraft", "block/water_still"));
+			ensureTexturePresent(resourcePack, Identifier.fromNamespaceAndPath("minecraft", "block/water_flow"));
+			ensureTexturePresent(resourcePack, Identifier.fromNamespaceAndPath("minecraft", "block/lava_still"));
+			ensureTexturePresent(resourcePack, Identifier.fromNamespaceAndPath("minecraft", "block/lava_flow"));
 
 			TextureGallery textureGallery = new TextureGallery();
 			textureGallery.put(resourcePack.getTextures());
@@ -148,6 +161,18 @@ public final class BlueMapCameraRenderer {
 		} catch (IOException | InterruptedException exception) {
 			throw new IllegalStateException("Failed to initialize BlueMap render resources", exception);
 		}
+	}
+
+	private static void ensureTexturePresent(ResourcePack resourcePack, Identifier textureId) throws IOException {
+		ResourcePath<Texture> resourcePath = new ResourcePath<>(textureId.getNamespace(), textureId.getPath());
+		if (resourcePack.getTextures().get(resourcePath) != null) {
+			return;
+		}
+		BufferedImage image = TextureAssetManager.get().loadTexture(textureId);
+		if (image == null) {
+			return;
+		}
+		resourcePack.getTextures().put(resourcePath, Texture.from(resourcePath, image));
 	}
 
 	private static float[] buildSrgbToLinear() {
@@ -182,6 +207,37 @@ public final class BlueMapCameraRenderer {
 
 	private static BlockState toBlueMapState(net.minecraft.world.level.block.state.BlockState state) {
 		return BLOCK_STATE_CACHE.computeIfAbsent(state, BlueMapCameraRenderer::convertBlockState);
+	}
+
+	private static Variant createLiquidVariant(String modelName, String stillTexturePath, String flowTexturePath) {
+		ResourcePath<Model> modelPath = new ResourcePath<>("lg2", "block/" + modelName);
+		Map<String, TextureVariable> textures = new HashMap<>();
+		textures.put("still", new TextureVariable(new ResourcePath<>("minecraft", stillTexturePath)));
+		textures.put("flow", new TextureVariable(new ResourcePath<>("minecraft", flowTexturePath)));
+		textures.put("particle", new TextureVariable(new ResourcePath<>("minecraft", stillTexturePath)));
+		modelPath.setResource(new Model(textures));
+		Variant variant = new Variant(modelPath);
+		variant.setRenderer(BlockRendererType.LIQUID);
+		return variant;
+	}
+
+	private static Variant vanillaLiquidVariant(BlockState blockState) {
+		if (blockState == null) {
+			return null;
+		}
+		Key id = blockState.getId();
+		if (!Key.MINECRAFT_NAMESPACE.equals(id.getNamespace())) {
+			return null;
+		}
+		return switch (id.getValue()) {
+			case "water" -> VANILLA_WATER_LIQUID_VARIANT;
+			case "lava" -> VANILLA_LAVA_LIQUID_VARIANT;
+			default -> null;
+		};
+	}
+
+	private static boolean isStandaloneLiquidBlock(BlockState blockState) {
+		return vanillaLiquidVariant(blockState) != null;
 	}
 
 	private static BlockState convertBlockState(net.minecraft.world.level.block.state.BlockState state) {
@@ -332,13 +388,14 @@ public final class BlueMapCameraRenderer {
 											level.getBrightness(LightLayer.SKY, cursor),
 											level.getBrightness(LightLayer.BLOCK, cursor)
 									);
+									BlockState fluidOverlayState = captureFluidOverlayState(state);
 									int primaryTintRgb = firstTint(BlockTintProvider.capture(level, cursor, state));
 									int waterTintRgb = state.getFluidState().is(FluidTags.WATER)
 											? firstTint(BlockTintProvider.capture(level, cursor, Blocks.WATER.defaultBlockState()))
 											: NO_TINT_RGB;
 									blocks.put(
 											BlockPos.asLong(worldX, worldY, worldZ),
-											new SnapshotBlock(toBlueMapState(state), light, biome, primaryTintRgb, waterTintRgb)
+											new SnapshotBlock(toBlueMapState(state), fluidOverlayState, light, biome, primaryTintRgb, waterTintRgb)
 									);
 									collectAirContext(
 											worldX,
@@ -377,7 +434,7 @@ public final class BlueMapCameraRenderer {
 						level.getBrightness(LightLayer.SKY, cursor),
 						level.getBrightness(LightLayer.BLOCK, cursor)
 				);
-				blocks.put(packedPos, new SnapshotBlock(BlockState.AIR, light, biome, NO_TINT_RGB, NO_TINT_RGB));
+				blocks.put(packedPos, new SnapshotBlock(BlockState.AIR, null, light, biome, NO_TINT_RGB, NO_TINT_RGB));
 			}
 
 			return new WorldSnapshot(
@@ -453,7 +510,18 @@ public final class BlueMapCameraRenderer {
 		}
 	}
 
-	private record SnapshotBlock(BlockState state, LightData light, Biome biome, int primaryTintRgb, int waterTintRgb) {
+	private record SnapshotBlock(BlockState state, BlockState fluidState, LightData light, Biome biome, int primaryTintRgb, int waterTintRgb) {
+	}
+
+	private static BlockState captureFluidOverlayState(net.minecraft.world.level.block.state.BlockState state) {
+		if (state == null || state.getBlock() == Blocks.WATER_CAULDRON) {
+			return null;
+		}
+		FluidState fluidState = state.getFluidState();
+		if (fluidState == null || fluidState.isEmpty()) {
+			return null;
+		}
+		return toBlueMapState(fluidState.createLegacyBlock());
 	}
 
 	private static Biome resolveBiome(ServerLevel level, BlockPos pos, Map<String, Biome> cache, DataPack dataPack) {
@@ -831,17 +899,7 @@ public final class BlueMapCameraRenderer {
 				if (image == null) {
 					return missing();
 				}
-				int width = Math.max(1, image.getWidth());
-				int height = Math.max(1, image.getHeight());
-				int[] pixels = image.getRGB(0, 0, width, height, null, 0, width);
-				boolean transparent = false;
-				for (int pixel : pixels) {
-					if (((pixel >>> 24) & 0xFF) < 255) {
-						transparent = true;
-						break;
-					}
-				}
-				return new TextureMaterial(width, height, pixels, transparent);
+				return fromImage(selectRenderableFrame(texture, image));
 			} catch (IOException exception) {
 				return missing();
 			}
@@ -866,6 +924,53 @@ public final class BlueMapCameraRenderer {
 				}
 			}
 			return new TextureMaterial(width, height, pixels, transparent);
+		}
+
+		private static BufferedImage selectRenderableFrame(Texture texture, BufferedImage image) {
+			int imageWidth = Math.max(1, image.getWidth());
+			int imageHeight = Math.max(1, image.getHeight());
+			AnimationMeta animation = texture.getAnimation();
+			int frameWidth = resolveFrameDimension(animation == null ? 0 : animation.getWidth(), imageWidth, imageHeight);
+			int frameHeight = resolveFrameDimension(animation == null ? 0 : animation.getHeight(), imageHeight, imageWidth);
+			if (frameWidth <= 0 || frameHeight <= 0) {
+				int fallbackFrameSize = Math.min(imageWidth, imageHeight);
+				frameWidth = fallbackFrameSize;
+				frameHeight = fallbackFrameSize;
+			}
+
+			frameWidth = Math.min(frameWidth, imageWidth);
+			frameHeight = Math.min(frameHeight, imageHeight);
+			boolean looksLikeVerticalFrameStrip = imageHeight > imageWidth && imageHeight % imageWidth == 0;
+			boolean hasExplicitAnimationFrames = animation != null && animation.getFrames() != null && !animation.getFrames().isEmpty();
+			boolean usesAnimationGrid = frameWidth < imageWidth || frameHeight < imageHeight;
+			if (!looksLikeVerticalFrameStrip && !hasExplicitAnimationFrames && !usesAnimationGrid) {
+				return image;
+			}
+
+			int columns = Math.max(1, imageWidth / frameWidth);
+			int rows = Math.max(1, imageHeight / frameHeight);
+			if (columns * rows <= 1) {
+				return image;
+			}
+
+			int frameIndex = 0;
+			if (hasExplicitAnimationFrames) {
+				frameIndex = Math.max(0, animation.getFrames().get(0).getIndex());
+			}
+			frameIndex = Mth.clamp(frameIndex, 0, columns * rows - 1);
+			int frameX = (frameIndex % columns) * frameWidth;
+			int frameY = (frameIndex / columns) * frameHeight;
+			return image.getSubimage(frameX, frameY, frameWidth, frameHeight);
+		}
+
+		private static int resolveFrameDimension(int explicitSize, int imagePrimary, int imageSecondary) {
+			if (explicitSize > 1 && explicitSize <= imagePrimary) {
+				return explicitSize;
+			}
+			if (imagePrimary > imageSecondary && imagePrimary % imageSecondary == 0) {
+				return imageSecondary;
+			}
+			return imagePrimary;
 		}
 
 		private int sample(float u, float v) {
@@ -968,6 +1073,7 @@ public final class BlueMapCameraRenderer {
 			ArrayTileModel model = new ArrayTileModel(8192);
 			TileModelView tileModelView = new TileModelView(model);
 			BlockStateModelRenderer blockRenderer = new BlockStateModelRenderer(this.resources.resourcePack(), this.resources.textureGallery(), renderSettings);
+			LiquidModelRenderer liquidRenderer = new LiquidModelRenderer(this.resources.resourcePack(), this.resources.textureGallery(), renderSettings);
 			BlockColorCalculatorFactory.BlockColorCalculator colorCalculator = this.resources.resourcePack().getColorCalculatorFactory().createCalculator();
 			BlockNeighborhood neighborhood = new BlockNeighborhood(
 					new SnapshotBlockAccess(snapshot, 0, 0, 0),
@@ -995,7 +1101,9 @@ public final class BlueMapCameraRenderer {
 				boolean hasPrimaryTintMarker = sampleTintColor(colorCalculator, neighborhood, snapshotBlock.state(), primaryTintColor);
 				boolean hasWaterTintMarker = snapshotBlock.waterTintRgb() != NO_TINT_RGB
 						&& sampleTintColor(colorCalculator, neighborhood, BlockState.WATER, waterTintColor);
-				blockRenderer.render(neighborhood, tileModelView, scratchColor);
+				if (!isStandaloneLiquidBlock(snapshotBlock.state())) {
+					blockRenderer.render(neighborhood, tileModelView, scratchColor);
+				}
 				if (tileModelView.getSize() > 0) {
 					applyWorldTint(
 							model,
@@ -1007,6 +1115,7 @@ public final class BlueMapCameraRenderer {
 					);
 					tileModelView.translate(x, y, z);
 				}
+				renderFluidOverlay(snapshotBlock, neighborhood, tileModelView, liquidRenderer, scratchColor, x, y, z);
 			}
 
 			CameraEntityRenderer.renderEntities(this.frame.entities(), snapshot, model, new CameraEntityRenderer.MaterialResolver() {
@@ -1022,6 +1131,39 @@ public final class BlueMapCameraRenderer {
 			});
 
 			return model;
+		}
+
+		private void renderFluidOverlay(
+				SnapshotBlock snapshotBlock,
+				BlockNeighborhood neighborhood,
+				TileModelView tileModelView,
+				LiquidModelRenderer liquidRenderer,
+				Color scratchColor,
+				int x,
+				int y,
+				int z
+		) {
+			BlockState fluidState = snapshotBlock.fluidState();
+			if (fluidState == null) {
+				return;
+			}
+
+			int triangleStart = tileModelView.getStart();
+			Variant syntheticVariant = vanillaLiquidVariant(fluidState);
+			if (syntheticVariant != null) {
+				liquidRenderer.render(neighborhood, syntheticVariant, tileModelView, scratchColor);
+			} else {
+				de.bluecolored.bluemap.core.resources.pack.resourcepack.blockstate.BlockState resourceBlockState = this.resources.resourcePack().getBlockState(fluidState);
+				if (resourceBlockState == null) {
+					return;
+				}
+				resourceBlockState.forEach(fluidState, x, y, z, variant -> liquidRenderer.render(neighborhood, variant, tileModelView, scratchColor));
+			}
+			if (tileModelView.getSize() > 0) {
+				tileModelView.translate(x, y, z);
+			} else {
+				tileModelView.initialize(triangleStart);
+			}
 		}
 
 		private int materialForTexture(Identifier textureId) {

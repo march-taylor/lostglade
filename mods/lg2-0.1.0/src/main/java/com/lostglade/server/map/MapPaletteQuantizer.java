@@ -2,6 +2,9 @@ package com.lostglade.server.map;
 
 import net.minecraft.world.level.material.MapColor;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public final class MapPaletteQuantizer {
 	private static final double REF_X = 0.95047D;
 	private static final double REF_Y = 1.0D;
@@ -25,7 +28,7 @@ public final class MapPaletteQuantizer {
 	public static byte quantize(int rgb) {
 		LabColor lab = toLab(rgb);
 		double bestDistance = Double.MAX_VALUE;
-		byte bestPackedId = 0;
+		byte bestPackedId = PALETTE.length > 0 ? PALETTE[0].packedId() : 0;
 		for (PaletteEntry entry : PALETTE) {
 			double dl = lab.lightness() - entry.lightness();
 			double da = lab.a() - entry.a();
@@ -109,23 +112,26 @@ public final class MapPaletteQuantizer {
 
 	private static PaletteEntry[] buildPalette() {
 		MapColor.Brightness[] brightnesses = MapColor.Brightness.values();
-		PaletteEntry[] entries = new PaletteEntry[(64 - 1) * brightnesses.length];
-		int index = 0;
+		List<PaletteEntry> entries = new ArrayList<>((64 - 1) * brightnesses.length);
 		for (int colorId = 1; colorId < 64; colorId++) {
 			MapColor color = MapColor.byId(colorId);
 			for (MapColor.Brightness brightness : brightnesses) {
 				byte packedId = color.getPackedId(brightness);
-				int packedRgb = MapColor.getColorFromPackedId(Byte.toUnsignedInt(packedId)) & 0xFFFFFF;
+				int unsignedPackedId = Byte.toUnsignedInt(packedId);
+				if (unsignedPackedId < 4) {
+					continue;
+				}
+				int packedRgb = MapColor.getColorFromPackedId(unsignedPackedId) & 0xFFFFFF;
 				LabColor lab = toLab(packedRgb);
-				entries[index++] = new PaletteEntry(
+				entries.add(new PaletteEntry(
 						packedId,
 						lab.lightness(),
 						lab.a(),
 						lab.b()
-				);
+				));
 			}
 		}
-		return entries;
+		return entries.toArray(PaletteEntry[]::new);
 	}
 
 	private static double toLinear(int channel) {
