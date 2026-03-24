@@ -347,6 +347,11 @@ final class CameraEntityRenderer {
 	) {
 	}
 
+	private enum ItemDisplayTransformContext {
+		THIRD_PERSON_RIGHT_HAND,
+		THIRD_PERSON_LEFT_HAND
+	}
+
 	private record ItemModelElement(
 			Vec3 from,
 			Vec3 to,
@@ -2454,6 +2459,23 @@ final class CameraEntityRenderer {
 		}
 		double sagOffset = sag * 4.0D * t * (1.0D - t);
 		return point.add(0.0D, -sagOffset, 0.0D);
+	}
+
+	private static void renderItemVisual(RenderContext context, Matrix4f root, ItemVisual visual, ItemDisplayTransformContext transformContext) {
+		if (visual == null) {
+			return;
+		}
+		if (visual.model() != null && !visual.model().elements().isEmpty()) {
+			renderItemModel(context, root, visual.model());
+			return;
+		}
+		if (visual.flatTexture() == null) {
+			return;
+		}
+		int material = context.materialResolver.materialForTexture(visual.flatTexture());
+		addDoubleSidedPlane(context, root, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
+		Matrix4f crossed = new Matrix4f(root).rotateY((float) Math.PI * 0.5F);
+		addDoubleSidedPlane(context, crossed, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
 	}
 
 	private static void renderItemModel(RenderContext context, Matrix4f root, ResolvedItemModel model) {
