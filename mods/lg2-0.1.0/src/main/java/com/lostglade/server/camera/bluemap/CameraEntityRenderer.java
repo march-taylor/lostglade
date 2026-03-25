@@ -3299,7 +3299,7 @@ final class CameraEntityRenderer {
 		Vector3f p2 = transformPosition(transform, x + width, y + height, z);
 		Vector3f p3 = transformPosition(transform, x, y + height, z);
 		LightSample lightSample = context.lightAt((p0.x + p2.x) * 0.5F, (p0.y + p2.y) * 0.5F, (p0.z + p2.z) * 0.5F);
-		addQuad(context, p0, p1, p2, p3, texU0, texU1, texV1, texV0, material, lightSample.sky(), lightSample.block(), red, green, blue);
+		addQuad(context, p0, p1, p2, p3, texU0, texU1, texV0, texV1, material, lightSample.sky(), lightSample.block(), red, green, blue);
 	}
 
 	private static void addBox(
