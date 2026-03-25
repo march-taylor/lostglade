@@ -1692,6 +1692,19 @@ public final class BlueMapCameraRenderer {
 			int colorBase = triangleIndex * 3;
 			Vertex[] vertices = new Vertex[3];
 			float depthSum = 0.0F;
+			float triangleSunlight = Byte.toUnsignedInt(sunlight[triangleIndex]);
+			float triangleBlocklight = Byte.toUnsignedInt(blocklight[triangleIndex]);
+			FaceNormal faceNormal = faceNormal(
+					positions[positionBase],
+					positions[positionBase + 1],
+					positions[positionBase + 2],
+					positions[positionBase + 3],
+					positions[positionBase + 4],
+					positions[positionBase + 5],
+					positions[positionBase + 6],
+					positions[positionBase + 7],
+					positions[positionBase + 8]
+			);
 			for (int vertexIndex = 0; vertexIndex < 3; vertexIndex++) {
 				float worldX = positions[positionBase + vertexIndex * 3];
 				float worldY = positions[positionBase + vertexIndex * 3 + 1];
@@ -1701,13 +1714,25 @@ public final class BlueMapCameraRenderer {
 				float cameraY = (float) relative.dot(this.frame.up());
 				float cameraZ = (float) relative.dot(this.frame.forward());
 				depthSum += cameraZ;
+				VertexLight vertexLight = sampleVertexLight(
+						worldX,
+						worldY,
+						worldZ,
+						faceNormal.x(),
+						faceNormal.y(),
+						faceNormal.z(),
+						triangleSunlight / 15.0F,
+						triangleBlocklight / 15.0F
+				);
 				vertices[vertexIndex] = new Vertex(
 						cameraX,
 						cameraY,
 						cameraZ,
 						uvs[uvBase + vertexIndex * 2],
 						uvs[uvBase + vertexIndex * 2 + 1],
-						aos[aoBase + vertexIndex]
+						aos[aoBase + vertexIndex],
+						vertexLight.skyLight(),
+						vertexLight.blockLight()
 				);
 			}
 
@@ -1730,8 +1755,6 @@ public final class BlueMapCameraRenderer {
 			float colorR = toLinear(colors[colorBase]);
 			float colorG = toLinear(colors[colorBase + 1]);
 			float colorB = toLinear(colors[colorBase + 2]);
-			float triangleSunlight = Byte.toUnsignedInt(sunlight[triangleIndex]);
-			float triangleBlocklight = Byte.toUnsignedInt(blocklight[triangleIndex]);
 			List<RasterTriangle> result = new ArrayList<>(Math.max(1, polygon.size() - 2));
 			for (int i = 1; i < polygon.size() - 1; i++) {
 				Vertex a = project(polygon.get(0));
@@ -1744,17 +1767,70 @@ public final class BlueMapCameraRenderer {
 						a,
 						b,
 						c,
-							colorR,
-							colorG,
-							colorB,
-							triangleSunlight,
-							triangleBlocklight,
-							faceShade,
-							material,
-							depthSum / 3.0F
+						colorR,
+						colorG,
+						colorB,
+						faceShade,
+						material,
+						depthSum / 3.0F
 					));
 			}
 			return result;
+		}
+
+		private VertexLight sampleVertexLight(
+				float worldX,
+				float worldY,
+				float worldZ,
+				float normalX,
+				float normalY,
+				float normalZ,
+				float fallbackSkyLight,
+				float fallbackBlockLight
+		) {
+			float sampleX = worldX + normalX * 0.18F;
+			float sampleY = worldY + normalY * 0.18F;
+			float sampleZ = worldZ + normalZ * 0.18F;
+			int baseX = Mth.floor(sampleX);
+			int baseY = Mth.floor(sampleY);
+			int baseZ = Mth.floor(sampleZ);
+			float fracX = sampleX - baseX;
+			float fracY = sampleY - baseY;
+			float fracZ = sampleZ - baseZ;
+			float weightedSky = 0.0F;
+			float weightedBlock = 0.0F;
+			float totalWeight = 0.0F;
+			for (int offsetX = 0; offsetX <= 1; offsetX++) {
+				float weightX = offsetX == 0 ? 1.0F - fracX : fracX;
+				for (int offsetY = 0; offsetY <= 1; offsetY++) {
+					float weightY = offsetY == 0 ? 1.0F - fracY : fracY;
+					for (int offsetZ = 0; offsetZ <= 1; offsetZ++) {
+						float weightZ = offsetZ == 0 ? 1.0F - fracZ : fracZ;
+						float weight = weightX * weightY * weightZ;
+						if (weight <= 1.0E-4F) {
+							continue;
+						}
+						SnapshotBlock block = this.frame.snapshot().blockAt(baseX + offsetX, baseY + offsetY, baseZ + offsetZ);
+						if (block == null) {
+							continue;
+						}
+						float openness = block.state().isAir() ? 1.0F : 0.72F;
+						float adjustedWeight = weight * openness;
+						weightedSky += (block.light().getSkyLight() / 15.0F) * adjustedWeight;
+						weightedBlock += (block.light().getBlockLight() / 15.0F) * adjustedWeight;
+						totalWeight += adjustedWeight;
+					}
+				}
+			}
+			if (totalWeight <= 1.0E-4F) {
+				return new VertexLight(fallbackSkyLight, fallbackBlockLight);
+			}
+			float sampledSky = weightedSky / totalWeight;
+			float sampledBlock = weightedBlock / totalWeight;
+			return new VertexLight(
+					Mth.lerp(0.22F, fallbackSkyLight, sampledSky),
+					Mth.lerp(0.18F, fallbackBlockLight, sampledBlock)
+			);
 		}
 
 		private List<Vertex> clipAgainstNearPlane(Vertex[] input) {
@@ -1833,6 +1909,12 @@ public final class BlueMapCameraRenderer {
 					float ao = (w0 * triangle.a().ao() * triangle.a().inverseZ()
 							+ w1 * triangle.b().ao() * triangle.b().inverseZ()
 							+ w2 * triangle.c().ao() * triangle.c().inverseZ()) / inverseZ;
+					float sunlightLevel = (w0 * triangle.a().skyLight() * triangle.a().inverseZ()
+							+ w1 * triangle.b().skyLight() * triangle.b().inverseZ()
+							+ w2 * triangle.c().skyLight() * triangle.c().inverseZ()) / inverseZ;
+					float blocklightLevel = (w0 * triangle.a().blockLight() * triangle.a().inverseZ()
+							+ w1 * triangle.b().blockLight() * triangle.b().inverseZ()
+							+ w2 * triangle.c().blockLight() * triangle.c().inverseZ()) / inverseZ;
 
 					TextureMaterial material = triangle.material();
 					int argb = material.sample(u, v);
@@ -1844,22 +1926,21 @@ public final class BlueMapCameraRenderer {
 						continue;
 					}
 
-						float sunlightLevel = triangle.sunlight() / 15.0F;
-						float blocklightLevel = triangle.blocklight() / 15.0F;
-						float skylightMix = sunlightLevel * Mth.lerp(this.frame.environment().sunlightStrength(), 0.18F, 1.0F);
-						float blocklightMix = blocklightLevel <= 0.0F ? 0.0F : Mth.lerp(blocklightLevel, 0.15F, 1.0F);
-						float ambientFloor = Mth.clamp(this.frame.environment().ambientLight() * 0.45F + 0.22F, 0.22F, 0.42F);
-						float lightMix = Math.max(Math.max(skylightMix, blocklightMix), ambientFloor);
-						float aoShade = Mth.lerp(Mth.clamp(ao, 0.0F, 1.0F), 0.58F, 1.0F);
-						float shade = triangle.faceShade() * quantizeLight(lightMix) * aoShade;
-						if (depth > 64.0F && this.frame.maxDistance() > 64.0D) {
-							float fade = Mth.clamp((depth - 64.0F) / (float) (this.frame.maxDistance() - 64.0D), 0.0F, 1.0F);
-							shade *= Mth.lerp(fade, 1.0F, 0.78F);
-						}
-						shade = Mth.clamp(shade, 0.0F, 1.0F);
-						float redLinear = toLinear((argb >> 16) & 0xFF) * triangle.colorR() * shade;
-						float greenLinear = toLinear((argb >> 8) & 0xFF) * triangle.colorG() * shade;
-						float blueLinear = toLinear(argb & 0xFF) * triangle.colorB() * shade;
+					float skylightMix = skyLightContribution(sunlightLevel);
+					float blocklightMix = blockLightContribution(blocklightLevel);
+					float ambientFloor = caveAmbientFloor();
+					float localBounce = localBounceLight(sunlightLevel, blocklightLevel);
+					float lightMix = Mth.clamp(Math.max(skylightMix, blocklightMix) + localBounce, ambientFloor, 1.0F);
+					float aoShade = Mth.lerp(Mth.clamp(ao, 0.0F, 1.0F), 0.74F, 1.0F);
+					float shade = triangle.faceShade() * lightMix * aoShade;
+					if (depth > 64.0F && this.frame.maxDistance() > 64.0D) {
+						float fade = Mth.clamp((depth - 64.0F) / (float) (this.frame.maxDistance() - 64.0D), 0.0F, 1.0F);
+						shade *= Mth.lerp(fade, 1.0F, 0.78F);
+					}
+					shade = Mth.clamp(shade, 0.0F, 1.0F);
+					float redLinear = toLinear((argb >> 16) & 0xFF) * triangle.colorR() * shade;
+					float greenLinear = toLinear((argb >> 8) & 0xFF) * triangle.colorG() * shade;
+					float blueLinear = toLinear(argb & 0xFF) * triangle.colorB() * shade;
 
 					if (opaquePass) {
 						this.red[index] = redLinear;
@@ -1961,18 +2042,60 @@ public final class BlueMapCameraRenderer {
 			return 0.6F;
 		}
 
-		private static float quantizeLight(float light) {
-			float clamped = Mth.clamp(light, 0.0F, 1.0F);
-			if (clamped < 0.625F) {
-				return 135.0F / 255.0F;
+		private FaceNormal faceNormal(
+				float ax, float ay, float az,
+				float bx, float by, float bz,
+				float cx, float cy, float cz
+		) {
+			float abx = bx - ax;
+			float aby = by - ay;
+			float abz = bz - az;
+			float acx = cx - ax;
+			float acy = cy - ay;
+			float acz = cz - az;
+			float nx = aby * acz - abz * acy;
+			float ny = abz * acx - abx * acz;
+			float nz = abx * acy - aby * acx;
+			float lengthSquared = nx * nx + ny * ny + nz * nz;
+			if (lengthSquared <= 1.0E-6F) {
+				return new FaceNormal(0.0F, 1.0F, 0.0F);
 			}
-			if (clamped < 0.785F) {
-				return 180.0F / 255.0F;
+			float inverseLength = 1.0F / Mth.sqrt(lengthSquared);
+			return new FaceNormal(nx * inverseLength, ny * inverseLength, nz * inverseLength);
+		}
+
+		private float skyLightContribution(float skyLightLevel) {
+			float clamped = Mth.clamp(skyLightLevel, 0.0F, 1.0F);
+			float curved = smoothLightCurve(clamped);
+			return curved * Mth.lerp(this.frame.environment().sunlightStrength(), 0.05F, 1.0F);
+		}
+
+		private static float blockLightContribution(float blockLightLevel) {
+			float clamped = Mth.clamp(blockLightLevel, 0.0F, 1.0F);
+			float curved = 1.0F - (float) Math.pow(1.0F - clamped, 1.18D);
+			return Mth.clamp(curved * 1.06F, 0.0F, 1.0F);
+		}
+
+		private float caveAmbientFloor() {
+			float dimensionAmbient = this.frame.environment().ambientLight();
+			if (this.frame.environment().skylight()) {
+				return Mth.clamp(0.055F + dimensionAmbient * 0.10F, 0.055F, 0.16F);
 			}
-			if (clamped < 0.93F) {
-				return 220.0F / 255.0F;
-			}
-			return 1.0F;
+			return Mth.clamp(0.080F + dimensionAmbient * 0.14F, 0.080F, 0.18F);
+		}
+
+		private float localBounceLight(float skyLightLevel, float blockLightLevel) {
+			float sky = Mth.clamp(skyLightLevel, 0.0F, 1.0F);
+			float block = Mth.clamp(blockLightLevel, 0.0F, 1.0F);
+			float skyBounce = 0.08F * sky * sky * this.frame.environment().sunlightStrength();
+			float blockBounce = 0.24F * (float) Math.pow(block, 1.65D);
+			return skyBounce + blockBounce;
+		}
+
+		private static float smoothLightCurve(float lightLevel) {
+			float clamped = Mth.clamp(lightLevel, 0.0F, 1.0F);
+			float smooth = clamped * clamped * (3.0F - 2.0F * clamped);
+			return Mth.lerp(smooth, 0.03F, 1.0F);
 		}
 
 		private static int lerpRgb(int from, int to, float delta) {
@@ -2003,12 +2126,14 @@ public final class BlueMapCameraRenderer {
 			float u,
 			float v,
 			float ao,
+			float skyLight,
+			float blockLight,
 			float screenX,
 			float screenY,
 			float inverseZ
 	) {
-		private Vertex(float cameraX, float cameraY, float cameraZ, float u, float v, float ao) {
-			this(cameraX, cameraY, cameraZ, u, v, ao, 0.0F, 0.0F, 0.0F);
+		private Vertex(float cameraX, float cameraY, float cameraZ, float u, float v, float ao, float skyLight, float blockLight) {
+			this(cameraX, cameraY, cameraZ, u, v, ao, skyLight, blockLight, 0.0F, 0.0F, 0.0F);
 		}
 
 		private Vertex lerp(Vertex other, float delta) {
@@ -2018,12 +2143,14 @@ public final class BlueMapCameraRenderer {
 					Mth.lerp(delta, this.cameraZ, other.cameraZ),
 					Mth.lerp(delta, this.u, other.u),
 					Mth.lerp(delta, this.v, other.v),
-					Mth.lerp(delta, this.ao, other.ao)
+					Mth.lerp(delta, this.ao, other.ao),
+					Mth.lerp(delta, this.skyLight, other.skyLight),
+					Mth.lerp(delta, this.blockLight, other.blockLight)
 			);
 		}
 
 		private Vertex withProjection(float screenX, float screenY, float inverseZ) {
-			return new Vertex(this.cameraX, this.cameraY, this.cameraZ, this.u, this.v, this.ao, screenX, screenY, inverseZ);
+			return new Vertex(this.cameraX, this.cameraY, this.cameraZ, this.u, this.v, this.ao, this.skyLight, this.blockLight, screenX, screenY, inverseZ);
 		}
 	}
 
@@ -2034,12 +2161,16 @@ public final class BlueMapCameraRenderer {
 			float colorR,
 			float colorG,
 			float colorB,
-			float sunlight,
-			float blocklight,
 			float faceShade,
 			TextureMaterial material,
 			float sortDepth
 	) {
+	}
+
+	private record VertexLight(float skyLight, float blockLight) {
+	}
+
+	private record FaceNormal(float x, float y, float z) {
 	}
 
 	private static final class StarField {
