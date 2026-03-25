@@ -365,14 +365,40 @@ final class CameraEntityRenderer {
 
 	private record ResolvedItemModel(
 			Map<String, String> textures,
-			List<ItemModelElement> elements
+			List<ItemModelElement> elements,
+			Map<ItemDisplayTransformContext, ItemModelTransform> transforms
+		) {
+	}
+
+	private record ItemModelTransform(
+			float rotationX,
+			float rotationY,
+			float rotationZ,
+			float translationX,
+			float translationY,
+			float translationZ,
+			float scaleX,
+			float scaleY,
+			float scaleZ
 	) {
+		private static final ItemModelTransform IDENTITY = new ItemModelTransform(
+				0.0F,
+				0.0F,
+				0.0F,
+				0.0F,
+				0.0F,
+				0.0F,
+				1.0F,
+				1.0F,
+				1.0F
+		);
 	}
 
 	private enum ItemDisplayTransformContext {
 		THIRD_PERSON_RIGHT_HAND,
 		THIRD_PERSON_LEFT_HAND,
-		FIXED
+		FIXED,
+		FRAMED
 	}
 
 	private record ItemModelElement(
@@ -2896,7 +2922,7 @@ final class CameraEntityRenderer {
 				.translate(0.0F, 0.0F, zOffset)
 				.rotateZ(radians(snapshot.rotation() * 45.0F))
 				.scale(0.5F);
-		renderItemVisual(context, itemRoot, snapshot.item(), ItemDisplayTransformContext.FIXED);
+		renderItemVisual(context, itemRoot, snapshot.item(), ItemDisplayTransformContext.FRAMED);
 	}
 
 	private static void renderLine(RenderContext context, LineSnapshot snapshot) {
@@ -3108,13 +3134,22 @@ final class CameraEntityRenderer {
 			return;
 		}
 		if (visual.model() != null && !visual.model().elements().isEmpty()) {
-			renderItemModel(context, root, visual.model());
+			if (transformContext == ItemDisplayTransformContext.FRAMED) {
+				renderDisplayedItemModel(context, root, visual.model(), transformContext);
+			} else {
+				renderItemModel(context, root, visual.model());
+			}
 			return;
 		}
 		if (visual.flatTexture() == null) {
 			return;
 		}
 		int material = context.materialResolver.materialForTexture(visual.flatTexture());
+		if (transformContext == ItemDisplayTransformContext.FRAMED) {
+			Matrix4f transformedRoot = applyItemDisplayTransform(root, visual.model(), transformContext);
+			addDoubleSidedPlane(context, transformedRoot, 0.0F, 0.0F, 0.5F, 1.0F, 1.0F, material);
+			return;
+		}
 		addDoubleSidedPlane(context, root, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
 		if (transformContext == ItemDisplayTransformContext.FIXED) {
 			return;
@@ -3128,6 +3163,49 @@ final class CameraEntityRenderer {
 		for (ItemModelElement element : model.elements()) {
 			renderItemModelElement(context, transform, model, element);
 		}
+	}
+
+	private static void renderDisplayedItemModel(RenderContext context, Matrix4f root, ResolvedItemModel model, ItemDisplayTransformContext transformContext) {
+		Matrix4f transform = applyItemDisplayTransform(root, model, transformContext);
+		for (ItemModelElement element : model.elements()) {
+			renderItemModelElement(context, transform, model, element);
+		}
+	}
+
+	private static Matrix4f applyItemDisplayTransform(Matrix4f root, ResolvedItemModel model, ItemDisplayTransformContext transformContext) {
+		ItemModelTransform transform = itemModelTransform(model, transformContext);
+		boolean leftHand = transformContext == ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND;
+		float translationX = leftHand ? -transform.translationX() : transform.translationX();
+		float rotationY = leftHand ? -transform.rotationY() : transform.rotationY();
+		float rotationZ = leftHand ? -transform.rotationZ() : transform.rotationZ();
+		return new Matrix4f(root)
+				.translate(translationX, transform.translationY(), transform.translationZ())
+				.rotate(new Quaternionf().rotationXYZ(radians(transform.rotationX()), radians(rotationY), radians(rotationZ)))
+				.scale(transform.scaleX(), transform.scaleY(), transform.scaleZ())
+				.translate(-0.5F, -0.5F, -0.5F);
+	}
+
+	private static ItemModelTransform itemModelTransform(ResolvedItemModel model, ItemDisplayTransformContext transformContext) {
+		if (model == null || model.transforms().isEmpty()) {
+			return ItemModelTransform.IDENTITY;
+		}
+		ItemModelTransform transform = model.transforms().get(transformContext);
+		if (transform != null) {
+			return transform;
+		}
+		if (transformContext == ItemDisplayTransformContext.FRAMED) {
+			transform = model.transforms().get(ItemDisplayTransformContext.FIXED);
+			if (transform != null) {
+				return transform;
+			}
+		}
+		if (transformContext == ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND) {
+			transform = model.transforms().get(ItemDisplayTransformContext.THIRD_PERSON_RIGHT_HAND);
+			if (transform != null) {
+				return transform;
+			}
+		}
+		return ItemModelTransform.IDENTITY;
 	}
 
 	private static void renderBlockEntityModel(RenderContext context, Matrix4f root, ResolvedItemModel model) {
@@ -3637,7 +3715,8 @@ final class CameraEntityRenderer {
 	}
 
 	private static ItemVisual resolveItemVisualInternal(ItemStack stack, Identifier itemId) {
-		ResolvedItemModel model = resolveItemModel(itemId.withPrefix("item/"), new HashSet<>());
+		Identifier rootModelId = resolveItemRootModelId(itemId);
+		ResolvedItemModel model = rootModelId == null ? null : resolveItemModel(rootModelId, new HashSet<>());
 		if ((model == null || model.elements().isEmpty()) && stack.getItem() instanceof BlockItem blockItem) {
 			Identifier blockId = BuiltInRegistries.BLOCK.getKey(blockItem.getBlock());
 			if (blockId != null) {
@@ -3666,7 +3745,41 @@ final class CameraEntityRenderer {
 	}
 
 	private static Identifier resolveItemTextureInternal(Identifier itemId) {
-		return resolveModelTexture(itemId.withPrefix("item/"), Set.of());
+		Identifier rootModelId = resolveItemRootModelId(itemId);
+		return rootModelId == null ? null : resolveModelTexture(rootModelId, Set.of());
+	}
+
+	private static Identifier resolveItemRootModelId(Identifier itemId) {
+		JsonObject itemDefinition = ASSETS.loadJsonAsset("assets/" + itemId.getNamespace() + "/items/" + itemId.getPath() + ".json");
+		if (itemDefinition != null && itemDefinition.has("model") && itemDefinition.get("model").isJsonObject()) {
+			Identifier definitionModel = resolveItemDefinitionModelId(itemDefinition.getAsJsonObject("model"));
+			if (definitionModel != null) {
+				return definitionModel;
+			}
+		}
+		return itemId.withPrefix("item/");
+	}
+
+	private static Identifier resolveItemDefinitionModelId(JsonObject modelObject) {
+		if (modelObject == null || !modelObject.has("type")) {
+			return null;
+		}
+		String type = modelObject.get("type").getAsString();
+		if ("minecraft:model".equals(type) && modelObject.has("model")) {
+			return Identifier.tryParse(modelObject.get("model").getAsString());
+		}
+		if ("minecraft:condition".equals(type)) {
+			if (modelObject.has("on_false") && modelObject.get("on_false").isJsonObject()) {
+				Identifier falseModel = resolveItemDefinitionModelId(modelObject.getAsJsonObject("on_false"));
+				if (falseModel != null) {
+					return falseModel;
+				}
+			}
+			if (modelObject.has("on_true") && modelObject.get("on_true").isJsonObject()) {
+				return resolveItemDefinitionModelId(modelObject.getAsJsonObject("on_true"));
+			}
+		}
+		return null;
 	}
 
 	private static ResolvedItemModel resolveItemModel(Identifier modelId, Set<String> resolving) {
@@ -3696,6 +3809,7 @@ final class CameraEntityRenderer {
 
 		Map<String, String> textures = new HashMap<>();
 		List<ItemModelElement> elements = new ArrayList<>();
+		Map<ItemDisplayTransformContext, ItemModelTransform> transforms = new HashMap<>();
 		if (json.has("parent")) {
 			Identifier parentId = Identifier.tryParse(json.get("parent").getAsString());
 			if (parentId != null && !"builtin/generated".equals(parentId.toString())) {
@@ -3703,6 +3817,7 @@ final class CameraEntityRenderer {
 				if (parent != null) {
 					textures.putAll(parent.textures());
 					elements.addAll(parent.elements());
+					transforms.putAll(parent.transforms());
 				}
 			}
 		}
@@ -3710,6 +3825,9 @@ final class CameraEntityRenderer {
 			for (Map.Entry<String, JsonElement> entry : json.getAsJsonObject("textures").entrySet()) {
 				textures.put(entry.getKey(), entry.getValue().getAsString());
 			}
+		}
+		if (json.has("display") && json.get("display").isJsonObject()) {
+			transforms.putAll(parseItemModelTransforms(json.getAsJsonObject("display")));
 		}
 		if (json.has("elements") && json.get("elements").isJsonArray()) {
 			elements.clear();
@@ -3738,7 +3856,7 @@ final class CameraEntityRenderer {
 				elements.add(new ItemModelElement(from, to, faces, rotation));
 			}
 		}
-		return new ResolvedItemModel(Map.copyOf(textures), List.copyOf(elements));
+		return new ResolvedItemModel(Map.copyOf(textures), List.copyOf(elements), Map.copyOf(transforms));
 	}
 
 	private static Identifier resolveModelTexture(Identifier modelId, Set<String> visited) {
@@ -3874,6 +3992,58 @@ final class CameraEntityRenderer {
 		float angle = rotationJson.get("angle").getAsFloat();
 		boolean rescale = rotationJson.has("rescale") && rotationJson.get("rescale").getAsBoolean();
 		return new ElementRotation(origin, axis, angle, rescale, rotationMatrix(axis, angle, rescale));
+	}
+
+	private static Map<ItemDisplayTransformContext, ItemModelTransform> parseItemModelTransforms(JsonObject displayJson) {
+		Map<ItemDisplayTransformContext, ItemModelTransform> transforms = new HashMap<>();
+		readItemModelTransform(displayJson, "thirdperson_righthand", ItemDisplayTransformContext.THIRD_PERSON_RIGHT_HAND, transforms);
+		readItemModelTransform(displayJson, "thirdperson_lefthand", ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND, transforms);
+		readItemModelTransform(displayJson, "fixed", ItemDisplayTransformContext.FIXED, transforms);
+		return transforms;
+	}
+
+	private static void readItemModelTransform(
+			JsonObject displayJson,
+			String jsonKey,
+			ItemDisplayTransformContext context,
+			Map<ItemDisplayTransformContext, ItemModelTransform> transforms
+	) {
+		if (!displayJson.has(jsonKey) || !displayJson.get(jsonKey).isJsonObject()) {
+			return;
+		}
+		JsonObject transformJson = displayJson.getAsJsonObject(jsonKey);
+		float[] rotation = readModelTransformVector(transformJson, "rotation", 0.0F, 0.0F, 0.0F);
+		float[] translation = readModelTransformVector(transformJson, "translation", 0.0F, 0.0F, 0.0F);
+		float[] scale = readModelTransformVector(transformJson, "scale", 1.0F, 1.0F, 1.0F);
+		transforms.put(
+				context,
+				new ItemModelTransform(
+						rotation[0],
+						rotation[1],
+						rotation[2],
+						Mth.clamp(translation[0] * PX, -5.0F, 5.0F),
+						Mth.clamp(translation[1] * PX, -5.0F, 5.0F),
+						Mth.clamp(translation[2] * PX, -5.0F, 5.0F),
+						Mth.clamp(scale[0], -4.0F, 4.0F),
+						Mth.clamp(scale[1], -4.0F, 4.0F),
+						Mth.clamp(scale[2], -4.0F, 4.0F)
+				)
+		);
+	}
+
+	private static float[] readModelTransformVector(JsonObject object, String key, float defaultX, float defaultY, float defaultZ) {
+		if (!object.has(key) || !object.get(key).isJsonArray()) {
+			return new float[]{defaultX, defaultY, defaultZ};
+		}
+		JsonArray array = object.getAsJsonArray(key);
+		if (array.size() != 3) {
+			return new float[]{defaultX, defaultY, defaultZ};
+		}
+		return new float[]{
+				array.get(0).getAsFloat(),
+				array.get(1).getAsFloat(),
+				array.get(2).getAsFloat()
+		};
 	}
 
 	private static Identifier itemTextureFallback(Identifier modelId) {
