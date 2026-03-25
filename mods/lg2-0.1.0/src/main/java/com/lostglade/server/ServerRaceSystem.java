@@ -962,16 +962,16 @@ public final class ServerRaceSystem {
 		return getCartelDisguiseDisplayName(player);
 	}
 
-	private static ItemStack buildCartelDisguiseArrow(boolean next) {
+	private static ItemStack buildCartelDisguiseArrow(ServerPlayer viewer, boolean next) {
 		ItemStack stack = new ItemStack(Items.ARROW);
 		stack.set(
 				DataComponents.CUSTOM_NAME,
-				Component.translatable(next ? "container.lg2.cartel_disguise.next" : "container.lg2.cartel_disguise.previous")
+				Component.literal(localizeCartelDisguiseText(viewer, next ? "next" : "previous"))
 		);
 		return stack;
 	}
 
-	private static ItemStack buildCartelDisguiseHead(ServerPlayer target) {
+	private static ItemStack buildCartelDisguiseHead(ServerPlayer viewer, ServerPlayer target) {
 		ItemStack stack = new ItemStack(Items.PLAYER_HEAD);
 		if (target == null) {
 			stack.set(DataComponents.CUSTOM_NAME, Component.literal(" "));
@@ -987,20 +987,20 @@ public final class ServerRaceSystem {
 		stack.set(DataComponents.PROFILE, ResolvableProfile.createResolved(profile));
 		stack.set(
 				DataComponents.CUSTOM_NAME,
-				Component.translatable("container.lg2.cartel_disguise.accept")
+				Component.literal(localizeCartelDisguiseText(viewer, "accept"))
 						.withStyle(style -> style.withColor(0x80FF80).withItalic(false))
 		);
 		return stack;
 	}
 
-	private static ItemStack buildCartelDisguiseEmptyState() {
+	private static ItemStack buildCartelDisguiseEmptyState(ServerPlayer viewer) {
 		ItemStack stack = new ItemStack(Items.BARRIER);
-		stack.set(DataComponents.CUSTOM_NAME, Component.translatable("container.lg2.cartel_disguise.empty"));
+		stack.set(DataComponents.CUSTOM_NAME, Component.literal(localizeCartelDisguiseText(viewer, "empty")));
 		return stack;
 	}
 
 	private static Component buildCartelDisguiseMenuTitle(ServerPlayer viewer, ServerPlayer target) {
-		Component title = Component.translatable("container.lg2.cartel_disguise.passport");
+		Component title = Component.literal(localizeCartelDisguiseText(viewer, "passport"));
 		if (target == null) {
 			return title;
 		}
@@ -1011,6 +1011,65 @@ public final class ServerRaceSystem {
 		int nameLength = playerName == null ? 0 : playerName.length();
 		int spaces = Math.max(4, 18 - Math.min(16, nameLength));
 		return " ".repeat(spaces);
+	}
+
+	private static String localizeCartelDisguiseText(ServerPlayer player, String key) {
+		String locale = normalizeCartelDisguiseLocale(player);
+		if (locale.startsWith("rpr")) {
+			return switch (key) {
+				case "passport" -> "Паспортъ";
+				case "accept" -> "Приняти";
+				case "previous" -> "Предыдущiй";
+				case "next" -> "Слѣдующiй";
+				case "empty" -> "Нѣтъ игроковъ";
+				default -> "";
+			};
+		}
+		if (locale.startsWith("uk")) {
+			return switch (key) {
+				case "passport" -> "Паспорт";
+				case "accept" -> "Прийняти";
+				case "previous" -> "Попередній";
+				case "next" -> "Наступний";
+				case "empty" -> "Немає гравців";
+				default -> "";
+			};
+		}
+		if (locale.startsWith("ja")) {
+			return switch (key) {
+				case "passport" -> "パスポート";
+				case "accept" -> "承認";
+				case "previous" -> "前へ";
+				case "next" -> "次へ";
+				case "empty" -> "プレイヤーがいません";
+				default -> "";
+			};
+		}
+		if (locale.startsWith("ru")) {
+			return switch (key) {
+				case "passport" -> "Пасспорт";
+				case "accept" -> "Принять";
+				case "previous" -> "Предыдущий";
+				case "next" -> "Следующий";
+				case "empty" -> "Нет игроков";
+				default -> "";
+			};
+		}
+		return switch (key) {
+			case "passport" -> "Passport";
+			case "accept" -> "Accept";
+			case "previous" -> "Previous";
+			case "next" -> "Next";
+			case "empty" -> "No players";
+			default -> "";
+		};
+	}
+
+	private static String normalizeCartelDisguiseLocale(ServerPlayer player) {
+		if (player == null || player.clientInformation() == null || player.clientInformation().language() == null) {
+			return "ru_ru";
+		}
+		return player.clientInformation().language().toLowerCase(Locale.ROOT);
 	}
 
 	private static void applySkinRestorerSkin(ServerPlayer sourcePlayer, PropertyMap properties) {
@@ -1975,14 +2034,14 @@ public final class ServerRaceSystem {
 
 			List<ServerPlayer> candidates = collectCartelDisguiseCandidates(this.viewer);
 			if (candidates.isEmpty()) {
-				this.container.setItem(CARTEL_DISGUISE_HEAD_SLOT, buildCartelDisguiseEmptyState());
+				this.container.setItem(CARTEL_DISGUISE_HEAD_SLOT, buildCartelDisguiseEmptyState(this.viewer));
 				return;
 			}
 
 			this.selectedIndex = Math.floorMod(this.selectedIndex, candidates.size());
-			this.container.setItem(CARTEL_DISGUISE_PREVIOUS_SLOT, buildCartelDisguiseArrow(false));
-			this.container.setItem(CARTEL_DISGUISE_HEAD_SLOT, buildCartelDisguiseHead(candidates.get(this.selectedIndex)));
-			this.container.setItem(CARTEL_DISGUISE_NEXT_SLOT, buildCartelDisguiseArrow(true));
+			this.container.setItem(CARTEL_DISGUISE_PREVIOUS_SLOT, buildCartelDisguiseArrow(this.viewer, false));
+			this.container.setItem(CARTEL_DISGUISE_HEAD_SLOT, buildCartelDisguiseHead(this.viewer, candidates.get(this.selectedIndex)));
+			this.container.setItem(CARTEL_DISGUISE_NEXT_SLOT, buildCartelDisguiseArrow(this.viewer, true));
 			if (this.viewer.containerMenu == this) {
 				this.slotsChanged(this.container);
 				this.broadcastChanges();
