@@ -17,6 +17,7 @@ import com.mojang.authlib.properties.PropertyMap;
 import com.mojang.brigadier.context.CommandContext;
 import eu.pb4.polymer.core.api.entity.PolymerEntity;
 import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
+import eu.pb4.polymer.core.api.item.PolymerItemUtils;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import it.unimi.dsi.fastutil.Pair;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -38,8 +39,10 @@ import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.ChatFormatting;
@@ -70,7 +73,9 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.Container;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.SimpleMenuProvider;
@@ -138,7 +143,7 @@ public final class ServerRaceSystem {
 	);
 	private static final int CARTEL_PASSPORT_NAME_CHAR_ADVANCE = 6;
 	private static final int CARTEL_PASSPORT_NAME_CENTER_X = 88;
-	private static final int CARTEL_PASSPORT_OVERLAY_X_OFFSET = 264;
+	private static final int CARTEL_PASSPORT_OVERLAY_X_OFFSET = 0;
 	private static final int MISTER_CARTEL_49_STACK_LIMIT = 49;
 	private static final String CARTEL_SUMMON_TAG = "lg2.cartel_summon";
 	private static final String CARTEL_LAWYER_TAG = "lg2.cartel_lawyer";
@@ -1055,7 +1060,76 @@ public final class ServerRaceSystem {
 			.append(Component.literal(TITLE_OVERLAY_RESET + buildHorizontalAdvance(startX))
 				.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
 			.append(Component.literal(playerName)
-						.withStyle(style -> style.withColor(0x2E2016).withItalic(false).withFont(CARTEL_PASSPORT_NAME_FONT)));
+						.withStyle(style -> style.withColor(0x2E2016).withItalic(false)));
+	}
+
+	private static void hideCartelDisguiseInventoryVisuals(ServerPlayer player, AbstractContainerMenu menu) {
+		sendCartelDisguiseInventoryVisuals(player, menu, true);
+		syncCartelDisguiseHeldEquipmentVisuals(player, true);
+	}
+
+	private static void restoreCartelDisguiseInventoryVisuals(ServerPlayer player, AbstractContainerMenu menu) {
+		if (player != null) {
+			AbstractContainerMenu targetMenu = player.containerMenu;
+			if (targetMenu == null || targetMenu == menu) {
+				targetMenu = player.inventoryMenu;
+			}
+			if (targetMenu != null) {
+				sendCartelDisguiseInventoryVisuals(player, targetMenu, false);
+			}
+		}
+		syncCartelDisguiseHeldEquipmentVisuals(player, false);
+	}
+
+	private static void sendCartelDisguiseInventoryVisuals(ServerPlayer player, AbstractContainerMenu menu, boolean hide) {
+		if (player == null || menu == null) {
+			return;
+		}
+
+		Inventory inventory = player.getInventory();
+		PacketContext.NotNullWithPlayer context = PacketContext.create(player);
+		int stateId = menu.incrementStateId();
+		for (int menuSlot = 0; menuSlot < menu.slots.size(); menuSlot++) {
+			Slot slot = menu.getSlot(menuSlot);
+			if (slot.container != inventory) {
+				continue;
+			}
+
+			int inventorySlot = slot.getContainerSlot();
+			ItemStack visual = hide ? ItemStack.EMPTY : inventory.getItem(inventorySlot).copy();
+			player.connection.send(new ClientboundContainerSetSlotPacket(
+				menu.containerId,
+				stateId,
+				menuSlot,
+				toCartelDisguiseClientVisualStack(visual, context)
+			));
+		}
+	}
+
+	private static void syncCartelDisguiseHeldEquipmentVisuals(ServerPlayer player, boolean hide) {
+		if (player == null) {
+			return;
+		}
+
+		PacketContext.NotNullWithPlayer context = PacketContext.create(player);
+		ItemStack mainHand = hide ? ItemStack.EMPTY : toCartelDisguiseClientVisualStack(player.getMainHandItem().copy(), context);
+		ItemStack offHand = hide ? ItemStack.EMPTY : toCartelDisguiseClientVisualStack(player.getOffhandItem().copy(), context);
+		player.connection.send(new ClientboundSetEquipmentPacket(
+			player.getId(),
+			List.of(
+				com.mojang.datafixers.util.Pair.of(EquipmentSlot.MAINHAND, mainHand),
+				com.mojang.datafixers.util.Pair.of(EquipmentSlot.OFFHAND, offHand)
+			)
+		));
+	}
+
+	private static ItemStack toCartelDisguiseClientVisualStack(ItemStack stack, PacketContext.NotNullWithPlayer context) {
+		if (stack == null || stack.isEmpty()) {
+			return ItemStack.EMPTY;
+		}
+
+		ItemStack clientStack = PolymerItemUtils.getClientItemStack(stack, context);
+		return clientStack.isEmpty() ? stack.copy() : clientStack.copy();
 	}
 
 	private static String buildCartelDisguiseTitlePadding(String playerName) {
@@ -2072,7 +2146,7 @@ public final class ServerRaceSystem {
 			this.viewer = viewer;
 			this.ability = ability;
 			this.selectedIndex = selectedIndex;
-            this.refreshContents();
+			this.refreshContents();
 		}
 
 		@Override
@@ -2110,6 +2184,24 @@ public final class ServerRaceSystem {
 		@Override
 		public boolean stillValid(Player player) {
 			return player.isAlive();
+		}
+
+		@Override
+		public void broadcastChanges() {
+			super.broadcastChanges();
+			hideCartelDisguiseInventoryVisuals(this.viewer, this);
+		}
+
+		@Override
+		public void broadcastFullState() {
+			super.broadcastFullState();
+			hideCartelDisguiseInventoryVisuals(this.viewer, this);
+		}
+
+		@Override
+		public void removed(Player player) {
+			super.removed(player);
+			restoreCartelDisguiseInventoryVisuals(this.viewer, this);
 		}
 
 		private void refreshContents() {
