@@ -10,6 +10,7 @@ import com.lostglade.config.RaceConfig.PlayerRaceConfig;
 import com.lostglade.config.RaceConfig.RaceAbilityConfig;
 import com.lostglade.config.RaceConfig.RaceAbilitySlot;
 import com.lostglade.item.ModItems;
+import com.lostglade.item.TubochkaItem;
 import com.lostglade.mixin.MobXpRewardAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.mojang.authlib.GameProfile;
@@ -23,6 +24,7 @@ import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import it.unimi.dsi.fastutil.Pair;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
@@ -92,6 +94,7 @@ import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.DoublePlantBlock;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -108,6 +111,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -119,6 +123,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.PriorityQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
@@ -170,6 +175,9 @@ public final class ServerRaceSystem {
 	private static final double CARTEL_DEFAULT_UNIQUE_DURATION_SECONDS = 300.0D;
 	private static final double CARTEL_DEFAULT_UNIQUE_COOLDOWN_SECONDS = 300.0D;
 	private static final double CARTEL_DEFAULT_SHNYAGA_TRAVKA_DROP_CHANCE = 0.25D;
+	private static final double CARTEL_DEFAULT_SHNYAGA_MIN_GROWTH_SECONDS = 120.0D;
+	private static final double CARTEL_DEFAULT_SHNYAGA_MAX_GROWTH_SECONDS = 240.0D;
+	private static final long CARTEL_FERN_GROWTH_RETRY_TICKS = 100L;
 	private static final long MISTER_CARTEL_STACK_CHECK_INTERVAL_TICKS = 8L;
 	private static final double CARTEL_LAWYER_BASE_MOVE_SPEED = 0.23D;
 	private static final double CARTEL_LAWYER_WALK_SPEED = CARTEL_LAWYER_BASE_MOVE_SPEED;
@@ -195,6 +203,8 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, Long> CARTEL_UNIQUE_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelDisguiseSession> CARTEL_DISGUISE_SESSIONS = new LinkedHashMap<>();
 	private static final List<CartelTravkaGrowthAttempt> CARTEL_TRAVKA_GROWTH_ATTEMPTS = new ArrayList<>();
+	private static final Map<CartelFernGrowthKey, CartelFernGrowthTask> CARTEL_PLANTED_FERN_GROWTHS = new LinkedHashMap<>();
+	private static final PriorityQueue<CartelFernGrowthTask> CARTEL_PLANTED_FERN_GROWTH_QUEUE = new PriorityQueue<>(Comparator.comparingLong(task -> task.growAtTick));
 	private static final Map<UUID, UUID> CARTEL_SUMMON_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> CARTEL_LAWYER_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final ThreadLocal<Boolean> CARTEL_DEFENSE_REFLECTION_ACTIVE = ThreadLocal.withInitial(() -> Boolean.FALSE);
@@ -286,6 +296,24 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private record CartelFernGrowthKey(ResourceKey<Level> dimension, BlockPos pos) {
+		private CartelFernGrowthKey {
+			pos = pos.immutable();
+		}
+	}
+
+	private static final class CartelFernGrowthTask {
+		private final CartelFernGrowthKey key;
+		private final long growAtTick;
+		private final double chance;
+
+		private CartelFernGrowthTask(CartelFernGrowthKey key, long growAtTick, double chance) {
+			this.key = key;
+			this.growAtTick = growAtTick;
+			this.chance = chance;
+		}
+	}
+
 	private ServerRaceSystem() {
 	}
 
@@ -313,6 +341,8 @@ public final class ServerRaceSystem {
 			CARTEL_UNIQUE_COOLDOWNS.clear();
 			CARTEL_DISGUISE_SESSIONS.clear();
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.clear();
+			CARTEL_PLANTED_FERN_GROWTHS.clear();
+			CARTEL_PLANTED_FERN_GROWTH_QUEUE.clear();
 			CARTEL_SUMMON_OWNER_BY_ENTITY.clear();
 			CARTEL_LAWYER_OWNER_BY_ENTITY.clear();
 			CARTEL_LAWYER_SKIN_FUTURE = null;
@@ -328,9 +358,18 @@ public final class ServerRaceSystem {
 			clearCartelDisguise(handler.player);
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.removeIf(attempt -> attempt.playerId.equals(handler.player.getUUID()));
 		});
+		UseItemCallback.EVENT.register((player, world, hand) -> {
+			if (!(player instanceof ServerPlayer serverPlayer) || world.isClientSide()) {
+				return InteractionResult.PASS;
+			}
+			return TubochkaItem.tryLightTubochka(serverPlayer) ? InteractionResult.SUCCESS : InteractionResult.PASS;
+		});
 		UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
 			if (!(player instanceof ServerPlayer serverPlayer) || world.isClientSide()) {
 				return InteractionResult.PASS;
+			}
+			if (TubochkaItem.tryLightTubochka(serverPlayer)) {
+				return InteractionResult.SUCCESS;
 			}
 			return onUseBlock(serverPlayer, hand, hitResult.getBlockPos());
 		});
@@ -345,6 +384,7 @@ public final class ServerRaceSystem {
 			tickCartelDefense(server);
 			tickCartelDisguises(server);
 			tickCartelTravkaGrowthAttempts(server);
+			tickCartelFernGrowths(server);
 		});
 	}
 
@@ -468,6 +508,30 @@ public final class ServerRaceSystem {
 		return Collections.unmodifiableCollection(RACES_BY_NICKNAME.values());
 	}
 
+	public static void onFernPlaced(ServerPlayer player, BlockPos pos) {
+		if (player == null || pos == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		clearCartelFernGrowth(level.dimension(), pos);
+
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isEmpty()) {
+			return;
+		}
+
+		PlayerRaceConfig race = raceOptional.get();
+		if (!MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id)) || race.shnyaga == null || !race.shnyaga.enabled) {
+			return;
+		}
+
+		if (!level.getBlockState(pos).is(Blocks.FERN)) {
+			return;
+		}
+
+		scheduleCartelFernGrowth(level, pos, race.shnyaga);
+	}
+
 	private static InteractionResult onUseBlock(ServerPlayer player, InteractionHand hand, BlockPos pos) {
 		ItemStack stack = player.getItemInHand(hand);
 		if (!stack.is(Items.BONE_MEAL)) {
@@ -511,15 +575,120 @@ public final class ServerRaceSystem {
 				continue;
 			}
 
-			if (level.getBlockState(attempt.pos).is(Blocks.LARGE_FERN) && level.random.nextDouble() < attempt.chance) {
-				Vec3 dropPos = Vec3.atCenterOf(attempt.pos);
-				ItemEntity itemEntity = new ItemEntity(level, dropPos.x, dropPos.y, dropPos.z, new ItemStack(ModItems.TRAVKA));
-				itemEntity.setDefaultPickUpDelay();
-				level.addFreshEntity(itemEntity);
+			if (level.getBlockState(attempt.pos).is(Blocks.LARGE_FERN)) {
+				clearCartelFernGrowth(level.dimension(), attempt.pos);
+				dropTravkaFromCartelFernGrowth(level, attempt.pos, attempt.chance);
 			}
 
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.remove(i);
 		}
+	}
+
+	private static void scheduleCartelFernGrowth(ServerLevel level, BlockPos pos, RaceAbilityConfig ability) {
+		if (level == null || pos == null || ability == null) {
+			return;
+		}
+
+		double chance = ability.chance > 0.0D ? ability.chance : CARTEL_DEFAULT_SHNYAGA_TRAVKA_DROP_CHANCE;
+		double minGrowthSeconds = ability.minGrowthSeconds > 0.0D ? ability.minGrowthSeconds : CARTEL_DEFAULT_SHNYAGA_MIN_GROWTH_SECONDS;
+		double maxGrowthSeconds = ability.maxGrowthSeconds > 0.0D ? ability.maxGrowthSeconds : CARTEL_DEFAULT_SHNYAGA_MAX_GROWTH_SECONDS;
+		if (maxGrowthSeconds < minGrowthSeconds) {
+			maxGrowthSeconds = minGrowthSeconds;
+		}
+
+		long nowTick = level.getServer() != null ? level.getServer().overworld().getGameTime() : level.getGameTime();
+		long minGrowthTicks = asTicks(minGrowthSeconds);
+		long maxGrowthTicks = Math.max(minGrowthTicks, asTicks(maxGrowthSeconds));
+		long randomDelay = maxGrowthTicks > minGrowthTicks
+				? Math.round(level.random.nextDouble() * (double) (maxGrowthTicks - minGrowthTicks))
+				: 0L;
+		CartelFernGrowthKey key = new CartelFernGrowthKey(level.dimension(), pos);
+		CartelFernGrowthTask task = new CartelFernGrowthTask(key, nowTick + minGrowthTicks + randomDelay, chance);
+		CARTEL_PLANTED_FERN_GROWTHS.put(key, task);
+		CARTEL_PLANTED_FERN_GROWTH_QUEUE.add(task);
+	}
+
+	private static void tickCartelFernGrowths(MinecraftServer server) {
+		if (server == null || CARTEL_PLANTED_FERN_GROWTH_QUEUE.isEmpty()) {
+			return;
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		while (true) {
+			CartelFernGrowthTask task = CARTEL_PLANTED_FERN_GROWTH_QUEUE.peek();
+			if (task == null || task.growAtTick > nowTick) {
+				return;
+			}
+
+			CARTEL_PLANTED_FERN_GROWTH_QUEUE.poll();
+			CartelFernGrowthTask currentTask = CARTEL_PLANTED_FERN_GROWTHS.get(task.key);
+			if (currentTask != task) {
+				continue;
+			}
+
+			ServerLevel level = server.getLevel(task.key.dimension());
+			if (level == null) {
+				CARTEL_PLANTED_FERN_GROWTHS.remove(task.key);
+				continue;
+			}
+
+			BlockPos pos = task.key.pos();
+			if (!level.hasChunkAt(pos) || !level.hasChunkAt(pos.above())) {
+				rescheduleCartelFernGrowth(task, nowTick + CARTEL_FERN_GROWTH_RETRY_TICKS);
+				continue;
+			}
+
+			if (!level.getBlockState(pos).is(Blocks.FERN)) {
+				CARTEL_PLANTED_FERN_GROWTHS.remove(task.key);
+				continue;
+			}
+
+			if (!canCartelFernGrow(level, pos)) {
+				rescheduleCartelFernGrowth(task, nowTick + CARTEL_FERN_GROWTH_RETRY_TICKS);
+				continue;
+			}
+
+			growCartelFern(level, pos, task.chance);
+			CARTEL_PLANTED_FERN_GROWTHS.remove(task.key);
+		}
+	}
+
+	private static void rescheduleCartelFernGrowth(CartelFernGrowthTask task, long nextTick) {
+		CartelFernGrowthTask replacement = new CartelFernGrowthTask(task.key, nextTick, task.chance);
+		CARTEL_PLANTED_FERN_GROWTHS.put(task.key, replacement);
+		CARTEL_PLANTED_FERN_GROWTH_QUEUE.add(replacement);
+	}
+
+	private static void clearCartelFernGrowth(ResourceKey<Level> dimension, BlockPos pos) {
+		if (dimension == null || pos == null) {
+			return;
+		}
+		CARTEL_PLANTED_FERN_GROWTHS.remove(new CartelFernGrowthKey(dimension, pos));
+	}
+
+	private static boolean canCartelFernGrow(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null || !level.getBlockState(pos).is(Blocks.FERN)) {
+			return false;
+		}
+		if (pos.getY() < level.getMinY() || pos.getY() >= level.getMaxY() - 1) {
+			return false;
+		}
+		return level.getBlockState(pos.above()).canBeReplaced();
+	}
+
+	private static void growCartelFern(ServerLevel level, BlockPos pos, double chance) {
+		DoublePlantBlock.placeAt(level, Blocks.LARGE_FERN.defaultBlockState(), pos, 2);
+		dropTravkaFromCartelFernGrowth(level, pos, chance);
+	}
+
+	private static void dropTravkaFromCartelFernGrowth(ServerLevel level, BlockPos pos, double chance) {
+		if (level == null || pos == null || level.random.nextDouble() >= chance) {
+			return;
+		}
+		Vec3 dropPos = Vec3.atCenterOf(pos);
+		ItemEntity itemEntity = new ItemEntity(level, dropPos.x, dropPos.y, dropPos.z, new ItemStack(ModItems.TRAVKA));
+		itemEntity.setDefaultPickUpDelay();
+		level.addFreshEntity(itemEntity);
 	}
 
 	private static void rebuildCache() {

@@ -143,7 +143,14 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.reflectedDamageRatio, value -> ability.reflectedDamageRatio = value);
 		changed |= normalizeNonNegative(ability.summonLifetimeSeconds, value -> ability.summonLifetimeSeconds = value);
 		changed |= normalizeNonNegative(ability.summonAfterKillSeconds, value -> ability.summonAfterKillSeconds = value);
+		changed |= normalizeNonNegative(ability.minGrowthSeconds, value -> ability.minGrowthSeconds = value);
+		changed |= normalizeNonNegative(ability.maxGrowthSeconds, value -> ability.maxGrowthSeconds = value);
+		changed |= normalizeNonNegative(ability.tubochkaBurnSeconds, value -> ability.tubochkaBurnSeconds = value);
 		changed |= normalizeChance(ability.chance, value -> ability.chance = value);
+		if (ability.maxGrowthSeconds < ability.minGrowthSeconds) {
+			ability.maxGrowthSeconds = ability.minGrowthSeconds;
+			changed = true;
+		}
 		return changed;
 	}
 
@@ -245,6 +252,9 @@ public final class RaceConfig {
 		public double reflectedDamageRatio = 0.0D;
 		public double summonLifetimeSeconds = 0.0D;
 		public double summonAfterKillSeconds = 0.0D;
+		public double minGrowthSeconds = 0.0D;
+		public double maxGrowthSeconds = 0.0D;
+		public double tubochkaBurnSeconds = 0.0D;
 		public double chance = 0.0D;
 
 		private RaceAbilityConfig() {
