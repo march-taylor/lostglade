@@ -325,8 +325,12 @@ public final class BlueMapCameraRenderer {
 			boolean skylight,
 			float ambientLight,
 			float sunlightStrength,
+			float skyLightFactor,
 			net.minecraft.world.level.dimension.DimensionType.Skybox skybox,
 			int skyColor,
+			float skyLightRed,
+			float skyLightGreen,
+			float skyLightBlue,
 			int sunriseSunsetColor,
 			float sunAngle,
 			float moonAngle,
@@ -339,6 +343,8 @@ public final class BlueMapCameraRenderer {
 			boolean skylight = level.dimensionType().hasSkyLight();
 			float ambient = Mth.clamp(level.dimensionType().ambientLight(), 0.0F, 1.0F);
 			float sunlight = skylight ? Mth.clamp(1.0F - level.getSkyDarken() / 15.0F, 0.0F, 1.0F) : 0.0F;
+			int skyLightColor = level.environmentAttributes().getValue(EnvironmentAttributes.SKY_LIGHT_COLOR, cameraPosition);
+			float skyLightFactor = Mth.clamp(level.environmentAttributes().getValue(EnvironmentAttributes.SKY_LIGHT_FACTOR, cameraPosition), 0.0F, 1.0F);
 			float rainBrightness = 1.0F - level.getRainLevel(0.0F);
 			return new FrameEnvironment(
 					toBlueMapDimension(level),
@@ -346,8 +352,12 @@ public final class BlueMapCameraRenderer {
 					skylight,
 					ambient,
 					sunlight,
+					skyLightFactor,
 					level.dimensionType().skybox(),
 					level.environmentAttributes().getValue(EnvironmentAttributes.SKY_COLOR, cameraPosition),
+					toLinear((skyLightColor >> 16) & 0xFF),
+					toLinear((skyLightColor >> 8) & 0xFF),
+					toLinear(skyLightColor & 0xFF),
 					level.environmentAttributes().getValue(EnvironmentAttributes.SUNRISE_SUNSET_COLOR, cameraPosition),
 					level.environmentAttributes().getValue(EnvironmentAttributes.SUN_ANGLE, cameraPosition) * DEG_TO_RAD,
 					level.environmentAttributes().getValue(EnvironmentAttributes.MOON_ANGLE, cameraPosition) * DEG_TO_RAD,
@@ -1926,21 +1936,39 @@ public final class BlueMapCameraRenderer {
 						continue;
 					}
 
-					float skylightMix = skyLightContribution(sunlightLevel);
-					float blocklightMix = blockLightContribution(blocklightLevel);
-					float ambientFloor = caveAmbientFloor();
-					float localBounce = localBounceLight(sunlightLevel, blocklightLevel);
-					float lightMix = Mth.clamp(Math.max(skylightMix, blocklightMix) + localBounce, ambientFloor, 1.0F);
+					float blockBrightness = vanillaLightBrightness(blocklightLevel) * 1.5F;
+					float skyBrightness = vanillaLightBrightness(sunlightLevel) * this.frame.environment().skyLightFactor();
+					float lightRed = Mth.lerp(this.frame.environment().ambientLight(), blockBrightness, 1.0F);
+					float lightGreen = Mth.lerp(this.frame.environment().ambientLight(), blockBrightness * ((blockBrightness * 0.6F + 0.4F) * 0.6F + 0.4F), 1.0F);
+					float lightBlue = Mth.lerp(this.frame.environment().ambientLight(), blockBrightness * (blockBrightness * blockBrightness * 0.6F + 0.4F), 1.0F);
+					lightRed += this.frame.environment().skyLightRed() * skyBrightness;
+					lightGreen += this.frame.environment().skyLightGreen() * skyBrightness;
+					lightBlue += this.frame.environment().skyLightBlue() * skyBrightness;
+					lightRed = Mth.lerp(0.04F, lightRed, 0.75F);
+					lightGreen = Mth.lerp(0.04F, lightGreen, 0.75F);
+					lightBlue = Mth.lerp(0.04F, lightBlue, 0.75F);
+					float maxComponent = Math.max(lightRed, Math.max(lightGreen, lightBlue));
+					if (maxComponent > 1.0E-4F) {
+						float maxInverted = 1.0F - maxComponent;
+						float maxScaled = 1.0F - maxInverted * maxInverted * maxInverted * maxInverted;
+						float scale = maxScaled / maxComponent;
+						lightRed = Mth.lerp(0.12F, lightRed, lightRed * scale);
+						lightGreen = Mth.lerp(0.12F, lightGreen, lightGreen * scale);
+						lightBlue = Mth.lerp(0.12F, lightBlue, lightBlue * scale);
+					}
+					lightRed = Mth.clamp(Mth.lerp(0.04F, lightRed, 0.75F), 0.0F, 1.0F);
+					lightGreen = Mth.clamp(Mth.lerp(0.04F, lightGreen, 0.75F), 0.0F, 1.0F);
+					lightBlue = Mth.clamp(Mth.lerp(0.04F, lightBlue, 0.75F), 0.0F, 1.0F);
 					float aoShade = Mth.lerp(Mth.clamp(ao, 0.0F, 1.0F), 0.74F, 1.0F);
-					float shade = triangle.faceShade() * lightMix * aoShade;
+					float shade = triangle.faceShade() * aoShade;
 					if (depth > 64.0F && this.frame.maxDistance() > 64.0D) {
 						float fade = Mth.clamp((depth - 64.0F) / (float) (this.frame.maxDistance() - 64.0D), 0.0F, 1.0F);
 						shade *= Mth.lerp(fade, 1.0F, 0.78F);
 					}
 					shade = Mth.clamp(shade, 0.0F, 1.0F);
-					float redLinear = toLinear((argb >> 16) & 0xFF) * triangle.colorR() * shade;
-					float greenLinear = toLinear((argb >> 8) & 0xFF) * triangle.colorG() * shade;
-					float blueLinear = toLinear(argb & 0xFF) * triangle.colorB() * shade;
+					float redLinear = toLinear((argb >> 16) & 0xFF) * triangle.colorR() * shade * lightRed;
+					float greenLinear = toLinear((argb >> 8) & 0xFF) * triangle.colorG() * shade * lightGreen;
+					float blueLinear = toLinear(argb & 0xFF) * triangle.colorB() * shade * lightBlue;
 
 					if (opaquePass) {
 						this.red[index] = redLinear;
@@ -2064,38 +2092,9 @@ public final class BlueMapCameraRenderer {
 			return new FaceNormal(nx * inverseLength, ny * inverseLength, nz * inverseLength);
 		}
 
-		private float skyLightContribution(float skyLightLevel) {
-			float clamped = Mth.clamp(skyLightLevel, 0.0F, 1.0F);
-			float curved = smoothLightCurve(clamped);
-			return curved * Mth.lerp(this.frame.environment().sunlightStrength(), 0.05F, 1.0F);
-		}
-
-		private static float blockLightContribution(float blockLightLevel) {
-			float clamped = Mth.clamp(blockLightLevel, 0.0F, 1.0F);
-			float curved = 1.0F - (float) Math.pow(1.0F - clamped, 1.18D);
-			return Mth.clamp(curved * 1.06F, 0.0F, 1.0F);
-		}
-
-		private float caveAmbientFloor() {
-			float dimensionAmbient = this.frame.environment().ambientLight();
-			if (this.frame.environment().skylight()) {
-				return Mth.clamp(0.055F + dimensionAmbient * 0.10F, 0.055F, 0.16F);
-			}
-			return Mth.clamp(0.080F + dimensionAmbient * 0.14F, 0.080F, 0.18F);
-		}
-
-		private float localBounceLight(float skyLightLevel, float blockLightLevel) {
-			float sky = Mth.clamp(skyLightLevel, 0.0F, 1.0F);
-			float block = Mth.clamp(blockLightLevel, 0.0F, 1.0F);
-			float skyBounce = 0.08F * sky * sky * this.frame.environment().sunlightStrength();
-			float blockBounce = 0.24F * (float) Math.pow(block, 1.65D);
-			return skyBounce + blockBounce;
-		}
-
-		private static float smoothLightCurve(float lightLevel) {
+		private static float vanillaLightBrightness(float lightLevel) {
 			float clamped = Mth.clamp(lightLevel, 0.0F, 1.0F);
-			float smooth = clamped * clamped * (3.0F - 2.0F * clamped);
-			return Mth.lerp(smooth, 0.03F, 1.0F);
+			return clamped / (4.0F - 3.0F * clamped);
 		}
 
 		private static int lerpRgb(int from, int to, float delta) {
