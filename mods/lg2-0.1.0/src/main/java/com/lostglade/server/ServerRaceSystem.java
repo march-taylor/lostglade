@@ -755,6 +755,14 @@ public final class ServerRaceSystem {
 			}
 
 			List<ServerPlayer> candidates = collectCartelDisguiseCandidates(caster);
+			if (candidates.isEmpty()) {
+				caster.displayClientMessage(
+						Component.literal(localizeCartelDisguiseText(caster, "no_players_online"))
+								.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+						true
+				);
+				return 0;
+			}
 			openMrCartelDisguiseMenu(caster, candidates, 0, ability);
 			Lg2.LOGGER.info(
 					"Player {} opened mister cartel unique ability '{}' menu from race '{}'",
@@ -967,6 +975,7 @@ public final class ServerRaceSystem {
 		stack.set(
 				DataComponents.CUSTOM_NAME,
 				Component.literal(localizeCartelDisguiseText(viewer, next ? "next" : "previous"))
+						.withStyle(style -> style.withItalic(false))
 		);
 		return stack;
 	}
@@ -988,7 +997,7 @@ public final class ServerRaceSystem {
 		stack.set(
 				DataComponents.CUSTOM_NAME,
 				Component.literal(localizeCartelDisguiseText(viewer, "accept"))
-						.withStyle(style -> style.withColor(0x80FF80).withItalic(false))
+						.withStyle(style -> style.withColor(0x80FF80).withItalic(false).withBold(true))
 		);
 		return stack;
 	}
@@ -1000,16 +1009,19 @@ public final class ServerRaceSystem {
 	}
 
 	private static Component buildCartelDisguiseMenuTitle(ServerPlayer viewer, ServerPlayer target) {
-		Component title = Component.literal(localizeCartelDisguiseText(viewer, "passport"));
+		String titleText = localizeCartelDisguiseText(viewer, "passport");
+		Component title = Component.literal(titleText);
 		if (target == null) {
 			return title;
 		}
-		return title.copy().append(Component.literal(buildCartelDisguiseTitlePadding(target.getGameProfile().name()) + target.getGameProfile().name()));
+		String playerName = target.getGameProfile().name();
+		return title.copy().append(Component.literal(buildCartelDisguiseTitlePadding(titleText, playerName) + playerName));
 	}
 
-	private static String buildCartelDisguiseTitlePadding(String playerName) {
+	private static String buildCartelDisguiseTitlePadding(String titleText, String playerName) {
+		int titleLength = titleText == null ? 0 : titleText.length();
 		int nameLength = playerName == null ? 0 : playerName.length();
-		int spaces = Math.max(4, 18 - Math.min(16, nameLength));
+		int spaces = Math.max(1, 13 - titleLength - (int) Math.floor(nameLength / 2.0D));
 		return " ".repeat(spaces);
 	}
 
@@ -1022,6 +1034,7 @@ public final class ServerRaceSystem {
 				case "previous" -> "Предыдущiй";
 				case "next" -> "Слѣдующiй";
 				case "empty" -> "Нѣтъ игроковъ";
+				case "no_players_online" -> "На серверѣ никого нѣтъ";
 				default -> "";
 			};
 		}
@@ -1032,6 +1045,7 @@ public final class ServerRaceSystem {
 				case "previous" -> "Попередній";
 				case "next" -> "Наступний";
 				case "empty" -> "Немає гравців";
+				case "no_players_online" -> "На сервері нікого немає";
 				default -> "";
 			};
 		}
@@ -1042,6 +1056,7 @@ public final class ServerRaceSystem {
 				case "previous" -> "前へ";
 				case "next" -> "次へ";
 				case "empty" -> "プレイヤーがいません";
+				case "no_players_online" -> "サーバーに誰もいません";
 				default -> "";
 			};
 		}
@@ -1052,6 +1067,7 @@ public final class ServerRaceSystem {
 				case "previous" -> "Предыдущий";
 				case "next" -> "Следующий";
 				case "empty" -> "Нет игроков";
+				case "no_players_online" -> "На сервере никого нет";
 				default -> "";
 			};
 		}
@@ -1061,6 +1077,7 @@ public final class ServerRaceSystem {
 			case "previous" -> "Previous";
 			case "next" -> "Next";
 			case "empty" -> "No players";
+			case "no_players_online" -> "There is nobody on the server";
 			default -> "";
 		};
 	}
@@ -1573,7 +1590,7 @@ public final class ServerRaceSystem {
 		}
 
 		if (session.raiderIds.isEmpty()) {
-			caster.sendSystemMessage(Component.literal("Р В РЎСљР В Р’ВµР РЋРІР‚С™ Р В РЎВР В Р’ВµР РЋР С“Р РЋРІР‚С™Р В Р’В° Р В РўвЂР В Р’В»Р РЋР РЏ Р РЋР С“Р В РЎвЂ”Р В Р’В°Р В Р вЂ Р В Р вЂ¦Р В Р’В° Р РЋР вЂљР В Р’В°Р В Р’В·Р В Р’В±Р В РЎвЂўР В РІвЂћвЂ“Р В Р вЂ¦Р В РЎвЂР В РЎвЂќР В РЎвЂўР В Р вЂ  Р В Р вЂ Р В РЎвЂўР В РЎвЂќР РЋР вЂљР РЋРЎвЂњР В РЎвЂ“ Р РЋРІР‚В Р В Р’ВµР В Р’В»Р В РЎвЂ."));
+			caster.sendSystemMessage(Component.literal("Р В Р’В Р РЋРЎС™Р В Р’В Р вЂ™Р’ВµР В Р Р‹Р Р†Р вЂљРЎв„ў Р В Р’В Р РЋР’ВР В Р’В Р вЂ™Р’ВµР В Р Р‹Р В РЎвЂњР В Р Р‹Р Р†Р вЂљРЎв„ўР В Р’В Р вЂ™Р’В° Р В Р’В Р СћРІР‚ВР В Р’В Р вЂ™Р’В»Р В Р Р‹Р В Р РЏ Р В Р Р‹Р В РЎвЂњР В Р’В Р РЋРІР‚вЂќР В Р’В Р вЂ™Р’В°Р В Р’В Р В РІР‚В Р В Р’В Р В РІР‚В¦Р В Р’В Р вЂ™Р’В° Р В Р Р‹Р В РІР‚С™Р В Р’В Р вЂ™Р’В°Р В Р’В Р вЂ™Р’В·Р В Р’В Р вЂ™Р’В±Р В Р’В Р РЋРІР‚СћР В Р’В Р Р†РІР‚С›РІР‚вЂњР В Р’В Р В РІР‚В¦Р В Р’В Р РЋРІР‚ВР В Р’В Р РЋРІР‚СњР В Р’В Р РЋРІР‚СћР В Р’В Р В РІР‚В  Р В Р’В Р В РІР‚В Р В Р’В Р РЋРІР‚СћР В Р’В Р РЋРІР‚СњР В Р Р‹Р В РІР‚С™Р В Р Р‹Р РЋРІР‚СљР В Р’В Р РЋРІР‚вЂњ Р В Р Р‹Р Р†Р вЂљР’В Р В Р’В Р вЂ™Р’ВµР В Р’В Р вЂ™Р’В»Р В Р’В Р РЋРІР‚В."));
 			return 0;
 		}
 
