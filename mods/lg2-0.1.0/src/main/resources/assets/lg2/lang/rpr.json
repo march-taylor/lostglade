@@ -55,5 +55,10 @@
     "message.lg2.race.no_menu":  "Не удалось открыти меню расы. Исполни /race reload",
     "message.lg2.race.ability_disabled":  "Способность %s нынѣ недоступна",
     "message.lg2.race.cooldown":  "Способность %s будеть готова чрезъ %s сек.",
-    "message.lg2.race.used":  "Активирована способность %s расы %s"
+    "message.lg2.race.used":  "Активирована способность %s расы %s",
+    "container.lg2.cartel_disguise.passport":  "Паспортъ",
+    "container.lg2.cartel_disguise.accept":  "Приняти",
+    "container.lg2.cartel_disguise.previous":  "Предыдущiй",
+    "container.lg2.cartel_disguise.next":  "Слѣдующiй",
+    "container.lg2.cartel_disguise.empty":  "Нѣтъ игроковъ"
 }

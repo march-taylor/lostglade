@@ -790,9 +790,10 @@ public final class ServerRaceSystem {
 		}
 
 		int normalizedIndex = candidates == null || candidates.isEmpty() ? 0 : Math.floorMod(selectedIndex, candidates.size());
+		ServerPlayer selectedPlayer = candidates == null || candidates.isEmpty() ? null : candidates.get(normalizedIndex);
 		caster.openMenu(new SimpleMenuProvider(
 				(syncId, inventory, menuPlayer) -> new CartelDisguiseMenu(syncId, inventory, caster, ability, normalizedIndex),
-				Component.literal("РџРµСЂРµРІРѕРїР»РѕС‰РµРЅРёРµ")
+				buildCartelDisguiseMenuTitle(caster, selectedPlayer)
 		));
 	}
 
@@ -963,7 +964,10 @@ public final class ServerRaceSystem {
 
 	private static ItemStack buildCartelDisguiseArrow(boolean next) {
 		ItemStack stack = new ItemStack(Items.ARROW);
-		stack.set(DataComponents.CUSTOM_NAME, Component.literal(next ? "Р’РїРµСЂРµРґ" : "РќР°Р·Р°Рґ"));
+		stack.set(
+				DataComponents.CUSTOM_NAME,
+				Component.translatable(next ? "container.lg2.cartel_disguise.next" : "container.lg2.cartel_disguise.previous")
+		);
 		return stack;
 	}
 
@@ -981,14 +985,32 @@ public final class ServerRaceSystem {
 		applySkinRestorerSkin(target, properties);
 		GameProfile profile = new GameProfile(target.getUUID(), target.getGameProfile().name(), properties);
 		stack.set(DataComponents.PROFILE, ResolvableProfile.createResolved(profile));
-		stack.set(DataComponents.CUSTOM_NAME, Component.literal(target.getGameProfile().name()));
+		stack.set(
+				DataComponents.CUSTOM_NAME,
+				Component.translatable("container.lg2.cartel_disguise.accept")
+						.withStyle(style -> style.withColor(0x80FF80).withItalic(false))
+		);
 		return stack;
 	}
 
 	private static ItemStack buildCartelDisguiseEmptyState() {
 		ItemStack stack = new ItemStack(Items.BARRIER);
-		stack.set(DataComponents.CUSTOM_NAME, Component.literal("Нет игроков"));
+		stack.set(DataComponents.CUSTOM_NAME, Component.translatable("container.lg2.cartel_disguise.empty"));
 		return stack;
+	}
+
+	private static Component buildCartelDisguiseMenuTitle(ServerPlayer viewer, ServerPlayer target) {
+		Component title = Component.translatable("container.lg2.cartel_disguise.passport");
+		if (target == null) {
+			return title;
+		}
+		return title.copy().append(Component.literal(buildCartelDisguiseTitlePadding(target.getGameProfile().name()) + target.getGameProfile().name()));
+	}
+
+	private static String buildCartelDisguiseTitlePadding(String playerName) {
+		int nameLength = playerName == null ? 0 : playerName.length();
+		int spaces = Math.max(4, 18 - Math.min(16, nameLength));
+		return " ".repeat(spaces);
 	}
 
 	private static void applySkinRestorerSkin(ServerPlayer sourcePlayer, PropertyMap properties) {
@@ -1492,7 +1514,7 @@ public final class ServerRaceSystem {
 		}
 
 		if (session.raiderIds.isEmpty()) {
-			caster.sendSystemMessage(Component.literal("РќРµС‚ РјРµСЃС‚Р° РґР»СЏ СЃРїР°РІРЅР° СЂР°Р·Р±РѕР№РЅРёРєРѕРІ РІРѕРєСЂСѓРі С†РµР»Рё."));
+			caster.sendSystemMessage(Component.literal("Р В РЎСљР В Р’ВµР РЋРІР‚С™ Р В РЎВР В Р’ВµР РЋР С“Р РЋРІР‚С™Р В Р’В° Р В РўвЂР В Р’В»Р РЋР РЏ Р РЋР С“Р В РЎвЂ”Р В Р’В°Р В Р вЂ Р В Р вЂ¦Р В Р’В° Р РЋР вЂљР В Р’В°Р В Р’В·Р В Р’В±Р В РЎвЂўР В РІвЂћвЂ“Р В Р вЂ¦Р В РЎвЂР В РЎвЂќР В РЎвЂўР В Р вЂ  Р В Р вЂ Р В РЎвЂўР В РЎвЂќР РЋР вЂљР РЋРЎвЂњР В РЎвЂ“ Р РЋРІР‚В Р В Р’ВµР В Р’В»Р В РЎвЂ."));
 			return 0;
 		}
 
@@ -1906,7 +1928,7 @@ public final class ServerRaceSystem {
 			this.viewer = viewer;
 			this.ability = ability;
 			this.selectedIndex = selectedIndex;
-			this.refreshContents();
+            this.refreshContents();
 		}
 
 		@Override
@@ -1923,12 +1945,12 @@ public final class ServerRaceSystem {
 			this.selectedIndex = Math.floorMod(this.selectedIndex, candidates.size());
 			if (slotId == CARTEL_DISGUISE_PREVIOUS_SLOT) {
 				this.selectedIndex = Math.floorMod(this.selectedIndex - 1, candidates.size());
-				this.refreshContents();
+				openMrCartelDisguiseMenu(this.viewer, candidates, this.selectedIndex, this.ability);
 				return;
 			}
 			if (slotId == CARTEL_DISGUISE_NEXT_SLOT) {
 				this.selectedIndex = Math.floorMod(this.selectedIndex + 1, candidates.size());
-				this.refreshContents();
+				openMrCartelDisguiseMenu(this.viewer, candidates, this.selectedIndex, this.ability);
 				return;
 			}
 			if (slotId == CARTEL_DISGUISE_HEAD_SLOT) {
