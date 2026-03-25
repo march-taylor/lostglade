@@ -134,10 +134,11 @@ public final class ServerRaceSystem {
 			Objects.requireNonNull(Identifier.tryParse("lg2:passport_title"))
 	);
 	private static final FontDescription CARTEL_PASSPORT_NAME_FONT = new FontDescription.Resource(
-			Objects.requireNonNull(Identifier.tryParse("lg2:passport_name"))
+		Objects.requireNonNull(Identifier.tryParse("lg2:passport_name"))
 	);
 	private static final int CARTEL_PASSPORT_NAME_CHAR_ADVANCE = 6;
 	private static final int CARTEL_PASSPORT_NAME_CENTER_X = 88;
+	private static final int CARTEL_PASSPORT_OVERLAY_X_OFFSET = 264;
 	private static final int MISTER_CARTEL_49_STACK_LIMIT = 49;
 	private static final String CARTEL_SUMMON_TAG = "lg2.cartel_summon";
 	private static final String CARTEL_LAWYER_TAG = "lg2.cartel_lawyer";
@@ -1016,9 +1017,9 @@ public final class ServerRaceSystem {
 		GameProfile profile = new GameProfile(target.getUUID(), target.getGameProfile().name(), properties);
 		stack.set(DataComponents.PROFILE, ResolvableProfile.createResolved(profile));
 		stack.set(
-				DataComponents.CUSTOM_NAME,
-				Component.literal(viewer != null && PolymerResourcePackUtils.hasMainPack(viewer) ? " " : localizeCartelDisguiseText(viewer, "accept"))
-						.withStyle(style -> style.withColor(0x80FF80).withItalic(false).withBold(true))
+			DataComponents.CUSTOM_NAME,
+			Component.literal(localizeCartelDisguiseText(viewer, "accept"))
+				.withStyle(style -> style.withColor(0x80FF80).withItalic(false).withBold(true))
 		);
 		return stack;
 	}
@@ -1042,18 +1043,18 @@ public final class ServerRaceSystem {
 	}
 
 	private static Component buildCartelDisguisePackTitle(ServerPlayer target) {
-		Component title = Component.literal(buildOverlayGlyph(CARTEL_PASSPORT_OVERLAY_GLYPH, 176))
-				.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CARTEL_PASSPORT_OVERLAY_FONT));
+		Component title = Component.literal(buildHorizontalAdvance(CARTEL_PASSPORT_OVERLAY_X_OFFSET) + buildOverlayGlyph(CARTEL_PASSPORT_OVERLAY_GLYPH, 176))
+			.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CARTEL_PASSPORT_OVERLAY_FONT));
 		if (target == null) {
 			return title;
 		}
 
 		String playerName = target.getGameProfile().name();
-		int startX = Math.max(18, CARTEL_PASSPORT_NAME_CENTER_X - (playerName.length() * CARTEL_PASSPORT_NAME_CHAR_ADVANCE) / 2);
+		int startX = CARTEL_PASSPORT_OVERLAY_X_OFFSET + Math.max(18, CARTEL_PASSPORT_NAME_CENTER_X - (playerName.length() * CARTEL_PASSPORT_NAME_CHAR_ADVANCE) / 2);
 		return title.copy()
-				.append(Component.literal(TITLE_OVERLAY_RESET + buildHorizontalAdvance(startX))
-						.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
-				.append(Component.literal(playerName)
+			.append(Component.literal(TITLE_OVERLAY_RESET + buildHorizontalAdvance(startX))
+				.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
+			.append(Component.literal(playerName)
 						.withStyle(style -> style.withColor(0x2E2016).withItalic(false).withFont(CARTEL_PASSPORT_NAME_FONT)));
 	}
 
