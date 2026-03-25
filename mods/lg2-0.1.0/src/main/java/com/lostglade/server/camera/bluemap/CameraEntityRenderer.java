@@ -109,6 +109,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 final class CameraEntityRenderer {
 	private static final TextureAssetManager ASSETS = TextureAssetManager.get();
+	private static final Map<String, Boolean> SEPARATE_LEFT_ARM_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final float PX = 1.0F / 16.0F;
 	private static final int DEFAULT_LIGHT = 15;
 	private static final Identifier PLAYER_WIDE_FALLBACK = Identifier.fromNamespaceAndPath("minecraft", "entity/player/wide/steve");
@@ -640,9 +641,6 @@ final class CameraEntityRenderer {
 		}
 
 		if (entity instanceof Zombie) {
-			if (VanillaClientModels.isAvailable()) {
-				return captureZombieClientModel((Zombie) entity);
-			}
 			Identifier texture = ZOMBIE_TEXTURE;
 			HumanoidKind kind = HumanoidKind.ZOMBIE;
 			Identifier[] overlays = new Identifier[0];
@@ -2615,7 +2613,15 @@ final class CameraEntityRenderer {
 		float leftLegYaw = 0.0F;
 		float rightLegRoll = 0.0F;
 		float leftLegRoll = 0.0F;
-		if (snapshot.aggressive()) {
+		if (snapshot.kind() == HumanoidKind.ZOMBIE) {
+			float[] zombieArmPose = zombieArmPose(snapshot);
+			rightArmPitch = zombieArmPose[0];
+			leftArmPitch = zombieArmPose[1];
+			rightArmYaw = zombieArmPose[2];
+			leftArmYaw = zombieArmPose[3];
+			rightArmRoll = zombieArmPose[4];
+			leftArmRoll = zombieArmPose[5];
+		} else if (snapshot.aggressive()) {
 			rightArmPitch = -1.2F;
 			leftArmPitch = -1.2F;
 		}
@@ -2662,6 +2668,26 @@ final class CameraEntityRenderer {
 		}
 
 		renderHumanoidHeldItems(context, snapshot, root, rightArmPitch, leftArmPitch, rightArmYaw, leftArmYaw, rightArmRoll, leftArmRoll);
+	}
+
+	private static float[] zombieArmPose(HumanoidSnapshot snapshot) {
+		float attackTime = Mth.clamp(snapshot.attackAnim(), 0.0F, 1.0F);
+		float swing = Mth.sin(attackTime * (float) Math.PI);
+		float easedSwing = Mth.sin((1.0F - (1.0F - attackTime) * (1.0F - attackTime)) * (float) Math.PI);
+		float basePitch = -((float) Math.PI) / (snapshot.aggressive() ? 1.5F : 2.25F);
+		float yawOffset = 0.1F - swing * 0.6F;
+		float armPitch = basePitch + swing * 1.2F - easedSwing * 0.4F;
+		float animationTime = snapshot.walkPos();
+		float idleRoll = Mth.cos(animationTime * 0.09F) * 0.05F + 0.05F;
+		float idlePitch = Mth.sin(animationTime * 0.067F) * 0.05F;
+		return new float[]{
+				armPitch + idlePitch,
+				armPitch - idlePitch,
+				-yawOffset,
+				yawOffset,
+				idleRoll,
+				-idleRoll
+		};
 	}
 
 	private static Matrix4f humanoidRoot(Vec3 position, float yaw, Pose pose, Direction sleepingDirection, float scale) {
@@ -2732,7 +2758,27 @@ final class CameraEntityRenderer {
 		if (snapshot.kind() == HumanoidKind.PLAYER_SLIM) {
 			addHumanoidBox(context, snapshot, leftArm, 5.0F, 12.0F, -2.0F, armWidth, 12.0F, 4.0F, 32, 48, texWidth, texHeight, material, false, 0.0F);
 		} else {
-			addHumanoidBox(context, snapshot, leftArm, 4.0F, 12.0F, -2.0F, armWidth, 12.0F, 4.0F, snapshot.kind() == HumanoidKind.SKELETON || snapshot.kind() == HumanoidKind.ENDERMAN ? 40 : 32, snapshot.kind() == HumanoidKind.SKELETON || snapshot.kind() == HumanoidKind.ENDERMAN ? 16 : 48, texWidth, texHeight, material, snapshot.kind() != HumanoidKind.PLAYER && snapshot.kind() != HumanoidKind.PLAYER_SLIM, 0.0F);
+			boolean mirroredLeftArm = snapshot.kind() == HumanoidKind.SKELETON
+					|| snapshot.kind() == HumanoidKind.ENDERMAN
+					|| !hasSeparateLeftArmTexture(snapshot);
+			addHumanoidBox(
+					context,
+					snapshot,
+					leftArm,
+					4.0F,
+					12.0F,
+					-2.0F,
+					armWidth,
+					12.0F,
+					4.0F,
+					mirroredLeftArm ? 40 : 32,
+					mirroredLeftArm ? 16 : 48,
+					texWidth,
+					texHeight,
+					material,
+					mirroredLeftArm,
+					0.0F
+			);
 		}
 
 		Matrix4f rightLeg = rotateAround(root, -2.0F, 12.0F, 0.0F, rightLegPitch, rightLegYaw, rightLegRoll);
@@ -2866,6 +2912,41 @@ final class CameraEntityRenderer {
 			return;
 		}
 		addBox(context, transform, x, y, z, width, height, depth, texU, texV, texWidth, texHeight, material, mirror, inflate);
+	}
+
+	private static boolean hasSeparateLeftArmTexture(HumanoidSnapshot snapshot) {
+		if (snapshot == null || snapshot.texture() == null) {
+			return false;
+		}
+		if (snapshot.kind() == HumanoidKind.PLAYER || snapshot.kind() == HumanoidKind.PLAYER_SLIM) {
+			return true;
+		}
+		if (snapshot.kind() != HumanoidKind.ZOMBIE) {
+			return false;
+		}
+		return SEPARATE_LEFT_ARM_TEXTURE_CACHE.computeIfAbsent(
+				snapshot.texture().toString(),
+				ignored -> textureRegionHasVisiblePixels(snapshot.texture(), 32, 48, 16, 16)
+		);
+	}
+
+	private static boolean textureRegionHasVisiblePixels(Identifier texture, int x, int y, int width, int height) {
+		BufferedImage image = ASSETS.loadTexture(texture);
+		if (image == null) {
+			return true;
+		}
+		int startX = Math.max(0, x);
+		int startY = Math.max(0, y);
+		int endX = Math.min(image.getWidth(), x + width);
+		int endY = Math.min(image.getHeight(), y + height);
+		for (int sampleY = startY; sampleY < endY; sampleY++) {
+			for (int sampleX = startX; sampleX < endX; sampleX++) {
+				if (((image.getRGB(sampleX, sampleY) >>> 24) & 0xFF) > 8) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	private static boolean showPlayerPart(byte bits, PlayerModelPart modelPart) {
@@ -3804,8 +3885,8 @@ final class CameraEntityRenderer {
 		addQuad(context, nnn, pnn, ppn, npn, uv(u3, texWidth), uv(u4, texWidth), uv(v1, texHeight), uv(v2, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
 		addQuad(context, nnp, nnn, npn, npp, uv(u1, texWidth), uv(u0, texWidth), uv(v1, texHeight), uv(v2, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
 		addQuad(context, pnn, pnp, ppp, ppn, uv(u3, texWidth), uv(u2, texWidth), uv(v1, texHeight), uv(v2, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
-		addQuad(context, pnn, nnn, nnp, pnp, uv(u1, texWidth), uv(u2, texWidth), uv(v0, texHeight), uv(v1, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
-		addQuad(context, npn, ppn, ppp, npp, uv(u2, texWidth), uv(u2 + width, texWidth), uv(v0, texHeight), uv(v1, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
+		addQuad(context, pnn, nnn, nnp, pnp, uv(u2, texWidth), uv(u2 + width, texWidth), uv(v0, texHeight), uv(v1, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
+		addQuad(context, npn, ppn, ppp, npp, uv(u1, texWidth), uv(u2, texWidth), uv(v0, texHeight), uv(v1, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
 	}
 
 	private static void addBox(
@@ -3865,8 +3946,8 @@ final class CameraEntityRenderer {
 		addQuad(context, nnn, pnn, ppn, npn, uv(u3, texWidth), uv(u4, texWidth), uv(v1, texHeight), uv(v2, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
 		addQuad(context, nnp, nnn, npn, npp, uv(u0, texWidth), uv(u1, texWidth), uv(v1, texHeight), uv(v2, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
 		addQuad(context, pnn, pnp, ppp, ppn, uv(u2, texWidth), uv(u3, texWidth), uv(v1, texHeight), uv(v2, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
-		addQuad(context, pnn, nnn, nnp, pnp, uv(u1, texWidth), uv(u2, texWidth), uv(v0, texHeight), uv(v1, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
-		addQuad(context, npn, ppn, ppp, npp, uv(u2, texWidth), uv(u2 + width, texWidth), uv(v0, texHeight), uv(v1, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
+		addQuad(context, pnn, nnn, nnp, pnp, uv(u2, texWidth), uv(u2 + width, texWidth), uv(v0, texHeight), uv(v1, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
+		addQuad(context, npn, ppn, ppp, npp, uv(u1, texWidth), uv(u2, texWidth), uv(v0, texHeight), uv(v1, texHeight), material, skyLight, blockLight, 1.0F, 1.0F, 1.0F);
 	}
 
 	private static float uv(float value, int size) {
