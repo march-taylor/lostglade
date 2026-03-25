@@ -94,7 +94,9 @@ public final class BlueMapCameraRenderer {
 		CameraFrustum frustum = CameraFrustum.create(eyePosition, forward, right, up, maxDistance, fovDegrees);
 		RenderResources resources = getRenderResources();
 		WorldSnapshot snapshot = WorldSnapshot.capture(level, frustum, resources);
-		List<CameraEntityRenderer.EntitySnapshot> entities = captureEntities(player, level, frustum);
+		List<CameraEntityRenderer.EntitySnapshot> entities = new ArrayList<>();
+		entities.addAll(captureEntities(player, level, frustum));
+		entities.addAll(captureBlockEntities(level, frustum));
 		FrameEnvironment environment = FrameEnvironment.capture(level);
 		return new PreparedFrame(eyePosition, forward, right, up, maxDistance, fovDegrees, supersampling, snapshot, entities, environment);
 	}
@@ -1863,6 +1865,49 @@ public final class BlueMapCameraRenderer {
 				}
 			} catch (Throwable throwable) {
 				Lg2.LOGGER.debug("Failed to prepare camera entity {}", entity, throwable);
+			}
+		}
+		return result;
+	}
+
+	private static List<CameraEntityRenderer.EntitySnapshot> captureBlockEntities(ServerLevel level, CameraFrustum frustum) {
+		BlockBounds bounds = frustum.bounds();
+		int minChunkX = SectionPos.blockToSectionCoord(bounds.minX());
+		int maxChunkX = SectionPos.blockToSectionCoord(bounds.maxX());
+		int minChunkZ = SectionPos.blockToSectionCoord(bounds.minZ());
+		int maxChunkZ = SectionPos.blockToSectionCoord(bounds.maxZ());
+		List<CameraEntityRenderer.EntitySnapshot> result = new ArrayList<>();
+		for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+			for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+				LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
+				if (chunk == null) {
+					continue;
+				}
+				for (var entry : chunk.getBlockEntities().entrySet()) {
+					try {
+						var blockEntity = entry.getValue();
+						if (blockEntity == null || blockEntity.isRemoved()) {
+							continue;
+						}
+						BlockPos blockPos = entry.getKey();
+						if (!frustum.intersectsAabb(
+								blockPos.getX(),
+								blockPos.getY(),
+								blockPos.getZ(),
+								blockPos.getX() + 1.0D,
+								blockPos.getY() + 1.0D,
+								blockPos.getZ() + 1.0D
+						)) {
+							continue;
+						}
+						CameraEntityRenderer.EntitySnapshot snapshot = CameraEntityRenderer.captureBlockEntity(blockEntity);
+						if (snapshot != null) {
+							result.add(snapshot);
+						}
+					} catch (Throwable throwable) {
+						Lg2.LOGGER.debug("Failed to prepare camera block entity {}", entry.getValue(), throwable);
+					}
+				}
 			}
 		}
 		return result;
