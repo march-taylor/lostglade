@@ -21,6 +21,7 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
@@ -71,14 +72,21 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.component.DyedItemColor;
 import net.minecraft.world.item.equipment.EquipmentAsset;
 import net.minecraft.world.item.equipment.Equippable;
+import net.minecraft.world.level.material.MapColor;
+import net.minecraft.world.level.saveddata.maps.MapId;
+import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.FontMetrics;
 import java.awt.AlphaComposite;
 import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
@@ -135,6 +143,8 @@ final class CameraEntityRenderer {
 		int materialForTexture(Identifier textureId);
 
 		int materialForPlayerSkin(PlayerSkinSnapshot skinSnapshot);
+
+		int materialForImage(String cacheKey, BufferedImage image);
 	}
 
 	interface EntitySnapshot {
@@ -245,6 +255,16 @@ final class CameraEntityRenderer {
 	) implements EntitySnapshot {
 	}
 
+	record FixedItemSnapshot(
+			Vec3 position,
+			float yaw,
+			float pitch,
+			float roll,
+			float scale,
+			ItemVisual visual
+	) implements EntitySnapshot {
+	}
+
 	record ExperienceOrbSnapshot(
 			Vec3 position,
 			int icon,
@@ -258,6 +278,24 @@ final class CameraEntityRenderer {
 	) implements EntitySnapshot {
 	}
 
+	record ItemFrameSnapshot(
+			Vec3 position,
+			Direction direction,
+			boolean glow,
+			boolean invisible,
+			int rotation,
+			boolean mapFrame,
+			ItemVisual item,
+			FramedMapSnapshot map
+	) implements EntitySnapshot {
+	}
+
+	record FramedMapSnapshot(
+			int mapId,
+			byte[] colors
+	) {
+	}
+
 	record LineSnapshot(
 			Vec3 position,
 			Vec3 start,
@@ -265,6 +303,20 @@ final class CameraEntityRenderer {
 			float thickness,
 			float sag,
 			Identifier texture
+	) implements EntitySnapshot {
+	}
+
+	record ImagePlaneSnapshot(
+			Vec3 position,
+			Matrix4f transform,
+			float x,
+			float y,
+			float z,
+			float width,
+			float height,
+			String materialKey,
+			BufferedImage image,
+			boolean emissive
 	) implements EntitySnapshot {
 	}
 
@@ -313,7 +365,8 @@ final class CameraEntityRenderer {
 
 	enum ClientModelTransformKind {
 		LIVING,
-		BOAT
+		BOAT,
+		BLOCK_ENTITY
 	}
 
 	record ClientModelSnapshot(
@@ -343,13 +396,41 @@ final class CameraEntityRenderer {
 
 	private record ResolvedItemModel(
 			Map<String, String> textures,
-			List<ItemModelElement> elements
+			List<ItemModelElement> elements,
+			Map<ItemDisplayTransformContext, ItemModelTransform> transforms
+		) {
+	}
+
+	private record ItemModelTransform(
+			float rotationX,
+			float rotationY,
+			float rotationZ,
+			float translationX,
+			float translationY,
+			float translationZ,
+			float scaleX,
+			float scaleY,
+			float scaleZ
 	) {
+		private static final ItemModelTransform IDENTITY = new ItemModelTransform(
+				0.0F,
+				0.0F,
+				0.0F,
+				0.0F,
+				0.0F,
+				0.0F,
+				1.0F,
+				1.0F,
+				1.0F
+		);
 	}
 
 	private enum ItemDisplayTransformContext {
 		THIRD_PERSON_RIGHT_HAND,
-		THIRD_PERSON_LEFT_HAND
+		THIRD_PERSON_LEFT_HAND,
+		GROUND,
+		FIXED,
+		FRAMED
 	}
 
 	private record ItemModelElement(
@@ -423,7 +504,47 @@ final class CameraEntityRenderer {
 		}
 	}
 
+	static EntitySnapshot captureBlockEntity(net.minecraft.world.level.block.entity.BlockEntity blockEntity) {
+		if (blockEntity == null || blockEntity.isRemoved()) {
+			return null;
+		}
+		try {
+			return captureBlockEntityUnsafe(blockEntity);
+		} catch (Throwable throwable) {
+			Lg2.LOGGER.debug("Failed to capture camera snapshot for block entity {}", blockEntity, throwable);
+			return null;
+		}
+	}
+
+	private static EntitySnapshot captureBlockEntityUnsafe(net.minecraft.world.level.block.entity.BlockEntity blockEntity) {
+		if (blockEntity instanceof net.minecraft.world.level.block.entity.BedBlockEntity bedBlockEntity && VanillaClientModels.isAvailable()) {
+			return captureBedBlockEntity(bedBlockEntity);
+		}
+		if (blockEntity instanceof net.minecraft.world.level.block.entity.HangingSignBlockEntity hangingSignBlockEntity && VanillaClientModels.isAvailable()) {
+			return withSignText(captureHangingSignBlockEntity(hangingSignBlockEntity), hangingSignBlockEntity, true);
+		}
+		if (blockEntity instanceof net.minecraft.world.level.block.entity.SignBlockEntity signBlockEntity && VanillaClientModels.isAvailable()) {
+			return withSignText(captureStandingOrWallSignBlockEntity(signBlockEntity), signBlockEntity, false);
+		}
+		if (blockEntity instanceof net.minecraft.world.level.block.entity.BannerBlockEntity bannerBlockEntity && VanillaClientModels.isAvailable()) {
+			return captureBannerBlockEntity(bannerBlockEntity);
+		}
+		if (blockEntity instanceof net.minecraft.world.level.block.entity.EnderChestBlockEntity enderChestBlockEntity && VanillaClientModels.isAvailable()) {
+			return captureChestBlockEntity(enderChestBlockEntity);
+		}
+		if (blockEntity instanceof net.minecraft.world.level.block.entity.ChestBlockEntity chestBlockEntity && VanillaClientModels.isAvailable()) {
+			return captureChestBlockEntity(chestBlockEntity);
+		}
+		if (blockEntity instanceof net.minecraft.world.level.block.entity.SkullBlockEntity skullBlockEntity && VanillaClientModels.isAvailable()) {
+			return captureSkullBlockEntity(skullBlockEntity);
+		}
+		return captureBlockEntityAsFixedItem(blockEntity);
+	}
+
 	private static EntitySnapshot captureEntityUnsafe(Entity entity) {
+		if (entity instanceof net.minecraft.world.entity.decoration.ItemFrame itemFrame) {
+			return captureItemFrameSnapshot(itemFrame);
+		}
 		if (!entity.isAlive() || entity.isInvisible()) {
 			return null;
 		}
@@ -961,6 +1082,493 @@ final class CameraEntityRenderer {
 		return new FishingHookSnapshot(
 				fishingHook.position(),
 				lineStart.subtract(hookPos)
+		);
+	}
+
+	private static EntitySnapshot captureItemFrameSnapshot(net.minecraft.world.entity.decoration.ItemFrame itemFrame) {
+		ItemStack stack = itemFrame.getItem();
+		ItemVisual item = resolveItemVisual(itemFrame.getItem());
+		if (item == null) {
+			item = new ItemVisual(null, null);
+		}
+		return new ItemFrameSnapshot(
+				itemFrame.position(),
+				itemFrame.getDirection(),
+				itemFrame instanceof net.minecraft.world.entity.decoration.GlowItemFrame,
+				itemFrame.isInvisible(),
+				itemFrame.getRotation(),
+				itemFrame.hasFramedMap(),
+				item,
+				captureFramedMap(itemFrame, stack)
+		);
+	}
+
+	private static FramedMapSnapshot captureFramedMap(net.minecraft.world.entity.decoration.ItemFrame itemFrame, ItemStack stack) {
+		if (stack == null || stack.isEmpty() || !(itemFrame.level() instanceof ServerLevel serverLevel)) {
+			return null;
+		}
+		MapId mapId = stack.get(DataComponents.MAP_ID);
+		if (mapId == null) {
+			return null;
+		}
+		MapItemSavedData mapData = serverLevel.getMapData(mapId);
+		if (mapData == null || mapData.colors == null || mapData.colors.length == 0) {
+			return null;
+		}
+		return new FramedMapSnapshot(mapId.id(), mapData.colors.clone());
+	}
+
+	private static EntitySnapshot captureBlockEntityAsFixedItem(net.minecraft.world.level.block.entity.BlockEntity blockEntity) {
+		net.minecraft.world.level.block.state.BlockState state = blockEntity.getBlockState();
+		if (state == null) {
+			return null;
+		}
+		Identifier blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+		if (blockId == null || !blockEntityShouldUseItemFallback(blockId)) {
+			return null;
+		}
+		net.minecraft.world.item.ItemStack stack = new net.minecraft.world.item.ItemStack(state.getBlock());
+		ItemVisual visual = resolveItemVisual(stack);
+		if (visual == null) {
+			return null;
+		}
+		Vec3 position = Vec3.atCenterOf(blockEntity.getBlockPos()).add(0.0D, -0.25D, 0.0D);
+		return new FixedItemSnapshot(position, 180.0F, 0.0F, 0.0F, 1.0F, visual);
+	}
+
+	private static boolean blockEntityShouldUseItemFallback(Identifier blockId) {
+		String path = blockId.getPath();
+		return path.equals("decorated_pot")
+				|| path.equals("bell")
+				|| path.equals("conduit")
+				|| path.equals("spawner")
+				|| path.equals("vault")
+				|| path.equals("trial_spawner")
+				|| path.endsWith("shulker_box");
+	}
+
+	private static ClientModelSnapshot captureBedBlockEntity(net.minecraft.world.level.block.entity.BedBlockEntity bedBlockEntity) {
+		net.minecraft.world.level.block.state.BlockState state = bedBlockEntity.getBlockState();
+		Direction facing = state.getValue(net.minecraft.world.level.block.BedBlock.FACING);
+		boolean head = state.getValue(net.minecraft.world.level.block.BedBlock.PART) == net.minecraft.world.level.block.state.properties.BedPart.HEAD;
+		Map<String, Object> rootState = blockEntityRootState(blockEntityPos(bedBlockEntity));
+		rootState.put("rootTranslateY", 9.0F * PX);
+		rootState.put("rootRotateX", 90.0F);
+		rootState.put("rootMidTranslateX", 0.5F);
+		rootState.put("rootMidTranslateY", 0.5F);
+		rootState.put("rootMidTranslateZ", 0.5F);
+		rootState.put("rootRotate2Z", 180.0F + facing.toYRot());
+		rootState.put("rootPostTranslateX", -0.5F);
+		rootState.put("rootPostTranslateY", -0.5F);
+		rootState.put("rootPostTranslateZ", -0.5F);
+
+		Identifier texture = minecraftTexture("entity/bed/" + bedBlockEntity.getColor().getSerializedName());
+		String factory = head
+				? "net.minecraft.client.renderer.blockentity.BedRenderer#createHeadLayer"
+				: "net.minecraft.client.renderer.blockentity.BedRenderer#createFootLayer";
+		return clientModelSnapshot(
+				blockEntityPos(bedBlockEntity),
+				0.0F,
+				0.0F,
+				1.0F,
+				ClientModelTransformKind.BLOCK_ENTITY,
+				rootState,
+				new ClientLayerSnapshot[]{
+						new ClientLayerSnapshot("net.minecraft.client.model.Model$Simple", texture, 0xFFFFFF, false).withFactory(factory)
+				}
+		);
+	}
+
+	private static ClientModelSnapshot captureStandingOrWallSignBlockEntity(net.minecraft.world.level.block.entity.SignBlockEntity signBlockEntity) {
+		net.minecraft.world.level.block.state.BlockState state = signBlockEntity.getBlockState();
+		net.minecraft.world.level.block.SignBlock signBlock = (net.minecraft.world.level.block.SignBlock) state.getBlock();
+		net.minecraft.world.level.block.state.properties.WoodType woodType = signBlock.type();
+		boolean standing = state.getBlock() instanceof net.minecraft.world.level.block.StandingSignBlock;
+		Map<String, Object> rootState = blockEntityRootState(blockEntityPos(signBlockEntity));
+		rootState.put("rootTranslateX", 0.5F);
+		rootState.put("rootTranslateY", 0.5F);
+		rootState.put("rootTranslateZ", 0.5F);
+		rootState.put("rootRotateY", -signBlock.getYRotationDegrees(state));
+		if (!standing) {
+			rootState.put("rootPostTranslateY", -0.3125F);
+			rootState.put("rootPostTranslateZ", -0.4375F);
+		}
+		rootState.put("rootScaleX", 0.6666667F);
+		rootState.put("rootScaleY", -0.6666667F);
+		rootState.put("rootScaleZ", -0.6666667F);
+
+		return clientModelSnapshot(
+				blockEntityPos(signBlockEntity),
+				0.0F,
+				0.0F,
+				1.0F,
+				ClientModelTransformKind.BLOCK_ENTITY,
+				rootState,
+				new ClientLayerSnapshot[]{
+						new ClientLayerSnapshot(
+								"net.minecraft.client.model.Model$Simple",
+								minecraftTexture("entity/signs/" + woodType.name()),
+								0xFFFFFF,
+								false
+						).withFactory("net.minecraft.client.renderer.blockentity.SignRenderer#createSignLayer:" + standing)
+				}
+		);
+	}
+
+	private static ClientModelSnapshot captureHangingSignBlockEntity(net.minecraft.world.level.block.entity.HangingSignBlockEntity signBlockEntity) {
+		net.minecraft.world.level.block.state.BlockState state = signBlockEntity.getBlockState();
+		net.minecraft.world.level.block.SignBlock signBlock = (net.minecraft.world.level.block.SignBlock) state.getBlock();
+		net.minecraft.world.level.block.state.properties.WoodType woodType = signBlock.type();
+		String attachmentType = hangingSignAttachmentType(state);
+		Map<String, Object> rootState = blockEntityRootState(blockEntityPos(signBlockEntity));
+		rootState.put("rootTranslateX", 0.5F);
+		rootState.put("rootTranslateY", 0.9375F);
+		rootState.put("rootTranslateZ", 0.5F);
+		rootState.put("rootRotateY", -signBlock.getYRotationDegrees(state));
+		rootState.put("rootPostTranslateY", -0.3125F);
+		rootState.put("rootScaleX", 1.0F);
+		rootState.put("rootScaleY", -1.0F);
+		rootState.put("rootScaleZ", -1.0F);
+
+		return clientModelSnapshot(
+				blockEntityPos(signBlockEntity),
+				0.0F,
+				0.0F,
+				1.0F,
+				ClientModelTransformKind.BLOCK_ENTITY,
+				rootState,
+				new ClientLayerSnapshot[]{
+						new ClientLayerSnapshot(
+								"net.minecraft.client.model.Model$Simple",
+								minecraftTexture("entity/signs/hanging/" + woodType.name()),
+								0xFFFFFF,
+								false
+						).withFactory("net.minecraft.client.renderer.blockentity.HangingSignRenderer#createHangingSignLayer:" + attachmentType)
+				}
+		);
+	}
+
+	private static EntitySnapshot withSignText(EntitySnapshot primary, net.minecraft.world.level.block.entity.SignBlockEntity signBlockEntity, boolean hanging) {
+		if (primary == null) {
+			return null;
+		}
+		List<EntitySnapshot> attachments = new ArrayList<>();
+		ImagePlaneSnapshot front = captureSignTextPlane(signBlockEntity, signBlockEntity.getFrontText(), true, hanging);
+		if (front != null) {
+			attachments.add(front);
+		}
+		ImagePlaneSnapshot back = captureSignTextPlane(signBlockEntity, signBlockEntity.getBackText(), false, hanging);
+		if (back != null) {
+			attachments.add(back);
+		}
+		if (attachments.isEmpty()) {
+			return primary;
+		}
+		return new CompositeSnapshot(primary.position(), primary, attachments.toArray(EntitySnapshot[]::new));
+	}
+
+	private static ImagePlaneSnapshot captureSignTextPlane(
+			net.minecraft.world.level.block.entity.SignBlockEntity signBlockEntity,
+			net.minecraft.world.level.block.entity.SignText signText,
+			boolean front,
+			boolean hanging
+	) {
+		BufferedImage image = signTextImage(signBlockEntity, signText);
+		if (image == null) {
+			return null;
+		}
+		Matrix4f transform = signTextTransform(signBlockEntity, front, hanging);
+		String materialKey = "sign_text:" + signBlockEntity.getBlockPos().asLong() + ":" + (hanging ? "hanging" : "sign") + ":" + (front ? "front" : "back");
+		return new ImagePlaneSnapshot(
+				blockEntityPos(signBlockEntity),
+				transform,
+				-image.getWidth() * 0.5F,
+				-image.getHeight() * 0.5F + 1.0F,
+				0.0F,
+				image.getWidth(),
+				image.getHeight(),
+				materialKey,
+				image,
+				signText.hasGlowingText()
+		);
+	}
+
+	private static Matrix4f signTextTransform(net.minecraft.world.level.block.entity.SignBlockEntity signBlockEntity, boolean front, boolean hanging) {
+		net.minecraft.world.level.block.state.BlockState state = signBlockEntity.getBlockState();
+		net.minecraft.world.level.block.SignBlock signBlock = (net.minecraft.world.level.block.SignBlock) state.getBlock();
+		Matrix4f transform = new Matrix4f()
+				.translate((float) signBlockEntity.getBlockPos().getX(), (float) signBlockEntity.getBlockPos().getY(), (float) signBlockEntity.getBlockPos().getZ());
+		if (hanging) {
+			transform.translate(0.5F, 0.9375F, 0.5F)
+					.rotateY(radians(-signBlock.getYRotationDegrees(state)))
+					.translate(0.0F, -0.3125F, 0.0F);
+		} else {
+			transform.translate(0.5F, 0.5F, 0.5F)
+					.rotateY(radians(-signBlock.getYRotationDegrees(state)));
+			if (!(state.getBlock() instanceof net.minecraft.world.level.block.StandingSignBlock)) {
+				transform.translate(0.0F, -0.3125F, -0.4375F);
+			}
+		}
+		if (!front) {
+			transform.rotateY((float) Math.PI);
+		}
+		Vec3 offset = hanging
+				? new Vec3(0.0D, -0.3199999928474426D, 0.0729999989271164D)
+				: new Vec3(0.0D, 0.3333333432674408D, 0.046666666865348816D);
+		float textScale = (1.0F / 64.0F) * (hanging ? 0.9F : 0.6666667F);
+		return transform
+				.translate((float) offset.x, (float) offset.y, (float) offset.z)
+				.translate(0.0F, 0.0F, 1.0F / 256.0F)
+				.scale(textScale, textScale, textScale);
+	}
+
+	private static BufferedImage signTextImage(
+			net.minecraft.world.level.block.entity.SignBlockEntity signBlockEntity,
+			net.minecraft.world.level.block.entity.SignText signText
+	) {
+		if (signText == null) {
+			return null;
+		}
+		String[] lines = new String[4];
+		boolean hasVisibleText = false;
+		for (int i = 0; i < lines.length; i++) {
+			lines[i] = signText.getMessage(i, false).getString();
+			if (!lines[i].isBlank()) {
+				hasVisibleText = true;
+			}
+		}
+		if (!hasVisibleText) {
+			return null;
+		}
+		int width = Math.max(1, signBlockEntity.getMaxTextLineWidth());
+		int lineHeight = Math.max(1, signBlockEntity.getTextLineHeight());
+		int height = lineHeight * 4;
+		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = image.createGraphics();
+		try {
+			graphics.setComposite(AlphaComposite.SrcOver);
+			graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+			graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+			graphics.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_OFF);
+			graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+			graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_SPEED);
+
+			int fontSize = Math.max(6, lineHeight);
+			Font font = new Font(Font.MONOSPACED, Font.PLAIN, fontSize);
+			graphics.setFont(font);
+			FontMetrics metrics = graphics.getFontMetrics(font);
+			int maxWidth = Math.max(1, width - 2);
+			while (fontSize > 4 && maxLineWidth(lines, metrics) > maxWidth) {
+				fontSize--;
+				font = font.deriveFont((float) fontSize);
+				graphics.setFont(font);
+				metrics = graphics.getFontMetrics(font);
+			}
+
+			int mainRgb = signTextMainColor(signText);
+			int outlineRgb = signTextOutlineColor(signText);
+			for (int i = 0; i < lines.length; i++) {
+				String line = lines[i];
+				if (line.isBlank()) {
+					continue;
+				}
+				int textWidth = metrics.stringWidth(line);
+				int x = (width - textWidth) / 2;
+				int boxTop = i * lineHeight;
+				int baseline = boxTop + Math.max(metrics.getAscent(), (lineHeight - metrics.getHeight()) / 2 + metrics.getAscent());
+				if (signText.hasGlowingText()) {
+					graphics.setColor(new Color(outlineRgb, true));
+					for (int dx = -1; dx <= 1; dx++) {
+						for (int dy = -1; dy <= 1; dy++) {
+							if (dx == 0 && dy == 0) {
+								continue;
+							}
+							graphics.drawString(line, x + dx, baseline + dy);
+						}
+					}
+				}
+				graphics.setColor(new Color(mainRgb, true));
+				graphics.drawString(line, x, baseline);
+			}
+		} finally {
+			graphics.dispose();
+		}
+		return image;
+	}
+
+	private static int maxLineWidth(String[] lines, FontMetrics metrics) {
+		int max = 0;
+		for (String line : lines) {
+			max = Math.max(max, metrics.stringWidth(line));
+		}
+		return max;
+	}
+
+	private static int signTextMainColor(net.minecraft.world.level.block.entity.SignText signText) {
+		int rgb = signText.getColor().getTextColor();
+		if (signText.hasGlowingText()) {
+			return 0xFF000000 | rgb;
+		}
+		return 0xFF000000 | scaleRgb(rgb, 0.4F);
+	}
+
+	private static int signTextOutlineColor(net.minecraft.world.level.block.entity.SignText signText) {
+		int rgb = signText.getColor().getTextColor();
+		if (rgb == net.minecraft.world.item.DyeColor.BLACK.getTextColor() && signText.hasGlowingText()) {
+			return 0xFFF0EBCC;
+		}
+		return 0xFF000000 | scaleRgb(rgb, 0.4F);
+	}
+
+	private static int scaleRgb(int rgb, float factor) {
+		int red = Mth.clamp(Math.round(((rgb >> 16) & 0xFF) * factor), 0, 255);
+		int green = Mth.clamp(Math.round(((rgb >> 8) & 0xFF) * factor), 0, 255);
+		int blue = Mth.clamp(Math.round((rgb & 0xFF) * factor), 0, 255);
+		return (red << 16) | (green << 8) | blue;
+	}
+
+	private static ClientModelSnapshot captureBannerBlockEntity(net.minecraft.world.level.block.entity.BannerBlockEntity bannerBlockEntity) {
+		net.minecraft.world.level.block.state.BlockState state = bannerBlockEntity.getBlockState();
+		boolean standing = state.getBlock() instanceof net.minecraft.world.level.block.BannerBlock;
+		float angle = standing
+				? -net.minecraft.world.level.block.state.properties.RotationSegment.convertToDegrees(state.getValue(net.minecraft.world.level.block.BannerBlock.ROTATION))
+				: -state.getValue(net.minecraft.world.level.block.WallBannerBlock.FACING).toYRot();
+		long gameTime = bannerBlockEntity.getLevel() == null ? 0L : bannerBlockEntity.getLevel().getGameTime();
+		BlockPos pos = bannerBlockEntity.getBlockPos();
+		float phase = (Math.floorMod((long) pos.getX() * 7L + (long) pos.getY() * 9L + (long) pos.getZ() * 13L + gameTime, 100L)) / 100.0F;
+
+		Map<String, Object> rootState = blockEntityRootState(blockEntityPos(bannerBlockEntity));
+		rootState.put("rootTranslateX", 0.5F);
+		rootState.put("rootTranslateZ", 0.5F);
+		rootState.put("rootRotateY", angle);
+		rootState.put("rootScaleX", 0.6666667F);
+		rootState.put("rootScaleY", -0.6666667F);
+		rootState.put("rootScaleZ", -0.6666667F);
+		rootState.put("modelState", phase);
+
+		List<ClientLayerSnapshot> layers = new ArrayList<>();
+		layers.add(
+				new ClientLayerSnapshot(
+						"net.minecraft.client.model.Model$Simple",
+						minecraftTexture("entity/banner_base"),
+						0xFFFFFF,
+						false
+				).withFactory("net.minecraft.client.model.object.banner.BannerModel#createBodyLayer:" + standing)
+		);
+		layers.add(
+				new ClientLayerSnapshot(
+						"net.minecraft.client.model.object.banner.BannerFlagModel",
+						minecraftTexture("entity/banner/base"),
+						bannerBlockEntity.getBaseColor().getTextureDiffuseColor(),
+						false
+				).withFactory("net.minecraft.client.model.object.banner.BannerFlagModel#createFlagLayer:" + standing)
+		);
+		for (net.minecraft.world.level.block.entity.BannerPatternLayers.Layer layer : bannerBlockEntity.getPatterns().layers()) {
+			Identifier patternTexture = layer.pattern().unwrapKey()
+					.map(resourceKey -> minecraftTexture("entity/banner/" + resourceKey.identifier().getPath()))
+					.orElse(null);
+			if (patternTexture == null) {
+				continue;
+			}
+			layers.add(
+					new ClientLayerSnapshot(
+							"net.minecraft.client.model.object.banner.BannerFlagModel",
+							patternTexture,
+							layer.color().getTextureDiffuseColor(),
+							false
+					).withFactory("net.minecraft.client.model.object.banner.BannerFlagModel#createFlagLayer:" + standing)
+			);
+		}
+		return clientModelSnapshot(
+				blockEntityPos(bannerBlockEntity),
+				0.0F,
+				0.0F,
+				1.0F,
+				ClientModelTransformKind.BLOCK_ENTITY,
+				rootState,
+				layers.toArray(ClientLayerSnapshot[]::new)
+		);
+	}
+
+	private static ClientModelSnapshot captureChestBlockEntity(net.minecraft.world.level.block.entity.BlockEntity chestBlockEntity) {
+		net.minecraft.world.level.block.state.BlockState state = chestBlockEntity.getBlockState();
+		net.minecraft.world.level.block.state.properties.ChestType chestType = state.hasProperty(net.minecraft.world.level.block.ChestBlock.TYPE)
+				? state.getValue(net.minecraft.world.level.block.ChestBlock.TYPE)
+				: net.minecraft.world.level.block.state.properties.ChestType.SINGLE;
+		Direction facing = chestFacing(state);
+		float open = chestBlockEntity instanceof net.minecraft.world.level.block.entity.ChestBlockEntity chest
+				? chest.getOpenNess(0.0F)
+				: chestBlockEntity instanceof net.minecraft.world.level.block.entity.EnderChestBlockEntity enderChest
+				? enderChest.getOpenNess(0.0F)
+				: 0.0F;
+		float easedOpen = 1.0F - (float) Math.pow(1.0F - open, 3.0D);
+
+		Map<String, Object> rootState = blockEntityRootState(blockEntityPos(chestBlockEntity));
+		rootState.put("rootTranslateX", 0.5F);
+		rootState.put("rootTranslateY", 0.5F);
+		rootState.put("rootTranslateZ", 0.5F);
+		rootState.put("rootRotateY", -facing.toYRot());
+		rootState.put("rootPostTranslateX", -0.5F);
+		rootState.put("rootPostTranslateY", -0.5F);
+		rootState.put("rootPostTranslateZ", -0.5F);
+		rootState.put("modelState", easedOpen);
+
+		return clientModelSnapshot(
+				blockEntityPos(chestBlockEntity),
+				0.0F,
+				0.0F,
+				1.0F,
+				ClientModelTransformKind.BLOCK_ENTITY,
+				rootState,
+				new ClientLayerSnapshot[]{
+						new ClientLayerSnapshot(
+								"net.minecraft.client.model.object.chest.ChestModel",
+								chestTexture(chestBlockEntity, chestType),
+								0xFFFFFF,
+								false
+						).withFactory(chestLayerFactory(chestType))
+				}
+		);
+	}
+
+	private static ClientModelSnapshot captureSkullBlockEntity(net.minecraft.world.level.block.entity.SkullBlockEntity skullBlockEntity) {
+		net.minecraft.world.level.block.state.BlockState state = skullBlockEntity.getBlockState();
+		boolean wall = state.getBlock() instanceof net.minecraft.world.level.block.WallSkullBlock;
+		Direction direction = wall ? state.getValue(net.minecraft.world.level.block.WallSkullBlock.FACING) : null;
+		int rotationSegment = wall
+				? net.minecraft.world.level.block.state.properties.RotationSegment.convertToSegment(direction.getOpposite())
+				: state.getValue(net.minecraft.world.level.block.SkullBlock.ROTATION);
+		float rotationDegrees = net.minecraft.world.level.block.state.properties.RotationSegment.convertToDegrees(rotationSegment);
+
+		Map<String, Object> rootState = blockEntityRootState(blockEntityPos(skullBlockEntity));
+		if (direction == null) {
+			rootState.put("rootTranslateX", 0.5F);
+			rootState.put("rootTranslateZ", 0.5F);
+		} else {
+			rootState.put("rootTranslateX", 0.5F - direction.getStepX() * 0.25F);
+			rootState.put("rootTranslateY", 0.25F);
+			rootState.put("rootTranslateZ", 0.5F - direction.getStepZ() * 0.25F);
+		}
+		rootState.put("rootScaleX", -1.0F);
+		rootState.put("rootScaleY", -1.0F);
+		rootState.put("rootScaleZ", 1.0F);
+		rootState.put("animationPos", skullBlockEntity.getAnimation(0.0F));
+		rootState.put("yRot", rotationDegrees);
+		rootState.put("xRot", 0.0F);
+
+		net.minecraft.world.level.block.SkullBlock.Type skullType = ((net.minecraft.world.level.block.AbstractSkullBlock) state.getBlock()).getType();
+		ClientLayerSnapshot layer = skullLayer(skullType, skullBlockEntity);
+		if (layer == null) {
+			return null;
+		}
+		return clientModelSnapshot(
+				blockEntityPos(skullBlockEntity),
+				0.0F,
+				0.0F,
+				1.0F,
+				ClientModelTransformKind.BLOCK_ENTITY,
+				rootState,
+				new ClientLayerSnapshot[]{layer}
 		);
 	}
 
@@ -1805,6 +2413,13 @@ final class CameraEntityRenderer {
 		}
 	}
 
+	private record ItemVisualBounds(
+			float minY,
+			float maxY
+	) {
+		static final ItemVisualBounds EMPTY = new ItemVisualBounds(0.0F, 0.0F);
+	}
+
 	private static Identifier equipmentAssetId(ItemStack stack) {
 		if (stack == null || stack.isEmpty()) {
 			return null;
@@ -1916,10 +2531,16 @@ final class CameraEntityRenderer {
 			renderArmorStand(context, armorStandSnapshot);
 		} else if (entitySnapshot instanceof ItemSnapshot itemSnapshot) {
 			renderItem(context, itemSnapshot);
+		} else if (entitySnapshot instanceof FixedItemSnapshot fixedItemSnapshot) {
+			renderFixedItem(context, fixedItemSnapshot);
 		} else if (entitySnapshot instanceof ExperienceOrbSnapshot experienceOrbSnapshot) {
 			renderExperienceOrb(context, experienceOrbSnapshot);
 		} else if (entitySnapshot instanceof FishingHookSnapshot fishingHookSnapshot) {
 			renderFishingHook(context, fishingHookSnapshot);
+		} else if (entitySnapshot instanceof ItemFrameSnapshot itemFrameSnapshot) {
+			renderItemFrame(context, itemFrameSnapshot);
+		} else if (entitySnapshot instanceof ImagePlaneSnapshot imagePlaneSnapshot) {
+			renderImagePlane(context, imagePlaneSnapshot);
 		} else if (entitySnapshot instanceof LineSnapshot lineSnapshot) {
 			renderLine(context, lineSnapshot);
 		}
@@ -2451,20 +3072,21 @@ final class CameraEntityRenderer {
 	}
 
 	private static void renderItem(RenderContext context, ItemSnapshot snapshot) {
+		ItemVisualBounds bounds = itemVisualBounds(snapshot.visual(), ItemDisplayTransformContext.GROUND);
 		Matrix4f root = new Matrix4f()
-				.translate((float) snapshot.position().x, (float) snapshot.position().y + 0.125F, (float) snapshot.position().z)
+				.translate((float) snapshot.position().x, (float) snapshot.position().y + (0.0625F - bounds.minY()), (float) snapshot.position().z)
 				.rotateY(snapshot.spin());
-		if (snapshot.visual().model() != null && !snapshot.visual().model().elements().isEmpty()) {
-			renderItemModel(context, root, snapshot.visual().model());
-			return;
-		}
-		if (snapshot.visual().flatTexture() == null) {
-			return;
-		}
-		int material = context.materialResolver.materialForTexture(snapshot.visual().flatTexture());
-		addDoubleSidedPlane(context, root, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
-		Matrix4f crossed = new Matrix4f(root).rotateY((float) Math.PI * 0.5F);
-		addDoubleSidedPlane(context, crossed, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
+		renderItemVisual(context, root, snapshot.visual(), ItemDisplayTransformContext.GROUND);
+	}
+
+	private static void renderFixedItem(RenderContext context, FixedItemSnapshot snapshot) {
+		Matrix4f root = new Matrix4f()
+				.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
+				.rotateY(radians(snapshot.yaw()))
+				.rotateX(radians(snapshot.pitch()))
+				.rotateZ(radians(snapshot.roll()))
+				.scale(snapshot.scale());
+		renderItemVisual(context, root, snapshot.visual(), ItemDisplayTransformContext.FIXED);
 	}
 
 	private static void renderExperienceOrb(RenderContext context, ExperienceOrbSnapshot snapshot) {
@@ -2506,6 +3128,78 @@ final class CameraEntityRenderer {
 		);
 	}
 
+	private static void renderItemFrame(RenderContext context, ItemFrameSnapshot snapshot) {
+		Matrix4f root = itemFrameRoot(snapshot);
+		if (!snapshot.invisible()) {
+			ResolvedItemModel frameModel = resolveItemModel(
+					Identifier.fromNamespaceAndPath(
+							"minecraft",
+							"block/" + (snapshot.glow() ? "glow_item_frame" : "item_frame") + (snapshot.mapFrame() ? "_map" : "")
+					),
+					new HashSet<>()
+			);
+			if (frameModel != null && !frameModel.elements().isEmpty()) {
+				renderBlockEntityModel(context, root, frameModel);
+			}
+		}
+		if (snapshot.map() != null) {
+			renderFramedMap(context, root, snapshot);
+			return;
+		}
+		if (snapshot.item() == null || (snapshot.item().flatTexture() == null && (snapshot.item().model() == null || snapshot.item().model().elements().isEmpty()))) {
+			return;
+		}
+		float zOffset = snapshot.invisible() ? 0.5F : 0.4375F;
+		Matrix4f itemRoot = new Matrix4f(root)
+				.translate(0.0F, 0.0F, zOffset)
+				.rotateZ(radians(snapshot.rotation() * 45.0F))
+				.rotateY((float) Math.PI)
+				.scale(0.5F);
+		renderItemVisual(context, itemRoot, snapshot.item(), ItemDisplayTransformContext.FRAMED);
+	}
+
+	private static void renderImagePlane(RenderContext context, ImagePlaneSnapshot snapshot) {
+		if (snapshot.image() == null) {
+			return;
+		}
+		int material = context.materialResolver.materialForImage(snapshot.materialKey(), snapshot.image());
+		Vector3f p0 = transformPosition(snapshot.transform(), snapshot.x(), snapshot.y(), snapshot.z());
+		Vector3f p1 = transformPosition(snapshot.transform(), snapshot.x() + snapshot.width(), snapshot.y(), snapshot.z());
+		Vector3f p2 = transformPosition(snapshot.transform(), snapshot.x() + snapshot.width(), snapshot.y() + snapshot.height(), snapshot.z());
+		Vector3f p3 = transformPosition(snapshot.transform(), snapshot.x(), snapshot.y() + snapshot.height(), snapshot.z());
+		LightSample lightSample = snapshot.emissive()
+				? new LightSample(15, 15)
+				: context.lightAt((p0.x + p2.x) * 0.5F, (p0.y + p2.y) * 0.5F, (p0.z + p2.z) * 0.5F);
+		addQuad(context, p0, p1, p2, p3, 0.0F, 1.0F, 0.0F, 1.0F, material, lightSample.sky(), lightSample.block(), 1.0F, 1.0F, 1.0F);
+	}
+
+	private static void renderFramedMap(RenderContext context, Matrix4f root, ItemFrameSnapshot snapshot) {
+		FramedMapSnapshot map = snapshot.map();
+		if (map == null) {
+			return;
+		}
+		float zOffset = snapshot.invisible() ? 0.5F : 0.4375F;
+		float rotation = Math.floorMod(snapshot.rotation(), 4) * 90.0F;
+		Matrix4f contentRoot = new Matrix4f(root)
+				.translate(0.0F, 0.0F, zOffset)
+				.rotateZ(radians(rotation))
+				.rotateY((float) Math.PI);
+		int mapMaterial = context.materialResolver.materialForImage("framed_map:" + map.mapId(), framedMapImage(map));
+		addTexturedPlane(context, contentRoot, -0.5F, -0.5F, 0.0F, 1.0F, 1.0F, 0.0F, 0.0F, 1.0F, 1.0F, mapMaterial, 1.0F, 1.0F, 1.0F);
+	}
+
+	private static BufferedImage framedMapImage(FramedMapSnapshot snapshot) {
+		BufferedImage image = new BufferedImage(128, 128, BufferedImage.TYPE_INT_ARGB);
+		byte[] colors = snapshot.colors();
+		int[] pixels = new int[128 * 128];
+		for (int i = 0; i < pixels.length; i++) {
+			int packedId = i < colors.length ? Byte.toUnsignedInt(colors[i]) : 0;
+			pixels[i] = MapColor.getColorFromPackedId(packedId);
+		}
+		image.setRGB(0, 0, 128, 128, pixels, 0, 128);
+		return image;
+	}
+
 	private static void renderLine(RenderContext context, LineSnapshot snapshot) {
 		int material = context.materialResolver.materialForTexture(snapshot.texture());
 		int segments = Math.max(6, Mth.ceil((float) snapshot.start().distanceTo(snapshot.end()) * 24.0F));
@@ -2527,25 +3221,407 @@ final class CameraEntityRenderer {
 		return point.add(0.0D, -sagOffset, 0.0D);
 	}
 
+	private static Matrix4f itemFrameRoot(ItemFrameSnapshot snapshot) {
+		Direction direction = snapshot.direction();
+		float xRotation;
+		float yRotation;
+		Vec3 center = snapshot.position().add(
+				direction.getStepX() * 0.46875D,
+				direction.getStepY() * 0.46875D,
+				direction.getStepZ() * 0.46875D
+		);
+		if (direction.getAxis().isHorizontal()) {
+			xRotation = 0.0F;
+			yRotation = 180.0F - direction.toYRot();
+		} else {
+			xRotation = -90.0F * direction.getAxisDirection().getStep();
+			yRotation = 180.0F;
+		}
+		return new Matrix4f()
+				.translate((float) center.x, (float) center.y, (float) center.z)
+				.rotateX(radians(xRotation))
+				.rotateY(radians(yRotation));
+	}
+
+	private static Vec3 blockEntityPos(net.minecraft.world.level.block.entity.BlockEntity blockEntity) {
+		return Vec3.atLowerCornerOf(blockEntity.getBlockPos());
+	}
+
+	private static Map<String, Object> blockEntityRootState(Vec3 position) {
+		Map<String, Object> state = new HashMap<>();
+		state.put("rootTranslateX", 0.0F);
+		state.put("rootTranslateY", 0.0F);
+		state.put("rootTranslateZ", 0.0F);
+		state.put("rootRotateX", 0.0F);
+		state.put("rootRotateY", 0.0F);
+		state.put("rootRotateZ", 0.0F);
+		state.put("rootMidTranslateX", 0.0F);
+		state.put("rootMidTranslateY", 0.0F);
+		state.put("rootMidTranslateZ", 0.0F);
+		state.put("rootRotate2X", 0.0F);
+		state.put("rootRotate2Y", 0.0F);
+		state.put("rootRotate2Z", 0.0F);
+		state.put("rootPostTranslateX", 0.0F);
+		state.put("rootPostTranslateY", 0.0F);
+		state.put("rootPostTranslateZ", 0.0F);
+		state.put("rootScaleX", 1.0F);
+		state.put("rootScaleY", 1.0F);
+		state.put("rootScaleZ", 1.0F);
+		state.put("renderOffset", position);
+		return state;
+	}
+
+	private static String hangingSignAttachmentType(net.minecraft.world.level.block.state.BlockState state) {
+		if (state.getBlock() instanceof net.minecraft.world.level.block.CeilingHangingSignBlock) {
+			return state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.ATTACHED)
+					? "CEILING_MIDDLE"
+					: "CEILING";
+		}
+		return "WALL";
+	}
+
+	private static String chestLayerFactory(net.minecraft.world.level.block.state.properties.ChestType chestType) {
+		return switch (chestType) {
+			case LEFT -> "createDoubleBodyLeftLayer";
+			case RIGHT -> "createDoubleBodyRightLayer";
+			default -> "createSingleBodyLayer";
+		};
+	}
+
+	private static Direction chestFacing(net.minecraft.world.level.block.state.BlockState state) {
+		if (state.hasProperty(net.minecraft.world.level.block.ChestBlock.FACING)) {
+			return state.getValue(net.minecraft.world.level.block.ChestBlock.FACING);
+		}
+		if (state.hasProperty(net.minecraft.world.level.block.EnderChestBlock.FACING)) {
+			return state.getValue(net.minecraft.world.level.block.EnderChestBlock.FACING);
+		}
+		return Direction.SOUTH;
+	}
+
+	private static Identifier chestTexture(net.minecraft.world.level.block.entity.BlockEntity chestBlockEntity, net.minecraft.world.level.block.state.properties.ChestType chestType) {
+		net.minecraft.world.level.block.Block block = chestBlockEntity.getBlockState().getBlock();
+		Identifier blockId = BuiltInRegistries.BLOCK.getKey(block);
+		String path = blockId == null ? "chest" : blockId.getPath();
+		String base;
+		if (chestBlockEntity instanceof net.minecraft.world.level.block.entity.EnderChestBlockEntity) {
+			base = "ender";
+		} else if (path.contains("trapped_chest")) {
+			base = "trapped";
+		} else if (path.contains("copper_chest")) {
+			base = chestCopperTexturePrefix(path);
+		} else {
+			base = "normal";
+		}
+		String suffix = switch (chestType) {
+			case LEFT -> "_left";
+			case RIGHT -> "_right";
+			default -> "";
+		};
+		return minecraftTexture("entity/chest/" + base + suffix);
+	}
+
+	private static String chestCopperTexturePrefix(String blockPath) {
+		String normalized = blockPath.startsWith("waxed_") ? blockPath.substring("waxed_".length()) : blockPath;
+		if (normalized.startsWith("exposed_")) {
+			return "copper_exposed";
+		}
+		if (normalized.startsWith("weathered_")) {
+			return "copper_weathered";
+		}
+		if (normalized.startsWith("oxidized_")) {
+			return "copper_oxidized";
+		}
+		return "copper";
+	}
+
+	private static ClientLayerSnapshot skullLayer(net.minecraft.world.level.block.SkullBlock.Type skullType, net.minecraft.world.level.block.entity.SkullBlockEntity skullBlockEntity) {
+		if (!(skullType instanceof net.minecraft.world.level.block.SkullBlock.Types types)) {
+			return null;
+		}
+		return switch (types) {
+			case SKELETON -> new ClientLayerSnapshot(
+					"net.minecraft.client.model.object.skull.SkullModel",
+					minecraftTexture("entity/skeleton/skeleton"),
+					0xFFFFFF,
+					false
+			).withFactory("createHumanoidHeadLayer");
+			case WITHER_SKELETON -> new ClientLayerSnapshot(
+					"net.minecraft.client.model.object.skull.SkullModel",
+					minecraftTexture("entity/skeleton/wither_skeleton"),
+					0xFFFFFF,
+					false
+			).withFactory("createHumanoidHeadLayer");
+			case PLAYER -> {
+				PlayerSkinSnapshot playerSkin = captureResolvableProfileSkin(skullBlockEntity.getOwnerProfile());
+				ClientLayerSnapshot layer = new ClientLayerSnapshot(
+						"net.minecraft.client.model.object.skull.SkullModel",
+						playerSkin == null ? PLAYER_WIDE_FALLBACK : playerSkin.fallbackTexture(),
+						0xFFFFFF,
+						false
+				).withFactory("createHumanoidHeadLayer");
+				yield playerSkin == null ? layer : layer.withPlayerSkin(playerSkin);
+			}
+			case ZOMBIE -> new ClientLayerSnapshot(
+					"net.minecraft.client.model.object.skull.SkullModel",
+					ZOMBIE_TEXTURE,
+					0xFFFFFF,
+					false
+			).withFactory("createHumanoidHeadLayer");
+			case CREEPER -> new ClientLayerSnapshot(
+					"net.minecraft.client.model.object.skull.SkullModel",
+					CREEPER_TEXTURE,
+					0xFFFFFF,
+					false
+			).withFactory("createMobHeadLayer");
+			case PIGLIN -> new ClientLayerSnapshot(
+					"net.minecraft.client.model.object.skull.PiglinHeadModel",
+					minecraftTexture("entity/piglin/piglin"),
+					0xFFFFFF,
+					false
+			).withFactory("createHeadModel");
+			case DRAGON -> new ClientLayerSnapshot(
+					"net.minecraft.client.model.object.skull.DragonHeadModel",
+					minecraftTexture("entity/enderdragon/dragon"),
+					0xFFFFFF,
+					false
+			).withFactory("createHeadLayer");
+		};
+	}
+
+	private static PlayerSkinSnapshot captureResolvableProfileSkin(net.minecraft.world.item.component.ResolvableProfile profile) {
+		if (profile == null || profile.partialProfile() == null) {
+			return null;
+		}
+		Property property = PlayerUtils.getPlayerSkin(profile.partialProfile());
+		if (property == null) {
+			return null;
+		}
+		var skinData = PlayerUtils.getSkinUrl(property);
+		String url = skinData == null ? null : skinData.left();
+		boolean slim = skinData != null
+				&& skinData.right() != null
+				&& "slim".equalsIgnoreCase(skinData.right().toString());
+		return new PlayerSkinSnapshot(property.value(), url, slim ? PLAYER_SLIM_FALLBACK : PLAYER_WIDE_FALLBACK, slim);
+	}
+
 	private static void renderItemVisual(RenderContext context, Matrix4f root, ItemVisual visual, ItemDisplayTransformContext transformContext) {
 		if (visual == null) {
 			return;
 		}
 		if (visual.model() != null && !visual.model().elements().isEmpty()) {
-			renderItemModel(context, root, visual.model());
+			if (transformContext == ItemDisplayTransformContext.FRAMED || transformContext == ItemDisplayTransformContext.GROUND) {
+				renderDisplayedItemModel(context, root, visual.model(), transformContext);
+			} else {
+				renderItemModel(context, root, visual.model());
+			}
 			return;
 		}
 		if (visual.flatTexture() == null) {
 			return;
 		}
 		int material = context.materialResolver.materialForTexture(visual.flatTexture());
+		if (transformContext == ItemDisplayTransformContext.FRAMED) {
+			Matrix4f transformedRoot = applyFlatFramedItemTransform(root, visual.model());
+			renderFlatItemLayers(context, transformedRoot, visual, 0.0625F, 0.0625F, 0.5F, 0.875F, 0.875F);
+			return;
+		}
+		if (transformContext == ItemDisplayTransformContext.GROUND) {
+			Matrix4f transformedRoot = applyItemDisplayTransform(root, visual.model(), transformContext);
+			renderFlatItemLayers(context, transformedRoot, visual, 0.0F, 0.0F, 0.5F, 1.0F, 1.0F);
+			return;
+		}
 		addDoubleSidedPlane(context, root, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
+		if (transformContext == ItemDisplayTransformContext.FIXED) {
+			return;
+		}
 		Matrix4f crossed = new Matrix4f(root).rotateY((float) Math.PI * 0.5F);
 		addDoubleSidedPlane(context, crossed, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
 	}
 
 	private static void renderItemModel(RenderContext context, Matrix4f root, ResolvedItemModel model) {
 		Matrix4f transform = new Matrix4f(root).translate(-0.25F, 0.0F, -0.25F).scale(0.5F);
+		for (ItemModelElement element : model.elements()) {
+			renderItemModelElement(context, transform, model, element);
+		}
+	}
+
+	private static void renderDisplayedItemModel(RenderContext context, Matrix4f root, ResolvedItemModel model, ItemDisplayTransformContext transformContext) {
+		Matrix4f transform = applyItemDisplayTransform(root, model, transformContext);
+		for (ItemModelElement element : model.elements()) {
+			renderItemModelElement(context, transform, model, element);
+		}
+	}
+
+	private static Matrix4f applyItemDisplayTransform(Matrix4f root, ResolvedItemModel model, ItemDisplayTransformContext transformContext) {
+		ItemModelTransform transform = itemModelTransform(model, transformContext);
+		return applyItemDisplayTransform(root, transform, transformContext == ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND);
+	}
+
+	private static Matrix4f applyFlatFramedItemTransform(Matrix4f root, ResolvedItemModel model) {
+		return applyItemDisplayTransform(root, model, ItemDisplayTransformContext.FRAMED);
+	}
+
+	private static Matrix4f applyItemDisplayTransform(Matrix4f root, ItemModelTransform transform, boolean leftHand) {
+		float translationX = leftHand ? -transform.translationX() : transform.translationX();
+		float rotationY = leftHand ? -transform.rotationY() : transform.rotationY();
+		float rotationZ = leftHand ? -transform.rotationZ() : transform.rotationZ();
+		return new Matrix4f(root)
+				.translate(translationX, transform.translationY(), transform.translationZ())
+				.rotate(new Quaternionf().rotationXYZ(radians(transform.rotationX()), radians(rotationY), radians(rotationZ)))
+				.scale(transform.scaleX(), transform.scaleY(), transform.scaleZ())
+				.translate(-0.5F, -0.5F, -0.5F);
+	}
+
+	private static ItemVisualBounds itemVisualBounds(ItemVisual visual, ItemDisplayTransformContext transformContext) {
+		if (visual == null) {
+			return ItemVisualBounds.EMPTY;
+		}
+		float minY = Float.POSITIVE_INFINITY;
+		float maxY = Float.NEGATIVE_INFINITY;
+		Matrix4f root = applyItemDisplayTransform(new Matrix4f(), visual.model(), transformContext);
+		if (visual.model() != null && !visual.model().elements().isEmpty()) {
+			for (ItemModelElement element : visual.model().elements()) {
+				Matrix4f transform = itemElementTransform(root, element);
+				for (float x : new float[]{(float) element.from().x, (float) element.to().x}) {
+					for (float y : new float[]{(float) element.from().y, (float) element.to().y}) {
+						for (float z : new float[]{(float) element.from().z, (float) element.to().z}) {
+							Vector3f point = transformPosition(transform, x * PX, y * PX, z * PX);
+							minY = Math.min(minY, point.y);
+							maxY = Math.max(maxY, point.y);
+						}
+					}
+				}
+			}
+		} else if (visual.flatTexture() != null) {
+			for (Vector3f point : new Vector3f[]{
+					transformPosition(root, 0.0F, 0.0F, 0.5F),
+					transformPosition(root, 1.0F, 0.0F, 0.5F),
+					transformPosition(root, 1.0F, 1.0F, 0.5F),
+					transformPosition(root, 0.0F, 1.0F, 0.5F)
+			}) {
+				minY = Math.min(minY, point.y);
+				maxY = Math.max(maxY, point.y);
+			}
+		}
+		if (!Float.isFinite(minY) || !Float.isFinite(maxY)) {
+			return ItemVisualBounds.EMPTY;
+		}
+		return new ItemVisualBounds(minY, maxY);
+	}
+
+	private static Matrix4f itemElementTransform(Matrix4f root, ItemModelElement element) {
+		Matrix4f transform = new Matrix4f(root);
+		if (element.rotation() != null) {
+			transform.translate(
+					(float) element.rotation().origin().x * PX,
+					(float) element.rotation().origin().y * PX,
+					(float) element.rotation().origin().z * PX
+			);
+			transform.mul(element.rotation().transform());
+			transform.translate(
+					(float) -element.rotation().origin().x * PX,
+					(float) -element.rotation().origin().y * PX,
+					(float) -element.rotation().origin().z * PX
+			);
+		}
+		return transform;
+	}
+
+	private static void renderFlatItemLayers(
+			RenderContext context,
+			Matrix4f transform,
+			ItemVisual visual,
+			float x,
+			float y,
+			float centerZ,
+			float width,
+			float height
+	) {
+		List<Identifier> layers = flatItemLayers(visual);
+		if (layers.isEmpty()) {
+			if (visual.flatTexture() == null) {
+				return;
+			}
+			layers = List.of(visual.flatTexture());
+		}
+		float layerSpacing = 1.0F / 128.0F;
+		float halfThickness = 1.0F / 64.0F;
+		float startCenterZ = centerZ - (layers.size() - 1) * layerSpacing * 0.5F;
+		for (int i = 0; i < layers.size(); i++) {
+			Identifier layer = layers.get(i);
+			int material = context.materialResolver.materialForTexture(layer);
+			float layerCenterZ = startCenterZ + i * layerSpacing;
+			addSeparatedTexturedDoubleSidedPlane(
+					context,
+					transform,
+					x,
+					y,
+					layerCenterZ,
+					width,
+					height,
+					halfThickness,
+					0.0F,
+					0.0F,
+					1.0F,
+					1.0F,
+					material,
+					1.0F,
+					1.0F,
+					1.0F
+			);
+		}
+	}
+
+	private static List<Identifier> flatItemLayers(ItemVisual visual) {
+		List<Identifier> layers = new ArrayList<>();
+		if (visual == null || visual.model() == null) {
+			return layers;
+		}
+		for (int i = 0; i < 8; i++) {
+			Identifier texture = resolveTextureIdentifier(visual.model().textures(), "#layer" + i);
+			if (texture == null) {
+				if (i == 0 && visual.flatTexture() != null) {
+					texture = visual.flatTexture();
+				} else {
+					break;
+				}
+			}
+			layers.add(texture);
+		}
+		return layers;
+	}
+
+	private static ItemModelTransform itemModelTransform(ResolvedItemModel model, ItemDisplayTransformContext transformContext) {
+		if (model == null || model.transforms().isEmpty()) {
+			return ItemModelTransform.IDENTITY;
+		}
+		ItemModelTransform transform = model.transforms().get(transformContext);
+		if (transform != null) {
+			return transform;
+		}
+		if (transformContext == ItemDisplayTransformContext.FRAMED) {
+			transform = model.transforms().get(ItemDisplayTransformContext.FIXED);
+			if (transform != null) {
+				return transform;
+			}
+		}
+		if (transformContext == ItemDisplayTransformContext.GROUND) {
+			transform = model.transforms().get(ItemDisplayTransformContext.GROUND);
+			if (transform != null) {
+				return transform;
+			}
+		}
+		if (transformContext == ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND) {
+			transform = model.transforms().get(ItemDisplayTransformContext.THIRD_PERSON_RIGHT_HAND);
+			if (transform != null) {
+				return transform;
+			}
+		}
+		return ItemModelTransform.IDENTITY;
+	}
+
+	private static void renderBlockEntityModel(RenderContext context, Matrix4f root, ResolvedItemModel model) {
+		Matrix4f transform = new Matrix4f(root).translate(-0.5F, -0.5F, -0.5F);
 		for (ItemModelElement element : model.elements()) {
 			renderItemModelElement(context, transform, model, element);
 		}
@@ -2605,6 +3681,29 @@ final class CameraEntityRenderer {
 		addTexturedPlane(context, back, -(x + width), y, -z, width, height, u0, v0, u1, v1, material, red, green, blue);
 	}
 
+	private static void addSeparatedTexturedDoubleSidedPlane(
+			RenderContext context,
+			Matrix4f transform,
+			float x,
+			float y,
+			float centerZ,
+			float width,
+			float height,
+			float halfThickness,
+			float u0,
+			float v0,
+			float u1,
+			float v1,
+			int material,
+			float red,
+			float green,
+			float blue
+	) {
+		addTexturedPlane(context, transform, x, y, centerZ + halfThickness, width, height, u0, v0, u1, v1, material, red, green, blue);
+		Matrix4f back = new Matrix4f(transform).rotateY((float) Math.PI);
+		addTexturedPlane(context, back, -(x + width), y, -(centerZ - halfThickness), width, height, u0, v0, u1, v1, material, red, green, blue);
+	}
+
 	private static void addTexturedPlane(
 			RenderContext context,
 			Matrix4f transform,
@@ -2627,7 +3726,7 @@ final class CameraEntityRenderer {
 		Vector3f p2 = transformPosition(transform, x + width, y + height, z);
 		Vector3f p3 = transformPosition(transform, x, y + height, z);
 		LightSample lightSample = context.lightAt((p0.x + p2.x) * 0.5F, (p0.y + p2.y) * 0.5F, (p0.z + p2.z) * 0.5F);
-		addQuad(context, p0, p1, p2, p3, texU0, texU1, texV1, texV0, material, lightSample.sky(), lightSample.block(), red, green, blue);
+		addQuad(context, p0, p1, p2, p3, texU0, texU1, texV0, texV1, material, lightSample.sky(), lightSample.block(), red, green, blue);
 	}
 
 	private static void addBox(
@@ -3051,14 +4150,19 @@ final class CameraEntityRenderer {
 	}
 
 	private static ItemVisual resolveItemVisualInternal(ItemStack stack, Identifier itemId) {
-		ResolvedItemModel model = resolveItemModel(itemId.withPrefix("item/"), new HashSet<>());
-		if ((model == null || model.elements().isEmpty()) && stack.getItem() instanceof BlockItem blockItem) {
+		Identifier rootModelId = resolveItemRootModelId(itemId);
+		ResolvedItemModel model = rootModelId == null ? null : resolveItemModel(rootModelId, new HashSet<>());
+		Identifier flatTexture = resolveItemTexture(stack);
+		if (flatTexture == null && model != null) {
+			flatTexture = primaryTexture(model);
+		}
+		boolean hasRenderableItemVisual = flatTexture != null || (model != null && !model.elements().isEmpty());
+		if (!hasRenderableItemVisual && stack.getItem() instanceof BlockItem blockItem) {
 			Identifier blockId = BuiltInRegistries.BLOCK.getKey(blockItem.getBlock());
 			if (blockId != null) {
 				model = resolveItemModel(blockId.withPrefix("block/"), new HashSet<>());
 			}
 		}
-		Identifier flatTexture = resolveItemTexture(stack);
 		if (flatTexture == null && model != null) {
 			flatTexture = primaryTexture(model);
 		}
@@ -3080,7 +4184,41 @@ final class CameraEntityRenderer {
 	}
 
 	private static Identifier resolveItemTextureInternal(Identifier itemId) {
-		return resolveModelTexture(itemId.withPrefix("item/"), Set.of());
+		Identifier rootModelId = resolveItemRootModelId(itemId);
+		return rootModelId == null ? null : resolveModelTexture(rootModelId, Set.of());
+	}
+
+	private static Identifier resolveItemRootModelId(Identifier itemId) {
+		JsonObject itemDefinition = ASSETS.loadJsonAsset("assets/" + itemId.getNamespace() + "/items/" + itemId.getPath() + ".json");
+		if (itemDefinition != null && itemDefinition.has("model") && itemDefinition.get("model").isJsonObject()) {
+			Identifier definitionModel = resolveItemDefinitionModelId(itemDefinition.getAsJsonObject("model"));
+			if (definitionModel != null) {
+				return definitionModel;
+			}
+		}
+		return itemId.withPrefix("item/");
+	}
+
+	private static Identifier resolveItemDefinitionModelId(JsonObject modelObject) {
+		if (modelObject == null || !modelObject.has("type")) {
+			return null;
+		}
+		String type = modelObject.get("type").getAsString();
+		if ("minecraft:model".equals(type) && modelObject.has("model")) {
+			return Identifier.tryParse(modelObject.get("model").getAsString());
+		}
+		if ("minecraft:condition".equals(type)) {
+			if (modelObject.has("on_false") && modelObject.get("on_false").isJsonObject()) {
+				Identifier falseModel = resolveItemDefinitionModelId(modelObject.getAsJsonObject("on_false"));
+				if (falseModel != null) {
+					return falseModel;
+				}
+			}
+			if (modelObject.has("on_true") && modelObject.get("on_true").isJsonObject()) {
+				return resolveItemDefinitionModelId(modelObject.getAsJsonObject("on_true"));
+			}
+		}
+		return null;
 	}
 
 	private static ResolvedItemModel resolveItemModel(Identifier modelId, Set<String> resolving) {
@@ -3110,6 +4248,7 @@ final class CameraEntityRenderer {
 
 		Map<String, String> textures = new HashMap<>();
 		List<ItemModelElement> elements = new ArrayList<>();
+		Map<ItemDisplayTransformContext, ItemModelTransform> transforms = new HashMap<>();
 		if (json.has("parent")) {
 			Identifier parentId = Identifier.tryParse(json.get("parent").getAsString());
 			if (parentId != null && !"builtin/generated".equals(parentId.toString())) {
@@ -3117,6 +4256,7 @@ final class CameraEntityRenderer {
 				if (parent != null) {
 					textures.putAll(parent.textures());
 					elements.addAll(parent.elements());
+					transforms.putAll(parent.transforms());
 				}
 			}
 		}
@@ -3124,6 +4264,9 @@ final class CameraEntityRenderer {
 			for (Map.Entry<String, JsonElement> entry : json.getAsJsonObject("textures").entrySet()) {
 				textures.put(entry.getKey(), entry.getValue().getAsString());
 			}
+		}
+		if (json.has("display") && json.get("display").isJsonObject()) {
+			transforms.putAll(parseItemModelTransforms(json.getAsJsonObject("display")));
 		}
 		if (json.has("elements") && json.get("elements").isJsonArray()) {
 			elements.clear();
@@ -3152,7 +4295,7 @@ final class CameraEntityRenderer {
 				elements.add(new ItemModelElement(from, to, faces, rotation));
 			}
 		}
-		return new ResolvedItemModel(Map.copyOf(textures), List.copyOf(elements));
+		return new ResolvedItemModel(Map.copyOf(textures), List.copyOf(elements), Map.copyOf(transforms));
 	}
 
 	private static Identifier resolveModelTexture(Identifier modelId, Set<String> visited) {
@@ -3288,6 +4431,59 @@ final class CameraEntityRenderer {
 		float angle = rotationJson.get("angle").getAsFloat();
 		boolean rescale = rotationJson.has("rescale") && rotationJson.get("rescale").getAsBoolean();
 		return new ElementRotation(origin, axis, angle, rescale, rotationMatrix(axis, angle, rescale));
+	}
+
+	private static Map<ItemDisplayTransformContext, ItemModelTransform> parseItemModelTransforms(JsonObject displayJson) {
+		Map<ItemDisplayTransformContext, ItemModelTransform> transforms = new HashMap<>();
+		readItemModelTransform(displayJson, "thirdperson_righthand", ItemDisplayTransformContext.THIRD_PERSON_RIGHT_HAND, transforms);
+		readItemModelTransform(displayJson, "thirdperson_lefthand", ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND, transforms);
+		readItemModelTransform(displayJson, "ground", ItemDisplayTransformContext.GROUND, transforms);
+		readItemModelTransform(displayJson, "fixed", ItemDisplayTransformContext.FIXED, transforms);
+		return transforms;
+	}
+
+	private static void readItemModelTransform(
+			JsonObject displayJson,
+			String jsonKey,
+			ItemDisplayTransformContext context,
+			Map<ItemDisplayTransformContext, ItemModelTransform> transforms
+	) {
+		if (!displayJson.has(jsonKey) || !displayJson.get(jsonKey).isJsonObject()) {
+			return;
+		}
+		JsonObject transformJson = displayJson.getAsJsonObject(jsonKey);
+		float[] rotation = readModelTransformVector(transformJson, "rotation", 0.0F, 0.0F, 0.0F);
+		float[] translation = readModelTransformVector(transformJson, "translation", 0.0F, 0.0F, 0.0F);
+		float[] scale = readModelTransformVector(transformJson, "scale", 1.0F, 1.0F, 1.0F);
+		transforms.put(
+				context,
+				new ItemModelTransform(
+						rotation[0],
+						rotation[1],
+						rotation[2],
+						Mth.clamp(translation[0] * PX, -5.0F, 5.0F),
+						Mth.clamp(translation[1] * PX, -5.0F, 5.0F),
+						Mth.clamp(translation[2] * PX, -5.0F, 5.0F),
+						Mth.clamp(scale[0], -4.0F, 4.0F),
+						Mth.clamp(scale[1], -4.0F, 4.0F),
+						Mth.clamp(scale[2], -4.0F, 4.0F)
+				)
+		);
+	}
+
+	private static float[] readModelTransformVector(JsonObject object, String key, float defaultX, float defaultY, float defaultZ) {
+		if (!object.has(key) || !object.get(key).isJsonArray()) {
+			return new float[]{defaultX, defaultY, defaultZ};
+		}
+		JsonArray array = object.getAsJsonArray(key);
+		if (array.size() != 3) {
+			return new float[]{defaultX, defaultY, defaultZ};
+		}
+		return new float[]{
+				array.get(0).getAsFloat(),
+				array.get(1).getAsFloat(),
+				array.get(2).getAsFloat()
+		};
 	}
 
 	private static Identifier itemTextureFallback(Identifier modelId) {
@@ -3427,6 +4623,7 @@ final class CameraEntityRenderer {
 		private static Matrix4f rootTransform(ClientModelSnapshot snapshot) {
 			return switch (snapshot.transformKind()) {
 				case BOAT -> boatRootTransform(snapshot);
+				case BLOCK_ENTITY -> blockEntityRootTransform(snapshot);
 				case LIVING -> new Matrix4f()
 						.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
 						.scale(snapshot.rootScale())
@@ -3434,6 +4631,39 @@ final class CameraEntityRenderer {
 						.scale(-1.0F, -1.0F, 1.0F)
 						.translate(0.0F, -1.501F, 0.0F);
 			};
+		}
+
+		private static Matrix4f blockEntityRootTransform(ClientModelSnapshot snapshot) {
+			Map<String, Object> stateFields = snapshot.stateFields();
+			Matrix4f root = new Matrix4f()
+					.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
+					.translate(
+							stateFloat(stateFields, "rootTranslateX", 0.0F),
+							stateFloat(stateFields, "rootTranslateY", 0.0F),
+							stateFloat(stateFields, "rootTranslateZ", 0.0F)
+					)
+					.rotateY(radians(stateFloat(stateFields, "rootRotateY", 0.0F)))
+					.rotateX(radians(stateFloat(stateFields, "rootRotateX", 0.0F)))
+					.rotateZ(radians(stateFloat(stateFields, "rootRotateZ", 0.0F)))
+					.translate(
+							stateFloat(stateFields, "rootMidTranslateX", 0.0F),
+							stateFloat(stateFields, "rootMidTranslateY", 0.0F),
+							stateFloat(stateFields, "rootMidTranslateZ", 0.0F)
+					)
+					.rotateY(radians(stateFloat(stateFields, "rootRotate2Y", 0.0F)))
+					.rotateX(radians(stateFloat(stateFields, "rootRotate2X", 0.0F)))
+					.rotateZ(radians(stateFloat(stateFields, "rootRotate2Z", 0.0F)))
+					.translate(
+							stateFloat(stateFields, "rootPostTranslateX", 0.0F),
+							stateFloat(stateFields, "rootPostTranslateY", 0.0F),
+							stateFloat(stateFields, "rootPostTranslateZ", 0.0F)
+					)
+					.scale(
+							snapshot.rootScale() * stateFloat(stateFields, "rootScaleX", 1.0F),
+							snapshot.rootScale() * stateFloat(stateFields, "rootScaleY", 1.0F),
+							snapshot.rootScale() * stateFloat(stateFields, "rootScaleZ", 1.0F)
+					);
+			return root;
 		}
 
 		private static Matrix4f boatRootTransform(ClientModelSnapshot snapshot) {
@@ -3641,8 +4871,13 @@ final class CameraEntityRenderer {
 				Constructor<?> constructor = modelClass.getConstructor(bridge.modelPartClass, boolean.class);
 				return constructor.newInstance(rootPart, modelFlag);
 			} catch (NoSuchMethodException ignored) {
-				Constructor<?> constructor = modelClass.getConstructor(bridge.modelPartClass);
-				return constructor.newInstance(rootPart);
+				try {
+					Constructor<?> constructor = modelClass.getConstructor(bridge.modelPartClass, java.util.function.Function.class);
+					return constructor.newInstance(rootPart, (java.util.function.Function<Identifier, Object>) identifier -> null);
+				} catch (NoSuchMethodException ignoredAgain) {
+					Constructor<?> constructor = modelClass.getConstructor(bridge.modelPartClass);
+					return constructor.newInstance(rootPart);
+				}
 			}
 		}
 
@@ -3655,8 +4890,12 @@ final class CameraEntityRenderer {
 				float cubeDeformation,
 				boolean modelFlag
 		) throws ReflectiveOperationException {
+			FactoryDescriptor factoryDescriptor = FactoryDescriptor.parse(layerFactoryMethodName);
+			Class<?> ownerClass = factoryDescriptor.ownerClassName() == null
+					? modelClass
+					: Class.forName(factoryDescriptor.ownerClassName(), true, bridge.classLoader);
 			List<Method> candidates = new ArrayList<>();
-			for (Class<?> cursor = modelClass; cursor != null && cursor != Object.class; cursor = cursor.getSuperclass()) {
+			for (Class<?> cursor = ownerClass; cursor != null && cursor != Object.class; cursor = cursor.getSuperclass()) {
 				for (Method method : cursor.getDeclaredMethods()) {
 					if ((method.getModifiers() & java.lang.reflect.Modifier.STATIC) == 0) {
 						continue;
@@ -3664,10 +4903,10 @@ final class CameraEntityRenderer {
 					if (!bridge.layerDefinitionClass.equals(method.getReturnType()) && !bridge.meshDefinitionClass.equals(method.getReturnType())) {
 						continue;
 					}
-					if (layerFactoryMethodName != null && !layerFactoryMethodName.equals(method.getName())) {
+					if (factoryDescriptor.methodName() != null && !factoryDescriptor.methodName().equals(method.getName())) {
 						continue;
 					}
-					if (isSupportedLayerFactory(bridge, method)) {
+					if (isSupportedLayerFactory(bridge, method, factoryDescriptor.argument())) {
 						candidates.add(method);
 					}
 				}
@@ -3675,7 +4914,7 @@ final class CameraEntityRenderer {
 			candidates.sort(Comparator.comparingInt(VanillaClientModels::layerMethodPriority));
 			for (Method method : candidates) {
 				method.setAccessible(true);
-				Object result = invokeLayerFactory(bridge, method, cubeDeformation, modelFlag);
+				Object result = invokeLayerFactory(bridge, method, cubeDeformation, modelFlag, factoryDescriptor.argument());
 				if (result == null) {
 					continue;
 				}
@@ -3689,24 +4928,33 @@ final class CameraEntityRenderer {
 			return null;
 		}
 
-		private static boolean isSupportedLayerFactory(RuntimeBridge bridge, Method method) {
+		private static boolean isSupportedLayerFactory(RuntimeBridge bridge, Method method, String explicitArgument) {
 			Class<?>[] parameterTypes = method.getParameterTypes();
 			return switch (parameterTypes.length) {
 				case 0 -> true;
-				case 1 -> bridge.cubeDeformationClass.equals(parameterTypes[0]) || parameterTypes[0] == boolean.class;
+				case 1 -> bridge.cubeDeformationClass.equals(parameterTypes[0])
+						|| parameterTypes[0] == boolean.class
+						|| (parameterTypes[0].isEnum() && explicitArgument != null);
 				case 2 -> (bridge.cubeDeformationClass.equals(parameterTypes[0]) && parameterTypes[1] == boolean.class)
 						|| (parameterTypes[0] == boolean.class && bridge.cubeDeformationClass.equals(parameterTypes[1]));
 				default -> false;
 			};
 		}
 
-		private static Object invokeLayerFactory(RuntimeBridge bridge, Method method, float cubeDeformation, boolean modelFlag) throws ReflectiveOperationException {
+		@SuppressWarnings({"rawtypes", "unchecked"})
+		private static Object invokeLayerFactory(RuntimeBridge bridge, Method method, float cubeDeformation, boolean modelFlag, String explicitArgument) throws ReflectiveOperationException {
 			Class<?>[] parameterTypes = method.getParameterTypes();
 			return switch (parameterTypes.length) {
 				case 0 -> method.invoke(null);
 				case 1 -> {
 					if (bridge.cubeDeformationClass.equals(parameterTypes[0])) {
 						yield method.invoke(null, cubeDeformationObject(bridge, cubeDeformation));
+					}
+					if (parameterTypes[0].isEnum() && explicitArgument != null) {
+						yield method.invoke(null, Enum.valueOf((Class<? extends Enum>) parameterTypes[0].asSubclass(Enum.class), explicitArgument));
+					}
+					if (explicitArgument != null && parameterTypes[0] == boolean.class) {
+						yield method.invoke(null, Boolean.parseBoolean(explicitArgument));
 					}
 					yield method.invoke(null, modelFlag);
 				}
@@ -3789,6 +5037,32 @@ final class CameraEntityRenderer {
 				}
 			}
 			return null;
+		}
+
+		private record FactoryDescriptor(
+				String ownerClassName,
+				String methodName,
+				String argument
+		) {
+			private static FactoryDescriptor parse(String descriptor) {
+				if (descriptor == null || descriptor.isBlank()) {
+					return new FactoryDescriptor(null, null, null);
+				}
+				String owner = null;
+				String method = descriptor;
+				String argument = null;
+				int hashIndex = descriptor.indexOf('#');
+				if (hashIndex >= 0) {
+					owner = descriptor.substring(0, hashIndex);
+					method = descriptor.substring(hashIndex + 1);
+				}
+				int colonIndex = method.indexOf(':');
+				if (colonIndex >= 0) {
+					argument = method.substring(colonIndex + 1);
+					method = method.substring(0, colonIndex);
+				}
+				return new FactoryDescriptor(owner, method, argument);
+			}
 		}
 
 		private static RuntimeBridge runtimeBridge() {
@@ -3925,6 +5199,14 @@ final class CameraEntityRenderer {
 			}
 
 			private Object newState(Map<String, Object> stateFields) throws ReflectiveOperationException {
+				if (this.stateClass == Float.class || this.stateClass == float.class) {
+					Object value = stateFields.get("modelState");
+					return value instanceof Number number ? number.floatValue() : 0.0F;
+				}
+				if ("net.minecraft.util.Unit".equals(this.stateClass.getName())) {
+					Field instanceField = this.stateClass.getField("INSTANCE");
+					return instanceField.get(null);
+				}
 				Object state = this.stateClass.getDeclaredConstructor().newInstance();
 				Map<String, Field> fieldsByName = new HashMap<>();
 				for (Field field : this.stateClass.getFields()) {

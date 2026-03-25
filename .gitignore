@@ -18,3 +18,5 @@ usercache.json
 cache/
 .tmp/
 usercache.json
+config/skinrestorer/mojang_profile_cache.json
+
