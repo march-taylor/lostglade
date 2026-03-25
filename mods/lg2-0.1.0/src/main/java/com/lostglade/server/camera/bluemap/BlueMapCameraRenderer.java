@@ -1193,6 +1193,11 @@ public final class BlueMapCameraRenderer {
 				public int materialForPlayerSkin(CameraEntityRenderer.PlayerSkinSnapshot skinSnapshot) {
 					return FrameRenderer.this.materialForPlayerSkin(skinSnapshot);
 				}
+
+				@Override
+				public int materialForImage(String cacheKey, BufferedImage image) {
+					return FrameRenderer.this.registerDynamicMaterial(cacheKey, image == null ? TextureMaterial.missing() : TextureMaterial.fromImage(image));
+				}
 			});
 
 			return model;

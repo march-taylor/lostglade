@@ -21,6 +21,7 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
@@ -71,6 +72,9 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.component.DyedItemColor;
 import net.minecraft.world.item.equipment.EquipmentAsset;
 import net.minecraft.world.item.equipment.Equippable;
+import net.minecraft.world.level.material.MapColor;
+import net.minecraft.world.level.saveddata.maps.MapId;
+import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
@@ -135,6 +139,8 @@ final class CameraEntityRenderer {
 		int materialForTexture(Identifier textureId);
 
 		int materialForPlayerSkin(PlayerSkinSnapshot skinSnapshot);
+
+		int materialForImage(String cacheKey, BufferedImage image);
 	}
 
 	interface EntitySnapshot {
@@ -275,8 +281,15 @@ final class CameraEntityRenderer {
 			boolean invisible,
 			int rotation,
 			boolean mapFrame,
-			ItemVisual item
+			ItemVisual item,
+			FramedMapSnapshot map
 	) implements EntitySnapshot {
+	}
+
+	record FramedMapSnapshot(
+			int mapId,
+			byte[] colors
+	) {
 	}
 
 	record LineSnapshot(
@@ -1055,6 +1068,7 @@ final class CameraEntityRenderer {
 	}
 
 	private static EntitySnapshot captureItemFrameSnapshot(net.minecraft.world.entity.decoration.ItemFrame itemFrame) {
+		ItemStack stack = itemFrame.getItem();
 		ItemVisual item = resolveItemVisual(itemFrame.getItem());
 		if (item == null) {
 			item = new ItemVisual(null, null);
@@ -1066,8 +1080,24 @@ final class CameraEntityRenderer {
 				itemFrame.isInvisible(),
 				itemFrame.getRotation(),
 				itemFrame.hasFramedMap(),
-				item
+				item,
+				captureFramedMap(itemFrame, stack)
 		);
+	}
+
+	private static FramedMapSnapshot captureFramedMap(net.minecraft.world.entity.decoration.ItemFrame itemFrame, ItemStack stack) {
+		if (stack == null || stack.isEmpty() || !(itemFrame.level() instanceof ServerLevel serverLevel)) {
+			return null;
+		}
+		MapId mapId = stack.get(DataComponents.MAP_ID);
+		if (mapId == null) {
+			return null;
+		}
+		MapItemSavedData mapData = serverLevel.getMapData(mapId);
+		if (mapData == null || mapData.colors == null || mapData.colors.length == 0) {
+			return null;
+		}
+		return new FramedMapSnapshot(mapId.id(), mapData.colors.clone());
 	}
 
 	private static EntitySnapshot captureBlockEntityAsFixedItem(net.minecraft.world.level.block.entity.BlockEntity blockEntity) {
@@ -2913,6 +2943,10 @@ final class CameraEntityRenderer {
 				renderBlockEntityModel(context, root, frameModel);
 			}
 		}
+		if (snapshot.map() != null) {
+			renderFramedMap(context, root, snapshot);
+			return;
+		}
 		if (snapshot.item() == null || (snapshot.item().flatTexture() == null && (snapshot.item().model() == null || snapshot.item().model().elements().isEmpty()))) {
 			return;
 		}
@@ -2923,6 +2957,33 @@ final class CameraEntityRenderer {
 				.rotateY((float) Math.PI)
 				.scale(0.5F);
 		renderItemVisual(context, itemRoot, snapshot.item(), ItemDisplayTransformContext.FRAMED);
+	}
+
+	private static void renderFramedMap(RenderContext context, Matrix4f root, ItemFrameSnapshot snapshot) {
+		FramedMapSnapshot map = snapshot.map();
+		if (map == null) {
+			return;
+		}
+		float zOffset = snapshot.invisible() ? 0.5F : 0.4375F;
+		float rotation = Math.floorMod(snapshot.rotation(), 4) * 90.0F;
+		Matrix4f contentRoot = new Matrix4f(root)
+				.translate(0.0F, 0.0F, zOffset)
+				.rotateZ(radians(rotation))
+				.rotateY((float) Math.PI);
+		int mapMaterial = context.materialResolver.materialForImage("framed_map:" + map.mapId(), framedMapImage(map));
+		addTexturedPlane(context, contentRoot, -0.5F, -0.5F, 0.0F, 1.0F, 1.0F, 0.0F, 0.0F, 1.0F, 1.0F, mapMaterial, 1.0F, 1.0F, 1.0F);
+	}
+
+	private static BufferedImage framedMapImage(FramedMapSnapshot snapshot) {
+		BufferedImage image = new BufferedImage(128, 128, BufferedImage.TYPE_INT_ARGB);
+		byte[] colors = snapshot.colors();
+		int[] pixels = new int[128 * 128];
+		for (int i = 0; i < pixels.length; i++) {
+			int packedId = i < colors.length ? Byte.toUnsignedInt(colors[i]) : 0;
+			pixels[i] = MapColor.getColorFromPackedId(packedId);
+		}
+		image.setRGB(0, 0, 128, 128, pixels, 0, 128);
+		return image;
 	}
 
 	private static void renderLine(RenderContext context, LineSnapshot snapshot) {
