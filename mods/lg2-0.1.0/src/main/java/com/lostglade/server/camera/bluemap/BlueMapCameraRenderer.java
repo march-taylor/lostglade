@@ -45,8 +45,11 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.MoonPhase;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.biome.BiomeSpecialEffects;
 import net.minecraft.world.level.block.Blocks;
@@ -57,6 +60,8 @@ import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.entity.Entity;
+import org.joml.Matrix3f;
+import org.joml.Vector3f;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -79,10 +84,23 @@ public final class BlueMapCameraRenderer {
 	private static final int BIOME_CONTEXT_HORIZONTAL_RADIUS = 2;
 	private static final int BIOME_CONTEXT_VERTICAL_RADIUS = 1;
 	private static final int NO_TINT_RGB = -1;
+	private static final float DEG_TO_RAD = (float) (Math.PI / 180.0D);
+	private static final float HALF_CELESTIAL_QUAD_SIZE = 0.30F;
+	private static final float STAR_DISC_RADIUS = 0.0019F;
+	private static final float SUNRISE_HORIZON_BAND = 0.42F;
+	private static final float SUN_MASK_INNER_RADIUS = 0.78F;
+	private static final float SUN_MASK_OUTER_RADIUS = 0.86F;
+	private static final float MOON_MASK_INNER_RADIUS = 0.92F;
+	private static final float MOON_MASK_OUTER_RADIUS = 1.02F;
+	private static final int SUN_GLOW_RGB = 0xFFE3A2;
+	private static final Identifier SUN_TEXTURE_ID = Identifier.fromNamespaceAndPath("minecraft", "environment/celestial/sun");
+	private static final Identifier END_SKY_TEXTURE_ID = Identifier.fromNamespaceAndPath("minecraft", "environment/end_sky");
 	private static final float[] SRGB_TO_LINEAR = buildSrgbToLinear();
 	private static final Variant VANILLA_WATER_LIQUID_VARIANT = createLiquidVariant("camera_water", "block/water_still", "block/water_flow");
 	private static final Variant VANILLA_LAVA_LIQUID_VARIANT = createLiquidVariant("camera_lava", "block/lava_still", "block/lava_flow");
 	private static final Map<net.minecraft.world.level.block.state.BlockState, BlockState> BLOCK_STATE_CACHE = new ConcurrentHashMap<>();
+	private static final Map<String, TextureMaterial> SKY_TEXTURE_CACHE = new ConcurrentHashMap<>();
+	private static final StarField STAR_FIELD = StarField.create();
 	private static volatile RenderResources renderResources;
 
 	private BlueMapCameraRenderer() {
@@ -97,7 +115,7 @@ public final class BlueMapCameraRenderer {
 		List<CameraEntityRenderer.EntitySnapshot> entities = new ArrayList<>();
 		entities.addAll(captureEntities(player, level, frustum));
 		entities.addAll(captureBlockEntities(level, frustum));
-		FrameEnvironment environment = FrameEnvironment.capture(level);
+		FrameEnvironment environment = FrameEnvironment.capture(level, eyePosition);
 		return new PreparedFrame(eyePosition, forward, right, up, maxDistance, fovDegrees, supersampling, snapshot, entities, environment);
 	}
 
@@ -207,6 +225,36 @@ public final class BlueMapCameraRenderer {
 		return Mth.clamp(Math.round(srgb * 255.0F), 0, 255);
 	}
 
+	private static TextureMaterial skyMaterial(Identifier textureId) {
+		if (textureId == null) {
+			return TextureMaterial.missing();
+		}
+		return SKY_TEXTURE_CACHE.computeIfAbsent(textureId.toString(), ignored -> CameraEntityRenderer.loadTextureMaterial(textureId));
+	}
+
+	private static Identifier moonTextureId(MoonPhase moonPhase) {
+		MoonPhase resolvedPhase = moonPhase == null ? MoonPhase.FULL_MOON : moonPhase;
+		return Identifier.fromNamespaceAndPath("minecraft", "environment/celestial/moon/" + resolvedPhase.getSerializedName());
+	}
+
+	private static Vec3 celestialDirection(float angle) {
+		Vector3f vector = new Vector3f(0.0F, 1.0F, 0.0F);
+		new Matrix3f()
+				.rotateY((float) (-Math.PI / 2.0D))
+				.rotateX(angle)
+				.transform(vector);
+		return new Vec3(vector.x(), vector.y(), vector.z()).normalize();
+	}
+
+	private static Vec3 inverseCelestialDirection(Vec3 direction, float angle) {
+		Vector3f vector = new Vector3f((float) direction.x, (float) direction.y, (float) direction.z);
+		new Matrix3f()
+				.rotateX(-angle)
+				.rotateY((float) (Math.PI / 2.0D))
+				.transform(vector);
+		return new Vec3(vector.x(), vector.y(), vector.z()).normalize();
+	}
+
 	private static BlockState toBlueMapState(net.minecraft.world.level.block.state.BlockState state) {
 		return BLOCK_STATE_CACHE.computeIfAbsent(state, BlueMapCameraRenderer::convertBlockState);
 	}
@@ -276,13 +324,38 @@ public final class BlueMapCameraRenderer {
 			boolean raining,
 			boolean skylight,
 			float ambientLight,
-			float sunlightStrength
+			float sunlightStrength,
+			net.minecraft.world.level.dimension.DimensionType.Skybox skybox,
+			int skyColor,
+			int sunriseSunsetColor,
+			float sunAngle,
+			float moonAngle,
+			float starAngle,
+			float rainBrightness,
+			float starBrightness,
+			MoonPhase moonPhase
 	) {
-		private static FrameEnvironment capture(ServerLevel level) {
+		private static FrameEnvironment capture(ServerLevel level, Vec3 cameraPosition) {
 			boolean skylight = level.dimensionType().hasSkyLight();
 			float ambient = Mth.clamp(level.dimensionType().ambientLight(), 0.0F, 1.0F);
 			float sunlight = skylight ? Mth.clamp(1.0F - level.getSkyDarken() / 15.0F, 0.0F, 1.0F) : 0.0F;
-			return new FrameEnvironment(toBlueMapDimension(level), level.isRaining(), skylight, ambient, sunlight);
+			float rainBrightness = 1.0F - level.getRainLevel(0.0F);
+			return new FrameEnvironment(
+					toBlueMapDimension(level),
+					level.isRaining(),
+					skylight,
+					ambient,
+					sunlight,
+					level.dimensionType().skybox(),
+					level.environmentAttributes().getValue(EnvironmentAttributes.SKY_COLOR, cameraPosition),
+					level.environmentAttributes().getValue(EnvironmentAttributes.SUNRISE_SUNSET_COLOR, cameraPosition),
+					level.environmentAttributes().getValue(EnvironmentAttributes.SUN_ANGLE, cameraPosition) * DEG_TO_RAD,
+					level.environmentAttributes().getValue(EnvironmentAttributes.MOON_ANGLE, cameraPosition) * DEG_TO_RAD,
+					level.environmentAttributes().getValue(EnvironmentAttributes.STAR_ANGLE, cameraPosition) * DEG_TO_RAD,
+					Mth.clamp(rainBrightness, 0.0F, 1.0F),
+					Mth.clamp(level.environmentAttributes().getValue(EnvironmentAttributes.STAR_BRIGHTNESS, cameraPosition), 0.0F, 1.0F),
+					level.environmentAttributes().getValue(EnvironmentAttributes.MOON_PHASE, cameraPosition)
+			);
 		}
 	}
 
@@ -1088,12 +1161,8 @@ public final class BlueMapCameraRenderer {
 		private void fillBackground() {
 			for (int y = 0; y < this.internalSize; y++) {
 				for (int x = 0; x < this.internalSize; x++) {
-					Vec3 direction = rayDirection(x + 0.5D, y + 0.5D);
-					int rgb = skyColor(direction);
 					int index = y * this.internalSize + x;
-					this.red[index] = toLinear((rgb >> 16) & 0xFF);
-					this.green[index] = toLinear((rgb >> 8) & 0xFF);
-					this.blue[index] = toLinear(rgb & 0xFF);
+					renderSkyPixel(index, rayDirection(x + 0.5D, y + 0.5D));
 				}
 			}
 		}
@@ -1107,29 +1176,266 @@ public final class BlueMapCameraRenderer {
 					.normalize();
 		}
 
-		private int skyColor(Vec3 direction) {
+		private void renderSkyPixel(int index, Vec3 direction) {
+			FrameEnvironment environment = this.frame.environment();
+			int baseRgb = switch (environment.skybox()) {
+				case END -> sampleEndSky(direction);
+				case NONE -> caveSkyColor(direction);
+				case OVERWORLD -> overworldSkyColor(direction);
+			};
+			float redLinear = toLinear((baseRgb >> 16) & 0xFF);
+			float greenLinear = toLinear((baseRgb >> 8) & 0xFF);
+			float blueLinear = toLinear(baseRgb & 0xFF);
+
+			if (environment.skybox() == net.minecraft.world.level.dimension.DimensionType.Skybox.OVERWORLD && environment.skylight()) {
+				int sunriseSunsetColor = environment.sunriseSunsetColor();
+				float sunriseAlpha = sunriseSunsetAlpha(direction);
+				if (sunriseAlpha > 0.0F) {
+					redLinear = blendLinear(redLinear, toLinear((sunriseSunsetColor >> 16) & 0xFF), sunriseAlpha);
+					greenLinear = blendLinear(greenLinear, toLinear((sunriseSunsetColor >> 8) & 0xFF), sunriseAlpha);
+					blueLinear = blendLinear(blueLinear, toLinear(sunriseSunsetColor & 0xFF), sunriseAlpha);
+				}
+
+				Vec3 sunDirection = celestialDirection(environment.sunAngle());
+				Vec3 moonDirection = celestialDirection(environment.moonAngle());
+				float rainBrightness = environment.rainBrightness();
+				float haloBaseRed = redLinear;
+				float haloBaseGreen = greenLinear;
+				float haloBaseBlue = blueLinear;
+				float sunGlow = sampleSunGlow(direction, sunDirection) * rainBrightness * 0.34F;
+				if (sunGlow > 0.0F) {
+					float glowRed = toLinear((SUN_GLOW_RGB >> 16) & 0xFF);
+					float glowGreen = toLinear((SUN_GLOW_RGB >> 8) & 0xFF);
+					float glowBlue = toLinear(SUN_GLOW_RGB & 0xFF);
+					float haloTargetRed = haloTarget(haloBaseRed, glowRed);
+					float haloTargetGreen = haloTarget(haloBaseGreen, glowGreen);
+					float haloTargetBlue = haloTarget(haloBaseBlue, glowBlue);
+					float haloBlend = sunGlow * 1.55F;
+					float haloLift = sunGlow * 0.70F;
+					redLinear = blendLinear(redLinear, haloTargetRed, haloBlend);
+					greenLinear = blendLinear(greenLinear, haloTargetGreen, haloBlend);
+					blueLinear = blendLinear(blueLinear, haloTargetBlue, haloBlend);
+					redLinear = screenLinear(redLinear, haloTargetRed, haloLift);
+					greenLinear = screenLinear(greenLinear, haloTargetGreen, haloLift);
+					blueLinear = screenLinear(blueLinear, haloTargetBlue, haloLift);
+				}
+				int sunArgb = sampleSunTexture(direction, sunDirection);
+				float sunAlpha = ((sunArgb >>> 24) & 0xFF) / 255.0F * rainBrightness;
+				if (sunAlpha > 0.0F) {
+					float sunRed = toLinear((sunArgb >> 16) & 0xFF);
+					float sunGreen = toLinear((sunArgb >> 8) & 0xFF);
+					float sunBlue = toLinear(sunArgb & 0xFF);
+					float sunBrightness = Math.max(sunRed, Math.max(sunGreen, sunBlue));
+					float coreFactor = smoothstep(0.12F, 0.52F, sunBrightness);
+					float coreAlpha = sunAlpha * coreFactor;
+					if (coreAlpha > 0.0F) {
+						redLinear = blendLinear(redLinear, sunRed, coreAlpha);
+						greenLinear = blendLinear(greenLinear, sunGreen, coreAlpha);
+						blueLinear = blendLinear(blueLinear, sunBlue, coreAlpha);
+					}
+				}
+
+				TextureMaterial moonMaterial = skyMaterial(moonTextureId(environment.moonPhase()));
+				int moonArgb = sampleMoonTexture(direction, moonDirection, moonMaterial);
+				float moonAlpha = ((moonArgb >>> 24) & 0xFF) / 255.0F * rainBrightness;
+				if (moonAlpha > 0.0F) {
+					redLinear = blendLinear(redLinear, toLinear((moonArgb >> 16) & 0xFF), moonAlpha);
+					greenLinear = blendLinear(greenLinear, toLinear((moonArgb >> 8) & 0xFF), moonAlpha);
+					blueLinear = blendLinear(blueLinear, toLinear(moonArgb & 0xFF), moonAlpha);
+				}
+
+				float stars = sampleStarBrightness(direction);
+				if (stars > 0.0F) {
+					float starAlpha = stars * environment.starBrightness() * rainBrightness;
+					redLinear = blendLinear(redLinear, 1.0F, starAlpha);
+					greenLinear = blendLinear(greenLinear, 1.0F, starAlpha);
+					blueLinear = blendLinear(blueLinear, 1.0F, starAlpha);
+				}
+			}
+
+			this.red[index] = redLinear;
+			this.green[index] = greenLinear;
+			this.blue[index] = blueLinear;
+		}
+
+		private int caveSkyColor(Vec3 direction) {
 			if (this.frame.environment().dimensionType() == DimensionType.NETHER) {
 				return 0xA54B2A;
 			}
-			if (this.frame.environment().dimensionType() == DimensionType.END) {
-				return 0x6A5E8F;
-			}
-			if (!this.frame.environment().skylight()) {
-				float ambient = Mth.clamp(this.frame.environment().ambientLight() + 0.18F, 0.15F, 0.45F);
-				return scaleRgb(0x2B313A, ambient);
-			}
+			float ambient = Mth.clamp(this.frame.environment().ambientLight() + 0.18F, 0.15F, 0.45F);
+			float horizon = 1.0F - Mth.clamp((float) Math.abs(direction.y), 0.0F, 1.0F);
+			return scaleRgb(0x2B313A, ambient * (0.90F + horizon * 0.18F));
+		}
 
-			float daylight = this.frame.environment().sunlightStrength();
+		private int overworldSkyColor(Vec3 direction) {
+			int skyRgb = this.frame.environment().skyColor();
 			float vertical = Mth.clamp((float) ((direction.y + 1.0D) * 0.5D), 0.0F, 1.0F);
-			float gradient = Mth.clamp(daylight * (0.45F + vertical * 0.55F), 0.0F, 1.0F);
-			int rgb = lerpRgb(0xD8F0FF, 0x8FC9FF, gradient);
+			float zenithMix = (float) Math.pow(vertical, 0.65D);
+			int horizonRgb = scaleRgb(skyRgb, 0.82F);
+			int zenithRgb = lerpRgb(scaleRgb(skyRgb, 0.96F), 0xFFFFFF, 0.08F * this.frame.environment().sunlightStrength());
+			int rgb = lerpRgb(horizonRgb, zenithRgb, zenithMix);
 			if (direction.y < 0.0D) {
-				rgb = lerpRgb(0xA7C2D9, rgb, vertical);
-			}
-			if (this.frame.environment().raining()) {
-				rgb = lerpRgb(rgb, 0x7286A0, 0.45F);
+				float belowHorizon = Mth.clamp((float) (-direction.y), 0.0F, 1.0F);
+				rgb = lerpRgb(rgb, scaleRgb(skyRgb, 0.22F), belowHorizon * 0.88F);
 			}
 			return rgb;
+		}
+
+		private int sampleEndSky(Vec3 direction) {
+			TextureMaterial material = skyMaterial(END_SKY_TEXTURE_ID);
+			double ax = Math.abs(direction.x);
+			double ay = Math.abs(direction.y);
+			double az = Math.abs(direction.z);
+			float u;
+			float v;
+			if (ax >= ay && ax >= az) {
+				double inverse = 0.5D / ax;
+				u = (float) ((direction.z * inverse) + 0.5D);
+				v = (float) ((direction.y * inverse) + 0.5D);
+			} else if (ay >= az) {
+				double inverse = 0.5D / ay;
+				u = (float) ((direction.x * inverse) + 0.5D);
+				v = (float) ((direction.z * inverse) + 0.5D);
+			} else {
+				double inverse = 0.5D / az;
+				u = (float) ((direction.x * inverse) + 0.5D);
+				v = (float) ((direction.y * inverse) + 0.5D);
+			}
+			int argb = material.sample(u, v);
+			return argb & 0xFFFFFF;
+		}
+
+		private float sunriseSunsetAlpha(Vec3 direction) {
+			int argb = this.frame.environment().sunriseSunsetColor();
+			float attributeAlpha = ((argb >>> 24) & 0xFF) / 255.0F;
+			if (attributeAlpha <= 0.0F) {
+				return 0.0F;
+			}
+			Vec3 sunDirection = celestialDirection(this.frame.environment().sunAngle());
+			float horizonMask = 1.0F - Mth.clamp(Math.abs((float) direction.y) / SUNRISE_HORIZON_BAND, 0.0F, 1.0F);
+			float facingMask = Mth.clamp((float) direction.dot(sunDirection), 0.0F, 1.0F);
+			facingMask = facingMask * facingMask;
+			return attributeAlpha * horizonMask * facingMask;
+		}
+
+		private float sampleStarBrightness(Vec3 direction) {
+			if (direction.y <= 0.0D) {
+				return 0.0F;
+			}
+			Vec3 localDirection = inverseCelestialDirection(direction, this.frame.environment().starAngle());
+			return STAR_FIELD.sample(localDirection);
+		}
+
+		private static float blendLinear(float base, float overlay, float alpha) {
+			float clampedAlpha = Mth.clamp(alpha, 0.0F, 1.0F);
+			return overlay * clampedAlpha + base * (1.0F - clampedAlpha);
+		}
+
+		private static float addLinear(float base, float overlay, float alpha) {
+			float clampedAlpha = Mth.clamp(alpha, 0.0F, 1.0F);
+			return Mth.clamp(base + overlay * clampedAlpha, 0.0F, 1.0F);
+		}
+
+		private static float screenLinear(float base, float overlay, float alpha) {
+			float clampedAlpha = Mth.clamp(alpha, 0.0F, 1.0F);
+			return Mth.clamp(base + (1.0F - base) * overlay * clampedAlpha, 0.0F, 1.0F);
+		}
+
+		private static float haloTarget(float skyBase, float glowColor) {
+			float tinted = Mth.lerp(0.58F, skyBase, glowColor);
+			float lifted = screenLinear(skyBase, glowColor, 0.38F);
+			return Mth.clamp(Mth.lerp(0.55F, tinted, lifted), 0.0F, 1.0F);
+		}
+
+		private static float sampleSunGlow(Vec3 direction, Vec3 centerDirection) {
+			float planeRadius = celestialPlaneRadius(direction, centerDirection);
+			if (!Float.isFinite(planeRadius)) {
+				return 0.0F;
+			}
+			float innerFade = smoothstep(0.08F, 0.30F, planeRadius);
+			float outerFade = 1.0F - smoothstep(0.62F, 1.72F, planeRadius);
+			if (innerFade <= 0.0F || outerFade <= 0.0F) {
+				return 0.0F;
+			}
+			float gaussian = (float) Math.exp(-Math.pow(planeRadius / 0.98F, 1.85D));
+			return innerFade * outerFade * gaussian;
+		}
+
+		private static int sampleSunTexture(Vec3 direction, Vec3 centerDirection) {
+			return sampleCelestialTexture(direction, centerDirection, skyMaterial(SUN_TEXTURE_ID), HALF_CELESTIAL_QUAD_SIZE, SUN_MASK_INNER_RADIUS, SUN_MASK_OUTER_RADIUS);
+		}
+
+		private static int sampleMoonTexture(Vec3 direction, Vec3 centerDirection, TextureMaterial material) {
+			return sampleCelestialTexture(direction, centerDirection, material, HALF_CELESTIAL_QUAD_SIZE, MOON_MASK_INNER_RADIUS, MOON_MASK_OUTER_RADIUS);
+		}
+
+		private static int sampleCelestialTexture(
+				Vec3 direction,
+				Vec3 centerDirection,
+				TextureMaterial material,
+				float halfSize,
+				float radialMaskInner,
+				float radialMaskOuter
+		) {
+			if (material == null) {
+				return 0;
+			}
+			double alignment = direction.dot(centerDirection);
+			if (alignment <= 0.0D) {
+				return 0;
+			}
+			Vec3 upHint = Math.abs(centerDirection.y) > 0.98D ? new Vec3(0.0D, 0.0D, 1.0D) : new Vec3(0.0D, 1.0D, 0.0D);
+			Vec3 basisRight = upHint.cross(centerDirection).normalize();
+			Vec3 basisUp = centerDirection.cross(basisRight).normalize();
+			float planeX = (float) (direction.dot(basisRight) / alignment);
+			float planeY = (float) (direction.dot(basisUp) / alignment);
+			if (Math.abs(planeX) > halfSize || Math.abs(planeY) > halfSize) {
+				return 0;
+			}
+			float u = planeX / (halfSize * 2.0F) + 0.5F;
+			float v = 0.5F - planeY / (halfSize * 2.0F);
+			int argb = material.sample(u, v);
+			int alpha = (argb >>> 24) & 0xFF;
+			if (alpha <= 0) {
+				return 0;
+			}
+
+			float radialX = u * 2.0F - 1.0F;
+			float radialY = v * 2.0F - 1.0F;
+			float radialDistance = Mth.sqrt(radialX * radialX + radialY * radialY);
+			float discMask = 1.0F - smoothstep(radialMaskInner, radialMaskOuter, radialDistance);
+			if (discMask <= 0.0F) {
+				return 0;
+			}
+
+			float maxChannel = Math.max(((argb >> 16) & 0xFF) / 255.0F, Math.max(((argb >> 8) & 0xFF) / 255.0F, (argb & 0xFF) / 255.0F));
+			float keyMask = smoothstep(0.015F, 0.09F, maxChannel);
+			float resolvedAlpha = alpha / 255.0F * discMask * keyMask;
+			if (resolvedAlpha <= 0.0F) {
+				return 0;
+			}
+			return (Mth.clamp(Math.round(resolvedAlpha * 255.0F), 0, 255) << 24) | (argb & 0xFFFFFF);
+		}
+
+		private static float celestialPlaneRadius(Vec3 direction, Vec3 centerDirection) {
+			double alignment = direction.dot(centerDirection);
+			if (alignment <= 0.0D) {
+				return Float.POSITIVE_INFINITY;
+			}
+			Vec3 upHint = Math.abs(centerDirection.y) > 0.98D ? new Vec3(0.0D, 0.0D, 1.0D) : new Vec3(0.0D, 1.0D, 0.0D);
+			Vec3 basisRight = upHint.cross(centerDirection).normalize();
+			Vec3 basisUp = centerDirection.cross(basisRight).normalize();
+			float planeX = (float) (direction.dot(basisRight) / alignment);
+			float planeY = (float) (direction.dot(basisUp) / alignment);
+			return Mth.sqrt(planeX * planeX + planeY * planeY) / HALF_CELESTIAL_QUAD_SIZE;
+		}
+
+		private static float smoothstep(float edge0, float edge1, float value) {
+			if (edge0 == edge1) {
+				return value < edge0 ? 0.0F : 1.0F;
+			}
+			float t = Mth.clamp((value - edge0) / (edge1 - edge0), 0.0F, 1.0F);
+			return t * t * (3.0F - 2.0F * t);
 		}
 
 		private ArrayTileModel buildGeometry() {
@@ -1734,6 +2040,80 @@ public final class BlueMapCameraRenderer {
 			TextureMaterial material,
 			float sortDepth
 	) {
+	}
+
+	private static final class StarField {
+		private static final int CELL_U = 192;
+		private static final int CELL_V = 96;
+		private final long[] seeds;
+
+		private StarField(long[] seeds) {
+			this.seeds = seeds;
+		}
+
+		private static StarField create() {
+			long[] seeds = new long[CELL_U * CELL_V];
+			RandomSource random = RandomSource.create(10842L);
+			for (int i = 0; i < seeds.length; i++) {
+				seeds[i] = random.nextLong();
+			}
+			return new StarField(seeds);
+		}
+
+		private float sample(Vec3 direction) {
+			float u = (float) (Math.atan2(direction.z, direction.x) / (Math.PI * 2.0D) + 0.5D);
+			float v = (float) (Math.asin(Mth.clamp(direction.y, -1.0D, 1.0D)) / Math.PI + 0.5D);
+			float cellU = u * CELL_U;
+			float cellV = v * CELL_V;
+			int baseU = Mth.floor(cellU);
+			int baseV = Mth.floor(cellV);
+			float brightness = 0.0F;
+			for (int offsetV = -1; offsetV <= 1; offsetV++) {
+				int wrappedV = wrap(baseV + offsetV, CELL_V);
+				for (int offsetU = -1; offsetU <= 1; offsetU++) {
+					int wrappedU = wrap(baseU + offsetU, CELL_U);
+					long seed = this.seeds[wrappedV * CELL_U + wrappedU];
+					float chance = unitFloat(seed);
+					if (chance < 0.949F) {
+						continue;
+					}
+					float centerU = wrappedU + unitFloat(seed >> 16);
+					float centerV = wrappedV + unitFloat(seed >> 32);
+					float du = periodicDistance(cellU, centerU, CELL_U);
+					float dv = periodicDistance(cellV, centerV, CELL_V);
+					float size = STAR_DISC_RADIUS * Mth.lerp(unitFloat(seed >> 48), 0.85F, 1.25F);
+					float distance = Mth.sqrt(du * du + dv * dv) / Math.max(size, 1.0E-4F);
+					if (distance >= 1.0F) {
+						continue;
+					}
+					float local = 1.0F - distance;
+					local = local * local * (1.15F - 0.15F * distance);
+					float starStrength = Mth.lerp(unitFloat(seed ^ 0x5DEECE66DL), 0.35F, 0.95F);
+					brightness = Math.max(brightness, local * starStrength);
+				}
+			}
+			return brightness;
+		}
+
+		private static int wrap(int value, int modulo) {
+			int wrapped = value % modulo;
+			return wrapped < 0 ? wrapped + modulo : wrapped;
+		}
+
+		private static float periodicDistance(float sample, float center, int modulo) {
+			float distance = Math.abs(sample - center);
+			return Math.min(distance, modulo - distance) / modulo;
+		}
+
+		private static float unitFloat(long seed) {
+			long mixed = seed;
+			mixed ^= mixed >>> 33;
+			mixed *= 0xff51afd7ed558ccdL;
+			mixed ^= mixed >>> 33;
+			mixed *= 0xc4ceb9fe1a85ec53L;
+			mixed ^= mixed >>> 33;
+			return (float) ((mixed >>> 40) & 0xFFFFFF) / (float) 0x1000000;
+		}
 	}
 
 	private record BlockBounds(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
