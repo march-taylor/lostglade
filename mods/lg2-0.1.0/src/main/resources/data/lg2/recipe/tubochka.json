@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "PPP",
+    "DDD",
+    "PPP"
+  ],
+  "key": {
+    "P": "minecraft:paper",
+    "D": "lg2:dried_travka"
+  },
+  "result": {
+    "id": "lg2:tubochka",
+    "count": 3
+  }
+}

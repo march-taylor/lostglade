@@ -22,6 +22,8 @@ public final class ModItems {
 	private static final Identifier SPECIAL_PICKAXE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "special_pickaxe");
 	private static final Identifier CAMERA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera");
 	private static final Identifier TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "travka");
+	private static final Identifier DRIED_TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "dried_travka");
+	private static final Identifier TUBOCHKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "tubochka");
 	private static final Identifier ABSOLUTE_INVISIBILITY_POTION_ID = Identifier.fromNamespaceAndPath(
 			Lg2.MOD_ID,
 			"absolute_invisibility_potion"
@@ -33,6 +35,8 @@ public final class ModItems {
 	private static final ResourceKey<Item> SPECIAL_PICKAXE_KEY = ResourceKey.create(Registries.ITEM, SPECIAL_PICKAXE_ID);
 	private static final ResourceKey<Item> CAMERA_KEY = ResourceKey.create(Registries.ITEM, CAMERA_ID);
 	private static final ResourceKey<Item> TRAVKA_KEY = ResourceKey.create(Registries.ITEM, TRAVKA_ID);
+	private static final ResourceKey<Item> DRIED_TRAVKA_KEY = ResourceKey.create(Registries.ITEM, DRIED_TRAVKA_ID);
+	private static final ResourceKey<Item> TUBOCHKA_KEY = ResourceKey.create(Registries.ITEM, TUBOCHKA_ID);
 	private static final ResourceKey<Item> ABSOLUTE_INVISIBILITY_POTION_KEY = ResourceKey.create(
 			Registries.ITEM,
 			ABSOLUTE_INVISIBILITY_POTION_ID
@@ -81,6 +85,25 @@ public final class ModItems {
 			new TravkaItem(
 					new Item.Properties()
 							.setId(TRAVKA_KEY)
+							.rarity(Rarity.COMMON)
+			)
+	);
+	public static final Item DRIED_TRAVKA = Registry.register(
+			BuiltInRegistries.ITEM,
+			DRIED_TRAVKA_ID,
+			new DriedTravkaItem(
+					new Item.Properties()
+							.setId(DRIED_TRAVKA_KEY)
+							.rarity(Rarity.COMMON)
+			)
+	);
+	public static final Item TUBOCHKA = Registry.register(
+			BuiltInRegistries.ITEM,
+			TUBOCHKA_ID,
+			new TubochkaItem(
+					new Item.Properties()
+							.setId(TUBOCHKA_KEY)
+							.stacksTo(64)
 							.rarity(Rarity.COMMON)
 			)
 	);
@@ -177,6 +200,8 @@ public final class ModItems {
 			entries.prepend(LONG_STABILITY_POTION);
 			entries.prepend(STABILITY_POTION);
 			entries.prepend(ABSOLUTE_INVISIBILITY_POTION);
+			entries.prepend(TUBOCHKA);
+			entries.prepend(DRIED_TRAVKA);
 			entries.prepend(TRAVKA);
 			entries.prepend(CAMERA);
 			entries.prepend(BITCOIN);

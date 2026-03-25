@@ -15,17 +15,17 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.context.UseOnContext;
 import xyz.nucleoid.packettweaker.PacketContext;
 
-public final class TravkaItem extends SimplePolymerItem {
-	private static final Identifier MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "travka");
-	private static final Identifier FALLBACK_MODEL_ID = Identifier.fromNamespaceAndPath("minecraft", "large_fern");
+public final class DriedTravkaItem extends SimplePolymerItem {
+	private static final Identifier MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "dried_travka");
+	private static final Identifier FALLBACK_MODEL_ID = Identifier.fromNamespaceAndPath("minecraft", "dead_bush");
 
-	public TravkaItem(Item.Properties settings) {
+	public DriedTravkaItem(Item.Properties settings) {
 		super(settings, Items.PAPER);
 	}
 
 	@Override
 	public Component getName(ItemStack stack) {
-		return Component.literal("Travka");
+		return Component.literal("Dried Travka");
 	}
 
 	@Override
@@ -49,27 +49,27 @@ public final class TravkaItem extends SimplePolymerItem {
 	private static MutableComponent getLocalizedName(PacketContext context) {
 		ServerPlayer player = context.getPlayer();
 		if (player == null) {
-			return Component.literal("Travka");
+			return Component.literal("Dried Travka");
 		}
 
 		String lang = player.clientInformation().language();
 		if (lang == null) {
-			return Component.literal("Travka");
+			return Component.literal("Dried Travka");
 		}
 
 		String normalized = lang.toLowerCase();
 		if (normalized.startsWith("rpr")) {
-			return Component.literal("Травка");
+			return Component.literal("Сушёная травка");
 		}
 		if (normalized.startsWith("uk")) {
-			return Component.literal("Травка");
+			return Component.literal("Сушена травка");
 		}
 		if (normalized.startsWith("ru")) {
-			return Component.literal("Травка");
+			return Component.literal("Сушёная травка");
 		}
 		if (normalized.startsWith("ja")) {
-			return Component.literal("トラフカ");
+			return Component.literal("乾燥トラフカ");
 		}
-		return Component.literal("Travka");
+		return Component.literal("Dried Travka");
 	}
 }

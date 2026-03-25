@@ -1,0 +1,12 @@
+{
+  "type": "minecraft:smelting",
+  "category": "misc",
+  "cookingtime": 200,
+  "experience": 0.0,
+  "ingredient": [
+    "lg2:travka"
+  ],
+  "result": {
+    "id": "lg2:dried_travka"
+  }
+}
