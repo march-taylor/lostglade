@@ -17,6 +17,7 @@ import com.mojang.authlib.properties.PropertyMap;
 import com.mojang.brigadier.context.CommandContext;
 import eu.pb4.polymer.core.api.entity.PolymerEntity;
 import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
+import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import it.unimi.dsi.fastutil.Pair;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -35,6 +36,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
@@ -42,6 +44,7 @@ import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.RemoteChatSession;
+import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -101,6 +104,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -121,6 +125,19 @@ public final class ServerRaceSystem {
 	private static final int DEFAULT_ACTION_WIDTH = 220;
 	private static final int EXIT_ACTION_WIDTH = 200;
 	private static final String MISTER_CARTEL_49_RACE_ID = "mister_cartel_49";
+	private static final String TITLE_OVERLAY_SHIFT = "\ue905";
+	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
+	private static final int TITLE_OVERLAY_TARGET_ADVANCE = 168;
+	private static final int TITLE_OVERLAY_SHIFT_ADVANCE = -8;
+	private static final String CARTEL_PASSPORT_OVERLAY_GLYPH = "\uef10";
+	private static final FontDescription CARTEL_PASSPORT_OVERLAY_FONT = new FontDescription.Resource(
+			Objects.requireNonNull(Identifier.tryParse("lg2:passport_title"))
+	);
+	private static final FontDescription CARTEL_PASSPORT_NAME_FONT = new FontDescription.Resource(
+			Objects.requireNonNull(Identifier.tryParse("lg2:passport_name"))
+	);
+	private static final int CARTEL_PASSPORT_NAME_CHAR_ADVANCE = 6;
+	private static final int CARTEL_PASSPORT_NAME_CENTER_X = 88;
 	private static final int MISTER_CARTEL_49_STACK_LIMIT = 49;
 	private static final String CARTEL_SUMMON_TAG = "lg2.cartel_summon";
 	private static final String CARTEL_LAWYER_TAG = "lg2.cartel_lawyer";
@@ -971,6 +988,10 @@ public final class ServerRaceSystem {
 	}
 
 	private static ItemStack buildCartelDisguiseArrow(ServerPlayer viewer, boolean next) {
+		if (viewer != null && PolymerResourcePackUtils.hasMainPack(viewer)) {
+			return ItemStack.EMPTY;
+		}
+
 		ItemStack stack = new ItemStack(Items.ARROW);
 		stack.set(
 				DataComponents.CUSTOM_NAME,
@@ -996,7 +1017,7 @@ public final class ServerRaceSystem {
 		stack.set(DataComponents.PROFILE, ResolvableProfile.createResolved(profile));
 		stack.set(
 				DataComponents.CUSTOM_NAME,
-				Component.literal(localizeCartelDisguiseText(viewer, "accept"))
+				Component.literal(viewer != null && PolymerResourcePackUtils.hasMainPack(viewer) ? " " : localizeCartelDisguiseText(viewer, "accept"))
 						.withStyle(style -> style.withColor(0x80FF80).withItalic(false).withBold(true))
 		);
 		return stack;
@@ -1009,19 +1030,36 @@ public final class ServerRaceSystem {
 	}
 
 	private static Component buildCartelDisguiseMenuTitle(ServerPlayer viewer, ServerPlayer target) {
-		String titleText = localizeCartelDisguiseText(viewer, "passport");
-		Component title = Component.literal(titleText);
+		if (viewer != null && PolymerResourcePackUtils.hasMainPack(viewer)) {
+			return buildCartelDisguisePackTitle(target);
+		}
+
+		if (target == null) {
+			return Component.literal(" ");
+		}
+		String playerName = target.getGameProfile().name();
+		return Component.literal(buildCartelDisguiseTitlePadding(playerName) + playerName);
+	}
+
+	private static Component buildCartelDisguisePackTitle(ServerPlayer target) {
+		Component title = Component.literal(buildOverlayGlyph(CARTEL_PASSPORT_OVERLAY_GLYPH, 176))
+				.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CARTEL_PASSPORT_OVERLAY_FONT));
 		if (target == null) {
 			return title;
 		}
+
 		String playerName = target.getGameProfile().name();
-		return title.copy().append(Component.literal(buildCartelDisguiseTitlePadding(titleText, playerName) + playerName));
+		int startX = Math.max(18, CARTEL_PASSPORT_NAME_CENTER_X - (playerName.length() * CARTEL_PASSPORT_NAME_CHAR_ADVANCE) / 2);
+		return title.copy()
+				.append(Component.literal(TITLE_OVERLAY_RESET + buildHorizontalAdvance(startX))
+						.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
+				.append(Component.literal(playerName)
+						.withStyle(style -> style.withColor(0x2E2016).withItalic(false).withFont(CARTEL_PASSPORT_NAME_FONT)));
 	}
 
-	private static String buildCartelDisguiseTitlePadding(String titleText, String playerName) {
-		int titleLength = titleText == null ? 0 : titleText.length();
+	private static String buildCartelDisguiseTitlePadding(String playerName) {
 		int nameLength = playerName == null ? 0 : playerName.length();
-		int spaces = Math.max(1, 13 - titleLength - (int) Math.floor(nameLength / 2.0D));
+		int spaces = Math.max(1, 12 - (int) Math.floor(nameLength / 2.0D));
 		return " ".repeat(spaces);
 	}
 
@@ -1087,6 +1125,35 @@ public final class ServerRaceSystem {
 			return "ru_ru";
 		}
 		return player.clientInformation().language().toLowerCase(Locale.ROOT);
+	}
+
+	private static String buildOverlayGlyph(String glyph, int glyphAdvance) {
+		int compensation = TITLE_OVERLAY_TARGET_ADVANCE - TITLE_OVERLAY_SHIFT_ADVANCE - glyphAdvance;
+		return TITLE_OVERLAY_RESET + TITLE_OVERLAY_SHIFT + glyph + buildHorizontalAdvance(compensation);
+	}
+
+	private static String buildHorizontalAdvance(int pixels) {
+		if (pixels == 0) {
+			return "";
+		}
+
+		int remaining = pixels;
+		StringBuilder result = new StringBuilder();
+		int[] values = remaining > 0
+				? new int[]{64, 32, 16, 8, 4, 2, 1}
+				: new int[]{-64, -32, -16, -8, -4, -2, -1};
+		String[] glyphs = remaining > 0
+				? new String[]{"\ue94d", "\ue94c", "\ue94b", "\ue94a", "\ue949", "\ue948", "\ue947"}
+				: new String[]{"\ue940", "\ue941", "\ue942", "\ue943", "\ue944", "\ue945", "\ue946"};
+
+		for (int index = 0; index < values.length; index++) {
+			int step = values[index];
+			while ((remaining > 0 && remaining >= step) || (remaining < 0 && remaining <= step)) {
+				result.append(glyphs[index]);
+				remaining -= step;
+			}
+		}
+		return result.toString();
 	}
 
 	private static void applySkinRestorerSkin(ServerPlayer sourcePlayer, PropertyMap properties) {
