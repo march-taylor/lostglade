@@ -582,6 +582,12 @@ final class CameraEntityRenderer {
 		}
 
 		if (entity instanceof Spider) {
+			if (VanillaClientModels.isAvailable()) {
+				ClientModelSnapshot snapshot = captureVanillaClientModel(livingEntity);
+				if (snapshot != null) {
+					return snapshot;
+				}
+			}
 			return new SpiderSnapshot(
 					entity.position(),
 					entity.getYRot(),
@@ -1223,6 +1229,28 @@ final class CameraEntityRenderer {
 		);
 	}
 
+	private static ClientModelSnapshot captureSpiderClientModel(LivingEntity livingEntity, Identifier texture) {
+		return livingClientModelSnapshot(
+				livingEntity,
+				livingEntity.yBodyRot,
+				livingStateFields(livingEntity),
+				new ClientLayerSnapshot[]{
+						new ClientLayerSnapshot(
+								"net.minecraft.client.model.monster.spider.SpiderModel",
+								texture,
+								0xFFFFFF,
+								false
+						),
+						new ClientLayerSnapshot(
+								"net.minecraft.client.model.monster.spider.SpiderModel",
+								SPIDER_EYES_TEXTURE,
+								0xFFFFFF,
+								true
+						)
+				}
+		);
+	}
+
 	private static ClientModelSnapshot captureIronGolemClientModel(net.minecraft.world.entity.animal.golem.IronGolem ironGolem) {
 		Map<String, Object> state = livingStateFields(ironGolem);
 		state.put("attackTicksRemaining", Math.max(ironGolem.getAttackAnimationTick(), 0));
@@ -1406,6 +1434,8 @@ final class CameraEntityRenderer {
 		rules.put("cow", livingEntity -> captureCowClientModel((Cow) livingEntity));
 		rules.put("pig", livingEntity -> capturePigClientModel((Pig) livingEntity));
 		rules.put("chicken", livingEntity -> captureChickenClientModel((Chicken) livingEntity));
+		rules.put("spider", livingEntity -> captureSpiderClientModel(livingEntity, SPIDER_TEXTURE));
+		rules.put("cave_spider", livingEntity -> captureSpiderClientModel(livingEntity, minecraftTexture("entity/spider/cave_spider")));
 		rules.put("mooshroom", livingEntity -> captureMushroomCowClientModel((MushroomCow) livingEntity));
 		rules.put("goat", livingEntity -> captureGoatClientModel((Goat) livingEntity));
 		rules.put("armadillo", livingEntity -> captureSimpleClientModel(
@@ -1457,7 +1487,6 @@ final class CameraEntityRenderer {
 		registerSimpleClientRule(rules, "bat", "net.minecraft.client.model.ambient.BatModel", minecraftTexture("entity/bat"));
 		registerSimpleClientRule(rules, "bee", "net.minecraft.client.model.animal.bee.BeeModel", minecraftTexture("entity/bee/bee"));
 		registerSimpleClientRule(rules, "camel", "net.minecraft.client.model.animal.camel.CamelModel", simpleMobTexture("camel"));
-		registerSimpleClientRule(rules, "cave_spider", "net.minecraft.client.model.monster.spider.SpiderModel", minecraftTexture("entity/spider/cave_spider"));
 		registerSimpleClientRule(rules, "cod", "net.minecraft.client.model.animal.fish.CodModel", minecraftTexture("entity/fish/cod"));
 		registerSimpleClientRule(rules, "creaking", "net.minecraft.client.model.monster.creaking.CreakingModel", minecraftTexture("entity/creaking/creaking"));
 		registerSimpleClientRule(rules, "dolphin", "net.minecraft.client.model.animal.dolphin.DolphinModel", minecraftTexture("entity/dolphin"));
