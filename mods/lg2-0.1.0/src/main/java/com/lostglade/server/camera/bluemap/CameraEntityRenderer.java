@@ -81,8 +81,12 @@ import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.FontMetrics;
 import java.awt.AlphaComposite;
 import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
@@ -302,6 +306,20 @@ final class CameraEntityRenderer {
 	) implements EntitySnapshot {
 	}
 
+	record ImagePlaneSnapshot(
+			Vec3 position,
+			Matrix4f transform,
+			float x,
+			float y,
+			float z,
+			float width,
+			float height,
+			String materialKey,
+			BufferedImage image,
+			boolean emissive
+	) implements EntitySnapshot {
+	}
+
 	record CompositeSnapshot(
 			Vec3 position,
 			EntitySnapshot primary,
@@ -503,10 +521,10 @@ final class CameraEntityRenderer {
 			return captureBedBlockEntity(bedBlockEntity);
 		}
 		if (blockEntity instanceof net.minecraft.world.level.block.entity.HangingSignBlockEntity hangingSignBlockEntity && VanillaClientModels.isAvailable()) {
-			return captureHangingSignBlockEntity(hangingSignBlockEntity);
+			return withSignText(captureHangingSignBlockEntity(hangingSignBlockEntity), hangingSignBlockEntity, true);
 		}
 		if (blockEntity instanceof net.minecraft.world.level.block.entity.SignBlockEntity signBlockEntity && VanillaClientModels.isAvailable()) {
-			return captureStandingOrWallSignBlockEntity(signBlockEntity);
+			return withSignText(captureStandingOrWallSignBlockEntity(signBlockEntity), signBlockEntity, false);
 		}
 		if (blockEntity instanceof net.minecraft.world.level.block.entity.BannerBlockEntity bannerBlockEntity && VanillaClientModels.isAvailable()) {
 			return captureBannerBlockEntity(bannerBlockEntity);
@@ -1228,6 +1246,185 @@ final class CameraEntityRenderer {
 						).withFactory("net.minecraft.client.renderer.blockentity.HangingSignRenderer#createHangingSignLayer:" + attachmentType)
 				}
 		);
+	}
+
+	private static EntitySnapshot withSignText(EntitySnapshot primary, net.minecraft.world.level.block.entity.SignBlockEntity signBlockEntity, boolean hanging) {
+		if (primary == null) {
+			return null;
+		}
+		List<EntitySnapshot> attachments = new ArrayList<>();
+		ImagePlaneSnapshot front = captureSignTextPlane(signBlockEntity, signBlockEntity.getFrontText(), true, hanging);
+		if (front != null) {
+			attachments.add(front);
+		}
+		ImagePlaneSnapshot back = captureSignTextPlane(signBlockEntity, signBlockEntity.getBackText(), false, hanging);
+		if (back != null) {
+			attachments.add(back);
+		}
+		if (attachments.isEmpty()) {
+			return primary;
+		}
+		return new CompositeSnapshot(primary.position(), primary, attachments.toArray(EntitySnapshot[]::new));
+	}
+
+	private static ImagePlaneSnapshot captureSignTextPlane(
+			net.minecraft.world.level.block.entity.SignBlockEntity signBlockEntity,
+			net.minecraft.world.level.block.entity.SignText signText,
+			boolean front,
+			boolean hanging
+	) {
+		BufferedImage image = signTextImage(signBlockEntity, signText);
+		if (image == null) {
+			return null;
+		}
+		Matrix4f transform = signTextTransform(signBlockEntity, front, hanging);
+		String materialKey = "sign_text:" + signBlockEntity.getBlockPos().asLong() + ":" + (hanging ? "hanging" : "sign") + ":" + (front ? "front" : "back");
+		return new ImagePlaneSnapshot(
+				blockEntityPos(signBlockEntity),
+				transform,
+				-image.getWidth() * 0.5F,
+				-image.getHeight() * 0.5F + 1.0F,
+				0.0F,
+				image.getWidth(),
+				image.getHeight(),
+				materialKey,
+				image,
+				signText.hasGlowingText()
+		);
+	}
+
+	private static Matrix4f signTextTransform(net.minecraft.world.level.block.entity.SignBlockEntity signBlockEntity, boolean front, boolean hanging) {
+		net.minecraft.world.level.block.state.BlockState state = signBlockEntity.getBlockState();
+		net.minecraft.world.level.block.SignBlock signBlock = (net.minecraft.world.level.block.SignBlock) state.getBlock();
+		Matrix4f transform = new Matrix4f()
+				.translate((float) signBlockEntity.getBlockPos().getX(), (float) signBlockEntity.getBlockPos().getY(), (float) signBlockEntity.getBlockPos().getZ());
+		if (hanging) {
+			transform.translate(0.5F, 0.9375F, 0.5F)
+					.rotateY(radians(-signBlock.getYRotationDegrees(state)))
+					.translate(0.0F, -0.3125F, 0.0F);
+		} else {
+			transform.translate(0.5F, 0.5F, 0.5F)
+					.rotateY(radians(-signBlock.getYRotationDegrees(state)));
+			if (!(state.getBlock() instanceof net.minecraft.world.level.block.StandingSignBlock)) {
+				transform.translate(0.0F, -0.3125F, -0.4375F);
+			}
+		}
+		if (!front) {
+			transform.rotateY((float) Math.PI);
+		}
+		Vec3 offset = hanging
+				? new Vec3(0.0D, -0.3199999928474426D, 0.0729999989271164D)
+				: new Vec3(0.0D, 0.3333333432674408D, 0.046666666865348816D);
+		float textScale = (1.0F / 64.0F) * (hanging ? 0.9F : 0.6666667F);
+		return transform
+				.translate((float) offset.x, (float) offset.y, (float) offset.z)
+				.translate(0.0F, 0.0F, 1.0F / 256.0F)
+				.scale(textScale, textScale, textScale);
+	}
+
+	private static BufferedImage signTextImage(
+			net.minecraft.world.level.block.entity.SignBlockEntity signBlockEntity,
+			net.minecraft.world.level.block.entity.SignText signText
+	) {
+		if (signText == null) {
+			return null;
+		}
+		String[] lines = new String[4];
+		boolean hasVisibleText = false;
+		for (int i = 0; i < lines.length; i++) {
+			lines[i] = signText.getMessage(i, false).getString();
+			if (!lines[i].isBlank()) {
+				hasVisibleText = true;
+			}
+		}
+		if (!hasVisibleText) {
+			return null;
+		}
+		int width = Math.max(1, signBlockEntity.getMaxTextLineWidth());
+		int lineHeight = Math.max(1, signBlockEntity.getTextLineHeight());
+		int height = lineHeight * 4;
+		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = image.createGraphics();
+		try {
+			graphics.setComposite(AlphaComposite.SrcOver);
+			graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+			graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+			graphics.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_OFF);
+			graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+			graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_SPEED);
+
+			int fontSize = Math.max(6, lineHeight);
+			Font font = new Font(Font.MONOSPACED, Font.PLAIN, fontSize);
+			graphics.setFont(font);
+			FontMetrics metrics = graphics.getFontMetrics(font);
+			int maxWidth = Math.max(1, width - 2);
+			while (fontSize > 4 && maxLineWidth(lines, metrics) > maxWidth) {
+				fontSize--;
+				font = font.deriveFont((float) fontSize);
+				graphics.setFont(font);
+				metrics = graphics.getFontMetrics(font);
+			}
+
+			int mainRgb = signTextMainColor(signText);
+			int outlineRgb = signTextOutlineColor(signText);
+			for (int i = 0; i < lines.length; i++) {
+				String line = lines[i];
+				if (line.isBlank()) {
+					continue;
+				}
+				int textWidth = metrics.stringWidth(line);
+				int x = (width - textWidth) / 2;
+				int boxTop = i * lineHeight;
+				int baseline = boxTop + Math.max(metrics.getAscent(), (lineHeight - metrics.getHeight()) / 2 + metrics.getAscent());
+				if (signText.hasGlowingText()) {
+					graphics.setColor(new Color(outlineRgb, true));
+					for (int dx = -1; dx <= 1; dx++) {
+						for (int dy = -1; dy <= 1; dy++) {
+							if (dx == 0 && dy == 0) {
+								continue;
+							}
+							graphics.drawString(line, x + dx, baseline + dy);
+						}
+					}
+				}
+				graphics.setColor(new Color(mainRgb, true));
+				graphics.drawString(line, x, baseline);
+			}
+		} finally {
+			graphics.dispose();
+		}
+		return image;
+	}
+
+	private static int maxLineWidth(String[] lines, FontMetrics metrics) {
+		int max = 0;
+		for (String line : lines) {
+			max = Math.max(max, metrics.stringWidth(line));
+		}
+		return max;
+	}
+
+	private static int signTextMainColor(net.minecraft.world.level.block.entity.SignText signText) {
+		int rgb = signText.getColor().getTextColor();
+		if (signText.hasGlowingText()) {
+			return 0xFF000000 | rgb;
+		}
+		return 0xFF000000 | scaleRgb(rgb, 0.4F);
+	}
+
+	private static int signTextOutlineColor(net.minecraft.world.level.block.entity.SignText signText) {
+		int rgb = signText.getColor().getTextColor();
+		if (rgb == net.minecraft.world.item.DyeColor.BLACK.getTextColor() && signText.hasGlowingText()) {
+			return 0xFFF0EBCC;
+		}
+		return 0xFF000000 | scaleRgb(rgb, 0.4F);
+	}
+
+	private static int scaleRgb(int rgb, float factor) {
+		int red = Mth.clamp(Math.round(((rgb >> 16) & 0xFF) * factor), 0, 255);
+		int green = Mth.clamp(Math.round(((rgb >> 8) & 0xFF) * factor), 0, 255);
+		int blue = Mth.clamp(Math.round((rgb & 0xFF) * factor), 0, 255);
+		return (red << 16) | (green << 8) | blue;
 	}
 
 	private static ClientModelSnapshot captureBannerBlockEntity(net.minecraft.world.level.block.entity.BannerBlockEntity bannerBlockEntity) {
@@ -2342,6 +2539,8 @@ final class CameraEntityRenderer {
 			renderFishingHook(context, fishingHookSnapshot);
 		} else if (entitySnapshot instanceof ItemFrameSnapshot itemFrameSnapshot) {
 			renderItemFrame(context, itemFrameSnapshot);
+		} else if (entitySnapshot instanceof ImagePlaneSnapshot imagePlaneSnapshot) {
+			renderImagePlane(context, imagePlaneSnapshot);
 		} else if (entitySnapshot instanceof LineSnapshot lineSnapshot) {
 			renderLine(context, lineSnapshot);
 		}
@@ -2957,6 +3156,21 @@ final class CameraEntityRenderer {
 				.rotateY((float) Math.PI)
 				.scale(0.5F);
 		renderItemVisual(context, itemRoot, snapshot.item(), ItemDisplayTransformContext.FRAMED);
+	}
+
+	private static void renderImagePlane(RenderContext context, ImagePlaneSnapshot snapshot) {
+		if (snapshot.image() == null) {
+			return;
+		}
+		int material = context.materialResolver.materialForImage(snapshot.materialKey(), snapshot.image());
+		Vector3f p0 = transformPosition(snapshot.transform(), snapshot.x(), snapshot.y(), snapshot.z());
+		Vector3f p1 = transformPosition(snapshot.transform(), snapshot.x() + snapshot.width(), snapshot.y(), snapshot.z());
+		Vector3f p2 = transformPosition(snapshot.transform(), snapshot.x() + snapshot.width(), snapshot.y() + snapshot.height(), snapshot.z());
+		Vector3f p3 = transformPosition(snapshot.transform(), snapshot.x(), snapshot.y() + snapshot.height(), snapshot.z());
+		LightSample lightSample = snapshot.emissive()
+				? new LightSample(15, 15)
+				: context.lightAt((p0.x + p2.x) * 0.5F, (p0.y + p2.y) * 0.5F, (p0.z + p2.z) * 0.5F);
+		addQuad(context, p0, p1, p2, p3, 0.0F, 1.0F, 0.0F, 1.0F, material, lightSample.sky(), lightSample.block(), 1.0F, 1.0F, 1.0F);
 	}
 
 	private static void renderFramedMap(RenderContext context, Matrix4f root, ItemFrameSnapshot snapshot) {
