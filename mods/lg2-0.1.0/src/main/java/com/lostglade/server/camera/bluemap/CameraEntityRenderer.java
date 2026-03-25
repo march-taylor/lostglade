@@ -397,6 +397,7 @@ final class CameraEntityRenderer {
 	private enum ItemDisplayTransformContext {
 		THIRD_PERSON_RIGHT_HAND,
 		THIRD_PERSON_LEFT_HAND,
+		GROUND,
 		FIXED,
 		FRAMED
 	}
@@ -2185,6 +2186,13 @@ final class CameraEntityRenderer {
 		}
 	}
 
+	private record ItemVisualBounds(
+			float minY,
+			float maxY
+	) {
+		static final ItemVisualBounds EMPTY = new ItemVisualBounds(0.0F, 0.0F);
+	}
+
 	private static Identifier equipmentAssetId(ItemStack stack) {
 		if (stack == null || stack.isEmpty()) {
 			return null;
@@ -2835,20 +2843,11 @@ final class CameraEntityRenderer {
 	}
 
 	private static void renderItem(RenderContext context, ItemSnapshot snapshot) {
+		ItemVisualBounds bounds = itemVisualBounds(snapshot.visual(), ItemDisplayTransformContext.GROUND);
 		Matrix4f root = new Matrix4f()
-				.translate((float) snapshot.position().x, (float) snapshot.position().y + 0.125F, (float) snapshot.position().z)
+				.translate((float) snapshot.position().x, (float) snapshot.position().y + (0.0625F - bounds.minY()), (float) snapshot.position().z)
 				.rotateY(snapshot.spin());
-		if (snapshot.visual().model() != null && !snapshot.visual().model().elements().isEmpty()) {
-			renderItemModel(context, root, snapshot.visual().model());
-			return;
-		}
-		if (snapshot.visual().flatTexture() == null) {
-			return;
-		}
-		int material = context.materialResolver.materialForTexture(snapshot.visual().flatTexture());
-		addDoubleSidedPlane(context, root, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
-		Matrix4f crossed = new Matrix4f(root).rotateY((float) Math.PI * 0.5F);
-		addDoubleSidedPlane(context, crossed, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
+		renderItemVisual(context, root, snapshot.visual(), ItemDisplayTransformContext.GROUND);
 	}
 
 	private static void renderFixedItem(RenderContext context, FixedItemSnapshot snapshot) {
@@ -3135,7 +3134,7 @@ final class CameraEntityRenderer {
 			return;
 		}
 		if (visual.model() != null && !visual.model().elements().isEmpty()) {
-			if (transformContext == ItemDisplayTransformContext.FRAMED) {
+			if (transformContext == ItemDisplayTransformContext.FRAMED || transformContext == ItemDisplayTransformContext.GROUND) {
 				renderDisplayedItemModel(context, root, visual.model(), transformContext);
 			} else {
 				renderItemModel(context, root, visual.model());
@@ -3148,7 +3147,12 @@ final class CameraEntityRenderer {
 		int material = context.materialResolver.materialForTexture(visual.flatTexture());
 		if (transformContext == ItemDisplayTransformContext.FRAMED) {
 			Matrix4f transformedRoot = applyFlatFramedItemTransform(root, visual.model());
-			addDoubleSidedPlane(context, transformedRoot, 0.0625F, 0.0625F, 0.53125F, 0.875F, 0.875F, material);
+			renderFlatItemLayers(context, transformedRoot, visual, 0.0625F, 0.0625F, 0.5F, 0.875F, 0.875F);
+			return;
+		}
+		if (transformContext == ItemDisplayTransformContext.GROUND) {
+			Matrix4f transformedRoot = applyItemDisplayTransform(root, visual.model(), transformContext);
+			renderFlatItemLayers(context, transformedRoot, visual, 0.0F, 0.0F, 0.5F, 1.0F, 1.0F);
 			return;
 		}
 		addDoubleSidedPlane(context, root, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
@@ -3193,6 +3197,125 @@ final class CameraEntityRenderer {
 				.translate(-0.5F, -0.5F, -0.5F);
 	}
 
+	private static ItemVisualBounds itemVisualBounds(ItemVisual visual, ItemDisplayTransformContext transformContext) {
+		if (visual == null) {
+			return ItemVisualBounds.EMPTY;
+		}
+		float minY = Float.POSITIVE_INFINITY;
+		float maxY = Float.NEGATIVE_INFINITY;
+		Matrix4f root = applyItemDisplayTransform(new Matrix4f(), visual.model(), transformContext);
+		if (visual.model() != null && !visual.model().elements().isEmpty()) {
+			for (ItemModelElement element : visual.model().elements()) {
+				Matrix4f transform = itemElementTransform(root, element);
+				for (float x : new float[]{(float) element.from().x, (float) element.to().x}) {
+					for (float y : new float[]{(float) element.from().y, (float) element.to().y}) {
+						for (float z : new float[]{(float) element.from().z, (float) element.to().z}) {
+							Vector3f point = transformPosition(transform, x * PX, y * PX, z * PX);
+							minY = Math.min(minY, point.y);
+							maxY = Math.max(maxY, point.y);
+						}
+					}
+				}
+			}
+		} else if (visual.flatTexture() != null) {
+			for (Vector3f point : new Vector3f[]{
+					transformPosition(root, 0.0F, 0.0F, 0.5F),
+					transformPosition(root, 1.0F, 0.0F, 0.5F),
+					transformPosition(root, 1.0F, 1.0F, 0.5F),
+					transformPosition(root, 0.0F, 1.0F, 0.5F)
+			}) {
+				minY = Math.min(minY, point.y);
+				maxY = Math.max(maxY, point.y);
+			}
+		}
+		if (!Float.isFinite(minY) || !Float.isFinite(maxY)) {
+			return ItemVisualBounds.EMPTY;
+		}
+		return new ItemVisualBounds(minY, maxY);
+	}
+
+	private static Matrix4f itemElementTransform(Matrix4f root, ItemModelElement element) {
+		Matrix4f transform = new Matrix4f(root);
+		if (element.rotation() != null) {
+			transform.translate(
+					(float) element.rotation().origin().x * PX,
+					(float) element.rotation().origin().y * PX,
+					(float) element.rotation().origin().z * PX
+			);
+			transform.mul(element.rotation().transform());
+			transform.translate(
+					(float) -element.rotation().origin().x * PX,
+					(float) -element.rotation().origin().y * PX,
+					(float) -element.rotation().origin().z * PX
+			);
+		}
+		return transform;
+	}
+
+	private static void renderFlatItemLayers(
+			RenderContext context,
+			Matrix4f transform,
+			ItemVisual visual,
+			float x,
+			float y,
+			float centerZ,
+			float width,
+			float height
+	) {
+		List<Identifier> layers = flatItemLayers(visual);
+		if (layers.isEmpty()) {
+			if (visual.flatTexture() == null) {
+				return;
+			}
+			layers = List.of(visual.flatTexture());
+		}
+		float layerSpacing = 1.0F / 128.0F;
+		float halfThickness = 1.0F / 64.0F;
+		float startCenterZ = centerZ - (layers.size() - 1) * layerSpacing * 0.5F;
+		for (int i = 0; i < layers.size(); i++) {
+			Identifier layer = layers.get(i);
+			int material = context.materialResolver.materialForTexture(layer);
+			float layerCenterZ = startCenterZ + i * layerSpacing;
+			addSeparatedTexturedDoubleSidedPlane(
+					context,
+					transform,
+					x,
+					y,
+					layerCenterZ,
+					width,
+					height,
+					halfThickness,
+					0.0F,
+					0.0F,
+					1.0F,
+					1.0F,
+					material,
+					1.0F,
+					1.0F,
+					1.0F
+			);
+		}
+	}
+
+	private static List<Identifier> flatItemLayers(ItemVisual visual) {
+		List<Identifier> layers = new ArrayList<>();
+		if (visual == null || visual.model() == null) {
+			return layers;
+		}
+		for (int i = 0; i < 8; i++) {
+			Identifier texture = resolveTextureIdentifier(visual.model().textures(), "#layer" + i);
+			if (texture == null) {
+				if (i == 0 && visual.flatTexture() != null) {
+					texture = visual.flatTexture();
+				} else {
+					break;
+				}
+			}
+			layers.add(texture);
+		}
+		return layers;
+	}
+
 	private static ItemModelTransform itemModelTransform(ResolvedItemModel model, ItemDisplayTransformContext transformContext) {
 		if (model == null || model.transforms().isEmpty()) {
 			return ItemModelTransform.IDENTITY;
@@ -3203,6 +3326,12 @@ final class CameraEntityRenderer {
 		}
 		if (transformContext == ItemDisplayTransformContext.FRAMED) {
 			transform = model.transforms().get(ItemDisplayTransformContext.FIXED);
+			if (transform != null) {
+				return transform;
+			}
+		}
+		if (transformContext == ItemDisplayTransformContext.GROUND) {
+			transform = model.transforms().get(ItemDisplayTransformContext.GROUND);
 			if (transform != null) {
 				return transform;
 			}
@@ -3275,6 +3404,29 @@ final class CameraEntityRenderer {
 		addTexturedPlane(context, transform, x, y, z, width, height, u0, v0, u1, v1, material, red, green, blue);
 		Matrix4f back = new Matrix4f(transform).rotateY((float) Math.PI);
 		addTexturedPlane(context, back, -(x + width), y, -z, width, height, u0, v0, u1, v1, material, red, green, blue);
+	}
+
+	private static void addSeparatedTexturedDoubleSidedPlane(
+			RenderContext context,
+			Matrix4f transform,
+			float x,
+			float y,
+			float centerZ,
+			float width,
+			float height,
+			float halfThickness,
+			float u0,
+			float v0,
+			float u1,
+			float v1,
+			int material,
+			float red,
+			float green,
+			float blue
+	) {
+		addTexturedPlane(context, transform, x, y, centerZ + halfThickness, width, height, u0, v0, u1, v1, material, red, green, blue);
+		Matrix4f back = new Matrix4f(transform).rotateY((float) Math.PI);
+		addTexturedPlane(context, back, -(x + width), y, -(centerZ - halfThickness), width, height, u0, v0, u1, v1, material, red, green, blue);
 	}
 
 	private static void addTexturedPlane(
@@ -4010,6 +4162,7 @@ final class CameraEntityRenderer {
 		Map<ItemDisplayTransformContext, ItemModelTransform> transforms = new HashMap<>();
 		readItemModelTransform(displayJson, "thirdperson_righthand", ItemDisplayTransformContext.THIRD_PERSON_RIGHT_HAND, transforms);
 		readItemModelTransform(displayJson, "thirdperson_lefthand", ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND, transforms);
+		readItemModelTransform(displayJson, "ground", ItemDisplayTransformContext.GROUND, transforms);
 		readItemModelTransform(displayJson, "fixed", ItemDisplayTransformContext.FIXED, transforms);
 		return transforms;
 	}
