@@ -146,6 +146,7 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.minGrowthSeconds, value -> ability.minGrowthSeconds = value);
 		changed |= normalizeNonNegative(ability.maxGrowthSeconds, value -> ability.maxGrowthSeconds = value);
 		changed |= normalizeNonNegative(ability.tubochkaBurnSeconds, value -> ability.tubochkaBurnSeconds = value);
+		changed |= normalizeNonNegative(ability.tubochkaMaxReleaseSmokeParticles, value -> ability.tubochkaMaxReleaseSmokeParticles = value);
 		changed |= normalizeChance(ability.chance, value -> ability.chance = value);
 		if (ability.maxGrowthSeconds < ability.minGrowthSeconds) {
 			ability.maxGrowthSeconds = ability.minGrowthSeconds;
@@ -255,6 +256,7 @@ public final class RaceConfig {
 		public double minGrowthSeconds = 0.0D;
 		public double maxGrowthSeconds = 0.0D;
 		public double tubochkaBurnSeconds = 0.0D;
+		public double tubochkaMaxReleaseSmokeParticles = 8.0D;
 		public double chance = 0.0D;
 
 		private RaceAbilityConfig() {

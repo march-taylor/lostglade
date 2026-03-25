@@ -5,6 +5,7 @@ import com.lostglade.config.RaceConfig;
 import com.lostglade.server.ServerRaceSystem;
 import eu.pb4.polymer.core.api.item.SimplePolymerItem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
@@ -15,6 +16,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
@@ -25,6 +27,7 @@ import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.phys.Vec3;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.Optional;
@@ -43,6 +46,9 @@ public final class TubochkaItem extends SimplePolymerItem {
 	private static final String TOTAL_TICKS_TAG = "total_ticks";
 	private static final String REMAINING_TICKS_TAG = "remaining_ticks";
 	private static final double DEFAULT_BURN_SECONDS = 120.0D;
+	private static final int HELD_SMOKE_INTERVAL_TICKS = 8;
+	private static final int CHARGE_TICKS_PER_RELEASE_PARTICLE = 10;
+	private static final int DEFAULT_MAX_RELEASE_SMOKE_PARTICLES = 8;
 	private static final int BAR_COLOR = 0xFF9A00;
 	private static final int BAR_SEGMENTS = 13;
 
@@ -128,6 +134,28 @@ public final class TubochkaItem extends SimplePolymerItem {
 	}
 
 	@Override
+	public boolean useOnRelease(ItemStack stack) {
+		return isLit(stack);
+	}
+
+	@Override
+	public boolean releaseUsing(ItemStack stack, Level level, LivingEntity entity, int timeChargedLeft) {
+		if (!(level instanceof ServerLevel serverLevel) || !isLit(stack)) {
+			return false;
+		}
+
+		int usedTicks = Math.max(0, getUseDuration(stack, entity) - timeChargedLeft);
+		int particleCount = Math.min(resolveMaxReleaseSmokeParticles(entity), usedTicks / CHARGE_TICKS_PER_RELEASE_PARTICLE);
+		if (particleCount <= 0) {
+			return true;
+		}
+
+		Vec3 origin = getHeldSmokeOrigin(entity, resolveTubochkaHandSlot(entity, stack), true);
+		serverLevel.sendParticles(ParticleTypes.CAMPFIRE_COSY_SMOKE, origin.x, origin.y, origin.z, particleCount, 0.05D, 0.02D, 0.05D, 0.01D);
+		return true;
+	}
+
+	@Override
 	public ItemStack finishUsingItem(ItemStack stack, Level level, LivingEntity entity) {
 		return stack;
 	}
@@ -168,6 +196,10 @@ public final class TubochkaItem extends SimplePolymerItem {
 		int barWidth = computeBarWidth(remainingTicks, getLongMetadata(stack, TOTAL_TICKS_TAG));
 		if (barWidth != getIntMetadata(stack, BAR_WIDTH_TAG)) {
 			updateSyncedBarState(stack, barWidth);
+		}
+
+		if (entity instanceof LivingEntity livingEntity && (slot == EquipmentSlot.MAINHAND || slot == EquipmentSlot.OFFHAND)) {
+			emitHeldSmoke(level, livingEntity, slot);
 		}
 	}
 
@@ -329,6 +361,55 @@ public final class TubochkaItem extends SimplePolymerItem {
 			tag.put(META_TAG, tubochkaTag);
 		});
 		setStackBarComponents(stack, barWidth);
+	}
+
+	private static void emitHeldSmoke(ServerLevel level, LivingEntity livingEntity, EquipmentSlot slot) {
+		long nowTick = level.getGameTime();
+		if ((nowTick + livingEntity.getId() + slot.ordinal()) % HELD_SMOKE_INTERVAL_TICKS != 0L) {
+			return;
+		}
+
+		Vec3 origin = getHeldSmokeOrigin(livingEntity, slot, false);
+		level.sendParticles(ParticleTypes.SMOKE, origin.x, origin.y, origin.z, 1, 0.015D, 0.02D, 0.015D, 0.003D);
+	}
+
+	private static Vec3 getHeldSmokeOrigin(LivingEntity livingEntity, EquipmentSlot slot, boolean raisedUsePose) {
+		Vec3 look = livingEntity.getLookAngle();
+		if (look.lengthSqr() < 1.0E-6D) {
+			look = new Vec3(0.0D, 0.0D, 1.0D);
+		} else {
+			look = look.normalize();
+		}
+
+		Vec3 right = new Vec3(0.0D, 1.0D, 0.0D).cross(look);
+		if (right.lengthSqr() < 1.0E-6D) {
+			right = new Vec3(1.0D, 0.0D, 0.0D);
+		} else {
+			right = right.normalize();
+		}
+
+		HumanoidArm hand = slot == EquipmentSlot.MAINHAND
+				? livingEntity.getMainArm()
+				: (livingEntity.getMainArm() == HumanoidArm.RIGHT ? HumanoidArm.LEFT : HumanoidArm.RIGHT);
+		double sideOffset = hand == HumanoidArm.RIGHT ? 0.18D : -0.18D;
+		double forwardOffset = raisedUsePose ? 0.26D : 0.34D;
+		double verticalOffset = raisedUsePose ? -0.28D : -0.42D;
+		double raisedSideScale = raisedUsePose ? 0.72D : 1.0D;
+		return livingEntity.getEyePosition().add(look.scale(forwardOffset)).add(right.scale(sideOffset * raisedSideScale)).add(0.0D, verticalOffset, 0.0D);
+	}
+
+	private static EquipmentSlot resolveTubochkaHandSlot(LivingEntity livingEntity, ItemStack stack) {
+		return livingEntity.getOffhandItem() == stack ? EquipmentSlot.OFFHAND : EquipmentSlot.MAINHAND;
+	}
+
+	private static int resolveMaxReleaseSmokeParticles(LivingEntity entity) {
+		if (entity instanceof ServerPlayer player) {
+			Optional<RaceConfig.PlayerRaceConfig> raceOptional = ServerRaceSystem.getRace(player);
+			if (raceOptional.isPresent() && raceOptional.get().shnyaga != null) {
+				return Math.max(0, (int) Math.round(raceOptional.get().shnyaga.tubochkaMaxReleaseSmokeParticles));
+			}
+		}
+		return DEFAULT_MAX_RELEASE_SMOKE_PARTICLES;
 	}
 
 	private static MutableComponent getLocalizedName(PacketContext context) {
