@@ -1,0 +1,24 @@
+{
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "lg2:font/passport_name.png",
+      "ascent": -20,
+      "height": 12,
+      "chars": [
+        "ABCDEFGH",
+        "IJKLMNOP",
+        "QRSTUVWX",
+        "YZabcdef",
+        "ghijklmn",
+        "opqrstuv",
+        "wxyz0123",
+        "456789_."
+      ]
+    },
+    {
+      "type": "reference",
+      "id": "minecraft:default"
+    }
+  ]
+}

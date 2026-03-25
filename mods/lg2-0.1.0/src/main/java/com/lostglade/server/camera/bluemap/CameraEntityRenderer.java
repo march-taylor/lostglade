@@ -2921,6 +2921,7 @@ final class CameraEntityRenderer {
 		Matrix4f itemRoot = new Matrix4f(root)
 				.translate(0.0F, 0.0F, zOffset)
 				.rotateZ(radians(snapshot.rotation() * 45.0F))
+				.rotateY((float) Math.PI)
 				.scale(0.5F);
 		renderItemVisual(context, itemRoot, snapshot.item(), ItemDisplayTransformContext.FRAMED);
 	}
@@ -3146,8 +3147,8 @@ final class CameraEntityRenderer {
 		}
 		int material = context.materialResolver.materialForTexture(visual.flatTexture());
 		if (transformContext == ItemDisplayTransformContext.FRAMED) {
-			Matrix4f transformedRoot = applyItemDisplayTransform(root, visual.model(), transformContext);
-			addDoubleSidedPlane(context, transformedRoot, 0.0F, 0.0F, 0.5F, 1.0F, 1.0F, material);
+			Matrix4f transformedRoot = applyFlatFramedItemTransform(root, visual.model());
+			addDoubleSidedPlane(context, transformedRoot, 0.0625F, 0.0625F, 0.53125F, 0.875F, 0.875F, material);
 			return;
 		}
 		addDoubleSidedPlane(context, root, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
@@ -3174,7 +3175,14 @@ final class CameraEntityRenderer {
 
 	private static Matrix4f applyItemDisplayTransform(Matrix4f root, ResolvedItemModel model, ItemDisplayTransformContext transformContext) {
 		ItemModelTransform transform = itemModelTransform(model, transformContext);
-		boolean leftHand = transformContext == ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND;
+		return applyItemDisplayTransform(root, transform, transformContext == ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND);
+	}
+
+	private static Matrix4f applyFlatFramedItemTransform(Matrix4f root, ResolvedItemModel model) {
+		return applyItemDisplayTransform(root, model, ItemDisplayTransformContext.FRAMED);
+	}
+
+	private static Matrix4f applyItemDisplayTransform(Matrix4f root, ItemModelTransform transform, boolean leftHand) {
 		float translationX = leftHand ? -transform.translationX() : transform.translationX();
 		float rotationY = leftHand ? -transform.rotationY() : transform.rotationY();
 		float rotationZ = leftHand ? -transform.rotationZ() : transform.rotationZ();
@@ -3717,13 +3725,17 @@ final class CameraEntityRenderer {
 	private static ItemVisual resolveItemVisualInternal(ItemStack stack, Identifier itemId) {
 		Identifier rootModelId = resolveItemRootModelId(itemId);
 		ResolvedItemModel model = rootModelId == null ? null : resolveItemModel(rootModelId, new HashSet<>());
-		if ((model == null || model.elements().isEmpty()) && stack.getItem() instanceof BlockItem blockItem) {
+		Identifier flatTexture = resolveItemTexture(stack);
+		if (flatTexture == null && model != null) {
+			flatTexture = primaryTexture(model);
+		}
+		boolean hasRenderableItemVisual = flatTexture != null || (model != null && !model.elements().isEmpty());
+		if (!hasRenderableItemVisual && stack.getItem() instanceof BlockItem blockItem) {
 			Identifier blockId = BuiltInRegistries.BLOCK.getKey(blockItem.getBlock());
 			if (blockId != null) {
 				model = resolveItemModel(blockId.withPrefix("block/"), new HashSet<>());
 			}
 		}
-		Identifier flatTexture = resolveItemTexture(stack);
 		if (flatTexture == null && model != null) {
 			flatTexture = primaryTexture(model);
 		}
