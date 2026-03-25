@@ -9,6 +9,7 @@ import com.lostglade.config.RaceConfig;
 import com.lostglade.config.RaceConfig.PlayerRaceConfig;
 import com.lostglade.config.RaceConfig.RaceAbilityConfig;
 import com.lostglade.config.RaceConfig.RaceAbilitySlot;
+import com.lostglade.item.ModItems;
 import com.lostglade.mixin.MobXpRewardAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.mojang.authlib.GameProfile;
@@ -21,6 +22,7 @@ import eu.pb4.polymer.core.api.item.PolymerItemUtils;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import it.unimi.dsi.fastutil.Pair;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
@@ -56,6 +58,8 @@ import net.minecraft.server.permissions.PermissionSet;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.SharedConstants;
 import net.minecraft.server.packs.PackType;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.EntitySpawnReason;
@@ -69,6 +73,7 @@ import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
 import net.minecraft.world.entity.ai.navigation.PathNavigation;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.ChestMenu;
@@ -86,6 +91,7 @@ import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -163,6 +169,7 @@ public final class ServerRaceSystem {
 	private static final double CARTEL_DEFAULT_DEFENSE_REFLECT_RATIO = 0.5D;
 	private static final double CARTEL_DEFAULT_UNIQUE_DURATION_SECONDS = 300.0D;
 	private static final double CARTEL_DEFAULT_UNIQUE_COOLDOWN_SECONDS = 300.0D;
+	private static final double CARTEL_DEFAULT_SHNYAGA_TRAVKA_DROP_CHANCE = 0.25D;
 	private static final long MISTER_CARTEL_STACK_CHECK_INTERVAL_TICKS = 8L;
 	private static final double CARTEL_LAWYER_BASE_MOVE_SPEED = 0.23D;
 	private static final double CARTEL_LAWYER_WALK_SPEED = CARTEL_LAWYER_BASE_MOVE_SPEED;
@@ -187,6 +194,7 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, CartelDefenseSession> CARTEL_DEFENSE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, Long> CARTEL_UNIQUE_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelDisguiseSession> CARTEL_DISGUISE_SESSIONS = new LinkedHashMap<>();
+	private static final List<CartelTravkaGrowthAttempt> CARTEL_TRAVKA_GROWTH_ATTEMPTS = new ArrayList<>();
 	private static final Map<UUID, UUID> CARTEL_SUMMON_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> CARTEL_LAWYER_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final ThreadLocal<Boolean> CARTEL_DEFENSE_REFLECTION_ACTIVE = ThreadLocal.withInitial(() -> Boolean.FALSE);
@@ -262,6 +270,22 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private static final class CartelTravkaGrowthAttempt {
+		private final UUID playerId;
+		private final ResourceKey<Level> dimension;
+		private final BlockPos pos;
+		private final long resolveTick;
+		private final double chance;
+
+		private CartelTravkaGrowthAttempt(UUID playerId, ResourceKey<Level> dimension, BlockPos pos, long resolveTick, double chance) {
+			this.playerId = playerId;
+			this.dimension = dimension;
+			this.pos = pos.immutable();
+			this.resolveTick = resolveTick;
+			this.chance = chance;
+		}
+	}
+
 	private ServerRaceSystem() {
 	}
 
@@ -288,6 +312,7 @@ public final class ServerRaceSystem {
 			CARTEL_DEFENSE_SESSIONS.clear();
 			CARTEL_UNIQUE_COOLDOWNS.clear();
 			CARTEL_DISGUISE_SESSIONS.clear();
+			CARTEL_TRAVKA_GROWTH_ATTEMPTS.clear();
 			CARTEL_SUMMON_OWNER_BY_ENTITY.clear();
 			CARTEL_LAWYER_OWNER_BY_ENTITY.clear();
 			CARTEL_LAWYER_SKIN_FUTURE = null;
@@ -301,6 +326,13 @@ public final class ServerRaceSystem {
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
 			cleanupCartelEntitiesForDisconnect(server, handler.player);
 			clearCartelDisguise(handler.player);
+			CARTEL_TRAVKA_GROWTH_ATTEMPTS.removeIf(attempt -> attempt.playerId.equals(handler.player.getUUID()));
+		});
+		UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
+			if (!(player instanceof ServerPlayer serverPlayer) || world.isClientSide()) {
+				return InteractionResult.PASS;
+			}
+			return onUseBlock(serverPlayer, hand, hitResult.getBlockPos());
 		});
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			long nowTick = server.overworld().getGameTime();
@@ -312,6 +344,7 @@ public final class ServerRaceSystem {
 			tickCartelSummons(server);
 			tickCartelDefense(server);
 			tickCartelDisguises(server);
+			tickCartelTravkaGrowthAttempts(server);
 		});
 	}
 
@@ -433,6 +466,60 @@ public final class ServerRaceSystem {
 
 	public static Collection<PlayerRaceConfig> getAllRaces() {
 		return Collections.unmodifiableCollection(RACES_BY_NICKNAME.values());
+	}
+
+	private static InteractionResult onUseBlock(ServerPlayer player, InteractionHand hand, BlockPos pos) {
+		ItemStack stack = player.getItemInHand(hand);
+		if (!stack.is(Items.BONE_MEAL)) {
+			return InteractionResult.PASS;
+		}
+
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isEmpty()) {
+			return InteractionResult.PASS;
+		}
+
+		PlayerRaceConfig race = raceOptional.get();
+		if (!MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id)) || race.shnyaga == null || !race.shnyaga.enabled) {
+			return InteractionResult.PASS;
+		}
+
+		ServerLevel level = (ServerLevel) player.level();
+		if (!level.getBlockState(pos).is(Blocks.FERN)) {
+			return InteractionResult.PASS;
+		}
+
+		double chance = race.shnyaga.chance > 0.0D ? race.shnyaga.chance : CARTEL_DEFAULT_SHNYAGA_TRAVKA_DROP_CHANCE;
+		CARTEL_TRAVKA_GROWTH_ATTEMPTS.add(new CartelTravkaGrowthAttempt(player.getUUID(), level.dimension(), pos, level.getGameTime() + 1L, chance));
+		return InteractionResult.PASS;
+	}
+
+	private static void tickCartelTravkaGrowthAttempts(MinecraftServer server) {
+		if (CARTEL_TRAVKA_GROWTH_ATTEMPTS.isEmpty()) {
+			return;
+		}
+
+		for (int i = CARTEL_TRAVKA_GROWTH_ATTEMPTS.size() - 1; i >= 0; i--) {
+			CartelTravkaGrowthAttempt attempt = CARTEL_TRAVKA_GROWTH_ATTEMPTS.get(i);
+			ServerLevel level = server.getLevel(attempt.dimension);
+			if (level == null) {
+				CARTEL_TRAVKA_GROWTH_ATTEMPTS.remove(i);
+				continue;
+			}
+
+			if (level.getGameTime() < attempt.resolveTick) {
+				continue;
+			}
+
+			if (level.getBlockState(attempt.pos).is(Blocks.LARGE_FERN) && level.random.nextDouble() < attempt.chance) {
+				Vec3 dropPos = Vec3.atCenterOf(attempt.pos);
+				ItemEntity itemEntity = new ItemEntity(level, dropPos.x, dropPos.y, dropPos.z, new ItemStack(ModItems.TRAVKA));
+				itemEntity.setDefaultPickUpDelay();
+				level.addFreshEntity(itemEntity);
+			}
+
+			CARTEL_TRAVKA_GROWTH_ATTEMPTS.remove(i);
+		}
 	}
 
 	private static void rebuildCache() {
@@ -1134,7 +1221,7 @@ public final class ServerRaceSystem {
 
 	private static String buildCartelDisguiseTitlePadding(String playerName) {
 		int nameLength = playerName == null ? 0 : playerName.length();
-		int spaces = Math.max(1, 12 - (int) Math.floor(nameLength / 2.0D));
+		int spaces = Math.max(1, 20 - (int) Math.ceil(nameLength * 0.75D));
 		return " ".repeat(spaces);
 	}
 

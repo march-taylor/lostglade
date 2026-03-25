@@ -143,11 +143,21 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.reflectedDamageRatio, value -> ability.reflectedDamageRatio = value);
 		changed |= normalizeNonNegative(ability.summonLifetimeSeconds, value -> ability.summonLifetimeSeconds = value);
 		changed |= normalizeNonNegative(ability.summonAfterKillSeconds, value -> ability.summonAfterKillSeconds = value);
+		changed |= normalizeChance(ability.chance, value -> ability.chance = value);
 		return changed;
 	}
 
 	private static boolean normalizeNonNegative(double value, java.util.function.DoubleConsumer setter) {
 		double normalized = Double.isNaN(value) ? 0.0D : Math.max(0.0D, value);
+		if (Double.compare(value, normalized) == 0) {
+			return false;
+		}
+		setter.accept(normalized);
+		return true;
+	}
+
+	private static boolean normalizeChance(double value, java.util.function.DoubleConsumer setter) {
+		double normalized = Double.isNaN(value) ? 0.0D : Math.max(0.0D, Math.min(1.0D, value));
 		if (Double.compare(value, normalized) == 0) {
 			return false;
 		}
@@ -235,6 +245,7 @@ public final class RaceConfig {
 		public double reflectedDamageRatio = 0.0D;
 		public double summonLifetimeSeconds = 0.0D;
 		public double summonAfterKillSeconds = 0.0D;
+		public double chance = 0.0D;
 
 		private RaceAbilityConfig() {
 		}

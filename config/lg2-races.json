@@ -1,54 +1,55 @@
 ﻿{
-  "races": [
-    {
-      "enabled": true,
-      "id": "mister_cartel_49",
-      "displayName": "Мистер Картель 49",
-      "ownerNickname": "Rajas_YT",
-      "description": "Сток: лимит обычных стаков 64 -> 49. Стаки 1 и 16 не изменяются.",
-      "attack": {
-        "enabled": true,
-        "abilityId": "cartel49_attack",
-        "name": "Атака",
-        "description": "Вокруг цели по взгляду появляются 4 разбойника (2 pillager + 2 vindicator).",
-        "cooldownSeconds": 300.0,
-        "activationRangeBlocks": 7.0,
-        "summonLifetimeSeconds": 30.0,
-        "summonAfterKillSeconds": 2.0
-      },
-      "defense": {
-        "enabled": true,
-        "abilityId": "cartel49_defense",
-        "name": "Защита",
-        "description": "Рядом появляется адвокат и отражает часть урона нападающим.",
-        "cooldownSeconds": 900.0,
-        "durationSeconds": 30.0,
-        "innerMinDistanceBlocks": 1.0,
-        "followMaxDistanceBlocks": 6.0,
-        "maxOutsideAreaSeconds": 4.0,
-        "healthPoints": 150.0,
-        "reflectedDamageRatio": 0.5 
-      },
-      "uniqueAbility": {
-        "enabled": true,
-        "abilityId": "cartel49_unique",
-        "name": "Абилка",
-        "description": "Открывает выбор онлайн-игрока для перевоплощения. Картель получает его скин и ник в чате на время действия.",
-        "cooldownSeconds": 300.0,
-        "durationSeconds": 300.0
-      },
-      "shnyaga": {
-        "enabled": false,
-        "abilityId": "cartel49_shnyaga",
-        "name": "Шняга",
-        "description": ""
-      },
-      "stock": {
-        "enabled": true,
-        "abilityId": "cartel49_stock_stack_cap",
-        "name": "Сток: Лимит 49",
-        "description": "Обычные стаки (64) ограничиваются 49. Предметы со стаком 1 и 16 остаются без изменений."
-      }
-    }
-  ]
+    "races":  [
+                  {
+                      "enabled":  true,
+                      "id":  "mister_cartel_49",
+                      "displayName":  "Мистер Картель 49",
+                      "ownerNickname":  "Rajas_YT",
+                      "description":  "Сток: лимит обычных стаков 64 -\u003e 49. Стаки 1 и 16 не изменяются.",
+                      "attack":  {
+                                     "enabled":  true,
+                                     "abilityId":  "cartel49_attack",
+                                     "name":  "Атака",
+                                     "description":  "Вокруг цели по взгляду появляются 4 разбойника (2 pillager + 2 vindicator).",
+                                     "cooldownSeconds":  300.0,
+                                     "activationRangeBlocks":  7.0,
+                                     "summonLifetimeSeconds":  30.0,
+                                     "summonAfterKillSeconds":  2.0
+                                 },
+                      "defense":  {
+                                      "enabled":  true,
+                                      "abilityId":  "cartel49_defense",
+                                      "name":  "Защита",
+                                      "description":  "Рядом появляется адвокат и отражает часть урона нападающим.",
+                                      "cooldownSeconds":  900.0,
+                                      "durationSeconds":  30.0,
+                                      "innerMinDistanceBlocks":  1.0,
+                                      "followMaxDistanceBlocks":  6.0,
+                                      "maxOutsideAreaSeconds":  4.0,
+                                      "healthPoints":  150.0,
+                                      "reflectedDamageRatio":  0.5
+                                  },
+                      "uniqueAbility":  {
+                                            "enabled":  true,
+                                            "abilityId":  "cartel49_unique",
+                                            "name":  "Абилка",
+                                            "description":  "Открывает выбор онлайн-игрока для перевоплощения. Картель получает его скин и ник в чате на время действия.",
+                                            "cooldownSeconds":  1200.0,
+                                            "durationSeconds":  300.0
+                                        },
+                      "shnyaga":  {
+                                      "enabled":  true,
+                                      "abilityId":  "cartel49_shnyaga",
+                                      "name":  "Шняга",
+                                      "description":  "При выращивании маленького папоротника костной мукой есть шанс получить \"Травку\".",
+                                      "chance":  0.25
+                                  },
+                      "stock":  {
+                                    "enabled":  true,
+                                    "abilityId":  "cartel49_stock_stack_cap",
+                                    "name":  "Сток: Лимит 49",
+                                    "description":  "Обычные стаки (64) ограничиваются 49. Предметы со стаком 1 и 16 остаются без изменений."
+                                }
+                  }
+              ]
 }

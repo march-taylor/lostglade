@@ -60,5 +60,6 @@
     "container.lg2.cartel_disguise.accept":  "Прийняти",
     "container.lg2.cartel_disguise.previous":  "Попередній",
     "container.lg2.cartel_disguise.next":  "Наступний",
-    "container.lg2.cartel_disguise.empty":  "Немає гравців"
+    "container.lg2.cartel_disguise.empty":  "Немає гравців",
+    "item.lg2.travka":  "������"
 }

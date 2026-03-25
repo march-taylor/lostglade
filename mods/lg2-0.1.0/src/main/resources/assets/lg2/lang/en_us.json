@@ -60,5 +60,6 @@
     "container.lg2.cartel_disguise.accept":  "Accept",
     "container.lg2.cartel_disguise.previous":  "Previous",
     "container.lg2.cartel_disguise.next":  "Next",
-    "container.lg2.cartel_disguise.empty":  "No players"
+    "container.lg2.cartel_disguise.empty":  "No players",
+    "item.lg2.travka":  "Travka"
 }

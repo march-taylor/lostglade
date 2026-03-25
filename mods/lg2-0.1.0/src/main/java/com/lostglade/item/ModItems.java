@@ -21,6 +21,7 @@ public final class ModItems {
 	private static final Identifier BITCOIN_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "bitcoin");
 	private static final Identifier SPECIAL_PICKAXE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "special_pickaxe");
 	private static final Identifier CAMERA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera");
+	private static final Identifier TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "travka");
 	private static final Identifier ABSOLUTE_INVISIBILITY_POTION_ID = Identifier.fromNamespaceAndPath(
 			Lg2.MOD_ID,
 			"absolute_invisibility_potion"
@@ -31,6 +32,7 @@ public final class ModItems {
 	private static final ResourceKey<Item> BITCOIN_KEY = ResourceKey.create(Registries.ITEM, BITCOIN_ID);
 	private static final ResourceKey<Item> SPECIAL_PICKAXE_KEY = ResourceKey.create(Registries.ITEM, SPECIAL_PICKAXE_ID);
 	private static final ResourceKey<Item> CAMERA_KEY = ResourceKey.create(Registries.ITEM, CAMERA_ID);
+	private static final ResourceKey<Item> TRAVKA_KEY = ResourceKey.create(Registries.ITEM, TRAVKA_ID);
 	private static final ResourceKey<Item> ABSOLUTE_INVISIBILITY_POTION_KEY = ResourceKey.create(
 			Registries.ITEM,
 			ABSOLUTE_INVISIBILITY_POTION_ID
@@ -71,6 +73,15 @@ public final class ModItems {
 							.setId(CAMERA_KEY)
 							.stacksTo(1)
 							.rarity(Rarity.UNCOMMON)
+			)
+	);
+	public static final Item TRAVKA = Registry.register(
+			BuiltInRegistries.ITEM,
+			TRAVKA_ID,
+			new TravkaItem(
+					new Item.Properties()
+							.setId(TRAVKA_KEY)
+							.rarity(Rarity.COMMON)
 			)
 	);
 	public static final Item ABSOLUTE_INVISIBILITY_POTION = Registry.register(
@@ -166,6 +177,7 @@ public final class ModItems {
 			entries.prepend(LONG_STABILITY_POTION);
 			entries.prepend(STABILITY_POTION);
 			entries.prepend(ABSOLUTE_INVISIBILITY_POTION);
+			entries.prepend(TRAVKA);
 			entries.prepend(CAMERA);
 			entries.prepend(BITCOIN);
 		});

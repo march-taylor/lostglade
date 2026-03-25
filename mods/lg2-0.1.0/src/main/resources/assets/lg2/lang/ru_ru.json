@@ -60,5 +60,6 @@
     "container.lg2.cartel_disguise.accept":  "Принять",
     "container.lg2.cartel_disguise.previous":  "Предыдущий",
     "container.lg2.cartel_disguise.next":  "Следующий",
-    "container.lg2.cartel_disguise.empty":  "Нет игроков"
+    "container.lg2.cartel_disguise.empty":  "Нет игроков",
+    "item.lg2.travka":  "������"
 }

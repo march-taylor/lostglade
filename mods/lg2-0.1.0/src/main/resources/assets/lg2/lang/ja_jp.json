@@ -60,5 +60,6 @@
     "container.lg2.cartel_disguise.accept":  "承認",
     "container.lg2.cartel_disguise.previous":  "前へ",
     "container.lg2.cartel_disguise.next":  "次へ",
-    "container.lg2.cartel_disguise.empty":  "プレイヤーがいません"
+    "container.lg2.cartel_disguise.empty":  "プレイヤーがいません",
+    "item.lg2.travka":  "????"
 }
