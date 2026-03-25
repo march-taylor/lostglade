@@ -1936,39 +1936,59 @@ public final class BlueMapCameraRenderer {
 						continue;
 					}
 
-					float blockBrightness = vanillaLightBrightness(blocklightLevel) * 1.5F;
-					float skyBrightness = vanillaLightBrightness(sunlightLevel) * this.frame.environment().skyLightFactor();
-					float lightRed = Mth.lerp(this.frame.environment().ambientLight(), blockBrightness, 1.0F);
-					float lightGreen = Mth.lerp(this.frame.environment().ambientLight(), blockBrightness * ((blockBrightness * 0.6F + 0.4F) * 0.6F + 0.4F), 1.0F);
-					float lightBlue = Mth.lerp(this.frame.environment().ambientLight(), blockBrightness * (blockBrightness * blockBrightness * 0.6F + 0.4F), 1.0F);
-					lightRed += this.frame.environment().skyLightRed() * skyBrightness;
-					lightGreen += this.frame.environment().skyLightGreen() * skyBrightness;
-					lightBlue += this.frame.environment().skyLightBlue() * skyBrightness;
-					lightRed = Mth.lerp(0.04F, lightRed, 0.75F);
-					lightGreen = Mth.lerp(0.04F, lightGreen, 0.75F);
-					lightBlue = Mth.lerp(0.04F, lightBlue, 0.75F);
-					float maxComponent = Math.max(lightRed, Math.max(lightGreen, lightBlue));
-					if (maxComponent > 1.0E-4F) {
-						float maxInverted = 1.0F - maxComponent;
-						float maxScaled = 1.0F - maxInverted * maxInverted * maxInverted * maxInverted;
-						float scale = maxScaled / maxComponent;
-						lightRed = Mth.lerp(0.12F, lightRed, lightRed * scale);
-						lightGreen = Mth.lerp(0.12F, lightGreen, lightGreen * scale);
-						lightBlue = Mth.lerp(0.12F, lightBlue, lightBlue * scale);
+					float redLinear;
+					float greenLinear;
+					float blueLinear;
+					if (material.transparent) {
+						float skylightMix = sunlightLevel * Mth.lerp(this.frame.environment().sunlightStrength(), 0.18F, 1.0F);
+						float blocklightMix = blocklightLevel <= 0.0F ? 0.0F : Mth.lerp(blocklightLevel, 0.15F, 1.0F);
+						float ambientFloor = Mth.clamp(this.frame.environment().ambientLight() * 0.45F + 0.22F, 0.22F, 0.42F);
+						float lightMix = Math.max(Math.max(skylightMix, blocklightMix), ambientFloor);
+						float aoShade = Mth.lerp(Mth.clamp(ao, 0.0F, 1.0F), 0.58F, 1.0F);
+						float shade = triangle.faceShade() * quantizeLight(lightMix) * aoShade;
+						if (depth > 64.0F && this.frame.maxDistance() > 64.0D) {
+							float fade = Mth.clamp((depth - 64.0F) / (float) (this.frame.maxDistance() - 64.0D), 0.0F, 1.0F);
+							shade *= Mth.lerp(fade, 1.0F, 0.78F);
+						}
+						shade = Mth.clamp(shade, 0.0F, 1.0F);
+						redLinear = toLinear((argb >> 16) & 0xFF) * triangle.colorR() * shade;
+						greenLinear = toLinear((argb >> 8) & 0xFF) * triangle.colorG() * shade;
+						blueLinear = toLinear(argb & 0xFF) * triangle.colorB() * shade;
+					} else {
+						float blockBrightness = vanillaLightBrightness(blocklightLevel) * 1.5F;
+						float skyBrightness = vanillaLightBrightness(sunlightLevel) * this.frame.environment().skyLightFactor();
+						float lightRed = Mth.lerp(this.frame.environment().ambientLight(), blockBrightness, 1.0F);
+						float lightGreen = Mth.lerp(this.frame.environment().ambientLight(), blockBrightness * ((blockBrightness * 0.6F + 0.4F) * 0.6F + 0.4F), 1.0F);
+						float lightBlue = Mth.lerp(this.frame.environment().ambientLight(), blockBrightness * (blockBrightness * blockBrightness * 0.6F + 0.4F), 1.0F);
+						lightRed += this.frame.environment().skyLightRed() * skyBrightness;
+						lightGreen += this.frame.environment().skyLightGreen() * skyBrightness;
+						lightBlue += this.frame.environment().skyLightBlue() * skyBrightness;
+						lightRed = Mth.lerp(0.04F, lightRed, 0.75F);
+						lightGreen = Mth.lerp(0.04F, lightGreen, 0.75F);
+						lightBlue = Mth.lerp(0.04F, lightBlue, 0.75F);
+						float maxComponent = Math.max(lightRed, Math.max(lightGreen, lightBlue));
+						if (maxComponent > 1.0E-4F) {
+							float maxInverted = 1.0F - maxComponent;
+							float maxScaled = 1.0F - maxInverted * maxInverted * maxInverted * maxInverted;
+							float scale = maxScaled / maxComponent;
+							lightRed = Mth.lerp(0.12F, lightRed, lightRed * scale);
+							lightGreen = Mth.lerp(0.12F, lightGreen, lightGreen * scale);
+							lightBlue = Mth.lerp(0.12F, lightBlue, lightBlue * scale);
+						}
+						lightRed = Mth.clamp(Mth.lerp(0.04F, lightRed, 0.75F), 0.0F, 1.0F);
+						lightGreen = Mth.clamp(Mth.lerp(0.04F, lightGreen, 0.75F), 0.0F, 1.0F);
+						lightBlue = Mth.clamp(Mth.lerp(0.04F, lightBlue, 0.75F), 0.0F, 1.0F);
+						float aoShade = Mth.lerp(Mth.clamp(ao, 0.0F, 1.0F), 0.74F, 1.0F);
+						float shade = triangle.faceShade() * aoShade;
+						if (depth > 64.0F && this.frame.maxDistance() > 64.0D) {
+							float fade = Mth.clamp((depth - 64.0F) / (float) (this.frame.maxDistance() - 64.0D), 0.0F, 1.0F);
+							shade *= Mth.lerp(fade, 1.0F, 0.78F);
+						}
+						shade = Mth.clamp(shade, 0.0F, 1.0F);
+						redLinear = toLinear((argb >> 16) & 0xFF) * triangle.colorR() * shade * lightRed;
+						greenLinear = toLinear((argb >> 8) & 0xFF) * triangle.colorG() * shade * lightGreen;
+						blueLinear = toLinear(argb & 0xFF) * triangle.colorB() * shade * lightBlue;
 					}
-					lightRed = Mth.clamp(Mth.lerp(0.04F, lightRed, 0.75F), 0.0F, 1.0F);
-					lightGreen = Mth.clamp(Mth.lerp(0.04F, lightGreen, 0.75F), 0.0F, 1.0F);
-					lightBlue = Mth.clamp(Mth.lerp(0.04F, lightBlue, 0.75F), 0.0F, 1.0F);
-					float aoShade = Mth.lerp(Mth.clamp(ao, 0.0F, 1.0F), 0.74F, 1.0F);
-					float shade = triangle.faceShade() * aoShade;
-					if (depth > 64.0F && this.frame.maxDistance() > 64.0D) {
-						float fade = Mth.clamp((depth - 64.0F) / (float) (this.frame.maxDistance() - 64.0D), 0.0F, 1.0F);
-						shade *= Mth.lerp(fade, 1.0F, 0.78F);
-					}
-					shade = Mth.clamp(shade, 0.0F, 1.0F);
-					float redLinear = toLinear((argb >> 16) & 0xFF) * triangle.colorR() * shade * lightRed;
-					float greenLinear = toLinear((argb >> 8) & 0xFF) * triangle.colorG() * shade * lightGreen;
-					float blueLinear = toLinear(argb & 0xFF) * triangle.colorB() * shade * lightBlue;
 
 					if (opaquePass) {
 						this.red[index] = redLinear;
@@ -2095,6 +2115,20 @@ public final class BlueMapCameraRenderer {
 		private static float vanillaLightBrightness(float lightLevel) {
 			float clamped = Mth.clamp(lightLevel, 0.0F, 1.0F);
 			return clamped / (4.0F - 3.0F * clamped);
+		}
+
+		private static float quantizeLight(float light) {
+			float clamped = Mth.clamp(light, 0.0F, 1.0F);
+			if (clamped < 0.625F) {
+				return 135.0F / 255.0F;
+			}
+			if (clamped < 0.785F) {
+				return 180.0F / 255.0F;
+			}
+			if (clamped < 0.93F) {
+				return 220.0F / 255.0F;
+			}
+			return 1.0F;
 		}
 
 		private static int lerpRgb(int from, int to, float delta) {
