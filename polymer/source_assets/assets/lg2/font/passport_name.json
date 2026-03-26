@@ -3,7 +3,7 @@
     {
       "type": "bitmap",
       "file": "lg2:font/passport_name.png",
-      "ascent": -64,
+      "ascent": -42,
       "height": 5,
       "chars": [
         "ABCDEFGH",
