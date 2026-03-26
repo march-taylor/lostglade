@@ -56,13 +56,10 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.monster.EnderMan;
 import net.minecraft.world.entity.monster.skeleton.AbstractSkeleton;
-import net.minecraft.world.entity.monster.skeleton.Bogged;
 import net.minecraft.world.entity.monster.spider.Spider;
 import net.minecraft.world.entity.monster.zombie.Drowned;
 import net.minecraft.world.entity.monster.zombie.Husk;
 import net.minecraft.world.entity.monster.zombie.Zombie;
-import net.minecraft.world.entity.monster.zombie.ZombifiedPiglin;
-import net.minecraft.world.entity.monster.zombie.ZombieVillager;
 import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.entity.npc.villager.VillagerData;
 import net.minecraft.world.entity.npc.villager.VillagerProfession;
@@ -121,16 +118,9 @@ final class CameraEntityRenderer {
 	private static final Identifier PLAYER_WIDE_FALLBACK = Identifier.fromNamespaceAndPath("minecraft", "entity/player/wide/steve");
 	private static final Identifier PLAYER_SLIM_FALLBACK = Identifier.fromNamespaceAndPath("minecraft", "entity/player/slim/alex");
 	private static final Identifier ZOMBIE_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/zombie/zombie");
-	private static final Identifier ZOMBIFIED_PIGLIN_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/piglin/zombified_piglin");
-	private static final Identifier ZOMBIE_VILLAGER_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/zombie_villager/zombie_villager");
 	private static final Identifier HUSK_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/zombie/husk");
 	private static final Identifier DROWNED_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/zombie/drowned");
 	private static final Identifier SKELETON_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/skeleton/skeleton");
-	private static final Identifier STRAY_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/skeleton/stray");
-	private static final Identifier STRAY_OVERLAY_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/skeleton/stray_overlay");
-	private static final Identifier WITHER_SKELETON_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/skeleton/wither_skeleton");
-	private static final Identifier BOGGED_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/skeleton/bogged");
-	private static final Identifier BOGGED_OVERLAY_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/skeleton/bogged_overlay");
 	private static final Identifier CREEPER_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/creeper/creeper");
 	private static final Identifier SPIDER_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/spider/spider");
 	private static final Identifier SPIDER_EYES_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/spider_eyes");
@@ -314,24 +304,12 @@ final class CameraEntityRenderer {
 			return humanoidSnapshot(livingEntity, HumanoidKind.VILLAGER, VILLAGER_TEXTURE, overlays);
 		}
 
-		if (entity instanceof ZombieVillager zombieVillager) {
-			VillagerData villagerData = zombieVillager.getVillagerData();
-			List<Identifier> overlays = new ArrayList<>();
-			overlays.add(holderTexture(villagerData.type(), "entity/zombie_villager/type/"));
-			if (!zombieVillager.isBaby() && !villagerData.profession().is(VillagerProfession.NONE)) {
-				overlays.add(holderTexture(villagerData.profession(), "entity/zombie_villager/profession/"));
-				if (!villagerData.profession().is(VillagerProfession.NITWIT)) {
-					overlays.add(professionLevelTexture(villagerData.level(), "entity/zombie_villager/profession_level/"));
-				}
-			}
-			return humanoidSnapshot(livingEntity, HumanoidKind.ZOMBIE, ZOMBIE_VILLAGER_TEXTURE, overlays.stream().filter(identifier -> identifier != null).toArray(Identifier[]::new));
+		EntitySnapshot specialEntityFixup = CameraEntityFixups.captureManualEntityFixup(entity, livingEntity);
+		if (specialEntityFixup != null) {
+			return specialEntityFixup;
 		}
 
-		if (entity instanceof ZombifiedPiglin) {
-			return humanoidSnapshot(livingEntity, HumanoidKind.ZOMBIE, ZOMBIFIED_PIGLIN_TEXTURE, new Identifier[0]);
-		}
-
-		if (entity instanceof Zombie && shouldUseManualZombieFamily(entity)) {
+		if (entity instanceof Zombie && CameraEntityFixups.shouldUseManualZombieFamily(entity)) {
 			Identifier texture = ZOMBIE_TEXTURE;
 			HumanoidKind kind = HumanoidKind.ZOMBIE;
 			Identifier[] overlays = new Identifier[0];
@@ -371,20 +349,7 @@ final class CameraEntityRenderer {
 			);
 		}
 
-		if (entity instanceof Bogged bogged) {
-			Identifier[] overlays = bogged.isSheared() ? new Identifier[0] : new Identifier[]{BOGGED_OVERLAY_TEXTURE};
-			return humanoidSnapshot(livingEntity, HumanoidKind.SKELETON, BOGGED_TEXTURE, overlays);
-		}
-
-		if (entity instanceof net.minecraft.world.entity.monster.skeleton.Stray) {
-			return humanoidSnapshot(livingEntity, HumanoidKind.SKELETON, STRAY_TEXTURE, new Identifier[]{STRAY_OVERLAY_TEXTURE});
-		}
-
-		if (entity instanceof net.minecraft.world.entity.monster.skeleton.WitherSkeleton) {
-			return humanoidSnapshot(livingEntity, HumanoidKind.SKELETON, WITHER_SKELETON_TEXTURE, new Identifier[0]);
-		}
-
-		if (entity instanceof AbstractSkeleton && shouldUseManualSkeletonFamily(entity)) {
+		if (entity instanceof AbstractSkeleton && CameraEntityFixups.shouldUseManualSkeletonFamily(entity)) {
 			return humanoidSnapshot(livingEntity, HumanoidKind.SKELETON, SKELETON_TEXTURE, new Identifier[0]);
 		}
 
@@ -606,7 +571,7 @@ final class CameraEntityRenderer {
 		return null;
 	}
 
-	private static HumanoidSnapshot humanoidSnapshot(LivingEntity livingEntity, HumanoidKind kind, Identifier texture, Identifier[] overlays) {
+	static HumanoidSnapshot humanoidSnapshot(LivingEntity livingEntity, HumanoidKind kind, Identifier texture, Identifier[] overlays) {
 		return new HumanoidSnapshot(
 				livingEntity.position(),
 				livingEntity.getYRot(),
@@ -947,7 +912,7 @@ final class CameraEntityRenderer {
 			return null;
 		}
 		Identifier blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock());
-		if (blockId == null || !blockEntityShouldUseItemFallback(blockId)) {
+		if (blockId == null || !CameraBlockFixups.shouldUseFixedItemFallback(blockId)) {
 			return null;
 		}
 		net.minecraft.world.item.ItemStack stack = new net.minecraft.world.item.ItemStack(state.getBlock());
@@ -957,17 +922,6 @@ final class CameraEntityRenderer {
 		}
 		Vec3 position = Vec3.atCenterOf(blockEntity.getBlockPos()).add(0.0D, -0.25D, 0.0D);
 		return new FixedItemSnapshot(position, 180.0F, 0.0F, 0.0F, 1.0F, visual);
-	}
-
-	private static boolean blockEntityShouldUseItemFallback(Identifier blockId) {
-		String path = blockId.getPath();
-		return path.equals("decorated_pot")
-				|| path.equals("bell")
-				|| path.equals("conduit")
-				|| path.equals("spawner")
-				|| path.equals("vault")
-				|| path.equals("trial_spawner")
-				|| path.endsWith("shulker_box");
 	}
 
 	private static ClientModelSnapshot captureBedBlockEntity(net.minecraft.world.level.block.entity.BedBlockEntity bedBlockEntity) {
@@ -1485,45 +1439,6 @@ final class CameraEntityRenderer {
 		return livingClientModelSnapshot(villager, villager.yBodyRot, state, layers.toArray(ClientLayerSnapshot[]::new));
 	}
 
-	private static ClientModelSnapshot captureZombieVillagerClientModel(ZombieVillager zombieVillager) {
-		VillagerData villagerData = zombieVillager.getVillagerData();
-		Map<String, Object> state = livingStateFields(zombieVillager);
-		state.put("villagerData", villagerData);
-		state.put("isAggressive", zombieVillager.isAggressive());
-		state.put("isConverting", zombieVillager.isConverting());
-
-		List<ClientLayerSnapshot> layers = new ArrayList<>();
-		String modelClassName = "net.minecraft.client.model.monster.zombie.ZombieVillagerModel";
-		layers.add(new ClientLayerSnapshot(modelClassName, minecraftTexture("entity/zombie_villager/zombie_villager"), 0xFFFFFF, false));
-		addClientLayerIfPresent(layers, modelClassName, holderTexture(villagerData.type(), "entity/zombie_villager/type/"), 0xFFFFFF, false);
-		if (!zombieVillager.isBaby() && !villagerData.profession().is(VillagerProfession.NONE)) {
-			addClientLayerIfPresent(layers, modelClassName, holderTexture(villagerData.profession(), "entity/zombie_villager/profession/"), 0xFFFFFF, false);
-			if (!villagerData.profession().is(VillagerProfession.NITWIT)) {
-				addClientLayerIfPresent(layers, modelClassName, professionLevelTexture(villagerData.level(), "entity/zombie_villager/profession_level/"), 0xFFFFFF, false);
-			}
-		}
-
-		return livingClientModelSnapshot(zombieVillager, zombieVillager.yBodyRot, state, layers.toArray(ClientLayerSnapshot[]::new));
-	}
-
-	private static ClientModelSnapshot captureZombifiedPiglinClientModel(ZombifiedPiglin zombifiedPiglin) {
-		Map<String, Object> state = livingStateFields(zombifiedPiglin);
-		state.put("isAggressive", zombifiedPiglin.isAggressive());
-		return livingClientModelSnapshot(
-				zombifiedPiglin,
-				zombifiedPiglin.yBodyRot,
-				state,
-				new ClientLayerSnapshot[]{
-						new ClientLayerSnapshot(
-								"net.minecraft.client.model.monster.piglin.ZombifiedPiglinModel",
-								minecraftTexture("entity/piglin/zombified_piglin"),
-								0xFFFFFF,
-								false
-						)
-				}
-		);
-	}
-
 	private static ClientModelSnapshot captureZombieClientModel(Zombie zombie) {
 		Map<String, Object> state = livingStateFields(zombie);
 		state.put("isAggressive", zombie.isAggressive());
@@ -1580,19 +1495,6 @@ final class CameraEntityRenderer {
 			).withRenderScale(1.01F));
 		}
 		return livingClientModelSnapshot(sheep, sheep.yBodyRot, state, layers.toArray(ClientLayerSnapshot[]::new));
-	}
-
-	private static ClientModelSnapshot captureBoggedClientModel(Bogged bogged) {
-		Map<String, Object> state = livingStateFields(bogged);
-		state.put("isSheared", bogged.isSheared());
-
-		List<ClientLayerSnapshot> layers = new ArrayList<>();
-		String modelClassName = "net.minecraft.client.model.monster.skeleton.BoggedModel";
-		layers.add(new ClientLayerSnapshot(modelClassName, minecraftTexture("entity/skeleton/bogged"), 0xFFFFFF, false));
-		if (!bogged.isSheared()) {
-			addClientLayerIfPresent(layers, modelClassName, minecraftTexture("entity/skeleton/bogged_overlay"), 0xFFFFFF, false);
-		}
-		return livingClientModelSnapshot(bogged, bogged.yBodyRot, state, layers.toArray(ClientLayerSnapshot[]::new));
 	}
 
 	private static ClientModelSnapshot captureCowClientModel(Cow cow) {
@@ -1818,7 +1720,7 @@ final class CameraEntityRenderer {
 		);
 	}
 
-	private static ClientModelSnapshot livingClientModelSnapshot(
+	static ClientModelSnapshot livingClientModelSnapshot(
 			LivingEntity livingEntity,
 			float rootYaw,
 			Map<String, Object> stateFields,
@@ -1863,7 +1765,7 @@ final class CameraEntityRenderer {
 		if (livingEntity == null || baseModelClassName == null) {
 			return false;
 		}
-		if (usesManualHumanoidBase(livingEntity)) {
+		if (CameraEntityFixups.usesManualHumanoidBase(livingEntity)) {
 			return false;
 		}
 		if (!hasAnyHumanoidArmor(livingEntity)) {
@@ -1875,38 +1777,6 @@ final class CameraEntityRenderer {
 				|| baseModelClassName.contains("ZombieModel")
 				|| baseModelClassName.contains("SkeletonModel")
 				|| baseModelClassName.contains("PlayerModel");
-	}
-
-	private static boolean usesManualHumanoidBase(LivingEntity livingEntity) {
-		if (livingEntity == null) {
-			return false;
-		}
-		if (livingEntity instanceof Player || livingEntity instanceof EnderMan) {
-			return true;
-		}
-		if (livingEntity instanceof Zombie && shouldUseManualZombieFamily(livingEntity)) {
-			return true;
-		}
-		return livingEntity instanceof AbstractSkeleton && shouldUseManualSkeletonFamily(livingEntity);
-	}
-
-	private static boolean shouldUseManualZombieFamily(Entity entity) {
-		return switch (entityTypePath(entity)) {
-			case "zombie", "husk", "drowned", "giant" -> true;
-			default -> false;
-		};
-	}
-
-	private static boolean shouldUseManualSkeletonFamily(Entity entity) {
-		return "skeleton".equals(entityTypePath(entity));
-	}
-
-	private static String entityTypePath(Entity entity) {
-		if (entity == null) {
-			return "";
-		}
-		Identifier typeId = BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType());
-		return typeId == null ? "" : typeId.getPath();
 	}
 
 	private static boolean hasAnyHumanoidArmor(LivingEntity livingEntity) {
@@ -1954,7 +1824,7 @@ final class CameraEntityRenderer {
 		return new ClientModelSnapshot(position, rootYaw, rootYawOffsetDegrees, rootScale, transformKind, stateFields, layers);
 	}
 
-	private static void addClientLayerIfPresent(List<ClientLayerSnapshot> layers, String modelClassName, Identifier texture, int tintRgb, boolean emissive) {
+	static void addClientLayerIfPresent(List<ClientLayerSnapshot> layers, String modelClassName, Identifier texture, int tintRgb, boolean emissive) {
 		if (texture != null) {
 			layers.add(new ClientLayerSnapshot(modelClassName, texture, tintRgb, emissive));
 		}
@@ -1978,7 +1848,7 @@ final class CameraEntityRenderer {
 		return state;
 	}
 
-	private static Map<String, Object> livingStateFields(LivingEntity livingEntity) {
+	static Map<String, Object> livingStateFields(LivingEntity livingEntity) {
 		Map<String, Object> state = entityStateFields(livingEntity);
 		state.put("bodyRot", livingEntity.yBodyRot);
 		state.put("yRot", wrapDegrees(livingEntity.yHeadRot - livingEntity.yBodyRot));
@@ -2133,7 +2003,6 @@ final class CameraEntityRenderer {
 		registerSimpleClientRule(rules, "salmon", "net.minecraft.client.model.animal.fish.SalmonModel", minecraftTexture("entity/fish/salmon"));
 		registerSimpleClientRule(rules, "skeleton_horse", "net.minecraft.client.model.animal.equine.HorseModel", minecraftTexture("entity/horse/horse_skeleton"));
 		registerSimpleClientRule(rules, "snow_golem", "net.minecraft.client.model.animal.golem.SnowGolemModel", minecraftTexture("entity/snow_golem"));
-		rules.put("bogged", livingEntity -> captureBoggedClientModel((Bogged) livingEntity));
 		registerSimpleClientRule(rules, "stray", "net.minecraft.client.model.monster.skeleton.SkeletonModel", minecraftTexture("entity/skeleton/stray"));
 		registerSimpleClientRule(rules, "tadpole", "net.minecraft.client.model.animal.frog.TadpoleModel", minecraftTexture("entity/frog/tadpole"));
 		rules.put("trader_llama", livingEntity -> captureLlamaClientModel((Llama) livingEntity));
@@ -2144,8 +2013,7 @@ final class CameraEntityRenderer {
 		registerSimpleClientRule(rules, "wither_skeleton", "net.minecraft.client.model.monster.skeleton.SkeletonModel", minecraftTexture("entity/skeleton/wither_skeleton"));
 		registerSimpleClientRule(rules, "zoglin", "net.minecraft.client.model.monster.hoglin.HoglinModel", minecraftTexture("entity/hoglin/zoglin"));
 		registerSimpleClientRule(rules, "zombie_horse", "net.minecraft.client.model.animal.equine.HorseModel", minecraftTexture("entity/horse/horse_zombie"));
-		rules.put("zombie_villager", livingEntity -> captureZombieVillagerClientModel((ZombieVillager) livingEntity));
-		rules.put("zombified_piglin", livingEntity -> captureZombifiedPiglinClientModel((ZombifiedPiglin) livingEntity));
+		CameraEntityFixups.registerClientModelRules(rules);
 
 		rules.put("ender_dragon", CameraEntityRenderer::captureEnderDragonClientModel);
 		rules.put("wither", CameraEntityRenderer::captureWitherClientModel);
@@ -2281,7 +2149,7 @@ final class CameraEntityRenderer {
 		));
 	}
 
-	private static Identifier minecraftTexture(String path) {
+	static Identifier minecraftTexture(String path) {
 		return Identifier.fromNamespaceAndPath("minecraft", path);
 	}
 
@@ -5012,7 +4880,7 @@ final class CameraEntityRenderer {
 		return fallback;
 	}
 
-	private static Identifier holderTexture(Holder<?> holder, String prefix) {
+	static Identifier holderTexture(Holder<?> holder, String prefix) {
 		if (holder == null) {
 			return null;
 		}
@@ -5024,11 +4892,11 @@ final class CameraEntityRenderer {
 				.orElse(null);
 	}
 
-	private static Identifier professionLevelTexture(int level) {
+	static Identifier professionLevelTexture(int level) {
 		return professionLevelTexture(level, "entity/villager/profession_level/");
 	}
 
-	private static Identifier professionLevelTexture(int level, String prefix) {
+	static Identifier professionLevelTexture(int level, String prefix) {
 		return switch (Mth.clamp(level, 1, 5)) {
 			case 1 -> Identifier.fromNamespaceAndPath("minecraft", prefix + "stone");
 			case 2 -> Identifier.fromNamespaceAndPath("minecraft", prefix + "iron");
