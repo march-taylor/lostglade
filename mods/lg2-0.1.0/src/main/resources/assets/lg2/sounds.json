@@ -22,5 +22,13 @@
         "preload": true
       }
     ]
+  },
+  "cocaine_consume": {
+    "sounds": [
+      {
+        "name": "lg2:cocaine_consume",
+        "preload": true
+      }
+    ]
   }
 }

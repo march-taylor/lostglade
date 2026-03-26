@@ -2,6 +2,7 @@ package com.lostglade.mixin;
 
 import com.lostglade.block.ModBlocks;
 import com.lostglade.server.ServerMechanicsGateSystem;
+import com.lostglade.server.ServerRaceSystem;
 import com.lostglade.server.ServerUpgradeUiSystem;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
@@ -24,12 +25,14 @@ public abstract class ServerItemEntityMixin {
 	private void lg2$protectServerItem(CallbackInfo ci) {
 		ItemEntity self = (ItemEntity) (Object) this;
 		if (!lg2$isProtectedServerItem(self) || self.level().isClientSide() || lg2$isCommandGiveFakeItem(self)) {
+			ServerRaceSystem.tryProcessCocaineCauldron(self);
 			return;
 		}
 
 		self.setInvulnerable(true);
 		self.setUnlimitedLifetime();
 		lg2$clampFloor(self);
+		ServerRaceSystem.tryProcessCocaineCauldron(self);
 	}
 
 	@Inject(method = "hurtClient", at = @At("HEAD"), cancellable = true)
