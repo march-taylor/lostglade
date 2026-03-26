@@ -67,6 +67,7 @@ import net.minecraft.world.entity.player.PlayerModelPart;
 import net.minecraft.world.entity.projectile.FishingHook;
 import net.minecraft.world.entity.vehicle.boat.AbstractBoat;
 import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.component.DyedItemColor;
@@ -298,6 +299,17 @@ final class CameraEntityRenderer {
 			float pitch,
 			float roll,
 			float scale,
+			ItemVisual visual
+	) implements EntitySnapshot {
+	}
+
+	record DisplayItemSnapshot(
+			Vec3 position,
+			float yaw,
+			float pitch,
+			float roll,
+			float scale,
+			ItemDisplayTransformContext transformContext,
 			ItemVisual visual
 	) implements EntitySnapshot {
 	}
@@ -664,6 +676,9 @@ final class CameraEntityRenderer {
 		}
 		if (entity instanceof AbstractBoat boat && VanillaClientModels.isAvailable()) {
 			return captureBoatClientModel(boat);
+		}
+		if (entity instanceof net.minecraft.world.entity.Display.ItemDisplay itemDisplay) {
+			return captureItemDisplaySnapshot(itemDisplay);
 		}
 		LivingEntity livingEntity = entity instanceof LivingEntity living ? living : null;
 		if (livingEntity == null && !(entity instanceof ItemEntity)) {
@@ -1244,6 +1259,27 @@ final class CameraEntityRenderer {
 		);
 	}
 
+	private static EntitySnapshot captureItemDisplaySnapshot(net.minecraft.world.entity.Display.ItemDisplay itemDisplay) {
+		ItemStack stack = itemDisplay.getItemStack();
+		if (stack == null || stack.isEmpty()) {
+			return null;
+		}
+		ItemDisplayTransformContext transformContext = itemDisplayTransformContext(itemDisplay.getItemTransform());
+		ItemVisual visual = resolveItemVisual(stack, transformContext);
+		if (visual == null) {
+			return null;
+		}
+		return new DisplayItemSnapshot(
+				itemDisplay.position(),
+				itemDisplay.getYRot(),
+				itemDisplay.getXRot(),
+				0.0F,
+				1.0F,
+				transformContext,
+				visual
+		);
+	}
+
 	private static FramedMapSnapshot captureFramedMap(net.minecraft.world.entity.decoration.ItemFrame itemFrame, ItemStack stack) {
 		if (stack == null || stack.isEmpty() || !(itemFrame.level() instanceof ServerLevel serverLevel)) {
 			return null;
@@ -1257,6 +1293,24 @@ final class CameraEntityRenderer {
 			return null;
 		}
 		return new FramedMapSnapshot(mapId.id(), mapData.colors.clone());
+	}
+
+	private static ItemDisplayTransformContext itemDisplayTransformContext(ItemDisplayContext transformContext) {
+		if (transformContext == null) {
+			return ItemDisplayTransformContext.NONE;
+		}
+		return switch (transformContext) {
+			case NONE -> ItemDisplayTransformContext.NONE;
+			case THIRD_PERSON_LEFT_HAND -> ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND;
+			case THIRD_PERSON_RIGHT_HAND -> ItemDisplayTransformContext.THIRD_PERSON_RIGHT_HAND;
+			case FIRST_PERSON_LEFT_HAND -> ItemDisplayTransformContext.FIRST_PERSON_LEFT_HAND;
+			case FIRST_PERSON_RIGHT_HAND -> ItemDisplayTransformContext.FIRST_PERSON_RIGHT_HAND;
+			case HEAD -> ItemDisplayTransformContext.HEAD;
+			case GUI -> ItemDisplayTransformContext.GUI;
+			case GROUND -> ItemDisplayTransformContext.GROUND;
+			case FIXED -> ItemDisplayTransformContext.FIXED;
+			default -> ItemDisplayTransformContext.FIXED;
+		};
 	}
 
 	private static EntitySnapshot captureBlockEntityAsFixedItem(net.minecraft.world.level.block.entity.BlockEntity blockEntity) {
@@ -2962,6 +3016,8 @@ final class CameraEntityRenderer {
 			renderItem(context, itemSnapshot);
 		} else if (entitySnapshot instanceof FixedItemSnapshot fixedItemSnapshot) {
 			renderFixedItem(context, fixedItemSnapshot);
+		} else if (entitySnapshot instanceof DisplayItemSnapshot displayItemSnapshot) {
+			renderDisplayItem(context, displayItemSnapshot);
 		} else if (entitySnapshot instanceof ExperienceOrbSnapshot experienceOrbSnapshot) {
 			renderExperienceOrb(context, experienceOrbSnapshot);
 		} else if (entitySnapshot instanceof FishingHookSnapshot fishingHookSnapshot) {
@@ -4010,6 +4066,17 @@ final class CameraEntityRenderer {
 				.rotateZ(radians(snapshot.roll()))
 				.scale(snapshot.scale());
 		renderItemVisual(context, root, snapshot.visual(), ItemDisplayTransformContext.FIXED);
+	}
+
+	private static void renderDisplayItem(RenderContext context, DisplayItemSnapshot snapshot) {
+		Matrix4f root = new Matrix4f()
+				.translate((float) snapshot.position().x, (float) snapshot.position().y, (float) snapshot.position().z)
+				.rotateY(radians(-snapshot.yaw()))
+				.rotateX(radians(snapshot.pitch()))
+				.rotateZ(radians(snapshot.roll()))
+				.rotateY((float) Math.PI)
+				.scale(snapshot.scale());
+		renderItemVisual(context, root, snapshot.visual(), snapshot.transformContext());
 	}
 
 	private static void renderExperienceOrb(RenderContext context, ExperienceOrbSnapshot snapshot) {
