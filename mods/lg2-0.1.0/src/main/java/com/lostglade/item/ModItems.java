@@ -21,6 +21,7 @@ public final class ModItems {
 	private static final Identifier BITCOIN_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "bitcoin");
 	private static final Identifier SPECIAL_PICKAXE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "special_pickaxe");
 	private static final Identifier CAMERA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera");
+	private static final Identifier PHOTO_PRINT_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "photo_print");
 	private static final Identifier TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "travka");
 	private static final Identifier DRIED_TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "dried_travka");
 	private static final Identifier COCAINE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "cocaine");
@@ -35,6 +36,7 @@ public final class ModItems {
 	private static final ResourceKey<Item> BITCOIN_KEY = ResourceKey.create(Registries.ITEM, BITCOIN_ID);
 	private static final ResourceKey<Item> SPECIAL_PICKAXE_KEY = ResourceKey.create(Registries.ITEM, SPECIAL_PICKAXE_ID);
 	private static final ResourceKey<Item> CAMERA_KEY = ResourceKey.create(Registries.ITEM, CAMERA_ID);
+	private static final ResourceKey<Item> PHOTO_PRINT_KEY = ResourceKey.create(Registries.ITEM, PHOTO_PRINT_ID);
 	private static final ResourceKey<Item> TRAVKA_KEY = ResourceKey.create(Registries.ITEM, TRAVKA_ID);
 	private static final ResourceKey<Item> DRIED_TRAVKA_KEY = ResourceKey.create(Registries.ITEM, DRIED_TRAVKA_ID);
 	private static final ResourceKey<Item> COCAINE_KEY = ResourceKey.create(Registries.ITEM, COCAINE_ID);
@@ -77,6 +79,16 @@ public final class ModItems {
 			new CameraItem(
 					new Item.Properties()
 							.setId(CAMERA_KEY)
+							.stacksTo(1)
+							.rarity(Rarity.UNCOMMON)
+			)
+	);
+	public static final Item PHOTO_PRINT = Registry.register(
+			BuiltInRegistries.ITEM,
+			PHOTO_PRINT_ID,
+			new PhotoPrintItem(
+					new Item.Properties()
+							.setId(PHOTO_PRINT_KEY)
 							.stacksTo(1)
 							.rarity(Rarity.UNCOMMON)
 			)

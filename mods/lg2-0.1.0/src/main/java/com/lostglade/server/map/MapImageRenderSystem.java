@@ -2,6 +2,7 @@ package com.lostglade.server.map;
 
 import com.lostglade.Lg2;
 import com.lostglade.config.Lg2Config;
+import com.lostglade.item.PhotoPrintData;
 import com.lostglade.server.CameraCaptureSystem;
 import com.lostglade.server.ServerMechanicsGateSystem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
@@ -70,28 +71,15 @@ public final class MapImageRenderSystem {
 		if (player == null || provider == null || hasActiveRender(player.getUUID())) {
 			return false;
 		}
-		ServerLevel level = (ServerLevel) player.level();
-		ServerLevel mapLevel = photoMapLevel(player.level().getServer(), level);
-		ItemStack map = MapItem.create(mapLevel, PHOTO_MAP_CENTER, PHOTO_MAP_CENTER, (byte) 0, false, false);
-		MapId mapId = map.get(DataComponents.MAP_ID);
-		if (mapId == null) {
+		int mapsWide = Math.max(1, provider.mapTilesWide());
+		int mapsHigh = Math.max(1, provider.mapTilesHigh());
+		PhotoMapSet photoMapSet = createPhotoMapSet(player, itemName, mapsWide, mapsHigh);
+		if (photoMapSet == null) {
 			return false;
 		}
-		MapItemSavedData initialMapData = mapLevel.getMapData(mapId);
-		if (initialMapData != null && !initialMapData.locked) {
-			mapLevel.setMapData(mapId, initialMapData.locked());
-		}
-		map.set(DataComponents.CUSTOM_NAME, itemName);
-
-		boolean inserted = player.getInventory().add(map);
-		if (!inserted) {
-			ItemEntity itemEntity = player.drop(map, false);
-			if (itemEntity != null) {
-				itemEntity.setPickUpDelay(0);
-			}
-		}
+		givePhotoItem(player, PhotoPrintData.createPhotoItem(itemName, mapsWide, mapsHigh, photoMapSet.mapIds()));
 		ServerMechanicsGateSystem.syncPlayerInventory(player);
-		RenderJob job = new RenderJob(player.getUUID(), mapId, provider);
+		RenderJob job = new RenderJob(player.getUUID(), photoMapSet.mapIds(), photoMapSet.mapDataSet(), mapsWide, mapsHigh, provider);
 		PLAYER_JOBS.put(player.getUUID(), job);
 		QUEUE.offer(player.getUUID());
 		if (activePlayerId == null) {
@@ -140,15 +128,8 @@ public final class MapImageRenderSystem {
 			return;
 		}
 
-		MapItemSavedData mapData = level.getMapData(job.mapId());
-		if (mapData == null) {
-			removeJob(job.playerId());
-			pollNextActive();
-			return;
-		}
-
 		if (job.provider().prefersWholeFrameRendering()) {
-			tickWholeFrameJob(server, player, level, mapData, job);
+			tickWholeFrameJob(server, player, level, job);
 			return;
 		}
 
@@ -168,14 +149,15 @@ public final class MapImageRenderSystem {
 					return;
 				}
 			} else {
-				mapData.setColor(result.x(), result.y(), result.color());
+				setPhotoColor(job, result.x(), result.y(), result.color());
 			}
 			job.finishDispatchedPixel();
 			processed++;
 		}
+		updatePhotoProgress(server, job);
 
 		long tickStart = System.nanoTime();
-		while (job.canDispatchMore() && job.nextPixel() < MAP_SIZE * MAP_SIZE) {
+		while (job.canDispatchMore() && job.nextPixel() < job.totalPixels()) {
 			int pixelIndex = job.nextPixel();
 			int x = pixelIndex % MAP_SIZE;
 			int y = pixelIndex / MAP_SIZE;
@@ -217,7 +199,8 @@ public final class MapImageRenderSystem {
 		}
 
 		if (job.isDone() && !job.hasDispatchedPixels()) {
-			lockRenderedPhoto(level, job, mapData);
+			lockRenderedPhoto(level, job);
+			finalizePhotoDisplay(server, job);
 			job.provider().onCompleted(server);
 			player.displayClientMessage(CameraCaptureSystem.captureCompletedMessage(player), true);
 			playCompletionSound(player);
@@ -226,7 +209,7 @@ public final class MapImageRenderSystem {
 		}
 	}
 
-	private static void tickWholeFrameJob(MinecraftServer server, ServerPlayer player, ServerLevel level, MapItemSavedData mapData, RenderJob job) {
+	private static void tickWholeFrameJob(MinecraftServer server, ServerPlayer player, ServerLevel level, RenderJob job) {
 		if (!job.hasPreparedFrame()) {
 			try {
 				job.setPreparedFrame(job.provider().prepareFrame(server));
@@ -266,7 +249,7 @@ public final class MapImageRenderSystem {
 		}
 
 		byte[] frame = frameResult.pixels();
-		if (frame == null || frame.length < MAP_SIZE * MAP_SIZE) {
+		if (frame == null || frame.length < job.totalPixels()) {
 			Lg2.LOGGER.error("Map frame render returned invalid frame for player {}", job.playerId());
 			player.displayClientMessage(Component.literal("Рендер снимка остановлен: кадр повреждён."), true);
 			removeJob(job.playerId());
@@ -275,15 +258,17 @@ public final class MapImageRenderSystem {
 		}
 
 		int applied = 0;
-		while (applied < FRAME_PIXELS_APPLIED_PER_TICK && job.frameApplyIndex() < MAP_SIZE * MAP_SIZE) {
+		while (applied < FRAME_PIXELS_APPLIED_PER_TICK && job.frameApplyIndex() < job.totalPixels()) {
 			int pixelIndex = job.frameApplyIndex();
-			mapData.setColor(pixelIndex % MAP_SIZE, pixelIndex / MAP_SIZE, frame[pixelIndex]);
+			setPhotoColor(job, pixelIndex, frame[pixelIndex]);
 			job.advanceFrameApplyIndex();
 			applied++;
 		}
+		updatePhotoProgress(server, job);
 
-		if (job.frameApplyIndex() >= MAP_SIZE * MAP_SIZE) {
-			lockRenderedPhoto(level, job, mapData);
+		if (job.frameApplyIndex() >= job.totalPixels()) {
+			lockRenderedPhoto(level, job);
+			finalizePhotoDisplay(server, job);
 			job.provider().onCompleted(server);
 			player.displayClientMessage(CameraCaptureSystem.captureCompletedMessage(player), true);
 			playCompletionSound(player);
@@ -309,11 +294,149 @@ public final class MapImageRenderSystem {
 		));
 	}
 
-	private static void lockRenderedPhoto(ServerLevel level, RenderJob job, MapItemSavedData mapData) {
-		if (level == null || job == null || mapData == null || mapData.locked) {
+	private static void lockRenderedPhoto(ServerLevel level, RenderJob job) {
+		if (level == null || job == null) {
 			return;
 		}
-		level.setMapData(job.mapId(), mapData.locked());
+		for (int i = 0; i < job.mapIds().length; i++) {
+			MapId mapId = job.mapIds()[i];
+			MapItemSavedData mapData = job.mapDataSet()[i];
+			if (mapId == null || mapData == null || mapData.locked) {
+				continue;
+			}
+			level.setMapData(mapId, mapData.locked());
+		}
+	}
+
+	private static void updatePhotoProgress(MinecraftServer server, RenderJob job) {
+		if (server == null || job == null) {
+			return;
+		}
+		int progress = job.progressPercent();
+		if (progress <= job.lastDisplayedProgress() || progress >= 100) {
+			return;
+		}
+		Component name = CameraCaptureSystem.createQueuedPhotoName(progress);
+		updatePhotoItemsInInventories(server, job.photoData(), name);
+		job.setLastDisplayedProgress(progress);
+	}
+
+	private static void finalizePhotoDisplay(MinecraftServer server, RenderJob job) {
+		if (server == null || job == null) {
+			return;
+		}
+		Component completedName = CameraCaptureSystem.createCompletedPhotoName();
+		updatePhotoItemsInInventories(server, job.photoData(), completedName);
+		updatePlacedPhotoFrameNames(server, job.photoData(), completedName);
+		job.setLastDisplayedProgress(100);
+	}
+
+	private static PhotoMapSet createPhotoMapSet(ServerPlayer player, Component itemName, int mapsWide, int mapsHigh) {
+		ServerLevel level = (ServerLevel) player.level();
+		ServerLevel mapLevel = photoMapLevel(player.level().getServer(), level);
+		MapId[] mapIds = new MapId[mapsWide * mapsHigh];
+		MapItemSavedData[] mapDataSet = new MapItemSavedData[mapIds.length];
+		for (int i = 0; i < mapIds.length; i++) {
+			ItemStack map = MapItem.create(mapLevel, PHOTO_MAP_CENTER, PHOTO_MAP_CENTER, (byte) 0, false, false);
+			MapId mapId = map.get(DataComponents.MAP_ID);
+			if (mapId == null) {
+				return null;
+			}
+			MapItemSavedData mapData = mapLevel.getMapData(mapId);
+			if (mapData != null && !mapData.locked) {
+				mapLevel.setMapData(mapId, mapData.locked());
+				mapData = mapLevel.getMapData(mapId);
+			}
+			if (mapData == null) {
+				return null;
+			}
+			map.set(DataComponents.CUSTOM_NAME, itemName);
+			mapIds[i] = mapId;
+			mapDataSet[i] = mapData;
+		}
+		return new PhotoMapSet(mapIds, mapDataSet);
+	}
+
+	private static void givePhotoItem(ServerPlayer player, ItemStack item) {
+		if (player == null || item == null || item.isEmpty()) {
+			return;
+		}
+		boolean inserted = player.getInventory().add(item);
+		if (!inserted) {
+			ItemEntity itemEntity = player.drop(item, false);
+			if (itemEntity != null) {
+				itemEntity.setPickUpDelay(0);
+			}
+		}
+	}
+
+	private static void updatePhotoItemsInInventories(MinecraftServer server, PhotoPrintData photoData, Component name) {
+		if (server == null || photoData == null || name == null) {
+			return;
+		}
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			boolean changed = false;
+			for (int slot = 0; slot < player.getInventory().getContainerSize(); slot++) {
+				ItemStack stack = player.getInventory().getItem(slot);
+				PhotoPrintData stackData = PhotoPrintData.readPhotoItem(stack);
+				if (stackData == null || !stackData.samePhoto(photoData)) {
+					continue;
+				}
+				stack.set(DataComponents.CUSTOM_NAME, name.copy());
+				changed = true;
+			}
+			if (changed) {
+				ServerMechanicsGateSystem.syncPlayerInventory(player);
+			}
+		}
+	}
+
+	private static void updatePlacedPhotoFrameNames(MinecraftServer server, PhotoPrintData photoData, Component name) {
+		if (server == null || photoData == null || name == null) {
+			return;
+		}
+		for (ServerLevel level : server.getAllLevels()) {
+			for (net.minecraft.world.entity.decoration.ItemFrame frame : level.getEntitiesOfClass(
+					net.minecraft.world.entity.decoration.ItemFrame.class,
+					new net.minecraft.world.phys.AABB(-30_000_000.0D, level.getMinY(), -30_000_000.0D, 30_000_000.0D, level.getMaxY(), 30_000_000.0D)
+			)) {
+				ItemStack stack = frame.getItem();
+				PhotoPrintData.PlacedPhotoFrameData frameData = PhotoPrintData.readFrameTile(stack);
+				if (frameData == null || !frameData.samePhoto(photoData)) {
+					continue;
+				}
+				ItemStack updated = stack.copy();
+				updated.set(DataComponents.CUSTOM_NAME, name.copy());
+				frame.setItem(updated, false);
+			}
+		}
+	}
+
+	private static void setPhotoColor(RenderJob job, int globalPixelIndex, byte color) {
+		if (job == null || globalPixelIndex < 0 || globalPixelIndex >= job.totalPixels()) {
+			return;
+		}
+		int outputWidth = job.outputWidth();
+		int globalX = globalPixelIndex % outputWidth;
+		int globalY = globalPixelIndex / outputWidth;
+		setPhotoColor(job, globalX, globalY, color);
+	}
+
+	private static void setPhotoColor(RenderJob job, int globalX, int globalY, byte color) {
+		if (job == null || globalX < 0 || globalY < 0 || globalX >= job.outputWidth() || globalY >= job.outputHeight()) {
+			return;
+		}
+		int tileX = globalX / MAP_SIZE;
+		int tileY = globalY / MAP_SIZE;
+		int tileIndex = tileY * job.mapsWide() + tileX;
+		if (tileIndex < 0 || tileIndex >= job.mapDataSet().length) {
+			return;
+		}
+		MapItemSavedData mapData = job.mapDataSet()[tileIndex];
+		if (mapData == null) {
+			return;
+		}
+		mapData.setColor(globalX % MAP_SIZE, globalY % MAP_SIZE, color);
 	}
 
 	private static void normalizeQueue() {
@@ -376,7 +499,10 @@ public final class MapImageRenderSystem {
 
 	private static final class RenderJob {
 		private final UUID playerId;
-		private final MapId mapId;
+		private final MapId[] mapIds;
+		private final MapItemSavedData[] mapDataSet;
+		private final int mapsWide;
+		private final int mapsHigh;
 		private final MapPixelProvider provider;
 		private final ConcurrentLinkedQueue<PixelResult> completedResults = new ConcurrentLinkedQueue<>();
 		private int nextPixel;
@@ -388,10 +514,14 @@ public final class MapImageRenderSystem {
 		private boolean frameTaskDispatched;
 		private volatile FrameResult frameResult;
 		private int frameApplyIndex;
+		private int lastDisplayedProgress = -1;
 
-		private RenderJob(UUID playerId, MapId mapId, MapPixelProvider provider) {
+		private RenderJob(UUID playerId, MapId[] mapIds, MapItemSavedData[] mapDataSet, int mapsWide, int mapsHigh, MapPixelProvider provider) {
 			this.playerId = playerId;
-			this.mapId = mapId;
+			this.mapIds = mapIds;
+			this.mapDataSet = mapDataSet;
+			this.mapsWide = mapsWide;
+			this.mapsHigh = mapsHigh;
 			this.provider = provider;
 		}
 
@@ -399,8 +529,36 @@ public final class MapImageRenderSystem {
 			return this.playerId;
 		}
 
-		private MapId mapId() {
-			return this.mapId;
+		private MapId[] mapIds() {
+			return this.mapIds;
+		}
+
+		private MapItemSavedData[] mapDataSet() {
+			return this.mapDataSet;
+		}
+
+		private int mapsWide() {
+			return this.mapsWide;
+		}
+
+		private int mapsHigh() {
+			return this.mapsHigh;
+		}
+
+		private int outputWidth() {
+			return this.mapsWide * MAP_SIZE;
+		}
+
+		private int outputHeight() {
+			return this.mapsHigh * MAP_SIZE;
+		}
+
+		private int totalPixels() {
+			return this.outputWidth() * this.outputHeight();
+		}
+
+		private PhotoPrintData photoData() {
+			return new PhotoPrintData(this.mapsWide, this.mapsHigh, photoMapIdsToRawIds(this.mapIds));
 		}
 
 		private MapPixelProvider provider() {
@@ -495,8 +653,43 @@ public final class MapImageRenderSystem {
 		}
 
 		private boolean isDone() {
-			return this.nextPixel >= MAP_SIZE * MAP_SIZE;
+			return this.nextPixel >= totalPixels();
 		}
+
+		private int progressPercent() {
+			if (this.provider.prefersWholeFrameRendering()) {
+				if (this.totalPixels() <= 0) {
+					return 100;
+				}
+				return Math.max(0, Math.min(99, this.frameApplyIndex * 100 / this.totalPixels()));
+			}
+			if (this.totalPixels() <= 0) {
+				return 100;
+			}
+			return Math.max(0, Math.min(99, this.nextPixel * 100 / this.totalPixels()));
+		}
+
+		private int lastDisplayedProgress() {
+			return this.lastDisplayedProgress;
+		}
+
+		private void setLastDisplayedProgress(int lastDisplayedProgress) {
+			this.lastDisplayedProgress = lastDisplayedProgress;
+		}
+	}
+
+	private static int[] photoMapIdsToRawIds(MapId[] mapIds) {
+		if (mapIds == null) {
+			return new int[0];
+		}
+		int[] rawIds = new int[mapIds.length];
+		for (int i = 0; i < mapIds.length; i++) {
+			rawIds[i] = mapIds[i] == null ? -1 : mapIds[i].id();
+		}
+		return rawIds;
+	}
+
+	private record PhotoMapSet(MapId[] mapIds, MapItemSavedData[] mapDataSet) {
 	}
 
 	private record PixelResult(int x, int y, byte color, Throwable error) {

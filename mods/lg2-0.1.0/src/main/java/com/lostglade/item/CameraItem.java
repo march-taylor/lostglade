@@ -2,6 +2,7 @@ package com.lostglade.item;
 
 import com.lostglade.Lg2;
 import com.lostglade.server.CameraCaptureSystem;
+import com.lostglade.server.CameraPhotoMenuSystem;
 import eu.pb4.polymer.core.api.item.SimplePolymerItem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.component.DataComponents;
@@ -48,6 +49,10 @@ public final class CameraItem extends SimplePolymerItem {
 		}
 		if (hand != InteractionHand.MAIN_HAND) {
 			return InteractionResult.PASS;
+		}
+		if (player.isShiftKeyDown()) {
+			CameraPhotoMenuSystem.open(serverPlayer);
+			return InteractionResult.SUCCESS;
 		}
 		return CameraCaptureSystem.tryCapture(serverPlayer, player.getItemInHand(hand))
 				? InteractionResult.SUCCESS
