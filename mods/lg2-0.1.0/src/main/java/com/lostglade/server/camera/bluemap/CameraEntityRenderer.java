@@ -137,6 +137,7 @@ final class CameraEntityRenderer {
 	private static final Identifier ARMOR_TRIM_PALETTE_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "trims/color_palettes/trim_palette");
 	private static final Map<String, BlueMapCameraRenderer.TextureMaterial> STATIC_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, BlueMapCameraRenderer.TextureMaterial> PLAYER_SKIN_CACHE = new ConcurrentHashMap<>();
+	private static final Map<String, PlayerSkinSnapshot> PLAYER_SKIN_SNAPSHOT_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, Identifier> ITEM_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, ItemVisual> ITEM_VISUAL_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, FlatSpriteMesh> FLAT_SPRITE_MESH_CACHE = new ConcurrentHashMap<>();
@@ -2490,14 +2491,16 @@ final class CameraEntityRenderer {
 		if (property == null) {
 			return null;
 		}
-
-		var skinData = PlayerUtils.getSkinUrl(property);
-		String url = skinData == null ? null : skinData.left();
-		boolean slim = skinData != null
-				&& skinData.right() != null
-				&& "slim".equalsIgnoreCase(skinData.right().toString());
-		Identifier fallback = slim ? PLAYER_SLIM_FALLBACK : PLAYER_WIDE_FALLBACK;
-		return new PlayerSkinSnapshot(property.value(), url, fallback, slim);
+		Property resolvedProperty = property;
+		return PLAYER_SKIN_SNAPSHOT_CACHE.computeIfAbsent(resolvedProperty.value(), ignored -> {
+			var skinData = PlayerUtils.getSkinUrl(resolvedProperty);
+			String url = skinData == null ? null : skinData.left();
+			boolean slim = skinData != null
+					&& skinData.right() != null
+					&& "slim".equalsIgnoreCase(skinData.right().toString());
+			Identifier fallback = slim ? PLAYER_SLIM_FALLBACK : PLAYER_WIDE_FALLBACK;
+			return new PlayerSkinSnapshot(resolvedProperty.value(), url, fallback, slim);
+		});
 	}
 
 	static void renderEntities(
