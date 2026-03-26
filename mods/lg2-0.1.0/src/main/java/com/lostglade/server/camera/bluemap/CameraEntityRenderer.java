@@ -180,11 +180,25 @@ final class CameraEntityRenderer {
 			Identifier texture,
 			Identifier[] overlayTextures,
 			ArmorEquipmentSnapshot armor,
-			ItemStack leftHandItem,
-			ItemStack rightHandItem,
+			HeldItemSnapshot leftHandItem,
+			HeldItemSnapshot rightHandItem,
 			PlayerSkinSnapshot playerSkin,
 			byte playerModelBits
 	) implements EntitySnapshot {
+	}
+
+	record HeldItemSnapshot(
+			ItemStack stack,
+			boolean usingItem,
+			float useTicks,
+			boolean fishingRodCast,
+			String contextDimensionId,
+			long gameTime,
+			long dayTime
+	) {
+		boolean isEmpty() {
+			return this.stack == null || this.stack.isEmpty();
+		}
 	}
 
 	record QuadrupedSnapshot(
@@ -430,8 +444,28 @@ final class CameraEntityRenderer {
 
 	record ItemVisual(
 			Identifier flatTexture,
-			ResolvedItemModel model
-	) {
+			ResolvedItemModel model,
+			int[] tintColors,
+			ClientModelSnapshot specialModel
+		) {
+	}
+
+	private record ResolvedItemDefinition(
+			Identifier modelId,
+			int[] tintColors,
+			String specialType
+		) {
+	}
+
+	private record ItemDefinitionRenderState(
+			ItemDisplayTransformContext transformContext,
+			boolean usingItem,
+			float useTicks,
+			boolean fishingRodCast,
+			String contextDimensionId,
+			long gameTime,
+			long dayTime
+		) {
 	}
 
 	private record ResolvedItemModel(
@@ -466,11 +500,27 @@ final class CameraEntityRenderer {
 	}
 
 	private enum ItemDisplayTransformContext {
-		THIRD_PERSON_RIGHT_HAND,
-		THIRD_PERSON_LEFT_HAND,
-		GROUND,
-		FIXED,
-		FRAMED
+		NONE("none"),
+		THIRD_PERSON_RIGHT_HAND("thirdperson_righthand"),
+		THIRD_PERSON_LEFT_HAND("thirdperson_lefthand"),
+		FIRST_PERSON_RIGHT_HAND("firstperson_righthand"),
+		FIRST_PERSON_LEFT_HAND("firstperson_lefthand"),
+		HEAD("head"),
+		GUI("gui"),
+		GROUND("ground"),
+		FIXED("fixed"),
+		ON_SHELF("on_shelf"),
+		FRAMED("fixed");
+
+		private final String serializedName;
+
+		ItemDisplayTransformContext(String serializedName) {
+			this.serializedName = serializedName;
+		}
+
+		String serializedName() {
+			return this.serializedName;
+		}
 	}
 
 	private record ItemModelElement(
@@ -484,8 +534,9 @@ final class CameraEntityRenderer {
 	private record ItemModelFace(
 			String texture,
 			double[] uv,
-			int rotation
-	) {
+			int rotation,
+			int tintIndex
+		) {
 	}
 
 	private record ElementRotation(
@@ -929,7 +980,7 @@ final class CameraEntityRenderer {
 		}
 
 		if (entity instanceof ItemEntity itemEntity) {
-			ItemVisual visual = resolveItemVisual(itemEntity.getItem());
+			ItemVisual visual = resolveItemVisual(itemEntity.getItem(), ItemDisplayTransformContext.GROUND);
 			if (visual == null || (visual.flatTexture() == null && (visual.model() == null || visual.model().elements().isEmpty()))) {
 				return null;
 			}
@@ -987,22 +1038,34 @@ final class CameraEntityRenderer {
 		);
 	}
 
-	private static ItemStack rightHandItem(LivingEntity livingEntity) {
-		if (livingEntity == null) {
-			return ItemStack.EMPTY;
-		}
-		return livingEntity.getMainArm() == HumanoidArm.RIGHT
-				? livingEntity.getItemInHand(InteractionHand.MAIN_HAND).copy()
-				: livingEntity.getItemInHand(InteractionHand.OFF_HAND).copy();
+	private static HeldItemSnapshot rightHandItem(LivingEntity livingEntity) {
+		return heldItemSnapshot(livingEntity, HumanoidArm.RIGHT);
 	}
 
-	private static ItemStack leftHandItem(LivingEntity livingEntity) {
+	private static HeldItemSnapshot leftHandItem(LivingEntity livingEntity) {
+		return heldItemSnapshot(livingEntity, HumanoidArm.LEFT);
+	}
+
+	private static HeldItemSnapshot heldItemSnapshot(LivingEntity livingEntity, HumanoidArm arm) {
 		if (livingEntity == null) {
-			return ItemStack.EMPTY;
+			return new HeldItemSnapshot(ItemStack.EMPTY, false, 0.0F, false, null, 0L, 0L);
 		}
-		return livingEntity.getMainArm() == HumanoidArm.RIGHT
-				? livingEntity.getItemInHand(InteractionHand.OFF_HAND).copy()
-				: livingEntity.getItemInHand(InteractionHand.MAIN_HAND).copy();
+		InteractionHand interactionHand = physicalHand(livingEntity, arm);
+		ItemStack stack = livingEntity.getItemInHand(interactionHand).copy();
+		boolean usingItem = livingEntity.isUsingItem() && livingEntity.getUsedItemHand() == interactionHand;
+		float useTicks = usingItem ? livingEntity.getTicksUsingItem() : 0.0F;
+		boolean fishingRodCast = stack.getItem() instanceof net.minecraft.world.item.FishingRodItem
+				&& livingEntity instanceof Player player
+				&& player.fishing != null
+				&& physicalHand(player, arm) == interactionHand;
+		String contextDimensionId = livingEntity.level() == null ? null : livingEntity.level().dimension().identifier().toString();
+		long gameTime = livingEntity.level() == null ? 0L : livingEntity.level().getGameTime();
+		long dayTime = livingEntity.level() == null ? 0L : livingEntity.level().getDayTime();
+		return new HeldItemSnapshot(stack, usingItem, useTicks, fishingRodCast, contextDimensionId, gameTime, dayTime);
+	}
+
+	private static InteractionHand physicalHand(LivingEntity livingEntity, HumanoidArm arm) {
+		return livingEntity.getMainArm() == arm ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
 	}
 
 	private static EntitySnapshot attachAuxiliarySnapshots(Entity entity, EntitySnapshot primary) {
@@ -1140,9 +1203,9 @@ final class CameraEntityRenderer {
 
 	private static EntitySnapshot captureItemFrameSnapshot(net.minecraft.world.entity.decoration.ItemFrame itemFrame) {
 		ItemStack stack = itemFrame.getItem();
-		ItemVisual item = resolveItemVisual(itemFrame.getItem());
+		ItemVisual item = resolveItemVisual(itemFrame.getItem(), ItemDisplayTransformContext.FRAMED);
 		if (item == null) {
-			item = new ItemVisual(null, null);
+			item = new ItemVisual(null, null, null, null);
 		}
 		return new ItemFrameSnapshot(
 				itemFrame.position(),
@@ -1181,7 +1244,7 @@ final class CameraEntityRenderer {
 			return null;
 		}
 		net.minecraft.world.item.ItemStack stack = new net.minecraft.world.item.ItemStack(state.getBlock());
-		ItemVisual visual = resolveItemVisual(stack);
+		ItemVisual visual = resolveItemVisual(stack, ItemDisplayTransformContext.FIXED);
 		if (visual == null) {
 			return null;
 		}
@@ -2146,14 +2209,16 @@ final class CameraEntityRenderer {
 		state.put("mainArm", livingEntity.getMainArm());
 		state.put("attackArm", livingEntity.getMainArm());
 		state.put("useItemHand", livingEntity.isUsingItem() ? livingEntity.getUsedItemHand() : InteractionHand.MAIN_HAND);
-		state.put("leftHandItemStack", livingEntity.getItemInHand(InteractionHand.OFF_HAND).copy());
-		state.put("rightHandItemStack", livingEntity.getItemInHand(InteractionHand.MAIN_HAND).copy());
+		ItemStack leftHandStack = livingEntity.getItemInHand(physicalHand(livingEntity, HumanoidArm.LEFT)).copy();
+		ItemStack rightHandStack = livingEntity.getItemInHand(physicalHand(livingEntity, HumanoidArm.RIGHT)).copy();
+		state.put("leftHandItemStack", leftHandStack);
+		state.put("rightHandItemStack", rightHandStack);
 		state.put("headEquipment", livingEntity.getItemBySlot(EquipmentSlot.HEAD).copy());
 		state.put("chestEquipment", livingEntity.getItemBySlot(EquipmentSlot.CHEST).copy());
 		state.put("legsEquipment", livingEntity.getItemBySlot(EquipmentSlot.LEGS).copy());
 		state.put("feetEquipment", livingEntity.getItemBySlot(EquipmentSlot.FEET).copy());
-		String leftArmPose = !livingEntity.getItemInHand(InteractionHand.OFF_HAND).isEmpty() ? "ITEM" : "EMPTY";
-		String rightArmPose = !livingEntity.getItemInHand(InteractionHand.MAIN_HAND).isEmpty() ? "ITEM" : "EMPTY";
+		String leftArmPose = !leftHandStack.isEmpty() ? "ITEM" : "EMPTY";
+		String rightArmPose = !rightHandStack.isEmpty() ? "ITEM" : "EMPTY";
 		if (livingEntity.isUsingItem()) {
 			if (livingEntity.getUsedItemHand() == InteractionHand.MAIN_HAND) {
 				rightArmPose = livingEntity.getMainArm() == HumanoidArm.RIGHT ? "ITEM" : rightArmPose;
@@ -2165,6 +2230,18 @@ final class CameraEntityRenderer {
 		}
 		state.put("leftArmPose", leftArmPose);
 		state.put("rightArmPose", rightArmPose);
+		boolean rightUsingItem = livingEntity.isUsingItem() && livingEntity.getUsedItemHand() == physicalHand(livingEntity, HumanoidArm.RIGHT);
+		boolean leftUsingItem = livingEntity.isUsingItem() && livingEntity.getUsedItemHand() == physicalHand(livingEntity, HumanoidArm.LEFT);
+		state.put("rightHandUsingItem", rightUsingItem);
+		state.put("leftHandUsingItem", leftUsingItem);
+		state.put("rightHandUseTicks", rightUsingItem ? (float) livingEntity.getTicksUsingItem() : 0.0F);
+		state.put("leftHandUseTicks", leftUsingItem ? (float) livingEntity.getTicksUsingItem() : 0.0F);
+		boolean fishingRodCast = livingEntity instanceof Player player && player.fishing != null;
+		state.put("rightFishingRodCast", fishingRodCast && !rightHandStack.isEmpty() && rightHandStack.getItem() instanceof net.minecraft.world.item.FishingRodItem);
+		state.put("leftFishingRodCast", fishingRodCast && !leftHandStack.isEmpty() && leftHandStack.getItem() instanceof net.minecraft.world.item.FishingRodItem);
+		state.put("contextDimensionId", livingEntity.level() == null ? null : livingEntity.level().dimension().identifier().toString());
+		state.put("gameTime", livingEntity.level() == null ? 0L : livingEntity.level().getGameTime());
+		state.put("dayTime", livingEntity.level() == null ? 0L : livingEntity.level().getDayTime());
 		state.put("beamOffset", Vec3.ZERO);
 		state.put("renderOffset", Vec3.ZERO);
 		state.put("attachFace", Direction.DOWN);
@@ -3128,8 +3205,8 @@ final class CameraEntityRenderer {
 		float walkSpeed = Mth.clamp(snapshot.walkSpeed(), 0.0F, 1.0F);
 		Vec3 eyePosition = snapshot.position().add(0.0D, 1.62D * snapshot.kind().scale * (snapshot.baby() ? 0.5D : 1.0D), 0.0D);
 		Vec3 lookDirection = Vec3.directionFromRotation(snapshot.pitch(), snapshot.headYaw());
-		ItemStack leftHand = snapshot.leftHandItem() == null ? ItemStack.EMPTY : snapshot.leftHandItem().copy();
-		ItemStack rightHand = snapshot.rightHandItem() == null ? ItemStack.EMPTY : snapshot.rightHandItem().copy();
+		ItemStack leftHand = snapshot.leftHandItem() == null || snapshot.leftHandItem().stack() == null ? ItemStack.EMPTY : snapshot.leftHandItem().stack().copy();
+		ItemStack rightHand = snapshot.rightHandItem() == null || snapshot.rightHandItem().stack() == null ? ItemStack.EMPTY : snapshot.rightHandItem().stack().copy();
 		ArmorEquipmentSnapshot armor = snapshot.armor();
 		state.put("bodyRot", snapshot.bodyYaw());
 		state.put("yRot", wrapDegrees(snapshot.headYaw() - snapshot.bodyYaw()));
@@ -3151,8 +3228,10 @@ final class CameraEntityRenderer {
 		state.put("isFallFlying", snapshot.fallFlying());
 		state.put("isVisuallySwimming", snapshot.swimming());
 		state.put("isPassenger", snapshot.passenger());
-		state.put("isUsingItem", snapshot.usingItem());
-		state.put("ticksUsingItem", snapshot.usingItem() ? 1.0F : 0.0F);
+		boolean rightUsingItem = snapshot.rightHandItem() != null && snapshot.rightHandItem().usingItem();
+		boolean leftUsingItem = snapshot.leftHandItem() != null && snapshot.leftHandItem().usingItem();
+		state.put("isUsingItem", rightUsingItem || leftUsingItem);
+		state.put("ticksUsingItem", rightUsingItem ? snapshot.rightHandItem().useTicks() : leftUsingItem ? snapshot.leftHandItem().useTicks() : 0.0F);
 		state.put("speedValue", walkSpeed);
 		state.put("distanceToCameraSq", 0.0D);
 		state.put("eyePosition", eyePosition);
@@ -3160,7 +3239,11 @@ final class CameraEntityRenderer {
 		state.put("lookAtPosition", eyePosition.add(lookDirection));
 		state.put("attackTargetPosition", eyePosition.add(lookDirection));
 		state.put("attackArm", snapshot.mainArm());
-		state.put("useItemHand", InteractionHand.MAIN_HAND);
+		state.put("useItemHand", rightUsingItem
+				? (snapshot.mainArm() == HumanoidArm.RIGHT ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND)
+				: leftUsingItem
+				? (snapshot.mainArm() == HumanoidArm.LEFT ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND)
+				: InteractionHand.MAIN_HAND);
 		state.put("leftHandItemStack", leftHand);
 		state.put("rightHandItemStack", rightHand);
 		state.put("headEquipment", armor == null || armor.head() == null ? ItemStack.EMPTY : armor.head().copy());
@@ -3517,19 +3600,23 @@ final class CameraEntityRenderer {
 		return tinted;
 	}
 
-	private static void renderHumanoidHeldItem(RenderContext context, ItemStack stack, Matrix4f handTransform, ItemDisplayTransformContext transformContext) {
-		if (stack == null || stack.isEmpty() || handTransform == null) {
+	private static void renderHumanoidHeldItem(RenderContext context, HeldItemSnapshot heldItem, Matrix4f handTransform, ItemDisplayTransformContext transformContext) {
+		if (heldItem == null || heldItem.isEmpty() || handTransform == null) {
 			return;
 		}
-		ItemVisual visual = resolveItemVisual(stack);
+		ItemVisual visual = resolveItemVisual(heldItem, transformContext);
 		if (visual == null) {
 			return;
 		}
-		Matrix4f itemTransform = new Matrix4f(handTransform)
-				.rotateX(radians(-90.0F))
-				.rotateY(radians(180.0F))
-				.translate(transformContext == ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND ? -1.0F / 16.0F : 1.0F / 16.0F, 0.125F, -0.625F);
+		Matrix4f itemTransform = manualHeldItemRoot(handTransform, transformContext == ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND);
 		renderItemVisual(context, itemTransform, visual, transformContext);
+	}
+
+	private static Matrix4f manualHeldItemRoot(Matrix4f handTransform, boolean leftHand) {
+		return new Matrix4f(handTransform)
+				.rotateX(radians(90.0F))
+				.rotateY(radians(180.0F))
+				.translate(leftHand ? -1.0F / 16.0F : 1.0F / 16.0F, 0.0F, -0.625F);
 	}
 
 	private static Matrix4f humanoidHandTransform(
@@ -4151,47 +4238,60 @@ final class CameraEntityRenderer {
 		if (visual == null) {
 			return;
 		}
+		if (visual.specialModel() != null) {
+			Matrix4f transformedRoot = switch (transformContext) {
+				case FRAMED -> applyFlatFramedItemTransform(root, visual.model());
+				case GROUND, FIXED, THIRD_PERSON_RIGHT_HAND, THIRD_PERSON_LEFT_HAND, FIRST_PERSON_RIGHT_HAND, FIRST_PERSON_LEFT_HAND, GUI, HEAD, ON_SHELF ->
+						applyItemDisplayTransform(root, visual.model(), transformContext);
+				default -> new Matrix4f(root);
+			};
+			VanillaClientModels.renderWithRoot(context, visual.specialModel(), transformedRoot);
+			return;
+		}
 		if (visual.model() != null && !visual.model().elements().isEmpty()) {
-			if (transformContext == ItemDisplayTransformContext.FRAMED || transformContext == ItemDisplayTransformContext.GROUND) {
-				renderDisplayedItemModel(context, root, visual.model(), transformContext);
-			} else {
-				renderItemModel(context, root, visual.model());
-			}
+			renderDisplayedItemModel(context, root, visual, transformContext);
 			return;
 		}
 		if (visual.flatTexture() == null) {
 			return;
 		}
-		int material = context.materialResolver.materialForTexture(visual.flatTexture());
 		if (transformContext == ItemDisplayTransformContext.FRAMED) {
 			Matrix4f transformedRoot = applyFlatFramedItemTransform(root, visual.model());
 			renderFlatItemLayers(context, transformedRoot, visual, 0.0625F, 0.0625F, 0.5F, 0.875F, 0.875F);
 			return;
 		}
-		if (transformContext == ItemDisplayTransformContext.GROUND) {
+		if (transformContext == ItemDisplayTransformContext.GROUND
+				|| transformContext == ItemDisplayTransformContext.FIXED
+				|| transformContext == ItemDisplayTransformContext.THIRD_PERSON_RIGHT_HAND
+				|| transformContext == ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND
+				|| transformContext == ItemDisplayTransformContext.FIRST_PERSON_RIGHT_HAND
+				|| transformContext == ItemDisplayTransformContext.FIRST_PERSON_LEFT_HAND
+				|| transformContext == ItemDisplayTransformContext.GUI
+				|| transformContext == ItemDisplayTransformContext.HEAD
+				|| transformContext == ItemDisplayTransformContext.ON_SHELF) {
 			Matrix4f transformedRoot = applyItemDisplayTransform(root, visual.model(), transformContext);
 			renderFlatItemLayers(context, transformedRoot, visual, 0.0F, 0.0F, 0.5F, 1.0F, 1.0F);
 			return;
 		}
+		int material = context.materialResolver.materialForTexture(visual.flatTexture());
 		addDoubleSidedPlane(context, root, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
-		if (transformContext == ItemDisplayTransformContext.FIXED) {
-			return;
-		}
 		Matrix4f crossed = new Matrix4f(root).rotateY((float) Math.PI * 0.5F);
 		addDoubleSidedPlane(context, crossed, -0.25F, 0.0F, 0.0F, 0.5F, 0.5F, material);
 	}
 
-	private static void renderItemModel(RenderContext context, Matrix4f root, ResolvedItemModel model) {
+	private static void renderItemModel(RenderContext context, Matrix4f root, ItemVisual visual) {
+		ResolvedItemModel model = visual.model();
 		Matrix4f transform = new Matrix4f(root).translate(-0.25F, 0.0F, -0.25F).scale(0.5F);
 		for (ItemModelElement element : model.elements()) {
-			renderItemModelElement(context, transform, model, element);
+			renderItemModelElement(context, transform, visual, element);
 		}
 	}
 
-	private static void renderDisplayedItemModel(RenderContext context, Matrix4f root, ResolvedItemModel model, ItemDisplayTransformContext transformContext) {
+	private static void renderDisplayedItemModel(RenderContext context, Matrix4f root, ItemVisual visual, ItemDisplayTransformContext transformContext) {
+		ResolvedItemModel model = visual.model();
 		Matrix4f transform = applyItemDisplayTransform(root, model, transformContext);
 		for (ItemModelElement element : model.elements()) {
-			renderItemModelElement(context, transform, model, element);
+			renderItemModelElement(context, transform, visual, element);
 		}
 	}
 
@@ -4293,6 +4393,10 @@ final class CameraEntityRenderer {
 		for (int i = 0; i < layers.size(); i++) {
 			Identifier layer = layers.get(i);
 			int material = context.materialResolver.materialForTexture(layer);
+			int tintRgb = itemTintRgb(visual, i);
+			float red = ((tintRgb >> 16) & 0xFF) / 255.0F;
+			float green = ((tintRgb >> 8) & 0xFF) / 255.0F;
+			float blue = (tintRgb & 0xFF) / 255.0F;
 			float layerCenterZ = startCenterZ + i * layerSpacing;
 			addSeparatedTexturedDoubleSidedPlane(
 					context,
@@ -4308,11 +4412,18 @@ final class CameraEntityRenderer {
 					1.0F,
 					1.0F,
 					material,
-					1.0F,
-					1.0F,
-					1.0F
+					red,
+					green,
+					blue
 			);
 		}
+	}
+
+	private static int itemTintRgb(ItemVisual visual, int tintIndex) {
+		if (visual == null || visual.tintColors() == null || tintIndex < 0 || tintIndex >= visual.tintColors().length) {
+			return 0xFFFFFF;
+		}
+		return visual.tintColors()[tintIndex] & 0xFFFFFF;
 	}
 
 	private static List<Identifier> flatItemLayers(ItemVisual visual) {
@@ -4360,13 +4471,20 @@ final class CameraEntityRenderer {
 				return transform;
 			}
 		}
+		if (transformContext == ItemDisplayTransformContext.FIRST_PERSON_LEFT_HAND) {
+			transform = model.transforms().get(ItemDisplayTransformContext.FIRST_PERSON_RIGHT_HAND);
+			if (transform != null) {
+				return transform;
+			}
+		}
 		return ItemModelTransform.IDENTITY;
 	}
 
 	private static void renderBlockEntityModel(RenderContext context, Matrix4f root, ResolvedItemModel model) {
+		ItemVisual visual = new ItemVisual(primaryTexture(model), model, null, null);
 		Matrix4f transform = new Matrix4f(root).translate(-0.5F, -0.5F, -0.5F);
 		for (ItemModelElement element : model.elements()) {
-			renderItemModelElement(context, transform, model, element);
+			renderItemModelElement(context, transform, visual, element);
 		}
 	}
 
@@ -4696,7 +4814,8 @@ final class CameraEntityRenderer {
 				.setMaterialIndex(triangle + 1, material);
 	}
 
-	private static void renderItemModelElement(RenderContext context, Matrix4f root, ResolvedItemModel model, ItemModelElement element) {
+	private static void renderItemModelElement(RenderContext context, Matrix4f root, ItemVisual visual, ItemModelElement element) {
+		ResolvedItemModel model = visual.model();
 		Matrix4f transform = new Matrix4f(root);
 		if (element.rotation() != null) {
 			transform.translate(
@@ -4725,6 +4844,9 @@ final class CameraEntityRenderer {
 					(vertices[0].y + vertices[1].y + vertices[2].y + vertices[3].y) * 0.25F,
 					(vertices[0].z + vertices[1].z + vertices[2].z + vertices[3].z) * 0.25F
 			);
+			int tintRgb = entry.getValue().tintIndex() >= 0 && visual.tintColors() != null && entry.getValue().tintIndex() < visual.tintColors().length
+					? visual.tintColors()[entry.getValue().tintIndex()] & 0xFFFFFF
+					: 0xFFFFFF;
 			addQuadExact(
 					context,
 					vertices[0],
@@ -4742,9 +4864,9 @@ final class CameraEntityRenderer {
 					context.materialResolver.materialForTexture(texture),
 					light.sky(),
 					light.block(),
-					1.0F,
-					1.0F,
-					1.0F
+					((tintRgb >> 16) & 0xFF) / 255.0F,
+					((tintRgb >> 8) & 0xFF) / 255.0F,
+					(tintRgb & 0xFF) / 255.0F
 			);
 		}
 	}
@@ -4881,7 +5003,29 @@ final class CameraEntityRenderer {
 		};
 	}
 
-	private static ItemVisual resolveItemVisual(ItemStack stack) {
+	private static ItemVisual resolveItemVisual(HeldItemSnapshot heldItem, ItemDisplayTransformContext transformContext) {
+		if (heldItem == null || heldItem.isEmpty()) {
+			return null;
+		}
+		return resolveItemVisual(
+				heldItem.stack(),
+				new ItemDefinitionRenderState(
+						transformContext,
+						heldItem.usingItem(),
+						heldItem.useTicks(),
+						heldItem.fishingRodCast(),
+						heldItem.contextDimensionId(),
+						heldItem.gameTime(),
+						heldItem.dayTime()
+				)
+		);
+	}
+
+	private static ItemVisual resolveItemVisual(ItemStack stack, ItemDisplayTransformContext transformContext) {
+		return resolveItemVisual(stack, new ItemDefinitionRenderState(transformContext, false, 0.0F, false, null, 0L, 0L));
+	}
+
+	private static ItemVisual resolveItemVisual(ItemStack stack, ItemDefinitionRenderState renderState) {
 		if (stack == null || stack.isEmpty()) {
 			return null;
 		}
@@ -4889,79 +5033,401 @@ final class CameraEntityRenderer {
 		if (itemId == null) {
 			return null;
 		}
-		return ITEM_VISUAL_CACHE.computeIfAbsent(itemId.toString(), ignored -> resolveItemVisualInternal(stack, itemId));
+		return resolveItemVisualInternal(stack, itemId, renderState);
 	}
 
-	private static ItemVisual resolveItemVisualInternal(ItemStack stack, Identifier itemId) {
-		Identifier rootModelId = resolveItemRootModelId(itemId);
-		ResolvedItemModel model = rootModelId == null ? null : resolveItemModel(rootModelId, new HashSet<>());
-		Identifier flatTexture = resolveItemTexture(stack);
-		if (flatTexture == null && model != null) {
-			flatTexture = primaryTexture(model);
-		}
-		boolean hasRenderableItemVisual = flatTexture != null || (model != null && !model.elements().isEmpty());
-		if (!hasRenderableItemVisual && stack.getItem() instanceof BlockItem blockItem) {
+	private static ItemVisual resolveItemVisualInternal(ItemStack stack, Identifier itemId, ItemDefinitionRenderState renderState) {
+		ResolvedItemDefinition definition = resolveItemDefinition(stack, itemId, renderState);
+		Identifier rootModelId = definition == null || definition.modelId() == null ? itemId.withPrefix("item/") : definition.modelId();
+		ResolvedItemModel model = resolveItemModel(rootModelId, new HashSet<>());
+		Identifier flatTexture = model == null ? null : primaryTexture(model);
+		ClientModelSnapshot specialModel = definition == null ? null : resolveSpecialItemClientModel(stack, definition);
+		boolean hasRenderableItemVisual = specialModel != null || flatTexture != null || (model != null && !model.elements().isEmpty());
+		boolean preferBlockItemFallback = definition != null
+				&& definition.specialType() != null
+				&& specialModel == null
+				&& stack.getItem() instanceof BlockItem;
+		if ((!hasRenderableItemVisual || preferBlockItemFallback) && stack.getItem() instanceof BlockItem blockItem) {
 			Identifier blockId = BuiltInRegistries.BLOCK.getKey(blockItem.getBlock());
 			if (blockId != null) {
 				model = resolveItemModel(blockId.withPrefix("block/"), new HashSet<>());
+				flatTexture = model == null ? null : primaryTexture(model);
+				hasRenderableItemVisual = specialModel != null || flatTexture != null || (model != null && !model.elements().isEmpty());
 			}
 		}
-		if (flatTexture == null && model != null) {
-			flatTexture = primaryTexture(model);
-		}
-		if ((model == null || model.elements().isEmpty()) && flatTexture == null) {
+		if (!hasRenderableItemVisual) {
 			return null;
 		}
-		return new ItemVisual(flatTexture, model);
+		return new ItemVisual(flatTexture, model, definition == null ? null : definition.tintColors(), specialModel);
 	}
 
-	private static Identifier resolveItemTexture(ItemStack stack) {
-		if (stack == null || stack.isEmpty()) {
-			return null;
-		}
-		Identifier itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
-		if (itemId == null) {
-			return null;
-		}
-		return ITEM_TEXTURE_CACHE.computeIfAbsent(itemId.toString(), ignored -> resolveItemTextureInternal(itemId));
-	}
-
-	private static Identifier resolveItemTextureInternal(Identifier itemId) {
-		Identifier rootModelId = resolveItemRootModelId(itemId);
-		return rootModelId == null ? null : resolveModelTexture(rootModelId, Set.of());
-	}
-
-	private static Identifier resolveItemRootModelId(Identifier itemId) {
+	private static ResolvedItemDefinition resolveItemDefinition(ItemStack stack, Identifier itemId, ItemDefinitionRenderState renderState) {
 		JsonObject itemDefinition = ASSETS.loadJsonAsset("assets/" + itemId.getNamespace() + "/items/" + itemId.getPath() + ".json");
 		if (itemDefinition != null && itemDefinition.has("model") && itemDefinition.get("model").isJsonObject()) {
-			Identifier definitionModel = resolveItemDefinitionModelId(itemDefinition.getAsJsonObject("model"));
-			if (definitionModel != null) {
-				return definitionModel;
+			ResolvedItemDefinition resolved = resolveItemDefinitionModel(itemDefinition.getAsJsonObject("model"), stack, renderState);
+			if (resolved != null) {
+				return resolved;
 			}
 		}
-		return itemId.withPrefix("item/");
+		return new ResolvedItemDefinition(itemId.withPrefix("item/"), null, null);
 	}
 
-	private static Identifier resolveItemDefinitionModelId(JsonObject modelObject) {
+	private static ResolvedItemDefinition resolveItemDefinitionModel(JsonObject modelObject, ItemStack stack, ItemDefinitionRenderState renderState) {
 		if (modelObject == null || !modelObject.has("type")) {
 			return null;
 		}
 		String type = modelObject.get("type").getAsString();
-		if ("minecraft:model".equals(type) && modelObject.has("model")) {
-			return Identifier.tryParse(modelObject.get("model").getAsString());
+		return switch (type) {
+			case "minecraft:model" -> modelObject.has("model")
+					? new ResolvedItemDefinition(
+							Identifier.tryParse(modelObject.get("model").getAsString()),
+							resolveItemTintColors(modelObject, stack),
+							null
+					)
+					: null;
+			case "minecraft:special" -> modelObject.has("base")
+					? new ResolvedItemDefinition(
+							Identifier.tryParse(modelObject.get("base").getAsString()),
+							resolveItemTintColors(modelObject, stack),
+							specialItemType(modelObject)
+					)
+					: modelObject.has("model") && modelObject.get("model").isJsonObject()
+					? resolveItemDefinitionModel(modelObject.getAsJsonObject("model"), stack, renderState)
+					: null;
+			case "minecraft:composite" -> resolveCompositeItemDefinition(modelObject, stack, renderState);
+			case "minecraft:condition" -> resolveConditionalItemDefinition(modelObject, stack, renderState);
+			case "minecraft:select" -> resolveSelectedItemDefinition(modelObject, stack, renderState);
+			case "minecraft:range_dispatch" -> resolveRangeItemDefinition(modelObject, stack, renderState);
+			default -> null;
+		};
+	}
+
+	private static String specialItemType(JsonObject modelObject) {
+		if (modelObject == null || !modelObject.has("model") || !modelObject.get("model").isJsonObject()) {
+			return null;
 		}
-		if ("minecraft:condition".equals(type)) {
-			if (modelObject.has("on_false") && modelObject.get("on_false").isJsonObject()) {
-				Identifier falseModel = resolveItemDefinitionModelId(modelObject.getAsJsonObject("on_false"));
-				if (falseModel != null) {
-					return falseModel;
-				}
+		JsonObject specialModel = modelObject.getAsJsonObject("model");
+		return specialModel.has("type") ? specialModel.get("type").getAsString() : null;
+	}
+
+	private static int[] resolveItemTintColors(JsonObject modelObject, ItemStack stack) {
+		if (modelObject == null || !modelObject.has("tints") || !modelObject.get("tints").isJsonArray()) {
+			return null;
+		}
+		JsonArray tintArray = modelObject.getAsJsonArray("tints");
+		if (tintArray.isEmpty()) {
+			return null;
+		}
+		int[] tintColors = new int[tintArray.size()];
+		for (int i = 0; i < tintArray.size(); i++) {
+			JsonElement tintElement = tintArray.get(i);
+			tintColors[i] = tintElement.isJsonObject()
+					? resolveItemTintColor(tintElement.getAsJsonObject(), stack)
+					: 0xFFFFFF;
+		}
+		return tintColors;
+	}
+
+	private static int resolveItemTintColor(JsonObject tintObject, ItemStack stack) {
+		if (tintObject == null || !tintObject.has("type")) {
+			return 0xFFFFFF;
+		}
+		int fallback = tintObject.has("default") ? tintObject.get("default").getAsInt() : tintObject.has("value") ? tintObject.get("value").getAsInt() : 0xFFFFFF;
+		return switch (tintObject.get("type").getAsString()) {
+			case "minecraft:constant" -> fallback & 0xFFFFFF;
+			case "minecraft:dye" -> DyedItemColor.getOrDefault(stack, fallback) & 0xFFFFFF;
+			case "minecraft:grass" -> grassTintRgb(tintObject);
+			case "minecraft:potion", "minecraft:map_color", "minecraft:firework" -> fallback & 0xFFFFFF;
+			default -> fallback & 0xFFFFFF;
+		};
+	}
+
+	private static int grassTintRgb(JsonObject tintObject) {
+		double temperature = tintObject.has("temperature") ? tintObject.get("temperature").getAsDouble() : 0.5D;
+		double downfall = tintObject.has("downfall") ? tintObject.get("downfall").getAsDouble() : 1.0D;
+		try {
+			Class<?> grassColorClass = Class.forName("net.minecraft.world.level.GrassColor");
+			Method getMethod = grassColorClass.getMethod("get", double.class, double.class);
+			Object color = getMethod.invoke(null, temperature, downfall);
+			if (color instanceof Integer integer) {
+				return integer & 0xFFFFFF;
 			}
-			if (modelObject.has("on_true") && modelObject.get("on_true").isJsonObject()) {
-				return resolveItemDefinitionModelId(modelObject.getAsJsonObject("on_true"));
+		} catch (ReflectiveOperationException ignored) {
+		}
+		return 0x7FB238;
+	}
+
+	private static ClientModelSnapshot resolveSpecialItemClientModel(ItemStack stack, ResolvedItemDefinition definition) {
+		if (definition == null || definition.specialType() == null || !VanillaClientModels.isAvailable()) {
+			return null;
+		}
+		return switch (definition.specialType()) {
+			case "minecraft:shield" -> specialShieldClientModel();
+			case "minecraft:trident" -> specialTridentClientModel();
+			default -> null;
+		};
+	}
+
+	private static ClientModelSnapshot specialShieldClientModel() {
+		return clientModelSnapshot(
+				Vec3.ZERO,
+				0.0F,
+				0.0F,
+				1.0F,
+				ClientModelTransformKind.BLOCK_ENTITY,
+				Map.of(),
+				new ClientLayerSnapshot[]{
+						new ClientLayerSnapshot("net.minecraft.client.model.ShieldModel", minecraftTexture("entity/shield/base"), 0xFFFFFF, false)
+								.withFactory("createLayer")
+				}
+		);
+	}
+
+	private static ClientModelSnapshot specialTridentClientModel() {
+		return clientModelSnapshot(
+				Vec3.ZERO,
+				0.0F,
+				0.0F,
+				1.0F,
+				ClientModelTransformKind.BLOCK_ENTITY,
+				Map.of(),
+				new ClientLayerSnapshot[]{
+						new ClientLayerSnapshot("net.minecraft.client.model.TridentModel", minecraftTexture("item/trident"), 0xFFFFFF, false)
+								.withFactory("createLayer")
+				}
+		);
+	}
+
+	private static ResolvedItemDefinition resolveCompositeItemDefinition(JsonObject modelObject, ItemStack stack, ItemDefinitionRenderState renderState) {
+		if (!modelObject.has("models") || !modelObject.get("models").isJsonArray()) {
+			return null;
+		}
+		for (JsonElement element : modelObject.getAsJsonArray("models")) {
+			if (!element.isJsonObject()) {
+				continue;
+			}
+			ResolvedItemDefinition resolved = resolveItemDefinitionModel(element.getAsJsonObject(), stack, renderState);
+			if (resolved != null && resolved.modelId() != null) {
+				return resolved;
 			}
 		}
 		return null;
+	}
+
+	private static ResolvedItemDefinition resolveConditionalItemDefinition(JsonObject modelObject, ItemStack stack, ItemDefinitionRenderState renderState) {
+		boolean result = evaluateItemCondition(modelObject, stack, renderState);
+		String branch = result ? "on_true" : "on_false";
+		if (modelObject.has(branch) && modelObject.get(branch).isJsonObject()) {
+			ResolvedItemDefinition resolved = resolveItemDefinitionModel(modelObject.getAsJsonObject(branch), stack, renderState);
+			if (resolved != null) {
+				return resolved;
+			}
+		}
+		String fallback = result ? "on_false" : "on_true";
+		if (modelObject.has(fallback) && modelObject.get(fallback).isJsonObject()) {
+			return resolveItemDefinitionModel(modelObject.getAsJsonObject(fallback), stack, renderState);
+		}
+		return null;
+	}
+
+	private static ResolvedItemDefinition resolveSelectedItemDefinition(JsonObject modelObject, ItemStack stack, ItemDefinitionRenderState renderState) {
+		String value = selectedItemPropertyValue(modelObject, stack, renderState);
+		if (value != null && modelObject.has("cases") && modelObject.get("cases").isJsonArray()) {
+			for (JsonElement caseElement : modelObject.getAsJsonArray("cases")) {
+				if (!caseElement.isJsonObject()) {
+					continue;
+				}
+				JsonObject caseObject = caseElement.getAsJsonObject();
+				if (!caseObject.has("model") || !caseObject.get("model").isJsonObject()) {
+					continue;
+				}
+				if (!caseObject.has("when") || matchesItemSelection(caseObject.get("when"), value)) {
+					ResolvedItemDefinition resolved = resolveItemDefinitionModel(caseObject.getAsJsonObject("model"), stack, renderState);
+					if (resolved != null) {
+						return resolved;
+					}
+				}
+			}
+		}
+		if (modelObject.has("fallback") && modelObject.get("fallback").isJsonObject()) {
+			return resolveItemDefinitionModel(modelObject.getAsJsonObject("fallback"), stack, renderState);
+		}
+		return null;
+	}
+
+	private static ResolvedItemDefinition resolveRangeItemDefinition(JsonObject modelObject, ItemStack stack, ItemDefinitionRenderState renderState) {
+		float value = rangeDispatchValue(modelObject, stack, renderState);
+		ResolvedItemDefinition selected = null;
+		float bestThreshold = Float.NEGATIVE_INFINITY;
+		if (modelObject.has("entries") && modelObject.get("entries").isJsonArray()) {
+			for (JsonElement entryElement : modelObject.getAsJsonArray("entries")) {
+				if (!entryElement.isJsonObject()) {
+					continue;
+				}
+				JsonObject entryObject = entryElement.getAsJsonObject();
+				if (!entryObject.has("model") || !entryObject.get("model").isJsonObject() || !entryObject.has("threshold")) {
+					continue;
+				}
+				float threshold = entryObject.get("threshold").getAsFloat();
+				if (value >= threshold && threshold >= bestThreshold) {
+					ResolvedItemDefinition resolved = resolveItemDefinitionModel(entryObject.getAsJsonObject("model"), stack, renderState);
+					if (resolved != null) {
+						selected = resolved;
+						bestThreshold = threshold;
+					}
+				}
+			}
+		}
+		if (selected != null) {
+			return selected;
+		}
+		if (modelObject.has("fallback") && modelObject.get("fallback").isJsonObject()) {
+			return resolveItemDefinitionModel(modelObject.getAsJsonObject("fallback"), stack, renderState);
+		}
+		return null;
+	}
+
+	private static boolean evaluateItemCondition(JsonObject modelObject, ItemStack stack, ItemDefinitionRenderState renderState) {
+		String property = modelObject.has("property") ? modelObject.get("property").getAsString() : "";
+		return switch (property) {
+			case "minecraft:broken" -> stack.isDamageableItem() && stack.getDamageValue() >= Math.max(0, stack.getMaxDamage() - 1);
+			case "minecraft:using_item" -> renderState.usingItem();
+			case "minecraft:fishing_rod/cast" -> renderState.fishingRodCast();
+			case "minecraft:has_component" -> hasItemComponent(stack, modelObject.has("component") ? modelObject.get("component").getAsString() : null);
+			default -> false;
+		};
+	}
+
+	private static boolean hasItemComponent(ItemStack stack, String componentId) {
+		if (stack == null || stack.isEmpty() || componentId == null) {
+			return false;
+		}
+		return switch (componentId) {
+			case "minecraft:lodestone_tracker" -> stack.has(DataComponents.LODESTONE_TRACKER);
+			case "minecraft:dyed_color" -> stack.has(DataComponents.DYED_COLOR);
+			case "minecraft:trim" -> stack.has(DataComponents.TRIM);
+			case "minecraft:charged_projectiles" -> stack.has(DataComponents.CHARGED_PROJECTILES);
+			default -> false;
+		};
+	}
+
+	private static String selectedItemPropertyValue(JsonObject modelObject, ItemStack stack, ItemDefinitionRenderState renderState) {
+		String property = modelObject.has("property") ? modelObject.get("property").getAsString() : "";
+		return switch (property) {
+			case "minecraft:display_context" -> renderState.transformContext().serializedName();
+			case "minecraft:context_dimension" -> renderState.contextDimensionId();
+			case "minecraft:charge_type" -> itemChargeType(stack);
+			case "minecraft:trim_material" -> trimMaterialId(stack);
+			case "minecraft:block_state" -> blockStateSelectionValue(stack, modelObject.has("block_state_property") ? modelObject.get("block_state_property").getAsString() : null);
+			default -> null;
+		};
+	}
+
+	private static boolean matchesItemSelection(JsonElement when, String value) {
+		if (when == null || value == null) {
+			return false;
+		}
+		if (when.isJsonPrimitive()) {
+			return value.equals(when.getAsString());
+		}
+		if (when.isJsonArray()) {
+			for (JsonElement element : when.getAsJsonArray()) {
+				if (matchesItemSelection(element, value)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private static float rangeDispatchValue(JsonObject modelObject, ItemStack stack, ItemDefinitionRenderState renderState) {
+		String property = modelObject.has("property") ? modelObject.get("property").getAsString() : "";
+		float scale = modelObject.has("scale") ? modelObject.get("scale").getAsFloat() : 1.0F;
+		return switch (property) {
+			case "minecraft:use_duration" -> renderState.useTicks() * scale;
+			case "minecraft:use_cycle" -> {
+				float period = modelObject.has("period") ? Math.max(1.0F, modelObject.get("period").getAsFloat()) : 1.0F;
+				yield (renderState.useTicks() % period) * scale;
+			}
+			case "minecraft:crossbow/pull" -> crossbowPullValue(stack, renderState.useTicks());
+			case "minecraft:time" -> itemTimeValue(modelObject, renderState, scale);
+			default -> 0.0F;
+		};
+	}
+
+	private static float itemTimeValue(JsonObject modelObject, ItemDefinitionRenderState renderState, float scale) {
+		String source = modelObject.has("source") ? modelObject.get("source").getAsString() : "random";
+		return switch (source) {
+			case "daytime" -> {
+				float dayFraction = Mth.positiveModulo((renderState.dayTime() % 24000L) / 24000.0F, 1.0F);
+				yield dayFraction * scale;
+			}
+			default -> {
+				long seed = renderState.gameTime() * 17L + 31L;
+				yield Mth.positiveModulo((seed & 63L) + ((renderState.gameTime() & 1L) == 0L ? 0.25F : 0.75F), scale);
+			}
+		};
+	}
+
+	private static float crossbowPullValue(ItemStack stack, float useTicks) {
+		if (stack == null || !(stack.getItem() instanceof net.minecraft.world.item.CrossbowItem) || useTicks <= 0.0F) {
+			return 0.0F;
+		}
+		int chargeDuration;
+		try {
+			chargeDuration = net.minecraft.world.item.CrossbowItem.getChargeDuration(stack, null);
+		} catch (Throwable ignored) {
+			chargeDuration = 25;
+		}
+		return Mth.clamp(useTicks / Math.max(1.0F, chargeDuration), 0.0F, 1.0F);
+	}
+
+	private static String itemChargeType(ItemStack stack) {
+		net.minecraft.world.item.component.ChargedProjectiles chargedProjectiles = stack == null ? null : stack.get(DataComponents.CHARGED_PROJECTILES);
+		if (chargedProjectiles == null || chargedProjectiles.isEmpty()) {
+			return null;
+		}
+		for (ItemStack charged : chargedProjectiles.getItems()) {
+			if (charged.getItem() instanceof net.minecraft.world.item.FireworkRocketItem) {
+				return "rocket";
+			}
+			if (charged.getItem() instanceof net.minecraft.world.item.ArrowItem) {
+				return "arrow";
+			}
+		}
+		return null;
+	}
+
+	private static String trimMaterialId(ItemStack stack) {
+		ArmorTrim trim = stack == null ? null : stack.get(DataComponents.TRIM);
+		if (trim == null || trim.material() == null) {
+			return null;
+		}
+		return trim.material()
+				.unwrapKey()
+				.map(ResourceKey::identifier)
+				.map(Identifier::toString)
+				.orElse(null);
+	}
+
+	private static String blockStateSelectionValue(ItemStack stack, String propertyName) {
+		if (stack == null || stack.isEmpty() || propertyName == null || !(stack.getItem() instanceof BlockItem blockItem)) {
+			return null;
+		}
+		net.minecraft.world.level.block.state.BlockState state = blockItem.getBlock().defaultBlockState();
+		net.minecraft.world.level.block.state.properties.Property<?> property = state.getProperties().stream()
+				.filter(candidate -> propertyName.equals(candidate.getName()))
+				.findFirst()
+				.orElse(null);
+		if (property == null) {
+			return null;
+		}
+		return propertyValueName(state, property);
+	}
+
+	@SuppressWarnings({"rawtypes", "unchecked"})
+	private static String propertyValueName(net.minecraft.world.level.block.state.BlockState state, net.minecraft.world.level.block.state.properties.Property<?> property) {
+		return ((net.minecraft.world.level.block.state.properties.Property) property).getName(state.getValue((net.minecraft.world.level.block.state.properties.Property) property));
 	}
 
 	private static ResolvedItemModel resolveItemModel(Identifier modelId, Set<String> resolving) {
@@ -4979,7 +5445,7 @@ final class CameraEntityRenderer {
 		} finally {
 			resolving.remove(modelId.toString());
 		}
-		ITEM_VISUAL_CACHE.putIfAbsent(cacheKey, new ItemVisual(primaryTexture(resolved), resolved));
+		ITEM_VISUAL_CACHE.putIfAbsent(cacheKey, new ItemVisual(primaryTexture(resolved), resolved, null, null));
 		return resolved;
 	}
 
@@ -5032,7 +5498,8 @@ final class CameraEntityRenderer {
 					faces.put(direction, new ItemModelFace(
 							faceJson.get("texture").getAsString(),
 							faceJson.has("uv") ? readUv(faceJson.getAsJsonArray("uv")) : null,
-							faceJson.has("rotation") ? faceJson.get("rotation").getAsInt() : 0
+							faceJson.has("rotation") ? faceJson.get("rotation").getAsInt() : 0,
+							faceJson.has("tintindex") ? faceJson.get("tintindex").getAsInt() : -1
 					));
 				}
 				elements.add(new ItemModelElement(from, to, faces, rotation));
@@ -5180,8 +5647,13 @@ final class CameraEntityRenderer {
 		Map<ItemDisplayTransformContext, ItemModelTransform> transforms = new HashMap<>();
 		readItemModelTransform(displayJson, "thirdperson_righthand", ItemDisplayTransformContext.THIRD_PERSON_RIGHT_HAND, transforms);
 		readItemModelTransform(displayJson, "thirdperson_lefthand", ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND, transforms);
+		readItemModelTransform(displayJson, "firstperson_righthand", ItemDisplayTransformContext.FIRST_PERSON_RIGHT_HAND, transforms);
+		readItemModelTransform(displayJson, "firstperson_lefthand", ItemDisplayTransformContext.FIRST_PERSON_LEFT_HAND, transforms);
+		readItemModelTransform(displayJson, "head", ItemDisplayTransformContext.HEAD, transforms);
+		readItemModelTransform(displayJson, "gui", ItemDisplayTransformContext.GUI, transforms);
 		readItemModelTransform(displayJson, "ground", ItemDisplayTransformContext.GROUND, transforms);
 		readItemModelTransform(displayJson, "fixed", ItemDisplayTransformContext.FIXED, transforms);
+		readItemModelTransform(displayJson, "on_shelf", ItemDisplayTransformContext.ON_SHELF, transforms);
 		return transforms;
 	}
 
@@ -5297,12 +5769,19 @@ final class CameraEntityRenderer {
 		}
 
 		static void render(RenderContext context, ClientModelSnapshot snapshot) {
-			RuntimeBridge bridge = runtimeBridge();
-			if (bridge == null || snapshot.layers() == null || snapshot.layers().length == 0) {
+			if (runtimeBridge() == null || snapshot.layers() == null || snapshot.layers().length == 0) {
 				return;
 			}
 
-			Matrix4f root = rootTransform(snapshot);
+			renderWithRoot(context, snapshot, rootTransform(snapshot));
+		}
+
+		static void renderWithRoot(RenderContext context, ClientModelSnapshot snapshot, Matrix4f root) {
+			RuntimeBridge bridge = runtimeBridge();
+			if (bridge == null || snapshot.layers() == null || snapshot.layers().length == 0 || root == null) {
+				return;
+			}
+
 			boolean baby = Boolean.TRUE.equals(snapshot.stateFields().get("isBaby"))
 					|| Boolean.TRUE.equals(snapshot.stateFields().get("baby"));
 			for (ClientLayerSnapshot layer : snapshot.layers()) {
@@ -5316,6 +5795,137 @@ final class CameraEntityRenderer {
 						: context.materialResolver.materialForTexture(layer.texture());
 				renderLayer(bridge, context, root, snapshot.stateFields(), baby, layer, material);
 			}
+			renderHeldItems(bridge, context, snapshot, root, baby);
+		}
+
+		private static void renderHeldItems(
+				RuntimeBridge bridge,
+				RenderContext context,
+				ClientModelSnapshot snapshot,
+				Matrix4f root,
+				boolean baby
+		) {
+			if (snapshot.transformKind() != ClientModelTransformKind.LIVING || snapshot.layers() == null || snapshot.layers().length == 0) {
+				return;
+			}
+			ItemStack rightHandStack = stateItemStack(snapshot.stateFields(), "rightHandItemStack");
+			ItemStack leftHandStack = stateItemStack(snapshot.stateFields(), "leftHandItemStack");
+			if ((rightHandStack == null || rightHandStack.isEmpty()) && (leftHandStack == null || leftHandStack.isEmpty())) {
+				return;
+			}
+
+			ClientLayerSnapshot baseLayer = null;
+			for (ClientLayerSnapshot layer : snapshot.layers()) {
+				if (layer != null && !layer.modelClassName().contains("Armor")) {
+					baseLayer = layer;
+					break;
+				}
+			}
+			if (baseLayer == null) {
+				return;
+			}
+
+			try {
+				ClientModelAdapter adapter = ADAPTER_CACHE.computeIfAbsent(
+						modelCacheKey(baseLayer, baby),
+						key -> createAdapter(
+								bridge,
+								key.modelClassName(),
+								key.baby(),
+								key.textureWidth(),
+								key.textureHeight(),
+								key.layerFactoryMethodName(),
+								key.cubeDeformation(),
+								key.secondaryCubeDeformation(),
+								key.modelFlag()
+						)
+				);
+				if (adapter == null) {
+					return;
+				}
+				synchronized (adapter) {
+					Object state = adapter.newState(snapshot.stateFields());
+					adapter.resetPose();
+					adapter.setupAnim(state);
+					Matrix4f rightHandTransform = findPartTransform(bridge, adapter.rootPart, root, "right_arm");
+					Matrix4f leftHandTransform = findPartTransform(bridge, adapter.rootPart, root, "left_arm");
+					renderExactHeldItem(context, snapshot.stateFields(), rightHandStack, rightHandTransform, ItemDisplayTransformContext.THIRD_PERSON_RIGHT_HAND);
+					renderExactHeldItem(context, snapshot.stateFields(), leftHandStack, leftHandTransform, ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND);
+				}
+			} catch (Exception ignored) {
+			}
+		}
+
+		private static void renderExactHeldItem(
+				RenderContext context,
+				Map<String, Object> stateFields,
+				ItemStack stack,
+				Matrix4f handTransform,
+				ItemDisplayTransformContext transformContext
+		) {
+			if (stack == null || stack.isEmpty() || handTransform == null) {
+				return;
+			}
+			boolean leftHand = transformContext == ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND;
+			boolean usingItem = stateBoolean(stateFields, leftHand ? "leftHandUsingItem" : "rightHandUsingItem", false);
+			float useTicks = stateFloat(stateFields, leftHand ? "leftHandUseTicks" : "rightHandUseTicks", 0.0F);
+			boolean fishingRodCast = stateBoolean(stateFields, leftHand ? "leftFishingRodCast" : "rightFishingRodCast", false);
+			String contextDimensionId = stateString(stateFields, "contextDimensionId");
+			long gameTime = stateLong(stateFields, "gameTime", 0L);
+			long dayTime = stateLong(stateFields, "dayTime", 0L);
+			ItemVisual visual = resolveItemVisual(
+					stack,
+					new ItemDefinitionRenderState(transformContext, usingItem, useTicks, fishingRodCast, contextDimensionId, gameTime, dayTime)
+			);
+			if (visual == null) {
+				return;
+			}
+			Matrix4f itemRoot = new Matrix4f(handTransform)
+					.rotateX(radians(-90.0F))
+					.rotateY(radians(180.0F))
+					.translate(leftHand ? -1.0F / 16.0F : 1.0F / 16.0F, 0.125F, -0.625F);
+			renderItemVisual(context, itemRoot, visual, transformContext);
+		}
+
+		@SuppressWarnings("unchecked")
+		private static Matrix4f findPartTransform(RuntimeBridge bridge, Object part, Matrix4f parentTransform, String targetName) throws ReflectiveOperationException {
+			Map<String, Object> children = (Map<String, Object>) bridge.partChildrenField.get(part);
+			if (children == null || children.isEmpty()) {
+				return null;
+			}
+			for (Map.Entry<String, Object> entry : children.entrySet()) {
+				Matrix4f childTransform = childPartTransform(bridge, parentTransform, entry.getValue());
+				if (targetName.equals(entry.getKey())) {
+					return childTransform;
+				}
+				Matrix4f nested = findPartTransform(bridge, entry.getValue(), childTransform, targetName);
+				if (nested != null) {
+					return nested;
+				}
+			}
+			return null;
+		}
+
+		private static Matrix4f childPartTransform(RuntimeBridge bridge, Matrix4f parentTransform, Object part) throws ReflectiveOperationException {
+			Matrix4f transform = new Matrix4f(parentTransform)
+					.translate(
+							bridge.partXField.getFloat(part) * PX,
+							bridge.partYField.getFloat(part) * PX,
+							bridge.partZField.getFloat(part) * PX
+					);
+			float xRot = bridge.partXRotField.getFloat(part);
+			float yRot = bridge.partYRotField.getFloat(part);
+			float zRot = bridge.partZRotField.getFloat(part);
+			if (xRot != 0.0F || yRot != 0.0F || zRot != 0.0F) {
+				transform.rotateZ(zRot).rotateY(yRot).rotateX(xRot);
+			}
+			float xScale = bridge.partXScaleField.getFloat(part);
+			float yScale = bridge.partYScaleField.getFloat(part);
+			float zScale = bridge.partZScaleField.getFloat(part);
+			if (xScale != 1.0F || yScale != 1.0F || zScale != 1.0F) {
+				transform.scale(xScale, yScale, zScale);
+			}
+			return transform;
 		}
 
 		static void renderHumanoidArmor(
@@ -5621,9 +6231,24 @@ final class CameraEntityRenderer {
 			return value instanceof Number number ? number.intValue() : fallback;
 		}
 
+		private static long stateLong(Map<String, Object> stateFields, String key, long fallback) {
+			Object value = stateFields.get(key);
+			return value instanceof Number number ? number.longValue() : fallback;
+		}
+
 		private static boolean stateBoolean(Map<String, Object> stateFields, String key, boolean fallback) {
 			Object value = stateFields.get(key);
 			return value instanceof Boolean bool ? bool : fallback;
+		}
+
+		private static String stateString(Map<String, Object> stateFields, String key) {
+			Object value = stateFields.get(key);
+			return value instanceof String string ? string : null;
+		}
+
+		private static ItemStack stateItemStack(Map<String, Object> stateFields, String key) {
+			Object value = stateFields.get(key);
+			return value instanceof ItemStack stack ? stack : ItemStack.EMPTY;
 		}
 
 		private static void renderPartTree(
