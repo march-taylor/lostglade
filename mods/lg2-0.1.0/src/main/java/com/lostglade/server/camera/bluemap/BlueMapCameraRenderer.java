@@ -112,7 +112,7 @@ public final class BlueMapCameraRenderer {
 		CameraFrustum frustum = CameraFrustum.create(eyePosition, forward, right, up, maxDistance, fovDegrees);
 		RenderResources resources = getRenderResources();
 		WorldSnapshot snapshot = WorldSnapshot.capture(level, frustum, resources);
-		List<CameraEntityRenderer.EntitySnapshot> entities = new ArrayList<>();
+		List<EntitySnapshot> entities = new ArrayList<>();
 		entities.addAll(captureEntities(player, level, frustum));
 		entities.addAll(captureBlockEntities(level, frustum));
 		FrameEnvironment environment = FrameEnvironment.capture(level, eyePosition);
@@ -314,7 +314,7 @@ public final class BlueMapCameraRenderer {
 			float fovDegrees,
 			int supersampling,
 			WorldSnapshot snapshot,
-			List<CameraEntityRenderer.EntitySnapshot> entities,
+			List<EntitySnapshot> entities,
 			FrameEnvironment environment
 	) {
 	}
@@ -1506,14 +1506,14 @@ public final class BlueMapCameraRenderer {
 				renderFluidOverlay(snapshotBlock, neighborhood, tileModelView, liquidRenderer, scratchColor, x, y, z);
 			}
 
-			CameraEntityRenderer.renderEntities(this.frame.entities(), snapshot, model, new CameraEntityRenderer.MaterialResolver() {
+			CameraEntityRenderer.renderEntities(this.frame.entities(), snapshot, model, new MaterialResolver() {
 				@Override
 				public int materialForTexture(Identifier textureId) {
 					return FrameRenderer.this.materialForTexture(textureId);
 				}
 
 				@Override
-				public int materialForPlayerSkin(CameraEntityRenderer.PlayerSkinSnapshot skinSnapshot) {
+				public int materialForPlayerSkin(PlayerSkinSnapshot skinSnapshot) {
 					return FrameRenderer.this.materialForPlayerSkin(skinSnapshot);
 				}
 
@@ -1563,7 +1563,7 @@ public final class BlueMapCameraRenderer {
 			return registerDynamicMaterial(textureId == null ? "missing" : textureId.toString(), CameraEntityRenderer.loadTextureMaterial(textureId));
 		}
 
-		private int materialForPlayerSkin(CameraEntityRenderer.PlayerSkinSnapshot skinSnapshot) {
+		private int materialForPlayerSkin(PlayerSkinSnapshot skinSnapshot) {
 			String key = skinSnapshot == null ? "player:missing" : "player:" + skinSnapshot.cacheKey();
 			return registerDynamicMaterial(key, CameraEntityRenderer.loadPlayerSkinMaterial(skinSnapshot));
 		}
@@ -2403,7 +2403,7 @@ public final class BlueMapCameraRenderer {
 		}
 	}
 
-	private static List<CameraEntityRenderer.EntitySnapshot> captureEntities(ServerPlayer viewer, ServerLevel level, CameraFrustum frustum) {
+	private static List<EntitySnapshot> captureEntities(ServerPlayer viewer, ServerLevel level, CameraFrustum frustum) {
 		BlockBounds bounds = frustum.bounds();
 		AABB searchBox = new AABB(
 				bounds.minX(),
@@ -2414,14 +2414,14 @@ public final class BlueMapCameraRenderer {
 				bounds.maxZ() + 1.0D
 		);
 		List<Entity> entities = level.getEntities(viewer, searchBox, entity -> entity != null && entity.isAlive() && !entity.isInvisible());
-		List<CameraEntityRenderer.EntitySnapshot> result = new ArrayList<>(entities.size());
+		List<EntitySnapshot> result = new ArrayList<>(entities.size());
 		for (Entity entity : entities) {
 			try {
 				AABB box = entity.getBoundingBox();
 				if (!frustum.intersectsAabb(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)) {
 					continue;
 				}
-				CameraEntityRenderer.EntitySnapshot snapshot = CameraEntityRenderer.captureEntity(entity);
+				EntitySnapshot snapshot = CameraEntityRenderer.captureEntity(entity);
 				if (snapshot != null) {
 					result.add(snapshot);
 				}
@@ -2432,13 +2432,13 @@ public final class BlueMapCameraRenderer {
 		return result;
 	}
 
-	private static List<CameraEntityRenderer.EntitySnapshot> captureBlockEntities(ServerLevel level, CameraFrustum frustum) {
+	private static List<EntitySnapshot> captureBlockEntities(ServerLevel level, CameraFrustum frustum) {
 		BlockBounds bounds = frustum.bounds();
 		int minChunkX = SectionPos.blockToSectionCoord(bounds.minX());
 		int maxChunkX = SectionPos.blockToSectionCoord(bounds.maxX());
 		int minChunkZ = SectionPos.blockToSectionCoord(bounds.minZ());
 		int maxChunkZ = SectionPos.blockToSectionCoord(bounds.maxZ());
-		List<CameraEntityRenderer.EntitySnapshot> result = new ArrayList<>();
+		List<EntitySnapshot> result = new ArrayList<>();
 		for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
 			for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
 				LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
@@ -2462,7 +2462,7 @@ public final class BlueMapCameraRenderer {
 						)) {
 							continue;
 						}
-						CameraEntityRenderer.EntitySnapshot snapshot = CameraEntityRenderer.captureBlockEntity(blockEntity);
+						EntitySnapshot snapshot = CameraEntityRenderer.captureBlockEntity(blockEntity);
 						if (snapshot != null) {
 							result.add(snapshot);
 						}
