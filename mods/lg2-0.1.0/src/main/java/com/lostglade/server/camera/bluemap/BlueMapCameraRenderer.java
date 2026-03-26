@@ -400,9 +400,15 @@ public final class BlueMapCameraRenderer {
 
 		private static WorldSnapshot capture(ServerLevel level, CameraFrustum frustum, RenderResources resources) {
 			BlockBounds bounds = frustum.bounds();
-			Long2ObjectOpenHashMap<SnapshotBlock> blocks = new Long2ObjectOpenHashMap<>();
-			LongOpenHashSet airContext = new LongOpenHashSet();
-			Map<String, Biome> biomeCache = new HashMap<>();
+			long spanX = (long) bounds.maxX() - bounds.minX() + 1L;
+			long spanY = (long) bounds.maxY() - bounds.minY() + 1L;
+			long spanZ = (long) bounds.maxZ() - bounds.minZ() + 1L;
+			long estimatedVolume = Math.max(1L, spanX * spanY * spanZ);
+			int estimatedBlockCapacity = (int) Math.min(Integer.MAX_VALUE - 8L, Math.max(256L, estimatedVolume / 3L));
+			int estimatedAirContextCapacity = (int) Math.min(Integer.MAX_VALUE - 8L, Math.max(512L, estimatedVolume));
+			Long2ObjectOpenHashMap<SnapshotBlock> blocks = new Long2ObjectOpenHashMap<>(estimatedBlockCapacity);
+			LongOpenHashSet airContext = new LongOpenHashSet(estimatedAirContextCapacity);
+			Map<String, Biome> biomeCache = new HashMap<>(32);
 			BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
 			int contextMinX = bounds.minX() - BIOME_CONTEXT_HORIZONTAL_RADIUS;
 			int contextMaxX = bounds.maxX() + BIOME_CONTEXT_HORIZONTAL_RADIUS;
@@ -452,6 +458,14 @@ public final class BlueMapCameraRenderer {
 						int endY = Math.min(15, bounds.maxY() - sectionMinY);
 						int startZ = Math.max(0, bounds.minZ() - chunkMinZ);
 						int endZ = Math.min(15, bounds.maxZ() - chunkMinZ);
+						boolean sectionFullyInsideFrustum = frustum.containsAabb(
+								chunkMinX,
+								sectionMinY,
+								chunkMinZ,
+								chunkMinX + 16.0D,
+								sectionMinY + 16.0D,
+								chunkMinZ + 16.0D
+						);
 						for (int localY = startY; localY <= endY; localY++) {
 							int worldY = sectionMinY + localY;
 							for (int localZ = startZ; localZ <= endZ; localZ++) {
@@ -463,7 +477,7 @@ public final class BlueMapCameraRenderer {
 									}
 
 									int worldX = chunkMinX + localX;
-									if (!frustum.intersectsAabb(worldX, worldY, worldZ, worldX + 1.0D, worldY + 1.0D, worldZ + 1.0D)) {
+									if (!sectionFullyInsideFrustum && !frustum.intersectsAabb(worldX, worldY, worldZ, worldX + 1.0D, worldY + 1.0D, worldZ + 1.0D)) {
 										continue;
 									}
 
@@ -2367,6 +2381,18 @@ public final class BlueMapCameraRenderer {
 			}
 			return true;
 		}
+
+		private boolean containsAabb(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
+			for (Plane plane : this.planes) {
+				double nx = plane.normalX >= 0.0D ? minX : maxX;
+				double ny = plane.normalY >= 0.0D ? minY : maxY;
+				double nz = plane.normalZ >= 0.0D ? minZ : maxZ;
+				if (plane.distance(nx, ny, nz) < 0.0D) {
+					return false;
+				}
+			}
+			return true;
+		}
 	}
 
 	private static final class Plane {
@@ -2414,6 +2440,9 @@ public final class BlueMapCameraRenderer {
 				bounds.maxZ() + 1.0D
 		);
 		List<Entity> entities = level.getEntities(viewer, searchBox, entity -> entity != null && entity.isAlive() && !entity.isInvisible());
+		if (entities.isEmpty()) {
+			return List.of();
+		}
 		List<EntitySnapshot> result = new ArrayList<>(entities.size());
 		for (Entity entity : entities) {
 			try {
@@ -2438,13 +2467,23 @@ public final class BlueMapCameraRenderer {
 		int maxChunkX = SectionPos.blockToSectionCoord(bounds.maxX());
 		int minChunkZ = SectionPos.blockToSectionCoord(bounds.minZ());
 		int maxChunkZ = SectionPos.blockToSectionCoord(bounds.maxZ());
-		List<EntitySnapshot> result = new ArrayList<>();
+		int chunkSpanX = maxChunkX - minChunkX + 1;
+		int chunkSpanZ = maxChunkZ - minChunkZ + 1;
+		List<EntitySnapshot> result = new ArrayList<>(Math.max(16, chunkSpanX * chunkSpanZ * 2));
 		for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
 			for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
 				LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
 				if (chunk == null) {
 					continue;
 				}
+				boolean chunkFullyInsideFrustum = frustum.containsAabb(
+						chunk.getPos().getMinBlockX(),
+						level.getMinY(),
+						chunk.getPos().getMinBlockZ(),
+						chunk.getPos().getMaxBlockX() + 1.0D,
+						level.getMaxY(),
+						chunk.getPos().getMaxBlockZ() + 1.0D
+				);
 				for (var entry : chunk.getBlockEntities().entrySet()) {
 					try {
 						var blockEntity = entry.getValue();
@@ -2452,7 +2491,7 @@ public final class BlueMapCameraRenderer {
 							continue;
 						}
 						BlockPos blockPos = entry.getKey();
-						if (!frustum.intersectsAabb(
+						if (!chunkFullyInsideFrustum && !frustum.intersectsAabb(
 								blockPos.getX(),
 								blockPos.getY(),
 								blockPos.getZ(),
