@@ -52,8 +52,9 @@ public final class TubochkaItem extends SimplePolymerItem {
 	private static final String TOTAL_TICKS_TAG = "total_ticks";
 	private static final String REMAINING_TICKS_TAG = "remaining_ticks";
 	private static final double DEFAULT_BURN_SECONDS = 120.0D;
-	private static final int[] TUBOCHKA_NAUSEA_DURATION_TICKS = {30 * 20, 45 * 20, 60 * 20, 90 * 20};
+	private static final int[] TUBOCHKA_NAUSEA_DURATION_TICKS = {15 * 20, 20 * 20, 25 * 20, 30 * 20};
 	private static final int CARTEL_BUFF_DURATION_TICKS = 15 * 20;
+	private static final int MAX_NAUSEA_BLINDNESS_TICKS = 4 * 20;
 	private static final int RELEASE_COOLDOWN_TICKS = 20;
 	private static final int HELD_SMOKE_INTERVAL_TICKS = 8;
 	private static final int CHARGE_TICKS_PER_RELEASE_PARTICLE = 10;
@@ -451,12 +452,13 @@ public final class TubochkaItem extends SimplePolymerItem {
 		int amplifier = Math.min(3, (releaseCount - 1) / 3);
 		boolean isMrCartel = isMrCartel(player);
 		int durationTicks = TUBOCHKA_NAUSEA_DURATION_TICKS[amplifier];
-		if (isMrCartel) {
-			durationTicks = Math.max(20, durationTicks / 2);
-		}
 
 		player.addEffect(new MobEffectInstance(MobEffects.NAUSEA, durationTicks, amplifier, false, true, true));
 		TUBOCHKA_NAUSEA_STATES.put(player.getUUID(), new TubochkaNauseaState(releaseCount, nowTick + durationTicks));
+
+		if (!isMrCartel && amplifier >= 3) {
+			player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, MAX_NAUSEA_BLINDNESS_TICKS, 0, false, true, true));
+		}
 
 		if (isMrCartel) {
 			player.addEffect(new MobEffectInstance(MobEffects.STRENGTH, CARTEL_BUFF_DURATION_TICKS, amplifier, false, true, true));
