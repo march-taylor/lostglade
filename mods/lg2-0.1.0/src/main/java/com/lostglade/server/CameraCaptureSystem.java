@@ -7,7 +7,6 @@ import com.lostglade.server.map.MapImageRenderSystem;
 import com.lostglade.server.map.MapPixelProvider;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.Holder;
-import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
@@ -76,7 +75,6 @@ public final class CameraCaptureSystem {
 
 		player.getCooldowns().addCooldown(stack, CAMERA_COOLDOWN_TICKS);
 		playShutterFeedback(player);
-		emitCaptureParticles(player);
 		return true;
 	}
 
@@ -193,14 +191,6 @@ public final class CameraCaptureSystem {
 			float pitch = PolymerResourcePackUtils.hasMainPack(viewer) ? SHUTTER_SOUND_PITCH : 1.2F;
 			viewer.connection.send(new ClientboundSoundPacket(sound, SoundSource.PLAYERS, origin.x, origin.y, origin.z, SHUTTER_SOUND_VOLUME, pitch, seed));
 		}
-	}
-
-	private static void emitCaptureParticles(ServerPlayer player) {
-		ServerLevel level = (ServerLevel) player.level();
-		Vec3 forward = player.getLookAngle().normalize();
-		Vec3 origin = player.getEyePosition().add(forward.scale(0.45D));
-		level.sendParticles(ParticleTypes.FIREWORK, origin.x, origin.y, origin.z, 1, 0.01D, 0.01D, 0.01D, 0.0D);
-		level.sendParticles(ParticleTypes.POOF, origin.x, origin.y, origin.z, 2, 0.025D, 0.025D, 0.025D, 0.01D);
 	}
 
 	private static final class CameraPixelProvider implements MapPixelProvider {
