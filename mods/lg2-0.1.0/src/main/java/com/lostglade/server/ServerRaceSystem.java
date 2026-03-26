@@ -2594,4 +2594,3 @@ public final class ServerRaceSystem {
 		}
 	}
 }
-
