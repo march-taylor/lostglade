@@ -152,9 +152,9 @@ public final class ServerRaceSystem {
 	private static final FontDescription CARTEL_PASSPORT_NAME_FONT = new FontDescription.Resource(
 		Objects.requireNonNull(Identifier.tryParse("lg2:passport_name"))
 	);
-	private static final int CARTEL_PASSPORT_NAME_CHAR_ADVANCE = 6;
+	private static final int CARTEL_PASSPORT_NAME_CHAR_ADVANCE = 3;
 	private static final int CARTEL_PASSPORT_NAME_MIN_X = 18;
-	private static final int CARTEL_PASSPORT_NAME_CENTER_X = 88;
+	private static final int CARTEL_PASSPORT_NAME_CENTER_X = 96;
 	private static final int CARTEL_PASSPORT_OVERLAY_X_OFFSET = 168;
 	private static final int MISTER_CARTEL_49_STACK_LIMIT = 49;
 	private static final String CARTEL_SUMMON_TAG = "lg2.cartel_summon";
