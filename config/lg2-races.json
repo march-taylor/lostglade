@@ -45,7 +45,7 @@
                                       "minGrowthSeconds":  120.0,
                                       "maxGrowthSeconds":  240.0,
                                       "tubochkaBurnSeconds":  60.0,
-                                      "tubochkaMaxReleaseSmokeParticles":  8.0,
+                                      "tubochkaMaxReleaseSmokeParticles":  16.0,
                                       "chance":  0.25
                                   },
                       "stock":  {

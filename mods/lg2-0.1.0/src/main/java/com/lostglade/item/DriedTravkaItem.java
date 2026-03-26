@@ -59,7 +59,7 @@ public final class DriedTravkaItem extends SimplePolymerItem {
 
 		String normalized = lang.toLowerCase();
 		if (normalized.startsWith("rpr")) {
-			return Component.literal("Сушёная травка");
+			return Component.literal("Сушённая травушка-муравушка");
 		}
 		if (normalized.startsWith("uk")) {
 			return Component.literal("Сушена травка");

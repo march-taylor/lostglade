@@ -59,7 +59,7 @@ public final class TravkaItem extends SimplePolymerItem {
 
 		String normalized = lang.toLowerCase();
 		if (normalized.startsWith("rpr")) {
-			return Component.literal("Травка");
+			return Component.literal("Травушка-муравушка");
 		}
 		if (normalized.startsWith("uk")) {
 			return Component.literal("Травка");
@@ -73,3 +73,4 @@ public final class TravkaItem extends SimplePolymerItem {
 		return Component.literal("Travka");
 	}
 }
+

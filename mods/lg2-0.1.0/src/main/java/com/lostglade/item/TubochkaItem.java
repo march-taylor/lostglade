@@ -12,8 +12,11 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.HumanoidArm;
@@ -30,7 +33,10 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.Vec3;
 import xyz.nucleoid.packettweaker.PacketContext;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 public final class TubochkaItem extends SimplePolymerItem {
 	private static final Identifier MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "tubochka");
@@ -46,11 +52,15 @@ public final class TubochkaItem extends SimplePolymerItem {
 	private static final String TOTAL_TICKS_TAG = "total_ticks";
 	private static final String REMAINING_TICKS_TAG = "remaining_ticks";
 	private static final double DEFAULT_BURN_SECONDS = 120.0D;
+	private static final int[] TUBOCHKA_NAUSEA_DURATION_TICKS = {30 * 20, 45 * 20, 60 * 20, 90 * 20};
+	private static final int CARTEL_BUFF_DURATION_TICKS = 15 * 20;
+	private static final int RELEASE_COOLDOWN_TICKS = 20;
 	private static final int HELD_SMOKE_INTERVAL_TICKS = 8;
 	private static final int CHARGE_TICKS_PER_RELEASE_PARTICLE = 10;
 	private static final int DEFAULT_MAX_RELEASE_SMOKE_PARTICLES = 8;
 	private static final int BAR_COLOR = 0xFF9A00;
 	private static final int BAR_SEGMENTS = 13;
+	private static final Map<UUID, TubochkaNauseaState> TUBOCHKA_NAUSEA_STATES = new HashMap<>();
 
 	public TubochkaItem(Item.Properties settings) {
 		super(settings, Items.STICK);
@@ -106,6 +116,9 @@ public final class TubochkaItem extends SimplePolymerItem {
 	@Override
 	public InteractionResult use(Level level, Player player, InteractionHand hand) {
 		ItemStack stack = player.getItemInHand(hand);
+		if (player.getCooldowns().isOnCooldown(stack)) {
+			return InteractionResult.FAIL;
+		}
 		if (isLit(stack)) {
 			player.startUsingItem(hand);
 			return InteractionResult.CONSUME;
@@ -116,6 +129,9 @@ public final class TubochkaItem extends SimplePolymerItem {
 	@Override
 	public InteractionResult useOn(UseOnContext context) {
 		Player player = context.getPlayer();
+		if (player != null && player.getCooldowns().isOnCooldown(context.getItemInHand())) {
+			return InteractionResult.FAIL;
+		}
 		if (player != null && isLit(context.getItemInHand())) {
 			player.startUsingItem(context.getHand());
 			return InteractionResult.CONSUME;
@@ -147,11 +163,12 @@ public final class TubochkaItem extends SimplePolymerItem {
 		int usedTicks = Math.max(0, getUseDuration(stack, entity) - timeChargedLeft);
 		int particleCount = Math.min(resolveMaxReleaseSmokeParticles(entity), usedTicks / CHARGE_TICKS_PER_RELEASE_PARTICLE);
 		if (particleCount <= 0) {
+			applyTubochkaReleaseEffects(level, entity, stack);
 			return true;
 		}
 
-		Vec3 origin = getHeldSmokeOrigin(entity, resolveTubochkaHandSlot(entity, stack), true);
-		serverLevel.sendParticles(ParticleTypes.CAMPFIRE_COSY_SMOKE, origin.x, origin.y, origin.z, particleCount, 0.05D, 0.02D, 0.05D, 0.01D);
+		emitReleaseSmoke(serverLevel, entity, particleCount);
+		applyTubochkaReleaseEffects(level, entity, stack);
 		return true;
 	}
 
@@ -186,7 +203,9 @@ public final class TubochkaItem extends SimplePolymerItem {
 		migrateLegacyLitState(stack, nowTick);
 		long remainingTicks = getRemainingTicks(stack, nowTick);
 		if (remainingTicks <= 0L) {
-			if (entity instanceof LivingEntity livingEntity && livingEntity.getUseItem() == stack) {
+			if (entity instanceof LivingEntity livingEntity && isChargingTubochka(livingEntity, slot)) {
+				emitReleaseSmoke(level, livingEntity, resolveMaxReleaseSmokeParticles(livingEntity));
+				applyTubochkaReleaseEffects(level, livingEntity, stack);
 				livingEntity.stopUsingItem();
 			}
 			stack.shrink(1);
@@ -198,7 +217,9 @@ public final class TubochkaItem extends SimplePolymerItem {
 			updateSyncedBarState(stack, barWidth);
 		}
 
-		if (entity instanceof LivingEntity livingEntity && (slot == EquipmentSlot.MAINHAND || slot == EquipmentSlot.OFFHAND)) {
+		if (entity instanceof LivingEntity livingEntity
+				&& (slot == EquipmentSlot.MAINHAND || slot == EquipmentSlot.OFFHAND)
+				&& !isChargingTubochka(livingEntity, slot)) {
 			emitHeldSmoke(level, livingEntity, slot);
 		}
 	}
@@ -217,16 +238,6 @@ public final class TubochkaItem extends SimplePolymerItem {
 	}
 
 	private static boolean tryLightTubochka(ServerPlayer player, InteractionHand tubochkaHand) {
-		Optional<RaceConfig.PlayerRaceConfig> raceOptional = ServerRaceSystem.getRace(player);
-		if (raceOptional.isEmpty()) {
-			return false;
-		}
-
-		RaceConfig.PlayerRaceConfig race = raceOptional.get();
-		if (!MISTER_CARTEL_49_RACE_ID.equals(race.id) || race.shnyaga == null || !race.shnyaga.enabled) {
-			return false;
-		}
-
 		ItemStack tubochkaStack = player.getItemInHand(tubochkaHand);
 		if (!tubochkaStack.is(ModItems.TUBOCHKA) || isLit(tubochkaStack)) {
 			return false;
@@ -238,7 +249,12 @@ public final class TubochkaItem extends SimplePolymerItem {
 			return false;
 		}
 
-		long totalTicks = Math.max(1L, Math.round((race.shnyaga.tubochkaBurnSeconds > 0.0D ? race.shnyaga.tubochkaBurnSeconds : DEFAULT_BURN_SECONDS) * 20.0D));
+		double burnSeconds = DEFAULT_BURN_SECONDS;
+		Optional<RaceConfig.PlayerRaceConfig> raceOptional = ServerRaceSystem.getRace(player);
+		if (raceOptional.isPresent() && raceOptional.get().shnyaga != null && raceOptional.get().shnyaga.tubochkaBurnSeconds > 0.0D) {
+			burnSeconds = raceOptional.get().shnyaga.tubochkaBurnSeconds;
+		}
+		long totalTicks = Math.max(1L, Math.round(burnSeconds * 20.0D));
 		if (tubochkaStack.getCount() > 1) {
 			ItemStack remainder = tubochkaStack.copyWithCount(tubochkaStack.getCount() - 1);
 			tubochkaStack.setCount(1);
@@ -373,7 +389,7 @@ public final class TubochkaItem extends SimplePolymerItem {
 		level.sendParticles(ParticleTypes.SMOKE, origin.x, origin.y, origin.z, 1, 0.015D, 0.02D, 0.015D, 0.003D);
 	}
 
-	private static Vec3 getHeldSmokeOrigin(LivingEntity livingEntity, EquipmentSlot slot, boolean raisedUsePose) {
+	private static void emitReleaseSmoke(ServerLevel level, LivingEntity livingEntity, int particleCount) {
 		Vec3 look = livingEntity.getLookAngle();
 		if (look.lengthSqr() < 1.0E-6D) {
 			look = new Vec3(0.0D, 0.0D, 1.0D);
@@ -381,25 +397,76 @@ public final class TubochkaItem extends SimplePolymerItem {
 			look = look.normalize();
 		}
 
-		Vec3 right = new Vec3(0.0D, 1.0D, 0.0D).cross(look);
-		if (right.lengthSqr() < 1.0E-6D) {
-			right = new Vec3(1.0D, 0.0D, 0.0D);
-		} else {
-			right = right.normalize();
+		Vec3 origin = livingEntity.getEyePosition().add(look.scale(0.34D)).add(0.0D, -0.10D, 0.0D);
+		for (int i = 0; i < particleCount; i++) {
+			double randomX = (level.random.nextDouble() - 0.5D) * 0.02D;
+			double randomY = level.random.nextDouble() * 0.015D;
+			double randomZ = (level.random.nextDouble() - 0.5D) * 0.02D;
+			double velocityX = look.x * 0.012D + randomX;
+			double velocityY = 0.045D + Math.max(0.0D, look.y) * 0.01D + randomY;
+			double velocityZ = look.z * 0.012D + randomZ;
+			level.sendParticles(ParticleTypes.CAMPFIRE_COSY_SMOKE, origin.x, origin.y, origin.z, 0, velocityX, velocityY, velocityZ, 1.0D);
 		}
+	}
+
+	private static Vec3 getHeldSmokeOrigin(LivingEntity livingEntity, EquipmentSlot slot, boolean raisedUsePose) {
+		float bodyYawRadians = livingEntity.yBodyRot * Mth.DEG_TO_RAD;
+		Vec3 forward = new Vec3(-Mth.sin(bodyYawRadians), 0.0D, Mth.cos(bodyYawRadians));
+		Vec3 right = new Vec3(forward.z, 0.0D, -forward.x);
 
 		HumanoidArm hand = slot == EquipmentSlot.MAINHAND
 				? livingEntity.getMainArm()
 				: (livingEntity.getMainArm() == HumanoidArm.RIGHT ? HumanoidArm.LEFT : HumanoidArm.RIGHT);
-		double sideOffset = hand == HumanoidArm.RIGHT ? 0.18D : -0.18D;
-		double forwardOffset = raisedUsePose ? 0.26D : 0.34D;
-		double verticalOffset = raisedUsePose ? -0.28D : -0.42D;
-		double raisedSideScale = raisedUsePose ? 0.72D : 1.0D;
-		return livingEntity.getEyePosition().add(look.scale(forwardOffset)).add(right.scale(sideOffset * raisedSideScale)).add(0.0D, verticalOffset, 0.0D);
+		double sideOffset = hand == HumanoidArm.RIGHT ? -0.42D : 0.42D;
+		double forwardOffset = raisedUsePose ? 0.22D : 0.24D;
+		double handHeight = livingEntity.getY() + livingEntity.getBbHeight() * (raisedUsePose ? 0.84D : 0.60D);
+		double verticalOffset = raisedUsePose ? -0.54D : -0.50D;
+		Vec3 handBase = new Vec3(livingEntity.getX(), handHeight, livingEntity.getZ());
+		return handBase.add(right.scale(sideOffset)).add(forward.scale(forwardOffset)).add(0.0D, verticalOffset, 0.0D);
 	}
 
 	private static EquipmentSlot resolveTubochkaHandSlot(LivingEntity livingEntity, ItemStack stack) {
 		return livingEntity.getOffhandItem() == stack ? EquipmentSlot.OFFHAND : EquipmentSlot.MAINHAND;
+	}
+
+	private static boolean isChargingTubochka(LivingEntity livingEntity, EquipmentSlot slot) {
+		if (!livingEntity.isUsingItem() || !livingEntity.getUseItem().is(ModItems.TUBOCHKA)) {
+			return false;
+		}
+		EquipmentSlot usedSlot = livingEntity.getUsedItemHand() == InteractionHand.OFF_HAND ? EquipmentSlot.OFFHAND : EquipmentSlot.MAINHAND;
+		return usedSlot == slot;
+	}
+
+	private static void applyTubochkaReleaseEffects(Level level, LivingEntity livingEntity, ItemStack stack) {
+		if (!(livingEntity instanceof ServerPlayer player)) {
+			return;
+		}
+
+		player.getCooldowns().addCooldown(stack, RELEASE_COOLDOWN_TICKS);
+
+		long nowTick = level.getGameTime();
+		TubochkaNauseaState state = TUBOCHKA_NAUSEA_STATES.get(player.getUUID());
+		boolean hasActiveTubochkaNausea = state != null && state.untilTick > nowTick && player.hasEffect(MobEffects.NAUSEA);
+		int releaseCount = hasActiveTubochkaNausea ? state.releaseCount + 1 : 1;
+		int amplifier = Math.min(3, (releaseCount - 1) / 3);
+		boolean isMrCartel = isMrCartel(player);
+		int durationTicks = TUBOCHKA_NAUSEA_DURATION_TICKS[amplifier];
+		if (isMrCartel) {
+			durationTicks = Math.max(20, durationTicks / 2);
+		}
+
+		player.addEffect(new MobEffectInstance(MobEffects.NAUSEA, durationTicks, amplifier, false, true, true));
+		TUBOCHKA_NAUSEA_STATES.put(player.getUUID(), new TubochkaNauseaState(releaseCount, nowTick + durationTicks));
+
+		if (isMrCartel) {
+			player.addEffect(new MobEffectInstance(MobEffects.STRENGTH, CARTEL_BUFF_DURATION_TICKS, amplifier, false, true, true));
+			player.addEffect(new MobEffectInstance(MobEffects.SPEED, CARTEL_BUFF_DURATION_TICKS, amplifier, false, true, true));
+		}
+	}
+
+	private static boolean isMrCartel(ServerPlayer player) {
+		Optional<RaceConfig.PlayerRaceConfig> raceOptional = ServerRaceSystem.getRace(player);
+		return raceOptional.isPresent() && MISTER_CARTEL_49_RACE_ID.equals(raceOptional.get().id);
 	}
 
 	private static int resolveMaxReleaseSmokeParticles(LivingEntity entity) {
@@ -415,27 +482,31 @@ public final class TubochkaItem extends SimplePolymerItem {
 	private static MutableComponent getLocalizedName(PacketContext context) {
 		ServerPlayer player = context.getPlayer();
 		if (player == null) {
-			return Component.literal("Tubochka");
+			return Component.literal("Joint");
 		}
 
 		String lang = player.clientInformation().language();
 		if (lang == null) {
-			return Component.literal("Tubochka");
+			return Component.literal("Joint");
 		}
 
 		String normalized = lang.toLowerCase();
 		if (normalized.startsWith("rpr")) {
-			return Component.literal("Трубочка");
+			return Component.literal("Курево Затѣйное");
 		}
 		if (normalized.startsWith("uk")) {
-			return Component.literal("Трубочка");
+			return Component.literal("Косячок");
 		}
 		if (normalized.startsWith("ru")) {
-			return Component.literal("Трубочка");
+			return Component.literal("Косячок");
 		}
 		if (normalized.startsWith("ja")) {
-			return Component.literal("筒");
+			return Component.literal("ジョイント");
 		}
-		return Component.literal("Tubochka");
+		return Component.literal("Joint");
+	}
+
+	private record TubochkaNauseaState(int releaseCount, long untilTick) {
 	}
 }
+
