@@ -3124,6 +3124,7 @@ final class CameraEntityRenderer {
 			);
 		}
 
+		renderHumanoidHeadEquipment(context, snapshot, root, headYaw, headPitch);
 		renderHumanoidHeldItems(context, snapshot, root, rightArmPitch, leftArmPitch, rightArmYaw, leftArmYaw, rightArmRoll, leftArmRoll);
 	}
 
@@ -3475,6 +3476,24 @@ final class CameraEntityRenderer {
 		renderHumanoidHeldItem(context, snapshot.leftHandItem(), humanoidHandTransform(root, snapshot, HumanoidArm.LEFT, leftArmPitch, leftArmYaw, leftArmRoll), ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND);
 	}
 
+	private static void renderHumanoidHeadEquipment(
+			RenderContext context,
+			HumanoidSnapshot snapshot,
+			Matrix4f root,
+			float headYaw,
+			float headPitch
+	) {
+		if (snapshot == null || snapshot.armor() == null) {
+			return;
+		}
+		ItemStack stack = snapshot.armor().head();
+		if (!shouldRenderHeadEquipmentItem(stack)) {
+			return;
+		}
+		Matrix4f headTransform = rotateAround(root, 0.0F, 24.0F, 0.0F, headPitch, headYaw, 0.0F);
+		renderHeadEquipmentItem(context, stack, manualHeadItemRoot(headTransform));
+	}
+
 	private static void renderHumanoidArmor(
 			RenderContext context,
 			HumanoidSnapshot snapshot,
@@ -3634,11 +3653,45 @@ final class CameraEntityRenderer {
 		renderItemVisual(context, itemTransform, visual, transformContext);
 	}
 
+	private static boolean shouldRenderHeadEquipmentItem(ItemStack stack) {
+		return stack != null
+				&& !stack.isEmpty()
+				&& !shouldRenderHumanoidArmor(stack, EquipmentSlot.HEAD);
+	}
+
+	private static void renderHeadEquipmentItem(RenderContext context, ItemStack stack, Matrix4f itemRoot) {
+		if (!shouldRenderHeadEquipmentItem(stack) || itemRoot == null) {
+			return;
+		}
+		ItemVisual visual = resolveItemVisual(stack, ItemDisplayTransformContext.HEAD);
+		if (visual == null) {
+			return;
+		}
+		renderItemVisual(context, itemRoot, visual, ItemDisplayTransformContext.HEAD);
+	}
+
 	private static Matrix4f manualHeldItemRoot(Matrix4f handTransform, boolean leftHand) {
 		return new Matrix4f(handTransform)
 				.rotateX(radians(90.0F))
 				.rotateY(radians(180.0F))
 				.translate(leftHand ? -1.0F / 16.0F : 1.0F / 16.0F, 0.0F, -0.625F);
+	}
+
+	private static Matrix4f manualHeadItemRoot(Matrix4f headTransform) {
+		return new Matrix4f(headTransform)
+				// Manual humanoid rendering already lives in world-space, so it needs a
+				// simple head-center anchor instead of the mirrored client PoseStack basis
+				// used by CustomHeadLayer.
+				.translate(0.0F, 28.0F * PX, 0.0F)
+				.rotateY((float) Math.PI)
+				.scale(0.625F, 0.625F, 0.625F);
+	}
+
+	private static Matrix4f exactHeadItemRoot(Matrix4f headTransform) {
+		return new Matrix4f(headTransform)
+				.translate(0.0F, -0.25F, 0.0F)
+				.rotateY((float) Math.PI)
+				.scale(0.625F, -0.625F, -0.625F);
 	}
 
 	private static Matrix4f humanoidHandTransform(
@@ -3920,6 +3973,10 @@ final class CameraEntityRenderer {
 
 		if (snapshot.showBasePlate()) {
 			addBox(context, root, -6.0F, 0.0F, -6.0F, 12.0F, 1.0F, 12.0F, 0, 32, 64, 64, material, false, 0.0F);
+		}
+
+		if (snapshot.armor() != null && shouldRenderHeadEquipmentItem(snapshot.armor().head())) {
+			renderHeadEquipmentItem(context, snapshot.armor().head(), manualHeadItemRoot(applyPose(root, snapshot.headPose(), 0.0F, 24.0F, 0.0F)));
 		}
 	}
 
@@ -6089,7 +6146,65 @@ final class CameraEntityRenderer {
 						: context.materialResolver.materialForTexture(layer.texture());
 				renderLayer(bridge, context, root, snapshot.stateFields(), baby, layer, material);
 			}
+			renderHeadEquipment(bridge, context, snapshot, root, baby);
 			renderHeldItems(bridge, context, snapshot, root, baby);
+		}
+
+		private static void renderHeadEquipment(
+				RuntimeBridge bridge,
+				RenderContext context,
+				ClientModelSnapshot snapshot,
+				Matrix4f root,
+				boolean baby
+		) {
+			if (snapshot.transformKind() != ClientModelTransformKind.LIVING || snapshot.layers() == null || snapshot.layers().length == 0) {
+				return;
+			}
+			ItemStack headStack = stateItemStack(snapshot.stateFields(), "headEquipment");
+			if (!shouldRenderHeadEquipmentItem(headStack)) {
+				return;
+			}
+
+			ClientLayerSnapshot baseLayer = null;
+			for (ClientLayerSnapshot layer : snapshot.layers()) {
+				if (layer != null && !layer.modelClassName().contains("Armor")) {
+					baseLayer = layer;
+					break;
+				}
+			}
+			if (baseLayer == null) {
+				return;
+			}
+
+			try {
+				ClientModelAdapter adapter = ADAPTER_CACHE.computeIfAbsent(
+						modelCacheKey(baseLayer, baby),
+						key -> createAdapter(
+								bridge,
+								key.modelClassName(),
+								key.baby(),
+								key.textureWidth(),
+								key.textureHeight(),
+								key.layerFactoryMethodName(),
+								key.cubeDeformation(),
+								key.secondaryCubeDeformation(),
+								key.modelFlag()
+						)
+				);
+				if (adapter == null) {
+					return;
+				}
+				synchronized (adapter) {
+					Object state = adapter.newState(snapshot.stateFields());
+					adapter.resetPose();
+					adapter.setupAnim(state);
+					Matrix4f headTransform = findPartTransform(bridge, adapter.rootPart, root, "head");
+					if (headTransform != null) {
+						renderExactHeadItem(context, snapshot.stateFields(), headStack, headTransform);
+					}
+				}
+			} catch (Exception ignored) {
+			}
 		}
 
 		private static void renderHeldItems(
@@ -6179,6 +6294,28 @@ final class CameraEntityRenderer {
 					.rotateY(radians(180.0F))
 					.translate(leftHand ? -1.0F / 16.0F : 1.0F / 16.0F, 0.125F, -0.625F);
 			renderItemVisual(context, itemRoot, visual, transformContext);
+		}
+
+		private static void renderExactHeadItem(
+				RenderContext context,
+				Map<String, Object> stateFields,
+				ItemStack stack,
+				Matrix4f headTransform
+		) {
+			if (!shouldRenderHeadEquipmentItem(stack) || headTransform == null) {
+				return;
+			}
+			String contextDimensionId = stateString(stateFields, "contextDimensionId");
+			long gameTime = stateLong(stateFields, "gameTime", 0L);
+			long dayTime = stateLong(stateFields, "dayTime", 0L);
+			ItemVisual visual = resolveItemVisual(
+					stack,
+					new ItemDefinitionRenderState(ItemDisplayTransformContext.HEAD, false, 0.0F, false, contextDimensionId, gameTime, dayTime)
+			);
+			if (visual == null) {
+				return;
+			}
+			renderItemVisual(context, exactHeadItemRoot(headTransform), visual, ItemDisplayTransformContext.HEAD);
 		}
 
 		@SuppressWarnings("unchecked")
