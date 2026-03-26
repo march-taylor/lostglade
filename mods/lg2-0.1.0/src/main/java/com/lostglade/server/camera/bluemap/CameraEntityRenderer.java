@@ -5994,6 +5994,16 @@ final class CameraEntityRenderer {
 		}
 		JsonObject rotationJson = object.getAsJsonObject("rotation");
 		Vec3 origin = readModelVec3(rotationJson.getAsJsonArray("origin"));
+		if (rotationJson.has("x") || rotationJson.has("y") || rotationJson.has("z")) {
+			float xRot = rotationJson.has("x") ? rotationJson.get("x").getAsFloat() : 0.0F;
+			float yRot = rotationJson.has("y") ? rotationJson.get("y").getAsFloat() : 0.0F;
+			float zRot = rotationJson.has("z") ? rotationJson.get("z").getAsFloat() : 0.0F;
+			Matrix4f transform = new Matrix4f().rotate(new Quaternionf().rotationXYZ(radians(xRot), radians(yRot), radians(zRot)));
+			return new ElementRotation(origin, null, 0.0F, false, transform);
+		}
+		if (!rotationJson.has("axis")) {
+			return null;
+		}
 		Direction.Axis axis = switch (rotationJson.get("axis").getAsString()) {
 			case "x" -> Direction.Axis.X;
 			case "y" -> Direction.Axis.Y;
