@@ -675,11 +675,13 @@ final class CameraEntityRenderer {
 			byte modelBits = player instanceof net.minecraft.world.entity.Avatar avatar
 					? avatar.getEntityData().get(PlayerTrackedDataAccessor.lg2$getDataPlayerModeCustomisation())
 					: 0;
+			float playerBodyYaw = entity.getYRot();
+			float playerHeadYaw = livingEntity.yHeadRot;
 			return new HumanoidSnapshot(
 					entity.position(),
 					entity.getYRot(),
-					livingEntity.yBodyRot,
-					livingEntity.yHeadRot,
+					playerBodyYaw,
+					playerHeadYaw,
 					entity.getXRot(),
 					livingEntity.walkAnimation.position(),
 					livingEntity.walkAnimation.speed(),
