@@ -122,7 +122,7 @@ public final class BlueMapCameraRenderer {
 		RenderResources resources = getRenderResources();
 		WorldSnapshot snapshot = WorldSnapshot.capture(level, frustum, resources);
 		List<EntitySnapshot> entities = new ArrayList<>();
-		entities.addAll(captureEntities(player, level, frustum));
+		entities.addAll(captureEntities(player, level, frustum, forward, right, up));
 		entities.addAll(captureBlockEntities(level, frustum));
 		FrameEnvironment environment = FrameEnvironment.capture(level, eyePosition);
 		return new PreparedFrame(eyePosition, forward, right, up, maxDistance, fovDegrees, supersampling, snapshot, entities, environment);
@@ -2696,7 +2696,7 @@ public final class BlueMapCameraRenderer {
 		}
 	}
 
-	private static List<EntitySnapshot> captureEntities(ServerPlayer viewer, ServerLevel level, CameraFrustum frustum) {
+	private static List<EntitySnapshot> captureEntities(ServerPlayer viewer, ServerLevel level, CameraFrustum frustum, Vec3 forward, Vec3 right, Vec3 up) {
 		BlockBounds bounds = frustum.bounds();
 		AABB searchBox = new AABB(
 				bounds.minX(),
@@ -2717,7 +2717,7 @@ public final class BlueMapCameraRenderer {
 				if (!frustum.intersectsAabb(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)) {
 					continue;
 				}
-				EntitySnapshot snapshot = CameraEntityRenderer.captureEntity(entity);
+				EntitySnapshot snapshot = CameraEntityRenderer.captureEntity(viewer, forward, right, up, entity);
 				if (snapshot != null) {
 					result.add(snapshot);
 				}

@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.lostglade.Lg2;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
+import com.lostglade.server.ServerWebcamFrameCache;
 import com.lostglade.server.map.TextureAssetManager;
 import com.mojang.authlib.properties.Property;
 import de.bluecolored.bluemap.core.map.hires.ArrayTileModel;
@@ -149,8 +150,12 @@ final class CameraEntityRenderer {
 	}
 
 	static EntitySnapshot captureEntity(Entity entity) {
+		return captureEntity(null, null, null, null, entity);
+	}
+
+	static EntitySnapshot captureEntity(ServerPlayer viewer, Vec3 cameraForward, Vec3 cameraRight, Vec3 cameraUp, Entity entity) {
 		try {
-			return attachAuxiliarySnapshots(entity, captureEntityUnsafe(entity));
+			return attachAuxiliarySnapshots(viewer, cameraForward, cameraRight, cameraUp, entity, captureEntityUnsafe(entity));
 		} catch (Throwable throwable) {
 			Lg2.LOGGER.debug("Failed to capture camera snapshot for entity {}", entity, throwable);
 			return null;
@@ -635,7 +640,14 @@ final class CameraEntityRenderer {
 		return livingEntity.getMainArm() == arm ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
 	}
 
-	private static EntitySnapshot attachAuxiliarySnapshots(Entity entity, EntitySnapshot primary) {
+	private static EntitySnapshot attachAuxiliarySnapshots(
+			ServerPlayer viewer,
+			Vec3 cameraForward,
+			Vec3 cameraRight,
+			Vec3 cameraUp,
+			Entity entity,
+			EntitySnapshot primary
+	) {
 		if (primary == null) {
 			return null;
 		}
@@ -648,10 +660,59 @@ final class CameraEntityRenderer {
 				}
 			}
 		}
+		if (entity instanceof Player player) {
+			ImagePlaneSnapshot webcamOverlay = capturePlayerWebcamOverlay(viewer, cameraForward, cameraRight, cameraUp, player);
+			if (webcamOverlay != null) {
+				attachments.add(webcamOverlay);
+			}
+		}
 		if (attachments.isEmpty()) {
 			return primary;
 		}
 		return new CompositeSnapshot(primary.position(), primary, attachments.toArray(EntitySnapshot[]::new));
+	}
+
+	private static ImagePlaneSnapshot capturePlayerWebcamOverlay(
+			ServerPlayer viewer,
+			Vec3 cameraForward,
+			Vec3 cameraRight,
+			Vec3 cameraUp,
+			Player player
+	) {
+		if (viewer == null || cameraForward == null || cameraRight == null || cameraUp == null || player == null) {
+			return null;
+		}
+		ServerWebcamFrameCache.WebcamDisplay display = ServerWebcamFrameCache.getAboveHeadDisplay(viewer, player);
+		if (display == null || display.image() == null || display.size() <= 0.0F) {
+			return null;
+		}
+		float size = display.size();
+		float halfSize = size * 0.5F;
+		// Webcam's living-entity layer is rendered from a higher local root than the raw
+		// server entity base position we use for snapshots. An extra small clearance keeps
+		// the webcam quad fully above the head instead of letting its lower edge clip it.
+		Vec3 anchor = player.position().add(0.0D, 1.5D + display.offsetY(), 0.0D);
+		Matrix4f transform = billboardTransform(anchor, cameraRight, cameraUp, cameraForward);
+		return new ImagePlaneSnapshot(
+				anchor,
+				transform,
+				-halfSize,
+				-halfSize,
+				0.0F,
+				size,
+				size,
+				display.materialKey(),
+				display.image(),
+				false
+		);
+	}
+
+	private static Matrix4f billboardTransform(Vec3 center, Vec3 right, Vec3 up, Vec3 forward) {
+		return new Matrix4f()
+				.m00((float) right.x).m01((float) right.y).m02((float) right.z).m03(0.0F)
+				.m10((float) up.x).m11((float) up.y).m12((float) up.z).m13(0.0F)
+				.m20((float) (-forward.x)).m21((float) (-forward.y)).m22((float) (-forward.z)).m23(0.0F)
+				.m30((float) center.x).m31((float) center.y).m32((float) center.z).m33(1.0F);
 	}
 
 	private static ClientModelSnapshot capturePlayerClientModel(Player player, PlayerSkinSnapshot playerSkin, byte modelBits) {

@@ -36,6 +36,7 @@ public final class CartelWebcamBridge {
 		removeMapping(cartelId);
 		TARGET_BY_CARTEL.put(cartelId, targetId);
 		CARTELS_BY_TARGET.computeIfAbsent(targetId, ignored -> ConcurrentHashMap.newKeySet()).add(cartelId);
+		ServerWebcamFrameCache.beginMirror(cartelId, targetId);
 		closeCartelSource(cartelId);
 	}
 
@@ -45,18 +46,22 @@ public final class CartelWebcamBridge {
 		}
 
 		removeMapping(cartelId);
+		ServerWebcamFrameCache.endMirror(cartelId);
 		closeCartelSource(cartelId);
 	}
 
 	public static void clearAll() {
 		TARGET_BY_CARTEL.clear();
 		CARTELS_BY_TARGET.clear();
+		ServerWebcamFrameCache.clearMirrors();
 	}
 
 	public static void handlePlayerDisconnected(UUID playerId) {
 		if (playerId == null) {
 			return;
 		}
+		ServerWebcamFrameCache.removeSource(playerId);
+		ServerWebcamFrameCache.endMirror(playerId);
 
 		Set<UUID> mirroredCartels = CARTELS_BY_TARGET.get(playerId);
 		if (mirroredCartels == null || mirroredCartels.isEmpty()) {
@@ -64,6 +69,7 @@ public final class CartelWebcamBridge {
 		}
 
 		for (UUID cartelId : mirroredCartels) {
+			ServerWebcamFrameCache.endMirror(cartelId);
 			closeCartelSource(cartelId);
 		}
 	}
@@ -89,11 +95,13 @@ public final class CartelWebcamBridge {
 				return true;
 			}
 
+			ServerWebcamFrameCache.handleVideoPacket(senderId, videoPacket);
 			mirrorVideoPacket(webcamServer, senderId, videoPacket);
 			return false;
 		}
 
 		if (packet instanceof CloseSourceC2SPacket) {
+			ServerWebcamFrameCache.removeSource(senderId);
 			mirrorClosePacket(webcamServer, senderId);
 		}
 

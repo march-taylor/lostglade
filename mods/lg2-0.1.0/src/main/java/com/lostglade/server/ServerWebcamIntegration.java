@@ -20,12 +20,14 @@ public final class ServerWebcamIntegration {
 
 	public static void register() {
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+			ServerWebcamFrameCache.clearAll();
 			if (!isLoaded()) {
 				Lg2.LOGGER.warn("Webcam is not loaded even though it is listed as a dependency");
 				return;
 			}
 			Lg2.LOGGER.info("Connected Webcam integration");
 		});
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> ServerWebcamFrameCache.clearAll());
 	}
 
 	public static boolean isLoaded() {
