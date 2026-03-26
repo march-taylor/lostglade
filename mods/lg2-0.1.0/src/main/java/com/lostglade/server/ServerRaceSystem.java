@@ -104,7 +104,10 @@ import net.minecraft.world.scores.Scoreboard;
 import net.minecraft.world.scores.Team;
 import xyz.nucleoid.packettweaker.PacketContext;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -152,9 +155,24 @@ public final class ServerRaceSystem {
 	private static final FontDescription CARTEL_PASSPORT_NAME_FONT = new FontDescription.Resource(
 		Objects.requireNonNull(Identifier.tryParse("lg2:passport_name"))
 	);
+	private static final String[] CARTEL_PASSPORT_NAME_FONT_ROWS = {
+			"ABCDEFGH",
+			"IJKLMNOP",
+			"QRSTUVWX",
+			"YZabcdef",
+			"ghijklmn",
+			"opqrstuv",
+			"wxyz0123",
+			"456789_\0"
+	};
+	private static final String CARTEL_PASSPORT_NAME_TEXTURE_RESOURCE = "/assets/lg2/textures/font/passport_name.png";
+	private static final int CARTEL_PASSPORT_NAME_BITMAP_COLUMNS = 8;
+	private static final int CARTEL_PASSPORT_NAME_BITMAP_ROWS = 8;
+	private static final int CARTEL_PASSPORT_NAME_RENDER_HEIGHT = 5;
 	private static final int CARTEL_PASSPORT_NAME_CHAR_ADVANCE = 5;
 	private static final int CARTEL_PASSPORT_NAME_MIN_X = 18;
 	private static final int CARTEL_PASSPORT_NAME_CENTER_X = 138;
+	private static volatile Map<Character, Integer> CARTEL_PASSPORT_NAME_ADVANCE_CACHE;
 	private static final int CARTEL_PASSPORT_OVERLAY_X_OFFSET = 168;
 	private static final int MISTER_CARTEL_49_STACK_LIMIT = 49;
 	private static final String CARTEL_SUMMON_TAG = "lg2.cartel_summon";
@@ -1315,12 +1333,88 @@ public final class ServerRaceSystem {
 		}
 
 		String playerName = target.getGameProfile().name();
-		int startX = Math.max(CARTEL_PASSPORT_NAME_MIN_X, CARTEL_PASSPORT_NAME_CENTER_X - (playerName.length() * CARTEL_PASSPORT_NAME_CHAR_ADVANCE) / 2);
+		int startX = Math.max(CARTEL_PASSPORT_NAME_MIN_X, CARTEL_PASSPORT_NAME_CENTER_X - measureCartelPassportNameWidth(playerName) / 2);
 		return title.copy()
 			.append(Component.literal(TITLE_OVERLAY_RESET + buildHorizontalAdvance(startX))
 				.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
 			.append(Component.literal(playerName)
 						.withStyle(style -> style.withColor(0x2E2016).withItalic(false).withFont(CARTEL_PASSPORT_NAME_FONT)));
+	}
+
+	private static int measureCartelPassportNameWidth(String text) {
+		if (text == null || text.isEmpty()) {
+			return 0;
+		}
+		Map<Character, Integer> advances = getCartelPassportNameAdvanceMap();
+		int width = 0;
+		for (int i = 0; i < text.length(); i++) {
+			width += advances.getOrDefault(text.charAt(i), CARTEL_PASSPORT_NAME_CHAR_ADVANCE);
+		}
+		return width;
+	}
+
+	private static Map<Character, Integer> getCartelPassportNameAdvanceMap() {
+		Map<Character, Integer> cached = CARTEL_PASSPORT_NAME_ADVANCE_CACHE;
+		if (cached != null) {
+			return cached;
+		}
+		synchronized (ServerRaceSystem.class) {
+			if (CARTEL_PASSPORT_NAME_ADVANCE_CACHE == null) {
+				CARTEL_PASSPORT_NAME_ADVANCE_CACHE = loadCartelPassportNameAdvanceMap();
+			}
+			return CARTEL_PASSPORT_NAME_ADVANCE_CACHE;
+		}
+	}
+
+	private static Map<Character, Integer> loadCartelPassportNameAdvanceMap() {
+		Map<Character, Integer> advances = new LinkedHashMap<>();
+		try (InputStream stream = ServerRaceSystem.class.getResourceAsStream(CARTEL_PASSPORT_NAME_TEXTURE_RESOURCE)) {
+			if (stream == null) {
+				return advances;
+			}
+			BufferedImage image = ImageIO.read(stream);
+			if (image == null) {
+				return advances;
+			}
+
+			int cellWidth = image.getWidth() / CARTEL_PASSPORT_NAME_BITMAP_COLUMNS;
+			int cellHeight = image.getHeight() / CARTEL_PASSPORT_NAME_BITMAP_ROWS;
+			float renderScale = (float) CARTEL_PASSPORT_NAME_RENDER_HEIGHT / (float) cellHeight;
+
+			for (int row = 0; row < CARTEL_PASSPORT_NAME_FONT_ROWS.length; row++) {
+				String rowChars = CARTEL_PASSPORT_NAME_FONT_ROWS[row];
+				for (int column = 0; column < rowChars.length(); column++) {
+					char character = rowChars.charAt(column);
+					if (character == '\0') {
+						continue;
+					}
+
+					int left = cellWidth;
+					int right = -1;
+					for (int x = 0; x < cellWidth; x++) {
+						for (int y = 0; y < cellHeight; y++) {
+							int argb = image.getRGB(column * cellWidth + x, row * cellHeight + y);
+							if (((argb >>> 24) & 0xFF) > 0) {
+								left = Math.min(left, x);
+								right = Math.max(right, x);
+							}
+						}
+					}
+
+					int advance;
+					if (right < left) {
+						advance = CARTEL_PASSPORT_NAME_CHAR_ADVANCE;
+					} else {
+						int glyphWidth = right - left + 1;
+						advance = Math.max(1, Math.round(glyphWidth * renderScale)) + 1;
+					}
+					advances.put(character, advance);
+				}
+			}
+		} catch (IOException exception) {
+			Lg2.LOGGER.warn("Failed to measure passport_name font glyph widths, using fallback centering", exception);
+		}
+		return advances;
 	}
 
 	private static int getCartelDisguisePreviousSlot(ServerPlayer viewer) {
