@@ -153,6 +153,7 @@ public final class ServerRaceSystem {
 		Objects.requireNonNull(Identifier.tryParse("lg2:passport_name"))
 	);
 	private static final int CARTEL_PASSPORT_NAME_CHAR_ADVANCE = 6;
+	private static final int CARTEL_PASSPORT_NAME_MIN_X = 18;
 	private static final int CARTEL_PASSPORT_NAME_CENTER_X = 88;
 	private static final int CARTEL_PASSPORT_OVERLAY_X_OFFSET = 168;
 	private static final int MISTER_CARTEL_49_STACK_LIMIT = 49;
@@ -189,6 +190,9 @@ public final class ServerRaceSystem {
 	private static final int CARTEL_DISGUISE_PREVIOUS_SLOT = 11;
 	private static final int CARTEL_DISGUISE_HEAD_SLOT = 13;
 	private static final int CARTEL_DISGUISE_NEXT_SLOT = 15;
+	private static final int CARTEL_DISGUISE_PACK_PREVIOUS_SLOT = 12;
+	private static final int CARTEL_DISGUISE_PACK_HEAD_SLOT = 13;
+	private static final int CARTEL_DISGUISE_PACK_NEXT_SLOT = 14;
 	private static final String CARTEL_LAWYER_SKIN_VALUE = "ewogICJ0aW1lc3RhbXAiIDogMTc1MjAzMzk0NjY5MSwKICAicHJvZmlsZUlkIiA6ICI0ZWE3NGM1ZGUyZGI0OGY2YjViOTk1YTVhNTYzMmU0NCIsCiAgInByb2ZpbGVOYW1lIiA6ICJNclNjYXJ5U3BhY2VDYXQiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvMjRkNDQ3MDc4N2M4NWRlNWI5ODE5ODVkNDBmOTI5NzNhNmQxMmQ5ZDYxNzc0NGM3YWQzOGY4MWZmMTA3YTE5ZCIKICAgIH0KICB9Cn0=";
 	private static final URI CARTEL_LAWYER_SKIN_URI = URI.create("https://textures.minecraft.net/texture/24d4470787c85de5b981985d40f92973a6d12d9d617744c7ad38f81ff107a19d");
 	private static final Property CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY = new Property("textures", CARTEL_LAWYER_SKIN_VALUE);
@@ -1311,12 +1315,30 @@ public final class ServerRaceSystem {
 		}
 
 		String playerName = target.getGameProfile().name();
-		int startX = CARTEL_PASSPORT_OVERLAY_X_OFFSET + Math.max(18, CARTEL_PASSPORT_NAME_CENTER_X - (playerName.length() * CARTEL_PASSPORT_NAME_CHAR_ADVANCE) / 2);
+		int startX = Math.max(CARTEL_PASSPORT_NAME_MIN_X, CARTEL_PASSPORT_NAME_CENTER_X - (playerName.length() * CARTEL_PASSPORT_NAME_CHAR_ADVANCE) / 2);
 		return title.copy()
 			.append(Component.literal(TITLE_OVERLAY_RESET + buildHorizontalAdvance(startX))
 				.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
 			.append(Component.literal(playerName)
-						.withStyle(style -> style.withColor(0x2E2016).withItalic(false)));
+						.withStyle(style -> style.withColor(0x2E2016).withItalic(false).withFont(CARTEL_PASSPORT_NAME_FONT)));
+	}
+
+	private static int getCartelDisguisePreviousSlot(ServerPlayer viewer) {
+		return viewer != null && PolymerResourcePackUtils.hasMainPack(viewer)
+				? CARTEL_DISGUISE_PACK_PREVIOUS_SLOT
+				: CARTEL_DISGUISE_PREVIOUS_SLOT;
+	}
+
+	private static int getCartelDisguiseHeadSlot(ServerPlayer viewer) {
+		return viewer != null && PolymerResourcePackUtils.hasMainPack(viewer)
+				? CARTEL_DISGUISE_PACK_HEAD_SLOT
+				: CARTEL_DISGUISE_HEAD_SLOT;
+	}
+
+	private static int getCartelDisguiseNextSlot(ServerPlayer viewer) {
+		return viewer != null && PolymerResourcePackUtils.hasMainPack(viewer)
+				? CARTEL_DISGUISE_PACK_NEXT_SLOT
+				: CARTEL_DISGUISE_NEXT_SLOT;
 	}
 
 	private static void hideCartelDisguiseInventoryVisuals(ServerPlayer player, AbstractContainerMenu menu) {
@@ -2417,17 +2439,20 @@ public final class ServerRaceSystem {
 			}
 
 			this.selectedIndex = Math.floorMod(this.selectedIndex, candidates.size());
-			if (slotId == CARTEL_DISGUISE_PREVIOUS_SLOT) {
+			int previousSlot = getCartelDisguisePreviousSlot(this.viewer);
+			int headSlot = getCartelDisguiseHeadSlot(this.viewer);
+			int nextSlot = getCartelDisguiseNextSlot(this.viewer);
+			if (slotId == previousSlot) {
 				this.selectedIndex = Math.floorMod(this.selectedIndex - 1, candidates.size());
 				openMrCartelDisguiseMenu(this.viewer, candidates, this.selectedIndex, this.ability);
 				return;
 			}
-			if (slotId == CARTEL_DISGUISE_NEXT_SLOT) {
+			if (slotId == nextSlot) {
 				this.selectedIndex = Math.floorMod(this.selectedIndex + 1, candidates.size());
 				openMrCartelDisguiseMenu(this.viewer, candidates, this.selectedIndex, this.ability);
 				return;
 			}
-			if (slotId == CARTEL_DISGUISE_HEAD_SLOT) {
+			if (slotId == headSlot) {
 				activateMrCartelDisguise(this.viewer, candidates.get(this.selectedIndex), this.ability);
 			}
 		}
@@ -2466,15 +2491,18 @@ public final class ServerRaceSystem {
 			}
 
 			List<ServerPlayer> candidates = collectCartelDisguiseCandidates(this.viewer);
+			int previousSlot = getCartelDisguisePreviousSlot(this.viewer);
+			int headSlot = getCartelDisguiseHeadSlot(this.viewer);
+			int nextSlot = getCartelDisguiseNextSlot(this.viewer);
 			if (candidates.isEmpty()) {
-				this.container.setItem(CARTEL_DISGUISE_HEAD_SLOT, buildCartelDisguiseEmptyState(this.viewer));
+				this.container.setItem(headSlot, buildCartelDisguiseEmptyState(this.viewer));
 				return;
 			}
 
 			this.selectedIndex = Math.floorMod(this.selectedIndex, candidates.size());
-			this.container.setItem(CARTEL_DISGUISE_PREVIOUS_SLOT, buildCartelDisguiseArrow(this.viewer, false));
-			this.container.setItem(CARTEL_DISGUISE_HEAD_SLOT, buildCartelDisguiseHead(this.viewer, candidates.get(this.selectedIndex)));
-			this.container.setItem(CARTEL_DISGUISE_NEXT_SLOT, buildCartelDisguiseArrow(this.viewer, true));
+			this.container.setItem(previousSlot, buildCartelDisguiseArrow(this.viewer, false));
+			this.container.setItem(headSlot, buildCartelDisguiseHead(this.viewer, candidates.get(this.selectedIndex)));
+			this.container.setItem(nextSlot, buildCartelDisguiseArrow(this.viewer, true));
 			if (this.viewer.containerMenu == this) {
 				this.slotsChanged(this.container);
 				this.broadcastChanges();
