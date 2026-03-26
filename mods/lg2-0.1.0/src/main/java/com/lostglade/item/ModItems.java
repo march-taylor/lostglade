@@ -23,6 +23,7 @@ public final class ModItems {
 	private static final Identifier CAMERA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera");
 	private static final Identifier TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "travka");
 	private static final Identifier DRIED_TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "dried_travka");
+	private static final Identifier COCAINE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "cocaine");
 	private static final Identifier TUBOCHKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "tubochka");
 	private static final Identifier ABSOLUTE_INVISIBILITY_POTION_ID = Identifier.fromNamespaceAndPath(
 			Lg2.MOD_ID,
@@ -36,6 +37,7 @@ public final class ModItems {
 	private static final ResourceKey<Item> CAMERA_KEY = ResourceKey.create(Registries.ITEM, CAMERA_ID);
 	private static final ResourceKey<Item> TRAVKA_KEY = ResourceKey.create(Registries.ITEM, TRAVKA_ID);
 	private static final ResourceKey<Item> DRIED_TRAVKA_KEY = ResourceKey.create(Registries.ITEM, DRIED_TRAVKA_ID);
+	private static final ResourceKey<Item> COCAINE_KEY = ResourceKey.create(Registries.ITEM, COCAINE_ID);
 	private static final ResourceKey<Item> TUBOCHKA_KEY = ResourceKey.create(Registries.ITEM, TUBOCHKA_ID);
 	private static final ResourceKey<Item> ABSOLUTE_INVISIBILITY_POTION_KEY = ResourceKey.create(
 			Registries.ITEM,
@@ -94,6 +96,15 @@ public final class ModItems {
 			new DriedTravkaItem(
 					new Item.Properties()
 							.setId(DRIED_TRAVKA_KEY)
+							.rarity(Rarity.COMMON)
+			)
+	);
+	public static final Item COCAINE = Registry.register(
+			BuiltInRegistries.ITEM,
+			COCAINE_ID,
+			new CocaineItem(
+					new Item.Properties()
+							.setId(COCAINE_KEY)
 							.rarity(Rarity.COMMON)
 			)
 	);
@@ -201,6 +212,7 @@ public final class ModItems {
 			entries.prepend(STABILITY_POTION);
 			entries.prepend(ABSOLUTE_INVISIBILITY_POTION);
 			entries.prepend(TUBOCHKA);
+			entries.prepend(COCAINE);
 			entries.prepend(DRIED_TRAVKA);
 			entries.prepend(TRAVKA);
 			entries.prepend(CAMERA);

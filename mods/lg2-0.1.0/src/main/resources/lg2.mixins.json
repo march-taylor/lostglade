@@ -33,6 +33,7 @@
 		"MobTrojanRoosterLeashMixin",
 		"MobXpRewardAccessor",
 		"MobDeathLootMixin",
+		"PlayerCocaineSprintMixin",
 		"PlayerContainerMenuAccessor",
 		"PlayerTrackedDataAccessor",
 		"PotionBrewingStabilityMixin",

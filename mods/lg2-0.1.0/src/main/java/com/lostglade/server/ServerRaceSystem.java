@@ -9,6 +9,7 @@ import com.lostglade.config.RaceConfig;
 import com.lostglade.config.RaceConfig.PlayerRaceConfig;
 import com.lostglade.config.RaceConfig.RaceAbilityConfig;
 import com.lostglade.config.RaceConfig.RaceAbilitySlot;
+import com.lostglade.item.CocaineItem;
 import com.lostglade.item.ModItems;
 import com.lostglade.item.TubochkaItem;
 import com.lostglade.mixin.MobXpRewardAccessor;
@@ -93,8 +94,10 @@ import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.LayeredCauldronBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.DoublePlantBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -197,6 +200,7 @@ public final class ServerRaceSystem {
 	private static final double CARTEL_DEFAULT_SHNYAGA_MIN_GROWTH_SECONDS = 120.0D;
 	private static final double CARTEL_DEFAULT_SHNYAGA_MAX_GROWTH_SECONDS = 240.0D;
 	private static final long CARTEL_FERN_GROWTH_RETRY_TICKS = 100L;
+	private static final int COCAINE_CAULDRON_BATCH_SIZE = 16;
 	private static final long MISTER_CARTEL_STACK_CHECK_INTERVAL_TICKS = 8L;
 	private static final double CARTEL_LAWYER_BASE_MOVE_SPEED = 0.23D;
 	private static final double CARTEL_LAWYER_WALK_SPEED = CARTEL_LAWYER_BASE_MOVE_SPEED;
@@ -230,6 +234,8 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, UUID> CARTEL_SUMMON_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> CARTEL_LAWYER_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final ThreadLocal<Boolean> CARTEL_DEFENSE_REFLECTION_ACTIVE = ThreadLocal.withInitial(() -> Boolean.FALSE);
+	private static final Set<CocaineCauldronKey> PROCESSED_COCAINE_CAULDRONS = new HashSet<>();
+	private static long processedCocaineCauldronTick = Long.MIN_VALUE;
 	private static CompletableFuture<Property> CARTEL_LAWYER_SKIN_FUTURE;
 	private static volatile Property CARTEL_LAWYER_SKIN_PROPERTY;
 	private static final class CartelSummonSession {
@@ -409,6 +415,7 @@ public final class ServerRaceSystem {
 			tickCartelDisguises(server);
 			tickCartelTravkaGrowthAttempts(server);
 			tickCartelFernGrowths(server);
+			CocaineItem.tick(server);
 		});
 	}
 
@@ -582,6 +589,80 @@ public final class ServerRaceSystem {
 		return InteractionResult.PASS;
 	}
 
+	public static void tryProcessCocaineCauldron(ItemEntity itemEntity) {
+		if (itemEntity == null || itemEntity.level().isClientSide()) {
+			return;
+		}
+
+		ItemStack triggerStack = itemEntity.getItem();
+		if (triggerStack.isEmpty() || (!triggerStack.is(Items.BONE_MEAL) && !triggerStack.is(ModItems.DRIED_TRAVKA))) {
+			return;
+		}
+
+		if (!(itemEntity.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		BlockPos cauldronPos = findCocaineCauldronPos(itemEntity, level);
+		if (cauldronPos == null) {
+			return;
+		}
+
+		long gameTime = level.getGameTime();
+		if (processedCocaineCauldronTick != gameTime) {
+			PROCESSED_COCAINE_CAULDRONS.clear();
+			processedCocaineCauldronTick = gameTime;
+		}
+
+		CocaineCauldronKey cauldronKey = new CocaineCauldronKey(level.dimension(), cauldronPos.immutable());
+		if (!PROCESSED_COCAINE_CAULDRONS.add(cauldronKey)) {
+			return;
+		}
+
+		BlockState state = level.getBlockState(cauldronPos);
+		if (!state.is(Blocks.WATER_CAULDRON)) {
+			return;
+		}
+
+		int waterLevel = state.getValue(LayeredCauldronBlock.LEVEL);
+		if (waterLevel <= 0) {
+			return;
+		}
+
+		AABB searchBox = createCocaineCauldronSearchBox(cauldronPos);
+		List<ItemEntity> nearbyItems = level.getEntitiesOfClass(
+				ItemEntity.class,
+				searchBox,
+				ServerRaceSystem::isCocaineIngredientEntity
+		);
+		if (nearbyItems.isEmpty()) {
+			return;
+		}
+
+		int boneMealCount = 0;
+		int driedTravkaCount = 0;
+		for (ItemEntity nearby : nearbyItems) {
+			ItemStack stack = nearby.getItem();
+			if (stack.is(Items.BONE_MEAL)) {
+				boneMealCount += stack.getCount();
+			} else if (stack.is(ModItems.DRIED_TRAVKA)) {
+				driedTravkaCount += stack.getCount();
+			}
+		}
+
+		int craftableCount = Math.min(Math.min(boneMealCount, driedTravkaCount), waterLevel * COCAINE_CAULDRON_BATCH_SIZE);
+		if (craftableCount <= 0) {
+			return;
+		}
+
+		int waterLevelsConsumed = (craftableCount + COCAINE_CAULDRON_BATCH_SIZE - 1) / COCAINE_CAULDRON_BATCH_SIZE;
+		consumeCocaineIngredient(nearbyItems, Items.BONE_MEAL, craftableCount);
+		consumeCocaineIngredient(nearbyItems, ModItems.DRIED_TRAVKA, craftableCount);
+		updateCauldronAfterCocaineCraft(level, cauldronPos, state, waterLevel - waterLevelsConsumed);
+		spawnCocaineOutput(level, cauldronPos, craftableCount);
+		emitCocaineCauldronParticles(level, cauldronPos, craftableCount);
+	}
+
 	private static void tickCartelTravkaGrowthAttempts(MinecraftServer server) {
 		if (CARTEL_TRAVKA_GROWTH_ATTEMPTS.isEmpty()) {
 			return;
@@ -606,6 +687,128 @@ public final class ServerRaceSystem {
 
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.remove(i);
 		}
+	}
+
+	private static BlockPos findCocaineCauldronPos(ItemEntity itemEntity, ServerLevel level) {
+		BlockPos currentPos = itemEntity.blockPosition();
+		if (isValidCocaineCauldronPosition(itemEntity, level, currentPos)) {
+			return currentPos;
+		}
+
+		BlockPos belowPos = currentPos.below();
+		if (isValidCocaineCauldronPosition(itemEntity, level, belowPos)) {
+			return belowPos;
+		}
+
+		return null;
+	}
+
+	private static boolean isValidCocaineCauldronPosition(ItemEntity itemEntity, ServerLevel level, BlockPos pos) {
+		if (itemEntity == null || level == null || pos == null) {
+			return false;
+		}
+
+		if (!level.getBlockState(pos).is(Blocks.WATER_CAULDRON)) {
+			return false;
+		}
+
+		return itemEntity.getBoundingBox().intersects(createCocaineCauldronSearchBox(pos));
+	}
+
+	private static AABB createCocaineCauldronSearchBox(BlockPos pos) {
+		return new AABB(
+				pos.getX() + 0.12D,
+				pos.getY() + 0.05D,
+				pos.getZ() + 0.12D,
+				pos.getX() + 0.88D,
+				pos.getY() + 1.15D,
+				pos.getZ() + 0.88D
+		);
+	}
+
+	private static boolean isCocaineIngredientEntity(ItemEntity itemEntity) {
+		if (itemEntity == null || itemEntity.isRemoved()) {
+			return false;
+		}
+
+		ItemStack stack = itemEntity.getItem();
+		return !stack.isEmpty() && (stack.is(Items.BONE_MEAL) || stack.is(ModItems.DRIED_TRAVKA));
+	}
+
+	private static void consumeCocaineIngredient(List<ItemEntity> nearbyItems, net.minecraft.world.item.Item item, int amount) {
+		if (nearbyItems == null || item == null || amount <= 0) {
+			return;
+		}
+
+		int remaining = amount;
+		for (ItemEntity nearby : nearbyItems) {
+			if (remaining <= 0) {
+				return;
+			}
+
+			ItemStack stack = nearby.getItem();
+			if (!stack.is(item)) {
+				continue;
+			}
+
+			int consumed = Math.min(stack.getCount(), remaining);
+			if (consumed >= stack.getCount()) {
+				nearby.discard();
+			} else {
+				stack.shrink(consumed);
+				nearby.setItem(stack);
+			}
+			remaining -= consumed;
+		}
+	}
+
+	private static void updateCauldronAfterCocaineCraft(ServerLevel level, BlockPos pos, BlockState state, int remainingWaterLevel) {
+		if (level == null || pos == null || state == null) {
+			return;
+		}
+
+		if (remainingWaterLevel <= 0) {
+			level.setBlockAndUpdate(pos, Blocks.CAULDRON.defaultBlockState());
+			return;
+		}
+
+		level.setBlockAndUpdate(pos, state.setValue(LayeredCauldronBlock.LEVEL, remainingWaterLevel));
+	}
+
+	private static void spawnCocaineOutput(ServerLevel level, BlockPos pos, int count) {
+		if (level == null || pos == null || count <= 0) {
+			return;
+		}
+
+		ItemEntity cocaine = new ItemEntity(
+				level,
+				pos.getX() + 0.5D,
+				pos.getY() + 0.42D,
+				pos.getZ() + 0.5D,
+				new ItemStack(ModItems.COCAINE, count)
+		);
+		cocaine.setDeltaMovement(Vec3.ZERO);
+		cocaine.setDefaultPickUpDelay();
+		level.addFreshEntity(cocaine);
+	}
+
+	private static void emitCocaineCauldronParticles(ServerLevel level, BlockPos pos, int craftedCount) {
+		if (level == null || pos == null || craftedCount <= 0) {
+			return;
+		}
+
+		int particleCount = Math.min(32, 8 + craftedCount / 2);
+		level.sendParticles(
+				ParticleTypes.CLOUD,
+				pos.getX() + 0.5D,
+				pos.getY() + 0.72D,
+				pos.getZ() + 0.5D,
+				particleCount,
+				0.18D,
+				0.12D,
+				0.18D,
+				0.015D
+		);
 	}
 
 	private static void scheduleCartelFernGrowth(ServerLevel level, BlockPos pos, RaceAbilityConfig ability) {
@@ -1217,6 +1420,9 @@ public final class ServerRaceSystem {
 		if (server != null) {
 			restoreCartelDisguise(server, player, session);
 		}
+	}
+
+	private record CocaineCauldronKey(ResourceKey<Level> dimension, BlockPos pos) {
 	}
 
 	private static void restoreCartelDisguise(MinecraftServer server, ServerPlayer player, CartelDisguiseSession session) {
