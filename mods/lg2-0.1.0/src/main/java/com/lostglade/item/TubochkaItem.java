@@ -461,8 +461,13 @@ public final class TubochkaItem extends SimplePolymerItem {
 		}
 
 		if (isMrCartel) {
-			player.addEffect(new MobEffectInstance(MobEffects.STRENGTH, CARTEL_BUFF_DURATION_TICKS, amplifier, false, true, true));
-			player.addEffect(new MobEffectInstance(MobEffects.SPEED, CARTEL_BUFF_DURATION_TICKS, amplifier, false, true, true));
+			int nauseaLevel = amplifier + 1;
+			int cartelBuffLevel = nauseaLevel / 2;
+			if (cartelBuffLevel > 0) {
+				int cartelBuffAmplifier = cartelBuffLevel - 1;
+				player.addEffect(new MobEffectInstance(MobEffects.STRENGTH, CARTEL_BUFF_DURATION_TICKS, cartelBuffAmplifier, false, true, true));
+				player.addEffect(new MobEffectInstance(MobEffects.SPEED, CARTEL_BUFF_DURATION_TICKS, cartelBuffAmplifier, false, true, true));
+			}
 		}
 	}
 
