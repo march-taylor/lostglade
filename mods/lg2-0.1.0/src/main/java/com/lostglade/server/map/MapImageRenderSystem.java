@@ -22,6 +22,7 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.MapItem;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 
@@ -42,6 +43,7 @@ public final class MapImageRenderSystem {
 	private static final float CAMERA_PRINT_VOLUME = 0.55F;
 	private static final float CAMERA_PRINT_PITCH = 1.0F;
 	private static final int MAP_SIZE = 128;
+	private static final int PHOTO_MAP_CENTER = 30_000_000;
 	private static final int RESULTS_APPLIED_PER_TICK = 384;
 	private static final int FRAME_PIXELS_APPLIED_PER_TICK = 4096;
 	private static final int MAX_PIXEL_FAILURES = 64;
@@ -69,10 +71,15 @@ public final class MapImageRenderSystem {
 			return false;
 		}
 		ServerLevel level = (ServerLevel) player.level();
-		ItemStack map = MapItem.create(level, 0, 0, (byte) 0, false, false);
+		ServerLevel mapLevel = photoMapLevel(player.level().getServer(), level);
+		ItemStack map = MapItem.create(mapLevel, PHOTO_MAP_CENTER, PHOTO_MAP_CENTER, (byte) 0, false, false);
 		MapId mapId = map.get(DataComponents.MAP_ID);
 		if (mapId == null) {
 			return false;
+		}
+		MapItemSavedData initialMapData = mapLevel.getMapData(mapId);
+		if (initialMapData != null && !initialMapData.locked) {
+			mapLevel.setMapData(mapId, initialMapData.locked());
 		}
 		map.set(DataComponents.CUSTOM_NAME, itemName);
 
@@ -94,6 +101,18 @@ public final class MapImageRenderSystem {
 			player.displayClientMessage(CameraCaptureSystem.addedToRenderQueueMessage(player), true);
 		}
 		return true;
+	}
+
+	private static ServerLevel photoMapLevel(MinecraftServer server, ServerLevel fallback) {
+		if (server == null) {
+			return fallback;
+		}
+		ServerLevel end = server.getLevel(Level.END);
+		if (end != null) {
+			return end;
+		}
+		ServerLevel overworld = server.getLevel(Level.OVERWORLD);
+		return overworld != null ? overworld : fallback;
 	}
 
 	private static void tick(MinecraftServer server) {
@@ -198,6 +217,7 @@ public final class MapImageRenderSystem {
 		}
 
 		if (job.isDone() && !job.hasDispatchedPixels()) {
+			lockRenderedPhoto(level, job, mapData);
 			job.provider().onCompleted(server);
 			player.displayClientMessage(CameraCaptureSystem.captureCompletedMessage(player), true);
 			playCompletionSound(player);
@@ -263,6 +283,7 @@ public final class MapImageRenderSystem {
 		}
 
 		if (job.frameApplyIndex() >= MAP_SIZE * MAP_SIZE) {
+			lockRenderedPhoto(level, job, mapData);
 			job.provider().onCompleted(server);
 			player.displayClientMessage(CameraCaptureSystem.captureCompletedMessage(player), true);
 			playCompletionSound(player);
@@ -286,6 +307,13 @@ public final class MapImageRenderSystem {
 				pitch,
 				player.level().getRandom().nextLong()
 		));
+	}
+
+	private static void lockRenderedPhoto(ServerLevel level, RenderJob job, MapItemSavedData mapData) {
+		if (level == null || job == null || mapData == null || mapData.locked) {
+			return;
+		}
+		level.setMapData(job.mapId(), mapData.locked());
 	}
 
 	private static void normalizeQueue() {
