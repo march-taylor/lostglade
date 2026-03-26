@@ -353,6 +353,7 @@ public final class ServerRaceSystem {
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			cleanupAllCartelRaceEntities(server, true);
 			restoreAllCartelDisguises(server);
+			CartelWebcamBridge.clearAll();
 			RACES_BY_NICKNAME.clear();
 			DIALOG_ID_BY_NICKNAME.clear();
 			GENERATED_DIALOG_JSON_BY_PATH.clear();
@@ -378,6 +379,7 @@ public final class ServerRaceSystem {
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
 			cleanupCartelEntitiesForDisconnect(server, handler.player);
 			clearCartelDisguise(handler.player);
+			CartelWebcamBridge.handlePlayerDisconnected(handler.player.getUUID());
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.removeIf(attempt -> attempt.playerId.equals(handler.player.getUUID()));
 		});
 		UseItemCallback.EVENT.register((player, world, hand) -> {
@@ -1131,6 +1133,7 @@ public final class ServerRaceSystem {
 		}
 
 		applySkin(server, caster, targetSkin);
+		CartelWebcamBridge.beginDisguise(caster.getUUID(), target.getUUID());
 		long nowTick = caster.level().getGameTime();
 		long durationTicks = asTicks(positiveOrDefault(ability.durationSeconds, CARTEL_DEFAULT_UNIQUE_DURATION_SECONDS));
 		CARTEL_DISGUISE_SESSIONS.put(
@@ -1175,6 +1178,7 @@ public final class ServerRaceSystem {
 
 			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
 			if (player == null) {
+				CartelWebcamBridge.endDisguise(entry.getKey());
 				return true;
 			}
 			if (nowTick < session.endTick) {
@@ -1206,6 +1210,7 @@ public final class ServerRaceSystem {
 		}
 		CartelDisguiseSession session = CARTEL_DISGUISE_SESSIONS.remove(player.getUUID());
 		if (session == null) {
+			CartelWebcamBridge.endDisguise(player.getUUID());
 			return;
 		}
 		MinecraftServer server = player.level().getServer();
@@ -1215,6 +1220,9 @@ public final class ServerRaceSystem {
 	}
 
 	private static void restoreCartelDisguise(MinecraftServer server, ServerPlayer player, CartelDisguiseSession session) {
+		if (player != null) {
+			CartelWebcamBridge.endDisguise(player.getUUID());
+		}
 		if (server == null || player == null || session == null || session.originalSkin == null) {
 			return;
 		}

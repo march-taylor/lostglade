@@ -47,6 +47,7 @@
 		"ServerPlayerMenuTitleMixin",
 		"TemptGoalAbsoluteInvisibilityMixin",
 		"TargetingConditionsAbsoluteInvisibilityMixin",
+		"WebcamServerCartelDisguiseMixin",
 		"WoodlandMansionIllusionerSpawnMixin",
 		"ZombieNaturalSpawnMarkerMixin"
 	],
