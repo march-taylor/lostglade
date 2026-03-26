@@ -137,6 +137,7 @@ final class CameraEntityRenderer {
 	private static final Map<String, BlueMapCameraRenderer.TextureMaterial> PLAYER_SKIN_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, Identifier> ITEM_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, ItemVisual> ITEM_VISUAL_CACHE = new ConcurrentHashMap<>();
+	private static final Map<String, FlatSpriteMesh> FLAT_SPRITE_MESH_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, BufferedImage> ARMOR_TRIM_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, BufferedImage> EQUIPMENT_TINT_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, ClientModelResolver> VANILLA_CLIENT_MODEL_RULES = buildVanillaClientModelRules();
@@ -537,6 +538,27 @@ final class CameraEntityRenderer {
 			int rotation,
 			int tintIndex
 		) {
+	}
+
+	private record FlatSpriteMesh(
+			int width,
+			int height,
+			List<HorizontalSpriteSpan> topEdges,
+			List<HorizontalSpriteSpan> bottomEdges,
+			List<VerticalSpriteSpan> leftEdges,
+			List<VerticalSpriteSpan> rightEdges
+	) {
+		private static final FlatSpriteMesh EMPTY = new FlatSpriteMesh(0, 0, List.of(), List.of(), List.of(), List.of());
+
+		boolean isEmpty() {
+			return this.width <= 0 || this.height <= 0;
+		}
+	}
+
+	private record HorizontalSpriteSpan(int row, int startX, int endX) {
+	}
+
+	private record VerticalSpriteSpan(int column, int startY, int endY) {
 	}
 
 	private record ElementRotation(
@@ -4392,34 +4414,12 @@ final class CameraEntityRenderer {
 			layers = List.of(visual.flatTexture());
 		}
 		float layerSpacing = 1.0F / 128.0F;
-		float halfThickness = 1.0F / 64.0F;
 		float startCenterZ = centerZ - (layers.size() - 1) * layerSpacing * 0.5F;
 		for (int i = 0; i < layers.size(); i++) {
 			Identifier layer = layers.get(i);
-			int material = context.materialResolver.materialForTexture(layer);
 			int tintRgb = itemTintRgb(visual, i);
-			float red = ((tintRgb >> 16) & 0xFF) / 255.0F;
-			float green = ((tintRgb >> 8) & 0xFF) / 255.0F;
-			float blue = (tintRgb & 0xFF) / 255.0F;
 			float layerCenterZ = startCenterZ + i * layerSpacing;
-			addSeparatedTexturedDoubleSidedPlane(
-					context,
-					transform,
-					x,
-					y,
-					layerCenterZ,
-					width,
-					height,
-					halfThickness,
-					0.0F,
-					0.0F,
-					1.0F,
-					1.0F,
-					material,
-					red,
-					green,
-					blue
-			);
+			renderFlatItemLayerExtruded(context, transform, layer, tintRgb, x, y, layerCenterZ, width, height);
 		}
 	}
 
@@ -4441,32 +4441,249 @@ final class CameraEntityRenderer {
 			layers = List.of(visual.flatTexture());
 		}
 		float layerSpacing = 1.0F / 128.0F;
-		float startZ = centerZ + Math.max(0, layers.size() - 1) * layerSpacing;
+		float startCenterZ = centerZ - (layers.size() - 1) * layerSpacing * 0.5F;
 		for (int i = 0; i < layers.size(); i++) {
 			Identifier layer = layers.get(i);
-			int material = context.materialResolver.materialForTexture(layer);
 			int tintRgb = itemTintRgb(visual, i);
-			float red = ((tintRgb >> 16) & 0xFF) / 255.0F;
-			float green = ((tintRgb >> 8) & 0xFF) / 255.0F;
-			float blue = (tintRgb & 0xFF) / 255.0F;
-			addTexturedPlane(
-					context,
-					transform,
-					x,
-					y,
-					startZ - i * layerSpacing,
-					width,
-					height,
-					0.0F,
-					0.0F,
-					1.0F,
-					1.0F,
-					material,
-					red,
-					green,
-					blue
-			);
+			float layerCenterZ = startCenterZ + i * layerSpacing;
+			renderFlatItemLayerHandExtruded(context, transform, layer, tintRgb, x, y, layerCenterZ, width, height);
 		}
+	}
+
+	private static void renderFlatItemLayerExtruded(
+			RenderContext context,
+			Matrix4f transform,
+			Identifier texture,
+			int tintRgb,
+			float x,
+			float y,
+			float centerZ,
+			float width,
+			float height
+	) {
+		renderFlatItemLayerExtruded(context, transform, texture, tintRgb, x, y, centerZ, width, height, true);
+	}
+
+	private static void renderFlatItemLayerHandExtruded(
+			RenderContext context,
+			Matrix4f transform,
+			Identifier texture,
+			int tintRgb,
+			float x,
+			float y,
+			float centerZ,
+			float width,
+			float height
+	) {
+		renderFlatItemLayerExtruded(context, transform, texture, tintRgb, x, y, centerZ, width, height, false);
+	}
+
+	private static void renderFlatItemLayerExtruded(
+			RenderContext context,
+			Matrix4f transform,
+			Identifier texture,
+			int tintRgb,
+			float x,
+			float y,
+			float centerZ,
+			float width,
+			float height,
+			boolean renderBackPlane
+	) {
+		int material = context.materialResolver.materialForTexture(texture);
+		float red = ((tintRgb >> 16) & 0xFF) / 255.0F;
+		float green = ((tintRgb >> 8) & 0xFF) / 255.0F;
+		float blue = (tintRgb & 0xFF) / 255.0F;
+		float halfThickness = Math.min(width, height) / 32.0F;
+		float frontZ = centerZ + halfThickness;
+		float backZ = centerZ - halfThickness;
+		addTexturedPlane(context, transform, x, y, frontZ, width, height, 0.0F, 0.0F, 1.0F, 1.0F, material, red, green, blue);
+		if (renderBackPlane) {
+			Matrix4f back = new Matrix4f(transform).rotateY((float) Math.PI);
+			addTexturedPlane(context, back, -(x + width), y, -backZ, width, height, 0.0F, 0.0F, 1.0F, 1.0F, material, red, green, blue);
+		}
+		FlatSpriteMesh mesh = flatSpriteMesh(texture);
+		if (mesh.isEmpty()) {
+			return;
+		}
+		for (HorizontalSpriteSpan span : mesh.topEdges()) {
+			addHorizontalSpriteEdge(context, transform, x, y, width, height, frontZ, backZ, mesh.width(), mesh.height(), span, material, red, green, blue, true);
+		}
+		for (HorizontalSpriteSpan span : mesh.bottomEdges()) {
+			addHorizontalSpriteEdge(context, transform, x, y, width, height, frontZ, backZ, mesh.width(), mesh.height(), span, material, red, green, blue, false);
+		}
+		for (VerticalSpriteSpan span : mesh.leftEdges()) {
+			addVerticalSpriteEdge(context, transform, x, y, width, height, frontZ, backZ, mesh.width(), mesh.height(), span, material, red, green, blue, true);
+		}
+		for (VerticalSpriteSpan span : mesh.rightEdges()) {
+			addVerticalSpriteEdge(context, transform, x, y, width, height, frontZ, backZ, mesh.width(), mesh.height(), span, material, red, green, blue, false);
+		}
+	}
+
+	private static FlatSpriteMesh flatSpriteMesh(Identifier texture) {
+		return FLAT_SPRITE_MESH_CACHE.computeIfAbsent(texture.toString(), ignored -> buildFlatSpriteMesh(texture));
+	}
+
+	private static FlatSpriteMesh buildFlatSpriteMesh(Identifier texture) {
+		BufferedImage image = renderableSpriteFrame(ASSETS.loadTexture(texture));
+		if (image == null || image.getWidth() <= 0 || image.getHeight() <= 0) {
+			return FlatSpriteMesh.EMPTY;
+		}
+		int width = image.getWidth();
+		int height = image.getHeight();
+		boolean[][] opaque = new boolean[height][width];
+		boolean anyOpaque = false;
+		for (int py = 0; py < height; py++) {
+			for (int px = 0; px < width; px++) {
+				boolean solid = ((image.getRGB(px, py) >>> 24) & 0xFF) > 0;
+				opaque[py][px] = solid;
+				anyOpaque |= solid;
+			}
+		}
+		if (!anyOpaque) {
+			return FlatSpriteMesh.EMPTY;
+		}
+		List<HorizontalSpriteSpan> topEdges = new ArrayList<>();
+		List<HorizontalSpriteSpan> bottomEdges = new ArrayList<>();
+		for (int py = 0; py < height; py++) {
+			addHorizontalSpriteSpans(opaque, width, height, py, true, topEdges);
+			addHorizontalSpriteSpans(opaque, width, height, py, false, bottomEdges);
+		}
+		List<VerticalSpriteSpan> leftEdges = new ArrayList<>();
+		List<VerticalSpriteSpan> rightEdges = new ArrayList<>();
+		for (int px = 0; px < width; px++) {
+			addVerticalSpriteSpans(opaque, width, height, px, true, leftEdges);
+			addVerticalSpriteSpans(opaque, width, height, px, false, rightEdges);
+		}
+		return new FlatSpriteMesh(width, height, topEdges, bottomEdges, leftEdges, rightEdges);
+	}
+
+	private static BufferedImage renderableSpriteFrame(BufferedImage image) {
+		if (image == null) {
+			return null;
+		}
+		if (image.getHeight() > image.getWidth() && image.getHeight() % image.getWidth() == 0) {
+			return image.getSubimage(0, 0, image.getWidth(), image.getWidth());
+		}
+		return image;
+	}
+
+	private static void addHorizontalSpriteSpans(
+			boolean[][] opaque,
+			int width,
+			int height,
+			int row,
+			boolean topEdge,
+			List<HorizontalSpriteSpan> spans
+	) {
+		int start = -1;
+		for (int x = 0; x < width; x++) {
+			boolean boundary = opaque[row][x] && (topEdge ? row == 0 || !opaque[row - 1][x] : row == height - 1 || !opaque[row + 1][x]);
+			if (boundary) {
+				if (start < 0) {
+					start = x;
+				}
+			} else if (start >= 0) {
+				spans.add(new HorizontalSpriteSpan(row, start, x));
+				start = -1;
+			}
+		}
+		if (start >= 0) {
+			spans.add(new HorizontalSpriteSpan(row, start, width));
+		}
+	}
+
+	private static void addVerticalSpriteSpans(
+			boolean[][] opaque,
+			int width,
+			int height,
+			int column,
+			boolean leftEdge,
+			List<VerticalSpriteSpan> spans
+	) {
+		int start = -1;
+		for (int y = 0; y < height; y++) {
+			boolean boundary = opaque[y][column] && (leftEdge ? column == 0 || !opaque[y][column - 1] : column == width - 1 || !opaque[y][column + 1]);
+			if (boundary) {
+				if (start < 0) {
+					start = y;
+				}
+			} else if (start >= 0) {
+				spans.add(new VerticalSpriteSpan(column, start, y));
+				start = -1;
+			}
+		}
+		if (start >= 0) {
+			spans.add(new VerticalSpriteSpan(column, start, height));
+		}
+	}
+
+	private static void addHorizontalSpriteEdge(
+			RenderContext context,
+			Matrix4f transform,
+			float x,
+			float y,
+			float width,
+			float height,
+			float frontZ,
+			float backZ,
+			int textureWidth,
+			int textureHeight,
+			HorizontalSpriteSpan span,
+			int material,
+			float red,
+			float green,
+			float blue,
+			boolean topEdge
+	) {
+		float x0 = x + width * span.startX() / textureWidth;
+		float x1 = x + width * span.endX() / textureWidth;
+		float edgeY = topEdge
+				? y + height * (1.0F - span.row() / (float) textureHeight)
+				: y + height * (1.0F - (span.row() + 1) / (float) textureHeight);
+		float u0 = span.startX() / (float) textureWidth;
+		float u1 = span.endX() / (float) textureWidth;
+		float v0 = span.row() / (float) textureHeight;
+		float v1 = (span.row() + 1) / (float) textureHeight;
+		Vector3f a = transformPosition(transform, x0, edgeY, topEdge ? backZ : frontZ);
+		Vector3f b = transformPosition(transform, x1, edgeY, topEdge ? backZ : frontZ);
+		Vector3f c = transformPosition(transform, x1, edgeY, topEdge ? frontZ : backZ);
+		Vector3f d = transformPosition(transform, x0, edgeY, topEdge ? frontZ : backZ);
+		addTexturedQuadExact(context, a, b, c, d, u0, v0, u1, v0, u1, v1, u0, v1, material, red, green, blue);
+	}
+
+	private static void addVerticalSpriteEdge(
+			RenderContext context,
+			Matrix4f transform,
+			float x,
+			float y,
+			float width,
+			float height,
+			float frontZ,
+			float backZ,
+			int textureWidth,
+			int textureHeight,
+			VerticalSpriteSpan span,
+			int material,
+			float red,
+			float green,
+			float blue,
+			boolean leftEdge
+	) {
+		float edgeX = leftEdge
+				? x + width * span.column() / (float) textureWidth
+				: x + width * (span.column() + 1) / (float) textureWidth;
+		float yTop = y + height * (1.0F - span.startY() / (float) textureHeight);
+		float yBottom = y + height * (1.0F - span.endY() / (float) textureHeight);
+		float u0 = span.column() / (float) textureWidth;
+		float u1 = (span.column() + 1) / (float) textureWidth;
+		float v0 = span.startY() / (float) textureHeight;
+		float v1 = span.endY() / (float) textureHeight;
+		Vector3f a = transformPosition(transform, edgeX, yBottom, leftEdge ? frontZ : backZ);
+		Vector3f b = transformPosition(transform, edgeX, yBottom, leftEdge ? backZ : frontZ);
+		Vector3f c = transformPosition(transform, edgeX, yTop, leftEdge ? backZ : frontZ);
+		Vector3f d = transformPosition(transform, edgeX, yTop, leftEdge ? frontZ : backZ);
+		addTexturedQuadExact(context, a, b, c, d, u0, v1, u1, v1, u1, v0, u0, v0, material, red, green, blue);
 	}
 
 	private static int itemTintRgb(ItemVisual visual, int tintIndex) {
@@ -4862,6 +5079,33 @@ final class CameraEntityRenderer {
 				.setSunlight(triangle + 1, skyLight)
 				.setBlocklight(triangle + 1, blockLight)
 				.setMaterialIndex(triangle + 1, material);
+	}
+
+	private static void addTexturedQuadExact(
+			RenderContext context,
+			Vector3f a,
+			Vector3f b,
+			Vector3f c,
+			Vector3f d,
+			float au,
+			float av,
+			float bu,
+			float bv,
+			float cu,
+			float cv,
+			float du,
+			float dv,
+			int material,
+			float red,
+			float green,
+			float blue
+	) {
+		LightSample light = context.lightAt(
+				(a.x + b.x + c.x + d.x) * 0.25F,
+				(a.y + b.y + c.y + d.y) * 0.25F,
+				(a.z + b.z + c.z + d.z) * 0.25F
+		);
+		addQuadExact(context, a, b, c, d, au, av, bu, bv, cu, cv, du, dv, material, light.sky(), light.block(), red, green, blue);
 	}
 
 	private static void renderItemModelElement(RenderContext context, Matrix4f root, ItemVisual visual, ItemModelElement element) {
