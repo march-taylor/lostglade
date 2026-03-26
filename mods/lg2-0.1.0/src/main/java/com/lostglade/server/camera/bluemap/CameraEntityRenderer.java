@@ -72,6 +72,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.component.DyedItemColor;
 import net.minecraft.world.item.equipment.EquipmentAsset;
 import net.minecraft.world.item.equipment.Equippable;
+import net.minecraft.world.item.equipment.trim.ArmorTrim;
 import net.minecraft.world.level.material.MapColor;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
@@ -131,10 +132,13 @@ final class CameraEntityRenderer {
 	private static final Identifier FISHING_HOOK_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/fishing_hook");
 	private static final Identifier LEASH_SEGMENT_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "block/brown_wool");
 	private static final Identifier FISHING_LINE_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "block/light_gray_wool");
+	private static final Identifier ARMOR_TRIM_PALETTE_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "trims/color_palettes/trim_palette");
 	private static final Map<String, BlueMapCameraRenderer.TextureMaterial> STATIC_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, BlueMapCameraRenderer.TextureMaterial> PLAYER_SKIN_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, Identifier> ITEM_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, ItemVisual> ITEM_VISUAL_CACHE = new ConcurrentHashMap<>();
+	private static final Map<String, BufferedImage> ARMOR_TRIM_TEXTURE_CACHE = new ConcurrentHashMap<>();
+	private static final Map<String, BufferedImage> EQUIPMENT_TINT_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, ClientModelResolver> VANILLA_CLIENT_MODEL_RULES = buildVanillaClientModelRules();
 
 	private CameraEntityRenderer() {
@@ -175,6 +179,7 @@ final class CameraEntityRenderer {
 			HumanoidKind kind,
 			Identifier texture,
 			Identifier[] overlayTextures,
+			ArmorEquipmentSnapshot armor,
 			ItemStack leftHandItem,
 			ItemStack rightHandItem,
 			PlayerSkinSnapshot playerSkin,
@@ -245,8 +250,23 @@ final class CameraEntityRenderer {
 			Rotations leftArmPose,
 			Rotations rightArmPose,
 			Rotations leftLegPose,
-			Rotations rightLegPose
-	) implements EntitySnapshot {
+			Rotations rightLegPose,
+			ArmorEquipmentSnapshot armor
+		) implements EntitySnapshot {
+	}
+
+	record ArmorEquipmentSnapshot(
+			ItemStack head,
+			ItemStack chest,
+			ItemStack legs,
+			ItemStack feet
+	) {
+		boolean isEmpty() {
+			return (this.head == null || this.head.isEmpty())
+					&& (this.chest == null || this.chest.isEmpty())
+					&& (this.legs == null || this.legs.isEmpty())
+					&& (this.feet == null || this.feet.isEmpty());
+		}
 	}
 
 	record ItemSnapshot(
@@ -332,36 +352,55 @@ final class CameraEntityRenderer {
 			String modelClassName,
 			Identifier texture,
 			PlayerSkinSnapshot playerSkin,
+			String dynamicImageKey,
+			BufferedImage dynamicImage,
 			int tintRgb,
 			boolean emissive,
 			String layerFactoryMethodName,
 			float cubeDeformation,
+			float secondaryCubeDeformation,
 			boolean modelFlag,
 			float renderScale
 	) {
 		ClientLayerSnapshot(String modelClassName, Identifier texture, int tintRgb, boolean emissive) {
-			this(modelClassName, texture, null, tintRgb, emissive, null, 0.0F, false, 1.0F);
+			this(modelClassName, texture, null, null, null, tintRgb, emissive, null, 0.0F, 0.0F, false, 1.0F);
 		}
 
 		ClientLayerSnapshot withFactory(String layerFactoryMethodName) {
-			return new ClientLayerSnapshot(this.modelClassName, this.texture, this.playerSkin, this.tintRgb, this.emissive, layerFactoryMethodName, this.cubeDeformation, this.modelFlag, this.renderScale);
+			return new ClientLayerSnapshot(this.modelClassName, this.texture, this.playerSkin, this.dynamicImageKey, this.dynamicImage, this.tintRgb, this.emissive, layerFactoryMethodName, this.cubeDeformation, this.secondaryCubeDeformation, this.modelFlag, this.renderScale);
 		}
 
 		ClientLayerSnapshot withCubeDeformation(float cubeDeformation) {
-			return new ClientLayerSnapshot(this.modelClassName, this.texture, this.playerSkin, this.tintRgb, this.emissive, this.layerFactoryMethodName, cubeDeformation, this.modelFlag, this.renderScale);
+			return new ClientLayerSnapshot(this.modelClassName, this.texture, this.playerSkin, this.dynamicImageKey, this.dynamicImage, this.tintRgb, this.emissive, this.layerFactoryMethodName, cubeDeformation, this.secondaryCubeDeformation, this.modelFlag, this.renderScale);
+		}
+
+		ClientLayerSnapshot withSecondaryCubeDeformation(float secondaryCubeDeformation) {
+			return new ClientLayerSnapshot(this.modelClassName, this.texture, this.playerSkin, this.dynamicImageKey, this.dynamicImage, this.tintRgb, this.emissive, this.layerFactoryMethodName, this.cubeDeformation, secondaryCubeDeformation, this.modelFlag, this.renderScale);
 		}
 
 		ClientLayerSnapshot withModelFlag(boolean modelFlag) {
-			return new ClientLayerSnapshot(this.modelClassName, this.texture, this.playerSkin, this.tintRgb, this.emissive, this.layerFactoryMethodName, this.cubeDeformation, modelFlag, this.renderScale);
+			return new ClientLayerSnapshot(this.modelClassName, this.texture, this.playerSkin, this.dynamicImageKey, this.dynamicImage, this.tintRgb, this.emissive, this.layerFactoryMethodName, this.cubeDeformation, this.secondaryCubeDeformation, modelFlag, this.renderScale);
 		}
 
 		ClientLayerSnapshot withRenderScale(float renderScale) {
-			return new ClientLayerSnapshot(this.modelClassName, this.texture, this.playerSkin, this.tintRgb, this.emissive, this.layerFactoryMethodName, this.cubeDeformation, this.modelFlag, renderScale);
+			return new ClientLayerSnapshot(this.modelClassName, this.texture, this.playerSkin, this.dynamicImageKey, this.dynamicImage, this.tintRgb, this.emissive, this.layerFactoryMethodName, this.cubeDeformation, this.secondaryCubeDeformation, this.modelFlag, renderScale);
 		}
 
 		ClientLayerSnapshot withPlayerSkin(PlayerSkinSnapshot playerSkin) {
-			return new ClientLayerSnapshot(this.modelClassName, this.texture, playerSkin, this.tintRgb, this.emissive, this.layerFactoryMethodName, this.cubeDeformation, this.modelFlag, this.renderScale);
+			return new ClientLayerSnapshot(this.modelClassName, this.texture, playerSkin, this.dynamicImageKey, this.dynamicImage, this.tintRgb, this.emissive, this.layerFactoryMethodName, this.cubeDeformation, this.secondaryCubeDeformation, this.modelFlag, this.renderScale);
 		}
+
+		ClientLayerSnapshot withDynamicImage(String dynamicImageKey, BufferedImage dynamicImage) {
+			return new ClientLayerSnapshot(this.modelClassName, this.texture, this.playerSkin, dynamicImageKey, dynamicImage, this.tintRgb, this.emissive, this.layerFactoryMethodName, this.cubeDeformation, this.secondaryCubeDeformation, this.modelFlag, this.renderScale);
+		}
+	}
+
+	private record EquipmentVisualLayer(
+			Identifier texture,
+			String dynamicImageKey,
+			BufferedImage dynamicImage,
+			int tintRgb
+	) {
 	}
 
 	enum ClientModelTransformKind {
@@ -586,6 +625,7 @@ final class CameraEntityRenderer {
 					kind,
 					playerSkin == null ? PLAYER_WIDE_FALLBACK : playerSkin.fallbackTexture(),
 					new Identifier[0],
+					captureArmorEquipment(livingEntity),
 					leftHandItem(livingEntity),
 					rightHandItem(livingEntity),
 					playerSkin,
@@ -611,7 +651,8 @@ final class CameraEntityRenderer {
 					armorStand.getLeftArmPose(),
 					armorStand.getRightArmPose(),
 					armorStand.getLeftLegPose(),
-					armorStand.getRightLegPose()
+					armorStand.getRightLegPose(),
+					captureArmorEquipment(armorStand)
 			);
 		}
 
@@ -672,6 +713,7 @@ final class CameraEntityRenderer {
 					kind,
 					texture,
 					overlays,
+					captureArmorEquipment(livingEntity),
 					leftHandItem(livingEntity),
 					rightHandItem(livingEntity),
 					null,
@@ -925,10 +967,23 @@ final class CameraEntityRenderer {
 				kind,
 				texture,
 				overlays,
+				captureArmorEquipment(livingEntity),
 				leftHandItem(livingEntity),
 				rightHandItem(livingEntity),
 				null,
 				(byte) 0
+		);
+	}
+
+	private static ArmorEquipmentSnapshot captureArmorEquipment(LivingEntity livingEntity) {
+		if (livingEntity == null) {
+			return new ArmorEquipmentSnapshot(ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY);
+		}
+		return new ArmorEquipmentSnapshot(
+				livingEntity.getItemBySlot(EquipmentSlot.HEAD).copy(),
+				livingEntity.getItemBySlot(EquipmentSlot.CHEST).copy(),
+				livingEntity.getItemBySlot(EquipmentSlot.LEGS).copy(),
+				livingEntity.getItemBySlot(EquipmentSlot.FEET).copy()
 		);
 	}
 
@@ -1936,7 +1991,90 @@ final class CameraEntityRenderer {
 			Map<String, Object> stateFields,
 			ClientLayerSnapshot[] layers
 	) {
-		return clientModelSnapshot(livingEntity.position(), rootYaw, 180.0F, livingEntity.getScale(), ClientModelTransformKind.LIVING, stateFields, layers);
+		return clientModelSnapshot(
+				livingEntity.position(),
+				rootYaw,
+				180.0F,
+				livingEntity.getScale(),
+				ClientModelTransformKind.LIVING,
+				stateFields,
+				appendLivingEquipmentLayers(livingEntity, layers)
+		);
+	}
+
+	private static ClientLayerSnapshot[] appendLivingEquipmentLayers(LivingEntity livingEntity, ClientLayerSnapshot[] baseLayers) {
+		if (livingEntity == null) {
+			return baseLayers;
+		}
+		List<ClientLayerSnapshot> layers = new ArrayList<>();
+		if (baseLayers != null) {
+			for (ClientLayerSnapshot layer : baseLayers) {
+				if (layer != null) {
+					layers.add(layer);
+				}
+			}
+		}
+		if (layers.isEmpty()) {
+			return baseLayers;
+		}
+
+		if (livingEntity instanceof ArmorStand) {
+			addExactArmorLayers(layers, livingEntity, "net.minecraft.client.model.object.armorstand.ArmorStandArmorModel", "createArmorLayerSet");
+		} else if (supportsExactHumanoidArmor(livingEntity, layers.get(0).modelClassName())) {
+			addExactArmorLayers(layers, livingEntity, "net.minecraft.client.model.HumanoidModel", "createArmorMeshSet");
+		}
+		return layers.toArray(ClientLayerSnapshot[]::new);
+	}
+
+	private static boolean supportsExactHumanoidArmor(LivingEntity livingEntity, String baseModelClassName) {
+		if (livingEntity == null || baseModelClassName == null) {
+			return false;
+		}
+		if (livingEntity instanceof Player || livingEntity instanceof Zombie || livingEntity instanceof AbstractSkeleton || livingEntity instanceof EnderMan) {
+			return false;
+		}
+		if (!hasAnyHumanoidArmor(livingEntity)) {
+			return false;
+		}
+		return baseModelClassName.contains("Humanoid")
+				|| baseModelClassName.contains("PiglinModel")
+				|| baseModelClassName.contains("IllagerModel")
+				|| baseModelClassName.contains("ZombieModel")
+				|| baseModelClassName.contains("SkeletonModel")
+				|| baseModelClassName.contains("PlayerModel");
+	}
+
+	private static boolean hasAnyHumanoidArmor(LivingEntity livingEntity) {
+		return shouldRenderHumanoidArmor(livingEntity.getItemBySlot(EquipmentSlot.HEAD), EquipmentSlot.HEAD)
+				|| shouldRenderHumanoidArmor(livingEntity.getItemBySlot(EquipmentSlot.CHEST), EquipmentSlot.CHEST)
+				|| shouldRenderHumanoidArmor(livingEntity.getItemBySlot(EquipmentSlot.LEGS), EquipmentSlot.LEGS)
+				|| shouldRenderHumanoidArmor(livingEntity.getItemBySlot(EquipmentSlot.FEET), EquipmentSlot.FEET);
+	}
+
+	private static void addExactArmorLayers(List<ClientLayerSnapshot> layers, LivingEntity livingEntity, String modelClassName, String layerFactoryMethodName) {
+		addExactArmorLayers(layers, livingEntity.getItemBySlot(EquipmentSlot.HEAD), EquipmentSlot.HEAD, modelClassName, layerFactoryMethodName);
+		addExactArmorLayers(layers, livingEntity.getItemBySlot(EquipmentSlot.CHEST), EquipmentSlot.CHEST, modelClassName, layerFactoryMethodName);
+		addExactArmorLayers(layers, livingEntity.getItemBySlot(EquipmentSlot.LEGS), EquipmentSlot.LEGS, modelClassName, layerFactoryMethodName);
+		addExactArmorLayers(layers, livingEntity.getItemBySlot(EquipmentSlot.FEET), EquipmentSlot.FEET, modelClassName, layerFactoryMethodName);
+	}
+
+	private static void addExactArmorLayers(List<ClientLayerSnapshot> layers, ItemStack stack, EquipmentSlot slot, String modelClassName, String layerFactoryMethodName) {
+		for (EquipmentVisualLayer visualLayer : collectHumanoidArmorVisualLayers(stack, slot)) {
+			ClientLayerSnapshot layer = new ClientLayerSnapshot(
+					modelClassName,
+					visualLayer.texture(),
+					visualLayer.tintRgb(),
+					false
+			)
+					.withFactory(layerFactoryMethodName + ":" + slot.name())
+					.withCubeDeformation(0.25F)
+					.withSecondaryCubeDeformation(0.5F)
+					.withRenderScale(visualLayer.dynamicImage() == null ? 1.0F : 1.001F);
+			if (visualLayer.dynamicImage() != null) {
+				layer = layer.withDynamicImage(visualLayer.dynamicImageKey(), visualLayer.dynamicImage());
+			}
+			layers.add(layer);
+		}
 	}
 
 	private static ClientModelSnapshot clientModelSnapshot(
@@ -2370,18 +2508,35 @@ final class CameraEntityRenderer {
 			Identifier assetIdOverride,
 			float renderScale
 	) {
+		for (EquipmentVisualLayer visualLayer : collectEquipmentVisualLayers(layerType, stack, assetIdOverride)) {
+			ClientLayerSnapshot layer = new ClientLayerSnapshot(
+					modelClassName,
+					visualLayer.texture(),
+					visualLayer.tintRgb(),
+					false
+			).withRenderScale(renderScale);
+			if (visualLayer.dynamicImage() != null) {
+				layer = layer.withDynamicImage(visualLayer.dynamicImageKey(), visualLayer.dynamicImage());
+			}
+			layers.add(layer);
+		}
+	}
+
+	private static List<EquipmentVisualLayer> collectEquipmentVisualLayers(String layerType, ItemStack stack, Identifier assetIdOverride) {
 		Identifier assetId = assetIdOverride != null ? assetIdOverride : equipmentAssetId(stack);
 		if (assetId == null) {
-			return;
+			return List.of();
 		}
 		JsonObject equipment = ASSETS.loadJsonAsset("assets/" + assetId.getNamespace() + "/equipment/" + assetId.getPath() + ".json");
 		if (equipment == null || !equipment.has("layers") || !equipment.get("layers").isJsonObject()) {
-			return;
+			return List.of();
 		}
 		JsonObject layerMap = equipment.getAsJsonObject("layers");
 		if (!layerMap.has(layerType) || !layerMap.get(layerType).isJsonArray()) {
-			return;
+			return List.of();
 		}
+
+		List<EquipmentVisualLayer> layers = new ArrayList<>();
 		for (JsonElement element : layerMap.getAsJsonArray(layerType)) {
 			if (!element.isJsonObject()) {
 				continue;
@@ -2400,15 +2555,167 @@ final class CameraEntityRenderer {
 				int fallback = dyeable.has("color_when_undyed") ? dyeable.get("color_when_undyed").getAsInt() : 0xFFFFFF;
 				tintRgb = DyedItemColor.getOrDefault(stack, fallback) & 0xFFFFFF;
 			}
-			layers.add(
-					new ClientLayerSnapshot(
-							modelClassName,
-							Identifier.fromNamespaceAndPath(textureId.getNamespace(), "entity/equipment/" + layerType + "/" + textureId.getPath()),
-							tintRgb,
-							false
-					).withRenderScale(renderScale)
-			);
+			layers.add(new EquipmentVisualLayer(
+					Identifier.fromNamespaceAndPath(textureId.getNamespace(), "entity/equipment/" + layerType + "/" + textureId.getPath()),
+					null,
+					null,
+					tintRgb
+			));
 		}
+		return layers;
+	}
+
+	private static List<EquipmentVisualLayer> collectHumanoidArmorVisualLayers(ItemStack stack, EquipmentSlot slot) {
+		if (!shouldRenderHumanoidArmor(stack, slot)) {
+			return List.of();
+		}
+		String layerType = humanoidArmorLayerType(slot);
+		List<EquipmentVisualLayer> layers = new ArrayList<>(collectEquipmentVisualLayers(layerType, stack, null));
+		EquipmentVisualLayer trimLayer = collectHumanoidTrimVisualLayer(stack, layerType);
+		if (trimLayer != null) {
+			layers.add(trimLayer);
+		}
+		return layers;
+	}
+
+	private static boolean shouldRenderHumanoidArmor(ItemStack stack, EquipmentSlot slot) {
+		if (stack == null || stack.isEmpty() || slot == null) {
+			return false;
+		}
+		Equippable equippable = stack.get(DataComponents.EQUIPPABLE);
+		if (equippable == null || equippable.slot() != slot || equippable.assetId().isEmpty()) {
+			return false;
+		}
+		return hasEquipmentLayer(humanoidArmorLayerType(slot), stack, null);
+	}
+
+	private static boolean hasEquipmentLayer(String layerType, ItemStack stack, Identifier assetIdOverride) {
+		Identifier assetId = assetIdOverride != null ? assetIdOverride : equipmentAssetId(stack);
+		if (assetId == null) {
+			return false;
+		}
+		JsonObject equipment = ASSETS.loadJsonAsset("assets/" + assetId.getNamespace() + "/equipment/" + assetId.getPath() + ".json");
+		if (equipment == null || !equipment.has("layers") || !equipment.get("layers").isJsonObject()) {
+			return false;
+		}
+		JsonObject layerMap = equipment.getAsJsonObject("layers");
+		return layerMap.has(layerType) && layerMap.get(layerType).isJsonArray() && !layerMap.getAsJsonArray(layerType).isEmpty();
+	}
+
+	private static String humanoidArmorLayerType(EquipmentSlot slot) {
+		return slot == EquipmentSlot.LEGS ? "humanoid_leggings" : "humanoid";
+	}
+
+	private static EquipmentVisualLayer collectHumanoidTrimVisualLayer(ItemStack stack, String layerType) {
+		if (stack == null || stack.isEmpty()) {
+			return null;
+		}
+		ArmorTrim trim = stack.get(DataComponents.TRIM);
+		ResourceKey<EquipmentAsset> assetKey = equipmentAssetKey(stack);
+		if (trim == null || assetKey == null) {
+			return null;
+		}
+
+		Identifier trimPatternTexture = armorTrimPatternTexture(trim, layerType);
+		Identifier paletteTexture = armorTrimPaletteTexture(trim, assetKey);
+		if (trimPatternTexture == null || paletteTexture == null) {
+			return null;
+		}
+		String cacheKey = "armor_trim:" + trimPatternTexture + "|" + paletteTexture;
+		BufferedImage image = ARMOR_TRIM_TEXTURE_CACHE.computeIfAbsent(cacheKey, ignored -> recolorArmorTrimTexture(trimPatternTexture, paletteTexture));
+		if (image == null) {
+			return null;
+		}
+		return new EquipmentVisualLayer(null, cacheKey, image, 0xFFFFFF);
+	}
+
+	private static Identifier armorTrimPatternTexture(ArmorTrim trim, String layerType) {
+		if (trim == null || trim.pattern() == null || trim.pattern().value() == null) {
+			return null;
+		}
+		Identifier assetId = trim.pattern().value().assetId();
+		if (assetId == null) {
+			return null;
+		}
+		return Identifier.fromNamespaceAndPath(assetId.getNamespace(), "trims/entity/" + layerType + "/" + assetId.getPath());
+	}
+
+	private static Identifier armorTrimPaletteTexture(ArmorTrim trim, ResourceKey<EquipmentAsset> assetKey) {
+		if (trim == null || trim.material() == null || trim.material().value() == null || assetKey == null) {
+			return null;
+		}
+		Identifier materialId = trim.material()
+				.unwrapKey()
+				.map(ResourceKey::identifier)
+				.orElse(Identifier.fromNamespaceAndPath("minecraft", "quartz"));
+		String suffix = trim.material().value().assets().assetId(assetKey).suffix();
+		return Identifier.fromNamespaceAndPath(materialId.getNamespace(), "trims/color_palettes/" + suffix);
+	}
+
+	private static BufferedImage recolorArmorTrimTexture(Identifier trimTextureId, Identifier paletteTextureId) {
+		BufferedImage trimTexture = ASSETS.loadTexture(trimTextureId);
+		BufferedImage sourcePalette = ASSETS.loadTexture(ARMOR_TRIM_PALETTE_TEXTURE);
+		BufferedImage targetPalette = ASSETS.loadTexture(paletteTextureId);
+		if (trimTexture == null || sourcePalette == null || targetPalette == null) {
+			return null;
+		}
+
+		int[] sourceColors = paletteColors(sourcePalette);
+		int[] targetColors = paletteColors(targetPalette);
+		if (sourceColors.length == 0 || targetColors.length == 0) {
+			return null;
+		}
+
+		BufferedImage recolored = new BufferedImage(trimTexture.getWidth(), trimTexture.getHeight(), BufferedImage.TYPE_INT_ARGB);
+		for (int y = 0; y < trimTexture.getHeight(); y++) {
+			for (int x = 0; x < trimTexture.getWidth(); x++) {
+				int argb = trimTexture.getRGB(x, y);
+				int alpha = (argb >>> 24) & 0xFF;
+				if (alpha == 0) {
+					continue;
+				}
+				int rgb = argb & 0xFFFFFF;
+				int index = paletteIndex(sourceColors, rgb);
+				int targetRgb = targetColors[Mth.clamp(index, 0, targetColors.length - 1)] & 0xFFFFFF;
+				recolored.setRGB(x, y, (alpha << 24) | targetRgb);
+			}
+		}
+		return recolored;
+	}
+
+	private static int[] paletteColors(BufferedImage palette) {
+		if (palette == null) {
+			return new int[0];
+		}
+		int count = Math.max(1, palette.getWidth() * palette.getHeight());
+		int[] colors = new int[count];
+		int index = 0;
+		for (int y = 0; y < palette.getHeight(); y++) {
+			for (int x = 0; x < palette.getWidth(); x++) {
+				colors[index++] = palette.getRGB(x, y);
+			}
+		}
+		return colors;
+	}
+
+	private static int paletteIndex(int[] sourceColors, int rgb) {
+		int bestIndex = 0;
+		int bestDistance = Integer.MAX_VALUE;
+		for (int i = 0; i < sourceColors.length; i++) {
+			int candidate = sourceColors[i] & 0xFFFFFF;
+			if (candidate == rgb) {
+				return i;
+			}
+			int dr = ((candidate >> 16) & 0xFF) - ((rgb >> 16) & 0xFF);
+			int dg = ((candidate >> 8) & 0xFF) - ((rgb >> 8) & 0xFF);
+			int db = (candidate & 0xFF) - (rgb & 0xFF);
+			int distance = dr * dr + dg * dg + db * db;
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				bestIndex = i;
+			}
+		}
+		return bestIndex;
 	}
 
 	private record ItemVisualBounds(
@@ -2427,6 +2734,17 @@ final class CameraEntityRenderer {
 			return null;
 		}
 		return equippable.assetId().map(ResourceKey::identifier).orElse(null);
+	}
+
+	private static ResourceKey<EquipmentAsset> equipmentAssetKey(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return null;
+		}
+		Equippable equippable = stack.get(DataComponents.EQUIPPABLE);
+		if (equippable == null) {
+			return null;
+		}
+		return equippable.assetId().orElse(null);
 	}
 
 	private static Identifier ironGolemCrackinessTexture(net.minecraft.world.entity.Crackiness.Level crackiness) {
@@ -2667,7 +2985,204 @@ final class CameraEntityRenderer {
 			}
 		}
 
+		boolean renderedExactArmor = renderExactHumanoidArmor(
+				context,
+				snapshot,
+				headYaw,
+				headPitch,
+				rightArmPitch,
+				leftArmPitch,
+				rightArmYaw,
+				leftArmYaw,
+				rightArmRoll,
+				leftArmRoll,
+				rightLegPitch,
+				leftLegPitch,
+				rightLegYaw,
+				leftLegYaw,
+				rightLegRoll,
+				leftLegRoll
+		);
+		if (!renderedExactArmor) {
+			renderHumanoidArmor(
+					context,
+					snapshot,
+					root,
+					headYaw,
+					headPitch,
+					rightArmPitch,
+					leftArmPitch,
+					rightArmYaw,
+					leftArmYaw,
+					rightArmRoll,
+					leftArmRoll,
+					rightLegPitch,
+					leftLegPitch,
+					rightLegYaw,
+					leftLegYaw,
+					rightLegRoll,
+					leftLegRoll
+			);
+		}
+
 		renderHumanoidHeldItems(context, snapshot, root, rightArmPitch, leftArmPitch, rightArmYaw, leftArmYaw, rightArmRoll, leftArmRoll);
+	}
+
+	private static boolean renderExactHumanoidArmor(
+			RenderContext context,
+			HumanoidSnapshot snapshot,
+			float headYaw,
+			float headPitch,
+			float rightArmPitch,
+			float leftArmPitch,
+			float rightArmYaw,
+			float leftArmYaw,
+			float rightArmRoll,
+			float leftArmRoll,
+			float rightLegPitch,
+			float leftLegPitch,
+			float rightLegYaw,
+			float leftLegYaw,
+			float rightLegRoll,
+			float leftLegRoll
+	) {
+		if (!VanillaClientModels.isAvailable()) {
+			return false;
+		}
+		ClientModelSnapshot armorSnapshot = captureHumanoidArmorClientModel(snapshot);
+		if (armorSnapshot == null || armorSnapshot.layers() == null || armorSnapshot.layers().length == 0) {
+			return false;
+		}
+		VanillaClientModels.renderHumanoidArmor(
+				context,
+				armorSnapshot,
+				headYaw,
+				headPitch,
+				rightArmPitch,
+				leftArmPitch,
+				rightArmYaw,
+				leftArmYaw,
+				rightArmRoll,
+				leftArmRoll,
+				rightLegPitch,
+				leftLegPitch,
+				rightLegYaw,
+				leftLegYaw,
+				rightLegRoll,
+				leftLegRoll
+		);
+		return true;
+	}
+
+	private static ClientModelSnapshot captureHumanoidArmorClientModel(HumanoidSnapshot snapshot) {
+		if (snapshot == null || snapshot.armor() == null || snapshot.armor().isEmpty() || snapshot.kind().villager) {
+			return null;
+		}
+
+		List<ClientLayerSnapshot> layers = new ArrayList<>();
+		addHumanoidArmorClientLayers(layers, snapshot.armor().head(), EquipmentSlot.HEAD, snapshot.kind() == HumanoidKind.PLAYER_SLIM);
+		addHumanoidArmorClientLayers(layers, snapshot.armor().chest(), EquipmentSlot.CHEST, snapshot.kind() == HumanoidKind.PLAYER_SLIM);
+		addHumanoidArmorClientLayers(layers, snapshot.armor().legs(), EquipmentSlot.LEGS, snapshot.kind() == HumanoidKind.PLAYER_SLIM);
+		addHumanoidArmorClientLayers(layers, snapshot.armor().feet(), EquipmentSlot.FEET, snapshot.kind() == HumanoidKind.PLAYER_SLIM);
+		if (layers.isEmpty()) {
+			return null;
+		}
+
+		return clientModelSnapshot(
+				snapshot.position(),
+				snapshot.bodyYaw(),
+				180.0F,
+				snapshot.kind().scale,
+				ClientModelTransformKind.LIVING,
+				humanoidArmorStateFields(snapshot),
+				layers.toArray(ClientLayerSnapshot[]::new)
+		);
+	}
+
+	private static void addHumanoidArmorClientLayers(List<ClientLayerSnapshot> layers, ItemStack stack, EquipmentSlot slot, boolean slimPlayerModel) {
+		for (EquipmentVisualLayer visualLayer : collectHumanoidArmorVisualLayers(stack, slot)) {
+			ClientLayerSnapshot layer = new ClientLayerSnapshot(
+					humanoidArmorModelClass(),
+					visualLayer.texture(),
+					visualLayer.tintRgb(),
+					false
+			)
+					.withFactory("createArmorMeshSet:" + slot.name())
+					.withCubeDeformation(0.25F)
+					.withSecondaryCubeDeformation(0.5F)
+					.withModelFlag(slimPlayerModel)
+					.withRenderScale(visualLayer.dynamicImage() == null ? 1.0F : 1.001F);
+			if (visualLayer.dynamicImage() != null) {
+				layer = layer.withDynamicImage(visualLayer.dynamicImageKey(), visualLayer.dynamicImage());
+			}
+			layers.add(layer);
+		}
+	}
+
+	private static String humanoidArmorModelClass() {
+		return "net.minecraft.client.model.HumanoidModel";
+	}
+
+	private static Map<String, Object> humanoidArmorStateFields(HumanoidSnapshot snapshot) {
+		Map<String, Object> state = new HashMap<>();
+		float walkSpeed = Mth.clamp(snapshot.walkSpeed(), 0.0F, 1.0F);
+		Vec3 eyePosition = snapshot.position().add(0.0D, 1.62D * snapshot.kind().scale * (snapshot.baby() ? 0.5D : 1.0D), 0.0D);
+		Vec3 lookDirection = Vec3.directionFromRotation(snapshot.pitch(), snapshot.headYaw());
+		ItemStack leftHand = snapshot.leftHandItem() == null ? ItemStack.EMPTY : snapshot.leftHandItem().copy();
+		ItemStack rightHand = snapshot.rightHandItem() == null ? ItemStack.EMPTY : snapshot.rightHandItem().copy();
+		ArmorEquipmentSnapshot armor = snapshot.armor();
+		state.put("bodyRot", snapshot.bodyYaw());
+		state.put("yRot", wrapDegrees(snapshot.headYaw() - snapshot.bodyYaw()));
+		state.put("xRot", snapshot.pitch());
+		state.put("walkAnimationPos", snapshot.walkPos());
+		state.put("walkAnimationSpeed", walkSpeed);
+		state.put("scale", snapshot.kind().scale);
+		state.put("ageScale", snapshot.baby() ? 0.5F : 1.0F);
+		state.put("baby", snapshot.baby());
+		state.put("isBaby", snapshot.baby());
+		state.put("isInWater", snapshot.swimming());
+		state.put("isAutoSpinAttack", false);
+		state.put("bedOrientation", snapshot.sleepingDirection());
+		state.put("pose", snapshot.pose());
+		state.put("mainArm", snapshot.mainArm());
+		state.put("attackTime", snapshot.attackAnim());
+		state.put("swimAmount", snapshot.swimAmount());
+		state.put("isCrouching", snapshot.crouching());
+		state.put("isFallFlying", snapshot.fallFlying());
+		state.put("isVisuallySwimming", snapshot.swimming());
+		state.put("isPassenger", snapshot.passenger());
+		state.put("isUsingItem", snapshot.usingItem());
+		state.put("ticksUsingItem", snapshot.usingItem() ? 1.0F : 0.0F);
+		state.put("speedValue", walkSpeed);
+		state.put("distanceToCameraSq", 0.0D);
+		state.put("eyePosition", eyePosition);
+		state.put("lookDirection", lookDirection);
+		state.put("lookAtPosition", eyePosition.add(lookDirection));
+		state.put("attackTargetPosition", eyePosition.add(lookDirection));
+		state.put("attackArm", snapshot.mainArm());
+		state.put("useItemHand", InteractionHand.MAIN_HAND);
+		state.put("leftHandItemStack", leftHand);
+		state.put("rightHandItemStack", rightHand);
+		state.put("headEquipment", armor == null || armor.head() == null ? ItemStack.EMPTY : armor.head().copy());
+		state.put("chestEquipment", armor == null || armor.chest() == null ? ItemStack.EMPTY : armor.chest().copy());
+		state.put("legsEquipment", armor == null || armor.legs() == null ? ItemStack.EMPTY : armor.legs().copy());
+		state.put("feetEquipment", armor == null || armor.feet() == null ? ItemStack.EMPTY : armor.feet().copy());
+		state.put("leftArmPose", leftHand.isEmpty() ? "EMPTY" : "ITEM");
+		state.put("rightArmPose", rightHand.isEmpty() ? "EMPTY" : "ITEM");
+		state.put("beamOffset", Vec3.ZERO);
+		state.put("isAggressive", snapshot.aggressive());
+		state.put("isConverting", false);
+		state.put("showHat", false);
+		state.put("showJacket", false);
+		state.put("showLeftPants", false);
+		state.put("showRightPants", false);
+		state.put("showLeftSleeve", false);
+		state.put("showRightSleeve", false);
+		state.put("showCape", false);
+		state.put("isSpectator", false);
+		state.put("showExtraEars", false);
+		state.put("id", 0);
+		return state;
 	}
 
 	private static float[] zombieArmPose(HumanoidSnapshot snapshot) {
@@ -2853,6 +3368,153 @@ final class CameraEntityRenderer {
 	) {
 		renderHumanoidHeldItem(context, snapshot.rightHandItem(), humanoidHandTransform(root, snapshot, HumanoidArm.RIGHT, rightArmPitch, rightArmYaw, rightArmRoll), ItemDisplayTransformContext.THIRD_PERSON_RIGHT_HAND);
 		renderHumanoidHeldItem(context, snapshot.leftHandItem(), humanoidHandTransform(root, snapshot, HumanoidArm.LEFT, leftArmPitch, leftArmYaw, leftArmRoll), ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND);
+	}
+
+	private static void renderHumanoidArmor(
+			RenderContext context,
+			HumanoidSnapshot snapshot,
+			Matrix4f root,
+			float headYaw,
+			float headPitch,
+			float rightArmPitch,
+			float leftArmPitch,
+			float rightArmYaw,
+			float leftArmYaw,
+			float rightArmRoll,
+			float leftArmRoll,
+			float rightLegPitch,
+			float leftLegPitch,
+			float rightLegYaw,
+			float leftLegYaw,
+			float rightLegRoll,
+			float leftLegRoll
+	) {
+		ArmorEquipmentSnapshot armor = snapshot.armor();
+		if (armor == null || armor.isEmpty() || snapshot.kind().villager) {
+			return;
+		}
+		renderHumanoidArmorSlot(context, snapshot, armor.head(), EquipmentSlot.HEAD, root, headYaw, headPitch, rightArmPitch, leftArmPitch, rightArmYaw, leftArmYaw, rightArmRoll, leftArmRoll, rightLegPitch, leftLegPitch, rightLegYaw, leftLegYaw, rightLegRoll, leftLegRoll);
+		renderHumanoidArmorSlot(context, snapshot, armor.chest(), EquipmentSlot.CHEST, root, headYaw, headPitch, rightArmPitch, leftArmPitch, rightArmYaw, leftArmYaw, rightArmRoll, leftArmRoll, rightLegPitch, leftLegPitch, rightLegYaw, leftLegYaw, rightLegRoll, leftLegRoll);
+		renderHumanoidArmorSlot(context, snapshot, armor.legs(), EquipmentSlot.LEGS, root, headYaw, headPitch, rightArmPitch, leftArmPitch, rightArmYaw, leftArmYaw, rightArmRoll, leftArmRoll, rightLegPitch, leftLegPitch, rightLegYaw, leftLegYaw, rightLegRoll, leftLegRoll);
+		renderHumanoidArmorSlot(context, snapshot, armor.feet(), EquipmentSlot.FEET, root, headYaw, headPitch, rightArmPitch, leftArmPitch, rightArmYaw, leftArmYaw, rightArmRoll, leftArmRoll, rightLegPitch, leftLegPitch, rightLegYaw, leftLegYaw, rightLegRoll, leftLegRoll);
+	}
+
+	private static void renderHumanoidArmorSlot(
+			RenderContext context,
+			HumanoidSnapshot snapshot,
+			ItemStack stack,
+			EquipmentSlot slot,
+			Matrix4f root,
+			float headYaw,
+			float headPitch,
+			float rightArmPitch,
+			float leftArmPitch,
+			float rightArmYaw,
+			float leftArmYaw,
+			float rightArmRoll,
+			float leftArmRoll,
+			float rightLegPitch,
+			float leftLegPitch,
+			float rightLegYaw,
+			float leftLegYaw,
+			float rightLegRoll,
+			float leftLegRoll
+	) {
+		List<EquipmentVisualLayer> layers = collectHumanoidArmorVisualLayers(stack, slot);
+		if (layers.isEmpty()) {
+			return;
+		}
+
+		float armWidth = snapshot.kind().armWidth;
+		float legWidth = snapshot.kind().legWidth;
+		boolean slim = snapshot.kind() == HumanoidKind.PLAYER_SLIM;
+		float baseInflate = slot == EquipmentSlot.LEGS ? 0.25F : 0.5F;
+
+		Matrix4f head = rotateAround(root, 0.0F, 24.0F, 0.0F, headPitch, headYaw, 0.0F);
+		Matrix4f rightArm = rotateAround(root, -5.0F, 22.0F, 0.0F, rightArmPitch, rightArmYaw, rightArmRoll);
+		Matrix4f leftArm = rotateAround(root, 5.0F, 22.0F, 0.0F, leftArmPitch, leftArmYaw, leftArmRoll);
+		Matrix4f rightLeg = rotateAround(root, -2.0F, 12.0F, 0.0F, rightLegPitch, rightLegYaw, rightLegRoll);
+		Matrix4f leftLeg = rotateAround(root, 2.0F, 12.0F, 0.0F, leftLegPitch, leftLegYaw, leftLegRoll);
+
+		for (int i = 0; i < layers.size(); i++) {
+			EquipmentVisualLayer layer = layers.get(i);
+			int material = armorMaterial(context, layer);
+			if (material < 0) {
+				continue;
+			}
+			float inflate = baseInflate + (i * 0.015F);
+			int[] textureSize = armorTextureSize(layer);
+			switch (slot) {
+				case HEAD -> addBox(context, head, -4.0F, 24.0F, -4.0F, 8.0F, 8.0F, 8.0F, 0, 0, textureSize[0], textureSize[1], material, false, inflate);
+				case CHEST -> {
+					addBox(context, root, -4.0F, 12.0F, -2.0F, 8.0F, 12.0F, 4.0F, 16, 16, textureSize[0], textureSize[1], material, false, inflate);
+					addBox(context, rightArm, -8.0F, 12.0F, -2.0F, armWidth, 12.0F, 4.0F, 40, 16, textureSize[0], textureSize[1], material, false, inflate);
+					addBox(context, leftArm, slim ? 5.0F : 4.0F, 12.0F, -2.0F, armWidth, 12.0F, 4.0F, 40, 16, textureSize[0], textureSize[1], material, true, inflate);
+				}
+				case LEGS -> {
+					addBox(context, root, -4.0F, 12.0F, -2.0F, 8.0F, 12.0F, 4.0F, 16, 16, textureSize[0], textureSize[1], material, false, inflate);
+					addBox(context, rightLeg, -4.0F, 0.0F, -2.0F, legWidth, 12.0F, 4.0F, 0, 16, textureSize[0], textureSize[1], material, false, inflate);
+					addBox(context, leftLeg, 0.0F, 0.0F, -2.0F, legWidth, 12.0F, 4.0F, 0, 16, textureSize[0], textureSize[1], material, true, inflate);
+				}
+				case FEET -> {
+					addBox(context, rightLeg, -4.0F, 0.0F, -2.0F, legWidth, 12.0F, 4.0F, 0, 16, textureSize[0], textureSize[1], material, false, inflate);
+					addBox(context, leftLeg, 0.0F, 0.0F, -2.0F, legWidth, 12.0F, 4.0F, 0, 16, textureSize[0], textureSize[1], material, true, inflate);
+				}
+				default -> {
+				}
+			}
+		}
+	}
+
+	private static int armorMaterial(RenderContext context, EquipmentVisualLayer layer) {
+		if (layer == null) {
+			return -1;
+		}
+		if (layer.dynamicImage() == null && layer.texture() != null && layer.tintRgb() != 0xFFFFFF) {
+			String cacheKey = "equipment_tint:" + layer.texture() + "|" + layer.tintRgb();
+			BufferedImage tinted = EQUIPMENT_TINT_TEXTURE_CACHE.computeIfAbsent(cacheKey, ignored -> tintEquipmentTexture(layer.texture(), layer.tintRgb()));
+			if (tinted != null) {
+				return context.materialResolver.materialForImage(cacheKey, tinted);
+			}
+		}
+		return layer.dynamicImage() != null
+				? context.materialResolver.materialForImage(layer.dynamicImageKey(), layer.dynamicImage())
+				: context.materialResolver.materialForTexture(layer.texture());
+	}
+
+	private static int[] armorTextureSize(EquipmentVisualLayer layer) {
+		BufferedImage image = layer == null
+				? null
+				: layer.dynamicImage() != null ? layer.dynamicImage() : ASSETS.loadTexture(layer.texture());
+		if (image == null) {
+			return new int[]{64, 32};
+		}
+		return new int[]{image.getWidth(), image.getHeight()};
+	}
+
+	private static BufferedImage tintEquipmentTexture(Identifier textureId, int tintRgb) {
+		BufferedImage source = ASSETS.loadTexture(textureId);
+		if (source == null) {
+			return null;
+		}
+		float tintRed = ((tintRgb >> 16) & 0xFF) / 255.0F;
+		float tintGreen = ((tintRgb >> 8) & 0xFF) / 255.0F;
+		float tintBlue = (tintRgb & 0xFF) / 255.0F;
+		BufferedImage tinted = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+		for (int y = 0; y < source.getHeight(); y++) {
+			for (int x = 0; x < source.getWidth(); x++) {
+				int argb = source.getRGB(x, y);
+				int alpha = (argb >>> 24) & 0xFF;
+				if (alpha == 0) {
+					continue;
+				}
+				int red = Mth.clamp(Math.round(((argb >> 16) & 0xFF) * tintRed), 0, 255);
+				int green = Mth.clamp(Math.round(((argb >> 8) & 0xFF) * tintGreen), 0, 255);
+				int blue = Mth.clamp(Math.round((argb & 0xFF) * tintBlue), 0, 255);
+				tinted.setRGB(x, y, (alpha << 24) | (red << 16) | (green << 8) | blue);
+			}
+		}
+		return tinted;
 	}
 
 	private static void renderHumanoidHeldItem(RenderContext context, ItemStack stack, Matrix4f handTransform, ItemDisplayTransformContext transformContext) {
@@ -4649,8 +5311,71 @@ final class CameraEntityRenderer {
 				}
 				int material = layer.playerSkin() != null
 						? context.materialResolver.materialForPlayerSkin(layer.playerSkin())
+						: layer.dynamicImage() != null
+						? context.materialResolver.materialForImage(layer.dynamicImageKey(), layer.dynamicImage())
 						: context.materialResolver.materialForTexture(layer.texture());
 				renderLayer(bridge, context, root, snapshot.stateFields(), baby, layer, material);
+			}
+		}
+
+		static void renderHumanoidArmor(
+				RenderContext context,
+				ClientModelSnapshot snapshot,
+				float headYaw,
+				float headPitch,
+				float rightArmPitch,
+				float leftArmPitch,
+				float rightArmYaw,
+				float leftArmYaw,
+				float rightArmRoll,
+				float leftArmRoll,
+				float rightLegPitch,
+				float leftLegPitch,
+				float rightLegYaw,
+				float leftLegYaw,
+				float rightLegRoll,
+				float leftLegRoll
+		) {
+			RuntimeBridge bridge = runtimeBridge();
+			if (bridge == null || snapshot.layers() == null || snapshot.layers().length == 0) {
+				return;
+			}
+
+			Matrix4f root = rootTransform(snapshot);
+			boolean baby = Boolean.TRUE.equals(snapshot.stateFields().get("isBaby"))
+					|| Boolean.TRUE.equals(snapshot.stateFields().get("baby"));
+			for (ClientLayerSnapshot layer : snapshot.layers()) {
+				if (layer == null) {
+					continue;
+				}
+				int material = layer.playerSkin() != null
+						? context.materialResolver.materialForPlayerSkin(layer.playerSkin())
+						: layer.dynamicImage() != null
+						? context.materialResolver.materialForImage(layer.dynamicImageKey(), layer.dynamicImage())
+						: context.materialResolver.materialForTexture(layer.texture());
+				renderHumanoidArmorLayer(
+						bridge,
+						context,
+						root,
+						snapshot.stateFields(),
+						baby,
+						layer,
+						material,
+						headYaw,
+						headPitch,
+						rightArmPitch,
+						leftArmPitch,
+						rightArmYaw,
+						leftArmYaw,
+						rightArmRoll,
+						leftArmRoll,
+						rightLegPitch,
+						leftLegPitch,
+						rightLegYaw,
+						leftLegYaw,
+						rightLegRoll,
+						leftLegRoll
+				);
 			}
 		}
 
@@ -4674,6 +5399,7 @@ final class CameraEntityRenderer {
 								key.textureHeight(),
 								key.layerFactoryMethodName(),
 								key.cubeDeformation(),
+								key.secondaryCubeDeformation(),
 								key.modelFlag()
 						)
 				);
@@ -4694,11 +5420,126 @@ final class CameraEntityRenderer {
 			}
 		}
 
+		private static void renderHumanoidArmorLayer(
+				RuntimeBridge bridge,
+				RenderContext context,
+				Matrix4f root,
+				Map<String, Object> stateFields,
+				boolean baby,
+				ClientLayerSnapshot layer,
+				int material,
+				float headYaw,
+				float headPitch,
+				float rightArmPitch,
+				float leftArmPitch,
+				float rightArmYaw,
+				float leftArmYaw,
+				float rightArmRoll,
+				float leftArmRoll,
+				float rightLegPitch,
+				float leftLegPitch,
+				float rightLegYaw,
+				float leftLegYaw,
+				float rightLegRoll,
+				float leftLegRoll
+		) {
+			try {
+				ClientModelAdapter adapter = ADAPTER_CACHE.computeIfAbsent(
+						modelCacheKey(layer, baby),
+						key -> createAdapter(
+								bridge,
+								key.modelClassName(),
+								key.baby(),
+								key.textureWidth(),
+								key.textureHeight(),
+								key.layerFactoryMethodName(),
+								key.cubeDeformation(),
+								key.secondaryCubeDeformation(),
+								key.modelFlag()
+						)
+				);
+				if (adapter == null) {
+					return;
+				}
+				synchronized (adapter) {
+					Object state = adapter.newState(stateFields);
+					adapter.resetPose();
+					adapter.setupAnim(state);
+					applyHumanoidArmorPose(
+							bridge,
+							adapter.rootPart,
+							headYaw,
+							headPitch,
+							rightArmPitch,
+							leftArmPitch,
+							rightArmYaw,
+							leftArmYaw,
+							rightArmRoll,
+							leftArmRoll,
+							rightLegPitch,
+							leftLegPitch,
+							rightLegYaw,
+							leftLegYaw,
+							rightLegRoll,
+							leftLegRoll
+					);
+					float red = ((layer.tintRgb() >> 16) & 0xFF) / 255.0F;
+					float green = ((layer.tintRgb() >> 8) & 0xFF) / 255.0F;
+					float blue = (layer.tintRgb() & 0xFF) / 255.0F;
+					Matrix4f layerRoot = Mth.equal(layer.renderScale(), 1.0F) ? root : new Matrix4f(root).scale(layer.renderScale());
+					renderPartTree(bridge, context, adapter.rootPart, layerRoot, material, red, green, blue, layer.emissive());
+				}
+			} catch (Exception ignored) {
+			}
+		}
+
+		@SuppressWarnings("unchecked")
+		private static void applyHumanoidArmorPose(
+				RuntimeBridge bridge,
+				Object rootPart,
+				float headYaw,
+				float headPitch,
+				float rightArmPitch,
+				float leftArmPitch,
+				float rightArmYaw,
+				float leftArmYaw,
+				float rightArmRoll,
+				float leftArmRoll,
+				float rightLegPitch,
+				float leftLegPitch,
+				float rightLegYaw,
+				float leftLegYaw,
+				float rightLegRoll,
+				float leftLegRoll
+		) throws IllegalAccessException {
+			Map<String, Object> children = (Map<String, Object>) bridge.partChildrenField.get(rootPart);
+			if (children == null || children.isEmpty()) {
+				return;
+			}
+			setPartPose(bridge, children.get("head"), headPitch, headYaw, 0.0F);
+			setPartPose(bridge, children.get("body"), 0.0F, 0.0F, 0.0F);
+			setPartPose(bridge, children.get("right_arm"), rightArmPitch, rightArmYaw, rightArmRoll);
+			setPartPose(bridge, children.get("left_arm"), leftArmPitch, leftArmYaw, leftArmRoll);
+			setPartPose(bridge, children.get("right_leg"), rightLegPitch, rightLegYaw, rightLegRoll);
+			setPartPose(bridge, children.get("left_leg"), leftLegPitch, leftLegYaw, leftLegRoll);
+		}
+
+		private static void setPartPose(RuntimeBridge bridge, Object part, float xRot, float yRot, float zRot) throws IllegalAccessException {
+			if (part == null) {
+				return;
+			}
+			bridge.partVisibleField.setBoolean(part, true);
+			bridge.partSkipDrawField.setBoolean(part, false);
+			bridge.partXRotField.setFloat(part, xRot);
+			bridge.partYRotField.setFloat(part, yRot);
+			bridge.partZRotField.setFloat(part, zRot);
+		}
+
 		private static ModelCacheKey modelCacheKey(ClientLayerSnapshot layer, boolean baby) {
-			BufferedImage texture = ASSETS.loadTexture(layer.texture());
+			BufferedImage texture = layer.dynamicImage() != null ? layer.dynamicImage() : ASSETS.loadTexture(layer.texture());
 			int width = texture == null ? 64 : texture.getWidth();
 			int height = texture == null ? 64 : texture.getHeight();
-			return new ModelCacheKey(layer.modelClassName(), baby, width, height, layer.layerFactoryMethodName(), layer.cubeDeformation(), layer.modelFlag());
+			return new ModelCacheKey(layer.modelClassName(), baby, width, height, layer.layerFactoryMethodName(), layer.cubeDeformation(), layer.secondaryCubeDeformation(), layer.modelFlag());
 		}
 
 		private static Matrix4f rootTransform(ClientModelSnapshot snapshot) {
@@ -4912,11 +5753,12 @@ final class CameraEntityRenderer {
 				int textureHeight,
 				String layerFactoryMethodName,
 				float cubeDeformation,
+				float secondaryCubeDeformation,
 				boolean modelFlag
 		) {
 			try {
 				Class<?> modelClass = Class.forName(modelClassName, true, bridge.classLoader);
-				Object layerDefinition = createLayerDefinition(bridge, modelClass, textureWidth, textureHeight, layerFactoryMethodName, cubeDeformation, modelFlag);
+				Object layerDefinition = createLayerDefinition(bridge, modelClass, textureWidth, textureHeight, layerFactoryMethodName, cubeDeformation, secondaryCubeDeformation, modelFlag);
 				if (layerDefinition == null) {
 					return null;
 				}
@@ -4969,6 +5811,7 @@ final class CameraEntityRenderer {
 				int textureHeight,
 				String layerFactoryMethodName,
 				float cubeDeformation,
+				float secondaryCubeDeformation,
 				boolean modelFlag
 		) throws ReflectiveOperationException {
 			FactoryDescriptor factoryDescriptor = FactoryDescriptor.parse(layerFactoryMethodName);
@@ -4981,7 +5824,9 @@ final class CameraEntityRenderer {
 					if ((method.getModifiers() & java.lang.reflect.Modifier.STATIC) == 0) {
 						continue;
 					}
-					if (!bridge.layerDefinitionClass.equals(method.getReturnType()) && !bridge.meshDefinitionClass.equals(method.getReturnType())) {
+					if (!bridge.layerDefinitionClass.equals(method.getReturnType())
+							&& !bridge.meshDefinitionClass.equals(method.getReturnType())
+							&& !bridge.armorModelSetClass.equals(method.getReturnType())) {
 						continue;
 					}
 					if (factoryDescriptor.methodName() != null && !factoryDescriptor.methodName().equals(method.getName())) {
@@ -4995,9 +5840,14 @@ final class CameraEntityRenderer {
 			candidates.sort(Comparator.comparingInt(VanillaClientModels::layerMethodPriority));
 			for (Method method : candidates) {
 				method.setAccessible(true);
-				Object result = invokeLayerFactory(bridge, method, cubeDeformation, modelFlag, factoryDescriptor.argument());
+				Object result = invokeLayerFactory(bridge, method, cubeDeformation, secondaryCubeDeformation, modelFlag, factoryDescriptor.argument());
 				if (result == null) {
 					continue;
+				}
+				if (bridge.armorModelSetClass.isInstance(result) && factoryDescriptor.argument() != null) {
+					@SuppressWarnings("rawtypes")
+					Object slot = Enum.valueOf((Class<? extends Enum>) bridge.equipmentSlotClass.asSubclass(Enum.class), factoryDescriptor.argument());
+					result = bridge.armorModelSetGetMethod.invoke(result, slot);
 				}
 				if (bridge.layerDefinitionClass.isInstance(result)) {
 					return result;
@@ -5017,13 +5867,14 @@ final class CameraEntityRenderer {
 						|| parameterTypes[0] == boolean.class
 						|| (parameterTypes[0].isEnum() && explicitArgument != null);
 				case 2 -> (bridge.cubeDeformationClass.equals(parameterTypes[0]) && parameterTypes[1] == boolean.class)
-						|| (parameterTypes[0] == boolean.class && bridge.cubeDeformationClass.equals(parameterTypes[1]));
+						|| (parameterTypes[0] == boolean.class && bridge.cubeDeformationClass.equals(parameterTypes[1]))
+						|| (bridge.cubeDeformationClass.equals(parameterTypes[0]) && bridge.cubeDeformationClass.equals(parameterTypes[1]));
 				default -> false;
 			};
 		}
 
 		@SuppressWarnings({"rawtypes", "unchecked"})
-		private static Object invokeLayerFactory(RuntimeBridge bridge, Method method, float cubeDeformation, boolean modelFlag, String explicitArgument) throws ReflectiveOperationException {
+		private static Object invokeLayerFactory(RuntimeBridge bridge, Method method, float cubeDeformation, float secondaryCubeDeformation, boolean modelFlag, String explicitArgument) throws ReflectiveOperationException {
 			Class<?>[] parameterTypes = method.getParameterTypes();
 			return switch (parameterTypes.length) {
 				case 0 -> method.invoke(null);
@@ -5040,12 +5891,19 @@ final class CameraEntityRenderer {
 					yield method.invoke(null, modelFlag);
 				}
 				case 2 -> {
-					Object first = bridge.cubeDeformationClass.equals(parameterTypes[0])
-							? cubeDeformationObject(bridge, cubeDeformation)
-							: modelFlag;
-					Object second = bridge.cubeDeformationClass.equals(parameterTypes[1])
-							? cubeDeformationObject(bridge, cubeDeformation)
-							: modelFlag;
+					Object first;
+					Object second;
+					if (bridge.cubeDeformationClass.equals(parameterTypes[0]) && bridge.cubeDeformationClass.equals(parameterTypes[1])) {
+						first = cubeDeformationObject(bridge, cubeDeformation);
+						second = cubeDeformationObject(bridge, secondaryCubeDeformation);
+					} else {
+						first = bridge.cubeDeformationClass.equals(parameterTypes[0])
+								? cubeDeformationObject(bridge, cubeDeformation)
+								: modelFlag;
+						second = bridge.cubeDeformationClass.equals(parameterTypes[1])
+								? cubeDeformationObject(bridge, cubeDeformation)
+								: modelFlag;
+					}
 					yield method.invoke(null, first, second);
 				}
 				default -> null;
@@ -5069,11 +5927,13 @@ final class CameraEntityRenderer {
 				case "createBaseChickenModel" -> 5;
 				case "createBasePigModel" -> 6;
 				case "createBaseCowModel" -> 7;
-				case "createBoatModel" -> 8;
-				case "createChestBoatModel" -> 9;
-				case "createRaftModel" -> 10;
-				case "createChestRaftModel" -> 11;
-				case "createMesh" -> 12;
+				case "createArmorMeshSet" -> 8;
+				case "createArmorLayerSet" -> 9;
+				case "createBoatModel" -> 10;
+				case "createChestBoatModel" -> 11;
+				case "createRaftModel" -> 12;
+				case "createChestRaftModel" -> 13;
+				case "createMesh" -> 14;
 				default -> 10;
 			};
 		}
@@ -5175,6 +6035,8 @@ final class CameraEntityRenderer {
 				Class<?> layerDefinitionClass = Class.forName("net.minecraft.client.model.geom.builders.LayerDefinition", true, classLoader);
 				Class<?> meshDefinitionClass = Class.forName("net.minecraft.client.model.geom.builders.MeshDefinition", true, classLoader);
 				Class<?> cubeDeformationClass = Class.forName("net.minecraft.client.model.geom.builders.CubeDeformation", true, classLoader);
+				Class<?> armorModelSetClass = Class.forName("net.minecraft.client.renderer.entity.ArmorModelSet", true, classLoader);
+				Class<?> equipmentSlotClass = Class.forName("net.minecraft.world.entity.EquipmentSlot", true, classLoader);
 
 				Field cubeDeformationNone = cubeDeformationClass.getField("NONE");
 				Field cubesField = modelPartClass.getDeclaredField("cubes");
@@ -5199,6 +6061,8 @@ final class CameraEntityRenderer {
 						modelPartClass,
 						layerDefinitionClass,
 						meshDefinitionClass,
+						armorModelSetClass,
+						equipmentSlotClass,
 						cubeDeformationClass,
 						cubeDeformationClass.getConstructor(float.class),
 						cubeDeformationNone.get(null),
@@ -5220,6 +6084,7 @@ final class CameraEntityRenderer {
 						cubesField,
 						childrenField,
 						cubePolygonsField,
+						armorModelSetClass.getMethod("get", equipmentSlotClass),
 						polygonClass.getMethod("vertices"),
 						vertexXField,
 						vertexYField,
@@ -5260,6 +6125,7 @@ final class CameraEntityRenderer {
 				int textureHeight,
 				String layerFactoryMethodName,
 				float cubeDeformation,
+				float secondaryCubeDeformation,
 				boolean modelFlag
 		) {
 		}
@@ -5347,6 +6213,8 @@ final class CameraEntityRenderer {
 				Class<?> modelPartClass,
 				Class<?> layerDefinitionClass,
 				Class<?> meshDefinitionClass,
+				Class<?> armorModelSetClass,
+				Class<?> equipmentSlotClass,
 				Class<?> cubeDeformationClass,
 				Constructor<?> cubeDeformationConstructor,
 				Object cubeDeformationNone,
@@ -5368,6 +6236,7 @@ final class CameraEntityRenderer {
 				Field partCubesField,
 				Field partChildrenField,
 				Field cubePolygonsField,
+				Method armorModelSetGetMethod,
 				Method polygonVerticesMethod,
 				Field vertexXField,
 				Field vertexYField,

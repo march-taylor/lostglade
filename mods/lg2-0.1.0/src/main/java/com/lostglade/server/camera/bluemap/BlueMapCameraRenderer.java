@@ -972,15 +972,17 @@ public final class BlueMapCameraRenderer {
 		private final int height;
 		private final int[] pixels;
 		private final boolean transparent;
+		private final boolean cutout;
 		private final boolean grayscale;
 		private final float averageLuma;
 		private final float detailContrast;
 
-		private TextureMaterial(int width, int height, int[] pixels, boolean transparent, boolean grayscale, float averageLuma, float detailContrast) {
+		private TextureMaterial(int width, int height, int[] pixels, boolean transparent, boolean cutout, boolean grayscale, float averageLuma, float detailContrast) {
 			this.width = width;
 			this.height = height;
 			this.pixels = pixels;
 			this.transparent = transparent;
+			this.cutout = cutout;
 			this.grayscale = grayscale;
 			this.averageLuma = averageLuma;
 			this.detailContrast = detailContrast;
@@ -999,7 +1001,7 @@ public final class BlueMapCameraRenderer {
 		}
 
 		static TextureMaterial missing() {
-			return new TextureMaterial(1, 1, new int[]{0xFFFF00FF}, false, false, 1.0F, 1.0F);
+			return new TextureMaterial(1, 1, new int[]{0xFFFF00FF}, false, false, false, 1.0F, 1.0F);
 		}
 
 		static TextureMaterial fromImage(BufferedImage image) {
@@ -1010,6 +1012,7 @@ public final class BlueMapCameraRenderer {
 			int height = Math.max(1, image.getHeight());
 			int[] pixels = image.getRGB(0, 0, width, height, null, 0, width);
 			boolean transparent = false;
+			boolean partialAlpha = false;
 			boolean grayscale = true;
 			float lumaSum = 0.0F;
 			float minLuma = 1.0F;
@@ -1019,6 +1022,9 @@ public final class BlueMapCameraRenderer {
 				int alpha = (pixel >>> 24) & 0xFF;
 				if (alpha < 255) {
 					transparent = true;
+				}
+				if (alpha > 8 && alpha < 247) {
+					partialAlpha = true;
 				}
 				if (alpha <= 8) {
 					continue;
@@ -1043,7 +1049,8 @@ public final class BlueMapCameraRenderer {
 			if (grayscale && opaqueSamples > 0 && maxLuma - minLuma < 0.42F) {
 				detailContrast = TINTED_GRAYSCALE_CONTRAST_BOOST;
 			}
-			return new TextureMaterial(width, height, pixels, transparent, grayscale, averageLuma, detailContrast);
+			boolean cutout = transparent && !partialAlpha;
+			return new TextureMaterial(width, height, pixels, transparent, cutout, grayscale, averageLuma, detailContrast);
 		}
 
 		private static BufferedImage selectRenderableFrame(Texture texture, BufferedImage image) {
@@ -1671,7 +1678,7 @@ public final class BlueMapCameraRenderer {
 				if (clippedTriangles.isEmpty()) {
 					continue;
 				}
-				if (material.transparent) {
+				if (material.transparent && !material.cutout) {
 					transparentTriangles.addAll(clippedTriangles);
 				} else {
 					for (RasterTriangle triangle : clippedTriangles) {
@@ -1935,11 +1942,17 @@ public final class BlueMapCameraRenderer {
 					if (alpha <= 0.01F) {
 						continue;
 					}
+					if (material.cutout) {
+						if (alpha < 0.5F) {
+							continue;
+						}
+						alpha = 1.0F;
+					}
 
 					float redLinear;
 					float greenLinear;
 					float blueLinear;
-					if (material.transparent) {
+					if (material.transparent && !material.cutout) {
 						float skylightMix = sunlightLevel * Mth.lerp(this.frame.environment().sunlightStrength(), 0.18F, 1.0F);
 						float blocklightMix = blocklightLevel <= 0.0F ? 0.0F : Mth.lerp(blocklightLevel, 0.15F, 1.0F);
 						float ambientFloor = Mth.clamp(this.frame.environment().ambientLight() * 0.45F + 0.22F, 0.22F, 0.42F);
