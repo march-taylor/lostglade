@@ -4260,12 +4260,16 @@ final class CameraEntityRenderer {
 			renderFlatItemLayers(context, transformedRoot, visual, 0.0625F, 0.0625F, 0.5F, 0.875F, 0.875F);
 			return;
 		}
-		if (transformContext == ItemDisplayTransformContext.GROUND
-				|| transformContext == ItemDisplayTransformContext.FIXED
-				|| transformContext == ItemDisplayTransformContext.THIRD_PERSON_RIGHT_HAND
+		if (transformContext == ItemDisplayTransformContext.THIRD_PERSON_RIGHT_HAND
 				|| transformContext == ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND
 				|| transformContext == ItemDisplayTransformContext.FIRST_PERSON_RIGHT_HAND
-				|| transformContext == ItemDisplayTransformContext.FIRST_PERSON_LEFT_HAND
+				|| transformContext == ItemDisplayTransformContext.FIRST_PERSON_LEFT_HAND) {
+			Matrix4f transformedRoot = applyItemDisplayTransform(root, visual.model(), transformContext);
+			renderFlatItemLayersSingleSided(context, transformedRoot, visual, 0.0F, 0.0F, 0.5F, 1.0F, 1.0F);
+			return;
+		}
+		if (transformContext == ItemDisplayTransformContext.GROUND
+				|| transformContext == ItemDisplayTransformContext.FIXED
 				|| transformContext == ItemDisplayTransformContext.GUI
 				|| transformContext == ItemDisplayTransformContext.HEAD
 				|| transformContext == ItemDisplayTransformContext.ON_SHELF) {
@@ -4407,6 +4411,52 @@ final class CameraEntityRenderer {
 					width,
 					height,
 					halfThickness,
+					0.0F,
+					0.0F,
+					1.0F,
+					1.0F,
+					material,
+					red,
+					green,
+					blue
+			);
+		}
+	}
+
+	private static void renderFlatItemLayersSingleSided(
+			RenderContext context,
+			Matrix4f transform,
+			ItemVisual visual,
+			float x,
+			float y,
+			float centerZ,
+			float width,
+			float height
+	) {
+		List<Identifier> layers = flatItemLayers(visual);
+		if (layers.isEmpty()) {
+			if (visual.flatTexture() == null) {
+				return;
+			}
+			layers = List.of(visual.flatTexture());
+		}
+		float layerSpacing = 1.0F / 128.0F;
+		float startZ = centerZ + Math.max(0, layers.size() - 1) * layerSpacing;
+		for (int i = 0; i < layers.size(); i++) {
+			Identifier layer = layers.get(i);
+			int material = context.materialResolver.materialForTexture(layer);
+			int tintRgb = itemTintRgb(visual, i);
+			float red = ((tintRgb >> 16) & 0xFF) / 255.0F;
+			float green = ((tintRgb >> 8) & 0xFF) / 255.0F;
+			float blue = (tintRgb & 0xFF) / 255.0F;
+			addTexturedPlane(
+					context,
+					transform,
+					x,
+					y,
+					startZ - i * layerSpacing,
+					width,
+					height,
 					0.0F,
 					0.0F,
 					1.0F,
