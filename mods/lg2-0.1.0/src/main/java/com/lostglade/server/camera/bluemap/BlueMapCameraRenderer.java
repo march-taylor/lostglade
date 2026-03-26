@@ -86,6 +86,14 @@ public final class BlueMapCameraRenderer {
 	private static final int NO_TINT_RGB = -1;
 	private static final float DEG_TO_RAD = (float) (Math.PI / 180.0D);
 	private static final float HALF_CELESTIAL_QUAD_SIZE = 0.30F;
+	private static final Identifier CLOUD_TEXTURE_ID = Identifier.fromNamespaceAndPath("minecraft", "environment/clouds");
+	private static final float CLOUD_CELL_SIZE = 12.0F;
+	private static final float CLOUD_THICKNESS = 4.0F;
+	private static final float CLOUD_SCROLL_PER_TICK = 0.030000001F;
+	private static final float CLOUD_Z_OFFSET = 3.9600000381469727F;
+	private static final float CLOUD_TRACE_EPSILON = 1.0E-3F;
+	private static final float CLOUD_FADE_START_DISTANCE = 352.0F;
+	private static final float CLOUD_FADE_END_DISTANCE = 640.0F;
 	private static final float STAR_DISC_RADIUS = 0.0019F;
 	private static final float SUNRISE_HORIZON_BAND = 0.42F;
 	private static final float SUN_MASK_INNER_RADIUS = 0.78F;
@@ -100,6 +108,7 @@ public final class BlueMapCameraRenderer {
 	private static final Variant VANILLA_LAVA_LIQUID_VARIANT = createLiquidVariant("camera_lava", "block/lava_still", "block/lava_flow");
 	private static final Map<net.minecraft.world.level.block.state.BlockState, BlockState> BLOCK_STATE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, TextureMaterial> SKY_TEXTURE_CACHE = new ConcurrentHashMap<>();
+	private static final CloudField CLOUD_FIELD = CloudField.create();
 	private static final StarField STAR_FIELD = StarField.create();
 	private static volatile RenderResources renderResources;
 
@@ -328,6 +337,8 @@ public final class BlueMapCameraRenderer {
 			float skyLightFactor,
 			net.minecraft.world.level.dimension.DimensionType.Skybox skybox,
 			int skyColor,
+			int cloudColor,
+			float cloudHeight,
 			float skyLightRed,
 			float skyLightGreen,
 			float skyLightBlue,
@@ -337,7 +348,8 @@ public final class BlueMapCameraRenderer {
 			float starAngle,
 			float rainBrightness,
 			float starBrightness,
-			MoonPhase moonPhase
+			MoonPhase moonPhase,
+			long gameTime
 	) {
 		private static FrameEnvironment capture(ServerLevel level, Vec3 cameraPosition) {
 			boolean skylight = level.dimensionType().hasSkyLight();
@@ -355,6 +367,8 @@ public final class BlueMapCameraRenderer {
 					skyLightFactor,
 					level.dimensionType().skybox(),
 					level.environmentAttributes().getValue(EnvironmentAttributes.SKY_COLOR, cameraPosition),
+					level.environmentAttributes().getValue(EnvironmentAttributes.CLOUD_COLOR, cameraPosition),
+					level.environmentAttributes().getValue(EnvironmentAttributes.CLOUD_HEIGHT, cameraPosition),
 					toLinear((skyLightColor >> 16) & 0xFF),
 					toLinear((skyLightColor >> 8) & 0xFF),
 					toLinear(skyLightColor & 0xFF),
@@ -364,7 +378,8 @@ public final class BlueMapCameraRenderer {
 					level.environmentAttributes().getValue(EnvironmentAttributes.STAR_ANGLE, cameraPosition) * DEG_TO_RAD,
 					Mth.clamp(rainBrightness, 0.0F, 1.0F),
 					Mth.clamp(level.environmentAttributes().getValue(EnvironmentAttributes.STAR_BRIGHTNESS, cameraPosition), 0.0F, 1.0F),
-					level.environmentAttributes().getValue(EnvironmentAttributes.MOON_PHASE, cameraPosition)
+					level.environmentAttributes().getValue(EnvironmentAttributes.MOON_PHASE, cameraPosition),
+					level.getGameTime()
 			);
 		}
 	}
@@ -1282,6 +1297,13 @@ public final class BlueMapCameraRenderer {
 					greenLinear = blendLinear(greenLinear, 1.0F, starAlpha);
 					blueLinear = blendLinear(blueLinear, 1.0F, starAlpha);
 				}
+
+				CloudSample cloudSample = sampleCloud(direction);
+				if (cloudSample != null && cloudSample.alpha() > 0.0F) {
+					redLinear = blendLinear(redLinear, cloudSample.red(), cloudSample.alpha());
+					greenLinear = blendLinear(greenLinear, cloudSample.green(), cloudSample.alpha());
+					blueLinear = blendLinear(blueLinear, cloudSample.blue(), cloudSample.alpha());
+				}
 			}
 
 			this.red[index] = redLinear;
@@ -1355,6 +1377,186 @@ public final class BlueMapCameraRenderer {
 			}
 			Vec3 localDirection = inverseCelestialDirection(direction, this.frame.environment().starAngle());
 			return STAR_FIELD.sample(localDirection);
+		}
+
+		private CloudSample sampleCloud(Vec3 direction) {
+			FrameEnvironment environment = this.frame.environment();
+			if (environment.skybox() != net.minecraft.world.level.dimension.DimensionType.Skybox.OVERWORLD || !environment.skylight()) {
+				return null;
+			}
+			if (CLOUD_FIELD == null || CLOUD_FIELD.isEmpty()) {
+				return null;
+			}
+			float cloudHeight = environment.cloudHeight();
+			if (!Float.isFinite(cloudHeight)) {
+				return null;
+			}
+
+			double dy = direction.y;
+			double bottomY = cloudHeight;
+			double topY = cloudHeight + CLOUD_THICKNESS;
+			double eyeY = this.frame.eyePosition().y;
+
+			double tEnter;
+			double tExit;
+			boolean startsInsideLayer;
+			if (Math.abs(dy) < 1.0E-6D) {
+				if (eyeY < bottomY || eyeY > topY) {
+					return null;
+				}
+				tEnter = 0.0D;
+				tExit = Double.POSITIVE_INFINITY;
+				startsInsideLayer = true;
+			} else {
+				double t0 = (bottomY - eyeY) / dy;
+				double t1 = (topY - eyeY) / dy;
+				tEnter = Math.min(t0, t1);
+				tExit = Math.max(t0, t1);
+				if (tExit <= 0.0D) {
+					return null;
+				}
+				startsInsideLayer = tEnter < 0.0D;
+			}
+
+			double startT = Math.max(tEnter, 0.0D);
+			double endT = tExit;
+			if (!(endT > startT)) {
+				return null;
+			}
+
+			double cloudOffsetX = cloudScrollOffset(environment.gameTime(), CLOUD_FIELD.width());
+			double originX = this.frame.eyePosition().x + cloudOffsetX;
+			double originZ = this.frame.eyePosition().z + CLOUD_Z_OFFSET;
+
+			if (startsInsideLayer) {
+				int insideCellX = Mth.floor(originX / CLOUD_CELL_SIZE);
+				int insideCellZ = Mth.floor(originZ / CLOUD_CELL_SIZE);
+				if (CLOUD_FIELD.isFilled(insideCellX, insideCellZ)) {
+					return applyCloudDistanceFade(cloudColorSample(CLOUD_FIELD.argb(insideCellX, insideCellZ), environment.cloudColor(), CloudFace.INSIDE), 0.0D);
+				}
+			}
+
+			double entryProbeT = Math.min(endT - CLOUD_TRACE_EPSILON, startT + CLOUD_TRACE_EPSILON);
+			if (entryProbeT >= startT) {
+				double entryX = originX + direction.x * entryProbeT;
+				double entryZ = originZ + direction.z * entryProbeT;
+				int entryCellX = Mth.floor(entryX / CLOUD_CELL_SIZE);
+				int entryCellZ = Mth.floor(entryZ / CLOUD_CELL_SIZE);
+				if (CLOUD_FIELD.isFilled(entryCellX, entryCellZ)) {
+					CloudFace verticalFace = direction.y > 0.0D ? CloudFace.BOTTOM : CloudFace.TOP;
+					return applyCloudDistanceFade(cloudColorSample(CLOUD_FIELD.argb(entryCellX, entryCellZ), environment.cloudColor(), verticalFace), entryProbeT);
+				}
+			}
+
+			return traceCloudSides(originX, originZ, direction, startT, endT, environment.cloudColor());
+		}
+
+		private CloudSample traceCloudSides(double originX, double originZ, Vec3 direction, double startT, double endT, int cloudColorRgb) {
+			double dx = direction.x;
+			double dz = direction.z;
+			double segmentStart = startT + CLOUD_TRACE_EPSILON;
+			if (!(segmentStart < endT)) {
+				return null;
+			}
+			double currentX = originX + dx * segmentStart;
+			double currentZ = originZ + dz * segmentStart;
+			int cellX = Mth.floor(currentX / CLOUD_CELL_SIZE);
+			int cellZ = Mth.floor(currentZ / CLOUD_CELL_SIZE);
+
+			int stepX = dx > 1.0E-6D ? 1 : dx < -1.0E-6D ? -1 : 0;
+			int stepZ = dz > 1.0E-6D ? 1 : dz < -1.0E-6D ? -1 : 0;
+
+			double nextBoundaryX = stepX > 0
+					? (cellX + 1) * CLOUD_CELL_SIZE
+					: stepX < 0 ? cellX * CLOUD_CELL_SIZE : Double.POSITIVE_INFINITY;
+			double nextBoundaryZ = stepZ > 0
+					? (cellZ + 1) * CLOUD_CELL_SIZE
+					: stepZ < 0 ? cellZ * CLOUD_CELL_SIZE : Double.POSITIVE_INFINITY;
+			double nextTX = stepX == 0 ? Double.POSITIVE_INFINITY : segmentStart + (nextBoundaryX - currentX) / dx;
+			double nextTZ = stepZ == 0 ? Double.POSITIVE_INFINITY : segmentStart + (nextBoundaryZ - currentZ) / dz;
+			double deltaTX = stepX == 0 ? Double.POSITIVE_INFINITY : CLOUD_CELL_SIZE / Math.abs(dx);
+			double deltaTZ = stepZ == 0 ? Double.POSITIVE_INFINITY : CLOUD_CELL_SIZE / Math.abs(dz);
+
+			int maxSteps = 16;
+			for (int step = 0; step < maxSteps; step++) {
+				if (nextTX >= endT && nextTZ >= endT) {
+					return null;
+				}
+				CloudFace face;
+				if (nextTX <= nextTZ) {
+					cellX += stepX;
+					face = stepX > 0 ? CloudFace.WEST : CloudFace.EAST;
+					nextTX += deltaTX;
+				} else {
+					cellZ += stepZ;
+					face = stepZ > 0 ? CloudFace.NORTH : CloudFace.SOUTH;
+					nextTZ += deltaTZ;
+				}
+				if (CLOUD_FIELD.isFilled(cellX, cellZ)) {
+					double hitDistance = Math.min(nextTX, nextTZ);
+					return applyCloudDistanceFade(cloudColorSample(CLOUD_FIELD.argb(cellX, cellZ), cloudColorRgb, face), hitDistance);
+				}
+			}
+			return null;
+		}
+
+		private CloudSample cloudColorSample(int textureArgb, int cloudColorRgb, CloudFace face) {
+			float alpha = ((textureArgb >>> 24) & 0xFF) / 255.0F;
+			if (alpha <= 0.0F) {
+				return null;
+			}
+			float shade = switch (face) {
+				case TOP -> 1.0F;
+				case BOTTOM -> 0.72F;
+				case NORTH, SOUTH -> 0.90F;
+				case EAST, WEST -> 0.82F;
+				case INSIDE -> 0.88F;
+			};
+			float textureRed = toLinear((textureArgb >> 16) & 0xFF);
+			float textureGreen = toLinear((textureArgb >> 8) & 0xFF);
+			float textureBlue = toLinear(textureArgb & 0xFF);
+			float cloudRed = toLinear((cloudColorRgb >> 16) & 0xFF);
+			float cloudGreen = toLinear((cloudColorRgb >> 8) & 0xFF);
+			float cloudBlue = toLinear(cloudColorRgb & 0xFF);
+			float red = Mth.clamp(cloudRed * textureRed * shade, 0.0F, 1.0F);
+			float green = Mth.clamp(cloudGreen * textureGreen * shade, 0.0F, 1.0F);
+			float blue = Mth.clamp(cloudBlue * textureBlue * shade, 0.0F, 1.0F);
+			float cloudAlpha = Mth.clamp(alpha * (face == CloudFace.INSIDE ? 0.92F : 1.0F), 0.0F, 1.0F);
+			return new CloudSample(red, green, blue, cloudAlpha);
+		}
+
+		private CloudSample applyCloudDistanceFade(CloudSample sample, double distance) {
+			if (sample == null) {
+				return null;
+			}
+			float fade = cloudDistanceFade(distance);
+			if (fade <= 0.0F) {
+				return null;
+			}
+			return new CloudSample(sample.red(), sample.green(), sample.blue(), sample.alpha() * fade);
+		}
+
+		private static float cloudDistanceFade(double distance) {
+			if (!(distance > 0.0D)) {
+				return 1.0F;
+			}
+			float clampedDistance = (float) Math.max(0.0D, distance);
+			if (clampedDistance <= CLOUD_FADE_START_DISTANCE) {
+				return 1.0F;
+			}
+			if (clampedDistance >= CLOUD_FADE_END_DISTANCE) {
+				return 0.0F;
+			}
+			float progress = (clampedDistance - CLOUD_FADE_START_DISTANCE) / (CLOUD_FADE_END_DISTANCE - CLOUD_FADE_START_DISTANCE);
+			return 1.0F - smoothstep(0.0F, 1.0F, progress);
+		}
+
+		private static double cloudScrollOffset(long gameTime, int cloudWidth) {
+			if (cloudWidth <= 0) {
+				return 0.0D;
+			}
+			long wrappedTicks = Math.floorMod(gameTime, (long) cloudWidth * 400L);
+			return wrappedTicks * CLOUD_SCROLL_PER_TICK;
 		}
 
 		private static float blendLinear(float base, float overlay, float alpha) {
@@ -2231,6 +2433,71 @@ public final class BlueMapCameraRenderer {
 	}
 
 	private record FaceNormal(float x, float y, float z) {
+	}
+
+	private record CloudSample(float red, float green, float blue, float alpha) {
+	}
+
+	private enum CloudFace {
+		TOP,
+		BOTTOM,
+		NORTH,
+		SOUTH,
+		EAST,
+		WEST,
+		INSIDE
+	}
+
+	private static final class CloudField {
+		private final int width;
+		private final int height;
+		private final int[] pixels;
+
+		private CloudField(int width, int height, int[] pixels) {
+			this.width = width;
+			this.height = height;
+			this.pixels = pixels;
+		}
+
+		private static CloudField create() {
+			BufferedImage image = TextureAssetManager.get().loadTexture(CLOUD_TEXTURE_ID);
+			if (image == null) {
+				return new CloudField(0, 0, new int[0]);
+			}
+			int width = Math.max(1, image.getWidth());
+			int height = Math.max(1, image.getHeight());
+			return new CloudField(width, height, image.getRGB(0, 0, width, height, null, 0, width));
+		}
+
+		private boolean isEmpty() {
+			return this.pixels.length == 0;
+		}
+
+		private int width() {
+			return this.width;
+		}
+
+		private boolean isFilled(int cellX, int cellZ) {
+			if (this.isEmpty()) {
+				return false;
+			}
+			int alpha = (this.argb(cellX, cellZ) >>> 24) & 0xFF;
+			return alpha >= 10;
+		}
+
+		private int argb(int cellX, int cellZ) {
+			if (this.isEmpty()) {
+				return 0;
+			}
+			int wrappedX = wrap(cellX, this.width);
+			int wrappedZ = wrap(cellZ, this.height);
+			return this.pixels[wrappedZ * this.width + wrappedX];
+		}
+
+		private static int wrap(int value, int modulo) {
+			int wrapped = value % modulo;
+			return wrapped < 0 ? wrapped + modulo : wrapped;
+		}
 	}
 
 	private static final class StarField {

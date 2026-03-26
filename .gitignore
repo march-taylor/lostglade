@@ -20,3 +20,4 @@ cache/
 usercache.json
 config/skinrestorer/mojang_profile_cache.json
 
+fabricloader.log
