@@ -171,7 +171,7 @@ public final class ServerRaceSystem {
 	private static final int CARTEL_PASSPORT_NAME_RENDER_HEIGHT = 5;
 	private static final int CARTEL_PASSPORT_NAME_CHAR_ADVANCE = 5;
 	private static final int CARTEL_PASSPORT_NAME_MIN_X = 18;
-	private static final int CARTEL_PASSPORT_NAME_CENTER_X = 130;
+	private static final int CARTEL_PASSPORT_NAME_CENTER_X = 131;
 	private static volatile Map<Character, Integer> CARTEL_PASSPORT_NAME_ADVANCE_CACHE;
 	private static final int CARTEL_PASSPORT_OVERLAY_X_OFFSET = 168;
 	private static final int MISTER_CARTEL_49_STACK_LIMIT = 49;
