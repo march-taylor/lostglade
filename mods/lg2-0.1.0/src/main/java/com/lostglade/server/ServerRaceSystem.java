@@ -2560,6 +2560,7 @@ public final class ServerRaceSystem {
 		}
 	}
 
+
 	private static final class CartelLawyerOverlay implements PolymerEntity {
 		private static final byte ALL_PLAYER_SKIN_PARTS = (byte) 0x7F;
 		private final GameProfile profile;
