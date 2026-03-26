@@ -61,7 +61,7 @@ public final class PhotoFramePlacementSystem {
 
 		ItemStack photoItem = recreatePhotoItem(frameStack, frameData);
 		clearPlacedPhoto(level, frameData);
-		if (!shouldDropPhoto || photoItem.isEmpty()) {
+		if (photoItem.isEmpty()) {
 			return;
 		}
 		frame.spawnAtLocation(level, photoItem);
