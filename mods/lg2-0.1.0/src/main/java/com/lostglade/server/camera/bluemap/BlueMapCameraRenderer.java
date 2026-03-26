@@ -115,17 +115,19 @@ public final class BlueMapCameraRenderer {
 	private BlueMapCameraRenderer() {
 	}
 
-	public static PreparedFrame capture(ServerPlayer player, Vec3 forward, Vec3 right, Vec3 up, double maxDistance, float fovDegrees, int supersampling) {
+	public static PreparedFrame capture(ServerPlayer player, Vec3 forward, Vec3 right, Vec3 up, double maxDistance, float fovDegrees, int supersampling, int mapTilesWide, int mapTilesHigh) {
 		ServerLevel level = (ServerLevel) player.level();
 		Vec3 eyePosition = player.getEyePosition();
-		CameraFrustum frustum = CameraFrustum.create(eyePosition, forward, right, up, maxDistance, fovDegrees);
+		int normalizedTilesWide = Math.max(1, mapTilesWide);
+		int normalizedTilesHigh = Math.max(1, mapTilesHigh);
+		CameraFrustum frustum = CameraFrustum.create(eyePosition, forward, right, up, maxDistance, fovDegrees, normalizedTilesWide / (double) normalizedTilesHigh);
 		RenderResources resources = getRenderResources();
 		WorldSnapshot snapshot = WorldSnapshot.capture(level, frustum, resources);
 		List<EntitySnapshot> entities = new ArrayList<>();
 		entities.addAll(captureEntities(player, level, frustum, forward, right, up));
 		entities.addAll(captureBlockEntities(level, frustum));
 		FrameEnvironment environment = FrameEnvironment.capture(level, eyePosition);
-		return new PreparedFrame(eyePosition, forward, right, up, maxDistance, fovDegrees, supersampling, snapshot, entities, environment);
+		return new PreparedFrame(eyePosition, forward, right, up, maxDistance, fovDegrees, supersampling, normalizedTilesWide, normalizedTilesHigh, snapshot, entities, environment);
 	}
 
 	public static byte[] render(PreparedFrame preparedFrame) {
@@ -322,6 +324,8 @@ public final class BlueMapCameraRenderer {
 			double maxDistance,
 			float fovDegrees,
 			int supersampling,
+			int mapTilesWide,
+			int mapTilesHigh,
 			WorldSnapshot snapshot,
 			List<EntitySnapshot> entities,
 			FrameEnvironment environment
@@ -1228,8 +1232,12 @@ public final class BlueMapCameraRenderer {
 	private static final class FrameRenderer {
 		private final PreparedFrame frame;
 		private final RenderResources resources;
-		private final int internalSize;
+		private final int outputWidth;
+		private final int outputHeight;
+		private final int internalWidth;
+		private final int internalHeight;
 		private final float tanHalfFov;
+		private final float aspectRatio;
 		private final Int2ObjectOpenHashMap<TextureMaterial> dynamicMaterials;
 		private final Map<String, Integer> dynamicMaterialIds;
 		private int nextDynamicMaterialId;
@@ -1241,12 +1249,17 @@ public final class BlueMapCameraRenderer {
 		private FrameRenderer(PreparedFrame frame, RenderResources resources) {
 			this.frame = frame;
 			this.resources = resources;
-			this.internalSize = MAP_SIZE * Mth.clamp(frame.supersampling(), 1, 4);
+			this.outputWidth = MAP_SIZE * Math.max(1, frame.mapTilesWide());
+			this.outputHeight = MAP_SIZE * Math.max(1, frame.mapTilesHigh());
+			int supersampling = Mth.clamp(frame.supersampling(), 1, 4);
+			this.internalWidth = this.outputWidth * supersampling;
+			this.internalHeight = this.outputHeight * supersampling;
 			this.tanHalfFov = (float) Math.tan(Math.toRadians(frame.fovDegrees() * 0.5D));
+			this.aspectRatio = this.outputWidth / (float) this.outputHeight;
 			this.dynamicMaterials = new Int2ObjectOpenHashMap<>();
 			this.dynamicMaterialIds = new HashMap<>();
 			this.nextDynamicMaterialId = -1;
-			int pixelCount = this.internalSize * this.internalSize;
+			int pixelCount = this.internalWidth * this.internalHeight;
 			this.red = new float[pixelCount];
 			this.green = new float[pixelCount];
 			this.blue = new float[pixelCount];
@@ -1264,17 +1277,17 @@ public final class BlueMapCameraRenderer {
 		}
 
 		private void fillBackground() {
-			for (int y = 0; y < this.internalSize; y++) {
-				for (int x = 0; x < this.internalSize; x++) {
-					int index = y * this.internalSize + x;
+			for (int y = 0; y < this.internalHeight; y++) {
+				for (int x = 0; x < this.internalWidth; x++) {
+					int index = y * this.internalWidth + x;
 					renderSkyPixel(index, rayDirection(x + 0.5D, y + 0.5D));
 				}
 			}
 		}
 
 		private Vec3 rayDirection(double pixelX, double pixelY) {
-			double sensorX = (pixelX / this.internalSize * 2.0D - 1.0D) * this.tanHalfFov;
-			double sensorY = (1.0D - pixelY / this.internalSize * 2.0D) * this.tanHalfFov;
+			double sensorX = (pixelX / this.internalWidth * 2.0D - 1.0D) * this.tanHalfFov * this.aspectRatio;
+			double sensorY = (1.0D - pixelY / this.internalHeight * 2.0D) * this.tanHalfFov;
 			return this.frame.forward()
 					.add(this.frame.right().scale(sensorX))
 					.add(this.frame.up().scale(sensorY))
@@ -2152,8 +2165,8 @@ public final class BlueMapCameraRenderer {
 				return null;
 			}
 			float inverseZ = 1.0F / vertex.cameraZ();
-			float screenX = (float) ((vertex.cameraX() * inverseZ / this.tanHalfFov * 0.5F + 0.5F) * this.internalSize);
-			float screenY = (float) ((0.5F - vertex.cameraY() * inverseZ / this.tanHalfFov * 0.5F) * this.internalSize);
+			float screenX = (float) ((vertex.cameraX() * inverseZ / (this.tanHalfFov * this.aspectRatio) * 0.5F + 0.5F) * this.internalWidth);
+			float screenY = (float) ((0.5F - vertex.cameraY() * inverseZ / this.tanHalfFov * 0.5F) * this.internalHeight);
 			return vertex.withProjection(screenX, screenY, inverseZ);
 		}
 
@@ -2162,10 +2175,10 @@ public final class BlueMapCameraRenderer {
 			float maxX = Math.max(triangle.a().screenX(), Math.max(triangle.b().screenX(), triangle.c().screenX()));
 			float minY = Math.min(triangle.a().screenY(), Math.min(triangle.b().screenY(), triangle.c().screenY()));
 			float maxY = Math.max(triangle.a().screenY(), Math.max(triangle.b().screenY(), triangle.c().screenY()));
-			int startX = Mth.clamp(Mth.floor(minX), 0, this.internalSize - 1);
-			int endX = Mth.clamp(Mth.ceil(maxX), 0, this.internalSize - 1);
-			int startY = Mth.clamp(Mth.floor(minY), 0, this.internalSize - 1);
-			int endY = Mth.clamp(Mth.ceil(maxY), 0, this.internalSize - 1);
+			int startX = Mth.clamp(Mth.floor(minX), 0, this.internalWidth - 1);
+			int endX = Mth.clamp(Mth.ceil(maxX), 0, this.internalWidth - 1);
+			int startY = Mth.clamp(Mth.floor(minY), 0, this.internalHeight - 1);
+			int endY = Mth.clamp(Mth.ceil(maxY), 0, this.internalHeight - 1);
 			float area = edge(triangle.a().screenX(), triangle.a().screenY(), triangle.b().screenX(), triangle.b().screenY(), triangle.c().screenX(), triangle.c().screenY());
 			if (Math.abs(area) < 1.0E-6F) {
 				return;
@@ -2187,7 +2200,7 @@ public final class BlueMapCameraRenderer {
 						continue;
 					}
 					float depth = 1.0F / inverseZ;
-					int index = y * this.internalSize + x;
+					int index = y * this.internalWidth + x;
 					if (opaquePass) {
 						if (depth >= this.opaqueDepth[index]) {
 							continue;
@@ -2316,12 +2329,12 @@ public final class BlueMapCameraRenderer {
 		}
 
 		private byte[] downsample() {
-			int scale = this.internalSize / MAP_SIZE;
-			byte[] output = new byte[MAP_SIZE * MAP_SIZE];
+			int scale = this.internalWidth / this.outputWidth;
+			byte[] output = new byte[this.outputWidth * this.outputHeight];
 			if (scale <= 1) {
-				for (int mapY = 0; mapY < MAP_SIZE; mapY++) {
-					for (int mapX = 0; mapX < MAP_SIZE; mapX++) {
-						int index = mapY * MAP_SIZE + mapX;
+				for (int mapY = 0; mapY < this.outputHeight; mapY++) {
+					for (int mapX = 0; mapX < this.outputWidth; mapX++) {
+						int index = mapY * this.outputWidth + mapX;
 						int rgb = (toSrgb(this.red[index]) << 16) | (toSrgb(this.green[index]) << 8) | toSrgb(this.blue[index]);
 						output[index] = MapPaletteQuantizer.quantizeDithered(rgb, mapX, mapY);
 					}
@@ -2331,32 +2344,32 @@ public final class BlueMapCameraRenderer {
 
 			int sampleCount = scale * scale;
 			int[] samples = new int[sampleCount];
-			for (int mapY = 0; mapY < MAP_SIZE; mapY++) {
-				for (int mapX = 0; mapX < MAP_SIZE; mapX++) {
+			for (int mapY = 0; mapY < this.outputHeight; mapY++) {
+				for (int mapX = 0; mapX < this.outputWidth; mapX++) {
 					int sampleIndex = 0;
 					int startY = mapY * scale;
 					int startX = mapX * scale;
-						for (int dy = 0; dy < scale; dy++) {
-							int row = (startY + dy) * this.internalSize + startX;
-							for (int dx = 0; dx < scale; dx++) {
-								int index = row + dx;
+					for (int dy = 0; dy < scale; dy++) {
+						int row = (startY + dy) * this.internalWidth + startX;
+						for (int dx = 0; dx < scale; dx++) {
+							int index = row + dx;
 							samples[sampleIndex++] = (toSrgb(this.red[index]) << 16)
 									| (toSrgb(this.green[index]) << 8)
-										| toSrgb(this.blue[index]);
-							}
+									| toSrgb(this.blue[index]);
 						}
-						int averagedRgb = MapPaletteQuantizer.averageRgb(samples, sampleIndex);
-						int centerX = startX + scale / 2;
-						int centerY = startY + scale / 2;
-						int centerIndex = centerY * this.internalSize + centerX;
-						int centerRgb = (toSrgb(this.red[centerIndex]) << 16)
-								| (toSrgb(this.green[centerIndex]) << 8)
-								| toSrgb(this.blue[centerIndex]);
-						int detailRgb = lerpRgb(averagedRgb, centerRgb, 0.50F);
-						output[mapY * MAP_SIZE + mapX] = MapPaletteQuantizer.quantizeDithered(detailRgb, mapX, mapY);
 					}
+					int averagedRgb = MapPaletteQuantizer.averageRgb(samples, sampleIndex);
+					int centerX = startX + scale / 2;
+					int centerY = startY + scale / 2;
+					int centerIndex = centerY * this.internalWidth + centerX;
+					int centerRgb = (toSrgb(this.red[centerIndex]) << 16)
+							| (toSrgb(this.green[centerIndex]) << 8)
+							| toSrgb(this.blue[centerIndex]);
+					int detailRgb = lerpRgb(averagedRgb, centerRgb, 0.50F);
+					output[mapY * this.outputWidth + mapX] = MapPaletteQuantizer.quantizeDithered(detailRgb, mapX, mapY);
 				}
-				return output;
+			}
+			return output;
 		}
 
 		private static float edge(float ax, float ay, float bx, float by, float px, float py) {
@@ -2671,10 +2684,11 @@ public final class BlueMapCameraRenderer {
 			this.bounds = bounds;
 		}
 
-		private static CameraFrustum create(Vec3 eye, Vec3 forward, Vec3 right, Vec3 up, double maxDistance, float fovDegrees) {
+		private static CameraFrustum create(Vec3 eye, Vec3 forward, Vec3 right, Vec3 up, double maxDistance, float fovDegrees, double aspectRatio) {
 			double tanHalfFov = Math.tan(Math.toRadians(fovDegrees * 0.5D));
-			double farHalfWidth = tanHalfFov * maxDistance;
 			double farHalfHeight = tanHalfFov * maxDistance;
+			double clampedAspectRatio = Math.max(0.25D, Math.min(6.0D, aspectRatio));
+			double farHalfWidth = farHalfHeight * clampedAspectRatio;
 			Vec3 farCenter = eye.add(forward.scale(maxDistance));
 			Vec3 farTopLeft = farCenter.add(up.scale(farHalfHeight)).subtract(right.scale(farHalfWidth));
 			Vec3 farTopRight = farCenter.add(up.scale(farHalfHeight)).add(right.scale(farHalfWidth));

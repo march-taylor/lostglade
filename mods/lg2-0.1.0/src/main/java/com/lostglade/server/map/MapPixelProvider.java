@@ -43,6 +43,14 @@ public interface MapPixelProvider {
 		return new byte[0];
 	}
 
+	default int mapTilesWide() {
+		return 1;
+	}
+
+	default int mapTilesHigh() {
+		return 1;
+	}
+
 	default boolean isValid(MinecraftServer server) {
 		return true;
 	}

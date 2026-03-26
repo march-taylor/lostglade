@@ -21,6 +21,7 @@
 		"EntityTrackedDataAccessor",
 		"GiantMixin",
 		"IllusionerMixin",
+		"ItemFramePhotoMixin",
 		"LivingEntityAbsoluteInvisibilityCombatMixin",
 		"LivingEntityAbsoluteInvisibilityMixin",
 		"LivingEntityCartelDefenseMixin",

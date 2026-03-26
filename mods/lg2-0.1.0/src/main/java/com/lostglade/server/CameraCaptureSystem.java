@@ -1,6 +1,7 @@
 package com.lostglade.server;
 
 import com.lostglade.config.Lg2Config;
+import com.lostglade.item.CameraPhotoSettings;
 import com.lostglade.item.ModItems;
 import com.lostglade.server.camera.bluemap.BlueMapCameraRenderer;
 import com.lostglade.server.map.MapImageRenderSystem;
@@ -68,7 +69,7 @@ public final class CameraCaptureSystem {
 			return false;
 		}
 
-		boolean started = MapImageRenderSystem.startRender(player, createPhotoName(), provider);
+		boolean started = MapImageRenderSystem.startRender(player, createQueuedPhotoName(0), provider);
 		if (!started) {
 			return false;
 		}
@@ -78,7 +79,12 @@ public final class CameraCaptureSystem {
 		return true;
 	}
 
-	private static Component createPhotoName() {
+	public static Component createQueuedPhotoName(int progressPercent) {
+		int clamped = Mth.clamp(progressPercent, 0, 100);
+		return Component.literal(clamped + "%").withStyle(style -> style.withItalic(false));
+	}
+
+	public static Component createCompletedPhotoName() {
 		String timestamp = LocalDateTime.now(ZoneId.systemDefault()).format(PHOTO_NAME_FORMATTER);
 		return Component.literal(timestamp).withStyle(style -> style.withItalic(false));
 	}
@@ -196,15 +202,20 @@ public final class CameraCaptureSystem {
 	private static final class CameraPixelProvider implements MapPixelProvider {
 		private final UUID playerId;
 		private final ResourceKey<Level> dimension;
+		private final int mapsWide;
+		private final int mapsHigh;
 		private final BlueMapCameraRenderer.PreparedFrame preparedFrame;
 
-		private CameraPixelProvider(UUID playerId, ResourceKey<Level> dimension, BlueMapCameraRenderer.PreparedFrame preparedFrame) {
+		private CameraPixelProvider(UUID playerId, ResourceKey<Level> dimension, int mapsWide, int mapsHigh, BlueMapCameraRenderer.PreparedFrame preparedFrame) {
 			this.playerId = playerId;
 			this.dimension = dimension;
+			this.mapsWide = mapsWide;
+			this.mapsHigh = mapsHigh;
 			this.preparedFrame = preparedFrame;
 		}
 
 		private static CameraPixelProvider capture(ServerPlayer player) {
+			CameraPhotoSettings settings = CameraPhotoSettings.read(player.getMainHandItem());
 			Vec3 forward = player.getLookAngle().normalize();
 			Vec3 worldUp = new Vec3(0.0D, 1.0D, 0.0D);
 			Vec3 right = forward.cross(worldUp);
@@ -222,9 +233,11 @@ public final class CameraCaptureSystem {
 					up,
 					MAX_DISTANCE,
 					FOV_DEGREES,
-					supersampling
+					supersampling,
+					settings.mapsWide(),
+					settings.mapsHigh()
 			);
-			return new CameraPixelProvider(player.getUUID(), player.level().dimension(), preparedFrame);
+			return new CameraPixelProvider(player.getUUID(), player.level().dimension(), settings.mapsWide(), settings.mapsHigh(), preparedFrame);
 		}
 
 		@Override
@@ -250,6 +263,16 @@ public final class CameraCaptureSystem {
 		@Override
 		public byte[] renderPreparedFrame(Object preparedFrame) {
 			return BlueMapCameraRenderer.render((BlueMapCameraRenderer.PreparedFrame) preparedFrame);
+		}
+
+		@Override
+		public int mapTilesWide() {
+			return this.mapsWide;
+		}
+
+		@Override
+		public int mapTilesHigh() {
+			return this.mapsHigh;
 		}
 
 		@Override
