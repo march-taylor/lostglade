@@ -147,9 +147,15 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.maxGrowthSeconds, value -> ability.maxGrowthSeconds = value);
 		changed |= normalizeNonNegative(ability.tubochkaBurnSeconds, value -> ability.tubochkaBurnSeconds = value);
 		changed |= normalizeNonNegative(ability.tubochkaMaxReleaseSmokeParticles, value -> ability.tubochkaMaxReleaseSmokeParticles = value);
+		changed |= normalizeNonNegative(ability.methadoneAddictionSeconds, value -> ability.methadoneAddictionSeconds = value);
+		changed |= normalizeNonNegative(ability.methadoneWithdrawalStartSeconds, value -> ability.methadoneWithdrawalStartSeconds = value);
 		changed |= normalizeChance(ability.chance, value -> ability.chance = value);
 		if (ability.maxGrowthSeconds < ability.minGrowthSeconds) {
 			ability.maxGrowthSeconds = ability.minGrowthSeconds;
+			changed = true;
+		}
+		if (ability.methadoneAddictionSeconds > 0.0D && ability.methadoneWithdrawalStartSeconds > ability.methadoneAddictionSeconds) {
+			ability.methadoneWithdrawalStartSeconds = ability.methadoneAddictionSeconds;
 			changed = true;
 		}
 		return changed;
@@ -257,6 +263,8 @@ public final class RaceConfig {
 		public double maxGrowthSeconds = 0.0D;
 		public double tubochkaBurnSeconds = 0.0D;
 		public double tubochkaMaxReleaseSmokeParticles = 8.0D;
+		public double methadoneAddictionSeconds = 0.0D;
+		public double methadoneWithdrawalStartSeconds = 0.0D;
 		public double chance = 0.0D;
 
 		private RaceAbilityConfig() {

@@ -30,5 +30,13 @@
         "preload": true
       }
     ]
+  },
+  "methadone_use": {
+    "sounds": [
+      {
+        "name": "lg2:methadone_use",
+        "preload": true
+      }
+    ]
   }
 }

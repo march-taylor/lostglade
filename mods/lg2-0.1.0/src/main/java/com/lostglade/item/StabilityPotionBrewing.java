@@ -11,7 +11,7 @@ public final class StabilityPotionBrewing {
 	}
 
 	public static boolean isCustomIngredient(ItemStack stack) {
-		return stack.is(ModItems.BITCOIN);
+		return stack.is(ModItems.BITCOIN) || stack.is(ModItems.COCAINE);
 	}
 
 	public static boolean hasCustomMix(ItemStack ingredient, ItemStack input) {
@@ -25,6 +25,9 @@ public final class StabilityPotionBrewing {
 
 		if (ingredient.is(ModItems.BITCOIN) && isAwkwardVanillaPotion(input)) {
 			return new ItemStack(ModItems.STABILITY_POTION);
+		}
+		if (ingredient.is(ModItems.COCAINE) && isMundaneVanillaPotion(input)) {
+			return new ItemStack(ModItems.METHADONE);
 		}
 		if (ingredient.is(Items.REDSTONE) && input.is(ModItems.STABILITY_POTION)) {
 			return new ItemStack(ModItems.LONG_STABILITY_POTION);
@@ -42,5 +45,13 @@ public final class StabilityPotionBrewing {
 		}
 		PotionContents contents = stack.getOrDefault(DataComponents.POTION_CONTENTS, PotionContents.EMPTY);
 		return contents.is(Potions.AWKWARD);
+	}
+
+	private static boolean isMundaneVanillaPotion(ItemStack stack) {
+		if (!stack.is(Items.POTION)) {
+			return false;
+		}
+		PotionContents contents = stack.getOrDefault(DataComponents.POTION_CONTENTS, PotionContents.EMPTY);
+		return contents.is(Potions.MUNDANE);
 	}
 }

@@ -53,9 +53,10 @@ public final class CocaineItem extends SimplePolymerItem {
 	private static final int CARTEL_AFTERMATH_HUNGER_TICKS = 10 * 20;
 	private static final int OTHER_NAUSEA_TICKS = 20 * 20;
 	private static final int OTHER_HUNGER_TICKS = 15 * 20;
-	private static final int CONSUME_SOUND_DELAY_TICKS = 4;
+	private static final int FALLBACK_CONSUME_SOUND_DELAY_TICKS = 4;
+	private static final int PACK_CONSUME_SOUND_DELAY_TICKS = 8;
 	private static final int SOUND_MAX_DISTANCE_SQR = 24 * 24;
-	private static final float SOUND_VOLUME = 0.85F;
+	private static final float SOUND_VOLUME = 0.27F;
 	private static final float PACK_SOUND_PITCH = 1.0F;
 	private static final float FALLBACK_SOUND_PITCH = 0.95F;
 	private static final Consumable CLIENT_ANIM_CONSUMABLE = Consumable.builder()
@@ -66,7 +67,8 @@ public final class CocaineItem extends SimplePolymerItem {
 			.build();
 	private static final Map<UUID, Long> CARTEL_AFTERMATH_HUNGER_TICKS_BY_PLAYER = new HashMap<>();
 	private static final Map<UUID, Long> CARTEL_COCAINE_SPRINT_TICKS_BY_PLAYER = new HashMap<>();
-	private static final Map<UUID, Long> PENDING_CONSUME_SOUND_TICKS_BY_PLAYER = new HashMap<>();
+	private static final Map<UUID, Long> PENDING_FALLBACK_CONSUME_SOUND_TICKS_BY_PLAYER = new HashMap<>();
+	private static final Map<UUID, Long> PENDING_PACK_CONSUME_SOUND_TICKS_BY_PLAYER = new HashMap<>();
 
 	public CocaineItem(Item.Properties settings) {
 		super(settings, Items.SUGAR);
@@ -91,7 +93,9 @@ public final class CocaineItem extends SimplePolymerItem {
 	@Override
 	public InteractionResult use(Level level, Player player, InteractionHand hand) {
 		if (!level.isClientSide() && player instanceof ServerPlayer serverPlayer && level instanceof ServerLevel serverLevel) {
-			PENDING_CONSUME_SOUND_TICKS_BY_PLAYER.put(serverPlayer.getUUID(), serverLevel.getGameTime() + CONSUME_SOUND_DELAY_TICKS);
+			long nowTick = serverLevel.getGameTime();
+			PENDING_FALLBACK_CONSUME_SOUND_TICKS_BY_PLAYER.put(serverPlayer.getUUID(), nowTick + FALLBACK_CONSUME_SOUND_DELAY_TICKS);
+			PENDING_PACK_CONSUME_SOUND_TICKS_BY_PLAYER.put(serverPlayer.getUUID(), nowTick + PACK_CONSUME_SOUND_DELAY_TICKS);
 		}
 		return ItemUtils.startUsingInstantly(level, player, hand);
 	}
@@ -136,7 +140,7 @@ public final class CocaineItem extends SimplePolymerItem {
 
 		long nowTick = server.overworld().getGameTime();
 		CARTEL_COCAINE_SPRINT_TICKS_BY_PLAYER.entrySet().removeIf(entry -> entry.getValue() == null || entry.getValue() <= nowTick);
-		PENDING_CONSUME_SOUND_TICKS_BY_PLAYER.entrySet().removeIf(entry -> {
+		PENDING_FALLBACK_CONSUME_SOUND_TICKS_BY_PLAYER.entrySet().removeIf(entry -> {
 			UUID playerId = entry.getKey();
 			Long dueTick = entry.getValue();
 			if (playerId == null || dueTick == null) {
@@ -151,7 +155,25 @@ public final class CocaineItem extends SimplePolymerItem {
 				return true;
 			}
 
-			playConsumeSound(player);
+			playConsumeSound(player, false);
+			return true;
+		});
+		PENDING_PACK_CONSUME_SOUND_TICKS_BY_PLAYER.entrySet().removeIf(entry -> {
+			UUID playerId = entry.getKey();
+			Long dueTick = entry.getValue();
+			if (playerId == null || dueTick == null) {
+				return true;
+			}
+			if (dueTick > nowTick) {
+				return false;
+			}
+
+			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+			if (player == null || !player.isUsingItem() || !(player.getUseItem().getItem() instanceof CocaineItem)) {
+				return true;
+			}
+
+			playConsumeSound(player, true);
 			return true;
 		});
 		if (CARTEL_AFTERMATH_HUNGER_TICKS_BY_PLAYER.isEmpty()) {
@@ -202,7 +224,7 @@ public final class CocaineItem extends SimplePolymerItem {
 		player.addEffect(new MobEffectInstance(MobEffects.HUNGER, OTHER_HUNGER_TICKS, 49));
 	}
 
-	private static void playConsumeSound(ServerPlayer consumer) {
+	private static void playConsumeSound(ServerPlayer consumer, boolean packViewers) {
 		if (consumer == null || !(consumer.level() instanceof ServerLevel level)) {
 			return;
 		}
@@ -215,7 +237,11 @@ public final class CocaineItem extends SimplePolymerItem {
 			}
 
 			boolean hasPack = PolymerResourcePackUtils.hasMainPack(viewer);
-			Holder<SoundEvent> sound = hasPack
+			if (hasPack != packViewers) {
+				continue;
+			}
+
+			Holder<SoundEvent> sound = packViewers
 					? COCAINE_CONSUME_SOUND
 					: BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.SNIFFER_SCENTING);
 			float pitch = hasPack ? PACK_SOUND_PITCH : FALLBACK_SOUND_PITCH;
