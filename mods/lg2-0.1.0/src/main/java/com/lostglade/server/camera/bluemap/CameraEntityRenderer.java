@@ -125,6 +125,7 @@ final class CameraEntityRenderer {
 	private static final Identifier ENDERMAN_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/enderman/enderman");
 	private static final Identifier ENDERMAN_EYES_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/enderman/enderman_eyes");
 	private static final Identifier SHEEP_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/sheep/sheep");
+	private static final Identifier SHEEP_WOOL_UNDERCOAT_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/sheep/sheep_wool_undercoat");
 	private static final Identifier SHEEP_WOOL_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/sheep/sheep_wool");
 	private static final Identifier ARMOR_STAND_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/armorstand/wood");
 	private static final Identifier VILLAGER_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/villager/villager");
@@ -1839,6 +1840,17 @@ final class CameraEntityRenderer {
 				false
 		));
 		if (!sheep.isSheared()) {
+			boolean coloredUndercoat = sheep.hasCustomName()
+					&& "jeb_".equals(sheep.getName().getString())
+					|| sheep.getColor() != net.minecraft.world.item.DyeColor.WHITE;
+			if (coloredUndercoat) {
+				layers.add(new ClientLayerSnapshot(
+						"net.minecraft.client.model.animal.sheep.SheepModel",
+						SHEEP_WOOL_UNDERCOAT_TEXTURE,
+						sheep.getColor().getTextureDiffuseColor(),
+						false
+				).withFactory("createBodyLayer").withRenderScale(1.001F));
+			}
 			layers.add(new ClientLayerSnapshot(
 					"net.minecraft.client.model.animal.sheep.SheepFurModel",
 					SHEEP_WOOL_TEXTURE,
@@ -6453,14 +6465,26 @@ final class CameraEntityRenderer {
 					Object state = adapter.newState(stateFields);
 					adapter.resetPose();
 					adapter.setupAnim(state);
-					float red = ((layer.tintRgb() >> 16) & 0xFF) / 255.0F;
-					float green = ((layer.tintRgb() >> 8) & 0xFF) / 255.0F;
-					float blue = (layer.tintRgb() & 0xFF) / 255.0F;
+					int tintRgb = layerTintRgb(stateFields, layer);
+					float red = ((tintRgb >> 16) & 0xFF) / 255.0F;
+					float green = ((tintRgb >> 8) & 0xFF) / 255.0F;
+					float blue = (tintRgb & 0xFF) / 255.0F;
 					Matrix4f layerRoot = Mth.equal(layer.renderScale(), 1.0F) ? root : new Matrix4f(root).scale(layer.renderScale());
 					renderPartTree(bridge, context, adapter.rootPart, layerRoot, material, red, green, blue, layer.emissive());
 				}
 			} catch (Exception ignored) {
 			}
+		}
+
+		private static int layerTintRgb(Map<String, Object> stateFields, ClientLayerSnapshot layer) {
+			if (layer.texture() != null
+					&& (SHEEP_WOOL_TEXTURE.equals(layer.texture()) || SHEEP_WOOL_UNDERCOAT_TEXTURE.equals(layer.texture()))) {
+				Object woolColor = stateFields.get("woolColor");
+				if (woolColor instanceof net.minecraft.world.item.DyeColor dyeColor) {
+					return dyeColor.getTextureDiffuseColor();
+				}
+			}
+			return layer.tintRgb();
 		}
 
 		private static void renderHumanoidArmorLayer(
