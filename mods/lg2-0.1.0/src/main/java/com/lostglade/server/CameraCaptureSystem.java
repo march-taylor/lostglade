@@ -5,24 +5,42 @@ import com.lostglade.item.ModItems;
 import com.lostglade.server.camera.bluemap.BlueMapCameraRenderer;
 import com.lostglade.server.map.MapImageRenderSystem;
 import com.lostglade.server.map.MapPixelProvider;
+import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
+import net.minecraft.core.Holder;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import java.util.UUID;
 
 public final class CameraCaptureSystem {
 	private static final String IT_CAMERA = "it_camera";
-	private static final Component PHOTO_NAME = Component.literal("фотография").withStyle(style -> style.withItalic(false));
+	private static final Identifier CAMERA_SHUTTER_SOUND_ID = Identifier.fromNamespaceAndPath("lg2", "camera_shutter");
+	private static final Holder<SoundEvent> CAMERA_SHUTTER_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(CAMERA_SHUTTER_SOUND_ID));
 	private static final int CAMERA_COOLDOWN_TICKS = 40;
 	private static final double MAX_DISTANCE = 96.0D;
 	private static final float FOV_DEGREES = 70.0F;
+	private static final double MAX_SHUTTER_SOUND_DISTANCE_SQR = 24.0D * 24.0D;
+	private static final float SHUTTER_SOUND_VOLUME = 0.45F;
+	private static final float SHUTTER_SOUND_PITCH = 1.0F;
+	private static final DateTimeFormatter PHOTO_NAME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
 	private CameraCaptureSystem() {
 	}
@@ -39,7 +57,7 @@ public final class CameraCaptureSystem {
 			return false;
 		}
 		if (MapImageRenderSystem.hasActiveRender(player.getUUID())) {
-			player.displayClientMessage(Component.literal("Камера уже обрабатывает предыдущий снимок."), true);
+			player.displayClientMessage(cameraBusyMessage(player), true);
 			return false;
 		}
 
@@ -47,18 +65,142 @@ public final class CameraCaptureSystem {
 		try {
 			provider = CameraPixelProvider.capture(player);
 		} catch (Exception exception) {
-			player.displayClientMessage(Component.literal("Не удалось подготовить снимок."), true);
+			player.displayClientMessage(capturePrepareFailedMessage(player), true);
 			return false;
 		}
 
-		boolean started = MapImageRenderSystem.startRender(player, PHOTO_NAME, provider);
+		boolean started = MapImageRenderSystem.startRender(player, createPhotoName(), provider);
 		if (!started) {
 			return false;
 		}
 
 		player.getCooldowns().addCooldown(stack, CAMERA_COOLDOWN_TICKS);
-		player.playSound(SoundEvents.UI_BUTTON_CLICK.value(), 0.5F, 1.35F);
+		playShutterFeedback(player);
+		emitCaptureParticles(player);
 		return true;
+	}
+
+	private static Component createPhotoName() {
+		String timestamp = LocalDateTime.now(ZoneId.systemDefault()).format(PHOTO_NAME_FORMATTER);
+		return Component.literal(timestamp).withStyle(style -> style.withItalic(false));
+	}
+
+	private static Component cameraBusyMessage(ServerPlayer player) {
+		String locale = locale(player);
+		if (locale.startsWith("rpr")) {
+			return Component.literal("Камѣра уже обрабатываеть предыдущее снимокъ.");
+		}
+		if (locale.startsWith("uk")) {
+			return Component.literal("Камера вже обробляє попередній знімок.");
+		}
+		if (locale.startsWith("ja")) {
+			return Component.literal("カメラは前の写真をまだ処理中です。");
+		}
+		if (locale.startsWith("ru")) {
+			return Component.literal("Камера уже обрабатывает предыдущий снимок.");
+		}
+		return Component.literal("The camera is still processing the previous photo.");
+	}
+
+	private static Component capturePrepareFailedMessage(ServerPlayer player) {
+		String locale = locale(player);
+		if (locale.startsWith("rpr")) {
+			return Component.literal("Не удалось подготовить снимокъ.");
+		}
+		if (locale.startsWith("uk")) {
+			return Component.literal("Не вдалося підготувати знімок.");
+		}
+		if (locale.startsWith("ja")) {
+			return Component.literal("写真の準備に失敗しました。");
+		}
+		if (locale.startsWith("ru")) {
+			return Component.literal("Не удалось подготовить снимок.");
+		}
+		return Component.literal("Couldn't prepare the photo.");
+	}
+
+	public static Component captureCompletedMessage(ServerPlayer player) {
+		String locale = locale(player);
+		if (locale.startsWith("rpr")) {
+			return Component.literal("Снимокъ готовъ.");
+		}
+		if (locale.startsWith("uk")) {
+			return Component.literal("Знімок готовий.");
+		}
+		if (locale.startsWith("ja")) {
+			return Component.literal("写真の準備ができました。");
+		}
+		if (locale.startsWith("ru")) {
+			return Component.literal("Снимок готов.");
+		}
+		return Component.literal("Photo ready.");
+	}
+
+	public static Component queuedForRenderMessage(ServerPlayer player) {
+		String locale = locale(player);
+		if (locale.startsWith("rpr")) {
+			return Component.literal("Снимокъ поставленъ въ рендеръ.");
+		}
+		if (locale.startsWith("uk")) {
+			return Component.literal("Знімок поставлено в рендер.");
+		}
+		if (locale.startsWith("ja")) {
+			return Component.literal("写真をレンダーに送信しました。");
+		}
+		if (locale.startsWith("ru")) {
+			return Component.literal("Снимок поставлен в рендер.");
+		}
+		return Component.literal("Photo sent to render.");
+	}
+
+	public static Component addedToRenderQueueMessage(ServerPlayer player) {
+		String locale = locale(player);
+		if (locale.startsWith("rpr")) {
+			return Component.literal("Снимокъ добавленъ въ очередь рендера.");
+		}
+		if (locale.startsWith("uk")) {
+			return Component.literal("Знімок додано в чергу рендера.");
+		}
+		if (locale.startsWith("ja")) {
+			return Component.literal("写真をレンダー待ちキューに追加しました。");
+		}
+		if (locale.startsWith("ru")) {
+			return Component.literal("Снимок добавлен в очередь рендера.");
+		}
+		return Component.literal("Photo added to the render queue.");
+	}
+
+	private static String locale(ServerPlayer player) {
+		if (player == null || player.clientInformation() == null || player.clientInformation().language() == null) {
+			return "en_us";
+		}
+		return player.clientInformation().language().toLowerCase(Locale.ROOT);
+	}
+
+	private static void playShutterFeedback(ServerPlayer player) {
+		ServerLevel level = (ServerLevel) player.level();
+		Vec3 origin = player.getEyePosition().add(player.getLookAngle().normalize().scale(0.35D));
+		long seed = level.getRandom().nextLong();
+
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer.distanceToSqr(origin.x, origin.y, origin.z) > MAX_SHUTTER_SOUND_DISTANCE_SQR) {
+				continue;
+			}
+
+			Holder<SoundEvent> sound = PolymerResourcePackUtils.hasMainPack(viewer)
+					? CAMERA_SHUTTER_SOUND
+					: BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.UI_BUTTON_CLICK.value());
+			float pitch = PolymerResourcePackUtils.hasMainPack(viewer) ? SHUTTER_SOUND_PITCH : 1.2F;
+			viewer.connection.send(new ClientboundSoundPacket(sound, SoundSource.PLAYERS, origin.x, origin.y, origin.z, SHUTTER_SOUND_VOLUME, pitch, seed));
+		}
+	}
+
+	private static void emitCaptureParticles(ServerPlayer player) {
+		ServerLevel level = (ServerLevel) player.level();
+		Vec3 forward = player.getLookAngle().normalize();
+		Vec3 origin = player.getEyePosition().add(forward.scale(0.45D));
+		level.sendParticles(ParticleTypes.FIREWORK, origin.x, origin.y, origin.z, 1, 0.01D, 0.01D, 0.01D, 0.0D);
+		level.sendParticles(ParticleTypes.POOF, origin.x, origin.y, origin.z, 2, 0.025D, 0.025D, 0.025D, 0.01D);
 	}
 
 	private static final class CameraPixelProvider implements MapPixelProvider {
@@ -127,7 +269,7 @@ public final class CameraCaptureSystem {
 
 		@Override
 		public Component completedMessage() {
-			return Component.literal("Снимок готов.");
+			return Component.literal("Photo ready.");
 		}
 	}
 }

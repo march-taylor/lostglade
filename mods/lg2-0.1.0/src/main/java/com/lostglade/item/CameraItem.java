@@ -21,7 +21,7 @@ public final class CameraItem extends SimplePolymerItem {
 	private static final Identifier MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera");
 
 	public CameraItem(Item.Properties settings) {
-		super(settings, Items.GOAT_HORN);
+		super(settings, Items.FILLED_MAP);
 	}
 
 	@Override

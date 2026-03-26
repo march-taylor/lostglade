@@ -2,15 +2,23 @@ package com.lostglade.server.map;
 
 import com.lostglade.Lg2;
 import com.lostglade.config.Lg2Config;
+import com.lostglade.server.CameraCaptureSystem;
 import com.lostglade.server.ServerMechanicsGateSystem;
+import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
+import net.minecraft.core.Holder;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.MapItem;
@@ -29,6 +37,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 
 public final class MapImageRenderSystem {
+	private static final Identifier CAMERA_PRINT_SOUND_ID = Identifier.fromNamespaceAndPath("lg2", "camera_print");
+	private static final Holder<SoundEvent> CAMERA_PRINT_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(CAMERA_PRINT_SOUND_ID));
+	private static final float CAMERA_PRINT_VOLUME = 0.55F;
+	private static final float CAMERA_PRINT_PITCH = 1.0F;
 	private static final int MAP_SIZE = 128;
 	private static final int RESULTS_APPLIED_PER_TICK = 384;
 	private static final int FRAME_PIXELS_APPLIED_PER_TICK = 4096;
@@ -77,9 +89,9 @@ public final class MapImageRenderSystem {
 		QUEUE.offer(player.getUUID());
 		if (activePlayerId == null) {
 			activePlayerId = player.getUUID();
-			player.displayClientMessage(Component.literal("Снимок поставлен в рендер."), true);
+			player.displayClientMessage(CameraCaptureSystem.queuedForRenderMessage(player), true);
 		} else {
-			player.displayClientMessage(Component.literal("Снимок добавлен в очередь рендера."), true);
+			player.displayClientMessage(CameraCaptureSystem.addedToRenderQueueMessage(player), true);
 		}
 		return true;
 	}
@@ -187,8 +199,8 @@ public final class MapImageRenderSystem {
 
 		if (job.isDone() && !job.hasDispatchedPixels()) {
 			job.provider().onCompleted(server);
-			player.displayClientMessage(job.provider().completedMessage(), true);
-			player.playSound(SoundEvents.EXPERIENCE_ORB_PICKUP, 0.4F, 1.4F);
+			player.displayClientMessage(CameraCaptureSystem.captureCompletedMessage(player), true);
+			playCompletionSound(player);
 			removeJob(job.playerId());
 			pollNextActive();
 		}
@@ -252,11 +264,28 @@ public final class MapImageRenderSystem {
 
 		if (job.frameApplyIndex() >= MAP_SIZE * MAP_SIZE) {
 			job.provider().onCompleted(server);
-			player.displayClientMessage(job.provider().completedMessage(), true);
-			player.playSound(SoundEvents.EXPERIENCE_ORB_PICKUP, 0.4F, 1.4F);
+			player.displayClientMessage(CameraCaptureSystem.captureCompletedMessage(player), true);
+			playCompletionSound(player);
 			removeJob(job.playerId());
 			pollNextActive();
 		}
+	}
+
+	private static void playCompletionSound(ServerPlayer player) {
+		Holder<SoundEvent> sound = PolymerResourcePackUtils.hasMainPack(player)
+				? CAMERA_PRINT_SOUND
+				: BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.EXPERIENCE_ORB_PICKUP);
+		float pitch = PolymerResourcePackUtils.hasMainPack(player) ? CAMERA_PRINT_PITCH : 1.15F;
+		player.connection.send(new ClientboundSoundPacket(
+				sound,
+				SoundSource.PLAYERS,
+				player.getX(),
+				player.getY(),
+				player.getZ(),
+				CAMERA_PRINT_VOLUME,
+				pitch,
+				player.level().getRandom().nextLong()
+		));
 	}
 
 	private static void normalizeQueue() {
