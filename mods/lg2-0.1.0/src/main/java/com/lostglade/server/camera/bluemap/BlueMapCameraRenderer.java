@@ -179,7 +179,7 @@ public final class BlueMapCameraRenderer {
 				int materialId = textureGallery.get(path);
 				Texture texture = path.getResource();
 				if (texture != null) {
-					materials.put(materialId, TextureMaterial.from(texture));
+					materials.put(materialId, TextureMaterial.from(texture, path));
 				}
 			}
 			if (!materials.containsKey(0)) {
@@ -1002,38 +1002,67 @@ public final class BlueMapCameraRenderer {
 		private final int[] pixels;
 		private final boolean transparent;
 		private final boolean cutout;
+		private final boolean cameraFriendlyGlass;
+		private final float cameraAlphaScale;
+		private final float cameraShadeFloor;
+		private final float cameraAoFloor;
 		private final boolean grayscale;
 		private final float averageLuma;
 		private final float detailContrast;
 
-		private TextureMaterial(int width, int height, int[] pixels, boolean transparent, boolean cutout, boolean grayscale, float averageLuma, float detailContrast) {
+		private TextureMaterial(
+				int width,
+				int height,
+				int[] pixels,
+				boolean transparent,
+				boolean cutout,
+				boolean cameraFriendlyGlass,
+				float cameraAlphaScale,
+				float cameraShadeFloor,
+				float cameraAoFloor,
+				boolean grayscale,
+				float averageLuma,
+				float detailContrast
+		) {
 			this.width = width;
 			this.height = height;
 			this.pixels = pixels;
 			this.transparent = transparent;
 			this.cutout = cutout;
+			this.cameraFriendlyGlass = cameraFriendlyGlass;
+			this.cameraAlphaScale = cameraAlphaScale;
+			this.cameraShadeFloor = cameraShadeFloor;
+			this.cameraAoFloor = cameraAoFloor;
 			this.grayscale = grayscale;
 			this.averageLuma = averageLuma;
 			this.detailContrast = detailContrast;
 		}
 
 		private static TextureMaterial from(Texture texture) {
+			return from(texture, null);
+		}
+
+		private static TextureMaterial from(Texture texture, ResourcePath<Texture> resourcePath) {
 			try {
 				BufferedImage image = texture.getTextureImage();
 				if (image == null) {
 					return missing();
 				}
-				return fromImage(selectRenderableFrame(texture, image));
+				return fromImage(selectRenderableFrame(texture, image), resourcePath == null ? null : resourcePath.getValue());
 			} catch (IOException exception) {
 				return missing();
 			}
 		}
 
 		static TextureMaterial missing() {
-			return new TextureMaterial(1, 1, new int[]{0xFFFF00FF}, false, false, false, 1.0F, 1.0F);
+			return new TextureMaterial(1, 1, new int[]{0xFFFF00FF}, false, false, false, 1.0F, 0.0F, 0.0F, false, 1.0F, 1.0F);
 		}
 
 		static TextureMaterial fromImage(BufferedImage image) {
+			return fromImage(image, null);
+		}
+
+		private static TextureMaterial fromImage(BufferedImage image, String texturePath) {
 			if (image == null) {
 				return missing();
 			}
@@ -1079,7 +1108,38 @@ public final class BlueMapCameraRenderer {
 				detailContrast = TINTED_GRAYSCALE_CONTRAST_BOOST;
 			}
 			boolean cutout = transparent && !partialAlpha;
-			return new TextureMaterial(width, height, pixels, transparent, cutout, grayscale, averageLuma, detailContrast);
+			GlassMaterialProfile glassProfile = glassProfile(texturePath);
+			return new TextureMaterial(
+					width,
+					height,
+					pixels,
+					transparent,
+					cutout,
+					glassProfile.enabled(),
+					glassProfile.alphaScale(),
+					glassProfile.shadeFloor(),
+					glassProfile.aoFloor(),
+					grayscale,
+					averageLuma,
+					detailContrast
+			);
+		}
+
+		private static GlassMaterialProfile glassProfile(String texturePath) {
+			if (texturePath == null || !texturePath.startsWith("block/")) {
+				return GlassMaterialProfile.DISABLED;
+			}
+			if (texturePath.equals("block/glass") || texturePath.endsWith("_stained_glass")) {
+				return new GlassMaterialProfile(true, 0.24F, 0.94F, 0.97F);
+			}
+			if (texturePath.equals("block/tinted_glass")) {
+				return new GlassMaterialProfile(true, 0.38F, 0.88F, 0.94F);
+			}
+			return GlassMaterialProfile.DISABLED;
+		}
+
+		private record GlassMaterialProfile(boolean enabled, float alphaScale, float shadeFloor, float aoFloor) {
+			private static final GlassMaterialProfile DISABLED = new GlassMaterialProfile(false, 1.0F, 0.0F, 0.0F);
 		}
 
 		private static BufferedImage selectRenderableFrame(Texture texture, BufferedImage image) {
@@ -1699,6 +1759,10 @@ public final class BlueMapCameraRenderer {
 				int x = BlockPos.getX(packedPos);
 				int y = BlockPos.getY(packedPos);
 				int z = BlockPos.getZ(packedPos);
+				if (isCameraFriendlyGlassBlock(snapshotBlock.state())) {
+					renderCameraFriendlyGlassBlock(model, snapshot, snapshotBlock, x, y, z);
+					continue;
+				}
 				neighborhood.set(x, y, z);
 				tileModelView.initialize();
 				int triangleStart = tileModelView.getStart();
@@ -1773,6 +1837,100 @@ public final class BlueMapCameraRenderer {
 			} else {
 				tileModelView.initialize(triangleStart);
 			}
+		}
+
+		private boolean isCameraFriendlyGlassBlock(BlockState blockState) {
+			if (blockState == null) {
+				return false;
+			}
+			Key id = blockState.getId();
+			if (!Key.MINECRAFT_NAMESPACE.equals(id.getNamespace())) {
+				return false;
+			}
+			String value = id.getValue();
+			return "glass".equals(value)
+					|| "tinted_glass".equals(value)
+					|| value.endsWith("_stained_glass");
+		}
+
+		private void renderCameraFriendlyGlassBlock(ArrayTileModel model, WorldSnapshot snapshot, SnapshotBlock snapshotBlock, int x, int y, int z) {
+			int materialId = glassMaterialId(snapshotBlock.state());
+			if (materialId < 0) {
+				return;
+			}
+			Key stateId = snapshotBlock.state().getId();
+			int skyLight = snapshotBlock.light().getSkyLight();
+			int blockLight = snapshotBlock.light().getBlockLight();
+			float x0 = x;
+			float x1 = x + 1.0F;
+			float y0 = y;
+			float y1 = y + 1.0F;
+			float z0 = z;
+			float z1 = z + 1.0F;
+
+			if (!matchesCameraFriendlyGlass(snapshot, stateId, x, y + 1, z)) {
+				addGlassQuad(model, materialId, skyLight, blockLight, x0, y1, z1, x1, y1, z1, x1, y1, z0, x0, y1, z0);
+			}
+			if (!matchesCameraFriendlyGlass(snapshot, stateId, x, y - 1, z)) {
+				addGlassQuad(model, materialId, skyLight, blockLight, x0, y0, z0, x1, y0, z0, x1, y0, z1, x0, y0, z1);
+			}
+			if (!matchesCameraFriendlyGlass(snapshot, stateId, x, y, z + 1)) {
+				addGlassQuad(model, materialId, skyLight, blockLight, x0, y1, z1, x0, y0, z1, x1, y0, z1, x1, y1, z1);
+			}
+			if (!matchesCameraFriendlyGlass(snapshot, stateId, x, y, z - 1)) {
+				addGlassQuad(model, materialId, skyLight, blockLight, x1, y1, z0, x1, y0, z0, x0, y0, z0, x0, y1, z0);
+			}
+			if (!matchesCameraFriendlyGlass(snapshot, stateId, x + 1, y, z)) {
+				addGlassQuad(model, materialId, skyLight, blockLight, x1, y1, z1, x1, y0, z1, x1, y0, z0, x1, y1, z0);
+			}
+			if (!matchesCameraFriendlyGlass(snapshot, stateId, x - 1, y, z)) {
+				addGlassQuad(model, materialId, skyLight, blockLight, x0, y1, z0, x0, y0, z0, x0, y0, z1, x0, y1, z1);
+			}
+		}
+
+		private boolean matchesCameraFriendlyGlass(WorldSnapshot snapshot, Key stateId, int x, int y, int z) {
+			SnapshotBlock neighbor = snapshot.blockAt(x, y, z);
+			return neighbor != null && stateId.equals(neighbor.state().getId());
+		}
+
+		private int glassMaterialId(BlockState blockState) {
+			if (blockState == null) {
+				return -1;
+			}
+			Key id = blockState.getId();
+			Identifier textureId = Identifier.fromNamespaceAndPath(id.getNamespace(), "block/" + id.getValue());
+			int materialId = this.resources.textureGallery().get(new ResourcePath<>(textureId.getNamespace(), textureId.getPath()));
+			if (this.resources.materials().containsKey(materialId)) {
+				return materialId;
+			}
+			return -1;
+		}
+
+		private void addGlassQuad(
+				ArrayTileModel model,
+				int materialId,
+				int skyLight,
+				int blockLight,
+				float ax, float ay, float az,
+				float bx, float by, float bz,
+				float cx, float cy, float cz,
+				float dx, float dy, float dz
+		) {
+			int firstTriangle = model.add(2);
+			model.setPositions(firstTriangle, ax, ay, az, bx, by, bz, cx, cy, cz)
+					.setUvs(firstTriangle, 0.0F, 0.0F, 0.0F, 1.0F, 1.0F, 1.0F)
+					.setAOs(firstTriangle, 1.0F, 1.0F, 1.0F)
+					.setColor(firstTriangle, 1.0F, 1.0F, 1.0F)
+					.setSunlight(firstTriangle, skyLight)
+					.setBlocklight(firstTriangle, blockLight)
+					.setMaterialIndex(firstTriangle, materialId);
+			model.setPositions(firstTriangle + 1, ax, ay, az, cx, cy, cz, dx, dy, dz)
+					.setUvs(firstTriangle + 1, 0.0F, 0.0F, 1.0F, 1.0F, 1.0F, 0.0F)
+					.setAOs(firstTriangle + 1, 1.0F, 1.0F, 1.0F)
+					.setColor(firstTriangle + 1, 1.0F, 1.0F, 1.0F)
+					.setSunlight(firstTriangle + 1, skyLight)
+					.setBlocklight(firstTriangle + 1, blockLight)
+					.setMaterialIndex(firstTriangle + 1, materialId);
 		}
 
 		private int materialForTexture(Identifier textureId) {
@@ -2165,21 +2323,37 @@ public final class BlueMapCameraRenderer {
 						alpha = 1.0F;
 					}
 
-					float redLinear;
-					float greenLinear;
-					float blueLinear;
-					if (material.transparent && !material.cutout) {
-						float skylightMix = sunlightLevel * Mth.lerp(this.frame.environment().sunlightStrength(), 0.18F, 1.0F);
-						float blocklightMix = blocklightLevel <= 0.0F ? 0.0F : Mth.lerp(blocklightLevel, 0.15F, 1.0F);
-						float ambientFloor = Mth.clamp(this.frame.environment().ambientLight() * 0.45F + 0.22F, 0.22F, 0.42F);
-						float lightMix = Math.max(Math.max(skylightMix, blocklightMix), ambientFloor);
-						float aoShade = Mth.lerp(Mth.clamp(ao, 0.0F, 1.0F), 0.58F, 1.0F);
-						float shade = triangle.faceShade() * quantizeLight(lightMix) * aoShade;
-						if (depth > 64.0F && this.frame.maxDistance() > 64.0D) {
-							float fade = Mth.clamp((depth - 64.0F) / (float) (this.frame.maxDistance() - 64.0D), 0.0F, 1.0F);
-							shade *= Mth.lerp(fade, 1.0F, 0.78F);
+						float redLinear;
+						float greenLinear;
+						float blueLinear;
+						if (material.transparent && !material.cutout) {
+							float shade;
+							if (material.cameraFriendlyGlass) {
+								float sourceAlpha = alpha;
+								float edgeWeight = smoothstep(0.44F, 0.62F, sourceAlpha);
+								float skylightMix = sunlightLevel * Mth.lerp(this.frame.environment().sunlightStrength(), 0.72F, 1.0F);
+								float blocklightMix = blocklightLevel <= 0.0F ? 0.0F : Mth.lerp(blocklightLevel, 0.55F, 1.0F);
+								float transmission = Math.max(Math.max(skylightMix, blocklightMix), material.cameraShadeFloor);
+								float aoShade = Math.max(Mth.clamp(ao, 0.0F, 1.0F), material.cameraAoFloor);
+								float faceShade = Math.max(triangle.faceShade(), material.cameraShadeFloor);
+								shade = Mth.clamp(faceShade * aoShade * transmission, material.cameraShadeFloor, 1.0F);
+								alpha = sourceAlpha * Mth.lerp(material.cameraAlphaScale, 0.78F, edgeWeight);
+							} else {
+							float skylightMix = sunlightLevel * Mth.lerp(this.frame.environment().sunlightStrength(), 0.18F, 1.0F);
+							float blocklightMix = blocklightLevel <= 0.0F ? 0.0F : Mth.lerp(blocklightLevel, 0.15F, 1.0F);
+							float ambientFloor = Mth.clamp(this.frame.environment().ambientLight() * 0.45F + 0.22F, 0.22F, 0.42F);
+							float lightMix = Math.max(Math.max(skylightMix, blocklightMix), ambientFloor);
+							float aoShade = Mth.lerp(Mth.clamp(ao, 0.0F, 1.0F), 0.58F, 1.0F);
+							shade = triangle.faceShade() * quantizeLight(lightMix) * aoShade;
+							if (depth > 64.0F && this.frame.maxDistance() > 64.0D) {
+								float fade = Mth.clamp((depth - 64.0F) / (float) (this.frame.maxDistance() - 64.0D), 0.0F, 1.0F);
+								shade *= Mth.lerp(fade, 1.0F, 0.78F);
+							}
+							shade = Mth.clamp(shade, 0.0F, 1.0F);
 						}
-						shade = Mth.clamp(shade, 0.0F, 1.0F);
+						if (alpha <= 0.01F) {
+							continue;
+						}
 						redLinear = toLinear((argb >> 16) & 0xFF) * triangle.colorR() * shade;
 						greenLinear = toLinear((argb >> 8) & 0xFF) * triangle.colorG() * shade;
 						blueLinear = toLinear(argb & 0xFF) * triangle.colorB() * shade;
