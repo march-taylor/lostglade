@@ -154,7 +154,7 @@ public final class ServerRaceSystem {
 	);
 	private static final int CARTEL_PASSPORT_NAME_CHAR_ADVANCE = 5;
 	private static final int CARTEL_PASSPORT_NAME_MIN_X = 18;
-	private static final int CARTEL_PASSPORT_NAME_CENTER_X = 144;
+	private static final int CARTEL_PASSPORT_NAME_CENTER_X = 128;
 	private static final int CARTEL_PASSPORT_OVERLAY_X_OFFSET = 168;
 	private static final int MISTER_CARTEL_49_STACK_LIMIT = 49;
 	private static final String CARTEL_SUMMON_TAG = "lg2.cartel_summon";
