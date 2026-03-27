@@ -204,13 +204,15 @@ public final class CameraCaptureSystem {
 		private final ResourceKey<Level> dimension;
 		private final int mapsWide;
 		private final int mapsHigh;
+		private final BlueMapCameraRenderer.PreparedFrame previewPreparedFrame;
 		private final BlueMapCameraRenderer.PreparedFrame preparedFrame;
 
-		private CameraPixelProvider(UUID playerId, ResourceKey<Level> dimension, int mapsWide, int mapsHigh, BlueMapCameraRenderer.PreparedFrame preparedFrame) {
+		private CameraPixelProvider(UUID playerId, ResourceKey<Level> dimension, int mapsWide, int mapsHigh, BlueMapCameraRenderer.PreparedFrame previewPreparedFrame, BlueMapCameraRenderer.PreparedFrame preparedFrame) {
 			this.playerId = playerId;
 			this.dimension = dimension;
 			this.mapsWide = mapsWide;
 			this.mapsHigh = mapsHigh;
+			this.previewPreparedFrame = previewPreparedFrame;
 			this.preparedFrame = preparedFrame;
 		}
 
@@ -226,7 +228,7 @@ public final class CameraCaptureSystem {
 			}
 			Vec3 up = right.cross(forward).normalize();
 			int supersampling = Mth.clamp(Lg2Config.get().cameraRenderSamplesPerAxis, 1, 4);
-			BlueMapCameraRenderer.PreparedFrame preparedFrame = BlueMapCameraRenderer.capture(
+			BlueMapCameraRenderer.PreparedFrame previewPreparedFrame = BlueMapCameraRenderer.capture(
 					player,
 					forward,
 					right,
@@ -234,10 +236,23 @@ public final class CameraCaptureSystem {
 					MAX_DISTANCE,
 					FOV_DEGREES,
 					supersampling,
-					settings.mapsWide(),
-					settings.mapsHigh()
+					1,
+					1
 			);
-			return new CameraPixelProvider(player.getUUID(), player.level().dimension(), settings.mapsWide(), settings.mapsHigh(), preparedFrame);
+			BlueMapCameraRenderer.PreparedFrame preparedFrame = settings.mapsWide() == 1 && settings.mapsHigh() == 1
+					? previewPreparedFrame
+					: BlueMapCameraRenderer.capture(
+							player,
+							forward,
+							right,
+							up,
+							MAX_DISTANCE,
+							FOV_DEGREES,
+							supersampling,
+							settings.mapsWide(),
+							settings.mapsHigh()
+					);
+			return new CameraPixelProvider(player.getUUID(), player.level().dimension(), settings.mapsWide(), settings.mapsHigh(), previewPreparedFrame, preparedFrame);
 		}
 
 		@Override
@@ -263,6 +278,11 @@ public final class CameraCaptureSystem {
 		@Override
 		public byte[] renderPreparedFrame(Object preparedFrame) {
 			return BlueMapCameraRenderer.render((BlueMapCameraRenderer.PreparedFrame) preparedFrame);
+		}
+
+		@Override
+		public byte[] renderImmediatePreview(MinecraftServer server) {
+			return BlueMapCameraRenderer.render(this.previewPreparedFrame);
 		}
 
 		@Override

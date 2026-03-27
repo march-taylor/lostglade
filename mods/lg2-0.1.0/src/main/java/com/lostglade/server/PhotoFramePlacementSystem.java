@@ -2,6 +2,7 @@ package com.lostglade.server;
 
 import com.lostglade.item.ModItems;
 import com.lostglade.item.PhotoPrintData;
+import com.lostglade.server.map.MapImageRenderSystem;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -134,6 +135,7 @@ public final class PhotoFramePlacementSystem {
 		clearPlacedPhoto(level, frameData);
 		giveOrDrop(player, photoItem);
 		ServerMechanicsGateSystem.syncPlayerInventory(player);
+		MapImageRenderSystem.sendPhotoPreviewMap(player, photoItem);
 		return true;
 	}
 
