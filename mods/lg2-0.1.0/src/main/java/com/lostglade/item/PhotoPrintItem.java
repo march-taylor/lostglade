@@ -22,8 +22,8 @@ public final class PhotoPrintItem extends SimplePolymerItem {
 	@Override
 	public void modifyBasePolymerItemStack(ItemStack out, ItemStack original, PacketContext context) {
 		PhotoPrintData data = PhotoPrintData.readPhotoItem(original);
-		if (data != null && data.firstMapId() >= 0) {
-			out.set(DataComponents.MAP_ID, new MapId(data.firstMapId()));
+		if (data != null && data.previewMapId() >= 0) {
+			out.set(DataComponents.MAP_ID, new MapId(data.previewMapId()));
 		}
 		Component customName = original.get(DataComponents.CUSTOM_NAME);
 		if (customName != null) {

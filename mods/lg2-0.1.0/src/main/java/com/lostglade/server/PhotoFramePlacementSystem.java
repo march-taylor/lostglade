@@ -2,6 +2,7 @@ package com.lostglade.server;
 
 import com.lostglade.item.ModItems;
 import com.lostglade.item.PhotoPrintData;
+import com.lostglade.server.map.MapImageRenderSystem;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -105,10 +106,8 @@ public final class PhotoFramePlacementSystem {
 				}
 				ItemStack frameMap = new ItemStack(Items.FILLED_MAP);
 				frameMap.set(DataComponents.MAP_ID, new MapId(mapId));
-				if (photoName != null) {
-					frameMap.set(DataComponents.CUSTOM_NAME, photoName.copy());
-				}
 				PhotoPrintData.writeFrameTile(frameMap, data.placed(groupId, anchorPos, facing, tileX, tileY));
+				PhotoPrintData.writeFrameStoredName(frameMap, photoName);
 				frame.setRotation(0);
 				frame.setItem(frameMap, false);
 			}
@@ -134,13 +133,17 @@ public final class PhotoFramePlacementSystem {
 		clearPlacedPhoto(level, frameData);
 		giveOrDrop(player, photoItem);
 		ServerMechanicsGateSystem.syncPlayerInventory(player);
+		MapImageRenderSystem.sendPhotoPreviewMap(player, photoItem);
 		return true;
 	}
 
 	private static ItemStack recreatePhotoItem(ItemStack frameStack, PhotoPrintData.PlacedPhotoFrameData frameData) {
 		ItemStack photoItem = new ItemStack(ModItems.PHOTO_PRINT);
 		PhotoPrintData.writePhotoItem(photoItem, frameData.asPhotoPrintData());
-		Component customName = frameStack.get(DataComponents.CUSTOM_NAME);
+		Component customName = PhotoPrintData.readFrameStoredName(frameStack);
+		if (customName == null) {
+			customName = frameStack.get(DataComponents.CUSTOM_NAME);
+		}
 		if (customName != null) {
 			photoItem.set(DataComponents.CUSTOM_NAME, customName.copy());
 		}

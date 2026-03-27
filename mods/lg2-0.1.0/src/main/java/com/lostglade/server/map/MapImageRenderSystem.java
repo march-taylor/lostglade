@@ -12,6 +12,8 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundMapItemDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
@@ -23,6 +25,7 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.MapItem;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
@@ -30,6 +33,7 @@ import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.UUID;
@@ -77,17 +81,24 @@ public final class MapImageRenderSystem {
 		if (photoMapSet == null) {
 			return false;
 		}
-		givePhotoItem(player, PhotoPrintData.createPhotoItem(itemName, mapsWide, mapsHigh, photoMapSet.mapIds()));
-		ServerMechanicsGateSystem.syncPlayerInventory(player);
-		RenderJob job = new RenderJob(player.getUUID(), photoMapSet.mapIds(), photoMapSet.mapDataSet(), mapsWide, mapsHigh, provider);
+		PreviewMap previewMap = preparePreviewMap(player, itemName, photoMapSet);
+		if (previewMap == null || previewMap.previewMapId() == null) {
+			return false;
+		}
+		PhotoPrintData photoData = new PhotoPrintData(mapsWide, mapsHigh, previewMap.previewMapId().id(), photoMapIdsToRawIds(photoMapSet.mapIds()));
+		givePhotoItem(player, PhotoPrintData.createPhotoItem(itemName, mapsWide, mapsHigh, previewMap.previewMapId(), photoMapSet.mapIds()));
+		RenderJob job = new RenderJob(player.getUUID(), photoMapSet.mapIds(), photoMapSet.mapDataSet(), mapsWide, mapsHigh, previewMap.previewMapId().id(), provider);
 		PLAYER_JOBS.put(player.getUUID(), job);
 		QUEUE.offer(player.getUUID());
+		ServerMechanicsGateSystem.syncPlayerInventory(player);
 		if (activePlayerId == null) {
 			activePlayerId = player.getUUID();
 			player.displayClientMessage(CameraCaptureSystem.queuedForRenderMessage(player), true);
 		} else {
 			player.displayClientMessage(CameraCaptureSystem.addedToRenderQueueMessage(player), true);
 		}
+		renderImmediatePreview(player, provider, previewMap);
+		sendMatchingPhotoPreviewMap(player, photoData);
 		return true;
 	}
 
@@ -325,7 +336,7 @@ public final class MapImageRenderSystem {
 		if (server == null || job == null) {
 			return;
 		}
-		Component completedName = CameraCaptureSystem.createCompletedPhotoName();
+		Component completedName = CameraCaptureSystem.createCompletedPhotoName(server);
 		updatePhotoItemsInInventories(server, job.photoData(), completedName);
 		updatePlacedPhotoFrameNames(server, job.photoData(), completedName);
 		job.setLastDisplayedProgress(100);
@@ -370,6 +381,13 @@ public final class MapImageRenderSystem {
 		}
 	}
 
+	public static void sendPhotoPreviewMap(ServerPlayer player, ItemStack stack) {
+		if (player == null || stack == null || stack.isEmpty()) {
+			return;
+		}
+		sendPhotoPreviewMap(player, PhotoPrintData.readPhotoItem(stack));
+	}
+
 	private static void updatePhotoItemsInInventories(MinecraftServer server, PhotoPrintData photoData, Component name) {
 		if (server == null || photoData == null || name == null) {
 			return;
@@ -387,6 +405,7 @@ public final class MapImageRenderSystem {
 			}
 			if (changed) {
 				ServerMechanicsGateSystem.syncPlayerInventory(player);
+				sendMatchingPhotoPreviewMap(player, photoData);
 			}
 		}
 	}
@@ -406,7 +425,8 @@ public final class MapImageRenderSystem {
 					continue;
 				}
 				ItemStack updated = stack.copy();
-				updated.set(DataComponents.CUSTOM_NAME, name.copy());
+				updated.remove(DataComponents.CUSTOM_NAME);
+				PhotoPrintData.writeFrameStoredName(updated, name);
 				frame.setItem(updated, false);
 			}
 		}
@@ -437,6 +457,96 @@ public final class MapImageRenderSystem {
 			return;
 		}
 		mapData.setColor(globalX % MAP_SIZE, globalY % MAP_SIZE, color);
+	}
+
+	private static PreviewMap preparePreviewMap(ServerPlayer player, Component itemName, PhotoMapSet photoMapSet) {
+		if (player == null || photoMapSet == null || photoMapSet.mapIds().length == 0 || photoMapSet.mapDataSet().length == 0) {
+			return null;
+		}
+		if (photoMapSet.mapIds().length == 1 && photoMapSet.mapDataSet().length == 1) {
+			return new PreviewMap(photoMapSet.mapIds()[0], photoMapSet.mapDataSet()[0]);
+		}
+		PhotoMapSet previewMapSet = createPhotoMapSet(player, itemName, 1, 1);
+		if (previewMapSet == null || previewMapSet.mapIds().length == 0 || previewMapSet.mapDataSet().length == 0) {
+			return new PreviewMap(photoMapSet.mapIds()[0], photoMapSet.mapDataSet()[0]);
+		}
+		return new PreviewMap(previewMapSet.mapIds()[0], previewMapSet.mapDataSet()[0]);
+	}
+
+	private static void renderImmediatePreview(ServerPlayer player, MapPixelProvider provider, PreviewMap previewMap) {
+		if (player == null || provider == null || previewMap == null || previewMap.previewMapId() == null || previewMap.previewMapData() == null) {
+			return;
+		}
+		byte[] previewPixels;
+		try {
+			previewPixels = provider.renderImmediatePreview(player.level().getServer());
+		} catch (Exception exception) {
+			Lg2.LOGGER.error("Immediate photo preview render failed for player {}", player.getUUID(), exception);
+			return;
+		}
+		if (!isValidFrame(previewPixels, MAP_SIZE * MAP_SIZE)) {
+			return;
+		}
+		applyFrameToMap(previewMap.previewMapData(), previewPixels);
+		sendPhotoPreviewMap(player, previewMap.previewMapId(), previewMap.previewMapData());
+	}
+
+	private static void applyFrameToMap(MapItemSavedData mapData, byte[] frame) {
+		if (mapData == null || !isValidFrame(frame, MAP_SIZE * MAP_SIZE)) {
+			return;
+		}
+		for (int pixelIndex = 0; pixelIndex < MAP_SIZE * MAP_SIZE; pixelIndex++) {
+			mapData.setColor(pixelIndex % MAP_SIZE, pixelIndex / MAP_SIZE, frame[pixelIndex]);
+		}
+	}
+
+	private static boolean isValidFrame(byte[] frame, int expectedPixels) {
+		return frame != null && frame.length >= expectedPixels;
+	}
+
+	private static void sendMatchingPhotoPreviewMap(ServerPlayer player, PhotoPrintData photoData) {
+		if (player == null || photoData == null) {
+			return;
+		}
+		for (int slot = 0; slot < player.getInventory().getContainerSize(); slot++) {
+			ItemStack stack = player.getInventory().getItem(slot);
+			PhotoPrintData stackData = PhotoPrintData.readPhotoItem(stack);
+			if (stackData == null || !stackData.samePhoto(photoData)) {
+				continue;
+			}
+			sendPhotoPreviewMap(player, stackData);
+			return;
+		}
+	}
+
+	private static void sendPhotoPreviewMap(ServerPlayer player, PhotoPrintData photoData) {
+		if (player == null || photoData == null || photoData.previewMapId() < 0 || !(player.level() instanceof ServerLevel fallbackLevel)) {
+			return;
+		}
+		ServerLevel mapLevel = photoMapLevel(player.level().getServer(), fallbackLevel);
+		MapId previewMapId = new MapId(photoData.previewMapId());
+		MapItemSavedData previewMapData = mapLevel.getMapData(previewMapId);
+		sendPhotoPreviewMap(player, previewMapId, previewMapData);
+	}
+
+	private static void sendPhotoPreviewMap(ServerPlayer player, MapId previewMapId, MapItemSavedData previewMapData) {
+		if (player == null || previewMapId == null || previewMapData == null || previewMapData.colors == null || previewMapData.colors.length < MAP_SIZE * MAP_SIZE) {
+			return;
+		}
+		ItemStack previewMapStack = new ItemStack(Items.FILLED_MAP);
+		previewMapStack.set(DataComponents.MAP_ID, previewMapId);
+		previewMapData.tickCarriedBy(player, previewMapStack);
+		player.connection.send(new ClientboundMapItemDataPacket(
+				previewMapId,
+				previewMapData.scale,
+				previewMapData.locked,
+				List.of(),
+				new MapItemSavedData.MapPatch(0, 0, MAP_SIZE, MAP_SIZE, previewMapData.colors.clone())
+		));
+		Packet<?> packet = previewMapData.getUpdatePacket(previewMapId, player);
+		if (packet != null) {
+			player.connection.send(packet);
+		}
 	}
 
 	private static void normalizeQueue() {
@@ -503,6 +613,7 @@ public final class MapImageRenderSystem {
 		private final MapItemSavedData[] mapDataSet;
 		private final int mapsWide;
 		private final int mapsHigh;
+		private final int previewMapId;
 		private final MapPixelProvider provider;
 		private final ConcurrentLinkedQueue<PixelResult> completedResults = new ConcurrentLinkedQueue<>();
 		private int nextPixel;
@@ -516,12 +627,13 @@ public final class MapImageRenderSystem {
 		private int frameApplyIndex;
 		private int lastDisplayedProgress = -1;
 
-		private RenderJob(UUID playerId, MapId[] mapIds, MapItemSavedData[] mapDataSet, int mapsWide, int mapsHigh, MapPixelProvider provider) {
+		private RenderJob(UUID playerId, MapId[] mapIds, MapItemSavedData[] mapDataSet, int mapsWide, int mapsHigh, int previewMapId, MapPixelProvider provider) {
 			this.playerId = playerId;
 			this.mapIds = mapIds;
 			this.mapDataSet = mapDataSet;
 			this.mapsWide = mapsWide;
 			this.mapsHigh = mapsHigh;
+			this.previewMapId = previewMapId;
 			this.provider = provider;
 		}
 
@@ -558,7 +670,7 @@ public final class MapImageRenderSystem {
 		}
 
 		private PhotoPrintData photoData() {
-			return new PhotoPrintData(this.mapsWide, this.mapsHigh, photoMapIdsToRawIds(this.mapIds));
+			return new PhotoPrintData(this.mapsWide, this.mapsHigh, this.previewMapId, photoMapIdsToRawIds(this.mapIds));
 		}
 
 		private MapPixelProvider provider() {
@@ -690,6 +802,9 @@ public final class MapImageRenderSystem {
 	}
 
 	private record PhotoMapSet(MapId[] mapIds, MapItemSavedData[] mapDataSet) {
+	}
+
+	private record PreviewMap(MapId previewMapId, MapItemSavedData previewMapData) {
 	}
 
 	private record PixelResult(int x, int y, byte color, Throwable error) {

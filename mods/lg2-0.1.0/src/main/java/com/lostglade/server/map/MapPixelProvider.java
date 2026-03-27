@@ -43,6 +43,10 @@ public interface MapPixelProvider {
 		return new byte[0];
 	}
 
+	default byte[] renderImmediatePreview(MinecraftServer server) {
+		return null;
+	}
+
 	default int mapTilesWide() {
 		return 1;
 	}
