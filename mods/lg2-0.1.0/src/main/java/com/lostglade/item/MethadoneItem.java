@@ -163,7 +163,7 @@ public final class MethadoneItem extends SimplePolymerItem {
             return;
         }
 
-        long nowTick = server.overworld().getGameTime();
+        Map<UUID, MethadoneAddictionState> updatedStates = new HashMap<>();
         ADDICTION_STATES.entrySet().removeIf(entry -> {
             UUID playerId = entry.getKey();
             MethadoneAddictionState state = entry.getValue();
@@ -172,18 +172,27 @@ public final class MethadoneItem extends SimplePolymerItem {
             }
 
             ServerPlayer player = server.getPlayerList().getPlayer(playerId);
-            if (state.expireTick <= nowTick) {
-                if (player != null) {
-                    clearWithdrawalEffects(player);
-                }
+            if (player == null) {
+                updatedStates.put(playerId, state);
                 return true;
             }
 
-            if (player != null && nowTick >= state.withdrawalStartTick) {
-                ensureWithdrawalEffects(player);
+            long remainingTicks = state.remainingTicks - 1L;
+            if (remainingTicks <= 0L) {
+                clearWithdrawalEffects(player);
+                return true;
             }
+
+            if (remainingTicks <= state.withdrawalStartRemainingTicks) {
+                ensureWithdrawalEffects(player);
+            } else {
+                clearWithdrawalEffects(player);
+            }
+
+            updatedStates.put(playerId, new MethadoneAddictionState(remainingTicks, state.withdrawalStartRemainingTicks, state.doseCount));
             return false;
         });
+        ADDICTION_STATES.putAll(updatedStates);
     }
 
     private static void applyUseEffects(ServerPlayer player) {
@@ -192,16 +201,13 @@ public final class MethadoneItem extends SimplePolymerItem {
             return;
         }
 
-        long nowTick = ((ServerLevel) player.level()).getGameTime();
         MethadoneAddictionState previousState = ADDICTION_STATES.get(player.getUUID());
-        boolean stillAddicted = previousState != null && previousState.expireTick > nowTick;
+        boolean stillAddicted = previousState != null && previousState.remainingTicks > 0L;
         int doseCount = stillAddicted ? previousState.doseCount + 1 : 1;
         long addictionDurationTicks = resolveAddictionDurationTicks();
-        long withdrawalRemainingTicks = resolveWithdrawalStartRemainingTicks(addictionDurationTicks);
-        long expireTick = nowTick + addictionDurationTicks;
-        long withdrawalStartTick = expireTick - withdrawalRemainingTicks;
+        long withdrawalStartRemainingTicks = resolveWithdrawalStartRemainingTicks(addictionDurationTicks);
 
-        ADDICTION_STATES.put(player.getUUID(), new MethadoneAddictionState(expireTick, withdrawalStartTick, doseCount));
+        ADDICTION_STATES.put(player.getUUID(), new MethadoneAddictionState(addictionDurationTicks, withdrawalStartRemainingTicks, doseCount));
         clearWithdrawalEffects(player);
 
         if (doseCount <= 3) {
@@ -334,6 +340,6 @@ public final class MethadoneItem extends SimplePolymerItem {
         return Component.literal("Methadone");
     }
 
-    private record MethadoneAddictionState(long expireTick, long withdrawalStartTick, int doseCount) {
+    private record MethadoneAddictionState(long remainingTicks, long withdrawalStartRemainingTicks, int doseCount) {
     }
 }
