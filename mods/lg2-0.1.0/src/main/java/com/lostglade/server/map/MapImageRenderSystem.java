@@ -336,7 +336,7 @@ public final class MapImageRenderSystem {
 		if (server == null || job == null) {
 			return;
 		}
-		Component completedName = CameraCaptureSystem.createCompletedPhotoName();
+		Component completedName = CameraCaptureSystem.createCompletedPhotoName(server);
 		updatePhotoItemsInInventories(server, job.photoData(), completedName);
 		updatePlacedPhotoFrameNames(server, job.photoData(), completedName);
 		job.setLastDisplayedProgress(100);
@@ -425,7 +425,8 @@ public final class MapImageRenderSystem {
 					continue;
 				}
 				ItemStack updated = stack.copy();
-				updated.set(DataComponents.CUSTOM_NAME, name.copy());
+				updated.remove(DataComponents.CUSTOM_NAME);
+				PhotoPrintData.writeFrameStoredName(updated, name);
 				frame.setItem(updated, false);
 			}
 		}

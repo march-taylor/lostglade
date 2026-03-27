@@ -26,6 +26,7 @@ public record PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[]
 	private static final String DIRECTION_TAG = "direction";
 	private static final String TILE_X_TAG = "tile_x";
 	private static final String TILE_Y_TAG = "tile_y";
+	private static final String FRAME_NAME_TAG = "stored_name";
 
 	public PhotoPrintData {
 		mapsWide = Math.max(1, mapsWide);
@@ -170,6 +171,38 @@ public record PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[]
 			frameTag.putIntArray(MAP_IDS_TAG, data.mapIds());
 			tag.put(FRAME_ROOT_TAG, frameTag);
 		});
+	}
+
+	public static void writeFrameStoredName(ItemStack stack, Component name) {
+		if (stack == null || stack.isEmpty()) {
+			return;
+		}
+		String rawName = name == null ? "" : name.getString();
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+			CompoundTag frameTag = tag.getCompoundOrEmpty(FRAME_ROOT_TAG);
+			if (rawName.isBlank()) {
+				frameTag.remove(FRAME_NAME_TAG);
+			} else {
+				frameTag.putString(FRAME_NAME_TAG, rawName);
+			}
+			tag.put(FRAME_ROOT_TAG, frameTag);
+		});
+	}
+
+	public static Component readFrameStoredName(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return null;
+		}
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData == null) {
+			return null;
+		}
+		CompoundTag rootTag = customData.copyTag();
+		if (!rootTag.contains(FRAME_ROOT_TAG)) {
+			return null;
+		}
+		String rawName = rootTag.getCompoundOrEmpty(FRAME_ROOT_TAG).getStringOr(FRAME_NAME_TAG, "");
+		return rawName.isBlank() ? null : Component.literal(rawName).withStyle(style -> style.withItalic(false));
 	}
 
 	public static PlacedPhotoFrameData readFrameTile(ItemStack stack) {

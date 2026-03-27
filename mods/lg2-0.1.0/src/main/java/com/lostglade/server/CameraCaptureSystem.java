@@ -24,9 +24,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -40,7 +37,9 @@ public final class CameraCaptureSystem {
 	private static final double MAX_SHUTTER_SOUND_DISTANCE_SQR = 24.0D * 24.0D;
 	private static final float SHUTTER_SOUND_VOLUME = 0.45F;
 	private static final float SHUTTER_SOUND_PITCH = 1.0F;
-	private static final DateTimeFormatter PHOTO_NAME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+	private static final long TICKS_PER_DAY = 24_000L;
+	private static final long TICKS_PER_HOUR = 1_000L;
+	private static final long MINUTES_PER_DAY = 24L * 60L;
 
 	private CameraCaptureSystem() {
 	}
@@ -68,6 +67,7 @@ public final class CameraCaptureSystem {
 			player.displayClientMessage(capturePrepareFailedMessage(player), true);
 			return false;
 		}
+		playShutterFeedback(player);
 
 		boolean started = MapImageRenderSystem.startRender(player, createQueuedPhotoName(0), provider);
 		if (!started) {
@@ -75,7 +75,6 @@ public final class CameraCaptureSystem {
 		}
 
 		player.getCooldowns().addCooldown(stack, CAMERA_COOLDOWN_TICKS);
-		playShutterFeedback(player);
 		return true;
 	}
 
@@ -84,8 +83,16 @@ public final class CameraCaptureSystem {
 		return Component.literal(clamped + "%").withStyle(style -> style.withItalic(false));
 	}
 
-	public static Component createCompletedPhotoName() {
-		String timestamp = LocalDateTime.now(ZoneId.systemDefault()).format(PHOTO_NAME_FORMATTER);
+	public static Component createCompletedPhotoName(MinecraftServer server) {
+		long dayTime = 0L;
+		if (server != null && server.overworld() != null) {
+			dayTime = Math.max(0L, server.overworld().getDayTime());
+		}
+		long dayNumber = Math.floorDiv(dayTime, TICKS_PER_DAY) + 1L;
+		long ticksInDay = Math.floorMod(dayTime, TICKS_PER_DAY);
+		int hour = (int) ((ticksInDay / TICKS_PER_HOUR + 6L) % 24L);
+		int minute = (int) (((ticksInDay % TICKS_PER_HOUR) * MINUTES_PER_DAY) / TICKS_PER_DAY);
+		String timestamp = String.format(Locale.ROOT, "d%d %02d:%02d", dayNumber, hour, minute);
 		return Component.literal(timestamp).withStyle(style -> style.withItalic(false));
 	}
 
