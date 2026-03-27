@@ -1,5 +1,6 @@
 package com.lostglade.server.camera.bluemap;
 
+import com.lostglade.server.map.TextureAssetManager;
 import de.bluecolored.bluemap.core.map.TextureGallery;
 import de.bluecolored.bluemap.core.map.hires.ArrayTileModel;
 import de.bluecolored.bluemap.core.resources.ResourcePath;
@@ -10,12 +11,31 @@ import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 
+import java.awt.image.BufferedImage;
+
 final class CameraBlockFixups {
+	private static final float ORE_BACKGROUND_MAX_CHANNEL_DELTA = 18.0F;
+	private static final float BEDROCK_CAMERA_MEAN_SCALE = 0.80F;
+	private static final float BEDROCK_CAMERA_STD_SCALE = 1.35F;
+
 	record GlassMaterialProfile(boolean enabled, float alphaScale, float shadeFloor, float aoFloor) {
 		static final GlassMaterialProfile DISABLED = new GlassMaterialProfile(false, 1.0F, 0.0F, 0.0F);
 	}
 
 	record TransparentMaterialLight(float alpha, float shade) {
+	}
+
+	private record ToneStats(
+			float meanRed,
+			float meanGreen,
+			float meanBlue,
+			float stdRed,
+			float stdGreen,
+			float stdBlue
+	) {
+		boolean isValid() {
+			return this.stdRed > 1.0E-3F && this.stdGreen > 1.0E-3F && this.stdBlue > 1.0E-3F;
+		}
 	}
 
 	private CameraBlockFixups() {
@@ -33,6 +53,82 @@ final class CameraBlockFixups {
 				|| path.equals("vault")
 				|| path.equals("trial_spawner")
 				|| path.endsWith("shulker_box");
+	}
+
+	static BufferedImage applyTextureFixups(BufferedImage image, String texturePath) {
+		if (image == null || texturePath == null) {
+			return image;
+		}
+
+		return switch (texturePath) {
+			case "block/stone" -> alignTextureToReference(image, Identifier.fromNamespaceAndPath("lg2", "block/bitcoin_ore"));
+			case "block/deepslate" -> alignTextureToReference(image, Identifier.fromNamespaceAndPath("lg2", "block/deepslate_bitcoin_ore"));
+			case "block/bedrock" -> enhanceBedrockTextureForCamera(image);
+			default -> image;
+		};
+	}
+
+	private static BufferedImage alignTextureToReference(BufferedImage image, Identifier referenceTextureId) {
+		if (referenceTextureId == null) {
+			return image;
+		}
+
+		BufferedImage referenceImage = TextureAssetManager.get().loadTexture(referenceTextureId);
+		if (referenceImage == null) {
+			return image;
+		}
+
+		ToneStats sourceStats = opaqueToneStats(image);
+		ToneStats targetStats = oreBackgroundToneStats(referenceImage);
+		if (sourceStats == null || targetStats == null || !sourceStats.isValid() || !targetStats.isValid()) {
+			return image;
+		}
+
+		return remapTexture(image, sourceStats, targetStats);
+	}
+
+	private static BufferedImage enhanceBedrockTextureForCamera(BufferedImage image) {
+		ToneStats sourceStats = opaqueToneStats(image);
+		if (sourceStats == null || !sourceStats.isValid()) {
+			return image;
+		}
+
+		ToneStats targetStats = new ToneStats(
+				Mth.clamp(sourceStats.meanRed * BEDROCK_CAMERA_MEAN_SCALE, 0.0F, 255.0F),
+				Mth.clamp(sourceStats.meanGreen * BEDROCK_CAMERA_MEAN_SCALE, 0.0F, 255.0F),
+				Mth.clamp(sourceStats.meanBlue * BEDROCK_CAMERA_MEAN_SCALE, 0.0F, 255.0F),
+				sourceStats.stdRed * BEDROCK_CAMERA_STD_SCALE,
+				sourceStats.stdGreen * BEDROCK_CAMERA_STD_SCALE,
+				sourceStats.stdBlue * BEDROCK_CAMERA_STD_SCALE
+		);
+		return remapTexture(image, sourceStats, targetStats);
+	}
+
+	private static BufferedImage remapTexture(BufferedImage image, ToneStats sourceStats, ToneStats targetStats) {
+		BufferedImage adjusted = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
+		for (int y = 0; y < image.getHeight(); y++) {
+			for (int x = 0; x < image.getWidth(); x++) {
+				int argb = image.getRGB(x, y);
+				int alpha = (argb >>> 24) & 0xFF;
+				if (alpha <= 8) {
+					adjusted.setRGB(x, y, argb);
+					continue;
+				}
+
+				float red = remapChannel((argb >> 16) & 0xFF, sourceStats.meanRed, sourceStats.stdRed, targetStats.meanRed, targetStats.stdRed);
+				float green = remapChannel((argb >> 8) & 0xFF, sourceStats.meanGreen, sourceStats.stdGreen, targetStats.meanGreen, targetStats.stdGreen);
+				float blue = remapChannel(argb & 0xFF, sourceStats.meanBlue, sourceStats.stdBlue, targetStats.meanBlue, targetStats.stdBlue);
+				adjusted.setRGB(
+						x,
+						y,
+						(alpha << 24)
+								| (Mth.clamp(Math.round(red), 0, 255) << 16)
+								| (Mth.clamp(Math.round(green), 0, 255) << 8)
+								| Mth.clamp(Math.round(blue), 0, 255)
+				);
+			}
+		}
+		return adjusted;
 	}
 
 	static GlassMaterialProfile glassProfile(String texturePath) {
@@ -184,5 +280,74 @@ final class CameraBlockFixups {
 		}
 		float t = Mth.clamp((value - edge0) / (edge1 - edge0), 0.0F, 1.0F);
 		return t * t * (3.0F - 2.0F * t);
+	}
+
+	private static ToneStats opaqueToneStats(BufferedImage image) {
+		return toneStats(image, false);
+	}
+
+	private static ToneStats oreBackgroundToneStats(BufferedImage image) {
+		return toneStats(image, true);
+	}
+
+	private static ToneStats toneStats(BufferedImage image, boolean grayscaleOnly) {
+		if (image == null) {
+			return null;
+		}
+
+		float sumRed = 0.0F;
+		float sumGreen = 0.0F;
+		float sumBlue = 0.0F;
+		float sumRedSquared = 0.0F;
+		float sumGreenSquared = 0.0F;
+		float sumBlueSquared = 0.0F;
+		int samples = 0;
+
+		for (int y = 0; y < image.getHeight(); y++) {
+			for (int x = 0; x < image.getWidth(); x++) {
+				int argb = image.getRGB(x, y);
+				int alpha = (argb >>> 24) & 0xFF;
+				if (alpha <= 8) {
+					continue;
+				}
+
+				int red = (argb >> 16) & 0xFF;
+				int green = (argb >> 8) & 0xFF;
+				int blue = argb & 0xFF;
+				if (grayscaleOnly) {
+					int maxDelta = Math.max(Math.abs(red - green), Math.max(Math.abs(red - blue), Math.abs(green - blue)));
+					if (maxDelta > ORE_BACKGROUND_MAX_CHANNEL_DELTA) {
+						continue;
+					}
+				}
+
+				sumRed += red;
+				sumGreen += green;
+				sumBlue += blue;
+				sumRedSquared += red * red;
+				sumGreenSquared += green * green;
+				sumBlueSquared += blue * blue;
+				samples++;
+			}
+		}
+
+		if (samples == 0) {
+			return null;
+		}
+
+		float meanRed = sumRed / samples;
+		float meanGreen = sumGreen / samples;
+		float meanBlue = sumBlue / samples;
+		float stdRed = (float) Math.sqrt(Math.max(0.0F, sumRedSquared / samples - meanRed * meanRed));
+		float stdGreen = (float) Math.sqrt(Math.max(0.0F, sumGreenSquared / samples - meanGreen * meanGreen));
+		float stdBlue = (float) Math.sqrt(Math.max(0.0F, sumBlueSquared / samples - meanBlue * meanBlue));
+		return new ToneStats(meanRed, meanGreen, meanBlue, stdRed, stdGreen, stdBlue);
+	}
+
+	private static float remapChannel(int value, float sourceMean, float sourceStd, float targetMean, float targetStd) {
+		if (sourceStd <= 1.0E-3F || targetStd <= 1.0E-3F) {
+			return value;
+		}
+		return targetMean + (value - sourceMean) * (targetStd / sourceStd);
 	}
 }

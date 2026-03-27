@@ -1070,6 +1070,7 @@ public final class BlueMapCameraRenderer {
 			if (image == null) {
 				return missing();
 			}
+			image = CameraBlockFixups.applyTextureFixups(image, texturePath);
 			int width = Math.max(1, image.getWidth());
 			int height = Math.max(1, image.getHeight());
 			int[] pixels = image.getRGB(0, 0, width, height, null, 0, width);
