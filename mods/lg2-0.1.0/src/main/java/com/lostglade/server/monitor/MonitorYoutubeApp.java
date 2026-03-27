@@ -33,11 +33,11 @@ public final class MonitorYoutubeApp implements MonitorApp {
 
 	@Override
 	public String screenTitle() {
-		return "Video feed";
+		return "Видеолента";
 	}
 
 	@Override
 	public String screenHint() {
-		return "Future internet video app";
+		return "Будущее приложение для видео";
 	}
 }

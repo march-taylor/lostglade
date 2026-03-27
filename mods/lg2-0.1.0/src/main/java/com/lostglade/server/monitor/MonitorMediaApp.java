@@ -63,12 +63,12 @@ public final class MonitorMediaApp implements MonitorApp {
 
 	@Override
 	public String screenTitle() {
-		return "Local media";
+		return "Локальные медиа";
 	}
 
 	@Override
 	public String screenHint() {
-		return "Future gallery and image feed";
+		return "Картинки и гифки по ссылке";
 	}
 
 	public static LoadedMedia loadFromUrl(String rawUrl) throws IOException {

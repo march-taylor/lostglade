@@ -33,11 +33,11 @@ public final class MonitorMaxApp implements MonitorApp {
 
 	@Override
 	public String screenTitle() {
-		return "MAX shell";
+		return "Оболочка MAX";
 	}
 
 	@Override
 	public String screenHint() {
-		return "Reserved for future app logic";
+		return "Зарезервировано под будущую логику";
 	}
 }

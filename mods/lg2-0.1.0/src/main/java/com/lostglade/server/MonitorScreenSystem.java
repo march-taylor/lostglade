@@ -65,6 +65,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -79,6 +80,8 @@ import java.util.concurrent.TimeUnit;
 public final class MonitorScreenSystem {
 	private static final String SCREEN_ROOT_TAG = "lg2_monitor_screen";
 	private static final String LINK_LOCKED_TAG = "link_locked";
+	private static final String ATTACHMENT_MASK_TAG = "attachment_mask";
+	private static final String GROUP_ID_TAG = "group_id";
 	private static final String GRID_WIDTH_TAG = "grid_width";
 	private static final String GRID_HEIGHT_TAG = "grid_height";
 	private static final String TILE_X_TAG = "tile_x";
@@ -96,10 +99,11 @@ public final class MonitorScreenSystem {
 	private static final int CONNECTION_RIGHT = 2;
 	private static final int CONNECTION_UP = 4;
 	private static final int CONNECTION_DOWN = 8;
+	private static final int CONNECTION_ALL = CONNECTION_LEFT | CONNECTION_RIGHT | CONNECTION_UP | CONNECTION_DOWN;
 	private static final int MAX_UI_TILES = 2;
 	private static final long RESCAN_INTERVAL_TICKS = 4L;
 	private static final double DISPLAY_SEARCH_RADIUS = 0.8D;
-	private static final double DISPLAY_PLANE_OFFSET = 0.45D;
+	private static final double DISPLAY_PLANE_OFFSET = 0.49D;
 	private static final double TOUCH_TOLERANCE = 0.08D;
 	private static final String SCREEN_OFF_RESOURCE = "/assets/lg2/textures/monitor/screen_off.png";
 	private static final String SCREEN_ON_RESOURCE = "/assets/lg2/textures/monitor/screen_on.png";
@@ -107,10 +111,12 @@ public final class MonitorScreenSystem {
 	private static final long PROGRESS_RENDER_INTERVAL_MS = 300L;
 	private static final int PROGRESS_FADE_RENDER_STEPS = 5;
 	private static final long MEDIA_SCROLL_FOCUS_TIMEOUT_MS = 6000L;
+	private static final double MEDIA_CONTROL_DISTANCE = 6.0D;
 	private static final Map<RenderCacheKey, byte[][]> TILE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, BufferedImage> APP_ICON_CACHE = new ConcurrentHashMap<>();
 	private static final Map<ScreenRuntimeKey, MediaRuntimeState> MEDIA_STATES = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingMediaLinkRequest> PENDING_MEDIA_LINKS = new ConcurrentHashMap<>();
+	private static final Map<UUID, ScreenRuntimeKey> ACTIVE_MEDIA_ACTIONBARS = new ConcurrentHashMap<>();
 	private static final Map<UUID, PlayerMediaFocus> PLAYER_MEDIA_FOCUS = new ConcurrentHashMap<>();
 	private static volatile ExecutorService renderExecutor;
 	private static volatile ExecutorService mediaIoExecutor;
@@ -178,9 +184,9 @@ public final class MonitorScreenSystem {
 			return InteractionResult.FAIL;
 		}
 
-		boolean linkLocked = player.isShiftKeyDown();
+		String groupId = resolvePlacementGroupId(level, framePos, facing, context.getClickLocation(), player.isShiftKeyDown());
 		ItemStack frameMap = createScreenMap(level, new ScreenTileState(
-				linkLocked,
+				CONNECTION_ALL,
 				1,
 				1,
 				0,
@@ -188,7 +194,8 @@ public final class MonitorScreenSystem {
 				0,
 				false,
 				ScreenViewMode.HOME,
-				0
+				0,
+				groupId
 		));
 		if (frameMap.isEmpty()) {
 			return InteractionResult.FAIL;
@@ -249,6 +256,8 @@ public final class MonitorScreenSystem {
 
 		MediaRuntimeState state = MEDIA_STATES.get(pending.screenKey());
 		if (state == null) {
+			ACTIVE_MEDIA_ACTIONBARS.remove(sender.getUUID());
+			sender.displayClientMessage(Component.empty(), true);
 			sender.sendSystemMessage(mediaCancelledMessage(sender));
 			return false;
 		}
@@ -261,6 +270,9 @@ public final class MonitorScreenSystem {
 				state.statusText = mediaPromptStatus(sender);
 				state.version++;
 			}
+			PENDING_MEDIA_LINKS.put(sender.getUUID(), pending);
+			ACTIVE_MEDIA_ACTIONBARS.put(sender.getUUID(), pending.screenKey());
+			sender.displayClientMessage(mediaPromptMessage(sender), true);
 			sender.sendSystemMessage(mediaInvalidLinkMessage(sender));
 			requestRuntimeRender(server, pending.screenKey());
 			return false;
@@ -273,7 +285,8 @@ public final class MonitorScreenSystem {
 			state.overlayMode = MediaOverlayMode.CONTROLS;
 			state.version++;
 		}
-		sender.sendSystemMessage(mediaLoadingMessage(sender));
+		ACTIVE_MEDIA_ACTIONBARS.put(sender.getUUID(), pending.screenKey());
+		sender.displayClientMessage(mediaLoadingMessage(sender), true);
 		requestRuntimeRender(server, pending.screenKey());
 
 		CompletableFuture
@@ -347,14 +360,26 @@ public final class MonitorScreenSystem {
 			}
 			if (hasMedia && overlayMode == MediaOverlayMode.VIEW) {
 				synchronized (mediaState) {
-					cancelPlaybackLocked(mediaState);
 					mediaState.overlayMode = MediaOverlayMode.CONTROLS;
 					mediaState.version++;
 				}
 				rerenderCurrent = true;
 			} else if (mediaCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				nextMode = ScreenViewMode.HOME;
-			} else if (hasMedia && mediaTimelineRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			} else if (hasMedia && mediaPlayPauseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					if (mediaState.loadedMedia != null && mediaState.loadedMedia.animated()) {
+						if (isPlaybackPausedLocked(mediaState)) {
+							mediaState.userPaused = false;
+						} else {
+							cancelPlaybackLocked(mediaState);
+							mediaState.userPaused = true;
+						}
+						mediaState.version++;
+					}
+				}
+				rerenderCurrent = true;
+			} else if (hasMedia && mediaTimelineTrackRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					if (mediaState.loadedMedia != null && mediaState.loadedMedia.frameCount() > 1) {
 						mediaState.frameIndex = mediaFrameIndexForFraction(mediaState.loadedMedia, mediaTimelineFraction(layout, touchPoint));
@@ -388,7 +413,7 @@ public final class MonitorScreenSystem {
 		if ((nextMode != null && nextMode != component.viewMode())
 				|| (nextLauncherPage != null && nextLauncherPage != component.launcherPage())) {
 			if (component.viewMode() == ScreenViewMode.MEDIA && nextMode != ScreenViewMode.MEDIA) {
-				closeMediaSession(component.runtimeKey());
+				closeMediaSession(level.getServer(), component.runtimeKey());
 			}
 			if (nextMode == ScreenViewMode.MEDIA && component.viewMode() != ScreenViewMode.MEDIA) {
 				openMediaSession(player, component.runtimeKey());
@@ -410,6 +435,7 @@ public final class MonitorScreenSystem {
 		}
 		cleanupMediaSessions(server);
 		cleanupExpiredMediaFocus();
+		refreshMediaRequestActionbars(server);
 		for (ServerLevel level : server.getAllLevels()) {
 			if (level.getGameTime() % RESCAN_INTERVAL_TICKS != 0L) {
 				continue;
@@ -459,6 +485,7 @@ public final class MonitorScreenSystem {
 				state.sourceUrl = null;
 				state.frameIndex = 0;
 			}
+			state.userPaused = false;
 			state.waitingForLink = true;
 			state.loading = false;
 			state.overlayMode = MediaOverlayMode.CONTROLS;
@@ -467,10 +494,11 @@ public final class MonitorScreenSystem {
 			state.version++;
 		}
 		PENDING_MEDIA_LINKS.put(player.getUUID(), new PendingMediaLinkRequest(key));
-		player.sendSystemMessage(mediaPromptMessage(player));
+		ACTIVE_MEDIA_ACTIONBARS.put(player.getUUID(), key);
+		player.displayClientMessage(mediaPromptMessage(player), true);
 	}
 
-	private static void closeMediaSession(ScreenRuntimeKey key) {
+	private static void closeMediaSession(MinecraftServer server, ScreenRuntimeKey key) {
 		if (key == null) {
 			return;
 		}
@@ -482,6 +510,12 @@ public final class MonitorScreenSystem {
 			}
 		}
 		PENDING_MEDIA_LINKS.entrySet().removeIf(entry -> entry.getValue().screenKey().equals(key));
+		for (Map.Entry<UUID, ScreenRuntimeKey> entry : List.copyOf(ACTIVE_MEDIA_ACTIONBARS.entrySet())) {
+			if (entry.getValue().equals(key)) {
+				ACTIVE_MEDIA_ACTIONBARS.remove(entry.getKey());
+				clearMediaActionbar(server, entry.getKey());
+			}
+		}
 		PLAYER_MEDIA_FOCUS.entrySet().removeIf(entry -> entry.getValue().screenKey().equals(key));
 	}
 
@@ -519,6 +553,47 @@ public final class MonitorScreenSystem {
 		}
 	}
 
+	private static void refreshMediaRequestActionbars(MinecraftServer server) {
+		if (server == null || server.getTickCount() % 20 != 0) {
+			return;
+		}
+		for (Map.Entry<UUID, ScreenRuntimeKey> entry : List.copyOf(ACTIVE_MEDIA_ACTIONBARS.entrySet())) {
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			MediaRuntimeState state = MEDIA_STATES.get(entry.getValue());
+			if (player == null || state == null) {
+				if (player != null) {
+					player.displayClientMessage(Component.empty(), true);
+				}
+				ACTIVE_MEDIA_ACTIONBARS.remove(entry.getKey());
+				continue;
+			}
+			Component message = null;
+			synchronized (state) {
+				if (state.waitingForLink) {
+					message = mediaPromptMessage(player);
+				} else if (state.loading) {
+					message = mediaLoadingMessage(player);
+				}
+			}
+			if (message == null) {
+				ACTIVE_MEDIA_ACTIONBARS.remove(entry.getKey());
+				player.displayClientMessage(Component.empty(), true);
+				continue;
+			}
+			player.displayClientMessage(message, true);
+		}
+	}
+
+	private static void clearMediaActionbar(MinecraftServer server, UUID playerId) {
+		if (server == null || playerId == null) {
+			return;
+		}
+		ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+		if (player != null) {
+			player.displayClientMessage(Component.empty(), true);
+		}
+	}
+
 	private static void applyMediaLoadResult(MinecraftServer server, MediaLoadResult result) {
 		if (server == null || result == null) {
 			return;
@@ -541,11 +616,13 @@ public final class MonitorScreenSystem {
 				state.loadedMedia = result.loadedMedia();
 				state.sourceUrl = result.url();
 				state.frameIndex = 0;
+				state.userPaused = false;
 				state.statusText = "";
 				state.progress.complete("READY");
 				animated = result.loadedMedia().animated();
 				schedulePlayback = animated && result.loadedMedia().frameCount() > 1;
 			} else {
+				state.userPaused = false;
 				state.statusText = sanitizeMediaError(result.error());
 				state.progress.clear();
 			}
@@ -553,6 +630,8 @@ public final class MonitorScreenSystem {
 		}
 
 		if (requester != null) {
+			ACTIVE_MEDIA_ACTIONBARS.remove(requester.getUUID());
+			requester.displayClientMessage(Component.empty(), true);
 			if (result.loadedMedia() != null) {
 				requester.sendSystemMessage(mediaLoadedMessage(requester, animated));
 			} else {
@@ -590,7 +669,7 @@ public final class MonitorScreenSystem {
 		}
 		synchronized (state) {
 			cancelPlaybackLocked(state);
-			if (state.loadedMedia == null || !state.loadedMedia.animated() || state.waitingForLink || state.loading || state.overlayMode == MediaOverlayMode.CONTROLS) {
+			if (state.loadedMedia == null || !state.loadedMedia.animated() || state.waitingForLink || state.loading || isPlaybackPausedLocked(state)) {
 				return;
 			}
 			int delayMillis = state.loadedMedia.delayMillis(state.frameIndex);
@@ -609,7 +688,7 @@ public final class MonitorScreenSystem {
 
 		boolean shouldContinue;
 		synchronized (state) {
-			if (state.loadedMedia == null || !state.loadedMedia.animated() || state.waitingForLink || state.loading || state.overlayMode == MediaOverlayMode.CONTROLS) {
+			if (state.loadedMedia == null || !state.loadedMedia.animated() || state.waitingForLink || state.loading || isPlaybackPausedLocked(state)) {
 				state.playbackFuture = null;
 				return;
 			}
@@ -640,7 +719,7 @@ public final class MonitorScreenSystem {
 					|| !state.loadedMedia.animated()
 					|| state.loading
 					|| state.waitingForLink
-					|| state.overlayMode == MediaOverlayMode.CONTROLS) {
+					|| isPlaybackPausedLocked(state)) {
 				return;
 			}
 		}
@@ -650,7 +729,7 @@ public final class MonitorScreenSystem {
 	private static void cleanupMediaSessions(MinecraftServer server) {
 		for (ScreenRuntimeKey key : Set.copyOf(MEDIA_STATES.keySet())) {
 			if (!isMediaSessionAlive(server, key)) {
-				closeMediaSession(key);
+				closeMediaSession(server, key);
 			}
 		}
 		PENDING_MEDIA_LINKS.entrySet().removeIf(entry -> !isMediaSessionAlive(server, entry.getValue().screenKey()));
@@ -672,26 +751,12 @@ public final class MonitorScreenSystem {
 		if (player == null) {
 			return false;
 		}
-		PlayerMediaFocus focus = PLAYER_MEDIA_FOCUS.get(player.getUUID());
-		if (focus == null || focus.expiresAtMillis() < System.currentTimeMillis()) {
-			PLAYER_MEDIA_FOCUS.remove(player.getUUID());
+		ScreenComponent component = findObservedMediaComponent(player);
+		if (component == null) {
 			return false;
 		}
 		MinecraftServer server = player.level().getServer();
 		if (server == null) {
-			return false;
-		}
-		ServerLevel level = server.getLevel(focus.screenKey().dimension());
-		if (level == null) {
-			return false;
-		}
-		ItemFrame rootFrame = findScreenFrame(level, focus.screenKey().pos(), focus.screenKey().facing());
-		if (rootFrame == null) {
-			PLAYER_MEDIA_FOCUS.remove(player.getUUID());
-			return false;
-		}
-		ScreenComponent component = collectComponent(level, rootFrame, null);
-		if (component == null || component.viewMode() != ScreenViewMode.MEDIA || !component.powered()) {
 			return false;
 		}
 		MediaRuntimeState state = MEDIA_STATES.get(component.runtimeKey());
@@ -725,9 +790,55 @@ public final class MonitorScreenSystem {
 		}
 
 		player.connection.send(new ClientboundSetHeldSlotPacket(currentSlot));
-		markMediaFocus(player, component.runtimeKey());
 		requestComponentRender(server, component, component.viewMode(), component.launcherPage());
+		resumeMediaPlaybackIfNeeded(server, component.runtimeKey());
 		return true;
+	}
+
+	private static ScreenComponent findObservedMediaComponent(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return null;
+		}
+		Vec3 eye = player.getEyePosition();
+		Vec3 rayEnd = eye.add(player.getLookAngle().scale(MEDIA_CONTROL_DISTANCE));
+		AABB searchBox = new AABB(eye, rayEnd).inflate(1.5D);
+		Set<ScreenKey> processed = new HashSet<>();
+		ScreenComponent nearest = null;
+		double nearestDistanceSqr = Double.POSITIVE_INFINITY;
+
+		for (ItemFrame frame : level.getEntitiesOfClass(ItemFrame.class, searchBox, candidate -> readScreenState(candidate.getItem()) != null)) {
+			ScreenKey key = new ScreenKey(frame.blockPosition(), frame.getDirection());
+			if (processed.contains(key)) {
+				continue;
+			}
+			ScreenComponent component = collectComponent(level, frame, processed);
+			if (component == null || component.viewMode() != ScreenViewMode.MEDIA || !component.powered()) {
+				continue;
+			}
+			double hitDistanceSqr = observedComponentHitDistanceSqr(component, eye, rayEnd);
+			if (Double.isFinite(hitDistanceSqr) && hitDistanceSqr < nearestDistanceSqr) {
+				nearestDistanceSqr = hitDistanceSqr;
+				nearest = component;
+			}
+		}
+		return nearest;
+	}
+
+	private static double observedComponentHitDistanceSqr(ScreenComponent component, Vec3 start, Vec3 end) {
+		if (component == null || start == null || end == null) {
+			return Double.POSITIVE_INFINITY;
+		}
+		double nearestDistanceSqr = Double.POSITIVE_INFINITY;
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			if (!frame.isAlive()) {
+				continue;
+			}
+			Optional<Vec3> hit = frame.getBoundingBox().inflate(0.08D).clip(start, end);
+			if (hit.isPresent() && hit.get().distanceToSqr(start) <= MEDIA_CONTROL_DISTANCE * MEDIA_CONTROL_DISTANCE) {
+				nearestDistanceSqr = Math.min(nearestDistanceSqr, start.distanceToSqr(hit.get()));
+			}
+		}
+		return nearestDistanceSqr;
 	}
 
 	private static int normalizeHotbarDelta(int currentSlot, int requestedSlot) {
@@ -774,7 +885,7 @@ public final class MonitorScreenSystem {
 			}
 			ItemFrame rootFrame = findScreenFrame(level, key.pos(), key.facing());
 			if (rootFrame == null) {
-				closeMediaSession(key);
+				closeMediaSession(server, key);
 				return;
 			}
 			ScreenComponent component = collectComponent(level, rootFrame, null);
@@ -956,7 +1067,7 @@ public final class MonitorScreenSystem {
 		if (!powered) {
 			viewMode = ScreenViewMode.HOME;
 			launcherPage = 0;
-			closeMediaSession(component.runtimeKey());
+			closeMediaSession(level.getServer(), component.runtimeKey());
 		}
 		ServerLevel mapLevel = photoMapLevel(level.getServer(), level);
 		boolean rerenderMaps = false;
@@ -980,7 +1091,7 @@ public final class MonitorScreenSystem {
 
 			int connectionMask = connectionMask(component.byCoord(), tileCoord.x(), tileCoord.y());
 			ScreenTileState updatedState = new ScreenTileState(
-					currentState.linkLocked(),
+					CONNECTION_ALL,
 					component.width(),
 					component.height(),
 					tileCoord.x(),
@@ -990,7 +1101,8 @@ public final class MonitorScreenSystem {
 					viewMode,
 					viewMode == ScreenViewMode.HOME
 							? clampInt(launcherPage, 0, Math.max(0, homePageCount(createUiLayout(component.width(), component.height())) - 1))
-							: component.launcherPage()
+							: component.launcherPage(),
+					componentGroupId(component.runtimeKey())
 			);
 
 			if (missingMap || !currentState.sameRenderState(updatedState)) {
@@ -1018,6 +1130,7 @@ public final class MonitorScreenSystem {
 		if (startState == null) {
 			return null;
 		}
+		String targetGroupId = normalizedGroupId(startState);
 
 		Direction facing = startFrame.getDirection();
 		Direction right = frameRight(facing);
@@ -1037,22 +1150,27 @@ public final class MonitorScreenSystem {
 				continue;
 			}
 			frames.put(key, new ScreenFrame(frame, state));
-			if (state.linkLocked()) {
-				continue;
-			}
-
-			for (BlockPos neighborPos : List.of(
-					frame.blockPosition().relative(right),
-					frame.blockPosition().relative(right.getOpposite()),
-					frame.blockPosition().above(),
-					frame.blockPosition().below()
+			for (PlacementNeighbor candidate : List.of(
+					new PlacementNeighbor(frame.blockPosition().relative(right), CONNECTION_RIGHT),
+					new PlacementNeighbor(frame.blockPosition().relative(right.getOpposite()), CONNECTION_LEFT),
+					new PlacementNeighbor(frame.blockPosition().above(), CONNECTION_UP),
+					new PlacementNeighbor(frame.blockPosition().below(), CONNECTION_DOWN)
 			)) {
+				BlockPos neighborPos = candidate.pos();
 				ItemFrame neighbor = findScreenFrame(level, neighborPos, facing);
 				if (neighbor == null) {
 					continue;
 				}
 				ScreenTileState neighborState = readScreenState(neighbor.getItem());
-				if (neighborState == null || neighborState.linkLocked()) {
+				if (neighborState == null) {
+					continue;
+				}
+				if (targetGroupId != null) {
+					if (!targetGroupId.equals(normalizedGroupId(neighborState))) {
+						continue;
+					}
+				} else if (!allowsLegacyAttachment(state, candidate.connectionMask())
+						|| !allowsLegacyAttachment(neighborState, oppositeConnectionMask(candidate.connectionMask()))) {
 					continue;
 				}
 				queue.add(neighbor);
@@ -1164,6 +1282,163 @@ public final class MonitorScreenSystem {
 		return mask;
 	}
 
+	private static String resolvePlacementGroupId(ServerLevel level, BlockPos framePos, Direction facing, Vec3 clickLocation, boolean shiftPlacement) {
+		if (level == null || framePos == null || facing == null) {
+			return "";
+		}
+		Map<Integer, ScreenComponent> adjacentComponents = adjacentComponents(level, framePos, facing);
+		if (adjacentComponents.isEmpty()) {
+			return standaloneGroupId(level, framePos, facing);
+		}
+		if (shiftPlacement) {
+			int preferredSide = preferredPlacementSide(framePos, facing, clickLocation);
+			ScreenComponent chosen = adjacentComponents.get(preferredSide);
+			if (chosen == null) {
+				return standaloneGroupId(level, framePos, facing);
+			}
+			String groupId = componentGroupId(chosen.runtimeKey());
+			rewriteComponentGroupId(chosen, groupId);
+			return groupId;
+		}
+
+		ScreenComponent primary = adjacentComponents.values().iterator().next();
+		String mergedGroupId = componentGroupId(primary.runtimeKey());
+		Set<ScreenRuntimeKey> rewritten = new HashSet<>();
+		for (ScreenComponent component : adjacentComponents.values()) {
+			if (component == null || !rewritten.add(component.runtimeKey())) {
+				continue;
+			}
+			rewriteComponentGroupId(component, mergedGroupId);
+		}
+		return mergedGroupId;
+	}
+
+	private static PlacementSurfacePoint placementSurfacePoint(BlockPos framePos, Direction facing, Vec3 hitLocation) {
+		if (framePos == null || facing == null || hitLocation == null) {
+			return null;
+		}
+		double localX = hitLocation.x - framePos.getX();
+		double localY = hitLocation.y - framePos.getY();
+		double localZ = hitLocation.z - framePos.getZ();
+		double u = switch (facing) {
+			case SOUTH -> localX;
+			case NORTH -> 1.0D - localX;
+			case EAST -> 1.0D - localZ;
+			case WEST -> localZ;
+			default -> Double.NaN;
+		};
+		if (!Double.isFinite(u) || !Double.isFinite(localY)) {
+			return null;
+		}
+		return new PlacementSurfacePoint(
+				clampDouble(u, 0.0D, 1.0D),
+				clampDouble(1.0D - localY, 0.0D, 1.0D)
+		);
+	}
+
+	private static Map<Integer, ScreenComponent> adjacentComponents(ServerLevel level, BlockPos framePos, Direction facing) {
+		if (level == null || framePos == null || facing == null) {
+			return Map.of();
+		}
+		Direction right = frameRight(facing);
+		Map<Integer, ScreenComponent> adjacent = new HashMap<>();
+		for (PlacementNeighbor candidate : List.of(
+				new PlacementNeighbor(framePos.relative(right.getOpposite()), CONNECTION_LEFT),
+				new PlacementNeighbor(framePos.relative(right), CONNECTION_RIGHT),
+				new PlacementNeighbor(framePos.above(), CONNECTION_UP),
+				new PlacementNeighbor(framePos.below(), CONNECTION_DOWN)
+		)) {
+			ItemFrame neighbor = findScreenFrame(level, candidate.pos(), facing);
+			if (neighbor == null) {
+				continue;
+			}
+			ScreenComponent component = collectComponent(level, neighbor, null);
+			if (component != null) {
+				adjacent.put(candidate.connectionMask(), component);
+			}
+		}
+		return adjacent;
+	}
+
+	private static int preferredPlacementSide(BlockPos framePos, Direction facing, Vec3 clickLocation) {
+		PlacementSurfacePoint hit = placementSurfacePoint(framePos, facing, clickLocation);
+		if (hit == null) {
+			return 0;
+		}
+		Direction right = frameRight(facing);
+		return List.of(
+				new PlacementNeighbor(framePos.relative(right.getOpposite()), CONNECTION_LEFT, hit.u()),
+				new PlacementNeighbor(framePos.relative(right), CONNECTION_RIGHT, 1.0D - hit.u()),
+				new PlacementNeighbor(framePos.above(), CONNECTION_UP, hit.v()),
+				new PlacementNeighbor(framePos.below(), CONNECTION_DOWN, 1.0D - hit.v())
+		).stream()
+				.min((leftNeighbor, rightNeighbor) -> Double.compare(leftNeighbor.distance(), rightNeighbor.distance()))
+				.map(PlacementNeighbor::connectionMask)
+				.orElse(0);
+	}
+
+	private static void rewriteComponentGroupId(ScreenComponent component, String groupId) {
+		if (component == null || groupId == null || groupId.isBlank()) {
+			return;
+		}
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			ScreenTileState state = readScreenState(frame.getItem());
+			if (state == null || groupId.equals(normalizedGroupId(state))) {
+				continue;
+			}
+			ItemStack updated = frame.getItem().copy();
+			writeScreenState(updated, new ScreenTileState(
+					CONNECTION_ALL,
+					state.gridWidth(),
+					state.gridHeight(),
+					state.tileX(),
+					state.tileY(),
+					state.connectionMask(),
+					state.powered(),
+					state.viewMode(),
+					state.launcherPage(),
+					groupId
+			));
+			frame.setItem(updated, false);
+		}
+	}
+
+	private static boolean allowsLegacyAttachment(ScreenTileState state, int connectionMask) {
+		return state != null && (state.attachmentMask() & connectionMask) != 0;
+	}
+
+	private static int oppositeConnectionMask(int connectionMask) {
+		return switch (connectionMask) {
+			case CONNECTION_LEFT -> CONNECTION_RIGHT;
+			case CONNECTION_RIGHT -> CONNECTION_LEFT;
+			case CONNECTION_UP -> CONNECTION_DOWN;
+			case CONNECTION_DOWN -> CONNECTION_UP;
+			default -> 0;
+		};
+	}
+
+	private static String componentGroupId(ScreenRuntimeKey key) {
+		if (key == null) {
+			return "";
+		}
+		return key.dimension() + "|" + key.pos().asLong() + "|" + key.facing().getSerializedName();
+	}
+
+	private static String standaloneGroupId(ServerLevel level, BlockPos framePos, Direction facing) {
+		if (level == null || framePos == null || facing == null) {
+			return "";
+		}
+		return level.dimension() + "|" + framePos.asLong() + "|" + facing.getSerializedName();
+	}
+
+	private static String normalizedGroupId(ScreenTileState state) {
+		if (state == null || state.groupId() == null) {
+			return null;
+		}
+		String normalized = state.groupId().trim();
+		return normalized.isEmpty() ? null : normalized;
+	}
+
 	private static ItemStack ensureMap(ServerLevel level, ItemFrame frame, ScreenTileState state) {
 		ItemStack stack = frame.getItem();
 		MapId mapId = stack.get(DataComponents.MAP_ID);
@@ -1205,7 +1480,9 @@ public final class MonitorScreenSystem {
 		}
 		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
 			CompoundTag screenTag = tag.getCompoundOrEmpty(SCREEN_ROOT_TAG);
-			screenTag.putBoolean(LINK_LOCKED_TAG, state.linkLocked());
+			screenTag.putBoolean(LINK_LOCKED_TAG, state.attachmentMask() != CONNECTION_ALL);
+			screenTag.putInt(ATTACHMENT_MASK_TAG, state.attachmentMask() & 0xF);
+			screenTag.putString(GROUP_ID_TAG, state.groupId() == null ? "" : state.groupId());
 			screenTag.putInt(GRID_WIDTH_TAG, state.gridWidth());
 			screenTag.putInt(GRID_HEIGHT_TAG, state.gridHeight());
 			screenTag.putInt(TILE_X_TAG, state.tileX());
@@ -1231,8 +1508,12 @@ public final class MonitorScreenSystem {
 			return null;
 		}
 		CompoundTag screenTag = root.getCompoundOrEmpty(SCREEN_ROOT_TAG);
+		boolean legacyLinkLocked = screenTag.getBooleanOr(LINK_LOCKED_TAG, false);
+		int attachmentMask = screenTag.contains(ATTACHMENT_MASK_TAG)
+				? screenTag.getIntOr(ATTACHMENT_MASK_TAG, CONNECTION_ALL)
+				: (legacyLinkLocked ? 0 : CONNECTION_ALL);
 		return new ScreenTileState(
-				screenTag.getBooleanOr(LINK_LOCKED_TAG, false),
+				attachmentMask & 0xF,
 				Math.max(1, screenTag.getIntOr(GRID_WIDTH_TAG, 1)),
 				Math.max(1, screenTag.getIntOr(GRID_HEIGHT_TAG, 1)),
 				Math.max(0, screenTag.getIntOr(TILE_X_TAG, 0)),
@@ -1240,7 +1521,8 @@ public final class MonitorScreenSystem {
 				screenTag.getIntOr(CONNECTION_MASK_TAG, 0) & 0xF,
 				screenTag.getBooleanOr(POWERED_TAG, false),
 				ScreenViewMode.fromTag(screenTag.getStringOr(VIEW_MODE_TAG, ScreenViewMode.HOME.serializedName())),
-				Math.max(0, screenTag.getIntOr(LAUNCHER_PAGE_TAG, 0))
+				Math.max(0, screenTag.getIntOr(LAUNCHER_PAGE_TAG, 0)),
+				screenTag.getStringOr(GROUP_ID_TAG, "")
 		);
 	}
 
@@ -1285,7 +1567,7 @@ public final class MonitorScreenSystem {
 				state.loadedMedia != null && state.loadedMedia.animated(),
 				state.loadedMedia != null ? Math.floorMod(state.frameIndex, Math.max(1, state.loadedMedia.frameCount())) : 0,
 				state.loadedMedia != null ? state.loadedMedia.frameCount() : 0,
-				state.loadedMedia != null && state.loadedMedia.animated() && state.overlayMode == MediaOverlayMode.CONTROLS,
+				state.loadedMedia != null && state.loadedMedia.animated() && isPlaybackPausedLocked(state),
 				state.overlayMode,
 				state.scaleMode,
 				state.statusText,
@@ -1387,7 +1669,7 @@ public final class MonitorScreenSystem {
 		UiRect header = homeHeaderRect(layout, panel);
 		fillRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 20), new Color(18, 24, 30, 196));
 		strokeRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 20), 1.0F, new Color(255, 255, 255, 66));
-		drawCenteredText(graphics, "APPS", header, new Color(248, 250, 252), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		drawCenteredText(graphics, "ПРИЛОЖЕНИЯ", header, new Color(248, 250, 252), Font.BOLD, clampInt(layout.unit(), 10, 16));
 
 		List<MonitorApp> visibleApps = visibleHomeApps(layout, launcherPage);
 		for (int index = 0; index < visibleApps.size(); index++) {
@@ -1536,29 +1818,22 @@ public final class MonitorScreenSystem {
 			));
 			graphics.fillRect(canvasRect.x(), canvasRect.bottom() - shadeHeight, canvasRect.width(), shadeHeight);
 
-			drawFloatingButton(graphics, closeRect, "EXIT", new Color(12, 16, 20, 214), new Color(248, 251, 255), layout);
+			drawMediaCloseButton(graphics, closeRect, layout);
 			if (hasMedia) {
 				drawMediaSearchBar(
 						graphics,
 						linkRect,
-						"PASTE URL",
+						"ВСТАВЬ URL",
 						true,
 						layout
 				);
-				drawFloatingButton(
-						graphics,
-						scaleRect,
-						state != null ? state.scaleMode().label() : MediaScaleMode.FIT.label(),
-						new Color(12, 16, 20, 214),
-						new Color(248, 251, 255),
-						layout
-				);
+				drawMediaScaleButton(graphics, scaleRect, state != null ? state.scaleMode() : MediaScaleMode.FIT, layout);
 				drawMediaTimeline(graphics, timelineRect, state, layout);
 			}
 		}
 
 		TaskProgress.Snapshot progress = state != null ? state.progress() : null;
-		String status = state != null ? state.statusText() : "SEND LINK IN CHAT";
+		String status = state != null ? state.statusText() : "";
 		boolean showPromptStatus = status != null
 				&& !status.isBlank()
 				&& !isMediaPromptStatus(status)
@@ -1587,7 +1862,7 @@ public final class MonitorScreenSystem {
 			drawMediaSearchBar(
 					graphics,
 					linkRect,
-					"PASTE URL",
+					"ВСТАВЬ URL",
 					false,
 					layout
 			);
@@ -1610,7 +1885,7 @@ public final class MonitorScreenSystem {
 			int pulseX = barRect.x() + (int) Math.min(barRect.width() - pulseWidth, pulse);
 			fillRoundedRect(graphics, new UiRect(pulseX, barRect.y(), pulseWidth, barRect.height()), clampInt(barHeight, 6, 12), withAlpha(new Color(86, 188, 255, 224), alpha));
 		}
-		String label = progress.stage() != null && !progress.stage().isBlank() ? progress.stage() : "LOADING";
+		String label = localizedProgressStage(progress.stage());
 		drawCenteredText(graphics, label, new UiRect(rect.x() + layout.unit(), rect.y() + 2, rect.width() - layout.unit() * 2, rect.height() / 2), withAlpha(new Color(248, 251, 255), alpha), Font.BOLD, clampInt(layout.unit() - 1, 8, 13));
 	}
 
@@ -1638,6 +1913,37 @@ public final class MonitorScreenSystem {
 		fillRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 10, 18), fill);
 		strokeRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 10, 18), 1.0F, new Color(255, 255, 255, 44));
 		drawCenteredText(graphics, label, rect, text, Font.BOLD, clampInt(layout.unit() - 1, 8, 13));
+	}
+
+	private static void drawMediaCloseButton(Graphics2D graphics, UiRect rect, UiLayout layout) {
+		drawRoundMediaButtonBase(graphics, rect);
+		drawCloseGlyph(graphics, rect.inset(Math.max(1, layout.unit() / 5)), new Color(248, 251, 255));
+	}
+
+	private static void drawMediaScaleButton(Graphics2D graphics, UiRect rect, MediaScaleMode scaleMode, UiLayout layout) {
+		drawRoundMediaButtonBase(graphics, rect);
+		UiRect iconRect = rect.inset(Math.max(2, layout.unit() / 4));
+		switch (scaleMode != null ? scaleMode : MediaScaleMode.FIT) {
+			case FILL -> drawMediaFillGlyph(graphics, iconRect, new Color(248, 251, 255));
+			case STRETCH -> drawMediaStretchGlyph(graphics, iconRect, new Color(248, 251, 255));
+			case FIT -> drawMediaFitGlyph(graphics, iconRect, new Color(248, 251, 255));
+		}
+	}
+
+	private static void drawMediaPlayPauseButton(Graphics2D graphics, UiRect rect, boolean paused, UiLayout layout) {
+		drawRoundMediaButtonBase(graphics, rect);
+		UiRect iconRect = rect.inset(Math.max(2, layout.unit() / 4));
+		if (paused) {
+			drawPlayGlyph(graphics, iconRect, new Color(248, 251, 255));
+		} else {
+			drawPauseGlyph(graphics, iconRect, new Color(248, 251, 255));
+		}
+	}
+
+	private static void drawRoundMediaButtonBase(Graphics2D graphics, UiRect rect) {
+		int arc = Math.min(rect.width(), rect.height());
+		fillRoundedRect(graphics, rect, arc, new Color(12, 16, 20, 214));
+		strokeRoundedRect(graphics, rect, arc, 1.0F, new Color(255, 255, 255, 44));
 	}
 
 	private static void drawMediaSearchBar(Graphics2D graphics, UiRect rect, String placeholder, boolean compact, UiLayout layout) {
@@ -1678,20 +1984,11 @@ public final class MonitorScreenSystem {
 		fillRoundedRect(graphics, rect, arc, new Color(10, 14, 18, 214));
 		strokeRoundedRect(graphics, rect, arc, 1.0F, new Color(255, 255, 255, 44));
 
-		String leftLabel = state.paused() ? "PAUSED" : "PLAY";
-		String rightLabel = (state.frameIndex() + 1) + "/" + state.frameCount();
-		int labelWidth = clampInt(layout.unit() * 4, 28, 52);
-		UiRect leftRect = new UiRect(rect.x() + layout.unit() / 2, rect.y(), labelWidth, rect.height());
-		UiRect rightRect = new UiRect(rect.right() - labelWidth - layout.unit() / 2, rect.y(), labelWidth, rect.height());
-		drawCenteredText(graphics, leftLabel, leftRect, new Color(248, 251, 255, 214), Font.BOLD, clampInt(layout.unit() - 1, 8, 13));
-		drawCenteredText(graphics, rightLabel, rightRect, new Color(248, 251, 255, 214), Font.BOLD, clampInt(layout.unit() - 1, 8, 13));
-
-		UiRect trackRect = new UiRect(
-				leftRect.right(),
-				rect.y() + rect.height() / 2 - clampInt(layout.unit() / 3, 3, 5),
-				Math.max(12, rightRect.x() - leftRect.right()),
-				clampInt(layout.unit() / 2, 6, 10)
-		);
+		UiRect playPauseRect = mediaPlayPauseRect(layout);
+		UiRect counterRect = mediaTimelineCounterRect(layout);
+		UiRect trackRect = mediaTimelineTrackRect(layout);
+		drawMediaPlayPauseButton(graphics, playPauseRect, state.paused(), layout);
+		drawCenteredText(graphics, (state.frameIndex() + 1) + "/" + state.frameCount(), counterRect, new Color(248, 251, 255, 214), Font.BOLD, clampInt(layout.unit() - 1, 8, 13));
 		fillRoundedRect(graphics, trackRect, Math.min(trackRect.height(), trackRect.width()), new Color(255, 255, 255, 36));
 		float fraction = state.frameCount() <= 1 ? 0.0F : (float) state.frameIndex() / (float) (state.frameCount() - 1);
 		int progressWidth = Math.max(trackRect.height(), Math.round(trackRect.width() * fraction));
@@ -1733,6 +2030,103 @@ public final class MonitorScreenSystem {
 		graphics.setStroke(new BasicStroke(2.2F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 		graphics.drawLine(rect.x() + pad, rect.y() + pad, rect.right() - pad, rect.bottom() - pad);
 		graphics.drawLine(rect.right() - pad, rect.y() + pad, rect.x() + pad, rect.bottom() - pad);
+		graphics.setStroke(previous);
+	}
+
+	private static void drawPlayGlyph(Graphics2D graphics, UiRect rect, Color color) {
+		int left = rect.x() + Math.max(1, rect.width() / 5);
+		int right = rect.right() - Math.max(1, rect.width() / 6);
+		int top = rect.y() + Math.max(1, rect.height() / 6);
+		int bottom = rect.bottom() - Math.max(1, rect.height() / 6);
+		graphics.setColor(color);
+		graphics.fillPolygon(
+				new int[]{left, left, right},
+				new int[]{top, bottom, rect.y() + rect.height() / 2},
+				3
+		);
+	}
+
+	private static void drawPauseGlyph(Graphics2D graphics, UiRect rect, Color color) {
+		int barWidth = Math.max(2, rect.width() / 5);
+		int gap = Math.max(2, rect.width() / 7);
+		int leftX = rect.x() + Math.max(1, (rect.width() - barWidth * 2 - gap) / 2);
+		int topY = rect.y() + Math.max(1, rect.height() / 6);
+		int barHeight = Math.max(4, rect.height() - Math.max(2, rect.height() / 3));
+		graphics.setColor(color);
+		graphics.fillRoundRect(leftX, topY, barWidth, barHeight, barWidth, barWidth);
+		graphics.fillRoundRect(leftX + barWidth + gap, topY, barWidth, barHeight, barWidth, barWidth);
+	}
+
+	private static void drawMediaFitGlyph(Graphics2D graphics, UiRect rect, Color color) {
+		Stroke previous = graphics.getStroke();
+		graphics.setColor(color);
+		graphics.setStroke(new BasicStroke(1.8F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.drawRoundRect(rect.x(), rect.y(), rect.width() - 1, rect.height() - 1, 4, 4);
+		int insetX = Math.max(2, rect.width() / 5);
+		int insetY = Math.max(2, rect.height() / 5);
+		graphics.drawRoundRect(
+				rect.x() + insetX,
+				rect.y() + insetY,
+				Math.max(3, rect.width() - insetX * 2 - 1),
+				Math.max(3, rect.height() - insetY * 2 - 1),
+				4,
+				4
+		);
+		graphics.setStroke(previous);
+	}
+
+	private static void drawMediaFillGlyph(Graphics2D graphics, UiRect rect, Color color) {
+		Stroke previous = graphics.getStroke();
+		graphics.setColor(color);
+		graphics.setStroke(new BasicStroke(1.8F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.drawRoundRect(rect.x(), rect.y(), rect.width() - 1, rect.height() - 1, 4, 4);
+		int fillInsetX = Math.max(1, rect.width() / 7);
+		int fillInsetY = Math.max(2, rect.height() / 6);
+		fillRoundedRect(
+				graphics,
+				new UiRect(
+						rect.x() + fillInsetX,
+						rect.y() + fillInsetY,
+						Math.max(4, rect.width() - fillInsetX * 2),
+						Math.max(4, rect.height() - fillInsetY * 2)
+				),
+				4,
+				withAlpha(color, 0.92F)
+		);
+		graphics.setStroke(previous);
+	}
+
+	private static void drawMediaStretchGlyph(Graphics2D graphics, UiRect rect, Color color) {
+		Stroke previous = graphics.getStroke();
+		graphics.setColor(color);
+		graphics.setStroke(new BasicStroke(1.8F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.drawRoundRect(rect.x(), rect.y(), rect.width() - 1, rect.height() - 1, 4, 4);
+		int centerX = rect.x() + rect.width() / 2;
+		int centerY = rect.y() + rect.height() / 2;
+		int horizontalInset = Math.max(2, rect.width() / 5);
+		int verticalInset = Math.max(2, rect.height() / 5);
+		graphics.drawLine(rect.x() + horizontalInset, centerY, rect.right() - horizontalInset, centerY);
+		graphics.drawLine(centerX, rect.y() + verticalInset, centerX, rect.bottom() - verticalInset);
+		graphics.fillPolygon(
+				new int[]{rect.right() - horizontalInset, rect.right() - horizontalInset - 3, rect.right() - horizontalInset - 3},
+				new int[]{centerY, centerY - 3, centerY + 3},
+				3
+		);
+		graphics.fillPolygon(
+				new int[]{rect.x() + horizontalInset, rect.x() + horizontalInset + 3, rect.x() + horizontalInset + 3},
+				new int[]{centerY, centerY - 3, centerY + 3},
+				3
+		);
+		graphics.fillPolygon(
+				new int[]{centerX, centerX - 3, centerX + 3},
+				new int[]{rect.y() + verticalInset, rect.y() + verticalInset + 3, rect.y() + verticalInset + 3},
+				3
+		);
+		graphics.fillPolygon(
+				new int[]{centerX, centerX - 3, centerX + 3},
+				new int[]{rect.bottom() - verticalInset, rect.bottom() - verticalInset - 3, rect.bottom() - verticalInset - 3},
+				3
+		);
 		graphics.setStroke(previous);
 	}
 
@@ -2032,9 +2426,8 @@ public final class MonitorScreenSystem {
 
 	private static UiRect mediaCloseRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int width = clampInt(layout.unit() * 4, 34, 58);
-		int height = clampInt(layout.unit() * 2, 18, 28);
-		return new UiRect(canvas.x() + layout.unit() / 2, canvas.y() + layout.unit() / 2, width, height);
+		int size = clampInt(layout.unit() * 2, 18, 28);
+		return new UiRect(canvas.x() + layout.unit() / 2, canvas.y() + layout.unit() / 2, size, size);
 	}
 
 	private static UiRect mediaOverlayToggleRect(UiLayout layout) {
@@ -2069,19 +2462,47 @@ public final class MonitorScreenSystem {
 
 	private static UiRect mediaScaleRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int width = clampInt(layout.unit() * 4, 34, 58);
-		int height = clampInt(layout.unit() * 2, 18, 28);
-		return new UiRect(canvas.right() - width - layout.unit() / 2, canvas.bottom() - height - layout.unit() / 2, width, height);
+		int size = clampInt(layout.unit() * 2, 18, 28);
+		return new UiRect(canvas.right() - size - layout.unit() / 2, canvas.bottom() - size - layout.unit() / 2, size, size);
 	}
 
 	private static UiRect mediaTimelineRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int width = clampInt(canvas.width() * 2 / 3, 84, canvas.width() - layout.unit() * 6);
+		UiRect scaleRect = mediaScaleRect(layout);
+		int left = canvas.x() + layout.unit() / 2;
+		int right = scaleRect.x() - clampInt(layout.unit() / 2, 4, 8);
 		int height = clampInt(layout.unit() * 2, 18, 28);
 		return new UiRect(
-				canvas.x() + (canvas.width() - width) / 2,
+				left,
 				canvas.bottom() - height - layout.unit() / 2,
-				width,
+				Math.max(44, right - left),
+				height
+		);
+	}
+
+	private static UiRect mediaPlayPauseRect(UiLayout layout) {
+		UiRect timeline = mediaTimelineRect(layout);
+		int size = Math.max(12, timeline.height() - 4);
+		return new UiRect(timeline.x() + 2, timeline.y() + (timeline.height() - size) / 2, size, size);
+	}
+
+	private static UiRect mediaTimelineCounterRect(UiLayout layout) {
+		UiRect timeline = mediaTimelineRect(layout);
+		int width = clampInt(timeline.width() / 5, 26, 52);
+		return new UiRect(timeline.right() - width - layout.unit() / 2, timeline.y(), width, timeline.height());
+	}
+
+	private static UiRect mediaTimelineTrackRect(UiLayout layout) {
+		UiRect timeline = mediaTimelineRect(layout);
+		UiRect playPause = mediaPlayPauseRect(layout);
+		UiRect counter = mediaTimelineCounterRect(layout);
+		int x = playPause.right() + clampInt(layout.unit() / 2, 4, 8);
+		int right = counter.x() - clampInt(layout.unit() / 2, 4, 8);
+		int height = clampInt(layout.unit() / 2, 6, 10);
+		return new UiRect(
+				x,
+				timeline.y() + timeline.height() / 2 - height / 2,
+				Math.max(12, right - x),
 				height
 		);
 	}
@@ -2506,27 +2927,43 @@ public final class MonitorScreenSystem {
 	}
 
 	private static String mediaPromptStatus(ServerPlayer player) {
-		return locale(player).startsWith("ru") || locale(player).startsWith("rpr") ? "ССЫЛКА В ЧАТ" : "SEND LINK IN CHAT";
+		return "ВСТАВЬ ССЫЛКУ В ЧАТ";
 	}
 
 	private static boolean isMediaPromptStatus(String status) {
 		if (status == null) {
 			return false;
 		}
-		return "SEND LINK IN CHAT".equalsIgnoreCase(status)
-				|| "ССЫЛКА В ЧАТ".equalsIgnoreCase(status);
+		return "ВСТАВЬ ССЫЛКУ В ЧАТ".equalsIgnoreCase(status)
+				|| "ССЫЛКА В ЧАТ".equalsIgnoreCase(status)
+				|| "SEND LINK IN CHAT".equalsIgnoreCase(status);
 	}
 
 	private static boolean isMediaLoadingStatus(String status) {
 		if (status == null) {
 			return false;
 		}
-		return "LOADING...".equalsIgnoreCase(status)
-				|| "ЗАГРУЖАЮ...".equalsIgnoreCase(status);
+		return "ЗАГРУЖАЮ...".equalsIgnoreCase(status)
+				|| "LOADING...".equalsIgnoreCase(status);
 	}
 
 	private static String mediaLoadingStatus(ServerPlayer player) {
-		return locale(player).startsWith("ru") || locale(player).startsWith("rpr") ? "ЗАГРУЖАЮ..." : "LOADING...";
+		return "ЗАГРУЖАЮ...";
+	}
+
+	private static String localizedProgressStage(String stage) {
+		if (stage == null || stage.isBlank()) {
+			return "ЗАГРУЗКА";
+		}
+		return switch (stage.toUpperCase(Locale.ROOT)) {
+			case "CONNECTING" -> "ПОДКЛЮЧЕНИЕ";
+			case "DOWNLOADING", "LOADING" -> "ЗАГРУЗКА";
+			case "DECODING" -> "ОБРАБОТКА";
+			case "READY" -> "ГОТОВО";
+			case "RENDER ERROR" -> "ОШИБКА РЕНДЕРА";
+			case "LOAD FAILED" -> "ОШИБКА ЗАГРУЗКИ";
+			default -> stage;
+		};
 	}
 
 	private static String sanitizeMediaError(String error) {
@@ -2541,106 +2978,28 @@ public final class MonitorScreenSystem {
 	}
 
 	private static Component mediaPromptMessage(ServerPlayer player) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return literal("Скинь в чат ссылку на картинку или гифку");
-		}
-		if (locale.startsWith("uk")) {
-			return literal("Надішли в чат посилання на картинку або GIF");
-		}
-		if (locale.startsWith("ja")) {
-			return literal("画像またはGIFのURLをチャットに送ってください");
-		}
-		if (locale.startsWith("ru")) {
-			return literal("Скинь в чат ссылку на картинку или гифку");
-		}
-		return literal("Send an image or GIF URL in chat");
+		return literal("Скинь в чат ссылку на картинку или гифку");
 	}
 
 	private static Component mediaLoadingMessage(ServerPlayer player) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return literal("Тяну медию с сети...");
-		}
-		if (locale.startsWith("uk")) {
-			return literal("Завантажую медіа...");
-		}
-		if (locale.startsWith("ja")) {
-			return literal("メディアを読み込み中...");
-		}
-		if (locale.startsWith("ru")) {
-			return literal("Загружаю медиа...");
-		}
-		return literal("Loading media...");
+		return literal("Загружаю медиа...");
 	}
 
 	private static Component mediaLoadedMessage(ServerPlayer player, boolean animated) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return literal(animated ? "Гифка загрузилась" : "Картинка загрузилась");
-		}
-		if (locale.startsWith("uk")) {
-			return literal(animated ? "GIF завантажено" : "Зображення завантажено");
-		}
-		if (locale.startsWith("ja")) {
-			return literal(animated ? "GIFを読み込みました" : "画像を読み込みました");
-		}
-		if (locale.startsWith("ru")) {
-			return literal(animated ? "Гифка загружена" : "Картинка загружена");
-		}
-		return literal(animated ? "GIF loaded" : "Image loaded");
+		return literal(animated ? "Гифка загружена" : "Картинка загружена");
 	}
 
 	private static Component mediaLoadFailedMessage(ServerPlayer player, String error) {
-		String locale = locale(player);
 		String reason = error == null || error.isBlank() ? "LOAD FAILED" : error;
-		if (locale.startsWith("rpr")) {
-			return literal("Не вышло загрузить: " + reason);
-		}
-		if (locale.startsWith("uk")) {
-			return literal("Не вдалося завантажити: " + reason);
-		}
-		if (locale.startsWith("ja")) {
-			return literal("読み込み失敗: " + reason);
-		}
-		if (locale.startsWith("ru")) {
-			return literal("Не удалось загрузить: " + reason);
-		}
-		return literal("Failed to load: " + reason);
+		return literal("Не удалось загрузить: " + reason);
 	}
 
 	private static Component mediaCancelledMessage(ServerPlayer player) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return literal("Экран уже не ждёт ссылку");
-		}
-		if (locale.startsWith("uk")) {
-			return literal("Екран більше не чекає посилання");
-		}
-		if (locale.startsWith("ja")) {
-			return literal("この画面はもうURL待ちではありません");
-		}
-		if (locale.startsWith("ru")) {
-			return literal("Этот экран уже не ждёт ссылку");
-		}
-		return literal("That screen is no longer waiting for a link");
+		return literal("Этот экран уже не ждёт ссылку");
 	}
 
 	private static Component mediaInvalidLinkMessage(ServerPlayer player) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return literal("Пустая ссылка не годится");
-		}
-		if (locale.startsWith("uk")) {
-			return literal("Порожнє посилання не підходить");
-		}
-		if (locale.startsWith("ja")) {
-			return literal("空のURLは使えません");
-		}
-		if (locale.startsWith("ru")) {
-			return literal("Пустая ссылка не подходит");
-		}
-		return literal("That URL is empty");
+		return literal("Пустая ссылка не подходит");
 	}
 
 	private static Component wallOnlyMessage(ServerPlayer player) {
@@ -2709,13 +3068,11 @@ public final class MonitorScreenSystem {
 	}
 
 	private static float mediaTimelineFraction(UiLayout layout, UiPoint point) {
-		UiRect timelineRect = mediaTimelineRect(layout);
-		int left = timelineRect.x() + clampInt(layout.unit() * 4, 28, 52) + layout.unit() / 2;
-		int right = timelineRect.right() - clampInt(layout.unit() * 4, 28, 52) - layout.unit() / 2;
-		if (right <= left) {
+		UiRect trackRect = mediaTimelineTrackRect(layout);
+		if (trackRect.width() <= 0) {
 			return 0.0F;
 		}
-		return (float) clampDouble((point.x() - left) / (double) Math.max(1, right - left), 0.0D, 1.0D);
+		return (float) clampDouble((point.x() - trackRect.x()) / (double) Math.max(1, trackRect.width()), 0.0D, 1.0D);
 	}
 
 	private static int mediaFrameIndexForFraction(MonitorMediaApp.LoadedMedia loadedMedia, float fraction) {
@@ -2723,6 +3080,10 @@ public final class MonitorScreenSystem {
 			return 0;
 		}
 		return clampInt((int) Math.round(clampDouble(fraction, 0.0D, 1.0D) * (loadedMedia.frameCount() - 1)), 0, loadedMedia.frameCount() - 1);
+	}
+
+	private static boolean isPlaybackPausedLocked(MediaRuntimeState state) {
+		return state != null && state.userPaused;
 	}
 
 	private enum ScreenViewMode {
@@ -2757,19 +3118,9 @@ public final class MonitorScreenSystem {
 	}
 
 	private enum MediaScaleMode {
-		FIT("FIT"),
-		FILL("FILL"),
-		STRETCH("FULL");
-
-		private final String label;
-
-		MediaScaleMode(String label) {
-			this.label = label;
-		}
-
-		String label() {
-			return this.label;
-		}
+		FIT,
+		FILL,
+		STRETCH;
 
 		MediaScaleMode next() {
 			MediaScaleMode[] values = values();
@@ -2787,6 +3138,9 @@ public final class MonitorScreenSystem {
 	}
 
 	private record UiPoint(int x, int y) {
+	}
+
+	private record PlacementSurfacePoint(double u, double v) {
 	}
 
 	private record UiRect(int x, int y, int width, int height) {
@@ -2883,6 +3237,12 @@ public final class MonitorScreenSystem {
 	private record PlayerMediaFocus(ScreenRuntimeKey screenKey, long expiresAtMillis) {
 	}
 
+	private record PlacementNeighbor(BlockPos pos, int connectionMask, double distance) {
+		private PlacementNeighbor(BlockPos pos, int connectionMask) {
+			this(pos, connectionMask, 0.0D);
+		}
+	}
+
 	private record MediaLoadResult(
 			ScreenRuntimeKey screenKey,
 			UUID requesterUuid,
@@ -2893,7 +3253,7 @@ public final class MonitorScreenSystem {
 	}
 
 	private record ScreenTileState(
-			boolean linkLocked,
+			int attachmentMask,
 			int gridWidth,
 			int gridHeight,
 			int tileX,
@@ -2901,7 +3261,8 @@ public final class MonitorScreenSystem {
 			int connectionMask,
 			boolean powered,
 			ScreenViewMode viewMode,
-			int launcherPage
+			int launcherPage,
+			String groupId
 	) {
 		boolean sameRenderState(ScreenTileState other) {
 			return other != null
@@ -2922,6 +3283,7 @@ public final class MonitorScreenSystem {
 		private long version;
 		private MediaOverlayMode overlayMode;
 		private MediaScaleMode scaleMode;
+		private boolean userPaused;
 		private boolean waitingForLink;
 		private boolean loading;
 		private String statusText;
@@ -2935,6 +3297,7 @@ public final class MonitorScreenSystem {
 		private MediaRuntimeState(Runnable progressListener) {
 			this.overlayMode = MediaOverlayMode.CONTROLS;
 			this.scaleMode = MediaScaleMode.FIT;
+			this.userPaused = false;
 			this.waitingForLink = false;
 			this.loading = false;
 			this.version = 0L;
