@@ -136,15 +136,18 @@ final class CameraEntityRenderer {
 	private static final Identifier VILLAGER_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/villager/villager");
 	private static final Identifier EXPERIENCE_ORB_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/experience_orb");
 	private static final Identifier FISHING_HOOK_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/fishing_hook");
+	private static final Identifier END_PORTAL_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/end_portal");
 	private static final Identifier LEASH_SEGMENT_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "block/brown_wool");
 	private static final Identifier FISHING_LINE_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "block/light_gray_wool");
 	private static final Identifier ARMOR_TRIM_PALETTE_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "trims/color_palettes/trim_palette");
+	private static final float END_PORTAL_SURFACE_Y = 0.75F;
 	private static final Map<String, BlueMapCameraRenderer.TextureMaterial> STATIC_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, BlueMapCameraRenderer.TextureMaterial> PLAYER_SKIN_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, PlayerSkinSnapshot> PLAYER_SKIN_SNAPSHOT_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, Identifier> ITEM_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, ItemVisual> ITEM_VISUAL_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, FlatSpriteMesh> FLAT_SPRITE_MESH_CACHE = new ConcurrentHashMap<>();
+	private static final Map<String, BufferedImage> SPECIAL_BLOCK_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, BufferedImage> ARMOR_TRIM_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, BufferedImage> EQUIPMENT_TINT_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, ClientModelResolver> VANILLA_CLIENT_MODEL_RULES = buildVanillaClientModelRules();
@@ -178,6 +181,9 @@ final class CameraEntityRenderer {
 	}
 
 	private static EntitySnapshot captureBlockEntityUnsafe(net.minecraft.world.level.block.entity.BlockEntity blockEntity) {
+		if (blockEntity instanceof net.minecraft.world.level.block.entity.TheEndPortalBlockEntity endPortalBlockEntity) {
+			return captureEndPortalBlockEntity(endPortalBlockEntity);
+		}
 		if (blockEntity instanceof net.minecraft.world.level.block.entity.BedBlockEntity bedBlockEntity && VanillaClientModels.isAvailable()) {
 			return captureBedBlockEntity(bedBlockEntity);
 		}
@@ -200,6 +206,57 @@ final class CameraEntityRenderer {
 			return captureSkullBlockEntity(skullBlockEntity);
 		}
 		return captureBlockEntityAsFixedItem(blockEntity);
+	}
+
+	private static ImagePlaneSnapshot captureEndPortalBlockEntity(net.minecraft.world.level.block.entity.TheEndPortalBlockEntity endPortalBlockEntity) {
+		BufferedImage image = endPortalSurfaceImage();
+		if (image == null) {
+			return null;
+		}
+		BlockPos pos = endPortalBlockEntity.getBlockPos();
+		Matrix4f transform = new Matrix4f()
+				.translate((float) pos.getX(), (float) (pos.getY() + END_PORTAL_SURFACE_Y), (float) (pos.getZ() + 1.0F))
+				.rotateX((float) (-Math.PI * 0.5D));
+		return new ImagePlaneSnapshot(
+				Vec3.atCenterOf(pos).add(0.0D, END_PORTAL_SURFACE_Y - 0.5D, 0.0D),
+				transform,
+				0.0F,
+				0.0F,
+				0.0F,
+				1.0F,
+				1.0F,
+				"block_entity:end_portal",
+				image,
+				true
+		);
+	}
+
+	private static BufferedImage endPortalSurfaceImage() {
+		return SPECIAL_BLOCK_TEXTURE_CACHE.computeIfAbsent("end_portal_surface", ignored -> {
+			BufferedImage source = ASSETS.loadTexture(END_PORTAL_TEXTURE);
+			if (source == null) {
+				return null;
+			}
+			BufferedImage tinted = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+			for (int y = 0; y < source.getHeight(); y++) {
+				for (int x = 0; x < source.getWidth(); x++) {
+					int argb = source.getRGB(x, y);
+					int alpha = (argb >>> 24) & 0xFF;
+					if (alpha <= 8) {
+						tinted.setRGB(x, y, 0);
+						continue;
+					}
+					float luma = (((argb >> 16) & 0xFF) + ((argb >> 8) & 0xFF) + (argb & 0xFF)) / (255.0F * 3.0F);
+					float glow = Mth.clamp((float) Math.pow(luma, 0.90D) * 1.18F, 0.0F, 1.0F);
+					float sparkle = Mth.clamp((luma - 0.55F) / 0.45F, 0.0F, 1.0F);
+					int red = Mth.clamp(Math.round(Mth.lerp(glow, 24.0F, 176.0F) + sparkle * 56.0F), 0, 255);
+					int green = Mth.clamp(Math.round(Mth.lerp(glow, 9.0F, 92.0F) + sparkle * 24.0F), 0, 255);
+					int blue = Mth.clamp(Math.round(Mth.lerp(glow, 48.0F, 255.0F)), 0, 255);
+					tinted.setRGB(x, y, (alpha << 24) | (red << 16) | (green << 8) | blue);
+				}
+			}
+			return tinted;
+		});
 	}
 
 	private static EntitySnapshot captureEntityUnsafe(Entity entity) {
