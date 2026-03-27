@@ -60,19 +60,20 @@ public final class MethadoneItem extends SimplePolymerItem {
             BuiltInRegistries.MOB_EFFECT.getValue(Identifier.fromNamespaceAndPath("minecraft", "slowness"))
     );
     private static final String MISTER_CARTEL_49_RACE_ID = "mister_cartel_49";
-    private static final int USE_DURATION_TICKS = 30;
+    private static final int USE_DURATION_TICKS = 10;
     private static final int CARTEL_EFFECT_DURATION_TICKS = 3 * 60 * 20;
     private static final int NON_CARTEL_EFFECT_DURATION_TICKS = 2 * 60 * 20;
     private static final double DEFAULT_ADDICTION_SECONDS = 60.0D * 60.0D;
     private static final double DEFAULT_WITHDRAWAL_START_SECONDS = 30.0D * 60.0D;
     private static final int WITHDRAWAL_REFRESH_DURATION_TICKS = 100;
     private static final int WITHDRAWAL_REAPPLY_THRESHOLD_TICKS = 40;
+    private static final int RELEASE_COOLDOWN_TICKS = 20;
     private static final int SOUND_MAX_DISTANCE_SQR = 24 * 24;
     private static final float SOUND_VOLUME = 0.85F;
     private static final float PACK_SOUND_PITCH = 1.0F;
     private static final float FALLBACK_SOUND_PITCH = 1.0F;
     private static final Consumable CLIENT_USE_CONSUMABLE = Consumable.builder()
-            .consumeSeconds(1.5F)
+            .consumeSeconds(0.5F)
             .animation(ItemUseAnimation.TOOT_HORN)
             .sound(BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.EMPTY))
             .hasConsumeParticles(false)
@@ -97,11 +98,13 @@ public final class MethadoneItem extends SimplePolymerItem {
     public void modifyBasePolymerItemStack(ItemStack out, ItemStack original, PacketContext context) {
         out.set(DataComponents.CUSTOM_NAME, getLocalizedName(context).withStyle(style -> style.withItalic(false)));
         out.set(DataComponents.CONSUMABLE, CLIENT_USE_CONSUMABLE);
+        TooltipDisplay tooltipDisplay = TooltipDisplay.DEFAULT;
         if (!PolymerResourcePackUtils.hasMainPack(context)) {
             out.set(DataComponents.ITEM_MODEL, FALLBACK_MODEL_ID);
             out.set(DataComponents.POTION_CONTENTS, FALLBACK_POTION_CONTENTS);
-            out.set(DataComponents.TOOLTIP_DISPLAY, TooltipDisplay.DEFAULT.withHidden(DataComponents.POTION_CONTENTS, true));
+            tooltipDisplay = tooltipDisplay.withHidden(DataComponents.POTION_CONTENTS, true);
         }
+        out.set(DataComponents.TOOLTIP_DISPLAY, tooltipDisplay);
     }
 
     @Override
@@ -140,6 +143,7 @@ public final class MethadoneItem extends SimplePolymerItem {
 
         if (player != null) {
             player.awardStat(Stats.ITEM_USED.get(this));
+            player.getCooldowns().addCooldown(stack, RELEASE_COOLDOWN_TICKS);
         }
 
         if (!level.isClientSide() && entity instanceof ServerPlayer serverPlayer) {
