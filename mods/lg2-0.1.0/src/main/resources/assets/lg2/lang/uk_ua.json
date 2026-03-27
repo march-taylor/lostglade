@@ -14,6 +14,7 @@
     "item.lg2.bitcoin_ore":  "Біткоїнова руда",
     "item.lg2.deepslate_bitcoin_ore":  "Глибинносланцева біткоїнова руда",
     "item.lg2.server":  "Сервер",
+    "item.lg2.camera":  "Фотоапарат",
     "item.lg2.special_pickaxe":  "Особлива кирка",
     "item.lg2.absolute_invisibility_potion":  "Зілля абсолютної невидимості",
     "item.lg2.stability_potion":  "Зілля стабільності",
@@ -61,5 +62,5 @@
     "container.lg2.cartel_disguise.previous":  "Попередній",
     "container.lg2.cartel_disguise.next":  "Наступний",
     "container.lg2.cartel_disguise.empty":  "Немає гравців",
-    "item.lg2.travka":  "������"
+    "item.lg2.travka":  "Травка"
 }

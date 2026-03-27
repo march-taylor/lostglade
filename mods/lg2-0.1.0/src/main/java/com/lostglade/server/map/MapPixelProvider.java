@@ -47,6 +47,10 @@ public interface MapPixelProvider {
 		return null;
 	}
 
+	default boolean immediatePreviewMatchesPrimaryFrame() {
+		return false;
+	}
+
 	default int mapTilesWide() {
 		return 1;
 	}

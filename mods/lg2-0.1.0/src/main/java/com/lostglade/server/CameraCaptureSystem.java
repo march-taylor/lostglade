@@ -69,7 +69,7 @@ public final class CameraCaptureSystem {
 		}
 		playShutterFeedback(player);
 
-		boolean started = MapImageRenderSystem.startRender(player, createQueuedPhotoName(0), provider);
+		boolean started = MapImageRenderSystem.startRender(player, createCompletedPhotoName(player.level().getServer()), provider);
 		if (!started) {
 			return false;
 		}
@@ -92,7 +92,7 @@ public final class CameraCaptureSystem {
 		long ticksInDay = Math.floorMod(dayTime, TICKS_PER_DAY);
 		int hour = (int) ((ticksInDay / TICKS_PER_HOUR + 6L) % 24L);
 		int minute = (int) (((ticksInDay % TICKS_PER_HOUR) * MINUTES_PER_DAY) / TICKS_PER_DAY);
-		String timestamp = String.format(Locale.ROOT, "d%d %02d:%02d", dayNumber, hour, minute);
+		String timestamp = String.format(Locale.ROOT, "%d - %02d:%02d", dayNumber, hour, minute);
 		return Component.literal(timestamp).withStyle(style -> style.withItalic(false));
 	}
 
@@ -290,6 +290,11 @@ public final class CameraCaptureSystem {
 		@Override
 		public byte[] renderImmediatePreview(MinecraftServer server) {
 			return BlueMapCameraRenderer.render(this.previewPreparedFrame);
+		}
+
+		@Override
+		public boolean immediatePreviewMatchesPrimaryFrame() {
+			return this.mapsWide == 1 && this.mapsHigh == 1;
 		}
 
 		@Override
