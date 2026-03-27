@@ -2,8 +2,8 @@ package com.lostglade.item;
 
 import com.lostglade.Lg2;
 import com.lostglade.config.RaceConfig;
+import com.lostglade.server.CocaineHallucinationSystem;
 import com.lostglade.server.ServerRaceSystem;
-import com.lostglade.server.glitch.PhantomMobGlitch;
 import eu.pb4.polymer.core.api.item.SimplePolymerItem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.advancements.CriteriaTriggers;
@@ -148,6 +148,7 @@ public final class CocaineItem extends SimplePolymerItem {
 			return;
 		}
 
+		CocaineHallucinationSystem.tick(server);
 		long nowTick = server.overworld().getGameTime();
 		CARTEL_COCAINE_SPRINT_TICKS_BY_PLAYER.entrySet().removeIf(entry -> entry.getValue() == null || entry.getValue() <= nowTick);
 		PENDING_FALLBACK_CONSUME_SOUND_TICKS_BY_PLAYER.entrySet().removeIf(entry -> {
@@ -271,7 +272,7 @@ public final class CocaineItem extends SimplePolymerItem {
 			return;
 		}
 
-		PhantomMobGlitch.spawnPersonalHallucination(player, level.random);
+		CocaineHallucinationSystem.spawn(player, level.random);
 		playHallucinationSound(player, level);
 	}
 

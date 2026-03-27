@@ -42,6 +42,7 @@
 		"RabbitNaturalSpawnMarkerMixin",
 		"RaidIllusionerSpawnMixin",
 		"ResultSlotMechanicsGateMixin",
+		"ServerCommonPacketListenerCocaineHallucinationMixin",
 		"ServerCommonPacketListenerAbsoluteInvisibilityMixin",
 		"ServerLevelAbsoluteInvisibilityMixin",
 		"ServerItemEntityMixin",
