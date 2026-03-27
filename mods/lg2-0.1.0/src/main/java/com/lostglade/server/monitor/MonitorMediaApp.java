@@ -1,5 +1,7 @@
 package com.lostglade.server.monitor;
 
+import com.lostglade.server.progress.TaskProgress;
+
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
@@ -70,9 +72,13 @@ public final class MonitorMediaApp implements MonitorApp {
 	}
 
 	public static LoadedMedia loadFromUrl(String rawUrl) throws IOException {
+		return loadFromUrl(rawUrl, null);
+	}
+
+	public static LoadedMedia loadFromUrl(String rawUrl, TaskProgress progress) throws IOException {
 		URI uri = validateUri(rawUrl);
-		byte[] bytes = download(uri.toURL());
-		return decode(bytes);
+		byte[] bytes = download(uri.toURL(), progress);
+		return decode(bytes, progress);
 	}
 
 	private static URI validateUri(String rawUrl) throws IOException {
@@ -91,7 +97,10 @@ public final class MonitorMediaApp implements MonitorApp {
 		}
 	}
 
-	private static byte[] download(URL url) throws IOException {
+	private static byte[] download(URL url, TaskProgress progress) throws IOException {
+		if (progress != null) {
+			progress.setIndeterminate("CONNECTING");
+		}
 		HttpURLConnection connection = (HttpURLConnection) url.openConnection();
 		connection.setInstanceFollowRedirects(true);
 		connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
@@ -102,6 +111,14 @@ public final class MonitorMediaApp implements MonitorApp {
 		int status = connection.getResponseCode();
 		if (status < 200 || status >= 300) {
 			throw new IOException("HTTP " + status);
+		}
+		long contentLength = connection.getContentLengthLong();
+		if (progress != null) {
+			if (contentLength > 0L) {
+				progress.setProgress("DOWNLOADING", 0L, contentLength);
+			} else {
+				progress.setIndeterminate("DOWNLOADING");
+			}
 		}
 
 		try (InputStream input = connection.getInputStream(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
@@ -114,6 +131,13 @@ public final class MonitorMediaApp implements MonitorApp {
 					throw new IOException("File is too large");
 				}
 				output.write(buffer, 0, read);
+				if (progress != null) {
+					if (contentLength > 0L) {
+						progress.setProgress("DOWNLOADING", total, contentLength);
+					} else {
+						progress.setStage("DOWNLOADING");
+					}
+				}
 			}
 			return output.toByteArray();
 		} finally {
@@ -121,7 +145,10 @@ public final class MonitorMediaApp implements MonitorApp {
 		}
 	}
 
-	private static LoadedMedia decode(byte[] bytes) throws IOException {
+	private static LoadedMedia decode(byte[] bytes, TaskProgress progress) throws IOException {
+		if (progress != null) {
+			progress.setIndeterminate("DECODING");
+		}
 		try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
 			if (input == null) {
 				throw new IOException("Unsupported image");
@@ -136,18 +163,24 @@ public final class MonitorMediaApp implements MonitorApp {
 				reader.setInput(input, false, false);
 				String format = reader.getFormatName();
 				if (format != null && format.equalsIgnoreCase("gif")) {
-					return decodeGif(reader);
+					return decodeGif(reader, progress);
 				}
 				BufferedImage image = scaleDown(toArgb(reader.read(0)));
-				return new LoadedMedia(List.of(image), List.of(1), image.getWidth(), image.getHeight(), false);
+				if (progress != null) {
+					progress.complete("READY");
+				}
+				return new LoadedMedia(List.of(image), List.of(1000), image.getWidth(), image.getHeight(), false);
 			} finally {
 				reader.dispose();
 			}
 		}
 	}
 
-	private static LoadedMedia decodeGif(ImageReader reader) throws IOException {
+	private static LoadedMedia decodeGif(ImageReader reader, TaskProgress progress) throws IOException {
 		int frameCount = Math.max(1, reader.getNumImages(true));
+		if (progress != null) {
+			progress.setProgress("DECODING", 0L, frameCount);
+		}
 		BufferedImage canvas = null;
 		List<BufferedImage> frames = new ArrayList<>();
 		List<Integer> delays = new ArrayList<>();
@@ -167,7 +200,10 @@ public final class MonitorMediaApp implements MonitorApp {
 			graphics.dispose();
 
 			frames.add(scaleDown(copyImage(canvas)));
-			delays.add(frameInfo.delayTicks());
+			delays.add(frameInfo.delayMillis());
+			if (progress != null) {
+				progress.setProgress("DECODING", index + 1L, frameCount);
+			}
 
 			if ("restoreToBackgroundColor".equals(frameInfo.disposalMethod())) {
 				clearRect(canvas, frameInfo.left(), frameInfo.top(), rawFrame.getWidth(), rawFrame.getHeight());
@@ -179,6 +215,9 @@ public final class MonitorMediaApp implements MonitorApp {
 		if (frames.isEmpty()) {
 			throw new IOException("GIF has no frames");
 		}
+		if (progress != null) {
+			progress.complete("READY");
+		}
 		BufferedImage first = frames.get(0);
 		return new LoadedMedia(frames, delays, first.getWidth(), first.getHeight(), frames.size() > 1);
 	}
@@ -188,7 +227,7 @@ public final class MonitorMediaApp implements MonitorApp {
 		int top = 0;
 		int canvasWidth = fallbackWidth;
 		int canvasHeight = fallbackHeight;
-		int delayTicks = 2;
+		int delayMillis = 100;
 		String disposalMethod = "none";
 
 		if (metadata != null) {
@@ -207,7 +246,7 @@ public final class MonitorMediaApp implements MonitorApp {
 					} else if ("GraphicControlExtension".equals(child.getNodeName())) {
 						NamedNodeMap attrs = child.getAttributes();
 						int delayHundredths = parseInt(attrs, "delayTime", 10);
-						delayTicks = Math.max(1, Math.round(delayHundredths / 2.0F));
+						delayMillis = Math.max(20, delayHundredths * 10);
 						Node disposalNode = attrs.getNamedItem("disposalMethod");
 						if (disposalNode != null) {
 							disposalMethod = disposalNode.getNodeValue();
@@ -217,7 +256,7 @@ public final class MonitorMediaApp implements MonitorApp {
 			}
 		}
 
-		return new GifFrameInfo(left, top, canvasWidth, canvasHeight, delayTicks, disposalMethod);
+		return new GifFrameInfo(left, top, canvasWidth, canvasHeight, delayMillis, disposalMethod);
 	}
 
 	private static int parseInt(NamedNodeMap attributes, String key, int fallback) {
@@ -280,7 +319,7 @@ public final class MonitorMediaApp implements MonitorApp {
 
 	public record LoadedMedia(
 			List<BufferedImage> frames,
-			List<Integer> frameDurationsTicks,
+			List<Integer> frameDurationsMillis,
 			int width,
 			int height,
 			boolean animated
@@ -292,11 +331,11 @@ public final class MonitorMediaApp implements MonitorApp {
 			return this.frames.get(Math.floorMod(index, this.frames.size()));
 		}
 
-		public int delayTicks(int index) {
-			if (this.frameDurationsTicks.isEmpty()) {
-				return 2;
+		public int delayMillis(int index) {
+			if (this.frameDurationsMillis.isEmpty()) {
+				return 100;
 			}
-			return Math.max(1, this.frameDurationsTicks.get(Math.floorMod(index, this.frameDurationsTicks.size())));
+			return Math.max(20, this.frameDurationsMillis.get(Math.floorMod(index, this.frameDurationsMillis.size())));
 		}
 
 		public int frameCount() {
@@ -309,7 +348,7 @@ public final class MonitorMediaApp implements MonitorApp {
 			int top,
 			int canvasWidth,
 			int canvasHeight,
-			int delayTicks,
+			int delayMillis,
 			String disposalMethod
 	) {
 	}
