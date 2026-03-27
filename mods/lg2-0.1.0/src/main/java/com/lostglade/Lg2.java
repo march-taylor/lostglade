@@ -11,6 +11,7 @@ import com.lostglade.item.ModItems;
 import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
 import com.lostglade.server.ServerBossBarVisibilitySystem;
 import com.lostglade.server.CameraCaptureSystem;
+import com.lostglade.server.MonitorScreenSystem;
 import com.lostglade.server.PhotoFramePlacementSystem;
 import com.lostglade.server.map.MapImageRenderSystem;
 import com.lostglade.server.ServerStabilitySystem;
@@ -52,6 +53,7 @@ public class Lg2 implements ModInitializer {
 		ServerBossBarVisibilitySystem.register();
 		MapImageRenderSystem.register();
 		CameraCaptureSystem.register();
+		MonitorScreenSystem.register();
 		PhotoFramePlacementSystem.register();
 		ServerStabilitySystem.register();
 		ServerTrojanRoosterSystem.register();
