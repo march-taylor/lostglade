@@ -2191,6 +2191,14 @@ public final class ServerRaceSystem {
 		return new GameProfile(profileId, buildCartelLawyerProfileName(profileId), new PropertyMap(mutableProperties));
 	}
 
+	public static boolean isCartelLawyerEntity(Entity entity) {
+		return entity instanceof CartelLawyerEntity || (entity != null && entity.getTags().contains(CARTEL_LAWYER_TAG));
+	}
+
+	public static Property getCameraCartelLawyerSkinProperty() {
+		return resolveCartelLawyerSkinProperty();
+	}
+
 	private static Property resolveCartelLawyerSkinProperty() {
 		Property cached = CARTEL_LAWYER_SKIN_PROPERTY;
 		if (cached != null) {
@@ -2932,4 +2940,3 @@ public final class ServerRaceSystem {
 		}
 	}
 }
-

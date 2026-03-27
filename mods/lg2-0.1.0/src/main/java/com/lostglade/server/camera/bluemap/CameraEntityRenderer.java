@@ -4,7 +4,9 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.lostglade.Lg2;
+import com.lostglade.entity.BackroomsStalkerEntity;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
+import com.lostglade.server.ServerRaceSystem;
 import com.lostglade.server.ServerWebcamFrameCache;
 import com.lostglade.server.map.TextureAssetManager;
 import com.mojang.authlib.properties.Property;
@@ -141,6 +143,8 @@ final class CameraEntityRenderer {
 	private static final Identifier FISHING_LINE_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "block/light_gray_wool");
 	private static final Identifier ARMOR_TRIM_PALETTE_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "trims/color_palettes/trim_palette");
 	private static final float END_PORTAL_SURFACE_Y = 0.75F;
+	private static final byte ALL_PLAYER_SKIN_PARTS = (byte) 0x7F;
+	private static final byte NO_PLAYER_SKIN_PARTS = (byte) 0x00;
 	private static final Map<String, BlueMapCameraRenderer.TextureMaterial> STATIC_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, BlueMapCameraRenderer.TextureMaterial> PLAYER_SKIN_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, PlayerSkinSnapshot> PLAYER_SKIN_SNAPSHOT_CACHE = new ConcurrentHashMap<>();
@@ -151,6 +155,13 @@ final class CameraEntityRenderer {
 	private static final Map<String, BufferedImage> ARMOR_TRIM_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, BufferedImage> EQUIPMENT_TINT_TEXTURE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, ClientModelResolver> VANILLA_CLIENT_MODEL_RULES = buildVanillaClientModelRules();
+	private static final PlayerSkinSnapshot STALKER_BLACK_PLAYER_SKIN = new PlayerSkinSnapshot(
+			"lg2:stalker_black",
+			null,
+			PLAYER_WIDE_FALLBACK,
+			false,
+			createSolidPlayerSkinImage(0xFF000000)
+	);
 
 	private CameraEntityRenderer() {
 	}
@@ -279,41 +290,23 @@ final class CameraEntityRenderer {
 
 		if (entity instanceof Player player) {
 			PlayerSkinSnapshot playerSkin = capturePlayerSkin(player);
-			HumanoidKind kind = playerSkin != null && playerSkin.slim() ? HumanoidKind.PLAYER_SLIM : HumanoidKind.PLAYER;
 			byte modelBits = player instanceof net.minecraft.world.entity.Avatar avatar
 					? avatar.getEntityData().get(PlayerTrackedDataAccessor.lg2$getDataPlayerModeCustomisation())
 					: 0;
-			float playerBodyYaw = entity.getYRot();
-			float playerHeadYaw = livingEntity.yHeadRot;
-			return new HumanoidSnapshot(
-					entity.position(),
-					entity.getYRot(),
-					playerBodyYaw,
-					playerHeadYaw,
-					entity.getXRot(),
-					livingEntity.walkAnimation.position(),
-					livingEntity.walkAnimation.speed(),
-					livingEntity.getAttackAnim(0.0F),
-					livingEntity.getSwimAmount(0.0F),
-					entity.getPose(),
-					sleepingDirection(livingEntity),
-					entity.isCrouching(),
-					entity.isVisuallySwimming(),
-					livingEntity.isFallFlying(),
-					entity.isPassenger(),
-					false,
-					false,
-					livingEntity.isUsingItem(),
-					player.getMainArm(),
-					kind,
-					playerSkin == null ? PLAYER_WIDE_FALLBACK : playerSkin.fallbackTexture(),
-					new Identifier[0],
-					captureArmorEquipment(livingEntity),
-					leftHandItem(livingEntity),
-					rightHandItem(livingEntity),
-					playerSkin,
-					modelBits
+			return playerHumanoidSnapshot(livingEntity, playerSkin, modelBits);
+		}
+
+		if (BackroomsStalkerEntity.isStalker(entity)) {
+			return playerHumanoidSnapshot(livingEntity, STALKER_BLACK_PLAYER_SKIN, NO_PLAYER_SKIN_PARTS);
+		}
+
+		if (ServerRaceSystem.isCartelLawyerEntity(entity)) {
+			PlayerSkinSnapshot lawyerSkin = capturePropertySkin(
+					null,
+					ServerRaceSystem.getCameraCartelLawyerSkinProperty(),
+					PLAYER_WIDE_FALLBACK
 			);
+			return playerHumanoidSnapshot(livingEntity, lawyerSkin, ALL_PLAYER_SKIN_PARTS);
 		}
 
 		if (entity instanceof ArmorStand armorStand) {
@@ -656,6 +649,39 @@ final class CameraEntityRenderer {
 				rightHandItem(livingEntity),
 				null,
 				(byte) 0
+		);
+	}
+
+	private static HumanoidSnapshot playerHumanoidSnapshot(LivingEntity livingEntity, PlayerSkinSnapshot playerSkin, byte playerModelBits) {
+		HumanoidKind kind = playerSkin != null && playerSkin.slim() ? HumanoidKind.PLAYER_SLIM : HumanoidKind.PLAYER;
+		return new HumanoidSnapshot(
+				livingEntity.position(),
+				livingEntity.getYRot(),
+				livingEntity.yBodyRot,
+				livingEntity.yHeadRot,
+				livingEntity.getXRot(),
+				livingEntity.walkAnimation.position(),
+				livingEntity.walkAnimation.speed(),
+				livingEntity.getAttackAnim(0.0F),
+				livingEntity.getSwimAmount(0.0F),
+				livingEntity.getPose(),
+				sleepingDirection(livingEntity),
+				livingEntity.isCrouching(),
+				livingEntity.isVisuallySwimming(),
+				livingEntity.isFallFlying(),
+				livingEntity.isPassenger(),
+				false,
+				false,
+				livingEntity.isUsingItem(),
+				livingEntity.getMainArm(),
+				kind,
+				playerSkin == null ? PLAYER_WIDE_FALLBACK : playerSkin.fallbackTexture(),
+				new Identifier[0],
+				captureArmorEquipment(livingEntity),
+				leftHandItem(livingEntity),
+				rightHandItem(livingEntity),
+				playerSkin,
+				playerModelBits
 		);
 	}
 
@@ -2641,16 +2667,7 @@ final class CameraEntityRenderer {
 		if (property == null) {
 			return null;
 		}
-		Property resolvedProperty = property;
-		return PLAYER_SKIN_SNAPSHOT_CACHE.computeIfAbsent(resolvedProperty.value(), ignored -> {
-			var skinData = PlayerUtils.getSkinUrl(resolvedProperty);
-			String url = skinData == null ? null : skinData.left();
-			boolean slim = skinData != null
-					&& skinData.right() != null
-					&& "slim".equalsIgnoreCase(skinData.right().toString());
-			Identifier fallback = slim ? PLAYER_SLIM_FALLBACK : PLAYER_WIDE_FALLBACK;
-			return new PlayerSkinSnapshot(resolvedProperty.value(), url, fallback, slim);
-		});
+		return capturePropertySkin(property.value(), property, null);
 	}
 
 	static void renderEntities(
@@ -2734,6 +2751,9 @@ final class CameraEntityRenderer {
 	}
 
 	private static BufferedImage loadSkinImage(PlayerSkinSnapshot skinSnapshot) {
+		if (skinSnapshot.localImage() != null) {
+			return normalizeSkinImage(toArgb(skinSnapshot.localImage()));
+		}
 		if (skinSnapshot.url() == null || skinSnapshot.url().isBlank()) {
 			return null;
 		}
@@ -4065,12 +4085,36 @@ final class CameraEntityRenderer {
 		if (property == null) {
 			return null;
 		}
-		var skinData = PlayerUtils.getSkinUrl(property);
-		String url = skinData == null ? null : skinData.left();
-		boolean slim = skinData != null
-				&& skinData.right() != null
-				&& "slim".equalsIgnoreCase(skinData.right().toString());
-		return new PlayerSkinSnapshot(property.value(), url, slim ? PLAYER_SLIM_FALLBACK : PLAYER_WIDE_FALLBACK, slim);
+		return capturePropertySkin(property.value(), property, null);
+	}
+
+	private static PlayerSkinSnapshot capturePropertySkin(String cacheKey, Property property, Identifier fallbackTexture) {
+		if (property == null) {
+			return null;
+		}
+		String resolvedCacheKey = (cacheKey == null || cacheKey.isBlank()) ? property.value() : cacheKey;
+		return PLAYER_SKIN_SNAPSHOT_CACHE.computeIfAbsent(resolvedCacheKey, ignored -> {
+			var skinData = PlayerUtils.getSkinUrl(property);
+			String url = skinData == null ? null : skinData.left();
+			boolean slim = skinData != null
+					&& skinData.right() != null
+					&& "slim".equalsIgnoreCase(skinData.right().toString());
+			Identifier fallback = fallbackTexture != null ? fallbackTexture : (slim ? PLAYER_SLIM_FALLBACK : PLAYER_WIDE_FALLBACK);
+			return new PlayerSkinSnapshot(resolvedCacheKey, url, fallback, slim, null);
+		});
+	}
+
+	private static BufferedImage createSolidPlayerSkinImage(int argb) {
+		BufferedImage image = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = image.createGraphics();
+		try {
+			graphics.setComposite(AlphaComposite.Src);
+			graphics.setColor(new Color(argb, true));
+			graphics.fillRect(0, 0, image.getWidth(), image.getHeight());
+		} finally {
+			graphics.dispose();
+		}
+		return image;
 	}
 
 	static void renderItemVisual(RenderContext context, Matrix4f root, ItemVisual visual, ItemDisplayTransformContext transformContext) {

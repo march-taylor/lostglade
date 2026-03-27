@@ -321,7 +321,8 @@ record PlayerSkinSnapshot(
 		String cacheKey,
 		String url,
 		Identifier fallbackTexture,
-		boolean slim
+		boolean slim,
+		BufferedImage localImage
 ) {
 }
 
