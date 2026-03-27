@@ -98,7 +98,7 @@ public final class MonitorScreenSystem {
 	private static final int MAX_UI_TILES = 2;
 	private static final long RESCAN_INTERVAL_TICKS = 4L;
 	private static final double DISPLAY_SEARCH_RADIUS = 0.8D;
-	private static final double DISPLAY_PLANE_OFFSET = 0.8D;
+	private static final double DISPLAY_PLANE_OFFSET = 0.5D;
 	private static final double TOUCH_TOLERANCE = 0.08D;
 	private static final String SCREEN_OFF_RESOURCE = "/assets/lg2/textures/monitor/screen_off.png";
 	private static final String SCREEN_ON_RESOURCE = "/assets/lg2/textures/monitor/screen_on.png";
@@ -816,8 +816,14 @@ public final class MonitorScreenSystem {
 			return;
 		}
 
+		boolean powered = component.powered();
 		ScreenViewMode viewMode = forcedViewMode != null ? forcedViewMode : component.viewMode();
 		int launcherPage = forcedLauncherPage != null ? forcedLauncherPage : component.launcherPage();
+		if (!powered) {
+			viewMode = ScreenViewMode.HOME;
+			launcherPage = 0;
+			closeMediaSession(component.runtimeKey());
+		}
 		ServerLevel mapLevel = photoMapLevel(level.getServer(), level);
 		boolean rerenderMaps = false;
 
@@ -846,7 +852,7 @@ public final class MonitorScreenSystem {
 					tileCoord.x(),
 					tileCoord.y(),
 					connectionMask,
-					component.powered(),
+					powered,
 					viewMode,
 					viewMode == ScreenViewMode.HOME
 							? clampInt(launcherPage, 0, Math.max(0, homePageCount(createUiLayout(component.width(), component.height())) - 1))
