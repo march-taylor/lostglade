@@ -3,6 +3,8 @@ package com.lostglade.server;
 import com.lostglade.item.ModItems;
 import com.lostglade.item.MonitorItem;
 import com.lostglade.server.map.MapPaletteQuantizer;
+import com.lostglade.server.monitor.MonitorApp;
+import com.lostglade.server.monitor.MonitorAppRegistry;
 import com.mojang.math.Transformation;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
@@ -66,6 +68,7 @@ public final class MonitorScreenSystem {
 	private static final String CONNECTION_MASK_TAG = "connection_mask";
 	private static final String POWERED_TAG = "powered";
 	private static final String VIEW_MODE_TAG = "view_mode";
+	private static final String LAUNCHER_PAGE_TAG = "launcher_page";
 	private static final String DISPLAY_ROOT_TAG = "lg2_monitor_display";
 	private static final String POS_TAG_PREFIX = "lg2_monitor_display_pos:";
 	private static final String FACING_TAG_PREFIX = "lg2_monitor_display_facing:";
@@ -78,11 +81,13 @@ public final class MonitorScreenSystem {
 	private static final int MAX_UI_TILES = 2;
 	private static final long RESCAN_INTERVAL_TICKS = 4L;
 	private static final double DISPLAY_SEARCH_RADIUS = 0.8D;
-	private static final double DISPLAY_PLANE_OFFSET = 0.4453125D;
+	private static final double DISPLAY_PLANE_OFFSET = 0.4296875D;
 	private static final double TOUCH_TOLERANCE = 0.08D;
 	private static final String SCREEN_OFF_RESOURCE = "/assets/lg2/textures/monitor/screen_off.png";
 	private static final String SCREEN_ON_RESOURCE = "/assets/lg2/textures/monitor/screen_on.png";
+	private static final int LAUNCHER_COLUMNS = 2;
 	private static final Map<RenderCacheKey, byte[][]> TILE_CACHE = new HashMap<>();
+	private static final Map<String, BufferedImage> APP_ICON_CACHE = new HashMap<>();
 	private static BufferedImage offBaseImage;
 	private static BufferedImage onBaseImage;
 
@@ -132,7 +137,8 @@ public final class MonitorScreenSystem {
 				0,
 				0,
 				false,
-				ScreenViewMode.HOME
+				ScreenViewMode.HOME,
+				0
 		));
 		if (frameMap.isEmpty()) {
 			return InteractionResult.FAIL;
@@ -144,7 +150,7 @@ public final class MonitorScreenSystem {
 		frame.setRotation(0);
 		level.addFreshEntity(frame);
 
-		synchronizeConnectedScreens(level, frame, null, null);
+		synchronizeConnectedScreens(level, frame, null, null, null);
 		if (!player.getAbilities().instabuild) {
 			context.getItemInHand().shrink(1);
 		}
@@ -196,20 +202,39 @@ public final class MonitorScreenSystem {
 
 		UiLayout layout = createUiLayout(component.width(), component.height());
 		ScreenViewMode nextMode = null;
+		Integer nextLauncherPage = null;
 		if (component.viewMode() == ScreenViewMode.HOME) {
-			UiRect appRect = homeAppRect(layout);
-			if (appRect.contains(touchPoint.x(), touchPoint.y())) {
-				nextMode = ScreenViewMode.MEDIA;
+			List<MonitorApp> visibleApps = visibleHomeApps(layout, component.launcherPage());
+			for (int index = 0; index < visibleApps.size(); index++) {
+				UiRect appRect = homeAppCardRect(layout, component.launcherPage(), index);
+				if (appRect.contains(touchPoint.x(), touchPoint.y())) {
+					nextMode = ScreenViewMode.fromTag(visibleApps.get(index).id());
+					break;
+				}
 			}
-		} else if (component.viewMode() == ScreenViewMode.MEDIA) {
+			int pageCount = homePageCount(layout);
+			if (nextMode == null && component.launcherPage() > 0) {
+				UiRect upRect = homeScrollUpRect(layout);
+				if (upRect != null && upRect.contains(touchPoint.x(), touchPoint.y())) {
+					nextLauncherPage = component.launcherPage() - 1;
+				}
+			}
+			if (nextMode == null && component.launcherPage() + 1 < pageCount) {
+				UiRect downRect = homeScrollDownRect(layout);
+				if (downRect != null && downRect.contains(touchPoint.x(), touchPoint.y())) {
+					nextLauncherPage = component.launcherPage() + 1;
+				}
+			}
+		} else if (component.viewMode() != ScreenViewMode.HOME) {
 			UiRect backRect = mediaBackRect(layout);
 			if (backRect.contains(touchPoint.x(), touchPoint.y())) {
 				nextMode = ScreenViewMode.HOME;
 			}
 		}
 
-		if (nextMode != null && nextMode != component.viewMode()) {
-			synchronizeConnectedScreens(level, frame, null, nextMode);
+		if ((nextMode != null && nextMode != component.viewMode())
+				|| (nextLauncherPage != null && nextLauncherPage != component.launcherPage())) {
+			synchronizeConnectedScreens(level, frame, null, nextMode, nextLauncherPage);
 		}
 		return InteractionResult.SUCCESS;
 	}
@@ -234,23 +259,30 @@ public final class MonitorScreenSystem {
 				if (processed.contains(key)) {
 					continue;
 				}
-				synchronizeConnectedScreens(level, frame, processed, null);
+					synchronizeConnectedScreens(level, frame, processed, null, null);
 			}
 			cleanupOrphanDisplays(level);
 		}
 	}
 
 	private static void synchronizeConnectedScreens(ServerLevel level, ItemFrame startFrame, Set<ScreenKey> processedKeys) {
-		synchronizeConnectedScreens(level, startFrame, processedKeys, null);
+		synchronizeConnectedScreens(level, startFrame, processedKeys, null, null);
 	}
 
-	private static void synchronizeConnectedScreens(ServerLevel level, ItemFrame startFrame, Set<ScreenKey> processedKeys, ScreenViewMode forcedViewMode) {
+	private static void synchronizeConnectedScreens(
+			ServerLevel level,
+			ItemFrame startFrame,
+			Set<ScreenKey> processedKeys,
+			ScreenViewMode forcedViewMode,
+			Integer forcedLauncherPage
+	) {
 		ScreenComponent component = collectComponent(level, startFrame, processedKeys);
 		if (component == null) {
 			return;
 		}
 
 		ScreenViewMode viewMode = forcedViewMode != null ? forcedViewMode : component.viewMode();
+		int launcherPage = forcedLauncherPage != null ? forcedLauncherPage : component.launcherPage();
 		ServerLevel mapLevel = photoMapLevel(level.getServer(), level);
 		boolean rerenderMaps = false;
 
@@ -280,7 +312,10 @@ public final class MonitorScreenSystem {
 					tileCoord.y(),
 					connectionMask,
 					component.powered(),
-					viewMode
+					viewMode,
+					viewMode == ScreenViewMode.HOME
+							? clampInt(launcherPage, 0, Math.max(0, homePageCount(createUiLayout(component.width(), component.height())) - 1))
+							: component.launcherPage()
 			);
 
 			if (missingMap || !currentState.sameRenderState(updatedState)) {
@@ -298,7 +333,7 @@ public final class MonitorScreenSystem {
 			return;
 		}
 
-		byte[][] renderedTiles = renderTiles(component.powered(), viewMode, component.width(), component.height());
+		byte[][] renderedTiles = renderTiles(component.powered(), viewMode, launcherPage, component.width(), component.height());
 		ServerLevel mapStorageLevel = photoMapLevel(level.getServer(), level);
 		for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
 			ItemFrame frame = entry.getKey();
@@ -401,6 +436,11 @@ public final class MonitorScreenSystem {
 				.map(ScreenTileState::viewMode)
 				.max(ScreenViewMode::compareTo)
 				.orElse(ScreenViewMode.HOME);
+		int launcherPage = frames.values().stream()
+				.map(ScreenFrame::state)
+				.mapToInt(ScreenTileState::launcherPage)
+				.max()
+				.orElse(0);
 
 		Map<ItemFrame, TileCoord> frameCoords = new HashMap<>();
 		Map<TileCoord, ScreenFrame> byCoord = new HashMap<>();
@@ -411,7 +451,7 @@ public final class MonitorScreenSystem {
 			frameCoords.put(entry.getKey().frame(), tileCoord);
 			byCoord.put(tileCoord, entry.getKey());
 		}
-		return new ScreenComponent(facing, right, width, height, powered, viewMode, frameCoords, byCoord);
+		return new ScreenComponent(facing, right, width, height, powered, viewMode, launcherPage, frameCoords, byCoord);
 	}
 
 	private static void synchronizeNeighborComponents(ServerLevel level, BlockPos pos, Direction facing) {
@@ -434,7 +474,7 @@ public final class MonitorScreenSystem {
 			if (processed.contains(key)) {
 				continue;
 			}
-			synchronizeConnectedScreens(level, frame, processed, null);
+			synchronizeConnectedScreens(level, frame, processed, null, null);
 		}
 	}
 
@@ -484,7 +524,7 @@ public final class MonitorScreenSystem {
 		writeScreenState(screenMap, state);
 		MapItemSavedData mapData = mapLevel.getMapData(mapId);
 		if (mapData != null) {
-			byte[][] tiles = renderTiles(state.powered(), state.viewMode(), 1, 1);
+			byte[][] tiles = renderTiles(state.powered(), state.viewMode(), state.launcherPage(), 1, 1);
 			applyFrameToMap(mapData, tiles[0]);
 		}
 		return screenMap;
@@ -504,6 +544,7 @@ public final class MonitorScreenSystem {
 			screenTag.putInt(CONNECTION_MASK_TAG, state.connectionMask() & 0xF);
 			screenTag.putBoolean(POWERED_TAG, state.powered());
 			screenTag.putString(VIEW_MODE_TAG, state.viewMode().serializedName());
+			screenTag.putInt(LAUNCHER_PAGE_TAG, Math.max(0, state.launcherPage()));
 			tag.put(SCREEN_ROOT_TAG, screenTag);
 		});
 	}
@@ -529,7 +570,8 @@ public final class MonitorScreenSystem {
 				Math.max(0, screenTag.getIntOr(TILE_Y_TAG, 0)),
 				screenTag.getIntOr(CONNECTION_MASK_TAG, 0) & 0xF,
 				screenTag.getBooleanOr(POWERED_TAG, false),
-				ScreenViewMode.fromTag(screenTag.getStringOr(VIEW_MODE_TAG, ScreenViewMode.HOME.serializedName()))
+				ScreenViewMode.fromTag(screenTag.getStringOr(VIEW_MODE_TAG, ScreenViewMode.HOME.serializedName())),
+				Math.max(0, screenTag.getIntOr(LAUNCHER_PAGE_TAG, 0))
 		);
 	}
 
@@ -540,8 +582,8 @@ public final class MonitorScreenSystem {
 				|| level.hasNeighborSignal(frame.blockPosition());
 	}
 
-	private static byte[][] renderTiles(boolean powered, ScreenViewMode viewMode, int width, int height) {
-		RenderCacheKey key = new RenderCacheKey(powered, viewMode, width, height);
+	private static byte[][] renderTiles(boolean powered, ScreenViewMode viewMode, int launcherPage, int width, int height) {
+		RenderCacheKey key = new RenderCacheKey(powered, viewMode, launcherPage, width, height);
 		byte[][] cached = TILE_CACHE.get(key);
 		if (cached != null) {
 			return cached;
@@ -553,10 +595,10 @@ public final class MonitorScreenSystem {
 		drawBaseBackground(graphics, width, height, powered);
 		if (powered) {
 			UiLayout layout = createUiLayout(width, height);
-			if (viewMode == ScreenViewMode.MEDIA) {
-				drawMediaScreen(graphics, layout);
+			if (viewMode == ScreenViewMode.HOME) {
+				drawHomeScreen(graphics, layout, launcherPage);
 			} else {
-				drawHomeScreen(graphics, layout);
+				drawAppScreen(graphics, layout, appForViewMode(viewMode));
 			}
 		}
 		graphics.dispose();
@@ -622,76 +664,72 @@ public final class MonitorScreenSystem {
 		}
 	}
 
-	private static void drawHomeScreen(Graphics2D graphics, UiLayout layout) {
-		UiRect workspace = workspaceRect(layout);
-		int arc = clampInt(layout.unit() * 2, 16, 30);
-		fillRoundedRect(graphics, workspace, arc, new Color(245, 248, 252, 220));
-		strokeRoundedRect(graphics, workspace, arc, 1.4F, new Color(255, 255, 255, 78));
+	private static void drawHomeScreen(Graphics2D graphics, UiLayout layout, int launcherPage) {
+		UiRect panel = homePanelRect(layout);
+		int arc = clampInt(layout.unit() * 2, 16, 26);
+		fillRoundedRect(graphics, panel, arc, new Color(242, 246, 252, 210));
+		strokeRoundedRect(graphics, panel, arc, 1.2F, new Color(255, 255, 255, 84));
 
-		UiRect appRect = homeAppRect(layout);
-		fillRoundedRect(graphics, appRect, clampInt(layout.unit() * 2, 18, 30), new Color(18, 22, 28, 232));
-		strokeRoundedRect(graphics, appRect, clampInt(layout.unit() * 2, 18, 30), 1.2F, new Color(255, 255, 255, 54));
+		UiRect header = homeHeaderRect(layout, panel);
+		drawCenteredText(graphics, "APPS", header, new Color(18, 24, 30), Font.BOLD, clampInt(layout.unit() + 2, 11, 18));
 
-		UiRect iconRect = homeAppIconRect(layout);
-		drawMediaAppIcon(graphics, iconRect);
-
-		UiRect labelRect = homeAppLabelRect(layout, appRect);
-		fillRoundedRect(graphics, labelRect, clampInt(layout.unit(), 10, 18), new Color(243, 246, 250, 238));
-		drawCenteredText(graphics, "MEDIA", labelRect, new Color(18, 24, 30), Font.BOLD, clampInt(layout.unit(), 11, 19));
-
-		UiRect statusRect = homeStatusRect(layout, appRect);
-		if (statusRect != null) {
-			fillRoundedRect(graphics, statusRect, clampInt(layout.unit() * 2, 16, 26), new Color(14, 18, 23, 220));
-			strokeRoundedRect(graphics, statusRect, clampInt(layout.unit() * 2, 16, 26), 1.0F, new Color(255, 255, 255, 44));
-
-			UiRect previewRect = new UiRect(
-					statusRect.x() + layout.unit(),
-					statusRect.y() + layout.unit(),
-					Math.max(40, statusRect.width() - layout.unit() * 2),
-					Math.max(36, statusRect.height() / 2)
-			);
-			fillRoundedRect(graphics, previewRect, clampInt(layout.unit(), 8, 16), new Color(224, 232, 240, 244));
-			strokeRoundedRect(graphics, previewRect, clampInt(layout.unit(), 8, 16), 1.0F, new Color(12, 18, 24, 24));
-
-			UiRect thumbRect = new UiRect(
-					previewRect.x() + layout.unit(),
-					previewRect.y() + layout.unit(),
-					Math.max(16, previewRect.width() / 3),
-					Math.max(14, previewRect.height() - layout.unit() * 2)
-			);
-			fillRoundedRect(graphics, thumbRect, clampInt(layout.unit() / 2, 6, 12), new Color(78, 186, 255, 210));
-
-			int lineX = thumbRect.right() + layout.unit();
-			int lineWidth = Math.max(18, previewRect.right() - layout.unit() - lineX);
-			fillRoundedRect(graphics, new UiRect(lineX, previewRect.y() + layout.unit(), lineWidth, clampInt(layout.unit() - 2, 6, 16)), 6, new Color(40, 50, 60, 150));
-			fillRoundedRect(graphics, new UiRect(lineX, previewRect.y() + layout.unit() * 2 + 4, Math.max(12, lineWidth * 3 / 4), clampInt(layout.unit() - 4, 4, 12)), 6, new Color(40, 50, 60, 90));
-			fillRoundedRect(graphics, new UiRect(lineX, previewRect.bottom() - layout.unit() - 6, Math.max(12, lineWidth / 2), clampInt(layout.unit() - 4, 4, 12)), 6, new Color(40, 50, 60, 110));
+		List<MonitorApp> visibleApps = visibleHomeApps(layout, launcherPage);
+		for (int index = 0; index < visibleApps.size(); index++) {
+			drawHomeAppCard(graphics, layout, homeAppCardRect(layout, launcherPage, index), visibleApps.get(index));
 		}
 
-		UiRect footerRect = homeFooterRect(layout, appRect, statusRect);
-		if (footerRect != null) {
-			fillRoundedRect(graphics, footerRect, clampInt(layout.unit() * 2, 16, 24), new Color(255, 255, 255, 104));
-			int chipSize = clampInt(layout.unit(), 12, 22);
-			int chipGap = clampInt(layout.unit() / 2, 6, 12);
-			int chipY = footerRect.y() + (footerRect.height() - chipSize) / 2;
-			for (int i = 0; i < 3; i++) {
-				int chipX = footerRect.x() + layout.unit() + i * (chipSize + chipGap);
-				fillRoundedRect(graphics, new UiRect(chipX, chipY, chipSize, chipSize), clampInt(chipSize / 2, 6, 10), new Color(16, 22, 28, i == 0 ? 182 : 68));
+		int pageCount = homePageCount(layout);
+		if (pageCount > 1) {
+			UiRect footer = homeFooterRect(layout, panel);
+			fillRoundedRect(graphics, footer, clampInt(layout.unit() * 2, 12, 20), new Color(18, 24, 30, 198));
+			drawCenteredText(
+					graphics,
+					(launcherPage + 1) + "/" + pageCount,
+					new UiRect(footer.x() + footer.width() / 4, footer.y(), footer.width() / 2, footer.height()),
+					new Color(248, 251, 255),
+					Font.BOLD,
+					clampInt(layout.unit(), 10, 14)
+			);
+
+			if (launcherPage > 0) {
+				UiRect upRect = homeScrollUpRect(layout);
+				if (upRect != null) {
+					drawLauncherArrowButton(graphics, upRect, true);
+				}
+			}
+			if (launcherPage + 1 < pageCount) {
+				UiRect downRect = homeScrollDownRect(layout);
+				if (downRect != null) {
+					drawLauncherArrowButton(graphics, downRect, false);
+				}
 			}
 		}
 	}
 
-	private static void drawMediaScreen(Graphics2D graphics, UiLayout layout) {
+	private static void drawAppScreen(Graphics2D graphics, UiLayout layout, MonitorApp app) {
+		if (app == null) {
+			drawHomeScreen(graphics, layout, 0);
+			return;
+		}
+
 		UiRect workspace = workspaceRect(layout);
 		int arc = clampInt(layout.unit() * 2, 16, 30);
-		fillRoundedRect(graphics, workspace, arc, new Color(242, 246, 252, 225));
-		strokeRoundedRect(graphics, workspace, arc, 1.2F, new Color(255, 255, 255, 80));
+		fillRoundedRect(graphics, workspace, arc, withAlpha(app.panelRgb(), 224));
+		strokeRoundedRect(graphics, workspace, arc, 1.1F, new Color(255, 255, 255, 66));
 
 		UiRect headerRect = mediaHeaderRect(layout);
-		fillRoundedRect(graphics, headerRect, clampInt(layout.unit() * 2, 14, 24), new Color(16, 20, 26, 235));
+		graphics.setPaint(new GradientPaint(
+				headerRect.x(),
+				headerRect.y(),
+				new Color(app.accentStartRgb()),
+				headerRect.right(),
+				headerRect.bottom(),
+				new Color(app.accentEndRgb())
+		));
+		fillRoundedRect(graphics, headerRect, clampInt(layout.unit() * 2, 14, 24), null);
 
 		UiRect backRect = mediaBackRect(layout);
-		fillRoundedRect(graphics, backRect, clampInt(layout.unit(), 10, 18), new Color(245, 247, 250, 235));
+		fillRoundedRect(graphics, backRect, clampInt(layout.unit(), 10, 18), new Color(245, 247, 250, 240));
 		drawBackArrow(graphics, backRect, new Color(18, 22, 28));
 
 		UiRect titleRect = new UiRect(
@@ -700,75 +738,142 @@ public final class MonitorScreenSystem {
 				Math.max(24, headerRect.right() - backRect.right() - layout.unit() * 2),
 				headerRect.height()
 		);
-		drawVerticalText(graphics, "MEDIA", titleRect, new Color(248, 251, 255), Font.BOLD, clampInt(layout.unit(), 11, 18));
+		drawVerticalText(graphics, app.title(), titleRect, new Color(248, 251, 255), Font.BOLD, clampInt(layout.unit(), 11, 18));
 
-		UiRect previewRect = mediaPreviewRect(layout);
-		fillRoundedRect(graphics, previewRect, clampInt(layout.unit() * 2, 14, 24), new Color(15, 18, 24, 235));
-		strokeRoundedRect(graphics, previewRect, clampInt(layout.unit() * 2, 14, 24), 1.0F, new Color(255, 255, 255, 42));
+		if ("media".equalsIgnoreCase(app.id())) {
+			UiRect previewRect = mediaPreviewRect(layout);
+			fillRoundedRect(graphics, previewRect, clampInt(layout.unit() * 2, 14, 24), new Color(15, 18, 24, 235));
+			strokeRoundedRect(graphics, previewRect, clampInt(layout.unit() * 2, 14, 24), 1.0F, new Color(255, 255, 255, 42));
 
-		UiRect imageRect = previewRect.inset(clampInt(layout.unit(), 10, 18));
-		fillRoundedRect(graphics, imageRect, clampInt(layout.unit(), 10, 18), new Color(232, 238, 244, 244));
-		drawMediaPlaceholder(graphics, imageRect);
+			UiRect imageRect = previewRect.inset(clampInt(layout.unit(), 10, 18));
+			fillRoundedRect(graphics, imageRect, clampInt(layout.unit(), 10, 18), new Color(232, 238, 244, 244));
+			drawMediaPlaceholder(graphics, imageRect);
 
-		UiRect controlsRect = mediaControlsRect(layout, previewRect);
-		fillRoundedRect(graphics, controlsRect, clampInt(layout.unit() * 2, 12, 20), new Color(255, 255, 255, 112));
-		drawMediaControls(graphics, controlsRect, layout);
+			UiRect controlsRect = mediaControlsRect(layout, previewRect);
+			fillRoundedRect(graphics, controlsRect, clampInt(layout.unit() * 2, 12, 20), new Color(255, 255, 255, 112));
+			drawMediaControls(graphics, controlsRect, layout);
 
-		UiRect sidebarRect = mediaSidebarRect(layout, previewRect, controlsRect);
-		if (sidebarRect != null) {
-			fillRoundedRect(graphics, sidebarRect, clampInt(layout.unit() * 2, 14, 22), new Color(18, 22, 28, 216));
-			strokeRoundedRect(graphics, sidebarRect, clampInt(layout.unit() * 2, 14, 22), 1.0F, new Color(255, 255, 255, 40));
-			int pad = clampInt(layout.unit(), 8, 14);
-			int rowHeight = clampInt(layout.unit() * 3, 24, 42);
-			for (int i = 0; i < 3; i++) {
-				int rowY = sidebarRect.y() + pad + i * (rowHeight + pad);
-				UiRect row = new UiRect(sidebarRect.x() + pad, rowY, Math.max(28, sidebarRect.width() - pad * 2), rowHeight);
-				fillRoundedRect(graphics, row, clampInt(layout.unit(), 8, 14), new Color(255, 255, 255, i == 0 ? 122 : 54));
-				UiRect thumb = new UiRect(row.x() + pad / 2, row.y() + pad / 2, Math.max(12, rowHeight - pad), Math.max(12, rowHeight - pad));
-				fillRoundedRect(graphics, thumb, clampInt(layout.unit() / 2, 6, 10), new Color(78, 186, 255, 220));
-				int barX = thumb.right() + pad / 2;
-				int barWidth = Math.max(10, row.right() - pad - barX);
-				fillRoundedRect(graphics, new UiRect(barX, row.y() + pad / 2, barWidth, clampInt(layout.unit() - 4, 4, 12)), 6, new Color(16, 22, 28, 110));
-				fillRoundedRect(graphics, new UiRect(barX, row.bottom() - pad - clampInt(layout.unit() - 6, 4, 10), Math.max(8, barWidth * 2 / 3), clampInt(layout.unit() - 6, 4, 10)), 6, new Color(16, 22, 28, 72));
+			UiRect sidebarRect = mediaSidebarRect(layout, previewRect, controlsRect);
+			if (sidebarRect != null) {
+				fillRoundedRect(graphics, sidebarRect, clampInt(layout.unit() * 2, 14, 22), new Color(18, 22, 28, 216));
+				strokeRoundedRect(graphics, sidebarRect, clampInt(layout.unit() * 2, 14, 22), 1.0F, new Color(255, 255, 255, 40));
+				int pad = clampInt(layout.unit(), 8, 14);
+				int rowHeight = clampInt(layout.unit() * 3, 24, 42);
+				for (int i = 0; i < 3; i++) {
+					int rowY = sidebarRect.y() + pad + i * (rowHeight + pad);
+					UiRect row = new UiRect(sidebarRect.x() + pad, rowY, Math.max(28, sidebarRect.width() - pad * 2), rowHeight);
+					fillRoundedRect(graphics, row, clampInt(layout.unit(), 8, 14), new Color(255, 255, 255, i == 0 ? 122 : 54));
+					UiRect thumb = new UiRect(row.x() + pad / 2, row.y() + pad / 2, Math.max(12, rowHeight - pad), Math.max(12, rowHeight - pad));
+					drawAppIcon(graphics, app, thumb, clampInt(layout.unit() / 3, 2, 6));
+					int barX = thumb.right() + pad / 2;
+					int barWidth = Math.max(10, row.right() - pad - barX);
+					fillRoundedRect(graphics, new UiRect(barX, row.y() + pad / 2, barWidth, clampInt(layout.unit() - 4, 4, 12)), 6, new Color(16, 22, 28, 110));
+					fillRoundedRect(graphics, new UiRect(barX, row.bottom() - pad - clampInt(layout.unit() - 6, 4, 10), Math.max(8, barWidth * 2 / 3), clampInt(layout.unit() - 6, 4, 10)), 6, new Color(16, 22, 28, 72));
+				}
 			}
+			return;
 		}
+
+		UiRect heroRect = genericAppHeroRect(layout);
+		fillRoundedRect(graphics, heroRect, clampInt(layout.unit() * 2, 14, 24), new Color(248, 250, 252, 230));
+		strokeRoundedRect(graphics, heroRect, clampInt(layout.unit() * 2, 14, 24), 1.0F, new Color(255, 255, 255, 76));
+
+		int iconSize = clampInt(Math.min(heroRect.width(), heroRect.height()) / 2, 48, 96);
+		UiRect iconRect = new UiRect(
+				heroRect.x() + (heroRect.width() - iconSize) / 2,
+				heroRect.y() + layout.unit(),
+				iconSize,
+				iconSize
+		);
+		fillRoundedRect(graphics, iconRect, clampInt(layout.unit() * 2, 12, 22), new Color(255, 255, 255, 255));
+		drawAppIcon(graphics, app, iconRect, clampInt(layout.unit() / 2, 4, 8));
+
+		UiRect titleTextRect = new UiRect(
+				heroRect.x() + layout.unit(),
+				iconRect.bottom() + layout.unit() / 2,
+				heroRect.width() - layout.unit() * 2,
+				clampInt(layout.unit() * 2, 20, 30)
+		);
+		drawCenteredText(graphics, app.screenTitle(), titleTextRect, new Color(18, 22, 28), Font.BOLD, clampInt(layout.unit() + 1, 11, 17));
+
+		UiRect hintRect = new UiRect(
+				heroRect.x() + layout.unit(),
+				titleTextRect.bottom(),
+				heroRect.width() - layout.unit() * 2,
+				clampInt(layout.unit() * 2, 18, 28)
+		);
+		drawCenteredText(graphics, app.screenHint(), hintRect, new Color(48, 58, 68), Font.PLAIN, clampInt(layout.unit() - 1, 9, 13));
 	}
 
-	private static void drawMediaAppIcon(Graphics2D graphics, UiRect rect) {
+	private static void drawHomeAppCard(Graphics2D graphics, UiLayout layout, UiRect cardRect, MonitorApp app) {
+		fillRoundedRect(graphics, cardRect, clampInt(layout.unit() * 2, 14, 22), withAlpha(app.panelRgb(), 236));
+		strokeRoundedRect(graphics, cardRect, clampInt(layout.unit() * 2, 14, 22), 1.0F, new Color(255, 255, 255, 44));
+
+		UiRect iconRect = homeAppIconRect(cardRect, layout);
+		drawAppIcon(graphics, app, iconRect, clampInt(layout.unit() / 3, 2, 5));
+
+		UiRect labelRect = homeAppLabelRect(layout, cardRect);
+		fillRoundedRect(graphics, labelRect, clampInt(layout.unit(), 8, 14), new Color(245, 247, 250, 236));
+		drawCenteredText(graphics, app.title(), labelRect, new Color(18, 22, 28), Font.BOLD, clampInt(layout.unit() - 1, 9, 13));
+	}
+
+	private static void drawAppIcon(Graphics2D graphics, MonitorApp app, UiRect rect, int padding) {
+		if (app == null) {
+			return;
+		}
+		BufferedImage image = loadAppIcon(app);
+		if (image == null) {
+			return;
+		}
+		drawContainedImage(graphics, image, rect, padding);
+	}
+
+	private static void drawContainedImage(Graphics2D graphics, BufferedImage image, UiRect rect, int padding) {
+		if (image == null || rect.width() <= 0 || rect.height() <= 0) {
+			return;
+		}
+		int availableWidth = Math.max(1, rect.width() - padding * 2);
+		int availableHeight = Math.max(1, rect.height() - padding * 2);
+		double scale = Math.min(availableWidth / (double) image.getWidth(), availableHeight / (double) image.getHeight());
+		int drawWidth = Math.max(1, (int) Math.round(image.getWidth() * scale));
+		int drawHeight = Math.max(1, (int) Math.round(image.getHeight() * scale));
+		int drawX = rect.x() + (rect.width() - drawWidth) / 2;
+		int drawY = rect.y() + (rect.height() - drawHeight) / 2;
+		graphics.drawImage(image, drawX, drawY, drawWidth, drawHeight, null);
+	}
+
+	private static BufferedImage loadAppIcon(MonitorApp app) {
+		if (app == null) {
+			return null;
+		}
+		return APP_ICON_CACHE.computeIfAbsent(
+				app.id(),
+				ignored -> loadPngImage(app.iconResourcePath(), fallbackAppIcon(app))
+		);
+	}
+
+	private static BufferedImage fallbackAppIcon(MonitorApp app) {
+		BufferedImage image = new BufferedImage(128, 128, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = image.createGraphics();
+		configureUiGraphics(graphics);
 		graphics.setPaint(new GradientPaint(
-				rect.x(),
-				rect.y(),
-				new Color(64, 173, 255, 255),
-				rect.right(),
-				rect.bottom(),
-				new Color(16, 84, 188, 255)
+				0.0F,
+				0.0F,
+				new Color(app.accentStartRgb()),
+				128.0F,
+				128.0F,
+				new Color(app.accentEndRgb())
 		));
-		fillRoundedRect(graphics, rect, clampInt(rect.width() / 4, 12, 22), null);
-		strokeRoundedRect(graphics, rect, clampInt(rect.width() / 4, 12, 22), 1.2F, new Color(255, 255, 255, 88));
-
-		UiRect imageRect = rect.inset(Math.max(8, rect.width() / 7));
-		strokeRoundedRect(graphics, imageRect, clampInt(rect.width() / 7, 8, 14), 2.4F, new Color(255, 255, 255, 234));
-
-		int mountainBaseY = imageRect.y() + imageRect.height() * 3 / 4;
-		int leftX = imageRect.x() + imageRect.width() / 5;
-		int peakX = imageRect.x() + imageRect.width() / 2;
-		int rightX = imageRect.right() - imageRect.width() / 6;
-		graphics.setColor(new Color(255, 255, 255, 228));
-		graphics.fillPolygon(
-				new int[]{leftX, peakX, rightX},
-				new int[]{mountainBaseY, imageRect.y() + imageRect.height() / 3, mountainBaseY},
-				3
-		);
-
-		int playSize = Math.max(10, rect.width() / 4);
-		int playCenterX = rect.right() - playSize - Math.max(8, rect.width() / 10);
-		int playCenterY = rect.bottom() - playSize - Math.max(8, rect.width() / 10);
-		fillRoundedRect(graphics, new UiRect(playCenterX - 4, playCenterY - 4, playSize + 8, playSize + 8), clampInt(playSize / 2, 8, 14), new Color(12, 18, 24, 150));
-		graphics.fillPolygon(
-				new int[]{playCenterX, playCenterX, playCenterX + playSize},
-				new int[]{playCenterY, playCenterY + playSize, playCenterY + playSize / 2},
-				3
-		);
+		graphics.fillRoundRect(0, 0, 128, 128, 28, 28);
+		graphics.setColor(Color.WHITE);
+		graphics.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 34));
+		var metrics = graphics.getFontMetrics();
+		String text = app.title().length() > 3 ? app.title().substring(0, 3) : app.title();
+		int textX = (128 - metrics.stringWidth(text)) / 2;
+		int textY = (128 - metrics.getHeight()) / 2 + metrics.getAscent();
+		graphics.drawString(text, textX, textY);
+		graphics.dispose();
+		return image;
 	}
 
 	private static void drawMediaPlaceholder(Graphics2D graphics, UiRect rect) {
@@ -820,6 +925,25 @@ public final class MonitorScreenSystem {
 		);
 	}
 
+	private static void drawLauncherArrowButton(Graphics2D graphics, UiRect rect, boolean up) {
+		fillRoundedRect(graphics, rect, clampInt(rect.width() / 2, 8, 12), new Color(248, 251, 255, 240));
+		graphics.setColor(new Color(18, 22, 28));
+		int pad = Math.max(4, rect.width() / 4);
+		if (up) {
+			graphics.fillPolygon(
+					new int[]{rect.x() + rect.width() / 2, rect.x() + pad, rect.right() - pad},
+					new int[]{rect.y() + pad, rect.bottom() - pad, rect.bottom() - pad},
+					3
+			);
+		} else {
+			graphics.fillPolygon(
+					new int[]{rect.x() + pad, rect.right() - pad, rect.x() + rect.width() / 2},
+					new int[]{rect.y() + pad, rect.y() + pad, rect.bottom() - pad},
+					3
+			);
+		}
+	}
+
 	private static void drawBackArrow(Graphics2D graphics, UiRect rect, Color color) {
 		int pad = Math.max(4, rect.width() / 4);
 		int midY = rect.y() + rect.height() / 2;
@@ -837,8 +961,8 @@ public final class MonitorScreenSystem {
 		int viewportHeight = Math.min(height, MAX_UI_TILES) * MAP_SIZE;
 		int viewportX = (canvasWidth - viewportWidth) / 2;
 		int viewportY = (canvasHeight - viewportHeight) / 2;
-		int margin = clampInt(Math.round(Math.min(viewportWidth, viewportHeight) * 0.10F), 10, 24);
-		int unit = clampInt(Math.round(Math.min(viewportWidth, viewportHeight) / 11.0F), 10, 24);
+		int margin = clampInt(Math.round(Math.min(viewportWidth, viewportHeight) * 0.08F), 8, 20);
+		int unit = clampInt(Math.round(Math.min(viewportWidth, viewportHeight) / 14.0F), 8, 18);
 		return new UiLayout(canvasWidth, canvasHeight, viewportX, viewportY, viewportWidth, viewportHeight, margin, unit);
 	}
 
@@ -851,68 +975,94 @@ public final class MonitorScreenSystem {
 		);
 	}
 
-	private static UiRect homeAppRect(UiLayout layout) {
-		int iconSize = homeAppIconSize(layout);
-		int width = clampInt(iconSize + layout.unit() * 2, 76, 128);
-		int labelHeight = clampInt(layout.unit() + 6, 18, 28);
-		int height = iconSize + labelHeight + layout.unit() * 2;
+	private static UiRect homePanelRect(UiLayout layout) {
+		int rows = homeRowsPerPage(layout);
+		int gap = homeAppGap(layout);
+		int headerHeight = homeHeaderHeight(layout);
+		int footerHeight = homePageCount(layout) > 1 ? clampInt(layout.unit() * 2, 18, 28) : clampInt(layout.unit() + 6, 12, 18);
+		int cardsWidth = LAUNCHER_COLUMNS * homeAppCardWidth(layout) + (LAUNCHER_COLUMNS - 1) * gap;
+		int cardsHeight = rows * homeAppCardHeight(layout) + Math.max(0, rows - 1) * gap;
+		int width = clampInt(cardsWidth + layout.unit() * 2, 96, workspaceRect(layout).width());
+		int height = clampInt(headerHeight + cardsHeight + footerHeight + layout.unit() * 2, 78, workspaceRect(layout).height());
 		return new UiRect(
-				layout.viewportX() + layout.margin(),
-				layout.viewportY() + layout.margin(),
+				layout.viewportX() + (layout.viewportWidth() - width) / 2,
+				layout.viewportY() + (layout.viewportHeight() - height) / 2,
 				width,
 				height
 		);
 	}
 
-	private static UiRect homeAppIconRect(UiLayout layout) {
-		UiRect appRect = homeAppRect(layout);
-		int iconSize = homeAppIconSize(layout);
+	private static UiRect homeHeaderRect(UiLayout layout, UiRect panel) {
 		return new UiRect(
-				appRect.x() + (appRect.width() - iconSize) / 2,
-				appRect.y() + layout.unit(),
-				iconSize,
-				iconSize
+				panel.x() + layout.unit(),
+				panel.y() + layout.unit() / 2,
+				panel.width() - layout.unit() * 2,
+				homeHeaderHeight(layout)
 		);
 	}
 
-	private static UiRect homeAppLabelRect(UiLayout layout, UiRect appRect) {
-		int labelHeight = clampInt(layout.unit() + 6, 18, 28);
+	private static UiRect homeFooterRect(UiLayout layout, UiRect panel) {
+		int height = clampInt(layout.unit() * 2, 18, 28);
 		return new UiRect(
-				appRect.x() + layout.unit(),
-				appRect.bottom() - labelHeight - layout.unit(),
-				appRect.width() - layout.unit() * 2,
+				panel.x() + layout.unit(),
+				panel.bottom() - height - layout.unit() / 2,
+				panel.width() - layout.unit() * 2,
+				height
+		);
+	}
+
+	private static UiRect homeAppCardRect(UiLayout layout, int launcherPage, int slotIndex) {
+		UiRect panel = homePanelRect(layout);
+		int row = slotIndex / LAUNCHER_COLUMNS;
+		int column = slotIndex % LAUNCHER_COLUMNS;
+		int gap = homeAppGap(layout);
+		int cardsWidth = LAUNCHER_COLUMNS * homeAppCardWidth(layout) + (LAUNCHER_COLUMNS - 1) * gap;
+		int startX = panel.x() + (panel.width() - cardsWidth) / 2;
+		int startY = homeHeaderRect(layout, panel).bottom() + layout.unit();
+		return new UiRect(
+				startX + column * (homeAppCardWidth(layout) + gap),
+				startY + row * (homeAppCardHeight(layout) + gap),
+				homeAppCardWidth(layout),
+				homeAppCardHeight(layout)
+		);
+	}
+
+	private static UiRect homeAppIconRect(UiRect cardRect, UiLayout layout) {
+		int size = homeAppIconSize(layout);
+		return new UiRect(
+				cardRect.x() + (cardRect.width() - size) / 2,
+				cardRect.y() + layout.unit() / 2,
+				size,
+				size
+		);
+	}
+
+	private static UiRect homeAppLabelRect(UiLayout layout, UiRect cardRect) {
+		int labelHeight = clampInt(layout.unit() + 2, 11, 18);
+		return new UiRect(
+				cardRect.x() + clampInt(layout.unit() / 2, 4, 8),
+				cardRect.bottom() - labelHeight - clampInt(layout.unit() / 2, 4, 8),
+				cardRect.width() - clampInt(layout.unit(), 8, 14),
 				labelHeight
 		);
 	}
 
-	private static UiRect homeStatusRect(UiLayout layout, UiRect appRect) {
-		int x = appRect.right() + layout.margin();
-		int availableWidth = layout.viewportX() + layout.viewportWidth() - layout.margin() - x;
-		if (availableWidth < 72) {
+	private static UiRect homeScrollUpRect(UiLayout layout) {
+		if (homePageCount(layout) <= 1) {
 			return null;
 		}
-		return new UiRect(
-				x,
-				appRect.y(),
-				availableWidth,
-				Math.max(72, appRect.height() - layout.unit())
-		);
+		UiRect footer = homeFooterRect(layout, homePanelRect(layout));
+		int size = Math.max(footer.height() - 6, 12);
+		return new UiRect(footer.x() + 3, footer.y() + (footer.height() - size) / 2, size, size);
 	}
 
-	private static UiRect homeFooterRect(UiLayout layout, UiRect appRect, UiRect statusRect) {
-		UiRect workspace = workspaceRect(layout);
-		int top = Math.max(appRect.bottom(), statusRect != null ? statusRect.bottom() : 0) + layout.unit();
-		int height = clampInt(layout.unit() * 2, 20, 34);
-		int maxTop = workspace.bottom() - height - layout.unit() / 2;
-		if (top > maxTop) {
+	private static UiRect homeScrollDownRect(UiLayout layout) {
+		if (homePageCount(layout) <= 1) {
 			return null;
 		}
-		return new UiRect(
-				workspace.x() + layout.unit(),
-				top,
-				workspace.width() - layout.unit() * 2,
-				height
-		);
+		UiRect footer = homeFooterRect(layout, homePanelRect(layout));
+		int size = Math.max(footer.height() - 6, 12);
+		return new UiRect(footer.right() - size - 3, footer.y() + (footer.height() - size) / 2, size, size);
 	}
 
 	private static UiRect mediaHeaderRect(UiLayout layout) {
@@ -921,7 +1071,7 @@ public final class MonitorScreenSystem {
 				workspace.x() + layout.unit() / 2,
 				workspace.y() + layout.unit() / 2,
 				workspace.width() - layout.unit(),
-				clampInt(layout.unit() * 2, 24, 38)
+				clampInt(layout.unit() * 2, 22, 36)
 		);
 	}
 
@@ -975,8 +1125,64 @@ public final class MonitorScreenSystem {
 		);
 	}
 
+	private static UiRect genericAppHeroRect(UiLayout layout) {
+		UiRect workspace = workspaceRect(layout);
+		UiRect header = mediaHeaderRect(layout);
+		return new UiRect(
+				workspace.x() + layout.unit(),
+				header.bottom() + layout.unit(),
+				workspace.width() - layout.unit() * 2,
+				workspace.bottom() - header.bottom() - layout.unit() * 2
+		);
+	}
+
+	private static int homeHeaderHeight(UiLayout layout) {
+		return clampInt(layout.unit() + 4, 12, 20);
+	}
+
+	private static int homeRowsPerPage(UiLayout layout) {
+		return layout.viewportHeight() >= 180 ? 2 : 1;
+	}
+
+	private static int homeAppGap(UiLayout layout) {
+		return clampInt(layout.unit() - 1, 6, 12);
+	}
+
 	private static int homeAppIconSize(UiLayout layout) {
-		return clampInt(Math.round(Math.min(layout.viewportWidth(), layout.viewportHeight()) * 0.42F), 56, 96);
+		return clampInt(Math.round(Math.min(layout.viewportWidth(), layout.viewportHeight()) * 0.22F), 24, 46);
+	}
+
+	private static int homeAppCardWidth(UiLayout layout) {
+		return clampInt(homeAppIconSize(layout) + layout.unit() + 6, 40, 74);
+	}
+
+	private static int homeAppCardHeight(UiLayout layout) {
+		return homeAppCardWidth(layout) + clampInt(layout.unit() + 2, 11, 18) + clampInt(layout.unit() / 2, 4, 8);
+	}
+
+	private static int homePageCapacity(UiLayout layout) {
+		return Math.max(1, homeRowsPerPage(layout) * LAUNCHER_COLUMNS);
+	}
+
+	private static int homePageCount(UiLayout layout) {
+		int capacity = homePageCapacity(layout);
+		int totalApps = MonitorAppRegistry.apps().size();
+		return Math.max(1, (totalApps + capacity - 1) / capacity);
+	}
+
+	private static List<MonitorApp> visibleHomeApps(UiLayout layout, int launcherPage) {
+		List<MonitorApp> apps = MonitorAppRegistry.apps();
+		int page = clampInt(launcherPage, 0, Math.max(0, homePageCount(layout) - 1));
+		int fromIndex = page * homePageCapacity(layout);
+		int toIndex = Math.min(apps.size(), fromIndex + homePageCapacity(layout));
+		return apps.subList(fromIndex, toIndex);
+	}
+
+	private static MonitorApp appForViewMode(ScreenViewMode mode) {
+		if (mode == null || mode == ScreenViewMode.HOME) {
+			return null;
+		}
+		return MonitorAppRegistry.findById(mode.serializedName());
 	}
 
 	private static void fillRoundedRect(Graphics2D graphics, UiRect rect, int arc, Color color) {
@@ -1066,6 +1272,18 @@ public final class MonitorScreenSystem {
 			return image != null ? image : fallbackImage(powered);
 		} catch (IOException ignored) {
 			return fallbackImage(powered);
+		}
+	}
+
+	private static BufferedImage loadPngImage(String resourcePath, BufferedImage fallback) {
+		try (InputStream inputStream = MonitorScreenSystem.class.getResourceAsStream(resourcePath)) {
+			if (inputStream == null) {
+				return fallback;
+			}
+			BufferedImage image = ImageIO.read(inputStream);
+			return image != null ? image : fallback;
+		} catch (IOException ignored) {
+			return fallback;
 		}
 	}
 
@@ -1331,9 +1549,15 @@ public final class MonitorScreenSystem {
 		return Math.max(min, Math.min(max, value));
 	}
 
+	private static Color withAlpha(int rgb, int alpha) {
+		return new Color((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, clampInt(alpha, 0, 255));
+	}
+
 	private enum ScreenViewMode {
 		HOME("home"),
-		MEDIA("media");
+		MEDIA("media"),
+		MAX("max"),
+		YOUTUBE("youtube");
 
 		private final String serializedName;
 
@@ -1406,12 +1630,13 @@ public final class MonitorScreenSystem {
 			int height,
 			boolean powered,
 			ScreenViewMode viewMode,
+			int launcherPage,
 			Map<ItemFrame, TileCoord> frameCoords,
 			Map<TileCoord, ScreenFrame> byCoord
 	) {
 	}
 
-	private record RenderCacheKey(boolean powered, ScreenViewMode viewMode, int width, int height) {
+	private record RenderCacheKey(boolean powered, ScreenViewMode viewMode, int launcherPage, int width, int height) {
 	}
 
 	private record ScreenTileState(
@@ -1422,7 +1647,8 @@ public final class MonitorScreenSystem {
 			int tileY,
 			int connectionMask,
 			boolean powered,
-			ScreenViewMode viewMode
+			ScreenViewMode viewMode,
+			int launcherPage
 	) {
 		boolean sameRenderState(ScreenTileState other) {
 			return other != null
@@ -1431,7 +1657,8 @@ public final class MonitorScreenSystem {
 					&& this.tileX == other.tileX
 					&& this.tileY == other.tileY
 					&& this.powered == other.powered
-					&& this.viewMode == other.viewMode;
+					&& this.viewMode == other.viewMode
+					&& this.launcherPage == other.launcherPage;
 		}
 	}
 }
