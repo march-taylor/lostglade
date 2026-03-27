@@ -5,13 +5,21 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientGamePacketListener;
+import net.minecraft.network.protocol.game.ClientboundBundlePacket;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundAnimatePacket;
+import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
+import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
 import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -141,6 +149,7 @@ public final class CocaineHallucinationSystem {
 
 	public static void tick(MinecraftServer server) {
 		if (server == null || ACTIVE_STATES.isEmpty()) {
+			cleanupOrphanedHallucinations(server);
 			return;
 		}
 
@@ -184,16 +193,58 @@ public final class CocaineHallucinationSystem {
 
 			applyMovement(mob, targetPlayer, state, nowTick);
 		}
+
+		cleanupOrphanedHallucinations(server);
 	}
 
-	public static boolean shouldSuppressOutgoingPacket(ServerPlayer viewer, Packet<?> packet) {
-		if (viewer == null || packet == null || ACTIVE_STATES.isEmpty()) {
-			return false;
+	public static Packet<?> filterOutgoingPacket(ServerPlayer viewer, Packet<?> packet) {
+		if (viewer == null || packet == null) {
+			return packet;
+		}
+
+		if (packet instanceof ClientboundBundlePacket bundlePacket) {
+			List<Packet<? super ClientGamePacketListener>> filteredPackets = new ArrayList<>();
+			boolean changed = false;
+			for (Packet<?> subPacket : bundlePacket.subPackets()) {
+				Packet<?> filteredSubPacket = filterOutgoingPacket(viewer, subPacket);
+				if (filteredSubPacket == null) {
+					changed = true;
+					continue;
+				}
+				if (filteredSubPacket != subPacket) {
+					changed = true;
+				}
+				filteredPackets.add(castGamePacket(filteredSubPacket));
+			}
+
+			if (!changed) {
+				return packet;
+			}
+			if (filteredPackets.isEmpty()) {
+				return null;
+			}
+			return new ClientboundBundlePacket(filteredPackets);
+		}
+
+		if (packet instanceof ClientboundRemoveEntitiesPacket removeEntitiesPacket) {
+			int[] filteredIds = filterRemovedEntityIds(viewer, removeEntitiesPacket);
+			if (filteredIds == null) {
+				return packet;
+			}
+			if (filteredIds.length == 0) {
+				return null;
+			}
+			return new ClientboundRemoveEntitiesPacket(filteredIds);
 		}
 
 		if (packet instanceof ClientboundAddEntityPacket
+				|| packet instanceof ClientboundAnimatePacket
+				|| packet instanceof ClientboundEntityEventPacket
 				|| packet instanceof ClientboundSetEntityDataPacket
+				|| packet instanceof ClientboundSetEntityMotionPacket
 				|| packet instanceof ClientboundSetEquipmentPacket
+				|| packet instanceof ClientboundUpdateAttributesPacket
+				|| packet instanceof ClientboundEntityPositionSyncPacket
 				|| packet instanceof ClientboundMoveEntityPacket
 				|| packet instanceof ClientboundRotateHeadPacket
 				|| packet instanceof ClientboundTeleportEntityPacket
@@ -201,11 +252,13 @@ public final class CocaineHallucinationSystem {
 			int entityId = extractEntityId(packet);
 			if (entityId != Integer.MIN_VALUE) {
 				Entity entity = ((ServerLevel) viewer.level()).getEntity(entityId);
-				return shouldHideEntityFromViewer(viewer, entity);
+				if (shouldHideEntityFromViewer(viewer, entity)) {
+					return null;
+				}
 			}
 		}
 
-		return false;
+		return packet;
 	}
 
 	private static List<EntityType<?>> getMobPool(ServerLevel level) {
@@ -496,12 +549,84 @@ public final class CocaineHallucinationSystem {
 			return false;
 		}
 
+		UUID targetPlayerUuid = resolveTargetPlayerUuid(entity);
+		return targetPlayerUuid != null && !viewer.getUUID().equals(targetPlayerUuid);
+	}
+
+	private static void cleanupOrphanedHallucinations(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		for (ServerLevel level : server.getAllLevels()) {
+			for (Entity entity : level.getAllEntities()) {
+				if (!entity.getTags().contains(HALLUCINATION_TAG) || ACTIVE_STATES.containsKey(entity.getUUID())) {
+					continue;
+				}
+
+				UUID targetPlayerUuid = resolveTargetPlayerUuid(entity);
+				ServerPlayer targetPlayer = targetPlayerUuid == null ? null : server.getPlayerList().getPlayer(targetPlayerUuid);
+				boolean touchedPlayer = entity instanceof Mob mob && targetPlayer != null && touchesTargetPlayer(mob, targetPlayer);
+				discardEntityOnly(entity, true, touchedPlayer);
+			}
+		}
+	}
+
+	private static UUID resolveTargetPlayerUuid(Entity entity) {
+		if (entity == null) {
+			return null;
+		}
+
 		ActiveHallucinationState state = ACTIVE_STATES.get(entity.getUUID());
-		return state != null && !viewer.getUUID().equals(state.targetPlayerUuid);
+		if (state != null) {
+			return state.targetPlayerUuid;
+		}
+
+		return null;
+	}
+
+	private static int[] filterRemovedEntityIds(ServerPlayer viewer, ClientboundRemoveEntitiesPacket removeEntitiesPacket) {
+		Object entityIds = invokeNoArgs(removeEntitiesPacket, "entityIds");
+		if (entityIds == null) {
+			entityIds = readFieldValue(removeEntitiesPacket, "entityIds");
+		}
+		if (!(entityIds instanceof Iterable<?> iterable)) {
+			return null;
+		}
+
+		List<Integer> keptEntityIds = new ArrayList<>();
+		boolean changed = false;
+		ServerLevel level = (ServerLevel) viewer.level();
+		for (Object entry : iterable) {
+			if (!(entry instanceof Number number)) {
+				continue;
+			}
+
+			int entityId = number.intValue();
+			Entity entity = level.getEntity(entityId);
+			if (shouldHideEntityFromViewer(viewer, entity)) {
+				changed = true;
+				continue;
+			}
+			keptEntityIds.add(entityId);
+		}
+
+		if (!changed) {
+			return null;
+		}
+
+		int[] result = new int[keptEntityIds.size()];
+		for (int i = 0; i < keptEntityIds.size(); i++) {
+			result[i] = keptEntityIds.get(i);
+		}
+		return result;
 	}
 
 	private static int extractEntityId(Packet<?> packet) {
-		Object value = invokeNoArgs(packet, "id", "getId", "getEntityId", "getEntity");
+		Object value = invokeNoArgs(packet, "getId", "getEntityId", "getEntity");
+		if (!(value instanceof Number)) {
+			value = readFieldValue(packet, "id", "entityId", "entity");
+		}
 		return value instanceof Number number ? number.intValue() : Integer.MIN_VALUE;
 	}
 
@@ -517,6 +642,31 @@ public final class CocaineHallucinationSystem {
 			}
 		}
 		return null;
+	}
+
+	private static Object readFieldValue(Object target, String... fieldNames) {
+		if (target == null) {
+			return null;
+		}
+
+		for (String fieldName : fieldNames) {
+			Class<?> type = target.getClass();
+			while (type != null) {
+				try {
+					java.lang.reflect.Field field = type.getDeclaredField(fieldName);
+					field.setAccessible(true);
+					return field.get(target);
+				} catch (ReflectiveOperationException ignored) {
+					type = type.getSuperclass();
+				}
+			}
+		}
+		return null;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Packet<? super ClientGamePacketListener> castGamePacket(Packet<?> packet) {
+		return (Packet<? super ClientGamePacketListener>) packet;
 	}
 
 	private static MovementType pickMovementType(RandomSource random) {
