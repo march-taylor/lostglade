@@ -15,6 +15,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.protocol.game.ClientboundChunksBiomesPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTimePacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
@@ -44,6 +45,7 @@ import net.minecraft.world.item.component.TooltipDisplay;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -91,6 +93,7 @@ public final class MethadoneItem extends SimplePolymerItem {
     private static final float FALLBACK_SOUND_PITCH = 1.0F;
     private static final int ACID_SKY_PHASE_INTERVAL_TICKS = 4;
     private static final int ACID_SKY_TRACKED_CHUNK_REFRESH_INTERVAL_TICKS = 20;
+    private static final long METHADONE_FORCED_DAY_TIME = 6000L;
     private static final long[] EMPTY_CHUNK_KEYS = new long[0];
     private static final List<ResourceKey<Biome>> ACID_SKY_BIOME_KEYS = IntStream.range(0, 16)
             .mapToObj(index -> acidSkyBiomeKey("acid_sky_" + String.format(Locale.ROOT, "%02d", index)))
@@ -253,6 +256,7 @@ public final class MethadoneItem extends SimplePolymerItem {
                 return true;
             }
 
+            sendForcedMethadoneTime(player);
             updateAcidSky(player, state);
             return false;
         });
@@ -527,6 +531,7 @@ public final class MethadoneItem extends SimplePolymerItem {
         if (player == null || state == null || !(player.level() instanceof ServerLevel level)) {
             return;
         }
+        restoreActualTime(player, level);
         if (state.overriddenDimension == null || !state.overriddenDimension.equals(level.dimension()) || state.overriddenChunks.isEmpty()) {
             return;
         }
@@ -535,6 +540,30 @@ public final class MethadoneItem extends SimplePolymerItem {
         if (!chunks.isEmpty()) {
             player.connection.send(ClientboundChunksBiomesPacket.forChunks(chunks));
         }
+    }
+
+    private static void sendForcedMethadoneTime(ServerPlayer player) {
+        if (player == null || !(player.level() instanceof ServerLevel level)) {
+            return;
+        }
+
+        player.connection.send(new ClientboundSetTimePacket(
+                level.getGameTime(),
+                METHADONE_FORCED_DAY_TIME,
+                false
+        ));
+    }
+
+    private static void restoreActualTime(ServerPlayer player, ServerLevel level) {
+        if (player == null || level == null) {
+            return;
+        }
+
+        player.connection.send(new ClientboundSetTimePacket(
+                level.getGameTime(),
+                level.getDayTime(),
+                level.getGameRules().get(GameRules.ADVANCE_TIME)
+        ));
     }
 
     private static void restoreRemovedChunks(ServerPlayer player, ServerLevel level, Set<Long> previousChunks, Set<Long> currentChunks) {
