@@ -3,13 +3,20 @@ package com.lostglade.server.camera.bluemap;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.monster.EnderMan;
 import net.minecraft.world.entity.monster.skeleton.Bogged;
 import net.minecraft.world.entity.monster.zombie.ZombifiedPiglin;
 import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.entity.monster.zombie.ZombieVillager;
 import net.minecraft.world.entity.npc.villager.VillagerData;
 import net.minecraft.world.entity.npc.villager.VillagerProfession;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.state.BlockState;
+import org.joml.Matrix4f;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -17,6 +24,8 @@ import java.util.List;
 import java.util.Map;
 
 final class CameraEntityFixups {
+	private static final Identifier ENDERMAN_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/enderman/enderman");
+	private static final Identifier ENDERMAN_EYES_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/enderman/enderman_eyes");
 	private static final Identifier ZOMBIFIED_PIGLIN_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/piglin/zombified_piglin");
 	private static final Identifier ZOMBIE_VILLAGER_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/zombie_villager/zombie_villager");
 	private static final Identifier STRAY_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "entity/skeleton/stray");
@@ -31,6 +40,9 @@ final class CameraEntityFixups {
 	static EntitySnapshot captureManualEntityFixup(Entity entity, LivingEntity livingEntity) {
 		if (livingEntity == null) {
 			return null;
+		}
+		if (entity instanceof EnderMan enderMan) {
+			return captureEndermanManual(enderMan);
 		}
 		if (entity instanceof ZombieVillager zombieVillager) {
 			return captureZombieVillagerManual(zombieVillager, livingEntity);
@@ -79,6 +91,79 @@ final class CameraEntityFixups {
 		rules.put("bogged", livingEntity -> captureBoggedClientModel((Bogged) livingEntity));
 		rules.put("zombie_villager", livingEntity -> captureZombieVillagerClientModel((ZombieVillager) livingEntity));
 		rules.put("zombified_piglin", livingEntity -> captureZombifiedPiglinClientModel((ZombifiedPiglin) livingEntity));
+	}
+
+	static boolean renderHumanoidBaseFixup(
+			RenderContext context,
+			HumanoidSnapshot snapshot,
+			Matrix4f root,
+			int material,
+			float headYaw,
+			float headPitch,
+			float rightArmPitch,
+			float leftArmPitch,
+			float rightArmYaw,
+			float leftArmYaw,
+			float rightArmRoll,
+			float leftArmRoll,
+			float rightLegPitch,
+			float leftLegPitch,
+			float rightLegYaw,
+			float leftLegYaw,
+			float rightLegRoll,
+			float leftLegRoll
+	) {
+		if (snapshot.kind() != HumanoidKind.ENDERMAN) {
+			return false;
+		}
+
+		Matrix4f head = CameraEntityRenderer.rotateAround(root, 0.0F, 38.0F, 0.0F, headPitch, headYaw, 0.0F);
+		CameraEntityRenderer.addBox(context, head, -4.0F, 38.0F, -4.0F, 8.0F, 8.0F, 8.0F, 0, 0, 64, 32, material, false, 0.0F);
+
+		CameraEntityRenderer.addBox(context, root, -4.0F, 27.0F, -2.0F, 8.0F, 12.0F, 4.0F, 32, 16, 64, 32, material, false, 0.0F);
+
+		Matrix4f rightArm = CameraEntityRenderer.rotateAround(root, -5.0F, 37.0F, 0.0F, rightArmPitch * 0.5F, rightArmYaw, rightArmRoll);
+		Matrix4f leftArm = CameraEntityRenderer.rotateAround(root, 5.0F, 37.0F, 0.0F, leftArmPitch * 0.5F, leftArmYaw, leftArmRoll);
+		CameraEntityRenderer.addBox(context, rightArm, -6.0F, 9.0F, -1.0F, 2.0F, 30.0F, 2.0F, 56, 0, 64, 32, material, false, 0.0F);
+		CameraEntityRenderer.addBox(context, leftArm, 4.0F, 9.0F, -1.0F, 2.0F, 30.0F, 2.0F, 56, 0, 64, 32, material, true, 0.0F);
+
+		Matrix4f rightLeg = CameraEntityRenderer.rotateAround(root, -2.0F, 30.0F, 0.0F, rightLegPitch * 0.5F, rightLegYaw, rightLegRoll);
+		Matrix4f leftLeg = CameraEntityRenderer.rotateAround(root, 2.0F, 30.0F, 0.0F, leftLegPitch * 0.5F, leftLegYaw, leftLegRoll);
+		CameraEntityRenderer.addBox(context, rightLeg, -3.0F, 0.0F, -1.0F, 2.0F, 30.0F, 2.0F, 56, 0, 64, 32, material, false, 0.0F);
+		CameraEntityRenderer.addBox(context, leftLeg, 1.0F, 0.0F, -1.0F, 2.0F, 30.0F, 2.0F, 56, 0, 64, 32, material, true, 0.0F);
+		return true;
+	}
+
+	static boolean renderHumanoidOverlayFixup(RenderContext context, HumanoidSnapshot snapshot, Matrix4f root, int material, Identifier overlayTexture, float headYaw, float headPitch) {
+		if (snapshot.kind() != HumanoidKind.ENDERMAN || !ENDERMAN_EYES_TEXTURE.equals(overlayTexture)) {
+			return false;
+		}
+		Matrix4f head = CameraEntityRenderer.rotateAround(root, 0.0F, 38.0F, 0.0F, headPitch, headYaw, 0.0F);
+		CameraEntityRenderer.addBox(context, head, -4.0F, 38.0F, -4.0F, 8.0F, 8.0F, 8.0F, 0, 0, 64, 32, material, false, 0.1F, 15, 15);
+		return true;
+	}
+
+	static boolean renderHumanoidHeldItemsFixup(RenderContext context, HumanoidSnapshot snapshot, Matrix4f root) {
+		if (snapshot.kind() != HumanoidKind.ENDERMAN) {
+			return false;
+		}
+		HeldItemSnapshot heldItem = snapshot.rightHandItem();
+		if (heldItem == null || heldItem.isEmpty()) {
+			return true;
+		}
+		ItemVisual visual = CameraEntityRenderer.resolveItemVisual(heldItem, ItemDisplayTransformContext.FIXED);
+		if (visual == null) {
+			return true;
+		}
+		Matrix4f itemRoot = new Matrix4f(root)
+				.translate(0.0F, 0.6875F, -0.75F)
+				.rotateX(CameraEntityRenderer.radians(20.0F))
+				.rotateY(CameraEntityRenderer.radians(45.0F))
+				.translate(0.25F, 0.1875F, 0.25F)
+				.scale(-0.5F, -0.5F, 0.5F)
+				.rotateY(CameraEntityRenderer.radians(90.0F));
+		CameraEntityRenderer.renderItemVisual(context, itemRoot, visual, ItemDisplayTransformContext.FIXED);
+		return true;
 	}
 
 	private static EntitySnapshot captureZombieVillagerManual(ZombieVillager zombieVillager, LivingEntity livingEntity) {
@@ -157,5 +242,45 @@ final class CameraEntityFixups {
 		}
 		Identifier typeId = BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType());
 		return typeId == null ? "" : typeId.getPath();
+	}
+
+	private static EntitySnapshot captureEndermanManual(EnderMan enderMan) {
+		ItemStack carriedBlockStack = ItemStack.EMPTY;
+		BlockState carriedBlock = enderMan.getCarriedBlock();
+		if (carriedBlock != null) {
+			Item carriedItem = carriedBlock.getBlock().asItem();
+			if (carriedItem != Items.AIR) {
+				carriedBlockStack = new ItemStack(carriedItem);
+			}
+		}
+		return new HumanoidSnapshot(
+				enderMan.position(),
+				enderMan.getYRot(),
+				enderMan.yBodyRot,
+				enderMan.yHeadRot,
+				enderMan.getXRot(),
+				enderMan.walkAnimation.position(),
+				enderMan.walkAnimation.speed(),
+				enderMan.getAttackAnim(0.0F),
+				enderMan.getSwimAmount(0.0F),
+				enderMan.getPose(),
+				CameraEntityRenderer.sleepingDirection(enderMan),
+				enderMan.isCrouching(),
+				enderMan.isVisuallySwimming(),
+				enderMan.isFallFlying(),
+				enderMan.isPassenger(),
+				false,
+				enderMan.isCreepy(),
+				false,
+				enderMan.getMainArm() == null ? HumanoidArm.RIGHT : enderMan.getMainArm(),
+				HumanoidKind.ENDERMAN,
+				ENDERMAN_TEXTURE,
+				new Identifier[]{ENDERMAN_EYES_TEXTURE},
+				CameraEntityRenderer.captureArmorEquipment(enderMan),
+				CameraEntityRenderer.leftHandItem(enderMan),
+				CameraEntityRenderer.heldItemSnapshot(enderMan, carriedBlockStack),
+				null,
+				(byte) 0
+		);
 	}
 }

@@ -68,13 +68,16 @@ import net.minecraft.world.entity.player.PlayerModelPart;
 import net.minecraft.world.entity.projectile.FishingHook;
 import net.minecraft.world.entity.vehicle.boat.AbstractBoat;
 import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.component.DyedItemColor;
 import net.minecraft.world.item.equipment.EquipmentAsset;
 import net.minecraft.world.item.equipment.Equippable;
 import net.minecraft.world.item.equipment.trim.ArmorTrim;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.MapColor;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
@@ -353,10 +356,6 @@ final class CameraEntityRenderer {
 			return humanoidSnapshot(livingEntity, HumanoidKind.SKELETON, SKELETON_TEXTURE, new Identifier[0]);
 		}
 
-		if (entity instanceof EnderMan) {
-			return humanoidSnapshot(livingEntity, HumanoidKind.ENDERMAN, ENDERMAN_TEXTURE, new Identifier[]{ENDERMAN_EYES_TEXTURE});
-		}
-
 		if (entity instanceof Creeper creeper) {
 			return new CreeperSnapshot(
 					entity.position(),
@@ -603,7 +602,7 @@ final class CameraEntityRenderer {
 		);
 	}
 
-	private static ArmorEquipmentSnapshot captureArmorEquipment(LivingEntity livingEntity) {
+	static ArmorEquipmentSnapshot captureArmorEquipment(LivingEntity livingEntity) {
 		if (livingEntity == null) {
 			return new ArmorEquipmentSnapshot(ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY);
 		}
@@ -619,7 +618,7 @@ final class CameraEntityRenderer {
 		return heldItemSnapshot(livingEntity, HumanoidArm.RIGHT);
 	}
 
-	private static HeldItemSnapshot leftHandItem(LivingEntity livingEntity) {
+	static HeldItemSnapshot leftHandItem(LivingEntity livingEntity) {
 		return heldItemSnapshot(livingEntity, HumanoidArm.LEFT);
 	}
 
@@ -639,6 +638,16 @@ final class CameraEntityRenderer {
 		long gameTime = livingEntity.level() == null ? 0L : livingEntity.level().getGameTime();
 		long dayTime = livingEntity.level() == null ? 0L : livingEntity.level().getDayTime();
 		return new HeldItemSnapshot(stack, usingItem, useTicks, fishingRodCast, contextDimensionId, gameTime, dayTime);
+	}
+
+	static HeldItemSnapshot heldItemSnapshot(LivingEntity livingEntity, ItemStack stack) {
+		if (livingEntity == null || stack == null || stack.isEmpty()) {
+			return new HeldItemSnapshot(ItemStack.EMPTY, false, 0.0F, false, null, 0L, 0L);
+		}
+		String contextDimensionId = livingEntity.level() == null ? null : livingEntity.level().dimension().identifier().toString();
+		long gameTime = livingEntity.level() == null ? 0L : livingEntity.level().getGameTime();
+		long dayTime = livingEntity.level() == null ? 0L : livingEntity.level().getDayTime();
+		return new HeldItemSnapshot(stack.copy(), false, 0.0F, false, contextDimensionId, gameTime, dayTime);
 	}
 
 	private static InteractionHand physicalHand(LivingEntity livingEntity, HumanoidArm arm) {
@@ -1647,6 +1656,32 @@ final class CameraEntityRenderer {
 		);
 	}
 
+	private static ClientModelSnapshot captureEndermanClientModel(EnderMan enderMan) {
+		Map<String, Object> state = livingStateFields(enderMan);
+		state.put("carriedBlock", enderMan.getCarriedBlock());
+		state.put("creepy", enderMan.isCreepy());
+
+		return livingClientModelSnapshot(
+				enderMan,
+				enderMan.yBodyRot,
+				state,
+				new ClientLayerSnapshot[]{
+						new ClientLayerSnapshot(
+								"net.minecraft.client.model.monster.enderman.EndermanModel",
+								ENDERMAN_TEXTURE,
+								0xFFFFFF,
+								false
+						),
+						new ClientLayerSnapshot(
+								"net.minecraft.client.model.monster.enderman.EndermanModel",
+								ENDERMAN_EYES_TEXTURE,
+								0xFFFFFF,
+								true
+						)
+				}
+		);
+	}
+
 	private static ClientModelSnapshot captureIronGolemClientModel(net.minecraft.world.entity.animal.golem.IronGolem ironGolem) {
 		Map<String, Object> state = livingStateFields(ironGolem);
 		state.put("attackTicksRemaining", Math.max(ironGolem.getAttackAnimationTick(), 0));
@@ -1927,6 +1962,7 @@ final class CameraEntityRenderer {
 		rules.put("cow", livingEntity -> captureCowClientModel((Cow) livingEntity));
 		rules.put("pig", livingEntity -> capturePigClientModel((Pig) livingEntity));
 		rules.put("chicken", livingEntity -> captureChickenClientModel((Chicken) livingEntity));
+		rules.put("enderman", livingEntity -> captureEndermanClientModel((EnderMan) livingEntity));
 		rules.put("spider", livingEntity -> captureSpiderClientModel(livingEntity, SPIDER_TEXTURE));
 		rules.put("cave_spider", livingEntity -> captureSpiderClientModel(livingEntity, minecraftTexture("entity/spider/cave_spider")));
 		rules.put("mooshroom", livingEntity -> captureMushroomCowClientModel((MushroomCow) livingEntity));
@@ -2526,7 +2562,7 @@ final class CameraEntityRenderer {
 		return null;
 	}
 
-	private static Direction sleepingDirection(LivingEntity livingEntity) {
+	static Direction sleepingDirection(LivingEntity livingEntity) {
 		return livingEntity.isSleeping() ? livingEntity.getBedOrientation() : null;
 	}
 
@@ -2733,8 +2769,7 @@ final class CameraEntityRenderer {
 			int overlayMaterial = context.materialResolver().materialForTexture(overlayTexture);
 			if (snapshot.kind().villager) {
 				renderVillagerFeatures(context, snapshot, root, overlayMaterial, headYaw, headPitch, rightLegPitch, leftLegPitch);
-			} else if (snapshot.kind() == HumanoidKind.ENDERMAN && overlayTexture.equals(ENDERMAN_EYES_TEXTURE)) {
-				renderEndermanEyes(context, snapshot, root, overlayMaterial, headYaw, headPitch);
+			} else if (CameraEntityFixups.renderHumanoidOverlayFixup(context, snapshot, root, overlayMaterial, overlayTexture, headYaw, headPitch)) {
 			} else {
 				renderHumanBase(context, snapshot, root, overlayMaterial, snapshot.kind().textureWidth, snapshot.kind().textureHeight, headYaw, headPitch, rightArmPitch, leftArmPitch, rightArmYaw, leftArmYaw, rightArmRoll, leftArmRoll, rightLegPitch, leftLegPitch, rightLegYaw, leftLegYaw, rightLegRoll, leftLegRoll);
 			}
@@ -3020,6 +3055,9 @@ final class CameraEntityRenderer {
 			renderVillagerBody(context, root, material, texWidth, texHeight, headYaw, headPitch, rightLegPitch, leftLegPitch);
 			return;
 		}
+		if (CameraEntityFixups.renderHumanoidBaseFixup(context, snapshot, root, material, headYaw, headPitch, rightArmPitch, leftArmPitch, rightArmYaw, leftArmYaw, rightArmRoll, leftArmRoll, rightLegPitch, leftLegPitch, rightLegYaw, leftLegYaw, rightLegRoll, leftLegRoll)) {
+			return;
+		}
 
 		float armWidth = snapshot.kind().armWidth;
 		float legWidth = snapshot.kind().legWidth;
@@ -3128,6 +3166,9 @@ final class CameraEntityRenderer {
 			float rightArmRoll,
 			float leftArmRoll
 	) {
+		if (CameraEntityFixups.renderHumanoidHeldItemsFixup(context, snapshot, root)) {
+			return;
+		}
 		renderHumanoidHeldItem(context, snapshot.rightHandItem(), humanoidHandTransform(root, snapshot, HumanoidArm.RIGHT, rightArmPitch, rightArmYaw, rightArmRoll), ItemDisplayTransformContext.THIRD_PERSON_RIGHT_HAND);
 		renderHumanoidHeldItem(context, snapshot.leftHandItem(), humanoidHandTransform(root, snapshot, HumanoidArm.LEFT, leftArmPitch, leftArmYaw, leftArmRoll), ItemDisplayTransformContext.THIRD_PERSON_LEFT_HAND);
 	}
@@ -3470,11 +3511,6 @@ final class CameraEntityRenderer {
 			float leftLegPitch
 	) {
 		renderVillagerBody(context, root, material, 64, 64, headYaw, headPitch, rightLegPitch, leftLegPitch);
-	}
-
-	private static void renderEndermanEyes(RenderContext context, HumanoidSnapshot snapshot, Matrix4f root, int material, float headYaw, float headPitch) {
-		Matrix4f head = rotateAround(root, 0.0F, 24.0F, 0.0F, headPitch, headYaw, 0.0F);
-		addBox(context, head, -4.0F, 24.0F, -4.0F, 8.0F, 8.0F, 8.0F, 0, 0, 64, 32, material, false, 0.1F, 15, 15);
 	}
 
 	private static void renderQuadruped(RenderContext context, QuadrupedSnapshot snapshot) {
@@ -3980,7 +4016,7 @@ final class CameraEntityRenderer {
 		return new PlayerSkinSnapshot(property.value(), url, slim ? PLAYER_SLIM_FALLBACK : PLAYER_WIDE_FALLBACK, slim);
 	}
 
-	private static void renderItemVisual(RenderContext context, Matrix4f root, ItemVisual visual, ItemDisplayTransformContext transformContext) {
+	static void renderItemVisual(RenderContext context, Matrix4f root, ItemVisual visual, ItemDisplayTransformContext transformContext) {
 		if (visual == null) {
 			return;
 		}
@@ -4486,7 +4522,7 @@ final class CameraEntityRenderer {
 		return rotateAround(parent, pivotX, pivotY, pivotZ, radians(rotations.x()), radians(rotations.y()), radians(rotations.z()));
 	}
 
-	private static Matrix4f rotateAround(Matrix4f parent, float pivotX, float pivotY, float pivotZ, float pitch, float yaw, float roll) {
+	static Matrix4f rotateAround(Matrix4f parent, float pivotX, float pivotY, float pivotZ, float pitch, float yaw, float roll) {
 		return new Matrix4f(parent)
 				.translate(pivotX * PX, pivotY * PX, pivotZ * PX)
 				.rotateY(yaw)
@@ -4495,7 +4531,7 @@ final class CameraEntityRenderer {
 				.translate(-pivotX * PX, -pivotY * PX, -pivotZ * PX);
 	}
 
-	private static float radians(float degrees) {
+	static float radians(float degrees) {
 		return degrees * ((float) Math.PI / 180.0F);
 	}
 
@@ -4572,7 +4608,7 @@ final class CameraEntityRenderer {
 		CameraGeometry.addTexturedPlane(context, transform, x, y, z, width, height, texU0, texV0, texU1, texV1, material, red, green, blue);
 	}
 
-	private static void addBox(
+	static void addBox(
 			RenderContext context,
 			Matrix4f transform,
 			float x,
@@ -4612,7 +4648,7 @@ final class CameraEntityRenderer {
 		CameraGeometry.addPlayerSkinBox(context, transform, x, y, z, width, height, depth, texU, texV, texWidth, texHeight, material, mirror, inflate);
 	}
 
-	private static void addBox(
+	static void addBox(
 			RenderContext context,
 			Matrix4f transform,
 			float x,
@@ -4906,7 +4942,7 @@ final class CameraEntityRenderer {
 		};
 	}
 
-	private static ItemVisual resolveItemVisual(HeldItemSnapshot heldItem, ItemDisplayTransformContext transformContext) {
+	static ItemVisual resolveItemVisual(HeldItemSnapshot heldItem, ItemDisplayTransformContext transformContext) {
 		if (heldItem == null || heldItem.isEmpty()) {
 			return null;
 		}

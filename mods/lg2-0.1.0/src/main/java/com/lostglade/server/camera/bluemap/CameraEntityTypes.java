@@ -462,7 +462,7 @@ enum HumanoidKind {
 	PLAYER_SLIM(64, 64, 3.0F, 4.0F, true, false, 1.0F),
 	ZOMBIE(64, 64, 4.0F, 4.0F, false, false, 1.0F),
 	SKELETON(64, 32, 2.0F, 2.0F, false, false, 1.0F),
-	ENDERMAN(64, 32, 2.0F, 2.0F, false, false, 1.45F),
+	ENDERMAN(64, 32, 2.0F, 2.0F, false, false, 1.0F),
 	VILLAGER(64, 64, 0.0F, 4.0F, false, true, 1.0F);
 
 	final int textureWidth;
