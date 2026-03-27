@@ -1,0 +1,34 @@
+{
+  "attributes": {
+    "minecraft:visual/sky_color": "#4DFFFF"
+  },
+  "carvers": [],
+  "downfall": 0.0,
+  "effects": {
+    "water_color": 7405376,
+    "fog_color": 5111807,
+    "water_fog_color": 2668584,
+    "sky_color": 5111807,
+    "foliage_color": 16070230,
+    "dry_foliage_color": 15914308,
+    "grass_color": 14496767,
+    "grass_color_modifier": "none",
+    "ambient_light": 0.15
+  },
+  "features": [
+    [], [], [], [], [], [], [], [], [], [], []
+  ],
+  "has_precipitation": false,
+  "spawn_costs": {},
+  "spawners": {
+    "ambient": [],
+    "axolotls": [],
+    "creature": [],
+    "misc": [],
+    "monster": [],
+    "underground_water_creature": [],
+    "water_ambient": [],
+    "water_creature": []
+  },
+  "temperature": 0.8
+}

@@ -5,14 +5,19 @@ import com.lostglade.config.RaceConfig;
 import com.lostglade.server.ServerRaceSystem;
 import eu.pb4.polymer.core.api.item.SimplePolymerItem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
+import io.netty.buffer.Unpooled;
 import net.minecraft.advancements.CriteriaTriggers;
 import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.protocol.game.ClientboundChunksBiomesPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -37,15 +42,27 @@ import net.minecraft.world.item.alchemy.Potions;
 import net.minecraft.world.item.component.Consumable;
 import net.minecraft.world.item.component.TooltipDisplay;
 import net.minecraft.world.item.context.UseOnContext;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.chunk.PalettedContainer;
+import net.minecraft.world.level.chunk.PalettedContainerFactory;
 import net.minecraft.world.phys.Vec3;
 import xyz.nucleoid.packettweaker.PacketContext;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.IntStream;
 
 public final class MethadoneItem extends SimplePolymerItem {
     private static final Identifier MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "methadone");
@@ -72,6 +89,12 @@ public final class MethadoneItem extends SimplePolymerItem {
     private static final float SOUND_VOLUME = 0.85F;
     private static final float PACK_SOUND_PITCH = 1.0F;
     private static final float FALLBACK_SOUND_PITCH = 1.0F;
+    private static final int ACID_SKY_PHASE_INTERVAL_TICKS = 4;
+    private static final int ACID_SKY_TRACKED_CHUNK_REFRESH_INTERVAL_TICKS = 20;
+    private static final long[] EMPTY_CHUNK_KEYS = new long[0];
+    private static final List<ResourceKey<Biome>> ACID_SKY_BIOME_KEYS = IntStream.range(0, 16)
+            .mapToObj(index -> acidSkyBiomeKey("acid_sky_" + String.format(Locale.ROOT, "%02d", index)))
+            .toList();
     private static final Consumable CLIENT_USE_CONSUMABLE = Consumable.builder()
             .consumeSeconds(0.5F)
             .animation(ItemUseAnimation.TOOT_HORN)
@@ -79,6 +102,8 @@ public final class MethadoneItem extends SimplePolymerItem {
             .hasConsumeParticles(false)
             .build();
     private static final Map<UUID, MethadoneAddictionState> ADDICTION_STATES = new HashMap<>();
+    private static final Map<UUID, MethadoneSkyState> ACID_SKY_STATES = new HashMap<>();
+    private static final Map<AcidSkyPayloadKey, byte[]> ACID_SKY_PAYLOAD_CACHE = new HashMap<>();
 
     public MethadoneItem(Item.Properties settings) {
         super(settings, Items.PAPER);
@@ -163,54 +188,102 @@ public final class MethadoneItem extends SimplePolymerItem {
             return;
         }
 
-        Map<UUID, MethadoneAddictionState> updatedStates = new HashMap<>();
-        ADDICTION_STATES.entrySet().removeIf(entry -> {
+        tickAddiction(server);
+        tickAcidSky(server);
+    }
+
+    private static void tickAddiction(MinecraftServer server) {
+        Iterator<Map.Entry<UUID, MethadoneAddictionState>> iterator = ADDICTION_STATES.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<UUID, MethadoneAddictionState> entry = iterator.next();
             UUID playerId = entry.getKey();
             MethadoneAddictionState state = entry.getValue();
+            if (playerId == null || state == null) {
+                iterator.remove();
+                continue;
+            }
+
+            ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+            if (player == null) {
+                continue;
+            }
+
+            state.remainingTicks--;
+            if (state.remainingTicks <= 0L) {
+                if (state.withdrawalActive) {
+                    clearWithdrawalEffects(player);
+                }
+                iterator.remove();
+                continue;
+            }
+
+            if (state.remainingTicks <= state.withdrawalStartRemainingTicks) {
+                ensureWithdrawalEffects(player);
+                state.withdrawalActive = true;
+            } else {
+                if (state.withdrawalActive) {
+                    clearWithdrawalEffects(player);
+                    state.withdrawalActive = false;
+                }
+            }
+        }
+    }
+
+    private static void tickAcidSky(MinecraftServer server) {
+        ACID_SKY_STATES.entrySet().removeIf(entry -> {
+            UUID playerId = entry.getKey();
+            MethadoneSkyState state = entry.getValue();
             if (playerId == null || state == null) {
                 return true;
             }
 
             ServerPlayer player = server.getPlayerList().getPlayer(playerId);
             if (player == null) {
-                updatedStates.put(playerId, state);
+                return false;
+            }
+
+            if (!player.isAlive()) {
+                restoreOriginalBiomes(player, state);
                 return true;
             }
 
-            long remainingTicks = state.remainingTicks - 1L;
-            if (remainingTicks <= 0L) {
-                clearWithdrawalEffects(player);
+            state.remainingTicks--;
+            if (state.remainingTicks <= 0L) {
+                restoreOriginalBiomes(player, state);
                 return true;
             }
 
-            if (remainingTicks <= state.withdrawalStartRemainingTicks) {
-                ensureWithdrawalEffects(player);
-            } else {
-                clearWithdrawalEffects(player);
-            }
-
-            updatedStates.put(playerId, new MethadoneAddictionState(remainingTicks, state.withdrawalStartRemainingTicks, state.doseCount));
+            updateAcidSky(player, state);
             return false;
         });
-        ADDICTION_STATES.putAll(updatedStates);
     }
 
     private static void applyUseEffects(ServerPlayer player) {
         if (isMrCartel(player)) {
+            refreshAcidSky(player, CARTEL_EFFECT_DURATION_TICKS);
             applyCartelBuffs(player, CARTEL_EFFECT_DURATION_TICKS);
             return;
         }
 
         MethadoneAddictionState previousState = ADDICTION_STATES.get(player.getUUID());
         boolean stillAddicted = previousState != null && previousState.remainingTicks > 0L;
-        int doseCount = stillAddicted ? previousState.doseCount + 1 : 1;
         long addictionDurationTicks = resolveAddictionDurationTicks();
         long withdrawalStartRemainingTicks = resolveWithdrawalStartRemainingTicks(addictionDurationTicks);
+        MethadoneAddictionState state = previousState;
+        if (state == null) {
+            state = new MethadoneAddictionState();
+            ADDICTION_STATES.put(player.getUUID(), state);
+        }
+        state.remainingTicks = addictionDurationTicks;
+        state.withdrawalStartRemainingTicks = withdrawalStartRemainingTicks;
+        state.doseCount = stillAddicted ? state.doseCount + 1 : 1;
+        if (state.withdrawalActive) {
+            clearWithdrawalEffects(player);
+            state.withdrawalActive = false;
+        }
+        refreshAcidSky(player, NON_CARTEL_EFFECT_DURATION_TICKS);
 
-        ADDICTION_STATES.put(player.getUUID(), new MethadoneAddictionState(addictionDurationTicks, withdrawalStartRemainingTicks, doseCount));
-        clearWithdrawalEffects(player);
-
-        if (doseCount <= 3) {
+        if (state.doseCount <= 3) {
             applyEarlyDoseEffects(player);
             return;
         }
@@ -313,6 +386,227 @@ public final class MethadoneItem extends SimplePolymerItem {
         }
     }
 
+    private static void refreshAcidSky(ServerPlayer player, int durationTicks) {
+        if (player == null || durationTicks <= 0) {
+            return;
+        }
+
+        MethadoneSkyState state = ACID_SKY_STATES.computeIfAbsent(player.getUUID(), ignored -> new MethadoneSkyState());
+        state.remainingTicks = durationTicks;
+        state.trackedChunkRefreshTicks = ACID_SKY_TRACKED_CHUNK_REFRESH_INTERVAL_TICKS;
+    }
+
+    private static void updateAcidSky(ServerPlayer player, MethadoneSkyState state) {
+        if (!(player.level() instanceof ServerLevel level)) {
+            return;
+        }
+
+        if (!level.dimensionType().hasSkyLight()) {
+            state.overriddenDimension = level.dimension();
+            state.overriddenChunks.clear();
+            state.currentPhaseIndex = 0;
+            state.phaseTicks = 0;
+            state.lastTrackedCenter = null;
+            return;
+        }
+
+        ChunkPos currentCenter = player.chunkPosition();
+        boolean dimensionChanged = state.overriddenDimension != null && !state.overriddenDimension.equals(level.dimension());
+        boolean centerChanged = state.lastTrackedCenter == null || !state.lastTrackedCenter.equals(currentCenter);
+        state.trackedChunkRefreshTicks++;
+        boolean shouldRefreshTrackedChunks = dimensionChanged
+                || centerChanged
+                || state.overriddenChunks.isEmpty()
+                || state.trackedChunkRefreshTicks >= ACID_SKY_TRACKED_CHUNK_REFRESH_INTERVAL_TICKS;
+
+        Set<Long> currentChunks = state.overriddenChunks;
+        long[] currentChunkKeys = state.overriddenChunkKeys;
+        boolean chunkSetChanged = false;
+        if (shouldRefreshTrackedChunks) {
+            Set<Long> refreshedChunks = collectTrackedChunkKeys(player);
+            if (!dimensionChanged) {
+                restoreRemovedChunks(player, level, state.overriddenChunks, refreshedChunks);
+            } else {
+                state.lastTrackedCenter = null;
+            }
+            chunkSetChanged = !state.overriddenChunks.equals(refreshedChunks);
+            if (chunkSetChanged) {
+                state.overriddenChunks.clear();
+                state.overriddenChunks.addAll(refreshedChunks);
+                state.overriddenChunkKeys = toChunkKeyArray(refreshedChunks);
+            }
+            state.lastTrackedCenter = currentCenter;
+            state.trackedChunkRefreshTicks = 0;
+            currentChunks = state.overriddenChunks;
+            currentChunkKeys = state.overriddenChunkKeys;
+        }
+
+        if (dimensionChanged) {
+            state.currentPhaseIndex = 0;
+            state.phaseTicks = 0;
+        }
+
+        state.overriddenDimension = level.dimension();
+        if (currentChunkKeys.length == 0) {
+            return;
+        }
+
+        if (chunkSetChanged) {
+            sendAcidBiomeOverride(player, level, currentChunkKeys, ACID_SKY_BIOME_KEYS.get(state.currentPhaseIndex));
+            state.phaseTicks = 0;
+            return;
+        }
+
+        state.phaseTicks++;
+        if (state.phaseTicks < ACID_SKY_PHASE_INTERVAL_TICKS) {
+            return;
+        }
+
+        state.phaseTicks = 0;
+        state.currentPhaseIndex = (state.currentPhaseIndex + 1) % ACID_SKY_BIOME_KEYS.size();
+        sendAcidBiomeOverride(player, level, currentChunkKeys, ACID_SKY_BIOME_KEYS.get(state.currentPhaseIndex));
+    }
+
+    private static void sendAcidBiomeOverride(
+            ServerPlayer player,
+            ServerLevel level,
+            long[] chunkKeys,
+            ResourceKey<Biome> biomeKey
+    ) {
+        List<LevelChunk> chunks = collectChunksToSend(level, chunkKeys);
+        if (chunks.isEmpty()) {
+            return;
+        }
+
+        byte[] serializedBiomes = getCachedUniformBiomePayload(level, chunks.getFirst().getSections().length, biomeKey);
+        if (serializedBiomes.length == 0) {
+            return;
+        }
+
+        List<ClientboundChunksBiomesPacket.ChunkBiomeData> biomeData = new ArrayList<>(chunks.size());
+        for (LevelChunk chunk : chunks) {
+            biomeData.add(new ClientboundChunksBiomesPacket.ChunkBiomeData(chunk.getPos(), serializedBiomes));
+        }
+        player.connection.send(new ClientboundChunksBiomesPacket(biomeData));
+    }
+
+    private static byte[] getCachedUniformBiomePayload(ServerLevel level, int sectionCount, ResourceKey<Biome> biomeKey) {
+        AcidSkyPayloadKey cacheKey = new AcidSkyPayloadKey(sectionCount, biomeKey);
+        byte[] cached = ACID_SKY_PAYLOAD_CACHE.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+
+        Holder<Biome> biomeHolder = level.registryAccess().lookupOrThrow(Registries.BIOME).getOrThrow(biomeKey);
+        PalettedContainerFactory containerFactory = PalettedContainerFactory.create(level.registryAccess());
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        try {
+            int biomeSize = 1 << LevelChunkSection.BIOME_CONTAINER_BITS;
+            for (int sectionIndex = 0; sectionIndex < sectionCount; sectionIndex++) {
+                PalettedContainer<Holder<Biome>> biomes = containerFactory.createForBiomes();
+                for (int x = 0; x < biomeSize; x++) {
+                    for (int y = 0; y < biomeSize; y++) {
+                        for (int z = 0; z < biomeSize; z++) {
+                            biomes.set(x, y, z, biomeHolder);
+                        }
+                    }
+                }
+                biomes.write(buffer);
+            }
+
+            byte[] payload = new byte[buffer.readableBytes()];
+            buffer.getBytes(0, payload);
+            ACID_SKY_PAYLOAD_CACHE.put(cacheKey, payload);
+            return payload;
+        } finally {
+            buffer.release();
+        }
+    }
+
+    private static void restoreOriginalBiomes(ServerPlayer player, MethadoneSkyState state) {
+        if (player == null || state == null || !(player.level() instanceof ServerLevel level)) {
+            return;
+        }
+        if (state.overriddenDimension == null || !state.overriddenDimension.equals(level.dimension()) || state.overriddenChunks.isEmpty()) {
+            return;
+        }
+
+        List<LevelChunk> chunks = collectChunksToSend(level, state.overriddenChunkKeys);
+        if (!chunks.isEmpty()) {
+            player.connection.send(ClientboundChunksBiomesPacket.forChunks(chunks));
+        }
+    }
+
+    private static void restoreRemovedChunks(ServerPlayer player, ServerLevel level, Set<Long> previousChunks, Set<Long> currentChunks) {
+        if (previousChunks.isEmpty()) {
+            return;
+        }
+
+        List<LevelChunk> chunksToRestore = new ArrayList<>();
+        for (long chunkKey : previousChunks) {
+            if (currentChunks.contains(chunkKey)) {
+                continue;
+            }
+
+            LevelChunk chunk = level.getChunkSource().chunkMap.getChunkToSend(chunkKey);
+            if (chunk == null) {
+                chunk = level.getChunkSource().getChunkNow(ChunkPos.getX(chunkKey), ChunkPos.getZ(chunkKey));
+            }
+            if (chunk != null) {
+                chunksToRestore.add(chunk);
+            }
+        }
+
+        if (!chunksToRestore.isEmpty()) {
+            player.connection.send(ClientboundChunksBiomesPacket.forChunks(chunksToRestore));
+        }
+    }
+
+    private static List<LevelChunk> collectChunksToSend(ServerLevel level, long[] chunkKeys) {
+        if (chunkKeys.length == 0) {
+            return List.of();
+        }
+
+        List<LevelChunk> chunks = new ArrayList<>(chunkKeys.length);
+        for (long chunkKey : chunkKeys) {
+            LevelChunk chunk = level.getChunkSource().chunkMap.getChunkToSend(chunkKey);
+            if (chunk == null) {
+                chunk = level.getChunkSource().getChunkNow(ChunkPos.getX(chunkKey), ChunkPos.getZ(chunkKey));
+            }
+            if (chunk != null) {
+                chunks.add(chunk);
+            }
+        }
+        return chunks;
+    }
+
+    private static long[] toChunkKeyArray(Set<Long> chunkKeys) {
+        if (chunkKeys.isEmpty()) {
+            return EMPTY_CHUNK_KEYS;
+        }
+
+        long[] result = new long[chunkKeys.size()];
+        int index = 0;
+        for (long chunkKey : chunkKeys) {
+            result[index++] = chunkKey;
+        }
+        return result;
+    }
+
+    private static Set<Long> collectTrackedChunkKeys(ServerPlayer player) {
+        Set<Long> chunkKeys = new HashSet<>();
+        if (player == null) {
+            return chunkKeys;
+        }
+
+        player.getChunkTrackingView().forEach(chunkPos -> chunkKeys.add(chunkPos.toLong()));
+        return chunkKeys;
+    }
+
+    private static ResourceKey<Biome> acidSkyBiomeKey(String path) {
+        return ResourceKey.create(Registries.BIOME, Identifier.fromNamespaceAndPath(Lg2.MOD_ID, path));
+    }
+
     private static boolean isMrCartel(ServerPlayer player) {
         Optional<RaceConfig.PlayerRaceConfig> raceOptional = ServerRaceSystem.getRace(player);
         return raceOptional.isPresent() && MISTER_CARTEL_49_RACE_ID.equals(raceOptional.get().id);
@@ -340,6 +634,24 @@ public final class MethadoneItem extends SimplePolymerItem {
         return Component.literal("Methadone");
     }
 
-    private record MethadoneAddictionState(long remainingTicks, long withdrawalStartRemainingTicks, int doseCount) {
+    private static final class MethadoneAddictionState {
+        private long remainingTicks;
+        private long withdrawalStartRemainingTicks;
+        private int doseCount;
+        private boolean withdrawalActive;
+    }
+
+    private static final class MethadoneSkyState {
+        private long remainingTicks;
+        private int phaseTicks;
+        private int currentPhaseIndex;
+        private ResourceKey<Level> overriddenDimension;
+        private ChunkPos lastTrackedCenter;
+        private int trackedChunkRefreshTicks = ACID_SKY_TRACKED_CHUNK_REFRESH_INTERVAL_TICKS;
+        private final Set<Long> overriddenChunks = new HashSet<>();
+        private long[] overriddenChunkKeys = EMPTY_CHUNK_KEYS;
+    }
+
+    private record AcidSkyPayloadKey(int sectionCount, ResourceKey<Biome> biomeKey) {
     }
 }
