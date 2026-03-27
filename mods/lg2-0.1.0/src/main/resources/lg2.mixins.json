@@ -44,6 +44,7 @@
 		"ResultSlotMechanicsGateMixin",
 		"ServerCommonPacketListenerCocaineHallucinationMixin",
 		"ServerCommonPacketListenerAbsoluteInvisibilityMixin",
+		"ServerGamePacketListenerMonitorTimelineMixin",
 		"ServerLevelAbsoluteInvisibilityMixin",
 		"ServerItemEntityMixin",
 		"ServerPlayerBackroomsRespawnMixin",
