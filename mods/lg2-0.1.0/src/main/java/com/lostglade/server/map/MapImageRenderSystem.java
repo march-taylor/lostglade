@@ -85,9 +85,8 @@ public final class MapImageRenderSystem {
 		if (previewMap == null || previewMap.previewMapId() == null) {
 			return false;
 		}
-		PhotoPrintData photoData = new PhotoPrintData(mapsWide, mapsHigh, previewMap.previewMapId().id(), photoMapIdsToRawIds(photoMapSet.mapIds()));
 		givePhotoItem(player, PhotoPrintData.createPhotoItem(itemName, mapsWide, mapsHigh, previewMap.previewMapId(), photoMapSet.mapIds()));
-		RenderJob job = new RenderJob(player.getUUID(), photoMapSet.mapIds(), photoMapSet.mapDataSet(), mapsWide, mapsHigh, previewMap.previewMapId().id(), provider);
+		RenderJob job = new RenderJob(player.getUUID(), photoMapSet.mapIds(), photoMapSet.mapDataSet(), mapsWide, mapsHigh, previewMap.previewMapId().id(), previewMap.previewMapData(), provider);
 		PLAYER_JOBS.put(player.getUUID(), job);
 		QUEUE.offer(player.getUUID());
 		ServerMechanicsGateSystem.syncPlayerInventory(player);
@@ -97,8 +96,6 @@ public final class MapImageRenderSystem {
 		} else {
 			player.displayClientMessage(CameraCaptureSystem.addedToRenderQueueMessage(player), true);
 		}
-		renderImmediatePreview(player, provider, previewMap);
-		sendMatchingPhotoPreviewMap(player, photoData);
 		return true;
 	}
 
@@ -136,6 +133,10 @@ public final class MapImageRenderSystem {
 		if (player == null || level == null || !job.provider().isValid(server)) {
 			removeJob(job.playerId());
 			pollNextActive();
+			return;
+		}
+		beginRender(player, job);
+		if (!tickPreviewStage(server, player, job)) {
 			return;
 		}
 
@@ -214,37 +215,39 @@ public final class MapImageRenderSystem {
 			finalizePhotoDisplay(server, job);
 			job.provider().onCompleted(server);
 			player.displayClientMessage(CameraCaptureSystem.captureCompletedMessage(player), true);
-			playCompletionSound(player);
+			playRenderStartSound(player);
 			removeJob(job.playerId());
 			pollNextActive();
 		}
 	}
 
 	private static void tickWholeFrameJob(MinecraftServer server, ServerPlayer player, ServerLevel level, RenderJob job) {
-		if (!job.hasPreparedFrame()) {
-			try {
-				job.setPreparedFrame(job.provider().prepareFrame(server));
-			} catch (Exception exception) {
-				Lg2.LOGGER.error("Map frame prepare failed for player {}", job.playerId(), exception);
-				player.displayClientMessage(Component.literal("Подготовка снимка остановлена: ошибка кадра."), true);
-				removeJob(job.playerId());
-				pollNextActive();
-				return;
-			}
-		}
-
-		if (!job.hasDispatchedFrameTask()) {
-			job.markFrameTaskDispatched();
-			Object preparedFrame = job.preparedFrame();
-			MapPixelProvider provider = job.provider();
-			executor.submit(() -> {
+		if (job.frameResult() == null) {
+			if (!job.hasPreparedFrame()) {
 				try {
-					byte[] frame = provider.renderPreparedFrame(preparedFrame);
-					job.pushFrameResult(FrameResult.success(frame));
-				} catch (Throwable throwable) {
-					job.pushFrameResult(FrameResult.failure(throwable));
+					job.setPreparedFrame(job.provider().prepareFrame(server));
+				} catch (Exception exception) {
+					Lg2.LOGGER.error("Map frame prepare failed for player {}", job.playerId(), exception);
+					player.displayClientMessage(Component.literal("Подготовка снимка остановлена: ошибка кадра."), true);
+					removeJob(job.playerId());
+					pollNextActive();
+					return;
 				}
-			});
+			}
+
+			if (!job.hasDispatchedFrameTask()) {
+				job.markFrameTaskDispatched();
+				Object preparedFrame = job.preparedFrame();
+				MapPixelProvider provider = job.provider();
+				executor.submit(() -> {
+					try {
+						byte[] frame = provider.renderPreparedFrame(preparedFrame);
+						job.pushFrameResult(FrameResult.success(frame));
+					} catch (Throwable throwable) {
+						job.pushFrameResult(FrameResult.failure(throwable));
+					}
+				});
+			}
 		}
 
 		FrameResult frameResult = job.frameResult();
@@ -282,13 +285,13 @@ public final class MapImageRenderSystem {
 			finalizePhotoDisplay(server, job);
 			job.provider().onCompleted(server);
 			player.displayClientMessage(CameraCaptureSystem.captureCompletedMessage(player), true);
-			playCompletionSound(player);
+			playRenderStartSound(player);
 			removeJob(job.playerId());
 			pollNextActive();
 		}
 	}
 
-	private static void playCompletionSound(ServerPlayer player) {
+	private static void playRenderStartSound(ServerPlayer player) {
 		Holder<SoundEvent> sound = PolymerResourcePackUtils.hasMainPack(player)
 				? CAMERA_PRINT_SOUND
 				: BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.EXPERIENCE_ORB_PICKUP);
@@ -323,12 +326,15 @@ public final class MapImageRenderSystem {
 		if (server == null || job == null) {
 			return;
 		}
+		ServerPlayer player = server.getPlayerList().getPlayer(job.playerId());
+		if (player == null) {
+			return;
+		}
 		int progress = job.progressPercent();
 		if (progress <= job.lastDisplayedProgress() || progress >= 100) {
 			return;
 		}
-		Component name = CameraCaptureSystem.createQueuedPhotoName(progress);
-		updatePhotoItemsInInventories(server, job.photoData(), name);
+		player.displayClientMessage(CameraCaptureSystem.createQueuedPhotoName(progress), true);
 		job.setLastDisplayedProgress(progress);
 	}
 
@@ -463,9 +469,6 @@ public final class MapImageRenderSystem {
 		if (player == null || photoMapSet == null || photoMapSet.mapIds().length == 0 || photoMapSet.mapDataSet().length == 0) {
 			return null;
 		}
-		if (photoMapSet.mapIds().length == 1 && photoMapSet.mapDataSet().length == 1) {
-			return new PreviewMap(photoMapSet.mapIds()[0], photoMapSet.mapDataSet()[0]);
-		}
 		PhotoMapSet previewMapSet = createPhotoMapSet(player, itemName, 1, 1);
 		if (previewMapSet == null || previewMapSet.mapIds().length == 0 || previewMapSet.mapDataSet().length == 0) {
 			return new PreviewMap(photoMapSet.mapIds()[0], photoMapSet.mapDataSet()[0]);
@@ -473,22 +476,59 @@ public final class MapImageRenderSystem {
 		return new PreviewMap(previewMapSet.mapIds()[0], previewMapSet.mapDataSet()[0]);
 	}
 
-	private static void renderImmediatePreview(ServerPlayer player, MapPixelProvider provider, PreviewMap previewMap) {
-		if (player == null || provider == null || previewMap == null || previewMap.previewMapId() == null || previewMap.previewMapData() == null) {
+	private static void beginRender(ServerPlayer player, RenderJob job) {
+		if (player == null || job == null || job.hasStartedRendering()) {
 			return;
 		}
-		byte[] previewPixels;
-		try {
-			previewPixels = provider.renderImmediatePreview(player.level().getServer());
-		} catch (Exception exception) {
-			Lg2.LOGGER.error("Immediate photo preview render failed for player {}", player.getUUID(), exception);
-			return;
+		job.markStartedRendering();
+		job.setLastDisplayedProgress(0);
+		player.displayClientMessage(CameraCaptureSystem.createQueuedPhotoName(0), true);
+	}
+
+	private static boolean tickPreviewStage(MinecraftServer server, ServerPlayer player, RenderJob job) {
+		if (server == null || player == null || job == null || job.previewRendered()) {
+			return true;
 		}
+		if (!job.previewTaskDispatched()) {
+			job.markPreviewTaskDispatched();
+			MapPixelProvider provider = job.provider();
+			executor.submit(() -> {
+				try {
+					byte[] preview = provider.renderImmediatePreview(server);
+					job.pushPreviewResult(FrameResult.success(preview));
+				} catch (Throwable throwable) {
+					job.pushPreviewResult(FrameResult.failure(throwable));
+				}
+			});
+			return false;
+		}
+		FrameResult previewResult = job.previewResult();
+		if (previewResult == null) {
+			return false;
+		}
+		if (previewResult.failed()) {
+			Lg2.LOGGER.error("Map preview render failed for player {}", job.playerId(), previewResult.error());
+			player.displayClientMessage(Component.literal("Рендер снимка остановлен: ошибка preview."), true);
+			removeJob(job.playerId());
+			pollNextActive();
+			return false;
+		}
+		byte[] previewPixels = previewResult.pixels();
 		if (!isValidFrame(previewPixels, MAP_SIZE * MAP_SIZE)) {
-			return;
+			Lg2.LOGGER.error("Map preview render returned invalid preview for player {}", job.playerId());
+			player.displayClientMessage(Component.literal("Рендер снимка остановлен: preview повреждён."), true);
+			removeJob(job.playerId());
+			pollNextActive();
+			return false;
 		}
-		applyFrameToMap(previewMap.previewMapData(), previewPixels);
-		sendPhotoPreviewMap(player, previewMap.previewMapId(), previewMap.previewMapData());
+		applyFrameToMap(job.previewMapData(), previewPixels);
+		sendPhotoPreviewMap(player, new MapId(job.previewMapId()), job.previewMapData());
+		if (job.provider().immediatePreviewMatchesPrimaryFrame()) {
+			job.markFrameTaskDispatched();
+			job.pushFrameResult(FrameResult.success(previewPixels.clone()));
+		}
+		job.markPreviewRendered();
+		return true;
 	}
 
 	private static void applyFrameToMap(MapItemSavedData mapData, byte[] frame) {
@@ -614,6 +654,7 @@ public final class MapImageRenderSystem {
 		private final int mapsWide;
 		private final int mapsHigh;
 		private final int previewMapId;
+		private final MapItemSavedData previewMapData;
 		private final MapPixelProvider provider;
 		private final ConcurrentLinkedQueue<PixelResult> completedResults = new ConcurrentLinkedQueue<>();
 		private int nextPixel;
@@ -623,17 +664,22 @@ public final class MapImageRenderSystem {
 		private Object preparedFrame;
 		private boolean framePrepared;
 		private boolean frameTaskDispatched;
+		private boolean previewTaskDispatched;
+		private boolean previewRendered;
+		private boolean startedRendering;
 		private volatile FrameResult frameResult;
+		private volatile FrameResult previewResult;
 		private int frameApplyIndex;
 		private int lastDisplayedProgress = -1;
 
-		private RenderJob(UUID playerId, MapId[] mapIds, MapItemSavedData[] mapDataSet, int mapsWide, int mapsHigh, int previewMapId, MapPixelProvider provider) {
+		private RenderJob(UUID playerId, MapId[] mapIds, MapItemSavedData[] mapDataSet, int mapsWide, int mapsHigh, int previewMapId, MapItemSavedData previewMapData, MapPixelProvider provider) {
 			this.playerId = playerId;
 			this.mapIds = mapIds;
 			this.mapDataSet = mapDataSet;
 			this.mapsWide = mapsWide;
 			this.mapsHigh = mapsHigh;
 			this.previewMapId = previewMapId;
+			this.previewMapData = previewMapData;
 			this.provider = provider;
 		}
 
@@ -647,6 +693,14 @@ public final class MapImageRenderSystem {
 
 		private MapItemSavedData[] mapDataSet() {
 			return this.mapDataSet;
+		}
+
+		private MapItemSavedData previewMapData() {
+			return this.previewMapData;
+		}
+
+		private int previewMapId() {
+			return this.previewMapId;
 		}
 
 		private int mapsWide() {
@@ -740,12 +794,44 @@ public final class MapImageRenderSystem {
 			this.frameTaskDispatched = true;
 		}
 
+		private boolean previewTaskDispatched() {
+			return this.previewTaskDispatched;
+		}
+
+		private void markPreviewTaskDispatched() {
+			this.previewTaskDispatched = true;
+		}
+
+		private boolean previewRendered() {
+			return this.previewRendered;
+		}
+
+		private void markPreviewRendered() {
+			this.previewRendered = true;
+		}
+
+		private boolean hasStartedRendering() {
+			return this.startedRendering;
+		}
+
+		private void markStartedRendering() {
+			this.startedRendering = true;
+		}
+
 		private void pushFrameResult(FrameResult frameResult) {
 			this.frameResult = frameResult;
 		}
 
 		private FrameResult frameResult() {
 			return this.frameResult;
+		}
+
+		private void pushPreviewResult(FrameResult previewResult) {
+			this.previewResult = previewResult;
+		}
+
+		private FrameResult previewResult() {
+			return this.previewResult;
 		}
 
 		private int frameApplyIndex() {
