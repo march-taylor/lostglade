@@ -5,16 +5,21 @@ import com.lostglade.item.MonitorItem;
 import com.lostglade.server.map.MapPaletteQuantizer;
 import com.lostglade.server.monitor.MonitorApp;
 import com.lostglade.server.monitor.MonitorAppRegistry;
+import com.lostglade.server.monitor.MonitorMediaApp;
 import com.mojang.math.Transformation;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
+import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundMapItemDataPacket;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -46,6 +51,7 @@ import java.awt.Font;
 import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.Shape;
 import java.awt.Stroke;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -56,7 +62,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 public final class MonitorScreenSystem {
 	private static final String SCREEN_ROOT_TAG = "lg2_monitor_screen";
@@ -88,6 +99,9 @@ public final class MonitorScreenSystem {
 	private static final int LAUNCHER_COLUMNS = 2;
 	private static final Map<RenderCacheKey, byte[][]> TILE_CACHE = new HashMap<>();
 	private static final Map<String, BufferedImage> APP_ICON_CACHE = new HashMap<>();
+	private static final Map<ScreenRuntimeKey, MediaRuntimeState> MEDIA_STATES = new ConcurrentHashMap<>();
+	private static final Map<UUID, PendingMediaLinkRequest> PENDING_MEDIA_LINKS = new ConcurrentHashMap<>();
+	private static final Queue<MediaLoadResult> MEDIA_LOAD_RESULTS = new ConcurrentLinkedQueue<>();
 	private static BufferedImage offBaseImage;
 	private static BufferedImage onBaseImage;
 
@@ -96,6 +110,7 @@ public final class MonitorScreenSystem {
 
 	public static void register() {
 		UseEntityCallback.EVENT.register(MonitorScreenSystem::onUseEntity);
+		ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(MonitorScreenSystem::onAllowChatMessage);
 		ServerTickEvents.END_SERVER_TICK.register(MonitorScreenSystem::tick);
 	}
 
@@ -181,6 +196,50 @@ public final class MonitorScreenSystem {
 		return handleTouch(serverPlayer, level, itemFrame, hitResult);
 	}
 
+	private static boolean onAllowChatMessage(PlayerChatMessage message, ServerPlayer sender, ChatType.Bound params) {
+		if (sender == null || message == null) {
+			return true;
+		}
+		PendingMediaLinkRequest pending = PENDING_MEDIA_LINKS.remove(sender.getUUID());
+		if (pending == null) {
+			return true;
+		}
+
+		MediaRuntimeState state = MEDIA_STATES.get(pending.screenKey());
+		if (state == null) {
+			sender.sendSystemMessage(mediaCancelledMessage(sender));
+			return false;
+		}
+
+		String url = message.signedContent() != null ? message.signedContent().trim() : "";
+		if (url.isEmpty()) {
+			state.waitingForLink = true;
+			state.loading = false;
+			state.statusText = mediaPromptStatus(sender);
+			sender.sendSystemMessage(mediaInvalidLinkMessage(sender));
+			rerenderRuntimeScreen(sender.level().getServer(), pending.screenKey());
+			return false;
+		}
+
+		state.waitingForLink = false;
+		state.loading = true;
+		state.statusText = mediaLoadingStatus(sender);
+		state.overlayMode = MediaOverlayMode.CONTROLS;
+		sender.sendSystemMessage(mediaLoadingMessage(sender));
+		rerenderRuntimeScreen(sender.level().getServer(), pending.screenKey());
+
+		CompletableFuture
+				.supplyAsync(() -> {
+					try {
+						return new MediaLoadResult(pending.screenKey(), sender.getUUID(), url, MonitorMediaApp.loadFromUrl(url), null);
+					} catch (Exception exception) {
+						return new MediaLoadResult(pending.screenKey(), sender.getUUID(), url, null, sanitizeMediaError(exception.getMessage()));
+					}
+				})
+				.thenAccept(MEDIA_LOAD_RESULTS::add);
+		return false;
+	}
+
 	private static InteractionResult handleTouch(ServerPlayer player, ServerLevel level, ItemFrame frame, EntityHitResult hitResult) {
 		ScreenComponent component = collectComponent(level, frame, null);
 		if (component == null) {
@@ -203,6 +262,7 @@ public final class MonitorScreenSystem {
 		UiLayout layout = createUiLayout(component.width(), component.height());
 		ScreenViewMode nextMode = null;
 		Integer nextLauncherPage = null;
+		boolean rerenderCurrent = false;
 		if (component.viewMode() == ScreenViewMode.HOME) {
 			List<MonitorApp> visibleApps = visibleHomeApps(layout, component.launcherPage());
 			for (int index = 0; index < visibleApps.size(); index++) {
@@ -225,16 +285,41 @@ public final class MonitorScreenSystem {
 					nextLauncherPage = component.launcherPage() + 1;
 				}
 			}
-		} else if (component.viewMode() != ScreenViewMode.HOME) {
-			UiRect backRect = mediaBackRect(layout);
-			if (backRect.contains(touchPoint.x(), touchPoint.y())) {
+		} else if (component.viewMode() == ScreenViewMode.MEDIA) {
+			MediaRuntimeState mediaState = MEDIA_STATES.computeIfAbsent(component.runtimeKey(), ignored -> MediaRuntimeState.fresh(mediaPromptStatus(player)));
+			if (mediaState.overlayMode == MediaOverlayMode.VIEW) {
+				mediaState.overlayMode = MediaOverlayMode.CONTROLS;
+				rerenderCurrent = true;
+			} else if (mediaCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				nextMode = ScreenViewMode.HOME;
+			} else if (mediaScaleRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				mediaState.scaleMode = mediaState.scaleMode.next();
+				rerenderCurrent = true;
+			} else if (mediaLinkRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				requestMediaLink(player, component.runtimeKey(), false);
+				rerenderCurrent = true;
+			} else if (mediaOverlayToggleRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				mediaState.overlayMode = MediaOverlayMode.VIEW;
+				rerenderCurrent = true;
+			}
+		} else {
+			UiRect closeRect = genericCloseRect(layout);
+			if (closeRect.contains(touchPoint.x(), touchPoint.y())) {
 				nextMode = ScreenViewMode.HOME;
 			}
 		}
 
 		if ((nextMode != null && nextMode != component.viewMode())
 				|| (nextLauncherPage != null && nextLauncherPage != component.launcherPage())) {
+			if (component.viewMode() == ScreenViewMode.MEDIA && nextMode != ScreenViewMode.MEDIA) {
+				closeMediaSession(component.runtimeKey());
+			}
+			if (nextMode == ScreenViewMode.MEDIA && component.viewMode() != ScreenViewMode.MEDIA) {
+				openMediaSession(player, component.runtimeKey());
+			}
 			synchronizeConnectedScreens(level, frame, null, nextMode, nextLauncherPage);
+		} else if (rerenderCurrent) {
+			rerenderComponent(level, component, component.viewMode(), component.launcherPage());
 		}
 		return InteractionResult.SUCCESS;
 	}
@@ -243,6 +328,9 @@ public final class MonitorScreenSystem {
 		if (server == null) {
 			return;
 		}
+		processCompletedMediaLoads(server);
+		processMediaPlayback(server);
+		cleanupMediaSessions(server);
 		for (ServerLevel level : server.getAllLevels()) {
 			if (level.getGameTime() % RESCAN_INTERVAL_TICKS != 0L) {
 				continue;
@@ -259,10 +347,156 @@ public final class MonitorScreenSystem {
 				if (processed.contains(key)) {
 					continue;
 				}
-					synchronizeConnectedScreens(level, frame, processed, null, null);
+				synchronizeConnectedScreens(level, frame, processed, null, null);
 			}
 			cleanupOrphanDisplays(level);
 		}
+	}
+
+	private static void openMediaSession(ServerPlayer player, ScreenRuntimeKey key) {
+		if (player == null || key == null) {
+			return;
+		}
+		MEDIA_STATES.put(key, MediaRuntimeState.fresh(mediaPromptStatus(player)));
+		requestMediaLink(player, key, true);
+	}
+
+	private static void requestMediaLink(ServerPlayer player, ScreenRuntimeKey key, boolean clearCurrentMedia) {
+		if (player == null || key == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.computeIfAbsent(key, ignored -> MediaRuntimeState.fresh(mediaPromptStatus(player)));
+		if (clearCurrentMedia) {
+			state.loadedMedia = null;
+			state.frameIndex = 0;
+			state.nextFrameTick = 0L;
+		}
+		state.waitingForLink = true;
+		state.loading = false;
+		state.overlayMode = MediaOverlayMode.CONTROLS;
+		state.statusText = mediaPromptStatus(player);
+		PENDING_MEDIA_LINKS.put(player.getUUID(), new PendingMediaLinkRequest(key));
+		player.sendSystemMessage(mediaPromptMessage(player));
+	}
+
+	private static void closeMediaSession(ScreenRuntimeKey key) {
+		if (key == null) {
+			return;
+		}
+		MEDIA_STATES.remove(key);
+		PENDING_MEDIA_LINKS.entrySet().removeIf(entry -> entry.getValue().screenKey().equals(key));
+	}
+
+	private static void processCompletedMediaLoads(MinecraftServer server) {
+		MediaLoadResult result;
+		while ((result = MEDIA_LOAD_RESULTS.poll()) != null) {
+			MediaRuntimeState state = MEDIA_STATES.get(result.screenKey());
+			if (state == null) {
+				continue;
+			}
+
+			ServerPlayer requester = server.getPlayerList().getPlayer(result.requesterUuid());
+			state.loading = false;
+			state.waitingForLink = false;
+			state.overlayMode = MediaOverlayMode.CONTROLS;
+
+			if (result.loadedMedia() != null) {
+				state.loadedMedia = result.loadedMedia();
+				state.sourceUrl = result.url();
+				state.frameIndex = 0;
+				state.nextFrameTick = overworldGameTime(server) + result.loadedMedia().delayTicks(0);
+				state.statusText = result.loadedMedia().animated() ? "GIF READY" : "IMAGE READY";
+				if (requester != null) {
+					requester.sendSystemMessage(mediaLoadedMessage(requester, result.loadedMedia().animated()));
+				}
+			} else {
+				state.statusText = sanitizeMediaError(result.error());
+				if (requester != null) {
+					requester.sendSystemMessage(mediaLoadFailedMessage(requester, state.statusText));
+				}
+			}
+
+			rerenderRuntimeScreen(server, result.screenKey());
+		}
+	}
+
+	private static void processMediaPlayback(MinecraftServer server) {
+		long gameTime = overworldGameTime(server);
+		for (Map.Entry<ScreenRuntimeKey, MediaRuntimeState> entry : MEDIA_STATES.entrySet()) {
+			MediaRuntimeState state = entry.getValue();
+			MonitorMediaApp.LoadedMedia media = state.loadedMedia;
+			if (media == null || !media.animated() || media.frameCount() <= 1 || state.waitingForLink) {
+				continue;
+			}
+
+			boolean changed = false;
+			while (gameTime >= state.nextFrameTick) {
+				state.frameIndex = (state.frameIndex + 1) % media.frameCount();
+				state.nextFrameTick += media.delayTicks(state.frameIndex);
+				changed = true;
+			}
+			if (changed) {
+				rerenderRuntimeScreen(server, entry.getKey());
+			}
+		}
+	}
+
+	private static void cleanupMediaSessions(MinecraftServer server) {
+		MEDIA_STATES.keySet().removeIf(key -> !isMediaSessionAlive(server, key));
+		PENDING_MEDIA_LINKS.entrySet().removeIf(entry -> !isMediaSessionAlive(server, entry.getValue().screenKey()));
+	}
+
+	private static boolean isMediaSessionAlive(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return false;
+		}
+		ServerLevel level = server.getLevel(key.dimension());
+		if (level == null) {
+			return false;
+		}
+		ItemFrame rootFrame = findScreenFrame(level, key.pos(), key.facing());
+		if (rootFrame == null) {
+			return false;
+		}
+		ScreenComponent component = collectComponent(level, rootFrame, null);
+		return component != null
+				&& component.runtimeKey().equals(key)
+				&& component.viewMode() == ScreenViewMode.MEDIA;
+	}
+
+	private static void rerenderRuntimeScreen(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		ServerLevel level = server.getLevel(key.dimension());
+		if (level == null) {
+			return;
+		}
+		ItemFrame rootFrame = findScreenFrame(level, key.pos(), key.facing());
+		if (rootFrame == null) {
+			closeMediaSession(key);
+			return;
+		}
+		ScreenComponent component = collectComponent(level, rootFrame, null);
+		if (component == null || component.viewMode() != ScreenViewMode.MEDIA) {
+			return;
+		}
+		rerenderComponent(level, component, component.viewMode(), component.launcherPage());
+	}
+
+	private static void rerenderComponent(ServerLevel level, ScreenComponent component, ScreenViewMode viewMode, int launcherPage) {
+		if (level == null || component == null) {
+			return;
+		}
+		byte[][] renderedTiles = renderTiles(component.powered(), viewMode, launcherPage, component.width(), component.height(), component.runtimeKey());
+		applyRenderedTiles(level, component, renderedTiles);
+	}
+
+	private static long overworldGameTime(MinecraftServer server) {
+		if (server == null || server.overworld() == null) {
+			return 0L;
+		}
+		return server.overworld().getGameTime();
 	}
 
 	private static void synchronizeConnectedScreens(ServerLevel level, ItemFrame startFrame, Set<ScreenKey> processedKeys) {
@@ -332,28 +566,7 @@ public final class MonitorScreenSystem {
 		if (!rerenderMaps) {
 			return;
 		}
-
-		byte[][] renderedTiles = renderTiles(component.powered(), viewMode, launcherPage, component.width(), component.height());
-		ServerLevel mapStorageLevel = photoMapLevel(level.getServer(), level);
-		for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
-			ItemFrame frame = entry.getKey();
-			ItemStack frameStack = frame.getItem();
-			ScreenTileState state = readScreenState(frameStack);
-			MapId mapId = frameStack.get(DataComponents.MAP_ID);
-			if (state == null || mapId == null) {
-				continue;
-			}
-			MapItemSavedData mapData = mapStorageLevel.getMapData(mapId);
-			if (mapData == null) {
-				continue;
-			}
-			int tileIndex = state.tileY() * component.width() + state.tileX();
-			if (tileIndex < 0 || tileIndex >= renderedTiles.length) {
-				continue;
-			}
-			applyFrameToMap(mapData, renderedTiles[tileIndex]);
-			sendMapToPlayers(level, mapId, mapData);
-		}
+		rerenderComponent(level, component, viewMode, launcherPage);
 	}
 
 	private static ScreenComponent collectComponent(ServerLevel level, ItemFrame startFrame, Set<ScreenKey> processedKeys) {
@@ -451,7 +664,22 @@ public final class MonitorScreenSystem {
 			frameCoords.put(entry.getKey().frame(), tileCoord);
 			byCoord.put(tileCoord, entry.getKey());
 		}
-		return new ScreenComponent(facing, right, width, height, powered, viewMode, launcherPage, frameCoords, byCoord);
+		ScreenFrame rootFrame = byCoord.get(new TileCoord(0, 0));
+		if (rootFrame == null) {
+			rootFrame = frames.values().iterator().next();
+		}
+		return new ScreenComponent(
+				new ScreenRuntimeKey(level.dimension(), rootFrame.frame().blockPosition(), facing),
+				facing,
+				right,
+				width,
+				height,
+				powered,
+				viewMode,
+				launcherPage,
+				frameCoords,
+				byCoord
+		);
 	}
 
 	private static void synchronizeNeighborComponents(ServerLevel level, BlockPos pos, Direction facing) {
@@ -524,7 +752,7 @@ public final class MonitorScreenSystem {
 		writeScreenState(screenMap, state);
 		MapItemSavedData mapData = mapLevel.getMapData(mapId);
 		if (mapData != null) {
-			byte[][] tiles = renderTiles(state.powered(), state.viewMode(), state.launcherPage(), 1, 1);
+			byte[][] tiles = renderTiles(state.powered(), state.viewMode(), state.launcherPage(), 1, 1, null);
 			applyFrameToMap(mapData, tiles[0]);
 		}
 		return screenMap;
@@ -582,11 +810,20 @@ public final class MonitorScreenSystem {
 				|| level.hasNeighborSignal(frame.blockPosition());
 	}
 
-	private static byte[][] renderTiles(boolean powered, ScreenViewMode viewMode, int launcherPage, int width, int height) {
-		RenderCacheKey key = new RenderCacheKey(powered, viewMode, launcherPage, width, height);
-		byte[][] cached = TILE_CACHE.get(key);
-		if (cached != null) {
-			return cached;
+	private static byte[][] renderTiles(
+			boolean powered,
+			ScreenViewMode viewMode,
+			int launcherPage,
+			int width,
+			int height,
+			ScreenRuntimeKey runtimeKey
+	) {
+		if (viewMode != ScreenViewMode.MEDIA) {
+			RenderCacheKey key = new RenderCacheKey(powered, viewMode, launcherPage, width, height);
+			byte[][] cached = TILE_CACHE.get(key);
+			if (cached != null) {
+				return cached;
+			}
 		}
 
 		BufferedImage canvas = new BufferedImage(width * MAP_SIZE, height * MAP_SIZE, BufferedImage.TYPE_INT_ARGB);
@@ -598,7 +835,7 @@ public final class MonitorScreenSystem {
 			if (viewMode == ScreenViewMode.HOME) {
 				drawHomeScreen(graphics, layout, launcherPage);
 			} else {
-				drawAppScreen(graphics, layout, appForViewMode(viewMode));
+				drawAppScreen(graphics, layout, appForViewMode(viewMode), runtimeKey);
 			}
 		}
 		graphics.dispose();
@@ -618,7 +855,9 @@ public final class MonitorScreenSystem {
 			}
 		}
 
-		TILE_CACHE.put(key, tiles);
+		if (viewMode != ScreenViewMode.MEDIA) {
+			TILE_CACHE.put(new RenderCacheKey(powered, viewMode, launcherPage, width, height), tiles);
+		}
 		return tiles;
 	}
 
@@ -666,12 +905,10 @@ public final class MonitorScreenSystem {
 
 	private static void drawHomeScreen(Graphics2D graphics, UiLayout layout, int launcherPage) {
 		UiRect panel = homePanelRect(layout);
-		int arc = clampInt(layout.unit() * 2, 16, 26);
-		fillRoundedRect(graphics, panel, arc, new Color(242, 246, 252, 210));
-		strokeRoundedRect(graphics, panel, arc, 1.2F, new Color(255, 255, 255, 84));
-
 		UiRect header = homeHeaderRect(layout, panel);
-		drawCenteredText(graphics, "APPS", header, new Color(18, 24, 30), Font.BOLD, clampInt(layout.unit() + 2, 11, 18));
+		fillRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 20), new Color(18, 24, 30, 196));
+		strokeRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 20), 1.0F, new Color(255, 255, 255, 66));
+		drawCenteredText(graphics, "APPS", header, new Color(248, 250, 252), Font.BOLD, clampInt(layout.unit(), 10, 16));
 
 		List<MonitorApp> visibleApps = visibleHomeApps(layout, launcherPage);
 		for (int index = 0; index < visibleApps.size(); index++) {
@@ -681,7 +918,8 @@ public final class MonitorScreenSystem {
 		int pageCount = homePageCount(layout);
 		if (pageCount > 1) {
 			UiRect footer = homeFooterRect(layout, panel);
-			fillRoundedRect(graphics, footer, clampInt(layout.unit() * 2, 12, 20), new Color(18, 24, 30, 198));
+			fillRoundedRect(graphics, footer, clampInt(layout.unit() * 2, 12, 18), new Color(18, 24, 30, 184));
+			strokeRoundedRect(graphics, footer, clampInt(layout.unit() * 2, 12, 18), 1.0F, new Color(255, 255, 255, 52));
 			drawCenteredText(
 					graphics,
 					(launcherPage + 1) + "/" + pageCount,
@@ -706,17 +944,19 @@ public final class MonitorScreenSystem {
 		}
 	}
 
-	private static void drawAppScreen(Graphics2D graphics, UiLayout layout, MonitorApp app) {
+	private static void drawAppScreen(Graphics2D graphics, UiLayout layout, MonitorApp app, ScreenRuntimeKey runtimeKey) {
 		if (app == null) {
 			drawHomeScreen(graphics, layout, 0);
 			return;
 		}
+		if ("media".equalsIgnoreCase(app.id())) {
+			drawMediaScreen(graphics, layout, runtimeKey);
+			return;
+		}
+		drawGenericAppScreen(graphics, layout, app);
+	}
 
-		UiRect workspace = workspaceRect(layout);
-		int arc = clampInt(layout.unit() * 2, 16, 30);
-		fillRoundedRect(graphics, workspace, arc, withAlpha(app.panelRgb(), 224));
-		strokeRoundedRect(graphics, workspace, arc, 1.1F, new Color(255, 255, 255, 66));
-
+	private static void drawGenericAppScreen(Graphics2D graphics, UiLayout layout, MonitorApp app) {
 		UiRect headerRect = mediaHeaderRect(layout);
 		graphics.setPaint(new GradientPaint(
 				headerRect.x(),
@@ -727,56 +967,23 @@ public final class MonitorScreenSystem {
 				new Color(app.accentEndRgb())
 		));
 		fillRoundedRect(graphics, headerRect, clampInt(layout.unit() * 2, 14, 24), null);
+		strokeRoundedRect(graphics, headerRect, clampInt(layout.unit() * 2, 14, 24), 1.0F, new Color(255, 255, 255, 82));
 
-		UiRect backRect = mediaBackRect(layout);
-		fillRoundedRect(graphics, backRect, clampInt(layout.unit(), 10, 18), new Color(245, 247, 250, 240));
-		drawBackArrow(graphics, backRect, new Color(18, 22, 28));
+		UiRect closeRect = genericCloseRect(layout);
+		fillRoundedRect(graphics, closeRect, clampInt(layout.unit() + 2, 10, 18), new Color(15, 18, 24, 224));
+		drawCloseGlyph(graphics, closeRect, new Color(248, 251, 255));
 
 		UiRect titleRect = new UiRect(
-				backRect.right() + clampInt(layout.unit() / 2, 6, 12),
+				closeRect.right() + clampInt(layout.unit() / 2, 6, 12),
 				headerRect.y(),
-				Math.max(24, headerRect.right() - backRect.right() - layout.unit() * 2),
+				Math.max(24, headerRect.right() - closeRect.right() - layout.unit() * 2),
 				headerRect.height()
 		);
 		drawVerticalText(graphics, app.title(), titleRect, new Color(248, 251, 255), Font.BOLD, clampInt(layout.unit(), 11, 18));
 
-		if ("media".equalsIgnoreCase(app.id())) {
-			UiRect previewRect = mediaPreviewRect(layout);
-			fillRoundedRect(graphics, previewRect, clampInt(layout.unit() * 2, 14, 24), new Color(15, 18, 24, 235));
-			strokeRoundedRect(graphics, previewRect, clampInt(layout.unit() * 2, 14, 24), 1.0F, new Color(255, 255, 255, 42));
-
-			UiRect imageRect = previewRect.inset(clampInt(layout.unit(), 10, 18));
-			fillRoundedRect(graphics, imageRect, clampInt(layout.unit(), 10, 18), new Color(232, 238, 244, 244));
-			drawMediaPlaceholder(graphics, imageRect);
-
-			UiRect controlsRect = mediaControlsRect(layout, previewRect);
-			fillRoundedRect(graphics, controlsRect, clampInt(layout.unit() * 2, 12, 20), new Color(255, 255, 255, 112));
-			drawMediaControls(graphics, controlsRect, layout);
-
-			UiRect sidebarRect = mediaSidebarRect(layout, previewRect, controlsRect);
-			if (sidebarRect != null) {
-				fillRoundedRect(graphics, sidebarRect, clampInt(layout.unit() * 2, 14, 22), new Color(18, 22, 28, 216));
-				strokeRoundedRect(graphics, sidebarRect, clampInt(layout.unit() * 2, 14, 22), 1.0F, new Color(255, 255, 255, 40));
-				int pad = clampInt(layout.unit(), 8, 14);
-				int rowHeight = clampInt(layout.unit() * 3, 24, 42);
-				for (int i = 0; i < 3; i++) {
-					int rowY = sidebarRect.y() + pad + i * (rowHeight + pad);
-					UiRect row = new UiRect(sidebarRect.x() + pad, rowY, Math.max(28, sidebarRect.width() - pad * 2), rowHeight);
-					fillRoundedRect(graphics, row, clampInt(layout.unit(), 8, 14), new Color(255, 255, 255, i == 0 ? 122 : 54));
-					UiRect thumb = new UiRect(row.x() + pad / 2, row.y() + pad / 2, Math.max(12, rowHeight - pad), Math.max(12, rowHeight - pad));
-					drawAppIcon(graphics, app, thumb, clampInt(layout.unit() / 3, 2, 6));
-					int barX = thumb.right() + pad / 2;
-					int barWidth = Math.max(10, row.right() - pad - barX);
-					fillRoundedRect(graphics, new UiRect(barX, row.y() + pad / 2, barWidth, clampInt(layout.unit() - 4, 4, 12)), 6, new Color(16, 22, 28, 110));
-					fillRoundedRect(graphics, new UiRect(barX, row.bottom() - pad - clampInt(layout.unit() - 6, 4, 10), Math.max(8, barWidth * 2 / 3), clampInt(layout.unit() - 6, 4, 10)), 6, new Color(16, 22, 28, 72));
-				}
-			}
-			return;
-		}
-
 		UiRect heroRect = genericAppHeroRect(layout);
-		fillRoundedRect(graphics, heroRect, clampInt(layout.unit() * 2, 14, 24), new Color(248, 250, 252, 230));
-		strokeRoundedRect(graphics, heroRect, clampInt(layout.unit() * 2, 14, 24), 1.0F, new Color(255, 255, 255, 76));
+		fillRoundedRect(graphics, heroRect, clampInt(layout.unit() * 2, 14, 24), withAlpha(app.panelRgb(), 214));
+		strokeRoundedRect(graphics, heroRect, clampInt(layout.unit() * 2, 14, 24), 1.0F, new Color(255, 255, 255, 68));
 
 		int iconSize = clampInt(Math.min(heroRect.width(), heroRect.height()) / 2, 48, 96);
 		UiRect iconRect = new UiRect(
@@ -785,7 +992,7 @@ public final class MonitorScreenSystem {
 				iconSize,
 				iconSize
 		);
-		fillRoundedRect(graphics, iconRect, clampInt(layout.unit() * 2, 12, 22), new Color(255, 255, 255, 255));
+		fillRoundedRect(graphics, iconRect, clampInt(layout.unit() * 2, 12, 22), new Color(255, 255, 255, 250));
 		drawAppIcon(graphics, app, iconRect, clampInt(layout.unit() / 2, 4, 8));
 
 		UiRect titleTextRect = new UiRect(
@@ -794,7 +1001,7 @@ public final class MonitorScreenSystem {
 				heroRect.width() - layout.unit() * 2,
 				clampInt(layout.unit() * 2, 20, 30)
 		);
-		drawCenteredText(graphics, app.screenTitle(), titleTextRect, new Color(18, 22, 28), Font.BOLD, clampInt(layout.unit() + 1, 11, 17));
+		drawCenteredText(graphics, app.screenTitle(), titleTextRect, new Color(245, 247, 250), Font.BOLD, clampInt(layout.unit() + 1, 11, 17));
 
 		UiRect hintRect = new UiRect(
 				heroRect.x() + layout.unit(),
@@ -802,19 +1009,146 @@ public final class MonitorScreenSystem {
 				heroRect.width() - layout.unit() * 2,
 				clampInt(layout.unit() * 2, 18, 28)
 		);
-		drawCenteredText(graphics, app.screenHint(), hintRect, new Color(48, 58, 68), Font.PLAIN, clampInt(layout.unit() - 1, 9, 13));
+		drawCenteredText(graphics, app.screenHint(), hintRect, new Color(212, 220, 228), Font.PLAIN, clampInt(layout.unit() - 1, 9, 13));
+	}
+
+	private static void drawMediaScreen(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey) {
+		MediaRuntimeState state = runtimeKey != null ? MEDIA_STATES.get(runtimeKey) : null;
+		UiRect canvasRect = mediaCanvasRect(layout);
+		UiRect closeRect = mediaCloseRect(layout);
+		UiRect linkRect = mediaLinkRect(layout);
+		UiRect scaleRect = mediaScaleRect(layout);
+		UiRect overlayRect = mediaOverlayToggleRect(layout);
+
+		MonitorMediaApp.LoadedMedia media = state != null ? state.loadedMedia : null;
+		if (media != null) {
+			drawScaledImage(graphics, media.frame(state.frameIndex), canvasRect, state.scaleMode);
+		} else {
+			graphics.setPaint(new GradientPaint(
+					canvasRect.x(),
+					canvasRect.y(),
+					new Color(230, 236, 242, 24),
+					canvasRect.right(),
+					canvasRect.bottom(),
+					new Color(32, 40, 48, 54)
+			));
+			fillRoundedRect(graphics, canvasRect, clampInt(layout.unit() * 2, 12, 22), null);
+			strokeRoundedRect(graphics, canvasRect, clampInt(layout.unit() * 2, 12, 22), 1.0F, new Color(255, 255, 255, 36));
+		}
+
+		if (state != null && state.overlayMode == MediaOverlayMode.CONTROLS) {
+			int shadeHeight = clampInt(layout.unit() * 5, 40, 72);
+			graphics.setPaint(new GradientPaint(
+					0.0F,
+					canvasRect.y(),
+					new Color(0, 0, 0, 118),
+					0.0F,
+					canvasRect.y() + shadeHeight,
+					new Color(0, 0, 0, 0)
+			));
+			graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), shadeHeight);
+			graphics.setPaint(new GradientPaint(
+					0.0F,
+					canvasRect.bottom() - shadeHeight,
+					new Color(0, 0, 0, 0),
+					0.0F,
+					canvasRect.bottom(),
+					new Color(0, 0, 0, 126)
+			));
+			graphics.fillRect(canvasRect.x(), canvasRect.bottom() - shadeHeight, canvasRect.width(), shadeHeight);
+
+			drawFloatingButton(graphics, closeRect, "EXIT", new Color(12, 16, 20, 214), new Color(248, 251, 255), layout);
+			drawFloatingButton(graphics, overlayRect, "HIDE", new Color(12, 16, 20, 214), new Color(248, 251, 255), layout);
+			drawFloatingButton(graphics, linkRect, "LINK", new Color(12, 16, 20, 214), new Color(248, 251, 255), layout);
+			drawFloatingButton(
+					graphics,
+					scaleRect,
+					state != null ? state.scaleMode.label() : MediaScaleMode.FIT.label(),
+					new Color(12, 16, 20, 214),
+					new Color(248, 251, 255),
+					layout
+			);
+		}
+
+		String status = state != null ? state.statusText : "SEND LINK IN CHAT";
+		if ((status != null && !status.isBlank()) || media == null) {
+			UiRect statusRect = mediaStatusRect(layout);
+			fillRoundedRect(graphics, statusRect, clampInt(layout.unit() * 2, 12, 20), new Color(12, 16, 20, media == null ? 208 : 152));
+			strokeRoundedRect(graphics, statusRect, clampInt(layout.unit() * 2, 12, 20), 1.0F, new Color(255, 255, 255, 42));
+			drawCenteredText(
+					graphics,
+					status != null && !status.isBlank() ? status : "SEND LINK IN CHAT",
+					statusRect,
+					new Color(248, 251, 255),
+					Font.BOLD,
+					clampInt(layout.unit() - 1, 9, 14)
+			);
+		}
+
+		if (media == null) {
+			UiRect promptRect = mediaPromptRect(layout);
+			drawCenteredText(graphics, "IMAGE / GIF URL", new UiRect(promptRect.x(), promptRect.y(), promptRect.width(), promptRect.height() / 2), new Color(18, 24, 30), Font.BOLD, clampInt(layout.unit() + 1, 10, 16));
+			drawCenteredText(graphics, "paste it in chat", new UiRect(promptRect.x(), promptRect.y() + promptRect.height() / 2 - 2, promptRect.width(), promptRect.height() / 2), new Color(40, 48, 58), Font.PLAIN, clampInt(layout.unit() - 1, 8, 13));
+		}
 	}
 
 	private static void drawHomeAppCard(Graphics2D graphics, UiLayout layout, UiRect cardRect, MonitorApp app) {
-		fillRoundedRect(graphics, cardRect, clampInt(layout.unit() * 2, 14, 22), withAlpha(app.panelRgb(), 236));
-		strokeRoundedRect(graphics, cardRect, clampInt(layout.unit() * 2, 14, 22), 1.0F, new Color(255, 255, 255, 44));
+		graphics.setPaint(new GradientPaint(
+				cardRect.x(),
+				cardRect.y(),
+				withAlpha(app.accentStartRgb(), 234),
+				cardRect.right(),
+				cardRect.bottom(),
+				withAlpha(app.accentEndRgb(), 234)
+		));
+		fillRoundedRect(graphics, cardRect, clampInt(layout.unit() * 2, 12, 20), null);
+		strokeRoundedRect(graphics, cardRect, clampInt(layout.unit() * 2, 12, 20), 1.0F, new Color(255, 255, 255, 56));
 
 		UiRect iconRect = homeAppIconRect(cardRect, layout);
 		drawAppIcon(graphics, app, iconRect, clampInt(layout.unit() / 3, 2, 5));
 
 		UiRect labelRect = homeAppLabelRect(layout, cardRect);
-		fillRoundedRect(graphics, labelRect, clampInt(layout.unit(), 8, 14), new Color(245, 247, 250, 236));
-		drawCenteredText(graphics, app.title(), labelRect, new Color(18, 22, 28), Font.BOLD, clampInt(layout.unit() - 1, 9, 13));
+		fillRoundedRect(graphics, labelRect, clampInt(layout.unit(), 8, 14), new Color(12, 16, 20, 176));
+		drawCenteredText(graphics, app.title(), labelRect, new Color(248, 251, 255), Font.BOLD, clampInt(layout.unit() - 1, 9, 13));
+	}
+
+	private static void drawFloatingButton(Graphics2D graphics, UiRect rect, String label, Color fill, Color text, UiLayout layout) {
+		fillRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 10, 18), fill);
+		strokeRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 10, 18), 1.0F, new Color(255, 255, 255, 44));
+		drawCenteredText(graphics, label, rect, text, Font.BOLD, clampInt(layout.unit() - 1, 8, 13));
+	}
+
+	private static void drawScaledImage(Graphics2D graphics, BufferedImage image, UiRect rect, MediaScaleMode scaleMode) {
+		if (image == null || rect.width() <= 0 || rect.height() <= 0) {
+			return;
+		}
+		Shape previousClip = graphics.getClip();
+		graphics.setClip(rect.x(), rect.y(), rect.width(), rect.height());
+		if (scaleMode == MediaScaleMode.STRETCH) {
+			graphics.drawImage(image, rect.x(), rect.y(), rect.width(), rect.height(), null);
+			graphics.setClip(previousClip);
+			return;
+		}
+
+		double scale = scaleMode == MediaScaleMode.FILL
+				? Math.max(rect.width() / (double) image.getWidth(), rect.height() / (double) image.getHeight())
+				: Math.min(rect.width() / (double) image.getWidth(), rect.height() / (double) image.getHeight());
+		int drawWidth = Math.max(1, (int) Math.round(image.getWidth() * scale));
+		int drawHeight = Math.max(1, (int) Math.round(image.getHeight() * scale));
+		int drawX = rect.x() + (rect.width() - drawWidth) / 2;
+		int drawY = rect.y() + (rect.height() - drawHeight) / 2;
+		graphics.drawImage(image, drawX, drawY, drawWidth, drawHeight, null);
+		graphics.setClip(previousClip);
+	}
+
+	private static void drawCloseGlyph(Graphics2D graphics, UiRect rect, Color color) {
+		int pad = Math.max(4, rect.width() / 4);
+		Stroke previous = graphics.getStroke();
+		graphics.setColor(color);
+		graphics.setStroke(new BasicStroke(2.2F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.drawLine(rect.x() + pad, rect.y() + pad, rect.right() - pad, rect.bottom() - pad);
+		graphics.drawLine(rect.right() - pad, rect.y() + pad, rect.x() + pad, rect.bottom() - pad);
+		graphics.setStroke(previous);
 	}
 
 	private static void drawAppIcon(Graphics2D graphics, MonitorApp app, UiRect rect, int padding) {
@@ -961,8 +1295,8 @@ public final class MonitorScreenSystem {
 		int viewportHeight = Math.min(height, MAX_UI_TILES) * MAP_SIZE;
 		int viewportX = (canvasWidth - viewportWidth) / 2;
 		int viewportY = (canvasHeight - viewportHeight) / 2;
-		int margin = clampInt(Math.round(Math.min(viewportWidth, viewportHeight) * 0.08F), 8, 20);
-		int unit = clampInt(Math.round(Math.min(viewportWidth, viewportHeight) / 14.0F), 8, 18);
+		int margin = clampInt(Math.round(Math.min(viewportWidth, viewportHeight) * 0.065F), 6, 18);
+		int unit = clampInt(Math.round(Math.min(viewportWidth, viewportHeight) / 15.5F), 7, 16);
 		return new UiLayout(canvasWidth, canvasHeight, viewportX, viewportY, viewportWidth, viewportHeight, margin, unit);
 	}
 
@@ -976,37 +1310,31 @@ public final class MonitorScreenSystem {
 	}
 
 	private static UiRect homePanelRect(UiLayout layout) {
-		int rows = homeRowsPerPage(layout);
-		int gap = homeAppGap(layout);
-		int headerHeight = homeHeaderHeight(layout);
-		int footerHeight = homePageCount(layout) > 1 ? clampInt(layout.unit() * 2, 18, 28) : clampInt(layout.unit() + 6, 12, 18);
-		int cardsWidth = LAUNCHER_COLUMNS * homeAppCardWidth(layout) + (LAUNCHER_COLUMNS - 1) * gap;
-		int cardsHeight = rows * homeAppCardHeight(layout) + Math.max(0, rows - 1) * gap;
-		int width = clampInt(cardsWidth + layout.unit() * 2, 96, workspaceRect(layout).width());
-		int height = clampInt(headerHeight + cardsHeight + footerHeight + layout.unit() * 2, 78, workspaceRect(layout).height());
 		return new UiRect(
-				layout.viewportX() + (layout.viewportWidth() - width) / 2,
-				layout.viewportY() + (layout.viewportHeight() - height) / 2,
-				width,
-				height
+				layout.viewportX() + layout.margin() / 3,
+				layout.viewportY() + layout.margin() / 3,
+				layout.viewportWidth() - (layout.margin() * 2) / 3,
+				layout.viewportHeight() - (layout.margin() * 2) / 3
 		);
 	}
 
 	private static UiRect homeHeaderRect(UiLayout layout, UiRect panel) {
+		int width = clampInt(panel.width() / 2, 52, Math.max(52, panel.width() - layout.unit() * 2));
 		return new UiRect(
-				panel.x() + layout.unit(),
+				panel.x() + (panel.width() - width) / 2,
 				panel.y() + layout.unit() / 2,
-				panel.width() - layout.unit() * 2,
+				width,
 				homeHeaderHeight(layout)
 		);
 	}
 
 	private static UiRect homeFooterRect(UiLayout layout, UiRect panel) {
 		int height = clampInt(layout.unit() * 2, 18, 28);
+		int width = clampInt(panel.width() / 2, 52, Math.max(52, panel.width() - layout.unit() * 2));
 		return new UiRect(
-				panel.x() + layout.unit(),
+				panel.x() + (panel.width() - width) / 2,
 				panel.bottom() - height - layout.unit() / 2,
-				panel.width() - layout.unit() * 2,
+				width,
 				height
 		);
 	}
@@ -1017,8 +1345,11 @@ public final class MonitorScreenSystem {
 		int column = slotIndex % LAUNCHER_COLUMNS;
 		int gap = homeAppGap(layout);
 		int cardsWidth = LAUNCHER_COLUMNS * homeAppCardWidth(layout) + (LAUNCHER_COLUMNS - 1) * gap;
+		int cardsHeight = homeRowsPerPage(layout) * homeAppCardHeight(layout) + Math.max(0, homeRowsPerPage(layout) - 1) * gap;
 		int startX = panel.x() + (panel.width() - cardsWidth) / 2;
-		int startY = homeHeaderRect(layout, panel).bottom() + layout.unit();
+		int contentTop = homeHeaderRect(layout, panel).bottom() + clampInt(layout.unit(), 6, 12);
+		int contentBottom = homeFooterRect(layout, panel).y() - clampInt(layout.unit(), 6, 12);
+		int startY = contentTop + Math.max(0, contentBottom - contentTop - cardsHeight) / 2;
 		return new UiRect(
 				startX + column * (homeAppCardWidth(layout) + gap),
 				startY + row * (homeAppCardHeight(layout) + gap),
@@ -1053,7 +1384,7 @@ public final class MonitorScreenSystem {
 		}
 		UiRect footer = homeFooterRect(layout, homePanelRect(layout));
 		int size = Math.max(footer.height() - 6, 12);
-		return new UiRect(footer.x() + 3, footer.y() + (footer.height() - size) / 2, size, size);
+		return new UiRect(footer.x() - size - 4, footer.y() + (footer.height() - size) / 2, size, size);
 	}
 
 	private static UiRect homeScrollDownRect(UiLayout layout) {
@@ -1062,7 +1393,7 @@ public final class MonitorScreenSystem {
 		}
 		UiRect footer = homeFooterRect(layout, homePanelRect(layout));
 		int size = Math.max(footer.height() - 6, 12);
-		return new UiRect(footer.right() - size - 3, footer.y() + (footer.height() - size) / 2, size, size);
+		return new UiRect(footer.right() + 4, footer.y() + (footer.height() - size) / 2, size, size);
 	}
 
 	private static UiRect mediaHeaderRect(UiLayout layout) {
@@ -1075,7 +1406,7 @@ public final class MonitorScreenSystem {
 		);
 	}
 
-	private static UiRect mediaBackRect(UiLayout layout) {
+	private static UiRect genericCloseRect(UiLayout layout) {
 		UiRect header = mediaHeaderRect(layout);
 		int size = clampInt(layout.unit() + 8, 18, 28);
 		return new UiRect(
@@ -1086,43 +1417,55 @@ public final class MonitorScreenSystem {
 		);
 	}
 
-	private static UiRect mediaPreviewRect(UiLayout layout) {
-		UiRect workspace = workspaceRect(layout);
-		UiRect header = mediaHeaderRect(layout);
-		int x = workspace.x() + layout.unit() / 2;
-		int y = header.bottom() + layout.unit();
-		int width = workspace.width() - layout.unit();
-		if (layout.viewportWidth() >= 220) {
-			width = Math.max(72, (workspace.width() * 2) / 3);
-		}
-		int maxHeight = workspace.bottom() - y - layout.unit() / 2;
-		int controlsHeight = clampInt(layout.unit() * 2, 20, 32);
-		int height = Math.max(56, maxHeight - controlsHeight - layout.unit());
-		return new UiRect(x, y, width, height);
-	}
-
-	private static UiRect mediaControlsRect(UiLayout layout, UiRect previewRect) {
+	private static UiRect mediaCanvasRect(UiLayout layout) {
 		return new UiRect(
-				previewRect.x(),
-				previewRect.bottom() + layout.unit() / 2,
-				previewRect.width(),
-				clampInt(layout.unit() * 2, 20, 32)
+				layout.viewportX() + clampInt(layout.margin() / 3, 2, 6),
+				layout.viewportY() + clampInt(layout.margin() / 3, 2, 6),
+				layout.viewportWidth() - clampInt((layout.margin() * 2) / 3, 4, 12),
+				layout.viewportHeight() - clampInt((layout.margin() * 2) / 3, 4, 12)
 		);
 	}
 
-	private static UiRect mediaSidebarRect(UiLayout layout, UiRect previewRect, UiRect controlsRect) {
-		UiRect workspace = workspaceRect(layout);
-		int x = previewRect.right() + layout.unit();
-		int width = workspace.right() - x - layout.unit() / 2;
-		if (width < 56) {
-			return null;
-		}
-		return new UiRect(
-				x,
-				previewRect.y(),
-				width,
-				controlsRect.bottom() - previewRect.y()
-		);
+	private static UiRect mediaCloseRect(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int width = clampInt(layout.unit() * 4, 34, 58);
+		int height = clampInt(layout.unit() * 2, 18, 28);
+		return new UiRect(canvas.x() + layout.unit() / 2, canvas.y() + layout.unit() / 2, width, height);
+	}
+
+	private static UiRect mediaOverlayToggleRect(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int width = clampInt(layout.unit() * 4, 34, 58);
+		int height = clampInt(layout.unit() * 2, 18, 28);
+		return new UiRect(canvas.right() - width - layout.unit() / 2, canvas.y() + layout.unit() / 2, width, height);
+	}
+
+	private static UiRect mediaLinkRect(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int width = clampInt(layout.unit() * 4, 34, 58);
+		int height = clampInt(layout.unit() * 2, 18, 28);
+		return new UiRect(canvas.x() + layout.unit() / 2, canvas.bottom() - height - layout.unit() / 2, width, height);
+	}
+
+	private static UiRect mediaScaleRect(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int width = clampInt(layout.unit() * 4, 34, 58);
+		int height = clampInt(layout.unit() * 2, 18, 28);
+		return new UiRect(canvas.right() - width - layout.unit() / 2, canvas.bottom() - height - layout.unit() / 2, width, height);
+	}
+
+	private static UiRect mediaStatusRect(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int width = clampInt(canvas.width() * 2 / 3, 72, canvas.width() - layout.unit() * 4);
+		int height = clampInt(layout.unit() * 2, 18, 30);
+		return new UiRect(canvas.x() + (canvas.width() - width) / 2, canvas.y() + canvas.height() / 2 - height / 2, width, height);
+	}
+
+	private static UiRect mediaPromptRect(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int width = clampInt(canvas.width() - layout.unit() * 3, 60, canvas.width());
+		int height = clampInt(layout.unit() * 5, 42, 76);
+		return new UiRect(canvas.x() + (canvas.width() - width) / 2, canvas.y() + (canvas.height() - height) / 2 - layout.unit(), width, height);
 	}
 
 	private static UiRect genericAppHeroRect(UiLayout layout) {
@@ -1137,7 +1480,7 @@ public final class MonitorScreenSystem {
 	}
 
 	private static int homeHeaderHeight(UiLayout layout) {
-		return clampInt(layout.unit() + 4, 12, 20);
+		return clampInt(layout.unit() + 2, 11, 18);
 	}
 
 	private static int homeRowsPerPage(UiLayout layout) {
@@ -1145,15 +1488,15 @@ public final class MonitorScreenSystem {
 	}
 
 	private static int homeAppGap(UiLayout layout) {
-		return clampInt(layout.unit() - 1, 6, 12);
+		return clampInt(layout.unit() - 2, 5, 10);
 	}
 
 	private static int homeAppIconSize(UiLayout layout) {
-		return clampInt(Math.round(Math.min(layout.viewportWidth(), layout.viewportHeight()) * 0.22F), 24, 46);
+		return clampInt(Math.round(Math.min(layout.viewportWidth(), layout.viewportHeight()) * 0.19F), 20, 40);
 	}
 
 	private static int homeAppCardWidth(UiLayout layout) {
-		return clampInt(homeAppIconSize(layout) + layout.unit() + 6, 40, 74);
+		return clampInt(homeAppIconSize(layout) + layout.unit() + 4, 36, 66);
 	}
 
 	private static int homeAppCardHeight(UiLayout layout) {
@@ -1314,6 +1657,32 @@ public final class MonitorScreenSystem {
 		}
 		for (int pixelIndex = 0; pixelIndex < MAP_SIZE * MAP_SIZE; pixelIndex++) {
 			mapData.setColor(pixelIndex % MAP_SIZE, pixelIndex / MAP_SIZE, frame[pixelIndex]);
+		}
+	}
+
+	private static void applyRenderedTiles(ServerLevel level, ScreenComponent component, byte[][] renderedTiles) {
+		if (level == null || component == null || renderedTiles == null) {
+			return;
+		}
+		ServerLevel mapStorageLevel = photoMapLevel(level.getServer(), level);
+		for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
+			ItemFrame frame = entry.getKey();
+			ItemStack frameStack = frame.getItem();
+			ScreenTileState state = readScreenState(frameStack);
+			MapId mapId = frameStack.get(DataComponents.MAP_ID);
+			if (state == null || mapId == null) {
+				continue;
+			}
+			MapItemSavedData mapData = mapStorageLevel.getMapData(mapId);
+			if (mapData == null) {
+				continue;
+			}
+			int tileIndex = state.tileY() * component.width() + state.tileX();
+			if (tileIndex < 0 || tileIndex >= renderedTiles.length) {
+				continue;
+			}
+			applyFrameToMap(mapData, renderedTiles[tileIndex]);
+			sendMapToPlayers(level, mapId, mapData);
 		}
 	}
 
@@ -1496,6 +1865,128 @@ public final class MonitorScreenSystem {
 		return null;
 	}
 
+	private static String mediaPromptStatus(ServerPlayer player) {
+		return locale(player).startsWith("ru") || locale(player).startsWith("rpr") ? "ССЫЛКА В ЧАТ" : "SEND LINK IN CHAT";
+	}
+
+	private static String mediaLoadingStatus(ServerPlayer player) {
+		return locale(player).startsWith("ru") || locale(player).startsWith("rpr") ? "ЗАГРУЖАЮ..." : "LOADING...";
+	}
+
+	private static String sanitizeMediaError(String error) {
+		if (error == null || error.isBlank()) {
+			return "LOAD FAILED";
+		}
+		String normalized = error.trim().replace('\n', ' ').replace('\r', ' ');
+		if (normalized.length() > 28) {
+			normalized = normalized.substring(0, 28).trim();
+		}
+		return normalized.toUpperCase(Locale.ROOT);
+	}
+
+	private static Component mediaPromptMessage(ServerPlayer player) {
+		String locale = locale(player);
+		if (locale.startsWith("rpr")) {
+			return literal("Скинь в чат ссылку на картинку или гифку");
+		}
+		if (locale.startsWith("uk")) {
+			return literal("Надішли в чат посилання на картинку або GIF");
+		}
+		if (locale.startsWith("ja")) {
+			return literal("画像またはGIFのURLをチャットに送ってください");
+		}
+		if (locale.startsWith("ru")) {
+			return literal("Скинь в чат ссылку на картинку или гифку");
+		}
+		return literal("Send an image or GIF URL in chat");
+	}
+
+	private static Component mediaLoadingMessage(ServerPlayer player) {
+		String locale = locale(player);
+		if (locale.startsWith("rpr")) {
+			return literal("Тяну медию с сети...");
+		}
+		if (locale.startsWith("uk")) {
+			return literal("Завантажую медіа...");
+		}
+		if (locale.startsWith("ja")) {
+			return literal("メディアを読み込み中...");
+		}
+		if (locale.startsWith("ru")) {
+			return literal("Загружаю медиа...");
+		}
+		return literal("Loading media...");
+	}
+
+	private static Component mediaLoadedMessage(ServerPlayer player, boolean animated) {
+		String locale = locale(player);
+		if (locale.startsWith("rpr")) {
+			return literal(animated ? "Гифка загрузилась" : "Картинка загрузилась");
+		}
+		if (locale.startsWith("uk")) {
+			return literal(animated ? "GIF завантажено" : "Зображення завантажено");
+		}
+		if (locale.startsWith("ja")) {
+			return literal(animated ? "GIFを読み込みました" : "画像を読み込みました");
+		}
+		if (locale.startsWith("ru")) {
+			return literal(animated ? "Гифка загружена" : "Картинка загружена");
+		}
+		return literal(animated ? "GIF loaded" : "Image loaded");
+	}
+
+	private static Component mediaLoadFailedMessage(ServerPlayer player, String error) {
+		String locale = locale(player);
+		String reason = error == null || error.isBlank() ? "LOAD FAILED" : error;
+		if (locale.startsWith("rpr")) {
+			return literal("Не вышло загрузить: " + reason);
+		}
+		if (locale.startsWith("uk")) {
+			return literal("Не вдалося завантажити: " + reason);
+		}
+		if (locale.startsWith("ja")) {
+			return literal("読み込み失敗: " + reason);
+		}
+		if (locale.startsWith("ru")) {
+			return literal("Не удалось загрузить: " + reason);
+		}
+		return literal("Failed to load: " + reason);
+	}
+
+	private static Component mediaCancelledMessage(ServerPlayer player) {
+		String locale = locale(player);
+		if (locale.startsWith("rpr")) {
+			return literal("Экран уже не ждёт ссылку");
+		}
+		if (locale.startsWith("uk")) {
+			return literal("Екран більше не чекає посилання");
+		}
+		if (locale.startsWith("ja")) {
+			return literal("この画面はもうURL待ちではありません");
+		}
+		if (locale.startsWith("ru")) {
+			return literal("Этот экран уже не ждёт ссылку");
+		}
+		return literal("That screen is no longer waiting for a link");
+	}
+
+	private static Component mediaInvalidLinkMessage(ServerPlayer player) {
+		String locale = locale(player);
+		if (locale.startsWith("rpr")) {
+			return literal("Пустая ссылка не годится");
+		}
+		if (locale.startsWith("uk")) {
+			return literal("Порожнє посилання не підходить");
+		}
+		if (locale.startsWith("ja")) {
+			return literal("空のURLは使えません");
+		}
+		if (locale.startsWith("ru")) {
+			return literal("Пустая ссылка не подходит");
+		}
+		return literal("That URL is empty");
+	}
+
 	private static Component wallOnlyMessage(ServerPlayer player) {
 		String locale = locale(player);
 		if (locale.startsWith("rpr")) {
@@ -1579,7 +2070,36 @@ public final class MonitorScreenSystem {
 		}
 	}
 
+	private enum MediaOverlayMode {
+		VIEW,
+		CONTROLS
+	}
+
+	private enum MediaScaleMode {
+		FIT("FIT"),
+		FILL("FILL"),
+		STRETCH("FULL");
+
+		private final String label;
+
+		MediaScaleMode(String label) {
+			this.label = label;
+		}
+
+		String label() {
+			return this.label;
+		}
+
+		MediaScaleMode next() {
+			MediaScaleMode[] values = values();
+			return values[(this.ordinal() + 1) % values.length];
+		}
+	}
+
 	private record ScreenKey(BlockPos pos, Direction direction) {
+	}
+
+	private record ScreenRuntimeKey(ResourceKey<Level> dimension, BlockPos pos, Direction facing) {
 	}
 
 	private record TileCoord(int x, int y) {
@@ -1624,6 +2144,7 @@ public final class MonitorScreenSystem {
 	}
 
 	private record ScreenComponent(
+			ScreenRuntimeKey runtimeKey,
 			Direction facing,
 			Direction right,
 			int width,
@@ -1637,6 +2158,18 @@ public final class MonitorScreenSystem {
 	}
 
 	private record RenderCacheKey(boolean powered, ScreenViewMode viewMode, int launcherPage, int width, int height) {
+	}
+
+	private record PendingMediaLinkRequest(ScreenRuntimeKey screenKey) {
+	}
+
+	private record MediaLoadResult(
+			ScreenRuntimeKey screenKey,
+			UUID requesterUuid,
+			String url,
+			MonitorMediaApp.LoadedMedia loadedMedia,
+			String error
+	) {
 	}
 
 	private record ScreenTileState(
@@ -1659,6 +2192,32 @@ public final class MonitorScreenSystem {
 					&& this.powered == other.powered
 					&& this.viewMode == other.viewMode
 					&& this.launcherPage == other.launcherPage;
+		}
+	}
+
+	private static final class MediaRuntimeState {
+		private MonitorMediaApp.LoadedMedia loadedMedia;
+		private String sourceUrl;
+		private int frameIndex;
+		private long nextFrameTick;
+		private MediaOverlayMode overlayMode;
+		private MediaScaleMode scaleMode;
+		private boolean waitingForLink;
+		private boolean loading;
+		private String statusText;
+
+		private MediaRuntimeState() {
+			this.overlayMode = MediaOverlayMode.CONTROLS;
+			this.scaleMode = MediaScaleMode.FIT;
+			this.waitingForLink = true;
+			this.loading = false;
+			this.statusText = "SEND LINK IN CHAT";
+		}
+
+		private static MediaRuntimeState fresh(String statusText) {
+			MediaRuntimeState state = new MediaRuntimeState();
+			state.statusText = statusText;
+			return state;
 		}
 	}
 }
