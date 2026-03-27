@@ -20,9 +20,17 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.RemoteChatSession;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
+import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
@@ -140,8 +148,9 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 				mob.clearFire();
 			}
 
-			boolean touchedPlayer = touchesPlayer(mob);
-			if (nowTick >= state.endTick || touchedPlayer || touchesProjectile(mob)) {
+			boolean touchedPlayer = state.visibleOnlyToTarget ? touchesTargetPlayer(mob, targetPlayer) : touchesPlayer(mob);
+			boolean touchedProjectile = !state.visibleOnlyToTarget && touchesProjectile(mob);
+			if (nowTick >= state.endTick || touchedPlayer || touchedProjectile) {
 				discardEntityOnly(mob, true, touchedPlayer);
 				iterator.remove();
 				continue;
@@ -185,6 +194,47 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 
 		discardPhantom(entity, true, true, true);
 		return true;
+	}
+
+	public static boolean shouldSuppressOutgoingPacket(ServerPlayer viewer, Packet<?> packet) {
+		if (viewer == null || packet == null || ACTIVE_STATES.isEmpty()) {
+			return false;
+		}
+
+		if (packet instanceof ClientboundAddEntityPacket
+				|| packet instanceof ClientboundSetEntityDataPacket
+				|| packet instanceof ClientboundSetEquipmentPacket
+				|| packet instanceof ClientboundMoveEntityPacket
+				|| packet instanceof ClientboundRotateHeadPacket
+				|| packet instanceof ClientboundTeleportEntityPacket
+				|| packet instanceof ClientboundSoundPacket) {
+			int entityId = extractEntityId(packet);
+			if (entityId != Integer.MIN_VALUE) {
+				Entity entity = ((ServerLevel) viewer.level()).getEntity(entityId);
+				return shouldHideEntityFromViewer(viewer, entity);
+			}
+		}
+
+		if (packet instanceof ClientboundRemoveEntitiesPacket removeEntitiesPacket) {
+			for (int entityId : removeEntitiesPacket.getEntityIds()) {
+				Entity entity = ((ServerLevel) viewer.level()).getEntity(entityId);
+				if (shouldHideEntityFromViewer(viewer, entity)) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	public static boolean spawnPersonalHallucination(ServerPlayer player, RandomSource random) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return false;
+		}
+
+		JsonObject settings = new PhantomMobGlitch().defaultEntry().settings.deepCopy();
+		RandomSource safeRandom = random != null ? random : level.random;
+		return spawnForPlayer(player, safeRandom, settings, level.getGameTime(), Boolean.FALSE, null, true);
 	}
 
 	@Override
@@ -301,7 +351,7 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 	}
 
 	private static boolean spawnForPlayer(ServerPlayer player, RandomSource random, JsonObject settings, long nowTick) {
-		return spawnForPlayer(player, random, settings, nowTick, null, null);
+		return spawnForPlayer(player, random, settings, nowTick, null, null, false);
 	}
 
 	private static boolean spawnForPlayer(
@@ -311,6 +361,18 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 			long nowTick,
 			Boolean forcePlayerAppearance,
 			ServerPlayer forcedSkinSource
+	) {
+		return spawnForPlayer(player, random, settings, nowTick, forcePlayerAppearance, forcedSkinSource, false);
+	}
+
+	private static boolean spawnForPlayer(
+			ServerPlayer player,
+			RandomSource random,
+			JsonObject settings,
+			long nowTick,
+			Boolean forcePlayerAppearance,
+			ServerPlayer forcedSkinSource,
+			boolean visibleOnlyToTarget
 	) {
 		if (player == null || !(player.level() instanceof ServerLevel level)) {
 			return false;
@@ -372,6 +434,7 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 					mob.getUUID(),
 					level.dimension(),
 					player.getUUID(),
+					visibleOnlyToTarget,
 					movementType,
 					nowTick + durationTicks,
 					nowTick + sampleRangeInt(random, MIN_WANDER_CHANGE_TICKS, MAX_WANDER_CHANGE_TICKS),
@@ -673,6 +736,13 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 		return false;
 	}
 
+	private static boolean touchesTargetPlayer(Mob mob, ServerPlayer targetPlayer) {
+		return mob != null
+				&& targetPlayer != null
+				&& targetPlayer.isAlive()
+				&& targetPlayer.getBoundingBox().intersects(mob.getBoundingBox().inflate(CONTACT_PADDING));
+	}
+
 	private static boolean touchesProjectile(Mob mob) {
 		if (!(mob.level() instanceof ServerLevel level)) {
 			return false;
@@ -716,6 +786,7 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 			return;
 		}
 
+		ActivePhantomState state = ACTIVE_STATES.get(entity.getUUID());
 		if (removeState) {
 			ACTIVE_STATES.remove(entity.getUUID());
 		}
@@ -724,10 +795,18 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 		}
 		if (entity.level() instanceof ServerLevel level && entity.isAlive() && !entity.isRemoved()) {
 			if (particles) {
-				spawnDespawnParticles(level, entity);
+				if (state != null && state.visibleOnlyToTarget) {
+					spawnDespawnParticles(level, entity, state.targetPlayerUuid);
+				} else {
+					spawnDespawnParticles(level, entity);
+				}
 			}
 			if (playDespawnSound) {
-				playContactDespawnSound(level, entity);
+				if (state != null && state.visibleOnlyToTarget) {
+					playContactDespawnSound(level, entity, state.targetPlayerUuid);
+				} else {
+					playContactDespawnSound(level, entity);
+				}
 			}
 		}
 		if (!entity.isRemoved()) {
@@ -747,6 +826,23 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 		level.sendParticles(ParticleTypes.ASH, centerX, centerY, centerZ, 12, spreadX, spreadY, spreadZ, 0.01D);
 	}
 
+	private static void spawnDespawnParticles(ServerLevel level, Entity entity, UUID targetPlayerId) {
+		ServerPlayer targetPlayer = targetPlayerId == null ? null : level.getServer().getPlayerList().getPlayer(targetPlayerId);
+		if (targetPlayer == null || targetPlayer.level() != level) {
+			return;
+		}
+
+		double centerX = entity.getX();
+		double centerY = entity.getY() + (entity.getBbHeight() * 0.5D);
+		double centerZ = entity.getZ();
+		double spreadX = Math.max(0.15D, entity.getBbWidth() * 0.35D);
+		double spreadY = Math.max(0.15D, entity.getBbHeight() * 0.25D);
+		double spreadZ = Math.max(0.15D, entity.getBbWidth() * 0.35D);
+
+		level.sendParticles(targetPlayer, ParticleTypes.SMOKE, false, false, centerX, centerY, centerZ, 18, spreadX, spreadY, spreadZ, 0.01D);
+		level.sendParticles(targetPlayer, ParticleTypes.ASH, false, false, centerX, centerY, centerZ, 12, spreadX, spreadY, spreadZ, 0.01D);
+	}
+
 	private static void playContactDespawnSound(ServerLevel level, Entity entity) {
 		level.playSound(
 				null,
@@ -758,6 +854,24 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 				0.55F,
 				1.15F
 		);
+	}
+
+	private static void playContactDespawnSound(ServerLevel level, Entity entity, UUID targetPlayerId) {
+		ServerPlayer targetPlayer = targetPlayerId == null ? null : level.getServer().getPlayerList().getPlayer(targetPlayerId);
+		if (targetPlayer == null || targetPlayer.level() != level) {
+			return;
+		}
+
+		targetPlayer.connection.send(new ClientboundSoundPacket(
+				BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.FIRE_EXTINGUISH),
+				SoundSource.HOSTILE,
+				entity.getX(),
+				entity.getY() + (entity.getBbHeight() * 0.5D),
+				entity.getZ(),
+				0.55F,
+				1.15F,
+				level.getRandom().nextLong()
+		));
 	}
 
 	private static boolean hasPlayerAppearance(Entity entity) {
@@ -870,6 +984,34 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 		return null;
 	}
 
+	private static boolean shouldHideEntityFromViewer(ServerPlayer viewer, Entity entity) {
+		if (viewer == null || entity == null || !isManagedPhantom(entity)) {
+			return false;
+		}
+
+		ActivePhantomState state = ACTIVE_STATES.get(entity.getUUID());
+		return state != null && state.visibleOnlyToTarget && !viewer.getUUID().equals(state.targetPlayerUuid);
+	}
+
+	private static int extractEntityId(Packet<?> packet) {
+		Object value = invokeNoArgs(packet, "id", "getId", "getEntityId", "getEntity");
+		return value instanceof Number number ? number.intValue() : Integer.MIN_VALUE;
+	}
+
+	private static Object invokeNoArgs(Object target, String... methodNames) {
+		if (target == null) {
+			return null;
+		}
+
+		for (String methodName : methodNames) {
+			try {
+				return target.getClass().getMethod(methodName).invoke(target);
+			} catch (ReflectiveOperationException ignored) {
+			}
+		}
+		return null;
+	}
+
 	private static int interpolateInt(int min, int max, double factor) {
 		if (max <= min) {
 			return min;
@@ -919,6 +1061,7 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 		private final UUID entityUuid;
 		private ResourceKey<Level> dimension;
 		private final UUID targetPlayerUuid;
+		private final boolean visibleOnlyToTarget;
 		private final MovementType movementType;
 		private final long endTick;
 		private long nextWanderChangeTick;
@@ -930,6 +1073,7 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 				UUID entityUuid,
 				ResourceKey<Level> dimension,
 				UUID targetPlayerUuid,
+				boolean visibleOnlyToTarget,
 				MovementType movementType,
 				long endTick,
 				long nextWanderChangeTick,
@@ -940,6 +1084,7 @@ public final class PhantomMobGlitch implements ServerGlitchHandler {
 			this.entityUuid = entityUuid;
 			this.dimension = dimension;
 			this.targetPlayerUuid = targetPlayerUuid;
+			this.visibleOnlyToTarget = visibleOnlyToTarget;
 			this.movementType = movementType;
 			this.endTick = endTick;
 			this.nextWanderChangeTick = nextWanderChangeTick;

@@ -2,6 +2,7 @@ package com.lostglade.mixin;
 
 import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
 import com.lostglade.server.ServerBossBarVisibilitySystem;
+import com.lostglade.server.glitch.PhantomMobGlitch;
 import io.netty.channel.ChannelFutureListener;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundBossEventPacket;
@@ -68,6 +69,11 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 
 		if (packet instanceof ClientboundBossEventPacket bossEventPacket
 				&& ServerBossBarVisibilitySystem.handleOutgoingBossEventPacket(receiver, bossEventPacket)) {
+			ci.cancel();
+			return;
+		}
+
+		if (PhantomMobGlitch.shouldSuppressOutgoingPacket(receiver, packet)) {
 			ci.cancel();
 			return;
 		}

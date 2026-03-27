@@ -46,6 +46,7 @@
                                       "maxGrowthSeconds":  240.0,
                                       "methadoneAddictionSeconds":  3600.0,
                                       "methadoneWithdrawalStartSeconds":  1800.0,
+                                      "cocaineHallucinationChance":  0.25,
                                       "tubochkaBurnSeconds":  60.0,
                                       "tubochkaMaxReleaseSmokeParticles":  16.0,
                                       "chance":  0.25

@@ -3,6 +3,7 @@ package com.lostglade.item;
 import com.lostglade.Lg2;
 import com.lostglade.config.RaceConfig;
 import com.lostglade.server.ServerRaceSystem;
+import com.lostglade.server.glitch.PhantomMobGlitch;
 import eu.pb4.polymer.core.api.item.SimplePolymerItem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.advancements.CriteriaTriggers;
@@ -37,6 +38,8 @@ import net.minecraft.world.phys.Vec3;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -53,18 +56,25 @@ public final class CocaineItem extends SimplePolymerItem {
 	private static final int CARTEL_AFTERMATH_HUNGER_TICKS = 10 * 20;
 	private static final int OTHER_NAUSEA_TICKS = 20 * 20;
 	private static final int OTHER_HUNGER_TICKS = 15 * 20;
+	private static final double DEFAULT_COCAINE_HALLUCINATION_CHANCE = 0.25D;
 	private static final int FALLBACK_CONSUME_SOUND_DELAY_TICKS = 4;
 	private static final int PACK_CONSUME_SOUND_DELAY_TICKS = 8;
 	private static final int SOUND_MAX_DISTANCE_SQR = 24 * 24;
 	private static final float SOUND_VOLUME = 0.27F;
 	private static final float PACK_SOUND_PITCH = 1.0F;
 	private static final float FALLBACK_SOUND_PITCH = 0.95F;
+	private static final double HALLUCINATION_SOUND_MIN_DISTANCE = 4.0D;
+	private static final double HALLUCINATION_SOUND_MAX_DISTANCE = 12.0D;
+	private static final float HALLUCINATION_SOUND_VOLUME = 1.0F;
+	private static final float HALLUCINATION_SOUND_PITCH_MIN = 0.70F;
+	private static final float HALLUCINATION_SOUND_PITCH_MAX = 1.25F;
 	private static final Consumable CLIENT_ANIM_CONSUMABLE = Consumable.builder()
 			.consumeSeconds(1.0F)
 			.animation(ItemUseAnimation.EAT)
 			.sound(BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.EMPTY))
 			.hasConsumeParticles(false)
 			.build();
+	private static final List<SoundEvent> HALLUCINATION_SOUND_POOL = collectHallucinationSoundPool();
 	private static final Map<UUID, Long> CARTEL_AFTERMATH_HUNGER_TICKS_BY_PLAYER = new HashMap<>();
 	private static final Map<UUID, Long> CARTEL_COCAINE_SPRINT_TICKS_BY_PLAYER = new HashMap<>();
 	private static final Map<UUID, Long> PENDING_FALLBACK_CONSUME_SOUND_TICKS_BY_PLAYER = new HashMap<>();
@@ -204,7 +214,7 @@ public final class CocaineItem extends SimplePolymerItem {
 	}
 
 	private static void applyConsumptionEffects(ServerPlayer player) {
-		if (player == null) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
 			return;
 		}
 
@@ -217,11 +227,12 @@ public final class CocaineItem extends SimplePolymerItem {
 					player.getUUID(),
 					nowTick + Math.max(CARTEL_SPEED_TICKS, CARTEL_REGEN_TICKS)
 			);
-			return;
+		} else {
+			player.addEffect(new MobEffectInstance(MobEffects.NAUSEA, OTHER_NAUSEA_TICKS, 1));
+			player.addEffect(new MobEffectInstance(MobEffects.HUNGER, OTHER_HUNGER_TICKS, 49));
 		}
 
-		player.addEffect(new MobEffectInstance(MobEffects.NAUSEA, OTHER_NAUSEA_TICKS, 1));
-		player.addEffect(new MobEffectInstance(MobEffects.HUNGER, OTHER_HUNGER_TICKS, 49));
+		tryTriggerHallucination(player, level);
 	}
 
 	private static void playConsumeSound(ServerPlayer consumer, boolean packViewers) {
@@ -252,6 +263,80 @@ public final class CocaineItem extends SimplePolymerItem {
 	private static boolean isMrCartel(ServerPlayer player) {
 		Optional<RaceConfig.PlayerRaceConfig> raceOptional = ServerRaceSystem.getRace(player);
 		return raceOptional.isPresent() && MISTER_CARTEL_49_RACE_ID.equals(raceOptional.get().id);
+	}
+
+	private static void tryTriggerHallucination(ServerPlayer player, ServerLevel level) {
+		double chance = resolveHallucinationChance();
+		if (chance <= 0.0D || level.random.nextDouble() >= chance) {
+			return;
+		}
+
+		PhantomMobGlitch.spawnPersonalHallucination(player, level.random);
+		playHallucinationSound(player, level);
+	}
+
+	private static double resolveHallucinationChance() {
+		RaceConfig.RaceAbilityConfig config = getCartelShnyagaConfig();
+		if (config != null) {
+			return config.cocaineHallucinationChance;
+		}
+		return DEFAULT_COCAINE_HALLUCINATION_CHANCE;
+	}
+
+	private static RaceConfig.RaceAbilityConfig getCartelShnyagaConfig() {
+		RaceConfig.ConfigData configData = RaceConfig.get();
+		if (configData == null || configData.races == null) {
+			return null;
+		}
+
+		for (RaceConfig.PlayerRaceConfig race : configData.races) {
+			if (race != null && MISTER_CARTEL_49_RACE_ID.equals(race.id) && race.shnyaga != null) {
+				return race.shnyaga;
+			}
+		}
+		return null;
+	}
+
+	private static void playHallucinationSound(ServerPlayer player, ServerLevel level) {
+		if (player == null || level == null || HALLUCINATION_SOUND_POOL.isEmpty()) {
+			return;
+		}
+
+		SoundEvent sound = HALLUCINATION_SOUND_POOL.get(level.random.nextInt(HALLUCINATION_SOUND_POOL.size()));
+		double angle = level.random.nextDouble() * Math.PI * 2.0D;
+		double distance = sampleRange(level.random.nextDouble(), HALLUCINATION_SOUND_MIN_DISTANCE, HALLUCINATION_SOUND_MAX_DISTANCE);
+		double x = player.getX() + Math.cos(angle) * distance;
+		double z = player.getZ() + Math.sin(angle) * distance;
+		double y = player.getY() + sampleRange(level.random.nextDouble(), -1.5D, 1.5D);
+		float pitch = (float) sampleRange(level.random.nextDouble(), HALLUCINATION_SOUND_PITCH_MIN, HALLUCINATION_SOUND_PITCH_MAX);
+		player.connection.send(new ClientboundSoundPacket(
+				BuiltInRegistries.SOUND_EVENT.wrapAsHolder(sound),
+				SoundSource.MASTER,
+				x,
+				y,
+				z,
+				HALLUCINATION_SOUND_VOLUME,
+				pitch,
+				level.random.nextLong()
+		));
+	}
+
+	private static List<SoundEvent> collectHallucinationSoundPool() {
+		List<SoundEvent> sounds = new ArrayList<>();
+		for (SoundEvent soundEvent : BuiltInRegistries.SOUND_EVENT) {
+			Identifier id = BuiltInRegistries.SOUND_EVENT.getKey(soundEvent);
+			if (id != null && "minecraft".equals(id.getNamespace())) {
+				sounds.add(soundEvent);
+			}
+		}
+		return sounds;
+	}
+
+	private static double sampleRange(double normalized, double min, double max) {
+		if (max <= min) {
+			return min;
+		}
+		return min + (Math.max(0.0D, Math.min(1.0D, normalized)) * (max - min));
 	}
 
 	public static boolean canCartelSprintDespiteHunger(Player player) {
