@@ -590,8 +590,9 @@ public final class MonitorScreenSystem {
 				state.playbackFuture = null;
 				return;
 			}
+			// Frame playback must not invalidate an in-flight large-screen render, or the first
+			// completed frame can get discarded forever while animation keeps advancing.
 			state.frameIndex = (state.frameIndex + 1) % state.loadedMedia.frameCount();
-			state.version++;
 			state.playbackFuture = null;
 			shouldContinue = state.loadedMedia.frameCount() > 1;
 		}
