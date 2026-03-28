@@ -47,6 +47,7 @@
 		"ServerGamePacketListenerMonitorTimelineMixin",
 		"ServerLevelAbsoluteInvisibilityMixin",
 		"ServerItemEntityMixin",
+		"ServerPlayerCartelRecipeBookMixin",
 		"ServerPlayerBackroomsRespawnMixin",
 		"ServerPlayerMenuTitleMixin",
 		"TemptGoalAbsoluteInvisibilityMixin",

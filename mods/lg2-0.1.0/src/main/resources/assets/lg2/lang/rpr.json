@@ -58,7 +58,7 @@
     "message.lg2.race.no_race":  "У тебе пока нѣтъ назначенной расы",
     "message.lg2.race.no_menu":  "Не удалось открыти меню расы. Исполни /race reload",
     "message.lg2.race.ability_disabled":  "Способность %s нынѣ недоступна",
-    "message.lg2.race.ability_not_purchased":  "Способность %s ещё не куплена",
+    "message.lg2.race.ability_not_purchased":  "Способность \"%s\" ещё не куплена",
     "message.lg2.race.cooldown":  "Способность %s будеть готова чрезъ %s сек.",
     "message.lg2.race.used":  "Активирована способность %s расы %s",
     "container.lg2.cartel_disguise.passport":  "Паспортъ",

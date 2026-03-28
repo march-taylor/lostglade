@@ -58,7 +58,7 @@
     "message.lg2.race.no_race":  "まだ種族が割り当てられていません",
     "message.lg2.race.no_menu":  "種族メニューを開けませんでした。/race reload を実行してください",
     "message.lg2.race.ability_disabled":  "能力 %s は現在使用できません",
-    "message.lg2.race.ability_not_purchased":  "能力 %s はまだ購入されていません",
+    "message.lg2.race.ability_not_purchased":  "能力「%s」はまだ購入されていません",
     "message.lg2.race.cooldown":  "能力 %s は %s 秒後に使用可能です",
     "message.lg2.race.used":  "種族 %2$s の能力 %1$s を発動しました",
     "container.lg2.cartel_disguise.passport":  "パスポート",

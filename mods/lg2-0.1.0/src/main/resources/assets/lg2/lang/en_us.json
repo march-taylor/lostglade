@@ -58,7 +58,7 @@
     "message.lg2.race.no_race":  "You do not have a race assigned yet",
     "message.lg2.race.no_menu":  "Failed to open race menu. Run /race reload",
     "message.lg2.race.ability_disabled":  "Ability %s is currently unavailable",
-    "message.lg2.race.ability_not_purchased":  "Ability %s is not purchased yet",
+    "message.lg2.race.ability_not_purchased":  "Ability \"%s\" is not purchased yet",
     "message.lg2.race.cooldown":  "Ability %s will be ready in %s sec.",
     "message.lg2.race.used":  "Activated %s from race %s",
     "container.lg2.cartel_disguise.passport":  "Passport",

@@ -2071,7 +2071,7 @@ public final class ServerUpgradeUiSystem {
 		);
 	}
 
-	private static void playPurchaseBlockedSound(ServerPlayer player) {
+	public static void playPurchaseBlockedSound(ServerPlayer player) {
 		if (player == null) {
 			return;
 		}
@@ -2133,6 +2133,7 @@ public final class ServerUpgradeUiSystem {
 			stateDirty = true;
 		}
 		saveState(server);
+		CartelSecretRecipeBookSystem.syncPlayerRecipeBook(player);
 	}
 
 	private static Path getStatePath(MinecraftServer server) {
