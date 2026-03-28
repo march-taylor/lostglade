@@ -61,6 +61,10 @@ public final class ServerTrojanRoosterSystem {
 	private static final int AMBUSH_REVEAL_TICKS = 20 * 5;
 	private static final double AMBUSH_BEHIND_DISTANCE = 5.0D;
 	private static final double CHASE_SPEED_PER_TICK = 0.23D * 1.5D;
+	private static final double CHASE_DIRECT_DASH_DISTANCE_SQR = 2.25D * 2.25D;
+	private static final double CHASE_DIRECT_DASH_SPEED = CHASE_SPEED_PER_TICK * 1.15D;
+	private static final double DIRECT_COLLISION_SHRINK_XZ = 0.08D;
+	private static final double DIRECT_COLLISION_MAX_HORIZONTAL_DISTANCE_SQR = 0.38D * 0.38D;
 	private static final double MAX_TARGET_DISTANCE_SQR = 32.0D * 32.0D;
 	private static final double LOOK_DOT_THRESHOLD = 0.72D;
 	private static final int AMBUSH_SPAWN_STEPS = 8;
@@ -488,10 +492,15 @@ public final class ServerTrojanRoosterSystem {
 			return;
 		}
 
-		if (chicken.getBoundingBox().inflate(0.02D).intersects(target.getBoundingBox())) {
-			banTarget(level, target, state);
-			vanish(level, chicken, state);
-			return;
+		if (hasDirectCollision(chicken, target)) {
+			if (state.pendingDirectCollisionTick == now - 1L) {
+				banTarget(level, target, state);
+				vanish(level, chicken, state);
+				return;
+			}
+			state.pendingDirectCollisionTick = now;
+		} else {
+			state.pendingDirectCollisionTick = Long.MIN_VALUE;
 		}
 
 		double targetX = target.getX();
@@ -499,6 +508,9 @@ public final class ServerTrojanRoosterSystem {
 		double targetZ = target.getZ();
 		faceChickenTowards(chicken, targetX, targetY, targetZ);
 		chicken.setXRot(0.0F);
+		if (dashIntoTargetIfClose(level, chicken, target, targetX, targetY, targetZ, state)) {
+			return;
+		}
 		if (now >= state.nextNavigationRetargetTick || hasTargetMovedEnough(targetX, targetY, targetZ, state)) {
 			chicken.getNavigation().moveTo(target, 1.0D);
 			state.lastTargetX = targetX;
@@ -506,6 +518,44 @@ public final class ServerTrojanRoosterSystem {
 			state.lastTargetZ = targetZ;
 			state.nextNavigationRetargetTick = now + 3L;
 		}
+	}
+
+	private static boolean dashIntoTargetIfClose(
+			ServerLevel level,
+			Chicken chicken,
+			ServerPlayer target,
+			double targetX,
+			double targetY,
+			double targetZ,
+			TrojanRoosterState state
+	) {
+		Vec3 toTarget = new Vec3(targetX - chicken.getX(), targetY - chicken.getY(), targetZ - chicken.getZ());
+		double distanceSqr = toTarget.lengthSqr();
+		if (distanceSqr > CHASE_DIRECT_DASH_DISTANCE_SQR || distanceSqr < 1.0E-6D) {
+			return false;
+		}
+
+		chicken.getNavigation().stop();
+		Vec3 dashVelocity = toTarget.normalize().scale(CHASE_DIRECT_DASH_SPEED);
+		chicken.setDeltaMovement(dashVelocity.x, chicken.getDeltaMovement().y, dashVelocity.z);
+		chicken.hurtMarked = true;
+		state.lastTargetX = targetX;
+		state.lastTargetY = targetY;
+		state.lastTargetZ = targetZ;
+		state.nextNavigationRetargetTick = level.getGameTime() + 1L;
+		return true;
+	}
+
+	private static boolean hasDirectCollision(Chicken chicken, ServerPlayer target) {
+		AABB chickenBox = chicken.getBoundingBox().deflate(DIRECT_COLLISION_SHRINK_XZ, 0.0D, DIRECT_COLLISION_SHRINK_XZ);
+		AABB targetBox = target.getBoundingBox().deflate(DIRECT_COLLISION_SHRINK_XZ, 0.0D, DIRECT_COLLISION_SHRINK_XZ);
+		if (!chickenBox.intersects(targetBox)) {
+			return false;
+		}
+
+		double dx = target.getX() - chicken.getX();
+		double dz = target.getZ() - chicken.getZ();
+		return dx * dx + dz * dz <= DIRECT_COLLISION_MAX_HORIZONTAL_DISTANCE_SQR;
 	}
 
 	private static void vanish(ServerLevel level, Chicken chicken, TrojanRoosterState state) {
@@ -699,18 +749,18 @@ public final class ServerTrojanRoosterSystem {
 	private static void playTheme(ServerPlayer player, Vec3 pos) {
 		stopThemeForPlayer(player);
 		if (PolymerResourcePackUtils.hasMainPack(player)) {
-			sendSoundToPlayer(player, TROJAN_THEME_SOUND, SoundSource.RECORDS, pos.x, pos.y, pos.z, 0.8F, 1.0F, player.getUUID().getLeastSignificantBits());
+			sendSoundToPlayer(player, TROJAN_THEME_SOUND, SoundSource.MASTER, pos.x, pos.y, pos.z, 0.8F, 1.0F, player.getUUID().getLeastSignificantBits());
 			return;
 		}
 
-		sendSoundToPlayer(player, SoundEvents.MUSIC_DISC_LAVA_CHICKEN, SoundSource.RECORDS, pos.x, pos.y, pos.z, 1.0F, 1.0F, player.getUUID().getLeastSignificantBits());
+		sendSoundToPlayer(player, SoundEvents.MUSIC_DISC_LAVA_CHICKEN, SoundSource.MASTER, pos.x, pos.y, pos.z, 1.0F, 1.0F, player.getUUID().getLeastSignificantBits());
 	}
 
 	private static void playSpawnHiss(ServerPlayer player, Vec3 pos) {
 		sendSoundToPlayer(
 				player,
 				Holder.direct(SoundEvents.CREEPER_PRIMED),
-				SoundSource.HOSTILE,
+				SoundSource.MASTER,
 				pos.x,
 				pos.y,
 				pos.z,
@@ -749,9 +799,9 @@ public final class ServerTrojanRoosterSystem {
 	}
 
 	private static void stopThemeForPlayer(ServerPlayer player) {
-		player.connection.send(new ClientboundStopSoundPacket(TROJAN_THEME_SOUND_ID, SoundSource.RECORDS));
+		player.connection.send(new ClientboundStopSoundPacket(TROJAN_THEME_SOUND_ID, SoundSource.MASTER));
 		if (LAVA_CHICKEN_SOUND_ID != null) {
-			player.connection.send(new ClientboundStopSoundPacket(LAVA_CHICKEN_SOUND_ID, SoundSource.RECORDS));
+			player.connection.send(new ClientboundStopSoundPacket(LAVA_CHICKEN_SOUND_ID, SoundSource.MASTER));
 		}
 	}
 
@@ -802,6 +852,7 @@ public final class ServerTrojanRoosterSystem {
 		private double lastTargetX = Double.NaN;
 		private double lastTargetY = Double.NaN;
 		private double lastTargetZ = Double.NaN;
+		private long pendingDirectCollisionTick = Long.MIN_VALUE;
 
 		private TrojanRoosterState(UUID targetPlayerId, TrojanPhase phase, long phaseStartTick, long phaseEndTick) {
 			this.targetPlayerId = targetPlayerId;
