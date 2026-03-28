@@ -99,18 +99,17 @@ public final class CartelWebcamBridge {
 		}
 
 		if (packet instanceof VideoC2SPacket videoPacket) {
-			if (TARGET_BY_MIRRORED_SOURCE.containsKey(senderId)) {
-				return true;
-			}
-
+			boolean mirroredSource = TARGET_BY_MIRRORED_SOURCE.containsKey(senderId);
 			ServerWebcamFrameCache.handleVideoPacket(senderId, videoPacket);
 			mirrorVideoPacket(webcamServer, senderId, videoPacket);
-			return false;
+			return mirroredSource;
 		}
 
 		if (packet instanceof CloseSourceC2SPacket) {
+			boolean mirroredSource = TARGET_BY_MIRRORED_SOURCE.containsKey(senderId);
 			ServerWebcamFrameCache.removeSource(senderId);
 			mirrorClosePacket(webcamServer, senderId);
+			return mirroredSource;
 		}
 
 		return false;

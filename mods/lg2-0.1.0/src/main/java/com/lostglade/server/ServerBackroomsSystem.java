@@ -83,12 +83,13 @@ public final class ServerBackroomsSystem {
 	private static final int PLATFORM_EXIT_LENGTH = 12;
 	private static final int RESPAWN_SEARCH_ATTEMPTS = 48;
 	private static final int RESPAWN_SEARCH_RADIUS = 12;
-	private static final int PREWARMED_RESPAWN_TARGET = 4;
-	private static final int PREWARMED_RESPAWN_IDLE_TARGET = 1;
-	private static final int PREWARMED_RESPAWN_REFILL_INTERVAL_TICKS = 40;
+	private static final int PREWARMED_RESPAWN_TARGET = 8;
+	private static final int PREWARMED_RESPAWN_IDLE_TARGET = 3;
+	private static final int PREWARMED_RESPAWN_STARTUP_BATCH = 3;
+	private static final int PREWARMED_RESPAWN_REFILL_INTERVAL_TICKS = 20;
 	private static final int PREWARMED_RESPAWN_CHUNK_RADIUS = 2;
-	private static final int PREWARMED_RESPAWN_PENDING_LIMIT = 1;
-	private static final int PREWARMED_RESPAWN_SEARCH_TIMEOUT_TICKS = 200;
+	private static final int PREWARMED_RESPAWN_PENDING_LIMIT = 4;
+	private static final int PREWARMED_RESPAWN_SEARCH_TIMEOUT_TICKS = 400;
 	private static final int ACTIVE_RESPAWN_CHUNK_HOLD_TICKS = 200;
 	private static final int BACKROOMS_SUPPORT_TICK_INTERVAL = 2;
 	private static final int LADDER_CRAWL_GRACE_TICKS = 6;
@@ -365,7 +366,7 @@ public final class ServerBackroomsSystem {
 
 		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
 		if (backrooms != null) {
-			queueAsyncPrewarmedRespawnSearch(backrooms, server.getTickCount());
+			queueAsyncPrewarmedRespawnSearches(backrooms, server.getTickCount(), PREWARMED_RESPAWN_STARTUP_BATCH, PREWARMED_RESPAWN_TARGET);
 		}
 	}
 
@@ -709,11 +710,12 @@ public final class ServerBackroomsSystem {
 		resolvePendingPrewarmedRespawnSearches(backrooms, server.getTickCount());
 
 		int target = getDesiredPrewarmedRespawnTarget(server);
-		if (PREWARMED_RESPAWNS.size() >= target || PENDING_PREWARMED_RESPAWN_SEARCHES.size() >= PREWARMED_RESPAWN_PENDING_LIMIT) {
+		if (PREWARMED_RESPAWNS.size() >= target) {
 			return;
 		}
 
-		queueAsyncPrewarmedRespawnSearch(backrooms, server.getTickCount());
+		int deficit = target - PREWARMED_RESPAWNS.size();
+		queueAsyncPrewarmedRespawnSearches(backrooms, server.getTickCount(), deficit, target);
 	}
 
 	private static void addPrewarmedRespawn(ServerLevel level, BlockPos floorPos) {
@@ -754,7 +756,22 @@ public final class ServerBackroomsSystem {
 		return false;
 	}
 
-	private static void queueAsyncPrewarmedRespawnSearch(ServerLevel level, long currentTick) {
+	private static void queueAsyncPrewarmedRespawnSearches(ServerLevel level, long currentTick, int requestedCount, int targetCount) {
+		if (level == null || requestedCount <= 0 || targetCount <= 0) {
+			return;
+		}
+
+		int missingCapacity = Math.max(0, targetCount - (PREWARMED_RESPAWNS.size() + PENDING_PREWARMED_RESPAWN_SEARCHES.size()));
+		int availablePendingSlots = Math.max(0, PREWARMED_RESPAWN_PENDING_LIMIT - PENDING_PREWARMED_RESPAWN_SEARCHES.size());
+		int searchesToQueue = Math.min(requestedCount, Math.min(missingCapacity, availablePendingSlots));
+		for (int queued = 0; queued < searchesToQueue; queued++) {
+			if (!queueAsyncPrewarmedRespawnSearch(level, currentTick)) {
+				break;
+			}
+		}
+	}
+
+	private static boolean queueAsyncPrewarmedRespawnSearch(ServerLevel level, long currentTick) {
 		for (int attempt = 0; attempt < RESPAWN_SEARCH_ATTEMPTS; attempt++) {
 			BlockPos center = pickRandomRespawnCenter(level).immutable();
 			if (PENDING_PREWARMED_RESPAWN_SEARCHES.containsKey(center)) {
@@ -763,8 +780,9 @@ public final class ServerBackroomsSystem {
 
 			retainPrewarmedRespawnChunk(level, center);
 			PENDING_PREWARMED_RESPAWN_SEARCHES.put(center, currentTick + PREWARMED_RESPAWN_SEARCH_TIMEOUT_TICKS);
-			return;
+			return true;
 		}
+		return false;
 	}
 
 	private static void resolvePendingPrewarmedRespawnSearches(ServerLevel level, long currentTick) {
@@ -816,6 +834,9 @@ public final class ServerBackroomsSystem {
 		}
 
 		BlockPos safeSpawn = takePrewarmedRespawn(backrooms);
+		if (server != null) {
+			queueAsyncPrewarmedRespawnSearches(backrooms, server.getTickCount(), 1, getDesiredPrewarmedRespawnTarget(server));
+		}
 		if (safeSpawn == null) {
 			safeSpawn = findRandomLoadedSafeRespawn(backrooms);
 		}
