@@ -117,13 +117,11 @@ public final class MonitorScreenSystem {
 	private static final int CONNECTION_UP = 4;
 	private static final int CONNECTION_DOWN = 8;
 	private static final int CONNECTION_ALL = CONNECTION_LEFT | CONNECTION_RIGHT | CONNECTION_UP | CONNECTION_DOWN;
-	private static final int MAX_UI_TILES = 2;
 	private static final double DISPLAY_SEARCH_RADIUS = 0.8D;
 	private static final double DISPLAY_PLANE_OFFSET = 0.49D;
 	private static final double TOUCH_TOLERANCE = 0.08D;
 	private static final String SCREEN_OFF_RESOURCE = "/assets/lg2/textures/monitor/screen_off.png";
 	private static final String SCREEN_ON_RESOURCE = "/assets/lg2/textures/monitor/screen_on.png";
-	private static final int LAUNCHER_COLUMNS = 2;
 	private static final long PROGRESS_RENDER_INTERVAL_MS = 300L;
 	private static final int PROGRESS_FADE_RENDER_STEPS = 5;
 	private static final long MEDIA_SCROLL_FOCUS_TIMEOUT_MS = 6000L;
@@ -869,18 +867,17 @@ public final class MonitorScreenSystem {
 					break;
 				}
 			}
-			int pageCount = homePageCount(layout);
-			if (nextMode == null && component.launcherPage() > 0) {
-				UiRect upRect = homeScrollUpRect(layout);
-				if (upRect != null && upRect.contains(touchPoint.x(), touchPoint.y())) {
-					nextLauncherPage = component.launcherPage() - 1;
-				}
-			}
-			if (nextMode == null && component.launcherPage() + 1 < pageCount) {
-				UiRect downRect = homeScrollDownRect(layout);
-				if (downRect != null && downRect.contains(touchPoint.x(), touchPoint.y())) {
-					nextLauncherPage = component.launcherPage() + 1;
-				}
+			int visibleRows = homeRowsPerPage(layout);
+			int totalRows = homeTotalRows(layout);
+			if (nextMode == null
+					&& scrollbarVisible(visibleRows, totalRows)
+					&& homeScrollbarTrackRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				nextLauncherPage = scrollValueForTrack(
+						homeScrollbarTrackRect(layout),
+						visibleRows,
+						totalRows,
+						touchPoint.y()
+				);
 			}
 		} else if (isPlayerMode(component.viewMode())) {
 			markMediaFocus(player, component.runtimeKey());
@@ -2267,13 +2264,34 @@ public final class MonitorScreenSystem {
 		if (player == null) {
 			return false;
 		}
-		ScreenComponent component = findObservedMediaComponent(player);
+		ScreenComponent component = findObservedScrollableComponent(player);
 		if (component == null) {
 			return false;
 		}
 		MinecraftServer server = player.level().getServer();
 		if (server == null) {
 			return false;
+		}
+		if (component.viewMode() == ScreenViewMode.HOME) {
+			UiLayout layout = createUiLayout(component.width(), component.height());
+			int delta = normalizeHotbarDelta(previousSlot, currentSlot);
+			if (delta == 0) {
+				return false;
+			}
+			int maxScroll = homeMaxScroll(layout);
+			if (maxScroll <= 0) {
+				return false;
+			}
+			int nextScroll = clampInt(component.launcherPage() - delta, 0, maxScroll);
+			if (nextScroll == component.launcherPage()) {
+				return false;
+			}
+			ItemFrame anchor = component.frameCoords().keySet().stream().filter(Entity::isAlive).findFirst().orElse(null);
+			if (anchor == null || !(player.level() instanceof ServerLevel serverLevel)) {
+				return false;
+			}
+			synchronizeConnectedScreens(serverLevel, anchor, null, null, nextScroll);
+			return true;
 		}
 		MediaRuntimeState state = MEDIA_STATES.get(component.runtimeKey());
 		if (state == null) {
@@ -2356,6 +2374,31 @@ public final class MonitorScreenSystem {
 
 		for (ScreenComponent component : cachedComponents(level)) {
 			if (component == null || !isPlayerMode(component.viewMode()) || !component.powered()) {
+				continue;
+			}
+			double hitDistanceSqr = observedComponentHitDistanceSqr(component, eye, rayEnd);
+			if (Double.isFinite(hitDistanceSqr) && hitDistanceSqr < nearestDistanceSqr) {
+				nearestDistanceSqr = hitDistanceSqr;
+				nearest = component;
+			}
+		}
+		return nearest;
+	}
+
+	private static ScreenComponent findObservedScrollableComponent(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return null;
+		}
+		Vec3 eye = player.getEyePosition();
+		Vec3 rayEnd = eye.add(player.getLookAngle().scale(MEDIA_CONTROL_DISTANCE));
+		ScreenComponent nearest = null;
+		double nearestDistanceSqr = Double.POSITIVE_INFINITY;
+
+		for (ScreenComponent component : cachedComponents(level)) {
+			if (component == null || !component.powered()) {
+				continue;
+			}
+			if (component.viewMode() != ScreenViewMode.HOME && !isPlayerMode(component.viewMode())) {
 				continue;
 			}
 			double hitDistanceSqr = observedComponentHitDistanceSqr(component, eye, rayEnd);
@@ -2615,7 +2658,7 @@ public final class MonitorScreenSystem {
 			closeMediaSession(level.getServer(), component.runtimeKey());
 		}
 		int effectiveLauncherPage = viewMode == ScreenViewMode.HOME
-				? clampInt(launcherPage, 0, Math.max(0, homePageCount(createUiLayout(component.width(), component.height())) - 1))
+				? clampInt(launcherPage, 0, homeMaxScroll(createUiLayout(component.width(), component.height())))
 				: launcherPage;
 		ServerLevel mapLevel = photoMapLevel(level.getServer(), level);
 		List<PersistedGalleryItem> persistedGallery = resolvePersistedGalleryState(component);
@@ -3446,41 +3489,32 @@ public final class MonitorScreenSystem {
 	private static void drawHomeScreen(Graphics2D graphics, UiLayout layout, int launcherPage) {
 		UiRect panel = homePanelRect(layout);
 		UiRect header = homeHeaderRect(layout, panel);
-		fillRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 20), new Color(18, 24, 30, 196));
-		strokeRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 20), 1.0F, new Color(255, 255, 255, 66));
-		drawCenteredText(graphics, "ПРИЛОЖЕНИЯ", header, new Color(248, 250, 252), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		fillRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 36), new Color(18, 24, 30, 196));
+		strokeRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 36), 1.0F, new Color(255, 255, 255, 66));
+		drawCenteredTextFitted(graphics, "ПРИЛОЖЕНИЯ", header, new Color(248, 250, 252), Font.BOLD, clampInt(layout.unit() * 2, 10, 34), clampInt(layout.unit(), 8, 18));
 
 		List<MonitorApp> visibleApps = visibleHomeApps(layout, launcherPage);
 		for (int index = 0; index < visibleApps.size(); index++) {
 			drawHomeAppCard(graphics, layout, homeAppCardRect(layout, launcherPage, index), visibleApps.get(index));
 		}
 
-		int pageCount = homePageCount(layout);
-		if (pageCount > 1) {
+		int totalRows = homeTotalRows(layout);
+		int visibleRows = homeRowsPerPage(layout);
+		int maxScroll = Math.max(0, totalRows - visibleRows);
+		if (maxScroll > 0) {
 			UiRect footer = homeFooterRect(layout, panel);
-			fillRoundedRect(graphics, footer, clampInt(layout.unit() * 2, 12, 18), new Color(18, 24, 30, 184));
-			strokeRoundedRect(graphics, footer, clampInt(layout.unit() * 2, 12, 18), 1.0F, new Color(255, 255, 255, 52));
-			drawCenteredText(
+			fillRoundedRect(graphics, footer, clampInt(layout.unit() * 2, 12, 32), new Color(18, 24, 30, 184));
+			strokeRoundedRect(graphics, footer, clampInt(layout.unit() * 2, 12, 32), 1.0F, new Color(255, 255, 255, 52));
+			drawCenteredTextFitted(
 					graphics,
-					(launcherPage + 1) + "/" + pageCount,
+					(launcherPage + 1) + "/" + (maxScroll + 1),
 					new UiRect(footer.x() + footer.width() / 4, footer.y(), footer.width() / 2, footer.height()),
 					new Color(248, 251, 255),
 					Font.BOLD,
-					clampInt(layout.unit(), 10, 14)
+					clampInt(layout.unit() * 2 - 1, 10, 28),
+					clampInt(layout.unit(), 8, 16)
 			);
-
-			if (launcherPage > 0) {
-				UiRect upRect = homeScrollUpRect(layout);
-				if (upRect != null) {
-					drawLauncherArrowButton(graphics, upRect, true);
-				}
-			}
-			if (launcherPage + 1 < pageCount) {
-				UiRect downRect = homeScrollDownRect(layout);
-				if (downRect != null) {
-					drawLauncherArrowButton(graphics, downRect, false);
-				}
-			}
+			drawScrollbar(graphics, homeScrollbarTrackRect(layout), launcherPage, visibleRows, totalRows, layout, homeScrollbarThumbRect(layout, launcherPage, visibleRows, totalRows));
 		}
 	}
 
@@ -3734,20 +3768,30 @@ public final class MonitorScreenSystem {
 		graphics.setPaint(new GradientPaint(
 				cardRect.x(),
 				cardRect.y(),
-				withAlpha(app.accentStartRgb(), 234),
+				withAlpha(app.accentStartRgb(), 88),
 				cardRect.right(),
 				cardRect.bottom(),
-				withAlpha(app.accentEndRgb(), 234)
+				withAlpha(app.accentEndRgb(), 88)
 		));
-		fillRoundedRect(graphics, cardRect, clampInt(layout.unit() * 2, 12, 20), null);
-		strokeRoundedRect(graphics, cardRect, clampInt(layout.unit() * 2, 12, 20), 1.0F, new Color(255, 255, 255, 56));
+		fillRoundedRect(graphics, cardRect, clampInt(layout.unit() * 2, 12, 36), null);
+		strokeRoundedRect(graphics, cardRect, clampInt(layout.unit() * 2, 12, 36), 1.0F, new Color(255, 255, 255, 38));
 
 		UiRect iconRect = homeAppIconRect(cardRect, layout);
-		drawAppIcon(graphics, app, iconRect, clampInt(layout.unit() / 3, 2, 5));
+		drawAppIcon(graphics, app, iconRect, clampInt(layout.unit() / 3, 2, 12));
 
 		UiRect labelRect = homeAppLabelRect(layout, cardRect);
-		fillRoundedRect(graphics, labelRect, clampInt(layout.unit(), 8, 14), new Color(12, 16, 20, 176));
-		drawCenteredText(graphics, app.title(), labelRect, new Color(248, 251, 255), Font.BOLD, clampInt(layout.unit() - 1, 9, 13));
+		int textSize = clampInt(layout.unit() * 2 - 1, 9, 26);
+		graphics.setFont(new Font(Font.SANS_SERIF, Font.BOLD, textSize));
+		var metrics = graphics.getFontMetrics();
+		int textBgWidth = Math.min(labelRect.width(), metrics.stringWidth(app.title()) + clampInt(layout.unit(), 10, 28));
+		UiRect textBgRect = new UiRect(
+				labelRect.x() + (labelRect.width() - textBgWidth) / 2,
+				labelRect.y(),
+				textBgWidth,
+				labelRect.height()
+		);
+		fillRoundedRect(graphics, textBgRect, clampInt(layout.unit(), 8, 24), new Color(12, 16, 20, 112));
+		drawCenteredTextFitted(graphics, app.title(), labelRect, new Color(248, 251, 255), Font.BOLD, textSize, clampInt(layout.unit() - 1, 7, 14));
 	}
 
 	private static void drawFloatingButton(Graphics2D graphics, UiRect rect, String label, Color fill, Color text, UiLayout layout) {
@@ -3894,7 +3938,18 @@ public final class MonitorScreenSystem {
 		UiRect counterRect = mediaTimelineCounterRect(layout);
 		UiRect trackRect = mediaTimelineTrackRect(layout);
 		drawMediaPlayPauseButton(graphics, playPauseRect, state.paused(), layout);
-		drawCenteredText(graphics, state.timelineLabel(), counterRect, new Color(248, 251, 255, 214), Font.BOLD, clampInt(layout.unit() - 1, 8, 13));
+		String timelineLabel = resolvedTimelineLabel(state, layout);
+		if (!timelineLabel.isBlank() && counterRect.width() > 0) {
+			drawCenteredTextFitted(
+					graphics,
+					timelineLabel,
+					counterRect,
+					new Color(248, 251, 255, 214),
+					Font.BOLD,
+					clampInt(layout.unit() - 1, 8, 14),
+					clampInt(layout.unit() - 4, 6, 10)
+			);
+		}
 		fillRoundedRect(graphics, trackRect, Math.min(trackRect.height(), trackRect.width()), new Color(255, 255, 255, 36));
 		float bufferedStart = clampFloat(state.bufferedStartFraction(), 0.0F, 1.0F);
 		float bufferedEnd = clampFloat(Math.max(state.bufferedEndFraction(), state.timelineFraction()), 0.0F, 1.0F);
@@ -4283,6 +4338,37 @@ public final class MonitorScreenSystem {
 
 	private static void drawGalleryScrollbar(Graphics2D graphics, UiRect trackRect, int scroll, int visibleRows, int totalRows, UiLayout layout) {
 		drawScrollbar(graphics, trackRect, scroll, visibleRows, totalRows, layout, mediaGalleryBrowserScrollbarThumbRect(layout, scroll, visibleRows, totalRows));
+	}
+
+	private static int scrollbarWidth(UiLayout layout) {
+		return clampInt(layout.unit() / 2, 6, 10);
+	}
+
+	private static int scrollbarGap(UiLayout layout) {
+		return clampInt(layout.unit() / 3, 3, 6);
+	}
+
+	private static int scrollbarGutterWidth(UiLayout layout) {
+		return scrollbarWidth(layout) + scrollbarGap(layout);
+	}
+
+	private static UiRect scrollContentRect(UiRect viewport, UiLayout layout) {
+		return new UiRect(
+				viewport.x(),
+				viewport.y(),
+				Math.max(18, viewport.width() - scrollbarGutterWidth(layout)),
+				viewport.height()
+		);
+	}
+
+	private static UiRect scrollTrackRect(UiRect viewport, UiLayout layout) {
+		int width = scrollbarWidth(layout);
+		return new UiRect(
+				viewport.right() - width,
+				viewport.y(),
+				width,
+				viewport.height()
+		);
 	}
 
 	private static void drawScrollbar(Graphics2D graphics, UiRect trackRect, int scroll, int visibleRows, int totalRows, UiLayout layout, UiRect thumbRect) {
@@ -4705,18 +4791,14 @@ public final class MonitorScreenSystem {
 	private static UiLayout createUiLayout(int width, int height) {
 		int canvasWidth = width * MAP_SIZE;
 		int canvasHeight = height * MAP_SIZE;
-		int viewportWidth = Math.min(width, MAX_UI_TILES) * MAP_SIZE;
-		int viewportHeight = Math.min(height, MAX_UI_TILES) * MAP_SIZE;
-		int viewportX = (canvasWidth - viewportWidth) / 2;
-		int viewportY = (canvasHeight - viewportHeight) / 2;
-		float scale = switch (Math.max(1, Math.min(width, height))) {
-			case 1 -> 0.62F;
-			case 2 -> 0.78F;
-			case 3 -> 0.9F;
-			default -> 1.0F;
-		};
-		int margin = clampInt(Math.round(Math.min(viewportWidth, viewportHeight) * 0.065F * Math.min(1.0F, 0.84F + scale * 0.16F)), 4, 18);
-		int unit = clampInt(Math.round(Math.min(viewportWidth, viewportHeight) / 15.5F * scale), 5, 16);
+		int viewportWidth = canvasWidth;
+		int viewportHeight = canvasHeight;
+		int viewportX = 0;
+		int viewportY = 0;
+		int minSpan = Math.max(1, Math.min(width, height));
+		double scale = 1.0D + Math.max(0, minSpan - 1) * 0.5D;
+		int margin = clampInt((int) Math.round(4.0D * scale), 4, 32);
+		int unit = clampInt((int) Math.round(5.0D * scale), 5, 32);
 		return new UiLayout(canvasWidth, canvasHeight, viewportX, viewportY, viewportWidth, viewportHeight, margin, unit);
 	}
 
@@ -4754,7 +4836,7 @@ public final class MonitorScreenSystem {
 	}
 
 	private static UiRect homeHeaderRect(UiLayout layout, UiRect panel) {
-		int width = clampInt(panel.width() / 2, 52, Math.max(52, panel.width() - layout.unit() * 2));
+		int width = clampInt((int) Math.round(panel.width() * 0.62D), 52, Math.max(52, panel.width() - layout.unit() * 2));
 		return new UiRect(
 				panel.x() + (panel.width() - width) / 2,
 				panel.y() + layout.unit() / 2,
@@ -4764,8 +4846,8 @@ public final class MonitorScreenSystem {
 	}
 
 	private static UiRect homeFooterRect(UiLayout layout, UiRect panel) {
-		int height = clampInt(layout.unit() * 2, 18, 28);
-		int width = clampInt(panel.width() / 2, 52, Math.max(52, panel.width() - layout.unit() * 2));
+		int height = clampInt((int) Math.round(layout.unit() * 2.2D), 18, 40);
+		int width = clampInt((int) Math.round(panel.width() * 0.46D), 52, Math.max(52, panel.width() - layout.unit() * 2));
 		return new UiRect(
 				panel.x() + (panel.width() - width) / 2,
 				panel.bottom() - height - layout.unit() / 2,
@@ -4774,27 +4856,63 @@ public final class MonitorScreenSystem {
 		);
 	}
 
+	private static UiRect homeContentRect(UiLayout layout, UiRect panel) {
+		int contentTop = homeHeaderRect(layout, panel).bottom() + clampInt(layout.unit(), 6, 18);
+		int contentBottom = homeFooterRect(layout, panel).y() - clampInt(layout.unit(), 6, 18);
+		return new UiRect(
+				panel.x() + clampInt(layout.unit() / 2, 4, 14),
+				contentTop,
+				panel.width() - clampInt(layout.unit(), 8, 28),
+				Math.max(24, contentBottom - contentTop)
+		);
+	}
+
+	private static UiRect homeGridRect(UiLayout layout, UiRect panel) {
+		return scrollContentRect(homeContentRect(layout, panel), layout);
+	}
+
+	private static UiRect homeScrollbarTrackRect(UiLayout layout) {
+		return scrollTrackRect(homeContentRect(layout, homePanelRect(layout)), layout);
+	}
+
+	private static UiRect homeScrollbarThumbRect(UiLayout layout, int scroll, int visibleRows, int totalRows) {
+		UiRect track = homeScrollbarTrackRect(layout);
+		if (track.height() <= 0 || totalRows <= 0) {
+			return track;
+		}
+		int safeVisible = Math.max(1, Math.min(visibleRows, totalRows));
+		int maxScroll = Math.max(0, totalRows - safeVisible);
+		int thumbHeight = Math.max(track.width(), Math.round(track.height() * (safeVisible / (float) totalRows)));
+		int travel = Math.max(0, track.height() - thumbHeight);
+		int thumbY = maxScroll <= 0 ? track.y() : track.y() + Math.round(travel * (clampInt(scroll, 0, maxScroll) / (float) maxScroll));
+		return new UiRect(track.x(), thumbY, track.width(), thumbHeight);
+	}
+
 	private static UiRect homeAppCardRect(UiLayout layout, int launcherPage, int slotIndex) {
 		UiRect panel = homePanelRect(layout);
-		int row = slotIndex / LAUNCHER_COLUMNS;
-		int column = slotIndex % LAUNCHER_COLUMNS;
+		int columns = homeColumns(layout);
+		int row = slotIndex / columns;
+		int column = slotIndex % columns;
 		int gap = homeAppGap(layout);
-		int cardsWidth = LAUNCHER_COLUMNS * homeAppCardWidth(layout) + (LAUNCHER_COLUMNS - 1) * gap;
-		int cardsHeight = homeRowsPerPage(layout) * homeAppCardHeight(layout) + Math.max(0, homeRowsPerPage(layout) - 1) * gap;
-		int startX = panel.x() + (panel.width() - cardsWidth) / 2;
-		int contentTop = homeHeaderRect(layout, panel).bottom() + clampInt(layout.unit(), 6, 12);
-		int contentBottom = homeFooterRect(layout, panel).y() - clampInt(layout.unit(), 6, 12);
-		int startY = contentTop + Math.max(0, contentBottom - contentTop - cardsHeight) / 2;
+		int cardWidth = homeAppCardWidth(layout);
+		int cardHeight = homeAppCardHeight(layout);
+		int rows = homeRowsPerPage(layout);
+		int cardsWidth = columns * cardWidth + Math.max(0, columns - 1) * gap;
+		int cardsHeight = rows * cardHeight + Math.max(0, rows - 1) * gap;
+		UiRect content = homeGridRect(layout, panel);
+		int startX = content.x() + Math.max(0, content.width() - cardsWidth) / 2;
+		int startY = content.y() + Math.max(0, content.height() - cardsHeight) / 2;
 		return new UiRect(
-				startX + column * (homeAppCardWidth(layout) + gap),
-				startY + row * (homeAppCardHeight(layout) + gap),
-				homeAppCardWidth(layout),
-				homeAppCardHeight(layout)
+				startX + column * (cardWidth + gap),
+				startY + row * (cardHeight + gap),
+				cardWidth,
+				cardHeight
 		);
 	}
 
 	private static UiRect homeAppIconRect(UiRect cardRect, UiLayout layout) {
-		int size = homeAppIconSize(layout);
+		int maxSize = Math.max(18, Math.min(cardRect.width() - layout.unit(), cardRect.height() - homeAppLabelHeight(layout) - layout.unit()));
+		int size = clampInt(Math.round(Math.min(cardRect.width(), cardRect.height()) * 0.48F), 18, maxSize);
 		return new UiRect(
 				cardRect.x() + (cardRect.width() - size) / 2,
 				cardRect.y() + layout.unit() / 2,
@@ -4804,31 +4922,13 @@ public final class MonitorScreenSystem {
 	}
 
 	private static UiRect homeAppLabelRect(UiLayout layout, UiRect cardRect) {
-		int labelHeight = clampInt(layout.unit() + 2, 11, 18);
+		int labelHeight = homeAppLabelHeight(layout);
 		return new UiRect(
 				cardRect.x() + clampInt(layout.unit() / 2, 4, 8),
 				cardRect.bottom() - labelHeight - clampInt(layout.unit() / 2, 4, 8),
 				cardRect.width() - clampInt(layout.unit(), 8, 14),
 				labelHeight
 		);
-	}
-
-	private static UiRect homeScrollUpRect(UiLayout layout) {
-		if (homePageCount(layout) <= 1) {
-			return null;
-		}
-		UiRect footer = homeFooterRect(layout, homePanelRect(layout));
-		int size = Math.max(footer.height() - 6, 12);
-		return new UiRect(footer.x() - size - 4, footer.y() + (footer.height() - size) / 2, size, size);
-	}
-
-	private static UiRect homeScrollDownRect(UiLayout layout) {
-		if (homePageCount(layout) <= 1) {
-			return null;
-		}
-		UiRect footer = homeFooterRect(layout, homePanelRect(layout));
-		int size = Math.max(footer.height() - 6, 12);
-		return new UiRect(footer.right() + 4, footer.y() + (footer.height() - size) / 2, size, size);
 	}
 
 	private static UiRect mediaHeaderRect(UiLayout layout) {
@@ -4969,12 +5069,13 @@ public final class MonitorScreenSystem {
 		UiRect linkRect = mediaGalleryBrowserLinkRect(layout);
 		UiRect canvas = mediaCanvasRect(layout);
 		int inset = clampInt(layout.unit() / 2, 4, 8);
-		return new UiRect(
+		UiRect viewport = new UiRect(
 				canvas.x() + inset,
 				linkRect.bottom() + inset,
 				canvas.width() - inset * 2,
 				Math.max(18, canvas.bottom() - linkRect.bottom() - inset * 2)
 		);
+		return scrollContentRect(viewport, layout);
 	}
 
 	private static int mediaGalleryFooterRectHeight(UiLayout layout) {
@@ -4999,20 +5100,12 @@ public final class MonitorScreenSystem {
 				: compactScreenLayout(layout)
 				? clampInt(layout.unit() * 9, 66, 92)
 				: clampInt(layout.unit() * 10, 86, 132);
-		int availableWidth = Math.max(32, grid.width() - mediaGalleryScrollbarGutterWidth(layout, true));
-		int columns = Math.max(1, (availableWidth + gap) / Math.max(1, desiredCardWidth + gap));
+		int columns = Math.max(1, (grid.width() + gap) / Math.max(1, desiredCardWidth + gap));
 		return Math.max(2, columns);
 	}
 
 	private static int mediaGalleryCardGap(UiLayout layout) {
 		return clampInt(layout.unit() / 2, 4, 8);
-	}
-
-	private static int mediaGalleryScrollbarGutterWidth(UiLayout layout, boolean reserve) {
-		if (!reserve) {
-			return 0;
-		}
-		return clampInt(layout.unit() / 2, 5, 9) + mediaGalleryCardGap(layout);
 	}
 
 	private static int mediaGalleryTotalRows(int itemCount, UiLayout layout) {
@@ -5024,7 +5117,7 @@ public final class MonitorScreenSystem {
 		UiRect grid = mediaGalleryGridRect(layout);
 		int gap = mediaGalleryCardGap(layout);
 		int columns = mediaGalleryColumns(layout);
-		int cardWidth = Math.max(18, (grid.width() - mediaGalleryScrollbarGutterWidth(layout, true) - gap * Math.max(0, columns - 1)) / Math.max(1, columns));
+		int cardWidth = Math.max(18, (grid.width() - gap * Math.max(0, columns - 1)) / Math.max(1, columns));
 		return clampInt((int) Math.round(cardWidth * 0.74D), clampInt(layout.unit() * 5, 28, 42), clampInt(layout.unit() * 12, 64, 150));
 	}
 
@@ -5032,7 +5125,7 @@ public final class MonitorScreenSystem {
 		UiRect grid = mediaGalleryGridRect(layout);
 		int gap = mediaGalleryCardGap(layout);
 		int columns = mediaGalleryColumns(layout);
-		int width = Math.max(18, (grid.width() - mediaGalleryScrollbarGutterWidth(layout, true) - gap * Math.max(0, columns - 1)) / columns);
+		int width = Math.max(18, (grid.width() - gap * Math.max(0, columns - 1)) / columns);
 		int height = mediaGalleryCardHeight(layout);
 		return new UiRect(
 				grid.x() + column * (width + gap),
@@ -5069,9 +5162,16 @@ public final class MonitorScreenSystem {
 	}
 
 	private static UiRect mediaGalleryBrowserScrollbarTrackRect(UiLayout layout) {
-		UiRect grid = mediaGalleryGridRect(layout);
-		int width = clampInt(layout.unit() / 2, 5, 9);
-		return new UiRect(grid.right() - width, grid.y(), width, grid.height());
+		UiRect linkRect = mediaGalleryBrowserLinkRect(layout);
+		UiRect canvas = mediaCanvasRect(layout);
+		int inset = clampInt(layout.unit() / 2, 4, 8);
+		UiRect viewport = new UiRect(
+				canvas.x() + inset,
+				linkRect.bottom() + inset,
+				canvas.width() - inset * 2,
+				Math.max(18, canvas.bottom() - linkRect.bottom() - inset * 2)
+		);
+		return scrollTrackRect(viewport, layout);
 	}
 
 	private static UiRect mediaGalleryBrowserScrollbarThumbRect(UiLayout layout, int scroll, int visibleRows, int totalRows) {
@@ -5156,10 +5256,10 @@ public final class MonitorScreenSystem {
 		UiRect panel = overlayWindowRect(layout, MediaOverlayWindowType.YOUTUBE_QUEUE);
 		UiRect header = mediaQueueHeaderRect(layout);
 		UiRect footer = mediaQueueFooterRect(layout);
-		int horizontalInset = clampInt(layout.unit() / 2, 4, 8);
 		int top = header.bottom() + clampInt(layout.unit() / 2, 4, 8);
 		int bottom = footer.y() - clampInt(layout.unit() / 2, 4, 8);
-		return new UiRect(panel.x() + clampInt(layout.unit() / 2, 4, 8), top, panel.width() - clampInt(layout.unit(), 8, 16), Math.max(20, bottom - top));
+		UiRect viewport = new UiRect(panel.x() + clampInt(layout.unit() / 2, 4, 8), top, panel.width() - clampInt(layout.unit(), 8, 16), Math.max(20, bottom - top));
+		return scrollContentRect(viewport, layout);
 	}
 
 	private static UiRect mediaQueueFooterRect(UiLayout layout) {
@@ -5248,14 +5348,13 @@ public final class MonitorScreenSystem {
 	}
 
 	private static UiRect mediaQueueScrollbarTrackRect(UiLayout layout) {
-		UiRect list = mediaQueueListRect(layout);
-		int width = clampInt(layout.unit() / 2, 6, 10);
-		return new UiRect(
-				list.right() - width,
-				list.y(),
-				width,
-				list.height()
-		);
+		UiRect panel = overlayWindowRect(layout, MediaOverlayWindowType.YOUTUBE_QUEUE);
+		UiRect header = mediaQueueHeaderRect(layout);
+		UiRect footer = mediaQueueFooterRect(layout);
+		int top = header.bottom() + clampInt(layout.unit() / 2, 4, 8);
+		int bottom = footer.y() - clampInt(layout.unit() / 2, 4, 8);
+		UiRect viewport = new UiRect(panel.x() + clampInt(layout.unit() / 2, 4, 8), top, panel.width() - clampInt(layout.unit(), 8, 16), Math.max(20, bottom - top));
+		return scrollTrackRect(viewport, layout);
 	}
 
 	private static UiRect mediaQueueScrollbarThumbRect(UiLayout layout, int scroll, int visibleRows, int totalRows) {
@@ -5298,7 +5397,7 @@ public final class MonitorScreenSystem {
 
 	private static UiRect mediaQueueRemoveRect(UiRect rowRect, UiLayout layout) {
 		int size = clampInt(rowRect.height() - clampInt(layout.unit(), 10, 16), 18, 30);
-		int rightInset = clampInt(layout.unit() / 2, 4, 8) + mediaQueueScrollbarTrackRect(layout).width() + clampInt(layout.unit() / 3, 3, 6);
+		int rightInset = clampInt(layout.unit() / 2, 4, 8);
 		return new UiRect(rowRect.right() - size - rightInset, rowRect.y() + (rowRect.height() - size) / 2, size, size);
 	}
 
@@ -5320,7 +5419,7 @@ public final class MonitorScreenSystem {
 		int x = badgeRect.right() + clampInt(layout.unit() / 2, 4, 8);
 		int top = rowRect.y() + clampInt(layout.unit() / 2, 4, 8);
 		int bottom = rowRect.bottom() - clampInt(layout.unit() / 2, 4, 8);
-		int width = Math.max(18, removeRect.x() - x - clampInt(layout.unit(), 8, 12) - mediaQueueScrollbarTrackRect(layout).width() - clampInt(layout.unit() / 2, 4, 8));
+		int width = Math.max(18, removeRect.x() - x - clampInt(layout.unit(), 8, 12));
 		return new UiRect(x, top, width, Math.max(18, bottom - top));
 	}
 
@@ -5332,7 +5431,7 @@ public final class MonitorScreenSystem {
 
 	private static UiRect mediaTimelineCounterRect(UiLayout layout) {
 		UiRect timeline = mediaTimelineRect(layout);
-		int width = clampInt(timeline.width() / 5, 26, 52);
+		int width = timelineCounterReservedWidth(layout);
 		return new UiRect(timeline.right() - width - layout.unit() / 2, timeline.y(), width, timeline.height());
 	}
 
@@ -5341,7 +5440,9 @@ public final class MonitorScreenSystem {
 		UiRect playPause = mediaPlayPauseRect(layout);
 		UiRect counter = mediaTimelineCounterRect(layout);
 		int x = playPause.right() + clampInt(layout.unit() / 2, 4, 8);
-		int right = counter.x() - clampInt(layout.unit() / 2, 4, 8);
+		int right = counter.width() > 0
+				? counter.x() - clampInt(layout.unit() / 2, 4, 8)
+				: timeline.right() - clampInt(layout.unit() / 2, 4, 8);
 		int height = clampInt(layout.unit() / 2, 6, 10);
 		return new UiRect(
 				x,
@@ -5349,6 +5450,14 @@ public final class MonitorScreenSystem {
 				Math.max(12, right - x),
 				height
 		);
+	}
+
+	private static int timelineCounterReservedWidth(UiLayout layout) {
+		return switch (timelineCounterDetailLevel(layout)) {
+			case NONE -> 0;
+			case COMPACT -> clampInt((int) Math.round(layout.unit() * 4.2D), 24, 48);
+			case FULL -> clampInt((int) Math.round(layout.unit() * 6.8D), 46, 88);
+		};
 	}
 
 	private static UiRect mediaTimelineHitRect(UiLayout layout) {
@@ -5440,43 +5549,76 @@ public final class MonitorScreenSystem {
 	}
 
 	private static int homeHeaderHeight(UiLayout layout) {
-		return clampInt(layout.unit() + 2, 11, 18);
+		return clampInt((int) Math.round(layout.unit() * 2.0D), 12, 44);
 	}
 
 	private static int homeRowsPerPage(UiLayout layout) {
-		return layout.viewportHeight() >= 180 ? 2 : 1;
+		UiRect content = homeGridRect(layout, homePanelRect(layout));
+		int gap = homeAppGap(layout);
+		int desiredHeight = homeDesiredCardHeight(layout);
+		return Math.max(1, (content.height() + gap) / Math.max(1, desiredHeight + gap));
 	}
 
 	private static int homeAppGap(UiLayout layout) {
-		return clampInt(layout.unit() - 2, 5, 10);
+		return clampInt((int) Math.round(layout.unit() * 0.8D), 4, 18);
 	}
 
-	private static int homeAppIconSize(UiLayout layout) {
-		return clampInt(Math.round(Math.min(layout.viewportWidth(), layout.viewportHeight()) * 0.19F), 20, 40);
+	private static int homeColumns(UiLayout layout) {
+		UiRect content = homeGridRect(layout, homePanelRect(layout));
+		int gap = homeAppGap(layout);
+		int desiredWidth = homeDesiredCardWidth(layout);
+		return Math.max(2, (content.width() + gap) / Math.max(1, desiredWidth + gap));
+	}
+
+	private static int homeAppLabelHeight(UiLayout layout) {
+		return clampInt((int) Math.round(layout.unit() * 1.9D), 12, 34);
+	}
+
+	private static int homeDesiredCardWidth(UiLayout layout) {
+		return clampInt((int) Math.round(layout.unit() * 8.5D), 42, 220);
+	}
+
+	private static int homeDesiredCardHeight(UiLayout layout) {
+		return homeDesiredCardWidth(layout) + homeAppLabelHeight(layout) + clampInt(layout.unit(), 4, 20);
 	}
 
 	private static int homeAppCardWidth(UiLayout layout) {
-		return clampInt(homeAppIconSize(layout) + layout.unit() + 4, 36, 66);
+		UiRect content = homeGridRect(layout, homePanelRect(layout));
+		int columns = homeColumns(layout);
+		int gap = homeAppGap(layout);
+		return Math.max(32, (content.width() - Math.max(0, columns - 1) * gap) / Math.max(1, columns));
 	}
 
 	private static int homeAppCardHeight(UiLayout layout) {
-		return homeAppCardWidth(layout) + clampInt(layout.unit() + 2, 11, 18) + clampInt(layout.unit() / 2, 4, 8);
+		UiRect content = homeGridRect(layout, homePanelRect(layout));
+		int rows = homeRowsPerPage(layout);
+		int gap = homeAppGap(layout);
+		int maxHeight = Math.max(32, (content.height() - Math.max(0, rows - 1) * gap) / Math.max(1, rows));
+		int desiredHeight = homeAppCardWidth(layout) + homeAppLabelHeight(layout) + clampInt(layout.unit(), 4, 20);
+		return Math.max(32, Math.min(maxHeight, desiredHeight));
 	}
 
 	private static int homePageCapacity(UiLayout layout) {
-		return Math.max(1, homeRowsPerPage(layout) * LAUNCHER_COLUMNS);
+		return Math.max(1, homeRowsPerPage(layout) * homeColumns(layout));
+	}
+
+	private static int homeTotalRows(UiLayout layout) {
+		int columns = Math.max(1, homeColumns(layout));
+		return Math.max(0, (MonitorAppRegistry.apps().size() + columns - 1) / columns);
+	}
+
+	private static int homeMaxScroll(UiLayout layout) {
+		return Math.max(0, homeTotalRows(layout) - homeRowsPerPage(layout));
 	}
 
 	private static int homePageCount(UiLayout layout) {
-		int capacity = homePageCapacity(layout);
-		int totalApps = MonitorAppRegistry.apps().size();
-		return Math.max(1, (totalApps + capacity - 1) / capacity);
+		return Math.max(1, homeMaxScroll(layout) + 1);
 	}
 
 	private static List<MonitorApp> visibleHomeApps(UiLayout layout, int launcherPage) {
 		List<MonitorApp> apps = MonitorAppRegistry.apps();
-		int page = clampInt(launcherPage, 0, Math.max(0, homePageCount(layout) - 1));
-		int fromIndex = page * homePageCapacity(layout);
+		int scroll = clampInt(launcherPage, 0, homeMaxScroll(layout));
+		int fromIndex = scroll * homeColumns(layout);
 		int toIndex = Math.min(apps.size(), fromIndex + homePageCapacity(layout));
 		return apps.subList(fromIndex, toIndex);
 	}
@@ -5507,6 +5649,27 @@ public final class MonitorScreenSystem {
 		graphics.setColor(color);
 		graphics.setFont(new Font(Font.SANS_SERIF, style, size));
 		var metrics = graphics.getFontMetrics();
+		int textX = rect.x() + (rect.width() - metrics.stringWidth(text)) / 2;
+		int textY = rect.y() + (rect.height() - metrics.getHeight()) / 2 + metrics.getAscent();
+		graphics.drawString(text, textX, textY);
+	}
+
+	private static void drawCenteredTextFitted(Graphics2D graphics, String text, UiRect rect, Color color, int style, int maxSize, int minSize) {
+		if (graphics == null || rect == null || rect.width() <= 0 || rect.height() <= 0 || text == null || text.isBlank()) {
+			return;
+		}
+		int resolvedMinSize = Math.max(1, Math.min(minSize, maxSize));
+		int size = maxSize;
+		java.awt.Font font = new Font(Font.SANS_SERIF, style, size);
+		graphics.setColor(color);
+		graphics.setFont(font);
+		var metrics = graphics.getFontMetrics();
+		while (size > resolvedMinSize && metrics.stringWidth(text) > rect.width() - 2) {
+			size--;
+			font = new Font(Font.SANS_SERIF, style, size);
+			graphics.setFont(font);
+			metrics = graphics.getFontMetrics();
+		}
 		int textX = rect.x() + (rect.width() - metrics.stringWidth(text)) / 2;
 		int textY = rect.y() + (rect.height() - metrics.getHeight()) / 2 + metrics.getAscent();
 		graphics.drawString(text, textX, textY);
@@ -6730,6 +6893,33 @@ public final class MonitorScreenSystem {
 		return state.loadedMedia != null && state.loadedMedia.animated();
 	}
 
+	private static String resolvedTimelineLabel(MediaVisualSnapshot state, UiLayout layout) {
+		if (state == null || layout == null || !state.timelineVisible()) {
+			return "";
+		}
+		return switch (timelineCounterDetailLevel(layout)) {
+			case NONE -> "";
+			case COMPACT -> {
+				if (state.mode() == ScreenViewMode.YOUTUBE) {
+					yield state.frameCount() <= 0 ? state.timelineLabel() : formatPlaybackTime(state.frameIndex());
+				}
+				yield state.timelineLabel();
+			}
+			case FULL -> state.timelineLabel();
+		};
+	}
+
+	private static TimelineCounterDetailLevel timelineCounterDetailLevel(UiLayout layout) {
+		int minSpan = smallestScreenTileSpan(layout);
+		if (minSpan <= 1) {
+			return TimelineCounterDetailLevel.NONE;
+		}
+		if (minSpan == 2) {
+			return TimelineCounterDetailLevel.COMPACT;
+		}
+		return TimelineCounterDetailLevel.FULL;
+	}
+
 	private static float youtubeTimelineFraction(MediaRuntimeState state) {
 		if (state == null || state.durationMs <= 0L) {
 			return 0.0F;
@@ -6865,6 +7055,12 @@ public final class MonitorScreenSystem {
 	private enum MediaActionGlyph {
 		TRASH,
 		DOWNLOAD
+	}
+
+	private enum TimelineCounterDetailLevel {
+		NONE,
+		COMPACT,
+		FULL
 	}
 
 	private record ScreenKey(BlockPos pos, Direction direction) {
