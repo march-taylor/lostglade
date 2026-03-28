@@ -33,12 +33,12 @@ public final class MonitorMediaApp implements MonitorApp {
 
 	@Override
 	public String id() {
-		return "media";
+		return "gallery";
 	}
 
 	@Override
 	public String title() {
-		return "MEDIA";
+		return "GALLERY";
 	}
 
 	@Override
@@ -63,7 +63,7 @@ public final class MonitorMediaApp implements MonitorApp {
 
 	@Override
 	public String screenTitle() {
-		return "Локальные медиа";
+		return "Галерея";
 	}
 
 	@Override
