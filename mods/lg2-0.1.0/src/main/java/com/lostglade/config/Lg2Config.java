@@ -378,8 +378,8 @@ public final class Lg2Config {
 		public int monitorMediaIoThreads = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() / 2));
 		public int monitorTileQuantizerThreads = Math.max(2, Runtime.getRuntime().availableProcessors());
 		public int monitorMapUpdateRadiusBlocks = 128;
-		public int monitorYoutubePollActiveIntervalMs = 100;
-		public int monitorYoutubePollIdleIntervalMs = 400;
+		public int monitorYoutubePollActiveIntervalMs = 50;
+		public int monitorYoutubePollIdleIntervalMs = 200;
 
 		private ConfigData() {
 		}
