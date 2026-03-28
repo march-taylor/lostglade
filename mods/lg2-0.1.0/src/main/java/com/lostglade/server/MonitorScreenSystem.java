@@ -585,6 +585,7 @@ public final class MonitorScreenSystem {
 			);
 			MediaOverlayMode overlayMode;
 			boolean hasMedia;
+			boolean controlsWereHidden = false;
 			synchronized (mediaState) {
 				overlayMode = mediaState.overlayMode;
 				hasMedia = hasDisplayableMediaLocked(mediaState);
@@ -595,7 +596,9 @@ public final class MonitorScreenSystem {
 					mediaState.version++;
 				}
 				rerenderCurrent = true;
-			} else if (mediaCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				controlsWereHidden = true;
+			}
+			if (mediaCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				nextMode = ScreenViewMode.HOME;
 			} else if (hasMedia && mediaPlayPauseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
@@ -637,7 +640,7 @@ public final class MonitorScreenSystem {
 			} else if (mediaLinkRect(layout, hasMedia).contains(touchPoint.x(), touchPoint.y())) {
 				requestMediaLink(player, component.runtimeKey(), false, component.viewMode());
 				rerenderCurrent = true;
-			} else if (hasMedia) {
+			} else if (hasMedia && !controlsWereHidden) {
 				synchronized (mediaState) {
 					mediaState.overlayMode = MediaOverlayMode.VIEW;
 					mediaState.version++;
@@ -680,7 +683,8 @@ public final class MonitorScreenSystem {
 					} else {
 						MonitorYoutubeRelayClient.resume(relaySessionId(component.runtimeKey()));
 					}
-				} catch (Exception ignored) {
+				} catch (Exception exception) {
+					Lg2.LOGGER.warn("Failed to {} YouTube session {}", shouldPause ? "pause" : "resume", component.runtimeKey(), exception);
 				}
 			}, mediaIoExecutor).thenRun(() -> server.execute(() -> scheduleYoutubeRefresh(server, component.runtimeKey(), 0L)));
 		}
@@ -690,7 +694,8 @@ public final class MonitorScreenSystem {
 			CompletableFuture.runAsync(() -> {
 				try {
 					MonitorYoutubeRelayClient.seek(relaySessionId(component.runtimeKey()), seekTargetMs);
-				} catch (Exception ignored) {
+				} catch (Exception exception) {
+					Lg2.LOGGER.warn("Failed to seek YouTube session {} to {}", component.runtimeKey(), seekTargetMs, exception);
 				}
 			}, mediaIoExecutor).thenRun(() -> server.execute(() -> scheduleYoutubeRefresh(server, component.runtimeKey(), 0L)));
 		}
@@ -954,6 +959,8 @@ public final class MonitorScreenSystem {
 				state.mediaTitle = result.loadResponse().title();
 				state.durationMs = result.loadResponse().durationMs();
 				state.positionMs = 0L;
+				state.bufferedStartMs = 0L;
+				state.bufferedEndMs = 0L;
 				state.liveStream = result.loadResponse().live();
 				state.audioPlaceholder = true;
 				state.loading = true;
@@ -1127,6 +1134,8 @@ public final class MonitorScreenSystem {
 				boolean wasLoading = state.loading;
 				long previousPositionMs = state.positionMs;
 				long previousDurationMs = state.durationMs;
+				long previousBufferedStartMs = state.bufferedStartMs;
+				long previousBufferedEndMs = state.bufferedEndMs;
 				boolean previousLiveStream = state.liveStream;
 				boolean previousAudioPlaceholder = state.audioPlaceholder;
 				boolean previousPaused = state.userPaused;
@@ -1143,12 +1152,16 @@ public final class MonitorScreenSystem {
 				}
 				state.positionMs = result.snapshot().positionMs();
 				state.durationMs = result.snapshot().durationMs();
+				state.bufferedStartMs = result.snapshot().bufferedStartMs();
+				state.bufferedEndMs = result.snapshot().bufferedEndMs();
 				state.liveStream = result.snapshot().live();
 				state.audioPlaceholder = result.snapshot().audioPlaceholder();
 				state.userPaused = result.snapshot().paused();
 				state.statusText = result.snapshot().status();
 				state.loading = !result.snapshot().ready();
 				if (previousDurationMs != state.durationMs
+						|| previousBufferedStartMs != state.bufferedStartMs
+						|| previousBufferedEndMs != state.bufferedEndMs
 						|| previousLiveStream != state.liveStream
 						|| previousAudioPlaceholder != state.audioPlaceholder
 						|| previousPaused != state.userPaused
@@ -2044,7 +2057,7 @@ public final class MonitorScreenSystem {
 
 	private static MediaVisualSnapshot captureMediaSnapshot(MediaRuntimeState state) {
 		if (state == null) {
-			return new MediaVisualSnapshot(0L, null, false, false, false, 0, 0, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", null);
+			return new MediaVisualSnapshot(0L, null, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", null);
 		}
 		boolean youtubeMode = state.mode == ScreenViewMode.YOUTUBE;
 		BufferedImage frame = youtubeMode
@@ -2068,6 +2081,8 @@ public final class MonitorScreenSystem {
 				: state.loadedMedia != null && state.loadedMedia.frameCount() > 1
 				? (float) timelineIndex / (float) Math.max(1, state.loadedMedia.frameCount() - 1)
 				: 0.0F;
+		float bufferedStartFraction = youtubeMode ? youtubeBufferedFraction(state, state.bufferedStartMs) : 0.0F;
+		float bufferedEndFraction = youtubeMode ? youtubeBufferedFraction(state, state.bufferedEndMs) : 0.0F;
 		String timelineLabel = youtubeMode
 				? state.liveStream ? "LIVE" : formatPlaybackTime(state.positionMs) + " / " + formatPlaybackTime(state.durationMs)
 				: (timelineIndex + 1) + "/" + Math.max(1, timelineCount);
@@ -2080,6 +2095,8 @@ public final class MonitorScreenSystem {
 				timelineIndex,
 				timelineCount,
 				timelineFraction,
+				bufferedStartFraction,
+				bufferedEndFraction,
 				timelineLabel,
 				isPlaybackPausedLocked(state),
 				state.overlayMode,
@@ -2539,6 +2556,18 @@ public final class MonitorScreenSystem {
 		drawMediaPlayPauseButton(graphics, playPauseRect, state.paused(), layout);
 		drawCenteredText(graphics, state.timelineLabel(), counterRect, new Color(248, 251, 255, 214), Font.BOLD, clampInt(layout.unit() - 1, 8, 13));
 		fillRoundedRect(graphics, trackRect, Math.min(trackRect.height(), trackRect.width()), new Color(255, 255, 255, 36));
+		float bufferedStart = clampFloat(state.bufferedStartFraction(), 0.0F, 1.0F);
+		float bufferedEnd = clampFloat(Math.max(state.bufferedEndFraction(), state.timelineFraction()), 0.0F, 1.0F);
+		if (bufferedEnd > bufferedStart) {
+			int bufferedX = trackRect.x() + Math.round(trackRect.width() * bufferedStart);
+			int bufferedWidth = Math.max(trackRect.height(), Math.round(trackRect.width() * (bufferedEnd - bufferedStart)));
+			fillRoundedRect(
+					graphics,
+					new UiRect(bufferedX, trackRect.y(), Math.min(trackRect.right() - bufferedX, bufferedWidth), trackRect.height()),
+					Math.min(trackRect.height(), trackRect.width()),
+					new Color(255, 255, 255, 92)
+			);
+		}
 		float fraction = state.timelineFraction();
 		int progressWidth = Math.max(trackRect.height(), Math.round(trackRect.width() * fraction));
 		fillRoundedRect(graphics, new UiRect(trackRect.x(), trackRect.y(), Math.min(trackRect.width(), progressWidth), trackRect.height()), Math.min(trackRect.height(), trackRect.width()), new Color(86, 188, 255, 224));
@@ -3745,6 +3774,10 @@ public final class MonitorScreenSystem {
 		return Math.max(min, Math.min(max, value));
 	}
 
+	private static float clampFloat(float value, float min, float max) {
+		return Math.max(min, Math.min(max, value));
+	}
+
 	private static double clampDouble(double value, double min, double max) {
 		return Math.max(min, Math.min(max, value));
 	}
@@ -3794,6 +3827,8 @@ public final class MonitorScreenSystem {
 		state.frameIndex = 0;
 		state.positionMs = 0L;
 		state.durationMs = 0L;
+		state.bufferedStartMs = 0L;
+		state.bufferedEndMs = 0L;
 		state.liveStream = false;
 		state.audioPlaceholder = true;
 	}
@@ -3830,6 +3865,13 @@ public final class MonitorScreenSystem {
 			return 0L;
 		}
 		return clampLong(Math.round(clampDouble(fraction, 0.0D, 1.0D) * state.durationMs), 0L, state.durationMs);
+	}
+
+	private static float youtubeBufferedFraction(MediaRuntimeState state, long positionMs) {
+		if (state == null || state.durationMs <= 0L || positionMs <= 0L) {
+			return 0.0F;
+		}
+		return (float) clampDouble((double) positionMs / (double) state.durationMs, 0.0D, 1.0D);
 	}
 
 	private static String relaySessionId(ScreenRuntimeKey key) {
@@ -3995,6 +4037,8 @@ public final class MonitorScreenSystem {
 			int frameIndex,
 			int frameCount,
 			float timelineFraction,
+			float bufferedStartFraction,
+			float bufferedEndFraction,
 			String timelineLabel,
 			boolean paused,
 			MediaOverlayMode overlayMode,
@@ -4117,6 +4161,8 @@ public final class MonitorScreenSystem {
 		private long youtubeFrameSequence;
 		private long positionMs;
 		private long durationMs;
+		private long bufferedStartMs;
+		private long bufferedEndMs;
 		private long version;
 		private MediaOverlayMode overlayMode;
 		private MediaScaleMode scaleMode;

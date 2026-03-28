@@ -37,6 +37,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 public final class SpeakerSystem {
 	private static final int HOTBAR_SLOT_COUNT = 9;
@@ -46,6 +47,7 @@ public final class SpeakerSystem {
 	private static final int AUDIO_FRAME_BYTES = AUDIO_FRAME_SAMPLES * 2;
 	private static final int AUDIO_QUEUE_CAPACITY = 24;
 	private static final long AUDIO_RESYNC_TOLERANCE_MS = 1_500L;
+	private static final long PROCESS_SHUTDOWN_TIMEOUT_MS = 200L;
 	private static final short[] SILENCE_FRAME = new short[AUDIO_FRAME_SAMPLES];
 	private static final Set<SpeakerKey> KNOWN_SPEAKERS = ConcurrentHashMap.newKeySet();
 	private static final ConcurrentHashMap<SpeakerKey, SpeakerRuntime> ACTIVE_SPEAKERS = new ConcurrentHashMap<>();
@@ -601,7 +603,13 @@ public final class SpeakerSystem {
 			}
 			try {
 				currentProcess.destroy();
-				currentProcess.waitFor();
+				if (!currentProcess.waitFor(PROCESS_SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+					currentProcess.destroyForcibly();
+					currentProcess.waitFor(PROCESS_SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+				}
+			} catch (InterruptedException exception) {
+				Thread.currentThread().interrupt();
+				currentProcess.destroyForcibly();
 			} catch (Exception ignored) {
 				currentProcess.destroyForcibly();
 			}

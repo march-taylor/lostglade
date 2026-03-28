@@ -16,12 +16,14 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.TreeMap;
 
 public final class MonitorYoutubeRelayClient {
 	private static final Gson GSON = new Gson();
@@ -34,6 +36,11 @@ public final class MonitorYoutubeRelayClient {
 	private static final long SESSION_IDLE_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(readIntSetting("LG2_YT_IDLE_TIMEOUT_SEC", "lg2.youtube.idleTimeoutSec", 600));
 	private static final int COMMAND_TIMEOUT_SEC = readIntSetting("LG2_YT_COMMAND_TIMEOUT_SEC", "lg2.youtube.commandTimeoutSec", 45);
 	private static final int STREAM_START_TIMEOUT_SEC = readIntSetting("LG2_YT_STREAM_START_TIMEOUT_SEC", "lg2.youtube.streamStartTimeoutSec", 20);
+	private static final long PREVIEW_CACHE_BUCKET_MS = 1000L;
+	private static final int MAX_CACHED_PREVIEW_FRAMES = 120;
+	private static final long CACHE_LOOKUP_TOLERANCE_MS = 1500L;
+	private static final long CONTIGUOUS_BUFFER_TOLERANCE_MS = PREVIEW_CACHE_BUCKET_MS + CACHE_LOOKUP_TOLERANCE_MS;
+	private static final long PROCESS_STOP_TIMEOUT_MS = 250L;
 
 	static {
 		CLEANUP_EXECUTOR.scheduleAtFixedRate(MonitorYoutubeRelayClient::cleanupExpiredSessions, 30L, 30L, TimeUnit.SECONDS);
@@ -59,7 +66,7 @@ public final class MonitorYoutubeRelayClient {
 	public static SessionSnapshot snapshot(String sessionId, long knownFrameSequence) throws IOException {
 		RelaySession session = requireSession(sessionId);
 		session.touch();
-		return session.snapshot(knownFrameSequence);
+		return session.snapshotWithPrefetch(knownFrameSequence);
 	}
 
 	public static void pause(String sessionId) throws IOException {
@@ -211,6 +218,10 @@ public final class MonitorYoutubeRelayClient {
 	}
 
 	private static BufferedImage runPreviewFrameCommand(List<String> command, int timeoutSeconds) throws IOException {
+		return decodeImageBytes(runPreviewFrameCommandBytes(command, timeoutSeconds));
+	}
+
+	private static byte[] runPreviewFrameCommandBytes(List<String> command, int timeoutSeconds) throws IOException {
 		ProcessBuilder builder = new ProcessBuilder(command);
 		builder.redirectError(ProcessBuilder.Redirect.DISCARD);
 		Process process = builder.start();
@@ -219,11 +230,7 @@ public final class MonitorYoutubeRelayClient {
 			if (process.exitValue() != 0 || bytes.length == 0) {
 				throw new IOException("Failed to capture YouTube preview frame");
 			}
-			BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
-			if (image == null) {
-				throw new IOException("ffmpeg returned an unreadable preview frame");
-			}
-			return image;
+			return bytes;
 		} catch (InterruptedException exception) {
 			Thread.currentThread().interrupt();
 			process.destroyForcibly();
@@ -231,6 +238,14 @@ public final class MonitorYoutubeRelayClient {
 		} finally {
 			process.destroy();
 		}
+	}
+
+	private static BufferedImage decodeImageBytes(byte[] bytes) throws IOException {
+		BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
+		if (image == null) {
+			throw new IOException("ffmpeg returned an unreadable preview frame");
+		}
+		return image;
 	}
 
 	private static byte[] readProcessOutput(Process process, int timeoutSeconds, String timeoutMessage) throws IOException, InterruptedException {
@@ -249,6 +264,58 @@ public final class MonitorYoutubeRelayClient {
 			throw reader.exception();
 		}
 		return reader.bytes();
+	}
+
+	private static List<String> previewFrameCommand(String streamUrl, long seekMs) {
+		List<String> command = new ArrayList<>();
+		command.add(ffmpegBin());
+		command.add("-hide_banner");
+		command.add("-loglevel");
+		command.add("error");
+		command.add("-nostdin");
+		if (seekMs > 0L) {
+			command.add("-ss");
+			command.add(String.format(Locale.ROOT, "%.3f", seekMs / 1000.0D));
+		}
+		command.add("-i");
+		command.add(streamUrl);
+		command.add("-frames:v");
+		command.add("1");
+		command.add("-an");
+		command.add("-vf");
+		command.add("scale=w=" + FRAME_WIDTH + ":h=-2:force_original_aspect_ratio=decrease");
+		command.add("-q:v");
+		command.add("5");
+		command.add("-f");
+		command.add("image2pipe");
+		command.add("-vcodec");
+		command.add("mjpeg");
+		command.add("-");
+		return command;
+	}
+
+	private static List<String> sequentialPrefetchCommand(String streamUrl) {
+		List<String> command = new ArrayList<>();
+		command.add(ffmpegBin());
+		command.add("-hide_banner");
+		command.add("-loglevel");
+		command.add("error");
+		command.add("-nostdin");
+		command.add("-threads");
+		command.add("1");
+		command.add("-i");
+		command.add(streamUrl);
+		command.add("-an");
+		command.add("-vf");
+		command.add("fps=1,scale=w=" + FRAME_WIDTH + ":h=-2:force_original_aspect_ratio=decrease");
+		command.add("-q:v");
+		command.add("6");
+		command.add("-f");
+		command.add("image2pipe");
+		command.add("-vcodec");
+		command.add("mjpeg");
+		command.add("-");
+		return command;
 	}
 
 	private static void readJpegFrames(InputStream stream, FrameConsumer consumer) throws IOException {
@@ -374,6 +441,8 @@ public final class MonitorYoutubeRelayClient {
 			long frameSequence,
 			long positionMs,
 			long durationMs,
+			long bufferedStartMs,
+			long bufferedEndMs,
 			boolean paused,
 			boolean live,
 			boolean audioPlaceholder,
@@ -441,8 +510,15 @@ public final class MonitorYoutubeRelayClient {
 		private long lastAccessAtMillis = System.currentTimeMillis();
 		private Process process = null;
 		private Thread readerThread = null;
+		private Process prefetchProcess = null;
+		private Thread prefetchReaderThread = null;
 		private long playStartedAtNanos = 0L;
 		private long playBasePositionMs = 0L;
+		private long bufferedStartMs = 0L;
+		private long bufferedEndMs = 0L;
+		private boolean bufferedFromStart = false;
+		private boolean prefetchCompleted = false;
+		private final NavigableMap<Long, byte[]> cachedPreviewFrames = new TreeMap<>();
 
 		private RelaySession(String sessionId) {
 			this.sessionId = sessionId;
@@ -463,6 +539,7 @@ public final class MonitorYoutubeRelayClient {
 		private SessionLoadResponse load(String url) throws IOException {
 			ResolvedYoutube resolved = resolveYoutube(url);
 			synchronized (this.lock) {
+				stopPrefetchLocked();
 				stopLocked();
 				this.title = resolved.title();
 				this.sourceUrl = url;
@@ -476,35 +553,56 @@ public final class MonitorYoutubeRelayClient {
 				this.status = "BUFFERING";
 				this.latestFrame = null;
 				this.frameSequence = 0L;
+				this.bufferedStartMs = 0L;
+				this.bufferedEndMs = 0L;
+				this.bufferedFromStart = false;
+				this.prefetchCompleted = false;
+				this.cachedPreviewFrames.clear();
 				this.lastAccessAtMillis = System.currentTimeMillis();
 			}
 			startStream();
+			ensurePrefetchStarted();
 			synchronized (this.lock) {
 				return new SessionLoadResponse(this.sessionId, this.title, this.durationMs, this.live, this.status, this.audioStreamUrl);
 			}
 		}
 
 		private SessionSnapshot snapshot(long knownFrameSequence) {
+			boolean shouldEnsurePrefetch;
 			synchronized (this.lock) {
 				if (!this.live && !this.paused && this.process != null) {
 					this.positionMs = currentPositionMsLocked();
 				}
+				shouldEnsurePrefetch = !this.live && !this.prefetchCompleted && this.prefetchProcess == null && !closedOrUnloadedLocked();
 				BufferedImage frame = this.frameSequence != knownFrameSequence ? this.latestFrame : null;
 				boolean ready = this.latestFrame != null;
-				return new SessionSnapshot(
+				SessionSnapshot snapshot = new SessionSnapshot(
 						this.sessionId,
 						this.title,
 						frame,
 						this.frameSequence,
 						this.positionMs,
 						this.durationMs,
+						this.bufferedStartMs,
+						this.bufferedEndMs,
 						this.paused,
 						this.live,
 						this.audioPlaceholder,
 						ready,
 						this.status
 				);
+				if (shouldEnsurePrefetch) {
+					// Restart the low-FPS sequential cache reader if it died unexpectedly.
+					// The actual process launch happens outside the state lock.
+				}
+				return snapshot;
 			}
+		}
+
+		private SessionSnapshot snapshotWithPrefetch(long knownFrameSequence) {
+			SessionSnapshot snapshot = snapshot(knownFrameSequence);
+			ensurePrefetchStarted();
+			return snapshot;
 		}
 
 		private void pause() {
@@ -524,10 +622,12 @@ public final class MonitorYoutubeRelayClient {
 				if (this.sourceUrl.isBlank() || this.streamUrl.isBlank()) {
 					throw new IOException("session is not loaded");
 				}
+				applyCachedPreviewLocked(this.positionMs);
 				this.paused = false;
 				this.status = "BUFFERING";
 			}
 			startStream();
+			ensurePrefetchStarted();
 		}
 
 		private void seek(long targetPositionMs) throws IOException {
@@ -538,19 +638,27 @@ public final class MonitorYoutubeRelayClient {
 				}
 				long clamped = Math.max(0L, this.durationMs > 0L ? Math.min(targetPositionMs, this.durationMs) : targetPositionMs);
 				this.positionMs = clamped;
-				capturePreview = this.paused;
+				boolean hadCachedPreview = applyCachedPreviewLocked(clamped);
+				capturePreview = this.paused && !hadCachedPreview;
 				this.status = this.paused ? "PAUSED" : "BUFFERING";
 				stopLocked();
 			}
 			if (capturePreview) {
 				capturePreviewFrame();
 			} else {
+				synchronized (this.lock) {
+					if (this.paused) {
+						return;
+					}
+				}
 				startStream();
 			}
+			ensurePrefetchStarted();
 		}
 
 		private void close() {
 			synchronized (this.lock) {
+				stopPrefetchLocked();
 				stopLocked();
 				this.status = "CLOSED";
 			}
@@ -573,36 +681,12 @@ public final class MonitorYoutubeRelayClient {
 				targetStreamUrl = this.streamUrl;
 				seekMs = this.positionMs;
 			}
-
-			List<String> command = new ArrayList<>();
-			command.add(ffmpegBin());
-			command.add("-hide_banner");
-			command.add("-loglevel");
-			command.add("error");
-			command.add("-nostdin");
-			if (seekMs > 0L) {
-				command.add("-ss");
-				command.add(String.format(Locale.ROOT, "%.3f", seekMs / 1000.0D));
-			}
-			command.add("-i");
-			command.add(targetStreamUrl);
-			command.add("-frames:v");
-			command.add("1");
-			command.add("-an");
-			command.add("-vf");
-			command.add("scale=w=" + FRAME_WIDTH + ":h=-2:force_original_aspect_ratio=decrease");
-			command.add("-q:v");
-			command.add("5");
-			command.add("-f");
-			command.add("image2pipe");
-			command.add("-vcodec");
-			command.add("mjpeg");
-			command.add("-");
-
-			BufferedImage preview = runPreviewFrameCommand(command, STREAM_START_TIMEOUT_SEC);
+			byte[] previewBytes = runPreviewFrameCommandBytes(previewFrameCommand(targetStreamUrl, seekMs), STREAM_START_TIMEOUT_SEC);
+			BufferedImage preview = decodeImageBytes(previewBytes);
 			synchronized (this.lock) {
 				this.latestFrame = preview;
 				this.frameSequence++;
+				cachePreviewFrameLocked(seekMs, previewBytes, false);
 			}
 		}
 
@@ -662,8 +746,10 @@ public final class MonitorYoutubeRelayClient {
 						if (this.process != processToRead) {
 							return;
 						}
+						long framePositionMs = currentPositionMsLocked();
 						this.latestFrame = image;
 						this.frameSequence++;
+						cachePreviewFrameLocked(framePositionMs, frameBytes, shouldExtendBufferedRangeLocked(framePositionMs));
 						if (this.paused) {
 							this.status = "PAUSED";
 						} else if (this.live) {
@@ -674,7 +760,9 @@ public final class MonitorYoutubeRelayClient {
 					}
 				});
 			} catch (IOException exception) {
-				Lg2.LOGGER.warn("YouTube frame reader stopped for session {}", this.sessionId, exception);
+				if (!isExpectedStreamShutdown(processToRead, exception, false)) {
+					Lg2.LOGGER.warn("YouTube frame reader stopped for session {}", this.sessionId, exception);
+				}
 			} finally {
 				synchronized (this.lock) {
 					if (this.process == processToRead) {
@@ -686,6 +774,66 @@ public final class MonitorYoutubeRelayClient {
 						}
 						this.process = null;
 						this.readerThread = null;
+					}
+				}
+				processToRead.destroy();
+			}
+		}
+
+		private void ensurePrefetchStarted() {
+			try {
+				synchronized (this.lock) {
+					startPrefetchLocked();
+				}
+			} catch (IOException exception) {
+				Lg2.LOGGER.debug("Failed to start YouTube prefetch for session {}", this.sessionId, exception);
+			}
+		}
+
+		private void startPrefetchLocked() throws IOException {
+			if (this.live || this.streamUrl.isBlank() || closedOrUnloadedLocked() || this.prefetchCompleted) {
+				return;
+			}
+			if (this.prefetchProcess != null || (this.prefetchReaderThread != null && this.prefetchReaderThread.isAlive())) {
+				return;
+			}
+			ProcessBuilder builder = new ProcessBuilder(sequentialPrefetchCommand(this.streamUrl));
+			builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+			Process startedProcess = builder.start();
+			this.prefetchProcess = startedProcess;
+			Thread thread = new Thread(() -> readPrefetchFrames(startedProcess), "lg2-youtube-prefetch-" + this.sessionId);
+			thread.setDaemon(true);
+			this.prefetchReaderThread = thread;
+			thread.start();
+		}
+
+		private void readPrefetchFrames(Process processToRead) {
+			long[] nextPositionMs = {0L};
+			boolean completedNormally = false;
+			try (InputStream stream = processToRead.getInputStream()) {
+				readJpegFrames(stream, frameBytes -> {
+					long positionMs = nextPositionMs[0];
+					nextPositionMs[0] += PREVIEW_CACHE_BUCKET_MS;
+					synchronized (this.lock) {
+						if (this.prefetchProcess != processToRead) {
+							return;
+						}
+						cachePreviewFrameLocked(positionMs, frameBytes, true);
+					}
+				});
+				completedNormally = true;
+			} catch (IOException exception) {
+				if (!isExpectedStreamShutdown(processToRead, exception, true)) {
+					Lg2.LOGGER.debug("YouTube prefetch reader stopped for session {}", this.sessionId, exception);
+				}
+			} finally {
+				synchronized (this.lock) {
+					if (this.prefetchProcess == processToRead) {
+						this.prefetchProcess = null;
+						this.prefetchReaderThread = null;
+						if (completedNormally) {
+							this.prefetchCompleted = true;
+						}
 					}
 				}
 				processToRead.destroy();
@@ -704,6 +852,102 @@ public final class MonitorYoutubeRelayClient {
 			return Math.max(0L, position);
 		}
 
+		private boolean applyCachedPreviewLocked(long positionMs) throws IOException {
+			byte[] previewBytes = findNearestCachedPreviewBytesLocked(positionMs);
+			if (previewBytes == null) {
+				return false;
+			}
+			this.latestFrame = decodeImageBytes(previewBytes);
+			this.frameSequence++;
+			return true;
+		}
+
+		private byte[] findNearestCachedPreviewBytesLocked(long targetPositionMs) {
+			if (this.cachedPreviewFrames.isEmpty()) {
+				return null;
+			}
+			Map.Entry<Long, byte[]> floor = this.cachedPreviewFrames.floorEntry(targetPositionMs);
+			Map.Entry<Long, byte[]> ceiling = this.cachedPreviewFrames.ceilingEntry(targetPositionMs);
+			Map.Entry<Long, byte[]> candidate = null;
+			if (floor != null && ceiling != null) {
+				long floorDistance = Math.abs(targetPositionMs - floor.getKey());
+				long ceilingDistance = Math.abs(ceiling.getKey() - targetPositionMs);
+				candidate = floorDistance <= ceilingDistance ? floor : ceiling;
+			} else if (floor != null) {
+				candidate = floor;
+			} else if (ceiling != null) {
+				candidate = ceiling;
+			}
+			if (candidate == null || Math.abs(candidate.getKey() - targetPositionMs) > CACHE_LOOKUP_TOLERANCE_MS) {
+				return null;
+			}
+			return candidate.getValue();
+		}
+
+		private boolean shouldExtendBufferedRangeLocked(long positionMs) {
+			long bucketMs = normalizeBucketMs(positionMs);
+			if (!this.bufferedFromStart) {
+				return bucketMs == 0L;
+			}
+			return bucketMs <= this.bufferedEndMs + CONTIGUOUS_BUFFER_TOLERANCE_MS;
+		}
+
+		private void cachePreviewFrameLocked(long positionMs, byte[] frameBytes, boolean extendBufferedRange) {
+			if (this.live || frameBytes == null || frameBytes.length == 0) {
+				return;
+			}
+			long bucketMs = normalizeBucketMs(positionMs);
+			if (!this.cachedPreviewFrames.containsKey(bucketMs)) {
+				this.cachedPreviewFrames.put(bucketMs, Arrays.copyOf(frameBytes, frameBytes.length));
+			}
+			while (this.cachedPreviewFrames.size() > MAX_CACHED_PREVIEW_FRAMES) {
+				this.cachedPreviewFrames.pollFirstEntry();
+			}
+			if (extendBufferedRange) {
+				advanceBufferedRangeLocked(bucketMs);
+			}
+		}
+
+		private void advanceBufferedRangeLocked(long bucketMs) {
+			if (!this.bufferedFromStart) {
+				if (bucketMs != 0L) {
+					return;
+				}
+				this.bufferedFromStart = true;
+				this.bufferedStartMs = 0L;
+				this.bufferedEndMs = 0L;
+				return;
+			}
+			if (bucketMs <= this.bufferedEndMs + CONTIGUOUS_BUFFER_TOLERANCE_MS) {
+				this.bufferedStartMs = 0L;
+				this.bufferedEndMs = Math.max(this.bufferedEndMs, bucketMs);
+			}
+		}
+
+		private boolean closedOrUnloadedLocked() {
+			return Objects.equals(this.status, "CLOSED") || this.streamUrl.isBlank();
+		}
+
+		private long normalizeBucketMs(long positionMs) {
+			return Math.max(0L, (positionMs / PREVIEW_CACHE_BUCKET_MS) * PREVIEW_CACHE_BUCKET_MS);
+		}
+
+		private boolean isExpectedStreamShutdown(Process processToRead, IOException exception, boolean prefetch) {
+			String message = exception.getMessage();
+			synchronized (this.lock) {
+				if (Thread.currentThread().isInterrupted()) {
+					return true;
+				}
+				if (message != null && message.contains("Stream closed")) {
+					return true;
+				}
+				if (prefetch) {
+					return this.prefetchProcess != processToRead || Objects.equals(this.status, "CLOSED");
+				}
+				return this.process != processToRead || Objects.equals(this.status, "PAUSED") || Objects.equals(this.status, "CLOSED");
+			}
+		}
+
 		private void stopLocked() {
 			Process running = this.process;
 			this.process = null;
@@ -713,9 +957,28 @@ public final class MonitorYoutubeRelayClient {
 			}
 			running.destroy();
 			try {
-				if (!running.waitFor(2L, TimeUnit.SECONDS)) {
+				if (!running.waitFor(PROCESS_STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
 					running.destroyForcibly();
-					running.waitFor(2L, TimeUnit.SECONDS);
+					running.waitFor(PROCESS_STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+				}
+			} catch (InterruptedException exception) {
+				Thread.currentThread().interrupt();
+				running.destroyForcibly();
+			}
+		}
+
+		private void stopPrefetchLocked() {
+			Process running = this.prefetchProcess;
+			this.prefetchProcess = null;
+			this.prefetchReaderThread = null;
+			if (running == null) {
+				return;
+			}
+			running.destroy();
+			try {
+				if (!running.waitFor(PROCESS_STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+					running.destroyForcibly();
+					running.waitFor(PROCESS_STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS);
 				}
 			} catch (InterruptedException exception) {
 				Thread.currentThread().interrupt();
