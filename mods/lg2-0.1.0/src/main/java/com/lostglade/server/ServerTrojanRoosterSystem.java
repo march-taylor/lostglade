@@ -401,6 +401,7 @@ public final class ServerTrojanRoosterSystem {
 
 	private static void tickAmbushIdle(ServerLevel level, Chicken chicken, TrojanRoosterState state) {
 		long now = level.getGameTime();
+		stopThemeIfTargetDied(level, state);
 		ServerPlayer target = resolvePlayer(level, state.targetPlayerId);
 		if (target == null) {
 			vanish(level, chicken, state);
@@ -441,6 +442,7 @@ public final class ServerTrojanRoosterSystem {
 
 	private static void tickAmbushSeenDelay(ServerLevel level, Chicken chicken, TrojanRoosterState state) {
 		long now = level.getGameTime();
+		stopThemeIfTargetDied(level, state);
 		ServerPlayer target = resolvePlayer(level, state.targetPlayerId);
 		if (target == null) {
 			vanish(level, chicken, state);
@@ -473,6 +475,7 @@ public final class ServerTrojanRoosterSystem {
 
 	private static void tickChasing(ServerLevel level, Chicken chicken, TrojanRoosterState state) {
 		long now = level.getGameTime();
+		stopThemeIfTargetDied(level, state);
 		ServerPlayer target = resolvePlayer(level, state.targetPlayerId);
 		if (target == null) {
 			vanish(level, chicken, state);
@@ -796,6 +799,18 @@ public final class ServerTrojanRoosterSystem {
 		stopThemeForPlayer(target);
 		target.connection.disconnect(Component.literal(BAN_REASON));
 		state.themePlaying = false;
+	}
+
+	private static void stopThemeIfTargetDied(ServerLevel level, TrojanRoosterState state) {
+		if (state == null || !state.themePlaying || state.targetPlayerId == null) {
+			return;
+		}
+
+		ServerPlayer rawPlayer = level.getServer().getPlayerList().getPlayer(state.targetPlayerId);
+		if (rawPlayer != null && rawPlayer.level() == level && !rawPlayer.isAlive()) {
+			stopThemeForPlayer(rawPlayer);
+			state.themePlaying = false;
+		}
 	}
 
 	private static void stopThemeForPlayer(ServerPlayer player) {
