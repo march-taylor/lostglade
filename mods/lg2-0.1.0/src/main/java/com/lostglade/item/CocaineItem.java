@@ -2,6 +2,7 @@ package com.lostglade.item;
 
 import com.lostglade.Lg2;
 import com.lostglade.config.RaceConfig;
+import com.lostglade.config.RaceConfig.RaceAbilitySlot;
 import com.lostglade.server.CocaineHallucinationSystem;
 import com.lostglade.server.ServerRaceSystem;
 import eu.pb4.polymer.core.api.item.SimplePolymerItem;
@@ -263,7 +264,9 @@ public final class CocaineItem extends SimplePolymerItem {
 
 	private static boolean isMrCartel(ServerPlayer player) {
 		Optional<RaceConfig.PlayerRaceConfig> raceOptional = ServerRaceSystem.getRace(player);
-		return raceOptional.isPresent() && MISTER_CARTEL_49_RACE_ID.equals(raceOptional.get().id);
+		return raceOptional.isPresent()
+				&& MISTER_CARTEL_49_RACE_ID.equals(raceOptional.get().id)
+				&& ServerRaceSystem.hasUnlockedAbility(player, RaceAbilitySlot.SHNYAGA);
 	}
 
 	private static void tryTriggerHallucination(ServerPlayer player, ServerLevel level) {

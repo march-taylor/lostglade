@@ -16,6 +16,7 @@ import java.util.List;
 public final class RaceConfig {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve(Lg2.MOD_ID + "-races.json");
+	private static final int MAX_PRICE_BITCOINS = 1_000_000;
 
 	private static ConfigData data = ConfigData.defaults();
 
@@ -133,6 +134,7 @@ public final class RaceConfig {
 		changed |= normalizeString(ability.abilityId, slot.defaultAbilityId, value -> ability.abilityId = value);
 		changed |= normalizeString(ability.name, slot.defaultDisplayName, value -> ability.name = value);
 		changed |= normalizeString(ability.description, "", value -> ability.description = value);
+		changed |= normalizePrice(ability.priceBitcoins, value -> ability.priceBitcoins = value);
 		changed |= normalizeNonNegative(ability.cooldownSeconds, value -> ability.cooldownSeconds = value);
 		changed |= normalizeNonNegative(ability.activationRangeBlocks, value -> ability.activationRangeBlocks = value);
 		changed |= normalizeNonNegative(ability.durationSeconds, value -> ability.durationSeconds = value);
@@ -180,6 +182,15 @@ public final class RaceConfig {
 		return true;
 	}
 
+	private static boolean normalizePrice(int value, java.util.function.IntConsumer setter) {
+		int normalized = Math.max(0, Math.min(MAX_PRICE_BITCOINS, value));
+		if (value == normalized) {
+			return false;
+		}
+		setter.accept(normalized);
+		return true;
+	}
+
 	private static boolean normalizeString(String value, String fallback, java.util.function.Consumer<String> setter) {
 		String normalized = value == null ? fallback : value.trim();
 		if (normalized.isEmpty() && !fallback.isEmpty()) {
@@ -197,18 +208,20 @@ public final class RaceConfig {
 	}
 
 	public enum RaceAbilitySlot {
-		ATTACK("attack_template", "Атака"),
-		DEFENSE("defense_template", "Защита"),
-		UNIQUE_ABILITY("unique_ability_template", "Уникальная способность"),
-		SHNYAGA("shnyaga_template", "Шняга"),
-		STOCK("stock_template", "Сток");
+		ATTACK("attack_template", "Атака", 300),
+		DEFENSE("defense_template", "Защита", 600),
+		UNIQUE_ABILITY("unique_ability_template", "Уникальная способность", 1000),
+		SHNYAGA("shnyaga_template", "Шняга", 1500),
+		STOCK("stock_template", "Сток", 0);
 
 		public final String defaultAbilityId;
 		public final String defaultDisplayName;
+		public final int defaultPriceBitcoins;
 
-		RaceAbilitySlot(String defaultAbilityId, String defaultDisplayName) {
+		RaceAbilitySlot(String defaultAbilityId, String defaultDisplayName, int defaultPriceBitcoins) {
 			this.defaultAbilityId = defaultAbilityId;
 			this.defaultDisplayName = defaultDisplayName;
+			this.defaultPriceBitcoins = defaultPriceBitcoins;
 		}
 	}
 
@@ -250,6 +263,7 @@ public final class RaceConfig {
 		public String abilityId;
 		public String name;
 		public String description = "";
+		public int priceBitcoins = 0;
 		public double cooldownSeconds = 0.0D;
 		public double activationRangeBlocks = 0.0D;
 		public double durationSeconds = 0.0D;
@@ -276,6 +290,7 @@ public final class RaceConfig {
 			RaceAbilityConfig config = new RaceAbilityConfig();
 			config.abilityId = slot.defaultAbilityId;
 			config.name = slot.defaultDisplayName;
+			config.priceBitcoins = slot.defaultPriceBitcoins;
 			return config;
 		}
 	}

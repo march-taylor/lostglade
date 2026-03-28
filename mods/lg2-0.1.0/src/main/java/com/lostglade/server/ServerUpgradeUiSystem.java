@@ -5,6 +5,9 @@ import com.google.gson.GsonBuilder;
 import com.mojang.datafixers.util.Pair;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.lostglade.Lg2;
+import com.lostglade.config.RaceConfig;
+import com.lostglade.config.RaceConfig.RaceAbilityConfig;
+import com.lostglade.config.RaceConfig.RaceAbilitySlot;
 import com.lostglade.config.UpgradeUiConfig;
 import com.lostglade.item.ModItems;
 import com.lostglade.server.glitch.InventoryTextureShuffleGlitch;
@@ -66,6 +69,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 public final class ServerUpgradeUiSystem {
@@ -118,6 +122,19 @@ public final class ServerUpgradeUiSystem {
 	private static final float PURCHASE_BLOCKED_SOUND_PITCH = 1.0F;
 	private static final float PURCHASE_BLOCKED_FALLBACK_VOLUME = 0.75F;
 	private static final float PURCHASE_BLOCKED_FALLBACK_PITCH = 0.95F;
+	private static final String RACES_SCREEN_ID = "races";
+	private static final String RACE_ATTACK_BUTTON_ID = "attack";
+	private static final String RACE_DEFENSE_BUTTON_ID = "defense";
+	private static final String RACE_ABILITY_BUTTON_ID = "ability";
+	private static final String RACE_SHNYAGA_BUTTON_ID = "shnyaga";
+	private static final int RACE_ATTACK_SLOT = 37;
+	private static final int RACE_DEFENSE_SLOT = 39;
+	private static final int RACE_ABILITY_SLOT = 41;
+	private static final int RACE_SHNYAGA_SLOT = 43;
+	private static final int RACE_ATTACK_COLOR = 0xE05555;
+	private static final int RACE_DEFENSE_COLOR = 0x5796FF;
+	private static final int RACE_ABILITY_COLOR = 0xB06CFF;
+	private static final int RACE_SHNYAGA_COLOR = 0x5FCB72;
 	private static final String[] ERAS_PROGRESS_GLYPHS = createGlyphSequence(
 			ERAS_PROGRESS_GLYPHS_BASE,
 			ERAS_PROGRESS_FRAME_COUNT
@@ -344,6 +361,15 @@ public final class ServerUpgradeUiSystem {
 				ids.add(button.upgradeId);
 			}
 		}
+		RaceConfig.ConfigData raceConfig = RaceConfig.get();
+		if (raceConfig != null && raceConfig.races != null) {
+			for (RaceConfig.PlayerRaceConfig race : raceConfig.races) {
+				collectRaceUpgradeId(ids, race == null ? null : race.attack);
+				collectRaceUpgradeId(ids, race == null ? null : race.defense);
+				collectRaceUpgradeId(ids, race == null ? null : race.uniqueAbility);
+				collectRaceUpgradeId(ids, race == null ? null : race.shnyaga);
+			}
+		}
 		return ids;
 	}
 
@@ -383,7 +409,7 @@ public final class ServerUpgradeUiSystem {
 			}
 		}
 
-		for (Map.Entry<String, UpgradeUiConfig.ButtonConfig> entry : screen.buttons.entrySet()) {
+		for (Map.Entry<String, UpgradeUiConfig.ButtonConfig> entry : resolveScreenButtons(viewer, screenId, screen).entrySet()) {
 			String buttonId = entry.getKey();
 			UpgradeUiConfig.ButtonConfig button = entry.getValue();
 			int anchorSlot = getButtonAnchorSlot(screenId, buttonId, button, hasPack);
@@ -405,6 +431,154 @@ public final class ServerUpgradeUiSystem {
 			ItemStack stack = buildButtonStack(viewer, screenId, buttonId, button, hasPack);
 			container.setItem(displaySlot, stack);
 		}
+	}
+
+	private static Map<String, UpgradeUiConfig.ButtonConfig> resolveScreenButtons(
+			ServerPlayer viewer,
+			String screenId,
+			UpgradeUiConfig.ScreenConfig screen
+	) {
+		LinkedHashMap<String, UpgradeUiConfig.ButtonConfig> buttons = new LinkedHashMap<>();
+		if (screen != null && screen.buttons != null) {
+			buttons.putAll(screen.buttons);
+		}
+		if (RACES_SCREEN_ID.equals(screenId)) {
+			applyRaceButtons(viewer, buttons);
+		}
+		return buttons;
+	}
+
+	private static void applyRaceButtons(ServerPlayer viewer, Map<String, UpgradeUiConfig.ButtonConfig> buttons) {
+		if (buttons == null) {
+			return;
+		}
+
+		buttons.remove("budget");
+		buttons.remove("medium");
+		buttons.remove("expensive");
+		buttons.remove("elite");
+
+		Optional<RaceConfig.PlayerRaceConfig> raceOptional = ServerRaceSystem.getRace(viewer);
+		if (raceOptional.isEmpty()) {
+			buttons.remove(RACE_ATTACK_BUTTON_ID);
+			buttons.remove(RACE_DEFENSE_BUTTON_ID);
+			buttons.remove(RACE_ABILITY_BUTTON_ID);
+			buttons.remove(RACE_SHNYAGA_BUTTON_ID);
+			return;
+		}
+
+		RaceConfig.PlayerRaceConfig race = raceOptional.get();
+		putRaceButton(buttons, RACE_ATTACK_BUTTON_ID, race.attack, RaceAbilitySlot.ATTACK);
+		putRaceButton(buttons, RACE_DEFENSE_BUTTON_ID, race.defense, RaceAbilitySlot.DEFENSE);
+		putRaceButton(buttons, RACE_ABILITY_BUTTON_ID, race.uniqueAbility, RaceAbilitySlot.UNIQUE_ABILITY);
+		putRaceButton(buttons, RACE_SHNYAGA_BUTTON_ID, race.shnyaga, RaceAbilitySlot.SHNYAGA);
+	}
+
+	private static void putRaceButton(
+			Map<String, UpgradeUiConfig.ButtonConfig> buttons,
+			String buttonId,
+			RaceAbilityConfig ability,
+			RaceAbilitySlot slot
+	) {
+		if (buttons == null) {
+			return;
+		}
+		if (ability == null || !ability.enabled) {
+			buttons.remove(buttonId);
+			return;
+		}
+
+		UpgradeUiConfig.ButtonConfig template = buttons.get(buttonId);
+		UpgradeUiConfig.ButtonConfig button = new UpgradeUiConfig.ButtonConfig();
+		button.enabled = true;
+		button.slot = template == null ? defaultRaceButtonSlot(buttonId) : template.slot;
+		button.hitboxWidth = template == null ? 1 : Math.max(1, template.hitboxWidth);
+		button.hitboxHeight = template == null ? 1 : Math.max(1, template.hitboxHeight);
+		button.type = UpgradeUiConfig.ButtonType.PURCHASE_UPGRADE.id;
+		button.targetScreenId = "";
+		button.upgradeId = safeString(ability.abilityId).trim();
+		button.pricesBitcoins = new ArrayList<>(List.of(Math.max(0, ability.priceBitcoins)));
+		button.icon = raceButtonIcon(slot);
+		button.lockedIcon = copyIcon(UpgradeUiConfig.IconConfig.defaultLocked());
+		button.maxedIcon = raceButtonMaxedIcon(slot);
+		button.name = singleValueText(nonBlank(ability.name, defaultRaceButtonName(slot)));
+		button.lore = singleValueLines(List.of(nonBlank(ability.description, nonBlank(ability.name, defaultRaceButtonName(slot)))));
+		button.requirements = new ArrayList<>();
+		button.requirementGroups = new ArrayList<>();
+		button.closeAfterClick = false;
+		buttons.put(buttonId, button);
+	}
+
+	private static void collectRaceUpgradeId(Collection<String> ids, RaceAbilityConfig ability) {
+		if (ids == null || ability == null || ability.abilityId == null || ability.abilityId.isBlank() || !ability.enabled) {
+			return;
+		}
+		ids.add(ability.abilityId.trim());
+	}
+
+	private static UpgradeUiConfig.LocalizedText singleValueText(String value) {
+		UpgradeUiConfig.LocalizedText text = new UpgradeUiConfig.LocalizedText();
+		text.values.put("default", value);
+		return text;
+	}
+
+	private static UpgradeUiConfig.LocalizedLines singleValueLines(List<String> lines) {
+		UpgradeUiConfig.LocalizedLines localized = new UpgradeUiConfig.LocalizedLines();
+		localized.values.put("default", new ArrayList<>(lines));
+		return localized;
+	}
+
+	private static UpgradeUiConfig.IconConfig raceButtonIcon(RaceAbilitySlot slot) {
+		UpgradeUiConfig.IconConfig icon = new UpgradeUiConfig.IconConfig();
+		icon.fallbackItem = switch (slot) {
+			case ATTACK -> "minecraft:iron_sword";
+			case DEFENSE -> "minecraft:shield";
+			case UNIQUE_ABILITY -> "minecraft:amethyst_shard";
+			case SHNYAGA -> "minecraft:slime_ball";
+			case STOCK -> "minecraft:paper";
+		};
+		icon.packModel = "lg2:gui/button/upgrade";
+		icon.count = 1;
+		icon.foil = false;
+		return icon;
+	}
+
+	private static UpgradeUiConfig.IconConfig raceButtonMaxedIcon(RaceAbilitySlot slot) {
+		UpgradeUiConfig.IconConfig icon = raceButtonIcon(slot);
+		icon.foil = true;
+		return icon;
+	}
+
+	private static UpgradeUiConfig.IconConfig copyIcon(UpgradeUiConfig.IconConfig source) {
+		UpgradeUiConfig.IconConfig icon = new UpgradeUiConfig.IconConfig();
+		if (source == null) {
+			return icon;
+		}
+		icon.fallbackItem = source.fallbackItem;
+		icon.packModel = source.packModel;
+		icon.count = source.count;
+		icon.foil = source.foil;
+		return icon;
+	}
+
+	private static int defaultRaceButtonSlot(String buttonId) {
+		return switch (safeString(buttonId)) {
+			case RACE_ATTACK_BUTTON_ID -> RACE_ATTACK_SLOT;
+			case RACE_DEFENSE_BUTTON_ID -> RACE_DEFENSE_SLOT;
+			case RACE_ABILITY_BUTTON_ID -> RACE_ABILITY_SLOT;
+			case RACE_SHNYAGA_BUTTON_ID -> RACE_SHNYAGA_SLOT;
+			default -> RACE_ATTACK_SLOT;
+		};
+	}
+
+	private static String defaultRaceButtonName(RaceAbilitySlot slot) {
+		return switch (slot) {
+			case ATTACK -> "Атака";
+			case DEFENSE -> "Защита";
+			case UNIQUE_ABILITY -> "Абилка";
+			case SHNYAGA -> "Шняга";
+			case STOCK -> "Сток";
+		};
 	}
 
 	private static int getButtonAnchorSlot(
@@ -459,7 +633,7 @@ public final class ServerUpgradeUiSystem {
 
 		ItemStack stack = createBaseStack(icon, hasPack);
 		Map<String, String> placeholders = buildPlaceholders(viewer, screenId, buttonId, button, state);
-		stack.set(DataComponents.CUSTOM_NAME, buildTooltipNameComponent(viewer, button, state, placeholders, useCustomTooltip));
+		stack.set(DataComponents.CUSTOM_NAME, buildTooltipNameComponent(viewer, screenId, buttonId, button, state, placeholders, useCustomTooltip));
 
 		List<Component> loreLines = buildTooltipLore(viewer, button, state, placeholders, useCustomTooltip);
 		if (!loreLines.isEmpty()) {
@@ -516,18 +690,37 @@ public final class ServerUpgradeUiSystem {
 
 	private static Component buildTooltipNameComponent(
 			ServerPlayer viewer,
+			String screenId,
+			String buttonId,
 			UpgradeUiConfig.ButtonConfig button,
 			ButtonState state,
 			Map<String, String> placeholders,
 			boolean hasPack
 	) {
 		String name = applyPlaceholders(resolveLocalizedText(viewer, button.name.values), placeholders);
-		int color = switch (state) {
+		int color = resolveButtonNameColor(screenId, buttonId, state);
+		return styledTooltipText(name, color, true, hasPack);
+	}
+
+	private static int resolveButtonNameColor(String screenId, String buttonId, ButtonState state) {
+		if (RACES_SCREEN_ID.equals(screenId)) {
+			Integer raceColor = switch (safeString(buttonId)) {
+				case RACE_ATTACK_BUTTON_ID -> RACE_ATTACK_COLOR;
+				case RACE_DEFENSE_BUTTON_ID -> RACE_DEFENSE_COLOR;
+				case RACE_ABILITY_BUTTON_ID -> RACE_ABILITY_COLOR;
+				case RACE_SHNYAGA_BUTTON_ID -> RACE_SHNYAGA_COLOR;
+				default -> null;
+			};
+			if (raceColor != null) {
+				return raceColor;
+			}
+		}
+
+		return switch (state) {
 			case LOCKED -> 0xB6C0D0;
 			case MAXED -> 0xA8F2C0;
 			case ACTIVE -> 0xF4E3BA;
 		};
-		return styledTooltipText(name, color, true, hasPack);
 	}
 
 	private static List<Component> buildTooltipLore(
@@ -766,6 +959,10 @@ public final class ServerUpgradeUiSystem {
 		if (upgradeId == null || upgradeId.isBlank()) {
 			return "";
 		}
+		RaceAbilityConfig raceAbility = findRaceAbilityByUpgradeId(player, upgradeId);
+		if (raceAbility != null && raceAbility.name != null && !raceAbility.name.isBlank()) {
+			return raceAbility.name;
+		}
 		for (UpgradeUiConfig.ScreenConfig screen : UpgradeUiConfig.get().screens.values()) {
 			if (screen == null || screen.buttons == null) {
 				continue;
@@ -781,6 +978,52 @@ public final class ServerUpgradeUiSystem {
 			}
 		}
 		return upgradeId.replace('_', ' ');
+	}
+
+	private static RaceAbilityConfig findRaceAbilityByUpgradeId(ServerPlayer player, String upgradeId) {
+		String normalizedUpgradeId = safeString(upgradeId).trim();
+		if (normalizedUpgradeId.isEmpty()) {
+			return null;
+		}
+
+		Optional<RaceConfig.PlayerRaceConfig> playerRace = ServerRaceSystem.getRace(player);
+		if (playerRace.isPresent()) {
+			RaceAbilityConfig direct = findRaceAbilityByUpgradeId(playerRace.get(), normalizedUpgradeId);
+			if (direct != null) {
+				return direct;
+			}
+		}
+
+		RaceConfig.ConfigData config = RaceConfig.get();
+		if (config == null || config.races == null) {
+			return null;
+		}
+		for (RaceConfig.PlayerRaceConfig race : config.races) {
+			RaceAbilityConfig ability = findRaceAbilityByUpgradeId(race, normalizedUpgradeId);
+			if (ability != null) {
+				return ability;
+			}
+		}
+		return null;
+	}
+
+	private static RaceAbilityConfig findRaceAbilityByUpgradeId(RaceConfig.PlayerRaceConfig race, String upgradeId) {
+		if (race == null || upgradeId == null || upgradeId.isBlank()) {
+			return null;
+		}
+		if (race.attack != null && upgradeId.equals(safeString(race.attack.abilityId).trim())) {
+			return race.attack;
+		}
+		if (race.defense != null && upgradeId.equals(safeString(race.defense.abilityId).trim())) {
+			return race.defense;
+		}
+		if (race.uniqueAbility != null && upgradeId.equals(safeString(race.uniqueAbility.abilityId).trim())) {
+			return race.uniqueAbility;
+		}
+		if (race.shnyaga != null && upgradeId.equals(safeString(race.shnyaga.abilityId).trim())) {
+			return race.shnyaga;
+		}
+		return null;
 	}
 
 	private static ItemStack createBaseStack(UpgradeUiConfig.IconConfig icon, boolean hasPack) {
@@ -845,7 +1088,7 @@ public final class ServerUpgradeUiSystem {
 	}
 
 	private static boolean handleScreenSlotClick(ServerPlayer player, String screenId, int slot, boolean hasPack) {
-		Map.Entry<String, UpgradeUiConfig.ButtonConfig> matched = findMatchedButton(screenId, slot, hasPack);
+		Map.Entry<String, UpgradeUiConfig.ButtonConfig> matched = findMatchedButton(player, screenId, slot, hasPack);
 		if (matched == null) {
 			return false;
 		}
@@ -892,13 +1135,18 @@ public final class ServerUpgradeUiSystem {
 		}
 	}
 
-	private static Map.Entry<String, UpgradeUiConfig.ButtonConfig> findMatchedButton(String screenId, int slot, boolean hasPack) {
+	private static Map.Entry<String, UpgradeUiConfig.ButtonConfig> findMatchedButton(
+			ServerPlayer viewer,
+			String screenId,
+			int slot,
+			boolean hasPack
+	) {
 		UpgradeUiConfig.ScreenConfig screen = UpgradeUiConfig.get().screens.get(screenId);
 		if (screen == null) {
 			return null;
 		}
 
-		for (Map.Entry<String, UpgradeUiConfig.ButtonConfig> entry : screen.buttons.entrySet()) {
+		for (Map.Entry<String, UpgradeUiConfig.ButtonConfig> entry : resolveScreenButtons(viewer, screenId, screen).entrySet()) {
 			UpgradeUiConfig.ButtonConfig button = entry.getValue();
 			if (button != null
 					&& button.enabled
@@ -918,7 +1166,7 @@ public final class ServerUpgradeUiSystem {
 			int topSlotCount,
 			boolean hasPack
 	) {
-		Map.Entry<String, UpgradeUiConfig.ButtonConfig> matched = findMatchedButton(screenId, menuSlot, hasPack);
+		Map.Entry<String, UpgradeUiConfig.ButtonConfig> matched = findMatchedButton(viewer, screenId, menuSlot, hasPack);
 		if (matched == null) {
 			return ItemStack.EMPTY;
 		}
@@ -1969,6 +2217,11 @@ public final class ServerUpgradeUiSystem {
 
 	private static String safeString(String value) {
 		return value == null ? "" : value;
+	}
+
+	private static String nonBlank(String value, String fallback) {
+		String normalized = safeString(value).trim();
+		return normalized.isEmpty() ? fallback : normalized;
 	}
 
 	private enum ButtonState {

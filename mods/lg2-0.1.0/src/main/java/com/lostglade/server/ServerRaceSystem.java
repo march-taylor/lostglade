@@ -527,6 +527,10 @@ public final class ServerRaceSystem {
 			player.sendSystemMessage(Component.translatable("message.lg2.race.ability_disabled", Component.literal(ability.name)));
 			return 0;
 		}
+		if (!hasUnlockedAbility(player, race, slot)) {
+			player.sendSystemMessage(Component.translatable("message.lg2.race.ability_not_purchased", Component.literal(ability.name)));
+			return 0;
+		}
 
 		if (slot == RaceAbilitySlot.ATTACK && MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id))) {
 			return useMrCartelAttack(player, race, ability);
@@ -560,6 +564,11 @@ public final class ServerRaceSystem {
 		return getRace(player).map(race -> getAbility(race, slot));
 	}
 
+	public static boolean hasUnlockedAbility(ServerPlayer player, RaceAbilitySlot slot) {
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		return raceOptional.isPresent() && hasUnlockedAbility(player, raceOptional.get(), slot);
+	}
+
 	public static RaceAbilityConfig getAbility(PlayerRaceConfig race, RaceAbilitySlot slot) {
 		return switch (slot) {
 			case ATTACK -> race.attack;
@@ -568,6 +577,25 @@ public final class ServerRaceSystem {
 			case SHNYAGA -> race.shnyaga;
 			case STOCK -> race.stock;
 		};
+	}
+
+	private static boolean hasUnlockedAbility(ServerPlayer player, PlayerRaceConfig race, RaceAbilitySlot slot) {
+		if (slot == null) {
+			return false;
+		}
+		RaceAbilityConfig ability = getAbility(race, slot);
+		if (ability == null || !ability.enabled) {
+			return false;
+		}
+		if (slot == RaceAbilitySlot.STOCK) {
+			return true;
+		}
+
+		String upgradeId = ability.abilityId == null ? "" : ability.abilityId.trim();
+		if (upgradeId.isEmpty()) {
+			return false;
+		}
+		return ServerUpgradeUiSystem.hasUpgrade(player, upgradeId);
 	}
 
 	public static Collection<PlayerRaceConfig> getAllRaces() {
@@ -587,7 +615,10 @@ public final class ServerRaceSystem {
 		}
 
 		PlayerRaceConfig race = raceOptional.get();
-		if (!MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id)) || race.shnyaga == null || !race.shnyaga.enabled) {
+		if (!MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id))
+				|| race.shnyaga == null
+				|| !race.shnyaga.enabled
+				|| !hasUnlockedAbility(player, race, RaceAbilitySlot.SHNYAGA)) {
 			return;
 		}
 
@@ -610,7 +641,10 @@ public final class ServerRaceSystem {
 		}
 
 		PlayerRaceConfig race = raceOptional.get();
-		if (!MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id)) || race.shnyaga == null || !race.shnyaga.enabled) {
+		if (!MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id))
+				|| race.shnyaga == null
+				|| !race.shnyaga.enabled
+				|| !hasUnlockedAbility(player, race, RaceAbilitySlot.SHNYAGA)) {
 			return InteractionResult.PASS;
 		}
 

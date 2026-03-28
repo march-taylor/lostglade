@@ -2,6 +2,7 @@ package com.lostglade.item;
 
 import com.lostglade.Lg2;
 import com.lostglade.config.RaceConfig;
+import com.lostglade.config.RaceConfig.RaceAbilitySlot;
 import com.lostglade.server.ServerRaceSystem;
 import eu.pb4.polymer.core.api.item.SimplePolymerItem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
@@ -252,7 +253,10 @@ public final class TubochkaItem extends SimplePolymerItem {
 
 		double burnSeconds = DEFAULT_BURN_SECONDS;
 		Optional<RaceConfig.PlayerRaceConfig> raceOptional = ServerRaceSystem.getRace(player);
-		if (raceOptional.isPresent() && raceOptional.get().shnyaga != null && raceOptional.get().shnyaga.tubochkaBurnSeconds > 0.0D) {
+		if (raceOptional.isPresent()
+				&& ServerRaceSystem.hasUnlockedAbility(player, RaceAbilitySlot.SHNYAGA)
+				&& raceOptional.get().shnyaga != null
+				&& raceOptional.get().shnyaga.tubochkaBurnSeconds > 0.0D) {
 			burnSeconds = raceOptional.get().shnyaga.tubochkaBurnSeconds;
 		}
 		long totalTicks = Math.max(1L, Math.round(burnSeconds * 20.0D));
@@ -473,13 +477,17 @@ public final class TubochkaItem extends SimplePolymerItem {
 
 	private static boolean isMrCartel(ServerPlayer player) {
 		Optional<RaceConfig.PlayerRaceConfig> raceOptional = ServerRaceSystem.getRace(player);
-		return raceOptional.isPresent() && MISTER_CARTEL_49_RACE_ID.equals(raceOptional.get().id);
+		return raceOptional.isPresent()
+				&& MISTER_CARTEL_49_RACE_ID.equals(raceOptional.get().id)
+				&& ServerRaceSystem.hasUnlockedAbility(player, RaceAbilitySlot.SHNYAGA);
 	}
 
 	private static int resolveMaxReleaseSmokeParticles(LivingEntity entity) {
 		if (entity instanceof ServerPlayer player) {
 			Optional<RaceConfig.PlayerRaceConfig> raceOptional = ServerRaceSystem.getRace(player);
-			if (raceOptional.isPresent() && raceOptional.get().shnyaga != null) {
+			if (raceOptional.isPresent()
+					&& ServerRaceSystem.hasUnlockedAbility(player, RaceAbilitySlot.SHNYAGA)
+					&& raceOptional.get().shnyaga != null) {
 				return Math.max(0, (int) Math.round(raceOptional.get().shnyaga.tubochkaMaxReleaseSmokeParticles));
 			}
 		}
@@ -516,4 +524,3 @@ public final class TubochkaItem extends SimplePolymerItem {
 	private record TubochkaNauseaState(int releaseCount, long untilTick) {
 	}
 }
-
