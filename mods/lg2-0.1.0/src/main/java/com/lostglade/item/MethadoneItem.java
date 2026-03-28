@@ -93,9 +93,12 @@ public final class MethadoneItem extends SimplePolymerItem {
     private static final float PACK_SOUND_PITCH = 1.0F;
     private static final float FALLBACK_SOUND_PITCH = 1.0F;
     private static final int ACID_SKY_PHASE_INTERVAL_TICKS = 4;
-    private static final int ACID_SKY_TRACKED_CHUNK_REFRESH_INTERVAL_TICKS = 20;
+    private static final int ACID_SKY_TRACKED_CHUNK_REFRESH_INTERVAL_TICKS = 60;
+    private static final int ACID_SKY_CHUNK_BATCH_SIZE = 48;
+    private static final int METHADONE_FORCED_TIME_INTERVAL_TICKS = 20;
     private static final long METHADONE_FORCED_DAY_TIME = 6000L;
     private static final long[] EMPTY_CHUNK_KEYS = new long[0];
+    private static final ChunkPos[] EMPTY_CHUNK_POSITIONS = new ChunkPos[0];
     private static final List<ResourceKey<Biome>> ACID_SKY_BIOME_KEYS = IntStream.range(0, 16)
             .mapToObj(index -> acidSkyBiomeKey("acid_sky_" + String.format(Locale.ROOT, "%02d", index)))
             .toList();
@@ -257,7 +260,6 @@ public final class MethadoneItem extends SimplePolymerItem {
                 return true;
             }
 
-            sendForcedMethadoneTime(player);
             updateAcidSky(player, state);
             return false;
         });
@@ -399,6 +401,7 @@ public final class MethadoneItem extends SimplePolymerItem {
         MethadoneSkyState state = ACID_SKY_STATES.computeIfAbsent(player.getUUID(), ignored -> new MethadoneSkyState());
         state.remainingTicks = durationTicks;
         state.trackedChunkRefreshTicks = ACID_SKY_TRACKED_CHUNK_REFRESH_INTERVAL_TICKS;
+        state.nextForcedTimeTick = Long.MIN_VALUE;
     }
 
     private static void updateAcidSky(ServerPlayer player, MethadoneSkyState state) {
@@ -407,13 +410,23 @@ public final class MethadoneItem extends SimplePolymerItem {
         }
 
         if (!level.dimensionType().hasSkyLight()) {
+            if (state.timeForcedActive) {
+                restoreActualTime(player, level);
+                state.timeForcedActive = false;
+            }
             state.overriddenDimension = level.dimension();
             state.overriddenChunks.clear();
+            state.overriddenChunkKeys = EMPTY_CHUNK_KEYS;
+            state.overriddenChunkPositions = EMPTY_CHUNK_POSITIONS;
+            state.overriddenSectionCount = 0;
+            state.nextChunkBatchIndex = 0;
             state.currentPhaseIndex = 0;
             state.phaseTicks = 0;
             state.lastTrackedCenter = null;
             return;
         }
+
+        tickForcedTime(player, level, state);
 
         ChunkPos currentCenter = player.chunkPosition();
         boolean dimensionChanged = state.overriddenDimension != null && !state.overriddenDimension.equals(level.dimension());
@@ -439,6 +452,9 @@ public final class MethadoneItem extends SimplePolymerItem {
                 state.overriddenChunks.clear();
                 state.overriddenChunks.addAll(refreshedChunks);
                 state.overriddenChunkKeys = toChunkKeyArray(refreshedChunks);
+                state.overriddenChunkPositions = toChunkPosArray(state.overriddenChunkKeys, currentCenter);
+                state.overriddenSectionCount = level.getSectionsCount();
+                state.nextChunkBatchIndex = 0;
             }
             state.lastTrackedCenter = currentCenter;
             state.trackedChunkRefreshTicks = 0;
@@ -449,6 +465,7 @@ public final class MethadoneItem extends SimplePolymerItem {
         if (dimensionChanged) {
             state.currentPhaseIndex = 0;
             state.phaseTicks = 0;
+            state.nextChunkBatchIndex = 0;
         }
 
         state.overriddenDimension = level.dimension();
@@ -456,9 +473,20 @@ public final class MethadoneItem extends SimplePolymerItem {
             return;
         }
 
-        if (chunkSetChanged) {
-            sendAcidBiomeOverride(player, level, currentChunkKeys, ACID_SKY_BIOME_KEYS.get(state.currentPhaseIndex));
+        if (chunkSetChanged && state.nextChunkBatchIndex == 0) {
             state.phaseTicks = 0;
+        }
+
+        if (state.nextChunkBatchIndex < state.overriddenChunkPositions.length) {
+            state.nextChunkBatchIndex += sendAcidBiomeOverrideBatch(
+                    player,
+                    level,
+                    state.overriddenChunkPositions,
+                    state.overriddenSectionCount,
+                    ACID_SKY_BIOME_KEYS.get(state.currentPhaseIndex),
+                    state.nextChunkBatchIndex,
+                    ACID_SKY_CHUNK_BATCH_SIZE
+            );
             return;
         }
 
@@ -469,30 +497,54 @@ public final class MethadoneItem extends SimplePolymerItem {
 
         state.phaseTicks = 0;
         state.currentPhaseIndex = (state.currentPhaseIndex + 1) % ACID_SKY_BIOME_KEYS.size();
-        sendAcidBiomeOverride(player, level, currentChunkKeys, ACID_SKY_BIOME_KEYS.get(state.currentPhaseIndex));
+        state.nextChunkBatchIndex = sendAcidBiomeOverrideBatch(
+                player,
+                level,
+                state.overriddenChunkPositions,
+                state.overriddenSectionCount,
+                ACID_SKY_BIOME_KEYS.get(state.currentPhaseIndex),
+                0,
+                ACID_SKY_CHUNK_BATCH_SIZE
+        );
     }
 
-    private static void sendAcidBiomeOverride(
+    private static int sendAcidBiomeOverrideBatch(
             ServerPlayer player,
             ServerLevel level,
-            long[] chunkKeys,
-            ResourceKey<Biome> biomeKey
+            ChunkPos[] chunkPositions,
+            int sectionCount,
+            ResourceKey<Biome> biomeKey,
+            int startIndex,
+            int batchSize
     ) {
-        List<LevelChunk> chunks = collectChunksToSend(level, chunkKeys);
-        if (chunks.isEmpty()) {
-            return;
+        if (chunkPositions.length == 0 || sectionCount <= 0 || startIndex >= chunkPositions.length || batchSize <= 0) {
+            return 0;
         }
 
-        byte[] serializedBiomes = getCachedUniformBiomePayload(level, chunks.getFirst().getSections().length, biomeKey);
+        byte[] serializedBiomes = getCachedUniformBiomePayload(level, sectionCount, biomeKey);
         if (serializedBiomes.length == 0) {
-            return;
+            return 0;
         }
 
-        List<ClientboundChunksBiomesPacket.ChunkBiomeData> biomeData = new ArrayList<>(chunks.size());
-        for (LevelChunk chunk : chunks) {
-            biomeData.add(new ClientboundChunksBiomesPacket.ChunkBiomeData(chunk.getPos(), serializedBiomes));
+        int endIndex = Math.min(chunkPositions.length, startIndex + batchSize);
+        List<ClientboundChunksBiomesPacket.ChunkBiomeData> biomeData = new ArrayList<>(endIndex - startIndex);
+        for (int index = startIndex; index < endIndex; index++) {
+            ChunkPos chunkPos = chunkPositions[index];
+            biomeData.add(new ClientboundChunksBiomesPacket.ChunkBiomeData(chunkPos, serializedBiomes));
         }
         player.connection.send(new ClientboundChunksBiomesPacket(biomeData));
+        return endIndex - startIndex;
+    }
+
+    private static void tickForcedTime(ServerPlayer player, ServerLevel level, MethadoneSkyState state) {
+        long nowTick = level.getGameTime();
+        if (state.timeForcedActive && nowTick < state.nextForcedTimeTick) {
+            return;
+        }
+
+        sendForcedMethadoneTime(player);
+        state.timeForcedActive = true;
+        state.nextForcedTimeTick = nowTick + METHADONE_FORCED_TIME_INTERVAL_TICKS;
     }
 
     private static byte[] getCachedUniformBiomePayload(ServerLevel level, int sectionCount, ResourceKey<Biome> biomeKey) {
@@ -532,7 +584,10 @@ public final class MethadoneItem extends SimplePolymerItem {
         if (player == null || state == null || !(player.level() instanceof ServerLevel level)) {
             return;
         }
-        restoreActualTime(player, level);
+        if (state.timeForcedActive) {
+            restoreActualTime(player, level);
+            state.timeForcedActive = false;
+        }
         if (state.overriddenDimension == null || !state.overriddenDimension.equals(level.dimension()) || state.overriddenChunks.isEmpty()) {
             return;
         }
@@ -623,6 +678,38 @@ public final class MethadoneItem extends SimplePolymerItem {
         return result;
     }
 
+    private static ChunkPos[] toChunkPosArray(long[] chunkKeys, ChunkPos center) {
+        if (chunkKeys.length == 0) {
+            return EMPTY_CHUNK_POSITIONS;
+        }
+
+        ChunkPos[] result = new ChunkPos[chunkKeys.length];
+        for (int index = 0; index < chunkKeys.length; index++) {
+            long chunkKey = chunkKeys[index];
+            result[index] = new ChunkPos(ChunkPos.getX(chunkKey), ChunkPos.getZ(chunkKey));
+        }
+        if (center != null && result.length > 1) {
+            java.util.Arrays.sort(result, java.util.Comparator.comparingInt((ChunkPos chunkPos) -> {
+                int dx = chunkPos.x - center.x;
+                int dz = chunkPos.z - center.z;
+                return (dx * dx) + (dz * dz);
+            }).thenComparingInt(chunkPos -> chunkPos.x).thenComparingInt(chunkPos -> chunkPos.z));
+
+            ChunkPos[] interleaved = new ChunkPos[result.length];
+            int low = 0;
+            int high = result.length - 1;
+            int writeIndex = 0;
+            while (low <= high) {
+                interleaved[writeIndex++] = result[high--];
+                if (low <= high) {
+                    interleaved[writeIndex++] = result[low++];
+                }
+            }
+            return interleaved;
+        }
+        return result;
+    }
+
     private static Set<Long> collectTrackedChunkKeys(ServerPlayer player) {
         Set<Long> chunkKeys = new HashSet<>();
         if (player == null) {
@@ -682,6 +769,11 @@ public final class MethadoneItem extends SimplePolymerItem {
         private int trackedChunkRefreshTicks = ACID_SKY_TRACKED_CHUNK_REFRESH_INTERVAL_TICKS;
         private final Set<Long> overriddenChunks = new HashSet<>();
         private long[] overriddenChunkKeys = EMPTY_CHUNK_KEYS;
+        private ChunkPos[] overriddenChunkPositions = EMPTY_CHUNK_POSITIONS;
+        private int overriddenSectionCount;
+        private int nextChunkBatchIndex;
+        private long nextForcedTimeTick = Long.MIN_VALUE;
+        private boolean timeForcedActive;
     }
 
     private record AcidSkyPayloadKey(int sectionCount, ResourceKey<Biome> biomeKey) {
