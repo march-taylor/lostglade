@@ -1,5 +1,6 @@
 package com.lostglade.server;
 
+import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
@@ -28,21 +29,24 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.MoverType;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -82,6 +86,10 @@ public final class CocaineHallucinationSystem {
 	private static List<EntityType<?>> mobPool;
 
 	private CocaineHallucinationSystem() {
+	}
+
+	public static void register() {
+		AttackEntityCallback.EVENT.register(CocaineHallucinationSystem::onAttackEntity);
 	}
 
 	public static boolean spawn(ServerPlayer player, RandomSource random) {
@@ -154,18 +162,16 @@ public final class CocaineHallucinationSystem {
 		}
 
 		long nowTick = server.overworld().getGameTime();
-		Iterator<Map.Entry<UUID, ActiveHallucinationState>> iterator = ACTIVE_STATES.entrySet().iterator();
-		while (iterator.hasNext()) {
-			Map.Entry<UUID, ActiveHallucinationState> entry = iterator.next();
+		for (Map.Entry<UUID, ActiveHallucinationState> entry : new ArrayList<>(ACTIVE_STATES.entrySet())) {
 			ActiveHallucinationState state = entry.getValue();
 			Entity rawEntity = findEntity(server, state.dimension, state.entityUuid);
 			if (!(rawEntity instanceof Mob mob) || !isManagedHallucination(mob)) {
-				iterator.remove();
+				ACTIVE_STATES.remove(entry.getKey(), state);
 				continue;
 			}
 			if (ServerBackroomsSystem.isInBackrooms(mob)) {
 				discardEntityOnly(mob, true, false);
-				iterator.remove();
+				ACTIVE_STATES.remove(entry.getKey(), state);
 				continue;
 			}
 
@@ -176,7 +182,7 @@ public final class CocaineHallucinationSystem {
 					|| ServerBackroomsSystem.isInBackrooms(targetPlayer)
 					|| targetPlayer.level() != mob.level()) {
 				discardEntityOnly(mob, true, false);
-				iterator.remove();
+				ACTIVE_STATES.remove(entry.getKey(), state);
 				continue;
 			}
 
@@ -187,7 +193,7 @@ public final class CocaineHallucinationSystem {
 			boolean touchedPlayer = touchesTargetPlayer(mob, targetPlayer);
 			if (nowTick >= state.endTick || touchedPlayer) {
 				discardEntityOnly(mob, true, touchedPlayer);
-				iterator.remove();
+				ACTIVE_STATES.remove(entry.getKey(), state);
 				continue;
 			}
 
@@ -195,6 +201,15 @@ public final class CocaineHallucinationSystem {
 		}
 
 		cleanupOrphanedHallucinations(server);
+	}
+
+	public static boolean handleIncomingDamage(Entity entity) {
+		if (!isManagedHallucination(entity)) {
+			return false;
+		}
+
+		discardEntityOnly(entity, true, true);
+		return true;
 	}
 
 	public static Packet<?> filterOutgoingPacket(ServerPlayer viewer, Packet<?> packet) {
@@ -471,7 +486,7 @@ public final class CocaineHallucinationSystem {
 			return;
 		}
 
-		ActiveHallucinationState state = ACTIVE_STATES.get(entity.getUUID());
+		ActiveHallucinationState state = ACTIVE_STATES.remove(entity.getUUID());
 		if (entity.level() instanceof ServerLevel level && entity.isAlive() && !entity.isRemoved() && state != null) {
 			if (particles) {
 				spawnDespawnParticles(level, entity, state.targetPlayerUuid);
@@ -483,6 +498,20 @@ public final class CocaineHallucinationSystem {
 		if (!entity.isRemoved()) {
 			entity.discard();
 		}
+	}
+
+	private static InteractionResult onAttackEntity(
+			Player player,
+			Level world,
+			InteractionHand hand,
+			Entity entity,
+			EntityHitResult hitResult
+	) {
+		if (world.isClientSide() || !(player instanceof ServerPlayer)) {
+			return InteractionResult.PASS;
+		}
+
+		return handleIncomingDamage(entity) ? InteractionResult.SUCCESS : InteractionResult.PASS;
 	}
 
 	private static void spawnDespawnParticles(ServerLevel level, Entity entity, UUID targetPlayerId) {
