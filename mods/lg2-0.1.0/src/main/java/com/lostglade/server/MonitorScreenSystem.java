@@ -290,28 +290,16 @@ public final class MonitorScreenSystem {
 	}
 
 	public static List<SpeakerAudioSource> findSpeakerAudioSources(ServerLevel level, BlockPos speakerPos) {
-		if (level == null || speakerPos == null || !level.hasChunkAt(speakerPos)) {
-			return List.of();
-		}
-		Set<BlockPos> wireNetwork = collectSpeakerWireNetwork(level, speakerPos);
-		AABB searchBox = speakerSearchBox(speakerPos, wireNetwork);
-		Map<ScreenRuntimeKey, ScreenComponent> connectedComponents = new HashMap<>();
-		for (ItemFrame frame : level.getEntitiesOfClass(ItemFrame.class, searchBox, candidate -> readScreenState(candidate.getItem()) != null)) {
-			ScreenComponent component = collectComponent(level, frame, null);
-			if (component == null || component.viewMode() != ScreenViewMode.YOUTUBE || !component.powered()) {
-				continue;
-			}
-			if (!isSpeakerConnectedToComponent(speakerPos, component, wireNetwork)) {
-				continue;
-			}
-			connectedComponents.putIfAbsent(component.runtimeKey(), component);
-		}
+		Map<ScreenRuntimeKey, ScreenComponent> connectedComponents = collectConnectedSpeakerComponents(level, speakerPos);
 		if (connectedComponents.isEmpty()) {
 			return List.of();
 		}
 
 		List<SpeakerAudioSource> sources = new ArrayList<>();
 		for (ScreenComponent component : connectedComponents.values()) {
+			if (component.viewMode() != ScreenViewMode.YOUTUBE || !component.powered()) {
+				continue;
+			}
 			MediaRuntimeState state = MEDIA_STATES.get(component.runtimeKey());
 			if (state == null) {
 				continue;
@@ -336,6 +324,30 @@ public final class MonitorScreenSystem {
 			}
 		}
 		return sources;
+	}
+
+	public static boolean hasPoweredConnectedMonitor(ServerLevel level, BlockPos speakerPos) {
+		return collectConnectedSpeakerComponents(level, speakerPos).values().stream().anyMatch(ScreenComponent::powered);
+	}
+
+	private static Map<ScreenRuntimeKey, ScreenComponent> collectConnectedSpeakerComponents(ServerLevel level, BlockPos speakerPos) {
+		if (level == null || speakerPos == null || !level.hasChunkAt(speakerPos)) {
+			return Map.of();
+		}
+		Set<BlockPos> wireNetwork = collectSpeakerWireNetwork(level, speakerPos);
+		AABB searchBox = speakerSearchBox(speakerPos, wireNetwork);
+		Map<ScreenRuntimeKey, ScreenComponent> connectedComponents = new HashMap<>();
+		for (ItemFrame frame : level.getEntitiesOfClass(ItemFrame.class, searchBox, candidate -> readScreenState(candidate.getItem()) != null)) {
+			ScreenComponent component = collectComponent(level, frame, null);
+			if (component == null) {
+				continue;
+			}
+			if (!isSpeakerConnectedToComponent(speakerPos, component, wireNetwork)) {
+				continue;
+			}
+			connectedComponents.putIfAbsent(component.runtimeKey(), component);
+		}
+		return connectedComponents;
 	}
 
 	private static AABB speakerSearchBox(BlockPos speakerPos, Set<BlockPos> wireNetwork) {

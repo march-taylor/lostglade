@@ -220,12 +220,9 @@ public final class SpeakerSystem {
 		}
 
 		boolean rawPowered = hasSpeakerPower(level, key.pos());
-		List<MonitorScreenSystem.SpeakerAudioSource> connectedSources = rawPowered
-				? MonitorScreenSystem.findSpeakerAudioSources(level, key.pos())
-				: List.of();
-		boolean connectedToScreen = !connectedSources.isEmpty();
-		if (SpeakerBlock.isLit(state) != connectedToScreen) {
-			state = state.setValue(BlockStateProperties.LIT, connectedToScreen);
+		boolean connectedToPoweredMonitor = rawPowered && MonitorScreenSystem.hasPoweredConnectedMonitor(level, key.pos());
+		if (SpeakerBlock.isLit(state) != connectedToPoweredMonitor) {
+			state = state.setValue(BlockStateProperties.LIT, connectedToPoweredMonitor);
 			level.setBlock(key.pos(), state, 3);
 		}
 
@@ -233,6 +230,10 @@ public final class SpeakerSystem {
 			stopRuntime(key);
 			return true;
 		}
+
+		List<MonitorScreenSystem.SpeakerAudioSource> connectedSources = connectedToPoweredMonitor
+				? MonitorScreenSystem.findSpeakerAudioSources(level, key.pos())
+				: List.of();
 
 		List<MonitorScreenSystem.SpeakerAudioSource> playableSources = connectedSources.stream()
 				.filter(source -> source != null && !source.paused() && source.audioStreamUrl() != null && !source.audioStreamUrl().isBlank())
