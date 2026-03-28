@@ -22,7 +22,6 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.PlayerChatMessage;
-import net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundMapItemDataPacket;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -1230,7 +1229,7 @@ public final class MonitorScreenSystem {
 		PLAYER_MEDIA_FOCUS.put(player.getUUID(), new PlayerMediaFocus(key, System.currentTimeMillis() + MEDIA_SCROLL_FOCUS_TIMEOUT_MS));
 	}
 
-	public static boolean onPlayerHotbarScroll(ServerPlayer player, int requestedSlot) {
+	public static boolean onPlayerHotbarScroll(ServerPlayer player, int previousSlot, int currentSlot) {
 		if (player == null) {
 			return false;
 		}
@@ -1247,8 +1246,7 @@ public final class MonitorScreenSystem {
 			return false;
 		}
 
-		int currentSlot = player.getInventory().getSelectedSlot();
-		int delta = normalizeHotbarDelta(currentSlot, requestedSlot);
+		int delta = normalizeHotbarDelta(previousSlot, currentSlot);
 		if (delta == 0) {
 			return false;
 		}
@@ -1278,7 +1276,6 @@ public final class MonitorScreenSystem {
 			return false;
 		}
 
-		player.connection.send(new ClientboundSetHeldSlotPacket(currentSlot));
 		requestComponentRender(server, component, component.viewMode(), component.launcherPage());
 		if (youtubeSeekTargetMs != null) {
 			long seekTargetMs = youtubeSeekTargetMs;
@@ -1341,19 +1338,19 @@ public final class MonitorScreenSystem {
 		return nearestDistanceSqr;
 	}
 
-	private static int normalizeHotbarDelta(int currentSlot, int requestedSlot) {
-		int forward = Math.floorMod(requestedSlot - currentSlot, 9);
-		int backward = Math.floorMod(currentSlot - requestedSlot, 9);
-		if (forward == 0 || backward == 0) {
+	private static int normalizeHotbarDelta(int previousSlot, int currentSlot) {
+		if (previousSlot == currentSlot) {
 			return 0;
 		}
-		if (forward < backward) {
-			return forward;
+		int upwardSteps = Math.floorMod(previousSlot - currentSlot, 9);
+		if (upwardSteps >= 1 && upwardSteps <= 2) {
+			return upwardSteps;
 		}
-		if (backward < forward) {
-			return -backward;
+		int downwardSteps = Math.floorMod(currentSlot - previousSlot, 9);
+		if (downwardSteps >= 1 && downwardSteps <= 2) {
+			return -downwardSteps;
 		}
-		return forward <= 4 ? forward : -backward;
+		return 0;
 	}
 
 	private static boolean isMediaSessionAlive(MinecraftServer server, ScreenRuntimeKey key) {

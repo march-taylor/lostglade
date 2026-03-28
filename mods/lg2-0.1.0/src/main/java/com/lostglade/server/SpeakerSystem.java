@@ -17,7 +17,6 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
@@ -86,7 +85,7 @@ public final class SpeakerSystem {
 		trackSpeaker(level, pos);
 	}
 
-	public static boolean onPlayerHotbarScroll(ServerPlayer player, int requestedSlot) {
+	public static boolean onPlayerHotbarScroll(ServerPlayer player, int previousSlot, int currentSlot) {
 		if (player == null || !(player.level() instanceof ServerLevel level)) {
 			return false;
 		}
@@ -99,25 +98,26 @@ public final class SpeakerSystem {
 		if (!state.is(ModBlocks.SPEAKER)) {
 			return false;
 		}
-		int currentSlot = player.getInventory().getSelectedSlot();
-		int delta = normalizeHotbarDelta(currentSlot, requestedSlot);
+		int delta = normalizeHotbarDelta(previousSlot, currentSlot);
 		if (delta == 0 || !SpeakerBlock.adjustVolumeByScroll(level, pos, state, player, delta)) {
 			return false;
 		}
-		player.connection.send(new ClientboundSetHeldSlotPacket(currentSlot));
 		return true;
 	}
 
-	private static int normalizeHotbarDelta(int currentSlot, int requestedSlot) {
-		if (currentSlot == requestedSlot) {
+	private static int normalizeHotbarDelta(int previousSlot, int currentSlot) {
+		if (previousSlot == currentSlot) {
 			return 0;
 		}
-		int forward = Math.floorMod(requestedSlot - currentSlot, HOTBAR_SLOT_COUNT);
-		int backward = Math.floorMod(currentSlot - requestedSlot, HOTBAR_SLOT_COUNT);
-		if (forward == 0 && backward == 0) {
-			return 0;
+		int upwardSteps = Math.floorMod(previousSlot - currentSlot, HOTBAR_SLOT_COUNT);
+		if (upwardSteps >= 1 && upwardSteps <= 2) {
+			return upwardSteps;
 		}
-		return forward <= backward ? 1 : -1;
+		int downwardSteps = Math.floorMod(currentSlot - previousSlot, HOTBAR_SLOT_COUNT);
+		if (downwardSteps >= 1 && downwardSteps <= 2) {
+			return -downwardSteps;
+		}
+		return 0;
 	}
 
 	private static void onChunkLoad(ServerLevel level, LevelChunk chunk) {
