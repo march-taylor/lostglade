@@ -586,14 +586,17 @@ public final class SpeakerSystem {
 				sourceFeed.close(this.key);
 			}
 			this.sourceFeeds.clear();
-			if (this.player != null && !this.player.isStopped()) {
-				this.player.stopPlaying();
-			}
+			AudioPlayer currentPlayer = this.player;
+			OpusEncoder currentEncoder = this.encoder;
 			this.player = null;
-			if (this.encoder != null && !this.encoder.isClosed()) {
-				this.encoder.close();
-			}
 			this.encoder = null;
+			if (currentPlayer != null && !currentPlayer.isStopped()) {
+				// AudioPlayer closes its encoder on its own worker thread. Closing it here races with that thread
+				// and produces intermittent "Encoder is closed" noise in the logs.
+				currentPlayer.stopPlaying();
+			} else if (currentEncoder != null && !currentEncoder.isClosed()) {
+				currentEncoder.close();
+			}
 			this.channel = null;
 		}
 	}

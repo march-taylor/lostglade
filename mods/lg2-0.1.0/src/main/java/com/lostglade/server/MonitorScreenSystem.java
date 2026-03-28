@@ -3102,15 +3102,7 @@ public final class MonitorScreenSystem {
 	}
 
 	private static UiRect mediaTimelineHitRect(UiLayout layout) {
-		UiRect track = mediaTimelineTrackRect(layout);
-		int horizontalPadding = clampInt(layout.unit() / 2, 4, 10);
-		int verticalPadding = clampInt(layout.unit(), 8, 18);
-		return new UiRect(
-				track.x() - horizontalPadding,
-				track.y() - verticalPadding,
-				track.width() + horizontalPadding * 2,
-				track.height() + verticalPadding * 2
-		);
+		return mediaTimelineTrackRect(layout);
 	}
 
 	private static UiRect mediaStatusRect(UiLayout layout) {
@@ -3857,11 +3849,11 @@ public final class MonitorScreenSystem {
 	}
 
 	private static float mediaTimelineFraction(UiLayout layout, UiPoint point) {
-		UiRect trackRect = mediaTimelineHitRect(layout);
+		UiRect trackRect = mediaTimelineTrackRect(layout);
 		if (trackRect.width() <= 0) {
 			return 0.0F;
 		}
-		return (float) clampDouble((point.x() - trackRect.x()) / (double) Math.max(1, trackRect.width()), 0.0D, 1.0D);
+		return (float) clampDouble((point.x() - trackRect.x()) / (double) Math.max(1, trackRect.width() - 1), 0.0D, 1.0D);
 	}
 
 	private static int mediaFrameIndexForFraction(MonitorMediaApp.LoadedMedia loadedMedia, float fraction) {
