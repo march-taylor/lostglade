@@ -5,6 +5,7 @@ import com.lostglade.block.ModBlocks;
 import com.lostglade.block.SpeakerBlock;
 import de.maxhenkel.voicechat.api.VoicechatApi;
 import de.maxhenkel.voicechat.api.VoicechatServerApi;
+import de.maxhenkel.voicechat.api.VolumeCategory;
 import de.maxhenkel.voicechat.api.audiochannel.AudioPlayer;
 import de.maxhenkel.voicechat.api.audiochannel.LocationalAudioChannel;
 import de.maxhenkel.voicechat.api.opus.OpusEncoder;
@@ -42,6 +43,15 @@ import java.util.concurrent.TimeUnit;
 public final class SpeakerSystem {
 	private static final int HOTBAR_SLOT_COUNT = 9;
 	private static final long REFRESH_INTERVAL_TICKS = 5L;
+	private static final String SPEAKER_VOLUME_CATEGORY_ID = "lg_speakers";
+	private static final String SPEAKER_VOLUME_CATEGORY_NAME = "Speakers";
+	private static final String SPEAKER_VOLUME_CATEGORY_DESCRIPTION = "LG2 Speakers";
+	private static final float MIN_SPEAKER_DISTANCE = 3.0F;
+	private static final float MAX_SPEAKER_DISTANCE = 48.0F;
+	private static final float MAX_SPEAKER_GAIN = 0.28F;
+	private static final float SPEAKER_GAIN_EXPONENT = 1.75F;
+	private static final float DISTANCE_COMPENSATION_AT_MAX = 0.84F;
+	private static final float DISTANCE_COMPENSATION_EXPONENT = 1.35F;
 	private static final int AUDIO_SAMPLE_RATE = 48_000;
 	private static final int AUDIO_FRAME_SAMPLES = 960;
 	private static final int AUDIO_FRAME_BYTES = AUDIO_FRAME_SAMPLES * 2;
@@ -54,6 +64,7 @@ public final class SpeakerSystem {
 	private static final Set<SpeakerKey> KNOWN_SPEAKERS = ConcurrentHashMap.newKeySet();
 	private static final ConcurrentHashMap<SpeakerKey, SpeakerRuntime> ACTIVE_SPEAKERS = new ConcurrentHashMap<>();
 	private static final ConcurrentHashMap<String, SharedSourceFeed> ACTIVE_SOURCE_FEEDS = new ConcurrentHashMap<>();
+	private static volatile boolean speakerVolumeCategoryRegistered = false;
 	private static volatile long tickCounter = 0L;
 
 	private SpeakerSystem() {
@@ -276,6 +287,15 @@ public final class SpeakerSystem {
 			feed.close();
 		}
 		ACTIVE_SOURCE_FEEDS.clear();
+		VoicechatServerApi voicechatServerApi = ServerVoicechatIntegration.getServerApi();
+		if (voicechatServerApi != null && speakerVolumeCategoryRegistered) {
+			try {
+				voicechatServerApi.unregisterVolumeCategory(SPEAKER_VOLUME_CATEGORY_ID);
+			} catch (Exception exception) {
+				Lg2.LOGGER.debug("Failed to unregister Simple Voice Chat speaker category", exception);
+			}
+		}
+		speakerVolumeCategoryRegistered = false;
 	}
 
 	private static SharedSourceFeed acquireSharedSourceFeed(SpeakerKey speakerKey, MonitorScreenSystem.SpeakerAudioSource source) {
@@ -335,7 +355,48 @@ public final class SpeakerSystem {
 	}
 
 	private static float volumeFactor(int volumePercent) {
-		return Math.max(0.0F, Math.min(1.0F, volumePercent / 100.0F));
+		float normalized = Math.max(0.0F, Math.min(1.0F, volumePercent / 100.0F));
+		if (normalized <= 0.0F) {
+			return 0.0F;
+		}
+		return MAX_SPEAKER_GAIN * (float) Math.pow(normalized, SPEAKER_GAIN_EXPONENT);
+	}
+
+	private static float audibleDistance(int volumePercent) {
+		int clamped = Math.max(1, Math.min(100, volumePercent));
+		if (clamped <= 1) {
+			return MIN_SPEAKER_DISTANCE;
+		}
+		float normalized = (clamped - 1) / 99.0F;
+		float designedDistance = MIN_SPEAKER_DISTANCE + (MAX_SPEAKER_DISTANCE - MIN_SPEAKER_DISTANCE) * normalized;
+		// Simple Voice Chat's client attenuation feels longer than the raw distance value,
+		// so we compensate at higher volumes to make the practical cutoff match the block range better.
+		float compensation = 1.0F - (1.0F - DISTANCE_COMPENSATION_AT_MAX)
+				* (float) Math.pow(normalized, DISTANCE_COMPENSATION_EXPONENT);
+		return MIN_SPEAKER_DISTANCE + (designedDistance - MIN_SPEAKER_DISTANCE) * compensation;
+	}
+
+	private static boolean ensureSpeakerVolumeCategoryRegistered(VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
+		if (speakerVolumeCategoryRegistered) {
+			return true;
+		}
+		if (voicechatApi == null || voicechatServerApi == null) {
+			return false;
+		}
+		try {
+			VolumeCategory category = voicechatApi.volumeCategoryBuilder()
+					.setId(SPEAKER_VOLUME_CATEGORY_ID)
+					.setName(SPEAKER_VOLUME_CATEGORY_NAME)
+					.setDescription(SPEAKER_VOLUME_CATEGORY_DESCRIPTION)
+					.build();
+			voicechatServerApi.registerVolumeCategory(category);
+			speakerVolumeCategoryRegistered = true;
+			return true;
+		} catch (Exception exception) {
+			Lg2.LOGGER.warn("Failed to register Simple Voice Chat speaker category, falling back to default category", exception);
+			speakerVolumeCategoryRegistered = false;
+			return false;
+		}
 	}
 
 	private static boolean readFully(InputStream input, byte[] buffer) throws IOException {
@@ -416,11 +477,13 @@ public final class SpeakerSystem {
 		}
 
 		private boolean ensureVoicechatPlayer(ServerLevel level, VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
-			if (this.player != null && !this.player.isStopped()) {
-				return true;
-			}
 			if (voicechatApi == null || voicechatServerApi == null || level == null) {
 				return false;
+			}
+			ensureSpeakerVolumeCategoryRegistered(voicechatApi, voicechatServerApi);
+			if (this.player != null && !this.player.isStopped()) {
+				updateChannelProperties(level, voicechatApi, voicechatServerApi);
+				return true;
 			}
 			this.encoder = voicechatApi.createEncoder();
 			this.channel = voicechatServerApi.createLocationalAudioChannel(
@@ -428,10 +491,21 @@ public final class SpeakerSystem {
 					voicechatApi.fromServerLevel(level),
 					voicechatApi.createPosition(this.key.pos().getX() + 0.5D, this.key.pos().getY() + 0.5D, this.key.pos().getZ() + 0.5D)
 			);
-			this.channel.setDistance((float) Math.max(voicechatApi.getVoiceChatDistance(), voicechatServerApi.getBroadcastRange()));
+			updateChannelProperties(level, voicechatApi, voicechatServerApi);
 			this.player = voicechatServerApi.createAudioPlayer(this.channel, this.encoder, this::nextFrame);
 			this.player.startPlaying();
 			return true;
+		}
+
+		private void updateChannelProperties(ServerLevel level, VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
+			if (this.channel == null) {
+				return;
+			}
+			this.channel.updateLocation(voicechatApi.createPosition(this.key.pos().getX() + 0.5D, this.key.pos().getY() + 0.5D, this.key.pos().getZ() + 0.5D));
+			this.channel.setDistance(audibleDistance(this.volumePercent));
+			if (speakerVolumeCategoryRegistered) {
+				this.channel.setCategory(SPEAKER_VOLUME_CATEGORY_ID);
+			}
 		}
 
 		private void synchronizeSources(List<MonitorScreenSystem.SpeakerAudioSource> sources) {
