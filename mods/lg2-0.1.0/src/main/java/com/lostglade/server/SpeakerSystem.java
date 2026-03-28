@@ -492,16 +492,45 @@ public final class SpeakerSystem {
 				updateChannelProperties(level, voicechatApi, voicechatServerApi);
 				return true;
 			}
-			this.encoder = voicechatApi.createEncoder();
-			this.channel = voicechatServerApi.createLocationalAudioChannel(
-					this.channelId,
-					voicechatApi.fromServerLevel(level),
-					voicechatApi.createPosition(this.key.pos().getX() + 0.5D, this.key.pos().getY() + 0.5D, this.key.pos().getZ() + 0.5D)
-			);
-			updateChannelProperties(level, voicechatApi, voicechatServerApi);
-			this.player = voicechatServerApi.createAudioPlayer(this.channel, this.encoder, this::nextFrame);
-			this.player.startPlaying();
-			return true;
+			OpusEncoder createdEncoder = null;
+			try {
+				createdEncoder = voicechatApi.createEncoder();
+				LocationalAudioChannel createdChannel = voicechatServerApi.createLocationalAudioChannel(
+						this.channelId,
+						voicechatApi.fromServerLevel(level),
+						voicechatApi.createPosition(this.key.pos().getX() + 0.5D, this.key.pos().getY() + 0.5D, this.key.pos().getZ() + 0.5D)
+				);
+				this.encoder = createdEncoder;
+				this.channel = createdChannel;
+				updateChannelProperties(level, voicechatApi, voicechatServerApi);
+				AudioPlayer createdPlayer = voicechatServerApi.createAudioPlayer(createdChannel, createdEncoder, this::nextFrame);
+				createdPlayer.setOnStopped(() -> onPlayerStopped(createdPlayer, createdChannel));
+				this.player = createdPlayer;
+				createdPlayer.startPlaying();
+				return true;
+			} catch (RuntimeException exception) {
+				if (createdEncoder != null && !createdEncoder.isClosed()) {
+					createdEncoder.close();
+				}
+				this.encoder = null;
+				this.channel = null;
+				this.player = null;
+				throw exception;
+			}
+		}
+
+		private void onPlayerStopped(AudioPlayer stoppedPlayer, LocationalAudioChannel stoppedChannel) {
+			boolean clearedPlayer = false;
+			if (this.player == stoppedPlayer) {
+				this.player = null;
+				clearedPlayer = true;
+			}
+			if (this.channel == stoppedChannel) {
+				this.channel = null;
+			}
+			if (clearedPlayer) {
+				this.encoder = null;
+			}
 		}
 
 		private void updateChannelProperties(ServerLevel level, VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
@@ -593,15 +622,12 @@ public final class SpeakerSystem {
 			}
 			this.sourceFeeds.clear();
 			AudioPlayer currentPlayer = this.player;
-			OpusEncoder currentEncoder = this.encoder;
 			this.player = null;
 			this.encoder = null;
+			// AudioPlayer closes its encoder on its own worker thread. Closing it here races with that thread
+			// and produces intermittent "Encoder is closed" noise in the logs.
 			if (currentPlayer != null && !currentPlayer.isStopped()) {
-				// AudioPlayer closes its encoder on its own worker thread. Closing it here races with that thread
-				// and produces intermittent "Encoder is closed" noise in the logs.
 				currentPlayer.stopPlaying();
-			} else if (currentEncoder != null && !currentEncoder.isClosed()) {
-				currentEncoder.close();
 			}
 			this.channel = null;
 		}

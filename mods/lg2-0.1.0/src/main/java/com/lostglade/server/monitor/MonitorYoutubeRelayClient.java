@@ -1,6 +1,8 @@
 package com.lostglade.server.monitor;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.lostglade.Lg2;
 import com.lostglade.server.progress.TaskProgress;
@@ -20,6 +22,7 @@ import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
@@ -29,7 +32,9 @@ import java.util.TreeMap;
 public final class MonitorYoutubeRelayClient {
 	private static final Gson GSON = new Gson();
 	private static final Map<String, RelaySession> SESSIONS = new ConcurrentHashMap<>();
+	private static final Map<String, QueuePreloadState> QUEUE_PRELOADS = new ConcurrentHashMap<>();
 	private static final ScheduledExecutorService CLEANUP_EXECUTOR = Executors.newSingleThreadScheduledExecutor(daemonThreadFactory("lg2-youtube-cleanup"));
+	private static final ExecutorService PRELOAD_EXECUTOR = Executors.newFixedThreadPool(2, daemonThreadFactory("lg2-youtube-queue"));
 	private static final String DEFAULT_YT_DLP_BIN = "yt-dlp";
 	private static final String DEFAULT_FFMPEG_BIN = "ffmpeg";
 	private static final double FRAME_RATE = readDoubleSetting("LG2_YT_FRAME_RATE", "lg2.youtube.frameRate", 12.0D);
@@ -39,6 +44,7 @@ public final class MonitorYoutubeRelayClient {
 	private static final int STREAM_START_TIMEOUT_SEC = readIntSetting("LG2_YT_STREAM_START_TIMEOUT_SEC", "lg2.youtube.streamStartTimeoutSec", 20);
 	private static final long PREVIEW_CACHE_BUCKET_MS = Math.max(1L, Math.round(1000.0D / Math.max(1.0D, FRAME_RATE)));
 	private static final int MAX_CACHED_PREVIEW_FRAMES = 3600;
+	private static final long QUEUE_PRELOAD_DURATION_MS = TimeUnit.SECONDS.toMillis(readIntSetting("LG2_YT_QUEUE_PRELOAD_SEC", "lg2.youtube.queuePreloadSec", 20));
 	private static final long CACHE_LOOKUP_TOLERANCE_MS = Math.max(100L, PREVIEW_CACHE_BUCKET_MS * 2L);
 	private static final long CONTIGUOUS_BUFFER_TOLERANCE_MS = PREVIEW_CACHE_BUCKET_MS + CACHE_LOOKUP_TOLERANCE_MS;
 	private static final long PROCESS_STOP_TIMEOUT_MS = 250L;
@@ -62,6 +68,11 @@ public final class MonitorYoutubeRelayClient {
 			progress.setIndeterminate("LOADING");
 		}
 		return response;
+	}
+
+	public static QueueResolveResponse resolveQueue(String rawUrl) throws IOException {
+		validateYoutubeUrl(rawUrl);
+		return resolveYoutubeQueue(rawUrl.trim());
 	}
 
 	public static SessionSnapshot snapshot(String sessionId, long knownFrameSequence) throws IOException {
@@ -90,12 +101,43 @@ public final class MonitorYoutubeRelayClient {
 		session.close();
 	}
 
+	public static void retainQueueEntry(String rawUrl) {
+		if (!looksLikeYoutubeUrl(rawUrl)) {
+			return;
+		}
+		String url = rawUrl.trim();
+		QUEUE_PRELOADS.compute(url, (ignored, existing) -> {
+			QueuePreloadState state = existing != null ? existing : new QueuePreloadState(url);
+			state.retain();
+			return state;
+		});
+	}
+
+	public static void releaseQueueEntry(String rawUrl) {
+		if (rawUrl == null || rawUrl.isBlank()) {
+			return;
+		}
+		String url = rawUrl.trim();
+		QueuePreloadState state = QUEUE_PRELOADS.get(url);
+		if (state == null) {
+			return;
+		}
+		if (state.release()) {
+			QUEUE_PRELOADS.remove(url, state);
+		}
+	}
+
 	public static void shutdown() {
 		for (RelaySession session : List.copyOf(SESSIONS.values())) {
 			session.closeQuietly();
 		}
 		SESSIONS.clear();
+		for (QueuePreloadState preload : List.copyOf(QUEUE_PRELOADS.values())) {
+			preload.closeQuietly();
+		}
+		QUEUE_PRELOADS.clear();
 		CLEANUP_EXECUTOR.shutdownNow();
+		PRELOAD_EXECUTOR.shutdownNow();
 	}
 
 	public static boolean looksLikeYoutubeUrl(String rawUrl) {
@@ -133,6 +175,14 @@ public final class MonitorYoutubeRelayClient {
 			throw new IOException("unknown session");
 		}
 		return session;
+	}
+
+	private static QueuePreloadSnapshot snapshotQueuePreload(String url) {
+		if (url == null || url.isBlank()) {
+			return null;
+		}
+		QueuePreloadState state = QUEUE_PRELOADS.get(url.trim());
+		return state != null ? state.snapshot() : null;
 	}
 
 	private static void cleanupExpiredSessions() {
@@ -183,6 +233,51 @@ public final class MonitorYoutubeRelayClient {
 			audioStreamUrl = streamUrl;
 		}
 		return new ResolvedYoutube(title, durationMs, isLive, streamUrl, audioStreamUrl);
+	}
+
+	private static QueueResolveResponse resolveYoutubeQueue(String url) throws IOException {
+		String metadataJson = runTextCommand(List.of(ytDlpBin(), "--dump-single-json", "--flat-playlist", url), COMMAND_TIMEOUT_SEC);
+		JsonObject metadata = GSON.fromJson(metadataJson, JsonObject.class);
+		String containerTitle = getString(metadata, "title", "YouTube");
+		JsonArray entriesArray = metadata != null && metadata.has("entries") && metadata.get("entries").isJsonArray()
+				? metadata.getAsJsonArray("entries")
+				: null;
+		List<QueueEntry> entries = new ArrayList<>();
+		if (entriesArray != null && !entriesArray.isEmpty()) {
+			for (JsonElement element : entriesArray) {
+				if (element == null || !element.isJsonObject()) {
+					continue;
+				}
+				JsonObject entry = element.getAsJsonObject();
+				String entryUrl = resolveQueueEntryUrl(entry);
+				if (entryUrl == null || entryUrl.isBlank()) {
+					continue;
+				}
+				String entryTitle = getString(entry, "title", "YouTube");
+				entries.add(new QueueEntry(entryTitle, entryUrl));
+			}
+			if (!entries.isEmpty()) {
+				return new QueueResolveResponse(containerTitle, entries, true);
+			}
+		}
+		String canonicalUrl = getString(metadata, "webpage_url", url);
+		return new QueueResolveResponse(containerTitle, List.of(new QueueEntry(containerTitle, canonicalUrl)), false);
+	}
+
+	private static String resolveQueueEntryUrl(JsonObject entry) {
+		String webpageUrl = getString(entry, "webpage_url", "");
+		if (!webpageUrl.isBlank()) {
+			return webpageUrl;
+		}
+		String rawUrl = getString(entry, "url", "");
+		if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
+			return rawUrl;
+		}
+		String id = getString(entry, "id", rawUrl);
+		if (id == null || id.isBlank()) {
+			return "";
+		}
+		return "https://www.youtube.com/watch?v=" + id.trim();
 	}
 
 	private static String firstOutputLine(String output) throws IOException {
@@ -319,6 +414,32 @@ public final class MonitorYoutubeRelayClient {
 		return command;
 	}
 
+	private static List<String> queuePreloadCommand(String streamUrl) {
+		List<String> command = new ArrayList<>();
+		command.add(ffmpegBin());
+		command.add("-hide_banner");
+		command.add("-loglevel");
+		command.add("error");
+		command.add("-nostdin");
+		command.add("-threads");
+		command.add("1");
+		command.add("-t");
+		command.add(String.format(Locale.ROOT, "%.3f", QUEUE_PRELOAD_DURATION_MS / 1000.0D));
+		command.add("-i");
+		command.add(streamUrl);
+		command.add("-an");
+		command.add("-vf");
+		command.add("fps=" + FRAME_RATE + ",scale=w=" + FRAME_WIDTH + ":h=-2:force_original_aspect_ratio=decrease");
+		command.add("-q:v");
+		command.add("6");
+		command.add("-f");
+		command.add("image2pipe");
+		command.add("-vcodec");
+		command.add("mjpeg");
+		command.add("-");
+		return command;
+	}
+
 	private static void readJpegFrames(InputStream stream, FrameConsumer consumer) throws IOException {
 		byte[] readBuffer = new byte[8192];
 		byte[] frameBuffer = new byte[16384];
@@ -365,6 +486,10 @@ public final class MonitorYoutubeRelayClient {
 			}
 		}
 		return -1;
+	}
+
+	private static long normalizeBucketMs(long positionMs) {
+		return Math.max(0L, (positionMs / PREVIEW_CACHE_BUCKET_MS) * PREVIEW_CACHE_BUCKET_MS);
 	}
 
 	private static ThreadFactory daemonThreadFactory(String namePrefix) {
@@ -435,6 +560,19 @@ public final class MonitorYoutubeRelayClient {
 	) {
 	}
 
+	public record QueueResolveResponse(
+			String title,
+			List<QueueEntry> entries,
+			boolean playlist
+	) {
+	}
+
+	public record QueueEntry(
+			String title,
+			String url
+	) {
+	}
+
 	public record SessionSnapshot(
 			String sessionId,
 			String title,
@@ -445,6 +583,7 @@ public final class MonitorYoutubeRelayClient {
 			long bufferedStartMs,
 			long bufferedEndMs,
 			boolean paused,
+			boolean ended,
 			boolean live,
 			boolean audioPlaceholder,
 			boolean ready,
@@ -467,6 +606,15 @@ public final class MonitorYoutubeRelayClient {
 	}
 
 	private record CachedPreviewFrame(byte[] bytes, SoftReference<BufferedImage> imageRef) {
+	}
+
+	private record QueuePreloadSnapshot(
+			ResolvedYoutube resolved,
+			NavigableMap<Long, CachedPreviewFrame> cachedPreviewFrames,
+			long bufferedStartMs,
+			long bufferedEndMs,
+			boolean bufferedFromStart
+	) {
 	}
 
 	private static final class ProcessOutputReader implements Runnable {
@@ -493,6 +641,199 @@ public final class MonitorYoutubeRelayClient {
 
 		private IOException exception() {
 			return this.exception;
+		}
+	}
+
+	private static final class QueuePreloadState {
+		private final String sourceUrl;
+		private final Object lock = new Object();
+		private int retainCount = 0;
+		private ResolvedYoutube resolved = null;
+		private Process process = null;
+		private boolean started = false;
+		private boolean preloadComplete = false;
+		private boolean bufferedFromStart = false;
+		private long bufferedStartMs = 0L;
+		private long bufferedEndMs = 0L;
+		private final NavigableMap<Long, CachedPreviewFrame> cachedPreviewFrames = new TreeMap<>();
+
+		private QueuePreloadState(String sourceUrl) {
+			this.sourceUrl = sourceUrl;
+		}
+
+		private void retain() {
+			boolean shouldStart = false;
+			synchronized (this.lock) {
+				this.retainCount++;
+				if (!this.started && !this.preloadComplete) {
+					this.started = true;
+					shouldStart = true;
+				}
+			}
+			if (shouldStart) {
+				PRELOAD_EXECUTOR.execute(this::runPreload);
+			}
+		}
+
+		private boolean release() {
+			synchronized (this.lock) {
+				this.retainCount = Math.max(0, this.retainCount - 1);
+				if (this.retainCount > 0) {
+					return false;
+				}
+				stopLocked();
+				this.cachedPreviewFrames.clear();
+				this.resolved = null;
+				this.bufferedStartMs = 0L;
+				this.bufferedEndMs = 0L;
+				this.bufferedFromStart = false;
+				this.preloadComplete = false;
+				this.started = false;
+				return true;
+			}
+		}
+
+		private void closeQuietly() {
+			synchronized (this.lock) {
+				this.retainCount = 0;
+				stopLocked();
+				this.cachedPreviewFrames.clear();
+				this.resolved = null;
+				this.bufferedStartMs = 0L;
+				this.bufferedEndMs = 0L;
+				this.bufferedFromStart = false;
+				this.preloadComplete = false;
+				this.started = false;
+			}
+		}
+
+		private QueuePreloadSnapshot snapshot() {
+			synchronized (this.lock) {
+				if (this.resolved == null) {
+					return null;
+				}
+				return new QueuePreloadSnapshot(
+						this.resolved,
+						new TreeMap<>(this.cachedPreviewFrames),
+						this.bufferedStartMs,
+						this.bufferedEndMs,
+						this.bufferedFromStart
+				);
+			}
+		}
+
+		private void runPreload() {
+			Process startedProcess = null;
+			boolean preloadFinished = false;
+			try {
+				ResolvedYoutube resolvedLocal = resolveYoutube(this.sourceUrl);
+				synchronized (this.lock) {
+					if (this.retainCount <= 0) {
+						this.started = false;
+						return;
+					}
+					this.resolved = resolvedLocal;
+					if (resolvedLocal.live()) {
+						this.preloadComplete = true;
+						this.started = false;
+						return;
+					}
+				}
+
+				ProcessBuilder builder = new ProcessBuilder(queuePreloadCommand(resolvedLocal.streamUrl()));
+				builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+				startedProcess = builder.start();
+				Process processRef = startedProcess;
+				synchronized (this.lock) {
+					if (this.retainCount <= 0) {
+						processRef.destroyForcibly();
+						this.started = false;
+						return;
+					}
+					this.process = processRef;
+				}
+
+				long[] nextPositionMs = {0L};
+				try (InputStream stream = processRef.getInputStream()) {
+					readJpegFrames(stream, frameBytes -> {
+						BufferedImage image = decodeImageBytes(frameBytes);
+						long positionMs = nextPositionMs[0];
+						nextPositionMs[0] += PREVIEW_CACHE_BUCKET_MS;
+						synchronized (this.lock) {
+							if (this.process != processRef || this.retainCount <= 0) {
+								return;
+							}
+							cachePreviewFrameLocked(positionMs, frameBytes, image);
+						}
+					});
+				}
+				preloadFinished = true;
+			} catch (IOException exception) {
+				Lg2.LOGGER.debug("Failed to preload YouTube queue entry {}", this.sourceUrl, exception);
+			} finally {
+				synchronized (this.lock) {
+					if (this.process == startedProcess) {
+						this.process = null;
+					}
+					this.preloadComplete = preloadFinished;
+					this.started = false;
+				}
+				if (startedProcess != null) {
+					startedProcess.destroy();
+				}
+			}
+		}
+
+		private void cachePreviewFrameLocked(long positionMs, byte[] frameBytes, BufferedImage decodedImage) {
+			if (frameBytes == null || frameBytes.length == 0) {
+				return;
+			}
+			long bucketMs = normalizeBucketMs(positionMs);
+			this.cachedPreviewFrames.putIfAbsent(
+					bucketMs,
+					new CachedPreviewFrame(
+							Arrays.copyOf(frameBytes, frameBytes.length),
+							decodedImage != null ? new SoftReference<>(decodedImage) : null
+					)
+			);
+			while (this.cachedPreviewFrames.size() > MAX_CACHED_PREVIEW_FRAMES) {
+				this.cachedPreviewFrames.pollFirstEntry();
+			}
+			advanceBufferedRangeLocked(bucketMs);
+		}
+
+		private void advanceBufferedRangeLocked(long bucketMs) {
+			if (!this.bufferedFromStart) {
+				if (bucketMs != 0L) {
+					return;
+				}
+				this.bufferedFromStart = true;
+				this.bufferedStartMs = 0L;
+				this.bufferedEndMs = 0L;
+				return;
+			}
+			if (bucketMs <= this.bufferedEndMs + CONTIGUOUS_BUFFER_TOLERANCE_MS) {
+				this.bufferedStartMs = 0L;
+				this.bufferedEndMs = Math.max(this.bufferedEndMs, bucketMs);
+			}
+		}
+
+		private void stopLocked() {
+			Process running = this.process;
+			this.process = null;
+			if (running == null) {
+				return;
+			}
+			running.destroy();
+			try {
+				if (!running.waitFor(PROCESS_STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+					running.destroyForcibly();
+					running.waitFor(PROCESS_STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+				}
+			} catch (InterruptedException exception) {
+				Thread.currentThread().interrupt();
+				running.destroyForcibly();
+			}
 		}
 	}
 
@@ -542,7 +883,11 @@ public final class MonitorYoutubeRelayClient {
 		}
 
 		private SessionLoadResponse load(String url) throws IOException {
-			ResolvedYoutube resolved = resolveYoutube(url);
+			QueuePreloadSnapshot queuePreload = snapshotQueuePreload(url);
+			ResolvedYoutube resolved = queuePreload != null && queuePreload.resolved() != null
+					? queuePreload.resolved()
+					: resolveYoutube(url);
+			boolean hadPreloadedFrame = false;
 			synchronized (this.lock) {
 				stopPrefetchLocked();
 				stopLocked();
@@ -564,6 +909,18 @@ public final class MonitorYoutubeRelayClient {
 				this.bufferedFromStart = false;
 				this.prefetchCompleted = false;
 				this.cachedPreviewFrames.clear();
+				if (queuePreload != null && !resolved.live()) {
+					this.cachedPreviewFrames.putAll(queuePreload.cachedPreviewFrames());
+					this.bufferedStartMs = queuePreload.bufferedStartMs();
+					this.bufferedEndMs = queuePreload.bufferedEndMs();
+					this.bufferedFromStart = queuePreload.bufferedFromStart();
+					try {
+						hadPreloadedFrame = applyCachedPreviewLocked(0L);
+					} catch (IOException exception) {
+						Lg2.LOGGER.debug("Failed to apply preloaded YouTube queue frame for {}", url, exception);
+						this.latestFrame = null;
+					}
+				}
 				this.playBasePositionMs = 0L;
 				this.playStartedAtNanos = System.nanoTime();
 				this.lastAccessAtMillis = System.currentTimeMillis();
@@ -571,7 +928,9 @@ public final class MonitorYoutubeRelayClient {
 			if (resolved.live()) {
 				startStream();
 			} else {
-				tryCapturePreviewFrame("load");
+				if (!hadPreloadedFrame) {
+					tryCapturePreviewFrame("load");
+				}
 				synchronized (this.lock) {
 					if (this.latestFrame != null) {
 						this.status = "PLAYING";
@@ -586,12 +945,14 @@ public final class MonitorYoutubeRelayClient {
 
 		private SessionSnapshot snapshot(long knownFrameSequence) {
 			boolean shouldEnsurePrefetch;
+			boolean ended = false;
 			synchronized (this.lock) {
 				if (!this.live && !this.paused) {
 					this.positionMs = currentPositionMsLocked();
 					if (this.durationMs > 0L && this.positionMs >= this.durationMs) {
 						this.positionMs = this.durationMs;
 						this.paused = true;
+						ended = true;
 					}
 					boolean hasCachedFrame;
 					try {
@@ -621,6 +982,7 @@ public final class MonitorYoutubeRelayClient {
 						this.bufferedStartMs,
 						this.bufferedEndMs,
 						this.paused,
+						ended,
 						this.live,
 						this.audioPlaceholder,
 						ready,
@@ -751,9 +1113,24 @@ public final class MonitorYoutubeRelayClient {
 						this.status = this.latestFrame != null ? "PLAYING" : "BUFFERING";
 					}
 				}
-				Lg2.LOGGER.debug("Failed to capture YouTube preview frame during {} for session {}", reason, this.sessionId, exception);
+				if (shouldLogPreviewFailure(reason, exception)) {
+					Lg2.LOGGER.debug("Failed to capture YouTube preview frame during {} for session {}", reason, this.sessionId, exception);
+				}
 				return false;
 			}
+		}
+
+		private boolean shouldLogPreviewFailure(String reason, IOException exception) {
+			if ("seek".equals(reason)) {
+				String message = exception.getMessage();
+				if (message == null) {
+					return false;
+				}
+				return !message.contains("Timed out waiting for ffmpeg preview frame")
+						&& !message.contains("Failed to capture YouTube preview frame")
+						&& !message.contains("ffmpeg returned an unreadable preview frame");
+			}
+			return true;
 		}
 
 		private void startStream() throws IOException {

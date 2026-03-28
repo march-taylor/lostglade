@@ -121,6 +121,9 @@ public final class MonitorScreenSystem {
 	private static final double MEDIA_CONTROL_DISTANCE = 6.0D;
 	private static final long YOUTUBE_SCROLL_SEEK_MS = 5000L;
 	private static final Map<RenderCacheKey, byte[][]> TILE_CACHE = new ConcurrentHashMap<>();
+	private static final Map<OverlayWindowCacheKey, OverlayWindowRenderState> OVERLAY_WINDOW_CACHE = new ConcurrentHashMap<>();
+	private static final Map<OverlayWindowFamilyKey, BufferedImage> OVERLAY_WINDOW_FAMILY_CACHE = new ConcurrentHashMap<>();
+	private static final Map<OverlayWindowFamilyKey, BufferedImage> OVERLAY_WINDOW_PLACEHOLDER_CACHE = new ConcurrentHashMap<>();
 	private static final Map<Integer, byte[]> LAST_RENDERED_MAP_FRAMES = new ConcurrentHashMap<>();
 	private static final Map<String, BufferedImage> APP_ICON_CACHE = new ConcurrentHashMap<>();
 	private static final Map<ScreenRuntimeKey, MediaRuntimeState> MEDIA_STATES = new ConcurrentHashMap<>();
@@ -130,6 +133,7 @@ public final class MonitorScreenSystem {
 	private static volatile ExecutorService renderExecutor;
 	private static volatile ExecutorService quantizeExecutor;
 	private static volatile ExecutorService mediaIoExecutor;
+	private static volatile ExecutorService overlayWindowExecutor;
 	private static volatile ScheduledExecutorService mediaScheduler;
 	private static volatile BufferedImage offBaseImage;
 	private static volatile BufferedImage onBaseImage;
@@ -155,6 +159,9 @@ public final class MonitorScreenSystem {
 		if (mediaIoExecutor == null) {
 			mediaIoExecutor = Executors.newFixedThreadPool(monitorMediaIoThreads(), daemonThreadFactory("lg2-monitor-io"));
 		}
+		if (overlayWindowExecutor == null) {
+			overlayWindowExecutor = Executors.newFixedThreadPool(monitorOverlayWindowThreads(), daemonThreadFactory("lg2-monitor-window"));
+		}
 		if (mediaScheduler == null) {
 			mediaScheduler = Executors.newScheduledThreadPool(monitorMediaSchedulerThreads(), daemonThreadFactory("lg2-monitor-scheduler"));
 		}
@@ -177,6 +184,10 @@ public final class MonitorScreenSystem {
 
 	private static int monitorMediaSchedulerThreads() {
 		return Math.max(2, Math.min(8, monitorMediaIoThreads()));
+	}
+
+	private static int monitorOverlayWindowThreads() {
+		return Math.max(1, Math.min(4, Math.max(1, monitorRenderThreads() / 2)));
 	}
 
 	private static int monitorMapUpdateRadiusBlocks() {
@@ -519,18 +530,26 @@ public final class MonitorScreenSystem {
 			CompletableFuture
 					.supplyAsync(() -> {
 						try {
-							return new YoutubeLoadResult(
+							return new YoutubeQueueResolveResult(
 									pending.screenKey(),
 									sender.getUUID(),
 									url,
-									MonitorYoutubeRelayClient.load(relaySessionId(pending.screenKey()), url, state.progress),
+									MonitorYoutubeRelayClient.resolveQueue(url),
+									pending.youtubeAction(),
 									null
 							);
 						} catch (Exception exception) {
-							return new YoutubeLoadResult(pending.screenKey(), sender.getUUID(), url, null, sanitizeMediaError(exception.getMessage()));
+							return new YoutubeQueueResolveResult(
+									pending.screenKey(),
+									sender.getUUID(),
+									url,
+									null,
+									pending.youtubeAction(),
+									sanitizeMediaError(exception.getMessage())
+							);
 						}
 					}, mediaIoExecutor)
-					.thenAccept(result -> server.execute(() -> applyYoutubeLoadResult(server, result)));
+					.thenAccept(result -> server.execute(() -> applyYoutubeQueueResolveResult(server, result)));
 		} else {
 			CompletableFuture
 					.supplyAsync(() -> {
@@ -571,6 +590,7 @@ public final class MonitorScreenSystem {
 		boolean rerenderCurrent = false;
 		Boolean youtubePauseAction = null;
 		Long youtubeSeekTargetMs = null;
+		Integer youtubeQueuePlayIndex = null;
 		if (component.viewMode() == ScreenViewMode.HOME) {
 			List<MonitorApp> visibleApps = visibleHomeApps(layout, component.launcherPage());
 			for (int index = 0; index < visibleApps.size(); index++) {
@@ -614,7 +634,71 @@ public final class MonitorScreenSystem {
 				rerenderCurrent = true;
 				controlsWereHidden = true;
 			}
-			if (mediaCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			if (hasMedia && mediaState.mode == ScreenViewMode.YOUTUBE && mediaState.youtubeQueueOpen) {
+				synchronized (mediaState) {
+					int visibleRows = mediaQueueVisibleRows(layout);
+					int maxScroll = Math.max(0, mediaState.youtubeQueue.size() - visibleRows);
+					mediaState.youtubeQueueScroll = clampInt(mediaState.youtubeQueueScroll, 0, maxScroll);
+					if (!mediaQueuePanelRect(layout).contains(touchPoint.x(), touchPoint.y())
+							|| mediaQueueCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+						mediaState.youtubeQueueOpen = false;
+					} else {
+						int rowCount = Math.min(visibleRows, Math.max(0, mediaState.youtubeQueue.size() - mediaState.youtubeQueueScroll));
+						String removedQueueUrl = null;
+						for (int visibleIndex = 0; visibleIndex < rowCount; visibleIndex++) {
+							UiRect rowRect = mediaQueueRowRect(layout, visibleIndex);
+							if (!rowRect.contains(touchPoint.x(), touchPoint.y())) {
+								continue;
+							}
+							int queueIndex = mediaState.youtubeQueueScroll + visibleIndex;
+							if (queueIndex < 0 || queueIndex >= mediaState.youtubeQueue.size()) {
+								break;
+							}
+							UiRect removeRect = mediaQueueRemoveRect(rowRect, layout);
+							if (removeRect.contains(touchPoint.x(), touchPoint.y())) {
+								boolean removedCurrent = queueIndex == mediaState.youtubeQueueIndex;
+								YoutubeQueueItem removedItem = mediaState.youtubeQueue.get(queueIndex);
+								removedQueueUrl = removedItem != null ? removedItem.url() : null;
+								mediaState.youtubeQueue.remove(queueIndex);
+								if (mediaState.youtubeQueue.isEmpty()) {
+									cancelPlaybackLocked(mediaState);
+									clearYoutubePlaybackLocked(mediaState);
+									mediaState.statusText = "";
+									mediaState.progress.clear();
+									mediaState.userPaused = false;
+									mediaState.loading = false;
+									mediaState.youtubeQueueIndex = -1;
+									mediaState.youtubeQueueScroll = 0;
+									mediaState.youtubeQueueOpen = false;
+								} else {
+									if (queueIndex < mediaState.youtubeQueueIndex) {
+										mediaState.youtubeQueueIndex--;
+									} else if (removedCurrent) {
+										mediaState.youtubeQueueIndex = Math.min(queueIndex, mediaState.youtubeQueue.size() - 1);
+										youtubeQueuePlayIndex = mediaState.youtubeQueueIndex;
+									}
+									int nextMaxScroll = Math.max(0, mediaState.youtubeQueue.size() - visibleRows);
+									mediaState.youtubeQueueScroll = clampInt(mediaState.youtubeQueueScroll, 0, nextMaxScroll);
+								}
+							} else {
+								mediaState.youtubeQueueIndex = queueIndex;
+								if (queueIndex < mediaState.youtubeQueue.size()) {
+									YoutubeQueueItem selectedItem = mediaState.youtubeQueue.get(queueIndex);
+									if (selectedItem != null && !Objects.equals(selectedItem.url(), mediaState.sourceUrl)) {
+										youtubeQueuePlayIndex = queueIndex;
+									}
+								}
+							}
+							break;
+						}
+						if (removedQueueUrl != null && !removedQueueUrl.isBlank()) {
+							releaseYoutubeQueuePreloads(List.of(removedQueueUrl));
+						}
+					}
+					mediaState.version++;
+				}
+				rerenderCurrent = true;
+			} else if (mediaCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				nextMode = ScreenViewMode.HOME;
 			} else if (hasMedia && mediaPlayPauseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
@@ -651,8 +735,20 @@ public final class MonitorScreenSystem {
 					mediaState.version++;
 				}
 				rerenderCurrent = true;
+			} else if (hasMedia && mediaState.mode == ScreenViewMode.YOUTUBE && mediaQueueToggleRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					mediaState.youtubeQueueOpen = !mediaState.youtubeQueueOpen;
+					mediaState.version++;
+				}
+				rerenderCurrent = true;
 			} else if (mediaLinkRect(layout, hasMedia).contains(touchPoint.x(), touchPoint.y())) {
-				requestMediaLink(player, component.runtimeKey(), false, component.viewMode());
+				requestMediaLink(
+						player,
+						component.runtimeKey(),
+						false,
+						component.viewMode(),
+						component.viewMode() == ScreenViewMode.YOUTUBE && hasMedia ? YoutubeLinkRequestAction.APPEND_QUEUE : YoutubeLinkRequestAction.REPLACE_QUEUE
+				);
 				rerenderCurrent = true;
 			} else if (hasMedia && !controlsWereHidden) {
 				synchronized (mediaState) {
@@ -677,7 +773,7 @@ public final class MonitorScreenSystem {
 				openMediaSession(player, component.runtimeKey(), nextMode);
 				markMediaFocus(player, component.runtimeKey());
 				if (nextMode == ScreenViewMode.YOUTUBE) {
-					requestMediaLink(player, component.runtimeKey(), false, ScreenViewMode.YOUTUBE);
+					requestMediaLink(player, component.runtimeKey(), false, ScreenViewMode.YOUTUBE, YoutubeLinkRequestAction.REPLACE_QUEUE);
 				}
 			}
 			synchronizeConnectedScreens(level, frame, null, nextMode, nextLauncherPage);
@@ -712,6 +808,9 @@ public final class MonitorScreenSystem {
 					Lg2.LOGGER.debug("Failed to seek YouTube session {} to {}", component.runtimeKey(), seekTargetMs, exception);
 				}
 			}, mediaIoExecutor).thenRun(() -> server.execute(() -> scheduleYoutubeRefresh(server, component.runtimeKey(), 0L)));
+		}
+		if (server != null && youtubeQueuePlayIndex != null) {
+			startYoutubeQueuePlayback(server, component.runtimeKey(), player.getUUID(), youtubeQueuePlayIndex);
 		}
 		return InteractionResult.SUCCESS;
 	}
@@ -756,7 +855,7 @@ public final class MonitorScreenSystem {
 		MEDIA_STATES.put(key, MediaRuntimeState.fresh(mode, "", () -> onMediaProgressChanged(server, key)));
 	}
 
-	private static void requestMediaLink(ServerPlayer player, ScreenRuntimeKey key, boolean clearCurrentMedia, ScreenViewMode mode) {
+	private static void requestMediaLink(ServerPlayer player, ScreenRuntimeKey key, boolean clearCurrentMedia, ScreenViewMode mode, YoutubeLinkRequestAction youtubeAction) {
 		if (player == null || key == null) {
 			return;
 		}
@@ -766,8 +865,10 @@ public final class MonitorScreenSystem {
 		}
 		MediaRuntimeState state = MEDIA_STATES.computeIfAbsent(key, ignored -> MediaRuntimeState.fresh(mode, linkPromptStatus(mode, player), () -> onMediaProgressChanged(server, key)));
 		synchronized (state) {
-			cancelPlaybackLocked(state);
 			state.mode = mode;
+			if (!(mode == ScreenViewMode.YOUTUBE && youtubeAction == YoutubeLinkRequestAction.APPEND_QUEUE)) {
+				cancelPlaybackLocked(state);
+			}
 			if (clearCurrentMedia) {
 				clearLoadedContentLocked(state);
 			}
@@ -779,9 +880,151 @@ public final class MonitorScreenSystem {
 			state.progress.clear();
 			state.version++;
 		}
-		PENDING_MEDIA_LINKS.put(player.getUUID(), new PendingMediaLinkRequest(key, mode));
+		PENDING_MEDIA_LINKS.put(player.getUUID(), new PendingMediaLinkRequest(key, mode, youtubeAction));
 		ACTIVE_MEDIA_ACTIONBARS.put(player.getUUID(), key);
 		player.displayClientMessage(linkPromptMessage(mode, player), true);
+	}
+
+	private static void applyYoutubeQueueResolveResult(MinecraftServer server, YoutubeQueueResolveResult result) {
+		if (server == null || result == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(result.screenKey());
+		if (state == null) {
+			return;
+		}
+		ServerPlayer requester = result.requesterUuid() != null ? server.getPlayerList().getPlayer(result.requesterUuid()) : null;
+		boolean shouldStartPlayback = false;
+		int startQueueIndex = -1;
+		String queueTitle = "YouTube";
+		int addedCount = 0;
+		List<String> releasedQueueUrls = List.of();
+		List<String> retainedQueueUrls = List.of();
+
+		synchronized (state) {
+			state.mode = ScreenViewMode.YOUTUBE;
+			state.waitingForLink = false;
+			state.overlayMode = MediaOverlayMode.CONTROLS;
+			state.loading = false;
+
+			if (result.queueResponse() == null || result.queueResponse().entries() == null || result.queueResponse().entries().isEmpty()) {
+				state.statusText = sanitizeMediaError(result.error());
+				state.progress.clear();
+				state.version++;
+			} else {
+				List<MonitorYoutubeRelayClient.QueueEntry> resolvedEntries = result.queueResponse().entries();
+				queueTitle = result.queueResponse().title();
+				addedCount = resolvedEntries.size();
+				if (result.action() == YoutubeLinkRequestAction.REPLACE_QUEUE) {
+					releasedQueueUrls = youtubeQueueUrlsLocked(state);
+					cancelPlaybackLocked(state);
+					clearLoadedContentLocked(state, true);
+				} else {
+					ensureYoutubeQueueCurrentEntryLocked(state);
+				}
+				int appendStartIndex = state.youtubeQueue.size();
+				List<String> nextRetainedUrls = new ArrayList<>();
+				for (MonitorYoutubeRelayClient.QueueEntry entry : resolvedEntries) {
+					if (entry == null || entry.url() == null || entry.url().isBlank()) {
+						continue;
+					}
+					String title = entry.title() == null || entry.title().isBlank() ? "YouTube" : entry.title();
+					state.youtubeQueue.add(new YoutubeQueueItem(title, entry.url()));
+					nextRetainedUrls.add(entry.url());
+				}
+				retainedQueueUrls = List.copyOf(nextRetainedUrls);
+				if (result.action() == YoutubeLinkRequestAction.REPLACE_QUEUE) {
+					state.youtubeQueueIndex = state.youtubeQueue.isEmpty() ? -1 : 0;
+					state.youtubeQueueScroll = 0;
+					state.youtubeQueueOpen = !state.youtubeQueue.isEmpty();
+					shouldStartPlayback = !state.youtubeQueue.isEmpty();
+					startQueueIndex = 0;
+				} else if (!state.youtubeQueue.isEmpty() && (state.sourceUrl == null || state.sourceUrl.isBlank())) {
+					state.youtubeQueueIndex = Math.max(0, Math.min(appendStartIndex, state.youtubeQueue.size() - 1));
+					state.youtubeQueueOpen = true;
+					shouldStartPlayback = true;
+					startQueueIndex = state.youtubeQueueIndex;
+				} else {
+					state.youtubeQueueOpen = true;
+					state.youtubeQueueScroll = Math.max(0, state.youtubeQueue.size() - youtubeQueueVisibleRowsPreview(state));
+				}
+				state.statusText = "";
+				state.version++;
+			}
+		}
+		releaseYoutubeQueuePreloads(releasedQueueUrls);
+		retainYoutubeQueuePreloads(retainedQueueUrls);
+
+		if (requester != null && (result.queueResponse() == null || result.queueResponse().entries() == null || result.queueResponse().entries().isEmpty())) {
+			ACTIVE_MEDIA_ACTIONBARS.remove(requester.getUUID());
+			requester.displayClientMessage(Component.empty(), true);
+			requester.sendSystemMessage(mediaLoadFailedMessage(requester, sanitizeMediaError(result.error())));
+		}
+		requestRuntimeRender(server, result.screenKey());
+		if (shouldStartPlayback) {
+			startYoutubeQueuePlayback(server, result.screenKey(), result.requesterUuid(), startQueueIndex);
+			return;
+		}
+		if (requester != null && addedCount > 0) {
+			ACTIVE_MEDIA_ACTIONBARS.remove(requester.getUUID());
+			requester.displayClientMessage(Component.empty(), true);
+			requester.sendSystemMessage(youtubeQueueAddedMessage(requester, queueTitle, addedCount, result.queueResponse().playlist()));
+		}
+	}
+
+	private static void startYoutubeQueuePlayback(MinecraftServer server, ScreenRuntimeKey key, UUID requesterUuid, int queueIndex) {
+		if (server == null || key == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		String url;
+		int resolvedIndex;
+		synchronized (state) {
+			resolvedIndex = normalizeYoutubeQueueIndexLocked(state, queueIndex);
+			if (resolvedIndex < 0) {
+				state.loading = false;
+				state.statusText = "";
+				state.progress.clear();
+				state.version++;
+				return;
+			}
+			YoutubeQueueItem item = state.youtubeQueue.get(resolvedIndex);
+			if (item == null || item.url() == null || item.url().isBlank()) {
+				return;
+			}
+			cancelPlaybackLocked(state);
+			clearYoutubePlaybackLocked(state);
+			state.mode = ScreenViewMode.YOUTUBE;
+			state.youtubeQueueIndex = resolvedIndex;
+			state.youtubeQueueOpen = true;
+			state.waitingForLink = false;
+			state.loading = true;
+			state.userPaused = false;
+			state.statusText = "BUFFERING";
+			state.progress.setIndeterminate("LOADING");
+			state.version++;
+			url = item.url();
+		}
+		requestRuntimeRender(server, key);
+		ensureExecutors();
+		CompletableFuture
+				.supplyAsync(() -> {
+					try {
+						return new YoutubeLoadResult(
+								key,
+								requesterUuid,
+								url,
+								MonitorYoutubeRelayClient.load(relaySessionId(key), url, state.progress),
+								null
+						);
+					} catch (Exception exception) {
+						return new YoutubeLoadResult(key, requesterUuid, url, null, sanitizeMediaError(exception.getMessage()));
+					}
+				}, mediaIoExecutor)
+				.thenAccept(result -> server.execute(() -> applyYoutubeLoadResult(server, result)));
 	}
 
 	private static void closeMediaSession(MinecraftServer server, ScreenRuntimeKey key) {
@@ -790,15 +1033,18 @@ public final class MonitorScreenSystem {
 		}
 		MediaRuntimeState removed = MEDIA_STATES.remove(key);
 		String relaySessionId = null;
+		List<String> releasedQueueUrls = List.of();
 		if (removed != null) {
 			synchronized (removed) {
 				cancelPlaybackLocked(removed);
 				removed.progress.clear();
+				releasedQueueUrls = youtubeQueueUrlsLocked(removed);
 				if (removed.mode == ScreenViewMode.YOUTUBE) {
 					relaySessionId = removed.relaySessionId;
 				}
 			}
 		}
+		releaseYoutubeQueuePreloads(releasedQueueUrls);
 		if (relaySessionId != null && !relaySessionId.isBlank()) {
 			ensureExecutors();
 			String finalRelaySessionId = relaySessionId;
@@ -905,9 +1151,11 @@ public final class MonitorScreenSystem {
 		ServerPlayer requester = server.getPlayerList().getPlayer(result.requesterUuid());
 		boolean schedulePlayback = false;
 		boolean animated = false;
+		List<String> releasedQueueUrls = List.of();
 
 		synchronized (state) {
 			state.mode = ScreenViewMode.MEDIA;
+			releasedQueueUrls = youtubeQueueUrlsLocked(state);
 			clearLoadedContentLocked(state);
 			state.loading = false;
 			state.waitingForLink = false;
@@ -930,6 +1178,7 @@ public final class MonitorScreenSystem {
 			}
 			state.version++;
 		}
+		releaseYoutubeQueuePreloads(releasedQueueUrls);
 
 		if (requester != null) {
 			ACTIVE_MEDIA_ACTIONBARS.remove(requester.getUUID());
@@ -961,7 +1210,7 @@ public final class MonitorScreenSystem {
 
 		synchronized (state) {
 			state.mode = ScreenViewMode.YOUTUBE;
-			clearLoadedContentLocked(state);
+			clearLoadedContentLocked(state, false);
 			state.waitingForLink = false;
 			state.overlayMode = MediaOverlayMode.CONTROLS;
 			cancelPlaybackLocked(state);
@@ -981,6 +1230,7 @@ public final class MonitorScreenSystem {
 				state.userPaused = false;
 				state.statusText = result.loadResponse().status();
 				state.progress.setIndeterminate(result.loadResponse().live() ? "LIVE" : "LOADING");
+				ensureYoutubeQueueCurrentEntryLocked(state);
 			} else {
 				state.loading = false;
 				state.userPaused = false;
@@ -1139,6 +1389,7 @@ public final class MonitorScreenSystem {
 		boolean shouldFadeProgress = false;
 		boolean shouldRender = false;
 		boolean shouldBumpVersion = false;
+		Integer queueAdvanceIndex = null;
 		synchronized (state) {
 			if (state.mode != ScreenViewMode.YOUTUBE) {
 				return;
@@ -1198,6 +1449,10 @@ public final class MonitorScreenSystem {
 				// Keep YouTube playback on the GIF-like path: new frames should queue the next render,
 				// not invalidate an in-flight large-screen render job every poll.
 				shouldReschedule = true;
+				if (result.snapshot().ended() && !state.youtubeQueue.isEmpty()) {
+					queueAdvanceIndex = normalizeYoutubeQueueIndexLocked(state, state.youtubeQueueIndex >= 0 ? state.youtubeQueueIndex + 1 : 0);
+					shouldReschedule = false;
+				}
 			} else {
 				state.loading = false;
 				state.statusText = sanitizeMediaError(result.error());
@@ -1208,6 +1463,10 @@ public final class MonitorScreenSystem {
 			if (shouldBumpVersion) {
 				state.version++;
 			}
+		}
+		if (queueAdvanceIndex != null) {
+			startYoutubeQueuePlayback(server, result.screenKey(), null, queueAdvanceIndex);
+			return;
 		}
 		if (shouldRender && hasNearbyMediaViewer(server, result.screenKey())) {
 			requestRuntimeRender(server, result.screenKey());
@@ -1269,14 +1528,21 @@ public final class MonitorScreenSystem {
 			if (state.overlayMode == MediaOverlayMode.CONTROLS
 					&& !state.loading
 					&& !state.waitingForLink) {
-				cancelPlaybackLocked(state);
-				if (state.mode == ScreenViewMode.YOUTUBE && canSeekTimelineLocked(state)) {
+				if (state.mode == ScreenViewMode.YOUTUBE && state.youtubeQueueOpen && !state.youtubeQueue.isEmpty()) {
+					int visibleRows = youtubeQueueVisibleRowsPreview(state);
+					int maxScroll = Math.max(0, state.youtubeQueue.size() - visibleRows);
+					state.youtubeQueueScroll = clampInt(state.youtubeQueueScroll + delta, 0, maxScroll);
+					state.version++;
+					handled = true;
+				} else if (state.mode == ScreenViewMode.YOUTUBE && canSeekTimelineLocked(state)) {
+					cancelPlaybackLocked(state);
 					long duration = Math.max(1L, state.durationMs);
 					long seekStep = Math.max(YOUTUBE_SCROLL_SEEK_MS, duration / 120L);
 					youtubeSeekTargetMs = clampLong(state.positionMs + delta * seekStep, 0L, duration);
 					state.positionMs = youtubeSeekTargetMs;
 					handled = true;
 				} else if (state.loadedMedia != null && state.loadedMedia.animated() && state.loadedMedia.frameCount() > 1) {
+					cancelPlaybackLocked(state);
 					int seekFrames = Math.max(1, state.loadedMedia.frameCount() / 60);
 					state.frameIndex = Math.floorMod(state.frameIndex + delta * seekFrames, state.loadedMedia.frameCount());
 					state.version++;
@@ -1455,7 +1721,7 @@ public final class MonitorScreenSystem {
 		ensureExecutors();
 		renderExecutor.submit(() -> {
 			try {
-				byte[][] renderedTiles = renderTiles(work);
+				byte[][] renderedTiles = renderTiles(server, work);
 				server.execute(() -> applyRenderedWork(server, work, renderedTiles));
 			} catch (Exception exception) {
 				Lg2.LOGGER.error("Monitor render job failed for {}", work.runtimeKey(), exception);
@@ -1980,7 +2246,7 @@ public final class MonitorScreenSystem {
 		writeScreenState(screenMap, state);
 		MapItemSavedData mapData = mapLevel.getMapData(mapId);
 		if (mapData != null) {
-			byte[][] tiles = renderTiles(new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null));
+			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null));
 			applyFrameToMap(mapData, tiles[0]);
 		}
 		return screenMap;
@@ -2069,7 +2335,7 @@ public final class MonitorScreenSystem {
 
 	private static MediaVisualSnapshot captureMediaSnapshot(MediaRuntimeState state) {
 		if (state == null) {
-			return new MediaVisualSnapshot(0L, null, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", null);
+			return new MediaVisualSnapshot(0L, null, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", null, List.of(), false, 0, null);
 		}
 		boolean youtubeMode = state.mode == ScreenViewMode.YOUTUBE;
 		BufferedImage frame = youtubeMode
@@ -2098,6 +2364,10 @@ public final class MonitorScreenSystem {
 		String timelineLabel = youtubeMode
 				? state.liveStream ? "LIVE" : formatPlaybackTime(state.positionMs) + " / " + formatPlaybackTime(state.durationMs)
 				: (timelineIndex + 1) + "/" + Math.max(1, timelineCount);
+		List<YoutubeQueueItemSnapshot> queueItems = youtubeMode ? youtubeQueueSnapshots(state) : List.of();
+		MediaOverlayWindowSnapshot overlayWindow = youtubeMode && state.youtubeQueueOpen
+				? youtubeQueueWindowSnapshot(state, queueItems)
+				: null;
 		return new MediaVisualSnapshot(
 				state.version,
 				frame,
@@ -2115,11 +2385,15 @@ public final class MonitorScreenSystem {
 				state.scaleMode,
 				state.statusText,
 				youtubeMode ? "YOUTUBE URL" : "ВСТАВЬ URL",
-				state.progress.snapshot()
+				state.progress.snapshot(),
+				queueItems,
+				youtubeMode && state.youtubeQueueOpen,
+				youtubeMode ? state.youtubeQueueScroll : 0,
+				overlayWindow
 		);
 	}
 
-	private static byte[][] renderTiles(RenderWork work) {
+	private static byte[][] renderTiles(MinecraftServer server, RenderWork work) {
 		if (work == null) {
 			return new byte[0][];
 		}
@@ -2142,7 +2416,7 @@ public final class MonitorScreenSystem {
 			if (work.viewMode() == ScreenViewMode.HOME) {
 				drawHomeScreen(graphics, layout, work.launcherPage());
 			} else {
-				drawAppScreen(graphics, layout, appForViewMode(work.viewMode()), work.mediaSnapshot());
+				drawAppScreen(graphics, layout, appForViewMode(work.viewMode()), work.runtimeKey(), server, work.mediaSnapshot());
 			}
 		}
 		graphics.dispose();
@@ -2285,13 +2559,13 @@ public final class MonitorScreenSystem {
 		}
 	}
 
-	private static void drawAppScreen(Graphics2D graphics, UiLayout layout, MonitorApp app, MediaVisualSnapshot mediaSnapshot) {
+	private static void drawAppScreen(Graphics2D graphics, UiLayout layout, MonitorApp app, ScreenRuntimeKey runtimeKey, MinecraftServer server, MediaVisualSnapshot mediaSnapshot) {
 		if (app == null) {
 			drawHomeScreen(graphics, layout, 0);
 			return;
 		}
 		if ("media".equalsIgnoreCase(app.id()) || "youtube".equalsIgnoreCase(app.id())) {
-			drawMediaScreen(graphics, layout, mediaSnapshot);
+			drawMediaScreen(graphics, layout, runtimeKey, server, mediaSnapshot);
 			return;
 		}
 		drawGenericAppScreen(graphics, layout, app);
@@ -2353,13 +2627,15 @@ public final class MonitorScreenSystem {
 		drawCenteredText(graphics, app.screenHint(), hintRect, new Color(212, 220, 228), Font.PLAIN, clampInt(layout.unit() - 1, 9, 13));
 	}
 
-	private static void drawMediaScreen(Graphics2D graphics, UiLayout layout, MediaVisualSnapshot state) {
+	private static void drawMediaScreen(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MinecraftServer server, MediaVisualSnapshot state) {
 		UiRect canvasRect = mediaCanvasRect(layout);
 		UiRect closeRect = mediaCloseRect(layout);
 		BufferedImage mediaFrame = state != null ? state.frame() : null;
 		boolean hasMedia = state != null && state.hasMedia();
+		boolean youtubeMode = state != null && "YOUTUBE URL".equals(state.linkPlaceholder());
 		UiRect linkRect = mediaLinkRect(layout, hasMedia);
 		UiRect scaleRect = mediaScaleRect(layout);
+		UiRect queueToggleRect = mediaQueueToggleRect(layout);
 		UiRect timelineRect = mediaTimelineRect(layout);
 
 		if (mediaFrame != null) {
@@ -2408,6 +2684,9 @@ public final class MonitorScreenSystem {
 						layout
 				);
 				drawMediaScaleButton(graphics, scaleRect, state != null ? state.scaleMode() : MediaScaleMode.FIT, layout);
+				if (youtubeMode) {
+					drawMediaQueueToggleButton(graphics, queueToggleRect, state.youtubeQueueOpen(), layout);
+				}
 				drawMediaTimeline(graphics, timelineRect, state, layout);
 			}
 		}
@@ -2446,6 +2725,9 @@ public final class MonitorScreenSystem {
 					false,
 					layout
 			);
+		}
+		if (state != null && state.overlayWindow() != null) {
+			drawMediaOverlayWindow(graphics, layout, runtimeKey, server, state.overlayWindow());
 		}
 	}
 
@@ -2594,6 +2876,241 @@ public final class MonitorScreenSystem {
 		}
 	}
 
+	private static void drawMediaQueueToggleButton(Graphics2D graphics, UiRect rect, boolean open, UiLayout layout) {
+		drawRoundMediaButtonBase(graphics, rect);
+		if (open) {
+			fillRoundedRect(graphics, rect.inset(Math.max(2, layout.unit() / 4)), clampInt(layout.unit(), 6, 10), new Color(86, 188, 255, 42));
+		}
+		drawQueueGlyph(graphics, rect.inset(Math.max(2, layout.unit() / 4)), new Color(248, 251, 255));
+	}
+
+	private static void drawQueueScrollButton(Graphics2D graphics, UiRect rect, String label, boolean active, UiLayout layout) {
+		fillRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 10, 18), active ? new Color(255, 255, 255, 18) : new Color(255, 255, 255, 8));
+		strokeRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 10, 18), 1.0F, new Color(255, 255, 255, active ? 34 : 18));
+		drawCenteredText(graphics, label, rect, new Color(248, 251, 255, active ? 228 : 90), Font.BOLD, clampInt(layout.unit() + 1, 10, 16));
+	}
+
+	private static void drawMediaOverlayWindow(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MinecraftServer server, MediaOverlayWindowSnapshot window) {
+		if (graphics == null || layout == null || window == null) {
+			return;
+		}
+		UiRect canvas = mediaCanvasRect(layout);
+		graphics.setColor(new Color(0, 0, 0, 118));
+		fillRoundedRect(graphics, canvas, clampInt(layout.unit() * 2, 12, 22), new Color(0, 0, 0, 118));
+
+		BufferedImage image = overlayWindowImage(server, runtimeKey, window, layout);
+		UiRect rect = overlayWindowRect(layout, window.type());
+		graphics.drawImage(image, rect.x(), rect.y(), null);
+	}
+
+	private static BufferedImage overlayWindowImage(MinecraftServer server, ScreenRuntimeKey runtimeKey, MediaOverlayWindowSnapshot window, UiLayout layout) {
+		UiRect rect = overlayWindowRect(layout, window.type());
+		OverlayWindowCacheKey key = new OverlayWindowCacheKey(window, rect.width(), rect.height(), layout.unit());
+		OverlayWindowFamilyKey familyKey = new OverlayWindowFamilyKey(window.type(), rect.width(), rect.height(), layout.unit());
+		OverlayWindowRenderState cached = OVERLAY_WINDOW_CACHE.computeIfAbsent(key, ignored -> new OverlayWindowRenderState());
+		cached.lastAccessNanos = System.nanoTime();
+		BufferedImage ready = cached.image;
+		if (ready != null) {
+			return ready;
+		}
+		scheduleOverlayWindowRender(server, runtimeKey, window, layout, rect, key, familyKey, cached);
+		BufferedImage familyFallback = OVERLAY_WINDOW_FAMILY_CACHE.get(familyKey);
+		if (familyFallback != null) {
+			return familyFallback;
+		}
+		return OVERLAY_WINDOW_PLACEHOLDER_CACHE.computeIfAbsent(
+				familyKey,
+				ignored -> renderOverlayWindowPlaceholder(window.type(), layout, rect)
+		);
+	}
+
+	private static void scheduleOverlayWindowRender(
+			MinecraftServer server,
+			ScreenRuntimeKey runtimeKey,
+			MediaOverlayWindowSnapshot window,
+			UiLayout layout,
+			UiRect rect,
+			OverlayWindowCacheKey key,
+			OverlayWindowFamilyKey familyKey,
+			OverlayWindowRenderState cacheState
+	) {
+		if (window == null || layout == null || rect == null || cacheState == null) {
+			return;
+		}
+		ensureExecutors();
+		synchronized (cacheState) {
+			if (cacheState.image != null) {
+				return;
+			}
+			if (cacheState.future != null && !cacheState.future.isDone()) {
+				return;
+			}
+			cacheState.future = CompletableFuture
+					.supplyAsync(() -> renderOverlayWindowImage(window, layout, rect), overlayWindowExecutor)
+					.whenComplete((rendered, throwable) -> {
+						if (throwable != null) {
+							OVERLAY_WINDOW_CACHE.remove(key, cacheState);
+							Lg2.LOGGER.debug("Failed to render overlay window {}", window.type(), throwable);
+							return;
+						}
+						cacheState.image = rendered;
+						cacheState.lastAccessNanos = System.nanoTime();
+						OVERLAY_WINDOW_FAMILY_CACHE.put(familyKey, rendered);
+						trimOverlayWindowCaches();
+						if (server != null && runtimeKey != null) {
+							server.execute(() -> requestRuntimeRender(server, runtimeKey));
+						}
+					});
+		}
+	}
+
+	private static void trimOverlayWindowCaches() {
+		if (OVERLAY_WINDOW_CACHE.size() <= 256 && OVERLAY_WINDOW_FAMILY_CACHE.size() <= 24 && OVERLAY_WINDOW_PLACEHOLDER_CACHE.size() <= 24) {
+			return;
+		}
+		OVERLAY_WINDOW_CACHE.entrySet().removeIf(entry -> {
+			OverlayWindowRenderState state = entry.getValue();
+			return state == null
+					|| (state.image != null && System.nanoTime() - state.lastAccessNanos > TimeUnit.MINUTES.toNanos(3));
+		});
+		if (OVERLAY_WINDOW_CACHE.size() > 320) {
+			OVERLAY_WINDOW_CACHE.clear();
+		}
+		if (OVERLAY_WINDOW_FAMILY_CACHE.size() > 32) {
+			OVERLAY_WINDOW_FAMILY_CACHE.clear();
+		}
+		if (OVERLAY_WINDOW_PLACEHOLDER_CACHE.size() > 32) {
+			OVERLAY_WINDOW_PLACEHOLDER_CACHE.clear();
+		}
+	}
+
+	private static BufferedImage renderOverlayWindowImage(MediaOverlayWindowSnapshot window, UiLayout layout, UiRect rect) {
+		BufferedImage image = new BufferedImage(Math.max(1, rect.width()), Math.max(1, rect.height()), BufferedImage.TYPE_INT_ARGB);
+		Graphics2D overlayGraphics = image.createGraphics();
+		configureUiGraphics(overlayGraphics);
+		overlayGraphics.translate(-rect.x(), -rect.y());
+		switch (window.type()) {
+			case YOUTUBE_QUEUE -> drawYoutubeQueueWindow(overlayGraphics, layout, window);
+		}
+		overlayGraphics.dispose();
+		return image;
+	}
+
+	private static BufferedImage renderOverlayWindowPlaceholder(MediaOverlayWindowType type, UiLayout layout, UiRect rect) {
+		BufferedImage image = new BufferedImage(Math.max(1, rect.width()), Math.max(1, rect.height()), BufferedImage.TYPE_INT_ARGB);
+		Graphics2D overlayGraphics = image.createGraphics();
+		configureUiGraphics(overlayGraphics);
+		overlayGraphics.translate(-rect.x(), -rect.y());
+		switch (type) {
+			case YOUTUBE_QUEUE -> drawYoutubeQueueWindowPlaceholder(overlayGraphics, layout);
+		}
+		overlayGraphics.dispose();
+		return image;
+	}
+
+	private static void drawYoutubeQueueWindow(Graphics2D graphics, UiLayout layout, MediaOverlayWindowSnapshot window) {
+		UiRect panel = mediaQueuePanelRect(layout);
+		UiRect header = mediaQueueHeaderRect(layout);
+		UiRect closeRect = mediaQueueCloseRect(layout);
+		UiRect subtitleRect = mediaQueueSubtitleRect(layout);
+		UiRect list = mediaQueueListRect(layout);
+		UiRect footer = mediaQueueFooterRect(layout);
+		UiRect footerInfoRect = mediaQueueFooterInfoRect(layout);
+		int visibleRows = mediaQueueVisibleRows(layout);
+		int scroll = clampInt(window.scroll(), 0, Math.max(0, window.items().size() - visibleRows));
+
+		graphics.setPaint(new GradientPaint(
+				panel.x(),
+				panel.y(),
+				new Color(8, 12, 18, 242),
+				panel.right(),
+				panel.bottom(),
+				new Color(20, 26, 34, 236)
+		));
+		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 3, 16, 28), null);
+		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 3, 16, 28), 1.2F, new Color(255, 255, 255, 62));
+
+		fillRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 22), new Color(255, 255, 255, 14));
+		strokeRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 22), 1.0F, new Color(255, 255, 255, 34));
+		drawVerticalText(graphics, window.title(), new UiRect(header.x() + clampInt(layout.unit(), 8, 14), header.y(), Math.max(16, closeRect.x() - header.x() - layout.unit() * 2), header.height() / 2 + 2), new Color(248, 251, 255), Font.BOLD, clampInt(layout.unit() + 2, 12, 20));
+		drawVerticalText(graphics, window.subtitle(), subtitleRect, new Color(178, 194, 212, 220), Font.PLAIN, clampInt(layout.unit() - 1, 9, 13));
+		drawMediaCloseButton(graphics, closeRect, layout);
+
+		if (window.items().isEmpty()) {
+			drawCenteredText(graphics, "Очередь пуста", list, new Color(210, 218, 226, 214), Font.PLAIN, clampInt(layout.unit(), 10, 16));
+		} else {
+			int rowCount = Math.min(visibleRows, Math.max(0, window.items().size() - scroll));
+			for (int visibleIndex = 0; visibleIndex < rowCount; visibleIndex++) {
+				YoutubeQueueItemSnapshot item = window.items().get(scroll + visibleIndex);
+				UiRect rowRect = mediaQueueRowRect(layout, visibleIndex);
+				UiRect removeRect = mediaQueueRemoveRect(rowRect, layout);
+				UiRect badgeRect = mediaQueueIndexRect(rowRect, layout);
+				UiRect titleRect = mediaQueueTitleRect(rowRect, removeRect, badgeRect, layout);
+				Color fill = item.current() ? new Color(86, 188, 255, 84) : new Color(255, 255, 255, 18);
+				Color stroke = item.current() ? new Color(140, 220, 255, 118) : new Color(255, 255, 255, 34);
+				fillRoundedRect(graphics, rowRect, clampInt(layout.unit() * 2, 12, 18), fill);
+				strokeRoundedRect(graphics, rowRect, clampInt(layout.unit() * 2, 12, 18), 1.0F, stroke);
+				fillRoundedRect(graphics, badgeRect, clampInt(layout.unit() * 2, 10, 18), new Color(12, 16, 22, 196));
+				drawCenteredText(graphics, Integer.toString(item.queueIndex() + 1), badgeRect, new Color(248, 251, 255), Font.BOLD, clampInt(layout.unit() + 1, 10, 16));
+				drawWrappedText(graphics, item.title(), titleRect, new Color(248, 251, 255, 232), item.current() ? Font.BOLD : Font.PLAIN, clampInt(layout.unit(), 10, 16), 3);
+				fillRoundedRect(graphics, removeRect, clampInt(layout.unit() * 2, 10, 18), new Color(30, 18, 24, 214));
+				strokeRoundedRect(graphics, removeRect, clampInt(layout.unit() * 2, 10, 18), 1.0F, new Color(255, 255, 255, 28));
+				drawCloseGlyph(graphics, removeRect.inset(Math.max(2, layout.unit() / 5)), new Color(255, 232, 238));
+			}
+		}
+
+		fillRoundedRect(graphics, footer, clampInt(layout.unit() * 2, 12, 18), new Color(255, 255, 255, 10));
+		strokeRoundedRect(graphics, footer, clampInt(layout.unit() * 2, 12, 18), 1.0F, new Color(255, 255, 255, 24));
+		drawCenteredText(
+				graphics,
+				window.items().isEmpty() ? "0/0" : ((window.currentIndex() >= 0 ? window.currentIndex() + 1 : 0) + "/" + window.items().size()),
+				footerInfoRect,
+				new Color(232, 238, 244, 204),
+				Font.BOLD,
+				clampInt(layout.unit() - 1, 9, 13)
+		);
+	}
+
+	private static void drawYoutubeQueueWindowPlaceholder(Graphics2D graphics, UiLayout layout) {
+		UiRect panel = mediaQueuePanelRect(layout);
+		UiRect header = mediaQueueHeaderRect(layout);
+		UiRect list = mediaQueueListRect(layout);
+		UiRect footer = mediaQueueFooterRect(layout);
+		UiRect footerInfoRect = mediaQueueFooterInfoRect(layout);
+		int arc = clampInt(layout.unit() * 3, 16, 28);
+
+		graphics.setPaint(new GradientPaint(
+				panel.x(),
+				panel.y(),
+				new Color(8, 12, 18, 238),
+				panel.right(),
+				panel.bottom(),
+				new Color(20, 26, 34, 232)
+		));
+		fillRoundedRect(graphics, panel, arc, null);
+		strokeRoundedRect(graphics, panel, arc, 1.0F, new Color(255, 255, 255, 36));
+
+		fillRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 22), new Color(255, 255, 255, 12));
+		drawVerticalText(graphics, "Очередь", new UiRect(header.x() + clampInt(layout.unit(), 8, 14), header.y(), header.width(), header.height() / 2), new Color(248, 251, 255, 232), Font.BOLD, clampInt(layout.unit() + 2, 12, 20));
+		drawVerticalText(graphics, "Загрузка окна...", mediaQueueSubtitleRect(layout), new Color(188, 198, 212, 176), Font.PLAIN, clampInt(layout.unit() - 1, 9, 13));
+		drawMediaCloseButton(graphics, mediaQueueCloseRect(layout), layout);
+
+		int visibleRows = Math.min(3, mediaQueueVisibleRows(layout));
+		for (int rowIndex = 0; rowIndex < visibleRows; rowIndex++) {
+			UiRect rowRect = mediaQueueRowRect(layout, rowIndex);
+			UiRect badgeRect = mediaQueueIndexRect(rowRect, layout);
+			UiRect titleRect = mediaQueueTitleRect(rowRect, mediaQueueRemoveRect(rowRect, layout), badgeRect, layout);
+			fillRoundedRect(graphics, rowRect, clampInt(layout.unit() * 2, 12, 18), new Color(255, 255, 255, 12));
+			fillRoundedRect(graphics, badgeRect, clampInt(layout.unit() * 2, 10, 18), new Color(12, 16, 22, 180));
+			fillRoundedRect(graphics, new UiRect(titleRect.x(), titleRect.y(), Math.max(18, titleRect.width() * 3 / 4), clampInt(layout.unit(), 10, 14)), clampInt(layout.unit(), 8, 12), new Color(255, 255, 255, 24));
+			fillRoundedRect(graphics, new UiRect(titleRect.x(), titleRect.y() + clampInt(layout.unit() + 2, 10, 16), Math.max(16, titleRect.width() / 2), clampInt(layout.unit(), 10, 14)), clampInt(layout.unit(), 8, 12), new Color(255, 255, 255, 18));
+		}
+
+		fillRoundedRect(graphics, footer, clampInt(layout.unit() * 2, 12, 18), new Color(255, 255, 255, 10));
+		strokeRoundedRect(graphics, footer, clampInt(layout.unit() * 2, 12, 18), 1.0F, new Color(255, 255, 255, 20));
+		drawCenteredText(graphics, "1/1", footerInfoRect, new Color(232, 238, 244, 116), Font.BOLD, clampInt(layout.unit() - 1, 9, 13));
+	}
+
 	private static void drawScaledImage(Graphics2D graphics, BufferedImage image, UiRect rect, MediaScaleMode scaleMode) {
 		if (image == null || rect.width() <= 0 || rect.height() <= 0) {
 			return;
@@ -2738,6 +3255,21 @@ public final class MonitorScreenSystem {
 		graphics.setStroke(new BasicStroke(2.0F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 		graphics.drawOval(lensX, lensY, lensSize, lensSize);
 		graphics.drawLine(handleStartX, handleStartY, handleEndX, handleEndY);
+		graphics.setStroke(previous);
+	}
+
+	private static void drawQueueGlyph(Graphics2D graphics, UiRect rect, Color color) {
+		Stroke previous = graphics.getStroke();
+		graphics.setColor(color);
+		graphics.setStroke(new BasicStroke(Math.max(1.6F, rect.width() / 10.0F), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		int left = rect.x() + clampInt(rect.width() / 5, 2, 5);
+		int right = rect.right() - clampInt(rect.width() / 5, 2, 5);
+		int top = rect.y() + clampInt(rect.height() / 5, 2, 5);
+		int gap = Math.max(3, rect.height() / 3);
+		for (int row = 0; row < 3; row++) {
+			int y = top + row * gap;
+			graphics.drawLine(left, y, right, y);
+		}
 		graphics.setStroke(previous);
 	}
 
@@ -3060,11 +3592,18 @@ public final class MonitorScreenSystem {
 		return new UiRect(canvas.right() - size - layout.unit() / 2, canvas.bottom() - size - layout.unit() / 2, size, size);
 	}
 
+	private static UiRect mediaQueueToggleRect(UiLayout layout) {
+		UiRect scaleRect = mediaScaleRect(layout);
+		int gap = clampInt(layout.unit() / 2, 4, 8);
+		return new UiRect(scaleRect.x() - scaleRect.width() - gap, scaleRect.y(), scaleRect.width(), scaleRect.height());
+	}
+
 	private static UiRect mediaTimelineRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
 		UiRect scaleRect = mediaScaleRect(layout);
+		UiRect queueToggleRect = mediaQueueToggleRect(layout);
 		int left = canvas.x() + layout.unit() / 2;
-		int right = scaleRect.x() - clampInt(layout.unit() / 2, 4, 8);
+		int right = Math.min(scaleRect.x(), queueToggleRect.x()) - clampInt(layout.unit() / 2, 4, 8);
 		int height = clampInt(layout.unit() * 2, 18, 28);
 		return new UiRect(
 				left,
@@ -3072,6 +3611,121 @@ public final class MonitorScreenSystem {
 				Math.max(44, right - left),
 				height
 		);
+	}
+
+	private static UiRect mediaQueuePanelRect(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int width = clampInt(canvas.width() * 5 / 6, 120, canvas.width() - layout.unit() * 2);
+		int height = clampInt(canvas.height() * 4 / 5, 90, canvas.height() - layout.unit() * 2);
+		return new UiRect(
+				canvas.x() + (canvas.width() - width) / 2,
+				canvas.y() + (canvas.height() - height) / 2,
+				width,
+				height
+		);
+	}
+
+	private static UiRect overlayWindowRect(UiLayout layout, MediaOverlayWindowType type) {
+		return switch (type) {
+			case YOUTUBE_QUEUE -> mediaQueuePanelRect(layout);
+		};
+	}
+
+	private static UiRect mediaQueueHeaderRect(UiLayout layout) {
+		UiRect panel = mediaQueuePanelRect(layout);
+		int inset = clampInt(layout.unit() / 2, 4, 8);
+		int height = clampInt(layout.unit() * 3, 26, 40);
+		return new UiRect(panel.x() + inset, panel.y() + inset, panel.width() - inset * 2, height);
+	}
+
+	private static UiRect mediaQueueCloseRect(UiLayout layout) {
+		UiRect header = mediaQueueHeaderRect(layout);
+		int size = Math.max(16, header.height() - clampInt(layout.unit() / 2, 4, 8));
+		return new UiRect(header.right() - size - clampInt(layout.unit() / 3, 3, 6), header.y() + (header.height() - size) / 2, size, size);
+	}
+
+	private static UiRect mediaQueueSubtitleRect(UiLayout layout) {
+		UiRect header = mediaQueueHeaderRect(layout);
+		UiRect closeRect = mediaQueueCloseRect(layout);
+		int x = header.x() + clampInt(layout.unit(), 8, 14);
+		int width = Math.max(16, closeRect.x() - x - clampInt(layout.unit(), 8, 14));
+		int y = header.y() + header.height() / 2 - 1;
+		return new UiRect(x, y, width, Math.max(12, header.bottom() - y - 2));
+	}
+
+	private static UiRect mediaQueueListRect(UiLayout layout) {
+		UiRect panel = mediaQueuePanelRect(layout);
+		UiRect header = mediaQueueHeaderRect(layout);
+		UiRect footer = mediaQueueFooterRect(layout);
+		int horizontalInset = clampInt(layout.unit() / 2, 4, 8);
+		int top = header.bottom() + clampInt(layout.unit() / 2, 4, 8);
+		int bottom = footer.y() - clampInt(layout.unit() / 2, 4, 8);
+		return new UiRect(panel.x() + clampInt(layout.unit() / 2, 4, 8), top, panel.width() - clampInt(layout.unit(), 8, 16), Math.max(20, bottom - top));
+	}
+
+	private static UiRect mediaQueueFooterRect(UiLayout layout) {
+		UiRect panel = mediaQueuePanelRect(layout);
+		int inset = clampInt(layout.unit() / 2, 4, 8);
+		int height = clampInt(layout.unit() * 3, 24, 38);
+		return new UiRect(panel.x() + inset, panel.bottom() - height - inset, panel.width() - inset * 2, height);
+	}
+
+	private static UiRect mediaQueueScrollUpRect(UiLayout layout) {
+		UiRect footer = mediaQueueFooterRect(layout);
+		int width = clampInt(footer.width() / 4, 28, 52);
+		return new UiRect(footer.x() + clampInt(layout.unit() / 3, 3, 6), footer.y() + clampInt(layout.unit() / 4, 2, 4), width, footer.height() - clampInt(layout.unit() / 2, 4, 8));
+	}
+
+	private static UiRect mediaQueueScrollDownRect(UiLayout layout) {
+		UiRect footer = mediaQueueFooterRect(layout);
+		int width = clampInt(footer.width() / 4, 28, 52);
+		return new UiRect(footer.right() - width - clampInt(layout.unit() / 3, 3, 6), footer.y() + clampInt(layout.unit() / 4, 2, 4), width, footer.height() - clampInt(layout.unit() / 2, 4, 8));
+	}
+
+	private static UiRect mediaQueueFooterInfoRect(UiLayout layout) {
+		UiRect footer = mediaQueueFooterRect(layout);
+		return new UiRect(
+				footer.x() + clampInt(layout.unit() / 2, 4, 8),
+				footer.y(),
+				footer.width() - clampInt(layout.unit(), 8, 16),
+				footer.height()
+		);
+	}
+
+	private static int mediaQueueVisibleRows(UiLayout layout) {
+		UiRect list = mediaQueueListRect(layout);
+		int rowHeight = mediaQueueRowHeight(layout);
+		return Math.max(1, list.height() / Math.max(1, rowHeight));
+	}
+
+	private static int mediaQueueRowHeight(UiLayout layout) {
+		return clampInt(layout.unit() * 5, 44, 72);
+	}
+
+	private static UiRect mediaQueueRowRect(UiLayout layout, int visibleIndex) {
+		UiRect list = mediaQueueListRect(layout);
+		int rowHeight = mediaQueueRowHeight(layout);
+		int gap = clampInt(layout.unit() / 2, 4, 8);
+		return new UiRect(list.x(), list.y() + visibleIndex * rowHeight, list.width(), Math.max(24, rowHeight - gap));
+	}
+
+	private static UiRect mediaQueueRemoveRect(UiRect rowRect, UiLayout layout) {
+		int size = clampInt(rowRect.height() - clampInt(layout.unit(), 10, 16), 18, 30);
+		return new UiRect(rowRect.right() - size - clampInt(layout.unit() / 2, 4, 8), rowRect.y() + (rowRect.height() - size) / 2, size, size);
+	}
+
+	private static UiRect mediaQueueIndexRect(UiRect rowRect, UiLayout layout) {
+		int width = clampInt(layout.unit() * 4, 26, 42);
+		int height = clampInt(layout.unit() * 2, 18, 26);
+		return new UiRect(rowRect.x() + clampInt(layout.unit() / 2, 4, 8), rowRect.y() + clampInt(layout.unit() / 2, 4, 8), width, height);
+	}
+
+	private static UiRect mediaQueueTitleRect(UiRect rowRect, UiRect removeRect, UiRect badgeRect, UiLayout layout) {
+		int x = badgeRect.right() + clampInt(layout.unit() / 2, 4, 8);
+		int top = rowRect.y() + clampInt(layout.unit() / 2, 4, 8);
+		int bottom = rowRect.bottom() - clampInt(layout.unit() / 2, 4, 8);
+		int width = Math.max(18, removeRect.x() - x - clampInt(layout.unit(), 8, 12));
+		return new UiRect(x, top, width, Math.max(18, bottom - top));
 	}
 
 	private static UiRect mediaPlayPauseRect(UiLayout layout) {
@@ -3216,6 +3870,93 @@ public final class MonitorScreenSystem {
 		var metrics = graphics.getFontMetrics();
 		int textY = rect.y() + (rect.height() - metrics.getHeight()) / 2 + metrics.getAscent();
 		graphics.drawString(text, rect.x(), textY);
+	}
+
+	private static void drawWrappedText(Graphics2D graphics, String text, UiRect rect, Color color, int style, int size, int maxLines) {
+		if (graphics == null || rect.width() <= 0 || rect.height() <= 0 || maxLines <= 0) {
+			return;
+		}
+		String normalized = text == null ? "" : text.trim().replace('\n', ' ').replace('\r', ' ');
+		graphics.setColor(color);
+		graphics.setFont(new Font(Font.SANS_SERIF, style, size));
+		var metrics = graphics.getFontMetrics();
+		List<String> lines = wrapText(metrics, normalized, rect.width(), maxLines);
+		if (lines.isEmpty()) {
+			return;
+		}
+		int lineHeight = metrics.getHeight();
+		int totalHeight = lineHeight * lines.size();
+		int y = rect.y() + Math.max(metrics.getAscent(), (rect.height() - totalHeight) / 2 + metrics.getAscent());
+		for (String line : lines) {
+			graphics.drawString(line, rect.x(), y);
+			y += lineHeight;
+		}
+	}
+
+	private static List<String> wrapText(java.awt.FontMetrics metrics, String text, int maxWidth, int maxLines) {
+		List<String> lines = new ArrayList<>();
+		if (metrics == null || maxWidth <= 0 || maxLines <= 0) {
+			return lines;
+		}
+		String normalized = text == null ? "" : text.trim();
+		if (normalized.isBlank()) {
+			lines.add("");
+			return lines;
+		}
+		String[] words = normalized.split("\\s+");
+		StringBuilder current = new StringBuilder();
+		for (String word : words) {
+			String candidate = current.isEmpty() ? word : current + " " + word;
+			if (metrics.stringWidth(candidate) <= maxWidth) {
+				current.setLength(0);
+				current.append(candidate);
+				continue;
+			}
+			if (!current.isEmpty()) {
+				lines.add(current.toString());
+				if (lines.size() >= maxLines - 1) {
+					lines.add(truncateWithEllipsis(metrics, word, maxWidth));
+					return lines;
+				}
+				current.setLength(0);
+				current.append(word);
+				continue;
+			}
+			lines.add(truncateWithEllipsis(metrics, word, maxWidth));
+			if (lines.size() >= maxLines) {
+				return lines;
+			}
+		}
+		if (!current.isEmpty()) {
+			lines.add(truncateWithEllipsis(metrics, current.toString(), maxWidth));
+		}
+		if (lines.size() > maxLines) {
+			return lines.subList(0, maxLines);
+		}
+		return lines;
+	}
+
+	private static String truncateWithEllipsis(java.awt.FontMetrics metrics, String text, int maxWidth) {
+		if (text == null || text.isEmpty() || metrics == null || maxWidth <= 0) {
+			return "";
+		}
+		if (metrics.stringWidth(text) <= maxWidth) {
+			return text;
+		}
+		String ellipsis = "...";
+		int ellipsisWidth = metrics.stringWidth(ellipsis);
+		StringBuilder builder = new StringBuilder();
+		for (int index = 0; index < text.length(); index++) {
+			char current = text.charAt(index);
+			if (metrics.stringWidth(builder.toString() + current) + ellipsisWidth > maxWidth) {
+				break;
+			}
+			builder.append(current);
+		}
+		if (builder.isEmpty()) {
+			return ellipsis;
+		}
+		return builder + ellipsis;
 	}
 
 	private static UiPoint screenTouchPoint(ItemFrame frame, Vec3 hitLocation, TileCoord tileCoord, int gridWidth, int gridHeight) {
@@ -3760,6 +4501,24 @@ public final class MonitorScreenSystem {
 		return literal(live ? "YouTube стрим подключён" : "YouTube видео подключено");
 	}
 
+	private static Component youtubeQueueAddedMessage(ServerPlayer player, String title, int addedCount, boolean playlist) {
+		String safeTitle = title == null || title.isBlank() ? "YouTube" : title;
+		String locale = locale(player);
+		if (locale.startsWith("ja")) {
+			return literal((playlist ? "再生リスト" : "動画") + "を " + addedCount + " 件キューに追加: " + safeTitle);
+		}
+		if (locale.startsWith("uk")) {
+			return literal("Додано в чергу " + addedCount + " " + (playlist ? "треків" : "відео") + ": " + safeTitle);
+		}
+		if (locale.startsWith("rpr")) {
+			return literal("Въ очередь прибавлено " + addedCount + " " + (playlist ? "пѣсней" : "видѣво") + ": " + safeTitle);
+		}
+		if (locale.startsWith("ru")) {
+			return literal("Добавлено в очередь " + addedCount + " " + (playlist ? "треков" : "видео") + ": " + safeTitle);
+		}
+		return literal("Queued " + addedCount + " " + (playlist ? "items" : "video") + ": " + safeTitle);
+	}
+
 	private static Component mediaLoadFailedMessage(ServerPlayer player, String error) {
 		String reason = error == null || error.isBlank() ? "LOAD FAILED" : error;
 		return literal("Не удалось загрузить: " + reason);
@@ -3867,7 +4626,111 @@ public final class MonitorScreenSystem {
 		return mode == ScreenViewMode.MEDIA || mode == ScreenViewMode.YOUTUBE;
 	}
 
-	private static void clearLoadedContentLocked(MediaRuntimeState state) {
+	private static int youtubeQueueVisibleRowsPreview(MediaRuntimeState state) {
+		return 5;
+	}
+
+	private static List<YoutubeQueueItemSnapshot> youtubeQueueSnapshots(MediaRuntimeState state) {
+		if (state == null || state.youtubeQueue.isEmpty()) {
+			return List.of();
+		}
+		List<YoutubeQueueItemSnapshot> items = new ArrayList<>(state.youtubeQueue.size());
+		for (int index = 0; index < state.youtubeQueue.size(); index++) {
+			YoutubeQueueItem item = state.youtubeQueue.get(index);
+			items.add(new YoutubeQueueItemSnapshot(index, item != null ? item.title() : "YouTube", index == state.youtubeQueueIndex));
+		}
+		return items;
+	}
+
+	private static MediaOverlayWindowSnapshot youtubeQueueWindowSnapshot(MediaRuntimeState state, List<YoutubeQueueItemSnapshot> items) {
+		if (state == null) {
+			return null;
+		}
+		int totalItems = items != null ? items.size() : 0;
+		String subtitle = totalItems <= 0 ? "Очередь пуста" : totalItems + " " + pluralizeQueueItems(totalItems);
+		return new MediaOverlayWindowSnapshot(
+				MediaOverlayWindowType.YOUTUBE_QUEUE,
+				"ОЧЕРЕДЬ",
+				subtitle,
+				items != null ? List.copyOf(items) : List.of(),
+				Math.max(0, state.youtubeQueueScroll),
+				Math.max(-1, state.youtubeQueueIndex)
+		);
+	}
+
+	private static String pluralizeQueueItems(int count) {
+		int mod100 = Math.floorMod(count, 100);
+		int mod10 = Math.floorMod(count, 10);
+		if (mod100 >= 11 && mod100 <= 19) {
+			return "видео";
+		}
+		if (mod10 == 1) {
+			return "видео";
+		}
+		if (mod10 >= 2 && mod10 <= 4) {
+			return "видео";
+		}
+		return "видео";
+	}
+
+	private static List<String> youtubeQueueUrlsLocked(MediaRuntimeState state) {
+		if (state == null || state.youtubeQueue.isEmpty()) {
+			return List.of();
+		}
+		List<String> urls = new ArrayList<>(state.youtubeQueue.size());
+		for (YoutubeQueueItem item : state.youtubeQueue) {
+			if (item != null && item.url() != null && !item.url().isBlank()) {
+				urls.add(item.url());
+			}
+		}
+		return urls;
+	}
+
+	private static void retainYoutubeQueuePreloads(List<String> urls) {
+		if (urls == null || urls.isEmpty()) {
+			return;
+		}
+		ensureExecutors();
+		List<String> snapshot = List.copyOf(urls);
+		CompletableFuture.runAsync(() -> {
+			for (String url : snapshot) {
+				try {
+					MonitorYoutubeRelayClient.retainQueueEntry(url);
+				} catch (Exception exception) {
+					Lg2.LOGGER.debug("Failed to retain YouTube queue preload for {}", url, exception);
+				}
+			}
+		}, mediaIoExecutor);
+	}
+
+	private static void releaseYoutubeQueuePreloads(List<String> urls) {
+		if (urls == null || urls.isEmpty()) {
+			return;
+		}
+		ensureExecutors();
+		List<String> snapshot = List.copyOf(urls);
+		CompletableFuture.runAsync(() -> {
+			for (String url : snapshot) {
+				try {
+					MonitorYoutubeRelayClient.releaseQueueEntry(url);
+				} catch (Exception exception) {
+					Lg2.LOGGER.debug("Failed to release YouTube queue preload for {}", url, exception);
+				}
+			}
+		}, mediaIoExecutor);
+	}
+
+	private static void clearYoutubeQueueLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		state.youtubeQueue.clear();
+		state.youtubeQueueIndex = -1;
+		state.youtubeQueueScroll = 0;
+		state.youtubeQueueOpen = false;
+	}
+
+	private static void clearYoutubePlaybackLocked(MediaRuntimeState state) {
 		if (state == null) {
 			return;
 		}
@@ -3885,6 +4748,50 @@ public final class MonitorScreenSystem {
 		state.bufferedEndMs = 0L;
 		state.liveStream = false;
 		state.audioPlaceholder = true;
+	}
+
+	private static void clearLoadedContentLocked(MediaRuntimeState state) {
+		clearLoadedContentLocked(state, true);
+	}
+
+	private static void clearLoadedContentLocked(MediaRuntimeState state, boolean clearYoutubeQueue) {
+		clearYoutubePlaybackLocked(state);
+		if (clearYoutubeQueue) {
+			clearYoutubeQueueLocked(state);
+		}
+	}
+
+	private static void ensureYoutubeQueueCurrentEntryLocked(MediaRuntimeState state) {
+		if (state == null || state.mode != ScreenViewMode.YOUTUBE || state.sourceUrl == null || state.sourceUrl.isBlank()) {
+			return;
+		}
+		if (state.youtubeQueueIndex >= 0 && state.youtubeQueueIndex < state.youtubeQueue.size()) {
+			YoutubeQueueItem current = state.youtubeQueue.get(state.youtubeQueueIndex);
+			if (current != null && Objects.equals(current.url(), state.sourceUrl)) {
+				String nextTitle = state.mediaTitle != null && !state.mediaTitle.isBlank() ? state.mediaTitle : current.title();
+				state.youtubeQueue.set(state.youtubeQueueIndex, new YoutubeQueueItem(nextTitle, state.sourceUrl));
+				return;
+			}
+		}
+		for (int index = 0; index < state.youtubeQueue.size(); index++) {
+			YoutubeQueueItem item = state.youtubeQueue.get(index);
+			if (item != null && Objects.equals(item.url(), state.sourceUrl)) {
+				String nextTitle = state.mediaTitle != null && !state.mediaTitle.isBlank() ? state.mediaTitle : item.title();
+				state.youtubeQueue.set(index, new YoutubeQueueItem(nextTitle, state.sourceUrl));
+				state.youtubeQueueIndex = index;
+				return;
+			}
+		}
+		String title = state.mediaTitle != null && !state.mediaTitle.isBlank() ? state.mediaTitle : "YouTube";
+		state.youtubeQueue.add(new YoutubeQueueItem(title, state.sourceUrl));
+		state.youtubeQueueIndex = state.youtubeQueue.size() - 1;
+	}
+
+	private static int normalizeYoutubeQueueIndexLocked(MediaRuntimeState state, int requestedIndex) {
+		if (state == null || state.youtubeQueue.isEmpty()) {
+			return -1;
+		}
+		return Math.floorMod(requestedIndex, state.youtubeQueue.size());
 	}
 
 	private static boolean hasDisplayableMediaLocked(MediaRuntimeState state) {
@@ -4004,6 +4911,15 @@ public final class MonitorScreenSystem {
 		CONTROLS
 	}
 
+	private enum MediaOverlayWindowType {
+		YOUTUBE_QUEUE
+	}
+
+	private enum YoutubeLinkRequestAction {
+		REPLACE_QUEUE,
+		APPEND_QUEUE
+	}
+
 	private enum MediaScaleMode {
 		FIT,
 		FILL,
@@ -4082,6 +4998,12 @@ public final class MonitorScreenSystem {
 	private record RenderCacheKey(boolean powered, ScreenViewMode viewMode, int launcherPage, int width, int height) {
 	}
 
+	private record OverlayWindowCacheKey(MediaOverlayWindowSnapshot snapshot, int width, int height, int unit) {
+	}
+
+	private record OverlayWindowFamilyKey(MediaOverlayWindowType type, int width, int height, int unit) {
+	}
+
 	private record MediaVisualSnapshot(
 			long version,
 			BufferedImage frame,
@@ -4099,7 +5021,21 @@ public final class MonitorScreenSystem {
 			MediaScaleMode scaleMode,
 			String statusText,
 			String linkPlaceholder,
-			TaskProgress.Snapshot progress
+			TaskProgress.Snapshot progress,
+			List<YoutubeQueueItemSnapshot> youtubeQueueItems,
+			boolean youtubeQueueOpen,
+			int youtubeQueueScroll,
+			MediaOverlayWindowSnapshot overlayWindow
+		) {
+	}
+
+	private record MediaOverlayWindowSnapshot(
+			MediaOverlayWindowType type,
+			String title,
+			String subtitle,
+			List<YoutubeQueueItemSnapshot> items,
+			int scroll,
+			int currentIndex
 	) {
 	}
 
@@ -4124,7 +5060,16 @@ public final class MonitorScreenSystem {
 	) {
 	}
 
-	private record PendingMediaLinkRequest(ScreenRuntimeKey screenKey, ScreenViewMode mode) {
+	private record PendingMediaLinkRequest(ScreenRuntimeKey screenKey, ScreenViewMode mode, YoutubeLinkRequestAction youtubeAction) {
+	}
+
+	private record YoutubeQueueItemSnapshot(int queueIndex, String title, boolean current) {
+	}
+
+	private static final class OverlayWindowRenderState {
+		private volatile BufferedImage image;
+		private volatile CompletableFuture<BufferedImage> future;
+		private volatile long lastAccessNanos;
 	}
 
 	private record PlayerMediaFocus(ScreenRuntimeKey screenKey, long expiresAtMillis) {
@@ -4150,6 +5095,16 @@ public final class MonitorScreenSystem {
 			UUID requesterUuid,
 			String url,
 			MonitorYoutubeRelayClient.SessionLoadResponse loadResponse,
+			String error
+	) {
+	}
+
+	private record YoutubeQueueResolveResult(
+			ScreenRuntimeKey screenKey,
+			UUID requesterUuid,
+			String url,
+			MonitorYoutubeRelayClient.QueueResolveResponse queueResponse,
+			YoutubeLinkRequestAction action,
 			String error
 	) {
 	}
@@ -4230,6 +5185,10 @@ public final class MonitorScreenSystem {
 		private boolean waitingForLink;
 		private boolean loading;
 		private String statusText;
+		private final List<YoutubeQueueItem> youtubeQueue;
+		private int youtubeQueueIndex;
+		private int youtubeQueueScroll;
+		private boolean youtubeQueueOpen;
 		private int activeRenderJobs;
 		private boolean rerenderRequested;
 		private MediaDispatchKey lastDispatchKey;
@@ -4248,6 +5207,10 @@ public final class MonitorScreenSystem {
 			this.loading = false;
 			this.version = 0L;
 			this.statusText = "";
+			this.youtubeQueue = new ArrayList<>();
+			this.youtubeQueueIndex = -1;
+			this.youtubeQueueScroll = 0;
+			this.youtubeQueueOpen = false;
 			this.activeRenderJobs = 0;
 			this.nextProgressRenderAtMillis = 0L;
 			this.progress = new TaskProgress(progressListener);
@@ -4258,5 +5221,8 @@ public final class MonitorScreenSystem {
 			state.statusText = statusText;
 			return state;
 		}
+	}
+
+	private record YoutubeQueueItem(String title, String url) {
 	}
 }
