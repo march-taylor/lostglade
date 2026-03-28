@@ -84,10 +84,11 @@ public final class ServerBackroomsSystem {
 	private static final int RESPAWN_SEARCH_ATTEMPTS = 48;
 	private static final int RESPAWN_SEARCH_RADIUS = 12;
 	private static final int PREWARMED_RESPAWN_TARGET = 4;
-	private static final int PREWARMED_RESPAWN_STARTUP_BATCH = 2;
+	private static final int PREWARMED_RESPAWN_IDLE_TARGET = 1;
 	private static final int PREWARMED_RESPAWN_REFILL_INTERVAL_TICKS = 40;
 	private static final int PREWARMED_RESPAWN_CHUNK_RADIUS = 2;
-	private static final int PREWARMED_RESPAWN_FORCE_INTERVAL_TICKS = 200;
+	private static final int PREWARMED_RESPAWN_PENDING_LIMIT = 1;
+	private static final int PREWARMED_RESPAWN_SEARCH_TIMEOUT_TICKS = 200;
 	private static final int ACTIVE_RESPAWN_CHUNK_HOLD_TICKS = 200;
 	private static final int BACKROOMS_SUPPORT_TICK_INTERVAL = 2;
 	private static final int LADDER_CRAWL_GRACE_TICKS = 6;
@@ -117,6 +118,7 @@ public final class ServerBackroomsSystem {
 	private static final Map<Long, Long> ACTIVE_LAMP_OUTAGES = new HashMap<>();
 	private static final List<BlockPos> PREWARMED_RESPAWNS = new ArrayList<>();
 	private static final Set<Long> PREWARMED_RESPAWN_KEYS = new HashSet<>();
+	private static final Map<BlockPos, Long> PENDING_PREWARMED_RESPAWN_SEARCHES = new HashMap<>();
 	private static final Map<Long, Integer> PREWARMED_RESPAWN_CHUNK_REFS = new HashMap<>();
 	private static final Map<BlockPos, Long> ACTIVE_RESPAWN_CHUNK_HOLDS = new HashMap<>();
 	private static final Set<UUID> FORCED_LADDER_CRAWL_PLAYERS = new HashSet<>();
@@ -124,7 +126,6 @@ public final class ServerBackroomsSystem {
 
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
-	private static long nextForcedRespawnPrewarmTick = 0L;
 	private ServerBackroomsSystem() {
 	}
 
@@ -136,12 +137,11 @@ public final class ServerBackroomsSystem {
 		ACTIVE_LAMP_OUTAGES.clear();
 		PREWARMED_RESPAWNS.clear();
 		PREWARMED_RESPAWN_KEYS.clear();
+		PENDING_PREWARMED_RESPAWN_SEARCHES.clear();
 		PREWARMED_RESPAWN_CHUNK_REFS.clear();
 		ACTIVE_RESPAWN_CHUNK_HOLDS.clear();
 		FORCED_LADDER_CRAWL_PLAYERS.clear();
 		FORCED_LADDER_CRAWL_GRACE_UNTIL.clear();
-		nextForcedRespawnPrewarmTick = 0L;
-
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerBackroomsSystem::loadState);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerBackroomsSystem::saveState);
 		ServerTickEvents.END_SERVER_TICK.register(ServerBackroomsSystem::tickServer);
@@ -347,27 +347,26 @@ public final class ServerBackroomsSystem {
 		stateDirty = false;
 
 		Path path = getStateFilePath(server);
-		if (!Files.isRegularFile(path)) {
-			return;
-		}
-
-		try (Reader reader = Files.newBufferedReader(path)) {
-			ReturnStateFile file = STATE_GSON.fromJson(reader, ReturnStateFile.class);
-			if (file == null || file.players == null) {
-				return;
-			}
-
-			for (Map.Entry<String, ReturnPointState> entry : file.players.entrySet()) {
-				try {
-					RETURN_POINTS.put(UUID.fromString(entry.getKey()), entry.getValue());
-				} catch (IllegalArgumentException ignored) {
+		if (Files.isRegularFile(path)) {
+			try (Reader reader = Files.newBufferedReader(path)) {
+				ReturnStateFile file = STATE_GSON.fromJson(reader, ReturnStateFile.class);
+				if (file != null && file.players != null) {
+					for (Map.Entry<String, ReturnPointState> entry : file.players.entrySet()) {
+						try {
+							RETURN_POINTS.put(UUID.fromString(entry.getKey()), entry.getValue());
+						} catch (IllegalArgumentException ignored) {
+						}
+					}
 				}
+			} catch (IOException exception) {
+				Lg2.LOGGER.error("Failed to load backrooms return points", exception);
 			}
-		} catch (IOException exception) {
-			Lg2.LOGGER.error("Failed to load backrooms return points", exception);
 		}
 
-		fillPrewarmedRespawns(server, PREWARMED_RESPAWN_STARTUP_BATCH);
+		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
+		if (backrooms != null) {
+			queueAsyncPrewarmedRespawnSearch(backrooms, server.getTickCount());
+		}
 	}
 
 	private static void saveState(MinecraftServer server) {
@@ -707,48 +706,14 @@ public final class ServerBackroomsSystem {
 			return;
 		}
 
-		int refillAttempts = PREWARMED_RESPAWNS.size() < (PREWARMED_RESPAWN_TARGET / 2) ? 2 : 1;
-		fillPrewarmedRespawns(server, refillAttempts);
-		if (PREWARMED_RESPAWNS.size() < PREWARMED_RESPAWN_TARGET && server.getTickCount() >= nextForcedRespawnPrewarmTick) {
-			forcePrewarmedRespawn(server);
-			nextForcedRespawnPrewarmTick = server.getTickCount() + PREWARMED_RESPAWN_FORCE_INTERVAL_TICKS;
-		}
-	}
+		resolvePendingPrewarmedRespawnSearches(backrooms, server.getTickCount());
 
-	private static void fillPrewarmedRespawns(MinecraftServer server, int attempts) {
-		if (attempts <= 0 || PREWARMED_RESPAWNS.size() >= PREWARMED_RESPAWN_TARGET) {
+		int target = getDesiredPrewarmedRespawnTarget(server);
+		if (PREWARMED_RESPAWNS.size() >= target || PENDING_PREWARMED_RESPAWN_SEARCHES.size() >= PREWARMED_RESPAWN_PENDING_LIMIT) {
 			return;
 		}
 
-		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
-		if (backrooms == null) {
-			return;
-		}
-
-		for (int i = 0; i < attempts && PREWARMED_RESPAWNS.size() < PREWARMED_RESPAWN_TARGET; i++) {
-			BlockPos safeSpawn = findRandomLoadedSafeRespawn(backrooms);
-			if (safeSpawn == null) {
-				continue;
-			}
-
-			addPrewarmedRespawn(backrooms, safeSpawn.below());
-		}
-	}
-
-	private static void forcePrewarmedRespawn(MinecraftServer server) {
-		if (PREWARMED_RESPAWNS.size() >= PREWARMED_RESPAWN_TARGET) {
-			return;
-		}
-
-		ServerLevel backrooms = server.getLevel(BACKROOMS_LEVEL);
-		if (backrooms == null) {
-			return;
-		}
-
-		BlockPos safeSpawn = findRandomSafeRespawn(backrooms);
-		if (safeSpawn != null) {
-			addPrewarmedRespawn(backrooms, safeSpawn.below());
-		}
+		queueAsyncPrewarmedRespawnSearch(backrooms, server.getTickCount());
 	}
 
 	private static void addPrewarmedRespawn(ServerLevel level, BlockPos floorPos) {
@@ -776,6 +741,55 @@ public final class ServerBackroomsSystem {
 		return null;
 	}
 
+	private static int getDesiredPrewarmedRespawnTarget(MinecraftServer server) {
+		return hasActiveBackroomsPlayers(server) ? PREWARMED_RESPAWN_TARGET : PREWARMED_RESPAWN_IDLE_TARGET;
+	}
+
+	private static boolean hasActiveBackroomsPlayers(MinecraftServer server) {
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (player != null && player.isAlive() && !player.isSpectator() && player.level().dimension().equals(BACKROOMS_LEVEL)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static void queueAsyncPrewarmedRespawnSearch(ServerLevel level, long currentTick) {
+		for (int attempt = 0; attempt < RESPAWN_SEARCH_ATTEMPTS; attempt++) {
+			BlockPos center = pickRandomRespawnCenter(level).immutable();
+			if (PENDING_PREWARMED_RESPAWN_SEARCHES.containsKey(center)) {
+				continue;
+			}
+
+			retainPrewarmedRespawnChunk(level, center);
+			PENDING_PREWARMED_RESPAWN_SEARCHES.put(center, currentTick + PREWARMED_RESPAWN_SEARCH_TIMEOUT_TICKS);
+			return;
+		}
+	}
+
+	private static void resolvePendingPrewarmedRespawnSearches(ServerLevel level, long currentTick) {
+		var iterator = PENDING_PREWARMED_RESPAWN_SEARCHES.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<BlockPos, Long> entry = iterator.next();
+			BlockPos center = entry.getKey();
+			if (!isRespawnSearchAreaLoaded(level, center)) {
+				if (currentTick < entry.getValue()) {
+					continue;
+				}
+				releasePrewarmedRespawnChunk(level, center);
+				iterator.remove();
+				continue;
+			}
+
+			BlockPos safeSpawn = findNearbyLoadedSafeRespawn(level, center);
+			releasePrewarmedRespawnChunk(level, center);
+			iterator.remove();
+			if (safeSpawn != null) {
+				addPrewarmedRespawn(level, safeSpawn.below());
+			}
+		}
+	}
+
 	private static BlockPos takePrewarmedRespawn(ServerLevel level) {
 		if (PREWARMED_RESPAWNS.isEmpty()) {
 			return null;
@@ -796,6 +810,11 @@ public final class ServerBackroomsSystem {
 	}
 
 	private static BlockPos getRandomBackroomsRespawnFloor(ServerLevel backrooms) {
+		MinecraftServer server = backrooms.getServer();
+		if (server != null) {
+			resolvePendingPrewarmedRespawnSearches(backrooms, server.getTickCount());
+		}
+
 		BlockPos safeSpawn = takePrewarmedRespawn(backrooms);
 		if (safeSpawn == null) {
 			safeSpawn = findRandomLoadedSafeRespawn(backrooms);
