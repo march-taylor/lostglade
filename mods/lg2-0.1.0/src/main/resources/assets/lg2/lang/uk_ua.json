@@ -56,7 +56,7 @@
     "message.lg2.race.no_race":  "У тебе поки немає призначеної раси",
     "message.lg2.race.no_menu":  "Не вдалося відкрити меню раси. Виконай /race reload",
     "message.lg2.race.ability_disabled":  "Здібність %s зараз недоступна",
-    "message.lg2.race.ability_not_purchased":  "Здібність %s ще не куплена",
+    "message.lg2.race.ability_not_purchased":  "Здібність \"%s\" ще не куплена",
     "message.lg2.race.cooldown":  "Здібність %s буде готова через %s сек.",
     "message.lg2.race.used":  "Активовано здібність %s раси %s",
     "container.lg2.cartel_disguise.passport":  "Паспорт",

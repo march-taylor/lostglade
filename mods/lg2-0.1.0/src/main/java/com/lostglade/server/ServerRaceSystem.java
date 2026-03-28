@@ -407,9 +407,12 @@ public final class ServerRaceSystem {
 			CARTEL_LAWYER_SKIN_PROPERTY = null;
 		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
-				getRace(handler.player).ifPresent(race ->
-						Lg2.LOGGER.info("Assigned personal race '{}' to {}", race.id, handler.player.getGameProfile().name())
-				)
+				server.execute(() -> {
+					getRace(handler.player).ifPresent(race ->
+							Lg2.LOGGER.info("Assigned personal race '{}' to {}", race.id, handler.player.getGameProfile().name())
+					);
+					CartelSecretRecipeBookSystem.syncJoinedPlayer(handler.player);
+				})
 		);
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
 			cleanupCartelEntitiesForDisconnect(server, handler.player);
@@ -528,7 +531,12 @@ public final class ServerRaceSystem {
 			return 0;
 		}
 		if (!hasUnlockedAbility(player, race, slot)) {
-			player.sendSystemMessage(Component.translatable("message.lg2.race.ability_not_purchased", Component.literal(ability.name)));
+			ServerUpgradeUiSystem.playPurchaseBlockedSound(player);
+			player.displayClientMessage(
+					Component.translatable("message.lg2.race.ability_not_purchased", Component.literal(ability.name))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
 			return 0;
 		}
 

@@ -9,8 +9,8 @@
                       "attack":  {
                                      "enabled":  true,
                                      "abilityId":  "cartel49_attack",
-                                     "name":  "Атака",
-                                     "description":  "Вокруг цели по взгляду появляются 4 разбойника (2 pillager + 2 vindicator).",
+                                     "name":  "Шестёрки",
+                                     "description":  "Вокруг цели Мистера Картеля появляются 4 союзных наёмника.",
                                      "priceBitcoins":  300,
                                      "cooldownSeconds":  300.0,
                                      "activationRangeBlocks":  7.0,
@@ -20,8 +20,8 @@
                       "defense":  {
                                       "enabled":  true,
                                       "abilityId":  "cartel49_defense",
-                                      "name":  "Защита",
-                                      "description":  "Рядом появляется адвокат и отражает часть урона нападающим.",
+                                      "name":  "Звонок адвокату",
+                                      "description":  "Рядом с Мистером Картелем появляется адвокат и отражает часть урона.",
                                       "priceBitcoins":  600,
                                       "cooldownSeconds":  900.0,
                                       "durationSeconds":  30.0,
@@ -34,8 +34,8 @@
                       "uniqueAbility":  {
                                             "enabled":  true,
                                             "abilityId":  "cartel49_unique",
-                                            "name":  "Абилка",
-                                            "description":  "Открывает выбор онлайн-игрока для перевоплощения. Картель получает его скин и ник в чате на время действия.",
+                                            "name":  "Второй паспорт",
+                                            "description":  "Позволяет замаскироваться под другого игрока.",
                                             "priceBitcoins":  1000,
                                             "cooldownSeconds":  1200.0,
                                             "durationSeconds":  300.0
@@ -43,8 +43,8 @@
                       "shnyaga":  {
                                       "enabled":  true,
                                       "abilityId":  "cartel49_shnyaga",
-                                      "name":  "Шняга",
-                                      "description":  "Лично посаженные Картелем папоротники со временем вырастают в большие. При росте и при выращивании костной мукой может выпасть \"Травка\".",
+                                      "name":  "Товар",
+                                      "description":  "Рассказывает тайну создания особых веществ.",
                                       "priceBitcoins":  1500,
                                       "minGrowthSeconds":  120.0,
                                       "maxGrowthSeconds":  240.0,
@@ -58,8 +58,8 @@
                       "stock":  {
                                     "enabled":  true,
                                     "abilityId":  "cartel49_stock_stack_cap",
-                                    "name":  "Сток: Лимит 49",
-                                    "description":  "Обычные стаки (64) ограничиваются 49. Предметы со стаком 1 и 16 остаются без изменений."
+                                    "name":  "Оптовая партия",
+                                    "description":  "Обычные стаки (64) ограничиваются 49."
                                 }
                   }
               ]
