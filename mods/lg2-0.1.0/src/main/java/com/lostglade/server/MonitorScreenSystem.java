@@ -1008,7 +1008,7 @@ public final class MonitorScreenSystem {
 				if (state.relaySessionId == null || state.waitingForLink) {
 					return;
 				}
-				long delayMillis = isPlaybackPausedLocked(state) ? youtubePollIdleIntervalMs() : youtubePollActiveIntervalMs();
+				long delayMillis = effectiveYoutubePollDelayMs(server, key, isPlaybackPausedLocked(state));
 				state.playbackFuture = mediaScheduler.schedule(() -> refreshYoutubeSnapshot(server, key), delayMillis, TimeUnit.MILLISECONDS);
 				return;
 			}
@@ -1154,7 +1154,7 @@ public final class MonitorScreenSystem {
 						|| wasLoading != state.loading) {
 					shouldRender = true;
 				}
-				if (!shouldRender && Math.abs(state.positionMs - previousPositionMs) >= youtubePollActiveIntervalMs() * 2L) {
+				if (!shouldRender && Math.abs(state.positionMs - previousPositionMs) >= effectiveYoutubeUiRefreshThresholdMs(server, result.screenKey())) {
 					shouldRender = true;
 				}
 				if (result.snapshot().ready()) {
@@ -1179,7 +1179,7 @@ public final class MonitorScreenSystem {
 				shouldRender = true;
 			}
 		}
-		if (shouldRender) {
+		if (shouldRender && hasNearbyMediaViewer(server, result.screenKey())) {
 			requestRuntimeRender(server, result.screenKey());
 		}
 		if (shouldFadeProgress) {
@@ -1372,6 +1372,9 @@ public final class MonitorScreenSystem {
 			}
 			ScreenComponent component = collectComponent(level, rootFrame, null);
 			if (component == null) {
+				return;
+			}
+			if (isPlayerMode(component.viewMode()) && !hasNearbyMediaViewer(level, component)) {
 				return;
 			}
 			requestComponentRender(server, component, component.viewMode(), component.launcherPage());
@@ -3345,7 +3348,7 @@ public final class MonitorScreenSystem {
 		if (level == null || component == null) {
 			return List.of();
 		}
-		if (!isPlayerMode(component.viewMode()) || !shouldLimitDynamicRecipients(component.runtimeKey())) {
+		if (!isPlayerMode(component.viewMode())) {
 			return new ArrayList<>(level.players());
 		}
 		double radiusBlocks = monitorMapUpdateRadiusBlocks();
@@ -3359,6 +3362,68 @@ public final class MonitorScreenSystem {
 		return recipients;
 	}
 
+	private static long effectiveYoutubePollDelayMs(MinecraftServer server, ScreenRuntimeKey key, boolean paused) {
+		long baseDelay = paused ? youtubePollIdleIntervalMs() : youtubePollActiveIntervalMs();
+		ScreenComponent component = resolveScreenComponent(server, key);
+		if (component == null) {
+			return baseDelay;
+		}
+
+		int tileCount = Math.max(1, component.width() * component.height());
+		double tileScale = 1.0D + Math.max(0.0D, Math.sqrt(tileCount) - 1.0D) * 1.25D;
+		long scaledDelay = Math.round(baseDelay * tileScale);
+		if (!hasNearbyMediaViewer(server.getLevel(key.dimension()), component)) {
+			scaledDelay = Math.max(scaledDelay, paused ? youtubePollIdleIntervalMs() * 2L : youtubePollIdleIntervalMs());
+		}
+		long maxDelay = paused ? 3_000L : 1_200L;
+		return Math.max(baseDelay, Math.min(maxDelay, scaledDelay));
+	}
+
+	private static long effectiveYoutubeUiRefreshThresholdMs(MinecraftServer server, ScreenRuntimeKey key) {
+		return Math.max(250L, effectiveYoutubePollDelayMs(server, key, false) * 2L);
+	}
+
+	private static ScreenComponent resolveScreenComponent(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return null;
+		}
+		ServerLevel level = server.getLevel(key.dimension());
+		if (level == null) {
+			return null;
+		}
+		ItemFrame rootFrame = findScreenFrame(level, key.pos(), key.facing());
+		if (rootFrame == null) {
+			return null;
+		}
+		return collectComponent(level, rootFrame, null);
+	}
+
+	private static boolean hasNearbyMediaViewer(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return false;
+		}
+		ServerLevel level = server.getLevel(key.dimension());
+		if (level == null) {
+			return false;
+		}
+		ScreenComponent component = resolveScreenComponent(server, key);
+		return hasNearbyMediaViewer(level, component);
+	}
+
+	private static boolean hasNearbyMediaViewer(ServerLevel level, ScreenComponent component) {
+		if (level == null || component == null) {
+			return false;
+		}
+		double radiusBlocks = monitorMapUpdateRadiusBlocks();
+		double radiusSquared = radiusBlocks * radiusBlocks;
+		for (ServerPlayer player : level.players()) {
+			if (isPlayerNearScreenComponent(player, component, radiusSquared)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private static boolean isPlayerNearScreenComponent(ServerPlayer player, ScreenComponent component, double radiusSquared) {
 		if (player == null || component == null) {
 			return false;
@@ -3369,25 +3434,6 @@ public final class MonitorScreenSystem {
 			}
 		}
 		return false;
-	}
-
-	private static boolean shouldLimitDynamicRecipients(ScreenRuntimeKey key) {
-		if (key == null) {
-			return false;
-		}
-		MediaRuntimeState state = MEDIA_STATES.get(key);
-		if (state == null) {
-			return false;
-		}
-		synchronized (state) {
-			if (state.waitingForLink || state.loading) {
-				return false;
-			}
-			if (state.mode == ScreenViewMode.YOUTUBE) {
-				return state.relaySessionId != null && !state.userPaused;
-			}
-			return state.loadedMedia != null && state.loadedMedia.animated() && !state.userPaused;
-		}
 	}
 
 	private static void ensureDisplay(ServerLevel level, ItemFrame frame, int connectionMask) {
