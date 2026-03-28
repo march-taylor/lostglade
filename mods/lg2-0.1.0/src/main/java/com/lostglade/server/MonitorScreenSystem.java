@@ -3415,6 +3415,8 @@ public final class MonitorScreenSystem {
 	}
 
 	private static void drawYoutubeQueueWindow(Graphics2D graphics, UiLayout layout, MediaOverlayWindowSnapshot window) {
+		boolean compact = compactScreenLayout(layout);
+		boolean ultraCompact = ultraCompactScreenLayout(layout);
 		UiRect panel = mediaQueuePanelRect(layout);
 		UiRect header = mediaQueueHeaderRect(layout);
 		UiRect closeRect = mediaQueueCloseRect(layout);
@@ -3439,12 +3441,12 @@ public final class MonitorScreenSystem {
 
 		fillRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 22), new Color(255, 255, 255, 14));
 		strokeRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 22), 1.0F, new Color(255, 255, 255, 34));
-		drawVerticalText(graphics, window.title(), new UiRect(header.x() + clampInt(layout.unit(), 8, 14), header.y(), Math.max(16, closeRect.x() - header.x() - layout.unit() * 2), header.height() / 2 + 2), new Color(248, 251, 255), Font.BOLD, clampInt(layout.unit() + 4, 14, 24));
-		drawVerticalText(graphics, window.subtitle(), subtitleRect, new Color(178, 194, 212, 220), Font.PLAIN, clampInt(layout.unit() + 1, 10, 15));
+		drawVerticalText(graphics, window.title(), new UiRect(header.x() + clampInt(layout.unit(), 8, 14), header.y(), Math.max(16, closeRect.x() - header.x() - layout.unit() * 2), header.height() / 2 + 2), new Color(248, 251, 255), Font.BOLD, compact ? clampInt(layout.unit() + (ultraCompact ? 1 : 2), 9, 16) : clampInt(layout.unit() + 4, 14, 24));
+		drawVerticalText(graphics, window.subtitle(), subtitleRect, new Color(178, 194, 212, 220), Font.PLAIN, compact ? clampInt(layout.unit(), 8, 11) : clampInt(layout.unit() + 1, 10, 15));
 		drawMediaCloseButton(graphics, closeRect, layout);
 
 		if (window.items().isEmpty()) {
-			drawCenteredText(graphics, "Очередь пуста", list, new Color(210, 218, 226, 214), Font.PLAIN, clampInt(layout.unit() + 2, 12, 18));
+			drawCenteredText(graphics, "Очередь пуста", list, new Color(210, 218, 226, 214), Font.PLAIN, compact ? clampInt(layout.unit() + 1, 9, 13) : clampInt(layout.unit() + 2, 12, 18));
 		} else {
 			int rowCount = Math.min(visibleRows, Math.max(0, window.items().size() - scroll));
 			for (int visibleIndex = 0; visibleIndex < rowCount; visibleIndex++) {
@@ -3458,8 +3460,8 @@ public final class MonitorScreenSystem {
 				fillRoundedRect(graphics, rowRect, clampInt(layout.unit() * 2, 12, 18), fill);
 				strokeRoundedRect(graphics, rowRect, clampInt(layout.unit() * 2, 12, 18), 1.0F, stroke);
 				fillRoundedRect(graphics, badgeRect, clampInt(layout.unit() * 2, 10, 18), new Color(12, 16, 22, 196));
-				drawCenteredText(graphics, Integer.toString(item.queueIndex() + 1), badgeRect, new Color(248, 251, 255), Font.BOLD, clampInt(layout.unit() + 2, 11, 18));
-				drawWrappedText(graphics, item.title(), titleRect, new Color(248, 251, 255, 232), item.current() ? Font.BOLD : Font.PLAIN, clampInt(layout.unit() + 2, 12, 18), 3);
+				drawCenteredText(graphics, Integer.toString(item.queueIndex() + 1), badgeRect, new Color(248, 251, 255), Font.BOLD, compact ? clampInt(layout.unit(), 8, 12) : clampInt(layout.unit() + 2, 11, 18));
+				drawWrappedText(graphics, item.title(), titleRect, new Color(248, 251, 255, 232), item.current() ? Font.BOLD : Font.PLAIN, compact ? clampInt(layout.unit() + (ultraCompact ? 0 : 1), 8, 12) : clampInt(layout.unit() + 2, 12, 18), compact ? 2 : 3);
 				fillRoundedRect(graphics, removeRect, clampInt(layout.unit() * 2, 10, 18), new Color(30, 18, 24, 214));
 				strokeRoundedRect(graphics, removeRect, clampInt(layout.unit() * 2, 10, 18), 1.0F, new Color(255, 255, 255, 28));
 				drawCloseGlyph(graphics, removeRect.inset(Math.max(2, layout.unit() / 5)), new Color(255, 232, 238));
@@ -3475,11 +3477,12 @@ public final class MonitorScreenSystem {
 				footerInfoRect,
 				new Color(232, 238, 244, 204),
 				Font.BOLD,
-				clampInt(layout.unit() + 1, 11, 16)
+				compact ? clampInt(layout.unit(), 8, 12) : clampInt(layout.unit() + 1, 11, 16)
 		);
 	}
 
 	private static void drawYoutubeQueueWindowPlaceholder(Graphics2D graphics, UiLayout layout) {
+		boolean compact = compactScreenLayout(layout);
 		UiRect panel = mediaQueuePanelRect(layout);
 		UiRect header = mediaQueueHeaderRect(layout);
 		UiRect list = mediaQueueListRect(layout);
@@ -3500,8 +3503,8 @@ public final class MonitorScreenSystem {
 		strokeRoundedRect(graphics, panel, arc, 1.0F, new Color(255, 255, 255, 36));
 
 		fillRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 22), new Color(255, 255, 255, 12));
-		drawVerticalText(graphics, "Очередь", new UiRect(header.x() + clampInt(layout.unit(), 8, 14), header.y(), header.width(), header.height() / 2), new Color(248, 251, 255, 232), Font.BOLD, clampInt(layout.unit() + 4, 14, 24));
-		drawVerticalText(graphics, "Загрузка окна...", mediaQueueSubtitleRect(layout), new Color(188, 198, 212, 176), Font.PLAIN, clampInt(layout.unit() + 1, 10, 15));
+		drawVerticalText(graphics, "Очередь", new UiRect(header.x() + clampInt(layout.unit(), 8, 14), header.y(), header.width(), header.height() / 2), new Color(248, 251, 255, 232), Font.BOLD, compact ? clampInt(layout.unit() + 2, 9, 16) : clampInt(layout.unit() + 4, 14, 24));
+		drawVerticalText(graphics, "Загрузка окна...", mediaQueueSubtitleRect(layout), new Color(188, 198, 212, 176), Font.PLAIN, compact ? clampInt(layout.unit(), 8, 11) : clampInt(layout.unit() + 1, 10, 15));
 		drawMediaCloseButton(graphics, mediaQueueCloseRect(layout), layout);
 
 		int visibleRows = Math.min(3, mediaQueueVisibleRows(layout));
@@ -3894,9 +3897,30 @@ public final class MonitorScreenSystem {
 		int viewportHeight = Math.min(height, MAX_UI_TILES) * MAP_SIZE;
 		int viewportX = (canvasWidth - viewportWidth) / 2;
 		int viewportY = (canvasHeight - viewportHeight) / 2;
-		int margin = clampInt(Math.round(Math.min(viewportWidth, viewportHeight) * 0.065F), 6, 18);
-		int unit = clampInt(Math.round(Math.min(viewportWidth, viewportHeight) / 15.5F), 7, 16);
+		float scale = switch (Math.max(1, Math.min(width, height))) {
+			case 1 -> 0.62F;
+			case 2 -> 0.78F;
+			case 3 -> 0.9F;
+			default -> 1.0F;
+		};
+		int margin = clampInt(Math.round(Math.min(viewportWidth, viewportHeight) * 0.065F * Math.min(1.0F, 0.84F + scale * 0.16F)), 4, 18);
+		int unit = clampInt(Math.round(Math.min(viewportWidth, viewportHeight) / 15.5F * scale), 5, 16);
 		return new UiLayout(canvasWidth, canvasHeight, viewportX, viewportY, viewportWidth, viewportHeight, margin, unit);
+	}
+
+	private static int smallestScreenTileSpan(UiLayout layout) {
+		if (layout == null) {
+			return 1;
+		}
+		return Math.max(1, Math.min(layout.canvasWidth() / MAP_SIZE, layout.canvasHeight() / MAP_SIZE));
+	}
+
+	private static boolean compactScreenLayout(UiLayout layout) {
+		return smallestScreenTileSpan(layout) <= 2;
+	}
+
+	private static boolean ultraCompactScreenLayout(UiLayout layout) {
+		return smallestScreenTileSpan(layout) <= 1;
 	}
 
 	private static UiRect workspaceRect(UiLayout layout) {
@@ -4092,8 +4116,18 @@ public final class MonitorScreenSystem {
 
 	private static UiRect mediaQueuePanelRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int width = clampInt(canvas.width() * 5 / 6, 120, canvas.width() - layout.unit() * 2);
-		int height = clampInt(canvas.height() * 4 / 5, 90, canvas.height() - layout.unit() * 2);
+		int width;
+		int height;
+		if (ultraCompactScreenLayout(layout)) {
+			width = clampInt(canvas.width() * 13 / 16, 86, canvas.width() - layout.unit());
+			height = clampInt(canvas.height() * 5 / 8, 62, canvas.height() - layout.unit() * 2);
+		} else if (compactScreenLayout(layout)) {
+			width = clampInt(canvas.width() * 4 / 5, 120, canvas.width() - layout.unit() * 2);
+			height = clampInt(canvas.height() * 11 / 16, 100, canvas.height() - layout.unit() * 2);
+		} else {
+			width = clampInt(canvas.width() * 5 / 6, 120, canvas.width() - layout.unit() * 2);
+			height = clampInt(canvas.height() * 4 / 5, 90, canvas.height() - layout.unit() * 2);
+		}
 		return new UiRect(
 				canvas.x() + (canvas.width() - width) / 2,
 				canvas.y() + (canvas.height() - height) / 2,
@@ -4111,7 +4145,11 @@ public final class MonitorScreenSystem {
 	private static UiRect mediaQueueHeaderRect(UiLayout layout) {
 		UiRect panel = mediaQueuePanelRect(layout);
 		int inset = clampInt(layout.unit() / 2, 4, 8);
-		int height = clampInt(layout.unit() * 3, 26, 40);
+		int height = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2, 18, 24)
+				: compactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 2, 22, 30)
+				: clampInt(layout.unit() * 3, 26, 40);
 		return new UiRect(panel.x() + inset, panel.y() + inset, panel.width() - inset * 2, height);
 	}
 
@@ -4143,7 +4181,11 @@ public final class MonitorScreenSystem {
 	private static UiRect mediaQueueFooterRect(UiLayout layout) {
 		UiRect panel = mediaQueuePanelRect(layout);
 		int inset = clampInt(layout.unit() / 2, 4, 8);
-		int height = clampInt(layout.unit() * 3, 24, 38);
+		int height = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2, 18, 22)
+				: compactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 1, 20, 28)
+				: clampInt(layout.unit() * 3, 24, 38);
 		return new UiRect(panel.x() + inset, panel.bottom() - height - inset, panel.width() - inset * 2, height);
 	}
 
@@ -4202,6 +4244,12 @@ public final class MonitorScreenSystem {
 	}
 
 	private static int mediaQueueRowHeight(UiLayout layout) {
+		if (ultraCompactScreenLayout(layout)) {
+			return clampInt(layout.unit() * 4, 24, 32);
+		}
+		if (compactScreenLayout(layout)) {
+			return clampInt(layout.unit() * 4, 30, 42);
+		}
 		return clampInt(layout.unit() * 5, 44, 72);
 	}
 
@@ -4219,8 +4267,16 @@ public final class MonitorScreenSystem {
 	}
 
 	private static UiRect mediaQueueIndexRect(UiRect rowRect, UiLayout layout) {
-		int width = clampInt(layout.unit() * 4, 26, 42);
-		int height = clampInt(layout.unit() * 2, 18, 26);
+		int width = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 3, 18, 24)
+				: compactScreenLayout(layout)
+				? clampInt(layout.unit() * 3 + 2, 22, 32)
+				: clampInt(layout.unit() * 4, 26, 42);
+		int height = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2, 14, 18)
+				: compactScreenLayout(layout)
+				? clampInt(layout.unit() * 2, 16, 22)
+				: clampInt(layout.unit() * 2, 18, 26);
 		return new UiRect(rowRect.x() + clampInt(layout.unit() / 2, 4, 8), rowRect.y() + (rowRect.height() - height) / 2, width, height);
 	}
 
@@ -4265,7 +4321,14 @@ public final class MonitorScreenSystem {
 
 	private static UiRect mediaCenterPlayPauseRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(layout.unit() * 6, 46, 92);
+		int size;
+		if (ultraCompactScreenLayout(layout)) {
+			size = clampInt(layout.unit() * 5, 24, 34);
+		} else if (compactScreenLayout(layout)) {
+			size = clampInt(layout.unit() * 5, 30, 52);
+		} else {
+			size = clampInt(layout.unit() * 6, 46, 92);
+		}
 		return new UiRect(
 				canvas.x() + (canvas.width() - size) / 2,
 				canvas.y() + (canvas.height() - size) / 2,
@@ -4276,15 +4339,35 @@ public final class MonitorScreenSystem {
 
 	private static UiRect mediaCenterBackRect(UiLayout layout) {
 		UiRect center = mediaCenterPlayPauseRect(layout);
-		int size = clampInt((int) Math.round(center.width() * 0.76D), 34, 68);
-		int gap = clampInt(layout.unit() * 3, 22, 44);
+		int size;
+		int gap;
+		if (ultraCompactScreenLayout(layout)) {
+			size = clampInt((int) Math.round(center.width() * 0.8D), 18, 24);
+			gap = clampInt(layout.unit() * 2, 10, 14);
+		} else if (compactScreenLayout(layout)) {
+			size = clampInt((int) Math.round(center.width() * 0.78D), 24, 34);
+			gap = clampInt(layout.unit() * 2, 14, 22);
+		} else {
+			size = clampInt((int) Math.round(center.width() * 0.76D), 34, 68);
+			gap = clampInt(layout.unit() * 3, 22, 44);
+		}
 		return new UiRect(center.x() - size - gap, center.y() + (center.height() - size) / 2, size, size);
 	}
 
 	private static UiRect mediaCenterForwardRect(UiLayout layout) {
 		UiRect center = mediaCenterPlayPauseRect(layout);
-		int size = clampInt((int) Math.round(center.width() * 0.76D), 34, 68);
-		int gap = clampInt(layout.unit() * 3, 22, 44);
+		int size;
+		int gap;
+		if (ultraCompactScreenLayout(layout)) {
+			size = clampInt((int) Math.round(center.width() * 0.8D), 18, 24);
+			gap = clampInt(layout.unit() * 2, 10, 14);
+		} else if (compactScreenLayout(layout)) {
+			size = clampInt((int) Math.round(center.width() * 0.78D), 24, 34);
+			gap = clampInt(layout.unit() * 2, 14, 22);
+		} else {
+			size = clampInt((int) Math.round(center.width() * 0.76D), 34, 68);
+			gap = clampInt(layout.unit() * 3, 22, 44);
+		}
 		return new UiRect(center.right() + gap, center.y() + (center.height() - size) / 2, size, size);
 	}
 
