@@ -27,50 +27,60 @@ public final class TaskProgress {
 		this.completedAtMillis = -1L;
 	}
 
-	public synchronized void setStage(String stage) {
-		this.stage = stage != null ? stage : "";
-		this.active = true;
-		this.completedAtMillis = -1L;
+	public void setStage(String stage) {
+		synchronized (this) {
+			this.stage = stage != null ? stage : "";
+			this.active = true;
+			this.completedAtMillis = -1L;
+		}
 		notifyChange();
 	}
 
-	public synchronized void setIndeterminate(String stage) {
-		this.stage = stage != null ? stage : "";
-		this.completed = 0L;
-		this.total = 0L;
-		this.determinate = false;
-		this.active = true;
-		this.completedAtMillis = -1L;
+	public void setIndeterminate(String stage) {
+		synchronized (this) {
+			this.stage = stage != null ? stage : "";
+			this.completed = 0L;
+			this.total = 0L;
+			this.determinate = false;
+			this.active = true;
+			this.completedAtMillis = -1L;
+		}
 		notifyChange();
 	}
 
-	public synchronized void setProgress(String stage, long completed, long total) {
-		this.stage = stage != null ? stage : "";
-		this.completed = Math.max(0L, completed);
-		this.total = Math.max(0L, total);
-		this.determinate = this.total > 0L;
-		this.active = true;
-		this.completedAtMillis = -1L;
+	public void setProgress(String stage, long completed, long total) {
+		synchronized (this) {
+			this.stage = stage != null ? stage : "";
+			this.completed = Math.max(0L, completed);
+			this.total = Math.max(0L, total);
+			this.determinate = this.total > 0L;
+			this.active = true;
+			this.completedAtMillis = -1L;
+		}
 		notifyChange();
 	}
 
-	public synchronized void complete(String stage) {
-		this.stage = stage != null ? stage : "";
-		this.completed = 1L;
-		this.total = 1L;
-		this.determinate = true;
-		this.active = false;
-		this.completedAtMillis = System.currentTimeMillis();
+	public void complete(String stage) {
+		synchronized (this) {
+			this.stage = stage != null ? stage : "";
+			this.completed = 1L;
+			this.total = 1L;
+			this.determinate = true;
+			this.active = false;
+			this.completedAtMillis = System.currentTimeMillis();
+		}
 		notifyChange();
 	}
 
-	public synchronized void clear() {
-		this.stage = "";
-		this.completed = 0L;
-		this.total = 0L;
-		this.determinate = false;
-		this.active = false;
-		this.completedAtMillis = -1L;
+	public void clear() {
+		synchronized (this) {
+			this.stage = "";
+			this.completed = 0L;
+			this.total = 0L;
+			this.determinate = false;
+			this.active = false;
+			this.completedAtMillis = -1L;
+		}
 		notifyChange();
 	}
 

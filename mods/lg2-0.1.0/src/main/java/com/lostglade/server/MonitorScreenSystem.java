@@ -11,6 +11,7 @@ import com.lostglade.server.monitor.MonitorMediaApp;
 import com.lostglade.server.monitor.MonitorYoutubeRelayClient;
 import com.lostglade.server.progress.TaskProgress;
 import com.mojang.math.Transformation;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
@@ -141,6 +142,7 @@ public final class MonitorScreenSystem {
 		UseEntityCallback.EVENT.register(MonitorScreenSystem::onUseEntity);
 		ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(MonitorScreenSystem::onAllowChatMessage);
 		ServerTickEvents.END_SERVER_TICK.register(MonitorScreenSystem::tick);
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> MonitorYoutubeRelayClient.shutdown());
 	}
 
 	private static void ensureExecutors() {
