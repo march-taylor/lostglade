@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 YT_DLP_BIN = os.environ.get("YT_DLP_BIN", "yt-dlp")
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
-FRAME_RATE = float(os.environ.get("LG2_YT_FRAME_RATE", "3"))
+FRAME_RATE = float(os.environ.get("LG2_YT_FRAME_RATE", "10"))
 FRAME_WIDTH = int(os.environ.get("LG2_YT_FRAME_WIDTH", "480"))
 SESSION_IDLE_TIMEOUT_SEC = int(os.environ.get("LG2_YT_IDLE_TIMEOUT_SEC", "600"))
 STREAM_START_TIMEOUT_SEC = int(os.environ.get("LG2_YT_STREAM_START_TIMEOUT_SEC", "20"))
@@ -93,6 +93,8 @@ class RelaySession:
         self.status = "IDLE"
         self.last_error = ""
         self.latest_frame: bytes | None = None
+        self.latest_frame_base64 = ""
+        self.frame_sequence = 0
         self.last_access_at = time.time()
         self._process: subprocess.Popen[bytes] | None = None
         self._reader_thread: threading.Thread | None = None
@@ -119,21 +121,24 @@ class RelaySession:
             self.status = "BUFFERING"
             self.last_error = ""
             self.latest_frame = None
+            self.latest_frame_base64 = ""
+            self.frame_sequence = 0
             self.last_access_at = time.time()
         self.start_stream()
         return self.snapshot(include_frame=False)
 
-    def snapshot(self, include_frame: bool = True) -> dict[str, Any]:
+    def snapshot(self, include_frame: bool = True, known_frame_sequence: int = -1) -> dict[str, Any]:
         with self._lock:
             if not self.is_live and not self.paused and self._process is not None:
                 self.position_ms = self.current_position_ms_locked()
             frame_base64 = ""
-            if include_frame and self.latest_frame is not None:
-                frame_base64 = base64.b64encode(self.latest_frame).decode("ascii")
+            if include_frame and self.latest_frame_base64 and self.frame_sequence != known_frame_sequence:
+                frame_base64 = self.latest_frame_base64
             ready = self.latest_frame is not None
             return {
                 "sessionId": self.session_id,
                 "title": self.title,
+                "frameSequence": self.frame_sequence,
                 "positionMs": self.position_ms,
                 "durationMs": self.duration_ms,
                 "paused": self.paused,
@@ -231,6 +236,8 @@ class RelaySession:
         if completed.returncode == 0 and completed.stdout:
             with self._lock:
                 self.latest_frame = completed.stdout
+                self.latest_frame_base64 = base64.b64encode(completed.stdout).decode("ascii")
+                self.frame_sequence += 1
 
     def start_stream(self) -> None:
         with self._lock:
@@ -277,6 +284,8 @@ class RelaySession:
         def on_frame(frame: bytes) -> None:
             with self._lock:
                 self.latest_frame = frame
+                self.latest_frame_base64 = base64.b64encode(frame).decode("ascii")
+                self.frame_sequence += 1
                 if self.paused:
                     self.status = "PAUSED"
                 elif self.is_live:
@@ -363,11 +372,12 @@ class RelayHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/session/snapshot":
                 params = parse_qs(parsed.query)
                 session_id = (params.get("sessionId") or [""])[0]
+                known_frame_sequence_raw = (params.get("knownFrameSequence") or ["-1"])[0]
                 if not session_id:
                     self.send_error_json(HTTPStatus.BAD_REQUEST, "sessionId is required")
                     return
                 session = get_session(session_id)
-                self.send_json(HTTPStatus.OK, session.snapshot(include_frame=True))
+                self.send_json(HTTPStatus.OK, session.snapshot(include_frame=True, known_frame_sequence=int(known_frame_sequence_raw or "-1")))
                 return
             self.send_error_json(HTTPStatus.NOT_FOUND, "not found")
         except Exception as exc:

@@ -1,6 +1,7 @@
 package com.lostglade.server;
 
 import com.lostglade.Lg2;
+import com.lostglade.config.Lg2Config;
 import com.lostglade.item.ModItems;
 import com.lostglade.item.MonitorItem;
 import com.lostglade.server.map.MapPaletteQuantizer;
@@ -20,7 +21,6 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.PlayerChatMessage;
-import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundMapItemDataPacket;
 import net.minecraft.resources.ResourceKey;
@@ -61,11 +61,14 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -113,16 +116,16 @@ public final class MonitorScreenSystem {
 	private static final int PROGRESS_FADE_RENDER_STEPS = 5;
 	private static final long MEDIA_SCROLL_FOCUS_TIMEOUT_MS = 6000L;
 	private static final double MEDIA_CONTROL_DISTANCE = 6.0D;
-	private static final long YOUTUBE_POLL_ACTIVE_INTERVAL_MS = 250L;
-	private static final long YOUTUBE_POLL_IDLE_INTERVAL_MS = 1000L;
 	private static final long YOUTUBE_SCROLL_SEEK_MS = 5000L;
 	private static final Map<RenderCacheKey, byte[][]> TILE_CACHE = new ConcurrentHashMap<>();
+	private static final Map<Integer, byte[]> LAST_RENDERED_MAP_FRAMES = new ConcurrentHashMap<>();
 	private static final Map<String, BufferedImage> APP_ICON_CACHE = new ConcurrentHashMap<>();
 	private static final Map<ScreenRuntimeKey, MediaRuntimeState> MEDIA_STATES = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingMediaLinkRequest> PENDING_MEDIA_LINKS = new ConcurrentHashMap<>();
 	private static final Map<UUID, ScreenRuntimeKey> ACTIVE_MEDIA_ACTIONBARS = new ConcurrentHashMap<>();
 	private static final Map<UUID, PlayerMediaFocus> PLAYER_MEDIA_FOCUS = new ConcurrentHashMap<>();
 	private static volatile ExecutorService renderExecutor;
+	private static volatile ExecutorService quantizeExecutor;
 	private static volatile ExecutorService mediaIoExecutor;
 	private static volatile ScheduledExecutorService mediaScheduler;
 	private static volatile BufferedImage offBaseImage;
@@ -140,15 +143,47 @@ public final class MonitorScreenSystem {
 
 	private static void ensureExecutors() {
 		if (renderExecutor == null) {
-			int threads = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() - 1));
-			renderExecutor = Executors.newFixedThreadPool(threads, daemonThreadFactory("lg2-monitor-render"));
+			renderExecutor = Executors.newFixedThreadPool(monitorRenderThreads(), daemonThreadFactory("lg2-monitor-render"));
+		}
+		if (quantizeExecutor == null) {
+			quantizeExecutor = Executors.newFixedThreadPool(monitorTileQuantizerThreads(), daemonThreadFactory("lg2-monitor-quantize"));
 		}
 		if (mediaIoExecutor == null) {
-			mediaIoExecutor = Executors.newFixedThreadPool(2, daemonThreadFactory("lg2-monitor-io"));
+			mediaIoExecutor = Executors.newFixedThreadPool(monitorMediaIoThreads(), daemonThreadFactory("lg2-monitor-io"));
 		}
 		if (mediaScheduler == null) {
 			mediaScheduler = Executors.newSingleThreadScheduledExecutor(daemonThreadFactory("lg2-monitor-gif"));
 		}
+	}
+
+	private static int monitorRenderThreads() {
+		Lg2Config.ConfigData config = Lg2Config.get();
+		return config != null ? Math.max(1, config.monitorRenderThreads) : Math.max(2, Runtime.getRuntime().availableProcessors());
+	}
+
+	private static int monitorTileQuantizerThreads() {
+		Lg2Config.ConfigData config = Lg2Config.get();
+		return config != null ? Math.max(1, config.monitorTileQuantizerThreads) : Math.max(2, Runtime.getRuntime().availableProcessors());
+	}
+
+	private static int monitorMediaIoThreads() {
+		Lg2Config.ConfigData config = Lg2Config.get();
+		return config != null ? Math.max(1, config.monitorMediaIoThreads) : 2;
+	}
+
+	private static int monitorMapUpdateRadiusBlocks() {
+		Lg2Config.ConfigData config = Lg2Config.get();
+		return config != null ? Math.max(16, config.monitorMapUpdateRadiusBlocks) : 128;
+	}
+
+	private static long youtubePollActiveIntervalMs() {
+		Lg2Config.ConfigData config = Lg2Config.get();
+		return config != null ? Math.max(33L, config.monitorYoutubePollActiveIntervalMs) : 100L;
+	}
+
+	private static long youtubePollIdleIntervalMs() {
+		Lg2Config.ConfigData config = Lg2Config.get();
+		return config != null ? Math.max(100L, config.monitorYoutubePollIdleIntervalMs) : 400L;
 	}
 
 	private static ThreadFactory daemonThreadFactory(String baseName) {
@@ -226,6 +261,7 @@ public final class MonitorScreenSystem {
 		BlockPos framePos = frame.blockPosition();
 		Direction facing = frame.getDirection();
 		removeDisplays(level, frame.blockPosition(), frame.getDirection());
+		forgetRenderedMapFrame(frame.getItem());
 		frame.setItem(ItemStack.EMPTY, false);
 		if (shouldDropScreen) {
 			frame.spawnAtLocation(level, new ItemStack(ModItems.MONITOR));
@@ -804,7 +840,7 @@ public final class MonitorScreenSystem {
 				if (state.relaySessionId == null || state.waitingForLink) {
 					return;
 				}
-				long delayMillis = isPlaybackPausedLocked(state) ? YOUTUBE_POLL_IDLE_INTERVAL_MS : YOUTUBE_POLL_ACTIVE_INTERVAL_MS;
+				long delayMillis = isPlaybackPausedLocked(state) ? youtubePollIdleIntervalMs() : youtubePollActiveIntervalMs();
 				state.playbackFuture = mediaScheduler.schedule(() -> refreshYoutubeSnapshot(server, key), delayMillis, TimeUnit.MILLISECONDS);
 				return;
 			}
@@ -881,18 +917,20 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		String sessionId;
+		long knownFrameSequence;
 		synchronized (state) {
 			state.playbackFuture = null;
 			if (state.mode != ScreenViewMode.YOUTUBE || state.relaySessionId == null || state.waitingForLink) {
 				return;
 			}
 			sessionId = state.relaySessionId;
+			knownFrameSequence = state.youtubeFrameSequence;
 		}
 		ensureExecutors();
 		CompletableFuture
 				.supplyAsync(() -> {
 					try {
-						return new YoutubeSnapshotResult(key, MonitorYoutubeRelayClient.snapshot(sessionId), null);
+						return new YoutubeSnapshotResult(key, MonitorYoutubeRelayClient.snapshot(sessionId, knownFrameSequence), null);
 					} catch (Exception exception) {
 						return new YoutubeSnapshotResult(key, null, sanitizeMediaError(exception.getMessage()));
 					}
@@ -910,15 +948,28 @@ public final class MonitorScreenSystem {
 		}
 		boolean shouldReschedule = false;
 		boolean shouldFadeProgress = false;
+		boolean shouldRender = false;
 		synchronized (state) {
 			if (state.mode != ScreenViewMode.YOUTUBE) {
 				return;
 			}
 			if (result.snapshot() != null) {
 				boolean wasLoading = state.loading;
+				long previousPositionMs = state.positionMs;
+				long previousDurationMs = state.durationMs;
+				boolean previousLiveStream = state.liveStream;
+				boolean previousAudioPlaceholder = state.audioPlaceholder;
+				boolean previousPaused = state.userPaused;
+				String previousStatusText = state.statusText;
+				long previousFrameSequence = state.youtubeFrameSequence;
 				state.mediaTitle = result.snapshot().title();
+				if (result.snapshot().frameSequence() != previousFrameSequence) {
+					state.youtubeFrameSequence = result.snapshot().frameSequence();
+					shouldRender = true;
+				}
 				if (result.snapshot().frame() != null) {
 					state.streamFrame = result.snapshot().frame();
+					shouldRender = true;
 				}
 				state.positionMs = result.snapshot().positionMs();
 				state.durationMs = result.snapshot().durationMs();
@@ -927,24 +978,42 @@ public final class MonitorScreenSystem {
 				state.userPaused = result.snapshot().paused();
 				state.statusText = result.snapshot().status();
 				state.loading = !result.snapshot().ready();
+				if (previousDurationMs != state.durationMs
+						|| previousLiveStream != state.liveStream
+						|| previousAudioPlaceholder != state.audioPlaceholder
+						|| previousPaused != state.userPaused
+						|| !Objects.equals(previousStatusText, state.statusText)
+						|| wasLoading != state.loading) {
+					shouldRender = true;
+				}
+				if (!shouldRender && Math.abs(state.positionMs - previousPositionMs) >= youtubePollActiveIntervalMs() * 2L) {
+					shouldRender = true;
+				}
 				if (result.snapshot().ready()) {
 					if (wasLoading) {
 						state.progress.complete("READY");
 						shouldFadeProgress = true;
+						shouldRender = true;
 					}
 				} else {
 					state.progress.setIndeterminate(result.snapshot().live() ? "LIVE" : "LOADING");
+					shouldRender = true;
 				}
-				state.version++;
+				if (shouldRender) {
+					state.version++;
+				}
 				shouldReschedule = true;
 			} else {
 				state.loading = false;
 				state.statusText = sanitizeMediaError(result.error());
 				state.progress.clear();
 				state.version++;
+				shouldRender = true;
 			}
 		}
-		requestRuntimeRender(server, result.screenKey());
+		if (shouldRender) {
+			requestRuntimeRender(server, result.screenKey());
+		}
 		if (shouldFadeProgress) {
 			scheduleProgressFadeRenders(server, result.screenKey());
 		}
@@ -1860,7 +1929,9 @@ public final class MonitorScreenSystem {
 			}
 		}
 
-		BufferedImage canvas = new BufferedImage(work.width() * MAP_SIZE, work.height() * MAP_SIZE, BufferedImage.TYPE_INT_ARGB);
+		int pixelWidth = work.width() * MAP_SIZE;
+		int pixelHeight = work.height() * MAP_SIZE;
+		BufferedImage canvas = new BufferedImage(pixelWidth, pixelHeight, BufferedImage.TYPE_INT_ARGB);
 		Graphics2D graphics = canvas.createGraphics();
 		configureUiGraphics(graphics);
 		drawBaseBackground(graphics, work.width(), work.height(), work.powered());
@@ -1874,20 +1945,9 @@ public final class MonitorScreenSystem {
 		}
 		graphics.dispose();
 
+		int[] rgbPixels = canvas.getRGB(0, 0, pixelWidth, pixelHeight, null, 0, pixelWidth);
 		byte[][] tiles = new byte[work.width() * work.height()][MAP_SIZE * MAP_SIZE];
-		for (int tileY = 0; tileY < work.height(); tileY++) {
-			for (int tileX = 0; tileX < work.width(); tileX++) {
-				byte[] tile = tiles[tileY * work.width() + tileX];
-				for (int localY = 0; localY < MAP_SIZE; localY++) {
-					for (int localX = 0; localX < MAP_SIZE; localX++) {
-						int globalX = tileX * MAP_SIZE + localX;
-						int globalY = tileY * MAP_SIZE + localY;
-						int rgb = canvas.getRGB(globalX, globalY) & 0xFFFFFF;
-						tile[localY * MAP_SIZE + localX] = MapPaletteQuantizer.quantizeDithered(rgb, globalX, globalY);
-					}
-				}
-			}
-		}
+		quantizeTiles(work, rgbPixels, pixelWidth, tiles);
 
 		if (!isPlayerMode(work.viewMode())) {
 			TILE_CACHE.put(new RenderCacheKey(work.powered(), work.viewMode(), work.launcherPage(), work.width(), work.height()), tiles);
@@ -1899,9 +1959,52 @@ public final class MonitorScreenSystem {
 		graphics.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION, RenderingHints.VALUE_ALPHA_INTERPOLATION_QUALITY);
 		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 		graphics.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING, RenderingHints.VALUE_COLOR_RENDER_QUALITY);
-		graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+		graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
 		graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
 		graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+	}
+
+	private static void quantizeTiles(RenderWork work, int[] rgbPixels, int pixelWidth, byte[][] tiles) {
+		if (work == null || rgbPixels == null || tiles == null) {
+			return;
+		}
+		int tileCount = work.width() * work.height();
+		if (tileCount <= 1 || quantizeExecutor == null) {
+			for (int tileIndex = 0; tileIndex < tileCount; tileIndex++) {
+				quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex]);
+			}
+			return;
+		}
+
+		CompletableFuture<?>[] futures = new CompletableFuture<?>[tileCount];
+		for (int tileIndex = 0; tileIndex < tileCount; tileIndex++) {
+			final int currentTileIndex = tileIndex;
+			futures[tileIndex] = CompletableFuture.runAsync(
+					() -> quantizeSingleTile(work.width(), rgbPixels, pixelWidth, currentTileIndex, tiles[currentTileIndex]),
+					quantizeExecutor
+			);
+		}
+		CompletableFuture.allOf(futures).join();
+	}
+
+	private static void quantizeSingleTile(int tilesWide, int[] rgbPixels, int pixelWidth, int tileIndex, byte[] tile) {
+		if (tilesWide <= 0 || rgbPixels == null || tile == null) {
+			return;
+		}
+		int tileX = Math.floorMod(tileIndex, tilesWide);
+		int tileY = tileIndex / tilesWide;
+		int tileOriginX = tileX * MAP_SIZE;
+		int tileOriginY = tileY * MAP_SIZE;
+		for (int localY = 0; localY < MAP_SIZE; localY++) {
+			int globalY = tileOriginY + localY;
+			int rowStart = globalY * pixelWidth + tileOriginX;
+			int tileRowStart = localY * MAP_SIZE;
+			for (int localX = 0; localX < MAP_SIZE; localX++) {
+				int globalX = tileOriginX + localX;
+				int rgb = rgbPixels[rowStart + localX] & 0xFFFFFF;
+				tile[tileRowStart + localX] = MapPaletteQuantizer.quantizeDithered(rgb, globalX, globalY);
+			}
+		}
 	}
 
 	private static void drawBaseBackground(Graphics2D graphics, int width, int height, boolean powered) {
@@ -2987,12 +3090,11 @@ public final class MonitorScreenSystem {
 	}
 
 	private static void applyFrameToMap(MapItemSavedData mapData, byte[] frame) {
-		if (mapData == null || frame == null || frame.length < MAP_SIZE * MAP_SIZE) {
+		if (mapData == null || frame == null || frame.length < MAP_SIZE * MAP_SIZE || mapData.colors == null || mapData.colors.length < MAP_SIZE * MAP_SIZE) {
 			return;
 		}
-		for (int pixelIndex = 0; pixelIndex < MAP_SIZE * MAP_SIZE; pixelIndex++) {
-			mapData.setColor(pixelIndex % MAP_SIZE, pixelIndex / MAP_SIZE, frame[pixelIndex]);
-		}
+		System.arraycopy(frame, 0, mapData.colors, 0, MAP_SIZE * MAP_SIZE);
+		mapData.setDirty();
 	}
 
 	private static void applyRenderedTiles(ServerLevel level, ScreenComponent component, byte[][] renderedTiles) {
@@ -3000,6 +3102,7 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		ServerLevel mapStorageLevel = photoMapLevel(level.getServer(), level);
+		List<MapPacketUpdate> changedUpdates = new ArrayList<>();
 		for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
 			ItemFrame frame = entry.getKey();
 			ItemStack frameStack = frame.getItem();
@@ -3016,30 +3119,106 @@ public final class MonitorScreenSystem {
 			if (tileIndex < 0 || tileIndex >= renderedTiles.length) {
 				continue;
 			}
-			applyFrameToMap(mapData, renderedTiles[tileIndex]);
-			sendMapToPlayers(level, mapId, mapData);
+			byte[] tileFrame = renderedTiles[tileIndex];
+			if (!hasRenderedMapChanged(mapId, tileFrame)) {
+				continue;
+			}
+			applyFrameToMap(mapData, tileFrame);
+			changedUpdates.add(new MapPacketUpdate(mapId, mapData.scale, mapData.locked, tileFrame.clone()));
+		}
+		sendMapToPlayers(level, component, changedUpdates);
+	}
+
+	private static boolean hasRenderedMapChanged(MapId mapId, byte[] tileFrame) {
+		if (mapId == null || tileFrame == null || tileFrame.length < MAP_SIZE * MAP_SIZE) {
+			return false;
+		}
+		byte[] previous = LAST_RENDERED_MAP_FRAMES.get(mapId.id());
+		if (previous != null && Arrays.equals(previous, tileFrame)) {
+			return false;
+		}
+		LAST_RENDERED_MAP_FRAMES.put(mapId.id(), tileFrame.clone());
+		return true;
+	}
+
+	private static void forgetRenderedMapFrame(ItemStack stack) {
+		if (stack == null) {
+			return;
+		}
+		MapId mapId = stack.get(DataComponents.MAP_ID);
+		if (mapId != null) {
+			LAST_RENDERED_MAP_FRAMES.remove(mapId.id());
 		}
 	}
 
-	private static void sendMapToPlayers(ServerLevel level, MapId mapId, MapItemSavedData mapData) {
-		if (level == null || mapId == null || mapData == null || mapData.colors == null || mapData.colors.length < MAP_SIZE * MAP_SIZE) {
+	private static void sendMapToPlayers(ServerLevel level, ScreenComponent component, List<MapPacketUpdate> changedUpdates) {
+		if (level == null || component == null || changedUpdates == null || changedUpdates.isEmpty()) {
 			return;
 		}
-		for (ServerPlayer player : level.players()) {
-			ItemStack mapStack = new ItemStack(Items.FILLED_MAP);
-			mapStack.set(DataComponents.MAP_ID, mapId);
-			mapData.tickCarriedBy(player, mapStack);
-			player.connection.send(new ClientboundMapItemDataPacket(
-					mapId,
-					mapData.scale,
-					mapData.locked,
+		List<ServerPlayer> recipients = collectMapRecipients(level, component);
+		if (recipients.isEmpty()) {
+			return;
+		}
+		for (MapPacketUpdate update : changedUpdates) {
+			ClientboundMapItemDataPacket packet = new ClientboundMapItemDataPacket(
+					update.mapId(),
+					update.scale(),
+					update.locked(),
 					List.of(),
-					new MapItemSavedData.MapPatch(0, 0, MAP_SIZE, MAP_SIZE, mapData.colors.clone())
-			));
-			Packet<?> packet = mapData.getUpdatePacket(mapId, player);
-			if (packet != null) {
+					new MapItemSavedData.MapPatch(0, 0, MAP_SIZE, MAP_SIZE, update.frame())
+			);
+			for (ServerPlayer player : recipients) {
 				player.connection.send(packet);
 			}
+		}
+	}
+
+	private static List<ServerPlayer> collectMapRecipients(ServerLevel level, ScreenComponent component) {
+		if (level == null || component == null) {
+			return List.of();
+		}
+		if (!isPlayerMode(component.viewMode()) || !shouldLimitDynamicRecipients(component.runtimeKey())) {
+			return new ArrayList<>(level.players());
+		}
+		double radiusBlocks = monitorMapUpdateRadiusBlocks();
+		double radiusSquared = radiusBlocks * radiusBlocks;
+		List<ServerPlayer> recipients = new ArrayList<>();
+		for (ServerPlayer player : level.players()) {
+			if (isPlayerNearScreenComponent(player, component, radiusSquared)) {
+				recipients.add(player);
+			}
+		}
+		return recipients;
+	}
+
+	private static boolean isPlayerNearScreenComponent(ServerPlayer player, ScreenComponent component, double radiusSquared) {
+		if (player == null || component == null) {
+			return false;
+		}
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			if (frame != null && player.distanceToSqr(frame) <= radiusSquared) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean shouldLimitDynamicRecipients(ScreenRuntimeKey key) {
+		if (key == null) {
+			return false;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return false;
+		}
+		synchronized (state) {
+			if (state.waitingForLink || state.loading) {
+				return false;
+			}
+			if (state.mode == ScreenViewMode.YOUTUBE) {
+				return state.relaySessionId != null && !state.userPaused;
+			}
+			return state.loadedMedia != null && state.loadedMedia.animated() && !state.userPaused;
 		}
 	}
 
@@ -3391,6 +3570,7 @@ public final class MonitorScreenSystem {
 		}
 		state.loadedMedia = null;
 		state.streamFrame = null;
+		state.youtubeFrameSequence = 0L;
 		state.sourceUrl = null;
 		state.relaySessionId = null;
 		state.mediaTitle = "";
@@ -3666,6 +3846,14 @@ public final class MonitorScreenSystem {
 	) {
 	}
 
+	private record MapPacketUpdate(
+			MapId mapId,
+			byte scale,
+			boolean locked,
+			byte[] frame
+	) {
+	}
+
 	private record ScreenTileState(
 			int attachmentMask,
 			int gridWidth,
@@ -3698,6 +3886,7 @@ public final class MonitorScreenSystem {
 		private String relaySessionId;
 		private String mediaTitle;
 		private int frameIndex;
+		private long youtubeFrameSequence;
 		private long positionMs;
 		private long durationMs;
 		private long version;

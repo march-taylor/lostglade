@@ -48,6 +48,18 @@ public final class Lg2Config {
 	private static final int MAX_CAMERA_RENDER_IN_FLIGHT_PIXELS = 8192;
 	private static final int MIN_CAMERA_RENDER_SAMPLES_PER_AXIS = 1;
 	private static final int MAX_CAMERA_RENDER_SAMPLES_PER_AXIS = 4;
+	private static final int MIN_MONITOR_RENDER_THREADS = 1;
+	private static final int MAX_MONITOR_RENDER_THREADS = 64;
+	private static final int MIN_MONITOR_MEDIA_IO_THREADS = 1;
+	private static final int MAX_MONITOR_MEDIA_IO_THREADS = 32;
+	private static final int MIN_MONITOR_TILE_QUANTIZER_THREADS = 1;
+	private static final int MAX_MONITOR_TILE_QUANTIZER_THREADS = 64;
+	private static final int MIN_MONITOR_MAP_UPDATE_RADIUS_BLOCKS = 16;
+	private static final int MAX_MONITOR_MAP_UPDATE_RADIUS_BLOCKS = 512;
+	private static final int MIN_MONITOR_YOUTUBE_POLL_ACTIVE_INTERVAL_MS = 33;
+	private static final int MAX_MONITOR_YOUTUBE_POLL_ACTIVE_INTERVAL_MS = 5000;
+	private static final int MIN_MONITOR_YOUTUBE_POLL_IDLE_INTERVAL_MS = 100;
+	private static final int MAX_MONITOR_YOUTUBE_POLL_IDLE_INTERVAL_MS = 10000;
 	private static final double DEFAULT_BITCOINS_PER_STABILITY = 6.4D;
 	private static final double MIN_BITCOINS_PER_STABILITY = 0.001D;
 	private static final double MAX_BITCOINS_PER_STABILITY = 1_000_000.0D;
@@ -166,6 +178,30 @@ public final class Lg2Config {
 				MIN_CAMERA_RENDER_SAMPLES_PER_AXIS,
 				MAX_CAMERA_RENDER_SAMPLES_PER_AXIS,
 				newValue -> configData.cameraRenderSamplesPerAxis = newValue);
+		changed |= clampSingleValue(configData.monitorRenderThreads,
+				MIN_MONITOR_RENDER_THREADS,
+				MAX_MONITOR_RENDER_THREADS,
+				newValue -> configData.monitorRenderThreads = newValue);
+		changed |= clampSingleValue(configData.monitorMediaIoThreads,
+				MIN_MONITOR_MEDIA_IO_THREADS,
+				MAX_MONITOR_MEDIA_IO_THREADS,
+				newValue -> configData.monitorMediaIoThreads = newValue);
+		changed |= clampSingleValue(configData.monitorTileQuantizerThreads,
+				MIN_MONITOR_TILE_QUANTIZER_THREADS,
+				MAX_MONITOR_TILE_QUANTIZER_THREADS,
+				newValue -> configData.monitorTileQuantizerThreads = newValue);
+		changed |= clampSingleValue(configData.monitorMapUpdateRadiusBlocks,
+				MIN_MONITOR_MAP_UPDATE_RADIUS_BLOCKS,
+				MAX_MONITOR_MAP_UPDATE_RADIUS_BLOCKS,
+				newValue -> configData.monitorMapUpdateRadiusBlocks = newValue);
+		changed |= clampSingleValue(configData.monitorYoutubePollActiveIntervalMs,
+				MIN_MONITOR_YOUTUBE_POLL_ACTIVE_INTERVAL_MS,
+				MAX_MONITOR_YOUTUBE_POLL_ACTIVE_INTERVAL_MS,
+				newValue -> configData.monitorYoutubePollActiveIntervalMs = newValue);
+		changed |= clampSingleValue(configData.monitorYoutubePollIdleIntervalMs,
+				MIN_MONITOR_YOUTUBE_POLL_IDLE_INTERVAL_MS,
+				MAX_MONITOR_YOUTUBE_POLL_IDLE_INTERVAL_MS,
+				newValue -> configData.monitorYoutubePollIdleIntervalMs = newValue);
 		changed |= clampSingleValue(configData.backroomsTrashRoomWeight,
 				MIN_BACKROOMS_SPECIAL_ROOM_WEIGHT,
 				MAX_BACKROOMS_SPECIAL_ROOM_WEIGHT,
@@ -338,6 +374,12 @@ public final class Lg2Config {
 		public int cameraRenderThreads = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
 		public int cameraRenderInFlightPixels = 1024;
 		public int cameraRenderSamplesPerAxis = 2;
+		public int monitorRenderThreads = Math.max(2, Runtime.getRuntime().availableProcessors());
+		public int monitorMediaIoThreads = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() / 2));
+		public int monitorTileQuantizerThreads = Math.max(2, Runtime.getRuntime().availableProcessors());
+		public int monitorMapUpdateRadiusBlocks = 128;
+		public int monitorYoutubePollActiveIntervalMs = 100;
+		public int monitorYoutubePollIdleIntervalMs = 400;
 
 		private ConfigData() {
 		}

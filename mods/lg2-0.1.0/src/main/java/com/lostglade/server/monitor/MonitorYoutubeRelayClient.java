@@ -51,16 +51,17 @@ public final class MonitorYoutubeRelayClient {
 		);
 	}
 
-	public static SessionSnapshot snapshot(String sessionId) throws IOException {
+	public static SessionSnapshot snapshot(String sessionId, long knownFrameSequence) throws IOException {
 		String encodedSession = URLEncoder.encode(sessionId, StandardCharsets.UTF_8);
-		JsonObject response = getJson("/api/session/snapshot?sessionId=" + encodedSession);
+		JsonObject response = getJson("/api/session/snapshot?sessionId=" + encodedSession + "&knownFrameSequence=" + Math.max(-1L, knownFrameSequence));
 		if (response.has("error") && !response.get("error").isJsonNull()) {
 			throw new IOException(response.get("error").getAsString());
 		}
 
+		long frameSequence = getLong(response, "frameSequence", 0L);
 		BufferedImage frame = null;
 		String frameBase64 = getString(response, "frameBase64", "");
-		if (!frameBase64.isBlank()) {
+		if (frameSequence != knownFrameSequence && !frameBase64.isBlank()) {
 			byte[] bytes = Base64.getDecoder().decode(frameBase64);
 			frame = ImageIO.read(new ByteArrayInputStream(bytes));
 		}
@@ -69,6 +70,7 @@ public final class MonitorYoutubeRelayClient {
 				getString(response, "sessionId", sessionId),
 				getString(response, "title", "YOUTUBE"),
 				frame,
+				frameSequence,
 				getLong(response, "positionMs", 0L),
 				getLong(response, "durationMs", 0L),
 				getBoolean(response, "paused", false),
@@ -233,6 +235,7 @@ public final class MonitorYoutubeRelayClient {
 			String sessionId,
 			String title,
 			BufferedImage frame,
+			long frameSequence,
 			long positionMs,
 			long durationMs,
 			boolean paused,
