@@ -882,12 +882,15 @@ public final class MonitorScreenSystem {
 			);
 			MediaOverlayMode overlayMode;
 			boolean hasMedia;
+			boolean playbackControlsVisible;
 			boolean controlsWereHidden = false;
 			synchronized (mediaState) {
 				overlayMode = mediaState.overlayMode;
 				hasMedia = hasDisplayableMediaLocked(mediaState);
+				playbackControlsVisible = playbackControlsVisibleLocked(mediaState);
 			}
-			if (hasMedia && overlayMode == MediaOverlayMode.VIEW) {
+			boolean playerUiVisible = hasMedia || playbackControlsVisible;
+			if ((playerUiVisible || mediaState.loading) && overlayMode == MediaOverlayMode.VIEW) {
 				synchronized (mediaState) {
 					mediaState.overlayMode = MediaOverlayMode.CONTROLS;
 					mediaState.version++;
@@ -895,7 +898,7 @@ public final class MonitorScreenSystem {
 				rerenderCurrent = true;
 				controlsWereHidden = true;
 			}
-			if (hasMedia && mediaState.mode == ScreenViewMode.YOUTUBE && mediaState.youtubeQueueOpen) {
+			if (playerUiVisible && mediaState.mode == ScreenViewMode.YOUTUBE && mediaState.youtubeQueueOpen) {
 				synchronized (mediaState) {
 					int visibleRows = mediaQueueVisibleRows(layout);
 					int maxScroll = Math.max(0, mediaState.youtubeQueue.size() - visibleRows);
@@ -961,7 +964,7 @@ public final class MonitorScreenSystem {
 				rerenderCurrent = true;
 			} else if (mediaCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				nextMode = ScreenViewMode.HOME;
-			} else if (hasMedia && mediaPlayPauseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			} else if (playerUiVisible && (mediaCenterPlayPauseRect(layout).contains(touchPoint.x(), touchPoint.y()) || mediaPlayPauseRect(layout).contains(touchPoint.x(), touchPoint.y()))) {
 				synchronized (mediaState) {
 					if (mediaState.mode == ScreenViewMode.YOUTUBE && mediaState.relaySessionId != null) {
 						boolean shouldPause = !isPlaybackPausedLocked(mediaState);
@@ -979,7 +982,35 @@ public final class MonitorScreenSystem {
 					}
 				}
 				rerenderCurrent = true;
-			} else if (hasMedia && mediaTimelineHitRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			} else if (playerUiVisible && mediaCenterBackRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					if (mediaState.mode == ScreenViewMode.YOUTUBE && !mediaState.youtubeQueue.isEmpty()) {
+						youtubeQueuePlayIndex = normalizeYoutubeQueueIndexLocked(
+								mediaState,
+								mediaState.youtubeQueueIndex >= 0 ? mediaState.youtubeQueueIndex - 1 : mediaState.youtubeQueue.size() - 1
+						);
+					} else if (mediaState.loadedMedia != null && mediaState.loadedMedia.frameCount() > 1) {
+						int seekFrames = Math.max(1, mediaState.loadedMedia.frameCount() / 20);
+						mediaState.frameIndex = Math.max(0, mediaState.frameIndex - seekFrames);
+						mediaState.version++;
+					}
+				}
+				rerenderCurrent = true;
+			} else if (playerUiVisible && mediaCenterForwardRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					if (mediaState.mode == ScreenViewMode.YOUTUBE && !mediaState.youtubeQueue.isEmpty()) {
+						youtubeQueuePlayIndex = normalizeYoutubeQueueIndexLocked(
+								mediaState,
+								mediaState.youtubeQueueIndex >= 0 ? mediaState.youtubeQueueIndex + 1 : 0
+						);
+					} else if (mediaState.loadedMedia != null && mediaState.loadedMedia.frameCount() > 1) {
+						int seekFrames = Math.max(1, mediaState.loadedMedia.frameCount() / 20);
+						mediaState.frameIndex = Math.min(Math.max(0, mediaState.loadedMedia.frameCount() - 1), mediaState.frameIndex + seekFrames);
+						mediaState.version++;
+					}
+				}
+				rerenderCurrent = true;
+			} else if (playerUiVisible && mediaTimelineHitRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					if (mediaState.mode == ScreenViewMode.YOUTUBE && canSeekTimelineLocked(mediaState)) {
 						youtubeSeekTargetMs = youtubePositionForFraction(mediaState, mediaTimelineFraction(layout, touchPoint));
@@ -990,19 +1021,19 @@ public final class MonitorScreenSystem {
 					}
 				}
 				rerenderCurrent = true;
-			} else if (hasMedia && mediaScaleRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			} else if (playerUiVisible && mediaScaleRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					mediaState.scaleMode = mediaState.scaleMode.next();
 					mediaState.version++;
 				}
 				rerenderCurrent = true;
-			} else if (hasMedia && mediaState.mode == ScreenViewMode.YOUTUBE && mediaQueueToggleRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			} else if (playerUiVisible && mediaState.mode == ScreenViewMode.YOUTUBE && mediaQueueToggleRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					mediaState.youtubeQueueOpen = !mediaState.youtubeQueueOpen;
 					mediaState.version++;
 				}
 				rerenderCurrent = true;
-			} else if (mediaLinkRect(layout, hasMedia).contains(touchPoint.x(), touchPoint.y())) {
+			} else if (mediaLinkRect(layout, playerUiVisible).contains(touchPoint.x(), touchPoint.y())) {
 				requestMediaLink(
 						player,
 						component.runtimeKey(),
@@ -1011,7 +1042,7 @@ public final class MonitorScreenSystem {
 						component.viewMode() == ScreenViewMode.YOUTUBE && hasMedia ? YoutubeLinkRequestAction.APPEND_QUEUE : YoutubeLinkRequestAction.REPLACE_QUEUE
 				);
 				rerenderCurrent = true;
-			} else if (hasMedia && !controlsWereHidden) {
+			} else if (playerUiVisible && !controlsWereHidden && !mediaState.loading) {
 				synchronized (mediaState) {
 					mediaState.overlayMode = MediaOverlayMode.VIEW;
 					mediaState.version++;
@@ -1357,6 +1388,7 @@ public final class MonitorScreenSystem {
 			cancelPlaybackLocked(state);
 			clearYoutubePlaybackLocked(state);
 			state.mode = ScreenViewMode.YOUTUBE;
+			state.sourceUrl = item.url();
 			state.youtubeQueueIndex = resolvedIndex;
 			state.youtubeQueueOpen = true;
 			state.waitingForLink = false;
@@ -2707,16 +2739,14 @@ public final class MonitorScreenSystem {
 
 	private static MediaVisualSnapshot captureMediaSnapshot(MediaRuntimeState state) {
 		if (state == null) {
-			return new MediaVisualSnapshot(0L, null, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", null, List.of(), false, 0, null);
+			return new MediaVisualSnapshot(0L, null, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", null, List.of(), false, 0, null);
 		}
 		boolean youtubeMode = state.mode == ScreenViewMode.YOUTUBE;
 		BufferedImage frame = youtubeMode
 				? state.streamFrame
 				: state.loadedMedia != null ? state.loadedMedia.frame(state.frameIndex) : null;
 		boolean hasMedia = hasDisplayableMediaLocked(state);
-		boolean playbackControlsVisible = youtubeMode
-				? state.sourceUrl != null || state.relaySessionId != null
-				: state.loadedMedia != null && state.loadedMedia.animated();
+		boolean playbackControlsVisible = playbackControlsVisibleLocked(state);
 		boolean timelineSeekable = youtubeMode
 				? state.durationMs > 0L && !state.liveStream
 				: state.loadedMedia != null && state.loadedMedia.frameCount() > 1;
@@ -2745,6 +2775,7 @@ public final class MonitorScreenSystem {
 				frame,
 				hasMedia,
 				playbackControlsVisible,
+				state.loading,
 				timelineSeekable,
 				timelineIndex,
 				timelineCount,
@@ -3004,8 +3035,9 @@ public final class MonitorScreenSystem {
 		UiRect closeRect = mediaCloseRect(layout);
 		BufferedImage mediaFrame = state != null ? state.frame() : null;
 		boolean hasMedia = state != null && state.hasMedia();
+		boolean controlUi = state != null && (state.hasMedia() || state.playbackControlsVisible());
 		boolean youtubeMode = state != null && "YOUTUBE URL".equals(state.linkPlaceholder());
-		UiRect linkRect = mediaLinkRect(layout, hasMedia);
+		UiRect linkRect = mediaLinkRect(layout, controlUi);
 		UiRect scaleRect = mediaScaleRect(layout);
 		UiRect queueToggleRect = mediaQueueToggleRect(layout);
 		UiRect timelineRect = mediaTimelineRect(layout);
@@ -3025,7 +3057,8 @@ public final class MonitorScreenSystem {
 			strokeRoundedRect(graphics, canvasRect, clampInt(layout.unit() * 2, 12, 22), 1.0F, new Color(255, 255, 255, 36));
 		}
 
-		if (state != null && state.overlayMode() == MediaOverlayMode.CONTROLS) {
+		boolean controlsActive = state != null && (state.overlayMode() == MediaOverlayMode.CONTROLS || state.loading());
+		if (controlsActive) {
 			int shadeHeight = clampInt(layout.unit() * 5, 40, 72);
 			graphics.setPaint(new GradientPaint(
 					0.0F,
@@ -3047,7 +3080,7 @@ public final class MonitorScreenSystem {
 			graphics.fillRect(canvasRect.x(), canvasRect.bottom() - shadeHeight, canvasRect.width(), shadeHeight);
 
 			drawMediaCloseButton(graphics, closeRect, layout);
-			if (hasMedia) {
+			if (controlUi) {
 				drawMediaSearchBar(
 						graphics,
 						linkRect,
@@ -3060,6 +3093,7 @@ public final class MonitorScreenSystem {
 					drawMediaQueueToggleButton(graphics, queueToggleRect, state.youtubeQueueOpen(), layout);
 				}
 				drawMediaTimeline(graphics, timelineRect, state, layout);
+				drawMediaCenterControls(graphics, layout, state);
 			}
 		}
 
@@ -3084,12 +3118,12 @@ public final class MonitorScreenSystem {
 			);
 		}
 
-		if (progress != null && progress.visible()) {
+		if (progress != null && progress.visible() && !controlUi) {
 			UiRect progressRect = mediaProgressRect(layout);
 			drawProgressBar(graphics, progressRect, progress, layout);
 		}
 
-		if (!hasMedia) {
+		if (!controlUi) {
 			drawMediaSearchBar(
 					graphics,
 					linkRect,
@@ -3175,8 +3209,12 @@ public final class MonitorScreenSystem {
 	}
 
 	private static void drawRoundMediaButtonBase(Graphics2D graphics, UiRect rect) {
+		drawRoundMediaButtonBase(graphics, rect, new Color(12, 16, 20, 214));
+	}
+
+	private static void drawRoundMediaButtonBase(Graphics2D graphics, UiRect rect, Color fill) {
 		int arc = Math.min(rect.width(), rect.height());
-		fillRoundedRect(graphics, rect, arc, new Color(12, 16, 20, 214));
+		fillRoundedRect(graphics, rect, arc, fill);
 		strokeRoundedRect(graphics, rect, arc, 1.0F, new Color(255, 255, 255, 44));
 	}
 
@@ -3555,6 +3593,48 @@ public final class MonitorScreenSystem {
 		graphics.fillRoundRect(leftX + barWidth + gap, topY, barWidth, barHeight, barWidth, barWidth);
 	}
 
+	private static void drawSeekGlyph(Graphics2D graphics, UiRect rect, Color color, boolean backward) {
+		int padX = Math.max(2, rect.width() / 6);
+		int padY = Math.max(2, rect.height() / 6);
+		int barWidth = Math.max(2, rect.width() / 8);
+		int triangleWidth = Math.max(6, rect.width() - padX * 2 - barWidth - Math.max(2, rect.width() / 10));
+		int gap = Math.max(2, rect.width() / 10);
+		UiRect barRect;
+		UiRect triangleRect;
+		if (backward) {
+			barRect = new UiRect(rect.x() + padX, rect.y() + padY, barWidth, Math.max(8, rect.height() - padY * 2));
+			triangleRect = new UiRect(barRect.right() + gap, rect.y() + padY, triangleWidth, Math.max(8, rect.height() - padY * 2));
+		} else {
+			triangleRect = new UiRect(rect.x() + padX, rect.y() + padY, triangleWidth, Math.max(8, rect.height() - padY * 2));
+			barRect = new UiRect(triangleRect.right() + gap, rect.y() + padY, barWidth, Math.max(8, rect.height() - padY * 2));
+		}
+		graphics.setColor(color);
+		graphics.fillRoundRect(barRect.x(), barRect.y(), barRect.width(), barRect.height(), barRect.width(), barRect.width());
+		if (backward) {
+			graphics.fillPolygon(
+					new int[]{triangleRect.right(), triangleRect.right(), triangleRect.x()},
+					new int[]{triangleRect.y(), triangleRect.bottom(), triangleRect.y() + triangleRect.height() / 2},
+					3
+			);
+		} else {
+			graphics.fillPolygon(
+					new int[]{triangleRect.x(), triangleRect.x(), triangleRect.right()},
+					new int[]{triangleRect.y(), triangleRect.bottom(), triangleRect.y() + triangleRect.height() / 2},
+					3
+			);
+		}
+	}
+
+	private static void drawLoadingSpinner(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
+		Stroke previous = graphics.getStroke();
+		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		long tick = System.currentTimeMillis() / 12L;
+		int startAngle = (int) (-tick % 360L);
+		graphics.setColor(color);
+		graphics.drawArc(rect.x(), rect.y(), rect.width() - 1, rect.height() - 1, startAngle, 280);
+		graphics.setStroke(previous);
+	}
+
 	private static void drawMediaFitGlyph(Graphics2D graphics, UiRect rect, Color color) {
 		Stroke previous = graphics.getStroke();
 		graphics.setColor(color);
@@ -3746,26 +3826,36 @@ public final class MonitorScreenSystem {
 		graphics.fillOval(rect.right() - pad - sunSize * 2, rect.y() + pad, sunSize, sunSize);
 	}
 
-	private static void drawMediaControls(Graphics2D graphics, UiRect rect, UiLayout layout) {
-		int centerY = rect.y() + rect.height() / 2;
-		int left = rect.x() + layout.unit();
-		int right = rect.right() - layout.unit();
-		int barHeight = clampInt(layout.unit() - 6, 4, 10);
-		int playSize = clampInt(layout.unit() + 4, 12, 20);
-		int playX = rect.x() + rect.width() / 2 - playSize / 2;
-		int playY = centerY - playSize / 2;
+	private static void drawMediaCenterControls(Graphics2D graphics, UiLayout layout, MediaVisualSnapshot state) {
+		if (graphics == null || layout == null || state == null || !state.playbackControlsVisible()) {
+			return;
+		}
+		drawMediaTransportButton(graphics, mediaCenterBackRect(layout), TransportButtonKind.BACK, false, state.paused(), layout);
+		drawMediaTransportButton(graphics, mediaCenterPlayPauseRect(layout), TransportButtonKind.PLAY_PAUSE, state.loading(), state.paused(), layout);
+		drawMediaTransportButton(graphics, mediaCenterForwardRect(layout), TransportButtonKind.FORWARD, false, state.paused(), layout);
+	}
 
-		fillRoundedRect(graphics, new UiRect(left, centerY - barHeight / 2, Math.max(12, playX - left - layout.unit()), barHeight), 6, new Color(18, 22, 28, 92));
-		fillRoundedRect(graphics, new UiRect(playX + playSize + layout.unit(), centerY - barHeight / 2, Math.max(12, right - playX - playSize - layout.unit()), barHeight), 6, new Color(18, 22, 28, 92));
-		fillRoundedRect(graphics, new UiRect(playX, playY, playSize, playSize), clampInt(playSize / 2, 8, 12), new Color(18, 22, 28, 214));
-
-		graphics.setColor(new Color(255, 255, 255, 240));
-		int triPad = Math.max(3, playSize / 4);
-		graphics.fillPolygon(
-				new int[]{playX + triPad, playX + triPad, playX + playSize - triPad},
-				new int[]{playY + triPad, playY + playSize - triPad, playY + playSize / 2},
-				3
-		);
+	private static void drawMediaTransportButton(Graphics2D graphics, UiRect rect, TransportButtonKind kind, boolean loading, boolean paused, UiLayout layout) {
+		Color fill = kind == TransportButtonKind.PLAY_PAUSE
+				? new Color(12, 16, 20, 232)
+				: new Color(12, 16, 20, 188);
+		drawRoundMediaButtonBase(graphics, rect, fill);
+		UiRect iconRect = rect.inset(Math.max(3, layout.unit() / 4));
+		if (loading && kind == TransportButtonKind.PLAY_PAUSE) {
+			drawLoadingSpinner(graphics, iconRect, new Color(248, 251, 255), 2.6F);
+			return;
+		}
+		switch (kind) {
+			case BACK -> drawSeekGlyph(graphics, iconRect, new Color(248, 251, 255), true);
+			case FORWARD -> drawSeekGlyph(graphics, iconRect, new Color(248, 251, 255), false);
+			case PLAY_PAUSE -> {
+				if (paused) {
+					drawPlayGlyph(graphics, iconRect, new Color(248, 251, 255));
+				} else {
+					drawPauseGlyph(graphics, iconRect, new Color(248, 251, 255));
+				}
+			}
+		}
 	}
 
 	private static void drawLauncherArrowButton(Graphics2D graphics, UiRect rect, boolean up) {
@@ -4171,6 +4261,31 @@ public final class MonitorScreenSystem {
 
 	private static UiRect mediaTimelineHitRect(UiLayout layout) {
 		return mediaTimelineTrackRect(layout);
+	}
+
+	private static UiRect mediaCenterPlayPauseRect(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int size = clampInt(layout.unit() * 6, 46, 92);
+		return new UiRect(
+				canvas.x() + (canvas.width() - size) / 2,
+				canvas.y() + (canvas.height() - size) / 2,
+				size,
+				size
+		);
+	}
+
+	private static UiRect mediaCenterBackRect(UiLayout layout) {
+		UiRect center = mediaCenterPlayPauseRect(layout);
+		int size = clampInt((int) Math.round(center.width() * 0.76D), 34, 68);
+		int gap = clampInt(layout.unit() * 3, 22, 44);
+		return new UiRect(center.x() - size - gap, center.y() + (center.height() - size) / 2, size, size);
+	}
+
+	private static UiRect mediaCenterForwardRect(UiLayout layout) {
+		UiRect center = mediaCenterPlayPauseRect(layout);
+		int size = clampInt((int) Math.round(center.width() * 0.76D), 34, 68);
+		int gap = clampInt(layout.unit() * 3, 22, 44);
+		return new UiRect(center.right() + gap, center.y() + (center.height() - size) / 2, size, size);
 	}
 
 	private static UiRect mediaStatusRect(UiLayout layout) {
@@ -4866,7 +4981,10 @@ public final class MonitorScreenSystem {
 		}
 		return "ЗАГРУЖАЮ...".equalsIgnoreCase(status)
 				|| "ПОДКЛЮЧАЮ YOUTUBE...".equalsIgnoreCase(status)
-				|| "LOADING...".equalsIgnoreCase(status);
+				|| "LOADING...".equalsIgnoreCase(status)
+				|| "BUFFERING".equalsIgnoreCase(status)
+				|| "LOADING".equalsIgnoreCase(status)
+				|| "CONNECTING".equalsIgnoreCase(status);
 	}
 
 	private static String loadingStatus(ScreenViewMode mode, ServerPlayer player) {
@@ -5227,6 +5345,16 @@ public final class MonitorScreenSystem {
 		return state.loadedMedia != null;
 	}
 
+	private static boolean playbackControlsVisibleLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return false;
+		}
+		if (state.mode == ScreenViewMode.YOUTUBE) {
+			return state.loading || state.sourceUrl != null || state.relaySessionId != null || !state.youtubeQueue.isEmpty();
+		}
+		return state.loadedMedia != null && state.loadedMedia.animated();
+	}
+
 	private static boolean canSeekTimelineLocked(MediaRuntimeState state) {
 		if (state == null) {
 			return false;
@@ -5352,6 +5480,12 @@ public final class MonitorScreenSystem {
 			MediaScaleMode[] values = values();
 			return values[(this.ordinal() + 1) % values.length];
 		}
+	}
+
+	private enum TransportButtonKind {
+		BACK,
+		PLAY_PAUSE,
+		FORWARD
 	}
 
 	private record ScreenKey(BlockPos pos, Direction direction) {
@@ -5507,6 +5641,7 @@ public final class MonitorScreenSystem {
 			BufferedImage frame,
 			boolean hasMedia,
 			boolean playbackControlsVisible,
+			boolean loading,
 			boolean timelineSeekable,
 			int frameIndex,
 			int frameCount,
