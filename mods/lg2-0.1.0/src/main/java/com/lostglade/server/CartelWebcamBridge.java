@@ -22,37 +22,45 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class CartelWebcamBridge {
-	private static final Map<UUID, UUID> TARGET_BY_CARTEL = new ConcurrentHashMap<>();
-	private static final Map<UUID, Set<UUID>> CARTELS_BY_TARGET = new ConcurrentHashMap<>();
+	private static final Map<UUID, UUID> TARGET_BY_MIRRORED_SOURCE = new ConcurrentHashMap<>();
+	private static final Map<UUID, Set<UUID>> MIRRORED_SOURCES_BY_TARGET = new ConcurrentHashMap<>();
 
 	private CartelWebcamBridge() {
 	}
 
 	public static void beginDisguise(UUID cartelId, UUID targetId) {
-		if (cartelId == null || targetId == null || cartelId.equals(targetId)) {
-			return;
-		}
-
-		removeMapping(cartelId);
-		TARGET_BY_CARTEL.put(cartelId, targetId);
-		CARTELS_BY_TARGET.computeIfAbsent(targetId, ignored -> ConcurrentHashMap.newKeySet()).add(cartelId);
-		ServerWebcamFrameCache.beginMirror(cartelId, targetId);
-		closeCartelSource(cartelId);
+		beginSourceMirror(cartelId, targetId);
 	}
 
 	public static void endDisguise(UUID cartelId) {
-		if (cartelId == null) {
+		endSourceMirror(cartelId);
+	}
+
+	public static void beginSourceMirror(UUID mirroredSourceId, UUID targetSourceId) {
+		if (mirroredSourceId == null || targetSourceId == null || mirroredSourceId.equals(targetSourceId)) {
 			return;
 		}
 
-		removeMapping(cartelId);
-		ServerWebcamFrameCache.endMirror(cartelId);
-		closeCartelSource(cartelId);
+		removeMapping(mirroredSourceId);
+		TARGET_BY_MIRRORED_SOURCE.put(mirroredSourceId, targetSourceId);
+		MIRRORED_SOURCES_BY_TARGET.computeIfAbsent(targetSourceId, ignored -> ConcurrentHashMap.newKeySet()).add(mirroredSourceId);
+		ServerWebcamFrameCache.beginMirror(mirroredSourceId, targetSourceId);
+		closeMirroredSource(mirroredSourceId);
+	}
+
+	public static void endSourceMirror(UUID mirroredSourceId) {
+		if (mirroredSourceId == null) {
+			return;
+		}
+
+		removeMapping(mirroredSourceId);
+		ServerWebcamFrameCache.endMirror(mirroredSourceId);
+		closeMirroredSource(mirroredSourceId);
 	}
 
 	public static void clearAll() {
-		TARGET_BY_CARTEL.clear();
-		CARTELS_BY_TARGET.clear();
+		TARGET_BY_MIRRORED_SOURCE.clear();
+		MIRRORED_SOURCES_BY_TARGET.clear();
 		ServerWebcamFrameCache.clearMirrors();
 	}
 
@@ -62,15 +70,15 @@ public final class CartelWebcamBridge {
 		}
 		ServerWebcamFrameCache.removeSource(playerId);
 		ServerWebcamFrameCache.endMirror(playerId);
+		endSourceMirror(playerId);
 
-		Set<UUID> mirroredCartels = CARTELS_BY_TARGET.get(playerId);
-		if (mirroredCartels == null || mirroredCartels.isEmpty()) {
+		Set<UUID> mirroredSources = MIRRORED_SOURCES_BY_TARGET.get(playerId);
+		if (mirroredSources == null || mirroredSources.isEmpty()) {
 			return;
 		}
 
-		for (UUID cartelId : mirroredCartels) {
-			ServerWebcamFrameCache.endMirror(cartelId);
-			closeCartelSource(cartelId);
+		for (UUID mirroredSourceId : Set.copyOf(mirroredSources)) {
+			endSourceMirror(mirroredSourceId);
 		}
 	}
 
@@ -91,7 +99,7 @@ public final class CartelWebcamBridge {
 		}
 
 		if (packet instanceof VideoC2SPacket videoPacket) {
-			if (TARGET_BY_CARTEL.containsKey(senderId)) {
+			if (TARGET_BY_MIRRORED_SOURCE.containsKey(senderId)) {
 				return true;
 			}
 
@@ -109,8 +117,8 @@ public final class CartelWebcamBridge {
 	}
 
 	private static void mirrorVideoPacket(WebcamServer webcamServer, UUID targetId, VideoC2SPacket videoPacket) {
-		Set<UUID> mirroredCartels = CARTELS_BY_TARGET.getOrDefault(targetId, Collections.emptySet());
-		if (mirroredCartels.isEmpty() || videoPacket == null) {
+		Set<UUID> mirroredSources = MIRRORED_SOURCES_BY_TARGET.getOrDefault(targetId, Collections.emptySet());
+		if (mirroredSources.isEmpty() || videoPacket == null) {
 			return;
 		}
 
@@ -119,11 +127,11 @@ public final class CartelWebcamBridge {
 			return;
 		}
 
-		for (UUID cartelId : mirroredCartels) {
-			VideoSource source = createSource(cartelId, config);
+		for (UUID mirroredSourceId : mirroredSources) {
+			VideoSource source = createSource(mirroredSourceId, config);
 			sendToNearbyPlayers(
 					webcamServer,
-					cartelId,
+					mirroredSourceId,
 					new VideoS2CPacket(source, videoPacket.nal()),
 					config.maxDisplayDistance(),
 					config.displaySelfWebcam(),
@@ -133,22 +141,22 @@ public final class CartelWebcamBridge {
 	}
 
 	private static void mirrorClosePacket(WebcamServer webcamServer, UUID targetId) {
-		Set<UUID> mirroredCartels = CARTELS_BY_TARGET.getOrDefault(targetId, Collections.emptySet());
-		if (mirroredCartels.isEmpty()) {
+		Set<UUID> mirroredSources = MIRRORED_SOURCES_BY_TARGET.getOrDefault(targetId, Collections.emptySet());
+		if (mirroredSources.isEmpty()) {
 			return;
 		}
 
-		for (UUID cartelId : mirroredCartels) {
-			closeCartelSource(webcamServer, cartelId);
+		for (UUID mirroredSourceId : mirroredSources) {
+			closeMirroredSource(webcamServer, mirroredSourceId);
 		}
 	}
 
-	private static void closeCartelSource(UUID cartelId) {
-		closeCartelSource(WebcamServer.getInstance(), cartelId);
+	private static void closeMirroredSource(UUID mirroredSourceId) {
+		closeMirroredSource(WebcamServer.getInstance(), mirroredSourceId);
 	}
 
-	private static void closeCartelSource(WebcamServer webcamServer, UUID cartelId) {
-		if (webcamServer == null || cartelId == null) {
+	private static void closeMirroredSource(WebcamServer webcamServer, UUID mirroredSourceId) {
+		if (webcamServer == null || mirroredSourceId == null) {
 			return;
 		}
 
@@ -159,8 +167,8 @@ public final class CartelWebcamBridge {
 
 		sendToNearbyPlayers(
 				webcamServer,
-				cartelId,
-				new CloseSourceS2CPacket(cartelId),
+				mirroredSourceId,
+				new CloseSourceS2CPacket(mirroredSourceId),
 				config.maxDisplayDistance(),
 				config.displaySelfWebcam(),
 				true
@@ -250,20 +258,20 @@ public final class CartelWebcamBridge {
 		return data instanceof ServerConfig config ? config : null;
 	}
 
-	private static void removeMapping(UUID cartelId) {
-		UUID previousTarget = TARGET_BY_CARTEL.remove(cartelId);
+	private static void removeMapping(UUID mirroredSourceId) {
+		UUID previousTarget = TARGET_BY_MIRRORED_SOURCE.remove(mirroredSourceId);
 		if (previousTarget == null) {
 			return;
 		}
 
-		Set<UUID> mirroredCartels = CARTELS_BY_TARGET.get(previousTarget);
-		if (mirroredCartels == null) {
+		Set<UUID> mirroredSources = MIRRORED_SOURCES_BY_TARGET.get(previousTarget);
+		if (mirroredSources == null) {
 			return;
 		}
 
-		mirroredCartels.remove(cartelId);
-		if (mirroredCartels.isEmpty()) {
-			CARTELS_BY_TARGET.remove(previousTarget);
+		mirroredSources.remove(mirroredSourceId);
+		if (mirroredSources.isEmpty()) {
+			MIRRORED_SOURCES_BY_TARGET.remove(previousTarget);
 		}
 	}
 }

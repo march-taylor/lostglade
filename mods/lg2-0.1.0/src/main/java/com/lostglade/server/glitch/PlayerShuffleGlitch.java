@@ -11,6 +11,8 @@ import net.lionarius.skinrestorer.skin.SkinVariant;
 import net.lionarius.skinrestorer.util.PlayerUtils;
 import com.lostglade.config.GlitchConfig;
 import com.lostglade.server.ServerBackroomsSystem;
+import com.lostglade.server.ServerStabilitySystem;
+import com.lostglade.server.CartelWebcamBridge;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -23,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -34,14 +37,56 @@ public final class PlayerShuffleGlitch implements ServerGlitchHandler {
 	private static final String POSITION_SHUFFLE_CHANCE = "positionShuffleChance";
 	private static final double TARGET_COUNT_PRIORITY = 2.4D;
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
+	private static final Map<UUID, ActiveShuffleState> ACTIVE_STATES = new HashMap<>();
 
 	public static void tickActiveStates(MinecraftServer server) {
+		if (server == null || ACTIVE_STATES.isEmpty()) {
+			return;
+		}
+
+		double stabilityPercent = ServerStabilitySystem.getStabilityPercent();
+		Iterator<Map.Entry<UUID, ActiveShuffleState>> iterator = ACTIVE_STATES.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, ActiveShuffleState> entry = iterator.next();
+			UUID playerId = entry.getKey();
+			ActiveShuffleState state = entry.getValue();
+			if (playerId == null || state == null) {
+				iterator.remove();
+				continue;
+			}
+
+			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+			if (player == null) {
+				CartelWebcamBridge.endSourceMirror(playerId);
+				iterator.remove();
+				continue;
+			}
+
+			if (ServerBackroomsSystem.isInBackrooms(player) || stabilityPercent > state.expireAboveStabilityPercent) {
+				restorePlayer(server, player, state);
+				iterator.remove();
+			}
+		}
 	}
 
 	public static void resetRuntimeState() {
+		ACTIVE_STATES.clear();
 	}
 
 	public static void restoreAll(MinecraftServer server) {
+		if (ACTIVE_STATES.isEmpty()) {
+			return;
+		}
+
+		for (Map.Entry<UUID, ActiveShuffleState> entry : new ArrayList<>(ACTIVE_STATES.entrySet())) {
+			ServerPlayer player = server == null ? null : server.getPlayerList().getPlayer(entry.getKey());
+			if (player != null) {
+				restorePlayer(server, player, entry.getValue());
+			} else if (entry.getKey() != null) {
+				CartelWebcamBridge.endSourceMirror(entry.getKey());
+			}
+		}
+		ACTIVE_STATES.clear();
 	}
 
 	@Override
@@ -124,16 +169,23 @@ public final class PlayerShuffleGlitch implements ServerGlitchHandler {
 		for (int i = 0; i < selectedPlayers.size(); i++) {
 			ServerPlayer target = selectedPlayers.get(i);
 			ServerPlayer source = shuffledSources.get((i + offset) % shuffledSources.size());
+			ActiveShuffleState existingState = ACTIVE_STATES.get(target.getUUID());
+			SkinValue originalSkin = existingState != null ? existingState.originalSkin : captureCurrentSkinValue(target);
 			SkinValue shuffledSkin = captureCurrentSkinValue(source);
-			assignments.add(new Assignment(target, source, shuffledSkin));
+			assignments.add(new Assignment(target, source, originalSkin, shuffledSkin));
 		}
 
 		boolean appliedAny = false;
 		for (Assignment assignment : assignments) {
-			if (assignment.shuffledSkin == null) {
+			if (assignment.originalSkin == null || assignment.shuffledSkin == null) {
 				continue;
 			}
 			applySkin(server, assignment.target, assignment.shuffledSkin);
+			CartelWebcamBridge.beginSourceMirror(assignment.target.getUUID(), assignment.source.getUUID());
+			ACTIVE_STATES.put(
+					assignment.target.getUUID(),
+					new ActiveShuffleState(assignment.originalSkin, entry.maxStabilityPercent + 10.0D)
+			);
 			appliedAny = true;
 		}
 
@@ -206,6 +258,17 @@ public final class PlayerShuffleGlitch implements ServerGlitchHandler {
 		SkinService.applySkin(server, List.of(player), skinValue, false);
 	}
 
+	private static void restorePlayer(MinecraftServer server, ServerPlayer player, ActiveShuffleState state) {
+		if (player == null || state == null) {
+			return;
+		}
+
+		CartelWebcamBridge.endSourceMirror(player.getUUID());
+		if (server != null && state.originalSkin != null) {
+			applySkin(server, player, state.originalSkin);
+		}
+	}
+
 	private static SkinValue captureCurrentSkinValue(ServerPlayer player) {
 		SkinStorage skinStorage = SkinRestorer.getSkinStorage();
 		if (skinStorage != null && skinStorage.hasSavedSkin(player.getUUID())) {
@@ -272,12 +335,24 @@ public final class PlayerShuffleGlitch implements ServerGlitchHandler {
 	private static final class Assignment {
 		private final ServerPlayer target;
 		private final ServerPlayer source;
+		private final SkinValue originalSkin;
 		private final SkinValue shuffledSkin;
 
-		private Assignment(ServerPlayer target, ServerPlayer source, SkinValue shuffledSkin) {
+		private Assignment(ServerPlayer target, ServerPlayer source, SkinValue originalSkin, SkinValue shuffledSkin) {
 			this.target = target;
 			this.source = source;
+			this.originalSkin = originalSkin;
 			this.shuffledSkin = shuffledSkin;
+		}
+	}
+
+	private static final class ActiveShuffleState {
+		private final SkinValue originalSkin;
+		private final double expireAboveStabilityPercent;
+
+		private ActiveShuffleState(SkinValue originalSkin, double expireAboveStabilityPercent) {
+			this.originalSkin = originalSkin;
+			this.expireAboveStabilityPercent = expireAboveStabilityPercent;
 		}
 	}
 
