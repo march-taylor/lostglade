@@ -238,11 +238,6 @@ public final class SpeakerSystem {
 		List<MonitorScreenSystem.SpeakerAudioSource> playableSources = connectedSources.stream()
 				.filter(source -> source != null && !source.paused() && source.audioStreamUrl() != null && !source.audioStreamUrl().isBlank())
 				.toList();
-		if (playableSources.isEmpty()) {
-			stopRuntime(key);
-			return true;
-		}
-
 		VoicechatApi voicechatApi = ServerVoicechatIntegration.getApi();
 		VoicechatServerApi voicechatServerApi = ServerVoicechatIntegration.getServerApi();
 		if (!ServerVoicechatIntegration.isLoaded() || voicechatApi == null || voicechatServerApi == null) {
@@ -251,6 +246,17 @@ public final class SpeakerSystem {
 		}
 
 		SpeakerRuntime runtime = ACTIVE_SPEAKERS.get(key);
+		if (playableSources.isEmpty()) {
+			if (runtime != null && connectedToPoweredMonitor) {
+				if (!runtime.update(level, state, List.of(), voicechatApi, voicechatServerApi)) {
+					stopRuntime(key);
+				}
+			} else {
+				stopRuntime(key);
+			}
+			return true;
+		}
+
 		if (runtime == null) {
 			runtime = new SpeakerRuntime(key);
 			if (!runtime.start(level, state, playableSources, voicechatApi, voicechatServerApi)) {

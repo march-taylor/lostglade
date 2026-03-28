@@ -698,7 +698,7 @@ public final class MonitorScreenSystem {
 						MonitorYoutubeRelayClient.resume(relaySessionId(component.runtimeKey()));
 					}
 				} catch (Exception exception) {
-					Lg2.LOGGER.warn("Failed to {} YouTube session {}", shouldPause ? "pause" : "resume", component.runtimeKey(), exception);
+					Lg2.LOGGER.debug("Failed to {} YouTube session {}", shouldPause ? "pause" : "resume", component.runtimeKey(), exception);
 				}
 			}, mediaIoExecutor).thenRun(() -> server.execute(() -> scheduleYoutubeRefresh(server, component.runtimeKey(), 0L)));
 		}
@@ -709,7 +709,7 @@ public final class MonitorScreenSystem {
 				try {
 					MonitorYoutubeRelayClient.seek(relaySessionId(component.runtimeKey()), seekTargetMs);
 				} catch (Exception exception) {
-					Lg2.LOGGER.warn("Failed to seek YouTube session {} to {}", component.runtimeKey(), seekTargetMs, exception);
+					Lg2.LOGGER.debug("Failed to seek YouTube session {} to {}", component.runtimeKey(), seekTargetMs, exception);
 				}
 			}, mediaIoExecutor).thenRun(() -> server.execute(() -> scheduleYoutubeRefresh(server, component.runtimeKey(), 0L)));
 		}
