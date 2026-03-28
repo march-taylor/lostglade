@@ -571,7 +571,7 @@ public final class MonitorYoutubeRelayClient {
 			if (resolved.live()) {
 				startStream();
 			} else {
-				capturePreviewFrame();
+				tryCapturePreviewFrame("load");
 				synchronized (this.lock) {
 					if (this.latestFrame != null) {
 						this.status = "PLAYING";
@@ -689,7 +689,7 @@ public final class MonitorYoutubeRelayClient {
 				shouldStartLiveStream = this.live && !this.paused;
 			}
 			if (capturePreview) {
-				capturePreviewFrame();
+				tryCapturePreviewFrame("seek");
 			} else {
 				synchronized (this.lock) {
 					if (this.paused) {
@@ -736,6 +736,23 @@ public final class MonitorYoutubeRelayClient {
 				this.latestFrameBucketMs = bucketMs;
 				this.frameSequence++;
 				cachePreviewFrameLocked(seekMs, previewBytes, preview, false);
+			}
+		}
+
+		private boolean tryCapturePreviewFrame(String reason) {
+			try {
+				capturePreviewFrame();
+				return true;
+			} catch (IOException exception) {
+				synchronized (this.lock) {
+					if (this.paused) {
+						this.status = this.latestFrame != null ? "PAUSED" : "BUFFERING";
+					} else if (!this.live) {
+						this.status = this.latestFrame != null ? "PLAYING" : "BUFFERING";
+					}
+				}
+				Lg2.LOGGER.debug("Failed to capture YouTube preview frame during {} for session {}", reason, this.sessionId, exception);
+				return false;
 			}
 		}
 

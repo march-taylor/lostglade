@@ -22,7 +22,6 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.PlayerChatMessage;
-import net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundMapItemDataPacket;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -291,28 +290,16 @@ public final class MonitorScreenSystem {
 	}
 
 	public static List<SpeakerAudioSource> findSpeakerAudioSources(ServerLevel level, BlockPos speakerPos) {
-		if (level == null || speakerPos == null || !level.hasChunkAt(speakerPos)) {
-			return List.of();
-		}
-		Set<BlockPos> wireNetwork = collectSpeakerWireNetwork(level, speakerPos);
-		AABB searchBox = speakerSearchBox(speakerPos, wireNetwork);
-		Map<ScreenRuntimeKey, ScreenComponent> connectedComponents = new HashMap<>();
-		for (ItemFrame frame : level.getEntitiesOfClass(ItemFrame.class, searchBox, candidate -> readScreenState(candidate.getItem()) != null)) {
-			ScreenComponent component = collectComponent(level, frame, null);
-			if (component == null || component.viewMode() != ScreenViewMode.YOUTUBE || !component.powered()) {
-				continue;
-			}
-			if (!isSpeakerConnectedToComponent(speakerPos, component, wireNetwork)) {
-				continue;
-			}
-			connectedComponents.putIfAbsent(component.runtimeKey(), component);
-		}
+		Map<ScreenRuntimeKey, ScreenComponent> connectedComponents = collectConnectedSpeakerComponents(level, speakerPos);
 		if (connectedComponents.isEmpty()) {
 			return List.of();
 		}
 
 		List<SpeakerAudioSource> sources = new ArrayList<>();
 		for (ScreenComponent component : connectedComponents.values()) {
+			if (component.viewMode() != ScreenViewMode.YOUTUBE || !component.powered()) {
+				continue;
+			}
 			MediaRuntimeState state = MEDIA_STATES.get(component.runtimeKey());
 			if (state == null) {
 				continue;
@@ -337,6 +324,30 @@ public final class MonitorScreenSystem {
 			}
 		}
 		return sources;
+	}
+
+	public static boolean hasPoweredConnectedMonitor(ServerLevel level, BlockPos speakerPos) {
+		return collectConnectedSpeakerComponents(level, speakerPos).values().stream().anyMatch(ScreenComponent::powered);
+	}
+
+	private static Map<ScreenRuntimeKey, ScreenComponent> collectConnectedSpeakerComponents(ServerLevel level, BlockPos speakerPos) {
+		if (level == null || speakerPos == null || !level.hasChunkAt(speakerPos)) {
+			return Map.of();
+		}
+		Set<BlockPos> wireNetwork = collectSpeakerWireNetwork(level, speakerPos);
+		AABB searchBox = speakerSearchBox(speakerPos, wireNetwork);
+		Map<ScreenRuntimeKey, ScreenComponent> connectedComponents = new HashMap<>();
+		for (ItemFrame frame : level.getEntitiesOfClass(ItemFrame.class, searchBox, candidate -> readScreenState(candidate.getItem()) != null)) {
+			ScreenComponent component = collectComponent(level, frame, null);
+			if (component == null) {
+				continue;
+			}
+			if (!isSpeakerConnectedToComponent(speakerPos, component, wireNetwork)) {
+				continue;
+			}
+			connectedComponents.putIfAbsent(component.runtimeKey(), component);
+		}
+		return connectedComponents;
 	}
 
 	private static AABB speakerSearchBox(BlockPos speakerPos, Set<BlockPos> wireNetwork) {
@@ -687,7 +698,7 @@ public final class MonitorScreenSystem {
 						MonitorYoutubeRelayClient.resume(relaySessionId(component.runtimeKey()));
 					}
 				} catch (Exception exception) {
-					Lg2.LOGGER.warn("Failed to {} YouTube session {}", shouldPause ? "pause" : "resume", component.runtimeKey(), exception);
+					Lg2.LOGGER.debug("Failed to {} YouTube session {}", shouldPause ? "pause" : "resume", component.runtimeKey(), exception);
 				}
 			}, mediaIoExecutor).thenRun(() -> server.execute(() -> scheduleYoutubeRefresh(server, component.runtimeKey(), 0L)));
 		}
@@ -698,7 +709,7 @@ public final class MonitorScreenSystem {
 				try {
 					MonitorYoutubeRelayClient.seek(relaySessionId(component.runtimeKey()), seekTargetMs);
 				} catch (Exception exception) {
-					Lg2.LOGGER.warn("Failed to seek YouTube session {} to {}", component.runtimeKey(), seekTargetMs, exception);
+					Lg2.LOGGER.debug("Failed to seek YouTube session {} to {}", component.runtimeKey(), seekTargetMs, exception);
 				}
 			}, mediaIoExecutor).thenRun(() -> server.execute(() -> scheduleYoutubeRefresh(server, component.runtimeKey(), 0L)));
 		}
@@ -1230,7 +1241,7 @@ public final class MonitorScreenSystem {
 		PLAYER_MEDIA_FOCUS.put(player.getUUID(), new PlayerMediaFocus(key, System.currentTimeMillis() + MEDIA_SCROLL_FOCUS_TIMEOUT_MS));
 	}
 
-	public static boolean onPlayerHotbarScroll(ServerPlayer player, int requestedSlot) {
+	public static boolean onPlayerHotbarScroll(ServerPlayer player, int previousSlot, int currentSlot) {
 		if (player == null) {
 			return false;
 		}
@@ -1247,8 +1258,7 @@ public final class MonitorScreenSystem {
 			return false;
 		}
 
-		int currentSlot = player.getInventory().getSelectedSlot();
-		int delta = normalizeHotbarDelta(currentSlot, requestedSlot);
+		int delta = normalizeHotbarDelta(previousSlot, currentSlot);
 		if (delta == 0) {
 			return false;
 		}
@@ -1278,7 +1288,6 @@ public final class MonitorScreenSystem {
 			return false;
 		}
 
-		player.connection.send(new ClientboundSetHeldSlotPacket(currentSlot));
 		requestComponentRender(server, component, component.viewMode(), component.launcherPage());
 		if (youtubeSeekTargetMs != null) {
 			long seekTargetMs = youtubeSeekTargetMs;
@@ -1341,19 +1350,19 @@ public final class MonitorScreenSystem {
 		return nearestDistanceSqr;
 	}
 
-	private static int normalizeHotbarDelta(int currentSlot, int requestedSlot) {
-		int forward = Math.floorMod(requestedSlot - currentSlot, 9);
-		int backward = Math.floorMod(currentSlot - requestedSlot, 9);
-		if (forward == 0 || backward == 0) {
+	private static int normalizeHotbarDelta(int previousSlot, int currentSlot) {
+		if (previousSlot == currentSlot) {
 			return 0;
 		}
-		if (forward < backward) {
-			return forward;
+		int upwardSteps = Math.floorMod(previousSlot - currentSlot, 9);
+		if (upwardSteps >= 1 && upwardSteps <= 2) {
+			return upwardSteps;
 		}
-		if (backward < forward) {
-			return -backward;
+		int downwardSteps = Math.floorMod(currentSlot - previousSlot, 9);
+		if (downwardSteps >= 1 && downwardSteps <= 2) {
+			return -downwardSteps;
 		}
-		return forward <= 4 ? forward : -backward;
+		return 0;
 	}
 
 	private static boolean isMediaSessionAlive(MinecraftServer server, ScreenRuntimeKey key) {
@@ -3093,15 +3102,7 @@ public final class MonitorScreenSystem {
 	}
 
 	private static UiRect mediaTimelineHitRect(UiLayout layout) {
-		UiRect track = mediaTimelineTrackRect(layout);
-		int horizontalPadding = clampInt(layout.unit() / 2, 4, 10);
-		int verticalPadding = clampInt(layout.unit(), 8, 18);
-		return new UiRect(
-				track.x() - horizontalPadding,
-				track.y() - verticalPadding,
-				track.width() + horizontalPadding * 2,
-				track.height() + verticalPadding * 2
-		);
+		return mediaTimelineTrackRect(layout);
 	}
 
 	private static UiRect mediaStatusRect(UiLayout layout) {
@@ -3848,11 +3849,11 @@ public final class MonitorScreenSystem {
 	}
 
 	private static float mediaTimelineFraction(UiLayout layout, UiPoint point) {
-		UiRect trackRect = mediaTimelineHitRect(layout);
+		UiRect trackRect = mediaTimelineTrackRect(layout);
 		if (trackRect.width() <= 0) {
 			return 0.0F;
 		}
-		return (float) clampDouble((point.x() - trackRect.x()) / (double) Math.max(1, trackRect.width()), 0.0D, 1.0D);
+		return (float) clampDouble((point.x() - trackRect.x()) / (double) Math.max(1, trackRect.width() - 1), 0.0D, 1.0D);
 	}
 
 	private static int mediaFrameIndexForFraction(MonitorMediaApp.LoadedMedia loadedMedia, float fraction) {

@@ -5,6 +5,7 @@ import com.lostglade.block.ModBlocks;
 import com.lostglade.block.SpeakerBlock;
 import de.maxhenkel.voicechat.api.VoicechatApi;
 import de.maxhenkel.voicechat.api.VoicechatServerApi;
+import de.maxhenkel.voicechat.api.VolumeCategory;
 import de.maxhenkel.voicechat.api.audiochannel.AudioPlayer;
 import de.maxhenkel.voicechat.api.audiochannel.LocationalAudioChannel;
 import de.maxhenkel.voicechat.api.opus.OpusEncoder;
@@ -17,7 +18,6 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
@@ -32,25 +32,39 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 public final class SpeakerSystem {
 	private static final int HOTBAR_SLOT_COUNT = 9;
 	private static final long REFRESH_INTERVAL_TICKS = 5L;
+	private static final String SPEAKER_VOLUME_CATEGORY_ID = "lg_speakers";
+	private static final String SPEAKER_VOLUME_CATEGORY_NAME = "Speakers";
+	private static final String SPEAKER_VOLUME_CATEGORY_DESCRIPTION = "LG2 Speakers";
+	private static final float MIN_SPEAKER_DISTANCE = 3.0F;
+	private static final float MAX_SPEAKER_DISTANCE = 48.0F;
+	private static final float MAX_SPEAKER_GAIN = 0.28F;
+	private static final float SPEAKER_GAIN_EXPONENT = 1.75F;
+	private static final float DISTANCE_COMPENSATION_AT_MAX = 0.84F;
+	private static final float DISTANCE_COMPENSATION_EXPONENT = 1.35F;
 	private static final int AUDIO_SAMPLE_RATE = 48_000;
 	private static final int AUDIO_FRAME_SAMPLES = 960;
 	private static final int AUDIO_FRAME_BYTES = AUDIO_FRAME_SAMPLES * 2;
-	private static final int AUDIO_QUEUE_CAPACITY = 24;
+	private static final long AUDIO_FRAME_DURATION_MS = AUDIO_FRAME_SAMPLES * 1000L / AUDIO_SAMPLE_RATE;
+	private static final long AUDIO_FRAME_NANOS = TimeUnit.MILLISECONDS.toNanos(AUDIO_FRAME_DURATION_MS);
+	private static final int SHARED_SOURCE_FRAME_BUFFER_CAPACITY = 256;
 	private static final long AUDIO_RESYNC_TOLERANCE_MS = 1_500L;
 	private static final long PROCESS_SHUTDOWN_TIMEOUT_MS = 200L;
 	private static final short[] SILENCE_FRAME = new short[AUDIO_FRAME_SAMPLES];
 	private static final Set<SpeakerKey> KNOWN_SPEAKERS = ConcurrentHashMap.newKeySet();
 	private static final ConcurrentHashMap<SpeakerKey, SpeakerRuntime> ACTIVE_SPEAKERS = new ConcurrentHashMap<>();
+	private static final ConcurrentHashMap<String, SharedSourceFeed> ACTIVE_SOURCE_FEEDS = new ConcurrentHashMap<>();
+	private static volatile boolean speakerVolumeCategoryRegistered = false;
 	private static volatile long tickCounter = 0L;
 
 	private SpeakerSystem() {
@@ -86,7 +100,7 @@ public final class SpeakerSystem {
 		trackSpeaker(level, pos);
 	}
 
-	public static boolean onPlayerHotbarScroll(ServerPlayer player, int requestedSlot) {
+	public static boolean onPlayerHotbarScroll(ServerPlayer player, int previousSlot, int currentSlot) {
 		if (player == null || !(player.level() instanceof ServerLevel level)) {
 			return false;
 		}
@@ -99,25 +113,26 @@ public final class SpeakerSystem {
 		if (!state.is(ModBlocks.SPEAKER)) {
 			return false;
 		}
-		int currentSlot = player.getInventory().getSelectedSlot();
-		int delta = normalizeHotbarDelta(currentSlot, requestedSlot);
+		int delta = normalizeHotbarDelta(previousSlot, currentSlot);
 		if (delta == 0 || !SpeakerBlock.adjustVolumeByScroll(level, pos, state, player, delta)) {
 			return false;
 		}
-		player.connection.send(new ClientboundSetHeldSlotPacket(currentSlot));
 		return true;
 	}
 
-	private static int normalizeHotbarDelta(int currentSlot, int requestedSlot) {
-		if (currentSlot == requestedSlot) {
+	private static int normalizeHotbarDelta(int previousSlot, int currentSlot) {
+		if (previousSlot == currentSlot) {
 			return 0;
 		}
-		int forward = Math.floorMod(requestedSlot - currentSlot, HOTBAR_SLOT_COUNT);
-		int backward = Math.floorMod(currentSlot - requestedSlot, HOTBAR_SLOT_COUNT);
-		if (forward == 0 && backward == 0) {
-			return 0;
+		int upwardSteps = Math.floorMod(previousSlot - currentSlot, HOTBAR_SLOT_COUNT);
+		if (upwardSteps >= 1 && upwardSteps <= 2) {
+			return upwardSteps;
 		}
-		return forward <= backward ? 1 : -1;
+		int downwardSteps = Math.floorMod(currentSlot - previousSlot, HOTBAR_SLOT_COUNT);
+		if (downwardSteps >= 1 && downwardSteps <= 2) {
+			return -downwardSteps;
+		}
+		return 0;
 	}
 
 	private static void onChunkLoad(ServerLevel level, LevelChunk chunk) {
@@ -205,12 +220,9 @@ public final class SpeakerSystem {
 		}
 
 		boolean rawPowered = hasSpeakerPower(level, key.pos());
-		List<MonitorScreenSystem.SpeakerAudioSource> connectedSources = rawPowered
-				? MonitorScreenSystem.findSpeakerAudioSources(level, key.pos())
-				: List.of();
-		boolean connectedToScreen = !connectedSources.isEmpty();
-		if (SpeakerBlock.isLit(state) != connectedToScreen) {
-			state = state.setValue(BlockStateProperties.LIT, connectedToScreen);
+		boolean connectedToPoweredMonitor = rawPowered && MonitorScreenSystem.hasPoweredConnectedMonitor(level, key.pos());
+		if (SpeakerBlock.isLit(state) != connectedToPoweredMonitor) {
+			state = state.setValue(BlockStateProperties.LIT, connectedToPoweredMonitor);
 			level.setBlock(key.pos(), state, 3);
 		}
 
@@ -219,14 +231,13 @@ public final class SpeakerSystem {
 			return true;
 		}
 
+		List<MonitorScreenSystem.SpeakerAudioSource> connectedSources = connectedToPoweredMonitor
+				? MonitorScreenSystem.findSpeakerAudioSources(level, key.pos())
+				: List.of();
+
 		List<MonitorScreenSystem.SpeakerAudioSource> playableSources = connectedSources.stream()
 				.filter(source -> source != null && !source.paused() && source.audioStreamUrl() != null && !source.audioStreamUrl().isBlank())
 				.toList();
-		if (playableSources.isEmpty()) {
-			stopRuntime(key);
-			return true;
-		}
-
 		VoicechatApi voicechatApi = ServerVoicechatIntegration.getApi();
 		VoicechatServerApi voicechatServerApi = ServerVoicechatIntegration.getServerApi();
 		if (!ServerVoicechatIntegration.isLoaded() || voicechatApi == null || voicechatServerApi == null) {
@@ -235,6 +246,17 @@ public final class SpeakerSystem {
 		}
 
 		SpeakerRuntime runtime = ACTIVE_SPEAKERS.get(key);
+		if (playableSources.isEmpty()) {
+			if (runtime != null && connectedToPoweredMonitor) {
+				if (!runtime.update(level, state, List.of(), voicechatApi, voicechatServerApi)) {
+					stopRuntime(key);
+				}
+			} else {
+				stopRuntime(key);
+			}
+			return true;
+		}
+
 		if (runtime == null) {
 			runtime = new SpeakerRuntime(key);
 			if (!runtime.start(level, state, playableSources, voicechatApi, voicechatServerApi)) {
@@ -268,6 +290,63 @@ public final class SpeakerSystem {
 			runtime.close();
 		}
 		ACTIVE_SPEAKERS.clear();
+		for (SharedSourceFeed feed : ACTIVE_SOURCE_FEEDS.values()) {
+			feed.close();
+		}
+		ACTIVE_SOURCE_FEEDS.clear();
+		VoicechatServerApi voicechatServerApi = ServerVoicechatIntegration.getServerApi();
+		if (voicechatServerApi != null && speakerVolumeCategoryRegistered) {
+			try {
+				voicechatServerApi.unregisterVolumeCategory(SPEAKER_VOLUME_CATEGORY_ID);
+			} catch (Exception exception) {
+				Lg2.LOGGER.debug("Failed to unregister Simple Voice Chat speaker category", exception);
+			}
+		}
+		speakerVolumeCategoryRegistered = false;
+	}
+
+	private static SharedSourceFeed acquireSharedSourceFeed(SpeakerKey speakerKey, MonitorScreenSystem.SpeakerAudioSource source) {
+		if (speakerKey == null || source == null || source.sourceKey() == null || source.sourceKey().isBlank()) {
+			return null;
+		}
+		return ACTIVE_SOURCE_FEEDS.compute(source.sourceKey(), (ignored, existing) -> {
+			SharedSourceFeed feed = existing;
+			if (feed == null || feed.isClosed()) {
+				feed = new SharedSourceFeed(source.sourceKey());
+			}
+			feed.addSpeaker(speakerKey);
+			if (!feed.update(source)) {
+				feed.removeSpeaker(speakerKey);
+				feed.close();
+				return null;
+			}
+			return feed;
+		});
+	}
+
+	private static void releaseSharedSourceFeed(SpeakerKey speakerKey, String sourceKey, SharedSourceFeed expectedFeed) {
+		if (sourceKey == null || sourceKey.isBlank()) {
+			return;
+		}
+		ACTIVE_SOURCE_FEEDS.computeIfPresent(sourceKey, (ignored, existing) -> {
+			if (expectedFeed != null && existing != expectedFeed) {
+				expectedFeed.removeSpeaker(speakerKey);
+				if (expectedFeed.isUnused()) {
+					expectedFeed.close();
+				}
+				if (existing.isUnused()) {
+					existing.close();
+					return null;
+				}
+				return existing;
+			}
+			existing.removeSpeaker(speakerKey);
+			if (existing.isUnused()) {
+				existing.close();
+				return null;
+			}
+			return existing;
+		});
 	}
 
 	private static String ffmpegBinary() {
@@ -283,7 +362,48 @@ public final class SpeakerSystem {
 	}
 
 	private static float volumeFactor(int volumePercent) {
-		return Math.max(0.0F, Math.min(1.0F, volumePercent / 100.0F));
+		float normalized = Math.max(0.0F, Math.min(1.0F, volumePercent / 100.0F));
+		if (normalized <= 0.0F) {
+			return 0.0F;
+		}
+		return MAX_SPEAKER_GAIN * (float) Math.pow(normalized, SPEAKER_GAIN_EXPONENT);
+	}
+
+	private static float audibleDistance(int volumePercent) {
+		int clamped = Math.max(1, Math.min(100, volumePercent));
+		if (clamped <= 1) {
+			return MIN_SPEAKER_DISTANCE;
+		}
+		float normalized = (clamped - 1) / 99.0F;
+		float designedDistance = MIN_SPEAKER_DISTANCE + (MAX_SPEAKER_DISTANCE - MIN_SPEAKER_DISTANCE) * normalized;
+		// Simple Voice Chat's client attenuation feels longer than the raw distance value,
+		// so we compensate at higher volumes to make the practical cutoff match the block range better.
+		float compensation = 1.0F - (1.0F - DISTANCE_COMPENSATION_AT_MAX)
+				* (float) Math.pow(normalized, DISTANCE_COMPENSATION_EXPONENT);
+		return MIN_SPEAKER_DISTANCE + (designedDistance - MIN_SPEAKER_DISTANCE) * compensation;
+	}
+
+	private static boolean ensureSpeakerVolumeCategoryRegistered(VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
+		if (speakerVolumeCategoryRegistered) {
+			return true;
+		}
+		if (voicechatApi == null || voicechatServerApi == null) {
+			return false;
+		}
+		try {
+			VolumeCategory category = voicechatApi.volumeCategoryBuilder()
+					.setId(SPEAKER_VOLUME_CATEGORY_ID)
+					.setName(SPEAKER_VOLUME_CATEGORY_NAME)
+					.setDescription(SPEAKER_VOLUME_CATEGORY_DESCRIPTION)
+					.build();
+			voicechatServerApi.registerVolumeCategory(category);
+			speakerVolumeCategoryRegistered = true;
+			return true;
+		} catch (Exception exception) {
+			Lg2.LOGGER.warn("Failed to register Simple Voice Chat speaker category, falling back to default category", exception);
+			speakerVolumeCategoryRegistered = false;
+			return false;
+		}
 	}
 
 	private static boolean readFully(InputStream input, byte[] buffer) throws IOException {
@@ -315,7 +435,7 @@ public final class SpeakerSystem {
 	private static final class SpeakerRuntime {
 		private final SpeakerKey key;
 		private final UUID channelId;
-		private final ConcurrentHashMap<String, SourceFeedRuntime> sourceFeeds;
+		private final ConcurrentHashMap<String, SourceSubscriptionRuntime> sourceFeeds;
 		private volatile int volumePercent;
 		private volatile boolean closed;
 		private OpusEncoder encoder;
@@ -364,11 +484,13 @@ public final class SpeakerSystem {
 		}
 
 		private boolean ensureVoicechatPlayer(ServerLevel level, VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
-			if (this.player != null && !this.player.isStopped()) {
-				return true;
-			}
 			if (voicechatApi == null || voicechatServerApi == null || level == null) {
 				return false;
+			}
+			ensureSpeakerVolumeCategoryRegistered(voicechatApi, voicechatServerApi);
+			if (this.player != null && !this.player.isStopped()) {
+				updateChannelProperties(level, voicechatApi, voicechatServerApi);
+				return true;
 			}
 			this.encoder = voicechatApi.createEncoder();
 			this.channel = voicechatServerApi.createLocationalAudioChannel(
@@ -376,10 +498,21 @@ public final class SpeakerSystem {
 					voicechatApi.fromServerLevel(level),
 					voicechatApi.createPosition(this.key.pos().getX() + 0.5D, this.key.pos().getY() + 0.5D, this.key.pos().getZ() + 0.5D)
 			);
-			this.channel.setDistance((float) Math.max(voicechatApi.getVoiceChatDistance(), voicechatServerApi.getBroadcastRange()));
+			updateChannelProperties(level, voicechatApi, voicechatServerApi);
 			this.player = voicechatServerApi.createAudioPlayer(this.channel, this.encoder, this::nextFrame);
 			this.player.startPlaying();
 			return true;
+		}
+
+		private void updateChannelProperties(ServerLevel level, VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
+			if (this.channel == null) {
+				return;
+			}
+			this.channel.updateLocation(voicechatApi.createPosition(this.key.pos().getX() + 0.5D, this.key.pos().getY() + 0.5D, this.key.pos().getZ() + 0.5D));
+			this.channel.setDistance(audibleDistance(this.volumePercent));
+			if (speakerVolumeCategoryRegistered) {
+				this.channel.setCategory(SPEAKER_VOLUME_CATEGORY_ID);
+			}
 		}
 
 		private void synchronizeSources(List<MonitorScreenSystem.SpeakerAudioSource> sources) {
@@ -390,24 +523,29 @@ public final class SpeakerSystem {
 				}
 				keepKeys.add(source.sourceKey());
 				this.sourceFeeds.compute(source.sourceKey(), (key, existing) -> {
-					if (existing == null) {
-						SourceFeedRuntime created = new SourceFeedRuntime(this.key, source.sourceKey());
-						return created.start(source) ? created : null;
-					}
-					if (!existing.update(source)) {
-						existing.close();
+					SharedSourceFeed feed = acquireSharedSourceFeed(this.key, source);
+					if (feed == null) {
+						if (existing != null) {
+							existing.close(this.key);
+						}
 						return null;
 					}
-					return existing;
+					if (existing != null && existing.feed() == feed) {
+						return existing;
+					}
+					if (existing != null) {
+						existing.close(this.key);
+					}
+					return new SourceSubscriptionRuntime(source.sourceKey(), feed);
 				});
 			}
-			for (Map.Entry<String, SourceFeedRuntime> entry : new ArrayList<>(this.sourceFeeds.entrySet())) {
+			for (Map.Entry<String, SourceSubscriptionRuntime> entry : new ArrayList<>(this.sourceFeeds.entrySet())) {
 				if (keepKeys.contains(entry.getKey())) {
 					continue;
 				}
-				SourceFeedRuntime removed = this.sourceFeeds.remove(entry.getKey());
+				SourceSubscriptionRuntime removed = this.sourceFeeds.remove(entry.getKey());
 				if (removed != null) {
-					removed.close();
+					removed.close(this.key);
 				}
 			}
 		}
@@ -416,15 +554,16 @@ public final class SpeakerSystem {
 			if (this.sourceFeeds.isEmpty()) {
 				return SILENCE_FRAME;
 			}
-			int[] mixed = null;
+			long nowNanos = System.nanoTime();
+			float[] mixed = null;
 			int contributors = 0;
-			for (SourceFeedRuntime sourceFeed : this.sourceFeeds.values()) {
-				short[] frame = sourceFeed.pollFrame();
+			for (SourceSubscriptionRuntime sourceFeed : this.sourceFeeds.values()) {
+				short[] frame = sourceFeed.frameAt(nowNanos);
 				if (frame == null) {
 					continue;
 				}
 				if (mixed == null) {
-					mixed = new int[AUDIO_FRAME_SAMPLES];
+					mixed = new float[AUDIO_FRAME_SAMPLES];
 				}
 				for (int index = 0; index < frame.length; index++) {
 					mixed[index] += frame[index];
@@ -440,40 +579,67 @@ public final class SpeakerSystem {
 			}
 			short[] output = new short[AUDIO_FRAME_SAMPLES];
 			for (int index = 0; index < output.length; index++) {
-				int averaged = Math.round(mixed[index] / (float) contributors);
-				int scaled = Math.round(averaged * factor);
-				if (scaled > Short.MAX_VALUE) {
-					scaled = Short.MAX_VALUE;
-				} else if (scaled < Short.MIN_VALUE) {
-					scaled = Short.MIN_VALUE;
-				}
-				output[index] = (short) scaled;
+				float averaged = mixed[index] / (float) contributors;
+				float scaled = averaged * factor;
+				output[index] = softLimitSample(scaled);
 			}
 			return output;
 		}
 
 		private void close() {
 			this.closed = true;
-			for (SourceFeedRuntime sourceFeed : this.sourceFeeds.values()) {
-				sourceFeed.close();
+			for (SourceSubscriptionRuntime sourceFeed : this.sourceFeeds.values()) {
+				sourceFeed.close(this.key);
 			}
 			this.sourceFeeds.clear();
-			if (this.player != null && !this.player.isStopped()) {
-				this.player.stopPlaying();
-			}
+			AudioPlayer currentPlayer = this.player;
+			OpusEncoder currentEncoder = this.encoder;
 			this.player = null;
-			if (this.encoder != null && !this.encoder.isClosed()) {
-				this.encoder.close();
-			}
 			this.encoder = null;
+			if (currentPlayer != null && !currentPlayer.isStopped()) {
+				// AudioPlayer closes its encoder on its own worker thread. Closing it here races with that thread
+				// and produces intermittent "Encoder is closed" noise in the logs.
+				currentPlayer.stopPlaying();
+			} else if (currentEncoder != null && !currentEncoder.isClosed()) {
+				currentEncoder.close();
+			}
 			this.channel = null;
 		}
 	}
 
-	private static final class SourceFeedRuntime {
-		private final SpeakerKey speakerKey;
+	private static short softLimitSample(float sample) {
+		float normalized = Math.max(-4.0F, Math.min(4.0F, sample / (float) Short.MAX_VALUE));
+		float limited = (float) Math.tanh(normalized);
+		return (short) Math.round(limited * Short.MAX_VALUE);
+	}
+
+	private static final class SourceSubscriptionRuntime {
 		private final String sourceKey;
-		private final ArrayBlockingQueue<short[]> frameQueue;
+		private final SharedSourceFeed feed;
+
+		private SourceSubscriptionRuntime(String sourceKey, SharedSourceFeed feed) {
+			this.sourceKey = sourceKey;
+			this.feed = feed;
+		}
+
+		private SharedSourceFeed feed() {
+			return this.feed;
+		}
+
+		private short[] frameAt(long nowNanos) {
+			return this.feed != null ? this.feed.frameAt(nowNanos) : null;
+		}
+
+		private void close(SpeakerKey speakerKey) {
+			releaseSharedSourceFeed(speakerKey, this.sourceKey, this.feed);
+		}
+	}
+
+	private static final class SharedSourceFeed {
+		private final String sourceKey;
+		private final Object lock = new Object();
+		private final Set<SpeakerKey> speakers = ConcurrentHashMap.newKeySet();
+		private final NavigableMap<Long, short[]> frameBuffer = new TreeMap<>();
 		private volatile boolean closed;
 		private Process process;
 		private Thread readerThread;
@@ -481,38 +647,67 @@ public final class SpeakerSystem {
 		private String audioStreamUrl;
 		private boolean liveStream;
 		private long processBasePositionMs;
-		private long processStartedAtMillis;
+		private long nextFrameSequence;
+		private long playbackEpochNanos;
 
-		private SourceFeedRuntime(SpeakerKey speakerKey, String sourceKey) {
-			this.speakerKey = speakerKey;
+		private SharedSourceFeed(String sourceKey) {
 			this.sourceKey = sourceKey;
-			this.frameQueue = new ArrayBlockingQueue<>(AUDIO_QUEUE_CAPACITY);
-			this.closed = false;
 		}
 
-		private boolean start(MonitorScreenSystem.SpeakerAudioSource source) {
-			restartProcess(source);
-			return this.process != null;
+		private void addSpeaker(SpeakerKey speakerKey) {
+			if (speakerKey != null) {
+				this.speakers.add(speakerKey);
+			}
+		}
+
+		private void removeSpeaker(SpeakerKey speakerKey) {
+			if (speakerKey != null) {
+				this.speakers.remove(speakerKey);
+			}
+		}
+
+		private boolean isUnused() {
+			return this.speakers.isEmpty();
+		}
+
+		private boolean isClosed() {
+			return this.closed;
 		}
 
 		private boolean update(MonitorScreenSystem.SpeakerAudioSource source) {
-			if (this.closed) {
-				return false;
+			synchronized (this.lock) {
+				if (this.closed || source == null || source.audioStreamUrl() == null || source.audioStreamUrl().isBlank()) {
+					return false;
+				}
+				if (shouldRestartLocked(source)) {
+					return restartProcessLocked(source);
+				}
+				return this.process != null;
 			}
-			if (shouldRestartProcess(source)) {
-				restartProcess(source);
-			}
-			return true;
 		}
 
-		private short[] pollFrame() {
-			return this.frameQueue.poll();
+		private short[] frameAt(long nowNanos) {
+			synchronized (this.lock) {
+				if (this.frameBuffer.isEmpty()) {
+					return null;
+				}
+				if (this.playbackEpochNanos == 0L) {
+					Map.Entry<Long, short[]> latest = this.frameBuffer.lastEntry();
+					return latest != null ? latest.getValue() : null;
+				}
+				long targetSequence = Math.max(0L, (nowNanos - this.playbackEpochNanos) / AUDIO_FRAME_NANOS);
+				Map.Entry<Long, short[]> frameEntry = this.frameBuffer.floorEntry(targetSequence);
+				if (frameEntry == null) {
+					frameEntry = this.frameBuffer.firstEntry();
+				}
+				if (frameEntry == null) {
+					frameEntry = this.frameBuffer.lastEntry();
+				}
+				return frameEntry != null ? frameEntry.getValue() : null;
+			}
 		}
 
-		private boolean shouldRestartProcess(MonitorScreenSystem.SpeakerAudioSource source) {
-			if (source == null) {
-				return false;
-			}
+		private boolean shouldRestartLocked(MonitorScreenSystem.SpeakerAudioSource source) {
 			if (this.process == null || !this.process.isAlive()) {
 				return true;
 			}
@@ -522,20 +717,24 @@ public final class SpeakerSystem {
 				return true;
 			}
 			if (!this.liveStream) {
-				long expectedPositionMs = this.processBasePositionMs + Math.max(0L, System.currentTimeMillis() - this.processStartedAtMillis);
-				return Math.abs(expectedPositionMs - source.positionMs()) > AUDIO_RESYNC_TOLERANCE_MS;
+				return Math.abs(expectedPositionMsLocked() - source.positionMs()) > AUDIO_RESYNC_TOLERANCE_MS;
 			}
 			return false;
 		}
 
-		private void restartProcess(MonitorScreenSystem.SpeakerAudioSource source) {
-			stopProcess();
-			this.frameQueue.clear();
+		private long expectedPositionMsLocked() {
+			return this.processBasePositionMs + this.nextFrameSequence * AUDIO_FRAME_DURATION_MS;
+		}
+
+		private boolean restartProcessLocked(MonitorScreenSystem.SpeakerAudioSource source) {
+			stopProcessLocked();
+			this.frameBuffer.clear();
 			this.relaySessionId = source.relaySessionId();
 			this.audioStreamUrl = source.audioStreamUrl();
 			this.liveStream = source.liveStream();
 			this.processBasePositionMs = Math.max(0L, source.positionMs());
-			this.processStartedAtMillis = System.currentTimeMillis();
+			this.nextFrameSequence = 0L;
+			this.playbackEpochNanos = 0L;
 
 			List<String> command = new ArrayList<>();
 			command.add(ffmpegBinary());
@@ -566,35 +765,51 @@ public final class SpeakerSystem {
 						.redirectError(ProcessBuilder.Redirect.DISCARD)
 						.start();
 			} catch (IOException exception) {
-				Lg2.LOGGER.warn("Failed to start speaker ffmpeg process for {} source {}", this.speakerKey, this.sourceKey, exception);
+				Lg2.LOGGER.warn("Failed to start shared speaker ffmpeg process for source {}", this.sourceKey, exception);
 				this.process = null;
-				return;
+				return false;
 			}
 
-			Thread thread = new Thread(this::readLoop, "lg2-speaker-" + this.speakerKey.pos().toShortString() + "-" + Integer.toHexString(this.sourceKey.hashCode()));
+			Process currentProcess = this.process;
+			Thread thread = new Thread(() -> readLoop(currentProcess), "lg2-speaker-shared-" + Integer.toHexString(this.sourceKey.hashCode()));
 			thread.setDaemon(true);
 			this.readerThread = thread;
 			thread.start();
+			return true;
 		}
 
-		private void readLoop() {
-			Process currentProcess = this.process;
-			if (currentProcess == null || currentProcess.getInputStream() == null) {
-				return;
-			}
+		private void readLoop(Process processToRead) {
 			byte[] buffer = new byte[AUDIO_FRAME_BYTES];
-			try (InputStream input = currentProcess.getInputStream()) {
-				while (!this.closed && currentProcess == this.process && readFully(input, buffer)) {
+			try (InputStream input = processToRead.getInputStream()) {
+				while (!this.closed && readFully(input, buffer)) {
 					short[] frame = decodePcmFrame(buffer);
-					while (!this.frameQueue.offer(frame)) {
-						this.frameQueue.poll();
+					synchronized (this.lock) {
+						if (this.process != processToRead || this.closed) {
+							return;
+						}
+						long frameSequence = this.nextFrameSequence++;
+						if (this.playbackEpochNanos == 0L) {
+							this.playbackEpochNanos = System.nanoTime() - frameSequence * AUDIO_FRAME_NANOS;
+						}
+						this.frameBuffer.put(frameSequence, frame);
+						while (this.frameBuffer.size() > SHARED_SOURCE_FRAME_BUFFER_CAPACITY) {
+							this.frameBuffer.pollFirstEntry();
+						}
 					}
 				}
 			} catch (IOException ignored) {
+			} finally {
+				synchronized (this.lock) {
+					if (this.process == processToRead) {
+						this.process = null;
+						this.readerThread = null;
+					}
+				}
+				processToRead.destroy();
 			}
 		}
 
-		private void stopProcess() {
+		private void stopProcessLocked() {
 			Process currentProcess = this.process;
 			this.process = null;
 			this.readerThread = null;
@@ -616,9 +831,12 @@ public final class SpeakerSystem {
 		}
 
 		private void close() {
-			this.closed = true;
-			stopProcess();
-			this.frameQueue.clear();
+			synchronized (this.lock) {
+				this.closed = true;
+				this.speakers.clear();
+				stopProcessLocked();
+				this.frameBuffer.clear();
+			}
 		}
 	}
 }

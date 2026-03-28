@@ -22,6 +22,8 @@ import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.Mirror;
+import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
@@ -47,6 +49,10 @@ public final class SpeakerBlock extends SimplePolymerBlock implements PolymerTex
 	private static final Identifier MODEL_SOUTH_ON_ID = Identifier.fromNamespaceAndPath("lg2", "block/speaker_south_on");
 	private static final Identifier MODEL_WEST_ID = Identifier.fromNamespaceAndPath("lg2", "block/speaker_west");
 	private static final Identifier MODEL_WEST_ON_ID = Identifier.fromNamespaceAndPath("lg2", "block/speaker_west_on");
+	private static final Identifier MODEL_UP_ID = Identifier.fromNamespaceAndPath("lg2", "block/speaker_up");
+	private static final Identifier MODEL_UP_ON_ID = Identifier.fromNamespaceAndPath("lg2", "block/speaker_up_on");
+	private static final Identifier MODEL_DOWN_ID = Identifier.fromNamespaceAndPath("lg2", "block/speaker_down");
+	private static final Identifier MODEL_DOWN_ON_ID = Identifier.fromNamespaceAndPath("lg2", "block/speaker_down_on");
 	private final BlockState polymerNorthState;
 	private final BlockState polymerNorthOnState;
 	private final BlockState polymerEastState;
@@ -55,6 +61,10 @@ public final class SpeakerBlock extends SimplePolymerBlock implements PolymerTex
 	private final BlockState polymerSouthOnState;
 	private final BlockState polymerWestState;
 	private final BlockState polymerWestOnState;
+	private final BlockState polymerUpState;
+	private final BlockState polymerUpOnState;
+	private final BlockState polymerDownState;
+	private final BlockState polymerDownOnState;
 	private final BlockState fallbackState;
 
 	public SpeakerBlock(BlockBehaviour.Properties properties) {
@@ -67,10 +77,14 @@ public final class SpeakerBlock extends SimplePolymerBlock implements PolymerTex
 		this.polymerSouthOnState = BackroomsBlock.requestTargetState(MODEL_SOUTH_ON_ID, Blocks.NOTE_BLOCK);
 		this.polymerWestState = BackroomsBlock.requestTargetState(MODEL_WEST_ID, Blocks.NOTE_BLOCK);
 		this.polymerWestOnState = BackroomsBlock.requestTargetState(MODEL_WEST_ON_ID, Blocks.NOTE_BLOCK);
+		this.polymerUpState = BackroomsBlock.requestTargetState(MODEL_UP_ID, Blocks.NOTE_BLOCK);
+		this.polymerUpOnState = BackroomsBlock.requestTargetState(MODEL_UP_ON_ID, Blocks.NOTE_BLOCK);
+		this.polymerDownState = BackroomsBlock.requestTargetState(MODEL_DOWN_ID, Blocks.NOTE_BLOCK);
+		this.polymerDownOnState = BackroomsBlock.requestTargetState(MODEL_DOWN_ON_ID, Blocks.NOTE_BLOCK);
 		this.fallbackState = Blocks.NOTE_BLOCK.defaultBlockState();
 		this.registerDefaultState(this.stateDefinition.any()
 				.setValue(BlockStateProperties.LIT, false)
-				.setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.NORTH)
+				.setValue(BlockStateProperties.FACING, Direction.NORTH)
 				.setValue(VOLUME, DEFAULT_VOLUME));
 	}
 
@@ -79,27 +93,39 @@ public final class SpeakerBlock extends SimplePolymerBlock implements PolymerTex
 		if (!PolymerResourcePackUtils.hasMainPack(context)) {
 			return this.fallbackState;
 		}
-		Direction facing = state.hasProperty(BlockStateProperties.HORIZONTAL_FACING)
-				? state.getValue(BlockStateProperties.HORIZONTAL_FACING)
+		Direction facing = state.hasProperty(BlockStateProperties.FACING)
+				? state.getValue(BlockStateProperties.FACING)
 				: Direction.NORTH;
 		boolean lit = state.getValue(BlockStateProperties.LIT);
 		return switch (facing) {
 			case EAST -> lit ? this.polymerEastOnState : this.polymerEastState;
 			case SOUTH -> lit ? this.polymerSouthOnState : this.polymerSouthState;
 			case WEST -> lit ? this.polymerWestOnState : this.polymerWestState;
+			case UP -> lit ? this.polymerUpOnState : this.polymerUpState;
+			case DOWN -> lit ? this.polymerDownOnState : this.polymerDownState;
 			default -> lit ? this.polymerNorthOnState : this.polymerNorthState;
 		};
 	}
 
 	@Override
 	protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
-		builder.add(BlockStateProperties.LIT, BlockStateProperties.HORIZONTAL_FACING, VOLUME);
+		builder.add(BlockStateProperties.LIT, BlockStateProperties.FACING, VOLUME);
 	}
 
 	@Override
 	public BlockState getStateForPlacement(BlockPlaceContext context) {
-		Direction facing = context.getHorizontalDirection().getOpposite();
-		return this.defaultBlockState().setValue(BlockStateProperties.HORIZONTAL_FACING, facing);
+		Direction facing = context.getNearestLookingDirection().getOpposite();
+		return this.defaultBlockState().setValue(BlockStateProperties.FACING, facing);
+	}
+
+	@Override
+	protected BlockState rotate(BlockState state, Rotation rotation) {
+		return state.setValue(BlockStateProperties.FACING, rotation.rotate(state.getValue(BlockStateProperties.FACING)));
+	}
+
+	@Override
+	protected BlockState mirror(BlockState state, Mirror mirror) {
+		return state.rotate(mirror.getRotation(state.getValue(BlockStateProperties.FACING)));
 	}
 
 	@Override
