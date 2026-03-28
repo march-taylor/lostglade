@@ -31,10 +31,11 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
@@ -44,12 +45,15 @@ public final class SpeakerSystem {
 	private static final int AUDIO_SAMPLE_RATE = 48_000;
 	private static final int AUDIO_FRAME_SAMPLES = 960;
 	private static final int AUDIO_FRAME_BYTES = AUDIO_FRAME_SAMPLES * 2;
-	private static final int AUDIO_QUEUE_CAPACITY = 24;
+	private static final long AUDIO_FRAME_DURATION_MS = AUDIO_FRAME_SAMPLES * 1000L / AUDIO_SAMPLE_RATE;
+	private static final long AUDIO_FRAME_NANOS = TimeUnit.MILLISECONDS.toNanos(AUDIO_FRAME_DURATION_MS);
+	private static final int SHARED_SOURCE_FRAME_BUFFER_CAPACITY = 256;
 	private static final long AUDIO_RESYNC_TOLERANCE_MS = 1_500L;
 	private static final long PROCESS_SHUTDOWN_TIMEOUT_MS = 200L;
 	private static final short[] SILENCE_FRAME = new short[AUDIO_FRAME_SAMPLES];
 	private static final Set<SpeakerKey> KNOWN_SPEAKERS = ConcurrentHashMap.newKeySet();
 	private static final ConcurrentHashMap<SpeakerKey, SpeakerRuntime> ACTIVE_SPEAKERS = new ConcurrentHashMap<>();
+	private static final ConcurrentHashMap<String, SharedSourceFeed> ACTIVE_SOURCE_FEEDS = new ConcurrentHashMap<>();
 	private static volatile long tickCounter = 0L;
 
 	private SpeakerSystem() {
@@ -268,6 +272,54 @@ public final class SpeakerSystem {
 			runtime.close();
 		}
 		ACTIVE_SPEAKERS.clear();
+		for (SharedSourceFeed feed : ACTIVE_SOURCE_FEEDS.values()) {
+			feed.close();
+		}
+		ACTIVE_SOURCE_FEEDS.clear();
+	}
+
+	private static SharedSourceFeed acquireSharedSourceFeed(SpeakerKey speakerKey, MonitorScreenSystem.SpeakerAudioSource source) {
+		if (speakerKey == null || source == null || source.sourceKey() == null || source.sourceKey().isBlank()) {
+			return null;
+		}
+		return ACTIVE_SOURCE_FEEDS.compute(source.sourceKey(), (ignored, existing) -> {
+			SharedSourceFeed feed = existing;
+			if (feed == null || feed.isClosed()) {
+				feed = new SharedSourceFeed(source.sourceKey());
+			}
+			feed.addSpeaker(speakerKey);
+			if (!feed.update(source)) {
+				feed.removeSpeaker(speakerKey);
+				feed.close();
+				return null;
+			}
+			return feed;
+		});
+	}
+
+	private static void releaseSharedSourceFeed(SpeakerKey speakerKey, String sourceKey, SharedSourceFeed expectedFeed) {
+		if (sourceKey == null || sourceKey.isBlank()) {
+			return;
+		}
+		ACTIVE_SOURCE_FEEDS.computeIfPresent(sourceKey, (ignored, existing) -> {
+			if (expectedFeed != null && existing != expectedFeed) {
+				expectedFeed.removeSpeaker(speakerKey);
+				if (expectedFeed.isUnused()) {
+					expectedFeed.close();
+				}
+				if (existing.isUnused()) {
+					existing.close();
+					return null;
+				}
+				return existing;
+			}
+			existing.removeSpeaker(speakerKey);
+			if (existing.isUnused()) {
+				existing.close();
+				return null;
+			}
+			return existing;
+		});
 	}
 
 	private static String ffmpegBinary() {
@@ -315,7 +367,7 @@ public final class SpeakerSystem {
 	private static final class SpeakerRuntime {
 		private final SpeakerKey key;
 		private final UUID channelId;
-		private final ConcurrentHashMap<String, SourceFeedRuntime> sourceFeeds;
+		private final ConcurrentHashMap<String, SourceSubscriptionRuntime> sourceFeeds;
 		private volatile int volumePercent;
 		private volatile boolean closed;
 		private OpusEncoder encoder;
@@ -390,24 +442,29 @@ public final class SpeakerSystem {
 				}
 				keepKeys.add(source.sourceKey());
 				this.sourceFeeds.compute(source.sourceKey(), (key, existing) -> {
-					if (existing == null) {
-						SourceFeedRuntime created = new SourceFeedRuntime(this.key, source.sourceKey());
-						return created.start(source) ? created : null;
-					}
-					if (!existing.update(source)) {
-						existing.close();
+					SharedSourceFeed feed = acquireSharedSourceFeed(this.key, source);
+					if (feed == null) {
+						if (existing != null) {
+							existing.close(this.key);
+						}
 						return null;
 					}
-					return existing;
+					if (existing != null && existing.feed() == feed) {
+						return existing;
+					}
+					if (existing != null) {
+						existing.close(this.key);
+					}
+					return new SourceSubscriptionRuntime(source.sourceKey(), feed);
 				});
 			}
-			for (Map.Entry<String, SourceFeedRuntime> entry : new ArrayList<>(this.sourceFeeds.entrySet())) {
+			for (Map.Entry<String, SourceSubscriptionRuntime> entry : new ArrayList<>(this.sourceFeeds.entrySet())) {
 				if (keepKeys.contains(entry.getKey())) {
 					continue;
 				}
-				SourceFeedRuntime removed = this.sourceFeeds.remove(entry.getKey());
+				SourceSubscriptionRuntime removed = this.sourceFeeds.remove(entry.getKey());
 				if (removed != null) {
-					removed.close();
+					removed.close(this.key);
 				}
 			}
 		}
@@ -416,15 +473,16 @@ public final class SpeakerSystem {
 			if (this.sourceFeeds.isEmpty()) {
 				return SILENCE_FRAME;
 			}
-			int[] mixed = null;
+			long nowNanos = System.nanoTime();
+			float[] mixed = null;
 			int contributors = 0;
-			for (SourceFeedRuntime sourceFeed : this.sourceFeeds.values()) {
-				short[] frame = sourceFeed.pollFrame();
+			for (SourceSubscriptionRuntime sourceFeed : this.sourceFeeds.values()) {
+				short[] frame = sourceFeed.frameAt(nowNanos);
 				if (frame == null) {
 					continue;
 				}
 				if (mixed == null) {
-					mixed = new int[AUDIO_FRAME_SAMPLES];
+					mixed = new float[AUDIO_FRAME_SAMPLES];
 				}
 				for (int index = 0; index < frame.length; index++) {
 					mixed[index] += frame[index];
@@ -440,22 +498,17 @@ public final class SpeakerSystem {
 			}
 			short[] output = new short[AUDIO_FRAME_SAMPLES];
 			for (int index = 0; index < output.length; index++) {
-				int averaged = Math.round(mixed[index] / (float) contributors);
-				int scaled = Math.round(averaged * factor);
-				if (scaled > Short.MAX_VALUE) {
-					scaled = Short.MAX_VALUE;
-				} else if (scaled < Short.MIN_VALUE) {
-					scaled = Short.MIN_VALUE;
-				}
-				output[index] = (short) scaled;
+				float averaged = mixed[index] / (float) contributors;
+				float scaled = averaged * factor;
+				output[index] = softLimitSample(scaled);
 			}
 			return output;
 		}
 
 		private void close() {
 			this.closed = true;
-			for (SourceFeedRuntime sourceFeed : this.sourceFeeds.values()) {
-				sourceFeed.close();
+			for (SourceSubscriptionRuntime sourceFeed : this.sourceFeeds.values()) {
+				sourceFeed.close(this.key);
 			}
 			this.sourceFeeds.clear();
 			if (this.player != null && !this.player.isStopped()) {
@@ -470,10 +523,39 @@ public final class SpeakerSystem {
 		}
 	}
 
-	private static final class SourceFeedRuntime {
-		private final SpeakerKey speakerKey;
+	private static short softLimitSample(float sample) {
+		float normalized = Math.max(-4.0F, Math.min(4.0F, sample / (float) Short.MAX_VALUE));
+		float limited = (float) Math.tanh(normalized);
+		return (short) Math.round(limited * Short.MAX_VALUE);
+	}
+
+	private static final class SourceSubscriptionRuntime {
 		private final String sourceKey;
-		private final ArrayBlockingQueue<short[]> frameQueue;
+		private final SharedSourceFeed feed;
+
+		private SourceSubscriptionRuntime(String sourceKey, SharedSourceFeed feed) {
+			this.sourceKey = sourceKey;
+			this.feed = feed;
+		}
+
+		private SharedSourceFeed feed() {
+			return this.feed;
+		}
+
+		private short[] frameAt(long nowNanos) {
+			return this.feed != null ? this.feed.frameAt(nowNanos) : null;
+		}
+
+		private void close(SpeakerKey speakerKey) {
+			releaseSharedSourceFeed(speakerKey, this.sourceKey, this.feed);
+		}
+	}
+
+	private static final class SharedSourceFeed {
+		private final String sourceKey;
+		private final Object lock = new Object();
+		private final Set<SpeakerKey> speakers = ConcurrentHashMap.newKeySet();
+		private final NavigableMap<Long, short[]> frameBuffer = new TreeMap<>();
 		private volatile boolean closed;
 		private Process process;
 		private Thread readerThread;
@@ -481,38 +563,67 @@ public final class SpeakerSystem {
 		private String audioStreamUrl;
 		private boolean liveStream;
 		private long processBasePositionMs;
-		private long processStartedAtMillis;
+		private long nextFrameSequence;
+		private long playbackEpochNanos;
 
-		private SourceFeedRuntime(SpeakerKey speakerKey, String sourceKey) {
-			this.speakerKey = speakerKey;
+		private SharedSourceFeed(String sourceKey) {
 			this.sourceKey = sourceKey;
-			this.frameQueue = new ArrayBlockingQueue<>(AUDIO_QUEUE_CAPACITY);
-			this.closed = false;
 		}
 
-		private boolean start(MonitorScreenSystem.SpeakerAudioSource source) {
-			restartProcess(source);
-			return this.process != null;
+		private void addSpeaker(SpeakerKey speakerKey) {
+			if (speakerKey != null) {
+				this.speakers.add(speakerKey);
+			}
+		}
+
+		private void removeSpeaker(SpeakerKey speakerKey) {
+			if (speakerKey != null) {
+				this.speakers.remove(speakerKey);
+			}
+		}
+
+		private boolean isUnused() {
+			return this.speakers.isEmpty();
+		}
+
+		private boolean isClosed() {
+			return this.closed;
 		}
 
 		private boolean update(MonitorScreenSystem.SpeakerAudioSource source) {
-			if (this.closed) {
-				return false;
+			synchronized (this.lock) {
+				if (this.closed || source == null || source.audioStreamUrl() == null || source.audioStreamUrl().isBlank()) {
+					return false;
+				}
+				if (shouldRestartLocked(source)) {
+					return restartProcessLocked(source);
+				}
+				return this.process != null;
 			}
-			if (shouldRestartProcess(source)) {
-				restartProcess(source);
-			}
-			return true;
 		}
 
-		private short[] pollFrame() {
-			return this.frameQueue.poll();
+		private short[] frameAt(long nowNanos) {
+			synchronized (this.lock) {
+				if (this.frameBuffer.isEmpty()) {
+					return null;
+				}
+				if (this.playbackEpochNanos == 0L) {
+					Map.Entry<Long, short[]> latest = this.frameBuffer.lastEntry();
+					return latest != null ? latest.getValue() : null;
+				}
+				long targetSequence = Math.max(0L, (nowNanos - this.playbackEpochNanos) / AUDIO_FRAME_NANOS);
+				Map.Entry<Long, short[]> frameEntry = this.frameBuffer.floorEntry(targetSequence);
+				if (frameEntry == null) {
+					frameEntry = this.frameBuffer.firstEntry();
+				}
+				if (frameEntry == null) {
+					frameEntry = this.frameBuffer.lastEntry();
+				}
+				return frameEntry != null ? frameEntry.getValue() : null;
+			}
 		}
 
-		private boolean shouldRestartProcess(MonitorScreenSystem.SpeakerAudioSource source) {
-			if (source == null) {
-				return false;
-			}
+		private boolean shouldRestartLocked(MonitorScreenSystem.SpeakerAudioSource source) {
 			if (this.process == null || !this.process.isAlive()) {
 				return true;
 			}
@@ -522,20 +633,24 @@ public final class SpeakerSystem {
 				return true;
 			}
 			if (!this.liveStream) {
-				long expectedPositionMs = this.processBasePositionMs + Math.max(0L, System.currentTimeMillis() - this.processStartedAtMillis);
-				return Math.abs(expectedPositionMs - source.positionMs()) > AUDIO_RESYNC_TOLERANCE_MS;
+				return Math.abs(expectedPositionMsLocked() - source.positionMs()) > AUDIO_RESYNC_TOLERANCE_MS;
 			}
 			return false;
 		}
 
-		private void restartProcess(MonitorScreenSystem.SpeakerAudioSource source) {
-			stopProcess();
-			this.frameQueue.clear();
+		private long expectedPositionMsLocked() {
+			return this.processBasePositionMs + this.nextFrameSequence * AUDIO_FRAME_DURATION_MS;
+		}
+
+		private boolean restartProcessLocked(MonitorScreenSystem.SpeakerAudioSource source) {
+			stopProcessLocked();
+			this.frameBuffer.clear();
 			this.relaySessionId = source.relaySessionId();
 			this.audioStreamUrl = source.audioStreamUrl();
 			this.liveStream = source.liveStream();
 			this.processBasePositionMs = Math.max(0L, source.positionMs());
-			this.processStartedAtMillis = System.currentTimeMillis();
+			this.nextFrameSequence = 0L;
+			this.playbackEpochNanos = 0L;
 
 			List<String> command = new ArrayList<>();
 			command.add(ffmpegBinary());
@@ -566,35 +681,51 @@ public final class SpeakerSystem {
 						.redirectError(ProcessBuilder.Redirect.DISCARD)
 						.start();
 			} catch (IOException exception) {
-				Lg2.LOGGER.warn("Failed to start speaker ffmpeg process for {} source {}", this.speakerKey, this.sourceKey, exception);
+				Lg2.LOGGER.warn("Failed to start shared speaker ffmpeg process for source {}", this.sourceKey, exception);
 				this.process = null;
-				return;
+				return false;
 			}
 
-			Thread thread = new Thread(this::readLoop, "lg2-speaker-" + this.speakerKey.pos().toShortString() + "-" + Integer.toHexString(this.sourceKey.hashCode()));
+			Process currentProcess = this.process;
+			Thread thread = new Thread(() -> readLoop(currentProcess), "lg2-speaker-shared-" + Integer.toHexString(this.sourceKey.hashCode()));
 			thread.setDaemon(true);
 			this.readerThread = thread;
 			thread.start();
+			return true;
 		}
 
-		private void readLoop() {
-			Process currentProcess = this.process;
-			if (currentProcess == null || currentProcess.getInputStream() == null) {
-				return;
-			}
+		private void readLoop(Process processToRead) {
 			byte[] buffer = new byte[AUDIO_FRAME_BYTES];
-			try (InputStream input = currentProcess.getInputStream()) {
-				while (!this.closed && currentProcess == this.process && readFully(input, buffer)) {
+			try (InputStream input = processToRead.getInputStream()) {
+				while (!this.closed && readFully(input, buffer)) {
 					short[] frame = decodePcmFrame(buffer);
-					while (!this.frameQueue.offer(frame)) {
-						this.frameQueue.poll();
+					synchronized (this.lock) {
+						if (this.process != processToRead || this.closed) {
+							return;
+						}
+						long frameSequence = this.nextFrameSequence++;
+						if (this.playbackEpochNanos == 0L) {
+							this.playbackEpochNanos = System.nanoTime() - frameSequence * AUDIO_FRAME_NANOS;
+						}
+						this.frameBuffer.put(frameSequence, frame);
+						while (this.frameBuffer.size() > SHARED_SOURCE_FRAME_BUFFER_CAPACITY) {
+							this.frameBuffer.pollFirstEntry();
+						}
 					}
 				}
 			} catch (IOException ignored) {
+			} finally {
+				synchronized (this.lock) {
+					if (this.process == processToRead) {
+						this.process = null;
+						this.readerThread = null;
+					}
+				}
+				processToRead.destroy();
 			}
 		}
 
-		private void stopProcess() {
+		private void stopProcessLocked() {
 			Process currentProcess = this.process;
 			this.process = null;
 			this.readerThread = null;
@@ -616,9 +747,12 @@ public final class SpeakerSystem {
 		}
 
 		private void close() {
-			this.closed = true;
-			stopProcess();
-			this.frameQueue.clear();
+			synchronized (this.lock) {
+				this.closed = true;
+				this.speakers.clear();
+				stopProcessLocked();
+				this.frameBuffer.clear();
+			}
 		}
 	}
 }
