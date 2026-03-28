@@ -7,6 +7,7 @@ import com.lostglade.server.ServerGlitchSystem;
 import com.lostglade.server.ServerBackroomsSystem;
 import com.lostglade.server.ServerBackroomsBlockBreakSystem;
 import com.lostglade.server.ServerBackroomsStalkerSystem;
+import com.lostglade.server.SpeakerSystem;
 import com.lostglade.item.ModItems;
 import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
 import com.lostglade.server.ServerBossBarVisibilitySystem;
@@ -69,6 +70,7 @@ public class Lg2 implements ModInitializer {
 		ServerUnusedMobSpawnSystem.register();
 		ServerTabIntegration.register();
 		ServerVoicechatIntegration.register();
+		SpeakerSystem.register();
 		ServerWebcamIntegration.register();
 		ServerUpgradeUiSystem.register();
 

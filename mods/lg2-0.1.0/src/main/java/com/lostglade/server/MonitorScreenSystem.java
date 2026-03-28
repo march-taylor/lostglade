@@ -42,6 +42,8 @@ import net.minecraft.world.item.MapItem;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import net.minecraft.world.phys.AABB;
@@ -279,6 +281,171 @@ public final class MonitorScreenSystem {
 			return InteractionResult.PASS;
 		}
 		return handleTouch(serverPlayer, level, itemFrame, hitResult);
+	}
+
+	public static List<SpeakerAudioSource> findSpeakerAudioSources(ServerLevel level, BlockPos speakerPos) {
+		if (level == null || speakerPos == null || !level.hasChunkAt(speakerPos)) {
+			return List.of();
+		}
+		Set<BlockPos> wireNetwork = collectSpeakerWireNetwork(level, speakerPos);
+		AABB searchBox = speakerSearchBox(speakerPos, wireNetwork);
+		Map<ScreenRuntimeKey, ScreenComponent> connectedComponents = new HashMap<>();
+		for (ItemFrame frame : level.getEntitiesOfClass(ItemFrame.class, searchBox, candidate -> readScreenState(candidate.getItem()) != null)) {
+			ScreenComponent component = collectComponent(level, frame, null);
+			if (component == null || component.viewMode() != ScreenViewMode.YOUTUBE || !component.powered()) {
+				continue;
+			}
+			if (!isSpeakerConnectedToComponent(speakerPos, component, wireNetwork)) {
+				continue;
+			}
+			connectedComponents.putIfAbsent(component.runtimeKey(), component);
+		}
+		if (connectedComponents.isEmpty()) {
+			return List.of();
+		}
+
+		List<SpeakerAudioSource> sources = new ArrayList<>();
+		for (ScreenComponent component : connectedComponents.values()) {
+			MediaRuntimeState state = MEDIA_STATES.get(component.runtimeKey());
+			if (state == null) {
+				continue;
+			}
+			synchronized (state) {
+				if (state.mode != ScreenViewMode.YOUTUBE
+						|| state.relaySessionId == null
+						|| state.audioStreamUrl == null
+						|| state.audioStreamUrl.isBlank()
+						|| state.waitingForLink
+						|| state.loading) {
+					continue;
+				}
+				sources.add(new SpeakerAudioSource(
+						componentGroupId(component.runtimeKey()),
+						state.relaySessionId,
+						state.audioStreamUrl,
+						state.positionMs,
+						state.userPaused,
+						state.liveStream
+				));
+			}
+		}
+		return sources;
+	}
+
+	private static AABB speakerSearchBox(BlockPos speakerPos, Set<BlockPos> wireNetwork) {
+		int minX = speakerPos.getX();
+		int minY = speakerPos.getY();
+		int minZ = speakerPos.getZ();
+		int maxX = speakerPos.getX();
+		int maxY = speakerPos.getY();
+		int maxZ = speakerPos.getZ();
+		for (BlockPos wirePos : wireNetwork) {
+			minX = Math.min(minX, wirePos.getX());
+			minY = Math.min(minY, wirePos.getY());
+			minZ = Math.min(minZ, wirePos.getZ());
+			maxX = Math.max(maxX, wirePos.getX());
+			maxY = Math.max(maxY, wirePos.getY());
+			maxZ = Math.max(maxZ, wirePos.getZ());
+		}
+		return new AABB(minX, minY, minZ, maxX + 1.0D, maxY + 1.0D, maxZ + 1.0D).inflate(2.25D);
+	}
+
+	private static Set<BlockPos> collectSpeakerWireNetwork(ServerLevel level, BlockPos speakerPos) {
+		Set<BlockPos> visited = new HashSet<>();
+		ArrayDeque<BlockPos> queue = new ArrayDeque<>();
+		for (BlockPos touchPos : redstoneTouchPoints(speakerPos)) {
+			if (!isRedstoneWire(level, touchPos) || !visited.add(touchPos.immutable())) {
+				continue;
+			}
+			queue.add(touchPos.immutable());
+		}
+		while (!queue.isEmpty()) {
+			BlockPos current = queue.removeFirst();
+			for (BlockPos neighbor : redstoneWireNeighbors(current)) {
+				if (!isRedstoneWire(level, neighbor) || !visited.add(neighbor.immutable())) {
+					continue;
+				}
+				queue.add(neighbor.immutable());
+			}
+		}
+		return visited;
+	}
+
+	private static boolean isRedstoneWire(ServerLevel level, BlockPos pos) {
+		return level != null && pos != null && level.hasChunkAt(pos) && level.getBlockState(pos).is(Blocks.REDSTONE_WIRE);
+	}
+
+	private static List<BlockPos> redstoneTouchPoints(BlockPos pos) {
+		return List.of(
+				pos,
+				pos.above(),
+				pos.below(),
+				pos.north(),
+				pos.south(),
+				pos.east(),
+				pos.west(),
+				pos.above().north(),
+				pos.above().south(),
+				pos.above().east(),
+				pos.above().west(),
+				pos.below().north(),
+				pos.below().south(),
+				pos.below().east(),
+				pos.below().west()
+		);
+	}
+
+	private static List<BlockPos> redstoneWireNeighbors(BlockPos pos) {
+		List<BlockPos> neighbors = new ArrayList<>(14);
+		neighbors.add(pos.north());
+		neighbors.add(pos.south());
+		neighbors.add(pos.east());
+		neighbors.add(pos.west());
+		neighbors.add(pos.above());
+		neighbors.add(pos.below());
+		neighbors.add(pos.above().north());
+		neighbors.add(pos.above().south());
+		neighbors.add(pos.above().east());
+		neighbors.add(pos.above().west());
+		neighbors.add(pos.below().north());
+		neighbors.add(pos.below().south());
+		neighbors.add(pos.below().east());
+		neighbors.add(pos.below().west());
+		return neighbors;
+	}
+
+	private static boolean isSpeakerConnectedToComponent(BlockPos speakerPos, ScreenComponent component, Set<BlockPos> wireNetwork) {
+		if (speakerPos == null || component == null) {
+			return false;
+		}
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			BlockPos framePos = frame.blockPosition();
+			BlockPos supportPos = framePos.relative(frame.getDirection().getOpposite());
+			if (areBlocksAdjacent(speakerPos, framePos) || areBlocksAdjacent(speakerPos, supportPos)) {
+				return true;
+			}
+			if (wireNetwork.isEmpty()) {
+				continue;
+			}
+			for (BlockPos touchPos : redstoneTouchPoints(framePos)) {
+				if (wireNetwork.contains(touchPos)) {
+					return true;
+				}
+			}
+			for (BlockPos touchPos : redstoneTouchPoints(supportPos)) {
+				if (wireNetwork.contains(touchPos)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private static boolean areBlocksAdjacent(BlockPos first, BlockPos second) {
+		if (first == null || second == null) {
+			return false;
+		}
+		return Math.abs(first.getX() - second.getX()) + Math.abs(first.getY() - second.getY()) + Math.abs(first.getZ() - second.getZ()) <= 1;
 	}
 
 	private static boolean onAllowChatMessage(PlayerChatMessage message, ServerPlayer sender, ChatType.Bound params) {
@@ -781,6 +948,7 @@ public final class MonitorScreenSystem {
 			if (result.loadResponse() != null) {
 				state.sourceUrl = result.url();
 				state.relaySessionId = result.loadResponse().sessionId();
+				state.audioStreamUrl = result.loadResponse().audioStreamUrl();
 				state.mediaTitle = result.loadResponse().title();
 				state.durationMs = result.loadResponse().durationMs();
 				state.positionMs = 0L;
@@ -3573,6 +3741,7 @@ public final class MonitorScreenSystem {
 		state.youtubeFrameSequence = 0L;
 		state.sourceUrl = null;
 		state.relaySessionId = null;
+		state.audioStreamUrl = null;
 		state.mediaTitle = "";
 		state.frameIndex = 0;
 		state.positionMs = 0L;
@@ -3846,6 +4015,16 @@ public final class MonitorScreenSystem {
 	) {
 	}
 
+	public record SpeakerAudioSource(
+			String sourceKey,
+			String relaySessionId,
+			String audioStreamUrl,
+			long positionMs,
+			boolean paused,
+			boolean liveStream
+	) {
+	}
+
 	private record MapPacketUpdate(
 			MapId mapId,
 			byte scale,
@@ -3884,6 +4063,7 @@ public final class MonitorScreenSystem {
 		private BufferedImage streamFrame;
 		private String sourceUrl;
 		private String relaySessionId;
+		private String audioStreamUrl;
 		private String mediaTitle;
 		private int frameIndex;
 		private long youtubeFrameSequence;

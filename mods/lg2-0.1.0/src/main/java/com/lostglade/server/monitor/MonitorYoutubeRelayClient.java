@@ -47,7 +47,8 @@ public final class MonitorYoutubeRelayClient {
 				getString(response, "title", "YOUTUBE"),
 				getLong(response, "durationMs", 0L),
 				getBoolean(response, "live", false),
-				getString(response, "status", "BUFFERING")
+				getString(response, "status", "BUFFERING"),
+				getString(response, "audioStreamUrl", "")
 		);
 	}
 
@@ -227,7 +228,8 @@ public final class MonitorYoutubeRelayClient {
 			String title,
 			long durationMs,
 			boolean live,
-			String status
+			String status,
+			String audioStreamUrl
 	) {
 	}
 

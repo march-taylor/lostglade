@@ -28,6 +28,7 @@ public final class ModBlocks {
 	private static final Identifier EXIT_SIGN_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "exit_sign");
 	private static final Identifier EXIT_WALL_SIGN_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "exit_wall_sign");
 	private static final Identifier SERVER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "server");
+	private static final Identifier SPEAKER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "speaker");
 
 	private static final ResourceKey<Block> BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, BITCOIN_ORE_ID);
 	private static final ResourceKey<Block> DEEPSLATE_BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, DEEPSLATE_BITCOIN_ORE_ID);
@@ -37,6 +38,7 @@ public final class ModBlocks {
 	private static final ResourceKey<Block> EXIT_SIGN_KEY = ResourceKey.create(Registries.BLOCK, EXIT_SIGN_ID);
 	private static final ResourceKey<Block> EXIT_WALL_SIGN_KEY = ResourceKey.create(Registries.BLOCK, EXIT_WALL_SIGN_ID);
 	private static final ResourceKey<Block> SERVER_KEY = ResourceKey.create(Registries.BLOCK, SERVER_ID);
+	private static final ResourceKey<Block> SPEAKER_KEY = ResourceKey.create(Registries.BLOCK, SPEAKER_ID);
 	private static final ResourceKey<Item> BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> DEEPSLATE_BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, DEEPSLATE_BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> BACKROOMS_BLOCK_ITEM_KEY = ResourceKey.create(Registries.ITEM, BACKROOMS_BLOCK_ID);
@@ -44,6 +46,7 @@ public final class ModBlocks {
 	private static final ResourceKey<Item> BACKROOMS_DOOR_ITEM_KEY = ResourceKey.create(Registries.ITEM, BACKROOMS_DOOR_ID);
 	private static final ResourceKey<Item> EXIT_SIGN_ITEM_KEY = ResourceKey.create(Registries.ITEM, EXIT_SIGN_ID);
 	private static final ResourceKey<Item> SERVER_ITEM_KEY = ResourceKey.create(Registries.ITEM, SERVER_ID);
+	private static final ResourceKey<Item> SPEAKER_ITEM_KEY = ResourceKey.create(Registries.ITEM, SPEAKER_ID);
 
 	private static final ResourceKey<CreativeModeTab> NATURAL_BLOCKS_TAB = ResourceKey.create(
 			Registries.CREATIVE_MODE_TAB,
@@ -78,6 +81,12 @@ public final class ModBlocks {
 			BuiltInRegistries.BLOCK,
 			SERVER_ID,
 			new ServerBlock(createServerProperties())
+	);
+
+	public static final Block SPEAKER = Registry.register(
+			BuiltInRegistries.BLOCK,
+			SPEAKER_ID,
+			new SpeakerBlock(createSpeakerProperties())
 	);
 
 	public static final Block BACKROOMS_BLOCK = Registry.register(
@@ -232,6 +241,17 @@ public final class ModBlocks {
 			)
 	);
 
+	public static final Item SPEAKER_ITEM = Registry.register(
+			BuiltInRegistries.ITEM,
+			SPEAKER_ID,
+			new SpeakerBlockItem(
+					(SpeakerBlock) SPEAKER,
+					new Item.Properties().setId(SPEAKER_ITEM_KEY).useBlockDescriptionPrefix(),
+					Items.NOTE_BLOCK,
+					true
+			)
+	);
+
 	private ModBlocks() {
 	}
 
@@ -246,6 +266,7 @@ public final class ModBlocks {
 			entries.prepend(BITCOIN_ORE_ITEM);
 		});
 		ItemGroupEvents.modifyEntriesEvent(FUNCTIONAL_BLOCKS_TAB).register(entries -> {
+			entries.prepend(SPEAKER_ITEM);
 			entries.prepend(EXIT_SIGN_ITEM);
 			entries.prepend(BACKROOMS_DOOR_ITEM);
 			entries.prepend(SERVER_ITEM);
@@ -277,6 +298,16 @@ public final class ModBlocks {
 				.noLootTable()
 				.noOcclusion()
 				.setId(SERVER_KEY);
+	}
+
+	private static BlockBehaviour.Properties createSpeakerProperties() {
+		return BlockBehaviour.Properties.of()
+				.mapColor(MapColor.COLOR_BLACK)
+				.strength(3.0f, 6.0f)
+				.sound(SoundType.METAL)
+				.requiresCorrectToolForDrops()
+				.noLootTable()
+				.setId(SPEAKER_KEY);
 	}
 
 	public static BlockState getRandomizedBackroomsBlockState(long seed) {

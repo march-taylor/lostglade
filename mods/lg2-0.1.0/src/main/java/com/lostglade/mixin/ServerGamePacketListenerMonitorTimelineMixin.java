@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.MonitorScreenSystem;
+import com.lostglade.server.SpeakerSystem;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
@@ -19,7 +20,8 @@ public abstract class ServerGamePacketListenerMonitorTimelineMixin {
 
 	@Inject(method = "handleSetCarriedItem", at = @At("HEAD"), cancellable = true)
 	private void lg2$redirectHotbarScrollToMonitorTimeline(ServerboundSetCarriedItemPacket packet, CallbackInfo ci) {
-		if (packet != null && MonitorScreenSystem.onPlayerHotbarScroll(this.player, packet.getSlot())) {
+		if (packet != null && (SpeakerSystem.onPlayerHotbarScroll(this.player, packet.getSlot())
+				|| MonitorScreenSystem.onPlayerHotbarScroll(this.player, packet.getSlot()))) {
 			ci.cancel();
 		}
 	}

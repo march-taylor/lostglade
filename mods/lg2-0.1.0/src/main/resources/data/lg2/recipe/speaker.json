@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "III",
+    "RNR",
+    "BBB"
+  ],
+  "key": {
+    "I": "minecraft:iron_ingot",
+    "R": "minecraft:redstone",
+    "N": "minecraft:note_block",
+    "B": "minecraft:black_concrete"
+  },
+  "result": {
+    "id": "lg2:speaker"
+  }
+}

@@ -40,7 +40,7 @@ def run_command(args: list[str], timeout: int = 30) -> str:
     return completed.stdout
 
 
-def resolve_youtube(url: str) -> tuple[str, int, bool, str]:
+def resolve_youtube(url: str) -> tuple[str, int, bool, str, str]:
     metadata_json = run_command(
         [YT_DLP_BIN, "--dump-single-json", "--no-playlist", url],
         timeout=45,
@@ -53,7 +53,14 @@ def resolve_youtube(url: str) -> tuple[str, int, bool, str]:
         [YT_DLP_BIN, "-g", "-f", "best[height<=480]/best", "--no-playlist", url],
         timeout=45,
     ).strip().splitlines()[0]
-    return title, duration_ms, is_live, stream_url
+    try:
+        audio_stream_url = run_command(
+            [YT_DLP_BIN, "-g", "-f", "bestaudio/best", "--no-playlist", url],
+            timeout=45,
+        ).strip().splitlines()[0]
+    except Exception:
+        audio_stream_url = stream_url
+    return title, duration_ms, is_live, stream_url, audio_stream_url
 
 
 def jpeg_frames_from_stream(stream, on_frame) -> None:
@@ -85,6 +92,7 @@ class RelaySession:
         self.title = "YouTube"
         self.source_url = ""
         self.stream_url = ""
+        self.audio_stream_url = ""
         self.duration_ms = 0
         self.position_ms = 0
         self.is_live = False
@@ -107,12 +115,13 @@ class RelaySession:
             self.last_access_at = time.time()
 
     def load(self, url: str) -> dict[str, Any]:
-        title, duration_ms, is_live, stream_url = resolve_youtube(url)
+        title, duration_ms, is_live, stream_url, audio_stream_url = resolve_youtube(url)
         with self._lock:
             self.stop_locked()
             self.title = title
             self.source_url = url
             self.stream_url = stream_url
+            self.audio_stream_url = audio_stream_url
             self.duration_ms = duration_ms
             self.position_ms = 0
             self.is_live = is_live
@@ -138,6 +147,7 @@ class RelaySession:
             return {
                 "sessionId": self.session_id,
                 "title": self.title,
+                "audioStreamUrl": self.audio_stream_url,
                 "frameSequence": self.frame_sequence,
                 "positionMs": self.position_ms,
                 "durationMs": self.duration_ms,
