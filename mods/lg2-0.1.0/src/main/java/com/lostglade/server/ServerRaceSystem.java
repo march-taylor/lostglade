@@ -110,6 +110,8 @@ import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.scores.PlayerTeam;
 import net.minecraft.world.scores.Scoreboard;
 import net.minecraft.world.scores.Team;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 import javax.imageio.ImageIO;
@@ -2378,6 +2380,16 @@ public final class ServerRaceSystem {
 			return null;
 		}
 		emitSmoke(level, lawyer.position());
+		level.playSound(
+				null,
+				lawyer.getX(),
+				lawyer.getY(),
+				lawyer.getZ(),
+				SoundEvents.VILLAGER_AMBIENT,
+				SoundSource.HOSTILE,
+				1.0F,
+				1.0F
+		);
 		return lawyer;
 	}
 
