@@ -390,7 +390,7 @@ public final class MonitorYoutubeRelayClient {
 		return command;
 	}
 
-	private static List<String> sequentialPrefetchCommand(String streamUrl) {
+	private static List<String> sequentialPrefetchCommand(String streamUrl, long startMs) {
 		List<String> command = new ArrayList<>();
 		command.add(ffmpegBin());
 		command.add("-hide_banner");
@@ -399,6 +399,10 @@ public final class MonitorYoutubeRelayClient {
 		command.add("-nostdin");
 		command.add("-threads");
 		command.add("1");
+		if (startMs > 0L) {
+			command.add("-ss");
+			command.add(String.format(Locale.ROOT, "%.3f", startMs / 1000.0D));
+		}
 		command.add("-i");
 		command.add(streamUrl);
 		command.add("-an");
@@ -1045,13 +1049,20 @@ public final class MonitorYoutubeRelayClient {
 				this.playBasePositionMs = clamped;
 				this.playStartedAtNanos = System.nanoTime();
 				boolean hadCachedPreview = applyCachedPreviewLocked(clamped);
-				capturePreview = this.paused && !hadCachedPreview;
+				capturePreview = !hadCachedPreview;
 				this.status = this.paused ? "PAUSED" : (hadCachedPreview ? "PLAYING" : "BUFFERING");
 				stopLocked();
 				shouldStartLiveStream = this.live && !this.paused;
 			}
 			if (capturePreview) {
-				tryCapturePreviewFrame("seek");
+				boolean captured = tryCapturePreviewFrame("seek");
+				synchronized (this.lock) {
+					if (captured) {
+						this.status = this.paused ? "PAUSED" : "PLAYING";
+					} else if (this.paused) {
+						return;
+					}
+				}
 			} else {
 				synchronized (this.lock) {
 					if (this.paused) {
@@ -1241,18 +1252,23 @@ public final class MonitorYoutubeRelayClient {
 			if (this.prefetchProcess != null || (this.prefetchReaderThread != null && this.prefetchReaderThread.isAlive())) {
 				return;
 			}
-			ProcessBuilder builder = new ProcessBuilder(sequentialPrefetchCommand(this.streamUrl));
+			long startMs = nextPrefetchStartMsLocked();
+			if (this.durationMs > 0L && startMs >= this.durationMs) {
+				this.prefetchCompleted = true;
+				return;
+			}
+			ProcessBuilder builder = new ProcessBuilder(sequentialPrefetchCommand(this.streamUrl, startMs));
 			builder.redirectError(ProcessBuilder.Redirect.DISCARD);
 			Process startedProcess = builder.start();
 			this.prefetchProcess = startedProcess;
-			Thread thread = new Thread(() -> readPrefetchFrames(startedProcess), "lg2-youtube-prefetch-" + this.sessionId);
+			Thread thread = new Thread(() -> readPrefetchFrames(startedProcess, startMs), "lg2-youtube-prefetch-" + this.sessionId);
 			thread.setDaemon(true);
 			this.prefetchReaderThread = thread;
 			thread.start();
 		}
 
-		private void readPrefetchFrames(Process processToRead) {
-			long[] nextPositionMs = {0L};
+		private void readPrefetchFrames(Process processToRead, long startPositionMs) {
+			long[] nextPositionMs = {Math.max(0L, normalizeBucketMs(startPositionMs))};
 			boolean completedNormally = false;
 			try (InputStream stream = processToRead.getInputStream()) {
 				readJpegFrames(stream, frameBytes -> {
@@ -1353,6 +1369,13 @@ public final class MonitorYoutubeRelayClient {
 				return bucketMs == 0L;
 			}
 			return bucketMs <= this.bufferedEndMs + CONTIGUOUS_BUFFER_TOLERANCE_MS;
+		}
+
+		private long nextPrefetchStartMsLocked() {
+			if (!this.bufferedFromStart) {
+				return 0L;
+			}
+			return Math.max(0L, normalizeBucketMs(this.bufferedEndMs + PREVIEW_CACHE_BUCKET_MS));
 		}
 
 		private void cachePreviewFrameLocked(long positionMs, byte[] frameBytes, BufferedImage decodedImage, boolean extendBufferedRange) {

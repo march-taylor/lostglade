@@ -4620,7 +4620,7 @@ public final class MonitorScreenSystem {
 	}
 
 	private static long effectiveYoutubeUiRefreshThresholdMs(MinecraftServer server, ScreenRuntimeKey key) {
-		return Math.max(250L, effectiveYoutubePollDelayMs(server, key, false) * 2L);
+		return Math.max(50L, effectiveYoutubePollDelayMs(server, key, false));
 	}
 
 	private static ScreenComponent resolveScreenComponent(MinecraftServer server, ScreenRuntimeKey key) {
