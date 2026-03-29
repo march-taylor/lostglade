@@ -3657,20 +3657,37 @@ public final class MonitorScreenSystem {
 		UiRect scaleRect = mediaScaleRect(layout);
 		UiRect queueToggleRect = mediaQueueToggleRect(layout);
 		UiRect timelineRect = mediaTimelineRect(layout);
+		boolean darkPlayerSurface = usesDarkMediaPlayerSurface(state);
 
+		if (darkPlayerSurface) {
+			graphics.setColor(Color.BLACK);
+			graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
+		}
 		if (mediaFrame != null) {
 			drawScaledImage(graphics, mediaFrame, canvasRect, state.scaleMode());
 		} else {
-			graphics.setPaint(new GradientPaint(
-					canvasRect.x(),
-					canvasRect.y(),
-					new Color(230, 236, 242, 24),
-					canvasRect.right(),
-					canvasRect.bottom(),
-					new Color(32, 40, 48, 54)
-			));
-			fillRoundedRect(graphics, canvasRect, clampInt(layout.unit() * 2, 12, 22), null);
-			strokeRoundedRect(graphics, canvasRect, clampInt(layout.unit() * 2, 12, 22), 1.0F, new Color(255, 255, 255, 36));
+			if (darkPlayerSurface) {
+				graphics.setPaint(new GradientPaint(
+						canvasRect.x(),
+						canvasRect.y(),
+						new Color(6, 8, 12, 222),
+						canvasRect.right(),
+						canvasRect.bottom(),
+						new Color(14, 18, 24, 248)
+				));
+				graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
+			} else {
+				graphics.setPaint(new GradientPaint(
+						canvasRect.x(),
+						canvasRect.y(),
+						new Color(230, 236, 242, 24),
+						canvasRect.right(),
+						canvasRect.bottom(),
+						new Color(32, 40, 48, 54)
+				));
+				fillRoundedRect(graphics, canvasRect, clampInt(layout.unit() * 2, 12, 22), null);
+				strokeRoundedRect(graphics, canvasRect, clampInt(layout.unit() * 2, 12, 22), 1.0F, new Color(255, 255, 255, 36));
+			}
 		}
 
 		boolean controlsActive = state != null && (state.overlayMode() == MediaOverlayMode.CONTROLS || state.loading());
@@ -3760,6 +3777,17 @@ public final class MonitorScreenSystem {
 		if (state != null && state.overlayWindow() != null) {
 			drawMediaOverlayWindow(graphics, layout, runtimeKey, server, state.overlayWindow());
 		}
+	}
+
+	private static boolean usesDarkMediaPlayerSurface(MediaVisualSnapshot state) {
+		if (state == null) {
+			return false;
+		}
+		return switch (state.mode()) {
+			case GALLERY -> !state.galleryBrowser();
+			case YOUTUBE -> state.hasMedia() || state.loading() || state.playbackControlsVisible();
+			default -> false;
+		};
 	}
 
 	private static void drawGalleryBrowserScreen(Graphics2D graphics, UiLayout layout, MediaVisualSnapshot state) {
@@ -5007,13 +5035,11 @@ public final class MonitorScreenSystem {
 	}
 
 	private static UiRect mediaCanvasRect(UiLayout layout) {
-		int marginX = clampInt(layout.canvasWidth() / 48, 4, 10);
-		int marginY = clampInt(layout.canvasHeight() / 48, 4, 10);
 		return new UiRect(
-				marginX,
-				marginY,
-				Math.max(16, layout.canvasWidth() - marginX * 2),
-				Math.max(16, layout.canvasHeight() - marginY * 2)
+				0,
+				0,
+				Math.max(16, layout.canvasWidth()),
+				Math.max(16, layout.canvasHeight())
 		);
 	}
 
