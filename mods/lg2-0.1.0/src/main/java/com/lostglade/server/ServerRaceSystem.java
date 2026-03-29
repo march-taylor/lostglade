@@ -42,6 +42,7 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.MutableComponent;
@@ -94,8 +95,11 @@ import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.raid.Raider;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.ItemUseAnimation;
 import net.minecraft.world.item.component.WrittenBookContent;
+import net.minecraft.world.item.component.Consumable;
 import net.minecraft.world.item.component.ResolvableProfile;
+import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
@@ -154,6 +158,7 @@ public final class ServerRaceSystem {
 	private static final int DEFAULT_ACTION_WIDTH = 220;
 	private static final int EXIT_ACTION_WIDTH = 200;
 	private static final String MISTER_CARTEL_49_RACE_ID = "mister_cartel_49";
+	private static final String COPPER_MAN_RACE_ID = "copper_man";
 	private static final String TITLE_OVERLAY_SHIFT = "\ue905";
 	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
 	private static final int TITLE_OVERLAY_TARGET_ADVANCE = 168;
@@ -220,6 +225,19 @@ public final class ServerRaceSystem {
 	private static final long CARTEL_FERN_GROWTH_RETRY_TICKS = 100L;
 	private static final int COCAINE_CAULDRON_BATCH_SIZE = 16;
 	private static final long MISTER_CARTEL_STACK_CHECK_INTERVAL_TICKS = 8L;
+	private static final double DEFAULT_COPPER_FOOD_RESTORE_MULTIPLIER = 0.8D;
+	private static final int DEFAULT_COPPER_INGOT_FOOD_POINTS = 5;
+	private static final double DEFAULT_COPPER_GOLEM_NOTICE_RANGE_BLOCKS = 8.0D;
+	private static final int COPPER_GOLEM_REACTION_INTERVAL_TICKS = 5;
+	private static final double COPPER_GOLEM_FOLLOW_SPEED = 1.1D;
+	private static final double COPPER_LIGHTNING_ATTRACT_RANGE_BLOCKS = 128.0D;
+	private static final float COPPER_INGOT_SATURATION = 0.6F;
+	private static final Consumable COPPER_INGOT_CONSUMABLE = Consumable.builder()
+			.consumeSeconds(1.6F)
+			.animation(ItemUseAnimation.EAT)
+			.sound(SoundEvents.GENERIC_EAT)
+			.hasConsumeParticles(true)
+			.build();
 	private static final double CARTEL_LAWYER_BASE_MOVE_SPEED = 0.23D;
 	private static final double CARTEL_LAWYER_WALK_SPEED = CARTEL_LAWYER_BASE_MOVE_SPEED;
 	private static final double CARTEL_LAWYER_RETURN_SPEED = CARTEL_LAWYER_BASE_MOVE_SPEED * 1.5D;
@@ -247,6 +265,7 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, Long> CARTEL_UNIQUE_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelDisguiseSession> CARTEL_DISGUISE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelManualBookRestore> CARTEL_MANUAL_BOOK_RESTORES = new LinkedHashMap<>();
+	private static final Map<UUID, UUID> COPPER_GOLEM_FOLLOWERS = new LinkedHashMap<>();
 	private static final List<CartelTravkaGrowthAttempt> CARTEL_TRAVKA_GROWTH_ATTEMPTS = new ArrayList<>();
 	private static final Map<CartelFernGrowthKey, CartelFernGrowthTask> CARTEL_PLANTED_FERN_GROWTHS = new LinkedHashMap<>();
 	private static final PriorityQueue<CartelFernGrowthTask> CARTEL_PLANTED_FERN_GROWTH_QUEUE = new PriorityQueue<>(Comparator.comparingLong(task -> task.growAtTick));
@@ -403,6 +422,7 @@ public final class ServerRaceSystem {
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.clear();
 			CARTEL_PLANTED_FERN_GROWTHS.clear();
 			CARTEL_PLANTED_FERN_GROWTH_QUEUE.clear();
+			COPPER_GOLEM_FOLLOWERS.clear();
 			CARTEL_SUMMON_OWNER_BY_ENTITY.clear();
 			CARTEL_LAWYER_OWNER_BY_ENTITY.clear();
 			CARTEL_LAWYER_SKIN_FUTURE = null;
@@ -422,6 +442,7 @@ public final class ServerRaceSystem {
 			CartelWebcamBridge.handlePlayerDisconnected(handler.player.getUUID());
 			CARTEL_MANUAL_BOOK_RESTORES.remove(handler.player.getUUID());
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.removeIf(attempt -> attempt.playerId.equals(handler.player.getUUID()));
+			COPPER_GOLEM_FOLLOWERS.entrySet().removeIf(entry -> handler.player.getUUID().equals(entry.getValue()));
 		});
 		UseItemCallback.EVENT.register((player, world, hand) -> {
 			if (!(player instanceof ServerPlayer serverPlayer) || world.isClientSide()) {
@@ -451,6 +472,7 @@ public final class ServerRaceSystem {
 			tickCartelManualBookRestores(server);
 			tickCartelTravkaGrowthAttempts(server);
 			tickCartelFernGrowths(server);
+			tickCopperManStock(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
 		});
@@ -554,6 +576,9 @@ public final class ServerRaceSystem {
 		if (slot == RaceAbilitySlot.SHNYAGA && MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id))) {
 			return useMrCartelShnyaga(player, race, ability);
 		}
+		if (slot == RaceAbilitySlot.ATTACK && COPPER_MAN_RACE_ID.equals(sanitizePath(race.id))) {
+			return CopperManRepulsorSystem.toggleMode(player);
+		}
 
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
@@ -606,6 +631,241 @@ public final class ServerRaceSystem {
 			return false;
 		}
 		return ServerUpgradeUiSystem.hasUpgrade(player, upgradeId);
+	}
+
+	public static boolean isCopperManStockEnabled(ServerPlayer player) {
+		if (player == null) {
+			return false;
+		}
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isEmpty()) {
+			return false;
+		}
+		PlayerRaceConfig race = raceOptional.get();
+		return COPPER_MAN_RACE_ID.equals(sanitizePath(race.id))
+				&& race.stock != null
+				&& race.stock.enabled;
+	}
+
+	public static boolean ensureCopperIngotConsumableForUse(ServerPlayer player, ItemStack stack) {
+		if (!isCopperManStockEnabled(player) || stack == null || stack.isEmpty() || !stack.is(Items.COPPER_INGOT)) {
+			return false;
+		}
+		stack.set(DataComponents.FOOD, new FoodProperties(getCopperIngotFoodPoints(player), COPPER_INGOT_SATURATION, false));
+		stack.set(DataComponents.CONSUMABLE, COPPER_INGOT_CONSUMABLE);
+		return true;
+	}
+
+	public static void stripCopperIngotConsumable(ItemStack stack) {
+		if (stack == null || stack.isEmpty() || !stack.is(Items.COPPER_INGOT)) {
+			return;
+		}
+		stack.remove(DataComponents.FOOD);
+		stack.remove(DataComponents.CONSUMABLE);
+	}
+
+	public static void adjustCopperManFoodAfterEating(ServerPlayer player, int beforeFood, float beforeSaturation) {
+		if (!isCopperManStockEnabled(player)) {
+			return;
+		}
+		FoodDataSnapshot snapshot = getFoodDataSnapshot(player);
+		if (snapshot == null) {
+			return;
+		}
+
+		int gained = Math.max(0, snapshot.foodLevel - beforeFood);
+		if (gained <= 0) {
+			return;
+		}
+
+		double multiplier = getCopperFoodRestoreMultiplier(player);
+		int adjustedGain = Math.max(0, (int) Math.round(gained * multiplier));
+		int adjustedFood = Math.max(0, Math.min(20, beforeFood + adjustedGain));
+		player.getFoodData().setFoodLevel(adjustedFood);
+
+		float currentSaturation = player.getFoodData().getSaturationLevel();
+		float maxAllowedSaturation = Math.max(beforeSaturation, adjustedFood);
+		if (currentSaturation > maxAllowedSaturation) {
+			player.getFoodData().setSaturation(maxAllowedSaturation);
+		}
+	}
+
+	public static BlockPos findCopperManLightningTarget(ServerLevel level, BlockPos origin) {
+		if (level == null || origin == null) {
+			return null;
+		}
+
+		double bestDistance = Double.MAX_VALUE;
+		ServerPlayer bestPlayer = null;
+		AABB searchBox = new AABB(origin).inflate(COPPER_LIGHTNING_ATTRACT_RANGE_BLOCKS);
+		for (ServerPlayer player : level.getEntitiesOfClass(ServerPlayer.class, searchBox, ServerRaceSystem::isCopperManStockEnabled)) {
+			if (!player.isAlive() || player.isSpectator() || !level.canSeeSky(player.blockPosition())) {
+				continue;
+			}
+			double distance = player.blockPosition().distSqr(origin);
+			if (distance >= bestDistance) {
+				continue;
+			}
+			bestDistance = distance;
+			bestPlayer = player;
+		}
+
+		return bestPlayer == null ? null : bestPlayer.blockPosition();
+	}
+
+	private static void tickCopperManStock(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			sanitizeCopperIngots(player);
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		if (nowTick % COPPER_GOLEM_REACTION_INTERVAL_TICKS != 0L) {
+			return;
+		}
+
+		tickCopperGolemFollowers(server);
+	}
+
+	private static void sanitizeCopperIngots(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+
+		boolean copperMan = isCopperManStockEnabled(player);
+		Inventory inventory = player.getInventory();
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			ItemStack stack = inventory.getItem(slot);
+			if (stack == null || stack.isEmpty() || !stack.is(Items.COPPER_INGOT)) {
+				continue;
+			}
+			if (!copperMan) {
+				stripCopperIngotConsumable(stack);
+			}
+		}
+	}
+
+	private static void tickCopperGolemFollowers(MinecraftServer server) {
+		COPPER_GOLEM_FOLLOWERS.entrySet().removeIf(entry -> !updateTrackedCopperGolemFollower(server, entry.getKey(), entry.getValue()));
+
+		List<ServerPlayer> copperPlayers = new ArrayList<>();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (isCopperManStockEnabled(player) && player.isAlive() && !player.isSpectator()) {
+				copperPlayers.add(player);
+			}
+		}
+		if (copperPlayers.isEmpty()) {
+			return;
+		}
+
+		for (ServerPlayer player : copperPlayers) {
+			double noticeRange = getCopperGolemNoticeRange(player);
+			AABB searchBox = player.getBoundingBox().inflate(noticeRange);
+			for (Entity entity : player.level().getEntities(player, searchBox, ServerRaceSystem::isCopperGolemEntity)) {
+				if (!(entity instanceof Mob mob) || !mob.isAlive() || mob.isPassenger()) {
+					continue;
+				}
+				if (mob.distanceToSqr(player) > noticeRange * noticeRange || !mob.hasLineOfSight(player)) {
+					continue;
+				}
+
+				COPPER_GOLEM_FOLLOWERS.put(mob.getUUID(), player.getUUID());
+				PathNavigation navigation = mob.getNavigation();
+				if (navigation != null) {
+					navigation.moveTo(player, COPPER_GOLEM_FOLLOW_SPEED);
+				}
+				mob.getLookControl().setLookAt(player, 30.0F, 30.0F);
+			}
+		}
+	}
+
+	private static boolean updateTrackedCopperGolemFollower(MinecraftServer server, UUID golemId, UUID playerId) {
+		Entity golemEntity = findEntity(server, golemId);
+		ServerPlayer player = playerId == null ? null : server.getPlayerList().getPlayer(playerId);
+		if (!(golemEntity instanceof Mob mob) || player == null || !player.isAlive() || player.isSpectator()) {
+			stopCopperGolemNavigation(golemEntity);
+			return false;
+		}
+		if (!isCopperGolemEntity(mob)) {
+			stopCopperGolemNavigation(mob);
+			return false;
+		}
+
+		double noticeRange = getCopperGolemNoticeRange(player);
+		if (mob.level() != player.level()
+				|| mob.distanceToSqr(player) > noticeRange * noticeRange
+				|| !mob.hasLineOfSight(player)) {
+			stopCopperGolemNavigation(mob);
+			return false;
+		}
+		return true;
+	}
+
+	private static void stopCopperGolemNavigation(Entity entity) {
+		if (entity instanceof Mob mob) {
+			PathNavigation navigation = mob.getNavigation();
+			if (navigation != null) {
+				navigation.stop();
+			}
+		}
+	}
+
+	private static Entity findEntity(MinecraftServer server, UUID entityId) {
+		if (server == null || entityId == null) {
+			return null;
+		}
+		for (ServerLevel level : server.getAllLevels()) {
+			Entity entity = level.getEntity(entityId);
+			if (entity != null) {
+				return entity;
+			}
+		}
+		return null;
+	}
+
+	private static boolean isCopperGolemEntity(Entity entity) {
+		if (entity == null) {
+			return false;
+		}
+		Identifier id = BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType());
+		return id != null && sanitizePath(id.getPath()).contains("copper_golem");
+	}
+
+	private static double getCopperFoodRestoreMultiplier(ServerPlayer player) {
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isPresent() && raceOptional.get().stock != null && raceOptional.get().stock.foodRestoreMultiplier > 0.0D) {
+			return raceOptional.get().stock.foodRestoreMultiplier;
+		}
+		return DEFAULT_COPPER_FOOD_RESTORE_MULTIPLIER;
+	}
+
+	private static int getCopperIngotFoodPoints(ServerPlayer player) {
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isPresent() && raceOptional.get().stock != null && raceOptional.get().stock.copperIngotFoodPoints > 0) {
+			return raceOptional.get().stock.copperIngotFoodPoints;
+		}
+		return DEFAULT_COPPER_INGOT_FOOD_POINTS;
+	}
+
+	private static double getCopperGolemNoticeRange(ServerPlayer player) {
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isPresent() && raceOptional.get().stock != null && raceOptional.get().stock.copperGolemNoticeRangeBlocks > 0.0D) {
+			return raceOptional.get().stock.copperGolemNoticeRangeBlocks;
+		}
+		return DEFAULT_COPPER_GOLEM_NOTICE_RANGE_BLOCKS;
+	}
+
+	private static FoodDataSnapshot getFoodDataSnapshot(ServerPlayer player) {
+		if (player == null || player.getFoodData() == null) {
+			return null;
+		}
+		return new FoodDataSnapshot(player.getFoodData().getFoodLevel(), player.getFoodData().getSaturationLevel());
+	}
+
+	private record FoodDataSnapshot(int foodLevel, float saturationLevel) {
 	}
 
 	public static Collection<PlayerRaceConfig> getAllRaces() {

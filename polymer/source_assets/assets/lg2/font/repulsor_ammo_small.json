@@ -1,0 +1,14 @@
+{
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "lg2:font/repulsor_ammo_small.png",
+      "ascent": -65,
+      "height": 6,
+      "chars": [
+        " !\"#$%&'()*+,-./",
+        "0123456789:;<=>?"
+      ]
+    }
+  ]
+}

@@ -61,6 +61,55 @@
                                     "name":  "Оптовая партия",
                                     "description":  "Обычные стаки (64) ограничиваются 49."
                                 }
+                  },
+                  {
+                      "enabled":  true,
+                      "id":  "copper_man",
+                      "displayName":  "Медный человек",
+                      "ownerNickname":  "Rajas_YT",
+                      "description":  "Сток: обычная еда восстанавливает меньше голода, медные слитки можно есть, молнии притягиваются, а медные големы замечают хозяина.",
+                      "attack":  {
+                                     "enabled":  true,
+                                     "abilityId":  "copper_man_attack",
+                                     "name":  "Репульсор",
+                                     "description":  "Встроенный в протез руки репульсор стреляет лазерами.",
+                                     "priceBitcoins":  300,
+                                     "cooldownSeconds":  3.0,
+                                     "repulsorMaxCharges":  35,
+                                     "repulsorCopperIngotChargeRestore":  5,
+                                     "repulsorNaturalLightningChargeRestore":  10
+                                 },
+                      "defense":  {
+                                      "enabled":  false,
+                                      "abilityId":  "copper_man_defense",
+                                      "name":  "Крепкая кожа",
+                                      "description":  "Кожа Медного человека укрепляется медью.",
+                                      "priceBitcoins":  600
+                                  },
+                      "uniqueAbility":  {
+                                            "enabled":  false,
+                                            "abilityId":  "copper_man_unique",
+                                            "name":  "Реактивный ранец",
+                                            "description":  "За спиной раскрывается медный ранец с турбинами.",
+                                            "priceBitcoins":  1000
+                                        },
+                      "shnyaga":  {
+                                      "enabled":  false,
+                                      "abilityId":  "copper_man_shnyaga",
+                                      "name":  "Спец-очки",
+                                      "description":  "Позволяет менять режимы видения.",
+                                      "priceBitcoins":  1500
+                                  },
+                      "stock":  {
+                                    "enabled":  true,
+                                    "abilityId":  "copper_man_stock",
+                                    "name":  "Медный организм",
+                                     "description":  "Обычная еда менее полезна, но медь можно есть. Молнии и медные големы тянутся к Медному человеку.",
+                                     "foodRestoreMultiplier":  0.8,
+                                     "copperIngotFoodPoints":  5,
+                                     "repulsorNaturalLightningChargeChance":  0.1,
+                                     "copperGolemNoticeRangeBlocks":  8.0
+                                 }
                   }
               ]
 }
