@@ -72,6 +72,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -127,6 +128,8 @@ public final class MonitorScreenSystem {
 	private static final long MEDIA_SCROLL_FOCUS_TIMEOUT_MS = 6000L;
 	private static final double MEDIA_CONTROL_DISTANCE = 6.0D;
 	private static final long YOUTUBE_SCROLL_SEEK_MS = 5000L;
+	private static final int YOUTUBE_PRELOAD_PREVIOUS_COUNT = 4;
+	private static final int YOUTUBE_PRELOAD_NEXT_COUNT = 8;
 	private static final int MAX_SCREEN_SYNC_OPERATIONS_PER_TICK = 24;
 	private static final int MAX_POWER_REFRESHES_PER_TICK = 16;
 	private static final long MEDIA_SESSION_CLEANUP_INTERVAL_TICKS = 40L;
@@ -786,12 +789,13 @@ public final class MonitorScreenSystem {
 			state.overlayMode = MediaOverlayMode.CONTROLS;
 			state.version++;
 		}
-		ACTIVE_MEDIA_ACTIONBARS.put(sender.getUUID(), pending.screenKey());
-		sender.displayClientMessage(loadingMessage(pending.mode(), sender), true);
-		requestRuntimeRender(server, pending.screenKey());
+			ACTIVE_MEDIA_ACTIONBARS.put(sender.getUUID(), pending.screenKey());
+			sender.displayClientMessage(loadingMessage(pending.mode(), sender), true);
+			requestRuntimeRender(server, pending.screenKey());
+			resumeMediaPlaybackIfNeeded(server, pending.screenKey());
 
-		if (pending.mode() == ScreenViewMode.YOUTUBE) {
-			CompletableFuture
+			if (pending.mode() == ScreenViewMode.YOUTUBE) {
+				CompletableFuture
 					.supplyAsync(() -> {
 						try {
 							return new YoutubeQueueResolveResult(
@@ -858,6 +862,8 @@ public final class MonitorScreenSystem {
 		Boolean youtubePauseAction = null;
 		Long youtubeSeekTargetMs = null;
 		Integer youtubeQueuePlayIndex = null;
+		List<String> youtubeQueueReleasedUrls = List.of();
+		YoutubeQueuePreloadDiff youtubeQueuePreloadDiff = YoutubeQueuePreloadDiff.EMPTY;
 		if (component.viewMode() == ScreenViewMode.HOME) {
 			List<MonitorApp> visibleApps = visibleHomeApps(layout, component.launcherPage());
 			for (int index = 0; index < visibleApps.size(); index++) {
@@ -948,7 +954,6 @@ public final class MonitorScreenSystem {
 						);
 					} else {
 						int rowCount = Math.min(visibleRows, Math.max(0, mediaState.youtubeQueue.size() - mediaState.youtubeQueueScroll));
-						String removedQueueUrl = null;
 						for (int visibleIndex = 0; visibleIndex < rowCount; visibleIndex++) {
 							UiRect rowRect = mediaQueueRowRect(layout, visibleIndex);
 							if (!rowRect.contains(touchPoint.x(), touchPoint.y())) {
@@ -961,8 +966,6 @@ public final class MonitorScreenSystem {
 							UiRect removeRect = mediaQueueRemoveRect(rowRect, layout);
 							if (removeRect.contains(touchPoint.x(), touchPoint.y())) {
 								boolean removedCurrent = queueIndex == mediaState.youtubeQueueIndex;
-								YoutubeQueueItem removedItem = mediaState.youtubeQueue.get(queueIndex);
-								removedQueueUrl = removedItem != null ? removedItem.url() : null;
 								mediaState.youtubeQueue.remove(queueIndex);
 								if (mediaState.youtubeQueue.isEmpty()) {
 									cancelPlaybackLocked(mediaState);
@@ -974,6 +977,8 @@ public final class MonitorScreenSystem {
 									mediaState.youtubeQueueIndex = -1;
 									mediaState.youtubeQueueScroll = 0;
 									mediaState.youtubeQueueOpen = false;
+									youtubeQueueReleasedUrls = retainedYoutubePreloadUrlsLocked(mediaState);
+									mediaState.retainedYoutubePreloadUrls.clear();
 								} else {
 									if (queueIndex < mediaState.youtubeQueueIndex) {
 										mediaState.youtubeQueueIndex--;
@@ -983,6 +988,9 @@ public final class MonitorScreenSystem {
 									}
 									int nextMaxScroll = Math.max(0, mediaState.youtubeQueue.size() - visibleRows);
 									mediaState.youtubeQueueScroll = clampInt(mediaState.youtubeQueueScroll, 0, nextMaxScroll);
+									if (youtubeQueuePlayIndex == null) {
+										youtubeQueuePreloadDiff = syncYoutubeQueuePreloadsLocked(mediaState);
+									}
 								}
 							} else {
 								mediaState.youtubeQueueIndex = queueIndex;
@@ -994,9 +1002,6 @@ public final class MonitorScreenSystem {
 								}
 							}
 							break;
-						}
-						if (removedQueueUrl != null && !removedQueueUrl.isBlank()) {
-							releaseYoutubeQueuePreloads(List.of(removedQueueUrl));
 						}
 					}
 					mediaState.version++;
@@ -1187,6 +1192,13 @@ public final class MonitorScreenSystem {
 			if (closeRect.contains(touchPoint.x(), touchPoint.y())) {
 				nextMode = ScreenViewMode.HOME;
 			}
+		}
+
+		if (!youtubeQueueReleasedUrls.isEmpty()) {
+			releaseYoutubeQueuePreloads(youtubeQueueReleasedUrls);
+		}
+		if (!youtubeQueuePreloadDiff.isEmpty() && youtubeQueuePlayIndex == null) {
+			applyYoutubeQueuePreloadDiff(youtubeQueuePreloadDiff);
 		}
 
 		if ((nextMode != null && nextMode != component.viewMode())
@@ -1655,10 +1667,9 @@ public final class MonitorScreenSystem {
 		ServerPlayer requester = result.requesterUuid() != null ? server.getPlayerList().getPlayer(result.requesterUuid()) : null;
 		boolean shouldStartPlayback = false;
 		int startQueueIndex = -1;
-		String queueTitle = "YouTube";
 		int addedCount = 0;
 		List<String> releasedQueueUrls = List.of();
-		List<String> retainedQueueUrls = List.of();
+		YoutubeQueuePreloadDiff preloadDiff = YoutubeQueuePreloadDiff.EMPTY;
 
 		synchronized (state) {
 			state.mode = ScreenViewMode.YOUTUBE;
@@ -1672,26 +1683,23 @@ public final class MonitorScreenSystem {
 				state.version++;
 			} else {
 				List<MonitorYoutubeRelayClient.QueueEntry> resolvedEntries = result.queueResponse().entries();
-				queueTitle = result.queueResponse().title();
 				addedCount = resolvedEntries.size();
 				if (result.action() == YoutubeLinkRequestAction.REPLACE_QUEUE) {
-					releasedQueueUrls = youtubeQueueUrlsLocked(state);
+					releasedQueueUrls = retainedYoutubePreloadUrlsLocked(state);
+					state.retainedYoutubePreloadUrls.clear();
 					cancelPlaybackLocked(state);
 					clearLoadedContentLocked(state, true);
 				} else {
 					ensureYoutubeQueueCurrentEntryLocked(state);
 				}
 				int appendStartIndex = state.youtubeQueue.size();
-				List<String> nextRetainedUrls = new ArrayList<>();
 				for (MonitorYoutubeRelayClient.QueueEntry entry : resolvedEntries) {
 					if (entry == null || entry.url() == null || entry.url().isBlank()) {
 						continue;
 					}
 					String title = entry.title() == null || entry.title().isBlank() ? "YouTube" : entry.title();
 					state.youtubeQueue.add(new YoutubeQueueItem(title, entry.url()));
-					nextRetainedUrls.add(entry.url());
 				}
-				retainedQueueUrls = List.copyOf(nextRetainedUrls);
 				if (result.action() == YoutubeLinkRequestAction.REPLACE_QUEUE) {
 					state.youtubeQueueIndex = state.youtubeQueue.isEmpty() ? -1 : 0;
 					state.youtubeQueueScroll = 0;
@@ -1708,11 +1716,12 @@ public final class MonitorScreenSystem {
 					state.youtubeQueueScroll = Math.max(0, state.youtubeQueue.size() - youtubeQueueVisibleRowsPreview(state));
 				}
 				state.statusText = "";
+				preloadDiff = syncYoutubeQueuePreloadsLocked(state);
 				state.version++;
 			}
 		}
 		releaseYoutubeQueuePreloads(releasedQueueUrls);
-		retainYoutubeQueuePreloads(retainedQueueUrls);
+		applyYoutubeQueuePreloadDiff(preloadDiff);
 
 		if (requester != null && (result.queueResponse() == null || result.queueResponse().entries() == null || result.queueResponse().entries().isEmpty())) {
 			ACTIVE_MEDIA_ACTIONBARS.remove(requester.getUUID());
@@ -1738,35 +1747,44 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		String url;
-		int resolvedIndex;
+		YoutubeQueuePreloadDiff preloadDiff = YoutubeQueuePreloadDiff.EMPTY;
 		synchronized (state) {
-			resolvedIndex = normalizeYoutubeQueueIndexLocked(state, queueIndex);
+			int resolvedIndex = normalizeYoutubeQueueIndexLocked(state, queueIndex);
 			if (resolvedIndex < 0) {
 				state.loading = false;
 				state.statusText = "";
 				state.progress.clear();
+				preloadDiff = syncYoutubeQueuePreloadsLocked(state);
 				state.version++;
-				return;
+				url = null;
+			} else {
+				YoutubeQueueItem item = state.youtubeQueue.get(resolvedIndex);
+				if (item == null || item.url() == null || item.url().isBlank()) {
+					return;
+				}
+				cancelPlaybackLocked(state);
+				clearYoutubePlaybackLocked(state);
+				state.mode = ScreenViewMode.YOUTUBE;
+				state.sourceUrl = item.url();
+				state.youtubeQueueIndex = resolvedIndex;
+				state.youtubeQueueOpen = true;
+				state.waitingForLink = false;
+				state.loading = true;
+				state.userPaused = false;
+				state.statusText = "BUFFERING";
+				state.progress.setIndeterminate("LOADING");
+				preloadDiff = syncYoutubeQueuePreloadsLocked(state);
+				state.version++;
+				url = item.url();
 			}
-			YoutubeQueueItem item = state.youtubeQueue.get(resolvedIndex);
-			if (item == null || item.url() == null || item.url().isBlank()) {
-				return;
-			}
-			cancelPlaybackLocked(state);
-			clearYoutubePlaybackLocked(state);
-			state.mode = ScreenViewMode.YOUTUBE;
-			state.sourceUrl = item.url();
-			state.youtubeQueueIndex = resolvedIndex;
-			state.youtubeQueueOpen = true;
-			state.waitingForLink = false;
-			state.loading = true;
-			state.userPaused = false;
-			state.statusText = "BUFFERING";
-			state.progress.setIndeterminate("LOADING");
-			state.version++;
-			url = item.url();
+		}
+		applyYoutubeQueuePreloadDiff(preloadDiff);
+		if (url == null || url.isBlank()) {
+			requestRuntimeRender(server, key);
+			return;
 		}
 		requestRuntimeRender(server, key);
+		resumeMediaPlaybackIfNeeded(server, key);
 		ensureExecutors();
 		CompletableFuture
 				.supplyAsync(() -> {
@@ -1796,7 +1814,8 @@ public final class MonitorScreenSystem {
 			synchronized (removed) {
 				cancelPlaybackLocked(removed);
 				removed.progress.clear();
-				releasedQueueUrls = youtubeQueueUrlsLocked(removed);
+				releasedQueueUrls = retainedYoutubePreloadUrlsLocked(removed);
+				removed.retainedYoutubePreloadUrls.clear();
 				if (removed.mode == ScreenViewMode.YOUTUBE) {
 					relaySessionId = removed.relaySessionId;
 				}
@@ -1909,16 +1928,17 @@ public final class MonitorScreenSystem {
 		ServerPlayer requester = server.getPlayerList().getPlayer(result.requesterUuid());
 		boolean schedulePlayback = false;
 		boolean animated = false;
-		List<String> releasedQueueUrls = List.of();
+			List<String> releasedQueueUrls = List.of();
 
 		synchronized (state) {
 			ScreenViewMode previousMode = state.mode;
-			state.mode = ScreenViewMode.GALLERY;
-			if (previousMode == ScreenViewMode.YOUTUBE || !state.youtubeQueue.isEmpty()) {
-				releasedQueueUrls = youtubeQueueUrlsLocked(state);
-				clearYoutubePlaybackLocked(state);
-				clearYoutubeQueueLocked(state);
-			}
+				state.mode = ScreenViewMode.GALLERY;
+				if (previousMode == ScreenViewMode.YOUTUBE || !state.youtubeQueue.isEmpty()) {
+					releasedQueueUrls = retainedYoutubePreloadUrlsLocked(state);
+					state.retainedYoutubePreloadUrls.clear();
+					clearYoutubePlaybackLocked(state);
+					clearYoutubeQueueLocked(state);
+				}
 			state.loading = false;
 			state.waitingForLink = false;
 			state.overlayMode = MediaOverlayMode.CONTROLS;
@@ -2035,22 +2055,54 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
-		synchronized (state) {
-			cancelPlaybackLocked(state);
-			if (state.mode == ScreenViewMode.YOUTUBE) {
-				if (state.relaySessionId == null || state.waitingForLink) {
+			synchronized (state) {
+				cancelPlaybackLocked(state);
+				if (state.mode == ScreenViewMode.YOUTUBE) {
+					if (state.waitingForLink) {
+						return;
+					}
+					if (state.relaySessionId == null) {
+						if (!state.loading) {
+							return;
+						}
+						state.playbackFuture = mediaScheduler.schedule(() -> refreshLoadingUi(server, key), youtubePollActiveIntervalMs(), TimeUnit.MILLISECONDS);
+						return;
+					}
+					long delayMillis = effectiveYoutubePollDelayMs(server, key, isPlaybackPausedLocked(state));
+					state.playbackFuture = mediaScheduler.schedule(() -> refreshYoutubeSnapshot(server, key), delayMillis, TimeUnit.MILLISECONDS);
 					return;
 				}
-				long delayMillis = effectiveYoutubePollDelayMs(server, key, isPlaybackPausedLocked(state));
-				state.playbackFuture = mediaScheduler.schedule(() -> refreshYoutubeSnapshot(server, key), delayMillis, TimeUnit.MILLISECONDS);
-				return;
-			}
-			if (state.loadedMedia == null || !state.loadedMedia.animated() || state.waitingForLink || state.loading || isPlaybackPausedLocked(state)) {
-				return;
-			}
+				if (state.loading) {
+					state.playbackFuture = mediaScheduler.schedule(() -> refreshLoadingUi(server, key), youtubePollActiveIntervalMs(), TimeUnit.MILLISECONDS);
+					return;
+				}
+				if (state.loadedMedia == null || !state.loadedMedia.animated() || state.waitingForLink || state.loading || isPlaybackPausedLocked(state)) {
+					return;
+				}
 			int delayMillis = state.loadedMedia.delayMillis(state.frameIndex);
 			state.playbackFuture = mediaScheduler.schedule(() -> advanceMediaFrame(server, key), delayMillis, TimeUnit.MILLISECONDS);
 		}
+	}
+
+	private static void refreshLoadingUi(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		synchronized (state) {
+			state.playbackFuture = null;
+			if (!state.loading || state.waitingForLink) {
+				return;
+			}
+			if (state.mode == ScreenViewMode.YOUTUBE && state.relaySessionId != null) {
+				return;
+			}
+		}
+		requestRuntimeRender(server, key);
+		resumeMediaPlaybackIfNeeded(server, key);
 	}
 
 	private static void advanceMediaFrame(MinecraftServer server, ScreenRuntimeKey key) {
@@ -2093,21 +2145,23 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
-		synchronized (state) {
-			if (state.playbackFuture != null
-					|| state.waitingForLink) {
-				return;
-			}
-			if (state.mode == ScreenViewMode.YOUTUBE) {
-				if (state.relaySessionId == null) {
+			synchronized (state) {
+				if (state.playbackFuture != null
+						|| state.waitingForLink) {
 					return;
 				}
-			} else if (state.loadedMedia == null || !state.loadedMedia.animated() || state.loading || isPlaybackPausedLocked(state)) {
-				return;
+				if (state.loading) {
+					// Keep loading spinners animating even before the relay session is fully connected.
+				} else if (state.mode == ScreenViewMode.YOUTUBE) {
+					if (state.relaySessionId == null) {
+						return;
+					}
+				} else if (state.loadedMedia == null || !state.loadedMedia.animated() || isPlaybackPausedLocked(state)) {
+					return;
+				}
 			}
+			scheduleNextMediaFrame(server, key);
 		}
-		scheduleNextMediaFrame(server, key);
-	}
 
 	private static void refreshYoutubeSnapshot(MinecraftServer server, ScreenRuntimeKey key) {
 		if (server == null || key == null) {
@@ -6577,6 +6631,73 @@ public final class MonitorScreenSystem {
 		return urls;
 	}
 
+	private static List<String> retainedYoutubePreloadUrlsLocked(MediaRuntimeState state) {
+		if (state == null || state.retainedYoutubePreloadUrls.isEmpty()) {
+			return List.of();
+		}
+		return List.copyOf(state.retainedYoutubePreloadUrls);
+	}
+
+	private static YoutubeQueuePreloadDiff syncYoutubeQueuePreloadsLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return YoutubeQueuePreloadDiff.EMPTY;
+		}
+		Set<String> desired = new LinkedHashSet<>();
+		if (!state.youtubeQueue.isEmpty()) {
+			int anchorIndex = state.youtubeQueueIndex >= 0 && state.youtubeQueueIndex < state.youtubeQueue.size() ? state.youtubeQueueIndex : -1;
+			if (anchorIndex < 0) {
+				for (int index = 0; index < Math.min(state.youtubeQueue.size(), YOUTUBE_PRELOAD_NEXT_COUNT); index++) {
+					YoutubeQueueItem item = state.youtubeQueue.get(index);
+					if (item != null && item.url() != null && !item.url().isBlank()) {
+						desired.add(item.url());
+					}
+				}
+			} else {
+				YoutubeQueueItem current = state.youtubeQueue.get(anchorIndex);
+				if (current != null && current.url() != null && !current.url().isBlank()) {
+					desired.add(current.url());
+				}
+				for (int index = anchorIndex + 1; index <= Math.min(state.youtubeQueue.size() - 1, anchorIndex + YOUTUBE_PRELOAD_NEXT_COUNT); index++) {
+					YoutubeQueueItem item = state.youtubeQueue.get(index);
+					if (item != null && item.url() != null && !item.url().isBlank()) {
+						desired.add(item.url());
+					}
+				}
+				for (int index = Math.max(0, anchorIndex - YOUTUBE_PRELOAD_PREVIOUS_COUNT); index < anchorIndex; index++) {
+					YoutubeQueueItem item = state.youtubeQueue.get(index);
+					if (item != null && item.url() != null && !item.url().isBlank()) {
+						desired.add(item.url());
+					}
+				}
+			}
+		}
+		List<String> toRelease = new ArrayList<>();
+		for (String url : List.copyOf(state.retainedYoutubePreloadUrls)) {
+			if (!desired.contains(url)) {
+				state.retainedYoutubePreloadUrls.remove(url);
+				toRelease.add(url);
+			}
+		}
+		List<String> toRetain = new ArrayList<>();
+		for (String url : desired) {
+			if (state.retainedYoutubePreloadUrls.add(url)) {
+				toRetain.add(url);
+			}
+		}
+		if (toRetain.isEmpty() && toRelease.isEmpty()) {
+			return YoutubeQueuePreloadDiff.EMPTY;
+		}
+		return new YoutubeQueuePreloadDiff(List.copyOf(toRetain), List.copyOf(toRelease));
+	}
+
+	private static void applyYoutubeQueuePreloadDiff(YoutubeQueuePreloadDiff diff) {
+		if (diff == null || diff.isEmpty()) {
+			return;
+		}
+		releaseYoutubeQueuePreloads(diff.releaseUrls());
+		retainYoutubeQueuePreloads(diff.retainUrls());
+	}
+
 	private static void retainYoutubeQueuePreloads(List<String> urls) {
 		if (urls == null || urls.isEmpty()) {
 			return;
@@ -7282,6 +7403,14 @@ public final class MonitorScreenSystem {
 	private record YoutubeQueueItemSnapshot(int queueIndex, String title, boolean current) {
 	}
 
+	private record YoutubeQueuePreloadDiff(List<String> retainUrls, List<String> releaseUrls) {
+		private static final YoutubeQueuePreloadDiff EMPTY = new YoutubeQueuePreloadDiff(List.of(), List.of());
+
+		private boolean isEmpty() {
+			return this.retainUrls.isEmpty() && this.releaseUrls.isEmpty();
+		}
+	}
+
 	private record GalleryItem(String title, String url, MonitorMediaApp.LoadedMedia media) {
 	}
 
@@ -7431,6 +7560,7 @@ public final class MonitorScreenSystem {
 		private int galleryIndex;
 		private int galleryScroll;
 		private final List<YoutubeQueueItem> youtubeQueue;
+		private final Set<String> retainedYoutubePreloadUrls;
 		private int youtubeQueueIndex;
 		private int youtubeQueueScroll;
 		private boolean youtubeQueueOpen;
@@ -7462,6 +7592,7 @@ public final class MonitorScreenSystem {
 			this.galleryIndex = -1;
 			this.galleryScroll = 0;
 			this.youtubeQueue = new ArrayList<>();
+			this.retainedYoutubePreloadUrls = new HashSet<>();
 			this.youtubeQueueIndex = -1;
 			this.youtubeQueueScroll = 0;
 			this.youtubeQueueOpen = false;

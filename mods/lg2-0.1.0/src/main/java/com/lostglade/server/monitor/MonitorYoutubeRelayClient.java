@@ -45,6 +45,12 @@ public final class MonitorYoutubeRelayClient {
 	private static final long PREVIEW_CACHE_BUCKET_MS = Math.max(1L, Math.round(1000.0D / Math.max(1.0D, FRAME_RATE)));
 	private static final int MAX_CACHED_PREVIEW_FRAMES = 3600;
 	private static final long QUEUE_PRELOAD_DURATION_MS = TimeUnit.SECONDS.toMillis(readIntSetting("LG2_YT_QUEUE_PRELOAD_SEC", "lg2.youtube.queuePreloadSec", 20));
+	private static final long CURRENT_VIDEO_CACHE_BEHIND_MS = TimeUnit.MINUTES.toMillis(readIntSetting("LG2_YT_CURRENT_CACHE_BEHIND_MIN", "lg2.youtube.currentCacheBehindMin", 30));
+	private static final long CURRENT_VIDEO_CACHE_AHEAD_MS = TimeUnit.MINUTES.toMillis(readIntSetting("LG2_YT_CURRENT_CACHE_AHEAD_MIN", "lg2.youtube.currentCacheAheadMin", 30));
+	private static final int MAX_SESSION_CACHED_PREVIEW_FRAMES = Math.max(
+			MAX_CACHED_PREVIEW_FRAMES,
+			(int) Math.ceil((CURRENT_VIDEO_CACHE_BEHIND_MS + CURRENT_VIDEO_CACHE_AHEAD_MS) / (double) PREVIEW_CACHE_BUCKET_MS) + 512
+	);
 	private static final long CACHE_LOOKUP_TOLERANCE_MS = Math.max(100L, PREVIEW_CACHE_BUCKET_MS * 2L);
 	private static final long CONTIGUOUS_BUFFER_TOLERANCE_MS = PREVIEW_CACHE_BUCKET_MS + CACHE_LOOKUP_TOLERANCE_MS;
 	private static final long PROCESS_STOP_TIMEOUT_MS = 250L;
@@ -390,7 +396,7 @@ public final class MonitorYoutubeRelayClient {
 		return command;
 	}
 
-	private static List<String> sequentialPrefetchCommand(String streamUrl, long startMs) {
+	private static List<String> sequentialPrefetchCommand(String streamUrl, long startMs, long durationMs) {
 		List<String> command = new ArrayList<>();
 		command.add(ffmpegBin());
 		command.add("-hide_banner");
@@ -402,6 +408,10 @@ public final class MonitorYoutubeRelayClient {
 		if (startMs > 0L) {
 			command.add("-ss");
 			command.add(String.format(Locale.ROOT, "%.3f", startMs / 1000.0D));
+		}
+		if (durationMs > 0L) {
+			command.add("-t");
+			command.add(String.format(Locale.ROOT, "%.3f", durationMs / 1000.0D));
 		}
 		command.add("-i");
 		command.add(streamUrl);
@@ -803,23 +813,27 @@ public final class MonitorYoutubeRelayClient {
 			while (this.cachedPreviewFrames.size() > MAX_CACHED_PREVIEW_FRAMES) {
 				this.cachedPreviewFrames.pollFirstEntry();
 			}
-			advanceBufferedRangeLocked(bucketMs);
+			recomputeBufferedRangeLocked();
 		}
 
-		private void advanceBufferedRangeLocked(long bucketMs) {
-			if (!this.bufferedFromStart) {
-				if (bucketMs != 0L) {
-					return;
-				}
-				this.bufferedFromStart = true;
+		private void recomputeBufferedRangeLocked() {
+			if (this.cachedPreviewFrames.isEmpty()) {
+				this.bufferedFromStart = false;
 				this.bufferedStartMs = 0L;
 				this.bufferedEndMs = 0L;
 				return;
 			}
-			if (bucketMs <= this.bufferedEndMs + CONTIGUOUS_BUFFER_TOLERANCE_MS) {
-				this.bufferedStartMs = 0L;
-				this.bufferedEndMs = Math.max(this.bufferedEndMs, bucketMs);
+			long startMs = this.cachedPreviewFrames.firstKey();
+			long endMs = startMs;
+			for (Long candidateMs : this.cachedPreviewFrames.tailMap(startMs, false).keySet()) {
+				if (candidateMs > endMs + CONTIGUOUS_BUFFER_TOLERANCE_MS) {
+					break;
+				}
+				endMs = candidateMs;
 			}
+			this.bufferedStartMs = startMs;
+			this.bufferedEndMs = endMs;
+			this.bufferedFromStart = startMs == 0L;
 		}
 
 		private void stopLocked() {
@@ -950,32 +964,59 @@ public final class MonitorYoutubeRelayClient {
 		private SessionSnapshot snapshot(long knownFrameSequence) {
 			boolean shouldEnsurePrefetch;
 			boolean ended = false;
+			boolean ready;
 			synchronized (this.lock) {
-				if (!this.live && !this.paused) {
-					this.positionMs = currentPositionMsLocked();
-					if (this.durationMs > 0L && this.positionMs >= this.durationMs) {
-						this.positionMs = this.durationMs;
-						this.paused = true;
-						ended = true;
-					}
+				if (this.live) {
+					ready = this.latestFrame != null && !Objects.equals(this.status, "BUFFERING");
+				} else if (this.paused) {
 					boolean hasCachedFrame;
 					try {
 						hasCachedFrame = applyCachedPreviewLocked(this.positionMs);
 					} catch (IOException exception) {
+						Lg2.LOGGER.debug("Failed to decode cached YouTube frame for paused session {}", this.sessionId, exception);
+						hasCachedFrame = false;
+					}
+					this.status = hasCachedFrame ? "PAUSED" : "BUFFERING";
+					ready = hasCachedFrame;
+				} else {
+					long targetPositionMs = currentPositionMsLocked();
+					if (this.durationMs > 0L && targetPositionMs >= this.durationMs) {
+						targetPositionMs = this.durationMs;
+						ended = true;
+					}
+					boolean hasCachedFrame;
+					try {
+						hasCachedFrame = applyCachedPreviewLocked(targetPositionMs);
+					} catch (IOException exception) {
 						Lg2.LOGGER.debug("Failed to decode cached YouTube frame for session {}", this.sessionId, exception);
 						hasCachedFrame = false;
 					}
-					if (this.paused) {
-						this.status = "PAUSED";
-					} else if (hasCachedFrame) {
-						this.status = "PLAYING";
-					} else if (this.latestFrame != null) {
+					if (hasCachedFrame) {
+						this.positionMs = targetPositionMs;
+						trimCachedPreviewWindowLocked();
+						if (ended) {
+							this.paused = true;
+							this.status = "PAUSED";
+						} else {
+							this.status = "PLAYING";
+						}
+						ready = true;
+					} else {
+						freezePlaybackClockLocked();
 						this.status = "BUFFERING";
+						ready = false;
 					}
 				}
-				shouldEnsurePrefetch = !this.live && !this.prefetchCompleted && this.prefetchProcess == null && !closedOrUnloadedLocked();
+					if (!this.live && this.prefetchProcess == null && !closedOrUnloadedLocked()) {
+						if (this.bufferedEndMs + CONTIGUOUS_BUFFER_TOLERANCE_MS < desiredCacheMaxMsLocked()) {
+							this.prefetchCompleted = false;
+						}
+					}
+					if (!this.live && !ready && !this.paused && this.prefetchProcess == null && !closedOrUnloadedLocked()) {
+						this.prefetchCompleted = false;
+					}
+					shouldEnsurePrefetch = !this.live && !this.prefetchCompleted && this.prefetchProcess == null && !closedOrUnloadedLocked();
 				BufferedImage frame = this.frameSequence != knownFrameSequence ? this.latestFrame : null;
-				boolean ready = this.latestFrame != null;
 				SessionSnapshot snapshot = new SessionSnapshot(
 						this.sessionId,
 						this.title,
@@ -1011,9 +1052,25 @@ public final class MonitorYoutubeRelayClient {
 				if (this.paused) {
 					return;
 				}
-				this.positionMs = currentPositionMsLocked();
+				if (this.live) {
+					this.positionMs = currentPositionMsLocked();
+				} else {
+					long targetPositionMs = currentPositionMsLocked();
+					boolean hasCachedFrame = false;
+					try {
+						hasCachedFrame = applyCachedPreviewLocked(targetPositionMs);
+					} catch (IOException exception) {
+						Lg2.LOGGER.debug("Failed to decode cached YouTube frame while pausing session {}", this.sessionId, exception);
+					}
+					if (hasCachedFrame) {
+						this.positionMs = targetPositionMs;
+						trimCachedPreviewWindowLocked();
+					} else {
+						freezePlaybackClockLocked();
+					}
+				}
 				this.paused = true;
-				this.status = "PAUSED";
+				this.status = this.live || hasCachedFrameForPositionLocked(this.positionMs) ? "PAUSED" : "BUFFERING";
 				stopLocked();
 			}
 		}
@@ -1044,11 +1101,12 @@ public final class MonitorYoutubeRelayClient {
 				if (this.live) {
 					throw new IOException("live stream is not seekable");
 				}
-				long clamped = Math.max(0L, this.durationMs > 0L ? Math.min(targetPositionMs, this.durationMs) : targetPositionMs);
-				this.positionMs = clamped;
-				this.playBasePositionMs = clamped;
-				this.playStartedAtNanos = System.nanoTime();
-				boolean hadCachedPreview = applyCachedPreviewLocked(clamped);
+					long clamped = Math.max(0L, this.durationMs > 0L ? Math.min(targetPositionMs, this.durationMs) : targetPositionMs);
+					this.positionMs = clamped;
+					this.playBasePositionMs = clamped;
+					this.playStartedAtNanos = System.nanoTime();
+					trimCachedPreviewWindowLocked();
+					boolean hadCachedPreview = applyCachedPreviewLocked(clamped);
 				capturePreview = !hadCachedPreview;
 				this.status = this.paused ? "PAUSED" : (hadCachedPreview ? "PLAYING" : "BUFFERING");
 				stopLocked();
@@ -1118,10 +1176,11 @@ public final class MonitorYoutubeRelayClient {
 				return true;
 			} catch (IOException exception) {
 				synchronized (this.lock) {
+					boolean hasCachedFrame = !this.live && hasCachedFrameForPositionLocked(this.positionMs);
 					if (this.paused) {
-						this.status = this.latestFrame != null ? "PAUSED" : "BUFFERING";
+						this.status = hasCachedFrame ? "PAUSED" : "BUFFERING";
 					} else if (!this.live) {
-						this.status = this.latestFrame != null ? "PLAYING" : "BUFFERING";
+						this.status = hasCachedFrame ? "PLAYING" : "BUFFERING";
 					}
 				}
 				if (shouldLogPreviewFailure(reason, exception)) {
@@ -1253,11 +1312,17 @@ public final class MonitorYoutubeRelayClient {
 				return;
 			}
 			long startMs = nextPrefetchStartMsLocked();
+			long maxTargetMs = desiredCacheMaxMsLocked();
+			long durationMs = Math.max(0L, maxTargetMs - startMs + PREVIEW_CACHE_BUCKET_MS);
 			if (this.durationMs > 0L && startMs >= this.durationMs) {
 				this.prefetchCompleted = true;
 				return;
 			}
-			ProcessBuilder builder = new ProcessBuilder(sequentialPrefetchCommand(this.streamUrl, startMs));
+			if (durationMs <= 0L) {
+				this.prefetchCompleted = true;
+				return;
+			}
+			ProcessBuilder builder = new ProcessBuilder(sequentialPrefetchCommand(this.streamUrl, startMs, durationMs));
 			builder.redirectError(ProcessBuilder.Redirect.DISCARD);
 			Process startedProcess = builder.start();
 			this.prefetchProcess = startedProcess;
@@ -1311,6 +1376,11 @@ public final class MonitorYoutubeRelayClient {
 				position = Math.min(position, this.durationMs);
 			}
 			return Math.max(0L, position);
+		}
+
+		private void freezePlaybackClockLocked() {
+			this.playBasePositionMs = this.positionMs;
+			this.playStartedAtNanos = System.nanoTime();
 		}
 
 		private boolean applyCachedPreviewLocked(long positionMs) throws IOException {
@@ -1372,8 +1442,13 @@ public final class MonitorYoutubeRelayClient {
 		}
 
 		private long nextPrefetchStartMsLocked() {
-			if (!this.bufferedFromStart) {
+			if (this.cachedPreviewFrames.isEmpty()) {
 				return 0L;
+			}
+			long currentBucketMs = normalizeBucketMs(this.positionMs);
+			if (currentBucketMs < this.bufferedStartMs - CONTIGUOUS_BUFFER_TOLERANCE_MS
+					|| currentBucketMs > this.bufferedEndMs + CONTIGUOUS_BUFFER_TOLERANCE_MS) {
+				return currentBucketMs;
 			}
 			return Math.max(0L, normalizeBucketMs(this.bufferedEndMs + PREVIEW_CACHE_BUCKET_MS));
 		}
@@ -1392,27 +1467,62 @@ public final class MonitorYoutubeRelayClient {
 						)
 				);
 			}
-			while (this.cachedPreviewFrames.size() > MAX_CACHED_PREVIEW_FRAMES) {
-				this.cachedPreviewFrames.pollFirstEntry();
-			}
-			if (extendBufferedRange) {
-				advanceBufferedRangeLocked(bucketMs);
-			}
+			trimCachedPreviewWindowLocked();
+			recomputeBufferedRangeLocked();
 		}
 
-		private void advanceBufferedRangeLocked(long bucketMs) {
-			if (!this.bufferedFromStart) {
-				if (bucketMs != 0L) {
-					return;
-				}
-				this.bufferedFromStart = true;
+		private void recomputeBufferedRangeLocked() {
+			if (this.cachedPreviewFrames.isEmpty()) {
+				this.bufferedFromStart = false;
 				this.bufferedStartMs = 0L;
 				this.bufferedEndMs = 0L;
 				return;
 			}
-			if (bucketMs <= this.bufferedEndMs + CONTIGUOUS_BUFFER_TOLERANCE_MS) {
-				this.bufferedStartMs = 0L;
-				this.bufferedEndMs = Math.max(this.bufferedEndMs, bucketMs);
+			long startMs = this.cachedPreviewFrames.firstKey();
+			long endMs = startMs;
+			for (Long candidateMs : this.cachedPreviewFrames.tailMap(startMs, false).keySet()) {
+				if (candidateMs > endMs + CONTIGUOUS_BUFFER_TOLERANCE_MS) {
+					break;
+				}
+				endMs = candidateMs;
+			}
+			this.bufferedStartMs = startMs;
+			this.bufferedEndMs = endMs;
+			this.bufferedFromStart = startMs == 0L;
+		}
+
+		private long desiredCacheMinMsLocked() {
+			return Math.max(0L, normalizeBucketMs(this.positionMs - CURRENT_VIDEO_CACHE_BEHIND_MS));
+		}
+
+		private long desiredCacheMaxMsLocked() {
+			long maxMs = normalizeBucketMs(this.positionMs + CURRENT_VIDEO_CACHE_AHEAD_MS);
+			if (this.durationMs > 0L) {
+				maxMs = Math.min(normalizeBucketMs(this.durationMs), maxMs);
+			}
+			return Math.max(0L, maxMs);
+		}
+
+		private void trimCachedPreviewWindowLocked() {
+			if (this.cachedPreviewFrames.isEmpty()) {
+				return;
+			}
+			long keepMinMs = desiredCacheMinMsLocked();
+			long keepMaxMs = desiredCacheMaxMsLocked();
+			while (!this.cachedPreviewFrames.isEmpty() && this.cachedPreviewFrames.firstKey() < keepMinMs) {
+				this.cachedPreviewFrames.pollFirstEntry();
+			}
+			while (!this.cachedPreviewFrames.isEmpty() && this.cachedPreviewFrames.lastKey() > keepMaxMs) {
+				this.cachedPreviewFrames.pollLastEntry();
+			}
+			while (this.cachedPreviewFrames.size() > MAX_SESSION_CACHED_PREVIEW_FRAMES) {
+				long firstDistance = Math.abs(this.cachedPreviewFrames.firstKey() - this.positionMs);
+				long lastDistance = Math.abs(this.cachedPreviewFrames.lastKey() - this.positionMs);
+				if (firstDistance >= lastDistance) {
+					this.cachedPreviewFrames.pollFirstEntry();
+				} else {
+					this.cachedPreviewFrames.pollLastEntry();
+				}
 			}
 		}
 
