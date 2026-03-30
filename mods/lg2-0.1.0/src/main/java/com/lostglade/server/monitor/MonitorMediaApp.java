@@ -31,13 +31,14 @@ import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.stream.Stream;
 
 public final class MonitorMediaApp implements MonitorApp {
 	private static final int MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
 	private static final int CONNECT_TIMEOUT_MS = 4000;
 	private static final int READ_TIMEOUT_MS = 12000;
 	private static final int MAX_DIMENSION = 1024;
-	private static volatile Path cacheDirectory = Path.of(".lg2-monitor-media-cache");
+	private static volatile Path cacheDirectory = Path.of("cache", "lg2-monitor", "media");
 
 	@Override
 	public String id() {
@@ -85,13 +86,44 @@ public final class MonitorMediaApp implements MonitorApp {
 
 	public static LoadedMedia loadFromUrl(String rawUrl, TaskProgress progress) throws IOException {
 		URI uri = validateUri(rawUrl);
-		byte[] bytes = loadBytes(uri, progress);
+		return decode(loadCachedMedia(uri, progress).bytes(), progress);
+	}
+
+	public static String persistSavedGalleryMedia(String rawUrl) throws IOException {
+		URI uri = validateUri(rawUrl);
+		return loadCachedMedia(uri, null).mediaKey();
+	}
+
+	public static LoadedMedia loadSavedGalleryMedia(String mediaKey, TaskProgress progress) throws IOException {
+		Path savedPath = savedGalleryMediaPath(mediaKey);
+		if (savedPath == null || !Files.isRegularFile(savedPath)) {
+			throw new IOException("Saved gallery media is missing");
+		}
+		if (progress != null) {
+			progress.setIndeterminate("LOADING LOCAL");
+		}
+		byte[] bytes = Files.readAllBytes(savedPath);
 		return decode(bytes, progress);
 	}
 
 	public static void setCacheDirectory(Path directory) {
 		if (directory != null) {
 			cacheDirectory = directory;
+		}
+	}
+
+	public static void deleteSavedGalleryMedia(String mediaKey) {
+		deleteFileQuietly(savedGalleryMediaPath(mediaKey), cacheDirectory);
+	}
+
+	public static void deleteCachedUrl(String rawUrl) {
+		if (rawUrl == null || rawUrl.isBlank()) {
+			return;
+		}
+		try {
+			URI uri = validateUri(rawUrl);
+			deleteFileQuietly(urlReferencePath(uri), cacheDirectory);
+		} catch (IOException ignored) {
 		}
 	}
 
@@ -111,17 +143,20 @@ public final class MonitorMediaApp implements MonitorApp {
 		}
 	}
 
-	private static byte[] loadBytes(URI uri, TaskProgress progress) throws IOException {
-		Path cachePath = cachePath(uri);
-		if (cachePath != null && Files.isRegularFile(cachePath)) {
+	private static CachedMediaBytes loadCachedMedia(URI uri, TaskProgress progress) throws IOException {
+		String cachedMediaKey = cachedMediaKey(uri);
+		Path savedPath = savedGalleryMediaPath(cachedMediaKey);
+		if (cachedMediaKey != null && savedPath != null && Files.isRegularFile(savedPath)) {
 			if (progress != null) {
 				progress.setIndeterminate("LOADING CACHE");
 			}
-			return Files.readAllBytes(cachePath);
+			return new CachedMediaBytes(Files.readAllBytes(savedPath), cachedMediaKey);
 		}
 		byte[] bytes = download(uri.toURL(), progress);
-		persistCacheBytes(cachePath, bytes);
-		return bytes;
+		String mediaKey = hashBytes(bytes) + cacheExtension(uri);
+		persistCacheBytes(savedGalleryMediaPath(mediaKey), bytes);
+		persistUrlReference(uri, mediaKey);
+		return new CachedMediaBytes(bytes, mediaKey);
 	}
 
 	private static void persistCacheBytes(Path cachePath, byte[] bytes) {
@@ -144,7 +179,46 @@ public final class MonitorMediaApp implements MonitorApp {
 		}
 	}
 
-	private static Path cachePath(URI uri) {
+	private static String cachedMediaKey(URI uri) {
+		if (uri == null) {
+			return null;
+		}
+		Path referencePath = urlReferencePath(uri);
+		if (referencePath != null && Files.isRegularFile(referencePath)) {
+			try {
+				String mediaKey = Files.readString(referencePath).trim();
+				if (!mediaKey.isBlank() && Files.isRegularFile(savedGalleryMediaPath(mediaKey))) {
+					return mediaKey;
+				}
+				deleteFileQuietly(referencePath, cacheDirectory);
+			} catch (IOException ignored) {
+			}
+		}
+		return null;
+	}
+
+	private static void persistUrlReference(URI uri, String mediaKey) {
+		Path referencePath = urlReferencePath(uri);
+		if (referencePath == null || mediaKey == null || mediaKey.isBlank()) {
+			return;
+		}
+		try {
+			Path parent = referencePath.getParent();
+			if (parent != null) {
+				Files.createDirectories(parent);
+			}
+			Path tempPath = referencePath.resolveSibling(referencePath.getFileName() + ".tmp");
+			Files.writeString(tempPath, mediaKey);
+			try {
+				Files.move(tempPath, referencePath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			} catch (IOException ignored) {
+				Files.move(tempPath, referencePath, StandardCopyOption.REPLACE_EXISTING);
+			}
+		} catch (IOException ignored) {
+		}
+	}
+
+	private static Path urlReferencePath(URI uri) {
 		if (uri == null) {
 			return null;
 		}
@@ -152,7 +226,51 @@ public final class MonitorMediaApp implements MonitorApp {
 		if (cacheKey == null || cacheKey.isBlank()) {
 			return null;
 		}
-		return cacheDirectory.resolve(cacheKey + cacheExtension(uri));
+		return cacheDirectory.resolve("url-index").resolve(cacheKey + ".ref");
+	}
+
+	private static Path savedGalleryMediaPath(String mediaKey) {
+		if (mediaKey == null || mediaKey.isBlank()) {
+			return null;
+		}
+		String normalized = mediaKey.trim();
+		if (normalized.contains("/") || normalized.contains("\\") || normalized.contains("..")) {
+			return null;
+		}
+		return cacheDirectory.resolve("blobs").resolve(normalized);
+	}
+
+	private static void deleteFileQuietly(Path path, Path stopDirectory) {
+		if (path == null) {
+			return;
+		}
+		try {
+			Files.deleteIfExists(path);
+			pruneEmptyParents(path.getParent(), stopDirectory);
+		} catch (IOException ignored) {
+		}
+	}
+
+	private static void pruneEmptyParents(Path directory, Path stopDirectory) {
+		Path current = directory;
+		while (current != null && stopDirectory != null && current.startsWith(stopDirectory) && !current.equals(stopDirectory)) {
+			try (Stream<Path> children = Files.list(current)) {
+				if (children.findAny().isPresent()) {
+					return;
+				}
+			} catch (IOException exception) {
+				return;
+			}
+			try {
+				Files.deleteIfExists(current);
+			} catch (IOException exception) {
+				return;
+			}
+			current = current.getParent();
+		}
+	}
+
+	private record CachedMediaBytes(byte[] bytes, String mediaKey) {
 	}
 
 	private static String cacheExtension(URI uri) {
@@ -174,6 +292,15 @@ public final class MonitorMediaApp implements MonitorApp {
 			return HexFormat.of().formatHex(digest.digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 		} catch (NoSuchAlgorithmException exception) {
 			return Integer.toHexString(value.hashCode());
+		}
+	}
+
+	private static String hashBytes(byte[] bytes) {
+		try {
+			MessageDigest digest = MessageDigest.getInstance("SHA-256");
+			return HexFormat.of().formatHex(digest.digest(bytes));
+		} catch (NoSuchAlgorithmException exception) {
+			return Integer.toHexString(java.util.Arrays.hashCode(bytes));
 		}
 	}
 

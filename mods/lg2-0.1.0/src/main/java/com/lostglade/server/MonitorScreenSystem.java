@@ -50,7 +50,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import net.minecraft.world.level.chunk.LevelChunk;
-import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -68,6 +67,7 @@ import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -111,8 +111,11 @@ public final class MonitorScreenSystem {
 	private static final String PERSISTED_GALLERY_KIND_TAG = "kind";
 	private static final String PERSISTED_GALLERY_TITLE_TAG = "title";
 	private static final String PERSISTED_GALLERY_URL_TAG = "url";
+	private static final String PERSISTED_GALLERY_LOCAL_MEDIA_TAG = "local_media";
 	private static final String PERSISTED_WALLPAPER_URL_TAG = "wallpaper_url";
 	private static final String PERSISTED_WALLPAPER_SCALE_TAG = "wallpaper_scale";
+	private static final String CACHE_ROOT_DIR_NAME = "cache";
+	private static final String CACHE_NAMESPACE_DIR_NAME = "lg2-monitor";
 	private static final String POS_TAG_PREFIX = "lg2_monitor_display_pos:";
 	private static final String FACING_TAG_PREFIX = "lg2_monitor_display_facing:";
 	private static final int MAP_SIZE = 128;
@@ -174,11 +177,22 @@ public final class MonitorScreenSystem {
 		ServerChunkEvents.CHUNK_LOAD.register(MonitorScreenSystem::onChunkLoad);
 		ServerChunkEvents.CHUNK_UNLOAD.register(MonitorScreenSystem::onChunkUnload);
 		ServerTickEvents.END_SERVER_TICK.register(MonitorScreenSystem::tick);
-		ServerLifecycleEvents.SERVER_STARTED.register(server -> MonitorMediaApp.setCacheDirectory(
-				server.getWorldPath(LevelResource.ROOT).resolve("data").resolve("lg2-monitor-media-cache")
-		));
+		ServerLifecycleEvents.SERVER_STARTED.register(MonitorScreenSystem::configureCacheDirectories);
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> MonitorYoutubeRelayClient.shutdown());
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> clearMonitorRuntime());
+	}
+
+	private static void configureCacheDirectories(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		Path cacheRoot = monitorCacheRoot();
+		MonitorMediaApp.setCacheDirectory(cacheRoot.resolve("media"));
+		MonitorYoutubeRelayClient.setCacheDirectory(cacheRoot.resolve("youtube-preload"));
+	}
+
+	private static Path monitorCacheRoot() {
+		return Path.of(System.getProperty("user.dir"), CACHE_ROOT_DIR_NAME, CACHE_NAMESPACE_DIR_NAME);
 	}
 
 	private static void ensureExecutors() {
@@ -274,7 +288,7 @@ public final class MonitorScreenSystem {
 		if (level == null || !(entity instanceof ItemFrame frame) || readScreenState(frame.getItem()) == null) {
 			return;
 		}
-		untrackScreenFrame(level, new ScreenKey(frame.blockPosition(), frame.getDirection()));
+		untrackScreenFrame(level, new ScreenKey(frame.blockPosition(), frame.getDirection()), false);
 	}
 
 	private static void onChunkLoad(ServerLevel level, LevelChunk chunk) {
@@ -293,7 +307,7 @@ public final class MonitorScreenSystem {
 			if (SectionPos.blockToSectionCoord(key.pos().getX()) != chunkX || SectionPos.blockToSectionCoord(key.pos().getZ()) != chunkZ) {
 				continue;
 			}
-			untrackScreenFrame(level, key);
+			untrackScreenFrame(level, key, false);
 		}
 	}
 
@@ -344,7 +358,7 @@ public final class MonitorScreenSystem {
 		enqueueScreenSync(level, key);
 	}
 
-	private static void untrackScreenFrame(ServerLevel level, ScreenKey key) {
+	private static void untrackScreenFrame(ServerLevel level, ScreenKey key, boolean permanentRemoval) {
 		if (level == null || key == null) {
 			return;
 		}
@@ -352,7 +366,7 @@ public final class MonitorScreenSystem {
 		state.knownFrames().remove(key);
 		ScreenRuntimeKey runtimeKey = state.frameToRuntime().remove(key);
 		if (runtimeKey != null) {
-			invalidateCachedRuntime(level, runtimeKey, key);
+			invalidateCachedRuntime(level, runtimeKey, key, permanentRemoval);
 		} else {
 			enqueueNeighborSync(level, key.pos(), key.direction());
 		}
@@ -426,7 +440,7 @@ public final class MonitorScreenSystem {
 		state.enqueuePowerRuntime(component.runtimeKey());
 	}
 
-	private static void invalidateCachedRuntime(ServerLevel level, ScreenRuntimeKey runtimeKey, ScreenKey removedFrameKey) {
+	private static void invalidateCachedRuntime(ServerLevel level, ScreenRuntimeKey runtimeKey, ScreenKey removedFrameKey, boolean permanentRemoval) {
 		if (level == null || runtimeKey == null) {
 			return;
 		}
@@ -436,6 +450,13 @@ public final class MonitorScreenSystem {
 				enqueueNeighborSync(level, removedFrameKey.pos(), removedFrameKey.direction());
 			}
 			return;
+		}
+		if (permanentRemoval) {
+			List<GalleryCacheCandidate> removedCacheCandidates = galleryCacheCandidatesForRemovedComponent(removed, MEDIA_STATES.get(runtimeKey));
+			closeMediaSession(level.getServer(), runtimeKey);
+			if (!removedCacheCandidates.isEmpty()) {
+				scheduleGalleryCacheRelease(level.getServer(), removedCacheCandidates, runtimeKey);
+			}
 		}
 		for (ItemFrame frame : removed.frameCoords().keySet()) {
 			ScreenKey frameKey = new ScreenKey(frame.blockPosition(), frame.getDirection());
@@ -569,7 +590,7 @@ public final class MonitorScreenSystem {
 			frame.spawnAtLocation(level, new ItemStack(ModItems.MONITOR));
 		}
 		frame.discard();
-		untrackScreenFrame(level, new ScreenKey(framePos, facing));
+		untrackScreenFrame(level, new ScreenKey(framePos, facing), true);
 		return true;
 	}
 
@@ -877,6 +898,7 @@ public final class MonitorScreenSystem {
 		boolean galleryWallpaperRequested = false;
 		boolean youtubeDownloadRequested = false;
 		boolean returnToGalleryAfterDelete = false;
+		GalleryCacheCandidate deletedGalleryCacheCandidate = null;
 		String galleryYoutubeUrl = null;
 		String galleryYoutubeTitle = null;
 		Integer galleryYoutubeIndex = null;
@@ -946,8 +968,10 @@ public final class MonitorScreenSystem {
 						if (isGalleryBackedYoutubeLocked(mediaState)) {
 							returnToGalleryAfterDelete = true;
 						}
-						GalleryItem deletedItem = currentGalleryItemLocked(mediaState);
-						boolean stillSelected = removeGalleryItemLocked(mediaState, mediaState.galleryIndex >= 0 ? mediaState.galleryIndex : 0, layout);
+						GalleryRemovalResult removal = removeGalleryItemLocked(mediaState, mediaState.galleryIndex >= 0 ? mediaState.galleryIndex : 0, layout);
+						GalleryItem deletedItem = removal.removedItem();
+						boolean stillSelected = removal.selectionRetained();
+						deletedGalleryCacheCandidate = galleryCacheCandidate(deletedItem);
 						if (deletedItem != null && deletedItem.url() != null && Objects.equals(deletedItem.url(), mediaState.wallpaperUrl)) {
 							clearWallpaperLocked(mediaState);
 						}
@@ -1327,12 +1351,16 @@ public final class MonitorScreenSystem {
 			if (state != null) {
 				persistGalleryState(server, component.runtimeKey(), state);
 			}
+			if (deletedGalleryCacheCandidate != null) {
+				scheduleGalleryCacheRelease(server, List.of(deletedGalleryCacheCandidate), component.runtimeKey());
+			}
 		}
 		if (galleryDeferredLoadIndex != null && server != null) {
 			MediaRuntimeState state = MEDIA_STATES.get(component.runtimeKey());
 			if (state != null) {
 				String deferredTitle = null;
 				String deferredUrl = null;
+				String deferredLocalMediaKey = null;
 				boolean deferredYoutube = false;
 				Integer deferredGalleryIndex = null;
 				synchronized (state) {
@@ -1342,6 +1370,7 @@ public final class MonitorScreenSystem {
 						if (item != null && item.url() != null && !item.url().isBlank()) {
 							deferredTitle = item.title();
 							deferredUrl = item.url();
+							deferredLocalMediaKey = item.localMediaKey();
 							deferredGalleryIndex = index;
 							deferredYoutube = item.kind() == GalleryItemKind.YOUTUBE;
 						}
@@ -1357,7 +1386,7 @@ public final class MonitorScreenSystem {
 							deferredGalleryIndex
 					);
 				} else if (deferredUrl != null) {
-					scheduleGalleryItemLoad(server, component.runtimeKey(), deferredTitle, deferredUrl, true, galleryDeferredLoadIndex);
+					scheduleGalleryItemLoad(server, component.runtimeKey(), deferredTitle, deferredUrl, deferredLocalMediaKey, true, galleryDeferredLoadIndex);
 				}
 			}
 		}
@@ -1470,7 +1499,7 @@ public final class MonitorScreenSystem {
 			state.knownFrames().remove(key);
 			ScreenRuntimeKey runtimeKey = state.frameToRuntime().remove(key);
 			if (runtimeKey != null) {
-				invalidateCachedRuntime(level, runtimeKey, key);
+				invalidateCachedRuntime(level, runtimeKey, key, true);
 			}
 			return;
 		}
@@ -1577,7 +1606,15 @@ public final class MonitorScreenSystem {
 		requestRuntimeRender(server, key);
 		ensureExecutors();
 		mediaScheduler.schedule(
-				() -> server.execute(() -> finishGalleryDownload(server, key, title, url, media, layout)),
+				() -> CompletableFuture
+						.supplyAsync(() -> {
+							try {
+								return new SavedGalleryMediaPersistResult(url, MonitorMediaApp.persistSavedGalleryMedia(url), null);
+							} catch (Exception exception) {
+								return new SavedGalleryMediaPersistResult(url, null, sanitizeMediaError(exception.getMessage()));
+							}
+						}, mediaIoExecutor)
+						.thenAccept(result -> server.execute(() -> finishGalleryDownload(server, key, title, url, media, result.savedMediaKey(), result.error(), layout))),
 				MEDIA_ACTION_SPINNER_MIN_MILLIS,
 				TimeUnit.MILLISECONDS
 		);
@@ -1589,6 +1626,8 @@ public final class MonitorScreenSystem {
 			String title,
 			String url,
 			MonitorMediaApp.LoadedMedia media,
+			String savedMediaKey,
+			String saveError,
 			UiLayout layout
 	) {
 		if (server == null || key == null || url == null || url.isBlank() || media == null || layout == null) {
@@ -1606,10 +1645,18 @@ public final class MonitorScreenSystem {
 				return;
 			}
 			requesterUuid = state.downloadRequesterUuid;
+			if (savedMediaKey == null || savedMediaKey.isBlank()) {
+				clearDownloadStateLocked(state);
+				state.statusText = saveError != null && !saveError.isBlank() ? saveError : "SAVE FAILED";
+				state.version++;
+				requestRuntimeRender(server, key);
+				return;
+			}
 			int index = upsertGalleryItemLocked(
 					state,
 					title,
 					url,
+					savedMediaKey,
 					media,
 					media.frameCount() > 0 ? media.frame(0) : null,
 					GalleryItemKind.MEDIA
@@ -1967,7 +2014,7 @@ public final class MonitorScreenSystem {
 		}
 		for (PersistedGalleryItem item : persistedItems) {
 			if (item.kind() == GalleryItemKind.MEDIA) {
-				scheduleGalleryItemLoad(server, key, item.title(), item.url(), false, -1);
+				scheduleGalleryItemLoad(server, key, item.title(), item.url(), item.localMediaKey(), false, -1);
 			}
 		}
 	}
@@ -1977,15 +2024,25 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		String wallpaperUrl = null;
+		String wallpaperLocalMediaKey = null;
 		boolean shouldRender = false;
 		synchronized (state) {
 			if (state.wallpaperHydrated) {
 				return;
 			}
 			PersistedWallpaperState persisted = null;
+			PersistedGalleryItem persistedWallpaperItem = null;
 			ScreenComponent component = resolveScreenComponent(server, key);
 			if (component != null) {
 				persisted = resolvePersistedWallpaperState(component);
+				if (persisted != null && persisted.url() != null && !persisted.url().isBlank()) {
+					for (PersistedGalleryItem galleryItem : resolvePersistedGalleryState(component)) {
+						if (galleryItem != null && Objects.equals(galleryItem.url(), persisted.url())) {
+							persistedWallpaperItem = galleryItem;
+							break;
+						}
+					}
+				}
 			}
 			state.wallpaperHydrated = true;
 			state.wallpaperFrameIndex = 0;
@@ -1998,12 +2055,13 @@ public final class MonitorScreenSystem {
 			state.wallpaperMedia = currentGalleryItemMatchingUrlLocked(state, state.wallpaperUrl)
 					.map(GalleryItem::media)
 					.orElse(null);
+			wallpaperLocalMediaKey = persistedWallpaperItem != null ? persistedWallpaperItem.localMediaKey() : null;
 			wallpaperUrl = state.wallpaperMedia == null ? state.wallpaperUrl : null;
 			shouldRender = state.wallpaperMedia != null;
 			state.version++;
 		}
 		if (wallpaperUrl != null) {
-			scheduleWallpaperLoad(server, key, wallpaperUrl);
+			scheduleWallpaperLoad(server, key, wallpaperUrl, wallpaperLocalMediaKey);
 		}
 		if (shouldRender) {
 			requestRuntimeRender(server, key);
@@ -2032,7 +2090,7 @@ public final class MonitorScreenSystem {
 		}
 	}
 
-	private static void scheduleGalleryItemLoad(MinecraftServer server, ScreenRuntimeKey key, String title, String url, boolean openWhenReady, int preferredIndex) {
+	private static void scheduleGalleryItemLoad(MinecraftServer server, ScreenRuntimeKey key, String title, String url, String localMediaKey, boolean openWhenReady, int preferredIndex) {
 		if (server == null || key == null || url == null || url.isBlank()) {
 			return;
 		}
@@ -2080,13 +2138,16 @@ public final class MonitorScreenSystem {
 								key,
 								title,
 								url,
-								MonitorMediaApp.loadFromUrl(url, finalProgress),
+								localMediaKey,
+								localMediaKey != null && !localMediaKey.isBlank()
+										? MonitorMediaApp.loadSavedGalleryMedia(localMediaKey, finalProgress)
+										: MonitorMediaApp.loadFromUrl(url, finalProgress),
 								openWhenReady,
 								preferredIndex,
 								null
 						);
 					} catch (Exception exception) {
-						return new GalleryItemLoadResult(key, title, url, null, openWhenReady, preferredIndex, sanitizeMediaError(exception.getMessage()));
+						return new GalleryItemLoadResult(key, title, url, localMediaKey, null, openWhenReady, preferredIndex, sanitizeMediaError(exception.getMessage()));
 					}
 				}, mediaIoExecutor)
 				.thenAccept(result -> server.execute(() -> applyGalleryItemLoadResult(server, result)));
@@ -2104,6 +2165,7 @@ public final class MonitorScreenSystem {
 		UiLayout layout = component != null ? createUiLayout(component.width(), component.height()) : null;
 		boolean shouldRender = false;
 		boolean shouldAnimate = false;
+		boolean shouldPersistLocalMedia = false;
 		synchronized (state) {
 			state.galleryLoadingUrls.remove(result.url());
 			boolean openWhenReady = result.openWhenReady()
@@ -2121,6 +2183,7 @@ public final class MonitorScreenSystem {
 						new GalleryItem(
 								(existing != null && existing.title() != null && !existing.title().isBlank()) ? existing.title() : result.title(),
 								result.url(),
+								result.localMediaKey() != null && !result.localMediaKey().isBlank() ? result.localMediaKey() : existing != null ? existing.localMediaKey() : null,
 								result.loadedMedia(),
 								result.loadedMedia().frameCount() > 0 ? result.loadedMedia().frame(0) : (existing != null ? existing.preview() : null),
 								GalleryItemKind.MEDIA
@@ -2141,6 +2204,7 @@ public final class MonitorScreenSystem {
 				}
 				state.version++;
 				shouldRender = true;
+				shouldPersistLocalMedia = (result.localMediaKey() == null || result.localMediaKey().isBlank());
 			} else if (openWhenReady) {
 				state.loading = false;
 				state.statusText = sanitizeMediaError(result.error());
@@ -2154,6 +2218,54 @@ public final class MonitorScreenSystem {
 		}
 		if (shouldAnimate) {
 			scheduleNextMediaFrame(server, result.screenKey());
+		}
+		if (shouldPersistLocalMedia) {
+			scheduleGalleryLocalMediaPersistence(server, result.screenKey(), result.url());
+		}
+	}
+
+	private static void scheduleGalleryLocalMediaPersistence(MinecraftServer server, ScreenRuntimeKey key, String url) {
+		if (server == null || key == null || url == null || url.isBlank()) {
+			return;
+		}
+		ensureExecutors();
+		CompletableFuture
+				.supplyAsync(() -> {
+					try {
+						return new SavedGalleryMediaPersistResult(url, MonitorMediaApp.persistSavedGalleryMedia(url), null);
+					} catch (Exception exception) {
+						return new SavedGalleryMediaPersistResult(url, null, sanitizeMediaError(exception.getMessage()));
+					}
+				}, mediaIoExecutor)
+				.thenAccept(result -> server.execute(() -> applyGalleryLocalMediaPersistence(server, key, result)));
+	}
+
+	private static void applyGalleryLocalMediaPersistence(MinecraftServer server, ScreenRuntimeKey key, SavedGalleryMediaPersistResult result) {
+		if (server == null || key == null || result == null || result.savedMediaKey() == null || result.savedMediaKey().isBlank()) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		boolean changed = false;
+		synchronized (state) {
+			int index = resolveGalleryItemIndex(state, result.url(), -1);
+			if (index < 0 || index >= state.galleryItems.size()) {
+				return;
+			}
+			GalleryItem item = state.galleryItems.get(index);
+			if (item == null || item.kind() != GalleryItemKind.MEDIA || item.localMediaKey() != null && !item.localMediaKey().isBlank()) {
+				return;
+			}
+			state.galleryItems.set(
+					index,
+					new GalleryItem(item.title(), item.url(), result.savedMediaKey(), item.media(), item.preview(), item.kind())
+			);
+			changed = true;
+		}
+		if (changed) {
+			persistGalleryState(server, key, state);
 		}
 	}
 
@@ -2174,6 +2286,262 @@ public final class MonitorScreenSystem {
 			}
 		}
 		return -1;
+	}
+
+	private static GalleryCacheCandidate galleryCacheCandidate(GalleryItem item) {
+		if (item == null) {
+			return null;
+		}
+		String url = item.url() != null ? item.url().trim() : "";
+		String localMediaKey = item.localMediaKey() != null ? item.localMediaKey().trim() : "";
+		if (url.isBlank() && localMediaKey.isBlank()) {
+			return null;
+		}
+		return new GalleryCacheCandidate(url, localMediaKey, item.kind() != null ? item.kind() : GalleryItemKind.MEDIA);
+	}
+
+	private static List<GalleryCacheCandidate> galleryCacheCandidatesForRemovedComponent(ScreenComponent component, MediaRuntimeState runtimeState) {
+		Set<GalleryCacheCandidate> candidates = new LinkedHashSet<>();
+		if (runtimeState != null) {
+			synchronized (runtimeState) {
+				for (GalleryItem item : runtimeState.galleryItems) {
+					GalleryCacheCandidate candidate = galleryCacheCandidate(item);
+					if (candidate != null) {
+						candidates.add(candidate);
+					}
+				}
+			}
+		}
+		if (component != null) {
+			for (ItemFrame frame : component.frameCoords().keySet()) {
+				List<PersistedGalleryItem> persistedItems = readPersistedGalleryState(frame.getItem());
+				if (persistedItems.isEmpty()) {
+					continue;
+				}
+				for (PersistedGalleryItem item : persistedItems) {
+					GalleryCacheCandidate candidate = galleryCacheCandidate(item);
+					if (candidate != null) {
+						candidates.add(candidate);
+					}
+				}
+				break;
+			}
+		}
+		return List.copyOf(candidates);
+	}
+
+	private static GalleryCacheCandidate galleryCacheCandidate(PersistedGalleryItem item) {
+		if (item == null) {
+			return null;
+		}
+		String url = item.url() != null ? item.url().trim() : "";
+		String localMediaKey = item.localMediaKey() != null ? item.localMediaKey().trim() : "";
+		if (url.isBlank() && localMediaKey.isBlank()) {
+			return null;
+		}
+		return new GalleryCacheCandidate(url, localMediaKey, item.kind() != null ? item.kind() : GalleryItemKind.MEDIA);
+	}
+
+	private static void scheduleGalleryCacheRelease(MinecraftServer server, List<GalleryCacheCandidate> candidates, ScreenRuntimeKey excludedRuntimeKey) {
+		if (server == null || candidates == null || candidates.isEmpty()) {
+			return;
+		}
+		List<GalleryCacheCandidate> normalizedCandidates = candidates.stream()
+				.filter(Objects::nonNull)
+				.distinct()
+				.toList();
+		if (normalizedCandidates.isEmpty()) {
+			return;
+		}
+		GalleryCacheReferenceSnapshot refs = collectGalleryCacheReferences(server, excludedRuntimeKey);
+		ensureExecutors();
+		CompletableFuture.runAsync(() -> applyGalleryCacheRelease(normalizedCandidates, refs), mediaIoExecutor);
+	}
+
+	private static GalleryCacheReferenceSnapshot collectGalleryCacheReferences(MinecraftServer server, ScreenRuntimeKey excludedRuntimeKey) {
+		Set<String> localMediaKeys = new HashSet<>();
+		Set<String> galleryMediaUrls = new HashSet<>();
+		Set<String> galleryYoutubeUrls = new HashSet<>();
+		Set<String> activeMediaUrls = new HashSet<>();
+		Set<String> activeYoutubeUrls = new HashSet<>();
+		for (Map.Entry<ScreenRuntimeKey, MediaRuntimeState> entry : List.copyOf(MEDIA_STATES.entrySet())) {
+			if (entry == null || entry.getKey() == null || entry.getValue() == null) {
+				continue;
+			}
+			if (excludedRuntimeKey != null && excludedRuntimeKey.equals(entry.getKey())) {
+				continue;
+			}
+			synchronized (entry.getValue()) {
+				collectGalleryCacheReferencesLocked(entry.getValue(), localMediaKeys, galleryMediaUrls, galleryYoutubeUrls, activeMediaUrls, activeYoutubeUrls);
+			}
+		}
+		for (MonitorLevelState levelState : LEVEL_STATES.values()) {
+			if (levelState == null) {
+				continue;
+			}
+			for (ScreenComponent component : List.copyOf(levelState.components().values())) {
+				if (component == null || (excludedRuntimeKey != null && excludedRuntimeKey.equals(component.runtimeKey()))) {
+					continue;
+				}
+				for (ItemFrame frame : component.frameCoords().keySet()) {
+					List<PersistedGalleryItem> persistedItems = readPersistedGalleryState(frame.getItem());
+					if (persistedItems.isEmpty()) {
+						continue;
+					}
+					collectPersistedGalleryCacheReferences(persistedItems, localMediaKeys, galleryMediaUrls, galleryYoutubeUrls);
+					break;
+				}
+			}
+		}
+		return new GalleryCacheReferenceSnapshot(
+				Set.copyOf(localMediaKeys),
+				Set.copyOf(galleryMediaUrls),
+				Set.copyOf(galleryYoutubeUrls),
+				Set.copyOf(activeMediaUrls),
+				Set.copyOf(activeYoutubeUrls)
+		);
+	}
+
+	private static void collectGalleryCacheReferencesLocked(
+			MediaRuntimeState state,
+			Set<String> localMediaKeys,
+			Set<String> galleryMediaUrls,
+			Set<String> galleryYoutubeUrls,
+			Set<String> activeMediaUrls,
+			Set<String> activeYoutubeUrls
+	) {
+		if (state == null) {
+			return;
+		}
+		for (GalleryItem item : state.galleryItems) {
+			collectGalleryCacheReference(item, localMediaKeys, galleryMediaUrls, galleryYoutubeUrls);
+		}
+		collectActiveMediaUrl(state.sourceUrl, activeMediaUrls, activeYoutubeUrls);
+		collectActiveMediaUrl(state.downloadTargetUrl, activeMediaUrls, activeYoutubeUrls);
+		for (String url : state.galleryLoadingUrls) {
+			collectActiveMediaUrl(url, activeMediaUrls, activeYoutubeUrls);
+		}
+		for (YoutubeQueueItem item : state.youtubeQueue) {
+			if (item == null) {
+				continue;
+			}
+			collectActiveMediaUrl(item.url(), activeMediaUrls, activeYoutubeUrls);
+		}
+		for (String url : state.retainedYoutubePreloadUrls) {
+			collectActiveMediaUrl(url, activeMediaUrls, activeYoutubeUrls);
+		}
+	}
+
+	private static void collectPersistedGalleryCacheReferences(
+			List<PersistedGalleryItem> persistedItems,
+			Set<String> localMediaKeys,
+			Set<String> galleryMediaUrls,
+			Set<String> galleryYoutubeUrls
+	) {
+		if (persistedItems == null || persistedItems.isEmpty()) {
+			return;
+		}
+		for (PersistedGalleryItem item : persistedItems) {
+			collectGalleryCacheReference(item, localMediaKeys, galleryMediaUrls, galleryYoutubeUrls);
+		}
+	}
+
+	private static void collectGalleryCacheReference(
+			GalleryItem item,
+			Set<String> localMediaKeys,
+			Set<String> galleryMediaUrls,
+			Set<String> galleryYoutubeUrls
+	) {
+		if (item == null) {
+			return;
+		}
+		collectGalleryCacheReference(item.url(), item.localMediaKey(), item.kind(), localMediaKeys, galleryMediaUrls, galleryYoutubeUrls);
+	}
+
+	private static void collectGalleryCacheReference(
+			PersistedGalleryItem item,
+			Set<String> localMediaKeys,
+			Set<String> galleryMediaUrls,
+			Set<String> galleryYoutubeUrls
+	) {
+		if (item == null) {
+			return;
+		}
+		collectGalleryCacheReference(item.url(), item.localMediaKey(), item.kind(), localMediaKeys, galleryMediaUrls, galleryYoutubeUrls);
+	}
+
+	private static void collectGalleryCacheReference(
+			String url,
+			String localMediaKey,
+			GalleryItemKind kind,
+			Set<String> localMediaKeys,
+			Set<String> galleryMediaUrls,
+			Set<String> galleryYoutubeUrls
+	) {
+		String normalizedUrl = url != null ? url.trim() : "";
+		String normalizedLocalMediaKey = localMediaKey != null ? localMediaKey.trim() : "";
+		GalleryItemKind resolvedKind = kind != null ? kind : GalleryItemKind.MEDIA;
+		if (resolvedKind == GalleryItemKind.YOUTUBE) {
+			if (!normalizedUrl.isBlank()) {
+				galleryYoutubeUrls.add(normalizedUrl);
+			}
+			return;
+		}
+		if (!normalizedUrl.isBlank()) {
+			galleryMediaUrls.add(normalizedUrl);
+		}
+		if (!normalizedLocalMediaKey.isBlank()) {
+			localMediaKeys.add(normalizedLocalMediaKey);
+		}
+	}
+
+	private static void collectActiveMediaUrl(String url, Set<String> activeMediaUrls, Set<String> activeYoutubeUrls) {
+		if (url == null || url.isBlank()) {
+			return;
+		}
+		String normalizedUrl = url.trim();
+		if (MonitorYoutubeRelayClient.looksLikeYoutubeUrl(normalizedUrl)) {
+			activeYoutubeUrls.add(normalizedUrl);
+		} else {
+			activeMediaUrls.add(normalizedUrl);
+		}
+	}
+
+	private static void applyGalleryCacheRelease(List<GalleryCacheCandidate> candidates, GalleryCacheReferenceSnapshot refs) {
+		if (candidates == null || candidates.isEmpty() || refs == null) {
+			return;
+		}
+		Set<String> deletedLocalMediaKeys = new HashSet<>();
+		Set<String> deletedMediaUrls = new HashSet<>();
+		Set<String> deletedYoutubeUrls = new HashSet<>();
+		for (GalleryCacheCandidate candidate : candidates) {
+			if (candidate == null) {
+				continue;
+			}
+			String url = candidate.url() != null ? candidate.url().trim() : "";
+			String localMediaKey = candidate.localMediaKey() != null ? candidate.localMediaKey().trim() : "";
+			if (candidate.kind() == GalleryItemKind.YOUTUBE) {
+				if (url.isBlank()
+						|| refs.galleryYoutubeUrls().contains(url)
+						|| refs.activeYoutubeUrls().contains(url)
+						|| !deletedYoutubeUrls.add(url)) {
+					continue;
+				}
+				MonitorYoutubeRelayClient.deletePersistentQueueEntry(url);
+				continue;
+			}
+			if (!localMediaKey.isBlank()
+					&& !refs.localMediaKeys().contains(localMediaKey)
+					&& deletedLocalMediaKeys.add(localMediaKey)) {
+				MonitorMediaApp.deleteSavedGalleryMedia(localMediaKey);
+			}
+			if (!url.isBlank()
+					&& !refs.galleryMediaUrls().contains(url)
+					&& !refs.activeMediaUrls().contains(url)
+					&& deletedMediaUrls.add(url)) {
+				MonitorMediaApp.deleteCachedUrl(url);
+			}
+		}
 	}
 
 	private static void persistGalleryState(MinecraftServer server, ScreenRuntimeKey key, MediaRuntimeState state) {
@@ -2201,7 +2569,7 @@ public final class MonitorScreenSystem {
 		}
 	}
 
-	private static void scheduleWallpaperLoad(MinecraftServer server, ScreenRuntimeKey key, String url) {
+	private static void scheduleWallpaperLoad(MinecraftServer server, ScreenRuntimeKey key, String url, String localMediaKey) {
 		if (server == null || key == null || url == null || url.isBlank()) {
 			return;
 		}
@@ -2219,9 +2587,17 @@ public final class MonitorScreenSystem {
 		CompletableFuture
 				.supplyAsync(() -> {
 					try {
-						return new WallpaperLoadResult(key, url, MonitorMediaApp.loadFromUrl(url), null);
+						return new WallpaperLoadResult(
+								key,
+								url,
+								localMediaKey,
+								localMediaKey != null && !localMediaKey.isBlank()
+										? MonitorMediaApp.loadSavedGalleryMedia(localMediaKey, null)
+										: MonitorMediaApp.loadFromUrl(url),
+								null
+						);
 					} catch (Exception exception) {
-						return new WallpaperLoadResult(key, url, null, sanitizeMediaError(exception.getMessage()));
+						return new WallpaperLoadResult(key, url, localMediaKey, null, sanitizeMediaError(exception.getMessage()));
 					}
 				}, mediaIoExecutor)
 				.thenAccept(result -> server.execute(() -> applyWallpaperLoadResult(server, result)));
@@ -2257,6 +2633,7 @@ public final class MonitorScreenSystem {
 							new GalleryItem(
 									existing.title(),
 									existing.url(),
+									existing.localMediaKey(),
 									result.loadedMedia(),
 									result.loadedMedia().frameCount() > 0 ? result.loadedMedia().frame(0) : existing.preview(),
 									existing.kind()
@@ -2772,7 +3149,7 @@ public final class MonitorScreenSystem {
 		}
 			synchronized (state) {
 				cancelPlaybackLocked(state);
-				if (isYoutubePlaybackLocked(state)) {
+				if (hasActiveYoutubePlaybackLocked(state)) {
 					if (state.waitingForLink) {
 						return;
 					}
@@ -2821,7 +3198,7 @@ public final class MonitorScreenSystem {
 			if (!state.loading || state.waitingForLink) {
 				return;
 			}
-			if (isYoutubePlaybackLocked(state) && state.relaySessionId != null) {
+			if (hasActiveYoutubePlaybackLocked(state) && state.relaySessionId != null) {
 				return;
 			}
 		}
@@ -2864,7 +3241,7 @@ public final class MonitorScreenSystem {
 
 		boolean shouldContinue;
 		synchronized (state) {
-			if (isYoutubePlaybackLocked(state)) {
+			if (hasActiveYoutubePlaybackLocked(state)) {
 				state.playbackFuture = null;
 				return;
 			}
@@ -2906,7 +3283,7 @@ public final class MonitorScreenSystem {
 				}
 				if (state.loading) {
 					// Keep loading spinners animating even before the relay session is fully connected.
-				} else if (isYoutubePlaybackLocked(state)) {
+				} else if (hasActiveYoutubePlaybackLocked(state)) {
 					if (state.relaySessionId == null) {
 						return;
 					}
@@ -3863,7 +4240,7 @@ public final class MonitorScreenSystem {
 			frame.setItem(updated, false);
 		}
 		if (level != null) {
-			invalidateCachedRuntime(level, component.runtimeKey(), null);
+			invalidateCachedRuntime(level, component.runtimeKey(), null, false);
 		}
 	}
 
@@ -3943,7 +4320,7 @@ public final class MonitorScreenSystem {
 			BufferedImage preview = item.kind() == GalleryItemKind.YOUTUBE
 					? MonitorYoutubeRelayClient.queueEntryPreview(item.url())
 					: null;
-			items.add(new GalleryItem(item.title(), item.url(), null, preview, item.kind()));
+			items.add(new GalleryItem(item.title(), item.url(), item.localMediaKey(), null, preview, item.kind()));
 		}
 		return List.copyOf(items);
 	}
@@ -4075,11 +4452,12 @@ public final class MonitorScreenSystem {
 				continue;
 			}
 			String title = itemTag.getStringOr(PERSISTED_GALLERY_TITLE_TAG, "").trim();
+			String localMediaKey = itemTag.getStringOr(PERSISTED_GALLERY_LOCAL_MEDIA_TAG, "").trim();
 			GalleryItemKind kind = GalleryItemKind.fromPersisted(
 					itemTag.getStringOr(PERSISTED_GALLERY_KIND_TAG, ""),
 					url
 			);
-			items.add(new PersistedGalleryItem(title, url, kind));
+			items.add(new PersistedGalleryItem(title, url, kind, localMediaKey));
 		}
 		return List.copyOf(items);
 	}
@@ -4140,6 +4518,9 @@ public final class MonitorScreenSystem {
 				itemTag.putString(PERSISTED_GALLERY_TITLE_TAG, item.title() == null ? "" : item.title());
 				itemTag.putString(PERSISTED_GALLERY_URL_TAG, item.url() == null ? "" : item.url());
 				itemTag.putString(PERSISTED_GALLERY_KIND_TAG, item.kind() != null ? item.kind().persistedName() : GalleryItemKind.MEDIA.persistedName());
+				if (item.localMediaKey() != null && !item.localMediaKey().isBlank()) {
+					itemTag.putString(PERSISTED_GALLERY_LOCAL_MEDIA_TAG, item.localMediaKey());
+				}
 				mediaTag.put(PERSISTED_GALLERY_ITEM_PREFIX + index, itemTag);
 			}
 			if (wallpaperState != null && wallpaperState.url() != null && !wallpaperState.url().isBlank()) {
@@ -4174,7 +4555,8 @@ public final class MonitorScreenSystem {
 			items.add(new PersistedGalleryItem(
 					item.title() == null ? "" : item.title(),
 					item.url().trim(),
-					item.kind() != null ? item.kind() : GalleryItemKind.MEDIA
+					item.kind() != null ? item.kind() : GalleryItemKind.MEDIA,
+					item.localMediaKey() == null ? "" : item.localMediaKey().trim()
 			));
 		}
 		return List.copyOf(items);
@@ -8049,6 +8431,7 @@ public final class MonitorScreenSystem {
 				state,
 				title,
 				state.sourceUrl,
+				null,
 				state.loadedMedia,
 				state.loadedMedia.frameCount() > 0 ? state.loadedMedia.frame(0) : null,
 				GalleryItemKind.MEDIA
@@ -8066,6 +8449,7 @@ public final class MonitorScreenSystem {
 				title,
 				state.sourceUrl,
 				null,
+				null,
 				copyBufferedImage(state.streamFrame),
 				GalleryItemKind.YOUTUBE
 		) >= 0;
@@ -8075,6 +8459,7 @@ public final class MonitorScreenSystem {
 			MediaRuntimeState state,
 			String title,
 			String url,
+			String localMediaKey,
 			MonitorMediaApp.LoadedMedia media,
 			BufferedImage preview,
 			GalleryItemKind kind
@@ -8093,6 +8478,7 @@ public final class MonitorScreenSystem {
 					new GalleryItem(
 							resolvedTitle,
 							url,
+							localMediaKey != null && !localMediaKey.isBlank() ? localMediaKey : existing != null ? existing.localMediaKey() : null,
 							media != null ? media : existing != null ? existing.media() : null,
 							preview != null ? preview : existing != null ? existing.preview() : null,
 							kind != null ? kind : existing != null ? existing.kind() : GalleryItemKind.MEDIA
@@ -8103,6 +8489,7 @@ public final class MonitorScreenSystem {
 		state.galleryItems.add(new GalleryItem(
 				resolvedTitle,
 				url,
+				localMediaKey,
 				media,
 				preview,
 				kind != null ? kind : GalleryItemKind.MEDIA
@@ -8184,12 +8571,12 @@ public final class MonitorScreenSystem {
 				&& state.bufferedEndMs >= requiredBufferedEndMs;
 	}
 
-	private static boolean removeGalleryItemLocked(MediaRuntimeState state, int requestedIndex, UiLayout layout) {
+	private static GalleryRemovalResult removeGalleryItemLocked(MediaRuntimeState state, int requestedIndex, UiLayout layout) {
 		if (state == null || state.galleryItems.isEmpty()) {
 			clearGallerySelectionLocked(state);
 			state.galleryIndex = -1;
 			state.galleryScroll = 0;
-			return false;
+			return new GalleryRemovalResult(null, false);
 		}
 		int resolvedIndex = clampInt(requestedIndex, 0, state.galleryItems.size() - 1);
 		GalleryItem removed = state.galleryItems.remove(resolvedIndex);
@@ -8200,13 +8587,13 @@ public final class MonitorScreenSystem {
 			clearGallerySelectionLocked(state);
 			state.galleryIndex = -1;
 			state.galleryScroll = 0;
-			return false;
+			return new GalleryRemovalResult(removed, false);
 		}
 		int nextIndex = Math.min(resolvedIndex, state.galleryItems.size() - 1);
 		int visibleRows = galleryVisibleRowsPreview(layout);
 		int totalRows = galleryTotalRowsPreview(state.galleryItems.size(), layout);
 		state.galleryScroll = clampInt(state.galleryScroll, 0, Math.max(0, totalRows - visibleRows));
-		return selectGalleryItemLocked(state, nextIndex, layout);
+		return new GalleryRemovalResult(removed, selectGalleryItemLocked(state, nextIndex, layout));
 	}
 
 	private static String galleryItemTitle(String url, MonitorMediaApp.LoadedMedia media, int fallbackIndex) {
@@ -8349,6 +8736,17 @@ public final class MonitorScreenSystem {
 
 	private static boolean isYoutubePlaybackLocked(MediaRuntimeState state) {
 		return state != null && (state.mode == ScreenViewMode.YOUTUBE || isGalleryBackedYoutubeLocked(state));
+	}
+
+	private static boolean hasActiveYoutubePlaybackLocked(MediaRuntimeState state) {
+		if (!isYoutubePlaybackLocked(state)) {
+			return false;
+		}
+		return isGalleryBackedYoutubeLocked(state)
+				|| state.loading
+				|| (state.sourceUrl != null && !state.sourceUrl.isBlank())
+				|| (state.relaySessionId != null && !state.relaySessionId.isBlank())
+				|| !state.youtubeQueue.isEmpty();
 	}
 
 	private static boolean canSeekTimelineLocked(MediaRuntimeState state) {
@@ -8806,10 +9204,25 @@ public final class MonitorScreenSystem {
 		}
 	}
 
-	private record GalleryItem(String title, String url, MonitorMediaApp.LoadedMedia media, BufferedImage preview, GalleryItemKind kind) {
+	private record GalleryItem(String title, String url, String localMediaKey, MonitorMediaApp.LoadedMedia media, BufferedImage preview, GalleryItemKind kind) {
 	}
 
-	private record PersistedGalleryItem(String title, String url, GalleryItemKind kind) {
+	private record PersistedGalleryItem(String title, String url, GalleryItemKind kind, String localMediaKey) {
+	}
+
+	private record GalleryRemovalResult(GalleryItem removedItem, boolean selectionRetained) {
+	}
+
+	private record GalleryCacheCandidate(String url, String localMediaKey, GalleryItemKind kind) {
+	}
+
+	private record GalleryCacheReferenceSnapshot(
+			Set<String> localMediaKeys,
+			Set<String> galleryMediaUrls,
+			Set<String> galleryYoutubeUrls,
+			Set<String> activeMediaUrls,
+			Set<String> activeYoutubeUrls
+	) {
 	}
 
 	private record PersistedWallpaperState(String url, MediaScaleMode scaleMode) {
@@ -8819,16 +9232,25 @@ public final class MonitorScreenSystem {
 			ScreenRuntimeKey screenKey,
 			String title,
 			String url,
+			String localMediaKey,
 			MonitorMediaApp.LoadedMedia loadedMedia,
 			boolean openWhenReady,
 			int preferredIndex,
 			String error
-		) {
+	) {
+	}
+
+	private record SavedGalleryMediaPersistResult(
+			String url,
+			String savedMediaKey,
+			String error
+	) {
 	}
 
 	private record WallpaperLoadResult(
 			ScreenRuntimeKey screenKey,
 			String url,
+			String localMediaKey,
 			MonitorMediaApp.LoadedMedia loadedMedia,
 			String error
 	) {

@@ -20,6 +20,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
@@ -33,6 +34,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.TreeMap;
+import java.util.stream.Stream;
 
 public final class MonitorYoutubeRelayClient {
 	private static final Gson GSON = new Gson();
@@ -59,7 +61,7 @@ public final class MonitorYoutubeRelayClient {
 	private static final long CACHE_LOOKUP_TOLERANCE_MS = Math.max(100L, PREVIEW_CACHE_BUCKET_MS * 2L);
 	private static final long CONTIGUOUS_BUFFER_TOLERANCE_MS = PREVIEW_CACHE_BUCKET_MS + CACHE_LOOKUP_TOLERANCE_MS;
 	private static final long PROCESS_STOP_TIMEOUT_MS = 250L;
-	private static final Path PERSISTENT_PRELOAD_CACHE_ROOT = Path.of(System.getProperty("user.dir"), ".lg2-cache", "youtube-preload");
+	private static volatile Path persistentPreloadCacheRoot = Path.of(System.getProperty("user.dir"), "cache", "lg2-monitor", "youtube-preload");
 
 	static {
 		CLEANUP_EXECUTOR.scheduleAtFixedRate(MonitorYoutubeRelayClient::cleanupExpiredSessions, 30L, 30L, TimeUnit.SECONDS);
@@ -118,6 +120,19 @@ public final class MonitorYoutubeRelayClient {
 			return;
 		}
 		requireSession(sessionId).persistQueuePreload(rawUrl.trim());
+	}
+
+	public static void setCacheDirectory(Path directory) {
+		if (directory != null) {
+			persistentPreloadCacheRoot = directory;
+		}
+	}
+
+	public static void deletePersistentQueueEntry(String rawUrl) {
+		if (!looksLikeYoutubeUrl(rawUrl)) {
+			return;
+		}
+		deleteDirectoryQuietly(persistentQueuePreloadDir(rawUrl.trim()), persistentPreloadCacheRoot);
 	}
 
 	public static void close(String sessionId) throws IOException {
@@ -257,7 +272,39 @@ public final class MonitorYoutubeRelayClient {
 	}
 
 	private static Path persistentQueuePreloadDir(String url) {
-		return PERSISTENT_PRELOAD_CACHE_ROOT.resolve(urlCacheKey(url));
+		return persistentPreloadCacheRoot.resolve(urlCacheKey(url));
+	}
+
+	private static void deleteDirectoryQuietly(Path directory, Path stopDirectory) {
+		if (directory == null) {
+			return;
+		}
+		try (Stream<Path> paths = Files.walk(directory)) {
+			for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator) {
+				Files.deleteIfExists(path);
+			}
+			pruneEmptyParents(directory.getParent(), stopDirectory);
+		} catch (IOException ignored) {
+		}
+	}
+
+	private static void pruneEmptyParents(Path directory, Path stopDirectory) {
+		Path current = directory;
+		while (current != null && stopDirectory != null && current.startsWith(stopDirectory) && !current.equals(stopDirectory)) {
+			try (Stream<Path> children = Files.list(current)) {
+				if (children.findAny().isPresent()) {
+					return;
+				}
+			} catch (IOException exception) {
+				return;
+			}
+			try {
+				Files.deleteIfExists(current);
+			} catch (IOException exception) {
+				return;
+			}
+			current = current.getParent();
+		}
 	}
 
 	private static String urlCacheKey(String url) {
