@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,6 +32,9 @@ import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 public final class MonitorMediaApp implements MonitorApp {
@@ -38,6 +42,9 @@ public final class MonitorMediaApp implements MonitorApp {
 	private static final int CONNECT_TIMEOUT_MS = 4000;
 	private static final int READ_TIMEOUT_MS = 12000;
 	private static final int MAX_DIMENSION = 1024;
+	private static final int COMMAND_TIMEOUT_SEC = 20;
+	private static final String DEFAULT_FFMPEG_BIN = "ffmpeg";
+	private static final String DEFAULT_FFPROBE_BIN = "ffprobe";
 	private static volatile Path cacheDirectory = Path.of("cache", "lg2-monitor", "media");
 
 	@Override
@@ -152,8 +159,9 @@ public final class MonitorMediaApp implements MonitorApp {
 			}
 			return new CachedMediaBytes(Files.readAllBytes(savedPath), cachedMediaKey);
 		}
-		byte[] bytes = download(uri.toURL(), progress);
-		String mediaKey = hashBytes(bytes) + cacheExtension(uri);
+		DownloadedMediaBytes downloaded = download(uri, progress);
+		byte[] bytes = downloaded.bytes();
+		String mediaKey = hashBytes(bytes) + downloaded.extension();
 		persistCacheBytes(savedGalleryMediaPath(mediaKey), bytes);
 		persistUrlReference(uri, mediaKey);
 		return new CachedMediaBytes(bytes, mediaKey);
@@ -240,6 +248,62 @@ public final class MonitorMediaApp implements MonitorApp {
 		return cacheDirectory.resolve("blobs").resolve(normalized);
 	}
 
+	private static String extensionFromContentType(String contentType) {
+		if (contentType == null || contentType.isBlank()) {
+			return null;
+		}
+		String normalized = contentType.toLowerCase(Locale.ROOT);
+		int separator = normalized.indexOf(';');
+		if (separator >= 0) {
+			normalized = normalized.substring(0, separator).trim();
+		}
+		return switch (normalized) {
+			case "image/png" -> ".png";
+			case "image/jpeg", "image/jpg" -> ".jpg";
+			case "image/gif" -> ".gif";
+			case "image/webp" -> ".webp";
+			case "image/bmp" -> ".bmp";
+			case "image/avif" -> ".avif";
+			case "image/x-icon", "image/vnd.microsoft.icon" -> ".ico";
+			default -> null;
+		};
+	}
+
+	private static String sniffExtension(byte[] bytes) {
+		if (bytes == null || bytes.length < 12) {
+			return null;
+		}
+		if ((bytes[0] & 0xFF) == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
+			return ".png";
+		}
+		if ((bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8) {
+			return ".jpg";
+		}
+		if (bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F') {
+			return ".gif";
+		}
+		if (bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+				&& bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
+			return ".webp";
+		}
+		if (bytes[0] == 'B' && bytes[1] == 'M') {
+			return ".bmp";
+		}
+		return null;
+	}
+
+	private static String resolvedExtension(URI uri, String contentType, byte[] bytes) {
+		String extension = extensionFromContentType(contentType);
+		if (extension != null) {
+			return extension;
+		}
+		extension = sniffExtension(bytes);
+		if (extension != null) {
+			return extension;
+		}
+		return cacheExtension(uri);
+	}
+
 	private static void deleteFileQuietly(Path path, Path stopDirectory) {
 		if (path == null) {
 			return;
@@ -273,6 +337,9 @@ public final class MonitorMediaApp implements MonitorApp {
 	private record CachedMediaBytes(byte[] bytes, String mediaKey) {
 	}
 
+	private record DownloadedMediaBytes(byte[] bytes, String extension) {
+	}
+
 	private static String cacheExtension(URI uri) {
 		String path = uri != null ? uri.getPath() : null;
 		if (path == null || path.isBlank()) {
@@ -304,7 +371,43 @@ public final class MonitorMediaApp implements MonitorApp {
 		}
 	}
 
-	private static byte[] download(URL url, TaskProgress progress) throws IOException {
+	private static DownloadedMediaBytes download(URI uri, TaskProgress progress) throws IOException {
+		IOException lastException = null;
+		for (URI candidate : downloadCandidates(uri)) {
+			try {
+				return downloadCandidate(candidate.toURL(), progress);
+			} catch (IOException exception) {
+				lastException = exception;
+			}
+		}
+		throw lastException != null ? lastException : new IOException("Failed to download media");
+	}
+
+	private static List<URI> downloadCandidates(URI uri) {
+		List<URI> candidates = new ArrayList<>();
+		if (uri == null) {
+			return candidates;
+		}
+		candidates.add(uri);
+		String host = uri.getHost();
+		if (host != null && host.equalsIgnoreCase("media.discordapp.net")) {
+			try {
+				candidates.add(new URI(
+						uri.getScheme(),
+						uri.getUserInfo(),
+						"cdn.discordapp.com",
+						uri.getPort(),
+						uri.getPath(),
+						null,
+						null
+				));
+			} catch (URISyntaxException ignored) {
+			}
+		}
+		return candidates;
+	}
+
+	private static DownloadedMediaBytes downloadCandidate(URL url, TaskProgress progress) throws IOException {
 		if (progress != null) {
 			progress.setIndeterminate("CONNECTING");
 		}
@@ -346,7 +449,8 @@ public final class MonitorMediaApp implements MonitorApp {
 					}
 				}
 			}
-			return output.toByteArray();
+			byte[] bytes = output.toByteArray();
+			return new DownloadedMediaBytes(bytes, resolvedExtension(toUri(url), connection.getContentType(), bytes));
 		} finally {
 			connection.disconnect();
 		}
@@ -358,11 +462,11 @@ public final class MonitorMediaApp implements MonitorApp {
 		}
 		try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
 			if (input == null) {
-				throw new IOException("Unsupported image");
+				return decodeWithFfmpegFallback(bytes, progress);
 			}
 			Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
 			if (!readers.hasNext()) {
-				throw new IOException("Unsupported image");
+				return decodeWithFfmpegFallback(bytes, progress);
 			}
 
 			ImageReader reader = readers.next();
@@ -377,9 +481,69 @@ public final class MonitorMediaApp implements MonitorApp {
 					progress.complete("READY");
 				}
 				return new LoadedMedia(List.of(image), List.of(1000), image.getWidth(), image.getHeight(), false);
+			} catch (IOException exception) {
+				return decodeWithFfmpegFallback(bytes, progress);
 			} finally {
 				reader.dispose();
 			}
+		}
+	}
+
+	private static LoadedMedia decodeWithFfmpegFallback(byte[] bytes, TaskProgress progress) throws IOException {
+		if (progress != null) {
+			progress.setIndeterminate("DECODING FALLBACK");
+		}
+		Path tempDirectory = Files.createTempDirectory("lg2-media-decode-");
+		Path inputPath = tempDirectory.resolve("input" + resolvedExtension(null, null, bytes));
+		Path framesDirectory = tempDirectory.resolve("frames");
+		try {
+			Files.write(inputPath, bytes);
+			Files.createDirectories(framesDirectory);
+			runCommand(List.of(
+					ffmpegBin(),
+					"-hide_banner",
+					"-loglevel",
+					"error",
+					"-nostdin",
+					"-i",
+					inputPath.toString(),
+					"-vsync",
+					"0",
+					framesDirectory.resolve("frame_%06d.png").toString()
+			), COMMAND_TIMEOUT_SEC);
+			Map<Integer, Integer> frameDurations = probeFrameDurations(inputPath);
+			List<BufferedImage> frames = new ArrayList<>();
+			List<Integer> delays = new ArrayList<>();
+			try (Stream<Path> paths = Files.list(framesDirectory)) {
+				List<Path> framePaths = paths.filter(Files::isRegularFile).sorted().toList();
+				if (framePaths.isEmpty()) {
+					throw new IOException("Unsupported image");
+				}
+				if (progress != null) {
+					progress.setProgress("DECODING", 0L, framePaths.size());
+				}
+				for (int index = 0; index < framePaths.size(); index++) {
+					BufferedImage frame = ImageIO.read(framePaths.get(index).toFile());
+					if (frame == null) {
+						continue;
+					}
+					frames.add(scaleDown(toArgb(frame)));
+					delays.add(Math.max(20, frameDurations.getOrDefault(index, 100)));
+					if (progress != null) {
+						progress.setProgress("DECODING", index + 1L, framePaths.size());
+					}
+				}
+			}
+			if (frames.isEmpty()) {
+				throw new IOException("Unsupported image");
+			}
+			if (progress != null) {
+				progress.complete("READY");
+			}
+			BufferedImage first = frames.get(0);
+			return new LoadedMedia(frames, delays, first.getWidth(), first.getHeight(), frames.size() > 1);
+		} finally {
+			deleteRecursivelyQuietly(tempDirectory);
 		}
 	}
 
@@ -522,6 +686,129 @@ public final class MonitorMediaApp implements MonitorApp {
 		graphics.drawImage(image, 0, 0, null);
 		graphics.dispose();
 		return converted;
+	}
+
+	private static Map<Integer, Integer> probeFrameDurations(Path inputPath) {
+		Map<Integer, Integer> durations = new TreeMap<>();
+		if (inputPath == null) {
+			return durations;
+		}
+		try {
+			String output = runCommand(List.of(
+					ffprobeBin(),
+					"-v",
+					"error",
+					"-select_streams",
+					"v:0",
+					"-show_entries",
+					"frame=best_effort_timestamp_time,pkt_duration_time",
+					"-of",
+					"csv=p=0",
+					inputPath.toString()
+			), COMMAND_TIMEOUT_SEC);
+			String[] lines = output.split("\\R");
+			double previousTimestampSeconds = -1.0D;
+			int frameIndex = 0;
+			for (String line : lines) {
+				if (line == null || line.isBlank()) {
+					continue;
+				}
+				String[] parts = line.split(",");
+				double timestampSeconds = parseDoubleOr(parts.length > 0 ? parts[0] : "", -1.0D);
+				double durationSeconds = parseDoubleOr(parts.length > 1 ? parts[1] : "", -1.0D);
+				if (durationSeconds <= 0.0D && timestampSeconds >= 0.0D && previousTimestampSeconds >= 0.0D) {
+					durationSeconds = timestampSeconds - previousTimestampSeconds;
+				}
+				if (timestampSeconds >= 0.0D) {
+					previousTimestampSeconds = timestampSeconds;
+				}
+				durations.put(frameIndex++, durationSeconds > 0.0D ? Math.max(20, (int) Math.round(durationSeconds * 1000.0D)) : 100);
+			}
+		} catch (IOException ignored) {
+		}
+		return durations;
+	}
+
+	private static String runCommand(List<String> command, int timeoutSeconds) throws IOException {
+		ProcessBuilder builder = new ProcessBuilder(command);
+		builder.redirectErrorStream(true);
+		Process process = builder.start();
+		try (InputStream input = process.getInputStream(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+				process.destroyForcibly();
+				throw new IOException("Timed out running " + command.get(0));
+			}
+			byte[] buffer = new byte[8192];
+			int read;
+			while ((read = input.read(buffer)) >= 0) {
+				output.write(buffer, 0, read);
+			}
+			String text = output.toString(java.nio.charset.StandardCharsets.UTF_8);
+			if (process.exitValue() != 0) {
+				throw new IOException(text == null || text.isBlank() ? "Command failed: " + String.join(" ", command) : text.trim());
+			}
+			return text;
+		} catch (InterruptedException exception) {
+			Thread.currentThread().interrupt();
+			process.destroyForcibly();
+			throw new IOException("Interrupted while decoding media", exception);
+		} finally {
+			process.destroy();
+		}
+	}
+
+	private static String ffmpegBin() {
+		return readStringSetting("FFMPEG_BIN", "lg2.youtube.ffmpegBin", DEFAULT_FFMPEG_BIN);
+	}
+
+	private static String ffprobeBin() {
+		return readStringSetting("FFPROBE_BIN", "lg2.media.ffprobeBin", DEFAULT_FFPROBE_BIN);
+	}
+
+	private static String readStringSetting(String envKey, String propertyKey, String fallback) {
+		String envValue = System.getenv(envKey);
+		if (envValue != null && !envValue.isBlank()) {
+			return envValue.trim();
+		}
+		String propertyValue = System.getProperty(propertyKey);
+		if (propertyValue != null && !propertyValue.isBlank()) {
+			return propertyValue.trim();
+		}
+		return fallback;
+	}
+
+	private static void deleteRecursivelyQuietly(Path root) {
+		if (root == null || !Files.exists(root)) {
+			return;
+		}
+		try (Stream<Path> paths = Files.walk(root)) {
+			for (Path path : (Iterable<Path>) paths.sorted(java.util.Comparator.reverseOrder())::iterator) {
+				Files.deleteIfExists(path);
+			}
+		} catch (IOException ignored) {
+		}
+	}
+
+	private static double parseDoubleOr(String value, double fallback) {
+		if (value == null || value.isBlank()) {
+			return fallback;
+		}
+		try {
+			return Double.parseDouble(value.trim());
+		} catch (NumberFormatException ignored) {
+			return fallback;
+		}
+	}
+
+	private static URI toUri(URL url) {
+		if (url == null) {
+			return null;
+		}
+		try {
+			return url.toURI();
+		} catch (URISyntaxException exception) {
+			return null;
+		}
 	}
 
 	public record LoadedMedia(
