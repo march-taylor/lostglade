@@ -15,6 +15,7 @@ import com.lostglade.server.CameraCaptureSystem;
 import com.lostglade.server.CocaineHallucinationSystem;
 import com.lostglade.server.CopperManRepulsorSystem;
 import com.lostglade.server.MonitorScreenSystem;
+import com.lostglade.server.MicrophoneSystem;
 import com.lostglade.server.PhotoFramePlacementSystem;
 import com.lostglade.server.map.MapImageRenderSystem;
 import com.lostglade.server.ServerStabilitySystem;
@@ -75,6 +76,7 @@ public class Lg2 implements ModInitializer {
 		ServerTabIntegration.register();
 		ServerVoicechatIntegration.register();
 		SpeakerSystem.register();
+		MicrophoneSystem.register();
 		ServerWebcamIntegration.register();
 		ServerUpgradeUiSystem.register();
 

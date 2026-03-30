@@ -941,18 +941,17 @@ public final class MonitorScreenSystem {
 			}
 			MediaOverlayMode overlayMode;
 			boolean hasMedia;
-			boolean playbackControlsVisible;
 			boolean galleryBrowser;
 			boolean galleryDeleteConfirmOpen;
+			boolean playerUiVisible;
 			boolean controlsWereHidden = false;
 			synchronized (mediaState) {
 				overlayMode = mediaState.overlayMode;
 				hasMedia = hasDisplayableMediaLocked(mediaState);
-				playbackControlsVisible = playbackControlsVisibleLocked(mediaState);
 				galleryBrowser = mediaState.mode == ScreenViewMode.GALLERY && mediaState.gallerySurfaceMode == GallerySurfaceMode.BROWSER;
 				galleryDeleteConfirmOpen = mediaState.galleryDeleteConfirmOpen;
+				playerUiVisible = mediaControlUiVisibleLocked(mediaState);
 			}
-			boolean playerUiVisible = !galleryBrowser && (hasMedia || playbackControlsVisible);
 			if (!galleryBrowser && (playerUiVisible || mediaState.loading) && overlayMode == MediaOverlayMode.VIEW) {
 				synchronized (mediaState) {
 					mediaState.overlayMode = MediaOverlayMode.CONTROLS;
@@ -1583,7 +1582,21 @@ public final class MonitorScreenSystem {
 		}
 		MediaRuntimeState state = MEDIA_STATES.computeIfAbsent(key, ignored -> MediaRuntimeState.fresh(mode, "", () -> onMediaProgressChanged(server, key)));
 		synchronized (state) {
+			ScreenViewMode previousMode = state.mode;
 			state.mode = mode;
+			if (mode == ScreenViewMode.YOUTUBE
+					&& previousMode != ScreenViewMode.YOUTUBE
+					&& !isStreamPlaybackLocked(state)
+					&& state.youtubeQueue.isEmpty()) {
+				cancelPlaybackLocked(state);
+				clearYoutubePlaybackLocked(state);
+				clearGallerySelectionLocked(state);
+				state.loading = false;
+				state.statusText = "";
+				state.overlayMode = MediaOverlayMode.CONTROLS;
+				state.youtubeReturnToGallery = false;
+				state.version++;
+			}
 		}
 		if (mode == ScreenViewMode.GALLERY) {
 			ensureGalleryStateHydrated(server, key, state);
@@ -4948,9 +4961,7 @@ public final class MonitorScreenSystem {
 		boolean hasMedia = streamPlayback
 				? hasDisplayableMediaLocked(state)
 				: galleryBrowser ? !state.galleryItems.isEmpty() : state.loadedMedia != null;
-		boolean playbackControlsVisible = streamPlayback
-				? playbackControlsVisibleLocked(state)
-				: galleryBrowser ? false : (state.loadedMedia != null || state.loading || state.sourceUrl != null);
+		boolean playbackControlsVisible = mediaControlUiVisibleLocked(state);
 		boolean timelineVisible = streamPlayback || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.frameCount() > 1);
 		boolean centerPlayPauseVisible = streamPlayback || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.animated());
 		boolean timelineSeekable = streamPlayback
@@ -9019,6 +9030,21 @@ public final class MonitorScreenSystem {
 					|| (state.streamKind == PlaybackStreamKind.YOUTUBE && state.mode == ScreenViewMode.YOUTUBE && !state.youtubeQueue.isEmpty());
 		}
 		return state.loadedMedia != null || !state.galleryItems.isEmpty();
+	}
+
+	private static boolean mediaControlUiVisibleLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return false;
+		}
+		if (state.mode == ScreenViewMode.GALLERY && state.gallerySurfaceMode == GallerySurfaceMode.BROWSER) {
+			return false;
+		}
+		if (isStreamPlaybackLocked(state)) {
+			return hasDisplayableMediaLocked(state) || playbackControlsVisibleLocked(state);
+		}
+		return state.loadedMedia != null
+				|| state.loading
+				|| (state.sourceUrl != null && !state.sourceUrl.isBlank());
 	}
 
 	private static boolean resolvedActionVisible(MediaRuntimeState state) {

@@ -361,7 +361,7 @@ public final class SpeakerSystem {
 		return "ffmpeg";
 	}
 
-	private static float volumeFactor(int volumePercent) {
+	static float volumeFactor(int volumePercent) {
 		float normalized = Math.max(0.0F, Math.min(1.0F, volumePercent / 100.0F));
 		if (normalized <= 0.0F) {
 			return 0.0F;
@@ -369,7 +369,7 @@ public final class SpeakerSystem {
 		return MAX_SPEAKER_GAIN * (float) Math.pow(normalized, SPEAKER_GAIN_EXPONENT);
 	}
 
-	private static float audibleDistance(int volumePercent) {
+	static float audibleDistance(int volumePercent) {
 		int clamped = Math.max(1, Math.min(100, volumePercent));
 		if (clamped <= 1) {
 			return MIN_SPEAKER_DISTANCE;
@@ -383,7 +383,7 @@ public final class SpeakerSystem {
 		return MIN_SPEAKER_DISTANCE + (designedDistance - MIN_SPEAKER_DISTANCE) * compensation;
 	}
 
-	private static boolean ensureSpeakerVolumeCategoryRegistered(VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
+	static boolean ensureSpeakerVolumeCategoryRegistered(VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
 		if (speakerVolumeCategoryRegistered) {
 			return true;
 		}
@@ -633,10 +633,137 @@ public final class SpeakerSystem {
 		}
 	}
 
-	private static short softLimitSample(float sample) {
+	static short softLimitSample(float sample) {
 		float normalized = Math.max(-4.0F, Math.min(4.0F, sample / (float) Short.MAX_VALUE));
 		float limited = (float) Math.tanh(normalized);
 		return (short) Math.round(limited * Short.MAX_VALUE);
+	}
+
+	static boolean isSpeakerVolumeCategoryRegistered() {
+		return speakerVolumeCategoryRegistered;
+	}
+
+	static String speakerVolumeCategoryId() {
+		return SPEAKER_VOLUME_CATEGORY_ID;
+	}
+
+	public static List<BlockPos> findConnectedPoweredSpeakerPositions(ServerLevel level, BlockPos originPos) {
+		if (level == null || originPos == null || !level.hasChunkAt(originPos)) {
+			return List.of();
+		}
+		Set<BlockPos> wireNetwork = collectWireNetwork(level, originPos);
+		List<BlockPos> connected = new ArrayList<>();
+		for (SpeakerKey key : KNOWN_SPEAKERS) {
+			if (!Objects.equals(key.dimension(), level.dimension()) || !level.hasChunkAt(key.pos())) {
+				continue;
+			}
+			BlockState state = level.getBlockState(key.pos());
+			if (!state.is(ModBlocks.SPEAKER) || !hasSpeakerPower(level, key.pos()) || SpeakerBlock.readVolumePercent(state) <= 0) {
+				continue;
+			}
+			if (!isConnectedToOrigin(originPos, key.pos(), wireNetwork)) {
+				continue;
+			}
+			connected.add(key.pos());
+		}
+		return connected;
+	}
+
+	private static boolean isConnectedToOrigin(BlockPos originPos, BlockPos speakerPos, Set<BlockPos> wireNetwork) {
+		if (originPos == null || speakerPos == null) {
+			return false;
+		}
+		if (areBlocksAdjacent(originPos, speakerPos)) {
+			return true;
+		}
+		if (wireNetwork.isEmpty()) {
+			return false;
+		}
+		for (BlockPos touchPos : redstoneTouchPoints(speakerPos)) {
+			if (wireNetwork.contains(touchPos)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static Set<BlockPos> collectWireNetwork(ServerLevel level, BlockPos originPos) {
+		Set<BlockPos> visited = new HashSet<>();
+		ArrayList<BlockPos> queue = new ArrayList<>();
+		for (BlockPos touchPos : redstoneTouchPoints(originPos)) {
+			if (!isRedstoneWire(level, touchPos)) {
+				continue;
+			}
+			BlockPos immutable = touchPos.immutable();
+			if (!visited.add(immutable)) {
+				continue;
+			}
+			queue.add(immutable);
+		}
+		for (int index = 0; index < queue.size(); index++) {
+			BlockPos current = queue.get(index);
+			for (BlockPos neighbor : redstoneWireNeighbors(current)) {
+				if (!isRedstoneWire(level, neighbor)) {
+					continue;
+				}
+				BlockPos immutable = neighbor.immutable();
+				if (!visited.add(immutable)) {
+					continue;
+				}
+				queue.add(immutable);
+			}
+		}
+		return visited;
+	}
+
+	private static boolean isRedstoneWire(ServerLevel level, BlockPos pos) {
+		return level != null && pos != null && level.hasChunkAt(pos) && level.getBlockState(pos).is(net.minecraft.world.level.block.Blocks.REDSTONE_WIRE);
+	}
+
+	private static List<BlockPos> redstoneTouchPoints(BlockPos pos) {
+		return List.of(
+				pos,
+				pos.above(),
+				pos.below(),
+				pos.north(),
+				pos.south(),
+				pos.east(),
+				pos.west(),
+				pos.above().north(),
+				pos.above().south(),
+				pos.above().east(),
+				pos.above().west(),
+				pos.below().north(),
+				pos.below().south(),
+				pos.below().east(),
+				pos.below().west()
+		);
+	}
+
+	private static List<BlockPos> redstoneWireNeighbors(BlockPos pos) {
+		List<BlockPos> neighbors = new ArrayList<>(14);
+		neighbors.add(pos.north());
+		neighbors.add(pos.south());
+		neighbors.add(pos.east());
+		neighbors.add(pos.west());
+		neighbors.add(pos.above());
+		neighbors.add(pos.below());
+		neighbors.add(pos.above().north());
+		neighbors.add(pos.above().south());
+		neighbors.add(pos.above().east());
+		neighbors.add(pos.above().west());
+		neighbors.add(pos.below().north());
+		neighbors.add(pos.below().south());
+		neighbors.add(pos.below().east());
+		neighbors.add(pos.below().west());
+		return neighbors;
+	}
+
+	private static boolean areBlocksAdjacent(BlockPos first, BlockPos second) {
+		if (first == null || second == null) {
+			return false;
+		}
+		return Math.abs(first.getX() - second.getX()) + Math.abs(first.getY() - second.getY()) + Math.abs(first.getZ() - second.getZ()) <= 1;
 	}
 
 	private static final class SourceSubscriptionRuntime {

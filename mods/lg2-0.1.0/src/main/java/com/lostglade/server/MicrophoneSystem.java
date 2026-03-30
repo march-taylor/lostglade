@@ -1,0 +1,614 @@
+package com.lostglade.server;
+
+import com.lostglade.Lg2;
+import com.lostglade.block.ModBlocks;
+import com.lostglade.block.SpeakerBlock;
+import de.maxhenkel.voicechat.api.Position;
+import de.maxhenkel.voicechat.api.VoicechatApi;
+import de.maxhenkel.voicechat.api.VoicechatConnection;
+import de.maxhenkel.voicechat.api.VoicechatServerApi;
+import de.maxhenkel.voicechat.api.audiochannel.AudioPlayer;
+import de.maxhenkel.voicechat.api.audiochannel.LocationalAudioChannel;
+import de.maxhenkel.voicechat.api.events.MicrophonePacketEvent;
+import de.maxhenkel.voicechat.api.opus.OpusDecoder;
+import de.maxhenkel.voicechat.api.opus.OpusEncoder;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.NavigableMap;
+import java.util.Objects;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+
+public final class MicrophoneSystem {
+	private static final long REFRESH_INTERVAL_TICKS = 5L;
+	private static final int AUDIO_SAMPLE_RATE = 48_000;
+	private static final int AUDIO_FRAME_SAMPLES = 960;
+	private static final long AUDIO_FRAME_DURATION_MS = AUDIO_FRAME_SAMPLES * 1000L / AUDIO_SAMPLE_RATE;
+	private static final long AUDIO_FRAME_NANOS = TimeUnit.MILLISECONDS.toNanos(AUDIO_FRAME_DURATION_MS);
+	private static final int FRAME_BUFFER_CAPACITY = 192;
+	private static final long MAX_FRAME_AGE = 3L;
+	private static final long SENDER_EXPIRE_AFTER_FRAMES = 12L;
+	private static final double WHISPER_DISTANCE_FACTOR = 0.5D;
+	private static final double MIN_CAPTURE_DISTANCE = 6.0D;
+	private static final float MICROPHONE_GAIN_BOOST = 2.4F;
+	private static final short[] SILENCE_FRAME = new short[AUDIO_FRAME_SAMPLES];
+	private static final Set<MicrophoneKey> KNOWN_MICROPHONES = ConcurrentHashMap.newKeySet();
+	private static final ConcurrentHashMap<MicrophoneKey, MicrophoneRuntime> ACTIVE_MICROPHONES = new ConcurrentHashMap<>();
+	private static volatile long tickCounter = 0L;
+
+	private MicrophoneSystem() {
+	}
+
+	public static void register() {
+		ServerTickEvents.END_SERVER_TICK.register(MicrophoneSystem::tick);
+		ServerChunkEvents.CHUNK_LOAD.register(MicrophoneSystem::onChunkLoad);
+		ServerChunkEvents.CHUNK_UNLOAD.register(MicrophoneSystem::onChunkUnload);
+		ServerLifecycleEvents.SERVER_STOPPED.register(server -> shutdownAll());
+	}
+
+	public static void trackMicrophone(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null) {
+			return;
+		}
+		KNOWN_MICROPHONES.add(new MicrophoneKey(level.dimension(), pos.immutable()));
+	}
+
+	public static void untrackMicrophone(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null) {
+			return;
+		}
+		MicrophoneKey key = new MicrophoneKey(level.dimension(), pos.immutable());
+		KNOWN_MICROPHONES.remove(key);
+		stopRuntime(key);
+	}
+
+	public static void onMicrophoneStateChanged(ServerLevel level, BlockPos pos) {
+		trackMicrophone(level, pos);
+	}
+
+	public static void onMicrophonePacket(MicrophonePacketEvent event) {
+		if (event == null || ACTIVE_MICROPHONES.isEmpty() || !ServerVoicechatIntegration.isLoaded()) {
+			return;
+		}
+		VoicechatApi voicechatApi = ServerVoicechatIntegration.getApi();
+		if (voicechatApi == null) {
+			return;
+		}
+		VoicechatConnection senderConnection = event.getSenderConnection();
+		if (senderConnection == null || senderConnection.getPlayer() == null) {
+			return;
+		}
+		Object rawPlayer = senderConnection.getPlayer().getPlayer();
+		if (!(rawPlayer instanceof ServerPlayer senderPlayer)) {
+			return;
+		}
+		Position senderPosition = senderConnection.getPlayer().getPosition();
+		byte[] opusData = event.getPacket() != null ? event.getPacket().getOpusEncodedData() : null;
+		if (senderPosition == null || opusData == null || opusData.length == 0) {
+			return;
+		}
+		boolean whispering = event.getPacket().isWhispering();
+		UUID senderUuid = senderConnection.getPlayer().getUuid();
+		ServerLevel level = (ServerLevel) senderPlayer.level();
+		for (MicrophoneRuntime runtime : ACTIVE_MICROPHONES.values()) {
+			runtime.offerVoicePacket(level, senderPosition, senderUuid, whispering, opusData, voicechatApi);
+		}
+	}
+
+	private static void onChunkLoad(ServerLevel level, LevelChunk chunk) {
+		scanChunkForMicrophones(level, chunk);
+	}
+
+	private static void onChunkUnload(ServerLevel level, LevelChunk chunk) {
+		if (level == null || chunk == null) {
+			return;
+		}
+		int chunkX = chunk.getPos().x;
+		int chunkZ = chunk.getPos().z;
+		for (MicrophoneKey key : new ArrayList<>(KNOWN_MICROPHONES)) {
+			if (!key.dimension().equals(level.dimension())) {
+				continue;
+			}
+			if (SectionPos.blockToSectionCoord(key.pos().getX()) != chunkX || SectionPos.blockToSectionCoord(key.pos().getZ()) != chunkZ) {
+				continue;
+			}
+			KNOWN_MICROPHONES.remove(key);
+			stopRuntime(key);
+		}
+	}
+
+	private static void scanChunkForMicrophones(ServerLevel level, LevelChunk chunk) {
+		if (level == null || chunk == null) {
+			return;
+		}
+		int chunkMinX = chunk.getPos().getMinBlockX();
+		int chunkMinZ = chunk.getPos().getMinBlockZ();
+		LevelChunkSection[] sections = chunk.getSections();
+		for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+			LevelChunkSection section = sections[sectionIndex];
+			if (section == null || section.hasOnlyAir()) {
+				continue;
+			}
+			int sectionY = level.getSectionYFromSectionIndex(sectionIndex);
+			int sectionMinY = SectionPos.sectionToBlockCoord(sectionY);
+			for (int localY = 0; localY < 16; localY++) {
+				for (int localZ = 0; localZ < 16; localZ++) {
+					for (int localX = 0; localX < 16; localX++) {
+						if (!section.getBlockState(localX, localY, localZ).is(ModBlocks.MICROPHONE)) {
+							continue;
+						}
+						trackMicrophone(level, new BlockPos(chunkMinX + localX, sectionMinY + localY, chunkMinZ + localZ));
+					}
+				}
+			}
+		}
+	}
+
+	private static void tick(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		tickCounter++;
+		if ((tickCounter % REFRESH_INTERVAL_TICKS) != 0L) {
+			return;
+		}
+
+		Set<MicrophoneKey> staleKeys = new HashSet<>(ACTIVE_MICROPHONES.keySet());
+		for (MicrophoneKey key : new ArrayList<>(KNOWN_MICROPHONES)) {
+			boolean keepKnown = refreshMicrophone(server, key);
+			if (!keepKnown) {
+				KNOWN_MICROPHONES.remove(key);
+			}
+			staleKeys.remove(key);
+		}
+		for (MicrophoneKey staleKey : staleKeys) {
+			stopRuntime(staleKey);
+		}
+	}
+
+	private static boolean refreshMicrophone(MinecraftServer server, MicrophoneKey key) {
+		ServerLevel level = server.getLevel(key.dimension());
+		if (level == null || !level.hasChunkAt(key.pos())) {
+			stopRuntime(key);
+			return true;
+		}
+
+		BlockState state = level.getBlockState(key.pos());
+		if (!state.is(ModBlocks.MICROPHONE)) {
+			stopRuntime(key);
+			return false;
+		}
+
+		if (!hasMicrophonePower(level, key.pos())) {
+			stopRuntime(key);
+			return true;
+		}
+
+		VoicechatApi voicechatApi = ServerVoicechatIntegration.getApi();
+		VoicechatServerApi voicechatServerApi = ServerVoicechatIntegration.getServerApi();
+		if (!ServerVoicechatIntegration.isLoaded() || voicechatApi == null || voicechatServerApi == null) {
+			stopRuntime(key);
+			return true;
+		}
+
+		boolean routedToScreen = MonitorScreenSystem.hasPoweredConnectedMonitor(level, key.pos());
+		List<BlockPos> connectedSpeakers = routedToScreen ? List.of() : SpeakerSystem.findConnectedPoweredSpeakerPositions(level, key.pos());
+		if (connectedSpeakers.isEmpty() && !routedToScreen) {
+			stopRuntime(key);
+			return true;
+		}
+
+		MicrophoneRuntime runtime = ACTIVE_MICROPHONES.computeIfAbsent(key, MicrophoneRuntime::new);
+		if (!runtime.update(level, connectedSpeakers, routedToScreen, voicechatApi, voicechatServerApi)) {
+			stopRuntime(key);
+		}
+		return true;
+	}
+
+	private static boolean hasMicrophonePower(ServerLevel level, BlockPos pos) {
+		return level != null && pos != null
+				&& (level.hasNeighborSignal(pos) || level.getBestNeighborSignal(pos) > 0);
+	}
+
+	private static void stopRuntime(MicrophoneKey key) {
+		MicrophoneRuntime runtime = ACTIVE_MICROPHONES.remove(key);
+		if (runtime != null) {
+			runtime.close();
+		}
+	}
+
+	private static void shutdownAll() {
+		for (MicrophoneRuntime runtime : ACTIVE_MICROPHONES.values()) {
+			runtime.close();
+		}
+		ACTIVE_MICROPHONES.clear();
+	}
+
+	private record MicrophoneKey(ResourceKey<Level> dimension, BlockPos pos) {
+	}
+
+	private static final class MicrophoneRuntime {
+		private final MicrophoneKey key;
+		private final SharedMicrophoneFeed feed;
+		private final ConcurrentHashMap<BlockPos, MicrophoneOutputRuntime> outputs;
+		private volatile boolean closed;
+		private volatile boolean captureEnabled;
+		private volatile double captureDistanceSq;
+
+		private MicrophoneRuntime(MicrophoneKey key) {
+			this.key = key;
+			this.feed = new SharedMicrophoneFeed();
+			this.outputs = new ConcurrentHashMap<>();
+		}
+
+		private boolean update(
+				ServerLevel level,
+				List<BlockPos> connectedSpeakers,
+				boolean routedToScreen,
+				VoicechatApi voicechatApi,
+				VoicechatServerApi voicechatServerApi
+		) {
+			if (this.closed || level == null || voicechatApi == null || voicechatServerApi == null) {
+				return false;
+			}
+			double captureDistance = Math.max(MIN_CAPTURE_DISTANCE, voicechatApi.getVoiceChatDistance());
+			this.captureDistanceSq = captureDistance * captureDistance;
+			this.captureEnabled = routedToScreen || !connectedSpeakers.isEmpty();
+			synchronizeOutputs(level, connectedSpeakers, voicechatApi, voicechatServerApi);
+			return true;
+		}
+
+		private void offerVoicePacket(
+				ServerLevel senderLevel,
+				Position senderPosition,
+				UUID senderUuid,
+				boolean whispering,
+				byte[] opusData,
+				VoicechatApi voicechatApi
+		) {
+			if (this.closed || !this.captureEnabled || senderLevel == null || senderPosition == null || senderUuid == null || opusData == null || opusData.length == 0 || voicechatApi == null) {
+				return;
+			}
+			if (!Objects.equals(senderLevel.dimension(), this.key.dimension())) {
+				return;
+			}
+			double dx = senderPosition.getX() - (this.key.pos().getX() + 0.5D);
+			double dy = senderPosition.getY() - (this.key.pos().getY() + 0.5D);
+			double dz = senderPosition.getZ() - (this.key.pos().getZ() + 0.5D);
+			double maxDistanceSq = whispering ? this.captureDistanceSq * (WHISPER_DISTANCE_FACTOR * WHISPER_DISTANCE_FACTOR) : this.captureDistanceSq;
+			if ((dx * dx) + (dy * dy) + (dz * dz) > maxDistanceSq) {
+				return;
+			}
+			this.feed.offerPacket(senderUuid, opusData, voicechatApi);
+		}
+
+		private void synchronizeOutputs(ServerLevel level, List<BlockPos> connectedSpeakers, VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
+			Set<BlockPos> keep = new HashSet<>();
+			for (BlockPos speakerPos : connectedSpeakers) {
+				if (speakerPos == null || !level.hasChunkAt(speakerPos)) {
+					continue;
+				}
+				BlockState speakerState = level.getBlockState(speakerPos);
+				if (!speakerState.is(ModBlocks.SPEAKER)) {
+					continue;
+				}
+				BlockPos immutablePos = speakerPos.immutable();
+				keep.add(immutablePos);
+				this.outputs.compute(immutablePos, (ignored, existing) -> {
+					MicrophoneOutputRuntime runtime = existing;
+					if (runtime == null) {
+						runtime = new MicrophoneOutputRuntime(this.feed, immutablePos);
+						if (!runtime.start(level, speakerState, voicechatApi, voicechatServerApi)) {
+							runtime.close();
+							return null;
+						}
+						return runtime;
+					}
+					if (!runtime.update(level, speakerState, voicechatApi, voicechatServerApi)) {
+						runtime.close();
+						return null;
+					}
+					return runtime;
+				});
+			}
+			for (Map.Entry<BlockPos, MicrophoneOutputRuntime> entry : new ArrayList<>(this.outputs.entrySet())) {
+				if (keep.contains(entry.getKey())) {
+					continue;
+				}
+				MicrophoneOutputRuntime removed = this.outputs.remove(entry.getKey());
+				if (removed != null) {
+					removed.close();
+				}
+			}
+		}
+
+		private void close() {
+			this.closed = true;
+			this.captureEnabled = false;
+			for (MicrophoneOutputRuntime runtime : this.outputs.values()) {
+				runtime.close();
+			}
+			this.outputs.clear();
+			this.feed.close();
+		}
+	}
+
+	private static final class MicrophoneOutputRuntime {
+		private final SharedMicrophoneFeed feed;
+		private final BlockPos speakerPos;
+		private final UUID channelId;
+		private volatile int volumePercent;
+		private volatile boolean closed;
+		private OpusEncoder encoder;
+		private LocationalAudioChannel channel;
+		private AudioPlayer player;
+
+		private MicrophoneOutputRuntime(SharedMicrophoneFeed feed, BlockPos speakerPos) {
+			this.feed = feed;
+			this.speakerPos = speakerPos;
+			this.channelId = UUID.randomUUID();
+			this.volumePercent = 50;
+		}
+
+		private boolean start(ServerLevel level, BlockState speakerState, VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
+			this.volumePercent = SpeakerBlock.readVolumePercent(speakerState);
+			return ensureVoicechatPlayer(level, voicechatApi, voicechatServerApi);
+		}
+
+		private boolean update(ServerLevel level, BlockState speakerState, VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
+			if (this.closed) {
+				return false;
+			}
+			this.volumePercent = SpeakerBlock.readVolumePercent(speakerState);
+			return ensureVoicechatPlayer(level, voicechatApi, voicechatServerApi);
+		}
+
+		private boolean ensureVoicechatPlayer(ServerLevel level, VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
+			if (level == null || voicechatApi == null || voicechatServerApi == null) {
+				return false;
+			}
+			SpeakerSystem.ensureSpeakerVolumeCategoryRegistered(voicechatApi, voicechatServerApi);
+			if (this.player != null && !this.player.isStopped()) {
+				updateChannelProperties(level, voicechatApi);
+				return true;
+			}
+			OpusEncoder createdEncoder = null;
+			try {
+				createdEncoder = voicechatApi.createEncoder();
+				LocationalAudioChannel createdChannel = voicechatServerApi.createLocationalAudioChannel(
+						this.channelId,
+						voicechatApi.fromServerLevel(level),
+						voicechatApi.createPosition(this.speakerPos.getX() + 0.5D, this.speakerPos.getY() + 0.5D, this.speakerPos.getZ() + 0.5D)
+				);
+				this.encoder = createdEncoder;
+				this.channel = createdChannel;
+				updateChannelProperties(level, voicechatApi);
+				AudioPlayer createdPlayer = voicechatServerApi.createAudioPlayer(createdChannel, createdEncoder, this::nextFrame);
+				createdPlayer.setOnStopped(() -> onPlayerStopped(createdPlayer, createdChannel));
+				this.player = createdPlayer;
+				createdPlayer.startPlaying();
+				return true;
+			} catch (RuntimeException exception) {
+				if (createdEncoder != null && !createdEncoder.isClosed()) {
+					createdEncoder.close();
+				}
+				this.encoder = null;
+				this.channel = null;
+				this.player = null;
+				throw exception;
+			}
+		}
+
+		private void onPlayerStopped(AudioPlayer stoppedPlayer, LocationalAudioChannel stoppedChannel) {
+			boolean clearedPlayer = false;
+			if (this.player == stoppedPlayer) {
+				this.player = null;
+				clearedPlayer = true;
+			}
+			if (this.channel == stoppedChannel) {
+				this.channel = null;
+			}
+			if (clearedPlayer) {
+				this.encoder = null;
+			}
+		}
+
+		private void updateChannelProperties(ServerLevel level, VoicechatApi voicechatApi) {
+			if (this.channel == null) {
+				return;
+			}
+			this.channel.updateLocation(voicechatApi.createPosition(this.speakerPos.getX() + 0.5D, this.speakerPos.getY() + 0.5D, this.speakerPos.getZ() + 0.5D));
+			this.channel.setDistance(SpeakerSystem.audibleDistance(this.volumePercent));
+			if (SpeakerSystem.isSpeakerVolumeCategoryRegistered()) {
+				this.channel.setCategory(SpeakerSystem.speakerVolumeCategoryId());
+			}
+		}
+
+		private short[] nextFrame() {
+			short[] frame = this.feed.frameAt(System.nanoTime());
+			if (frame == null) {
+				return SILENCE_FRAME;
+			}
+			float factor = SpeakerSystem.volumeFactor(this.volumePercent) * MICROPHONE_GAIN_BOOST;
+			if (factor <= 0.0F) {
+				return SILENCE_FRAME;
+			}
+			short[] output = new short[AUDIO_FRAME_SAMPLES];
+			for (int index = 0; index < output.length; index++) {
+				output[index] = SpeakerSystem.softLimitSample(frame[index] * factor);
+			}
+			return output;
+		}
+
+		private void close() {
+			this.closed = true;
+			AudioPlayer currentPlayer = this.player;
+			this.player = null;
+			this.encoder = null;
+			if (currentPlayer != null && !currentPlayer.isStopped()) {
+				currentPlayer.stopPlaying();
+			}
+			this.channel = null;
+		}
+	}
+
+	private static final class SharedMicrophoneFeed {
+		private final Object lock = new Object();
+		private final Map<UUID, SenderVoiceBuffer> senderBuffers = new HashMap<>();
+		private volatile boolean closed;
+
+		private void offerPacket(UUID senderUuid, byte[] opusData, VoicechatApi voicechatApi) {
+			if (this.closed || senderUuid == null || opusData == null || opusData.length == 0 || voicechatApi == null) {
+				return;
+			}
+			synchronized (this.lock) {
+				if (this.closed) {
+					return;
+				}
+				long baseSequence = System.nanoTime() / AUDIO_FRAME_NANOS;
+				SenderVoiceBuffer buffer = this.senderBuffers.computeIfAbsent(senderUuid, ignored -> new SenderVoiceBuffer(voicechatApi.createDecoder()));
+				buffer.offer(opusData, baseSequence);
+				pruneExpiredLocked(baseSequence);
+			}
+		}
+
+		private short[] frameAt(long nowNanos) {
+			synchronized (this.lock) {
+				if (this.closed || this.senderBuffers.isEmpty()) {
+					return null;
+				}
+				long targetSequence = nowNanos / AUDIO_FRAME_NANOS;
+				pruneExpiredLocked(targetSequence);
+				float[] mixed = null;
+				int contributors = 0;
+				for (SenderVoiceBuffer buffer : this.senderBuffers.values()) {
+					short[] frame = buffer.frameAt(targetSequence);
+					if (frame == null) {
+						continue;
+					}
+					if (mixed == null) {
+						mixed = new float[AUDIO_FRAME_SAMPLES];
+					}
+					for (int index = 0; index < frame.length; index++) {
+						mixed[index] += frame[index];
+					}
+					contributors++;
+				}
+				if (mixed == null || contributors <= 0) {
+					return null;
+				}
+				short[] output = new short[AUDIO_FRAME_SAMPLES];
+				for (int index = 0; index < output.length; index++) {
+					output[index] = SpeakerSystem.softLimitSample(mixed[index] / contributors);
+				}
+				return output;
+			}
+		}
+
+		private void pruneExpiredLocked(long targetSequence) {
+			Iterator<Map.Entry<UUID, SenderVoiceBuffer>> iterator = this.senderBuffers.entrySet().iterator();
+			while (iterator.hasNext()) {
+				Map.Entry<UUID, SenderVoiceBuffer> entry = iterator.next();
+				if (!entry.getValue().isExpired(targetSequence)) {
+					continue;
+				}
+				entry.getValue().close();
+				iterator.remove();
+			}
+		}
+
+		private void close() {
+			synchronized (this.lock) {
+				this.closed = true;
+				for (SenderVoiceBuffer buffer : this.senderBuffers.values()) {
+					buffer.close();
+				}
+				this.senderBuffers.clear();
+			}
+		}
+	}
+
+	private static final class SenderVoiceBuffer {
+		private final OpusDecoder decoder;
+		private final NavigableMap<Long, short[]> frames = new TreeMap<>();
+		private long lastSequence = Long.MIN_VALUE;
+		private boolean closed;
+
+		private SenderVoiceBuffer(OpusDecoder decoder) {
+			this.decoder = decoder;
+		}
+
+		private void offer(byte[] opusData, long baseSequence) {
+			if (this.closed || this.decoder == null || this.decoder.isClosed()) {
+				return;
+			}
+			short[] decoded;
+			try {
+				decoded = this.decoder.decode(opusData);
+			} catch (RuntimeException exception) {
+				Lg2.LOGGER.debug("Failed to decode microphone packet", exception);
+				return;
+			}
+			if (decoded == null || decoded.length == 0) {
+				return;
+			}
+			long nextSequence = Math.max(baseSequence, this.lastSequence + 1L);
+			int frameCount = Math.max(1, (decoded.length + AUDIO_FRAME_SAMPLES - 1) / AUDIO_FRAME_SAMPLES);
+			for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+				short[] frame = new short[AUDIO_FRAME_SAMPLES];
+				int sourceOffset = frameIndex * AUDIO_FRAME_SAMPLES;
+				int copyLength = Math.min(AUDIO_FRAME_SAMPLES, Math.max(0, decoded.length - sourceOffset));
+				if (copyLength > 0) {
+					System.arraycopy(decoded, sourceOffset, frame, 0, copyLength);
+				}
+				this.frames.put(nextSequence++, frame);
+			}
+			this.lastSequence = nextSequence - 1L;
+			while (this.frames.size() > FRAME_BUFFER_CAPACITY) {
+				this.frames.pollFirstEntry();
+			}
+		}
+
+		private short[] frameAt(long targetSequence) {
+			Map.Entry<Long, short[]> entry = this.frames.floorEntry(targetSequence);
+			if (entry == null) {
+				return null;
+			}
+			return targetSequence - entry.getKey() <= MAX_FRAME_AGE ? entry.getValue() : null;
+		}
+
+		private boolean isExpired(long targetSequence) {
+			Map.Entry<Long, short[]> latestEntry = this.frames.lastEntry();
+			return latestEntry == null || targetSequence - latestEntry.getKey() > SENDER_EXPIRE_AFTER_FRAMES;
+		}
+
+		private void close() {
+			this.closed = true;
+			if (this.decoder != null && !this.decoder.isClosed()) {
+				this.decoder.close();
+			}
+			this.frames.clear();
+		}
+	}
+}

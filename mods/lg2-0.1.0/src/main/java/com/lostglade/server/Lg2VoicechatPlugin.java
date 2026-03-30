@@ -3,6 +3,7 @@ package com.lostglade.server;
 import de.maxhenkel.voicechat.api.VoicechatApi;
 import de.maxhenkel.voicechat.api.VoicechatPlugin;
 import de.maxhenkel.voicechat.api.events.EventRegistration;
+import de.maxhenkel.voicechat.api.events.MicrophonePacketEvent;
 import de.maxhenkel.voicechat.api.events.VoicechatServerStartedEvent;
 import de.maxhenkel.voicechat.api.events.VoicechatServerStoppedEvent;
 
@@ -20,6 +21,7 @@ public final class Lg2VoicechatPlugin implements VoicechatPlugin {
 
 	@Override
 	public void registerEvents(EventRegistration registration) {
+		registration.registerEvent(MicrophonePacketEvent.class, MicrophoneSystem::onMicrophonePacket);
 		registration.registerEvent(VoicechatServerStartedEvent.class, event ->
 				ServerVoicechatIntegration.setServerApi(event.getVoicechat())
 		);
