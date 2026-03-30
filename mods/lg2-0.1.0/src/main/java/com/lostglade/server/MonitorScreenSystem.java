@@ -50,6 +50,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -110,6 +111,8 @@ public final class MonitorScreenSystem {
 	private static final String PERSISTED_GALLERY_KIND_TAG = "kind";
 	private static final String PERSISTED_GALLERY_TITLE_TAG = "title";
 	private static final String PERSISTED_GALLERY_URL_TAG = "url";
+	private static final String PERSISTED_WALLPAPER_URL_TAG = "wallpaper_url";
+	private static final String PERSISTED_WALLPAPER_SCALE_TAG = "wallpaper_scale";
 	private static final String POS_TAG_PREFIX = "lg2_monitor_display_pos:";
 	private static final String FACING_TAG_PREFIX = "lg2_monitor_display_facing:";
 	private static final int MAP_SIZE = 128;
@@ -134,6 +137,7 @@ public final class MonitorScreenSystem {
 	private static final long MEDIA_ACTION_SPINNER_MIN_MILLIS = 150L;
 	private static final long MEDIA_ACTION_COMPLETE_VISIBLE_MILLIS = 1600L;
 	private static final long YOUTUBE_FULLY_BUFFERED_TOLERANCE_MS = 1500L;
+	private static final long WALLPAPER_IDLE_VISIBILITY_RECHECK_MS = 500L;
 	private static final int MAX_SCREEN_SYNC_OPERATIONS_PER_TICK = 24;
 	private static final int MAX_POWER_REFRESHES_PER_TICK = 16;
 	private static final long MEDIA_SESSION_CLEANUP_INTERVAL_TICKS = 40L;
@@ -170,6 +174,9 @@ public final class MonitorScreenSystem {
 		ServerChunkEvents.CHUNK_LOAD.register(MonitorScreenSystem::onChunkLoad);
 		ServerChunkEvents.CHUNK_UNLOAD.register(MonitorScreenSystem::onChunkUnload);
 		ServerTickEvents.END_SERVER_TICK.register(MonitorScreenSystem::tick);
+		ServerLifecycleEvents.SERVER_STARTED.register(server -> MonitorMediaApp.setCacheDirectory(
+				server.getWorldPath(LevelResource.ROOT).resolve("data").resolve("lg2-monitor-media-cache")
+		));
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> MonitorYoutubeRelayClient.shutdown());
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> clearMonitorRuntime());
 	}
@@ -867,6 +874,7 @@ public final class MonitorScreenSystem {
 		Long youtubeSeekTargetMs = null;
 		Integer youtubeQueuePlayIndex = null;
 		boolean galleryDownloadRequested = false;
+		boolean galleryWallpaperRequested = false;
 		boolean youtubeDownloadRequested = false;
 		boolean returnToGalleryAfterDelete = false;
 		String galleryYoutubeUrl = null;
@@ -938,7 +946,11 @@ public final class MonitorScreenSystem {
 						if (isGalleryBackedYoutubeLocked(mediaState)) {
 							returnToGalleryAfterDelete = true;
 						}
+						GalleryItem deletedItem = currentGalleryItemLocked(mediaState);
 						boolean stillSelected = removeGalleryItemLocked(mediaState, mediaState.galleryIndex >= 0 ? mediaState.galleryIndex : 0, layout);
+						if (deletedItem != null && deletedItem.url() != null && Objects.equals(deletedItem.url(), mediaState.wallpaperUrl)) {
+							clearWallpaperLocked(mediaState);
+						}
 						if (!stillSelected) {
 							mediaState.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
 						}
@@ -1105,6 +1117,17 @@ public final class MonitorScreenSystem {
 					mediaState.version++;
 				}
 				rerenderCurrent = true;
+			} else if (!galleryBrowser
+					&& mediaState.mode == ScreenViewMode.GALLERY
+					&& mediaDownloadRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					if (currentGalleryItemCanBeWallpaperLocked(mediaState)) {
+						galleryWallpaperRequested = true;
+						mediaState.statusText = "";
+						mediaState.version++;
+					}
+				}
+				rerenderCurrent = true;
 			} else if (playerUiVisible
 					&& canTogglePlaybackLocked(mediaState)
 					&& (mediaCenterPlayPauseRect(layout).contains(touchPoint.x(), touchPoint.y()) || mediaPlayPauseRect(layout).contains(touchPoint.x(), touchPoint.y()))) {
@@ -1259,14 +1282,29 @@ public final class MonitorScreenSystem {
 		if ((nextMode != null && nextMode != component.viewMode())
 				|| (nextLauncherPage != null && nextLauncherPage != component.launcherPage())) {
 			if (isPlayerMode(component.viewMode()) && nextMode != component.viewMode()) {
-				closeMediaSession(level.getServer(), component.runtimeKey());
+				MediaRuntimeState currentState = MEDIA_STATES.get(component.runtimeKey());
+				boolean preserveWallpaperPlayback = false;
+				if (currentState != null) {
+					synchronized (currentState) {
+						preserveWallpaperPlayback = shouldPreserveWallpaperPlaybackOnTransitionLocked(currentState, nextMode);
+						if (preserveWallpaperPlayback) {
+							clearTransientPlaybackStateLocked(currentState, true);
+							currentState.mode = nextMode != null ? nextMode : ScreenViewMode.HOME;
+							currentState.overlayMode = MediaOverlayMode.VIEW;
+							currentState.statusText = "";
+							currentState.version++;
+						}
+					}
+				}
+				if (preserveWallpaperPlayback) {
+					clearMediaSessionBindings(level.getServer(), component.runtimeKey());
+				} else {
+					deactivateMediaSession(level.getServer(), component.runtimeKey());
+				}
 			}
 			if (isPlayerMode(nextMode) && component.viewMode() != nextMode) {
 				openMediaSession(player, component.runtimeKey(), nextMode);
 				markMediaFocus(player, component.runtimeKey());
-				if (nextMode == ScreenViewMode.YOUTUBE) {
-					requestMediaLink(player, component.runtimeKey(), false, ScreenViewMode.YOUTUBE, YoutubeLinkRequestAction.REPLACE_QUEUE);
-				}
 			}
 			synchronizeConnectedScreens(level, frame, null, nextMode, nextLauncherPage);
 		} else if (rerenderCurrent) {
@@ -1280,6 +1318,9 @@ public final class MonitorScreenSystem {
 		}
 		if (server != null && galleryDownloadRequested) {
 			beginGalleryDownload(server, component.runtimeKey(), player.getUUID(), layout);
+		}
+		if (server != null && galleryWallpaperRequested) {
+			applyGalleryWallpaper(server, component.runtimeKey(), player.getUUID());
 		}
 		if (persistGallery && server != null) {
 			MediaRuntimeState state = MEDIA_STATES.get(component.runtimeKey());
@@ -1596,6 +1637,42 @@ public final class MonitorScreenSystem {
 		}
 	}
 
+	private static void applyGalleryWallpaper(MinecraftServer server, ScreenRuntimeKey key, UUID requesterUuid) {
+		if (server == null || key == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		boolean shouldAnimate = false;
+		synchronized (state) {
+			if (!currentGalleryItemCanBeWallpaperLocked(state)) {
+				return;
+			}
+			GalleryItem item = currentGalleryItemLocked(state);
+			if (item == null || item.media() == null || item.url() == null || item.url().isBlank()) {
+				return;
+			}
+			state.wallpaperUrl = item.url();
+			state.wallpaperMedia = item.media();
+			state.wallpaperScaleMode = state.scaleMode != null ? state.scaleMode : MediaScaleMode.FIT;
+			state.wallpaperFrameIndex = 0;
+			state.wallpaperHydrated = true;
+			state.version++;
+			shouldAnimate = wallpaperVisibleForCurrentViewLocked(state) && item.media().animated();
+		}
+		persistGalleryState(server, key, state);
+		requestRuntimeRender(server, key);
+		if (shouldAnimate) {
+			resumeMediaPlaybackIfNeeded(server, key);
+		}
+		ServerPlayer requester = requesterUuid != null ? server.getPlayerList().getPlayer(requesterUuid) : null;
+		if (requester != null) {
+			requester.sendSystemMessage(Component.literal("Обои обновлены"));
+		}
+	}
+
 	private static void beginYoutubeDownload(MinecraftServer server, ScreenRuntimeKey key, UUID requesterUuid) {
 		if (server == null || key == null) {
 			return;
@@ -1895,6 +1972,44 @@ public final class MonitorScreenSystem {
 		}
 	}
 
+	private static void ensureWallpaperStateHydrated(MinecraftServer server, ScreenRuntimeKey key, MediaRuntimeState state) {
+		if (server == null || key == null || state == null) {
+			return;
+		}
+		String wallpaperUrl = null;
+		boolean shouldRender = false;
+		synchronized (state) {
+			if (state.wallpaperHydrated) {
+				return;
+			}
+			PersistedWallpaperState persisted = null;
+			ScreenComponent component = resolveScreenComponent(server, key);
+			if (component != null) {
+				persisted = resolvePersistedWallpaperState(component);
+			}
+			state.wallpaperHydrated = true;
+			state.wallpaperFrameIndex = 0;
+			if (persisted == null || persisted.url() == null || persisted.url().isBlank()) {
+				clearWallpaperLocked(state);
+				return;
+			}
+			state.wallpaperUrl = persisted.url();
+			state.wallpaperScaleMode = persisted.scaleMode() != null ? persisted.scaleMode() : MediaScaleMode.FIT;
+			state.wallpaperMedia = currentGalleryItemMatchingUrlLocked(state, state.wallpaperUrl)
+					.map(GalleryItem::media)
+					.orElse(null);
+			wallpaperUrl = state.wallpaperMedia == null ? state.wallpaperUrl : null;
+			shouldRender = state.wallpaperMedia != null;
+			state.version++;
+		}
+		if (wallpaperUrl != null) {
+			scheduleWallpaperLoad(server, key, wallpaperUrl);
+		}
+		if (shouldRender) {
+			requestRuntimeRender(server, key);
+		}
+	}
+
 	private static void scheduleGalleryPreloadStatusRefreshes(MinecraftServer server, ScreenRuntimeKey key) {
 		if (server == null || key == null) {
 			return;
@@ -2011,6 +2126,10 @@ public final class MonitorScreenSystem {
 								GalleryItemKind.MEDIA
 						)
 				);
+				if (Objects.equals(state.wallpaperUrl, result.url())) {
+					state.wallpaperMedia = result.loadedMedia();
+					state.wallpaperFrameIndex = 0;
+				}
 				if (openWhenReady) {
 					state.loading = false;
 					state.statusText = "";
@@ -2066,8 +2185,10 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		List<GalleryItem> galleryItems;
+		PersistedWallpaperState wallpaperState;
 		synchronized (state) {
 			galleryItems = List.copyOf(state.galleryItems);
+			wallpaperState = persistedWallpaperStateLocked(state);
 		}
 		for (ItemFrame frame : component.frameCoords().keySet()) {
 			ItemStack stack = frame.getItem();
@@ -2075,8 +2196,83 @@ public final class MonitorScreenSystem {
 				continue;
 			}
 			ItemStack updated = stack.copy();
-			writePersistedGalleryState(updated, galleryItems);
+			writePersistedGalleryState(updated, galleryItems, wallpaperState);
 			frame.setItem(updated, false);
+		}
+	}
+
+	private static void scheduleWallpaperLoad(MinecraftServer server, ScreenRuntimeKey key, String url) {
+		if (server == null || key == null || url == null || url.isBlank()) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		synchronized (state) {
+			if (state.wallpaperLoading || (state.wallpaperMedia != null && Objects.equals(state.wallpaperUrl, url))) {
+				return;
+			}
+			state.wallpaperLoading = true;
+		}
+		ensureExecutors();
+		CompletableFuture
+				.supplyAsync(() -> {
+					try {
+						return new WallpaperLoadResult(key, url, MonitorMediaApp.loadFromUrl(url), null);
+					} catch (Exception exception) {
+						return new WallpaperLoadResult(key, url, null, sanitizeMediaError(exception.getMessage()));
+					}
+				}, mediaIoExecutor)
+				.thenAccept(result -> server.execute(() -> applyWallpaperLoadResult(server, result)));
+	}
+
+	private static void applyWallpaperLoadResult(MinecraftServer server, WallpaperLoadResult result) {
+		if (server == null || result == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(result.screenKey());
+		if (state == null) {
+			return;
+		}
+		boolean shouldRender = false;
+		boolean shouldAnimate = false;
+		synchronized (state) {
+			state.wallpaperLoading = false;
+			if (!Objects.equals(state.wallpaperUrl, result.url())) {
+				return;
+			}
+			if (result.loadedMedia() == null) {
+				Lg2.LOGGER.debug("Failed to load monitor wallpaper {}: {}", result.url(), result.error());
+				return;
+			}
+			state.wallpaperMedia = result.loadedMedia();
+			state.wallpaperFrameIndex = 0;
+			int galleryIndex = resolveGalleryItemIndex(state, result.url(), -1);
+			if (galleryIndex >= 0 && galleryIndex < state.galleryItems.size()) {
+				GalleryItem existing = state.galleryItems.get(galleryIndex);
+				if (existing != null && existing.kind() == GalleryItemKind.MEDIA) {
+					state.galleryItems.set(
+							galleryIndex,
+							new GalleryItem(
+									existing.title(),
+									existing.url(),
+									result.loadedMedia(),
+									result.loadedMedia().frameCount() > 0 ? result.loadedMedia().frame(0) : existing.preview(),
+									existing.kind()
+							)
+					);
+				}
+			}
+			state.version++;
+			shouldRender = true;
+			shouldAnimate = wallpaperVisibleForCurrentViewLocked(state) && result.loadedMedia().animated();
+		}
+		if (shouldRender) {
+			requestRuntimeRender(server, result.screenKey());
+		}
+		if (shouldAnimate) {
+			resumeMediaPlaybackIfNeeded(server, result.screenKey());
 		}
 	}
 
@@ -2247,21 +2443,65 @@ public final class MonitorScreenSystem {
 			}
 		}
 		releaseYoutubeQueuePreloads(releasedQueueUrls);
-		if (relaySessionId != null && !relaySessionId.isBlank()) {
-			ensureExecutors();
-			String finalRelaySessionId = relaySessionId;
-			CompletableFuture.runAsync(() -> {
-				try {
-					MonitorYoutubeRelayClient.close(finalRelaySessionId);
-				} catch (Exception ignored) {
+		releaseYoutubeRelaySession(relaySessionId);
+		clearMediaSessionBindings(server, key);
+	}
+
+	private static void deactivateMediaSession(MinecraftServer server, ScreenRuntimeKey key) {
+		if (key == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		String relaySessionId = null;
+		List<String> releasedQueueUrls = List.of();
+		if (state != null) {
+			synchronized (state) {
+				cancelPlaybackLocked(state);
+				state.progress.clear();
+				releasedQueueUrls = retainedYoutubePreloadUrlsLocked(state);
+				state.retainedYoutubePreloadUrls.clear();
+				if (state.relaySessionId != null && !state.relaySessionId.isBlank()) {
+					relaySessionId = state.relaySessionId;
 				}
-			}, mediaIoExecutor);
+				clearTransientPlaybackStateLocked(state, true);
+				state.activeRenderJobs = 0;
+				state.lastDispatchKey = null;
+				state.rerenderRequested = false;
+				state.overlayMode = MediaOverlayMode.VIEW;
+				state.statusText = "";
+				state.version++;
+			}
+		}
+		releaseYoutubeQueuePreloads(releasedQueueUrls);
+		releaseYoutubeRelaySession(relaySessionId);
+		clearMediaSessionBindings(server, key);
+	}
+
+	private static void releaseYoutubeRelaySession(String relaySessionId) {
+		if (relaySessionId == null || relaySessionId.isBlank()) {
+			return;
+		}
+		ensureExecutors();
+		String finalRelaySessionId = relaySessionId;
+		CompletableFuture.runAsync(() -> {
+			try {
+				MonitorYoutubeRelayClient.close(finalRelaySessionId);
+			} catch (Exception ignored) {
+			}
+		}, mediaIoExecutor);
+	}
+
+	private static void clearMediaSessionBindings(MinecraftServer server, ScreenRuntimeKey key) {
+		if (key == null) {
+			return;
 		}
 		PENDING_MEDIA_LINKS.entrySet().removeIf(entry -> entry.getValue().screenKey().equals(key));
 		for (Map.Entry<UUID, ScreenRuntimeKey> entry : List.copyOf(ACTIVE_MEDIA_ACTIONBARS.entrySet())) {
 			if (entry.getValue().equals(key)) {
 				ACTIVE_MEDIA_ACTIONBARS.remove(entry.getKey());
-				clearMediaActionbar(server, entry.getKey());
+				if (server != null) {
+					clearMediaActionbar(server, entry.getKey());
+				}
 			}
 		}
 		PLAYER_MEDIA_FOCUS.entrySet().removeIf(entry -> entry.getValue().screenKey().equals(key));
@@ -2471,6 +2711,38 @@ public final class MonitorScreenSystem {
 		}
 	}
 
+	private static boolean wallpaperVisibleForCurrentViewLocked(MediaRuntimeState state) {
+		if (state == null || state.wallpaperMedia == null || state.wallpaperUrl == null || state.wallpaperUrl.isBlank()) {
+			return false;
+		}
+		return wallpaperVisibleForViewMode(state.mode, state);
+	}
+
+	private static boolean wallpaperVisibleForViewMode(ScreenViewMode viewMode, MediaRuntimeState state) {
+		if (state == null || state.wallpaperMedia == null || state.wallpaperUrl == null || state.wallpaperUrl.isBlank()) {
+			return false;
+		}
+		if (viewMode == null || viewMode == ScreenViewMode.HOME) {
+			return true;
+		}
+		if (!isPlayerMode(viewMode)) {
+			return true;
+		}
+		if (viewMode == ScreenViewMode.GALLERY) {
+			return state.gallerySurfaceMode == GallerySurfaceMode.BROWSER;
+		}
+		return state.sourceUrl == null
+				&& state.relaySessionId == null
+				&& !state.loading
+				&& state.youtubeQueue.isEmpty();
+	}
+
+	private static boolean shouldPreserveWallpaperPlaybackOnTransitionLocked(MediaRuntimeState state, ScreenViewMode nextMode) {
+		return state != null
+				&& wallpaperVisibleForCurrentViewLocked(state)
+				&& wallpaperVisibleForViewMode(nextMode, state);
+	}
+
 	private static void scheduleProgressFadeRenders(MinecraftServer server, ScreenRuntimeKey key) {
 		if (server == null || key == null) {
 			return;
@@ -2481,6 +2753,13 @@ public final class MonitorScreenSystem {
 			long delayMillis = stepMillis * index;
 			mediaScheduler.schedule(() -> requestRuntimeRender(server, key), delayMillis, TimeUnit.MILLISECONDS);
 		}
+	}
+
+	private static ScheduledFuture<?> scheduleWallpaperVisibilityRecheck(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return null;
+		}
+		return mediaScheduler.schedule(() -> server.execute(() -> refreshWallpaperPlayback(server, key)), WALLPAPER_IDLE_VISIBILITY_RECHECK_MS, TimeUnit.MILLISECONDS);
 	}
 
 	private static void scheduleNextMediaFrame(MinecraftServer server, ScreenRuntimeKey key) {
@@ -2512,6 +2791,15 @@ public final class MonitorScreenSystem {
 					state.playbackFuture = mediaScheduler.schedule(() -> refreshLoadingUi(server, key), youtubePollActiveIntervalMs(), TimeUnit.MILLISECONDS);
 					return;
 				}
+				if (wallpaperVisibleForCurrentViewLocked(state) && state.wallpaperMedia != null && state.wallpaperMedia.animated()) {
+					if (!hasNearbyMediaViewer(server, key)) {
+						state.playbackFuture = scheduleWallpaperVisibilityRecheck(server, key);
+						return;
+					}
+					int delayMillis = state.wallpaperMedia.delayMillis(state.wallpaperFrameIndex);
+					state.playbackFuture = mediaScheduler.schedule(() -> advanceMediaFrame(server, key), delayMillis, TimeUnit.MILLISECONDS);
+					return;
+				}
 				if (state.loadedMedia == null || !state.loadedMedia.animated() || state.waitingForLink || state.loading || isPlaybackPausedLocked(state)) {
 					return;
 				}
@@ -2541,6 +2829,30 @@ public final class MonitorScreenSystem {
 		resumeMediaPlaybackIfNeeded(server, key);
 	}
 
+	private static void refreshWallpaperPlayback(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		boolean visibleAnimatedWallpaper;
+		synchronized (state) {
+			state.playbackFuture = null;
+			visibleAnimatedWallpaper = wallpaperVisibleForCurrentViewLocked(state)
+					&& state.wallpaperMedia != null
+					&& state.wallpaperMedia.animated();
+		}
+		if (!visibleAnimatedWallpaper) {
+			return;
+		}
+		if (hasNearbyMediaViewer(server, key)) {
+			requestRuntimeRender(server, key);
+		}
+		resumeMediaPlaybackIfNeeded(server, key);
+	}
+
 	private static void advanceMediaFrame(MinecraftServer server, ScreenRuntimeKey key) {
 		if (server == null || key == null) {
 			return;
@@ -2556,15 +2868,21 @@ public final class MonitorScreenSystem {
 				state.playbackFuture = null;
 				return;
 			}
-			if (state.loadedMedia == null || !state.loadedMedia.animated() || state.waitingForLink || state.loading || isPlaybackPausedLocked(state)) {
+			if (wallpaperVisibleForCurrentViewLocked(state) && state.wallpaperMedia != null && state.wallpaperMedia.animated()) {
+				state.wallpaperFrameIndex = (state.wallpaperFrameIndex + 1) % state.wallpaperMedia.frameCount();
 				state.playbackFuture = null;
-				return;
+				shouldContinue = state.wallpaperMedia.frameCount() > 1;
+			} else {
+				if (state.loadedMedia == null || !state.loadedMedia.animated() || state.waitingForLink || state.loading || isPlaybackPausedLocked(state)) {
+					state.playbackFuture = null;
+					return;
+				}
+				// Frame playback must not invalidate an in-flight large-screen render, or the first
+				// completed frame can get discarded forever while animation keeps advancing.
+				state.frameIndex = (state.frameIndex + 1) % state.loadedMedia.frameCount();
+				state.playbackFuture = null;
+				shouldContinue = state.loadedMedia.frameCount() > 1;
 			}
-			// Frame playback must not invalidate an in-flight large-screen render, or the first
-			// completed frame can get discarded forever while animation keeps advancing.
-			state.frameIndex = (state.frameIndex + 1) % state.loadedMedia.frameCount();
-			state.playbackFuture = null;
-			shouldContinue = state.loadedMedia.frameCount() > 1;
 		}
 
 		requestRuntimeRender(server, key);
@@ -2592,6 +2910,8 @@ public final class MonitorScreenSystem {
 					if (state.relaySessionId == null) {
 						return;
 					}
+				} else if (wallpaperVisibleForCurrentViewLocked(state) && state.wallpaperMedia != null && state.wallpaperMedia.animated()) {
+					// Animated wallpaper uses the same scheduler path as gallery GIF playback.
 				} else if (state.loadedMedia == null || !state.loadedMedia.animated() || isPlaybackPausedLocked(state)) {
 					return;
 				}
@@ -2935,7 +3255,19 @@ public final class MonitorScreenSystem {
 
 	private static boolean isMediaSessionAlive(MinecraftServer server, ScreenRuntimeKey key) {
 		ScreenComponent component = resolveScreenComponent(server, key);
-		return component != null && component.runtimeKey().equals(key) && isPlayerMode(component.viewMode());
+		if (component == null || !component.runtimeKey().equals(key)) {
+			return false;
+		}
+		if (isPlayerMode(component.viewMode())) {
+			return true;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return false;
+		}
+		synchronized (state) {
+			return (state.wallpaperUrl != null && !state.wallpaperUrl.isBlank()) || !state.galleryItems.isEmpty();
+		}
 	}
 
 	private static void requestRuntimeRender(MinecraftServer server, ScreenRuntimeKey key) {
@@ -2965,6 +3297,16 @@ public final class MonitorScreenSystem {
 		if (isPlayerMode(component.viewMode()) && !hasNearbyMediaViewer(level, component)) {
 			return;
 		}
+		if (!isPlayerMode(component.viewMode())) {
+			MediaRuntimeState state = MEDIA_STATES.get(key);
+			if (state != null) {
+				synchronized (state) {
+					if (wallpaperVisibleForCurrentViewLocked(state) && !hasNearbyMediaViewer(level, component)) {
+						return;
+					}
+				}
+			}
+		}
 		requestComponentRender(server, component, component.viewMode(), component.launcherPage());
 	}
 
@@ -2973,19 +3315,22 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		RenderWork work;
-		MediaRuntimeState mediaState = null;
+		MediaRuntimeState mediaState = MEDIA_STATES.get(component.runtimeKey());
+		if (mediaState == null && (isPlayerMode(viewMode) || resolvePersistedWallpaperState(component) != null)) {
+			mediaState = MEDIA_STATES.computeIfAbsent(
+					component.runtimeKey(),
+					ignored -> MediaRuntimeState.fresh(viewMode, "", () -> onMediaProgressChanged(server, component.runtimeKey()))
+			);
+		}
+		if (mediaState != null) {
+			synchronized (mediaState) {
+				mediaState.mode = viewMode;
+			}
+			ensureWallpaperStateHydrated(server, component.runtimeKey(), mediaState);
+		}
 		if (isPlayerMode(viewMode)) {
 			if (viewMode == ScreenViewMode.GALLERY) {
-				mediaState = MEDIA_STATES.computeIfAbsent(
-						component.runtimeKey(),
-						ignored -> MediaRuntimeState.fresh(viewMode, "", () -> onMediaProgressChanged(server, component.runtimeKey()))
-				);
-				synchronized (mediaState) {
-					mediaState.mode = viewMode;
-				}
 				ensureGalleryStateHydrated(server, component.runtimeKey(), mediaState);
-			} else {
-				mediaState = MEDIA_STATES.get(component.runtimeKey());
 			}
 			if (mediaState != null) {
 				MediaDispatchKey dispatchKey = new MediaDispatchKey(component.powered(), viewMode, launcherPage, component.width(), component.height());
@@ -3003,7 +3348,7 @@ public final class MonitorScreenSystem {
 				work = createRenderWork(component, viewMode, launcherPage, null);
 			}
 		} else {
-			work = createRenderWork(component, viewMode, launcherPage, null);
+			work = createRenderWork(component, viewMode, launcherPage, mediaState);
 		}
 		if (work == null) {
 			if (mediaState != null) {
@@ -3017,6 +3362,9 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		submitRenderWork(server, work);
+		if (mediaState != null && (isPlayerMode(viewMode) || wallpaperVisibleForViewMode(viewMode, mediaState))) {
+			resumeMediaPlaybackIfNeeded(server, component.runtimeKey());
+		}
 	}
 
 	private static void submitRenderWork(MinecraftServer server, RenderWork work) {
@@ -3146,14 +3494,33 @@ public final class MonitorScreenSystem {
 		if (!powered) {
 			viewMode = ScreenViewMode.HOME;
 			launcherPage = 0;
-			closeMediaSession(level.getServer(), component.runtimeKey());
+			deactivateMediaSession(level.getServer(), component.runtimeKey());
 		}
 		int effectiveLauncherPage = viewMode == ScreenViewMode.HOME
 				? clampInt(launcherPage, 0, homeMaxScroll(createUiLayout(component.width(), component.height())))
 				: launcherPage;
+		ScreenComponent renderedComponent = new ScreenComponent(
+				component.runtimeKey(),
+				component.facing(),
+				component.right(),
+				component.width(),
+				component.height(),
+				powered,
+				viewMode,
+				effectiveLauncherPage,
+				component.frameCoords(),
+				component.byCoord()
+		);
+		boolean immediateRenderRequested = forcedViewMode != null || forcedLauncherPage != null;
 		ServerLevel mapLevel = photoMapLevel(level.getServer(), level);
 		List<PersistedGalleryItem> persistedGallery = resolvePersistedGalleryState(component);
+		PersistedWallpaperState persistedWallpaper = resolvePersistedWallpaperState(component);
 		boolean rerenderMaps = false;
+
+		cacheComponent(level, renderedComponent);
+		if (immediateRenderRequested) {
+			requestComponentRender(level.getServer(), renderedComponent, viewMode, effectiveLauncherPage);
+		}
 
 		for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
 			ItemFrame frame = entry.getKey();
@@ -3189,43 +3556,27 @@ public final class MonitorScreenSystem {
 			if (missingMap || !currentState.sameRenderState(updatedState)) {
 				rerenderMaps = true;
 			}
-			if (!currentState.equals(updatedState)) {
+			List<PersistedGalleryItem> currentGalleryState = readPersistedGalleryState(ensured);
+			PersistedWallpaperState currentWallpaperState = readPersistedWallpaperState(ensured);
+			boolean galleryChanged = !Objects.equals(currentGalleryState, persistedGallery);
+			boolean wallpaperChanged = !Objects.equals(currentWallpaperState, persistedWallpaper);
+			if (galleryChanged || wallpaperChanged) {
+				rerenderMaps = true;
+			}
+			if (!currentState.equals(updatedState) || galleryChanged || wallpaperChanged) {
 				ItemStack updated = ensured.copy();
 				writeScreenState(updated, updatedState);
 				writePersistedGalleryState(updated, galleryItemsFromPersisted(persistedGallery));
+				writePersistedWallpaperState(updated, persistedWallpaper);
 				frame.setItem(updated, false);
 			}
 			ensureDisplay(level, frame, connectionMask);
 		}
 
-		cacheComponent(level, new ScreenComponent(
-				component.runtimeKey(),
-				component.facing(),
-				component.right(),
-				component.width(),
-				component.height(),
-				powered,
-				viewMode,
-				effectiveLauncherPage,
-				component.frameCoords(),
-				component.byCoord()
-		));
-
-		if (!rerenderMaps) {
+		if (!rerenderMaps || immediateRenderRequested) {
 			return;
 		}
-		requestComponentRender(level.getServer(), new ScreenComponent(
-				component.runtimeKey(),
-				component.facing(),
-				component.right(),
-				component.width(),
-				component.height(),
-				powered,
-				viewMode,
-				effectiveLauncherPage,
-				component.frameCoords(),
-				component.byCoord()
-		), viewMode, effectiveLauncherPage);
+		requestComponentRender(level.getServer(), renderedComponent, viewMode, effectiveLauncherPage);
 	}
 
 	private static ScreenComponent collectComponent(ServerLevel level, ItemFrame startFrame, Set<ScreenKey> processedKeys) {
@@ -3559,6 +3910,27 @@ public final class MonitorScreenSystem {
 		return List.of();
 	}
 
+	private static PersistedWallpaperState resolvePersistedWallpaperState(ScreenComponent component) {
+		if (component == null) {
+			return null;
+		}
+		MediaRuntimeState runtimeState = MEDIA_STATES.get(component.runtimeKey());
+		if (runtimeState != null) {
+			synchronized (runtimeState) {
+				if (runtimeState.wallpaperUrl != null && !runtimeState.wallpaperUrl.isBlank()) {
+					return new PersistedWallpaperState(runtimeState.wallpaperUrl, runtimeState.wallpaperScaleMode);
+				}
+			}
+		}
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			PersistedWallpaperState state = readPersistedWallpaperState(frame.getItem());
+			if (state != null && state.url() != null && !state.url().isBlank()) {
+				return state;
+			}
+		}
+		return null;
+	}
+
 	private static List<GalleryItem> galleryItemsFromPersisted(List<PersistedGalleryItem> persistedItems) {
 		if (persistedItems == null || persistedItems.isEmpty()) {
 			return List.of();
@@ -3620,7 +3992,7 @@ public final class MonitorScreenSystem {
 		writeScreenState(screenMap, state);
 		MapItemSavedData mapData = mapLevel.getMapData(mapId);
 		if (mapData != null) {
-			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null));
+			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null, null));
 			applyFrameToMap(mapData, tiles[0]);
 		}
 		return screenMap;
@@ -3712,14 +4084,52 @@ public final class MonitorScreenSystem {
 		return List.copyOf(items);
 	}
 
+	private static PersistedWallpaperState readPersistedWallpaperState(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return null;
+		}
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData == null) {
+			return null;
+		}
+		CompoundTag root = customData.copyTag();
+		if (!root.contains(PERSISTED_MEDIA_ROOT_TAG)) {
+			return null;
+		}
+		CompoundTag mediaTag = root.getCompoundOrEmpty(PERSISTED_MEDIA_ROOT_TAG);
+		String url = mediaTag.getStringOr(PERSISTED_WALLPAPER_URL_TAG, "").trim();
+		if (url.isBlank()) {
+			return null;
+		}
+		return new PersistedWallpaperState(
+				url,
+				parsePersistedScaleMode(mediaTag.getStringOr(PERSISTED_WALLPAPER_SCALE_TAG, MediaScaleMode.FIT.name()))
+		);
+	}
+
+	private static MediaScaleMode parsePersistedScaleMode(String value) {
+		if (value == null || value.isBlank()) {
+			return MediaScaleMode.FIT;
+		}
+		try {
+			return MediaScaleMode.valueOf(value.toUpperCase(Locale.ROOT));
+		} catch (IllegalArgumentException ignored) {
+			return MediaScaleMode.FIT;
+		}
+	}
+
 	private static void writePersistedGalleryState(ItemStack stack, List<GalleryItem> galleryItems) {
+		writePersistedGalleryState(stack, galleryItems, null);
+	}
+
+	private static void writePersistedGalleryState(ItemStack stack, List<GalleryItem> galleryItems, PersistedWallpaperState wallpaperState) {
 		if (stack == null || stack.isEmpty()) {
 			return;
 		}
 		List<PersistedGalleryItem> persistedItems = persistedGalleryItems(galleryItems);
 		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
 			tag.remove(PERSISTED_MEDIA_ROOT_TAG);
-			if (persistedItems.isEmpty()) {
+			if (persistedItems.isEmpty() && (wallpaperState == null || wallpaperState.url() == null || wallpaperState.url().isBlank())) {
 				return;
 			}
 			CompoundTag mediaTag = new CompoundTag();
@@ -3732,8 +4142,24 @@ public final class MonitorScreenSystem {
 				itemTag.putString(PERSISTED_GALLERY_KIND_TAG, item.kind() != null ? item.kind().persistedName() : GalleryItemKind.MEDIA.persistedName());
 				mediaTag.put(PERSISTED_GALLERY_ITEM_PREFIX + index, itemTag);
 			}
+			if (wallpaperState != null && wallpaperState.url() != null && !wallpaperState.url().isBlank()) {
+				mediaTag.putString(PERSISTED_WALLPAPER_URL_TAG, wallpaperState.url());
+				mediaTag.putString(
+						PERSISTED_WALLPAPER_SCALE_TAG,
+						(wallpaperState.scaleMode() != null ? wallpaperState.scaleMode() : MediaScaleMode.FIT).name().toLowerCase(Locale.ROOT)
+				);
+			}
 			tag.put(PERSISTED_MEDIA_ROOT_TAG, mediaTag);
 		});
+	}
+
+	private static void writePersistedWallpaperState(ItemStack stack, PersistedWallpaperState wallpaperState) {
+		if (stack == null || stack.isEmpty()) {
+			return;
+		}
+		List<PersistedGalleryItem> persistedItems = readPersistedGalleryState(stack);
+		List<GalleryItem> galleryItems = galleryItemsFromPersisted(persistedItems);
+		writePersistedGalleryState(stack, galleryItems, wallpaperState);
 	}
 
 	private static List<PersistedGalleryItem> persistedGalleryItems(List<GalleryItem> galleryItems) {
@@ -3766,6 +4192,7 @@ public final class MonitorScreenSystem {
 			return null;
 		}
 		MediaVisualSnapshot mediaSnapshot = null;
+		WallpaperVisualSnapshot wallpaperSnapshot = captureWallpaperSnapshot(mediaState, viewMode);
 		long mediaVersion = 0L;
 		if (isPlayerMode(viewMode)) {
 			mediaSnapshot = captureMediaSnapshot(mediaState);
@@ -3779,13 +4206,14 @@ public final class MonitorScreenSystem {
 				component.width(),
 				component.height(),
 				mediaVersion,
-				mediaSnapshot
+				mediaSnapshot,
+				wallpaperSnapshot
 		);
 	}
 
 	private static MediaVisualSnapshot captureMediaSnapshot(MediaRuntimeState state) {
 		if (state == null) {
-			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, false, true, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, 0, -1, null);
+			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, false, true, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, 0, -1, null);
 		}
 		boolean youtubeMode = state.mode == ScreenViewMode.YOUTUBE;
 		boolean galleryMode = state.mode == ScreenViewMode.GALLERY;
@@ -3827,6 +4255,9 @@ public final class MonitorScreenSystem {
 		MediaActionGlyph actionGlyph = resolvedActionGlyph(state);
 		MediaActionVisualState actionState = resolvedActionVisualState(state);
 		boolean actionVisible = resolvedActionVisible(state);
+		boolean wallpaperActionVisible = galleryMode && currentGalleryItemCanBeWallpaperLocked(state);
+		MediaActionGlyph wallpaperActionGlyph = currentGalleryItemIsWallpaperLocked(state) ? MediaActionGlyph.CHECK : MediaActionGlyph.WALLPAPER;
+		MediaActionVisualState wallpaperActionState = currentGalleryItemIsWallpaperLocked(state) ? MediaActionVisualState.COMPLETE : MediaActionVisualState.IDLE;
 		MediaOverlayWindowSnapshot overlayWindow = youtubeMode && state.youtubeQueueOpen
 				? youtubeQueueWindowSnapshot(state, queueItems)
 				: galleryMode && state.galleryDeleteConfirmOpen
@@ -3863,6 +4294,9 @@ public final class MonitorScreenSystem {
 				actionVisible,
 				actionGlyph,
 				actionState,
+				wallpaperActionVisible,
+				wallpaperActionGlyph,
+				wallpaperActionState,
 				youtubeMode && state.youtubeQueueOpen,
 				youtubeMode ? state.youtubeQueueScroll : galleryMode ? state.galleryScroll : 0,
 				youtubeMode ? state.youtubeQueueIndex : galleryMode ? state.galleryIndex : -1,
@@ -3870,11 +4304,25 @@ public final class MonitorScreenSystem {
 		);
 	}
 
+	private static WallpaperVisualSnapshot captureWallpaperSnapshot(MediaRuntimeState state, ScreenViewMode viewMode) {
+		if (state == null || !wallpaperVisibleForViewMode(viewMode, state) || state.wallpaperMedia == null) {
+			return null;
+		}
+		BufferedImage frame = state.wallpaperMedia.frame(state.wallpaperFrameIndex);
+		if (frame == null) {
+			return null;
+		}
+		return new WallpaperVisualSnapshot(
+				frame,
+				state.wallpaperScaleMode != null ? state.wallpaperScaleMode : MediaScaleMode.FIT
+		);
+	}
+
 	private static byte[][] renderTiles(MinecraftServer server, RenderWork work) {
 		if (work == null) {
 			return new byte[0][];
 		}
-		if (!isPlayerMode(work.viewMode())) {
+		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null) {
 			RenderCacheKey key = new RenderCacheKey(work.powered(), work.viewMode(), work.launcherPage(), work.width(), work.height());
 			byte[][] cached = TILE_CACHE.get(key);
 			if (cached != null) {
@@ -3888,6 +4336,14 @@ public final class MonitorScreenSystem {
 		Graphics2D graphics = canvas.createGraphics();
 		configureUiGraphics(graphics);
 		drawBaseBackground(graphics, work.width(), work.height(), work.powered());
+		if (work.powered() && work.wallpaperSnapshot() != null && work.wallpaperSnapshot().frame() != null) {
+			drawScaledImage(
+					graphics,
+					work.wallpaperSnapshot().frame(),
+					mediaCanvasRect(createUiLayout(work.width(), work.height())),
+					work.wallpaperSnapshot().scaleMode()
+			);
+		}
 		if (work.powered()) {
 			UiLayout layout = createUiLayout(work.width(), work.height());
 			if (work.viewMode() == ScreenViewMode.HOME) {
@@ -3904,7 +4360,7 @@ public final class MonitorScreenSystem {
 		byte[][] tiles = new byte[work.width() * work.height()][MAP_SIZE * MAP_SIZE];
 		quantizeTiles(work, rgbPixels, pixelWidth, tiles);
 
-		if (!isPlayerMode(work.viewMode())) {
+		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null) {
 			TILE_CACHE.put(new RenderCacheKey(work.powered(), work.viewMode(), work.launcherPage(), work.width(), work.height()), tiles);
 		}
 		return tiles;
@@ -4147,7 +4603,10 @@ public final class MonitorScreenSystem {
 			}
 		}
 
-		boolean controlsActive = state != null && (state.overlayMode() == MediaOverlayMode.CONTROLS || state.loading());
+		boolean controlsActive = state != null
+				&& (state.overlayMode() == MediaOverlayMode.CONTROLS
+				|| state.loading()
+				|| (youtubeMode && !hasMedia));
 		if (controlsActive) {
 			int shadeHeight = clampInt(layout.unit() * 5, 40, 72);
 			graphics.setPaint(new GradientPaint(
@@ -4174,17 +4633,20 @@ public final class MonitorScreenSystem {
 			} else {
 				drawMediaCloseButton(graphics, closeRect, layout);
 			}
-			if (controlUi) {
-				if (galleryMode || galleryBackedYoutube) {
-					drawMediaTitleBar(graphics, titleRect, state != null ? state.mediaTitle() : "", layout);
-					if (galleryMode && state != null && state.actionVisible()) {
-						drawGalleryPlayerActionButton(graphics, mediaGalleryPlayerActionRect(layout), state, layout);
-					}
-				} else {
-					drawMediaSearchBar(
-							graphics,
-							titleRect,
-							state != null ? state.linkPlaceholder() : "ВСТАВЬ URL",
+				if (controlUi) {
+					if (galleryMode || galleryBackedYoutube) {
+						drawMediaTitleBar(graphics, titleRect, state != null ? state.mediaTitle() : "", layout);
+						if (galleryMode && state != null && state.actionVisible()) {
+							drawGalleryPlayerActionButton(graphics, mediaGalleryPlayerActionRect(layout), state, layout);
+						}
+						if (galleryMode && state != null && state.wallpaperActionVisible()) {
+							drawGalleryWallpaperActionButton(graphics, downloadRect, state, layout);
+						}
+					} else {
+						drawMediaSearchBar(
+								graphics,
+								titleRect,
+								state != null ? state.linkPlaceholder() : "ВСТАВЬ URL",
 							true,
 							layout
 					);
@@ -4468,6 +4930,20 @@ public final class MonitorScreenSystem {
 		);
 	}
 
+	private static void drawGalleryWallpaperActionButton(Graphics2D graphics, UiRect rect, MediaVisualSnapshot state, UiLayout layout) {
+		if (state == null) {
+			return;
+		}
+		drawMediaIconActionButton(
+				graphics,
+				rect,
+				new Color(74, 54, 18, 214),
+				layout,
+				state.wallpaperActionGlyph(),
+				state.wallpaperActionState()
+		);
+	}
+
 	private static void drawYoutubePlayerActionButton(Graphics2D graphics, UiRect rect, MediaVisualSnapshot state, UiLayout layout) {
 		if (state == null) {
 			return;
@@ -4502,6 +4978,7 @@ public final class MonitorScreenSystem {
 			case TRASH -> drawTrashGlyph(graphics, iconRect, new Color(248, 251, 255));
 			case DOWNLOAD -> drawDownloadGlyph(graphics, iconRect, new Color(248, 251, 255));
 			case CHECK -> drawCheckGlyph(graphics, iconRect, new Color(248, 251, 255));
+			case WALLPAPER -> drawWallpaperGlyph(graphics, iconRect, new Color(248, 251, 255));
 		}
 	}
 
@@ -5230,6 +5707,28 @@ public final class MonitorScreenSystem {
 		int topY = rect.y() + clampInt(rect.height() / 4, 3, 6);
 		graphics.drawLine(left, midY, centerX, lowY);
 		graphics.drawLine(centerX, lowY, right, topY);
+		graphics.setStroke(previous);
+	}
+
+	private static void drawWallpaperGlyph(Graphics2D graphics, UiRect rect, Color color) {
+		Stroke previous = graphics.getStroke();
+		graphics.setColor(color);
+		graphics.setStroke(new BasicStroke(Math.max(1.6F, rect.width() / 10.0F), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		int pad = clampInt(rect.width() / 6, 2, 5);
+		int left = rect.x() + pad;
+		int top = rect.y() + pad;
+		int width = Math.max(4, rect.width() - pad * 2);
+		int height = Math.max(4, rect.height() - pad * 2);
+		int right = left + width;
+		int bottom = top + height;
+		graphics.drawRoundRect(left, top, width, height, clampInt(rect.width() / 6, 2, 6), clampInt(rect.width() / 6, 2, 6));
+		int sunSize = clampInt(rect.width() / 5, 2, 5);
+		graphics.drawOval(right - sunSize - pad / 2, top + pad / 2, sunSize, sunSize);
+		int hillBaseY = bottom - clampInt(rect.height() / 4, 2, 5);
+		int midX = rect.x() + rect.width() / 2;
+		graphics.drawLine(left + pad / 2, hillBaseY, midX - clampInt(rect.width() / 8, 1, 3), top + height / 2);
+		graphics.drawLine(midX - clampInt(rect.width() / 8, 1, 3), top + height / 2, midX + clampInt(rect.width() / 10, 1, 4), hillBaseY - clampInt(rect.height() / 8, 1, 3));
+		graphics.drawLine(midX + clampInt(rect.width() / 10, 1, 4), hillBaseY - clampInt(rect.height() / 8, 1, 3), right - pad / 2, hillBaseY);
 		graphics.setStroke(previous);
 	}
 
@@ -7339,6 +7838,17 @@ public final class MonitorScreenSystem {
 		clearGallerySelectionLocked(state);
 	}
 
+	private static void clearWallpaperLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		state.wallpaperUrl = null;
+		state.wallpaperMedia = null;
+		state.wallpaperScaleMode = MediaScaleMode.FIT;
+		state.wallpaperFrameIndex = 0;
+		state.wallpaperLoading = false;
+	}
+
 	private static void clearGallerySelectionLocked(MediaRuntimeState state) {
 		if (state == null) {
 			return;
@@ -7393,8 +7903,47 @@ public final class MonitorScreenSystem {
 		return state.galleryItems.get(state.galleryIndex);
 	}
 
+	private static Optional<GalleryItem> currentGalleryItemMatchingUrlLocked(MediaRuntimeState state, String url) {
+		if (state == null || url == null || url.isBlank()) {
+			return Optional.empty();
+		}
+		for (GalleryItem item : state.galleryItems) {
+			if (item != null && Objects.equals(item.url(), url)) {
+				return Optional.of(item);
+			}
+		}
+		return Optional.empty();
+	}
+
 	private static boolean currentGalleryItemSavedLocked(MediaRuntimeState state) {
 		return currentGalleryItemLocked(state) != null;
+	}
+
+	private static boolean currentGalleryItemCanBeWallpaperLocked(MediaRuntimeState state) {
+		GalleryItem item = currentGalleryItemLocked(state);
+		return item != null
+				&& item.kind() == GalleryItemKind.MEDIA
+				&& item.media() != null
+				&& item.url() != null
+				&& !item.url().isBlank();
+	}
+
+	private static boolean currentGalleryItemIsWallpaperLocked(MediaRuntimeState state) {
+		GalleryItem item = currentGalleryItemLocked(state);
+		return item != null
+				&& item.url() != null
+				&& !item.url().isBlank()
+				&& Objects.equals(item.url(), state.wallpaperUrl);
+	}
+
+	private static PersistedWallpaperState persistedWallpaperStateLocked(MediaRuntimeState state) {
+		if (state == null || state.wallpaperUrl == null || state.wallpaperUrl.isBlank()) {
+			return null;
+		}
+		return new PersistedWallpaperState(
+				state.wallpaperUrl,
+				state.wallpaperScaleMode != null ? state.wallpaperScaleMode : MediaScaleMode.FIT
+		);
 	}
 
 	private static BufferedImage copyBufferedImage(BufferedImage source) {
@@ -7643,7 +8192,10 @@ public final class MonitorScreenSystem {
 			return false;
 		}
 		int resolvedIndex = clampInt(requestedIndex, 0, state.galleryItems.size() - 1);
-		state.galleryItems.remove(resolvedIndex);
+		GalleryItem removed = state.galleryItems.remove(resolvedIndex);
+		if (removed != null && removed.url() != null && Objects.equals(removed.url(), state.wallpaperUrl)) {
+			clearWallpaperLocked(state);
+		}
 		if (state.galleryItems.isEmpty()) {
 			clearGallerySelectionLocked(state);
 			state.galleryIndex = -1;
@@ -7981,7 +8533,8 @@ public final class MonitorScreenSystem {
 	private enum MediaActionGlyph {
 		TRASH,
 		DOWNLOAD,
-		CHECK
+		CHECK,
+		WALLPAPER
 	}
 
 	private enum MediaActionVisualState {
@@ -8191,11 +8744,20 @@ public final class MonitorScreenSystem {
 			boolean actionVisible,
 			MediaActionGlyph actionGlyph,
 			MediaActionVisualState actionState,
+			boolean wallpaperActionVisible,
+			MediaActionGlyph wallpaperActionGlyph,
+			MediaActionVisualState wallpaperActionState,
 			boolean youtubeQueueOpen,
 			int mediaListScroll,
 			int currentMediaListIndex,
 			MediaOverlayWindowSnapshot overlayWindow
 		) {
+	}
+
+	private record WallpaperVisualSnapshot(
+			BufferedImage frame,
+			MediaScaleMode scaleMode
+	) {
 	}
 
 	private record MediaOverlayWindowSnapshot(
@@ -8216,8 +8778,9 @@ public final class MonitorScreenSystem {
 			int width,
 			int height,
 			long mediaVersion,
-			MediaVisualSnapshot mediaSnapshot
-	) {
+			MediaVisualSnapshot mediaSnapshot,
+			WallpaperVisualSnapshot wallpaperSnapshot
+		) {
 	}
 
 	private record MediaDispatchKey(
@@ -8249,6 +8812,9 @@ public final class MonitorScreenSystem {
 	private record PersistedGalleryItem(String title, String url, GalleryItemKind kind) {
 	}
 
+	private record PersistedWallpaperState(String url, MediaScaleMode scaleMode) {
+	}
+
 	private record GalleryItemLoadResult(
 			ScreenRuntimeKey screenKey,
 			String title,
@@ -8256,6 +8822,14 @@ public final class MonitorScreenSystem {
 			MonitorMediaApp.LoadedMedia loadedMedia,
 			boolean openWhenReady,
 			int preferredIndex,
+			String error
+		) {
+	}
+
+	private record WallpaperLoadResult(
+			ScreenRuntimeKey screenKey,
+			String url,
+			MonitorMediaApp.LoadedMedia loadedMedia,
 			String error
 	) {
 	}
@@ -8385,8 +8959,14 @@ public final class MonitorScreenSystem {
 		private boolean galleryDeleteConfirmOpen;
 		private String statusText;
 		private boolean galleryHydrated;
+		private boolean wallpaperHydrated;
 		private final List<GalleryItem> galleryItems;
 		private final Set<String> galleryLoadingUrls;
+		private MonitorMediaApp.LoadedMedia wallpaperMedia;
+		private String wallpaperUrl;
+		private MediaScaleMode wallpaperScaleMode;
+		private int wallpaperFrameIndex;
+		private boolean wallpaperLoading;
 		private String galleryPendingOpenUrl;
 		private int galleryPendingOpenIndex;
 		private int galleryIndex;
@@ -8422,10 +9002,16 @@ public final class MonitorScreenSystem {
 			this.loading = false;
 			this.galleryDeleteConfirmOpen = false;
 			this.galleryHydrated = false;
+			this.wallpaperHydrated = false;
 			this.version = 0L;
 			this.statusText = "";
 			this.galleryItems = new ArrayList<>();
 			this.galleryLoadingUrls = new HashSet<>();
+			this.wallpaperMedia = null;
+			this.wallpaperUrl = null;
+			this.wallpaperScaleMode = MediaScaleMode.FIT;
+			this.wallpaperFrameIndex = 0;
+			this.wallpaperLoading = false;
 			this.galleryPendingOpenUrl = null;
 			this.galleryPendingOpenIndex = -1;
 			this.galleryIndex = -1;

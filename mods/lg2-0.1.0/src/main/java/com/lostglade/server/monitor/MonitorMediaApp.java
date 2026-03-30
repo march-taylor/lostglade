@@ -21,15 +21,23 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 
 public final class MonitorMediaApp implements MonitorApp {
 	private static final int MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
 	private static final int CONNECT_TIMEOUT_MS = 4000;
 	private static final int READ_TIMEOUT_MS = 12000;
 	private static final int MAX_DIMENSION = 1024;
+	private static volatile Path cacheDirectory = Path.of(".lg2-monitor-media-cache");
 
 	@Override
 	public String id() {
@@ -77,8 +85,14 @@ public final class MonitorMediaApp implements MonitorApp {
 
 	public static LoadedMedia loadFromUrl(String rawUrl, TaskProgress progress) throws IOException {
 		URI uri = validateUri(rawUrl);
-		byte[] bytes = download(uri.toURL(), progress);
+		byte[] bytes = loadBytes(uri, progress);
 		return decode(bytes, progress);
+	}
+
+	public static void setCacheDirectory(Path directory) {
+		if (directory != null) {
+			cacheDirectory = directory;
+		}
 	}
 
 	private static URI validateUri(String rawUrl) throws IOException {
@@ -94,6 +108,72 @@ public final class MonitorMediaApp implements MonitorApp {
 			return uri;
 		} catch (IllegalArgumentException exception) {
 			throw new IOException("Invalid URL", exception);
+		}
+	}
+
+	private static byte[] loadBytes(URI uri, TaskProgress progress) throws IOException {
+		Path cachePath = cachePath(uri);
+		if (cachePath != null && Files.isRegularFile(cachePath)) {
+			if (progress != null) {
+				progress.setIndeterminate("LOADING CACHE");
+			}
+			return Files.readAllBytes(cachePath);
+		}
+		byte[] bytes = download(uri.toURL(), progress);
+		persistCacheBytes(cachePath, bytes);
+		return bytes;
+	}
+
+	private static void persistCacheBytes(Path cachePath, byte[] bytes) {
+		if (cachePath == null || bytes == null || bytes.length == 0) {
+			return;
+		}
+		try {
+			Path parent = cachePath.getParent();
+			if (parent != null) {
+				Files.createDirectories(parent);
+			}
+			Path tempPath = cachePath.resolveSibling(cachePath.getFileName() + ".tmp");
+			Files.write(tempPath, bytes);
+			try {
+				Files.move(tempPath, cachePath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			} catch (IOException ignored) {
+				Files.move(tempPath, cachePath, StandardCopyOption.REPLACE_EXISTING);
+			}
+		} catch (IOException ignored) {
+		}
+	}
+
+	private static Path cachePath(URI uri) {
+		if (uri == null) {
+			return null;
+		}
+		String cacheKey = hashString(uri.toString());
+		if (cacheKey == null || cacheKey.isBlank()) {
+			return null;
+		}
+		return cacheDirectory.resolve(cacheKey + cacheExtension(uri));
+	}
+
+	private static String cacheExtension(URI uri) {
+		String path = uri != null ? uri.getPath() : null;
+		if (path == null || path.isBlank()) {
+			return ".bin";
+		}
+		int dotIndex = path.lastIndexOf('.');
+		if (dotIndex < 0 || dotIndex >= path.length() - 1) {
+			return ".bin";
+		}
+		String extension = path.substring(dotIndex).toLowerCase(Locale.ROOT);
+		return extension.matches("\\.[a-z0-9]{1,6}") ? extension : ".bin";
+	}
+
+	private static String hashString(String value) {
+		try {
+			MessageDigest digest = MessageDigest.getInstance("SHA-256");
+			return HexFormat.of().formatHex(digest.digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+		} catch (NoSuchAlgorithmException exception) {
+			return Integer.toHexString(value.hashCode());
 		}
 	}
 
