@@ -166,6 +166,30 @@ public final class MonitorYoutubeRelayClient {
 		return isQueuePreloadReady(loadPersistentQueuePreload(url));
 	}
 
+	public static BufferedImage queueEntryPreview(String rawUrl) {
+		if (!looksLikeYoutubeUrl(rawUrl)) {
+			return null;
+		}
+		QueuePreloadSnapshot snapshot = snapshotQueuePreload(rawUrl.trim());
+		if (snapshot == null || snapshot.cachedPreviewFrames() == null || snapshot.cachedPreviewFrames().isEmpty()) {
+			return null;
+		}
+		CachedPreviewFrame frame = snapshot.cachedPreviewFrames().firstEntry().getValue();
+		if (frame == null) {
+			return null;
+		}
+		BufferedImage cachedImage = frame.imageRef() != null ? frame.imageRef().get() : null;
+		if (cachedImage != null) {
+			return cachedImage;
+		}
+		try {
+			return frame.bytes() != null && frame.bytes().length > 0 ? decodeImageBytes(frame.bytes()) : null;
+		} catch (IOException exception) {
+			Lg2.LOGGER.debug("Failed to decode cached YouTube gallery preview for {}", rawUrl, exception);
+			return null;
+		}
+	}
+
 	public static void shutdown() {
 		for (RelaySession session : List.copyOf(SESSIONS.values())) {
 			session.closeQuietly();

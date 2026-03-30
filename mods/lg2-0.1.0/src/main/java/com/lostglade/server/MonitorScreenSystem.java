@@ -3568,7 +3568,10 @@ public final class MonitorScreenSystem {
 			if (item == null || item.url() == null || item.url().isBlank()) {
 				continue;
 			}
-			items.add(new GalleryItem(item.title(), item.url(), null, null, item.kind()));
+			BufferedImage preview = item.kind() == GalleryItemKind.YOUTUBE
+					? MonitorYoutubeRelayClient.queueEntryPreview(item.url())
+					: null;
+			items.add(new GalleryItem(item.title(), item.url(), null, preview, item.kind()));
 		}
 		return List.copyOf(items);
 	}
@@ -4571,20 +4574,6 @@ public final class MonitorScreenSystem {
 			UiRect playBadge = mediaGalleryCardPlayBadgeRect(previewRect, layout);
 			drawRoundMediaButtonBase(graphics, playBadge, new Color(12, 16, 20, 196));
 			drawPlayGlyph(graphics, playBadge.inset(Math.max(2, layout.unit() / 5)), new Color(248, 251, 255));
-		}
-
-		if (card.loaded()) {
-			int badgeWidth = clampInt(layout.unit() * 4, 18, 34);
-			int badgeHeight = clampInt(layout.unit() * 2, 12, 20);
-			UiRect readyRect = new UiRect(
-					rect.right() - badgeWidth - clampInt(layout.unit() / 3, 3, 6),
-					rect.y() + clampInt(layout.unit() / 3, 3, 6),
-					badgeWidth,
-					badgeHeight
-			);
-			fillRoundedRect(graphics, readyRect, badgeHeight, new Color(22, 122, 68, 220));
-			strokeRoundedRect(graphics, readyRect, badgeHeight, 1.0F, new Color(186, 255, 214, 128));
-			drawCheckGlyph(graphics, readyRect.inset(Math.max(2, layout.unit() / 5)), new Color(248, 251, 255));
 		}
 	}
 
