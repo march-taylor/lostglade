@@ -584,7 +584,7 @@ public final class MonitorScreenSystem {
 
 		List<SpeakerAudioSource> sources = new ArrayList<>();
 		for (ScreenComponent component : connectedComponents.values()) {
-			if (component.viewMode() != ScreenViewMode.YOUTUBE || !component.powered()) {
+			if (!component.powered()) {
 				continue;
 			}
 			MediaRuntimeState state = MEDIA_STATES.get(component.runtimeKey());
@@ -592,7 +592,7 @@ public final class MonitorScreenSystem {
 				continue;
 			}
 			synchronized (state) {
-				if (state.mode != ScreenViewMode.YOUTUBE
+				if (!isYoutubePlaybackLocked(state)
 						|| state.relaySessionId == null
 						|| state.audioStreamUrl == null
 						|| state.audioStreamUrl.isBlank()
@@ -869,9 +869,9 @@ public final class MonitorScreenSystem {
 		boolean galleryDownloadRequested = false;
 		boolean youtubeDownloadRequested = false;
 		boolean returnToGalleryAfterDelete = false;
-		String standaloneYoutubeUrl = null;
-		String standaloneYoutubeTitle = null;
-		boolean skipYoutubePrompt = false;
+		String galleryYoutubeUrl = null;
+		String galleryYoutubeTitle = null;
+		Integer galleryYoutubeIndex = null;
 		List<String> youtubeQueueReleasedUrls = List.of();
 		YoutubeQueuePreloadDiff youtubeQueuePreloadDiff = YoutubeQueuePreloadDiff.EMPTY;
 		if (component.viewMode() == ScreenViewMode.HOME) {
@@ -935,7 +935,7 @@ public final class MonitorScreenSystem {
 						mediaState.version++;
 					} else if (galleryDeleteConfirmConfirmRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 						cancelPlaybackLocked(mediaState);
-						if (mediaState.mode == ScreenViewMode.YOUTUBE && isGalleryBackedYoutubeLocked(mediaState)) {
+						if (isGalleryBackedYoutubeLocked(mediaState)) {
 							returnToGalleryAfterDelete = true;
 						}
 						boolean stillSelected = removeGalleryItemLocked(mediaState, mediaState.galleryIndex >= 0 ? mediaState.galleryIndex : 0, layout);
@@ -1055,10 +1055,9 @@ public final class MonitorScreenSystem {
 								GalleryItem item = mediaState.galleryItems.get(galleryIndex);
 								if (item != null && item.kind() == GalleryItemKind.YOUTUBE && item.url() != null && !item.url().isBlank()) {
 									mediaState.galleryIndex = galleryIndex;
-									nextMode = ScreenViewMode.YOUTUBE;
-									standaloneYoutubeUrl = item.url();
-									standaloneYoutubeTitle = item.title();
-									skipYoutubePrompt = true;
+									galleryYoutubeIndex = galleryIndex;
+									galleryYoutubeUrl = item.url();
+									galleryYoutubeTitle = item.title();
 									mediaState.version++;
 									visibleRow = rowCount;
 									break;
@@ -1110,7 +1109,7 @@ public final class MonitorScreenSystem {
 					&& canTogglePlaybackLocked(mediaState)
 					&& (mediaCenterPlayPauseRect(layout).contains(touchPoint.x(), touchPoint.y()) || mediaPlayPauseRect(layout).contains(touchPoint.x(), touchPoint.y()))) {
 				synchronized (mediaState) {
-					if (mediaState.mode == ScreenViewMode.YOUTUBE && mediaState.relaySessionId != null) {
+					if (isYoutubePlaybackLocked(mediaState) && mediaState.relaySessionId != null) {
 						boolean shouldPause = !isPlaybackPausedLocked(mediaState);
 						cancelPlaybackLocked(mediaState);
 						mediaState.userPaused = shouldPause;
@@ -1180,7 +1179,7 @@ public final class MonitorScreenSystem {
 				rerenderCurrent = true;
 			} else if (playerUiVisible && mediaTimelineHitRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
-					if (mediaState.mode == ScreenViewMode.YOUTUBE && canSeekTimelineLocked(mediaState)) {
+					if (isYoutubePlaybackLocked(mediaState) && canSeekTimelineLocked(mediaState)) {
 						youtubeSeekTargetMs = youtubePositionForFraction(mediaState, mediaTimelineFraction(layout, touchPoint));
 						mediaState.positionMs = youtubeSeekTargetMs;
 					} else if (mediaState.loadedMedia != null && mediaState.loadedMedia.frameCount() > 1) {
@@ -1265,7 +1264,7 @@ public final class MonitorScreenSystem {
 			if (isPlayerMode(nextMode) && component.viewMode() != nextMode) {
 				openMediaSession(player, component.runtimeKey(), nextMode);
 				markMediaFocus(player, component.runtimeKey());
-				if (nextMode == ScreenViewMode.YOUTUBE && !skipYoutubePrompt) {
+				if (nextMode == ScreenViewMode.YOUTUBE) {
 					requestMediaLink(player, component.runtimeKey(), false, ScreenViewMode.YOUTUBE, YoutubeLinkRequestAction.REPLACE_QUEUE);
 				}
 			}
@@ -1293,17 +1292,30 @@ public final class MonitorScreenSystem {
 			if (state != null) {
 				String deferredTitle = null;
 				String deferredUrl = null;
+				boolean deferredYoutube = false;
+				Integer deferredGalleryIndex = null;
 				synchronized (state) {
 					int index = normalizeGalleryIndexLocked(state, galleryDeferredLoadIndex);
 					if (index >= 0 && index < state.galleryItems.size()) {
 						GalleryItem item = state.galleryItems.get(index);
-						if (item != null && item.media() == null && item.url() != null && !item.url().isBlank()) {
+						if (item != null && item.url() != null && !item.url().isBlank()) {
 							deferredTitle = item.title();
 							deferredUrl = item.url();
+							deferredGalleryIndex = index;
+							deferredYoutube = item.kind() == GalleryItemKind.YOUTUBE;
 						}
 					}
 				}
-				if (deferredUrl != null) {
+				if (deferredYoutube && deferredUrl != null) {
+					startGalleryYoutubePlayback(
+							server,
+							component.runtimeKey(),
+							player.getUUID(),
+							deferredTitle,
+							deferredUrl,
+							deferredGalleryIndex
+					);
+				} else if (deferredUrl != null) {
 					scheduleGalleryItemLoad(server, component.runtimeKey(), deferredTitle, deferredUrl, true, galleryDeferredLoadIndex);
 				}
 			}
@@ -1340,8 +1352,8 @@ public final class MonitorScreenSystem {
 		if (server != null && youtubeDownloadRequested) {
 			beginYoutubeDownload(server, component.runtimeKey(), player.getUUID());
 		}
-		if (server != null && standaloneYoutubeUrl != null) {
-			startStandaloneYoutubePlayback(server, component.runtimeKey(), player.getUUID(), standaloneYoutubeTitle, standaloneYoutubeUrl, true);
+		if (server != null && galleryYoutubeUrl != null) {
+			startGalleryYoutubePlayback(server, component.runtimeKey(), player.getUUID(), galleryYoutubeTitle, galleryYoutubeUrl, galleryYoutubeIndex);
 		}
 		return InteractionResult.SUCCESS;
 	}
@@ -1500,6 +1512,7 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
+		ensureGalleryStateHydrated(server, key, state);
 		MonitorMediaApp.LoadedMedia media;
 		String url;
 		String title;
@@ -1544,6 +1557,7 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
+		ensureGalleryStateHydrated(server, key, state);
 		UUID requesterUuid;
 		boolean saved = false;
 		synchronized (state) {
@@ -1590,8 +1604,8 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
-		String sessionId = null;
-		boolean shouldRequestFullCache = false;
+		ensureGalleryStateHydrated(server, key, state);
+		boolean readyNow = false;
 		synchronized (state) {
 			if (state.mode != ScreenViewMode.YOUTUBE || state.sourceUrl == null || state.sourceUrl.isBlank()) {
 				return;
@@ -1606,20 +1620,12 @@ public final class MonitorScreenSystem {
 			markDownloadStartedLocked(state, state.sourceUrl, requesterUuid);
 			state.statusText = "";
 			state.version++;
-			sessionId = state.relaySessionId;
-			shouldRequestFullCache = !state.liveStream && sessionId != null && !sessionId.isBlank();
+			readyNow = isYoutubeGalleryDownloadReadyLocked(state);
 		}
 		requestRuntimeRender(server, key);
-		if (shouldRequestFullCache) {
-			String finalSessionId = sessionId;
-			ensureExecutors();
-			CompletableFuture.runAsync(() -> {
-				try {
-					MonitorYoutubeRelayClient.requestFullCache(finalSessionId);
-				} catch (Exception exception) {
-					Lg2.LOGGER.debug("Failed to request full YouTube cache for {}", key, exception);
-				}
-			}, mediaIoExecutor);
+		if (readyNow) {
+			finishYoutubeDownload(server, key);
+			return;
 		}
 		maybeCompleteYoutubeDownload(server, key);
 	}
@@ -1634,7 +1640,7 @@ public final class MonitorScreenSystem {
 		}
 		long delayMillis;
 		synchronized (state) {
-			if (!state.downloadInProgress || !isYoutubeFullyBufferedLocked(state)) {
+			if (!state.downloadInProgress || !isYoutubeGalleryDownloadReadyLocked(state)) {
 				return;
 			}
 			delayMillis = remainingDownloadSpinnerMillisLocked(state);
@@ -1655,11 +1661,12 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
+		ensureGalleryStateHydrated(server, key, state);
 		UUID requesterUuid;
 		String savedUrl = null;
 		boolean saved = false;
 		synchronized (state) {
-			if (!state.downloadInProgress || !isYoutubeFullyBufferedLocked(state)) {
+			if (!state.downloadInProgress || !isYoutubeGalleryDownloadReadyLocked(state)) {
 				return;
 			}
 			if (state.sourceUrl == null || state.sourceUrl.isBlank() || !Objects.equals(state.sourceUrl, state.downloadTargetUrl)) {
@@ -1723,6 +1730,61 @@ public final class MonitorScreenSystem {
 			clearYoutubeQueueLocked(state);
 			state.mode = ScreenViewMode.YOUTUBE;
 			state.youtubeReturnToGallery = returnToGallery;
+			state.sourceUrl = url;
+			state.mediaTitle = title == null || title.isBlank() ? "YouTube" : title;
+			state.waitingForLink = false;
+			state.loading = true;
+			state.userPaused = false;
+			state.youtubeQueueOpen = false;
+			state.overlayMode = MediaOverlayMode.CONTROLS;
+			state.statusText = "BUFFERING";
+			state.progress.setIndeterminate("LOADING");
+			state.version++;
+		}
+		requestRuntimeRender(server, key);
+		resumeMediaPlaybackIfNeeded(server, key);
+		ensureExecutors();
+		CompletableFuture
+				.supplyAsync(() -> {
+					try {
+						return new YoutubeLoadResult(
+								key,
+								requesterUuid,
+								url,
+								MonitorYoutubeRelayClient.load(relaySessionId(key), url, state.progress),
+								null
+						);
+					} catch (Exception exception) {
+						return new YoutubeLoadResult(key, requesterUuid, url, null, sanitizeMediaError(exception.getMessage()));
+					}
+				}, mediaIoExecutor)
+				.thenAccept(result -> server.execute(() -> applyYoutubeLoadResult(server, result)));
+	}
+
+	private static void startGalleryYoutubePlayback(
+			MinecraftServer server,
+			ScreenRuntimeKey key,
+			UUID requesterUuid,
+			String title,
+			String url,
+			Integer galleryIndex
+	) {
+		if (server == null || key == null || url == null || url.isBlank()) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		synchronized (state) {
+			cancelPlaybackLocked(state);
+			clearYoutubePlaybackLocked(state);
+			clearYoutubeQueueLocked(state);
+			state.mode = ScreenViewMode.GALLERY;
+			state.youtubeReturnToGallery = false;
+			state.galleryDeleteConfirmOpen = false;
+			state.gallerySurfaceMode = GallerySurfaceMode.PLAYER;
+			state.galleryIndex = normalizeGalleryIndexLocked(state, galleryIndex == null ? -1 : galleryIndex);
 			state.sourceUrl = url;
 			state.mediaTitle = title == null || title.isBlank() ? "YouTube" : title;
 			state.waitingForLink = false;
@@ -2050,7 +2112,7 @@ public final class MonitorScreenSystem {
 					releasedQueueUrls = retainedYoutubePreloadUrlsLocked(state);
 					state.retainedYoutubePreloadUrls.clear();
 					cancelPlaybackLocked(state);
-					clearLoadedContentLocked(state, true);
+					clearTransientPlaybackStateLocked(state, true);
 				} else {
 					ensureYoutubeQueueCurrentEntryLocked(state);
 				}
@@ -2179,7 +2241,7 @@ public final class MonitorScreenSystem {
 				removed.progress.clear();
 				releasedQueueUrls = retainedYoutubePreloadUrlsLocked(removed);
 				removed.retainedYoutubePreloadUrls.clear();
-				if (removed.mode == ScreenViewMode.YOUTUBE) {
+				if (isYoutubePlaybackLocked(removed) || removed.relaySessionId != null) {
 					relaySessionId = removed.relaySessionId;
 				}
 			}
@@ -2352,8 +2414,17 @@ public final class MonitorScreenSystem {
 		ServerPlayer requester = server.getPlayerList().getPlayer(result.requesterUuid());
 
 		synchronized (state) {
-			state.mode = ScreenViewMode.YOUTUBE;
-			clearLoadedContentLocked(state, false);
+			boolean galleryBacked = state.mode == ScreenViewMode.GALLERY
+					&& state.gallerySurfaceMode == GallerySurfaceMode.PLAYER
+					&& result.url() != null
+					&& !result.url().isBlank()
+					&& hasGalleryItemForUrlLocked(state, result.url());
+			clearTransientPlaybackStateLocked(state, false);
+			state.mode = galleryBacked ? ScreenViewMode.GALLERY : ScreenViewMode.YOUTUBE;
+			if (galleryBacked) {
+				state.gallerySurfaceMode = GallerySurfaceMode.PLAYER;
+				state.galleryIndex = resolveGalleryItemIndex(state, result.url(), state.galleryIndex);
+			}
 			state.waitingForLink = false;
 			state.overlayMode = MediaOverlayMode.CONTROLS;
 			cancelPlaybackLocked(state);
@@ -2373,7 +2444,9 @@ public final class MonitorScreenSystem {
 				state.userPaused = false;
 				state.statusText = result.loadResponse().status();
 				state.progress.setIndeterminate(result.loadResponse().live() ? "LIVE" : "LOADING");
-				ensureYoutubeQueueCurrentEntryLocked(state);
+				if (state.mode == ScreenViewMode.YOUTUBE) {
+					ensureYoutubeQueueCurrentEntryLocked(state);
+				}
 			} else {
 				state.loading = false;
 				state.userPaused = false;
@@ -2420,7 +2493,7 @@ public final class MonitorScreenSystem {
 		}
 			synchronized (state) {
 				cancelPlaybackLocked(state);
-				if (state.mode == ScreenViewMode.YOUTUBE) {
+				if (isYoutubePlaybackLocked(state)) {
 					if (state.waitingForLink) {
 						return;
 					}
@@ -2460,7 +2533,7 @@ public final class MonitorScreenSystem {
 			if (!state.loading || state.waitingForLink) {
 				return;
 			}
-			if (state.mode == ScreenViewMode.YOUTUBE && state.relaySessionId != null) {
+			if (isYoutubePlaybackLocked(state) && state.relaySessionId != null) {
 				return;
 			}
 		}
@@ -2479,7 +2552,7 @@ public final class MonitorScreenSystem {
 
 		boolean shouldContinue;
 		synchronized (state) {
-			if (state.mode == ScreenViewMode.YOUTUBE) {
+			if (isYoutubePlaybackLocked(state)) {
 				state.playbackFuture = null;
 				return;
 			}
@@ -2515,7 +2588,7 @@ public final class MonitorScreenSystem {
 				}
 				if (state.loading) {
 					// Keep loading spinners animating even before the relay session is fully connected.
-				} else if (state.mode == ScreenViewMode.YOUTUBE) {
+				} else if (isYoutubePlaybackLocked(state)) {
 					if (state.relaySessionId == null) {
 						return;
 					}
@@ -2538,7 +2611,7 @@ public final class MonitorScreenSystem {
 		long knownFrameSequence;
 		synchronized (state) {
 			state.playbackFuture = null;
-			if (state.mode != ScreenViewMode.YOUTUBE || state.relaySessionId == null || state.waitingForLink) {
+			if (!isYoutubePlaybackLocked(state) || state.relaySessionId == null || state.waitingForLink) {
 				return;
 			}
 			sessionId = state.relaySessionId;
@@ -2568,7 +2641,7 @@ public final class MonitorScreenSystem {
 		boolean shouldBumpVersion = false;
 		Integer queueAdvanceIndex = null;
 		synchronized (state) {
-			if (state.mode != ScreenViewMode.YOUTUBE) {
+			if (!isYoutubePlaybackLocked(state)) {
 				return;
 			}
 			if (result.snapshot() != null) {
@@ -2626,7 +2699,7 @@ public final class MonitorScreenSystem {
 				// Keep YouTube playback on the GIF-like path: new frames should queue the next render,
 				// not invalidate an in-flight large-screen render job every poll.
 				shouldReschedule = true;
-				if (result.snapshot().ended() && !state.youtubeQueue.isEmpty()) {
+				if (state.mode == ScreenViewMode.YOUTUBE && result.snapshot().ended() && !state.youtubeQueue.isEmpty()) {
 					queueAdvanceIndex = normalizeYoutubeQueueIndexLocked(state, state.youtubeQueueIndex >= 0 ? state.youtubeQueueIndex + 1 : 0);
 					shouldReschedule = false;
 				}
@@ -2745,7 +2818,7 @@ public final class MonitorScreenSystem {
 						state.version++;
 						handled = true;
 					}
-				} else if (state.mode == ScreenViewMode.YOUTUBE && canSeekTimelineLocked(state)) {
+				} else if (isYoutubePlaybackLocked(state) && canSeekTimelineLocked(state)) {
 					cancelPlaybackLocked(state);
 					long duration = Math.max(1L, state.durationMs);
 					long seekStep = Math.max(YOUTUBE_SCROLL_SEEK_MS, duration / 120L);
@@ -3715,34 +3788,35 @@ public final class MonitorScreenSystem {
 		boolean galleryMode = state.mode == ScreenViewMode.GALLERY;
 		boolean galleryBrowser = galleryMode && state.gallerySurfaceMode == GallerySurfaceMode.BROWSER;
 		boolean galleryBackedYoutube = isGalleryBackedYoutubeLocked(state);
-		BufferedImage frame = youtubeMode
+		boolean youtubePlayback = youtubeMode || galleryBackedYoutube;
+		BufferedImage frame = youtubePlayback
 				? state.streamFrame
 				: !galleryBrowser && state.loadedMedia != null ? state.loadedMedia.frame(state.frameIndex) : null;
-		boolean hasMedia = youtubeMode
+		boolean hasMedia = youtubePlayback
 				? hasDisplayableMediaLocked(state)
 				: galleryBrowser ? !state.galleryItems.isEmpty() : state.loadedMedia != null;
-		boolean playbackControlsVisible = youtubeMode
+		boolean playbackControlsVisible = youtubePlayback
 				? playbackControlsVisibleLocked(state)
 				: galleryBrowser ? false : (state.loadedMedia != null || state.loading || state.sourceUrl != null);
-		boolean timelineVisible = youtubeMode || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.frameCount() > 1);
-		boolean centerPlayPauseVisible = youtubeMode || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.animated());
-		boolean timelineSeekable = youtubeMode
+		boolean timelineVisible = youtubePlayback || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.frameCount() > 1);
+		boolean centerPlayPauseVisible = youtubePlayback || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.animated());
+		boolean timelineSeekable = youtubePlayback
 				? state.durationMs > 0L && !state.liveStream
 				: !galleryBrowser && state.loadedMedia != null && state.loadedMedia.frameCount() > 1;
-		int timelineIndex = youtubeMode
+		int timelineIndex = youtubePlayback
 				? (int) Math.min(Integer.MAX_VALUE, state.positionMs)
 				: !galleryBrowser && state.loadedMedia != null ? Math.floorMod(state.frameIndex, Math.max(1, state.loadedMedia.frameCount())) : 0;
-		int timelineCount = youtubeMode
+		int timelineCount = youtubePlayback
 				? (int) Math.min(Integer.MAX_VALUE, state.durationMs)
 				: !galleryBrowser && state.loadedMedia != null ? state.loadedMedia.frameCount() : 0;
-		float timelineFraction = youtubeMode
+		float timelineFraction = youtubePlayback
 				? youtubeTimelineFraction(state)
 				: !galleryBrowser && state.loadedMedia != null && state.loadedMedia.frameCount() > 1
 				? (float) timelineIndex / (float) Math.max(1, state.loadedMedia.frameCount() - 1)
 				: 0.0F;
-		float bufferedStartFraction = youtubeMode ? youtubeBufferedFraction(state, state.bufferedStartMs) : 0.0F;
-		float bufferedEndFraction = youtubeMode ? youtubeBufferedFraction(state, state.bufferedEndMs) : 0.0F;
-		String timelineLabel = youtubeMode
+		float bufferedStartFraction = youtubePlayback ? youtubeBufferedFraction(state, state.bufferedStartMs) : 0.0F;
+		float bufferedEndFraction = youtubePlayback ? youtubeBufferedFraction(state, state.bufferedEndMs) : 0.0F;
+		String timelineLabel = youtubePlayback
 				? state.liveStream ? "LIVE" : formatPlaybackTime(state.positionMs) + " / " + formatPlaybackTime(state.durationMs)
 				: (!galleryBrowser && timelineCount > 0 ? (timelineIndex + 1) + "/" + Math.max(1, timelineCount) : "");
 		List<YoutubeQueueItemSnapshot> queueItems = youtubeMode ? youtubeQueueSnapshots(state) : galleryMode ? galleryItemSnapshots(state) : List.of();
@@ -4031,7 +4105,7 @@ public final class MonitorScreenSystem {
 		boolean controlUi = state != null && (state.hasMedia() || state.playbackControlsVisible());
 		boolean youtubeMode = state != null && state.mode() == ScreenViewMode.YOUTUBE;
 		boolean galleryMode = state != null && state.mode() == ScreenViewMode.GALLERY;
-		boolean galleryBackedYoutube = youtubeMode && state != null && state.galleryBackedYoutube();
+		boolean galleryBackedYoutube = state != null && state.galleryBackedYoutube();
 		UiRect titleRect = galleryMode ? mediaGalleryPlayerTitleRect(layout) : mediaLinkRect(layout, controlUi);
 		UiRect scaleRect = mediaScaleRect(layout);
 		UiRect downloadRect = mediaDownloadRect(layout);
@@ -7305,6 +7379,24 @@ public final class MonitorScreenSystem {
 		}
 	}
 
+	private static void clearTransientPlaybackStateLocked(MediaRuntimeState state, boolean clearYoutubeQueue) {
+		if (state == null) {
+			return;
+		}
+		clearYoutubePlaybackLocked(state);
+		clearDownloadStateLocked(state);
+		state.galleryDeleteConfirmOpen = false;
+		state.galleryPendingOpenUrl = null;
+		state.galleryPendingOpenIndex = -1;
+		state.loading = false;
+		state.waitingForLink = false;
+		state.youtubeReturnToGallery = false;
+		clearGallerySelectionLocked(state);
+		if (clearYoutubeQueue) {
+			clearYoutubeQueueLocked(state);
+		}
+	}
+
 	private static GalleryItem currentGalleryItemLocked(MediaRuntimeState state) {
 		if (state == null || state.galleryIndex < 0 || state.galleryIndex >= state.galleryItems.size()) {
 			return null;
@@ -7538,6 +7630,22 @@ public final class MonitorScreenSystem {
 				&& state.bufferedEndMs >= Math.max(0L, state.durationMs - YOUTUBE_FULLY_BUFFERED_TOLERANCE_MS);
 	}
 
+	private static boolean isYoutubeGalleryDownloadReadyLocked(MediaRuntimeState state) {
+		if (state == null || state.liveStream || state.sourceUrl == null || state.sourceUrl.isBlank()) {
+			return false;
+		}
+		if (MonitorYoutubeRelayClient.isQueueEntryLoaded(state.sourceUrl)) {
+			return true;
+		}
+		long preloadTargetMs = MonitorYoutubeRelayClient.queuePreloadDurationMs();
+		if (state.durationMs > 0L) {
+			preloadTargetMs = Math.min(preloadTargetMs, state.durationMs);
+		}
+		long requiredBufferedEndMs = Math.max(0L, preloadTargetMs - YOUTUBE_FULLY_BUFFERED_TOLERANCE_MS);
+		return state.bufferedStartMs <= YOUTUBE_FULLY_BUFFERED_TOLERANCE_MS
+				&& state.bufferedEndMs >= requiredBufferedEndMs;
+	}
+
 	private static boolean removeGalleryItemLocked(MediaRuntimeState state, int requestedIndex, UiLayout layout) {
 		if (state == null || state.galleryItems.isEmpty()) {
 			clearGallerySelectionLocked(state);
@@ -7615,7 +7723,7 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return false;
 		}
-		if (state.mode == ScreenViewMode.YOUTUBE) {
+		if (isYoutubePlaybackLocked(state)) {
 			return state.sourceUrl != null || state.streamFrame != null;
 		}
 		return state.loadedMedia != null || !state.galleryItems.isEmpty();
@@ -7625,8 +7733,11 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return false;
 		}
-		if (state.mode == ScreenViewMode.YOUTUBE) {
-			return state.loading || state.sourceUrl != null || state.relaySessionId != null || !state.youtubeQueue.isEmpty();
+		if (isYoutubePlaybackLocked(state)) {
+			return state.loading
+					|| state.sourceUrl != null
+					|| state.relaySessionId != null
+					|| (state.mode == ScreenViewMode.YOUTUBE && !state.youtubeQueue.isEmpty());
 		}
 		return state.loadedMedia != null || !state.galleryItems.isEmpty();
 	}
@@ -7686,18 +7797,24 @@ public final class MonitorScreenSystem {
 
 	private static boolean isGalleryBackedYoutubeLocked(MediaRuntimeState state) {
 		return state != null
-				&& state.mode == ScreenViewMode.YOUTUBE
-				&& state.youtubeReturnToGallery
+				&& state.mode == ScreenViewMode.GALLERY
+				&& state.gallerySurfaceMode == GallerySurfaceMode.PLAYER
 				&& state.sourceUrl != null
 				&& !state.sourceUrl.isBlank()
+				&& currentGalleryItemLocked(state) != null
+				&& currentGalleryItemLocked(state).kind() == GalleryItemKind.YOUTUBE
 				&& hasGalleryItemForUrlLocked(state, state.sourceUrl);
+	}
+
+	private static boolean isYoutubePlaybackLocked(MediaRuntimeState state) {
+		return state != null && (state.mode == ScreenViewMode.YOUTUBE || isGalleryBackedYoutubeLocked(state));
 	}
 
 	private static boolean canSeekTimelineLocked(MediaRuntimeState state) {
 		if (state == null) {
 			return false;
 		}
-		if (state.mode == ScreenViewMode.YOUTUBE) {
+		if (isYoutubePlaybackLocked(state)) {
 			return state.durationMs > 0L && !state.liveStream;
 		}
 		return state.loadedMedia != null && state.loadedMedia.frameCount() > 1;
@@ -7707,7 +7824,7 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return false;
 		}
-		if (state.mode == ScreenViewMode.YOUTUBE) {
+		if (isYoutubePlaybackLocked(state)) {
 			return state.relaySessionId != null || state.loading;
 		}
 		return state.loadedMedia != null && state.loadedMedia.animated();
@@ -7720,7 +7837,7 @@ public final class MonitorScreenSystem {
 		return switch (timelineCounterDetailLevel(layout)) {
 			case NONE -> "";
 			case COMPACT -> {
-				if (state.mode() == ScreenViewMode.YOUTUBE) {
+				if (state.mode() == ScreenViewMode.YOUTUBE || state.galleryBackedYoutube()) {
 					yield state.frameCount() <= 0 ? state.timelineLabel() : formatPlaybackTime(state.frameIndex());
 				}
 				yield state.timelineLabel();
@@ -7779,7 +7896,7 @@ public final class MonitorScreenSystem {
 		}
 		ensureExecutors();
 		synchronized (state) {
-			if (state.mode != ScreenViewMode.YOUTUBE || state.relaySessionId == null || state.waitingForLink) {
+			if (!isYoutubePlaybackLocked(state) || state.relaySessionId == null || state.waitingForLink) {
 				return;
 			}
 			cancelPlaybackLocked(state);

@@ -109,6 +109,10 @@ public final class MonitorYoutubeRelayClient {
 		requireSession(sessionId).requestFullCache();
 	}
 
+	public static long queuePreloadDurationMs() {
+		return QUEUE_PRELOAD_DURATION_MS;
+	}
+
 	public static void persistQueueEntryFromSession(String sessionId, String rawUrl) throws IOException {
 		if (!looksLikeYoutubeUrl(rawUrl)) {
 			return;
@@ -1088,6 +1092,7 @@ public final class MonitorYoutubeRelayClient {
 		private Thread readerThread = null;
 		private Process prefetchProcess = null;
 		private Thread prefetchReaderThread = null;
+		private boolean sourceRefreshInProgress = false;
 		private long playStartedAtNanos = 0L;
 		private long playBasePositionMs = 0L;
 		private long bufferedStartMs = 0L;
@@ -1118,6 +1123,7 @@ public final class MonitorYoutubeRelayClient {
 			ResolvedYoutube resolved = queuePreload != null && queuePreload.resolved() != null
 					? queuePreload.resolved()
 					: resolveYoutube(url);
+			boolean loadedFromQueuePreload = queuePreload != null && queuePreload.resolved() != null;
 			boolean hadPreloadedFrame = false;
 			synchronized (this.lock) {
 				stopPrefetchLocked();
@@ -1169,10 +1175,56 @@ public final class MonitorYoutubeRelayClient {
 					}
 				}
 			}
+			if (loadedFromQueuePreload && !resolved.live()) {
+				refreshResolvedSourceAsync(url);
+			}
 			ensurePrefetchStarted();
 			synchronized (this.lock) {
 				return new SessionLoadResponse(this.sessionId, this.title, this.durationMs, this.live, this.status, this.audioStreamUrl);
 			}
+		}
+
+		private void refreshResolvedSourceAsync(String url) {
+			if (url == null || url.isBlank()) {
+				return;
+			}
+			synchronized (this.lock) {
+				if (this.sourceRefreshInProgress || closedOrUnloadedLocked() || !Objects.equals(this.sourceUrl, url)) {
+					return;
+				}
+				this.sourceRefreshInProgress = true;
+			}
+			PRELOAD_EXECUTOR.execute(() -> {
+				ResolvedYoutube refreshed = null;
+				try {
+					refreshed = resolveYoutube(url);
+				} catch (IOException exception) {
+					Lg2.LOGGER.debug("Failed to refresh YouTube source for session {}", this.sessionId, exception);
+				}
+				boolean shouldRestartPrefetch = false;
+				synchronized (this.lock) {
+					this.sourceRefreshInProgress = false;
+					if (closedOrUnloadedLocked() || !Objects.equals(this.sourceUrl, url) || refreshed == null) {
+						return;
+					}
+					boolean streamChanged = !Objects.equals(this.streamUrl, refreshed.streamUrl());
+					this.title = refreshed.title();
+					this.durationMs = refreshed.durationMs();
+					this.live = refreshed.live();
+					this.streamUrl = refreshed.streamUrl();
+					this.audioStreamUrl = refreshed.audioStreamUrl();
+					if (!this.live) {
+						this.prefetchCompleted = false;
+						if (streamChanged && this.prefetchProcess != null) {
+							stopPrefetchLocked();
+						}
+						shouldRestartPrefetch = this.prefetchProcess == null;
+					}
+				}
+				if (shouldRestartPrefetch) {
+					ensurePrefetchStarted();
+				}
+			});
 		}
 
 		private SessionSnapshot snapshot(long knownFrameSequence) {
