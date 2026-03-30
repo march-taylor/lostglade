@@ -1,0 +1,10 @@
+{
+  "providers": [
+    {
+      "type": "space",
+      "advances": {
+        "\uef80": 280
+      }
+    }
+  ]
+}

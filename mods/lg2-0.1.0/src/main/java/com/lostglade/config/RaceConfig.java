@@ -152,6 +152,13 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.methadoneAddictionSeconds, value -> ability.methadoneAddictionSeconds = value);
 		changed |= normalizeNonNegative(ability.methadoneWithdrawalStartSeconds, value -> ability.methadoneWithdrawalStartSeconds = value);
 		changed |= normalizeChance(ability.cocaineHallucinationChance, value -> ability.cocaineHallucinationChance = value);
+		changed |= normalizeNonNegative(ability.foodRestoreMultiplier, value -> ability.foodRestoreMultiplier = value);
+		changed |= normalizeNonNegative(ability.copperGolemNoticeRangeBlocks, value -> ability.copperGolemNoticeRangeBlocks = value);
+		changed |= normalizeChance(ability.repulsorNaturalLightningChargeChance, value -> ability.repulsorNaturalLightningChargeChance = value);
+		changed |= normalizeNonNegative(ability.copperIngotFoodPoints, (java.util.function.IntConsumer) value -> ability.copperIngotFoodPoints = value);
+		changed |= normalizeNonNegative(ability.repulsorMaxCharges, (java.util.function.IntConsumer) value -> ability.repulsorMaxCharges = value);
+		changed |= normalizeNonNegative(ability.repulsorCopperIngotChargeRestore, (java.util.function.IntConsumer) value -> ability.repulsorCopperIngotChargeRestore = value);
+		changed |= normalizeNonNegative(ability.repulsorNaturalLightningChargeRestore, (java.util.function.IntConsumer) value -> ability.repulsorNaturalLightningChargeRestore = value);
 		changed |= normalizeChance(ability.chance, value -> ability.chance = value);
 		if (ability.maxGrowthSeconds < ability.minGrowthSeconds) {
 			ability.maxGrowthSeconds = ability.minGrowthSeconds;
@@ -184,6 +191,15 @@ public final class RaceConfig {
 
 	private static boolean normalizePrice(int value, java.util.function.IntConsumer setter) {
 		int normalized = Math.max(0, Math.min(MAX_PRICE_BITCOINS, value));
+		if (value == normalized) {
+			return false;
+		}
+		setter.accept(normalized);
+		return true;
+	}
+
+	private static boolean normalizeNonNegative(int value, java.util.function.IntConsumer setter) {
+		int normalized = Math.max(0, value);
 		if (value == normalized) {
 			return false;
 		}
@@ -281,6 +297,13 @@ public final class RaceConfig {
 		public double methadoneAddictionSeconds = 0.0D;
 		public double methadoneWithdrawalStartSeconds = 0.0D;
 		public double cocaineHallucinationChance = 0.0D;
+		public double foodRestoreMultiplier = 0.0D;
+		public int copperIngotFoodPoints = 0;
+		public double copperGolemNoticeRangeBlocks = 0.0D;
+		public int repulsorMaxCharges = 0;
+		public int repulsorCopperIngotChargeRestore = 0;
+		public double repulsorNaturalLightningChargeChance = 0.0D;
+		public int repulsorNaturalLightningChargeRestore = 0;
 		public double chance = 0.0D;
 
 		private RaceAbilityConfig() {
