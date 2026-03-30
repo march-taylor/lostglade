@@ -1,5 +1,8 @@
 package com.lostglade.server.monitor;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import com.lostglade.server.progress.TaskProgress;
 
 import javax.imageio.IIOImage;
@@ -16,8 +19,10 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -33,18 +38,23 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 public final class MonitorMediaApp implements MonitorApp {
+	private static final Gson GSON = new Gson();
 	private static final int MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
+	private static final long MAX_VIDEO_SAVE_BYTES = 1024L * 1024L * 1024L;
 	private static final int CONNECT_TIMEOUT_MS = 4000;
 	private static final int READ_TIMEOUT_MS = 12000;
 	private static final int MAX_DIMENSION = 1024;
 	private static final int COMMAND_TIMEOUT_SEC = 20;
 	private static final String DEFAULT_FFMPEG_BIN = "ffmpeg";
 	private static final String DEFAULT_FFPROBE_BIN = "ffprobe";
+	private static final int VIDEO_PREVIEW_WIDTH = 480;
+	private static final Set<String> DIRECT_VIDEO_EXTENSIONS = Set.of(".mp4", ".m4v", ".mov", ".webm");
 	private static volatile Path cacheDirectory = Path.of("cache", "lg2-monitor", "media");
 
 	@Override
@@ -84,7 +94,7 @@ public final class MonitorMediaApp implements MonitorApp {
 
 	@Override
 	public String screenHint() {
-		return "Картинки и гифки по ссылке";
+		return "Картинки, гифки и видео по ссылке";
 	}
 
 	public static LoadedMedia loadFromUrl(String rawUrl) throws IOException {
@@ -96,9 +106,41 @@ public final class MonitorMediaApp implements MonitorApp {
 		return decode(loadCachedMedia(uri, progress).bytes(), progress);
 	}
 
+	public static boolean looksLikeDirectVideoUrl(String rawUrl) {
+		if (rawUrl == null || rawUrl.isBlank()) {
+			return false;
+		}
+		URI uri;
+		try {
+			uri = validateUri(rawUrl);
+		} catch (IOException exception) {
+			return false;
+		}
+		String extension = cacheExtension(uri);
+		if (DIRECT_VIDEO_EXTENSIONS.contains(extension)) {
+			return true;
+		}
+		String contentType = probeContentType(uri);
+		return contentType != null && contentType.toLowerCase(Locale.ROOT).startsWith("video/");
+	}
+
+	public static LoadedVideo loadVideoFromUrl(String rawUrl, TaskProgress progress) throws IOException {
+		URI uri = validateUri(rawUrl);
+		return probeVideo(uri.toString(), uri.toString(), progress);
+	}
+
 	public static String persistSavedGalleryMedia(String rawUrl) throws IOException {
 		URI uri = validateUri(rawUrl);
 		return loadCachedMedia(uri, null).mediaKey();
+	}
+
+	public static String persistSavedGalleryVideo(String rawUrl, TaskProgress progress) throws IOException {
+		URI uri = validateUri(rawUrl);
+		String existingKey = cachedMediaKey(uri);
+		if (existingKey != null && !existingKey.isBlank()) {
+			return existingKey;
+		}
+		return downloadVideoToCache(uri, progress);
 	}
 
 	public static LoadedMedia loadSavedGalleryMedia(String mediaKey, TaskProgress progress) throws IOException {
@@ -111,6 +153,17 @@ public final class MonitorMediaApp implements MonitorApp {
 		}
 		byte[] bytes = Files.readAllBytes(savedPath);
 		return decode(bytes, progress);
+	}
+
+	public static LoadedVideo loadSavedGalleryVideo(String mediaKey, TaskProgress progress) throws IOException {
+		Path savedPath = savedGalleryMediaPath(mediaKey);
+		if (savedPath == null || !Files.isRegularFile(savedPath)) {
+			throw new IOException("Saved gallery video is missing");
+		}
+		if (progress != null) {
+			progress.setIndeterminate("PROBING VIDEO");
+		}
+		return probeVideo(savedPath.toAbsolutePath().toString(), savedPath.toAbsolutePath().toString(), progress);
 	}
 
 	public static void setCacheDirectory(Path directory) {
@@ -165,6 +218,63 @@ public final class MonitorMediaApp implements MonitorApp {
 		persistCacheBytes(savedGalleryMediaPath(mediaKey), bytes);
 		persistUrlReference(uri, mediaKey);
 		return new CachedMediaBytes(bytes, mediaKey);
+	}
+
+	private static String downloadVideoToCache(URI uri, TaskProgress progress) throws IOException {
+		DownloadToFileResult result = downloadToFile(uri, progress);
+		Path targetPath = savedGalleryMediaPath(result.mediaKey());
+		if (targetPath == null) {
+			deleteFileQuietly(result.tempPath(), cacheDirectory);
+			throw new IOException("Invalid media key");
+		}
+		try {
+			Path parent = targetPath.getParent();
+			if (parent != null) {
+				Files.createDirectories(parent);
+			}
+			if (Files.isRegularFile(targetPath)) {
+				deleteFileQuietly(result.tempPath(), cacheDirectory);
+			} else {
+				try {
+					Files.move(result.tempPath(), targetPath, StandardCopyOption.ATOMIC_MOVE);
+				} catch (IOException ignored) {
+					Files.move(result.tempPath(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+				}
+			}
+			persistUrlReference(uri, result.mediaKey());
+			if (progress != null) {
+				progress.complete("READY");
+			}
+			return result.mediaKey();
+		} catch (IOException exception) {
+			deleteFileQuietly(result.tempPath(), cacheDirectory);
+			throw exception;
+		}
+	}
+
+	private static LoadedVideo probeVideo(String displayUrl, String input, TaskProgress progress) throws IOException {
+		if (input == null || input.isBlank()) {
+			throw new IOException("Video input is missing");
+		}
+		if (progress != null) {
+			progress.setIndeterminate("PROBING VIDEO");
+		}
+		VideoMetadata metadata = probeVideoMetadata(input);
+		if (progress != null) {
+			progress.setIndeterminate("CAPTURING FRAME");
+		}
+		BufferedImage preview = captureVideoPreview(input);
+		if (progress != null) {
+			progress.complete("READY");
+		}
+		return new LoadedVideo(
+				preview,
+				Math.max(0L, metadata.durationMs()),
+				Math.max(1, metadata.width()),
+				Math.max(1, metadata.height()),
+				input,
+				input
+		);
 	}
 
 	private static void persistCacheBytes(Path cachePath, byte[] bytes) {
@@ -248,6 +358,48 @@ public final class MonitorMediaApp implements MonitorApp {
 		return cacheDirectory.resolve("blobs").resolve(normalized);
 	}
 
+	private static String probeContentType(URI uri) {
+		HttpURLConnection connection = null;
+		try {
+			connection = (HttpURLConnection) uri.toURL().openConnection();
+			connection.setInstanceFollowRedirects(true);
+			connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+			connection.setReadTimeout(READ_TIMEOUT_MS);
+			connection.setRequestProperty("User-Agent", "LostGladeMonitor/1.0");
+			connection.setRequestMethod("HEAD");
+			connection.connect();
+			int status = connection.getResponseCode();
+			if (status >= 200 && status < 400) {
+				String contentType = connection.getContentType();
+				if (contentType != null && !contentType.isBlank()) {
+					return contentType;
+				}
+			}
+		} catch (IOException ignored) {
+		} finally {
+			if (connection != null) {
+				connection.disconnect();
+			}
+		}
+
+		try {
+			connection = (HttpURLConnection) uri.toURL().openConnection();
+			connection.setInstanceFollowRedirects(true);
+			connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+			connection.setReadTimeout(READ_TIMEOUT_MS);
+			connection.setRequestProperty("User-Agent", "LostGladeMonitor/1.0");
+			connection.connect();
+			int status = connection.getResponseCode();
+			return status >= 200 && status < 400 ? connection.getContentType() : null;
+		} catch (IOException ignored) {
+			return null;
+		} finally {
+			if (connection != null) {
+				connection.disconnect();
+			}
+		}
+	}
+
 	private static String extensionFromContentType(String contentType) {
 		if (contentType == null || contentType.isBlank()) {
 			return null;
@@ -265,6 +417,10 @@ public final class MonitorMediaApp implements MonitorApp {
 			case "image/bmp" -> ".bmp";
 			case "image/avif" -> ".avif";
 			case "image/x-icon", "image/vnd.microsoft.icon" -> ".ico";
+			case "video/mp4" -> ".mp4";
+			case "video/webm" -> ".webm";
+			case "video/quicktime" -> ".mov";
+			case "video/x-m4v" -> ".m4v";
 			default -> null;
 		};
 	}
@@ -288,6 +444,13 @@ public final class MonitorMediaApp implements MonitorApp {
 		}
 		if (bytes[0] == 'B' && bytes[1] == 'M') {
 			return ".bmp";
+		}
+		if (bytes.length >= 12
+				&& bytes[4] == 'f'
+				&& bytes[5] == 't'
+				&& bytes[6] == 'y'
+				&& bytes[7] == 'p') {
+			return ".mp4";
 		}
 		return null;
 	}
@@ -451,6 +614,73 @@ public final class MonitorMediaApp implements MonitorApp {
 			}
 			byte[] bytes = output.toByteArray();
 			return new DownloadedMediaBytes(bytes, resolvedExtension(toUri(url), connection.getContentType(), bytes));
+		} finally {
+			connection.disconnect();
+		}
+	}
+
+	private static DownloadToFileResult downloadToFile(URI uri, TaskProgress progress) throws IOException {
+		IOException lastException = null;
+		for (URI candidate : downloadCandidates(uri)) {
+			try {
+				return downloadCandidateToFile(candidate.toURL(), progress);
+			} catch (IOException exception) {
+				lastException = exception;
+			}
+		}
+		throw lastException != null ? lastException : new IOException("Failed to download video");
+	}
+
+	private static DownloadToFileResult downloadCandidateToFile(URL url, TaskProgress progress) throws IOException {
+		if (progress != null) {
+			progress.setIndeterminate("DOWNLOADING");
+		}
+		HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+		connection.setInstanceFollowRedirects(true);
+		connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+		connection.setReadTimeout(READ_TIMEOUT_MS);
+		connection.setRequestProperty("User-Agent", "LostGladeMonitor/1.0");
+		connection.connect();
+
+		int status = connection.getResponseCode();
+		if (status < 200 || status >= 300) {
+			throw new IOException("HTTP " + status);
+		}
+		long contentLength = connection.getContentLengthLong();
+		if (contentLength > MAX_VIDEO_SAVE_BYTES) {
+			throw new IOException("Video is too large");
+		}
+		String extension = resolvedExtension(toUri(url), connection.getContentType(), new byte[0]);
+		if (extension == null || extension.isBlank()) {
+			extension = ".mp4";
+		}
+		Files.createDirectories(cacheDirectory);
+		Path tempPath = Files.createTempFile(cacheDirectory, "video-", extension + ".tmp");
+		MessageDigest digest = sha256Digest();
+		long total = 0L;
+		try (InputStream input = connection.getInputStream(); OutputStream output = new FileOutputStream(tempPath.toFile())) {
+			byte[] buffer = new byte[8192];
+			int read;
+			while ((read = input.read(buffer)) >= 0) {
+				total += read;
+				if (total > MAX_VIDEO_SAVE_BYTES) {
+					throw new IOException("Video is too large");
+				}
+				output.write(buffer, 0, read);
+				digest.update(buffer, 0, read);
+				if (progress != null) {
+					if (contentLength > 0L) {
+						progress.setProgress("DOWNLOADING", total, contentLength);
+					} else {
+						progress.setStage("DOWNLOADING");
+					}
+				}
+			}
+			String mediaKey = HexFormat.of().formatHex(digest.digest()) + extension;
+			return new DownloadToFileResult(tempPath, mediaKey);
+		} catch (IOException exception) {
+			deleteFileQuietly(tempPath, cacheDirectory);
+			throw exception;
 		} finally {
 			connection.disconnect();
 		}
@@ -729,6 +959,64 @@ public final class MonitorMediaApp implements MonitorApp {
 		return durations;
 	}
 
+	private static VideoMetadata probeVideoMetadata(String input) throws IOException {
+		String output = runCommand(List.of(
+				ffprobeBin(),
+				"-v",
+				"error",
+				"-select_streams",
+				"v:0",
+				"-show_entries",
+				"stream=width,height:format=duration",
+				"-of",
+				"json",
+				input
+		), COMMAND_TIMEOUT_SEC);
+		JsonObject root = GSON.fromJson(output, JsonObject.class);
+		JsonArray streams = root != null && root.has("streams") && root.get("streams").isJsonArray()
+				? root.getAsJsonArray("streams")
+				: null;
+		int width = 0;
+		int height = 0;
+		if (streams != null && !streams.isEmpty() && streams.get(0).isJsonObject()) {
+			JsonObject stream = streams.get(0).getAsJsonObject();
+			width = getInt(stream, "width", 0);
+			height = getInt(stream, "height", 0);
+		}
+		JsonObject format = root != null && root.has("format") && root.get("format").isJsonObject()
+				? root.getAsJsonObject("format")
+				: null;
+		long durationMs = Math.round(getDouble(format, "duration", 0.0D) * 1000.0D);
+		if (width <= 0 || height <= 0) {
+			throw new IOException("Unsupported video");
+		}
+		return new VideoMetadata(width, height, Math.max(0L, durationMs));
+	}
+
+	private static BufferedImage captureVideoPreview(String input) throws IOException {
+		return decodeImageBytes(runBinaryCommand(List.of(
+				ffmpegBin(),
+				"-hide_banner",
+				"-loglevel",
+				"error",
+				"-nostdin",
+				"-i",
+				input,
+				"-frames:v",
+				"1",
+				"-an",
+				"-vf",
+				"scale=w=" + VIDEO_PREVIEW_WIDTH + ":h=-2:force_original_aspect_ratio=decrease",
+				"-q:v",
+				"4",
+				"-f",
+				"image2pipe",
+				"-vcodec",
+				"mjpeg",
+				"-"
+		), COMMAND_TIMEOUT_SEC));
+	}
+
 	private static String runCommand(List<String> command, int timeoutSeconds) throws IOException {
 		ProcessBuilder builder = new ProcessBuilder(command);
 		builder.redirectErrorStream(true);
@@ -757,12 +1045,73 @@ public final class MonitorMediaApp implements MonitorApp {
 		}
 	}
 
+	private static byte[] runBinaryCommand(List<String> command, int timeoutSeconds) throws IOException {
+		ProcessBuilder builder = new ProcessBuilder(command);
+		builder.redirectErrorStream(true);
+		Process process = builder.start();
+		try {
+			byte[] output = readProcessOutput(process, timeoutSeconds, "Timed out running " + command.get(0));
+			if (process.exitValue() != 0) {
+				throw new IOException("Command failed: " + String.join(" ", command));
+			}
+			return output;
+		} catch (InterruptedException exception) {
+			Thread.currentThread().interrupt();
+			process.destroyForcibly();
+			throw new IOException("Interrupted while running command", exception);
+		} finally {
+			process.destroy();
+		}
+	}
+
+	private static byte[] readProcessOutput(Process process, int timeoutSeconds, String timeoutMessage) throws IOException, InterruptedException {
+		ProcessOutputReader reader = new ProcessOutputReader(process.getInputStream());
+		Thread thread = new Thread(reader, "lg2-media-process-output");
+		thread.setDaemon(true);
+		thread.start();
+		boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+		if (!finished) {
+			process.destroyForcibly();
+			thread.join(1000L);
+			throw new IOException(timeoutMessage);
+		}
+		thread.join(1000L);
+		if (reader.exception() != null) {
+			throw reader.exception();
+		}
+		return reader.bytes();
+	}
+
+	private static BufferedImage decodeImageBytes(byte[] bytes) throws IOException {
+		BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
+		if (image == null) {
+			throw new IOException("Unsupported preview frame");
+		}
+		return toArgb(image);
+	}
+
 	private static String ffmpegBin() {
 		return readStringSetting("FFMPEG_BIN", "lg2.youtube.ffmpegBin", DEFAULT_FFMPEG_BIN);
 	}
 
 	private static String ffprobeBin() {
 		return readStringSetting("FFPROBE_BIN", "lg2.media.ffprobeBin", DEFAULT_FFPROBE_BIN);
+	}
+
+	private static MessageDigest sha256Digest() {
+		try {
+			return MessageDigest.getInstance("SHA-256");
+		} catch (NoSuchAlgorithmException exception) {
+			throw new IllegalStateException("Missing SHA-256", exception);
+		}
+	}
+
+	private static int getInt(JsonObject object, String key, int fallback) {
+		return object != null && object.has(key) && !object.get(key).isJsonNull() ? object.get(key).getAsInt() : fallback;
+	}
+
+	private static double getDouble(JsonObject object, String key, double fallback) {
+		return object != null && object.has(key) && !object.get(key).isJsonNull() ? object.get(key).getAsDouble() : fallback;
 	}
 
 	private static String readStringSetting(String envKey, String propertyKey, String fallback) {
@@ -786,6 +1135,33 @@ public final class MonitorMediaApp implements MonitorApp {
 				Files.deleteIfExists(path);
 			}
 		} catch (IOException ignored) {
+		}
+	}
+
+	private static final class ProcessOutputReader implements Runnable {
+		private final InputStream inputStream;
+		private volatile byte[] bytes = new byte[0];
+		private volatile IOException exception = null;
+
+		private ProcessOutputReader(InputStream inputStream) {
+			this.inputStream = inputStream;
+		}
+
+		@Override
+		public void run() {
+			try (InputStream stream = this.inputStream) {
+				this.bytes = stream.readAllBytes();
+			} catch (IOException exception) {
+				this.exception = exception;
+			}
+		}
+
+		private byte[] bytes() {
+			return this.bytes;
+		}
+
+		private IOException exception() {
+			return this.exception;
 		}
 	}
 
@@ -835,6 +1211,22 @@ public final class MonitorMediaApp implements MonitorApp {
 		public int frameCount() {
 			return this.frames.size();
 		}
+	}
+
+	public record LoadedVideo(
+			BufferedImage preview,
+			long durationMs,
+			int width,
+			int height,
+			String playbackInput,
+			String audioInput
+	) {
+	}
+
+	private record DownloadToFileResult(Path tempPath, String mediaKey) {
+	}
+
+	private record VideoMetadata(int width, int height, long durationMs) {
 	}
 
 	private record GifFrameInfo(

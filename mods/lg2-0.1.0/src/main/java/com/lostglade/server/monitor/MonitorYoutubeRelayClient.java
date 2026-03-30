@@ -84,6 +84,36 @@ public final class MonitorYoutubeRelayClient {
 		return response;
 	}
 
+	public static SessionLoadResponse loadDirect(
+			String sessionId,
+			String sourceId,
+			String title,
+			String videoInput,
+			String audioInput,
+			long durationMs,
+			TaskProgress progress
+	) throws IOException {
+		if (videoInput == null || videoInput.isBlank()) {
+			throw new IOException("Video input is required");
+		}
+		if (progress != null) {
+			progress.setIndeterminate("CONNECTING");
+		}
+		RelaySession session = SESSIONS.computeIfAbsent(sessionId, RelaySession::new);
+		session.touch();
+		SessionLoadResponse response = session.loadDirect(
+				sourceId == null || sourceId.isBlank() ? videoInput.trim() : sourceId.trim(),
+				title == null || title.isBlank() ? "Video" : title.trim(),
+				videoInput.trim(),
+				audioInput == null || audioInput.isBlank() ? videoInput.trim() : audioInput.trim(),
+				Math.max(0L, durationMs)
+		);
+		if (progress != null) {
+			progress.setIndeterminate("LOADING");
+		}
+		return response;
+	}
+
 	public static QueueResolveResponse resolveQueue(String rawUrl) throws IOException {
 		validateYoutubeUrl(rawUrl);
 		return resolveYoutubeQueue(rawUrl.trim());
@@ -1195,12 +1225,28 @@ public final class MonitorYoutubeRelayClient {
 					? queuePreload.resolved()
 					: resolveYoutube(url);
 			boolean loadedFromQueuePreload = queuePreload != null && queuePreload.resolved() != null;
+			SessionLoadResponse response = loadResolved(url, resolved, queuePreload);
+			if (loadedFromQueuePreload && !resolved.live()) {
+				refreshResolvedSourceAsync(url);
+			}
+			return response;
+		}
+
+		private SessionLoadResponse loadDirect(String sourceId, String title, String videoInput, String audioInput, long durationMs) throws IOException {
+			return loadResolved(
+					sourceId,
+					new ResolvedYoutube(title, durationMs, false, videoInput, audioInput),
+					null
+			);
+		}
+
+		private SessionLoadResponse loadResolved(String sourceId, ResolvedYoutube resolved, QueuePreloadSnapshot queuePreload) throws IOException {
 			boolean hadPreloadedFrame = false;
 			synchronized (this.lock) {
 				stopPrefetchLocked();
 				stopLocked();
 				this.title = resolved.title();
-				this.sourceUrl = url;
+				this.sourceUrl = sourceId;
 				this.streamUrl = resolved.streamUrl();
 				this.audioStreamUrl = resolved.audioStreamUrl();
 				this.durationMs = resolved.durationMs();
@@ -1226,7 +1272,7 @@ public final class MonitorYoutubeRelayClient {
 					try {
 						hadPreloadedFrame = applyCachedPreviewLocked(0L);
 					} catch (IOException exception) {
-						Lg2.LOGGER.debug("Failed to apply preloaded YouTube queue frame for {}", url, exception);
+						Lg2.LOGGER.debug("Failed to apply preloaded frame for {}", sourceId, exception);
 						this.latestFrame = null;
 					}
 				}
@@ -1245,9 +1291,6 @@ public final class MonitorYoutubeRelayClient {
 						this.status = "PLAYING";
 					}
 				}
-			}
-			if (loadedFromQueuePreload && !resolved.live()) {
-				refreshResolvedSourceAsync(url);
 			}
 			ensurePrefetchStarted();
 			synchronized (this.lock) {
