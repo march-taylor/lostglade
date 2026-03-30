@@ -13,9 +13,14 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.lang.ref.SoftReference;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -54,6 +59,7 @@ public final class MonitorYoutubeRelayClient {
 	private static final long CACHE_LOOKUP_TOLERANCE_MS = Math.max(100L, PREVIEW_CACHE_BUCKET_MS * 2L);
 	private static final long CONTIGUOUS_BUFFER_TOLERANCE_MS = PREVIEW_CACHE_BUCKET_MS + CACHE_LOOKUP_TOLERANCE_MS;
 	private static final long PROCESS_STOP_TIMEOUT_MS = 250L;
+	private static final Path PERSISTENT_PRELOAD_CACHE_ROOT = Path.of(System.getProperty("user.dir"), ".lg2-cache", "youtube-preload");
 
 	static {
 		CLEANUP_EXECUTOR.scheduleAtFixedRate(MonitorYoutubeRelayClient::cleanupExpiredSessions, 30L, 30L, TimeUnit.SECONDS);
@@ -99,6 +105,17 @@ public final class MonitorYoutubeRelayClient {
 		requireSession(sessionId).seek(Math.max(0L, positionMs));
 	}
 
+	public static void requestFullCache(String sessionId) throws IOException {
+		requireSession(sessionId).requestFullCache();
+	}
+
+	public static void persistQueueEntryFromSession(String sessionId, String rawUrl) throws IOException {
+		if (!looksLikeYoutubeUrl(rawUrl)) {
+			return;
+		}
+		requireSession(sessionId).persistQueuePreload(rawUrl.trim());
+	}
+
 	public static void close(String sessionId) throws IOException {
 		RelaySession session = SESSIONS.remove(sessionId);
 		if (session == null) {
@@ -131,6 +148,18 @@ public final class MonitorYoutubeRelayClient {
 		if (state.release()) {
 			QUEUE_PRELOADS.remove(url, state);
 		}
+	}
+
+	public static boolean isQueueEntryLoaded(String rawUrl) {
+		if (!looksLikeYoutubeUrl(rawUrl)) {
+			return false;
+		}
+		String url = rawUrl.trim();
+		QueuePreloadState state = QUEUE_PRELOADS.get(url);
+		if (state != null) {
+			return state.isLoaded();
+		}
+		return isQueuePreloadReady(loadPersistentQueuePreload(url));
 	}
 
 	public static void shutdown() {
@@ -188,7 +217,148 @@ public final class MonitorYoutubeRelayClient {
 			return null;
 		}
 		QueuePreloadState state = QUEUE_PRELOADS.get(url.trim());
-		return state != null ? state.snapshot() : null;
+		return state != null ? state.snapshot() : loadPersistentQueuePreload(url.trim());
+	}
+
+	private static boolean isQueuePreloadReady(QueuePreloadSnapshot snapshot) {
+		if (snapshot == null || snapshot.resolved() == null || snapshot.resolved().live()) {
+			return false;
+		}
+		return snapshot.bufferedFromStart()
+				&& snapshot.bufferedEndMs() + CONTIGUOUS_BUFFER_TOLERANCE_MS >= Math.max(0L, QUEUE_PRELOAD_DURATION_MS - PREVIEW_CACHE_BUCKET_MS);
+	}
+
+	private static Path persistentQueuePreloadDir(String url) {
+		return PERSISTENT_PRELOAD_CACHE_ROOT.resolve(urlCacheKey(url));
+	}
+
+	private static String urlCacheKey(String url) {
+		try {
+			MessageDigest digest = MessageDigest.getInstance("SHA-256");
+			byte[] hash = digest.digest(url.getBytes(StandardCharsets.UTF_8));
+			return HexFormat.of().formatHex(hash);
+		} catch (NoSuchAlgorithmException exception) {
+			throw new IllegalStateException("Missing SHA-256", exception);
+		}
+	}
+
+	private static QueuePreloadSnapshot loadPersistentQueuePreload(String url) {
+		if (url == null || url.isBlank()) {
+			return null;
+		}
+		Path cacheDir = persistentQueuePreloadDir(url);
+		Path metadataPath = cacheDir.resolve("meta.json");
+		if (!Files.isRegularFile(metadataPath)) {
+			return null;
+		}
+		try {
+			JsonObject metadata = GSON.fromJson(Files.readString(metadataPath, StandardCharsets.UTF_8), JsonObject.class);
+			if (metadata == null || !url.equals(getString(metadata, "url", ""))) {
+				return null;
+			}
+			ResolvedYoutube resolved = new ResolvedYoutube(
+					getString(metadata, "title", "YouTube"),
+					Math.max(0L, getLong(metadata, "durationMs", 0L)),
+					getBoolean(metadata, "live", false),
+					getString(metadata, "streamUrl", ""),
+					getString(metadata, "audioStreamUrl", "")
+			);
+			JsonArray framesArray = metadata.getAsJsonArray("frames");
+			if (framesArray == null || framesArray.isEmpty()) {
+				return null;
+			}
+			NavigableMap<Long, CachedPreviewFrame> frames = new TreeMap<>();
+			for (JsonElement element : framesArray) {
+				if (element == null || !element.isJsonObject()) {
+					continue;
+				}
+				JsonObject frameObject = element.getAsJsonObject();
+				long bucketMs = Math.max(0L, getLong(frameObject, "bucketMs", -1L));
+				String fileName = getString(frameObject, "file", "").trim();
+				if (bucketMs < 0L || fileName.isBlank()) {
+					continue;
+				}
+				Path framePath = cacheDir.resolve(fileName);
+				if (!Files.isRegularFile(framePath)) {
+					continue;
+				}
+				byte[] bytes = Files.readAllBytes(framePath);
+				if (bytes.length == 0) {
+					continue;
+				}
+				frames.put(bucketMs, new CachedPreviewFrame(bytes, null));
+			}
+			if (frames.isEmpty()) {
+				return null;
+			}
+			QueueBufferRange range = computeQueueBufferRange(frames);
+			return new QueuePreloadSnapshot(
+					resolved,
+					frames,
+					range.bufferedStartMs(),
+					range.bufferedEndMs(),
+					range.bufferedFromStart()
+			);
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to load persistent YouTube preload cache for {}", url, exception);
+			return null;
+		}
+	}
+
+	private static void persistQueuePreloadSnapshot(String url, QueuePreloadSnapshot snapshot) {
+		if (url == null || url.isBlank() || snapshot == null || snapshot.resolved() == null || snapshot.resolved().live()) {
+			return;
+		}
+		Path cacheDir = persistentQueuePreloadDir(url);
+		try {
+			Files.createDirectories(cacheDir);
+			JsonArray framesArray = new JsonArray();
+			for (Map.Entry<Long, CachedPreviewFrame> entry : snapshot.cachedPreviewFrames().entrySet()) {
+				CachedPreviewFrame frame = entry.getValue();
+				if (frame == null || frame.bytes() == null || frame.bytes().length == 0) {
+					continue;
+				}
+				long bucketMs = entry.getKey();
+				String fileName = bucketMs + ".jpg";
+				Files.write(cacheDir.resolve(fileName), frame.bytes());
+				JsonObject frameObject = new JsonObject();
+				frameObject.addProperty("bucketMs", bucketMs);
+				frameObject.addProperty("file", fileName);
+				framesArray.add(frameObject);
+			}
+			if (framesArray.isEmpty()) {
+				return;
+			}
+			JsonObject metadata = new JsonObject();
+			metadata.addProperty("url", url);
+			metadata.addProperty("title", snapshot.resolved().title());
+			metadata.addProperty("durationMs", snapshot.resolved().durationMs());
+			metadata.addProperty("live", snapshot.resolved().live());
+			metadata.addProperty("streamUrl", snapshot.resolved().streamUrl());
+			metadata.addProperty("audioStreamUrl", snapshot.resolved().audioStreamUrl());
+			metadata.addProperty("bufferedStartMs", snapshot.bufferedStartMs());
+			metadata.addProperty("bufferedEndMs", snapshot.bufferedEndMs());
+			metadata.addProperty("bufferedFromStart", snapshot.bufferedFromStart());
+			metadata.add("frames", framesArray);
+			Files.writeString(cacheDir.resolve("meta.json"), GSON.toJson(metadata), StandardCharsets.UTF_8);
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to persist YouTube preload cache for {}", url, exception);
+		}
+	}
+
+	private static QueueBufferRange computeQueueBufferRange(NavigableMap<Long, CachedPreviewFrame> frames) {
+		if (frames == null || frames.isEmpty()) {
+			return new QueueBufferRange(0L, 0L, false);
+		}
+		long startMs = frames.firstKey();
+		long endMs = startMs;
+		for (Long candidateMs : frames.tailMap(startMs, false).keySet()) {
+			if (candidateMs > endMs + CONTIGUOUS_BUFFER_TOLERANCE_MS) {
+				break;
+			}
+			endMs = candidateMs;
+		}
+		return new QueueBufferRange(startMs, endMs, startMs == 0L);
 	}
 
 	private static void cleanupExpiredSessions() {
@@ -564,6 +734,10 @@ public final class MonitorYoutubeRelayClient {
 		return object != null && object.has(key) && !object.get(key).isJsonNull() ? object.get(key).getAsDouble() : fallback;
 	}
 
+	private static long getLong(JsonObject object, String key, long fallback) {
+		return object != null && object.has(key) && !object.get(key).isJsonNull() ? object.get(key).getAsLong() : fallback;
+	}
+
 	public record SessionLoadResponse(
 			String sessionId,
 			String title,
@@ -631,6 +805,9 @@ public final class MonitorYoutubeRelayClient {
 	) {
 	}
 
+	private record QueueBufferRange(long bufferedStartMs, long bufferedEndMs, boolean bufferedFromStart) {
+	}
+
 	private static final class ProcessOutputReader implements Runnable {
 		private final InputStream inputStream;
 		private volatile byte[] bytes = new byte[0];
@@ -678,6 +855,7 @@ public final class MonitorYoutubeRelayClient {
 		private void retain() {
 			boolean shouldStart = false;
 			synchronized (this.lock) {
+				loadPersistentCacheLocked();
 				this.retainCount++;
 				if (!this.started && !this.preloadComplete) {
 					this.started = true;
@@ -723,6 +901,7 @@ public final class MonitorYoutubeRelayClient {
 
 		private QueuePreloadSnapshot snapshot() {
 			synchronized (this.lock) {
+				loadPersistentCacheLocked();
 				if (this.resolved == null) {
 					return null;
 				}
@@ -736,9 +915,23 @@ public final class MonitorYoutubeRelayClient {
 			}
 		}
 
+		private boolean isLoaded() {
+			synchronized (this.lock) {
+				loadPersistentCacheLocked();
+				return isQueuePreloadReady(this.resolved == null ? null : new QueuePreloadSnapshot(
+						this.resolved,
+						new TreeMap<>(this.cachedPreviewFrames),
+						this.bufferedStartMs,
+						this.bufferedEndMs,
+						this.bufferedFromStart
+				));
+			}
+		}
+
 		private void runPreload() {
 			Process startedProcess = null;
 			boolean preloadFinished = false;
+			QueuePreloadSnapshot snapshotToPersist = null;
 			try {
 				ResolvedYoutube resolvedLocal = resolveYoutube(this.sourceUrl);
 				synchronized (this.lock) {
@@ -790,10 +983,25 @@ public final class MonitorYoutubeRelayClient {
 						this.process = null;
 					}
 					this.preloadComplete = preloadFinished;
+					if (preloadFinished && this.resolved != null) {
+						QueuePreloadSnapshot snapshot = new QueuePreloadSnapshot(
+								this.resolved,
+								new TreeMap<>(this.cachedPreviewFrames),
+								this.bufferedStartMs,
+								this.bufferedEndMs,
+								this.bufferedFromStart
+						);
+						if (isQueuePreloadReady(snapshot)) {
+							snapshotToPersist = snapshot;
+						}
+					}
 					this.started = false;
 				}
 				if (startedProcess != null) {
 					startedProcess.destroy();
+				}
+				if (snapshotToPersist != null) {
+					persistQueuePreloadSnapshot(this.sourceUrl, snapshotToPersist);
 				}
 			}
 		}
@@ -817,23 +1025,27 @@ public final class MonitorYoutubeRelayClient {
 		}
 
 		private void recomputeBufferedRangeLocked() {
-			if (this.cachedPreviewFrames.isEmpty()) {
-				this.bufferedFromStart = false;
-				this.bufferedStartMs = 0L;
-				this.bufferedEndMs = 0L;
+			QueueBufferRange range = computeQueueBufferRange(this.cachedPreviewFrames);
+			this.bufferedStartMs = range.bufferedStartMs();
+			this.bufferedEndMs = range.bufferedEndMs();
+			this.bufferedFromStart = range.bufferedFromStart();
+		}
+
+		private void loadPersistentCacheLocked() {
+			if ((this.resolved != null && !this.cachedPreviewFrames.isEmpty()) || this.started) {
 				return;
 			}
-			long startMs = this.cachedPreviewFrames.firstKey();
-			long endMs = startMs;
-			for (Long candidateMs : this.cachedPreviewFrames.tailMap(startMs, false).keySet()) {
-				if (candidateMs > endMs + CONTIGUOUS_BUFFER_TOLERANCE_MS) {
-					break;
-				}
-				endMs = candidateMs;
+			QueuePreloadSnapshot snapshot = loadPersistentQueuePreload(this.sourceUrl);
+			if (snapshot == null || snapshot.resolved() == null) {
+				return;
 			}
-			this.bufferedStartMs = startMs;
-			this.bufferedEndMs = endMs;
-			this.bufferedFromStart = startMs == 0L;
+			this.resolved = snapshot.resolved();
+			this.cachedPreviewFrames.clear();
+			this.cachedPreviewFrames.putAll(snapshot.cachedPreviewFrames());
+			this.bufferedStartMs = snapshot.bufferedStartMs();
+			this.bufferedEndMs = snapshot.bufferedEndMs();
+			this.bufferedFromStart = snapshot.bufferedFromStart();
+			this.preloadComplete = isQueuePreloadReady(snapshot);
 		}
 
 		private void stopLocked() {
@@ -882,6 +1094,7 @@ public final class MonitorYoutubeRelayClient {
 		private long bufferedEndMs = 0L;
 		private boolean bufferedFromStart = false;
 		private boolean prefetchCompleted = false;
+		private boolean fullCacheRequested = false;
 		private final NavigableMap<Long, CachedPreviewFrame> cachedPreviewFrames = new TreeMap<>();
 
 		private RelaySession(String sessionId) {
@@ -926,6 +1139,7 @@ public final class MonitorYoutubeRelayClient {
 				this.bufferedEndMs = 0L;
 				this.bufferedFromStart = false;
 				this.prefetchCompleted = false;
+				this.fullCacheRequested = false;
 				this.cachedPreviewFrames.clear();
 				if (queuePreload != null && !resolved.live()) {
 					this.cachedPreviewFrames.putAll(queuePreload.cachedPreviewFrames());
@@ -1383,6 +1597,50 @@ public final class MonitorYoutubeRelayClient {
 			this.playStartedAtNanos = System.nanoTime();
 		}
 
+		private void persistQueuePreload(String url) {
+			QueuePreloadSnapshot snapshot = null;
+			synchronized (this.lock) {
+				if (this.live || this.sourceUrl == null || !this.sourceUrl.equals(url) || this.cachedPreviewFrames.isEmpty()) {
+					return;
+				}
+				NavigableMap<Long, CachedPreviewFrame> frames = new TreeMap<>();
+				long maxBucketMs = Math.max(0L, QUEUE_PRELOAD_DURATION_MS - PREVIEW_CACHE_BUCKET_MS);
+				for (Map.Entry<Long, CachedPreviewFrame> entry : this.cachedPreviewFrames.entrySet()) {
+					if (entry.getKey() > maxBucketMs) {
+						break;
+					}
+					CachedPreviewFrame frame = entry.getValue();
+					if (frame == null || frame.bytes() == null || frame.bytes().length == 0) {
+						continue;
+					}
+					frames.put(
+							entry.getKey(),
+							new CachedPreviewFrame(
+									Arrays.copyOf(frame.bytes(), frame.bytes().length),
+									null
+							)
+					);
+				}
+				if (frames.isEmpty()) {
+					return;
+				}
+				QueueBufferRange range = computeQueueBufferRange(frames);
+				snapshot = new QueuePreloadSnapshot(
+						new ResolvedYoutube(this.title, this.durationMs, this.live, this.streamUrl, this.audioStreamUrl),
+						frames,
+						range.bufferedStartMs(),
+						range.bufferedEndMs(),
+						range.bufferedFromStart()
+				);
+				if (!isQueuePreloadReady(snapshot)) {
+					snapshot = null;
+				}
+			}
+			if (snapshot != null) {
+				persistQueuePreloadSnapshot(url, snapshot);
+			}
+		}
+
 		private boolean applyCachedPreviewLocked(long positionMs) throws IOException {
 			Map.Entry<Long, CachedPreviewFrame> previewEntry = findNearestCachedPreviewEntryLocked(positionMs);
 			if (previewEntry == null) {
@@ -1442,6 +1700,9 @@ public final class MonitorYoutubeRelayClient {
 		}
 
 		private long nextPrefetchStartMsLocked() {
+			if (this.fullCacheRequested && !this.bufferedFromStart) {
+				return 0L;
+			}
 			if (this.cachedPreviewFrames.isEmpty()) {
 				return 0L;
 			}
@@ -1492,15 +1753,34 @@ public final class MonitorYoutubeRelayClient {
 		}
 
 		private long desiredCacheMinMsLocked() {
+			if (this.fullCacheRequested) {
+				return 0L;
+			}
 			return Math.max(0L, normalizeBucketMs(this.positionMs - CURRENT_VIDEO_CACHE_BEHIND_MS));
 		}
 
 		private long desiredCacheMaxMsLocked() {
+			if (this.fullCacheRequested && this.durationMs > 0L) {
+				return Math.max(0L, normalizeBucketMs(this.durationMs));
+			}
 			long maxMs = normalizeBucketMs(this.positionMs + CURRENT_VIDEO_CACHE_AHEAD_MS);
 			if (this.durationMs > 0L) {
 				maxMs = Math.min(normalizeBucketMs(this.durationMs), maxMs);
 			}
 			return Math.max(0L, maxMs);
+		}
+
+		private void requestFullCache() throws IOException {
+			synchronized (this.lock) {
+				if (this.live || closedOrUnloadedLocked()) {
+					return;
+				}
+				this.fullCacheRequested = true;
+				this.prefetchCompleted = false;
+				if (this.prefetchProcess == null) {
+					startPrefetchLocked();
+				}
+			}
 		}
 
 		private void trimCachedPreviewWindowLocked() {

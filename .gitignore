@@ -17,6 +17,7 @@ polymer/resource_pack.zip
 usercache.json
 cache/
 .tmp/
+.lg2-cache/
 usercache.json
 config/skinrestorer/mojang_profile_cache.json
 
