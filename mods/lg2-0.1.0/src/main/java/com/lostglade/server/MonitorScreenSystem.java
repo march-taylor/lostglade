@@ -158,6 +158,7 @@ public final class MonitorScreenSystem {
 	private static final Map<String, BufferedImage> APP_ICON_CACHE = new ConcurrentHashMap<>();
 	private static final Map<ScreenRuntimeKey, MediaRuntimeState> MEDIA_STATES = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingMediaLinkRequest> PENDING_MEDIA_LINKS = new ConcurrentHashMap<>();
+	private static final Map<UUID, InFlightMediaLinkRequest> IN_FLIGHT_MEDIA_LINKS = new ConcurrentHashMap<>();
 	private static final Map<UUID, ScreenRuntimeKey> ACTIVE_MEDIA_ACTIONBARS = new ConcurrentHashMap<>();
 	private static final Map<UUID, PlayerMediaFocus> PLAYER_MEDIA_FOCUS = new ConcurrentHashMap<>();
 	private static final Map<ResourceKey<Level>, MonitorLevelState> LEVEL_STATES = new ConcurrentHashMap<>();
@@ -848,11 +849,8 @@ public final class MonitorScreenSystem {
 			}
 			state.version++;
 		}
-		if (preservePlaybackDuringPrompt) {
-			ACTIVE_MEDIA_ACTIONBARS.remove(sender.getUUID());
-		} else {
-			ACTIVE_MEDIA_ACTIONBARS.put(sender.getUUID(), pending.screenKey());
-		}
+		IN_FLIGHT_MEDIA_LINKS.put(sender.getUUID(), new InFlightMediaLinkRequest(pending.screenKey(), pending.mode(), pending.youtubeAction()));
+		ACTIVE_MEDIA_ACTIONBARS.put(sender.getUUID(), pending.screenKey());
 		sender.displayClientMessage(loadingMessage(pending.mode(), sender), true);
 		requestRuntimeRender(server, pending.screenKey());
 		if (!preservePlaybackDuringPrompt) {
@@ -2219,6 +2217,12 @@ public final class MonitorScreenSystem {
 		if (server == null) {
 			return;
 		}
+		InFlightMediaLinkRequest inFlight = IN_FLIGHT_MEDIA_LINKS.get(player.getUUID());
+		if (inFlight != null) {
+			ACTIVE_MEDIA_ACTIONBARS.put(player.getUUID(), inFlight.screenKey());
+			player.displayClientMessage(loadingMessage(inFlight.mode(), player), true);
+			return;
+		}
 		MediaRuntimeState state = MEDIA_STATES.computeIfAbsent(key, ignored -> MediaRuntimeState.fresh(mode, linkPromptStatus(mode, player), () -> onMediaProgressChanged(server, key)));
 		if (mode == ScreenViewMode.GALLERY) {
 			ensureGalleryStateHydrated(server, key, state);
@@ -3160,6 +3164,9 @@ public final class MonitorScreenSystem {
 		applyYoutubeQueuePreloadDiff(preloadDiff);
 		applyYoutubeMusicQueuePreloadDiff(musicPreloadDiff);
 
+		if (result.requesterUuid() != null) {
+			IN_FLIGHT_MEDIA_LINKS.remove(result.requesterUuid());
+		}
 		if (requester != null && (result.queueResponse() == null || result.queueResponse().entries() == null || result.queueResponse().entries().isEmpty())) {
 			ACTIVE_MEDIA_ACTIONBARS.remove(requester.getUUID());
 			requester.displayClientMessage(Component.empty(), true);
@@ -3443,6 +3450,7 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		PENDING_MEDIA_LINKS.entrySet().removeIf(entry -> entry.getValue().screenKey().equals(key));
+		IN_FLIGHT_MEDIA_LINKS.entrySet().removeIf(entry -> entry.getValue().screenKey().equals(key));
 		for (Map.Entry<UUID, ScreenRuntimeKey> entry : List.copyOf(ACTIVE_MEDIA_ACTIONBARS.entrySet())) {
 			if (entry.getValue().equals(key)) {
 				ACTIVE_MEDIA_ACTIONBARS.remove(entry.getKey());
@@ -3510,6 +3518,7 @@ public final class MonitorScreenSystem {
 				if (player != null) {
 					player.displayClientMessage(Component.empty(), true);
 				}
+				IN_FLIGHT_MEDIA_LINKS.remove(entry.getKey());
 				ACTIVE_MEDIA_ACTIONBARS.remove(entry.getKey());
 				continue;
 			}
@@ -3517,6 +3526,10 @@ public final class MonitorScreenSystem {
 			PendingMediaLinkRequest pending = PENDING_MEDIA_LINKS.get(entry.getKey());
 			if (pending != null && pending.screenKey().equals(entry.getValue())) {
 				message = linkPromptMessage(pending.mode(), player);
+			}
+			InFlightMediaLinkRequest inFlight = IN_FLIGHT_MEDIA_LINKS.get(entry.getKey());
+			if (message == null && inFlight != null && inFlight.screenKey().equals(entry.getValue())) {
+				message = loadingMessage(inFlight.mode(), player);
 			}
 			synchronized (state) {
 				if (message == null && state.waitingForLink) {
@@ -3596,6 +3609,9 @@ public final class MonitorScreenSystem {
 		releaseYoutubeQueuePreloads(releasedQueueUrls);
 		releaseYoutubeMusicQueuePreloads(releasedMusicQueueUrls);
 
+		if (result.requesterUuid() != null) {
+			IN_FLIGHT_MEDIA_LINKS.remove(result.requesterUuid());
+		}
 		if (requester != null) {
 			ACTIVE_MEDIA_ACTIONBARS.remove(requester.getUUID());
 			requester.displayClientMessage(Component.empty(), true);
@@ -3690,6 +3706,9 @@ public final class MonitorScreenSystem {
 			state.version++;
 		}
 
+		if (result.requesterUuid() != null) {
+			IN_FLIGHT_MEDIA_LINKS.remove(result.requesterUuid());
+		}
 		if (requester != null) {
 			ACTIVE_MEDIA_ACTIONBARS.remove(requester.getUUID());
 			requester.displayClientMessage(Component.empty(), true);
@@ -4083,6 +4102,7 @@ public final class MonitorScreenSystem {
 			}
 		}
 		PENDING_MEDIA_LINKS.entrySet().removeIf(entry -> !isMediaSessionAlive(server, entry.getValue().screenKey()));
+		IN_FLIGHT_MEDIA_LINKS.entrySet().removeIf(entry -> !isMediaSessionAlive(server, entry.getValue().screenKey()));
 	}
 
 	private static void cleanupExpiredMediaFocus() {
@@ -10702,6 +10722,9 @@ public final class MonitorScreenSystem {
 	}
 
 	private record PendingMediaLinkRequest(ScreenRuntimeKey screenKey, ScreenViewMode mode, YoutubeLinkRequestAction youtubeAction) {
+	}
+
+	private record InFlightMediaLinkRequest(ScreenRuntimeKey screenKey, ScreenViewMode mode, YoutubeLinkRequestAction youtubeAction) {
 	}
 
 	private record YoutubeQueueItemSnapshot(int queueIndex, String title, boolean current) {

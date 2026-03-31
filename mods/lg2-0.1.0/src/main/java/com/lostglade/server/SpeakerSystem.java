@@ -57,11 +57,11 @@ public final class SpeakerSystem {
 	private static final int AUDIO_FRAME_BYTES = AUDIO_FRAME_SAMPLES * 2;
 	private static final long AUDIO_FRAME_DURATION_MS = AUDIO_FRAME_SAMPLES * 1000L / AUDIO_SAMPLE_RATE;
 	private static final long AUDIO_FRAME_NANOS = TimeUnit.MILLISECONDS.toNanos(AUDIO_FRAME_DURATION_MS);
-	private static final int SHARED_SOURCE_FRAME_BUFFER_CAPACITY = 256;
+	private static final int SHARED_SOURCE_FRAME_BUFFER_CAPACITY = 512;
 	private static final long AUDIO_RESYNC_TOLERANCE_MS = 4_000L;
-	private static final int SHARED_SOURCE_STARTUP_BUFFER_FRAMES = 6;
+	private static final int SHARED_SOURCE_STARTUP_BUFFER_FRAMES = 3;
 	private static final int SHARED_SOURCE_PLAYBACK_LEAD_FRAMES = 2;
-	private static final int SHARED_SOURCE_TARGET_LEAD_FRAMES = 96;
+	private static final int SHARED_SOURCE_TARGET_LEAD_FRAMES = 256;
 	private static final long PROCESS_SHUTDOWN_TIMEOUT_MS = 200L;
 	private static final short[] SILENCE_FRAME = new short[AUDIO_FRAME_SAMPLES];
 	private static final Set<SpeakerKey> KNOWN_SPEAKERS = ConcurrentHashMap.newKeySet();
@@ -871,6 +871,10 @@ public final class SpeakerSystem {
 					return first.getValue();
 				}
 				if (targetSequence > last.getKey()) {
+					// If the decoder/network falls behind, stop advancing the playback clock and let
+					// readLoop re-anchor once a small lead is buffered again instead of outputting
+					// long random silence in the middle of a track.
+					this.playbackEpochNanos = 0L;
 					return null;
 				}
 				Map.Entry<Long, short[]> frameEntry = this.frameBuffer.floorEntry(targetSequence);
@@ -950,7 +954,10 @@ public final class SpeakerSystem {
 			}
 
 			Process currentProcess = this.process;
-			this.playbackEpochNanos = System.nanoTime();
+			// Start the playback clock only after ffmpeg has produced a small PCM lead.
+			// Starting it immediately makes targetSequence race ahead during network/process startup,
+			// which causes long silence after seek/resume until the decoder "catches up".
+			this.playbackEpochNanos = 0L;
 			Thread thread = new Thread(() -> readLoop(currentProcess), "lg2-speaker-shared-" + Integer.toHexString(this.sourceKey.hashCode()));
 			thread.setDaemon(true);
 			this.readerThread = thread;
