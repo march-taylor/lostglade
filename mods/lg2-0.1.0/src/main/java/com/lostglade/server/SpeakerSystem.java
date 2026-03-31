@@ -58,7 +58,9 @@ public final class SpeakerSystem {
 	private static final long AUDIO_FRAME_DURATION_MS = AUDIO_FRAME_SAMPLES * 1000L / AUDIO_SAMPLE_RATE;
 	private static final long AUDIO_FRAME_NANOS = TimeUnit.MILLISECONDS.toNanos(AUDIO_FRAME_DURATION_MS);
 	private static final int SHARED_SOURCE_FRAME_BUFFER_CAPACITY = 256;
-	private static final long AUDIO_RESYNC_TOLERANCE_MS = 500L;
+	private static final long AUDIO_RESYNC_TOLERANCE_MS = 4_000L;
+	private static final int SHARED_SOURCE_STARTUP_BUFFER_FRAMES = 6;
+	private static final int SHARED_SOURCE_PLAYBACK_LEAD_FRAMES = 2;
 	private static final int SHARED_SOURCE_TARGET_LEAD_FRAMES = 96;
 	private static final long PROCESS_SHUTDOWN_TIMEOUT_MS = 200L;
 	private static final short[] SILENCE_FRAME = new short[AUDIO_FRAME_SAMPLES];
@@ -99,6 +101,16 @@ public final class SpeakerSystem {
 			return;
 		}
 		trackSpeaker(level, pos);
+	}
+
+	public static void refreshConnectedSpeakersNow(MinecraftServer server, ServerLevel level, BlockPos originPos) {
+		if (server == null || level == null || originPos == null || !level.hasChunkAt(originPos)) {
+			return;
+		}
+		for (BlockPos speakerPos : findConnectedPoweredSpeakerPositions(level, originPos)) {
+			trackSpeaker(level, speakerPos);
+			refreshSpeaker(server, new SpeakerKey(level.dimension(), speakerPos.immutable()));
+		}
 	}
 
 	public static boolean onPlayerHotbarScroll(ServerPlayer player, int previousSlot, int currentSlot) {
@@ -846,17 +858,21 @@ public final class SpeakerSystem {
 					return null;
 				}
 				if (this.playbackEpochNanos == 0L) {
-					Map.Entry<Long, short[]> latest = this.frameBuffer.lastEntry();
-					return latest != null ? latest.getValue() : null;
+					return null;
+				}
+				Map.Entry<Long, short[]> first = this.frameBuffer.firstEntry();
+				Map.Entry<Long, short[]> last = this.frameBuffer.lastEntry();
+				if (first == null || last == null) {
+					return null;
 				}
 				long targetSequence = targetSequenceLocked(nowNanos);
+				if (targetSequence < first.getKey()) {
+					return first.getValue();
+				}
+				if (targetSequence > last.getKey()) {
+					return null;
+				}
 				Map.Entry<Long, short[]> frameEntry = this.frameBuffer.floorEntry(targetSequence);
-				if (frameEntry == null) {
-					frameEntry = this.frameBuffer.firstEntry();
-				}
-				if (frameEntry == null) {
-					frameEntry = this.frameBuffer.lastEntry();
-				}
 				return frameEntry != null ? frameEntry.getValue() : null;
 			}
 		}
@@ -870,7 +886,7 @@ public final class SpeakerSystem {
 					|| this.liveStream != source.liveStream()) {
 				return true;
 			}
-			if (!this.liveStream) {
+			if (!this.liveStream && !source.loading()) {
 				return Math.abs(expectedPositionMsLocked() - source.positionMs()) > AUDIO_RESYNC_TOLERANCE_MS;
 			}
 			return false;
@@ -951,6 +967,10 @@ public final class SpeakerSystem {
 						}
 						long frameSequence = this.nextFrameSequence++;
 						this.frameBuffer.put(frameSequence, frame);
+						if (this.playbackEpochNanos == 0L && this.frameBuffer.size() >= SHARED_SOURCE_STARTUP_BUFFER_FRAMES) {
+							long anchorSequence = Math.max(0L, frameSequence - SHARED_SOURCE_PLAYBACK_LEAD_FRAMES);
+							this.playbackEpochNanos = System.nanoTime() - anchorSequence * AUDIO_FRAME_NANOS;
+						}
 						while (this.frameBuffer.size() > SHARED_SOURCE_FRAME_BUFFER_CAPACITY) {
 							this.frameBuffer.pollFirstEntry();
 						}

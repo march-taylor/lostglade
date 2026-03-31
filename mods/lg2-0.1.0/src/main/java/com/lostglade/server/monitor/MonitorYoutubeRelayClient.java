@@ -93,6 +93,19 @@ public final class MonitorYoutubeRelayClient {
 			long durationMs,
 			TaskProgress progress
 	) throws IOException {
+		return loadDirect(sessionId, sourceId, title, videoInput, audioInput, durationMs, null, progress);
+	}
+
+	public static SessionLoadResponse loadDirect(
+			String sessionId,
+			String sourceId,
+			String title,
+			String videoInput,
+			String audioInput,
+			long durationMs,
+			BufferedImage staticFrame,
+			TaskProgress progress
+	) throws IOException {
 		if (videoInput == null || videoInput.isBlank()) {
 			throw new IOException("Video input is required");
 		}
@@ -106,7 +119,8 @@ public final class MonitorYoutubeRelayClient {
 				title == null || title.isBlank() ? "Video" : title.trim(),
 				videoInput.trim(),
 				audioInput == null || audioInput.isBlank() ? videoInput.trim() : audioInput.trim(),
-				Math.max(0L, durationMs)
+				Math.max(0L, durationMs),
+				staticFrame
 		);
 		if (progress != null) {
 			progress.setIndeterminate("LOADING");
@@ -1177,6 +1191,7 @@ public final class MonitorYoutubeRelayClient {
 		private boolean live = false;
 		private boolean paused = false;
 		private boolean audioPlaceholder = true;
+		private boolean staticVisual = false;
 		private String status = "IDLE";
 		private BufferedImage latestFrame = null;
 		private long frameSequence = 0L;
@@ -1218,22 +1233,23 @@ public final class MonitorYoutubeRelayClient {
 					? queuePreload.resolved()
 					: resolveYoutube(url);
 			boolean loadedFromQueuePreload = queuePreload != null && queuePreload.resolved() != null;
-			SessionLoadResponse response = loadResolved(url, resolved, queuePreload);
+			SessionLoadResponse response = loadResolved(url, resolved, queuePreload, null);
 			if (loadedFromQueuePreload && !resolved.live()) {
 				refreshResolvedSourceAsync(url);
 			}
 			return response;
 		}
 
-		private SessionLoadResponse loadDirect(String sourceId, String title, String videoInput, String audioInput, long durationMs) throws IOException {
+		private SessionLoadResponse loadDirect(String sourceId, String title, String videoInput, String audioInput, long durationMs, BufferedImage staticFrame) throws IOException {
 			return loadResolved(
 					sourceId,
 					new ResolvedYoutube(title, durationMs, false, videoInput, audioInput),
-					null
+					null,
+					staticFrame
 			);
 		}
 
-		private SessionLoadResponse loadResolved(String sourceId, ResolvedYoutube resolved, QueuePreloadSnapshot queuePreload) throws IOException {
+		private SessionLoadResponse loadResolved(String sourceId, ResolvedYoutube resolved, QueuePreloadSnapshot queuePreload, BufferedImage staticFrame) throws IOException {
 			boolean hadPreloadedFrame = false;
 			synchronized (this.lock) {
 				stopPrefetchLocked();
@@ -1246,18 +1262,19 @@ public final class MonitorYoutubeRelayClient {
 				this.positionMs = 0L;
 				this.live = resolved.live();
 				this.paused = false;
-				this.audioPlaceholder = true;
+				this.audioPlaceholder = false;
+				this.staticVisual = staticFrame != null;
 				this.status = "BUFFERING";
-				this.latestFrame = null;
-				this.frameSequence = 0L;
-				this.latestFrameBucketMs = Long.MIN_VALUE;
+				this.latestFrame = staticFrame;
+				this.frameSequence = staticFrame != null ? 1L : 0L;
+				this.latestFrameBucketMs = staticFrame != null ? 0L : Long.MIN_VALUE;
 				this.bufferedStartMs = 0L;
 				this.bufferedEndMs = 0L;
 				this.bufferedFromStart = false;
 				this.prefetchCompleted = false;
 				this.fullCacheRequested = false;
 				this.cachedPreviewFrames.clear();
-				if (queuePreload != null && !resolved.live()) {
+				if (!this.staticVisual && queuePreload != null && !resolved.live()) {
 					this.cachedPreviewFrames.putAll(queuePreload.cachedPreviewFrames());
 					this.bufferedStartMs = queuePreload.bufferedStartMs();
 					this.bufferedEndMs = queuePreload.bufferedEndMs();
@@ -1276,7 +1293,7 @@ public final class MonitorYoutubeRelayClient {
 			if (resolved.live()) {
 				startStream();
 			} else {
-				if (!hadPreloadedFrame) {
+				if (!this.staticVisual && !hadPreloadedFrame) {
 					tryCapturePreviewFrame("load");
 				}
 				synchronized (this.lock) {
@@ -1285,7 +1302,9 @@ public final class MonitorYoutubeRelayClient {
 					}
 				}
 			}
-			ensurePrefetchStarted();
+			if (!this.staticVisual) {
+				ensurePrefetchStarted();
+			}
 			synchronized (this.lock) {
 				boolean ready = this.latestFrame != null && !Objects.equals(this.status, "BUFFERING");
 				return new SessionLoadResponse(
@@ -1355,6 +1374,20 @@ public final class MonitorYoutubeRelayClient {
 			synchronized (this.lock) {
 				if (this.live) {
 					ready = this.latestFrame != null && !Objects.equals(this.status, "BUFFERING");
+				} else if (this.staticVisual) {
+					long targetPositionMs = this.paused ? this.positionMs : currentPositionMsLocked();
+					if (this.durationMs > 0L && targetPositionMs >= this.durationMs) {
+						targetPositionMs = this.durationMs;
+						ended = true;
+					}
+					this.positionMs = targetPositionMs;
+					if (ended) {
+						this.paused = true;
+						this.status = "PAUSED";
+					} else {
+						this.status = this.paused ? "PAUSED" : "PLAYING";
+					}
+					ready = this.latestFrame != null;
 				} else if (this.paused) {
 					boolean hasCachedFrame;
 					try {
@@ -1402,7 +1435,7 @@ public final class MonitorYoutubeRelayClient {
 					if (!this.live && !ready && !this.paused && this.prefetchProcess == null && !closedOrUnloadedLocked()) {
 						this.prefetchCompleted = false;
 					}
-					shouldEnsurePrefetch = !this.live && !this.prefetchCompleted && this.prefetchProcess == null && !closedOrUnloadedLocked();
+					shouldEnsurePrefetch = !this.live && !this.staticVisual && !this.prefetchCompleted && this.prefetchProcess == null && !closedOrUnloadedLocked();
 				BufferedImage frame = this.frameSequence != knownFrameSequence ? this.latestFrame : null;
 				SessionSnapshot snapshot = new SessionSnapshot(
 						this.sessionId,
@@ -1439,6 +1472,13 @@ public final class MonitorYoutubeRelayClient {
 				if (this.paused) {
 					return;
 				}
+				if (this.staticVisual) {
+					this.positionMs = currentPositionMsLocked();
+					this.paused = true;
+					this.status = "PAUSED";
+					stopLocked();
+					return;
+				}
 				if (this.live) {
 					this.positionMs = currentPositionMsLocked();
 				} else {
@@ -1468,6 +1508,13 @@ public final class MonitorYoutubeRelayClient {
 				if (this.sourceUrl.isBlank() || this.streamUrl.isBlank()) {
 					throw new IOException("session is not loaded");
 				}
+				if (this.staticVisual) {
+					this.playBasePositionMs = this.positionMs;
+					this.playStartedAtNanos = System.nanoTime();
+					this.paused = false;
+					this.status = "PLAYING";
+					return;
+				}
 				applyCachedPreviewLocked(this.positionMs);
 				this.playBasePositionMs = this.positionMs;
 				this.playStartedAtNanos = System.nanoTime();
@@ -1487,6 +1534,15 @@ public final class MonitorYoutubeRelayClient {
 			synchronized (this.lock) {
 				if (this.live) {
 					throw new IOException("live stream is not seekable");
+				}
+				if (this.staticVisual) {
+					long clamped = Math.max(0L, this.durationMs > 0L ? Math.min(targetPositionMs, this.durationMs) : targetPositionMs);
+					this.positionMs = clamped;
+					this.playBasePositionMs = clamped;
+					this.playStartedAtNanos = System.nanoTime();
+					this.status = this.paused ? "PAUSED" : "PLAYING";
+					stopLocked();
+					return;
 				}
 					long clamped = Math.max(0L, this.durationMs > 0L ? Math.min(targetPositionMs, this.durationMs) : targetPositionMs);
 					this.positionMs = clamped;
@@ -1692,7 +1748,7 @@ public final class MonitorYoutubeRelayClient {
 		}
 
 		private void startPrefetchLocked() throws IOException {
-			if (this.live || this.streamUrl.isBlank() || closedOrUnloadedLocked() || this.prefetchCompleted) {
+			if (this.live || this.staticVisual || this.streamUrl.isBlank() || closedOrUnloadedLocked() || this.prefetchCompleted) {
 				return;
 			}
 			if (this.prefetchProcess != null || (this.prefetchReaderThread != null && this.prefetchReaderThread.isAlive())) {
