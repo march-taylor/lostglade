@@ -810,12 +810,20 @@ public final class MonitorScreenSystem {
 			return false;
 		}
 
+		boolean preservePlaybackDuringPrompt;
+		synchronized (state) {
+			preservePlaybackDuringPrompt = shouldKeepPlaybackWhilePromptingLocked(state, pending.mode(), pending.youtubeAction());
+		}
 		String url = message.signedContent() != null ? message.signedContent().trim() : "";
 		if (url.isEmpty()) {
 			synchronized (state) {
-				state.waitingForLink = true;
-				state.loading = false;
-				state.statusText = linkPromptStatus(pending.mode(), sender);
+				if (preservePlaybackDuringPrompt) {
+					state.overlayMode = MediaOverlayMode.CONTROLS;
+				} else {
+					state.waitingForLink = true;
+					state.loading = false;
+					state.statusText = linkPromptStatus(pending.mode(), sender);
+				}
 				state.version++;
 			}
 			PENDING_MEDIA_LINKS.put(sender.getUUID(), pending);
@@ -828,16 +836,26 @@ public final class MonitorScreenSystem {
 
 		synchronized (state) {
 			state.mode = pending.mode();
-			state.waitingForLink = false;
-			state.loading = true;
-			state.statusText = loadingStatus(pending.mode(), sender);
 			state.overlayMode = MediaOverlayMode.CONTROLS;
+			if (preservePlaybackDuringPrompt) {
+				state.waitingForLink = false;
+			} else {
+				state.waitingForLink = false;
+				state.loading = true;
+				state.statusText = loadingStatus(pending.mode(), sender);
+			}
 			state.version++;
 		}
+		if (preservePlaybackDuringPrompt) {
+			ACTIVE_MEDIA_ACTIONBARS.remove(sender.getUUID());
+		} else {
 			ACTIVE_MEDIA_ACTIONBARS.put(sender.getUUID(), pending.screenKey());
-			sender.displayClientMessage(loadingMessage(pending.mode(), sender), true);
-			requestRuntimeRender(server, pending.screenKey());
+		}
+		sender.displayClientMessage(loadingMessage(pending.mode(), sender), true);
+		requestRuntimeRender(server, pending.screenKey());
+		if (!preservePlaybackDuringPrompt) {
 			resumeMediaPlaybackIfNeeded(server, pending.screenKey());
+		}
 
 			if (isYoutubeFamilyMode(pending.mode())) {
 				CompletableFuture
@@ -2194,28 +2212,46 @@ public final class MonitorScreenSystem {
 			ensureGalleryStateHydrated(server, key, state);
 		}
 		synchronized (state) {
+			boolean preservePlayback = shouldKeepPlaybackWhilePromptingLocked(state, mode, youtubeAction);
 			state.mode = mode;
 			if (!(isYoutubeFamilyMode(mode) && youtubeAction == YoutubeLinkRequestAction.APPEND_QUEUE)) {
 				cancelPlaybackLocked(state);
 			}
-			if (clearCurrentMedia) {
+			if (clearCurrentMedia && !preservePlayback) {
 				clearLoadedContentLocked(state);
 			}
-			state.userPaused = false;
-			state.waitingForLink = true;
-			state.loading = false;
+			if (!preservePlayback) {
+				state.userPaused = false;
+				state.waitingForLink = true;
+				state.loading = false;
+				state.statusText = linkPromptStatus(mode, player);
+				state.progress.clear();
+			} else {
+				state.waitingForLink = false;
+			}
 			state.youtubeReturnToGallery = false;
 			if (mode == ScreenViewMode.GALLERY) {
 				state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
 			}
 			state.overlayMode = MediaOverlayMode.CONTROLS;
-			state.statusText = linkPromptStatus(mode, player);
-			state.progress.clear();
 			state.version++;
 		}
 		PENDING_MEDIA_LINKS.put(player.getUUID(), new PendingMediaLinkRequest(key, mode, youtubeAction));
 		ACTIVE_MEDIA_ACTIONBARS.put(player.getUUID(), key);
 		player.displayClientMessage(linkPromptMessage(mode, player), true);
+		requestRuntimeRender(server, key);
+	}
+
+	private static boolean shouldKeepPlaybackWhilePromptingLocked(MediaRuntimeState state, ScreenViewMode mode, YoutubeLinkRequestAction youtubeAction) {
+		if (state == null || !isYoutubeFamilyMode(mode) || youtubeAction != YoutubeLinkRequestAction.APPEND_QUEUE) {
+			return false;
+		}
+		return isStreamPlaybackLocked(state)
+				&& (state.loading
+				|| (state.sourceUrl != null && !state.sourceUrl.isBlank())
+				|| state.relaySessionId != null
+				|| state.streamFrame != null
+				|| state.durationMs > 0L);
 	}
 
 	private static void ensureGalleryStateHydrated(MinecraftServer server, ScreenRuntimeKey key, MediaRuntimeState state) {
@@ -3455,10 +3491,14 @@ public final class MonitorScreenSystem {
 				continue;
 			}
 			Component message = null;
+			PendingMediaLinkRequest pending = PENDING_MEDIA_LINKS.get(entry.getKey());
+			if (pending != null && pending.screenKey().equals(entry.getValue())) {
+				message = linkPromptMessage(pending.mode(), player);
+			}
 			synchronized (state) {
-				if (state.waitingForLink) {
+				if (message == null && state.waitingForLink) {
 					message = linkPromptMessage(state.mode, player);
-				} else if (state.loading) {
+				} else if (message == null && state.loading) {
 					message = loadingMessage(state.mode, player);
 				}
 			}
@@ -5540,6 +5580,7 @@ public final class MonitorScreenSystem {
 		boolean youtubeFamilyMode = youtubeMode || youtubeMusicMode;
 		boolean galleryMode = state != null && state.mode() == ScreenViewMode.GALLERY;
 		boolean galleryBackedYoutube = state != null && state.galleryBackedYoutube();
+		boolean youtubeHomePrompt = youtubeFamilyMode && !controlUi && !hasMedia;
 		UiRect titleRect = galleryMode ? mediaGalleryPlayerTitleRect(layout) : mediaLinkRect(layout, controlUi);
 		UiRect scaleRect = mediaScaleRect(layout);
 		UiRect downloadRect = mediaDownloadRect(layout);
@@ -5551,7 +5592,7 @@ public final class MonitorScreenSystem {
 			graphics.setColor(Color.BLACK);
 			graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
 		}
-		if (youtubeMusicMode) {
+		if (youtubeMusicMode && !youtubeHomePrompt) {
 			graphics.setPaint(new GradientPaint(
 					canvasRect.x(),
 					canvasRect.y(),
@@ -5566,7 +5607,7 @@ public final class MonitorScreenSystem {
 			}
 		} else if (mediaFrame != null) {
 			drawScaledImage(graphics, mediaFrame, canvasRect, state.scaleMode());
-		} else {
+		} else if (!youtubeHomePrompt) {
 			if (darkPlayerSurface) {
 				graphics.setPaint(new GradientPaint(
 						canvasRect.x(),
@@ -5596,25 +5637,27 @@ public final class MonitorScreenSystem {
 				|| state.loading()
 				|| (youtubeFamilyMode && !hasMedia));
 		if (controlsActive) {
-			int shadeHeight = clampInt(layout.unit() * 5, 40, 72);
-			graphics.setPaint(new GradientPaint(
-					0.0F,
-					canvasRect.y(),
-					new Color(0, 0, 0, 118),
-					0.0F,
-					canvasRect.y() + shadeHeight,
-					new Color(0, 0, 0, 0)
-			));
-			graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), shadeHeight);
-			graphics.setPaint(new GradientPaint(
-					0.0F,
-					canvasRect.bottom() - shadeHeight,
-					new Color(0, 0, 0, 0),
-					0.0F,
-					canvasRect.bottom(),
-					new Color(0, 0, 0, 126)
-			));
-			graphics.fillRect(canvasRect.x(), canvasRect.bottom() - shadeHeight, canvasRect.width(), shadeHeight);
+			if (!youtubeHomePrompt) {
+				int shadeHeight = clampInt(layout.unit() * 5, 40, 72);
+				graphics.setPaint(new GradientPaint(
+						0.0F,
+						canvasRect.y(),
+						new Color(0, 0, 0, 118),
+						0.0F,
+						canvasRect.y() + shadeHeight,
+						new Color(0, 0, 0, 0)
+				));
+				graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), shadeHeight);
+				graphics.setPaint(new GradientPaint(
+						0.0F,
+						canvasRect.bottom() - shadeHeight,
+						new Color(0, 0, 0, 0),
+						0.0F,
+						canvasRect.bottom(),
+						new Color(0, 0, 0, 126)
+				));
+				graphics.fillRect(canvasRect.x(), canvasRect.bottom() - shadeHeight, canvasRect.width(), shadeHeight);
+			}
 
 			if (galleryMode) {
 				drawMediaBackButton(graphics, closeRect, layout);
@@ -5636,7 +5679,18 @@ public final class MonitorScreenSystem {
 							drawGalleryWallpaperActionButton(graphics, downloadRect, state, layout);
 						}
 					} else if (youtubeMusicMode) {
-						drawYoutubeMusicTrackInfo(graphics, layout, state);
+						drawMediaSearchBar(
+								graphics,
+								titleRect,
+								state != null ? state.linkPlaceholder() : "YT MUSIC URL",
+								true,
+								layout
+						);
+						if (hasMedia
+								|| state.loading()
+								|| (state.mediaTitle() != null && !state.mediaTitle().isBlank())) {
+							drawYoutubeMusicTrackInfo(graphics, layout, state);
+						}
 					} else {
 						drawMediaSearchBar(
 								graphics,
@@ -5706,11 +5760,24 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return false;
 		}
+		if (isYoutubeHomePrompt(state)) {
+			return false;
+		}
 		return switch (state.mode()) {
 			case GALLERY -> !state.galleryBrowser();
 			case YOUTUBE, YOUTUBE_MUSIC -> state.hasMedia() || state.loading() || state.playbackControlsVisible();
 			default -> false;
 		};
+	}
+
+	private static boolean isYoutubeHomePrompt(MediaVisualSnapshot state) {
+		if (state == null || !isYoutubeFamilyMode(state.mode())) {
+			return false;
+		}
+		return !state.loading()
+				&& !state.hasMedia()
+				&& !state.playbackControlsVisible()
+				&& state.mediaListItems().isEmpty();
 	}
 
 	private static void drawGalleryBrowserScreen(Graphics2D graphics, UiLayout layout, MediaVisualSnapshot state) {
@@ -9676,6 +9743,17 @@ public final class MonitorScreenSystem {
 		return state.loadedMedia != null
 				|| state.loading
 				|| (state.sourceUrl != null && !state.sourceUrl.isBlank());
+	}
+
+	private static boolean isYoutubeHomePromptLocked(MediaRuntimeState state) {
+		if (state == null || !isYoutubeFamilyMode(state.mode)) {
+			return false;
+		}
+		return !state.loading
+				&& !hasDisplayableMediaLocked(state)
+				&& (state.sourceUrl == null || state.sourceUrl.isBlank())
+				&& state.relaySessionId == null
+				&& state.youtubeQueue.isEmpty();
 	}
 
 	private static boolean resolvedActionVisible(MediaRuntimeState state) {

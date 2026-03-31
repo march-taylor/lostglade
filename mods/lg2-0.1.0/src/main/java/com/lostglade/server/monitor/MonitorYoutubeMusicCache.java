@@ -130,44 +130,19 @@ public final class MonitorYoutubeMusicCache {
 		private final String url;
 		private final Object lock = new Object();
 		private int retainCount;
-		private boolean loading;
+		private boolean quickLoading;
+		private boolean fullCacheLoading;
 		private LoadedTrack loadedTrack;
-		private IOException lastFailure;
 
 		private TrackCacheState(String url) {
 			this.url = url;
 		}
 
 		private void retain() {
-			boolean shouldStart = false;
 			synchronized (this.lock) {
 				this.retainCount++;
-				shouldStart = this.loadedTrack == null && !this.loading;
-				if (shouldStart) {
-					this.loading = true;
-					this.lastFailure = null;
-				}
 			}
-			if (shouldStart) {
-				PRELOAD_EXECUTOR.execute(() -> {
-					try {
-						LoadedTrack built = buildTrack(this.url, null);
-						synchronized (this.lock) {
-							this.loadedTrack = built;
-							this.loading = false;
-							this.lastFailure = null;
-							this.lock.notifyAll();
-						}
-					} catch (IOException exception) {
-						synchronized (this.lock) {
-							this.loading = false;
-							this.lastFailure = exception;
-							this.lock.notifyAll();
-						}
-						Lg2.LOGGER.debug("Failed to preload YouTube Music track {}", this.url, exception);
-					}
-				});
-			}
+			ensureFullCacheAsync(null);
 		}
 
 		private void release() {
@@ -179,14 +154,20 @@ public final class MonitorYoutubeMusicCache {
 		}
 
 		private LoadedTrack load(TaskProgress progress) throws IOException {
+			LoadedTrack cached = loadCachedIfPresent(progress);
+			if (cached != null) {
+				synchronized (this.lock) {
+					this.loadedTrack = cached;
+				}
+				return cached;
+			}
 			while (true) {
 				synchronized (this.lock) {
 					if (this.loadedTrack != null) {
 						return this.loadedTrack;
 					}
-					if (!this.loading) {
-						this.loading = true;
-						this.lastFailure = null;
+					if (!this.quickLoading) {
+						this.quickLoading = true;
 						break;
 					}
 					try {
@@ -198,41 +179,111 @@ public final class MonitorYoutubeMusicCache {
 				}
 			}
 			try {
-				LoadedTrack built = buildTrack(this.url, progress);
+				LoadedTrack built = buildQuickTrack(this.url, progress);
 				synchronized (this.lock) {
 					this.loadedTrack = built;
-					this.loading = false;
-					this.lastFailure = null;
+					this.quickLoading = false;
 					this.lock.notifyAll();
 				}
+				ensureFullCacheAsync(null);
 				return built;
 			} catch (IOException exception) {
 				synchronized (this.lock) {
-					this.loading = false;
-					this.lastFailure = exception;
+					this.quickLoading = false;
 					this.lock.notifyAll();
 				}
 				throw exception;
 			}
 		}
-	}
 
-	private static LoadedTrack buildTrack(String url, TaskProgress progress) throws IOException {
-		Path targetTrackPath = trackPath(url);
-		Path targetCoverPath = coverPath(url);
-		Path targetMetadataPath = metadataPath(url);
-		if (targetTrackPath != null && targetCoverPath != null && targetMetadataPath != null
-				&& Files.isRegularFile(targetTrackPath)
-				&& Files.isRegularFile(targetCoverPath)
-				&& Files.isRegularFile(targetMetadataPath)) {
-			return loadCachedTrack(targetTrackPath, targetCoverPath, targetMetadataPath, progress);
+		private LoadedTrack loadCachedIfPresent(TaskProgress progress) throws IOException {
+			Path targetTrackPath = trackPath(this.url);
+			Path targetCoverPath = coverPath(this.url);
+			Path targetMetadataPath = metadataPath(this.url);
+			if (targetTrackPath != null
+					&& targetCoverPath != null
+					&& targetMetadataPath != null
+					&& Files.isRegularFile(targetTrackPath)
+					&& Files.isRegularFile(targetCoverPath)
+					&& Files.isRegularFile(targetMetadataPath)) {
+				return loadCachedTrack(targetTrackPath, targetCoverPath, targetMetadataPath, progress);
+			}
+			return null;
 		}
 
+		private void ensureFullCacheAsync(TaskProgress progress) {
+			synchronized (this.lock) {
+				if (this.fullCacheLoading || isQueueEntryLoaded(this.url)) {
+					return;
+				}
+				this.fullCacheLoading = true;
+			}
+			PRELOAD_EXECUTOR.execute(() -> {
+				try {
+					LoadedTrack built = buildFullTrack(this.url, progress);
+					synchronized (this.lock) {
+						this.loadedTrack = built;
+						this.fullCacheLoading = false;
+						this.lock.notifyAll();
+					}
+				} catch (IOException exception) {
+					synchronized (this.lock) {
+						this.fullCacheLoading = false;
+						this.lock.notifyAll();
+					}
+					Lg2.LOGGER.debug("Failed to fully cache YouTube Music track {}", this.url, exception);
+				}
+			});
+		}
+	}
+
+	private static LoadedTrack buildQuickTrack(String url, TaskProgress progress) throws IOException {
+		LoadedTrack cached = loadCachedTrackIfPresent(url, progress);
+		if (cached != null) {
+			return cached;
+		}
 		JsonObject metadata = resolveMetadata(url);
 		String title = getString(metadata, "title", "YouTube Music");
 		String artist = resolveArtist(metadata);
 		long durationMs = Math.round(getDouble(metadata, "duration", 0.0D) * 1000.0D);
 		String thumbnailUrl = resolveThumbnailUrl(metadata);
+		BufferedImage cover = downloadOrCreateCover(title, thumbnailUrl, progress);
+		persistMetadataAndCover(url, title, artist, durationMs, cover);
+		if (progress != null) {
+			progress.setIndeterminate("CONNECTING AUDIO");
+		}
+		String audioStreamUrl = resolveAudioStreamUrl(url);
+		if (progress != null) {
+			progress.complete("READY");
+		}
+		return new LoadedTrack(
+				title,
+				artist,
+				new MonitorMediaApp.LoadedVideo(
+						cover,
+						Math.max(0L, durationMs),
+						cover.getWidth(),
+						cover.getHeight(),
+						audioStreamUrl,
+						audioStreamUrl
+				)
+		);
+	}
+
+	private static LoadedTrack buildFullTrack(String url, TaskProgress progress) throws IOException {
+		LoadedTrack cached = loadCachedTrackIfPresent(url, progress);
+		if (cached != null) {
+			return cached;
+		}
+		Path targetTrackPath = trackPath(url);
+		Path targetCoverPath = coverPath(url);
+		Path targetMetadataPath = metadataPath(url);
+		JsonObject metadata = resolveMetadata(url);
+		String title = getString(metadata, "title", "YouTube Music");
+		String artist = resolveArtist(metadata);
+		long durationMs = Math.round(getDouble(metadata, "duration", 0.0D) * 1000.0D);
+		String thumbnailUrl = resolveThumbnailUrl(metadata);
+		BufferedImage cover = loadPersistedOrCreateCover(url, title, thumbnailUrl, progress);
 
 		Path entryDir = entryDirectory(url);
 		if (entryDir == null) {
@@ -241,10 +292,6 @@ public final class MonitorYoutubeMusicCache {
 		Files.createDirectories(entryDir);
 		Path tempDir = Files.createTempDirectory(entryDir, "build-");
 		try {
-			BufferedImage cover = downloadCoverImage(thumbnailUrl, progress);
-			if (cover == null) {
-				cover = createFallbackCover(title);
-			}
 			Path tempCoverPath = tempDir.resolve("cover.png");
 			ImageIO.write(cover, "png", tempCoverPath.toFile());
 
@@ -300,6 +347,21 @@ public final class MonitorYoutubeMusicCache {
 		}
 	}
 
+	private static LoadedTrack loadCachedTrackIfPresent(String url, TaskProgress progress) throws IOException {
+		Path targetTrackPath = trackPath(url);
+		Path targetCoverPath = coverPath(url);
+		Path targetMetadataPath = metadataPath(url);
+		if (targetTrackPath != null
+				&& targetCoverPath != null
+				&& targetMetadataPath != null
+				&& Files.isRegularFile(targetTrackPath)
+				&& Files.isRegularFile(targetCoverPath)
+				&& Files.isRegularFile(targetMetadataPath)) {
+			return loadCachedTrack(targetTrackPath, targetCoverPath, targetMetadataPath, progress);
+		}
+		return null;
+	}
+
 	private static LoadedTrack loadCachedTrack(Path trackPath, Path coverPath, Path metadataPath, TaskProgress progress) throws IOException {
 		if (progress != null) {
 			progress.setIndeterminate("LOADING CACHE");
@@ -341,6 +403,25 @@ public final class MonitorYoutubeMusicCache {
 			return artist;
 		}
 		return getString(metadata, "channel", "");
+	}
+
+	private static String resolveAudioStreamUrl(String url) throws IOException {
+		String output = runTextCommand(List.of(
+				ytDlpBin(),
+				"-f",
+				"bestaudio/best",
+				"-g",
+				"--no-playlist",
+				url
+		), 120);
+		String[] lines = output.split("\\R");
+		for (String line : lines) {
+			String candidate = line == null ? "" : line.trim();
+			if (!candidate.isBlank()) {
+				return candidate;
+			}
+		}
+		throw new IOException("Failed to resolve audio stream URL");
 	}
 
 	private static JsonObject resolveMetadata(String url) throws IOException {
@@ -393,6 +474,38 @@ public final class MonitorYoutubeMusicCache {
 		} finally {
 			connection.disconnect();
 		}
+	}
+
+	private static BufferedImage downloadOrCreateCover(String title, String thumbnailUrl, TaskProgress progress) throws IOException {
+		BufferedImage cover = downloadCoverImage(thumbnailUrl, progress);
+		return cover != null ? cover : createFallbackCover(title);
+	}
+
+	private static BufferedImage loadPersistedOrCreateCover(String url, String title, String thumbnailUrl, TaskProgress progress) throws IOException {
+		Path existingCoverPath = coverPath(url);
+		if (existingCoverPath != null && Files.isRegularFile(existingCoverPath)) {
+			BufferedImage persisted = ImageIO.read(existingCoverPath.toFile());
+			if (persisted != null) {
+				return persisted;
+			}
+		}
+		return downloadOrCreateCover(title, thumbnailUrl, progress);
+	}
+
+	private static void persistMetadataAndCover(String url, String title, String artist, long durationMs, BufferedImage cover) throws IOException {
+		Path targetCoverPath = coverPath(url);
+		Path targetMetadataPath = metadataPath(url);
+		if (targetCoverPath == null || targetMetadataPath == null || cover == null) {
+			return;
+		}
+		Files.createDirectories(targetCoverPath.getParent());
+		Files.createDirectories(targetMetadataPath.getParent());
+		ImageIO.write(cover, "png", targetCoverPath.toFile());
+		JsonObject persisted = new JsonObject();
+		persisted.addProperty("title", title);
+		persisted.addProperty("artist", artist);
+		persisted.addProperty("durationMs", durationMs);
+		Files.writeString(targetMetadataPath, GSON.toJson(persisted), StandardCharsets.UTF_8);
 	}
 
 	private static BufferedImage createFallbackCover(String title) {
