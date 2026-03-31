@@ -510,15 +510,17 @@ public final class CopperManRepulsorSystem {
 	}
 
 	private static double getNaturalLightningChargeChance(ServerPlayer player) {
+		RaceAbilityConfig ability = ServerRaceSystem.getAbility(player, RaceAbilitySlot.ATTACK).orElse(null);
+		if (ability != null && ability.repulsorNaturalLightningChargeChance > 0.0D) {
+			return ability.repulsorNaturalLightningChargeChance;
+		}
+
 		Optional<PlayerRaceConfig> raceOptional = ServerRaceSystem.getRace(player);
 		if (raceOptional.isPresent() && raceOptional.get().stock != null && raceOptional.get().stock.repulsorNaturalLightningChargeChance > 0.0D) {
 			return raceOptional.get().stock.repulsorNaturalLightningChargeChance;
 		}
 
-		RaceAbilityConfig ability = ServerRaceSystem.getAbility(player, RaceAbilitySlot.ATTACK).orElse(null);
-		return ability != null && ability.repulsorNaturalLightningChargeChance > 0.0D
-				? ability.repulsorNaturalLightningChargeChance
-				: DEFAULT_NATURAL_LIGHTNING_RESTORE_CHANCE;
+		return DEFAULT_NATURAL_LIGHTNING_RESTORE_CHANCE;
 	}
 
 	private static int getNaturalLightningChargeRestore(ServerPlayer player) {

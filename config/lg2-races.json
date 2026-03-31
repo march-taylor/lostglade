@@ -29,7 +29,7 @@
                                       "followMaxDistanceBlocks":  6.0,
                                       "maxOutsideAreaSeconds":  4.0,
                                       "healthPoints":  150.0,
-                                      "reflectedDamageRatio":  0.5
+                                      "reflectedDamageRatio":  0.65
                                   },
                       "uniqueAbility":  {
                                             "enabled":  true,
@@ -74,17 +74,20 @@
                                      "name":  "Репульсор",
                                      "description":  "Встроенный в протез руки репульсор стреляет лазерами.",
                                      "priceBitcoins":  300,
-                                     "cooldownSeconds":  3.0,
-                                     "repulsorMaxCharges":  35,
-                                     "repulsorCopperIngotChargeRestore":  5,
-                                     "repulsorNaturalLightningChargeRestore":  10
-                                 },
+                                       "cooldownSeconds":  3.0,
+                                       "repulsorMaxCharges":  35,
+                                       "repulsorCopperIngotChargeRestore":  5,
+                                       "repulsorNaturalLightningChargeChance":  0.1,
+                                       "repulsorNaturalLightningChargeRestore":  10
+                                   },
                       "defense":  {
-                                      "enabled":  false,
+                                      "enabled":  true,
                                       "abilityId":  "copper_man_defense",
                                       "name":  "Крепкая кожа",
                                       "description":  "Кожа Медного человека укрепляется медью.",
-                                      "priceBitcoins":  600
+                                      "priceBitcoins":  600,
+                                      "cooldownSeconds":  900.0,
+                                      "durationSeconds":  45.0
                                   },
                       "uniqueAbility":  {
                                             "enabled":  false,
@@ -104,12 +107,11 @@
                                     "enabled":  true,
                                     "abilityId":  "copper_man_stock",
                                     "name":  "Медный организм",
-                                     "description":  "Обычная еда менее полезна, но медь можно есть. Молнии и медные големы тянутся к Медному человеку.",
-                                     "foodRestoreMultiplier":  0.8,
-                                     "copperIngotFoodPoints":  5,
-                                     "repulsorNaturalLightningChargeChance":  0.1,
-                                     "copperGolemNoticeRangeBlocks":  8.0
-                                 }
+                                       "description":  "Обычная еда менее полезна, но медь можно есть. Молнии и медные големы тянутся к Медному человеку.",
+                                       "foodRestoreMultiplier":  0.8,
+                                       "copperIngotFoodPoints":  5,
+                                       "copperGolemNoticeRangeBlocks":  8.0
+                                   }
                   }
               ]
 }

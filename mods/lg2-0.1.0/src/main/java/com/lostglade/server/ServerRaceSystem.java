@@ -100,6 +100,8 @@ import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.item.component.Consumable;
 import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.food.FoodProperties;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
@@ -231,6 +233,8 @@ public final class ServerRaceSystem {
 	private static final int COPPER_GOLEM_REACTION_INTERVAL_TICKS = 5;
 	private static final double COPPER_GOLEM_FOLLOW_SPEED = 1.1D;
 	private static final double COPPER_LIGHTNING_ATTRACT_RANGE_BLOCKS = 128.0D;
+	private static final double COPPER_MAN_DEFENSE_DEFAULT_DURATION_SECONDS = 300.0D;
+	private static final double COPPER_MAN_DEFENSE_DEFAULT_COOLDOWN_SECONDS = 900.0D;
 	private static final float COPPER_INGOT_SATURATION = 0.6F;
 	private static final Consumable COPPER_INGOT_CONSUMABLE = Consumable.builder()
 			.consumeSeconds(1.6F)
@@ -266,6 +270,7 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, CartelDisguiseSession> CARTEL_DISGUISE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelManualBookRestore> CARTEL_MANUAL_BOOK_RESTORES = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> COPPER_GOLEM_FOLLOWERS = new LinkedHashMap<>();
+	private static final Map<UUID, Long> COPPER_MAN_DEFENSE_COOLDOWNS = new LinkedHashMap<>();
 	private static final List<CartelTravkaGrowthAttempt> CARTEL_TRAVKA_GROWTH_ATTEMPTS = new ArrayList<>();
 	private static final Map<CartelFernGrowthKey, CartelFernGrowthTask> CARTEL_PLANTED_FERN_GROWTHS = new LinkedHashMap<>();
 	private static final PriorityQueue<CartelFernGrowthTask> CARTEL_PLANTED_FERN_GROWTH_QUEUE = new PriorityQueue<>(Comparator.comparingLong(task -> task.growAtTick));
@@ -419,6 +424,7 @@ public final class ServerRaceSystem {
 			CARTEL_DEFENSE_SESSIONS.clear();
 			CARTEL_UNIQUE_COOLDOWNS.clear();
 			CARTEL_DISGUISE_SESSIONS.clear();
+			COPPER_MAN_DEFENSE_COOLDOWNS.clear();
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.clear();
 			CARTEL_PLANTED_FERN_GROWTHS.clear();
 			CARTEL_PLANTED_FERN_GROWTH_QUEUE.clear();
@@ -443,6 +449,7 @@ public final class ServerRaceSystem {
 			CARTEL_MANUAL_BOOK_RESTORES.remove(handler.player.getUUID());
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.removeIf(attempt -> attempt.playerId.equals(handler.player.getUUID()));
 			COPPER_GOLEM_FOLLOWERS.entrySet().removeIf(entry -> handler.player.getUUID().equals(entry.getValue()));
+			COPPER_MAN_DEFENSE_COOLDOWNS.remove(handler.player.getUUID());
 		});
 		UseItemCallback.EVENT.register((player, world, hand) -> {
 			if (!(player instanceof ServerPlayer serverPlayer) || world.isClientSide()) {
@@ -473,6 +480,7 @@ public final class ServerRaceSystem {
 			tickCartelTravkaGrowthAttempts(server);
 			tickCartelFernGrowths(server);
 			tickCopperManStock(server);
+			tickCopperManDefense(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
 		});
@@ -578,6 +586,9 @@ public final class ServerRaceSystem {
 		}
 		if (slot == RaceAbilitySlot.ATTACK && COPPER_MAN_RACE_ID.equals(sanitizePath(race.id))) {
 			return CopperManRepulsorSystem.toggleMode(player);
+		}
+		if (slot == RaceAbilitySlot.DEFENSE && COPPER_MAN_RACE_ID.equals(sanitizePath(race.id))) {
+			return useCopperManDefense(player, race, ability);
 		}
 
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
@@ -722,6 +733,48 @@ public final class ServerRaceSystem {
 		}
 
 		return bestPlayer == null ? null : bestPlayer.blockPosition();
+	}
+
+	private static int useCopperManDefense(ServerPlayer caster, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		try {
+			ServerLevel level = caster.level();
+			long nowTick = level.getGameTime();
+			long cooldownTicks = asTicks(positiveOrDefault(ability.cooldownSeconds, COPPER_MAN_DEFENSE_DEFAULT_COOLDOWN_SECONDS));
+			long nextAllowedTick = COPPER_MAN_DEFENSE_COOLDOWNS.getOrDefault(caster.getUUID(), 0L);
+			if (cooldownTicks > 0L && nowTick < nextAllowedTick) {
+				double remaining = (nextAllowedTick - nowTick) / 20.0D;
+				caster.displayClientMessage(
+						Component.literal(String.format(Locale.ROOT, "%.1fs", remaining))
+								.withStyle(ChatFormatting.RED),
+						true
+				);
+				return 0;
+			}
+
+			long durationTicks = Math.max(1L, asTicks(positiveOrDefault(ability.durationSeconds, COPPER_MAN_DEFENSE_DEFAULT_DURATION_SECONDS)));
+			caster.addEffect(new MobEffectInstance(MobEffects.RESISTANCE, (int) Math.min(Integer.MAX_VALUE, durationTicks), 1, false, false, true));
+			if (cooldownTicks > 0L) {
+				COPPER_MAN_DEFENSE_COOLDOWNS.put(caster.getUUID(), nowTick + cooldownTicks);
+			}
+
+			Lg2.LOGGER.info("Player {} used copper man defense '{}' from race '{}'", caster.getGameProfile().name(), ability.abilityId, race.id);
+			return 1;
+		} catch (Exception exception) {
+			Lg2.LOGGER.error("Failed to activate copper man defense for {}", caster.getGameProfile().name(), exception);
+			caster.sendSystemMessage(Component.literal("Не удалось активировать защиту."));
+			return 0;
+		}
+	}
+
+	private static void tickCopperManDefense(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		if (nowTick % 40L == 0L) {
+			COPPER_MAN_DEFENSE_COOLDOWNS.entrySet().removeIf(entry -> entry.getValue() <= nowTick);
+		}
 	}
 
 	private static void tickCopperManStock(MinecraftServer server) {
@@ -2403,45 +2456,45 @@ public final class ServerRaceSystem {
 		String locale = normalizeCartelDisguiseLocale(player);
 		if (locale.startsWith("rpr")) {
 			return switch (key) {
-				case "passport" -> "Паспортъ";
-				case "accept" -> "Приняти";
-				case "previous" -> "Предыдущiй";
-				case "next" -> "Слѣдующiй";
-				case "empty" -> "Нѣтъ игроковъ";
-				case "no_players_online" -> "На серверѣ никого нѣтъ";
+				case "passport" -> "РџР°СЃРїРѕСЂС‚СЉ";
+				case "accept" -> "РџСЂРёРЅСЏС‚Рё";
+				case "previous" -> "РџСЂРµРґС‹РґСѓС‰iР№";
+				case "next" -> "РЎР»СЈРґСѓСЋС‰iР№";
+				case "empty" -> "РќСЈС‚СЉ РёРіСЂРѕРєРѕРІСЉ";
+				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂСЈ РЅРёРєРѕРіРѕ РЅСЈС‚СЉ";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("uk")) {
 			return switch (key) {
-				case "passport" -> "Паспорт";
-				case "accept" -> "Прийняти";
-				case "previous" -> "Попередній";
-				case "next" -> "Наступний";
-				case "empty" -> "Немає гравців";
-				case "no_players_online" -> "На сервері нікого немає";
+				case "passport" -> "РџР°СЃРїРѕСЂС‚";
+				case "accept" -> "РџСЂРёР№РЅСЏС‚Рё";
+				case "previous" -> "РџРѕРїРµСЂРµРґРЅС–Р№";
+				case "next" -> "РќР°СЃС‚СѓРїРЅРёР№";
+				case "empty" -> "РќРµРјР°С” РіСЂР°РІС†С–РІ";
+				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂС– РЅС–РєРѕРіРѕ РЅРµРјР°С”";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("ja")) {
 			return switch (key) {
-				case "passport" -> "パスポート";
-				case "accept" -> "承認";
-				case "previous" -> "前へ";
-				case "next" -> "次へ";
-				case "empty" -> "プレイヤーがいません";
-				case "no_players_online" -> "サーバーに誰もいません";
+				case "passport" -> "гѓ‘г‚№гѓќгѓјгѓ€";
+				case "accept" -> "ж‰їиЄЌ";
+				case "previous" -> "е‰ЌгЃё";
+				case "next" -> "ж¬ЎгЃё";
+				case "empty" -> "гѓ—гѓ¬г‚¤гѓ¤гѓјгЃЊгЃ„гЃѕгЃ›г‚“";
+				case "no_players_online" -> "г‚µгѓјгѓђгѓјгЃ«иЄ°г‚‚гЃ„гЃѕгЃ›г‚“";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("ru")) {
 			return switch (key) {
-				case "passport" -> "Пасспорт";
-				case "accept" -> "Принять";
-				case "previous" -> "Предыдущий";
-				case "next" -> "Следующий";
-				case "empty" -> "Нет игроков";
-				case "no_players_online" -> "На сервере никого нет";
+				case "passport" -> "РџР°СЃСЃРїРѕСЂС‚";
+				case "accept" -> "РџСЂРёРЅСЏС‚СЊ";
+				case "previous" -> "РџСЂРµРґС‹РґСѓС‰РёР№";
+				case "next" -> "РЎР»РµРґСѓСЋС‰РёР№";
+				case "empty" -> "РќРµС‚ РёРіСЂРѕРєРѕРІ";
+				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂРµ РЅРёРєРѕРіРѕ РЅРµС‚";
 				default -> "";
 			};
 		}
@@ -3623,3 +3676,4 @@ public final class ServerRaceSystem {
 		}
 	}
 }
+

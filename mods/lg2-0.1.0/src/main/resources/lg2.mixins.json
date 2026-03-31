@@ -1,4 +1,4 @@
-{
+﻿{
 	"required": true,
 	"package": "com.lostglade.mixin",
 	"compatibilityLevel": "JAVA_21",
@@ -30,8 +30,7 @@
 		"LivingEntityCocaineHallucinationContactMixin",
 		"LivingEntityCartelOwnerFriendlyFireMixin",
 		"LivingEntityCartelLawyerInvulnerabilityMixin",
-		"LivingEntityCartelSummonLootMixin",
-		"LivingEntityCopperManFoodMixin",
+		"LivingEntityCartelSummonLootMixin",		"LivingEntityCopperManFoodMixin",
 		"LivingEntityStabilityLuckMixin",
 		"LivingEntityTrojanRoosterInvulnerabilityMixin",
 		"MsgCommandMixin",
@@ -72,3 +71,4 @@
 		"requireAnnotations": true
 	}
 }
+
