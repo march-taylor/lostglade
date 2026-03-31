@@ -58,7 +58,8 @@ public final class SpeakerSystem {
 	private static final long AUDIO_FRAME_DURATION_MS = AUDIO_FRAME_SAMPLES * 1000L / AUDIO_SAMPLE_RATE;
 	private static final long AUDIO_FRAME_NANOS = TimeUnit.MILLISECONDS.toNanos(AUDIO_FRAME_DURATION_MS);
 	private static final int SHARED_SOURCE_FRAME_BUFFER_CAPACITY = 256;
-	private static final long AUDIO_RESYNC_TOLERANCE_MS = 1_500L;
+	private static final long AUDIO_RESYNC_TOLERANCE_MS = 500L;
+	private static final int SHARED_SOURCE_TARGET_LEAD_FRAMES = 96;
 	private static final long PROCESS_SHUTDOWN_TIMEOUT_MS = 200L;
 	private static final short[] SILENCE_FRAME = new short[AUDIO_FRAME_SAMPLES];
 	private static final Set<SpeakerKey> KNOWN_SPEAKERS = ConcurrentHashMap.newKeySet();
@@ -848,7 +849,7 @@ public final class SpeakerSystem {
 					Map.Entry<Long, short[]> latest = this.frameBuffer.lastEntry();
 					return latest != null ? latest.getValue() : null;
 				}
-				long targetSequence = Math.max(0L, (nowNanos - this.playbackEpochNanos) / AUDIO_FRAME_NANOS);
+				long targetSequence = targetSequenceLocked(nowNanos);
 				Map.Entry<Long, short[]> frameEntry = this.frameBuffer.floorEntry(targetSequence);
 				if (frameEntry == null) {
 					frameEntry = this.frameBuffer.firstEntry();
@@ -876,7 +877,14 @@ public final class SpeakerSystem {
 		}
 
 		private long expectedPositionMsLocked() {
-			return this.processBasePositionMs + this.nextFrameSequence * AUDIO_FRAME_DURATION_MS;
+			return this.processBasePositionMs + targetSequenceLocked(System.nanoTime()) * AUDIO_FRAME_DURATION_MS;
+		}
+
+		private long targetSequenceLocked(long nowNanos) {
+			if (this.playbackEpochNanos == 0L || nowNanos <= this.playbackEpochNanos) {
+				return 0L;
+			}
+			return Math.max(0L, (nowNanos - this.playbackEpochNanos) / AUDIO_FRAME_NANOS);
 		}
 
 		private boolean restartProcessLocked(MonitorScreenSystem.SpeakerAudioSource source) {
@@ -899,7 +907,6 @@ public final class SpeakerSystem {
 				command.add("-ss");
 				command.add(String.format(java.util.Locale.ROOT, "%.3f", source.positionMs() / 1000.0D));
 			}
-			command.add("-re");
 			command.add("-i");
 			command.add(source.audioStreamUrl());
 			command.add("-vn");
@@ -924,6 +931,7 @@ public final class SpeakerSystem {
 			}
 
 			Process currentProcess = this.process;
+			this.playbackEpochNanos = System.nanoTime();
 			Thread thread = new Thread(() -> readLoop(currentProcess), "lg2-speaker-shared-" + Integer.toHexString(this.sourceKey.hashCode()));
 			thread.setDaemon(true);
 			this.readerThread = thread;
@@ -936,17 +944,30 @@ public final class SpeakerSystem {
 			try (InputStream input = processToRead.getInputStream()) {
 				while (!this.closed && readFully(input, buffer)) {
 					short[] frame = decodePcmFrame(buffer);
+					long sleepMillis = 0L;
 					synchronized (this.lock) {
 						if (this.process != processToRead || this.closed) {
 							return;
 						}
 						long frameSequence = this.nextFrameSequence++;
-						if (this.playbackEpochNanos == 0L) {
-							this.playbackEpochNanos = System.nanoTime() - frameSequence * AUDIO_FRAME_NANOS;
-						}
 						this.frameBuffer.put(frameSequence, frame);
 						while (this.frameBuffer.size() > SHARED_SOURCE_FRAME_BUFFER_CAPACITY) {
 							this.frameBuffer.pollFirstEntry();
+						}
+						long leadFrames = frameSequence - targetSequenceLocked(System.nanoTime());
+						if (leadFrames > SHARED_SOURCE_TARGET_LEAD_FRAMES) {
+							sleepMillis = Math.min(
+									100L,
+									(leadFrames - SHARED_SOURCE_TARGET_LEAD_FRAMES) * AUDIO_FRAME_DURATION_MS
+							);
+						}
+					}
+					if (sleepMillis > 0L) {
+						try {
+							Thread.sleep(sleepMillis);
+						} catch (InterruptedException exception) {
+							Thread.currentThread().interrupt();
+							return;
 						}
 					}
 				}

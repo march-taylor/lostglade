@@ -3370,6 +3370,7 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		ServerPlayer requester = server.getPlayerList().getPlayer(result.requesterUuid());
+		boolean shouldFadeProgress = false;
 
 		synchronized (state) {
 			boolean youtubeStream = result.streamKind() == PlaybackStreamKind.YOUTUBE;
@@ -3399,15 +3400,24 @@ public final class MonitorScreenSystem {
 				state.audioStreamUrl = result.loadResponse().audioStreamUrl();
 				state.mediaTitle = result.loadResponse().title();
 				state.durationMs = result.loadResponse().durationMs();
-				state.positionMs = 0L;
-				state.bufferedStartMs = 0L;
-				state.bufferedEndMs = 0L;
+				state.positionMs = result.loadResponse().initialPositionMs();
+				state.bufferedStartMs = result.loadResponse().bufferedStartMs();
+				state.bufferedEndMs = result.loadResponse().bufferedEndMs();
+				if (result.loadResponse().initialFrame() != null) {
+					state.streamFrame = result.loadResponse().initialFrame();
+					state.youtubeFrameSequence = result.loadResponse().initialFrameSequence();
+				}
 				state.liveStream = result.loadResponse().live();
 				state.audioPlaceholder = true;
-				state.loading = true;
+				state.loading = !result.loadResponse().ready();
 				state.userPaused = false;
 				state.statusText = result.loadResponse().status();
-				state.progress.setIndeterminate(result.loadResponse().live() ? "LIVE" : "LOADING");
+				if (result.loadResponse().ready()) {
+					state.progress.complete("READY");
+					shouldFadeProgress = true;
+				} else {
+					state.progress.setIndeterminate(result.loadResponse().live() ? "LIVE" : "LOADING");
+				}
 				if (youtubeStream && state.mode == ScreenViewMode.YOUTUBE) {
 					ensureYoutubeQueueCurrentEntryLocked(state);
 				}
@@ -3434,6 +3444,9 @@ public final class MonitorScreenSystem {
 			}
 		}
 		requestRuntimeRender(server, result.screenKey());
+		if (shouldFadeProgress) {
+			scheduleProgressFadeRenders(server, result.screenKey());
+		}
 		if (result.loadResponse() != null) {
 			scheduleYoutubeRefresh(server, result.screenKey(), 0L);
 		}
