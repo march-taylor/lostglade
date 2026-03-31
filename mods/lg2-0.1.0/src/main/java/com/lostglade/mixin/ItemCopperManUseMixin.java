@@ -27,7 +27,7 @@ public abstract class ItemCopperManUseMixin {
 		if ((Object) this != Items.COPPER_INGOT || !(player instanceof ServerPlayer serverPlayer)) {
 			return;
 		}
-		if (!ServerRaceSystem.isCopperManStockEnabled(serverPlayer) || !player.canEat(false)) {
+		if (!ServerRaceSystem.isCopperManStockEnabled(serverPlayer)) {
 			return;
 		}
 

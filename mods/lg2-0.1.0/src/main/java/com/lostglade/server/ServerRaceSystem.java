@@ -651,9 +651,20 @@ public final class ServerRaceSystem {
 		if (!isCopperManStockEnabled(player) || stack == null || stack.isEmpty() || !stack.is(Items.COPPER_INGOT)) {
 			return false;
 		}
-		stack.set(DataComponents.FOOD, new FoodProperties(getCopperIngotFoodPoints(player), COPPER_INGOT_SATURATION, false));
-		stack.set(DataComponents.CONSUMABLE, COPPER_INGOT_CONSUMABLE);
-		return true;
+
+		FoodProperties desiredFood = new FoodProperties(getCopperIngotFoodPoints(player), COPPER_INGOT_SATURATION, true);
+		FoodProperties currentFood = stack.get(DataComponents.FOOD);
+		Consumable currentConsumable = stack.get(DataComponents.CONSUMABLE);
+		boolean changed = false;
+		if (!Objects.equals(currentFood, desiredFood)) {
+			stack.set(DataComponents.FOOD, desiredFood);
+			changed = true;
+		}
+		if (!Objects.equals(currentConsumable, COPPER_INGOT_CONSUMABLE)) {
+			stack.set(DataComponents.CONSUMABLE, COPPER_INGOT_CONSUMABLE);
+			changed = true;
+		}
+		return changed;
 	}
 
 	public static void stripCopperIngotConsumable(ItemStack stack) {
@@ -737,14 +748,23 @@ public final class ServerRaceSystem {
 
 		boolean copperMan = isCopperManStockEnabled(player);
 		Inventory inventory = player.getInventory();
+		boolean changed = false;
 		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
 			ItemStack stack = inventory.getItem(slot);
 			if (stack == null || stack.isEmpty() || !stack.is(Items.COPPER_INGOT)) {
 				continue;
 			}
-			if (!copperMan) {
+			if (copperMan) {
+				changed |= ensureCopperIngotConsumableForUse(player, stack);
+			} else {
+				if (stack.has(DataComponents.FOOD) || stack.has(DataComponents.CONSUMABLE)) {
+					changed = true;
+				}
 				stripCopperIngotConsumable(stack);
 			}
+		}
+		if (changed) {
+			player.inventoryMenu.broadcastChanges();
 		}
 	}
 
