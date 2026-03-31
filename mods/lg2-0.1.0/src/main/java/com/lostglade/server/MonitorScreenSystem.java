@@ -1653,18 +1653,19 @@ public final class MonitorScreenSystem {
 		}
 		MediaRuntimeState state = MEDIA_STATES.computeIfAbsent(key, ignored -> MediaRuntimeState.fresh(mode, "", () -> onMediaProgressChanged(server, key)));
 		synchronized (state) {
-			ScreenViewMode previousMode = state.mode;
 			state.mode = mode;
 			if (isYoutubeFamilyMode(mode)
-					&& previousMode != mode
-					&& !isStreamPlaybackLocked(state)
-					&& state.youtubeQueue.isEmpty()) {
+					&& !hasDisplayableMediaLocked(state)
+					&& !state.loading
+					&& (isYoutubeMusicMode(mode) || !isStreamPlaybackLocked(state))) {
 				cancelPlaybackLocked(state);
 				clearYoutubePlaybackLocked(state);
 				clearGallerySelectionLocked(state);
 				state.loading = false;
+				state.waitingForLink = false;
 				state.statusText = "";
 				state.overlayMode = MediaOverlayMode.CONTROLS;
+				state.youtubeQueueOpen = false;
 				state.youtubeReturnToGallery = false;
 				state.version++;
 			}
@@ -2169,6 +2170,7 @@ public final class MonitorScreenSystem {
 			state.mediaTitle = title == null || title.isBlank() ? "Video" : title;
 			state.mediaSubtitle = subtitle == null ? "" : subtitle;
 			state.streamFrame = video.preview();
+			state.loadingBackdropFrame = null;
 			state.waitingForLink = false;
 			state.loading = true;
 			state.userPaused = false;
@@ -3306,10 +3308,12 @@ public final class MonitorScreenSystem {
 				if (item == null || item.url() == null || item.url().isBlank()) {
 					return;
 				}
+				BufferedImage preservedBackdrop = currentYoutubeMusicBackdropLocked(state);
 				cancelPlaybackLocked(state);
 				clearYoutubePlaybackLocked(state);
 				state.mode = ScreenViewMode.YOUTUBE_MUSIC;
 				state.streamKind = PlaybackStreamKind.NONE;
+				state.loadingBackdropFrame = preservedBackdrop;
 				state.sourceUrl = item.url();
 				state.mediaTitle = item.title() == null || item.title().isBlank() ? "Track" : item.title();
 				state.mediaSubtitle = "";
@@ -3773,6 +3777,12 @@ public final class MonitorScreenSystem {
 			return true;
 		}
 		if (!isPlayerMode(viewMode)) {
+			return true;
+		}
+		if (viewMode == ScreenViewMode.YOUTUBE_MUSIC
+				&& state.loading
+				&& state.streamFrame == null
+				&& state.loadingBackdropFrame == null) {
 			return true;
 		}
 		if (viewMode == ScreenViewMode.GALLERY) {
@@ -5288,7 +5298,7 @@ public final class MonitorScreenSystem {
 
 	private static MediaVisualSnapshot captureMediaSnapshot(MediaRuntimeState state) {
 		if (state == null) {
-			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, false, true, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, 0, -1, null);
+			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, false, true, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, 0, -1, null);
 		}
 		boolean youtubeMode = state.mode == ScreenViewMode.YOUTUBE;
 		boolean youtubeMusicMode = state.mode == ScreenViewMode.YOUTUBE_MUSIC;
@@ -5300,6 +5310,9 @@ public final class MonitorScreenSystem {
 		BufferedImage frame = streamPlayback
 				? state.streamFrame
 				: !galleryBrowser && state.loadedMedia != null ? state.loadedMedia.frame(state.frameIndex) : null;
+		BufferedImage backgroundFrame = youtubeMusicMode && state.loading && state.loadingBackdropFrame != null
+				? state.loadingBackdropFrame
+				: frame;
 		boolean hasMedia = streamPlayback
 				? hasDisplayableMediaLocked(state)
 				: galleryBrowser ? !state.galleryItems.isEmpty() : state.loadedMedia != null;
@@ -5342,6 +5355,7 @@ public final class MonitorScreenSystem {
 				state.mode,
 				state.version,
 				frame,
+				backgroundFrame,
 				hasMedia,
 				galleryBrowser,
 				galleryMode && currentGalleryItemSavedLocked(state),
@@ -5641,6 +5655,7 @@ public final class MonitorScreenSystem {
 		UiRect canvasRect = mediaCanvasRect(layout);
 		UiRect closeRect = mediaCloseRect(layout);
 		BufferedImage mediaFrame = state != null ? state.frame() : null;
+		BufferedImage mediaBackgroundFrame = state != null && state.backgroundFrame() != null ? state.backgroundFrame() : mediaFrame;
 		boolean hasMedia = state != null && state.hasMedia();
 		boolean controlUi = state != null && (state.hasMedia() || state.playbackControlsVisible());
 		boolean youtubeMode = state != null && state.mode() == ScreenViewMode.YOUTUBE;
@@ -5686,11 +5701,11 @@ public final class MonitorScreenSystem {
 			graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
 		}
 		if (youtubeMusicMode && !youtubeHomePrompt) {
-			if (mediaFrame != null) {
+			if (mediaBackgroundFrame != null) {
 				drawYoutubeMusicArtworkBackground(
 						graphics,
 						canvasRect,
-						mediaFrame,
+						mediaBackgroundFrame,
 						secondaryArtworkScaleMode(state != null ? state.scaleMode() : MediaScaleMode.FIT)
 				);
 				graphics.setPaint(new GradientPaint(
@@ -5702,6 +5717,8 @@ public final class MonitorScreenSystem {
 						new Color(10, 10, 14, 164)
 				));
 				graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
+			}
+			if (mediaFrame != null) {
 				drawYoutubeMusicArtworkCard(graphics, layout, mediaFrame, state != null ? state.scaleMode() : MediaScaleMode.FIT);
 			}
 		} else if (mediaFrame != null) {
@@ -9680,6 +9697,7 @@ public final class MonitorScreenSystem {
 		state.bufferedEndMs = 0L;
 		state.liveStream = false;
 		state.audioPlaceholder = true;
+		state.loadingBackdropFrame = null;
 	}
 
 	private static void clearGalleryLocked(MediaRuntimeState state) {
@@ -9764,6 +9782,19 @@ public final class MonitorScreenSystem {
 			return null;
 		}
 		return state.galleryItems.get(state.galleryIndex);
+	}
+
+	private static BufferedImage currentYoutubeMusicBackdropLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return null;
+		}
+		if (state.streamFrame != null) {
+			return state.streamFrame;
+		}
+		if (state.loadedMedia != null) {
+			return state.loadedMedia.frame(state.frameIndex);
+		}
+		return state.loadingBackdropFrame;
 	}
 
 	private static Optional<GalleryItem> currentGalleryItemMatchingUrlLocked(MediaRuntimeState state, String url) {
@@ -10728,6 +10759,7 @@ public final class MonitorScreenSystem {
 			ScreenViewMode mode,
 			long version,
 			BufferedImage frame,
+			BufferedImage backgroundFrame,
 			boolean hasMedia,
 			boolean galleryBrowser,
 			boolean galleryCurrentSaved,
@@ -11006,6 +11038,7 @@ public final class MonitorScreenSystem {
 		private PlaybackStreamKind streamKind;
 		private MonitorMediaApp.LoadedMedia loadedMedia;
 		private BufferedImage streamFrame;
+		private BufferedImage loadingBackdropFrame;
 		private String sourceUrl;
 		private String relaySessionId;
 		private String audioStreamUrl;
@@ -11079,6 +11112,7 @@ public final class MonitorScreenSystem {
 			this.version = 0L;
 			this.statusText = "";
 			this.mediaSubtitle = "";
+			this.loadingBackdropFrame = null;
 			this.galleryItems = new ArrayList<>();
 			this.galleryLoadingUrls = new HashSet<>();
 			this.wallpaperMedia = null;
