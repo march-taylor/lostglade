@@ -813,6 +813,7 @@ public final class SpeakerSystem {
 		private String audioStreamUrl;
 		private boolean liveStream;
 		private long processBasePositionMs;
+		private long audioSyncToken;
 		private long nextFrameSequence;
 		private long playbackEpochNanos;
 
@@ -883,7 +884,8 @@ public final class SpeakerSystem {
 			}
 			if (!Objects.equals(this.relaySessionId, source.relaySessionId())
 					|| !Objects.equals(this.audioStreamUrl, source.audioStreamUrl())
-					|| this.liveStream != source.liveStream()) {
+					|| this.liveStream != source.liveStream()
+					|| this.audioSyncToken != source.audioSyncToken()) {
 				return true;
 			}
 			if (!this.liveStream && !source.loading()) {
@@ -910,6 +912,7 @@ public final class SpeakerSystem {
 			this.audioStreamUrl = source.audioStreamUrl();
 			this.liveStream = source.liveStream();
 			this.processBasePositionMs = Math.max(0L, source.positionMs());
+			this.audioSyncToken = source.audioSyncToken();
 			this.nextFrameSequence = 0L;
 			this.playbackEpochNanos = 0L;
 

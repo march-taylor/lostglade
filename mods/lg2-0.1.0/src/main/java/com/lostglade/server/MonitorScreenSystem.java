@@ -64,6 +64,7 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.Stroke;
+import java.awt.geom.Path2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
@@ -645,6 +646,7 @@ public final class MonitorScreenSystem {
 						state.relaySessionId,
 						state.audioStreamUrl,
 						state.positionMs,
+						state.audioSyncToken,
 						state.loading,
 						state.userPaused,
 						state.liveStream
@@ -1206,6 +1208,7 @@ public final class MonitorScreenSystem {
 						boolean shouldPause = !isPlaybackPausedLocked(mediaState);
 						cancelPlaybackLocked(mediaState);
 						mediaState.userPaused = shouldPause;
+						bumpAudioSyncTokenLocked(mediaState);
 						youtubePauseAction = shouldPause;
 					} else if (mediaState.loadedMedia != null && mediaState.loadedMedia.animated()) {
 						if (isPlaybackPausedLocked(mediaState)) {
@@ -1275,6 +1278,7 @@ public final class MonitorScreenSystem {
 					if (isStreamPlaybackLocked(mediaState) && canSeekTimelineLocked(mediaState)) {
 						youtubeSeekTargetMs = youtubePositionForFraction(mediaState, mediaTimelineFraction(layout, touchPoint, mediaState.mode));
 						mediaState.positionMs = youtubeSeekTargetMs;
+						bumpAudioSyncTokenLocked(mediaState);
 					} else if (mediaState.loadedMedia != null && mediaState.loadedMedia.frameCount() > 1) {
 						mediaState.frameIndex = mediaFrameIndexForFraction(mediaState.loadedMedia, mediaTimelineFraction(layout, touchPoint, mediaState.mode));
 						mediaState.version++;
@@ -1450,6 +1454,7 @@ public final class MonitorScreenSystem {
 		}
 		if (server != null && youtubePauseAction != null) {
 			boolean shouldPause = youtubePauseAction;
+			refreshConnectedSpeakersNow(server, component.runtimeKey());
 			ensureExecutors();
 			CompletableFuture.runAsync(() -> {
 				try {
@@ -1461,10 +1466,14 @@ public final class MonitorScreenSystem {
 				} catch (Exception exception) {
 					Lg2.LOGGER.debug("Failed to {} YouTube session {}", shouldPause ? "pause" : "resume", component.runtimeKey(), exception);
 				}
-			}, mediaIoExecutor).thenRun(() -> server.execute(() -> scheduleYoutubeRefresh(server, component.runtimeKey(), 0L)));
+			}, mediaIoExecutor).thenRun(() -> server.execute(() -> {
+				refreshConnectedSpeakersNow(server, component.runtimeKey());
+				scheduleYoutubeRefresh(server, component.runtimeKey(), 0L);
+			}));
 		}
 		if (server != null && youtubeSeekTargetMs != null) {
 			long seekTargetMs = youtubeSeekTargetMs;
+			refreshConnectedSpeakersNow(server, component.runtimeKey());
 			ensureExecutors();
 			CompletableFuture.runAsync(() -> {
 				try {
@@ -1472,7 +1481,10 @@ public final class MonitorScreenSystem {
 				} catch (Exception exception) {
 					Lg2.LOGGER.debug("Failed to seek YouTube session {} to {}", component.runtimeKey(), seekTargetMs, exception);
 				}
-			}, mediaIoExecutor).thenRun(() -> server.execute(() -> scheduleYoutubeRefresh(server, component.runtimeKey(), 0L)));
+			}, mediaIoExecutor).thenRun(() -> server.execute(() -> {
+				refreshConnectedSpeakersNow(server, component.runtimeKey());
+				scheduleYoutubeRefresh(server, component.runtimeKey(), 0L);
+			}));
 		}
 		if (server != null && youtubeQueuePlayIndex != null) {
 			startYoutubeQueuePlayback(server, component.runtimeKey(), player.getUUID(), youtubeQueuePlayIndex);
@@ -3450,6 +3462,17 @@ public final class MonitorScreenSystem {
 		state.playbackFuture = null;
 	}
 
+	private static long bumpAudioSyncTokenLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return 0L;
+		}
+		state.audioSyncToken++;
+		if (state.audioSyncToken == Long.MIN_VALUE) {
+			state.audioSyncToken = 1L;
+		}
+		return state.audioSyncToken;
+	}
+
 	private static void onMediaProgressChanged(MinecraftServer server, ScreenRuntimeKey key) {
 		if (server == null || key == null) {
 			return;
@@ -3648,6 +3671,7 @@ public final class MonitorScreenSystem {
 				state.loading = !result.loadResponse().ready();
 				state.userPaused = false;
 				state.statusText = result.loadResponse().status();
+				bumpAudioSyncTokenLocked(state);
 				if (result.loadResponse().ready()) {
 					state.progress.complete("READY");
 					shouldFadeProgress = true;
@@ -4146,6 +4170,7 @@ public final class MonitorScreenSystem {
 					long seekStep = Math.max(YOUTUBE_SCROLL_SEEK_MS, duration / 120L);
 					youtubeSeekTargetMs = clampLong(state.positionMs + delta * seekStep, 0L, duration);
 					state.positionMs = youtubeSeekTargetMs;
+					bumpAudioSyncTokenLocked(state);
 					handled = true;
 				} else if (state.loadedMedia != null && state.loadedMedia.animated() && state.loadedMedia.frameCount() > 1) {
 					cancelPlaybackLocked(state);
@@ -4163,13 +4188,17 @@ public final class MonitorScreenSystem {
 		requestComponentRender(server, component, component.viewMode(), component.launcherPage());
 		if (youtubeSeekTargetMs != null) {
 			long seekTargetMs = youtubeSeekTargetMs;
+			refreshConnectedSpeakersNow(server, component.runtimeKey());
 			ensureExecutors();
 			CompletableFuture.runAsync(() -> {
 				try {
 					MonitorYoutubeRelayClient.seek(relaySessionId(component.runtimeKey()), seekTargetMs);
 				} catch (Exception ignored) {
 				}
-			}, mediaIoExecutor).thenRun(() -> server.execute(() -> scheduleYoutubeRefresh(server, component.runtimeKey(), 0L)));
+			}, mediaIoExecutor).thenRun(() -> server.execute(() -> {
+				refreshConnectedSpeakersNow(server, component.runtimeKey());
+				scheduleYoutubeRefresh(server, component.runtimeKey(), 0L);
+			}));
 		} else {
 			resumeMediaPlaybackIfNeeded(server, component.runtimeKey());
 		}
@@ -5581,6 +5610,27 @@ public final class MonitorScreenSystem {
 		boolean galleryMode = state != null && state.mode() == ScreenViewMode.GALLERY;
 		boolean galleryBackedYoutube = state != null && state.galleryBackedYoutube();
 		boolean youtubeHomePrompt = youtubeFamilyMode && !controlUi && !hasMedia;
+		boolean showQueueButton = state != null && youtubeFamilyMode && !galleryBackedYoutube;
+		boolean showPrimaryActionButton = state != null && !youtubeMusicMode && state.actionVisible();
+		boolean showWallpaperActionButton = state != null && galleryMode && state.wallpaperActionVisible();
+		MediaButtonSegment scaleButtonSegment = MediaButtonSegment.SINGLE;
+		MediaButtonSegment primaryActionSegment = MediaButtonSegment.SINGLE;
+		MediaButtonSegment wallpaperActionSegment = MediaButtonSegment.SINGLE;
+		MediaButtonSegment queueButtonSegment = MediaButtonSegment.SINGLE;
+		if (!youtubeMusicMode) {
+			int smallButtonCount = 1 + (showWallpaperActionButton ? 1 : 0) + (showPrimaryActionButton ? 1 : 0) + (showQueueButton ? 1 : 0);
+			int smallButtonIndex = 0;
+			if (showWallpaperActionButton) {
+				wallpaperActionSegment = mediaButtonSegment(smallButtonIndex++, smallButtonCount);
+			}
+			if (showPrimaryActionButton) {
+				primaryActionSegment = mediaButtonSegment(smallButtonIndex++, smallButtonCount);
+			}
+			if (showQueueButton) {
+				queueButtonSegment = mediaButtonSegment(smallButtonIndex++, smallButtonCount);
+			}
+			scaleButtonSegment = mediaButtonSegment(smallButtonIndex, smallButtonCount);
+		}
 		UiRect titleRect = galleryMode ? mediaGalleryPlayerTitleRect(layout) : mediaLinkRect(layout, controlUi);
 		UiRect scaleRect = mediaScaleRect(layout);
 		UiRect downloadRect = mediaDownloadRect(layout);
@@ -5672,11 +5722,11 @@ public final class MonitorScreenSystem {
 							|| (state.mediaTitle() != null && !state.mediaTitle().isBlank())));
 					if (titleBarMode && !youtubeMusicMode) {
 						drawMediaTitleBar(graphics, titleRect, state != null ? state.mediaTitle() : "", layout);
-						if (galleryMode && state != null && state.actionVisible()) {
-							drawGalleryPlayerActionButton(graphics, mediaGalleryPlayerActionRect(layout), state, layout);
+						if (showPrimaryActionButton && galleryMode) {
+							drawGalleryPlayerActionButton(graphics, mediaGalleryPlayerActionRect(layout), state, layout, primaryActionSegment);
 						}
-						if (galleryMode && state != null && state.wallpaperActionVisible()) {
-							drawGalleryWallpaperActionButton(graphics, downloadRect, state, layout);
+						if (showWallpaperActionButton && galleryMode) {
+							drawGalleryWallpaperActionButton(graphics, downloadRect, state, layout, wallpaperActionSegment);
 						}
 					} else if (youtubeMusicMode) {
 						if (hasMedia
@@ -5694,14 +5744,14 @@ public final class MonitorScreenSystem {
 					);
 				}
 				if (!youtubeMusicMode) {
-					drawMediaScaleButton(graphics, scaleRect, state != null ? state.scaleMode() : MediaScaleMode.FIT, layout);
+					drawMediaScaleButton(graphics, scaleRect, state != null ? state.scaleMode() : MediaScaleMode.FIT, layout, scaleButtonSegment);
 				}
 				if (youtubeFamilyMode) {
-					if (!youtubeMusicMode && state != null && state.actionVisible()) {
-						drawYoutubePlayerActionButton(graphics, downloadRect, state, layout);
+					if (showPrimaryActionButton && !youtubeMusicMode) {
+						drawYoutubePlayerActionButton(graphics, downloadRect, state, layout, primaryActionSegment);
 					}
-					if (!galleryBackedYoutube) {
-						drawMediaQueueToggleButton(graphics, queueToggleRect, state.youtubeQueueOpen(), layout);
+					if (showQueueButton) {
+						drawMediaQueueToggleButton(graphics, queueToggleRect, state.youtubeQueueOpen(), layout, queueButtonSegment);
 					}
 				}
 				drawMediaTimeline(graphics, timelineRect, state, layout);
@@ -5875,13 +5925,14 @@ public final class MonitorScreenSystem {
 		drawBackArrow(graphics, rect.inset(Math.max(1, layout.unit() / 5)), new Color(248, 251, 255));
 	}
 
-	private static void drawMediaScaleButton(Graphics2D graphics, UiRect rect, MediaScaleMode scaleMode, UiLayout layout) {
-		drawRoundMediaButtonBase(graphics, rect);
-		UiRect iconRect = rect.inset(Math.max(2, layout.unit() / 4));
+	private static void drawMediaScaleButton(Graphics2D graphics, UiRect rect, MediaScaleMode scaleMode, UiLayout layout, MediaButtonSegment segment) {
+		float strokeWidth = mediaChromeStrokeWidth(rect);
+		Color iconColor = drawSmallMediaButtonBase(graphics, rect, segment, false, strokeWidth);
+		UiRect iconRect = mediaChromeIconRect(rect, layout);
 		switch (scaleMode != null ? scaleMode : MediaScaleMode.FIT) {
-			case FILL -> drawMediaFillGlyph(graphics, iconRect, new Color(248, 251, 255));
-			case STRETCH -> drawMediaStretchGlyph(graphics, iconRect, new Color(248, 251, 255));
-			case FIT -> drawMediaFitGlyph(graphics, iconRect, new Color(248, 251, 255));
+			case FILL -> drawMediaFillGlyph(graphics, iconRect, iconColor, strokeWidth);
+			case STRETCH -> drawMediaStretchGlyph(graphics, iconRect, iconColor, strokeWidth);
+			case FIT -> drawMediaFitGlyph(graphics, iconRect, iconColor, strokeWidth);
 		}
 	}
 
@@ -5903,6 +5954,56 @@ public final class MonitorScreenSystem {
 		int arc = Math.min(rect.width(), rect.height());
 		fillRoundedRect(graphics, rect, arc, fill);
 		strokeRoundedRect(graphics, rect, arc, 1.0F, new Color(255, 255, 255, 44));
+	}
+
+	private static Color drawSmallMediaButtonBase(Graphics2D graphics, UiRect rect, MediaButtonSegment segment, boolean active, float strokeWidth) {
+		Shape shape = mediaButtonShape(rect, segment);
+		Color outline = active ? new Color(248, 246, 246, 18) : new Color(244, 232, 236, 188);
+		Color fill = active ? new Color(248, 246, 246, 242) : null;
+		if (fill != null) {
+			fillShape(graphics, shape, fill);
+		}
+		strokeShape(graphics, shape, Math.max(0.75F, strokeWidth * 0.5F), outline);
+		return active ? new Color(24, 22, 24, 238) : new Color(244, 232, 236, 188);
+	}
+
+	private static UiRect mediaChromeIconRect(UiRect rect, UiLayout layout) {
+		int inset = clampInt(layout.unit() / 3, 3, 7);
+		int iconSize = Math.max(10, Math.min(rect.width() - inset * 2, rect.height() - inset * 2));
+		return new UiRect(
+				rect.x() + (rect.width() - iconSize) / 2,
+				rect.y() + (rect.height() - iconSize) / 2,
+				iconSize,
+				iconSize
+		);
+	}
+
+	private static float mediaChromeStrokeWidth(UiRect rect) {
+		return clampFloat(Math.min(rect.width(), rect.height()) / 12.0F, 1.5F, 2.2F);
+	}
+
+	private static MediaButtonSegment mediaButtonSegment(int index, int total) {
+		if (total <= 1) {
+			return MediaButtonSegment.SINGLE;
+		}
+		if (index <= 0) {
+			return MediaButtonSegment.LEFT;
+		}
+		if (index >= total - 1) {
+			return MediaButtonSegment.RIGHT;
+		}
+		return MediaButtonSegment.MIDDLE;
+	}
+
+	private static Shape mediaButtonShape(UiRect rect, MediaButtonSegment segment) {
+		int outer = clampInt(Math.min(rect.width(), rect.height()) / 2, 9, 18);
+		int inner = clampInt(Math.min(rect.width(), rect.height()) / 6, 3, 8);
+		return switch (segment != null ? segment : MediaButtonSegment.SINGLE) {
+			case LEFT -> roundedRectShape(rect, outer, inner, inner, outer);
+			case MIDDLE -> roundedRectShape(rect, inner, inner, inner, inner);
+			case RIGHT -> roundedRectShape(rect, inner, outer, outer, inner);
+			case SINGLE -> roundedRectShape(rect, outer, outer, outer, outer);
+		};
 	}
 
 	private static void drawMediaSearchBar(Graphics2D graphics, UiRect rect, String placeholder, boolean compact, UiLayout layout) {
@@ -5942,7 +6043,8 @@ public final class MonitorScreenSystem {
 				deleteMode ? new Color(66, 18, 24, 222) : new Color(20, 58, 94, 222),
 				layout,
 				deleteMode ? MediaActionGlyph.TRASH : MediaActionGlyph.DOWNLOAD,
-				MediaActionVisualState.IDLE
+				MediaActionVisualState.IDLE,
+				MediaButtonSegment.SINGLE
 		);
 	}
 
@@ -5973,7 +6075,7 @@ public final class MonitorScreenSystem {
 		);
 	}
 
-	private static void drawGalleryPlayerActionButton(Graphics2D graphics, UiRect rect, MediaVisualSnapshot state, UiLayout layout) {
+	private static void drawGalleryPlayerActionButton(Graphics2D graphics, UiRect rect, MediaVisualSnapshot state, UiLayout layout, MediaButtonSegment segment) {
 		if (state == null) {
 			return;
 		}
@@ -5983,11 +6085,12 @@ public final class MonitorScreenSystem {
 				state.actionGlyph() == MediaActionGlyph.TRASH ? new Color(70, 20, 28, 214) : new Color(18, 70, 42, 214),
 				layout,
 				state.actionGlyph(),
-				state.actionState()
+				state.actionState(),
+				segment
 		);
 	}
 
-	private static void drawGalleryWallpaperActionButton(Graphics2D graphics, UiRect rect, MediaVisualSnapshot state, UiLayout layout) {
+	private static void drawGalleryWallpaperActionButton(Graphics2D graphics, UiRect rect, MediaVisualSnapshot state, UiLayout layout, MediaButtonSegment segment) {
 		if (state == null) {
 			return;
 		}
@@ -5997,11 +6100,12 @@ public final class MonitorScreenSystem {
 				new Color(74, 54, 18, 214),
 				layout,
 				state.wallpaperActionGlyph(),
-				state.wallpaperActionState()
+				state.wallpaperActionState(),
+				segment
 		);
 	}
 
-	private static void drawYoutubePlayerActionButton(Graphics2D graphics, UiRect rect, MediaVisualSnapshot state, UiLayout layout) {
+	private static void drawYoutubePlayerActionButton(Graphics2D graphics, UiRect rect, MediaVisualSnapshot state, UiLayout layout, MediaButtonSegment segment) {
 		if (state == null) {
 			return;
 		}
@@ -6011,31 +6115,29 @@ public final class MonitorScreenSystem {
 				new Color(20, 58, 94, 222),
 				layout,
 				state.actionGlyph(),
-				state.actionState()
+				state.actionState(),
+				segment
 		);
 	}
 
-	private static void drawMediaIconActionButton(Graphics2D graphics, UiRect rect, Color fill, UiLayout layout, MediaActionGlyph glyph, MediaActionVisualState visualState) {
-		Color resolvedFill = switch (visualState != null ? visualState : MediaActionVisualState.IDLE) {
-			case COMPLETE -> new Color(20, 96, 56, 222);
-			case DOWNLOADING -> new Color(20, 58, 94, 222);
-			case IDLE -> fill;
-		};
-		drawRoundMediaButtonBase(graphics, rect, resolvedFill);
-		UiRect iconRect = rect.inset(Math.max(2, layout.unit() / 4));
+	private static void drawMediaIconActionButton(Graphics2D graphics, UiRect rect, Color fill, UiLayout layout, MediaActionGlyph glyph, MediaActionVisualState visualState, MediaButtonSegment segment) {
+		boolean active = visualState == MediaActionVisualState.COMPLETE || visualState == MediaActionVisualState.DOWNLOADING;
+		float strokeWidth = mediaChromeStrokeWidth(rect);
+		Color iconColor = drawSmallMediaButtonBase(graphics, rect, segment, active, strokeWidth);
+		UiRect iconRect = mediaChromeIconRect(rect, layout);
 		if (visualState == MediaActionVisualState.DOWNLOADING) {
-			drawLoadingSpinner(graphics, iconRect, new Color(248, 251, 255), 2.4F);
+			drawLoadingSpinner(graphics, iconRect, iconColor, Math.max(1.6F, strokeWidth));
 			return;
 		}
 		if (visualState == MediaActionVisualState.COMPLETE) {
-			drawCheckGlyph(graphics, iconRect, new Color(248, 251, 255));
+			drawCheckGlyph(graphics, iconRect, iconColor, strokeWidth);
 			return;
 		}
 		switch (glyph) {
-			case TRASH -> drawTrashGlyph(graphics, iconRect, new Color(248, 251, 255));
-			case DOWNLOAD -> drawDownloadGlyph(graphics, iconRect, new Color(248, 251, 255));
-			case CHECK -> drawCheckGlyph(graphics, iconRect, new Color(248, 251, 255));
-			case WALLPAPER -> drawWallpaperGlyph(graphics, iconRect, new Color(248, 251, 255));
+			case TRASH -> drawTrashGlyph(graphics, iconRect, iconColor, strokeWidth);
+			case DOWNLOAD -> drawDownloadGlyph(graphics, iconRect, iconColor, strokeWidth);
+			case CHECK -> drawCheckGlyph(graphics, iconRect, iconColor, strokeWidth);
+			case WALLPAPER -> drawWallpaperGlyph(graphics, iconRect, iconColor, strokeWidth);
 		}
 	}
 
@@ -6141,12 +6243,10 @@ public final class MonitorScreenSystem {
 		}
 	}
 
-	private static void drawMediaQueueToggleButton(Graphics2D graphics, UiRect rect, boolean open, UiLayout layout) {
-		drawRoundMediaButtonBase(graphics, rect);
-		if (open) {
-			fillRoundedRect(graphics, rect.inset(Math.max(2, layout.unit() / 4)), clampInt(layout.unit(), 6, 10), new Color(86, 188, 255, 42));
-		}
-		drawQueueGlyph(graphics, rect.inset(Math.max(2, layout.unit() / 4)), new Color(248, 251, 255));
+	private static void drawMediaQueueToggleButton(Graphics2D graphics, UiRect rect, boolean open, UiLayout layout, MediaButtonSegment segment) {
+		float strokeWidth = mediaChromeStrokeWidth(rect);
+		Color iconColor = drawSmallMediaButtonBase(graphics, rect, segment, open, strokeWidth);
+		drawQueueGlyph(graphics, mediaChromeIconRect(rect, layout), iconColor, strokeWidth);
 	}
 
 	private static void drawQueueScrollButton(Graphics2D graphics, UiRect rect, String label, boolean active, UiLayout layout) {
@@ -6811,10 +6911,10 @@ public final class MonitorScreenSystem {
 		graphics.setStroke(previous);
 	}
 
-	private static void drawMediaFitGlyph(Graphics2D graphics, UiRect rect, Color color) {
+	private static void drawMediaFitGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
 		Stroke previous = graphics.getStroke();
 		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(1.8F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 		graphics.drawRoundRect(rect.x(), rect.y(), rect.width() - 1, rect.height() - 1, 4, 4);
 		int insetX = Math.max(2, rect.width() / 5);
 		int insetY = Math.max(2, rect.height() / 5);
@@ -6829,10 +6929,10 @@ public final class MonitorScreenSystem {
 		graphics.setStroke(previous);
 	}
 
-	private static void drawMediaFillGlyph(Graphics2D graphics, UiRect rect, Color color) {
+	private static void drawMediaFillGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
 		Stroke previous = graphics.getStroke();
 		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(1.8F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 		graphics.drawRoundRect(rect.x(), rect.y(), rect.width() - 1, rect.height() - 1, 4, 4);
 		int fillInsetX = Math.max(1, rect.width() / 7);
 		int fillInsetY = Math.max(2, rect.height() / 6);
@@ -6850,10 +6950,10 @@ public final class MonitorScreenSystem {
 		graphics.setStroke(previous);
 	}
 
-	private static void drawMediaStretchGlyph(Graphics2D graphics, UiRect rect, Color color) {
+	private static void drawMediaStretchGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
 		Stroke previous = graphics.getStroke();
 		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(1.8F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 		graphics.drawRoundRect(rect.x(), rect.y(), rect.width() - 1, rect.height() - 1, 4, 4);
 		int centerX = rect.x() + rect.width() / 2;
 		int centerY = rect.y() + rect.height() / 2;
@@ -6901,10 +7001,10 @@ public final class MonitorScreenSystem {
 		graphics.setStroke(previous);
 	}
 
-	private static void drawQueueGlyph(Graphics2D graphics, UiRect rect, Color color) {
+	private static void drawQueueGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
 		Stroke previous = graphics.getStroke();
 		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(Math.max(1.6F, rect.width() / 10.0F), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 		int left = rect.x() + clampInt(rect.width() / 5, 2, 5);
 		int right = rect.right() - clampInt(rect.width() / 5, 2, 5);
 		int top = rect.y() + clampInt(rect.height() / 5, 2, 5);
@@ -6916,10 +7016,10 @@ public final class MonitorScreenSystem {
 		graphics.setStroke(previous);
 	}
 
-	private static void drawTrashGlyph(Graphics2D graphics, UiRect rect, Color color) {
+	private static void drawTrashGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
 		Stroke previous = graphics.getStroke();
 		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(Math.max(1.6F, rect.width() / 10.0F), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 		int lidY = rect.y() + clampInt(rect.height() / 4, 2, 5);
 		int bodyTop = lidY + clampInt(rect.height() / 8, 2, 4);
 		int left = rect.x() + clampInt(rect.width() / 4, 3, 6);
@@ -6935,10 +7035,10 @@ public final class MonitorScreenSystem {
 		graphics.setStroke(previous);
 	}
 
-	private static void drawDownloadGlyph(Graphics2D graphics, UiRect rect, Color color) {
+	private static void drawDownloadGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
 		Stroke previous = graphics.getStroke();
 		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(Math.max(1.6F, rect.width() / 10.0F), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 		int centerX = rect.x() + rect.width() / 2;
 		int top = rect.y() + clampInt(rect.height() / 5, 2, 5);
 		int arrowBottom = rect.bottom() - clampInt(rect.height() / 3, 4, 8);
@@ -6955,10 +7055,10 @@ public final class MonitorScreenSystem {
 		graphics.setStroke(previous);
 	}
 
-	private static void drawCheckGlyph(Graphics2D graphics, UiRect rect, Color color) {
+	private static void drawCheckGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
 		Stroke previous = graphics.getStroke();
 		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(Math.max(2.0F, rect.width() / 8.0F), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 		int left = rect.x() + clampInt(rect.width() / 5, 3, 6);
 		int centerX = rect.x() + rect.width() / 2 - clampInt(rect.width() / 12, 0, 2);
 		int right = rect.right() - clampInt(rect.width() / 6, 3, 6);
@@ -6970,10 +7070,10 @@ public final class MonitorScreenSystem {
 		graphics.setStroke(previous);
 	}
 
-	private static void drawWallpaperGlyph(Graphics2D graphics, UiRect rect, Color color) {
+	private static void drawWallpaperGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
 		Stroke previous = graphics.getStroke();
 		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(Math.max(1.6F, rect.width() / 10.0F), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 		int pad = clampInt(rect.width() / 6, 2, 5);
 		int left = rect.x() + pad;
 		int top = rect.y() + pad;
@@ -7090,33 +7190,27 @@ public final class MonitorScreenSystem {
 	}
 
 	private static void drawMediaTransportButton(Graphics2D graphics, UiRect rect, TransportButtonKind kind, boolean loading, boolean paused, ScreenViewMode mode, UiLayout layout) {
-		boolean youtubeMusicMode = isYoutubeMusicMode(mode);
-		Color fill = youtubeMusicMode
-				? kind == TransportButtonKind.PLAY_PAUSE
+		Color fill = kind == TransportButtonKind.PLAY_PAUSE
 				? new Color(248, 246, 246, 242)
-				: new Color(50, 36, 42, 184)
-				: kind == TransportButtonKind.PLAY_PAUSE
-				? new Color(12, 16, 20, 232)
-				: new Color(12, 16, 20, 188);
-		if (youtubeMusicMode) {
-			fillRoundedRect(graphics, rect, kind == TransportButtonKind.PLAY_PAUSE ? rect.height() : Math.min(rect.width(), rect.height()), fill);
-		} else {
-			drawRoundMediaButtonBase(graphics, rect, fill);
+				: new Color(50, 36, 42, 184);
+		int arc = kind == TransportButtonKind.PLAY_PAUSE ? rect.height() : Math.min(rect.width(), rect.height());
+		fillRoundedRect(graphics, rect, arc, fill);
+		if (kind != TransportButtonKind.PLAY_PAUSE) {
+			strokeRoundedRect(graphics, rect, arc, 1.0F, new Color(255, 255, 255, 22));
 		}
-		if (youtubeMusicMode && kind != TransportButtonKind.PLAY_PAUSE) {
-			strokeRoundedRect(graphics, rect, Math.min(rect.width(), rect.height()), 1.0F, new Color(255, 255, 255, 22));
-		}
-		UiRect iconRect = rect.inset(Math.max(3, layout.unit() / 4));
-		if (youtubeMusicMode && kind == TransportButtonKind.PLAY_PAUSE) {
-			int iconSize = Math.max(12, Math.min(rect.height() - Math.max(6, layout.unit() / 2), rect.height() * 2 / 3));
-			iconRect = new UiRect(
-					rect.x() + (rect.width() - iconSize) / 2,
-					rect.y() + (rect.height() - iconSize) / 2,
-					iconSize,
-					iconSize
-			);
-		}
-		Color iconColor = youtubeMusicMode && kind == TransportButtonKind.PLAY_PAUSE
+		double iconScale = kind == TransportButtonKind.PLAY_PAUSE ? 0.54D : 0.44D;
+		int iconSize = clampInt(
+				(int) Math.round(Math.min(rect.width(), rect.height()) * iconScale),
+				10,
+				Math.max(10, Math.min(rect.width(), rect.height()) - Math.max(6, layout.unit()))
+		);
+		UiRect iconRect = new UiRect(
+				rect.x() + (rect.width() - iconSize) / 2,
+				rect.y() + (rect.height() - iconSize) / 2,
+				iconSize,
+				iconSize
+		);
+		Color iconColor = kind == TransportButtonKind.PLAY_PAUSE
 				? new Color(20, 18, 20, 244)
 				: new Color(248, 251, 255);
 		if (loading && kind == TransportButtonKind.PLAY_PAUSE) {
@@ -7995,19 +8089,24 @@ public final class MonitorScreenSystem {
 			);
 		}
 		UiRect canvas = mediaCanvasRect(layout);
-		int size;
+		int height;
 		if (ultraCompactScreenLayout(layout)) {
-			size = clampInt(layout.unit() * 5, 24, 34);
+			height = clampInt(layout.unit() * 5, 24, 34);
 		} else if (compactScreenLayout(layout)) {
-			size = clampInt(layout.unit() * 5, 30, 52);
+			height = clampInt(layout.unit() * 5, 30, 52);
 		} else {
-			size = clampInt(layout.unit() * 6, 46, 92);
+			height = clampInt(layout.unit() * 6, 46, 92);
 		}
+		int width = clampInt(
+				(int) Math.round(height * 2.05D),
+				Math.max(44, height + 16),
+				Math.max(52, canvas.width() - clampInt(layout.unit() * 10, 40, 120))
+		);
 		return new UiRect(
-				canvas.x() + (canvas.width() - size) / 2,
-				canvas.y() + (canvas.height() - size) / 2,
-				size,
-				size
+				canvas.x() + (canvas.width() - width) / 2,
+				canvas.y() + (canvas.height() - height) / 2,
+				width,
+				height
 		);
 	}
 
@@ -8023,14 +8122,14 @@ public final class MonitorScreenSystem {
 			size = clampInt(center.height(), ultraCompactScreenLayout(layout) ? 22 : 28, 54);
 			gap = clampInt(layout.unit(), 8, 18);
 		} else if (ultraCompactScreenLayout(layout)) {
-			size = clampInt((int) Math.round(center.width() * 0.8D), 18, 24);
-			gap = clampInt(layout.unit() * 2, 10, 14);
+			size = clampInt(center.height(), 18, 24);
+			gap = clampInt(layout.unit(), 8, 12);
 		} else if (compactScreenLayout(layout)) {
-			size = clampInt((int) Math.round(center.width() * 0.78D), 24, 34);
-			gap = clampInt(layout.unit() * 2, 14, 22);
+			size = clampInt(center.height(), 24, 34);
+			gap = clampInt(layout.unit() + 2, 10, 18);
 		} else {
-			size = clampInt((int) Math.round(center.width() * 0.76D), 34, 68);
-			gap = clampInt(layout.unit() * 3, 22, 44);
+			size = clampInt(center.height(), 34, 68);
+			gap = clampInt(layout.unit() * 2, 14, 28);
 		}
 		return new UiRect(center.x() - size - gap, center.y() + (center.height() - size) / 2, size, size);
 	}
@@ -8047,14 +8146,14 @@ public final class MonitorScreenSystem {
 			size = clampInt(center.height(), ultraCompactScreenLayout(layout) ? 22 : 28, 54);
 			gap = clampInt(layout.unit(), 8, 18);
 		} else if (ultraCompactScreenLayout(layout)) {
-			size = clampInt((int) Math.round(center.width() * 0.8D), 18, 24);
-			gap = clampInt(layout.unit() * 2, 10, 14);
+			size = clampInt(center.height(), 18, 24);
+			gap = clampInt(layout.unit(), 8, 12);
 		} else if (compactScreenLayout(layout)) {
-			size = clampInt((int) Math.round(center.width() * 0.78D), 24, 34);
-			gap = clampInt(layout.unit() * 2, 14, 22);
+			size = clampInt(center.height(), 24, 34);
+			gap = clampInt(layout.unit() + 2, 10, 18);
 		} else {
-			size = clampInt((int) Math.round(center.width() * 0.76D), 34, 68);
-			gap = clampInt(layout.unit() * 3, 22, 44);
+			size = clampInt(center.height(), 34, 68);
+			gap = clampInt(layout.unit() * 2, 14, 28);
 		}
 		return new UiRect(center.right() + gap, center.y() + (center.height() - size) / 2, size, size);
 	}
@@ -8186,6 +8285,70 @@ public final class MonitorScreenSystem {
 		graphics.setColor(color);
 		graphics.drawRoundRect(rect.x(), rect.y(), rect.width(), rect.height(), arc, arc);
 		graphics.setStroke(previous);
+	}
+
+	private static Shape roundedRectShape(UiRect rect, int topLeft, int topRight, int bottomRight, int bottomLeft) {
+		float x = rect.x();
+		float y = rect.y();
+		float width = rect.width();
+		float height = rect.height();
+		float right = x + width;
+		float bottom = y + height;
+		float tl = clampFloat(topLeft, 0.0F, Math.min(width, height) / 2.0F);
+		float tr = clampFloat(topRight, 0.0F, Math.min(width, height) / 2.0F);
+		float br = clampFloat(bottomRight, 0.0F, Math.min(width, height) / 2.0F);
+		float bl = clampFloat(bottomLeft, 0.0F, Math.min(width, height) / 2.0F);
+		Path2D.Float path = new Path2D.Float();
+		path.moveTo(x + tl, y);
+		path.lineTo(right - tr, y);
+		if (tr > 0.0F) {
+			path.quadTo(right, y, right, y + tr);
+		} else {
+			path.lineTo(right, y);
+		}
+		path.lineTo(right, bottom - br);
+		if (br > 0.0F) {
+			path.quadTo(right, bottom, right - br, bottom);
+		} else {
+			path.lineTo(right, bottom);
+		}
+		path.lineTo(x + bl, bottom);
+		if (bl > 0.0F) {
+			path.quadTo(x, bottom, x, bottom - bl);
+		} else {
+			path.lineTo(x, bottom);
+		}
+		path.lineTo(x, y + tl);
+		if (tl > 0.0F) {
+			path.quadTo(x, y, x + tl, y);
+		} else {
+			path.lineTo(x, y);
+		}
+		path.closePath();
+		return path;
+	}
+
+	private static void fillShape(Graphics2D graphics, Shape shape, Color color) {
+		if (graphics == null || shape == null || color == null) {
+			return;
+		}
+		Color previous = graphics.getColor();
+		graphics.setColor(color);
+		graphics.fill(shape);
+		graphics.setColor(previous);
+	}
+
+	private static void strokeShape(Graphics2D graphics, Shape shape, float width, Color color) {
+		if (graphics == null || shape == null || color == null) {
+			return;
+		}
+		Stroke previousStroke = graphics.getStroke();
+		Color previousColor = graphics.getColor();
+		graphics.setStroke(new BasicStroke(width, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.setColor(color);
+		graphics.draw(shape);
+		graphics.setStroke(previousStroke);
+		graphics.setColor(previousColor);
 	}
 
 	private static void drawCenteredText(Graphics2D graphics, String text, UiRect rect, Color color, int style, int size) {
@@ -10259,6 +10422,13 @@ public final class MonitorScreenSystem {
 		FORWARD
 	}
 
+	private enum MediaButtonSegment {
+		SINGLE,
+		LEFT,
+		MIDDLE,
+		RIGHT
+	}
+
 	private enum MediaActionGlyph {
 		TRASH,
 		DOWNLOAD,
@@ -10681,6 +10851,7 @@ public final class MonitorScreenSystem {
 			String relaySessionId,
 			String audioStreamUrl,
 			long positionMs,
+			long audioSyncToken,
 			boolean loading,
 			boolean paused,
 			boolean liveStream
@@ -10739,6 +10910,7 @@ public final class MonitorScreenSystem {
 		private long durationMs;
 		private long bufferedStartMs;
 		private long bufferedEndMs;
+		private long audioSyncToken;
 		private long version;
 		private MediaOverlayMode overlayMode;
 		private MediaScaleMode scaleMode;
