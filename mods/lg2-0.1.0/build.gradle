@@ -93,6 +93,7 @@ tasks.register("prepareDevResourcePack", Sync) {
 	from(layout.projectDirectory.dir("resourcepack"))
 	from(layout.projectDirectory.dir("src/main/resources/assets")) {
 		into("assets")
+		exclude("lg2/textures/monitor/ui_icons/**")
 	}
 	// Resource-pack overrides (e.g. lang keys for pack users) must win over base assets.
 	duplicatesStrategy = DuplicatesStrategy.EXCLUDE

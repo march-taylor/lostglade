@@ -158,6 +158,8 @@ public final class MonitorScreenSystem {
 	private static final Map<OverlayWindowFamilyKey, BufferedImage> OVERLAY_WINDOW_PLACEHOLDER_CACHE = new ConcurrentHashMap<>();
 	private static final Map<Integer, byte[]> LAST_RENDERED_MAP_FRAMES = new ConcurrentHashMap<>();
 	private static final Map<String, BufferedImage> APP_ICON_CACHE = new ConcurrentHashMap<>();
+	private static final Map<PlayerUiIcon, BufferedImage> PLAYER_UI_ICON_CACHE = new ConcurrentHashMap<>();
+	private static final Map<PlayerUiIconTintKey, BufferedImage> PLAYER_UI_ICON_TINT_CACHE = new ConcurrentHashMap<>();
 	private static final Map<ScreenRuntimeKey, MediaRuntimeState> MEDIA_STATES = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingMediaLinkRequest> PENDING_MEDIA_LINKS = new ConcurrentHashMap<>();
 	private static final Map<UUID, InFlightMediaLinkRequest> IN_FLIGHT_MEDIA_LINKS = new ConcurrentHashMap<>();
@@ -6029,7 +6031,7 @@ public final class MonitorScreenSystem {
 
 	private static Color drawSmallMediaButtonBase(Graphics2D graphics, UiRect rect, MediaButtonSegment segment, boolean active, float strokeWidth) {
 		Shape shape = mediaButtonShape(rect, segment);
-		Color outline = active ? new Color(248, 246, 246, 18) : new Color(244, 232, 236, 188);
+		Color outline = active ? new Color(255, 255, 255, 76) : new Color(255, 255, 255, 76);
 		Color fill = active ? new Color(248, 246, 246, 242) : null;
 		if (fill != null) {
 			fillShape(graphics, shape, fill);
@@ -6039,10 +6041,12 @@ public final class MonitorScreenSystem {
 	}
 
 	private static UiRect mediaChromeIconRect(UiRect rect, UiLayout layout) {
-		int inset = clampInt(layout.unit() / 3, 3, 7);
-		int iconSize = Math.max(10, Math.min(rect.width() - inset * 2, rect.height() - inset * 2));
+		int inset = clampInt(layout.unit() / 2, 4, 8);
+		int iconSize = clampInt(layout.unit() + 3, 11, 15);
+		iconSize = Math.min(iconSize, Math.max(8, Math.min(rect.width() - inset * 2, rect.height() - inset * 2)));
+		int offsetX = Math.max(0, iconSize / 14);
 		return new UiRect(
-				rect.x() + (rect.width() - iconSize) / 2,
+				rect.x() + (rect.width() - iconSize) / 2 + offsetX,
 				rect.y() + (rect.height() - iconSize) / 2,
 				iconSize,
 				iconSize
@@ -6933,13 +6937,7 @@ public final class MonitorScreenSystem {
 	}
 
 	private static void drawCloseGlyph(Graphics2D graphics, UiRect rect, Color color) {
-		int pad = Math.max(4, rect.width() / 4);
-		Stroke previous = graphics.getStroke();
-		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(2.2F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-		graphics.drawLine(rect.x() + pad, rect.y() + pad, rect.right() - pad, rect.bottom() - pad);
-		graphics.drawLine(rect.right() - pad, rect.y() + pad, rect.x() + pad, rect.bottom() - pad);
-		graphics.setStroke(previous);
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.CLOSE, color);
 	}
 
 	private static void drawPlayGlyph(Graphics2D graphics, UiRect rect, Color color) {
@@ -7009,184 +7007,39 @@ public final class MonitorScreenSystem {
 	}
 
 	private static void drawMediaFitGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
-		Stroke previous = graphics.getStroke();
-		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-		graphics.drawRoundRect(rect.x(), rect.y(), rect.width() - 1, rect.height() - 1, 4, 4);
-		int insetX = Math.max(2, rect.width() / 5);
-		int insetY = Math.max(2, rect.height() / 5);
-		graphics.drawRoundRect(
-				rect.x() + insetX,
-				rect.y() + insetY,
-				Math.max(3, rect.width() - insetX * 2 - 1),
-				Math.max(3, rect.height() - insetY * 2 - 1),
-				4,
-				4
-		);
-		graphics.setStroke(previous);
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.FIT, color);
 	}
 
 	private static void drawMediaFillGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
-		Stroke previous = graphics.getStroke();
-		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-		graphics.drawRoundRect(rect.x(), rect.y(), rect.width() - 1, rect.height() - 1, 4, 4);
-		int fillInsetX = Math.max(1, rect.width() / 7);
-		int fillInsetY = Math.max(2, rect.height() / 6);
-		fillRoundedRect(
-				graphics,
-				new UiRect(
-						rect.x() + fillInsetX,
-						rect.y() + fillInsetY,
-						Math.max(4, rect.width() - fillInsetX * 2),
-						Math.max(4, rect.height() - fillInsetY * 2)
-				),
-				4,
-				withAlpha(color, 0.92F)
-		);
-		graphics.setStroke(previous);
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.FILL, color);
 	}
 
 	private static void drawMediaStretchGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
-		Stroke previous = graphics.getStroke();
-		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-		graphics.drawRoundRect(rect.x(), rect.y(), rect.width() - 1, rect.height() - 1, 4, 4);
-		int centerX = rect.x() + rect.width() / 2;
-		int centerY = rect.y() + rect.height() / 2;
-		int horizontalInset = Math.max(2, rect.width() / 5);
-		int verticalInset = Math.max(2, rect.height() / 5);
-		graphics.drawLine(rect.x() + horizontalInset, centerY, rect.right() - horizontalInset, centerY);
-		graphics.drawLine(centerX, rect.y() + verticalInset, centerX, rect.bottom() - verticalInset);
-		graphics.fillPolygon(
-				new int[]{rect.right() - horizontalInset, rect.right() - horizontalInset - 3, rect.right() - horizontalInset - 3},
-				new int[]{centerY, centerY - 3, centerY + 3},
-				3
-		);
-		graphics.fillPolygon(
-				new int[]{rect.x() + horizontalInset, rect.x() + horizontalInset + 3, rect.x() + horizontalInset + 3},
-				new int[]{centerY, centerY - 3, centerY + 3},
-				3
-		);
-		graphics.fillPolygon(
-				new int[]{centerX, centerX - 3, centerX + 3},
-				new int[]{rect.y() + verticalInset, rect.y() + verticalInset + 3, rect.y() + verticalInset + 3},
-				3
-		);
-		graphics.fillPolygon(
-				new int[]{centerX, centerX - 3, centerX + 3},
-				new int[]{rect.bottom() - verticalInset, rect.bottom() - verticalInset - 3, rect.bottom() - verticalInset - 3},
-				3
-		);
-		graphics.setStroke(previous);
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.STRETCH, color);
 	}
 
 	private static void drawSearchGlyph(Graphics2D graphics, UiRect rect, Color color) {
-		int size = Math.min(rect.width(), rect.height());
-		int lensSize = Math.max(4, size * 2 / 3);
-		int lensX = rect.x();
-		int lensY = rect.y() + (rect.height() - lensSize) / 2;
-		int handleStartX = lensX + lensSize - 1;
-		int handleStartY = lensY + lensSize - 1;
-		int handleEndX = rect.right() - 1;
-		int handleEndY = rect.bottom() - 1;
-		Stroke previous = graphics.getStroke();
-		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(2.0F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-		graphics.drawOval(lensX, lensY, lensSize, lensSize);
-		graphics.drawLine(handleStartX, handleStartY, handleEndX, handleEndY);
-		graphics.setStroke(previous);
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.SEARCH, color);
 	}
 
 	private static void drawQueueGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
-		Stroke previous = graphics.getStroke();
-		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-		int left = rect.x() + clampInt(rect.width() / 5, 2, 5);
-		int right = rect.right() - clampInt(rect.width() / 5, 2, 5);
-		int top = rect.y() + clampInt(rect.height() / 5, 2, 5);
-		int gap = Math.max(3, rect.height() / 3);
-		for (int row = 0; row < 3; row++) {
-			int y = top + row * gap;
-			graphics.drawLine(left, y, right, y);
-		}
-		graphics.setStroke(previous);
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.QUEUE, color);
 	}
 
 	private static void drawTrashGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
-		Stroke previous = graphics.getStroke();
-		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-		int lidY = rect.y() + clampInt(rect.height() / 4, 2, 5);
-		int bodyTop = lidY + clampInt(rect.height() / 8, 2, 4);
-		int left = rect.x() + clampInt(rect.width() / 4, 3, 6);
-		int right = rect.right() - clampInt(rect.width() / 4, 3, 6);
-		int bottom = rect.bottom() - clampInt(rect.height() / 5, 3, 6);
-		graphics.drawLine(left, lidY, right, lidY);
-		graphics.drawLine(rect.x() + rect.width() / 2 - clampInt(rect.width() / 8, 2, 4), rect.y() + clampInt(rect.height() / 6, 1, 3), rect.x() + rect.width() / 2 + clampInt(rect.width() / 8, 2, 4), rect.y() + clampInt(rect.height() / 6, 1, 3));
-		graphics.drawRoundRect(left, bodyTop, Math.max(4, right - left), Math.max(4, bottom - bodyTop), clampInt(rect.width() / 6, 2, 6), clampInt(rect.width() / 6, 2, 6));
-		int stripeGap = Math.max(3, (right - left) / 4);
-		for (int x = left + stripeGap; x < right; x += stripeGap) {
-			graphics.drawLine(x, bodyTop + 2, x, bottom - 2);
-		}
-		graphics.setStroke(previous);
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.TRASH, color);
 	}
 
 	private static void drawDownloadGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
-		Stroke previous = graphics.getStroke();
-		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-		int centerX = rect.x() + rect.width() / 2;
-		int top = rect.y() + clampInt(rect.height() / 5, 2, 5);
-		int arrowBottom = rect.bottom() - clampInt(rect.height() / 3, 4, 8);
-		graphics.drawLine(centerX, top, centerX, arrowBottom);
-		int arrowSize = clampInt(rect.width() / 4, 3, 6);
-		graphics.drawLine(centerX, arrowBottom, centerX - arrowSize, arrowBottom - arrowSize);
-		graphics.drawLine(centerX, arrowBottom, centerX + arrowSize, arrowBottom - arrowSize);
-		int trayLeft = rect.x() + clampInt(rect.width() / 5, 3, 6);
-		int trayRight = rect.right() - clampInt(rect.width() / 5, 3, 6);
-		int trayY = rect.bottom() - clampInt(rect.height() / 5, 2, 5);
-		graphics.drawLine(trayLeft, trayY, trayRight, trayY);
-		graphics.drawLine(trayLeft, trayY, trayLeft, trayY - clampInt(rect.height() / 8, 2, 4));
-		graphics.drawLine(trayRight, trayY, trayRight, trayY - clampInt(rect.height() / 8, 2, 4));
-		graphics.setStroke(previous);
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.DOWNLOAD, color);
 	}
 
 	private static void drawCheckGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
-		Stroke previous = graphics.getStroke();
-		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-		int left = rect.x() + clampInt(rect.width() / 5, 3, 6);
-		int centerX = rect.x() + rect.width() / 2 - clampInt(rect.width() / 12, 0, 2);
-		int right = rect.right() - clampInt(rect.width() / 6, 3, 6);
-		int midY = rect.y() + rect.height() / 2 + clampInt(rect.height() / 6, 1, 4);
-		int lowY = rect.bottom() - clampInt(rect.height() / 4, 3, 6);
-		int topY = rect.y() + clampInt(rect.height() / 4, 3, 6);
-		graphics.drawLine(left, midY, centerX, lowY);
-		graphics.drawLine(centerX, lowY, right, topY);
-		graphics.setStroke(previous);
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.CHECK, color);
 	}
 
 	private static void drawWallpaperGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
-		Stroke previous = graphics.getStroke();
-		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-		int pad = clampInt(rect.width() / 6, 2, 5);
-		int left = rect.x() + pad;
-		int top = rect.y() + pad;
-		int width = Math.max(4, rect.width() - pad * 2);
-		int height = Math.max(4, rect.height() - pad * 2);
-		int right = left + width;
-		int bottom = top + height;
-		graphics.drawRoundRect(left, top, width, height, clampInt(rect.width() / 6, 2, 6), clampInt(rect.width() / 6, 2, 6));
-		int sunSize = clampInt(rect.width() / 5, 2, 5);
-		graphics.drawOval(right - sunSize - pad / 2, top + pad / 2, sunSize, sunSize);
-		int hillBaseY = bottom - clampInt(rect.height() / 4, 2, 5);
-		int midX = rect.x() + rect.width() / 2;
-		graphics.drawLine(left + pad / 2, hillBaseY, midX - clampInt(rect.width() / 8, 1, 3), top + height / 2);
-		graphics.drawLine(midX - clampInt(rect.width() / 8, 1, 3), top + height / 2, midX + clampInt(rect.width() / 10, 1, 4), hillBaseY - clampInt(rect.height() / 8, 1, 3));
-		graphics.drawLine(midX + clampInt(rect.width() / 10, 1, 4), hillBaseY - clampInt(rect.height() / 8, 1, 3), right - pad / 2, hillBaseY);
-		graphics.setStroke(previous);
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.WALLPAPER, color);
 	}
 
 	private static void drawAppIcon(Graphics2D graphics, MonitorApp app, UiRect rect, int padding) {
@@ -7347,13 +7200,7 @@ public final class MonitorScreenSystem {
 	}
 
 	private static void drawBackArrow(Graphics2D graphics, UiRect rect, Color color) {
-		int pad = Math.max(4, rect.width() / 4);
-		int midY = rect.y() + rect.height() / 2;
-		graphics.setColor(color);
-		graphics.setStroke(new BasicStroke(2.4F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-		graphics.drawLine(rect.right() - pad, midY, rect.x() + pad, midY);
-		graphics.drawLine(rect.x() + pad, midY, rect.x() + pad + pad, rect.y() + pad);
-		graphics.drawLine(rect.x() + pad, midY, rect.x() + pad + pad, rect.bottom() - pad);
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.BACK, color);
 	}
 
 	private static UiLayout createUiLayout(int width, int height) {
@@ -8678,6 +8525,55 @@ public final class MonitorScreenSystem {
 		} catch (IOException ignored) {
 			return fallback;
 		}
+	}
+
+	private static BufferedImage loadPlayerUiIcon(PlayerUiIcon icon) {
+		if (icon == null) {
+			return new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+		}
+		return PLAYER_UI_ICON_CACHE.computeIfAbsent(
+				icon,
+				key -> loadPngImage(key.resourcePath(), new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB))
+		);
+	}
+
+	private static BufferedImage tintedPlayerUiIcon(PlayerUiIcon icon, Color tint) {
+		if (icon == null || tint == null) {
+			return new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+		}
+		return PLAYER_UI_ICON_TINT_CACHE.computeIfAbsent(
+				new PlayerUiIconTintKey(icon, tint.getRGB()),
+				key -> colorizePlayerUiIcon(loadPlayerUiIcon(key.icon()), tint)
+		);
+	}
+
+	private static BufferedImage colorizePlayerUiIcon(BufferedImage source, Color tint) {
+		if (source == null || tint == null) {
+			return new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+		}
+		BufferedImage tinted = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+		int tintAlpha = tint.getAlpha();
+		int tintRgb = tint.getRGB() & 0x00FFFFFF;
+		for (int y = 0; y < source.getHeight(); y++) {
+			for (int x = 0; x < source.getWidth(); x++) {
+				int argb = source.getRGB(x, y);
+				int alpha = (argb >>> 24) & 0xFF;
+				if (alpha <= 0) {
+					continue;
+				}
+				int finalAlpha = alpha * tintAlpha / 255;
+				tinted.setRGB(x, y, (finalAlpha << 24) | tintRgb);
+			}
+		}
+		return tinted;
+	}
+
+	private static void drawPlayerUiIcon(Graphics2D graphics, UiRect rect, PlayerUiIcon icon, Color tint) {
+		if (graphics == null || rect == null || rect.width() <= 0 || rect.height() <= 0 || icon == null || tint == null) {
+			return;
+		}
+		BufferedImage tinted = tintedPlayerUiIcon(icon, tint);
+		graphics.drawImage(tinted, rect.x(), rect.y(), rect.width(), rect.height(), null);
 	}
 
 	private static BufferedImage fallbackImage(boolean powered) {
@@ -10983,6 +10879,33 @@ public final class MonitorScreenSystem {
 			MonitorYoutubeRelayClient.SessionSnapshot snapshot,
 			String error
 	) {
+	}
+
+	private enum PlayerUiIcon {
+		SEARCH("/assets/lg2/textures/monitor/ui_icons/search.png"),
+		QUEUE("/assets/lg2/textures/monitor/ui_icons/queue.png"),
+		DOWNLOAD("/assets/lg2/textures/monitor/ui_icons/download.png"),
+		TRASH("/assets/lg2/textures/monitor/ui_icons/trash.png"),
+		WALLPAPER("/assets/lg2/textures/monitor/ui_icons/wallpaper.png"),
+		CHECK("/assets/lg2/textures/monitor/ui_icons/check.png"),
+		FIT("/assets/lg2/textures/monitor/ui_icons/fit.png"),
+		FILL("/assets/lg2/textures/monitor/ui_icons/fill.png"),
+		STRETCH("/assets/lg2/textures/monitor/ui_icons/stretch.png"),
+		CLOSE("/assets/lg2/textures/monitor/ui_icons/close.png"),
+		BACK("/assets/lg2/textures/monitor/ui_icons/back.png");
+
+		private final String resourcePath;
+
+		PlayerUiIcon(String resourcePath) {
+			this.resourcePath = resourcePath;
+		}
+
+		private String resourcePath() {
+			return this.resourcePath;
+		}
+	}
+
+	private record PlayerUiIconTintKey(PlayerUiIcon icon, int argb) {
 	}
 
 	public record SpeakerAudioSource(
