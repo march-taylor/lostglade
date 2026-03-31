@@ -56,8 +56,10 @@ import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
 
 import javax.imageio.ImageIO;
+import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
+import java.awt.Composite;
 import java.awt.Font;
 import java.awt.GradientPaint;
 import java.awt.Graphics2D;
@@ -1306,7 +1308,7 @@ public final class MonitorScreenSystem {
 					mediaState.version++;
 				}
 				rerenderCurrent = true;
-			} else if (playerUiVisible
+			} else if ((playerUiVisible || isYoutubeMusicMode(mediaState.mode))
 					&& isYoutubeFamilyMode(mediaState.mode)
 					&& !isGalleryBackedYoutubeLocked(mediaState)
 					&& mediaQueueToggleRect(layout, mediaState.mode).contains(touchPoint.x(), touchPoint.y())) {
@@ -1315,8 +1317,21 @@ public final class MonitorScreenSystem {
 					mediaState.version++;
 				}
 				rerenderCurrent = true;
+			} else if (isYoutubeMusicMode(mediaState.mode)
+					&& !isYoutubeHomePromptLocked(mediaState)
+					&& !isGalleryBackedYoutubeLocked(mediaState)
+					&& mediaYoutubeMusicSearchRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				requestMediaLink(
+						player,
+						component.runtimeKey(),
+						false,
+						component.viewMode(),
+						hasMedia ? YoutubeLinkRequestAction.APPEND_QUEUE : YoutubeLinkRequestAction.REPLACE_QUEUE
+				);
+				rerenderCurrent = true;
 			} else if (isYoutubeFamilyMode(mediaState.mode)
 					&& !isGalleryBackedYoutubeLocked(mediaState)
+					&& (!isYoutubeMusicMode(mediaState.mode) || isYoutubeHomePromptLocked(mediaState))
 					&& mediaLinkRect(layout, playerUiVisible).contains(touchPoint.x(), touchPoint.y())) {
 				requestMediaLink(
 						player,
@@ -1326,7 +1341,10 @@ public final class MonitorScreenSystem {
 						isYoutubeFamilyMode(component.viewMode()) && hasMedia ? YoutubeLinkRequestAction.APPEND_QUEUE : YoutubeLinkRequestAction.REPLACE_QUEUE
 				);
 				rerenderCurrent = true;
-			} else if (playerUiVisible && !controlsWereHidden && !mediaState.loading) {
+			} else if (playerUiVisible
+					&& mediaState.mode != ScreenViewMode.YOUTUBE_MUSIC
+					&& !controlsWereHidden
+					&& !mediaState.loading) {
 				synchronized (mediaState) {
 					mediaState.overlayMode = MediaOverlayMode.VIEW;
 					mediaState.version++;
@@ -3762,8 +3780,7 @@ public final class MonitorScreenSystem {
 		}
 		return state.sourceUrl == null
 				&& state.relaySessionId == null
-				&& !state.loading
-				&& state.youtubeQueue.isEmpty();
+				&& !state.loading;
 	}
 
 	private static boolean shouldPreserveWallpaperPlaybackOnTransitionLocked(MediaRuntimeState state, ScreenViewMode nextMode) {
@@ -5488,11 +5505,13 @@ public final class MonitorScreenSystem {
 			graphics.setPaint(new GradientPaint(
 					0.0F,
 					0.0F,
-					new Color(255, 255, 255, 44),
+					new Color(190, 196, 202, 60),
 					0.0F,
 					pixelHeight,
-					new Color(200, 224, 255, 16)
+					new Color(112, 122, 132, 44)
 			));
+			graphics.fillRect(0, 0, pixelWidth, pixelHeight);
+			graphics.setColor(new Color(96, 104, 114, 40));
 			graphics.fillRect(0, 0, pixelWidth, pixelHeight);
 			graphics.setColor(new Color(0, 0, 0, 10));
 			for (int y = 0; y < pixelHeight; y += 4) {
@@ -5629,7 +5648,7 @@ public final class MonitorScreenSystem {
 		boolean youtubeFamilyMode = youtubeMode || youtubeMusicMode;
 		boolean galleryMode = state != null && state.mode() == ScreenViewMode.GALLERY;
 		boolean galleryBackedYoutube = state != null && state.galleryBackedYoutube();
-		boolean youtubeHomePrompt = youtubeFamilyMode && !controlUi && !hasMedia;
+		boolean youtubeHomePrompt = isYoutubeHomePrompt(state);
 		boolean showQueueButton = state != null && youtubeFamilyMode && !galleryBackedYoutube;
 		boolean showPrimaryActionButton = state != null && !youtubeMusicMode && state.actionVisible();
 		boolean showWallpaperActionButton = state != null && galleryMode && state.wallpaperActionVisible();
@@ -5637,6 +5656,7 @@ public final class MonitorScreenSystem {
 		MediaButtonSegment primaryActionSegment = MediaButtonSegment.SINGLE;
 		MediaButtonSegment wallpaperActionSegment = MediaButtonSegment.SINGLE;
 		MediaButtonSegment queueButtonSegment = MediaButtonSegment.SINGLE;
+		MediaButtonSegment youtubeMusicSearchSegment = MediaButtonSegment.SINGLE;
 		if (!youtubeMusicMode) {
 			int smallButtonCount = 1 + (showWallpaperActionButton ? 1 : 0) + (showPrimaryActionButton ? 1 : 0) + (showQueueButton ? 1 : 0);
 			int smallButtonIndex = 0;
@@ -5650,6 +5670,9 @@ public final class MonitorScreenSystem {
 				queueButtonSegment = mediaButtonSegment(smallButtonIndex++, smallButtonCount);
 			}
 			scaleButtonSegment = mediaButtonSegment(smallButtonIndex, smallButtonCount);
+		} else if (showQueueButton) {
+			youtubeMusicSearchSegment = MediaButtonSegment.LEFT;
+			queueButtonSegment = MediaButtonSegment.RIGHT;
 		}
 		UiRect titleRect = galleryMode ? mediaGalleryPlayerTitleRect(layout) : mediaLinkRect(layout, controlUi);
 		UiRect scaleRect = mediaScaleRect(layout);
@@ -5663,16 +5686,22 @@ public final class MonitorScreenSystem {
 			graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
 		}
 		if (youtubeMusicMode && !youtubeHomePrompt) {
-			graphics.setPaint(new GradientPaint(
-					canvasRect.x(),
-					canvasRect.y(),
-					new Color(4, 6, 10, 118),
-					canvasRect.right(),
-					canvasRect.bottom(),
-					new Color(8, 10, 16, 152)
-			));
-			graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
 			if (mediaFrame != null) {
+				drawYoutubeMusicArtworkBackground(
+						graphics,
+						canvasRect,
+						mediaFrame,
+						secondaryArtworkScaleMode(state != null ? state.scaleMode() : MediaScaleMode.FIT)
+				);
+				graphics.setPaint(new GradientPaint(
+						canvasRect.x(),
+						canvasRect.y(),
+						new Color(6, 8, 10, 122),
+						canvasRect.right(),
+						canvasRect.bottom(),
+						new Color(10, 10, 14, 164)
+				));
+				graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
 				drawYoutubeMusicArtworkCard(graphics, layout, mediaFrame, state != null ? state.scaleMode() : MediaScaleMode.FIT);
 			}
 		} else if (mediaFrame != null) {
@@ -5770,12 +5799,18 @@ public final class MonitorScreenSystem {
 					if (showPrimaryActionButton && !youtubeMusicMode) {
 						drawYoutubePlayerActionButton(graphics, downloadRect, state, layout, primaryActionSegment);
 					}
-					if (showQueueButton) {
+					if (showQueueButton && !youtubeMusicMode) {
 						drawMediaQueueToggleButton(graphics, queueToggleRect, state.youtubeQueueOpen(), layout, queueButtonSegment);
 					}
 				}
 				drawMediaTimeline(graphics, timelineRect, state, layout);
 				drawMediaCenterControls(graphics, layout, state);
+			}
+			if (youtubeMusicMode && !galleryBackedYoutube && !youtubeHomePrompt) {
+				drawYoutubeMusicSearchButton(graphics, mediaYoutubeMusicSearchRect(layout), layout, youtubeMusicSearchSegment);
+				if (showQueueButton) {
+					drawMediaQueueToggleButton(graphics, queueToggleRect, state.youtubeQueueOpen(), layout, queueButtonSegment);
+				}
 			}
 		}
 
@@ -5805,7 +5840,7 @@ public final class MonitorScreenSystem {
 			drawProgressBar(graphics, progressRect, progress, layout);
 		}
 
-		if (!controlUi && youtubeFamilyMode) {
+		if (!controlUi && youtubeFamilyMode && (!youtubeMusicMode || youtubeHomePrompt)) {
 			drawMediaSearchBar(
 					graphics,
 					titleRect,
@@ -5839,8 +5874,7 @@ public final class MonitorScreenSystem {
 		}
 		return !state.loading()
 				&& !state.hasMedia()
-				&& !state.playbackControlsVisible()
-				&& state.mediaListItems().isEmpty();
+				&& !state.playbackControlsVisible();
 	}
 
 	private static void drawGalleryBrowserScreen(Graphics2D graphics, UiLayout layout, MediaVisualSnapshot state) {
@@ -6269,6 +6303,12 @@ public final class MonitorScreenSystem {
 		drawQueueGlyph(graphics, mediaChromeIconRect(rect, layout), iconColor, strokeWidth);
 	}
 
+	private static void drawYoutubeMusicSearchButton(Graphics2D graphics, UiRect rect, UiLayout layout, MediaButtonSegment segment) {
+		float strokeWidth = mediaChromeStrokeWidth(rect);
+		Color iconColor = drawSmallMediaButtonBase(graphics, rect, segment, false, strokeWidth);
+		drawSearchGlyph(graphics, mediaChromeIconRect(rect, layout), iconColor);
+	}
+
 	private static void drawQueueScrollButton(Graphics2D graphics, UiRect rect, String label, boolean active, UiLayout layout) {
 		fillRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 10, 18), active ? new Color(255, 255, 255, 18) : new Color(255, 255, 255, 8));
 		strokeRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 10, 18), 1.0F, new Color(255, 255, 255, active ? 34 : 18));
@@ -6695,6 +6735,24 @@ public final class MonitorScreenSystem {
 		graphics.setClip(clip);
 		drawScaledImage(graphics, image, rect, scaleMode);
 		graphics.setClip(previousClip);
+	}
+
+	private static void drawYoutubeMusicArtworkBackground(Graphics2D graphics, UiRect rect, BufferedImage image, MediaScaleMode scaleMode) {
+		if (graphics == null || rect == null || image == null || rect.width() <= 0 || rect.height() <= 0) {
+			return;
+		}
+		Composite previousComposite = graphics.getComposite();
+		graphics.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.26F));
+		drawScaledImage(graphics, image, rect, scaleMode);
+		graphics.setComposite(previousComposite);
+	}
+
+	private static MediaScaleMode secondaryArtworkScaleMode(MediaScaleMode scaleMode) {
+		MediaScaleMode normalized = scaleMode != null ? scaleMode : MediaScaleMode.FIT;
+		if (normalized == MediaScaleMode.STRETCH) {
+			return MediaScaleMode.FILL;
+		}
+		return normalized == MediaScaleMode.FILL ? MediaScaleMode.FIT : MediaScaleMode.FILL;
 	}
 
 	private static void drawYoutubeMusicArtworkCard(Graphics2D graphics, UiLayout layout, BufferedImage image, MediaScaleMode scaleMode) {
@@ -7563,9 +7621,12 @@ public final class MonitorScreenSystem {
 		}
 		if (isYoutubeMusicMode(mode)) {
 			UiRect actionsRow = mediaYoutubeMusicActionsRowRect(layout);
-			int size = clampInt(actionsRow.height(), 20, 38);
+			int size = mediaYoutubeMusicActionButtonSize(layout);
+			int gap = mediaYoutubeMusicActionButtonsGap(layout);
+			int totalWidth = size * 2 + gap;
+			int startX = actionsRow.x() + (actionsRow.width() - totalWidth) / 2;
 			return new UiRect(
-					actionsRow.x() + (actionsRow.width() - size) / 2,
+					startX + size + gap,
 					actionsRow.y() + (actionsRow.height() - size) / 2,
 					size,
 					size
@@ -7574,6 +7635,28 @@ public final class MonitorScreenSystem {
 		UiRect scaleRect = mediaScaleRect(layout);
 		int gap = clampInt(layout.unit() / 2, 4, 8);
 		return new UiRect(scaleRect.x() - scaleRect.width() - gap, scaleRect.y(), scaleRect.width(), scaleRect.height());
+	}
+
+	private static int mediaYoutubeMusicActionButtonSize(UiLayout layout) {
+		return clampInt(mediaYoutubeMusicActionsRowHeight(layout), 20, 38);
+	}
+
+	private static int mediaYoutubeMusicActionButtonsGap(UiLayout layout) {
+		return clampInt(layout.unit() / 2, 4, 8);
+	}
+
+	private static UiRect mediaYoutubeMusicSearchRect(UiLayout layout) {
+		UiRect actionsRow = mediaYoutubeMusicActionsRowRect(layout);
+		int size = mediaYoutubeMusicActionButtonSize(layout);
+		int gap = mediaYoutubeMusicActionButtonsGap(layout);
+		int totalWidth = size * 2 + gap;
+		int startX = actionsRow.x() + (actionsRow.width() - totalWidth) / 2;
+		return new UiRect(
+				startX,
+				actionsRow.y() + (actionsRow.height() - size) / 2,
+				size,
+				size
+		);
 	}
 
 	private static UiRect mediaTimelineRect(UiLayout layout) {
@@ -10096,8 +10179,7 @@ public final class MonitorScreenSystem {
 		return !state.loading
 				&& !hasDisplayableMediaLocked(state)
 				&& (state.sourceUrl == null || state.sourceUrl.isBlank())
-				&& state.relaySessionId == null
-				&& state.youtubeQueue.isEmpty();
+				&& state.relaySessionId == null;
 	}
 
 	private static boolean resolvedActionVisible(MediaRuntimeState state) {
