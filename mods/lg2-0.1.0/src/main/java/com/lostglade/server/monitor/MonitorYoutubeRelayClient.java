@@ -496,24 +496,11 @@ public final class MonitorYoutubeRelayClient {
 				ytDlpBin(),
 				"-g",
 				"-f",
-				"best[height<=480]/best",
+				"best[height<=480][acodec!=none][vcodec!=none]/best[acodec!=none][vcodec!=none]/best",
 				"--no-playlist",
 				url
 		), COMMAND_TIMEOUT_SEC));
-		String audioStreamUrl;
-		try {
-			audioStreamUrl = firstOutputLine(runTextCommand(List.of(
-					ytDlpBin(),
-					"-g",
-					"-f",
-					"bestaudio/best",
-					"--no-playlist",
-					url
-			), COMMAND_TIMEOUT_SEC));
-		} catch (IOException ignored) {
-			audioStreamUrl = streamUrl;
-		}
-		return new ResolvedYoutube(title, durationMs, isLive, streamUrl, audioStreamUrl);
+		return new ResolvedYoutube(title, durationMs, isLive, streamUrl, streamUrl);
 	}
 
 	private static QueueResolveResponse resolveYoutubeQueue(String url) throws IOException {
@@ -849,7 +836,13 @@ public final class MonitorYoutubeRelayClient {
 			long durationMs,
 			boolean live,
 			String status,
-			String audioStreamUrl
+			String audioStreamUrl,
+			BufferedImage initialFrame,
+			long initialFrameSequence,
+			long initialPositionMs,
+			long bufferedStartMs,
+			long bufferedEndMs,
+			boolean ready
 	) {
 	}
 
@@ -1294,7 +1287,21 @@ public final class MonitorYoutubeRelayClient {
 			}
 			ensurePrefetchStarted();
 			synchronized (this.lock) {
-				return new SessionLoadResponse(this.sessionId, this.title, this.durationMs, this.live, this.status, this.audioStreamUrl);
+				boolean ready = this.latestFrame != null && !Objects.equals(this.status, "BUFFERING");
+				return new SessionLoadResponse(
+						this.sessionId,
+						this.title,
+						this.durationMs,
+						this.live,
+						this.status,
+						this.audioStreamUrl,
+						this.latestFrame,
+						this.frameSequence,
+						this.positionMs,
+						this.bufferedStartMs,
+						this.bufferedEndMs,
+						ready
+				);
 			}
 		}
 
