@@ -373,6 +373,12 @@ public final class MonitorYoutubeMusicCache {
 		BufferedImage cover = ImageIO.read(coverPath.toFile());
 		if (cover == null) {
 			cover = createFallbackCover(title);
+		} else {
+			BufferedImage normalized = normalizeCoverArt(cover);
+			if (normalized != cover) {
+				cover = normalized;
+				ImageIO.write(cover, "png", coverPath.toFile());
+			}
 		}
 		if (progress != null) {
 			progress.complete("READY");
@@ -470,7 +476,8 @@ public final class MonitorYoutubeMusicCache {
 			if (bytes.length == 0) {
 				return null;
 			}
-			return ImageIO.read(new ByteArrayInputStream(bytes));
+			BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
+			return normalizeCoverArt(image);
 		} finally {
 			connection.disconnect();
 		}
@@ -486,7 +493,11 @@ public final class MonitorYoutubeMusicCache {
 		if (existingCoverPath != null && Files.isRegularFile(existingCoverPath)) {
 			BufferedImage persisted = ImageIO.read(existingCoverPath.toFile());
 			if (persisted != null) {
-				return persisted;
+				BufferedImage normalized = normalizeCoverArt(persisted);
+				if (normalized != persisted) {
+					ImageIO.write(normalized, "png", existingCoverPath.toFile());
+				}
+				return normalized;
 			}
 		}
 		return downloadOrCreateCover(title, thumbnailUrl, progress);
@@ -498,14 +509,49 @@ public final class MonitorYoutubeMusicCache {
 		if (targetCoverPath == null || targetMetadataPath == null || cover == null) {
 			return;
 		}
+		BufferedImage normalizedCover = normalizeCoverArt(cover);
 		Files.createDirectories(targetCoverPath.getParent());
 		Files.createDirectories(targetMetadataPath.getParent());
-		ImageIO.write(cover, "png", targetCoverPath.toFile());
+		ImageIO.write(normalizedCover, "png", targetCoverPath.toFile());
 		JsonObject persisted = new JsonObject();
 		persisted.addProperty("title", title);
 		persisted.addProperty("artist", artist);
 		persisted.addProperty("durationMs", durationMs);
 		Files.writeString(targetMetadataPath, GSON.toJson(persisted), StandardCharsets.UTF_8);
+	}
+
+	private static BufferedImage normalizeCoverArt(BufferedImage image) {
+		if (image == null || image.getWidth() <= 0 || image.getHeight() <= 0) {
+			return image;
+		}
+		if (image.getWidth() == COVER_SIZE && image.getHeight() == COVER_SIZE) {
+			return image;
+		}
+		int side = Math.min(image.getWidth(), image.getHeight());
+		int sourceX = Math.max(0, (image.getWidth() - side) / 2);
+		int sourceY = Math.max(0, (image.getHeight() - side) / 2);
+		BufferedImage normalized = new BufferedImage(COVER_SIZE, COVER_SIZE, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = normalized.createGraphics();
+		try {
+			graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+			graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+			graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+			graphics.drawImage(
+					image,
+					0,
+					0,
+					COVER_SIZE,
+					COVER_SIZE,
+					sourceX,
+					sourceY,
+					sourceX + side,
+					sourceY + side,
+					null
+			);
+		} finally {
+			graphics.dispose();
+		}
+		return normalized;
 	}
 
 	private static BufferedImage createFallbackCover(String title) {

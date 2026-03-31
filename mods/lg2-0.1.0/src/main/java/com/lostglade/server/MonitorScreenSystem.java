@@ -6664,7 +6664,11 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		Shape previousClip = graphics.getClip();
-		graphics.setClip(rect.x(), rect.y(), rect.width(), rect.height());
+		if (previousClip == null) {
+			graphics.setClip(rect.x(), rect.y(), rect.width(), rect.height());
+		} else {
+			graphics.clipRect(rect.x(), rect.y(), rect.width(), rect.height());
+		}
 		if (scaleMode == MediaScaleMode.STRETCH) {
 			graphics.drawImage(image, rect.x(), rect.y(), rect.width(), rect.height(), null);
 			graphics.setClip(previousClip);
@@ -6696,14 +6700,12 @@ public final class MonitorScreenSystem {
 	private static void drawYoutubeMusicArtworkCard(Graphics2D graphics, UiLayout layout, BufferedImage image, MediaScaleMode scaleMode) {
 		UiRect artworkRect = mediaYoutubeMusicArtworkRect(layout);
 		int arc = clampInt(layout.unit() * 2, 12, 28);
-		fillRoundedRect(graphics, artworkRect, arc, new Color(8, 10, 16, 208));
-		strokeRoundedRect(graphics, artworkRect, arc, 1.0F, new Color(255, 255, 255, 44));
 		drawRoundedScaledImage(
 				graphics,
 				image,
-				artworkRect.inset(Math.max(2, layout.unit() / 4)),
+				artworkRect,
 				scaleMode == MediaScaleMode.STRETCH ? MediaScaleMode.FILL : scaleMode,
-				Math.max(6, arc - Math.max(2, layout.unit() / 3))
+				arc
 		);
 	}
 
