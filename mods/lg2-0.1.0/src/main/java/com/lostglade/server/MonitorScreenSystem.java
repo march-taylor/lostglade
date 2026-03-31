@@ -94,6 +94,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 public final class MonitorScreenSystem {
@@ -947,6 +948,7 @@ public final class MonitorScreenSystem {
 		Integer galleryYoutubeIndex = null;
 		List<String> youtubeQueueReleasedUrls = List.of();
 		YoutubeQueuePreloadDiff youtubeQueuePreloadDiff = YoutubeQueuePreloadDiff.EMPTY;
+		YoutubeMusicQueuePreloadDiff youtubeMusicQueuePreloadDiff = YoutubeMusicQueuePreloadDiff.EMPTY;
 		if (component.viewMode() == ScreenViewMode.HOME) {
 			List<MonitorApp> visibleApps = visibleHomeApps(layout, component.launcherPage());
 			for (int index = 0; index < visibleApps.size(); index++) {
@@ -1070,6 +1072,8 @@ public final class MonitorScreenSystem {
 									mediaState.youtubeQueueOpen = false;
 									youtubeQueueReleasedUrls = retainedYoutubePreloadUrlsLocked(mediaState);
 									mediaState.retainedYoutubePreloadUrls.clear();
+									youtubeMusicQueuePreloadDiff = syncYoutubeMusicQueuePreloadsLocked(mediaState);
+									clearYoutubeMusicShuffleOrderLocked(mediaState);
 								} else {
 									if (queueIndex < mediaState.youtubeQueueIndex) {
 										mediaState.youtubeQueueIndex--;
@@ -1077,10 +1081,12 @@ public final class MonitorScreenSystem {
 										mediaState.youtubeQueueIndex = Math.min(queueIndex, mediaState.youtubeQueue.size() - 1);
 										youtubeQueuePlayIndex = mediaState.youtubeQueueIndex;
 									}
+									syncYoutubeMusicShuffleStateLocked(mediaState, true);
 									int nextMaxScroll = Math.max(0, mediaState.youtubeQueue.size() - visibleRows);
 									mediaState.youtubeQueueScroll = clampInt(mediaState.youtubeQueueScroll, 0, nextMaxScroll);
 									if (youtubeQueuePlayIndex == null) {
 										youtubeQueuePreloadDiff = syncYoutubeQueuePreloadsLocked(mediaState);
+										youtubeMusicQueuePreloadDiff = syncYoutubeMusicQueuePreloadsLocked(mediaState);
 									}
 								}
 							} else {
@@ -1226,10 +1232,7 @@ public final class MonitorScreenSystem {
 			} else if (playerUiVisible && mediaCenterBackRect(layout, mediaState.mode).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					if (isYoutubeFamilyMode(mediaState.mode) && !mediaState.youtubeQueue.isEmpty()) {
-						youtubeQueuePlayIndex = normalizeYoutubeQueueIndexLocked(
-								mediaState,
-								mediaState.youtubeQueueIndex >= 0 ? mediaState.youtubeQueueIndex - 1 : mediaState.youtubeQueue.size() - 1
-						);
+						youtubeQueuePlayIndex = adjacentYoutubeQueueIndexLocked(mediaState, -1);
 					} else if (mediaState.mode == ScreenViewMode.GALLERY && !mediaState.galleryItems.isEmpty()) {
 						if (!selectGalleryItemLocked(
 								mediaState,
@@ -1252,10 +1255,7 @@ public final class MonitorScreenSystem {
 			} else if (playerUiVisible && mediaCenterForwardRect(layout, mediaState.mode).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					if (isYoutubeFamilyMode(mediaState.mode) && !mediaState.youtubeQueue.isEmpty()) {
-						youtubeQueuePlayIndex = normalizeYoutubeQueueIndexLocked(
-								mediaState,
-								mediaState.youtubeQueueIndex >= 0 ? mediaState.youtubeQueueIndex + 1 : 0
-						);
+						youtubeQueuePlayIndex = adjacentYoutubeQueueIndexLocked(mediaState, 1);
 					} else if (mediaState.mode == ScreenViewMode.GALLERY && !mediaState.galleryItems.isEmpty()) {
 						if (!selectGalleryItemLocked(
 								mediaState,
@@ -1322,6 +1322,21 @@ public final class MonitorScreenSystem {
 			} else if (isYoutubeMusicMode(mediaState.mode)
 					&& !isYoutubeHomePromptLocked(mediaState)
 					&& !isGalleryBackedYoutubeLocked(mediaState)
+					&& mediaYoutubeMusicShuffleRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					mediaState.youtubeMusicShuffleEnabled = !mediaState.youtubeMusicShuffleEnabled;
+					if (mediaState.youtubeMusicShuffleEnabled) {
+						syncYoutubeMusicShuffleStateLocked(mediaState, false);
+					} else {
+						clearYoutubeMusicShuffleOrderLocked(mediaState);
+					}
+					youtubeMusicQueuePreloadDiff = syncYoutubeMusicQueuePreloadsLocked(mediaState);
+					mediaState.version++;
+				}
+				rerenderCurrent = true;
+			} else if (isYoutubeMusicMode(mediaState.mode)
+					&& !isYoutubeHomePromptLocked(mediaState)
+					&& !isGalleryBackedYoutubeLocked(mediaState)
 					&& mediaYoutubeMusicSearchRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				requestMediaLink(
 						player,
@@ -1369,6 +1384,9 @@ public final class MonitorScreenSystem {
 		}
 		if (!youtubeQueuePreloadDiff.isEmpty() && youtubeQueuePlayIndex == null) {
 			applyYoutubeQueuePreloadDiff(youtubeQueuePreloadDiff);
+		}
+		if (!youtubeMusicQueuePreloadDiff.isEmpty() && youtubeQueuePlayIndex == null) {
+			applyYoutubeMusicQueuePreloadDiff(youtubeMusicQueuePreloadDiff);
 		}
 		if (returnToGalleryAfterDelete) {
 			nextMode = ScreenViewMode.GALLERY;
@@ -1505,7 +1523,12 @@ public final class MonitorScreenSystem {
 			}));
 		}
 		if (server != null && youtubeQueuePlayIndex != null) {
-			startYoutubeQueuePlayback(server, component.runtimeKey(), player.getUUID(), youtubeQueuePlayIndex);
+			MediaRuntimeState state = MEDIA_STATES.get(component.runtimeKey());
+			if (state != null && isYoutubeMusicMode(state.mode)) {
+				startYoutubeMusicQueuePlayback(server, component.runtimeKey(), player.getUUID(), youtubeQueuePlayIndex);
+			} else {
+				startYoutubeQueuePlayback(server, component.runtimeKey(), player.getUUID(), youtubeQueuePlayIndex);
+			}
 		}
 		if (server != null && youtubeDownloadRequested) {
 			beginYoutubeDownload(server, component.runtimeKey(), player.getUUID());
@@ -2166,6 +2189,7 @@ public final class MonitorScreenSystem {
 				state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
 				state.galleryIndex = -1;
 				state.youtubeQueueIndex = normalizeYoutubeQueueIndexLocked(state, selectionIndex);
+				syncYoutubeMusicShuffleStateLocked(state, true);
 				state.youtubeQueueOpen = false;
 			}
 			state.sourceUrl = url;
@@ -3160,6 +3184,7 @@ public final class MonitorScreenSystem {
 							: entry.title();
 					state.youtubeQueue.add(new YoutubeQueueItem(title, entry.url()));
 				}
+				syncYoutubeMusicShuffleStateLocked(state, true);
 				if (result.action() == YoutubeLinkRequestAction.REPLACE_QUEUE) {
 					state.youtubeQueueIndex = state.youtubeQueue.isEmpty() ? -1 : 0;
 					state.youtubeQueueScroll = 0;
@@ -3320,6 +3345,7 @@ public final class MonitorScreenSystem {
 				state.mediaTitle = item.title() == null || item.title().isBlank() ? "Track" : item.title();
 				state.mediaSubtitle = "";
 				state.youtubeQueueIndex = resolvedIndex;
+				syncYoutubeMusicShuffleStateLocked(state, true);
 				state.youtubeQueueOpen = false;
 				state.waitingForLink = false;
 				state.loading = true;
@@ -4086,7 +4112,7 @@ public final class MonitorScreenSystem {
 				// not invalidate an in-flight large-screen render job every poll.
 				shouldReschedule = true;
 				if (isYoutubeFamilyMode(state.mode) && result.snapshot().ended() && !state.youtubeQueue.isEmpty()) {
-					queueAdvanceIndex = normalizeYoutubeQueueIndexLocked(state, state.youtubeQueueIndex >= 0 ? state.youtubeQueueIndex + 1 : 0);
+					queueAdvanceIndex = adjacentYoutubeQueueIndexLocked(state, 1);
 					shouldReschedule = false;
 				}
 			} else {
@@ -5300,7 +5326,7 @@ public final class MonitorScreenSystem {
 
 	private static MediaVisualSnapshot captureMediaSnapshot(MediaRuntimeState state) {
 		if (state == null) {
-			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, false, true, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, 0, -1, null);
+			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, false, true, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, false, 0, -1, null);
 		}
 		boolean youtubeMode = state.mode == ScreenViewMode.YOUTUBE;
 		boolean youtubeMusicMode = state.mode == ScreenViewMode.YOUTUBE_MUSIC;
@@ -5390,6 +5416,7 @@ public final class MonitorScreenSystem {
 				wallpaperActionVisible,
 				wallpaperActionGlyph,
 				wallpaperActionState,
+				youtubeMusicMode && state.youtubeMusicShuffleEnabled,
 				youtubeFamilyMode && state.youtubeQueueOpen,
 				youtubeFamilyMode ? state.youtubeQueueScroll : galleryMode ? state.galleryScroll : 0,
 				youtubeFamilyMode ? state.youtubeQueueIndex : galleryMode ? state.galleryIndex : -1,
@@ -5674,6 +5701,7 @@ public final class MonitorScreenSystem {
 		MediaButtonSegment wallpaperActionSegment = MediaButtonSegment.SINGLE;
 		MediaButtonSegment queueButtonSegment = MediaButtonSegment.SINGLE;
 		MediaButtonSegment youtubeMusicSearchSegment = MediaButtonSegment.SINGLE;
+		MediaButtonSegment youtubeMusicShuffleSegment = MediaButtonSegment.SINGLE;
 		if (!youtubeMusicMode) {
 			int smallButtonCount = 1 + (showWallpaperActionButton ? 1 : 0) + (showPrimaryActionButton ? 1 : 0) + (showQueueButton ? 1 : 0);
 			int smallButtonIndex = 0;
@@ -5689,6 +5717,7 @@ public final class MonitorScreenSystem {
 			scaleButtonSegment = mediaButtonSegment(smallButtonIndex, smallButtonCount);
 		} else if (showQueueButton) {
 			youtubeMusicSearchSegment = MediaButtonSegment.LEFT;
+			youtubeMusicShuffleSegment = MediaButtonSegment.MIDDLE;
 			queueButtonSegment = MediaButtonSegment.RIGHT;
 		}
 		UiRect titleRect = galleryMode ? mediaGalleryPlayerTitleRect(layout) : mediaLinkRect(layout, controlUi);
@@ -5827,6 +5856,7 @@ public final class MonitorScreenSystem {
 			}
 			if (youtubeMusicMode && !galleryBackedYoutube && !youtubeHomePrompt) {
 				drawYoutubeMusicSearchButton(graphics, mediaYoutubeMusicSearchRect(layout), layout, youtubeMusicSearchSegment);
+				drawYoutubeMusicShuffleButton(graphics, mediaYoutubeMusicShuffleRect(layout), state.youtubeMusicShuffleEnabled(), layout, youtubeMusicShuffleSegment);
 				if (showQueueButton) {
 					drawMediaQueueToggleButton(graphics, queueToggleRect, state.youtubeQueueOpen(), layout, queueButtonSegment);
 				}
@@ -6328,6 +6358,12 @@ public final class MonitorScreenSystem {
 		float strokeWidth = mediaChromeStrokeWidth(rect);
 		Color iconColor = drawSmallMediaButtonBase(graphics, rect, segment, false, strokeWidth);
 		drawSearchGlyph(graphics, mediaChromeIconRect(rect, layout), iconColor);
+	}
+
+	private static void drawYoutubeMusicShuffleButton(Graphics2D graphics, UiRect rect, boolean active, UiLayout layout, MediaButtonSegment segment) {
+		float strokeWidth = mediaChromeStrokeWidth(rect);
+		Color iconColor = drawSmallMediaButtonBase(graphics, rect, segment, active, strokeWidth);
+		drawShuffleGlyph(graphics, mediaChromeIconRect(rect, layout), iconColor);
 	}
 
 	private static void drawQueueScrollButton(Graphics2D graphics, UiRect rect, String label, boolean active, UiLayout layout) {
@@ -7022,6 +7058,10 @@ public final class MonitorScreenSystem {
 		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.SEARCH, color);
 	}
 
+	private static void drawShuffleGlyph(Graphics2D graphics, UiRect rect, Color color) {
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.SHUFFLE, color);
+	}
+
 	private static void drawQueueGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
 		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.QUEUE, color);
 	}
@@ -7472,29 +7512,8 @@ public final class MonitorScreenSystem {
 	}
 
 	private static UiRect mediaQueueToggleRect(UiLayout layout, ScreenViewMode mode) {
-		if (isYoutubeMusicMode(mode) && youtubeMusicLandscapeLayout(layout)) {
-			UiRect artworkRect = mediaYoutubeMusicArtworkRect(layout);
-			int size = clampInt(mediaYoutubeMusicActionsRowHeight(layout), 20, 38);
-			int y = artworkRect.bottom() + clampInt(layout.unit(), 6, 14);
-			return new UiRect(
-					artworkRect.x() + (artworkRect.width() - size) / 2,
-					y,
-					size,
-					size
-			);
-		}
 		if (isYoutubeMusicMode(mode)) {
-			UiRect actionsRow = mediaYoutubeMusicActionsRowRect(layout);
-			int size = mediaYoutubeMusicActionButtonSize(layout);
-			int gap = mediaYoutubeMusicActionButtonsGap(layout);
-			int totalWidth = size * 2 + gap;
-			int startX = actionsRow.x() + (actionsRow.width() - totalWidth) / 2;
-			return new UiRect(
-					startX + size + gap,
-					actionsRow.y() + (actionsRow.height() - size) / 2,
-					size,
-					size
-			);
+			return mediaYoutubeMusicActionButtonRect(layout, 2, 3);
 		}
 		UiRect scaleRect = mediaScaleRect(layout);
 		int gap = clampInt(layout.unit() / 2, 4, 8);
@@ -7509,18 +7528,26 @@ public final class MonitorScreenSystem {
 		return clampInt(layout.unit() / 2, 4, 8);
 	}
 
-	private static UiRect mediaYoutubeMusicSearchRect(UiLayout layout) {
+	private static UiRect mediaYoutubeMusicActionButtonRect(UiLayout layout, int slot, int total) {
 		UiRect actionsRow = mediaYoutubeMusicActionsRowRect(layout);
 		int size = mediaYoutubeMusicActionButtonSize(layout);
 		int gap = mediaYoutubeMusicActionButtonsGap(layout);
-		int totalWidth = size * 2 + gap;
+		int totalWidth = size * total + gap * Math.max(0, total - 1);
 		int startX = actionsRow.x() + (actionsRow.width() - totalWidth) / 2;
 		return new UiRect(
-				startX,
+				startX + slot * (size + gap),
 				actionsRow.y() + (actionsRow.height() - size) / 2,
 				size,
 				size
 		);
+	}
+
+	private static UiRect mediaYoutubeMusicSearchRect(UiLayout layout) {
+		return mediaYoutubeMusicActionButtonRect(layout, 0, 3);
+	}
+
+	private static UiRect mediaYoutubeMusicShuffleRect(UiLayout layout) {
+		return mediaYoutubeMusicActionButtonRect(layout, 1, 3);
 	}
 
 	private static UiRect mediaTimelineRect(UiLayout layout) {
@@ -9388,6 +9415,181 @@ public final class MonitorScreenSystem {
 		return List.copyOf(state.retainedYoutubeMusicUrls);
 	}
 
+	private static void clearYoutubeMusicShuffleOrderLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		state.youtubeMusicShuffleOrder.clear();
+		state.youtubeMusicShuffleCursor = -1;
+	}
+
+	private static void syncYoutubeMusicShuffleStateLocked(MediaRuntimeState state, boolean preserveUpcomingOrder) {
+		if (state == null) {
+			return;
+		}
+		if (!state.youtubeMusicShuffleEnabled || state.youtubeQueue.isEmpty()) {
+			clearYoutubeMusicShuffleOrderLocked(state);
+			return;
+		}
+		if (!preserveUpcomingOrder || state.youtubeMusicShuffleOrder.isEmpty()) {
+			rebuildYoutubeMusicShuffleOrderLocked(state);
+		} else {
+			reconcileYoutubeMusicShuffleOrderLocked(state);
+		}
+		alignYoutubeMusicShuffleCursorLocked(state);
+	}
+
+	private static void rebuildYoutubeMusicShuffleOrderLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		if (!state.youtubeMusicShuffleEnabled || state.youtubeQueue.isEmpty()) {
+			clearYoutubeMusicShuffleOrderLocked(state);
+			return;
+		}
+		int queueSize = state.youtubeQueue.size();
+		int currentIndex = state.youtubeQueueIndex >= 0 && state.youtubeQueueIndex < queueSize ? state.youtubeQueueIndex : -1;
+		state.youtubeMusicShuffleOrder.clear();
+		List<Integer> remaining = new ArrayList<>();
+		for (int index = 0; index < queueSize; index++) {
+			if (index == currentIndex) {
+				continue;
+			}
+			remaining.add(index);
+		}
+		shuffleQueueIndices(remaining);
+		if (currentIndex >= 0) {
+			state.youtubeMusicShuffleOrder.add(currentIndex);
+			state.youtubeMusicShuffleCursor = 0;
+		} else {
+			state.youtubeMusicShuffleCursor = remaining.isEmpty() ? -1 : 0;
+		}
+		state.youtubeMusicShuffleOrder.addAll(remaining);
+	}
+
+	private static void reconcileYoutubeMusicShuffleOrderLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		if (!state.youtubeMusicShuffleEnabled || state.youtubeQueue.isEmpty()) {
+			clearYoutubeMusicShuffleOrderLocked(state);
+			return;
+		}
+		int queueSize = state.youtubeQueue.size();
+		int currentIndex = state.youtubeQueueIndex >= 0 && state.youtubeQueueIndex < queueSize ? state.youtubeQueueIndex : -1;
+		List<Integer> reconciled = new ArrayList<>(queueSize);
+		Set<Integer> seen = new HashSet<>();
+		for (Integer index : List.copyOf(state.youtubeMusicShuffleOrder)) {
+			if (index == null || index < 0 || index >= queueSize || !seen.add(index)) {
+				continue;
+			}
+			reconciled.add(index);
+		}
+		if (currentIndex >= 0 && !seen.contains(currentIndex)) {
+			reconciled.add(0, currentIndex);
+			seen.add(currentIndex);
+		}
+		List<Integer> missing = new ArrayList<>();
+		for (int index = 0; index < queueSize; index++) {
+			if (!seen.contains(index)) {
+				missing.add(index);
+			}
+		}
+		shuffleQueueIndices(missing);
+		reconciled.addAll(missing);
+		state.youtubeMusicShuffleOrder.clear();
+		state.youtubeMusicShuffleOrder.addAll(reconciled);
+	}
+
+	private static void alignYoutubeMusicShuffleCursorLocked(MediaRuntimeState state) {
+		if (state == null || !state.youtubeMusicShuffleEnabled || state.youtubeMusicShuffleOrder.isEmpty()) {
+			if (state != null) {
+				state.youtubeMusicShuffleCursor = -1;
+			}
+			return;
+		}
+		int currentIndex = state.youtubeQueueIndex >= 0 && state.youtubeQueueIndex < state.youtubeQueue.size() ? state.youtubeQueueIndex : -1;
+		if (currentIndex < 0) {
+			state.youtubeMusicShuffleCursor = clampInt(state.youtubeMusicShuffleCursor, 0, state.youtubeMusicShuffleOrder.size() - 1);
+			return;
+		}
+		int cursor = state.youtubeMusicShuffleOrder.indexOf(currentIndex);
+		if (cursor >= 0) {
+			state.youtubeMusicShuffleCursor = cursor;
+			return;
+		}
+		reconcileYoutubeMusicShuffleOrderLocked(state);
+		cursor = state.youtubeMusicShuffleOrder.indexOf(currentIndex);
+		state.youtubeMusicShuffleCursor = cursor >= 0 ? cursor : 0;
+	}
+
+	private static void shuffleQueueIndices(List<Integer> indices) {
+		if (indices == null || indices.size() <= 1) {
+			return;
+		}
+		ThreadLocalRandom random = ThreadLocalRandom.current();
+		for (int index = indices.size() - 1; index > 0; index--) {
+			int other = random.nextInt(index + 1);
+			if (index == other) {
+				continue;
+			}
+			int value = indices.get(index);
+			indices.set(index, indices.get(other));
+			indices.set(other, value);
+		}
+	}
+
+	private static int adjacentYoutubeQueueIndexLocked(MediaRuntimeState state, int step) {
+		if (state == null || state.youtubeQueue.isEmpty()) {
+			return -1;
+		}
+		if (isYoutubeMusicMode(state.mode) && state.youtubeMusicShuffleEnabled) {
+			syncYoutubeMusicShuffleStateLocked(state, true);
+			if (!state.youtubeMusicShuffleOrder.isEmpty()) {
+				int cursor = state.youtubeMusicShuffleCursor >= 0 ? state.youtubeMusicShuffleCursor : 0;
+				int targetCursor = Math.floorMod(cursor + step, state.youtubeMusicShuffleOrder.size());
+				return state.youtubeMusicShuffleOrder.get(targetCursor);
+			}
+		}
+		int anchor = state.youtubeQueueIndex >= 0
+				? state.youtubeQueueIndex
+				: step < 0 ? state.youtubeQueue.size() - 1 : 0;
+		return normalizeYoutubeQueueIndexLocked(state, anchor + step);
+	}
+
+	private static Set<String> desiredYoutubeMusicWindowUrlsLocked(MediaRuntimeState state) {
+		Set<String> desired = new LinkedHashSet<>();
+		if (state == null || state.youtubeQueue.isEmpty()) {
+			return desired;
+		}
+		if (!state.youtubeMusicShuffleEnabled) {
+			return desiredYoutubeQueueWindowUrlsLocked(state);
+		}
+		syncYoutubeMusicShuffleStateLocked(state, true);
+		if (state.youtubeMusicShuffleOrder.isEmpty()) {
+			return desired;
+		}
+		int size = state.youtubeMusicShuffleOrder.size();
+		int cursor = state.youtubeMusicShuffleCursor >= 0 ? state.youtubeMusicShuffleCursor : 0;
+		int maxPrevious = Math.min(YOUTUBE_PRELOAD_PREVIOUS_COUNT, Math.max(0, size - 1));
+		int maxNext = Math.min(YOUTUBE_PRELOAD_NEXT_COUNT, Math.max(0, size - 1));
+		for (int offset = 0; offset <= maxNext; offset++) {
+			int queueIndex = state.youtubeMusicShuffleOrder.get(Math.floorMod(cursor + offset, size));
+			YoutubeQueueItem item = state.youtubeQueue.get(queueIndex);
+			if (item != null && item.url() != null && !item.url().isBlank()) {
+				desired.add(item.url());
+			}
+		}
+		for (int offset = 1; offset <= maxPrevious; offset++) {
+			int queueIndex = state.youtubeMusicShuffleOrder.get(Math.floorMod(cursor - offset, size));
+			YoutubeQueueItem item = state.youtubeQueue.get(queueIndex);
+			if (item != null && item.url() != null && !item.url().isBlank()) {
+				desired.add(item.url());
+			}
+		}
+		return desired;
+	}
+
 	private static Set<String> desiredYoutubeQueueWindowUrlsLocked(MediaRuntimeState state) {
 		Set<String> desired = new LinkedHashSet<>();
 		if (state == null || state.youtubeQueue.isEmpty()) {
@@ -9458,7 +9660,7 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return YoutubeMusicQueuePreloadDiff.EMPTY;
 		}
-		Set<String> desired = isYoutubeMusicMode(state.mode) ? desiredYoutubeQueueWindowUrlsLocked(state) : Set.of();
+		Set<String> desired = isYoutubeMusicMode(state.mode) ? desiredYoutubeMusicWindowUrlsLocked(state) : Set.of();
 		List<String> toRelease = new ArrayList<>();
 		for (String url : List.copyOf(state.retainedYoutubeMusicUrls)) {
 			if (!desired.contains(url)) {
@@ -9567,6 +9769,7 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		state.youtubeQueue.clear();
+		clearYoutubeMusicShuffleOrderLocked(state);
 		state.youtubeQueueIndex = -1;
 		state.youtubeQueueScroll = 0;
 		state.youtubeQueueOpen = false;
@@ -10037,6 +10240,7 @@ public final class MonitorScreenSystem {
 			if (current != null && Objects.equals(current.url(), state.sourceUrl)) {
 				String nextTitle = state.mediaTitle != null && !state.mediaTitle.isBlank() ? state.mediaTitle : current.title();
 				state.youtubeQueue.set(state.youtubeQueueIndex, new YoutubeQueueItem(nextTitle, state.sourceUrl));
+				syncYoutubeMusicShuffleStateLocked(state, true);
 				return;
 			}
 		}
@@ -10046,12 +10250,14 @@ public final class MonitorScreenSystem {
 				String nextTitle = state.mediaTitle != null && !state.mediaTitle.isBlank() ? state.mediaTitle : item.title();
 				state.youtubeQueue.set(index, new YoutubeQueueItem(nextTitle, state.sourceUrl));
 				state.youtubeQueueIndex = index;
+				syncYoutubeMusicShuffleStateLocked(state, true);
 				return;
 			}
 		}
 		String title = state.mediaTitle != null && !state.mediaTitle.isBlank() ? state.mediaTitle : "YouTube";
 		state.youtubeQueue.add(new YoutubeQueueItem(title, state.sourceUrl));
 		state.youtubeQueueIndex = state.youtubeQueue.size() - 1;
+		syncYoutubeMusicShuffleStateLocked(state, true);
 	}
 
 	private static int normalizeYoutubeQueueIndexLocked(MediaRuntimeState state, int requestedIndex) {
@@ -10688,6 +10894,7 @@ public final class MonitorScreenSystem {
 			boolean wallpaperActionVisible,
 			MediaActionGlyph wallpaperActionGlyph,
 			MediaActionVisualState wallpaperActionState,
+			boolean youtubeMusicShuffleEnabled,
 			boolean youtubeQueueOpen,
 			int mediaListScroll,
 			int currentMediaListIndex,
@@ -10883,6 +11090,7 @@ public final class MonitorScreenSystem {
 
 	private enum PlayerUiIcon {
 		SEARCH("/assets/lg2/textures/monitor/ui_icons/search.png"),
+		SHUFFLE("/assets/lg2/textures/monitor/ui_icons/shuffle.png"),
 		QUEUE("/assets/lg2/textures/monitor/ui_icons/queue.png"),
 		DOWNLOAD("/assets/lg2/textures/monitor/ui_icons/download.png"),
 		TRASH("/assets/lg2/textures/monitor/ui_icons/trash.png"),
@@ -11007,6 +11215,9 @@ public final class MonitorScreenSystem {
 		private final List<YoutubeQueueItem> youtubeQueue;
 		private final Set<String> retainedYoutubePreloadUrls;
 		private final Set<String> retainedYoutubeMusicUrls;
+		private boolean youtubeMusicShuffleEnabled;
+		private final List<Integer> youtubeMusicShuffleOrder;
+		private int youtubeMusicShuffleCursor;
 		private int youtubeQueueIndex;
 		private int youtubeQueueScroll;
 		private boolean youtubeQueueOpen;
@@ -11056,6 +11267,9 @@ public final class MonitorScreenSystem {
 			this.youtubeQueue = new ArrayList<>();
 			this.retainedYoutubePreloadUrls = new HashSet<>();
 			this.retainedYoutubeMusicUrls = new HashSet<>();
+			this.youtubeMusicShuffleEnabled = false;
+			this.youtubeMusicShuffleOrder = new ArrayList<>();
+			this.youtubeMusicShuffleCursor = -1;
 			this.youtubeQueueIndex = -1;
 			this.youtubeQueueScroll = 0;
 			this.youtubeQueueOpen = false;
