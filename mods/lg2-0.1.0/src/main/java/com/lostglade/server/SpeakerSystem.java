@@ -63,10 +63,12 @@ public final class SpeakerSystem {
 	private static final int SHARED_SOURCE_PLAYBACK_LEAD_FRAMES = 2;
 	private static final int SHARED_SOURCE_TARGET_LEAD_FRAMES = 256;
 	private static final long PROCESS_SHUTDOWN_TIMEOUT_MS = 200L;
+	private static final long CONNECTED_SPEAKER_CACHE_TTL_TICKS = 4L;
 	private static final short[] SILENCE_FRAME = new short[AUDIO_FRAME_SAMPLES];
 	private static final Set<SpeakerKey> KNOWN_SPEAKERS = ConcurrentHashMap.newKeySet();
 	private static final ConcurrentHashMap<SpeakerKey, SpeakerRuntime> ACTIVE_SPEAKERS = new ConcurrentHashMap<>();
 	private static final ConcurrentHashMap<String, SharedSourceFeed> ACTIVE_SOURCE_FEEDS = new ConcurrentHashMap<>();
+	private static final ConcurrentHashMap<SpeakerConnectionCacheKey, ConnectedSpeakerCacheEntry> CONNECTED_SPEAKER_CACHE = new ConcurrentHashMap<>();
 	private static volatile boolean speakerVolumeCategoryRegistered = false;
 	private static volatile long tickCounter = 0L;
 
@@ -84,7 +86,9 @@ public final class SpeakerSystem {
 		if (level == null || pos == null) {
 			return;
 		}
-		KNOWN_SPEAKERS.add(new SpeakerKey(level.dimension(), pos.immutable()));
+		if (KNOWN_SPEAKERS.add(new SpeakerKey(level.dimension(), pos.immutable()))) {
+			invalidateConnectedSpeakerCache();
+		}
 	}
 
 	public static void untrackSpeaker(ServerLevel level, BlockPos pos) {
@@ -92,7 +96,9 @@ public final class SpeakerSystem {
 			return;
 		}
 		SpeakerKey key = new SpeakerKey(level.dimension(), pos.immutable());
-		KNOWN_SPEAKERS.remove(key);
+		if (KNOWN_SPEAKERS.remove(key)) {
+			invalidateConnectedSpeakerCache();
+		}
 		stopRuntime(key);
 	}
 
@@ -101,6 +107,7 @@ public final class SpeakerSystem {
 			return;
 		}
 		trackSpeaker(level, pos);
+		invalidateConnectedSpeakerCache();
 	}
 
 	public static void refreshConnectedSpeakersNow(MinecraftServer server, ServerLevel level, BlockPos originPos) {
@@ -150,6 +157,7 @@ public final class SpeakerSystem {
 
 	private static void onChunkLoad(ServerLevel level, LevelChunk chunk) {
 		scanChunkForSpeakers(level, chunk);
+		invalidateConnectedSpeakerCache();
 	}
 
 	private static void onChunkUnload(ServerLevel level, LevelChunk chunk) {
@@ -168,6 +176,7 @@ public final class SpeakerSystem {
 			KNOWN_SPEAKERS.remove(key);
 			stopRuntime(key);
 		}
+		invalidateConnectedSpeakerCache();
 	}
 
 	private static void scanChunkForSpeakers(ServerLevel level, LevelChunk chunk) {
@@ -445,6 +454,12 @@ public final class SpeakerSystem {
 	private record SpeakerKey(ResourceKey<Level> dimension, BlockPos pos) {
 	}
 
+	private record SpeakerConnectionCacheKey(ResourceKey<Level> dimension, BlockPos originPos) {
+	}
+
+	private record ConnectedSpeakerCacheEntry(long expiresAtGameTime, List<BlockPos> speakerPositions) {
+	}
+
 	private static final class SpeakerRuntime {
 		private final SpeakerKey key;
 		private final UUID channelId;
@@ -664,6 +679,12 @@ public final class SpeakerSystem {
 		if (level == null || originPos == null || !level.hasChunkAt(originPos)) {
 			return List.of();
 		}
+		SpeakerConnectionCacheKey cacheKey = new SpeakerConnectionCacheKey(level.dimension(), originPos.immutable());
+		long gameTime = level.getGameTime();
+		ConnectedSpeakerCacheEntry cached = CONNECTED_SPEAKER_CACHE.get(cacheKey);
+		if (cached != null && cached.expiresAtGameTime() >= gameTime) {
+			return cached.speakerPositions();
+		}
 		Set<BlockPos> wireNetwork = collectWireNetwork(level, originPos);
 		List<BlockPos> connected = new ArrayList<>();
 		for (SpeakerKey key : KNOWN_SPEAKERS) {
@@ -677,9 +698,15 @@ public final class SpeakerSystem {
 			if (!isConnectedToOrigin(originPos, key.pos(), wireNetwork)) {
 				continue;
 			}
-			connected.add(key.pos());
+			connected.add(key.pos().immutable());
 		}
-		return connected;
+		List<BlockPos> cachedPositions = List.copyOf(connected);
+		CONNECTED_SPEAKER_CACHE.put(cacheKey, new ConnectedSpeakerCacheEntry(gameTime + CONNECTED_SPEAKER_CACHE_TTL_TICKS, cachedPositions));
+		return cachedPositions;
+	}
+
+	private static void invalidateConnectedSpeakerCache() {
+		CONNECTED_SPEAKER_CACHE.clear();
 	}
 
 	private static boolean isConnectedToOrigin(BlockPos originPos, BlockPos speakerPos, Set<BlockPos> wireNetwork) {

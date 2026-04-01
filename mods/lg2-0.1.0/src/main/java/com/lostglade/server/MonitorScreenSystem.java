@@ -78,6 +78,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -152,6 +153,7 @@ public final class MonitorScreenSystem {
 	private static final long WALLPAPER_IDLE_VISIBILITY_RECHECK_MS = 500L;
 	private static final int MAX_SCREEN_SYNC_OPERATIONS_PER_TICK = 24;
 	private static final int MAX_POWER_REFRESHES_PER_TICK = 16;
+	private static final int MAX_SPEAKER_REFRESHES_PER_TICK = 12;
 	private static final long MEDIA_SESSION_CLEANUP_INTERVAL_TICKS = 40L;
 	private static final long MEDIA_ACTIONBAR_REFRESH_INTERVAL_TICKS = 20L;
 	private static final long MEDIA_FOCUS_CLEANUP_INTERVAL_TICKS = 20L;
@@ -1473,7 +1475,13 @@ public final class MonitorScreenSystem {
 				openMediaSession(player, component.runtimeKey(), nextMode);
 				markMediaFocus(player, component.runtimeKey());
 			}
-			synchronizeConnectedScreens(level, frame, null, nextMode, nextLauncherPage);
+			applyTransientComponentViewState(
+					level.getServer(),
+					level,
+					component,
+					nextMode != null ? nextMode : component.viewMode(),
+					nextLauncherPage != null ? nextLauncherPage : component.launcherPage()
+			);
 		} else if (rerenderCurrent) {
 			requestComponentRender(level.getServer(), component, component.viewMode(), component.launcherPage());
 			if (isPlayerMode(component.viewMode())) {
@@ -1590,6 +1598,7 @@ public final class MonitorScreenSystem {
 		}
 		processPendingScreenSyncs(server);
 		processPendingComponentSyncs(server);
+		processPendingSpeakerRefreshes(server);
 		processPowerRefreshes(server);
 		if ((server.getTickCount() % MEDIA_FOCUS_CLEANUP_INTERVAL_TICKS) == 0L) {
 			cleanupExpiredMediaFocus();
@@ -1640,6 +1649,37 @@ public final class MonitorScreenSystem {
 				remaining--;
 			}
 		}
+	}
+
+	private static void processPendingSpeakerRefreshes(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		int remaining = MAX_SPEAKER_REFRESHES_PER_TICK;
+		for (MonitorLevelState state : LEVEL_STATES.values()) {
+			if (remaining <= 0) {
+				break;
+			}
+			while (remaining > 0) {
+				ScreenRuntimeKey runtimeKey = state.pollSpeakerRefreshRuntime();
+				if (runtimeKey == null) {
+					break;
+				}
+				processPendingSpeakerRefresh(server, runtimeKey);
+				remaining--;
+			}
+		}
+	}
+
+	private static void processPendingSpeakerRefresh(MinecraftServer server, ScreenRuntimeKey runtimeKey) {
+		if (server == null || runtimeKey == null) {
+			return;
+		}
+		ServerLevel level = server.getLevel(runtimeKey.dimension());
+		if (level == null) {
+			return;
+		}
+		SpeakerSystem.refreshConnectedSpeakersNow(server, level, runtimeKey.pos());
 	}
 
 	private static void processPendingScreenSync(MinecraftServer server, MonitorLevelState state, ScreenKey key) {
@@ -3122,6 +3162,7 @@ public final class MonitorScreenSystem {
 			if (levelState == null) {
 				continue;
 			}
+			ServerLevel level = server.getLevel(levelState.dimension());
 			for (ScreenComponent component : List.copyOf(levelState.components().values())) {
 				if (component == null || (excludedRuntimeKey != null && excludedRuntimeKey.equals(component.runtimeKey()))) {
 					continue;
@@ -3134,6 +3175,19 @@ public final class MonitorScreenSystem {
 					collectPersistedGalleryCacheReferences(persistedItems, localMediaKeys, galleryMediaUrls, galleryMusicUrls, galleryYoutubeUrls);
 					break;
 				}
+			}
+			if (level == null) {
+				continue;
+			}
+			for (ScreenKey frameKey : List.copyOf(levelState.knownFrames())) {
+				if (frameKey == null) {
+					continue;
+				}
+				ItemFrame frame = findScreenFrame(level, frameKey.pos(), frameKey.direction());
+				if (frame == null) {
+					continue;
+				}
+				collectPersistedGalleryCacheReferences(readPersistedGalleryState(frame.getItem()), localMediaKeys, galleryMediaUrls, galleryMusicUrls, galleryYoutubeUrls);
 			}
 		}
 		return new GalleryCacheReferenceSnapshot(
@@ -4503,7 +4557,7 @@ public final class MonitorScreenSystem {
 			if (anchor == null || !(player.level() instanceof ServerLevel serverLevel)) {
 				return false;
 			}
-			synchronizeConnectedScreens(serverLevel, anchor, null, null, nextScroll);
+			applyTransientComponentViewState(server, serverLevel, component, component.viewMode(), nextScroll);
 			return true;
 		}
 		MediaRuntimeState state = MEDIA_STATES.get(component.runtimeKey());
@@ -4879,6 +4933,41 @@ public final class MonitorScreenSystem {
 				&& component.height() == work.height();
 	}
 
+	private static void applyTransientComponentViewState(
+			MinecraftServer server,
+			ServerLevel level,
+			ScreenComponent component,
+			ScreenViewMode viewMode,
+			int launcherPage
+	) {
+		if (server == null || level == null || component == null) {
+			return;
+		}
+		ScreenViewMode effectiveViewMode = viewMode != null ? viewMode : component.viewMode();
+		int effectiveLauncherPage = effectiveViewMode == ScreenViewMode.HOME
+				? clampInt(launcherPage, 0, homeMaxScroll(createUiLayout(component.width(), component.height())))
+				: launcherPage;
+		ScreenComponent updated = new ScreenComponent(
+				component.runtimeKey(),
+				component.facing(),
+				component.right(),
+				component.width(),
+				component.height(),
+				component.powered(),
+				effectiveViewMode,
+				effectiveLauncherPage,
+				component.frameCoords(),
+				component.byCoord()
+		);
+		MonitorLevelState state = levelState(level.dimension());
+		if (state.components().containsKey(updated.runtimeKey())) {
+			state.components().put(updated.runtimeKey(), updated);
+		} else {
+			cacheComponent(level, updated);
+		}
+		requestRuntimeRender(server, updated.runtimeKey());
+	}
+
 	private static void synchronizeConnectedScreens(ServerLevel level, ItemFrame startFrame, Set<ScreenKey> processedKeys) {
 		synchronizeConnectedScreens(level, startFrame, processedKeys, null, null);
 	}
@@ -4890,12 +4979,18 @@ public final class MonitorScreenSystem {
 			ScreenViewMode forcedViewMode,
 			Integer forcedLauncherPage
 	) {
-		ScreenComponent component = collectComponent(level, startFrame, processedKeys);
+		ScreenComponent component = (forcedViewMode != null || forcedLauncherPage != null)
+				? cachedComponentForFrame(level, startFrame, processedKeys)
+				: null;
+		if (component == null) {
+			component = collectComponent(level, startFrame, processedKeys);
+		}
 		if (component == null) {
 			return;
 		}
 
-		boolean powered = component.powered();
+		boolean powered = component.frameCoords().keySet().stream()
+				.anyMatch(frame -> frame != null && frame.isAlive() && isPowered(level, frame));
 		ScreenViewMode viewMode = forcedViewMode != null ? forcedViewMode : component.viewMode();
 		int launcherPage = forcedLauncherPage != null ? forcedLauncherPage : component.launcherPage();
 		if (!powered) {
@@ -4921,6 +5016,7 @@ public final class MonitorScreenSystem {
 		boolean immediateRenderRequested = forcedViewMode != null || forcedLauncherPage != null;
 		ServerLevel mapLevel = photoMapLevel(level.getServer(), level);
 		List<PersistedGalleryItem> persistedGallery = resolvePersistedGalleryState(component);
+		synchronizeRuntimeGalleryState(component.runtimeKey(), persistedGallery);
 		PersistedWallpaperState persistedWallpaper = resolvePersistedWallpaperState(component);
 		boolean rerenderMaps = false;
 
@@ -4984,6 +5080,26 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		requestComponentRender(level.getServer(), renderedComponent, viewMode, effectiveLauncherPage);
+	}
+
+	private static ScreenComponent cachedComponentForFrame(ServerLevel level, ItemFrame frame, Set<ScreenKey> processedKeys) {
+		if (level == null || frame == null) {
+			return null;
+		}
+		ScreenRuntimeKey runtimeKey = levelState(level.dimension()).frameToRuntime().get(new ScreenKey(frame.blockPosition(), frame.getDirection()));
+		if (runtimeKey == null) {
+			return null;
+		}
+		ScreenComponent component = levelState(level.dimension()).components().get(runtimeKey);
+		if (component == null) {
+			return null;
+		}
+		if (processedKeys != null) {
+			for (ItemFrame currentFrame : component.frameCoords().keySet()) {
+				processedKeys.add(new ScreenKey(currentFrame.blockPosition(), currentFrame.getDirection()));
+			}
+		}
+		return component;
 	}
 
 	private static ScreenComponent collectComponent(ServerLevel level, ItemFrame startFrame, Set<ScreenKey> processedKeys) {
@@ -5299,22 +5415,127 @@ public final class MonitorScreenSystem {
 		if (component == null) {
 			return List.of();
 		}
-		MediaRuntimeState runtimeState = MEDIA_STATES.get(component.runtimeKey());
-		if (runtimeState != null) {
+		LinkedHashSet<ScreenRuntimeKey> runtimeKeys = new LinkedHashSet<>();
+		if (component.runtimeKey() != null) {
+			runtimeKeys.add(component.runtimeKey());
+		}
+		MonitorLevelState state = null;
+		List<Map.Entry<ItemFrame, TileCoord>> orderedFrames = new ArrayList<>(component.frameCoords().entrySet());
+		orderedFrames.sort((left, right) -> {
+			TileCoord leftCoord = left.getValue();
+			TileCoord rightCoord = right.getValue();
+			int byRow = Integer.compare(leftCoord.y(), rightCoord.y());
+			return byRow != 0 ? byRow : Integer.compare(leftCoord.x(), rightCoord.x());
+		});
+		for (Map.Entry<ItemFrame, TileCoord> entry : orderedFrames) {
+			ItemFrame frame = entry.getKey();
+			if (state == null && frame != null && frame.level() instanceof ServerLevel level) {
+				state = levelState(level.dimension());
+			}
+			if (state == null || frame == null) {
+				continue;
+			}
+			ScreenRuntimeKey runtimeKey = state.frameToRuntime().get(new ScreenKey(frame.blockPosition(), frame.getDirection()));
+			if (runtimeKey != null) {
+				runtimeKeys.add(runtimeKey);
+			}
+		}
+		LinkedHashMap<String, PersistedGalleryItem> merged = new LinkedHashMap<>();
+		for (ScreenRuntimeKey runtimeKey : runtimeKeys) {
+			MediaRuntimeState runtimeState = MEDIA_STATES.get(runtimeKey);
+			if (runtimeState == null) {
+				continue;
+			}
 			synchronized (runtimeState) {
-				List<PersistedGalleryItem> fromRuntime = persistedGalleryItems(runtimeState.galleryItems);
-				if (!fromRuntime.isEmpty()) {
-					return fromRuntime;
-				}
+				mergePersistedGalleryItems(merged, persistedGalleryItems(runtimeState.galleryItems));
 			}
 		}
-		for (ItemFrame frame : component.frameCoords().keySet()) {
-			List<PersistedGalleryItem> fromFrame = readPersistedGalleryState(frame.getItem());
-			if (!fromFrame.isEmpty()) {
-				return fromFrame;
-			}
+		for (Map.Entry<ItemFrame, TileCoord> entry : orderedFrames) {
+			mergePersistedGalleryItems(merged, readPersistedGalleryState(entry.getKey().getItem()));
 		}
-		return List.of();
+		return merged.isEmpty() ? List.of() : List.copyOf(merged.values());
+	}
+
+	private static void mergePersistedGalleryItems(Map<String, PersistedGalleryItem> merged, List<PersistedGalleryItem> items) {
+		if (merged == null || items == null || items.isEmpty()) {
+			return;
+		}
+		for (PersistedGalleryItem item : items) {
+			String identity = persistedGalleryIdentity(item);
+			if (identity == null) {
+				continue;
+			}
+			PersistedGalleryItem existing = merged.get(identity);
+			merged.put(identity, mergePersistedGalleryItem(existing, item));
+		}
+	}
+
+	private static String persistedGalleryIdentity(PersistedGalleryItem item) {
+		if (item == null) {
+			return null;
+		}
+		String url = item.url() != null ? item.url().trim() : "";
+		if (!url.isBlank()) {
+			return "url:" + url;
+		}
+		String localMediaKey = item.localMediaKey() != null ? item.localMediaKey().trim() : "";
+		return localMediaKey.isBlank() ? null : "local:" + localMediaKey;
+	}
+
+	private static PersistedGalleryItem mergePersistedGalleryItem(PersistedGalleryItem existing, PersistedGalleryItem candidate) {
+		if (existing == null) {
+			return candidate;
+		}
+		if (candidate == null) {
+			return existing;
+		}
+		String title = firstNonBlank(existing.title(), candidate.title());
+		String subtitle = firstNonBlank(existing.subtitle(), candidate.subtitle());
+		String url = firstNonBlank(existing.url(), candidate.url());
+		String localMediaKey = firstNonBlank(existing.localMediaKey(), candidate.localMediaKey());
+		GalleryItemKind kind = existing.kind() != null && existing.kind() != GalleryItemKind.MEDIA
+				? existing.kind()
+				: candidate.kind() != null
+				? candidate.kind()
+				: GalleryItemKind.MEDIA;
+		return new PersistedGalleryItem(title, subtitle, url, effectiveGalleryItemKind(url, localMediaKey, kind), localMediaKey);
+	}
+
+	private static String firstNonBlank(String preferred, String fallback) {
+		if (preferred != null && !preferred.isBlank()) {
+			return preferred;
+		}
+		return fallback != null ? fallback : "";
+	}
+
+	private static void synchronizeRuntimeGalleryState(ScreenRuntimeKey key, List<PersistedGalleryItem> persistedItems) {
+		if (key == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		List<PersistedGalleryItem> normalizedItems = persistedItems != null ? persistedItems : List.of();
+		synchronized (state) {
+			if (Objects.equals(persistedGalleryItems(state.galleryItems), normalizedItems)) {
+				return;
+			}
+			String selectedUrl = currentGalleryItemLocked(state) != null ? currentGalleryItemLocked(state).url() : null;
+			int preferredIndex = state.galleryIndex;
+			state.galleryItems.clear();
+			state.galleryItems.addAll(galleryItemsFromPersisted(normalizedItems));
+			state.galleryHydrated = true;
+			state.galleryIndex = resolveGalleryItemIndex(state, selectedUrl, preferredIndex);
+			if (state.gallerySurfaceMode == GallerySurfaceMode.PLAYER && state.galleryIndex < 0 && !state.galleryItems.isEmpty()) {
+				state.galleryIndex = 0;
+			}
+			if (state.galleryItems.isEmpty()) {
+				state.galleryIndex = -1;
+				state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+			}
+			state.version++;
+		}
 	}
 
 	private static PersistedWallpaperState resolvePersistedWallpaperState(ScreenComponent component) {
@@ -10963,7 +11184,7 @@ public final class MonitorScreenSystem {
 		if (level == null) {
 			return;
 		}
-		SpeakerSystem.refreshConnectedSpeakersNow(server, level, key.pos());
+		levelState(level.dimension()).enqueueSpeakerRefreshRuntime(key);
 	}
 
 	private static long clampLong(long value, long min, long max) {
@@ -11179,6 +11400,8 @@ public final class MonitorScreenSystem {
 		private final ConcurrentLinkedQueue<ScreenRuntimeKey> dirtyRuntimes = new ConcurrentLinkedQueue<>();
 		private final Set<ScreenRuntimeKey> powerRuntimeSet = ConcurrentHashMap.newKeySet();
 		private final ConcurrentLinkedQueue<ScreenRuntimeKey> powerRuntimes = new ConcurrentLinkedQueue<>();
+		private final Set<ScreenRuntimeKey> speakerRefreshRuntimeSet = ConcurrentHashMap.newKeySet();
+		private final ConcurrentLinkedQueue<ScreenRuntimeKey> speakerRefreshRuntimes = new ConcurrentLinkedQueue<>();
 
 		private MonitorLevelState(ResourceKey<Level> dimension) {
 			this.dimension = dimension;
@@ -11234,10 +11457,24 @@ public final class MonitorScreenSystem {
 			}
 		}
 
+		private void enqueueSpeakerRefreshRuntime(ScreenRuntimeKey key) {
+			if (key != null && this.speakerRefreshRuntimeSet.add(key)) {
+				this.speakerRefreshRuntimes.add(key);
+			}
+		}
+
 		private ScreenRuntimeKey pollPowerRuntime() {
 			ScreenRuntimeKey key = this.powerRuntimes.poll();
 			if (key != null) {
 				this.powerRuntimeSet.remove(key);
+			}
+			return key;
+		}
+
+		private ScreenRuntimeKey pollSpeakerRefreshRuntime() {
+			ScreenRuntimeKey key = this.speakerRefreshRuntimes.poll();
+			if (key != null) {
+				this.speakerRefreshRuntimeSet.remove(key);
 			}
 			return key;
 		}
