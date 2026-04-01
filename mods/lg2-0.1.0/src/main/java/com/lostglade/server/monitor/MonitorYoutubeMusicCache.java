@@ -126,6 +126,15 @@ public final class MonitorYoutubeMusicCache {
 		return state.load(progress);
 	}
 
+	public static void deletePersistentTrack(String rawUrl) {
+		if (!looksLikeSupportedUrl(rawUrl)) {
+			return;
+		}
+		String url = rawUrl.trim();
+		TRACKS.remove(url);
+		deleteDirectoryQuietly(entryDirectory(url));
+	}
+
 	private static final class TrackCacheState {
 		private final String url;
 		private final Object lock = new Object();

@@ -116,6 +116,7 @@ public final class MonitorScreenSystem {
 	private static final String PERSISTED_GALLERY_ITEM_PREFIX = "gallery_item_";
 	private static final String PERSISTED_GALLERY_KIND_TAG = "kind";
 	private static final String PERSISTED_GALLERY_TITLE_TAG = "title";
+	private static final String PERSISTED_GALLERY_SUBTITLE_TAG = "subtitle";
 	private static final String PERSISTED_GALLERY_URL_TAG = "url";
 	private static final String PERSISTED_GALLERY_LOCAL_MEDIA_TAG = "local_media";
 	private static final String PERSISTED_WALLPAPER_URL_TAG = "wallpaper_url";
@@ -145,6 +146,7 @@ public final class MonitorScreenSystem {
 	private static final int YOUTUBE_PRELOAD_NEXT_COUNT = 8;
 	private static final long MEDIA_ACTION_SPINNER_MIN_MILLIS = 150L;
 	private static final Set<String> GALLERY_VIDEO_EXTENSIONS = Set.of(".mp4", ".m4v", ".mov", ".webm");
+	private static final Set<String> GALLERY_AUDIO_EXTENSIONS = Set.of(".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wav", ".flac", ".weba");
 	private static final long MEDIA_ACTION_COMPLETE_VISIBLE_MILLIS = 1600L;
 	private static final long YOUTUBE_FULLY_BUFFERED_TOLERANCE_MS = 1500L;
 	private static final long WALLPAPER_IDLE_VISIBILITY_RECHECK_MS = 500L;
@@ -894,12 +896,40 @@ public final class MonitorScreenSystem {
 			CompletableFuture
 					.supplyAsync(() -> {
 						try {
-							if (MonitorMediaApp.looksLikeDirectVideoUrl(url)) {
-								return new MediaLoadResult(pending.screenKey(), sender.getUUID(), url, null, MonitorMediaApp.loadVideoFromUrl(url, state.progress), null);
+							if (pending.mode() == ScreenViewMode.GALLERY && MonitorYoutubeMusicCache.looksLikeSupportedUrl(url)) {
+								MonitorYoutubeMusicCache.LoadedTrack track = MonitorYoutubeMusicCache.load(url, state.progress);
+								return new MediaLoadResult(
+										pending.screenKey(),
+										sender.getUUID(),
+										url,
+										track.title(),
+										track.artist(),
+										GalleryItemKind.AUDIO,
+										null,
+										track.video(),
+										null
+								);
 							}
-							return new MediaLoadResult(pending.screenKey(), sender.getUUID(), url, MonitorMediaApp.loadFromUrl(url, state.progress), null, null);
+							if (MonitorMediaApp.looksLikeDirectAudioUrl(url)) {
+								MonitorMediaApp.LoadedAudioTrack track = MonitorMediaApp.loadAudioFromUrl(url, state.progress);
+								return new MediaLoadResult(
+										pending.screenKey(),
+										sender.getUUID(),
+										url,
+										track.title(),
+										track.artist(),
+										GalleryItemKind.AUDIO,
+										null,
+										track.video(),
+										null
+								);
+							}
+							if (MonitorMediaApp.looksLikeDirectVideoUrl(url)) {
+								return new MediaLoadResult(pending.screenKey(), sender.getUUID(), url, null, "", GalleryItemKind.VIDEO, null, MonitorMediaApp.loadVideoFromUrl(url, state.progress), null);
+							}
+							return new MediaLoadResult(pending.screenKey(), sender.getUUID(), url, null, "", GalleryItemKind.MEDIA, MonitorMediaApp.loadFromUrl(url, state.progress), null, null);
 						} catch (Exception exception) {
-							return new MediaLoadResult(pending.screenKey(), sender.getUUID(), url, null, null, sanitizeMediaError(exception.getMessage()));
+							return new MediaLoadResult(pending.screenKey(), sender.getUUID(), url, null, "", GalleryItemKind.MEDIA, null, null, sanitizeMediaError(exception.getMessage()));
 						}
 					}, mediaIoExecutor)
 					.thenAccept(result -> server.execute(() -> applyMediaLoadResult(server, result)));
@@ -1185,7 +1215,11 @@ public final class MonitorScreenSystem {
 					}
 					nextMode = returnToGallery ? ScreenViewMode.GALLERY : ScreenViewMode.HOME;
 				}
-			} else if (!galleryBrowser && mediaState.mode == ScreenViewMode.GALLERY && mediaGalleryPlayerActionRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			} else if (!galleryBrowser
+					&& mediaState.mode == ScreenViewMode.GALLERY
+					&& (usesMusicPlayerLayoutLocked(mediaState)
+					? mediaYoutubeMusicActionButtonRect(layout, 0, 1)
+					: mediaGalleryPlayerActionRect(layout)).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					if (currentGalleryItemSavedLocked(mediaState)) {
 						mediaState.galleryDeleteConfirmOpen = true;
@@ -1209,8 +1243,8 @@ public final class MonitorScreenSystem {
 				rerenderCurrent = true;
 			} else if (playerUiVisible
 					&& canTogglePlaybackLocked(mediaState)
-					&& (mediaCenterPlayPauseRect(layout, mediaState.mode).contains(touchPoint.x(), touchPoint.y())
-					|| mediaPlayPauseRect(layout, mediaState.mode).contains(touchPoint.x(), touchPoint.y()))) {
+					&& (mediaCenterPlayPauseRect(layout, mediaChromeMode(mediaState)).contains(touchPoint.x(), touchPoint.y())
+					|| mediaPlayPauseRect(layout, mediaChromeMode(mediaState)).contains(touchPoint.x(), touchPoint.y()))) {
 				synchronized (mediaState) {
 					if (isStreamPlaybackLocked(mediaState) && mediaState.relaySessionId != null) {
 						boolean shouldPause = !isPlaybackPausedLocked(mediaState);
@@ -1229,7 +1263,7 @@ public final class MonitorScreenSystem {
 					}
 				}
 				rerenderCurrent = true;
-			} else if (playerUiVisible && mediaCenterBackRect(layout, mediaState.mode).contains(touchPoint.x(), touchPoint.y())) {
+			} else if (playerUiVisible && mediaCenterBackRect(layout, mediaChromeMode(mediaState)).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					if (isYoutubeFamilyMode(mediaState.mode) && !mediaState.youtubeQueue.isEmpty()) {
 						youtubeQueuePlayIndex = adjacentYoutubeQueueIndexLocked(mediaState, -1);
@@ -1252,7 +1286,7 @@ public final class MonitorScreenSystem {
 					}
 				}
 				rerenderCurrent = true;
-			} else if (playerUiVisible && mediaCenterForwardRect(layout, mediaState.mode).contains(touchPoint.x(), touchPoint.y())) {
+			} else if (playerUiVisible && mediaCenterForwardRect(layout, mediaChromeMode(mediaState)).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					if (isYoutubeFamilyMode(mediaState.mode) && !mediaState.youtubeQueue.isEmpty()) {
 						youtubeQueuePlayIndex = adjacentYoutubeQueueIndexLocked(mediaState, 1);
@@ -1275,14 +1309,14 @@ public final class MonitorScreenSystem {
 					}
 				}
 				rerenderCurrent = true;
-			} else if (playerUiVisible && mediaTimelineHitRect(layout, mediaState.mode).contains(touchPoint.x(), touchPoint.y())) {
+			} else if (playerUiVisible && mediaTimelineHitRect(layout, mediaChromeMode(mediaState)).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					if (isStreamPlaybackLocked(mediaState) && canSeekTimelineLocked(mediaState)) {
-						youtubeSeekTargetMs = youtubePositionForFraction(mediaState, mediaTimelineFraction(layout, touchPoint, mediaState.mode));
+						youtubeSeekTargetMs = youtubePositionForFraction(mediaState, mediaTimelineFraction(layout, touchPoint, mediaChromeMode(mediaState)));
 						mediaState.positionMs = youtubeSeekTargetMs;
 						bumpAudioSyncTokenLocked(mediaState);
 					} else if (mediaState.loadedMedia != null && mediaState.loadedMedia.frameCount() > 1) {
-						mediaState.frameIndex = mediaFrameIndexForFraction(mediaState.loadedMedia, mediaTimelineFraction(layout, touchPoint, mediaState.mode));
+						mediaState.frameIndex = mediaFrameIndexForFraction(mediaState.loadedMedia, mediaTimelineFraction(layout, touchPoint, mediaChromeMode(mediaState)));
 						mediaState.version++;
 					}
 				}
@@ -1293,6 +1327,17 @@ public final class MonitorScreenSystem {
 					&& mediaDownloadRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					mediaState.galleryDeleteConfirmOpen = true;
+					mediaState.statusText = "";
+					mediaState.version++;
+				}
+				rerenderCurrent = true;
+			} else if (playerUiVisible
+					&& mediaState.mode == ScreenViewMode.YOUTUBE_MUSIC
+					&& !isGalleryBackedYoutubeLocked(mediaState)
+					&& !isYoutubeHomePromptLocked(mediaState)
+					&& mediaYoutubeMusicDownloadRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					youtubeDownloadRequested = true;
 					mediaState.statusText = "";
 					mediaState.version++;
 				}
@@ -1359,7 +1404,7 @@ public final class MonitorScreenSystem {
 				);
 				rerenderCurrent = true;
 			} else if (playerUiVisible
-					&& mediaState.mode != ScreenViewMode.YOUTUBE_MUSIC
+					&& !isYoutubeMusicMode(mediaChromeMode(mediaState))
 					&& !controlsWereHidden
 					&& !mediaState.loading) {
 				synchronized (mediaState) {
@@ -1714,6 +1759,7 @@ public final class MonitorScreenSystem {
 		String url;
 		String title;
 		boolean directVideo;
+		boolean directAudio;
 		synchronized (state) {
 			if ((state.loadedMedia == null && !isDirectVideoPlaybackLocked(state)) || state.sourceUrl == null || state.sourceUrl.isBlank()) {
 				return;
@@ -1732,6 +1778,7 @@ public final class MonitorScreenSystem {
 			url = state.sourceUrl;
 			title = state.mediaTitle;
 			directVideo = isDirectVideoPlaybackLocked(state);
+			directAudio = directVideo && usesMusicPlayerLayoutLocked(state);
 		}
 		requestRuntimeRender(server, key);
 		ensureExecutors();
@@ -1741,7 +1788,9 @@ public final class MonitorScreenSystem {
 							try {
 								return new SavedGalleryMediaPersistResult(
 										url,
-										directVideo ? MonitorMediaApp.persistSavedGalleryVideo(url, null) : MonitorMediaApp.persistSavedGalleryMedia(url),
+										directVideo
+												? (directAudio ? MonitorMediaApp.persistSavedGalleryAudio(url, null) : MonitorMediaApp.persistSavedGalleryVideo(url, null))
+												: MonitorMediaApp.persistSavedGalleryMedia(url),
 										null
 								);
 							} catch (Exception exception) {
@@ -1749,7 +1798,9 @@ public final class MonitorScreenSystem {
 							}
 						}, mediaIoExecutor)
 						.thenAccept(result -> server.execute(() -> {
-							if (directVideo) {
+							if (directVideo && directAudio) {
+								finishGalleryAudioDownload(server, key, title, url, directVideoPreview, result.savedMediaKey(), result.error(), layout);
+							} else if (directVideo) {
 								finishGalleryVideoDownload(server, key, title, url, directVideoPreview, result.savedMediaKey(), result.error(), layout);
 							} else {
 								finishGalleryDownload(server, key, title, url, media, result.savedMediaKey(), result.error(), layout);
@@ -1795,6 +1846,7 @@ public final class MonitorScreenSystem {
 			int index = upsertGalleryItemLocked(
 					state,
 					title,
+					"",
 					url,
 					savedMediaKey,
 					media,
@@ -1859,6 +1911,7 @@ public final class MonitorScreenSystem {
 			int index = upsertGalleryItemLocked(
 					state,
 					title,
+					"",
 					url,
 					savedMediaKey,
 					null,
@@ -1888,6 +1941,74 @@ public final class MonitorScreenSystem {
 		ServerPlayer requester = requesterUuid != null ? server.getPlayerList().getPlayer(requesterUuid) : null;
 		if (requester != null) {
 			requester.sendSystemMessage(Component.literal("Видео сохранено в галерею"));
+		}
+	}
+
+	private static void finishGalleryAudioDownload(
+			MinecraftServer server,
+			ScreenRuntimeKey key,
+			String title,
+			String url,
+			BufferedImage preview,
+			String savedMediaKey,
+			String saveError,
+			UiLayout layout
+	) {
+		if (server == null || key == null || url == null || url.isBlank() || layout == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		ensureGalleryStateHydrated(server, key, state);
+		UUID requesterUuid;
+		boolean saved = false;
+		synchronized (state) {
+			if (!state.downloadInProgress || !Objects.equals(state.downloadTargetUrl, url)) {
+				return;
+			}
+			requesterUuid = state.downloadRequesterUuid;
+			if (savedMediaKey == null || savedMediaKey.isBlank()) {
+				clearDownloadStateLocked(state);
+				state.statusText = saveError != null && !saveError.isBlank() ? saveError : "SAVE FAILED";
+				state.version++;
+				requestRuntimeRender(server, key);
+				return;
+			}
+			int index = upsertGalleryItemLocked(
+					state,
+					title,
+					state.mediaSubtitle,
+					url,
+					savedMediaKey,
+					null,
+					preview,
+					GalleryItemKind.AUDIO
+			);
+			saved = index >= 0;
+			if (saved) {
+				if (Objects.equals(state.sourceUrl, url)) {
+					state.galleryIndex = index;
+					state.gallerySurfaceMode = GallerySurfaceMode.PLAYER;
+				}
+				markDownloadCompletedLocked(state, url);
+			} else {
+				clearDownloadStateLocked(state);
+			}
+			state.statusText = "";
+			state.version++;
+		}
+		if (!saved) {
+			requestRuntimeRender(server, key);
+			return;
+		}
+		persistGalleryState(server, key, state);
+		requestRuntimeRender(server, key);
+		scheduleActionCompletionReset(server, key);
+		ServerPlayer requester = requesterUuid != null ? server.getPlayerList().getPlayer(requesterUuid) : null;
+		if (requester != null) {
+			requester.sendSystemMessage(Component.literal("Аудио сохранено в галерею"));
 		}
 	}
 
@@ -1937,10 +2058,14 @@ public final class MonitorScreenSystem {
 		}
 		ensureGalleryStateHydrated(server, key, state);
 		boolean readyNow = false;
+		ScreenViewMode downloadMode;
 		synchronized (state) {
-			if (state.mode != ScreenViewMode.YOUTUBE || state.sourceUrl == null || state.sourceUrl.isBlank()) {
+			if ((state.mode != ScreenViewMode.YOUTUBE && state.mode != ScreenViewMode.YOUTUBE_MUSIC)
+					|| state.sourceUrl == null
+					|| state.sourceUrl.isBlank()) {
 				return;
 			}
+			downloadMode = state.mode;
 			if (hasGalleryItemForUrlLocked(state, state.sourceUrl)) {
 				state.version++;
 				return;
@@ -1996,6 +2121,7 @@ public final class MonitorScreenSystem {
 		UUID requesterUuid;
 		String savedUrl = null;
 		boolean saved = false;
+		ScreenViewMode downloadMode;
 		synchronized (state) {
 			if (!state.downloadInProgress || !isYoutubeGalleryDownloadReadyLocked(state)) {
 				return;
@@ -2003,6 +2129,7 @@ public final class MonitorScreenSystem {
 			if (state.sourceUrl == null || state.sourceUrl.isBlank() || !Objects.equals(state.sourceUrl, state.downloadTargetUrl)) {
 				return;
 			}
+			downloadMode = state.mode;
 			requesterUuid = state.downloadRequesterUuid;
 			saved = saveCurrentYoutubeToGalleryLocked(state);
 			if (saved) {
@@ -2036,7 +2163,7 @@ public final class MonitorScreenSystem {
 		scheduleActionCompletionReset(server, key);
 		ServerPlayer requester = requesterUuid != null ? server.getPlayerList().getPlayer(requesterUuid) : null;
 		if (requester != null) {
-			requester.sendSystemMessage(Component.literal("Видео сохранено в галерею"));
+			requester.sendSystemMessage(Component.literal(downloadMode == ScreenViewMode.YOUTUBE_MUSIC ? "Трек сохранён в галерею" : "Видео сохранено в галерею"));
 		}
 	}
 
@@ -2085,11 +2212,12 @@ public final class MonitorScreenSystem {
 								url,
 								ScreenViewMode.YOUTUBE,
 								PlaybackStreamKind.YOUTUBE,
+								null,
 								MonitorYoutubeRelayClient.load(relaySessionId(key), url, state.progress),
 								null
 						);
 					} catch (Exception exception) {
-						return new YoutubeLoadResult(key, requesterUuid, url, ScreenViewMode.YOUTUBE, PlaybackStreamKind.YOUTUBE, null, sanitizeMediaError(exception.getMessage()));
+						return new YoutubeLoadResult(key, requesterUuid, url, ScreenViewMode.YOUTUBE, PlaybackStreamKind.YOUTUBE, null, null, sanitizeMediaError(exception.getMessage()));
 					}
 				}, mediaIoExecutor)
 				.thenAccept(result -> server.execute(() -> applyYoutubeLoadResult(server, result)));
@@ -2143,11 +2271,12 @@ public final class MonitorScreenSystem {
 								url,
 								ScreenViewMode.GALLERY,
 								PlaybackStreamKind.YOUTUBE,
+								null,
 								MonitorYoutubeRelayClient.load(relaySessionId(key), url, state.progress),
 								null
 						);
 					} catch (Exception exception) {
-						return new YoutubeLoadResult(key, requesterUuid, url, ScreenViewMode.GALLERY, PlaybackStreamKind.YOUTUBE, null, sanitizeMediaError(exception.getMessage()));
+						return new YoutubeLoadResult(key, requesterUuid, url, ScreenViewMode.GALLERY, PlaybackStreamKind.YOUTUBE, null, null, sanitizeMediaError(exception.getMessage()));
 					}
 				}, mediaIoExecutor)
 				.thenAccept(result -> server.execute(() -> applyYoutubeLoadResult(server, result)));
@@ -2222,6 +2351,7 @@ public final class MonitorScreenSystem {
 								url,
 								targetMode,
 								PlaybackStreamKind.DIRECT_VIDEO,
+								subtitle,
 								MonitorYoutubeRelayClient.loadDirect(
 										relaySessionId(key),
 										url,
@@ -2229,13 +2359,19 @@ public final class MonitorScreenSystem {
 										video.playbackInput(),
 										video.audioInput(),
 										video.durationMs(),
-										targetMode == ScreenViewMode.YOUTUBE_MUSIC ? video.preview() : null,
+										(targetMode == ScreenViewMode.YOUTUBE_MUSIC
+												|| (targetMode == ScreenViewMode.GALLERY
+												&& (MonitorYoutubeMusicCache.looksLikeSupportedUrl(url)
+												|| MonitorMediaApp.looksLikeDirectAudioUrl(url)
+												|| subtitle != null && !subtitle.isBlank())))
+												? video.preview()
+												: null,
 										state.progress
 								),
 								null
 						);
 					} catch (Exception exception) {
-						return new YoutubeLoadResult(key, requesterUuid, url, targetMode, PlaybackStreamKind.DIRECT_VIDEO, null, sanitizeMediaError(exception.getMessage()));
+						return new YoutubeLoadResult(key, requesterUuid, url, targetMode, PlaybackStreamKind.DIRECT_VIDEO, subtitle, null, sanitizeMediaError(exception.getMessage()));
 					}
 				}, mediaIoExecutor)
 				.thenAccept(result -> server.execute(() -> applyYoutubeLoadResult(server, result)));
@@ -2353,7 +2489,9 @@ public final class MonitorScreenSystem {
 		}
 		for (PersistedGalleryItem item : persistedItems) {
 			GalleryItemKind resolvedKind = effectiveGalleryItemKind(item);
-			if (resolvedKind == GalleryItemKind.MEDIA || resolvedKind == GalleryItemKind.VIDEO) {
+			if (resolvedKind == GalleryItemKind.MEDIA
+					|| resolvedKind == GalleryItemKind.VIDEO
+					|| resolvedKind == GalleryItemKind.AUDIO) {
 				scheduleGalleryItemLoad(server, key, item.title(), item.url(), item.localMediaKey(), resolvedKind, false, -1);
 			}
 		}
@@ -2475,9 +2613,44 @@ public final class MonitorScreenSystem {
 				.supplyAsync(() -> {
 					try {
 						GalleryItemKind resolvedKind = effectiveGalleryItemKind(url, localMediaKey, kind);
+						if (resolvedKind == GalleryItemKind.AUDIO) {
+							if (MonitorYoutubeMusicCache.looksLikeSupportedUrl(url) && (localMediaKey == null || localMediaKey.isBlank())) {
+								MonitorYoutubeMusicCache.LoadedTrack track = MonitorYoutubeMusicCache.load(url, finalProgress);
+								return new GalleryItemLoadResult(
+										key,
+										track.title(),
+										track.artist(),
+										url,
+										localMediaKey,
+										resolvedKind,
+										null,
+										track.video(),
+										openWhenReady,
+										preferredIndex,
+										null
+								);
+							}
+							MonitorMediaApp.LoadedAudioTrack track = localMediaKey != null && !localMediaKey.isBlank()
+									? MonitorMediaApp.loadSavedGalleryAudio(localMediaKey, finalProgress)
+									: MonitorMediaApp.loadAudioFromUrl(url, finalProgress);
+							return new GalleryItemLoadResult(
+									key,
+									track.title(),
+									track.artist(),
+									url,
+									localMediaKey,
+									resolvedKind,
+									null,
+									track.video(),
+									openWhenReady,
+									preferredIndex,
+									null
+							);
+						}
 						return new GalleryItemLoadResult(
 								key,
 								title,
+								"",
 								url,
 								localMediaKey,
 								resolvedKind,
@@ -2496,7 +2669,7 @@ public final class MonitorScreenSystem {
 								null
 						);
 					} catch (Exception exception) {
-						return new GalleryItemLoadResult(key, title, url, localMediaKey, kind != null ? kind : GalleryItemKind.MEDIA, null, null, openWhenReady, preferredIndex, sanitizeMediaError(exception.getMessage()));
+						return new GalleryItemLoadResult(key, title, "", url, localMediaKey, kind != null ? kind : GalleryItemKind.MEDIA, null, null, openWhenReady, preferredIndex, sanitizeMediaError(exception.getMessage()));
 					}
 				}, mediaIoExecutor)
 				.thenAccept(result -> server.execute(() -> applyGalleryItemLoadResult(server, result)));
@@ -2516,8 +2689,10 @@ public final class MonitorScreenSystem {
 		boolean shouldAnimate = false;
 		boolean shouldPersistLocalMedia = false;
 		boolean shouldPersistLocalVideo = false;
+		boolean shouldPersistLocalAudio = false;
 		MonitorMediaApp.LoadedVideo loadedVideoToOpen = null;
 		String loadedVideoTitle = null;
+		String loadedVideoSubtitle = null;
 		int loadedVideoIndex = -1;
 		synchronized (state) {
 			state.galleryLoadingUrls.remove(result.url());
@@ -2535,6 +2710,7 @@ public final class MonitorScreenSystem {
 						targetIndex,
 						new GalleryItem(
 								(existing != null && existing.title() != null && !existing.title().isBlank()) ? existing.title() : result.title(),
+								existing != null && existing.subtitle() != null ? existing.subtitle() : "",
 								result.url(),
 								result.localMediaKey() != null && !result.localMediaKey().isBlank() ? result.localMediaKey() : existing != null ? existing.localMediaKey() : null,
 								result.loadedMedia(),
@@ -2562,21 +2738,26 @@ public final class MonitorScreenSystem {
 				GalleryItem existing = state.galleryItems.get(targetIndex);
 				String resolvedTitle = (existing != null && existing.title() != null && !existing.title().isBlank())
 						? existing.title()
-						: result.title();
+						: (result.title() == null || result.title().isBlank() ? "Audio" : result.title());
+				String resolvedSubtitle = result.subtitle() != null && !result.subtitle().isBlank()
+						? result.subtitle()
+						: existing != null && existing.subtitle() != null ? existing.subtitle() : "";
 				state.galleryItems.set(
 						targetIndex,
 						new GalleryItem(
 								resolvedTitle,
+								resolvedSubtitle,
 								result.url(),
 								result.localMediaKey() != null && !result.localMediaKey().isBlank() ? result.localMediaKey() : existing != null ? existing.localMediaKey() : null,
 								null,
 								result.loadedVideo().preview() != null ? result.loadedVideo().preview() : (existing != null ? existing.preview() : null),
-								GalleryItemKind.VIDEO
+								result.kind()
 						)
 				);
 				if (openWhenReady) {
 					loadedVideoToOpen = result.loadedVideo();
 					loadedVideoTitle = resolvedTitle;
+					loadedVideoSubtitle = resolvedSubtitle;
 					loadedVideoIndex = targetIndex;
 				} else {
 					state.loading = false;
@@ -2585,7 +2766,10 @@ public final class MonitorScreenSystem {
 				}
 				state.version++;
 				shouldRender = true;
-				shouldPersistLocalVideo = (result.localMediaKey() == null || result.localMediaKey().isBlank());
+				shouldPersistLocalVideo = result.kind() == GalleryItemKind.VIDEO && (result.localMediaKey() == null || result.localMediaKey().isBlank());
+				shouldPersistLocalAudio = result.kind() == GalleryItemKind.AUDIO
+						&& (result.localMediaKey() == null || result.localMediaKey().isBlank())
+						&& !MonitorYoutubeMusicCache.looksLikeSupportedUrl(result.url());
 			} else if (openWhenReady) {
 				state.loading = false;
 				state.statusText = sanitizeMediaError(result.error());
@@ -2601,13 +2785,16 @@ public final class MonitorScreenSystem {
 			scheduleNextMediaFrame(server, result.screenKey());
 		}
 		if (loadedVideoToOpen != null) {
-			startDirectVideoPlayback(server, result.screenKey(), null, loadedVideoTitle, result.url(), loadedVideoToOpen, loadedVideoIndex, ScreenViewMode.GALLERY, false);
+			startDirectVideoPlayback(server, result.screenKey(), null, loadedVideoTitle, loadedVideoSubtitle, result.url(), loadedVideoToOpen, loadedVideoIndex, ScreenViewMode.GALLERY, false);
 		}
 		if (shouldPersistLocalMedia) {
 			scheduleGalleryLocalMediaPersistence(server, result.screenKey(), result.url());
 		}
 		if (shouldPersistLocalVideo) {
 			scheduleGalleryLocalVideoPersistence(server, result.screenKey(), result.url());
+		}
+		if (shouldPersistLocalAudio) {
+			scheduleGalleryLocalAudioPersistence(server, result.screenKey(), result.url());
 		}
 	}
 
@@ -2647,7 +2834,7 @@ public final class MonitorScreenSystem {
 			}
 			state.galleryItems.set(
 					index,
-					new GalleryItem(item.title(), item.url(), result.savedMediaKey(), item.media(), item.preview(), item.kind())
+					new GalleryItem(item.title(), item.subtitle(), item.url(), result.savedMediaKey(), item.media(), item.preview(), item.kind())
 			);
 			changed = true;
 		}
@@ -2694,7 +2881,54 @@ public final class MonitorScreenSystem {
 			}
 			state.galleryItems.set(
 					index,
-					new GalleryItem(item.title(), item.url(), result.savedMediaKey(), item.media(), item.preview(), GalleryItemKind.VIDEO)
+					new GalleryItem(item.title(), item.subtitle(), item.url(), result.savedMediaKey(), item.media(), item.preview(), GalleryItemKind.VIDEO)
+			);
+			changed = true;
+		}
+		if (changed) {
+			persistGalleryState(server, key, state);
+		}
+	}
+
+	private static void scheduleGalleryLocalAudioPersistence(MinecraftServer server, ScreenRuntimeKey key, String url) {
+		if (server == null || key == null || url == null || url.isBlank()) {
+			return;
+		}
+		ensureExecutors();
+		CompletableFuture
+				.supplyAsync(() -> {
+					try {
+						return new SavedGalleryMediaPersistResult(url, MonitorMediaApp.persistSavedGalleryAudio(url, null), null);
+					} catch (Exception exception) {
+						return new SavedGalleryMediaPersistResult(url, null, sanitizeMediaError(exception.getMessage()));
+					}
+				}, mediaIoExecutor)
+				.thenAccept(result -> server.execute(() -> applyGalleryLocalAudioPersistence(server, key, result)));
+	}
+
+	private static void applyGalleryLocalAudioPersistence(MinecraftServer server, ScreenRuntimeKey key, SavedGalleryMediaPersistResult result) {
+		if (server == null || key == null || result == null || result.savedMediaKey() == null || result.savedMediaKey().isBlank()) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		boolean changed = false;
+		synchronized (state) {
+			int index = resolveGalleryItemIndex(state, result.url(), -1);
+			if (index < 0 || index >= state.galleryItems.size()) {
+				return;
+			}
+			GalleryItem item = state.galleryItems.get(index);
+			if (item == null
+					|| effectiveGalleryItemKind(item) != GalleryItemKind.AUDIO
+					|| item.localMediaKey() != null && !item.localMediaKey().isBlank()) {
+				return;
+			}
+			state.galleryItems.set(
+					index,
+					new GalleryItem(item.title(), item.subtitle(), item.url(), result.savedMediaKey(), item.media(), item.preview(), GalleryItemKind.AUDIO)
 			);
 			changed = true;
 		}
@@ -2745,7 +2979,33 @@ public final class MonitorScreenSystem {
 		return GALLERY_VIDEO_EXTENSIONS.contains(extension);
 	}
 
+	private static boolean looksLikeDirectAudioReference(String value) {
+		if (value == null || value.isBlank()) {
+			return false;
+		}
+		String normalized = value.trim();
+		int queryIndex = normalized.indexOf('?');
+		if (queryIndex >= 0) {
+			normalized = normalized.substring(0, queryIndex);
+		}
+		int fragmentIndex = normalized.indexOf('#');
+		if (fragmentIndex >= 0) {
+			normalized = normalized.substring(0, fragmentIndex);
+		}
+		int slashIndex = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
+		String tail = slashIndex >= 0 && slashIndex + 1 < normalized.length() ? normalized.substring(slashIndex + 1) : normalized;
+		int dotIndex = tail.lastIndexOf('.');
+		if (dotIndex < 0 || dotIndex >= tail.length() - 1) {
+			return false;
+		}
+		String extension = tail.substring(dotIndex).toLowerCase(Locale.ROOT);
+		return GALLERY_AUDIO_EXTENSIONS.contains(extension);
+	}
+
 	private static GalleryItemKind effectiveGalleryItemKind(String url, String localMediaKey, GalleryItemKind kind) {
+		if (kind == GalleryItemKind.AUDIO || looksLikeDirectAudioReference(localMediaKey) || looksLikeDirectAudioReference(url)) {
+			return GalleryItemKind.AUDIO;
+		}
 		if (looksLikeDirectVideoReference(localMediaKey) || looksLikeDirectVideoReference(url)) {
 			return GalleryItemKind.VIDEO;
 		}
@@ -2842,8 +3102,10 @@ public final class MonitorScreenSystem {
 	private static GalleryCacheReferenceSnapshot collectGalleryCacheReferences(MinecraftServer server, ScreenRuntimeKey excludedRuntimeKey) {
 		Set<String> localMediaKeys = new HashSet<>();
 		Set<String> galleryMediaUrls = new HashSet<>();
+		Set<String> galleryMusicUrls = new HashSet<>();
 		Set<String> galleryYoutubeUrls = new HashSet<>();
 		Set<String> activeMediaUrls = new HashSet<>();
+		Set<String> activeMusicUrls = new HashSet<>();
 		Set<String> activeYoutubeUrls = new HashSet<>();
 		for (Map.Entry<ScreenRuntimeKey, MediaRuntimeState> entry : List.copyOf(MEDIA_STATES.entrySet())) {
 			if (entry == null || entry.getKey() == null || entry.getValue() == null) {
@@ -2853,7 +3115,7 @@ public final class MonitorScreenSystem {
 				continue;
 			}
 			synchronized (entry.getValue()) {
-				collectGalleryCacheReferencesLocked(entry.getValue(), localMediaKeys, galleryMediaUrls, galleryYoutubeUrls, activeMediaUrls, activeYoutubeUrls);
+				collectGalleryCacheReferencesLocked(entry.getValue(), localMediaKeys, galleryMediaUrls, galleryMusicUrls, galleryYoutubeUrls, activeMediaUrls, activeMusicUrls, activeYoutubeUrls);
 			}
 		}
 		for (MonitorLevelState levelState : LEVEL_STATES.values()) {
@@ -2869,7 +3131,7 @@ public final class MonitorScreenSystem {
 					if (persistedItems.isEmpty()) {
 						continue;
 					}
-					collectPersistedGalleryCacheReferences(persistedItems, localMediaKeys, galleryMediaUrls, galleryYoutubeUrls);
+					collectPersistedGalleryCacheReferences(persistedItems, localMediaKeys, galleryMediaUrls, galleryMusicUrls, galleryYoutubeUrls);
 					break;
 				}
 			}
@@ -2877,8 +3139,10 @@ public final class MonitorScreenSystem {
 		return new GalleryCacheReferenceSnapshot(
 				Set.copyOf(localMediaKeys),
 				Set.copyOf(galleryMediaUrls),
+				Set.copyOf(galleryMusicUrls),
 				Set.copyOf(galleryYoutubeUrls),
 				Set.copyOf(activeMediaUrls),
+				Set.copyOf(activeMusicUrls),
 				Set.copyOf(activeYoutubeUrls)
 		);
 	}
@@ -2887,29 +3151,34 @@ public final class MonitorScreenSystem {
 			MediaRuntimeState state,
 			Set<String> localMediaKeys,
 			Set<String> galleryMediaUrls,
+			Set<String> galleryMusicUrls,
 			Set<String> galleryYoutubeUrls,
 			Set<String> activeMediaUrls,
+			Set<String> activeMusicUrls,
 			Set<String> activeYoutubeUrls
 	) {
 		if (state == null) {
 			return;
 		}
 		for (GalleryItem item : state.galleryItems) {
-			collectGalleryCacheReference(item, localMediaKeys, galleryMediaUrls, galleryYoutubeUrls);
+			collectGalleryCacheReference(item, localMediaKeys, galleryMediaUrls, galleryMusicUrls, galleryYoutubeUrls);
 		}
-		collectActiveMediaUrl(state.sourceUrl, activeMediaUrls, activeYoutubeUrls);
-		collectActiveMediaUrl(state.downloadTargetUrl, activeMediaUrls, activeYoutubeUrls);
+		collectActiveMediaUrl(state.sourceUrl, activeMediaUrls, activeMusicUrls, activeYoutubeUrls);
+		collectActiveMediaUrl(state.downloadTargetUrl, activeMediaUrls, activeMusicUrls, activeYoutubeUrls);
 		for (String url : state.galleryLoadingUrls) {
-			collectActiveMediaUrl(url, activeMediaUrls, activeYoutubeUrls);
+			collectActiveMediaUrl(url, activeMediaUrls, activeMusicUrls, activeYoutubeUrls);
 		}
 		for (YoutubeQueueItem item : state.youtubeQueue) {
 			if (item == null) {
 				continue;
 			}
-			collectActiveMediaUrl(item.url(), activeMediaUrls, activeYoutubeUrls);
+			collectActiveMediaUrl(item.url(), activeMediaUrls, activeMusicUrls, activeYoutubeUrls);
 		}
 		for (String url : state.retainedYoutubePreloadUrls) {
-			collectActiveMediaUrl(url, activeMediaUrls, activeYoutubeUrls);
+			collectActiveMediaUrl(url, activeMediaUrls, activeMusicUrls, activeYoutubeUrls);
+		}
+		for (String url : state.retainedYoutubeMusicUrls) {
+			collectActiveMediaUrl(url, activeMediaUrls, activeMusicUrls, activeYoutubeUrls);
 		}
 	}
 
@@ -2917,13 +3186,14 @@ public final class MonitorScreenSystem {
 			List<PersistedGalleryItem> persistedItems,
 			Set<String> localMediaKeys,
 			Set<String> galleryMediaUrls,
+			Set<String> galleryMusicUrls,
 			Set<String> galleryYoutubeUrls
 	) {
 		if (persistedItems == null || persistedItems.isEmpty()) {
 			return;
 		}
 		for (PersistedGalleryItem item : persistedItems) {
-			collectGalleryCacheReference(item, localMediaKeys, galleryMediaUrls, galleryYoutubeUrls);
+			collectGalleryCacheReference(item, localMediaKeys, galleryMediaUrls, galleryMusicUrls, galleryYoutubeUrls);
 		}
 	}
 
@@ -2931,24 +3201,26 @@ public final class MonitorScreenSystem {
 			GalleryItem item,
 			Set<String> localMediaKeys,
 			Set<String> galleryMediaUrls,
+			Set<String> galleryMusicUrls,
 			Set<String> galleryYoutubeUrls
 	) {
 		if (item == null) {
 			return;
 		}
-		collectGalleryCacheReference(item.url(), item.localMediaKey(), item.kind(), localMediaKeys, galleryMediaUrls, galleryYoutubeUrls);
+		collectGalleryCacheReference(item.url(), item.localMediaKey(), item.kind(), localMediaKeys, galleryMediaUrls, galleryMusicUrls, galleryYoutubeUrls);
 	}
 
 	private static void collectGalleryCacheReference(
 			PersistedGalleryItem item,
 			Set<String> localMediaKeys,
 			Set<String> galleryMediaUrls,
+			Set<String> galleryMusicUrls,
 			Set<String> galleryYoutubeUrls
 	) {
 		if (item == null) {
 			return;
 		}
-		collectGalleryCacheReference(item.url(), item.localMediaKey(), item.kind(), localMediaKeys, galleryMediaUrls, galleryYoutubeUrls);
+		collectGalleryCacheReference(item.url(), item.localMediaKey(), item.kind(), localMediaKeys, galleryMediaUrls, galleryMusicUrls, galleryYoutubeUrls);
 	}
 
 	private static void collectGalleryCacheReference(
@@ -2957,11 +3229,18 @@ public final class MonitorScreenSystem {
 			GalleryItemKind kind,
 			Set<String> localMediaKeys,
 			Set<String> galleryMediaUrls,
+			Set<String> galleryMusicUrls,
 			Set<String> galleryYoutubeUrls
 	) {
 		String normalizedUrl = url != null ? url.trim() : "";
 		String normalizedLocalMediaKey = localMediaKey != null ? localMediaKey.trim() : "";
 		GalleryItemKind resolvedKind = effectiveGalleryItemKind(normalizedUrl, normalizedLocalMediaKey, kind);
+		if (resolvedKind == GalleryItemKind.AUDIO && MonitorYoutubeMusicCache.looksLikeSupportedUrl(normalizedUrl)) {
+			if (!normalizedUrl.isBlank()) {
+				galleryMusicUrls.add(normalizedUrl);
+			}
+			return;
+		}
 		if (resolvedKind == GalleryItemKind.YOUTUBE) {
 			if (!normalizedUrl.isBlank()) {
 				galleryYoutubeUrls.add(normalizedUrl);
@@ -2976,11 +3255,14 @@ public final class MonitorScreenSystem {
 		}
 	}
 
-	private static void collectActiveMediaUrl(String url, Set<String> activeMediaUrls, Set<String> activeYoutubeUrls) {
+	private static void collectActiveMediaUrl(String url, Set<String> activeMediaUrls, Set<String> activeMusicUrls, Set<String> activeYoutubeUrls) {
 		if (url == null || url.isBlank()) {
 			return;
 		}
 		String normalizedUrl = url.trim();
+		if (MonitorYoutubeMusicCache.looksLikeSupportedUrl(normalizedUrl)) {
+			activeMusicUrls.add(normalizedUrl);
+		}
 		if (MonitorYoutubeRelayClient.looksLikeYoutubeUrl(normalizedUrl)) {
 			activeYoutubeUrls.add(normalizedUrl);
 		} else {
@@ -2994,6 +3276,7 @@ public final class MonitorScreenSystem {
 		}
 		Set<String> deletedLocalMediaKeys = new HashSet<>();
 		Set<String> deletedMediaUrls = new HashSet<>();
+		Set<String> deletedMusicUrls = new HashSet<>();
 		Set<String> deletedYoutubeUrls = new HashSet<>();
 		for (GalleryCacheCandidate candidate : candidates) {
 			if (candidate == null) {
@@ -3001,6 +3284,16 @@ public final class MonitorScreenSystem {
 			}
 			String url = candidate.url() != null ? candidate.url().trim() : "";
 			String localMediaKey = candidate.localMediaKey() != null ? candidate.localMediaKey().trim() : "";
+			if (candidate.kind() == GalleryItemKind.AUDIO && MonitorYoutubeMusicCache.looksLikeSupportedUrl(url)) {
+				if (url.isBlank()
+						|| refs.galleryMusicUrls().contains(url)
+						|| refs.activeMusicUrls().contains(url)
+						|| !deletedMusicUrls.add(url)) {
+					continue;
+				}
+				MonitorYoutubeMusicCache.deletePersistentTrack(url);
+				continue;
+			}
 			if (candidate.kind() == GalleryItemKind.YOUTUBE) {
 				if (url.isBlank()
 						|| refs.galleryYoutubeUrls().contains(url)
@@ -3113,6 +3406,7 @@ public final class MonitorScreenSystem {
 							galleryIndex,
 							new GalleryItem(
 									existing.title(),
+									existing.subtitle(),
 									existing.url(),
 									existing.localMediaKey(),
 									result.loadedMedia(),
@@ -3296,11 +3590,12 @@ public final class MonitorScreenSystem {
 								url,
 								ScreenViewMode.YOUTUBE,
 								PlaybackStreamKind.YOUTUBE,
+								null,
 								MonitorYoutubeRelayClient.load(relaySessionId(key), url, state.progress),
 								null
 						);
 					} catch (Exception exception) {
-						return new YoutubeLoadResult(key, requesterUuid, url, ScreenViewMode.YOUTUBE, PlaybackStreamKind.YOUTUBE, null, sanitizeMediaError(exception.getMessage()));
+						return new YoutubeLoadResult(key, requesterUuid, url, ScreenViewMode.YOUTUBE, PlaybackStreamKind.YOUTUBE, null, null, sanitizeMediaError(exception.getMessage()));
 					}
 				}, mediaIoExecutor)
 				.thenAccept(result -> server.execute(() -> applyYoutubeLoadResult(server, result)));
@@ -3622,6 +3917,8 @@ public final class MonitorScreenSystem {
 		List<String> releasedMusicQueueUrls = List.of();
 		MonitorMediaApp.LoadedVideo directVideo = result.loadedVideo();
 		String directVideoTitle = null;
+		String directVideoSubtitle = null;
+		GalleryItemKind directKind = result.kind();
 
 		synchronized (state) {
 			ScreenViewMode previousMode = state.mode;
@@ -3647,7 +3944,10 @@ public final class MonitorScreenSystem {
 				animated = result.loadedMedia().animated();
 				schedulePlayback = animated && result.loadedMedia().frameCount() > 1;
 			} else if (directVideo != null) {
-				directVideoTitle = galleryItemTitle(result.url(), null, state.galleryItems.size() + 1);
+				directVideoTitle = result.title() != null && !result.title().isBlank()
+						? result.title()
+						: galleryItemTitle(result.url(), null, state.galleryItems.size() + 1);
+				directVideoSubtitle = result.subtitle() != null ? result.subtitle() : "";
 				state.statusText = "";
 			} else {
 				state.userPaused = false;
@@ -3668,14 +3968,14 @@ public final class MonitorScreenSystem {
 			if (result.loadedMedia() != null) {
 				requester.sendSystemMessage(mediaLoadedMessage(requester, animated));
 			} else if (directVideo != null) {
-				requester.sendSystemMessage(literal("Видео открыто"));
+				requester.sendSystemMessage(literal(directKind == GalleryItemKind.AUDIO ? "Аудио открыто" : "Видео открыто"));
 			} else {
 				requester.sendSystemMessage(mediaLoadFailedMessage(requester, sanitizeMediaError(result.error())));
 			}
 		}
 		requestRuntimeRender(server, result.screenKey());
 		if (directVideo != null) {
-			startDirectVideoPlayback(server, result.screenKey(), result.requesterUuid(), directVideoTitle, result.url(), directVideo, -1, ScreenViewMode.GALLERY, false);
+			startDirectVideoPlayback(server, result.screenKey(), result.requesterUuid(), directVideoTitle, directVideoSubtitle, result.url(), directVideo, -1, ScreenViewMode.GALLERY, false);
 			return;
 		}
 		if (result.loadedMedia() != null) {
@@ -3724,6 +4024,7 @@ public final class MonitorScreenSystem {
 				state.relaySessionId = result.loadResponse().sessionId();
 				state.audioStreamUrl = result.loadResponse().audioStreamUrl();
 				state.mediaTitle = result.loadResponse().title();
+				state.mediaSubtitle = result.subtitle() == null ? "" : result.subtitle();
 				state.durationMs = result.loadResponse().durationMs();
 				state.positionMs = result.loadResponse().initialPositionMs();
 				state.bufferedStartMs = result.loadResponse().bufferedStartMs();
@@ -5049,8 +5350,10 @@ public final class MonitorScreenSystem {
 			GalleryItemKind resolvedKind = effectiveGalleryItemKind(item);
 			BufferedImage preview = resolvedKind == GalleryItemKind.YOUTUBE
 					? MonitorYoutubeRelayClient.queueEntryPreview(item.url())
+					: resolvedKind == GalleryItemKind.AUDIO && MonitorYoutubeMusicCache.looksLikeSupportedUrl(item.url())
+					? MonitorYoutubeMusicCache.queueEntryPreview(item.url())
 					: null;
-			items.add(new GalleryItem(item.title(), item.url(), item.localMediaKey(), null, preview, resolvedKind));
+			items.add(new GalleryItem(item.title(), item.subtitle(), item.url(), item.localMediaKey(), null, preview, resolvedKind));
 		}
 		return List.copyOf(items);
 	}
@@ -5182,13 +5485,14 @@ public final class MonitorScreenSystem {
 				continue;
 			}
 			String title = itemTag.getStringOr(PERSISTED_GALLERY_TITLE_TAG, "").trim();
+			String subtitle = itemTag.getStringOr(PERSISTED_GALLERY_SUBTITLE_TAG, "").trim();
 			String localMediaKey = itemTag.getStringOr(PERSISTED_GALLERY_LOCAL_MEDIA_TAG, "").trim();
 			GalleryItemKind kind = effectiveGalleryItemKind(
 					url,
 					localMediaKey,
 					GalleryItemKind.fromPersisted(itemTag.getStringOr(PERSISTED_GALLERY_KIND_TAG, ""), url)
 			);
-			items.add(new PersistedGalleryItem(title, url, kind, localMediaKey));
+			items.add(new PersistedGalleryItem(title, subtitle, url, kind, localMediaKey));
 		}
 		return List.copyOf(items);
 	}
@@ -5247,6 +5551,7 @@ public final class MonitorScreenSystem {
 				PersistedGalleryItem item = persistedItems.get(index);
 				CompoundTag itemTag = new CompoundTag();
 				itemTag.putString(PERSISTED_GALLERY_TITLE_TAG, item.title() == null ? "" : item.title());
+				itemTag.putString(PERSISTED_GALLERY_SUBTITLE_TAG, item.subtitle() == null ? "" : item.subtitle());
 				itemTag.putString(PERSISTED_GALLERY_URL_TAG, item.url() == null ? "" : item.url());
 				itemTag.putString(PERSISTED_GALLERY_KIND_TAG, item.kind() != null ? item.kind().persistedName() : GalleryItemKind.MEDIA.persistedName());
 				if (item.localMediaKey() != null && !item.localMediaKey().isBlank()) {
@@ -5285,6 +5590,7 @@ public final class MonitorScreenSystem {
 			}
 			items.add(new PersistedGalleryItem(
 					item.title() == null ? "" : item.title(),
+					item.subtitle() == null ? "" : item.subtitle(),
 					item.url().trim(),
 					item.kind() != null ? item.kind() : GalleryItemKind.MEDIA,
 					item.localMediaKey() == null ? "" : item.localMediaKey().trim()
@@ -5326,10 +5632,11 @@ public final class MonitorScreenSystem {
 
 	private static MediaVisualSnapshot captureMediaSnapshot(MediaRuntimeState state) {
 		if (state == null) {
-			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, false, true, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, false, 0, -1, null);
+			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, false, true, false, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, false, 0, -1, null);
 		}
 		boolean youtubeMode = state.mode == ScreenViewMode.YOUTUBE;
 		boolean youtubeMusicMode = state.mode == ScreenViewMode.YOUTUBE_MUSIC;
+		boolean musicPlayerLayout = usesMusicPlayerLayoutLocked(state);
 		boolean youtubeFamilyMode = youtubeMode || youtubeMusicMode;
 		boolean galleryMode = state.mode == ScreenViewMode.GALLERY;
 		boolean galleryBrowser = galleryMode && state.gallerySurfaceMode == GallerySurfaceMode.BROWSER;
@@ -5388,6 +5695,7 @@ public final class MonitorScreenSystem {
 				galleryBrowser,
 				galleryMode && currentGalleryItemSavedLocked(state),
 				galleryBackedYoutube,
+				musicPlayerLayout,
 				streamPlayback,
 				playbackControlsVisible,
 				state.loading,
@@ -5686,14 +5994,18 @@ public final class MonitorScreenSystem {
 		BufferedImage mediaBackgroundFrame = state != null && state.backgroundFrame() != null ? state.backgroundFrame() : mediaFrame;
 		boolean hasMedia = state != null && state.hasMedia();
 		boolean controlUi = state != null && (state.hasMedia() || state.playbackControlsVisible());
-		boolean youtubeMode = state != null && state.mode() == ScreenViewMode.YOUTUBE;
-		boolean youtubeMusicMode = state != null && state.mode() == ScreenViewMode.YOUTUBE_MUSIC;
+		ScreenViewMode actualMode = state != null ? state.mode() : ScreenViewMode.HOME;
+		boolean musicPlayerLayout = usesMusicPlayerLayout(state);
+		ScreenViewMode chromeMode = musicPlayerLayout ? ScreenViewMode.YOUTUBE_MUSIC : actualMode;
+		boolean youtubeMode = actualMode == ScreenViewMode.YOUTUBE;
+		boolean youtubeMusicMode = actualMode == ScreenViewMode.YOUTUBE_MUSIC;
 		boolean youtubeFamilyMode = youtubeMode || youtubeMusicMode;
-		boolean galleryMode = state != null && state.mode() == ScreenViewMode.GALLERY;
+		boolean galleryMode = actualMode == ScreenViewMode.GALLERY;
 		boolean galleryBackedYoutube = state != null && state.galleryBackedYoutube();
 		boolean youtubeHomePrompt = isYoutubeHomePrompt(state);
 		boolean showQueueButton = state != null && youtubeFamilyMode && !galleryBackedYoutube;
 		boolean showPrimaryActionButton = state != null && !youtubeMusicMode && state.actionVisible();
+		boolean showYoutubeMusicDownloadButton = state != null && youtubeMusicMode && state.actionVisible() && !galleryBackedYoutube;
 		boolean showWallpaperActionButton = state != null && galleryMode && state.wallpaperActionVisible();
 		MediaButtonSegment scaleButtonSegment = MediaButtonSegment.SINGLE;
 		MediaButtonSegment primaryActionSegment = MediaButtonSegment.SINGLE;
@@ -5714,23 +6026,24 @@ public final class MonitorScreenSystem {
 				queueButtonSegment = mediaButtonSegment(smallButtonIndex++, smallButtonCount);
 			}
 			scaleButtonSegment = mediaButtonSegment(smallButtonIndex, smallButtonCount);
-		} else if (showQueueButton) {
+		} else if (showQueueButton || showYoutubeMusicDownloadButton) {
 			youtubeMusicSearchSegment = MediaButtonSegment.LEFT;
 			youtubeMusicShuffleSegment = MediaButtonSegment.MIDDLE;
-			queueButtonSegment = MediaButtonSegment.RIGHT;
+			queueButtonSegment = showYoutubeMusicDownloadButton ? MediaButtonSegment.MIDDLE : MediaButtonSegment.RIGHT;
+			primaryActionSegment = showQueueButton ? MediaButtonSegment.RIGHT : MediaButtonSegment.MIDDLE;
 		}
-		UiRect titleRect = galleryMode ? mediaGalleryPlayerTitleRect(layout) : mediaLinkRect(layout, controlUi);
+		UiRect titleRect = galleryMode && !musicPlayerLayout ? mediaGalleryPlayerTitleRect(layout) : mediaLinkRect(layout, controlUi);
 		UiRect scaleRect = mediaScaleRect(layout);
 		UiRect downloadRect = mediaDownloadRect(layout);
-		UiRect queueToggleRect = mediaQueueToggleRect(layout, state != null ? state.mode() : ScreenViewMode.HOME);
-		UiRect timelineRect = mediaTimelineRect(layout, state != null ? state.mode() : ScreenViewMode.HOME);
+		UiRect queueToggleRect = mediaQueueToggleRect(layout, chromeMode);
+		UiRect timelineRect = mediaTimelineRect(layout, chromeMode);
 		boolean darkPlayerSurface = usesDarkMediaPlayerSurface(state);
 
-		if (darkPlayerSurface && !youtubeMusicMode) {
+		if (darkPlayerSurface && !musicPlayerLayout) {
 			graphics.setColor(Color.BLACK);
 			graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
 		}
-		if (youtubeMusicMode && !youtubeHomePrompt) {
+		if (musicPlayerLayout && !youtubeHomePrompt) {
 			if (mediaBackgroundFrame != null) {
 				drawYoutubeMusicArtworkBackground(
 						graphics,
@@ -5806,9 +6119,9 @@ public final class MonitorScreenSystem {
 			}
 
 			if (galleryMode) {
-				drawMediaBackButton(graphics, closeRect, layout, controlUi && !youtubeMusicMode ? MediaButtonSegment.LEFT : MediaButtonSegment.SINGLE);
+				drawMediaBackButton(graphics, closeRect, layout, controlUi && !musicPlayerLayout ? MediaButtonSegment.LEFT : MediaButtonSegment.SINGLE);
 			} else {
-				drawMediaCloseButton(graphics, closeRect, layout, controlUi && !youtubeMusicMode ? MediaButtonSegment.LEFT : MediaButtonSegment.SINGLE);
+				drawMediaCloseButton(graphics, closeRect, layout, controlUi && !musicPlayerLayout ? MediaButtonSegment.LEFT : MediaButtonSegment.SINGLE);
 			}
 				if (controlUi) {
 					boolean titleBarMode = galleryMode
@@ -5816,19 +6129,19 @@ public final class MonitorScreenSystem {
 							|| (youtubeMusicMode && (hasMedia
 							|| state.loading()
 							|| (state.mediaTitle() != null && !state.mediaTitle().isBlank())));
-					if (titleBarMode && !youtubeMusicMode) {
+					if (musicPlayerLayout) {
+						if (hasMedia
+								|| state.loading()
+								|| (state.mediaTitle() != null && !state.mediaTitle().isBlank())) {
+							drawYoutubeMusicTrackInfo(graphics, layout, state);
+						}
+					} else if (titleBarMode && !youtubeMusicMode) {
 						drawMediaTitleBar(graphics, titleRect, state != null ? state.mediaTitle() : "", layout, MediaButtonSegment.RIGHT);
 						if (showPrimaryActionButton && galleryMode) {
 							drawGalleryPlayerActionButton(graphics, mediaGalleryPlayerActionRect(layout), state, layout, primaryActionSegment);
 						}
 						if (showWallpaperActionButton && galleryMode) {
 							drawGalleryWallpaperActionButton(graphics, downloadRect, state, layout, wallpaperActionSegment);
-						}
-					} else if (youtubeMusicMode) {
-						if (hasMedia
-								|| state.loading()
-								|| (state.mediaTitle() != null && !state.mediaTitle().isBlank())) {
-							drawYoutubeMusicTrackInfo(graphics, layout, state);
 						}
 					} else {
 						drawMediaSearchBar(
@@ -5840,7 +6153,7 @@ public final class MonitorScreenSystem {
 								MediaButtonSegment.RIGHT
 						);
 				}
-				if (!youtubeMusicMode) {
+				if (!musicPlayerLayout) {
 					drawMediaScaleButton(graphics, scaleRect, state != null ? state.scaleMode() : MediaScaleMode.FIT, layout, scaleButtonSegment);
 				}
 				if (youtubeFamilyMode) {
@@ -5860,6 +6173,17 @@ public final class MonitorScreenSystem {
 				if (showQueueButton) {
 					drawMediaQueueToggleButton(graphics, queueToggleRect, state.youtubeQueueOpen(), layout, queueButtonSegment);
 				}
+				if (showYoutubeMusicDownloadButton) {
+					drawYoutubePlayerActionButton(graphics, mediaYoutubeMusicDownloadRect(layout), state, layout, primaryActionSegment);
+				}
+			} else if (musicPlayerLayout && galleryMode && showPrimaryActionButton) {
+				drawGalleryPlayerActionButton(
+						graphics,
+						mediaYoutubeMusicActionButtonRect(layout, 0, 1),
+						state,
+						layout,
+						MediaButtonSegment.SINGLE
+				);
 			}
 		}
 
@@ -6253,12 +6577,13 @@ public final class MonitorScreenSystem {
 		if (state == null || !state.timelineVisible()) {
 			return;
 		}
-		boolean youtubeMusicMode = isYoutubeMusicMode(state.mode());
-		UiRect trackRect = mediaTimelineTrackRect(layout, state.mode());
+		ScreenViewMode chromeMode = mediaChromeMode(state);
+		boolean youtubeMusicMode = isYoutubeMusicMode(chromeMode);
+		UiRect trackRect = mediaTimelineTrackRect(layout, chromeMode);
 		if (trackRect.width() <= 0 || trackRect.height() <= 0) {
 			return;
 		}
-		UiRect counterRect = mediaTimelineCounterRect(layout, state.mode());
+		UiRect counterRect = mediaTimelineCounterRect(layout, chromeMode);
 		String timelineLabel = resolvedTimelineLabel(state, layout);
 		Color trackFill = youtubeMusicMode ? new Color(82, 64, 70, 212) : new Color(255, 255, 255, 40);
 		Color bufferedFill = youtubeMusicMode ? new Color(158, 138, 146, 164) : new Color(255, 255, 255, 90);
@@ -7175,11 +7500,12 @@ public final class MonitorScreenSystem {
 		if (graphics == null || layout == null || state == null || !state.playbackControlsVisible()) {
 			return;
 		}
-		drawMediaTransportButton(graphics, mediaCenterBackRect(layout, state.mode()), TransportButtonKind.BACK, false, state.paused(), state.mode(), layout);
+		ScreenViewMode chromeMode = mediaChromeMode(state);
+		drawMediaTransportButton(graphics, mediaCenterBackRect(layout, chromeMode), TransportButtonKind.BACK, false, state.paused(), chromeMode, layout);
 		if (state.centerPlayPauseVisible()) {
-			drawMediaTransportButton(graphics, mediaCenterPlayPauseRect(layout, state.mode()), TransportButtonKind.PLAY_PAUSE, state.loading(), state.paused(), state.mode(), layout);
+			drawMediaTransportButton(graphics, mediaCenterPlayPauseRect(layout, chromeMode), TransportButtonKind.PLAY_PAUSE, state.loading(), state.paused(), chromeMode, layout);
 		}
-		drawMediaTransportButton(graphics, mediaCenterForwardRect(layout, state.mode()), TransportButtonKind.FORWARD, false, state.paused(), state.mode(), layout);
+		drawMediaTransportButton(graphics, mediaCenterForwardRect(layout, chromeMode), TransportButtonKind.FORWARD, false, state.paused(), chromeMode, layout);
 	}
 
 	private static void drawMediaTransportButton(Graphics2D graphics, UiRect rect, TransportButtonKind kind, boolean loading, boolean paused, ScreenViewMode mode, UiLayout layout) {
@@ -7523,7 +7849,7 @@ public final class MonitorScreenSystem {
 
 	private static UiRect mediaQueueToggleRect(UiLayout layout, ScreenViewMode mode) {
 		if (isYoutubeMusicMode(mode)) {
-			return mediaYoutubeMusicActionButtonRect(layout, 2, 3);
+			return mediaYoutubeMusicActionButtonRect(layout, 2, 4);
 		}
 		UiRect scaleRect = mediaScaleRect(layout);
 		int gap = clampInt(layout.unit() / 2, 4, 8);
@@ -7553,11 +7879,15 @@ public final class MonitorScreenSystem {
 	}
 
 	private static UiRect mediaYoutubeMusicSearchRect(UiLayout layout) {
-		return mediaYoutubeMusicActionButtonRect(layout, 0, 3);
+		return mediaYoutubeMusicActionButtonRect(layout, 0, 4);
 	}
 
 	private static UiRect mediaYoutubeMusicShuffleRect(UiLayout layout) {
-		return mediaYoutubeMusicActionButtonRect(layout, 1, 3);
+		return mediaYoutubeMusicActionButtonRect(layout, 1, 4);
+	}
+
+	private static UiRect mediaYoutubeMusicDownloadRect(UiLayout layout) {
+		return mediaYoutubeMusicActionButtonRect(layout, 3, 4);
 	}
 
 	private static UiRect mediaTimelineRect(UiLayout layout) {
@@ -9090,7 +9420,7 @@ public final class MonitorScreenSystem {
 		if (mode == ScreenViewMode.YOUTUBE_MUSIC) {
 			return literal("Скинь в чат YouTube или YouTube Music ссылку");
 		}
-		return literal("Скинь в чат ссылку на картинку, гифку или видео");
+		return literal("Скинь в чат ссылку на картинку, гифку, видео или музыку");
 	}
 
 	private static Component loadingMessage(ScreenViewMode mode, ServerPlayer player) {
@@ -9310,14 +9640,14 @@ public final class MonitorScreenSystem {
 			BufferedImage preview = media != null ? media.frame(0) : item != null ? item.preview() : null;
 			GalleryItemKind itemKind = effectiveGalleryItemKind(item);
 			boolean youtubeLoaded = item != null
-					&& itemKind == GalleryItemKind.YOUTUBE
+					&& ((itemKind == GalleryItemKind.YOUTUBE && MonitorYoutubeRelayClient.isQueueEntryLoaded(item.url()))
+					|| (itemKind == GalleryItemKind.AUDIO && item.url() != null && !item.url().isBlank() && MonitorYoutubeMusicCache.isQueueEntryLoaded(item.url())))
 					&& item.url() != null
-					&& !item.url().isBlank()
-					&& MonitorYoutubeRelayClient.isQueueEntryLoaded(item.url());
+					&& !item.url().isBlank();
 			items.add(new GalleryCardSnapshot(
 					index,
 					item != null ? item.title() : "Gallery",
-					(item != null && (itemKind == GalleryItemKind.YOUTUBE || itemKind == GalleryItemKind.VIDEO))
+					(item != null && (itemKind == GalleryItemKind.YOUTUBE || itemKind == GalleryItemKind.VIDEO || itemKind == GalleryItemKind.AUDIO))
 							|| (media != null && media.animated()),
 					preview,
 					index == state.galleryIndex,
@@ -10054,6 +10384,7 @@ public final class MonitorScreenSystem {
 		int index = upsertGalleryItemLocked(
 				state,
 				title,
+				"",
 				state.sourceUrl,
 				null,
 				state.loadedMedia,
@@ -10067,21 +10398,26 @@ public final class MonitorScreenSystem {
 		if (state == null || state.sourceUrl == null || state.sourceUrl.isBlank()) {
 			return false;
 		}
-		String title = state.mediaTitle == null || state.mediaTitle.isBlank() ? "YouTube" : state.mediaTitle;
+		String title = state.mediaTitle == null || state.mediaTitle.isBlank()
+				? (state.mode == ScreenViewMode.YOUTUBE_MUSIC ? "Track" : "YouTube")
+				: state.mediaTitle;
+		GalleryItemKind kind = state.mode == ScreenViewMode.YOUTUBE_MUSIC ? GalleryItemKind.AUDIO : GalleryItemKind.YOUTUBE;
 		return upsertGalleryItemLocked(
 				state,
 				title,
+				state.mediaSubtitle,
 				state.sourceUrl,
 				null,
 				null,
 				copyBufferedImage(state.streamFrame),
-				GalleryItemKind.YOUTUBE
+				kind
 		) >= 0;
 	}
 
 	private static int upsertGalleryItemLocked(
 			MediaRuntimeState state,
 			String title,
+			String subtitle,
 			String url,
 			String localMediaKey,
 			MonitorMediaApp.LoadedMedia media,
@@ -10101,6 +10437,7 @@ public final class MonitorScreenSystem {
 					existingIndex,
 					new GalleryItem(
 							resolvedTitle,
+							subtitle != null && !subtitle.isBlank() ? subtitle : existing != null ? existing.subtitle() : "",
 							url,
 							localMediaKey != null && !localMediaKey.isBlank() ? localMediaKey : existing != null ? existing.localMediaKey() : null,
 							media != null ? media : existing != null ? existing.media() : null,
@@ -10112,6 +10449,7 @@ public final class MonitorScreenSystem {
 		}
 		state.galleryItems.add(new GalleryItem(
 				resolvedTitle,
+				subtitle != null ? subtitle : "",
 				url,
 				localMediaKey,
 				media,
@@ -10183,6 +10521,9 @@ public final class MonitorScreenSystem {
 		if (state == null || state.liveStream || state.sourceUrl == null || state.sourceUrl.isBlank()) {
 			return false;
 		}
+		if (state.mode == ScreenViewMode.YOUTUBE_MUSIC) {
+			return MonitorYoutubeMusicCache.isQueueEntryLoaded(state.sourceUrl);
+		}
 		if (MonitorYoutubeRelayClient.isQueueEntryLoaded(state.sourceUrl)) {
 			return true;
 		}
@@ -10235,6 +10576,9 @@ public final class MonitorScreenSystem {
 		if (tail == null || tail.isBlank()) {
 			if (MonitorMediaApp.looksLikeDirectVideoUrl(url)) {
 				return "VIDEO " + fallbackIndex;
+			}
+			if (MonitorMediaApp.looksLikeDirectAudioUrl(url) || MonitorYoutubeMusicCache.looksLikeSupportedUrl(url)) {
+				return "TRACK " + fallbackIndex;
 			}
 			return media != null && media.animated() ? "GIF " + fallbackIndex : "IMAGE " + fallbackIndex;
 		}
@@ -10338,7 +10682,7 @@ public final class MonitorScreenSystem {
 		if (isGalleryBackedYoutubeLocked(state)) {
 			return true;
 		}
-		if (state.mode == ScreenViewMode.YOUTUBE) {
+		if (state.mode == ScreenViewMode.YOUTUBE || state.mode == ScreenViewMode.YOUTUBE_MUSIC) {
 			return state.sourceUrl != null && !state.sourceUrl.isBlank();
 		}
 		return state.mode == ScreenViewMode.GALLERY && state.gallerySurfaceMode == GallerySurfaceMode.PLAYER;
@@ -10374,7 +10718,9 @@ public final class MonitorScreenSystem {
 				&& System.currentTimeMillis() < state.downloadCompletedUntilMillis) {
 			return MediaActionVisualState.COMPLETE;
 		}
-		if (state.mode == ScreenViewMode.YOUTUBE && currentUrl != null && hasGalleryItemForUrlLocked(state, currentUrl)) {
+		if ((state.mode == ScreenViewMode.YOUTUBE || state.mode == ScreenViewMode.YOUTUBE_MUSIC)
+				&& currentUrl != null
+				&& hasGalleryItemForUrlLocked(state, currentUrl)) {
 			return MediaActionVisualState.COMPLETE;
 		}
 		return MediaActionVisualState.IDLE;
@@ -10406,6 +10752,51 @@ public final class MonitorScreenSystem {
 				&& currentGalleryItemLocked(state) != null
 				&& effectiveGalleryItemKind(currentGalleryItemLocked(state)) == GalleryItemKind.VIDEO
 				&& hasGalleryItemForUrlLocked(state, state.sourceUrl);
+	}
+
+	private static boolean isGalleryBackedAudioLocked(MediaRuntimeState state) {
+		return state != null
+				&& state.mode == ScreenViewMode.GALLERY
+				&& state.gallerySurfaceMode == GallerySurfaceMode.PLAYER
+				&& state.sourceUrl != null
+				&& !state.sourceUrl.isBlank()
+				&& state.streamKind == PlaybackStreamKind.DIRECT_VIDEO
+				&& currentGalleryItemLocked(state) != null
+				&& effectiveGalleryItemKind(currentGalleryItemLocked(state)) == GalleryItemKind.AUDIO
+				&& hasGalleryItemForUrlLocked(state, state.sourceUrl);
+	}
+
+	private static boolean usesMusicPlayerLayoutLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return false;
+		}
+		if (state.mode == ScreenViewMode.YOUTUBE_MUSIC) {
+			return true;
+		}
+		if (state.mode != ScreenViewMode.GALLERY || state.gallerySurfaceMode != GallerySurfaceMode.PLAYER || state.streamKind != PlaybackStreamKind.DIRECT_VIDEO) {
+			return false;
+		}
+		GalleryItem current = currentGalleryItemLocked(state);
+		if (current != null) {
+			return effectiveGalleryItemKind(current) == GalleryItemKind.AUDIO;
+		}
+		String url = state.sourceUrl;
+		return url != null
+				&& !url.isBlank()
+				&& (MonitorYoutubeMusicCache.looksLikeSupportedUrl(url) || MonitorMediaApp.looksLikeDirectAudioUrl(url))
+				&& !MonitorMediaApp.looksLikeDirectVideoUrl(url);
+	}
+
+	private static boolean usesMusicPlayerLayout(MediaVisualSnapshot state) {
+		return state != null && state.musicPlayerLayout();
+	}
+
+	private static ScreenViewMode mediaChromeMode(MediaRuntimeState state) {
+		return usesMusicPlayerLayoutLocked(state) ? ScreenViewMode.YOUTUBE_MUSIC : state != null ? state.mode : ScreenViewMode.HOME;
+	}
+
+	private static ScreenViewMode mediaChromeMode(MediaVisualSnapshot state) {
+		return usesMusicPlayerLayout(state) ? ScreenViewMode.YOUTUBE_MUSIC : state != null ? state.mode() : ScreenViewMode.HOME;
 	}
 
 	private static boolean isStreamPlaybackLocked(MediaRuntimeState state) {
@@ -10697,10 +11088,14 @@ public final class MonitorScreenSystem {
 
 	private enum GalleryItemKind {
 		MEDIA,
+		AUDIO,
 		VIDEO,
 		YOUTUBE;
 
 		private static GalleryItemKind fromPersisted(String value, String url) {
+			if ("audio".equalsIgnoreCase(value)) {
+				return AUDIO;
+			}
 			if ("youtube".equalsIgnoreCase(value)) {
 				return YOUTUBE;
 			}
@@ -10712,6 +11107,7 @@ public final class MonitorScreenSystem {
 
 		private String persistedName() {
 			return switch (this) {
+				case AUDIO -> "audio";
 				case YOUTUBE -> "youtube";
 				case VIDEO -> "video";
 				case MEDIA -> "media";
@@ -10882,6 +11278,7 @@ public final class MonitorScreenSystem {
 			boolean galleryBrowser,
 			boolean galleryCurrentSaved,
 			boolean galleryBackedYoutube,
+			boolean musicPlayerLayout,
 			boolean streamPlayback,
 			boolean playbackControlsVisible,
 			boolean loading,
@@ -10981,10 +11378,10 @@ public final class MonitorScreenSystem {
 		}
 	}
 
-	private record GalleryItem(String title, String url, String localMediaKey, MonitorMediaApp.LoadedMedia media, BufferedImage preview, GalleryItemKind kind) {
+	private record GalleryItem(String title, String subtitle, String url, String localMediaKey, MonitorMediaApp.LoadedMedia media, BufferedImage preview, GalleryItemKind kind) {
 	}
 
-	private record PersistedGalleryItem(String title, String url, GalleryItemKind kind, String localMediaKey) {
+	private record PersistedGalleryItem(String title, String subtitle, String url, GalleryItemKind kind, String localMediaKey) {
 	}
 
 	private record GalleryRemovalResult(GalleryItem removedItem, boolean selectionRetained) {
@@ -10996,8 +11393,10 @@ public final class MonitorScreenSystem {
 	private record GalleryCacheReferenceSnapshot(
 			Set<String> localMediaKeys,
 			Set<String> galleryMediaUrls,
+			Set<String> galleryMusicUrls,
 			Set<String> galleryYoutubeUrls,
 			Set<String> activeMediaUrls,
+			Set<String> activeMusicUrls,
 			Set<String> activeYoutubeUrls
 	) {
 	}
@@ -11008,6 +11407,7 @@ public final class MonitorScreenSystem {
 	private record GalleryItemLoadResult(
 			ScreenRuntimeKey screenKey,
 			String title,
+			String subtitle,
 			String url,
 			String localMediaKey,
 			GalleryItemKind kind,
@@ -11057,6 +11457,9 @@ public final class MonitorScreenSystem {
 			ScreenRuntimeKey screenKey,
 			UUID requesterUuid,
 			String url,
+			String title,
+			String subtitle,
+			GalleryItemKind kind,
 			MonitorMediaApp.LoadedMedia loadedMedia,
 			MonitorMediaApp.LoadedVideo loadedVideo,
 			String error
@@ -11069,6 +11472,7 @@ public final class MonitorScreenSystem {
 			String url,
 			ScreenViewMode targetMode,
 			PlaybackStreamKind streamKind,
+			String subtitle,
 			MonitorYoutubeRelayClient.SessionLoadResponse loadResponse,
 			String error
 	) {

@@ -14,8 +14,14 @@ import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
+import java.awt.BasicStroke;
+import java.awt.Color;
+import java.awt.Font;
 import java.awt.Graphics2D;
+import java.awt.GradientPaint;
 import java.awt.RenderingHints;
+import java.awt.geom.Ellipse2D;
+import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -54,7 +60,9 @@ public final class MonitorMediaApp implements MonitorApp {
 	private static final String DEFAULT_FFMPEG_BIN = "ffmpeg";
 	private static final String DEFAULT_FFPROBE_BIN = "ffprobe";
 	private static final int VIDEO_PREVIEW_WIDTH = 480;
+	private static final int AUDIO_COVER_SIZE = 640;
 	private static final Set<String> DIRECT_VIDEO_EXTENSIONS = Set.of(".mp4", ".m4v", ".mov", ".webm");
+	private static final Set<String> DIRECT_AUDIO_EXTENSIONS = Set.of(".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wav", ".flac", ".weba");
 	private static volatile Path cacheDirectory = Path.of("cache", "lg2-monitor", "media");
 
 	@Override
@@ -94,7 +102,7 @@ public final class MonitorMediaApp implements MonitorApp {
 
 	@Override
 	public String screenHint() {
-		return "Картинки, гифки и видео по ссылке";
+		return "Картинки, гифки, видео и музыка по ссылке";
 	}
 
 	public static LoadedMedia loadFromUrl(String rawUrl) throws IOException {
@@ -129,12 +137,44 @@ public final class MonitorMediaApp implements MonitorApp {
 		return probeVideo(uri.toString(), uri.toString(), progress);
 	}
 
+	public static boolean looksLikeDirectAudioUrl(String rawUrl) {
+		if (rawUrl == null || rawUrl.isBlank()) {
+			return false;
+		}
+		URI uri;
+		try {
+			uri = validateUri(rawUrl);
+		} catch (IOException exception) {
+			return false;
+		}
+		String extension = cacheExtension(uri);
+		if (DIRECT_AUDIO_EXTENSIONS.contains(extension)) {
+			return true;
+		}
+		String contentType = probeContentType(uri);
+		return contentType != null && contentType.toLowerCase(Locale.ROOT).startsWith("audio/");
+	}
+
+	public static LoadedAudioTrack loadAudioFromUrl(String rawUrl, TaskProgress progress) throws IOException {
+		URI uri = validateUri(rawUrl);
+		return probeAudio(uri.toString(), uri.toString(), progress);
+	}
+
 	public static String persistSavedGalleryMedia(String rawUrl) throws IOException {
 		URI uri = validateUri(rawUrl);
 		return loadCachedMedia(uri, null).mediaKey();
 	}
 
 	public static String persistSavedGalleryVideo(String rawUrl, TaskProgress progress) throws IOException {
+		URI uri = validateUri(rawUrl);
+		String existingKey = cachedMediaKey(uri);
+		if (existingKey != null && !existingKey.isBlank()) {
+			return existingKey;
+		}
+		return downloadVideoToCache(uri, progress);
+	}
+
+	public static String persistSavedGalleryAudio(String rawUrl, TaskProgress progress) throws IOException {
 		URI uri = validateUri(rawUrl);
 		String existingKey = cachedMediaKey(uri);
 		if (existingKey != null && !existingKey.isBlank()) {
@@ -164,6 +204,17 @@ public final class MonitorMediaApp implements MonitorApp {
 			progress.setIndeterminate("PROBING VIDEO");
 		}
 		return probeVideo(savedPath.toAbsolutePath().toString(), savedPath.toAbsolutePath().toString(), progress);
+	}
+
+	public static LoadedAudioTrack loadSavedGalleryAudio(String mediaKey, TaskProgress progress) throws IOException {
+		Path savedPath = savedGalleryMediaPath(mediaKey);
+		if (savedPath == null || !Files.isRegularFile(savedPath)) {
+			throw new IOException("Saved gallery audio is missing");
+		}
+		if (progress != null) {
+			progress.setIndeterminate("PROBING AUDIO");
+		}
+		return probeAudio(savedPath.getFileName().toString(), savedPath.toAbsolutePath().toString(), progress);
 	}
 
 	public static void setCacheDirectory(Path directory) {
@@ -274,6 +325,36 @@ public final class MonitorMediaApp implements MonitorApp {
 				Math.max(1, metadata.height()),
 				input,
 				input
+		);
+	}
+
+	private static LoadedAudioTrack probeAudio(String displayUrl, String input, TaskProgress progress) throws IOException {
+		if (input == null || input.isBlank()) {
+			throw new IOException("Audio input is missing");
+		}
+		if (progress != null) {
+			progress.setIndeterminate("PROBING AUDIO");
+		}
+		String fallbackTitle = fallbackMediaTitle(displayUrl != null && !displayUrl.isBlank() ? displayUrl : input);
+		AudioMetadata metadata = probeAudioMetadata(input, fallbackTitle);
+		if (progress != null) {
+			progress.setIndeterminate("CAPTURING COVER");
+		}
+		BufferedImage cover = captureAudioPreview(input, metadata.title());
+		if (progress != null) {
+			progress.complete("READY");
+		}
+		return new LoadedAudioTrack(
+				metadata.title(),
+				metadata.artist(),
+				new LoadedVideo(
+						cover,
+						Math.max(0L, metadata.durationMs()),
+						Math.max(1, cover.getWidth()),
+						Math.max(1, cover.getHeight()),
+						input,
+						input
+				)
 		);
 	}
 
@@ -421,6 +502,13 @@ public final class MonitorMediaApp implements MonitorApp {
 			case "video/webm" -> ".webm";
 			case "video/quicktime" -> ".mov";
 			case "video/x-m4v" -> ".m4v";
+			case "audio/mpeg", "audio/mp3" -> ".mp3";
+			case "audio/mp4", "audio/x-m4a", "audio/aac", "audio/aacp" -> ".m4a";
+			case "audio/ogg" -> ".ogg";
+			case "audio/opus" -> ".opus";
+			case "audio/wav", "audio/x-wav", "audio/wave" -> ".wav";
+			case "audio/flac", "audio/x-flac" -> ".flac";
+			case "audio/webm" -> ".weba";
 			default -> null;
 		};
 	}
@@ -996,6 +1084,36 @@ public final class MonitorMediaApp implements MonitorApp {
 		return new VideoMetadata(width, height, Math.max(0L, durationMs));
 	}
 
+	private static AudioMetadata probeAudioMetadata(String input, String fallbackTitle) throws IOException {
+		String output = runCommand(List.of(
+				ffprobeBin(),
+				"-v",
+				"error",
+				"-show_entries",
+				"format=duration:format_tags=title,artist,album_artist",
+				"-of",
+				"json",
+				input
+		), COMMAND_TIMEOUT_SEC);
+		JsonObject root = GSON.fromJson(output, JsonObject.class);
+		JsonObject format = root != null && root.has("format") && root.get("format").isJsonObject()
+				? root.getAsJsonObject("format")
+				: null;
+		long durationMs = Math.round(getDouble(format, "duration", 0.0D) * 1000.0D);
+		JsonObject tags = format != null && format.has("tags") && format.get("tags").isJsonObject()
+				? format.getAsJsonObject("tags")
+				: null;
+		String title = getString(tags, "title", fallbackTitle);
+		if (title == null || title.isBlank()) {
+			title = fallbackTitle;
+		}
+		String artist = getString(tags, "artist", "");
+		if (artist.isBlank()) {
+			artist = getString(tags, "album_artist", "");
+		}
+		return new AudioMetadata(title, artist, Math.max(0L, durationMs));
+	}
+
 	private static BufferedImage captureVideoPreview(String input) throws IOException {
 		return decodeImageBytes(runBinaryCommand(List.of(
 				ffmpegBin(),
@@ -1018,6 +1136,34 @@ public final class MonitorMediaApp implements MonitorApp {
 				"mjpeg",
 				"-"
 		), COMMAND_TIMEOUT_SEC));
+	}
+
+	private static BufferedImage captureAudioPreview(String input, String title) {
+		try {
+			return decodeImageBytes(runBinaryCommand(List.of(
+					ffmpegBin(),
+					"-hide_banner",
+					"-loglevel",
+					"error",
+					"-nostdin",
+					"-i",
+					input,
+					"-map",
+					"0:v:0?",
+					"-frames:v",
+					"1",
+					"-vf",
+					"scale=w=" + AUDIO_COVER_SIZE + ":h=" + AUDIO_COVER_SIZE + ":force_original_aspect_ratio=decrease,pad="
+							+ AUDIO_COVER_SIZE + ":" + AUDIO_COVER_SIZE + ":(ow-iw)/2:(oh-ih)/2:color=0x00000000",
+					"-f",
+					"image2pipe",
+					"-vcodec",
+					"png",
+					"-"
+			), COMMAND_TIMEOUT_SEC));
+		} catch (IOException ignored) {
+			return createFallbackAudioCover(title);
+		}
 	}
 
 	private static String runCommand(List<String> command, int timeoutSeconds) throws IOException {
@@ -1093,6 +1239,72 @@ public final class MonitorMediaApp implements MonitorApp {
 		return toArgb(image);
 	}
 
+	private static String fallbackMediaTitle(String raw) {
+		if (raw == null || raw.isBlank()) {
+			return "Audio";
+		}
+		String normalized = raw.trim();
+		int slash = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
+		String tail = slash >= 0 && slash + 1 < normalized.length() ? normalized.substring(slash + 1) : normalized;
+		int query = tail.indexOf('?');
+		if (query >= 0) {
+			tail = tail.substring(0, query);
+		}
+		int hash = tail.indexOf('#');
+		if (hash >= 0) {
+			tail = tail.substring(0, hash);
+		}
+		int dot = tail.lastIndexOf('.');
+		if (dot > 0) {
+			tail = tail.substring(0, dot);
+		}
+		tail = tail.replace('_', ' ').replace('-', ' ').trim();
+		return tail.isBlank() ? "Audio" : tail.length() > 48 ? tail.substring(0, 48).trim() : tail;
+	}
+
+	private static BufferedImage createFallbackAudioCover(String title) {
+		BufferedImage image = new BufferedImage(AUDIO_COVER_SIZE, AUDIO_COVER_SIZE, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = image.createGraphics();
+		try {
+			graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+			graphics.setPaint(new GradientPaint(0.0F, 0.0F, new Color(22, 24, 34), AUDIO_COVER_SIZE, AUDIO_COVER_SIZE, new Color(44, 78, 126)));
+			graphics.fillRect(0, 0, AUDIO_COVER_SIZE, AUDIO_COVER_SIZE);
+			int circleSize = 276;
+			int circleX = (AUDIO_COVER_SIZE - circleSize) / 2;
+			int circleY = 110;
+			graphics.setColor(new Color(248, 251, 255, 232));
+			graphics.fill(new Ellipse2D.Float(circleX, circleY, circleSize, circleSize));
+			graphics.setColor(new Color(38, 52, 82));
+			graphics.setStroke(new BasicStroke(24.0F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+			Path2D note = new Path2D.Float();
+			note.moveTo(circleX + 160, circleY + 66);
+			note.lineTo(circleX + 160, circleY + 182);
+			note.curveTo(circleX + 136, circleY + 168, circleX + 98, circleY + 172, circleX + 92, circleY + 204);
+			note.curveTo(circleX + 88, circleY + 234, circleX + 120, circleY + 252, circleX + 150, circleY + 246);
+			note.curveTo(circleX + 178, circleY + 240, circleX + 194, circleY + 218, circleX + 194, circleY + 194);
+			note.lineTo(circleX + 194, circleY + 110);
+			note.lineTo(circleX + 238, circleY + 98);
+			note.lineTo(circleX + 238, circleY + 160);
+			note.curveTo(circleX + 214, circleY + 146, circleX + 176, circleY + 150, circleX + 170, circleY + 182);
+			note.curveTo(circleX + 166, circleY + 212, circleX + 198, circleY + 230, circleX + 228, circleY + 224);
+			note.curveTo(circleX + 256, circleY + 218, circleX + 272, circleY + 196, circleX + 272, circleY + 172);
+			note.lineTo(circleX + 272, circleY + 66);
+			note.closePath();
+			graphics.fill(note);
+			graphics.setColor(new Color(248, 251, 255, 228));
+			graphics.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 34));
+			String label = title == null || title.isBlank() ? "Audio Track" : title;
+			if (label.length() > 26) {
+				label = label.substring(0, 26).trim();
+			}
+			int labelWidth = graphics.getFontMetrics().stringWidth(label);
+			graphics.drawString(label, (AUDIO_COVER_SIZE - labelWidth) / 2, 508);
+		} finally {
+			graphics.dispose();
+		}
+		return image;
+	}
+
 	private static String ffmpegBin() {
 		return readStringSetting("FFMPEG_BIN", "lg2.youtube.ffmpegBin", DEFAULT_FFMPEG_BIN);
 	}
@@ -1111,6 +1323,18 @@ public final class MonitorMediaApp implements MonitorApp {
 
 	private static int getInt(JsonObject object, String key, int fallback) {
 		return object != null && object.has(key) && !object.get(key).isJsonNull() ? object.get(key).getAsInt() : fallback;
+	}
+
+	private static String getString(JsonObject object, String key, String fallback) {
+		if (object == null || !object.has(key) || object.get(key).isJsonNull()) {
+			return fallback;
+		}
+		try {
+			String value = object.get(key).getAsString();
+			return value != null ? value : fallback;
+		} catch (RuntimeException ignored) {
+			return fallback;
+		}
 	}
 
 	private static double getDouble(JsonObject object, String key, double fallback) {
@@ -1226,10 +1450,20 @@ public final class MonitorMediaApp implements MonitorApp {
 	) {
 	}
 
+	public record LoadedAudioTrack(
+			String title,
+			String artist,
+			LoadedVideo video
+	) {
+	}
+
 	private record DownloadToFileResult(Path tempPath, String mediaKey) {
 	}
 
 	private record VideoMetadata(int width, int height, long durationMs) {
+	}
+
+	private record AudioMetadata(String title, String artist, long durationMs) {
 	}
 
 	private record GifFrameInfo(
