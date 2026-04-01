@@ -5633,8 +5633,7 @@ public final class MonitorScreenSystem {
 		strokeRoundedRect(graphics, headerRect, clampInt(layout.unit() * 2, 14, 24), 1.0F, new Color(255, 255, 255, 82));
 
 		UiRect closeRect = genericCloseRect(layout);
-		fillRoundedRect(graphics, closeRect, clampInt(layout.unit() + 2, 10, 18), new Color(15, 18, 24, 224));
-		drawCloseGlyph(graphics, closeRect, new Color(248, 251, 255));
+		drawMediaCloseButton(graphics, closeRect, layout);
 
 		UiRect titleRect = new UiRect(
 				closeRect.right() + clampInt(layout.unit() / 2, 6, 12),
@@ -5807,9 +5806,9 @@ public final class MonitorScreenSystem {
 			}
 
 			if (galleryMode) {
-				drawMediaBackButton(graphics, closeRect, layout);
+				drawMediaBackButton(graphics, closeRect, layout, controlUi && !youtubeMusicMode ? MediaButtonSegment.LEFT : MediaButtonSegment.SINGLE);
 			} else {
-				drawMediaCloseButton(graphics, closeRect, layout);
+				drawMediaCloseButton(graphics, closeRect, layout, controlUi && !youtubeMusicMode ? MediaButtonSegment.LEFT : MediaButtonSegment.SINGLE);
 			}
 				if (controlUi) {
 					boolean titleBarMode = galleryMode
@@ -5818,7 +5817,7 @@ public final class MonitorScreenSystem {
 							|| state.loading()
 							|| (state.mediaTitle() != null && !state.mediaTitle().isBlank())));
 					if (titleBarMode && !youtubeMusicMode) {
-						drawMediaTitleBar(graphics, titleRect, state != null ? state.mediaTitle() : "", layout);
+						drawMediaTitleBar(graphics, titleRect, state != null ? state.mediaTitle() : "", layout, MediaButtonSegment.RIGHT);
 						if (showPrimaryActionButton && galleryMode) {
 							drawGalleryPlayerActionButton(graphics, mediaGalleryPlayerActionRect(layout), state, layout, primaryActionSegment);
 						}
@@ -5836,9 +5835,10 @@ public final class MonitorScreenSystem {
 								graphics,
 								titleRect,
 								state != null ? state.linkPlaceholder() : "ВСТАВЬ URL",
-							true,
-							layout
-					);
+								true,
+								layout,
+								MediaButtonSegment.RIGHT
+						);
 				}
 				if (!youtubeMusicMode) {
 					drawMediaScaleButton(graphics, scaleRect, state != null ? state.scaleMode() : MediaScaleMode.FIT, layout, scaleButtonSegment);
@@ -5932,8 +5932,8 @@ public final class MonitorScreenSystem {
 		UiRect gridRect = mediaGalleryGridRect(layout);
 		UiRect scrollbarTrackRect = mediaGalleryBrowserScrollbarTrackRect(layout);
 
-		drawMediaCloseButton(graphics, closeRect, layout);
-		drawMediaSearchBar(graphics, linkRect, state != null ? state.linkPlaceholder() : "ВСТАВЬ URL", true, layout);
+		drawMediaCloseButton(graphics, closeRect, layout, MediaButtonSegment.LEFT);
+		drawMediaSearchBar(graphics, linkRect, state != null ? state.linkPlaceholder() : "ВСТАВЬ URL", true, layout, MediaButtonSegment.RIGHT);
 
 		List<GalleryCardSnapshot> cards = state != null ? state.galleryCards() : List.of();
 		int columns = mediaGalleryColumns(layout);
@@ -6019,13 +6019,21 @@ public final class MonitorScreenSystem {
 	}
 
 	private static void drawMediaCloseButton(Graphics2D graphics, UiRect rect, UiLayout layout) {
-		drawRoundMediaButtonBase(graphics, rect);
-		drawCloseGlyph(graphics, rect.inset(Math.max(1, layout.unit() / 5)), new Color(248, 251, 255));
+		drawMediaCloseButton(graphics, rect, layout, MediaButtonSegment.SINGLE);
+	}
+
+	private static void drawMediaCloseButton(Graphics2D graphics, UiRect rect, UiLayout layout, MediaButtonSegment segment) {
+		Color color = drawMediaHeaderControlBase(graphics, rect, segment);
+		drawCloseGlyph(graphics, mediaChromeIconRect(rect, layout), color);
 	}
 
 	private static void drawMediaBackButton(Graphics2D graphics, UiRect rect, UiLayout layout) {
-		drawRoundMediaButtonBase(graphics, rect);
-		drawBackArrow(graphics, rect.inset(Math.max(1, layout.unit() / 5)), new Color(248, 251, 255));
+		drawMediaBackButton(graphics, rect, layout, MediaButtonSegment.SINGLE);
+	}
+
+	private static void drawMediaBackButton(Graphics2D graphics, UiRect rect, UiLayout layout, MediaButtonSegment segment) {
+		Color color = drawMediaHeaderControlBase(graphics, rect, segment);
+		drawBackArrow(graphics, mediaChromeIconRect(rect, layout), color);
 	}
 
 	private static void drawMediaScaleButton(Graphics2D graphics, UiRect rect, MediaScaleMode scaleMode, UiLayout layout, MediaButtonSegment segment) {
@@ -6070,6 +6078,14 @@ public final class MonitorScreenSystem {
 		return active ? new Color(24, 22, 24, 238) : new Color(244, 232, 236, 188);
 	}
 
+	private static Color drawMediaHeaderControlBase(Graphics2D graphics, UiRect rect, MediaButtonSegment segment) {
+		float strokeWidth = mediaChromeStrokeWidth(rect);
+		Shape shape = mediaButtonShape(rect, segment);
+		fillShape(graphics, shape, new Color(12, 16, 20, 134));
+		strokeShape(graphics, shape, Math.max(0.75F, strokeWidth * 0.5F), new Color(255, 255, 255, 76));
+		return new Color(248, 251, 255, 226);
+	}
+
 	private static UiRect mediaChromeIconRect(UiRect rect, UiLayout layout) {
 		int inset = clampInt(layout.unit() / 2, 4, 8);
 		int iconSize = clampInt(layout.unit() + 3, 11, 15);
@@ -6101,7 +6117,7 @@ public final class MonitorScreenSystem {
 	}
 
 	private static Shape mediaButtonShape(UiRect rect, MediaButtonSegment segment) {
-		int outer = clampInt(Math.min(rect.width(), rect.height()) / 2, 9, 18);
+		int outer = Math.max(2, Math.min(rect.width(), rect.height()) / 2);
 		int inner = clampInt(Math.min(rect.width(), rect.height()) / 6, 3, 8);
 		return switch (segment != null ? segment : MediaButtonSegment.SINGLE) {
 			case LEFT -> roundedRectShape(rect, outer, inner, inner, outer);
@@ -6112,17 +6128,11 @@ public final class MonitorScreenSystem {
 	}
 
 	private static void drawMediaSearchBar(Graphics2D graphics, UiRect rect, String placeholder, boolean compact, UiLayout layout) {
-		int arc = Math.min(rect.height(), rect.width());
-		graphics.setPaint(new GradientPaint(
-				rect.x(),
-				rect.y(),
-				new Color(12, 16, 20, compact ? 232 : 222),
-				rect.right(),
-				rect.bottom(),
-				new Color(22, 30, 38, compact ? 208 : 198)
-		));
-		fillRoundedRect(graphics, rect, arc, null);
-		strokeRoundedRect(graphics, rect, arc, 1.0F, new Color(255, 255, 255, compact ? 60 : 76));
+		drawMediaSearchBar(graphics, rect, placeholder, compact, layout, MediaButtonSegment.SINGLE);
+	}
+
+	private static void drawMediaSearchBar(Graphics2D graphics, UiRect rect, String placeholder, boolean compact, UiLayout layout, MediaButtonSegment segment) {
+		drawMediaHeaderControlBase(graphics, rect, segment);
 
 		UiRect iconRect = new UiRect(
 				rect.x() + clampInt(layout.unit() / 2, 5, 10),
@@ -6154,24 +6164,17 @@ public final class MonitorScreenSystem {
 	}
 
 	private static void drawMediaTitleBar(Graphics2D graphics, UiRect rect, String title, UiLayout layout) {
-		int arc = Math.min(rect.height(), rect.width());
-		graphics.setPaint(new GradientPaint(
-				rect.x(),
-				rect.y(),
-				new Color(12, 16, 20, 228),
-				rect.right(),
-				rect.bottom(),
-				new Color(22, 30, 38, 204)
-		));
-		fillRoundedRect(graphics, rect, arc, null);
-		strokeRoundedRect(graphics, rect, arc, 1.0F, new Color(255, 255, 255, 64));
+		drawMediaTitleBar(graphics, rect, title, layout, MediaButtonSegment.SINGLE);
+	}
+
+	private static void drawMediaTitleBar(Graphics2D graphics, UiRect rect, String title, UiLayout layout, MediaButtonSegment segment) {
 		drawVerticalText(
 				graphics,
 				(title == null || title.isBlank()) ? "ГАЛЕРЕЯ" : title,
 				new UiRect(
-						rect.x() + clampInt(layout.unit() / 2, 4, 8),
+						rect.x() + clampInt(layout.unit() / 3, 3, 6),
 						rect.y(),
-						rect.width() - clampInt(layout.unit(), 8, 16),
+						rect.width() - clampInt(layout.unit() / 2, 4, 10),
 						rect.height()
 				),
 				new Color(248, 251, 255, 236),
@@ -7188,12 +7191,7 @@ public final class MonitorScreenSystem {
 		if (kind != TransportButtonKind.PLAY_PAUSE) {
 			strokeRoundedRect(graphics, rect, arc, 1.0F, new Color(255, 255, 255, 22));
 		}
-		double iconScale = kind == TransportButtonKind.PLAY_PAUSE ? 0.54D : 0.44D;
-		int iconSize = clampInt(
-				(int) Math.round(Math.min(rect.width(), rect.height()) * iconScale),
-				10,
-				Math.max(10, Math.min(rect.width(), rect.height()) - Math.max(6, layout.unit()))
-		);
+		int iconSize = mediaTransportIconSize(rect, layout);
 		UiRect iconRect = new UiRect(
 				rect.x() + (rect.width() - iconSize) / 2,
 				rect.y() + (rect.height() - iconSize) / 2,
@@ -7218,6 +7216,14 @@ public final class MonitorScreenSystem {
 				}
 			}
 		}
+	}
+
+	private static int mediaTransportIconSize(UiRect rect, UiLayout layout) {
+		return clampInt(
+				(int) Math.round(Math.min(rect.width(), rect.height()) * 0.44D),
+				10,
+				Math.max(10, Math.min(rect.width(), rect.height()) - Math.max(6, layout.unit()))
+		);
 	}
 
 	private static void drawLauncherArrowButton(Graphics2D graphics, UiRect rect, boolean up) {
@@ -7451,7 +7457,7 @@ public final class MonitorScreenSystem {
 		}
 		UiRect closeRect = mediaCloseRect(layout);
 		int height = clampInt(layout.unit() * 2, 18, 28);
-		int x = closeRect.right() + clampInt(layout.unit() / 2, 5, 10);
+		int x = closeRect.right() + mediaHeaderControlGap(layout);
 		int width = Math.max(48, canvas.right() - x - layout.unit() / 2);
 		return new UiRect(x, canvas.y() + layout.unit() / 2, width, height);
 	}
@@ -7476,9 +7482,13 @@ public final class MonitorScreenSystem {
 		UiRect closeRect = mediaGalleryBrowserCloseRect(layout);
 		UiRect canvas = mediaCanvasRect(layout);
 		int height = clampInt(layout.unit() * 2, 18, 28);
-		int x = closeRect.right() + clampInt(layout.unit() / 2, 5, 10);
+		int x = closeRect.right() + mediaHeaderControlGap(layout);
 		int width = Math.max(48, canvas.right() - x - layout.unit() / 2);
 		return new UiRect(x, canvas.y() + layout.unit() / 2, width, height);
+	}
+
+	private static int mediaHeaderControlGap(UiLayout layout) {
+		return clampInt(layout.unit() / 5, 1, 3);
 	}
 
 	private static UiRect mediaGalleryPlayerTitleRect(UiLayout layout) {
@@ -7486,7 +7496,7 @@ public final class MonitorScreenSystem {
 		UiRect canvas = mediaCanvasRect(layout);
 		UiRect actionRect = mediaGalleryPlayerActionRect(layout);
 		int height = clampInt(layout.unit() * 2, 18, 28);
-		int x = closeRect.right() + clampInt(layout.unit() / 2, 5, 10);
+		int x = closeRect.right() + mediaHeaderControlGap(layout);
 		int width = Math.max(48, actionRect.x() - x - clampInt(layout.unit() / 2, 4, 8));
 		return new UiRect(x, canvas.y() + layout.unit() / 2, width, height);
 	}
@@ -8118,13 +8128,13 @@ public final class MonitorScreenSystem {
 			size = clampInt(center.height(), ultraCompactScreenLayout(layout) ? 22 : 28, 54);
 			gap = clampInt(layout.unit(), 8, 18);
 		} else if (ultraCompactScreenLayout(layout)) {
-			size = clampInt(center.height(), 18, 24);
+			size = center.height();
 			gap = clampInt(layout.unit(), 8, 12);
 		} else if (compactScreenLayout(layout)) {
-			size = clampInt(center.height(), 24, 34);
+			size = center.height();
 			gap = clampInt(layout.unit() + 2, 10, 18);
 		} else {
-			size = clampInt(center.height(), 34, 68);
+			size = center.height();
 			gap = clampInt(layout.unit() * 2, 14, 28);
 		}
 		return new UiRect(center.x() - size - gap, center.y() + (center.height() - size) / 2, size, size);
@@ -8142,13 +8152,13 @@ public final class MonitorScreenSystem {
 			size = clampInt(center.height(), ultraCompactScreenLayout(layout) ? 22 : 28, 54);
 			gap = clampInt(layout.unit(), 8, 18);
 		} else if (ultraCompactScreenLayout(layout)) {
-			size = clampInt(center.height(), 18, 24);
+			size = center.height();
 			gap = clampInt(layout.unit(), 8, 12);
 		} else if (compactScreenLayout(layout)) {
-			size = clampInt(center.height(), 24, 34);
+			size = center.height();
 			gap = clampInt(layout.unit() + 2, 10, 18);
 		} else {
-			size = clampInt(center.height(), 34, 68);
+			size = center.height();
 			gap = clampInt(layout.unit() * 2, 14, 28);
 		}
 		return new UiRect(center.right() + gap, center.y() + (center.height() - size) / 2, size, size);
@@ -10274,7 +10284,10 @@ public final class MonitorScreenSystem {
 		if (isStreamPlaybackLocked(state)) {
 			return state.sourceUrl != null || state.streamFrame != null;
 		}
-		return state.loadedMedia != null || !state.galleryItems.isEmpty();
+		if (state.mode == ScreenViewMode.GALLERY) {
+			return state.loadedMedia != null || !state.galleryItems.isEmpty();
+		}
+		return state.loadedMedia != null;
 	}
 
 	private static boolean playbackControlsVisibleLocked(MediaRuntimeState state) {
@@ -10287,7 +10300,10 @@ public final class MonitorScreenSystem {
 					|| state.relaySessionId != null
 					|| (state.streamKind == PlaybackStreamKind.YOUTUBE && state.mode == ScreenViewMode.YOUTUBE && !state.youtubeQueue.isEmpty());
 		}
-		return state.loadedMedia != null || !state.galleryItems.isEmpty();
+		if (state.mode == ScreenViewMode.GALLERY) {
+			return state.loadedMedia != null || !state.galleryItems.isEmpty();
+		}
+		return state.loadedMedia != null;
 	}
 
 	private static boolean mediaControlUiVisibleLocked(MediaRuntimeState state) {

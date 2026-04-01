@@ -45,7 +45,7 @@ import java.util.stream.Stream;
 
 public final class MonitorMediaApp implements MonitorApp {
 	private static final Gson GSON = new Gson();
-	private static final int MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
+	private static final int MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024;
 	private static final long MAX_VIDEO_SAVE_BYTES = 1024L * 1024L * 1024L;
 	private static final int CONNECT_TIMEOUT_MS = 4000;
 	private static final int READ_TIMEOUT_MS = 12000;
@@ -586,6 +586,9 @@ public final class MonitorMediaApp implements MonitorApp {
 			throw new IOException("HTTP " + status);
 		}
 		long contentLength = connection.getContentLengthLong();
+		if (contentLength > MAX_DOWNLOAD_BYTES) {
+			throw new IOException("File is too large");
+		}
 		if (progress != null) {
 			if (contentLength > 0L) {
 				progress.setProgress("DOWNLOADING", 0L, contentLength);
