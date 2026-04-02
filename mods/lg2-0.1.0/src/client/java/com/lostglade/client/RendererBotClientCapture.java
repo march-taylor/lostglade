@@ -14,19 +14,29 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class RendererBotClientCapture {
 	private static final Object LOCK = new Object();
 	private static final long LOCAL_CAPTURE_TIMEOUT_MS = Long.getLong("lg2.rendererBotLocalCaptureTimeoutMs", 8_000L);
-	private static final ExecutorService CAPTURE_EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
+	private static final long RECENT_FRAME_TTL_MS = Long.getLong("lg2.rendererBotRecentFrameTtlMs", 175L);
+	private static final int DEFAULT_WARMUP_FRAMES = Math.max(1, Integer.getInteger("lg2.rendererBotWarmupFrames", 2));
+	private static final int CAPTURE_THREADS = Math.max(3, Integer.getInteger("lg2.rendererBotCaptureThreads", Math.max(3, Runtime.getRuntime().availableProcessors() - 1)));
+	private static final int MIN_RENDER_WIDTH = Math.max(128, Integer.getInteger("lg2.rendererBotMinRenderWidth", 512));
+	private static final int MIN_RENDER_HEIGHT = Math.max(128, Integer.getInteger("lg2.rendererBotMinRenderHeight", 384));
+	private static final int MAX_RENDER_WIDTH = Math.max(MIN_RENDER_WIDTH, Integer.getInteger("lg2.rendererBotMaxRenderWidth", 1536));
+	private static final int MAX_RENDER_HEIGHT = Math.max(MIN_RENDER_HEIGHT, Integer.getInteger("lg2.rendererBotMaxRenderHeight", 1024));
+	private static final ExecutorService CAPTURE_EXECUTOR = Executors.newFixedThreadPool(CAPTURE_THREADS, runnable -> {
 		Thread thread = new Thread(runnable, "lg2-renderer-bot-capture");
 		thread.setDaemon(true);
 		return thread;
 	});
 
 	private static PendingCapture pendingCapture;
+	private static volatile CapturedFrame latestFrame;
 
 	private RendererBotClientCapture() {
 	}
@@ -45,24 +55,44 @@ public final class RendererBotClientCapture {
 	}
 
 	private static void beginCapture(RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload, Minecraft client) {
+		long now = System.currentTimeMillis();
 		PendingCapture previous;
 		synchronized (LOCK) {
 			previous = pendingCapture;
-			pendingCapture = new PendingCapture(payload, 6, client.options.fov().get(), System.currentTimeMillis(), false);
+			pendingCapture = null;
+		}
+		if (previous != null) {
+			client.options.fov().set(previous.originalFov());
+			sendFailure(previous.payload(), "Renderer bot capture was replaced by a newer request");
+		}
+
+		CapturedFrame cached = latestFrame;
+		if (cached != null && cached.matches(payload) && cached.capturedAtMillis() + RECENT_FRAME_TTL_MS >= now) {
+			Lg2.LOGGER.info("Renderer bot reusing hot cached frame for {}", payload.requestId());
+			sendFrame(payload, cached.previewPixels(), cached.fullPixels());
+			return;
+		}
+
+		int renderWidth = computeRenderWidth(payload);
+		int renderHeight = computeRenderHeight(payload, renderWidth);
+		boolean resized = ensureRenderTargetSize(client, renderWidth, renderHeight);
+		int warmupFrames = resized ? DEFAULT_WARMUP_FRAMES + 2 : DEFAULT_WARMUP_FRAMES;
+		synchronized (LOCK) {
+			pendingCapture = new PendingCapture(payload, warmupFrames, client.options.fov().get(), now);
 			client.options.fov().set(payload.fovDegrees());
 		}
 		Lg2.LOGGER.info(
-				"Renderer bot received capture request {} preview={}x{} full={}x{}",
+				"Renderer bot received capture request {} preview={}x{} full={}x{} render={}x{} warmup={}",
 				payload.requestId(),
 				payload.previewWidth(),
 				payload.previewHeight(),
 				payload.fullWidth(),
-				payload.fullHeight()
+				payload.fullHeight(),
+				renderWidth,
+				renderHeight,
+				warmupFrames
 		);
 
-		if (previous != null) {
-			sendFailure(previous.payload(), "Renderer bot capture was replaced by a newer request");
-		}
 	}
 
 	private static void onClientTick(Minecraft client) {
@@ -96,7 +126,12 @@ public final class RendererBotClientCapture {
 			return;
 		}
 		capture.markScreenshotRequested();
-		Lg2.LOGGER.info("Renderer bot capturing rendered frame for {}", capture.payload().requestId());
+		Lg2.LOGGER.info(
+				"Renderer bot capturing rendered frame for {} (renderTarget={}x{})",
+				capture.payload().requestId(),
+				client.getMainRenderTarget().width,
+				client.getMainRenderTarget().height
+		);
 		Screenshot.takeScreenshot(client.getMainRenderTarget(), image -> handleScreenshot(client, capture, image));
 	}
 
@@ -115,32 +150,58 @@ public final class RendererBotClientCapture {
 	private static void handleScreenshot(Minecraft client, PendingCapture capture, NativeImage image) {
 		int width = image.getWidth();
 		int height = image.getHeight();
-		int[] pixels = image.makePixelArray();
-		image.close();
 		Lg2.LOGGER.info("Renderer bot captured {}x{} frame for {}", width, height, capture.payload().requestId());
-		client.execute(() -> restoreFov(capture));
-		CAPTURE_EXECUTOR.submit(() -> processCaptureAsync(capture.payload(), pixels, width, height));
+		CAPTURE_EXECUTOR.submit(() -> processCaptureAsync(client, capture, image));
 	}
 
-	private static void processCaptureAsync(RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload, int[] pixels, int width, int height) {
-		Minecraft client = Minecraft.getInstance();
+	private static void processCaptureAsync(Minecraft client, PendingCapture capture, NativeImage image) {
+		RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload = capture.payload();
 		try {
-			byte[] previewPixels = quantizeScaledFrame(pixels, width, height, payload.previewWidth(), payload.previewHeight());
-			client.execute(() -> ClientPlayNetworking.send(new RendererBotPayloads.RendererBotPreviewFrameC2SPayload(payload.requestId(), previewPixels)));
-
-			byte[] fullPixels;
-			if (payload.previewWidth() == payload.fullWidth() && payload.previewHeight() == payload.fullHeight()) {
-				fullPixels = previewPixels;
-			} else {
-				fullPixels = quantizeScaledFrame(pixels, width, height, payload.fullWidth(), payload.fullHeight());
-			}
-			Lg2.LOGGER.info("Renderer bot sending preview/full frames for {}", payload.requestId());
-			client.execute(() -> ClientPlayNetworking.send(new RendererBotPayloads.RendererBotFullFrameC2SPayload(payload.requestId(), fullPixels)));
+			int width = image.getWidth();
+			int height = image.getHeight();
+			int[] pixels = image.makePixelArray();
+			CompletableFuture<byte[]> previewFuture = CompletableFuture.supplyAsync(
+					() -> quantizeScaledFrame(pixels, width, height, payload.previewWidth(), payload.previewHeight()),
+					CAPTURE_EXECUTOR
+			);
+			CompletableFuture<byte[]> fullFuture = payload.previewWidth() == payload.fullWidth() && payload.previewHeight() == payload.fullHeight()
+					? previewFuture.thenApply(bytes -> bytes)
+					: CompletableFuture.supplyAsync(
+							() -> quantizeScaledFrame(pixels, width, height, payload.fullWidth(), payload.fullHeight()),
+							CAPTURE_EXECUTOR
+					);
+			byte[] previewPixels = previewFuture.join();
+			byte[] fullPixels = fullFuture.join();
+			latestFrame = new CapturedFrame(
+					payload.dimensionId(),
+					payload.expectedX(),
+					payload.expectedY(),
+					payload.expectedZ(),
+					payload.expectedYaw(),
+					payload.expectedPitch(),
+					payload.previewWidth(),
+					payload.previewHeight(),
+					payload.fullWidth(),
+					payload.fullHeight(),
+					payload.fovDegrees(),
+					previewPixels,
+					fullPixels,
+					System.currentTimeMillis()
+			);
+			client.execute(() -> {
+				restoreFov(capture);
+				sendFrame(payload, previewPixels, fullPixels);
+				clearPendingCapture(payload.requestId());
+			});
 		} catch (Throwable throwable) {
-			client.execute(() -> sendFailure(payload, throwable.getMessage() != null ? throwable.getMessage() : throwable.getClass().getSimpleName()));
+			client.execute(() -> {
+				restoreFov(capture);
+				sendFailure(payload, throwable.getMessage() != null ? throwable.getMessage() : throwable.getClass().getSimpleName());
+				clearPendingCapture(payload.requestId());
+			});
 			Lg2.LOGGER.error("Renderer bot capture failed", throwable);
 		} finally {
-			client.execute(() -> clearPendingCapture(payload.requestId()));
+			image.close();
 		}
 	}
 
@@ -173,9 +234,14 @@ public final class RendererBotClientCapture {
 		return output;
 	}
 
+	private static void sendFrame(RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload, byte[] previewPixels, byte[] fullPixels) {
+		ClientPlayNetworking.send(new RendererBotPayloads.RendererBotPreviewFrameC2SPayload(payload.requestId(), previewPixels));
+		ClientPlayNetworking.send(new RendererBotPayloads.RendererBotFullFrameC2SPayload(payload.requestId(), fullPixels));
+	}
+
 	private static void restoreFov(PendingCapture capture) {
 		synchronized (LOCK) {
-			if (pendingCapture == null || pendingCapture.payload().requestId().equals(capture.payload().requestId())) {
+			if (pendingCapture == null || Objects.equals(pendingCapture.payload().requestId(), capture.payload().requestId())) {
 				Minecraft.getInstance().options.fov().set(capture.originalFov());
 			}
 		}
@@ -201,6 +267,37 @@ public final class RendererBotClientCapture {
 		));
 	}
 
+	private static int computeRenderWidth(RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload) {
+		int fullWidth = Math.max(1, payload.fullWidth());
+		int fullHeight = Math.max(1, payload.fullHeight());
+		double minScale = Math.max(MIN_RENDER_WIDTH / (double) fullWidth, MIN_RENDER_HEIGHT / (double) fullHeight);
+		double maxScale = Math.min(MAX_RENDER_WIDTH / (double) fullWidth, MAX_RENDER_HEIGHT / (double) fullHeight);
+		double scale = Math.max(1.0D, minScale);
+		if (scale > maxScale) {
+			scale = maxScale;
+		}
+		return Mth.clamp((int) Math.round(fullWidth * scale), 1, MAX_RENDER_WIDTH);
+	}
+
+	private static int computeRenderHeight(RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload, int renderWidth) {
+		double aspect = Math.max(1.0D, payload.fullHeight()) / (double) Math.max(1.0D, payload.fullWidth());
+		return Mth.clamp((int) Math.round(renderWidth * aspect), 1, MAX_RENDER_HEIGHT);
+	}
+
+	private static boolean ensureRenderTargetSize(Minecraft client, int desiredWidth, int desiredHeight) {
+		if (client == null || client.getWindow() == null) {
+			return false;
+		}
+		int currentWidth = client.getWindow().getWidth();
+		int currentHeight = client.getWindow().getHeight();
+		if (Math.abs(currentWidth - desiredWidth) <= 2 && Math.abs(currentHeight - desiredHeight) <= 2) {
+			return false;
+		}
+		client.getWindow().setWindowed(desiredWidth, desiredHeight);
+		client.resizeDisplay();
+		return true;
+	}
+
 	private static final class PendingCapture {
 		private final RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload;
 		private final int originalFov;
@@ -208,16 +305,24 @@ public final class RendererBotClientCapture {
 		private int remainingWarmupFrames;
 		private boolean screenshotRequested;
 
-		private PendingCapture(RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload, int remainingWarmupFrames, int originalFov, long requestStartedAt, boolean screenshotRequested) {
+		private PendingCapture(RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload, int remainingWarmupFrames, int originalFov, long requestStartedAt) {
 			this.payload = payload;
-			this.remainingWarmupFrames = remainingWarmupFrames;
 			this.originalFov = originalFov;
 			this.requestStartedAt = requestStartedAt;
-			this.screenshotRequested = screenshotRequested;
+			this.remainingWarmupFrames = remainingWarmupFrames;
+			this.screenshotRequested = false;
 		}
 
 		private RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload() {
 			return this.payload;
+		}
+
+		private int originalFov() {
+			return this.originalFov;
+		}
+
+		private long requestStartedAt() {
+			return this.requestStartedAt;
 		}
 
 		private int remainingWarmupFrames() {
@@ -230,20 +335,43 @@ public final class RendererBotClientCapture {
 			}
 		}
 
-		private int originalFov() {
-			return this.originalFov;
-		}
-
-		private long requestStartedAt() {
-			return this.requestStartedAt;
-		}
-
 		private boolean screenshotRequested() {
 			return this.screenshotRequested;
 		}
 
 		private void markScreenshotRequested() {
 			this.screenshotRequested = true;
+		}
+	}
+
+	private record CapturedFrame(
+			String dimensionId,
+			double expectedX,
+			double expectedY,
+			double expectedZ,
+			float expectedYaw,
+			float expectedPitch,
+			int previewWidth,
+			int previewHeight,
+			int fullWidth,
+			int fullHeight,
+			int fovDegrees,
+			byte[] previewPixels,
+			byte[] fullPixels,
+			long capturedAtMillis
+	) {
+		private boolean matches(RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload) {
+			return Objects.equals(this.dimensionId, payload.dimensionId())
+					&& Math.abs(this.expectedX - payload.expectedX()) <= 0.01D
+					&& Math.abs(this.expectedY - payload.expectedY()) <= 0.01D
+					&& Math.abs(this.expectedZ - payload.expectedZ()) <= 0.01D
+					&& Math.abs(this.expectedYaw - payload.expectedYaw()) <= 0.1F
+					&& Math.abs(this.expectedPitch - payload.expectedPitch()) <= 0.1F
+					&& this.previewWidth == payload.previewWidth()
+					&& this.previewHeight == payload.previewHeight()
+					&& this.fullWidth == payload.fullWidth()
+					&& this.fullHeight == payload.fullHeight()
+					&& this.fovDegrees == payload.fovDegrees();
 		}
 	}
 }

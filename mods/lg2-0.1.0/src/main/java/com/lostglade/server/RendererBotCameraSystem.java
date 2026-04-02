@@ -4,6 +4,7 @@ import com.lostglade.Lg2;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.network.RendererBotPayloads;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
@@ -28,6 +29,11 @@ public final class RendererBotCameraSystem {
 	}
 
 	public static void register() {
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+			UUID botUuid = handler.player.getUUID();
+			READY_BOTS.remove(botUuid);
+			failCapturesForBot(botUuid, "Renderer bot disconnected during capture");
+		});
 		ServerPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotHelloC2SPayload.TYPE,
 				(payload, context) -> {
@@ -173,6 +179,23 @@ public final class RendererBotCameraSystem {
 	private static void cleanupIfFinished(UUID requestId, PendingCapture capture) {
 		if (capture.previewFuture().isDone() && capture.fullFuture().isDone()) {
 			PENDING_CAPTURES.remove(requestId);
+		}
+	}
+
+	private static void failCapturesForBot(UUID botUuid, String message) {
+		if (botUuid == null) {
+			return;
+		}
+		IllegalStateException failure = new IllegalStateException(message);
+		for (Map.Entry<UUID, PendingCapture> entry : PENDING_CAPTURES.entrySet()) {
+			PendingCapture capture = entry.getValue();
+			if (capture == null || !botUuid.equals(capture.botUuid())) {
+				continue;
+			}
+			if (PENDING_CAPTURES.remove(entry.getKey(), capture)) {
+				capture.previewFuture().completeExceptionally(failure);
+				capture.fullFuture().completeExceptionally(failure);
+			}
 		}
 	}
 

@@ -21,11 +21,16 @@ public final class MapPaletteQuantizer {
 	};
 	private static final double[] SRGB_TO_LINEAR = buildSrgbToLinear();
 	private static final PaletteEntry[] PALETTE = buildPalette();
+	private static final byte[] RGB565_LOOKUP = buildRgb565Lookup();
 
 	private MapPaletteQuantizer() {
 	}
 
 	public static byte quantize(int rgb) {
+		return RGB565_LOOKUP[rgb565Key(rgb) & 0xFFFF];
+	}
+
+	private static byte quantizeExact(int rgb) {
 		LabColor lab = toLab(rgb);
 		double bestDistance = Double.MAX_VALUE;
 		byte bestPackedId = PALETTE.length > 0 ? PALETTE[0].packedId() : 0;
@@ -132,6 +137,27 @@ public final class MapPaletteQuantizer {
 			}
 		}
 		return entries.toArray(PaletteEntry[]::new);
+	}
+
+	private static byte[] buildRgb565Lookup() {
+		byte[] lookup = new byte[1 << 16];
+		for (int key = 0; key < lookup.length; key++) {
+			int red5 = (key >> 11) & 0x1F;
+			int green6 = (key >> 5) & 0x3F;
+			int blue5 = key & 0x1F;
+			int red = (red5 << 3) | (red5 >> 2);
+			int green = (green6 << 2) | (green6 >> 4);
+			int blue = (blue5 << 3) | (blue5 >> 2);
+			lookup[key] = quantizeExact((red << 16) | (green << 8) | blue);
+		}
+		return lookup;
+	}
+
+	private static int rgb565Key(int rgb) {
+		int red = (rgb >> 16) & 0xFF;
+		int green = (rgb >> 8) & 0xFF;
+		int blue = rgb & 0xFF;
+		return ((red >> 3) << 11) | ((green >> 2) << 5) | (blue >> 3);
 	}
 
 	private static double toLinear(int channel) {
