@@ -7,6 +7,7 @@ import com.lostglade.Lg2;
 import com.lostglade.config.RaceConfig.PlayerRaceConfig;
 import com.lostglade.config.RaceConfig.RaceAbilityConfig;
 import com.lostglade.config.RaceConfig.RaceAbilitySlot;
+import com.lostglade.mixin.LivingEntityTrackedDataAccessor;
 import com.mojang.authlib.properties.Property;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import it.unimi.dsi.fastutil.Pair;
@@ -27,9 +28,12 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FontDescription;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -168,11 +172,20 @@ public final class CopperManRepulsorSystem {
 	}
 
 	public static boolean handleUseInteraction(ServerPlayer player, InteractionHand hand) {
-		if (!canUseRepulsor(player, hand)) {
+		if (!canUseRepulsor(player)) {
 			return false;
 		}
 
 		RepulsorState state = state(player);
+		if (state.charges <= 0) {
+			state.hudDirty = true;
+			return false;
+		}
+
+		if (hand == InteractionHand.OFF_HAND) {
+			cancelOffhandUse(player);
+		}
+
 		long nowTick = player.level().getGameTime();
 		state.hudDirty = true;
 		if (state.mode == RepulsorMode.AUTOMATIC) {
@@ -226,8 +239,13 @@ public final class CopperManRepulsorSystem {
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			RepulsorState state = state(player);
 			syncAirTriggerEntity(player, state);
+			if (!(state.charges > 0 && canUseRepulsor(player))
+					&& player.isUsingItem()
+					&& player.getUsedItemHand() == InteractionHand.OFF_HAND) {
+				state.lastAutomaticInputTick = Long.MIN_VALUE;
+			}
 			if (state.mode == RepulsorMode.AUTOMATIC
-					&& canUseRepulsor(player, InteractionHand.MAIN_HAND)
+					&& canUseRepulsor(player)
 					&& state.lastAutomaticInputTick + AUTO_INPUT_GRACE_TICKS >= nowTick
 					&& nowTick >= state.nextShotTick) {
 				tryFire(player, state, nowTick);
@@ -243,7 +261,7 @@ public final class CopperManRepulsorSystem {
 		return STATES.computeIfAbsent(player.getUUID(), ignored -> new RepulsorState());
 	}
 
-	private static boolean canUseRepulsor(ServerPlayer player, InteractionHand hand) {
+	private static boolean canUseRepulsor(ServerPlayer player) {
 		return player != null
 				&& player.isAlive()
 				&& !player.isSpectator()
@@ -251,6 +269,14 @@ public final class CopperManRepulsorSystem {
 				&& isAttackUnlocked(player)
 				&& player.getInventory().getSelectedSlot() == 0
 				&& player.getMainHandItem().isEmpty();
+	}
+
+	public static boolean isAirTriggerEntity(ServerPlayer player, Entity entity) {
+		if (player == null || entity == null) {
+			return false;
+		}
+		RepulsorState state = STATES.get(player.getUUID());
+		return state != null && state.airTriggerEntity == entity;
 	}
 
 	private static boolean tryFire(ServerPlayer player, RepulsorState state, long nowTick) {
@@ -389,9 +415,13 @@ public final class CopperManRepulsorSystem {
 		}
 
 		ItemStack mainHand = player.getMainHandItem();
+		ItemStack offhand = player.getOffhandItem();
 		ItemStack selected = player.getInventory().getItem(player.getInventory().getSelectedSlot());
 		ItemStack using = player.getUseItem();
-		if (mainHand.is(Items.COPPER_INGOT) || selected.is(Items.COPPER_INGOT) || using.is(Items.COPPER_INGOT)) {
+		if (mainHand.is(Items.COPPER_INGOT)
+				|| offhand.is(Items.COPPER_INGOT)
+				|| selected.is(Items.COPPER_INGOT)
+				|| using.is(Items.COPPER_INGOT)) {
 			return true;
 		}
 
@@ -399,7 +429,7 @@ public final class CopperManRepulsorSystem {
 	}
 
 	private static void syncAirTriggerEntity(ServerPlayer player, RepulsorState state) {
-		if (!shouldMaintainAirTrigger(player)) {
+		if (!shouldMaintainAirTrigger(player, state)) {
 			removeAirTriggerEntity(state);
 			return;
 		}
@@ -430,10 +460,12 @@ public final class CopperManRepulsorSystem {
 		trigger.setXRot(player.getXRot());
 	}
 
-	private static boolean shouldMaintainAirTrigger(ServerPlayer player) {
+	private static boolean shouldMaintainAirTrigger(ServerPlayer player, RepulsorState state) {
 		return player != null
+				&& state != null
 				&& player.isAlive()
 				&& !player.isSpectator()
+				&& state.charges > 0
 				&& isAttackUnlocked(player)
 				&& player.getInventory().getSelectedSlot() == 0
 				&& player.getMainHandItem().isEmpty();
@@ -461,6 +493,21 @@ public final class CopperManRepulsorSystem {
 			state.airTriggerEntity.discard();
 			state.airTriggerEntity = null;
 		}
+	}
+
+	private static void cancelOffhandUse(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+
+		player.stopUsingItem();
+		EntityDataAccessor<Byte> flagsAccessor = LivingEntityTrackedDataAccessor.lg2$getDataLivingEntityFlags();
+		byte flags = player.getEntityData().get(flagsAccessor);
+		byte clearedFlags = (byte) (flags & ~0x01 & ~0x02);
+		player.connection.send(new ClientboundSetEntityDataPacket(
+				player.getId(),
+				List.of(SynchedEntityData.DataValue.create(flagsAccessor, clearedFlags))
+		));
 	}
 
 	private static String localizeModeChanged(ServerPlayer player, RepulsorMode mode) {

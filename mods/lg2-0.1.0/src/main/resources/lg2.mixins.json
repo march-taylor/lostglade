@@ -32,6 +32,7 @@
 		"LivingEntityCartelOwnerFriendlyFireMixin",
 		"LivingEntityCartelLawyerInvulnerabilityMixin",
 		"LivingEntityCartelSummonLootMixin",		"LivingEntityCopperManFoodMixin",
+		"LivingEntityTrackedDataAccessor",
 		"LivingEntityStabilityLuckMixin",
 		"LivingEntityTrojanRoosterInvulnerabilityMixin",
 		"MsgCommandMixin",
