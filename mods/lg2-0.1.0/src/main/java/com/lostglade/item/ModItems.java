@@ -22,6 +22,7 @@ public final class ModItems {
 	private static final Identifier SPECIAL_PICKAXE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "special_pickaxe");
 	private static final Identifier CAMERA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera");
 	private static final Identifier MONITOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "monitor");
+	private static final Identifier COPPER_JETPACK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_jetpack");
 	private static final Identifier PHOTO_PRINT_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "photo_print");
 	private static final Identifier TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "travka");
 	private static final Identifier DRIED_TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "dried_travka");
@@ -39,6 +40,7 @@ public final class ModItems {
 	private static final ResourceKey<Item> SPECIAL_PICKAXE_KEY = ResourceKey.create(Registries.ITEM, SPECIAL_PICKAXE_ID);
 	private static final ResourceKey<Item> CAMERA_KEY = ResourceKey.create(Registries.ITEM, CAMERA_ID);
 	private static final ResourceKey<Item> MONITOR_KEY = ResourceKey.create(Registries.ITEM, MONITOR_ID);
+	private static final ResourceKey<Item> COPPER_JETPACK_KEY = ResourceKey.create(Registries.ITEM, COPPER_JETPACK_ID);
 	private static final ResourceKey<Item> PHOTO_PRINT_KEY = ResourceKey.create(Registries.ITEM, PHOTO_PRINT_ID);
 	private static final ResourceKey<Item> TRAVKA_KEY = ResourceKey.create(Registries.ITEM, TRAVKA_ID);
 	private static final ResourceKey<Item> DRIED_TRAVKA_KEY = ResourceKey.create(Registries.ITEM, DRIED_TRAVKA_ID);
@@ -94,6 +96,16 @@ public final class ModItems {
 					new Item.Properties()
 							.setId(MONITOR_KEY)
 							.stacksTo(16)
+							.rarity(Rarity.UNCOMMON)
+			)
+	);
+	public static final Item COPPER_JETPACK = Registry.register(
+			BuiltInRegistries.ITEM,
+			COPPER_JETPACK_ID,
+			new CopperJetpackItem(
+					new Item.Properties()
+							.setId(COPPER_JETPACK_KEY)
+							.stacksTo(1)
 							.rarity(Rarity.UNCOMMON)
 			)
 	);

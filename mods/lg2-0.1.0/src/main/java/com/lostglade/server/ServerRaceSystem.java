@@ -13,6 +13,7 @@ import com.lostglade.item.CocaineItem;
 import com.lostglade.item.MethadoneItem;
 import com.lostglade.item.ModItems;
 import com.lostglade.item.TubochkaItem;
+import com.mojang.math.Transformation;
 import com.lostglade.mixin.MobXpRewardAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.mojang.authlib.GameProfile;
@@ -72,6 +73,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
@@ -94,6 +96,7 @@ import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.raid.Raider;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.ItemUseAnimation;
 import net.minecraft.world.item.component.WrittenBookContent;
@@ -241,6 +244,25 @@ public final class ServerRaceSystem {
 	private static final double COPPER_LIGHTNING_ATTRACT_RANGE_BLOCKS = 128.0D;
 	private static final double COPPER_MAN_DEFENSE_DEFAULT_DURATION_SECONDS = 300.0D;
 	private static final double COPPER_MAN_DEFENSE_DEFAULT_COOLDOWN_SECONDS = 900.0D;
+	private static final double COPPER_MAN_JETPACK_DEFAULT_DURATION_SECONDS = 30.0D;
+	private static final double COPPER_MAN_JETPACK_DEFAULT_COOLDOWN_SECONDS = 300.0D;
+	private static final double COPPER_MAN_JETPACK_DEFAULT_MAX_RISE_BLOCKS = 30.0D;
+	private static final double COPPER_MAN_JETPACK_ASCEND_SPEED = 0.42D;
+	private static final double COPPER_MAN_JETPACK_GLIDE_DESCEND_SPEED = -0.32D;
+	private static final double COPPER_MAN_JETPACK_HORIZONTAL_SPEED = 0.0275D;
+	private static final double COPPER_MAN_JETPACK_VERTICAL_ACCEL = 0.255D;
+	private static final double COPPER_MAN_JETPACK_DESCEND_ACCEL = 0.165D;
+	private static final double COPPER_MAN_JETPACK_HORIZONTAL_BLEND = 0.4D;
+	private static final double COPPER_MAN_JETPACK_ASCEND_BRAKE_RANGE_BLOCKS = 4.0D;
+	private static final double COPPER_MAN_JETPACK_PARTICLE_BACK_OFFSET = 0.34D;
+	private static final double COPPER_MAN_JETPACK_PARTICLE_SIDE_OFFSET = 0.2D;
+	private static final double COPPER_MAN_JETPACK_PARTICLE_UP_OFFSET = 0.80D;
+	private static final double COPPER_MAN_JETPACK_PARTICLE_UP_OFFSET_CROUCHING = 0.64D;
+	private static final double COPPER_MAN_JETPACK_BODY_OFFSET_BACK = 0.08D;
+	private static final double COPPER_MAN_JETPACK_BODY_OFFSET_UP = 1.62D;
+	private static final double COPPER_MAN_JETPACK_BODY_OFFSET_UP_CROUCHING = 1.38D;
+	private static final String COPPER_MAN_JETPACK_DISPLAY_TAG = "lg2_copper_jetpack_display";
+	private static final String COPPER_MAN_JETPACK_DISPLAY_OWNER_TAG_PREFIX = "lg2_copper_jetpack_owner:";
 	private static final long COPPER_MAN_DEFENSE_PREWARM_INTERVAL_TICKS = 10L;
 	private static final long COPPER_MAN_DEFENSE_TINT_RETRY_COOLDOWN_MS = 30_000L;
 	private static final long COPPER_MAN_DEFENSE_TINT_CACHE_CLEANUP_INTERVAL_TICKS = 12_000L;
@@ -252,6 +274,7 @@ public final class ServerRaceSystem {
 	private static final float COPPER_MAN_DEFENSE_COPPER_RED = 0.84313726F;
 	private static final float COPPER_MAN_DEFENSE_COPPER_GREEN = 0.48235294F;
 	private static final float COPPER_MAN_DEFENSE_COPPER_BLUE = 0.35686275F;
+	private static final Identifier COPPER_MAN_JETPACK_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_jetpack");
 	private static final float COPPER_INGOT_SATURATION = 0.6F;
 	private static final Consumable COPPER_INGOT_CONSUMABLE = Consumable.builder()
 			.consumeSeconds(1.6F)
@@ -289,6 +312,10 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, UUID> COPPER_GOLEM_FOLLOWERS = new LinkedHashMap<>();
 	private static final Map<UUID, Long> COPPER_MAN_DEFENSE_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, CopperManDefenseVisualSession> COPPER_MAN_DEFENSE_VISUAL_SESSIONS = new LinkedHashMap<>();
+	private static final Map<UUID, Long> COPPER_MAN_JETPACK_COOLDOWNS = new LinkedHashMap<>();
+	private static final Map<UUID, CopperManJetpackSession> COPPER_MAN_JETPACK_SESSIONS = new LinkedHashMap<>();
+	private static final Map<UUID, CopperManJetpackInputState> COPPER_MAN_JETPACK_INPUTS = new ConcurrentHashMap<>();
+	private static final Map<UUID, UUID> COPPER_MAN_JETPACK_DISPLAY_IDS = new LinkedHashMap<>();
 	private static final Map<String, Property> COPPER_MAN_DEFENSE_TINT_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, Long> COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS = new ConcurrentHashMap<>();
 	private static final Set<String> COPPER_MAN_DEFENSE_TINT_BUILD_IN_FLIGHT = ConcurrentHashMap.newKeySet();
@@ -437,6 +464,7 @@ public final class ServerRaceSystem {
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			cleanupAllCartelRaceEntities(server, true);
 			restoreAllCartelDisguises(server);
+			restoreAllCopperManJetpacks(server);
 			restoreAllCopperManDefenseVisuals(server);
 			CartelWebcamBridge.clearAll();
 			RACES_BY_NICKNAME.clear();
@@ -450,6 +478,10 @@ public final class ServerRaceSystem {
 			CARTEL_DISGUISE_SESSIONS.clear();
 			COPPER_MAN_DEFENSE_COOLDOWNS.clear();
 			COPPER_MAN_DEFENSE_VISUAL_SESSIONS.clear();
+			COPPER_MAN_JETPACK_COOLDOWNS.clear();
+			COPPER_MAN_JETPACK_SESSIONS.clear();
+			COPPER_MAN_JETPACK_INPUTS.clear();
+			COPPER_MAN_JETPACK_DISPLAY_IDS.clear();
 			COPPER_MAN_DEFENSE_TINT_CACHE.clear();
 			COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS.clear();
 			COPPER_MAN_DEFENSE_TINT_BUILD_IN_FLIGHT.clear();
@@ -480,7 +512,9 @@ public final class ServerRaceSystem {
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.removeIf(attempt -> attempt.playerId.equals(handler.player.getUUID()));
 			COPPER_GOLEM_FOLLOWERS.entrySet().removeIf(entry -> handler.player.getUUID().equals(entry.getValue()));
 			clearCopperManDefenseVisual(handler.player);
+			clearCopperManJetpack(handler.player);
 			COPPER_MAN_DEFENSE_COOLDOWNS.remove(handler.player.getUUID());
+			COPPER_MAN_JETPACK_COOLDOWNS.remove(handler.player.getUUID());
 		});
 		UseItemCallback.EVENT.register((player, world, hand) -> {
 			if (!(player instanceof ServerPlayer serverPlayer) || world.isClientSide()) {
@@ -511,6 +545,7 @@ public final class ServerRaceSystem {
 			tickCartelTravkaGrowthAttempts(server);
 			tickCartelFernGrowths(server);
 			tickCopperManStock(server);
+			tickCopperManJetpack(server);
 			tickCopperManDefense(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
@@ -621,6 +656,9 @@ public final class ServerRaceSystem {
 		if (slot == RaceAbilitySlot.DEFENSE && COPPER_MAN_RACE_ID.equals(sanitizePath(race.id))) {
 			return useCopperManDefense(player, race, ability);
 		}
+		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && COPPER_MAN_RACE_ID.equals(sanitizePath(race.id))) {
+			return useCopperManJetpack(player, race, ability);
+		}
 
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
@@ -717,6 +755,25 @@ public final class ServerRaceSystem {
 		stack.remove(DataComponents.CONSUMABLE);
 	}
 
+	public static void handleCopperManJetpackInput(ServerPlayer player, net.minecraft.world.entity.player.Input input) {
+		if (player == null || input == null) {
+			return;
+		}
+
+		COPPER_MAN_JETPACK_INPUTS.put(
+				player.getUUID(),
+				new CopperManJetpackInputState(
+						input.forward(),
+						input.backward(),
+						input.left(),
+						input.right(),
+						input.jump(),
+						input.shift(),
+						input.sprint()
+				)
+		);
+	}
+
 	public static void adjustCopperManFoodAfterEating(ServerPlayer player, int beforeFood, float beforeSaturation) {
 		if (!isCopperManStockEnabled(player)) {
 			return;
@@ -799,6 +856,75 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private static int useCopperManJetpack(ServerPlayer caster, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		try {
+			ServerLevel level = caster.level();
+			long nowTick = level.getGameTime();
+			long cooldownTicks = asTicks(positiveOrDefault(ability.cooldownSeconds, COPPER_MAN_JETPACK_DEFAULT_COOLDOWN_SECONDS));
+			long nextAllowedTick = COPPER_MAN_JETPACK_COOLDOWNS.getOrDefault(caster.getUUID(), 0L);
+			if (cooldownTicks > 0L && nowTick < nextAllowedTick) {
+				double remaining = (nextAllowedTick - nowTick) / 20.0D;
+				caster.displayClientMessage(
+						Component.literal(String.format(Locale.ROOT, "%.1fs", remaining))
+								.withStyle(ChatFormatting.RED),
+						true
+				);
+				return 0;
+			}
+
+			long durationTicks = Math.max(1L, asTicks(positiveOrDefault(ability.durationSeconds, COPPER_MAN_JETPACK_DEFAULT_DURATION_SECONDS)));
+			double maxRiseBlocks = positiveOrDefault(ability.jetpackMaxRiseBlocks, COPPER_MAN_JETPACK_DEFAULT_MAX_RISE_BLOCKS);
+			COPPER_MAN_JETPACK_SESSIONS.put(
+					caster.getUUID(),
+					new CopperManJetpackSession(nowTick + durationTicks, caster.getY(), maxRiseBlocks)
+			);
+			COPPER_MAN_JETPACK_INPUTS.putIfAbsent(caster.getUUID(), CopperManJetpackInputState.EMPTY);
+			if (cooldownTicks > 0L) {
+				COPPER_MAN_JETPACK_COOLDOWNS.put(caster.getUUID(), nowTick + cooldownTicks);
+			}
+			syncCopperManJetpackVisual(caster, true);
+
+			Lg2.LOGGER.info("Player {} used copper man unique ability '{}' from race '{}'", caster.getGameProfile().name(), ability.abilityId, race.id);
+			return 1;
+		} catch (Exception exception) {
+			Lg2.LOGGER.error("Failed to activate copper man jetpack for {}", caster.getGameProfile().name(), exception);
+			caster.sendSystemMessage(Component.literal("Не удалось активировать реактивный ранец."));
+			return 0;
+		}
+	}
+
+	private static void tickCopperManJetpack(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		if (nowTick % 40L == 0L) {
+			COPPER_MAN_JETPACK_COOLDOWNS.entrySet().removeIf(entry -> entry.getValue() <= nowTick);
+		}
+		if (COPPER_MAN_JETPACK_SESSIONS.isEmpty()) {
+			return;
+		}
+
+		for (Map.Entry<UUID, CopperManJetpackSession> entry : new ArrayList<>(COPPER_MAN_JETPACK_SESSIONS.entrySet())) {
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			CopperManJetpackSession session = entry.getValue();
+			if (player == null || session == null) {
+				COPPER_MAN_JETPACK_SESSIONS.remove(entry.getKey());
+				COPPER_MAN_JETPACK_INPUTS.remove(entry.getKey());
+				continue;
+			}
+
+			if (!player.isAlive() || player.isSpectator() || nowTick >= session.expireTick()) {
+				clearCopperManJetpack(player);
+				continue;
+			}
+
+			applyCopperManJetpackMovement(player, session);
+			syncCopperManJetpackVisual(player, true);
+		}
+	}
+
 	private static void tickCopperManDefense(MinecraftServer server) {
 		if (server == null) {
 			return;
@@ -833,6 +959,195 @@ public final class ServerRaceSystem {
 			}
 
 			ensureCopperManDefenseVisualApplied(server, player, session);
+		}
+	}
+
+	private static void applyCopperManJetpackMovement(ServerPlayer player, CopperManJetpackSession session) {
+		if (player == null || session == null) {
+			return;
+		}
+
+		CopperManJetpackInputState input = COPPER_MAN_JETPACK_INPUTS.getOrDefault(player.getUUID(), CopperManJetpackInputState.EMPTY);
+		Vec3 currentMotion = player.getDeltaMovement();
+		double currentY = player.getY();
+		double maxAllowedY = session.maxAllowedY();
+
+		if (player.onGround() && !input.jump()) {
+			player.fallDistance = 0.0F;
+			return;
+		}
+
+		double verticalTarget;
+		if (input.jump()) {
+			double remaining = Math.max(0.0D, maxAllowedY - currentY);
+			float brakeFactor = clamp01((float) (remaining / COPPER_MAN_JETPACK_ASCEND_BRAKE_RANGE_BLOCKS));
+			verticalTarget = remaining <= 0.02D
+					? 0.0D
+					: Math.min(COPPER_MAN_JETPACK_ASCEND_SPEED * brakeFactor, remaining);
+		} else {
+			verticalTarget = player.onGround() ? 0.0D : COPPER_MAN_JETPACK_GLIDE_DESCEND_SPEED;
+		}
+
+		double verticalAccel = input.jump() ? COPPER_MAN_JETPACK_VERTICAL_ACCEL : COPPER_MAN_JETPACK_DESCEND_ACCEL;
+		double nextVertical = approach(currentMotion.y, verticalTarget, verticalAccel);
+		if (currentY >= maxAllowedY - 0.02D && nextVertical > 0.0D) {
+			nextVertical = 0.0D;
+		}
+
+		double nextX = currentMotion.x;
+		double nextZ = currentMotion.z;
+		if (!player.onGround()) {
+			Vec3 horizontalTarget = computeCopperManJetpackHorizontalVelocity(player, input);
+			Vec3 currentHorizontal = new Vec3(currentMotion.x, 0.0D, currentMotion.z);
+			Vec3 nextHorizontal = currentHorizontal.add(horizontalTarget.subtract(currentHorizontal).scale(COPPER_MAN_JETPACK_HORIZONTAL_BLEND));
+			nextX = nextHorizontal.x;
+			nextZ = nextHorizontal.z;
+		}
+
+		player.setDeltaMovement(nextX, nextVertical, nextZ);
+		player.hurtMarked = true;
+		player.fallDistance = 0.0F;
+		emitCopperManJetpackParticles(player, input);
+	}
+
+	private static Vec3 computeCopperManJetpackHorizontalVelocity(ServerPlayer player, CopperManJetpackInputState input) {
+		if (player == null || input == null) {
+			return Vec3.ZERO;
+		}
+
+		int forwardInput = (input.forward() ? 1 : 0) - (input.backward() ? 1 : 0);
+		int strafeInput = (input.right() ? 1 : 0) - (input.left() ? 1 : 0);
+		if (forwardInput == 0 && strafeInput == 0) {
+			return Vec3.ZERO;
+		}
+
+		Vec3 forward = Vec3.directionFromRotation(0.0F, player.getYRot());
+		forward = new Vec3(forward.x, 0.0D, forward.z);
+		if (forward.lengthSqr() <= 1.0E-6D) {
+			return Vec3.ZERO;
+		}
+		forward = forward.normalize();
+		Vec3 right = new Vec3(-forward.z, 0.0D, forward.x);
+		Vec3 desired = forward.scale(forwardInput).add(right.scale(strafeInput));
+		if (desired.lengthSqr() <= 1.0E-6D) {
+			return Vec3.ZERO;
+		}
+		return desired.normalize().scale(COPPER_MAN_JETPACK_HORIZONTAL_SPEED);
+	}
+
+	private static void emitCopperManJetpackParticles(ServerPlayer player, CopperManJetpackInputState input) {
+		if (player == null || input == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+		if (player.onGround() && !input.jump()) {
+			return;
+		}
+
+		float yaw = player.getYHeadRot();
+		Vec3 forward = Vec3.directionFromRotation(0.0F, yaw);
+		forward = new Vec3(forward.x, 0.0D, forward.z);
+		if (forward.lengthSqr() <= 1.0E-6D) {
+			return;
+		}
+		forward = forward.normalize();
+		Vec3 backward = forward.scale(-1.0D);
+		Vec3 right = new Vec3(-forward.z, 0.0D, forward.x);
+
+		double upOffset = player.isCrouching()
+				? COPPER_MAN_JETPACK_PARTICLE_UP_OFFSET_CROUCHING
+				: COPPER_MAN_JETPACK_PARTICLE_UP_OFFSET;
+		Vec3 center = player.position()
+				.add(0.0D, upOffset, 0.0D)
+				.add(backward.scale(COPPER_MAN_JETPACK_PARTICLE_BACK_OFFSET));
+		Vec3 leftTube = center.add(right.scale(COPPER_MAN_JETPACK_PARTICLE_SIDE_OFFSET));
+		Vec3 rightTube = center.add(right.scale(-COPPER_MAN_JETPACK_PARTICLE_SIDE_OFFSET));
+
+		int particleCount = input.jump() ? 2 : 1;
+		double spread = input.jump() ? 0.012D : 0.008D;
+		double speed = input.jump() ? 0.018D : 0.01D;
+		level.sendParticles(ParticleTypes.CLOUD, leftTube.x, leftTube.y, leftTube.z, particleCount, spread, spread, spread, speed);
+		level.sendParticles(ParticleTypes.CLOUD, rightTube.x, rightTube.y, rightTube.z, particleCount, spread, spread, spread, speed);
+	}
+
+	private static void clearCopperManJetpack(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+
+		COPPER_MAN_JETPACK_SESSIONS.remove(player.getUUID());
+		COPPER_MAN_JETPACK_INPUTS.remove(player.getUUID());
+		player.fallDistance = 0.0F;
+		syncCopperManJetpackVisual(player, false);
+	}
+
+	private static void restoreAllCopperManJetpacks(MinecraftServer server) {
+		if (server == null || COPPER_MAN_JETPACK_SESSIONS.isEmpty()) {
+			return;
+		}
+
+		for (UUID playerId : new ArrayList<>(COPPER_MAN_JETPACK_SESSIONS.keySet())) {
+			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+			if (player != null) {
+				syncCopperManJetpackVisual(player, false);
+				player.fallDistance = 0.0F;
+			}
+		}
+		COPPER_MAN_JETPACK_SESSIONS.clear();
+		COPPER_MAN_JETPACK_INPUTS.clear();
+		COPPER_MAN_JETPACK_DISPLAY_IDS.clear();
+	}
+
+	private static void syncCopperManJetpackVisual(ServerPlayer player, boolean active) {
+		MinecraftServer server = player == null ? null : player.level().getServer();
+		if (player == null || server == null) {
+			return;
+		}
+
+		removeCopperManJetpackDisplay(player);
+		ItemStack actualHead = player.getItemBySlot(EquipmentSlot.HEAD).copy();
+		ItemStack jetpackHead = buildCopperManJetpackVisualStack();
+		for (ServerPlayer viewer : server.getPlayerList().getPlayers()) {
+			if (viewer == null) {
+				continue;
+			}
+			ItemStack stack = active && PolymerResourcePackUtils.hasMainPack(viewer) ? jetpackHead : actualHead;
+			viewer.connection.send(new ClientboundSetEquipmentPacket(
+					player.getId(),
+					List.of(com.mojang.datafixers.util.Pair.of(EquipmentSlot.HEAD, stack.copy()))
+			));
+		}
+	}
+
+	private static ItemStack buildCopperManJetpackVisualStack() {
+		ItemStack stack = new ItemStack(Items.PAPER);
+		stack.set(DataComponents.ITEM_MODEL, COPPER_MAN_JETPACK_MODEL_ID);
+		stack.set(DataComponents.CUSTOM_NAME, Component.literal(" ").withStyle(style -> style.withItalic(false)));
+		return stack;
+	}
+
+	private static void removeCopperManJetpackDisplay(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+
+		ServerLevel level = (ServerLevel) player.level();
+		UUID playerId = player.getUUID();
+		UUID displayId = COPPER_MAN_JETPACK_DISPLAY_IDS.remove(playerId);
+		if (displayId != null) {
+			Entity entity = level.getEntity(displayId);
+			if (entity != null) {
+				entity.discard();
+			}
+		}
+
+		String ownerTag = COPPER_MAN_JETPACK_DISPLAY_OWNER_TAG_PREFIX + playerId;
+		AABB cleanupBox = player.getBoundingBox().inflate(64.0D);
+		for (Display.ItemDisplay display : level.getEntitiesOfClass(
+				Display.ItemDisplay.class,
+				cleanupBox,
+				candidate -> candidate.getTags().contains(COPPER_MAN_JETPACK_DISPLAY_TAG) && candidate.getTags().contains(ownerTag)
+		)) {
+			display.discard();
 		}
 	}
 
@@ -998,6 +1313,16 @@ public final class ServerRaceSystem {
 	}
 
 	private record FoodDataSnapshot(int foodLevel, float saturationLevel) {
+	}
+
+	private record CopperManJetpackInputState(boolean forward, boolean backward, boolean left, boolean right, boolean jump, boolean shift, boolean sprint) {
+		private static final CopperManJetpackInputState EMPTY = new CopperManJetpackInputState(false, false, false, false, false, false, false);
+	}
+
+	private record CopperManJetpackSession(long expireTick, double baseY, double maxRiseBlocks) {
+		private double maxAllowedY() {
+			return this.baseY + this.maxRiseBlocks;
+		}
 	}
 
 	private record CopperManDefenseVisualSession(SkinValue originalSkin, String sourceCacheKey, long expireTick) {
@@ -2643,6 +2968,16 @@ public final class ServerRaceSystem {
 
 	private static float lerp(float start, float end, float delta) {
 		return start + ((end - start) * delta);
+	}
+
+	private static double approach(double current, double target, double maxDelta) {
+		if (current < target) {
+			return Math.min(current + maxDelta, target);
+		}
+		if (current > target) {
+			return Math.max(current - maxDelta, target);
+		}
+		return current;
 	}
 
 	private static float clamp01(float value) {

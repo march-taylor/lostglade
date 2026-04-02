@@ -154,6 +154,7 @@ public final class RaceConfig {
 		changed |= normalizeChance(ability.cocaineHallucinationChance, value -> ability.cocaineHallucinationChance = value);
 		changed |= normalizeNonNegative(ability.foodRestoreMultiplier, value -> ability.foodRestoreMultiplier = value);
 		changed |= normalizeNonNegative(ability.copperGolemNoticeRangeBlocks, value -> ability.copperGolemNoticeRangeBlocks = value);
+		changed |= normalizeNonNegative(ability.jetpackMaxRiseBlocks, value -> ability.jetpackMaxRiseBlocks = value);
 		changed |= normalizeChance(ability.repulsorNaturalLightningChargeChance, value -> ability.repulsorNaturalLightningChargeChance = value);
 		changed |= normalizeNonNegative(ability.copperIngotFoodPoints, (java.util.function.IntConsumer) value -> ability.copperIngotFoodPoints = value);
 		changed |= normalizeNonNegative(ability.repulsorMaxCharges, (java.util.function.IntConsumer) value -> ability.repulsorMaxCharges = value);
@@ -300,6 +301,7 @@ public final class RaceConfig {
 		public double foodRestoreMultiplier = 0.0D;
 		public int copperIngotFoodPoints = 0;
 		public double copperGolemNoticeRangeBlocks = 0.0D;
+		public double jetpackMaxRiseBlocks = 0.0D;
 		public int repulsorMaxCharges = 0;
 		public int repulsorCopperIngotChargeRestore = 0;
 		public double repulsorNaturalLightningChargeChance = 0.0D;

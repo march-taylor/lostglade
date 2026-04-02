@@ -90,11 +90,14 @@
                                       "durationSeconds":  45.0
                                   },
                       "uniqueAbility":  {
-                                            "enabled":  false,
+                                            "enabled":  true,
                                             "abilityId":  "copper_man_unique",
                                             "name":  "Реактивный ранец",
                                             "description":  "За спиной раскрывается медный ранец с турбинами.",
-                                            "priceBitcoins":  1000
+                                            "priceBitcoins":  1000,
+                                            "cooldownSeconds":  300.0,
+                                            "durationSeconds":  30.0,
+                                            "jetpackMaxRiseBlocks":  30.0
                                         },
                       "shnyaga":  {
                                       "enabled":  false,
