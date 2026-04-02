@@ -239,12 +239,9 @@ public final class CopperManRepulsorSystem {
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			RepulsorState state = state(player);
 			syncAirTriggerEntity(player, state);
-			if (state.charges > 0
+			if (!(state.charges > 0 && canUseRepulsor(player))
 					&& player.isUsingItem()
-					&& player.getUsedItemHand() == InteractionHand.OFF_HAND
-					&& canUseRepulsor(player)) {
-				cancelOffhandUse(player);
-			} else if (player.isUsingItem() && player.getUsedItemHand() == InteractionHand.OFF_HAND) {
+					&& player.getUsedItemHand() == InteractionHand.OFF_HAND) {
 				state.lastAutomaticInputTick = Long.MIN_VALUE;
 			}
 			if (state.mode == RepulsorMode.AUTOMATIC
@@ -471,8 +468,7 @@ public final class CopperManRepulsorSystem {
 				&& state.charges > 0
 				&& isAttackUnlocked(player)
 				&& player.getInventory().getSelectedSlot() == 0
-				&& player.getMainHandItem().isEmpty()
-				&& player.getOffhandItem().isEmpty();
+				&& player.getMainHandItem().isEmpty();
 	}
 
 	private static boolean hasAirTriggerObstruction(ServerPlayer player, RepulsorState state) {
