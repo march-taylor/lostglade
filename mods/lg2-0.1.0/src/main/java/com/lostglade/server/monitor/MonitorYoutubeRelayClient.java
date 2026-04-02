@@ -521,6 +521,8 @@ public final class MonitorYoutubeRelayClient {
 		String metadataJson = runTextCommand(List.of(ytDlpBin(), "--dump-single-json", "--flat-playlist", url), COMMAND_TIMEOUT_SEC);
 		JsonObject metadata = GSON.fromJson(metadataJson, JsonObject.class);
 		String containerTitle = getString(metadata, "title", "YouTube");
+		String containerSubtitle = resolveQueueEntrySubtitle(metadata);
+		long containerDurationMs = resolveQueueEntryDurationMs(metadata);
 		JsonArray entriesArray = metadata != null && metadata.has("entries") && metadata.get("entries").isJsonArray()
 				? metadata.getAsJsonArray("entries")
 				: null;
@@ -536,14 +538,56 @@ public final class MonitorYoutubeRelayClient {
 					continue;
 				}
 				String entryTitle = getString(entry, "title", "YouTube");
-				entries.add(new QueueEntry(entryTitle, entryUrl));
+				String entrySubtitle = resolveQueueEntrySubtitle(entry);
+				long entryDurationMs = resolveQueueEntryDurationMs(entry);
+				entries.add(new QueueEntry(entryTitle, entrySubtitle, entryDurationMs, entryUrl));
 			}
 			if (!entries.isEmpty()) {
 				return new QueueResolveResponse(containerTitle, entries, true);
 			}
 		}
 		String canonicalUrl = getString(metadata, "webpage_url", url);
-		return new QueueResolveResponse(containerTitle, List.of(new QueueEntry(containerTitle, canonicalUrl)), false);
+		return new QueueResolveResponse(
+				containerTitle,
+				List.of(new QueueEntry(containerTitle, containerSubtitle, containerDurationMs, canonicalUrl)),
+				false
+		);
+	}
+
+	private static String resolveQueueEntrySubtitle(JsonObject entry) {
+		String[] keys = {"artist", "channel", "uploader", "creator", "album_artist", "playlist_uploader"};
+		for (String key : keys) {
+			String value = getString(entry, key, "");
+			if (!value.isBlank()) {
+				return value;
+			}
+		}
+		return "";
+	}
+
+	private static long resolveQueueEntryDurationMs(JsonObject entry) {
+		if (entry == null) {
+			return 0L;
+		}
+		if (entry.has("duration") && !entry.get("duration").isJsonNull()) {
+			try {
+				return Math.max(0L, Math.round(entry.get("duration").getAsDouble() * 1000.0D));
+			} catch (RuntimeException ignored) {
+			}
+		}
+		if (entry.has("duration_ms") && !entry.get("duration_ms").isJsonNull()) {
+			try {
+				return Math.max(0L, entry.get("duration_ms").getAsLong());
+			} catch (RuntimeException ignored) {
+			}
+		}
+		if (entry.has("durationMs") && !entry.get("durationMs").isJsonNull()) {
+			try {
+				return Math.max(0L, entry.get("durationMs").getAsLong());
+			} catch (RuntimeException ignored) {
+			}
+		}
+		return 0L;
 	}
 
 	private static String resolveQueueEntryUrl(JsonObject entry) {
@@ -869,6 +913,8 @@ public final class MonitorYoutubeRelayClient {
 
 	public record QueueEntry(
 			String title,
+			String subtitle,
+			long durationMs,
 			String url
 	) {
 	}
