@@ -142,6 +142,7 @@ import java.util.Comparator;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -513,8 +514,6 @@ public final class ServerRaceSystem {
 			COPPER_GOLEM_FOLLOWERS.entrySet().removeIf(entry -> handler.player.getUUID().equals(entry.getValue()));
 			clearCopperManDefenseVisual(handler.player);
 			clearCopperManJetpack(handler.player);
-			COPPER_MAN_DEFENSE_COOLDOWNS.remove(handler.player.getUUID());
-			COPPER_MAN_JETPACK_COOLDOWNS.remove(handler.player.getUUID());
 		});
 		UseItemCallback.EVENT.register((player, world, hand) -> {
 			if (!(player instanceof ServerPlayer serverPlayer) || world.isClientSide()) {
@@ -829,23 +828,15 @@ public final class ServerRaceSystem {
 			MinecraftServer server = level.getServer();
 			long nowTick = level.getGameTime();
 			long cooldownTicks = asTicks(positiveOrDefault(ability.cooldownSeconds, COPPER_MAN_DEFENSE_DEFAULT_COOLDOWN_SECONDS));
-			long nextAllowedTick = COPPER_MAN_DEFENSE_COOLDOWNS.getOrDefault(caster.getUUID(), 0L);
-			if (cooldownTicks > 0L && nowTick < nextAllowedTick) {
-				double remaining = (nextAllowedTick - nowTick) / 20.0D;
-				caster.displayClientMessage(
-						Component.literal(String.format(Locale.ROOT, "%.1fs", remaining))
-								.withStyle(ChatFormatting.RED),
-						true
-				);
+			long remainingCooldownTicks = getRemainingOnlineCooldownTicks(COPPER_MAN_DEFENSE_COOLDOWNS, caster.getUUID());
+			if (displayRemainingCooldown(caster, remainingCooldownTicks)) {
 				return 0;
 			}
 
 			long durationTicks = Math.max(1L, asTicks(positiveOrDefault(ability.durationSeconds, COPPER_MAN_DEFENSE_DEFAULT_DURATION_SECONDS)));
 			caster.addEffect(new MobEffectInstance(MobEffects.RESISTANCE, (int) Math.min(Integer.MAX_VALUE, durationTicks), 1, false, false, true));
 			startCopperManDefenseVisual(server, caster, nowTick + durationTicks);
-			if (cooldownTicks > 0L) {
-				COPPER_MAN_DEFENSE_COOLDOWNS.put(caster.getUUID(), nowTick + cooldownTicks);
-			}
+			startOnlineCooldown(COPPER_MAN_DEFENSE_COOLDOWNS, caster.getUUID(), cooldownTicks);
 
 			Lg2.LOGGER.info("Player {} used copper man defense '{}' from race '{}'", caster.getGameProfile().name(), ability.abilityId, race.id);
 			return 1;
@@ -861,14 +852,8 @@ public final class ServerRaceSystem {
 			ServerLevel level = caster.level();
 			long nowTick = level.getGameTime();
 			long cooldownTicks = asTicks(positiveOrDefault(ability.cooldownSeconds, COPPER_MAN_JETPACK_DEFAULT_COOLDOWN_SECONDS));
-			long nextAllowedTick = COPPER_MAN_JETPACK_COOLDOWNS.getOrDefault(caster.getUUID(), 0L);
-			if (cooldownTicks > 0L && nowTick < nextAllowedTick) {
-				double remaining = (nextAllowedTick - nowTick) / 20.0D;
-				caster.displayClientMessage(
-						Component.literal(String.format(Locale.ROOT, "%.1fs", remaining))
-								.withStyle(ChatFormatting.RED),
-						true
-				);
+			long remainingCooldownTicks = getRemainingOnlineCooldownTicks(COPPER_MAN_JETPACK_COOLDOWNS, caster.getUUID());
+			if (displayRemainingCooldown(caster, remainingCooldownTicks)) {
 				return 0;
 			}
 
@@ -879,9 +864,7 @@ public final class ServerRaceSystem {
 					new CopperManJetpackSession(nowTick + durationTicks, caster.getY(), maxRiseBlocks)
 			);
 			COPPER_MAN_JETPACK_INPUTS.putIfAbsent(caster.getUUID(), CopperManJetpackInputState.EMPTY);
-			if (cooldownTicks > 0L) {
-				COPPER_MAN_JETPACK_COOLDOWNS.put(caster.getUUID(), nowTick + cooldownTicks);
-			}
+			startOnlineCooldown(COPPER_MAN_JETPACK_COOLDOWNS, caster.getUUID(), cooldownTicks);
 			syncCopperManJetpackVisual(caster, true);
 
 			Lg2.LOGGER.info("Player {} used copper man unique ability '{}' from race '{}'", caster.getGameProfile().name(), ability.abilityId, race.id);
@@ -899,9 +882,7 @@ public final class ServerRaceSystem {
 		}
 
 		long nowTick = server.overworld().getGameTime();
-		if (nowTick % 40L == 0L) {
-			COPPER_MAN_JETPACK_COOLDOWNS.entrySet().removeIf(entry -> entry.getValue() <= nowTick);
-		}
+		tickOnlineCooldowns(server, COPPER_MAN_JETPACK_COOLDOWNS);
 		if (COPPER_MAN_JETPACK_SESSIONS.isEmpty()) {
 			return;
 		}
@@ -931,9 +912,7 @@ public final class ServerRaceSystem {
 		}
 
 		long nowTick = server.overworld().getGameTime();
-		if (nowTick % 40L == 0L) {
-			COPPER_MAN_DEFENSE_COOLDOWNS.entrySet().removeIf(entry -> entry.getValue() <= nowTick);
-		}
+		tickOnlineCooldowns(server, COPPER_MAN_DEFENSE_COOLDOWNS);
 		if (copperManDefenseTintCacheLastCleanupTick == Long.MIN_VALUE
 				|| nowTick - copperManDefenseTintCacheLastCleanupTick >= COPPER_MAN_DEFENSE_TINT_CACHE_CLEANUP_INTERVAL_TICKS) {
 			cleanupCopperManDefenseTintCache(server, false);
@@ -1980,14 +1959,8 @@ public final class ServerRaceSystem {
 			ServerLevel level = caster.level();
 			long nowTick = level.getGameTime();
 			long cooldownTicks = asTicks(positiveOrDefault(ability.cooldownSeconds, CARTEL_DEFAULT_COOLDOWN_SECONDS));
-			long nextAllowedTick = CARTEL_DEFENSE_COOLDOWNS.getOrDefault(caster.getUUID(), 0L);
-			if (cooldownTicks > 0 && nowTick < nextAllowedTick) {
-				double remaining = (nextAllowedTick - nowTick) / 20.0D;
-				caster.displayClientMessage(
-						Component.literal(String.format(Locale.ROOT, "%.1fs", remaining))
-								.withStyle(ChatFormatting.RED),
-						true
-				);
+			long remainingCooldownTicks = getRemainingOnlineCooldownTicks(CARTEL_DEFENSE_COOLDOWNS, caster.getUUID());
+			if (displayRemainingCooldown(caster, remainingCooldownTicks)) {
 				return 0;
 			}
 
@@ -2027,9 +2000,7 @@ public final class ServerRaceSystem {
 			session.wanderTarget = caster.position();
 			CARTEL_DEFENSE_SESSIONS.put(caster.getUUID(), session);
 
-			if (cooldownTicks > 0) {
-				CARTEL_DEFENSE_COOLDOWNS.put(caster.getUUID(), nowTick + cooldownTicks);
-			}
+			startOnlineCooldown(CARTEL_DEFENSE_COOLDOWNS, caster.getUUID(), cooldownTicks);
 
 			Lg2.LOGGER.info(
 					"Player {} used mister cartel defense '{}' from race '{}' and spawned lawyer {}",
@@ -2051,14 +2022,8 @@ public final class ServerRaceSystem {
 			ServerLevel level = caster.level();
 			long nowTick = level.getGameTime();
 			long cooldownTicks = asTicks(positiveOrDefault(ability.cooldownSeconds, CARTEL_DEFAULT_UNIQUE_COOLDOWN_SECONDS));
-			long nextAllowedTick = CARTEL_UNIQUE_COOLDOWNS.getOrDefault(caster.getUUID(), 0L);
-			if (cooldownTicks > 0 && nowTick < nextAllowedTick) {
-				double remaining = (nextAllowedTick - nowTick) / 20.0D;
-				caster.displayClientMessage(
-						Component.literal(String.format(Locale.ROOT, "%.1fs", remaining))
-								.withStyle(ChatFormatting.RED),
-						true
-				);
+			long remainingCooldownTicks = getRemainingOnlineCooldownTicks(CARTEL_UNIQUE_COOLDOWNS, caster.getUUID());
+			if (displayRemainingCooldown(caster, remainingCooldownTicks)) {
 				return 0;
 			}
 
@@ -2468,9 +2433,7 @@ public final class ServerRaceSystem {
 		);
 
 		long cooldownTicks = asTicks(positiveOrDefault(ability.cooldownSeconds, CARTEL_DEFAULT_UNIQUE_COOLDOWN_SECONDS));
-		if (cooldownTicks > 0L) {
-			CARTEL_UNIQUE_COOLDOWNS.put(caster.getUUID(), nowTick + cooldownTicks);
-		}
+		startOnlineCooldown(CARTEL_UNIQUE_COOLDOWNS, caster.getUUID(), cooldownTicks);
 
 		caster.closeContainer();
 		Lg2.LOGGER.info(
@@ -2484,9 +2447,7 @@ public final class ServerRaceSystem {
 
 	private static void tickCartelDisguises(MinecraftServer server) {
 		long nowTick = server.overworld().getGameTime();
-		if (nowTick % 40L == 0L) {
-			CARTEL_UNIQUE_COOLDOWNS.entrySet().removeIf(entry -> entry.getValue() <= nowTick);
-		}
+		tickOnlineCooldowns(server, CARTEL_UNIQUE_COOLDOWNS);
 		if (CARTEL_DISGUISE_SESSIONS.isEmpty()) {
 			return;
 		}
@@ -3428,9 +3389,7 @@ public final class ServerRaceSystem {
 
 	private static void tickCartelDefense(MinecraftServer server) {
 		long nowTick = server.overworld().getGameTime();
-		if (nowTick % 40L == 0L) {
-			CARTEL_DEFENSE_COOLDOWNS.entrySet().removeIf(entry -> entry.getValue() <= nowTick);
-		}
+		tickOnlineCooldowns(server, CARTEL_DEFENSE_COOLDOWNS);
 		if (CARTEL_DEFENSE_SESSIONS.isEmpty()) {
 			return;
 		}
@@ -3877,18 +3836,12 @@ public final class ServerRaceSystem {
 
 	private static int useMrCartelAttack(ServerPlayer caster, PlayerRaceConfig race, RaceAbilityConfig ability) {
 		ServerLevel level = caster.level();
-		long nowTick = level.getGameTime();
 		long cooldownTicks = asTicks(positiveOrDefault(ability.cooldownSeconds, CARTEL_DEFAULT_COOLDOWN_SECONDS));
-		long nextAllowedTick = CARTEL_ATTACK_COOLDOWNS.getOrDefault(caster.getUUID(), 0L);
-		if (cooldownTicks > 0 && nowTick < nextAllowedTick) {
-			double remaining = (nextAllowedTick - nowTick) / 20.0D;
-			caster.displayClientMessage(
-					Component.literal(String.format(Locale.ROOT, "%.1fs", remaining))
-							.withStyle(ChatFormatting.RED),
-					true
-			);
+		long remainingCooldownTicks = getRemainingOnlineCooldownTicks(CARTEL_ATTACK_COOLDOWNS, caster.getUUID());
+		if (displayRemainingCooldown(caster, remainingCooldownTicks)) {
 			return 0;
 		}
+		long nowTick = level.getGameTime();
 
 		double activationRange = positiveOrDefault(ability.activationRangeBlocks, CARTEL_TARGET_RANGE);
 		LivingEntity target = findLookTarget(caster, activationRange);
@@ -3926,9 +3879,7 @@ public final class ServerRaceSystem {
 		}
 
 		CARTEL_SUMMON_SESSIONS.put(UUID.randomUUID(), session);
-		if (cooldownTicks > 0) {
-			CARTEL_ATTACK_COOLDOWNS.put(caster.getUUID(), nowTick + cooldownTicks);
-		}
+		startOnlineCooldown(CARTEL_ATTACK_COOLDOWNS, caster.getUUID(), cooldownTicks);
 
 		Lg2.LOGGER.info(
 				"Player {} used mister cartel attack '{}' from race '{}' and summoned {} raiders around target {}",
@@ -3943,9 +3894,7 @@ public final class ServerRaceSystem {
 
 	private static void tickCartelSummons(MinecraftServer server) {
 		long nowTick = server.overworld().getGameTime();
-		if (nowTick % 40L == 0L) {
-			CARTEL_ATTACK_COOLDOWNS.entrySet().removeIf(entry -> entry.getValue() <= nowTick);
-		}
+		tickOnlineCooldowns(server, CARTEL_ATTACK_COOLDOWNS);
 		if (CARTEL_SUMMON_SESSIONS.isEmpty()) {
 			return;
 		}
@@ -4100,6 +4049,64 @@ public final class ServerRaceSystem {
 
 	private static long asTicks(double seconds) {
 		return Math.max(0L, Math.round(seconds * 20.0D));
+	}
+
+	private static long getRemainingOnlineCooldownTicks(Map<UUID, Long> cooldowns, UUID playerId) {
+		if (cooldowns == null || playerId == null) {
+			return 0L;
+		}
+		return Math.max(0L, cooldowns.getOrDefault(playerId, 0L));
+	}
+
+	private static boolean displayRemainingCooldown(ServerPlayer player, long remainingCooldownTicks) {
+		if (player == null || remainingCooldownTicks <= 0L) {
+			return false;
+		}
+
+		double remaining = remainingCooldownTicks / 20.0D;
+		player.displayClientMessage(
+				Component.literal(String.format(Locale.ROOT, "%.1fs", remaining))
+						.withStyle(ChatFormatting.RED),
+				true
+		);
+		return true;
+	}
+
+	private static void startOnlineCooldown(Map<UUID, Long> cooldowns, UUID playerId, long cooldownTicks) {
+		if (cooldowns == null || playerId == null) {
+			return;
+		}
+		if (cooldownTicks <= 0L) {
+			cooldowns.remove(playerId);
+			return;
+		}
+		cooldowns.put(playerId, cooldownTicks);
+	}
+
+	private static void tickOnlineCooldowns(MinecraftServer server, Map<UUID, Long> cooldowns) {
+		if (server == null || cooldowns == null || cooldowns.isEmpty()) {
+			return;
+		}
+
+		Iterator<Map.Entry<UUID, Long>> iterator = cooldowns.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, Long> entry = iterator.next();
+			Long remainingTicks = entry.getValue();
+			if (remainingTicks == null || remainingTicks <= 0L) {
+				iterator.remove();
+				continue;
+			}
+			if (server.getPlayerList().getPlayer(entry.getKey()) == null) {
+				continue;
+			}
+
+			long nextValue = remainingTicks - 1L;
+			if (nextValue <= 0L) {
+				iterator.remove();
+			} else {
+				entry.setValue(nextValue);
+			}
+		}
 	}
 
 	private static double positiveOrDefault(double value, double defaultValue) {

@@ -96,7 +96,7 @@
                                             "description":  "За спиной раскрывается медный ранец с турбинами.",
                                             "priceBitcoins":  1000,
                                             "cooldownSeconds":  300.0,
-                                            "durationSeconds":  30.0,
+                                            "durationSeconds":  20.0,
                                             "jetpackMaxRiseBlocks":  30.0
                                         },
                       "shnyaga":  {
