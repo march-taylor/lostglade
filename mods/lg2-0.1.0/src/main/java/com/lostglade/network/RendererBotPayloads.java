@@ -11,7 +11,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 1;
+	public static final int PROTOCOL_VERSION = 2;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
 
@@ -26,8 +26,11 @@ public final class RendererBotPayloads {
 		PayloadTypeRegistry.playC2S().register(RendererBotHelloC2SPayload.TYPE, RendererBotHelloC2SPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playC2S().register(RendererBotPreviewFrameC2SPayload.TYPE, RendererBotPreviewFrameC2SPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playC2S().registerLarge(RendererBotFullFrameC2SPayload.TYPE, RendererBotFullFrameC2SPayload.STREAM_CODEC, MAX_CAPTURE_PAYLOAD_BYTES);
+		PayloadTypeRegistry.playC2S().registerLarge(RendererBotVideoRecordingCompleteC2SPayload.TYPE, RendererBotVideoRecordingCompleteC2SPayload.STREAM_CODEC, MAX_CAPTURE_PAYLOAD_BYTES);
 		PayloadTypeRegistry.playC2S().register(RendererBotCaptureFailureC2SPayload.TYPE, RendererBotCaptureFailureC2SPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotCaptureRequestS2CPayload.TYPE, RendererBotCaptureRequestS2CPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playS2C().register(RendererBotVideoRecordingStartS2CPayload.TYPE, RendererBotVideoRecordingStartS2CPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playS2C().register(RendererBotVideoRecordingStopS2CPayload.TYPE, RendererBotVideoRecordingStopS2CPayload.STREAM_CODEC);
 	}
 
 	public record RendererBotHelloC2SPayload(int protocolVersion) implements CustomPacketPayload {
@@ -161,6 +164,122 @@ public final class RendererBotPayloads {
 
 		@Override
 		public Type<RendererBotCaptureFailureC2SPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotVideoRecordingStartS2CPayload(
+			UUID requestId,
+			String dimensionId,
+			double expectedX,
+			double expectedY,
+			double expectedZ,
+			float expectedYaw,
+			float expectedPitch,
+			int previewWidth,
+			int previewHeight,
+			int fullWidth,
+			int fullHeight,
+			int fovDegrees,
+			int targetFps,
+			int maxDurationSeconds
+	) implements CustomPacketPayload {
+		public static final Type<RendererBotVideoRecordingStartS2CPayload> TYPE = new Type<>(id("renderer_bot_video_recording_start"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotVideoRecordingStartS2CPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotVideoRecordingStartS2CPayload::write, RendererBotVideoRecordingStartS2CPayload::new);
+
+		public RendererBotVideoRecordingStartS2CPayload(FriendlyByteBuf buffer) {
+			this(
+					buffer.readUUID(),
+					buffer.readUtf(),
+					buffer.readDouble(),
+					buffer.readDouble(),
+					buffer.readDouble(),
+					buffer.readFloat(),
+					buffer.readFloat(),
+					buffer.readVarInt(),
+					buffer.readVarInt(),
+					buffer.readVarInt(),
+					buffer.readVarInt(),
+					buffer.readVarInt(),
+					buffer.readVarInt(),
+					buffer.readVarInt()
+			);
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUUID(this.requestId);
+			buffer.writeUtf(this.dimensionId);
+			buffer.writeDouble(this.expectedX);
+			buffer.writeDouble(this.expectedY);
+			buffer.writeDouble(this.expectedZ);
+			buffer.writeFloat(this.expectedYaw);
+			buffer.writeFloat(this.expectedPitch);
+			buffer.writeVarInt(this.previewWidth);
+			buffer.writeVarInt(this.previewHeight);
+			buffer.writeVarInt(this.fullWidth);
+			buffer.writeVarInt(this.fullHeight);
+			buffer.writeVarInt(this.fovDegrees);
+			buffer.writeVarInt(this.targetFps);
+			buffer.writeVarInt(this.maxDurationSeconds);
+		}
+
+		@Override
+		public Type<RendererBotVideoRecordingStartS2CPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotVideoRecordingStopS2CPayload(UUID requestId) implements CustomPacketPayload {
+		public static final Type<RendererBotVideoRecordingStopS2CPayload> TYPE = new Type<>(id("renderer_bot_video_recording_stop"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotVideoRecordingStopS2CPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotVideoRecordingStopS2CPayload::write, RendererBotVideoRecordingStopS2CPayload::new);
+
+		public RendererBotVideoRecordingStopS2CPayload(FriendlyByteBuf buffer) {
+			this(buffer.readUUID());
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUUID(this.requestId);
+		}
+
+		@Override
+		public Type<RendererBotVideoRecordingStopS2CPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotVideoRecordingCompleteC2SPayload(
+			UUID requestId,
+			long durationMs,
+			int fps,
+			byte[] previewPixels,
+			byte[] fullPixels
+	) implements CustomPacketPayload {
+		public static final Type<RendererBotVideoRecordingCompleteC2SPayload> TYPE = new Type<>(id("renderer_bot_video_recording_complete"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotVideoRecordingCompleteC2SPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotVideoRecordingCompleteC2SPayload::write, RendererBotVideoRecordingCompleteC2SPayload::new);
+
+		public RendererBotVideoRecordingCompleteC2SPayload(FriendlyByteBuf buffer) {
+			this(
+					buffer.readUUID(),
+					buffer.readVarLong(),
+					buffer.readVarInt(),
+					buffer.readByteArray(),
+					buffer.readByteArray()
+			);
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUUID(this.requestId);
+			buffer.writeVarLong(this.durationMs);
+			buffer.writeVarInt(this.fps);
+			buffer.writeByteArray(this.previewPixels);
+			buffer.writeByteArray(this.fullPixels);
+		}
+
+		@Override
+		public Type<RendererBotVideoRecordingCompleteC2SPayload> type() {
 			return TYPE;
 		}
 	}

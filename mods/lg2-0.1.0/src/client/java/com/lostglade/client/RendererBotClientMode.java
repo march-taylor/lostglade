@@ -97,7 +97,10 @@ public final class RendererBotClientMode {
 		}
 		client.options.pauseOnLostFocus = false;
 		client.options.framerateLimit().set(260);
-		client.options.inactivityFpsLimit().set(InactivityFpsLimit.AFK);
+		// Hidden bot windows must not fall into the vanilla "AFK" framerate throttle,
+		// otherwise world renders arrive only every few seconds and video capture collapses.
+		client.options.inactivityFpsLimit().set(InactivityFpsLimit.MINIMIZED);
+		client.options.enableVsync().set(false);
 		client.setWindowActive(true);
 	}
 

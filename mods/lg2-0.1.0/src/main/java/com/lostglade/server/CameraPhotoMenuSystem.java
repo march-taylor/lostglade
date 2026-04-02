@@ -41,9 +41,9 @@ public final class CameraPhotoMenuSystem {
 	private static final int CAMERA_SLOT = 6;
 	private static final int INFO_SLOT = 7;
 	private static final int CLOSE_SLOT = 8;
-	private static final int HELP_SLOT = 15;
-	private static final int TOTAL_SLOT = 16;
-	private static final int FILLER_SLOT = 17;
+	private static final int PHOTO_MODE_SLOT = 15;
+	private static final int VIDEO_MODE_SLOT = 16;
+	private static final int TOTAL_SLOT = 17;
 	private static final String TITLE_SHIFT = "\ue905";
 	private static final String TITLE_RESET = "\ue940\ue940\ue941\ue943";
 	private static final String CAMERA_PANEL_GLYPH = "\uebf0";
@@ -177,6 +177,30 @@ public final class CameraPhotoMenuSystem {
 		return literal("Maps in photo: " + settings.totalMaps());
 	}
 
+	private static Component photoModeLabel(ServerPlayer player, boolean selected) {
+		String prefix = selected ? "[Фото] " : "Фото";
+		String locale = locale(player);
+		if (locale.startsWith("ja")) {
+			return literal(selected ? "[写真] 写真" : "写真");
+		}
+		if (locale.startsWith("uk")) {
+			return literal(selected ? "[Фото] Фото" : "Фото");
+		}
+		return literal(prefix);
+	}
+
+	private static Component videoModeLabel(ServerPlayer player, boolean selected) {
+		String prefix = selected ? "[Видео] " : "Видео";
+		String locale = locale(player);
+		if (locale.startsWith("ja")) {
+			return literal(selected ? "[動画] 動画" : "動画");
+		}
+		if (locale.startsWith("uk")) {
+			return literal(selected ? "[Відео] Відео" : "Відео");
+		}
+		return literal(prefix);
+	}
+
 	private static Component closeLabel(ServerPlayer player) {
 		String locale = locale(player);
 		if (locale.startsWith("rpr")) {
@@ -279,10 +303,25 @@ public final class CameraPhotoMenuSystem {
 				this.viewer.closeContainer();
 				return;
 			}
+			CameraPhotoSettings currentSettings = CameraPhotoSettings.read(cameraStack);
+			if (slotId == PHOTO_MODE_SLOT) {
+				CameraPhotoSettings.write(cameraStack, new CameraPhotoSettings(currentSettings.mapsWide(), currentSettings.mapsHigh(), CameraPhotoSettings.CaptureMode.PHOTO));
+				ServerMechanicsGateSystem.syncPlayerInventory(this.viewer);
+				this.refreshContents();
+				this.broadcastFullState();
+				return;
+			}
+			if (slotId == VIDEO_MODE_SLOT) {
+				CameraPhotoSettings.write(cameraStack, new CameraPhotoSettings(currentSettings.mapsWide(), currentSettings.mapsHigh(), CameraPhotoSettings.CaptureMode.VIDEO));
+				ServerMechanicsGateSystem.syncPlayerInventory(this.viewer);
+				this.refreshContents();
+				this.broadcastFullState();
+				return;
+			}
 			int row = slotId / MENU_COLUMNS;
 			int column = slotId % MENU_COLUMNS;
 			if (column < GRID_COLUMNS && row < GRID_ROWS) {
-				CameraPhotoSettings.write(cameraStack, new CameraPhotoSettings(column + 1, row + 1));
+				CameraPhotoSettings.write(cameraStack, new CameraPhotoSettings(column + 1, row + 1, currentSettings.captureMode()));
 				ServerMechanicsGateSystem.syncPlayerInventory(this.viewer);
 				this.refreshContents();
 				this.broadcastFullState();
@@ -331,9 +370,21 @@ public final class CameraPhotoMenuSystem {
 			this.container.setItem(CAMERA_SLOT, invisibleGuiStack());
 			this.container.setItem(INFO_SLOT, invisibleGuiStack());
 			this.container.setItem(CLOSE_SLOT, invisibleGuiStack());
-			this.container.setItem(HELP_SLOT, invisibleGuiStack());
-			this.container.setItem(TOTAL_SLOT, invisibleGuiStack());
-			this.container.setItem(FILLER_SLOT, invisibleGuiStack());
+			this.container.setItem(
+					PHOTO_MODE_SLOT,
+					named(
+							new ItemStack(settings.captureMode() == CameraPhotoSettings.CaptureMode.PHOTO ? Items.LIME_STAINED_GLASS_PANE : Items.GRAY_STAINED_GLASS_PANE),
+							photoModeLabel(this.viewer, settings.captureMode() == CameraPhotoSettings.CaptureMode.PHOTO)
+					)
+			);
+			this.container.setItem(
+					VIDEO_MODE_SLOT,
+					named(
+							new ItemStack(settings.captureMode() == CameraPhotoSettings.CaptureMode.VIDEO ? Items.RED_STAINED_GLASS_PANE : Items.GRAY_STAINED_GLASS_PANE),
+							videoModeLabel(this.viewer, settings.captureMode() == CameraPhotoSettings.CaptureMode.VIDEO)
+					)
+			);
+			this.container.setItem(TOTAL_SLOT, named(new ItemStack(Items.PAPER), totalMapsLabel(this.viewer, settings)));
 			this.refreshTitle(settings);
 		}
 

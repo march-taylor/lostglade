@@ -53,6 +53,18 @@ public final class CameraCaptureSystem {
 			player.displayClientMessage(Component.literal("Сначала открой технологию Камера."), true);
 			return false;
 		}
+		CameraPhotoSettings settings = CameraPhotoSettings.read(stack);
+		if (settings.isVideoMode()) {
+			if (MapImageRenderSystem.hasActiveRender(player.getUUID())) {
+				player.displayClientMessage(cameraBusyMessage(player), true);
+				return false;
+			}
+			return CameraVideoRecordingSystem.toggleRecording(player, settings);
+		}
+		if (CameraVideoRecordingSystem.hasAnyRecording() && !CameraVideoRecordingSystem.isRecording(player.getUUID())) {
+			player.displayClientMessage(Component.literal("Камера сейчас занята записью видео."), true);
+			return false;
+		}
 		if (MapImageRenderSystem.hasActiveRender(player.getUUID())) {
 			player.displayClientMessage(cameraBusyMessage(player), true);
 			return false;
@@ -65,7 +77,7 @@ public final class CameraCaptureSystem {
 
 		MapPixelProvider provider;
 		try {
-			provider = createPixelProvider(player);
+			provider = createPixelProvider(player, settings);
 		} catch (Exception exception) {
 			player.displayClientMessage(capturePrepareFailedMessage(player), true);
 			return false;
@@ -226,8 +238,7 @@ public final class CameraCaptureSystem {
 		}
 	}
 
-	private static MapPixelProvider createPixelProvider(ServerPlayer player) {
-		CameraPhotoSettings settings = CameraPhotoSettings.read(player.getMainHandItem());
+	private static MapPixelProvider createPixelProvider(ServerPlayer player, CameraPhotoSettings settings) {
 		RendererBotCameraSystem.ClientCaptureHandle captureHandle = RendererBotCameraSystem.requestPhotoCapture(
 				player,
 				settings.mapsWide(),
@@ -251,6 +262,7 @@ public final class CameraCaptureSystem {
 		private final int mapsWide;
 		private final int mapsHigh;
 		private final RendererBotCameraSystem.ClientCaptureHandle captureHandle;
+		private final String sourceKey;
 
 		private RendererBotPixelProvider(UUID playerId, ResourceKey<Level> dimension, int mapsWide, int mapsHigh, RendererBotCameraSystem.ClientCaptureHandle captureHandle) {
 			this.playerId = playerId;
@@ -258,6 +270,7 @@ public final class CameraCaptureSystem {
 			this.mapsWide = mapsWide;
 			this.mapsHigh = mapsHigh;
 			this.captureHandle = captureHandle;
+			this.sourceKey = captureHandle.requestId().toString();
 		}
 
 		@Override
@@ -308,6 +321,11 @@ public final class CameraCaptureSystem {
 		@Override
 		public int mapTilesHigh() {
 			return this.mapsHigh;
+		}
+
+		@Override
+		public String sourceKey() {
+			return this.sourceKey;
 		}
 	}
 }
