@@ -144,11 +144,10 @@ public final class CopperManRepulsorSystem {
 			return 0;
 		}
 
-		long nowTick = player.level().getGameTime();
 		long cooldownTicks = getModeSwitchCooldownTicks(player);
-		long nextAllowedTick = NEXT_MODE_SWITCH_TICKS.getOrDefault(player.getUUID(), 0L);
-		if (cooldownTicks > 0L && nowTick < nextAllowedTick) {
-			double remaining = (nextAllowedTick - nowTick) / 20.0D;
+		long remainingCooldownTicks = getRemainingOnlineCooldownTicks(player.getUUID());
+		if (remainingCooldownTicks > 0L) {
+			double remaining = remainingCooldownTicks / 20.0D;
 			player.displayClientMessage(
 					Component.literal(String.format(Locale.ROOT, "%.1fs", remaining))
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
@@ -160,9 +159,7 @@ public final class CopperManRepulsorSystem {
 		RepulsorState state = state(player);
 		state.mode = state.mode == RepulsorMode.AUTOMATIC ? RepulsorMode.SINGLE : RepulsorMode.AUTOMATIC;
 		state.hudDirty = true;
-		if (cooldownTicks > 0L) {
-			NEXT_MODE_SWITCH_TICKS.put(player.getUUID(), nowTick + cooldownTicks);
-		}
+		startModeSwitchCooldown(player.getUUID(), cooldownTicks);
 		player.displayClientMessage(
 				Component.literal(localizeModeChanged(player, state.mode))
 						.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false)),
@@ -233,6 +230,7 @@ public final class CopperManRepulsorSystem {
 
 	private static void tickServer(MinecraftServer server) {
 		long nowTick = server.overworld().getGameTime();
+		tickModeSwitchCooldowns(server);
 		if (nowTick % 40L == 0L) {
 			PROCESSED_NATURAL_LIGHTNING_HITS.entrySet().removeIf(entry -> entry.getValue() < nowTick);
 		}
@@ -583,6 +581,49 @@ public final class CopperManRepulsorSystem {
 			return 0L;
 		}
 		return Math.max(0L, Math.round(ability.cooldownSeconds * 20.0D));
+	}
+
+	private static long getRemainingOnlineCooldownTicks(UUID playerId) {
+		if (playerId == null) {
+			return 0L;
+		}
+		return Math.max(0L, NEXT_MODE_SWITCH_TICKS.getOrDefault(playerId, 0L));
+	}
+
+	private static void startModeSwitchCooldown(UUID playerId, long cooldownTicks) {
+		if (playerId == null) {
+			return;
+		}
+		if (cooldownTicks <= 0L) {
+			NEXT_MODE_SWITCH_TICKS.remove(playerId);
+			return;
+		}
+		NEXT_MODE_SWITCH_TICKS.put(playerId, cooldownTicks);
+	}
+
+	private static void tickModeSwitchCooldowns(MinecraftServer server) {
+		if (server == null || NEXT_MODE_SWITCH_TICKS.isEmpty()) {
+			return;
+		}
+
+		for (Map.Entry<UUID, Long> entry : NEXT_MODE_SWITCH_TICKS.entrySet()) {
+			UUID playerId = entry.getKey();
+			Long remainingTicks = entry.getValue();
+			if (remainingTicks == null || remainingTicks <= 0L) {
+				NEXT_MODE_SWITCH_TICKS.remove(playerId, remainingTicks);
+				continue;
+			}
+			if (server.getPlayerList().getPlayer(playerId) == null) {
+				continue;
+			}
+
+			long nextValue = remainingTicks - 1L;
+			if (nextValue <= 0L) {
+				NEXT_MODE_SWITCH_TICKS.remove(playerId, remainingTicks);
+			} else {
+				NEXT_MODE_SWITCH_TICKS.replace(playerId, remainingTicks, nextValue);
+			}
+		}
 	}
 
 	private static String sanitizePath(String value) {
