@@ -1,10 +1,15 @@
 package com.lostglade;
 
+import com.lostglade.client.RendererBotClientCapture;
+import com.lostglade.client.RendererBotClientMode;
+import com.lostglade.network.RendererBotPayloads;
 import net.fabricmc.api.ClientModInitializer;
 
 public class Lg2Client implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
-		// This entrypoint is suitable for setting up client-specific logic, such as rendering.
+		RendererBotPayloads.registerPayloadTypes();
+		RendererBotClientMode.register();
+		RendererBotClientCapture.register();
 	}
 }

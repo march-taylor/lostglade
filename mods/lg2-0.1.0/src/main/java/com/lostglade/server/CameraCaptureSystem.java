@@ -1,9 +1,9 @@
 package com.lostglade.server;
 
+import com.lostglade.Lg2;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.item.CameraPhotoSettings;
 import com.lostglade.item.ModItems;
-import com.lostglade.server.camera.bluemap.BlueMapCameraRenderer;
 import com.lostglade.server.map.MapImageRenderSystem;
 import com.lostglade.server.map.MapPixelProvider;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
@@ -32,8 +32,6 @@ public final class CameraCaptureSystem {
 	private static final Identifier CAMERA_SHUTTER_SOUND_ID = Identifier.fromNamespaceAndPath("lg2", "camera_shutter");
 	private static final Holder<SoundEvent> CAMERA_SHUTTER_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(CAMERA_SHUTTER_SOUND_ID));
 	private static final int CAMERA_COOLDOWN_TICKS = 40;
-	private static final double MAX_DISTANCE = 96.0D;
-	private static final float FOV_DEGREES = 70.0F;
 	private static final double MAX_SHUTTER_SOUND_DISTANCE_SQR = 24.0D * 24.0D;
 	private static final float SHUTTER_SOUND_VOLUME = 0.45F;
 	private static final float SHUTTER_SOUND_PITCH = 1.0F;
@@ -59,10 +57,15 @@ public final class CameraCaptureSystem {
 			player.displayClientMessage(cameraBusyMessage(player), true);
 			return false;
 		}
+		MinecraftServer server = player.level().getServer();
+		if (server == null || !RendererBotCameraSystem.hasReadyBot(server)) {
+			player.displayClientMessage(noActiveRendererClientMessage(player), true);
+			return false;
+		}
 
 		MapPixelProvider provider;
 		try {
-			provider = CameraPixelProvider.capture(player);
+			provider = createPixelProvider(player);
 		} catch (Exception exception) {
 			player.displayClientMessage(capturePrepareFailedMessage(player), true);
 			return false;
@@ -128,6 +131,23 @@ public final class CameraCaptureSystem {
 			return Component.literal("Не удалось подготовить снимок.");
 		}
 		return Component.literal("Couldn't prepare the photo.");
+	}
+
+	private static Component noActiveRendererClientMessage(ServerPlayer player) {
+		String locale = locale(player);
+		if (locale.startsWith("rpr")) {
+			return Component.literal("Нѣтъ активнаго рендеръ-кліента для снимка.");
+		}
+		if (locale.startsWith("uk")) {
+			return Component.literal("Немає активного рендер-клієнта для знімка.");
+		}
+		if (locale.startsWith("ja")) {
+			return Component.literal("写真用のアクティブなレンダークライアントがいません。");
+		}
+		if (locale.startsWith("ru")) {
+			return Component.literal("Нет активного рендер-клиента для снимка.");
+		}
+		return Component.literal("No active renderer client is available for photos.");
 	}
 
 	public static Component captureCompletedMessage(ServerPlayer player) {
@@ -206,60 +226,38 @@ public final class CameraCaptureSystem {
 		}
 	}
 
-	private static final class CameraPixelProvider implements MapPixelProvider {
+	private static MapPixelProvider createPixelProvider(ServerPlayer player) {
+		CameraPhotoSettings settings = CameraPhotoSettings.read(player.getMainHandItem());
+		RendererBotCameraSystem.ClientCaptureHandle captureHandle = RendererBotCameraSystem.requestPhotoCapture(
+				player,
+				settings.mapsWide(),
+				settings.mapsHigh()
+		);
+		if (captureHandle == null) {
+			throw new IllegalStateException("No active renderer client is available");
+		}
+		return new RendererBotPixelProvider(
+				player.getUUID(),
+				player.level().dimension(),
+				settings.mapsWide(),
+				settings.mapsHigh(),
+				captureHandle
+		);
+	}
+
+	private static final class RendererBotPixelProvider implements MapPixelProvider {
 		private final UUID playerId;
 		private final ResourceKey<Level> dimension;
 		private final int mapsWide;
 		private final int mapsHigh;
-		private final BlueMapCameraRenderer.PreparedFrame previewPreparedFrame;
-		private final BlueMapCameraRenderer.PreparedFrame preparedFrame;
+		private final RendererBotCameraSystem.ClientCaptureHandle captureHandle;
 
-		private CameraPixelProvider(UUID playerId, ResourceKey<Level> dimension, int mapsWide, int mapsHigh, BlueMapCameraRenderer.PreparedFrame previewPreparedFrame, BlueMapCameraRenderer.PreparedFrame preparedFrame) {
+		private RendererBotPixelProvider(UUID playerId, ResourceKey<Level> dimension, int mapsWide, int mapsHigh, RendererBotCameraSystem.ClientCaptureHandle captureHandle) {
 			this.playerId = playerId;
 			this.dimension = dimension;
 			this.mapsWide = mapsWide;
 			this.mapsHigh = mapsHigh;
-			this.previewPreparedFrame = previewPreparedFrame;
-			this.preparedFrame = preparedFrame;
-		}
-
-		private static CameraPixelProvider capture(ServerPlayer player) {
-			CameraPhotoSettings settings = CameraPhotoSettings.read(player.getMainHandItem());
-			Vec3 forward = player.getLookAngle().normalize();
-			Vec3 worldUp = new Vec3(0.0D, 1.0D, 0.0D);
-			Vec3 right = forward.cross(worldUp);
-			if (right.lengthSqr() < 1.0E-4D) {
-				right = new Vec3(1.0D, 0.0D, 0.0D);
-			} else {
-				right = right.normalize();
-			}
-			Vec3 up = right.cross(forward).normalize();
-			int supersampling = Mth.clamp(Lg2Config.get().cameraRenderSamplesPerAxis, 1, 4);
-			BlueMapCameraRenderer.PreparedFrame previewPreparedFrame = BlueMapCameraRenderer.capture(
-					player,
-					forward,
-					right,
-					up,
-					MAX_DISTANCE,
-					FOV_DEGREES,
-					supersampling,
-					1,
-					1
-			);
-			BlueMapCameraRenderer.PreparedFrame preparedFrame = settings.mapsWide() == 1 && settings.mapsHigh() == 1
-					? previewPreparedFrame
-					: BlueMapCameraRenderer.capture(
-							player,
-							forward,
-							right,
-							up,
-							MAX_DISTANCE,
-							FOV_DEGREES,
-							supersampling,
-							settings.mapsWide(),
-							settings.mapsHigh()
-					);
-			return new CameraPixelProvider(player.getUUID(), player.level().dimension(), settings.mapsWide(), settings.mapsHigh(), previewPreparedFrame, preparedFrame);
+			this.captureHandle = captureHandle;
 		}
 
 		@Override
@@ -279,17 +277,22 @@ public final class CameraCaptureSystem {
 
 		@Override
 		public Object prepareFrame(MinecraftServer server) {
-			return this.preparedFrame;
+			return this.captureHandle;
 		}
 
 		@Override
 		public byte[] renderPreparedFrame(Object preparedFrame) {
-			return BlueMapCameraRenderer.render((BlueMapCameraRenderer.PreparedFrame) preparedFrame);
+			return ((RendererBotCameraSystem.ClientCaptureHandle) preparedFrame).awaitFull();
+		}
+
+		@Override
+		public byte[] renderImmediatePreviewFromPreparedFrame(Object preparedFrame) {
+			return ((RendererBotCameraSystem.ClientCaptureHandle) preparedFrame).awaitPreview();
 		}
 
 		@Override
 		public byte[] renderImmediatePreview(MinecraftServer server) {
-			return BlueMapCameraRenderer.render(this.previewPreparedFrame);
+			return this.captureHandle.awaitPreview();
 		}
 
 		@Override
@@ -305,16 +308,6 @@ public final class CameraCaptureSystem {
 		@Override
 		public int mapTilesHigh() {
 			return this.mapsHigh;
-		}
-
-		@Override
-		public boolean isValid(MinecraftServer server) {
-			return server.getPlayerList().getPlayer(this.playerId) != null && server.getLevel(this.dimension) != null;
-		}
-
-		@Override
-		public Component completedMessage() {
-			return Component.literal("Photo ready.");
 		}
 	}
 }

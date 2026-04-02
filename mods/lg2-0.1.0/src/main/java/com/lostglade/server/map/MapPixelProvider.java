@@ -43,6 +43,10 @@ public interface MapPixelProvider {
 		return new byte[0];
 	}
 
+	default byte[] renderImmediatePreviewFromPreparedFrame(Object preparedFrame) {
+		return null;
+	}
+
 	default byte[] renderImmediatePreview(MinecraftServer server) {
 		return null;
 	}

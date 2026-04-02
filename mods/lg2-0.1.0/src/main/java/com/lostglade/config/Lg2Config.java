@@ -48,6 +48,8 @@ public final class Lg2Config {
 	private static final int MAX_CAMERA_RENDER_IN_FLIGHT_PIXELS = 8192;
 	private static final int MIN_CAMERA_RENDER_SAMPLES_PER_AXIS = 1;
 	private static final int MAX_CAMERA_RENDER_SAMPLES_PER_AXIS = 4;
+	private static final int MIN_CAMERA_RENDERER_BOT_TIMEOUT_MS = 250;
+	private static final int MAX_CAMERA_RENDERER_BOT_TIMEOUT_MS = 30_000;
 	private static final int MIN_MONITOR_RENDER_THREADS = 1;
 	private static final int MAX_MONITOR_RENDER_THREADS = 64;
 	private static final int MIN_MONITOR_MEDIA_IO_THREADS = 1;
@@ -178,6 +180,10 @@ public final class Lg2Config {
 				MIN_CAMERA_RENDER_SAMPLES_PER_AXIS,
 				MAX_CAMERA_RENDER_SAMPLES_PER_AXIS,
 				newValue -> configData.cameraRenderSamplesPerAxis = newValue);
+		changed |= clampSingleValue(configData.cameraRendererBotTimeoutMs,
+				MIN_CAMERA_RENDERER_BOT_TIMEOUT_MS,
+				MAX_CAMERA_RENDERER_BOT_TIMEOUT_MS,
+				newValue -> configData.cameraRendererBotTimeoutMs = newValue);
 		changed |= clampSingleValue(configData.monitorRenderThreads,
 				MIN_MONITOR_RENDER_THREADS,
 				MAX_MONITOR_RENDER_THREADS,
@@ -374,6 +380,8 @@ public final class Lg2Config {
 		public int cameraRenderThreads = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
 		public int cameraRenderInFlightPixels = 1024;
 		public int cameraRenderSamplesPerAxis = 2;
+		public String cameraRendererBotPlayerName = "";
+		public int cameraRendererBotTimeoutMs = 15_000;
 		public int monitorRenderThreads = Math.max(2, Runtime.getRuntime().availableProcessors());
 		public int monitorMediaIoThreads = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() / 2));
 		public int monitorTileQuantizerThreads = Math.max(2, Runtime.getRuntime().availableProcessors());

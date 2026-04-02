@@ -137,16 +137,7 @@ public final class ServerRespectSystem {
 	}
 
 	private static List<ServerPlayer> getOrderedTabPlayers(ServerPlayer viewer) {
-		List<ServerPlayer> orderedPlayers = new ArrayList<>();
-		var api = ServerTabIntegration.getApi();
-		if (api != null) {
-			for (var tabPlayer : api.getOnlinePlayers()) {
-				Object rawPlayer = tabPlayer.getPlayer();
-				if (rawPlayer instanceof ServerPlayer serverPlayer) {
-					orderedPlayers.add(serverPlayer);
-				}
-			}
-		}
+		List<ServerPlayer> orderedPlayers = new ArrayList<>(ServerTabIntegration.getOnlinePlayers());
 
 		if (!orderedPlayers.isEmpty()) {
 			return orderedPlayers;

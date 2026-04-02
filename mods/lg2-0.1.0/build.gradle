@@ -16,9 +16,10 @@ def skinRestorerJars = fileTree(dir: "${serverRootDir}/mods", include: "skinrest
 def tabJars = fileTree(dir: "${serverRootDir}/mods", include: "TAB*.jar")
 def voicechatJars = fileTree(dir: "${serverRootDir}/mods", include: "voicechat-fabric-*.jar")
 def webcamJars = fileTree(dir: "${serverRootDir}/mods", include: "webcam-fabric-*.jar")
-def bluemapJars = fileTree(dir: "${serverRootDir}/mods", include: "bluemap-*.jar")
 def skinRestorerNestedLibDir = file("${buildDir}/skinrestorer-libs")
 def skinRestorerJavaClientJars = fileTree(dir: skinRestorerNestedLibDir, include: "java-client-*.jar")
+def rendererBotNameProp = providers.systemProperty("lg2.rendererBotName").orElse("RendererBot")
+def rendererBotServerProp = providers.systemProperty("lg2.rendererBotServer").orElse("127.0.0.1:25565")
 
 repositories {
 	// Add repositories to retrieve artifacts from in here.
@@ -51,6 +52,25 @@ loom {
 			runDir("../../")
 			vmArgs("-Xms8G", "-Xmx8G")
 		}
+
+		rendererBotClient {
+			inherit client
+			configName = "Renderer Bot Client"
+			ideConfigGenerated = true
+			runDir("../../run-renderer-bot")
+			vmArgs(
+					"-Xms2G",
+					"-Xmx2G",
+					"-Dlg2.rendererBot=true",
+					"-Dlg2.rendererBotName=${rendererBotNameProp.get()}",
+					"-Dlg2.rendererBotServer=${rendererBotServerProp.get()}"
+			)
+			programArg("--offlineDeveloperMode")
+			programArg("--username=${rendererBotNameProp.get()}")
+			programArg("--width=960")
+			programArg("--height=540")
+			client()
+		}
 	}
 }
 
@@ -66,7 +86,6 @@ dependencies {
 	modImplementation "eu.pb4:polymer-blocks:${project.polymer_version}"
 	modImplementation "eu.pb4:polymer-resource-pack:${project.polymer_version}"
 	modImplementation files(skinRestorerJars)
-	modImplementation files(bluemapJars)
 	compileOnly files(tabJars)
 	modCompileOnly files(voicechatJars)
 	modCompileOnly files(webcamJars)

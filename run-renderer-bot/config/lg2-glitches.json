@@ -1,0 +1,224 @@
+{
+  "enabled": true,
+  "checkIntervalTicks": 20,
+  "maxActivationsPerCheck": 1,
+  "glitches": {
+    "phantom_sounds": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 84.0,
+      "chancePerCheck": 0.45,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 100,
+      "maxCooldownTicks": 100,
+      "settings": {
+        "minTargetPlayers": 2,
+        "maxTargetPlayers": 2,
+        "minDistance": 4.0,
+        "maxDistance": 12.0,
+        "minVolume": 1.0,
+        "maxVolume": 1.0,
+        "pitchMin": 0.7,
+        "pitchMax": 1.25
+      }
+    },
+    "chat_interference": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 70.0,
+      "chancePerCheck": 0.6,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 0,
+      "maxCooldownTicks": 60,
+      "settings": {
+        "minMutations": 1,
+        "maxMutations": 5,
+        "maxDuplicateExtra": 3,
+        "replaceWeight": 1.0,
+        "insertWeight": 0.8,
+        "duplicateWeight": 0.8,
+        "reverseWeight": 0.5,
+        "shuffleWeight": 1.0,
+        "caseWeight": 0.8,
+        "swapNicknameWeight": 0.6
+      }
+    },
+    "checkpoint_desync": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 70.0,
+      "chancePerCheck": 0.35,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 0,
+      "maxCooldownTicks": 0,
+      "settings": {}
+    },
+    "time_of_day_jumps": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 100.0,
+      "chancePerCheck": 0.3,
+      "stabilityInfluence": 0.9,
+      "minCooldownTicks": 80,
+      "maxCooldownTicks": 2400,
+      "settings": {
+        "minJumpTicks": 80,
+        "maxJumpTicks": 12000
+      }
+    },
+    "inventory_texture_shuffle": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 70.0,
+      "chancePerCheck": 0.2,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 80,
+      "maxCooldownTicks": 1200,
+      "settings": {
+        "minTargetPlayers": 1,
+        "maxTargetPlayers": 4,
+        "minShuffledPercent": 8.0,
+        "maxShuffledPercent": 75.0,
+        "shuffledPercentPriority": 2.0,
+        "minDurationSeconds": 3,
+        "maxDurationSeconds": 20,
+        "minReshuffleIntervalTicks": 8,
+        "maxReshuffleIntervalTicks": 50
+      }
+    },
+    "blackout": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 70.0,
+      "chancePerCheck": 0.3,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 80,
+      "maxCooldownTicks": 1200,
+      "settings": {
+        "minTargetPlayers": 1,
+        "maxTargetPlayers": 3,
+        "minDurationSeconds": 4,
+        "maxDurationSeconds": 12
+      }
+    },
+    "gravity_surges": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 55.0,
+      "chancePerCheck": 0.2,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 40,
+      "maxCooldownTicks": 2000,
+      "settings": {
+        "minEntityPercent": 10.0,
+        "maxEntityPercent": 45.0,
+        "minItemPercent": 15.0,
+        "maxItemPercent": 65.0,
+        "minDurationSeconds": 2,
+        "maxDurationSeconds": 10,
+        "upwardDirectionWeight": 1.0,
+        "downwardDirectionWeight": 1.0,
+        "minDirectionCount": 1,
+        "maxDirectionCount": 10,
+        "playerControlRatio": 0.7,
+        "minForce": 0.22,
+        "maxForce": 0.58
+      }
+    },
+    "phantom_chunk": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 45.0,
+      "chancePerCheck": 0.12,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 200,
+      "maxCooldownTicks": 3200,
+      "settings": {
+        "minTargetPlayers": 1,
+        "maxTargetPlayers": 3,
+        "minDurationSeconds": 8,
+        "maxDurationSeconds": 24,
+        "minTargetDistanceChunks": 0,
+        "maxTargetDistanceChunks": 1,
+        "replacementChunkWeight": 1.0,
+        "intangibleChunkWeight": 1.0,
+        "backroomsTeleportChance": 0.35
+      }
+    },
+    "phantom_mobs": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 45.0,
+      "chancePerCheck": 0.12,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 160,
+      "maxCooldownTicks": 2200,
+      "settings": {
+        "minTargetPlayers": 1,
+        "maxTargetPlayers": 3,
+        "minSpawnDistance": 4.0,
+        "maxSpawnDistance": 14.0,
+        "minDurationSeconds": 5,
+        "maxDurationSeconds": 14,
+        "minChasingSpeed": 0.34,
+        "maxChasingSpeed": 0.5,
+        "standingWeight": 1.0,
+        "chasingWeight": 1.0,
+        "wanderingWeight": 1.0
+      }
+    },
+    "upside_down_mobs": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 55.0,
+      "chancePerCheck": 0.16,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 80,
+      "maxCooldownTicks": 2400,
+      "settings": {
+        "minMobPercent": 4.0,
+        "maxMobPercent": 28.0,
+        "minDurationSeconds": 6,
+        "maxDurationSeconds": 24
+      }
+    },
+    "player_shuffle": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 45.0,
+      "chancePerCheck": 0.1,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 200,
+      "maxCooldownTicks": 3200,
+      "settings": {
+        "minTargetPlayers": 2,
+        "maxTargetPlayers": 4,
+        "positionShuffleChance": 0.35
+      }
+    },
+    "chest_desync": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 70.0,
+      "chancePerCheck": 0.25,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 60,
+      "maxCooldownTicks": 600,
+      "settings": {
+        "includeGeneratedStorages": false
+      }
+    },
+    "bitcoin_overcook": {
+      "enabled": true,
+      "minStabilityPercent": 0.0,
+      "maxStabilityPercent": 60.0,
+      "chancePerCheck": 0.2,
+      "stabilityInfluence": 1.0,
+      "minCooldownTicks": 0,
+      "maxCooldownTicks": 0,
+      "settings": {
+        "experience": 0.1
+      }
+    }
+  }
+}

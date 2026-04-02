@@ -37,12 +37,14 @@
 		"minecraft": "~1.21.11",
 		"java": ">=21",
 		"fabric-api": "*",
-		"tab": "*",
 		"polymer-core": "*",
 		"polymer-blocks": "*",
 		"polymer-resource-pack": "*",
 		"cardinal-components": "*",
-		"skinrestorer": "*",
+		"skinrestorer": "*"
+	},
+	"suggests": {
+		"tab": "*",
 		"voicechat": "*",
 		"webcam": "*"
 	}
