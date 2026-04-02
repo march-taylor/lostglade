@@ -121,10 +121,15 @@ import net.minecraft.sounds.SoundSource;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 import javax.imageio.ImageIO;
+import java.awt.AlphaComposite;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -144,6 +149,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.PriorityQueue;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 import static net.minecraft.commands.Commands.literal;
@@ -235,6 +241,17 @@ public final class ServerRaceSystem {
 	private static final double COPPER_LIGHTNING_ATTRACT_RANGE_BLOCKS = 128.0D;
 	private static final double COPPER_MAN_DEFENSE_DEFAULT_DURATION_SECONDS = 300.0D;
 	private static final double COPPER_MAN_DEFENSE_DEFAULT_COOLDOWN_SECONDS = 900.0D;
+	private static final long COPPER_MAN_DEFENSE_PREWARM_INTERVAL_TICKS = 10L;
+	private static final long COPPER_MAN_DEFENSE_TINT_RETRY_COOLDOWN_MS = 30_000L;
+	private static final long COPPER_MAN_DEFENSE_TINT_CACHE_CLEANUP_INTERVAL_TICKS = 12_000L;
+	private static final long COPPER_MAN_DEFENSE_TINT_CACHE_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1000L;
+	private static final int COPPER_MAN_DEFENSE_TINT_CACHE_MAX_FILES = 64;
+	private static final String COPPER_MAN_DEFENSE_TINT_CACHE_VERSION = "v3";
+	private static final String COPPER_MAN_DEFENSE_TINT_CACHE_DIR_NAME = "generated/lg2/copper_defense_tints";
+	private static final float COPPER_MAN_DEFENSE_TINT_STRENGTH = 0.84F;
+	private static final float COPPER_MAN_DEFENSE_COPPER_RED = 0.84313726F;
+	private static final float COPPER_MAN_DEFENSE_COPPER_GREEN = 0.48235294F;
+	private static final float COPPER_MAN_DEFENSE_COPPER_BLUE = 0.35686275F;
 	private static final float COPPER_INGOT_SATURATION = 0.6F;
 	private static final Consumable COPPER_INGOT_CONSUMABLE = Consumable.builder()
 			.consumeSeconds(1.6F)
@@ -271,6 +288,11 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, CartelManualBookRestore> CARTEL_MANUAL_BOOK_RESTORES = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> COPPER_GOLEM_FOLLOWERS = new LinkedHashMap<>();
 	private static final Map<UUID, Long> COPPER_MAN_DEFENSE_COOLDOWNS = new LinkedHashMap<>();
+	private static final Map<UUID, CopperManDefenseVisualSession> COPPER_MAN_DEFENSE_VISUAL_SESSIONS = new LinkedHashMap<>();
+	private static final Map<String, Property> COPPER_MAN_DEFENSE_TINT_CACHE = new ConcurrentHashMap<>();
+	private static final Map<String, Long> COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS = new ConcurrentHashMap<>();
+	private static final Set<String> COPPER_MAN_DEFENSE_TINT_BUILD_IN_FLIGHT = ConcurrentHashMap.newKeySet();
+	private static long copperManDefenseTintCacheLastCleanupTick = Long.MIN_VALUE;
 	private static final List<CartelTravkaGrowthAttempt> CARTEL_TRAVKA_GROWTH_ATTEMPTS = new ArrayList<>();
 	private static final Map<CartelFernGrowthKey, CartelFernGrowthTask> CARTEL_PLANTED_FERN_GROWTHS = new LinkedHashMap<>();
 	private static final PriorityQueue<CartelFernGrowthTask> CARTEL_PLANTED_FERN_GROWTH_QUEUE = new PriorityQueue<>(Comparator.comparingLong(task -> task.growAtTick));
@@ -408,12 +430,14 @@ public final class ServerRaceSystem {
 			RaceConfig.load();
 			rebuildCache();
 			prewarmCartelLawyerSkinAsync();
+			cleanupCopperManDefenseTintCache(server, true);
 			syncGeneratedDialogs(server, true);
 			Lg2.LOGGER.info("Loaded {} configured personal races", RACES_BY_NICKNAME.size());
 		});
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			cleanupAllCartelRaceEntities(server, true);
 			restoreAllCartelDisguises(server);
+			restoreAllCopperManDefenseVisuals(server);
 			CartelWebcamBridge.clearAll();
 			RACES_BY_NICKNAME.clear();
 			DIALOG_ID_BY_NICKNAME.clear();
@@ -425,6 +449,11 @@ public final class ServerRaceSystem {
 			CARTEL_UNIQUE_COOLDOWNS.clear();
 			CARTEL_DISGUISE_SESSIONS.clear();
 			COPPER_MAN_DEFENSE_COOLDOWNS.clear();
+			COPPER_MAN_DEFENSE_VISUAL_SESSIONS.clear();
+			COPPER_MAN_DEFENSE_TINT_CACHE.clear();
+			COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS.clear();
+			COPPER_MAN_DEFENSE_TINT_BUILD_IN_FLIGHT.clear();
+			copperManDefenseTintCacheLastCleanupTick = Long.MIN_VALUE;
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.clear();
 			CARTEL_PLANTED_FERN_GROWTHS.clear();
 			CARTEL_PLANTED_FERN_GROWTH_QUEUE.clear();
@@ -440,6 +469,7 @@ public final class ServerRaceSystem {
 							Lg2.LOGGER.info("Assigned personal race '{}' to {}", race.id, handler.player.getGameProfile().name())
 					);
 					CartelSecretRecipeBookSystem.syncJoinedPlayer(handler.player);
+					prewarmCopperManDefenseTint(server, handler.player);
 				})
 		);
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
@@ -449,6 +479,7 @@ public final class ServerRaceSystem {
 			CARTEL_MANUAL_BOOK_RESTORES.remove(handler.player.getUUID());
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.removeIf(attempt -> attempt.playerId.equals(handler.player.getUUID()));
 			COPPER_GOLEM_FOLLOWERS.entrySet().removeIf(entry -> handler.player.getUUID().equals(entry.getValue()));
+			clearCopperManDefenseVisual(handler.player);
 			COPPER_MAN_DEFENSE_COOLDOWNS.remove(handler.player.getUUID());
 		});
 		UseItemCallback.EVENT.register((player, world, hand) -> {
@@ -738,6 +769,7 @@ public final class ServerRaceSystem {
 	private static int useCopperManDefense(ServerPlayer caster, PlayerRaceConfig race, RaceAbilityConfig ability) {
 		try {
 			ServerLevel level = caster.level();
+			MinecraftServer server = level.getServer();
 			long nowTick = level.getGameTime();
 			long cooldownTicks = asTicks(positiveOrDefault(ability.cooldownSeconds, COPPER_MAN_DEFENSE_DEFAULT_COOLDOWN_SECONDS));
 			long nextAllowedTick = COPPER_MAN_DEFENSE_COOLDOWNS.getOrDefault(caster.getUUID(), 0L);
@@ -753,6 +785,7 @@ public final class ServerRaceSystem {
 
 			long durationTicks = Math.max(1L, asTicks(positiveOrDefault(ability.durationSeconds, COPPER_MAN_DEFENSE_DEFAULT_DURATION_SECONDS)));
 			caster.addEffect(new MobEffectInstance(MobEffects.RESISTANCE, (int) Math.min(Integer.MAX_VALUE, durationTicks), 1, false, false, true));
+			startCopperManDefenseVisual(server, caster, nowTick + durationTicks);
 			if (cooldownTicks > 0L) {
 				COPPER_MAN_DEFENSE_COOLDOWNS.put(caster.getUUID(), nowTick + cooldownTicks);
 			}
@@ -774,6 +807,32 @@ public final class ServerRaceSystem {
 		long nowTick = server.overworld().getGameTime();
 		if (nowTick % 40L == 0L) {
 			COPPER_MAN_DEFENSE_COOLDOWNS.entrySet().removeIf(entry -> entry.getValue() <= nowTick);
+		}
+		if (copperManDefenseTintCacheLastCleanupTick == Long.MIN_VALUE
+				|| nowTick - copperManDefenseTintCacheLastCleanupTick >= COPPER_MAN_DEFENSE_TINT_CACHE_CLEANUP_INTERVAL_TICKS) {
+			cleanupCopperManDefenseTintCache(server, false);
+		}
+		if (nowTick % COPPER_MAN_DEFENSE_PREWARM_INTERVAL_TICKS == 0L) {
+			prewarmCopperManDefenseTints(server);
+		}
+		if (COPPER_MAN_DEFENSE_VISUAL_SESSIONS.isEmpty()) {
+			return;
+		}
+
+		for (Map.Entry<UUID, CopperManDefenseVisualSession> entry : new ArrayList<>(COPPER_MAN_DEFENSE_VISUAL_SESSIONS.entrySet())) {
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			CopperManDefenseVisualSession session = entry.getValue();
+			if (player == null || session == null) {
+				COPPER_MAN_DEFENSE_VISUAL_SESSIONS.remove(entry.getKey());
+				continue;
+			}
+
+			if (!player.isAlive() || nowTick >= session.expireTick()) {
+				clearCopperManDefenseVisual(player);
+				continue;
+			}
+
+			ensureCopperManDefenseVisualApplied(server, player, session);
 		}
 	}
 
@@ -939,6 +998,12 @@ public final class ServerRaceSystem {
 	}
 
 	private record FoodDataSnapshot(int foodLevel, float saturationLevel) {
+	}
+
+	private record CopperManDefenseVisualSession(SkinValue originalSkin, String sourceCacheKey, long expireTick) {
+	}
+
+	private record StoredSkinProperty(String name, String value, String signature) {
 	}
 
 	public static Collection<PlayerRaceConfig> getAllRaces() {
@@ -2150,6 +2215,454 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private static void prewarmCopperManDefenseTints(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			prewarmCopperManDefenseTint(server, player);
+		}
+	}
+
+	private static void prewarmCopperManDefenseTint(MinecraftServer server, ServerPlayer player) {
+		if (server == null || !shouldPrewarmCopperManDefenseTint(player)) {
+			return;
+		}
+
+		SkinValue currentSkin = captureCurrentSkinValue(player);
+		if (currentSkin == null || currentSkin.value() == null) {
+			return;
+		}
+
+		String sourceCacheKey = getCopperManDefenseTintSourceCacheKey(currentSkin.value());
+		queueCopperManDefenseTintBuild(server, player.getScoreboardName(), currentSkin.value(), sourceCacheKey);
+	}
+
+	private static boolean shouldPrewarmCopperManDefenseTint(ServerPlayer player) {
+		if (player == null || !player.isAlive() || player.isSpectator() || COPPER_MAN_DEFENSE_VISUAL_SESSIONS.containsKey(player.getUUID())) {
+			return false;
+		}
+
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isEmpty()) {
+			return false;
+		}
+
+		PlayerRaceConfig race = raceOptional.get();
+		return COPPER_MAN_RACE_ID.equals(sanitizePath(race.id)) && hasUnlockedAbility(player, race, RaceAbilitySlot.DEFENSE);
+	}
+
+	private static void startCopperManDefenseVisual(MinecraftServer server, ServerPlayer player, long expireTick) {
+		if (server == null || player == null) {
+			return;
+		}
+
+		CopperManDefenseVisualSession existing = COPPER_MAN_DEFENSE_VISUAL_SESSIONS.get(player.getUUID());
+		SkinValue originalSkin = existing != null && existing.originalSkin() != null ? existing.originalSkin() : captureCurrentSkinValue(player);
+		if (originalSkin == null || originalSkin.value() == null) {
+			return;
+		}
+
+		String sourceCacheKey = getCopperManDefenseTintSourceCacheKey(originalSkin.value());
+		CopperManDefenseVisualSession session = new CopperManDefenseVisualSession(originalSkin, sourceCacheKey, expireTick);
+		COPPER_MAN_DEFENSE_VISUAL_SESSIONS.put(player.getUUID(), session);
+		ensureCopperManDefenseVisualApplied(server, player, session);
+	}
+
+	private static void ensureCopperManDefenseVisualApplied(MinecraftServer server, ServerPlayer player, CopperManDefenseVisualSession session) {
+		if (server == null || player == null || session == null || session.originalSkin() == null || session.originalSkin().value() == null) {
+			return;
+		}
+
+		SkinValue storedSkin = captureStoredSkinValue(player);
+		if (storedSkin != null
+				&& storedSkin.value() != null
+				&& !isSameSkinProperty(storedSkin.value(), session.originalSkin().value())) {
+			session = new CopperManDefenseVisualSession(
+					storedSkin,
+					getCopperManDefenseTintSourceCacheKey(storedSkin.value()),
+					session.expireTick()
+			);
+			COPPER_MAN_DEFENSE_VISUAL_SESSIONS.put(player.getUUID(), session);
+			if (!isPlayerUsingSkin(player, storedSkin.value())) {
+				applySkin(server, player, storedSkin);
+			}
+		}
+
+		Property tintedProperty = COPPER_MAN_DEFENSE_TINT_CACHE.get(session.sourceCacheKey());
+		if (tintedProperty == null) {
+			queueCopperManDefenseTintBuild(server, player.getScoreboardName(), session.originalSkin().value(), session.sourceCacheKey());
+			return;
+		}
+
+		if (isPlayerUsingSkin(player, tintedProperty)) {
+			return;
+		}
+
+		SkinVariant variant = resolveSkinVariant(tintedProperty);
+		applySkin(server, player, new SkinValue("lg2_copper_defense_tint", player.getScoreboardName(), variant, tintedProperty, tintedProperty));
+	}
+
+	private static void restoreAllCopperManDefenseVisuals(MinecraftServer server) {
+		if (server == null || COPPER_MAN_DEFENSE_VISUAL_SESSIONS.isEmpty()) {
+			return;
+		}
+
+		for (Map.Entry<UUID, CopperManDefenseVisualSession> entry : new ArrayList<>(COPPER_MAN_DEFENSE_VISUAL_SESSIONS.entrySet())) {
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			if (player != null) {
+				restoreCopperManDefenseVisual(server, player, entry.getValue());
+			}
+		}
+		COPPER_MAN_DEFENSE_VISUAL_SESSIONS.clear();
+	}
+
+	private static void clearCopperManDefenseVisual(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+
+		CopperManDefenseVisualSession session = COPPER_MAN_DEFENSE_VISUAL_SESSIONS.remove(player.getUUID());
+		if (session == null) {
+			return;
+		}
+
+		MinecraftServer server = player.level().getServer();
+		if (server != null) {
+			restoreCopperManDefenseVisual(server, player, session);
+		}
+	}
+
+	private static void restoreCopperManDefenseVisual(MinecraftServer server, ServerPlayer player, CopperManDefenseVisualSession session) {
+		if (server == null || player == null || session == null || session.originalSkin() == null) {
+			return;
+		}
+		if (isPlayerUsingSkin(player, session.originalSkin().value())) {
+			return;
+		}
+		applySkin(server, player, session.originalSkin());
+	}
+
+	private static String getCopperManDefenseTintSourceCacheKey(Property sourceSkin) {
+		return getCopperManDefenseTintSourceCacheKey(sourceSkin, COPPER_MAN_DEFENSE_TINT_CACHE_VERSION);
+	}
+
+	private static String getCopperManDefenseTintSourceCacheKey(Property sourceSkin, String cacheVersion) {
+		if (sourceSkin == null) {
+			return "";
+		}
+		Pair<String, SkinVariant> skinData = PlayerUtils.getSkinUrl(sourceSkin);
+		String skinUrl = skinData != null && skinData.first() != null && !skinData.first().isBlank()
+				? skinData.first()
+				: sourceSkin.value();
+		String variant = skinData != null && skinData.second() != null ? skinData.second().name() : SkinVariant.CLASSIC.name();
+		return skinUrl + "|" + variant + "|" + cacheVersion;
+	}
+
+	private static void queueCopperManDefenseTintBuild(MinecraftServer server, String playerName, Property sourceSkin, String sourceCacheKey) {
+		if (sourceSkin == null || sourceCacheKey == null || sourceCacheKey.isBlank()) {
+			return;
+		}
+		Property cached = COPPER_MAN_DEFENSE_TINT_CACHE.get(sourceCacheKey);
+		if (cached != null) {
+			return;
+		}
+		Property diskCached = readCopperManDefenseTintFromDisk(server, sourceCacheKey);
+		if (diskCached != null) {
+			COPPER_MAN_DEFENSE_TINT_CACHE.put(sourceCacheKey, diskCached);
+			COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS.remove(sourceCacheKey);
+			return;
+		}
+
+		long nowMs = System.currentTimeMillis();
+		Long retryAtMs = COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS.get(sourceCacheKey);
+		if (retryAtMs != null && nowMs < retryAtMs) {
+			return;
+		}
+		if (!COPPER_MAN_DEFENSE_TINT_BUILD_IN_FLIGHT.add(sourceCacheKey)) {
+			return;
+		}
+
+		CompletableFuture.runAsync(() -> {
+			Property generated = null;
+			try {
+				generated = buildCopperManDefenseTintSkin(sourceSkin, playerName);
+			} finally {
+				if (generated != null) {
+					COPPER_MAN_DEFENSE_TINT_CACHE.put(sourceCacheKey, generated);
+					COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS.remove(sourceCacheKey);
+					writeCopperManDefenseTintToDisk(server, sourceCacheKey, generated);
+				} else {
+					COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS.put(sourceCacheKey, nowMs + COPPER_MAN_DEFENSE_TINT_RETRY_COOLDOWN_MS);
+				}
+				COPPER_MAN_DEFENSE_TINT_BUILD_IN_FLIGHT.remove(sourceCacheKey);
+			}
+		});
+	}
+
+	private static Property buildCopperManDefenseTintSkin(Property sourceSkin, String playerName) {
+		Path tempSkinPath = null;
+		try {
+			Pair<String, SkinVariant> skinData = PlayerUtils.getSkinUrl(sourceSkin);
+			if (skinData == null || skinData.first() == null || skinData.first().isBlank()) {
+				return null;
+			}
+
+			BufferedImage sourceSkinImage = loadSkinImage(new URI(skinData.first()));
+			if (sourceSkinImage == null) {
+				return null;
+			}
+
+			BufferedImage copperTintedSkin = applyCopperDefenseTint(sourceSkinImage);
+			tempSkinPath = Files.createTempFile("lg2_copper_defense_", "_" + shortSha1(sourceSkin.value()) + ".png");
+			ImageIO.write(copperTintedSkin, "PNG", tempSkinPath.toFile());
+			SkinVariant variant = skinData.second() == null ? SkinVariant.CLASSIC : skinData.second();
+			return signCopperDefenseSkin(tempSkinPath.toUri(), variant);
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to build copper defense skin tint for {}", playerName, exception);
+			return null;
+		} finally {
+			if (tempSkinPath != null) {
+				try {
+					Files.deleteIfExists(tempSkinPath);
+				} catch (IOException ignored) {
+				}
+			}
+		}
+	}
+
+	private static Property signCopperDefenseSkin(URI skinUri, SkinVariant variant) {
+		try {
+			return MineskinService.INSTANCE.signSkin(skinUri, variant).orElse(null);
+		} catch (Exception firstFailure) {
+			try {
+				MineskinService.INSTANCE.reload();
+				return MineskinService.INSTANCE.signSkin(skinUri, variant).orElse(null);
+			} catch (Exception secondFailure) {
+				Lg2.LOGGER.debug("Failed to sign copper defense skin after Mineskin reload", secondFailure);
+			}
+			Lg2.LOGGER.debug("Failed to sign copper defense skin", firstFailure);
+			return null;
+		}
+	}
+
+	private static Property readCopperManDefenseTintFromDisk(MinecraftServer server, String sourceCacheKey) {
+		if (server == null || sourceCacheKey == null || sourceCacheKey.isBlank()) {
+			return null;
+		}
+
+		Path cacheFile = getCopperManDefenseTintCacheFile(server, sourceCacheKey);
+		if (cacheFile == null || !Files.exists(cacheFile)) {
+			return null;
+		}
+
+		try {
+			String json = Files.readString(cacheFile, StandardCharsets.UTF_8);
+			StoredSkinProperty stored = GSON.fromJson(json, StoredSkinProperty.class);
+			if (stored == null || stored.name() == null || stored.value() == null || stored.value().isBlank()) {
+				return null;
+			}
+			return stored.signature() == null || stored.signature().isBlank()
+					? new Property(stored.name(), stored.value())
+					: new Property(stored.name(), stored.value(), stored.signature());
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to read cached copper defense skin from {}", cacheFile, exception);
+			return null;
+		}
+	}
+
+	private static void writeCopperManDefenseTintToDisk(MinecraftServer server, String sourceCacheKey, Property property) {
+		if (server == null || sourceCacheKey == null || sourceCacheKey.isBlank() || property == null || property.value() == null || property.value().isBlank()) {
+			return;
+		}
+
+		Path cacheFile = getCopperManDefenseTintCacheFile(server, sourceCacheKey);
+		if (cacheFile == null) {
+			return;
+		}
+
+		try {
+			Files.createDirectories(cacheFile.getParent());
+			StoredSkinProperty stored = new StoredSkinProperty(property.name(), property.value(), property.signature());
+			Files.writeString(cacheFile, GSON.toJson(stored), StandardCharsets.UTF_8);
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to write cached copper defense skin to {}", cacheFile, exception);
+		}
+	}
+
+	private static Path getCopperManDefenseTintCacheFile(MinecraftServer server, String sourceCacheKey) {
+		if (server == null || sourceCacheKey == null || sourceCacheKey.isBlank()) {
+			return null;
+		}
+
+		Path cacheDir = server.getWorldPath(LevelResource.ROOT).resolve(COPPER_MAN_DEFENSE_TINT_CACHE_DIR_NAME);
+		return cacheDir.resolve(shortSha1(sourceCacheKey) + ".json");
+	}
+
+	private static void cleanupCopperManDefenseTintCache(MinecraftServer server, boolean force) {
+		if (server == null) {
+			return;
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		if (!force
+				&& copperManDefenseTintCacheLastCleanupTick != Long.MIN_VALUE
+				&& nowTick - copperManDefenseTintCacheLastCleanupTick < COPPER_MAN_DEFENSE_TINT_CACHE_CLEANUP_INTERVAL_TICKS) {
+			return;
+		}
+		copperManDefenseTintCacheLastCleanupTick = nowTick;
+
+		Path cacheDir = server.getWorldPath(LevelResource.ROOT).resolve(COPPER_MAN_DEFENSE_TINT_CACHE_DIR_NAME);
+		if (!Files.isDirectory(cacheDir)) {
+			return;
+		}
+
+		long nowMs = System.currentTimeMillis();
+		try (Stream<Path> stream = Files.list(cacheDir)) {
+			List<Path> files = stream
+					.filter(Files::isRegularFile)
+					.filter(path -> path.getFileName().toString().endsWith(".json"))
+					.sorted(Comparator.comparingLong(ServerRaceSystem::lastModifiedSafe).reversed())
+					.toList();
+
+			if (files.isEmpty()) {
+				return;
+			}
+
+			for (int i = 0; i < files.size(); i++) {
+				Path file = files.get(i);
+				boolean overLimit = i >= COPPER_MAN_DEFENSE_TINT_CACHE_MAX_FILES;
+				boolean expired = nowMs - lastModifiedSafe(file) > COPPER_MAN_DEFENSE_TINT_CACHE_MAX_AGE_MS;
+				if (!overLimit && !expired) {
+					continue;
+				}
+				try {
+					Files.deleteIfExists(file);
+				} catch (IOException exception) {
+					Lg2.LOGGER.debug("Failed to delete stale copper defense tint cache {}", file, exception);
+				}
+			}
+		} catch (IOException exception) {
+			Lg2.LOGGER.debug("Failed to cleanup copper defense tint cache directory {}", cacheDir, exception);
+		}
+	}
+
+	private static long lastModifiedSafe(Path path) {
+		try {
+			return Files.getLastModifiedTime(path).toMillis();
+		} catch (IOException exception) {
+			return Long.MIN_VALUE;
+		}
+	}
+
+	private static BufferedImage loadSkinImage(URI uri) throws IOException {
+		try (InputStream stream = uri.toURL().openStream()) {
+			BufferedImage image = ImageIO.read(stream);
+			if (image == null) {
+				return null;
+			}
+			return normalizeSkinImage(toArgb(image));
+		}
+	}
+
+	private static BufferedImage applyCopperDefenseTint(BufferedImage source) {
+		BufferedImage tinted = toArgb(source);
+		int width = tinted.getWidth();
+		int height = tinted.getHeight();
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				int argb = tinted.getRGB(x, y);
+				int alpha = (argb >>> 24) & 0xFF;
+				if (alpha <= 0) {
+					continue;
+				}
+
+				float red = ((argb >>> 16) & 0xFF) / 255.0F;
+				float green = ((argb >>> 8) & 0xFF) / 255.0F;
+				float blue = (argb & 0xFF) / 255.0F;
+				float luminance = (red * 0.2126F) + (green * 0.7152F) + (blue * 0.0722F);
+				float shading = clamp01(0.32F + (luminance * 0.95F));
+
+				float targetRed = clamp01(COPPER_MAN_DEFENSE_COPPER_RED * (0.58F + shading));
+				float targetGreen = clamp01(COPPER_MAN_DEFENSE_COPPER_GREEN * (0.52F + shading));
+				float targetBlue = clamp01(COPPER_MAN_DEFENSE_COPPER_BLUE * (0.48F + (shading * 0.85F)));
+
+				int outRed = Math.round(lerp(red, targetRed, COPPER_MAN_DEFENSE_TINT_STRENGTH) * 255.0F);
+				int outGreen = Math.round(lerp(green, targetGreen, COPPER_MAN_DEFENSE_TINT_STRENGTH) * 255.0F);
+				int outBlue = Math.round(lerp(blue, targetBlue, COPPER_MAN_DEFENSE_TINT_STRENGTH) * 255.0F);
+				tinted.setRGB(x, y, ((alpha & 0xFF) << 24) | ((outRed & 0xFF) << 16) | ((outGreen & 0xFF) << 8) | (outBlue & 0xFF));
+			}
+		}
+		return tinted;
+	}
+
+	private static boolean isPlayerUsingSkin(ServerPlayer player, Property expectedSkin) {
+		if (player == null || expectedSkin == null) {
+			return false;
+		}
+
+		Property currentSkin = PlayerUtils.getPlayerSkin(player.getGameProfile());
+		return isSameSkinProperty(currentSkin, expectedSkin);
+	}
+
+	private static boolean isSameSkinProperty(Property left, Property right) {
+		return left != null
+				&& right != null
+				&& Objects.equals(left.name(), right.name())
+				&& Objects.equals(left.value(), right.value())
+				&& Objects.equals(left.signature(), right.signature());
+	}
+
+	private static BufferedImage normalizeSkinImage(BufferedImage image) {
+		if (image.getWidth() == 64 && image.getHeight() == 64) {
+			return image;
+		}
+
+		BufferedImage normalized = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = normalized.createGraphics();
+		graphics.setComposite(AlphaComposite.Src);
+		graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+		graphics.drawImage(image, 0, 0, 64, 64, null);
+		graphics.dispose();
+		return normalized;
+	}
+
+	private static BufferedImage toArgb(BufferedImage image) {
+		if (image.getType() == BufferedImage.TYPE_INT_ARGB) {
+			return image;
+		}
+
+		BufferedImage converted = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = converted.createGraphics();
+		graphics.setComposite(AlphaComposite.Src);
+		graphics.drawImage(image, 0, 0, null);
+		graphics.dispose();
+		return converted;
+	}
+
+	private static float lerp(float start, float end, float delta) {
+		return start + ((end - start) * delta);
+	}
+
+	private static float clamp01(float value) {
+		return Math.max(0.0F, Math.min(1.0F, value));
+	}
+
+	private static String shortSha1(String value) {
+		try {
+			MessageDigest digest = MessageDigest.getInstance("SHA-1");
+			byte[] bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+			StringBuilder builder = new StringBuilder(bytes.length * 2);
+			for (byte b : bytes) {
+				builder.append(String.format("%02x", b));
+			}
+			return builder.toString();
+		} catch (NoSuchAlgorithmException exception) {
+			return Integer.toHexString(value.hashCode());
+		}
+	}
+
 	private record CocaineCauldronKey(ResourceKey<Level> dimension, BlockPos pos) {
 	}
 
@@ -2175,12 +2688,9 @@ public final class ServerRaceSystem {
 			return null;
 		}
 
-		SkinStorage skinStorage = SkinRestorer.getSkinStorage();
-		if (skinStorage != null && skinStorage.hasSavedSkin(player.getUUID())) {
-			SkinValue stored = skinStorage.getSkin(player.getUUID());
-			if (stored != null) {
-				return stored;
-			}
+		SkinValue stored = captureStoredSkinValue(player);
+		if (stored != null) {
+			return stored;
 		}
 
 		Property current = PlayerUtils.getPlayerSkin(player.getGameProfile());
@@ -2189,6 +2699,19 @@ public final class ServerRaceSystem {
 		}
 		SkinVariant variant = resolveSkinVariant(current);
 		return new SkinValue("lg2_cartel_disguise", player.getScoreboardName(), variant, current, current);
+	}
+
+	private static SkinValue captureStoredSkinValue(ServerPlayer player) {
+		if (player == null) {
+			return null;
+		}
+
+		SkinStorage skinStorage = SkinRestorer.getSkinStorage();
+		if (skinStorage == null || !skinStorage.hasSavedSkin(player.getUUID())) {
+			return null;
+		}
+
+		return skinStorage.getSkin(player.getUUID());
 	}
 
 	private static SkinVariant resolveSkinVariant(Property property) {

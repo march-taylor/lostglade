@@ -2,8 +2,9 @@ package com.lostglade.mixin;
 
 import com.lostglade.server.CopperManRepulsorSystem;
 import net.minecraft.network.protocol.game.ServerboundInteractPacket;
-import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.world.InteractionHand;
@@ -26,15 +27,13 @@ public abstract class ServerGamePacketListenerCopperManRepulsorMixin {
 		}
 	}
 
-	@Inject(method = "handleUseItemOn", at = @At("HEAD"), cancellable = true)
-	private void lg2$fireCopperRepulsorOnBlock(ServerboundUseItemOnPacket packet, CallbackInfo ci) {
-		if (CopperManRepulsorSystem.handleUseInteraction(this.player, packet.getHand())) {
-			ci.cancel();
-		}
-	}
-
 	@Inject(method = "handleInteract", at = @At("HEAD"), cancellable = true)
 	private void lg2$fireCopperRepulsorOnEntity(ServerboundInteractPacket packet, CallbackInfo ci) {
+		Entity target = packet.getTarget((ServerLevel) this.player.level());
+		if (!CopperManRepulsorSystem.isAirTriggerEntity(this.player, target)) {
+			return;
+		}
+
 		final boolean[] cancel = new boolean[]{false};
 		packet.dispatch(new ServerboundInteractPacket.Handler() {
 			@Override
