@@ -1,6 +1,7 @@
 ﻿{
 	"required": true,
 	"package": "com.lostglade.mixin",
+	"plugin": "com.lostglade.mixin.Lg2MixinPlugin",
 	"compatibilityLevel": "JAVA_21",
 	"mixins": [
 		"AbstractCookingRecipeMixin",
@@ -34,6 +35,7 @@
 		"LivingEntityStabilityLuckMixin",
 		"LivingEntityTrojanRoosterInvulnerabilityMixin",
 		"MsgCommandMixin",
+		"MinecraftServerRendererBotStatusMixin",
 		"MobTrojanRoosterLeashMixin",
 		"MobXpRewardAccessor",
 		"MobDeathLootMixin",
@@ -52,6 +54,7 @@
 		"ServerLevelAbsoluteInvisibilityMixin",
 		"ServerLevelCopperManLightningMixin",
 		"ServerItemEntityMixin",
+		"ServerPlayerRendererBotListingMixin",
 		"ServerPlayerCartelRecipeBookMixin",
 		"ServerPlayerBackroomsRespawnMixin",
 		"ServerPlayerMenuTitleMixin",
@@ -71,4 +74,3 @@
 		"requireAnnotations": true
 	}
 }
-

@@ -35,6 +35,8 @@
   "killerRabbitReplacementChance": 100,
   "giantZombieReplacementChance": 200,
 
+  "cameraRendererBotPlayerName": "camera",
+  "cameraRendererBotTimeoutMs": 15000,
   "cameraRenderThreads": 10,
   "cameraRenderInFlightPixels": 1024,
   "cameraRenderSamplesPerAxis": 2,

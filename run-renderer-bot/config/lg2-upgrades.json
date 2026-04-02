@@ -1,0 +1,592 @@
+{
+  "enabled": true,
+  "rootScreenId": "main",
+  "themes": {
+    "default": {
+      "enabled": true,
+      "packTitlePrefix": "",
+      "packTitleSuffix": "",
+      "fillEmptySlots": true,
+      "fillerIcon": {
+        "fallbackItem": "minecraft:gray_stained_glass_pane",
+        "packModel": "lg2:gui/button/filler",
+        "count": 1,
+        "foil": false
+      }
+    }
+  },
+  "screens": {
+    "main": {
+      "enabled": true,
+      "rows": 3,
+      "theme": "default",
+      "hideTitleTextWhenPack": false,
+      "title": {
+        "values": {
+          "en_us": "Server Upgrades",
+          "ru_ru": "Прокачка сервера"
+        }
+      },
+      "buttons": {
+        "systems": {
+          "enabled": true,
+          "slot": 11,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "systems",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:compass",
+            "packModel": "lg2:gui/button/category",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Systems",
+              "ru_ru": "Системы"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Open the 4-row systems screen."
+              ],
+              "ru_ru": [
+                "Открыть экран систем на 4 ряда."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "buffer": {
+          "enabled": true,
+          "slot": 13,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "purchase_upgrade",
+          "targetScreenId": "",
+          "upgradeId": "stability_buffer",
+          "pricesBitcoins": [
+            4,
+            8,
+            12
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/upgrade",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Stability Buffer",
+              "ru_ru": "Буфер стабильности"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Smooths server hiccups.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC"
+              ],
+              "ru_ru": [
+                "Сглаживает сбои сервера.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC"
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "advanced": {
+          "enabled": true,
+          "slot": 15,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "open_screen",
+          "targetScreenId": "advanced",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:book",
+            "packModel": "lg2:gui/button/info",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Advanced",
+              "ru_ru": "Сложный интерфейс"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Open the 5-row advanced screen."
+              ],
+              "ru_ru": [
+                "Открыть сложный экран на 5 рядов."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "close": {
+          "enabled": true,
+          "slot": 22,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "close",
+          "targetScreenId": "",
+          "upgradeId": "",
+          "pricesBitcoins": [],
+          "icon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/close",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Close",
+              "ru_ru": "Закрыть"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Close this interface."
+              ],
+              "ru_ru": [
+                "Закрыть интерфейс."
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        }
+      }
+    },
+    "systems": {
+      "enabled": true,
+      "rows": 4,
+      "theme": "default",
+      "hideTitleTextWhenPack": false,
+      "title": {
+        "values": {
+          "en_us": "Systems",
+          "ru_ru": "Системы"
+        }
+      },
+      "buttons": {
+        "cooling": {
+          "enabled": true,
+          "slot": 10,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "purchase_upgrade",
+          "targetScreenId": "",
+          "upgradeId": "cooling",
+          "pricesBitcoins": [
+            3,
+            6,
+            12,
+            18
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/upgrade",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Cooling",
+              "ru_ru": "Охлаждение"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Reduces thermal failures.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC"
+              ],
+              "ru_ru": [
+                "Снижает термические сбои.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC"
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "bus": {
+          "enabled": true,
+          "slot": 12,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "purchase_upgrade",
+          "targetScreenId": "",
+          "upgradeId": "data_bus",
+          "pricesBitcoins": [
+            5,
+            9,
+            15
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/upgrade",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Data Bus",
+              "ru_ru": "Шина данных"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Opens room for future upgrades.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC"
+              ],
+              "ru_ru": [
+                "Открывает место под будущие апгрейды.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC"
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "routing": {
+          "enabled": true,
+          "slot": 14,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "purchase_upgrade",
+          "targetScreenId": "",
+          "upgradeId": "routing",
+          "pricesBitcoins": [
+            6,
+            10,
+            16
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/upgrade",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Routing",
+              "ru_ru": "Маршрутизация"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Better internal traffic handling.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC"
+              ],
+              "ru_ru": [
+                "Лучше обрабатывает внутренний трафик.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC"
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        }
+      }
+    },
+    "advanced": {
+      "enabled": true,
+      "rows": 5,
+      "theme": "default",
+      "hideTitleTextWhenPack": false,
+      "title": {
+        "values": {
+          "en_us": "Advanced Layout",
+          "ru_ru": "Сложный экран"
+        }
+      },
+      "buttons": {
+        "ai_core": {
+          "enabled": true,
+          "slot": 10,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "purchase_upgrade",
+          "targetScreenId": "",
+          "upgradeId": "ai_core",
+          "pricesBitcoins": [
+            8,
+            16,
+            24,
+            40,
+            64
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/upgrade",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "AI Core",
+              "ru_ru": "ИИ-ядро"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Example of a 5-row upgrade tree.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC"
+              ],
+              "ru_ru": [
+                "Пример дерева апгрейдов на 5 рядов.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC"
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "buffering": {
+          "enabled": true,
+          "slot": 13,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "purchase_upgrade",
+          "targetScreenId": "",
+          "upgradeId": "buffering",
+          "pricesBitcoins": [
+            6,
+            12,
+            18,
+            30
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/upgrade",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Buffering",
+              "ru_ru": "Буферизация"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Stores more server operations.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC"
+              ],
+              "ru_ru": [
+                "Хранит больше операций сервера.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC"
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "clock": {
+          "enabled": true,
+          "slot": 16,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "purchase_upgrade",
+          "targetScreenId": "",
+          "upgradeId": "clock_sync",
+          "pricesBitcoins": [
+            7,
+            14,
+            28
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:redstone",
+            "packModel": "lg2:gui/button/upgrade",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:barrier",
+            "packModel": "lg2:gui/button/locked",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:emerald",
+            "packModel": "lg2:gui/button/maxed",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Clock Sync",
+              "ru_ru": "Синхронизация тактов"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Stabilizes timing-sensitive systems.",
+                "Level: %level%/%max_level%",
+                "Cost: %cost% BTC"
+              ],
+              "ru_ru": [
+                "Стабилизирует системы, чувствительные ко времени.",
+                "Уровень: %level%/%max_level%",
+                "Цена: %cost% BTC"
+              ]
+            }
+          },
+          "requirements": [],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        }
+      }
+    }
+  }
+}

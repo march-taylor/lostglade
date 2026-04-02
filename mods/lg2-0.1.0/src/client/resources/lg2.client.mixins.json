@@ -3,7 +3,10 @@
 	"package": "com.lostglade.mixin.client",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
-		"ExampleClientMixin"
+		"RendererBotMinecraftAuthMixin",
+		"RendererBotGlfwMixin",
+		"RendererBotSkinManagerMixin",
+		"RendererBotWindowMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

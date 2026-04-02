@@ -3,10 +3,14 @@ package com.lostglade;
 import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.config.RaceConfig;
+import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.server.ServerGlitchSystem;
 import com.lostglade.server.ServerBackroomsSystem;
 import com.lostglade.server.ServerBackroomsBlockBreakSystem;
 import com.lostglade.server.ServerBackroomsStalkerSystem;
+import com.lostglade.server.RendererBotCameraSystem;
+import com.lostglade.server.RendererBotPresenceSystem;
+import com.lostglade.server.RendererBotProcessSystem;
 import com.lostglade.server.SpeakerSystem;
 import com.lostglade.item.ModItems;
 import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
@@ -31,6 +35,7 @@ import com.lostglade.server.ServerVoicechatIntegration;
 import com.lostglade.server.ServerWebcamIntegration;
 import com.lostglade.worldgen.ModWorldGen;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.loader.api.FabricLoader;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 
 import org.slf4j.Logger;
@@ -48,8 +53,10 @@ public class Lg2 implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		Lg2Config.load();
+		RendererBotProcessSystem.preflightServerProperties();
 		RaceConfig.load();
 		PolymerResourcePackUtils.addModAssets(MOD_ID);
+		RendererBotPayloads.registerPayloadTypes();
 
 		ModItems.register();
 		ModBlocks.register();
@@ -57,6 +64,9 @@ public class Lg2 implements ModInitializer {
 		ServerBossBarVisibilitySystem.register();
 		MapImageRenderSystem.register();
 		CameraCaptureSystem.register();
+		RendererBotCameraSystem.register();
+		RendererBotPresenceSystem.register();
+		RendererBotProcessSystem.register();
 		CocaineHallucinationSystem.register();
 		CopperManRepulsorSystem.register();
 		MonitorScreenSystem.register();
@@ -73,11 +83,17 @@ public class Lg2 implements ModInitializer {
 		ServerRespectSystem.register();
 		ServerRaceSystem.register();
 		ServerUnusedMobSpawnSystem.register();
-		ServerTabIntegration.register();
-		ServerVoicechatIntegration.register();
-		SpeakerSystem.register();
-		MicrophoneSystem.register();
-		ServerWebcamIntegration.register();
+		if (FabricLoader.getInstance().isModLoaded("tab")) {
+			ServerTabIntegration.register();
+		}
+		if (FabricLoader.getInstance().isModLoaded("voicechat")) {
+			ServerVoicechatIntegration.register();
+			SpeakerSystem.register();
+			MicrophoneSystem.register();
+		}
+		if (FabricLoader.getInstance().isModLoaded("webcam")) {
+			ServerWebcamIntegration.register();
+		}
 		ServerUpgradeUiSystem.register();
 
 		LOGGER.info("Initialized {}", MOD_ID);
