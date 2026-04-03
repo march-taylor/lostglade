@@ -178,11 +178,29 @@ public final class CopperManGogglesSystem {
 		ItemStack stack = actualHead.copy();
 		if (spoofVisual && PolymerResourcePackUtils.hasMainPack(viewer) && !stack.isEmpty()) {
 			stack.set(DataComponents.ITEM_MODEL, HEAD_MODEL_ID);
+			preserveVisibleName(stack, actualHead);
 		}
 		viewer.connection.send(new ClientboundSetEquipmentPacket(
 				wearer.getId(),
 				List.of(com.mojang.datafixers.util.Pair.of(EquipmentSlot.HEAD, stack.copy()))
 		));
+	}
+
+	private static void preserveVisibleName(ItemStack visualStack, ItemStack originalStack) {
+		if (visualStack == null || visualStack.isEmpty() || originalStack == null || originalStack.isEmpty()) {
+			return;
+		}
+
+		Component customName = originalStack.get(DataComponents.CUSTOM_NAME);
+		if (customName != null) {
+			visualStack.set(DataComponents.CUSTOM_NAME, customName.copy().withStyle(style -> style.withItalic(false)));
+			return;
+		}
+
+		visualStack.set(
+				DataComponents.CUSTOM_NAME,
+				originalStack.getItem().getName(originalStack).copy().withStyle(style -> style.withItalic(false))
+		);
 	}
 
 	private static boolean shouldSpoofVisual(ServerPlayer player) {
