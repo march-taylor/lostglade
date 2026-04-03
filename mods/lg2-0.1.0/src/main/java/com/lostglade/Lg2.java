@@ -18,6 +18,7 @@ import com.lostglade.server.ServerBossBarVisibilitySystem;
 import com.lostglade.server.CameraAnimatedMapPlaybackSystem;
 import com.lostglade.server.CameraCaptureSystem;
 import com.lostglade.server.CameraMediaCache;
+import com.lostglade.server.CameraOrientationStore;
 import com.lostglade.server.CameraVideoRecordingSystem;
 import com.lostglade.server.CocaineHallucinationSystem;
 import com.lostglade.server.CopperManGogglesSystem;
@@ -65,6 +66,7 @@ public class Lg2 implements ModInitializer {
 
 		ModItems.register();
 		ModBlocks.register();
+		CameraOrientationStore.register();
 		ModWorldGen.register();
 		ServerBossBarVisibilitySystem.register();
 		MapImageRenderSystem.register();

@@ -1,17 +1,16 @@
 package com.lostglade.block;
 
-import com.lostglade.Lg2;
 import com.lostglade.server.MonitorScreenSystem;
-import eu.pb4.polymer.blocks.api.BlockModelType;
-import eu.pb4.polymer.blocks.api.PolymerBlockModel;
-import eu.pb4.polymer.blocks.api.PolymerBlockResourceUtils;
-import eu.pb4.polymer.blocks.api.PolymerTexturedBlock;
+import com.lostglade.server.CameraOrientationStore;
 import eu.pb4.polymer.core.api.block.SimplePolymerBlock;
-import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
+import net.minecraft.util.Mth;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.BlockGetter;
@@ -21,25 +20,26 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
-import net.minecraft.world.level.block.SkullBlock;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.redstone.Orientation;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import xyz.nucleoid.packettweaker.PacketContext;
 
-public final class CameraBlock extends SimplePolymerBlock implements PolymerTexturedBlock {
-	private static final Identifier MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/camera");
-	private final BlockState polymerState;
-	private final BlockState fallbackState;
+public final class CameraBlock extends SimplePolymerBlock {
+	private final BlockState hiddenState;
+	private final BlockState hitboxState;
 
 	public CameraBlock(BlockBehaviour.Properties properties) {
-		super(properties, Blocks.PLAYER_HEAD);
-		this.polymerState = requestHeadState(MODEL_ID);
-		this.fallbackState = Blocks.PLAYER_HEAD.defaultBlockState();
+		super(properties, Blocks.STRUCTURE_VOID);
+		this.hiddenState = Blocks.STRUCTURE_VOID.defaultBlockState();
+		this.hitboxState = Blocks.PLAYER_HEAD.defaultBlockState();
 		this.registerDefaultState(this.stateDefinition.any().setValue(HorizontalDirectionalBlock.FACING, net.minecraft.core.Direction.NORTH));
 	}
 
@@ -50,7 +50,12 @@ public final class CameraBlock extends SimplePolymerBlock implements PolymerText
 
 	@Override
 	public BlockState getStateForPlacement(BlockPlaceContext context) {
-		return this.defaultBlockState().setValue(HorizontalDirectionalBlock.FACING, context.getHorizontalDirection().getOpposite());
+		net.minecraft.core.Direction facing = context.getHorizontalDirection().getOpposite();
+		if (context.getPlayer() != null) {
+			float yaw = yawTo(captureBaseOrigin(context.getClickedPos()), context.getPlayer().getEyePosition());
+			facing = net.minecraft.core.Direction.fromYRot(yaw);
+		}
+		return this.defaultBlockState().setValue(HorizontalDirectionalBlock.FACING, facing);
 	}
 
 	@Override
@@ -65,26 +70,22 @@ public final class CameraBlock extends SimplePolymerBlock implements PolymerText
 
 	@Override
 	public BlockState getPolymerBlockState(BlockState state, PacketContext context) {
-		int rotation = rotationFromFacing(state.getValue(HorizontalDirectionalBlock.FACING));
-		if (!PolymerResourcePackUtils.hasMainPack(context)) {
-			return this.fallbackState.setValue(SkullBlock.ROTATION, rotation);
-		}
-		return this.polymerState.setValue(SkullBlock.ROTATION, rotation);
+		return this.hiddenState;
 	}
 
 	@Override
 	protected VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
-		return this.fallbackState.getShape(level, pos, context);
+		return this.hitboxState.getShape(level, pos, context);
 	}
 
 	@Override
 	protected VoxelShape getCollisionShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
-		return this.fallbackState.getCollisionShape(level, pos, context);
+		return this.hitboxState.getCollisionShape(level, pos, context);
 	}
 
 	@Override
 	protected VoxelShape getInteractionShape(BlockState state, BlockGetter level, BlockPos pos) {
-		return this.fallbackState.getShape(level, pos);
+		return this.hitboxState.getShape(level, pos);
 	}
 
 	@Override
@@ -93,6 +94,25 @@ public final class CameraBlock extends SimplePolymerBlock implements PolymerText
 		if (level instanceof ServerLevel serverLevel) {
 			MonitorScreenSystem.onCameraNetworkChanged(serverLevel, pos);
 		}
+	}
+
+	@Override
+	public void setPlacedBy(Level level, BlockPos pos, BlockState state, LivingEntity placer, ItemStack stack) {
+		super.setPlacedBy(level, pos, state, placer, stack);
+		if (!(level instanceof ServerLevel serverLevel) || placer == null) {
+			return;
+		}
+		aimAt(serverLevel, pos, placer.getEyePosition());
+	}
+
+	@Override
+	protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hitResult) {
+		return this.aimAtPlayer(level, pos, player);
+	}
+
+	@Override
+	protected InteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hitResult) {
+		return this.aimAtPlayer(level, pos, player);
 	}
 
 	@Override
@@ -105,14 +125,12 @@ public final class CameraBlock extends SimplePolymerBlock implements PolymerText
 
 	@Override
 	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
+		CameraOrientationStore.remove(level, pos);
 		MonitorScreenSystem.onCameraNetworkChanged(level, pos);
 		super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
 	}
 
 	public static void applyFallbackName(ItemStack out, PacketContext context) {
-		if (PolymerResourcePackUtils.hasMainPack(context)) {
-			return;
-		}
 		String language = context.getPlayer() != null ? context.getPlayer().clientInformation().language() : "";
 		String normalized = language == null ? "" : language.toLowerCase();
 		String name = "Camera";
@@ -128,21 +146,65 @@ public final class CameraBlock extends SimplePolymerBlock implements PolymerText
 		out.set(DataComponents.CUSTOM_NAME, Component.literal(name).withStyle(style -> style.withItalic(false)));
 	}
 
-	private static BlockState requestHeadState(Identifier modelId) {
-		BlockState state = PolymerBlockResourceUtils.requestBlock(BlockModelType.HEAD, PolymerBlockModel.of(modelId));
-		if (state == null) {
-			throw new IllegalStateException("Unable to allocate head polymer block state for model " + modelId);
-		}
-		return state;
+	public static Vec3 captureBaseOrigin(BlockPos cameraPos) {
+		return new Vec3(cameraPos.getX() + 0.5D, cameraPos.getY() + 0.25D, cameraPos.getZ() + 0.5D);
 	}
 
-	private static int rotationFromFacing(net.minecraft.core.Direction direction) {
-		return switch (direction) {
-			case NORTH -> 8;
-			case EAST -> 12;
-			case SOUTH -> 0;
-			case WEST -> 4;
-			default -> 0;
-		};
+	public static Vec3 captureOrigin(BlockPos cameraPos, float yaw, float pitch) {
+		Vec3 base = captureBaseOrigin(cameraPos);
+		Vec3 forward = forwardVector(yaw, pitch).scale(0.24D);
+		return base.add(forward);
+	}
+
+	public static float yawTo(Vec3 origin, Vec3 target) {
+		Vec3 delta = target.subtract(origin);
+		return (float) Math.toDegrees(Math.atan2(delta.z, delta.x)) - 90.0F;
+	}
+
+	public static float pitchTo(Vec3 origin, Vec3 target) {
+		Vec3 delta = target.subtract(origin);
+		double horizontal = Math.sqrt(delta.x * delta.x + delta.z * delta.z);
+		return (float) -Math.toDegrees(Math.atan2(delta.y, horizontal));
+	}
+
+	private static Vec3 forwardVector(float yaw, float pitch) {
+		float yawRadians = yaw * ((float) Math.PI / 180.0F);
+		float pitchRadians = pitch * ((float) Math.PI / 180.0F);
+		float x = -Mth.sin(yawRadians) * Mth.cos(pitchRadians);
+		float y = -Mth.sin(pitchRadians);
+		float z = Mth.cos(yawRadians) * Mth.cos(pitchRadians);
+		return new Vec3(x, y, z);
+	}
+
+	private InteractionResult aimAtPlayer(Level level, BlockPos pos, Player player) {
+		if (level.isClientSide()) {
+			return InteractionResult.SUCCESS;
+		}
+		if (!(level instanceof ServerLevel serverLevel) || !(player instanceof ServerPlayer serverPlayer)) {
+			return InteractionResult.PASS;
+		}
+		boolean changed = aimAt(serverLevel, pos, serverPlayer.getEyePosition());
+		return changed ? InteractionResult.CONSUME : InteractionResult.PASS;
+	}
+
+	private static boolean aimAt(ServerLevel level, BlockPos pos, Vec3 target) {
+		if (level == null || pos == null || target == null) {
+			return false;
+		}
+		BlockState state = level.getBlockState(pos);
+		if (!(state.getBlock() instanceof CameraBlock)) {
+			return false;
+		}
+		Vec3 origin = captureBaseOrigin(pos);
+		float yaw = yawTo(origin, target);
+		float pitch = pitchTo(origin, target);
+		net.minecraft.core.Direction facing = net.minecraft.core.Direction.fromYRot(yaw);
+		BlockState updatedState = state.setValue(HorizontalDirectionalBlock.FACING, facing);
+		if (updatedState != state) {
+			level.setBlock(pos, updatedState, Block.UPDATE_CLIENTS);
+		}
+		CameraOrientationStore.set(level, pos, yaw, pitch);
+		MonitorScreenSystem.onCameraNetworkChanged(level, pos);
+		return true;
 	}
 }

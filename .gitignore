@@ -1,28 +1,50 @@
-# Runtime server files
-server-instance/
-.fabric/
-libraries/
-versions/
-world/
-logs/
+# Top-level runtime state
+/.fabric/
+/libraries/
+/versions/
+/world/
+/logs/
+/bluemap/logs/
+/cache/
+/crash-reports/
+/server-instance/
+/run/
+/run-bot/
+/mods/lg2-0.1.0/logs/
 
-# IDE/system
-.idea/
-.vscode/
+# Generated packs/artifacts
+/polymer/resource_pack.zip
+
+# Bot client runtime outputs
+/run-renderer-bot/logs/
+/run-renderer-bot/debug/
+/run-renderer-bot/crash-reports/
+/run-renderer-bot/downloads/
+/run-renderer-bot/polymer/resource_pack.zip
+/run-renderer-bot/options.txt
+/run-renderer-bot/servers.dat
+/run-renderer-bot/servers.dat_old
+/run-renderer-bot/data/fabric_default_resource_packs.json
+
+# Bot client user-specific caches
+/run-renderer-bot/config/voicechat/category-volumes.properties
+/run-renderer-bot/config/voicechat/player-volumes.properties
+/run-renderer-bot/config/voicechat/username-cache.json
+/run-renderer-bot/config/webcam/blocked_sources.json
+
+# Local caches / machine-specific files
+/usercache.json
+/fabricloader.log
+/config/skinrestorer/mojang_profile_cache.json
+
+# Temp files
+/.tmp/
+/tmp/
+*.tmp
+
+# IDE / OS
+/.idea/
+/.vscode/
 *.iml
 .DS_Store
-usercache.json
-polymer/resource_pack.zip
-
-usercache.json
-cache/
-.tmp/
-usercache.json
-config/skinrestorer/mojang_profile_cache.json
-
-fabricloader.log
-.codex
-config/skinrestorer/mojang_profile_cache.json
-config/skinrestorer/mojang_profile_cache.json
-run-renderer-bot/downloads/log.json
-
+/.codex

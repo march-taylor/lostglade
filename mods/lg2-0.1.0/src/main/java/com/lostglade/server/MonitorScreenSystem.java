@@ -1,6 +1,7 @@
 package com.lostglade.server;
 
 import com.lostglade.Lg2;
+import com.lostglade.block.CameraBlock;
 import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.item.ModItems;
@@ -2945,10 +2946,15 @@ public final class MonitorScreenSystem {
 		return image;
 	}
 
-	private static Vec3 liveCameraCaptureOrigin(BlockPos cameraPos, Direction facing) {
-		Vec3 center = Vec3.atCenterOf(cameraPos);
-		Vec3 forward = new Vec3(facing.getStepX(), facing.getStepY(), facing.getStepZ()).scale(0.24D);
-		return new Vec3(center.x + forward.x, cameraPos.getY() + 0.42D, center.z + forward.z);
+	private static LiveCameraPose liveCameraCapturePose(ServerLevel level, BlockPos cameraPos, BlockState cameraState) {
+		float yaw = cameraState.getValue(HorizontalDirectionalBlock.FACING).toYRot();
+		float pitch = 0.0F;
+		CameraOrientationStore.CameraPose pose = CameraOrientationStore.get(level, cameraPos);
+		if (pose != null) {
+			yaw = pose.yaw();
+			pitch = pose.pitch();
+		}
+		return new LiveCameraPose(CameraBlock.captureOrigin(cameraPos, yaw, pitch), yaw, pitch);
 	}
 
 	private static void ensureWallpaperStateHydrated(MinecraftServer server, ScreenRuntimeKey key, MediaRuntimeState state) {
@@ -4789,8 +4795,8 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		BlockState cameraState = level.getBlockState(cameraPos);
-		Direction cameraFacing = cameraState.getValue(HorizontalDirectionalBlock.FACING);
-		Vec3 origin = liveCameraCaptureOrigin(cameraPos, cameraFacing);
+		LiveCameraPose pose = liveCameraCapturePose(level, cameraPos, cameraState);
+		Vec3 origin = pose.origin();
 		int fullWidth = Math.max(1, component.width()) * MAP_SIZE;
 		int fullHeight = Math.max(1, component.height()) * MAP_SIZE;
 		boolean started = RendererBotCameraSystem.ensureLiveStream(
@@ -4799,8 +4805,8 @@ public final class MonitorScreenSystem {
 				origin.x,
 				origin.y,
 				origin.z,
-				cameraFacing.toYRot(),
-				0.0F,
+				pose.yaw(),
+				pose.pitch(),
 				fullWidth,
 				fullHeight,
 				LIVE_CAMERA_FOV_DEGREES,
@@ -4842,6 +4848,9 @@ public final class MonitorScreenSystem {
 		}
 		ensureExecutors();
 		mediaIoExecutor.execute(() -> decodePendingLiveCameraFrames(server, key, url, fullWidth, fullHeight));
+	}
+
+	private record LiveCameraPose(Vec3 origin, float yaw, float pitch) {
 	}
 
 	private static void decodePendingLiveCameraFrames(MinecraftServer server, ScreenRuntimeKey key, String url, int fullWidth, int fullHeight) {
