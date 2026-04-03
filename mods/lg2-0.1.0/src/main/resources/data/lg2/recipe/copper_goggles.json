@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "I I",
+    "PGP",
+    "   "
+  ],
+  "key": {
+    "I": "minecraft:copper_ingot",
+    "P": "minecraft:lime_stained_glass_pane",
+    "G": "#lg2:copper_goggles_center"
+  },
+  "result": {
+    "id": "lg2:copper_goggles"
+  }
+}

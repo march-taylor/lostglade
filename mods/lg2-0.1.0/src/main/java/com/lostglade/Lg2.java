@@ -17,6 +17,7 @@ import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
 import com.lostglade.server.ServerBossBarVisibilitySystem;
 import com.lostglade.server.CameraCaptureSystem;
 import com.lostglade.server.CocaineHallucinationSystem;
+import com.lostglade.server.CopperManGogglesSystem;
 import com.lostglade.server.CopperManRepulsorSystem;
 import com.lostglade.server.MonitorScreenSystem;
 import com.lostglade.server.MicrophoneSystem;
@@ -68,6 +69,7 @@ public class Lg2 implements ModInitializer {
 		RendererBotPresenceSystem.register();
 		RendererBotProcessSystem.register();
 		CocaineHallucinationSystem.register();
+		CopperManGogglesSystem.register();
 		CopperManRepulsorSystem.register();
 		MonitorScreenSystem.register();
 		PhotoFramePlacementSystem.register();

@@ -100,7 +100,7 @@
                                             "jetpackMaxRiseBlocks":  30.0
                                         },
                       "shnyaga":  {
-                                      "enabled":  false,
+                                      "enabled":  true,
                                       "abilityId":  "copper_man_shnyaga",
                                       "name":  "Спец-очки",
                                       "description":  "Позволяет менять режимы видения.",

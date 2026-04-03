@@ -13,7 +13,6 @@ import com.lostglade.item.CocaineItem;
 import com.lostglade.item.MethadoneItem;
 import com.lostglade.item.ModItems;
 import com.lostglade.item.TubochkaItem;
-import com.mojang.math.Transformation;
 import com.lostglade.mixin.MobXpRewardAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.mojang.authlib.GameProfile;
@@ -502,6 +501,7 @@ public final class ServerRaceSystem {
 							Lg2.LOGGER.info("Assigned personal race '{}' to {}", race.id, handler.player.getGameProfile().name())
 					);
 					CartelSecretRecipeBookSystem.syncJoinedPlayer(handler.player);
+					CopperManGogglesSystem.syncPlayerRecipeBook(handler.player);
 					prewarmCopperManDefenseTint(server, handler.player);
 				})
 		);
@@ -1089,7 +1089,8 @@ public final class ServerRaceSystem {
 			if (viewer == null) {
 				continue;
 			}
-			ItemStack stack = active && PolymerResourcePackUtils.hasMainPack(viewer) ? jetpackHead : actualHead;
+			boolean canShowJetpack = active && PolymerResourcePackUtils.hasMainPack(viewer);
+			ItemStack stack = canShowJetpack ? jetpackHead : actualHead;
 			viewer.connection.send(new ClientboundSetEquipmentPacket(
 					player.getId(),
 					List.of(com.mojang.datafixers.util.Pair.of(EquipmentSlot.HEAD, stack.copy()))
@@ -4049,6 +4050,10 @@ public final class ServerRaceSystem {
 
 	private static long asTicks(double seconds) {
 		return Math.max(0L, Math.round(seconds * 20.0D));
+	}
+
+	public static boolean isCopperManJetpackActive(ServerPlayer player) {
+		return player != null && COPPER_MAN_JETPACK_SESSIONS.containsKey(player.getUUID());
 	}
 
 	private static long getRemainingOnlineCooldownTicks(Map<UUID, Long> cooldowns, UUID playerId) {
