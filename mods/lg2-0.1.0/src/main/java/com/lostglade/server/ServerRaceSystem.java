@@ -268,6 +268,8 @@ public final class ServerRaceSystem {
 	private static final double COPPER_MAN_JETPACK_DISPLAY_SNAP_DISTANCE = 1.5D;
 	private static final double COPPER_MAN_JETPACK_DISPLAY_YAW_MOVEMENT_THRESHOLD = 0.0025D;
 	private static final float COPPER_MAN_JETPACK_DISPLAY_IDLE_BODY_TURN_THRESHOLD = 0.5F;
+	private static final float COPPER_MAN_JETPACK_DISPLAY_MOVEMENT_YAW_FACTOR = 0.60F;
+	private static final float COPPER_MAN_JETPACK_DISPLAY_BACKWARD_YAW_THRESHOLD = 135.0F;
 	private static final double COPPER_MAN_JETPACK_STAND_FOOT_OFFSET = -0.92D;
 	private static final String COPPER_MAN_JETPACK_DISPLAY_TAG = "lg2_copper_jetpack_display";
 	private static final String COPPER_MAN_JETPACK_DISPLAY_OWNER_TAG_PREFIX = "lg2_copper_jetpack_owner:";
@@ -1256,12 +1258,12 @@ public final class ServerRaceSystem {
 		CopperManJetpackInputState input = COPPER_MAN_JETPACK_INPUTS.getOrDefault(player.getUUID(), CopperManJetpackInputState.EMPTY);
 		Vec3 inputDirection = computeCopperManJetpackInputDirection(player, input);
 		if (inputDirection.lengthSqr() > 1.0E-6D) {
-			return yawFromHorizontalVector(inputDirection);
+			return adjustCopperManJetpackYawToBody(player.yBodyRot, yawFromHorizontalVector(inputDirection));
 		}
 
 		Vec3 horizontalMovement = new Vec3(player.getDeltaMovement().x, 0.0D, player.getDeltaMovement().z);
 		if (horizontalMovement.lengthSqr() > COPPER_MAN_JETPACK_DISPLAY_YAW_MOVEMENT_THRESHOLD * COPPER_MAN_JETPACK_DISPLAY_YAW_MOVEMENT_THRESHOLD) {
-			return yawFromHorizontalVector(horizontalMovement);
+			return adjustCopperManJetpackYawToBody(player.yBodyRot, yawFromHorizontalVector(horizontalMovement));
 		}
 
 		if (Math.abs(wrapDegrees(player.yBodyRot - player.yBodyRotO)) > COPPER_MAN_JETPACK_DISPLAY_IDLE_BODY_TURN_THRESHOLD) {
@@ -1302,6 +1304,14 @@ public final class ServerRaceSystem {
 			return 0.0F;
 		}
 		return (float) Math.toDegrees(Math.atan2(-vector.x, vector.z));
+	}
+
+	private static float adjustCopperManJetpackYawToBody(float bodyYaw, float movementYaw) {
+		float delta = wrapDegrees(movementYaw - bodyYaw);
+		if (Math.abs(delta) >= COPPER_MAN_JETPACK_DISPLAY_BACKWARD_YAW_THRESHOLD) {
+			return bodyYaw;
+		}
+		return bodyYaw + delta * COPPER_MAN_JETPACK_DISPLAY_MOVEMENT_YAW_FACTOR;
 	}
 
 	private static CopperManJetpackDisplayState smoothCopperManJetpackDisplay(CopperManJetpackDisplayState previous, Vec3 targetPos, float targetYaw) {
