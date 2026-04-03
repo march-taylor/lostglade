@@ -1,28 +1,30 @@
 package com.lostglade.item;
 
 import com.lostglade.Lg2;
-import com.lostglade.server.CameraCaptureSystem;
+import com.lostglade.block.CameraBlock;
 import com.lostglade.server.CameraPhotoMenuSystem;
-import eu.pb4.polymer.core.api.item.SimplePolymerItem;
+import eu.pb4.polymer.core.api.item.PolymerBlockItem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
-import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
 import xyz.nucleoid.packettweaker.PacketContext;
 
-public final class CameraItem extends SimplePolymerItem {
+public final class CameraItem extends PolymerBlockItem {
 	private static final Identifier MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera");
 
-	public CameraItem(Item.Properties settings) {
-		super(settings, Items.FILLED_MAP);
+	public CameraItem(CameraBlock block, Item.Properties settings) {
+		super(block, settings, Items.SPYGLASS, true);
 	}
 
 	@Override
@@ -37,52 +39,40 @@ public final class CameraItem extends SimplePolymerItem {
 
 	@Override
 	public void modifyBasePolymerItemStack(ItemStack out, ItemStack original, PacketContext context) {
-		if (!PolymerResourcePackUtils.hasMainPack(context)) {
-			out.set(DataComponents.CUSTOM_NAME, getLocalizedName(context).withStyle(style -> style.withItalic(false)));
-		}
+		CameraBlock.applyFallbackName(out, context);
 	}
 
 	@Override
-	public InteractionResult use(Level level, net.minecraft.world.entity.player.Player player, InteractionHand hand) {
-		if (!(player instanceof ServerPlayer serverPlayer)) {
-			return InteractionResult.SUCCESS;
-		}
+	public InteractionResult use(Level level, Player player, InteractionHand hand) {
 		if (hand != InteractionHand.MAIN_HAND) {
 			return InteractionResult.PASS;
 		}
-		if (player.isShiftKeyDown()) {
-			CameraPhotoMenuSystem.open(serverPlayer);
-			return InteractionResult.SUCCESS;
+		if (!player.isShiftKeyDown()) {
+			return InteractionResult.PASS;
 		}
-		return CameraCaptureSystem.tryCapture(serverPlayer, player.getItemInHand(hand))
-				? InteractionResult.SUCCESS
-				: InteractionResult.FAIL;
+		if (player instanceof ServerPlayer serverPlayer) {
+			CameraPhotoMenuSystem.open(serverPlayer);
+		}
+		return InteractionResult.SUCCESS;
 	}
 
-	private static MutableComponent getLocalizedName(PacketContext context) {
-		ServerPlayer player = context.getPlayer();
-		if (player == null) {
-			return Component.literal("Camera");
+	@Override
+	public InteractionResult useOn(UseOnContext context) {
+		if (context.getHand() != InteractionHand.MAIN_HAND) {
+			return InteractionResult.PASS;
 		}
+		Player player = context.getPlayer();
+		if (player != null && player.isShiftKeyDown()) {
+			if (player instanceof ServerPlayer serverPlayer) {
+				CameraPhotoMenuSystem.open(serverPlayer);
+			}
+			return InteractionResult.SUCCESS;
+		}
+		return super.useOn(context);
+	}
 
-		String lang = player.clientInformation().language();
-		if (lang == null) {
-			return Component.literal("Camera");
-		}
-
-		String normalized = lang.toLowerCase();
-		if (normalized.startsWith("rpr")) {
-			return Component.literal("Камѣра");
-		}
-		if (normalized.startsWith("uk")) {
-			return Component.literal("Камера");
-		}
-		if (normalized.startsWith("ru")) {
-			return Component.literal("Камера");
-		}
-		if (normalized.startsWith("ja")) {
-			return Component.literal("カメラ");
-		}
-		return Component.literal("Camera");
+	@Override
+	public boolean canDestroyBlock(ItemStack stack, BlockState state, Level level, BlockPos pos, net.minecraft.world.entity.LivingEntity miningEntity) {
+		return false;
 	}
 }

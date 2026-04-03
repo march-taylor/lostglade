@@ -6,6 +6,8 @@ import com.lostglade.item.CameraPhotoSettings;
 import com.lostglade.item.ModItems;
 import com.lostglade.server.map.MapImageRenderSystem;
 import com.lostglade.server.map.MapPixelProvider;
+import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
+import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -20,8 +22,13 @@ import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.Locale;
@@ -43,6 +50,28 @@ public final class CameraCaptureSystem {
 	}
 
 	public static void register() {
+		AttackBlockCallback.EVENT.register((player, world, hand, pos, direction) -> {
+			if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer)) {
+				return InteractionResult.PASS;
+			}
+			if (!isLeftClickCameraTrigger(serverPlayer, hand)) {
+				return InteractionResult.PASS;
+			}
+			tryCapture(serverPlayer, serverPlayer.getItemInHand(hand));
+			return InteractionResult.SUCCESS;
+		});
+		AttackEntityCallback.EVENT.register(CameraCaptureSystem::onAttackEntity);
+	}
+
+	public static boolean handleLeftClickAir(ServerPlayer player, InteractionHand hand) {
+		if (!isLeftClickCameraTrigger(player, hand)) {
+			return false;
+		}
+		if (hasAttackTarget(player)) {
+			return false;
+		}
+		tryCapture(player, player.getItemInHand(hand));
+		return true;
 	}
 
 	public static boolean tryCapture(ServerPlayer player, ItemStack stack) {
@@ -254,6 +283,37 @@ public final class CameraCaptureSystem {
 				settings.mapsHigh(),
 				captureHandle
 		);
+	}
+
+	private static InteractionResult onAttackEntity(
+			net.minecraft.world.entity.player.Player player,
+			Level world,
+			InteractionHand hand,
+			Entity entity,
+			EntityHitResult hitResult
+	) {
+		if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer)) {
+			return InteractionResult.PASS;
+		}
+		if (!isLeftClickCameraTrigger(serverPlayer, hand)) {
+			return InteractionResult.PASS;
+		}
+		tryCapture(serverPlayer, serverPlayer.getItemInHand(hand));
+		return InteractionResult.SUCCESS;
+	}
+
+	private static boolean isLeftClickCameraTrigger(ServerPlayer player, InteractionHand hand) {
+		return player != null
+				&& hand == InteractionHand.MAIN_HAND
+				&& player.isAlive()
+				&& !player.isSpectator()
+				&& player.getItemInHand(hand).is(ModItems.CAMERA);
+	}
+
+	private static boolean hasAttackTarget(ServerPlayer player) {
+		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange());
+		HitResult hitResult = player.pick(reach, 1.0F, false);
+		return hitResult != null && hitResult.getType() != HitResult.Type.MISS;
 	}
 
 	private static final class RendererBotPixelProvider implements MapPixelProvider {

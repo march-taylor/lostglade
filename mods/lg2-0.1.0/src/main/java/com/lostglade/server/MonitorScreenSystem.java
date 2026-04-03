@@ -1,6 +1,7 @@
 package com.lostglade.server;
 
 import com.lostglade.Lg2;
+import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.item.ModItems;
 import com.lostglade.item.MonitorItem;
@@ -48,10 +49,12 @@ import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.material.MapColor;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -159,6 +162,11 @@ public final class MonitorScreenSystem {
 	private static final long MEDIA_ACTIONBAR_REFRESH_INTERVAL_TICKS = 20L;
 	private static final long MEDIA_FOCUS_CLEANUP_INTERVAL_TICKS = 20L;
 	private static final String CAMERA_GALLERY_URL_PREFIX = "lg2-camera:";
+	private static final String LIVE_CAMERA_GALLERY_URL_PREFIX = "lg2-live-camera:";
+	private static final int LIVE_CAMERA_PREVIEW_SIZE = 128;
+	private static final int LIVE_CAMERA_FOV_DEGREES = 70;
+	private static final long LIVE_CAMERA_CAPTURE_INTERVAL_MS = 200L;
+	private static final long LIVE_CAMERA_GALLERY_SYNC_INTERVAL_MS = 400L;
 	private static final Map<RenderCacheKey, byte[][]> TILE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<OverlayWindowCacheKey, OverlayWindowRenderState> OVERLAY_WINDOW_CACHE = new ConcurrentHashMap<>();
 	private static final Map<OverlayWindowFamilyKey, BufferedImage> OVERLAY_WINDOW_FAMILY_CACHE = new ConcurrentHashMap<>();
@@ -673,13 +681,49 @@ public final class MonitorScreenSystem {
 	}
 
 	private static Map<ScreenRuntimeKey, ScreenComponent> collectConnectedSpeakerComponents(ServerLevel level, BlockPos speakerPos) {
-		if (level == null || speakerPos == null || !level.hasChunkAt(speakerPos)) {
+		return collectConnectedComponentsForWireSource(level, speakerPos);
+	}
+
+	public static void onCameraNetworkChanged(ServerLevel level, BlockPos cameraPos) {
+		if (level == null || cameraPos == null) {
+			return;
+		}
+		MinecraftServer server = level.getServer();
+		if (server == null) {
+			return;
+		}
+		Set<ScreenRuntimeKey> targets = new LinkedHashSet<>(collectConnectedComponentsForWireSource(level, cameraPos).keySet());
+		for (Map.Entry<ScreenRuntimeKey, MediaRuntimeState> entry : MEDIA_STATES.entrySet()) {
+			ScreenRuntimeKey runtimeKey = entry.getKey();
+			MediaRuntimeState state = entry.getValue();
+			if (runtimeKey == null || state == null || !Objects.equals(runtimeKey.dimension(), level.dimension())) {
+				continue;
+			}
+			synchronized (state) {
+				if (state.streamKind == PlaybackStreamKind.LIVE_CAMERA || hasLiveCameraItemsLocked(state)) {
+					targets.add(runtimeKey);
+				}
+			}
+		}
+		for (ScreenRuntimeKey target : targets) {
+			MediaRuntimeState state = MEDIA_STATES.get(target);
+			if (state != null) {
+				synchronized (state) {
+					state.nextLiveCameraGallerySyncAtMillis = 0L;
+				}
+			}
+			requestRuntimeRender(server, target);
+		}
+	}
+
+	private static Map<ScreenRuntimeKey, ScreenComponent> collectConnectedComponentsForWireSource(ServerLevel level, BlockPos originPos) {
+		if (level == null || originPos == null || !level.hasChunkAt(originPos)) {
 			return Map.of();
 		}
-		Set<BlockPos> wireNetwork = collectSpeakerWireNetwork(level, speakerPos);
+		Set<BlockPos> wireNetwork = collectSpeakerWireNetwork(level, originPos);
 		Map<ScreenRuntimeKey, ScreenComponent> connectedComponents = new HashMap<>();
 		for (ScreenComponent component : cachedComponents(level)) {
-			if (!isSpeakerConnectedToComponent(speakerPos, component, wireNetwork)) {
+			if (!isSpeakerConnectedToComponent(originPos, component, wireNetwork)) {
 				continue;
 			}
 			connectedComponents.putIfAbsent(component.runtimeKey(), component);
@@ -2562,6 +2606,290 @@ public final class MonitorScreenSystem {
 				scheduleGalleryItemLoad(server, key, item.title(), item.url(), item.localMediaKey(), resolvedKind, false, -1);
 			}
 		}
+		ScreenComponent component = resolveScreenComponent(server, key);
+		if (component != null) {
+			syncConnectedLiveCameraGalleryStateIfDue(server, component, state, true);
+		}
+	}
+
+	private static void syncConnectedLiveCameraGalleryStateIfDue(MinecraftServer server, ScreenComponent component, MediaRuntimeState state, boolean force) {
+		if (server == null || component == null || state == null) {
+			return;
+		}
+		ServerLevel level = server.getLevel(component.runtimeKey().dimension());
+		if (level == null) {
+			return;
+		}
+		long now = System.currentTimeMillis();
+		synchronized (state) {
+			boolean relevant = state.mode == ScreenViewMode.GALLERY
+					&& (state.gallerySurfaceMode == GallerySurfaceMode.BROWSER
+					|| state.streamKind == PlaybackStreamKind.LIVE_CAMERA
+					|| hasLiveCameraItemsLocked(state));
+			if (!force && (!relevant || now < state.nextLiveCameraGallerySyncAtMillis)) {
+				return;
+			}
+			state.nextLiveCameraGallerySyncAtMillis = now + LIVE_CAMERA_GALLERY_SYNC_INTERVAL_MS;
+		}
+
+		List<BlockPos> connectedCameraPositions = collectConnectedCameraPositions(level, component);
+		synchronized (state) {
+			Map<String, GalleryItem> existingLiveItems = new LinkedHashMap<>();
+			List<GalleryItem> rebuilt = new ArrayList<>(state.galleryItems.size() + connectedCameraPositions.size());
+			for (GalleryItem item : state.galleryItems) {
+				if (isLiveCameraGalleryItem(item)) {
+					existingLiveItems.put(item.url(), item);
+				} else {
+					rebuilt.add(item);
+				}
+			}
+
+			for (BlockPos cameraPos : connectedCameraPositions) {
+				String url = liveCameraGalleryUrl(cameraPos);
+				String title = liveCameraGalleryTitle(cameraPos);
+				String subtitle = liveCameraGallerySubtitle(cameraPos);
+				GalleryItem existing = existingLiveItems.get(url);
+				if (existing != null
+						&& Objects.equals(existing.title(), title)
+						&& Objects.equals(existing.subtitle(), subtitle)
+						&& existing.kind() == GalleryItemKind.LIVE_CAMERA) {
+					rebuilt.add(existing);
+				} else {
+					BufferedImage preview = existing != null && existing.preview() != null
+							? existing.preview()
+							: createLiveCameraPlaceholderPreview(title, subtitle);
+					rebuilt.add(new GalleryItem(title, subtitle, url, null, null, preview, GalleryItemKind.LIVE_CAMERA));
+				}
+			}
+
+			if (galleryItemsEqual(state.galleryItems, rebuilt)) {
+				return;
+			}
+
+			String currentSourceUrl = state.sourceUrl;
+			boolean currentLivePlayback = state.streamKind == PlaybackStreamKind.LIVE_CAMERA;
+			state.galleryItems.clear();
+			state.galleryItems.addAll(rebuilt);
+
+			if (currentSourceUrl != null && !currentSourceUrl.isBlank()) {
+				int currentIndex = resolveGalleryItemIndex(state, currentSourceUrl, -1);
+				if (currentIndex >= 0) {
+					state.galleryIndex = currentIndex;
+				} else if (currentLivePlayback) {
+					cancelPlaybackLocked(state);
+					clearYoutubePlaybackLocked(state);
+					clearGallerySelectionLocked(state);
+					state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+					state.galleryIndex = -1;
+					state.loading = false;
+					state.statusText = "";
+				}
+			} else if (state.galleryIndex >= state.galleryItems.size()) {
+				state.galleryIndex = state.galleryItems.isEmpty() ? -1 : state.galleryItems.size() - 1;
+			}
+
+			int totalRows = galleryTotalRowsPreview(state.galleryItems.size(), createUiLayout(component.width(), component.height()));
+			int visibleRows = galleryVisibleRowsPreview(createUiLayout(component.width(), component.height()));
+			state.galleryScroll = clampInt(state.galleryScroll, 0, Math.max(0, totalRows - visibleRows));
+			state.version++;
+		}
+	}
+
+	private static boolean hasLiveCameraItemsLocked(MediaRuntimeState state) {
+		if (state == null || state.galleryItems.isEmpty()) {
+			return false;
+		}
+		for (GalleryItem item : state.galleryItems) {
+			if (isLiveCameraGalleryItem(item)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static List<BlockPos> collectConnectedCameraPositions(ServerLevel level, ScreenComponent component) {
+		if (level == null || component == null) {
+			return List.of();
+		}
+		Set<BlockPos> wireNetwork = collectComponentWireNetwork(level, component);
+		Set<BlockPos> cameraPositions = new LinkedHashSet<>();
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			BlockPos framePos = frame.blockPosition();
+			BlockPos supportPos = framePos.relative(frame.getDirection().getOpposite());
+			collectCameraTouchPoints(level, framePos, cameraPositions);
+			collectCameraTouchPoints(level, supportPos, cameraPositions);
+		}
+		for (BlockPos wirePos : wireNetwork) {
+			collectCameraTouchPoints(level, wirePos, cameraPositions);
+		}
+		List<BlockPos> ordered = new ArrayList<>(cameraPositions);
+		ordered.sort((first, second) -> {
+			int compareX = Integer.compare(first.getX(), second.getX());
+			if (compareX != 0) {
+				return compareX;
+			}
+			int compareY = Integer.compare(first.getY(), second.getY());
+			if (compareY != 0) {
+				return compareY;
+			}
+			return Integer.compare(first.getZ(), second.getZ());
+		});
+		return List.copyOf(ordered);
+	}
+
+	private static Set<BlockPos> collectComponentWireNetwork(ServerLevel level, ScreenComponent component) {
+		if (level == null || component == null) {
+			return Set.of();
+		}
+		Set<BlockPos> visited = new LinkedHashSet<>();
+		ArrayDeque<BlockPos> queue = new ArrayDeque<>();
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			BlockPos framePos = frame.blockPosition();
+			BlockPos supportPos = framePos.relative(frame.getDirection().getOpposite());
+			seedWireNetwork(level, framePos, visited, queue);
+			seedWireNetwork(level, supportPos, visited, queue);
+		}
+		while (!queue.isEmpty()) {
+			BlockPos current = queue.removeFirst();
+			for (BlockPos neighbor : redstoneWireNeighbors(current)) {
+				if (!isRedstoneWire(level, neighbor) || !visited.add(neighbor.immutable())) {
+					continue;
+				}
+				queue.add(neighbor.immutable());
+			}
+		}
+		return Set.copyOf(visited);
+	}
+
+	private static void seedWireNetwork(ServerLevel level, BlockPos originPos, Set<BlockPos> visited, ArrayDeque<BlockPos> queue) {
+		if (level == null || originPos == null) {
+			return;
+		}
+		for (BlockPos touchPos : redstoneTouchPoints(originPos)) {
+			if (!isRedstoneWire(level, touchPos) || !visited.add(touchPos.immutable())) {
+				continue;
+			}
+			queue.add(touchPos.immutable());
+		}
+	}
+
+	private static void collectCameraTouchPoints(ServerLevel level, BlockPos originPos, Set<BlockPos> cameraPositions) {
+		if (level == null || originPos == null || cameraPositions == null) {
+			return;
+		}
+		for (BlockPos touchPos : redstoneTouchPoints(originPos)) {
+			if (!isCameraBlock(level, touchPos)) {
+				continue;
+			}
+			cameraPositions.add(touchPos.immutable());
+		}
+	}
+
+	private static boolean isCameraBlock(ServerLevel level, BlockPos pos) {
+		return level != null && pos != null && level.hasChunkAt(pos) && level.getBlockState(pos).is(ModBlocks.CAMERA);
+	}
+
+	private static boolean isLiveCameraGalleryItem(GalleryItem item) {
+		return item != null && effectiveGalleryItemKind(item) == GalleryItemKind.LIVE_CAMERA;
+	}
+
+	private static boolean galleryItemsEqual(List<GalleryItem> first, List<GalleryItem> second) {
+		if (first == second) {
+			return true;
+		}
+		if (first == null || second == null || first.size() != second.size()) {
+			return false;
+		}
+		for (int index = 0; index < first.size(); index++) {
+			if (!Objects.equals(first.get(index), second.get(index))) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static String liveCameraGalleryUrl(BlockPos cameraPos) {
+		if (cameraPos == null) {
+			return "";
+		}
+		return LIVE_CAMERA_GALLERY_URL_PREFIX + cameraPos.getX() + "," + cameraPos.getY() + "," + cameraPos.getZ();
+	}
+
+	private static BlockPos liveCameraGalleryPos(String url) {
+		if (url == null || !url.startsWith(LIVE_CAMERA_GALLERY_URL_PREFIX)) {
+			return null;
+		}
+		String payload = url.substring(LIVE_CAMERA_GALLERY_URL_PREFIX.length()).trim();
+		String[] parts = payload.split(",", 3);
+		if (parts.length != 3) {
+			return null;
+		}
+		try {
+			return new BlockPos(
+					Integer.parseInt(parts[0].trim()),
+					Integer.parseInt(parts[1].trim()),
+					Integer.parseInt(parts[2].trim())
+			);
+		} catch (NumberFormatException exception) {
+			return null;
+		}
+	}
+
+	private static String liveCameraGalleryTitle(BlockPos cameraPos) {
+		return "Live Camera";
+	}
+
+	private static String liveCameraGallerySubtitle(BlockPos cameraPos) {
+		if (cameraPos == null) {
+			return "Прямая трансляция";
+		}
+		return cameraPos.getX() + " " + cameraPos.getY() + " " + cameraPos.getZ();
+	}
+
+	private static BufferedImage createLiveCameraPlaceholderPreview(String title, String subtitle) {
+		BufferedImage image = new BufferedImage(256, 256, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = image.createGraphics();
+		try {
+			graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+			graphics.setColor(new Color(0x11171D));
+			graphics.fillRect(0, 0, image.getWidth(), image.getHeight());
+			graphics.setPaint(new GradientPaint(0, 0, new Color(0x19242F), image.getWidth(), image.getHeight(), new Color(0x0B0F14)));
+			graphics.fillRoundRect(12, 12, image.getWidth() - 24, image.getHeight() - 24, 28, 28);
+			graphics.setColor(new Color(0xE74C3C));
+			graphics.fillOval(24, 24, 22, 22);
+			graphics.setColor(new Color(0xFFFFFF));
+			graphics.setFont(new Font("SansSerif", Font.BOLD, 26));
+			graphics.drawString("LIVE", 56, 42);
+			graphics.setFont(new Font("SansSerif", Font.BOLD, 22));
+			graphics.drawString(title != null && !title.isBlank() ? title : "Live Camera", 24, 176);
+			graphics.setColor(new Color(0xC7D0D9));
+			graphics.setFont(new Font("SansSerif", Font.PLAIN, 16));
+			graphics.drawString(subtitle != null && !subtitle.isBlank() ? subtitle : "Прямая трансляция", 24, 204);
+		} finally {
+			graphics.dispose();
+		}
+		return image;
+	}
+
+	private static BufferedImage mapPaletteImage(byte[] pixels, int width, int height) {
+		if (pixels == null || pixels.length == 0 || width <= 0 || height <= 0) {
+			return null;
+		}
+		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+		int[] argb = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
+		int pixelCount = Math.min(argb.length, pixels.length);
+		for (int index = 0; index < pixelCount; index++) {
+			int packedId = Byte.toUnsignedInt(pixels[index]);
+			int rgb = MapColor.getColorFromPackedId(packedId) & 0xFFFFFF;
+			argb[index] = 0xFF000000 | rgb;
+		}
+		return image;
+	}
+
+	private static Vec3 liveCameraCaptureOrigin(BlockPos cameraPos, Direction facing) {
+		Vec3 center = Vec3.atCenterOf(cameraPos);
+		Vec3 forward = new Vec3(facing.getStepX(), facing.getStepY(), facing.getStepZ()).scale(0.24D);
+		return new Vec3(center.x + forward.x, cameraPos.getY() + 0.42D, center.z + forward.z);
 	}
 
 	private static void ensureWallpaperStateHydrated(MinecraftServer server, ScreenRuntimeKey key, MediaRuntimeState state) {
@@ -3070,6 +3398,9 @@ public final class MonitorScreenSystem {
 	}
 
 	private static GalleryItemKind effectiveGalleryItemKind(String url, String localMediaKey, GalleryItemKind kind) {
+		if (kind == GalleryItemKind.LIVE_CAMERA || (url != null && url.startsWith(LIVE_CAMERA_GALLERY_URL_PREFIX))) {
+			return GalleryItemKind.LIVE_CAMERA;
+		}
 		if (kind == GalleryItemKind.AUDIO || looksLikeDirectAudioReference(localMediaKey) || looksLikeDirectAudioReference(url)) {
 			return GalleryItemKind.AUDIO;
 		}
@@ -3098,6 +3429,9 @@ public final class MonitorScreenSystem {
 
 	private static GalleryCacheCandidate galleryCacheCandidate(GalleryItem item) {
 		if (item == null) {
+			return null;
+		}
+		if (effectiveGalleryItemKind(item) == GalleryItemKind.LIVE_CAMERA) {
 			return null;
 		}
 		String url = item.url() != null ? item.url().trim() : "";
@@ -3140,6 +3474,9 @@ public final class MonitorScreenSystem {
 
 	private static GalleryCacheCandidate galleryCacheCandidate(PersistedGalleryItem item) {
 		if (item == null) {
+			return null;
+		}
+		if (effectiveGalleryItemKind(item) == GalleryItemKind.LIVE_CAMERA) {
 			return null;
 		}
 		String url = item.url() != null ? item.url().trim() : "";
@@ -4248,6 +4585,14 @@ public final class MonitorScreenSystem {
 					if (state.waitingForLink) {
 						return;
 					}
+					if (state.streamKind == PlaybackStreamKind.LIVE_CAMERA) {
+						if (state.liveCameraCaptureInFlight) {
+							return;
+						}
+						long delayMillis = state.streamFrame == null ? 1L : LIVE_CAMERA_CAPTURE_INTERVAL_MS;
+						state.playbackFuture = mediaScheduler.schedule(() -> refreshLiveCameraSnapshot(server, key), delayMillis, TimeUnit.MILLISECONDS);
+						return;
+					}
 					if (state.relaySessionId == null) {
 						if (!state.loading) {
 							return;
@@ -4323,6 +4668,138 @@ public final class MonitorScreenSystem {
 			requestRuntimeRender(server, key);
 		}
 		resumeMediaPlaybackIfNeeded(server, key);
+	}
+
+	private static void refreshLiveCameraSnapshot(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		String sourceUrl;
+		synchronized (state) {
+			state.playbackFuture = null;
+			if (!isStreamPlaybackLocked(state)
+					|| state.streamKind != PlaybackStreamKind.LIVE_CAMERA
+					|| state.sourceUrl == null
+					|| state.sourceUrl.isBlank()
+					|| state.waitingForLink
+					|| state.liveCameraCaptureInFlight) {
+				return;
+			}
+			state.liveCameraCaptureInFlight = true;
+			sourceUrl = state.sourceUrl;
+		}
+
+		ScreenComponent component = resolveScreenComponent(server, key);
+		ServerLevel level = server.getLevel(key.dimension());
+		BlockPos cameraPos = liveCameraGalleryPos(sourceUrl);
+		if (component == null || level == null || cameraPos == null || !isCameraBlock(level, cameraPos)) {
+			server.execute(() -> applyLiveCameraSnapshotResult(server, new LiveCameraSnapshotResult(key, sourceUrl, null, null, "Камера недоступна")));
+			return;
+		}
+		BlockState cameraState = level.getBlockState(cameraPos);
+		Direction cameraFacing = cameraState.getValue(HorizontalDirectionalBlock.FACING);
+		Vec3 origin = liveCameraCaptureOrigin(cameraPos, cameraFacing);
+		int fullWidth = Math.max(1, component.width()) * MAP_SIZE;
+		int fullHeight = Math.max(1, component.height()) * MAP_SIZE;
+		RendererBotCameraSystem.ClientCaptureHandle captureHandle = RendererBotCameraSystem.requestCapture(
+				level,
+				origin.x,
+				origin.y,
+				origin.z,
+				cameraFacing.toYRot(),
+				0.0F,
+				LIVE_CAMERA_PREVIEW_SIZE,
+				LIVE_CAMERA_PREVIEW_SIZE,
+				fullWidth,
+				fullHeight,
+				LIVE_CAMERA_FOV_DEGREES
+		);
+		if (captureHandle == null) {
+			server.execute(() -> applyLiveCameraSnapshotResult(server, new LiveCameraSnapshotResult(key, sourceUrl, null, null, "Нет активного клиента камеры")));
+			return;
+		}
+
+		ensureExecutors();
+		CompletableFuture
+				.supplyAsync(() -> {
+					try {
+						BufferedImage previewImage = mapPaletteImage(captureHandle.awaitPreview(), LIVE_CAMERA_PREVIEW_SIZE, LIVE_CAMERA_PREVIEW_SIZE);
+						BufferedImage fullImage = mapPaletteImage(captureHandle.awaitFull(), fullWidth, fullHeight);
+						return new LiveCameraSnapshotResult(key, sourceUrl, previewImage, fullImage, null);
+					} catch (Exception exception) {
+						return new LiveCameraSnapshotResult(key, sourceUrl, null, null, sanitizeMediaError(exception.getMessage()));
+					}
+				}, mediaIoExecutor)
+				.thenAccept(result -> server.execute(() -> applyLiveCameraSnapshotResult(server, result)));
+	}
+
+	private static void applyLiveCameraSnapshotResult(MinecraftServer server, LiveCameraSnapshotResult result) {
+		if (server == null || result == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(result.screenKey());
+		if (state == null) {
+			return;
+		}
+		boolean shouldRender = false;
+		boolean shouldReschedule = false;
+		synchronized (state) {
+			if (state.streamKind != PlaybackStreamKind.LIVE_CAMERA || !Objects.equals(state.sourceUrl, result.url())) {
+				state.liveCameraCaptureInFlight = false;
+				return;
+			}
+			state.liveCameraCaptureInFlight = false;
+			if (result.fullFrame() != null) {
+				state.streamFrame = result.fullFrame();
+				state.loadingBackdropFrame = result.fullFrame();
+				state.loading = false;
+				state.liveStream = true;
+				state.statusText = "";
+				shouldRender = true;
+				upsertLiveCameraPreviewLocked(state, result.url(), result.previewFrame());
+			} else {
+				state.loading = state.streamFrame == null;
+				state.statusText = sanitizeMediaError(result.error());
+				shouldRender = true;
+			}
+			shouldReschedule = true;
+		}
+		if (shouldRender && hasNearbyMediaViewer(server, result.screenKey())) {
+			requestRuntimeRender(server, result.screenKey());
+		}
+		if (shouldReschedule) {
+			scheduleNextMediaFrame(server, result.screenKey());
+		}
+	}
+
+	private static void upsertLiveCameraPreviewLocked(MediaRuntimeState state, String url, BufferedImage previewFrame) {
+		if (state == null || url == null || url.isBlank() || previewFrame == null) {
+			return;
+		}
+		int index = resolveGalleryItemIndex(state, url, -1);
+		if (index < 0 || index >= state.galleryItems.size()) {
+			return;
+		}
+		GalleryItem existing = state.galleryItems.get(index);
+		if (existing == null || effectiveGalleryItemKind(existing) != GalleryItemKind.LIVE_CAMERA) {
+			return;
+		}
+		state.galleryItems.set(
+				index,
+				new GalleryItem(
+						existing.title(),
+						existing.subtitle(),
+						existing.url(),
+						existing.localMediaKey(),
+						null,
+						previewFrame,
+						GalleryItemKind.LIVE_CAMERA
+				)
+		);
 	}
 
 	private static void advanceMediaFrame(MinecraftServer server, ScreenRuntimeKey key) {
@@ -4827,6 +5304,9 @@ public final class MonitorScreenSystem {
 		if (isPlayerMode(viewMode)) {
 			if (viewMode == ScreenViewMode.GALLERY) {
 				ensureGalleryStateHydrated(server, component.runtimeKey(), mediaState);
+			}
+			if (mediaState != null) {
+				syncConnectedLiveCameraGalleryStateIfDue(server, component, mediaState, false);
 			}
 			if (mediaState != null) {
 				MediaDispatchKey dispatchKey = new MediaDispatchKey(component.powered(), viewMode, launcherPage, component.width(), component.height());
@@ -5844,6 +6324,9 @@ public final class MonitorScreenSystem {
 			if (item == null || item.url() == null || item.url().isBlank()) {
 				continue;
 			}
+			if (effectiveGalleryItemKind(item) == GalleryItemKind.LIVE_CAMERA) {
+				continue;
+			}
 			items.add(new PersistedGalleryItem(
 					item.title() == null ? "" : item.title(),
 					item.subtitle() == null ? "" : item.subtitle(),
@@ -5898,6 +6381,7 @@ public final class MonitorScreenSystem {
 		boolean galleryBrowser = galleryMode && state.gallerySurfaceMode == GallerySurfaceMode.BROWSER;
 		boolean galleryBackedYoutube = isGalleryBackedYoutubeLocked(state);
 		boolean streamPlayback = isStreamPlaybackLocked(state);
+		boolean liveCameraPlayback = state.streamKind == PlaybackStreamKind.LIVE_CAMERA;
 		BufferedImage frame = streamPlayback
 				? state.streamFrame
 				: !galleryBrowser && state.loadedMedia != null ? state.loadedMedia.frame(state.frameIndex) : null;
@@ -5908,8 +6392,8 @@ public final class MonitorScreenSystem {
 				? hasDisplayableMediaLocked(state)
 				: galleryBrowser ? !state.galleryItems.isEmpty() : state.loadedMedia != null;
 		boolean playbackControlsVisible = mediaControlUiVisibleLocked(state);
-		boolean timelineVisible = streamPlayback || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.frameCount() > 1);
-		boolean centerPlayPauseVisible = streamPlayback || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.animated());
+		boolean timelineVisible = (streamPlayback && !liveCameraPlayback) || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.frameCount() > 1);
+		boolean centerPlayPauseVisible = (streamPlayback && !liveCameraPlayback) || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.animated());
 		boolean timelineSeekable = streamPlayback
 				? state.durationMs > 0L && !state.liveStream
 				: !galleryBrowser && state.loadedMedia != null && state.loadedMedia.frameCount() > 1;
@@ -10023,11 +10507,11 @@ public final class MonitorScreenSystem {
 			items.add(new GalleryCardSnapshot(
 					index,
 					item != null ? item.title() : "Gallery",
-					(item != null && (itemKind == GalleryItemKind.YOUTUBE || itemKind == GalleryItemKind.VIDEO || itemKind == GalleryItemKind.AUDIO))
+					(item != null && (itemKind == GalleryItemKind.YOUTUBE || itemKind == GalleryItemKind.VIDEO || itemKind == GalleryItemKind.AUDIO || itemKind == GalleryItemKind.LIVE_CAMERA))
 							|| (media != null && media.animated()),
 					preview,
 					index == state.galleryIndex,
-					youtubeLoaded
+					youtubeLoaded || itemKind == GalleryItemKind.LIVE_CAMERA
 			));
 		}
 		return items;
@@ -10555,6 +11039,7 @@ public final class MonitorScreenSystem {
 		state.liveStream = false;
 		state.audioPlaceholder = true;
 		state.loadingBackdropFrame = null;
+		state.liveCameraCaptureInFlight = false;
 	}
 
 	private static void clearGalleryLocked(MediaRuntimeState state) {
@@ -10602,6 +11087,7 @@ public final class MonitorScreenSystem {
 		state.bufferedEndMs = 0L;
 		state.liveStream = false;
 		state.audioPlaceholder = true;
+		state.liveCameraCaptureInFlight = false;
 	}
 
 	private static void clearLoadedContentLocked(MediaRuntimeState state) {
@@ -10667,7 +11153,8 @@ public final class MonitorScreenSystem {
 	}
 
 	private static boolean currentGalleryItemSavedLocked(MediaRuntimeState state) {
-		return currentGalleryItemLocked(state) != null;
+		GalleryItem item = currentGalleryItemLocked(state);
+		return item != null && effectiveGalleryItemKind(item) != GalleryItemKind.LIVE_CAMERA;
 	}
 
 	private static boolean currentGalleryItemCanBeWallpaperLocked(MediaRuntimeState state) {
@@ -10733,16 +11220,17 @@ public final class MonitorScreenSystem {
 			return false;
 		}
 		GalleryItem item = state.galleryItems.get(resolvedIndex);
-		if (item == null || item.kind() == GalleryItemKind.YOUTUBE || item.media() == null) {
+		GalleryItemKind itemKind = effectiveGalleryItemKind(item);
+		if (item == null || itemKind == GalleryItemKind.YOUTUBE || (itemKind != GalleryItemKind.LIVE_CAMERA && item.media() == null)) {
 			return false;
 		}
 		cancelPlaybackLocked(state);
 		clearYoutubePlaybackLocked(state);
 		state.galleryIndex = resolvedIndex;
 		state.galleryDeleteConfirmOpen = false;
-		state.loadedMedia = item.media();
 		state.sourceUrl = item.url();
 		state.mediaTitle = item.title();
+		state.mediaSubtitle = item.subtitle();
 		state.frameIndex = 0;
 		state.userPaused = false;
 		state.gallerySurfaceMode = GallerySurfaceMode.PLAYER;
@@ -10750,8 +11238,24 @@ public final class MonitorScreenSystem {
 		state.durationMs = 0L;
 		state.bufferedStartMs = 0L;
 		state.bufferedEndMs = 0L;
-		state.liveStream = false;
+		state.liveStream = itemKind == GalleryItemKind.LIVE_CAMERA;
 		state.audioPlaceholder = true;
+		state.progress.clear();
+		if (itemKind == GalleryItemKind.LIVE_CAMERA) {
+			state.streamKind = PlaybackStreamKind.LIVE_CAMERA;
+			state.loading = true;
+			state.statusText = "LIVE";
+			state.loadedMedia = null;
+			state.streamFrame = item.preview();
+			state.loadingBackdropFrame = item.preview();
+			state.relaySessionId = null;
+			state.audioStreamUrl = null;
+			state.liveCameraCaptureInFlight = false;
+		} else {
+			state.loadedMedia = item.media();
+			state.loading = false;
+			state.statusText = "";
+		}
 		int visibleRows = galleryVisibleRowsPreview(layout);
 		int totalRows = galleryTotalRowsPreview(state.galleryItems.size(), layout);
 		int maxScroll = Math.max(0, totalRows - visibleRows);
@@ -11176,6 +11680,9 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return false;
 		}
+		if (isCurrentLiveCameraLocked(state)) {
+			return false;
+		}
 		if (isGalleryBackedYoutubeLocked(state)) {
 			return true;
 		}
@@ -11225,6 +11732,11 @@ public final class MonitorScreenSystem {
 
 	private static boolean hasGalleryItemForUrlLocked(MediaRuntimeState state, String url) {
 		return resolveGalleryItemIndex(state, url, -1) >= 0;
+	}
+
+	private static boolean isCurrentLiveCameraLocked(MediaRuntimeState state) {
+		GalleryItem current = currentGalleryItemLocked(state);
+		return current != null && effectiveGalleryItemKind(current) == GalleryItemKind.LIVE_CAMERA;
 	}
 
 	private static boolean isGalleryBackedYoutubeLocked(MediaRuntimeState state) {
@@ -11335,6 +11847,9 @@ public final class MonitorScreenSystem {
 			return false;
 		}
 		if (isStreamPlaybackLocked(state)) {
+			if (state.streamKind == PlaybackStreamKind.LIVE_CAMERA) {
+				return false;
+			}
 			return state.relaySessionId != null || state.loading;
 		}
 		return state.loadedMedia != null && state.loadedMedia.animated();
@@ -11543,6 +12058,7 @@ public final class MonitorScreenSystem {
 	private enum PlaybackStreamKind {
 		NONE,
 		YOUTUBE,
+		LIVE_CAMERA,
 		DIRECT_VIDEO
 	}
 
@@ -11587,11 +12103,15 @@ public final class MonitorScreenSystem {
 		MEDIA,
 		AUDIO,
 		VIDEO,
+		LIVE_CAMERA,
 		YOUTUBE;
 
 		private static GalleryItemKind fromPersisted(String value, String url) {
 			if ("audio".equalsIgnoreCase(value)) {
 				return AUDIO;
+			}
+			if ("live_camera".equalsIgnoreCase(value)) {
+				return LIVE_CAMERA;
 			}
 			if ("youtube".equalsIgnoreCase(value)) {
 				return YOUTUBE;
@@ -11605,6 +12125,7 @@ public final class MonitorScreenSystem {
 		private String persistedName() {
 			return switch (this) {
 				case AUDIO -> "audio";
+				case LIVE_CAMERA -> "live_camera";
 				case YOUTUBE -> "youtube";
 				case VIDEO -> "video";
 				case MEDIA -> "media";
@@ -12023,6 +12544,15 @@ public final class MonitorScreenSystem {
 	) {
 	}
 
+	private record LiveCameraSnapshotResult(
+			ScreenRuntimeKey screenKey,
+			String url,
+			BufferedImage previewFrame,
+			BufferedImage fullFrame,
+			String error
+	) {
+	}
+
 	private enum PlayerUiIcon {
 		SEARCH("/assets/lg2/textures/monitor/ui_icons/search.png"),
 		SHUFFLE("/assets/lg2/textures/monitor/ui_icons/shuffle.png"),
@@ -12160,6 +12690,8 @@ public final class MonitorScreenSystem {
 		private int youtubeQueueScroll;
 		private boolean youtubeQueueOpen;
 		private boolean youtubeReturnToGallery;
+		private boolean liveCameraCaptureInFlight;
+		private long nextLiveCameraGallerySyncAtMillis;
 		private int activeRenderJobs;
 		private boolean rerenderRequested;
 		private MediaDispatchKey lastDispatchKey;
@@ -12213,6 +12745,8 @@ public final class MonitorScreenSystem {
 			this.youtubeQueueScroll = 0;
 			this.youtubeQueueOpen = false;
 			this.youtubeReturnToGallery = false;
+			this.liveCameraCaptureInFlight = false;
+			this.nextLiveCameraGallerySyncAtMillis = 0L;
 			this.activeRenderJobs = 0;
 			this.nextProgressRenderAtMillis = 0L;
 			this.progress = new TaskProgress(progressListener);

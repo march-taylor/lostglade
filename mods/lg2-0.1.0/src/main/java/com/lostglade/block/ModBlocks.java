@@ -30,6 +30,7 @@ public final class ModBlocks {
 	private static final Identifier SERVER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "server");
 	private static final Identifier SPEAKER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "speaker");
 	private static final Identifier MICROPHONE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "microphone");
+	private static final Identifier CAMERA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera");
 
 	private static final ResourceKey<Block> BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, BITCOIN_ORE_ID);
 	private static final ResourceKey<Block> DEEPSLATE_BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, DEEPSLATE_BITCOIN_ORE_ID);
@@ -41,6 +42,7 @@ public final class ModBlocks {
 	private static final ResourceKey<Block> SERVER_KEY = ResourceKey.create(Registries.BLOCK, SERVER_ID);
 	private static final ResourceKey<Block> SPEAKER_KEY = ResourceKey.create(Registries.BLOCK, SPEAKER_ID);
 	private static final ResourceKey<Block> MICROPHONE_KEY = ResourceKey.create(Registries.BLOCK, MICROPHONE_ID);
+	private static final ResourceKey<Block> CAMERA_KEY = ResourceKey.create(Registries.BLOCK, CAMERA_ID);
 	private static final ResourceKey<Item> BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> DEEPSLATE_BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, DEEPSLATE_BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> BACKROOMS_BLOCK_ITEM_KEY = ResourceKey.create(Registries.ITEM, BACKROOMS_BLOCK_ID);
@@ -96,6 +98,12 @@ public final class ModBlocks {
 			BuiltInRegistries.BLOCK,
 			MICROPHONE_ID,
 			new MicrophoneBlock(createMicrophoneProperties())
+	);
+
+	public static final Block CAMERA = Registry.register(
+			BuiltInRegistries.BLOCK,
+			CAMERA_ID,
+			new CameraBlock(createCameraProperties())
 	);
 
 	public static final Block BACKROOMS_BLOCK = Registry.register(
@@ -339,6 +347,15 @@ public final class ModBlocks {
 				.noLootTable()
 				.noOcclusion()
 				.setId(MICROPHONE_KEY);
+	}
+
+	private static BlockBehaviour.Properties createCameraProperties() {
+		return BlockBehaviour.Properties.of()
+				.mapColor(MapColor.COLOR_BLACK)
+				.strength(0.8F, 2.0F)
+				.sound(SoundType.METAL)
+				.noOcclusion()
+				.setId(CAMERA_KEY);
 	}
 
 	public static BlockState getRandomizedBackroomsBlockState(long seed) {

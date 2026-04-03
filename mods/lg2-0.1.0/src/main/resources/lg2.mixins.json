@@ -50,6 +50,7 @@
 		"ResultSlotMechanicsGateMixin",
 		"ServerCommonPacketListenerCocaineHallucinationMixin",
 		"ServerCommonPacketListenerAbsoluteInvisibilityMixin",
+		"ServerGamePacketListenerCameraCaptureMixin",
 		"ServerGamePacketListenerCopperManJetpackMixin",
 		"ServerGamePacketListenerCopperManRepulsorMixin",
 		"ServerGamePacketListenerMonitorTimelineMixin",

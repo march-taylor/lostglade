@@ -1,6 +1,8 @@
 package com.lostglade.item;
 
 import com.lostglade.Lg2;
+import com.lostglade.block.CameraBlock;
+import com.lostglade.block.ModBlocks;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.Registry;
@@ -86,6 +88,7 @@ public final class ModItems {
 			BuiltInRegistries.ITEM,
 			CAMERA_ID,
 			new CameraItem(
+					(CameraBlock) ModBlocks.CAMERA,
 					new Item.Properties()
 							.setId(CAMERA_KEY)
 							.stacksTo(1)

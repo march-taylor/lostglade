@@ -8,6 +8,7 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Relative;
 
@@ -116,7 +117,39 @@ public final class RendererBotCameraSystem {
 	}
 
 	public static ClientCaptureHandle requestPhotoCapture(ServerPlayer requester, int mapsWide, int mapsHigh) {
-		MinecraftServer server = requester == null || requester.level() == null ? null : requester.level().getServer();
+		ServerLevel level = requester == null || !(requester.level() instanceof ServerLevel serverLevel) ? null : serverLevel;
+		if (level == null) {
+			return null;
+		}
+		return requestCapture(
+				level,
+				requester.getX(),
+				requester.getY(),
+				requester.getZ(),
+				requester.getYRot(),
+				requester.getXRot(),
+				128,
+				128,
+				Math.max(1, mapsWide) * 128,
+				Math.max(1, mapsHigh) * 128,
+				70
+		);
+	}
+
+	public static ClientCaptureHandle requestCapture(
+			ServerLevel level,
+			double x,
+			double y,
+			double z,
+			float yaw,
+			float pitch,
+			int previewWidth,
+			int previewHeight,
+			int fullWidth,
+			int fullHeight,
+			int fovDegrees
+	) {
+		MinecraftServer server = level != null ? level.getServer() : null;
 		if (server == null) {
 			return null;
 		}
@@ -126,10 +159,10 @@ public final class RendererBotCameraSystem {
 			return null;
 		}
 
-		int previewWidth = 128;
-		int previewHeight = 128;
-		int fullWidth = Math.max(1, mapsWide) * 128;
-		int fullHeight = Math.max(1, mapsHigh) * 128;
+		int clampedPreviewWidth = Math.max(1, previewWidth);
+		int clampedPreviewHeight = Math.max(1, previewHeight);
+		int clampedFullWidth = Math.max(1, fullWidth);
+		int clampedFullHeight = Math.max(1, fullHeight);
 		UUID requestId = UUID.randomUUID();
 		long timeoutMillis = Math.max(500L, Lg2Config.get().cameraRendererBotTimeoutMs);
 		CompletableFuture<byte[]> previewFuture = new CompletableFuture<>();
@@ -138,15 +171,15 @@ public final class RendererBotCameraSystem {
 		PENDING_CAPTURES.put(requestId, pending);
 		applyTimeout(requestId, pending, timeoutMillis);
 
-		requester.level().getChunkAt(requester.blockPosition());
+		level.getChunkAt(net.minecraft.core.BlockPos.containing(x, y, z));
 		bot.teleportTo(
-				(net.minecraft.server.level.ServerLevel) requester.level(),
-				requester.getX(),
-				requester.getY(),
-				requester.getZ(),
+				level,
+				x,
+				y,
+				z,
 				ABSOLUTE_TELEPORT,
-				requester.getYRot(),
-				requester.getXRot(),
+				yaw,
+				pitch,
 				false
 		);
 		bot.fallDistance = 0.0F;
@@ -155,17 +188,17 @@ public final class RendererBotCameraSystem {
 				bot,
 				new RendererBotPayloads.RendererBotCaptureRequestS2CPayload(
 						requestId,
-						requester.level().dimension().identifier().toString(),
-						requester.getX(),
-						requester.getY(),
-						requester.getZ(),
-						requester.getYRot(),
-						requester.getXRot(),
-						previewWidth,
-						previewHeight,
-						fullWidth,
-						fullHeight,
-						70
+						level.dimension().identifier().toString(),
+						x,
+						y,
+						z,
+						yaw,
+						pitch,
+						clampedPreviewWidth,
+						clampedPreviewHeight,
+						clampedFullWidth,
+						clampedFullHeight,
+						Math.max(1, fovDegrees)
 				)
 		);
 
