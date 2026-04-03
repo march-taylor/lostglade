@@ -38,6 +38,7 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -51,11 +52,13 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class CameraAnimatedMapPlaybackSystem {
 	private static final int MAP_SIZE = 128;
 	private static final int PHOTO_MAP_CENTER = 30_000_000;
-	private static final int DISCOVERY_INTERVAL_TICKS = 10;
+	private static final int DISCOVERY_INTERVAL_TICKS = 100;
 	private static final long SESSION_IDLE_TICKS = 200L;
 	private static final long SESSION_STARTUP_TIMEOUT_MS = 5_000L;
 	private static final long VIEWER_REPRIME_GRACE_TICKS = 40L;
 	private static final long VIEWER_REPRIME_INTERVAL_TICKS = 5L;
+	private static final int MIN_DECODE_AHEAD_FRAMES = 24;
+	private static final int MAX_DECODE_AHEAD_FRAMES = 120;
 	private static final double FRAME_VIEW_RADIUS_SQR = 96.0D * 96.0D;
 	private static final String DEFAULT_FFMPEG_BIN = "ffmpeg";
 	private static final String PLACED_VIDEOS_FILE = "lg2-camera-placed-videos.json";
@@ -820,16 +823,22 @@ public final class CameraAnimatedMapPlaybackSystem {
 	private static final class VideoPlaybackSession implements AutoCloseable {
 		private final PlaybackKey key;
 		private final long startedAtMs;
-		private volatile DecodedVideoFrame latestFrame;
+		private final Object frameQueueLock = new Object();
+		private final ArrayDeque<DecodedVideoFrame> decodedFrameQueue = new ArrayDeque<>();
+		private final long frameDurationNanos;
+		private final int maxBufferedFrames;
+		private volatile DecodedVideoFrame presentedFrame;
 		private volatile long lastUsedTick;
 		private volatile boolean closed;
+		private volatile boolean decoderFailed;
 		private Process process;
-		private Thread readerThread;
-		private Thread stderrThread;
+		private Thread decoderThread;
 
 		private VideoPlaybackSession(PlaybackKey key) throws IOException {
 			this.key = key;
 			this.startedAtMs = System.currentTimeMillis();
+			this.frameDurationNanos = 1_000_000_000L / Math.max(1, this.key.fps());
+			this.maxBufferedFrames = Math.max(MIN_DECODE_AHEAD_FRAMES, Math.min(MAX_DECODE_AHEAD_FRAMES, Math.max(1, this.key.fps()) * 4));
 			start();
 		}
 
@@ -838,13 +847,74 @@ public final class CameraAnimatedMapPlaybackSystem {
 			if (!Files.isRegularFile(videoPath)) {
 				throw new IOException("Cached camera video is missing");
 			}
+			this.decoderThread = new Thread(this::decodeLoop, "lg2-camera-video-" + this.key.sourceKey());
+			this.decoderThread.setDaemon(true);
+			this.decoderThread.start();
+		}
+
+		private int outputWidth() {
+			return this.key.mapsWide() * MAP_SIZE;
+		}
+
+		private int outputHeight() {
+			return this.key.mapsHigh() * MAP_SIZE;
+		}
+
+		private void decodeLoop() {
+			byte[][] previousTiles = null;
+			long sequence = 0L;
+			long nextPresentationNanos = System.nanoTime() + this.frameDurationNanos;
+			int frameBytes = outputWidth() * outputHeight() * 3;
+			Path videoPath = CameraMediaCache.videoSourcePath(this.key.sourceKey());
+			while (!this.closed) {
+				Process currentProcess = null;
+				Thread currentStderrThread = null;
+				try {
+					currentProcess = startDecoderProcess(videoPath);
+					this.process = currentProcess;
+					currentStderrThread = startStderrDrain(currentProcess);
+					try (InputStream input = currentProcess.getInputStream()) {
+						while (!this.closed) {
+							byte[] rgb = input.readNBytes(frameBytes);
+							if (rgb.length < frameBytes) {
+								break;
+							}
+							byte[] preview = buildPreviewFrame(rgb, outputWidth(), outputHeight());
+							byte[][] tiles = buildTileFrames(rgb, outputWidth(), outputHeight(), this.key.mapsWide(), this.key.mapsHigh());
+							TilePatch[] patches = buildTilePatches(previousTiles, tiles);
+							DecodedVideoFrame decodedFrame = new DecodedVideoFrame(++sequence, nextPresentationNanos, preview, tiles, patches);
+							enqueueDecodedFrame(decodedFrame);
+							if (sequence == 1L) {
+								Lg2.LOGGER.info("Camera video playback session decoded first frame for {}", this.key.sourceKey());
+							}
+							previousTiles = tiles;
+							nextPresentationNanos += this.frameDurationNanos;
+						}
+					}
+				} catch (InterruptedException interruptedException) {
+					Thread.currentThread().interrupt();
+					break;
+				} catch (Exception exception) {
+					if (!this.closed) {
+						this.decoderFailed = true;
+						Lg2.LOGGER.warn("Camera video playback session failed for {}", this.key.sourceKey(), exception);
+					}
+					break;
+				} finally {
+					this.process = null;
+					destroyProcess(currentProcess);
+					if (currentStderrThread != null) {
+						currentStderrThread.interrupt();
+					}
+				}
+			}
+		}
+
+		private Process startDecoderProcess(Path videoPath) throws IOException {
 			List<String> command = new ArrayList<>();
 			command.add(ffmpegBinary());
 			command.add("-loglevel");
 			command.add("error");
-			command.add("-stream_loop");
-			command.add("-1");
-			command.add("-re");
 			command.add("-i");
 			command.add(videoPath.toAbsolutePath().toString());
 			command.add("-an");
@@ -857,83 +927,82 @@ public final class CameraAnimatedMapPlaybackSystem {
 			command.add("-f");
 			command.add("rawvideo");
 			command.add("pipe:1");
-			ProcessBuilder builder = new ProcessBuilder(command);
-			this.process = builder.start();
-			this.readerThread = new Thread(this::readLoop, "lg2-camera-video-" + this.key.sourceKey());
-			this.readerThread.setDaemon(true);
-			this.readerThread.start();
-			this.stderrThread = new Thread(this::readStderrLoop, "lg2-camera-video-err-" + this.key.sourceKey());
-			this.stderrThread.setDaemon(true);
-			this.stderrThread.start();
+			return new ProcessBuilder(command).start();
 		}
 
-		private int outputWidth() {
-			return this.key.mapsWide() * MAP_SIZE;
-		}
-
-		private int outputHeight() {
-			return this.key.mapsHigh() * MAP_SIZE;
-		}
-
-		private void readLoop() {
-			byte[][] previousTiles = null;
-			long sequence = 0L;
-			int frameBytes = outputWidth() * outputHeight() * 3;
-			try (InputStream input = this.process.getInputStream()) {
-				while (!this.closed) {
-					byte[] rgb = input.readNBytes(frameBytes);
-					if (rgb.length < frameBytes) {
-						break;
+		private Thread startStderrDrain(Process currentProcess) {
+			Thread stderrDrain = new Thread(() -> {
+				try (InputStream error = currentProcess.getErrorStream()) {
+					String stderr = new String(error.readAllBytes(), StandardCharsets.UTF_8).trim();
+					if (!stderr.isBlank() && !this.closed) {
+						Lg2.LOGGER.warn("Camera video playback ffmpeg stderr for {}: {}", this.key.sourceKey(), stderr);
 					}
-					byte[] preview = buildPreviewFrame(rgb, outputWidth(), outputHeight());
-					byte[][] tiles = buildTileFrames(rgb, outputWidth(), outputHeight(), this.key.mapsWide(), this.key.mapsHigh());
-					TilePatch[] patches = buildTilePatches(previousTiles, tiles);
-					this.latestFrame = new DecodedVideoFrame(++sequence, preview, tiles, patches);
-					if (sequence == 1L) {
-						Lg2.LOGGER.info("Camera video playback session decoded first frame for {}", this.key.sourceKey());
-					}
-					previousTiles = deepCopyTiles(tiles);
+				} catch (Exception ignored) {
 				}
-			} catch (Exception exception) {
-				if (!this.closed) {
-					Lg2.LOGGER.warn("Camera video playback session failed for {}", this.key.sourceKey(), exception);
-				}
-			} finally {
-				close();
-			}
+			}, "lg2-camera-video-err-" + this.key.sourceKey());
+			stderrDrain.setDaemon(true);
+			stderrDrain.start();
+			return stderrDrain;
 		}
 
-		private void readStderrLoop() {
-			Process currentProcess = this.process;
-			if (currentProcess == null) {
-				return;
-			}
-			try (InputStream error = currentProcess.getErrorStream()) {
-				String stderr = new String(error.readAllBytes()).trim();
-				if (!stderr.isBlank() && !this.closed) {
-					Lg2.LOGGER.warn("Camera video playback ffmpeg stderr for {}: {}", this.key.sourceKey(), stderr);
+		private void enqueueDecodedFrame(DecodedVideoFrame frame) throws InterruptedException {
+			synchronized (this.frameQueueLock) {
+				while (!this.closed && this.decodedFrameQueue.size() >= this.maxBufferedFrames) {
+					this.frameQueueLock.wait(25L);
 				}
-			} catch (Exception ignored) {
+				if (this.closed) {
+					return;
+				}
+				this.decodedFrameQueue.addLast(frame);
+				this.decoderFailed = false;
+				this.frameQueueLock.notifyAll();
 			}
 		}
 
 		private DecodedVideoFrame latestFrame() {
-			return this.latestFrame;
+			long now = System.nanoTime();
+			synchronized (this.frameQueueLock) {
+				while (!this.decodedFrameQueue.isEmpty()) {
+					DecodedVideoFrame next = this.decodedFrameQueue.peekFirst();
+					if (next == null || next.displayAtNanos() > now) {
+						break;
+					}
+					this.presentedFrame = this.decodedFrameQueue.removeFirst();
+					this.frameQueueLock.notifyAll();
+				}
+				if (this.presentedFrame != null) {
+					return this.presentedFrame;
+				}
+				if (!this.decodedFrameQueue.isEmpty()) {
+					this.presentedFrame = this.decodedFrameQueue.removeFirst();
+					this.frameQueueLock.notifyAll();
+					return this.presentedFrame;
+				}
+				return null;
+			}
 		}
 
 		private boolean isUsable() {
 			if (this.closed) {
 				return false;
 			}
-			Process currentProcess = this.process;
-			Thread currentReader = this.readerThread;
-			if (currentProcess == null || currentReader == null) {
+			Thread currentDecoder = this.decoderThread;
+			if (currentDecoder == null) {
 				return false;
 			}
-			if (!currentProcess.isAlive() || !currentReader.isAlive()) {
+			if (hasRenderableFrame()) {
+				return true;
+			}
+			if (this.decoderFailed) {
 				return false;
 			}
-			return this.latestFrame != null || System.currentTimeMillis() - this.startedAtMs < SESSION_STARTUP_TIMEOUT_MS;
+			return currentDecoder.isAlive() && System.currentTimeMillis() - this.startedAtMs < SESSION_STARTUP_TIMEOUT_MS;
+		}
+
+		private boolean hasRenderableFrame() {
+			synchronized (this.frameQueueLock) {
+				return this.presentedFrame != null || !this.decodedFrameQueue.isEmpty();
+			}
 		}
 
 		private long lastUsedTick() {
@@ -947,22 +1016,19 @@ public final class CameraAnimatedMapPlaybackSystem {
 		@Override
 		public void close() {
 			this.closed = true;
-			if (this.process != null) {
-				this.process.destroy();
-				this.process = null;
+			synchronized (this.frameQueueLock) {
+				this.frameQueueLock.notifyAll();
 			}
+			destroyProcess(this.process);
+			this.process = null;
 		}
 	}
 
-	private static byte[][] deepCopyTiles(byte[][] tiles) {
-		if (tiles == null) {
-			return null;
+	private static void destroyProcess(Process process) {
+		if (process == null) {
+			return;
 		}
-		byte[][] copy = new byte[tiles.length][];
-		for (int i = 0; i < tiles.length; i++) {
-			copy[i] = tiles[i] == null ? null : tiles[i].clone();
-		}
-		return copy;
+		process.destroy();
 	}
 
 	private record PhotoMapSet(MapId[] mapIds, MapItemSavedData[] mapDataSet) {
@@ -980,7 +1046,7 @@ public final class CameraAnimatedMapPlaybackSystem {
 	private record TilePatch(int startX, int startY, int width, int height, byte[] frame) {
 	}
 
-	private record DecodedVideoFrame(long sequence, byte[] previewFrame, byte[][] tiles, TilePatch[] tilePatches) {
+	private record DecodedVideoFrame(long sequence, long displayAtNanos, byte[] previewFrame, byte[][] tiles, TilePatch[] tilePatches) {
 	}
 
 	private record PlacedVideoGroup(
