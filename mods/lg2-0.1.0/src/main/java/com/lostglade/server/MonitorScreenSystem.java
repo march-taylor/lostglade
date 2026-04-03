@@ -164,6 +164,7 @@ public final class MonitorScreenSystem {
 	private static final long MEDIA_FOCUS_CLEANUP_INTERVAL_TICKS = 20L;
 	private static final String CAMERA_GALLERY_URL_PREFIX = "lg2-camera:";
 	private static final String LIVE_CAMERA_GALLERY_URL_PREFIX = "lg2-live-camera:";
+	private static final double RENDERER_BOT_EYE_HEIGHT = 1.62D;
 	private static final int LIVE_CAMERA_PREVIEW_SIZE = 128;
 	private static final int LIVE_CAMERA_FOV_DEGREES = 70;
 	private static final int LIVE_CAMERA_TARGET_FPS = 20;
@@ -4797,13 +4798,14 @@ public final class MonitorScreenSystem {
 		BlockState cameraState = level.getBlockState(cameraPos);
 		LiveCameraPose pose = liveCameraCapturePose(level, cameraPos, cameraState);
 		Vec3 origin = pose.origin();
+		double botFeetY = origin.y - RENDERER_BOT_EYE_HEIGHT;
 		int fullWidth = Math.max(1, component.width()) * MAP_SIZE;
 		int fullHeight = Math.max(1, component.height()) * MAP_SIZE;
 		boolean started = RendererBotCameraSystem.ensureLiveStream(
 				liveCameraStreamOwnerId(component.runtimeKey()),
 				level,
 				origin.x,
-				origin.y,
+				botFeetY,
 				origin.z,
 				pose.yaw(),
 				pose.pitch(),

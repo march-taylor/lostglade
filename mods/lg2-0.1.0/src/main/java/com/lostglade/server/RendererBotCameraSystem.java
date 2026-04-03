@@ -10,6 +10,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Relative;
 
 import java.util.EnumSet;
@@ -105,12 +106,14 @@ public final class RendererBotCameraSystem {
 						IllegalStateException failure = new IllegalStateException(payload.message());
 						recording.completionFuture().completeExceptionally(failure);
 						PENDING_VIDEO_RECORDINGS.remove(payload.requestId());
+						releaseBotCameraIfNeeded(recording.server(), recording.botUuid(), recording.resetCameraOnFinish());
 						return;
 					}
 					IllegalStateException failure = new IllegalStateException(payload.message());
 					capture.previewFuture().completeExceptionally(failure);
 					capture.fullFuture().completeExceptionally(failure);
 					PENDING_CAPTURES.remove(payload.requestId());
+					releaseBotCameraIfNeeded(capture.server(), capture.botUuid(), capture.resetCameraOnFinish());
 				}
 		);
 		ServerPlayNetworking.registerGlobalReceiver(
@@ -138,6 +141,7 @@ public final class RendererBotCameraSystem {
 					}
 					recording.completionFuture().complete(new VideoRecordingResult(payload.durationMs(), payload.fps(), payload.previewPixels(), payload.fullPixels()));
 					PENDING_VIDEO_RECORDINGS.remove(payload.requestId());
+					releaseBotCameraIfNeeded(recording.server(), recording.botUuid(), recording.resetCameraOnFinish());
 				}
 		);
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
@@ -165,7 +169,20 @@ public final class RendererBotCameraSystem {
 		if (level == null) {
 			return null;
 		}
-		return requestCapture(
+		MinecraftServer server = level.getServer();
+		if (server == null) {
+			return null;
+		}
+
+		ServerPlayer bot = selectBot(server);
+		if (bot == null) {
+			return null;
+		}
+		stopLiveStreamForBot(bot.getUUID(), "Renderer bot switched from live stream to photo capture", false);
+
+		return requestCaptureInternal(
+				server,
+				bot,
 				level,
 				requester.getX(),
 				requester.getY(),
@@ -176,7 +193,8 @@ public final class RendererBotCameraSystem {
 				128,
 				Math.max(1, mapsWide) * 128,
 				Math.max(1, mapsHigh) * 128,
-				70
+				70,
+				requester
 		);
 	}
 
@@ -204,6 +222,44 @@ public final class RendererBotCameraSystem {
 		}
 		stopLiveStreamForBot(bot.getUUID(), "Renderer bot switched from live stream to photo capture", false);
 
+		return requestCaptureInternal(
+				server,
+				bot,
+				level,
+				x,
+				y,
+				z,
+				yaw,
+				pitch,
+				previewWidth,
+				previewHeight,
+				fullWidth,
+				fullHeight,
+				fovDegrees,
+				null
+		);
+	}
+
+	private static ClientCaptureHandle requestCaptureInternal(
+			MinecraftServer server,
+			ServerPlayer bot,
+			ServerLevel level,
+			double x,
+			double y,
+			double z,
+			float yaw,
+			float pitch,
+			int previewWidth,
+			int previewHeight,
+			int fullWidth,
+			int fullHeight,
+			int fovDegrees,
+			Entity followTarget
+	) {
+		if (server == null || bot == null || level == null) {
+			return null;
+		}
+
 		int clampedPreviewWidth = Math.max(1, previewWidth);
 		int clampedPreviewHeight = Math.max(1, previewHeight);
 		int clampedFullWidth = Math.max(1, fullWidth);
@@ -212,22 +268,22 @@ public final class RendererBotCameraSystem {
 		long timeoutMillis = Math.max(500L, Lg2Config.get().cameraRendererBotTimeoutMs);
 		CompletableFuture<byte[]> previewFuture = new CompletableFuture<>();
 		CompletableFuture<byte[]> fullFuture = new CompletableFuture<>();
-		PendingCapture pending = new PendingCapture(requestId, bot.getUUID(), previewFuture, fullFuture);
+		PendingCapture pending = new PendingCapture(
+				requestId,
+				server,
+				bot.getUUID(),
+				followTarget != null,
+				previewFuture,
+				fullFuture
+		);
 		PENDING_CAPTURES.put(requestId, pending);
 		applyTimeout(requestId, pending, timeoutMillis);
 
-		level.getChunkAt(net.minecraft.core.BlockPos.containing(x, y, z));
-		bot.teleportTo(
-				level,
-				x,
-				y,
-				z,
-				ABSOLUTE_TELEPORT,
-				yaw,
-				pitch,
-				false
-		);
-		bot.fallDistance = 0.0F;
+		if (followTarget != null) {
+			prepareBotToFollowEntity(bot, level, x, y, z, yaw, pitch, followTarget);
+		} else {
+			prepareBotForStaticView(bot, level, x, y, z, yaw, pitch);
+		}
 
 		ServerPlayNetworking.send(
 				bot,
@@ -306,18 +362,7 @@ public final class RendererBotCameraSystem {
 
 		stopLiveStreamForBot(bot.getUUID(), "Renderer bot reassigned to another live stream", false);
 
-		level.getChunkAt(net.minecraft.core.BlockPos.containing(x, y, z));
-		bot.teleportTo(
-				level,
-				x,
-				y,
-				z,
-				ABSOLUTE_TELEPORT,
-				yaw,
-				pitch,
-				false
-		);
-		bot.fallDistance = 0.0F;
+		prepareBotForStaticView(bot, level, x, y, z, yaw, pitch);
 
 		UUID streamId = UUID.randomUUID();
 		ActiveLiveStream stream = new ActiveLiveStream(server, streamId, ownerKey, bot.getUUID(), desiredSpec, onFrame, onFailure);
@@ -384,28 +429,27 @@ public final class RendererBotCameraSystem {
 		UUID requestId = UUID.randomUUID();
 		long timeoutMillis = Math.max(5_000L, Lg2Config.get().cameraRendererBotTimeoutMs);
 		CompletableFuture<VideoRecordingResult> completionFuture = new CompletableFuture<>();
-		PendingVideoRecording pending = new PendingVideoRecording(requestId, bot.getUUID(), completionFuture);
+		PendingVideoRecording pending = new PendingVideoRecording(requestId, server, bot.getUUID(), true, completionFuture);
 		PENDING_VIDEO_RECORDINGS.put(requestId, pending);
 		completionFuture.orTimeout(Math.max(timeoutMillis, maxDurationSeconds * 1_000L + 30_000L), TimeUnit.MILLISECONDS)
 				.exceptionally(throwable -> {
 					if (PENDING_VIDEO_RECORDINGS.remove(requestId, pending)) {
+						releaseBotCameraIfNeeded(pending.server(), pending.botUuid(), pending.resetCameraOnFinish());
 						completionFuture.completeExceptionally(throwable);
 					}
 					return null;
 				});
 
-		requester.level().getChunkAt(requester.blockPosition());
-		bot.teleportTo(
-				(net.minecraft.server.level.ServerLevel) requester.level(),
+		prepareBotToFollowEntity(
+				bot,
+				(ServerLevel) requester.level(),
 				requester.getX(),
 				requester.getY(),
 				requester.getZ(),
-				ABSOLUTE_TELEPORT,
 				requester.getYRot(),
 				requester.getXRot(),
-				false
+				requester
 		);
-		bot.fallDistance = 0.0F;
 
 		int clampedTargetFps = Math.clamp(Math.max(1, targetFps), 1, MAX_VIDEO_RECORDING_FPS);
 		ServerPlayNetworking.send(
@@ -476,11 +520,13 @@ public final class RendererBotCameraSystem {
 		if (!capture.fullFuture().isDone()) {
 			capture.fullFuture().completeExceptionally(throwable);
 		}
+		releaseBotCameraIfNeeded(capture.server(), capture.botUuid(), capture.resetCameraOnFinish());
 	}
 
 	private static void cleanupIfFinished(UUID requestId, PendingCapture capture) {
 		if (capture.previewFuture().isDone() && capture.fullFuture().isDone()) {
 			PENDING_CAPTURES.remove(requestId);
+			releaseBotCameraIfNeeded(capture.server(), capture.botUuid(), capture.resetCameraOnFinish());
 		}
 	}
 
@@ -496,6 +542,7 @@ public final class RendererBotCameraSystem {
 			}
 			if (PENDING_VIDEO_RECORDINGS.remove(entry.getKey(), recording)) {
 				recording.completionFuture().completeExceptionally(failure);
+				releaseBotCameraIfNeeded(recording.server(), recording.botUuid(), recording.resetCameraOnFinish());
 			}
 		}
 	}
@@ -579,6 +626,61 @@ public final class RendererBotCameraSystem {
 		return null;
 	}
 
+	private static void prepareBotForStaticView(
+			ServerPlayer bot,
+			ServerLevel level,
+			double x,
+			double y,
+			double z,
+			float yaw,
+			float pitch
+	) {
+		if (bot == null || level == null) {
+			return;
+		}
+		if (bot.getCamera() != bot) {
+			bot.setCamera(bot);
+		}
+		level.getChunkAt(net.minecraft.core.BlockPos.containing(x, y, z));
+		bot.teleportTo(
+				level,
+				x,
+				y,
+				z,
+				ABSOLUTE_TELEPORT,
+				yaw,
+				pitch,
+				false
+		);
+		bot.fallDistance = 0.0F;
+	}
+
+	private static void prepareBotToFollowEntity(
+			ServerPlayer bot,
+			ServerLevel level,
+			double x,
+			double y,
+			double z,
+			float yaw,
+			float pitch,
+			Entity target
+	) {
+		prepareBotForStaticView(bot, level, x, y, z, yaw, pitch);
+		if (bot != null && target != null && target.level() == level) {
+			bot.setCamera(target);
+		}
+	}
+
+	private static void releaseBotCameraIfNeeded(MinecraftServer server, UUID botUuid, boolean resetCameraOnFinish) {
+		if (!resetCameraOnFinish || server == null || botUuid == null) {
+			return;
+		}
+		ServerPlayer bot = server.getPlayerList().getPlayer(botUuid);
+		if (bot != null && bot.getCamera() != bot) {
+			bot.setCamera(bot);
+		}
+	}
+
 	public record ClientCaptureHandle(
 			UUID requestId,
 			CompletableFuture<byte[]> previewFuture,
@@ -613,7 +715,9 @@ public final class RendererBotCameraSystem {
 
 	private record PendingCapture(
 			UUID requestId,
+			MinecraftServer server,
 			UUID botUuid,
+			boolean resetCameraOnFinish,
 			CompletableFuture<byte[]> previewFuture,
 			CompletableFuture<byte[]> fullFuture
 	) {
@@ -621,7 +725,9 @@ public final class RendererBotCameraSystem {
 
 	private record PendingVideoRecording(
 			UUID requestId,
+			MinecraftServer server,
 			UUID botUuid,
+			boolean resetCameraOnFinish,
 			CompletableFuture<VideoRecordingResult> completionFuture
 	) {
 	}
