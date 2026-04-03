@@ -16,6 +16,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -31,6 +32,7 @@ public final class RendererBotClientCapture {
 	private static final int MIN_RENDER_HEIGHT = Math.max(128, Integer.getInteger("lg2.rendererBotMinRenderHeight", 768));
 	private static final int MAX_RENDER_WIDTH = Math.max(MIN_RENDER_WIDTH, Integer.getInteger("lg2.rendererBotMaxRenderWidth", 3072));
 	private static final int MAX_RENDER_HEIGHT = Math.max(MIN_RENDER_HEIGHT, Integer.getInteger("lg2.rendererBotMaxRenderHeight", 2048));
+	private static final int MAX_LIVE_STREAM_FPS = 20;
 	private static final ExecutorService CAPTURE_EXECUTOR = Executors.newFixedThreadPool(CAPTURE_THREADS, runnable -> {
 		Thread thread = new Thread(runnable, "lg2-renderer-bot-capture");
 		thread.setDaemon(true);
@@ -38,6 +40,7 @@ public final class RendererBotClientCapture {
 	});
 
 	private static PendingCapture pendingCapture;
+	private static LiveStreamSession liveStreamSession;
 	private static volatile CapturedFrame latestFrame;
 
 	private RendererBotClientCapture() {
@@ -47,16 +50,28 @@ public final class RendererBotClientCapture {
 		ClientPlayConnectionEvents.JOIN.register((handler, sender, client) ->
 				ClientPlayNetworking.send(new RendererBotPayloads.RendererBotHelloC2SPayload(RendererBotPayloads.PROTOCOL_VERSION))
 		);
-		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> clearPendingCapture(null));
+		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+			clearPendingCapture(null);
+			clearLiveStreamSession(null);
+		});
 		ClientTickEvents.END_CLIENT_TICK.register(RendererBotClientCapture::onClientTick);
 		ClientPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotCaptureRequestS2CPayload.TYPE,
 				(payload, context) -> context.client().execute(() -> beginCapture(payload, context.client()))
 		);
+		ClientPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotLiveStreamStartS2CPayload.TYPE,
+				(payload, context) -> context.client().execute(() -> beginLiveStream(payload, context.client()))
+		);
+		ClientPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotLiveStreamStopS2CPayload.TYPE,
+				(payload, context) -> context.client().execute(() -> clearLiveStreamSession(payload.streamId()))
+		);
 		WorldRenderEvents.END_MAIN.register(context -> onEndMain(Minecraft.getInstance()));
 	}
 
 	private static void beginCapture(RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload, Minecraft client) {
+		clearLiveStreamSession(null);
 		long now = System.currentTimeMillis();
 		PendingCapture previous;
 		synchronized (LOCK) {
@@ -97,47 +112,120 @@ public final class RendererBotClientCapture {
 
 	}
 
+	private static void beginLiveStream(RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload, Minecraft client) {
+		PendingCapture previousCapture;
+		synchronized (LOCK) {
+			previousCapture = pendingCapture;
+		}
+		if (previousCapture != null) {
+			restoreFov(previousCapture);
+			sendFailure(previousCapture.payload(), "Renderer bot capture was replaced by live stream");
+		}
+		clearPendingCapture(null);
+		clearLiveStreamSession(null);
+		int renderWidth = computeLiveRenderWidth(payload);
+		int renderHeight = computeLiveRenderHeight(payload, renderWidth);
+		boolean resized = ensureRenderTargetSize(client, renderWidth, renderHeight);
+		int warmupFrames = resized ? DEFAULT_WARMUP_FRAMES + 2 : DEFAULT_WARMUP_FRAMES;
+		synchronized (LOCK) {
+			liveStreamSession = new LiveStreamSession(
+					payload,
+					client.options.fov().get(),
+					System.currentTimeMillis(),
+					warmupFrames
+			);
+			client.options.fov().set(payload.fovDegrees());
+		}
+		Lg2.LOGGER.info(
+				"Renderer bot started live stream {} at {} fps {}x{} (render {}x{}, warmup={})",
+				payload.streamId(),
+				Math.clamp(Math.max(1, payload.targetFps()), 1, MAX_LIVE_STREAM_FPS),
+				payload.fullWidth(),
+				payload.fullHeight(),
+				renderWidth,
+				renderHeight,
+				warmupFrames
+		);
+	}
+
 	private static void onClientTick(Minecraft client) {
 		PendingCapture capture;
+		LiveStreamSession liveStream;
 		synchronized (LOCK) {
 			capture = pendingCapture;
+			liveStream = liveStreamSession;
 		}
 		if (capture == null || capture.screenshotRequested()) {
+			// continue to live stream timeout checks
+		} else if (System.currentTimeMillis() - capture.requestStartedAt() >= LOCAL_CAPTURE_TIMEOUT_MS) {
+			sendFailure(capture.payload(), "Renderer bot client did not produce a rendered frame in time");
+			clearPendingCapture(capture.payload().requestId());
+		}
+		if (liveStream == null || liveStream.frameInFlight()) {
 			return;
 		}
-		if (System.currentTimeMillis() - capture.requestStartedAt() < LOCAL_CAPTURE_TIMEOUT_MS) {
-			return;
+		if (System.currentTimeMillis() - liveStream.startedAtMillis() >= LOCAL_CAPTURE_TIMEOUT_MS
+				&& liveStream.lastFrameAtNanos() == 0L) {
+			sendLiveFailure(liveStream.payload(), "Renderer bot live stream did not produce a rendered frame in time");
+			clearLiveStreamSession(liveStream.payload().streamId());
 		}
-		sendFailure(capture.payload(), "Renderer bot client did not produce a rendered frame in time");
-		clearPendingCapture(capture.payload().requestId());
 	}
 
 	private static void onEndMain(Minecraft client) {
 		PendingCapture capture;
+		LiveStreamSession liveStream;
 		synchronized (LOCK) {
 			capture = pendingCapture;
+			liveStream = liveStreamSession;
 		}
-		if (capture == null || capture.screenshotRequested()) {
+		if (capture != null && !capture.screenshotRequested()) {
+			if (isCaptureWorldReady(client, capture.payload())) {
+				if (capture.remainingWarmupFrames() > 0) {
+					capture.decrementWarmupFrames();
+				} else {
+					capture.markScreenshotRequested();
+					Lg2.LOGGER.info(
+							"Renderer bot capturing rendered frame for {} (renderTarget={}x{})",
+							capture.payload().requestId(),
+							client.getMainRenderTarget().width,
+							client.getMainRenderTarget().height
+					);
+					Screenshot.takeScreenshot(client.getMainRenderTarget(), image -> handleScreenshot(client, capture, image));
+				}
+			}
+		}
+		if (liveStream == null || liveStream.frameInFlight()) {
 			return;
 		}
-		if (!isCaptureWorldReady(client, capture.payload())) {
+		if (!isLiveStreamWorldReady(client, liveStream.payload())) {
 			return;
 		}
-		if (capture.remainingWarmupFrames() > 0) {
-			capture.decrementWarmupFrames();
+		if (liveStream.remainingWarmupFrames() > 0) {
+			liveStream.decrementWarmupFrames();
 			return;
 		}
-		capture.markScreenshotRequested();
-		Lg2.LOGGER.info(
-				"Renderer bot capturing rendered frame for {} (renderTarget={}x{})",
-				capture.payload().requestId(),
-				client.getMainRenderTarget().width,
-				client.getMainRenderTarget().height
-		);
-		Screenshot.takeScreenshot(client.getMainRenderTarget(), image -> handleScreenshot(client, capture, image));
+		long intervalNanos = 1_000_000_000L / Math.clamp(Math.max(1, liveStream.payload().targetFps()), 1, MAX_LIVE_STREAM_FPS);
+		long nowNanos = System.nanoTime();
+		if (liveStream.lastFrameAtNanos() != 0L && nowNanos - liveStream.lastFrameAtNanos() < intervalNanos) {
+			return;
+		}
+		liveStream.markFrameInFlight(nowNanos);
+		Screenshot.takeScreenshot(client.getMainRenderTarget(), image -> handleLiveStreamScreenshot(client, liveStream, image));
 	}
 
 	private static boolean isCaptureWorldReady(Minecraft client, RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload) {
+		LocalPlayer player = client.player;
+		if (player == null || client.level == null) {
+			return false;
+		}
+		if (client.screen != null || client.getOverlay() != null) {
+			return false;
+		}
+		Identifier expectedDimension = Identifier.tryParse(payload.dimensionId());
+		return expectedDimension != null && client.level.dimension().identifier().equals(expectedDimension);
+	}
+
+	private static boolean isLiveStreamWorldReady(Minecraft client, RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload) {
 		LocalPlayer player = client.player;
 		if (player == null || client.level == null) {
 			return false;
@@ -156,6 +244,10 @@ public final class RendererBotClientCapture {
 		CAPTURE_EXECUTOR.submit(() -> processCaptureAsync(client, capture, image));
 	}
 
+	private static void handleLiveStreamScreenshot(Minecraft client, LiveStreamSession session, NativeImage image) {
+		CAPTURE_EXECUTOR.submit(() -> processLiveStreamFrame(client, session, image));
+	}
+
 	private static void processCaptureAsync(Minecraft client, PendingCapture capture, NativeImage image) {
 		RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload = capture.payload();
 		try {
@@ -164,13 +256,13 @@ public final class RendererBotClientCapture {
 			int height = image.getHeight();
 			int[] pixels = image.makePixelArray();
 			CompletableFuture<byte[]> previewFuture = CompletableFuture.supplyAsync(
-					() -> quantizeScaledFrame(pixels, width, height, payload.previewWidth(), payload.previewHeight()),
+					() -> quantizeFrame(pixels, width, height, payload.previewWidth(), payload.previewHeight()),
 					CAPTURE_EXECUTOR
 			);
 			CompletableFuture<byte[]> fullFuture = payload.previewWidth() == payload.fullWidth() && payload.previewHeight() == payload.fullHeight()
 					? previewFuture.thenApply(bytes -> bytes)
 					: CompletableFuture.supplyAsync(
-							() -> quantizeScaledFrame(pixels, width, height, payload.fullWidth(), payload.fullHeight()),
+							() -> quantizeFrame(pixels, width, height, payload.fullWidth(), payload.fullHeight()),
 							CAPTURE_EXECUTOR
 					);
 			byte[] previewPixels = previewFuture.join();
@@ -208,6 +300,28 @@ public final class RendererBotClientCapture {
 		}
 	}
 
+	private static void processLiveStreamFrame(Minecraft client, LiveStreamSession session, NativeImage image) {
+		RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload = session.payload();
+		try {
+			int width = image.getWidth();
+			int height = image.getHeight();
+			int[] pixels = image.makePixelArray();
+			byte[] fullPixels = quantizeFrame(pixels, width, height, payload.fullWidth(), payload.fullHeight());
+			client.execute(() -> {
+				ClientPlayNetworking.send(new RendererBotPayloads.RendererBotLiveFrameC2SPayload(payload.streamId(), fullPixels));
+				clearLiveStreamFrameInFlight(payload.streamId());
+			});
+		} catch (Throwable throwable) {
+			client.execute(() -> {
+				sendLiveFailure(payload, throwable.getMessage() != null ? throwable.getMessage() : throwable.getClass().getSimpleName());
+				clearLiveStreamSession(payload.streamId());
+			});
+			Lg2.LOGGER.error("Renderer bot live stream frame failed", throwable);
+		} finally {
+			image.close();
+		}
+	}
+
 	private static void persistPhotoSource(RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload, NativeImage image) throws Exception {
 		if (payload == null || image == null) {
 			return;
@@ -215,6 +329,25 @@ public final class RendererBotClientCapture {
 		String sourceKey = payload.requestId().toString();
 		CameraMediaCache.ensurePhotoParent(sourceKey);
 		image.writeToFile(CameraMediaCache.photoSourcePath(sourceKey));
+	}
+
+	private static byte[] quantizeFrame(int[] sourcePixels, int sourceWidth, int sourceHeight, int outputWidth, int outputHeight) {
+		if (sourceWidth == outputWidth && sourceHeight == outputHeight) {
+			return quantizeExactFrame(sourcePixels, outputWidth, outputHeight);
+		}
+		return quantizeScaledFrame(sourcePixels, sourceWidth, sourceHeight, outputWidth, outputHeight);
+	}
+
+	private static byte[] quantizeExactFrame(int[] sourcePixels, int width, int height) {
+		byte[] output = new byte[Math.max(1, width * height)];
+		for (int y = 0; y < height; y++) {
+			int rowStart = y * width;
+			for (int x = 0; x < width; x++) {
+				int rgb = sourcePixels[rowStart + x] & 0xFFFFFF;
+				output[rowStart + x] = MapPaletteQuantizer.quantizeDithered(rgb, x, y);
+			}
+		}
+		return output;
 	}
 
 	private static byte[] quantizeScaledFrame(int[] sourcePixels, int sourceWidth, int sourceHeight, int outputWidth, int outputHeight) {
@@ -310,6 +443,14 @@ public final class RendererBotClientCapture {
 		ClientPlayNetworking.send(new RendererBotPayloads.RendererBotFullFrameC2SPayload(payload.requestId(), fullPixels));
 	}
 
+	private static void sendLiveFailure(RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload, String message) {
+		Lg2.LOGGER.warn("Renderer bot failing live stream {}: {}", payload.streamId(), message);
+		ClientPlayNetworking.send(new RendererBotPayloads.RendererBotLiveStreamFailureC2SPayload(
+				payload.streamId(),
+				message == null || message.isBlank() ? "Renderer bot live stream failed" : message
+		));
+	}
+
 	private static void restoreFov(PendingCapture capture) {
 		synchronized (LOCK) {
 			if (pendingCapture == null || Objects.equals(pendingCapture.payload().requestId(), capture.payload().requestId())) {
@@ -327,6 +468,27 @@ public final class RendererBotClientCapture {
 				Minecraft.getInstance().options.fov().set(pendingCapture.originalFov());
 				pendingCapture = null;
 			}
+		}
+	}
+
+	private static void clearLiveStreamSession(UUID streamId) {
+		synchronized (LOCK) {
+			if (liveStreamSession == null) {
+				return;
+			}
+			if (streamId == null || liveStreamSession.payload().streamId().equals(streamId)) {
+				Minecraft.getInstance().options.fov().set(liveStreamSession.originalFov());
+				liveStreamSession = null;
+			}
+		}
+	}
+
+	private static void clearLiveStreamFrameInFlight(UUID streamId) {
+		synchronized (LOCK) {
+			if (liveStreamSession == null || !liveStreamSession.payload().streamId().equals(streamId)) {
+				return;
+			}
+			liveStreamSession.clearFrameInFlight();
 		}
 	}
 
@@ -348,6 +510,15 @@ public final class RendererBotClientCapture {
 	}
 
 	private static int computeRenderHeight(RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload, int renderWidth) {
+		double aspect = Math.max(1.0D, payload.fullHeight()) / (double) Math.max(1.0D, payload.fullWidth());
+		return Mth.clamp((int) Math.round(renderWidth * aspect), 1, MAX_RENDER_HEIGHT);
+	}
+
+	private static int computeLiveRenderWidth(RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload) {
+		return Mth.clamp(Math.max(1, payload.fullWidth()), 1, MAX_RENDER_WIDTH);
+	}
+
+	private static int computeLiveRenderHeight(RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload, int renderWidth) {
 		double aspect = Math.max(1.0D, payload.fullHeight()) / (double) Math.max(1.0D, payload.fullWidth());
 		return Mth.clamp((int) Math.round(renderWidth * aspect), 1, MAX_RENDER_HEIGHT);
 	}
@@ -409,6 +580,68 @@ public final class RendererBotClientCapture {
 
 		private void markScreenshotRequested() {
 			this.screenshotRequested = true;
+		}
+	}
+
+	private static final class LiveStreamSession {
+		private final RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload;
+		private final int originalFov;
+		private final long startedAtMillis;
+		private int remainingWarmupFrames;
+		private long lastFrameAtNanos;
+		private boolean frameInFlight;
+
+		private LiveStreamSession(
+				RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload,
+				int originalFov,
+				long startedAtMillis,
+				int remainingWarmupFrames
+		) {
+			this.payload = payload;
+			this.originalFov = originalFov;
+			this.startedAtMillis = startedAtMillis;
+			this.remainingWarmupFrames = remainingWarmupFrames;
+			this.lastFrameAtNanos = 0L;
+			this.frameInFlight = false;
+		}
+
+		private RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload() {
+			return this.payload;
+		}
+
+		private int originalFov() {
+			return this.originalFov;
+		}
+
+		private long startedAtMillis() {
+			return this.startedAtMillis;
+		}
+
+		private int remainingWarmupFrames() {
+			return this.remainingWarmupFrames;
+		}
+
+		private void decrementWarmupFrames() {
+			if (this.remainingWarmupFrames > 0) {
+				this.remainingWarmupFrames--;
+			}
+		}
+
+		private long lastFrameAtNanos() {
+			return this.lastFrameAtNanos;
+		}
+
+		private boolean frameInFlight() {
+			return this.frameInFlight;
+		}
+
+		private void markFrameInFlight(long nowNanos) {
+			this.lastFrameAtNanos = nowNanos;
+			this.frameInFlight = true;
+		}
+
+		private void clearFrameInFlight() {
+			this.frameInFlight = false;
 		}
 	}
 

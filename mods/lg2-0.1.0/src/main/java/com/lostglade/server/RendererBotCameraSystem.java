@@ -20,13 +20,18 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 public final class RendererBotCameraSystem {
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
 	private static final int MAX_VIDEO_RECORDING_FPS = 20;
+	private static final int MAX_LIVE_STREAM_FPS = 20;
+	private static final long LIVE_STREAM_STALE_MS = 1_500L;
 	private static final Map<UUID, BotHandshake> READY_BOTS = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingCapture> PENDING_CAPTURES = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingVideoRecording> PENDING_VIDEO_RECORDINGS = new ConcurrentHashMap<>();
+	private static final Map<UUID, ActiveLiveStream> ACTIVE_LIVE_STREAMS = new ConcurrentHashMap<>();
+	private static final Map<String, UUID> LIVE_STREAMS_BY_OWNER = new ConcurrentHashMap<>();
 
 	private RendererBotCameraSystem() {
 	}
@@ -37,6 +42,7 @@ public final class RendererBotCameraSystem {
 			READY_BOTS.remove(botUuid);
 			failCapturesForBot(botUuid, "Renderer bot disconnected during capture");
 			failVideoRecordingsForBot(botUuid, "Renderer bot disconnected during video recording");
+			failLiveStreamsForBot(botUuid, "Renderer bot disconnected during live stream");
 		});
 		ServerPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotHelloC2SPayload.TYPE,
@@ -71,6 +77,23 @@ public final class RendererBotCameraSystem {
 				}
 		);
 		ServerPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotLiveFrameC2SPayload.TYPE,
+				(payload, context) -> {
+					ActiveLiveStream stream = ACTIVE_LIVE_STREAMS.get(payload.streamId());
+					if (stream == null || !stream.botUuid().equals(context.player().getUUID())) {
+						return;
+					}
+					stream.markFrameReceived();
+					context.player().level().getServer().execute(() -> {
+						ActiveLiveStream current = ACTIVE_LIVE_STREAMS.get(payload.streamId());
+						if (current == null || !current.botUuid().equals(context.player().getUUID())) {
+							return;
+						}
+						current.onFrame().accept(payload.pixels());
+					});
+				}
+		);
+		ServerPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotCaptureFailureC2SPayload.TYPE,
 				(payload, context) -> {
 					PendingCapture capture = PENDING_CAPTURES.get(payload.requestId());
@@ -88,6 +111,22 @@ public final class RendererBotCameraSystem {
 					capture.previewFuture().completeExceptionally(failure);
 					capture.fullFuture().completeExceptionally(failure);
 					PENDING_CAPTURES.remove(payload.requestId());
+				}
+		);
+		ServerPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotLiveStreamFailureC2SPayload.TYPE,
+				(payload, context) -> {
+					ActiveLiveStream stream = ACTIVE_LIVE_STREAMS.get(payload.streamId());
+					if (stream == null || !stream.botUuid().equals(context.player().getUUID())) {
+						return;
+					}
+					context.player().level().getServer().execute(() -> {
+						ActiveLiveStream current = ACTIVE_LIVE_STREAMS.get(payload.streamId());
+						if (current == null || !current.botUuid().equals(context.player().getUUID())) {
+							return;
+						}
+						stopLiveStreamInternal(current, payload.message(), true);
+					});
 				}
 		);
 		ServerPlayNetworking.registerGlobalReceiver(
@@ -113,6 +152,11 @@ public final class RendererBotCameraSystem {
 				recording.completionFuture().completeExceptionally(new IllegalStateException("Renderer bot recording aborted: server stopping"));
 			}
 			PENDING_VIDEO_RECORDINGS.clear();
+			for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+				stream.onFailure().accept("Renderer bot live stream aborted: server stopping");
+			}
+			ACTIVE_LIVE_STREAMS.clear();
+			LIVE_STREAMS_BY_OWNER.clear();
 		});
 	}
 
@@ -158,6 +202,7 @@ public final class RendererBotCameraSystem {
 		if (bot == null) {
 			return null;
 		}
+		stopLiveStreamForBot(bot.getUUID(), "Renderer bot switched from live stream to photo capture", false);
 
 		int clampedPreviewWidth = Math.max(1, previewWidth);
 		int clampedPreviewHeight = Math.max(1, previewHeight);
@@ -205,6 +250,121 @@ public final class RendererBotCameraSystem {
 		return new ClientCaptureHandle(requestId, previewFuture, fullFuture);
 	}
 
+	public static boolean ensureLiveStream(
+			String ownerKey,
+			ServerLevel level,
+			double x,
+			double y,
+			double z,
+			float yaw,
+			float pitch,
+			int fullWidth,
+			int fullHeight,
+			int fovDegrees,
+			int targetFps,
+			Consumer<byte[]> onFrame,
+			Consumer<String> onFailure
+	) {
+		if (ownerKey == null || level == null || onFrame == null || onFailure == null) {
+			return false;
+		}
+		MinecraftServer server = level.getServer();
+		if (server == null) {
+			onFailure.accept("Сервер камеры недоступен");
+			return false;
+		}
+
+		ServerPlayer bot = selectBot(server);
+		if (bot == null) {
+			onFailure.accept("Нет активного клиента камеры");
+			return false;
+		}
+
+		LiveStreamSpec desiredSpec = new LiveStreamSpec(
+				level.dimension().identifier().toString(),
+				x,
+				y,
+				z,
+				yaw,
+				pitch,
+				Math.max(1, fullWidth),
+				Math.max(1, fullHeight),
+				Math.max(1, fovDegrees),
+				Math.clamp(Math.max(1, targetFps), 1, MAX_LIVE_STREAM_FPS)
+		);
+		UUID existingStreamId = LIVE_STREAMS_BY_OWNER.get(ownerKey);
+		if (existingStreamId != null) {
+			ActiveLiveStream existing = ACTIVE_LIVE_STREAMS.get(existingStreamId);
+			if (existing != null
+					&& existing.botUuid().equals(bot.getUUID())
+					&& existing.spec().equals(desiredSpec)
+					&& !existing.isStale()) {
+				return true;
+			}
+			stopLiveStreamInternal(existing, "Renderer bot live stream restarted", false);
+		}
+
+		stopLiveStreamForBot(bot.getUUID(), "Renderer bot reassigned to another live stream", false);
+
+		level.getChunkAt(net.minecraft.core.BlockPos.containing(x, y, z));
+		bot.teleportTo(
+				level,
+				x,
+				y,
+				z,
+				ABSOLUTE_TELEPORT,
+				yaw,
+				pitch,
+				false
+		);
+		bot.fallDistance = 0.0F;
+
+		UUID streamId = UUID.randomUUID();
+		ActiveLiveStream stream = new ActiveLiveStream(server, streamId, ownerKey, bot.getUUID(), desiredSpec, onFrame, onFailure);
+		ACTIVE_LIVE_STREAMS.put(streamId, stream);
+		LIVE_STREAMS_BY_OWNER.put(ownerKey, streamId);
+		ServerPlayNetworking.send(
+				bot,
+				new RendererBotPayloads.RendererBotLiveStreamStartS2CPayload(
+						streamId,
+						desiredSpec.dimensionId(),
+						desiredSpec.expectedX(),
+						desiredSpec.expectedY(),
+						desiredSpec.expectedZ(),
+						desiredSpec.expectedYaw(),
+						desiredSpec.expectedPitch(),
+						desiredSpec.fullWidth(),
+						desiredSpec.fullHeight(),
+						desiredSpec.fovDegrees(),
+						desiredSpec.targetFps()
+				)
+		);
+		return true;
+	}
+
+	public static void stopLiveStream(String ownerKey) {
+		if (ownerKey == null) {
+			return;
+		}
+		UUID streamId = LIVE_STREAMS_BY_OWNER.remove(ownerKey);
+		if (streamId == null) {
+			return;
+		}
+		stopLiveStreamInternal(ACTIVE_LIVE_STREAMS.remove(streamId), "Renderer bot live stream stopped", false);
+	}
+
+	public static boolean isLiveStreamHealthy(String ownerKey) {
+		if (ownerKey == null) {
+			return false;
+		}
+		UUID streamId = LIVE_STREAMS_BY_OWNER.get(ownerKey);
+		if (streamId == null) {
+			return false;
+		}
+		ActiveLiveStream stream = ACTIVE_LIVE_STREAMS.get(streamId);
+		return stream != null && !stream.isStale();
+	}
+
 	public static VideoRecordingHandle startVideoRecording(ServerPlayer requester, int mapsWide, int mapsHigh, int targetFps, int maxDurationSeconds) {
 		MinecraftServer server = requester == null || requester.level() == null ? null : requester.level().getServer();
 		if (server == null) {
@@ -215,6 +375,7 @@ public final class RendererBotCameraSystem {
 		if (bot == null) {
 			return null;
 		}
+		stopLiveStreamForBot(bot.getUUID(), "Renderer bot switched from live stream to video recording", false);
 
 		int previewWidth = 128;
 		int previewHeight = 128;
@@ -339,6 +500,45 @@ public final class RendererBotCameraSystem {
 		}
 	}
 
+	private static void failLiveStreamsForBot(UUID botUuid, String message) {
+		if (botUuid == null) {
+			return;
+		}
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null || !botUuid.equals(stream.botUuid())) {
+				continue;
+			}
+			stopLiveStreamInternal(stream, message, true);
+		}
+	}
+
+	private static void stopLiveStreamForBot(UUID botUuid, String message, boolean notifyFailure) {
+		if (botUuid == null) {
+			return;
+		}
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null || !botUuid.equals(stream.botUuid())) {
+				continue;
+			}
+			stopLiveStreamInternal(stream, message, notifyFailure);
+		}
+	}
+
+	private static void stopLiveStreamInternal(ActiveLiveStream stream, String message, boolean notifyFailure) {
+		if (stream == null) {
+			return;
+		}
+		ACTIVE_LIVE_STREAMS.remove(stream.streamId(), stream);
+		LIVE_STREAMS_BY_OWNER.remove(stream.ownerKey(), stream.streamId());
+		ServerPlayer bot = stream.server().getPlayerList().getPlayer(stream.botUuid());
+		if (bot != null && ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotLiveStreamStopS2CPayload.TYPE)) {
+			ServerPlayNetworking.send(bot, new RendererBotPayloads.RendererBotLiveStreamStopS2CPayload(stream.streamId()));
+		}
+		if (notifyFailure) {
+			stream.onFailure().accept(message);
+		}
+	}
+
 	private static void failCapturesForBot(UUID botUuid, String message) {
 		if (botUuid == null) {
 			return;
@@ -424,6 +624,89 @@ public final class RendererBotCameraSystem {
 			UUID botUuid,
 			CompletableFuture<VideoRecordingResult> completionFuture
 	) {
+	}
+
+	private record LiveStreamSpec(
+			String dimensionId,
+			double expectedX,
+			double expectedY,
+			double expectedZ,
+			float expectedYaw,
+			float expectedPitch,
+			int fullWidth,
+			int fullHeight,
+			int fovDegrees,
+			int targetFps
+	) {
+	}
+
+	private static final class ActiveLiveStream {
+		private final MinecraftServer server;
+		private final UUID streamId;
+		private final String ownerKey;
+		private final UUID botUuid;
+		private final LiveStreamSpec spec;
+		private final Consumer<byte[]> onFrame;
+		private final Consumer<String> onFailure;
+		private final long startedAtMillis;
+		private volatile long lastFrameAtMillis;
+
+		private ActiveLiveStream(
+				MinecraftServer server,
+				UUID streamId,
+				String ownerKey,
+				UUID botUuid,
+				LiveStreamSpec spec,
+				Consumer<byte[]> onFrame,
+				Consumer<String> onFailure
+		) {
+			this.server = server;
+			this.streamId = streamId;
+			this.ownerKey = ownerKey;
+			this.botUuid = botUuid;
+			this.spec = spec;
+			this.onFrame = onFrame;
+			this.onFailure = onFailure;
+			this.startedAtMillis = System.currentTimeMillis();
+			this.lastFrameAtMillis = 0L;
+		}
+
+		private MinecraftServer server() {
+			return this.server;
+		}
+
+		private UUID streamId() {
+			return this.streamId;
+		}
+
+		private String ownerKey() {
+			return this.ownerKey;
+		}
+
+		private UUID botUuid() {
+			return this.botUuid;
+		}
+
+		private LiveStreamSpec spec() {
+			return this.spec;
+		}
+
+		private Consumer<byte[]> onFrame() {
+			return this.onFrame;
+		}
+
+		private Consumer<String> onFailure() {
+			return this.onFailure;
+		}
+
+		private void markFrameReceived() {
+			this.lastFrameAtMillis = System.currentTimeMillis();
+		}
+
+		private boolean isStale() {
+			long referenceTime = this.lastFrameAtMillis > 0L ? this.lastFrameAtMillis : this.startedAtMillis;
+			return System.currentTimeMillis() - referenceTime > LIVE_STREAM_STALE_MS;
+		}
 	}
 
 	public record VideoRecordingResult(
