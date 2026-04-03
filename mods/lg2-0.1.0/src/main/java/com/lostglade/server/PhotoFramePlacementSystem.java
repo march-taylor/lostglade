@@ -61,6 +61,7 @@ public final class PhotoFramePlacementSystem {
 		}
 
 		ItemStack photoItem = recreatePhotoItem(frameStack, frameData);
+		CameraAnimatedMapPlaybackSystem.unregisterPlacedVideo(frameData.groupId());
 		clearPlacedPhoto(level, frameData);
 		if (photoItem.isEmpty()) {
 			return;
@@ -116,6 +117,9 @@ public final class PhotoFramePlacementSystem {
 		if (!player.getAbilities().instabuild) {
 			heldStack.shrink(1);
 		}
+		if (data.isVideo()) {
+			CameraAnimatedMapPlaybackSystem.registerPlacedVideo((ServerLevel) player.level(), data.placed(groupId, anchorPos, facing, 0, 0));
+		}
 		ServerMechanicsGateSystem.syncPlayerInventory(player);
 		return true;
 	}
@@ -130,6 +134,7 @@ public final class PhotoFramePlacementSystem {
 			return false;
 		}
 		ItemStack photoItem = recreatePhotoItem(frameStack, frameData);
+		CameraAnimatedMapPlaybackSystem.unregisterPlacedVideo(frameData.groupId());
 		clearPlacedPhoto(level, frameData);
 		giveOrDrop(player, photoItem);
 		ServerMechanicsGateSystem.syncPlayerInventory(player);

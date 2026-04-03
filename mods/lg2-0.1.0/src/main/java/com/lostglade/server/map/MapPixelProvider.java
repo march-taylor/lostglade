@@ -1,5 +1,6 @@
 package com.lostglade.server.map;
 
+import com.lostglade.item.PhotoPrintData;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -68,6 +69,22 @@ public interface MapPixelProvider {
 	}
 
 	default void onCompleted(MinecraftServer server) {
+	}
+
+	default PhotoPrintData.MediaKind mediaKind() {
+		return PhotoPrintData.MediaKind.PHOTO;
+	}
+
+	default String sourceKey() {
+		return "";
+	}
+
+	default long mediaDurationMs() {
+		return 0L;
+	}
+
+	default int mediaFps() {
+		return 0;
 	}
 
 	default Component completedMessage() {

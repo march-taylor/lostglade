@@ -20,6 +20,7 @@ def skinRestorerNestedLibDir = file("${buildDir}/skinrestorer-libs")
 def skinRestorerJavaClientJars = fileTree(dir: skinRestorerNestedLibDir, include: "java-client-*.jar")
 def rendererBotNameProp = providers.systemProperty("lg2.rendererBotName").orElse("RendererBot")
 def rendererBotServerProp = providers.systemProperty("lg2.rendererBotServer").orElse("127.0.0.1:25565")
+def cameraMediaCacheRoot = file("${serverRootDir}/cache/lg2-camera").canonicalFile
 
 repositories {
 	// Add repositories to retrieve artifacts from in here.
@@ -63,7 +64,8 @@ loom {
 					"-Xmx2G",
 					"-Dlg2.rendererBot=true",
 					"-Dlg2.rendererBotName=${rendererBotNameProp.get()}",
-					"-Dlg2.rendererBotServer=${rendererBotServerProp.get()}"
+					"-Dlg2.rendererBotServer=${rendererBotServerProp.get()}",
+					"-Dlg2.cameraMediaCacheRoot=${cameraMediaCacheRoot.absolutePath}"
 			)
 			programArg("--offlineDeveloperMode")
 			programArg("--username=${rendererBotNameProp.get()}")

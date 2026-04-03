@@ -16,7 +16,8 @@ public final class PhotoPrintItem extends SimplePolymerItem {
 
 	@Override
 	public Component getName(ItemStack stack) {
-		return Component.literal("Photo");
+		PhotoPrintData data = PhotoPrintData.readPhotoItem(stack);
+		return Component.literal(data != null && data.isVideo() ? "Video" : "Photo");
 	}
 
 	@Override

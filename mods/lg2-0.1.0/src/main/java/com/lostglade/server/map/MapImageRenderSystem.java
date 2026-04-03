@@ -85,7 +85,20 @@ public final class MapImageRenderSystem {
 		if (previewMap == null || previewMap.previewMapId() == null) {
 			return false;
 		}
-		givePhotoItem(player, PhotoPrintData.createPhotoItem(itemName, mapsWide, mapsHigh, previewMap.previewMapId(), photoMapSet.mapIds()));
+		givePhotoItem(
+				player,
+				PhotoPrintData.createPhotoItem(
+						itemName,
+						mapsWide,
+						mapsHigh,
+						previewMap.previewMapId(),
+						photoMapSet.mapIds(),
+						provider.mediaKind(),
+						provider.sourceKey(),
+						provider.mediaDurationMs(),
+						provider.mediaFps()
+				)
+		);
 		RenderJob job = new RenderJob(player.getUUID(), photoMapSet.mapIds(), photoMapSet.mapDataSet(), mapsWide, mapsHigh, previewMap.previewMapId().id(), previewMap.previewMapData(), provider);
 		PLAYER_JOBS.put(player.getUUID(), job);
 		QUEUE.offer(player.getUUID());

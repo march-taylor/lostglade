@@ -120,11 +120,13 @@ public final class RendererBotProcessSystem {
 
 		boolean headlessRequested = isBlank(System.getenv("DISPLAY")) && isBlank(System.getenv("WAYLAND_DISPLAY"));
 		String serverAddress = "127.0.0.1:" + Math.max(1, server.getPort());
+		Path cameraCacheRoot = server.getServerDirectory().resolve("cache").resolve("lg2-camera").toAbsolutePath().normalize();
 		List<String> command = new ArrayList<>();
 		command.add(gradlew.toString());
 		command.add("--console=plain");
 		command.add("-Dlg2.rendererBotName=" + botName.trim());
 		command.add("-Dlg2.rendererBotServer=" + serverAddress);
+		command.add("-Dlg2.cameraMediaCacheRoot=" + cameraCacheRoot);
 		if (headlessRequested) {
 			command.add("-Dlg2.rendererBotHeadless=true");
 		}

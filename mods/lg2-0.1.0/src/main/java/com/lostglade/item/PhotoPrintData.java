@@ -12,13 +12,26 @@ import net.minecraft.core.Direction;
 import java.util.Arrays;
 import java.util.UUID;
 
-public record PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[] mapIds) {
+public record PhotoPrintData(
+		int mapsWide,
+		int mapsHigh,
+		int previewMapId,
+		int[] mapIds,
+		PhotoPrintData.MediaKind mediaKind,
+		String sourceKey,
+		long durationMs,
+		int fps
+) {
 	private static final String PHOTO_ROOT_TAG = "lg2_photo_print";
 	private static final String FRAME_ROOT_TAG = "lg2_photo_frame";
 	private static final String MAPS_WIDE_TAG = "maps_wide";
 	private static final String MAPS_HIGH_TAG = "maps_high";
 	private static final String PREVIEW_MAP_ID_TAG = "preview_map_id";
 	private static final String MAP_IDS_TAG = "map_ids";
+	private static final String MEDIA_KIND_TAG = "media_kind";
+	private static final String SOURCE_KEY_TAG = "source_key";
+	private static final String DURATION_MS_TAG = "duration_ms";
+	private static final String FPS_TAG = "fps";
 	private static final String GROUP_ID_TAG = "group_id";
 	private static final String ANCHOR_X_TAG = "anchor_x";
 	private static final String ANCHOR_Y_TAG = "anchor_y";
@@ -28,15 +41,54 @@ public record PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[]
 	private static final String TILE_Y_TAG = "tile_y";
 	private static final String FRAME_NAME_TAG = "stored_name";
 
+	public enum MediaKind {
+		PHOTO("photo"),
+		VIDEO("video");
+
+		private final String serializedName;
+
+		MediaKind(String serializedName) {
+			this.serializedName = serializedName;
+		}
+
+		public String serializedName() {
+			return this.serializedName;
+		}
+
+		public static MediaKind fromSerializedName(String raw) {
+			if (raw == null) {
+				return PHOTO;
+			}
+			for (MediaKind kind : values()) {
+				if (kind.serializedName.equalsIgnoreCase(raw)) {
+					return kind;
+				}
+			}
+			return PHOTO;
+		}
+	}
+
 	public PhotoPrintData {
 		mapsWide = Math.max(1, mapsWide);
 		mapsHigh = Math.max(1, mapsHigh);
 		mapIds = mapIds == null ? new int[0] : Arrays.copyOf(mapIds, mapIds.length);
 		previewMapId = normalizePreviewMapId(previewMapId, mapIds);
+		mediaKind = mediaKind == null ? MediaKind.PHOTO : mediaKind;
+		sourceKey = sourceKey == null ? "" : sourceKey.trim();
+		durationMs = Math.max(0L, durationMs);
+		fps = Math.max(0, fps);
 	}
 
 	public PhotoPrintData(int mapsWide, int mapsHigh, int[] mapIds) {
-		this(mapsWide, mapsHigh, firstValidMapId(mapIds), mapIds);
+		this(mapsWide, mapsHigh, firstValidMapId(mapIds), mapIds, MediaKind.PHOTO, "", 0L, 0);
+	}
+
+	public PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[] mapIds) {
+		this(mapsWide, mapsHigh, previewMapId, mapIds, MediaKind.PHOTO, "", 0L, 0);
+	}
+
+	public PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[] mapIds, String sourceKey) {
+		this(mapsWide, mapsHigh, previewMapId, mapIds, MediaKind.PHOTO, sourceKey, 0L, 0);
 	}
 
 	public static ItemStack createPhotoItem(Component name, int mapsWide, int mapsHigh, MapId[] mapIds) {
@@ -45,6 +97,20 @@ public record PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[]
 	}
 
 	public static ItemStack createPhotoItem(Component name, int mapsWide, int mapsHigh, MapId previewMapId, MapId[] mapIds) {
+		return createPhotoItem(name, mapsWide, mapsHigh, previewMapId, mapIds, MediaKind.PHOTO, "", 0L, 0);
+	}
+
+	public static ItemStack createPhotoItem(
+			Component name,
+			int mapsWide,
+			int mapsHigh,
+			MapId previewMapId,
+			MapId[] mapIds,
+			MediaKind mediaKind,
+			String sourceKey,
+			long durationMs,
+			int fps
+	) {
 		ItemStack stack = new ItemStack(ModItems.PHOTO_PRINT);
 		if (name != null) {
 			stack.set(DataComponents.CUSTOM_NAME, name.copy());
@@ -54,7 +120,7 @@ public record PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[]
 			rawIds[i] = mapIds[i] == null ? -1 : mapIds[i].id();
 		}
 		int rawPreviewMapId = previewMapId == null ? -1 : previewMapId.id();
-		writePhotoItem(stack, new PhotoPrintData(mapsWide, mapsHigh, rawPreviewMapId, rawIds));
+		writePhotoItem(stack, new PhotoPrintData(mapsWide, mapsHigh, rawPreviewMapId, rawIds, mediaKind, sourceKey, durationMs, fps));
 		return stack;
 	}
 
@@ -68,6 +134,14 @@ public record PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[]
 			photoTag.putInt(MAPS_HIGH_TAG, data.mapsHigh());
 			photoTag.putInt(PREVIEW_MAP_ID_TAG, data.previewMapId());
 			photoTag.putIntArray(MAP_IDS_TAG, data.mapIds());
+			photoTag.putString(MEDIA_KIND_TAG, data.mediaKind().serializedName());
+			if (data.sourceKey().isBlank()) {
+				photoTag.remove(SOURCE_KEY_TAG);
+			} else {
+				photoTag.putString(SOURCE_KEY_TAG, data.sourceKey());
+			}
+			photoTag.putLong(DURATION_MS_TAG, data.durationMs());
+			photoTag.putInt(FPS_TAG, data.fps());
 			tag.put(PHOTO_ROOT_TAG, photoTag);
 		});
 	}
@@ -90,7 +164,11 @@ public record PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[]
 				photoTag.getIntOr(MAPS_WIDE_TAG, 1),
 				photoTag.getIntOr(MAPS_HIGH_TAG, 1),
 				photoTag.getIntOr(PREVIEW_MAP_ID_TAG, firstValidMapId(mapIds)),
-				mapIds
+				mapIds,
+				MediaKind.fromSerializedName(photoTag.getStringOr(MEDIA_KIND_TAG, MediaKind.PHOTO.serializedName())),
+				photoTag.getStringOr(SOURCE_KEY_TAG, ""),
+				photoTag.getLongOr(DURATION_MS_TAG, 0L),
+				photoTag.getIntOr(FPS_TAG, 0)
 		);
 		return data.isValid() ? data : null;
 	}
@@ -141,6 +219,14 @@ public record PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[]
 				&& Arrays.equals(this.mapIds, other.mapIds);
 	}
 
+	public boolean isVideo() {
+		return this.mediaKind == MediaKind.VIDEO;
+	}
+
+	public boolean isPhoto() {
+		return this.mediaKind == MediaKind.PHOTO;
+	}
+
 	public int mapIdAt(int tileX, int tileY) {
 		if (tileX < 0 || tileY < 0 || tileX >= this.mapsWide || tileY >= this.mapsHigh) {
 			return -1;
@@ -149,7 +235,21 @@ public record PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[]
 	}
 
 	public PlacedPhotoFrameData placed(UUID groupId, BlockPos anchorPos, Direction direction, int tileX, int tileY) {
-		return new PlacedPhotoFrameData(groupId, anchorPos, direction, this.mapsWide, this.mapsHigh, tileX, tileY, this.previewMapId, this.mapIds);
+		return new PlacedPhotoFrameData(
+				groupId,
+				anchorPos,
+				direction,
+				this.mapsWide,
+				this.mapsHigh,
+				tileX,
+				tileY,
+				this.previewMapId,
+				this.mapIds,
+				this.mediaKind,
+				this.sourceKey,
+				this.durationMs,
+				this.fps
+		);
 	}
 
 	public static void writeFrameTile(ItemStack stack, PlacedPhotoFrameData data) {
@@ -169,6 +269,14 @@ public record PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[]
 			frameTag.putInt(TILE_Y_TAG, data.tileY());
 			frameTag.putInt(PREVIEW_MAP_ID_TAG, data.previewMapId());
 			frameTag.putIntArray(MAP_IDS_TAG, data.mapIds());
+			frameTag.putString(MEDIA_KIND_TAG, data.mediaKind().serializedName());
+			if (data.sourceKey().isBlank()) {
+				frameTag.remove(SOURCE_KEY_TAG);
+			} else {
+				frameTag.putString(SOURCE_KEY_TAG, data.sourceKey());
+			}
+			frameTag.putLong(DURATION_MS_TAG, data.durationMs());
+			frameTag.putInt(FPS_TAG, data.fps());
 			tag.put(FRAME_ROOT_TAG, frameTag);
 		});
 	}
@@ -246,7 +354,11 @@ public record PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[]
 				frameTag.getIntOr(TILE_X_TAG, 0),
 				frameTag.getIntOr(TILE_Y_TAG, 0),
 				frameTag.getIntOr(PREVIEW_MAP_ID_TAG, firstValidMapId(mapIds)),
-				mapIds
+				mapIds,
+				MediaKind.fromSerializedName(frameTag.getStringOr(MEDIA_KIND_TAG, MediaKind.PHOTO.serializedName())),
+				frameTag.getStringOr(SOURCE_KEY_TAG, ""),
+				frameTag.getLongOr(DURATION_MS_TAG, 0L),
+				frameTag.getIntOr(FPS_TAG, 0)
 		);
 		return data.isValid() ? data : null;
 	}
@@ -260,11 +372,19 @@ public record PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[]
 			int tileX,
 			int tileY,
 			int previewMapId,
-			int[] mapIds
+			int[] mapIds,
+			MediaKind mediaKind,
+			String sourceKey,
+			long durationMs,
+			int fps
 	) {
 		public PlacedPhotoFrameData {
 			mapIds = mapIds == null ? new int[0] : Arrays.copyOf(mapIds, mapIds.length);
 			previewMapId = normalizePreviewMapId(previewMapId, mapIds);
+			mediaKind = mediaKind == null ? MediaKind.PHOTO : mediaKind;
+			sourceKey = sourceKey == null ? "" : sourceKey.trim();
+			durationMs = Math.max(0L, durationMs);
+			fps = Math.max(0, fps);
 		}
 
 		public boolean isValid() {
@@ -286,7 +406,7 @@ public record PhotoPrintData(int mapsWide, int mapsHigh, int previewMapId, int[]
 		}
 
 		public PhotoPrintData asPhotoPrintData() {
-			return new PhotoPrintData(this.mapsWide, this.mapsHigh, this.previewMapId, this.mapIds);
+			return new PhotoPrintData(this.mapsWide, this.mapsHigh, this.previewMapId, this.mapIds, this.mediaKind, this.sourceKey, this.durationMs, this.fps);
 		}
 
 		public boolean samePhoto(PhotoPrintData photoData) {

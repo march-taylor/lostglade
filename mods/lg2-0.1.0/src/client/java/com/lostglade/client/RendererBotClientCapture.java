@@ -2,6 +2,7 @@ package com.lostglade.client;
 
 import com.lostglade.Lg2;
 import com.lostglade.network.RendererBotPayloads;
+import com.lostglade.server.CameraMediaCache;
 import com.lostglade.server.map.MapPaletteQuantizer;
 import com.mojang.blaze3d.platform.NativeImage;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -157,6 +158,7 @@ public final class RendererBotClientCapture {
 	private static void processCaptureAsync(Minecraft client, PendingCapture capture, NativeImage image) {
 		RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload = capture.payload();
 		try {
+			persistPhotoSource(payload, image);
 			int width = image.getWidth();
 			int height = image.getHeight();
 			int[] pixels = image.makePixelArray();
@@ -203,6 +205,15 @@ public final class RendererBotClientCapture {
 		} finally {
 			image.close();
 		}
+	}
+
+	private static void persistPhotoSource(RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload, NativeImage image) throws Exception {
+		if (payload == null || image == null) {
+			return;
+		}
+		String sourceKey = payload.requestId().toString();
+		CameraMediaCache.ensurePhotoParent(sourceKey);
+		image.writeToFile(CameraMediaCache.photoSourcePath(sourceKey));
 	}
 
 	private static byte[] quantizeScaledFrame(int[] sourcePixels, int sourceWidth, int sourceHeight, int outputWidth, int outputHeight) {
