@@ -7,11 +7,13 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Relative;
+import net.minecraft.world.level.Level;
 
 import java.util.EnumSet;
 import java.util.Map;
@@ -28,6 +30,9 @@ public final class RendererBotCameraSystem {
 	private static final int MAX_VIDEO_RECORDING_FPS = 20;
 	private static final int MAX_LIVE_STREAM_FPS = 20;
 	private static final long LIVE_STREAM_STALE_MS = 1_500L;
+	private static final long PHOTO_CAPTURE_RETRY_INTERVAL_MS = 50L;
+	private static final double SHARED_RENDER_RADIUS_BLOCKS = 96.0D;
+	private static final double SHARED_RENDER_RADIUS_SQ = SHARED_RENDER_RADIUS_BLOCKS * SHARED_RENDER_RADIUS_BLOCKS;
 	private static final Map<UUID, BotHandshake> READY_BOTS = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingCapture> PENDING_CAPTURES = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingVideoRecording> PENDING_VIDEO_RECORDINGS = new ConcurrentHashMap<>();
@@ -178,7 +183,6 @@ public final class RendererBotCameraSystem {
 		if (bot == null) {
 			return null;
 		}
-		stopLiveStreamForBot(bot.getUUID(), "Renderer bot switched from live stream to photo capture", false);
 
 		return requestCaptureInternal(
 				server,
@@ -220,7 +224,6 @@ public final class RendererBotCameraSystem {
 		if (bot == null) {
 			return null;
 		}
-		stopLiveStreamForBot(bot.getUUID(), "Renderer bot switched from live stream to photo capture", false);
 
 		return requestCaptureInternal(
 				server,
@@ -268,22 +271,28 @@ public final class RendererBotCameraSystem {
 		long timeoutMillis = Math.max(500L, Lg2Config.get().cameraRendererBotTimeoutMs);
 		CompletableFuture<byte[]> previewFuture = new CompletableFuture<>();
 		CompletableFuture<byte[]> fullFuture = new CompletableFuture<>();
+		if (!isWithinActiveBotZone(server, bot.getUUID(), level, x, y, z)) {
+			return null;
+		}
+		anchorBotIfNeeded(bot, level, x, y, z, yaw, pitch);
 		PendingCapture pending = new PendingCapture(
 				requestId,
 				server,
 				bot.getUUID(),
 				followTarget != null,
+				level.dimension(),
+				x,
+				y,
+				z,
+				yaw,
+				pitch,
+				Math.max(1, fovDegrees),
+				followTarget != null ? followTarget.getUUID() : null,
 				previewFuture,
 				fullFuture
 		);
 		PENDING_CAPTURES.put(requestId, pending);
 		applyTimeout(requestId, pending, timeoutMillis);
-
-		if (followTarget != null) {
-			prepareBotToFollowEntity(bot, level, x, y, z, yaw, pitch, followTarget);
-		} else {
-			prepareBotForStaticView(bot, level, x, y, z, yaw, pitch);
-		}
 
 		ServerPlayNetworking.send(
 				bot,
@@ -295,6 +304,7 @@ public final class RendererBotCameraSystem {
 						z,
 						yaw,
 						pitch,
+						followTarget != null ? followTarget.getUUID() : null,
 						clampedPreviewWidth,
 						clampedPreviewHeight,
 						clampedFullWidth,
@@ -337,12 +347,13 @@ public final class RendererBotCameraSystem {
 		}
 
 		LiveStreamSpec desiredSpec = new LiveStreamSpec(
-				level.dimension().identifier().toString(),
+				level.dimension(),
 				x,
 				y,
 				z,
 				yaw,
 				pitch,
+				null,
 				Math.max(1, fullWidth),
 				Math.max(1, fullHeight),
 				Math.max(1, fovDegrees),
@@ -359,10 +370,11 @@ public final class RendererBotCameraSystem {
 			}
 			stopLiveStreamInternal(existing, "Renderer bot live stream restarted", false);
 		}
-
-		stopLiveStreamForBot(bot.getUUID(), "Renderer bot reassigned to another live stream", false);
-
-		prepareBotForStaticView(bot, level, x, y, z, yaw, pitch);
+		if (!isWithinActiveBotZone(server, bot.getUUID(), level, x, y, z)) {
+			onFailure.accept("Клиент камеры уже занят другой зоной");
+			return false;
+		}
+		anchorBotIfNeeded(bot, level, x, y, z, yaw, pitch);
 
 		UUID streamId = UUID.randomUUID();
 		ActiveLiveStream stream = new ActiveLiveStream(server, streamId, ownerKey, bot.getUUID(), desiredSpec, onFrame, onFailure);
@@ -372,7 +384,7 @@ public final class RendererBotCameraSystem {
 				bot,
 				new RendererBotPayloads.RendererBotLiveStreamStartS2CPayload(
 						streamId,
-						desiredSpec.dimensionId(),
+						desiredSpec.dimension().identifier().toString(),
 						desiredSpec.expectedX(),
 						desiredSpec.expectedY(),
 						desiredSpec.expectedZ(),
@@ -420,16 +432,35 @@ public final class RendererBotCameraSystem {
 		if (bot == null) {
 			return null;
 		}
-		stopLiveStreamForBot(bot.getUUID(), "Renderer bot switched from live stream to video recording", false);
 
 		int previewWidth = 128;
 		int previewHeight = 128;
 		int fullWidth = Math.max(1, mapsWide) * 128;
 		int fullHeight = Math.max(1, mapsHigh) * 128;
+		int clampedTargetFps = Math.clamp(Math.max(1, targetFps), 1, MAX_VIDEO_RECORDING_FPS);
+		if (!isWithinActiveBotZone(server, bot.getUUID(), (ServerLevel) requester.level(), requester.getX(), requester.getY(), requester.getZ())) {
+			return null;
+		}
+		anchorBotIfNeeded(bot, (ServerLevel) requester.level(), requester.getX(), requester.getY(), requester.getZ(), requester.getYRot(), requester.getXRot());
 		UUID requestId = UUID.randomUUID();
 		long timeoutMillis = Math.max(5_000L, Lg2Config.get().cameraRendererBotTimeoutMs);
 		CompletableFuture<VideoRecordingResult> completionFuture = new CompletableFuture<>();
-		PendingVideoRecording pending = new PendingVideoRecording(requestId, server, bot.getUUID(), true, completionFuture);
+		PendingVideoRecording pending = new PendingVideoRecording(
+				requestId,
+				server,
+				bot.getUUID(),
+				true,
+				requester.level().dimension(),
+				requester.getX(),
+				requester.getY(),
+				requester.getZ(),
+				requester.getYRot(),
+				requester.getXRot(),
+				70,
+				requester.getUUID(),
+				clampedTargetFps,
+				completionFuture
+		);
 		PENDING_VIDEO_RECORDINGS.put(requestId, pending);
 		completionFuture.orTimeout(Math.max(timeoutMillis, maxDurationSeconds * 1_000L + 30_000L), TimeUnit.MILLISECONDS)
 				.exceptionally(throwable -> {
@@ -440,18 +471,6 @@ public final class RendererBotCameraSystem {
 					return null;
 				});
 
-		prepareBotToFollowEntity(
-				bot,
-				(ServerLevel) requester.level(),
-				requester.getX(),
-				requester.getY(),
-				requester.getZ(),
-				requester.getYRot(),
-				requester.getXRot(),
-				requester
-		);
-
-		int clampedTargetFps = Math.clamp(Math.max(1, targetFps), 1, MAX_VIDEO_RECORDING_FPS);
 		ServerPlayNetworking.send(
 				bot,
 				new RendererBotPayloads.RendererBotVideoRecordingStartS2CPayload(
@@ -462,6 +481,7 @@ public final class RendererBotCameraSystem {
 						requester.getZ(),
 						requester.getYRot(),
 						requester.getXRot(),
+						requester.getUUID(),
 						previewWidth,
 						previewHeight,
 						fullWidth,
@@ -482,6 +502,7 @@ public final class RendererBotCameraSystem {
 		if (recording == null) {
 			return;
 		}
+		recording.markStopRequested();
 		ServerPlayer bot = server.getPlayerList().getPlayer(recording.botUuid());
 		if (bot == null || !ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotVideoRecordingStopS2CPayload.TYPE)) {
 			return;
@@ -581,6 +602,7 @@ public final class RendererBotCameraSystem {
 		if (bot != null && ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotLiveStreamStopS2CPayload.TYPE)) {
 			ServerPlayNetworking.send(bot, new RendererBotPayloads.RendererBotLiveStreamStopS2CPayload(stream.streamId()));
 		}
+		releaseBotCameraIfNeeded(stream.server(), stream.botUuid(), true);
 		if (notifyFailure) {
 			stream.onFailure().accept(message);
 		}
@@ -655,6 +677,21 @@ public final class RendererBotCameraSystem {
 		bot.fallDistance = 0.0F;
 	}
 
+	private static void anchorBotIfNeeded(
+			ServerPlayer bot,
+			ServerLevel level,
+			double x,
+			double y,
+			double z,
+			float yaw,
+			float pitch
+	) {
+		if (bot == null || level == null || botHasActiveJobs(bot.getUUID())) {
+			return;
+		}
+		prepareBotForStaticView(bot, level, x, y, z, yaw, pitch);
+	}
+
 	private static void prepareBotToFollowEntity(
 			ServerPlayer bot,
 			ServerLevel level,
@@ -675,10 +712,315 @@ public final class RendererBotCameraSystem {
 		if (!resetCameraOnFinish || server == null || botUuid == null) {
 			return;
 		}
+		if (botHasActiveJobs(botUuid)) {
+			return;
+		}
 		ServerPlayer bot = server.getPlayerList().getPlayer(botUuid);
 		if (bot != null && bot.getCamera() != bot) {
 			bot.setCamera(bot);
 		}
+	}
+
+	private static void tickBotJobs(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		ServerPlayer bot = selectBot(server);
+		if (bot == null) {
+			return;
+		}
+		long now = System.currentTimeMillis();
+		ScheduledServiceTarget selectedTarget = null;
+		long selectedDueAt = Long.MAX_VALUE;
+		int selectedPriority = Integer.MAX_VALUE;
+
+		for (Map.Entry<UUID, PendingCapture> entry : PENDING_CAPTURES.entrySet()) {
+			PendingCapture capture = entry.getValue();
+			if (capture == null || !bot.getUUID().equals(capture.botUuid()) || capture.isDone()) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.x(), capture.y(), capture.z(), capture.yaw(), capture.pitch(), capture.followEntityUuid());
+			if (target == null) {
+				failCapture(entry.getKey(), capture, "Renderer bot capture target is unavailable");
+				continue;
+			}
+			long dueAt = capture.nextDueAtMillis();
+			if (isBetterCandidate(dueAt, 0, selectedDueAt, selectedPriority)) {
+				selectedTarget = target;
+				selectedDueAt = dueAt;
+				selectedPriority = 0;
+			}
+		}
+
+		for (Map.Entry<UUID, PendingVideoRecording> entry : PENDING_VIDEO_RECORDINGS.entrySet()) {
+			PendingVideoRecording recording = entry.getValue();
+			if (recording == null || !bot.getUUID().equals(recording.botUuid()) || recording.completionFuture().isDone() || recording.stopRequested()) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, recording.dimension(), recording.x(), recording.y(), recording.z(), recording.yaw(), recording.pitch(), recording.followEntityUuid());
+			if (target == null) {
+				failVideoRecording(entry.getKey(), recording, "Renderer bot recording target is unavailable");
+				continue;
+			}
+			long dueAt = recording.nextDueAtMillis();
+			if (isBetterCandidate(dueAt, 1, selectedDueAt, selectedPriority)) {
+				selectedTarget = target;
+				selectedDueAt = dueAt;
+				selectedPriority = 1;
+			}
+		}
+
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null || !bot.getUUID().equals(stream.botUuid())) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(
+					server,
+					stream.spec().dimension(),
+					stream.spec().expectedX(),
+					stream.spec().expectedY(),
+					stream.spec().expectedZ(),
+					stream.spec().expectedYaw(),
+					stream.spec().expectedPitch(),
+					stream.spec().followEntityUuid()
+			);
+			if (target == null) {
+				stopLiveStreamInternal(stream, "Renderer bot live stream target is unavailable", true);
+				continue;
+			}
+			long dueAt = stream.nextDueAtMillis();
+			if (isBetterCandidate(dueAt, 2, selectedDueAt, selectedPriority)) {
+				selectedTarget = target;
+				selectedDueAt = dueAt;
+				selectedPriority = 2;
+			}
+		}
+
+		if (selectedTarget == null || selectedDueAt > now) {
+			return;
+		}
+		applyServiceTarget(bot, selectedTarget);
+		markDispatchedForMatchingJobs(bot.getUUID(), selectedTarget, now);
+	}
+
+	private static boolean isBetterCandidate(long dueAt, int priority, long selectedDueAt, int selectedPriority) {
+		return dueAt < selectedDueAt || (dueAt == selectedDueAt && priority < selectedPriority);
+	}
+
+	private static void applyServiceTarget(ServerPlayer bot, ScheduledServiceTarget target) {
+		if (bot == null || target == null || target.level() == null) {
+			return;
+		}
+		if (target.followTarget() != null) {
+			prepareBotToFollowEntity(
+					bot,
+					target.level(),
+					target.x(),
+					target.y(),
+					target.z(),
+					target.yaw(),
+					target.pitch(),
+					target.followTarget()
+			);
+			return;
+		}
+		prepareBotForStaticView(bot, target.level(), target.x(), target.y(), target.z(), target.yaw(), target.pitch());
+	}
+
+	private static void markDispatchedForMatchingJobs(UUID botUuid, ScheduledServiceTarget target, long now) {
+		if (botUuid == null || target == null) {
+			return;
+		}
+		for (PendingCapture capture : PENDING_CAPTURES.values()) {
+			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.isDone()) {
+				continue;
+			}
+			if (matchesTarget(capture.dimension(), capture.followEntityUuid(), capture.x(), capture.y(), capture.z(), capture.yaw(), capture.pitch(), target)) {
+				capture.markDispatched(now);
+			}
+		}
+		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
+			if (recording == null || !botUuid.equals(recording.botUuid()) || recording.stopRequested() || recording.completionFuture().isDone()) {
+				continue;
+			}
+			if (matchesTarget(recording.dimension(), recording.followEntityUuid(), recording.x(), recording.y(), recording.z(), recording.yaw(), recording.pitch(), target)) {
+				recording.markDispatched(now);
+			}
+		}
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null || !botUuid.equals(stream.botUuid())) {
+				continue;
+			}
+			LiveStreamSpec spec = stream.spec();
+			if (matchesTarget(spec.dimension(), spec.followEntityUuid(), spec.expectedX(), spec.expectedY(), spec.expectedZ(), spec.expectedYaw(), spec.expectedPitch(), target)) {
+				stream.markDispatched(now);
+			}
+		}
+	}
+
+	private static boolean matchesTarget(
+			ResourceKey<Level> dimension,
+			UUID followEntityUuid,
+			double x,
+			double y,
+			double z,
+			float yaw,
+			float pitch,
+			ScheduledServiceTarget target
+	) {
+		if (target == null) {
+			return false;
+		}
+		if (followEntityUuid != null) {
+			Entity followTarget = target.followTarget();
+			return followTarget != null && followEntityUuid.equals(followTarget.getUUID());
+		}
+		if (target.followTarget() != null || target.level() == null || dimension == null || !target.level().dimension().equals(dimension)) {
+			return false;
+		}
+		return Math.abs(target.x() - x) <= 0.01D
+				&& Math.abs(target.y() - y) <= 0.01D
+				&& Math.abs(target.z() - z) <= 0.01D
+				&& Math.abs(target.yaw() - yaw) <= 0.1F
+				&& Math.abs(target.pitch() - pitch) <= 0.1F;
+	}
+
+	private static ScheduledServiceTarget resolveServiceTarget(
+			MinecraftServer server,
+			ResourceKey<Level> dimension,
+			double x,
+			double y,
+			double z,
+			float yaw,
+			float pitch,
+			UUID followEntityUuid
+	) {
+		if (server == null) {
+			return null;
+		}
+		if (followEntityUuid != null) {
+			Entity target = resolveFollowEntity(server, dimension, followEntityUuid);
+			if (target == null || !(target.level() instanceof ServerLevel targetLevel)) {
+				return null;
+			}
+			return new ScheduledServiceTarget(targetLevel, target.getX(), target.getY(), target.getZ(), target.getYRot(), target.getXRot(), target);
+		}
+		ServerLevel level = dimension != null ? server.getLevel(dimension) : null;
+		if (level == null) {
+			return null;
+		}
+		return new ScheduledServiceTarget(level, x, y, z, yaw, pitch, null);
+	}
+
+	private static Entity resolveFollowEntity(MinecraftServer server, ResourceKey<Level> dimension, UUID followEntityUuid) {
+		if (server == null || followEntityUuid == null) {
+			return null;
+		}
+		ServerPlayer player = server.getPlayerList().getPlayer(followEntityUuid);
+		if (player != null) {
+			return player;
+		}
+		ServerLevel level = dimension != null ? server.getLevel(dimension) : null;
+		return level == null ? null : level.getEntity(followEntityUuid);
+	}
+
+	private static void failCapture(UUID requestId, PendingCapture capture, String message) {
+		if (capture == null || requestId == null) {
+			return;
+		}
+		IllegalStateException failure = new IllegalStateException(message);
+		if (PENDING_CAPTURES.remove(requestId, capture)) {
+			capture.previewFuture().completeExceptionally(failure);
+			capture.fullFuture().completeExceptionally(failure);
+			releaseBotCameraIfNeeded(capture.server(), capture.botUuid(), capture.resetCameraOnFinish());
+		}
+	}
+
+	private static void failVideoRecording(UUID requestId, PendingVideoRecording recording, String message) {
+		if (recording == null || requestId == null) {
+			return;
+		}
+		IllegalStateException failure = new IllegalStateException(message);
+		if (PENDING_VIDEO_RECORDINGS.remove(requestId, recording)) {
+			recording.completionFuture().completeExceptionally(failure);
+			releaseBotCameraIfNeeded(recording.server(), recording.botUuid(), recording.resetCameraOnFinish());
+		}
+	}
+
+	private static boolean botHasActiveJobs(UUID botUuid) {
+		if (botUuid == null) {
+			return false;
+		}
+		for (PendingCapture capture : PENDING_CAPTURES.values()) {
+			if (capture != null && botUuid.equals(capture.botUuid()) && !capture.isDone()) {
+				return true;
+			}
+		}
+		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
+			if (recording != null && botUuid.equals(recording.botUuid()) && !recording.completionFuture().isDone()) {
+				return true;
+			}
+		}
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream != null && botUuid.equals(stream.botUuid())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean isWithinActiveBotZone(MinecraftServer server, UUID botUuid, ServerLevel level, double x, double y, double z) {
+		if (server == null || botUuid == null || level == null) {
+			return false;
+		}
+		ServerPlayer bot = server.getPlayerList().getPlayer(botUuid);
+		if (bot == null) {
+			return false;
+		}
+		if (!botHasActiveJobs(botUuid)) {
+			return true;
+		}
+		if (!(bot.level() instanceof ServerLevel botLevel) || !botLevel.dimension().equals(level.dimension())) {
+			return false;
+		}
+		double dx = bot.getX() - x;
+		double dy = bot.getY() - y;
+		double dz = bot.getZ() - z;
+		return dx * dx + dy * dy + dz * dz <= SHARED_RENDER_RADIUS_SQ;
+	}
+
+	private static ScheduledServiceTarget resolveAnyActiveBotTarget(MinecraftServer server, UUID botUuid) {
+		if (server == null || botUuid == null) {
+			return null;
+		}
+		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
+			if (recording == null || !botUuid.equals(recording.botUuid()) || recording.completionFuture().isDone()) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, recording.dimension(), recording.x(), recording.y(), recording.z(), recording.yaw(), recording.pitch(), recording.followEntityUuid());
+			if (target != null) {
+				return target;
+			}
+		}
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null || !botUuid.equals(stream.botUuid())) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, stream.spec().dimension(), stream.spec().expectedX(), stream.spec().expectedY(), stream.spec().expectedZ(), stream.spec().expectedYaw(), stream.spec().expectedPitch(), stream.spec().followEntityUuid());
+			if (target != null) {
+				return target;
+			}
+		}
+		for (PendingCapture capture : PENDING_CAPTURES.values()) {
+			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.isDone()) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.x(), capture.y(), capture.z(), capture.yaw(), capture.pitch(), capture.followEntityUuid());
+			if (target != null) {
+				return target;
+			}
+		}
+		return null;
 	}
 
 	public record ClientCaptureHandle(
@@ -713,32 +1055,259 @@ public final class RendererBotCameraSystem {
 	private record BotHandshake(UUID playerUuid, String playerName) {
 	}
 
-	private record PendingCapture(
-			UUID requestId,
-			MinecraftServer server,
-			UUID botUuid,
-			boolean resetCameraOnFinish,
-			CompletableFuture<byte[]> previewFuture,
-			CompletableFuture<byte[]> fullFuture
-	) {
+	private static final class PendingCapture {
+		private final UUID requestId;
+		private final MinecraftServer server;
+		private final UUID botUuid;
+		private final boolean resetCameraOnFinish;
+		private final ResourceKey<Level> dimension;
+		private final double x;
+		private final double y;
+		private final double z;
+		private final float yaw;
+		private final float pitch;
+		private final int fovDegrees;
+		private final UUID followEntityUuid;
+		private final CompletableFuture<byte[]> previewFuture;
+		private final CompletableFuture<byte[]> fullFuture;
+		private volatile long lastDispatchAtMillis;
+
+		private PendingCapture(
+				UUID requestId,
+				MinecraftServer server,
+				UUID botUuid,
+				boolean resetCameraOnFinish,
+				ResourceKey<Level> dimension,
+				double x,
+				double y,
+				double z,
+				float yaw,
+				float pitch,
+				int fovDegrees,
+				UUID followEntityUuid,
+				CompletableFuture<byte[]> previewFuture,
+				CompletableFuture<byte[]> fullFuture
+		) {
+			this.requestId = requestId;
+			this.server = server;
+			this.botUuid = botUuid;
+			this.resetCameraOnFinish = resetCameraOnFinish;
+			this.dimension = dimension;
+			this.x = x;
+			this.y = y;
+			this.z = z;
+			this.yaw = yaw;
+			this.pitch = pitch;
+			this.fovDegrees = fovDegrees;
+			this.followEntityUuid = followEntityUuid;
+			this.previewFuture = previewFuture;
+			this.fullFuture = fullFuture;
+			this.lastDispatchAtMillis = 0L;
+		}
+
+		private UUID requestId() {
+			return this.requestId;
+		}
+
+		private MinecraftServer server() {
+			return this.server;
+		}
+
+		private UUID botUuid() {
+			return this.botUuid;
+		}
+
+		private boolean resetCameraOnFinish() {
+			return this.resetCameraOnFinish;
+		}
+
+		private ResourceKey<Level> dimension() {
+			return this.dimension;
+		}
+
+		private double x() {
+			return this.x;
+		}
+
+		private double y() {
+			return this.y;
+		}
+
+		private double z() {
+			return this.z;
+		}
+
+		private float yaw() {
+			return this.yaw;
+		}
+
+		private float pitch() {
+			return this.pitch;
+		}
+
+		private int fovDegrees() {
+			return this.fovDegrees;
+		}
+
+		private UUID followEntityUuid() {
+			return this.followEntityUuid;
+		}
+
+		private CompletableFuture<byte[]> previewFuture() {
+			return this.previewFuture;
+		}
+
+		private CompletableFuture<byte[]> fullFuture() {
+			return this.fullFuture;
+		}
+
+		private boolean isDone() {
+			return this.previewFuture.isDone() && this.fullFuture.isDone();
+		}
+
+		private long nextDueAtMillis() {
+			return this.lastDispatchAtMillis <= 0L ? 0L : this.lastDispatchAtMillis + PHOTO_CAPTURE_RETRY_INTERVAL_MS;
+		}
+
+		private void markDispatched(long now) {
+			this.lastDispatchAtMillis = now;
+		}
 	}
 
-	private record PendingVideoRecording(
-			UUID requestId,
-			MinecraftServer server,
-			UUID botUuid,
-			boolean resetCameraOnFinish,
-			CompletableFuture<VideoRecordingResult> completionFuture
-	) {
+	private static final class PendingVideoRecording {
+		private final UUID requestId;
+		private final MinecraftServer server;
+		private final UUID botUuid;
+		private final boolean resetCameraOnFinish;
+		private final ResourceKey<Level> dimension;
+		private final double x;
+		private final double y;
+		private final double z;
+		private final float yaw;
+		private final float pitch;
+		private final int fovDegrees;
+		private final UUID followEntityUuid;
+		private final int targetFps;
+		private final CompletableFuture<VideoRecordingResult> completionFuture;
+		private volatile long lastDispatchAtMillis;
+		private volatile boolean stopRequested;
+
+		private PendingVideoRecording(
+				UUID requestId,
+				MinecraftServer server,
+				UUID botUuid,
+				boolean resetCameraOnFinish,
+				ResourceKey<Level> dimension,
+				double x,
+				double y,
+				double z,
+				float yaw,
+				float pitch,
+				int fovDegrees,
+				UUID followEntityUuid,
+				int targetFps,
+				CompletableFuture<VideoRecordingResult> completionFuture
+		) {
+			this.requestId = requestId;
+			this.server = server;
+			this.botUuid = botUuid;
+			this.resetCameraOnFinish = resetCameraOnFinish;
+			this.dimension = dimension;
+			this.x = x;
+			this.y = y;
+			this.z = z;
+			this.yaw = yaw;
+			this.pitch = pitch;
+			this.fovDegrees = fovDegrees;
+			this.followEntityUuid = followEntityUuid;
+			this.targetFps = targetFps;
+			this.completionFuture = completionFuture;
+			this.lastDispatchAtMillis = 0L;
+			this.stopRequested = false;
+		}
+
+		private UUID requestId() {
+			return this.requestId;
+		}
+
+		private MinecraftServer server() {
+			return this.server;
+		}
+
+		private UUID botUuid() {
+			return this.botUuid;
+		}
+
+		private boolean resetCameraOnFinish() {
+			return this.resetCameraOnFinish;
+		}
+
+		private ResourceKey<Level> dimension() {
+			return this.dimension;
+		}
+
+		private double x() {
+			return this.x;
+		}
+
+		private double y() {
+			return this.y;
+		}
+
+		private double z() {
+			return this.z;
+		}
+
+		private float yaw() {
+			return this.yaw;
+		}
+
+		private float pitch() {
+			return this.pitch;
+		}
+
+		private int fovDegrees() {
+			return this.fovDegrees;
+		}
+
+		private UUID followEntityUuid() {
+			return this.followEntityUuid;
+		}
+
+		private int targetFps() {
+			return this.targetFps;
+		}
+
+		private CompletableFuture<VideoRecordingResult> completionFuture() {
+			return this.completionFuture;
+		}
+
+		private boolean stopRequested() {
+			return this.stopRequested;
+		}
+
+		private void markStopRequested() {
+			this.stopRequested = true;
+		}
+
+		private long nextDueAtMillis() {
+			long interval = Math.max(1L, 1_000L / Math.max(1, this.targetFps));
+			return this.lastDispatchAtMillis <= 0L ? 0L : this.lastDispatchAtMillis + interval;
+		}
+
+		private void markDispatched(long now) {
+			this.lastDispatchAtMillis = now;
+		}
 	}
 
 	private record LiveStreamSpec(
-			String dimensionId,
+			ResourceKey<Level> dimension,
 			double expectedX,
 			double expectedY,
 			double expectedZ,
 			float expectedYaw,
 			float expectedPitch,
+			UUID followEntityUuid,
 			int fullWidth,
 			int fullHeight,
 			int fovDegrees,
@@ -756,6 +1325,7 @@ public final class RendererBotCameraSystem {
 		private final Consumer<String> onFailure;
 		private final long startedAtMillis;
 		private volatile long lastFrameAtMillis;
+		private volatile long lastDispatchAtMillis;
 
 		private ActiveLiveStream(
 				MinecraftServer server,
@@ -775,6 +1345,7 @@ public final class RendererBotCameraSystem {
 			this.onFailure = onFailure;
 			this.startedAtMillis = System.currentTimeMillis();
 			this.lastFrameAtMillis = 0L;
+			this.lastDispatchAtMillis = 0L;
 		}
 
 		private MinecraftServer server() {
@@ -809,10 +1380,36 @@ public final class RendererBotCameraSystem {
 			this.lastFrameAtMillis = System.currentTimeMillis();
 		}
 
+		private long nextDueAtMillis() {
+			long interval = Math.max(1L, 1_000L / Math.max(1, this.spec.targetFps()));
+			return this.lastDispatchAtMillis <= 0L ? 0L : this.lastDispatchAtMillis + interval;
+		}
+
+		private void markDispatched(long now) {
+			this.lastDispatchAtMillis = now;
+		}
+
 		private boolean isStale() {
-			long referenceTime = this.lastFrameAtMillis > 0L ? this.lastFrameAtMillis : this.startedAtMillis;
+			long referenceTime = this.startedAtMillis;
+			if (this.lastDispatchAtMillis > referenceTime) {
+				referenceTime = this.lastDispatchAtMillis;
+			}
+			if (this.lastFrameAtMillis > referenceTime) {
+				referenceTime = this.lastFrameAtMillis;
+			}
 			return System.currentTimeMillis() - referenceTime > LIVE_STREAM_STALE_MS;
 		}
+	}
+
+	private record ScheduledServiceTarget(
+			ServerLevel level,
+			double x,
+			double y,
+			double z,
+			float yaw,
+			float pitch,
+			Entity followTarget
+	) {
 	}
 
 	public record VideoRecordingResult(

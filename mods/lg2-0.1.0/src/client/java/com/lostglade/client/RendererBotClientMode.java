@@ -5,6 +5,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.CloudStatus;
+import net.minecraft.client.CameraType;
 import net.minecraft.client.GraphicsPreset;
 import net.minecraft.client.InactivityFpsLimit;
 import net.minecraft.client.Minecraft;
@@ -141,6 +142,10 @@ public final class RendererBotClientMode {
 		changed |= setMin(client.options.entityDistanceScaling(), 2.5D);
 		changed |= setIfDifferent(client.options.particles(), ParticleStatus.ALL);
 		changed |= setIfDifferent(client.options.ambientOcclusion(), true);
+		if (client.options.getCameraType() != CameraType.FIRST_PERSON) {
+			client.options.setCameraType(CameraType.FIRST_PERSON);
+			changed = true;
+		}
 		changed |= setMin(client.options.mipmapLevels(), 4);
 		changed |= setMin(client.options.biomeBlendRadius(), 2);
 		changed |= setIfDifferent(client.options.bobView(), false);

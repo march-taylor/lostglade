@@ -90,10 +90,6 @@ public final class CameraCaptureSystem {
 			}
 			return CameraVideoRecordingSystem.toggleRecording(player, settings);
 		}
-		if (CameraVideoRecordingSystem.hasAnyRecording() && !CameraVideoRecordingSystem.isRecording(player.getUUID())) {
-			player.displayClientMessage(Component.literal("Камера сейчас занята записью видео."), true);
-			return false;
-		}
 		if (MapImageRenderSystem.hasActiveRender(player.getUUID())) {
 			player.displayClientMessage(cameraBusyMessage(player), true);
 			return false;

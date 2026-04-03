@@ -54,11 +54,6 @@ public final class CameraVideoRecordingSystem {
 			return true;
 		}
 
-		if (!RECORDINGS_BY_PLAYER.isEmpty()) {
-			player.displayClientMessage(Component.literal("Камера уже записывает другое видео."), true);
-			return false;
-		}
-
 		RendererBotCameraSystem.VideoRecordingHandle handle = RendererBotCameraSystem.startVideoRecording(
 				player,
 				settings.mapsWide(),
