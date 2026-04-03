@@ -19,6 +19,17 @@ public final class CameraMediaCache {
 		}
 	}
 
+	public static void initialize(Path gameDir) {
+		String override = System.getProperty(ROOT_PROPERTY, "").trim();
+		if (!override.isBlank()) {
+			cacheRoot = Path.of(override).toAbsolutePath().normalize();
+			return;
+		}
+		if (gameDir != null) {
+			cacheRoot = gameDir.resolve("cache").resolve("lg2-camera").toAbsolutePath().normalize();
+		}
+	}
+
 	public static Path cacheRoot() {
 		return cacheRoot;
 	}

@@ -1,20 +1,26 @@
 package com.lostglade.server;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.lostglade.Lg2;
 import com.lostglade.item.ModItems;
 import com.lostglade.item.PhotoPrintData;
 import com.lostglade.server.map.MapPaletteQuantizer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundMapItemDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
@@ -27,6 +33,9 @@ import net.minecraft.world.phys.AABB;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Reader;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -44,20 +53,39 @@ public final class CameraAnimatedMapPlaybackSystem {
 	private static final int PHOTO_MAP_CENTER = 30_000_000;
 	private static final int DISCOVERY_INTERVAL_TICKS = 10;
 	private static final long SESSION_IDLE_TICKS = 200L;
+	private static final long SESSION_STARTUP_TIMEOUT_MS = 5_000L;
+	private static final long VIEWER_REPRIME_GRACE_TICKS = 40L;
+	private static final long VIEWER_REPRIME_INTERVAL_TICKS = 5L;
 	private static final double FRAME_VIEW_RADIUS_SQR = 96.0D * 96.0D;
 	private static final String DEFAULT_FFMPEG_BIN = "ffmpeg";
+	private static final String PLACED_VIDEOS_FILE = "lg2-camera-placed-videos.json";
+	private static final Gson PERSISTENCE_GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private static final Map<PlaybackKey, VideoPlaybackSession> PLAYBACKS = new ConcurrentHashMap<>();
 	private static final Map<UUID, PlacedVideoGroup> PLACED_GROUPS = new ConcurrentHashMap<>();
+	private static final Map<UUID, PlacedVideoGroup> PERSISTED_PLACED_GROUPS = new ConcurrentHashMap<>();
 	private static final Map<PlayerMapKey, Long> LAST_SENT_SEQUENCE_BY_PLAYER_MAP = new ConcurrentHashMap<>();
+	private static final Map<PlacedViewerKey, Boolean> PRIMED_PLACED_GROUPS_BY_VIEWER = new ConcurrentHashMap<>();
+	private static final Map<UUID, Long> RECENT_VIEWER_REPRIME_DEADLINES = new ConcurrentHashMap<>();
 	private static volatile long lastDiscoveryTick = Long.MIN_VALUE;
+	private static volatile MinecraftServer persistenceServer;
 
 	private CameraAnimatedMapPlaybackSystem() {
 	}
 
 	public static void register() {
 		ServerTickEvents.END_SERVER_TICK.register(CameraAnimatedMapPlaybackSystem::tick);
-		ServerLifecycleEvents.SERVER_STOPPING.register(server -> shutdownAll());
+		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+			persistenceServer = server;
+			loadPersistedPlacedVideos(server);
+		});
+		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> server.execute(() -> markViewerJoined((ServerPlayer) handler.player, server)));
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> server.execute(() -> clearViewerRuntimeState(handler.player.getUUID())));
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			savePersistedPlacedVideos(server);
+			persistenceServer = null;
+			shutdownAll();
+		});
 	}
 
 	public static ItemStack createVideoItem(
@@ -116,11 +144,16 @@ public final class CameraAnimatedMapPlaybackSystem {
 				frameData.groupId(),
 				new PlacedVideoGroup(frameData.groupId(), level.dimension(), frameData.anchorPos(), frameData.direction(), mediaData)
 		);
+		PERSISTED_PLACED_GROUPS.put(frameData.groupId(), new PlacedVideoGroup(frameData.groupId(), level.dimension(), frameData.anchorPos(), frameData.direction(), mediaData));
+		savePersistedPlacedVideos(persistenceServer);
 	}
 
 	public static void unregisterPlacedVideo(UUID groupId) {
 		if (groupId != null) {
 			PLACED_GROUPS.remove(groupId);
+			PERSISTED_PLACED_GROUPS.remove(groupId);
+			PRIMED_PLACED_GROUPS_BY_VIEWER.keySet().removeIf(key -> groupId.equals(key.groupId()));
+			savePersistedPlacedVideos(persistenceServer);
 		}
 	}
 
@@ -182,6 +215,7 @@ public final class CameraAnimatedMapPlaybackSystem {
 			if (level == null) {
 				continue;
 			}
+			ServerLevel mapLevel = photoMapLevel(server, level);
 			PlaybackKey key = new PlaybackKey(group.data().sourceKey(), group.data().mapsWide(), group.data().mapsHigh(), Math.max(1, group.data().fps()));
 			VideoPlaybackSession session = ensureSession(key);
 			if (session == null) {
@@ -198,6 +232,16 @@ public final class CameraAnimatedMapPlaybackSystem {
 				continue;
 			}
 			for (ServerPlayer recipient : recipients) {
+				PlacedViewerKey placedViewerKey = new PlacedViewerKey(recipient.getUUID(), group.groupId());
+				boolean forceReprime = shouldForceViewerReprime(recipient.getUUID(), gameTime);
+				boolean joinWindowPrimeTick = forceReprime && (gameTime % VIEWER_REPRIME_INTERVAL_TICKS) == 0L;
+				if (!PRIMED_PLACED_GROUPS_BY_VIEWER.containsKey(placedViewerKey) || joinWindowPrimeTick) {
+					primePlacedVideoGroupForViewer(level, mapLevel, group, recipient);
+					if (forceReprime) {
+						clearViewerSequenceState(recipient.getUUID(), group.data());
+					}
+					PRIMED_PLACED_GROUPS_BY_VIEWER.put(placedViewerKey, Boolean.TRUE);
+				}
 				for (int tileIndex = 0; tileIndex < group.data().mapIds().length; tileIndex++) {
 					int rawMapId = group.data().mapIds()[tileIndex];
 					if (rawMapId < 0) {
@@ -207,7 +251,10 @@ public final class CameraAnimatedMapPlaybackSystem {
 					Long lastSequence = LAST_SENT_SEQUENCE_BY_PLAYER_MAP.get(playerMapKey);
 					byte[] fullTile = frame.tiles()[tileIndex];
 					TilePatch patch = frame.tilePatches()[tileIndex];
-					if (lastSequence == null || lastSequence != frame.sequence() - 1L || patch == null) {
+					if (lastSequence == null) {
+						primeAnimatedMapForViewer(recipient, new MapId(rawMapId), mapLevel);
+						sendMapPatch(recipient, new MapId(rawMapId), (byte) 0, true, 0, 0, MAP_SIZE, MAP_SIZE, fullTile);
+					} else if (lastSequence != frame.sequence() - 1L || patch == null) {
 						sendMapPatch(recipient, new MapId(rawMapId), (byte) 0, true, 0, 0, MAP_SIZE, MAP_SIZE, fullTile);
 					} else {
 						sendMapPatch(recipient, new MapId(rawMapId), (byte) 0, true, patch.startX(), patch.startY(), patch.width(), patch.height(), patch.frame());
@@ -250,8 +297,26 @@ public final class CameraAnimatedMapPlaybackSystem {
 				);
 			}
 		}
+		for (PlacedVideoGroup persisted : PERSISTED_PLACED_GROUPS.values()) {
+			if (persisted == null || rebuilt.containsKey(persisted.groupId())) {
+				continue;
+			}
+			ServerLevel level = server.getLevel(persisted.dimension());
+			if (level == null) {
+				continue;
+			}
+			if (isPlacedVideoGroupStillPresent(level, persisted)) {
+				rebuilt.put(persisted.groupId(), persisted);
+			}
+		}
 		PLACED_GROUPS.clear();
 		PLACED_GROUPS.putAll(rebuilt);
+		if (!sameGroupSet(PERSISTED_PLACED_GROUPS, rebuilt)) {
+			PERSISTED_PLACED_GROUPS.clear();
+			PERSISTED_PLACED_GROUPS.putAll(rebuilt);
+			savePersistedPlacedVideos(server);
+		}
+		PRIMED_PLACED_GROUPS_BY_VIEWER.keySet().removeIf(key -> !PLACED_GROUPS.containsKey(key.groupId()));
 	}
 
 	private static void reapUnusedSessions(Map<PlaybackKey, Boolean> usedSessions, long gameTime) {
@@ -285,6 +350,8 @@ public final class CameraAnimatedMapPlaybackSystem {
 				iterator.remove();
 			}
 		}
+		PRIMED_PLACED_GROUPS_BY_VIEWER.keySet().removeIf(key -> server.getPlayerList().getPlayer(key.playerId()) == null);
+		RECENT_VIEWER_REPRIME_DEADLINES.entrySet().removeIf(entry -> server.getPlayerList().getPlayer(entry.getKey()) == null || server.getTickCount() > entry.getValue());
 	}
 
 	private static VideoPlaybackSession ensureSession(PlaybackKey key) {
@@ -293,7 +360,12 @@ public final class CameraAnimatedMapPlaybackSystem {
 		}
 		VideoPlaybackSession existing = PLAYBACKS.get(key);
 		if (existing != null) {
-			return existing;
+			if (existing.isUsable()) {
+				return existing;
+			}
+			if (PLAYBACKS.remove(key, existing)) {
+				existing.close();
+			}
 		}
 		try {
 			VideoPlaybackSession created = new VideoPlaybackSession(key);
@@ -316,6 +388,8 @@ public final class CameraAnimatedMapPlaybackSystem {
 		PLAYBACKS.clear();
 		PLACED_GROUPS.clear();
 		LAST_SENT_SEQUENCE_BY_PLAYER_MAP.clear();
+		PRIMED_PLACED_GROUPS_BY_VIEWER.clear();
+		RECENT_VIEWER_REPRIME_DEADLINES.clear();
 	}
 
 	private static PhotoMapSet createPhotoMapSet(ServerLevel mapLevel, Component itemName, int mapsWide, int mapsHigh) {
@@ -382,6 +456,232 @@ public final class CameraAnimatedMapPlaybackSystem {
 		mapStack.set(DataComponents.MAP_ID, mapId);
 		mapData.tickCarriedBy(player, mapStack);
 		sendMapPatch(player, mapId, mapData.scale, mapData.locked, 0, 0, MAP_SIZE, MAP_SIZE, mapData.colors.clone());
+	}
+
+	private static void primeAnimatedMapForViewer(ServerPlayer player, MapId mapId, ServerLevel mapLevel) {
+		if (player == null || mapId == null || mapLevel == null) {
+			return;
+		}
+		MapItemSavedData mapData = mapLevel.getMapData(mapId);
+		if (mapData == null) {
+			return;
+		}
+		ItemStack mapStack = new ItemStack(Items.FILLED_MAP);
+		mapStack.set(DataComponents.MAP_ID, mapId);
+		mapData.tickCarriedBy(player, mapStack);
+		var packet = mapData.getUpdatePacket(mapId, player);
+		if (packet != null) {
+			player.connection.send(packet);
+		}
+	}
+
+	private static void primePlacedVideoGroupForViewer(ServerLevel level, ServerLevel mapLevel, PlacedVideoGroup group, ServerPlayer recipient) {
+		if (level == null || mapLevel == null || group == null || recipient == null) {
+			return;
+		}
+		for (int rawMapId : group.data().mapIds()) {
+			if (rawMapId >= 0) {
+				primeAnimatedMapForViewer(recipient, new MapId(rawMapId), mapLevel);
+			}
+		}
+		refreshPlacedFrameItems(level, group, recipient);
+	}
+
+	private static void refreshPlacedFrameItems(ServerLevel level, PlacedVideoGroup group, ServerPlayer recipient) {
+		if (level == null || group == null) {
+			return;
+		}
+		Direction right = frameRight(group.direction());
+		for (int tileY = 0; tileY < group.data().mapsHigh(); tileY++) {
+			for (int tileX = 0; tileX < group.data().mapsWide(); tileX++) {
+				BlockPos expectedPos = group.anchorPos().relative(right, tileX).relative(Direction.DOWN, tileY);
+				ItemFrame frame = findPlacedFrame(level, expectedPos, group, tileX, tileY);
+				if (frame == null) {
+					continue;
+				}
+				ItemStack current = frame.getItem();
+				if (!current.isEmpty()) {
+					ItemStack updated = current.copy();
+					if (PhotoPrintData.readFrameTile(updated) == null) {
+						PhotoPrintData.writeFrameTile(updated, group.data().placed(group.groupId(), group.anchorPos(), group.direction(), tileX, tileY));
+					}
+					frame.setItem(updated, false);
+					sendFrameEntityData(recipient, frame);
+				}
+			}
+		}
+	}
+
+	private static void sendFrameEntityData(ServerPlayer recipient, ItemFrame frame) {
+		if (recipient == null || frame == null) {
+			return;
+		}
+		List<SynchedEntityData.DataValue<?>> values = frame.getEntityData().getNonDefaultValues();
+		if (values == null || values.isEmpty()) {
+			return;
+		}
+		recipient.connection.send(new ClientboundSetEntityDataPacket(frame.getId(), values));
+	}
+
+	private static ItemFrame findPlacedFrame(ServerLevel level, BlockPos expectedPos, PlacedVideoGroup group, int tileX, int tileY) {
+		AABB searchBox = new AABB(expectedPos).inflate(0.6D);
+		int expectedMapId = group.data().mapIdAt(tileX, tileY);
+		for (ItemFrame frame : level.getEntitiesOfClass(ItemFrame.class, searchBox, candidate -> candidate.blockPosition().equals(expectedPos))) {
+			if (frame.getDirection() != group.direction()) {
+				continue;
+			}
+			PhotoPrintData.PlacedPhotoFrameData candidateData = PhotoPrintData.readFrameTile(frame.getItem());
+			if (candidateData != null
+					&& candidateData.groupId().equals(group.groupId())
+					&& candidateData.anchorPos().equals(group.anchorPos())
+					&& candidateData.direction() == group.direction()
+					&& candidateData.mapsWide() == group.data().mapsWide()
+					&& candidateData.mapsHigh() == group.data().mapsHigh()) {
+				return frame;
+			}
+			MapId mapId = frame.getItem().get(DataComponents.MAP_ID);
+			if (candidateData == null && mapId != null && mapId.id() == expectedMapId) {
+				return frame;
+			}
+		}
+		return null;
+	}
+
+	private static Direction frameRight(Direction facing) {
+		return switch (facing) {
+			case NORTH -> Direction.WEST;
+			case SOUTH -> Direction.EAST;
+			case EAST -> Direction.NORTH;
+			case WEST -> Direction.SOUTH;
+			default -> Direction.EAST;
+		};
+	}
+
+	private static boolean isPlacedVideoGroupStillPresent(ServerLevel level, PlacedVideoGroup group) {
+		if (level == null || group == null) {
+			return false;
+		}
+		Direction right = frameRight(group.direction());
+		for (int tileY = 0; tileY < group.data().mapsHigh(); tileY++) {
+			for (int tileX = 0; tileX < group.data().mapsWide(); tileX++) {
+				BlockPos expectedPos = group.anchorPos().relative(right, tileX).relative(Direction.DOWN, tileY);
+				if (!level.isLoaded(expectedPos)) {
+					continue;
+				}
+				if (findPlacedFrame(level, expectedPos, group, tileX, tileY) == null) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	private static boolean sameGroupSet(Map<UUID, PlacedVideoGroup> existing, Map<UUID, PlacedVideoGroup> rebuilt) {
+		if (existing.size() != rebuilt.size()) {
+			return false;
+		}
+		for (Map.Entry<UUID, PlacedVideoGroup> entry : rebuilt.entrySet()) {
+			PlacedVideoGroup current = existing.get(entry.getKey());
+			if (!Objects.equals(current, entry.getValue())) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static void markViewerJoined(ServerPlayer player, MinecraftServer server) {
+		if (player == null || server == null) {
+			return;
+		}
+		clearViewerRuntimeState(player.getUUID());
+		RECENT_VIEWER_REPRIME_DEADLINES.put(player.getUUID(), server.getTickCount() + VIEWER_REPRIME_GRACE_TICKS);
+	}
+
+	private static void clearViewerRuntimeState(UUID playerId) {
+		if (playerId == null) {
+			return;
+		}
+		LAST_SENT_SEQUENCE_BY_PLAYER_MAP.keySet().removeIf(key -> playerId.equals(key.playerId()));
+		PRIMED_PLACED_GROUPS_BY_VIEWER.keySet().removeIf(key -> playerId.equals(key.playerId()));
+		RECENT_VIEWER_REPRIME_DEADLINES.remove(playerId);
+	}
+
+	private static boolean shouldForceViewerReprime(UUID playerId, long gameTime) {
+		if (playerId == null) {
+			return false;
+		}
+		Long deadline = RECENT_VIEWER_REPRIME_DEADLINES.get(playerId);
+		if (deadline == null) {
+			return false;
+		}
+		if (gameTime > deadline) {
+			RECENT_VIEWER_REPRIME_DEADLINES.remove(playerId, deadline);
+			return false;
+		}
+		return true;
+	}
+
+	private static void clearViewerSequenceState(UUID playerId, PhotoPrintData data) {
+		if (playerId == null || data == null) {
+			return;
+		}
+		for (int rawMapId : data.mapIds()) {
+			if (rawMapId >= 0) {
+				LAST_SENT_SEQUENCE_BY_PLAYER_MAP.remove(new PlayerMapKey(playerId, rawMapId));
+			}
+		}
+	}
+
+	private static void loadPersistedPlacedVideos(MinecraftServer server) {
+		PERSISTED_PLACED_GROUPS.clear();
+		if (server == null) {
+			return;
+		}
+		Path path = placedVideosPath(server);
+		if (!Files.isRegularFile(path)) {
+			return;
+		}
+		try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+			PersistedPlacedVideosFile file = PERSISTENCE_GSON.fromJson(reader, PersistedPlacedVideosFile.class);
+			if (file == null || file.groups == null) {
+				return;
+			}
+			for (PersistedPlacedVideoGroup persisted : file.groups) {
+				PlacedVideoGroup group = persisted == null ? null : persisted.toRuntime();
+				if (group != null) {
+					PERSISTED_PLACED_GROUPS.put(group.groupId(), group);
+				}
+			}
+			PLACED_GROUPS.clear();
+			PLACED_GROUPS.putAll(PERSISTED_PLACED_GROUPS);
+		} catch (Exception exception) {
+			Lg2.LOGGER.warn("Failed to load persisted camera placed videos from {}", path, exception);
+		}
+	}
+
+	private static void savePersistedPlacedVideos(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		Path path = placedVideosPath(server);
+		try {
+			Files.createDirectories(path.getParent());
+			PersistedPlacedVideosFile file = new PersistedPlacedVideosFile();
+			for (PlacedVideoGroup group : PERSISTED_PLACED_GROUPS.values()) {
+				if (group != null) {
+					file.groups.add(PersistedPlacedVideoGroup.fromRuntime(group));
+				}
+			}
+			try (Writer writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
+				PERSISTENCE_GSON.toJson(file, writer);
+			}
+		} catch (Exception exception) {
+			Lg2.LOGGER.warn("Failed to save persisted camera placed videos to {}", path, exception);
+		}
+	}
+
+	private static Path placedVideosPath(MinecraftServer server) {
+		return server.getServerDirectory().resolve("world").resolve("data").resolve(PLACED_VIDEOS_FILE);
 	}
 
 	private static void sendMapPatch(ServerPlayer player, MapId mapId, byte scale, boolean locked, int startX, int startY, int width, int height, byte[] frame) {
@@ -519,14 +819,17 @@ public final class CameraAnimatedMapPlaybackSystem {
 
 	private static final class VideoPlaybackSession implements AutoCloseable {
 		private final PlaybackKey key;
+		private final long startedAtMs;
 		private volatile DecodedVideoFrame latestFrame;
 		private volatile long lastUsedTick;
 		private volatile boolean closed;
 		private Process process;
 		private Thread readerThread;
+		private Thread stderrThread;
 
 		private VideoPlaybackSession(PlaybackKey key) throws IOException {
 			this.key = key;
+			this.startedAtMs = System.currentTimeMillis();
 			start();
 		}
 
@@ -555,11 +858,13 @@ public final class CameraAnimatedMapPlaybackSystem {
 			command.add("rawvideo");
 			command.add("pipe:1");
 			ProcessBuilder builder = new ProcessBuilder(command);
-			builder.redirectError(ProcessBuilder.Redirect.DISCARD);
 			this.process = builder.start();
 			this.readerThread = new Thread(this::readLoop, "lg2-camera-video-" + this.key.sourceKey());
 			this.readerThread.setDaemon(true);
 			this.readerThread.start();
+			this.stderrThread = new Thread(this::readStderrLoop, "lg2-camera-video-err-" + this.key.sourceKey());
+			this.stderrThread.setDaemon(true);
+			this.stderrThread.start();
 		}
 
 		private int outputWidth() {
@@ -584,6 +889,9 @@ public final class CameraAnimatedMapPlaybackSystem {
 					byte[][] tiles = buildTileFrames(rgb, outputWidth(), outputHeight(), this.key.mapsWide(), this.key.mapsHigh());
 					TilePatch[] patches = buildTilePatches(previousTiles, tiles);
 					this.latestFrame = new DecodedVideoFrame(++sequence, preview, tiles, patches);
+					if (sequence == 1L) {
+						Lg2.LOGGER.info("Camera video playback session decoded first frame for {}", this.key.sourceKey());
+					}
 					previousTiles = deepCopyTiles(tiles);
 				}
 			} catch (Exception exception) {
@@ -595,8 +903,37 @@ public final class CameraAnimatedMapPlaybackSystem {
 			}
 		}
 
+		private void readStderrLoop() {
+			Process currentProcess = this.process;
+			if (currentProcess == null) {
+				return;
+			}
+			try (InputStream error = currentProcess.getErrorStream()) {
+				String stderr = new String(error.readAllBytes()).trim();
+				if (!stderr.isBlank() && !this.closed) {
+					Lg2.LOGGER.warn("Camera video playback ffmpeg stderr for {}: {}", this.key.sourceKey(), stderr);
+				}
+			} catch (Exception ignored) {
+			}
+		}
+
 		private DecodedVideoFrame latestFrame() {
 			return this.latestFrame;
+		}
+
+		private boolean isUsable() {
+			if (this.closed) {
+				return false;
+			}
+			Process currentProcess = this.process;
+			Thread currentReader = this.readerThread;
+			if (currentProcess == null || currentReader == null) {
+				return false;
+			}
+			if (!currentProcess.isAlive() || !currentReader.isAlive()) {
+				return false;
+			}
+			return this.latestFrame != null || System.currentTimeMillis() - this.startedAtMs < SESSION_STARTUP_TIMEOUT_MS;
 		}
 
 		private long lastUsedTick() {
@@ -637,6 +974,9 @@ public final class CameraAnimatedMapPlaybackSystem {
 	private record PlayerMapKey(UUID playerId, int mapId) {
 	}
 
+	private record PlacedViewerKey(UUID playerId, UUID groupId) {
+	}
+
 	private record TilePatch(int startX, int startY, int width, int height, byte[] frame) {
 	}
 
@@ -650,5 +990,72 @@ public final class CameraAnimatedMapPlaybackSystem {
 			Direction direction,
 			PhotoPrintData data
 	) {
+	}
+
+	private static final class PersistedPlacedVideosFile {
+		private List<PersistedPlacedVideoGroup> groups = new ArrayList<>();
+	}
+
+	private static final class PersistedPlacedVideoGroup {
+		private String groupId;
+		private String dimensionId;
+		private int anchorX;
+		private int anchorY;
+		private int anchorZ;
+		private String direction;
+		private int mapsWide;
+		private int mapsHigh;
+		private int previewMapId;
+		private int[] mapIds;
+		private String mediaKind;
+		private String sourceKey;
+		private long durationMs;
+		private int fps;
+
+		private static PersistedPlacedVideoGroup fromRuntime(PlacedVideoGroup runtime) {
+			PersistedPlacedVideoGroup persisted = new PersistedPlacedVideoGroup();
+			persisted.groupId = runtime.groupId().toString();
+			persisted.dimensionId = runtime.dimension().identifier().toString();
+			persisted.anchorX = runtime.anchorPos().getX();
+			persisted.anchorY = runtime.anchorPos().getY();
+			persisted.anchorZ = runtime.anchorPos().getZ();
+			persisted.direction = runtime.direction().getName();
+			persisted.mapsWide = runtime.data().mapsWide();
+			persisted.mapsHigh = runtime.data().mapsHigh();
+			persisted.previewMapId = runtime.data().previewMapId();
+			persisted.mapIds = runtime.data().mapIds().clone();
+			persisted.mediaKind = runtime.data().mediaKind().serializedName();
+			persisted.sourceKey = runtime.data().sourceKey();
+			persisted.durationMs = runtime.data().durationMs();
+			persisted.fps = runtime.data().fps();
+			return persisted;
+		}
+
+		private PlacedVideoGroup toRuntime() {
+			try {
+				UUID parsedGroupId = UUID.fromString(this.groupId);
+				Direction parsedDirection = Direction.byName(this.direction);
+				if (parsedDirection == null || this.dimensionId == null || this.dimensionId.isBlank()) {
+					return null;
+				}
+				ResourceKey<Level> dimensionKey = ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION, Identifier.parse(this.dimensionId));
+				PhotoPrintData data = new PhotoPrintData(
+						this.mapsWide,
+						this.mapsHigh,
+						this.previewMapId,
+						this.mapIds == null ? new int[0] : this.mapIds,
+						PhotoPrintData.MediaKind.fromSerializedName(this.mediaKind),
+						this.sourceKey,
+						this.durationMs,
+						this.fps
+				);
+				if (!data.isValid() || !data.isVideo()) {
+					return null;
+				}
+				return new PlacedVideoGroup(parsedGroupId, dimensionKey, new BlockPos(this.anchorX, this.anchorY, this.anchorZ), parsedDirection, data);
+			} catch (Exception ignored) {
+				return null;
+			}
+		}
 	}
 }

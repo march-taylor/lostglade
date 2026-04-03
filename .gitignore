@@ -24,3 +24,5 @@ fabricloader.log
 .codex
 config/skinrestorer/mojang_profile_cache.json
 config/skinrestorer/mojang_profile_cache.json
+run-renderer-bot/downloads/log.json
+

@@ -17,6 +17,7 @@ import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
 import com.lostglade.server.ServerBossBarVisibilitySystem;
 import com.lostglade.server.CameraAnimatedMapPlaybackSystem;
 import com.lostglade.server.CameraCaptureSystem;
+import com.lostglade.server.CameraMediaCache;
 import com.lostglade.server.CameraVideoRecordingSystem;
 import com.lostglade.server.CocaineHallucinationSystem;
 import com.lostglade.server.CopperManRepulsorSystem;
@@ -55,6 +56,7 @@ public class Lg2 implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		Lg2Config.load();
+		CameraMediaCache.initialize(FabricLoader.getInstance().getGameDir());
 		RendererBotProcessSystem.preflightServerProperties();
 		RaceConfig.load();
 		PolymerResourcePackUtils.addModAssets(MOD_ID);
