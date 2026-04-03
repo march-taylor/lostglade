@@ -3,6 +3,7 @@ package com.lostglade.client;
 import com.lostglade.Lg2;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.GraphicsPreset;
 import net.minecraft.client.InactivityFpsLimit;
@@ -22,6 +23,8 @@ public final class RendererBotClientMode {
 	private static final String BOT_NAME = System.getProperty("lg2.rendererBotName", "RendererBot").trim();
 	private static final boolean ENABLED = Boolean.getBoolean("lg2.rendererBot");
 	private static final boolean HEADLESS = Boolean.getBoolean("lg2.rendererBotHeadless");
+	private static final boolean VOICECHAT_LOADED = FabricLoader.getInstance().isModLoaded("voicechat");
+	private static final boolean WEBCAM_LOADED = FabricLoader.getInstance().isModLoaded("webcam");
 
 	private static boolean invalidServerAddressLogged;
 	private static boolean connectInFlight;
@@ -39,7 +42,14 @@ public final class RendererBotClientMode {
 			return;
 		}
 
-		Lg2.LOGGER.info("Renderer bot client mode enabled for '{}' -> {}{}", BOT_NAME, SERVER_ADDRESS, HEADLESS ? " (headless backend requested)" : "");
+		Lg2.LOGGER.info(
+				"Renderer bot client mode enabled for '{}' -> {}{}{}{}",
+				BOT_NAME,
+				SERVER_ADDRESS,
+				HEADLESS ? " (headless backend requested)" : "",
+				VOICECHAT_LOADED ? " [voicechat]" : "",
+				WEBCAM_LOADED ? " [webcam]" : ""
+		);
 		ClientTickEvents.END_CLIENT_TICK.register(RendererBotClientMode::onClientTick);
 		ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> onJoin());
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> scheduleReconnect());
@@ -108,11 +118,13 @@ public final class RendererBotClientMode {
 		if (muted || client == null || client.options == null || client.getSoundManager() == null) {
 			return;
 		}
-		client.options.getSoundSourceOptionInstance(SoundSource.MASTER).set(0.0D);
 		client.options.getSoundSourceOptionInstance(SoundSource.MUSIC).set(0.0D);
-		client.getSoundManager().updateCategoryVolume(SoundSource.MASTER, 0.0F);
 		client.getSoundManager().updateCategoryVolume(SoundSource.MUSIC, 0.0F);
-		client.getSoundManager().stop();
+		if (!VOICECHAT_LOADED) {
+			client.options.getSoundSourceOptionInstance(SoundSource.MASTER).set(0.0D);
+			client.getSoundManager().updateCategoryVolume(SoundSource.MASTER, 0.0F);
+			client.getSoundManager().stop();
+		}
 		muted = true;
 	}
 

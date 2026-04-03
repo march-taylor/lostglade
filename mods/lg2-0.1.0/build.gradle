@@ -91,6 +91,8 @@ dependencies {
 	compileOnly files(tabJars)
 	modCompileOnly files(voicechatJars)
 	modCompileOnly files(webcamJars)
+	modRuntimeOnly files(voicechatJars)
+	modRuntimeOnly files(webcamJars)
 	implementation files(
 			"libs/flow-math-1.0.3.jar",
 			"libs/bluenbt-3.5.0.jar"
