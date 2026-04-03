@@ -42,6 +42,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Rotations;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -265,6 +266,8 @@ public final class ServerRaceSystem {
 	private static final double COPPER_MAN_JETPACK_DISPLAY_POSITION_SMOOTHING = 0.7D;
 	private static final float COPPER_MAN_JETPACK_DISPLAY_YAW_SMOOTHING = 0.7F;
 	private static final double COPPER_MAN_JETPACK_DISPLAY_SNAP_DISTANCE = 1.5D;
+	private static final double COPPER_MAN_JETPACK_DISPLAY_YAW_MOVEMENT_THRESHOLD = 0.0025D;
+	private static final float COPPER_MAN_JETPACK_DISPLAY_IDLE_BODY_TURN_THRESHOLD = 0.5F;
 	private static final double COPPER_MAN_JETPACK_STAND_FOOT_OFFSET = -0.92D;
 	private static final String COPPER_MAN_JETPACK_DISPLAY_TAG = "lg2_copper_jetpack_display";
 	private static final String COPPER_MAN_JETPACK_DISPLAY_OWNER_TAG_PREFIX = "lg2_copper_jetpack_owner:";
@@ -1212,18 +1215,20 @@ public final class ServerRaceSystem {
 		}
 
 		UUID playerId = player.getUUID();
-		float targetYaw = player.yBodyRot;
-		Vec3 targetPos = computeCopperManJetpackDisplayTarget(player, targetYaw);
 		CopperManJetpackDisplayState previous = COPPER_MAN_JETPACK_DISPLAY_STATES.get(playerId);
+		float targetYaw = resolveCopperManJetpackDisplayYaw(player, previous);
+		Vec3 targetPos = computeCopperManJetpackDisplayTarget(player, targetYaw);
 		CopperManJetpackDisplayState next = smoothCopperManJetpackDisplay(previous, targetPos, targetYaw);
 		COPPER_MAN_JETPACK_DISPLAY_STATES.put(playerId, next);
 
-		display.setPos(next.x(), next.y(), next.z() + 0.0D);
+		display.setPos(next.x(), next.y(), next.z());
 		display.setYRot(next.yaw());
 		display.setYHeadRot(next.yaw());
 		display.yBodyRot = next.yaw();
+		display.yBodyRotO = next.yaw();
 		display.yRotO = next.yaw();
 		display.yHeadRotO = next.yaw();
+		display.setHeadPose(new Rotations(0.0F, 0.0F, 0.0F));
 	}
 
 	private static Vec3 computeCopperManJetpackDisplayTarget(ServerPlayer player, float bodyYaw) {
@@ -1241,6 +1246,62 @@ public final class ServerRaceSystem {
 		forward = forward.normalize();
 		Vec3 backward = forward.scale(-COPPER_MAN_JETPACK_BODY_OFFSET_BACK);
 		return player.position().add(lead).add(0.0D, upOffset + COPPER_MAN_JETPACK_STAND_FOOT_OFFSET, 0.0D).add(backward);
+	}
+
+	private static float resolveCopperManJetpackDisplayYaw(ServerPlayer player, CopperManJetpackDisplayState previous) {
+		if (player == null) {
+			return 0.0F;
+		}
+
+		CopperManJetpackInputState input = COPPER_MAN_JETPACK_INPUTS.getOrDefault(player.getUUID(), CopperManJetpackInputState.EMPTY);
+		Vec3 inputDirection = computeCopperManJetpackInputDirection(player, input);
+		if (inputDirection.lengthSqr() > 1.0E-6D) {
+			return yawFromHorizontalVector(inputDirection);
+		}
+
+		Vec3 horizontalMovement = new Vec3(player.getDeltaMovement().x, 0.0D, player.getDeltaMovement().z);
+		if (horizontalMovement.lengthSqr() > COPPER_MAN_JETPACK_DISPLAY_YAW_MOVEMENT_THRESHOLD * COPPER_MAN_JETPACK_DISPLAY_YAW_MOVEMENT_THRESHOLD) {
+			return yawFromHorizontalVector(horizontalMovement);
+		}
+
+		if (Math.abs(wrapDegrees(player.yBodyRot - player.yBodyRotO)) > COPPER_MAN_JETPACK_DISPLAY_IDLE_BODY_TURN_THRESHOLD) {
+			return player.yBodyRot;
+		}
+
+		if (previous != null) {
+			return previous.yaw();
+		}
+
+		return player.yBodyRot;
+	}
+
+	private static Vec3 computeCopperManJetpackInputDirection(ServerPlayer player, CopperManJetpackInputState input) {
+		if (player == null || input == null) {
+			return Vec3.ZERO;
+		}
+
+		int forwardInput = (input.forward() ? 1 : 0) - (input.backward() ? 1 : 0);
+		int strafeInput = (input.right() ? 1 : 0) - (input.left() ? 1 : 0);
+		if (forwardInput == 0 && strafeInput == 0) {
+			return Vec3.ZERO;
+		}
+
+		Vec3 forward = Vec3.directionFromRotation(0.0F, player.getYRot());
+		forward = new Vec3(forward.x, 0.0D, forward.z);
+		if (forward.lengthSqr() <= 1.0E-6D) {
+			return Vec3.ZERO;
+		}
+		forward = forward.normalize();
+		Vec3 right = new Vec3(-forward.z, 0.0D, forward.x);
+		Vec3 desired = forward.scale(forwardInput).add(right.scale(strafeInput));
+		return desired.lengthSqr() <= 1.0E-6D ? Vec3.ZERO : desired.normalize();
+	}
+
+	private static float yawFromHorizontalVector(Vec3 vector) {
+		if (vector == null || vector.lengthSqr() <= 1.0E-6D) {
+			return 0.0F;
+		}
+		return (float) Math.toDegrees(Math.atan2(-vector.x, vector.z));
 	}
 
 	private static CopperManJetpackDisplayState smoothCopperManJetpackDisplay(CopperManJetpackDisplayState previous, Vec3 targetPos, float targetYaw) {
