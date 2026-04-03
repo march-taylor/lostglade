@@ -1,12 +1,15 @@
 package com.lostglade.server;
 
 import com.lostglade.item.CameraPhotoSettings;
+import com.lostglade.item.ModItems;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ItemStack;
 
 import java.util.Map;
@@ -24,6 +27,7 @@ public final class CameraVideoRecordingSystem {
 	}
 
 	public static void register() {
+		ServerTickEvents.END_SERVER_TICK.register(CameraVideoRecordingSystem::tick);
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> RECORDINGS_BY_PLAYER.clear());
 	}
 
@@ -46,8 +50,7 @@ public final class CameraVideoRecordingSystem {
 				player.displayClientMessage(Component.literal("Запись видео запускается..."), true);
 				return true;
 			}
-			RendererBotCameraSystem.stopVideoRecording(player.level().getServer(), current.requestId());
-			player.displayClientMessage(Component.literal("Останавливаю запись видео..."), true);
+			requestStop(player.level().getServer(), current, true);
 			return true;
 		}
 
@@ -88,6 +91,42 @@ public final class CameraVideoRecordingSystem {
 		});
 		player.displayClientMessage(Component.literal("Запись видео началась. Нажми камеру ещё раз, чтобы остановить."), true);
 		return true;
+	}
+
+	private static void tick(MinecraftServer server) {
+		if (server == null || RECORDINGS_BY_PLAYER.isEmpty()) {
+			return;
+		}
+		for (ActiveRecording recording : RECORDINGS_BY_PLAYER.values()) {
+			if (recording == null || recording.stopRequested()) {
+				continue;
+			}
+			ServerPlayer player = server.getPlayerList().getPlayer(recording.playerId());
+			if (player == null || !player.isAlive() || !isHoldingCameraInAnyHand(player)) {
+				requestStop(server, recording, player != null);
+			}
+		}
+	}
+
+	private static void requestStop(MinecraftServer server, ActiveRecording recording, boolean notifyPlayer) {
+		if (server == null || recording == null || recording.stopRequested()) {
+			return;
+		}
+		recording.markStopRequested();
+		RendererBotCameraSystem.stopVideoRecording(server, recording.requestId());
+		if (notifyPlayer) {
+			ServerPlayer player = server.getPlayerList().getPlayer(recording.playerId());
+			if (player != null) {
+				player.displayClientMessage(Component.literal("Останавливаю запись видео..."), true);
+			}
+		}
+	}
+
+	private static boolean isHoldingCameraInAnyHand(ServerPlayer player) {
+		if (player == null) {
+			return false;
+		}
+		return player.getMainHandItem().is(ModItems.CAMERA) || player.getOffhandItem().is(ModItems.CAMERA);
 	}
 
 	private static void finishRecording(
@@ -148,16 +187,83 @@ public final class CameraVideoRecordingSystem {
 		}
 	}
 
-	private record ActiveRecording(
-			UUID playerId,
-			UUID requestId,
-			ServerLevel level,
-			double x,
-			double y,
-			double z,
-			int mapsWide,
-			int mapsHigh,
-			long startedAtMs
-	) {
+	private static final class ActiveRecording {
+		private final UUID playerId;
+		private final UUID requestId;
+		private final ServerLevel level;
+		private final double x;
+		private final double y;
+		private final double z;
+		private final int mapsWide;
+		private final int mapsHigh;
+		private final long startedAtMs;
+		private volatile boolean stopRequested;
+
+		private ActiveRecording(
+				UUID playerId,
+				UUID requestId,
+				ServerLevel level,
+				double x,
+				double y,
+				double z,
+				int mapsWide,
+				int mapsHigh,
+				long startedAtMs
+		) {
+			this.playerId = playerId;
+			this.requestId = requestId;
+			this.level = level;
+			this.x = x;
+			this.y = y;
+			this.z = z;
+			this.mapsWide = mapsWide;
+			this.mapsHigh = mapsHigh;
+			this.startedAtMs = startedAtMs;
+			this.stopRequested = false;
+		}
+
+		private UUID playerId() {
+			return this.playerId;
+		}
+
+		private UUID requestId() {
+			return this.requestId;
+		}
+
+		private ServerLevel level() {
+			return this.level;
+		}
+
+		private double x() {
+			return this.x;
+		}
+
+		private double y() {
+			return this.y;
+		}
+
+		private double z() {
+			return this.z;
+		}
+
+		private int mapsWide() {
+			return this.mapsWide;
+		}
+
+		private int mapsHigh() {
+			return this.mapsHigh;
+		}
+
+		private long startedAtMs() {
+			return this.startedAtMs;
+		}
+
+		private boolean stopRequested() {
+			return this.stopRequested;
+		}
+
+		private void markStopRequested() {
+			this.stopRequested = true;
+		}
 	}
 }
