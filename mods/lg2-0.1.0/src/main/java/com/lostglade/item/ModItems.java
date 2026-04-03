@@ -8,6 +8,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Rarity;
@@ -23,6 +24,7 @@ public final class ModItems {
 	private static final Identifier CAMERA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera");
 	private static final Identifier MONITOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "monitor");
 	private static final Identifier COPPER_JETPACK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_jetpack");
+	private static final Identifier COPPER_GOGGLES_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_goggles");
 	private static final Identifier PHOTO_PRINT_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "photo_print");
 	private static final Identifier TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "travka");
 	private static final Identifier DRIED_TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "dried_travka");
@@ -41,6 +43,7 @@ public final class ModItems {
 	private static final ResourceKey<Item> CAMERA_KEY = ResourceKey.create(Registries.ITEM, CAMERA_ID);
 	private static final ResourceKey<Item> MONITOR_KEY = ResourceKey.create(Registries.ITEM, MONITOR_ID);
 	private static final ResourceKey<Item> COPPER_JETPACK_KEY = ResourceKey.create(Registries.ITEM, COPPER_JETPACK_ID);
+	private static final ResourceKey<Item> COPPER_GOGGLES_KEY = ResourceKey.create(Registries.ITEM, COPPER_GOGGLES_ID);
 	private static final ResourceKey<Item> PHOTO_PRINT_KEY = ResourceKey.create(Registries.ITEM, PHOTO_PRINT_ID);
 	private static final ResourceKey<Item> TRAVKA_KEY = ResourceKey.create(Registries.ITEM, TRAVKA_ID);
 	private static final ResourceKey<Item> DRIED_TRAVKA_KEY = ResourceKey.create(Registries.ITEM, DRIED_TRAVKA_ID);
@@ -106,6 +109,17 @@ public final class ModItems {
 					new Item.Properties()
 							.setId(COPPER_JETPACK_KEY)
 							.stacksTo(1)
+							.rarity(Rarity.UNCOMMON)
+			)
+	);
+	public static final Item COPPER_GOGGLES = Registry.register(
+			BuiltInRegistries.ITEM,
+			COPPER_GOGGLES_ID,
+			new CopperGogglesItem(
+					new Item.Properties()
+							.setId(COPPER_GOGGLES_KEY)
+							.stacksTo(1)
+							.equippable(EquipmentSlot.HEAD)
 							.rarity(Rarity.UNCOMMON)
 			)
 	);
@@ -266,6 +280,7 @@ public final class ModItems {
 			entries.prepend(TRAVKA);
 			entries.prepend(MONITOR);
 			entries.prepend(CAMERA);
+			entries.prepend(COPPER_GOGGLES);
 			entries.prepend(BITCOIN);
 		});
 	}
