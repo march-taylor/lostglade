@@ -10,9 +10,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 public final class RendererBotProcessSystem {
 	private static final Object LOCK = new Object();
@@ -121,6 +124,7 @@ public final class RendererBotProcessSystem {
 		boolean headlessRequested = isBlank(System.getenv("DISPLAY")) && isBlank(System.getenv("WAYLAND_DISPLAY"));
 		String serverAddress = "127.0.0.1:" + Math.max(1, server.getPort());
 		Path cameraCacheRoot = server.getServerDirectory().resolve("cache").resolve("lg2-camera").toAbsolutePath().normalize();
+		terminateStaleBotProcesses(modDir, botName.trim(), serverAddress);
 		List<String> command = new ArrayList<>();
 		command.add(gradlew.toString());
 		command.add("--console=plain");
@@ -205,15 +209,7 @@ public final class RendererBotProcessSystem {
 			return;
 		}
 
-		runningProcess.destroy();
-		try {
-			if (!runningProcess.waitFor(STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-				runningProcess.destroyForcibly();
-			}
-		} catch (InterruptedException interruptedException) {
-			Thread.currentThread().interrupt();
-			runningProcess.destroyForcibly();
-		}
+		terminateProcessTree(runningProcess.toHandle(), STOP_TIMEOUT_MS);
 	}
 
 	private static Path locateModProjectDir(Path serverDir) {
@@ -237,5 +233,77 @@ public final class RendererBotProcessSystem {
 
 	private static boolean isBlank(String value) {
 		return value == null || value.isBlank();
+	}
+
+	private static void terminateStaleBotProcesses(Path modDir, String botName, String serverAddress) {
+		if (modDir == null || isBlank(botName) || isBlank(serverAddress)) {
+			return;
+		}
+		long currentPid = ProcessHandle.current().pid();
+		String modDirToken = modDir.toAbsolutePath().normalize().toString();
+		String botNameToken = "-Dlg2.rendererBotName=" + botName;
+		String serverAddressToken = "-Dlg2.rendererBotServer=" + serverAddress;
+		List<ProcessHandle> staleProcesses = ProcessHandle.allProcesses()
+				.filter(handle -> handle.pid() != currentPid)
+				.filter(ProcessHandle::isAlive)
+				.filter(handle -> matchesRendererBotProcess(handle, modDirToken, botNameToken, serverAddressToken))
+				.sorted(Comparator.comparingLong(ProcessHandle::pid))
+				.collect(Collectors.toList());
+		if (staleProcesses.isEmpty()) {
+			return;
+		}
+		Lg2.LOGGER.warn(
+				"Stopping stale renderer bot process tree(s) for '{}' on {}: {}",
+				botName,
+				serverAddress,
+				staleProcesses.stream().map(handle -> Long.toString(handle.pid())).collect(Collectors.joining(", "))
+		);
+		for (ProcessHandle handle : staleProcesses) {
+			terminateProcessTree(handle, STOP_TIMEOUT_MS);
+		}
+	}
+
+	private static boolean matchesRendererBotProcess(ProcessHandle handle, String modDirToken, String botNameToken, String serverAddressToken) {
+		if (handle == null) {
+			return false;
+		}
+		Optional<String> commandLine = handle.info().commandLine();
+		if (commandLine.isEmpty()) {
+			return false;
+		}
+		String line = commandLine.get();
+		return line.contains(modDirToken)
+				&& line.contains("runRendererBotClient")
+				&& line.contains(botNameToken)
+				&& line.contains(serverAddressToken);
+	}
+
+	private static void terminateProcessTree(ProcessHandle rootHandle, long timeoutMillis) {
+		if (rootHandle == null) {
+			return;
+		}
+		List<ProcessHandle> handles = new ArrayList<>(rootHandle.descendants()
+				.sorted(Comparator.comparingLong(ProcessHandle::pid).reversed())
+				.collect(Collectors.toList()));
+		handles.add(rootHandle);
+		for (ProcessHandle handle : handles) {
+			if (handle.isAlive()) {
+				handle.destroy();
+			}
+		}
+		long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(250L, timeoutMillis));
+		for (ProcessHandle handle : handles) {
+			if (!handle.isAlive()) {
+				continue;
+			}
+			long remainingMs = Math.max(1L, TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()));
+			try {
+				handle.onExit().get(Math.max(1L, remainingMs), TimeUnit.MILLISECONDS);
+			} catch (Exception ignored) {
+				if (handle.isAlive()) {
+					handle.destroyForcibly();
+				}
+			}
+		}
 	}
 }

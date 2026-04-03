@@ -168,6 +168,7 @@ public final class MonitorScreenSystem {
 	private static final int LIVE_CAMERA_TARGET_FPS = 20;
 	private static final long LIVE_CAMERA_HEALTH_CHECK_INTERVAL_MS = 500L;
 	private static final long LIVE_CAMERA_GALLERY_SYNC_INTERVAL_MS = 400L;
+	private static final long LIVE_CAMERA_PREVIEW_DECODE_INTERVAL_MS = 200L;
 	private static final Map<RenderCacheKey, byte[][]> TILE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<OverlayWindowCacheKey, OverlayWindowRenderState> OVERLAY_WINDOW_CACHE = new ConcurrentHashMap<>();
 	private static final Map<OverlayWindowFamilyKey, BufferedImage> OVERLAY_WINDOW_FAMILY_CACHE = new ConcurrentHashMap<>();
@@ -1244,7 +1245,6 @@ public final class MonitorScreenSystem {
 								}
 								if (selectGalleryItemLocked(mediaState, galleryIndex, layout)) {
 									mediaState.statusText = "";
-									mediaState.overlayMode = MediaOverlayMode.CONTROLS;
 									mediaState.version++;
 								} else {
 									galleryDeferredLoadIndex = galleryIndex;
@@ -4847,6 +4847,8 @@ public final class MonitorScreenSystem {
 	private static void decodePendingLiveCameraFrames(MinecraftServer server, ScreenRuntimeKey key, String url, int fullWidth, int fullHeight) {
 		while (true) {
 			byte[] pixels;
+			boolean decodePreviewFrame;
+			byte[][] previousTiles;
 			MediaRuntimeState state = MEDIA_STATES.get(key);
 			if (state == null) {
 				RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(key));
@@ -4859,20 +4861,45 @@ public final class MonitorScreenSystem {
 					state.liveCameraDecodeScheduled = false;
 					return;
 				}
+				long now = System.currentTimeMillis();
+				decodePreviewFrame = state.streamFrame == null
+						|| state.loading
+						|| now >= state.nextLiveCameraPreviewDecodeAtMillis;
+				if (decodePreviewFrame) {
+					state.nextLiveCameraPreviewDecodeAtMillis = now + LIVE_CAMERA_PREVIEW_DECODE_INTERVAL_MS;
+				}
+				previousTiles = state.liveCameraPreviousTiles;
 			}
-			BufferedImage fullFrame;
+			PreparedRenderedTiles preparedTiles;
 			try {
-				fullFrame = mapPaletteImage(pixels, fullWidth, fullHeight);
+				byte[][] renderedTiles = splitRenderedTiles(pixels, fullWidth, fullHeight);
+				preparedTiles = prepareRenderedTiles(renderedTiles, previousTiles);
+				synchronized (state) {
+					if (state.streamKind == PlaybackStreamKind.LIVE_CAMERA && Objects.equals(state.sourceUrl, url)) {
+						state.liveCameraPreviousTiles = preparedTiles.renderedTiles();
+					}
+				}
 			} catch (Exception exception) {
 				server.execute(() -> applyLiveCameraStreamFailure(server, key, url, sanitizeMediaError(exception.getMessage())));
 				continue;
 			}
-			server.execute(() -> applyLiveCameraFrame(server, key, url, fullFrame));
+			BufferedImage previewFrame = null;
+			if (decodePreviewFrame) {
+				try {
+					previewFrame = mapPaletteImage(pixels, fullWidth, fullHeight);
+				} catch (Exception exception) {
+					server.execute(() -> applyLiveCameraStreamFailure(server, key, url, sanitizeMediaError(exception.getMessage())));
+					continue;
+				}
+			}
+			BufferedImage finalPreviewFrame = previewFrame;
+			PreparedRenderedTiles finalPreparedTiles = preparedTiles;
+			server.execute(() -> applyLiveCameraFrame(server, key, url, finalPreparedTiles, finalPreviewFrame));
 		}
 	}
 
-	private static void applyLiveCameraFrame(MinecraftServer server, ScreenRuntimeKey key, String url, BufferedImage fullFrame) {
-		if (server == null || key == null || url == null || url.isBlank() || fullFrame == null) {
+	private static void applyLiveCameraFrame(MinecraftServer server, ScreenRuntimeKey key, String url, PreparedRenderedTiles preparedTiles, BufferedImage previewFrame) {
+		if (server == null || key == null || url == null || url.isBlank() || preparedTiles == null || preparedTiles.renderedTiles() == null || preparedTiles.renderedTiles().length == 0) {
 			return;
 		}
 		MediaRuntimeState state = MEDIA_STATES.get(key);
@@ -4881,17 +4908,34 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		boolean shouldRender = false;
+		boolean directApply = false;
 		synchronized (state) {
 			if (state.streamKind != PlaybackStreamKind.LIVE_CAMERA || !Objects.equals(state.sourceUrl, url)) {
 				return;
 			}
-			state.streamFrame = fullFrame;
-			state.loadingBackdropFrame = fullFrame;
+			boolean stateChanged = state.loading || !state.liveStream || !"LIVE".equals(state.statusText);
+			if (previewFrame != null) {
+				state.streamFrame = previewFrame;
+				state.loadingBackdropFrame = previewFrame;
+				upsertLiveCameraPreviewLocked(state, url, previewFrame);
+				stateChanged = true;
+			}
 			state.loading = false;
 			state.liveStream = true;
 			state.statusText = "LIVE";
-			state.version++;
-			shouldRender = true;
+			directApply = state.overlayMode == MediaOverlayMode.VIEW;
+			if (stateChanged) {
+				state.version++;
+			}
+			shouldRender = !directApply && (stateChanged || previewFrame != null);
+		}
+		if (directApply) {
+			ServerLevel level = server.getLevel(key.dimension());
+			ScreenComponent component = resolveScreenComponent(server, key);
+			if (level != null && component != null && hasNearbyMediaViewer(level, component)) {
+				applyPreparedRenderedTiles(level, component, preparedTiles);
+			}
+			return;
 		}
 		if (shouldRender && hasNearbyMediaViewer(server, key)) {
 			requestRuntimeRender(server, key);
@@ -4919,6 +4963,84 @@ public final class MonitorScreenSystem {
 		if (shouldRender && hasNearbyMediaViewer(server, key)) {
 			requestRuntimeRender(server, key);
 		}
+	}
+
+	private static byte[][] splitRenderedTiles(byte[] pixels, int fullWidth, int fullHeight) {
+		if (pixels == null || pixels.length == 0 || fullWidth <= 0 || fullHeight <= 0) {
+			throw new IllegalArgumentException("Live camera frame is empty");
+		}
+		if (fullWidth % MAP_SIZE != 0 || fullHeight % MAP_SIZE != 0) {
+			throw new IllegalArgumentException("Live camera frame does not match map tile size");
+		}
+		if (pixels.length < fullWidth * fullHeight) {
+			throw new IllegalArgumentException("Live camera frame is truncated");
+		}
+		int tilesWide = fullWidth / MAP_SIZE;
+		int tilesHigh = fullHeight / MAP_SIZE;
+		byte[][] renderedTiles = new byte[tilesWide * tilesHigh][MAP_SIZE * MAP_SIZE];
+		for (int tileY = 0; tileY < tilesHigh; tileY++) {
+			for (int tileX = 0; tileX < tilesWide; tileX++) {
+				byte[] tile = renderedTiles[tileY * tilesWide + tileX];
+				for (int row = 0; row < MAP_SIZE; row++) {
+					int sourceOffset = (tileY * MAP_SIZE + row) * fullWidth + tileX * MAP_SIZE;
+					System.arraycopy(pixels, sourceOffset, tile, row * MAP_SIZE, MAP_SIZE);
+				}
+			}
+		}
+		return renderedTiles;
+	}
+
+	private static PreparedRenderedTiles prepareRenderedTiles(byte[][] renderedTiles, byte[][] previousTiles) {
+		if (renderedTiles == null || renderedTiles.length == 0) {
+			throw new IllegalArgumentException("Live camera frame is empty");
+		}
+		TileFramePatch[] patches = new TileFramePatch[renderedTiles.length];
+		for (int tileIndex = 0; tileIndex < renderedTiles.length; tileIndex++) {
+			byte[] currentTile = renderedTiles[tileIndex];
+			if (currentTile == null || currentTile.length < MAP_SIZE * MAP_SIZE) {
+				continue;
+			}
+			byte[] previousTile = previousTiles != null && tileIndex < previousTiles.length ? previousTiles[tileIndex] : null;
+			patches[tileIndex] = buildTileFramePatch(previousTile, currentTile);
+		}
+		return new PreparedRenderedTiles(renderedTiles, patches);
+	}
+
+	private static TileFramePatch buildTileFramePatch(byte[] previousTile, byte[] currentTile) {
+		if (currentTile == null || currentTile.length < MAP_SIZE * MAP_SIZE) {
+			return null;
+		}
+		if (previousTile == null || previousTile.length < MAP_SIZE * MAP_SIZE) {
+			return new TileFramePatch(0, 0, MAP_SIZE, MAP_SIZE, currentTile.clone());
+		}
+		int minX = MAP_SIZE;
+		int minY = MAP_SIZE;
+		int maxX = -1;
+		int maxY = -1;
+		for (int y = 0; y < MAP_SIZE; y++) {
+			int rowStart = y * MAP_SIZE;
+			for (int x = 0; x < MAP_SIZE; x++) {
+				int index = rowStart + x;
+				if (previousTile[index] == currentTile[index]) {
+					continue;
+				}
+				minX = Math.min(minX, x);
+				minY = Math.min(minY, y);
+				maxX = Math.max(maxX, x);
+				maxY = Math.max(maxY, y);
+			}
+		}
+		if (maxX < minX || maxY < minY) {
+			return null;
+		}
+		int patchWidth = maxX - minX + 1;
+		int patchHeight = maxY - minY + 1;
+		byte[] patch = new byte[patchWidth * patchHeight];
+		for (int row = 0; row < patchHeight; row++) {
+			int sourceOffset = (minY + row) * MAP_SIZE + minX;
+			System.arraycopy(currentTile, sourceOffset, patch, row * patchWidth, patchWidth);
+		}
+		return new TileFramePatch(minX, minY, patchWidth, patchHeight, patch);
 	}
 
 	private static void upsertLiveCameraPreviewLocked(MediaRuntimeState state, String url, BufferedImage previewFrame) {
@@ -10062,6 +10184,55 @@ public final class MonitorScreenSystem {
 		sendMapToPlayers(level, component, changedUpdates);
 	}
 
+	private static void applyPreparedRenderedTiles(ServerLevel level, ScreenComponent component, PreparedRenderedTiles preparedTiles) {
+		if (level == null || component == null || preparedTiles == null || preparedTiles.renderedTiles() == null) {
+			return;
+		}
+		ServerLevel mapStorageLevel = photoMapLevel(level.getServer(), level);
+		List<MapPacketUpdate> changedUpdates = new ArrayList<>();
+		byte[][] renderedTiles = preparedTiles.renderedTiles();
+		TileFramePatch[] patches = preparedTiles.tilePatches();
+		for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
+			ItemFrame frame = entry.getKey();
+			ItemStack frameStack = frame.getItem();
+			ScreenTileState state = readScreenState(frameStack);
+			MapId mapId = frameStack.get(DataComponents.MAP_ID);
+			if (state == null || mapId == null) {
+				continue;
+			}
+			MapItemSavedData mapData = mapStorageLevel.getMapData(mapId);
+			if (mapData == null) {
+				continue;
+			}
+			int tileIndex = state.tileY() * component.width() + state.tileX();
+			if (tileIndex < 0 || tileIndex >= renderedTiles.length) {
+				continue;
+			}
+			byte[] tileFrame = renderedTiles[tileIndex];
+			if (tileFrame == null || tileFrame.length < MAP_SIZE * MAP_SIZE) {
+				continue;
+			}
+			LAST_RENDERED_MAP_FRAMES.put(mapId.id(), tileFrame.clone());
+			TileFramePatch patch = patches != null && tileIndex < patches.length ? patches[tileIndex] : null;
+			if (patch == null) {
+				continue;
+			}
+			MapPacketUpdate update = new MapPacketUpdate(
+					mapId,
+					mapData.scale,
+					mapData.locked,
+					patch.startX(),
+					patch.startY(),
+					patch.width(),
+					patch.height(),
+					patch.frame()
+			);
+			applyPatchToMap(mapData, update);
+			changedUpdates.add(update);
+		}
+		sendMapToPlayers(level, component, changedUpdates);
+	}
+
 	private static MapPacketUpdate buildRenderedMapUpdate(MapId mapId, byte scale, boolean locked, byte[] tileFrame) {
 		if (mapId == null || tileFrame == null || tileFrame.length < MAP_SIZE * MAP_SIZE) {
 			return null;
@@ -11248,6 +11419,8 @@ public final class MonitorScreenSystem {
 		state.pendingLiveCameraPixels = null;
 		state.liveCameraDecodeScheduled = false;
 		state.liveCameraLastFrameAtMillis = 0L;
+		state.liveCameraPreviousTiles = null;
+		state.nextLiveCameraPreviewDecodeAtMillis = 0L;
 	}
 
 	private static void clearGalleryLocked(MediaRuntimeState state) {
@@ -11299,6 +11472,8 @@ public final class MonitorScreenSystem {
 		state.pendingLiveCameraPixels = null;
 		state.liveCameraDecodeScheduled = false;
 		state.liveCameraLastFrameAtMillis = 0L;
+		state.liveCameraPreviousTiles = null;
+		state.nextLiveCameraPreviewDecodeAtMillis = 0L;
 	}
 
 	private static void clearLoadedContentLocked(MediaRuntimeState state) {
@@ -11450,6 +11625,7 @@ public final class MonitorScreenSystem {
 		state.bufferedStartMs = 0L;
 		state.bufferedEndMs = 0L;
 		state.liveStream = itemKind == GalleryItemKind.LIVE_CAMERA;
+		state.overlayMode = itemKind == GalleryItemKind.LIVE_CAMERA ? MediaOverlayMode.VIEW : MediaOverlayMode.CONTROLS;
 		state.audioPlaceholder = true;
 		state.progress.clear();
 		if (itemKind == GalleryItemKind.LIVE_CAMERA) {
@@ -11465,6 +11641,8 @@ public final class MonitorScreenSystem {
 			state.pendingLiveCameraPixels = null;
 			state.liveCameraDecodeScheduled = false;
 			state.liveCameraLastFrameAtMillis = 0L;
+			state.liveCameraPreviousTiles = null;
+			state.nextLiveCameraPreviewDecodeAtMillis = 0L;
 		} else {
 			state.loadedMedia = item.media();
 			state.loading = false;
@@ -12822,6 +13000,12 @@ public final class MonitorScreenSystem {
 	) {
 	}
 
+	private record TileFramePatch(int startX, int startY, int width, int height, byte[] frame) {
+	}
+
+	private record PreparedRenderedTiles(byte[][] renderedTiles, TileFramePatch[] tilePatches) {
+	}
+
 	private record ScreenTileState(
 			int attachmentMask,
 			int gridWidth,
@@ -12909,6 +13093,8 @@ public final class MonitorScreenSystem {
 		private byte[] pendingLiveCameraPixels;
 		private boolean liveCameraDecodeScheduled;
 		private long liveCameraLastFrameAtMillis;
+		private byte[][] liveCameraPreviousTiles;
+		private long nextLiveCameraPreviewDecodeAtMillis;
 		private long nextLiveCameraGallerySyncAtMillis;
 		private int activeRenderJobs;
 		private boolean rerenderRequested;
@@ -12967,6 +13153,8 @@ public final class MonitorScreenSystem {
 			this.pendingLiveCameraPixels = null;
 			this.liveCameraDecodeScheduled = false;
 			this.liveCameraLastFrameAtMillis = 0L;
+			this.liveCameraPreviousTiles = null;
+			this.nextLiveCameraPreviewDecodeAtMillis = 0L;
 			this.nextLiveCameraGallerySyncAtMillis = 0L;
 			this.activeRenderJobs = 0;
 			this.nextProgressRenderAtMillis = 0L;

@@ -33,6 +33,8 @@ public final class RendererBotClientCapture {
 	private static final int MAX_RENDER_WIDTH = Math.max(MIN_RENDER_WIDTH, Integer.getInteger("lg2.rendererBotMaxRenderWidth", 3072));
 	private static final int MAX_RENDER_HEIGHT = Math.max(MIN_RENDER_HEIGHT, Integer.getInteger("lg2.rendererBotMaxRenderHeight", 2048));
 	private static final int MAX_LIVE_STREAM_FPS = 20;
+	private static final boolean LIVE_STREAM_DITHERING = Boolean.getBoolean("lg2.rendererBotLiveStreamDithering");
+	private static final int LIVE_STREAM_PARALLEL_PIXELS_THRESHOLD = Math.max(65_536, Integer.getInteger("lg2.rendererBotLiveParallelPixelsThreshold", 131_072));
 	private static final ExecutorService CAPTURE_EXECUTOR = Executors.newFixedThreadPool(CAPTURE_THREADS, runnable -> {
 		Thread thread = new Thread(runnable, "lg2-renderer-bot-capture");
 		thread.setDaemon(true);
@@ -306,7 +308,7 @@ public final class RendererBotClientCapture {
 			int width = image.getWidth();
 			int height = image.getHeight();
 			int[] pixels = image.makePixelArray();
-			byte[] fullPixels = quantizeFrame(pixels, width, height, payload.fullWidth(), payload.fullHeight());
+			byte[] fullPixels = quantizeLiveFrame(pixels, width, height, payload.fullWidth(), payload.fullHeight());
 			client.execute(() -> {
 				ClientPlayNetworking.send(new RendererBotPayloads.RendererBotLiveFrameC2SPayload(payload.streamId(), fullPixels));
 				clearLiveStreamFrameInFlight(payload.streamId());
@@ -338,19 +340,41 @@ public final class RendererBotClientCapture {
 		return quantizeScaledFrame(sourcePixels, sourceWidth, sourceHeight, outputWidth, outputHeight);
 	}
 
+	private static byte[] quantizeLiveFrame(int[] sourcePixels, int sourceWidth, int sourceHeight, int outputWidth, int outputHeight) {
+		boolean dither = LIVE_STREAM_DITHERING;
+		if (sourceWidth == outputWidth && sourceHeight == outputHeight) {
+			return quantizeExactFrame(sourcePixels, outputWidth, outputHeight, dither, true);
+		}
+		return quantizeScaledFrame(sourcePixels, sourceWidth, sourceHeight, outputWidth, outputHeight, dither, true);
+	}
+
 	private static byte[] quantizeExactFrame(int[] sourcePixels, int width, int height) {
+		return quantizeExactFrame(sourcePixels, width, height, true, false);
+	}
+
+	private static byte[] quantizeExactFrame(int[] sourcePixels, int width, int height, boolean dither, boolean allowParallel) {
 		byte[] output = new byte[Math.max(1, width * height)];
+		if (allowParallel && width * height >= LIVE_STREAM_PARALLEL_PIXELS_THRESHOLD) {
+			parallelQuantizeRows(sourcePixels, width, height, output, dither);
+			return output;
+		}
 		for (int y = 0; y < height; y++) {
 			int rowStart = y * width;
 			for (int x = 0; x < width; x++) {
 				int rgb = sourcePixels[rowStart + x] & 0xFFFFFF;
-				output[rowStart + x] = MapPaletteQuantizer.quantizeDithered(rgb, x, y);
+				output[rowStart + x] = dither
+						? MapPaletteQuantizer.quantizeDithered(rgb, x, y)
+						: MapPaletteQuantizer.quantize(rgb);
 			}
 		}
 		return output;
 	}
 
 	private static byte[] quantizeScaledFrame(int[] sourcePixels, int sourceWidth, int sourceHeight, int outputWidth, int outputHeight) {
+		return quantizeScaledFrame(sourcePixels, sourceWidth, sourceHeight, outputWidth, outputHeight, true, false);
+	}
+
+	private static byte[] quantizeScaledFrame(int[] sourcePixels, int sourceWidth, int sourceHeight, int outputWidth, int outputHeight, boolean dither, boolean allowParallel) {
 		double sourceAspect = sourceWidth / (double) Math.max(1, sourceHeight);
 		double targetAspect = outputWidth / (double) Math.max(1, outputHeight);
 		double cropX = 0.0D;
@@ -366,6 +390,10 @@ public final class RendererBotClientCapture {
 		}
 
 		byte[] output = new byte[Math.max(1, outputWidth * outputHeight)];
+		if (allowParallel && outputWidth * outputHeight >= LIVE_STREAM_PARALLEL_PIXELS_THRESHOLD) {
+			parallelScaleQuantizeRows(sourcePixels, sourceWidth, sourceHeight, outputWidth, outputHeight, cropX, cropY, cropWidth, cropHeight, output, dither);
+			return output;
+		}
 		double sampleSpanX = cropWidth / Math.max(1.0D, outputWidth);
 		double sampleSpanY = cropHeight / Math.max(1.0D, outputHeight);
 		for (int y = 0; y < outputHeight; y++) {
@@ -373,10 +401,101 @@ public final class RendererBotClientCapture {
 			for (int x = 0; x < outputWidth; x++) {
 				double sampleX = cropX + ((x + 0.5D) / outputWidth) * cropWidth;
 				int rgb = sampleScaledRgb(sourcePixels, sourceWidth, sourceHeight, sampleX, sampleY, sampleSpanX, sampleSpanY);
-				output[y * outputWidth + x] = MapPaletteQuantizer.quantizeDithered(rgb, x, y);
+				output[y * outputWidth + x] = dither
+						? MapPaletteQuantizer.quantizeDithered(rgb, x, y)
+						: MapPaletteQuantizer.quantize(rgb);
 			}
 		}
 		return output;
+	}
+
+	private static void parallelQuantizeRows(int[] sourcePixels, int width, int height, byte[] output, boolean dither) {
+		int workerCount = Math.max(1, Math.min(Math.max(1, CAPTURE_THREADS - 1), height));
+		if (workerCount <= 1) {
+			quantizeRows(sourcePixels, width, output, 0, height, dither);
+			return;
+		}
+		CompletableFuture<?>[] tasks = new CompletableFuture<?>[workerCount];
+		for (int worker = 0; worker < workerCount; worker++) {
+			int startRow = (height * worker) / workerCount;
+			int endRow = (height * (worker + 1)) / workerCount;
+			tasks[worker] = CompletableFuture.runAsync(
+					() -> quantizeRows(sourcePixels, width, output, startRow, endRow, dither),
+					CAPTURE_EXECUTOR
+			);
+		}
+		CompletableFuture.allOf(tasks).join();
+	}
+
+	private static void quantizeRows(int[] sourcePixels, int width, byte[] output, int startRow, int endRow, boolean dither) {
+		for (int y = startRow; y < endRow; y++) {
+			int rowStart = y * width;
+			for (int x = 0; x < width; x++) {
+				int rgb = sourcePixels[rowStart + x] & 0xFFFFFF;
+				output[rowStart + x] = dither
+						? MapPaletteQuantizer.quantizeDithered(rgb, x, y)
+						: MapPaletteQuantizer.quantize(rgb);
+			}
+		}
+	}
+
+	private static void parallelScaleQuantizeRows(
+			int[] sourcePixels,
+			int sourceWidth,
+			int sourceHeight,
+			int outputWidth,
+			int outputHeight,
+			double cropX,
+			double cropY,
+			double cropWidth,
+			double cropHeight,
+			byte[] output,
+			boolean dither
+	) {
+		int workerCount = Math.max(1, Math.min(Math.max(1, CAPTURE_THREADS - 1), outputHeight));
+		if (workerCount <= 1) {
+			scaleQuantizeRows(sourcePixels, sourceWidth, sourceHeight, outputWidth, outputHeight, cropX, cropY, cropWidth, cropHeight, output, 0, outputHeight, dither);
+			return;
+		}
+		CompletableFuture<?>[] tasks = new CompletableFuture<?>[workerCount];
+		for (int worker = 0; worker < workerCount; worker++) {
+			int startRow = (outputHeight * worker) / workerCount;
+			int endRow = (outputHeight * (worker + 1)) / workerCount;
+			tasks[worker] = CompletableFuture.runAsync(
+					() -> scaleQuantizeRows(sourcePixels, sourceWidth, sourceHeight, outputWidth, outputHeight, cropX, cropY, cropWidth, cropHeight, output, startRow, endRow, dither),
+					CAPTURE_EXECUTOR
+			);
+		}
+		CompletableFuture.allOf(tasks).join();
+	}
+
+	private static void scaleQuantizeRows(
+			int[] sourcePixels,
+			int sourceWidth,
+			int sourceHeight,
+			int outputWidth,
+			int outputHeight,
+			double cropX,
+			double cropY,
+			double cropWidth,
+			double cropHeight,
+			byte[] output,
+			int startRow,
+			int endRow,
+			boolean dither
+	) {
+		double sampleSpanX = cropWidth / Math.max(1.0D, outputWidth);
+		double sampleSpanY = cropHeight / Math.max(1.0D, outputHeight);
+		for (int y = startRow; y < endRow; y++) {
+			double sampleY = cropY + ((y + 0.5D) / outputHeight) * cropHeight;
+			for (int x = 0; x < outputWidth; x++) {
+				double sampleX = cropX + ((x + 0.5D) / outputWidth) * cropWidth;
+				int rgb = sampleScaledRgb(sourcePixels, sourceWidth, sourceHeight, sampleX, sampleY, sampleSpanX, sampleSpanY);
+				output[y * outputWidth + x] = dither
+						? MapPaletteQuantizer.quantizeDithered(rgb, x, y)
+						: MapPaletteQuantizer.quantize(rgb);
+			}
+		}
 	}
 
 	private static int sampleScaledRgb(int[] sourcePixels, int sourceWidth, int sourceHeight, double sampleX, double sampleY, double sampleSpanX, double sampleSpanY) {
