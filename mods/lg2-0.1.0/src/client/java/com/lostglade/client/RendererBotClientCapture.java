@@ -26,10 +26,11 @@ public final class RendererBotClientCapture {
 	private static final long RECENT_FRAME_TTL_MS = Long.getLong("lg2.rendererBotRecentFrameTtlMs", 175L);
 	private static final int DEFAULT_WARMUP_FRAMES = Math.max(1, Integer.getInteger("lg2.rendererBotWarmupFrames", 2));
 	private static final int CAPTURE_THREADS = Math.max(3, Integer.getInteger("lg2.rendererBotCaptureThreads", Math.max(3, Runtime.getRuntime().availableProcessors() - 1)));
-	private static final int MIN_RENDER_WIDTH = Math.max(128, Integer.getInteger("lg2.rendererBotMinRenderWidth", 512));
-	private static final int MIN_RENDER_HEIGHT = Math.max(128, Integer.getInteger("lg2.rendererBotMinRenderHeight", 384));
-	private static final int MAX_RENDER_WIDTH = Math.max(MIN_RENDER_WIDTH, Integer.getInteger("lg2.rendererBotMaxRenderWidth", 1536));
-	private static final int MAX_RENDER_HEIGHT = Math.max(MIN_RENDER_HEIGHT, Integer.getInteger("lg2.rendererBotMaxRenderHeight", 1024));
+	private static final double TARGET_RENDER_SCALE = Math.max(1.0D, doubleProperty("lg2.rendererBotPhotoRenderScale", 2.5D));
+	private static final int MIN_RENDER_WIDTH = Math.max(128, Integer.getInteger("lg2.rendererBotMinRenderWidth", 1024));
+	private static final int MIN_RENDER_HEIGHT = Math.max(128, Integer.getInteger("lg2.rendererBotMinRenderHeight", 768));
+	private static final int MAX_RENDER_WIDTH = Math.max(MIN_RENDER_WIDTH, Integer.getInteger("lg2.rendererBotMaxRenderWidth", 3072));
+	private static final int MAX_RENDER_HEIGHT = Math.max(MIN_RENDER_HEIGHT, Integer.getInteger("lg2.rendererBotMaxRenderHeight", 2048));
 	private static final ExecutorService CAPTURE_EXECUTOR = Executors.newFixedThreadPool(CAPTURE_THREADS, runnable -> {
 		Thread thread = new Thread(runnable, "lg2-renderer-bot-capture");
 		thread.setDaemon(true);
@@ -232,17 +233,76 @@ public final class RendererBotClientCapture {
 		}
 
 		byte[] output = new byte[Math.max(1, outputWidth * outputHeight)];
+		double sampleSpanX = cropWidth / Math.max(1.0D, outputWidth);
+		double sampleSpanY = cropHeight / Math.max(1.0D, outputHeight);
 		for (int y = 0; y < outputHeight; y++) {
 			double sampleY = cropY + ((y + 0.5D) / outputHeight) * cropHeight;
-			int sourceY = Mth.clamp((int) Math.floor(sampleY), 0, sourceHeight - 1);
 			for (int x = 0; x < outputWidth; x++) {
 				double sampleX = cropX + ((x + 0.5D) / outputWidth) * cropWidth;
-				int sourceX = Mth.clamp((int) Math.floor(sampleX), 0, sourceWidth - 1);
-				int rgb = sourcePixels[sourceY * sourceWidth + sourceX] & 0xFFFFFF;
+				int rgb = sampleScaledRgb(sourcePixels, sourceWidth, sourceHeight, sampleX, sampleY, sampleSpanX, sampleSpanY);
 				output[y * outputWidth + x] = MapPaletteQuantizer.quantizeDithered(rgb, x, y);
 			}
 		}
 		return output;
+	}
+
+	private static int sampleScaledRgb(int[] sourcePixels, int sourceWidth, int sourceHeight, double sampleX, double sampleY, double sampleSpanX, double sampleSpanY) {
+		if (sampleSpanX > 1.15D || sampleSpanY > 1.15D) {
+			double offsetX = sampleSpanX * 0.25D;
+			double offsetY = sampleSpanY * 0.25D;
+			int rgbA = sampleBilinearRgb(sourcePixels, sourceWidth, sourceHeight, sampleX - offsetX, sampleY - offsetY);
+			int rgbB = sampleBilinearRgb(sourcePixels, sourceWidth, sourceHeight, sampleX + offsetX, sampleY - offsetY);
+			int rgbC = sampleBilinearRgb(sourcePixels, sourceWidth, sourceHeight, sampleX - offsetX, sampleY + offsetY);
+			int rgbD = sampleBilinearRgb(sourcePixels, sourceWidth, sourceHeight, sampleX + offsetX, sampleY + offsetY);
+			return averageRgb(rgbA, rgbB, rgbC, rgbD);
+		}
+		return sampleBilinearRgb(sourcePixels, sourceWidth, sourceHeight, sampleX, sampleY);
+	}
+
+	private static int sampleBilinearRgb(int[] sourcePixels, int sourceWidth, int sourceHeight, double sampleX, double sampleY) {
+		double clampedX = Mth.clamp(sampleX, 0.0D, Math.max(0, sourceWidth - 1));
+		double clampedY = Mth.clamp(sampleY, 0.0D, Math.max(0, sourceHeight - 1));
+		int x0 = Mth.clamp((int) Math.floor(clampedX), 0, sourceWidth - 1);
+		int y0 = Mth.clamp((int) Math.floor(clampedY), 0, sourceHeight - 1);
+		int x1 = Math.min(x0 + 1, sourceWidth - 1);
+		int y1 = Math.min(y0 + 1, sourceHeight - 1);
+		double tx = clampedX - x0;
+		double ty = clampedY - y0;
+
+		int c00 = sourcePixels[y0 * sourceWidth + x0] & 0xFFFFFF;
+		int c10 = sourcePixels[y0 * sourceWidth + x1] & 0xFFFFFF;
+		int c01 = sourcePixels[y1 * sourceWidth + x0] & 0xFFFFFF;
+		int c11 = sourcePixels[y1 * sourceWidth + x1] & 0xFFFFFF;
+
+		int red = bilinearChannel((c00 >> 16) & 0xFF, (c10 >> 16) & 0xFF, (c01 >> 16) & 0xFF, (c11 >> 16) & 0xFF, tx, ty);
+		int green = bilinearChannel((c00 >> 8) & 0xFF, (c10 >> 8) & 0xFF, (c01 >> 8) & 0xFF, (c11 >> 8) & 0xFF, tx, ty);
+		int blue = bilinearChannel(c00 & 0xFF, c10 & 0xFF, c01 & 0xFF, c11 & 0xFF, tx, ty);
+		return (red << 16) | (green << 8) | blue;
+	}
+
+	private static int bilinearChannel(int c00, int c10, int c01, int c11, double tx, double ty) {
+		double top = c00 + (c10 - c00) * tx;
+		double bottom = c01 + (c11 - c01) * tx;
+		return Mth.clamp((int) Math.round(top + (bottom - top) * ty), 0, 255);
+	}
+
+	private static int averageRgb(int a, int b, int c, int d) {
+		int red = (((a >> 16) & 0xFF) + ((b >> 16) & 0xFF) + ((c >> 16) & 0xFF) + ((d >> 16) & 0xFF) + 2) >> 2;
+		int green = (((a >> 8) & 0xFF) + ((b >> 8) & 0xFF) + ((c >> 8) & 0xFF) + ((d >> 8) & 0xFF) + 2) >> 2;
+		int blue = ((a & 0xFF) + (b & 0xFF) + (c & 0xFF) + (d & 0xFF) + 2) >> 2;
+		return (red << 16) | (green << 8) | blue;
+	}
+
+	private static double doubleProperty(String key, double fallback) {
+		String raw = System.getProperty(key);
+		if (raw == null || raw.isBlank()) {
+			return fallback;
+		}
+		try {
+			return Double.parseDouble(raw.trim());
+		} catch (NumberFormatException ignored) {
+			return fallback;
+		}
 	}
 
 	private static void sendFrame(RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload, byte[] previewPixels, byte[] fullPixels) {
@@ -283,10 +343,7 @@ public final class RendererBotClientCapture {
 		int fullHeight = Math.max(1, payload.fullHeight());
 		double minScale = Math.max(MIN_RENDER_WIDTH / (double) fullWidth, MIN_RENDER_HEIGHT / (double) fullHeight);
 		double maxScale = Math.min(MAX_RENDER_WIDTH / (double) fullWidth, MAX_RENDER_HEIGHT / (double) fullHeight);
-		double scale = Math.max(1.0D, minScale);
-		if (scale > maxScale) {
-			scale = maxScale;
-		}
+		double scale = Math.max(1.0D, Math.min(maxScale, Math.max(minScale, TARGET_RENDER_SCALE)));
 		return Mth.clamp((int) Math.round(fullWidth * scale), 1, MAX_RENDER_WIDTH);
 	}
 

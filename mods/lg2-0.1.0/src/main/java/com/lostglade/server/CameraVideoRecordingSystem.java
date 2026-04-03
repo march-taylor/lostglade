@@ -14,6 +14,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class CameraVideoRecordingSystem {
+	private static final int MAX_TARGET_FPS = 20;
 	private static final int TARGET_FPS = 10;
 	private static final int MAX_DURATION_SECONDS = 10 * 60;
 	private static final long MIN_STOP_DELAY_MS = 1_000L;
@@ -59,7 +60,7 @@ public final class CameraVideoRecordingSystem {
 				player,
 				settings.mapsWide(),
 				settings.mapsHigh(),
-				TARGET_FPS,
+				Math.min(MAX_TARGET_FPS, TARGET_FPS),
 				MAX_DURATION_SECONDS
 		);
 		if (handle == null) {

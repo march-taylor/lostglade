@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 
 public final class RendererBotCameraSystem {
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
+	private static final int MAX_VIDEO_RECORDING_FPS = 20;
 	private static final Map<UUID, BotHandshake> READY_BOTS = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingCapture> PENDING_CAPTURES = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingVideoRecording> PENDING_VIDEO_RECORDINGS = new ConcurrentHashMap<>();
@@ -212,6 +213,7 @@ public final class RendererBotCameraSystem {
 		);
 		bot.fallDistance = 0.0F;
 
+		int clampedTargetFps = Math.clamp(Math.max(1, targetFps), 1, MAX_VIDEO_RECORDING_FPS);
 		ServerPlayNetworking.send(
 				bot,
 				new RendererBotPayloads.RendererBotVideoRecordingStartS2CPayload(
@@ -227,7 +229,7 @@ public final class RendererBotCameraSystem {
 						fullWidth,
 						fullHeight,
 						70,
-						Math.max(1, targetFps),
+						clampedTargetFps,
 						Math.max(1, maxDurationSeconds)
 				)
 		);

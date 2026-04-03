@@ -183,6 +183,41 @@ public final class MonitorMediaApp implements MonitorApp {
 		return downloadVideoToCache(uri, progress);
 	}
 
+	public static String persistLocalGalleryFile(String stableKeyBase, Path sourcePath) throws IOException {
+		if (stableKeyBase == null || stableKeyBase.isBlank()) {
+			throw new IOException("Local media key is missing");
+		}
+		if (sourcePath == null || !Files.isRegularFile(sourcePath)) {
+			throw new IOException("Local media source is missing");
+		}
+		String extension = localFileExtension(sourcePath);
+		String mediaKey = sanitizeLocalMediaKeyBase(stableKeyBase.trim()) + extension;
+		Path targetPath = savedGalleryMediaPath(mediaKey);
+		if (targetPath == null) {
+			throw new IOException("Invalid media key");
+		}
+		Path parent = targetPath.getParent();
+		if (parent != null) {
+			Files.createDirectories(parent);
+		}
+		if (Files.isRegularFile(targetPath)) {
+			return mediaKey;
+		}
+		Path tempPath = targetPath.resolveSibling(targetPath.getFileName() + ".tmp");
+		try {
+			Files.copy(sourcePath, tempPath, StandardCopyOption.REPLACE_EXISTING);
+			try {
+				Files.move(tempPath, targetPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			} catch (IOException ignored) {
+				Files.move(tempPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+			}
+			return mediaKey;
+		} catch (IOException exception) {
+			deleteFileQuietly(tempPath, cacheDirectory);
+			throw exception;
+		}
+	}
+
 	public static LoadedMedia loadSavedGalleryMedia(String mediaKey, TaskProgress progress) throws IOException {
 		Path savedPath = savedGalleryMediaPath(mediaKey);
 		if (savedPath == null || !Files.isRegularFile(savedPath)) {
@@ -437,6 +472,24 @@ public final class MonitorMediaApp implements MonitorApp {
 			return null;
 		}
 		return cacheDirectory.resolve("blobs").resolve(normalized);
+	}
+
+	private static String localFileExtension(Path sourcePath) {
+		if (sourcePath == null) {
+			return ".bin";
+		}
+		String fileName = sourcePath.getFileName() != null ? sourcePath.getFileName().toString() : "";
+		int dotIndex = fileName.lastIndexOf('.');
+		if (dotIndex < 0 || dotIndex >= fileName.length() - 1) {
+			return ".bin";
+		}
+		String extension = fileName.substring(dotIndex).toLowerCase(Locale.ROOT);
+		return extension.matches("\\.[a-z0-9]{1,8}") ? extension : ".bin";
+	}
+
+	private static String sanitizeLocalMediaKeyBase(String value) {
+		String normalized = value.replaceAll("[^a-zA-Z0-9._-]", "_");
+		return normalized.isBlank() ? "local_media" : normalized;
 	}
 
 	private static String probeContentType(URI uri) {

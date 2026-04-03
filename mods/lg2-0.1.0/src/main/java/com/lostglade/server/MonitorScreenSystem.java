@@ -4,6 +4,7 @@ import com.lostglade.Lg2;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.item.ModItems;
 import com.lostglade.item.MonitorItem;
+import com.lostglade.item.PhotoPrintData;
 import com.lostglade.server.map.MapPaletteQuantizer;
 import com.lostglade.server.monitor.MonitorApp;
 import com.lostglade.server.monitor.MonitorAppRegistry;
@@ -157,6 +158,7 @@ public final class MonitorScreenSystem {
 	private static final long MEDIA_SESSION_CLEANUP_INTERVAL_TICKS = 40L;
 	private static final long MEDIA_ACTIONBAR_REFRESH_INTERVAL_TICKS = 20L;
 	private static final long MEDIA_FOCUS_CLEANUP_INTERVAL_TICKS = 20L;
+	private static final String CAMERA_GALLERY_URL_PREFIX = "lg2-camera:";
 	private static final Map<RenderCacheKey, byte[][]> TILE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<OverlayWindowCacheKey, OverlayWindowRenderState> OVERLAY_WINDOW_CACHE = new ConcurrentHashMap<>();
 	private static final Map<OverlayWindowFamilyKey, BufferedImage> OVERLAY_WINDOW_FAMILY_CACHE = new ConcurrentHashMap<>();
@@ -964,6 +966,7 @@ public final class MonitorScreenSystem {
 		Integer nextLauncherPage = null;
 		boolean rerenderCurrent = false;
 		boolean galleryLoadRequest = false;
+		boolean galleryPhotoPrintImportRequested = false;
 		boolean persistGallery = false;
 		Integer galleryDeferredLoadIndex = null;
 		Boolean youtubePauseAction = null;
@@ -1146,9 +1149,11 @@ public final class MonitorScreenSystem {
 			} else if (galleryBrowser && mediaGalleryBrowserCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				nextMode = ScreenViewMode.HOME;
 			} else if (galleryBrowser && mediaGalleryBrowserLinkRect(layout).contains(touchPoint.x(), touchPoint.y())) {
-				galleryLoadRequest = true;
+				galleryPhotoPrintImportRequested = canImportHeldPhotoPrintToGallery(player);
+				galleryLoadRequest = !galleryPhotoPrintImportRequested;
 				rerenderCurrent = true;
 			} else if (galleryBrowser && mediaGalleryGridRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				boolean galleryGridHandled = false;
 				synchronized (mediaState) {
 					int columns = mediaGalleryColumns(layout);
 					int visibleRows = mediaGalleryVisibleRows(layout);
@@ -1157,6 +1162,7 @@ public final class MonitorScreenSystem {
 					mediaState.galleryScroll = clampInt(mediaState.galleryScroll, 0, maxScroll);
 					if (scrollbarVisible(visibleRows, totalRows)
 							&& mediaGalleryBrowserScrollbarTrackRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+						galleryGridHandled = true;
 						mediaState.galleryScroll = scrollValueForTrack(
 								mediaGalleryBrowserScrollbarTrackRect(layout),
 								visibleRows,
@@ -1175,6 +1181,7 @@ public final class MonitorScreenSystem {
 								if (!cardRect.contains(touchPoint.x(), touchPoint.y())) {
 									continue;
 								}
+								galleryGridHandled = true;
 								GalleryItem item = mediaState.galleryItems.get(galleryIndex);
 								GalleryItemKind itemKind = effectiveGalleryItemKind(item);
 								if (item != null && itemKind == GalleryItemKind.YOUTUBE && item.url() != null && !item.url().isBlank()) {
@@ -1198,6 +1205,9 @@ public final class MonitorScreenSystem {
 							}
 						}
 					}
+				}
+				if (!galleryGridHandled && canImportHeldPhotoPrintToGallery(player)) {
+					galleryPhotoPrintImportRequested = true;
 				}
 				rerenderCurrent = true;
 			} else if (mediaCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
@@ -1500,6 +1510,9 @@ public final class MonitorScreenSystem {
 		}
 		if (galleryLoadRequest) {
 			requestMediaLink(player, component.runtimeKey(), false, ScreenViewMode.GALLERY, YoutubeLinkRequestAction.REPLACE_QUEUE);
+		}
+		if (server != null && galleryPhotoPrintImportRequested) {
+			importHeldPhotoPrintToGallery(server, component.runtimeKey(), player, layout);
 		}
 		if (server != null && galleryDownloadRequested) {
 			beginGalleryDownload(server, component.runtimeKey(), player.getUUID(), layout);
@@ -2419,6 +2432,7 @@ public final class MonitorScreenSystem {
 												|| subtitle != null && !subtitle.isBlank())))
 												? video.preview()
 												: null,
+										video.width(),
 										state.progress
 								),
 								null
@@ -10773,6 +10787,80 @@ public final class MonitorScreenSystem {
 		state.liveStream = false;
 		state.audioPlaceholder = true;
 		return true;
+	}
+
+	private static boolean canImportHeldPhotoPrintToGallery(ServerPlayer player) {
+		ItemStack stack = heldPhotoPrintStack(player);
+		PhotoPrintData data = PhotoPrintData.readPhotoItem(stack);
+		return data != null && data.isValid() && data.sourceKey() != null && !data.sourceKey().isBlank();
+	}
+
+	private static ItemStack heldPhotoPrintStack(ServerPlayer player) {
+		if (player == null) {
+			return ItemStack.EMPTY;
+		}
+		ItemStack mainHand = player.getMainHandItem();
+		if (mainHand != null && mainHand.is(ModItems.PHOTO_PRINT)) {
+			return mainHand;
+		}
+		ItemStack offHand = player.getOffhandItem();
+		if (offHand != null && offHand.is(ModItems.PHOTO_PRINT)) {
+			return offHand;
+		}
+		return ItemStack.EMPTY;
+	}
+
+	private static void importHeldPhotoPrintToGallery(MinecraftServer server, ScreenRuntimeKey key, ServerPlayer player, UiLayout layout) {
+		if (server == null || key == null || player == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		ItemStack stack = heldPhotoPrintStack(player);
+		PhotoPrintData data = PhotoPrintData.readPhotoItem(stack);
+		if (data == null || !data.isValid() || data.sourceKey() == null || data.sourceKey().isBlank()) {
+			player.sendSystemMessage(literal("Эту карту нельзя импортировать в галерею"));
+			return;
+		}
+		String title = stack.get(DataComponents.CUSTOM_NAME) != null
+				? stack.get(DataComponents.CUSTOM_NAME).getString()
+				: (data.isVideo() ? "Camera Video" : "Photo");
+		String syntheticUrl = cameraGalleryUrl(data);
+		String localMediaKey;
+		try {
+			localMediaKey = data.isVideo()
+					? MonitorMediaApp.persistLocalGalleryFile("camera-video-" + data.sourceKey(), CameraMediaCache.videoSourcePath(data.sourceKey()))
+					: MonitorMediaApp.persistLocalGalleryFile("camera-photo-" + data.sourceKey(), CameraMediaCache.photoSourcePath(data.sourceKey()));
+		} catch (Exception exception) {
+			player.sendSystemMessage(literal("Не удалось импортировать карту: " + sanitizeMediaError(exception.getMessage())));
+			return;
+		}
+		GalleryItemKind kind = data.isVideo() ? GalleryItemKind.VIDEO : GalleryItemKind.MEDIA;
+		int preferredIndex;
+		synchronized (state) {
+			preferredIndex = upsertGalleryItemLocked(state, title, "", syntheticUrl, localMediaKey, null, null, kind);
+			state.loading = true;
+			state.waitingForLink = false;
+			state.overlayMode = MediaOverlayMode.CONTROLS;
+			state.statusText = "IMPORTING";
+			state.progress.setIndeterminate("IMPORTING");
+			state.galleryPendingOpenUrl = syntheticUrl;
+			state.galleryPendingOpenIndex = preferredIndex;
+			state.version++;
+		}
+		persistGalleryState(server, key, state);
+		requestRuntimeRender(server, key);
+		scheduleGalleryItemLoad(server, key, title, syntheticUrl, localMediaKey, kind, true, preferredIndex);
+		player.sendSystemMessage(literal("Карта импортируется в галерею"));
+	}
+
+	private static String cameraGalleryUrl(PhotoPrintData data) {
+		if (data == null || data.sourceKey() == null || data.sourceKey().isBlank()) {
+			return "";
+		}
+		return CAMERA_GALLERY_URL_PREFIX + (data.isVideo() ? "video:" : "photo:") + data.sourceKey().trim();
 	}
 
 	private static boolean saveCurrentGalleryItemLocked(MediaRuntimeState state, UiLayout layout) {

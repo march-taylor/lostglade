@@ -37,6 +37,14 @@ public final class RendererBotClientVideoRecording {
 	private static final int DEFAULT_WARMUP_FRAMES = Math.max(1, Integer.getInteger("lg2.rendererBotVideoWarmupFrames", 3));
 	private static final long FINISH_TIMEOUT_MS = Long.getLong("lg2.rendererBotVideoFinishTimeoutMs", 30_000L);
 	private static final int MIN_RECORDING_FRAMES = Math.max(2, Integer.getInteger("lg2.rendererBotVideoMinFrames", 2));
+	private static final int MAX_TARGET_FPS = 20;
+	private static final double TARGET_RENDER_SCALE = Math.max(1.0D, doubleProperty("lg2.rendererBotVideoRenderScale", 2.0D));
+	private static final int MIN_RENDER_WIDTH = Math.max(128, Integer.getInteger("lg2.rendererBotVideoMinRenderWidth", 1024));
+	private static final int MIN_RENDER_HEIGHT = Math.max(128, Integer.getInteger("lg2.rendererBotVideoMinRenderHeight", 768));
+	private static final int MAX_RENDER_WIDTH = Math.max(MIN_RENDER_WIDTH, Integer.getInteger("lg2.rendererBotVideoMaxRenderWidth", 2048));
+	private static final int MAX_RENDER_HEIGHT = Math.max(MIN_RENDER_HEIGHT, Integer.getInteger("lg2.rendererBotVideoMaxRenderHeight", 1536));
+	private static final String ENCODER_PRESET = System.getProperty("lg2.rendererBotVideoPreset", "fast").trim();
+	private static final int ENCODER_CRF = Math.max(0, Integer.getInteger("lg2.rendererBotVideoCrf", 18));
 
 	private static PendingRecording recording;
 
@@ -67,13 +75,35 @@ public final class RendererBotClientVideoRecording {
 			Files.deleteIfExists(tempPath);
 			Files.deleteIfExists(finalPath);
 
-			ensureRenderTargetSize(client, payload.fullWidth(), payload.fullHeight());
-			Process process = startEncoderProcess(tempPath, payload.fullWidth(), payload.fullHeight(), payload.targetFps());
+			int captureWidth = computeRenderWidth(payload);
+			int captureHeight = computeRenderHeight(payload, captureWidth);
+			ensureRenderTargetSize(client, captureWidth, captureHeight);
+			int targetFps = Math.clamp(payload.targetFps(), 1, MAX_TARGET_FPS);
+			Process process = startEncoderProcess(tempPath, captureWidth, captureHeight, targetFps);
 			synchronized (LOCK) {
-				recording = new PendingRecording(payload, client.options.fov().get(), process, process.getOutputStream(), tempPath, finalPath, DEFAULT_WARMUP_FRAMES, System.currentTimeMillis());
+				recording = new PendingRecording(
+						payload,
+						client.options.fov().get(),
+						process,
+						process.getOutputStream(),
+						tempPath,
+						finalPath,
+						captureWidth,
+						captureHeight,
+						DEFAULT_WARMUP_FRAMES,
+						System.currentTimeMillis()
+				);
 				client.options.fov().set(payload.fovDegrees());
 			}
-			Lg2.LOGGER.info("Renderer bot started video recording {} at {} fps {}x{}", payload.requestId(), payload.targetFps(), payload.fullWidth(), payload.fullHeight());
+			Lg2.LOGGER.info(
+					"Renderer bot started video recording {} at {} fps {}x{} (capture {}x{})",
+					payload.requestId(),
+					targetFps,
+					payload.fullWidth(),
+					payload.fullHeight(),
+					captureWidth,
+					captureHeight
+			);
 		} catch (Exception exception) {
 			sendFailure(payload.requestId(), exception.getMessage());
 			Lg2.LOGGER.warn("Renderer bot failed to start video recording {}", payload.requestId(), exception);
@@ -122,7 +152,7 @@ public final class RendererBotClientVideoRecording {
 			current.remainingWarmupFrames--;
 			return;
 		}
-		long intervalNanos = 1_000_000_000L / Math.max(1, current.payload().targetFps());
+		long intervalNanos = 1_000_000_000L / Math.clamp(current.payload().targetFps(), 1, MAX_TARGET_FPS);
 		long nowNanos = System.nanoTime();
 		if (current.lastFrameAtNanos != 0L && nowNanos - current.lastFrameAtNanos < intervalNanos) {
 			return;
@@ -197,14 +227,15 @@ public final class RendererBotClientVideoRecording {
 				throw new IOException("Renderer bot recording captured too few frames: " + current.frameCount);
 			}
 			Files.move(current.tempPath(), current.finalPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-			long durationMs = current.frameCount * 1_000L / Math.max(1, current.payload().targetFps());
+			int targetFps = Math.clamp(current.payload().targetFps(), 1, MAX_TARGET_FPS);
+			long durationMs = current.frameCount * 1_000L / targetFps;
 			Lg2.LOGGER.info("Renderer bot finished video recording {} with {} frames ({} ms)", current.payload().requestId(), current.frameCount, durationMs);
 			client.execute(() -> {
 				restoreFov(current);
 				ClientPlayNetworking.send(new RendererBotPayloads.RendererBotVideoRecordingCompleteC2SPayload(
 						current.payload().requestId(),
 						durationMs,
-						current.payload().targetFps(),
+						targetFps,
 						current.firstPreviewFrame,
 						current.firstFullFrame
 				));
@@ -289,9 +320,13 @@ public final class RendererBotClientVideoRecording {
 		command.add("-c:v");
 		command.add("libx264");
 		command.add("-preset");
-		command.add("ultrafast");
+		command.add(ENCODER_PRESET.isBlank() ? "fast" : ENCODER_PRESET);
 		command.add("-crf");
-		command.add("30");
+		command.add(Integer.toString(ENCODER_CRF));
+		command.add("-g");
+		command.add(Integer.toString(Math.max(1, fps * 2)));
+		command.add("-movflags");
+		command.add("+faststart");
 		command.add("-pix_fmt");
 		command.add("yuv420p");
 		command.add(outputPath.toAbsolutePath().toString());
@@ -319,6 +354,20 @@ public final class RendererBotClientVideoRecording {
 		}
 		client.getWindow().setWindowed(desiredWidth, desiredHeight);
 		client.resizeDisplay();
+	}
+
+	private static int computeRenderWidth(RendererBotPayloads.RendererBotVideoRecordingStartS2CPayload payload) {
+		int fullWidth = Math.max(1, payload.fullWidth());
+		int fullHeight = Math.max(1, payload.fullHeight());
+		double minScale = Math.max(MIN_RENDER_WIDTH / (double) fullWidth, MIN_RENDER_HEIGHT / (double) fullHeight);
+		double maxScale = Math.min(MAX_RENDER_WIDTH / (double) fullWidth, MAX_RENDER_HEIGHT / (double) fullHeight);
+		double scale = Math.max(1.0D, Math.min(maxScale, Math.max(minScale, TARGET_RENDER_SCALE)));
+		return Math.clamp((int) Math.round(fullWidth * scale), 1, MAX_RENDER_WIDTH);
+	}
+
+	private static int computeRenderHeight(RendererBotPayloads.RendererBotVideoRecordingStartS2CPayload payload, int renderWidth) {
+		double aspect = Math.max(1.0D, payload.fullHeight()) / (double) Math.max(1.0D, payload.fullWidth());
+		return Math.clamp((int) Math.round(renderWidth * aspect), 1, MAX_RENDER_HEIGHT);
 	}
 
 	private static byte[] argbToRgb(int[] pixels) {
@@ -349,17 +398,76 @@ public final class RendererBotClientVideoRecording {
 		}
 
 		byte[] output = new byte[Math.max(1, outputWidth * outputHeight)];
+		double sampleSpanX = cropWidth / Math.max(1.0D, outputWidth);
+		double sampleSpanY = cropHeight / Math.max(1.0D, outputHeight);
 		for (int y = 0; y < outputHeight; y++) {
 			double sampleY = cropY + ((y + 0.5D) / outputHeight) * cropHeight;
-			int sourceY = Math.clamp((int) Math.floor(sampleY), 0, sourceHeight - 1);
 			for (int x = 0; x < outputWidth; x++) {
 				double sampleX = cropX + ((x + 0.5D) / outputWidth) * cropWidth;
-				int sourceX = Math.clamp((int) Math.floor(sampleX), 0, sourceWidth - 1);
-				int rgb = sourcePixels[sourceY * sourceWidth + sourceX] & 0xFFFFFF;
+				int rgb = sampleScaledRgb(sourcePixels, sourceWidth, sourceHeight, sampleX, sampleY, sampleSpanX, sampleSpanY);
 				output[y * outputWidth + x] = MapPaletteQuantizer.quantizeDithered(rgb, x, y);
 			}
 		}
 		return output;
+	}
+
+	private static int sampleScaledRgb(int[] sourcePixels, int sourceWidth, int sourceHeight, double sampleX, double sampleY, double sampleSpanX, double sampleSpanY) {
+		if (sampleSpanX > 1.15D || sampleSpanY > 1.15D) {
+			double offsetX = sampleSpanX * 0.25D;
+			double offsetY = sampleSpanY * 0.25D;
+			int rgbA = sampleBilinearRgb(sourcePixels, sourceWidth, sourceHeight, sampleX - offsetX, sampleY - offsetY);
+			int rgbB = sampleBilinearRgb(sourcePixels, sourceWidth, sourceHeight, sampleX + offsetX, sampleY - offsetY);
+			int rgbC = sampleBilinearRgb(sourcePixels, sourceWidth, sourceHeight, sampleX - offsetX, sampleY + offsetY);
+			int rgbD = sampleBilinearRgb(sourcePixels, sourceWidth, sourceHeight, sampleX + offsetX, sampleY + offsetY);
+			return averageRgb(rgbA, rgbB, rgbC, rgbD);
+		}
+		return sampleBilinearRgb(sourcePixels, sourceWidth, sourceHeight, sampleX, sampleY);
+	}
+
+	private static int sampleBilinearRgb(int[] sourcePixels, int sourceWidth, int sourceHeight, double sampleX, double sampleY) {
+		double clampedX = Math.max(0.0D, Math.min(Math.max(0, sourceWidth - 1), sampleX));
+		double clampedY = Math.max(0.0D, Math.min(Math.max(0, sourceHeight - 1), sampleY));
+		int x0 = Math.clamp((int) Math.floor(clampedX), 0, sourceWidth - 1);
+		int y0 = Math.clamp((int) Math.floor(clampedY), 0, sourceHeight - 1);
+		int x1 = Math.min(x0 + 1, sourceWidth - 1);
+		int y1 = Math.min(y0 + 1, sourceHeight - 1);
+		double tx = clampedX - x0;
+		double ty = clampedY - y0;
+
+		int c00 = sourcePixels[y0 * sourceWidth + x0] & 0xFFFFFF;
+		int c10 = sourcePixels[y0 * sourceWidth + x1] & 0xFFFFFF;
+		int c01 = sourcePixels[y1 * sourceWidth + x0] & 0xFFFFFF;
+		int c11 = sourcePixels[y1 * sourceWidth + x1] & 0xFFFFFF;
+
+		int red = bilinearChannel((c00 >> 16) & 0xFF, (c10 >> 16) & 0xFF, (c01 >> 16) & 0xFF, (c11 >> 16) & 0xFF, tx, ty);
+		int green = bilinearChannel((c00 >> 8) & 0xFF, (c10 >> 8) & 0xFF, (c01 >> 8) & 0xFF, (c11 >> 8) & 0xFF, tx, ty);
+		int blue = bilinearChannel(c00 & 0xFF, c10 & 0xFF, c01 & 0xFF, c11 & 0xFF, tx, ty);
+		return (red << 16) | (green << 8) | blue;
+	}
+
+	private static int bilinearChannel(int c00, int c10, int c01, int c11, double tx, double ty) {
+		double top = c00 + (c10 - c00) * tx;
+		double bottom = c01 + (c11 - c01) * tx;
+		return Math.clamp((int) Math.round(top + (bottom - top) * ty), 0, 255);
+	}
+
+	private static int averageRgb(int a, int b, int c, int d) {
+		int red = (((a >> 16) & 0xFF) + ((b >> 16) & 0xFF) + ((c >> 16) & 0xFF) + ((d >> 16) & 0xFF) + 2) >> 2;
+		int green = (((a >> 8) & 0xFF) + ((b >> 8) & 0xFF) + ((c >> 8) & 0xFF) + ((d >> 8) & 0xFF) + 2) >> 2;
+		int blue = ((a & 0xFF) + (b & 0xFF) + (c & 0xFF) + (d & 0xFF) + 2) >> 2;
+		return (red << 16) | (green << 8) | blue;
+	}
+
+	private static double doubleProperty(String key, double fallback) {
+		String raw = System.getProperty(key);
+		if (raw == null || raw.isBlank()) {
+			return fallback;
+		}
+		try {
+			return Double.parseDouble(raw.trim());
+		} catch (NumberFormatException ignored) {
+			return fallback;
+		}
 	}
 
 	private static void sendFailure(UUID requestId, String message) {
@@ -379,6 +487,8 @@ public final class RendererBotClientVideoRecording {
 		private final OutputStream encoderInput;
 		private final Path tempPath;
 		private final Path finalPath;
+		private final int captureWidth;
+		private final int captureHeight;
 		private final long startedAtMs;
 		private byte[] firstPreviewFrame;
 		private byte[] firstFullFrame;
@@ -396,6 +506,8 @@ public final class RendererBotClientVideoRecording {
 				OutputStream encoderInput,
 				Path tempPath,
 				Path finalPath,
+				int captureWidth,
+				int captureHeight,
 				int remainingWarmupFrames,
 				long startedAtMs
 		) {
@@ -405,6 +517,8 @@ public final class RendererBotClientVideoRecording {
 			this.encoderInput = encoderInput;
 			this.tempPath = tempPath;
 			this.finalPath = finalPath;
+			this.captureWidth = captureWidth;
+			this.captureHeight = captureHeight;
 			this.remainingWarmupFrames = remainingWarmupFrames;
 			this.startedAtMs = startedAtMs;
 		}

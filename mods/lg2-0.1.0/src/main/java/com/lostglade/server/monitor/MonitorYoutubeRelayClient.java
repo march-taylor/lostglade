@@ -46,6 +46,8 @@ public final class MonitorYoutubeRelayClient {
 	private static final String DEFAULT_FFMPEG_BIN = "ffmpeg";
 	private static final double FRAME_RATE = readDoubleSetting("LG2_YT_FRAME_RATE", "lg2.youtube.frameRate", 12.0D);
 	private static final int FRAME_WIDTH = readIntSetting("LG2_YT_FRAME_WIDTH", "lg2.youtube.frameWidth", 480);
+	private static final int DIRECT_FRAME_WIDTH_MAX = Math.max(FRAME_WIDTH, readIntSetting("LG2_YT_DIRECT_FRAME_WIDTH_MAX", "lg2.youtube.directFrameWidthMax", 1536));
+	private static final int DIRECT_FRAME_WIDTH_MIN = Math.max(FRAME_WIDTH, readIntSetting("LG2_YT_DIRECT_FRAME_WIDTH_MIN", "lg2.youtube.directFrameWidthMin", 640));
 	private static final long SESSION_IDLE_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(readIntSetting("LG2_YT_IDLE_TIMEOUT_SEC", "lg2.youtube.idleTimeoutSec", 600));
 	private static final int COMMAND_TIMEOUT_SEC = readIntSetting("LG2_YT_COMMAND_TIMEOUT_SEC", "lg2.youtube.commandTimeoutSec", 45);
 	private static final int STREAM_START_TIMEOUT_SEC = readIntSetting("LG2_YT_STREAM_START_TIMEOUT_SEC", "lg2.youtube.streamStartTimeoutSec", 20);
@@ -93,7 +95,7 @@ public final class MonitorYoutubeRelayClient {
 			long durationMs,
 			TaskProgress progress
 	) throws IOException {
-		return loadDirect(sessionId, sourceId, title, videoInput, audioInput, durationMs, null, progress);
+		return loadDirect(sessionId, sourceId, title, videoInput, audioInput, durationMs, null, FRAME_WIDTH, progress);
 	}
 
 	public static SessionLoadResponse loadDirect(
@@ -104,6 +106,7 @@ public final class MonitorYoutubeRelayClient {
 			String audioInput,
 			long durationMs,
 			BufferedImage staticFrame,
+			int preferredFrameWidth,
 			TaskProgress progress
 	) throws IOException {
 		if (videoInput == null || videoInput.isBlank()) {
@@ -120,7 +123,8 @@ public final class MonitorYoutubeRelayClient {
 				videoInput.trim(),
 				audioInput == null || audioInput.isBlank() ? videoInput.trim() : audioInput.trim(),
 				Math.max(0L, durationMs),
-				staticFrame
+				staticFrame,
+				Math.max(FRAME_WIDTH, preferredFrameWidth)
 		);
 		if (progress != null) {
 			progress.setIndeterminate("LOADING");
@@ -688,7 +692,7 @@ public final class MonitorYoutubeRelayClient {
 		return reader.bytes();
 	}
 
-	private static List<String> previewFrameCommand(String streamUrl, long seekMs) {
+	private static List<String> previewFrameCommand(String streamUrl, long seekMs, int frameWidth) {
 		List<String> command = new ArrayList<>();
 		command.add(ffmpegBin());
 		command.add("-hide_banner");
@@ -705,7 +709,7 @@ public final class MonitorYoutubeRelayClient {
 		command.add("1");
 		command.add("-an");
 		command.add("-vf");
-		command.add("scale=w=" + FRAME_WIDTH + ":h=-2:force_original_aspect_ratio=decrease");
+		command.add("scale=w=" + Math.max(FRAME_WIDTH, frameWidth) + ":h=-2:force_original_aspect_ratio=decrease");
 		command.add("-q:v");
 		command.add("5");
 		command.add("-f");
@@ -716,7 +720,7 @@ public final class MonitorYoutubeRelayClient {
 		return command;
 	}
 
-	private static List<String> sequentialPrefetchCommand(String streamUrl, long startMs, long durationMs) {
+	private static List<String> sequentialPrefetchCommand(String streamUrl, long startMs, long durationMs, int frameWidth) {
 		List<String> command = new ArrayList<>();
 		command.add(ffmpegBin());
 		command.add("-hide_banner");
@@ -737,7 +741,7 @@ public final class MonitorYoutubeRelayClient {
 		command.add(streamUrl);
 		command.add("-an");
 		command.add("-vf");
-		command.add("fps=" + FRAME_RATE + ",scale=w=" + FRAME_WIDTH + ":h=-2:force_original_aspect_ratio=decrease");
+		command.add("fps=" + FRAME_RATE + ",scale=w=" + Math.max(FRAME_WIDTH, frameWidth) + ":h=-2:force_original_aspect_ratio=decrease");
 		command.add("-q:v");
 		command.add("6");
 		command.add("-f");
@@ -1255,6 +1259,7 @@ public final class MonitorYoutubeRelayClient {
 		private boolean bufferedFromStart = false;
 		private boolean prefetchCompleted = false;
 		private boolean fullCacheRequested = false;
+		private int directFrameWidth = FRAME_WIDTH;
 		private final NavigableMap<Long, CachedPreviewFrame> cachedPreviewFrames = new TreeMap<>();
 
 		private RelaySession(String sessionId) {
@@ -1286,16 +1291,21 @@ public final class MonitorYoutubeRelayClient {
 			return response;
 		}
 
-		private SessionLoadResponse loadDirect(String sourceId, String title, String videoInput, String audioInput, long durationMs, BufferedImage staticFrame) throws IOException {
+		private SessionLoadResponse loadDirect(String sourceId, String title, String videoInput, String audioInput, long durationMs, BufferedImage staticFrame, int preferredFrameWidth) throws IOException {
 			return loadResolved(
 					sourceId,
 					new ResolvedYoutube(title, durationMs, false, videoInput, audioInput),
 					null,
-					staticFrame
+					staticFrame,
+					Math.max(FRAME_WIDTH, preferredFrameWidth)
 			);
 		}
 
 		private SessionLoadResponse loadResolved(String sourceId, ResolvedYoutube resolved, QueuePreloadSnapshot queuePreload, BufferedImage staticFrame) throws IOException {
+			return loadResolved(sourceId, resolved, queuePreload, staticFrame, FRAME_WIDTH);
+		}
+
+		private SessionLoadResponse loadResolved(String sourceId, ResolvedYoutube resolved, QueuePreloadSnapshot queuePreload, BufferedImage staticFrame, int preferredFrameWidth) throws IOException {
 			boolean hadPreloadedFrame = false;
 			synchronized (this.lock) {
 				stopPrefetchLocked();
@@ -1319,6 +1329,9 @@ public final class MonitorYoutubeRelayClient {
 				this.bufferedFromStart = false;
 				this.prefetchCompleted = false;
 				this.fullCacheRequested = false;
+				this.directFrameWidth = staticFrame == null && queuePreload == null
+						? clampDirectFrameWidth(preferredFrameWidth)
+						: FRAME_WIDTH;
 				this.cachedPreviewFrames.clear();
 				if (!this.staticVisual && queuePreload != null && !resolved.live()) {
 					this.cachedPreviewFrames.putAll(queuePreload.cachedPreviewFrames());
@@ -1648,7 +1661,11 @@ public final class MonitorYoutubeRelayClient {
 				targetStreamUrl = this.streamUrl;
 				seekMs = this.positionMs;
 			}
-			byte[] previewBytes = runPreviewFrameCommandBytes(previewFrameCommand(targetStreamUrl, seekMs), STREAM_START_TIMEOUT_SEC);
+			int frameWidth;
+			synchronized (this.lock) {
+				frameWidth = effectiveFrameWidthLocked();
+			}
+			byte[] previewBytes = runPreviewFrameCommandBytes(previewFrameCommand(targetStreamUrl, seekMs, frameWidth), STREAM_START_TIMEOUT_SEC);
 			BufferedImage preview = decodeImageBytes(previewBytes);
 			synchronized (this.lock) {
 				long bucketMs = normalizeBucketMs(seekMs);
@@ -1714,7 +1731,7 @@ public final class MonitorYoutubeRelayClient {
 				command.add(this.streamUrl);
 				command.add("-an");
 				command.add("-vf");
-				command.add("fps=" + FRAME_RATE + ",scale=w=" + FRAME_WIDTH + ":h=-2:force_original_aspect_ratio=decrease");
+				command.add("fps=" + FRAME_RATE + ",scale=w=" + effectiveFrameWidthLocked() + ":h=-2:force_original_aspect_ratio=decrease");
 				command.add("-q:v");
 				command.add("5");
 				command.add("-f");
@@ -1811,7 +1828,7 @@ public final class MonitorYoutubeRelayClient {
 				this.prefetchCompleted = true;
 				return;
 			}
-			ProcessBuilder builder = new ProcessBuilder(sequentialPrefetchCommand(this.streamUrl, startMs, durationMs));
+			ProcessBuilder builder = new ProcessBuilder(sequentialPrefetchCommand(this.streamUrl, startMs, durationMs, effectiveFrameWidthLocked()));
 			builder.redirectError(ProcessBuilder.Redirect.DISCARD);
 			Process startedProcess = builder.start();
 			this.prefetchProcess = startedProcess;
@@ -1870,6 +1887,14 @@ public final class MonitorYoutubeRelayClient {
 		private void freezePlaybackClockLocked() {
 			this.playBasePositionMs = this.positionMs;
 			this.playStartedAtNanos = System.nanoTime();
+		}
+
+		private int effectiveFrameWidthLocked() {
+			return Math.max(FRAME_WIDTH, this.directFrameWidth);
+		}
+
+		private int clampDirectFrameWidth(int preferredFrameWidth) {
+			return Math.max(FRAME_WIDTH, Math.min(DIRECT_FRAME_WIDTH_MAX, Math.max(DIRECT_FRAME_WIDTH_MIN, preferredFrameWidth)));
 		}
 
 		private void persistQueuePreload(String url) {
