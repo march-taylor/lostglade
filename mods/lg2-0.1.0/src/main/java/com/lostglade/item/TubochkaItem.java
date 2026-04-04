@@ -6,13 +6,16 @@ import com.lostglade.config.RaceConfig.RaceAbilitySlot;
 import com.lostglade.server.ServerRaceSystem;
 import eu.pb4.polymer.core.api.item.SimplePolymerItem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
@@ -63,6 +66,8 @@ public final class TubochkaItem extends SimplePolymerItem {
 	private static final int BURN_SOUND_INTERVAL_TICKS = 14;
 	private static final int CHARGE_TICKS_PER_RELEASE_PARTICLE = 10;
 	private static final int DEFAULT_MAX_RELEASE_SMOKE_PARTICLES = 8;
+	private static final double TUBOCHKA_SOUND_RADIUS_BLOCKS = 3.0D;
+	private static final double TUBOCHKA_SOUND_RADIUS_SQR = TUBOCHKA_SOUND_RADIUS_BLOCKS * TUBOCHKA_SOUND_RADIUS_BLOCKS;
 	private static final int BAR_COLOR = 0xFF9A00;
 	private static final int BAR_SEGMENTS = 13;
 	private static final Map<UUID, TubochkaNauseaState> TUBOCHKA_NAUSEA_STATES = new HashMap<>();
@@ -411,11 +416,9 @@ public final class TubochkaItem extends SimplePolymerItem {
 		}
 
 		Vec3 origin = getHeldSmokeOrigin(livingEntity, slot, raisedUsePose);
-		level.playSound(
-				null,
-				origin.x,
-				origin.y,
-				origin.z,
+		playTubochkaLocalSound(
+				level,
+				origin,
 				SoundEvents.FIRE_AMBIENT,
 				SoundSource.PLAYERS,
 				0.10F,
@@ -505,12 +508,10 @@ public final class TubochkaItem extends SimplePolymerItem {
 	}
 
 	private static void playLightSound(ServerPlayer player) {
-		Level level = player.level();
-		level.playSound(
-				null,
-				player.getX(),
-				player.getY() + player.getBbHeight() * 0.65D,
-				player.getZ(),
+		ServerLevel level = (ServerLevel) player.level();
+		playTubochkaLocalSound(
+				level,
+				new Vec3(player.getX(), player.getY() + player.getBbHeight() * 0.65D, player.getZ()),
 				SoundEvents.FLINTANDSTEEL_USE,
 				SoundSource.PLAYERS,
 				0.85F,
@@ -521,16 +522,33 @@ public final class TubochkaItem extends SimplePolymerItem {
 	private static void playReleaseExtinguishSound(ServerLevel level, LivingEntity livingEntity, ItemStack stack) {
 		EquipmentSlot slot = resolveTubochkaHandSlot(livingEntity, stack);
 		Vec3 origin = getHeldSmokeOrigin(livingEntity, slot, true);
-		level.playSound(
-				null,
-				origin.x,
-				origin.y,
-				origin.z,
+		playTubochkaLocalSound(
+				level,
+				origin,
 				SoundEvents.GENERIC_EXTINGUISH_FIRE,
 				SoundSource.PLAYERS,
 				0.28F,
 				1.15F + (level.random.nextFloat() * 0.1F)
 		);
+	}
+
+	private static void playTubochkaLocalSound(ServerLevel level, Vec3 origin, SoundEvent sound, SoundSource source, float volume, float pitch) {
+		long seed = level.random.nextLong();
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer.distanceToSqr(origin) > TUBOCHKA_SOUND_RADIUS_SQR) {
+				continue;
+			}
+			viewer.connection.send(new ClientboundSoundPacket(
+					BuiltInRegistries.SOUND_EVENT.wrapAsHolder(sound),
+					source,
+					origin.x,
+					origin.y,
+					origin.z,
+					volume,
+					pitch,
+					seed
+			));
+		}
 	}
 
 	private static boolean isMrCartel(ServerPlayer player) {
