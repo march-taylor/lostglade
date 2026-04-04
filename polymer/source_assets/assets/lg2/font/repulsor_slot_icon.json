@@ -1,0 +1,13 @@
+{
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "lg2:font/repulsor_slot_icon.png",
+      "ascent": -65,
+      "height": 10,
+      "chars": [
+        "\uef83"
+      ]
+    }
+  ]
+}

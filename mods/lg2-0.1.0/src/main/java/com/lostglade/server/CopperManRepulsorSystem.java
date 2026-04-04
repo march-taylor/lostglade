@@ -28,6 +28,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FontDescription;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
@@ -104,8 +105,16 @@ public final class CopperManRepulsorSystem {
 	private static final int LASER_PARTICLE_COLOR = 0xFF2A2A;
 	private static final float LASER_PARTICLE_SCALE = 0.75F;
 	private static final String REPULSOR_SHIFT_GLYPH = "\uef80";
+	private static final String REPULSOR_SLOT_TO_AMMO_SHIFT_GLYPH = "\uef81";
+	private static final String REPULSOR_SLOT_ICON_CENTER_BASE_SHIFT_GLYPH = "\uef85";
+	private static final String REPULSOR_SLOT_ICON_CENTER_PER_CHAR_SHIFT_GLYPH = "\uef86";
+	private static final String REPULSOR_SLOT_ICON_ONLY_POST_SHIFT_GLYPH = "\uef87";
+	private static final String REPULSOR_SLOT_ICON_GLYPH = "\uef83";
 	private static final FontDescription REPULSOR_SHIFT_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:repulsor_ammo_shift"))
+	);
+	private static final FontDescription REPULSOR_SLOT_ICON_FONT = new FontDescription.Resource(
+			Objects.requireNonNull(Identifier.tryParse("lg2:repulsor_slot_icon"))
 	);
 	private static final FontDescription REPULSOR_AMMO_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:repulsor_ammo_small"))
@@ -366,13 +375,15 @@ public final class CopperManRepulsorSystem {
 	}
 
 	private static void updateHud(ServerPlayer player, RepulsorState state, boolean force) {
-		if (!shouldShowHud(player)) {
+		boolean hasPack = PolymerResourcePackUtils.hasMainPack(player);
+		boolean showAttackSlotIcon = hasPack && shouldShowAttackSlotIcon(player);
+		boolean showAmmo = shouldShowAmmoHud(player);
+		if (!showAttackSlotIcon && !showAmmo) {
 			clearHud(player, state, force);
 			return;
 		}
 
-		String hudText = Math.max(0, state.charges) + "/" + getMaxCharges(player);
-		boolean hasPack = PolymerResourcePackUtils.hasMainPack(player);
+		String hudText = showAmmo ? Math.max(0, state.charges) + "/" + getMaxCharges(player) : "";
 		if (!force && !state.hudDirty && state.hudVisible && Objects.equals(state.lastHudText, hudText) && state.lastHudPack == hasPack) {
 			return;
 		}
@@ -380,7 +391,7 @@ public final class CopperManRepulsorSystem {
 		player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 40, 0));
 		player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
 		Component subtitle = hasPack
-				? buildPackAmmoComponent(hudText)
+				? buildPackHudComponent(hudText, showAttackSlotIcon, showAmmo)
 				: Component.literal(hudText).withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false));
 		player.connection.send(new ClientboundSetSubtitleTextPacket(subtitle));
 		state.hudVisible = true;
@@ -389,12 +400,32 @@ public final class CopperManRepulsorSystem {
 		state.hudDirty = false;
 	}
 
-	private static Component buildPackAmmoComponent(String text) {
-		return Component.empty()
-				.append(Component.literal(REPULSOR_SHIFT_GLYPH)
-						.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SHIFT_FONT)))
-				.append(Component.literal(text)
-						.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_AMMO_FONT)));
+	private static Component buildPackHudComponent(String text, boolean showAttackSlotIcon, boolean showAmmo) {
+		MutableComponent component = Component.empty();
+		if (showAttackSlotIcon && showAmmo) {
+			component.append(Component.literal(REPULSOR_SLOT_ICON_CENTER_BASE_SHIFT_GLYPH + REPULSOR_SLOT_ICON_CENTER_PER_CHAR_SHIFT_GLYPH.repeat(text.length()))
+					.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
+		}
+		if (showAttackSlotIcon) {
+			component.append(Component.literal(REPULSOR_SLOT_ICON_GLYPH)
+					.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SLOT_ICON_FONT).withShadowColor(0x00000000)));
+			if (!showAmmo) {
+				component.append(Component.literal(REPULSOR_SLOT_ICON_ONLY_POST_SHIFT_GLYPH)
+						.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
+			}
+		}
+		if (showAmmo) {
+			if (showAttackSlotIcon) {
+				component.append(Component.literal(REPULSOR_SLOT_TO_AMMO_SHIFT_GLYPH)
+						.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
+			} else {
+				component.append(Component.literal(REPULSOR_SHIFT_GLYPH)
+						.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
+			}
+			component.append(Component.literal(text)
+					.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_AMMO_FONT)));
+		}
+		return component;
 	}
 
 	private static void clearHud(ServerPlayer player, RepulsorState state, boolean force) {
@@ -407,7 +438,15 @@ public final class CopperManRepulsorSystem {
 		state.hudDirty = false;
 	}
 
-	private static boolean shouldShowHud(ServerPlayer player) {
+	private static boolean shouldShowAttackSlotIcon(ServerPlayer player) {
+		return player != null
+				&& player.isAlive()
+				&& !player.isSpectator()
+				&& isCopperMan(player)
+				&& isAttackUnlocked(player);
+	}
+
+	private static boolean shouldShowAmmoHud(ServerPlayer player) {
 		if (player == null || !player.isAlive() || player.isSpectator() || !isAttackUnlocked(player)) {
 			return false;
 		}

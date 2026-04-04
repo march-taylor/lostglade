@@ -268,12 +268,12 @@ public final class ServerRaceSystem {
 	private static final long COPPER_MAN_DEFENSE_TINT_CACHE_CLEANUP_INTERVAL_TICKS = 12_000L;
 	private static final long COPPER_MAN_DEFENSE_TINT_CACHE_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1000L;
 	private static final int COPPER_MAN_DEFENSE_TINT_CACHE_MAX_FILES = 64;
-	private static final String COPPER_MAN_DEFENSE_TINT_CACHE_VERSION = "v3";
+	private static final String COPPER_MAN_DEFENSE_TINT_CACHE_VERSION = "v5";
 	private static final String COPPER_MAN_DEFENSE_TINT_CACHE_DIR_NAME = "generated/lg2/copper_defense_tints";
 	private static final float COPPER_MAN_DEFENSE_TINT_STRENGTH = 0.84F;
-	private static final float COPPER_MAN_DEFENSE_COPPER_RED = 0.84313726F;
-	private static final float COPPER_MAN_DEFENSE_COPPER_GREEN = 0.48235294F;
-	private static final float COPPER_MAN_DEFENSE_COPPER_BLUE = 0.35686275F;
+	private static final float COPPER_MAN_DEFENSE_COPPER_RED = 0.6509804F;
+	private static final float COPPER_MAN_DEFENSE_COPPER_GREEN = 0.37254903F;
+	private static final float COPPER_MAN_DEFENSE_COPPER_BLUE = 0.30980393F;
 	private static final float COPPER_INGOT_SATURATION = 0.6F;
 	private static final Consumable COPPER_INGOT_CONSUMABLE = Consumable.builder()
 			.consumeSeconds(1.6F)
