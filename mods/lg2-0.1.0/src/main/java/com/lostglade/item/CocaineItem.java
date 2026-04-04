@@ -60,7 +60,7 @@ public final class CocaineItem extends SimplePolymerItem {
 	private static final double DEFAULT_COCAINE_HALLUCINATION_CHANCE = 0.25D;
 	private static final int FALLBACK_CONSUME_SOUND_DELAY_TICKS = 4;
 	private static final int PACK_CONSUME_SOUND_DELAY_TICKS = 8;
-	private static final int SOUND_MAX_DISTANCE_SQR = 24 * 24;
+	private static final int SOUND_MAX_DISTANCE_SQR = 3 * 3;
 	private static final float SOUND_VOLUME = 0.27F;
 	private static final float PACK_SOUND_PITCH = 1.0F;
 	private static final float FALLBACK_SOUND_PITCH = 0.95F;
