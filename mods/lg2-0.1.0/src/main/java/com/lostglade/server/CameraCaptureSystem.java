@@ -32,19 +32,23 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class CameraCaptureSystem {
 	private static final String IT_CAMERA = "it_camera";
 	private static final Identifier CAMERA_SHUTTER_SOUND_ID = Identifier.fromNamespaceAndPath("lg2", "camera_shutter");
 	private static final Holder<SoundEvent> CAMERA_SHUTTER_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(CAMERA_SHUTTER_SOUND_ID));
 	private static final int CAMERA_COOLDOWN_TICKS = 40;
+	private static final int USE_SWING_SUPPRESSION_TICKS = 2;
 	private static final double MAX_SHUTTER_SOUND_DISTANCE_SQR = 24.0D * 24.0D;
 	private static final float SHUTTER_SOUND_VOLUME = 0.45F;
 	private static final float SHUTTER_SOUND_PITCH = 1.0F;
 	private static final long TICKS_PER_DAY = 24_000L;
 	private static final long TICKS_PER_HOUR = 1_000L;
 	private static final long MINUTES_PER_DAY = 24L * 60L;
+	private static final Map<UUID, Integer> SUPPRESSED_SWING_UNTIL_TICK = new ConcurrentHashMap<>();
 
 	private CameraCaptureSystem() {
 	}
@@ -67,11 +71,25 @@ public final class CameraCaptureSystem {
 		if (!isLeftClickCameraTrigger(player, hand)) {
 			return false;
 		}
+		if (isSuppressedByRecentUse(player, hand)) {
+			return false;
+		}
 		if (hasAttackTarget(player)) {
 			return false;
 		}
 		tryCapture(player, player.getItemInHand(hand));
 		return true;
+	}
+
+	public static void suppressNextCameraSwing(ServerPlayer player, InteractionHand hand) {
+		if (player == null || hand != InteractionHand.MAIN_HAND) {
+			return;
+		}
+		MinecraftServer server = player.level().getServer();
+		if (server == null) {
+			return;
+		}
+		SUPPRESSED_SWING_UNTIL_TICK.put(player.getUUID(), server.getTickCount() + USE_SWING_SUPPRESSION_TICKS);
 	}
 
 	public static boolean tryCapture(ServerPlayer player, ItemStack stack) {
@@ -304,6 +322,26 @@ public final class CameraCaptureSystem {
 				&& player.isAlive()
 				&& !player.isSpectator()
 				&& player.getItemInHand(hand).is(ModItems.CAMERA);
+	}
+
+	private static boolean isSuppressedByRecentUse(ServerPlayer player, InteractionHand hand) {
+		if (player == null || hand != InteractionHand.MAIN_HAND) {
+			return false;
+		}
+		MinecraftServer server = player.level().getServer();
+		if (server == null) {
+			return false;
+		}
+		Integer untilTick = SUPPRESSED_SWING_UNTIL_TICK.get(player.getUUID());
+		if (untilTick == null) {
+			return false;
+		}
+		int currentTick = server.getTickCount();
+		if (currentTick <= untilTick) {
+			return true;
+		}
+		SUPPRESSED_SWING_UNTIL_TICK.remove(player.getUUID(), untilTick);
+		return false;
 	}
 
 	private static boolean hasAttackTarget(ServerPlayer player) {

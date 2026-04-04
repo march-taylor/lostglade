@@ -38,15 +38,16 @@ public final class CameraPhotoMenuSystem {
 	private static final int MENU_COLUMNS = 9;
 	private static final int GRID_COLUMNS = CameraPhotoSettings.MAX_MAPS_WIDE;
 	private static final int GRID_ROWS = CameraPhotoSettings.MAX_MAPS_HIGH;
-	private static final int CAMERA_SLOT = 6;
-	private static final int INFO_SLOT = 7;
+	private static final int PANEL_SLOT_TOP_LEFT = 6;
+	private static final int MODE_SLOT = 7;
 	private static final int CLOSE_SLOT = 8;
-	private static final int PHOTO_MODE_SLOT = 15;
-	private static final int VIDEO_MODE_SLOT = 16;
-	private static final int TOTAL_SLOT = 17;
+	private static final int PANEL_SLOT_BOTTOM_LEFT = 15;
+	private static final int PANEL_SLOT_BOTTOM_CENTER = 16;
+	private static final int PANEL_SLOT_BOTTOM_RIGHT = 17;
 	private static final String TITLE_SHIFT = "\ue905";
 	private static final String TITLE_RESET = "\ue940\ue940\ue941\ue943";
-	private static final String CAMERA_PANEL_GLYPH = "\uebf0";
+	private static final String CAMERA_PANEL_PHOTO_GLYPH = "\uebf0";
+	private static final String CAMERA_PANEL_VIDEO_GLYPH = "\uebf1";
 	private static final int CAMERA_SIZE_X = 142;
 	private static final int CAMERA_TOTAL_X = 151;
 	private static final Identifier INVISIBLE_BUTTON_MODEL = Objects.requireNonNull(Identifier.tryParse("lg2:gui/button/invisible"));
@@ -95,7 +96,7 @@ public final class CameraPhotoMenuSystem {
 
 		MutableComponent title = Component.empty();
 		title.append(defaultStyled(TITLE_SHIFT));
-		title.append(Component.literal(CAMERA_PANEL_GLYPH).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CAMERA_PANEL_FONT)));
+		title.append(Component.literal(panelGlyph(settings)).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CAMERA_PANEL_FONT)));
 		title.append(defaultStyled(TITLE_RESET));
 		title.append(plainTitle.copy().withStyle(style -> style.withColor(0xD0C4A7).withItalic(false)));
 		title.append(defaultStyled(buildHorizontalAdvance(CAMERA_SIZE_X - titleWidth)));
@@ -105,6 +106,12 @@ public final class CameraPhotoMenuSystem {
 		title.append(Component.literal(totalText)
 				.withStyle(style -> style.withColor(0xD2C39A).withItalic(false).withFont(CAMERA_TOTAL_FONT)));
 		return title;
+	}
+
+	private static String panelGlyph(CameraPhotoSettings settings) {
+		return settings != null && settings.captureMode() == CameraPhotoSettings.CaptureMode.VIDEO
+				? CAMERA_PANEL_VIDEO_GLYPH
+				: CAMERA_PANEL_PHOTO_GLYPH;
 	}
 
 	private static Component plainMenuTitle(ServerPlayer player) {
@@ -158,64 +165,6 @@ public final class CameraPhotoMenuSystem {
 			return literal("Нажми ячейку сетки");
 		}
 		return literal("Click a grid cell");
-	}
-
-	private static Component totalMapsLabel(ServerPlayer player, CameraPhotoSettings settings) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return literal("Картъ въ снимке: " + settings.totalMaps());
-		}
-		if (locale.startsWith("uk")) {
-			return literal("Мап у знімку: " + settings.totalMaps());
-		}
-		if (locale.startsWith("ja")) {
-			return literal("写真の地図枚数: " + settings.totalMaps());
-		}
-		if (locale.startsWith("ru")) {
-			return literal("Карт в снимке: " + settings.totalMaps());
-		}
-		return literal("Maps in photo: " + settings.totalMaps());
-	}
-
-	private static Component photoModeLabel(ServerPlayer player, boolean selected) {
-		String prefix = selected ? "[Фото] " : "Фото";
-		String locale = locale(player);
-		if (locale.startsWith("ja")) {
-			return literal(selected ? "[写真] 写真" : "写真");
-		}
-		if (locale.startsWith("uk")) {
-			return literal(selected ? "[Фото] Фото" : "Фото");
-		}
-		return literal(prefix);
-	}
-
-	private static Component videoModeLabel(ServerPlayer player, boolean selected) {
-		String prefix = selected ? "[Видео] " : "Видео";
-		String locale = locale(player);
-		if (locale.startsWith("ja")) {
-			return literal(selected ? "[動画] 動画" : "動画");
-		}
-		if (locale.startsWith("uk")) {
-			return literal(selected ? "[Відео] Відео" : "Відео");
-		}
-		return literal(prefix);
-	}
-
-	private static Component closeLabel(ServerPlayer player) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return literal("Закрыть");
-		}
-		if (locale.startsWith("uk")) {
-			return literal("Закрити");
-		}
-		if (locale.startsWith("ja")) {
-			return literal("閉じる");
-		}
-		if (locale.startsWith("ru")) {
-			return literal("Закрыть");
-		}
-		return literal("Close");
 	}
 
 	private static String locale(ServerPlayer player) {
@@ -304,15 +253,11 @@ public final class CameraPhotoMenuSystem {
 				return;
 			}
 			CameraPhotoSettings currentSettings = CameraPhotoSettings.read(cameraStack);
-			if (slotId == PHOTO_MODE_SLOT) {
-				CameraPhotoSettings.write(cameraStack, new CameraPhotoSettings(currentSettings.mapsWide(), currentSettings.mapsHigh(), CameraPhotoSettings.CaptureMode.PHOTO));
-				ServerMechanicsGateSystem.syncPlayerInventory(this.viewer);
-				this.refreshContents();
-				this.broadcastFullState();
-				return;
-			}
-			if (slotId == VIDEO_MODE_SLOT) {
-				CameraPhotoSettings.write(cameraStack, new CameraPhotoSettings(currentSettings.mapsWide(), currentSettings.mapsHigh(), CameraPhotoSettings.CaptureMode.VIDEO));
+			if (slotId == MODE_SLOT) {
+				CameraPhotoSettings.CaptureMode nextMode = currentSettings.captureMode() == CameraPhotoSettings.CaptureMode.PHOTO
+						? CameraPhotoSettings.CaptureMode.VIDEO
+						: CameraPhotoSettings.CaptureMode.PHOTO;
+				CameraPhotoSettings.write(cameraStack, new CameraPhotoSettings(currentSettings.mapsWide(), currentSettings.mapsHigh(), nextMode));
 				ServerMechanicsGateSystem.syncPlayerInventory(this.viewer);
 				this.refreshContents();
 				this.broadcastFullState();
@@ -367,24 +312,12 @@ public final class CameraPhotoMenuSystem {
 				}
 			}
 
-			this.container.setItem(CAMERA_SLOT, invisibleGuiStack());
-			this.container.setItem(INFO_SLOT, invisibleGuiStack());
+			this.container.setItem(PANEL_SLOT_TOP_LEFT, invisibleGuiStack());
+			this.container.setItem(MODE_SLOT, invisibleGuiStack());
 			this.container.setItem(CLOSE_SLOT, invisibleGuiStack());
-			this.container.setItem(
-					PHOTO_MODE_SLOT,
-					named(
-							new ItemStack(settings.captureMode() == CameraPhotoSettings.CaptureMode.PHOTO ? Items.LIME_STAINED_GLASS_PANE : Items.GRAY_STAINED_GLASS_PANE),
-							photoModeLabel(this.viewer, settings.captureMode() == CameraPhotoSettings.CaptureMode.PHOTO)
-					)
-			);
-			this.container.setItem(
-					VIDEO_MODE_SLOT,
-					named(
-							new ItemStack(settings.captureMode() == CameraPhotoSettings.CaptureMode.VIDEO ? Items.RED_STAINED_GLASS_PANE : Items.GRAY_STAINED_GLASS_PANE),
-							videoModeLabel(this.viewer, settings.captureMode() == CameraPhotoSettings.CaptureMode.VIDEO)
-					)
-			);
-			this.container.setItem(TOTAL_SLOT, named(new ItemStack(Items.PAPER), totalMapsLabel(this.viewer, settings)));
+			this.container.setItem(PANEL_SLOT_BOTTOM_LEFT, invisibleGuiStack());
+			this.container.setItem(PANEL_SLOT_BOTTOM_CENTER, invisibleGuiStack());
+			this.container.setItem(PANEL_SLOT_BOTTOM_RIGHT, invisibleGuiStack());
 			this.refreshTitle(settings);
 		}
 
