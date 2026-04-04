@@ -1,6 +1,7 @@
 package com.lostglade.client;
 
 import com.lostglade.Lg2;
+import com.lostglade.mixin.client.CameraPositionInvoker;
 import com.lostglade.mixin.client.GameRendererRenderLevelInvoker;
 import com.lostglade.mixin.client.LevelRendererRenderStateAccessor;
 import com.lostglade.mixin.client.MinecraftMainRenderTargetAccessor;
@@ -238,24 +239,26 @@ public final class RendererBotOffscreenWorldRenderer {
 	}
 
 	private static CameraState resolveCameraState(Minecraft client, RenderRequest request) {
+		float partialTick = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
 		if (request.followEntityUuid() != null) {
 			Entity followTarget = client.level.getPlayerByUUID(request.followEntityUuid());
 			if (followTarget != null) {
 				Camera camera = new Camera();
-				camera.setup(client.level, followTarget, false, false, client.getDeltaTracker().getGameTimeDeltaPartialTick(false));
+				camera.setup(client.level, followTarget, false, false, partialTick);
+				((CameraPositionInvoker) camera).lg2$setPosition(followTarget.getEyePosition(partialTick));
 				return new CameraState(camera);
 			}
 			for (Entity entity : client.level.entitiesForRendering()) {
 				if (request.followEntityUuid().equals(entity.getUUID())) {
 					Camera camera = new Camera();
-					camera.setup(client.level, entity, false, false, client.getDeltaTracker().getGameTimeDeltaPartialTick(false));
+					camera.setup(client.level, entity, false, false, partialTick);
+					((CameraPositionInvoker) camera).lg2$setPosition(entity.getEyePosition(partialTick));
 					return new CameraState(camera);
 				}
 			}
 			return null;
 		}
 
-		float partialTick = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
 		Vec3 eyePosition = new Vec3(request.x(), request.y() + STATIC_CAMERA_EYE_HEIGHT, request.z());
 		Marker anchor = new Marker(EntityType.MARKER, client.level);
 		anchor.snapTo(eyePosition, request.yaw(), request.pitch());
