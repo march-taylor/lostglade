@@ -13,6 +13,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -58,6 +60,7 @@ public final class TubochkaItem extends SimplePolymerItem {
 	private static final int MAX_NAUSEA_BLINDNESS_TICKS = 4 * 20;
 	private static final int RELEASE_COOLDOWN_TICKS = 20;
 	private static final int HELD_SMOKE_INTERVAL_TICKS = 8;
+	private static final int BURN_SOUND_INTERVAL_TICKS = 14;
 	private static final int CHARGE_TICKS_PER_RELEASE_PARTICLE = 10;
 	private static final int DEFAULT_MAX_RELEASE_SMOKE_PARTICLES = 8;
 	private static final int BAR_COLOR = 0xFF9A00;
@@ -163,6 +166,9 @@ public final class TubochkaItem extends SimplePolymerItem {
 		}
 
 		int usedTicks = Math.max(0, getUseDuration(stack, entity) - timeChargedLeft);
+		if (usedTicks > 0) {
+			playReleaseExtinguishSound(serverLevel, entity, stack);
+		}
 		int particleCount = Math.min(resolveMaxReleaseSmokeParticles(entity), usedTicks / CHARGE_TICKS_PER_RELEASE_PARTICLE);
 		if (particleCount <= 0) {
 			applyTubochkaReleaseEffects(level, entity, stack);
@@ -220,9 +226,12 @@ public final class TubochkaItem extends SimplePolymerItem {
 		}
 
 		if (entity instanceof LivingEntity livingEntity
-				&& (slot == EquipmentSlot.MAINHAND || slot == EquipmentSlot.OFFHAND)
-				&& !isChargingTubochka(livingEntity, slot)) {
-			emitHeldSmoke(level, livingEntity, slot);
+				&& (slot == EquipmentSlot.MAINHAND || slot == EquipmentSlot.OFFHAND)) {
+			boolean charging = isChargingTubochka(livingEntity, slot);
+			if (!charging) {
+				emitHeldSmoke(level, livingEntity, slot);
+			}
+			emitHeldBurnSound(level, livingEntity, slot, charging);
 		}
 	}
 
@@ -272,6 +281,7 @@ public final class TubochkaItem extends SimplePolymerItem {
 		}
 
 		lighterStack.hurtAndBreak(1, player, lighterHand);
+		playLightSound(player);
 		player.containerMenu.broadcastChanges();
 		return true;
 	}
@@ -394,6 +404,25 @@ public final class TubochkaItem extends SimplePolymerItem {
 		level.sendParticles(ParticleTypes.SMOKE, origin.x, origin.y, origin.z, 1, 0.015D, 0.02D, 0.015D, 0.003D);
 	}
 
+	private static void emitHeldBurnSound(ServerLevel level, LivingEntity livingEntity, EquipmentSlot slot, boolean raisedUsePose) {
+		long nowTick = level.getGameTime();
+		if ((nowTick + livingEntity.getId() + slot.ordinal()) % BURN_SOUND_INTERVAL_TICKS != 0L) {
+			return;
+		}
+
+		Vec3 origin = getHeldSmokeOrigin(livingEntity, slot, raisedUsePose);
+		level.playSound(
+				null,
+				origin.x,
+				origin.y,
+				origin.z,
+				SoundEvents.FIRE_AMBIENT,
+				SoundSource.PLAYERS,
+				0.10F,
+				1.55F + (level.random.nextFloat() * 0.1F)
+		);
+	}
+
 	private static void emitReleaseSmoke(ServerLevel level, LivingEntity livingEntity, int particleCount) {
 		Vec3 look = livingEntity.getLookAngle();
 		if (look.lengthSqr() < 1.0E-6D) {
@@ -473,6 +502,35 @@ public final class TubochkaItem extends SimplePolymerItem {
 				player.addEffect(new MobEffectInstance(MobEffects.SPEED, CARTEL_BUFF_DURATION_TICKS, cartelBuffAmplifier, false, true, true));
 			}
 		}
+	}
+
+	private static void playLightSound(ServerPlayer player) {
+		Level level = player.level();
+		level.playSound(
+				null,
+				player.getX(),
+				player.getY() + player.getBbHeight() * 0.65D,
+				player.getZ(),
+				SoundEvents.FLINTANDSTEEL_USE,
+				SoundSource.PLAYERS,
+				0.85F,
+				0.95F + (level.random.nextFloat() * 0.1F)
+		);
+	}
+
+	private static void playReleaseExtinguishSound(ServerLevel level, LivingEntity livingEntity, ItemStack stack) {
+		EquipmentSlot slot = resolveTubochkaHandSlot(livingEntity, stack);
+		Vec3 origin = getHeldSmokeOrigin(livingEntity, slot, true);
+		level.playSound(
+				null,
+				origin.x,
+				origin.y,
+				origin.z,
+				SoundEvents.GENERIC_EXTINGUISH_FIRE,
+				SoundSource.PLAYERS,
+				0.28F,
+				1.15F + (level.random.nextFloat() * 0.1F)
+		);
 	}
 
 	private static boolean isMrCartel(ServerPlayer player) {

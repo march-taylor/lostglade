@@ -1205,7 +1205,7 @@ public final class ServerRaceSystem {
 		stand.setNoGravity(true);
 		stand.setItemSlot(EquipmentSlot.HEAD, buildCopperManJetpackVisualStack());
 		((ArmorStandAccessor) stand).lg2$setSmall(false);
-		((ArmorStandAccessor) stand).lg2$setMarker(false);
+		((ArmorStandAccessor) stand).lg2$setMarker(true);
 	}
 
 	private static void syncCopperManJetpackDisplayEquipment(ArmorStand stand) {
