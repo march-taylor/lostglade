@@ -422,8 +422,12 @@
 		}
 	],
 	"display": {
-		"head": {
+		"fixed": {
 			"translation": [0, -16.75, 7.25],
+			"scale": [1.4, 1.4, 1.4]
+		},
+		"head": {
+			"translation": [0, -63.0, 7.25],
 			"scale": [1.4, 1.4, 1.4]
 		}
 	}

@@ -14,6 +14,7 @@ import com.lostglade.item.CopperJetpackItem;
 import com.lostglade.item.MethadoneItem;
 import com.lostglade.item.ModItems;
 import com.lostglade.item.TubochkaItem;
+import com.lostglade.mixin.ArmorStandAccessor;
 import com.lostglade.mixin.EntityPassengerAccessor;
 import com.lostglade.mixin.MobXpRewardAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
@@ -21,7 +22,6 @@ import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.Property;
 import com.mojang.authlib.properties.PropertyMap;
 import com.mojang.brigadier.context.CommandContext;
-import com.mojang.math.Transformation;
 import eu.pb4.polymer.core.api.entity.PolymerEntity;
 import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
 import eu.pb4.polymer.core.api.item.PolymerItemUtils;
@@ -44,7 +44,6 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.core.Rotations;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -86,9 +85,7 @@ import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
 import net.minecraft.world.entity.ai.navigation.PathNavigation;
-import net.minecraft.world.entity.animal.pig.Pig;
-import net.minecraft.world.entity.AreaEffectCloud;
-import net.minecraft.world.entity.Display;
+import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
@@ -102,7 +99,6 @@ import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.raid.Raider;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.ItemUseAnimation;
 import net.minecraft.world.item.component.WrittenBookContent;
@@ -265,19 +261,6 @@ public final class ServerRaceSystem {
 	private static final double COPPER_MAN_JETPACK_PARTICLE_SIDE_OFFSET = 0.2D;
 	private static final double COPPER_MAN_JETPACK_PARTICLE_UP_OFFSET = 0.80D;
 	private static final double COPPER_MAN_JETPACK_PARTICLE_UP_OFFSET_CROUCHING = 0.64D;
-	private static final double COPPER_MAN_JETPACK_BODY_OFFSET_BACK = 0.0D;
-	private static final double COPPER_MAN_JETPACK_BODY_OFFSET_UP = 0.97D;
-	private static final double COPPER_MAN_JETPACK_BODY_OFFSET_UP_CROUCHING = 0.73D;
-	private static final double COPPER_MAN_JETPACK_DISPLAY_PREDICTION = 1.25D;
-	private static final float COPPER_MAN_JETPACK_DISPLAY_YAW_SMOOTHING = 0.7F;
-	private static final double COPPER_MAN_JETPACK_DISPLAY_SNAP_DISTANCE = 1.5D;
-	private static final double COPPER_MAN_JETPACK_DISPLAY_YAW_MOVEMENT_THRESHOLD = 0.0025D;
-	private static final float COPPER_MAN_JETPACK_DISPLAY_IDLE_BODY_TURN_THRESHOLD = 0.5F;
-	private static final float COPPER_MAN_JETPACK_DISPLAY_MOVEMENT_YAW_FACTOR = 0.60F;
-	private static final float COPPER_MAN_JETPACK_DISPLAY_BACKWARD_YAW_THRESHOLD = 135.0F;
-	private static final double COPPER_MAN_JETPACK_STAND_FOOT_OFFSET = -0.92D;
-	private static final String COPPER_MAN_JETPACK_CARRIER_TAG = "lg2_copper_jetpack_carrier";
-	private static final String COPPER_MAN_JETPACK_CARRIER_OWNER_TAG_PREFIX = "lg2_copper_jetpack_carrier_owner:";
 	private static final String COPPER_MAN_JETPACK_DISPLAY_TAG = "lg2_copper_jetpack_display";
 	private static final String COPPER_MAN_JETPACK_DISPLAY_OWNER_TAG_PREFIX = "lg2_copper_jetpack_owner:";
 	private static final long COPPER_MAN_DEFENSE_PREWARM_INTERVAL_TICKS = 10L;
@@ -291,7 +274,6 @@ public final class ServerRaceSystem {
 	private static final float COPPER_MAN_DEFENSE_COPPER_RED = 0.84313726F;
 	private static final float COPPER_MAN_DEFENSE_COPPER_GREEN = 0.48235294F;
 	private static final float COPPER_MAN_DEFENSE_COPPER_BLUE = 0.35686275F;
-	private static final Identifier COPPER_MAN_JETPACK_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_jetpack");
 	private static final float COPPER_INGOT_SATURATION = 0.6F;
 	private static final Consumable COPPER_INGOT_CONSUMABLE = Consumable.builder()
 			.consumeSeconds(1.6F)
@@ -332,9 +314,7 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, Long> COPPER_MAN_JETPACK_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, CopperManJetpackSession> COPPER_MAN_JETPACK_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, CopperManJetpackInputState> COPPER_MAN_JETPACK_INPUTS = new ConcurrentHashMap<>();
-	private static final Map<UUID, UUID> COPPER_MAN_JETPACK_CARRIER_IDS = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> COPPER_MAN_JETPACK_DISPLAY_IDS = new LinkedHashMap<>();
-	private static final Map<UUID, CopperManJetpackDisplayState> COPPER_MAN_JETPACK_DISPLAY_STATES = new LinkedHashMap<>();
 	private static final Map<String, Property> COPPER_MAN_DEFENSE_TINT_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, Long> COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS = new ConcurrentHashMap<>();
 	private static final Set<String> COPPER_MAN_DEFENSE_TINT_BUILD_IN_FLIGHT = ConcurrentHashMap.newKeySet();
@@ -500,9 +480,7 @@ public final class ServerRaceSystem {
 			COPPER_MAN_JETPACK_COOLDOWNS.clear();
 			COPPER_MAN_JETPACK_SESSIONS.clear();
 			COPPER_MAN_JETPACK_INPUTS.clear();
-			COPPER_MAN_JETPACK_CARRIER_IDS.clear();
 			COPPER_MAN_JETPACK_DISPLAY_IDS.clear();
-			COPPER_MAN_JETPACK_DISPLAY_STATES.clear();
 			COPPER_MAN_DEFENSE_TINT_CACHE.clear();
 			COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS.clear();
 			COPPER_MAN_DEFENSE_TINT_BUILD_IN_FLIGHT.clear();
@@ -1095,9 +1073,7 @@ public final class ServerRaceSystem {
 		}
 		COPPER_MAN_JETPACK_SESSIONS.clear();
 		COPPER_MAN_JETPACK_INPUTS.clear();
-		COPPER_MAN_JETPACK_CARRIER_IDS.clear();
 		COPPER_MAN_JETPACK_DISPLAY_IDS.clear();
-		COPPER_MAN_JETPACK_DISPLAY_STATES.clear();
 	}
 
 	private static void syncCopperManJetpackVisual(ServerPlayer player, boolean active) {
@@ -1116,10 +1092,7 @@ public final class ServerRaceSystem {
 	}
 
 	private static ItemStack buildCopperManJetpackVisualStack() {
-		ItemStack stack = new ItemStack(Items.PAPER);
-		stack.set(DataComponents.ITEM_MODEL, COPPER_MAN_JETPACK_MODEL_ID);
-		stack.set(DataComponents.CUSTOM_NAME, Component.literal(" ").withStyle(style -> style.withItalic(false)));
-		return stack;
+		return CopperJetpackItem.createDisplayStack();
 	}
 
 	private static void removeCopperManJetpackDisplay(ServerPlayer player) {
@@ -1129,15 +1102,7 @@ public final class ServerRaceSystem {
 
 		ServerLevel level = (ServerLevel) player.level();
 		UUID playerId = player.getUUID();
-		UUID carrierId = COPPER_MAN_JETPACK_CARRIER_IDS.remove(playerId);
 		UUID displayId = COPPER_MAN_JETPACK_DISPLAY_IDS.remove(playerId);
-		COPPER_MAN_JETPACK_DISPLAY_STATES.remove(playerId);
-		if (carrierId != null) {
-			Entity entity = level.getEntity(carrierId);
-			if (entity != null) {
-				entity.discard();
-			}
-		}
 		if (displayId != null) {
 			Entity entity = level.getEntity(displayId);
 			if (entity != null) {
@@ -1145,22 +1110,14 @@ public final class ServerRaceSystem {
 			}
 		}
 
-		String carrierOwnerTag = COPPER_MAN_JETPACK_CARRIER_OWNER_TAG_PREFIX + playerId;
 		String ownerTag = COPPER_MAN_JETPACK_DISPLAY_OWNER_TAG_PREFIX + playerId;
 		AABB cleanupBox = player.getBoundingBox().inflate(64.0D);
-		for (AreaEffectCloud cloud : level.getEntitiesOfClass(
-				AreaEffectCloud.class,
-				cleanupBox,
-				candidate -> candidate.getTags().contains(COPPER_MAN_JETPACK_CARRIER_TAG) && candidate.getTags().contains(carrierOwnerTag)
-		)) {
-			cloud.discard();
-		}
-		for (Pig pig : level.getEntitiesOfClass(
-				Pig.class,
+		for (ArmorStand stand : level.getEntitiesOfClass(
+				ArmorStand.class,
 				cleanupBox,
 				candidate -> candidate.getTags().contains(COPPER_MAN_JETPACK_DISPLAY_TAG) && candidate.getTags().contains(ownerTag)
 		)) {
-			pig.discard();
+			stand.discard();
 		}
 	}
 
@@ -1169,72 +1126,42 @@ public final class ServerRaceSystem {
 			return;
 		}
 
-		AreaEffectCloud carrier = findCopperManJetpackCarrier(player);
-		if (carrier == null) {
-			carrier = new AreaEffectCloud(level, player.getX(), player.getY(), player.getZ());
-			if (carrier == null) {
-				return;
-			}
-			carrier.addTag(COPPER_MAN_JETPACK_CARRIER_TAG);
-			carrier.addTag(COPPER_MAN_JETPACK_CARRIER_OWNER_TAG_PREFIX + player.getUUID());
-			configureCopperManJetpackCarrier(carrier);
-			carrier.setPos(player.getX(), player.getY(), player.getZ());
-			level.addFreshEntity(carrier);
-		}
-		configureCopperManJetpackCarrier(carrier);
-		attachCopperManJetpackCarrier(player, carrier);
-		COPPER_MAN_JETPACK_CARRIER_IDS.put(player.getUUID(), carrier.getUUID());
-
-		Pig existing = findCopperManJetpackDisplay(player);
+		ArmorStand existing = findCopperManJetpackDisplay(player);
 		if (existing != null) {
 			configureCopperManJetpackDisplay(existing);
-			attachCopperManJetpackDisplay(carrier, existing);
+			attachCopperManJetpackDisplay(player, existing);
 			COPPER_MAN_JETPACK_DISPLAY_IDS.put(player.getUUID(), existing.getUUID());
+			syncCopperManJetpackDisplayEquipment(existing);
 			return;
 		}
 
-		Pig pig = EntityType.PIG.create(level, EntitySpawnReason.TRIGGERED);
-		if (pig == null) {
+		ArmorStand stand = EntityType.ARMOR_STAND.create(level, EntitySpawnReason.TRIGGERED);
+		if (stand == null) {
 			return;
 		}
-		pig.addTag(COPPER_MAN_JETPACK_DISPLAY_TAG);
-		pig.addTag(COPPER_MAN_JETPACK_DISPLAY_OWNER_TAG_PREFIX + player.getUUID());
-		configureCopperManJetpackDisplay(pig);
-		pig.setPos(player.getX(), player.getY(), player.getZ());
-		level.addFreshEntity(pig);
-		attachCopperManJetpackDisplay(carrier, pig);
-		COPPER_MAN_JETPACK_DISPLAY_IDS.put(player.getUUID(), pig.getUUID());
-		COPPER_MAN_JETPACK_DISPLAY_STATES.remove(player.getUUID());
+		stand.addTag(COPPER_MAN_JETPACK_DISPLAY_TAG);
+		stand.addTag(COPPER_MAN_JETPACK_DISPLAY_OWNER_TAG_PREFIX + player.getUUID());
+		configureCopperManJetpackDisplay(stand);
+		stand.setPos(player.getX(), player.getY(), player.getZ());
+		level.addFreshEntity(stand);
+		attachCopperManJetpackDisplay(player, stand);
+		COPPER_MAN_JETPACK_DISPLAY_IDS.put(player.getUUID(), stand.getUUID());
+		syncCopperManJetpackDisplayEquipment(stand);
 	}
 
-	private static void attachCopperManJetpackCarrier(ServerPlayer player, AreaEffectCloud carrier) {
-		if (player == null || carrier == null) {
+	private static void attachCopperManJetpackDisplay(ServerPlayer player, ArmorStand stand) {
+		if (player == null || stand == null) {
 			return;
 		}
 
-		Entity vehicle = carrier.getVehicle();
-		if (vehicle == player && player.hasPassenger(carrier)) {
+		Entity vehicle = stand.getVehicle();
+		if (vehicle == player && player.hasPassenger(stand)) {
 			return;
 		}
 		if (vehicle != null) {
-			carrier.stopRiding();
+			stand.stopRiding();
 		}
-		forceEntityPassenger(player, carrier);
-	}
-
-	private static void attachCopperManJetpackDisplay(Entity carrier, Pig pig) {
-		if (carrier == null || pig == null) {
-			return;
-		}
-
-		Entity vehicle = pig.getVehicle();
-		if (vehicle == carrier && carrier.hasPassenger(pig)) {
-			return;
-		}
-		if (vehicle != null) {
-			pig.stopRiding();
-		}
-		forceEntityPassenger(carrier, pig);
+		forceEntityPassenger(player, stand);
 	}
 
 	private static void forceEntityPassenger(Entity vehicle, Entity passenger) {
@@ -1267,66 +1194,36 @@ public final class ServerRaceSystem {
 		}
 	}
 
-	private static void configureCopperManJetpackDisplay(Pig pig) {
-		if (pig == null) {
+	private static void configureCopperManJetpackDisplay(ArmorStand stand) {
+		if (stand == null) {
 			return;
 		}
 
-		pig.setNoAi(true);
-		pig.setInvulnerable(true);
-		pig.setSilent(true);
-		pig.setPersistenceRequired();
+		stand.setInvisible(true);
+		stand.setInvulnerable(true);
+		stand.setSilent(true);
+		stand.setNoGravity(true);
+		stand.setItemSlot(EquipmentSlot.HEAD, buildCopperManJetpackVisualStack());
+		((ArmorStandAccessor) stand).lg2$setSmall(false);
+		((ArmorStandAccessor) stand).lg2$setMarker(false);
 	}
 
-	private static void configureCopperManJetpackCarrier(AreaEffectCloud carrier) {
-		if (carrier == null) {
+	private static void syncCopperManJetpackDisplayEquipment(ArmorStand stand) {
+		if (stand == null || !(stand.level() instanceof ServerLevel level)) {
 			return;
 		}
 
-		carrier.setInvisible(true);
-		carrier.setInvulnerable(true);
-		carrier.setSilent(true);
-		carrier.setNoGravity(true);
-		carrier.setRadius(0.01F);
-		carrier.setWaitTime(0);
-		carrier.setDuration(Integer.MAX_VALUE);
-		carrier.setRadiusOnUse(0.0F);
-		carrier.setRadiusPerTick(0.0F);
-	}
-
-	private static AreaEffectCloud findCopperManJetpackCarrier(ServerPlayer player) {
-		if (player == null || !(player.level() instanceof ServerLevel level)) {
-			return null;
-		}
-
-		UUID playerId = player.getUUID();
-		UUID carrierId = COPPER_MAN_JETPACK_CARRIER_IDS.get(playerId);
-		if (carrierId != null) {
-			Entity entity = level.getEntity(carrierId);
-			if (entity instanceof AreaEffectCloud cloud) {
-				return cloud;
-			}
-		}
-
-		String ownerTag = COPPER_MAN_JETPACK_CARRIER_OWNER_TAG_PREFIX + playerId;
-		AABB searchBox = player.getBoundingBox().inflate(16.0D);
-		List<AreaEffectCloud> clouds = level.getEntitiesOfClass(
-				AreaEffectCloud.class,
-				searchBox,
-				candidate -> candidate.getTags().contains(COPPER_MAN_JETPACK_CARRIER_TAG) && candidate.getTags().contains(ownerTag)
+		ClientboundSetEquipmentPacket packet = new ClientboundSetEquipmentPacket(
+				stand.getId(),
+				List.of(com.mojang.datafixers.util.Pair.of(EquipmentSlot.HEAD, stand.getItemBySlot(EquipmentSlot.HEAD).copy()))
 		);
-		if (clouds.isEmpty()) {
-			return null;
+		for (ServerPlayer viewer : level.players()) {
+			viewer.connection.send(packet);
 		}
-
-		AreaEffectCloud keep = clouds.get(0);
-		for (int i = 1; i < clouds.size(); i++) {
-			clouds.get(i).discard();
-		}
-		return keep;
 	}
 
-	private static Pig findCopperManJetpackDisplay(ServerPlayer player) {
+
+	private static ArmorStand findCopperManJetpackDisplay(ServerPlayer player) {
 		if (player == null || !(player.level() instanceof ServerLevel level)) {
 			return null;
 		}
@@ -1335,25 +1232,25 @@ public final class ServerRaceSystem {
 		UUID displayId = COPPER_MAN_JETPACK_DISPLAY_IDS.get(playerId);
 		if (displayId != null) {
 			Entity entity = level.getEntity(displayId);
-			if (entity instanceof Pig pig) {
-				return pig;
+			if (entity instanceof ArmorStand stand) {
+				return stand;
 			}
 		}
 
 		String ownerTag = COPPER_MAN_JETPACK_DISPLAY_OWNER_TAG_PREFIX + playerId;
 		AABB searchBox = player.getBoundingBox().inflate(16.0D);
-		List<Pig> pigs = level.getEntitiesOfClass(
-				Pig.class,
+		List<ArmorStand> stands = level.getEntitiesOfClass(
+				ArmorStand.class,
 				searchBox,
 				candidate -> candidate.getTags().contains(COPPER_MAN_JETPACK_DISPLAY_TAG) && candidate.getTags().contains(ownerTag)
 		);
-		if (pigs.isEmpty()) {
+		if (stands.isEmpty()) {
 			return null;
 		}
 
-		Pig keep = pigs.get(0);
-		for (int i = 1; i < pigs.size(); i++) {
-			pigs.get(i).discard();
+		ArmorStand keep = stands.get(0);
+		for (int i = 1; i < stands.size(); i++) {
+			stands.get(i).discard();
 		}
 		return keep;
 	}
@@ -1363,139 +1260,17 @@ public final class ServerRaceSystem {
 			return;
 		}
 
-		Pig pig = findCopperManJetpackDisplay(player);
-		AreaEffectCloud carrier = findCopperManJetpackCarrier(player);
-		if (pig == null || carrier == null) {
+		ArmorStand stand = findCopperManJetpackDisplay(player);
+		if (stand == null) {
 			return;
 		}
 
-		configureCopperManJetpackCarrier(carrier);
-		attachCopperManJetpackCarrier(player, carrier);
-		attachCopperManJetpackDisplay(carrier, pig);
-		pig.setYRot(player.getYRot());
-		pig.setYHeadRot(player.getYRot());
-	}
-
-	private static Vec3 computeCopperManJetpackDisplayTarget(ServerPlayer player, float bodyYaw) {
-		Vec3 delta = player.getDeltaMovement();
-		Vec3 lead = new Vec3(
-				delta.x * COPPER_MAN_JETPACK_DISPLAY_PREDICTION,
-				0.0D,
-				delta.z * COPPER_MAN_JETPACK_DISPLAY_PREDICTION
-		);
-		double upOffset = player.isCrouching() ? COPPER_MAN_JETPACK_BODY_OFFSET_UP_CROUCHING : COPPER_MAN_JETPACK_BODY_OFFSET_UP;
-		Vec3 forward = Vec3.directionFromRotation(0.0F, bodyYaw);
-		forward = new Vec3(forward.x, 0.0D, forward.z);
-		if (forward.lengthSqr() <= 1.0E-6D) {
-			forward = Vec3.directionFromRotation(0.0F, player.getYRot());
-			forward = new Vec3(forward.x, 0.0D, forward.z);
-		}
-		if (forward.lengthSqr() <= 1.0E-6D) {
-			forward = new Vec3(0.0D, 0.0D, 1.0D);
-		}
-		forward = forward.normalize();
-		Vec3 backward = forward.scale(-COPPER_MAN_JETPACK_BODY_OFFSET_BACK);
-		return player.position().add(lead).add(0.0D, upOffset + COPPER_MAN_JETPACK_STAND_FOOT_OFFSET, 0.0D).add(backward);
-	}
-
-	private static float resolveCopperManJetpackDisplayYaw(ServerPlayer player, CopperManJetpackDisplayState previous) {
-		if (player == null) {
-			return 0.0F;
-		}
-
-		CopperManJetpackInputState input = COPPER_MAN_JETPACK_INPUTS.getOrDefault(player.getUUID(), CopperManJetpackInputState.EMPTY);
-		Vec3 inputDirection = computeCopperManJetpackInputDirection(player, input);
-		if (inputDirection.lengthSqr() > 1.0E-6D) {
-			return adjustCopperManJetpackYawToBody(player.yBodyRot, yawFromHorizontalVector(inputDirection));
-		}
-
-		Vec3 horizontalMovement = new Vec3(player.getDeltaMovement().x, 0.0D, player.getDeltaMovement().z);
-		if (horizontalMovement.lengthSqr() > COPPER_MAN_JETPACK_DISPLAY_YAW_MOVEMENT_THRESHOLD * COPPER_MAN_JETPACK_DISPLAY_YAW_MOVEMENT_THRESHOLD) {
-			return adjustCopperManJetpackYawToBody(player.yBodyRot, yawFromHorizontalVector(horizontalMovement));
-		}
-
-		if (Math.abs(wrapDegrees(player.yBodyRot - player.yBodyRotO)) > COPPER_MAN_JETPACK_DISPLAY_IDLE_BODY_TURN_THRESHOLD) {
-			return player.yBodyRot;
-		}
-
-		if (previous != null) {
-			return previous.yaw();
-		}
-
-		return player.yBodyRot;
-	}
-
-	private static Vec3 computeCopperManJetpackInputDirection(ServerPlayer player, CopperManJetpackInputState input) {
-		if (player == null || input == null) {
-			return Vec3.ZERO;
-		}
-
-		int forwardInput = (input.forward() ? 1 : 0) - (input.backward() ? 1 : 0);
-		int strafeInput = (input.right() ? 1 : 0) - (input.left() ? 1 : 0);
-		if (forwardInput == 0 && strafeInput == 0) {
-			return Vec3.ZERO;
-		}
-
-		Vec3 forward = Vec3.directionFromRotation(0.0F, player.getYRot());
-		forward = new Vec3(forward.x, 0.0D, forward.z);
-		if (forward.lengthSqr() <= 1.0E-6D) {
-			return Vec3.ZERO;
-		}
-		forward = forward.normalize();
-		Vec3 right = new Vec3(-forward.z, 0.0D, forward.x);
-		Vec3 desired = forward.scale(forwardInput).add(right.scale(strafeInput));
-		return desired.lengthSqr() <= 1.0E-6D ? Vec3.ZERO : desired.normalize();
-	}
-
-	private static float yawFromHorizontalVector(Vec3 vector) {
-		if (vector == null || vector.lengthSqr() <= 1.0E-6D) {
-			return 0.0F;
-		}
-		return (float) Math.toDegrees(Math.atan2(-vector.x, vector.z));
-	}
-
-	private static float adjustCopperManJetpackYawToBody(float bodyYaw, float movementYaw) {
-		float delta = wrapDegrees(movementYaw - bodyYaw);
-		if (Math.abs(delta) >= COPPER_MAN_JETPACK_DISPLAY_BACKWARD_YAW_THRESHOLD) {
-			return bodyYaw;
-		}
-		return bodyYaw + delta * COPPER_MAN_JETPACK_DISPLAY_MOVEMENT_YAW_FACTOR;
-	}
-
-	private static CopperManJetpackDisplayState smoothCopperManJetpackDisplay(CopperManJetpackDisplayState previous, Vec3 targetPos, float targetYaw) {
-		if (targetPos == null) {
-			return previous;
-		}
-		if (previous == null) {
-			return new CopperManJetpackDisplayState(targetPos.x, targetPos.y, targetPos.z, targetYaw);
-		}
-
-		Vec3 previousPos = new Vec3(previous.x(), previous.y(), previous.z());
-		if (previousPos.distanceToSqr(targetPos) >= COPPER_MAN_JETPACK_DISPLAY_SNAP_DISTANCE * COPPER_MAN_JETPACK_DISPLAY_SNAP_DISTANCE) {
-			return new CopperManJetpackDisplayState(targetPos.x, targetPos.y, targetPos.z, targetYaw);
-		}
-
-		double x = targetPos.x;
-		double y = targetPos.y;
-		double z = targetPos.z;
-		float yaw = lerpWrappedDegrees(previous.yaw(), targetYaw, COPPER_MAN_JETPACK_DISPLAY_YAW_SMOOTHING);
-		return new CopperManJetpackDisplayState(x, y, z, yaw);
-	}
-
-	private static float lerpWrappedDegrees(float from, float to, float factor) {
-		float delta = wrapDegrees(to - from);
-		return from + delta * factor;
-	}
-
-	private static float wrapDegrees(float degrees) {
-		float wrapped = degrees % 360.0F;
-		if (wrapped >= 180.0F) {
-			wrapped -= 360.0F;
-		}
-		if (wrapped < -180.0F) {
-			wrapped += 360.0F;
-		}
-		return wrapped;
+		attachCopperManJetpackDisplay(player, stand);
+		stand.setYRot(player.getYRot());
+		stand.setYHeadRot(player.getYRot());
+		stand.yBodyRot = player.getYRot();
+		stand.yBodyRotO = player.getYRot();
+		syncCopperManJetpackDisplayEquipment(stand);
 	}
 
 	private static void tickCopperManStock(MinecraftServer server) {
@@ -1670,9 +1445,6 @@ public final class ServerRaceSystem {
 		private double maxAllowedY() {
 			return this.baseY + this.maxRiseBlocks;
 		}
-	}
-
-	private record CopperManJetpackDisplayState(double x, double y, double z, float yaw) {
 	}
 
 	private record CopperManDefenseVisualSession(SkinValue originalSkin, String sourceCacheKey, long expireTick) {
