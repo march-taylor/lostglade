@@ -102,6 +102,17 @@ public final class RendererBotOffscreenWorldRenderer {
 		}
 	}
 
+	public static void onSectionDirty(ClientLevel level, int sectionX, int sectionY, int sectionZ) {
+		if (level == null) {
+			return;
+		}
+		synchronized (LOCK) {
+			forEachCachedRendererLocked(level, cachedRenderer ->
+					cachedRenderer.levelRenderer().setSectionDirty(sectionX, sectionY, sectionZ)
+			);
+		}
+	}
+
 	public static void onSectionRangeDirty(
 			ClientLevel level,
 			int minSectionX,
@@ -167,6 +178,17 @@ public final class RendererBotOffscreenWorldRenderer {
 							maxSectionY,
 							pos.z
 					)
+			);
+		}
+	}
+
+	public static void onChunkReadyToRender(ClientLevel level, ChunkPos pos) {
+		if (level == null || pos == null) {
+			return;
+		}
+		synchronized (LOCK) {
+			forEachCachedRendererLocked(level, cachedRenderer ->
+					cachedRenderer.levelRenderer().onChunkReadyToRender(pos)
 			);
 		}
 	}
@@ -265,6 +287,8 @@ public final class RendererBotOffscreenWorldRenderer {
 		GameRendererRenderLevelInvoker gameRendererAccessor = (GameRendererRenderLevelInvoker) client.gameRenderer;
 		FogRenderer fogRenderer = gameRendererAccessor.lg2$getFogRenderer();
 		float partialTick = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
+		client.gameRenderer.lightTexture().updateLightTexture(1.0F);
+		cachedRenderer.levelRenderer().tick(cameraState.camera());
 		applyLevelRenderCameraState(cachedRenderer.levelRenderer(), cameraState.camera(), partialTick);
 		Matrix4f projectionMatrix = client.gameRenderer.getProjectionMatrix(request.fovDegrees());
 		Matrix4f cullingMatrix = gameRendererAccessor.lg2$getProjectionMatrixForCulling(request.fovDegrees());
@@ -304,7 +328,7 @@ public final class RendererBotOffscreenWorldRenderer {
 				cullingMatrix,
 				fogBuffer,
 				fogColor,
-				false
+				client.gui == null || !client.gui.getBossOverlay().shouldCreateWorldFog()
 		);
 		cachedRenderer.featureRenderDispatcher().endFrame();
 		cachedRenderer.levelRenderer().endFrame();

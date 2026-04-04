@@ -8,6 +8,7 @@
 		"ClientChunkCacheRendererBotMixin",
 		"GameRendererOffscreenProjectionMixin",
 		"GameRendererRenderLevelInvoker",
+		"LevelRendererOffscreenSyncMixin",
 		"LevelRendererRenderStateAccessor",
 		"MinecraftMainRenderTargetAccessor",
 		"RendererBotMinecraftAuthMixin",
