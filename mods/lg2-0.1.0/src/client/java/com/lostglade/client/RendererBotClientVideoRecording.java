@@ -273,6 +273,7 @@ public final class RendererBotClientVideoRecording {
 		for (UUID requestId : requestIds) {
 			abortRecording(requestId, message);
 		}
+		RendererBotOffscreenWorldRenderer.clearCaches();
 	}
 
 	private static void abortRecording(UUID requestId, String message) {

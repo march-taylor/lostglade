@@ -4,19 +4,36 @@ import com.lostglade.Lg2;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.network.RendererBotPayloads;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ChunkTrackingView;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.TicketType;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Relative;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongSet;
+import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -31,6 +48,8 @@ public final class RendererBotCameraSystem {
 	private static final int MAX_LIVE_STREAM_FPS = 20;
 	private static final long LIVE_STREAM_STALE_MS = 1_500L;
 	private static final long PHOTO_CAPTURE_RETRY_INTERVAL_MS = 50L;
+	private static final int VIRTUAL_CAMERA_ALWAYS_LOADED_CHUNK_RADIUS = 1;
+	private static final double VIRTUAL_CAMERA_FORWARD_CHUNK_MIN_DOT = Math.cos(Math.toRadians(75.0D));
 	private static final double SHARED_RENDER_RADIUS_BLOCKS = 96.0D;
 	private static final double SHARED_RENDER_RADIUS_SQ = SHARED_RENDER_RADIUS_BLOCKS * SHARED_RENDER_RADIUS_BLOCKS;
 	private static final Map<UUID, BotHandshake> READY_BOTS = new ConcurrentHashMap<>();
@@ -38,11 +57,13 @@ public final class RendererBotCameraSystem {
 	private static final Map<UUID, PendingVideoRecording> PENDING_VIDEO_RECORDINGS = new ConcurrentHashMap<>();
 	private static final Map<UUID, ActiveLiveStream> ACTIVE_LIVE_STREAMS = new ConcurrentHashMap<>();
 	private static final Map<String, UUID> LIVE_STREAMS_BY_OWNER = new ConcurrentHashMap<>();
+	private static final Map<ChunkTicketKey, Integer> ACTIVE_CAMERA_CHUNK_TICKETS = new HashMap<>();
 
 	private RendererBotCameraSystem() {
 	}
 
 	public static void register() {
+		ServerTickEvents.END_SERVER_TICK.register(RendererBotCameraSystem::tickVirtualCameraState);
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
 			UUID botUuid = handler.player.getUUID();
 			READY_BOTS.remove(botUuid);
@@ -150,6 +171,7 @@ public final class RendererBotCameraSystem {
 				}
 		);
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			releaseAllVirtualCameraChunkTickets(server);
 			READY_BOTS.clear();
 			for (PendingCapture capture : PENDING_CAPTURES.values()) {
 				IllegalStateException failure = new IllegalStateException("Renderer bot capture aborted: server stopping");
@@ -262,6 +284,9 @@ public final class RendererBotCameraSystem {
 		if (server == null || bot == null || level == null) {
 			return null;
 		}
+		if (!canBotRenderLevel(bot, level)) {
+			return null;
+		}
 
 		int clampedPreviewWidth = Math.max(1, previewWidth);
 		int clampedPreviewHeight = Math.max(1, previewHeight);
@@ -271,10 +296,6 @@ public final class RendererBotCameraSystem {
 		long timeoutMillis = Math.max(500L, Lg2Config.get().cameraRendererBotTimeoutMs);
 		CompletableFuture<byte[]> previewFuture = new CompletableFuture<>();
 		CompletableFuture<byte[]> fullFuture = new CompletableFuture<>();
-		if (!isWithinActiveBotZone(server, bot.getUUID(), level, x, y, z)) {
-			return null;
-		}
-		anchorBotIfNeeded(bot, level, x, y, z, yaw, pitch);
 		PendingCapture pending = new PendingCapture(
 				requestId,
 				server,
@@ -320,6 +341,7 @@ public final class RendererBotCameraSystem {
 	public static boolean ensureLiveStream(
 			String ownerKey,
 			ServerLevel level,
+			BlockPos cameraPos,
 			double x,
 			double y,
 			double z,
@@ -346,9 +368,14 @@ public final class RendererBotCameraSystem {
 			onFailure.accept("Нет активного клиента камеры");
 			return false;
 		}
+		if (!canBotRenderLevel(bot, level)) {
+			onFailure.accept("Клиент камеры не может рендерить этот мир");
+			return false;
+		}
 
 		LiveStreamSpec desiredSpec = new LiveStreamSpec(
 				level.dimension(),
+				cameraPos == null ? null : cameraPos.immutable(),
 				x,
 				y,
 				z,
@@ -371,17 +398,13 @@ public final class RendererBotCameraSystem {
 			}
 			stopLiveStreamInternal(existing, "Renderer bot live stream restarted", false);
 		}
-		if (!isWithinActiveBotZone(server, bot.getUUID(), level, x, y, z)) {
-			onFailure.accept("Клиент камеры уже занят другой зоной");
-			return false;
-		}
-		anchorBotIfNeeded(bot, level, x, y, z, yaw, pitch);
 
 		UUID streamId = UUID.randomUUID();
 		ActiveLiveStream stream = new ActiveLiveStream(server, streamId, ownerKey, bot.getUUID(), desiredSpec, onFrame, onFailure);
 		ACTIVE_LIVE_STREAMS.put(streamId, stream);
 		LIVE_STREAMS_BY_OWNER.put(ownerKey, streamId);
 		refreshVirtualEntityTracking(bot);
+		refreshVirtualCameraState(server);
 		ServerPlayNetworking.send(
 				bot,
 				new RendererBotPayloads.RendererBotLiveStreamStartS2CPayload(
@@ -440,10 +463,9 @@ public final class RendererBotCameraSystem {
 		int fullWidth = Math.max(1, mapsWide) * 128;
 		int fullHeight = Math.max(1, mapsHigh) * 128;
 		int clampedTargetFps = Math.clamp(Math.max(1, targetFps), 1, MAX_VIDEO_RECORDING_FPS);
-		if (!isWithinActiveBotZone(server, bot.getUUID(), (ServerLevel) requester.level(), requester.getX(), requester.getY(), requester.getZ())) {
+		if (!canBotRenderLevel(bot, (ServerLevel) requester.level())) {
 			return null;
 		}
-		anchorBotIfNeeded(bot, (ServerLevel) requester.level(), requester.getX(), requester.getY(), requester.getZ(), requester.getYRot(), requester.getXRot());
 		UUID requestId = UUID.randomUUID();
 		long timeoutMillis = Math.max(5_000L, Lg2Config.get().cameraRendererBotTimeoutMs);
 		CompletableFuture<VideoRecordingResult> completionFuture = new CompletableFuture<>();
@@ -519,6 +541,34 @@ public final class RendererBotCameraSystem {
 
 	public static ServerPlayer readyBot(MinecraftServer server) {
 		return server == null ? null : selectBot(server);
+	}
+
+	public static boolean isCameraPlayerLoaded(ServerLevel level, BlockPos cameraPos) {
+		if (level == null || cameraPos == null || !level.hasChunkAt(cameraPos)) {
+			return false;
+		}
+		ChunkPos cameraChunk = new ChunkPos(cameraPos);
+		for (ServerPlayer player : level.players()) {
+			if (player == null || RendererBotPresenceSystem.isRendererBot(player)) {
+				continue;
+			}
+			if (level.getChunkSource().chunkMap.isChunkTracked(player, cameraChunk.x, cameraChunk.z)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	public static ChunkTrackingView createVirtualChunkTrackingView(ServerPlayer bot) {
+		if (bot == null) {
+			return ChunkTrackingView.EMPTY;
+		}
+		if (!RendererBotPresenceSystem.isRendererBot(bot)) {
+			ChunkPos realCenter = bot.chunkPosition();
+			return ChunkTrackingView.of(realCenter, resolveViewDistance(bot));
+		}
+		LongSet virtualChunks = collectVirtualTrackedChunks(bot, resolveViewDistance(bot));
+		return virtualChunks.isEmpty() ? ChunkTrackingView.EMPTY : new VirtualChunkTrackingView(virtualChunks);
 	}
 
 	public static boolean isEntityWithinAnyVirtualTrackingRange(ServerPlayer viewer, Entity entity, double horizontalRangeBlocks) {
@@ -621,6 +671,7 @@ public final class RendererBotCameraSystem {
 			ServerPlayNetworking.send(bot, new RendererBotPayloads.RendererBotLiveStreamStopS2CPayload(stream.streamId()));
 		}
 		refreshVirtualEntityTracking(bot);
+		refreshVirtualCameraState(stream.server());
 		releaseBotCameraIfNeeded(stream.server(), stream.botUuid(), true);
 		if (notifyFailure) {
 			stream.onFailure().accept(message);
@@ -748,6 +799,212 @@ public final class RendererBotCameraSystem {
 			return;
 		}
 		level.getChunkSource().move(bot);
+	}
+
+	private static void tickVirtualCameraState(MinecraftServer server) {
+		refreshVirtualCameraState(server);
+	}
+
+	private static void refreshVirtualCameraState(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		updateVirtualCameraChunkTickets(server);
+		ServerPlayer bot = selectBot(server);
+		if (bot != null
+				&& (botHasActiveJobs(bot.getUUID()) || !Objects.equals(bot.getChunkTrackingView(), ChunkTrackingView.EMPTY))) {
+			refreshVirtualEntityTracking(bot);
+		}
+	}
+
+	private static int resolveViewDistance(ServerPlayer bot) {
+		MinecraftServer server = bot != null && bot.level() != null ? bot.level().getServer() : null;
+		return Mth.clamp(
+				bot != null ? bot.requestedViewDistance() : 2,
+				2,
+				Math.max(2, server != null ? server.getPlayerList().getViewDistance() : 2)
+		);
+	}
+
+	private static boolean canBotRenderLevel(ServerPlayer bot, ServerLevel level) {
+		return bot != null && level != null && bot.level() == level;
+	}
+
+	private static LongSet collectVirtualTrackedChunks(ServerPlayer bot, int viewDistance) {
+		LongOpenHashSet chunks = new LongOpenHashSet();
+		if (bot == null || !(bot.level() instanceof ServerLevel botLevel)) {
+			return chunks;
+		}
+		MinecraftServer server = botLevel.getServer();
+		if (server == null) {
+			return chunks;
+		}
+		UUID botUuid = bot.getUUID();
+
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null || !botUuid.equals(stream.botUuid())) {
+				continue;
+			}
+			LiveStreamSpec spec = stream.spec();
+			if (spec == null || spec.dimension() == null || !botLevel.dimension().equals(spec.dimension())) {
+				continue;
+			}
+			if (spec.cameraPos() != null && !isCameraPlayerLoaded(botLevel, spec.cameraPos())) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(
+					server,
+					spec.dimension(),
+					spec.expectedX(),
+					spec.expectedY(),
+					spec.expectedZ(),
+					spec.expectedYaw(),
+					spec.expectedPitch(),
+					spec.followEntityUuid()
+			);
+			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance);
+		}
+		for (PendingCapture capture : PENDING_CAPTURES.values()) {
+			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.isDone()) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.x(), capture.y(), capture.z(), capture.yaw(), capture.pitch(), capture.followEntityUuid());
+			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance);
+		}
+		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
+			if (recording == null || !botUuid.equals(recording.botUuid()) || recording.stopRequested() || recording.completionFuture().isDone()) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, recording.dimension(), recording.x(), recording.y(), recording.z(), recording.yaw(), recording.pitch(), recording.followEntityUuid());
+			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance);
+		}
+		return chunks;
+	}
+
+	private static void appendVirtualTargetChunks(LongSet chunks, ServerLevel level, ScheduledServiceTarget target, int viewDistance) {
+		if (chunks == null || level == null || target == null || target.level() != level) {
+			return;
+		}
+		appendVirtualCameraChunks(chunks, target.x(), target.z(), target.yaw(), viewDistance);
+	}
+
+	private static void appendVirtualCameraChunks(LongSet target, double x, double z, float yaw, int viewDistance) {
+		if (target == null || viewDistance <= 0) {
+			return;
+		}
+		LongSet chunks = computeVirtualCameraChunks(x, z, yaw, viewDistance);
+		LongIterator iterator = chunks.iterator();
+		while (iterator.hasNext()) {
+			target.add(iterator.nextLong());
+		}
+	}
+
+	private static LongSet computeVirtualCameraChunks(double x, double z, float yaw, int viewDistance) {
+		LongOpenHashSet chunks = new LongOpenHashSet();
+		int centerChunkX = SectionPos.blockToSectionCoord(Mth.floor(x));
+		int centerChunkZ = SectionPos.blockToSectionCoord(Mth.floor(z));
+		Vec3 forward = forwardVector(yaw);
+		for (int dx = -viewDistance; dx <= viewDistance; dx++) {
+			for (int dz = -viewDistance; dz <= viewDistance; dz++) {
+				int chunkX = centerChunkX + dx;
+				int chunkZ = centerChunkZ + dz;
+				if (!ChunkTrackingView.isInViewDistance(centerChunkX, centerChunkZ, viewDistance, chunkX, chunkZ)) {
+					continue;
+				}
+				if (Math.max(Math.abs(dx), Math.abs(dz)) <= VIRTUAL_CAMERA_ALWAYS_LOADED_CHUNK_RADIUS) {
+					chunks.add(new ChunkPos(chunkX, chunkZ).toLong());
+					continue;
+				}
+				double chunkCenterX = chunkX * 16.0D + 8.0D - x;
+				double chunkCenterZ = chunkZ * 16.0D + 8.0D - z;
+				double horizontalLengthSq = chunkCenterX * chunkCenterX + chunkCenterZ * chunkCenterZ;
+				if (horizontalLengthSq <= 1.0D) {
+					chunks.add(new ChunkPos(chunkX, chunkZ).toLong());
+					continue;
+				}
+				double horizontalLength = Math.sqrt(horizontalLengthSq);
+				double dot = (chunkCenterX * forward.x + chunkCenterZ * forward.z) / horizontalLength;
+				if (dot >= VIRTUAL_CAMERA_FORWARD_CHUNK_MIN_DOT) {
+					chunks.add(new ChunkPos(chunkX, chunkZ).toLong());
+				}
+			}
+		}
+		return chunks;
+	}
+
+	private static Vec3 forwardVector(float yaw) {
+		float yawRadians = yaw * ((float) Math.PI / 180.0F);
+		float x = -Mth.sin(yawRadians);
+		float z = Mth.cos(yawRadians);
+		return new Vec3(x, 0.0D, z);
+	}
+
+	private static boolean updateVirtualCameraChunkTickets(MinecraftServer server) {
+		Map<ChunkTicketKey, Integer> desiredRefs = new HashMap<>();
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null) {
+				continue;
+			}
+			LiveStreamSpec spec = stream.spec();
+			if (spec == null || spec.cameraPos() == null || spec.dimension() == null) {
+				continue;
+			}
+			ServerLevel level = server.getLevel(spec.dimension());
+			if (level == null || !isCameraPlayerLoaded(level, spec.cameraPos())) {
+				continue;
+			}
+			ServerPlayer bot = server.getPlayerList().getPlayer(stream.botUuid());
+			if (bot == null || bot.level() != level) {
+				continue;
+			}
+			int viewDistance = Mth.clamp(bot.requestedViewDistance(), 2, Math.max(2, server.getPlayerList().getViewDistance()));
+			LongSet chunks = computeVirtualCameraChunks(spec.expectedX(), spec.expectedZ(), spec.expectedYaw(), viewDistance);
+			LongIterator iterator = chunks.iterator();
+			while (iterator.hasNext()) {
+				long packed = iterator.nextLong();
+				desiredRefs.merge(new ChunkTicketKey(spec.dimension(), packed), 1, Integer::sum);
+			}
+		}
+
+		if (Objects.equals(ACTIVE_CAMERA_CHUNK_TICKETS, desiredRefs)) {
+			return false;
+		}
+
+		Set<ChunkTicketKey> keys = new LinkedHashSet<>();
+		keys.addAll(ACTIVE_CAMERA_CHUNK_TICKETS.keySet());
+		keys.addAll(desiredRefs.keySet());
+		for (ChunkTicketKey key : keys) {
+			int current = ACTIVE_CAMERA_CHUNK_TICKETS.getOrDefault(key, 0);
+			int desired = desiredRefs.getOrDefault(key, 0);
+			if (current <= 0 && desired > 0) {
+				ServerLevel level = server.getLevel(key.dimension());
+				if (level != null) {
+					level.getChunkSource().addTicketWithRadius(TicketType.DRAGON, new ChunkPos(key.chunkLong()), 0);
+				}
+			} else if (current > 0 && desired <= 0) {
+				ServerLevel level = server.getLevel(key.dimension());
+				if (level != null) {
+					level.getChunkSource().removeTicketWithRadius(TicketType.DRAGON, new ChunkPos(key.chunkLong()), 0);
+				}
+			}
+		}
+		ACTIVE_CAMERA_CHUNK_TICKETS.clear();
+		ACTIVE_CAMERA_CHUNK_TICKETS.putAll(desiredRefs);
+		return true;
+	}
+
+	private static void releaseAllVirtualCameraChunkTickets(MinecraftServer server) {
+		if (server == null || ACTIVE_CAMERA_CHUNK_TICKETS.isEmpty()) {
+			ACTIVE_CAMERA_CHUNK_TICKETS.clear();
+			return;
+		}
+		for (ChunkTicketKey key : new ArrayList<>(ACTIVE_CAMERA_CHUNK_TICKETS.keySet())) {
+			ServerLevel level = server.getLevel(key.dimension());
+			if (level != null) {
+				level.getChunkSource().removeTicketWithRadius(TicketType.DRAGON, new ChunkPos(key.chunkLong()), 0);
+			}
+		}
+		ACTIVE_CAMERA_CHUNK_TICKETS.clear();
 	}
 
 	private static void tickBotJobs(MinecraftServer server) {
@@ -1072,6 +1329,23 @@ public final class RendererBotCameraSystem {
 		return dx * dx + dy * dy + dz * dz <= SHARED_RENDER_RADIUS_SQ;
 	}
 
+	private static boolean isWithinLiveStreamBotZone(MinecraftServer server, UUID botUuid, ServerLevel level, BlockPos cameraPos, double x, double y, double z) {
+		if (cameraPos == null) {
+			return isWithinActiveBotZone(server, botUuid, level, x, y, z);
+		}
+		if (server == null || botUuid == null || level == null) {
+			return false;
+		}
+		ServerPlayer bot = server.getPlayerList().getPlayer(botUuid);
+		if (bot == null) {
+			return false;
+		}
+		if (!botHasActiveJobs(botUuid)) {
+			return true;
+		}
+		return bot.level() == level;
+	}
+
 	private static ScheduledServiceTarget resolveAnyActiveBotTarget(MinecraftServer server, UUID botUuid) {
 		if (server == null || botUuid == null) {
 			return null;
@@ -1104,6 +1378,47 @@ public final class RendererBotCameraSystem {
 			}
 		}
 		return null;
+	}
+
+	private record VirtualChunkTrackingView(LongSet chunks) implements ChunkTrackingView {
+		private VirtualChunkTrackingView(LongSet chunks) {
+			this.chunks = chunks == null ? new LongOpenHashSet() : new LongOpenHashSet(chunks);
+		}
+
+		@Override
+		public boolean contains(int x, int z, boolean includeEdge) {
+			return this.chunks.contains(new ChunkPos(x, z).toLong());
+		}
+
+		@Override
+		public void forEach(Consumer<ChunkPos> consumer) {
+			if (consumer == null || this.chunks.isEmpty()) {
+				return;
+			}
+			LongIterator iterator = this.chunks.iterator();
+			while (iterator.hasNext()) {
+				consumer.accept(new ChunkPos(iterator.nextLong()));
+			}
+		}
+
+		@Override
+		public boolean equals(Object object) {
+			if (this == object) {
+				return true;
+			}
+			if (!(object instanceof VirtualChunkTrackingView other)) {
+				return false;
+			}
+			return Objects.equals(this.chunks, other.chunks);
+		}
+
+		@Override
+		public int hashCode() {
+			return this.chunks.hashCode();
+		}
+	}
+
+	private record ChunkTicketKey(ResourceKey<Level> dimension, long chunkLong) {
 	}
 
 	public record ClientCaptureHandle(
@@ -1385,6 +1700,7 @@ public final class RendererBotCameraSystem {
 
 	private record LiveStreamSpec(
 			ResourceKey<Level> dimension,
+			BlockPos cameraPos,
 			double expectedX,
 			double expectedY,
 			double expectedZ,

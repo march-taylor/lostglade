@@ -590,6 +590,7 @@ public final class RendererBotClientCapture {
 			LIVE_STREAM_SESSIONS.clear();
 			latestFrame = null;
 		}
+		RendererBotOffscreenWorldRenderer.clearCaches();
 	}
 
 	private static void sendFailure(RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload, String message) {

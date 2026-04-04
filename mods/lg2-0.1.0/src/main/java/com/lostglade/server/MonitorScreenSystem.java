@@ -4932,7 +4932,7 @@ public final class MonitorScreenSystem {
 		}
 		ServerLevel level = server.getLevel(component.runtimeKey().dimension());
 		BlockPos cameraPos = liveCameraGalleryPos(sourceUrl);
-		if (level == null || cameraPos == null || !isCameraBlock(level, cameraPos)) {
+		if (level == null || cameraPos == null) {
 			RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(component.runtimeKey()));
 			applyLiveCameraStreamFailure(server, component.runtimeKey(), sourceUrl, "Камера недоступна");
 			return false;
@@ -4940,6 +4940,12 @@ public final class MonitorScreenSystem {
 		if (!hasNearbyMediaViewer(level, component)) {
 			RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(component.runtimeKey()));
 			return false;
+		}
+		if (!RendererBotCameraSystem.isCameraPlayerLoaded(level, cameraPos)) {
+			return resetLiveCameraToHome(server, level, component, state);
+		}
+		if (!level.hasChunkAt(cameraPos) || !isCameraBlock(level, cameraPos)) {
+			return resetLiveCameraToHome(server, level, component, state);
 		}
 		BlockState cameraState = level.getBlockState(cameraPos);
 		LiveCameraPose pose = liveCameraCapturePose(level, cameraPos, cameraState);
@@ -4950,6 +4956,7 @@ public final class MonitorScreenSystem {
 		boolean started = RendererBotCameraSystem.ensureLiveStream(
 				liveCameraStreamOwnerId(component.runtimeKey()),
 				level,
+				cameraPos,
 				origin.x,
 				botFeetY,
 				origin.z,
@@ -4976,6 +4983,17 @@ public final class MonitorScreenSystem {
 			}
 			return changed;
 		}
+		return false;
+	}
+
+	private static boolean resetLiveCameraToHome(MinecraftServer server, ServerLevel level, ScreenComponent component, MediaRuntimeState state) {
+		if (server == null || level == null || component == null || state == null) {
+			return false;
+		}
+		RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(component.runtimeKey()));
+		clearPendingLiveCameraApply(state);
+		deactivateMediaSession(server, component.runtimeKey());
+		applyTransientComponentViewState(server, level, component, ScreenViewMode.HOME, 0);
 		return false;
 	}
 
