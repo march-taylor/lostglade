@@ -88,7 +88,7 @@ public final class MethadoneItem extends SimplePolymerItem {
     private static final int WITHDRAWAL_REFRESH_DURATION_TICKS = 100;
     private static final int WITHDRAWAL_REAPPLY_THRESHOLD_TICKS = 40;
     private static final int RELEASE_COOLDOWN_TICKS = 20;
-    private static final int SOUND_MAX_DISTANCE_SQR = 24 * 24;
+    private static final int SOUND_MAX_DISTANCE_SQR = 3 * 3;
     private static final float SOUND_VOLUME = 0.85F;
     private static final float PACK_SOUND_PITCH = 1.0F;
     private static final float FALLBACK_SOUND_PITCH = 1.0F;
