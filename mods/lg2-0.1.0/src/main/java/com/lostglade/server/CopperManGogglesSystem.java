@@ -206,8 +206,7 @@ public final class CopperManGogglesSystem {
 	private static boolean shouldSpoofVisual(ServerPlayer player) {
 		return player != null
 				&& player.isAlive()
-				&& player.getItemBySlot(EquipmentSlot.HEAD).getItem() == ModItems.COPPER_GOGGLES
-				&& !ServerRaceSystem.isCopperManJetpackActive(player);
+				&& player.getItemBySlot(EquipmentSlot.HEAD).getItem() == ModItems.COPPER_GOGGLES;
 	}
 
 	private static Collection<RecipeHolder<?>> collectRecipeHolders(MinecraftServer server) {
