@@ -159,6 +159,7 @@ public final class MonitorScreenSystem {
 	private static final int MAX_SCREEN_SYNC_OPERATIONS_PER_TICK = 24;
 	private static final int MAX_POWER_REFRESHES_PER_TICK = 16;
 	private static final int MAX_SPEAKER_REFRESHES_PER_TICK = 12;
+	private static final int MAX_CAMERA_REFRESHES_PER_TICK = 12;
 	private static final long MEDIA_SESSION_CLEANUP_INTERVAL_TICKS = 40L;
 	private static final long MEDIA_ACTIONBAR_REFRESH_INTERVAL_TICKS = 20L;
 	private static final long MEDIA_FOCUS_CLEANUP_INTERVAL_TICKS = 20L;
@@ -418,6 +419,13 @@ public final class MonitorScreenSystem {
 		levelState(level.dimension()).enqueueDirtyRuntime(key);
 	}
 
+	private static void enqueueCameraRefresh(ServerLevel level, ScreenRuntimeKey key) {
+		if (level == null || key == null) {
+			return;
+		}
+		levelState(level.dimension()).enqueueCameraRefreshRuntime(key);
+	}
+
 	private static void enqueueNeighborSync(ServerLevel level, BlockPos pos, Direction facing) {
 		if (level == null || pos == null || facing == null) {
 			return;
@@ -469,6 +477,11 @@ public final class MonitorScreenSystem {
 			}
 		}
 		state.components().put(component.runtimeKey(), component);
+		if (component.powered()) {
+			state.enqueueCameraRefreshRuntime(component.runtimeKey());
+		} else {
+			state.connectedCameraPositions().remove(component.runtimeKey());
+		}
 		state.enqueuePowerRuntime(component.runtimeKey());
 	}
 
@@ -512,6 +525,7 @@ public final class MonitorScreenSystem {
 		if (removed == null) {
 			return null;
 		}
+		state.connectedCameraPositions().remove(runtimeKey);
 		for (ItemFrame frame : removed.frameCoords().keySet()) {
 			ScreenKey frameKey = new ScreenKey(frame.blockPosition(), frame.getDirection());
 			if (replacementKey != null && replacementKey.equals(state.frameToRuntime().get(frameKey))) {
@@ -697,17 +711,13 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		Set<ScreenRuntimeKey> targets = new LinkedHashSet<>(collectConnectedComponentsForWireSource(level, cameraPos).keySet());
-		for (Map.Entry<ScreenRuntimeKey, MediaRuntimeState> entry : MEDIA_STATES.entrySet()) {
+		for (Map.Entry<ScreenRuntimeKey, List<BlockPos>> entry : levelState(level.dimension()).connectedCameraPositions().entrySet()) {
 			ScreenRuntimeKey runtimeKey = entry.getKey();
-			MediaRuntimeState state = entry.getValue();
-			if (runtimeKey == null || state == null || !Objects.equals(runtimeKey.dimension(), level.dimension())) {
+			List<BlockPos> connectedCameraPositions = entry.getValue();
+			if (runtimeKey == null || connectedCameraPositions == null || !connectedCameraPositions.contains(cameraPos)) {
 				continue;
 			}
-			synchronized (state) {
-				if (state.streamKind == PlaybackStreamKind.LIVE_CAMERA || hasLiveCameraItemsLocked(state)) {
-					targets.add(runtimeKey);
-				}
-			}
+			targets.add(runtimeKey);
 		}
 		for (ScreenRuntimeKey target : targets) {
 			MediaRuntimeState state = MEDIA_STATES.get(target);
@@ -716,7 +726,7 @@ public final class MonitorScreenSystem {
 					state.nextLiveCameraGallerySyncAtMillis = 0L;
 				}
 			}
-			requestRuntimeRender(server, target);
+			enqueueCameraRefresh(level, target);
 		}
 	}
 
@@ -1671,6 +1681,7 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		processPendingScreenSyncs(server);
+		processPendingCameraRefreshes(server);
 		processPendingComponentSyncs(server);
 		processPendingSpeakerRefreshes(server);
 		processPowerRefreshes(server);
@@ -1725,6 +1736,26 @@ public final class MonitorScreenSystem {
 		}
 	}
 
+	private static void processPendingCameraRefreshes(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		int remaining = MAX_CAMERA_REFRESHES_PER_TICK;
+		for (MonitorLevelState state : LEVEL_STATES.values()) {
+			if (remaining <= 0) {
+				break;
+			}
+			while (remaining > 0) {
+				ScreenRuntimeKey runtimeKey = state.pollCameraRefreshRuntime();
+				if (runtimeKey == null) {
+					break;
+				}
+				processPendingCameraRefresh(server, runtimeKey);
+				remaining--;
+			}
+		}
+	}
+
 	private static void processPendingSpeakerRefreshes(MinecraftServer server) {
 		if (server == null) {
 			return;
@@ -1754,6 +1785,110 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		SpeakerSystem.refreshConnectedSpeakersNow(server, level, runtimeKey.pos());
+	}
+
+	private static void processPendingCameraRefresh(MinecraftServer server, ScreenRuntimeKey runtimeKey) {
+		if (server == null || runtimeKey == null) {
+			return;
+		}
+		ServerLevel level = server.getLevel(runtimeKey.dimension());
+		if (level == null) {
+			return;
+		}
+		ScreenComponent component = resolveScreenComponent(server, runtimeKey);
+		if (component == null) {
+			levelState(level.dimension()).connectedCameraPositions().remove(runtimeKey);
+			RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(runtimeKey));
+			return;
+		}
+		refreshConnectedCameraState(server, level, component);
+	}
+
+	private static void clearPendingLiveCameraApply(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		synchronized (state) {
+			state.pendingLiveCameraPreparedTiles = null;
+			state.pendingLiveCameraApplyUrl = null;
+			state.liveCameraApplyScheduled = false;
+		}
+	}
+
+	private static void scheduleLiveCameraApply(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		server.execute(() -> processPendingLiveCameraApply(server, key));
+	}
+
+	private static void processPendingLiveCameraApply(MinecraftServer server, ScreenRuntimeKey runtimeKey) {
+		if (server == null || runtimeKey == null) {
+			return;
+		}
+		ServerLevel level = server.getLevel(runtimeKey.dimension());
+		if (level == null) {
+			return;
+		}
+		ScreenComponent component = resolveScreenComponent(server, runtimeKey);
+		MediaRuntimeState state = MEDIA_STATES.get(runtimeKey);
+		if (component == null || state == null || !component.powered()) {
+			clearPendingLiveCameraApply(state);
+			return;
+		}
+		if (!hasNearbyMediaViewer(level, component)) {
+			synchronized (state) {
+				state.liveCameraApplyScheduled = false;
+			}
+			return;
+		}
+		PreparedRenderedTiles preparedTiles;
+		boolean reschedule = false;
+		synchronized (state) {
+			state.liveCameraApplyScheduled = false;
+			if (state.streamKind != PlaybackStreamKind.LIVE_CAMERA
+					|| state.overlayMode != MediaOverlayMode.VIEW
+					|| state.pendingLiveCameraPreparedTiles == null
+					|| !Objects.equals(state.pendingLiveCameraApplyUrl, state.sourceUrl)) {
+				state.pendingLiveCameraPreparedTiles = null;
+				state.pendingLiveCameraApplyUrl = null;
+				return;
+			}
+			preparedTiles = state.pendingLiveCameraPreparedTiles;
+			state.pendingLiveCameraPreparedTiles = null;
+			state.pendingLiveCameraApplyUrl = null;
+		}
+		applyPreparedRenderedTiles(level, component, preparedTiles);
+		synchronized (state) {
+			if (state.streamKind == PlaybackStreamKind.LIVE_CAMERA
+					&& state.overlayMode == MediaOverlayMode.VIEW
+					&& state.pendingLiveCameraPreparedTiles != null
+					&& !state.liveCameraApplyScheduled
+					&& Objects.equals(state.pendingLiveCameraApplyUrl, state.sourceUrl)) {
+				state.liveCameraApplyScheduled = true;
+				reschedule = true;
+			}
+		}
+		if (reschedule) {
+			scheduleLiveCameraApply(server, runtimeKey);
+		}
+	}
+
+	private static void refreshConnectedCameraState(MinecraftServer server, ServerLevel level, ScreenComponent component) {
+		if (server == null || level == null || component == null) {
+			return;
+		}
+		List<BlockPos> connectedCameraPositions = collectConnectedCameraPositions(level, component);
+		levelState(level.dimension()).connectedCameraPositions().put(component.runtimeKey(), connectedCameraPositions);
+		MediaRuntimeState state = MEDIA_STATES.get(component.runtimeKey());
+		if (state == null) {
+			return;
+		}
+		boolean shouldRender = syncConnectedLiveCameraGalleryState(component, state, connectedCameraPositions);
+		shouldRender |= syncLiveCameraPlayback(server, component, state);
+		if (shouldRender && hasNearbyMediaViewer(level, component)) {
+			requestRuntimeRender(server, component.runtimeKey());
+		}
 	}
 
 	private static void processPendingScreenSync(MinecraftServer server, MonitorLevelState state, ScreenKey key) {
@@ -1838,17 +1973,23 @@ public final class MonitorScreenSystem {
 		MediaRuntimeState state = MEDIA_STATES.computeIfAbsent(key, ignored -> MediaRuntimeState.fresh(mode, "", () -> onMediaProgressChanged(server, key)));
 		synchronized (state) {
 			if (mode == ScreenViewMode.SBER_DRONES && state.mode != ScreenViewMode.SBER_DRONES) {
+				clearTransientPlaybackStateLocked(state, false);
 				state.galleryItems.clear();
 				state.galleryHydrated = false;
 				state.galleryIndex = -1;
 				state.galleryScroll = 0;
 				state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
 			} else if (mode == ScreenViewMode.GALLERY && state.mode == ScreenViewMode.SBER_DRONES) {
+				clearTransientPlaybackStateLocked(state, false);
 				state.galleryItems.clear();
 				state.galleryHydrated = false;
 				state.galleryIndex = -1;
 				state.galleryScroll = 0;
 				state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+				state.loading = false;
+				state.waitingForLink = false;
+				state.statusText = "";
+				state.overlayMode = MediaOverlayMode.CONTROLS;
 			}
 			state.mode = mode;
 			if (isYoutubeFamilyMode(mode)
@@ -2659,46 +2800,42 @@ public final class MonitorScreenSystem {
 		if (component == null) {
 			return;
 		}
+		boolean initialSyncNeeded;
 		synchronized (state) {
+			initialSyncNeeded = !state.galleryHydrated;
 			state.galleryHydrated = true;
 			if (state.gallerySurfaceMode != GallerySurfaceMode.PLAYER) {
 				state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
 			}
 		}
-		syncConnectedLiveCameraGalleryStateIfDue(server, component, state, true);
+		ServerLevel level = server.getLevel(key.dimension());
+		if (initialSyncNeeded && level != null) {
+			enqueueCameraRefresh(level, key);
+		}
 	}
 
-	private static void syncConnectedLiveCameraGalleryStateIfDue(MinecraftServer server, ScreenComponent component, MediaRuntimeState state, boolean force) {
-		if (server == null || component == null || state == null) {
-			return;
+	private static boolean syncConnectedLiveCameraGalleryState(ScreenComponent component, MediaRuntimeState state, List<BlockPos> connectedCameraPositions) {
+		if (component == null || state == null) {
+			return false;
 		}
-		ServerLevel level = server.getLevel(component.runtimeKey().dimension());
-		if (level == null) {
-			return;
-		}
-		long now = System.currentTimeMillis();
+		List<BlockPos> resolvedPositions = connectedCameraPositions != null ? connectedCameraPositions : List.of();
 		synchronized (state) {
 			boolean relevant = state.mode == ScreenViewMode.SBER_DRONES
 					&& (state.gallerySurfaceMode == GallerySurfaceMode.BROWSER
 					|| state.streamKind == PlaybackStreamKind.LIVE_CAMERA
 					|| hasLiveCameraItemsLocked(state));
-			if (!force && (!relevant || now < state.nextLiveCameraGallerySyncAtMillis)) {
-				return;
+			if (!relevant) {
+				return false;
 			}
-			state.nextLiveCameraGallerySyncAtMillis = now + LIVE_CAMERA_GALLERY_SYNC_INTERVAL_MS;
-		}
-
-		List<BlockPos> connectedCameraPositions = collectConnectedCameraPositions(level, component);
-		synchronized (state) {
 			Map<String, GalleryItem> existingLiveItems = new LinkedHashMap<>();
-			List<GalleryItem> rebuilt = new ArrayList<>(connectedCameraPositions.size());
+			List<GalleryItem> rebuilt = new ArrayList<>(resolvedPositions.size());
 			for (GalleryItem item : state.galleryItems) {
 				if (isLiveCameraGalleryItem(item)) {
 					existingLiveItems.put(item.url(), item);
 				}
 			}
 
-			for (BlockPos cameraPos : connectedCameraPositions) {
+			for (BlockPos cameraPos : resolvedPositions) {
 				String url = liveCameraGalleryUrl(cameraPos);
 				String title = liveCameraGalleryTitle(cameraPos);
 				String subtitle = liveCameraGallerySubtitle(cameraPos);
@@ -2717,7 +2854,7 @@ public final class MonitorScreenSystem {
 			}
 
 			if (galleryItemsEqual(state.galleryItems, rebuilt)) {
-				return;
+				return false;
 			}
 
 			String currentSourceUrl = state.sourceUrl;
@@ -2746,6 +2883,7 @@ public final class MonitorScreenSystem {
 			int visibleRows = galleryVisibleRowsPreview(createUiLayout(component.width(), component.height()));
 			state.galleryScroll = clampInt(state.galleryScroll, 0, Math.max(0, totalRows - visibleRows));
 			state.version++;
+			return true;
 		}
 	}
 
@@ -4748,7 +4886,10 @@ public final class MonitorScreenSystem {
 			state.playbackFuture = null;
 		}
 		ScreenComponent component = resolveScreenComponent(server, key);
-		syncLiveCameraPlayback(server, component, state);
+		boolean shouldRender = syncLiveCameraPlayback(server, component, state);
+		if (shouldRender && hasNearbyMediaViewer(server, key)) {
+			requestRuntimeRender(server, key);
+		}
 		MediaRuntimeState current = MEDIA_STATES.get(key);
 		if (current == null) {
 			return;
@@ -4765,12 +4906,17 @@ public final class MonitorScreenSystem {
 		scheduleNextMediaFrame(server, key);
 	}
 
-	private static void syncLiveCameraPlayback(MinecraftServer server, ScreenComponent component, MediaRuntimeState state) {
+	private static boolean syncLiveCameraPlayback(MinecraftServer server, ScreenComponent component, MediaRuntimeState state) {
 		if (server == null || component == null || state == null) {
 			if (component != null) {
 				RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(component.runtimeKey()));
 			}
-			return;
+			return false;
+		}
+		if (!component.powered()) {
+			RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(component.runtimeKey()));
+			clearPendingLiveCameraApply(state);
+			return false;
 		}
 		String sourceUrl;
 		synchronized (state) {
@@ -4780,7 +4926,7 @@ public final class MonitorScreenSystem {
 					|| state.sourceUrl.isBlank()
 					|| state.waitingForLink) {
 				RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(component.runtimeKey()));
-				return;
+				return false;
 			}
 			sourceUrl = state.sourceUrl;
 		}
@@ -4789,11 +4935,11 @@ public final class MonitorScreenSystem {
 		if (level == null || cameraPos == null || !isCameraBlock(level, cameraPos)) {
 			RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(component.runtimeKey()));
 			applyLiveCameraStreamFailure(server, component.runtimeKey(), sourceUrl, "Камера недоступна");
-			return;
+			return false;
 		}
 		if (!hasNearbyMediaViewer(level, component)) {
 			RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(component.runtimeKey()));
-			return;
+			return false;
 		}
 		BlockState cameraState = level.getBlockState(cameraPos);
 		LiveCameraPose pose = liveCameraCapturePose(level, cameraPos, cameraState);
@@ -4817,11 +4963,20 @@ public final class MonitorScreenSystem {
 				error -> applyLiveCameraStreamFailure(server, component.runtimeKey(), sourceUrl, error)
 		);
 		if (!started) {
+			boolean changed;
 			synchronized (state) {
-				state.loading = state.streamFrame == null;
-				state.statusText = state.streamFrame == null ? "Нет активного клиента камеры" : state.statusText;
+				boolean nextLoading = state.streamFrame == null;
+				String nextStatus = state.streamFrame == null ? "Нет активного клиента камеры" : state.statusText;
+				changed = state.loading != nextLoading || !Objects.equals(state.statusText, nextStatus);
+				state.loading = nextLoading;
+				state.statusText = nextStatus;
+				if (changed) {
+					state.version++;
+				}
 			}
+			return changed;
 		}
+		return false;
 	}
 
 	private static void onLiveCameraFrame(MinecraftServer server, ScreenRuntimeKey key, String url, int fullWidth, int fullHeight, byte[] pixels) {
@@ -4935,16 +5090,28 @@ public final class MonitorScreenSystem {
 			state.liveStream = true;
 			state.statusText = "LIVE";
 			directApply = state.overlayMode == MediaOverlayMode.VIEW;
+			if (directApply) {
+				state.pendingLiveCameraPreparedTiles = preparedTiles;
+				state.pendingLiveCameraApplyUrl = url;
+				if (!state.liveCameraApplyScheduled) {
+					state.liveCameraApplyScheduled = true;
+					shouldRender = true;
+				}
+			}
 			if (stateChanged) {
 				state.version++;
 			}
-			shouldRender = !directApply && (stateChanged || previewFrame != null);
+			if (!directApply) {
+				shouldRender = stateChanged || previewFrame != null;
+			}
 		}
 		if (directApply) {
 			ServerLevel level = server.getLevel(key.dimension());
 			ScreenComponent component = resolveScreenComponent(server, key);
-			if (level != null && component != null && hasNearbyMediaViewer(level, component)) {
-				applyPreparedRenderedTiles(level, component, preparedTiles);
+			if (level != null && component != null && component.powered() && hasNearbyMediaViewer(level, component)) {
+				scheduleLiveCameraApply(server, key);
+			} else {
+				clearPendingLiveCameraApply(state);
 			}
 			return;
 		}
@@ -5586,10 +5753,6 @@ public final class MonitorScreenSystem {
 				ensureSberDronesStateHydrated(server, component.runtimeKey(), mediaState);
 			}
 			if (mediaState != null) {
-				syncConnectedLiveCameraGalleryStateIfDue(server, component, mediaState, false);
-				syncLiveCameraPlayback(server, component, mediaState);
-			}
-			if (mediaState != null) {
 				MediaDispatchKey dispatchKey = new MediaDispatchKey(component.powered(), viewMode, launcherPage, component.width(), component.height());
 				synchronized (mediaState) {
 					if (mediaState.activeRenderJobs > 0 && dispatchKey.equals(mediaState.lastDispatchKey)) {
@@ -5760,6 +5923,16 @@ public final class MonitorScreenSystem {
 			state.components().put(updated.runtimeKey(), updated);
 		} else {
 			cacheComponent(level, updated);
+		}
+		MediaRuntimeState mediaState = MEDIA_STATES.get(updated.runtimeKey());
+		boolean cameraRefreshNeeded = effectiveViewMode == ScreenViewMode.SBER_DRONES;
+		if (!cameraRefreshNeeded && mediaState != null) {
+			synchronized (mediaState) {
+				cameraRefreshNeeded = mediaState.streamKind == PlaybackStreamKind.LIVE_CAMERA || hasLiveCameraItemsLocked(mediaState);
+			}
+		}
+		if (cameraRefreshNeeded) {
+			enqueueCameraRefresh(level, updated.runtimeKey());
 		}
 		requestRuntimeRender(server, updated.runtimeKey());
 	}
@@ -11432,6 +11605,9 @@ public final class MonitorScreenSystem {
 		state.liveCameraLastFrameAtMillis = 0L;
 		state.liveCameraPreviousTiles = null;
 		state.nextLiveCameraPreviewDecodeAtMillis = 0L;
+		state.pendingLiveCameraPreparedTiles = null;
+		state.pendingLiveCameraApplyUrl = null;
+		state.liveCameraApplyScheduled = false;
 	}
 
 	private static void clearGalleryLocked(MediaRuntimeState state) {
@@ -11485,6 +11661,9 @@ public final class MonitorScreenSystem {
 		state.liveCameraLastFrameAtMillis = 0L;
 		state.liveCameraPreviousTiles = null;
 		state.nextLiveCameraPreviewDecodeAtMillis = 0L;
+		state.pendingLiveCameraPreparedTiles = null;
+		state.pendingLiveCameraApplyUrl = null;
+		state.liveCameraApplyScheduled = false;
 	}
 
 	private static void clearLoadedContentLocked(MediaRuntimeState state) {
@@ -12595,10 +12774,13 @@ public final class MonitorScreenSystem {
 		private final Set<ScreenKey> knownFrames = ConcurrentHashMap.newKeySet();
 		private final Map<ScreenKey, ScreenRuntimeKey> frameToRuntime = new ConcurrentHashMap<>();
 		private final Map<ScreenRuntimeKey, ScreenComponent> components = new ConcurrentHashMap<>();
+		private final Map<ScreenRuntimeKey, List<BlockPos>> connectedCameraPositions = new ConcurrentHashMap<>();
 		private final Set<ScreenKey> dirtyFramesSet = ConcurrentHashMap.newKeySet();
 		private final ConcurrentLinkedQueue<ScreenKey> dirtyFrames = new ConcurrentLinkedQueue<>();
 		private final Set<ScreenRuntimeKey> dirtyRuntimeSet = ConcurrentHashMap.newKeySet();
 		private final ConcurrentLinkedQueue<ScreenRuntimeKey> dirtyRuntimes = new ConcurrentLinkedQueue<>();
+		private final Set<ScreenRuntimeKey> cameraRefreshRuntimeSet = ConcurrentHashMap.newKeySet();
+		private final ConcurrentLinkedQueue<ScreenRuntimeKey> cameraRefreshRuntimes = new ConcurrentLinkedQueue<>();
 		private final Set<ScreenRuntimeKey> powerRuntimeSet = ConcurrentHashMap.newKeySet();
 		private final ConcurrentLinkedQueue<ScreenRuntimeKey> powerRuntimes = new ConcurrentLinkedQueue<>();
 		private final Set<ScreenRuntimeKey> speakerRefreshRuntimeSet = ConcurrentHashMap.newKeySet();
@@ -12622,6 +12804,10 @@ public final class MonitorScreenSystem {
 
 		private Map<ScreenRuntimeKey, ScreenComponent> components() {
 			return this.components;
+		}
+
+		private Map<ScreenRuntimeKey, List<BlockPos>> connectedCameraPositions() {
+			return this.connectedCameraPositions;
 		}
 
 		private void enqueueDirtyFrame(ScreenKey key) {
@@ -12648,6 +12834,20 @@ public final class MonitorScreenSystem {
 			ScreenRuntimeKey key = this.dirtyRuntimes.poll();
 			if (key != null) {
 				this.dirtyRuntimeSet.remove(key);
+			}
+			return key;
+		}
+
+		private void enqueueCameraRefreshRuntime(ScreenRuntimeKey key) {
+			if (key != null && this.cameraRefreshRuntimeSet.add(key)) {
+				this.cameraRefreshRuntimes.add(key);
+			}
+		}
+
+		private ScreenRuntimeKey pollCameraRefreshRuntime() {
+			ScreenRuntimeKey key = this.cameraRefreshRuntimes.poll();
+			if (key != null) {
+				this.cameraRefreshRuntimeSet.remove(key);
 			}
 			return key;
 		}
@@ -13106,6 +13306,9 @@ public final class MonitorScreenSystem {
 		private long liveCameraLastFrameAtMillis;
 		private byte[][] liveCameraPreviousTiles;
 		private long nextLiveCameraPreviewDecodeAtMillis;
+		private PreparedRenderedTiles pendingLiveCameraPreparedTiles;
+		private String pendingLiveCameraApplyUrl;
+		private boolean liveCameraApplyScheduled;
 		private long nextLiveCameraGallerySyncAtMillis;
 		private int activeRenderJobs;
 		private boolean rerenderRequested;
@@ -13166,6 +13369,9 @@ public final class MonitorScreenSystem {
 			this.liveCameraLastFrameAtMillis = 0L;
 			this.liveCameraPreviousTiles = null;
 			this.nextLiveCameraPreviewDecodeAtMillis = 0L;
+			this.pendingLiveCameraPreparedTiles = null;
+			this.pendingLiveCameraApplyUrl = null;
+			this.liveCameraApplyScheduled = false;
 			this.nextLiveCameraGallerySyncAtMillis = 0L;
 			this.activeRenderJobs = 0;
 			this.nextProgressRenderAtMillis = 0L;
