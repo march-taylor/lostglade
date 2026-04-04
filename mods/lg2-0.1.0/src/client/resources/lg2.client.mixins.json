@@ -3,7 +3,9 @@
 	"package": "com.lostglade.mixin.client",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
+		"GameRendererOffscreenProjectionMixin",
 		"GameRendererRenderLevelInvoker",
+		"LevelRendererRenderStateAccessor",
 		"MinecraftMainRenderTargetAccessor",
 		"RendererBotMinecraftAuthMixin",
 		"RendererBotGlfwMixin",

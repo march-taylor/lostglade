@@ -2,6 +2,7 @@ package com.lostglade.client;
 
 import com.lostglade.Lg2;
 import com.lostglade.mixin.client.GameRendererRenderLevelInvoker;
+import com.lostglade.mixin.client.LevelRendererRenderStateAccessor;
 import com.lostglade.mixin.client.MinecraftMainRenderTargetAccessor;
 import com.mojang.blaze3d.ProjectionType;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
@@ -14,7 +15,10 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
+import net.minecraft.client.renderer.state.CameraRenderState;
+import net.minecraft.client.renderer.state.LevelRenderState;
 import net.minecraft.client.renderer.fog.FogRenderer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
@@ -79,6 +83,9 @@ public final class RendererBotOffscreenWorldRenderer {
 					true
 			);
 			RenderTarget previousRenderTarget = client.getMainRenderTarget();
+			Entity previousCameraEntity = client.getCameraEntity();
+			Camera previousMainCamera = client.gameRenderer.getMainCamera();
+			CameraRenderStateSnapshot previousLevelRenderCameraState = snapshotLevelRenderCameraState(client);
 			int previousWidth = previousRenderTarget.width;
 			int previousHeight = previousRenderTarget.height;
 			boolean screenshotQueued = false;
@@ -87,6 +94,8 @@ public final class RendererBotOffscreenWorldRenderer {
 				offscreenRenderActive = true;
 				RenderSystem.backupProjectionMatrix();
 				((MinecraftMainRenderTargetAccessor) client).lg2$setMainRenderTarget(renderTarget);
+				client.setCameraEntity(cameraState.camera().entity());
+				((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(cameraState.camera());
 				if (previousWidth != request.renderWidth() || previousHeight != request.renderHeight()) {
 					client.levelRenderer.resize(request.renderWidth(), request.renderHeight());
 				}
@@ -105,6 +114,9 @@ public final class RendererBotOffscreenWorldRenderer {
 				return false;
 			} finally {
 				((MinecraftMainRenderTargetAccessor) client).lg2$setMainRenderTarget(previousRenderTarget);
+				client.setCameraEntity(previousCameraEntity);
+				((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(previousMainCamera);
+				restoreLevelRenderCameraState(client, previousLevelRenderCameraState);
 				if (previousWidth != request.renderWidth() || previousHeight != request.renderHeight()) {
 					client.levelRenderer.resize(previousWidth, previousHeight);
 				}
@@ -127,6 +139,7 @@ public final class RendererBotOffscreenWorldRenderer {
 		GameRendererRenderLevelInvoker gameRendererAccessor = (GameRendererRenderLevelInvoker) client.gameRenderer;
 		FogRenderer fogRenderer = gameRendererAccessor.lg2$getFogRenderer();
 		float partialTick = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
+		applyLevelRenderCameraState(client, cameraState.camera(), partialTick);
 		Matrix4f projectionMatrix = client.gameRenderer.getProjectionMatrix(request.fovDegrees());
 		Matrix4f cullingMatrix = gameRendererAccessor.lg2$getProjectionMatrixForCulling(request.fovDegrees());
 		Matrix4f viewMatrix = new Matrix4f().rotation(new Quaternionf(cameraState.camera().rotation()).conjugate());
@@ -155,21 +168,73 @@ public final class RendererBotOffscreenWorldRenderer {
 				cameraState.camera(),
 				false
 		);
-			client.levelRenderer.renderLevel(
-					GraphicsResourceAllocator.UNPOOLED,
-					client.getDeltaTracker(),
-					false,
+		client.levelRenderer.renderLevel(
+				GraphicsResourceAllocator.UNPOOLED,
+				client.getDeltaTracker(),
+				false,
 				cameraState.camera(),
 				viewMatrix,
 				projectionMatrix,
 				cullingMatrix,
 				fogBuffer,
-					fogColor,
-					false
-			);
-			client.gameRenderer.getSubmitNodeStorage().endFrame();
-			client.gameRenderer.getFeatureRenderDispatcher().endFrame();
-			client.levelRenderer.endFrame();
+				fogColor,
+				false
+		);
+		client.gameRenderer.getSubmitNodeStorage().endFrame();
+		client.gameRenderer.getFeatureRenderDispatcher().endFrame();
+		client.levelRenderer.endFrame();
+	}
+
+	private static CameraRenderStateSnapshot snapshotLevelRenderCameraState(Minecraft client) {
+		if (client == null || client.levelRenderer == null) {
+			return null;
+		}
+		LevelRenderState levelRenderState = ((LevelRendererRenderStateAccessor) client.levelRenderer).lg2$getLevelRenderState();
+		if (levelRenderState == null || levelRenderState.cameraRenderState == null) {
+			return null;
+		}
+		CameraRenderState cameraRenderState = levelRenderState.cameraRenderState;
+		Quaternionf orientation = cameraRenderState.orientation == null ? null : new Quaternionf(cameraRenderState.orientation);
+		return new CameraRenderStateSnapshot(
+				cameraRenderState.initialized,
+				cameraRenderState.pos,
+				cameraRenderState.blockPos,
+				cameraRenderState.entityPos,
+				orientation
+		);
+	}
+
+	private static void applyLevelRenderCameraState(Minecraft client, Camera camera, float partialTick) {
+		if (client == null || client.levelRenderer == null || camera == null) {
+			return;
+		}
+		LevelRenderState levelRenderState = ((LevelRendererRenderStateAccessor) client.levelRenderer).lg2$getLevelRenderState();
+		if (levelRenderState == null || levelRenderState.cameraRenderState == null) {
+			return;
+		}
+		CameraRenderState cameraRenderState = levelRenderState.cameraRenderState;
+		Entity cameraEntity = camera.entity();
+		cameraRenderState.initialized = true;
+		cameraRenderState.pos = camera.position();
+		cameraRenderState.blockPos = camera.blockPosition();
+		cameraRenderState.entityPos = cameraEntity != null ? cameraEntity.getPosition(partialTick) : camera.position();
+		cameraRenderState.orientation = new Quaternionf(camera.rotation());
+	}
+
+	private static void restoreLevelRenderCameraState(Minecraft client, CameraRenderStateSnapshot snapshot) {
+		if (client == null || client.levelRenderer == null || snapshot == null) {
+			return;
+		}
+		LevelRenderState levelRenderState = ((LevelRendererRenderStateAccessor) client.levelRenderer).lg2$getLevelRenderState();
+		if (levelRenderState == null || levelRenderState.cameraRenderState == null) {
+			return;
+		}
+		CameraRenderState cameraRenderState = levelRenderState.cameraRenderState;
+		cameraRenderState.initialized = snapshot.initialized();
+		cameraRenderState.pos = snapshot.pos();
+		cameraRenderState.blockPos = snapshot.blockPos();
+		cameraRenderState.entityPos = snapshot.entityPos();
+		cameraRenderState.orientation = snapshot.orientation() == null ? null : new Quaternionf(snapshot.orientation());
 	}
 
 	private static CameraState resolveCameraState(Minecraft client, RenderRequest request) {
@@ -217,5 +282,14 @@ public final class RendererBotOffscreenWorldRenderer {
 	}
 
 	private record CameraState(Camera camera) {
+	}
+
+	private record CameraRenderStateSnapshot(
+			boolean initialized,
+			Vec3 pos,
+			BlockPos blockPos,
+			Vec3 entityPos,
+			Quaternionf orientation
+	) {
 	}
 }

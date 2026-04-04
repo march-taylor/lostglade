@@ -293,6 +293,7 @@ public final class RendererBotCameraSystem {
 		);
 		PENDING_CAPTURES.put(requestId, pending);
 		applyTimeout(requestId, pending, timeoutMillis);
+		refreshVirtualEntityTracking(bot);
 
 		ServerPlayNetworking.send(
 				bot,
@@ -380,6 +381,7 @@ public final class RendererBotCameraSystem {
 		ActiveLiveStream stream = new ActiveLiveStream(server, streamId, ownerKey, bot.getUUID(), desiredSpec, onFrame, onFailure);
 		ACTIVE_LIVE_STREAMS.put(streamId, stream);
 		LIVE_STREAMS_BY_OWNER.put(ownerKey, streamId);
+		refreshVirtualEntityTracking(bot);
 		ServerPlayNetworking.send(
 				bot,
 				new RendererBotPayloads.RendererBotLiveStreamStartS2CPayload(
@@ -462,6 +464,7 @@ public final class RendererBotCameraSystem {
 				completionFuture
 		);
 		PENDING_VIDEO_RECORDINGS.put(requestId, pending);
+		refreshVirtualEntityTracking(bot);
 		completionFuture.orTimeout(Math.max(timeoutMillis, maxDurationSeconds * 1_000L + 30_000L), TimeUnit.MILLISECONDS)
 				.exceptionally(throwable -> {
 					if (PENDING_VIDEO_RECORDINGS.remove(requestId, pending)) {
@@ -516,6 +519,21 @@ public final class RendererBotCameraSystem {
 
 	public static ServerPlayer readyBot(MinecraftServer server) {
 		return server == null ? null : selectBot(server);
+	}
+
+	public static boolean isEntityWithinAnyVirtualTrackingRange(ServerPlayer viewer, Entity entity, double horizontalRangeBlocks) {
+		if (viewer == null
+				|| entity == null
+				|| horizontalRangeBlocks <= 0.0D
+				|| !RendererBotPresenceSystem.isRendererBot(viewer)) {
+			return false;
+		}
+		ServerLevel viewerLevel = viewer.level();
+		MinecraftServer server = viewerLevel != null ? viewerLevel.getServer() : null;
+		if (server == null) {
+			return false;
+		}
+		return isEntityWithinAnyTrackingTarget(server, viewer.getUUID(), entity, horizontalRangeBlocks * horizontalRangeBlocks);
 	}
 
 	private static void applyTimeout(UUID requestId, PendingCapture capture, long timeoutMillis) {
@@ -602,6 +620,7 @@ public final class RendererBotCameraSystem {
 		if (bot != null && ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotLiveStreamStopS2CPayload.TYPE)) {
 			ServerPlayNetworking.send(bot, new RendererBotPayloads.RendererBotLiveStreamStopS2CPayload(stream.streamId()));
 		}
+		refreshVirtualEntityTracking(bot);
 		releaseBotCameraIfNeeded(stream.server(), stream.botUuid(), true);
 		if (notifyFailure) {
 			stream.onFailure().accept(message);
@@ -713,12 +732,22 @@ public final class RendererBotCameraSystem {
 			return;
 		}
 		if (botHasActiveJobs(botUuid)) {
+			ServerPlayer activeBot = server.getPlayerList().getPlayer(botUuid);
+			refreshVirtualEntityTracking(activeBot);
 			return;
 		}
 		ServerPlayer bot = server.getPlayerList().getPlayer(botUuid);
+		refreshVirtualEntityTracking(bot);
 		if (bot != null && bot.getCamera() != bot) {
 			bot.setCamera(bot);
 		}
+	}
+
+	private static void refreshVirtualEntityTracking(ServerPlayer bot) {
+		if (bot == null || !(bot.level() instanceof ServerLevel level)) {
+			return;
+		}
+		level.getChunkSource().move(bot);
 	}
 
 	private static void tickBotJobs(MinecraftServer server) {
@@ -967,6 +996,60 @@ public final class RendererBotCameraSystem {
 			}
 		}
 		return false;
+	}
+
+	private static boolean isEntityWithinAnyTrackingTarget(MinecraftServer server, UUID botUuid, Entity entity, double horizontalRangeSq) {
+		if (server == null || botUuid == null || entity == null || horizontalRangeSq <= 0.0D) {
+			return false;
+		}
+
+		for (PendingCapture capture : PENDING_CAPTURES.values()) {
+			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.isDone()) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.x(), capture.y(), capture.z(), capture.yaw(), capture.pitch(), capture.followEntityUuid());
+			if (isEntityWithinTrackingTarget(entity, target, horizontalRangeSq)) {
+				return true;
+			}
+		}
+		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
+			if (recording == null || !botUuid.equals(recording.botUuid()) || recording.stopRequested() || recording.completionFuture().isDone()) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, recording.dimension(), recording.x(), recording.y(), recording.z(), recording.yaw(), recording.pitch(), recording.followEntityUuid());
+			if (isEntityWithinTrackingTarget(entity, target, horizontalRangeSq)) {
+				return true;
+			}
+		}
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null || !botUuid.equals(stream.botUuid())) {
+				continue;
+			}
+			LiveStreamSpec spec = stream.spec();
+			ScheduledServiceTarget target = resolveServiceTarget(
+					server,
+					spec.dimension(),
+					spec.expectedX(),
+					spec.expectedY(),
+					spec.expectedZ(),
+					spec.expectedYaw(),
+					spec.expectedPitch(),
+					spec.followEntityUuid()
+			);
+			if (isEntityWithinTrackingTarget(entity, target, horizontalRangeSq)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean isEntityWithinTrackingTarget(Entity entity, ScheduledServiceTarget target, double horizontalRangeSq) {
+		if (entity == null || target == null || target.level() == null || entity.level() != target.level()) {
+			return false;
+		}
+		double dx = entity.getX() - target.x();
+		double dz = entity.getZ() - target.z();
+		return dx * dx + dz * dz <= horizontalRangeSq;
 	}
 
 	private static boolean isWithinActiveBotZone(MinecraftServer server, UUID botUuid, ServerLevel level, double x, double y, double z) {
