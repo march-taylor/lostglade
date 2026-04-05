@@ -291,6 +291,7 @@ public final class RendererBotOffscreenWorldRenderer {
 		GameRendererRenderLevelInvoker gameRendererAccessor = (GameRendererRenderLevelInvoker) client.gameRenderer;
 		FogRenderer fogRenderer = gameRendererAccessor.lg2$getFogRenderer();
 		float partialTick = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
+		cameraState.camera().tick();
 		client.gameRenderer.lightTexture().updateLightTexture(1.0F);
 		cachedRenderer.levelRenderer().tick(cameraState.camera());
 		applyLevelRenderCameraState(cachedRenderer.levelRenderer(), cameraState.camera(), partialTick);
