@@ -57,6 +57,7 @@
 		"ServerGamePacketListenerCameraCaptureMixin",
 		"ServerGamePacketListenerCopperManJetpackMixin",
 		"ServerGamePacketListenerCopperManRepulsorMixin",
+		"ServerPlayerGameModeCopperManRepulsorMixin",
 		"ServerGamePacketListenerMonitorTimelineMixin",
 		"ServerLevelAbsoluteInvisibilityMixin",
 		"ServerLevelCopperManLightningMixin",

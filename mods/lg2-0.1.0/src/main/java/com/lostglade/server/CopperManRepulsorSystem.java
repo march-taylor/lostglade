@@ -109,7 +109,10 @@ public final class CopperManRepulsorSystem {
 	private static final String REPULSOR_SLOT_ICON_CENTER_BASE_SHIFT_GLYPH = "\uef85";
 	private static final String REPULSOR_SLOT_ICON_CENTER_PER_CHAR_SHIFT_GLYPH = "\uef86";
 	private static final String REPULSOR_SLOT_ICON_ONLY_POST_SHIFT_GLYPH = "\uef87";
+	private static final String REPULSOR_AMMO_EXTRA_LEFT_DIGIT_SHIFT_GLYPH = "\uef88";
+	private static final String REPULSOR_ICON_AMMO_EXTRA_LEFT_DIGIT_SHIFT_GLYPH = "\uef89";
 	private static final String REPULSOR_SLOT_ICON_GLYPH = "\uef83";
+	private static final int REPULSOR_ICON_AMMO_BASE_CHAR_COUNT = 4;
 	private static final FontDescription REPULSOR_SHIFT_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:repulsor_ammo_shift"))
 	);
@@ -286,6 +289,27 @@ public final class CopperManRepulsorSystem {
 		return state != null && state.airTriggerEntity == entity;
 	}
 
+	public static boolean handleEntityInteraction(ServerPlayer player, Entity target, InteractionHand hand, Vec3 location) {
+		if (player == null || target == null) {
+			return false;
+		}
+		if (!canUseRepulsor(player)) {
+			return false;
+		}
+		if (isAirTriggerEntity(player, target)) {
+			return handleUseInteraction(player, hand);
+		}
+
+		var result = location != null ? target.interactAt(player, location, hand) : net.minecraft.world.InteractionResult.PASS;
+		if (result == net.minecraft.world.InteractionResult.PASS) {
+			result = player.interactOn(target, hand);
+		}
+		if (result != net.minecraft.world.InteractionResult.PASS) {
+			return true;
+		}
+		return handleUseInteraction(player, hand);
+	}
+
 	private static boolean tryFire(ServerPlayer player, RepulsorState state, long nowTick) {
 		if (state.charges <= 0 || nowTick < state.nextShotTick) {
 			state.hudDirty = true;
@@ -402,8 +426,12 @@ public final class CopperManRepulsorSystem {
 
 	private static Component buildPackHudComponent(String text, boolean showAttackSlotIcon, boolean showAmmo) {
 		MutableComponent component = Component.empty();
+		int slashIndex = text.indexOf('/');
+		int extraLeftDigits = Math.max(0, slashIndex - 1);
 		if (showAttackSlotIcon && showAmmo) {
-			component.append(Component.literal(REPULSOR_SLOT_ICON_CENTER_BASE_SHIFT_GLYPH + REPULSOR_SLOT_ICON_CENTER_PER_CHAR_SHIFT_GLYPH.repeat(text.length()))
+			component.append(Component.literal(REPULSOR_ICON_AMMO_EXTRA_LEFT_DIGIT_SHIFT_GLYPH.repeat(extraLeftDigits)
+					+ REPULSOR_SLOT_ICON_CENTER_BASE_SHIFT_GLYPH
+					+ REPULSOR_SLOT_ICON_CENTER_PER_CHAR_SHIFT_GLYPH.repeat(REPULSOR_ICON_AMMO_BASE_CHAR_COUNT))
 					.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 		}
 		if (showAttackSlotIcon) {
@@ -420,6 +448,10 @@ public final class CopperManRepulsorSystem {
 						.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 			} else {
 				component.append(Component.literal(REPULSOR_SHIFT_GLYPH)
+						.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
+			}
+			if (extraLeftDigits > 0) {
+				component.append(Component.literal(REPULSOR_AMMO_EXTRA_LEFT_DIGIT_SHIFT_GLYPH.repeat(extraLeftDigits))
 						.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 			}
 			component.append(Component.literal(text)
@@ -509,10 +541,11 @@ public final class CopperManRepulsorSystem {
 	}
 
 	private static boolean hasAirTriggerObstruction(ServerPlayer player, RepulsorState state) {
+		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange()) + 0.5D;
 		Vec3 start = player.getEyePosition();
-		Vec3 end = start.add(player.getLookAngle().scale(AIR_TRIGGER_RAY_RANGE));
-		BlockHitResult blockHit = player.level().clip(new ClipContext(start, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, player));
-		double maxDistance = blockHit.getType() == HitResult.Type.MISS ? AIR_TRIGGER_RAY_RANGE : Math.sqrt(blockHit.getLocation().distanceToSqr(start));
+		Vec3 end = start.add(player.getLookAngle().scale(reach));
+		BlockHitResult blockHit = player.level().clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
+		double maxDistance = blockHit.getType() == HitResult.Type.MISS ? reach : Math.sqrt(blockHit.getLocation().distanceToSqr(start));
 		EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
 				player.level(),
 				player,
