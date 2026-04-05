@@ -7,12 +7,15 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 4;
+	public static final int PROTOCOL_VERSION = 5;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
+	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
 
 	private RendererBotPayloads() {
@@ -35,6 +38,12 @@ public final class RendererBotPayloads {
 		PayloadTypeRegistry.playS2C().register(RendererBotLiveStreamStopS2CPayload.TYPE, RendererBotLiveStreamStopS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotVideoRecordingStartS2CPayload.TYPE, RendererBotVideoRecordingStartS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotVideoRecordingStopS2CPayload.TYPE, RendererBotVideoRecordingStopS2CPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playS2C().register(RendererBotShadowLevelInitS2CPayload.TYPE, RendererBotShadowLevelInitS2CPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playS2C().register(RendererBotShadowLevelStateS2CPayload.TYPE, RendererBotShadowLevelStateS2CPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playS2C().register(RendererBotShadowLevelDestroyS2CPayload.TYPE, RendererBotShadowLevelDestroyS2CPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playS2C().registerLarge(RendererBotShadowChunkDataS2CPayload.TYPE, RendererBotShadowChunkDataS2CPayload.STREAM_CODEC, MAX_SHADOW_PAYLOAD_BYTES);
+		PayloadTypeRegistry.playS2C().register(RendererBotShadowForgetChunkS2CPayload.TYPE, RendererBotShadowForgetChunkS2CPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playS2C().registerLarge(RendererBotShadowEntityPacketsS2CPayload.TYPE, RendererBotShadowEntityPacketsS2CPayload.STREAM_CODEC, MAX_SHADOW_PAYLOAD_BYTES);
 	}
 
 	public record RendererBotHelloC2SPayload(int protocolVersion) implements CustomPacketPayload {
@@ -409,6 +418,218 @@ public final class RendererBotPayloads {
 		@Override
 		public Type<RendererBotVideoRecordingCompleteC2SPayload> type() {
 			return TYPE;
+		}
+	}
+
+	public record RendererBotShadowLevelInitS2CPayload(
+			String dimensionId,
+			String dimensionTypeId,
+			long seed,
+			boolean debug,
+			boolean flat,
+			boolean hardcore,
+			int difficultyOrdinal,
+			long gameTime,
+			long dayTime,
+			boolean tickDayTime,
+			boolean raining,
+			int seaLevel,
+			int viewDistance,
+			int simulationDistance
+	) implements CustomPacketPayload {
+		public static final Type<RendererBotShadowLevelInitS2CPayload> TYPE = new Type<>(id("renderer_bot_shadow_level_init"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotShadowLevelInitS2CPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotShadowLevelInitS2CPayload::write, RendererBotShadowLevelInitS2CPayload::new);
+
+		public RendererBotShadowLevelInitS2CPayload(FriendlyByteBuf buffer) {
+			this(
+					buffer.readUtf(),
+					buffer.readUtf(),
+					buffer.readVarLong(),
+					buffer.readBoolean(),
+					buffer.readBoolean(),
+					buffer.readBoolean(),
+					buffer.readVarInt(),
+					buffer.readVarLong(),
+					buffer.readVarLong(),
+					buffer.readBoolean(),
+					buffer.readBoolean(),
+					buffer.readVarInt(),
+					buffer.readVarInt(),
+					buffer.readVarInt()
+			);
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUtf(this.dimensionId);
+			buffer.writeUtf(this.dimensionTypeId);
+			buffer.writeVarLong(this.seed);
+			buffer.writeBoolean(this.debug);
+			buffer.writeBoolean(this.flat);
+			buffer.writeBoolean(this.hardcore);
+			buffer.writeVarInt(this.difficultyOrdinal);
+			buffer.writeVarLong(this.gameTime);
+			buffer.writeVarLong(this.dayTime);
+			buffer.writeBoolean(this.tickDayTime);
+			buffer.writeBoolean(this.raining);
+			buffer.writeVarInt(this.seaLevel);
+			buffer.writeVarInt(this.viewDistance);
+			buffer.writeVarInt(this.simulationDistance);
+		}
+
+		@Override
+		public Type<RendererBotShadowLevelInitS2CPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotShadowLevelStateS2CPayload(
+			String dimensionId,
+			long gameTime,
+			long dayTime,
+			boolean tickDayTime,
+			boolean raining
+	) implements CustomPacketPayload {
+		public static final Type<RendererBotShadowLevelStateS2CPayload> TYPE = new Type<>(id("renderer_bot_shadow_level_state"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotShadowLevelStateS2CPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotShadowLevelStateS2CPayload::write, RendererBotShadowLevelStateS2CPayload::new);
+
+		public RendererBotShadowLevelStateS2CPayload(FriendlyByteBuf buffer) {
+			this(
+					buffer.readUtf(),
+					buffer.readVarLong(),
+					buffer.readVarLong(),
+					buffer.readBoolean(),
+					buffer.readBoolean()
+			);
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUtf(this.dimensionId);
+			buffer.writeVarLong(this.gameTime);
+			buffer.writeVarLong(this.dayTime);
+			buffer.writeBoolean(this.tickDayTime);
+			buffer.writeBoolean(this.raining);
+		}
+
+		@Override
+		public Type<RendererBotShadowLevelStateS2CPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotShadowLevelDestroyS2CPayload(String dimensionId) implements CustomPacketPayload {
+		public static final Type<RendererBotShadowLevelDestroyS2CPayload> TYPE = new Type<>(id("renderer_bot_shadow_level_destroy"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotShadowLevelDestroyS2CPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotShadowLevelDestroyS2CPayload::write, RendererBotShadowLevelDestroyS2CPayload::new);
+
+		public RendererBotShadowLevelDestroyS2CPayload(FriendlyByteBuf buffer) {
+			this(buffer.readUtf());
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUtf(this.dimensionId);
+		}
+
+		@Override
+		public Type<RendererBotShadowLevelDestroyS2CPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotShadowChunkDataS2CPayload(String dimensionId, byte[] packetBytes) implements CustomPacketPayload {
+		public static final Type<RendererBotShadowChunkDataS2CPayload> TYPE = new Type<>(id("renderer_bot_shadow_chunk_data"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotShadowChunkDataS2CPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotShadowChunkDataS2CPayload::write, RendererBotShadowChunkDataS2CPayload::new);
+
+		public RendererBotShadowChunkDataS2CPayload(FriendlyByteBuf buffer) {
+			this(buffer.readUtf(), buffer.readByteArray());
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUtf(this.dimensionId);
+			buffer.writeByteArray(this.packetBytes);
+		}
+
+		@Override
+		public Type<RendererBotShadowChunkDataS2CPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotShadowForgetChunkS2CPayload(String dimensionId, int chunkX, int chunkZ) implements CustomPacketPayload {
+		public static final Type<RendererBotShadowForgetChunkS2CPayload> TYPE = new Type<>(id("renderer_bot_shadow_forget_chunk"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotShadowForgetChunkS2CPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotShadowForgetChunkS2CPayload::write, RendererBotShadowForgetChunkS2CPayload::new);
+
+		public RendererBotShadowForgetChunkS2CPayload(FriendlyByteBuf buffer) {
+			this(buffer.readUtf(), buffer.readVarInt(), buffer.readVarInt());
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUtf(this.dimensionId);
+			buffer.writeVarInt(this.chunkX);
+			buffer.writeVarInt(this.chunkZ);
+		}
+
+		@Override
+		public Type<RendererBotShadowForgetChunkS2CPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotShadowEntityPacketsS2CPayload(String dimensionId, List<ShadowPacketData> packets) implements CustomPacketPayload {
+		public static final Type<RendererBotShadowEntityPacketsS2CPayload> TYPE = new Type<>(id("renderer_bot_shadow_entity_packets"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotShadowEntityPacketsS2CPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotShadowEntityPacketsS2CPayload::write, RendererBotShadowEntityPacketsS2CPayload::new);
+
+		public RendererBotShadowEntityPacketsS2CPayload(FriendlyByteBuf buffer) {
+			this(buffer.readUtf(), readShadowPacketList(buffer));
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUtf(this.dimensionId);
+			writeShadowPacketList(buffer, this.packets);
+		}
+
+		@Override
+		public Type<RendererBotShadowEntityPacketsS2CPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record ShadowPacketData(String packetTypeId, byte[] packetBytes) {
+		private static ShadowPacketData read(FriendlyByteBuf buffer) {
+			return new ShadowPacketData(buffer.readUtf(), buffer.readByteArray());
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUtf(this.packetTypeId);
+			buffer.writeByteArray(this.packetBytes);
+		}
+	}
+
+	private static List<ShadowPacketData> readShadowPacketList(FriendlyByteBuf buffer) {
+		int size = buffer.readVarInt();
+		List<ShadowPacketData> packets = new ArrayList<>(size);
+		for (int index = 0; index < size; index++) {
+			packets.add(ShadowPacketData.read(buffer));
+		}
+		return packets;
+	}
+
+	private static void writeShadowPacketList(FriendlyByteBuf buffer, List<ShadowPacketData> packets) {
+		List<ShadowPacketData> safePackets = new ArrayList<>();
+		if (packets != null) {
+			for (ShadowPacketData packet : packets) {
+				if (packet != null) {
+					safePackets.add(packet);
+				}
+			}
+		}
+		buffer.writeVarInt(safePackets.size());
+		for (ShadowPacketData packet : safePackets) {
+			packet.write(buffer);
 		}
 	}
 

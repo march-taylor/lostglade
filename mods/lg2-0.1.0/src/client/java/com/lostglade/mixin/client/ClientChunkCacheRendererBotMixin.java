@@ -1,6 +1,7 @@
 package com.lostglade.mixin.client;
 
 import com.lostglade.client.RendererBotClientMode;
+import com.lostglade.client.RendererBotVirtualChunkAccess;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.client.multiplayer.ClientChunkCache;
@@ -22,10 +23,12 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Map;
 
 @Mixin(ClientChunkCache.class)
-public abstract class ClientChunkCacheRendererBotMixin {
+public abstract class ClientChunkCacheRendererBotMixin implements RendererBotVirtualChunkAccess {
 	@Shadow
 	@Final
 	private ClientLevel level;
@@ -225,6 +228,13 @@ public abstract class ClientChunkCacheRendererBotMixin {
 				continue;
 			}
 			this.level.setSectionDirtyWithNeighbors(pos.x, chunk.getSectionYFromSectionIndex(sectionIndex), pos.z);
+		}
+	}
+
+	@Override
+	public Collection<LevelChunk> lg2$getLoadedVirtualChunksSnapshot() {
+		synchronized (this.lg2$virtualChunkLock) {
+			return new ArrayList<>(this.lg2$virtualChunks.values());
 		}
 	}
 }

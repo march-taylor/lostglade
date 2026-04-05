@@ -59,6 +59,7 @@
 		"ServerGamePacketListenerCopperManJetpackMixin",
 		"ServerGamePacketListenerCopperManRepulsorMixin",
 		"ServerGamePacketListenerMonitorTimelineMixin",
+		"ServerChunkCacheRendererBotShadowDirtyMixin",
 		"ServerLevelAbsoluteInvisibilityMixin",
 		"ServerLevelCopperManLightningMixin",
 		"ServerItemEntityMixin",

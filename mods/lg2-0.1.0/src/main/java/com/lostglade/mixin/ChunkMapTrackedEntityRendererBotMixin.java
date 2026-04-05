@@ -48,6 +48,10 @@ public abstract class ChunkMapTrackedEntityRendererBotMixin {
 		if (player == this.entity || !(this.entity.level() instanceof ServerLevel entityLevel)) {
 			return;
 		}
+		if (player.level() != entityLevel) {
+			this.removePlayer(player);
+			return;
+		}
 
 		double horizontalRange = this.getEffectiveRange();
 		boolean withinRealPlayerRange = lg2$isWithinHorizontalRange(player.position(), this.entity, horizontalRange);

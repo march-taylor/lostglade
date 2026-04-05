@@ -2,6 +2,7 @@ package com.lostglade;
 
 import com.lostglade.client.RendererBotClientCapture;
 import com.lostglade.client.RendererBotClientMode;
+import com.lostglade.client.RendererBotShadowWorldManager;
 import com.lostglade.client.RendererBotClientVideoRecording;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.server.CameraMediaCache;
@@ -14,6 +15,7 @@ public class Lg2Client implements ClientModInitializer {
 		CameraMediaCache.initialize(FabricLoader.getInstance().getGameDir());
 		RendererBotPayloads.registerPayloadTypes();
 		RendererBotClientMode.register();
+		RendererBotShadowWorldManager.register();
 		RendererBotClientCapture.register();
 		RendererBotClientVideoRecording.register();
 	}

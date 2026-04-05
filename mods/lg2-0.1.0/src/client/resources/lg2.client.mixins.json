@@ -5,6 +5,7 @@
 	"client": [
 		"CameraPositionInvoker",
 		"ClientLevelOffscreenRendererSyncMixin",
+		"ClientPacketListenerShadowAccessor",
 		"ClientChunkCacheRendererBotMixin",
 		"GameRendererOffscreenProjectionMixin",
 		"GameRendererRenderLevelInvoker",

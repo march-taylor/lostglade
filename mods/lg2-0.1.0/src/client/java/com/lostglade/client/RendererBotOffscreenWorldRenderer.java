@@ -34,6 +34,7 @@ import net.minecraft.world.entity.Marker;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
@@ -201,7 +202,6 @@ public final class RendererBotOffscreenWorldRenderer {
 		if (client == null
 				|| request == null
 				|| imageConsumer == null
-				|| client.level == null
 				|| client.gameRenderer == null
 				|| client.levelRenderer == null) {
 			return false;
@@ -209,8 +209,8 @@ public final class RendererBotOffscreenWorldRenderer {
 		if (client.screen != null || client.getOverlay() != null) {
 			return false;
 		}
-		Identifier currentDimension = client.level.dimension().identifier();
-		if (!currentDimension.toString().equals(request.dimensionId())) {
+		ClientLevel renderLevel = RendererBotShadowWorldManager.resolveRenderLevel(client, request.dimensionId());
+		if (renderLevel == null) {
 			return false;
 		}
 
@@ -220,18 +220,21 @@ public final class RendererBotOffscreenWorldRenderer {
 			}
 			cleanupCachedRenderersLocked(client, System.currentTimeMillis());
 
-			CameraState cameraState = resolveCameraState(client, request);
+			CameraState cameraState = resolveCameraState(client, renderLevel, request);
 			if (cameraState == null) {
 				return false;
 			}
-			if (!isWorldReady(client, cameraState)) {
+			if (!isWorldReady(renderLevel, cameraState)) {
 				return false;
 			}
-			CachedLevelRenderer cachedRenderer = getOrCreateCachedRendererLocked(client, request, System.currentTimeMillis());
+			CachedLevelRenderer cachedRenderer = getOrCreateCachedRendererLocked(client, renderLevel, request, System.currentTimeMillis());
 			if (cachedRenderer == null) {
 				return false;
 			}
 			cachedRenderer.ensureSize(request.renderWidth(), request.renderHeight());
+			if (cachedRenderer.levelRenderer().countRenderedSections() == 0) {
+				bootstrapLoadedChunks(cachedRenderer.levelRenderer(), renderLevel);
+			}
 
 			TextureTarget renderTarget = new TextureTarget(
 					"lg2_renderer_bot_offscreen",
@@ -250,7 +253,7 @@ public final class RendererBotOffscreenWorldRenderer {
 				((MinecraftMainRenderTargetAccessor) client).lg2$setMainRenderTarget(renderTarget);
 				client.setCameraEntity(cameraState.camera().entity());
 				((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(cameraState.camera());
-				renderOffscreenWorld(client, request, cameraState, cachedRenderer, renderTarget);
+				renderOffscreenWorld(client, renderLevel, request, cameraState, cachedRenderer, renderTarget);
 				Screenshot.takeScreenshot(renderTarget, image -> {
 					try {
 						imageConsumer.accept(image);
@@ -279,6 +282,7 @@ public final class RendererBotOffscreenWorldRenderer {
 
 	private static void renderOffscreenWorld(
 			Minecraft client,
+			ClientLevel renderLevel,
 			RenderRequest request,
 			CameraState cameraState,
 			CachedLevelRenderer cachedRenderer,
@@ -298,12 +302,12 @@ public final class RendererBotOffscreenWorldRenderer {
 				client.options.getEffectiveRenderDistance(),
 				client.getDeltaTracker(),
 				gameRendererAccessor.lg2$getDarkenWorldAmount(partialTick),
-				client.level
+				renderLevel
 		);
 		GpuBufferSlice projectionMatrixSlice = gameRendererAccessor.lg2$getLevelProjectionMatrixBuffer().getBuffer(projectionMatrix);
 		GpuBufferSlice fogBuffer = fogRenderer.getBuffer(FogRenderer.FogMode.WORLD);
 		double gamma = client.options.gamma().get();
-		long dayTime = client.level == null ? 0L : client.level.getDayTime();
+		long dayTime = renderLevel == null ? 0L : renderLevel.getDayTime();
 		CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
 		encoder.clearColorAndDepthTextures(renderTarget.getColorTexture(), 0, renderTarget.getDepthTexture(), 1.0D);
 
@@ -351,20 +355,23 @@ public final class RendererBotOffscreenWorldRenderer {
 		cameraRenderState.orientation = new Quaternionf(camera.rotation());
 	}
 
-	private static CameraState resolveCameraState(Minecraft client, RenderRequest request) {
+	private static CameraState resolveCameraState(Minecraft client, ClientLevel renderLevel, RenderRequest request) {
 		float partialTick = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
+		if (renderLevel == null) {
+			return null;
+		}
 		if (request.followEntityUuid() != null) {
-			Entity followTarget = client.level.getPlayerByUUID(request.followEntityUuid());
+			Entity followTarget = renderLevel.getPlayerByUUID(request.followEntityUuid());
 			if (followTarget != null) {
 				Camera camera = new Camera();
-				camera.setup(client.level, followTarget, false, false, partialTick);
+				camera.setup(renderLevel, followTarget, false, false, partialTick);
 				((CameraPositionInvoker) camera).lg2$setPosition(followTarget.getEyePosition(partialTick));
 				return new CameraState(camera);
 			}
-			for (Entity entity : client.level.entitiesForRendering()) {
+			for (Entity entity : renderLevel.entitiesForRendering()) {
 				if (request.followEntityUuid().equals(entity.getUUID())) {
 					Camera camera = new Camera();
-					camera.setup(client.level, entity, false, false, partialTick);
+					camera.setup(renderLevel, entity, false, false, partialTick);
 					((CameraPositionInvoker) camera).lg2$setPosition(entity.getEyePosition(partialTick));
 					return new CameraState(camera);
 				}
@@ -373,18 +380,18 @@ public final class RendererBotOffscreenWorldRenderer {
 		}
 
 		Vec3 eyePosition = new Vec3(request.x(), request.y() + STATIC_CAMERA_EYE_HEIGHT, request.z());
-		Marker anchor = new Marker(EntityType.MARKER, client.level);
+		Marker anchor = new Marker(EntityType.MARKER, renderLevel);
 		anchor.snapTo(eyePosition, request.yaw(), request.pitch());
 		anchor.setOldPosAndRot(eyePosition, request.yaw(), request.pitch());
 		anchor.noPhysics = true;
 		anchor.setNoGravity(true);
 		Camera camera = new Camera();
-		camera.setup(client.level, anchor, false, false, partialTick);
+		camera.setup(renderLevel, anchor, false, false, partialTick);
 		return new CameraState(camera);
 	}
 
-	private static boolean isWorldReady(Minecraft client, CameraState cameraState) {
-		if (client == null || client.level == null || cameraState == null || cameraState.camera() == null) {
+	private static boolean isWorldReady(ClientLevel renderLevel, CameraState cameraState) {
+		if (renderLevel == null || cameraState == null || cameraState.camera() == null) {
 			return false;
 		}
 		Vec3 position = cameraState.camera().position();
@@ -392,7 +399,7 @@ public final class RendererBotOffscreenWorldRenderer {
 		int centerChunkZ = SectionPos.blockToSectionCoord(Mth.floor(position.z));
 		for (int dx = -MIN_READY_CHUNK_RADIUS; dx <= MIN_READY_CHUNK_RADIUS; dx++) {
 			for (int dz = -MIN_READY_CHUNK_RADIUS; dz <= MIN_READY_CHUNK_RADIUS; dz++) {
-				LevelChunk chunk = client.level.getChunkSource().getChunk(centerChunkX + dx, centerChunkZ + dz, ChunkStatus.FULL, false);
+				LevelChunk chunk = renderLevel.getChunkSource().getChunk(centerChunkX + dx, centerChunkZ + dz, ChunkStatus.FULL, false);
 				if (chunk == null) {
 					return false;
 				}
@@ -413,14 +420,14 @@ public final class RendererBotOffscreenWorldRenderer {
 		}
 	}
 
-	private static CachedLevelRenderer getOrCreateCachedRendererLocked(Minecraft client, RenderRequest request, long now) {
-		if (client == null || client.level == null || request == null) {
+	private static CachedLevelRenderer getOrCreateCachedRendererLocked(Minecraft client, ClientLevel renderLevel, RenderRequest request, long now) {
+		if (client == null || renderLevel == null || request == null) {
 			return null;
 		}
 		RendererKey key = RendererKey.from(request);
 		CachedLevelRenderer cachedRenderer = CACHED_RENDERERS.get(key);
 		if (cachedRenderer != null) {
-			if (cachedRenderer.level() == client.level) {
+			if (cachedRenderer.level() == renderLevel) {
 				cachedRenderer.touch(now);
 				return cachedRenderer;
 			}
@@ -447,10 +454,11 @@ public final class RendererBotOffscreenWorldRenderer {
 				featureRenderDispatcher
 		);
 		levelRenderer.onResourceManagerReload(client.getResourceManager());
-		levelRenderer.setLevel(client.level);
+		levelRenderer.setLevel(renderLevel);
 		levelRenderer.resize(request.renderWidth(), request.renderHeight());
+		bootstrapLoadedChunks(levelRenderer, renderLevel);
 		CachedLevelRenderer created = new CachedLevelRenderer(
-				client.level,
+				renderLevel,
 				levelRenderer,
 				featureRenderDispatcher,
 				request.renderWidth(),
@@ -461,17 +469,41 @@ public final class RendererBotOffscreenWorldRenderer {
 		return created;
 	}
 
+	private static void bootstrapLoadedChunks(LevelRenderer levelRenderer, ClientLevel renderLevel) {
+		if (levelRenderer == null || renderLevel == null) {
+			return;
+		}
+		if (!(renderLevel.getChunkSource() instanceof RendererBotVirtualChunkAccess chunkAccess)) {
+			return;
+		}
+		for (LevelChunk chunk : chunkAccess.lg2$getLoadedVirtualChunksSnapshot()) {
+			if (chunk == null) {
+				continue;
+			}
+			ChunkPos pos = chunk.getPos();
+			levelRenderer.onChunkReadyToRender(pos);
+			LevelChunkSection[] sections = chunk.getSections();
+			for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+				LevelChunkSection section = sections[sectionIndex];
+				if (section == null || section.hasOnlyAir()) {
+					continue;
+				}
+				levelRenderer.setSectionDirtyWithNeighbors(pos.x, chunk.getSectionYFromSectionIndex(sectionIndex), pos.z);
+			}
+		}
+		levelRenderer.needsUpdate();
+	}
+
 	private static void cleanupCachedRenderersLocked(Minecraft client, long now) {
 		if (CACHED_RENDERERS.isEmpty()) {
 			return;
 		}
-		ClientLevel currentLevel = client == null ? null : client.level;
 		Iterator<Map.Entry<RendererKey, CachedLevelRenderer>> iterator = CACHED_RENDERERS.entrySet().iterator();
 		while (iterator.hasNext()) {
 			Map.Entry<RendererKey, CachedLevelRenderer> entry = iterator.next();
 			CachedLevelRenderer cachedRenderer = entry.getValue();
 			if (cachedRenderer == null
-					|| cachedRenderer.level() != currentLevel
+					|| !RendererBotShadowWorldManager.isManagedLevel(client, cachedRenderer.level())
 					|| now - cachedRenderer.lastUsedAtMillis() > RENDERER_CACHE_TTL_MS) {
 				closeCachedRendererLocked(cachedRenderer);
 				iterator.remove();

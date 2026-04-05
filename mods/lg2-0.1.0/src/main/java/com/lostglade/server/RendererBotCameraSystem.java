@@ -3,12 +3,18 @@ package com.lostglade.server;
 import com.lostglade.Lg2;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.network.RendererBotPayloads;
+import com.lostglade.network.RendererBotShadowPacketCodec;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientGamePacketListener;
+import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
+import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -17,10 +23,12 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.TicketType;
 import net.minecraft.util.Mth;
+import net.minecraft.world.Difficulty;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.gamerules.GameRules;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
@@ -29,6 +37,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -55,6 +64,8 @@ public final class RendererBotCameraSystem {
 	private static final Map<UUID, ActiveLiveStream> ACTIVE_LIVE_STREAMS = new ConcurrentHashMap<>();
 	private static final Map<String, UUID> LIVE_STREAMS_BY_OWNER = new ConcurrentHashMap<>();
 	private static final Map<ChunkTicketKey, Integer> ACTIVE_CAMERA_CHUNK_TICKETS = new HashMap<>();
+	private static final Map<ShadowSyncKey, ShadowDimensionSyncState> ACTIVE_SHADOW_SYNC_STATES = new HashMap<>();
+	private static final Set<ChunkTicketKey> DIRTY_SHADOW_CHUNKS = ConcurrentHashMap.newKeySet();
 
 	private RendererBotCameraSystem() {
 	}
@@ -63,6 +74,7 @@ public final class RendererBotCameraSystem {
 		ServerTickEvents.END_SERVER_TICK.register(RendererBotCameraSystem::tickVirtualCameraState);
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
 			UUID botUuid = handler.player.getUUID();
+			clearShadowSyncState(server, botUuid, false);
 			READY_BOTS.remove(botUuid);
 			failCapturesForBot(botUuid, "Renderer bot disconnected during capture");
 			failVideoRecordingsForBot(botUuid, "Renderer bot disconnected during video recording");
@@ -169,6 +181,7 @@ public final class RendererBotCameraSystem {
 		);
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			releaseAllVirtualCameraChunkTickets(server);
+			clearAllShadowSyncStates(server, false);
 			READY_BOTS.clear();
 			for (PendingCapture capture : PENDING_CAPTURES.values()) {
 				IllegalStateException failure = new IllegalStateException("Renderer bot capture aborted: server stopping");
@@ -570,6 +583,9 @@ public final class RendererBotCameraSystem {
 				|| !RendererBotPresenceSystem.isRendererBot(viewer)) {
 			return false;
 		}
+		if (viewer.level() != entity.level()) {
+			return false;
+		}
 		ServerLevel viewerLevel = viewer.level();
 		MinecraftServer server = viewerLevel != null ? viewerLevel.getServer() : null;
 		if (server == null) {
@@ -793,6 +809,7 @@ public final class RendererBotCameraSystem {
 			return;
 		}
 		updateVirtualCameraChunkTickets(server);
+		syncShadowWorlds(server);
 		ServerPlayer bot = selectBot(server);
 		if (bot != null
 				&& (botHasActiveJobs(bot.getUUID()) || !Objects.equals(bot.getChunkTrackingView(), ChunkTrackingView.EMPTY))) {
@@ -810,7 +827,7 @@ public final class RendererBotCameraSystem {
 	}
 
 	private static boolean canBotRenderLevel(ServerPlayer bot, ServerLevel level) {
-		return bot != null && level != null && bot.level() == level;
+		return bot != null && level != null && READY_BOTS.containsKey(bot.getUUID());
 	}
 
 	private static LongSet collectVirtualTrackedChunks(ServerPlayer bot, int viewDistance) {
@@ -852,6 +869,9 @@ public final class RendererBotCameraSystem {
 				continue;
 			}
 			ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.x(), capture.y(), capture.z(), capture.yaw(), capture.pitch(), capture.followEntityUuid());
+			if (target == null || target.level() != botLevel) {
+				continue;
+			}
 			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance);
 		}
 		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
@@ -859,6 +879,9 @@ public final class RendererBotCameraSystem {
 				continue;
 			}
 			ScheduledServiceTarget target = resolveServiceTarget(server, recording.dimension(), recording.x(), recording.y(), recording.z(), recording.yaw(), recording.pitch(), recording.followEntityUuid());
+			if (target == null || target.level() != botLevel) {
+				continue;
+			}
 			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance);
 		}
 		return chunks;
@@ -914,7 +937,7 @@ public final class RendererBotCameraSystem {
 				continue;
 			}
 			ServerPlayer bot = server.getPlayerList().getPlayer(stream.botUuid());
-			if (bot == null || bot.level() != level) {
+			if (bot == null || !READY_BOTS.containsKey(bot.getUUID())) {
 				continue;
 			}
 			int viewDistance = Mth.clamp(bot.requestedViewDistance(), 2, Math.max(2, server.getPlayerList().getViewDistance()));
@@ -965,6 +988,396 @@ public final class RendererBotCameraSystem {
 			}
 		}
 		ACTIVE_CAMERA_CHUNK_TICKETS.clear();
+	}
+
+	public static void markShadowChunkDirty(ServerLevel level, ChunkPos pos) {
+		if (level == null || pos == null) {
+			return;
+		}
+		DIRTY_SHADOW_CHUNKS.add(new ChunkTicketKey(level.dimension(), pos.toLong()));
+	}
+
+	private static void syncShadowWorlds(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		Map<ShadowSyncKey, ShadowDesiredState> desiredStates = collectDesiredShadowStates(server);
+		Set<ChunkTicketKey> consumedDirtyChunks = new HashSet<>();
+		for (Map.Entry<ShadowSyncKey, ShadowDesiredState> entry : desiredStates.entrySet()) {
+			ShadowSyncKey key = entry.getKey();
+			ServerPlayer bot = server.getPlayerList().getPlayer(key.botUuid());
+			if (bot == null || !READY_BOTS.containsKey(bot.getUUID())) {
+				continue;
+			}
+			syncShadowState(server, bot, key, entry.getValue(), consumedDirtyChunks);
+		}
+
+		Set<ShadowSyncKey> staleKeys = new LinkedHashSet<>(ACTIVE_SHADOW_SYNC_STATES.keySet());
+		staleKeys.removeAll(desiredStates.keySet());
+		for (ShadowSyncKey staleKey : staleKeys) {
+			removeShadowSyncState(server, staleKey, true);
+		}
+		DIRTY_SHADOW_CHUNKS.removeAll(consumedDirtyChunks);
+	}
+
+	private static Map<ShadowSyncKey, ShadowDesiredState> collectDesiredShadowStates(MinecraftServer server) {
+		Map<ShadowSyncKey, ShadowDesiredState> desiredStates = new HashMap<>();
+		ServerPlayer bot = selectBot(server);
+		if (server == null || bot == null || !(bot.level() instanceof ServerLevel botLevel)) {
+			return desiredStates;
+		}
+		UUID botUuid = bot.getUUID();
+		ResourceKey<Level> botDimension = botLevel.dimension();
+		int viewDistance = resolveViewDistance(bot);
+
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null || !botUuid.equals(stream.botUuid())) {
+				continue;
+			}
+			LiveStreamSpec spec = stream.spec();
+			ScheduledServiceTarget target = resolveServiceTarget(
+					server,
+					spec.dimension(),
+					spec.expectedX(),
+					spec.expectedY(),
+					spec.expectedZ(),
+					spec.expectedYaw(),
+					spec.expectedPitch(),
+					spec.followEntityUuid()
+			);
+			if (target == null || target.level() == null) {
+				stopLiveStreamInternal(stream, "Renderer bot live stream target is unavailable", true);
+				continue;
+			}
+			if (target.level().dimension().equals(botDimension)) {
+				continue;
+			}
+			if (spec.cameraPos() != null && !isCameraPlayerLoaded(target.level(), spec.cameraPos())) {
+				continue;
+			}
+			accumulateShadowDesiredState(desiredStates, botUuid, target, viewDistance);
+		}
+
+		for (Map.Entry<UUID, PendingCapture> entry : PENDING_CAPTURES.entrySet()) {
+			PendingCapture capture = entry.getValue();
+			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.isDone()) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.x(), capture.y(), capture.z(), capture.yaw(), capture.pitch(), capture.followEntityUuid());
+			if (target == null || target.level() == null) {
+				failCapture(entry.getKey(), capture, "Renderer bot capture target is unavailable");
+				continue;
+			}
+			if (target.level().dimension().equals(botDimension)) {
+				continue;
+			}
+			accumulateShadowDesiredState(desiredStates, botUuid, target, viewDistance);
+		}
+
+		for (Map.Entry<UUID, PendingVideoRecording> entry : PENDING_VIDEO_RECORDINGS.entrySet()) {
+			PendingVideoRecording recording = entry.getValue();
+			if (recording == null || !botUuid.equals(recording.botUuid()) || recording.stopRequested() || recording.completionFuture().isDone()) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, recording.dimension(), recording.x(), recording.y(), recording.z(), recording.yaw(), recording.pitch(), recording.followEntityUuid());
+			if (target == null || target.level() == null) {
+				failVideoRecording(entry.getKey(), recording, "Renderer bot recording target is unavailable");
+				continue;
+			}
+			if (target.level().dimension().equals(botDimension)) {
+				continue;
+			}
+			accumulateShadowDesiredState(desiredStates, botUuid, target, viewDistance);
+		}
+		return desiredStates;
+	}
+
+	private static void accumulateShadowDesiredState(
+			Map<ShadowSyncKey, ShadowDesiredState> desiredStates,
+			UUID botUuid,
+			ScheduledServiceTarget target,
+			int viewDistance
+	) {
+		if (desiredStates == null || botUuid == null || target == null || !(target.level() instanceof ServerLevel level)) {
+			return;
+		}
+		ShadowSyncKey key = new ShadowSyncKey(botUuid, level.dimension());
+		ShadowDesiredState desiredState = desiredStates.computeIfAbsent(key, ignored -> new ShadowDesiredState(level, viewDistance));
+		desiredState.targets().add(target);
+		appendVirtualTargetChunks(desiredState.trackedChunks(), level, target, viewDistance);
+	}
+
+	private static void syncShadowState(
+			MinecraftServer server,
+			ServerPlayer bot,
+			ShadowSyncKey key,
+			ShadowDesiredState desiredState,
+			Set<ChunkTicketKey> consumedDirtyChunks
+	) {
+		if (server == null || bot == null || key == null || desiredState == null || desiredState.level() == null) {
+			return;
+		}
+		if (!ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotShadowLevelInitS2CPayload.TYPE)) {
+			return;
+		}
+		ShadowDimensionSyncState activeState = ACTIVE_SHADOW_SYNC_STATES.computeIfAbsent(
+				key,
+				ignored -> new ShadowDimensionSyncState(key.botUuid(), key.dimension())
+		);
+		syncShadowLevelInit(bot, desiredState, activeState);
+		syncShadowLevelState(bot, desiredState.level(), activeState);
+		syncShadowChunks(bot, desiredState, activeState, consumedDirtyChunks);
+		syncShadowEntities(bot, desiredState, activeState);
+	}
+
+	private static void syncShadowLevelInit(ServerPlayer bot, ShadowDesiredState desiredState, ShadowDimensionSyncState activeState) {
+		ServerLevel level = desiredState.level();
+		String dimensionTypeId = level.dimensionTypeRegistration()
+				.unwrapKey()
+				.orElseThrow()
+				.identifier()
+				.toString();
+		if (activeState.initialized()
+				&& Objects.equals(activeState.dimensionTypeId(), dimensionTypeId)
+				&& activeState.seed() == level.getSeed()
+				&& activeState.viewDistance() == desiredState.viewDistance()) {
+			return;
+		}
+		activeState.setInitialized(true);
+		activeState.setDimensionTypeId(dimensionTypeId);
+		activeState.setSeed(level.getSeed());
+		activeState.setViewDistance(desiredState.viewDistance());
+		activeState.trackedChunks().clear();
+		activeState.trackedEntities().clear();
+		ServerPlayNetworking.send(
+				bot,
+				new RendererBotPayloads.RendererBotShadowLevelInitS2CPayload(
+						level.dimension().identifier().toString(),
+						dimensionTypeId,
+						level.getSeed(),
+						level.isDebug(),
+						level.isFlat(),
+						level.getServer().getWorldData().isHardcore(),
+						level.getDifficulty().ordinal(),
+						level.getGameTime(),
+						level.getDayTime(),
+						level.getGameRules().get(GameRules.ADVANCE_TIME),
+						level.isRaining(),
+						level.getSeaLevel(),
+						desiredState.viewDistance(),
+						Math.max(2, level.getServer().getPlayerList().getSimulationDistance())
+				)
+		);
+	}
+
+	private static void syncShadowLevelState(ServerPlayer bot, ServerLevel level, ShadowDimensionSyncState activeState) {
+		long gameTime = level.getGameTime();
+		long dayTime = level.getDayTime();
+		boolean tickDayTime = level.getGameRules().get(GameRules.ADVANCE_TIME);
+		boolean raining = level.isRaining();
+		if (activeState.lastGameTime() == gameTime
+				&& activeState.lastDayTime() == dayTime
+				&& activeState.lastTickDayTime() == tickDayTime
+				&& activeState.lastRaining() == raining) {
+			return;
+		}
+		activeState.setLastGameTime(gameTime);
+		activeState.setLastDayTime(dayTime);
+		activeState.setLastTickDayTime(tickDayTime);
+		activeState.setLastRaining(raining);
+		ServerPlayNetworking.send(
+				bot,
+				new RendererBotPayloads.RendererBotShadowLevelStateS2CPayload(
+						level.dimension().identifier().toString(),
+						gameTime,
+						dayTime,
+						tickDayTime,
+						raining
+				)
+		);
+	}
+
+	private static void syncShadowChunks(
+			ServerPlayer bot,
+			ShadowDesiredState desiredState,
+			ShadowDimensionSyncState activeState,
+			Set<ChunkTicketKey> consumedDirtyChunks
+	) {
+		ServerLevel level = desiredState.level();
+		LongSet previousChunks = new LongOpenHashSet(activeState.trackedChunks());
+		LongSet newTrackedChunks = new LongOpenHashSet();
+
+		LongIterator desiredIterator = desiredState.trackedChunks().iterator();
+		while (desiredIterator.hasNext()) {
+			long chunkLong = desiredIterator.nextLong();
+			ChunkPos pos = new ChunkPos(chunkLong);
+			ChunkTicketKey dirtyKey = new ChunkTicketKey(level.dimension(), chunkLong);
+			boolean alreadyTracked = previousChunks.contains(chunkLong);
+			boolean dirty = DIRTY_SHADOW_CHUNKS.contains(dirtyKey);
+			net.minecraft.world.level.chunk.LevelChunk chunk = level.getChunkSource().getChunkNow(pos.x, pos.z);
+			if (chunk == null) {
+				if (alreadyTracked) {
+					newTrackedChunks.add(chunkLong);
+				}
+				continue;
+			}
+			if (!alreadyTracked || dirty) {
+				ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(chunk, level.getChunkSource().getLightEngine(), null, null);
+				ServerPlayNetworking.send(
+						bot,
+						new RendererBotPayloads.RendererBotShadowChunkDataS2CPayload(
+								level.dimension().identifier().toString(),
+								RendererBotShadowPacketCodec.encodeChunkPacket(level.registryAccess(), packet)
+						)
+				);
+				if (dirty) {
+					consumedDirtyChunks.add(dirtyKey);
+				}
+			}
+			newTrackedChunks.add(chunkLong);
+			previousChunks.remove(chunkLong);
+		}
+
+		LongIterator removedIterator = previousChunks.iterator();
+		while (removedIterator.hasNext()) {
+			ChunkPos removedPos = new ChunkPos(removedIterator.nextLong());
+			ServerPlayNetworking.send(
+					bot,
+					new RendererBotPayloads.RendererBotShadowForgetChunkS2CPayload(
+							level.dimension().identifier().toString(),
+							removedPos.x,
+							removedPos.z
+					)
+			);
+		}
+
+		activeState.trackedChunks().clear();
+		activeState.trackedChunks().addAll(newTrackedChunks);
+	}
+
+	private static void syncShadowEntities(ServerPlayer bot, ShadowDesiredState desiredState, ShadowDimensionSyncState activeState) {
+		ServerLevel level = desiredState.level();
+		Map<Integer, ShadowTrackedEntity> trackedEntities = activeState.trackedEntities();
+		Set<Integer> desiredEntityIds = new HashSet<>();
+		List<Packet<? extends ClientGamePacketListener>> packets = new ArrayList<>();
+
+		for (Entity entity : level.getAllEntities()) {
+			if (!shouldShadowTrackEntity(entity, desiredState)) {
+				continue;
+			}
+			desiredEntityIds.add(entity.getId());
+			ShadowTrackedEntity trackedEntity = trackedEntities.get(entity.getId());
+			if (trackedEntity == null || trackedEntity.entity() != entity) {
+				trackedEntity = createShadowTrackedEntity(level, entity, bot);
+				trackedEntities.put(entity.getId(), trackedEntity);
+				trackedEntity.serverEntity().sendPairingData(bot, packets::add);
+			}
+			trackedEntity.collector().clear();
+			trackedEntity.serverEntity().sendChanges();
+			packets.addAll(trackedEntity.collector().drain());
+		}
+
+		if (!trackedEntities.isEmpty()) {
+			List<Integer> removals = new ArrayList<>();
+			for (Integer entityId : new ArrayList<>(trackedEntities.keySet())) {
+				if (desiredEntityIds.contains(entityId)) {
+					continue;
+				}
+				removals.add(entityId);
+				trackedEntities.remove(entityId);
+			}
+			if (!removals.isEmpty()) {
+				int[] removalIds = removals.stream().mapToInt(Integer::intValue).toArray();
+				packets.add(new ClientboundRemoveEntitiesPacket(removalIds));
+			}
+		}
+
+		if (packets.isEmpty()) {
+			return;
+		}
+		ServerPlayNetworking.send(
+				bot,
+				new RendererBotPayloads.RendererBotShadowEntityPacketsS2CPayload(
+						level.dimension().identifier().toString(),
+						RendererBotShadowPacketCodec.encodePacketList(level.registryAccess(), packets)
+				)
+		);
+	}
+
+	private static boolean shouldShadowTrackEntity(Entity entity, ShadowDesiredState desiredState) {
+		if (entity == null
+				|| desiredState == null
+				|| desiredState.level() == null
+				|| entity.isRemoved()
+				|| entity.level() != desiredState.level()
+				|| !desiredState.trackedChunks().contains(entity.chunkPosition().toLong())) {
+			return false;
+		}
+		if (entity instanceof ServerPlayer player && RendererBotPresenceSystem.isRendererBot(player)) {
+			return false;
+		}
+		double entityRangeBlocks = Math.max(16.0D, entity.getType().clientTrackingRange() * 16.0D);
+		double entityRangeSq = entityRangeBlocks * entityRangeBlocks;
+		for (ScheduledServiceTarget target : desiredState.targets()) {
+			if (target == null || target.level() != desiredState.level()) {
+				continue;
+			}
+			double dx = entity.getX() - target.x();
+			double dz = entity.getZ() - target.z();
+			if (dx * dx + dz * dz <= entityRangeSq) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static ShadowTrackedEntity createShadowTrackedEntity(ServerLevel level, Entity entity, ServerPlayer bot) {
+		ShadowPacketCollector collector = new ShadowPacketCollector(bot);
+		return new ShadowTrackedEntity(
+				entity,
+				new net.minecraft.server.level.ServerEntity(
+						level,
+						entity,
+						entity.getType().updateInterval(),
+						entity.getType().trackDeltas(),
+						collector
+				),
+				collector
+		);
+	}
+
+	private static void clearAllShadowSyncStates(MinecraftServer server, boolean notifyClient) {
+		for (ShadowSyncKey key : new ArrayList<>(ACTIVE_SHADOW_SYNC_STATES.keySet())) {
+			removeShadowSyncState(server, key, notifyClient);
+		}
+		DIRTY_SHADOW_CHUNKS.clear();
+	}
+
+	private static void clearShadowSyncState(MinecraftServer server, UUID botUuid, boolean notifyClient) {
+		if (botUuid == null) {
+			return;
+		}
+		for (ShadowSyncKey key : new ArrayList<>(ACTIVE_SHADOW_SYNC_STATES.keySet())) {
+			if (!botUuid.equals(key.botUuid())) {
+				continue;
+			}
+			removeShadowSyncState(server, key, notifyClient);
+		}
+	}
+
+	private static void removeShadowSyncState(MinecraftServer server, ShadowSyncKey key, boolean notifyClient) {
+		ShadowDimensionSyncState removed = ACTIVE_SHADOW_SYNC_STATES.remove(key);
+		if (removed == null || !notifyClient || server == null) {
+			return;
+		}
+		ServerPlayer bot = server.getPlayerList().getPlayer(key.botUuid());
+		if (bot == null || !ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotShadowLevelDestroyS2CPayload.TYPE)) {
+			return;
+		}
+		ServerPlayNetworking.send(
+				bot,
+				new RendererBotPayloads.RendererBotShadowLevelDestroyS2CPayload(key.dimension().identifier().toString())
+		);
 	}
 
 	private static void tickBotJobs(MinecraftServer server) {
@@ -1379,6 +1792,188 @@ public final class RendererBotCameraSystem {
 	}
 
 	private record ChunkTicketKey(ResourceKey<Level> dimension, long chunkLong) {
+	}
+
+	private record ShadowSyncKey(UUID botUuid, ResourceKey<Level> dimension) {
+	}
+
+	private static final class ShadowDesiredState {
+		private final ServerLevel level;
+		private final int viewDistance;
+		private final LongOpenHashSet trackedChunks = new LongOpenHashSet();
+		private final List<ScheduledServiceTarget> targets = new ArrayList<>();
+
+		private ShadowDesiredState(ServerLevel level, int viewDistance) {
+			this.level = level;
+			this.viewDistance = viewDistance;
+		}
+
+		private ServerLevel level() {
+			return this.level;
+		}
+
+		private int viewDistance() {
+			return this.viewDistance;
+		}
+
+		private LongOpenHashSet trackedChunks() {
+			return this.trackedChunks;
+		}
+
+		private List<ScheduledServiceTarget> targets() {
+			return this.targets;
+		}
+	}
+
+	private static final class ShadowDimensionSyncState {
+		private final UUID botUuid;
+		private final ResourceKey<Level> dimension;
+		private final LongOpenHashSet trackedChunks = new LongOpenHashSet();
+		private final Map<Integer, ShadowTrackedEntity> trackedEntities = new HashMap<>();
+		private boolean initialized;
+		private String dimensionTypeId;
+		private long seed;
+		private int viewDistance;
+		private long lastGameTime = Long.MIN_VALUE;
+		private long lastDayTime = Long.MIN_VALUE;
+		private boolean lastTickDayTime;
+		private boolean lastRaining;
+
+		private ShadowDimensionSyncState(UUID botUuid, ResourceKey<Level> dimension) {
+			this.botUuid = botUuid;
+			this.dimension = dimension;
+		}
+
+		private UUID botUuid() {
+			return this.botUuid;
+		}
+
+		private ResourceKey<Level> dimension() {
+			return this.dimension;
+		}
+
+		private LongOpenHashSet trackedChunks() {
+			return this.trackedChunks;
+		}
+
+		private Map<Integer, ShadowTrackedEntity> trackedEntities() {
+			return this.trackedEntities;
+		}
+
+		private boolean initialized() {
+			return this.initialized;
+		}
+
+		private void setInitialized(boolean initialized) {
+			this.initialized = initialized;
+		}
+
+		private String dimensionTypeId() {
+			return this.dimensionTypeId;
+		}
+
+		private void setDimensionTypeId(String dimensionTypeId) {
+			this.dimensionTypeId = dimensionTypeId;
+		}
+
+		private long seed() {
+			return this.seed;
+		}
+
+		private void setSeed(long seed) {
+			this.seed = seed;
+		}
+
+		private int viewDistance() {
+			return this.viewDistance;
+		}
+
+		private void setViewDistance(int viewDistance) {
+			this.viewDistance = viewDistance;
+		}
+
+		private long lastGameTime() {
+			return this.lastGameTime;
+		}
+
+		private void setLastGameTime(long lastGameTime) {
+			this.lastGameTime = lastGameTime;
+		}
+
+		private long lastDayTime() {
+			return this.lastDayTime;
+		}
+
+		private void setLastDayTime(long lastDayTime) {
+			this.lastDayTime = lastDayTime;
+		}
+
+		private boolean lastTickDayTime() {
+			return this.lastTickDayTime;
+		}
+
+		private void setLastTickDayTime(boolean lastTickDayTime) {
+			this.lastTickDayTime = lastTickDayTime;
+		}
+
+		private boolean lastRaining() {
+			return this.lastRaining;
+		}
+
+		private void setLastRaining(boolean lastRaining) {
+			this.lastRaining = lastRaining;
+		}
+	}
+
+	private record ShadowTrackedEntity(
+			Entity entity,
+			net.minecraft.server.level.ServerEntity serverEntity,
+			ShadowPacketCollector collector
+	) {
+	}
+
+	private static final class ShadowPacketCollector implements net.minecraft.server.level.ServerEntity.Synchronizer {
+		private final ServerPlayer bot;
+		private final List<Packet<? extends ClientGamePacketListener>> packets = new ArrayList<>();
+
+		private ShadowPacketCollector(ServerPlayer bot) {
+			this.bot = bot;
+		}
+
+		@Override
+		public void sendToTrackingPlayers(Packet<? super ClientGamePacketListener> packet) {
+			add(packet);
+		}
+
+		@Override
+		public void sendToTrackingPlayersAndSelf(Packet<? super ClientGamePacketListener> packet) {
+			add(packet);
+		}
+
+		@Override
+		public void sendToTrackingPlayersFiltered(Packet<? super ClientGamePacketListener> packet, java.util.function.Predicate<ServerPlayer> predicate) {
+			if (predicate == null || this.bot == null || predicate.test(this.bot)) {
+				add(packet);
+			}
+		}
+
+		private void clear() {
+			this.packets.clear();
+		}
+
+		private List<Packet<? extends ClientGamePacketListener>> drain() {
+			List<Packet<? extends ClientGamePacketListener>> drained = new ArrayList<>(this.packets);
+			this.packets.clear();
+			return drained;
+		}
+
+		@SuppressWarnings("unchecked")
+		private void add(Packet<? super ClientGamePacketListener> packet) {
+			if (packet == null) {
+				return;
+			}
+			this.packets.add((Packet<? extends ClientGamePacketListener>) packet);
+		}
 	}
 
 	public record ClientCaptureHandle(
