@@ -1214,6 +1214,7 @@ public final class RendererBotCameraSystem {
 			ChunkTicketKey dirtyKey = new ChunkTicketKey(level.dimension(), chunkLong);
 			boolean alreadyTracked = previousChunks.contains(chunkLong);
 			boolean dirty = DIRTY_SHADOW_CHUNKS.contains(dirtyKey);
+			previousChunks.remove(chunkLong);
 			net.minecraft.world.level.chunk.LevelChunk chunk = level.getChunkSource().getChunkNow(pos.x, pos.z);
 			if (chunk == null) {
 				if (alreadyTracked) {
@@ -1235,7 +1236,6 @@ public final class RendererBotCameraSystem {
 				}
 			}
 			newTrackedChunks.add(chunkLong);
-			previousChunks.remove(chunkLong);
 		}
 
 		LongIterator removedIterator = previousChunks.iterator();

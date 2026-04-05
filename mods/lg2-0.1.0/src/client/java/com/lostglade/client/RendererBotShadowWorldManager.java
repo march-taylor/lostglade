@@ -3,6 +3,7 @@ package com.lostglade.client;
 import com.lostglade.Lg2;
 import com.lostglade.mixin.client.ClientPacketListenerShadowAccessor;
 import com.lostglade.network.RendererBotPayloads;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import com.lostglade.network.RendererBotShadowPacketCodec;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -26,7 +27,9 @@ import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public final class RendererBotShadowWorldManager {
@@ -39,6 +42,7 @@ public final class RendererBotShadowWorldManager {
 	public static void register() {
 		ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> clear());
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> clear());
+		ClientTickEvents.END_CLIENT_TICK.register(RendererBotShadowWorldManager::tickShadowWorlds);
 		ClientPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotShadowLevelInitS2CPayload.TYPE,
 				(payload, context) -> context.client().execute(() -> applyLevelInit(context.client(), payload))
@@ -101,6 +105,25 @@ public final class RendererBotShadowWorldManager {
 				closeSession(session);
 			}
 			SHADOW_LEVELS.clear();
+		}
+	}
+
+	private static void tickShadowWorlds(Minecraft client) {
+		if (client == null || client.getConnection() == null) {
+			return;
+		}
+		List<ShadowLevelSession> sessions;
+		synchronized (LOCK) {
+			if (SHADOW_LEVELS.isEmpty()) {
+				return;
+			}
+			sessions = new ArrayList<>(SHADOW_LEVELS.values());
+		}
+		for (ShadowLevelSession session : sessions) {
+			if (session == null || session.level() == null || client.level == session.level()) {
+				continue;
+			}
+			session.level().tick(() -> true);
 		}
 	}
 
@@ -214,7 +237,7 @@ public final class RendererBotShadowWorldManager {
 				payload.hardcore(),
 				payload.flat()
 		);
-		RenderBuffers renderBuffers = client.renderBuffers();
+		RenderBuffers renderBuffers = new RenderBuffers(Math.max(1, Runtime.getRuntime().availableProcessors()));
 		FeatureRenderDispatcher featureRenderDispatcher = new FeatureRenderDispatcher(
 				new SubmitNodeStorage(),
 				client.getBlockRenderer(),
