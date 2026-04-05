@@ -124,6 +124,7 @@ public final class RendererBotShadowWorldManager {
 				continue;
 			}
 			session.level().tick(() -> true);
+			session.level().tickEntities();
 		}
 	}
 
