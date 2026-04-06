@@ -136,10 +136,13 @@ public final class CopperManRepulsorSystem {
 			updateHud(handler.player, state, true);
 		}));
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
-			RepulsorState state = STATES.remove(handler.player.getUUID());
+			RepulsorState state = STATES.get(handler.player.getUUID());
 			if (state != null) {
 				removeAirTriggerEntity(state);
 				clearHud(handler.player, state, true);
+				state.lastAutomaticInputTick = Long.MIN_VALUE;
+				state.lastSingleInputTick = Long.MIN_VALUE;
+				state.hudDirty = true;
 			}
 		});
 		ServerTickEvents.END_SERVER_TICK.register(CopperManRepulsorSystem::tickServer);
@@ -238,6 +241,10 @@ public final class CopperManRepulsorSystem {
 			return;
 		}
 		restoreCharges(player, state(player), getNaturalLightningChargeRestore(player));
+	}
+
+	public static void onPlayerDeath(ServerPlayer player) {
+		resetChargesAfterDeath(player);
 	}
 
 	private static void tickServer(MinecraftServer server) {
@@ -396,6 +403,19 @@ public final class CopperManRepulsorSystem {
 			state.charges = restored;
 			state.hudDirty = true;
 		}
+	}
+
+	private static void resetChargesAfterDeath(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		RepulsorState state = state(player);
+		removeAirTriggerEntity(state);
+		state.charges = 0;
+		state.nextShotTick = 0L;
+		state.lastAutomaticInputTick = Long.MIN_VALUE;
+		state.lastSingleInputTick = Long.MIN_VALUE;
+		state.hudDirty = true;
 	}
 
 	private static void updateHud(ServerPlayer player, RepulsorState state, boolean force) {
