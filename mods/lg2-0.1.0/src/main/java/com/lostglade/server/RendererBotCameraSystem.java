@@ -1279,6 +1279,8 @@ public final class RendererBotCameraSystem {
 						level.getDayTime(),
 						level.getGameRules().get(GameRules.ADVANCE_TIME),
 						level.isRaining(),
+						level.getRainLevel(1.0F),
+						level.getThunderLevel(1.0F),
 						level.getSeaLevel(),
 						desiredState.viewDistance(),
 						Math.max(2, level.getServer().getPlayerList().getSimulationDistance())
@@ -1315,16 +1317,22 @@ public final class RendererBotCameraSystem {
 		long dayTime = level.getDayTime();
 		boolean tickDayTime = level.getGameRules().get(GameRules.ADVANCE_TIME);
 		boolean raining = level.isRaining();
+		float rainLevel = level.getRainLevel(1.0F);
+		float thunderLevel = level.getThunderLevel(1.0F);
 		if (activeState.lastGameTime() == gameTime
 				&& activeState.lastDayTime() == dayTime
 				&& activeState.lastTickDayTime() == tickDayTime
-				&& activeState.lastRaining() == raining) {
+				&& activeState.lastRaining() == raining
+				&& Float.compare(activeState.lastRainLevel(), rainLevel) == 0
+				&& Float.compare(activeState.lastThunderLevel(), thunderLevel) == 0) {
 			return;
 		}
 		activeState.setLastGameTime(gameTime);
 		activeState.setLastDayTime(dayTime);
 		activeState.setLastTickDayTime(tickDayTime);
 		activeState.setLastRaining(raining);
+		activeState.setLastRainLevel(rainLevel);
+		activeState.setLastThunderLevel(thunderLevel);
 		ServerPlayNetworking.send(
 				bot,
 				new RendererBotPayloads.RendererBotShadowLevelStateS2CPayload(
@@ -1333,7 +1341,9 @@ public final class RendererBotCameraSystem {
 						gameTime,
 						dayTime,
 						tickDayTime,
-						raining
+						raining,
+						rainLevel,
+						thunderLevel
 				)
 		);
 	}
@@ -2003,6 +2013,8 @@ public final class RendererBotCameraSystem {
 		private long lastDayTime = Long.MIN_VALUE;
 		private boolean lastTickDayTime;
 		private boolean lastRaining;
+		private float lastRainLevel = Float.NaN;
+		private float lastThunderLevel = Float.NaN;
 		private int lastCenterChunkX = Integer.MIN_VALUE;
 		private int lastCenterChunkZ = Integer.MIN_VALUE;
 
@@ -2094,6 +2106,22 @@ public final class RendererBotCameraSystem {
 
 		private void setLastRaining(boolean lastRaining) {
 			this.lastRaining = lastRaining;
+		}
+
+		private float lastRainLevel() {
+			return this.lastRainLevel;
+		}
+
+		private void setLastRainLevel(float lastRainLevel) {
+			this.lastRainLevel = lastRainLevel;
+		}
+
+		private float lastThunderLevel() {
+			return this.lastThunderLevel;
+		}
+
+		private void setLastThunderLevel(float lastThunderLevel) {
+			this.lastThunderLevel = lastThunderLevel;
 		}
 
 		private int lastCenterChunkX() {

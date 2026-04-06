@@ -193,7 +193,15 @@ public final class RendererBotShadowWorldManager {
 			}
 			SHADOW_SESSIONS.put(payload.sessionId(), created);
 			LAST_RENDER_ACTIVITY_AT.put(payload.sessionId(), System.currentTimeMillis());
-			applyState(created.level(), payload.gameTime(), payload.dayTime(), payload.tickDayTime(), payload.raining());
+			applyState(
+					created.level(),
+					payload.gameTime(),
+					payload.dayTime(),
+					payload.tickDayTime(),
+					payload.raining(),
+					payload.rainLevel(),
+					payload.thunderLevel()
+			);
 			applyViewState(client.getConnection(), created.level(), payload.viewDistance(), 0, 0);
 			Lg2.LOGGER.info("Renderer bot created shadow session {} for {}", payload.sessionId(), payload.dimensionId());
 		}
@@ -210,7 +218,15 @@ public final class RendererBotShadowWorldManager {
 		if (session == null) {
 			return;
 		}
-		applyState(session.level(), payload.gameTime(), payload.dayTime(), payload.tickDayTime(), payload.raining());
+		applyState(
+				session.level(),
+				payload.gameTime(),
+				payload.dayTime(),
+				payload.tickDayTime(),
+				payload.raining(),
+				payload.rainLevel(),
+				payload.thunderLevel()
+		);
 	}
 
 	private static void applyView(Minecraft client, RendererBotPayloads.RendererBotShadowViewS2CPayload payload) {
@@ -406,12 +422,22 @@ public final class RendererBotShadowWorldManager {
 		});
 	}
 
-	private static void applyState(ClientLevel level, long gameTime, long dayTime, boolean tickDayTime, boolean raining) {
+	private static void applyState(
+			ClientLevel level,
+			long gameTime,
+			long dayTime,
+			boolean tickDayTime,
+			boolean raining,
+			float rainLevel,
+			float thunderLevel
+	) {
 		if (level == null) {
 			return;
 		}
 		level.setTimeFromServer(gameTime, dayTime, tickDayTime);
 		level.getLevelData().setRaining(raining);
+		level.setRainLevel(rainLevel);
+		level.setThunderLevel(thunderLevel);
 	}
 
 	private static boolean shouldTickSession(UUID sessionId) {

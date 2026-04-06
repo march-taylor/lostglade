@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 6;
+	public static final int PROTOCOL_VERSION = 7;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
@@ -435,6 +435,8 @@ public final class RendererBotPayloads {
 			long dayTime,
 			boolean tickDayTime,
 			boolean raining,
+			float rainLevel,
+			float thunderLevel,
 			int seaLevel,
 			int viewDistance,
 			int simulationDistance
@@ -457,6 +459,8 @@ public final class RendererBotPayloads {
 					buffer.readVarLong(),
 					buffer.readBoolean(),
 					buffer.readBoolean(),
+					buffer.readFloat(),
+					buffer.readFloat(),
 					buffer.readVarInt(),
 					buffer.readVarInt(),
 					buffer.readVarInt()
@@ -476,6 +480,8 @@ public final class RendererBotPayloads {
 			buffer.writeVarLong(this.dayTime);
 			buffer.writeBoolean(this.tickDayTime);
 			buffer.writeBoolean(this.raining);
+			buffer.writeFloat(this.rainLevel);
+			buffer.writeFloat(this.thunderLevel);
 			buffer.writeVarInt(this.seaLevel);
 			buffer.writeVarInt(this.viewDistance);
 			buffer.writeVarInt(this.simulationDistance);
@@ -493,7 +499,9 @@ public final class RendererBotPayloads {
 			long gameTime,
 			long dayTime,
 			boolean tickDayTime,
-			boolean raining
+			boolean raining,
+			float rainLevel,
+			float thunderLevel
 	) implements CustomPacketPayload {
 		public static final Type<RendererBotShadowLevelStateS2CPayload> TYPE = new Type<>(id("renderer_bot_shadow_level_state"));
 		public static final StreamCodec<FriendlyByteBuf, RendererBotShadowLevelStateS2CPayload> STREAM_CODEC =
@@ -506,7 +514,9 @@ public final class RendererBotPayloads {
 					buffer.readVarLong(),
 					buffer.readVarLong(),
 					buffer.readBoolean(),
-					buffer.readBoolean()
+					buffer.readBoolean(),
+					buffer.readFloat(),
+					buffer.readFloat()
 			);
 		}
 
@@ -517,6 +527,8 @@ public final class RendererBotPayloads {
 			buffer.writeVarLong(this.dayTime);
 			buffer.writeBoolean(this.tickDayTime);
 			buffer.writeBoolean(this.raining);
+			buffer.writeFloat(this.rainLevel);
+			buffer.writeFloat(this.thunderLevel);
 		}
 
 		@Override
