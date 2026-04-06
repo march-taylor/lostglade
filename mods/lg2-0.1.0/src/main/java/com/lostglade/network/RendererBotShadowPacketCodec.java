@@ -1,5 +1,6 @@
 package com.lostglade.network;
 
+import eu.pb4.polymer.core.impl.networking.PacketPatcher;
 import io.netty.buffer.Unpooled;
 import net.minecraft.core.RegistryAccess;
 import net.minecraft.network.RegistryFriendlyByteBuf;
@@ -27,6 +28,8 @@ import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
 import net.minecraft.network.protocol.game.GamePacketTypes;
+import net.minecraft.server.network.ServerCommonPacketListenerImpl;
+import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -63,24 +66,24 @@ public final class RendererBotShadowPacketCodec {
 	private RendererBotShadowPacketCodec() {
 	}
 
-	public static RendererBotPayloads.ShadowPacketData encodePacket(RegistryAccess registryAccess, Packet<? extends ClientGamePacketListener> packet) {
+	public static RendererBotPayloads.ShadowPacketData encodePacket(
+			RegistryAccess registryAccess,
+			ServerCommonPacketListenerImpl packetListener,
+			Packet<? extends ClientGamePacketListener> packet
+	) {
 		if (packet == null) {
 			return null;
 		}
-		StreamCodec<RegistryFriendlyByteBuf, Packet<? extends ClientGamePacketListener>> codec = codecForPacket(packet);
-		RegistryFriendlyByteBuf buffer = new RegistryFriendlyByteBuf(Unpooled.buffer(), registryAccess);
-		try {
-			codec.encode(buffer, packet);
-			byte[] payload = new byte[buffer.readableBytes()];
-			buffer.getBytes(buffer.readerIndex(), payload);
-			return new RendererBotPayloads.ShadowPacketData(packet.type().id().toString(), payload);
-		} finally {
-			buffer.release();
+		Packet<? extends ClientGamePacketListener> patchedPacket = patchPacket(packetListener, packet);
+		if (patchedPacket == null) {
+			return null;
 		}
+		return encodePatchedPacket(registryAccess, packetListener, patchedPacket);
 	}
 
 	public static List<RendererBotPayloads.ShadowPacketData> encodePacketList(
 			RegistryAccess registryAccess,
+			ServerCommonPacketListenerImpl packetListener,
 			Iterable<? extends Packet<? extends ClientGamePacketListener>> packets
 	) {
 		List<RendererBotPayloads.ShadowPacketData> encoded = new ArrayList<>();
@@ -88,7 +91,7 @@ public final class RendererBotShadowPacketCodec {
 			return encoded;
 		}
 		for (Packet<? extends ClientGamePacketListener> packet : packets) {
-			flattenAndEncode(registryAccess, packet, encoded);
+			flattenAndEncode(registryAccess, packetListener, packet, encoded);
 		}
 		return encoded;
 	}
@@ -109,8 +112,12 @@ public final class RendererBotShadowPacketCodec {
 		}
 	}
 
-	public static byte[] encodeChunkPacket(RegistryAccess registryAccess, ClientboundLevelChunkWithLightPacket packet) {
-		RendererBotPayloads.ShadowPacketData encoded = encodePacket(registryAccess, packet);
+	public static byte[] encodeChunkPacket(
+			RegistryAccess registryAccess,
+			ServerCommonPacketListenerImpl packetListener,
+			ClientboundLevelChunkWithLightPacket packet
+	) {
+		RendererBotPayloads.ShadowPacketData encoded = encodePacket(registryAccess, packetListener, packet);
 		return encoded == null ? new byte[0] : encoded.packetBytes();
 	}
 
@@ -146,24 +153,69 @@ public final class RendererBotShadowPacketCodec {
 
 	private static void flattenAndEncode(
 			RegistryAccess registryAccess,
+			ServerCommonPacketListenerImpl packetListener,
 			Packet<? extends ClientGamePacketListener> packet,
 			List<RendererBotPayloads.ShadowPacketData> encoded
 	) {
 		if (packet == null || encoded == null) {
 			return;
 		}
-		if (packet instanceof BundlePacket<?> bundlePacket) {
+		Packet<? extends ClientGamePacketListener> patchedPacket = patchPacket(packetListener, packet);
+		if (patchedPacket == null) {
+			return;
+		}
+		if (patchedPacket instanceof BundlePacket<?> bundlePacket) {
 			for (Packet<?> child : bundlePacket.subPackets()) {
 				@SuppressWarnings("unchecked")
 				Packet<? extends ClientGamePacketListener> clientPacket = (Packet<? extends ClientGamePacketListener>) child;
-				flattenAndEncode(registryAccess, clientPacket, encoded);
+				flattenAndEncode(registryAccess, packetListener, clientPacket, encoded);
 			}
 			return;
 		}
-		RendererBotPayloads.ShadowPacketData encodedPacket = encodePacket(registryAccess, packet);
+		RendererBotPayloads.ShadowPacketData encodedPacket = encodePatchedPacket(registryAccess, packetListener, patchedPacket);
 		if (encodedPacket != null) {
 			encoded.add(encodedPacket);
 		}
+	}
+
+	private static RendererBotPayloads.ShadowPacketData encodePatchedPacket(
+			RegistryAccess registryAccess,
+			ServerCommonPacketListenerImpl packetListener,
+			Packet<? extends ClientGamePacketListener> packet
+	) {
+		return PacketContext.supplyWithContext(packetListener, packet, () -> {
+			StreamCodec<RegistryFriendlyByteBuf, Packet<? extends ClientGamePacketListener>> codec = codecForPacket(packet);
+			RegistryFriendlyByteBuf buffer = new RegistryFriendlyByteBuf(Unpooled.buffer(), registryAccess);
+			try {
+				codec.encode(buffer, packet);
+				byte[] payload = new byte[buffer.readableBytes()];
+				buffer.getBytes(buffer.readerIndex(), payload);
+				return new RendererBotPayloads.ShadowPacketData(packet.type().id().toString(), payload);
+			} finally {
+				buffer.release();
+			}
+		});
+	}
+
+	private static Packet<? extends ClientGamePacketListener> patchPacket(
+			ServerCommonPacketListenerImpl packetListener,
+			Packet<? extends ClientGamePacketListener> packet
+	) {
+		if (packet == null) {
+			return null;
+		}
+		if (packetListener == null) {
+			return packet;
+		}
+		return PacketContext.supplyWithContext(packetListener, packet, () -> {
+			@SuppressWarnings("unchecked")
+			Packet<? extends ClientGamePacketListener> patchedPacket =
+					(Packet<? extends ClientGamePacketListener>) PacketPatcher.replace(packetListener, packet);
+			if (patchedPacket == null || PacketPatcher.prevent(packetListener, patchedPacket)) {
+				return null;
+			}
+			return patchedPacket;
+		});
 	}
 
 	@SuppressWarnings("unchecked")
