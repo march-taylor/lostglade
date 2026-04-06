@@ -30,7 +30,7 @@ public abstract class ServerGamePacketListenerCopperManRepulsorMixin {
 	@Inject(method = "handleInteract", at = @At("HEAD"), cancellable = true)
 	private void lg2$fireCopperRepulsorOnEntity(ServerboundInteractPacket packet, CallbackInfo ci) {
 		Entity target = packet.getTarget((ServerLevel) this.player.level());
-		if (!CopperManRepulsorSystem.isAirTriggerEntity(this.player, target)) {
+		if (target == null) {
 			return;
 		}
 
@@ -38,12 +38,12 @@ public abstract class ServerGamePacketListenerCopperManRepulsorMixin {
 		packet.dispatch(new ServerboundInteractPacket.Handler() {
 			@Override
 			public void onInteraction(InteractionHand hand) {
-				cancel[0] = CopperManRepulsorSystem.handleUseInteraction(player, hand);
+				cancel[0] = CopperManRepulsorSystem.handleEntityInteraction(player, target, hand, null);
 			}
 
 			@Override
 			public void onInteraction(InteractionHand hand, Vec3 location) {
-				cancel[0] = CopperManRepulsorSystem.handleUseInteraction(player, hand);
+				cancel[0] = CopperManRepulsorSystem.handleEntityInteraction(player, target, hand, location);
 			}
 
 			@Override

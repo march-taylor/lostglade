@@ -1,0 +1,34 @@
+package com.lostglade.mixin;
+
+import com.lostglade.server.CopperManRepulsorSystem;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerPlayerGameMode;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.BlockHitResult;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+@Mixin(ServerPlayerGameMode.class)
+public abstract class ServerPlayerGameModeCopperManRepulsorMixin {
+	@Inject(method = "useItemOn", at = @At("RETURN"), cancellable = true)
+	private void lg2$fireCopperRepulsorAfterVanillaBlockPass(
+			ServerPlayer player,
+			Level level,
+			ItemStack stack,
+			InteractionHand hand,
+			BlockHitResult hitResult,
+			CallbackInfoReturnable<InteractionResult> cir
+	) {
+		if (cir.getReturnValue() != InteractionResult.PASS) {
+			return;
+		}
+		if (CopperManRepulsorSystem.handleUseInteraction(player, hand)) {
+			cir.setReturnValue(InteractionResult.SUCCESS);
+		}
+	}
+}
