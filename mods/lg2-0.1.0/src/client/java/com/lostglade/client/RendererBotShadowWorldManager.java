@@ -3,6 +3,7 @@ package com.lostglade.client;
 import com.lostglade.Lg2;
 import com.lostglade.mixin.client.ClientLevelMapDataAccessor;
 import com.lostglade.mixin.client.ClientPacketListenerShadowAccessor;
+import com.lostglade.mixin.client.CloudRendererReloadInvoker;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.network.RendererBotShadowPacketCodec;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -14,6 +15,7 @@ import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.RenderBuffers;
 import net.minecraft.client.renderer.SubmitNodeStorage;
+import net.minecraft.client.renderer.CloudRenderer;
 import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
 import net.minecraft.client.renderer.state.LevelRenderState;
 import net.minecraft.core.Holder;
@@ -26,6 +28,8 @@ import net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket;
 import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.packs.resources.ResourceManager;
+import net.minecraft.util.profiling.InactiveProfiler;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
@@ -348,6 +352,7 @@ public final class RendererBotShadowWorldManager {
 				featureRenderDispatcher
 		);
 		levelRenderer.onResourceManagerReload(client.getResourceManager());
+		initializeShadowCloudRenderer(levelRenderer, client.getResourceManager());
 		ClientLevel level = new ClientLevel(
 				connection,
 				levelData,
@@ -372,6 +377,26 @@ public final class RendererBotShadowWorldManager {
 				levelRenderer,
 				featureRenderDispatcher
 		);
+	}
+
+	private static void initializeShadowCloudRenderer(LevelRenderer levelRenderer, ResourceManager resourceManager) {
+		if (levelRenderer == null || resourceManager == null) {
+			return;
+		}
+		CloudRenderer cloudRenderer = levelRenderer.getCloudRenderer();
+		if (cloudRenderer == null) {
+			return;
+		}
+		try {
+			CloudRendererReloadInvoker invoker = (CloudRendererReloadInvoker) cloudRenderer;
+			invoker.lg2$applyPreparedClouds(
+					invoker.lg2$prepareCloudTexture(resourceManager, InactiveProfiler.INSTANCE),
+					resourceManager,
+					InactiveProfiler.INSTANCE
+			);
+		} catch (Throwable throwable) {
+			Lg2.LOGGER.warn("Renderer bot failed to initialize shadow cloud renderer", throwable);
+		}
 	}
 
 	private static void closeSession(ShadowLevelSession session) {
