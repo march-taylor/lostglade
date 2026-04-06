@@ -5,6 +5,7 @@ import com.lostglade.mixin.client.CameraPositionInvoker;
 import com.lostglade.mixin.client.GameRendererRenderLevelInvoker;
 import com.lostglade.mixin.client.LevelRendererRenderStateAccessor;
 import com.lostglade.mixin.client.MinecraftMainRenderTargetAccessor;
+import com.lostglade.mixin.client.MinecraftOffscreenWorldAccessor;
 import com.mojang.blaze3d.ProjectionType;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderTarget;
@@ -18,6 +19,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.TextureFilteringMethod;
 import net.minecraft.client.renderer.fog.FogRenderer;
 import net.minecraft.client.renderer.state.CameraRenderState;
 import net.minecraft.client.renderer.state.LevelRenderState;
@@ -128,6 +130,9 @@ public final class RendererBotOffscreenWorldRenderer {
 					true
 			);
 			RenderTarget previousRenderTarget = client.getMainRenderTarget();
+			MinecraftOffscreenWorldAccessor worldAccessor = (MinecraftOffscreenWorldAccessor) client;
+			ClientLevel previousLevel = worldAccessor.lg2$getLevel();
+			LevelRenderer previousLevelRenderer = worldAccessor.lg2$getLevelRenderer();
 			Entity previousCameraEntity = client.getCameraEntity();
 			Camera previousMainCamera = client.gameRenderer.getMainCamera();
 			boolean screenshotQueued = false;
@@ -136,6 +141,8 @@ public final class RendererBotOffscreenWorldRenderer {
 				offscreenRenderActive = true;
 				RenderSystem.backupProjectionMatrix();
 				((MinecraftMainRenderTargetAccessor) client).lg2$setMainRenderTarget(renderTarget);
+				worldAccessor.lg2$setLevel(renderLevel);
+				worldAccessor.lg2$setLevelRenderer(levelRenderer);
 				client.setCameraEntity(cameraState.camera().entity());
 				((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(cameraState.camera());
 				renderOffscreenWorld(client, renderLevel, levelRenderer, session.featureRenderDispatcher(), request, cameraState, renderTarget);
@@ -153,6 +160,8 @@ public final class RendererBotOffscreenWorldRenderer {
 				return false;
 			} finally {
 				((MinecraftMainRenderTargetAccessor) client).lg2$setMainRenderTarget(previousRenderTarget);
+				worldAccessor.lg2$setLevel(previousLevel);
+				worldAccessor.lg2$setLevelRenderer(previousLevelRenderer);
 				client.setCameraEntity(previousCameraEntity);
 				((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(previousMainCamera);
 				RenderSystem.restoreProjectionMatrix();
@@ -179,6 +188,7 @@ public final class RendererBotOffscreenWorldRenderer {
 		float partialTick = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
 		cameraState.camera().tick();
 		client.gameRenderer.lightTexture().updateLightTexture(1.0F);
+		gameRendererAccessor.lg2$extractCamera(partialTick);
 		levelRenderer.tick(cameraState.camera());
 		applyLevelRenderCameraState(levelRenderer, cameraState.camera(), partialTick);
 		Matrix4f projectionMatrix = client.gameRenderer.getProjectionMatrix(request.fovDegrees());
@@ -202,12 +212,12 @@ public final class RendererBotOffscreenWorldRenderer {
 		client.gameRenderer.getGlobalSettingsUniform().update(
 				request.renderWidth(),
 				request.renderHeight(),
-				gamma,
-				dayTime,
+				client.options.glintStrength().get(),
+				renderLevel.getGameTime(),
 				client.getDeltaTracker(),
-				client.options.getEffectiveRenderDistance(),
+				client.options.getMenuBackgroundBlurriness(),
 				cameraState.camera(),
-				false
+				client.options.textureFiltering().get() == TextureFilteringMethod.RGSS
 		);
 		levelRenderer.renderLevel(
 				GraphicsResourceAllocator.UNPOOLED,
@@ -223,6 +233,7 @@ public final class RendererBotOffscreenWorldRenderer {
 		);
 		featureRenderDispatcher.endFrame();
 		levelRenderer.endFrame();
+		fogRenderer.endFrame();
 	}
 
 	private static void applyLevelRenderCameraState(LevelRenderer levelRenderer, Camera camera, float partialTick) {

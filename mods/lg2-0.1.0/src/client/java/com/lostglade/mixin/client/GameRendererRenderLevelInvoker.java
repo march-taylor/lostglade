@@ -27,4 +27,7 @@ public interface GameRendererRenderLevelInvoker {
 
 	@Invoker("getDarkenWorldAmount")
 	float lg2$getDarkenWorldAmount(float partialTick);
+
+	@Invoker("extractCamera")
+	void lg2$extractCamera(float partialTick);
 }
