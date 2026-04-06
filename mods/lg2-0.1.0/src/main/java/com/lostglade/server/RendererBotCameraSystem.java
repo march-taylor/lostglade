@@ -32,6 +32,7 @@ import net.minecraft.world.level.gamerules.GameRules;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
+import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -1311,13 +1312,16 @@ public final class RendererBotCameraSystem {
 				continue;
 			}
 			if (!alreadyTracked || dirty) {
-				ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(chunk, level.getChunkSource().getLightEngine(), null, null);
+				ClientboundLevelChunkWithLightPacket packet = PacketContext.supplyWithContext(
+						bot.connection,
+						() -> new ClientboundLevelChunkWithLightPacket(chunk, level.getChunkSource().getLightEngine(), null, null)
+				);
 				ServerPlayNetworking.send(
 						bot,
 						new RendererBotPayloads.RendererBotShadowChunkDataS2CPayload(
 								desiredState.sessionId(),
 								level.dimension().identifier().toString(),
-								RendererBotShadowPacketCodec.encodeChunkPacket(level.registryAccess(), packet)
+								RendererBotShadowPacketCodec.encodeChunkPacket(level.registryAccess(), bot.connection, packet)
 						)
 				);
 				if (dirty) {
@@ -1351,21 +1355,23 @@ public final class RendererBotCameraSystem {
 		Set<Integer> desiredEntityIds = new HashSet<>();
 		List<Packet<? extends ClientGamePacketListener>> packets = new ArrayList<>();
 
-		for (Entity entity : level.getAllEntities()) {
-			if (!shouldShadowTrackEntity(entity, desiredState)) {
-				continue;
+		PacketContext.runWithContext(bot.connection, () -> {
+			for (Entity entity : level.getAllEntities()) {
+				if (!shouldShadowTrackEntity(entity, desiredState)) {
+					continue;
+				}
+				desiredEntityIds.add(entity.getId());
+				ShadowTrackedEntity trackedEntity = trackedEntities.get(entity.getId());
+				if (trackedEntity == null || trackedEntity.entity() != entity) {
+					trackedEntity = createShadowTrackedEntity(level, entity, bot);
+					trackedEntities.put(entity.getId(), trackedEntity);
+					trackedEntity.serverEntity().sendPairingData(bot, packets::add);
+				}
+				trackedEntity.collector().clear();
+				trackedEntity.serverEntity().sendChanges();
+				packets.addAll(trackedEntity.collector().drain());
 			}
-			desiredEntityIds.add(entity.getId());
-			ShadowTrackedEntity trackedEntity = trackedEntities.get(entity.getId());
-			if (trackedEntity == null || trackedEntity.entity() != entity) {
-				trackedEntity = createShadowTrackedEntity(level, entity, bot);
-				trackedEntities.put(entity.getId(), trackedEntity);
-				trackedEntity.serverEntity().sendPairingData(bot, packets::add);
-			}
-			trackedEntity.collector().clear();
-			trackedEntity.serverEntity().sendChanges();
-			packets.addAll(trackedEntity.collector().drain());
-		}
+		});
 
 		if (!trackedEntities.isEmpty()) {
 			List<Integer> removals = new ArrayList<>();
@@ -1390,7 +1396,7 @@ public final class RendererBotCameraSystem {
 				new RendererBotPayloads.RendererBotShadowEntityPacketsS2CPayload(
 						desiredState.sessionId(),
 						level.dimension().identifier().toString(),
-						RendererBotShadowPacketCodec.encodePacketList(level.registryAccess(), packets)
+						RendererBotShadowPacketCodec.encodePacketList(level.registryAccess(), bot.connection, packets)
 				)
 		);
 	}
