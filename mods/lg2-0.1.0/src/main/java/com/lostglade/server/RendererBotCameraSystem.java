@@ -554,6 +554,27 @@ public final class RendererBotCameraSystem {
 		return server == null ? null : selectBot(server);
 	}
 
+	public static List<ServerPlayer> activeBotsRenderingLevel(ServerLevel level) {
+		if (level == null) {
+			return List.of();
+		}
+		MinecraftServer server = level.getServer();
+		if (server == null) {
+			return List.of();
+		}
+		List<ServerPlayer> recipients = new ArrayList<>();
+		for (UUID botUuid : READY_BOTS.keySet()) {
+			ServerPlayer bot = server.getPlayerList().getPlayer(botUuid);
+			if (bot == null || !RendererBotPresenceSystem.isRendererBot(bot)) {
+				continue;
+			}
+			if (isLevelActivelyRenderedByBot(server, botUuid, level.dimension())) {
+				recipients.add(bot);
+			}
+		}
+		return recipients;
+	}
+
 	public static boolean isCameraPlayerLoaded(ServerLevel level, BlockPos cameraPos) {
 		if (level == null || cameraPos == null || !level.hasChunkAt(cameraPos)) {
 			return false;
@@ -624,6 +645,37 @@ public final class RendererBotCameraSystem {
 			capture.fullFuture().completeExceptionally(throwable);
 		}
 		releaseBotCameraIfNeeded(capture.server(), capture.botUuid(), capture.resetCameraOnFinish());
+	}
+
+	private static boolean isLevelActivelyRenderedByBot(MinecraftServer server, UUID botUuid, ResourceKey<Level> dimension) {
+		if (server == null || botUuid == null || dimension == null) {
+			return false;
+		}
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream != null
+					&& botUuid.equals(stream.botUuid())
+					&& dimension.equals(stream.spec().dimension())) {
+				return true;
+			}
+		}
+		for (PendingCapture capture : PENDING_CAPTURES.values()) {
+			if (capture != null
+					&& botUuid.equals(capture.botUuid())
+					&& !capture.isDone()
+					&& dimension.equals(capture.dimension())) {
+				return true;
+			}
+		}
+		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
+			if (recording != null
+					&& botUuid.equals(recording.botUuid())
+					&& !recording.stopRequested()
+					&& !recording.completionFuture().isDone()
+					&& dimension.equals(recording.dimension())) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static void cleanupIfFinished(UUID requestId, PendingCapture capture) {

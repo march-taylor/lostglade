@@ -1,6 +1,7 @@
 package com.lostglade.client;
 
 import com.lostglade.Lg2;
+import com.lostglade.mixin.client.ClientLevelMapDataAccessor;
 import com.lostglade.mixin.client.ClientPacketListenerShadowAccessor;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.network.RendererBotShadowPacketCodec;
@@ -28,6 +29,8 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.saveddata.maps.MapId;
+import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -37,7 +40,9 @@ import java.util.UUID;
 
 public final class RendererBotShadowWorldManager {
 	private static final Object LOCK = new Object();
+	private static final long ACTIVE_SESSION_TICK_WINDOW_MS = 2_500L;
 	private static final Map<UUID, ShadowLevelSession> SHADOW_SESSIONS = new HashMap<>();
+	private static final Map<UUID, Long> LAST_RENDER_ACTIVITY_AT = new HashMap<>();
 
 	private RendererBotShadowWorldManager() {
 	}
@@ -76,6 +81,29 @@ public final class RendererBotShadowWorldManager {
 		);
 	}
 
+	public static void onMapDataUpdated(ClientPacketListener connection, net.minecraft.network.protocol.game.ClientboundMapItemDataPacket packet) {
+		if (connection == null || packet == null) {
+			return;
+		}
+		Minecraft client = Minecraft.getInstance();
+		ClientLevel sourceLevel = client.level;
+		if (sourceLevel == null) {
+			return;
+		}
+		MapItemSavedData mapData = sourceLevel.getMapData(packet.mapId());
+		if (mapData == null) {
+			return;
+		}
+		synchronized (LOCK) {
+			for (ShadowLevelSession session : SHADOW_SESSIONS.values()) {
+				if (session == null || session.level() == null) {
+					continue;
+				}
+				session.level().overrideMapData(packet.mapId(), mapData);
+			}
+		}
+	}
+
 	public static ShadowRenderSession resolveRenderSession(UUID sessionId) {
 		if (sessionId == null) {
 			return null;
@@ -85,6 +113,7 @@ public final class RendererBotShadowWorldManager {
 			if (session == null) {
 				return null;
 			}
+			LAST_RENDER_ACTIVITY_AT.put(sessionId, System.currentTimeMillis());
 			return new ShadowRenderSession(session.sessionId(), session.dimensionId(), session.level(), session.levelRenderer(), session.featureRenderDispatcher());
 		}
 	}
@@ -123,6 +152,7 @@ public final class RendererBotShadowWorldManager {
 				closeSession(session);
 			}
 			SHADOW_SESSIONS.clear();
+			LAST_RENDER_ACTIVITY_AT.clear();
 		}
 	}
 
@@ -141,6 +171,9 @@ public final class RendererBotShadowWorldManager {
 			if (session == null || session.level() == null) {
 				continue;
 			}
+			if (!shouldTickSession(session.sessionId())) {
+				continue;
+			}
 			session.level().tick(() -> true);
 			session.level().tickEntities();
 		}
@@ -152,12 +185,14 @@ public final class RendererBotShadowWorldManager {
 		}
 		synchronized (LOCK) {
 			ShadowLevelSession existing = SHADOW_SESSIONS.remove(payload.sessionId());
+			LAST_RENDER_ACTIVITY_AT.remove(payload.sessionId());
 			closeSession(existing);
 			ShadowLevelSession created = createShadowSession(client, payload);
 			if (created == null) {
 				return;
 			}
 			SHADOW_SESSIONS.put(payload.sessionId(), created);
+			LAST_RENDER_ACTIVITY_AT.put(payload.sessionId(), System.currentTimeMillis());
 			applyState(created.level(), payload.gameTime(), payload.dayTime(), payload.tickDayTime(), payload.raining());
 			applyViewState(client.getConnection(), created.level(), payload.viewDistance(), 0, 0);
 			Lg2.LOGGER.info("Renderer bot created shadow session {} for {}", payload.sessionId(), payload.dimensionId());
@@ -257,6 +292,7 @@ public final class RendererBotShadowWorldManager {
 		}
 		synchronized (LOCK) {
 			ShadowLevelSession removed = SHADOW_SESSIONS.remove(sessionId);
+			LAST_RENDER_ACTIVITY_AT.remove(sessionId);
 			closeSession(removed);
 		}
 	}
@@ -311,6 +347,7 @@ public final class RendererBotShadowWorldManager {
 		levelRenderer.setLevel(level);
 		levelRenderer.resize(Math.max(1, client.getWindow().getWidth()), Math.max(1, client.getWindow().getHeight()));
 		level.setServerSimulationDistance(Math.max(2, payload.simulationDistance()));
+		copyKnownMapData(client.level, level);
 		return new ShadowLevelSession(
 				payload.sessionId(),
 				payload.dimensionId(),
@@ -375,6 +412,35 @@ public final class RendererBotShadowWorldManager {
 		}
 		level.setTimeFromServer(gameTime, dayTime, tickDayTime);
 		level.getLevelData().setRaining(raining);
+	}
+
+	private static boolean shouldTickSession(UUID sessionId) {
+		if (sessionId == null) {
+			return false;
+		}
+		long now = System.currentTimeMillis();
+		synchronized (LOCK) {
+			Long lastActivity = LAST_RENDER_ACTIVITY_AT.get(sessionId);
+			return lastActivity != null && now - lastActivity <= ACTIVE_SESSION_TICK_WINDOW_MS;
+		}
+	}
+
+	private static void copyKnownMapData(ClientLevel sourceLevel, ClientLevel targetLevel) {
+		if (sourceLevel == null || targetLevel == null) {
+			return;
+		}
+		Map<MapId, MapItemSavedData> sourceMapData = ((ClientLevelMapDataAccessor) sourceLevel).lg2$getMapData();
+		if (sourceMapData == null || sourceMapData.isEmpty()) {
+			return;
+		}
+		for (Map.Entry<MapId, MapItemSavedData> entry : sourceMapData.entrySet()) {
+			MapId mapId = entry.getKey();
+			MapItemSavedData mapData = entry.getValue();
+			if (mapId == null || mapData == null) {
+				continue;
+			}
+			targetLevel.overrideMapData(mapId, mapData);
+		}
 	}
 
 	private static Difficulty resolveDifficulty(int ordinal) {

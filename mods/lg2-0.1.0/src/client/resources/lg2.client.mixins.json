@@ -3,8 +3,10 @@
 	"package": "com.lostglade.mixin.client",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
+		"ClientLevelMapDataAccessor",
 		"CameraPositionInvoker",
 		"ClientPacketListenerShadowAccessor",
+		"ClientPacketListenerShadowMapSyncMixin",
 		"GameRendererOffscreenProjectionMixin",
 		"GameRendererRenderLevelInvoker",
 		"LevelRendererRenderStateAccessor",

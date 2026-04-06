@@ -10512,18 +10512,19 @@ public final class MonitorScreenSystem {
 		if (level == null || component == null) {
 			return List.of();
 		}
+		LinkedHashSet<ServerPlayer> recipients = new LinkedHashSet<>(RendererBotCameraSystem.activeBotsRenderingLevel(level));
 		if (!isPlayerMode(component.viewMode())) {
-			return new ArrayList<>(level.players());
+			recipients.addAll(level.players());
+			return new ArrayList<>(recipients);
 		}
 		double radiusBlocks = monitorMapUpdateRadiusBlocks();
 		double radiusSquared = radiusBlocks * radiusBlocks;
-		List<ServerPlayer> recipients = new ArrayList<>();
 		for (ServerPlayer player : level.players()) {
 			if (isPlayerNearScreenComponent(player, component, radiusSquared)) {
 				recipients.add(player);
 			}
 		}
-		return recipients;
+		return new ArrayList<>(recipients);
 	}
 
 	private static long effectiveYoutubePollDelayMs(MinecraftServer server, ScreenRuntimeKey key, boolean paused) {
