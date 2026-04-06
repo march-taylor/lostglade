@@ -8,6 +8,7 @@ import net.minecraft.client.CloudStatus;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.GraphicsPreset;
 import net.minecraft.client.InactivityFpsLimit;
+import net.minecraft.client.PrioritizeChunkUpdates;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.multiplayer.ServerData;
@@ -142,6 +143,7 @@ public final class RendererBotClientMode {
 		changed |= setMin(client.options.entityDistanceScaling(), 2.5D);
 		changed |= setIfDifferent(client.options.particles(), ParticleStatus.ALL);
 		changed |= setIfDifferent(client.options.ambientOcclusion(), true);
+		changed |= setIfDifferent(client.options.prioritizeChunkUpdates(), PrioritizeChunkUpdates.NONE);
 		if (client.options.getCameraType() != CameraType.FIRST_PERSON) {
 			client.options.setCameraType(CameraType.FIRST_PERSON);
 			changed = true;
@@ -156,7 +158,7 @@ public final class RendererBotClientMode {
 				client.levelRenderer.needsUpdate();
 				client.levelRenderer.allChanged();
 			}
-			Lg2.LOGGER.info("Renderer bot visual profile applied: fancy graphics, clouds, full particles, extended distances");
+			Lg2.LOGGER.info("Renderer bot visual profile applied: fancy graphics, clouds, full particles, extended distances, no prioritized chunk updates");
 		}
 		visualsConfigured = true;
 	}

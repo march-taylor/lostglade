@@ -16,8 +16,6 @@
 		"CarvedPumpkinBlockGolemGateMixin",
 		"ChickenTrojanRoosterAmbientSoundMixin",
 		"ChickenTrojanRoosterMixin",
-		"ChunkMapTrackedEntityRendererBotMixin",
-		"ChunkMapVirtualCameraTrackingMixin",
 		"EntityCartelNoSaveMixin",
 		"EntityPassengerAccessor",
 		"EntityCopperManRepulsorLightningMixin",

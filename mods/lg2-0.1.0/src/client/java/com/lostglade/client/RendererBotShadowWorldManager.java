@@ -3,8 +3,8 @@ package com.lostglade.client;
 import com.lostglade.Lg2;
 import com.lostglade.mixin.client.ClientPacketListenerShadowAccessor;
 import com.lostglade.network.RendererBotPayloads;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import com.lostglade.network.RendererBotShadowPacketCodec;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.Minecraft;
@@ -21,6 +21,8 @@ import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
+import net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket;
+import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.Difficulty;
@@ -31,10 +33,11 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 public final class RendererBotShadowWorldManager {
 	private static final Object LOCK = new Object();
-	private static final Map<String, ShadowLevelSession> SHADOW_LEVELS = new HashMap<>();
+	private static final Map<UUID, ShadowLevelSession> SHADOW_SESSIONS = new HashMap<>();
 
 	private RendererBotShadowWorldManager() {
 	}
@@ -52,8 +55,12 @@ public final class RendererBotShadowWorldManager {
 				(payload, context) -> context.client().execute(() -> applyLevelState(context.client(), payload))
 		);
 		ClientPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotShadowViewS2CPayload.TYPE,
+				(payload, context) -> context.client().execute(() -> applyView(context.client(), payload))
+		);
+		ClientPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotShadowLevelDestroyS2CPayload.TYPE,
-				(payload, context) -> context.client().execute(() -> destroyShadowLevel(payload.dimensionId()))
+				(payload, context) -> context.client().execute(() -> destroyShadowSession(payload.sessionId()))
 		);
 		ClientPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotShadowChunkDataS2CPayload.TYPE,
@@ -69,29 +76,40 @@ public final class RendererBotShadowWorldManager {
 		);
 	}
 
-	public static ClientLevel resolveRenderLevel(Minecraft client, String dimensionId) {
-		if (client == null || dimensionId == null || dimensionId.isBlank()) {
+	public static ShadowRenderSession resolveRenderSession(UUID sessionId) {
+		if (sessionId == null) {
 			return null;
 		}
-		if (client.level != null && dimensionId.equals(client.level.dimension().identifier().toString())) {
-			return client.level;
-		}
 		synchronized (LOCK) {
-			ShadowLevelSession session = SHADOW_LEVELS.get(dimensionId);
-			return session == null ? null : session.level();
+			ShadowLevelSession session = SHADOW_SESSIONS.get(sessionId);
+			if (session == null) {
+				return null;
+			}
+			return new ShadowRenderSession(session.sessionId(), session.dimensionId(), session.level(), session.levelRenderer(), session.featureRenderDispatcher());
 		}
 	}
 
-	public static boolean isManagedLevel(Minecraft client, ClientLevel level) {
+	public static boolean isManagedLevel(ClientLevel level) {
 		if (level == null) {
 			return false;
 		}
-		if (client != null && client.level == level) {
-			return true;
+		synchronized (LOCK) {
+			for (ShadowLevelSession session : SHADOW_SESSIONS.values()) {
+				if (session != null && session.level() == level) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	public static boolean isManagedRenderer(LevelRenderer renderer, ClientLevel level) {
+		if (renderer == null || level == null) {
+			return false;
 		}
 		synchronized (LOCK) {
-			for (ShadowLevelSession session : SHADOW_LEVELS.values()) {
-				if (session != null && session.level() == level) {
+			for (ShadowLevelSession session : SHADOW_SESSIONS.values()) {
+				if (session != null && session.level() == level && session.levelRenderer() == renderer) {
 					return true;
 				}
 			}
@@ -101,10 +119,10 @@ public final class RendererBotShadowWorldManager {
 
 	public static void clear() {
 		synchronized (LOCK) {
-			for (ShadowLevelSession session : SHADOW_LEVELS.values()) {
+			for (ShadowLevelSession session : SHADOW_SESSIONS.values()) {
 				closeSession(session);
 			}
-			SHADOW_LEVELS.clear();
+			SHADOW_SESSIONS.clear();
 		}
 	}
 
@@ -114,13 +132,13 @@ public final class RendererBotShadowWorldManager {
 		}
 		List<ShadowLevelSession> sessions;
 		synchronized (LOCK) {
-			if (SHADOW_LEVELS.isEmpty()) {
+			if (SHADOW_SESSIONS.isEmpty()) {
 				return;
 			}
-			sessions = new ArrayList<>(SHADOW_LEVELS.values());
+			sessions = new ArrayList<>(SHADOW_SESSIONS.values());
 		}
 		for (ShadowLevelSession session : sessions) {
-			if (session == null || session.level() == null || client.level == session.level()) {
+			if (session == null || session.level() == null) {
 				continue;
 			}
 			session.level().tick(() -> true);
@@ -129,48 +147,59 @@ public final class RendererBotShadowWorldManager {
 	}
 
 	private static void applyLevelInit(Minecraft client, RendererBotPayloads.RendererBotShadowLevelInitS2CPayload payload) {
-		if (client == null || client.getConnection() == null || payload == null || payload.dimensionId() == null || payload.dimensionId().isBlank()) {
-			return;
-		}
-		if (client.level != null && payload.dimensionId().equals(client.level.dimension().identifier().toString())) {
+		if (client == null || client.getConnection() == null || payload == null || payload.sessionId() == null) {
 			return;
 		}
 		synchronized (LOCK) {
-			ShadowLevelSession existing = SHADOW_LEVELS.get(payload.dimensionId());
-			if (existing != null) {
-				closeSession(existing);
-				SHADOW_LEVELS.remove(payload.dimensionId());
-			}
+			ShadowLevelSession existing = SHADOW_SESSIONS.remove(payload.sessionId());
+			closeSession(existing);
 			ShadowLevelSession created = createShadowSession(client, payload);
 			if (created == null) {
 				return;
 			}
-			SHADOW_LEVELS.put(payload.dimensionId(), created);
+			SHADOW_SESSIONS.put(payload.sessionId(), created);
 			applyState(created.level(), payload.gameTime(), payload.dayTime(), payload.tickDayTime(), payload.raining());
-			created.level().setServerSimulationDistance(Math.max(2, payload.simulationDistance()));
+			applyViewState(client.getConnection(), created.level(), payload.viewDistance(), 0, 0);
+			Lg2.LOGGER.info("Renderer bot created shadow session {} for {}", payload.sessionId(), payload.dimensionId());
 		}
 	}
 
 	private static void applyLevelState(Minecraft client, RendererBotPayloads.RendererBotShadowLevelStateS2CPayload payload) {
-		if (client == null || payload == null) {
-			return;
-		}
-		synchronized (LOCK) {
-			ShadowLevelSession session = SHADOW_LEVELS.get(payload.dimensionId());
-			if (session == null) {
-				return;
-			}
-			applyState(session.level(), payload.gameTime(), payload.dayTime(), payload.tickDayTime(), payload.raining());
-		}
-	}
-
-	private static void applyChunkData(Minecraft client, RendererBotPayloads.RendererBotShadowChunkDataS2CPayload payload) {
-		if (client == null || client.getConnection() == null || payload == null) {
+		if (client == null || payload == null || payload.sessionId() == null) {
 			return;
 		}
 		ShadowLevelSession session;
 		synchronized (LOCK) {
-			session = SHADOW_LEVELS.get(payload.dimensionId());
+			session = SHADOW_SESSIONS.get(payload.sessionId());
+		}
+		if (session == null) {
+			return;
+		}
+		applyState(session.level(), payload.gameTime(), payload.dayTime(), payload.tickDayTime(), payload.raining());
+	}
+
+	private static void applyView(Minecraft client, RendererBotPayloads.RendererBotShadowViewS2CPayload payload) {
+		if (client == null || client.getConnection() == null || payload == null || payload.sessionId() == null) {
+			return;
+		}
+		ShadowLevelSession session;
+		synchronized (LOCK) {
+			session = SHADOW_SESSIONS.get(payload.sessionId());
+		}
+		if (session == null) {
+			return;
+		}
+		applyViewState(client.getConnection(), session.level(), payload.viewDistance(), payload.centerChunkX(), payload.centerChunkZ());
+		session.levelRenderer().needsUpdate();
+	}
+
+	private static void applyChunkData(Minecraft client, RendererBotPayloads.RendererBotShadowChunkDataS2CPayload payload) {
+		if (client == null || client.getConnection() == null || payload == null || payload.sessionId() == null) {
+			return;
+		}
+		ShadowLevelSession session;
+		synchronized (LOCK) {
+			session = SHADOW_SESSIONS.get(payload.sessionId());
 		}
 		if (session == null) {
 			return;
@@ -180,16 +209,16 @@ public final class RendererBotShadowWorldManager {
 			client.getConnection().handleLevelChunkWithLight(packet);
 			session.level().pollLightUpdates();
 		});
-		RendererBotOffscreenWorldRenderer.onChunkReadyToRender(session.level(), new ChunkPos(packet.getX(), packet.getZ()));
+		session.levelRenderer().onChunkReadyToRender(new ChunkPos(packet.getX(), packet.getZ()));
 	}
 
 	private static void applyForgetChunk(Minecraft client, RendererBotPayloads.RendererBotShadowForgetChunkS2CPayload payload) {
-		if (client == null || client.getConnection() == null || payload == null) {
+		if (client == null || client.getConnection() == null || payload == null || payload.sessionId() == null) {
 			return;
 		}
 		ShadowLevelSession session;
 		synchronized (LOCK) {
-			session = SHADOW_LEVELS.get(payload.dimensionId());
+			session = SHADOW_SESSIONS.get(payload.sessionId());
 		}
 		if (session == null) {
 			return;
@@ -202,12 +231,12 @@ public final class RendererBotShadowWorldManager {
 	}
 
 	private static void applyEntityPackets(Minecraft client, RendererBotPayloads.RendererBotShadowEntityPacketsS2CPayload payload) {
-		if (client == null || client.getConnection() == null || payload == null || payload.packets() == null || payload.packets().isEmpty()) {
+		if (client == null || client.getConnection() == null || payload == null || payload.sessionId() == null || payload.packets() == null || payload.packets().isEmpty()) {
 			return;
 		}
 		ShadowLevelSession session;
 		synchronized (LOCK) {
-			session = SHADOW_LEVELS.get(payload.dimensionId());
+			session = SHADOW_SESSIONS.get(payload.sessionId());
 		}
 		if (session == null) {
 			return;
@@ -220,6 +249,16 @@ public final class RendererBotShadowWorldManager {
 				}
 			}
 		});
+	}
+
+	private static void destroyShadowSession(UUID sessionId) {
+		if (sessionId == null) {
+			return;
+		}
+		synchronized (LOCK) {
+			ShadowLevelSession removed = SHADOW_SESSIONS.remove(sessionId);
+			closeSession(removed);
+		}
 	}
 
 	private static ShadowLevelSession createShadowSession(Minecraft client, RendererBotPayloads.RendererBotShadowLevelInitS2CPayload payload) {
@@ -272,19 +311,14 @@ public final class RendererBotShadowWorldManager {
 		levelRenderer.setLevel(level);
 		levelRenderer.resize(Math.max(1, client.getWindow().getWidth()), Math.max(1, client.getWindow().getHeight()));
 		level.setServerSimulationDistance(Math.max(2, payload.simulationDistance()));
-		applyState(level, payload.gameTime(), payload.dayTime(), payload.tickDayTime(), payload.raining());
-		Lg2.LOGGER.info("Renderer bot created shadow level {} ({})", payload.dimensionId(), payload.dimensionTypeId());
-		return new ShadowLevelSession(payload.dimensionId(), payload.dimensionTypeId(), level, levelRenderer, featureRenderDispatcher);
-	}
-
-	private static void destroyShadowLevel(String dimensionId) {
-		if (dimensionId == null || dimensionId.isBlank()) {
-			return;
-		}
-		synchronized (LOCK) {
-			ShadowLevelSession removed = SHADOW_LEVELS.remove(dimensionId);
-			closeSession(removed);
-		}
+		return new ShadowLevelSession(
+				payload.sessionId(),
+				payload.dimensionId(),
+				payload.dimensionTypeId(),
+				level,
+				levelRenderer,
+				featureRenderDispatcher
+		);
 	}
 
 	private static void closeSession(ShadowLevelSession session) {
@@ -325,6 +359,16 @@ public final class RendererBotShadowWorldManager {
 		}
 	}
 
+	private static void applyViewState(ClientPacketListener connection, ClientLevel level, int viewDistance, int centerChunkX, int centerChunkZ) {
+		if (connection == null || level == null) {
+			return;
+		}
+		runWithShadowLevel(connection, level, () -> {
+			connection.handleSetChunkCacheRadius(new ClientboundSetChunkCacheRadiusPacket(Math.max(2, viewDistance)));
+			connection.handleSetChunkCacheCenter(new ClientboundSetChunkCacheCenterPacket(centerChunkX, centerChunkZ));
+		});
+	}
+
 	private static void applyState(ClientLevel level, long gameTime, long dayTime, boolean tickDayTime, boolean raining) {
 		if (level == null) {
 			return;
@@ -341,7 +385,17 @@ public final class RendererBotShadowWorldManager {
 		return values[ordinal];
 	}
 
+	public record ShadowRenderSession(
+			UUID sessionId,
+			String dimensionId,
+			ClientLevel level,
+			LevelRenderer levelRenderer,
+			FeatureRenderDispatcher featureRenderDispatcher
+	) {
+	}
+
 	private record ShadowLevelSession(
+			UUID sessionId,
 			String dimensionId,
 			String dimensionTypeId,
 			ClientLevel level,

@@ -808,13 +808,7 @@ public final class RendererBotCameraSystem {
 		if (server == null) {
 			return;
 		}
-		updateVirtualCameraChunkTickets(server);
 		syncShadowWorlds(server);
-		ServerPlayer bot = selectBot(server);
-		if (bot != null
-				&& (botHasActiveJobs(bot.getUUID()) || !Objects.equals(bot.getChunkTrackingView(), ChunkTrackingView.EMPTY))) {
-			refreshVirtualEntityTracking(bot);
-		}
 	}
 
 	private static int resolveViewDistance(ServerPlayer bot) {
@@ -1002,6 +996,7 @@ public final class RendererBotCameraSystem {
 			return;
 		}
 		Map<ShadowSyncKey, ShadowDesiredState> desiredStates = collectDesiredShadowStates(server);
+		syncShadowChunkTickets(server, desiredStates.values());
 		Set<ChunkTicketKey> consumedDirtyChunks = new HashSet<>();
 		for (Map.Entry<ShadowSyncKey, ShadowDesiredState> entry : desiredStates.entrySet()) {
 			ShadowSyncKey key = entry.getKey();
@@ -1020,14 +1015,54 @@ public final class RendererBotCameraSystem {
 		DIRTY_SHADOW_CHUNKS.removeAll(consumedDirtyChunks);
 	}
 
+	private static void syncShadowChunkTickets(MinecraftServer server, Iterable<ShadowDesiredState> desiredStates) {
+		Map<ChunkTicketKey, Integer> desiredRefs = new HashMap<>();
+		if (server == null) {
+			ACTIVE_CAMERA_CHUNK_TICKETS.clear();
+			return;
+		}
+		if (desiredStates != null) {
+			for (ShadowDesiredState desiredState : desiredStates) {
+				if (desiredState == null || desiredState.level() == null) {
+					continue;
+				}
+				LongIterator iterator = desiredState.trackedChunks().iterator();
+				while (iterator.hasNext()) {
+					long chunkLong = iterator.nextLong();
+					desiredRefs.merge(new ChunkTicketKey(desiredState.level().dimension(), chunkLong), 1, Integer::sum);
+				}
+			}
+		}
+		if (Objects.equals(ACTIVE_CAMERA_CHUNK_TICKETS, desiredRefs)) {
+			return;
+		}
+		Set<ChunkTicketKey> keys = new LinkedHashSet<>();
+		keys.addAll(ACTIVE_CAMERA_CHUNK_TICKETS.keySet());
+		keys.addAll(desiredRefs.keySet());
+		for (ChunkTicketKey key : keys) {
+			int current = ACTIVE_CAMERA_CHUNK_TICKETS.getOrDefault(key, 0);
+			int desired = desiredRefs.getOrDefault(key, 0);
+			ServerLevel level = server.getLevel(key.dimension());
+			if (level == null) {
+				continue;
+			}
+			if (current <= 0 && desired > 0) {
+				level.getChunkSource().addTicketWithRadius(TicketType.UNKNOWN, new ChunkPos(key.chunkLong()), 0);
+			} else if (current > 0 && desired <= 0) {
+				level.getChunkSource().removeTicketWithRadius(TicketType.UNKNOWN, new ChunkPos(key.chunkLong()), 0);
+			}
+		}
+		ACTIVE_CAMERA_CHUNK_TICKETS.clear();
+		ACTIVE_CAMERA_CHUNK_TICKETS.putAll(desiredRefs);
+	}
+
 	private static Map<ShadowSyncKey, ShadowDesiredState> collectDesiredShadowStates(MinecraftServer server) {
 		Map<ShadowSyncKey, ShadowDesiredState> desiredStates = new HashMap<>();
 		ServerPlayer bot = selectBot(server);
-		if (server == null || bot == null || !(bot.level() instanceof ServerLevel botLevel)) {
+		if (server == null || bot == null) {
 			return desiredStates;
 		}
 		UUID botUuid = bot.getUUID();
-		ResourceKey<Level> botDimension = botLevel.dimension();
 		int viewDistance = resolveViewDistance(bot);
 
 		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
@@ -1049,13 +1084,10 @@ public final class RendererBotCameraSystem {
 				stopLiveStreamInternal(stream, "Renderer bot live stream target is unavailable", true);
 				continue;
 			}
-			if (target.level().dimension().equals(botDimension)) {
-				continue;
-			}
 			if (spec.cameraPos() != null && !isCameraPlayerLoaded(target.level(), spec.cameraPos())) {
 				continue;
 			}
-			accumulateShadowDesiredState(desiredStates, botUuid, target, viewDistance);
+			accumulateShadowDesiredState(desiredStates, botUuid, stream.streamId(), target, viewDistance);
 		}
 
 		for (Map.Entry<UUID, PendingCapture> entry : PENDING_CAPTURES.entrySet()) {
@@ -1068,10 +1100,7 @@ public final class RendererBotCameraSystem {
 				failCapture(entry.getKey(), capture, "Renderer bot capture target is unavailable");
 				continue;
 			}
-			if (target.level().dimension().equals(botDimension)) {
-				continue;
-			}
-			accumulateShadowDesiredState(desiredStates, botUuid, target, viewDistance);
+			accumulateShadowDesiredState(desiredStates, botUuid, capture.requestId(), target, viewDistance);
 		}
 
 		for (Map.Entry<UUID, PendingVideoRecording> entry : PENDING_VIDEO_RECORDINGS.entrySet()) {
@@ -1084,10 +1113,7 @@ public final class RendererBotCameraSystem {
 				failVideoRecording(entry.getKey(), recording, "Renderer bot recording target is unavailable");
 				continue;
 			}
-			if (target.level().dimension().equals(botDimension)) {
-				continue;
-			}
-			accumulateShadowDesiredState(desiredStates, botUuid, target, viewDistance);
+			accumulateShadowDesiredState(desiredStates, botUuid, recording.requestId(), target, viewDistance);
 		}
 		return desiredStates;
 	}
@@ -1095,16 +1121,17 @@ public final class RendererBotCameraSystem {
 	private static void accumulateShadowDesiredState(
 			Map<ShadowSyncKey, ShadowDesiredState> desiredStates,
 			UUID botUuid,
+			UUID sessionId,
 			ScheduledServiceTarget target,
 			int viewDistance
 	) {
-		if (desiredStates == null || botUuid == null || target == null || !(target.level() instanceof ServerLevel level)) {
+		if (desiredStates == null || botUuid == null || sessionId == null || target == null || !(target.level() instanceof ServerLevel level)) {
 			return;
 		}
-		ShadowSyncKey key = new ShadowSyncKey(botUuid, level.dimension());
-		ShadowDesiredState desiredState = desiredStates.computeIfAbsent(key, ignored -> new ShadowDesiredState(level, viewDistance));
-		desiredState.targets().add(target);
+		ShadowSyncKey key = new ShadowSyncKey(botUuid, sessionId);
+		ShadowDesiredState desiredState = new ShadowDesiredState(sessionId, level, viewDistance, target);
 		appendVirtualTargetChunks(desiredState.trackedChunks(), level, target, viewDistance);
+		desiredStates.put(key, desiredState);
 	}
 
 	private static void syncShadowState(
@@ -1122,9 +1149,10 @@ public final class RendererBotCameraSystem {
 		}
 		ShadowDimensionSyncState activeState = ACTIVE_SHADOW_SYNC_STATES.computeIfAbsent(
 				key,
-				ignored -> new ShadowDimensionSyncState(key.botUuid(), key.dimension())
+				ignored -> new ShadowDimensionSyncState(key.botUuid(), key.sessionId(), desiredState.level().dimension())
 		);
 		syncShadowLevelInit(bot, desiredState, activeState);
+		syncShadowView(bot, desiredState, activeState);
 		syncShadowLevelState(bot, desiredState.level(), activeState);
 		syncShadowChunks(bot, desiredState, activeState, consumedDirtyChunks);
 		syncShadowEntities(bot, desiredState, activeState);
@@ -1152,6 +1180,7 @@ public final class RendererBotCameraSystem {
 		ServerPlayNetworking.send(
 				bot,
 				new RendererBotPayloads.RendererBotShadowLevelInitS2CPayload(
+						desiredState.sessionId(),
 						level.dimension().identifier().toString(),
 						dimensionTypeId,
 						level.getSeed(),
@@ -1166,6 +1195,30 @@ public final class RendererBotCameraSystem {
 						level.getSeaLevel(),
 						desiredState.viewDistance(),
 						Math.max(2, level.getServer().getPlayerList().getSimulationDistance())
+				)
+		);
+	}
+
+	private static void syncShadowView(ServerPlayer bot, ShadowDesiredState desiredState, ShadowDimensionSyncState activeState) {
+		if (bot == null || desiredState == null || activeState == null) {
+			return;
+		}
+		int centerChunkX = desiredState.centerChunkX();
+		int centerChunkZ = desiredState.centerChunkZ();
+		if (activeState.lastCenterChunkX() == centerChunkX
+				&& activeState.lastCenterChunkZ() == centerChunkZ
+				&& activeState.viewDistance() == desiredState.viewDistance()) {
+			return;
+		}
+		activeState.setLastCenterChunkX(centerChunkX);
+		activeState.setLastCenterChunkZ(centerChunkZ);
+		ServerPlayNetworking.send(
+				bot,
+				new RendererBotPayloads.RendererBotShadowViewS2CPayload(
+						desiredState.sessionId(),
+						centerChunkX,
+						centerChunkZ,
+						desiredState.viewDistance()
 				)
 		);
 	}
@@ -1188,6 +1241,7 @@ public final class RendererBotCameraSystem {
 		ServerPlayNetworking.send(
 				bot,
 				new RendererBotPayloads.RendererBotShadowLevelStateS2CPayload(
+						activeState.sessionId(),
 						level.dimension().identifier().toString(),
 						gameTime,
 						dayTime,
@@ -1227,6 +1281,7 @@ public final class RendererBotCameraSystem {
 				ServerPlayNetworking.send(
 						bot,
 						new RendererBotPayloads.RendererBotShadowChunkDataS2CPayload(
+								desiredState.sessionId(),
 								level.dimension().identifier().toString(),
 								RendererBotShadowPacketCodec.encodeChunkPacket(level.registryAccess(), packet)
 						)
@@ -1244,6 +1299,7 @@ public final class RendererBotCameraSystem {
 			ServerPlayNetworking.send(
 					bot,
 					new RendererBotPayloads.RendererBotShadowForgetChunkS2CPayload(
+							desiredState.sessionId(),
 							level.dimension().identifier().toString(),
 							removedPos.x,
 							removedPos.z
@@ -1298,6 +1354,7 @@ public final class RendererBotCameraSystem {
 		ServerPlayNetworking.send(
 				bot,
 				new RendererBotPayloads.RendererBotShadowEntityPacketsS2CPayload(
+						desiredState.sessionId(),
 						level.dimension().identifier().toString(),
 						RendererBotShadowPacketCodec.encodePacketList(level.registryAccess(), packets)
 				)
@@ -1318,17 +1375,13 @@ public final class RendererBotCameraSystem {
 		}
 		double entityRangeBlocks = Math.max(16.0D, entity.getType().clientTrackingRange() * 16.0D);
 		double entityRangeSq = entityRangeBlocks * entityRangeBlocks;
-		for (ScheduledServiceTarget target : desiredState.targets()) {
-			if (target == null || target.level() != desiredState.level()) {
-				continue;
-			}
-			double dx = entity.getX() - target.x();
-			double dz = entity.getZ() - target.z();
-			if (dx * dx + dz * dz <= entityRangeSq) {
-				return true;
-			}
+		ScheduledServiceTarget target = desiredState.target();
+		if (target == null || target.level() != desiredState.level()) {
+			return false;
 		}
-		return false;
+		double dx = entity.getX() - target.x();
+		double dz = entity.getZ() - target.z();
+		return dx * dx + dz * dz <= entityRangeSq;
 	}
 
 	private static ShadowTrackedEntity createShadowTrackedEntity(ServerLevel level, Entity entity, ServerPlayer bot) {
@@ -1376,7 +1429,7 @@ public final class RendererBotCameraSystem {
 		}
 		ServerPlayNetworking.send(
 				bot,
-				new RendererBotPayloads.RendererBotShadowLevelDestroyS2CPayload(key.dimension().identifier().toString())
+				new RendererBotPayloads.RendererBotShadowLevelDestroyS2CPayload(key.sessionId())
 		);
 	}
 
@@ -1794,18 +1847,29 @@ public final class RendererBotCameraSystem {
 	private record ChunkTicketKey(ResourceKey<Level> dimension, long chunkLong) {
 	}
 
-	private record ShadowSyncKey(UUID botUuid, ResourceKey<Level> dimension) {
+	private record ShadowSyncKey(UUID botUuid, UUID sessionId) {
 	}
 
 	private static final class ShadowDesiredState {
+		private final UUID sessionId;
 		private final ServerLevel level;
 		private final int viewDistance;
+		private final int centerChunkX;
+		private final int centerChunkZ;
+		private final ScheduledServiceTarget target;
 		private final LongOpenHashSet trackedChunks = new LongOpenHashSet();
-		private final List<ScheduledServiceTarget> targets = new ArrayList<>();
 
-		private ShadowDesiredState(ServerLevel level, int viewDistance) {
+		private ShadowDesiredState(UUID sessionId, ServerLevel level, int viewDistance, ScheduledServiceTarget target) {
+			this.sessionId = sessionId;
 			this.level = level;
 			this.viewDistance = viewDistance;
+			this.centerChunkX = SectionPos.blockToSectionCoord(Mth.floor(target.x()));
+			this.centerChunkZ = SectionPos.blockToSectionCoord(Mth.floor(target.z()));
+			this.target = target;
+		}
+
+		private UUID sessionId() {
+			return this.sessionId;
 		}
 
 		private ServerLevel level() {
@@ -1816,17 +1880,26 @@ public final class RendererBotCameraSystem {
 			return this.viewDistance;
 		}
 
-		private LongOpenHashSet trackedChunks() {
-			return this.trackedChunks;
+		private int centerChunkX() {
+			return this.centerChunkX;
 		}
 
-		private List<ScheduledServiceTarget> targets() {
-			return this.targets;
+		private int centerChunkZ() {
+			return this.centerChunkZ;
+		}
+
+		private ScheduledServiceTarget target() {
+			return this.target;
+		}
+
+		private LongOpenHashSet trackedChunks() {
+			return this.trackedChunks;
 		}
 	}
 
 	private static final class ShadowDimensionSyncState {
 		private final UUID botUuid;
+		private final UUID sessionId;
 		private final ResourceKey<Level> dimension;
 		private final LongOpenHashSet trackedChunks = new LongOpenHashSet();
 		private final Map<Integer, ShadowTrackedEntity> trackedEntities = new HashMap<>();
@@ -1838,14 +1911,21 @@ public final class RendererBotCameraSystem {
 		private long lastDayTime = Long.MIN_VALUE;
 		private boolean lastTickDayTime;
 		private boolean lastRaining;
+		private int lastCenterChunkX = Integer.MIN_VALUE;
+		private int lastCenterChunkZ = Integer.MIN_VALUE;
 
-		private ShadowDimensionSyncState(UUID botUuid, ResourceKey<Level> dimension) {
+		private ShadowDimensionSyncState(UUID botUuid, UUID sessionId, ResourceKey<Level> dimension) {
 			this.botUuid = botUuid;
+			this.sessionId = sessionId;
 			this.dimension = dimension;
 		}
 
 		private UUID botUuid() {
 			return this.botUuid;
+		}
+
+		private UUID sessionId() {
+			return this.sessionId;
 		}
 
 		private ResourceKey<Level> dimension() {
@@ -1922,6 +2002,22 @@ public final class RendererBotCameraSystem {
 
 		private void setLastRaining(boolean lastRaining) {
 			this.lastRaining = lastRaining;
+		}
+
+		private int lastCenterChunkX() {
+			return this.lastCenterChunkX;
+		}
+
+		private void setLastCenterChunkX(int lastCenterChunkX) {
+			this.lastCenterChunkX = lastCenterChunkX;
+		}
+
+		private int lastCenterChunkZ() {
+			return this.lastCenterChunkZ;
+		}
+
+		private void setLastCenterChunkZ(int lastCenterChunkZ) {
+			this.lastCenterChunkZ = lastCenterChunkZ;
 		}
 	}
 

@@ -628,6 +628,7 @@ public final class RendererBotClientCapture {
 		int renderWidth = computeRenderWidth(payload);
 		int renderHeight = computeRenderHeight(payload, renderWidth);
 		return new RendererBotOffscreenWorldRenderer.RenderRequest(
+				payload.requestId(),
 				payload.dimensionId(),
 				payload.followEntityUuid(),
 				payload.expectedX(),
@@ -645,6 +646,7 @@ public final class RendererBotClientCapture {
 		int renderWidth = computeLiveRenderWidth(payload);
 		int renderHeight = computeLiveRenderHeight(payload, renderWidth);
 		return new RendererBotOffscreenWorldRenderer.RenderRequest(
+				payload.streamId(),
 				payload.dimensionId(),
 				null,
 				payload.expectedX(),

@@ -60,8 +60,8 @@ loom {
 			ideConfigGenerated = true
 			runDir("../../run-renderer-bot")
 			vmArgs(
-					"-Xms2G",
-					"-Xmx2G",
+					"-Xms4G",
+					"-Xmx4G",
 					"-Dlg2.rendererBot=true",
 					"-Dlg2.rendererBotName=${rendererBotNameProp.get()}",
 					"-Dlg2.rendererBotServer=${rendererBotServerProp.get()}",
