@@ -54,8 +54,13 @@ public final class RendererBotCameraSystem {
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
 	private static final int MAX_VIDEO_RECORDING_FPS = 20;
 	private static final int MAX_LIVE_STREAM_FPS = 20;
+	private static final int SHADOW_VIEW_DISTANCE_MARGIN_CHUNKS = 6;
+	private static final int SHADOW_REAR_VIEW_CHUNKS = 2;
 	private static final long LIVE_STREAM_STALE_MS = 1_500L;
 	private static final long PHOTO_CAPTURE_RETRY_INTERVAL_MS = 50L;
+	private static final double SHADOW_FORWARD_HALF_FOV_DEGREES = 80.0D;
+	private static final double SHADOW_NEAR_OMNI_RADIUS_CHUNKS = 3.0D;
+	private static final double SHADOW_SIDE_SAFETY_MARGIN_CHUNKS = 1.5D;
 	private static final double SHARED_RENDER_RADIUS_BLOCKS = 96.0D;
 	private static final double SHARED_RENDER_RADIUS_SQ = SHARED_RENDER_RADIUS_BLOCKS * SHARED_RENDER_RADIUS_BLOCKS;
 	private static final Map<UUID, BotHandshake> READY_BOTS = new ConcurrentHashMap<>();
@@ -572,7 +577,7 @@ public final class RendererBotCameraSystem {
 			ChunkPos realCenter = bot.chunkPosition();
 			return ChunkTrackingView.of(realCenter, resolveViewDistance(bot));
 		}
-		LongSet virtualChunks = collectVirtualTrackedChunks(bot, resolveViewDistance(bot));
+		LongSet virtualChunks = collectVirtualTrackedChunks(bot, resolveShadowViewDistance(bot));
 		return virtualChunks.isEmpty() ? ChunkTrackingView.EMPTY : new VirtualChunkTrackingView(virtualChunks);
 	}
 
@@ -820,6 +825,10 @@ public final class RendererBotCameraSystem {
 		);
 	}
 
+	private static int resolveShadowViewDistance(ServerPlayer bot) {
+		return Mth.clamp(resolveViewDistance(bot) + SHADOW_VIEW_DISTANCE_MARGIN_CHUNKS, 2, 32);
+	}
+
 	private static boolean canBotRenderLevel(ServerPlayer bot, ServerLevel level) {
 		return bot != null && level != null && READY_BOTS.containsKey(bot.getUUID());
 	}
@@ -903,11 +912,36 @@ public final class RendererBotCameraSystem {
 		LongOpenHashSet chunks = new LongOpenHashSet();
 		int centerChunkX = SectionPos.blockToSectionCoord(Mth.floor(x));
 		int centerChunkZ = SectionPos.blockToSectionCoord(Mth.floor(z));
+		double yawRadians = Math.toRadians(yaw);
+		double forwardX = -Math.sin(yawRadians);
+		double forwardZ = Math.cos(yawRadians);
+		double halfFovRadians = Math.toRadians(SHADOW_FORWARD_HALF_FOV_DEGREES);
+		double tangentLimit = Math.tan(halfFovRadians);
 		for (int dx = -viewDistance; dx <= viewDistance; dx++) {
 			for (int dz = -viewDistance; dz <= viewDistance; dz++) {
 				int chunkX = centerChunkX + dx;
 				int chunkZ = centerChunkZ + dz;
 				if (!ChunkTrackingView.isInViewDistance(centerChunkX, centerChunkZ, viewDistance, chunkX, chunkZ)) {
+					continue;
+				}
+				double chunkCenterX = chunkX * 16.0D + 8.0D;
+				double chunkCenterZ = chunkZ * 16.0D + 8.0D;
+				double deltaChunkX = (chunkCenterX - x) / 16.0D;
+				double deltaChunkZ = (chunkCenterZ - z) / 16.0D;
+				double horizontalDistanceChunks = Math.sqrt(deltaChunkX * deltaChunkX + deltaChunkZ * deltaChunkZ);
+				if (horizontalDistanceChunks <= SHADOW_NEAR_OMNI_RADIUS_CHUNKS) {
+					chunks.add(new ChunkPos(chunkX, chunkZ).toLong());
+					continue;
+				}
+				double forwardDistance = deltaChunkX * forwardX + deltaChunkZ * forwardZ;
+				if (forwardDistance < -SHADOW_REAR_VIEW_CHUNKS || forwardDistance > viewDistance + SHADOW_SIDE_SAFETY_MARGIN_CHUNKS) {
+					continue;
+				}
+				double sideDistance = Math.abs(deltaChunkX * forwardZ - deltaChunkZ * forwardX);
+				double allowedSideDistance = forwardDistance <= 0.0D
+						? SHADOW_NEAR_OMNI_RADIUS_CHUNKS + SHADOW_SIDE_SAFETY_MARGIN_CHUNKS
+						: forwardDistance * tangentLimit + SHADOW_SIDE_SAFETY_MARGIN_CHUNKS;
+				if (sideDistance > allowedSideDistance) {
 					continue;
 				}
 				chunks.add(new ChunkPos(chunkX, chunkZ).toLong());
@@ -934,7 +968,7 @@ public final class RendererBotCameraSystem {
 			if (bot == null || !READY_BOTS.containsKey(bot.getUUID())) {
 				continue;
 			}
-			int viewDistance = Mth.clamp(bot.requestedViewDistance(), 2, Math.max(2, server.getPlayerList().getViewDistance()));
+			int viewDistance = resolveShadowViewDistance(bot);
 			LongSet chunks = computeVirtualCameraChunks(spec.expectedX(), spec.expectedZ(), spec.expectedYaw(), viewDistance);
 			LongIterator iterator = chunks.iterator();
 			while (iterator.hasNext()) {
@@ -1063,7 +1097,7 @@ public final class RendererBotCameraSystem {
 			return desiredStates;
 		}
 		UUID botUuid = bot.getUUID();
-		int viewDistance = resolveViewDistance(bot);
+		int viewDistance = resolveShadowViewDistance(bot);
 
 		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
 			if (stream == null || !botUuid.equals(stream.botUuid())) {

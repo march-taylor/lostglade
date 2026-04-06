@@ -141,6 +141,7 @@ public final class RendererBotClientMode {
 		changed |= setMin(client.options.renderDistance(), 18);
 		changed |= setMin(client.options.simulationDistance(), 10);
 		changed |= setMin(client.options.entityDistanceScaling(), 2.5D);
+		changed |= setIfDifferent(client.options.chunkSectionFadeInTime(), 0.0D);
 		changed |= setIfDifferent(client.options.particles(), ParticleStatus.ALL);
 		changed |= setIfDifferent(client.options.ambientOcclusion(), true);
 		changed |= setIfDifferent(client.options.prioritizeChunkUpdates(), PrioritizeChunkUpdates.NONE);
@@ -158,7 +159,7 @@ public final class RendererBotClientMode {
 				client.levelRenderer.needsUpdate();
 				client.levelRenderer.allChanged();
 			}
-			Lg2.LOGGER.info("Renderer bot visual profile applied: fancy graphics, clouds, full particles, extended distances, no prioritized chunk updates");
+			Lg2.LOGGER.info("Renderer bot visual profile applied: fancy graphics, clouds, full particles, extended distances, no chunk fade, no prioritized chunk updates");
 		}
 		visualsConfigured = true;
 	}
