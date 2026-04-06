@@ -9,6 +9,7 @@ import com.lostglade.config.RaceConfig.RaceAbilityConfig;
 import com.lostglade.config.RaceConfig.RaceAbilitySlot;
 import com.lostglade.mixin.LivingEntityTrackedDataAccessor;
 import com.mojang.authlib.properties.Property;
+import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import it.unimi.dsi.fastutil.Pair;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -123,6 +124,7 @@ public final class CopperManRepulsorSystem {
 			Objects.requireNonNull(Identifier.tryParse("lg2:repulsor_ammo_small"))
 	);
 	private static final Map<UUID, RepulsorState> STATES = new ConcurrentHashMap<>();
+	private static final Map<UUID, RepulsorMode> SAVED_MODES = new ConcurrentHashMap<>();
 	private static final Map<UUID, Long> NEXT_MODE_SWITCH_TICKS = new ConcurrentHashMap<>();
 	private static final Map<String, Long> PROCESSED_NATURAL_LIGHTNING_HITS = new ConcurrentHashMap<>();
 
@@ -130,14 +132,21 @@ public final class CopperManRepulsorSystem {
 	}
 
 	public static void register() {
+		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> {
+			if (!alive) {
+				onPlayerDeath(newPlayer);
+			}
+		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> server.execute(() -> {
 			RepulsorState state = state(handler.player);
+			state.mode = SAVED_MODES.getOrDefault(handler.player.getUUID(), state.mode);
 			state.hudDirty = true;
 			updateHud(handler.player, state, true);
 		}));
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
 			RepulsorState state = STATES.get(handler.player.getUUID());
 			if (state != null) {
+				SAVED_MODES.put(handler.player.getUUID(), state.mode);
 				removeAirTriggerEntity(state);
 				clearHud(handler.player, state, true);
 				state.lastAutomaticInputTick = Long.MIN_VALUE;
@@ -149,6 +158,7 @@ public final class CopperManRepulsorSystem {
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			STATES.values().forEach(CopperManRepulsorSystem::removeAirTriggerEntity);
 			STATES.clear();
+			SAVED_MODES.clear();
 			NEXT_MODE_SWITCH_TICKS.clear();
 			PROCESSED_NATURAL_LIGHTNING_HITS.clear();
 		});
@@ -173,6 +183,7 @@ public final class CopperManRepulsorSystem {
 
 		RepulsorState state = state(player);
 		state.mode = state.mode == RepulsorMode.AUTOMATIC ? RepulsorMode.SINGLE : RepulsorMode.AUTOMATIC;
+		SAVED_MODES.put(player.getUUID(), state.mode);
 		state.hudDirty = true;
 		startModeSwitchCooldown(player.getUUID(), cooldownTicks);
 		player.displayClientMessage(
@@ -275,7 +286,9 @@ public final class CopperManRepulsorSystem {
 	}
 
 	private static RepulsorState state(ServerPlayer player) {
-		return STATES.computeIfAbsent(player.getUUID(), ignored -> new RepulsorState());
+		RepulsorState state = STATES.computeIfAbsent(player.getUUID(), ignored -> new RepulsorState());
+		state.mode = SAVED_MODES.getOrDefault(player.getUUID(), state.mode);
+		return state;
 	}
 
 	private static boolean canUseRepulsor(ServerPlayer player) {
