@@ -3036,7 +3036,7 @@
           "targetScreenId": "",
           "upgradeId": "mechanic_villagers",
           "pricesBitcoins": [
-            2500
+            2000
           ],
           "icon": {
             "fallbackItem": "minecraft:emerald",

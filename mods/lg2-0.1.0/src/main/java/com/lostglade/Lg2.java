@@ -91,6 +91,7 @@ public class Lg2 implements ModInitializer {
 		ServerStructureBreakSystem.register();
 		ServerMechanicsGateSystem.register();
 		ServerRespectSystem.register();
+		CopperManRepulsorSystem.registerLateInteractions();
 		ServerRaceSystem.register();
 		ServerUnusedMobSpawnSystem.register();
 		if (FabricLoader.getInstance().isModLoaded("tab")) {
