@@ -23,6 +23,11 @@ import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelEventPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
 import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityLinkPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
+import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
+import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -1591,7 +1596,12 @@ public final class RendererBotCameraSystem {
 		return packet instanceof ClientboundAnimatePacket
 				|| packet instanceof ClientboundEntityEventPacket
 				|| packet instanceof ClientboundHurtAnimationPacket
-				|| packet instanceof ClientboundDamageEventPacket;
+				|| packet instanceof ClientboundDamageEventPacket
+				|| packet instanceof ClientboundSetEntityDataPacket
+				|| packet instanceof ClientboundSetEquipmentPacket
+				|| packet instanceof ClientboundUpdateAttributesPacket
+				|| packet instanceof ClientboundSetPassengersPacket
+				|| packet instanceof ClientboundSetEntityLinkPacket;
 	}
 
 	private static boolean shouldShadowTrackEntity(Entity entity, ShadowDesiredState desiredState) {

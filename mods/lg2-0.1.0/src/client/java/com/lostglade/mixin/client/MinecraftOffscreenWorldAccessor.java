@@ -2,6 +2,8 @@ package com.lostglade.mixin.client;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.particle.ParticleEngine;
+import net.minecraft.client.particle.ParticleResources;
 import net.minecraft.client.renderer.LevelRenderer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Mutable;
@@ -22,4 +24,14 @@ public interface MinecraftOffscreenWorldAccessor {
 	@Accessor("levelRenderer")
 	@Mutable
 	void lg2$setLevelRenderer(LevelRenderer levelRenderer);
+
+	@Accessor("particleEngine")
+	ParticleEngine lg2$getParticleEngine();
+
+	@Accessor("particleEngine")
+	@Mutable
+	void lg2$setParticleEngine(ParticleEngine particleEngine);
+
+	@Accessor("particleResources")
+	ParticleResources lg2$getParticleResources();
 }

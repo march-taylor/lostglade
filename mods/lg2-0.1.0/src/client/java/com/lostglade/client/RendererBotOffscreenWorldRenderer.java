@@ -18,6 +18,7 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.particle.ParticleEngine;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.TextureFilteringMethod;
 import net.minecraft.client.renderer.fog.FogRenderer;
@@ -133,6 +134,7 @@ public final class RendererBotOffscreenWorldRenderer {
 			MinecraftOffscreenWorldAccessor worldAccessor = (MinecraftOffscreenWorldAccessor) client;
 			ClientLevel previousLevel = worldAccessor.lg2$getLevel();
 			LevelRenderer previousLevelRenderer = worldAccessor.lg2$getLevelRenderer();
+			ParticleEngine previousParticleEngine = worldAccessor.lg2$getParticleEngine();
 			Entity previousCameraEntity = client.getCameraEntity();
 			Camera previousMainCamera = client.gameRenderer.getMainCamera();
 			boolean screenshotQueued = false;
@@ -143,8 +145,10 @@ public final class RendererBotOffscreenWorldRenderer {
 				((MinecraftMainRenderTargetAccessor) client).lg2$setMainRenderTarget(renderTarget);
 				worldAccessor.lg2$setLevel(renderLevel);
 				worldAccessor.lg2$setLevelRenderer(levelRenderer);
+				worldAccessor.lg2$setParticleEngine(session.particleEngine());
 				client.setCameraEntity(cameraState.camera().entity());
 				((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(cameraState.camera());
+				RendererBotShadowWorldManager.updateCameraContext(request.sessionId(), cameraState.camera());
 				renderOffscreenWorld(client, renderLevel, levelRenderer, session.featureRenderDispatcher(), request, cameraState, renderTarget);
 				Screenshot.takeScreenshot(renderTarget, image -> {
 					try {
@@ -162,6 +166,7 @@ public final class RendererBotOffscreenWorldRenderer {
 				((MinecraftMainRenderTargetAccessor) client).lg2$setMainRenderTarget(previousRenderTarget);
 				worldAccessor.lg2$setLevel(previousLevel);
 				worldAccessor.lg2$setLevelRenderer(previousLevelRenderer);
+				worldAccessor.lg2$setParticleEngine(previousParticleEngine);
 				client.setCameraEntity(previousCameraEntity);
 				((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(previousMainCamera);
 				RenderSystem.restoreProjectionMatrix();

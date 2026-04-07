@@ -5,20 +5,24 @@ import com.lostglade.mixin.client.ClientLevelMapDataAccessor;
 import com.lostglade.mixin.client.ClientPacketListenerShadowAccessor;
 import com.lostglade.mixin.client.MinecraftOffscreenWorldAccessor;
 import com.lostglade.mixin.client.CloudRendererReloadInvoker;
+import com.lostglade.mixin.client.GameRendererRenderLevelInvoker;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.network.RendererBotShadowPacketCodec;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.particle.ParticleEngine;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.RenderBuffers;
 import net.minecraft.client.renderer.SubmitNodeStorage;
 import net.minecraft.client.renderer.CloudRenderer;
 import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
 import net.minecraft.client.renderer.state.LevelRenderState;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.protocol.Packet;
@@ -119,7 +123,28 @@ public final class RendererBotShadowWorldManager {
 				return null;
 			}
 			LAST_RENDER_ACTIVITY_AT.put(sessionId, System.currentTimeMillis());
-			return new ShadowRenderSession(session.sessionId(), session.dimensionId(), session.level(), session.levelRenderer(), session.featureRenderDispatcher());
+			return new ShadowRenderSession(
+					session.sessionId(),
+					session.dimensionId(),
+					session.level(),
+					session.levelRenderer(),
+					session.featureRenderDispatcher(),
+					session.particleEngine()
+			);
+		}
+	}
+
+	public static void updateCameraContext(UUID sessionId, Camera camera) {
+		if (sessionId == null || camera == null) {
+			return;
+		}
+		synchronized (LOCK) {
+			ShadowLevelSession session = SHADOW_SESSIONS.get(sessionId);
+			if (session == null) {
+				return;
+			}
+			session.setLastCamera(camera);
+			LAST_RENDER_ACTIVITY_AT.put(sessionId, System.currentTimeMillis());
 		}
 	}
 
@@ -179,9 +204,28 @@ public final class RendererBotShadowWorldManager {
 			if (!shouldTickSession(session.sessionId())) {
 				continue;
 			}
-			session.level().tick(() -> true);
-			session.level().tickEntities();
+			tickShadowSession(client, session);
 		}
+	}
+
+	private static void tickShadowSession(Minecraft client, ShadowLevelSession session) {
+		if (client == null || client.getConnection() == null || session == null || session.level() == null) {
+			return;
+		}
+		runWithShadowSession(client.getConnection(), session, () -> {
+			Camera camera = session.lastCamera();
+			if (camera != null) {
+				camera.tick();
+			}
+			session.level().tickEntities();
+			session.level().tickBlockEntities();
+			session.level().tick(() -> true);
+			if (camera != null) {
+				BlockPos blockPos = camera.blockPosition();
+				session.level().animateTick(blockPos.getX(), blockPos.getY(), blockPos.getZ());
+			}
+			session.particleEngine().tick();
+		});
 	}
 
 	private static void applyLevelInit(Minecraft client, RendererBotPayloads.RendererBotShadowLevelInitS2CPayload payload) {
@@ -261,7 +305,7 @@ public final class RendererBotShadowWorldManager {
 			return;
 		}
 		ClientboundLevelChunkWithLightPacket packet = RendererBotShadowPacketCodec.decodeChunkPacket(client.getConnection().registryAccess(), payload.packetBytes());
-		runWithShadowLevel(client.getConnection(), session.level(), () -> {
+		runWithShadowSession(client.getConnection(), session, () -> {
 			client.getConnection().handleLevelChunkWithLight(packet);
 			session.level().pollLightUpdates();
 		});
@@ -280,7 +324,7 @@ public final class RendererBotShadowWorldManager {
 			return;
 		}
 		ClientboundForgetLevelChunkPacket packet = new ClientboundForgetLevelChunkPacket(new ChunkPos(payload.chunkX(), payload.chunkZ()));
-		runWithShadowLevel(client.getConnection(), session.level(), () -> {
+		runWithShadowSession(client.getConnection(), session, () -> {
 			client.getConnection().handleForgetLevelChunk(packet);
 			session.level().pollLightUpdates();
 		});
@@ -297,7 +341,7 @@ public final class RendererBotShadowWorldManager {
 		if (session == null) {
 			return;
 		}
-		runWithShadowLevel(client.getConnection(), session.level(), () -> {
+		runWithShadowSession(client.getConnection(), session, () -> {
 			for (RendererBotPayloads.ShadowPacketData packetData : payload.packets()) {
 				Packet<ClientGamePacketListener> packet = RendererBotShadowPacketCodec.decodePacket(client.getConnection().registryAccess(), packetData);
 				if (packet != null) {
@@ -369,6 +413,7 @@ public final class RendererBotShadowWorldManager {
 		levelRenderer.setLevel(level);
 		levelRenderer.resize(Math.max(1, client.getWindow().getWidth()), Math.max(1, client.getWindow().getHeight()));
 		level.setServerSimulationDistance(Math.max(2, payload.simulationDistance()));
+		ParticleEngine particleEngine = new ParticleEngine(level, ((MinecraftOffscreenWorldAccessor) client).lg2$getParticleResources());
 		copyKnownMapData(client.level, level);
 		return new ShadowLevelSession(
 				payload.sessionId(),
@@ -376,7 +421,8 @@ public final class RendererBotShadowWorldManager {
 				payload.dimensionTypeId(),
 				level,
 				levelRenderer,
-				featureRenderDispatcher
+				featureRenderDispatcher,
+				particleEngine
 		);
 	}
 
@@ -419,23 +465,39 @@ public final class RendererBotShadowWorldManager {
 		} catch (Throwable throwable) {
 			Lg2.LOGGER.debug("Renderer bot failed to close shadow feature dispatcher cleanly", throwable);
 		}
+		try {
+			session.particleEngine().clearParticles();
+		} catch (Throwable throwable) {
+			Lg2.LOGGER.debug("Renderer bot failed to clear shadow particle manager cleanly", throwable);
+		}
 	}
 
-	private static void runWithShadowLevel(ClientPacketListener connection, ClientLevel shadowLevel, Runnable action) {
-		if (connection == null || shadowLevel == null || action == null) {
+	private static void runWithShadowSession(ClientPacketListener connection, ShadowLevelSession session, Runnable action) {
+		if (connection == null || session == null || session.level() == null || action == null) {
 			return;
 		}
 		Minecraft client = Minecraft.getInstance();
+		ClientLevel shadowLevel = session.level();
 		ClientPacketListenerShadowAccessor accessor = (ClientPacketListenerShadowAccessor) connection;
 		ClientLevel previousLevel = accessor.lg2$getLevel();
 		ClientLevel.ClientLevelData previousLevelData = accessor.lg2$getLevelData();
 		MinecraftOffscreenWorldAccessor worldAccessor = client == null ? null : (MinecraftOffscreenWorldAccessor) client;
 		ClientLevel previousClientLevel = worldAccessor == null ? null : worldAccessor.lg2$getLevel();
+		LevelRenderer previousLevelRenderer = worldAccessor == null ? null : worldAccessor.lg2$getLevelRenderer();
+		ParticleEngine previousParticleEngine = worldAccessor == null ? null : worldAccessor.lg2$getParticleEngine();
+		net.minecraft.world.entity.Entity previousCameraEntity = client == null ? null : client.getCameraEntity();
+		Camera previousMainCamera = client == null || client.gameRenderer == null ? null : client.gameRenderer.getMainCamera();
 		try {
 			accessor.lg2$setLevel(shadowLevel);
 			accessor.lg2$setLevelData(shadowLevel.getLevelData());
 			if (worldAccessor != null) {
 				worldAccessor.lg2$setLevel(shadowLevel);
+				worldAccessor.lg2$setLevelRenderer(session.levelRenderer());
+				worldAccessor.lg2$setParticleEngine(session.particleEngine());
+			}
+			if (client != null && client.gameRenderer != null && session.lastCamera() != null) {
+				client.setCameraEntity(session.lastCamera().entity());
+				((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(session.lastCamera());
 			}
 			action.run();
 		} finally {
@@ -443,6 +505,12 @@ public final class RendererBotShadowWorldManager {
 			accessor.lg2$setLevelData(previousLevelData);
 			if (worldAccessor != null) {
 				worldAccessor.lg2$setLevel(previousClientLevel);
+				worldAccessor.lg2$setLevelRenderer(previousLevelRenderer);
+				worldAccessor.lg2$setParticleEngine(previousParticleEngine);
+			}
+			if (client != null && client.gameRenderer != null) {
+				client.setCameraEntity(previousCameraEntity);
+				((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(previousMainCamera);
 			}
 		}
 	}
@@ -451,10 +519,28 @@ public final class RendererBotShadowWorldManager {
 		if (connection == null || level == null) {
 			return;
 		}
-		runWithShadowLevel(connection, level, () -> {
+		ShadowLevelSession session = findSession(level);
+		if (session == null) {
+			return;
+		}
+		runWithShadowSession(connection, session, () -> {
 			connection.handleSetChunkCacheRadius(new ClientboundSetChunkCacheRadiusPacket(Math.max(2, viewDistance)));
 			connection.handleSetChunkCacheCenter(new ClientboundSetChunkCacheCenterPacket(centerChunkX, centerChunkZ));
 		});
+	}
+
+	private static ShadowLevelSession findSession(ClientLevel level) {
+		if (level == null) {
+			return null;
+		}
+		synchronized (LOCK) {
+			for (ShadowLevelSession session : SHADOW_SESSIONS.values()) {
+				if (session != null && session.level() == level) {
+					return session;
+				}
+			}
+		}
+		return null;
 	}
 
 	private static void applyState(
@@ -517,17 +603,74 @@ public final class RendererBotShadowWorldManager {
 			String dimensionId,
 			ClientLevel level,
 			LevelRenderer levelRenderer,
-			FeatureRenderDispatcher featureRenderDispatcher
+			FeatureRenderDispatcher featureRenderDispatcher,
+			ParticleEngine particleEngine
 	) {
 	}
 
-	private record ShadowLevelSession(
-			UUID sessionId,
-			String dimensionId,
-			String dimensionTypeId,
-			ClientLevel level,
-			LevelRenderer levelRenderer,
-			FeatureRenderDispatcher featureRenderDispatcher
-	) {
+	private static final class ShadowLevelSession {
+		private final UUID sessionId;
+		private final String dimensionId;
+		private final String dimensionTypeId;
+		private final ClientLevel level;
+		private final LevelRenderer levelRenderer;
+		private final FeatureRenderDispatcher featureRenderDispatcher;
+		private final ParticleEngine particleEngine;
+		private Camera lastCamera;
+
+		private ShadowLevelSession(
+				UUID sessionId,
+				String dimensionId,
+				String dimensionTypeId,
+				ClientLevel level,
+				LevelRenderer levelRenderer,
+				FeatureRenderDispatcher featureRenderDispatcher,
+				ParticleEngine particleEngine
+		) {
+			this.sessionId = sessionId;
+			this.dimensionId = dimensionId;
+			this.dimensionTypeId = dimensionTypeId;
+			this.level = level;
+			this.levelRenderer = levelRenderer;
+			this.featureRenderDispatcher = featureRenderDispatcher;
+			this.particleEngine = particleEngine;
+		}
+
+		private UUID sessionId() {
+			return this.sessionId;
+		}
+
+		private String dimensionId() {
+			return this.dimensionId;
+		}
+
+		@SuppressWarnings("unused")
+		private String dimensionTypeId() {
+			return this.dimensionTypeId;
+		}
+
+		private ClientLevel level() {
+			return this.level;
+		}
+
+		private LevelRenderer levelRenderer() {
+			return this.levelRenderer;
+		}
+
+		private FeatureRenderDispatcher featureRenderDispatcher() {
+			return this.featureRenderDispatcher;
+		}
+
+		private ParticleEngine particleEngine() {
+			return this.particleEngine;
+		}
+
+		private Camera lastCamera() {
+			return this.lastCamera;
+		}
+
+		private void setLastCamera(Camera lastCamera) {
+			this.lastCamera = lastCamera;
+		}
 	}
 }
