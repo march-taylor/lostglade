@@ -4406,6 +4406,53 @@ public final class MonitorScreenSystem {
 		clearMediaSessionBindings(server, key);
 	}
 
+	private static void resetMediaSessionForPowerOff(MinecraftServer server, ScreenRuntimeKey key, List<PersistedGalleryItem> persistedGallery) {
+		if (key == null) {
+			return;
+		}
+		RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(key));
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		String relaySessionId = null;
+		List<String> releasedQueueUrls = List.of();
+		List<String> releasedMusicQueueUrls = List.of();
+		if (state != null) {
+			synchronized (state) {
+				cancelPlaybackLocked(state);
+				state.progress.clear();
+				releasedQueueUrls = retainedYoutubePreloadUrlsLocked(state);
+				releasedMusicQueueUrls = retainedYoutubeMusicPreloadUrlsLocked(state);
+				state.retainedYoutubePreloadUrls.clear();
+				state.retainedYoutubeMusicUrls.clear();
+				if (state.relaySessionId != null && !state.relaySessionId.isBlank()) {
+					relaySessionId = state.relaySessionId;
+				}
+				clearTransientPlaybackStateLocked(state, true);
+				clearWallpaperLocked(state);
+				state.wallpaperHydrated = true;
+				state.mode = ScreenViewMode.HOME;
+				state.overlayMode = MediaOverlayMode.VIEW;
+				state.statusText = "";
+				state.loading = false;
+				state.waitingForLink = false;
+				state.userPaused = false;
+				state.galleryItems.clear();
+				state.galleryItems.addAll(galleryItemsFromPersisted(persistedGallery != null ? persistedGallery : List.of()));
+				state.galleryHydrated = true;
+				state.galleryIndex = -1;
+				state.galleryScroll = 0;
+				state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+				state.activeRenderJobs = 0;
+				state.lastDispatchKey = null;
+				state.rerenderRequested = false;
+				state.version++;
+			}
+		}
+		releaseYoutubeQueuePreloads(releasedQueueUrls);
+		releaseYoutubeMusicQueuePreloads(releasedMusicQueueUrls);
+		releaseYoutubeRelaySession(relaySessionId);
+		clearMediaSessionBindings(server, key);
+	}
+
 	private static void releaseYoutubeRelaySession(String relaySessionId) {
 		if (relaySessionId == null || relaySessionId.isBlank()) {
 			return;
@@ -5984,10 +6031,13 @@ public final class MonitorScreenSystem {
 				.anyMatch(frame -> frame != null && frame.isAlive() && isPowered(level, frame));
 		ScreenViewMode viewMode = forcedViewMode != null ? forcedViewMode : component.viewMode();
 		int launcherPage = forcedLauncherPage != null ? forcedLauncherPage : component.launcherPage();
+		List<PersistedGalleryItem> persistedGallery = resolvePersistedGalleryState(component);
+		PersistedWallpaperState persistedWallpaper = resolvePersistedWallpaperState(component);
 		if (!powered) {
 			viewMode = ScreenViewMode.HOME;
 			launcherPage = 0;
-			deactivateMediaSession(level.getServer(), component.runtimeKey());
+			persistedWallpaper = null;
+			resetMediaSessionForPowerOff(level.getServer(), component.runtimeKey(), persistedGallery);
 		}
 		int effectiveLauncherPage = viewMode == ScreenViewMode.HOME
 				? clampInt(launcherPage, 0, homeMaxScroll(createUiLayout(component.width(), component.height())))
@@ -6006,9 +6056,7 @@ public final class MonitorScreenSystem {
 		);
 		boolean immediateRenderRequested = forcedViewMode != null || forcedLauncherPage != null;
 		ServerLevel mapLevel = photoMapLevel(level.getServer(), level);
-		List<PersistedGalleryItem> persistedGallery = resolvePersistedGalleryState(component);
 		synchronizeRuntimeGalleryState(component.runtimeKey(), persistedGallery);
-		PersistedWallpaperState persistedWallpaper = resolvePersistedWallpaperState(component);
 		boolean rerenderMaps = false;
 
 		cacheComponent(level, renderedComponent);
