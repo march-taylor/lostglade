@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 7;
+	public static final int PROTOCOL_VERSION = 8;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);

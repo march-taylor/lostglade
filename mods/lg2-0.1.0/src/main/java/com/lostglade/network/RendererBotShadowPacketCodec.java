@@ -1,5 +1,6 @@
 package com.lostglade.network;
 
+import com.lostglade.Lg2;
 import eu.pb4.polymer.core.impl.networking.PacketPatcher;
 import io.netty.buffer.Unpooled;
 import net.minecraft.core.RegistryAccess;
@@ -27,11 +28,14 @@ import net.minecraft.network.protocol.game.ClientboundProjectilePowerPacket;
 import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
 import net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityLinkPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
+import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
 import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
 import net.minecraft.network.protocol.game.GamePacketTypes;
@@ -73,6 +77,9 @@ public final class RendererBotShadowPacketCodec {
 		register(GamePacketTypes.CLIENTBOUND_ENTITY_EVENT, ClientboundEntityEventPacket.class);
 		register(GamePacketTypes.CLIENTBOUND_PROJECTILE_POWER, ClientboundProjectilePowerPacket.class);
 		register(GamePacketTypes.CLIENTBOUND_MOVE_MINECART_ALONG_TRACK, ClientboundMoveMinecartPacket.class);
+		register(GamePacketTypes.CLIENTBOUND_SET_PLAYER_TEAM, ClientboundSetPlayerTeamPacket.class);
+		register(GamePacketTypes.CLIENTBOUND_PLAYER_INFO_UPDATE, ClientboundPlayerInfoUpdatePacket.class);
+		register(GamePacketTypes.CLIENTBOUND_PLAYER_INFO_REMOVE, ClientboundPlayerInfoRemovePacket.class);
 		register(GamePacketTypes.CLIENTBOUND_LEVEL_CHUNK_WITH_LIGHT, ClientboundLevelChunkWithLightPacket.class);
 		register(GamePacketTypes.CLIENTBOUND_FORGET_LEVEL_CHUNK, ClientboundForgetLevelChunkPacket.class);
 	}
@@ -198,7 +205,13 @@ public final class RendererBotShadowPacketCodec {
 			Packet<? extends ClientGamePacketListener> packet
 	) {
 		return PacketContext.supplyWithContext(packetListener, packet, () -> {
-			StreamCodec<RegistryFriendlyByteBuf, Packet<? extends ClientGamePacketListener>> codec = codecForPacket(packet);
+			StreamCodec<RegistryFriendlyByteBuf, Packet<? extends ClientGamePacketListener>> codec;
+			try {
+				codec = codecForPacket(packet);
+			} catch (IllegalArgumentException illegalArgumentException) {
+				Lg2.LOGGER.warn("Skipping unsupported renderer bot shadow packet {}", packet.getClass().getName());
+				return null;
+			}
 			RegistryFriendlyByteBuf buffer = new RegistryFriendlyByteBuf(Unpooled.buffer(), registryAccess);
 			try {
 				codec.encode(buffer, packet);

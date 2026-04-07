@@ -10,6 +10,7 @@ import java.util.Set;
 
 public final class Lg2MixinPlugin implements IMixinConfigPlugin {
 	private static final String WEBCAM_MIXIN = "com.lostglade.mixin.WebcamServerCartelDisguiseMixin";
+	private static final String CLIENT_WEBCAM_RENDER_LAYER_MIXIN = "com.lostglade.mixin.client.WebcamRenderLayerOffscreenMixin";
 
 	@Override
 	public void onLoad(String mixinPackage) {
@@ -22,7 +23,7 @@ public final class Lg2MixinPlugin implements IMixinConfigPlugin {
 
 	@Override
 	public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
-		if (WEBCAM_MIXIN.equals(mixinClassName)) {
+		if (WEBCAM_MIXIN.equals(mixinClassName) || CLIENT_WEBCAM_RENDER_LAYER_MIXIN.equals(mixinClassName)) {
 			return FabricLoader.getInstance().isModLoaded("webcam");
 		}
 		return true;

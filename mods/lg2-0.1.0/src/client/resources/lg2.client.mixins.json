@@ -1,6 +1,7 @@
 {
 	"required": true,
 	"package": "com.lostglade.mixin.client",
+	"plugin": "com.lostglade.mixin.Lg2MixinPlugin",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
 		"ClientLevelMapDataAccessor",
@@ -16,6 +17,7 @@
 		"RendererBotMinecraftAuthMixin",
 		"RendererBotGlfwMixin",
 		"RendererBotSkinManagerMixin",
+		"WebcamRenderLayerOffscreenMixin",
 		"RendererBotWindowMixin"
 	],
 	"injectors": {
