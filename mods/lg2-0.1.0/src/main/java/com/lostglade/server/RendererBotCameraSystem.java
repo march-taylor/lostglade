@@ -13,7 +13,15 @@ import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
+import net.minecraft.network.protocol.game.ClientboundAnimatePacket;
+import net.minecraft.network.protocol.game.ClientboundBlockDestructionPacket;
+import net.minecraft.network.protocol.game.ClientboundBlockEventPacket;
+import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
+import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
+import net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
+import net.minecraft.network.protocol.game.ClientboundLevelEventPacket;
+import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
 import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
@@ -1461,6 +1469,129 @@ public final class RendererBotCameraSystem {
 						RendererBotShadowPacketCodec.encodePacketList(level.registryAccess(), bot.connection, packets)
 				)
 		);
+	}
+
+	public static void mirrorTransientEntityPacket(Entity entity, Packet<? super ClientGamePacketListener> packet) {
+		if (!(entity != null && entity.level() instanceof ServerLevel level) || !isShadowTransientEntityPacket(packet)) {
+			return;
+		}
+		@SuppressWarnings("unchecked")
+		Packet<? extends ClientGamePacketListener> clientPacket = (Packet<? extends ClientGamePacketListener>) packet;
+		for (ShadowDimensionSyncState activeState : ACTIVE_SHADOW_SYNC_STATES.values()) {
+			if (activeState == null
+					|| !activeState.initialized()
+					|| !activeState.dimension().equals(level.dimension())
+					|| !activeState.trackedEntities().containsKey(entity.getId())) {
+				continue;
+			}
+			sendShadowTransientPacket(level, activeState, clientPacket);
+		}
+	}
+
+	public static void mirrorTransientBlockEvent(ServerLevel level, BlockPos pos, net.minecraft.world.level.block.Block block, int paramA, int paramB) {
+		if (level == null || pos == null || block == null) {
+			return;
+		}
+		mirrorTransientLevelPacket(level, pos, new ClientboundBlockEventPacket(pos, block, paramA, paramB));
+	}
+
+	public static void mirrorTransientBlockDestruction(ServerLevel level, int breakerId, BlockPos pos, int progress) {
+		if (level == null || pos == null) {
+			return;
+		}
+		mirrorTransientLevelPacket(level, pos, new ClientboundBlockDestructionPacket(breakerId, pos, progress));
+	}
+
+	public static void mirrorTransientLevelEvent(ServerLevel level, int type, BlockPos pos, int data, boolean globalEvent) {
+		if (level == null || pos == null) {
+			return;
+		}
+		mirrorTransientLevelPacket(level, pos, new ClientboundLevelEventPacket(type, pos, data, globalEvent));
+	}
+
+	public static void mirrorTransientParticles(
+			ServerLevel level,
+			net.minecraft.core.particles.ParticleOptions particle,
+			boolean overrideLimiter,
+			boolean alwaysShow,
+			double x,
+			double y,
+			double z,
+			int count,
+			double xDist,
+			double yDist,
+			double zDist,
+			double maxSpeed
+	) {
+		if (level == null || particle == null) {
+			return;
+		}
+		ClientboundLevelParticlesPacket packet = new ClientboundLevelParticlesPacket(
+				particle,
+				overrideLimiter,
+				alwaysShow,
+				x,
+				y,
+				z,
+				(float) xDist,
+				(float) yDist,
+				(float) zDist,
+				(float) maxSpeed,
+				count
+		);
+		mirrorTransientLevelPacket(level, BlockPos.containing(x, y, z), packet);
+	}
+
+	private static void mirrorTransientLevelPacket(ServerLevel level, BlockPos pos, Packet<? extends ClientGamePacketListener> packet) {
+		if (level == null || pos == null || packet == null) {
+			return;
+		}
+		long chunkLong = new ChunkPos(pos).toLong();
+		for (ShadowDimensionSyncState activeState : ACTIVE_SHADOW_SYNC_STATES.values()) {
+			if (activeState == null
+					|| !activeState.initialized()
+					|| !activeState.dimension().equals(level.dimension())
+					|| !activeState.trackedChunks().contains(chunkLong)) {
+				continue;
+			}
+			sendShadowTransientPacket(level, activeState, packet);
+		}
+	}
+
+	private static void sendShadowTransientPacket(
+			ServerLevel level,
+			ShadowDimensionSyncState activeState,
+			Packet<? extends ClientGamePacketListener> packet
+	) {
+		if (level == null || activeState == null || packet == null) {
+			return;
+		}
+		ServerPlayer bot = level.getServer().getPlayerList().getPlayer(activeState.botUuid());
+		if (bot == null
+				|| bot.connection == null
+				|| !READY_BOTS.containsKey(bot.getUUID())
+				|| !ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotShadowEntityPacketsS2CPayload.TYPE)) {
+			return;
+		}
+		RendererBotPayloads.ShadowPacketData encoded = RendererBotShadowPacketCodec.encodePacket(level.registryAccess(), bot.connection, packet);
+		if (encoded == null) {
+			return;
+		}
+		ServerPlayNetworking.send(
+				bot,
+				new RendererBotPayloads.RendererBotShadowEntityPacketsS2CPayload(
+						activeState.sessionId(),
+						level.dimension().identifier().toString(),
+						List.of(encoded)
+				)
+		);
+	}
+
+	private static boolean isShadowTransientEntityPacket(Packet<?> packet) {
+		return packet instanceof ClientboundAnimatePacket
+				|| packet instanceof ClientboundEntityEventPacket
+				|| packet instanceof ClientboundHurtAnimationPacket
+				|| packet instanceof ClientboundDamageEventPacket;
 	}
 
 	private static boolean shouldShadowTrackEntity(Entity entity, ShadowDesiredState desiredState) {

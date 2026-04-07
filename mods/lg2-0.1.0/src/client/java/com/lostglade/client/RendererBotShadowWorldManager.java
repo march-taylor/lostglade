@@ -3,6 +3,7 @@ package com.lostglade.client;
 import com.lostglade.Lg2;
 import com.lostglade.mixin.client.ClientLevelMapDataAccessor;
 import com.lostglade.mixin.client.ClientPacketListenerShadowAccessor;
+import com.lostglade.mixin.client.MinecraftOffscreenWorldAccessor;
 import com.lostglade.mixin.client.CloudRendererReloadInvoker;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.network.RendererBotShadowPacketCodec;
@@ -424,16 +425,25 @@ public final class RendererBotShadowWorldManager {
 		if (connection == null || shadowLevel == null || action == null) {
 			return;
 		}
+		Minecraft client = Minecraft.getInstance();
 		ClientPacketListenerShadowAccessor accessor = (ClientPacketListenerShadowAccessor) connection;
 		ClientLevel previousLevel = accessor.lg2$getLevel();
 		ClientLevel.ClientLevelData previousLevelData = accessor.lg2$getLevelData();
+		MinecraftOffscreenWorldAccessor worldAccessor = client == null ? null : (MinecraftOffscreenWorldAccessor) client;
+		ClientLevel previousClientLevel = worldAccessor == null ? null : worldAccessor.lg2$getLevel();
 		try {
 			accessor.lg2$setLevel(shadowLevel);
 			accessor.lg2$setLevelData(shadowLevel.getLevelData());
+			if (worldAccessor != null) {
+				worldAccessor.lg2$setLevel(shadowLevel);
+			}
 			action.run();
 		} finally {
 			accessor.lg2$setLevel(previousLevel);
 			accessor.lg2$setLevelData(previousLevelData);
+			if (worldAccessor != null) {
+				worldAccessor.lg2$setLevel(previousClientLevel);
+			}
 		}
 	}
 
