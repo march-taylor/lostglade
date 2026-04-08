@@ -57,6 +57,7 @@
 		"ServerCommonPacketListenerAbsoluteInvisibilityMixin",
 		"ServerGamePacketListenerCameraCaptureMixin",
 		"ServerGamePacketListenerCopperManJetpackMixin",
+		"ServerGamePacketListenerDroneControlMixin",
 		"ServerGamePacketListenerMonitorTimelineMixin",
 		"ServerChunkCacheRendererBotShadowDirtyMixin",
 		"ServerLevelAbsoluteInvisibilityMixin",
