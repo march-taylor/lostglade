@@ -10,7 +10,10 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -27,6 +30,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -36,7 +40,24 @@ public final class CopperManGogglesSystem {
 	private static final String COPPER_MAN_RACE_ID = "copper_man";
 	private static final Identifier HEAD_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_goggles_head");
 	private static final Identifier RECIPE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_goggles");
+	private static final FontDescription SCREEN_OVERLAY_FONT = new FontDescription.Resource(
+			Objects.requireNonNull(Identifier.tryParse("lg2:copper_goggles_overlay"))
+	);
+	private static final String TITLE_OVERLAY_SHIFT = "\ue905";
+	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
+	private static final int SCREEN_OVERLAY_X_OFFSET = -120;
+	private static final String[] SCREEN_OVERLAY_GLYPH_FRAMES = {
+			"\uef8a" + buildHorizontalAdvance(-1) + "\uef8b" + buildHorizontalAdvance(-1) + "\uef8c",
+			"\uef8d" + buildHorizontalAdvance(-1) + "\uef8e" + buildHorizontalAdvance(-1) + "\uef8f",
+			"\uef90" + buildHorizontalAdvance(-1) + "\uef91" + buildHorizontalAdvance(-1) + "\uef92",
+			"\uef93" + buildHorizontalAdvance(-1) + "\uef94" + buildHorizontalAdvance(-1) + "\uef95"
+	};
+	private static final long SCREEN_OVERLAY_FRAME_TICKS = 3L;
+	private static final int SCREEN_OVERLAY_TITLE_COLOR = 0xFFFFFF;
+	private static final int SCREEN_OVERLAY_HUD_COLOR = 0x6EAA43;
+	private static final int SCREEN_OVERLAY_ACCENT_COLOR = 0xB7FF3C;
 	private static final Map<UUID, Boolean> LAST_VISUAL_STATES = new ConcurrentHashMap<>();
+	private static final Map<UUID, Boolean> LAST_SCREEN_OVERLAY_STATES = new ConcurrentHashMap<>();
 
 	private CopperManGogglesSystem() {
 	}
@@ -49,8 +70,14 @@ public final class CopperManGogglesSystem {
 					refreshVisual(handler.player);
 				})
 		);
-		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> LAST_VISUAL_STATES.remove(handler.player.getUUID()));
-		ServerLifecycleEvents.SERVER_STOPPED.register(server -> LAST_VISUAL_STATES.clear());
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+			LAST_VISUAL_STATES.remove(handler.player.getUUID());
+			LAST_SCREEN_OVERLAY_STATES.remove(handler.player.getUUID());
+		});
+		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+			LAST_VISUAL_STATES.clear();
+			LAST_SCREEN_OVERLAY_STATES.clear();
+		});
 	}
 
 	public static void syncPlayerRecipeBook(ServerPlayer player) {
@@ -114,6 +141,19 @@ public final class CopperManGogglesSystem {
 		boolean shouldSpoof = shouldSpoofVisual(player);
 		LAST_VISUAL_STATES.put(player.getUUID(), shouldSpoof);
 		syncWearerToAllViewers(player, shouldSpoof);
+		syncScreenOverlay(player, shouldShowScreenOverlay(player));
+	}
+
+	public static Component getScreenOverlayTitle(ServerPlayer player) {
+		return shouldShowScreenOverlay(player) ? buildScreenOverlayTitle(player) : Component.empty();
+	}
+
+	public static int getOverlayTintColor(ServerPlayer player) {
+		return shouldShowScreenOverlay(player) ? SCREEN_OVERLAY_HUD_COLOR : 0xFFFFFF;
+	}
+
+	public static int getOverlayAccentColor(ServerPlayer player) {
+		return shouldShowScreenOverlay(player) ? SCREEN_OVERLAY_ACCENT_COLOR : 0xFFFFFF;
 	}
 
 	public static boolean canSeeRecipe(ServerPlayer player) {
@@ -132,6 +172,7 @@ public final class CopperManGogglesSystem {
 			return;
 		}
 
+		long gameTime = server.overworld().getGameTime();
 		Set<UUID> online = ConcurrentHashMap.newKeySet();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			online.add(player.getUUID());
@@ -140,8 +181,17 @@ public final class CopperManGogglesSystem {
 			if (previous == null || previous.booleanValue() != shouldSpoof) {
 				syncWearerToAllViewers(player, shouldSpoof);
 			}
+
+			boolean shouldShowOverlay = shouldShowScreenOverlay(player);
+			Boolean previousOverlay = LAST_SCREEN_OVERLAY_STATES.put(player.getUUID(), shouldShowOverlay);
+			if (previousOverlay == null
+					|| previousOverlay.booleanValue() != shouldShowOverlay
+					|| (shouldShowOverlay && gameTime % SCREEN_OVERLAY_FRAME_TICKS == 0L)) {
+				syncScreenOverlay(player, shouldShowOverlay);
+			}
 		}
 		LAST_VISUAL_STATES.keySet().removeIf(uuid -> !online.contains(uuid));
+		LAST_SCREEN_OVERLAY_STATES.keySet().removeIf(uuid -> !online.contains(uuid));
 	}
 
 	private static void syncViewer(ServerPlayer viewer) {
@@ -207,6 +257,58 @@ public final class CopperManGogglesSystem {
 		return player != null
 				&& player.isAlive()
 				&& player.getItemBySlot(EquipmentSlot.HEAD).getItem() == ModItems.COPPER_GOGGLES;
+	}
+
+	private static boolean shouldShowScreenOverlay(ServerPlayer player) {
+		return shouldSpoofVisual(player) && PolymerResourcePackUtils.hasMainPack(player);
+	}
+
+	private static Component buildScreenOverlayTitle(ServerPlayer player) {
+		long gameTime = player == null || player.level() == null ? 0L : player.level().getGameTime();
+		int frameIndex = (int) ((gameTime / SCREEN_OVERLAY_FRAME_TICKS) % SCREEN_OVERLAY_GLYPH_FRAMES.length);
+		Component glyph = Component.literal(SCREEN_OVERLAY_GLYPH_FRAMES[frameIndex])
+				.withStyle(style -> style
+						.withColor(SCREEN_OVERLAY_TITLE_COLOR)
+						.withItalic(false)
+						.withFont(SCREEN_OVERLAY_FONT)
+						.withShadowColor(0x00000000));
+		return Component.empty()
+				.append(Component.literal(buildHorizontalAdvance(SCREEN_OVERLAY_X_OFFSET)).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
+				.append(Component.literal(TITLE_OVERLAY_SHIFT).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
+				.append(glyph)
+				.append(Component.literal(TITLE_OVERLAY_RESET).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)));
+	}
+
+	private static void syncScreenOverlay(ServerPlayer player, boolean enabled) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 16, 0));
+		player.connection.send(new ClientboundSetTitleTextPacket(enabled ? buildScreenOverlayTitle(player) : Component.empty()));
+	}
+
+	private static String buildHorizontalAdvance(int pixels) {
+		if (pixels == 0) {
+			return "";
+		}
+
+		int remaining = pixels;
+		StringBuilder result = new StringBuilder();
+		int[] values = remaining > 0
+				? new int[]{64, 32, 16, 8, 4, 2, 1}
+				: new int[]{-64, -32, -16, -8, -4, -2, -1};
+		String[] glyphs = remaining > 0
+				? new String[]{"\ue94d", "\ue94c", "\ue94b", "\ue94a", "\ue949", "\ue948", "\ue947"}
+				: new String[]{"\ue940", "\ue941", "\ue942", "\ue943", "\ue944", "\ue945", "\ue946"};
+
+		for (int index = 0; index < values.length; index++) {
+			int step = values[index];
+			while ((remaining > 0 && remaining >= step) || (remaining < 0 && remaining <= step)) {
+				result.append(glyphs[index]);
+				remaining -= step;
+			}
+		}
+		return result.toString();
 	}
 
 	private static Collection<RecipeHolder<?>> collectRecipeHolders(MinecraftServer server) {

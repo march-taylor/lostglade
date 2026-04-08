@@ -554,10 +554,12 @@ public final class CopperManRepulsorSystem {
 			return;
 		}
 
+		int hudColor = CopperManGogglesSystem.getOverlayTintColor(player);
+		int iconColor = CopperManGogglesSystem.getOverlayAccentColor(player);
 		player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 40, 0));
-		player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
+		player.connection.send(new ClientboundSetTitleTextPacket(CopperManGogglesSystem.getScreenOverlayTitle(player)));
 		Component subtitle = hasPack
-				? buildPackHudComponent(hudText, showAttackSlotIcon, showAmmo)
+				? buildPackHudComponent(hudText, showAttackSlotIcon, showAmmo, hudColor, iconColor)
 				: Component.literal(hudText).withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false));
 		player.connection.send(new ClientboundSetSubtitleTextPacket(subtitle));
 		state.hudVisible = true;
@@ -566,7 +568,7 @@ public final class CopperManRepulsorSystem {
 		state.hudDirty = false;
 	}
 
-	private static Component buildPackHudComponent(String text, boolean showAttackSlotIcon, boolean showAmmo) {
+	private static Component buildPackHudComponent(String text, boolean showAttackSlotIcon, boolean showAmmo, int hudColor, int iconColor) {
 		MutableComponent component = Component.empty();
 		int slashIndex = text.indexOf('/');
 		int extraLeftDigits = Math.max(0, slashIndex - 1);
@@ -574,30 +576,30 @@ public final class CopperManRepulsorSystem {
 			component.append(Component.literal(REPULSOR_ICON_AMMO_EXTRA_LEFT_DIGIT_SHIFT_GLYPH.repeat(extraLeftDigits)
 					+ REPULSOR_SLOT_ICON_CENTER_BASE_SHIFT_GLYPH
 					+ REPULSOR_SLOT_ICON_CENTER_PER_CHAR_SHIFT_GLYPH.repeat(REPULSOR_ICON_AMMO_BASE_CHAR_COUNT))
-					.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
+					.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 		}
 		if (showAttackSlotIcon) {
 			component.append(Component.literal(REPULSOR_SLOT_ICON_GLYPH)
-					.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SLOT_ICON_FONT).withShadowColor(0x00000000)));
+					.withStyle(style -> style.withColor(iconColor).withItalic(false).withFont(REPULSOR_SLOT_ICON_FONT).withShadowColor(0x00000000)));
 			if (!showAmmo) {
 				component.append(Component.literal(REPULSOR_SLOT_ICON_ONLY_POST_SHIFT_GLYPH)
-						.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
+						.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 			}
 		}
 		if (showAmmo) {
 			if (showAttackSlotIcon) {
 				component.append(Component.literal(REPULSOR_SLOT_TO_AMMO_SHIFT_GLYPH)
-						.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
+						.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 			} else {
 				component.append(Component.literal(REPULSOR_SHIFT_GLYPH)
-						.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
+						.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 			}
 			if (extraLeftDigits > 0) {
 				component.append(Component.literal(REPULSOR_AMMO_EXTRA_LEFT_DIGIT_SHIFT_GLYPH.repeat(extraLeftDigits))
-						.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
+						.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 			}
 			component.append(Component.literal(text)
-					.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false).withFont(REPULSOR_AMMO_FONT)));
+					.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_AMMO_FONT)));
 		}
 		return component;
 	}
