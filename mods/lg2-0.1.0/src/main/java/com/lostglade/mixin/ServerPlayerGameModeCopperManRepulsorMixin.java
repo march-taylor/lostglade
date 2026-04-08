@@ -1,5 +1,6 @@
 package com.lostglade.mixin;
 
+import com.lostglade.server.CopperManGogglesSystem;
 import com.lostglade.server.CopperManRepulsorSystem;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerPlayerGameMode;
@@ -28,6 +29,10 @@ public abstract class ServerPlayerGameModeCopperManRepulsorMixin {
 			return;
 		}
 		if (CopperManRepulsorSystem.handleUseInteraction(player, hand)) {
+			cir.setReturnValue(InteractionResult.SUCCESS);
+			return;
+		}
+		if (CopperManGogglesSystem.handleUseOnBlockPass(player, hand)) {
 			cir.setReturnValue(InteractionResult.SUCCESS);
 		}
 	}

@@ -2,6 +2,7 @@ package com.lostglade.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.annotations.SerializedName;
 import com.lostglade.Lg2;
 import net.fabricmc.loader.api.FabricLoader;
 
@@ -154,6 +155,11 @@ public final class RaceConfig {
 		changed |= normalizeChance(ability.cocaineHallucinationChance, value -> ability.cocaineHallucinationChance = value);
 		changed |= normalizeNonNegative(ability.foodRestoreMultiplier, value -> ability.foodRestoreMultiplier = value);
 		changed |= normalizeNonNegative(ability.copperGolemNoticeRangeBlocks, value -> ability.copperGolemNoticeRangeBlocks = value);
+		changed |= normalizeNonNegative(ability.copperGogglesScanCooldownSeconds, value -> ability.copperGogglesScanCooldownSeconds = value);
+		changed |= normalizeNonNegative(ability.copperGogglesOreSearchRadiusBlocks, value -> ability.copperGogglesOreSearchRadiusBlocks = value);
+		changed |= normalizeNonNegative(ability.copperGogglesOreSearchHighlightSeconds, value -> ability.copperGogglesOreSearchHighlightSeconds = value);
+		changed |= normalizeNonNegative(ability.copperGogglesTrackingRadiusBlocks, value -> ability.copperGogglesTrackingRadiusBlocks = value);
+		changed |= normalizeNonNegative(ability.copperGogglesTrackingHighlightSeconds, value -> ability.copperGogglesTrackingHighlightSeconds = value);
 		changed |= normalizeNonNegative(ability.jetpackMaxRiseBlocks, value -> ability.jetpackMaxRiseBlocks = value);
 		changed |= normalizeChance(ability.repulsorNaturalLightningChargeChance, value -> ability.repulsorNaturalLightningChargeChance = value);
 		changed |= normalizeNonNegative(ability.copperIngotFoodPoints, (java.util.function.IntConsumer) value -> ability.copperIngotFoodPoints = value);
@@ -301,6 +307,12 @@ public final class RaceConfig {
 		public double foodRestoreMultiplier = 0.0D;
 		public int copperIngotFoodPoints = 0;
 		public double copperGolemNoticeRangeBlocks = 0.0D;
+		@SerializedName(value = "copperGogglesScanCooldownSeconds", alternate = {"copperGogglesOreSearchCooldownSeconds"})
+		public double copperGogglesScanCooldownSeconds = 0.0D;
+		public double copperGogglesOreSearchRadiusBlocks = 0.0D;
+		public double copperGogglesOreSearchHighlightSeconds = 0.0D;
+		public double copperGogglesTrackingRadiusBlocks = 0.0D;
+		public double copperGogglesTrackingHighlightSeconds = 0.0D;
 		public double jetpackMaxRiseBlocks = 0.0D;
 		public int repulsorMaxCharges = 0;
 		public int repulsorCopperIngotChargeRestore = 0;
