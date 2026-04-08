@@ -4,11 +4,13 @@ import com.lostglade.Lg2;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.server.CameraMediaCache;
 import com.lostglade.server.map.MapPaletteQuantizer;
+import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.platform.NativeImage;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.Screenshot;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -21,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -163,14 +166,65 @@ public final class RendererBotClientVideoRecording {
 			if (!markRecordingFrameInFlight(recording.payload().requestId(), nowNanos)) {
 				continue;
 			}
-			boolean rendered = RendererBotOffscreenWorldRenderer.render(
+			boolean rendered = RendererBotOffscreenWorldRenderer.renderToTarget(
 					client,
 					recordingRenderRequest(recording.payload(), recording.captureWidth, recording.captureHeight),
-					image -> RECORD_EXECUTOR.submit(() -> processCapturedFrame(client, List.of(recording), image))
+					renderTarget -> dispatchRecordingFrame(client, recording, renderTarget)
 			);
 			if (!rendered) {
 				clearRecordingFrameInFlight(recording.payload().requestId());
 			}
+		}
+	}
+
+	private static void dispatchRecordingFrame(Minecraft client, PendingRecording recording, RenderTarget renderTarget) {
+		try {
+			CompletableFuture<NativeImage> sourceFuture = takeScreenshotFuture(renderTarget);
+			CompletableFuture<byte[]> previewFuture;
+			CompletableFuture<byte[]> fullFuture;
+			synchronized (LOCK) {
+				PendingRecording active = RECORDINGS.get(recording.payload().requestId());
+				if (active == null || active != recording || active.stopRequested) {
+					sourceFuture.thenAccept(image -> {
+						if (image != null) {
+							image.close();
+						}
+					});
+					clearRecordingFrameInFlight(recording.payload().requestId());
+					return;
+				}
+				if (active.firstPreviewFrame == null) {
+					previewFuture = RendererBotGpuCaptureBackend.isAvailable()
+							? RendererBotGpuCaptureBackend.captureQuantizedFrame(
+									renderTarget,
+									active.payload().previewWidth(),
+									active.payload().previewHeight(),
+									true
+							)
+							: CompletableFuture.completedFuture(null);
+					fullFuture = RendererBotGpuCaptureBackend.isAvailable()
+							? RendererBotGpuCaptureBackend.captureQuantizedFrame(
+									renderTarget,
+									active.payload().fullWidth(),
+									active.payload().fullHeight(),
+									true
+							)
+							: CompletableFuture.completedFuture(null);
+				} else {
+					previewFuture = CompletableFuture.completedFuture(active.firstPreviewFrame);
+					fullFuture = CompletableFuture.completedFuture(active.firstFullFrame);
+				}
+			}
+			CompletableFuture.allOf(sourceFuture, previewFuture, fullFuture).whenComplete((ignored, throwable) -> {
+				if (throwable != null) {
+					handleRecordingFrameFailure(client, recording, sourceFuture, throwable);
+					return;
+				}
+				RECORD_EXECUTOR.submit(() -> processCapturedFrame(client, List.of(recording), sourceFuture.join(), previewFuture.join(), fullFuture.join()));
+			});
+		} catch (Throwable throwable) {
+			Lg2.LOGGER.warn("Renderer bot recording dispatch failed, falling back to screenshot path for {}", recording.payload().requestId(), throwable);
+			Screenshot.takeScreenshot(renderTarget, image -> RECORD_EXECUTOR.submit(() -> processCapturedFrame(client, List.of(recording), image)));
 		}
 	}
 
@@ -219,6 +273,103 @@ public final class RendererBotClientVideoRecording {
 				}
 			});
 		}
+	}
+
+	private static void processCapturedFrame(
+			Minecraft client,
+			List<PendingRecording> recordings,
+			NativeImage image,
+			byte[] previewFrame,
+			byte[] fullFrame
+	) {
+		try {
+			int[] pixels = image.makePixelArray();
+			byte[] rgb = argbToRgb(pixels);
+			synchronized (LOCK) {
+				for (PendingRecording current : recordings) {
+					PendingRecording active = RECORDINGS.get(current.payload().requestId());
+					if (active == null || active != current || current.stopRequested) {
+						continue;
+					}
+					if (current.firstPreviewFrame == null) {
+						current.firstPreviewFrame = previewFrame != null
+								? previewFrame
+								: quantizeScaledFrame(pixels, image.getWidth(), image.getHeight(), current.payload().previewWidth(), current.payload().previewHeight());
+						current.firstFullFrame = fullFrame != null
+								? fullFrame
+								: quantizeScaledFrame(pixels, image.getWidth(), image.getHeight(), current.payload().fullWidth(), current.payload().fullHeight());
+					}
+					current.encoderInput.write(rgb);
+					current.encoderInput.flush();
+					current.frameCount++;
+				}
+			}
+		} catch (Exception exception) {
+			client.execute(() -> {
+				for (PendingRecording current : recordings) {
+					sendFailure(current.payload().requestId(), exception.getMessage());
+					abortRecording(current.payload().requestId(), "Renderer bot failed during video frame encoding");
+				}
+			});
+			Lg2.LOGGER.warn("Renderer bot video frame encode failed", exception);
+		} finally {
+			image.close();
+			client.execute(() -> {
+				synchronized (LOCK) {
+					for (PendingRecording current : recordings) {
+						PendingRecording active = RECORDINGS.get(current.payload().requestId());
+						if (active != null && active == current) {
+							active.frameInFlight = false;
+							if (active.stopRequested && !active.finishScheduled) {
+								scheduleFinish(client, active);
+							}
+						}
+					}
+				}
+			});
+		}
+	}
+
+	private static void handleRecordingFrameFailure(
+			Minecraft client,
+			PendingRecording recording,
+			CompletableFuture<NativeImage> sourceFuture,
+			Throwable throwable
+	) {
+		if (sourceFuture.isDone() && !sourceFuture.isCompletedExceptionally() && !sourceFuture.isCancelled()) {
+			RECORD_EXECUTOR.submit(() -> {
+				try {
+					processCapturedFrame(client, List.of(recording), sourceFuture.join());
+				} catch (Throwable fallbackThrowable) {
+					client.execute(() -> {
+						sendFailure(recording.payload().requestId(), fallbackThrowable.getMessage());
+						abortRecording(recording.payload().requestId(), "Renderer bot failed during video frame encoding");
+					});
+					Lg2.LOGGER.warn("Renderer bot video recording GPU fallback failed for {}", recording.payload().requestId(), fallbackThrowable);
+				}
+			});
+			return;
+		}
+		sourceFuture.thenAccept(image -> {
+			if (image != null) {
+				image.close();
+			}
+		});
+		client.execute(() -> {
+			sendFailure(recording.payload().requestId(), throwable.getMessage());
+			abortRecording(recording.payload().requestId(), "Renderer bot failed during video frame encoding");
+		});
+		Lg2.LOGGER.warn("Renderer bot video recording GPU path failed for {}", recording.payload().requestId(), throwable);
+	}
+
+	private static CompletableFuture<NativeImage> takeScreenshotFuture(RenderTarget renderTarget) {
+		CompletableFuture<NativeImage> future = new CompletableFuture<>();
+		try {
+			Screenshot.takeScreenshot(renderTarget, future::complete);
+		} catch (Throwable throwable) {
+			future.completeExceptionally(throwable);
+		}
+		return future;
 	}
 
 	private static void scheduleFinish(Minecraft client, PendingRecording current) {

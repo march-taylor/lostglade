@@ -1,6 +1,7 @@
 package com.lostglade.server;
 
 import com.lostglade.Lg2;
+import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.network.RendererBotShadowPacketCodec;
@@ -42,6 +43,7 @@ import net.minecraft.world.entity.Relative;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.gamerules.GameRules;
+import net.minecraft.world.phys.AABB;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
@@ -589,19 +591,13 @@ public final class RendererBotCameraSystem {
 	}
 
 	public static boolean isCameraPlayerLoaded(ServerLevel level, BlockPos cameraPos) {
-		if (level == null || cameraPos == null || !level.hasChunkAt(cameraPos)) {
+		if (level == null || cameraPos == null) {
 			return false;
 		}
-		ChunkPos cameraChunk = new ChunkPos(cameraPos);
-		for (ServerPlayer player : level.players()) {
-			if (player == null || RendererBotPresenceSystem.isRendererBot(player)) {
-				continue;
-			}
-			if (level.getChunkSource().chunkMap.isChunkTracked(player, cameraChunk.x, cameraChunk.z)) {
-				return true;
-			}
+		if (!level.hasChunkAt(cameraPos)) {
+			return false;
 		}
-		return false;
+		return level.getBlockState(cameraPos).is(ModBlocks.CAMERA);
 	}
 
 	public static ChunkTrackingView createVirtualChunkTrackingView(ServerPlayer bot) {
@@ -879,7 +875,19 @@ public final class RendererBotCameraSystem {
 		if (server == null) {
 			return;
 		}
+		if (!hasActiveShadowSyncWork()) {
+			return;
+		}
 		syncShadowWorlds(server);
+	}
+
+	private static boolean hasActiveShadowSyncWork() {
+		return !ACTIVE_LIVE_STREAMS.isEmpty()
+				|| !PENDING_CAPTURES.isEmpty()
+				|| !PENDING_VIDEO_RECORDINGS.isEmpty()
+				|| !ACTIVE_SHADOW_SYNC_STATES.isEmpty()
+				|| !ACTIVE_CAMERA_CHUNK_TICKETS.isEmpty()
+				|| !DIRTY_SHADOW_CHUNKS.isEmpty();
 	}
 
 	private static int resolveViewDistance(ServerPlayer bot) {
@@ -1429,9 +1437,10 @@ public final class RendererBotCameraSystem {
 		Map<Integer, ShadowTrackedEntity> trackedEntities = activeState.trackedEntities();
 		Set<Integer> desiredEntityIds = new HashSet<>();
 		List<Packet<? extends ClientGamePacketListener>> packets = new ArrayList<>();
+		AABB searchBox = shadowEntitySearchBox(desiredState);
 
 		PacketContext.runWithContext(bot.connection, () -> {
-			for (Entity entity : level.getAllEntities()) {
+			for (Entity entity : level.getEntities((Entity) null, searchBox, entity -> true)) {
 				if (!shouldShadowTrackEntity(entity, desiredState)) {
 					continue;
 				}
@@ -1473,6 +1482,23 @@ public final class RendererBotCameraSystem {
 						level.dimension().identifier().toString(),
 						RendererBotShadowPacketCodec.encodePacketList(level.registryAccess(), bot.connection, packets)
 				)
+		);
+	}
+
+	private static AABB shadowEntitySearchBox(ShadowDesiredState desiredState) {
+		ScheduledServiceTarget target = desiredState != null ? desiredState.target() : null;
+		ServerLevel level = desiredState != null ? desiredState.level() : null;
+		if (target == null || level == null) {
+			return new AABB(0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 0.0D);
+		}
+		double radius = desiredState.viewDistance() * 16.0D + 32.0D;
+		return new AABB(
+				target.x() - radius,
+				level.getMinY(),
+				target.z() - radius,
+				target.x() + radius,
+				level.getMaxY() + 1.0D,
+				target.z() + radius
 		);
 	}
 

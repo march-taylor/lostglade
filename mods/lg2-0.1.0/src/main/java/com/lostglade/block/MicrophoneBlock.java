@@ -1,6 +1,7 @@
 package com.lostglade.block;
 
 import com.lostglade.server.MicrophoneSystem;
+import com.lostglade.server.BluetoothLinkSystem;
 import eu.pb4.polymer.blocks.api.BlockModelType;
 import eu.pb4.polymer.blocks.api.PolymerBlockModel;
 import eu.pb4.polymer.blocks.api.PolymerBlockResourceUtils;
@@ -107,6 +108,7 @@ public final class MicrophoneBlock extends SimplePolymerBlock implements Polymer
 
 	@Override
 	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
+		BluetoothLinkSystem.removeBlockEndpoint(level, BluetoothLinkSystem.EndpointType.MICROPHONE, pos);
 		MicrophoneSystem.untrackMicrophone(level, pos);
 		super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
 	}

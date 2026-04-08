@@ -28,7 +28,10 @@ public final class RendererBotClientCapture {
 	private static final long LOCAL_CAPTURE_TIMEOUT_MS = Long.getLong("lg2.rendererBotLocalCaptureTimeoutMs", 8_000L);
 	private static final long RECENT_FRAME_TTL_MS = Long.getLong("lg2.rendererBotRecentFrameTtlMs", 175L);
 	private static final int DEFAULT_WARMUP_FRAMES = Math.max(1, Integer.getInteger("lg2.rendererBotWarmupFrames", 2));
-	private static final int CAPTURE_THREADS = Math.max(3, Integer.getInteger("lg2.rendererBotCaptureThreads", Math.max(3, Runtime.getRuntime().availableProcessors() - 1)));
+	private static final int CAPTURE_THREADS = Math.max(1, Math.min(
+			Integer.getInteger("lg2.rendererBotCaptureThreads", recommendedCaptureThreads()),
+			recommendedCaptureThreads()
+	));
 	private static final double TARGET_RENDER_SCALE = Math.max(1.0D, doubleProperty("lg2.rendererBotPhotoRenderScale", 2.5D));
 	private static final int MIN_RENDER_WIDTH = Math.max(128, Integer.getInteger("lg2.rendererBotMinRenderWidth", 1024));
 	private static final int MIN_RENDER_HEIGHT = Math.max(128, Integer.getInteger("lg2.rendererBotMinRenderHeight", 768));
@@ -40,6 +43,7 @@ public final class RendererBotClientCapture {
 	private static final ExecutorService CAPTURE_EXECUTOR = Executors.newFixedThreadPool(CAPTURE_THREADS, runnable -> {
 		Thread thread = new Thread(runnable, "lg2-renderer-bot-capture");
 		thread.setDaemon(true);
+		thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
 		return thread;
 	});
 
@@ -48,6 +52,10 @@ public final class RendererBotClientCapture {
 	private static volatile CapturedFrame latestFrame;
 
 	private RendererBotClientCapture() {
+	}
+
+	private static int recommendedCaptureThreads() {
+		return Math.max(1, Math.min(2, Math.max(1, (Runtime.getRuntime().availableProcessors() - 1) / 2)));
 	}
 
 	public static void register() {
