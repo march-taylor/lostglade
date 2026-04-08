@@ -114,9 +114,13 @@ public final class RendererBotOffscreenWorldRenderer {
 	}
 
 	public static boolean render(Minecraft client, RenderRequest request, Consumer<NativeImage> imageConsumer) {
+		return renderToTarget(client, request, renderTarget -> Screenshot.takeScreenshot(renderTarget, imageConsumer));
+	}
+
+	public static boolean renderToTarget(Minecraft client, RenderRequest request, Consumer<RenderTarget> renderTargetConsumer) {
 		if (client == null
 				|| request == null
-				|| imageConsumer == null
+				|| renderTargetConsumer == null
 				|| client.gameRenderer == null
 				|| client.levelRenderer == null) {
 			return false;
@@ -164,9 +168,7 @@ public final class RendererBotOffscreenWorldRenderer {
 				((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(cameraState.camera());
 				RendererBotShadowWorldManager.updateCameraContext(request.sessionId(), cameraState.camera());
 				renderOffscreenWorld(client, renderLevel, levelRenderer, session.featureRenderDispatcher(), request, cameraState, renderTarget);
-				Screenshot.takeScreenshot(renderTarget, image -> {
-					imageConsumer.accept(image);
-				});
+				renderTargetConsumer.accept(renderTarget);
 				screenshotQueued = true;
 				return true;
 			} catch (Throwable throwable) {

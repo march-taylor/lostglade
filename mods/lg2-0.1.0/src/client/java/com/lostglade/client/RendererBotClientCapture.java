@@ -4,11 +4,13 @@ import com.lostglade.Lg2;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.server.CameraMediaCache;
 import com.lostglade.server.map.MapPaletteQuantizer;
+import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.platform.NativeImage;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.Screenshot;
 import net.minecraft.util.Mth;
 
 import java.util.ArrayList;
@@ -182,11 +184,17 @@ public final class RendererBotClientCapture {
 			if (!markPendingCaptureRequested(capture.payload().requestId())) {
 				continue;
 			}
-			boolean rendered = RendererBotOffscreenWorldRenderer.render(
-					client,
-					captureRenderRequest(capture.payload()),
-					image -> CAPTURE_EXECUTOR.submit(() -> processSharedFrame(client, List.of(capture), List.of(), image))
-			);
+			boolean rendered = RendererBotGpuCaptureBackend.isAvailable()
+					? RendererBotOffscreenWorldRenderer.renderToTarget(
+							client,
+							captureRenderRequest(capture.payload()),
+							renderTarget -> dispatchGpuCapture(client, capture, renderTarget)
+					)
+					: RendererBotOffscreenWorldRenderer.render(
+							client,
+							captureRenderRequest(capture.payload()),
+							image -> CAPTURE_EXECUTOR.submit(() -> processSharedFrame(client, List.of(capture), List.of(), image))
+					);
 			if (!rendered) {
 				clearPendingCaptureRequested(capture.payload().requestId());
 			}
@@ -195,15 +203,159 @@ public final class RendererBotClientCapture {
 			if (!markLiveStreamFrameInFlight(liveStream.payload().streamId(), nowNanos)) {
 				continue;
 			}
-			boolean rendered = RendererBotOffscreenWorldRenderer.render(
-					client,
-					liveRenderRequest(liveStream.payload()),
-					image -> CAPTURE_EXECUTOR.submit(() -> processSharedFrame(client, List.of(), List.of(liveStream), image))
-			);
+			boolean rendered = RendererBotGpuCaptureBackend.isAvailable()
+					? RendererBotOffscreenWorldRenderer.renderToTarget(
+							client,
+							liveRenderRequest(liveStream.payload()),
+							renderTarget -> dispatchGpuLiveStream(client, liveStream, renderTarget)
+					)
+					: RendererBotOffscreenWorldRenderer.render(
+							client,
+							liveRenderRequest(liveStream.payload()),
+							image -> CAPTURE_EXECUTOR.submit(() -> processSharedFrame(client, List.of(), List.of(liveStream), image))
+					);
 			if (!rendered) {
 				clearLiveStreamFrameInFlight(liveStream.payload().streamId());
 			}
 		}
+	}
+
+	private static void dispatchGpuCapture(Minecraft client, PendingCapture capture, RenderTarget renderTarget) {
+		RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload = capture.payload();
+		try {
+			CompletableFuture<byte[]> previewFuture = RendererBotGpuCaptureBackend.captureQuantizedFrame(
+					renderTarget,
+					payload.previewWidth(),
+					payload.previewHeight(),
+					true
+			);
+			CompletableFuture<byte[]> fullFuture = payload.previewWidth() == payload.fullWidth() && payload.previewHeight() == payload.fullHeight()
+					? previewFuture
+					: RendererBotGpuCaptureBackend.captureQuantizedFrame(
+							renderTarget,
+							payload.fullWidth(),
+							payload.fullHeight(),
+							true
+					);
+			CompletableFuture<NativeImage> sourceFuture = takeScreenshotFuture(renderTarget);
+			CompletableFuture.allOf(previewFuture, fullFuture, sourceFuture).whenComplete((ignored, throwable) -> {
+				if (throwable != null) {
+					handleGpuCaptureFailure(client, capture, sourceFuture, throwable);
+					return;
+				}
+				CAPTURE_EXECUTOR.submit(() -> completeGpuCapture(client, payload, sourceFuture, previewFuture, fullFuture));
+			});
+		} catch (Throwable throwable) {
+			Lg2.LOGGER.warn("Renderer bot GPU capture path failed before completion, falling back to CPU capture for {}", payload.requestId(), throwable);
+			Screenshot.takeScreenshot(renderTarget, image -> CAPTURE_EXECUTOR.submit(() -> processSharedFrame(client, List.of(capture), List.of(), image)));
+		}
+	}
+
+	private static void dispatchGpuLiveStream(Minecraft client, LiveStreamSession liveStream, RenderTarget renderTarget) {
+		RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload = liveStream.payload();
+		try {
+			RendererBotGpuCaptureBackend.captureQuantizedFrame(
+					renderTarget,
+					payload.fullWidth(),
+					payload.fullHeight(),
+					LIVE_STREAM_DITHERING
+			).whenComplete((fullPixels, throwable) -> client.execute(() -> {
+				if (throwable != null) {
+					Lg2.LOGGER.warn("Renderer bot GPU live stream path failed for {}", payload.streamId(), throwable);
+					sendLiveFailure(payload, throwable.getMessage() != null ? throwable.getMessage() : throwable.getClass().getSimpleName());
+					clearLiveStreamSession(payload.streamId());
+					return;
+				}
+				ClientPlayNetworking.send(new RendererBotPayloads.RendererBotLiveFrameC2SPayload(payload.streamId(), fullPixels));
+				clearLiveStreamFrameInFlight(payload.streamId());
+			}));
+		} catch (Throwable throwable) {
+			Lg2.LOGGER.warn("Renderer bot GPU live stream path failed before completion, falling back to CPU capture for {}", payload.streamId(), throwable);
+			Screenshot.takeScreenshot(renderTarget, image -> CAPTURE_EXECUTOR.submit(() -> processSharedFrame(client, List.of(), List.of(liveStream), image)));
+		}
+	}
+
+	private static void handleGpuCaptureFailure(
+			Minecraft client,
+			PendingCapture capture,
+			CompletableFuture<NativeImage> sourceFuture,
+			Throwable throwable
+	) {
+		if (sourceFuture.isDone() && !sourceFuture.isCompletedExceptionally() && !sourceFuture.isCancelled()) {
+			CAPTURE_EXECUTOR.submit(() -> {
+				try {
+					processSharedFrame(client, List.of(capture), List.of(), sourceFuture.join());
+				} catch (Throwable fallbackThrowable) {
+					client.execute(() -> {
+						sendFailure(capture.payload(), fallbackThrowable.getMessage() != null ? fallbackThrowable.getMessage() : fallbackThrowable.getClass().getSimpleName());
+						clearPendingCapture(capture.payload().requestId());
+					});
+					Lg2.LOGGER.error("Renderer bot GPU capture fallback failed for {}", capture.payload().requestId(), fallbackThrowable);
+				}
+			});
+			return;
+		}
+		sourceFuture.thenAccept(image -> {
+			if (image != null) {
+				image.close();
+			}
+		});
+		client.execute(() -> {
+			sendFailure(capture.payload(), throwable.getMessage() != null ? throwable.getMessage() : throwable.getClass().getSimpleName());
+			clearPendingCapture(capture.payload().requestId());
+		});
+		Lg2.LOGGER.error("Renderer bot GPU capture failed for {}", capture.payload().requestId(), throwable);
+	}
+
+	private static void completeGpuCapture(
+			Minecraft client,
+			RendererBotPayloads.RendererBotCaptureRequestS2CPayload payload,
+			CompletableFuture<NativeImage> sourceFuture,
+			CompletableFuture<byte[]> previewFuture,
+			CompletableFuture<byte[]> fullFuture
+	) {
+		try (NativeImage sourceImage = sourceFuture.join()) {
+			persistPhotoSource(payload, sourceImage);
+			byte[] previewPixels = previewFuture.join();
+			byte[] fullPixels = fullFuture.join();
+			latestFrame = new CapturedFrame(
+					payload.dimensionId(),
+					payload.followEntityUuid(),
+					payload.expectedX(),
+					payload.expectedY(),
+					payload.expectedZ(),
+					payload.expectedYaw(),
+					payload.expectedPitch(),
+					payload.previewWidth(),
+					payload.previewHeight(),
+					payload.fullWidth(),
+					payload.fullHeight(),
+					payload.fovDegrees(),
+					previewPixels,
+					fullPixels,
+					System.currentTimeMillis()
+			);
+			client.execute(() -> {
+				sendFrame(payload, previewPixels, fullPixels);
+				clearPendingCapture(payload.requestId());
+			});
+		} catch (Throwable throwable) {
+			client.execute(() -> {
+				sendFailure(payload, throwable.getMessage() != null ? throwable.getMessage() : throwable.getClass().getSimpleName());
+				clearPendingCapture(payload.requestId());
+			});
+			Lg2.LOGGER.error("Renderer bot GPU capture completion failed for {}", payload.requestId(), throwable);
+		}
+	}
+
+	private static CompletableFuture<NativeImage> takeScreenshotFuture(RenderTarget renderTarget) {
+		CompletableFuture<NativeImage> future = new CompletableFuture<>();
+		try {
+			Screenshot.takeScreenshot(renderTarget, future::complete);
+		} catch (Throwable throwable) {
+			future.completeExceptionally(throwable);
+		}
+		return future;
 	}
 
 	private static void processSharedFrame(Minecraft client, List<PendingCapture> captures, List<LiveStreamSession> liveStreams, NativeImage image) {
