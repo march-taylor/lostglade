@@ -9,13 +9,21 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.LocalCapture;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(ServerLevel.class)
 public abstract class ServerLevelRendererBotShadowEventsMixin {
-	@Inject(method = "doBlockEvent", at = @At("TAIL"))
-	private void lg2$mirrorShadowBlockEvents(BlockEventData data, CallbackInfoReturnable<Boolean> cir) {
-		if (!cir.getReturnValueZ() || data == null) {
+	@Inject(
+			method = "runBlockEvents",
+			at = @At(
+					value = "INVOKE",
+					target = "Lnet/minecraft/server/players/PlayerList;broadcast(Lnet/minecraft/world/entity/player/Player;DDDDLnet/minecraft/resources/ResourceKey;Lnet/minecraft/network/protocol/Packet;)V"
+			),
+			locals = LocalCapture.CAPTURE_FAILHARD
+	)
+	private void lg2$mirrorShadowBlockEvents(CallbackInfo ci, BlockEventData data) {
+		if (data == null) {
 			return;
 		}
 		RendererBotCameraSystem.mirrorTransientBlockEvent(
