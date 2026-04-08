@@ -54,8 +54,8 @@ public final class CopperManGogglesSystem {
 	};
 	private static final long SCREEN_OVERLAY_FRAME_TICKS = 3L;
 	private static final int SCREEN_OVERLAY_TITLE_COLOR = 0xFFFFFF;
-	private static final int SCREEN_OVERLAY_HUD_COLOR = 0x6EAA43;
-	private static final int SCREEN_OVERLAY_ACCENT_COLOR = 0xB7FF3C;
+	private static final int SCREEN_OVERLAY_HUD_COLOR = 0x31B814;
+	private static final int SCREEN_OVERLAY_ACCENT_COLOR = 0x55FF22;
 	private static final Map<UUID, Boolean> LAST_VISUAL_STATES = new ConcurrentHashMap<>();
 	private static final Map<UUID, Boolean> LAST_SCREEN_OVERLAY_STATES = new ConcurrentHashMap<>();
 
