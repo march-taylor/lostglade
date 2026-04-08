@@ -4,12 +4,12 @@ import com.google.common.collect.ImmutableMultimap;
 import com.lostglade.Lg2;
 import com.lostglade.item.DroneItem;
 import com.lostglade.item.ModItems;
-import com.lostglade.mixin.EntityPassengerAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.PropertyMap;
 import eu.pb4.polymer.core.api.entity.PolymerEntity;
 import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
+import com.mojang.math.Transformation;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -23,7 +23,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.RemoteChatSession;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
-import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -35,7 +34,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.HumanoidArm;
-import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.Interaction;
 import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.player.Input;
@@ -63,7 +62,9 @@ public final class DroneSystem {
 	private static final String IT_DRONE_SCOUT = "it_drone_scout";
 	private static final String DRONE_ROOT_TAG = "lg2_drone_root";
 	private static final String DRONE_DISPLAY_TAG = "lg2_drone_display";
+	private static final String DRONE_DISPLAY_OWNER_TAG_PREFIX = "lg2_drone_display_owner_";
 	private static final String DRONE_DUMMY_TAG = "lg2_drone_dummy";
+	private static final double DRONE_CRASH_SPEED = 1.25D;
 	private static final float DRONE_WIDTH = 0.95F;
 	private static final float DRONE_HEIGHT = 0.35F;
 	private static final double DRONE_SPAWN_Y_OFFSET = 0.24D;
@@ -73,6 +74,7 @@ public final class DroneSystem {
 	private static final Map<UUID, DroneControlSession> ACTIVE_SESSIONS = new HashMap<>();
 	private static final Map<UUID, DroneInputState> INPUTS = new HashMap<>();
 	private static final Map<UUID, UUID> CONTROLLERS_BY_DRONE = new HashMap<>();
+	private static final Map<UUID, UUID> DISPLAYS_BY_DRONE = new HashMap<>();
 
 	private DroneSystem() {
 	}
@@ -117,6 +119,7 @@ public final class DroneSystem {
 			ACTIVE_SESSIONS.clear();
 			INPUTS.clear();
 			CONTROLLERS_BY_DRONE.clear();
+			DISPLAYS_BY_DRONE.clear();
 		});
 	}
 
@@ -142,27 +145,24 @@ public final class DroneSystem {
 		}
 
 		float yRot = player.getYRot();
-		Mob root = (Mob) EntityType.BEE.create(serverLevel, EntitySpawnReason.TRIGGERED);
-		if (root == null) {
-			return InteractionResult.FAIL;
-		}
+		Interaction root = new Interaction(EntityType.INTERACTION, serverLevel);
 		root.addTag(DRONE_ROOT_TAG);
 		root.setPos(spawnPos.x, spawnPos.y, spawnPos.z);
 		root.setYRot(yRot);
 		root.setXRot(0.0F);
-		root.setYHeadRot(yRot);
-		root.setYBodyRot(yRot);
-		root.setInvisible(true);
 		root.setNoGravity(true);
 		root.setInvulnerable(true);
 		root.setSilent(true);
-		root.setNoAi(true);
-		root.setPersistenceRequired();
+		root.setResponse(true);
+		root.setWidth(DRONE_WIDTH);
+		root.setHeight(DRONE_HEIGHT);
 
 		Display.ItemDisplay display = createDroneDisplay(serverLevel, spawnPos, yRot, 0.0F);
 		serverLevel.addFreshEntity(root);
 		serverLevel.addFreshEntity(display);
-		display.startRiding(root, true, true);
+		display.addTag(DRONE_DISPLAY_OWNER_TAG_PREFIX + root.getUUID());
+		DISPLAYS_BY_DRONE.put(root.getUUID(), display.getUUID());
+		syncDroneDisplay(root, yRot, 0.0F);
 
 		if (!player.getAbilities().instabuild) {
 			context.getItemInHand().shrink(1);
@@ -228,24 +228,24 @@ public final class DroneSystem {
 			return;
 		}
 
+		Vec3 currentPos = player.position();
+		Vec3 actualMovement = currentPos.subtract(session.lastPlayerPos());
+		double impactSpeed = Math.max(session.velocity().length(), actualMovement.length());
 		float yaw = player.getYRot();
 		float pitch = player.getXRot();
 		root.setYRot(yaw);
 		root.setXRot(pitch);
-		root.setYHeadRot(yaw);
-		root.setYBodyRot(yaw);
-
-		if (root.getVehicle() != player || !player.hasPassenger(root)) {
-			forceEntityPassenger(player, root);
-		} else {
-			player.positionRider(root);
-			syncPassengerAttachment(player);
-		}
 		ensureDroneFlight(player, input);
 		root.setPos(player.getX(), player.getY(), player.getZ());
 		root.setDeltaMovement(player.getDeltaMovement());
 		root.hurtMarked = true;
 		session.setVelocity(player.getDeltaMovement());
+		session.setLastPlayerPos(currentPos);
+		if ((player.horizontalCollision || player.verticalCollision) && impactSpeed >= DRONE_CRASH_SPEED) {
+			destroyDrone(root, null, false);
+			stopControlling(player, true, true);
+			return;
+		}
 		syncDroneDisplay(root, yaw, pitch);
 		syncControlledPlayer(player, root);
 	}
@@ -306,9 +306,7 @@ public final class DroneSystem {
 		boolean wasFlying = player.getAbilities().flying;
 		DronePilotDummyEntity dummy = spawnPlayerDummy(originLevel, player, originPos);
 		root.level().getChunkAt(root.blockPosition());
-		root.stopRiding();
 		player.teleportTo(droneLevel, root.getX(), root.getY(), root.getZ(), ABSOLUTE_TELEPORT, root.getYRot(), root.getXRot(), false);
-		forceEntityPassenger(player, root);
 		player.setInvisible(true);
 		player.setNoGravity(false);
 		player.noPhysics = false;
@@ -332,6 +330,7 @@ public final class DroneSystem {
 				hadMayfly,
 				wasFlying
 		);
+		session.setLastPlayerPos(player.position());
 		ACTIVE_SESSIONS.put(player.getUUID(), session);
 		INPUTS.put(player.getUUID(), DroneInputState.EMPTY);
 		CONTROLLERS_BY_DRONE.put(root.getUUID(), player.getUUID());
@@ -360,13 +359,10 @@ public final class DroneSystem {
 		}
 
 		player.setCamera(player);
-		if (root != null && root.getVehicle() == player) {
-			root.stopRiding();
+		if (root != null) {
 			root.setPos(player.getX(), player.getY(), player.getZ());
 			root.setYRot(player.getYRot());
 			root.setXRot(player.getXRot());
-			root.setYHeadRot(player.getYRot());
-			root.setYBodyRot(player.getYRot());
 			root.setDeltaMovement(Vec3.ZERO);
 			root.hurtMarked = true;
 		}
@@ -409,6 +405,11 @@ public final class DroneSystem {
 				stopControlling(controller, true, true);
 			}
 		}
+		UUID displayId = DISPLAYS_BY_DRONE.remove(root.getUUID());
+		Entity display = displayId == null ? findDroneDisplay(root) : findEntity(level.getServer(), level.dimension(), displayId);
+		if (display != null) {
+			display.discard();
+		}
 		for (Entity passenger : new ArrayList<>(root.getPassengers())) {
 			passenger.discard();
 		}
@@ -422,11 +423,20 @@ public final class DroneSystem {
 		if (entity != null && entity.getTags().contains(DRONE_ROOT_TAG)) {
 			return entity;
 		}
-		if (entity != null && entity.getTags().contains(DRONE_DISPLAY_TAG) && entity.getVehicle() != null && entity.getVehicle().getTags().contains(DRONE_ROOT_TAG)) {
-			return entity.getVehicle();
-		}
-		if (entity != null && entity.getVehicle() != null && entity.getVehicle().getTags().contains(DRONE_ROOT_TAG)) {
-			return entity.getVehicle();
+		if (entity != null && entity.getTags().contains(DRONE_DISPLAY_TAG) && entity.level() instanceof ServerLevel level) {
+			for (String tag : entity.getTags()) {
+				if (!tag.startsWith(DRONE_DISPLAY_OWNER_TAG_PREFIX)) {
+					continue;
+				}
+				try {
+					UUID rootId = UUID.fromString(tag.substring(DRONE_DISPLAY_OWNER_TAG_PREFIX.length()));
+					Entity root = level.getEntity(rootId);
+					if (root != null && root.getTags().contains(DRONE_ROOT_TAG)) {
+						return root;
+					}
+				} catch (IllegalArgumentException ignored) {
+				}
+			}
 		}
 		return null;
 	}
@@ -448,50 +458,38 @@ public final class DroneSystem {
 		display.setShadowRadius(0.0F);
 		display.setShadowStrength(0.0F);
 		display.setViewRange(DRONE_DISPLAY_VIEW_RANGE);
+		display.setTransformation(Transformation.identity());
 		return display;
 	}
 
 	private static void syncDroneDisplay(Entity root, float yRot, float xRot) {
-		for (Entity passenger : root.getPassengers()) {
-			if (!(passenger instanceof Display.ItemDisplay display) || !display.getTags().contains(DRONE_DISPLAY_TAG)) {
-				continue;
-			}
+		Entity entity = findDroneDisplay(root);
+		if (entity instanceof Display.ItemDisplay display) {
 			display.setYRot(yRot);
 			display.setXRot(xRot);
-			display.setYHeadRot(yRot);
-			display.setYBodyRot(yRot);
 			display.setPos(root.getX(), root.getY(), root.getZ());
 		}
 	}
 
-	private static void forceEntityPassenger(Entity vehicle, Entity passenger) {
-		if (vehicle == null || passenger == null || vehicle == passenger) {
-			return;
+	private static Entity findDroneDisplay(Entity root) {
+		if (root == null || !(root.level() instanceof ServerLevel level)) {
+			return null;
 		}
-
-		if (passenger.getVehicle() == vehicle && vehicle.hasPassenger(passenger)) {
-			return;
+		UUID displayId = DISPLAYS_BY_DRONE.get(root.getUUID());
+		Entity display = displayId == null ? null : level.getEntity(displayId);
+		if (display != null && display.getTags().contains(DRONE_DISPLAY_TAG)) {
+			return display;
 		}
-
-		if (passenger.isPassenger()) {
-			passenger.stopRiding();
+		for (Entity candidate : level.getEntities(root, root.getBoundingBox().inflate(8.0D))) {
+			if (!candidate.getTags().contains(DRONE_DISPLAY_TAG)) {
+				continue;
+			}
+			if (candidate.getTags().contains(DRONE_DISPLAY_OWNER_TAG_PREFIX + root.getUUID())) {
+				DISPLAYS_BY_DRONE.put(root.getUUID(), candidate.getUUID());
+				return candidate;
+			}
 		}
-
-		((EntityPassengerAccessor) passenger).lg2$setVehicle(vehicle);
-		((EntityPassengerAccessor) vehicle).lg2$addPassenger(passenger);
-		vehicle.positionRider(passenger);
-		syncPassengerAttachment(vehicle);
-	}
-
-	private static void syncPassengerAttachment(Entity vehicle) {
-		if (vehicle == null || !(vehicle.level() instanceof ServerLevel level)) {
-			return;
-		}
-
-		ClientboundSetPassengersPacket packet = new ClientboundSetPassengersPacket(vehicle);
-		for (ServerPlayer viewer : level.players()) {
-			viewer.connection.send(packet);
-		}
+		return null;
 	}
 
 	private static DronePilotDummyEntity spawnPlayerDummy(ServerLevel level, ServerPlayer sourcePlayer, Vec3 position) {
@@ -679,6 +677,7 @@ public final class DroneSystem {
 		private boolean hadMayfly;
 		private boolean wasFlying;
 		private Vec3 velocity = Vec3.ZERO;
+		private Vec3 lastPlayerPos = Vec3.ZERO;
 
 		private DroneControlSession(
 				UUID droneUuid,
@@ -768,6 +767,14 @@ public final class DroneSystem {
 
 		private void setVelocity(Vec3 velocity) {
 			this.velocity = velocity == null ? Vec3.ZERO : velocity;
+		}
+
+		private Vec3 lastPlayerPos() {
+			return this.lastPlayerPos;
+		}
+
+		private void setLastPlayerPos(Vec3 lastPlayerPos) {
+			this.lastPlayerPos = lastPlayerPos == null ? Vec3.ZERO : lastPlayerPos;
 		}
 	}
 }
