@@ -715,10 +715,17 @@ public final class MapImageRenderSystem {
 		if (executor != null) {
 			return;
 		}
-		int threads = Lg2Config.get().cameraRenderThreads;
+		int threads = Math.max(
+				1,
+				Math.min(
+						Lg2Config.get().cameraRenderThreads,
+						Math.max(1, Math.min(3, Math.max(1, (Runtime.getRuntime().availableProcessors() - 1) / 2)))
+				)
+		);
 		ThreadFactory threadFactory = runnable -> {
 			Thread thread = new Thread(runnable, "lg2-map-render");
 			thread.setDaemon(true);
+			thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
 			return thread;
 		};
 		executor = Executors.newFixedThreadPool(threads, threadFactory);

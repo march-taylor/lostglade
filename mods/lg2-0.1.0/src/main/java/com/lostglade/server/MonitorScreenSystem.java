@@ -160,6 +160,7 @@ public final class MonitorScreenSystem {
 	private static final int MAX_POWER_REFRESHES_PER_TICK = 16;
 	private static final int MAX_SPEAKER_REFRESHES_PER_TICK = 12;
 	private static final int MAX_CAMERA_REFRESHES_PER_TICK = 12;
+	private static final int POWER_REFRESH_FALLBACK_INTERVAL_TICKS = 5;
 	private static final long MEDIA_SESSION_CLEANUP_INTERVAL_TICKS = 40L;
 	private static final long MEDIA_ACTIONBAR_REFRESH_INTERVAL_TICKS = 20L;
 	private static final long MEDIA_FOCUS_CLEANUP_INTERVAL_TICKS = 20L;
@@ -252,29 +253,56 @@ public final class MonitorScreenSystem {
 
 	private static int monitorRenderThreads() {
 		Lg2Config.ConfigData config = Lg2Config.get();
-		return config != null ? Math.max(1, config.monitorRenderThreads) : Math.max(2, Runtime.getRuntime().availableProcessors());
+		int configured = config != null ? Math.max(1, config.monitorRenderThreads) : recommendedMonitorRenderThreads();
+		return Math.min(configured, recommendedMonitorRenderThreads());
 	}
 
 	private static int monitorTileQuantizerThreads() {
 		Lg2Config.ConfigData config = Lg2Config.get();
-		return config != null ? Math.max(1, config.monitorTileQuantizerThreads) : Math.max(2, Runtime.getRuntime().availableProcessors());
+		int configured = config != null ? Math.max(1, config.monitorTileQuantizerThreads) : recommendedMonitorQuantizerThreads();
+		return Math.min(configured, recommendedMonitorQuantizerThreads());
 	}
 
 	private static int monitorMediaIoThreads() {
 		Lg2Config.ConfigData config = Lg2Config.get();
-		return config != null ? Math.max(1, config.monitorMediaIoThreads) : 2;
+		int configured = config != null ? Math.max(1, config.monitorMediaIoThreads) : recommendedMonitorMediaIoThreads();
+		return Math.min(configured, recommendedMonitorMediaIoThreads());
 	}
 
 	private static int monitorMediaSchedulerThreads() {
-		return Math.max(2, Math.min(8, monitorMediaIoThreads()));
+		return Math.max(1, Math.min(2, monitorMediaIoThreads()));
 	}
 
 	private static int monitorLiveCameraThreads() {
-		return Math.max(2, Math.min(8, Math.max(2, Runtime.getRuntime().availableProcessors() - 1)));
+		return recommendedMonitorLiveCameraThreads();
 	}
 
 	private static int monitorOverlayWindowThreads() {
-		return Math.max(1, Math.min(4, Math.max(1, monitorRenderThreads() / 2)));
+		return recommendedMonitorOverlayThreads();
+	}
+
+	private static int availableWorkerCores() {
+		return Math.max(1, Runtime.getRuntime().availableProcessors());
+	}
+
+	private static int recommendedMonitorRenderThreads() {
+		return Math.max(1, Math.min(4, Math.max(1, (availableWorkerCores() - 1) / 2)));
+	}
+
+	private static int recommendedMonitorQuantizerThreads() {
+		return Math.max(1, Math.min(3, Math.max(1, (availableWorkerCores() - 1) / 2)));
+	}
+
+	private static int recommendedMonitorMediaIoThreads() {
+		return Math.max(1, Math.min(2, Math.max(1, availableWorkerCores() / 4)));
+	}
+
+	private static int recommendedMonitorLiveCameraThreads() {
+		return Math.max(1, Math.min(2, Math.max(1, (availableWorkerCores() - 1) / 3)));
+	}
+
+	private static int recommendedMonitorOverlayThreads() {
+		return 1;
 	}
 
 	private static int monitorMapUpdateRadiusBlocks() {
@@ -296,6 +324,7 @@ public final class MonitorScreenSystem {
 		return runnable -> {
 			Thread thread = new Thread(runnable, baseName);
 			thread.setDaemon(true);
+			thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
 			return thread;
 		};
 	}
@@ -1692,6 +1721,9 @@ public final class MonitorScreenSystem {
 		processPendingCameraRefreshes(server);
 		processPendingComponentSyncs(server);
 		processPendingSpeakerRefreshes(server);
+		if ((server.getTickCount() % POWER_REFRESH_FALLBACK_INTERVAL_TICKS) == 0L) {
+			enqueuePeriodicPowerRefreshes();
+		}
 		processPowerRefreshes(server);
 		if ((server.getTickCount() % MEDIA_FOCUS_CLEANUP_INTERVAL_TICKS) == 0L) {
 			cleanupExpiredMediaFocus();
@@ -1935,19 +1967,21 @@ public final class MonitorScreenSystem {
 			while (remaining > 0) {
 				ScreenRuntimeKey runtimeKey = state.pollPowerRuntime();
 				if (runtimeKey == null) {
-					for (ScreenRuntimeKey cachedKey : state.components().keySet()) {
-						state.enqueuePowerRuntime(cachedKey);
-					}
-					runtimeKey = state.pollPowerRuntime();
-					if (runtimeKey == null) {
-						break;
-					}
+					break;
 				}
 				refreshComponentPower(level, runtimeKey);
-				if (state.components().containsKey(runtimeKey)) {
-					state.enqueuePowerRuntime(runtimeKey);
-				}
 				remaining--;
+			}
+		}
+	}
+
+	private static void enqueuePeriodicPowerRefreshes() {
+		for (MonitorLevelState state : LEVEL_STATES.values()) {
+			if (state == null) {
+				continue;
+			}
+			for (ScreenRuntimeKey runtimeKey : state.components().keySet()) {
+				state.enqueuePowerRuntime(runtimeKey);
 			}
 		}
 	}
@@ -7093,13 +7127,27 @@ public final class MonitorScreenSystem {
 			return;
 		}
 
-		CompletableFuture<?>[] futures = new CompletableFuture<?>[tileCount];
-		for (int tileIndex = 0; tileIndex < tileCount; tileIndex++) {
-			final int currentTileIndex = tileIndex;
-			futures[tileIndex] = CompletableFuture.runAsync(
-					() -> quantizeSingleTile(work.width(), rgbPixels, pixelWidth, currentTileIndex, tiles[currentTileIndex]),
-					quantizeExecutor
-			);
+		int workerCount = Math.max(1, Math.min(tileCount, monitorTileQuantizerThreads()));
+		if (workerCount <= 1) {
+			for (int tileIndex = 0; tileIndex < tileCount; tileIndex++) {
+				quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex]);
+			}
+			return;
+		}
+		int chunkSize = Math.max(1, (tileCount + workerCount - 1) / workerCount);
+		CompletableFuture<?>[] futures = new CompletableFuture<?>[workerCount];
+		for (int workerIndex = 0; workerIndex < workerCount; workerIndex++) {
+			int startTileIndex = workerIndex * chunkSize;
+			int endTileIndex = Math.min(tileCount, startTileIndex + chunkSize);
+			if (startTileIndex >= endTileIndex) {
+				futures[workerIndex] = CompletableFuture.completedFuture(null);
+				continue;
+			}
+			futures[workerIndex] = CompletableFuture.runAsync(() -> {
+				for (int tileIndex = startTileIndex; tileIndex < endTileIndex; tileIndex++) {
+					quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex]);
+				}
+			}, quantizeExecutor);
 		}
 		CompletableFuture.allOf(futures).join();
 	}
