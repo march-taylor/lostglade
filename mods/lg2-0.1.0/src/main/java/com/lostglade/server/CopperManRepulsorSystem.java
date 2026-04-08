@@ -7,9 +7,10 @@ import com.lostglade.Lg2;
 import com.lostglade.config.RaceConfig.PlayerRaceConfig;
 import com.lostglade.config.RaceConfig.RaceAbilityConfig;
 import com.lostglade.config.RaceConfig.RaceAbilitySlot;
-import com.lostglade.mixin.LivingEntityTrackedDataAccessor;
 import com.mojang.authlib.properties.Property;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
+import net.fabricmc.fabric.api.event.player.UseEntityCallback;
+import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import it.unimi.dsi.fastutil.Pair;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -30,12 +31,9 @@ import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.MutableComponent;
-import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
-import net.minecraft.network.syncher.EntityDataAccessor;
-import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -55,10 +53,6 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 import javax.imageio.ImageIO;
-import java.awt.AlphaComposite;
-import java.awt.Color;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
@@ -90,17 +84,17 @@ public final class CopperManRepulsorSystem {
 	private static final double DEFAULT_NATURAL_LIGHTNING_RESTORE_CHANCE = 0.10D;
 	private static final int DEFAULT_NATURAL_LIGHTNING_RESTORE = 10;
 	private static final long AUTO_SHOT_INTERVAL_TICKS = 2L;
-	private static final long SINGLE_SHOT_INTERVAL_TICKS = 30L;
+	private static final long SINGLE_SHOT_INTERVAL_TICKS = 40L;
 	private static final long AUTO_INPUT_GRACE_TICKS = 4L;
 	private static final long HUD_UPDATE_INTERVAL_TICKS = 5L;
 	private static final long NATURAL_LIGHTNING_RECHARGE_DEDUP_TICKS = 200L;
-	private static final double AUTO_RANGE = 10.0D;
-	private static final double SINGLE_RANGE = 25.0D;
 	private static final double AIR_TRIGGER_RAY_RANGE = 4.5D;
 	private static final double AIR_TRIGGER_SPAWN_DISTANCE = 2.0D;
 	private static final double AIR_TRIGGER_MOTION_LEAD_SCALE = 0.9D;
 	private static final float AIR_TRIGGER_WIDTH = 1.2F;
 	private static final float AIR_TRIGGER_HEIGHT = 1.35F;
+	private static final double AUTO_RANGE = 16.0D;
+	private static final double SINGLE_RANGE = 32.0D;
 	private static final float AUTO_DAMAGE = 1.0F;
 	private static final float SINGLE_DAMAGE = 4.0F;
 	private static final int LASER_PARTICLE_COLOR = 0xFF2A2A;
@@ -132,6 +126,12 @@ public final class CopperManRepulsorSystem {
 	}
 
 	public static void register() {
+		UseItemCallback.EVENT.register((player, world, hand) -> {
+			if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer)) {
+				return net.minecraft.world.InteractionResult.PASS;
+			}
+			return onUseItem(serverPlayer, hand);
+		});
 		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> {
 			if (!alive) {
 				onPlayerDeath(newPlayer);
@@ -161,6 +161,15 @@ public final class CopperManRepulsorSystem {
 			SAVED_MODES.clear();
 			NEXT_MODE_SWITCH_TICKS.clear();
 			PROCESSED_NATURAL_LIGHTNING_HITS.clear();
+		});
+	}
+
+	public static void registerLateInteractions() {
+		UseEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
+			if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer)) {
+				return net.minecraft.world.InteractionResult.PASS;
+			}
+			return onUseEntity(serverPlayer, hand, entity, hitResult == null ? null : hitResult.getLocation());
 		});
 	}
 
@@ -205,8 +214,77 @@ public final class CopperManRepulsorSystem {
 			return false;
 		}
 
-		if (hand == InteractionHand.OFF_HAND) {
-			cancelOffhandUse(player);
+		long nowTick = player.level().getGameTime();
+		state.hudDirty = true;
+
+		if (state.mode == RepulsorMode.AUTOMATIC) {
+			state.lastAutomaticInputTick = nowTick;
+			if (nowTick >= state.nextShotTick) {
+				tryFire(player, state, nowTick);
+			}
+			return true;
+		}
+
+		if (state.lastSingleInputTick != nowTick) {
+			state.lastSingleInputTick = nowTick;
+			tryFire(player, state, nowTick);
+		}
+		return true;
+	}
+
+	public static net.minecraft.world.InteractionResult onUseItem(ServerPlayer player, InteractionHand hand) {
+		return handleUseInteraction(player, hand)
+				? net.minecraft.world.InteractionResult.SUCCESS
+				: net.minecraft.world.InteractionResult.PASS;
+	}
+
+	public static boolean isAirTriggerEntity(ServerPlayer player, Entity entity) {
+		if (player == null || entity == null) {
+			return false;
+		}
+		RepulsorState state = STATES.get(player.getUUID());
+		return state != null && state.airTriggerEntity == entity;
+	}
+
+	public static net.minecraft.world.InteractionResult onUseEntity(ServerPlayer player, InteractionHand hand, Entity target, Vec3 location) {
+		if (player == null || target == null) {
+			return net.minecraft.world.InteractionResult.PASS;
+		}
+		if (!canUseRepulsor(player)) {
+			return net.minecraft.world.InteractionResult.PASS;
+		}
+
+		RepulsorState state = state(player);
+		if (state.charges <= 0) {
+			state.hudDirty = true;
+			return net.minecraft.world.InteractionResult.PASS;
+		}
+
+		if (isAirTriggerEntity(player, target)) {
+			return onUseItem(player, hand);
+		}
+
+		var result = location != null ? target.interactAt(player, location, hand) : net.minecraft.world.InteractionResult.PASS;
+		if (result == net.minecraft.world.InteractionResult.PASS) {
+			result = player.interactOn(target, hand);
+		}
+		if (result != net.minecraft.world.InteractionResult.PASS) {
+			return result;
+		}
+
+		handleEntityInteractionPass(player, hand);
+		return net.minecraft.world.InteractionResult.SUCCESS;
+	}
+
+	public static void handleEntityInteractionPass(ServerPlayer player, InteractionHand hand) {
+		if (!canUseRepulsor(player)) {
+			return;
+		}
+
+		RepulsorState state = state(player);
+		if (state.charges <= 0) {
+			state.hudDirty = true;
+			return;
 		}
 
 		long nowTick = player.level().getGameTime();
@@ -216,15 +294,13 @@ public final class CopperManRepulsorSystem {
 			if (nowTick >= state.nextShotTick) {
 				tryFire(player, state, nowTick);
 			}
-			return true;
+			return;
 		}
 
-		if (state.lastSingleInputTick == nowTick) {
-			return true;
+		if (state.lastSingleInputTick != nowTick) {
+			state.lastSingleInputTick = nowTick;
+			tryFire(player, state, nowTick);
 		}
-		state.lastSingleInputTick = nowTick;
-		tryFire(player, state, nowTick);
-		return true;
 	}
 
 	public static void onCopperIngotConsumed(ServerPlayer player) {
@@ -267,13 +343,9 @@ public final class CopperManRepulsorSystem {
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			RepulsorState state = state(player);
 			syncAirTriggerEntity(player, state);
-			if (!(state.charges > 0 && canUseRepulsor(player))
-					&& player.isUsingItem()
-					&& player.getUsedItemHand() == InteractionHand.OFF_HAND) {
-				state.lastAutomaticInputTick = Long.MIN_VALUE;
-			}
 			if (state.mode == RepulsorMode.AUTOMATIC
 					&& canUseRepulsor(player)
+					&& state.charges > 0
 					&& state.lastAutomaticInputTick + AUTO_INPUT_GRACE_TICKS >= nowTick
 					&& nowTick >= state.nextShotTick) {
 				tryFire(player, state, nowTick);
@@ -299,35 +371,6 @@ public final class CopperManRepulsorSystem {
 				&& isAttackUnlocked(player)
 				&& player.getInventory().getSelectedSlot() == 0
 				&& player.getMainHandItem().isEmpty();
-	}
-
-	public static boolean isAirTriggerEntity(ServerPlayer player, Entity entity) {
-		if (player == null || entity == null) {
-			return false;
-		}
-		RepulsorState state = STATES.get(player.getUUID());
-		return state != null && state.airTriggerEntity == entity;
-	}
-
-	public static boolean handleEntityInteraction(ServerPlayer player, Entity target, InteractionHand hand, Vec3 location) {
-		if (player == null || target == null) {
-			return false;
-		}
-		if (!canUseRepulsor(player)) {
-			return false;
-		}
-		if (isAirTriggerEntity(player, target)) {
-			return handleUseInteraction(player, hand);
-		}
-
-		var result = location != null ? target.interactAt(player, location, hand) : net.minecraft.world.InteractionResult.PASS;
-		if (result == net.minecraft.world.InteractionResult.PASS) {
-			result = player.interactOn(target, hand);
-		}
-		if (result != net.minecraft.world.InteractionResult.PASS) {
-			return true;
-		}
-		return handleUseInteraction(player, hand);
 	}
 
 	private static boolean tryFire(ServerPlayer player, RepulsorState state, long nowTick) {
@@ -375,10 +418,8 @@ public final class CopperManRepulsorSystem {
 		}
 		var playerTeam = player.getTeam();
 		var entityTeam = entity.getTeam();
-		if (entity instanceof ServerPlayer otherPlayer) {
-			if (player.isAlliedTo(otherPlayer)) {
-				return false;
-			}
+		if (entity instanceof ServerPlayer otherPlayer && player.isAlliedTo(otherPlayer)) {
+			return false;
 		}
 		return playerTeam == null || entityTeam == null || !Objects.equals(entityTeam, playerTeam);
 	}
@@ -397,12 +438,81 @@ public final class CopperManRepulsorSystem {
 			level.sendParticles(new DustParticleOptions(LASER_PARTICLE_COLOR, LASER_PARTICLE_SCALE), start.x, start.y, start.z, 1, 0.0, 0.0, 0.0, 0.0);
 			return;
 		}
+
 		int particles = Math.max(1, (int) Math.ceil(length * 3.0D));
 		Vec3 step = delta.scale(1.0D / particles);
 		Vec3 current = start;
 		for (int i = 0; i <= particles; i++) {
 			level.sendParticles(new DustParticleOptions(LASER_PARTICLE_COLOR, LASER_PARTICLE_SCALE), current.x, current.y, current.z, 1, 0.0, 0.0, 0.0, 0.0);
 			current = current.add(step);
+		}
+	}
+
+	private static void syncAirTriggerEntity(ServerPlayer player, RepulsorState state) {
+		if (!shouldMaintainAirTrigger(player, state)) {
+			removeAirTriggerEntity(state);
+			return;
+		}
+		if (hasAirTriggerObstruction(player, state)) {
+			removeAirTriggerEntity(state);
+			return;
+		}
+
+		Interaction trigger = state.airTriggerEntity;
+		if (trigger == null || !trigger.isAlive() || trigger.level() != player.level()) {
+			trigger = new Interaction(net.minecraft.world.entity.EntityType.INTERACTION, player.level());
+			trigger.setNoGravity(true);
+			trigger.setSilent(true);
+			trigger.setResponse(false);
+			trigger.setWidth(AIR_TRIGGER_WIDTH);
+			trigger.setHeight(AIR_TRIGGER_HEIGHT);
+			player.level().addFreshEntity(trigger);
+			state.airTriggerEntity = trigger;
+		}
+
+		Vec3 look = player.getLookAngle().normalize();
+		double forwardSpeed = Math.max(0.0D, player.getDeltaMovement().dot(look));
+		Vec3 offset = look.scale(AIR_TRIGGER_SPAWN_DISTANCE + (forwardSpeed * AIR_TRIGGER_MOTION_LEAD_SCALE));
+		Vec3 pos = player.getEyePosition().add(offset).subtract(0.0D, AIR_TRIGGER_HEIGHT * 0.5D, 0.0D);
+		trigger.setPos(pos.x, pos.y, pos.z);
+		trigger.setDeltaMovement(Vec3.ZERO);
+		trigger.setYRot(player.getYRot());
+		trigger.setXRot(player.getXRot());
+	}
+
+	private static boolean shouldMaintainAirTrigger(ServerPlayer player, RepulsorState state) {
+		return player != null
+				&& state != null
+				&& player.isAlive()
+				&& !player.isSpectator()
+				&& state.charges > 0
+				&& isAttackUnlocked(player)
+				&& player.getInventory().getSelectedSlot() == 0
+				&& player.getMainHandItem().isEmpty();
+	}
+
+	private static boolean hasAirTriggerObstruction(ServerPlayer player, RepulsorState state) {
+		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange()) + 0.5D;
+		Vec3 start = player.getEyePosition();
+		Vec3 end = start.add(player.getLookAngle().scale(reach));
+		BlockHitResult blockHit = player.level().clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
+		double maxDistance = blockHit.getType() == HitResult.Type.MISS ? reach : Math.sqrt(blockHit.getLocation().distanceToSqr(start));
+		EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
+				player.level(),
+				player,
+				start,
+				start.add(player.getLookAngle().scale(maxDistance)),
+				player.getBoundingBox().expandTowards(player.getLookAngle().scale(maxDistance)).inflate(0.6D),
+				entity -> entity != state.airTriggerEntity && entity != player && entity.isAlive() && entity.isPickable(),
+				0.0F
+		);
+		return blockHit.getType() != HitResult.Type.MISS || entityHit != null;
+	}
+
+	private static void removeAirTriggerEntity(RepulsorState state) {
+		if (state.airTriggerEntity != null) {
+			state.airTriggerEntity.discard();
+			state.airTriggerEntity = null;
 		}
 	}
 
@@ -423,7 +533,6 @@ public final class CopperManRepulsorSystem {
 			return;
 		}
 		RepulsorState state = state(player);
-		removeAirTriggerEntity(state);
 		state.charges = 0;
 		state.nextShotTick = 0L;
 		state.lastAutomaticInputTick = Long.MIN_VALUE;
@@ -528,89 +637,6 @@ public final class CopperManRepulsorSystem {
 		}
 
 		return player.getInventory().getSelectedSlot() == 0 && (mainHand.isEmpty() || selected.isEmpty());
-	}
-
-	private static void syncAirTriggerEntity(ServerPlayer player, RepulsorState state) {
-		if (!shouldMaintainAirTrigger(player, state)) {
-			removeAirTriggerEntity(state);
-			return;
-		}
-		if (hasAirTriggerObstruction(player, state)) {
-			removeAirTriggerEntity(state);
-			return;
-		}
-
-		Interaction trigger = state.airTriggerEntity;
-		if (trigger == null || !trigger.isAlive() || trigger.level() != player.level()) {
-			trigger = new Interaction(net.minecraft.world.entity.EntityType.INTERACTION, player.level());
-			trigger.setNoGravity(true);
-			trigger.setSilent(true);
-			trigger.setResponse(false);
-			trigger.setWidth(AIR_TRIGGER_WIDTH);
-			trigger.setHeight(AIR_TRIGGER_HEIGHT);
-			player.level().addFreshEntity(trigger);
-			state.airTriggerEntity = trigger;
-		}
-
-		Vec3 look = player.getLookAngle().normalize();
-		double forwardSpeed = Math.max(0.0D, player.getDeltaMovement().dot(look));
-		Vec3 offset = look.scale(AIR_TRIGGER_SPAWN_DISTANCE + (forwardSpeed * AIR_TRIGGER_MOTION_LEAD_SCALE));
-		Vec3 pos = player.getEyePosition().add(offset).subtract(0.0D, AIR_TRIGGER_HEIGHT * 0.5D, 0.0D);
-		trigger.setPos(pos.x, pos.y, pos.z);
-		trigger.setDeltaMovement(Vec3.ZERO);
-		trigger.setYRot(player.getYRot());
-		trigger.setXRot(player.getXRot());
-	}
-
-	private static boolean shouldMaintainAirTrigger(ServerPlayer player, RepulsorState state) {
-		return player != null
-				&& state != null
-				&& player.isAlive()
-				&& !player.isSpectator()
-				&& state.charges > 0
-				&& isAttackUnlocked(player)
-				&& player.getInventory().getSelectedSlot() == 0
-				&& player.getMainHandItem().isEmpty();
-	}
-
-	private static boolean hasAirTriggerObstruction(ServerPlayer player, RepulsorState state) {
-		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange()) + 0.5D;
-		Vec3 start = player.getEyePosition();
-		Vec3 end = start.add(player.getLookAngle().scale(reach));
-		BlockHitResult blockHit = player.level().clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
-		double maxDistance = blockHit.getType() == HitResult.Type.MISS ? reach : Math.sqrt(blockHit.getLocation().distanceToSqr(start));
-		EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
-				player.level(),
-				player,
-				start,
-				start.add(player.getLookAngle().scale(maxDistance)),
-				player.getBoundingBox().expandTowards(player.getLookAngle().scale(maxDistance)).inflate(0.6D),
-				entity -> entity != state.airTriggerEntity && entity != player && entity.isAlive() && entity.isPickable(),
-				0.0F
-		);
-		return blockHit.getType() != HitResult.Type.MISS || entityHit != null;
-	}
-
-	private static void removeAirTriggerEntity(RepulsorState state) {
-		if (state.airTriggerEntity != null) {
-			state.airTriggerEntity.discard();
-			state.airTriggerEntity = null;
-		}
-	}
-
-	private static void cancelOffhandUse(ServerPlayer player) {
-		if (player == null) {
-			return;
-		}
-
-		player.stopUsingItem();
-		EntityDataAccessor<Byte> flagsAccessor = LivingEntityTrackedDataAccessor.lg2$getDataLivingEntityFlags();
-		byte flags = player.getEntityData().get(flagsAccessor);
-		byte clearedFlags = (byte) (flags & ~0x01 & ~0x02);
-		player.connection.send(new ClientboundSetEntityDataPacket(
-				player.getId(),
-				List.of(SynchedEntityData.DataValue.create(flagsAccessor, clearedFlags))
-		));
 	}
 
 	private static String localizeModeChanged(ServerPlayer player, RepulsorMode mode) {
