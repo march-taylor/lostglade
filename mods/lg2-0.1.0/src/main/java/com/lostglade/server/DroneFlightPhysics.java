@@ -9,9 +9,12 @@ public final class DroneFlightPhysics {
 	public static final double STRAFE_THRUST = 0.076D;
 	public static final double VERTICAL_THRUST = 0.074D;
 	public static final double GRAVITY = 0.046D;
-	public static final double AIR_DRAG = 0.988D;
+	public static final double AIR_DRAG = 0.996D;
 	public static final double GLIDE_LIFT = 0.020D;
 	public static final double DIVE_ACCELERATION = 0.018D;
+	public static final double PLANAR_DRIVE_STEP = 0.080D;
+	public static final double MAX_FORWARD_DRIVE = 0.420D;
+	public static final double MAX_STRAFE_DRIVE = 0.420D;
 
 	private DroneFlightPhysics() {
 	}
@@ -26,7 +29,17 @@ public final class DroneFlightPhysics {
 	) {
 	}
 
-	public static Vec3 computeAcceleration(float pitch, float yaw, boolean forwardPressed, boolean backwardPressed, boolean leftPressed, boolean rightPressed, boolean jumpPressed, boolean descendPressed) {
+	public static double adjustDrive(double currentDrive, boolean positivePressed, boolean negativePressed, double driveStep, double maxMagnitude) {
+		double nextDrive = currentDrive;
+		if (positivePressed && !negativePressed) {
+			nextDrive += driveStep;
+		} else if (negativePressed && !positivePressed) {
+			nextDrive -= driveStep;
+		}
+		return net.minecraft.util.Mth.clamp(nextDrive, -maxMagnitude, maxMagnitude);
+	}
+
+	public static Vec3 computeAcceleration(float pitch, float yaw, double forwardDrive, double strafeDrive, boolean jumpPressed, boolean descendPressed) {
 		Vec3 forward = Vec3.directionFromRotation(pitch, yaw);
 		Vec3 horizontalForward = Vec3.directionFromRotation(0.0F, yaw);
 		Vec3 right = new Vec3(-horizontalForward.z, 0.0D, horizontalForward.x);
@@ -44,17 +57,12 @@ public final class DroneFlightPhysics {
 		}
 
 		Vec3 acceleration = new Vec3(0.0D, -GRAVITY, 0.0D);
-		if (forwardPressed) {
-			acceleration = acceleration.add(forward.scale(FORWARD_THRUST));
+		if (Math.abs(forwardDrive) > 1.0E-6D) {
+			double forwardScale = forwardDrive >= 0.0D ? FORWARD_THRUST : REVERSE_THRUST;
+			acceleration = acceleration.add(forward.scale(forwardDrive * forwardScale));
 		}
-		if (backwardPressed) {
-			acceleration = acceleration.add(forward.scale(-REVERSE_THRUST));
-		}
-		if (rightPressed) {
-			acceleration = acceleration.add(right.scale(STRAFE_THRUST));
-		}
-		if (leftPressed) {
-			acceleration = acceleration.add(right.scale(-STRAFE_THRUST));
+		if (Math.abs(strafeDrive) > 1.0E-6D) {
+			acceleration = acceleration.add(right.scale(strafeDrive * STRAFE_THRUST));
 		}
 		if (jumpPressed) {
 			acceleration = acceleration.add(up.scale(VERTICAL_THRUST));
@@ -65,15 +73,13 @@ public final class DroneFlightPhysics {
 		return acceleration;
 	}
 
-	public static Vec3 step(Vec3 currentVelocity, float pitch, float yaw, ControlInput input, Vec3 externalAcceleration) {
+	public static Vec3 step(Vec3 currentVelocity, float pitch, float yaw, double forwardDrive, double strafeDrive, ControlInput input, Vec3 externalAcceleration) {
 		Vec3 velocity = currentVelocity == null ? Vec3.ZERO : currentVelocity;
 		Vec3 acceleration = computeAcceleration(
 				pitch,
 				yaw,
-				input != null && input.forward(),
-				input != null && input.backward(),
-				input != null && input.left(),
-				input != null && input.right(),
+				forwardDrive,
+				strafeDrive,
 				input != null && input.up(),
 				input != null && input.down()
 		);

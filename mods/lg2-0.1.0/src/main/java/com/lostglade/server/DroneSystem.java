@@ -228,6 +228,25 @@ public final class DroneSystem {
 			return;
 		}
 
+		session.setForwardDrive(
+				DroneFlightPhysics.adjustDrive(
+						session.forwardDrive(),
+						input.forward(),
+						input.backward(),
+						DroneFlightPhysics.PLANAR_DRIVE_STEP,
+						DroneFlightPhysics.MAX_FORWARD_DRIVE
+				)
+		);
+		session.setStrafeDrive(
+				DroneFlightPhysics.adjustDrive(
+						session.strafeDrive(),
+						input.right(),
+						input.left(),
+						DroneFlightPhysics.PLANAR_DRIVE_STEP,
+						DroneFlightPhysics.MAX_STRAFE_DRIVE
+				)
+		);
+
 		Vec3 currentPos = player.position();
 		Vec3 actualMovement = currentPos.subtract(session.lastPlayerPos());
 		double impactSpeed = Math.max(session.velocity().length(), actualMovement.length());
@@ -235,7 +254,7 @@ public final class DroneSystem {
 		float pitch = player.getXRot();
 		root.setYRot(yaw);
 		root.setXRot(pitch);
-		ensureDroneFlight(player, input);
+		ensureDroneFlight(player, session, input);
 		root.setPos(player.getX(), player.getY(), player.getZ());
 		root.setDeltaMovement(player.getDeltaMovement());
 		root.hurtMarked = true;
@@ -250,7 +269,7 @@ public final class DroneSystem {
 		syncControlledPlayer(player, root);
 	}
 
-	private static void ensureDroneFlight(ServerPlayer player, DroneInputState input) {
+	private static void ensureDroneFlight(ServerPlayer player, DroneControlSession session, DroneInputState input) {
 		player.setNoGravity(false);
 		player.noPhysics = false;
 		player.fallDistance = 0.0F;
@@ -261,6 +280,8 @@ public final class DroneSystem {
 				player.getDeltaMovement(),
 				player.getXRot(),
 				player.getYRot(),
+				session.forwardDrive(),
+				session.strafeDrive(),
 				new DroneFlightPhysics.ControlInput(
 						input.forward(),
 						input.backward(),
@@ -678,6 +699,8 @@ public final class DroneSystem {
 		private boolean wasFlying;
 		private Vec3 velocity = Vec3.ZERO;
 		private Vec3 lastPlayerPos = Vec3.ZERO;
+		private double forwardDrive;
+		private double strafeDrive;
 
 		private DroneControlSession(
 				UUID droneUuid,
@@ -775,6 +798,22 @@ public final class DroneSystem {
 
 		private void setLastPlayerPos(Vec3 lastPlayerPos) {
 			this.lastPlayerPos = lastPlayerPos == null ? Vec3.ZERO : lastPlayerPos;
+		}
+
+		private double forwardDrive() {
+			return this.forwardDrive;
+		}
+
+		private void setForwardDrive(double forwardDrive) {
+			this.forwardDrive = forwardDrive;
+		}
+
+		private double strafeDrive() {
+			return this.strafeDrive;
+		}
+
+		private void setStrafeDrive(double strafeDrive) {
+			this.strafeDrive = strafeDrive;
 		}
 	}
 }
