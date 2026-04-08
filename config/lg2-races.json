@@ -104,7 +104,10 @@
                                       "abilityId":  "copper_man_shnyaga",
                                       "name":  "Спец-очки",
                                       "description":  "Позволяет менять режимы видения.",
-                                      "priceBitcoins":  1500
+                                      "priceBitcoins":  1500,
+                                      "copperGogglesOreSearchCooldownSeconds":  600.0,
+                                      "copperGogglesOreSearchRadiusBlocks":  10.0,
+                                      "copperGogglesOreSearchHighlightSeconds":  5.0
                                   },
                       "stock":  {
                                     "enabled":  true,
