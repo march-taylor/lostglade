@@ -360,6 +360,7 @@ public final class RendererBotShadowWorldManager {
 			LAST_RENDER_ACTIVITY_AT.remove(sessionId);
 			closeSession(removed);
 		}
+		RendererBotOffscreenWorldRenderer.releaseSession(sessionId);
 	}
 
 	private static ShadowLevelSession createShadowSession(Minecraft client, RendererBotPayloads.RendererBotShadowLevelInitS2CPayload payload) {

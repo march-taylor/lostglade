@@ -531,6 +531,7 @@ public final class RendererBotClientCapture {
 			}
 			PENDING_CAPTURES.remove(requestId);
 		}
+		RendererBotOffscreenWorldRenderer.releaseSession(requestId);
 	}
 
 	private static boolean markPendingCaptureRequested(UUID requestId) {
@@ -561,6 +562,7 @@ public final class RendererBotClientCapture {
 			}
 			LIVE_STREAM_SESSIONS.remove(streamId);
 		}
+		RendererBotOffscreenWorldRenderer.releaseSession(streamId);
 	}
 
 	private static void clearLiveStreamFrameInFlight(UUID streamId) {

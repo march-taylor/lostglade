@@ -189,6 +189,7 @@ public final class MonitorScreenSystem {
 	private static volatile ExecutorService renderExecutor;
 	private static volatile ExecutorService quantizeExecutor;
 	private static volatile ExecutorService mediaIoExecutor;
+	private static volatile ExecutorService liveCameraExecutor;
 	private static volatile ExecutorService overlayWindowExecutor;
 	private static volatile ScheduledExecutorService mediaScheduler;
 	private static volatile BufferedImage offBaseImage;
@@ -238,6 +239,9 @@ public final class MonitorScreenSystem {
 		if (mediaIoExecutor == null) {
 			mediaIoExecutor = Executors.newFixedThreadPool(monitorMediaIoThreads(), daemonThreadFactory("lg2-monitor-io"));
 		}
+		if (liveCameraExecutor == null) {
+			liveCameraExecutor = Executors.newFixedThreadPool(monitorLiveCameraThreads(), daemonThreadFactory("lg2-monitor-live-camera"));
+		}
 		if (overlayWindowExecutor == null) {
 			overlayWindowExecutor = Executors.newFixedThreadPool(monitorOverlayWindowThreads(), daemonThreadFactory("lg2-monitor-window"));
 		}
@@ -263,6 +267,10 @@ public final class MonitorScreenSystem {
 
 	private static int monitorMediaSchedulerThreads() {
 		return Math.max(2, Math.min(8, monitorMediaIoThreads()));
+	}
+
+	private static int monitorLiveCameraThreads() {
+		return Math.max(2, Math.min(8, Math.max(2, Runtime.getRuntime().availableProcessors() - 1)));
 	}
 
 	private static int monitorOverlayWindowThreads() {
@@ -5069,7 +5077,7 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		ensureExecutors();
-		mediaIoExecutor.execute(() -> decodePendingLiveCameraFrames(server, key, url, fullWidth, fullHeight));
+		liveCameraExecutor.execute(() -> decodePendingLiveCameraFrames(server, key, url, fullWidth, fullHeight));
 	}
 
 	private record LiveCameraPose(Vec3 origin, float yaw, float pitch) {
@@ -5081,6 +5089,7 @@ public final class MonitorScreenSystem {
 			boolean decodePreviewFrame;
 			byte[][] displayedTiles;
 			long displayedGeneration;
+			boolean directView;
 			MediaRuntimeState state = MEDIA_STATES.get(key);
 			if (state == null) {
 				RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(key));
@@ -5094,10 +5103,11 @@ public final class MonitorScreenSystem {
 					return;
 				}
 				long now = System.currentTimeMillis();
+				directView = state.overlayMode == MediaOverlayMode.VIEW;
 				decodePreviewFrame = state.streamFrame == null
 						|| state.loading
-						|| now >= state.nextLiveCameraPreviewDecodeAtMillis;
-				if (decodePreviewFrame) {
+						|| (!directView && now >= state.nextLiveCameraPreviewDecodeAtMillis);
+				if (decodePreviewFrame && !directView) {
 					state.nextLiveCameraPreviewDecodeAtMillis = now + LIVE_CAMERA_PREVIEW_DECODE_INTERVAL_MS;
 				}
 				displayedTiles = state.liveCameraDisplayedTiles;

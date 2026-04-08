@@ -39,6 +39,8 @@ import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector4f;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -46,6 +48,7 @@ public final class RendererBotOffscreenWorldRenderer {
 	private static final Object LOCK = new Object();
 	private static final double STATIC_CAMERA_EYE_HEIGHT = 1.62D;
 	private static final int MIN_READY_CHUNK_RADIUS = 1;
+	private static final Map<UUID, OffscreenSessionState> SESSION_STATES = new HashMap<>();
 	private static boolean offscreenRenderActive;
 
 	private RendererBotOffscreenWorldRenderer() {
@@ -58,6 +61,21 @@ public final class RendererBotOffscreenWorldRenderer {
 	}
 
 	public static void clearCaches() {
+		synchronized (LOCK) {
+			for (OffscreenSessionState state : SESSION_STATES.values()) {
+				closeSessionState(state);
+			}
+			SESSION_STATES.clear();
+		}
+	}
+
+	public static void releaseSession(UUID sessionId) {
+		if (sessionId == null) {
+			return;
+		}
+		synchronized (LOCK) {
+			closeSessionState(SESSION_STATES.remove(sessionId));
+		}
 	}
 
 	public static void onBlockChanged(ClientLevel level, BlockPos pos, BlockState oldState, BlockState newState, int flags) {
@@ -118,18 +136,14 @@ public final class RendererBotOffscreenWorldRenderer {
 				return false;
 			}
 
-			CameraState cameraState = resolveCameraState(client, renderLevel, request);
+			OffscreenSessionState sessionState = SESSION_STATES.computeIfAbsent(request.sessionId(), ignored -> new OffscreenSessionState());
+			TextureTarget renderTarget = ensureRenderTarget(sessionState, request.renderWidth(), request.renderHeight());
+			CameraState cameraState = resolveCameraState(client, renderLevel, request, sessionState);
 			if (cameraState == null || !isWorldReady(renderLevel, cameraState)) {
 				return false;
 			}
 
 			levelRenderer.resize(request.renderWidth(), request.renderHeight());
-			TextureTarget renderTarget = new TextureTarget(
-					"lg2_renderer_bot_offscreen",
-					request.renderWidth(),
-					request.renderHeight(),
-					true
-			);
 			RenderTarget previousRenderTarget = client.getMainRenderTarget();
 			MinecraftOffscreenWorldAccessor worldAccessor = (MinecraftOffscreenWorldAccessor) client;
 			ClientLevel previousLevel = worldAccessor.lg2$getLevel();
@@ -151,11 +165,7 @@ public final class RendererBotOffscreenWorldRenderer {
 				RendererBotShadowWorldManager.updateCameraContext(request.sessionId(), cameraState.camera());
 				renderOffscreenWorld(client, renderLevel, levelRenderer, session.featureRenderDispatcher(), request, cameraState, renderTarget);
 				Screenshot.takeScreenshot(renderTarget, image -> {
-					try {
-						imageConsumer.accept(image);
-					} finally {
-						client.execute(renderTarget::destroyBuffers);
-					}
+					imageConsumer.accept(image);
 				});
 				screenshotQueued = true;
 				return true;
@@ -172,9 +182,7 @@ public final class RendererBotOffscreenWorldRenderer {
 				RenderSystem.restoreProjectionMatrix();
 				RenderSystem.setShaderFog(((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$getFogRenderer().getBuffer(FogRenderer.FogMode.NONE));
 				offscreenRenderActive = false;
-				if (!screenshotQueued) {
-					renderTarget.destroyBuffers();
-				}
+				sessionState.renderInProgress = false;
 			}
 		}
 	}
@@ -258,7 +266,7 @@ public final class RendererBotOffscreenWorldRenderer {
 		cameraRenderState.orientation = new Quaternionf(camera.rotation());
 	}
 
-	private static CameraState resolveCameraState(Minecraft client, ClientLevel renderLevel, RenderRequest request) {
+	private static CameraState resolveCameraState(Minecraft client, ClientLevel renderLevel, RenderRequest request, OffscreenSessionState sessionState) {
 		float partialTick = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
 		if (renderLevel == null) {
 			return null;
@@ -266,14 +274,14 @@ public final class RendererBotOffscreenWorldRenderer {
 		if (request.followEntityUuid() != null) {
 			Entity followTarget = renderLevel.getPlayerByUUID(request.followEntityUuid());
 			if (followTarget != null) {
-				Camera camera = new Camera();
+				Camera camera = sessionState.followCamera;
 				camera.setup(renderLevel, followTarget, false, false, partialTick);
 				((CameraPositionInvoker) camera).lg2$setPosition(followTarget.getEyePosition(partialTick));
 				return new CameraState(camera);
 			}
 			for (Entity entity : renderLevel.entitiesForRendering()) {
 				if (request.followEntityUuid().equals(entity.getUUID())) {
-					Camera camera = new Camera();
+					Camera camera = sessionState.followCamera;
 					camera.setup(renderLevel, entity, false, false, partialTick);
 					((CameraPositionInvoker) camera).lg2$setPosition(entity.getEyePosition(partialTick));
 					return new CameraState(camera);
@@ -283,14 +291,45 @@ public final class RendererBotOffscreenWorldRenderer {
 		}
 
 		Vec3 eyePosition = new Vec3(request.x(), request.y() + STATIC_CAMERA_EYE_HEIGHT, request.z());
-		Marker anchor = new Marker(EntityType.MARKER, renderLevel);
+		Marker anchor = sessionState.ensureStaticAnchor(renderLevel);
 		anchor.snapTo(eyePosition, request.yaw(), request.pitch());
 		anchor.setOldPosAndRot(eyePosition, request.yaw(), request.pitch());
 		anchor.noPhysics = true;
 		anchor.setNoGravity(true);
-		Camera camera = new Camera();
+		Camera camera = sessionState.staticCamera;
 		camera.setup(renderLevel, anchor, false, false, partialTick);
 		return new CameraState(camera);
+	}
+
+	private static TextureTarget ensureRenderTarget(OffscreenSessionState sessionState, int width, int height) {
+		if (sessionState == null) {
+			return null;
+		}
+		int safeWidth = Math.max(1, width);
+		int safeHeight = Math.max(1, height);
+		if (sessionState.renderTarget == null
+				|| sessionState.renderWidth != safeWidth
+				|| sessionState.renderHeight != safeHeight) {
+			if (sessionState.renderTarget != null) {
+				sessionState.renderTarget.destroyBuffers();
+			}
+			sessionState.renderTarget = new TextureTarget("lg2_renderer_bot_offscreen", safeWidth, safeHeight, true);
+			sessionState.renderWidth = safeWidth;
+			sessionState.renderHeight = safeHeight;
+		}
+		sessionState.renderInProgress = true;
+		return sessionState.renderTarget;
+	}
+
+	private static void closeSessionState(OffscreenSessionState state) {
+		if (state == null) {
+			return;
+		}
+		if (state.renderTarget != null) {
+			state.renderTarget.destroyBuffers();
+			state.renderTarget = null;
+		}
+		state.staticAnchor = null;
 	}
 
 	private static boolean isWorldReady(ClientLevel renderLevel, CameraState cameraState) {
@@ -327,5 +366,24 @@ public final class RendererBotOffscreenWorldRenderer {
 	}
 
 	private record CameraState(Camera camera) {
+	}
+
+	private static final class OffscreenSessionState {
+		private TextureTarget renderTarget;
+		private int renderWidth;
+		private int renderHeight;
+		private Marker staticAnchor;
+		private final Camera staticCamera = new Camera();
+		private final Camera followCamera = new Camera();
+		private boolean renderInProgress;
+
+		private Marker ensureStaticAnchor(ClientLevel level) {
+			if (this.staticAnchor == null || this.staticAnchor.level() != level) {
+				this.staticAnchor = new Marker(EntityType.MARKER, level);
+				this.staticAnchor.noPhysics = true;
+				this.staticAnchor.setNoGravity(true);
+			}
+			return this.staticAnchor;
+		}
 	}
 }

@@ -1634,8 +1634,8 @@ public final class RendererBotCameraSystem {
 				new net.minecraft.server.level.ServerEntity(
 						level,
 						entity,
-						entity.getType().updateInterval(),
-						entity.getType().trackDeltas(),
+						1,
+						true,
 						collector
 				),
 				collector
