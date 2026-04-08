@@ -2,6 +2,7 @@ package com.lostglade.block;
 
 import com.lostglade.server.MonitorScreenSystem;
 import com.lostglade.server.CameraOrientationStore;
+import com.lostglade.server.BluetoothLinkSystem;
 import eu.pb4.polymer.core.api.block.SimplePolymerBlock;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
@@ -126,6 +127,7 @@ public final class CameraBlock extends SimplePolymerBlock {
 	@Override
 	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
 		CameraOrientationStore.remove(level, pos);
+		BluetoothLinkSystem.removeBlockEndpoint(level, BluetoothLinkSystem.EndpointType.CAMERA, pos);
 		MonitorScreenSystem.onCameraNetworkChanged(level, pos);
 		super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
 	}

@@ -700,6 +700,33 @@ public final class SpeakerSystem {
 			}
 			connected.add(key.pos().immutable());
 		}
+		BluetoothLinkSystem.Endpoint originEndpoint = BluetoothLinkSystem.resolveBlockEndpoint(level, originPos);
+		if (originEndpoint != null) {
+			for (BluetoothLinkSystem.Endpoint linked : BluetoothLinkSystem.linkedEndpoints(originEndpoint)) {
+				if (linked.type() != BluetoothLinkSystem.EndpointType.SPEAKER) {
+					continue;
+				}
+				ServerLevel linkedLevel = level.getServer() == null ? null : level.getServer().getLevel(linked.dimension());
+				if (linkedLevel == null || !linkedLevel.hasChunkAt(linked.pos())) {
+					continue;
+				}
+				BlockState linkedState = linkedLevel.getBlockState(linked.pos());
+				if (!linkedState.is(ModBlocks.SPEAKER)
+						|| !hasSpeakerPower(linkedLevel, linked.pos())
+						|| SpeakerBlock.readVolumePercent(linkedState) <= 0) {
+					continue;
+				}
+				if (Objects.equals(linked.dimension(), level.dimension())) {
+					BlockPos wirelessPos = linked.pos().immutable();
+					if (!connected.contains(wirelessPos)) {
+						connected.add(wirelessPos);
+					}
+				} else {
+					trackSpeaker(linkedLevel, linked.pos());
+					refreshSpeaker(level.getServer(), new SpeakerKey(linked.dimension(), linked.pos().immutable()));
+				}
+			}
+		}
 		List<BlockPos> cachedPositions = List.copyOf(connected);
 		CONNECTED_SPEAKER_CACHE.put(cacheKey, new ConnectedSpeakerCacheEntry(gameTime + CONNECTED_SPEAKER_CACHE_TTL_TICKS, cachedPositions));
 		return cachedPositions;

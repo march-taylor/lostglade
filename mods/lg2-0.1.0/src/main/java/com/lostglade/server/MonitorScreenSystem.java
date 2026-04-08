@@ -432,6 +432,9 @@ public final class MonitorScreenSystem {
 		if (level == null || key == null) {
 			return;
 		}
+		if (permanentRemoval) {
+			BluetoothLinkSystem.removeScreenEndpoint(level, key.pos(), key.direction());
+		}
 		MonitorLevelState state = levelState(level.dimension());
 		state.knownFrames().remove(key);
 		ScreenRuntimeKey runtimeKey = state.frameToRuntime().remove(key);
@@ -592,6 +595,63 @@ public final class MonitorScreenSystem {
 		return component;
 	}
 
+	private static String bluetoothScreenId(ScreenComponent component) {
+		if (component == null) {
+			return null;
+		}
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			String groupId = normalizedGroupId(readScreenState(frame.getItem()));
+			if (groupId != null) {
+				return groupId;
+			}
+		}
+		return componentGroupId(component.runtimeKey());
+	}
+
+	private static BluetoothLinkSystem.Endpoint bluetoothScreenEndpoint(ServerLevel level, ScreenComponent component) {
+		if (level == null || component == null || component.runtimeKey() == null) {
+			return null;
+		}
+		BluetoothLinkSystem.Endpoint endpoint = BluetoothLinkSystem.screenEndpoint(
+				level.dimension(),
+				component.runtimeKey().pos(),
+				component.runtimeKey().facing(),
+				bluetoothScreenId(component)
+		);
+		LinkedHashSet<BluetoothLinkSystem.Endpoint> legacyEndpoints = new LinkedHashSet<>();
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			legacyEndpoints.add(BluetoothLinkSystem.screenEndpoint(level.dimension(), frame.blockPosition(), frame.getDirection()));
+		}
+		BluetoothLinkSystem.collapseScreenEndpoints(level.getServer(), endpoint, legacyEndpoints);
+		return endpoint;
+	}
+
+	private static ScreenComponent resolveBluetoothScreenComponent(ServerLevel level, BluetoothLinkSystem.Endpoint endpoint) {
+		if (level == null || endpoint == null || endpoint.type() != BluetoothLinkSystem.EndpointType.SCREEN) {
+			return null;
+		}
+		String screenId = endpoint.screenId();
+		if (screenId != null && !screenId.isBlank()) {
+			for (ScreenComponent component : cachedComponents(level)) {
+				if (screenId.equals(bluetoothScreenId(component))) {
+					return component;
+				}
+			}
+		}
+		if (endpoint.pos() == null || endpoint.facing() == null) {
+			return null;
+		}
+		ScreenComponent cached = levelState(level.dimension()).components().get(new ScreenRuntimeKey(level.dimension(), endpoint.pos(), endpoint.facing()));
+		if (cached != null) {
+			return cached;
+		}
+		ItemFrame frame = findScreenFrame(level, endpoint.pos(), endpoint.facing());
+		if (frame == null || readScreenState(frame.getItem()) == null) {
+			return null;
+		}
+		return resolveScreenComponent(level, frame);
+	}
+
 	private static List<ScreenComponent> cachedComponents(ServerLevel level) {
 		if (level == null) {
 			return List.of();
@@ -663,6 +723,10 @@ public final class MonitorScreenSystem {
 		if (level == null || frame == null || readScreenState(frame.getItem()) == null) {
 			return false;
 		}
+		ScreenComponent componentBeforeRemoval = resolveScreenComponent(level, frame);
+		BluetoothLinkSystem.Endpoint removedScreenEndpoint = componentBeforeRemoval != null && componentBeforeRemoval.frameCoords().size() == 1
+				? bluetoothScreenEndpoint(level, componentBeforeRemoval)
+				: null;
 
 		BlockPos framePos = frame.blockPosition();
 		Direction facing = frame.getDirection();
@@ -674,7 +738,99 @@ public final class MonitorScreenSystem {
 		}
 		frame.discard();
 		untrackScreenFrame(level, new ScreenKey(framePos, facing), true);
+		if (removedScreenEndpoint != null) {
+			BluetoothLinkSystem.removeScreenEndpoint(level, removedScreenEndpoint);
+		}
 		return true;
+	}
+
+	public static BluetoothLinkSystem.Endpoint resolveBluetoothScreenEndpoint(ServerLevel level, ItemFrame frame) {
+		if (level == null || frame == null || readScreenState(frame.getItem()) == null) {
+			return null;
+		}
+		return bluetoothScreenEndpoint(level, resolveScreenComponent(level, frame));
+	}
+
+	public static BluetoothLinkSystem.Endpoint resolveBluetoothScreenEndpoint(ServerLevel level, Entity entity) {
+		if (level == null || entity == null) {
+			return null;
+		}
+		if (entity instanceof ItemFrame itemFrame) {
+			return resolveBluetoothScreenEndpoint(level, itemFrame);
+		}
+		if (entity instanceof Display.ItemDisplay display && display.getTags().contains(DISPLAY_ROOT_TAG)) {
+			BlockPos pos = parsePositionTag(display.getTags());
+			Direction facing = parseFacingTag(display.getTags());
+			if (pos == null || facing == null) {
+				return null;
+			}
+			ItemFrame frame = findScreenFrame(level, pos, facing);
+			if (frame != null) {
+				return resolveBluetoothScreenEndpoint(level, frame);
+			}
+		}
+		return null;
+	}
+
+	public static List<ServerSelectionHighlightSystem.DisplayBlueprint> resolveBluetoothScreenHighlightBlueprints(ServerLevel level, BluetoothLinkSystem.Endpoint endpoint) {
+		if (level == null || endpoint == null) {
+			return List.of();
+		}
+		ScreenComponent component = resolveBluetoothScreenComponent(level, endpoint);
+		if (component == null) {
+			return List.of();
+		}
+		List<Map.Entry<ItemFrame, TileCoord>> orderedFrames = new ArrayList<>(component.frameCoords().entrySet());
+		orderedFrames.sort((left, right) -> {
+			TileCoord leftCoord = left.getValue();
+			TileCoord rightCoord = right.getValue();
+			int byRow = Integer.compare(leftCoord.y(), rightCoord.y());
+			return byRow != 0 ? byRow : Integer.compare(leftCoord.x(), rightCoord.x());
+		});
+		List<ServerSelectionHighlightSystem.DisplayBlueprint> blueprints = new ArrayList<>(orderedFrames.size());
+		for (Map.Entry<ItemFrame, TileCoord> entry : orderedFrames) {
+			ItemFrame frame = entry.getKey();
+			ScreenTileState state = readScreenState(frame.getItem());
+			if (state == null) {
+				continue;
+			}
+			Direction facing = frame.getDirection();
+			Direction mountSide = facing.getOpposite();
+			Vec3 center = Vec3.atCenterOf(frame.blockPosition()).add(
+					mountSide.getStepX() * DISPLAY_PLANE_OFFSET,
+					mountSide.getStepY() * DISPLAY_PLANE_OFFSET,
+					mountSide.getStepZ() * DISPLAY_PLANE_OFFSET
+			);
+			blueprints.add(new ServerSelectionHighlightSystem.ItemDisplayBlueprint(
+					level,
+					center,
+					facing.toYRot(),
+					0.0F,
+					MonitorItem.createDisplayStack(state.connectionMask()),
+					ItemDisplayContext.FIXED,
+					Transformation.identity()
+			));
+		}
+		return List.copyOf(blueprints);
+	}
+
+	public static void onBluetoothScreenEndpointChanged(ServerLevel level, BluetoothLinkSystem.Endpoint endpoint) {
+		if (level == null || endpoint == null) {
+			return;
+		}
+		ScreenComponent component = resolveBluetoothScreenComponent(level, endpoint);
+		if (component == null) {
+			return;
+		}
+		MinecraftServer server = level.getServer();
+		if (server == null) {
+			return;
+		}
+		enqueueCameraRefresh(level, component.runtimeKey());
+		refreshConnectedSpeakersNow(server, component);
+		if (hasNearbyMediaViewer(level, component)) {
+			requestRuntimeRender(server, component.runtimeKey());
+		}
 	}
 
 	private static InteractionResult onUseEntity(Player player, Level world, InteractionHand hand, Entity entity, EntityHitResult hitResult) {
@@ -763,7 +919,10 @@ public final class MonitorScreenSystem {
 					state.nextLiveCameraGallerySyncAtMillis = 0L;
 				}
 			}
-			enqueueCameraRefresh(level, target);
+			ServerLevel targetLevel = server.getLevel(target.dimension());
+			if (targetLevel != null) {
+				enqueueCameraRefresh(targetLevel, target);
+			}
 		}
 	}
 
@@ -772,12 +931,33 @@ public final class MonitorScreenSystem {
 			return Map.of();
 		}
 		Set<BlockPos> wireNetwork = collectSpeakerWireNetwork(level, originPos);
+		BluetoothLinkSystem.Endpoint originEndpoint = BluetoothLinkSystem.resolveBlockEndpoint(level, originPos);
 		Map<ScreenRuntimeKey, ScreenComponent> connectedComponents = new HashMap<>();
 		for (ScreenComponent component : cachedComponents(level)) {
-			if (!isSpeakerConnectedToComponent(originPos, component, wireNetwork)) {
+			boolean connected = isSpeakerConnectedToComponent(originPos, component, wireNetwork);
+			if (!connected && originEndpoint != null) {
+				BluetoothLinkSystem.Endpoint screenEndpoint = bluetoothScreenEndpoint(level, component);
+				connected = screenEndpoint != null && BluetoothLinkSystem.areLinked(originEndpoint, screenEndpoint);
+			}
+			if (!connected) {
 				continue;
 			}
 			connectedComponents.putIfAbsent(component.runtimeKey(), component);
+		}
+		if (originEndpoint != null && level.getServer() != null) {
+			for (BluetoothLinkSystem.Endpoint linked : BluetoothLinkSystem.linkedEndpoints(originEndpoint)) {
+				if (linked.type() != BluetoothLinkSystem.EndpointType.SCREEN) {
+					continue;
+				}
+				ServerLevel linkedLevel = level.getServer().getLevel(linked.dimension());
+				if (linkedLevel == null) {
+					continue;
+				}
+				ScreenComponent linkedComponent = resolveBluetoothScreenComponent(linkedLevel, linked);
+				if (linkedComponent != null) {
+					connectedComponents.putIfAbsent(linkedComponent.runtimeKey(), linkedComponent);
+				}
+			}
 		}
 		return connectedComponents;
 	}
@@ -1824,7 +2004,11 @@ public final class MonitorScreenSystem {
 		if (level == null) {
 			return;
 		}
-		SpeakerSystem.refreshConnectedSpeakersNow(server, level, runtimeKey.pos());
+		ScreenComponent component = resolveScreenComponent(server, runtimeKey);
+		if (component == null) {
+			return;
+		}
+		refreshConnectedSpeakersNow(server, component);
 	}
 
 	private static void processPendingCameraRefresh(MinecraftServer server, ScreenRuntimeKey runtimeKey) {
@@ -2952,6 +3136,12 @@ public final class MonitorScreenSystem {
 			BlockPos supportPos = framePos.relative(frame.getDirection().getOpposite());
 			collectCameraTouchPoints(level, framePos, cameraPositions);
 			collectCameraTouchPoints(level, supportPos, cameraPositions);
+		}
+		BluetoothLinkSystem.Endpoint screenEndpoint = bluetoothScreenEndpoint(level, component);
+		for (BluetoothLinkSystem.Endpoint linked : BluetoothLinkSystem.linkedEndpoints(screenEndpoint)) {
+			if (linked.type() == BluetoothLinkSystem.EndpointType.CAMERA && Objects.equals(linked.dimension(), level.dimension())) {
+				cameraPositions.add(linked.pos().immutable());
+			}
 		}
 		for (BlockPos wirePos : wireNetwork) {
 			collectCameraTouchPoints(level, wirePos, cameraPositions);
@@ -12718,7 +12908,45 @@ public final class MonitorScreenSystem {
 		if (level == null) {
 			return;
 		}
-		levelState(level.dimension()).enqueueSpeakerRefreshRuntime(key);
+		ScreenComponent component = resolveScreenComponent(server, key);
+		if (component == null) {
+			return;
+		}
+		refreshConnectedSpeakersNow(server, component);
+	}
+
+	private static void refreshConnectedSpeakersNow(MinecraftServer server, ScreenComponent component) {
+		if (server == null || component == null) {
+			return;
+		}
+		ServerLevel level = server.getLevel(component.runtimeKey().dimension());
+		if (level == null) {
+			return;
+		}
+		LinkedHashSet<BlockPos> speakerPositions = new LinkedHashSet<>();
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			BlockPos framePos = frame.blockPosition();
+			BlockPos supportPos = framePos.relative(frame.getDirection().getOpposite());
+			speakerPositions.addAll(SpeakerSystem.findConnectedPoweredSpeakerPositions(level, framePos));
+			speakerPositions.addAll(SpeakerSystem.findConnectedPoweredSpeakerPositions(level, supportPos));
+		}
+		BluetoothLinkSystem.Endpoint screenEndpoint = bluetoothScreenEndpoint(level, component);
+		for (BluetoothLinkSystem.Endpoint linked : BluetoothLinkSystem.linkedEndpoints(screenEndpoint)) {
+			if (linked.type() != BluetoothLinkSystem.EndpointType.SPEAKER) {
+				continue;
+			}
+			if (Objects.equals(linked.dimension(), level.dimension())) {
+				speakerPositions.add(linked.pos().immutable());
+				continue;
+			}
+			ServerLevel linkedLevel = server.getLevel(linked.dimension());
+			if (linkedLevel != null) {
+				SpeakerSystem.onSpeakerStateChanged(linkedLevel, linked.pos());
+			}
+		}
+		for (BlockPos speakerPos : speakerPositions) {
+			SpeakerSystem.onSpeakerStateChanged(level, speakerPos);
+		}
 	}
 
 	private static long clampLong(long value, long min, long max) {

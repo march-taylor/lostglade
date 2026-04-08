@@ -1,6 +1,7 @@
 package com.lostglade.block;
 
 import com.lostglade.server.SpeakerSystem;
+import com.lostglade.server.BluetoothLinkSystem;
 import eu.pb4.polymer.blocks.api.PolymerTexturedBlock;
 import eu.pb4.polymer.core.api.block.SimplePolymerBlock;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
@@ -153,6 +154,7 @@ public final class SpeakerBlock extends SimplePolymerBlock implements PolymerTex
 
 	@Override
 	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
+		BluetoothLinkSystem.removeBlockEndpoint(level, BluetoothLinkSystem.EndpointType.SPEAKER, pos);
 		SpeakerSystem.untrackSpeaker(level, pos);
 		super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
 	}
