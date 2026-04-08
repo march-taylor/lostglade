@@ -30,6 +30,8 @@ import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.protocol.game.ClientboundMapItemDataPacket;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -801,13 +803,12 @@ public final class MonitorScreenSystem {
 					mountSide.getStepY() * DISPLAY_PLANE_OFFSET,
 					mountSide.getStepZ() * DISPLAY_PLANE_OFFSET
 			);
-			blueprints.add(new ServerSelectionHighlightSystem.ItemDisplayBlueprint(
+			blueprints.add(new ServerSelectionHighlightSystem.BlockDisplayBlueprint(
 					level,
 					center,
 					facing.toYRot(),
 					0.0F,
-					MonitorItem.createDisplayStack(state.connectionMask()),
-					ItemDisplayContext.FIXED,
+					Blocks.AIR.defaultBlockState(),
 					Transformation.identity()
 			));
 		}
@@ -903,14 +904,17 @@ public final class MonitorScreenSystem {
 		if (server == null) {
 			return;
 		}
+		LiveCameraReference changedCamera = new LiveCameraReference(level.dimension(), cameraPos.immutable());
 		Set<ScreenRuntimeKey> targets = new LinkedHashSet<>(collectConnectedComponentsForWireSource(level, cameraPos).keySet());
-		for (Map.Entry<ScreenRuntimeKey, List<BlockPos>> entry : levelState(level.dimension()).connectedCameraPositions().entrySet()) {
-			ScreenRuntimeKey runtimeKey = entry.getKey();
-			List<BlockPos> connectedCameraPositions = entry.getValue();
-			if (runtimeKey == null || connectedCameraPositions == null || !connectedCameraPositions.contains(cameraPos)) {
-				continue;
+		for (MonitorLevelState monitorState : LEVEL_STATES.values()) {
+			for (Map.Entry<ScreenRuntimeKey, List<LiveCameraReference>> entry : monitorState.connectedCameraPositions().entrySet()) {
+				ScreenRuntimeKey runtimeKey = entry.getKey();
+				List<LiveCameraReference> connectedCameraPositions = entry.getValue();
+				if (runtimeKey == null || connectedCameraPositions == null || !connectedCameraPositions.contains(changedCamera)) {
+					continue;
+				}
+				targets.add(runtimeKey);
 			}
-			targets.add(runtimeKey);
 		}
 		for (ScreenRuntimeKey target : targets) {
 			MediaRuntimeState state = MEDIA_STATES.get(target);
@@ -2102,13 +2106,13 @@ public final class MonitorScreenSystem {
 		if (server == null || level == null || component == null) {
 			return;
 		}
-		List<BlockPos> connectedCameraPositions = collectConnectedCameraPositions(level, component);
+		List<LiveCameraReference> connectedCameraPositions = collectConnectedCameraPositions(level, component);
 		levelState(level.dimension()).connectedCameraPositions().put(component.runtimeKey(), connectedCameraPositions);
 		MediaRuntimeState state = MEDIA_STATES.get(component.runtimeKey());
 		if (state == null) {
 			return;
 		}
-		boolean shouldRender = syncConnectedLiveCameraGalleryState(component, state, connectedCameraPositions);
+		boolean shouldRender = syncConnectedLiveCameraGalleryState(server, component, state, connectedCameraPositions);
 		shouldRender |= syncLiveCameraPlayback(server, component, state);
 		if (shouldRender && hasNearbyMediaViewer(level, component)) {
 			requestRuntimeRender(server, component.runtimeKey());
@@ -3040,11 +3044,11 @@ public final class MonitorScreenSystem {
 		}
 	}
 
-	private static boolean syncConnectedLiveCameraGalleryState(ScreenComponent component, MediaRuntimeState state, List<BlockPos> connectedCameraPositions) {
+	private static boolean syncConnectedLiveCameraGalleryState(MinecraftServer server, ScreenComponent component, MediaRuntimeState state, List<LiveCameraReference> connectedCameraPositions) {
 		if (component == null || state == null) {
 			return false;
 		}
-		List<BlockPos> resolvedPositions = connectedCameraPositions != null ? connectedCameraPositions : List.of();
+		List<LiveCameraReference> resolvedPositions = connectedCameraPositions != null ? connectedCameraPositions : List.of();
 		synchronized (state) {
 			boolean relevant = state.mode == ScreenViewMode.SBER_DRONES
 					&& (state.gallerySurfaceMode == GallerySurfaceMode.BROWSER
@@ -3060,11 +3064,11 @@ public final class MonitorScreenSystem {
 					existingLiveItems.put(item.url(), item);
 				}
 			}
-
-			for (BlockPos cameraPos : resolvedPositions) {
-				String url = liveCameraGalleryUrl(cameraPos);
-				String title = liveCameraGalleryTitle(cameraPos);
-				String subtitle = liveCameraGallerySubtitle(cameraPos);
+			for (LiveCameraReference cameraRef : resolvedPositions) {
+				boolean online = isLiveCameraOnline(server, cameraRef);
+				String url = liveCameraGalleryUrl(cameraRef);
+				String title = liveCameraGalleryTitle(cameraRef);
+				String subtitle = liveCameraGallerySubtitle(cameraRef, online);
 				GalleryItem existing = existingLiveItems.get(url);
 				if (existing != null
 						&& Objects.equals(existing.title(), title)
@@ -3072,9 +3076,7 @@ public final class MonitorScreenSystem {
 						&& existing.kind() == GalleryItemKind.LIVE_CAMERA) {
 					rebuilt.add(existing);
 				} else {
-					BufferedImage preview = existing != null && existing.preview() != null
-							? existing.preview()
-							: createLiveCameraPlaceholderPreview(title, subtitle);
+					BufferedImage preview = createLiveCameraPlaceholderPreview(title, subtitle, online);
 					rebuilt.add(new GalleryItem(title, subtitle, url, null, null, preview, GalleryItemKind.LIVE_CAMERA));
 				}
 			}
@@ -3125,12 +3127,12 @@ public final class MonitorScreenSystem {
 		return false;
 	}
 
-	private static List<BlockPos> collectConnectedCameraPositions(ServerLevel level, ScreenComponent component) {
+	private static List<LiveCameraReference> collectConnectedCameraPositions(ServerLevel level, ScreenComponent component) {
 		if (level == null || component == null) {
 			return List.of();
 		}
 		Set<BlockPos> wireNetwork = collectComponentWireNetwork(level, component);
-		Set<BlockPos> cameraPositions = new LinkedHashSet<>();
+		Set<LiveCameraReference> cameraPositions = new LinkedHashSet<>();
 		for (ItemFrame frame : component.frameCoords().keySet()) {
 			BlockPos framePos = frame.blockPosition();
 			BlockPos supportPos = framePos.relative(frame.getDirection().getOpposite());
@@ -3139,24 +3141,28 @@ public final class MonitorScreenSystem {
 		}
 		BluetoothLinkSystem.Endpoint screenEndpoint = bluetoothScreenEndpoint(level, component);
 		for (BluetoothLinkSystem.Endpoint linked : BluetoothLinkSystem.linkedEndpoints(screenEndpoint)) {
-			if (linked.type() == BluetoothLinkSystem.EndpointType.CAMERA && Objects.equals(linked.dimension(), level.dimension())) {
-				cameraPositions.add(linked.pos().immutable());
+			if (linked.type() == BluetoothLinkSystem.EndpointType.CAMERA && linked.dimension() != null && linked.pos() != null) {
+				cameraPositions.add(new LiveCameraReference(linked.dimension(), linked.pos().immutable()));
 			}
 		}
 		for (BlockPos wirePos : wireNetwork) {
 			collectCameraTouchPoints(level, wirePos, cameraPositions);
 		}
-		List<BlockPos> ordered = new ArrayList<>(cameraPositions);
+		List<LiveCameraReference> ordered = new ArrayList<>(cameraPositions);
 		ordered.sort((first, second) -> {
-			int compareX = Integer.compare(first.getX(), second.getX());
+			int compareDimension = first.dimension().identifier().toString().compareTo(second.dimension().identifier().toString());
+			if (compareDimension != 0) {
+				return compareDimension;
+			}
+			int compareX = Integer.compare(first.pos().getX(), second.pos().getX());
 			if (compareX != 0) {
 				return compareX;
 			}
-			int compareY = Integer.compare(first.getY(), second.getY());
+			int compareY = Integer.compare(first.pos().getY(), second.pos().getY());
 			if (compareY != 0) {
 				return compareY;
 			}
-			return Integer.compare(first.getZ(), second.getZ());
+			return Integer.compare(first.pos().getZ(), second.pos().getZ());
 		});
 		return List.copyOf(ordered);
 	}
@@ -3197,7 +3203,7 @@ public final class MonitorScreenSystem {
 		}
 	}
 
-	private static void collectCameraTouchPoints(ServerLevel level, BlockPos originPos, Set<BlockPos> cameraPositions) {
+	private static void collectCameraTouchPoints(ServerLevel level, BlockPos originPos, Set<LiveCameraReference> cameraPositions) {
 		if (level == null || originPos == null || cameraPositions == null) {
 			return;
 		}
@@ -3205,7 +3211,7 @@ public final class MonitorScreenSystem {
 			if (!isCameraBlock(level, touchPos)) {
 				continue;
 			}
-			cameraPositions.add(touchPos.immutable());
+			cameraPositions.add(new LiveCameraReference(level.dimension(), touchPos.immutable()));
 		}
 	}
 
@@ -3232,42 +3238,77 @@ public final class MonitorScreenSystem {
 		return true;
 	}
 
-	private static String liveCameraGalleryUrl(BlockPos cameraPos) {
-		if (cameraPos == null) {
+	private static String liveCameraGalleryUrl(LiveCameraReference cameraRef) {
+		if (cameraRef == null || cameraRef.dimension() == null || cameraRef.pos() == null) {
 			return "";
 		}
-		return LIVE_CAMERA_GALLERY_URL_PREFIX + cameraPos.getX() + "," + cameraPos.getY() + "," + cameraPos.getZ();
+		BlockPos cameraPos = cameraRef.pos();
+		return LIVE_CAMERA_GALLERY_URL_PREFIX
+				+ cameraRef.dimension().identifier()
+				+ "|"
+				+ cameraPos.getX()
+				+ ","
+				+ cameraPos.getY()
+				+ ","
+				+ cameraPos.getZ();
 	}
 
-	private static BlockPos liveCameraGalleryPos(String url) {
+	private static LiveCameraReference liveCameraGalleryReference(String url, ResourceKey<Level> fallbackDimension) {
 		if (url == null || !url.startsWith(LIVE_CAMERA_GALLERY_URL_PREFIX)) {
 			return null;
 		}
 		String payload = url.substring(LIVE_CAMERA_GALLERY_URL_PREFIX.length()).trim();
-		String[] parts = payload.split(",", 3);
+		ResourceKey<Level> dimension = fallbackDimension;
+		String coordinatesPayload = payload;
+		int dimensionSeparator = payload.indexOf('|');
+		if (dimensionSeparator >= 0) {
+			Identifier dimensionId = Identifier.tryParse(payload.substring(0, dimensionSeparator).trim());
+			if (dimensionId == null) {
+				return null;
+			}
+			dimension = ResourceKey.create(Registries.DIMENSION, dimensionId);
+			coordinatesPayload = payload.substring(dimensionSeparator + 1).trim();
+		}
+		if (dimension == null) {
+			return null;
+		}
+		String[] parts = coordinatesPayload.split(",", 3);
 		if (parts.length != 3) {
 			return null;
 		}
 		try {
-			return new BlockPos(
-					Integer.parseInt(parts[0].trim()),
-					Integer.parseInt(parts[1].trim()),
-					Integer.parseInt(parts[2].trim())
+			return new LiveCameraReference(
+					dimension,
+					new BlockPos(
+							Integer.parseInt(parts[0].trim()),
+							Integer.parseInt(parts[1].trim()),
+							Integer.parseInt(parts[2].trim())
+					)
 			);
 		} catch (NumberFormatException exception) {
 			return null;
 		}
 	}
 
-	private static String liveCameraGalleryTitle(BlockPos cameraPos) {
+	private static String liveCameraGalleryTitle(LiveCameraReference cameraRef) {
 		return "Камера";
 	}
 
-	private static String liveCameraGallerySubtitle(BlockPos cameraPos) {
-		if (cameraPos == null) {
+	private static String liveCameraGallerySubtitle(LiveCameraReference cameraRef, boolean online) {
+		if (cameraRef == null || cameraRef.pos() == null || cameraRef.dimension() == null) {
 			return "Прямая трансляция";
 		}
-		return "X: " + cameraPos.getX() + "  Y: " + cameraPos.getY() + "  Z: " + cameraPos.getZ();
+		BlockPos cameraPos = cameraRef.pos();
+		String status = online ? "online" : "offline";
+		return status
+				+ "  •  "
+				+ cameraRef.dimension().identifier()
+				+ "  •  X: "
+				+ cameraPos.getX()
+				+ "  Y: "
+				+ cameraPos.getY()
+				+ "  Z: "
+				+ cameraPos.getZ();
 	}
 
 	private static String liveCameraStreamOwnerId(ScreenRuntimeKey key) {
@@ -3277,7 +3318,21 @@ public final class MonitorScreenSystem {
 		return key.dimension() + "|" + key.pos().asLong() + "|" + key.facing().getSerializedName();
 	}
 
-	private static BufferedImage createLiveCameraPlaceholderPreview(String title, String subtitle) {
+	private static boolean isLiveCameraOnline(MinecraftServer server, LiveCameraReference cameraRef) {
+		if (server == null || cameraRef == null || cameraRef.dimension() == null || cameraRef.pos() == null) {
+			return false;
+		}
+		ServerLevel cameraLevel = server.getLevel(cameraRef.dimension());
+		if (cameraLevel == null) {
+			return false;
+		}
+		BlockPos cameraPos = cameraRef.pos();
+		return cameraLevel.hasChunkAt(cameraPos)
+				&& isCameraBlock(cameraLevel, cameraPos)
+				&& RendererBotCameraSystem.isCameraPlayerLoaded(cameraLevel, cameraPos);
+	}
+
+	private static BufferedImage createLiveCameraPlaceholderPreview(String title, String subtitle, boolean online) {
 		BufferedImage image = new BufferedImage(256, 256, BufferedImage.TYPE_INT_ARGB);
 		Graphics2D graphics = image.createGraphics();
 		try {
@@ -3286,11 +3341,11 @@ public final class MonitorScreenSystem {
 			graphics.fillRect(0, 0, image.getWidth(), image.getHeight());
 			graphics.setPaint(new GradientPaint(0, 0, new Color(0x19242F), image.getWidth(), image.getHeight(), new Color(0x0B0F14)));
 			graphics.fillRoundRect(12, 12, image.getWidth() - 24, image.getHeight() - 24, 28, 28);
-			graphics.setColor(new Color(0xE74C3C));
+			graphics.setColor(online ? new Color(0x2ECC71) : new Color(0xE74C3C));
 			graphics.fillOval(24, 24, 22, 22);
 			graphics.setColor(new Color(0xFFFFFF));
-			graphics.setFont(new Font("SansSerif", Font.BOLD, 26));
-			graphics.drawString("LIVE", 56, 42);
+			graphics.setFont(new Font("SansSerif", Font.BOLD, 24));
+			graphics.drawString(online ? "ONLINE" : "OFFLINE", 56, 42);
 			graphics.setFont(new Font("SansSerif", Font.BOLD, 22));
 			graphics.drawString(title != null && !title.isBlank() ? title : "Live Camera", 24, 176);
 			graphics.setColor(new Color(0xC7D0D9));
@@ -5209,32 +5264,37 @@ public final class MonitorScreenSystem {
 			}
 			sourceUrl = state.sourceUrl;
 		}
-		ServerLevel level = server.getLevel(component.runtimeKey().dimension());
-		BlockPos cameraPos = liveCameraGalleryPos(sourceUrl);
-		if (level == null || cameraPos == null) {
+		ServerLevel screenLevel = server.getLevel(component.runtimeKey().dimension());
+		LiveCameraReference cameraRef = liveCameraGalleryReference(sourceUrl, component.runtimeKey().dimension());
+		if (screenLevel == null || cameraRef == null) {
 			RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(component.runtimeKey()));
 			applyLiveCameraStreamFailure(server, component.runtimeKey(), sourceUrl, "Камера недоступна");
 			return false;
 		}
-		if (!hasNearbyMediaViewer(level, component)) {
+		ServerLevel cameraLevel = server.getLevel(cameraRef.dimension());
+		BlockPos cameraPos = cameraRef.pos();
+		if (cameraLevel == null || cameraPos == null) {
+			return resetLiveCameraToHome(server, screenLevel, component, state);
+		}
+		if (!hasNearbyMediaViewer(screenLevel, component)) {
 			RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(component.runtimeKey()));
 			return false;
 		}
-		if (!RendererBotCameraSystem.isCameraPlayerLoaded(level, cameraPos)) {
-			return resetLiveCameraToHome(server, level, component, state);
+		if (!RendererBotCameraSystem.isCameraPlayerLoaded(cameraLevel, cameraPos)) {
+			return resetLiveCameraToHome(server, screenLevel, component, state);
 		}
-		if (!level.hasChunkAt(cameraPos) || !isCameraBlock(level, cameraPos)) {
-			return resetLiveCameraToHome(server, level, component, state);
+		if (!cameraLevel.hasChunkAt(cameraPos) || !isCameraBlock(cameraLevel, cameraPos)) {
+			return resetLiveCameraToHome(server, screenLevel, component, state);
 		}
-		BlockState cameraState = level.getBlockState(cameraPos);
-		LiveCameraPose pose = liveCameraCapturePose(level, cameraPos, cameraState);
+		BlockState cameraState = cameraLevel.getBlockState(cameraPos);
+		LiveCameraPose pose = liveCameraCapturePose(cameraLevel, cameraPos, cameraState);
 		Vec3 origin = pose.origin();
 		double botFeetY = origin.y - RENDERER_BOT_EYE_HEIGHT;
 		int fullWidth = Math.max(1, component.width()) * MAP_SIZE;
 		int fullHeight = Math.max(1, component.height()) * MAP_SIZE;
 		boolean started = RendererBotCameraSystem.ensureLiveStream(
 				liveCameraStreamOwnerId(component.runtimeKey()),
-				level,
+				cameraLevel,
 				cameraPos,
 				origin.x,
 				botFeetY,
@@ -13117,6 +13177,9 @@ public final class MonitorScreenSystem {
 	private record ScreenRuntimeKey(ResourceKey<Level> dimension, BlockPos pos, Direction facing) {
 	}
 
+	private record LiveCameraReference(ResourceKey<Level> dimension, BlockPos pos) {
+	}
+
 	private record TileCoord(int x, int y) {
 	}
 
@@ -13163,7 +13226,7 @@ public final class MonitorScreenSystem {
 		private final Set<ScreenKey> knownFrames = ConcurrentHashMap.newKeySet();
 		private final Map<ScreenKey, ScreenRuntimeKey> frameToRuntime = new ConcurrentHashMap<>();
 		private final Map<ScreenRuntimeKey, ScreenComponent> components = new ConcurrentHashMap<>();
-		private final Map<ScreenRuntimeKey, List<BlockPos>> connectedCameraPositions = new ConcurrentHashMap<>();
+		private final Map<ScreenRuntimeKey, List<LiveCameraReference>> connectedCameraPositions = new ConcurrentHashMap<>();
 		private final Set<ScreenKey> dirtyFramesSet = ConcurrentHashMap.newKeySet();
 		private final ConcurrentLinkedQueue<ScreenKey> dirtyFrames = new ConcurrentLinkedQueue<>();
 		private final Set<ScreenRuntimeKey> dirtyRuntimeSet = ConcurrentHashMap.newKeySet();
@@ -13195,7 +13258,7 @@ public final class MonitorScreenSystem {
 			return this.components;
 		}
 
-		private Map<ScreenRuntimeKey, List<BlockPos>> connectedCameraPositions() {
+		private Map<ScreenRuntimeKey, List<LiveCameraReference>> connectedCameraPositions() {
 			return this.connectedCameraPositions;
 		}
 

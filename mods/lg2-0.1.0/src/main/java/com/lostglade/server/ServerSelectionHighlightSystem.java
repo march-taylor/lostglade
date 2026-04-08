@@ -5,7 +5,9 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
+import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerEntity;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -133,6 +135,10 @@ public final class ServerSelectionHighlightSystem {
 				NOOP_SYNCHRONIZER
 		);
 		tracker.sendPairingData(player, packet -> player.connection.send((Packet<? super ClientGamePacketListener>) packet));
+		List<SynchedEntityData.DataValue<?>> values = entity.getEntityData().getNonDefaultValues();
+		if (values != null && !values.isEmpty()) {
+			player.connection.send(new ClientboundSetEntityDataPacket(entity.getId(), values));
+		}
 	}
 
 	public sealed interface DisplayBlueprint permits BlockDisplayBlueprint, ItemDisplayBlueprint {

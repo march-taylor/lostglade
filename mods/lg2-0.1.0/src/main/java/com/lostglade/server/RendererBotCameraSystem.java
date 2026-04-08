@@ -1,6 +1,7 @@
 package com.lostglade.server;
 
 import com.lostglade.Lg2;
+import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.network.RendererBotShadowPacketCodec;
@@ -590,19 +591,13 @@ public final class RendererBotCameraSystem {
 	}
 
 	public static boolean isCameraPlayerLoaded(ServerLevel level, BlockPos cameraPos) {
-		if (level == null || cameraPos == null || !level.hasChunkAt(cameraPos)) {
+		if (level == null || cameraPos == null) {
 			return false;
 		}
-		ChunkPos cameraChunk = new ChunkPos(cameraPos);
-		for (ServerPlayer player : level.players()) {
-			if (player == null || RendererBotPresenceSystem.isRendererBot(player)) {
-				continue;
-			}
-			if (level.getChunkSource().chunkMap.isChunkTracked(player, cameraChunk.x, cameraChunk.z)) {
-				return true;
-			}
+		if (!level.hasChunkAt(cameraPos)) {
+			return false;
 		}
-		return false;
+		return level.getBlockState(cameraPos).is(ModBlocks.CAMERA);
 	}
 
 	public static ChunkTrackingView createVirtualChunkTrackingView(ServerPlayer bot) {
