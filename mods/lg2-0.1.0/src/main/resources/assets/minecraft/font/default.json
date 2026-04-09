@@ -756,6 +756,15 @@
       ]
     },
     {
+      "type": "bitmap",
+      "file": "minecraft:font/drone_hud_speed_bar.png",
+      "ascent": 12,
+      "height": 32,
+      "chars": [
+        "\ue780\ue781\ue782\ue783\ue784\ue785\ue786\ue787\ue788"
+      ]
+    },
+    {
       "type": "reference",
       "id": "minecraft:include/space"
     },

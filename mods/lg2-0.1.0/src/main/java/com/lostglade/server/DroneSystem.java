@@ -81,9 +81,13 @@ public final class DroneSystem {
 	private static final long DRONE_HUD_REFRESH_TICKS = 2L;
 	private static final int DRONE_HUD_GRID_SIZE = 11;
 	private static final int DRONE_HUD_GLYPH_BASE = 0xE700;
+	private static final int DRONE_HUD_SPEED_BAR_GLYPH_BASE = 0xE780;
+	private static final String DRONE_HUD_BAR_OVERLAP_GLYPH = "\uE944";
 	private static final int DRONE_HUD_LABEL_COLOR = 0x6BD7FF;
 	private static final int DRONE_HUD_VALUE_COLOR = 0xF4FFF6;
 	private static final int DRONE_HUD_DIM_COLOR = 0x5A7080;
+	private static final double DRONE_MIN_CONTROL_DRIVE_STEP = 0.055D;
+	private static final double DRONE_MAX_CONTROL_DRIVE_STEP = 0.500D;
 	private static final Map<UUID, DroneControlSession> ACTIVE_SESSIONS = new HashMap<>();
 	private static final Map<UUID, DroneInputState> INPUTS = new HashMap<>();
 	private static final Map<UUID, UUID> CONTROLLERS_BY_DRONE = new HashMap<>();
@@ -213,6 +217,8 @@ public final class DroneSystem {
 		if (session == null) {
 			return;
 		}
+		int controlSpeedSlot = getControlSpeedSlot(player);
+		double driveStep = getControlDriveStep(controlSpeedSlot);
 
 		DroneInputState input = INPUTS.getOrDefault(player.getUUID(), DroneInputState.EMPTY);
 		session.setForwardDrive(
@@ -220,7 +226,7 @@ public final class DroneSystem {
 						session.forwardDrive(),
 						input.forward(),
 						input.backward(),
-						DroneFlightPhysics.PLANAR_DRIVE_STEP,
+						driveStep,
 						DroneFlightPhysics.MAX_FORWARD_DRIVE
 				)
 		);
@@ -229,7 +235,7 @@ public final class DroneSystem {
 						session.strafeDrive(),
 						input.right(),
 						input.left(),
-						DroneFlightPhysics.PLANAR_DRIVE_STEP,
+						driveStep,
 						DroneFlightPhysics.MAX_STRAFE_DRIVE
 				)
 		);
@@ -328,7 +334,8 @@ public final class DroneSystem {
 		}
 
 		long now = player.level().getGameTime();
-		String snapshot = buildDroneHudSnapshot(session, player.getDeltaMovement());
+		int controlSpeedSlot = getControlSpeedSlot(player);
+		String snapshot = buildDroneHudSnapshot(session, player.getDeltaMovement(), controlSpeedSlot);
 		if (!force
 				&& session.hudVisible()
 				&& Objects.equals(session.lastHudSnapshot(), snapshot)
@@ -342,14 +349,14 @@ public final class DroneSystem {
 				player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
 				player.connection.send(new ClientboundSetSubtitleTextPacket(Component.empty()));
 			}
-			player.connection.send(new ClientboundSetActionBarTextPacket(buildDroneHudWidget(session)));
+			player.connection.send(new ClientboundSetActionBarTextPacket(buildDroneHudWidget(session, controlSpeedSlot)));
 		} else {
 			if (force) {
 				player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
 				player.connection.send(new ClientboundSetActionBarTextPacket(Component.empty()));
 			}
 			player.connection.send(new ClientboundSetSubtitleTextPacket(Component.empty()));
-			player.connection.send(new ClientboundSetActionBarTextPacket(buildDroneHudTextSubtitle(session, player.getDeltaMovement())));
+			player.connection.send(new ClientboundSetActionBarTextPacket(buildDroneHudTextSubtitle(session, player.getDeltaMovement(), controlSpeedSlot)));
 		}
 		session.setHudVisible(true);
 		session.setLastHudSnapshot(snapshot);
@@ -372,7 +379,7 @@ public final class DroneSystem {
 		session.setLastHudTick(Long.MIN_VALUE);
 	}
 
-	private static Component buildDroneHudTextSubtitle(DroneControlSession session, Vec3 velocity) {
+	private static Component buildDroneHudTextSubtitle(DroneControlSession session, Vec3 velocity, int controlSpeedSlot) {
 		int forwardPct = drivePercent(Math.max(0.0D, session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
 		int reversePct = drivePercent(Math.max(0.0D, -session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
 		int leftPct = drivePercent(Math.max(0.0D, -session.strafeDrive()), DroneFlightPhysics.MAX_STRAFE_DRIVE);
@@ -382,6 +389,7 @@ public final class DroneSystem {
 				0.0D,
 				1.0D
 		) * 100.0D);
+		int controlPct = (int) Math.round(((controlSpeedSlot + 1) / 9.0D) * 100.0D);
 
 		MutableComponent line = Component.empty();
 		line.append(hudLabel("FWD ")).append(hudValue(percentText(forwardPct)));
@@ -392,15 +400,18 @@ public final class DroneSystem {
 		line.append(hudSeparator("  "));
 		line.append(hudLabel("R ")).append(hudValue(percentText(rightPct)));
 		line.append(hudSeparator("   "));
+		line.append(hudLabel("CTRL ")).append(hudValue(percentText(controlPct)));
+		line.append(hudSeparator("   "));
 		line.append(hudLabel("SPD ")).append(hudValue(percentText(speedPct)));
 		return line;
 	}
 
-	private static Component buildDroneHudWidget(DroneControlSession session) {
+	private static Component buildDroneHudWidget(DroneControlSession session, int controlSpeedSlot) {
 		int xIndex = quantizeDrive(session.strafeDrive(), DroneFlightPhysics.MAX_STRAFE_DRIVE);
 		int yIndex = quantizeDrive(-session.forwardDrive(), DroneFlightPhysics.MAX_FORWARD_DRIVE);
-		int glyph = DRONE_HUD_GLYPH_BASE + yIndex * DRONE_HUD_GRID_SIZE + xIndex;
-		String glyphText = String.valueOf((char) glyph);
+		int stickGlyph = DRONE_HUD_GLYPH_BASE + yIndex * DRONE_HUD_GRID_SIZE + xIndex;
+		int speedGlyph = DRONE_HUD_SPEED_BAR_GLYPH_BASE + net.minecraft.util.Mth.clamp(controlSpeedSlot, 0, 8);
+		String glyphText = new String(new char[]{(char) stickGlyph}) + DRONE_HUD_BAR_OVERLAP_GLYPH + (char) speedGlyph;
 		return Component.literal(glyphText)
 				.withStyle(style -> style
 						.withColor(DRONE_HUD_VALUE_COLOR)
@@ -408,7 +419,7 @@ public final class DroneSystem {
 						.withShadowColor(0x00000000));
 	}
 
-	private static String buildDroneHudSnapshot(DroneControlSession session, Vec3 velocity) {
+	private static String buildDroneHudSnapshot(DroneControlSession session, Vec3 velocity, int controlSpeedSlot) {
 		int forwardPct = drivePercent(Math.max(0.0D, session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
 		int reversePct = drivePercent(Math.max(0.0D, -session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
 		int leftPct = drivePercent(Math.max(0.0D, -session.strafeDrive()), DroneFlightPhysics.MAX_STRAFE_DRIVE);
@@ -418,7 +429,19 @@ public final class DroneSystem {
 				0.0D,
 				1.0D
 		) * 100.0D);
-		return forwardPct + "|" + reversePct + "|" + leftPct + "|" + rightPct + "|" + speedPct;
+		return forwardPct + "|" + reversePct + "|" + leftPct + "|" + rightPct + "|" + speedPct + "|" + controlSpeedSlot;
+	}
+
+	private static int getControlSpeedSlot(ServerPlayer player) {
+		if (player == null) {
+			return 0;
+		}
+		return net.minecraft.util.Mth.clamp(player.getInventory().getSelectedSlot(), 0, 8);
+	}
+
+	private static double getControlDriveStep(int controlSpeedSlot) {
+		double normalized = net.minecraft.util.Mth.clamp(controlSpeedSlot, 0, 8) / 8.0D;
+		return net.minecraft.util.Mth.lerp(normalized, DRONE_MIN_CONTROL_DRIVE_STEP, DRONE_MAX_CONTROL_DRIVE_STEP);
 	}
 
 	private static int drivePercent(double value, double maxValue) {
