@@ -1,8 +1,10 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.CopperManGogglesSystem;
+import com.lostglade.server.CopperManRepulsorSystem;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
+import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
@@ -64,5 +66,11 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 			return;
 		}
 		CopperManGogglesSystem.handleSelectedSlotChangeApplied(this.player, packet.getSlot());
+	}
+
+	@Inject(method = "handleMovePlayer", at = @At("TAIL"))
+	private void lg2$syncCopperManInvisibleTriggersOnMove(ServerboundMovePlayerPacket packet, CallbackInfo ci) {
+		CopperManGogglesSystem.handleMovePacket(this.player);
+		CopperManRepulsorSystem.handleMovePacket(this.player);
 	}
 }

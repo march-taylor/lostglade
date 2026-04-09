@@ -24,6 +24,7 @@ import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
+import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
 import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
@@ -157,6 +158,7 @@ public final class CopperManGogglesSystem {
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
 			UUID playerId = handler.player.getUUID();
 			SAVED_GOGGLES_MODES.put(playerId, getMode(handler.player));
+			clearManagedNightVision(handler.player);
 			stopMagnifier(handler.player);
 			clearScanVisuals(handler.player);
 			LAST_VISUAL_STATES.remove(playerId);
@@ -169,6 +171,11 @@ public final class CopperManGogglesSystem {
 			ACTIVE_SCAN_WAVES.remove(playerId);
 			ACTIVE_ORE_SEARCH_HIGHLIGHTS.remove(playerId);
 			ACTIVE_TRACKING_HIGHLIGHTS.remove(playerId);
+		});
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+				clearManagedNightVision(player);
+			}
 		});
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			LAST_VISUAL_STATES.clear();
@@ -337,6 +344,13 @@ public final class CopperManGogglesSystem {
 			return;
 		}
 		activateCurrentMode(player, hand);
+	}
+
+	public static void handleMovePacket(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		syncTrackingAirTrigger(player);
 	}
 
 	public static void handleReleaseUsePacket(ServerPlayer player) {
@@ -511,12 +525,8 @@ public final class CopperManGogglesSystem {
 
 	private static boolean shouldHandleMagnifierUse(ServerPlayer player) {
 		return player != null
-				&& !isRepulsorSlotSelected(player)
+				&& !CopperManRepulsorSystem.shouldBlockMagnifier(player)
 				&& player.getItemInHand(InteractionHand.MAIN_HAND).isEmpty();
-	}
-
-	private static boolean isRepulsorSlotSelected(ServerPlayer player) {
-		return player != null && player.getInventory().getSelectedSlot() == 0;
 	}
 
 	private static boolean isLikelyRightClickable(ServerPlayer player, ItemStack stack) {
@@ -789,6 +799,7 @@ public final class CopperManGogglesSystem {
 			trigger = new Interaction(EntityType.INTERACTION, player.level());
 			trigger.setNoGravity(true);
 			trigger.setSilent(true);
+			trigger.setInvisible(true);
 			trigger.setResponse(false);
 			trigger.setWidth(TRACKING_TRIGGER_WIDTH);
 			trigger.setHeight(TRACKING_TRIGGER_HEIGHT);
@@ -799,10 +810,12 @@ public final class CopperManGogglesSystem {
 		Vec3 pos = player.getEyePosition()
 				.add(player.getLookAngle().normalize().scale(TRACKING_TRIGGER_HEAD_FORWARD_OFFSET))
 				.subtract(0.0D, TRACKING_TRIGGER_HEIGHT * 0.5D, 0.0D);
+		trigger.setInvisible(true);
 		trigger.setPos(pos.x, pos.y, pos.z);
 		trigger.setDeltaMovement(Vec3.ZERO);
 		trigger.setYRot(player.getYRot());
 		trigger.setXRot(player.getXRot());
+		player.connection.send(ClientboundEntityPositionSyncPacket.of(trigger));
 	}
 
 	private static boolean shouldMaintainTrackingAirTrigger(ServerPlayer player) {
@@ -841,6 +854,15 @@ public final class CopperManGogglesSystem {
 
 		boolean hadManagedNightVision = LAST_NIGHT_VISION_STATES.remove(playerId) == Boolean.TRUE;
 		if (hadManagedNightVision) {
+			player.removeEffect(MobEffects.NIGHT_VISION);
+		}
+	}
+
+	private static void clearManagedNightVision(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		if (LAST_NIGHT_VISION_STATES.remove(player.getUUID()) == Boolean.TRUE) {
 			player.removeEffect(MobEffects.NIGHT_VISION);
 		}
 	}

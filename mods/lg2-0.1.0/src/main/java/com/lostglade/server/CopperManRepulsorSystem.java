@@ -31,6 +31,7 @@ import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
@@ -302,6 +303,36 @@ public final class CopperManRepulsorSystem {
 		}
 	}
 
+	public static void handleMovePacket(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+
+		RepulsorState existingState = STATES.get(player.getUUID());
+		if (existingState != null) {
+			syncAirTriggerEntity(player, existingState);
+			return;
+		}
+
+		if (player.isAlive()
+				&& !player.isSpectator()
+				&& player.getInventory().getSelectedSlot() == 0
+				&& player.getMainHandItem().isEmpty()
+				&& isAttackUnlocked(player)) {
+			syncAirTriggerEntity(player, state(player));
+		}
+	}
+
+	public static boolean shouldBlockMagnifier(ServerPlayer player) {
+		return player != null
+				&& player.isAlive()
+				&& !player.isSpectator()
+				&& isCopperMan(player)
+				&& isAttackUnlocked(player)
+				&& player.getInventory().getSelectedSlot() == 0
+				&& Math.max(0, state(player).charges) > 0;
+	}
+
 	public static void onCopperIngotConsumed(ServerPlayer player) {
 		if (player == null || !isCopperMan(player)) {
 			return;
@@ -462,6 +493,7 @@ public final class CopperManRepulsorSystem {
 			trigger = new Interaction(net.minecraft.world.entity.EntityType.INTERACTION, player.level());
 			trigger.setNoGravity(true);
 			trigger.setSilent(true);
+			trigger.setInvisible(true);
 			trigger.setResponse(false);
 			trigger.setWidth(AIR_TRIGGER_WIDTH);
 			trigger.setHeight(AIR_TRIGGER_HEIGHT);
@@ -472,10 +504,12 @@ public final class CopperManRepulsorSystem {
 		Vec3 pos = player.getEyePosition()
 				.add(player.getLookAngle().normalize().scale(AIR_TRIGGER_HEAD_FORWARD_OFFSET))
 				.subtract(0.0D, AIR_TRIGGER_HEIGHT * 0.5D, 0.0D);
+		trigger.setInvisible(true);
 		trigger.setPos(pos.x, pos.y, pos.z);
 		trigger.setDeltaMovement(Vec3.ZERO);
 		trigger.setYRot(player.getYRot());
 		trigger.setXRot(player.getXRot());
+		player.connection.send(ClientboundEntityPositionSyncPacket.of(trigger));
 	}
 
 	private static boolean shouldMaintainAirTrigger(ServerPlayer player, RepulsorState state) {
