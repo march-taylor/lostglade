@@ -2,6 +2,7 @@ package com.lostglade.mixin;
 
 import com.lostglade.server.CopperManGogglesSystem;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
+import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
@@ -29,9 +30,39 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 
 	@Inject(method = "handlePlayerAction", at = @At("HEAD"))
 	private void lg2$handleCopperManGogglesReleaseUse(ServerboundPlayerActionPacket packet, CallbackInfo ci) {
-		if (packet == null || packet.getAction() != ServerboundPlayerActionPacket.Action.RELEASE_USE_ITEM) {
+		if (packet == null) {
 			return;
 		}
-		CopperManGogglesSystem.handleReleaseUsePacket(this.player);
+		if (packet.getAction() == ServerboundPlayerActionPacket.Action.RELEASE_USE_ITEM) {
+			CopperManGogglesSystem.handleReleaseUsePacket(this.player);
+			return;
+		}
+		if (packet.getAction() == ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND) {
+			CopperManGogglesSystem.handleSwapWithOffhand(this.player);
+		}
+	}
+
+	@Inject(method = "handlePlayerAction", at = @At("TAIL"))
+	private void lg2$handleCopperManGogglesSwapOffhandApplied(ServerboundPlayerActionPacket packet, CallbackInfo ci) {
+		if (packet == null || packet.getAction() != ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND) {
+			return;
+		}
+		CopperManGogglesSystem.handleSwapWithOffhandApplied(this.player);
+	}
+
+	@Inject(method = "handleSetCarriedItem", at = @At("HEAD"))
+	private void lg2$handleCopperManGogglesSelectedSlotChange(ServerboundSetCarriedItemPacket packet, CallbackInfo ci) {
+		if (packet == null) {
+			return;
+		}
+		CopperManGogglesSystem.handleSelectedSlotChange(this.player, packet.getSlot());
+	}
+
+	@Inject(method = "handleSetCarriedItem", at = @At("TAIL"))
+	private void lg2$handleCopperManGogglesSelectedSlotChangeApplied(ServerboundSetCarriedItemPacket packet, CallbackInfo ci) {
+		if (packet == null) {
+			return;
+		}
+		CopperManGogglesSystem.handleSelectedSlotChangeApplied(this.player, packet.getSlot());
 	}
 }

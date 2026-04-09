@@ -16,6 +16,18 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(ServerPlayerGameMode.class)
 public abstract class ServerPlayerGameModeCopperManRepulsorMixin {
+	@Inject(method = "useItemOn", at = @At("HEAD"))
+	private void lg2$trackCopperGogglesOnAnyBlockUse(
+			ServerPlayer player,
+			Level level,
+			ItemStack stack,
+			InteractionHand hand,
+			BlockHitResult hitResult,
+			CallbackInfoReturnable<InteractionResult> cir
+	) {
+		CopperManGogglesSystem.handleAnyBlockUse(player, hand);
+	}
+
 	@Inject(method = "useItemOn", at = @At("RETURN"), cancellable = true)
 	private void lg2$fireCopperRepulsorAfterVanillaBlockPass(
 			ServerPlayer player,

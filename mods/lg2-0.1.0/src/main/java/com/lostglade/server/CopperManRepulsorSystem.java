@@ -89,10 +89,9 @@ public final class CopperManRepulsorSystem {
 	private static final long HUD_UPDATE_INTERVAL_TICKS = 5L;
 	private static final long NATURAL_LIGHTNING_RECHARGE_DEDUP_TICKS = 200L;
 	private static final double AIR_TRIGGER_RAY_RANGE = 4.5D;
-	private static final double AIR_TRIGGER_SPAWN_DISTANCE = 2.0D;
-	private static final double AIR_TRIGGER_MOTION_LEAD_SCALE = 0.9D;
-	private static final float AIR_TRIGGER_WIDTH = 1.2F;
-	private static final float AIR_TRIGGER_HEIGHT = 1.35F;
+	private static final double AIR_TRIGGER_HEAD_FORWARD_OFFSET = 0.22D;
+	private static final float AIR_TRIGGER_WIDTH = 1.8F;
+	private static final float AIR_TRIGGER_HEIGHT = 1.8F;
 	private static final double AUTO_RANGE = 16.0D;
 	private static final double SINGLE_RANGE = 32.0D;
 	private static final float AUTO_DAMAGE = 1.0F;
@@ -470,10 +469,9 @@ public final class CopperManRepulsorSystem {
 			state.airTriggerEntity = trigger;
 		}
 
-		Vec3 look = player.getLookAngle().normalize();
-		double forwardSpeed = Math.max(0.0D, player.getDeltaMovement().dot(look));
-		Vec3 offset = look.scale(AIR_TRIGGER_SPAWN_DISTANCE + (forwardSpeed * AIR_TRIGGER_MOTION_LEAD_SCALE));
-		Vec3 pos = player.getEyePosition().add(offset).subtract(0.0D, AIR_TRIGGER_HEIGHT * 0.5D, 0.0D);
+		Vec3 pos = player.getEyePosition()
+				.add(player.getLookAngle().normalize().scale(AIR_TRIGGER_HEAD_FORWARD_OFFSET))
+				.subtract(0.0D, AIR_TRIGGER_HEIGHT * 0.5D, 0.0D);
 		trigger.setPos(pos.x, pos.y, pos.z);
 		trigger.setDeltaMovement(Vec3.ZERO);
 		trigger.setYRot(player.getYRot());
@@ -511,6 +509,7 @@ public final class CopperManRepulsorSystem {
 
 	private static void removeAirTriggerEntity(RepulsorState state) {
 		if (state.airTriggerEntity != null) {
+			state.airTriggerEntity.stopRiding();
 			state.airTriggerEntity.discard();
 			state.airTriggerEntity = null;
 		}
