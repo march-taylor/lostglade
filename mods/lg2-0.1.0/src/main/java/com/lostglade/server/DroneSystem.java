@@ -20,9 +20,13 @@ import net.lionarius.skinrestorer.SkinRestorer;
 import net.lionarius.skinrestorer.skin.SkinStorage;
 import net.lionarius.skinrestorer.skin.SkinValue;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.RemoteChatSession;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -35,6 +39,7 @@ import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.Interaction;
+import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.player.Input;
@@ -71,6 +76,11 @@ public final class DroneSystem {
 	private static final float DRONE_DISPLAY_VIEW_RANGE = 64.0F;
 	private static final byte ALL_PLAYER_SKIN_PARTS = (byte) 0x7F;
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
+	private static final long DRONE_HUD_REFRESH_TICKS = 2L;
+	private static final int DRONE_HUD_TITLE_COLOR = 0x8DF7B2;
+	private static final int DRONE_HUD_LABEL_COLOR = 0x6BD7FF;
+	private static final int DRONE_HUD_VALUE_COLOR = 0xF4FFF6;
+	private static final int DRONE_HUD_DIM_COLOR = 0x5A7080;
 	private static final Map<UUID, DroneControlSession> ACTIVE_SESSIONS = new HashMap<>();
 	private static final Map<UUID, DroneInputState> INPUTS = new HashMap<>();
 	private static final Map<UUID, UUID> CONTROLLERS_BY_DRONE = new HashMap<>();
@@ -188,6 +198,58 @@ public final class DroneSystem {
 		);
 	}
 
+	public static boolean isControllingDrone(ServerPlayer player) {
+		return player != null && ACTIVE_SESSIONS.containsKey(player.getUUID());
+	}
+
+	public static void applyControlledTravel(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
+		if (session == null) {
+			return;
+		}
+
+		DroneInputState input = INPUTS.getOrDefault(player.getUUID(), DroneInputState.EMPTY);
+		session.setForwardDrive(
+				DroneFlightPhysics.adjustDrive(
+						session.forwardDrive(),
+						input.forward(),
+						input.backward(),
+						DroneFlightPhysics.PLANAR_DRIVE_STEP,
+						DroneFlightPhysics.MAX_FORWARD_DRIVE
+				)
+		);
+		session.setStrafeDrive(
+				DroneFlightPhysics.adjustDrive(
+						session.strafeDrive(),
+						input.right(),
+						input.left(),
+						DroneFlightPhysics.PLANAR_DRIVE_STEP,
+						DroneFlightPhysics.MAX_STRAFE_DRIVE
+				)
+		);
+
+		player.setNoGravity(true);
+		player.noPhysics = false;
+		player.fallDistance = 0.0F;
+		if (!player.isFallFlying()) {
+			player.startFallFlying();
+		}
+
+		Vec3 nextVelocity = DroneFlightPhysics.step(
+				player.getXRot(),
+				player.getYRot(),
+				session.forwardDrive(),
+				session.strafeDrive()
+		);
+		player.setDeltaMovement(nextVelocity);
+		player.move(MoverType.SELF, nextVelocity);
+		session.setVelocity(nextVelocity);
+		player.hurtMarked = true;
+	}
+
 	public static boolean isDroneEntity(Entity entity) {
 		return resolveDroneRoot(entity) != null;
 	}
@@ -228,25 +290,6 @@ public final class DroneSystem {
 			return;
 		}
 
-		session.setForwardDrive(
-				DroneFlightPhysics.adjustDrive(
-						session.forwardDrive(),
-						input.forward(),
-						input.backward(),
-						DroneFlightPhysics.PLANAR_DRIVE_STEP,
-						DroneFlightPhysics.MAX_FORWARD_DRIVE
-				)
-		);
-		session.setStrafeDrive(
-				DroneFlightPhysics.adjustDrive(
-						session.strafeDrive(),
-						input.right(),
-						input.left(),
-						DroneFlightPhysics.PLANAR_DRIVE_STEP,
-						DroneFlightPhysics.MAX_STRAFE_DRIVE
-				)
-		);
-
 		Vec3 currentPos = player.position();
 		Vec3 actualMovement = currentPos.subtract(session.lastPlayerPos());
 		double impactSpeed = Math.max(session.velocity().length(), actualMovement.length());
@@ -254,7 +297,6 @@ public final class DroneSystem {
 		float pitch = player.getXRot();
 		root.setYRot(yaw);
 		root.setXRot(pitch);
-		ensureDroneFlight(player, session, input);
 		root.setPos(player.getX(), player.getY(), player.getZ());
 		root.setDeltaMovement(player.getDeltaMovement());
 		root.hurtMarked = true;
@@ -267,33 +309,7 @@ public final class DroneSystem {
 		}
 		syncDroneDisplay(root, yaw, pitch);
 		syncControlledPlayer(player, root);
-	}
-
-	private static void ensureDroneFlight(ServerPlayer player, DroneControlSession session, DroneInputState input) {
-		player.setNoGravity(false);
-		player.noPhysics = false;
-		player.fallDistance = 0.0F;
-		if (!player.isFallFlying()) {
-			player.startFallFlying();
-		}
-		Vec3 nextVelocity = DroneFlightPhysics.step(
-				player.getDeltaMovement(),
-				player.getXRot(),
-				player.getYRot(),
-				session.forwardDrive(),
-				session.strafeDrive(),
-				new DroneFlightPhysics.ControlInput(
-						input.forward(),
-						input.backward(),
-						input.left(),
-						input.right(),
-						input.jump(),
-						input.sprint()
-				),
-				Vec3.ZERO
-		);
-		player.setDeltaMovement(nextVelocity);
-		player.hurtMarked = true;
+		updateDroneHud(player, session, false);
 	}
 
 	private static void syncControlledPlayer(ServerPlayer player, Entity root) {
@@ -301,6 +317,116 @@ public final class DroneSystem {
 		if (player.getCamera() != player) {
 			player.setCamera(player);
 		}
+	}
+
+	private static void updateDroneHud(ServerPlayer player, DroneControlSession session, boolean force) {
+		if (player == null || session == null || player.connection == null) {
+			return;
+		}
+
+		long now = player.level().getGameTime();
+		String snapshot = buildDroneHudSnapshot(session, player.getDeltaMovement());
+		if (!force
+				&& session.hudVisible()
+				&& Objects.equals(session.lastHudSnapshot(), snapshot)
+				&& now - session.lastHudTick() < DRONE_HUD_REFRESH_TICKS) {
+			return;
+		}
+
+		player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 20, 0));
+		player.connection.send(new ClientboundSetTitleTextPacket(buildDroneHudTitle()));
+		player.connection.send(new ClientboundSetSubtitleTextPacket(buildDroneHudSubtitle(session, player.getDeltaMovement())));
+		session.setHudVisible(true);
+		session.setLastHudSnapshot(snapshot);
+		session.setLastHudTick(now);
+	}
+
+	private static void clearDroneHud(ServerPlayer player, DroneControlSession session, boolean force) {
+		if (player == null || session == null || player.connection == null) {
+			return;
+		}
+		if (!force && !session.hudVisible()) {
+			return;
+		}
+
+		player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
+		player.connection.send(new ClientboundSetSubtitleTextPacket(Component.empty()));
+		session.setHudVisible(false);
+		session.setLastHudSnapshot("");
+		session.setLastHudTick(Long.MIN_VALUE);
+	}
+
+	private static Component buildDroneHudTitle() {
+		return Component.empty()
+				.append(hudSegment("◢ ", DRONE_HUD_DIM_COLOR))
+				.append(hudSegment("DRONE LINK", DRONE_HUD_TITLE_COLOR))
+				.append(hudSegment(" // ", DRONE_HUD_DIM_COLOR))
+				.append(hudSegment("FLIGHT CTRL", DRONE_HUD_LABEL_COLOR))
+				.append(hudSegment(" ◣", DRONE_HUD_DIM_COLOR));
+	}
+
+	private static Component buildDroneHudSubtitle(DroneControlSession session, Vec3 velocity) {
+		int forwardPct = drivePercent(Math.max(0.0D, session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
+		int reversePct = drivePercent(Math.max(0.0D, -session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
+		int leftPct = drivePercent(Math.max(0.0D, -session.strafeDrive()), DroneFlightPhysics.MAX_STRAFE_DRIVE);
+		int rightPct = drivePercent(Math.max(0.0D, session.strafeDrive()), DroneFlightPhysics.MAX_STRAFE_DRIVE);
+		int speedPct = (int) Math.round(net.minecraft.util.Mth.clamp(
+				(velocity == null ? 0.0D : velocity.length()) / DroneFlightPhysics.MAX_COMBINED_SPEED,
+				0.0D,
+				1.0D
+		) * 100.0D);
+
+		MutableComponent line = Component.empty();
+		line.append(hudLabel("FWD ")).append(hudValue(percentText(forwardPct)));
+		line.append(hudSeparator("  "));
+		line.append(hudLabel("REV ")).append(hudValue(percentText(reversePct)));
+		line.append(hudSeparator("  "));
+		line.append(hudLabel("L ")).append(hudValue(percentText(leftPct)));
+		line.append(hudSeparator("  "));
+		line.append(hudLabel("R ")).append(hudValue(percentText(rightPct)));
+		line.append(hudSeparator("   "));
+		line.append(hudLabel("SPD ")).append(hudValue(percentText(speedPct)));
+		return line;
+	}
+
+	private static String buildDroneHudSnapshot(DroneControlSession session, Vec3 velocity) {
+		int forwardPct = drivePercent(Math.max(0.0D, session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
+		int reversePct = drivePercent(Math.max(0.0D, -session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
+		int leftPct = drivePercent(Math.max(0.0D, -session.strafeDrive()), DroneFlightPhysics.MAX_STRAFE_DRIVE);
+		int rightPct = drivePercent(Math.max(0.0D, session.strafeDrive()), DroneFlightPhysics.MAX_STRAFE_DRIVE);
+		int speedPct = (int) Math.round(net.minecraft.util.Mth.clamp(
+				(velocity == null ? 0.0D : velocity.length()) / DroneFlightPhysics.MAX_COMBINED_SPEED,
+				0.0D,
+				1.0D
+		) * 100.0D);
+		return forwardPct + "|" + reversePct + "|" + leftPct + "|" + rightPct + "|" + speedPct;
+	}
+
+	private static int drivePercent(double value, double maxValue) {
+		if (maxValue <= 1.0E-6D) {
+			return 0;
+		}
+		return (int) Math.round(net.minecraft.util.Mth.clamp(value / maxValue, 0.0D, 1.0D) * 100.0D);
+	}
+
+	private static String percentText(int value) {
+		return "%03d%%".formatted(Math.max(0, Math.min(999, value)));
+	}
+
+	private static MutableComponent hudLabel(String text) {
+		return Component.literal(text).withStyle(style -> style.withColor(DRONE_HUD_LABEL_COLOR).withItalic(false));
+	}
+
+	private static MutableComponent hudValue(String text) {
+		return Component.literal(text).withStyle(style -> style.withColor(DRONE_HUD_VALUE_COLOR).withItalic(false));
+	}
+
+	private static MutableComponent hudSeparator(String text) {
+		return Component.literal(text).withStyle(style -> style.withColor(DRONE_HUD_DIM_COLOR).withItalic(false));
+	}
+
+	private static MutableComponent hudSegment(String text, int color) {
+		return Component.literal(text).withStyle(style -> style.withColor(color).withItalic(false));
 	}
 
 	private static boolean startControlling(ServerPlayer player, Entity root) {
@@ -329,7 +455,7 @@ public final class DroneSystem {
 		root.level().getChunkAt(root.blockPosition());
 		player.teleportTo(droneLevel, root.getX(), root.getY(), root.getZ(), ABSOLUTE_TELEPORT, root.getYRot(), root.getXRot(), false);
 		player.setInvisible(true);
-		player.setNoGravity(false);
+		player.setNoGravity(true);
 		player.noPhysics = false;
 		player.setInvulnerable(true);
 		player.setCamera(player);
@@ -355,6 +481,7 @@ public final class DroneSystem {
 		ACTIVE_SESSIONS.put(player.getUUID(), session);
 		INPUTS.put(player.getUUID(), DroneInputState.EMPTY);
 		CONTROLLERS_BY_DRONE.put(root.getUUID(), player.getUUID());
+		updateDroneHud(player, session, true);
 		player.sendSystemMessage(Component.literal("Управление дроном начато. Shift — выйти."));
 		return true;
 	}
@@ -392,6 +519,7 @@ public final class DroneSystem {
 		player.noPhysics = session.wasNoPhysics();
 		player.setInvulnerable(session.wasInvulnerable());
 		player.fallDistance = 0.0F;
+		clearDroneHud(player, session, true);
 
 		if (returnToOrigin && server != null) {
 			ServerLevel level = server.getLevel(session.originDimension());
@@ -701,6 +829,9 @@ public final class DroneSystem {
 		private Vec3 lastPlayerPos = Vec3.ZERO;
 		private double forwardDrive;
 		private double strafeDrive;
+		private boolean hudVisible;
+		private String lastHudSnapshot = "";
+		private long lastHudTick = Long.MIN_VALUE;
 
 		private DroneControlSession(
 				UUID droneUuid,
@@ -814,6 +945,30 @@ public final class DroneSystem {
 
 		private void setStrafeDrive(double strafeDrive) {
 			this.strafeDrive = strafeDrive;
+		}
+
+		private boolean hudVisible() {
+			return this.hudVisible;
+		}
+
+		private void setHudVisible(boolean hudVisible) {
+			this.hudVisible = hudVisible;
+		}
+
+		private String lastHudSnapshot() {
+			return this.lastHudSnapshot;
+		}
+
+		private void setLastHudSnapshot(String lastHudSnapshot) {
+			this.lastHudSnapshot = lastHudSnapshot == null ? "" : lastHudSnapshot;
+		}
+
+		private long lastHudTick() {
+			return this.lastHudTick;
+		}
+
+		private void setLastHudTick(long lastHudTick) {
+			this.lastHudTick = lastHudTick;
 		}
 	}
 }
