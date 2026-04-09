@@ -69,6 +69,7 @@
     "message.lg2.copper_goggles.mode":  "Режим очков: %s",
     "message.lg2.copper_goggles.mode.ore_search":  "Поиск руд",
     "message.lg2.copper_goggles.mode.tracking":  "Отслеживание",
+    "message.lg2.copper_goggles.mode.magnifier":  "Лупа",
     "container.lg2.cartel_disguise.passport":  "Пасспорт",
     "container.lg2.cartel_disguise.accept":  "Принять",
     "container.lg2.cartel_disguise.previous":  "Предыдущий",
