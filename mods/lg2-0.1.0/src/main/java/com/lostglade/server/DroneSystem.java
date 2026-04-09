@@ -9,6 +9,7 @@ import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.PropertyMap;
 import eu.pb4.polymer.core.api.entity.PolymerEntity;
 import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
+import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import com.mojang.math.Transformation;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -23,6 +24,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.RemoteChatSession;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
@@ -77,7 +79,8 @@ public final class DroneSystem {
 	private static final byte ALL_PLAYER_SKIN_PARTS = (byte) 0x7F;
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
 	private static final long DRONE_HUD_REFRESH_TICKS = 2L;
-	private static final int DRONE_HUD_TITLE_COLOR = 0x8DF7B2;
+	private static final int DRONE_HUD_GRID_SIZE = 11;
+	private static final int DRONE_HUD_GLYPH_BASE = 0xE700;
 	private static final int DRONE_HUD_LABEL_COLOR = 0x6BD7FF;
 	private static final int DRONE_HUD_VALUE_COLOR = 0xF4FFF6;
 	private static final int DRONE_HUD_DIM_COLOR = 0x5A7080;
@@ -333,9 +336,21 @@ public final class DroneSystem {
 			return;
 		}
 
-		player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 20, 0));
-		player.connection.send(new ClientboundSetTitleTextPacket(buildDroneHudTitle()));
-		player.connection.send(new ClientboundSetSubtitleTextPacket(buildDroneHudSubtitle(session, player.getDeltaMovement())));
+		player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 30, 0));
+		if (player != null && PolymerResourcePackUtils.hasMainPack(player)) {
+			if (force) {
+				player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
+				player.connection.send(new ClientboundSetSubtitleTextPacket(Component.empty()));
+			}
+			player.connection.send(new ClientboundSetActionBarTextPacket(buildDroneHudWidget(session)));
+		} else {
+			if (force) {
+				player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
+				player.connection.send(new ClientboundSetActionBarTextPacket(Component.empty()));
+			}
+			player.connection.send(new ClientboundSetSubtitleTextPacket(Component.empty()));
+			player.connection.send(new ClientboundSetActionBarTextPacket(buildDroneHudTextSubtitle(session, player.getDeltaMovement())));
+		}
 		session.setHudVisible(true);
 		session.setLastHudSnapshot(snapshot);
 		session.setLastHudTick(now);
@@ -351,21 +366,13 @@ public final class DroneSystem {
 
 		player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
 		player.connection.send(new ClientboundSetSubtitleTextPacket(Component.empty()));
+		player.connection.send(new ClientboundSetActionBarTextPacket(Component.empty()));
 		session.setHudVisible(false);
 		session.setLastHudSnapshot("");
 		session.setLastHudTick(Long.MIN_VALUE);
 	}
 
-	private static Component buildDroneHudTitle() {
-		return Component.empty()
-				.append(hudSegment("◢ ", DRONE_HUD_DIM_COLOR))
-				.append(hudSegment("DRONE LINK", DRONE_HUD_TITLE_COLOR))
-				.append(hudSegment(" // ", DRONE_HUD_DIM_COLOR))
-				.append(hudSegment("FLIGHT CTRL", DRONE_HUD_LABEL_COLOR))
-				.append(hudSegment(" ◣", DRONE_HUD_DIM_COLOR));
-	}
-
-	private static Component buildDroneHudSubtitle(DroneControlSession session, Vec3 velocity) {
+	private static Component buildDroneHudTextSubtitle(DroneControlSession session, Vec3 velocity) {
 		int forwardPct = drivePercent(Math.max(0.0D, session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
 		int reversePct = drivePercent(Math.max(0.0D, -session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
 		int leftPct = drivePercent(Math.max(0.0D, -session.strafeDrive()), DroneFlightPhysics.MAX_STRAFE_DRIVE);
@@ -389,6 +396,18 @@ public final class DroneSystem {
 		return line;
 	}
 
+	private static Component buildDroneHudWidget(DroneControlSession session) {
+		int xIndex = quantizeDrive(session.strafeDrive(), DroneFlightPhysics.MAX_STRAFE_DRIVE);
+		int yIndex = quantizeDrive(-session.forwardDrive(), DroneFlightPhysics.MAX_FORWARD_DRIVE);
+		int glyph = DRONE_HUD_GLYPH_BASE + yIndex * DRONE_HUD_GRID_SIZE + xIndex;
+		String glyphText = String.valueOf((char) glyph);
+		return Component.literal(glyphText)
+				.withStyle(style -> style
+						.withColor(DRONE_HUD_VALUE_COLOR)
+						.withItalic(false)
+						.withShadowColor(0x00000000));
+	}
+
 	private static String buildDroneHudSnapshot(DroneControlSession session, Vec3 velocity) {
 		int forwardPct = drivePercent(Math.max(0.0D, session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
 		int reversePct = drivePercent(Math.max(0.0D, -session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
@@ -407,6 +426,18 @@ public final class DroneSystem {
 			return 0;
 		}
 		return (int) Math.round(net.minecraft.util.Mth.clamp(value / maxValue, 0.0D, 1.0D) * 100.0D);
+	}
+
+	private static int quantizeDrive(double value, double maxMagnitude) {
+		if (maxMagnitude <= 1.0E-6D) {
+			return DRONE_HUD_GRID_SIZE / 2;
+		}
+		double normalized = net.minecraft.util.Mth.clamp(value / maxMagnitude, -1.0D, 1.0D);
+		return net.minecraft.util.Mth.clamp(
+				(int) Math.round((normalized + 1.0D) * 0.5D * (DRONE_HUD_GRID_SIZE - 1)),
+				0,
+				DRONE_HUD_GRID_SIZE - 1
+		);
 	}
 
 	private static String percentText(int value) {
