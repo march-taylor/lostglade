@@ -12,6 +12,7 @@ public final class DroneFlightPhysics {
 	public static final double PLANAR_DRIVE_STEP = 0.080D;
 	public static final double MAX_FORWARD_DRIVE = 1.0D;
 	public static final double MAX_STRAFE_DRIVE = 1.0D;
+	private static final double DRIVE_ZERO_SNAP_FACTOR = 0.50D;
 
 	private DroneFlightPhysics() {
 	}
@@ -22,6 +23,9 @@ public final class DroneFlightPhysics {
 			nextDrive += driveStep;
 		} else if (negativePressed && !positivePressed) {
 			nextDrive -= driveStep;
+		}
+		if (Math.abs(nextDrive) <= driveStep * DRIVE_ZERO_SNAP_FACTOR) {
+			nextDrive = 0.0D;
 		}
 		return net.minecraft.util.Mth.clamp(nextDrive, -maxMagnitude, maxMagnitude);
 	}

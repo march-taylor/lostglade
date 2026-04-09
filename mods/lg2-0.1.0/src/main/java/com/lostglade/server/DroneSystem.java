@@ -4,9 +4,11 @@ import com.google.common.collect.ImmutableMultimap;
 import com.lostglade.Lg2;
 import com.lostglade.item.DroneItem;
 import com.lostglade.item.ModItems;
+import com.lostglade.mixin.EntityPassengerAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.PropertyMap;
+import com.mojang.datafixers.util.Pair;
 import eu.pb4.polymer.core.api.entity.PolymerEntity;
 import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
@@ -24,7 +26,10 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.RemoteChatSession;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
+import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
@@ -39,6 +44,7 @@ import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.Interaction;
 import net.minecraft.world.entity.MoverType;
@@ -50,10 +56,13 @@ import net.minecraft.world.entity.ai.navigation.PathNavigation;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.UseOnContext;
+import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.ArrayList;
@@ -76,14 +85,21 @@ public final class DroneSystem {
 	private static final float DRONE_HEIGHT = 0.35F;
 	private static final double DRONE_SPAWN_Y_OFFSET = 0.24D;
 	private static final float DRONE_DISPLAY_VIEW_RANGE = 64.0F;
+	private static final float DRONE_DISPLAY_CONTROLLED_Y_OFFSET = -0.92F;
+	private static final float DRONE_MAX_TILT_DEGREES = 32.0F;
+	private static final int PLAYER_HOTBAR_MENU_SLOT_START = 36;
 	private static final byte ALL_PLAYER_SKIN_PARTS = (byte) 0x7F;
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
 	private static final long DRONE_HUD_REFRESH_TICKS = 2L;
 	private static final int DRONE_HUD_GRID_SIZE = 11;
 	private static final int DRONE_HUD_GLYPH_BASE = 0xE700;
+	private static final int DRONE_HUD_SPEED_BAR_GLYPH_BASE = 0xE780;
+	private static final String DRONE_HUD_BAR_OVERLAP_GLYPH = "\uE944";
 	private static final int DRONE_HUD_LABEL_COLOR = 0x6BD7FF;
 	private static final int DRONE_HUD_VALUE_COLOR = 0xF4FFF6;
 	private static final int DRONE_HUD_DIM_COLOR = 0x5A7080;
+	private static final double DRONE_MIN_CONTROL_DRIVE_STEP = 0.055D;
+	private static final double DRONE_MAX_CONTROL_DRIVE_STEP = 0.500D;
 	private static final Map<UUID, DroneControlSession> ACTIVE_SESSIONS = new HashMap<>();
 	private static final Map<UUID, DroneInputState> INPUTS = new HashMap<>();
 	private static final Map<UUID, UUID> CONTROLLERS_BY_DRONE = new HashMap<>();
@@ -173,9 +189,10 @@ public final class DroneSystem {
 		Display.ItemDisplay display = createDroneDisplay(serverLevel, spawnPos, yRot, 0.0F);
 		serverLevel.addFreshEntity(root);
 		serverLevel.addFreshEntity(display);
+		forceEntityPassenger(root, display);
 		display.addTag(DRONE_DISPLAY_OWNER_TAG_PREFIX + root.getUUID());
 		DISPLAYS_BY_DRONE.put(root.getUUID(), display.getUUID());
-		syncDroneDisplay(root, yRot, 0.0F);
+		syncDroneDisplay(root, yRot, 0.0F, 0.0D, 0.0D);
 
 		if (!player.getAbilities().instabuild) {
 			context.getItemInHand().shrink(1);
@@ -213,6 +230,8 @@ public final class DroneSystem {
 		if (session == null) {
 			return;
 		}
+		int controlSpeedSlot = getControlSpeedSlot(player);
+		double driveStep = getControlDriveStep(controlSpeedSlot);
 
 		DroneInputState input = INPUTS.getOrDefault(player.getUUID(), DroneInputState.EMPTY);
 		session.setForwardDrive(
@@ -220,7 +239,7 @@ public final class DroneSystem {
 						session.forwardDrive(),
 						input.forward(),
 						input.backward(),
-						DroneFlightPhysics.PLANAR_DRIVE_STEP,
+						driveStep,
 						DroneFlightPhysics.MAX_FORWARD_DRIVE
 				)
 		);
@@ -229,7 +248,7 @@ public final class DroneSystem {
 						session.strafeDrive(),
 						input.right(),
 						input.left(),
-						DroneFlightPhysics.PLANAR_DRIVE_STEP,
+						driveStep,
 						DroneFlightPhysics.MAX_STRAFE_DRIVE
 				)
 		);
@@ -298,9 +317,11 @@ public final class DroneSystem {
 		double impactSpeed = Math.max(session.velocity().length(), actualMovement.length());
 		float yaw = player.getYRot();
 		float pitch = player.getXRot();
+		ensureDroneMounted(player, root);
+		broadcastDronePilotEquipmentHidden(player, true);
+		syncDummyHeldItems(player, session);
 		root.setYRot(yaw);
 		root.setXRot(pitch);
-		root.setPos(player.getX(), player.getY(), player.getZ());
 		root.setDeltaMovement(player.getDeltaMovement());
 		root.hurtMarked = true;
 		session.setVelocity(player.getDeltaMovement());
@@ -310,7 +331,7 @@ public final class DroneSystem {
 			stopControlling(player, true, true);
 			return;
 		}
-		syncDroneDisplay(root, yaw, pitch);
+		syncDroneDisplay(root, yaw, pitch, session.forwardDrive(), session.strafeDrive());
 		syncControlledPlayer(player, root);
 		updateDroneHud(player, session, false);
 	}
@@ -328,7 +349,8 @@ public final class DroneSystem {
 		}
 
 		long now = player.level().getGameTime();
-		String snapshot = buildDroneHudSnapshot(session, player.getDeltaMovement());
+		int controlSpeedSlot = getControlSpeedSlot(player);
+		String snapshot = buildDroneHudSnapshot(session, player.getDeltaMovement(), controlSpeedSlot);
 		if (!force
 				&& session.hudVisible()
 				&& Objects.equals(session.lastHudSnapshot(), snapshot)
@@ -342,14 +364,14 @@ public final class DroneSystem {
 				player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
 				player.connection.send(new ClientboundSetSubtitleTextPacket(Component.empty()));
 			}
-			player.connection.send(new ClientboundSetActionBarTextPacket(buildDroneHudWidget(session)));
+			player.connection.send(new ClientboundSetActionBarTextPacket(buildDroneHudWidget(session, controlSpeedSlot)));
 		} else {
 			if (force) {
 				player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
 				player.connection.send(new ClientboundSetActionBarTextPacket(Component.empty()));
 			}
 			player.connection.send(new ClientboundSetSubtitleTextPacket(Component.empty()));
-			player.connection.send(new ClientboundSetActionBarTextPacket(buildDroneHudTextSubtitle(session, player.getDeltaMovement())));
+			player.connection.send(new ClientboundSetActionBarTextPacket(buildDroneHudTextSubtitle(session, player.getDeltaMovement(), controlSpeedSlot)));
 		}
 		session.setHudVisible(true);
 		session.setLastHudSnapshot(snapshot);
@@ -372,7 +394,7 @@ public final class DroneSystem {
 		session.setLastHudTick(Long.MIN_VALUE);
 	}
 
-	private static Component buildDroneHudTextSubtitle(DroneControlSession session, Vec3 velocity) {
+	private static Component buildDroneHudTextSubtitle(DroneControlSession session, Vec3 velocity, int controlSpeedSlot) {
 		int forwardPct = drivePercent(Math.max(0.0D, session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
 		int reversePct = drivePercent(Math.max(0.0D, -session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
 		int leftPct = drivePercent(Math.max(0.0D, -session.strafeDrive()), DroneFlightPhysics.MAX_STRAFE_DRIVE);
@@ -382,6 +404,7 @@ public final class DroneSystem {
 				0.0D,
 				1.0D
 		) * 100.0D);
+		int controlPct = (int) Math.round(((controlSpeedSlot + 1) / 9.0D) * 100.0D);
 
 		MutableComponent line = Component.empty();
 		line.append(hudLabel("FWD ")).append(hudValue(percentText(forwardPct)));
@@ -392,15 +415,18 @@ public final class DroneSystem {
 		line.append(hudSeparator("  "));
 		line.append(hudLabel("R ")).append(hudValue(percentText(rightPct)));
 		line.append(hudSeparator("   "));
+		line.append(hudLabel("CTRL ")).append(hudValue(percentText(controlPct)));
+		line.append(hudSeparator("   "));
 		line.append(hudLabel("SPD ")).append(hudValue(percentText(speedPct)));
 		return line;
 	}
 
-	private static Component buildDroneHudWidget(DroneControlSession session) {
+	private static Component buildDroneHudWidget(DroneControlSession session, int controlSpeedSlot) {
 		int xIndex = quantizeDrive(session.strafeDrive(), DroneFlightPhysics.MAX_STRAFE_DRIVE);
 		int yIndex = quantizeDrive(-session.forwardDrive(), DroneFlightPhysics.MAX_FORWARD_DRIVE);
-		int glyph = DRONE_HUD_GLYPH_BASE + yIndex * DRONE_HUD_GRID_SIZE + xIndex;
-		String glyphText = String.valueOf((char) glyph);
+		int stickGlyph = DRONE_HUD_GLYPH_BASE + yIndex * DRONE_HUD_GRID_SIZE + xIndex;
+		int speedGlyph = DRONE_HUD_SPEED_BAR_GLYPH_BASE + net.minecraft.util.Mth.clamp(controlSpeedSlot, 0, 8);
+		String glyphText = new String(new char[]{(char) stickGlyph}) + DRONE_HUD_BAR_OVERLAP_GLYPH + (char) speedGlyph;
 		return Component.literal(glyphText)
 				.withStyle(style -> style
 						.withColor(DRONE_HUD_VALUE_COLOR)
@@ -408,7 +434,7 @@ public final class DroneSystem {
 						.withShadowColor(0x00000000));
 	}
 
-	private static String buildDroneHudSnapshot(DroneControlSession session, Vec3 velocity) {
+	private static String buildDroneHudSnapshot(DroneControlSession session, Vec3 velocity, int controlSpeedSlot) {
 		int forwardPct = drivePercent(Math.max(0.0D, session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
 		int reversePct = drivePercent(Math.max(0.0D, -session.forwardDrive()), DroneFlightPhysics.MAX_FORWARD_DRIVE);
 		int leftPct = drivePercent(Math.max(0.0D, -session.strafeDrive()), DroneFlightPhysics.MAX_STRAFE_DRIVE);
@@ -418,7 +444,19 @@ public final class DroneSystem {
 				0.0D,
 				1.0D
 		) * 100.0D);
-		return forwardPct + "|" + reversePct + "|" + leftPct + "|" + rightPct + "|" + speedPct;
+		return forwardPct + "|" + reversePct + "|" + leftPct + "|" + rightPct + "|" + speedPct + "|" + controlSpeedSlot;
+	}
+
+	private static int getControlSpeedSlot(ServerPlayer player) {
+		if (player == null) {
+			return 0;
+		}
+		return net.minecraft.util.Mth.clamp(player.getInventory().getSelectedSlot(), 0, 8);
+	}
+
+	private static double getControlDriveStep(int controlSpeedSlot) {
+		double normalized = net.minecraft.util.Mth.clamp(controlSpeedSlot, 0, 8) / 8.0D;
+		return net.minecraft.util.Mth.lerp(normalized, DRONE_MIN_CONTROL_DRIVE_STEP, DRONE_MAX_CONTROL_DRIVE_STEP);
 	}
 
 	private static int drivePercent(double value, double maxValue) {
@@ -485,6 +523,8 @@ public final class DroneSystem {
 		DronePilotDummyEntity dummy = spawnPlayerDummy(originLevel, player, originPos);
 		root.level().getChunkAt(root.blockPosition());
 		player.teleportTo(droneLevel, root.getX(), root.getY(), root.getZ(), ABSOLUTE_TELEPORT, root.getYRot(), root.getXRot(), false);
+		broadcastDronePilotEquipmentHidden(player, true);
+		setHotbarVisualHidden(player, true);
 		player.setInvisible(true);
 		player.setNoGravity(true);
 		player.noPhysics = false;
@@ -492,6 +532,7 @@ public final class DroneSystem {
 		player.setCamera(player);
 		player.fallDistance = 0.0F;
 		player.startFallFlying();
+		ensureDroneMounted(player, root);
 
 		DroneControlSession session = new DroneControlSession(
 				root.getUUID(),
@@ -539,11 +580,15 @@ public final class DroneSystem {
 
 		player.setCamera(player);
 		if (root != null) {
+			if (root.isPassenger() && root.getVehicle() == player) {
+				root.stopRiding();
+			}
 			root.setPos(player.getX(), player.getY(), player.getZ());
 			root.setYRot(player.getYRot());
 			root.setXRot(player.getXRot());
 			root.setDeltaMovement(Vec3.ZERO);
 			root.hurtMarked = true;
+			syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
 		}
 		player.setInvisible(session.wasInvisible());
 		player.setNoGravity(session.wasNoGravity());
@@ -551,6 +596,8 @@ public final class DroneSystem {
 		player.setInvulnerable(session.wasInvulnerable());
 		player.fallDistance = 0.0F;
 		clearDroneHud(player, session, true);
+		broadcastDronePilotEquipmentHidden(player, false);
+		setHotbarVisualHidden(player, false);
 
 		if (returnToOrigin && server != null) {
 			ServerLevel level = server.getLevel(session.originDimension());
@@ -566,6 +613,7 @@ public final class DroneSystem {
 						session.originPitch(),
 						false
 				);
+				broadcastDronePilotEquipmentHidden(player, false);
 			}
 		}
 
@@ -642,13 +690,39 @@ public final class DroneSystem {
 		return display;
 	}
 
-	private static void syncDroneDisplay(Entity root, float yRot, float xRot) {
+	private static void syncDroneDisplay(Entity root, float yRot, float xRot, double forwardDrive, double strafeDrive) {
 		Entity entity = findDroneDisplay(root);
 		if (entity instanceof Display.ItemDisplay display) {
 			display.setYRot(yRot);
 			display.setXRot(xRot);
-			display.setPos(root.getX(), root.getY(), root.getZ());
+			display.setTransformation(buildDroneDisplayTransformation(root, forwardDrive, strafeDrive));
+			if (!(display.isPassenger() && display.getVehicle() == root && root.hasPassenger(display))) {
+				display.setPos(root.getX(), root.getY(), root.getZ());
+			}
 		}
+	}
+
+	private static Transformation buildDroneDisplayTransformation(Entity root, double forwardDrive, double strafeDrive) {
+		float yOffset = 0.0F;
+		if (root != null && root.isPassenger() && root.getVehicle() instanceof ServerPlayer) {
+			yOffset = DRONE_DISPLAY_CONTROLLED_Y_OFFSET;
+		}
+
+		double forwardNorm = forwardDrive / DroneFlightPhysics.MAX_FORWARD_DRIVE;
+		double strafeNorm = strafeDrive / DroneFlightPhysics.MAX_STRAFE_DRIVE;
+		forwardNorm = net.minecraft.util.Mth.clamp(forwardNorm, -1.0D, 1.0D);
+		strafeNorm = net.minecraft.util.Mth.clamp(strafeNorm, -1.0D, 1.0D);
+
+		// Forward drive pitches the nose down; strafe drive rolls into the turn.
+		float pitchTiltRad = (float) Math.toRadians((float) (forwardNorm * DRONE_MAX_TILT_DEGREES));
+		float rollTiltRad = (float) Math.toRadians((float) (-strafeNorm * DRONE_MAX_TILT_DEGREES));
+
+		return new Transformation(
+				new Vector3f(0.0F, yOffset, 0.0F),
+				new Quaternionf().rotateXYZ(pitchTiltRad, 0.0F, rollTiltRad),
+				new Vector3f(1.0F, 1.0F, 1.0F),
+				new Quaternionf()
+		);
 	}
 
 	private static Entity findDroneDisplay(Entity root) {
@@ -687,10 +761,98 @@ public final class DroneSystem {
 		dummy.setInvulnerable(true);
 		dummy.setSilent(true);
 		dummy.setPersistenceRequired();
+		copyEquipmentToDummy(sourcePlayer, dummy);
 		GameProfile profile = createDummyProfile(sourcePlayer, dummy.getUUID());
 		PolymerEntityUtils.setPolymerEntity(dummy, new DronePilotOverlay(profile));
 		level.addFreshEntity(dummy);
 		return dummy;
+	}
+
+	private static void copyEquipmentToDummy(ServerPlayer sourcePlayer, DronePilotDummyEntity dummy) {
+		if (sourcePlayer == null || dummy == null) {
+			return;
+		}
+
+		dummy.setItemSlot(EquipmentSlot.HEAD, sourcePlayer.getItemBySlot(EquipmentSlot.HEAD).copy());
+		dummy.setItemSlot(EquipmentSlot.CHEST, sourcePlayer.getItemBySlot(EquipmentSlot.CHEST).copy());
+		dummy.setItemSlot(EquipmentSlot.LEGS, sourcePlayer.getItemBySlot(EquipmentSlot.LEGS).copy());
+		dummy.setItemSlot(EquipmentSlot.FEET, sourcePlayer.getItemBySlot(EquipmentSlot.FEET).copy());
+		dummy.setItemSlot(EquipmentSlot.MAINHAND, sourcePlayer.getMainHandItem().copy());
+		dummy.setItemSlot(EquipmentSlot.OFFHAND, sourcePlayer.getOffhandItem().copy());
+	}
+
+	private static void syncDummyHeldItems(ServerPlayer sourcePlayer, DroneControlSession session) {
+		if (sourcePlayer == null || session == null || session.dummyUuid() == null) {
+			return;
+		}
+		MinecraftServer server = sourcePlayer.level().getServer();
+		if (server == null) {
+			return;
+		}
+
+		Entity entity = findEntity(server, session.originDimension(), session.dummyUuid());
+		if (!(entity instanceof DronePilotDummyEntity dummy)) {
+			return;
+		}
+
+		ItemStack main = sourcePlayer.getMainHandItem();
+		ItemStack off = sourcePlayer.getOffhandItem();
+		if (!stacksEqual(dummy.getItemBySlot(EquipmentSlot.MAINHAND), main)) {
+			dummy.setItemSlot(EquipmentSlot.MAINHAND, main.copy());
+		}
+		if (!stacksEqual(dummy.getItemBySlot(EquipmentSlot.OFFHAND), off)) {
+			dummy.setItemSlot(EquipmentSlot.OFFHAND, off.copy());
+		}
+	}
+
+	private static boolean stacksEqual(ItemStack first, ItemStack second) {
+		if (first == null || first.isEmpty()) {
+			return second == null || second.isEmpty();
+		}
+		if (second == null || second.isEmpty()) {
+			return false;
+		}
+		if (first.getCount() != second.getCount()) {
+			return false;
+		}
+		return ItemStack.isSameItemSameComponents(first, second);
+	}
+
+	private static void broadcastDronePilotEquipmentHidden(ServerPlayer player, boolean hidden) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		List<Pair<EquipmentSlot, ItemStack>> slots = new ArrayList<>(6);
+		slots.add(Pair.of(EquipmentSlot.HEAD, hidden ? ItemStack.EMPTY : player.getItemBySlot(EquipmentSlot.HEAD).copy()));
+		slots.add(Pair.of(EquipmentSlot.CHEST, hidden ? ItemStack.EMPTY : player.getItemBySlot(EquipmentSlot.CHEST).copy()));
+		slots.add(Pair.of(EquipmentSlot.LEGS, hidden ? ItemStack.EMPTY : player.getItemBySlot(EquipmentSlot.LEGS).copy()));
+		slots.add(Pair.of(EquipmentSlot.FEET, hidden ? ItemStack.EMPTY : player.getItemBySlot(EquipmentSlot.FEET).copy()));
+		slots.add(Pair.of(EquipmentSlot.MAINHAND, hidden ? ItemStack.EMPTY : player.getMainHandItem().copy()));
+		slots.add(Pair.of(EquipmentSlot.OFFHAND, hidden ? ItemStack.EMPTY : player.getOffhandItem().copy()));
+
+		ClientboundSetEquipmentPacket packet = new ClientboundSetEquipmentPacket(player.getId(), slots);
+		for (ServerPlayer viewer : level.players()) {
+			viewer.connection.send(packet);
+		}
+	}
+
+	private static void setHotbarVisualHidden(ServerPlayer player, boolean hidden) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+
+		AbstractContainerMenu menu = player.inventoryMenu;
+		int stateId = menu.incrementStateId();
+		for (int index = 0; index < 9; index++) {
+			ItemStack stack = hidden ? ItemStack.EMPTY : player.getInventory().getItem(index).copy();
+			player.connection.send(new ClientboundContainerSetSlotPacket(
+					menu.containerId,
+					stateId,
+					PLAYER_HOTBAR_MENU_SLOT_START + index,
+					stack
+			));
+		}
 	}
 
 	private static GameProfile createDummyProfile(ServerPlayer sourcePlayer, UUID fakeProfileId) {
@@ -751,6 +913,50 @@ public final class DroneSystem {
 		}
 		ServerLevel level = server.getLevel(dimension);
 		return level == null ? null : level.getEntity(uuid);
+	}
+
+	private static void ensureDroneMounted(ServerPlayer player, Entity root) {
+		if (player == null || root == null || !root.isAlive() || root.level() != player.level()) {
+			return;
+		}
+		if (root.getVehicle() == player && player.hasPassenger(root)) {
+			return;
+		}
+		forceEntityPassenger(player, root);
+		Entity display = findDroneDisplay(root);
+		if (display != null && !(display.getVehicle() == root && root.hasPassenger(display))) {
+			forceEntityPassenger(root, display);
+		}
+	}
+
+	private static void forceEntityPassenger(Entity vehicle, Entity passenger) {
+		if (vehicle == null || passenger == null || vehicle == passenger) {
+			return;
+		}
+
+		if (passenger.getVehicle() == vehicle && vehicle.hasPassenger(passenger)) {
+			return;
+		}
+
+		if (passenger.isPassenger()) {
+			passenger.stopRiding();
+		}
+
+		((EntityPassengerAccessor) passenger).lg2$setVehicle(vehicle);
+		((EntityPassengerAccessor) vehicle).lg2$addPassenger(passenger);
+		vehicle.positionRider(passenger);
+		syncPassengerAttachment(vehicle);
+	}
+
+	private static void syncPassengerAttachment(Entity vehicle) {
+		if (vehicle == null || !(vehicle.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		ClientboundSetPassengersPacket packet = new ClientboundSetPassengersPacket(vehicle);
+		for (ServerPlayer viewer : level.players()) {
+			viewer.connection.send(packet);
+		}
 	}
 
 	private static final class DronePilotOverlay implements PolymerEntity {
