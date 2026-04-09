@@ -57,6 +57,7 @@
 		"ServerCommonPacketListenerCocaineHallucinationMixin",
 		"ServerCommonPacketListenerAbsoluteInvisibilityMixin",
 		"ServerGamePacketListenerCameraCaptureMixin",
+		"ServerGamePacketListenerCopperManGogglesMixin",
 		"ServerGamePacketListenerCopperManJetpackMixin",
 		"ServerGamePacketListenerDroneControlMixin",
 		"ServerGamePacketListenerMonitorTimelineMixin",

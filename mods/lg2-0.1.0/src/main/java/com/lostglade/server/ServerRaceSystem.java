@@ -657,6 +657,9 @@ public final class ServerRaceSystem {
 		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && COPPER_MAN_RACE_ID.equals(sanitizePath(race.id))) {
 			return useCopperManJetpack(player, race, ability);
 		}
+		if (slot == RaceAbilitySlot.SHNYAGA && COPPER_MAN_RACE_ID.equals(sanitizePath(race.id))) {
+			return CopperManGogglesSystem.toggleMode(player);
+		}
 
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;

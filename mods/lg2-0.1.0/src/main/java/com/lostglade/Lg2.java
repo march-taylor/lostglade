@@ -97,6 +97,7 @@ public class Lg2 implements ModInitializer {
 		ServerStructureBreakSystem.register();
 		ServerMechanicsGateSystem.register();
 		ServerRespectSystem.register();
+		CopperManGogglesSystem.registerLateInteractions();
 		CopperManRepulsorSystem.registerLateInteractions();
 		ServerRaceSystem.register();
 		ServerUnusedMobSpawnSystem.register();
