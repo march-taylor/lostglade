@@ -4213,7 +4213,7 @@
             1800
           ],
           "icon": {
-            "fallbackItem": "minecraft:firework_rocket",
+            "fallbackItem": "lg2:drone",
             "packModel": "",
             "count": 1,
             "foil": false
@@ -4225,49 +4225,49 @@
             "foil": false
           },
           "maxedIcon": {
-            "fallbackItem": "minecraft:firework_rocket",
+            "fallbackItem": "lg2:drone",
             "packModel": "",
             "count": 1,
             "foil": true
           },
           "name": {
             "values": {
-              "en_us": "Scout Drone",
-              "ru_ru": "Дрон-разведчик",
-              "uk_ua": "Дрон-розвідник",
-              "ja_jp": "偵察ドローン",
-              "rpr": "Дронъ-развѣдчикъ"
+              "en_us": "Drone",
+              "ru_ru": "Дрон",
+              "uk_ua": "Дрон",
+              "ja_jp": "ドローン",
+              "rpr": "Дронъ"
             }
           },
           "lore": {
             "values": {
               "en_us": [
                 "A remote drone for caves, mines and hostile bases.",
-                "Requires Camera and the Screen.",
+                "Requires Camera.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
                 "Управляемый дрон для разведки пещер, шахт и чужих баз.",
-                "Требует Камеру и Экран.",
+                "Требует Камеру.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],
               "uk_ua": [
                 "Керований дрон для розвідки печер, шахт і чужих баз.",
-                "Потребує Камеру та Екран.",
+                "Потребує Камеру.",
                 "Рівень: %level%/%max_level%",
                 "Ціна: %cost% BTC | Стан: %status%"
               ],
               "ja_jp": [
                 "洞窟・鉱山・敵拠点向けの偵察ドローンです。",
-                "カメラと画面が必要です。",
+                "カメラが必要です。",
                 "レベル: %level%/%max_level%",
                 "価格: %cost% BTC | 状態: %status%"
               ],
               "rpr": [
                 "Управляемый летунъ для пещеръ, шахтъ и вражьих дворовъ.",
-                "Требуетъ камеру и экранъ.",
+                "Требуетъ камеру.",
                 "Чинъ: %level%/%max_level%",
                 "Мзда: %cost% BTC | Состоянiе: %status%"
               ]
@@ -4276,10 +4276,6 @@
           "requirements": [
             {
               "upgradeId": "it_camera",
-              "minLevel": 1
-            },
-            {
-              "upgradeId": "it_screen",
               "minLevel": 1
             }
           ],
@@ -6495,7 +6491,7 @@
             1800
           ],
           "icon": {
-            "fallbackItem": "minecraft:firework_rocket",
+            "fallbackItem": "lg2:drone",
             "packModel": "",
             "count": 1,
             "foil": false
@@ -6507,49 +6503,49 @@
             "foil": false
           },
           "maxedIcon": {
-            "fallbackItem": "minecraft:firework_rocket",
+            "fallbackItem": "lg2:drone",
             "packModel": "",
             "count": 1,
             "foil": true
           },
           "name": {
             "values": {
-              "en_us": "Scout Drone",
-              "ru_ru": "Дрон-разведчик",
-              "uk_ua": "Дрон-розвідник",
-              "ja_jp": "偵察ドローン",
-              "rpr": "Дронъ-развѣдчикъ"
+              "en_us": "Drone",
+              "ru_ru": "Дрон",
+              "uk_ua": "Дрон",
+              "ja_jp": "ドローン",
+              "rpr": "Дронъ"
             }
           },
           "lore": {
             "values": {
               "en_us": [
                 "A remote drone for caves, mines and hostile bases.",
-                "Requires Camera and the Screen.",
+                "Requires Camera.",
                 "Level: %level%/%max_level%",
                 "Cost: %cost% BTC | Status: %status%"
               ],
               "ru_ru": [
                 "Управляемый дрон для разведки пещер, шахт и чужих баз.",
-                "Требует Камеру и Экран.",
+                "Требует Камеру.",
                 "Уровень: %level%/%max_level%",
                 "Цена: %cost% BTC | Статус: %status%"
               ],
               "uk_ua": [
                 "Керований дрон для розвідки печер, шахт і чужих баз.",
-                "Потребує Камеру та Екран.",
+                "Потребує Камеру.",
                 "Рівень: %level%/%max_level%",
                 "Ціна: %cost% BTC | Стан: %status%"
               ],
               "ja_jp": [
                 "洞窟・鉱山・敵拠点向けの偵察ドローンです。",
-                "カメラと画面が必要です。",
+                "カメラが必要です。",
                 "レベル: %level%/%max_level%",
                 "価格: %cost% BTC | 状態: %status%"
               ],
               "rpr": [
                 "Управляемый летунъ для пещеръ, шахтъ и вражьих дворовъ.",
-                "Требуетъ камеру и экранъ.",
+                "Требуетъ камеру.",
                 "Чинъ: %level%/%max_level%",
                 "Мзда: %cost% BTC | Состоянiе: %status%"
               ]
@@ -6558,10 +6554,6 @@
           "requirements": [
             {
               "upgradeId": "it_camera",
-              "minLevel": 1
-            },
-            {
-              "upgradeId": "it_screen",
               "minLevel": 1
             }
           ],

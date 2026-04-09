@@ -58,7 +58,7 @@ public final class SpeakerSystem {
 	private static final long AUDIO_FRAME_DURATION_MS = AUDIO_FRAME_SAMPLES * 1000L / AUDIO_SAMPLE_RATE;
 	private static final long AUDIO_FRAME_NANOS = TimeUnit.MILLISECONDS.toNanos(AUDIO_FRAME_DURATION_MS);
 	private static final int SHARED_SOURCE_FRAME_BUFFER_CAPACITY = 512;
-	private static final long AUDIO_RESYNC_TOLERANCE_MS = 4_000L;
+	private static final long AUDIO_RESYNC_TOLERANCE_MS = 500L;
 	private static final int SHARED_SOURCE_STARTUP_BUFFER_FRAMES = 3;
 	private static final int SHARED_SOURCE_PLAYBACK_LEAD_FRAMES = 2;
 	private static final int SHARED_SOURCE_TARGET_LEAD_FRAMES = 256;
@@ -462,10 +462,10 @@ public final class SpeakerSystem {
 
 	private static final class SpeakerRuntime {
 		private final SpeakerKey key;
-		private final UUID channelId;
 		private final ConcurrentHashMap<String, SourceSubscriptionRuntime> sourceFeeds;
 		private volatile int volumePercent;
 		private volatile boolean closed;
+		private volatile UUID channelId;
 		private OpusEncoder encoder;
 		private LocationalAudioChannel channel;
 		private AudioPlayer player;
@@ -489,7 +489,10 @@ public final class SpeakerSystem {
 			if (!ensureVoicechatPlayer(level, voicechatApi, voicechatServerApi)) {
 				return false;
 			}
-			synchronizeSources(sources);
+			boolean playbackResyncNeeded = synchronizeSources(sources);
+			if (playbackResyncNeeded && !restartVoicechatPlayer(level, voicechatApi, voicechatServerApi)) {
+				return false;
+			}
 			return true;
 		}
 
@@ -507,7 +510,10 @@ public final class SpeakerSystem {
 			if (!ensureVoicechatPlayer(level, voicechatApi, voicechatServerApi)) {
 				return false;
 			}
-			synchronizeSources(sources);
+			boolean playbackResyncNeeded = synchronizeSources(sources);
+			if (playbackResyncNeeded && !restartVoicechatPlayer(level, voicechatApi, voicechatServerApi)) {
+				return false;
+			}
 			return true;
 		}
 
@@ -572,8 +578,24 @@ public final class SpeakerSystem {
 			}
 		}
 
-		private void synchronizeSources(List<MonitorScreenSystem.SpeakerAudioSource> sources) {
+		private boolean restartVoicechatPlayer(ServerLevel level, VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
+			if (this.closed) {
+				return false;
+			}
+			AudioPlayer currentPlayer = this.player;
+			this.player = null;
+			this.channel = null;
+			this.encoder = null;
+			this.channelId = UUID.randomUUID();
+			if (currentPlayer != null && !currentPlayer.isStopped()) {
+				currentPlayer.stopPlaying();
+			}
+			return ensureVoicechatPlayer(level, voicechatApi, voicechatServerApi);
+		}
+
+		private boolean synchronizeSources(List<MonitorScreenSystem.SpeakerAudioSource> sources) {
 			Set<String> keepKeys = new HashSet<>();
+			boolean[] playbackResyncNeeded = new boolean[] {false};
 			for (MonitorScreenSystem.SpeakerAudioSource source : sources) {
 				if (source == null || source.sourceKey() == null || source.sourceKey().isBlank()) {
 					continue;
@@ -585,15 +607,20 @@ public final class SpeakerSystem {
 						if (existing != null) {
 							existing.close(this.key);
 						}
+						playbackResyncNeeded[0] = true;
 						return null;
 					}
 					if (existing != null && existing.feed() == feed) {
+						if (existing.updateGeneration(feed.generation())) {
+							playbackResyncNeeded[0] = true;
+						}
 						return existing;
 					}
 					if (existing != null) {
 						existing.close(this.key);
 					}
-					return new SourceSubscriptionRuntime(source.sourceKey(), feed);
+					playbackResyncNeeded[0] = true;
+					return new SourceSubscriptionRuntime(source.sourceKey(), feed, feed.generation());
 				});
 			}
 			for (Map.Entry<String, SourceSubscriptionRuntime> entry : new ArrayList<>(this.sourceFeeds.entrySet())) {
@@ -603,8 +630,10 @@ public final class SpeakerSystem {
 				SourceSubscriptionRuntime removed = this.sourceFeeds.remove(entry.getKey());
 				if (removed != null) {
 					removed.close(this.key);
+					playbackResyncNeeded[0] = true;
 				}
 			}
+			return playbackResyncNeeded[0];
 		}
 
 		private short[] nextFrame() {
@@ -836,14 +865,24 @@ public final class SpeakerSystem {
 	private static final class SourceSubscriptionRuntime {
 		private final String sourceKey;
 		private final SharedSourceFeed feed;
+		private long feedGeneration;
 
-		private SourceSubscriptionRuntime(String sourceKey, SharedSourceFeed feed) {
+		private SourceSubscriptionRuntime(String sourceKey, SharedSourceFeed feed, long feedGeneration) {
 			this.sourceKey = sourceKey;
 			this.feed = feed;
+			this.feedGeneration = feedGeneration;
 		}
 
 		private SharedSourceFeed feed() {
 			return this.feed;
+		}
+
+		private boolean updateGeneration(long generation) {
+			if (this.feedGeneration == generation) {
+				return false;
+			}
+			this.feedGeneration = generation;
+			return true;
 		}
 
 		private short[] frameAt(long nowNanos) {
@@ -870,14 +909,27 @@ public final class SpeakerSystem {
 		private long audioSyncToken;
 		private long nextFrameSequence;
 		private long playbackEpochNanos;
+		private long generation;
 
 		private SharedSourceFeed(String sourceKey) {
 			this.sourceKey = sourceKey;
 		}
 
 		private void addSpeaker(SpeakerKey speakerKey) {
-			if (speakerKey != null) {
-				this.speakers.add(speakerKey);
+			if (speakerKey == null) {
+				return;
+			}
+			boolean added = this.speakers.add(speakerKey);
+			if (!added) {
+				return;
+			}
+			synchronized (this.lock) {
+				// When a speaker rejoins an already-playing shared feed, Simple Voice Chat gives the
+				// new locational channel its own startup latency. Bumping the generation forces every
+				// subscribed speaker on this feed to recreate its channel so they realign together.
+				if (!this.closed && this.process != null && this.speakers.size() > 1) {
+					this.generation++;
+				}
 			}
 		}
 
@@ -973,6 +1025,7 @@ public final class SpeakerSystem {
 			this.audioSyncToken = source.audioSyncToken();
 			this.nextFrameSequence = 0L;
 			this.playbackEpochNanos = 0L;
+			this.generation++;
 
 			List<String> command = new ArrayList<>();
 			command.add(ffmpegBinary());
@@ -1017,6 +1070,10 @@ public final class SpeakerSystem {
 			this.readerThread = thread;
 			thread.start();
 			return true;
+		}
+
+		private long generation() {
+			return this.generation;
 		}
 
 		private void readLoop(Process processToRead) {

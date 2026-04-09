@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "III",
+    "CDC",
+    "IBI"
+  ],
+  "key": {
+    "I": "minecraft:iron_ingot",
+    "C": "minecraft:comparator",
+    "D": "lg2:camera",
+    "B": "#minecraft:buttons"
+  },
+  "result": {
+    "id": "lg2:drone"
+  }
+}
