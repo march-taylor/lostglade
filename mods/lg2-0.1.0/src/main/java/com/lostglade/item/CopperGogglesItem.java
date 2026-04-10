@@ -6,21 +6,32 @@ import eu.pb4.polymer.core.api.item.SimplePolymerItem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.SlotAccess;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.ClickAction;
+import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.ItemLore;
 import net.minecraft.world.level.Level;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 public final class CopperGogglesItem extends SimplePolymerItem {
 	private static final Identifier MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_goggles");
+	private static final int MODE_SELECTED_COLOR = 0x55FF22;
+	private static final int MODE_UNSELECTED_COLOR = 0x808080;
+	private static final String MODE_ORE_SEARCH = "ORE_SEARCH";
+	private static final String MODE_TRACKING = "TRACKING";
+	private static final String MODE_MAGNIFIER = "MAGNIFIER";
+	private static final String MODE_NIGHT_VISION = "NIGHT_VISION";
 
 	public CopperGogglesItem(Item.Properties settings) {
 		super(settings, Items.LEATHER_HELMET);
@@ -38,9 +49,159 @@ public final class CopperGogglesItem extends SimplePolymerItem {
 
 	@Override
 	public void modifyBasePolymerItemStack(ItemStack out, ItemStack original, PacketContext context) {
+		out.set(DataComponents.LORE, buildModeLore(context));
 		if (!PolymerResourcePackUtils.hasMainPack(context)) {
-			out.set(DataComponents.CUSTOM_NAME, getName(original).copy().withStyle(style -> style.withItalic(false)));
+			out.set(DataComponents.CUSTOM_NAME, localizedName(context).withStyle(style -> style.withItalic(false)));
 		}
+	}
+
+	@Override
+	public boolean overrideOtherStackedOnMe(
+			ItemStack stack,
+			ItemStack otherStack,
+			Slot slot,
+			ClickAction clickAction,
+			Player player,
+			SlotAccess cursorAccess
+	) {
+		if (clickAction != ClickAction.SECONDARY || player == null || !otherStack.isEmpty() || !(player instanceof ServerPlayer serverPlayer)) {
+			return false;
+		}
+		if (CopperManGogglesSystem.toggleMode(serverPlayer) <= 0) {
+			return false;
+		}
+		player.playSound(SoundEvents.UI_BUTTON_CLICK.value(), 0.55F, 1.15F);
+		return true;
+	}
+
+	private static MutableComponent localizedName(PacketContext context) {
+		ServerPlayer player = context.getPlayer();
+		if (player == null) {
+			return Component.literal("Special Goggles");
+		}
+
+		String normalized = getNormalizedLanguage(context);
+		if (normalized == null) {
+			return Component.literal("Special Goggles");
+		}
+		if (normalized.startsWith("rpr")) {
+			return Component.literal("Спецъ-очки");
+		}
+		if (normalized.startsWith("uk")) {
+			return Component.literal("Спец-окуляри");
+		}
+		if (normalized.startsWith("ru")) {
+			return Component.literal("Спец-очки");
+		}
+		if (normalized.startsWith("ja")) {
+			return Component.literal("特殊ゴーグル");
+		}
+		return Component.literal("Special Goggles");
+	}
+
+	private static ItemLore buildModeLore(PacketContext context) {
+		String selectedMode = resolveSelectedModeId(context);
+		ItemLore lore = ItemLore.EMPTY;
+		lore = lore.withLineAdded(buildModeLine(context, MODE_ORE_SEARCH, "tooltip.lg2.copper_goggles.mode.ore_search", selectedMode));
+		lore = lore.withLineAdded(buildModeLine(context, MODE_TRACKING, "tooltip.lg2.copper_goggles.mode.tracking", selectedMode));
+		lore = lore.withLineAdded(buildModeLine(context, MODE_MAGNIFIER, "tooltip.lg2.copper_goggles.mode.magnifier", selectedMode));
+		lore = lore.withLineAdded(buildModeLine(context, MODE_NIGHT_VISION, "tooltip.lg2.copper_goggles.mode.night_vision", selectedMode));
+		return lore;
+	}
+
+	private static Component buildModeLine(PacketContext context, String modeId, String translationKey, String selectedMode) {
+		boolean selected = modeId.equals(selectedMode);
+		int color = selected ? MODE_SELECTED_COLOR : MODE_UNSELECTED_COLOR;
+		MutableComponent label = useTranslatedTooltip(context)
+				? Component.translatable(translationKey)
+				: Component.literal(localizedTooltipLabel(context, modeId));
+		label.withStyle(style -> style.withColor(color).withItalic(false));
+		return Component.literal("- ")
+				.withStyle(style -> style.withColor(color).withItalic(false))
+				.append(label);
+	}
+
+	private static boolean useTranslatedTooltip(PacketContext context) {
+		return PolymerResourcePackUtils.hasMainPack(context) && hasSupportedLanguage(context);
+	}
+
+	private static boolean hasSupportedLanguage(PacketContext context) {
+		String normalized = getNormalizedLanguage(context);
+		if (normalized == null) {
+			return false;
+		}
+		return normalized.startsWith("en")
+				|| normalized.startsWith("ru")
+				|| normalized.startsWith("uk")
+				|| normalized.startsWith("rpr")
+				|| normalized.startsWith("ja");
+	}
+
+	private static String getNormalizedLanguage(PacketContext context) {
+		ServerPlayer player = context.getPlayer();
+		if (player == null || player.clientInformation() == null || player.clientInformation().language() == null) {
+			return null;
+		}
+		return player.clientInformation().language().toLowerCase();
+	}
+
+	private static String resolveSelectedModeId(PacketContext context) {
+		ServerPlayer player = context.getPlayer();
+		return player == null ? MODE_ORE_SEARCH : CopperManGogglesSystem.getCurrentModeId(player);
+	}
+
+	private static String localizedTooltipLabel(PacketContext context, String modeId) {
+		String normalized = getNormalizedLanguage(context);
+		if (normalized == null) {
+			return englishTooltipLabel(modeId);
+		}
+		if (normalized.startsWith("rpr")) {
+			return switch (modeId) {
+				case MODE_ORE_SEARCH -> "Режимъ поиска рудъ";
+				case MODE_TRACKING -> "Режимъ отслеживанiя";
+				case MODE_MAGNIFIER -> "Режимъ лупы";
+				case MODE_NIGHT_VISION -> "Режимъ нощнаго зрѣнiя";
+				default -> englishTooltipLabel(modeId);
+			};
+		}
+		if (normalized.startsWith("uk")) {
+			return switch (modeId) {
+				case MODE_ORE_SEARCH -> "Режим пошуку руд";
+				case MODE_TRACKING -> "Режим відстеження";
+				case MODE_MAGNIFIER -> "Режим лупи";
+				case MODE_NIGHT_VISION -> "Режим нічного зору";
+				default -> englishTooltipLabel(modeId);
+			};
+		}
+		if (normalized.startsWith("ru")) {
+			return switch (modeId) {
+				case MODE_ORE_SEARCH -> "Режим поиска руд";
+				case MODE_TRACKING -> "Режим отслеживания";
+				case MODE_MAGNIFIER -> "Режим лупы";
+				case MODE_NIGHT_VISION -> "Режим ночного зрения";
+				default -> englishTooltipLabel(modeId);
+			};
+		}
+		if (normalized.startsWith("ja")) {
+			return switch (modeId) {
+				case MODE_ORE_SEARCH -> "鉱石探索モード";
+				case MODE_TRACKING -> "追跡モード";
+				case MODE_MAGNIFIER -> "ズームモード";
+				case MODE_NIGHT_VISION -> "暗視モード";
+				default -> englishTooltipLabel(modeId);
+			};
+		}
+		return englishTooltipLabel(modeId);
+	}
+
+	private static String englishTooltipLabel(String modeId) {
+		return switch (modeId) {
+			case MODE_ORE_SEARCH -> "Ore Search Mode";
+			case MODE_TRACKING -> "Tracking Mode";
+			case MODE_MAGNIFIER -> "Zoom Mode";
+			case MODE_NIGHT_VISION -> "Night Vision Mode";
+			default -> "Mode";
+		};
 	}
 
 	@Override

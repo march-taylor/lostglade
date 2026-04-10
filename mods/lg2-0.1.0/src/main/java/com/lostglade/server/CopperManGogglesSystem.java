@@ -8,7 +8,6 @@ import com.lostglade.config.RaceConfig.RaceAbilitySlot;
 import com.lostglade.item.ModItems;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
 import com.lostglade.mixin.LivingEntityTrackedDataAccessor;
-import com.mojang.math.Transformation;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -43,13 +42,13 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
-import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Interaction;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.monster.Slime;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.BucketItem;
@@ -216,6 +215,7 @@ public final class CopperManGogglesSystem {
 		SAVED_GOGGLES_MODES.put(player.getUUID(), next);
 		clearScanVisuals(player);
 		syncNightVision(player);
+		syncGogglesStacks(player);
 		player.displayClientMessage(
 				Component.translatable("message.lg2.copper_goggles.mode", Component.translatable(next.translationKey()))
 						.withStyle(style -> style.withColor(ChatFormatting.GREEN).withItalic(false)),
@@ -276,6 +276,10 @@ public final class CopperManGogglesSystem {
 			return true;
 		}
 		return canSeeRecipe(player);
+	}
+
+	public static String getCurrentModeId(ServerPlayer player) {
+		return getMode(player).name();
 	}
 
 	public static void refreshVisual(ServerPlayer player) {
@@ -375,6 +379,32 @@ public final class CopperManGogglesSystem {
 			return;
 		}
 		sendActualInventorySlot(player, newSelectedSlot);
+	}
+
+	public static boolean handleInventoryModeClick(ServerPlayer player, int containerId, int slotNum) {
+		if (player == null || slotNum < 0) {
+			return false;
+		}
+		AbstractContainerMenu menu = player.containerMenu;
+		if (menu == null || menu.containerId != containerId || slotNum >= menu.slots.size()) {
+			return false;
+		}
+		Slot slot = menu.getSlot(slotNum);
+		ItemStack stack = slot.getItem();
+		if (stack.isEmpty() || stack.getItem() != ModItems.COPPER_GOGGLES) {
+			return false;
+		}
+		if (toggleMode(player) <= 0) {
+			return false;
+		}
+		menu.broadcastFullState();
+		menu.sendAllDataToRemote();
+		if (player.inventoryMenu != menu) {
+			player.inventoryMenu.broadcastFullState();
+			player.inventoryMenu.sendAllDataToRemote();
+		}
+		syncGogglesStacks(player);
+		return true;
 	}
 
 	public static void handleSwapWithOffhand(ServerPlayer player) {
@@ -764,6 +794,35 @@ public final class CopperManGogglesSystem {
 		));
 	}
 
+	private static void syncGogglesStacks(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		syncGogglesStacksInMenu(player, player.inventoryMenu);
+		if (player.containerMenu != player.inventoryMenu) {
+			syncGogglesStacksInMenu(player, player.containerMenu);
+		}
+	}
+
+	private static void syncGogglesStacksInMenu(ServerPlayer player, AbstractContainerMenu menu) {
+		if (player == null || menu == null) {
+			return;
+		}
+		for (int menuSlot = 0; menuSlot < menu.slots.size(); menuSlot++) {
+			Slot slot = menu.getSlot(menuSlot);
+			ItemStack stack = slot.getItem();
+			if (stack.isEmpty() || stack.getItem() != ModItems.COPPER_GOGGLES) {
+				continue;
+			}
+			player.connection.send(new ClientboundContainerSetSlotPacket(
+					menu.containerId,
+					menu.incrementStateId(),
+					menuSlot,
+					stack.copy()
+			));
+		}
+	}
+
 	private static int findInventoryMenuSlot(AbstractContainerMenu menu, Inventory inventory, int inventorySlot) {
 		if (menu == null || inventory == null || inventorySlot < 0) {
 			return -1;
@@ -884,20 +943,11 @@ public final class CopperManGogglesSystem {
 
 	private static boolean hasTrackingAirTriggerObstruction(ServerPlayer player) {
 		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange()) + 0.5D;
-		Vec3 start = player.getEyePosition();
-		Vec3 end = start.add(player.getLookAngle().scale(reach));
-		BlockHitResult blockHit = player.level().clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
-		double maxDistance = blockHit.getType() == HitResult.Type.MISS ? reach : Math.sqrt(blockHit.getLocation().distanceToSqr(start));
-		EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
-				player.level(),
-				player,
-				start,
-				start.add(player.getLookAngle().scale(maxDistance)),
-				player.getBoundingBox().expandTowards(player.getLookAngle().scale(maxDistance)).inflate(0.6D),
-				entity -> !isTrackingAirTrigger(player, entity) && entity != player && entity.isAlive() && entity.isPickable(),
-				0.0F
-		);
-		return blockHit.getType() != HitResult.Type.MISS || entityHit != null;
+		HitResult hit = player.pick(reach, 1.0F, false);
+		if (hit instanceof EntityHitResult entityHit && isTrackingAirTrigger(player, entityHit.getEntity())) {
+			return false;
+		}
+		return hit.getType() != HitResult.Type.MISS;
 	}
 
 	private static boolean isTrackingAirTrigger(ServerPlayer player, Entity entity) {
@@ -1043,13 +1093,12 @@ public final class CopperManGogglesSystem {
 		}
 		List<Integer> ids = new ArrayList<>();
 		for (BlockPos pos : positions) {
-			BlockState state = player.level().getBlockState(pos);
-			Display.BlockDisplay display = createHighlightDisplay(player.level(), pos, state);
-			if (display == null) {
+			Entity highlight = createHighlightEntity(player.level(), pos);
+			if (highlight == null) {
 				continue;
 			}
-			ids.add(display.getId());
-			sendSpawnPackets(player, display);
+			ids.add(highlight.getId());
+			sendSpawnPackets(player, highlight);
 		}
 		if (!ids.isEmpty()) {
 			int[] rawIds = ids.stream().mapToInt(Integer::intValue).toArray();
@@ -1069,27 +1118,26 @@ public final class CopperManGogglesSystem {
 		);
 	}
 
-	private static Display.BlockDisplay createHighlightDisplay(ServerLevel level, BlockPos pos, BlockState state) {
-		if (level == null || pos == null || state == null) {
+	private static Entity createHighlightEntity(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null) {
 			return null;
 		}
-		Display.BlockDisplay display = new Display.BlockDisplay(EntityType.BLOCK_DISPLAY, level);
-		display.setPos(Vec3.atLowerCornerOf(pos));
-		display.setYRot(0.0F);
-		display.setXRot(0.0F);
-		display.setYHeadRot(0.0F);
-		display.setYBodyRot(0.0F);
-		display.setTransformation(Transformation.identity());
-		display.setBlockState(state);
-		display.setNoGravity(true);
-		display.setInvulnerable(true);
-		display.setSilent(true);
-		display.setShadowRadius(0.0F);
-		display.setShadowStrength(0.0F);
-		display.setInvisible(true);
-		display.setGlowingTag(true);
-		display.setViewRange(HIGHLIGHT_VIEW_RANGE);
-		return display;
+		Entity entity = EntityType.SLIME.create(level, net.minecraft.world.entity.EntitySpawnReason.TRIGGERED);
+		if (!(entity instanceof Slime slime)) {
+			if (entity != null) {
+				entity.discard();
+			}
+			return null;
+		}
+		slime.setSize(2, false);
+		slime.setPos(pos.getX() + 0.5D, pos.getY(), pos.getZ() + 0.5D);
+		slime.setNoAi(true);
+		slime.setNoGravity(true);
+		slime.setInvulnerable(true);
+		slime.setSilent(true);
+		slime.setInvisible(true);
+		slime.setGlowingTag(true);
+		return slime;
 	}
 
 	private static void clearScanVisuals(ServerPlayer player) {

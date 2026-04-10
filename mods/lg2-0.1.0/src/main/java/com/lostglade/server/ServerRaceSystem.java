@@ -2393,7 +2393,7 @@ public final class ServerRaceSystem {
 			case 3 -> "\u041A\u043E\u0441\u044F\u0447\u043E\u043A";
 			case 4 -> "\u041A\u043E\u043A\u0430\u0438\u043D";
 			case 5 -> "\u041C\u0435\u0442\u0430\u0434\u043E\u043D";
-			default -> "?????";
+			default -> "Раздел";
 		};
 	}
 
@@ -2441,7 +2441,7 @@ public final class ServerRaceSystem {
 			case 3 -> "\u041A\u043E\u0441\u044F\u0447\u043E\u043A";
 			case 4 -> "\u041A\u043E\u043A\u0430\u0457\u043D";
 			case 5 -> "\u041C\u0435\u0442\u0430\u0434\u043E\u043D";
-			default -> "?????";
+			default -> "Розділ";
 		};
 	}
 
@@ -2489,7 +2489,7 @@ public final class ServerRaceSystem {
 			case 3 -> "\u041A\u0443\u0440\u0435\u0432\u043E";
 			case 4 -> "\u041F\u0440\u0430\u0445\u044A";
 			case 5 -> "\u0414\u0440\u0435\u043C\u0430\u0442\u0438\u043D\u044A";
-			default -> "?????";
+			default -> "Раздѣл";
 		};
 	}
 
@@ -3421,45 +3421,45 @@ public final class ServerRaceSystem {
 		String locale = normalizeCartelDisguiseLocale(player);
 		if (locale.startsWith("rpr")) {
 			return switch (key) {
-				case "passport" -> "РџР°СЃРїРѕСЂС‚СЉ";
-				case "accept" -> "РџСЂРёРЅСЏС‚Рё";
-				case "previous" -> "РџСЂРµРґС‹РґСѓС‰iР№";
-				case "next" -> "РЎР»СЈРґСѓСЋС‰iР№";
-				case "empty" -> "РќСЈС‚СЉ РёРіСЂРѕРєРѕРІСЉ";
-				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂСЈ РЅРёРєРѕРіРѕ РЅСЈС‚СЉ";
+				case "passport" -> "Паспортъ";
+				case "accept" -> "Приняти";
+				case "previous" -> "Предыдущiй";
+				case "next" -> "Слѣдующiй";
+				case "empty" -> "Нѣтъ игроковъ";
+				case "no_players_online" -> "На серверѣ никого нѣтъ";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("uk")) {
 			return switch (key) {
-				case "passport" -> "РџР°СЃРїРѕСЂС‚";
-				case "accept" -> "РџСЂРёР№РЅСЏС‚Рё";
-				case "previous" -> "РџРѕРїРµСЂРµРґРЅС–Р№";
-				case "next" -> "РќР°СЃС‚СѓРїРЅРёР№";
-				case "empty" -> "РќРµРјР°С” РіСЂР°РІС†С–РІ";
-				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂС– РЅС–РєРѕРіРѕ РЅРµРјР°С”";
+				case "passport" -> "Паспорт";
+				case "accept" -> "Прийняти";
+				case "previous" -> "Попередній";
+				case "next" -> "Наступний";
+				case "empty" -> "Немає гравців";
+				case "no_players_online" -> "На сервері нікого немає";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("ja")) {
 			return switch (key) {
-				case "passport" -> "гѓ‘г‚№гѓќгѓјгѓ€";
-				case "accept" -> "ж‰їиЄЌ";
-				case "previous" -> "е‰ЌгЃё";
-				case "next" -> "ж¬ЎгЃё";
-				case "empty" -> "гѓ—гѓ¬г‚¤гѓ¤гѓјгЃЊгЃ„гЃѕгЃ›г‚“";
-				case "no_players_online" -> "г‚µгѓјгѓђгѓјгЃ«иЄ°г‚‚гЃ„гЃѕгЃ›г‚“";
+				case "passport" -> "パスポート";
+				case "accept" -> "承認";
+				case "previous" -> "前へ";
+				case "next" -> "次へ";
+				case "empty" -> "プレイヤーがいません";
+				case "no_players_online" -> "サーバーに誰もいません";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("ru")) {
 			return switch (key) {
-				case "passport" -> "РџР°СЃСЃРїРѕСЂС‚";
-				case "accept" -> "РџСЂРёРЅСЏС‚СЊ";
-				case "previous" -> "РџСЂРµРґС‹РґСѓС‰РёР№";
-				case "next" -> "РЎР»РµРґСѓСЋС‰РёР№";
-				case "empty" -> "РќРµС‚ РёРіСЂРѕРєРѕРІ";
-				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂРµ РЅРёРєРѕРіРѕ РЅРµС‚";
+				case "passport" -> "Паспорт";
+				case "accept" -> "Принять";
+				case "previous" -> "Предыдущий";
+				case "next" -> "Следующий";
+				case "empty" -> "Нет игроков";
+				case "no_players_online" -> "На сервере никого нет";
 				default -> "";
 			};
 		}

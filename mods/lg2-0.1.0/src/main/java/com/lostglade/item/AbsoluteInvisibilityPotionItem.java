@@ -5,6 +5,7 @@ import eu.pb4.polymer.core.api.item.PolymerItem;
 import net.minecraft.advancements.CriteriaTriggers;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.stats.Stats;
@@ -78,6 +79,28 @@ public final class AbsoluteInvisibilityPotionItem extends PotionItem implements 
 	@Override
 	public void modifyBasePolymerItemStack(ItemStack out, ItemStack original, PacketContext context) {
 		out.set(DataComponents.POTION_CONTENTS, CONTENTS);
-		out.set(DataComponents.CUSTOM_NAME, Component.translatable(this.getDescriptionId()).withStyle(style -> style.withItalic(false)));
+		out.set(DataComponents.CUSTOM_NAME, localizedName(context).withStyle(style -> style.withItalic(false)));
+	}
+
+	private MutableComponent localizedName(PacketContext context) {
+		ServerPlayer player = context.getPlayer();
+		if (player == null) {
+			return Component.literal("Potion of Absolute Invisibility");
+		}
+		String lang = player.clientInformation().language();
+		String normalized = lang == null ? "" : lang.toLowerCase();
+		if (normalized.startsWith("rpr")) {
+			return Component.literal("Зелье абсолютнаго невидѣнія");
+		}
+		if (normalized.startsWith("uk")) {
+			return Component.literal("Зілля абсолютної невидимості");
+		}
+		if (normalized.startsWith("ru")) {
+			return Component.literal("Зелье абсолютной невидимости");
+		}
+		if (normalized.startsWith("ja")) {
+			return Component.literal("完全不可視のポーション");
+		}
+		return Component.literal("Potion of Absolute Invisibility");
 	}
 }

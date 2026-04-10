@@ -525,20 +525,11 @@ public final class CopperManRepulsorSystem {
 
 	private static boolean hasAirTriggerObstruction(ServerPlayer player, RepulsorState state) {
 		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange()) + 0.5D;
-		Vec3 start = player.getEyePosition();
-		Vec3 end = start.add(player.getLookAngle().scale(reach));
-		BlockHitResult blockHit = player.level().clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
-		double maxDistance = blockHit.getType() == HitResult.Type.MISS ? reach : Math.sqrt(blockHit.getLocation().distanceToSqr(start));
-		EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
-				player.level(),
-				player,
-				start,
-				start.add(player.getLookAngle().scale(maxDistance)),
-				player.getBoundingBox().expandTowards(player.getLookAngle().scale(maxDistance)).inflate(0.6D),
-				entity -> entity != state.airTriggerEntity && entity != player && entity.isAlive() && entity.isPickable(),
-				0.0F
-		);
-		return blockHit.getType() != HitResult.Type.MISS || entityHit != null;
+		HitResult hit = player.pick(reach, 1.0F, false);
+		if (hit instanceof EntityHitResult entityHit && entityHit.getEntity() == state.airTriggerEntity) {
+			return false;
+		}
+		return hit.getType() != HitResult.Type.MISS;
 	}
 
 	private static void removeAirTriggerEntity(RepulsorState state) {
