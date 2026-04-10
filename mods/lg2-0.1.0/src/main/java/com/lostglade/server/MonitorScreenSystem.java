@@ -904,17 +904,50 @@ public final class MonitorScreenSystem {
 		if (server == null) {
 			return;
 		}
-		LiveCameraReference changedCamera = new LiveCameraReference(level.dimension(), cameraPos.immutable());
+		LiveCameraReference changedCamera = LiveCameraReference.camera(level.dimension(), cameraPos.immutable());
 		Set<ScreenRuntimeKey> targets = new LinkedHashSet<>(collectConnectedComponentsForWireSource(level, cameraPos).keySet());
 		for (MonitorLevelState monitorState : LEVEL_STATES.values()) {
 			for (Map.Entry<ScreenRuntimeKey, List<LiveCameraReference>> entry : monitorState.connectedCameraPositions().entrySet()) {
 				ScreenRuntimeKey runtimeKey = entry.getKey();
 				List<LiveCameraReference> connectedCameraPositions = entry.getValue();
-				if (runtimeKey == null || connectedCameraPositions == null || !connectedCameraPositions.contains(changedCamera)) {
+				if (runtimeKey == null
+						|| connectedCameraPositions == null
+						|| connectedCameraPositions.stream().noneMatch(candidate -> sameLiveCameraIdentity(candidate, changedCamera))) {
 					continue;
 				}
 				targets.add(runtimeKey);
 			}
+		}
+		triggerLiveCameraTargets(server, targets);
+	}
+
+	public static void onDroneNetworkChanged(MinecraftServer server, BluetoothLinkSystem.Endpoint endpoint) {
+		if (server == null || endpoint == null || endpoint.type() != BluetoothLinkSystem.EndpointType.DRONE || endpoint.deviceUuid() == null) {
+			return;
+		}
+		DroneSystem.DroneLiveFeedState droneState = DroneSystem.resolveLiveFeedState(server, endpoint);
+		LiveCameraReference changedDrone = droneState != null
+				? LiveCameraReference.drone(droneState.dimension(), droneState.pos(), droneState.droneUuid())
+				: LiveCameraReference.drone(endpoint.dimension(), endpoint.pos(), endpoint.deviceUuid());
+		Set<ScreenRuntimeKey> targets = new LinkedHashSet<>();
+		for (MonitorLevelState monitorState : LEVEL_STATES.values()) {
+			for (Map.Entry<ScreenRuntimeKey, List<LiveCameraReference>> entry : monitorState.connectedCameraPositions().entrySet()) {
+				ScreenRuntimeKey runtimeKey = entry.getKey();
+				List<LiveCameraReference> connectedCameraPositions = entry.getValue();
+				if (runtimeKey == null
+						|| connectedCameraPositions == null
+						|| connectedCameraPositions.stream().noneMatch(candidate -> sameLiveCameraIdentity(candidate, changedDrone))) {
+					continue;
+				}
+				targets.add(runtimeKey);
+			}
+		}
+		triggerLiveCameraTargets(server, targets);
+	}
+
+	private static void triggerLiveCameraTargets(MinecraftServer server, Set<ScreenRuntimeKey> targets) {
+		if (server == null || targets == null || targets.isEmpty()) {
+			return;
 		}
 		for (ScreenRuntimeKey target : targets) {
 			MediaRuntimeState state = MEDIA_STATES.get(target);
@@ -3142,7 +3175,16 @@ public final class MonitorScreenSystem {
 		BluetoothLinkSystem.Endpoint screenEndpoint = bluetoothScreenEndpoint(level, component);
 		for (BluetoothLinkSystem.Endpoint linked : BluetoothLinkSystem.linkedEndpoints(screenEndpoint)) {
 			if (linked.type() == BluetoothLinkSystem.EndpointType.CAMERA && linked.dimension() != null && linked.pos() != null) {
-				cameraPositions.add(new LiveCameraReference(linked.dimension(), linked.pos().immutable()));
+				cameraPositions.add(LiveCameraReference.camera(linked.dimension(), linked.pos().immutable()));
+				continue;
+			}
+			if (linked.type() == BluetoothLinkSystem.EndpointType.DRONE && linked.deviceUuid() != null) {
+				DroneSystem.DroneLiveFeedState droneState = DroneSystem.resolveLiveFeedState(level.getServer(), linked);
+				if (droneState != null) {
+					cameraPositions.add(LiveCameraReference.drone(droneState.dimension(), droneState.pos(), droneState.droneUuid()));
+				} else if (linked.dimension() != null) {
+					cameraPositions.add(LiveCameraReference.drone(linked.dimension(), linked.pos(), linked.deviceUuid()));
+				}
 			}
 		}
 		for (BlockPos wirePos : wireNetwork) {
@@ -3150,9 +3192,27 @@ public final class MonitorScreenSystem {
 		}
 		List<LiveCameraReference> ordered = new ArrayList<>(cameraPositions);
 		ordered.sort((first, second) -> {
+			int compareType = first.sourceType().compareTo(second.sourceType());
+			if (compareType != 0) {
+				return compareType;
+			}
+			if (first.sourceType() == LiveCameraSourceType.DRONE || second.sourceType() == LiveCameraSourceType.DRONE) {
+				String firstUuid = first.sourceUuid() == null ? "" : first.sourceUuid().toString();
+				String secondUuid = second.sourceUuid() == null ? "" : second.sourceUuid().toString();
+				int compareUuid = firstUuid.compareTo(secondUuid);
+				if (compareUuid != 0) {
+					return compareUuid;
+				}
+			}
+			if (first.dimension() == null || second.dimension() == null) {
+				return Boolean.compare(first.dimension() != null, second.dimension() != null);
+			}
 			int compareDimension = first.dimension().identifier().toString().compareTo(second.dimension().identifier().toString());
 			if (compareDimension != 0) {
 				return compareDimension;
+			}
+			if (first.pos() == null || second.pos() == null) {
+				return Boolean.compare(first.pos() != null, second.pos() != null);
 			}
 			int compareX = Integer.compare(first.pos().getX(), second.pos().getX());
 			if (compareX != 0) {
@@ -3211,7 +3271,7 @@ public final class MonitorScreenSystem {
 			if (!isCameraBlock(level, touchPos)) {
 				continue;
 			}
-			cameraPositions.add(new LiveCameraReference(level.dimension(), touchPos.immutable()));
+			cameraPositions.add(LiveCameraReference.camera(level.dimension(), touchPos.immutable()));
 		}
 	}
 
@@ -3238,8 +3298,33 @@ public final class MonitorScreenSystem {
 		return true;
 	}
 
+	private static boolean sameLiveCameraIdentity(LiveCameraReference first, LiveCameraReference second) {
+		if (first == second) {
+			return true;
+		}
+		if (first == null || second == null || first.sourceType() != second.sourceType()) {
+			return false;
+		}
+		if (first.sourceType() == LiveCameraSourceType.DRONE && first.sourceUuid() != null && second.sourceUuid() != null) {
+			return Objects.equals(first.sourceUuid(), second.sourceUuid());
+		}
+		return Objects.equals(first.dimension(), second.dimension()) && Objects.equals(first.pos(), second.pos());
+	}
+
 	private static String liveCameraGalleryUrl(LiveCameraReference cameraRef) {
-		if (cameraRef == null || cameraRef.dimension() == null || cameraRef.pos() == null) {
+		if (cameraRef == null) {
+			return "";
+		}
+		if (cameraRef.sourceType() == LiveCameraSourceType.DRONE && cameraRef.sourceUuid() != null) {
+			StringBuilder builder = new StringBuilder(LIVE_CAMERA_GALLERY_URL_PREFIX)
+					.append("drone|")
+					.append(cameraRef.sourceUuid());
+			if (cameraRef.dimension() != null) {
+				builder.append("|").append(cameraRef.dimension().identifier());
+			}
+			return builder.toString();
+		}
+		if (cameraRef.dimension() == null || cameraRef.pos() == null) {
 			return "";
 		}
 		BlockPos cameraPos = cameraRef.pos();
@@ -3258,6 +3343,28 @@ public final class MonitorScreenSystem {
 			return null;
 		}
 		String payload = url.substring(LIVE_CAMERA_GALLERY_URL_PREFIX.length()).trim();
+		if (payload.startsWith("drone|")) {
+			String[] parts = payload.split("\\|", 3);
+			if (parts.length < 2) {
+				return null;
+			}
+			try {
+				UUID droneUuid = UUID.fromString(parts[1].trim());
+				ResourceKey<Level> dimension = fallbackDimension;
+				if (parts.length >= 3) {
+					Identifier dimensionId = Identifier.tryParse(parts[2].trim());
+					if (dimensionId != null) {
+						dimension = ResourceKey.create(Registries.DIMENSION, dimensionId);
+					}
+				}
+				return LiveCameraReference.drone(dimension, null, droneUuid);
+			} catch (IllegalArgumentException exception) {
+				return null;
+			}
+		}
+		if (payload.startsWith("camera|")) {
+			payload = payload.substring("camera|".length()).trim();
+		}
 		ResourceKey<Level> dimension = fallbackDimension;
 		String coordinatesPayload = payload;
 		int dimensionSeparator = payload.indexOf('|');
@@ -3277,7 +3384,7 @@ public final class MonitorScreenSystem {
 			return null;
 		}
 		try {
-			return new LiveCameraReference(
+			return LiveCameraReference.camera(
 					dimension,
 					new BlockPos(
 							Integer.parseInt(parts[0].trim()),
@@ -3291,16 +3398,28 @@ public final class MonitorScreenSystem {
 	}
 
 	private static String liveCameraGalleryTitle(LiveCameraReference cameraRef) {
+		if (cameraRef != null && cameraRef.sourceType() == LiveCameraSourceType.DRONE) {
+			return "Дрон";
+		}
 		return "Камера";
 	}
 
 	private static String liveCameraGallerySubtitle(LiveCameraReference cameraRef, boolean online) {
-		if (cameraRef == null || cameraRef.pos() == null || cameraRef.dimension() == null) {
+		if (cameraRef == null) {
+			return "Прямая трансляция";
+		}
+		String status = online ? "online" : "offline";
+		if (cameraRef.dimension() == null || cameraRef.pos() == null) {
+			if (cameraRef.sourceType() == LiveCameraSourceType.DRONE && cameraRef.sourceUuid() != null) {
+				return status + "  •  drone  •  " + cameraRef.sourceUuid();
+			}
 			return "Прямая трансляция";
 		}
 		BlockPos cameraPos = cameraRef.pos();
-		String status = online ? "online" : "offline";
+		String sourceLabel = cameraRef.sourceType() == LiveCameraSourceType.DRONE ? "drone" : "camera";
 		return status
+				+ "  •  "
+				+ sourceLabel
 				+ "  •  "
 				+ cameraRef.dimension().identifier()
 				+ "  •  X: "
@@ -3319,7 +3438,17 @@ public final class MonitorScreenSystem {
 	}
 
 	private static boolean isLiveCameraOnline(MinecraftServer server, LiveCameraReference cameraRef) {
-		if (server == null || cameraRef == null || cameraRef.dimension() == null || cameraRef.pos() == null) {
+		if (server == null || cameraRef == null) {
+			return false;
+		}
+		if (cameraRef.sourceType() == LiveCameraSourceType.DRONE) {
+			if (cameraRef.sourceUuid() == null) {
+				return false;
+			}
+			DroneSystem.DroneLiveFeedState droneState = DroneSystem.resolveLiveFeedState(server, cameraRef.sourceUuid(), cameraRef.dimension(), cameraRef.pos());
+			return droneState != null && droneState.online();
+		}
+		if (cameraRef.dimension() == null || cameraRef.pos() == null) {
 			return false;
 		}
 		ServerLevel cameraLevel = server.getLevel(cameraRef.dimension());
@@ -5268,17 +5397,66 @@ public final class MonitorScreenSystem {
 		LiveCameraReference cameraRef = liveCameraGalleryReference(sourceUrl, component.runtimeKey().dimension());
 		if (screenLevel == null || cameraRef == null) {
 			RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(component.runtimeKey()));
-			applyLiveCameraStreamFailure(server, component.runtimeKey(), sourceUrl, "Камера недоступна");
+			applyLiveCameraStreamFailure(server, component.runtimeKey(), sourceUrl, "Источник недоступен");
+			return false;
+		}
+		if (!hasNearbyMediaViewer(screenLevel, component)) {
+			RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(component.runtimeKey()));
+			return false;
+		}
+		int fullWidth = Math.max(1, component.width()) * MAP_SIZE;
+		int fullHeight = Math.max(1, component.height()) * MAP_SIZE;
+		if (cameraRef.sourceType() == LiveCameraSourceType.DRONE) {
+			if (cameraRef.sourceUuid() == null) {
+				return resetLiveCameraToHome(server, screenLevel, component, state);
+			}
+			DroneSystem.DroneLiveFeedState droneState = DroneSystem.resolveLiveFeedState(server, cameraRef.sourceUuid(), cameraRef.dimension(), cameraRef.pos());
+			if (droneState == null || !droneState.online()) {
+				return resetLiveCameraToHome(server, screenLevel, component, state);
+			}
+			ServerLevel droneLevel = server.getLevel(droneState.dimension());
+			if (droneLevel == null) {
+				return resetLiveCameraToHome(server, screenLevel, component, state);
+			}
+			boolean started = RendererBotCameraSystem.ensureLiveStream(
+					liveCameraStreamOwnerId(component.runtimeKey()),
+					droneLevel,
+					null,
+					droneState.expectedX(),
+					droneState.expectedY(),
+					droneState.expectedZ(),
+					droneState.yaw(),
+					droneState.pitch(),
+					droneState.followEntityUuid(),
+					droneState.hiddenEntityUuids(),
+					droneState.omnidirectionalChunkLoading(),
+					fullWidth,
+					fullHeight,
+					LIVE_CAMERA_FOV_DEGREES,
+					LIVE_CAMERA_TARGET_FPS,
+					pixels -> onLiveCameraFrame(server, component.runtimeKey(), sourceUrl, fullWidth, fullHeight, pixels),
+					error -> applyLiveCameraStreamFailure(server, component.runtimeKey(), sourceUrl, error)
+			);
+			if (!started) {
+				boolean changed;
+				synchronized (state) {
+					boolean nextLoading = state.streamFrame == null;
+					String nextStatus = state.streamFrame == null ? "Нет активного клиента камеры" : state.statusText;
+					changed = state.loading != nextLoading || !Objects.equals(state.statusText, nextStatus);
+					state.loading = nextLoading;
+					state.statusText = nextStatus;
+					if (changed) {
+						state.version++;
+					}
+				}
+				return changed;
+			}
 			return false;
 		}
 		ServerLevel cameraLevel = server.getLevel(cameraRef.dimension());
 		BlockPos cameraPos = cameraRef.pos();
 		if (cameraLevel == null || cameraPos == null) {
 			return resetLiveCameraToHome(server, screenLevel, component, state);
-		}
-		if (!hasNearbyMediaViewer(screenLevel, component)) {
-			RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(component.runtimeKey()));
-			return false;
 		}
 		if (!RendererBotCameraSystem.isCameraPlayerLoaded(cameraLevel, cameraPos)) {
 			return resetLiveCameraToHome(server, screenLevel, component, state);
@@ -5290,8 +5468,6 @@ public final class MonitorScreenSystem {
 		LiveCameraPose pose = liveCameraCapturePose(cameraLevel, cameraPos, cameraState);
 		Vec3 origin = pose.origin();
 		double botFeetY = origin.y - RENDERER_BOT_EYE_HEIGHT;
-		int fullWidth = Math.max(1, component.width()) * MAP_SIZE;
-		int fullHeight = Math.max(1, component.height()) * MAP_SIZE;
 		boolean started = RendererBotCameraSystem.ensureLiveStream(
 				liveCameraStreamOwnerId(component.runtimeKey()),
 				cameraLevel,
@@ -13177,7 +13353,19 @@ public final class MonitorScreenSystem {
 	private record ScreenRuntimeKey(ResourceKey<Level> dimension, BlockPos pos, Direction facing) {
 	}
 
-	private record LiveCameraReference(ResourceKey<Level> dimension, BlockPos pos) {
+	private enum LiveCameraSourceType {
+		CAMERA,
+		DRONE
+	}
+
+	private record LiveCameraReference(LiveCameraSourceType sourceType, ResourceKey<Level> dimension, BlockPos pos, UUID sourceUuid) {
+		private static LiveCameraReference camera(ResourceKey<Level> dimension, BlockPos pos) {
+			return new LiveCameraReference(LiveCameraSourceType.CAMERA, dimension, pos == null ? null : pos.immutable(), null);
+		}
+
+		private static LiveCameraReference drone(ResourceKey<Level> dimension, BlockPos pos, UUID sourceUuid) {
+			return new LiveCameraReference(LiveCameraSourceType.DRONE, dimension, pos == null ? null : pos.immutable(), sourceUuid);
+		}
 	}
 
 	private record TileCoord(int x, int y) {

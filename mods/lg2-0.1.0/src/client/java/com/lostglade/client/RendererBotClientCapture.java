@@ -810,7 +810,7 @@ public final class RendererBotClientCapture {
 		return new RendererBotOffscreenWorldRenderer.RenderRequest(
 				payload.streamId(),
 				payload.dimensionId(),
-				null,
+				payload.followEntityUuid(),
 				payload.expectedX(),
 				payload.expectedY(),
 				payload.expectedZ(),
