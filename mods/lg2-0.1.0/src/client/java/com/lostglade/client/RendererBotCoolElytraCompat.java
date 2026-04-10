@@ -116,7 +116,7 @@ final class RendererBotCoolElytraCompat {
 		double cosine = (velocity.x * look.x + velocity.z * look.z) / Math.sqrt(lookHorizontal * velocityHorizontal);
 		cosine = Mth.clamp(cosine, -1.0D, 1.0D);
 		double sign = Math.signum(velocity.x * look.z - velocity.z * look.x);
-		return Math.atan(Math.sqrt(velocityHorizontal) * Math.acos(cosine) * wingPower) * sign * RAD_TO_DEG;
+		return Math.atan(Math.sqrt(velocityHorizontal) * Math.acos(Math.abs(cosine)) * wingPower) * sign * RAD_TO_DEG;
 	}
 
 	private static Access access() {
