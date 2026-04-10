@@ -32,12 +32,12 @@ public final class DroneItem extends SimplePolymerItem {
 		if (!PolymerResourcePackUtils.hasMainPack(context)) {
 			return null;
 		}
-		return isDisplayOnly(itemStack) ? DISPLAY_MODEL_ID : MODEL_ID;
+		return isDroneDisplayStack(itemStack) ? DISPLAY_MODEL_ID : MODEL_ID;
 	}
 
 	@Override
 	public void modifyBasePolymerItemStack(ItemStack out, ItemStack original, PacketContext context) {
-		if (isDisplayOnly(original) || PolymerResourcePackUtils.hasMainPack(context)) {
+		if (isDroneDisplayStack(original) || PolymerResourcePackUtils.hasMainPack(context)) {
 			return;
 		}
 		out.set(DataComponents.CUSTOM_NAME, localizedName(context).withStyle(style -> style.withItalic(false)));
@@ -58,7 +58,7 @@ public final class DroneItem extends SimplePolymerItem {
 		return stack;
 	}
 
-	private static boolean isDisplayOnly(ItemStack stack) {
+	public static boolean isDroneDisplayStack(ItemStack stack) {
 		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
 		if (customData == null) {
 			return false;

@@ -24,6 +24,7 @@ import net.lionarius.skinrestorer.SkinRestorer;
 import net.lionarius.skinrestorer.skin.SkinStorage;
 import net.lionarius.skinrestorer.skin.SkinValue;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.RemoteChatSession;
@@ -33,13 +34,17 @@ import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Display;
@@ -84,6 +89,8 @@ public final class DroneSystem {
 	private static final String DRONE_CAMERA_TAG = "lg2_drone_camera_anchor";
 	private static final String DRONE_CAMERA_OWNER_TAG_PREFIX = "lg2_drone_camera_owner_";
 	private static final String DRONE_DUMMY_TAG = "lg2_drone_dummy";
+	private static final Identifier DRONE_LOOP_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_loop");
+	private static final Holder<SoundEvent> DRONE_LOOP_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(DRONE_LOOP_SOUND_ID));
 	private static final double DRONE_CRASH_EQUIVALENT_FALL_BLOCKS = 3.25D;
 	private static final double DRONE_CRASH_REFERENCE_ACCELERATION = 0.04D;
 	private static final float DRONE_WIDTH = 0.95F;
@@ -91,8 +98,15 @@ public final class DroneSystem {
 	private static final float DRONE_CAMERA_ANCHOR_SIZE = 0.01F;
 	private static final double DRONE_SPAWN_Y_OFFSET = 0.24D;
 	private static final float DRONE_DISPLAY_VIEW_RANGE = 64.0F;
-	private static final float DRONE_DISPLAY_CONTROLLED_Y_OFFSET = -0.92F;
+	private static final float DRONE_DISPLAY_CONTROLLED_Y_OFFSET = 0.0F;
 	private static final float DRONE_MAX_TILT_DEGREES = 32.0F;
+	private static final long DRONE_LOOP_REPLAY_TICKS = 10L;
+	private static final double DRONE_SOUND_RADIUS_SQR = 16.0D * 16.0D;
+	private static final float DRONE_SOUND_SOURCE_POWER = 0.58F;
+	private static final float DRONE_SOUND_MIN_VOLUME = 1.0F;
+	private static final float DRONE_SOUND_MAX_VOLUME = 1.0F;
+	private static final float DRONE_SOUND_MIN_PITCH = 0.76F;
+	private static final float DRONE_SOUND_MAX_PITCH = 1.18F;
 	private static final double UNCONTROLLED_GRAVITY = 0.04D;
 	private static final double UNCONTROLLED_AIR_DRAG = 0.985D;
 	private static final float UNCONTROLLED_ROTATION_LERP = 0.35F;
@@ -117,6 +131,7 @@ public final class DroneSystem {
 	private static final Map<UUID, UUID> DISPLAYS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UUID> CAMERA_ANCHORS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UncontrolledDroneState> UNCONTROLLED_DRONES = new HashMap<>();
+	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
 
 	private DroneSystem() {
 	}
@@ -517,6 +532,7 @@ public final class DroneSystem {
 		syncDroneCameraAnchor(root, player.getDeltaMovement());
 		session.setVelocity(player.getDeltaMovement());
 		session.setLastPlayerPos(currentPos);
+		maybePlayDroneLoopSound(root, session.forwardDrive(), session.strafeDrive(), true);
 		if (shouldDestroyDroneFromCollision(intendedMovement, actualMovement, player.horizontalCollision, player.verticalCollision)) {
 			destroyDrone(root, null, false);
 			stopControlling(player, true, true);
@@ -564,6 +580,7 @@ public final class DroneSystem {
 		root.hurtMarked = true;
 		syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
 		syncDroneCameraAnchor(root, actualMovement);
+		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
 	}
 
 	private static void applyUncontrolledRotation(Entity root, UncontrolledDroneState state, Vec3 velocity) {
@@ -651,6 +668,91 @@ public final class DroneSystem {
 		root.hurtMarked = true;
 		syncDroneDisplay(root, root.getYRot(), 0.0F, 0.0D, 0.0D);
 		syncDroneCameraAnchor(root, Vec3.ZERO);
+		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
+	}
+
+	private static void maybePlayDroneLoopSound(Entity root, double forwardDrive, double strafeDrive, boolean controlled) {
+		if (root == null || !root.isAlive() || !(root.level() instanceof ServerLevel level)) {
+			return;
+		}
+		if (!controlled) {
+			NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
+			return;
+		}
+
+		float power = computeDroneSoundPower(root, forwardDrive, strafeDrive, controlled);
+		if (power <= 1.0E-3F) {
+			NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
+			return;
+		}
+
+		long now = level.getGameTime();
+		long nextAllowedTick = NEXT_DRONE_SOUND_TICK.getOrDefault(root.getUUID(), Long.MIN_VALUE);
+		if (now < nextAllowedTick) {
+			return;
+		}
+
+		NEXT_DRONE_SOUND_TICK.put(root.getUUID(), now + DRONE_LOOP_REPLAY_TICKS);
+		playDroneLoopSound(level, root.position(), computeDroneSoundVolume(power), computeDroneSoundPitch(power));
+	}
+
+	private static float computeDroneSoundPower(Entity root, double forwardDrive, double strafeDrive, boolean controlled) {
+		if (root == null) {
+			return 0.0F;
+		}
+
+		Vec3 velocity = root.getDeltaMovement();
+		if (velocity == null) {
+			velocity = Vec3.ZERO;
+		}
+
+		float forwardPower = (float) net.minecraft.util.Mth.clamp(Math.abs(forwardDrive) / DroneFlightPhysics.MAX_FORWARD_DRIVE, 0.0D, 1.0D);
+		float strafePower = (float) net.minecraft.util.Mth.clamp(Math.abs(strafeDrive) / DroneFlightPhysics.MAX_STRAFE_DRIVE, 0.0D, 1.0D);
+		float drivePower = Math.max(forwardPower, strafePower);
+		float speedPower = (float) net.minecraft.util.Mth.clamp(velocity.length() / DroneFlightPhysics.MAX_COMBINED_SPEED, 0.0D, 1.0D);
+		float verticalPower = (float) net.minecraft.util.Mth.clamp(Math.abs(velocity.y) / 0.42D, 0.0D, 1.0D);
+
+		float hoverFloor = root.onGround()
+				? (controlled ? 0.18F : 0.0F)
+				: (controlled ? 0.46F : 0.28F);
+		float responsivePower = Math.max(drivePower, speedPower * 0.78F + verticalPower * 0.22F);
+		return net.minecraft.util.Mth.clamp(Math.max(hoverFloor, responsivePower), 0.0F, 1.0F);
+	}
+
+	private static float computeDroneSoundPitch(float power) {
+		float shiftedPower = 1.0F + (power - DRONE_SOUND_SOURCE_POWER) * 0.58F;
+		return net.minecraft.util.Mth.clamp(shiftedPower, DRONE_SOUND_MIN_PITCH, DRONE_SOUND_MAX_PITCH);
+	}
+
+	private static float computeDroneSoundVolume(float power) {
+		return net.minecraft.util.Mth.clamp(
+				DRONE_SOUND_MIN_VOLUME + power * (DRONE_SOUND_MAX_VOLUME - DRONE_SOUND_MIN_VOLUME),
+				0.0F,
+				DRONE_SOUND_MAX_VOLUME
+		);
+	}
+
+	private static void playDroneLoopSound(ServerLevel level, Vec3 origin, float volume, float pitch) {
+		if (level == null || origin == null || volume <= 0.0F) {
+			return;
+		}
+
+		long seed = level.random.nextLong();
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer.distanceToSqr(origin) > DRONE_SOUND_RADIUS_SQR || !PolymerResourcePackUtils.hasMainPack(viewer)) {
+				continue;
+			}
+			viewer.connection.send(new ClientboundSoundPacket(
+					DRONE_LOOP_SOUND,
+					SoundSource.PLAYERS,
+					origin.x,
+					origin.y,
+					origin.z,
+					volume,
+					pitch,
+					seed
+			));
+		}
 	}
 
 	private static float lerpAngleDegrees(float current, float target, float delta) {
@@ -677,6 +779,7 @@ public final class DroneSystem {
 			return;
 		}
 		UNCONTROLLED_DRONES.remove(root.getUUID());
+		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
 	}
 
 	private static ReturnLocation resolveReturnLocation(MinecraftServer server, DroneControlSession session, Entity dummy) {
@@ -1030,6 +1133,8 @@ public final class DroneSystem {
 			syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
 			syncDroneCameraAnchor(root, releasedVelocity);
 			notifyDroneNetworkChanged(root);
+		} else {
+			NEXT_DRONE_SOUND_TICK.remove(session.droneUuid());
 		}
 		restoreControlledPlayerState(player, session);
 		clearDroneHud(player, session, true);
@@ -1063,6 +1168,7 @@ public final class DroneSystem {
 			return;
 		}
 		UNCONTROLLED_DRONES.remove(root.getUUID());
+		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
 		BluetoothLinkSystem.removeDroneEndpoint(level, root.getUUID(), root.blockPosition());
 		UUID controllerId = CONTROLLERS_BY_DRONE.get(root.getUUID());
 		if (controllerId != null && level.getServer() != null) {
@@ -1151,8 +1257,9 @@ public final class DroneSystem {
 	private static void syncDroneDisplay(Entity root, float yRot, float xRot, double forwardDrive, double strafeDrive) {
 		Entity entity = findDroneDisplay(root);
 		if (entity instanceof Display.ItemDisplay display) {
+			boolean controlled = root != null && root.isPassenger() && root.getVehicle() instanceof ServerPlayer;
 			display.setYRot(yRot);
-			display.setXRot(xRot);
+			display.setXRot(controlled ? 0.0F : xRot);
 			display.setTransformation(buildDroneDisplayTransformation(root, forwardDrive, strafeDrive));
 			if (!(display.isPassenger() && display.getVehicle() == root && root.hasPassenger(display))) {
 				display.setPos(root.getX(), root.getY(), root.getZ());

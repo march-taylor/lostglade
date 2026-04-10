@@ -15,6 +15,14 @@
       }
     ]
   },
+  "drone_loop": {
+    "sounds": [
+      {
+        "name": "lg2:drone_loop",
+        "preload": true
+      }
+    ]
+  },
   "ui_purchase_blocked": {
     "sounds": [
       {
