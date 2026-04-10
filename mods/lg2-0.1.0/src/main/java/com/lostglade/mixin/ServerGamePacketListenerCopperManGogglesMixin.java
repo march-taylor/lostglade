@@ -37,7 +37,10 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 		if (packet == null) {
 			return;
 		}
-		if (packet.clickType() != ClickType.PICKUP || packet.buttonNum() != 1) {
+		if (packet.clickType() != ClickType.PICKUP) {
+			return;
+		}
+		if (packet.buttonNum() != 0 && packet.buttonNum() != 1) {
 			return;
 		}
 		if (!this.player.containerMenu.getCarried().isEmpty()) {

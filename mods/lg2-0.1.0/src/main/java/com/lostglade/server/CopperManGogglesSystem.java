@@ -8,6 +8,7 @@ import com.lostglade.config.RaceConfig.RaceAbilitySlot;
 import com.lostglade.item.ModItems;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
 import com.lostglade.mixin.LivingEntityTrackedDataAccessor;
+import com.mojang.math.Transformation;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -42,18 +43,19 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Interaction;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
-import net.minecraft.world.entity.monster.Slime;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.BucketItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ItemUseAnimation;
+import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.Recipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
@@ -70,6 +72,8 @@ import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -86,6 +90,7 @@ public final class CopperManGogglesSystem {
 	private static final String COPPER_MAN_RACE_ID = "copper_man";
 	private static final Identifier HEAD_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_goggles_head");
 	private static final Identifier INVISIBLE_MAGNIFIER_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "gui/button/invisible");
+	private static final Identifier ORE_HIGHLIGHT_CARRIER_ITEM_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "ore_highlight_carrier");
 	private static final Identifier RECIPE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_goggles");
 	private static final FontDescription SCREEN_OVERLAY_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:copper_goggles_overlay"))
@@ -118,6 +123,7 @@ public final class CopperManGogglesSystem {
 	private static final int TRACKING_MAX_HIGHLIGHTS = 128;
 	private static final long TRACKING_REFRESH_INTERVAL_TICKS = 10L;
 	private static final float HIGHLIGHT_VIEW_RANGE = 1_000_000.0F;
+	private static final float ORE_HIGHLIGHT_SCALE = 2.0F;
 	private static final byte GLOWING_FLAG_MASK = 0x40;
 	private static final byte USING_ITEM_FLAG_MASK = 0x01;
 	private static final byte USING_OFFHAND_FLAG_MASK = 0x02;
@@ -397,12 +403,17 @@ public final class CopperManGogglesSystem {
 		if (toggleMode(player) <= 0) {
 			return false;
 		}
+		menu.setCarried(ItemStack.EMPTY);
+		player.inventoryMenu.setCarried(ItemStack.EMPTY);
+		player.getInventory().setChanged();
+		slot.setChanged();
 		menu.broadcastFullState();
 		menu.sendAllDataToRemote();
 		if (player.inventoryMenu != menu) {
 			player.inventoryMenu.broadcastFullState();
 			player.inventoryMenu.sendAllDataToRemote();
 		}
+		ServerMechanicsGateSystem.syncPlayerInventory(player);
 		syncGogglesStacks(player);
 		return true;
 	}
@@ -1122,22 +1133,38 @@ public final class CopperManGogglesSystem {
 		if (level == null || pos == null) {
 			return null;
 		}
-		Entity entity = EntityType.SLIME.create(level, net.minecraft.world.entity.EntitySpawnReason.TRIGGERED);
-		if (!(entity instanceof Slime slime)) {
-			if (entity != null) {
-				entity.discard();
-			}
+		Display.ItemDisplay display = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
+		if (display == null) {
 			return null;
 		}
-		slime.setSize(2, false);
-		slime.setPos(pos.getX() + 0.5D, pos.getY(), pos.getZ() + 0.5D);
-		slime.setNoAi(true);
-		slime.setNoGravity(true);
-		slime.setInvulnerable(true);
-		slime.setSilent(true);
-		slime.setInvisible(true);
-		slime.setGlowingTag(true);
-		return slime;
+		display.setPos(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D);
+		display.setYRot(0.0F);
+		display.setXRot(0.0F);
+		display.setYHeadRot(0.0F);
+		display.setYBodyRot(0.0F);
+		display.setTransformation(new Transformation(
+				new Vector3f(0.0F, 0.0F, 0.0F),
+				new Quaternionf(),
+				new Vector3f(ORE_HIGHLIGHT_SCALE, ORE_HIGHLIGHT_SCALE, ORE_HIGHLIGHT_SCALE),
+				new Quaternionf()
+		));
+		display.setNoGravity(true);
+		display.setInvulnerable(true);
+		display.setSilent(true);
+		display.setShadowRadius(0.0F);
+		display.setShadowStrength(0.0F);
+		display.setGlowingTag(true);
+		display.setViewRange(HIGHLIGHT_VIEW_RANGE);
+		display.setItemStack(createHighlightCarrierStack());
+		display.setItemTransform(ItemDisplayContext.FIXED);
+		display.setBillboardConstraints(Display.BillboardConstraints.FIXED);
+		return display;
+	}
+
+	private static ItemStack createHighlightCarrierStack() {
+		ItemStack stack = new ItemStack(Items.PAPER);
+		stack.set(DataComponents.ITEM_MODEL, ORE_HIGHLIGHT_CARRIER_ITEM_MODEL_ID);
+		return stack;
 	}
 
 	private static void clearScanVisuals(ServerPlayer player) {
