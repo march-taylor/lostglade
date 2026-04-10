@@ -14,6 +14,7 @@ import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import com.mojang.math.Transformation;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
@@ -91,6 +92,11 @@ public final class DroneSystem {
 	private static final float DRONE_DISPLAY_VIEW_RANGE = 64.0F;
 	private static final float DRONE_DISPLAY_CONTROLLED_Y_OFFSET = -0.92F;
 	private static final float DRONE_MAX_TILT_DEGREES = 32.0F;
+	private static final double UNCONTROLLED_GRAVITY = 0.04D;
+	private static final double UNCONTROLLED_AIR_DRAG = 0.985D;
+	private static final float UNCONTROLLED_ROTATION_LERP = 0.35F;
+	private static final double UNCONTROLLED_SETTLED_HORIZONTAL_SPEED_SQR = 1.0E-6D;
+	private static final double UNCONTROLLED_SETTLED_VERTICAL_SPEED = 0.045D;
 	private static final int PLAYER_HOTBAR_MENU_SLOT_START = 36;
 	private static final byte ALL_PLAYER_SKIN_PARTS = (byte) 0x7F;
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
@@ -109,6 +115,7 @@ public final class DroneSystem {
 	private static final Map<UUID, UUID> CONTROLLERS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UUID> DISPLAYS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UUID> CAMERA_ANCHORS_BY_DRONE = new HashMap<>();
+	private static final Map<UUID, UncontrolledDroneState> UNCONTROLLED_DRONES = new HashMap<>();
 
 	private DroneSystem() {
 	}
@@ -144,13 +151,15 @@ public final class DroneSystem {
 		});
 
 		ServerTickEvents.END_SERVER_TICK.register(DroneSystem::tick);
+		ServerEntityEvents.ENTITY_LOAD.register(DroneSystem::onEntityLoad);
+		ServerEntityEvents.ENTITY_UNLOAD.register(DroneSystem::onEntityUnload);
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> stopControlling((ServerPlayer) handler.player, true, false));
 		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> stopControlling(newPlayer, false, false));
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			for (UUID playerId : new ArrayList<>(ACTIVE_SESSIONS.keySet())) {
 				ServerPlayer player = server.getPlayerList().getPlayer(playerId);
 				if (player != null) {
-					stopControlling(player, false, false);
+					stopControlling(player, true, false);
 				}
 			}
 			ACTIVE_SESSIONS.clear();
@@ -158,6 +167,7 @@ public final class DroneSystem {
 			CONTROLLERS_BY_DRONE.clear();
 			DISPLAYS_BY_DRONE.clear();
 			CAMERA_ANCHORS_BY_DRONE.clear();
+			UNCONTROLLED_DRONES.clear();
 		});
 	}
 
@@ -206,6 +216,10 @@ public final class DroneSystem {
 		cameraAnchor.addTag(DRONE_CAMERA_OWNER_TAG_PREFIX + root.getUUID());
 		CAMERA_ANCHORS_BY_DRONE.put(root.getUUID(), cameraAnchor.getUUID());
 		syncDroneDisplay(root, yRot, 0.0F, 0.0D, 0.0D);
+		UNCONTROLLED_DRONES.put(
+				root.getUUID(),
+				new UncontrolledDroneState(root.getUUID(), serverLevel.dimension(), Vec3.ZERO, yRot, 0.0F)
+		);
 
 		if (!player.getAbilities().instabuild) {
 			context.getItemInHand().shrink(1);
@@ -409,10 +423,17 @@ public final class DroneSystem {
 	}
 
 	private static void tick(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		tickControlledSessions(server);
+		tickUncontrolledDrones(server);
+	}
+
+	private static void tickControlledSessions(MinecraftServer server) {
 		if (server == null || ACTIVE_SESSIONS.isEmpty()) {
 			return;
 		}
-
 		for (Map.Entry<UUID, DroneControlSession> entry : new ArrayList<>(ACTIVE_SESSIONS.entrySet())) {
 			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
 			DroneControlSession session = entry.getValue();
@@ -439,6 +460,36 @@ public final class DroneSystem {
 		}
 	}
 
+	private static void tickUncontrolledDrones(MinecraftServer server) {
+		if (server == null || UNCONTROLLED_DRONES.isEmpty()) {
+			return;
+		}
+
+		for (Map.Entry<UUID, UncontrolledDroneState> entry : new ArrayList<>(UNCONTROLLED_DRONES.entrySet())) {
+			UncontrolledDroneState state = entry.getValue();
+			if (state == null || state.dimension() == null) {
+				UNCONTROLLED_DRONES.remove(entry.getKey());
+				continue;
+			}
+			Entity root = findDroneRoot(server, state.dimension(), state.droneUuid());
+			if (root == null || !root.isAlive()) {
+				UNCONTROLLED_DRONES.remove(entry.getKey());
+				continue;
+			}
+
+			// If someone is actively controlling the drone, it should follow the player, not our physics.
+			if (root.isPassenger() && root.getVehicle() instanceof ServerPlayer controller) {
+				DroneControlSession session = ACTIVE_SESSIONS.get(controller.getUUID());
+				if (session != null && Objects.equals(session.droneUuid(), root.getUUID())) {
+					UNCONTROLLED_DRONES.remove(entry.getKey());
+					continue;
+				}
+			}
+
+			tickUncontrolledDrone(root, state);
+		}
+	}
+
 	private static void tickControlledDrone(ServerPlayer player, Entity root, DroneControlSession session, DroneInputState input) {
 		if (!(root.level() instanceof ServerLevel)) {
 			return;
@@ -446,7 +497,8 @@ public final class DroneSystem {
 
 		Vec3 currentPos = player.position();
 		Vec3 actualMovement = currentPos.subtract(session.lastPlayerPos());
-		double impactSpeed = Math.max(session.velocity().length(), actualMovement.length());
+		Vec3 intendedMovement = session.velocity();
+		double impactSpeed = intendedMovement.subtract(actualMovement).length();
 		float yaw = player.getYRot();
 		float pitch = player.getXRot();
 		ensureDroneMounted(player, root);
@@ -467,6 +519,194 @@ public final class DroneSystem {
 		syncDroneDisplay(root, yaw, pitch, session.forwardDrive(), session.strafeDrive());
 		syncControlledPlayer(player, root);
 		updateDroneHud(player, session, false);
+	}
+
+	private static void tickUncontrolledDrone(Entity root, UncontrolledDroneState state) {
+		if (root == null || state == null) {
+			return;
+		}
+		if (isUncontrolledDroneSettled(root, state.velocity())) {
+			settleUncontrolledDrone(root, state);
+			return;
+		}
+
+		Vec3 velocity = state.velocity() == null ? Vec3.ZERO : state.velocity();
+		velocity = new Vec3(
+				velocity.x * UNCONTROLLED_AIR_DRAG,
+				velocity.y * UNCONTROLLED_AIR_DRAG - UNCONTROLLED_GRAVITY,
+				velocity.z * UNCONTROLLED_AIR_DRAG
+		);
+
+		Vec3 startPos = root.position();
+		root.noPhysics = false;
+		root.move(MoverType.SELF, velocity);
+		Vec3 actualMovement = root.position().subtract(startPos);
+		Vec3 impact = velocity.subtract(actualMovement);
+		double impactSpeed = impact.length();
+
+		if ((root.horizontalCollision || root.verticalCollision) && impactSpeed >= DRONE_CRASH_SPEED) {
+			destroyDrone(root, null, false);
+			UNCONTROLLED_DRONES.remove(root.getUUID());
+			return;
+		}
+
+		state.setVelocity(actualMovement);
+		if (isUncontrolledDroneSettled(root, actualMovement)) {
+			settleUncontrolledDrone(root, state);
+			return;
+		}
+		applyUncontrolledRotation(root, state, actualMovement);
+		root.setDeltaMovement(actualMovement);
+		root.hurtMarked = true;
+		syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
+		syncDroneCameraAnchor(root, actualMovement);
+	}
+
+	private static void applyUncontrolledRotation(Entity root, UncontrolledDroneState state, Vec3 velocity) {
+		if (root == null || state == null || velocity == null) {
+			return;
+		}
+		double speedSq = velocity.lengthSqr();
+		if (speedSq <= 1.0E-8D) {
+			if (root.onGround()) {
+				state.setPitch(0.0F);
+			}
+			root.setYRot(state.yaw());
+			root.setXRot(state.pitch());
+			return;
+		}
+
+		double horizontalSq = velocity.x * velocity.x + velocity.z * velocity.z;
+		float nextYaw = state.yaw();
+		if (horizontalSq > 1.0E-8D) {
+			float targetYaw = (float) Math.toDegrees(Math.atan2(-velocity.x, velocity.z));
+			nextYaw = lerpAngleDegrees(state.yaw(), targetYaw, UNCONTROLLED_ROTATION_LERP);
+			state.setYaw(nextYaw);
+		}
+		float targetPitch = (float) Math.toDegrees(Math.atan2(-velocity.y, Math.sqrt(horizontalSq)));
+		float nextPitch = (float) net.minecraft.util.Mth.lerp(UNCONTROLLED_ROTATION_LERP, state.pitch(), targetPitch);
+		nextPitch = net.minecraft.util.Mth.clamp(nextPitch, -90.0F, 90.0F);
+		state.setPitch(nextPitch);
+
+		root.setYRot(nextYaw);
+		root.setXRot(nextPitch);
+	}
+
+	private static boolean isUncontrolledDroneSettled(Entity root, Vec3 velocity) {
+		if (root == null || velocity == null || !root.onGround()) {
+			return false;
+		}
+		double horizontalSpeedSq = velocity.x * velocity.x + velocity.z * velocity.z;
+		return horizontalSpeedSq <= UNCONTROLLED_SETTLED_HORIZONTAL_SPEED_SQR
+				&& Math.abs(velocity.y) <= UNCONTROLLED_SETTLED_VERTICAL_SPEED;
+	}
+
+	private static void settleUncontrolledDrone(Entity root, UncontrolledDroneState state) {
+		if (root == null || state == null) {
+			return;
+		}
+		state.setVelocity(Vec3.ZERO);
+		state.setPitch(0.0F);
+		root.setXRot(0.0F);
+		root.setDeltaMovement(Vec3.ZERO);
+		root.hurtMarked = true;
+		syncDroneDisplay(root, root.getYRot(), 0.0F, 0.0D, 0.0D);
+		syncDroneCameraAnchor(root, Vec3.ZERO);
+	}
+
+	private static float lerpAngleDegrees(float current, float target, float delta) {
+		float wrapped = net.minecraft.util.Mth.wrapDegrees(target - current);
+		return current + wrapped * net.minecraft.util.Mth.clamp(delta, 0.0F, 1.0F);
+	}
+
+	private static void onEntityLoad(Entity entity, ServerLevel level) {
+		if (!(entity instanceof Interaction root) || level == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
+			return;
+		}
+		// After a restart we want drones to keep falling without a controller; seed the physics state from entity motion.
+		if (root.isPassenger() && root.getVehicle() instanceof ServerPlayer) {
+			return;
+		}
+		UNCONTROLLED_DRONES.putIfAbsent(
+				root.getUUID(),
+				new UncontrolledDroneState(root.getUUID(), level.dimension(), root.getDeltaMovement(), root.getYRot(), root.getXRot())
+		);
+	}
+
+	private static void onEntityUnload(Entity entity, ServerLevel level) {
+		if (!(entity instanceof Interaction root) || level == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
+			return;
+		}
+		UNCONTROLLED_DRONES.remove(root.getUUID());
+	}
+
+	private static ReturnLocation resolveReturnLocation(MinecraftServer server, DroneControlSession session, Entity dummy) {
+		if (server == null || session == null) {
+			return new ReturnLocation(null, null, 0.0F, 0.0F);
+		}
+		if (dummy != null && dummy.level() instanceof ServerLevel dummyLevel && dummy.isAlive()) {
+			return new ReturnLocation(dummyLevel, dummy.position(), dummy.getYRot(), dummy.getXRot());
+		}
+		ServerLevel origin = server.getLevel(session.originDimension());
+		return origin == null
+				? new ReturnLocation(null, null, session.originYaw(), session.originPitch())
+				: new ReturnLocation(origin, session.originPos(), session.originYaw(), session.originPitch());
+	}
+
+	private static void discardDummyIfPresent(MinecraftServer server, DroneControlSession session, Entity loadedDummy) {
+		if (server == null || session == null || session.dummyUuid() == null) {
+			return;
+		}
+		if (loadedDummy != null) {
+			loadedDummy.discard();
+			return;
+		}
+		ServerLevel originLevel = server.getLevel(session.originDimension());
+		if (originLevel == null) {
+			return;
+		}
+		originLevel.getChunkAt(net.minecraft.core.BlockPos.containing(session.originPos()));
+		Entity dummy = findEntity(server, session.originDimension(), session.dummyUuid());
+		if (dummy != null) {
+			dummy.discard();
+		}
+	}
+
+	private static void detachDroneFromController(ServerPlayer player, Entity root) {
+		if (player == null || root == null) {
+			return;
+		}
+		if (player.hasPassenger(root)) {
+			player.ejectPassengers();
+		}
+		if (root.isPassenger()) {
+			root.stopRiding();
+		}
+		if (player.hasPassenger(root)) {
+			((EntityPassengerAccessor) player).lg2$removePassenger(root);
+		}
+		if (root.getVehicle() != null) {
+			((EntityPassengerAccessor) root).lg2$setVehicle(null);
+		}
+		syncPassengerAttachment(player);
+	}
+
+	private static void restoreControlledPlayerState(ServerPlayer player, DroneControlSession session) {
+		if (player == null || session == null) {
+			return;
+		}
+		player.setCamera(player);
+		player.setInvisible(session.wasInvisible());
+		player.setNoGravity(session.wasNoGravity());
+		player.noPhysics = session.wasNoPhysics();
+		player.setInvulnerable(session.wasInvulnerable());
+		player.stopFallFlying();
+		player.setDeltaMovement(Vec3.ZERO);
+		player.getAbilities().mayfly = session.hadMayfly();
+		player.getAbilities().flying = session.wasFlying();
+		player.onUpdateAbilities();
+		player.fallDistance = 0.0F;
+		player.hurtMarked = true;
 	}
 
 	private static void syncControlledPlayer(ServerPlayer player, Entity root) {
@@ -642,6 +882,8 @@ public final class DroneSystem {
 		}
 
 		stopControlling(player, true, false);
+		UNCONTROLLED_DRONES.remove(root.getUUID());
+		root.noPhysics = true;
 
 		ServerLevel originLevel = player.level();
 		Vec3 originPos = player.position();
@@ -708,64 +950,49 @@ public final class DroneSystem {
 		CONTROLLERS_BY_DRONE.remove(session.droneUuid(), player.getUUID());
 		MinecraftServer server = player.level().getServer();
 		Entity root = server == null ? null : findDroneRoot(server, session.droneDimension(), session.droneUuid());
-		if (server != null && session.dummyUuid() != null) {
-			Entity dummy = findEntity(server, session.originDimension(), session.dummyUuid());
-			if (dummy != null) {
-				dummy.discard();
-			}
-		}
+		Entity dummy = server != null && session.dummyUuid() != null
+				? findEntity(server, session.originDimension(), session.dummyUuid())
+				: null;
 
 		player.setCamera(player);
 		if (root != null) {
-			if (root.isPassenger() && root.getVehicle() == player) {
-				root.stopRiding();
-				syncPassengerAttachment(player);
-			}
+			// Fully detach before teleporting the controller back, otherwise the passenger chain can drag the drone with the player.
+			detachDroneFromController(player, root);
 			root.setPos(player.getX(), player.getY(), player.getZ());
 			root.setYRot(player.getYRot());
 			root.setXRot(player.getXRot());
-			root.setDeltaMovement(Vec3.ZERO);
+			Vec3 releasedVelocity = session.velocity();
+			root.noPhysics = false;
+			root.setDeltaMovement(releasedVelocity);
 			root.hurtMarked = true;
+			UNCONTROLLED_DRONES.put(
+					root.getUUID(),
+					new UncontrolledDroneState(root.getUUID(), ((ServerLevel) root.level()).dimension(), releasedVelocity, root.getYRot(), root.getXRot())
+			);
 			syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
-			syncDroneCameraAnchor(root, Vec3.ZERO);
+			syncDroneCameraAnchor(root, releasedVelocity);
 			notifyDroneNetworkChanged(root);
 		}
-		player.setInvisible(session.wasInvisible());
-		player.setNoGravity(session.wasNoGravity());
-		player.noPhysics = session.wasNoPhysics();
-		player.setInvulnerable(session.wasInvulnerable());
-		player.stopFallFlying();
-		player.setDeltaMovement(Vec3.ZERO);
-		player.getAbilities().mayfly = session.hadMayfly();
-		player.getAbilities().flying = session.wasFlying();
-		player.onUpdateAbilities();
-		player.fallDistance = 0.0F;
+		restoreControlledPlayerState(player, session);
 		clearDroneHud(player, session, true);
 		broadcastDronePilotEquipmentHidden(player, false);
 		setHotbarVisualHidden(player, false);
 
 		if (returnToOrigin && server != null) {
-			ServerLevel level = server.getLevel(session.originDimension());
-			if (level != null) {
-				level.getChunkAt(net.minecraft.core.BlockPos.containing(session.originPos()));
-				player.teleportTo(
-						level,
-						session.originPos().x,
-						session.originPos().y,
-						session.originPos().z,
-						ABSOLUTE_TELEPORT,
-						session.originYaw(),
-						session.originPitch(),
-						false
-				);
-				player.stopFallFlying();
-				player.setDeltaMovement(Vec3.ZERO);
-				player.getAbilities().mayfly = session.hadMayfly();
-				player.getAbilities().flying = session.wasFlying();
-				player.onUpdateAbilities();
+			ReturnLocation returnLocation = resolveReturnLocation(server, session, dummy);
+			ServerLevel level = returnLocation.level();
+			Vec3 returnPos = returnLocation.pos();
+			if (level != null && returnPos != null) {
+				level.getChunkAt(net.minecraft.core.BlockPos.containing(returnPos));
+				player.teleportTo(level, returnPos.x, returnPos.y, returnPos.z, ABSOLUTE_TELEPORT, returnLocation.yaw(), returnLocation.pitch(), false);
+				restoreControlledPlayerState(player, session);
+				if (root != null) {
+					detachDroneFromController(player, root);
+				}
 				broadcastDronePilotEquipmentHidden(player, false);
 			}
 		}
+		discardDummyIfPresent(server, session, dummy);
 
 		if (notify) {
 			player.sendSystemMessage(Component.literal("Управление дроном завершено."));
@@ -776,6 +1003,7 @@ public final class DroneSystem {
 		if (root == null || !root.isAlive() || !(root.level() instanceof ServerLevel level)) {
 			return;
 		}
+		UNCONTROLLED_DRONES.remove(root.getUUID());
 		BluetoothLinkSystem.removeDroneEndpoint(level, root.getUUID(), root.blockPosition());
 		UUID controllerId = CONTROLLERS_BY_DRONE.get(root.getUUID());
 		if (controllerId != null && level.getServer() != null) {
@@ -1108,7 +1336,8 @@ public final class DroneSystem {
 	private static Vec3 resolvePlacementPosition(UseOnContext context) {
 		net.minecraft.core.Direction face = context.getClickedFace();
 		net.minecraft.core.BlockPos anchor = context.getClickedPos().relative(face);
-		return new Vec3(anchor.getX() + 0.5D, anchor.getY() + DRONE_SPAWN_Y_OFFSET, anchor.getZ() + 0.5D);
+		double yOffset = face == net.minecraft.core.Direction.UP ? 0.0D : DRONE_SPAWN_Y_OFFSET;
+		return new Vec3(anchor.getX() + 0.5D, anchor.getY() + yOffset, anchor.getZ() + 0.5D);
 	}
 
 	private static AABB droneBoxAt(Vec3 position) {
@@ -1268,6 +1497,57 @@ public final class DroneSystem {
 				}
 			}
 			data.add(replacement);
+		}
+	}
+
+	private record ReturnLocation(ServerLevel level, Vec3 pos, float yaw, float pitch) {
+	}
+
+	private static final class UncontrolledDroneState {
+		private final UUID droneUuid;
+		private final net.minecraft.resources.ResourceKey<Level> dimension;
+		private Vec3 velocity;
+		private float yaw;
+		private float pitch;
+
+		private UncontrolledDroneState(UUID droneUuid, net.minecraft.resources.ResourceKey<Level> dimension, Vec3 velocity, float yaw, float pitch) {
+			this.droneUuid = droneUuid;
+			this.dimension = dimension;
+			this.velocity = velocity == null ? Vec3.ZERO : velocity;
+			this.yaw = yaw;
+			this.pitch = pitch;
+		}
+
+		private UUID droneUuid() {
+			return this.droneUuid;
+		}
+
+		private net.minecraft.resources.ResourceKey<Level> dimension() {
+			return this.dimension;
+		}
+
+		private Vec3 velocity() {
+			return this.velocity;
+		}
+
+		private void setVelocity(Vec3 velocity) {
+			this.velocity = velocity == null ? Vec3.ZERO : velocity;
+		}
+
+		private float yaw() {
+			return this.yaw;
+		}
+
+		private void setYaw(float yaw) {
+			this.yaw = yaw;
+		}
+
+		private float pitch() {
+			return this.pitch;
+		}
+
+		private void setPitch(float pitch) {
+			this.pitch = pitch;
 		}
 	}
 

@@ -12,4 +12,7 @@ public interface EntityPassengerAccessor {
 
 	@Invoker("addPassenger")
 	void lg2$addPassenger(Entity passenger);
+
+	@Invoker("removePassenger")
+	void lg2$removePassenger(Entity passenger);
 }
