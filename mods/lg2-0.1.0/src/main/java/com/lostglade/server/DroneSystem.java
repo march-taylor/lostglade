@@ -84,7 +84,8 @@ public final class DroneSystem {
 	private static final String DRONE_CAMERA_TAG = "lg2_drone_camera_anchor";
 	private static final String DRONE_CAMERA_OWNER_TAG_PREFIX = "lg2_drone_camera_owner_";
 	private static final String DRONE_DUMMY_TAG = "lg2_drone_dummy";
-	private static final double DRONE_CRASH_SPEED = 1.25D;
+	private static final double DRONE_CRASH_EQUIVALENT_FALL_BLOCKS = 3.25D;
+	private static final double DRONE_CRASH_REFERENCE_ACCELERATION = 0.04D;
 	private static final float DRONE_WIDTH = 0.95F;
 	private static final float DRONE_HEIGHT = 0.35F;
 	private static final float DRONE_CAMERA_ANCHOR_SIZE = 0.01F;
@@ -228,7 +229,7 @@ public final class DroneSystem {
 	}
 
 	public static void handleInput(ServerPlayer player, Input input) {
-		if (player == null || input == null || !ACTIVE_SESSIONS.containsKey(player.getUUID())) {
+		if (player == null || input == null || !isControllingDrone(player)) {
 			return;
 		}
 		INPUTS.put(
@@ -246,7 +247,14 @@ public final class DroneSystem {
 	}
 
 	public static boolean isControllingDrone(ServerPlayer player) {
-		return player != null && ACTIVE_SESSIONS.containsKey(player.getUUID());
+		if (player == null) {
+			return false;
+		}
+		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
+		if (session == null) {
+			return false;
+		}
+		return Objects.equals(CONTROLLERS_BY_DRONE.get(session.droneUuid()), player.getUUID());
 	}
 
 	public static BluetoothLinkSystem.Endpoint resolveBluetoothDroneEndpoint(ServerLevel level, Entity entity) {
@@ -399,12 +407,7 @@ public final class DroneSystem {
 				)
 		);
 
-		player.setNoGravity(true);
-		player.noPhysics = false;
-		player.fallDistance = 0.0F;
-		if (!player.isFallFlying()) {
-			player.startFallFlying();
-		}
+		ensureControlledPlayerState(player);
 
 		Vec3 nextVelocity = DroneFlightPhysics.step(
 				player.getXRot(),
@@ -448,6 +451,10 @@ public final class DroneSystem {
 			}
 			if (!player.isAlive() || player.isSpectator()) {
 				stopControlling(player, false, false);
+				continue;
+			}
+			if (!Objects.equals(CONTROLLERS_BY_DRONE.get(session.droneUuid()), player.getUUID())) {
+				stopControlling(player, true, false);
 				continue;
 			}
 
@@ -498,7 +505,6 @@ public final class DroneSystem {
 		Vec3 currentPos = player.position();
 		Vec3 actualMovement = currentPos.subtract(session.lastPlayerPos());
 		Vec3 intendedMovement = session.velocity();
-		double impactSpeed = intendedMovement.subtract(actualMovement).length();
 		float yaw = player.getYRot();
 		float pitch = player.getXRot();
 		ensureDroneMounted(player, root);
@@ -511,7 +517,7 @@ public final class DroneSystem {
 		syncDroneCameraAnchor(root, player.getDeltaMovement());
 		session.setVelocity(player.getDeltaMovement());
 		session.setLastPlayerPos(currentPos);
-		if ((player.horizontalCollision || player.verticalCollision) && impactSpeed >= DRONE_CRASH_SPEED) {
+		if (shouldDestroyDroneFromCollision(intendedMovement, actualMovement, player.horizontalCollision, player.verticalCollision)) {
 			destroyDrone(root, null, false);
 			stopControlling(player, true, true);
 			return;
@@ -541,10 +547,8 @@ public final class DroneSystem {
 		root.noPhysics = false;
 		root.move(MoverType.SELF, velocity);
 		Vec3 actualMovement = root.position().subtract(startPos);
-		Vec3 impact = velocity.subtract(actualMovement);
-		double impactSpeed = impact.length();
 
-		if ((root.horizontalCollision || root.verticalCollision) && impactSpeed >= DRONE_CRASH_SPEED) {
+		if (shouldDestroyDroneFromCollision(velocity, actualMovement, root.horizontalCollision, root.verticalCollision)) {
 			destroyDrone(root, null, false);
 			UNCONTROLLED_DRONES.remove(root.getUUID());
 			return;
@@ -590,6 +594,41 @@ public final class DroneSystem {
 
 		root.setYRot(nextYaw);
 		root.setXRot(nextPitch);
+	}
+
+	private static boolean shouldDestroyDroneFromCollision(
+			Vec3 intendedMovement,
+			Vec3 actualMovement,
+			boolean horizontalCollision,
+			boolean verticalCollision
+	) {
+		return computeCrashEquivalentFallBlocks(intendedMovement, actualMovement, horizontalCollision, verticalCollision)
+				>= DRONE_CRASH_EQUIVALENT_FALL_BLOCKS;
+	}
+
+	private static double computeCrashEquivalentFallBlocks(
+			Vec3 intendedMovement,
+			Vec3 actualMovement,
+			boolean horizontalCollision,
+			boolean verticalCollision
+	) {
+		if (intendedMovement == null || actualMovement == null || (!horizontalCollision && !verticalCollision)) {
+			return 0.0D;
+		}
+
+		Vec3 blockedMovement = intendedMovement.subtract(actualMovement);
+		double horizontalImpactSq = 0.0D;
+		if (horizontalCollision) {
+			horizontalImpactSq = blockedMovement.x * blockedMovement.x + blockedMovement.z * blockedMovement.z;
+		}
+
+		double verticalImpact = verticalCollision ? Math.abs(intendedMovement.y) : 0.0D;
+		double crashEnergy = horizontalImpactSq + verticalImpact * verticalImpact;
+		if (crashEnergy <= 1.0E-8D) {
+			return 0.0D;
+		}
+
+		return crashEnergy / (2.0D * DRONE_CRASH_REFERENCE_ACCELERATION);
 	}
 
 	private static boolean isUncontrolledDroneSettled(Entity root, Vec3 velocity) {
@@ -709,7 +748,31 @@ public final class DroneSystem {
 		player.hurtMarked = true;
 	}
 
+	private static void ensureControlledPlayerState(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		player.setCamera(player);
+		player.setInvisible(true);
+		player.setNoGravity(true);
+		player.noPhysics = false;
+		player.setInvulnerable(true);
+		if (player.getAbilities().flying) {
+			player.getAbilities().flying = false;
+			player.onUpdateAbilities();
+		}
+		player.fallDistance = 0.0F;
+		if (!player.isFallFlying()) {
+			player.startFallFlying();
+		}
+		player.hurtMarked = true;
+	}
+
 	private static void syncControlledPlayer(ServerPlayer player, Entity root) {
+		if (player != null && ACTIVE_SESSIONS.containsKey(player.getUUID())) {
+			ensureControlledPlayerState(player);
+			return;
+		}
 		player.fallDistance = 0.0F;
 		if (player.getCamera() != player) {
 			player.setCamera(player);
@@ -882,6 +945,7 @@ public final class DroneSystem {
 		}
 
 		stopControlling(player, true, false);
+		ServerRaceSystem.suspendCopperManJetpackForDrone(player);
 		UNCONTROLLED_DRONES.remove(root.getUUID());
 		root.noPhysics = true;
 
@@ -900,15 +964,9 @@ public final class DroneSystem {
 		player.teleportTo(droneLevel, root.getX(), root.getY(), root.getZ(), ABSOLUTE_TELEPORT, root.getYRot(), root.getXRot(), false);
 		broadcastDronePilotEquipmentHidden(player, true);
 		setHotbarVisualHidden(player, true);
-		player.setInvisible(true);
-		player.setNoGravity(true);
-		player.noPhysics = false;
-		player.setInvulnerable(true);
-		player.setCamera(player);
-		player.fallDistance = 0.0F;
 		player.stopFallFlying();
 		player.setDeltaMovement(Vec3.ZERO);
-		player.startFallFlying();
+		ensureControlledPlayerState(player);
 		ensureDroneMounted(player, root);
 		syncDroneCameraAnchor(root, Vec3.ZERO);
 
@@ -993,6 +1051,7 @@ public final class DroneSystem {
 			}
 		}
 		discardDummyIfPresent(server, session, dummy);
+		ServerRaceSystem.resumeCopperManJetpackAfterDrone(player);
 
 		if (notify) {
 			player.sendSystemMessage(Component.literal("Управление дроном завершено."));

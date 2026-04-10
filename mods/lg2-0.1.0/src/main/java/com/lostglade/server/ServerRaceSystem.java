@@ -313,6 +313,7 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, CopperManDefenseVisualSession> COPPER_MAN_DEFENSE_VISUAL_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, Long> COPPER_MAN_JETPACK_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, CopperManJetpackSession> COPPER_MAN_JETPACK_SESSIONS = new LinkedHashMap<>();
+	private static final Map<UUID, CopperManJetpackSession> COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE = new LinkedHashMap<>();
 	private static final Map<UUID, CopperManJetpackInputState> COPPER_MAN_JETPACK_INPUTS = new ConcurrentHashMap<>();
 	private static final Map<UUID, UUID> COPPER_MAN_JETPACK_DISPLAY_IDS = new LinkedHashMap<>();
 	private static final Map<String, Property> COPPER_MAN_DEFENSE_TINT_CACHE = new ConcurrentHashMap<>();
@@ -479,6 +480,7 @@ public final class ServerRaceSystem {
 			COPPER_MAN_DEFENSE_VISUAL_SESSIONS.clear();
 			COPPER_MAN_JETPACK_COOLDOWNS.clear();
 			COPPER_MAN_JETPACK_SESSIONS.clear();
+			COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE.clear();
 			COPPER_MAN_JETPACK_INPUTS.clear();
 			COPPER_MAN_JETPACK_DISPLAY_IDS.clear();
 			COPPER_MAN_DEFENSE_TINT_CACHE.clear();
@@ -902,6 +904,10 @@ public final class ServerRaceSystem {
 				clearCopperManJetpack(player);
 				continue;
 			}
+			if (DroneSystem.isControllingDrone(player)) {
+				suspendCopperManJetpackForDrone(player);
+				continue;
+			}
 
 			applyCopperManJetpackMovement(player, session);
 			syncCopperManJetpackVisual(player, true);
@@ -1057,6 +1063,7 @@ public final class ServerRaceSystem {
 		}
 
 		COPPER_MAN_JETPACK_SESSIONS.remove(player.getUUID());
+		COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE.remove(player.getUUID());
 		COPPER_MAN_JETPACK_INPUTS.remove(player.getUUID());
 		player.fallDistance = 0.0F;
 		syncCopperManJetpackVisual(player, false);
@@ -1075,6 +1082,7 @@ public final class ServerRaceSystem {
 			}
 		}
 		COPPER_MAN_JETPACK_SESSIONS.clear();
+		COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE.clear();
 		COPPER_MAN_JETPACK_INPUTS.clear();
 		COPPER_MAN_JETPACK_DISPLAY_IDS.clear();
 	}
@@ -4201,6 +4209,38 @@ public final class ServerRaceSystem {
 		return player != null && COPPER_MAN_JETPACK_SESSIONS.containsKey(player.getUUID());
 	}
 
+	public static void suspendCopperManJetpackForDrone(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		CopperManJetpackSession session = COPPER_MAN_JETPACK_SESSIONS.remove(playerId);
+		if (session != null) {
+			COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE.put(playerId, session);
+		}
+		syncCopperManJetpackVisual(player, false);
+	}
+
+	public static void resumeCopperManJetpackAfterDrone(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		CopperManJetpackSession session = COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE.remove(playerId);
+		if (session == null) {
+			return;
+		}
+
+		long nowTick = player.level().getGameTime();
+		if (!player.isAlive() || player.isSpectator() || nowTick >= session.expireTick()) {
+			syncCopperManJetpackVisual(player, false);
+			return;
+		}
+
+		COPPER_MAN_JETPACK_SESSIONS.put(playerId, session);
+		syncCopperManJetpackVisual(player, true);
+	}
+
 	private static long getRemainingOnlineCooldownTicks(Map<UUID, Long> cooldowns, UUID playerId) {
 		if (cooldowns == null || playerId == null) {
 			return 0L;
@@ -4691,4 +4731,3 @@ public final class ServerRaceSystem {
 		}
 	}
 }
-
