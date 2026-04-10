@@ -99,6 +99,7 @@ public final class CopperManRepulsorSystem {
 	private static final float SINGLE_DAMAGE = 4.0F;
 	private static final int LASER_PARTICLE_COLOR = 0xFF2A2A;
 	private static final float LASER_PARTICLE_SCALE = 0.75F;
+	private static final int REPULSOR_MODE_PREFIX_COLOR = 0xC97B3B;
 	private static final String REPULSOR_SHIFT_GLYPH = "\uef80";
 	private static final String REPULSOR_SLOT_TO_AMMO_SHIFT_GLYPH = "\uef81";
 	private static final String REPULSOR_SLOT_ICON_CENTER_BASE_SHIFT_GLYPH = "\uef85";
@@ -196,8 +197,7 @@ public final class CopperManRepulsorSystem {
 		state.hudDirty = true;
 		startModeSwitchCooldown(player.getUUID(), cooldownTicks);
 		player.displayClientMessage(
-				Component.literal(localizeModeChanged(player, state.mode))
-						.withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false)),
+				buildModeChangedMessage(player, state.mode),
 				true
 		);
 		return 1;
@@ -665,10 +665,29 @@ public final class CopperManRepulsorSystem {
 		return player.getInventory().getSelectedSlot() == 0 && (mainHand.isEmpty() || selected.isEmpty());
 	}
 
+	private static Component buildModeChangedMessage(ServerPlayer player, RepulsorMode mode) {
+		return Component.literal(localizeModePrefix(player))
+				.withStyle(style -> style.withColor(REPULSOR_MODE_PREFIX_COLOR).withItalic(false))
+				.append(
+						Component.literal(localizeModeName(player, mode))
+								.withStyle(style -> style.withColor(REPULSOR_MODE_PREFIX_COLOR).withItalic(false))
+				);
+	}
+
+	private static String localizeModePrefix(ServerPlayer player) {
+		return switch (locale(player)) {
+			case "rpr" -> "Репульсоръ: ";
+			case "uk", "uk_ua" -> "Режим роботи репульсора: ";
+			case "ja", "ja_jp" -> "リパルサー: ";
+			case "ru", "ru_ru" -> "Режим репульсора: ";
+			default -> "Repulsor mode: ";
+		};
+	}
+
 	private static String localizeModeChanged(ServerPlayer player, RepulsorMode mode) {
 		return switch (locale(player)) {
-			case "rpr" -> "Режимъ репульсора: " + localizeModeName(player, mode);
-			case "uk", "uk_ua" -> "Режим репульсора: " + localizeModeName(player, mode);
+			case "rpr" -> "Репульсоръ: " + localizeModeName(player, mode);
+			case "uk", "uk_ua" -> "Режим роботи репульсора: " + localizeModeName(player, mode);
 			case "ja", "ja_jp" -> "リパルサー: " + localizeModeName(player, mode);
 			case "ru", "ru_ru" -> "Режим репульсора: " + localizeModeName(player, mode);
 			default -> "Repulsor mode: " + localizeModeName(player, mode);
@@ -677,7 +696,7 @@ public final class CopperManRepulsorSystem {
 
 	private static String localizeModeName(ServerPlayer player, RepulsorMode mode) {
 		return switch (locale(player)) {
-			case "rpr" -> mode == RepulsorMode.AUTOMATIC ? "Самострѣльный" : "Одиночный";
+			case "rpr" -> mode == RepulsorMode.AUTOMATIC ? "Дѣйствіе безъ понужденія" : "Разовый пускъ";
 			case "uk", "uk_ua" -> mode == RepulsorMode.AUTOMATIC ? "Автоматичний" : "Одиночний";
 			case "ja", "ja_jp" -> mode == RepulsorMode.AUTOMATIC ? "オート" : "単発";
 			case "ru", "ru_ru" -> mode == RepulsorMode.AUTOMATIC ? "Автоматический" : "Одиночный";

@@ -630,9 +630,11 @@ public final class ServerRaceSystem {
 		}
 		if (!hasUnlockedAbility(player, race, slot)) {
 			ServerUpgradeUiSystem.playPurchaseBlockedSound(player);
+			MutableComponent notPurchased = PolymerResourcePackUtils.hasMainPack(player)
+					? Component.translatable("message.lg2.race.ability_not_purchased", Component.literal(ability.name))
+					: Component.literal(localizeAbilityNotPurchased(player, ability.name));
 			player.displayClientMessage(
-					Component.translatable("message.lg2.race.ability_not_purchased", Component.literal(ability.name))
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					notPurchased.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
 			return 0;
@@ -3487,6 +3489,17 @@ public final class ServerRaceSystem {
 			return "ru_ru";
 		}
 		return player.clientInformation().language().toLowerCase(Locale.ROOT);
+	}
+
+	private static String localizeAbilityNotPurchased(ServerPlayer player, String abilityName) {
+		String locale = normalizeCartelDisguiseLocale(player);
+		return switch (locale) {
+			case "rpr" -> "Умѣніе «" + abilityName + "» не стяжано";
+			case "uk", "uk_ua" -> "Здібність «" + abilityName + "» ще не куплена";
+			case "ja", "ja_jp" -> "能力「" + abilityName + "」はまだ購入されていません";
+			case "ru", "ru_ru" -> "Способность «" + abilityName + "» не куплена";
+			default -> "Ability \"" + abilityName + "\" is not purchased yet";
+		};
 	}
 
 	private static String buildOverlayGlyph(String glyph, int glyphAdvance) {

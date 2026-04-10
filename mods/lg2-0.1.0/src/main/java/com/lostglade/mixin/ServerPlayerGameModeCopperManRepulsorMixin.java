@@ -16,7 +16,20 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(ServerPlayerGameMode.class)
 public abstract class ServerPlayerGameModeCopperManRepulsorMixin {
-	@Inject(method = "useItemOn", at = @At("HEAD"))
+	@Inject(method = "useItem", at = @At("HEAD"), cancellable = true)
+	private void lg2$toggleCopperGogglesModeInHand(
+			ServerPlayer player,
+			Level level,
+			ItemStack stack,
+			InteractionHand hand,
+			CallbackInfoReturnable<InteractionResult> cir
+	) {
+		if (CopperManGogglesSystem.handleHeldModeToggle(player, hand)) {
+			cir.setReturnValue(InteractionResult.SUCCESS);
+		}
+	}
+
+	@Inject(method = "useItemOn", at = @At("HEAD"), cancellable = true)
 	private void lg2$trackCopperGogglesOnAnyBlockUse(
 			ServerPlayer player,
 			Level level,
@@ -25,6 +38,10 @@ public abstract class ServerPlayerGameModeCopperManRepulsorMixin {
 			BlockHitResult hitResult,
 			CallbackInfoReturnable<InteractionResult> cir
 	) {
+		if (CopperManGogglesSystem.handleHeldModeToggle(player, hand)) {
+			cir.setReturnValue(InteractionResult.SUCCESS);
+			return;
+		}
 		CopperManGogglesSystem.handleAnyBlockUse(player, hand);
 	}
 
