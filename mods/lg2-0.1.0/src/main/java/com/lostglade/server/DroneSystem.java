@@ -80,10 +80,13 @@ public final class DroneSystem {
 	private static final String DRONE_ROOT_TAG = "lg2_drone_root";
 	private static final String DRONE_DISPLAY_TAG = "lg2_drone_display";
 	private static final String DRONE_DISPLAY_OWNER_TAG_PREFIX = "lg2_drone_display_owner_";
+	private static final String DRONE_CAMERA_TAG = "lg2_drone_camera_anchor";
+	private static final String DRONE_CAMERA_OWNER_TAG_PREFIX = "lg2_drone_camera_owner_";
 	private static final String DRONE_DUMMY_TAG = "lg2_drone_dummy";
 	private static final double DRONE_CRASH_SPEED = 1.25D;
 	private static final float DRONE_WIDTH = 0.95F;
 	private static final float DRONE_HEIGHT = 0.35F;
+	private static final float DRONE_CAMERA_ANCHOR_SIZE = 0.01F;
 	private static final double DRONE_SPAWN_Y_OFFSET = 0.24D;
 	private static final float DRONE_DISPLAY_VIEW_RANGE = 64.0F;
 	private static final float DRONE_DISPLAY_CONTROLLED_Y_OFFSET = -0.92F;
@@ -105,6 +108,7 @@ public final class DroneSystem {
 	private static final Map<UUID, DroneInputState> INPUTS = new HashMap<>();
 	private static final Map<UUID, UUID> CONTROLLERS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UUID> DISPLAYS_BY_DRONE = new HashMap<>();
+	private static final Map<UUID, UUID> CAMERA_ANCHORS_BY_DRONE = new HashMap<>();
 
 	private DroneSystem() {
 	}
@@ -153,6 +157,7 @@ public final class DroneSystem {
 			INPUTS.clear();
 			CONTROLLERS_BY_DRONE.clear();
 			DISPLAYS_BY_DRONE.clear();
+			CAMERA_ANCHORS_BY_DRONE.clear();
 		});
 	}
 
@@ -191,11 +196,15 @@ public final class DroneSystem {
 		root.setHeight(DRONE_HEIGHT);
 
 		Display.ItemDisplay display = createDroneDisplay(serverLevel, spawnPos, yRot, 0.0F);
+		Interaction cameraAnchor = createDroneCameraAnchor(serverLevel, droneCameraOrigin(spawnPos), yRot, 0.0F);
 		serverLevel.addFreshEntity(root);
 		serverLevel.addFreshEntity(display);
+		serverLevel.addFreshEntity(cameraAnchor);
 		forceEntityPassenger(root, display);
 		display.addTag(DRONE_DISPLAY_OWNER_TAG_PREFIX + root.getUUID());
 		DISPLAYS_BY_DRONE.put(root.getUUID(), display.getUUID());
+		cameraAnchor.addTag(DRONE_CAMERA_OWNER_TAG_PREFIX + root.getUUID());
+		CAMERA_ANCHORS_BY_DRONE.put(root.getUUID(), cameraAnchor.getUUID());
 		syncDroneDisplay(root, yRot, 0.0F, 0.0D, 0.0D);
 
 		if (!player.getAbilities().instabuild) {
@@ -297,24 +306,32 @@ public final class DroneSystem {
 		UUID controllerId = CONTROLLERS_BY_DRONE.get(root.getUUID());
 		ServerPlayer controller = controllerId == null ? null : server.getPlayerList().getPlayer(controllerId);
 		UUID displayId = DISPLAYS_BY_DRONE.get(root.getUUID());
+		Entity cameraAnchor = ensureDroneCameraAnchor(root);
+		Vec3 cameraOrigin = cameraAnchor != null ? cameraAnchor.position() : droneCameraOrigin(root);
+		float cameraYaw = cameraAnchor != null ? cameraAnchor.getYRot() : root.getYRot();
+		float cameraPitch = cameraAnchor != null ? cameraAnchor.getXRot() : root.getXRot();
+		UUID cameraAnchorUuid = cameraAnchor != null ? cameraAnchor.getUUID() : null;
 		Set<UUID> hiddenEntities = displayId == null ? Set.of(root.getUUID()) : Set.of(root.getUUID(), displayId);
 		if (controller != null && ACTIVE_SESSIONS.containsKey(controller.getUUID())) {
 			DroneControlSession session = ACTIVE_SESSIONS.get(controller.getUUID());
 			if (session != null
 					&& Objects.equals(session.droneUuid(), root.getUUID())
 					&& controller.level() == droneLevel) {
+				Set<UUID> activeHiddenEntities = displayId == null
+						? Set.of(root.getUUID(), controller.getUUID())
+						: Set.of(root.getUUID(), controller.getUUID(), displayId);
 				return new DroneLiveFeedState(
 						root.getUUID(),
 						droneLevel.dimension(),
 						root.blockPosition(),
 						true,
-						root.getX(),
-						root.getY(),
-						root.getZ(),
-						root.getYRot(),
-						root.getXRot(),
-						root.getUUID(),
-						displayId == null ? Set.of(controller.getUUID()) : Set.of(controller.getUUID(), displayId),
+						cameraOrigin.x,
+						cameraOrigin.y,
+						cameraOrigin.z,
+						cameraYaw,
+						cameraPitch,
+						cameraAnchorUuid,
+						activeHiddenEntities,
 						true,
 						controller.getScoreboardName()
 				);
@@ -325,12 +342,12 @@ public final class DroneSystem {
 				droneLevel.dimension(),
 				root.blockPosition(),
 				true,
-				root.getX(),
-				root.getY() - (1.62D - DRONE_HEIGHT * 0.5D),
-				root.getZ(),
-				root.getYRot(),
-				root.getXRot(),
-				null,
+				cameraOrigin.x,
+				cameraOrigin.y,
+				cameraOrigin.z,
+				cameraYaw,
+				cameraPitch,
+				cameraAnchorUuid,
 				hiddenEntities,
 				true,
 				null
@@ -439,6 +456,7 @@ public final class DroneSystem {
 		root.setXRot(pitch);
 		root.setDeltaMovement(player.getDeltaMovement());
 		root.hurtMarked = true;
+		syncDroneCameraAnchor(root, player.getDeltaMovement());
 		session.setVelocity(player.getDeltaMovement());
 		session.setLastPlayerPos(currentPos);
 		if ((player.horizontalCollision || player.verticalCollision) && impactSpeed >= DRONE_CRASH_SPEED) {
@@ -646,8 +664,11 @@ public final class DroneSystem {
 		player.setInvulnerable(true);
 		player.setCamera(player);
 		player.fallDistance = 0.0F;
+		player.stopFallFlying();
+		player.setDeltaMovement(Vec3.ZERO);
 		player.startFallFlying();
 		ensureDroneMounted(player, root);
+		syncDroneCameraAnchor(root, Vec3.ZERO);
 
 		DroneControlSession session = new DroneControlSession(
 				root.getUUID(),
@@ -706,12 +727,18 @@ public final class DroneSystem {
 			root.setDeltaMovement(Vec3.ZERO);
 			root.hurtMarked = true;
 			syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
+			syncDroneCameraAnchor(root, Vec3.ZERO);
 			notifyDroneNetworkChanged(root);
 		}
 		player.setInvisible(session.wasInvisible());
 		player.setNoGravity(session.wasNoGravity());
 		player.noPhysics = session.wasNoPhysics();
 		player.setInvulnerable(session.wasInvulnerable());
+		player.stopFallFlying();
+		player.setDeltaMovement(Vec3.ZERO);
+		player.getAbilities().mayfly = session.hadMayfly();
+		player.getAbilities().flying = session.wasFlying();
+		player.onUpdateAbilities();
 		player.fallDistance = 0.0F;
 		clearDroneHud(player, session, true);
 		broadcastDronePilotEquipmentHidden(player, false);
@@ -731,6 +758,11 @@ public final class DroneSystem {
 						session.originPitch(),
 						false
 				);
+				player.stopFallFlying();
+				player.setDeltaMovement(Vec3.ZERO);
+				player.getAbilities().mayfly = session.hadMayfly();
+				player.getAbilities().flying = session.wasFlying();
+				player.onUpdateAbilities();
 				broadcastDronePilotEquipmentHidden(player, false);
 			}
 		}
@@ -756,6 +788,11 @@ public final class DroneSystem {
 		Entity display = displayId == null ? findDroneDisplay(root) : findEntity(level.getServer(), level.dimension(), displayId);
 		if (display != null) {
 			display.discard();
+		}
+		UUID cameraAnchorId = CAMERA_ANCHORS_BY_DRONE.remove(root.getUUID());
+		Entity cameraAnchor = cameraAnchorId == null ? findDroneCameraAnchor(root) : findEntity(level.getServer(), level.dimension(), cameraAnchorId);
+		if (cameraAnchor != null) {
+			cameraAnchor.discard();
 		}
 		for (Entity passenger : new ArrayList<>(root.getPassengers())) {
 			passenger.discard();
@@ -807,6 +844,21 @@ public final class DroneSystem {
 		display.setViewRange(DRONE_DISPLAY_VIEW_RANGE);
 		display.setTransformation(Transformation.identity());
 		return display;
+	}
+
+	private static Interaction createDroneCameraAnchor(ServerLevel level, Vec3 position, float yRot, float xRot) {
+		Interaction anchor = new Interaction(EntityType.INTERACTION, level);
+		anchor.addTag(DRONE_CAMERA_TAG);
+		anchor.setPos(position.x, position.y, position.z);
+		anchor.setYRot(yRot);
+		anchor.setXRot(xRot);
+		anchor.setNoGravity(true);
+		anchor.setInvulnerable(true);
+		anchor.setSilent(true);
+		anchor.setResponse(false);
+		anchor.setWidth(DRONE_CAMERA_ANCHOR_SIZE);
+		anchor.setHeight(DRONE_CAMERA_ANCHOR_SIZE);
+		return anchor;
 	}
 
 	private static void syncDroneDisplay(Entity root, float yRot, float xRot, double forwardDrive, double strafeDrive) {
@@ -863,6 +915,56 @@ public final class DroneSystem {
 			}
 		}
 		return null;
+	}
+
+	private static Entity findDroneCameraAnchor(Entity root) {
+		if (root == null || !(root.level() instanceof ServerLevel level)) {
+			return null;
+		}
+		UUID anchorId = CAMERA_ANCHORS_BY_DRONE.get(root.getUUID());
+		Entity anchor = anchorId == null ? null : level.getEntity(anchorId);
+		if (anchor != null && anchor.getTags().contains(DRONE_CAMERA_TAG)) {
+			return anchor;
+		}
+		for (Entity candidate : level.getEntities(root, root.getBoundingBox().inflate(16.0D))) {
+			if (!candidate.getTags().contains(DRONE_CAMERA_TAG)) {
+				continue;
+			}
+			if (candidate.getTags().contains(DRONE_CAMERA_OWNER_TAG_PREFIX + root.getUUID())) {
+				CAMERA_ANCHORS_BY_DRONE.put(root.getUUID(), candidate.getUUID());
+				return candidate;
+			}
+		}
+		return null;
+	}
+
+	private static Entity ensureDroneCameraAnchor(Entity root) {
+		if (root == null || !root.isAlive() || !(root.level() instanceof ServerLevel level)) {
+			return null;
+		}
+		Entity anchor = findDroneCameraAnchor(root);
+		if (anchor != null) {
+			return anchor;
+		}
+		Vec3 origin = droneCameraOrigin(root);
+		Interaction created = createDroneCameraAnchor(level, origin, root.getYRot(), root.getXRot());
+		created.addTag(DRONE_CAMERA_OWNER_TAG_PREFIX + root.getUUID());
+		level.addFreshEntity(created);
+		CAMERA_ANCHORS_BY_DRONE.put(root.getUUID(), created.getUUID());
+		return created;
+	}
+
+	private static void syncDroneCameraAnchor(Entity root, Vec3 velocity) {
+		Entity anchor = ensureDroneCameraAnchor(root);
+		if (anchor == null) {
+			return;
+		}
+		Vec3 origin = droneCameraOrigin(root);
+		anchor.setPos(origin.x, origin.y, origin.z);
+		anchor.setYRot(root.getYRot());
+		anchor.setXRot(root.getXRot());
+		anchor.setDeltaMovement(velocity == null ? Vec3.ZERO : velocity);
+		anchor.hurtMarked = true;
 	}
 
 	private static DronePilotDummyEntity spawnPlayerDummy(ServerLevel level, ServerPlayer sourcePlayer, Vec3 position) {
@@ -1019,6 +1121,17 @@ public final class DroneSystem {
 				position.y + DRONE_HEIGHT,
 				position.z + halfWidth
 		);
+	}
+
+	private static Vec3 droneCameraOrigin(Entity root) {
+		return root == null ? Vec3.ZERO : droneCameraOrigin(root.position());
+	}
+
+	private static Vec3 droneCameraOrigin(Vec3 rootPosition) {
+		if (rootPosition == null) {
+			return Vec3.ZERO;
+		}
+		return new Vec3(rootPosition.x, rootPosition.y + DRONE_HEIGHT * 0.5D, rootPosition.z);
 	}
 
 	private static void notifyDroneNetworkChanged(Entity root) {
