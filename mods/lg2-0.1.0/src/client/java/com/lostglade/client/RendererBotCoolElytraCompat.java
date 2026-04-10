@@ -4,7 +4,6 @@ import com.lostglade.Lg2;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.phys.Vec3;
 
 import java.lang.reflect.Field;
@@ -85,7 +84,11 @@ final class RendererBotCoolElytraCompat {
 	}
 
 	private static double computeSessionRoll(UUID sessionId, Entity followTarget, Access currentAccess) {
-		if (!(followTarget instanceof LivingEntity living) || !living.isFallFlying()) {
+		if (followTarget == null) {
+			SESSION_STATES.remove(sessionId);
+			return 0.0D;
+		}
+		if (followTarget instanceof net.minecraft.world.entity.LivingEntity living && !living.isFallFlying()) {
 			SESSION_STATES.remove(sessionId);
 			return 0.0D;
 		}
@@ -95,14 +98,14 @@ final class RendererBotCoolElytraCompat {
 				? 1.0D / 20.0D
 				: Math.max(0.0D, (now - state.lastUpdateNanos) * 1.0E-9D);
 		state.lastUpdateNanos = now;
-		double targetRoll = computeClassicRollTarget(living, currentAccess.wingPower());
+		double targetRoll = computeClassicRollTarget(followTarget, currentAccess.wingPower());
 		double smoothing = Mth.clamp(currentAccess.rollSmoothing(), 0.0D, 1.0D);
 		double nextRoll = targetRoll + Math.pow(smoothing, deltaSeconds * 40.0D) * (state.lastRollAngle - targetRoll);
 		state.lastRollAngle = nextRoll;
 		return nextRoll;
 	}
 
-	private static double computeClassicRollTarget(LivingEntity followTarget, double wingPower) {
+	private static double computeClassicRollTarget(Entity followTarget, double wingPower) {
 		Vec3 look = followTarget.getLookAngle();
 		Vec3 velocity = followTarget.getDeltaMovement();
 		double lookHorizontal = look.x * look.x + look.z * look.z;

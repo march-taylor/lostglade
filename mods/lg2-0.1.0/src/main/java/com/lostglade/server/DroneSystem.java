@@ -308,13 +308,13 @@ public final class DroneSystem {
 						droneLevel.dimension(),
 						root.blockPosition(),
 						true,
-						controller.getX(),
-						controller.getY(),
-						controller.getZ(),
-						controller.getYRot(),
-						controller.getXRot(),
-						controller.getUUID(),
-						hiddenEntities,
+						root.getX(),
+						root.getY(),
+						root.getZ(),
+						root.getYRot(),
+						root.getXRot(),
+						root.getUUID(),
+						displayId == null ? Set.of(controller.getUUID()) : Set.of(controller.getUUID(), displayId),
 						true,
 						controller.getScoreboardName()
 				);
@@ -704,7 +704,6 @@ public final class DroneSystem {
 			root.setYRot(player.getYRot());
 			root.setXRot(player.getXRot());
 			root.setDeltaMovement(Vec3.ZERO);
-			root.setOldPosAndRot(root.position(), root.getYRot(), root.getXRot());
 			root.hurtMarked = true;
 			syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
 			notifyDroneNetworkChanged(root);
