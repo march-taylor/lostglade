@@ -22,6 +22,7 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.lionarius.skinrestorer.SkinRestorer;
 import net.lionarius.skinrestorer.skin.SkinStorage;
 import net.lionarius.skinrestorer.skin.SkinValue;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.RemoteChatSession;
@@ -115,6 +116,9 @@ public final class DroneSystem {
 			}
 			Entity root = resolveDroneRoot(entity);
 			if (root == null) {
+				return InteractionResult.PASS;
+			}
+			if (serverPlayer.getItemInHand(hand).is(ModItems.BLUETOOTH_ADAPTER)) {
 				return InteractionResult.PASS;
 			}
 			if (!ServerUpgradeUiSystem.hasUpgrade(serverPlayer, IT_DRONE_SCOUT)) {
@@ -220,6 +224,117 @@ public final class DroneSystem {
 
 	public static boolean isControllingDrone(ServerPlayer player) {
 		return player != null && ACTIVE_SESSIONS.containsKey(player.getUUID());
+	}
+
+	public static BluetoothLinkSystem.Endpoint resolveBluetoothDroneEndpoint(ServerLevel level, Entity entity) {
+		if (level == null || entity == null) {
+			return null;
+		}
+		Entity root = resolveDroneRoot(entity);
+		if (root == null || !root.isAlive() || root.level() != level) {
+			return null;
+		}
+		return BluetoothLinkSystem.droneEndpoint(level.dimension(), root.blockPosition(), root.getUUID());
+	}
+
+	public static List<ServerSelectionHighlightSystem.DisplayBlueprint> resolveBluetoothDroneHighlightBlueprints(ServerLevel level, BluetoothLinkSystem.Endpoint endpoint) {
+		if (level == null || endpoint == null || endpoint.type() != BluetoothLinkSystem.EndpointType.DRONE) {
+			return List.of();
+		}
+		Entity root = endpoint.deviceUuid() == null ? null : findDroneRoot(level.getServer(), level.dimension(), endpoint.deviceUuid());
+		Vec3 position = root != null ? root.position() : Vec3.atCenterOf(endpoint.pos());
+		float yRot = root != null ? root.getYRot() : 0.0F;
+		float xRot = root != null ? root.getXRot() : 0.0F;
+		return List.of(
+				new ServerSelectionHighlightSystem.ItemDisplayBlueprint(
+						level,
+						position,
+						yRot,
+						xRot,
+						DroneItem.createDisplayStack(),
+						ItemDisplayContext.FIXED,
+						buildDroneDisplayTransformation(root, 0.0D, 0.0D)
+				)
+		);
+	}
+
+	public static DroneLiveFeedState resolveLiveFeedState(MinecraftServer server, BluetoothLinkSystem.Endpoint endpoint) {
+		if (endpoint == null || endpoint.type() != BluetoothLinkSystem.EndpointType.DRONE) {
+			return null;
+		}
+		return resolveLiveFeedState(server, endpoint.deviceUuid(), endpoint.dimension(), endpoint.pos());
+	}
+
+	public static DroneLiveFeedState resolveLiveFeedState(
+			MinecraftServer server,
+			UUID droneUuid,
+			net.minecraft.resources.ResourceKey<Level> fallbackDimension,
+			BlockPos fallbackPos
+	) {
+		if (server == null || droneUuid == null) {
+			return null;
+		}
+		Entity root = fallbackDimension == null ? findDroneRoot(server, droneUuid) : findDroneRoot(server, fallbackDimension, droneUuid);
+		if (root == null || !root.isAlive() || !(root.level() instanceof ServerLevel droneLevel)) {
+			net.minecraft.resources.ResourceKey<Level> dimension = fallbackDimension == null ? Level.OVERWORLD : fallbackDimension;
+			BlockPos pos = fallbackPos == null ? BlockPos.ZERO : fallbackPos.immutable();
+			return new DroneLiveFeedState(
+					droneUuid,
+					dimension,
+					pos,
+					false,
+					pos.getX() + 0.5D,
+					pos.getY(),
+					pos.getZ() + 0.5D,
+					0.0F,
+					0.0F,
+					null,
+					Set.of(),
+					true,
+					null
+			);
+		}
+		UUID controllerId = CONTROLLERS_BY_DRONE.get(root.getUUID());
+		ServerPlayer controller = controllerId == null ? null : server.getPlayerList().getPlayer(controllerId);
+		UUID displayId = DISPLAYS_BY_DRONE.get(root.getUUID());
+		Set<UUID> hiddenEntities = displayId == null ? Set.of(root.getUUID()) : Set.of(root.getUUID(), displayId);
+		if (controller != null && ACTIVE_SESSIONS.containsKey(controller.getUUID())) {
+			DroneControlSession session = ACTIVE_SESSIONS.get(controller.getUUID());
+			if (session != null
+					&& Objects.equals(session.droneUuid(), root.getUUID())
+					&& controller.level() == droneLevel) {
+				return new DroneLiveFeedState(
+						root.getUUID(),
+						droneLevel.dimension(),
+						root.blockPosition(),
+						true,
+						controller.getX(),
+						controller.getY(),
+						controller.getZ(),
+						controller.getYRot(),
+						controller.getXRot(),
+						controller.getUUID(),
+						hiddenEntities,
+						true,
+						controller.getScoreboardName()
+				);
+			}
+		}
+		return new DroneLiveFeedState(
+				root.getUUID(),
+				droneLevel.dimension(),
+				root.blockPosition(),
+				true,
+				root.getX(),
+				root.getY() - (1.62D - DRONE_HEIGHT * 0.5D),
+				root.getZ(),
+				root.getYRot(),
+				root.getXRot(),
+				null,
+				hiddenEntities,
+				true,
+				null
+		);
 	}
 
 	public static void applyControlledTravel(ServerPlayer player) {
@@ -553,6 +668,7 @@ public final class DroneSystem {
 		ACTIVE_SESSIONS.put(player.getUUID(), session);
 		INPUTS.put(player.getUUID(), DroneInputState.EMPTY);
 		CONTROLLERS_BY_DRONE.put(root.getUUID(), player.getUUID());
+		notifyDroneNetworkChanged(root);
 		updateDroneHud(player, session, true);
 		player.sendSystemMessage(Component.literal("Управление дроном начато. Shift — выйти."));
 		return true;
@@ -582,13 +698,16 @@ public final class DroneSystem {
 		if (root != null) {
 			if (root.isPassenger() && root.getVehicle() == player) {
 				root.stopRiding();
+				syncPassengerAttachment(player);
 			}
 			root.setPos(player.getX(), player.getY(), player.getZ());
 			root.setYRot(player.getYRot());
 			root.setXRot(player.getXRot());
 			root.setDeltaMovement(Vec3.ZERO);
+			root.setOldPosAndRot(root.position(), root.getYRot(), root.getXRot());
 			root.hurtMarked = true;
 			syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
+			notifyDroneNetworkChanged(root);
 		}
 		player.setInvisible(session.wasInvisible());
 		player.setNoGravity(session.wasNoGravity());
@@ -626,6 +745,7 @@ public final class DroneSystem {
 		if (root == null || !root.isAlive() || !(root.level() instanceof ServerLevel level)) {
 			return;
 		}
+		BluetoothLinkSystem.removeDroneEndpoint(level, root.getUUID(), root.blockPosition());
 		UUID controllerId = CONTROLLERS_BY_DRONE.get(root.getUUID());
 		if (controllerId != null && level.getServer() != null) {
 			ServerPlayer controller = level.getServer().getPlayerList().getPlayer(controllerId);
@@ -902,9 +1022,32 @@ public final class DroneSystem {
 		);
 	}
 
+	private static void notifyDroneNetworkChanged(Entity root) {
+		if (root == null || !(root.level() instanceof ServerLevel level)) {
+			return;
+		}
+		MonitorScreenSystem.onDroneNetworkChanged(
+				level.getServer(),
+				BluetoothLinkSystem.droneEndpoint(level.dimension(), root.blockPosition(), root.getUUID())
+		);
+	}
+
 	private static Entity findDroneRoot(MinecraftServer server, net.minecraft.resources.ResourceKey<Level> dimension, UUID droneUuid) {
 		Entity entity = findEntity(server, dimension, droneUuid);
 		return entity != null && entity.getTags().contains(DRONE_ROOT_TAG) ? entity : null;
+	}
+
+	private static Entity findDroneRoot(MinecraftServer server, UUID droneUuid) {
+		if (server == null || droneUuid == null) {
+			return null;
+		}
+		for (ServerLevel level : server.getAllLevels()) {
+			Entity entity = findDroneRoot(server, level.dimension(), droneUuid);
+			if (entity != null) {
+				return entity;
+			}
+		}
+		return null;
 	}
 
 	private static Entity findEntity(MinecraftServer server, net.minecraft.resources.ResourceKey<Level> dimension, UUID uuid) {
@@ -1207,5 +1350,22 @@ public final class DroneSystem {
 		private void setLastHudTick(long lastHudTick) {
 			this.lastHudTick = lastHudTick;
 		}
+	}
+
+	public record DroneLiveFeedState(
+			UUID droneUuid,
+			net.minecraft.resources.ResourceKey<Level> dimension,
+			BlockPos pos,
+			boolean online,
+			double expectedX,
+			double expectedY,
+			double expectedZ,
+			float yaw,
+			float pitch,
+			UUID followEntityUuid,
+			Set<UUID> hiddenEntityUuids,
+			boolean omnidirectionalChunkLoading,
+			String controllerName
+	) {
 	}
 }

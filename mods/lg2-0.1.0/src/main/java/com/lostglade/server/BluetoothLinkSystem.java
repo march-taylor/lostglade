@@ -116,6 +116,13 @@ public final class BluetoothLinkSystem {
 		return Endpoint.screen(dimension, pos, facing, screenId);
 	}
 
+	public static Endpoint droneEndpoint(ResourceKey<Level> dimension, BlockPos pos, UUID droneUuid) {
+		if (dimension == null || pos == null || droneUuid == null) {
+			return null;
+		}
+		return Endpoint.drone(dimension, pos, droneUuid);
+	}
+
 	public static boolean areLinked(Endpoint first, Endpoint second) {
 		if (first == null || second == null) {
 			return false;
@@ -150,6 +157,10 @@ public final class BluetoothLinkSystem {
 			return;
 		}
 		removeEndpoint(level, Endpoint.block(level == null ? null : level.dimension(), type, pos));
+	}
+
+	public static void removeDroneEndpoint(ServerLevel level, UUID droneUuid, BlockPos pos) {
+		removeEndpoint(level, droneEndpoint(level == null ? null : level.dimension(), pos == null ? BlockPos.ZERO : pos, droneUuid));
 	}
 
 	public static void collapseScreenEndpoints(MinecraftServer server, Endpoint rootEndpoint, Iterable<Endpoint> legacyEndpoints) {
@@ -240,6 +251,9 @@ public final class BluetoothLinkSystem {
 			return InteractionResult.PASS;
 		}
 		Endpoint endpoint = MonitorScreenSystem.resolveBluetoothScreenEndpoint(level, entity);
+		if (endpoint == null) {
+			endpoint = DroneSystem.resolveBluetoothDroneEndpoint(level, entity);
+		}
 		if (endpoint == null) {
 			return InteractionResult.PASS;
 		}
@@ -334,6 +348,7 @@ public final class BluetoothLinkSystem {
 			case SPEAKER -> SpeakerSystem.onSpeakerStateChanged(level, endpoint.pos());
 			case MICROPHONE -> MicrophoneSystem.onMicrophoneStateChanged(level, endpoint.pos());
 			case CAMERA -> MonitorScreenSystem.onCameraNetworkChanged(level, endpoint.pos());
+			case DRONE -> MonitorScreenSystem.onDroneNetworkChanged(server, endpoint);
 		}
 	}
 
@@ -357,6 +372,7 @@ public final class BluetoothLinkSystem {
 			case SPEAKER -> "динамик";
 			case MICROPHONE -> "микрофон";
 			case CAMERA -> "камера";
+			case DRONE -> "дрон";
 		};
 	}
 
@@ -369,6 +385,7 @@ public final class BluetoothLinkSystem {
 				case SPEAKER -> "スピーカー";
 				case MICROPHONE -> "マイク";
 				case CAMERA -> "カメラ";
+				case DRONE -> "ドローン";
 			});
 		}
 		if (normalized.startsWith("uk")) {
@@ -377,6 +394,7 @@ public final class BluetoothLinkSystem {
 				case SPEAKER -> "Динамік";
 				case MICROPHONE -> "Мікрофон";
 				case CAMERA -> "Камера";
+				case DRONE -> "Дрон";
 			});
 		}
 		if (normalized.startsWith("rpr")) {
@@ -385,6 +403,7 @@ public final class BluetoothLinkSystem {
 				case SPEAKER -> "Динамикъ";
 				case MICROPHONE -> "Микрофонъ";
 				case CAMERA -> "Камѣра";
+				case DRONE -> "Дронъ";
 			});
 		}
 		if (normalized.startsWith("ru")) {
@@ -393,6 +412,7 @@ public final class BluetoothLinkSystem {
 				case SPEAKER -> "Динамик";
 				case MICROPHONE -> "Микрофон";
 				case CAMERA -> "Камера";
+				case DRONE -> "Дрон";
 			});
 		}
 		return Component.literal(switch (type) {
@@ -400,6 +420,7 @@ public final class BluetoothLinkSystem {
 			case SPEAKER -> "Speaker";
 			case MICROPHONE -> "Microphone";
 			case CAMERA -> "Camera";
+			case DRONE -> "Drone";
 		});
 	}
 
@@ -414,10 +435,11 @@ public final class BluetoothLinkSystem {
 			return false;
 		}
 		return switch (first) {
-			case SCREEN -> second == EndpointType.SPEAKER || second == EndpointType.MICROPHONE || second == EndpointType.CAMERA;
+			case SCREEN -> second == EndpointType.SPEAKER || second == EndpointType.MICROPHONE || second == EndpointType.CAMERA || second == EndpointType.DRONE;
 			case SPEAKER -> second == EndpointType.SCREEN || second == EndpointType.MICROPHONE;
 			case MICROPHONE -> second == EndpointType.SCREEN || second == EndpointType.SPEAKER;
 			case CAMERA -> second == EndpointType.SCREEN;
+			case DRONE -> second == EndpointType.SCREEN;
 		};
 	}
 
@@ -552,7 +574,7 @@ public final class BluetoothLinkSystem {
 			}
 			return;
 		}
-		if (endpoint.equals(VISIBLE_ENDPOINTS.get(playerId))) {
+		if (endpoint.type() != EndpointType.DRONE && endpoint.equals(VISIBLE_ENDPOINTS.get(playerId))) {
 			return;
 		}
 		switch (endpoint.type()) {
@@ -578,6 +600,10 @@ public final class BluetoothLinkSystem {
 								com.mojang.math.Transformation.identity()
 						)
 				));
+				VISIBLE_ENDPOINTS.put(playerId, endpoint);
+			}
+			case DRONE -> {
+				ServerSelectionHighlightSystem.show(player, DroneSystem.resolveBluetoothDroneHighlightBlueprints(level, endpoint));
 				VISIBLE_ENDPOINTS.put(playerId, endpoint);
 			}
 		}
@@ -663,6 +689,9 @@ public final class BluetoothLinkSystem {
 		if (endpoint.screenId() != null && !endpoint.screenId().isBlank()) {
 			object.addProperty("screen_id", endpoint.screenId());
 		}
+		if (endpoint.deviceUuid() != null) {
+			object.addProperty("device_uuid", endpoint.deviceUuid().toString());
+		}
 		return object;
 	}
 
@@ -680,6 +709,14 @@ public final class BluetoothLinkSystem {
 			facing = Direction.byName(object.get("facing").getAsString());
 		}
 		String screenId = object.has("screen_id") ? object.get("screen_id").getAsString() : null;
+		UUID deviceUuid = null;
+		if (object.has("device_uuid")) {
+			try {
+				deviceUuid = UUID.fromString(object.get("device_uuid").getAsString());
+			} catch (IllegalArgumentException ignored) {
+				return null;
+			}
+		}
 		return new Endpoint(
 				ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION, dimensionId),
 				type,
@@ -689,7 +726,8 @@ public final class BluetoothLinkSystem {
 						object.has("z") ? object.get("z").getAsInt() : 0
 				),
 				facing,
-				screenId
+				screenId,
+				deviceUuid
 		);
 	}
 
@@ -697,7 +735,8 @@ public final class BluetoothLinkSystem {
 		SCREEN("screen"),
 		SPEAKER("speaker"),
 		MICROPHONE("microphone"),
-		CAMERA("camera");
+		CAMERA("camera"),
+		DRONE("drone");
 
 		private final String serializedName;
 
@@ -728,13 +767,15 @@ public final class BluetoothLinkSystem {
 		private final BlockPos pos;
 		private final Direction facing;
 		private final String screenId;
+		private final UUID deviceUuid;
 
-		private Endpoint(ResourceKey<Level> dimension, EndpointType type, BlockPos pos, Direction facing, String screenId) {
+		private Endpoint(ResourceKey<Level> dimension, EndpointType type, BlockPos pos, Direction facing, String screenId, UUID deviceUuid) {
 			this.dimension = dimension;
 			this.type = type;
 			this.pos = pos == null ? BlockPos.ZERO : pos.immutable();
 			this.facing = type == EndpointType.SCREEN ? facing : null;
 			this.screenId = type == EndpointType.SCREEN && screenId != null && !screenId.isBlank() ? screenId : null;
+			this.deviceUuid = type == EndpointType.DRONE ? deviceUuid : null;
 		}
 
 		public ResourceKey<Level> dimension() {
@@ -757,11 +798,18 @@ public final class BluetoothLinkSystem {
 			return this.screenId;
 		}
 
+		public UUID deviceUuid() {
+			return this.deviceUuid;
+		}
+
 		private String identityKey() {
 			StringBuilder builder = new StringBuilder();
 			builder.append(this.dimension.identifier()).append('|').append(this.type.name()).append('|');
 			if (this.type == EndpointType.SCREEN && this.screenId != null) {
 				return builder.append("screen:").append(this.screenId).toString();
+			}
+			if (this.type == EndpointType.DRONE && this.deviceUuid != null) {
+				return builder.append("drone:").append(this.deviceUuid).toString();
 			}
 			builder.append(this.pos.getX()).append('|').append(this.pos.getY()).append('|').append(this.pos.getZ());
 			if (this.type == EndpointType.SCREEN) {
@@ -795,14 +843,21 @@ public final class BluetoothLinkSystem {
 			if (dimension == null || type == null || pos == null) {
 				return null;
 			}
-			return new Endpoint(dimension, type, pos, null, null);
+			return new Endpoint(dimension, type, pos, null, null, null);
 		}
 
 		private static Endpoint screen(ResourceKey<Level> dimension, BlockPos pos, Direction facing, String screenId) {
 			if (dimension == null || pos == null || facing == null) {
 				return null;
 			}
-			return new Endpoint(dimension, EndpointType.SCREEN, pos, facing, screenId);
+			return new Endpoint(dimension, EndpointType.SCREEN, pos, facing, screenId, null);
+		}
+
+		private static Endpoint drone(ResourceKey<Level> dimension, BlockPos pos, UUID droneUuid) {
+			if (dimension == null || pos == null || droneUuid == null) {
+				return null;
+			}
+			return new Endpoint(dimension, EndpointType.DRONE, pos, null, null, droneUuid);
 		}
 	}
 }

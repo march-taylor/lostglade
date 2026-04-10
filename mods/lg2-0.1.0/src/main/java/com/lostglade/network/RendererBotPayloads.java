@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 8;
+	public static final int PROTOCOL_VERSION = 9;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
@@ -176,6 +176,7 @@ public final class RendererBotPayloads {
 			double expectedZ,
 			float expectedYaw,
 			float expectedPitch,
+			UUID followEntityUuid,
 			int fullWidth,
 			int fullHeight,
 			int fovDegrees,
@@ -194,6 +195,7 @@ public final class RendererBotPayloads {
 					buffer.readDouble(),
 					buffer.readFloat(),
 					buffer.readFloat(),
+					buffer.readBoolean() ? buffer.readUUID() : null,
 					buffer.readVarInt(),
 					buffer.readVarInt(),
 					buffer.readVarInt(),
@@ -209,6 +211,10 @@ public final class RendererBotPayloads {
 			buffer.writeDouble(this.expectedZ);
 			buffer.writeFloat(this.expectedYaw);
 			buffer.writeFloat(this.expectedPitch);
+			buffer.writeBoolean(this.followEntityUuid != null);
+			if (this.followEntityUuid != null) {
+				buffer.writeUUID(this.followEntityUuid);
+			}
 			buffer.writeVarInt(this.fullWidth);
 			buffer.writeVarInt(this.fullHeight);
 			buffer.writeVarInt(this.fovDegrees);
