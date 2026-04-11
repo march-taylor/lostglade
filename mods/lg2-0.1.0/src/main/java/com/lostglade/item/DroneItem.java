@@ -54,7 +54,19 @@ public final class DroneItem extends SimplePolymerItem {
 		if (isDroneDisplayStack(original) || PolymerResourcePackUtils.hasMainPack(context)) {
 			return;
 		}
-		out.set(DataComponents.CUSTOM_NAME, localizedName(context, this.kamikaze).withStyle(style -> style.withItalic(false)));
+		out.set(DataComponents.CUSTOM_NAME, localizedName(context, this.kamikaze, getKamikazePower(original)).withStyle(style -> style.withItalic(false)));
+	}
+
+	@Override
+	public Component getName(ItemStack stack) {
+		if (!this.kamikaze) {
+			return super.getName(stack);
+		}
+		int power = getKamikazePower(stack);
+		return Component.translatable(
+				"item.lg2.drone_kamikaze.with_power",
+				Component.translatable("item.lg2.drone_kamikaze.power." + power)
+		);
 	}
 
 	@Override
@@ -128,25 +140,33 @@ public final class DroneItem extends SimplePolymerItem {
 		return stack;
 	}
 
-	private static MutableComponent localizedName(PacketContext context, boolean kamikaze) {
+	private static MutableComponent localizedName(PacketContext context, boolean kamikaze, int power) {
 		ServerPlayer player = context.getPlayer();
 		if (player == null) {
-			return Component.literal(kamikaze ? "Kamikaze Drone" : "Drone");
+			return Component.literal(kamikaze ? "Kamikaze Drone " + romanPower(power) : "Drone");
 		}
 		String language = player.clientInformation().language();
 		String normalized = language == null ? "" : language.toLowerCase();
 		if (normalized.startsWith("rpr")) {
-			return Component.literal(kamikaze ? "Дронъ-камикадзе" : "Дронъ");
+			return Component.literal(kamikaze ? "Дронъ-камикадзе " + romanPower(power) : "Дронъ");
 		}
 		if (normalized.startsWith("ru")) {
-			return Component.literal(kamikaze ? "Дрон-камикадзе" : "Дрон");
+			return Component.literal(kamikaze ? "Дрон-камикадзе " + romanPower(power) : "Дрон");
 		}
 		if (normalized.startsWith("uk")) {
-			return Component.literal(kamikaze ? "Дрон-камікадзе" : "Дрон");
+			return Component.literal(kamikaze ? "Дрон-камікадзе " + romanPower(power) : "Дрон");
 		}
 		if (normalized.startsWith("ja")) {
-			return Component.literal(kamikaze ? "カミカゼドローン" : "ドローン");
+			return Component.literal(kamikaze ? "カミカゼドローン " + romanPower(power) : "ドローン");
 		}
-		return Component.literal(kamikaze ? "Kamikaze Drone" : "Drone");
+		return Component.literal(kamikaze ? "Kamikaze Drone " + romanPower(power) : "Drone");
+	}
+
+	private static String romanPower(int power) {
+		return switch (net.minecraft.util.Mth.clamp(power, MIN_KAMIKAZE_POWER, MAX_KAMIKAZE_POWER)) {
+			case 1 -> "I";
+			case 2 -> "II";
+			default -> "III";
+		};
 	}
 }

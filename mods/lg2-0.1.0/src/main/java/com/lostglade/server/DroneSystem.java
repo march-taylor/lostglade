@@ -101,8 +101,12 @@ public final class DroneSystem {
 	private static final String DRONE_CAMERA_OWNER_TAG_PREFIX = "lg2_drone_camera_owner_";
 	private static final String DRONE_DUMMY_TAG = "lg2_drone_dummy";
 	private static final Identifier DRONE_LOOP_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_loop");
+	private static final Identifier DRONE_KAMIKAZE_LOOP_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_kamikaze_loop");
 	private static final Identifier DRONE_BREAK_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "entity.firework_rocket.blast");
 	private static final Holder<SoundEvent> DRONE_LOOP_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(DRONE_LOOP_SOUND_ID));
+	private static final Holder<SoundEvent> DRONE_KAMIKAZE_LOOP_SOUND = Holder.direct(
+			SoundEvent.createVariableRangeEvent(DRONE_KAMIKAZE_LOOP_SOUND_ID)
+	);
 	private static final double DRONE_CRASH_EQUIVALENT_FALL_BLOCKS = 3.25D;
 	private static final double DRONE_CRASH_REFERENCE_ACCELERATION = 0.04D;
 	private static final float DRONE_WIDTH = 0.95F;
@@ -122,6 +126,10 @@ public final class DroneSystem {
 	private static final float DRONE_SOUND_MAX_VOLUME = 1.0F;
 	private static final float DRONE_SOUND_MIN_PITCH = 0.76F;
 	private static final float DRONE_SOUND_MAX_PITCH = 1.18F;
+	private static final float DRONE_KAMIKAZE_LOOP_LEVEL_1_VOLUME_SCALE = 0.42F;
+	private static final float DRONE_KAMIKAZE_LOOP_LEVEL_2_VOLUME_SCALE = 0.76F;
+	private static final float DRONE_KAMIKAZE_LOOP_LEVEL_3_VOLUME_SCALE = 1.15F;
+	private static final float DRONE_KAMIKAZE_LOOP_PITCH_SHIFT = 1.08F;
 	private static final int DRONE_KAMIKAZE_MIN_POWER = 1;
 	private static final int DRONE_KAMIKAZE_MAX_POWER = 3;
 	private static final float DRONE_KAMIKAZE_TNT_SPREAD = 0.26F;
@@ -846,7 +854,28 @@ public final class DroneSystem {
 		}
 
 		NEXT_DRONE_SOUND_TICK.put(root.getUUID(), now + DRONE_LOOP_REPLAY_TICKS);
-		playDroneLoopSound(level, root.position(), computeDroneSoundVolume(power), computeDroneSoundPitch(power));
+		float volume = computeDroneSoundVolume(power);
+		float pitch = computeDroneSoundPitch(power);
+		playDroneLoopSound(level, root.position(), DRONE_LOOP_SOUND, volume, pitch);
+		if (isKamikazeDrone(root)) {
+			int kamikazePower = resolveDroneKamikazePower(root);
+			playDroneLoopSound(
+					level,
+					root.position(),
+					DRONE_KAMIKAZE_LOOP_SOUND,
+					computeKamikazeLoopVolume(volume, kamikazePower),
+					pitch * DRONE_KAMIKAZE_LOOP_PITCH_SHIFT
+			);
+		}
+	}
+
+	private static float computeKamikazeLoopVolume(float baseVolume, int kamikazePower) {
+		float scale = switch (net.minecraft.util.Mth.clamp(kamikazePower, DRONE_KAMIKAZE_MIN_POWER, DRONE_KAMIKAZE_MAX_POWER)) {
+			case 1 -> DRONE_KAMIKAZE_LOOP_LEVEL_1_VOLUME_SCALE;
+			case 2 -> DRONE_KAMIKAZE_LOOP_LEVEL_2_VOLUME_SCALE;
+			default -> DRONE_KAMIKAZE_LOOP_LEVEL_3_VOLUME_SCALE;
+		};
+		return baseVolume * scale;
 	}
 
 	private static float computeDroneSoundPower(Entity root, double forwardDrive, double strafeDrive, boolean controlled) {
@@ -885,8 +914,11 @@ public final class DroneSystem {
 		);
 	}
 
-	private static void playDroneLoopSound(ServerLevel level, Vec3 origin, float volume, float pitch) {
+	private static void playDroneLoopSound(ServerLevel level, Vec3 origin, Holder<SoundEvent> sound, float volume, float pitch) {
 		if (level == null || origin == null || volume <= 0.0F) {
+			return;
+		}
+		if (sound == null) {
 			return;
 		}
 
@@ -896,7 +928,7 @@ public final class DroneSystem {
 				continue;
 			}
 			viewer.connection.send(new ClientboundSoundPacket(
-					DRONE_LOOP_SOUND,
+					sound,
 					SoundSource.PLAYERS,
 					origin.x,
 					origin.y,
