@@ -986,7 +986,11 @@ public final class RendererBotCameraSystem {
 			return false;
 		}
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player == null || !player.isAlive() || !(player.level() instanceof ServerLevel) || !playerHasCameraInHotbar(player)) {
+			if (player == null
+					|| !player.isAlive()
+					|| DroneSystem.isControllingDrone(player)
+					|| !(player.level() instanceof ServerLevel)
+					|| !playerHasCameraInHotbar(player)) {
 				continue;
 			}
 			return true;
@@ -1010,6 +1014,14 @@ public final class RendererBotCameraSystem {
 		return playerUuid == null ? null : "lg2:camera_hotbar_warmup:" + playerUuid;
 	}
 
+	public static void stopCameraHotbarWarmupForPlayer(UUID playerUuid) {
+		String ownerKey = cameraHotbarWarmupOwnerKey(playerUuid);
+		if (ownerKey == null) {
+			return;
+		}
+		stopLiveStream(ownerKey);
+	}
+
 	private static void syncCameraHotbarWarmupStreams(MinecraftServer server) {
 		if (server == null || server.getPlayerList() == null) {
 			return;
@@ -1023,7 +1035,10 @@ public final class RendererBotCameraSystem {
 			if (ownerKey == null) {
 				continue;
 			}
-			if (!player.isAlive() || !(player.level() instanceof ServerLevel playerLevel) || !playerHasCameraInHotbar(player)) {
+			if (!player.isAlive()
+					|| DroneSystem.isControllingDrone(player)
+					|| !(player.level() instanceof ServerLevel playerLevel)
+					|| !playerHasCameraInHotbar(player)) {
 				stopLiveStream(ownerKey);
 				continue;
 			}
@@ -1470,7 +1485,11 @@ public final class RendererBotCameraSystem {
 
 		if (server.getPlayerList() != null) {
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-				if (player == null || !player.isAlive() || !(player.level() instanceof ServerLevel playerLevel) || !playerHasCameraInHotbar(player)) {
+				if (player == null
+						|| !player.isAlive()
+						|| DroneSystem.isControllingDrone(player)
+						|| !(player.level() instanceof ServerLevel playerLevel)
+						|| !playerHasCameraInHotbar(player)) {
 					continue;
 				}
 				accumulateShadowDesiredState(
