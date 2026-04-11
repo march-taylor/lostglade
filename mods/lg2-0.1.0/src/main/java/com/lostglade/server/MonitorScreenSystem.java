@@ -4833,7 +4833,12 @@ public final class MonitorScreenSystem {
 		clearMediaSessionBindings(server, key);
 	}
 
-	private static void resetMediaSessionForPowerOff(MinecraftServer server, ScreenRuntimeKey key, List<PersistedGalleryItem> persistedGallery) {
+	private static void resetMediaSessionForPowerOff(
+			MinecraftServer server,
+			ScreenRuntimeKey key,
+			List<PersistedGalleryItem> persistedGallery,
+			PersistedWallpaperState persistedWallpaper
+	) {
 		if (key == null) {
 			return;
 		}
@@ -4854,8 +4859,20 @@ public final class MonitorScreenSystem {
 					relaySessionId = state.relaySessionId;
 				}
 				clearTransientPlaybackStateLocked(state, true);
-				clearWallpaperLocked(state);
-				state.wallpaperHydrated = true;
+				if (persistedWallpaper != null
+						&& persistedWallpaper.url() != null
+						&& !persistedWallpaper.url().isBlank()) {
+					state.wallpaperUrl = persistedWallpaper.url();
+					state.wallpaperScaleMode = persistedWallpaper.scaleMode() != null ? persistedWallpaper.scaleMode() : MediaScaleMode.FIT;
+					state.wallpaperMedia = null;
+					state.wallpaperFrameIndex = 0;
+					state.wallpaperLoading = false;
+					// Keep wallpaper metadata, but require a fresh media hydrate after power-on.
+					state.wallpaperHydrated = false;
+				} else {
+					clearWallpaperLocked(state);
+					state.wallpaperHydrated = true;
+				}
 				state.mode = ScreenViewMode.HOME;
 				state.overlayMode = MediaOverlayMode.VIEW;
 				state.statusText = "";
@@ -6525,8 +6542,7 @@ public final class MonitorScreenSystem {
 		if (!powered) {
 			viewMode = ScreenViewMode.HOME;
 			launcherPage = 0;
-			persistedWallpaper = null;
-			resetMediaSessionForPowerOff(level.getServer(), component.runtimeKey(), persistedGallery);
+			resetMediaSessionForPowerOff(level.getServer(), component.runtimeKey(), persistedGallery, persistedWallpaper);
 		}
 		int effectiveLauncherPage = viewMode == ScreenViewMode.HOME
 				? clampInt(launcherPage, 0, homeMaxScroll(createUiLayout(component.width(), component.height())))

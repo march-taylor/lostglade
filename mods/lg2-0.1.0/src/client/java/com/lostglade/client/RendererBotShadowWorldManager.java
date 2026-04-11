@@ -177,6 +177,15 @@ public final class RendererBotShadowWorldManager {
 	}
 
 	public static void clear() {
+		Minecraft client = Minecraft.getInstance();
+		if (client != null && !client.isSameThread()) {
+			client.execute(RendererBotShadowWorldManager::clearOnClientThread);
+			return;
+		}
+		clearOnClientThread();
+	}
+
+	private static void clearOnClientThread() {
 		synchronized (LOCK) {
 			for (ShadowLevelSession session : SHADOW_SESSIONS.values()) {
 				closeSession(session);
