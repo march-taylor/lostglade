@@ -4,7 +4,7 @@
                       "enabled":  true,
                       "id":  "mister_cartel_49",
                       "displayName":  "Мистер Картель 49",
-                      "ownerNickname":  "march_taylor",
+                      "ownerNickname":  "pines1",
                       "description":  "Сток: лимит обычных стаков 64 -\u003e 49. Стаки 1 и 16 не изменяются.",
                       "attack":  {
                                      "enabled":  true,
@@ -66,7 +66,7 @@
                       "enabled":  true,
                       "id":  "copper_man",
                       "displayName":  "Медный человек",
-                      "ownerNickname":  "Rajas_YT",
+                      "ownerNickname":  "march_taylor",
                       "description":  "Сток: обычная еда восстанавливает меньше голода, медные слитки можно есть, молнии притягиваются, а медные големы замечают хозяина.",
                       "attack":  {
                                      "enabled":  true,
@@ -120,6 +120,51 @@
                                        "copperIngotFoodPoints":  5,
                                        "copperGolemNoticeRangeBlocks":  8.0
                                    }
+                  },
+                  {
+                      "enabled":  true,
+                      "id":  "no_race",
+                      "displayName":  "Без расы",
+                      "ownerNickname":  "Rajas_YT",
+                      "description":  "",
+                      "attack":  {
+                                     "enabled":  true,
+                                     "abilityId":  "no_race_attack",
+                                     "name":  "",
+                                     "description":  "",
+                                     "priceBitcoins":  300,
+                                     "cooldownSeconds":  -1.0
+                                 },
+                      "defense":  {
+                                      "enabled":  true,
+                                      "abilityId":  "no_race_defense",
+                                      "name":  "",
+                                      "description":  "",
+                                      "priceBitcoins":  600,
+                                      "cooldownSeconds":  -1.0
+                                  },
+                      "uniqueAbility":  {
+                                            "enabled":  true,
+                                            "abilityId":  "no_race_unique",
+                                            "name":  "",
+                                            "description":  "",
+                                            "priceBitcoins":  1000,
+                                            "cooldownSeconds":  -1.0
+                                        },
+                      "shnyaga":  {
+                                      "enabled":  true,
+                                      "abilityId":  "no_race_shnyaga",
+                                      "name":  "",
+                                      "description":  "",
+                                      "priceBitcoins":  1500,
+                                      "cooldownSeconds":  -1.0
+                                  },
+                      "stock":  {
+                                    "enabled":  true,
+                                    "abilityId":  "no_race_stock",
+                                    "name":  "",
+                                    "description":  ""
+                                }
                   }
               ]
 }

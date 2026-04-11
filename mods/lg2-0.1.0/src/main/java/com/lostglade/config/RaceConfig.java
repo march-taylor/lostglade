@@ -18,6 +18,8 @@ public final class RaceConfig {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve(Lg2.MOD_ID + "-races.json");
 	private static final int MAX_PRICE_BITCOINS = 1_000_000;
+	private static final String NO_RACE_ID = "no_race";
+	public static final double INFINITE_COOLDOWN_SECONDS = -1.0D;
 
 	private static ConfigData data = ConfigData.defaults();
 
@@ -99,11 +101,12 @@ public final class RaceConfig {
 		changed |= ensureAbility(race, RaceAbilitySlot.UNIQUE_ABILITY);
 		changed |= ensureAbility(race, RaceAbilitySlot.SHNYAGA);
 		changed |= ensureAbility(race, RaceAbilitySlot.STOCK);
-		changed |= sanitizeAbility(race.attack, RaceAbilitySlot.ATTACK);
-		changed |= sanitizeAbility(race.defense, RaceAbilitySlot.DEFENSE);
-		changed |= sanitizeAbility(race.uniqueAbility, RaceAbilitySlot.UNIQUE_ABILITY);
-		changed |= sanitizeAbility(race.shnyaga, RaceAbilitySlot.SHNYAGA);
-		changed |= sanitizeAbility(race.stock, RaceAbilitySlot.STOCK);
+		boolean preserveBlankAbilityNames = NO_RACE_ID.equals(race.id == null ? "" : race.id.trim());
+		changed |= sanitizeAbility(race.attack, RaceAbilitySlot.ATTACK, preserveBlankAbilityNames);
+		changed |= sanitizeAbility(race.defense, RaceAbilitySlot.DEFENSE, preserveBlankAbilityNames);
+		changed |= sanitizeAbility(race.uniqueAbility, RaceAbilitySlot.UNIQUE_ABILITY, preserveBlankAbilityNames);
+		changed |= sanitizeAbility(race.shnyaga, RaceAbilitySlot.SHNYAGA, preserveBlankAbilityNames);
+		changed |= sanitizeAbility(race.stock, RaceAbilitySlot.STOCK, preserveBlankAbilityNames);
 		return changed;
 	}
 
@@ -130,13 +133,13 @@ public final class RaceConfig {
 		return true;
 	}
 
-	private static boolean sanitizeAbility(RaceAbilityConfig ability, RaceAbilitySlot slot) {
+	private static boolean sanitizeAbility(RaceAbilityConfig ability, RaceAbilitySlot slot, boolean preserveBlankName) {
 		boolean changed = false;
 		changed |= normalizeString(ability.abilityId, slot.defaultAbilityId, value -> ability.abilityId = value);
-		changed |= normalizeString(ability.name, slot.defaultDisplayName, value -> ability.name = value);
+		changed |= normalizeString(ability.name, preserveBlankName ? "" : slot.defaultDisplayName, value -> ability.name = value);
 		changed |= normalizeString(ability.description, "", value -> ability.description = value);
 		changed |= normalizePrice(ability.priceBitcoins, value -> ability.priceBitcoins = value);
-		changed |= normalizeNonNegative(ability.cooldownSeconds, value -> ability.cooldownSeconds = value);
+		changed |= normalizeCooldownSeconds(ability.cooldownSeconds, value -> ability.cooldownSeconds = value);
 		changed |= normalizeNonNegative(ability.activationRangeBlocks, value -> ability.activationRangeBlocks = value);
 		changed |= normalizeNonNegative(ability.durationSeconds, value -> ability.durationSeconds = value);
 		changed |= normalizeNonNegative(ability.innerMinDistanceBlocks, value -> ability.innerMinDistanceBlocks = value);
@@ -176,6 +179,22 @@ public final class RaceConfig {
 			changed = true;
 		}
 		return changed;
+	}
+
+	private static boolean normalizeCooldownSeconds(double value, java.util.function.DoubleConsumer setter) {
+		double normalized;
+		if (Double.isNaN(value)) {
+			normalized = 0.0D;
+		} else if (Double.compare(value, INFINITE_COOLDOWN_SECONDS) == 0) {
+			normalized = INFINITE_COOLDOWN_SECONDS;
+		} else {
+			normalized = Math.max(0.0D, value);
+		}
+		if (Double.compare(value, normalized) == 0) {
+			return false;
+		}
+		setter.accept(normalized);
+		return true;
 	}
 
 	private static boolean normalizeNonNegative(double value, java.util.function.DoubleConsumer setter) {

@@ -74,6 +74,7 @@ import java.util.UUID;
 
 public final class ServerUpgradeUiSystem {
 	private static final String STATE_FILE_NAME = "lg2-upgrade-state.json";
+	private static final String NO_RACE_ID = "no_race";
 	private static final String TITLE_OVERLAY_SHIFT = "\ue905";
 	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
 	private static final int TITLE_OVERLAY_TARGET_ADVANCE = 168;
@@ -468,15 +469,16 @@ public final class ServerUpgradeUiSystem {
 		}
 
 		RaceConfig.PlayerRaceConfig race = raceOptional.get();
-		putRaceButton(buttons, RACE_ATTACK_BUTTON_ID, race.attack, RaceAbilitySlot.ATTACK);
-		putRaceButton(buttons, RACE_DEFENSE_BUTTON_ID, race.defense, RaceAbilitySlot.DEFENSE);
-		putRaceButton(buttons, RACE_ABILITY_BUTTON_ID, race.uniqueAbility, RaceAbilitySlot.UNIQUE_ABILITY);
-		putRaceButton(buttons, RACE_SHNYAGA_BUTTON_ID, race.shnyaga, RaceAbilitySlot.SHNYAGA);
+		putRaceButton(buttons, RACE_ATTACK_BUTTON_ID, race, race.attack, RaceAbilitySlot.ATTACK);
+		putRaceButton(buttons, RACE_DEFENSE_BUTTON_ID, race, race.defense, RaceAbilitySlot.DEFENSE);
+		putRaceButton(buttons, RACE_ABILITY_BUTTON_ID, race, race.uniqueAbility, RaceAbilitySlot.UNIQUE_ABILITY);
+		putRaceButton(buttons, RACE_SHNYAGA_BUTTON_ID, race, race.shnyaga, RaceAbilitySlot.SHNYAGA);
 	}
 
 	private static void putRaceButton(
 			Map<String, UpgradeUiConfig.ButtonConfig> buttons,
 			String buttonId,
+			RaceConfig.PlayerRaceConfig race,
 			RaceAbilityConfig ability,
 			RaceAbilitySlot slot
 	) {
@@ -501,8 +503,12 @@ public final class ServerUpgradeUiSystem {
 		button.icon = raceButtonIcon(slot);
 		button.lockedIcon = copyIcon(UpgradeUiConfig.IconConfig.defaultLocked());
 		button.maxedIcon = raceButtonMaxedIcon(slot);
-		button.name = singleValueText(nonBlank(ability.name, defaultRaceButtonName(slot)));
-		button.lore = singleValueLines(List.of(nonBlank(ability.description, nonBlank(ability.name, defaultRaceButtonName(slot)))));
+		boolean preserveBlankText = preserveBlankRaceAbilityText(race);
+		String fallbackName = preserveBlankText ? "" : defaultRaceButtonName(slot);
+		String buttonName = nonBlank(ability.name, fallbackName);
+		String loreLine = nonBlank(ability.description, buttonName);
+		button.name = singleValueText(buttonName);
+		button.lore = loreLine.isEmpty() ? singleValueLines(List.of()) : singleValueLines(List.of(loreLine));
 		button.requirements = new ArrayList<>();
 		button.requirementGroups = new ArrayList<>();
 		button.closeAfterClick = false;
@@ -2224,6 +2230,10 @@ public final class ServerUpgradeUiSystem {
 	private static String nonBlank(String value, String fallback) {
 		String normalized = safeString(value).trim();
 		return normalized.isEmpty() ? fallback : normalized;
+	}
+
+	private static boolean preserveBlankRaceAbilityText(RaceConfig.PlayerRaceConfig race) {
+		return race != null && NO_RACE_ID.equals(safeString(race.id).trim());
 	}
 
 	private enum ButtonState {

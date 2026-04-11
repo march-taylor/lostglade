@@ -142,6 +142,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -173,6 +174,7 @@ public final class ServerRaceSystem {
 	private static final int EXIT_ACTION_WIDTH = 200;
 	private static final String MISTER_CARTEL_49_RACE_ID = "mister_cartel_49";
 	private static final String COPPER_MAN_RACE_ID = "copper_man";
+	private static final String NO_RACE_ID = "no_race";
 	private static final String TITLE_OVERLAY_SHIFT = "\ue905";
 	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
 	private static final int TITLE_OVERLAY_TARGET_ADVANCE = 168;
@@ -306,6 +308,8 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, Long> CARTEL_DEFENSE_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelDefenseSession> CARTEL_DEFENSE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, Long> CARTEL_UNIQUE_COOLDOWNS = new LinkedHashMap<>();
+	private static final Map<UUID, EnumMap<RaceAbilitySlot, Long>> GENERIC_ABILITY_COOLDOWN_END_TICKS = new LinkedHashMap<>();
+	private static final Map<UUID, EnumSet<RaceAbilitySlot>> GENERIC_ABILITY_INFINITE_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelDisguiseSession> CARTEL_DISGUISE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelManualBookRestore> CARTEL_MANUAL_BOOK_RESTORES = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> COPPER_GOLEM_FOLLOWERS = new LinkedHashMap<>();
@@ -475,6 +479,8 @@ public final class ServerRaceSystem {
 			CARTEL_DEFENSE_COOLDOWNS.clear();
 			CARTEL_DEFENSE_SESSIONS.clear();
 			CARTEL_UNIQUE_COOLDOWNS.clear();
+			GENERIC_ABILITY_COOLDOWN_END_TICKS.clear();
+			GENERIC_ABILITY_INFINITE_COOLDOWNS.clear();
 			CARTEL_DISGUISE_SESSIONS.clear();
 			COPPER_MAN_DEFENSE_COOLDOWNS.clear();
 			COPPER_MAN_DEFENSE_VISUAL_SESSIONS.clear();
@@ -640,31 +646,37 @@ public final class ServerRaceSystem {
 			return 0;
 		}
 
-		if (slot == RaceAbilitySlot.ATTACK && MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id))) {
+		String raceId = sanitizePath(race.id);
+		if (!isCustomHandledAbility(raceId, slot) && displayGenericAbilityCooldown(player, slot)) {
+			return 0;
+		}
+
+		if (slot == RaceAbilitySlot.ATTACK && MISTER_CARTEL_49_RACE_ID.equals(raceId)) {
 			return useMrCartelAttack(player, race, ability);
 		}
-		if (slot == RaceAbilitySlot.DEFENSE && MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id))) {
+		if (slot == RaceAbilitySlot.DEFENSE && MISTER_CARTEL_49_RACE_ID.equals(raceId)) {
 			return useMrCartelDefense(player, race, ability);
 		}
-		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id))) {
+		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && MISTER_CARTEL_49_RACE_ID.equals(raceId)) {
 			return useMrCartelUniqueAbility(player, race, ability);
 		}
-		if (slot == RaceAbilitySlot.SHNYAGA && MISTER_CARTEL_49_RACE_ID.equals(sanitizePath(race.id))) {
+		if (slot == RaceAbilitySlot.SHNYAGA && MISTER_CARTEL_49_RACE_ID.equals(raceId)) {
 			return useMrCartelShnyaga(player, race, ability);
 		}
-		if (slot == RaceAbilitySlot.ATTACK && COPPER_MAN_RACE_ID.equals(sanitizePath(race.id))) {
+		if (slot == RaceAbilitySlot.ATTACK && COPPER_MAN_RACE_ID.equals(raceId)) {
 			return CopperManRepulsorSystem.toggleMode(player);
 		}
-		if (slot == RaceAbilitySlot.DEFENSE && COPPER_MAN_RACE_ID.equals(sanitizePath(race.id))) {
+		if (slot == RaceAbilitySlot.DEFENSE && COPPER_MAN_RACE_ID.equals(raceId)) {
 			return useCopperManDefense(player, race, ability);
 		}
-		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && COPPER_MAN_RACE_ID.equals(sanitizePath(race.id))) {
+		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && COPPER_MAN_RACE_ID.equals(raceId)) {
 			return useCopperManJetpack(player, race, ability);
 		}
-		if (slot == RaceAbilitySlot.SHNYAGA && COPPER_MAN_RACE_ID.equals(sanitizePath(race.id))) {
+		if (slot == RaceAbilitySlot.SHNYAGA && COPPER_MAN_RACE_ID.equals(raceId)) {
 			return CopperManGogglesSystem.toggleMode(player);
 		}
 
+		startGenericAbilityCooldown(player, slot, ability);
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
 	}
@@ -716,6 +728,98 @@ public final class ServerRaceSystem {
 			return false;
 		}
 		return ServerUpgradeUiSystem.hasUpgrade(player, upgradeId);
+	}
+
+	private static boolean isCustomHandledAbility(String raceId, RaceAbilitySlot slot) {
+		if (raceId == null || slot == null) {
+			return false;
+		}
+		if (MISTER_CARTEL_49_RACE_ID.equals(raceId)) {
+			return slot == RaceAbilitySlot.ATTACK
+					|| slot == RaceAbilitySlot.DEFENSE
+					|| slot == RaceAbilitySlot.UNIQUE_ABILITY
+					|| slot == RaceAbilitySlot.SHNYAGA;
+		}
+		if (COPPER_MAN_RACE_ID.equals(raceId)) {
+			return slot == RaceAbilitySlot.ATTACK
+					|| slot == RaceAbilitySlot.DEFENSE
+					|| slot == RaceAbilitySlot.UNIQUE_ABILITY
+					|| slot == RaceAbilitySlot.SHNYAGA;
+		}
+		return false;
+	}
+
+	private static boolean displayGenericAbilityCooldown(ServerPlayer player, RaceAbilitySlot slot) {
+		if (player == null || slot == null || slot == RaceAbilitySlot.STOCK) {
+			return false;
+		}
+
+		UUID playerId = player.getUUID();
+		EnumSet<RaceAbilitySlot> infiniteCooldowns = GENERIC_ABILITY_INFINITE_COOLDOWNS.get(playerId);
+		if (infiniteCooldowns != null && infiniteCooldowns.contains(slot)) {
+			return displayInfiniteCooldown(player);
+		}
+
+		EnumMap<RaceAbilitySlot, Long> cooldownEndTicks = GENERIC_ABILITY_COOLDOWN_END_TICKS.get(playerId);
+		if (cooldownEndTicks == null) {
+			return false;
+		}
+
+		Long cooldownEndTick = cooldownEndTicks.get(slot);
+		if (cooldownEndTick == null) {
+			return false;
+		}
+
+		long nowTick = player.level().getGameTime();
+		long remainingTicks = cooldownEndTick - nowTick;
+		if (remainingTicks <= 0L) {
+			cooldownEndTicks.remove(slot);
+			if (cooldownEndTicks.isEmpty()) {
+				GENERIC_ABILITY_COOLDOWN_END_TICKS.remove(playerId);
+			}
+			return false;
+		}
+		return displayRemainingCooldown(player, remainingTicks);
+	}
+
+	private static void startGenericAbilityCooldown(ServerPlayer player, RaceAbilitySlot slot, RaceAbilityConfig ability) {
+		if (player == null || slot == null || slot == RaceAbilitySlot.STOCK || ability == null) {
+			return;
+		}
+
+		UUID playerId = player.getUUID();
+		if (isInfiniteCooldown(ability.cooldownSeconds)) {
+			GENERIC_ABILITY_COOLDOWN_END_TICKS.computeIfPresent(playerId, (id, cooldowns) -> {
+				cooldowns.remove(slot);
+				return cooldowns.isEmpty() ? null : cooldowns;
+			});
+			GENERIC_ABILITY_INFINITE_COOLDOWNS
+					.computeIfAbsent(playerId, id -> EnumSet.noneOf(RaceAbilitySlot.class))
+					.add(slot);
+			return;
+		}
+
+		EnumSet<RaceAbilitySlot> infiniteCooldowns = GENERIC_ABILITY_INFINITE_COOLDOWNS.get(playerId);
+		if (infiniteCooldowns != null) {
+			infiniteCooldowns.remove(slot);
+			if (infiniteCooldowns.isEmpty()) {
+				GENERIC_ABILITY_INFINITE_COOLDOWNS.remove(playerId);
+			}
+		}
+
+		long cooldownTicks = asTicks(ability.cooldownSeconds);
+		if (cooldownTicks <= 0L) {
+			GENERIC_ABILITY_COOLDOWN_END_TICKS.computeIfPresent(playerId, (id, cooldowns) -> {
+				cooldowns.remove(slot);
+				return cooldowns.isEmpty() ? null : cooldowns;
+			});
+			return;
+		}
+
+		long cooldownEndTick = player.level().getGameTime() + cooldownTicks;
+		GENERIC_ABILITY_COOLDOWN_END_TICKS
+				.computeIfAbsent(playerId, id -> new EnumMap<>(RaceAbilitySlot.class))
+				.put(slot, cooldownEndTick);
 	}
 
 	public static boolean isCopperManStockEnabled(ServerPlayer player) {
@@ -2013,10 +2117,10 @@ public final class ServerRaceSystem {
 		root.put("columns", DEFAULT_DIALOG_COLUMNS);
 
 		List<Map<String, Object>> actions = new ArrayList<>();
-		appendAbilityAction(actions, race.attack, "/race use attack");
-		appendAbilityAction(actions, race.defense, "/race use defense");
-		appendAbilityAction(actions, race.uniqueAbility, "/race use ability");
-		appendAbilityAction(actions, race.shnyaga, "/race use shnyaga");
+		appendAbilityAction(actions, race, race.attack, "/race use attack");
+		appendAbilityAction(actions, race, race.defense, "/race use defense");
+		appendAbilityAction(actions, race, race.uniqueAbility, "/race use ability");
+		appendAbilityAction(actions, race, race.shnyaga, "/race use shnyaga");
 
 		if (actions.isEmpty()) {
 			Map<String, Object> action = new LinkedHashMap<>();
@@ -2037,14 +2141,18 @@ public final class ServerRaceSystem {
 		return GSON.toJson(root);
 	}
 
-	private static void appendAbilityAction(List<Map<String, Object>> actions, RaceAbilityConfig ability, String command) {
+	private static void appendAbilityAction(List<Map<String, Object>> actions, PlayerRaceConfig race, RaceAbilityConfig ability, String command) {
 		if (ability == null || !ability.enabled) {
 			return;
 		}
 
+		String fallbackName = preserveBlankAbilityText(race) ? "" : "Ability";
+		String label = nonBlank(ability.name, fallbackName);
+		String tooltip = nonBlank(ability.description, label);
+
 		Map<String, Object> action = new LinkedHashMap<>();
-		action.put("label", textComponent(nonBlank(ability.name, "Ability")));
-		action.put("tooltip", textComponent(nonBlank(ability.description, nonBlank(ability.name, "Ability"))));
+		action.put("label", textComponent(label));
+		action.put("tooltip", textComponent(tooltip));
 		action.put("width", DEFAULT_ACTION_WIDTH);
 		action.put("action", runCommandAction(command));
 		actions.add(action);
@@ -2075,6 +2183,10 @@ public final class ServerRaceSystem {
 		}
 		String normalized = value.trim();
 		return normalized.isEmpty() ? fallback : normalized;
+	}
+
+	private static boolean preserveBlankAbilityText(PlayerRaceConfig race) {
+		return race != null && NO_RACE_ID.equals(sanitizePath(race.id));
 	}
 
 	private static String buildDialogPath(PlayerRaceConfig race, Set<String> usedPaths) {
@@ -4275,6 +4387,14 @@ public final class ServerRaceSystem {
 		return true;
 	}
 
+	private static boolean displayInfiniteCooldown(ServerPlayer player) {
+		if (player == null) {
+			return false;
+		}
+		player.displayClientMessage(Component.literal("\u221E").withStyle(ChatFormatting.RED), true);
+		return true;
+	}
+
 	private static void startOnlineCooldown(Map<UUID, Long> cooldowns, UUID playerId, long cooldownTicks) {
 		if (cooldowns == null || playerId == null) {
 			return;
@@ -4317,6 +4437,10 @@ public final class ServerRaceSystem {
 			return defaultValue;
 		}
 		return value;
+	}
+
+	private static boolean isInfiniteCooldown(double value) {
+		return Double.compare(value, RaceConfig.INFINITE_COOLDOWN_SECONDS) == 0;
 	}
 
 	private static void enforceMrCartel49StackLimit(ServerPlayer player) {
