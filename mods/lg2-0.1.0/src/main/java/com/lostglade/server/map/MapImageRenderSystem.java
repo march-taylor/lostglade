@@ -4,11 +4,14 @@ import com.lostglade.Lg2;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.item.PhotoPrintData;
 import com.lostglade.server.CameraCaptureSystem;
+import com.lostglade.server.CameraMediaCache;
 import com.lostglade.server.ServerMechanicsGateSystem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.Holder;
+import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -30,12 +33,15 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 
+import java.awt.image.BufferedImage;
 import java.util.ArrayDeque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -53,7 +59,10 @@ public final class MapImageRenderSystem {
 	private static final int FRAME_PIXELS_APPLIED_PER_TICK = 4096;
 	private static final int MAX_PIXEL_FAILURES = 64;
 	private static final long MAX_PREPARE_NANOS_PER_TICK = 1_000_000L;
+	private static final long PHOTO_PREVIEW_REPRIME_GRACE_TICKS = 40L;
+	private static final long PHOTO_PREVIEW_REPRIME_INTERVAL_TICKS = 5L;
 	private static final Map<UUID, RenderJob> PLAYER_JOBS = new HashMap<>();
+	private static final Map<UUID, Long> PENDING_PREVIEW_REPRIME_DEADLINES = new HashMap<>();
 	private static final Queue<UUID> QUEUE = new ArrayDeque<>();
 	private static UUID activePlayerId;
 	private static ExecutorService executor;
@@ -63,8 +72,23 @@ public final class MapImageRenderSystem {
 
 	public static void register() {
 		ensureExecutor();
+		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
+				server.execute(() -> schedulePhotoPreviewReprime((ServerPlayer) handler.player, server))
+		);
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
+				server.execute(() -> clearPhotoPreviewReprime(handler.player.getUUID()))
+		);
+		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> {
+			MinecraftServer server = newPlayer.level().getServer();
+			if (server != null) {
+				server.execute(() -> schedulePhotoPreviewReprime(newPlayer, server));
+			}
+		});
 		ServerTickEvents.END_SERVER_TICK.register(MapImageRenderSystem::tick);
-		ServerLifecycleEvents.SERVER_STOPPING.register(server -> shutdownExecutor());
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			PENDING_PREVIEW_REPRIME_DEADLINES.clear();
+			shutdownExecutor();
+		});
 	}
 
 	public static boolean hasActiveRender(UUID playerId) {
@@ -126,6 +150,7 @@ public final class MapImageRenderSystem {
 
 	private static void tick(MinecraftServer server) {
 		ensureExecutor();
+		tickQueuedPhotoPreviewReprimes(server);
 		if (PLAYER_JOBS.isEmpty()) {
 			activePlayerId = null;
 			return;
@@ -465,6 +490,62 @@ public final class MapImageRenderSystem {
 		}
 	}
 
+	private static void schedulePhotoPreviewReprime(ServerPlayer player, MinecraftServer server) {
+		if (player == null || server == null) {
+			return;
+		}
+		PENDING_PREVIEW_REPRIME_DEADLINES.put(player.getUUID(), server.getTickCount() + PHOTO_PREVIEW_REPRIME_GRACE_TICKS);
+		primePlayerPhotoPreviewMaps(player);
+	}
+
+	private static void clearPhotoPreviewReprime(UUID playerId) {
+		if (playerId != null) {
+			PENDING_PREVIEW_REPRIME_DEADLINES.remove(playerId);
+		}
+	}
+
+	private static void tickQueuedPhotoPreviewReprimes(MinecraftServer server) {
+		if (server == null || PENDING_PREVIEW_REPRIME_DEADLINES.isEmpty()) {
+			return;
+		}
+		boolean shouldPrimeThisTick = (server.getTickCount() % PHOTO_PREVIEW_REPRIME_INTERVAL_TICKS) == 0L;
+		Iterator<Map.Entry<UUID, Long>> iterator = PENDING_PREVIEW_REPRIME_DEADLINES.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, Long> entry = iterator.next();
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			if (player == null || server.getTickCount() > entry.getValue()) {
+				iterator.remove();
+				continue;
+			}
+			if (shouldPrimeThisTick) {
+				primePlayerPhotoPreviewMaps(player);
+			}
+		}
+	}
+
+	private static void primePlayerPhotoPreviewMaps(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		Set<Integer> primedPreviewMapIds = new HashSet<>();
+		primePhotoPreviewMap(player, player.getMainHandItem(), primedPreviewMapIds);
+		primePhotoPreviewMap(player, player.getOffhandItem(), primedPreviewMapIds);
+		for (int slot = 0; slot < player.getInventory().getContainerSize(); slot++) {
+			primePhotoPreviewMap(player, player.getInventory().getItem(slot), primedPreviewMapIds);
+		}
+	}
+
+	private static void primePhotoPreviewMap(ServerPlayer player, ItemStack stack, Set<Integer> primedPreviewMapIds) {
+		if (player == null || stack == null || primedPreviewMapIds == null) {
+			return;
+		}
+		PhotoPrintData photoData = PhotoPrintData.readPhotoItem(stack);
+		if (photoData == null || photoData.previewMapId() < 0 || !primedPreviewMapIds.add(photoData.previewMapId())) {
+			return;
+		}
+		sendPhotoPreviewMap(player, photoData);
+	}
+
 	public static void sendPhotoPreviewMap(ServerPlayer player, ItemStack stack) {
 		if (player == null || stack == null || stack.isEmpty()) {
 			return;
@@ -644,14 +725,84 @@ public final class MapImageRenderSystem {
 		ServerLevel mapLevel = photoMapLevel(player.level().getServer(), fallbackLevel);
 		MapId previewMapId = new MapId(photoData.previewMapId());
 		MapItemSavedData previewMapData = mapLevel.getMapData(previewMapId);
+		if (!hasFullMapColors(previewMapData)) {
+			byte[] rebuiltPreview = rebuildPhotoPreviewPixels(photoData);
+			if (rebuiltPreview != null) {
+				sendPhotoPreviewMap(player, previewMapId, rebuiltPreview);
+			}
+			return;
+		}
 		sendPhotoPreviewMap(player, previewMapId, previewMapData);
 	}
 
 	private static void sendPhotoPreviewMap(ServerPlayer player, MapId previewMapId, MapItemSavedData previewMapData) {
-		if (player == null || previewMapId == null || previewMapData == null || previewMapData.colors == null || previewMapData.colors.length < MAP_SIZE * MAP_SIZE) {
+		if (player == null || previewMapId == null || !hasFullMapColors(previewMapData)) {
 			return;
 		}
 		sendPhotoMap(player, previewMapId, previewMapData);
+	}
+
+	private static void sendPhotoPreviewMap(ServerPlayer player, MapId previewMapId, byte[] previewPixels) {
+		if (player == null || previewMapId == null || previewPixels == null || previewPixels.length < MAP_SIZE * MAP_SIZE) {
+			return;
+		}
+		player.connection.send(new ClientboundMapItemDataPacket(
+				previewMapId,
+				(byte) 0,
+				true,
+				List.of(),
+				new MapItemSavedData.MapPatch(0, 0, MAP_SIZE, MAP_SIZE, previewPixels.clone())
+		));
+	}
+
+	private static boolean hasFullMapColors(MapItemSavedData mapData) {
+		return mapData != null && mapData.colors != null && mapData.colors.length >= MAP_SIZE * MAP_SIZE;
+	}
+
+	private static byte[] rebuildPhotoPreviewPixels(PhotoPrintData photoData) {
+		if (photoData == null || !photoData.isPhoto() || photoData.sourceKey().isBlank()) {
+			return null;
+		}
+		try {
+			return quantizePreviewImage(CameraMediaCache.loadPhotoSource(photoData.sourceKey()));
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to rebuild photo preview for {}", photoData.sourceKey(), exception);
+			return null;
+		}
+	}
+
+	private static byte[] quantizePreviewImage(BufferedImage image) {
+		if (image == null || image.getWidth() <= 0 || image.getHeight() <= 0) {
+			return null;
+		}
+		int sourceWidth = image.getWidth();
+		int sourceHeight = image.getHeight();
+		double sourceAspect = sourceWidth / (double) Math.max(1, sourceHeight);
+		double targetAspect = 1.0D;
+		double cropX = 0.0D;
+		double cropY = 0.0D;
+		double cropWidth = sourceWidth;
+		double cropHeight = sourceHeight;
+		if (sourceAspect > targetAspect) {
+			cropWidth = sourceHeight * targetAspect;
+			cropX = (sourceWidth - cropWidth) * 0.5D;
+		} else if (sourceAspect < targetAspect) {
+			cropHeight = sourceWidth / targetAspect;
+			cropY = (sourceHeight - cropHeight) * 0.5D;
+		}
+
+		byte[] output = new byte[MAP_SIZE * MAP_SIZE];
+		for (int y = 0; y < MAP_SIZE; y++) {
+			double sampleY = cropY + ((y + 0.5D) / MAP_SIZE) * cropHeight;
+			int sourceY = Math.clamp((int) Math.floor(sampleY), 0, sourceHeight - 1);
+			for (int x = 0; x < MAP_SIZE; x++) {
+				double sampleX = cropX + ((x + 0.5D) / MAP_SIZE) * cropWidth;
+				int sourceX = Math.clamp((int) Math.floor(sampleX), 0, sourceWidth - 1);
+				int rgb24 = image.getRGB(sourceX, sourceY) & 0xFFFFFF;
+				output[y * MAP_SIZE + x] = MapPaletteQuantizer.quantizeDithered(rgb24, x, y);
+			}
+		}
+		return output;
 	}
 
 	private static void sendPhotoMap(ServerPlayer player, MapId mapId, MapItemSavedData mapData) {
