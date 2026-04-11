@@ -69,6 +69,7 @@ import net.minecraft.world.entity.ai.navigation.PathNavigation;
 import net.minecraft.world.entity.item.PrimedTnt;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.level.GameType;
@@ -130,9 +131,14 @@ public final class DroneSystem {
 	private static final float DRONE_KAMIKAZE_LOOP_LEVEL_2_VOLUME_SCALE = 0.76F;
 	private static final float DRONE_KAMIKAZE_LOOP_LEVEL_3_VOLUME_SCALE = 1.15F;
 	private static final float DRONE_KAMIKAZE_LOOP_PITCH_SHIFT = 1.08F;
+	private static final int DRONE_KAMIKAZE_NO_POWER = 0;
 	private static final int DRONE_KAMIKAZE_MIN_POWER = 1;
 	private static final int DRONE_KAMIKAZE_MAX_POWER = 3;
 	private static final float DRONE_KAMIKAZE_TNT_SPREAD = 0.26F;
+	private static final float DRONE_VANILLA_WOBBLE_ROTATION_SCALE = 0.015625F;
+	private static final float DRONE_VANILLA_WOBBLE_NEGATIVE_SCALE = 0.125F;
+	private static final float DRONE_VANILLA_WOBBLE_PROGRESS_TO_RADIANS = (float) (Math.PI * 2.0D);
+	private static final float DRONE_VANILLA_WOBBLE_NEGATIVE_PROGRESS_TO_RADIANS = (float) (Math.PI * 3.0D);
 	private static final double UNCONTROLLED_GRAVITY = 0.04D;
 	private static final double UNCONTROLLED_AIR_DRAG = 0.985D;
 	private static final float UNCONTROLLED_ROTATION_LERP = 0.35F;
@@ -159,6 +165,7 @@ public final class DroneSystem {
 	private static final Map<UUID, UUID> CAMERA_ANCHORS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UncontrolledDroneState> UNCONTROLLED_DRONES = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
+	private static final Map<UUID, DroneDisplayWobbleState> DISPLAY_WOBBLE_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, Long> CAMERA_SUPPRESSED_UNTIL_TICK = new HashMap<>();
 	private static final Set<UUID> FORCED_CONTROLLED_PLAYERS = new HashSet<>();
 	private static final Map<UUID, ControlledInventorySnapshot> CONTROLLED_INVENTORY_SNAPSHOTS = new HashMap<>();
@@ -178,6 +185,10 @@ public final class DroneSystem {
 			}
 			if (serverPlayer.getItemInHand(hand).is(ModItems.BLUETOOTH_ADAPTER)) {
 				return InteractionResult.PASS;
+			}
+			InteractionResult armResult = tryArmDroneWithTnt(serverPlayer, root, serverPlayer.getItemInHand(hand));
+			if (armResult != InteractionResult.PASS) {
+				return armResult;
 			}
 			String requiredUpgrade = resolveRequiredUpgradeForDroneRoot(root);
 			if (requiredUpgrade != null && !ServerUpgradeUiSystem.hasUpgrade(serverPlayer, requiredUpgrade)) {
@@ -220,6 +231,7 @@ public final class DroneSystem {
 			FORCED_CONTROLLED_PLAYERS.clear();
 			CONTROLLED_INVENTORY_SNAPSHOTS.clear();
 			DUMMY_OWNER_BY_UUID.clear();
+			DISPLAY_WOBBLE_BY_DRONE.clear();
 		});
 	}
 
@@ -271,7 +283,7 @@ public final class DroneSystem {
 				spawnPos,
 				yRot,
 				0.0F,
-				kamikazeDrone ? ModItems.DRONE_KAMIKAZE : ModItems.DRONE,
+				ModItems.DRONE,
 				kamikazePower
 		);
 		Interaction cameraAnchor = createDroneCameraAnchor(serverLevel, droneCameraOrigin(spawnPos), yRot, 0.0F);
@@ -965,6 +977,7 @@ public final class DroneSystem {
 		}
 		UNCONTROLLED_DRONES.remove(root.getUUID());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
+		DISPLAY_WOBBLE_BY_DRONE.remove(root.getUUID());
 	}
 
 	private static ReturnLocation resolveReturnLocation(MinecraftServer server, DroneControlSession session, Entity dummy) {
@@ -1434,6 +1447,7 @@ public final class DroneSystem {
 		playDroneBreakEffects(level, droneCameraOrigin(root), root.getDeltaMovement());
 		UNCONTROLLED_DRONES.remove(root.getUUID());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
+		DISPLAY_WOBBLE_BY_DRONE.remove(root.getUUID());
 		BluetoothLinkSystem.removeDroneEndpoint(level, root.getUUID(), root.blockPosition());
 		UUID controllerId = CONTROLLERS_BY_DRONE.get(root.getUUID());
 		if (controllerId != null && level.getServer() != null) {
@@ -1491,13 +1505,43 @@ public final class DroneSystem {
 		if (stack == null || stack.isEmpty()) {
 			return null;
 		}
-		if (stack.getItem() == ModItems.DRONE_KAMIKAZE) {
-			return IT_DRONE_KAMIKAZE;
-		}
-		if (stack.getItem() == ModItems.DRONE) {
+		if (stack.getItem() == ModItems.DRONE || stack.getItem() == ModItems.DRONE_KAMIKAZE) {
+			if (DroneItem.getKamikazePower(stack) > DRONE_KAMIKAZE_NO_POWER) {
+				return IT_DRONE_KAMIKAZE;
+			}
 			return IT_DRONE_SCOUT;
 		}
 		return null;
+	}
+
+	private static InteractionResult tryArmDroneWithTnt(ServerPlayer player, Entity root, ItemStack heldStack) {
+		if (player == null || root == null || !(root.level() instanceof ServerLevel level) || heldStack == null || !heldStack.is(Items.TNT)) {
+			return InteractionResult.PASS;
+		}
+
+		int currentPower = resolveDroneKamikazePower(root);
+		if (currentPower >= DRONE_KAMIKAZE_MAX_POWER) {
+			playDroneKamikazeInsertFailFeedback(level, droneCameraOrigin(root));
+			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.NEGATIVE);
+			return InteractionResult.CONSUME;
+		}
+
+		if (!isKamikazeDrone(root) && !ServerUpgradeUiSystem.hasUpgrade(player, IT_DRONE_KAMIKAZE)) {
+			playDroneKamikazeInsertFailFeedback(level, droneCameraOrigin(root));
+			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.NEGATIVE);
+			return InteractionResult.FAIL;
+		}
+
+		int newPower = net.minecraft.util.Mth.clamp(currentPower + 1, DRONE_KAMIKAZE_MIN_POWER, DRONE_KAMIKAZE_MAX_POWER);
+		setDroneKamikazePower(root, newPower);
+		triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+		playDroneKamikazeInsertFeedback(level, droneCameraOrigin(root), newPower);
+		notifyDroneNetworkChanged(root);
+
+		if (!player.getAbilities().instabuild) {
+			heldStack.shrink(1);
+		}
+		return InteractionResult.SUCCESS;
 	}
 
 	private static String resolveRequiredUpgradeForDroneRoot(Entity root) {
@@ -1520,7 +1564,7 @@ public final class DroneSystem {
 
 	private static int resolveDroneKamikazePower(Entity root) {
 		if (!isKamikazeDrone(root)) {
-			return DRONE_KAMIKAZE_MIN_POWER;
+			return DRONE_KAMIKAZE_NO_POWER;
 		}
 		int resolvedPower = DRONE_KAMIKAZE_MIN_POWER;
 		for (String tag : root.getTags()) {
@@ -1535,6 +1579,81 @@ public final class DroneSystem {
 			}
 		}
 		return resolvedPower;
+	}
+
+	private static void setDroneKamikazePower(Entity root, int power) {
+		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
+			return;
+		}
+		int clampedPower = net.minecraft.util.Mth.clamp(power, DRONE_KAMIKAZE_NO_POWER, DRONE_KAMIKAZE_MAX_POWER);
+		removeDroneKamikazePowerTags(root);
+		if (clampedPower <= DRONE_KAMIKAZE_NO_POWER) {
+			root.removeTag(DRONE_VARIANT_KAMIKAZE_TAG);
+		} else {
+			root.addTag(DRONE_VARIANT_KAMIKAZE_TAG);
+			root.addTag(droneKamikazePowerTag(clampedPower));
+		}
+
+		Entity displayEntity = findDroneDisplay(root);
+		if (displayEntity instanceof Display.ItemDisplay display) {
+			display.setItemStack(DroneItem.createDisplayStack(ModItems.DRONE, clampedPower));
+		}
+	}
+
+	private static void removeDroneKamikazePowerTags(Entity root) {
+		if (root == null) {
+			return;
+		}
+		for (String tag : new ArrayList<>(root.getTags())) {
+			if (tag != null && tag.startsWith(DRONE_KAMIKAZE_POWER_TAG_PREFIX)) {
+				root.removeTag(tag);
+			}
+		}
+	}
+
+	private static void playDroneKamikazeInsertFeedback(ServerLevel level, Vec3 origin, int newPower) {
+		if (level == null || origin == null) {
+			return;
+		}
+		float fillRatio = net.minecraft.util.Mth.clamp(newPower / (float) DRONE_KAMIKAZE_MAX_POWER, 0.0F, 1.0F);
+		float pitch = 0.7F + 0.5F * fillRatio;
+		level.playSound(
+				null,
+				origin.x,
+				origin.y,
+				origin.z,
+				SoundEvents.DECORATED_POT_INSERT,
+				SoundSource.PLAYERS,
+				1.0F,
+				pitch
+		);
+		level.sendParticles(
+				ParticleTypes.DUST_PLUME,
+				origin.x,
+				origin.y + DRONE_HEIGHT * 0.50D,
+				origin.z,
+				7,
+				0.0D,
+				0.0D,
+				0.0D,
+				0.0D
+		);
+	}
+
+	private static void playDroneKamikazeInsertFailFeedback(ServerLevel level, Vec3 origin) {
+		if (level == null || origin == null) {
+			return;
+		}
+		level.playSound(
+				null,
+				origin.x,
+				origin.y,
+				origin.z,
+				SoundEvents.DECORATED_POT_INSERT_FAIL,
+				SoundSource.PLAYERS,
+				1.0F,
+				1.0F
+		);
 	}
 
 	private static String droneKamikazePowerTag(int power) {
@@ -1678,13 +1797,63 @@ public final class DroneSystem {
 		// Forward drive pitches the nose down; strafe drive rolls into the turn.
 		float pitchTiltRad = (float) Math.toRadians((float) (forwardNorm * DRONE_MAX_TILT_DEGREES));
 		float rollTiltRad = (float) Math.toRadians((float) (-strafeNorm * DRONE_MAX_TILT_DEGREES));
+		Quaternionf rotation = new Quaternionf().rotateXYZ(pitchTiltRad, 0.0F, rollTiltRad);
+		DroneDisplayWobble wobble = resolveActiveDroneDisplayWobble(root);
+		if (wobble != null) {
+			applyVanillaPotWobbleRotation(rotation, wobble);
+		}
 
 		return new Transformation(
 				new Vector3f(0.0F, yOffset, 0.0F),
-				new Quaternionf().rotateXYZ(pitchTiltRad, 0.0F, rollTiltRad),
+				rotation,
 				new Vector3f(1.0F, 1.0F, 1.0F),
 				new Quaternionf()
 		);
+	}
+
+	private static void triggerDroneDisplayWobble(Entity root, DroneDisplayWobbleType type) {
+		if (root == null || type == null || root.level() == null) {
+			return;
+		}
+		DISPLAY_WOBBLE_BY_DRONE.put(root.getUUID(), new DroneDisplayWobbleState(type, root.level().getGameTime()));
+	}
+
+	private static DroneDisplayWobble resolveActiveDroneDisplayWobble(Entity root) {
+		if (root == null || root.level() == null) {
+			return null;
+		}
+		DroneDisplayWobbleState state = DISPLAY_WOBBLE_BY_DRONE.get(root.getUUID());
+		if (state == null || state.type() == null) {
+			return null;
+		}
+
+		float progress = (root.level().getGameTime() - state.startedAtTick()) / (float) state.type().lengthInTicks();
+		if (progress < 0.0F || progress > 1.0F) {
+			DISPLAY_WOBBLE_BY_DRONE.remove(root.getUUID());
+			return null;
+		}
+		return new DroneDisplayWobble(state.type(), progress);
+	}
+
+	private static void applyVanillaPotWobbleRotation(Quaternionf rotation, DroneDisplayWobble wobble) {
+		if (rotation == null || wobble == null || wobble.type() == null) {
+			return;
+		}
+		float progress = wobble.progress();
+		if (wobble.type() == DroneDisplayWobbleType.POSITIVE) {
+			float phase = progress * DRONE_VANILLA_WOBBLE_PROGRESS_TO_RADIANS;
+			float wobbleX = ((-1.5F * net.minecraft.util.Mth.cos(phase) + 0.5F) * net.minecraft.util.Mth.sin(phase / 2.0F))
+					* DRONE_VANILLA_WOBBLE_ROTATION_SCALE;
+			float wobbleZ = net.minecraft.util.Mth.sin(phase) * DRONE_VANILLA_WOBBLE_ROTATION_SCALE;
+			rotation.rotateX(wobbleX);
+			rotation.rotateZ(wobbleZ);
+			return;
+		}
+
+		float yawWobble = net.minecraft.util.Mth.sin(-progress * DRONE_VANILLA_WOBBLE_NEGATIVE_PROGRESS_TO_RADIANS)
+				* DRONE_VANILLA_WOBBLE_NEGATIVE_SCALE
+				* (1.0F - progress);
+		rotation.rotateY(yawWobble);
 	}
 
 	private static Entity findDroneDisplay(Entity root) {
@@ -2515,6 +2684,27 @@ public final class DroneSystem {
 
 		private void setLastHudTick(long lastHudTick) {
 			this.lastHudTick = lastHudTick;
+		}
+	}
+
+	private record DroneDisplayWobbleState(DroneDisplayWobbleType type, long startedAtTick) {
+	}
+
+	private record DroneDisplayWobble(DroneDisplayWobbleType type, float progress) {
+	}
+
+	private enum DroneDisplayWobbleType {
+		POSITIVE(7),
+		NEGATIVE(10);
+
+		private final int lengthInTicks;
+
+		DroneDisplayWobbleType(int lengthInTicks) {
+			this.lengthInTicks = Math.max(1, lengthInTicks);
+		}
+
+		private int lengthInTicks() {
+			return this.lengthInTicks;
 		}
 	}
 

@@ -325,7 +325,6 @@ public final class ModItems {
 			entries.prepend(MONITOR);
 			entries.prepend(BLUETOOTH_ADAPTER);
 			entries.prepend(CAMERA);
-			entries.prepend(DRONE_KAMIKAZE);
 			entries.prepend(DRONE);
 			entries.prepend(COPPER_GOGGLES);
 			entries.prepend(BITCOIN);

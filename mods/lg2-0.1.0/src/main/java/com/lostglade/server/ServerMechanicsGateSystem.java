@@ -1,5 +1,6 @@
 package com.lostglade.server;
 
+import com.lostglade.item.DroneItem;
 import com.lostglade.item.ModItems;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
@@ -326,6 +327,9 @@ public final class ServerMechanicsGateSystem {
 			return IT_CAMERA;
 		}
 		if (item == ModItems.DRONE) {
+			if (DroneItem.getKamikazePower(stack) > 0) {
+				return IT_DRONE_KAMIKAZE;
+			}
 			return IT_DRONE;
 		}
 		if (item == ModItems.DRONE_KAMIKAZE) {
