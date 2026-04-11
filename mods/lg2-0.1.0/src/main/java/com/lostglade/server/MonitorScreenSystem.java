@@ -501,6 +501,7 @@ public final class MonitorScreenSystem {
 		}
 		for (ScreenRuntimeKey replaced : replacedRuntimes) {
 			removeCachedRuntime(state, replaced, component.runtimeKey());
+			closeMediaSession(level.getServer(), replaced);
 		}
 		if (previousComponent != null) {
 			Set<ScreenKey> currentKeys = new HashSet<>();
@@ -6509,8 +6510,16 @@ public final class MonitorScreenSystem {
 
 		boolean powered = component.frameCoords().keySet().stream()
 				.anyMatch(frame -> frame != null && frame.isAlive() && isPowered(level, frame));
+		Set<ScreenRuntimeKey> previousRuntimeKeys = previousRuntimeKeysForComponent(level, component);
 		ScreenViewMode viewMode = forcedViewMode != null ? forcedViewMode : component.viewMode();
 		int launcherPage = forcedLauncherPage != null ? forcedLauncherPage : component.launcherPage();
+		if (forcedViewMode == null
+				&& forcedLauncherPage == null
+				&& shouldResetToHomeAfterPhysicalInteraction(component, powered)) {
+			resetMediaSessionsForPhysicalInteraction(level.getServer(), component.runtimeKey(), previousRuntimeKeys);
+			viewMode = ScreenViewMode.HOME;
+			launcherPage = 0;
+		}
 		List<PersistedGalleryItem> persistedGallery = resolvePersistedGalleryState(component);
 		PersistedWallpaperState persistedWallpaper = resolvePersistedWallpaperState(component);
 		if (!powered) {
@@ -6599,6 +6608,78 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		requestComponentRender(level.getServer(), renderedComponent, viewMode, effectiveLauncherPage);
+	}
+
+	private static Set<ScreenRuntimeKey> previousRuntimeKeysForComponent(ServerLevel level, ScreenComponent component) {
+		if (level == null || component == null) {
+			return Set.of();
+		}
+		Set<ScreenRuntimeKey> runtimeKeys = new HashSet<>();
+		MonitorLevelState state = levelState(level.dimension());
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			if (frame == null) {
+				continue;
+			}
+			ScreenRuntimeKey runtimeKey = state.frameToRuntime().get(new ScreenKey(frame.blockPosition(), frame.getDirection()));
+			if (runtimeKey != null) {
+				runtimeKeys.add(runtimeKey);
+			}
+		}
+		return runtimeKeys;
+	}
+
+	private static boolean shouldResetToHomeAfterPhysicalInteraction(ScreenComponent component, boolean powered) {
+		if (component == null) {
+			return false;
+		}
+		for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
+			ItemFrame frame = entry.getKey();
+			TileCoord tileCoord = entry.getValue();
+			if (frame == null || tileCoord == null) {
+				continue;
+			}
+			ScreenTileState state = readScreenState(frame.getItem());
+			if (state == null) {
+				continue;
+			}
+			int expectedConnectionMask = connectionMask(component.byCoord(), tileCoord.x(), tileCoord.y());
+			if (state.gridWidth() != component.width()
+					|| state.gridHeight() != component.height()
+					|| state.tileX() != tileCoord.x()
+					|| state.tileY() != tileCoord.y()
+					|| state.connectionMask() != expectedConnectionMask
+					|| state.powered() != powered) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static void resetMediaSessionsForPhysicalInteraction(
+			MinecraftServer server,
+			ScreenRuntimeKey currentRuntimeKey,
+			Set<ScreenRuntimeKey> previousRuntimeKeys
+	) {
+		if (server == null) {
+			return;
+		}
+		boolean resetCurrent = previousRuntimeKeys == null || previousRuntimeKeys.isEmpty();
+		if (previousRuntimeKeys != null) {
+			for (ScreenRuntimeKey previousRuntimeKey : previousRuntimeKeys) {
+				if (previousRuntimeKey == null) {
+					continue;
+				}
+				if (previousRuntimeKey.equals(currentRuntimeKey)) {
+					deactivateMediaSession(server, previousRuntimeKey);
+					resetCurrent = false;
+				} else {
+					closeMediaSession(server, previousRuntimeKey);
+				}
+			}
+		}
+		if (resetCurrent && currentRuntimeKey != null && MEDIA_STATES.containsKey(currentRuntimeKey)) {
+			deactivateMediaSession(server, currentRuntimeKey);
+		}
 	}
 
 	private static ScreenComponent cachedComponentForFrame(ServerLevel level, ItemFrame frame, Set<ScreenKey> processedKeys) {
