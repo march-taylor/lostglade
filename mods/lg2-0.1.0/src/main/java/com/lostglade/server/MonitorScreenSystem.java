@@ -6539,6 +6539,7 @@ public final class MonitorScreenSystem {
 		}
 		List<PersistedGalleryItem> persistedGallery = resolvePersistedGalleryState(component);
 		PersistedWallpaperState persistedWallpaper = resolvePersistedWallpaperState(component);
+		String persistedGroupId = resolvePersistedGroupId(component);
 		if (!powered) {
 			viewMode = ScreenViewMode.HOME;
 			launcherPage = 0;
@@ -6587,18 +6588,18 @@ public final class MonitorScreenSystem {
 			}
 
 			int connectionMask = connectionMask(component.byCoord(), tileCoord.x(), tileCoord.y());
-			ScreenTileState updatedState = new ScreenTileState(
-					CONNECTION_ALL,
-					component.width(),
-					component.height(),
-					tileCoord.x(),
-					tileCoord.y(),
-					connectionMask,
-					powered,
-					viewMode,
-					effectiveLauncherPage,
-					componentGroupId(component.runtimeKey())
-			);
+				ScreenTileState updatedState = new ScreenTileState(
+						CONNECTION_ALL,
+						component.width(),
+						component.height(),
+						tileCoord.x(),
+						tileCoord.y(),
+						connectionMask,
+						powered,
+						viewMode,
+						effectiveLauncherPage,
+						persistedGroupId
+				);
 
 			if (missingMap || !currentState.sameRenderState(updatedState)) {
 				rerenderMaps = true;
@@ -7025,6 +7026,30 @@ public final class MonitorScreenSystem {
 			return "";
 		}
 		return key.dimension() + "|" + key.pos().asLong() + "|" + key.facing().getSerializedName();
+	}
+
+	private static String resolvePersistedGroupId(ScreenComponent component) {
+		if (component == null || component.frameCoords().isEmpty()) {
+			return "";
+		}
+		List<Map.Entry<ItemFrame, TileCoord>> orderedFrames = new ArrayList<>(component.frameCoords().entrySet());
+		orderedFrames.sort((left, right) -> {
+			TileCoord leftCoord = left.getValue();
+			TileCoord rightCoord = right.getValue();
+			int byRow = Integer.compare(leftCoord.y(), rightCoord.y());
+			return byRow != 0 ? byRow : Integer.compare(leftCoord.x(), rightCoord.x());
+		});
+		for (Map.Entry<ItemFrame, TileCoord> entry : orderedFrames) {
+			ItemFrame frame = entry.getKey();
+			if (frame == null) {
+				continue;
+			}
+			String groupId = normalizedGroupId(readScreenState(frame.getItem()));
+			if (groupId != null) {
+				return groupId;
+			}
+		}
+		return "";
 	}
 
 	private static List<PersistedGalleryItem> resolvePersistedGalleryState(ScreenComponent component) {
