@@ -21,6 +21,7 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FontDescription;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
@@ -38,6 +39,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerEntity;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvents;
 import net.minecraft.stats.ServerRecipeBook;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -57,10 +59,12 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ItemUseAnimation;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.crafting.Recipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.item.crafting.RecipeManager;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -92,6 +96,8 @@ public final class CopperManGogglesSystem {
 	private static final Identifier INVISIBLE_MAGNIFIER_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "gui/button/invisible");
 	private static final Identifier ORE_HIGHLIGHT_CARRIER_ITEM_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "ore_highlight_carrier");
 	private static final Identifier RECIPE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_goggles");
+	private static final String GOGGLES_META_TAG = "lg2_copper_goggles";
+	private static final String GOGGLES_MODE_TAG = "mode";
 	private static final FontDescription SCREEN_OVERLAY_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:copper_goggles_overlay"))
 	);
@@ -131,8 +137,6 @@ public final class CopperManGogglesSystem {
 	private static final Map<UUID, Boolean> LAST_VISUAL_STATES = new ConcurrentHashMap<>();
 	private static final Map<UUID, Boolean> LAST_SCREEN_OVERLAY_STATES = new ConcurrentHashMap<>();
 	private static final Map<UUID, Boolean> LAST_NIGHT_VISION_STATES = new ConcurrentHashMap<>();
-	private static final Map<UUID, GogglesMode> GOGGLES_MODES = new ConcurrentHashMap<>();
-	private static final Map<UUID, GogglesMode> SAVED_GOGGLES_MODES = new ConcurrentHashMap<>();
 	private static final Map<UUID, Long> SCAN_COOLDOWNS = new ConcurrentHashMap<>();
 	private static final Map<UUID, Long> LAST_SCAN_ACTIVATION_TICKS = new ConcurrentHashMap<>();
 	private static final Map<UUID, ScanWave> ACTIVE_SCAN_WAVES = new ConcurrentHashMap<>();
@@ -154,22 +158,18 @@ public final class CopperManGogglesSystem {
 		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
 				server.execute(() -> {
-					UUID playerId = handler.player.getUUID();
-					GOGGLES_MODES.put(playerId, SAVED_GOGGLES_MODES.getOrDefault(playerId, GogglesMode.ORE_SEARCH));
 					syncViewer(handler.player);
 					refreshVisual(handler.player);
 				})
 		);
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
 			UUID playerId = handler.player.getUUID();
-			SAVED_GOGGLES_MODES.put(playerId, getMode(handler.player));
 			clearManagedNightVision(handler.player);
 			stopMagnifier(handler.player);
 			clearScanVisuals(handler.player);
 			LAST_VISUAL_STATES.remove(playerId);
 			LAST_SCREEN_OVERLAY_STATES.remove(playerId);
 			LAST_NIGHT_VISION_STATES.remove(playerId);
-			GOGGLES_MODES.remove(playerId);
 			SCAN_COOLDOWNS.remove(playerId);
 			LAST_SCAN_ACTIVATION_TICKS.remove(playerId);
 			removeTrackingAirTrigger(playerId);
@@ -186,8 +186,6 @@ public final class CopperManGogglesSystem {
 			LAST_VISUAL_STATES.clear();
 			LAST_SCREEN_OVERLAY_STATES.clear();
 			LAST_NIGHT_VISION_STATES.clear();
-			GOGGLES_MODES.clear();
-			SAVED_GOGGLES_MODES.clear();
 			SCAN_COOLDOWNS.clear();
 			LAST_SCAN_ACTIVATION_TICKS.clear();
 			TRACKING_AIR_TRIGGERS.values().forEach(Entity::discard);
@@ -215,19 +213,132 @@ public final class CopperManGogglesSystem {
 		if (getGogglesAbility(player).isEmpty()) {
 			return 0;
 		}
+		ItemStack equippedGoggles = getEquippedGogglesStack(player);
+		if (equippedGoggles.isEmpty()) {
+			player.displayClientMessage(
+					Component.translatable("message.lg2.copper_goggles.not_equipped")
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return 0;
+		}
+		return cycleMode(player, equippedGoggles);
+	}
 
-		GogglesMode next = getMode(player).next();
-		GOGGLES_MODES.put(player.getUUID(), next);
-		SAVED_GOGGLES_MODES.put(player.getUUID(), next);
-		clearScanVisuals(player);
-		syncNightVision(player);
-		syncGogglesStacks(player);
+	public static int toggleInventoryMode(ServerPlayer player, ItemStack stack) {
+		if (player == null || stack == null || stack.isEmpty() || stack.getItem() != ModItems.COPPER_GOGGLES) {
+			return 0;
+		}
+		if (stack == getEquippedGogglesStack(player)) {
+			return 0;
+		}
+		return cycleMode(player, stack);
+	}
+
+	public static boolean handleHeldModeToggle(ServerPlayer player, InteractionHand hand) {
+		if (player == null || hand == null || !player.isSecondaryUseActive()) {
+			return false;
+		}
+		ItemStack stack = player.getItemInHand(hand);
+		if (stack.isEmpty() || stack.getItem() != ModItems.COPPER_GOGGLES) {
+			return false;
+		}
+
+		ItemStack updated = stack.copy();
+		GogglesMode next = advanceMode(updated);
+		player.setItemInHand(hand, updated);
+		finishModeChange(player, next, false);
+		resyncHeldToggleState(player);
+		player.playSound(SoundEvents.UI_BUTTON_CLICK.value(), 0.55F, 1.15F);
+		return true;
+	}
+
+	public static boolean handleInventoryModeClick(
+			ServerPlayer player,
+			AbstractContainerMenu menu,
+			int slotIndex,
+			ClickType clickType,
+			int button
+	) {
+		if (player == null || menu == null) {
+			return false;
+		}
+		boolean isRightClick = clickType == ClickType.PICKUP && button == 1;
+		boolean isShiftClick = clickType == ClickType.QUICK_MOVE;
+		if (!isRightClick && !isShiftClick) {
+			return false;
+		}
+		if (!menu.isValidSlotIndex(slotIndex)) {
+			return false;
+		}
+		Slot slot = menu.getSlot(slotIndex);
+		if (slot == null || slot.container != player.getInventory()) {
+			return false;
+		}
+		int containerSlot = slot.getContainerSlot();
+		if (containerSlot < 0 || containerSlot >= 36) {
+			return false;
+		}
+		ItemStack stack = slot.getItem();
+		if (stack.isEmpty() || stack.getItem() != ModItems.COPPER_GOGGLES) {
+			return false;
+		}
+		ItemStack updated = stack.copy();
+		GogglesMode next = advanceMode(updated);
+		slot.set(updated);
+		slot.setChanged();
+		finishModeChange(player, next, false);
+		player.playSound(SoundEvents.UI_BUTTON_CLICK.value(), 0.55F, 1.15F);
+		return true;
+	}
+
+	private static int cycleMode(ServerPlayer player, ItemStack stack) {
+		GogglesMode next = advanceMode(stack);
+		boolean affectsActiveGoggles = stack == getEquippedGogglesStack(player);
+		finishModeChange(player, next, affectsActiveGoggles);
+		return 1;
+	}
+
+	private static GogglesMode advanceMode(ItemStack stack) {
+		GogglesMode next = getMode(stack).next();
+		setMode(stack, next);
+		return next;
+	}
+
+	private static void finishModeChange(ServerPlayer player, GogglesMode next, boolean affectsActiveGoggles) {
+		if (affectsActiveGoggles) {
+			clearScanVisuals(player);
+			syncNightVision(player);
+			refreshVisual(player);
+		}
+		player.getInventory().setChanged();
+		player.inventoryMenu.broadcastChanges();
+		player.containerMenu.broadcastChanges();
+		MutableComponent modeMessage = PolymerResourcePackUtils.hasMainPack(player)
+				? Component.translatable("message.lg2.copper_goggles.mode", Component.translatable(next.translationKey()))
+				: Component.literal(localizeGogglesModeMessage(player, next));
 		player.displayClientMessage(
-				Component.translatable("message.lg2.copper_goggles.mode", Component.translatable(next.translationKey()))
-						.withStyle(style -> style.withColor(ChatFormatting.GREEN).withItalic(false)),
+				modeMessage.withStyle(style -> style.withColor(ChatFormatting.GREEN).withItalic(false)),
 				true
 		);
-		return 1;
+	}
+
+	private static void resyncHeldToggleState(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		player.getInventory().setChanged();
+		player.inventoryMenu.broadcastFullState();
+		player.inventoryMenu.sendAllDataToRemote();
+		if (player.containerMenu != player.inventoryMenu) {
+			player.containerMenu.broadcastFullState();
+			player.containerMenu.sendAllDataToRemote();
+		}
+		sendActualHands(player);
+		player.connection.send(new ClientboundSetEquipmentPacket(
+				player.getId(),
+				List.of(com.mojang.datafixers.util.Pair.of(EquipmentSlot.HEAD, player.getItemBySlot(EquipmentSlot.HEAD).copy()))
+		));
 	}
 
 	public static void syncPlayerRecipeBook(ServerPlayer player) {
@@ -286,6 +397,10 @@ public final class CopperManGogglesSystem {
 
 	public static String getCurrentModeId(ServerPlayer player) {
 		return getMode(player).name();
+	}
+
+	public static String getCurrentModeId(ItemStack stack) {
+		return getMode(stack).name();
 	}
 
 	public static void refreshVisual(ServerPlayer player) {
@@ -385,37 +500,6 @@ public final class CopperManGogglesSystem {
 			return;
 		}
 		sendActualInventorySlot(player, newSelectedSlot);
-	}
-
-	public static boolean handleInventoryModeClick(ServerPlayer player, int containerId, int slotNum) {
-		if (player == null || slotNum < 0) {
-			return false;
-		}
-		AbstractContainerMenu menu = player.containerMenu;
-		if (menu == null || menu.containerId != containerId || slotNum >= menu.slots.size()) {
-			return false;
-		}
-		Slot slot = menu.getSlot(slotNum);
-		ItemStack stack = slot.getItem();
-		if (stack.isEmpty() || stack.getItem() != ModItems.COPPER_GOGGLES) {
-			return false;
-		}
-		if (toggleMode(player) <= 0) {
-			return false;
-		}
-		menu.setCarried(ItemStack.EMPTY);
-		player.inventoryMenu.setCarried(ItemStack.EMPTY);
-		player.getInventory().setChanged();
-		slot.setChanged();
-		menu.broadcastFullState();
-		menu.sendAllDataToRemote();
-		if (player.inventoryMenu != menu) {
-			player.inventoryMenu.broadcastFullState();
-			player.inventoryMenu.sendAllDataToRemote();
-		}
-		ServerMechanicsGateSystem.syncPlayerInventory(player);
-		syncGogglesStacks(player);
-		return true;
 	}
 
 	public static void handleSwapWithOffhand(ServerPlayer player) {
@@ -626,7 +710,6 @@ public final class CopperManGogglesSystem {
 		LAST_VISUAL_STATES.keySet().removeIf(uuid -> !online.contains(uuid));
 		LAST_SCREEN_OVERLAY_STATES.keySet().removeIf(uuid -> !online.contains(uuid));
 		LAST_NIGHT_VISION_STATES.keySet().removeIf(uuid -> !online.contains(uuid));
-		GOGGLES_MODES.keySet().removeIf(uuid -> !online.contains(uuid));
 		SCAN_COOLDOWNS.keySet().removeIf(uuid -> !online.contains(uuid));
 		ACTIVE_SCAN_WAVES.keySet().removeIf(uuid -> !online.contains(uuid));
 		ACTIVE_ORE_SEARCH_HIGHLIGHTS.entrySet().removeIf(entry -> !online.contains(entry.getKey()));
@@ -803,35 +886,6 @@ public final class CopperManGogglesSystem {
 				menuSlot,
 				inventory.getItem(inventorySlot).copy()
 		));
-	}
-
-	private static void syncGogglesStacks(ServerPlayer player) {
-		if (player == null) {
-			return;
-		}
-		syncGogglesStacksInMenu(player, player.inventoryMenu);
-		if (player.containerMenu != player.inventoryMenu) {
-			syncGogglesStacksInMenu(player, player.containerMenu);
-		}
-	}
-
-	private static void syncGogglesStacksInMenu(ServerPlayer player, AbstractContainerMenu menu) {
-		if (player == null || menu == null) {
-			return;
-		}
-		for (int menuSlot = 0; menuSlot < menu.slots.size(); menuSlot++) {
-			Slot slot = menu.getSlot(menuSlot);
-			ItemStack stack = slot.getItem();
-			if (stack.isEmpty() || stack.getItem() != ModItems.COPPER_GOGGLES) {
-				continue;
-			}
-			player.connection.send(new ClientboundContainerSetSlotPacket(
-					menu.containerId,
-					menu.incrementStateId(),
-					menuSlot,
-					stack.copy()
-			));
-		}
 	}
 
 	private static int findInventoryMenuSlot(AbstractContainerMenu menu, Inventory inventory, int inventorySlot) {
@@ -1274,10 +1328,44 @@ public final class CopperManGogglesSystem {
 		if (player == null) {
 			return GogglesMode.ORE_SEARCH;
 		}
-		return GOGGLES_MODES.computeIfAbsent(
-				player.getUUID(),
-				uuid -> SAVED_GOGGLES_MODES.getOrDefault(uuid, GogglesMode.ORE_SEARCH)
-		);
+		return getMode(getEquippedGogglesStack(player));
+	}
+
+	private static GogglesMode getMode(ItemStack stack) {
+		if (stack == null || stack.isEmpty() || stack.getItem() != ModItems.COPPER_GOGGLES) {
+			return GogglesMode.ORE_SEARCH;
+		}
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData == null || customData.isEmpty()) {
+			return GogglesMode.ORE_SEARCH;
+		}
+		String serializedMode = customData.copyTag()
+				.getCompoundOrEmpty(GOGGLES_META_TAG)
+				.getStringOr(GOGGLES_MODE_TAG, GogglesMode.ORE_SEARCH.name());
+		try {
+			return GogglesMode.valueOf(serializedMode);
+		} catch (IllegalArgumentException ignored) {
+			return GogglesMode.ORE_SEARCH;
+		}
+	}
+
+	private static void setMode(ItemStack stack, GogglesMode mode) {
+		if (stack == null || stack.isEmpty() || stack.getItem() != ModItems.COPPER_GOGGLES || mode == null) {
+			return;
+		}
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+			var gogglesTag = tag.getCompoundOrEmpty(GOGGLES_META_TAG);
+			gogglesTag.putString(GOGGLES_MODE_TAG, mode.name());
+			tag.put(GOGGLES_META_TAG, gogglesTag);
+		});
+	}
+
+	private static ItemStack getEquippedGogglesStack(ServerPlayer player) {
+		if (player == null || !player.isAlive()) {
+			return ItemStack.EMPTY;
+		}
+		ItemStack headStack = player.getItemBySlot(EquipmentSlot.HEAD);
+		return headStack.getItem() == ModItems.COPPER_GOGGLES ? headStack : ItemStack.EMPTY;
 	}
 
 	private static Optional<RaceAbilityConfig> getGogglesAbility(ServerPlayer player) {
@@ -1372,9 +1460,7 @@ public final class CopperManGogglesSystem {
 	}
 
 	private static boolean isWearingCopperGoggles(ServerPlayer player) {
-		return player != null
-				&& player.isAlive()
-				&& player.getItemBySlot(EquipmentSlot.HEAD).getItem() == ModItems.COPPER_GOGGLES;
+		return !getEquippedGogglesStack(player).isEmpty();
 	}
 
 	private static void syncViewer(ServerPlayer viewer) {
@@ -1409,9 +1495,11 @@ public final class CopperManGogglesSystem {
 
 		ItemStack actualHead = wearer.getItemBySlot(EquipmentSlot.HEAD).copy();
 		ItemStack stack = actualHead.copy();
-		if (spoofVisual && PolymerResourcePackUtils.hasMainPack(viewer) && !stack.isEmpty()) {
-			stack.set(DataComponents.ITEM_MODEL, HEAD_MODEL_ID);
-			preserveVisibleName(stack, actualHead);
+		if (spoofVisual && !stack.isEmpty()) {
+			if (PolymerResourcePackUtils.hasMainPack(viewer)) {
+				stack.set(DataComponents.ITEM_MODEL, HEAD_MODEL_ID);
+				preserveVisibleName(stack, actualHead);
+			}
 		}
 		viewer.connection.send(new ClientboundSetEquipmentPacket(
 				wearer.getId(),
@@ -1442,6 +1530,60 @@ public final class CopperManGogglesSystem {
 
 	private static boolean shouldShowScreenOverlay(ServerPlayer player) {
 		return shouldSpoofVisual(player) && PolymerResourcePackUtils.hasMainPack(player);
+	}
+
+	private static String localizeGogglesModeMessage(ServerPlayer player, GogglesMode mode) {
+		String locale = normalizeGogglesLocale(player);
+		String modeName = localizeGogglesModeName(locale, mode);
+		return switch (locale) {
+			case "rpr" -> "Режимъ стеколъ: " + modeName;
+			case "uk", "uk_ua" -> "Режим окулярів: " + modeName;
+			case "ja", "ja_jp" -> "ゴーグルモード: " + modeName;
+			case "ru", "ru_ru" -> "Режим очков: " + modeName;
+			default -> "Goggles mode: " + modeName;
+		};
+	}
+
+	private static String localizeGogglesModeName(String locale, GogglesMode mode) {
+		return switch (locale) {
+			case "rpr" -> switch (mode) {
+				case ORE_SEARCH -> "Рудоискательный чинъ";
+				case TRACKING -> "Сыскное выслеживаніе";
+				case MAGNIFIER -> "Окуляръ чрезмѣрнаго взора";
+				case NIGHT_VISION -> "Нощное всевидѣніе";
+			};
+			case "uk", "uk_ua" -> switch (mode) {
+				case ORE_SEARCH -> "Пошук руд";
+				case TRACKING -> "Відстеження";
+				case MAGNIFIER -> "Лупа";
+				case NIGHT_VISION -> "Нічне бачення";
+			};
+			case "ja", "ja_jp" -> switch (mode) {
+				case ORE_SEARCH -> "鉱石探知";
+				case TRACKING -> "追跡";
+				case MAGNIFIER -> "ズーム";
+				case NIGHT_VISION -> "暗視";
+			};
+			case "ru", "ru_ru" -> switch (mode) {
+				case ORE_SEARCH -> "Поиск руд";
+				case TRACKING -> "Отслеживание";
+				case MAGNIFIER -> "Лупа";
+				case NIGHT_VISION -> "Ночное зрение";
+			};
+			default -> switch (mode) {
+				case ORE_SEARCH -> "Ore Search";
+				case TRACKING -> "Tracking";
+				case MAGNIFIER -> "Zoom";
+				case NIGHT_VISION -> "Night Vision";
+			};
+		};
+	}
+
+	private static String normalizeGogglesLocale(ServerPlayer player) {
+		if (player == null || player.clientInformation() == null || player.clientInformation().language() == null) {
+			return "en_us";
+		}
+		return player.clientInformation().language().toLowerCase(Locale.ROOT);
 	}
 
 	private static Component buildScreenOverlayTitle(ServerPlayer player) {

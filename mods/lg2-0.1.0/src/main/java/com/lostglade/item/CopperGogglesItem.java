@@ -13,13 +13,11 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.EquipmentSlot;
-import net.minecraft.world.entity.SlotAccess;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.inventory.ClickAction;
-import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.DyedItemColor;
 import net.minecraft.world.item.component.ItemLore;
 import net.minecraft.world.level.Level;
 import xyz.nucleoid.packettweaker.PacketContext;
@@ -49,29 +47,11 @@ public final class CopperGogglesItem extends SimplePolymerItem {
 
 	@Override
 	public void modifyBasePolymerItemStack(ItemStack out, ItemStack original, PacketContext context) {
-		out.set(DataComponents.LORE, buildModeLore(context));
+		out.set(DataComponents.LORE, buildModeLore(context, original));
 		if (!PolymerResourcePackUtils.hasMainPack(context)) {
 			out.set(DataComponents.CUSTOM_NAME, localizedName(context).withStyle(style -> style.withItalic(false)));
+			out.set(DataComponents.DYED_COLOR, new DyedItemColor(0x32FF32));
 		}
-	}
-
-	@Override
-	public boolean overrideOtherStackedOnMe(
-			ItemStack stack,
-			ItemStack otherStack,
-			Slot slot,
-			ClickAction clickAction,
-			Player player,
-			SlotAccess cursorAccess
-	) {
-		if (clickAction != ClickAction.SECONDARY || player == null || !otherStack.isEmpty() || !(player instanceof ServerPlayer serverPlayer)) {
-			return false;
-		}
-		if (CopperManGogglesSystem.toggleMode(serverPlayer) <= 0) {
-			return false;
-		}
-		player.playSound(SoundEvents.UI_BUTTON_CLICK.value(), 0.55F, 1.15F);
-		return true;
 	}
 
 	private static MutableComponent localizedName(PacketContext context) {
@@ -85,7 +65,7 @@ public final class CopperGogglesItem extends SimplePolymerItem {
 			return Component.literal("Special Goggles");
 		}
 		if (normalized.startsWith("rpr")) {
-			return Component.literal("Спецъ-очки");
+			return Component.literal("Всевидящія стекла казённаго образца");
 		}
 		if (normalized.startsWith("uk")) {
 			return Component.literal("Спец-окуляри");
@@ -99,8 +79,8 @@ public final class CopperGogglesItem extends SimplePolymerItem {
 		return Component.literal("Special Goggles");
 	}
 
-	private static ItemLore buildModeLore(PacketContext context) {
-		String selectedMode = resolveSelectedModeId(context);
+	private static ItemLore buildModeLore(PacketContext context, ItemStack stack) {
+		String selectedMode = resolveSelectedModeId(stack);
 		ItemLore lore = ItemLore.EMPTY;
 		lore = lore.withLineAdded(buildModeLine(context, MODE_ORE_SEARCH, "tooltip.lg2.copper_goggles.mode.ore_search", selectedMode));
 		lore = lore.withLineAdded(buildModeLine(context, MODE_TRACKING, "tooltip.lg2.copper_goggles.mode.tracking", selectedMode));
@@ -145,9 +125,8 @@ public final class CopperGogglesItem extends SimplePolymerItem {
 		return player.clientInformation().language().toLowerCase();
 	}
 
-	private static String resolveSelectedModeId(PacketContext context) {
-		ServerPlayer player = context.getPlayer();
-		return player == null ? MODE_ORE_SEARCH : CopperManGogglesSystem.getCurrentModeId(player);
+	private static String resolveSelectedModeId(ItemStack stack) {
+		return stack == null || stack.isEmpty() ? MODE_ORE_SEARCH : CopperManGogglesSystem.getCurrentModeId(stack);
 	}
 
 	private static String localizedTooltipLabel(PacketContext context, String modeId) {
@@ -157,10 +136,10 @@ public final class CopperGogglesItem extends SimplePolymerItem {
 		}
 		if (normalized.startsWith("rpr")) {
 			return switch (modeId) {
-				case MODE_ORE_SEARCH -> "Режимъ поиска рудъ";
-				case MODE_TRACKING -> "Режимъ отслеживанiя";
-				case MODE_MAGNIFIER -> "Режимъ лупы";
-				case MODE_NIGHT_VISION -> "Режимъ нощнаго зрѣнiя";
+				case MODE_ORE_SEARCH -> "Рудоискательный чинъ";
+				case MODE_TRACKING -> "Сыскное выслеживаніе";
+				case MODE_MAGNIFIER -> "Окуляръ чрезмѣрнаго взора";
+				case MODE_NIGHT_VISION -> "Нощное всевидѣніе";
 				default -> englishTooltipLabel(modeId);
 			};
 		}
@@ -206,12 +185,19 @@ public final class CopperGogglesItem extends SimplePolymerItem {
 
 	@Override
 	public InteractionResult use(Level level, Player player, InteractionHand hand) {
-		if (hand != InteractionHand.MAIN_HAND) {
+		ItemStack stack = player.getItemInHand(hand);
+		if (stack.isEmpty()) {
 			return InteractionResult.PASS;
 		}
 
-		ItemStack stack = player.getItemInHand(hand);
-		if (stack.isEmpty()) {
+		if (player.isShiftKeyDown()) {
+			if (hand == InteractionHand.MAIN_HAND && !level.isClientSide() && player instanceof ServerPlayer serverPlayer) {
+				CopperManGogglesSystem.handleHeldModeToggle(serverPlayer, hand);
+			}
+			return InteractionResult.CONSUME;
+		}
+
+		if (hand != InteractionHand.MAIN_HAND) {
 			return InteractionResult.PASS;
 		}
 
