@@ -6,6 +6,7 @@
     "north": "lg2:block/speaker_body",
     "south": "lg2:block/speaker_body",
     "east": "lg2:block/speaker_body",
-    "west": "lg2:block/speaker_front_on"
+    "west": "lg2:block/speaker_front_on",
+    "particle": "lg2:block/speaker_body"
   }
 }
