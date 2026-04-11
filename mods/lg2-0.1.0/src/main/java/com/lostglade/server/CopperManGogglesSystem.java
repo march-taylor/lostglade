@@ -395,6 +395,17 @@ public final class CopperManGogglesSystem {
 		return canSeeRecipe(player);
 	}
 
+	public static boolean canShowCraftingResult(ServerPlayer player, RecipeHolder<?> recipeHolder, ItemStack stack) {
+		if (stack == null || stack.isEmpty() || stack.getItem() != ModItems.COPPER_GOGGLES) {
+			return true;
+		}
+		return player != null && canSeeRecipe(player);
+	}
+
+	public static boolean canAutoCraft(RecipeHolder<?> recipeHolder) {
+		return recipeHolder == null || !isCopperGogglesRecipe(recipeHolder.id());
+	}
+
 	public static String getCurrentModeId(ServerPlayer player) {
 		return getMode(player).name();
 	}
@@ -437,7 +448,10 @@ public final class CopperManGogglesSystem {
 
 		PlayerRaceConfig race = raceOptional.get();
 		String raceId = race.id == null ? "" : race.id.trim().toLowerCase(Locale.ROOT);
-		return COPPER_MAN_RACE_ID.equals(raceId) && ServerRaceSystem.hasUnlockedAbility(player, RaceAbilitySlot.SHNYAGA);
+		return COPPER_MAN_RACE_ID.equals(raceId)
+				&& race.shnyaga != null
+				&& race.shnyaga.enabled
+				&& ServerRaceSystem.hasUnlockedAbility(player, RaceAbilitySlot.SHNYAGA);
 	}
 
 	public static boolean handleUseOnBlockPass(ServerPlayer player, InteractionHand hand) {
@@ -565,11 +579,7 @@ public final class CopperManGogglesSystem {
 	}
 
 	private static boolean activateOreSearch(ServerPlayer player, InteractionHand hand) {
-		Optional<RaceAbilityConfig> abilityOptional = getGogglesAbility(player);
-		if (abilityOptional.isEmpty()) {
-			return false;
-		}
-		RaceAbilityConfig ability = abilityOptional.get();
+		RaceAbilityConfig ability = getEffectiveGogglesAbility(player);
 		ItemStack stack = resolveOreSearchSampleStack(player);
 		OreSearchMaterial material = resolveOreSearchMaterial(stack);
 		if (material == null) {
@@ -599,11 +609,7 @@ public final class CopperManGogglesSystem {
 	}
 
 	private static boolean activateTracking(ServerPlayer player) {
-		Optional<RaceAbilityConfig> abilityOptional = getGogglesAbility(player);
-		if (abilityOptional.isEmpty()) {
-			return false;
-		}
-		RaceAbilityConfig ability = abilityOptional.get();
+		RaceAbilityConfig ability = getEffectiveGogglesAbility(player);
 		long nowTick = player.level().getGameTime();
 		if (LAST_SCAN_ACTIVATION_TICKS.getOrDefault(player.getUUID(), Long.MIN_VALUE) == nowTick) {
 			return true;
@@ -631,9 +637,6 @@ public final class CopperManGogglesSystem {
 			return false;
 		}
 		if (!isWearingCopperGoggles(player)) {
-			return false;
-		}
-		if (getGogglesAbility(player).isEmpty()) {
 			return false;
 		}
 		return switch (getMode(player)) {
@@ -722,7 +725,7 @@ public final class CopperManGogglesSystem {
 		}
 		syncMagnifier(player);
 		syncTrackingAirTrigger(player);
-		if (!isWearingCopperGoggles(player) || getGogglesAbility(player).isEmpty()) {
+		if (!isWearingCopperGoggles(player)) {
 			clearScanVisuals(player);
 			return;
 		}
@@ -796,7 +799,6 @@ public final class CopperManGogglesSystem {
 				&& player.isAlive()
 				&& !player.isSpectator()
 				&& isWearingCopperGoggles(player)
-				&& getGogglesAbility(player).isPresent()
 				&& getMode(player) == GogglesMode.MAGNIFIER
 				&& player.getInventory().getSelectedSlot() == session.selectedSlot()
 				&& player.getItemInHand(InteractionHand.MAIN_HAND).isEmpty();
@@ -822,7 +824,7 @@ public final class CopperManGogglesSystem {
 		if (player == null || session == null) {
 			return;
 		}
-		ItemStack spyglass = buildVirtualSpyglassStack();
+		ItemStack spyglass = buildVirtualSpyglassStack(player);
 		player.connection.send(new ClientboundSetEquipmentPacket(
 				player.getId(),
 				List.of(com.mojang.datafixers.util.Pair.of(EquipmentSlot.MAINHAND, spyglass))
@@ -901,10 +903,12 @@ public final class CopperManGogglesSystem {
 		return -1;
 	}
 
-	private static ItemStack buildVirtualSpyglassStack() {
+	private static ItemStack buildVirtualSpyglassStack(ServerPlayer viewer) {
 		ItemStack stack = new ItemStack(Items.SPYGLASS);
-		stack.set(DataComponents.ITEM_MODEL, INVISIBLE_MAGNIFIER_MODEL_ID);
-		stack.set(DataComponents.CUSTOM_NAME, Component.literal(" "));
+		if (viewer != null && PolymerResourcePackUtils.hasMainPack(viewer)) {
+			stack.set(DataComponents.ITEM_MODEL, INVISIBLE_MAGNIFIER_MODEL_ID);
+			stack.set(DataComponents.CUSTOM_NAME, Component.literal(" "));
+		}
 		return stack;
 	}
 
@@ -947,7 +951,6 @@ public final class CopperManGogglesSystem {
 				&& player.isAlive()
 				&& !player.isSpectator()
 				&& isWearingCopperGoggles(player)
-				&& getGogglesAbility(player).isPresent()
 				&& switch (getMode(player)) {
 					case TRACKING -> shouldHandleTrackingUse(player, InteractionHand.MAIN_HAND);
 					case MAGNIFIER -> shouldHandleMagnifierUse(player);
@@ -996,7 +999,6 @@ public final class CopperManGogglesSystem {
 				&& player.isAlive()
 				&& !player.isSpectator()
 				&& isWearingCopperGoggles(player)
-				&& getGogglesAbility(player).isPresent()
 				&& getMode(player) == GogglesMode.NIGHT_VISION;
 	}
 
@@ -1385,6 +1387,10 @@ public final class CopperManGogglesSystem {
 			return Optional.empty();
 		}
 		return Optional.of(race.shnyaga);
+	}
+
+	private static RaceAbilityConfig getEffectiveGogglesAbility(ServerPlayer player) {
+		return getGogglesAbility(player).orElseGet(() -> RaceAbilityConfig.defaults(RaceAbilitySlot.SHNYAGA));
 	}
 
 	private static double getScanCooldownSeconds(RaceAbilityConfig ability) {
