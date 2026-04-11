@@ -27,6 +27,8 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemDisplayContext;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.LevelResource;
@@ -574,7 +576,7 @@ public final class BluetoothLinkSystem {
 			}
 			return;
 		}
-		if (endpoint.type() != EndpointType.DRONE && endpoint.equals(VISIBLE_ENDPOINTS.get(playerId))) {
+		if (endpoint.equals(VISIBLE_ENDPOINTS.get(playerId))) {
 			return;
 		}
 		switch (endpoint.type()) {
@@ -590,16 +592,22 @@ public final class BluetoothLinkSystem {
 					return;
 				}
 				BlockState state = level.getBlockState(endpoint.pos());
-				ServerSelectionHighlightSystem.show(player, List.of(
-						new ServerSelectionHighlightSystem.BlockDisplayBlueprint(
-								level,
-								Vec3.atLowerCornerOf(endpoint.pos()),
-								0.0F,
-								0.0F,
-								state,
-								com.mojang.math.Transformation.identity()
-						)
-				));
+				if (state.isAir()) {
+					if (VISIBLE_ENDPOINTS.remove(playerId) != null) {
+						ServerSelectionHighlightSystem.clear(player);
+					}
+					return;
+				}
+				ItemStack highlightCarrier = ServerSelectionHighlightSystem.createHighlightCarrierStack();
+				ServerSelectionHighlightSystem.show(player, List.of(new ServerSelectionHighlightSystem.ItemDisplayBlueprint(
+						level,
+						Vec3.atCenterOf(endpoint.pos()),
+						0.0F,
+						0.0F,
+						highlightCarrier,
+						ItemDisplayContext.FIXED,
+						ServerSelectionHighlightSystem.defaultHighlightCarrierTransformation()
+				)));
 				VISIBLE_ENDPOINTS.put(playerId, endpoint);
 			}
 			case DRONE -> {

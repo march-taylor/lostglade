@@ -288,20 +288,14 @@ public final class DroneSystem {
 			return List.of();
 		}
 		Entity root = endpoint.deviceUuid() == null ? null : findDroneRoot(level.getServer(), level.dimension(), endpoint.deviceUuid());
-		Vec3 position = root != null ? root.position() : Vec3.atCenterOf(endpoint.pos());
-		float yRot = root != null ? root.getYRot() : 0.0F;
-		float xRot = root != null ? root.getXRot() : 0.0F;
-		return List.of(
-				new ServerSelectionHighlightSystem.ItemDisplayBlueprint(
-						level,
-						position,
-						yRot,
-						xRot,
-						DroneItem.createDisplayStack(),
-						ItemDisplayContext.FIXED,
-						buildDroneDisplayTransformation(root, 0.0D, 0.0D)
-				)
-		);
+		if (root == null || !root.isAlive() || root.level() != level) {
+			return List.of();
+		}
+		Entity highlightEntity = findDroneDisplay(root);
+		if (highlightEntity == null || !highlightEntity.isAlive()) {
+			highlightEntity = root;
+		}
+		return List.of(new ServerSelectionHighlightSystem.EntityGlowBlueprint(highlightEntity));
 	}
 
 	public static DroneLiveFeedState resolveLiveFeedState(MinecraftServer server, BluetoothLinkSystem.Endpoint endpoint) {
