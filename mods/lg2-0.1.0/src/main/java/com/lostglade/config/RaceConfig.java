@@ -163,6 +163,8 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.copperGogglesOreSearchHighlightSeconds, value -> ability.copperGogglesOreSearchHighlightSeconds = value);
 		changed |= normalizeNonNegative(ability.copperGogglesTrackingRadiusBlocks, value -> ability.copperGogglesTrackingRadiusBlocks = value);
 		changed |= normalizeNonNegative(ability.copperGogglesTrackingHighlightSeconds, value -> ability.copperGogglesTrackingHighlightSeconds = value);
+		changed |= normalizeNonNegative(ability.womanFlowerCooldownSeconds, value -> ability.womanFlowerCooldownSeconds = value);
+		changed |= normalizeNonNegative(ability.womanAnimalBreedCooldownSeconds, value -> ability.womanAnimalBreedCooldownSeconds = value);
 		changed |= normalizeNonNegative(ability.jetpackMaxRiseBlocks, value -> ability.jetpackMaxRiseBlocks = value);
 		changed |= normalizeChance(ability.repulsorNaturalLightningChargeChance, value -> ability.repulsorNaturalLightningChargeChance = value);
 		changed |= normalizeNonNegative(ability.copperIngotFoodPoints, (java.util.function.IntConsumer) value -> ability.copperIngotFoodPoints = value);
@@ -332,6 +334,8 @@ public final class RaceConfig {
 		public double copperGogglesOreSearchHighlightSeconds = 0.0D;
 		public double copperGogglesTrackingRadiusBlocks = 0.0D;
 		public double copperGogglesTrackingHighlightSeconds = 0.0D;
+		public double womanFlowerCooldownSeconds = 0.0D;
+		public double womanAnimalBreedCooldownSeconds = 0.0D;
 		public double jetpackMaxRiseBlocks = 0.0D;
 		public int repulsorMaxCharges = 0;
 		public int repulsorCopperIngotChargeRestore = 0;

@@ -29,6 +29,7 @@ import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import it.unimi.dsi.fastutil.Pair;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -82,6 +83,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.PathfinderMob;
+import net.minecraft.world.entity.animal.Animal;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
 import net.minecraft.world.entity.ai.navigation.PathNavigation;
@@ -110,10 +112,11 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.LayeredCauldronBlock;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LayeredCauldronBlock;
 import net.minecraft.world.level.block.DoublePlantBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -123,6 +126,7 @@ import net.minecraft.world.scores.Scoreboard;
 import net.minecraft.world.scores.Team;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.tags.BlockTags;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 import javax.imageio.ImageIO;
@@ -175,6 +179,7 @@ public final class ServerRaceSystem {
 	private static final String MISTER_CARTEL_49_RACE_ID = "mister_cartel_49";
 	private static final String COPPER_MAN_RACE_ID = "copper_man";
 	private static final String NO_RACE_ID = "no_race";
+	private static final String WOMAN_RACE_ID = "woman";
 	private static final String TITLE_OVERLAY_SHIFT = "\ue905";
 	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
 	private static final int TITLE_OVERLAY_TARGET_ADVANCE = 168;
@@ -244,6 +249,9 @@ public final class ServerRaceSystem {
 	private static final double DEFAULT_COPPER_FOOD_RESTORE_MULTIPLIER = 0.8D;
 	private static final int DEFAULT_COPPER_INGOT_FOOD_POINTS = 5;
 	private static final double DEFAULT_COPPER_GOLEM_NOTICE_RANGE_BLOCKS = 8.0D;
+	private static final double WOMAN_FLOWER_DEFAULT_COOLDOWN_SECONDS = 5.0D;
+	private static final double WOMAN_ANIMAL_BREED_DEFAULT_COOLDOWN_SECONDS = 30.0D;
+	private static final float WOMAN_FLOWER_HEAL_AMOUNT = 1.0F;
 	private static final int COPPER_GOLEM_REACTION_INTERVAL_TICKS = 5;
 	private static final double COPPER_GOLEM_FOLLOW_SPEED = 1.1D;
 	private static final double COPPER_LIGHTNING_ATTRACT_RANGE_BLOCKS = 128.0D;
@@ -310,6 +318,8 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, Long> CARTEL_UNIQUE_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, EnumMap<RaceAbilitySlot, Long>> GENERIC_ABILITY_COOLDOWN_END_TICKS = new LinkedHashMap<>();
 	private static final Map<UUID, EnumSet<RaceAbilitySlot>> GENERIC_ABILITY_INFINITE_COOLDOWNS = new LinkedHashMap<>();
+	private static final Map<UUID, Long> WOMAN_FLOWER_COOLDOWNS = new LinkedHashMap<>();
+	private static final Map<UUID, Long> WOMAN_ANIMAL_BREED_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelDisguiseSession> CARTEL_DISGUISE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelManualBookRestore> CARTEL_MANUAL_BOOK_RESTORES = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> COPPER_GOLEM_FOLLOWERS = new LinkedHashMap<>();
@@ -481,6 +491,8 @@ public final class ServerRaceSystem {
 			CARTEL_UNIQUE_COOLDOWNS.clear();
 			GENERIC_ABILITY_COOLDOWN_END_TICKS.clear();
 			GENERIC_ABILITY_INFINITE_COOLDOWNS.clear();
+			WOMAN_FLOWER_COOLDOWNS.clear();
+			WOMAN_ANIMAL_BREED_COOLDOWNS.clear();
 			CARTEL_DISGUISE_SESSIONS.clear();
 			COPPER_MAN_DEFENSE_COOLDOWNS.clear();
 			COPPER_MAN_DEFENSE_VISUAL_SESSIONS.clear();
@@ -537,6 +549,12 @@ public final class ServerRaceSystem {
 			}
 			return onUseBlock(serverPlayer, hand, hitResult.getBlockPos());
 		});
+		UseEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
+			if (!(player instanceof ServerPlayer serverPlayer) || world.isClientSide()) {
+				return InteractionResult.PASS;
+			}
+			return onUseEntity(serverPlayer, hand, entity);
+		});
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			long nowTick = server.overworld().getGameTime();
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -553,6 +571,7 @@ public final class ServerRaceSystem {
 			tickCopperManStock(server);
 			tickCopperManJetpack(server);
 			tickCopperManDefense(server);
+			tickWomanStock(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
 		});
@@ -1407,6 +1426,14 @@ public final class ServerRaceSystem {
 		tickCopperGolemFollowers(server);
 	}
 
+	private static void tickWomanStock(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		tickOnlineCooldowns(server, WOMAN_FLOWER_COOLDOWNS);
+		tickOnlineCooldowns(server, WOMAN_ANIMAL_BREED_COOLDOWNS);
+	}
+
 	private static void sanitizeCopperIngots(ServerPlayer player) {
 		if (player == null) {
 			return;
@@ -1602,6 +1629,11 @@ public final class ServerRaceSystem {
 	}
 
 	private static InteractionResult onUseBlock(ServerPlayer player, InteractionHand hand, BlockPos pos) {
+		InteractionResult womanResult = tryUseWomanFlowerStock(player, hand, pos);
+		if (womanResult != InteractionResult.PASS) {
+			return womanResult;
+		}
+
 		ItemStack stack = player.getItemInHand(hand);
 		if (!stack.is(Items.BONE_MEAL)) {
 			return InteractionResult.PASS;
@@ -1628,6 +1660,124 @@ public final class ServerRaceSystem {
 		double chance = race.shnyaga.chance > 0.0D ? race.shnyaga.chance : CARTEL_DEFAULT_SHNYAGA_TRAVKA_DROP_CHANCE;
 		CARTEL_TRAVKA_GROWTH_ATTEMPTS.add(new CartelTravkaGrowthAttempt(player.getUUID(), level.dimension(), pos, level.getGameTime() + 1L, chance));
 		return InteractionResult.PASS;
+	}
+
+	private static InteractionResult onUseEntity(ServerPlayer player, InteractionHand hand, Entity entity) {
+		return tryUseWomanAnimalBreedStock(player, hand, entity);
+	}
+
+	private static InteractionResult tryUseWomanFlowerStock(ServerPlayer player, InteractionHand hand, BlockPos pos) {
+		if (player == null
+				|| pos == null
+				|| hand != InteractionHand.MAIN_HAND
+				|| !player.getMainHandItem().isEmpty()
+				|| !(player.level() instanceof ServerLevel level)) {
+			return InteractionResult.PASS;
+		}
+
+		RaceAbilityConfig stock = getWomanStockAbility(player);
+		if (stock == null) {
+			return InteractionResult.PASS;
+		}
+
+		BlockState state = level.getBlockState(pos);
+		if (!state.is(BlockTags.FLOWERS)) {
+			return InteractionResult.PASS;
+		}
+
+		long remainingCooldownTicks = getRemainingOnlineCooldownTicks(WOMAN_FLOWER_COOLDOWNS, player.getUUID());
+		if (displayRemainingCooldown(player, remainingCooldownTicks)) {
+			return InteractionResult.SUCCESS;
+		}
+
+		consumeWomanFlower(level, pos, state, player);
+		level.sendParticles(ParticleTypes.END_ROD, pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 6, 0.22D, 0.22D, 0.22D, 0.02D);
+		player.heal(WOMAN_FLOWER_HEAL_AMOUNT);
+		startOnlineCooldown(WOMAN_FLOWER_COOLDOWNS, player.getUUID(), asTicks(getWomanFlowerCooldownSeconds(stock)));
+		return InteractionResult.SUCCESS;
+	}
+
+	private static InteractionResult tryUseWomanAnimalBreedStock(ServerPlayer player, InteractionHand hand, Entity entity) {
+		if (player == null
+				|| entity == null
+				|| hand != InteractionHand.MAIN_HAND
+				|| !player.getMainHandItem().isEmpty()
+				|| !(entity instanceof Animal animal)) {
+			return InteractionResult.PASS;
+		}
+
+		RaceAbilityConfig stock = getWomanStockAbility(player);
+		if (stock == null) {
+			return InteractionResult.PASS;
+		}
+
+		if (!canWomanTriggerBreeding(animal)) {
+			return InteractionResult.PASS;
+		}
+
+		long remainingCooldownTicks = getRemainingOnlineCooldownTicks(WOMAN_ANIMAL_BREED_COOLDOWNS, player.getUUID());
+		if (displayRemainingCooldown(player, remainingCooldownTicks)) {
+			return InteractionResult.SUCCESS;
+		}
+
+		animal.setInLove(player);
+		startOnlineCooldown(WOMAN_ANIMAL_BREED_COOLDOWNS, player.getUUID(), asTicks(getWomanAnimalBreedCooldownSeconds(stock)));
+		return InteractionResult.SUCCESS;
+	}
+
+	private static boolean canWomanTriggerBreeding(Animal animal) {
+		if (animal == null || !animal.isAlive()) {
+			return false;
+		}
+		if (animal.isBaby() || animal.getAge() != 0 || animal.isInLove() || !animal.canFallInLove()) {
+			return false;
+		}
+		if (animal instanceof net.minecraft.world.entity.TamableAnimal tameable) {
+			if (!tameable.isTame() || tameable.getHealth() < tameable.getMaxHealth()) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static void consumeWomanFlower(ServerLevel level, BlockPos pos, BlockState state, ServerPlayer player) {
+		if (!(state.getBlock() instanceof DoublePlantBlock) || !state.hasProperty(DoublePlantBlock.HALF)) {
+			level.destroyBlock(pos, false, player);
+			return;
+		}
+
+		DoubleBlockHalf half = state.getValue(DoublePlantBlock.HALF);
+		BlockPos lowerPos = half == DoubleBlockHalf.UPPER ? pos.below() : pos;
+		BlockPos upperPos = lowerPos.above();
+		BlockState lowerState = level.getBlockState(lowerPos);
+		BlockState upperState = level.getBlockState(upperPos);
+		if (lowerState.getBlock() == state.getBlock()) {
+			level.destroyBlock(lowerPos, false, player);
+		}
+		if (upperState.getBlock() == state.getBlock()) {
+			level.destroyBlock(upperPos, false, player);
+		}
+	}
+
+	private static RaceAbilityConfig getWomanStockAbility(ServerPlayer player) {
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isEmpty()) {
+			return null;
+		}
+
+		PlayerRaceConfig race = raceOptional.get();
+		if (!WOMAN_RACE_ID.equals(sanitizePath(race.id)) || race.stock == null || !race.stock.enabled) {
+			return null;
+		}
+		return race.stock;
+	}
+
+	private static double getWomanFlowerCooldownSeconds(RaceAbilityConfig stock) {
+		return positiveOrDefault(stock == null ? 0.0D : stock.womanFlowerCooldownSeconds, WOMAN_FLOWER_DEFAULT_COOLDOWN_SECONDS);
+	}
+
+	private static double getWomanAnimalBreedCooldownSeconds(RaceAbilityConfig stock) {
+		return positiveOrDefault(stock == null ? 0.0D : stock.womanAnimalBreedCooldownSeconds, WOMAN_ANIMAL_BREED_DEFAULT_COOLDOWN_SECONDS);
 	}
 
 	public static void tryProcessCocaineCauldron(ItemEntity itemEntity) {

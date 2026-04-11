@@ -5,7 +5,7 @@
                       "id":  "mister_cartel_49",
                       "displayName":  "Мистер Картель 49",
                       "ownerNickname":  "pines1",
-                      "description":  "Сток: лимит обычных стаков 64 -\u003e 49. Стаки 1 и 16 не изменяются.",
+                      "description":  "Глава всего преступного мира.",
                       "attack":  {
                                      "enabled":  true,
                                      "abilityId":  "cartel49_attack",
@@ -67,7 +67,7 @@
                       "id":  "copper_man",
                       "displayName":  "Медный человек",
                       "ownerNickname":  "march_taylor",
-                      "description":  "Сток: обычная еда восстанавливает меньше голода, медные слитки можно есть, молнии притягиваются, а медные големы замечают хозяина.",
+                      "description":  "Искал медь сгорел медведь.",
                       "attack":  {
                                      "enabled":  true,
                                      "abilityId":  "copper_man_attack",
@@ -125,7 +125,7 @@
                       "enabled":  true,
                       "id":  "no_race",
                       "displayName":  "Без расы",
-                      "ownerNickname":  "Rajas_YT",
+                      "ownerNickname":  "pines2",
                       "description":  "",
                       "attack":  {
                                      "enabled":  true,
@@ -164,6 +164,49 @@
                                     "abilityId":  "no_race_stock",
                                     "name":  "",
                                     "description":  ""
+                                }
+                  },
+                  {
+                      "enabled":  true,
+                      "id":  "woman",
+                      "displayName":  "ЖЕНЩИНА!!!",
+                      "ownerNickname":  "Rajas_YT",
+                      "description":  "Хрупкая снаружи, но опасная внутри. Она не бьёт в лоб — она манипулирует, соблазняет и наказывает.",
+                      "attack":  {
+                                     "enabled":  true,
+                                     "abilityId":  "woman_attack",
+                                     "name":  "Сила любви",
+                                     "description":  "Выпускает шар из сердец, который наносит урон и привлекает к цели всех животных.",
+                                     "priceBitcoins":  300
+                                 },
+                      "defense":  {
+                                      "enabled":  true,
+                                      "abilityId":  "woman_defense",
+                                      "name":  "Страх перед училкой",
+                                      "description":  "Вокруг вас создаётся область страха. Чем ближе враг, тем сильнее негативные эффекты.",
+                                      "priceBitcoins":  600
+                                  },
+                      "uniqueAbility":  {
+                                            "enabled":  true,
+                                            "abilityId":  "woman_unique",
+                                            "name":  "Отшила",
+                                            "description":  "Накладывает на цель «Неуверенность». Жертва слабеет, теряет предметы и хуже торгуется. Вы восстанавливаете здоровье, а цель его теряет.",
+                                            "priceBitcoins":  1000
+                                        },
+                      "shnyaga":  {
+                                      "enabled":  true,
+                                      "abilityId":  "woman_shnyaga",
+                                      "name":  "Сердце едка",
+                                      "description":  "Вы предлагаете игроку стать вашим парнем. Согласившийся передает вам 3 сердца максимального здоровья. Рядом с вами он получает силу, скорость, регенерацию и спешку. Если он убьёт вас — сердца возвращаются. При отказе вы получаете урон, голод и замедление.",
+                                      "priceBitcoins":  1500
+                                  },
+                      "stock":  {
+                                    "enabled":  true,
+                                    "abilityId":  "woman_stock",
+                                    "name":  "Любовь и цветочки",
+                                    "description":  "Вы можете поглощать силу цветов прикосновением и подготавливать животных к размножению пустой рукой.",
+                                    "womanFlowerCooldownSeconds":  3.0,
+                                    "womanAnimalBreedCooldownSeconds":  15.0
                                 }
                   }
               ]
