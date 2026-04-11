@@ -26,6 +26,8 @@ import net.lionarius.skinrestorer.skin.SkinStorage;
 import net.lionarius.skinrestorer.skin.SkinValue;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.RemoteChatSession;
@@ -46,6 +48,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -94,6 +97,7 @@ public final class DroneSystem {
 	private static final String DRONE_CAMERA_OWNER_TAG_PREFIX = "lg2_drone_camera_owner_";
 	private static final String DRONE_DUMMY_TAG = "lg2_drone_dummy";
 	private static final Identifier DRONE_LOOP_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_loop");
+	private static final Identifier DRONE_BREAK_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "entity.firework_rocket.blast");
 	private static final Holder<SoundEvent> DRONE_LOOP_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(DRONE_LOOP_SOUND_ID));
 	private static final double DRONE_CRASH_EQUIVALENT_FALL_BLOCKS = 3.25D;
 	private static final double DRONE_CRASH_REFERENCE_ACCELERATION = 0.04D;
@@ -1350,6 +1354,7 @@ public final class DroneSystem {
 		if (root == null || !root.isAlive() || !(root.level() instanceof ServerLevel level)) {
 			return;
 		}
+		playDroneBreakEffects(level, droneCameraOrigin(root), root.getDeltaMovement());
 		UNCONTROLLED_DRONES.remove(root.getUUID());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
 		BluetoothLinkSystem.removeDroneEndpoint(level, root.getUUID(), root.blockPosition());
@@ -1377,6 +1382,37 @@ public final class DroneSystem {
 			root.spawnAtLocation(level, new ItemStack(ModItems.DRONE));
 		}
 		root.discard();
+	}
+
+	private static void playDroneBreakEffects(ServerLevel level, Vec3 origin, Vec3 velocity) {
+		if (level == null || origin == null) {
+			return;
+		}
+		SoundEvent breakSound = resolveVanillaSoundEvent(DRONE_BREAK_SOUND_ID, SoundEvents.GENERIC_EXPLODE.value());
+		float pitch = 0.86F + level.random.nextFloat() * 0.10F;
+		level.playSound(
+				null,
+				origin.x,
+				origin.y,
+				origin.z,
+				breakSound,
+				SoundSource.PLAYERS,
+				1.05F,
+				pitch
+		);
+
+		double motionSpread = velocity == null ? 0.05D : net.minecraft.util.Mth.clamp(velocity.length() * 0.35D, 0.05D, 0.35D);
+		level.sendParticles(ParticleTypes.EXPLOSION, origin.x, origin.y + DRONE_HEIGHT * 0.28D, origin.z, 3, 0.10D, 0.07D, 0.10D, 0.01D);
+		level.sendParticles(ParticleTypes.SMOKE, origin.x, origin.y + DRONE_HEIGHT * 0.12D, origin.z, 5, 0.13D, 0.10D, 0.13D, motionSpread * 0.25D);
+		level.sendParticles(ParticleTypes.FLAME, origin.x, origin.y + DRONE_HEIGHT * 0.16D, origin.z, 2, 0.07D, 0.05D, 0.07D, 0.01D);
+	}
+
+	private static SoundEvent resolveVanillaSoundEvent(Identifier soundId, SoundEvent fallback) {
+		if (soundId == null) {
+			return fallback;
+		}
+		SoundEvent resolved = BuiltInRegistries.SOUND_EVENT.getValue(soundId);
+		return resolved != null ? resolved : fallback;
 	}
 
 	private static Entity resolveDroneRoot(Entity entity) {
