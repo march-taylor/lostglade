@@ -4,6 +4,7 @@ import com.lostglade.Lg2;
 import com.lostglade.block.CameraBlock;
 import com.lostglade.server.CameraCaptureSystem;
 import com.lostglade.server.CameraPhotoMenuSystem;
+import com.lostglade.server.DroneSystem;
 import eu.pb4.polymer.core.api.item.PolymerBlockItem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.BlockPos;
@@ -67,6 +68,9 @@ public final class CameraItem extends PolymerBlockItem {
 		if (hand != InteractionHand.MAIN_HAND) {
 			return InteractionResult.PASS;
 		}
+		if (player instanceof ServerPlayer serverPlayer && DroneSystem.isControllingDrone(serverPlayer)) {
+			return InteractionResult.PASS;
+		}
 		if (player instanceof ServerPlayer serverPlayer) {
 			CameraCaptureSystem.suppressNextCameraSwing(serverPlayer, hand);
 		}
@@ -85,6 +89,9 @@ public final class CameraItem extends PolymerBlockItem {
 			return InteractionResult.PASS;
 		}
 		Player player = context.getPlayer();
+		if (player instanceof ServerPlayer serverPlayer && DroneSystem.isControllingDrone(serverPlayer)) {
+			return InteractionResult.PASS;
+		}
 		if (player instanceof ServerPlayer serverPlayer) {
 			CameraCaptureSystem.suppressNextCameraSwing(serverPlayer, context.getHand());
 		}

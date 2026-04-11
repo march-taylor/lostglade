@@ -61,13 +61,17 @@ public final class CameraCaptureSystem {
 			if (!isLeftClickCameraTrigger(serverPlayer, hand)) {
 				return InteractionResult.PASS;
 			}
-			tryCapture(serverPlayer, serverPlayer.getItemInHand(hand));
-			return InteractionResult.SUCCESS;
+			return tryCapture(serverPlayer, serverPlayer.getItemInHand(hand))
+					? InteractionResult.SUCCESS
+					: InteractionResult.PASS;
 		});
 		AttackEntityCallback.EVENT.register(CameraCaptureSystem::onAttackEntity);
 	}
 
 	public static boolean handleLeftClickAir(ServerPlayer player, InteractionHand hand) {
+		if (DroneSystem.isControllingDrone(player)) {
+			return false;
+		}
 		if (!isLeftClickCameraTrigger(player, hand)) {
 			return false;
 		}
@@ -77,8 +81,7 @@ public final class CameraCaptureSystem {
 		if (hasAttackTarget(player)) {
 			return false;
 		}
-		tryCapture(player, player.getItemInHand(hand));
-		return true;
+		return tryCapture(player, player.getItemInHand(hand));
 	}
 
 	public static void suppressNextCameraSwing(ServerPlayer player, InteractionHand hand) {
@@ -93,6 +96,9 @@ public final class CameraCaptureSystem {
 	}
 
 	public static boolean tryCapture(ServerPlayer player, ItemStack stack) {
+		if (DroneSystem.isControllingDrone(player)) {
+			return false;
+		}
 		if (player == null || stack == null || stack.isEmpty() || !stack.is(ModItems.CAMERA)) {
 			return false;
 		}
@@ -312,8 +318,9 @@ public final class CameraCaptureSystem {
 		if (!isLeftClickCameraTrigger(serverPlayer, hand)) {
 			return InteractionResult.PASS;
 		}
-		tryCapture(serverPlayer, serverPlayer.getItemInHand(hand));
-		return InteractionResult.SUCCESS;
+		return tryCapture(serverPlayer, serverPlayer.getItemInHand(hand))
+				? InteractionResult.SUCCESS
+				: InteractionResult.PASS;
 	}
 
 	private static boolean isLeftClickCameraTrigger(ServerPlayer player, InteractionHand hand) {
@@ -321,6 +328,7 @@ public final class CameraCaptureSystem {
 				&& hand == InteractionHand.MAIN_HAND
 				&& player.isAlive()
 				&& !player.isSpectator()
+				&& !DroneSystem.isControllingDrone(player)
 				&& player.getItemInHand(hand).is(ModItems.CAMERA);
 	}
 

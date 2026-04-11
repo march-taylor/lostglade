@@ -95,6 +95,13 @@ public final class MapImageRenderSystem {
 		return playerId != null && PLAYER_JOBS.containsKey(playerId);
 	}
 
+	public static void cancelRender(UUID playerId) {
+		if (playerId == null) {
+			return;
+		}
+		removeJob(playerId);
+	}
+
 	public static boolean startRender(ServerPlayer player, Component itemName, MapPixelProvider provider) {
 		if (player == null || provider == null || hasActiveRender(player.getUUID())) {
 			return false;

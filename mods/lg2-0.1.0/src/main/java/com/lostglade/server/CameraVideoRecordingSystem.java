@@ -10,7 +10,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.ItemStack;
 
 import java.util.Map;
 import java.util.UUID;
@@ -41,6 +40,9 @@ public final class CameraVideoRecordingSystem {
 
 	public static boolean toggleRecording(ServerPlayer player, CameraPhotoSettings settings) {
 		if (player == null || settings == null) {
+			return false;
+		}
+		if (DroneSystem.isControllingDrone(player)) {
 			return false;
 		}
 		ActiveRecording current = RECORDINGS_BY_PLAYER.get(player.getUUID());
@@ -88,6 +90,21 @@ public final class CameraVideoRecordingSystem {
 		return true;
 	}
 
+	public static void stopForDroneControl(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		ActiveRecording current = RECORDINGS_BY_PLAYER.get(player.getUUID());
+		if (current == null) {
+			return;
+		}
+		MinecraftServer server = player.level() == null ? null : player.level().getServer();
+		if (server == null) {
+			return;
+		}
+		requestStop(server, current, false);
+	}
+
 	private static void tick(MinecraftServer server) {
 		if (server == null || RECORDINGS_BY_PLAYER.isEmpty()) {
 			return;
@@ -97,7 +114,10 @@ public final class CameraVideoRecordingSystem {
 				continue;
 			}
 			ServerPlayer player = server.getPlayerList().getPlayer(recording.playerId());
-			if (player == null || !player.isAlive() || !isHoldingCameraInAnyHand(player)) {
+			if (player == null
+					|| !player.isAlive()
+					|| DroneSystem.isControllingDrone(player)
+					|| !isHoldingCameraInAnyHand(player)) {
 				requestStop(server, recording, player != null);
 			}
 		}

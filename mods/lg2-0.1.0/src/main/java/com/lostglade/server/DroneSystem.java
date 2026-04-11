@@ -4,6 +4,7 @@ import com.google.common.collect.ImmutableMultimap;
 import com.lostglade.Lg2;
 import com.lostglade.item.DroneItem;
 import com.lostglade.item.ModItems;
+import com.lostglade.server.map.MapImageRenderSystem;
 import com.lostglade.mixin.EntityPassengerAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.mojang.authlib.GameProfile;
@@ -74,6 +75,7 @@ import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -132,6 +134,7 @@ public final class DroneSystem {
 	private static final Map<UUID, UUID> CAMERA_ANCHORS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UncontrolledDroneState> UNCONTROLLED_DRONES = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
+	private static final Set<UUID> FORCED_CONTROLLED_PLAYERS = new HashSet<>();
 
 	private DroneSystem() {
 	}
@@ -184,6 +187,7 @@ public final class DroneSystem {
 			DISPLAYS_BY_DRONE.clear();
 			CAMERA_ANCHORS_BY_DRONE.clear();
 			UNCONTROLLED_DRONES.clear();
+			FORCED_CONTROLLED_PLAYERS.clear();
 		});
 	}
 
@@ -440,6 +444,28 @@ public final class DroneSystem {
 		}
 		tickControlledSessions(server);
 		tickUncontrolledDrones(server);
+		recoverOrphanedControlledPlayers(server);
+	}
+
+	private static void recoverOrphanedControlledPlayers(MinecraftServer server) {
+		if (server == null || FORCED_CONTROLLED_PLAYERS.isEmpty()) {
+			return;
+		}
+		for (UUID playerId : new ArrayList<>(FORCED_CONTROLLED_PLAYERS)) {
+			if (playerId == null || ACTIVE_SESSIONS.containsKey(playerId)) {
+				continue;
+			}
+			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+			if (player == null) {
+				FORCED_CONTROLLED_PLAYERS.remove(playerId);
+				continue;
+			}
+			clearForcedControlMovementState(player);
+			detachAnyDronePassengersFromController(player);
+			setHotbarVisualHidden(player, false);
+			broadcastDronePilotEquipmentHidden(player, false);
+			FORCED_CONTROLLED_PLAYERS.remove(playerId);
+		}
 	}
 
 	private static void tickControlledSessions(MinecraftServer server) {
@@ -812,19 +838,29 @@ public final class DroneSystem {
 		if (player == null || root == null) {
 			return;
 		}
-		if (player.hasPassenger(root)) {
-			player.ejectPassengers();
-		}
-		if (root.isPassenger()) {
+		if (root.getVehicle() == player || root.isPassenger() || player.hasPassenger(root)) {
 			root.stopRiding();
 		}
-		if (player.hasPassenger(root)) {
-			((EntityPassengerAccessor) player).lg2$removePassenger(root);
-		}
-		if (root.getVehicle() != null) {
-			((EntityPassengerAccessor) root).lg2$setVehicle(null);
-		}
 		syncPassengerAttachment(player);
+	}
+
+	private static void detachAnyDronePassengersFromController(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		boolean changed = false;
+		for (Entity passenger : new ArrayList<>(player.getPassengers())) {
+			if (resolveDroneRoot(passenger) == null) {
+				continue;
+			}
+			if (passenger.getVehicle() == player || passenger.isPassenger()) {
+				passenger.stopRiding();
+				changed = true;
+			}
+		}
+		if (changed) {
+			syncPassengerAttachment(player);
+		}
 	}
 
 	private static void restoreControlledPlayerState(ServerPlayer player, DroneControlSession session) {
@@ -843,12 +879,14 @@ public final class DroneSystem {
 		player.onUpdateAbilities();
 		player.fallDistance = 0.0F;
 		player.hurtMarked = true;
+		FORCED_CONTROLLED_PLAYERS.remove(player.getUUID());
 	}
 
 	private static void ensureControlledPlayerState(ServerPlayer player) {
 		if (player == null) {
 			return;
 		}
+		FORCED_CONTROLLED_PLAYERS.add(player.getUUID());
 		player.setCamera(player);
 		player.setInvisible(true);
 		player.setNoGravity(true);
@@ -862,6 +900,19 @@ public final class DroneSystem {
 		if (!player.isFallFlying()) {
 			player.startFallFlying();
 		}
+		player.hurtMarked = true;
+	}
+
+	private static void clearForcedControlMovementState(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		player.setCamera(player);
+		player.setNoGravity(false);
+		player.noPhysics = false;
+		player.stopFallFlying();
+		player.setDeltaMovement(Vec3.ZERO);
+		player.fallDistance = 0.0F;
 		player.hurtMarked = true;
 	}
 
@@ -1042,6 +1093,9 @@ public final class DroneSystem {
 		}
 
 		stopControlling(player, true, false);
+		CameraVideoRecordingSystem.stopForDroneControl(player);
+		MapImageRenderSystem.cancelRender(player.getUUID());
+		RendererBotCameraSystem.stopCameraHotbarWarmupForPlayer(player.getUUID());
 		ServerRaceSystem.suspendCopperManJetpackForDrone(player);
 		UNCONTROLLED_DRONES.remove(root.getUUID());
 		root.noPhysics = true;
@@ -1099,6 +1153,14 @@ public final class DroneSystem {
 		DroneControlSession session = ACTIVE_SESSIONS.remove(player.getUUID());
 		INPUTS.remove(player.getUUID());
 		if (session == null) {
+			if (!FORCED_CONTROLLED_PLAYERS.contains(player.getUUID())) {
+				return;
+			}
+			FORCED_CONTROLLED_PLAYERS.remove(player.getUUID());
+			clearForcedControlMovementState(player);
+			detachAnyDronePassengersFromController(player);
+			setHotbarVisualHidden(player, false);
+			broadcastDronePilotEquipmentHidden(player, false);
 			return;
 		}
 
@@ -1110,6 +1172,7 @@ public final class DroneSystem {
 				: null;
 
 		player.setCamera(player);
+		detachAnyDronePassengersFromController(player);
 		if (root != null) {
 			// Fully detach before teleporting the controller back, otherwise the passenger chain can drag the drone with the player.
 			detachDroneFromController(player, root);
@@ -1149,6 +1212,7 @@ public final class DroneSystem {
 				broadcastDronePilotEquipmentHidden(player, false);
 			}
 		}
+		detachAnyDronePassengersFromController(player);
 		discardDummyIfPresent(server, session, dummy);
 		ServerRaceSystem.resumeCopperManJetpackAfterDrone(player);
 
