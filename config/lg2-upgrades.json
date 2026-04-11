@@ -4291,7 +4291,7 @@
           "targetScreenId": "",
           "upgradeId": "it_drone_kamikaze",
           "pricesBitcoins": [
-            2700
+            1000
           ],
           "icon": {
             "fallbackItem": "minecraft:tnt",
@@ -6608,7 +6608,7 @@
           "targetScreenId": "",
           "upgradeId": "it_drone_kamikaze",
           "pricesBitcoins": [
-            2700
+            1000
           ],
           "icon": {
             "fallbackItem": "minecraft:tnt",

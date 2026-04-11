@@ -18,13 +18,27 @@ import net.minecraft.world.item.context.UseOnContext;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 public final class DroneItem extends SimplePolymerItem {
-	private static final Identifier MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone");
-	private static final Identifier DISPLAY_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_display");
+	private static final Identifier DEFAULT_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone");
+	private static final Identifier DEFAULT_DISPLAY_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_display");
 	private static final String DISPLAY_ROOT_TAG = "lg2_drone_display";
 	private static final String DISPLAY_ONLY_TAG = "display_only";
+	private static final String DATA_ROOT_TAG = "lg2_drone";
+	private static final String KAMIKAZE_POWER_TAG = "kamikaze_power";
+	private static final int MIN_KAMIKAZE_POWER = 1;
+	private static final int MAX_KAMIKAZE_POWER = 3;
+	private final Identifier modelId;
+	private final Identifier displayModelId;
+	private final boolean kamikaze;
 
 	public DroneItem(Item.Properties settings) {
+		this(settings, DEFAULT_MODEL_ID, DEFAULT_DISPLAY_MODEL_ID, false);
+	}
+
+	public DroneItem(Item.Properties settings, Identifier modelId, Identifier displayModelId, boolean kamikaze) {
 		super(settings, Items.FIREWORK_ROCKET);
+		this.modelId = modelId == null ? DEFAULT_MODEL_ID : modelId;
+		this.displayModelId = displayModelId == null ? DEFAULT_DISPLAY_MODEL_ID : displayModelId;
+		this.kamikaze = kamikaze;
 	}
 
 	@Override
@@ -32,7 +46,7 @@ public final class DroneItem extends SimplePolymerItem {
 		if (!PolymerResourcePackUtils.hasMainPack(context)) {
 			return null;
 		}
-		return isDroneDisplayStack(itemStack) ? DISPLAY_MODEL_ID : MODEL_ID;
+		return isDroneDisplayStack(itemStack) ? this.displayModelId : this.modelId;
 	}
 
 	@Override
@@ -40,7 +54,7 @@ public final class DroneItem extends SimplePolymerItem {
 		if (isDroneDisplayStack(original) || PolymerResourcePackUtils.hasMainPack(context)) {
 			return;
 		}
-		out.set(DataComponents.CUSTOM_NAME, localizedName(context).withStyle(style -> style.withItalic(false)));
+		out.set(DataComponents.CUSTOM_NAME, localizedName(context, this.kamikaze).withStyle(style -> style.withItalic(false)));
 	}
 
 	@Override
@@ -49,16 +63,26 @@ public final class DroneItem extends SimplePolymerItem {
 	}
 
 	public static ItemStack createDisplayStack() {
-		ItemStack stack = new ItemStack(ModItems.DRONE);
+		return createDisplayStack(ModItems.DRONE, MIN_KAMIKAZE_POWER);
+	}
+
+	public static ItemStack createDisplayStack(Item droneItem, int kamikazePower) {
+		ItemStack stack = new ItemStack(droneItem == null ? ModItems.DRONE : droneItem);
 		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
 			var displayTag = tag.getCompoundOrEmpty(DISPLAY_ROOT_TAG);
 			displayTag.putBoolean(DISPLAY_ONLY_TAG, true);
 			tag.put(DISPLAY_ROOT_TAG, displayTag);
 		});
+		if (isKamikazeDroneStack(stack)) {
+			setKamikazePower(stack, kamikazePower);
+		}
 		return stack;
 	}
 
 	public static boolean isDroneDisplayStack(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return false;
+		}
 		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
 		if (customData == null) {
 			return false;
@@ -68,25 +92,61 @@ public final class DroneItem extends SimplePolymerItem {
 				.getBooleanOr(DISPLAY_ONLY_TAG, false);
 	}
 
-	private static MutableComponent localizedName(PacketContext context) {
+	public static boolean isKamikazeDroneStack(ItemStack stack) {
+		return stack != null && !stack.isEmpty() && stack.getItem() == ModItems.DRONE_KAMIKAZE;
+	}
+
+	public static int getKamikazePower(ItemStack stack) {
+		if (!isKamikazeDroneStack(stack)) {
+			return MIN_KAMIKAZE_POWER;
+		}
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData == null) {
+			return MIN_KAMIKAZE_POWER;
+		}
+		int rawPower = customData.copyTag()
+				.getCompoundOrEmpty(DATA_ROOT_TAG)
+				.getIntOr(KAMIKAZE_POWER_TAG, MIN_KAMIKAZE_POWER);
+		return net.minecraft.util.Mth.clamp(rawPower, MIN_KAMIKAZE_POWER, MAX_KAMIKAZE_POWER);
+	}
+
+	public static void setKamikazePower(ItemStack stack, int power) {
+		if (!isKamikazeDroneStack(stack)) {
+			return;
+		}
+		int clamped = net.minecraft.util.Mth.clamp(power, MIN_KAMIKAZE_POWER, MAX_KAMIKAZE_POWER);
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+			var droneTag = tag.getCompoundOrEmpty(DATA_ROOT_TAG);
+			droneTag.putInt(KAMIKAZE_POWER_TAG, clamped);
+			tag.put(DATA_ROOT_TAG, droneTag);
+		});
+	}
+
+	public static ItemStack createKamikazeStack(int power) {
+		ItemStack stack = new ItemStack(ModItems.DRONE_KAMIKAZE);
+		setKamikazePower(stack, power);
+		return stack;
+	}
+
+	private static MutableComponent localizedName(PacketContext context, boolean kamikaze) {
 		ServerPlayer player = context.getPlayer();
 		if (player == null) {
-			return Component.literal("Drone");
+			return Component.literal(kamikaze ? "Kamikaze Drone" : "Drone");
 		}
 		String language = player.clientInformation().language();
 		String normalized = language == null ? "" : language.toLowerCase();
 		if (normalized.startsWith("rpr")) {
-			return Component.literal("Дронъ");
+			return Component.literal(kamikaze ? "Дронъ-камикадзе" : "Дронъ");
 		}
 		if (normalized.startsWith("ru")) {
-			return Component.literal("Дрон");
+			return Component.literal(kamikaze ? "Дрон-камикадзе" : "Дрон");
 		}
 		if (normalized.startsWith("uk")) {
-			return Component.literal("Дрон");
+			return Component.literal(kamikaze ? "Дрон-камікадзе" : "Дрон");
 		}
 		if (normalized.startsWith("ja")) {
-			return Component.literal("ドローン");
+			return Component.literal(kamikaze ? "カミカゼドローン" : "ドローン");
 		}
-		return Component.literal("Drone");
+		return Component.literal(kamikaze ? "Kamikaze Drone" : "Drone");
 	}
 }

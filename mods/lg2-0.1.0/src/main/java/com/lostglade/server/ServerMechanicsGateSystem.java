@@ -50,6 +50,7 @@ public final class ServerMechanicsGateSystem {
 	private static final String ERA_NETHERITE = "era_netherite";
 	private static final String IT_CAMERA = "it_camera";
 	private static final String IT_DRONE = "it_drone_scout";
+	private static final String IT_DRONE_KAMIKAZE = "it_drone_kamikaze";
 	private static final double AUTOMATED_GOLEM_PLAYER_RADIUS = 16.0D;
 	private static final double AUTOMATED_GOLEM_PLAYER_RADIUS_SQR = AUTOMATED_GOLEM_PLAYER_RADIUS * AUTOMATED_GOLEM_PLAYER_RADIUS;
 
@@ -327,6 +328,9 @@ public final class ServerMechanicsGateSystem {
 		if (item == ModItems.DRONE) {
 			return IT_DRONE;
 		}
+		if (item == ModItems.DRONE_KAMIKAZE) {
+			return IT_DRONE_KAMIKAZE;
+		}
 		String eraRequirement = requiredEraForItem(item);
 		if (eraRequirement != null) {
 			return eraRequirement;
@@ -401,7 +405,8 @@ public final class ServerMechanicsGateSystem {
 
 	private static String requiredUpgradeForEntityInteraction(Entity entity) {
 		if (DroneSystem.isDroneEntity(entity)) {
-			return IT_DRONE;
+			String requirement = DroneSystem.requiredUpgradeForDroneEntity(entity);
+			return requirement == null ? IT_DRONE : requirement;
 		}
 		if (entity instanceof AbstractVillager) {
 			return VILLAGERS;

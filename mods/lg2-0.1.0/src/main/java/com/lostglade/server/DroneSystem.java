@@ -66,6 +66,7 @@ import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
 import net.minecraft.world.entity.ai.navigation.PathNavigation;
+import net.minecraft.world.entity.item.PrimedTnt;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.UseOnContext;
@@ -90,7 +91,10 @@ import java.util.UUID;
 
 public final class DroneSystem {
 	private static final String IT_DRONE_SCOUT = "it_drone_scout";
+	private static final String IT_DRONE_KAMIKAZE = "it_drone_kamikaze";
 	private static final String DRONE_ROOT_TAG = "lg2_drone_root";
+	private static final String DRONE_VARIANT_KAMIKAZE_TAG = "lg2_drone_variant_kamikaze";
+	private static final String DRONE_KAMIKAZE_POWER_TAG_PREFIX = "lg2_drone_kamikaze_power_";
 	private static final String DRONE_DISPLAY_TAG = "lg2_drone_display";
 	private static final String DRONE_DISPLAY_OWNER_TAG_PREFIX = "lg2_drone_display_owner_";
 	private static final String DRONE_CAMERA_TAG = "lg2_drone_camera_anchor";
@@ -118,6 +122,9 @@ public final class DroneSystem {
 	private static final float DRONE_SOUND_MAX_VOLUME = 1.0F;
 	private static final float DRONE_SOUND_MIN_PITCH = 0.76F;
 	private static final float DRONE_SOUND_MAX_PITCH = 1.18F;
+	private static final int DRONE_KAMIKAZE_MIN_POWER = 1;
+	private static final int DRONE_KAMIKAZE_MAX_POWER = 3;
+	private static final float DRONE_KAMIKAZE_TNT_SPREAD = 0.26F;
 	private static final double UNCONTROLLED_GRAVITY = 0.04D;
 	private static final double UNCONTROLLED_AIR_DRAG = 0.985D;
 	private static final float UNCONTROLLED_ROTATION_LERP = 0.35F;
@@ -164,7 +171,8 @@ public final class DroneSystem {
 			if (serverPlayer.getItemInHand(hand).is(ModItems.BLUETOOTH_ADAPTER)) {
 				return InteractionResult.PASS;
 			}
-			if (!ServerUpgradeUiSystem.hasUpgrade(serverPlayer, IT_DRONE_SCOUT)) {
+			String requiredUpgrade = resolveRequiredUpgradeForDroneRoot(root);
+			if (requiredUpgrade != null && !ServerUpgradeUiSystem.hasUpgrade(serverPlayer, requiredUpgrade)) {
 				return InteractionResult.FAIL;
 			}
 			return startControlling(serverPlayer, root) ? InteractionResult.SUCCESS : InteractionResult.CONSUME;
@@ -218,9 +226,14 @@ public final class DroneSystem {
 		if (!(level instanceof ServerLevel serverLevel) || !(context.getPlayer() instanceof ServerPlayer player)) {
 			return InteractionResult.PASS;
 		}
-		if (!ServerUpgradeUiSystem.hasUpgrade(player, IT_DRONE_SCOUT)) {
+		ItemStack placedStack = context.getItemInHand();
+		ItemStack placementSnapshot = placedStack.copy();
+		String requiredUpgrade = resolveRequiredUpgradeForDroneItem(placementSnapshot);
+		if (requiredUpgrade != null && !ServerUpgradeUiSystem.hasUpgrade(player, requiredUpgrade)) {
 			return InteractionResult.FAIL;
 		}
+		boolean kamikazeDrone = DroneItem.isKamikazeDroneStack(placementSnapshot);
+		int kamikazePower = DroneItem.getKamikazePower(placementSnapshot);
 
 		Vec3 spawnPos = resolvePlacementPosition(context);
 		AABB placementBox = droneBoxAt(spawnPos);
@@ -231,6 +244,10 @@ public final class DroneSystem {
 		float yRot = player.getYRot();
 		Interaction root = new Interaction(EntityType.INTERACTION, serverLevel);
 		root.addTag(DRONE_ROOT_TAG);
+		if (kamikazeDrone) {
+			root.addTag(DRONE_VARIANT_KAMIKAZE_TAG);
+			root.addTag(droneKamikazePowerTag(kamikazePower));
+		}
 		root.setPos(spawnPos.x, spawnPos.y, spawnPos.z);
 		root.setYRot(yRot);
 		root.setXRot(0.0F);
@@ -241,7 +258,14 @@ public final class DroneSystem {
 		root.setWidth(DRONE_WIDTH);
 		root.setHeight(DRONE_HEIGHT);
 
-		Display.ItemDisplay display = createDroneDisplay(serverLevel, spawnPos, yRot, 0.0F);
+		Display.ItemDisplay display = createDroneDisplay(
+				serverLevel,
+				spawnPos,
+				yRot,
+				0.0F,
+				kamikazeDrone ? ModItems.DRONE_KAMIKAZE : ModItems.DRONE,
+				kamikazePower
+		);
 		Interaction cameraAnchor = createDroneCameraAnchor(serverLevel, droneCameraOrigin(spawnPos), yRot, 0.0F);
 		serverLevel.addFreshEntity(root);
 		serverLevel.addFreshEntity(display);
@@ -471,6 +495,11 @@ public final class DroneSystem {
 
 	public static boolean isDroneEntity(Entity entity) {
 		return resolveDroneRoot(entity) != null;
+	}
+
+	public static String requiredUpgradeForDroneEntity(Entity entity) {
+		Entity root = resolveDroneRoot(entity);
+		return root == null ? null : resolveRequiredUpgradeForDroneRoot(root);
 	}
 
 	private static void tick(MinecraftServer server) {
@@ -1368,6 +1397,8 @@ public final class DroneSystem {
 		if (root == null || !root.isAlive() || !(root.level() instanceof ServerLevel level)) {
 			return;
 		}
+		boolean kamikazeDrone = isKamikazeDrone(root);
+		int kamikazePower = resolveDroneKamikazePower(root);
 		playDroneBreakEffects(level, droneCameraOrigin(root), root.getDeltaMovement());
 		UNCONTROLLED_DRONES.remove(root.getUUID());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
@@ -1392,8 +1423,11 @@ public final class DroneSystem {
 		for (Entity passenger : new ArrayList<>(root.getPassengers())) {
 			passenger.discard();
 		}
-		if (dropItem && breaker != null && !breaker.getAbilities().instabuild) {
-			root.spawnAtLocation(level, new ItemStack(ModItems.DRONE));
+		if (dropItem && breaker != null && !breaker.getAbilities().instabuild && !kamikazeDrone) {
+			root.spawnAtLocation(level, buildDroneDropStack(root));
+		}
+		if (kamikazeDrone) {
+			detonateKamikazeDrone(level, droneCameraOrigin(root), root.getDeltaMovement(), kamikazePower);
 		}
 		root.discard();
 	}
@@ -1419,6 +1453,91 @@ public final class DroneSystem {
 		level.sendParticles(ParticleTypes.EXPLOSION, origin.x, origin.y + DRONE_HEIGHT * 0.28D, origin.z, 3, 0.10D, 0.07D, 0.10D, 0.01D);
 		level.sendParticles(ParticleTypes.SMOKE, origin.x, origin.y + DRONE_HEIGHT * 0.12D, origin.z, 5, 0.13D, 0.10D, 0.13D, motionSpread * 0.25D);
 		level.sendParticles(ParticleTypes.FLAME, origin.x, origin.y + DRONE_HEIGHT * 0.16D, origin.z, 2, 0.07D, 0.05D, 0.07D, 0.01D);
+	}
+
+	private static String resolveRequiredUpgradeForDroneItem(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return null;
+		}
+		if (stack.getItem() == ModItems.DRONE_KAMIKAZE) {
+			return IT_DRONE_KAMIKAZE;
+		}
+		if (stack.getItem() == ModItems.DRONE) {
+			return IT_DRONE_SCOUT;
+		}
+		return null;
+	}
+
+	private static String resolveRequiredUpgradeForDroneRoot(Entity root) {
+		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
+			return null;
+		}
+		return isKamikazeDrone(root) ? IT_DRONE_KAMIKAZE : IT_DRONE_SCOUT;
+	}
+
+	private static ItemStack buildDroneDropStack(Entity root) {
+		if (isKamikazeDrone(root)) {
+			return DroneItem.createKamikazeStack(resolveDroneKamikazePower(root));
+		}
+		return new ItemStack(ModItems.DRONE);
+	}
+
+	private static boolean isKamikazeDrone(Entity root) {
+		return root != null && root.getTags().contains(DRONE_VARIANT_KAMIKAZE_TAG);
+	}
+
+	private static int resolveDroneKamikazePower(Entity root) {
+		if (!isKamikazeDrone(root)) {
+			return DRONE_KAMIKAZE_MIN_POWER;
+		}
+		int resolvedPower = DRONE_KAMIKAZE_MIN_POWER;
+		for (String tag : root.getTags()) {
+			if (!tag.startsWith(DRONE_KAMIKAZE_POWER_TAG_PREFIX)) {
+				continue;
+			}
+			try {
+				int parsed = Integer.parseInt(tag.substring(DRONE_KAMIKAZE_POWER_TAG_PREFIX.length()));
+				resolvedPower = net.minecraft.util.Mth.clamp(parsed, DRONE_KAMIKAZE_MIN_POWER, DRONE_KAMIKAZE_MAX_POWER);
+				break;
+			} catch (NumberFormatException ignored) {
+			}
+		}
+		return resolvedPower;
+	}
+
+	private static String droneKamikazePowerTag(int power) {
+		return DRONE_KAMIKAZE_POWER_TAG_PREFIX
+				+ net.minecraft.util.Mth.clamp(power, DRONE_KAMIKAZE_MIN_POWER, DRONE_KAMIKAZE_MAX_POWER);
+	}
+
+	private static void detonateKamikazeDrone(ServerLevel level, Vec3 origin, Vec3 velocity, int power) {
+		if (level == null || origin == null) {
+			return;
+		}
+		int charges = net.minecraft.util.Mth.clamp(power, DRONE_KAMIKAZE_MIN_POWER, DRONE_KAMIKAZE_MAX_POWER);
+		Vec3 inheritedVelocity = velocity == null ? Vec3.ZERO : velocity.scale(0.30D);
+
+		for (int index = 0; index < charges; index++) {
+			Entity created = EntityType.TNT.create(level, EntitySpawnReason.TRIGGERED);
+			if (!(created instanceof PrimedTnt tnt)) {
+				continue;
+			}
+			double angle = charges <= 1 ? 0.0D : (Math.PI * 2.0D * index) / charges;
+			double radius = charges <= 1 ? 0.0D : DRONE_KAMIKAZE_TNT_SPREAD;
+			double x = origin.x + Math.cos(angle) * radius;
+			double y = origin.y + 0.04D;
+			double z = origin.z + Math.sin(angle) * radius;
+			tnt.setPos(x, y, z);
+			tnt.setFuse(0);
+			tnt.setDeltaMovement(
+					inheritedVelocity.add(
+							(level.random.nextDouble() - 0.5D) * 0.08D,
+							0.03D + level.random.nextDouble() * 0.03D,
+							(level.random.nextDouble() - 0.5D) * 0.08D
+					)
+			);
+			level.addFreshEntity(tnt);
+		}
 	}
 
 	private static SoundEvent resolveVanillaSoundEvent(Identifier soundId, SoundEvent fallback) {
@@ -1451,7 +1570,14 @@ public final class DroneSystem {
 		return null;
 	}
 
-	private static Display.ItemDisplay createDroneDisplay(ServerLevel level, Vec3 position, float yRot, float xRot) {
+	private static Display.ItemDisplay createDroneDisplay(
+			ServerLevel level,
+			Vec3 position,
+			float yRot,
+			float xRot,
+			net.minecraft.world.item.Item droneItem,
+			int kamikazePower
+	) {
 		Display.ItemDisplay display = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
 		display.addTag(DRONE_DISPLAY_TAG);
 		display.setPos(position.x, position.y, position.z);
@@ -1459,7 +1585,7 @@ public final class DroneSystem {
 		display.setXRot(xRot);
 		display.setYHeadRot(yRot);
 		display.setYBodyRot(yRot);
-		display.setItemStack(DroneItem.createDisplayStack());
+		display.setItemStack(DroneItem.createDisplayStack(droneItem, kamikazePower));
 		display.setItemTransform(ItemDisplayContext.FIXED);
 		display.setBillboardConstraints(Display.BillboardConstraints.FIXED);
 		display.setNoGravity(true);

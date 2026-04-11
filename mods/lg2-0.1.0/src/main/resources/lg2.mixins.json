@@ -56,6 +56,7 @@
 		"RabbitAccessor",
 		"RabbitNaturalSpawnMarkerMixin",
 		"RaidIllusionerSpawnMixin",
+		"ResultSlotKamikazeDroneMixin",
 		"ResultSlotMechanicsGateMixin",
 		"ServerCommonPacketListenerCocaineHallucinationMixin",
 		"ServerCommonPacketListenerAbsoluteInvisibilityMixin",
