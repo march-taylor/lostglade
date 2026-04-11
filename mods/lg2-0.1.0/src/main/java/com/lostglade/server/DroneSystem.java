@@ -103,6 +103,7 @@ public final class DroneSystem {
 	private static final float DRONE_DISPLAY_CONTROLLED_Y_OFFSET = 0.0F;
 	private static final float DRONE_MAX_TILT_DEGREES = 32.0F;
 	private static final long DRONE_LOOP_REPLAY_TICKS = 10L;
+	private static final long DRONE_CAMERA_SUPPRESS_AFTER_CONTROL_TICKS = 20L;
 	private static final double DRONE_SOUND_RADIUS_SQR = 16.0D * 16.0D;
 	private static final float DRONE_SOUND_SOURCE_POWER = 0.58F;
 	private static final float DRONE_SOUND_MIN_VOLUME = 1.0F;
@@ -134,6 +135,7 @@ public final class DroneSystem {
 	private static final Map<UUID, UUID> CAMERA_ANCHORS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UncontrolledDroneState> UNCONTROLLED_DRONES = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
+	private static final Map<UUID, Long> CAMERA_SUPPRESSED_UNTIL_TICK = new HashMap<>();
 	private static final Set<UUID> FORCED_CONTROLLED_PLAYERS = new HashSet<>();
 
 	private DroneSystem() {
@@ -187,6 +189,7 @@ public final class DroneSystem {
 			DISPLAYS_BY_DRONE.clear();
 			CAMERA_ANCHORS_BY_DRONE.clear();
 			UNCONTROLLED_DRONES.clear();
+			CAMERA_SUPPRESSED_UNTIL_TICK.clear();
 			FORCED_CONTROLLED_PLAYERS.clear();
 		});
 	}
@@ -274,6 +277,25 @@ public final class DroneSystem {
 			return false;
 		}
 		return Objects.equals(CONTROLLERS_BY_DRONE.get(session.droneUuid()), player.getUUID());
+	}
+
+	public static boolean isDroneCameraSuppressed(ServerPlayer player) {
+		if (player == null) {
+			return false;
+		}
+		if (isControllingDrone(player)) {
+			return true;
+		}
+		Long untilTick = CAMERA_SUPPRESSED_UNTIL_TICK.get(player.getUUID());
+		if (untilTick == null) {
+			return false;
+		}
+		long now = player.level() == null ? Long.MAX_VALUE : player.level().getGameTime();
+		if (now > untilTick) {
+			CAMERA_SUPPRESSED_UNTIL_TICK.remove(player.getUUID(), untilTick);
+			return false;
+		}
+		return true;
 	}
 
 	public static BluetoothLinkSystem.Endpoint resolveBluetoothDroneEndpoint(ServerLevel level, Entity entity) {
@@ -444,7 +466,59 @@ public final class DroneSystem {
 		}
 		tickControlledSessions(server);
 		tickUncontrolledDrones(server);
+		cleanupExpiredCameraSuppression(server);
 		recoverOrphanedControlledPlayers(server);
+		recoverPlayersWithStaleDronePassenger(server);
+	}
+
+	private static void cleanupExpiredCameraSuppression(MinecraftServer server) {
+		if (server == null || CAMERA_SUPPRESSED_UNTIL_TICK.isEmpty()) {
+			return;
+		}
+		ServerLevel overworld = server.overworld();
+		long now = overworld == null ? Long.MAX_VALUE : overworld.getGameTime();
+		for (Map.Entry<UUID, Long> entry : new ArrayList<>(CAMERA_SUPPRESSED_UNTIL_TICK.entrySet())) {
+			Long untilTick = entry.getValue();
+			if (untilTick == null || now > untilTick) {
+				CAMERA_SUPPRESSED_UNTIL_TICK.remove(entry.getKey(), untilTick);
+			}
+		}
+	}
+
+	private static void recoverPlayersWithStaleDronePassenger(MinecraftServer server) {
+		if (server == null || server.getPlayerList() == null) {
+			return;
+		}
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (player == null || ACTIVE_SESSIONS.containsKey(player.getUUID())) {
+				continue;
+			}
+			boolean hasDronePassenger = false;
+			for (Entity passenger : new ArrayList<>(player.getPassengers())) {
+				if (resolveDroneRoot(passenger) != null) {
+					hasDronePassenger = true;
+					break;
+				}
+			}
+			if (!hasDronePassenger) {
+				continue;
+			}
+			detachAnyDronePassengersFromController(player);
+			clearForcedControlMovementState(player);
+			markCameraSuppressedForPlayer(player);
+			setHotbarVisualHidden(player, false);
+			broadcastDronePilotEquipmentHidden(player, false);
+		}
+	}
+
+	private static void markCameraSuppressedForPlayer(ServerPlayer player) {
+		if (player == null || player.level() == null) {
+			return;
+		}
+		CAMERA_SUPPRESSED_UNTIL_TICK.put(
+				player.getUUID(),
+				player.level().getGameTime() + DRONE_CAMERA_SUPPRESS_AFTER_CONTROL_TICKS
+		);
 	}
 
 	private static void recoverOrphanedControlledPlayers(MinecraftServer server) {
@@ -908,7 +982,9 @@ public final class DroneSystem {
 			return;
 		}
 		player.setCamera(player);
-		player.setNoGravity(false);
+		if (!player.getAbilities().mayfly) {
+			player.setNoGravity(false);
+		}
 		player.noPhysics = false;
 		player.stopFallFlying();
 		player.setDeltaMovement(Vec3.ZERO);
@@ -1093,6 +1169,7 @@ public final class DroneSystem {
 		}
 
 		stopControlling(player, true, false);
+		markCameraSuppressedForPlayer(player);
 		CameraVideoRecordingSystem.stopForDroneControl(player);
 		MapImageRenderSystem.cancelRender(player.getUUID());
 		RendererBotCameraSystem.stopCameraHotbarWarmupForPlayer(player.getUUID());
@@ -1157,6 +1234,7 @@ public final class DroneSystem {
 				return;
 			}
 			FORCED_CONTROLLED_PLAYERS.remove(player.getUUID());
+			markCameraSuppressedForPlayer(player);
 			clearForcedControlMovementState(player);
 			detachAnyDronePassengersFromController(player);
 			setHotbarVisualHidden(player, false);
@@ -1213,6 +1291,7 @@ public final class DroneSystem {
 			}
 		}
 		detachAnyDronePassengersFromController(player);
+		markCameraSuppressedForPlayer(player);
 		discardDummyIfPresent(server, session, dummy);
 		ServerRaceSystem.resumeCopperManJetpackAfterDrone(player);
 

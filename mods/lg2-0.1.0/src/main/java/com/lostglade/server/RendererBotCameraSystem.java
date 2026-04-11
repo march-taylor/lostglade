@@ -988,7 +988,7 @@ public final class RendererBotCameraSystem {
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			if (player == null
 					|| !player.isAlive()
-					|| DroneSystem.isControllingDrone(player)
+					|| DroneSystem.isDroneCameraSuppressed(player)
 					|| !(player.level() instanceof ServerLevel)
 					|| !playerHasCameraInHotbar(player)) {
 				continue;
@@ -1036,7 +1036,7 @@ public final class RendererBotCameraSystem {
 				continue;
 			}
 			if (!player.isAlive()
-					|| DroneSystem.isControllingDrone(player)
+					|| DroneSystem.isDroneCameraSuppressed(player)
 					|| !(player.level() instanceof ServerLevel playerLevel)
 					|| !playerHasCameraInHotbar(player)) {
 				stopLiveStream(ownerKey);
@@ -1487,7 +1487,7 @@ public final class RendererBotCameraSystem {
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 				if (player == null
 						|| !player.isAlive()
-						|| DroneSystem.isControllingDrone(player)
+						|| DroneSystem.isDroneCameraSuppressed(player)
 						|| !(player.level() instanceof ServerLevel playerLevel)
 						|| !playerHasCameraInHotbar(player)) {
 					continue;

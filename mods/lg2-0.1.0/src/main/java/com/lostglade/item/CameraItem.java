@@ -68,7 +68,7 @@ public final class CameraItem extends PolymerBlockItem {
 		if (hand != InteractionHand.MAIN_HAND) {
 			return InteractionResult.PASS;
 		}
-		if (player instanceof ServerPlayer serverPlayer && DroneSystem.isControllingDrone(serverPlayer)) {
+		if (player instanceof ServerPlayer serverPlayer && DroneSystem.isDroneCameraSuppressed(serverPlayer)) {
 			return InteractionResult.PASS;
 		}
 		if (player instanceof ServerPlayer serverPlayer) {
@@ -89,7 +89,7 @@ public final class CameraItem extends PolymerBlockItem {
 			return InteractionResult.PASS;
 		}
 		Player player = context.getPlayer();
-		if (player instanceof ServerPlayer serverPlayer && DroneSystem.isControllingDrone(serverPlayer)) {
+		if (player instanceof ServerPlayer serverPlayer && DroneSystem.isDroneCameraSuppressed(serverPlayer)) {
 			return InteractionResult.PASS;
 		}
 		if (player instanceof ServerPlayer serverPlayer) {

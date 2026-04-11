@@ -42,7 +42,7 @@ public final class CameraVideoRecordingSystem {
 		if (player == null || settings == null) {
 			return false;
 		}
-		if (DroneSystem.isControllingDrone(player)) {
+		if (DroneSystem.isDroneCameraSuppressed(player)) {
 			return false;
 		}
 		ActiveRecording current = RECORDINGS_BY_PLAYER.get(player.getUUID());
@@ -116,7 +116,7 @@ public final class CameraVideoRecordingSystem {
 			ServerPlayer player = server.getPlayerList().getPlayer(recording.playerId());
 			if (player == null
 					|| !player.isAlive()
-					|| DroneSystem.isControllingDrone(player)
+					|| DroneSystem.isDroneCameraSuppressed(player)
 					|| !isHoldingCameraInAnyHand(player)) {
 				requestStop(server, recording, player != null);
 			}
