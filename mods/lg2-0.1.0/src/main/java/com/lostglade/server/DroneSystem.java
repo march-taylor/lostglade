@@ -106,7 +106,9 @@ public final class DroneSystem {
 	private static final float DRONE_CAMERA_ANCHOR_SIZE = 0.01F;
 	private static final double DRONE_SPAWN_Y_OFFSET = 0.24D;
 	private static final float DRONE_DISPLAY_VIEW_RANGE = 64.0F;
-	private static final float DRONE_DISPLAY_CONTROLLED_Y_OFFSET = 0.0F;
+	private static final float DRONE_DISPLAY_CONTROLLED_Y_OFFSET = -0.6F;
+	private static final int DRONE_DISPLAY_INTERPOLATION_TICKS = 2;
+	private static final float DRONE_DISPLAY_DRIVE_SMOOTHING = 0.35F;
 	private static final float DRONE_MAX_TILT_DEGREES = 32.0F;
 	private static final long DRONE_LOOP_REPLAY_TICKS = 10L;
 	private static final long DRONE_CAMERA_SUPPRESS_AFTER_CONTROL_TICKS = 20L;
@@ -648,7 +650,19 @@ public final class DroneSystem {
 			stopControlling(player, true, true);
 			return;
 		}
-		syncDroneDisplay(root, yaw, pitch, session.forwardDrive(), session.strafeDrive());
+		double displayForwardDrive = net.minecraft.util.Mth.lerp(
+				DRONE_DISPLAY_DRIVE_SMOOTHING,
+				session.displayForwardDrive(),
+				session.forwardDrive()
+		);
+		double displayStrafeDrive = net.minecraft.util.Mth.lerp(
+				DRONE_DISPLAY_DRIVE_SMOOTHING,
+				session.displayStrafeDrive(),
+				session.strafeDrive()
+		);
+		session.setDisplayForwardDrive(displayForwardDrive);
+		session.setDisplayStrafeDrive(displayStrafeDrive);
+		syncDroneDisplay(root, yaw, pitch, displayForwardDrive, displayStrafeDrive);
 		syncControlledPlayer(player, root);
 		updateDroneHud(player, session, false);
 	}
@@ -1454,6 +1468,9 @@ public final class DroneSystem {
 		display.setShadowRadius(0.0F);
 		display.setShadowStrength(0.0F);
 		display.setViewRange(DRONE_DISPLAY_VIEW_RANGE);
+		display.setPosRotInterpolationDuration(DRONE_DISPLAY_INTERPOLATION_TICKS);
+		display.setTransformationInterpolationDelay(0);
+		display.setTransformationInterpolationDuration(DRONE_DISPLAY_INTERPOLATION_TICKS);
 		display.setTransformation(Transformation.identity());
 		return display;
 	}
@@ -1477,6 +1494,9 @@ public final class DroneSystem {
 		Entity entity = findDroneDisplay(root);
 		if (entity instanceof Display.ItemDisplay display) {
 			boolean controlled = root != null && root.isPassenger() && root.getVehicle() instanceof ServerPlayer;
+			display.setPosRotInterpolationDuration(DRONE_DISPLAY_INTERPOLATION_TICKS);
+			display.setTransformationInterpolationDelay(0);
+			display.setTransformationInterpolationDuration(DRONE_DISPLAY_INTERPOLATION_TICKS);
 			display.setYRot(yRot);
 			display.setXRot(controlled ? 0.0F : xRot);
 			display.setTransformation(buildDroneDisplayTransformation(root, forwardDrive, strafeDrive));
@@ -2173,6 +2193,8 @@ public final class DroneSystem {
 		private Vec3 lastPlayerPos = Vec3.ZERO;
 		private double forwardDrive;
 		private double strafeDrive;
+		private double displayForwardDrive;
+		private double displayStrafeDrive;
 		private boolean hudVisible;
 		private String lastHudSnapshot = "";
 		private long lastHudTick = Long.MIN_VALUE;
@@ -2295,6 +2317,22 @@ public final class DroneSystem {
 
 		private void setStrafeDrive(double strafeDrive) {
 			this.strafeDrive = strafeDrive;
+		}
+
+		private double displayForwardDrive() {
+			return this.displayForwardDrive;
+		}
+
+		private void setDisplayForwardDrive(double displayForwardDrive) {
+			this.displayForwardDrive = displayForwardDrive;
+		}
+
+		private double displayStrafeDrive() {
+			return this.displayStrafeDrive;
+		}
+
+		private void setDisplayStrafeDrive(double displayStrafeDrive) {
+			this.displayStrafeDrive = displayStrafeDrive;
 		}
 
 		private boolean hudVisible() {
