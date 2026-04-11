@@ -790,11 +790,20 @@ public final class MonitorScreenSystem {
 			return byRow != 0 ? byRow : Integer.compare(leftCoord.x(), rightCoord.x());
 		});
 		List<ServerSelectionHighlightSystem.DisplayBlueprint> blueprints = new ArrayList<>(orderedFrames.size());
+		Set<UUID> addedGlowEntities = new HashSet<>();
 		for (Map.Entry<ItemFrame, TileCoord> entry : orderedFrames) {
 			ItemFrame frame = entry.getKey();
 			ScreenTileState state = readScreenState(frame.getItem());
 			if (state == null) {
 				continue;
+			}
+			List<Display.ItemDisplay> displays = findDisplays(level, frame.blockPosition(), frame.getDirection());
+			if (!displays.isEmpty()) {
+				Display.ItemDisplay display = displays.get(0);
+				if (display != null && display.isAlive() && addedGlowEntities.add(display.getUUID())) {
+					blueprints.add(new ServerSelectionHighlightSystem.EntityGlowBlueprint(display));
+					continue;
+				}
 			}
 			Direction facing = frame.getDirection();
 			Direction mountSide = facing.getOpposite();
@@ -803,12 +812,13 @@ public final class MonitorScreenSystem {
 					mountSide.getStepY() * DISPLAY_PLANE_OFFSET,
 					mountSide.getStepZ() * DISPLAY_PLANE_OFFSET
 			);
-			blueprints.add(new ServerSelectionHighlightSystem.BlockDisplayBlueprint(
+			blueprints.add(new ServerSelectionHighlightSystem.ItemDisplayBlueprint(
 					level,
 					center,
 					facing.toYRot(),
 					0.0F,
-					Blocks.AIR.defaultBlockState(),
+					MonitorItem.createDisplayStack(state.connectionMask()),
+					ItemDisplayContext.FIXED,
 					Transformation.identity()
 			));
 		}
