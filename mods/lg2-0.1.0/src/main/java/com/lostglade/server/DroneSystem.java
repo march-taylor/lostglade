@@ -116,6 +116,7 @@ public final class DroneSystem {
 	private static final double UNCONTROLLED_SETTLED_HORIZONTAL_SPEED_SQR = 1.0E-6D;
 	private static final double UNCONTROLLED_SETTLED_VERTICAL_SPEED = 0.045D;
 	private static final int PLAYER_HOTBAR_MENU_SLOT_START = 36;
+	private static final int PLAYER_OFFHAND_MENU_SLOT = 45;
 	private static final byte ALL_PLAYER_SKIN_PARTS = (byte) 0x7F;
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
 	private static final long DRONE_HUD_REFRESH_TICKS = 2L;
@@ -137,6 +138,7 @@ public final class DroneSystem {
 	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
 	private static final Map<UUID, Long> CAMERA_SUPPRESSED_UNTIL_TICK = new HashMap<>();
 	private static final Set<UUID> FORCED_CONTROLLED_PLAYERS = new HashSet<>();
+	private static final Map<UUID, ControlledInventorySnapshot> CONTROLLED_INVENTORY_SNAPSHOTS = new HashMap<>();
 
 	private DroneSystem() {
 	}
@@ -191,6 +193,7 @@ public final class DroneSystem {
 			UNCONTROLLED_DRONES.clear();
 			CAMERA_SUPPRESSED_UNTIL_TICK.clear();
 			FORCED_CONTROLLED_PLAYERS.clear();
+			CONTROLLED_INVENTORY_SNAPSHOTS.clear();
 		});
 	}
 
@@ -506,6 +509,7 @@ public final class DroneSystem {
 			detachAnyDronePassengersFromController(player);
 			clearForcedControlMovementState(player);
 			markCameraSuppressedForPlayer(player);
+			restoreControlledInventoryIfNeeded(player);
 			setHotbarVisualHidden(player, false);
 			broadcastDronePilotEquipmentHidden(player, false);
 		}
@@ -536,6 +540,7 @@ public final class DroneSystem {
 			}
 			clearForcedControlMovementState(player);
 			detachAnyDronePassengersFromController(player);
+			restoreControlledInventoryIfNeeded(player);
 			setHotbarVisualHidden(player, false);
 			broadcastDronePilotEquipmentHidden(player, false);
 			FORCED_CONTROLLED_PLAYERS.remove(playerId);
@@ -627,6 +632,7 @@ public final class DroneSystem {
 		session.setVelocity(player.getDeltaMovement());
 		session.setLastPlayerPos(currentPos);
 		maybePlayDroneLoopSound(root, session.forwardDrive(), session.strafeDrive(), true);
+		setHotbarVisualHidden(player, true);
 		if (shouldDestroyDroneFromCollision(intendedMovement, actualMovement, player.horizontalCollision, player.verticalCollision)) {
 			destroyDrone(root, null, false);
 			stopControlling(player, true, true);
@@ -1190,6 +1196,7 @@ public final class DroneSystem {
 		DronePilotDummyEntity dummy = spawnPlayerDummy(originLevel, player, originPos);
 		root.level().getChunkAt(root.blockPosition());
 		player.teleportTo(droneLevel, root.getX(), root.getY(), root.getZ(), ABSOLUTE_TELEPORT, root.getYRot(), root.getXRot(), false);
+		stashAndHideControlledInventory(player);
 		broadcastDronePilotEquipmentHidden(player, true);
 		setHotbarVisualHidden(player, true);
 		player.stopFallFlying();
@@ -1230,6 +1237,7 @@ public final class DroneSystem {
 		DroneControlSession session = ACTIVE_SESSIONS.remove(player.getUUID());
 		INPUTS.remove(player.getUUID());
 		if (session == null) {
+			restoreControlledInventoryIfNeeded(player);
 			if (!FORCED_CONTROLLED_PLAYERS.contains(player.getUUID())) {
 				return;
 			}
@@ -1274,6 +1282,7 @@ public final class DroneSystem {
 		restoreControlledPlayerState(player, session);
 		clearDroneHud(player, session, true);
 		broadcastDronePilotEquipmentHidden(player, false);
+		restoreControlledInventoryIfNeeded(player);
 		setHotbarVisualHidden(player, false);
 
 		if (returnToOrigin && server != null) {
@@ -1589,6 +1598,72 @@ public final class DroneSystem {
 		}
 	}
 
+	private static void stashAndHideControlledInventory(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		if (CONTROLLED_INVENTORY_SNAPSHOTS.containsKey(playerId)) {
+			return;
+		}
+		List<ItemStack> hotbar = new ArrayList<>(9);
+		for (int index = 0; index < 9; index++) {
+			hotbar.add(player.getInventory().getItem(index).copy());
+			player.getInventory().setItem(index, ItemStack.EMPTY);
+		}
+		ItemStack offhand = player.getOffhandItem().copy();
+		player.setItemInHand(InteractionHand.OFF_HAND, ItemStack.EMPTY);
+		CONTROLLED_INVENTORY_SNAPSHOTS.put(playerId, new ControlledInventorySnapshot(hotbar, offhand));
+		player.inventoryMenu.broadcastChanges();
+		setHotbarVisualHidden(player, true);
+	}
+
+	private static void restoreControlledInventoryIfNeeded(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		ControlledInventorySnapshot snapshot = CONTROLLED_INVENTORY_SNAPSHOTS.remove(player.getUUID());
+		if (snapshot == null) {
+			return;
+		}
+		List<ItemStack> hotbar = snapshot.hotbar();
+		for (int index = 0; index < 9; index++) {
+			ItemStack saved = index < hotbar.size() ? hotbar.get(index) : ItemStack.EMPTY;
+			restoreSavedStackToHotbarSlot(player, index, saved);
+		}
+		restoreSavedStackToOffhand(player, snapshot.offhand());
+		player.inventoryMenu.broadcastChanges();
+		player.inventoryMenu.sendAllDataToRemote();
+	}
+
+	private static void restoreSavedStackToHotbarSlot(ServerPlayer player, int slot, ItemStack saved) {
+		if (player == null || slot < 0 || slot >= 9 || saved == null || saved.isEmpty()) {
+			return;
+		}
+		ItemStack current = player.getInventory().getItem(slot);
+		if (current == null || current.isEmpty()) {
+			player.getInventory().setItem(slot, saved.copy());
+			return;
+		}
+		if (!player.getInventory().add(saved.copy())) {
+			player.drop(saved.copy(), false);
+		}
+	}
+
+	private static void restoreSavedStackToOffhand(ServerPlayer player, ItemStack saved) {
+		if (player == null || saved == null || saved.isEmpty()) {
+			return;
+		}
+		ItemStack current = player.getOffhandItem();
+		if (current == null || current.isEmpty()) {
+			player.setItemInHand(InteractionHand.OFF_HAND, saved.copy());
+			return;
+		}
+		if (!player.getInventory().add(saved.copy())) {
+			player.drop(saved.copy(), false);
+		}
+	}
+
 	private static void setHotbarVisualHidden(ServerPlayer player, boolean hidden) {
 		if (player == null || player.connection == null) {
 			return;
@@ -1605,6 +1680,13 @@ public final class DroneSystem {
 					stack
 			));
 		}
+		ItemStack offhand = hidden ? ItemStack.EMPTY : player.getOffhandItem().copy();
+		player.connection.send(new ClientboundContainerSetSlotPacket(
+				menu.containerId,
+				stateId,
+				PLAYER_OFFHAND_MENU_SLOT,
+				offhand
+		));
 	}
 
 	private static GameProfile createDummyProfile(ServerPlayer sourcePlayer, UUID fakeProfileId) {
@@ -1800,6 +1882,18 @@ public final class DroneSystem {
 				}
 			}
 			data.add(replacement);
+		}
+	}
+
+	private record ControlledInventorySnapshot(List<ItemStack> hotbar, ItemStack offhand) {
+		private ControlledInventorySnapshot {
+			List<ItemStack> safeHotbar = hotbar == null ? List.of() : hotbar;
+			List<ItemStack> copiedHotbar = new ArrayList<>(safeHotbar.size());
+			for (ItemStack stack : safeHotbar) {
+				copiedHotbar.add(stack == null ? ItemStack.EMPTY : stack.copy());
+			}
+			hotbar = List.copyOf(copiedHotbar);
+			offhand = offhand == null ? ItemStack.EMPTY : offhand.copy();
 		}
 	}
 
