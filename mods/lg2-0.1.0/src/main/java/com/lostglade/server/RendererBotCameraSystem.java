@@ -80,6 +80,7 @@ public final class RendererBotCameraSystem {
 	private static final int SHADOW_VIEW_DISTANCE_MARGIN_CHUNKS = 6;
 	private static final int SHADOW_REAR_VIEW_CHUNKS = 2;
 	private static final long LIVE_STREAM_STALE_MS = 1_500L;
+	private static final long LIVE_STREAM_ORPHAN_CLEANUP_MS = 15_000L;
 	private static final long PHOTO_CAPTURE_RETRY_INTERVAL_MS = 50L;
 	private static final double SHADOW_FORWARD_HALF_FOV_DEGREES = 80.0D;
 	private static final double SHADOW_NEAR_OMNI_RADIUS_CHUNKS = 3.0D;
@@ -965,6 +966,7 @@ public final class RendererBotCameraSystem {
 			return;
 		}
 		syncCameraHotbarWarmupStreams(server);
+		cleanupOrphanedLiveStreams(server);
 		if (!hasActiveShadowSyncWork(server)) {
 			return;
 		}
@@ -990,7 +992,7 @@ public final class RendererBotCameraSystem {
 					|| !player.isAlive()
 					|| DroneSystem.isDroneCameraSuppressed(player)
 					|| !(player.level() instanceof ServerLevel)
-					|| !playerHasCameraInHotbar(player)) {
+					|| !playerHasCameraInActiveSlot(player)) {
 				continue;
 			}
 			return true;
@@ -998,16 +1000,15 @@ public final class RendererBotCameraSystem {
 		return false;
 	}
 
-	private static boolean playerHasCameraInHotbar(ServerPlayer player) {
+	private static boolean playerHasCameraInActiveSlot(ServerPlayer player) {
 		if (player == null) {
 			return false;
 		}
-		for (int slot = 0; slot < HOTBAR_SIZE; slot++) {
-			if (player.getInventory().getItem(slot).is(ModItems.CAMERA)) {
-				return true;
-			}
+		int selected = player.getInventory().getSelectedSlot();
+		if (selected < 0 || selected >= HOTBAR_SIZE) {
+			return false;
 		}
-		return false;
+		return player.getInventory().getItem(selected).is(ModItems.CAMERA);
 	}
 
 	private static String cameraHotbarWarmupOwnerKey(UUID playerUuid) {
@@ -1038,7 +1039,7 @@ public final class RendererBotCameraSystem {
 			if (!player.isAlive()
 					|| DroneSystem.isDroneCameraSuppressed(player)
 					|| !(player.level() instanceof ServerLevel playerLevel)
-					|| !playerHasCameraInHotbar(player)) {
+					|| !playerHasCameraInActiveSlot(player)) {
 				stopLiveStream(ownerKey);
 				continue;
 			}
@@ -1071,6 +1072,34 @@ public final class RendererBotCameraSystem {
 				continue;
 			}
 			stopLiveStream(ownerKey);
+		}
+	}
+
+	private static void cleanupOrphanedLiveStreams(MinecraftServer server) {
+		if (server == null || ACTIVE_LIVE_STREAMS.isEmpty()) {
+			return;
+		}
+		long now = System.currentTimeMillis();
+		for (ActiveLiveStream stream : new ArrayList<>(ACTIVE_LIVE_STREAMS.values())) {
+			if (stream == null) {
+				continue;
+			}
+			UUID expectedStreamId = LIVE_STREAMS_BY_OWNER.get(stream.ownerKey());
+			boolean ownerMismatch = !Objects.equals(expectedStreamId, stream.streamId());
+			if (ownerMismatch) {
+				stopLiveStreamInternal(stream, "Renderer bot live stream orphaned", false);
+				continue;
+			}
+			boolean botUnavailable = !READY_BOTS.containsKey(stream.botUuid())
+					|| server.getPlayerList() == null
+					|| server.getPlayerList().getPlayer(stream.botUuid()) == null;
+			if (botUnavailable) {
+				stopLiveStreamInternal(stream, "Renderer bot live stream target is unavailable", true);
+				continue;
+			}
+			if (now - stream.lastActivityAtMillis() > LIVE_STREAM_ORPHAN_CLEANUP_MS) {
+				stopLiveStreamInternal(stream, "Renderer bot live stream timed out", true);
+			}
 		}
 	}
 
@@ -1355,6 +1384,7 @@ public final class RendererBotCameraSystem {
 			return;
 		}
 		Map<ShadowSyncKey, ShadowDesiredState> desiredStates = collectDesiredShadowStates(server);
+		Set<ChunkTicketKey> trackedChunks = collectTrackedShadowChunks(desiredStates.values());
 		syncShadowChunkTickets(server, desiredStates.values());
 		Set<ChunkTicketKey> consumedDirtyChunks = new HashSet<>();
 		for (Map.Entry<ShadowSyncKey, ShadowDesiredState> entry : desiredStates.entrySet()) {
@@ -1372,6 +1402,29 @@ public final class RendererBotCameraSystem {
 			removeShadowSyncState(server, staleKey, true);
 		}
 		DIRTY_SHADOW_CHUNKS.removeAll(consumedDirtyChunks);
+		if (trackedChunks.isEmpty()) {
+			DIRTY_SHADOW_CHUNKS.clear();
+			return;
+		}
+		DIRTY_SHADOW_CHUNKS.removeIf(key -> key == null || !trackedChunks.contains(key));
+	}
+
+	private static Set<ChunkTicketKey> collectTrackedShadowChunks(Iterable<ShadowDesiredState> desiredStates) {
+		if (desiredStates == null) {
+			return Set.of();
+		}
+		Set<ChunkTicketKey> tracked = new HashSet<>();
+		for (ShadowDesiredState desiredState : desiredStates) {
+			if (desiredState == null || desiredState.level() == null) {
+				continue;
+			}
+			ResourceKey<Level> dimension = desiredState.level().dimension();
+			LongIterator iterator = desiredState.trackedChunks().iterator();
+			while (iterator.hasNext()) {
+				tracked.add(new ChunkTicketKey(dimension, iterator.nextLong()));
+			}
+		}
+		return tracked;
 	}
 
 	private static void syncShadowChunkTickets(MinecraftServer server, Iterable<ShadowDesiredState> desiredStates) {
@@ -1489,7 +1542,7 @@ public final class RendererBotCameraSystem {
 						|| !player.isAlive()
 						|| DroneSystem.isDroneCameraSuppressed(player)
 						|| !(player.level() instanceof ServerLevel playerLevel)
-						|| !playerHasCameraInHotbar(player)) {
+						|| !playerHasCameraInActiveSlot(player)) {
 					continue;
 				}
 				accumulateShadowDesiredState(
@@ -3150,6 +3203,17 @@ public final class RendererBotCameraSystem {
 				referenceTime = this.lastFrameAtMillis;
 			}
 			return System.currentTimeMillis() - referenceTime > LIVE_STREAM_STALE_MS;
+		}
+
+		private long lastActivityAtMillis() {
+			long referenceTime = this.startedAtMillis;
+			if (this.lastDispatchAtMillis > referenceTime) {
+				referenceTime = this.lastDispatchAtMillis;
+			}
+			if (this.lastFrameAtMillis > referenceTime) {
+				referenceTime = this.lastFrameAtMillis;
+			}
+			return referenceTime;
 		}
 	}
 

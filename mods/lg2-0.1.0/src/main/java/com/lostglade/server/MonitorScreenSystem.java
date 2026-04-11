@@ -166,6 +166,8 @@ public final class MonitorScreenSystem {
 	private static final long MEDIA_SESSION_CLEANUP_INTERVAL_TICKS = 40L;
 	private static final long MEDIA_ACTIONBAR_REFRESH_INTERVAL_TICKS = 20L;
 	private static final long MEDIA_FOCUS_CLEANUP_INTERVAL_TICKS = 20L;
+	private static final long RENDER_CACHE_CLEANUP_INTERVAL_TICKS = 200L;
+	private static final int MAX_TILE_CACHE_ENTRIES = 128;
 	private static final String CAMERA_GALLERY_URL_PREFIX = "lg2-camera:";
 	private static final String LIVE_CAMERA_GALLERY_URL_PREFIX = "lg2-live-camera:";
 	private static final double RENDERER_BOT_EYE_HEIGHT = 1.62D;
@@ -336,7 +338,57 @@ public final class MonitorScreenSystem {
 	}
 
 	private static void clearMonitorRuntime() {
+		for (MediaRuntimeState state : MEDIA_STATES.values()) {
+			if (state == null) {
+				continue;
+			}
+			synchronized (state) {
+				cancelPlaybackLocked(state);
+				clearPendingLiveCameraApply(state);
+			}
+		}
+		MEDIA_STATES.clear();
+		PENDING_MEDIA_LINKS.clear();
+		IN_FLIGHT_MEDIA_LINKS.clear();
+		ACTIVE_MEDIA_ACTIONBARS.clear();
+		PLAYER_MEDIA_FOCUS.clear();
+		TILE_CACHE.clear();
+		OVERLAY_WINDOW_CACHE.clear();
+		OVERLAY_WINDOW_FAMILY_CACHE.clear();
+		OVERLAY_WINDOW_PLACEHOLDER_CACHE.clear();
+		LAST_RENDERED_MAP_FRAMES.clear();
+		APP_ICON_CACHE.clear();
+		PLAYER_UI_ICON_CACHE.clear();
+		PLAYER_UI_ICON_TINT_CACHE.clear();
 		LEVEL_STATES.clear();
+		shutdownExecutor(renderExecutor);
+		renderExecutor = null;
+		shutdownExecutor(quantizeExecutor);
+		quantizeExecutor = null;
+		shutdownExecutor(mediaIoExecutor);
+		mediaIoExecutor = null;
+		shutdownExecutor(liveCameraExecutor);
+		liveCameraExecutor = null;
+		shutdownExecutor(overlayWindowExecutor);
+		overlayWindowExecutor = null;
+		shutdownScheduler(mediaScheduler);
+		mediaScheduler = null;
+		offBaseImage = null;
+		onBaseImage = null;
+	}
+
+	private static void shutdownExecutor(ExecutorService executor) {
+		if (executor == null) {
+			return;
+		}
+		executor.shutdownNow();
+	}
+
+	private static void shutdownScheduler(ScheduledExecutorService scheduler) {
+		if (scheduler == null) {
+			return;
+		}
+		scheduler.shutdownNow();
 	}
 
 	private static void onEntityLoad(Entity entity, ServerLevel level) {
@@ -1962,6 +2014,50 @@ public final class MonitorScreenSystem {
 		if ((server.getTickCount() % MEDIA_SESSION_CLEANUP_INTERVAL_TICKS) == 0L) {
 			cleanupMediaSessions(server);
 		}
+		if ((server.getTickCount() % RENDER_CACHE_CLEANUP_INTERVAL_TICKS) == 0L) {
+			cleanupRenderCaches(server);
+		}
+	}
+
+	private static void cleanupRenderCaches(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		if (TILE_CACHE.size() > MAX_TILE_CACHE_ENTRIES) {
+			TILE_CACHE.clear();
+		}
+		if (LAST_RENDERED_MAP_FRAMES.isEmpty()) {
+			return;
+		}
+		Set<Integer> activeMapIds = new HashSet<>();
+		for (MonitorLevelState levelState : LEVEL_STATES.values()) {
+			if (levelState == null) {
+				continue;
+			}
+			ServerLevel level = server.getLevel(levelState.dimension());
+			if (level == null) {
+				continue;
+			}
+			for (ScreenComponent component : levelState.components().values()) {
+				if (component == null) {
+					continue;
+				}
+				for (ItemFrame frame : component.frameCoords().keySet()) {
+					if (frame == null || !frame.isAlive()) {
+						continue;
+					}
+					MapId mapId = frame.getItem().get(DataComponents.MAP_ID);
+					if (mapId != null) {
+						activeMapIds.add(mapId.id());
+					}
+				}
+			}
+		}
+		if (activeMapIds.isEmpty()) {
+			LAST_RENDERED_MAP_FRAMES.clear();
+			return;
+		}
+		LAST_RENDERED_MAP_FRAMES.entrySet().removeIf(entry -> entry == null || !activeMapIds.contains(entry.getKey()));
 	}
 
 	private static void processPendingScreenSyncs(MinecraftServer server) {
