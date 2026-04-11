@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 9;
+	public static final int PROTOCOL_VERSION = 10;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
@@ -68,6 +68,7 @@ public final class RendererBotPayloads {
 
 	public record RendererBotCaptureRequestS2CPayload(
 			UUID requestId,
+			UUID renderSessionId,
 			String dimensionId,
 			double expectedX,
 			double expectedY,
@@ -88,6 +89,7 @@ public final class RendererBotPayloads {
 		public RendererBotCaptureRequestS2CPayload(FriendlyByteBuf buffer) {
 			this(
 					buffer.readUUID(),
+					buffer.readUUID(),
 					buffer.readUtf(),
 					buffer.readDouble(),
 					buffer.readDouble(),
@@ -105,6 +107,7 @@ public final class RendererBotPayloads {
 
 		private void write(FriendlyByteBuf buffer) {
 			buffer.writeUUID(this.requestId);
+			buffer.writeUUID(this.renderSessionId);
 			buffer.writeUtf(this.dimensionId);
 			buffer.writeDouble(this.expectedX);
 			buffer.writeDouble(this.expectedY);
@@ -170,6 +173,7 @@ public final class RendererBotPayloads {
 
 	public record RendererBotLiveStreamStartS2CPayload(
 			UUID streamId,
+			UUID renderSessionId,
 			String dimensionId,
 			double expectedX,
 			double expectedY,
@@ -189,6 +193,7 @@ public final class RendererBotPayloads {
 		public RendererBotLiveStreamStartS2CPayload(FriendlyByteBuf buffer) {
 			this(
 					buffer.readUUID(),
+					buffer.readUUID(),
 					buffer.readUtf(),
 					buffer.readDouble(),
 					buffer.readDouble(),
@@ -205,6 +210,7 @@ public final class RendererBotPayloads {
 
 		private void write(FriendlyByteBuf buffer) {
 			buffer.writeUUID(this.streamId);
+			buffer.writeUUID(this.renderSessionId);
 			buffer.writeUtf(this.dimensionId);
 			buffer.writeDouble(this.expectedX);
 			buffer.writeDouble(this.expectedY);
@@ -308,6 +314,7 @@ public final class RendererBotPayloads {
 
 	public record RendererBotVideoRecordingStartS2CPayload(
 			UUID requestId,
+			UUID renderSessionId,
 			String dimensionId,
 			double expectedX,
 			double expectedY,
@@ -330,6 +337,7 @@ public final class RendererBotPayloads {
 		public RendererBotVideoRecordingStartS2CPayload(FriendlyByteBuf buffer) {
 			this(
 					buffer.readUUID(),
+					buffer.readUUID(),
 					buffer.readUtf(),
 					buffer.readDouble(),
 					buffer.readDouble(),
@@ -349,6 +357,7 @@ public final class RendererBotPayloads {
 
 		private void write(FriendlyByteBuf buffer) {
 			buffer.writeUUID(this.requestId);
+			buffer.writeUUID(this.renderSessionId);
 			buffer.writeUtf(this.dimensionId);
 			buffer.writeDouble(this.expectedX);
 			buffer.writeDouble(this.expectedY);

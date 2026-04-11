@@ -47,7 +47,7 @@ import java.util.function.Consumer;
 public final class RendererBotOffscreenWorldRenderer {
 	private static final Object LOCK = new Object();
 	private static final double STATIC_CAMERA_EYE_HEIGHT = 1.62D;
-	private static final int MIN_READY_CHUNK_RADIUS = 1;
+	private static final int MIN_READY_CHUNK_RADIUS = 2;
 	private static final Map<UUID, OffscreenSessionState> SESSION_STATES = new HashMap<>();
 	private static boolean offscreenRenderActive;
 

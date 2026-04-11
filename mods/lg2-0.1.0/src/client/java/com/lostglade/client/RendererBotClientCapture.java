@@ -691,7 +691,6 @@ public final class RendererBotClientCapture {
 			}
 			PENDING_CAPTURES.remove(requestId);
 		}
-		RendererBotOffscreenWorldRenderer.releaseSession(requestId);
 	}
 
 	private static boolean markPendingCaptureRequested(UUID requestId) {
@@ -722,7 +721,6 @@ public final class RendererBotClientCapture {
 			}
 			LIVE_STREAM_SESSIONS.remove(streamId);
 		}
-		RendererBotOffscreenWorldRenderer.releaseSession(streamId);
 	}
 
 	private static void clearLiveStreamFrameInFlight(UUID streamId) {
@@ -790,7 +788,7 @@ public final class RendererBotClientCapture {
 		int renderWidth = computeRenderWidth(payload);
 		int renderHeight = computeRenderHeight(payload, renderWidth);
 		return new RendererBotOffscreenWorldRenderer.RenderRequest(
-				payload.requestId(),
+				payload.renderSessionId(),
 				payload.dimensionId(),
 				payload.followEntityUuid(),
 				payload.expectedX(),
@@ -808,7 +806,7 @@ public final class RendererBotClientCapture {
 		int renderWidth = computeLiveRenderWidth(payload);
 		int renderHeight = computeLiveRenderHeight(payload, renderWidth);
 		return new RendererBotOffscreenWorldRenderer.RenderRequest(
-				payload.streamId(),
+				payload.renderSessionId(),
 				payload.dimensionId(),
 				payload.followEntityUuid(),
 				payload.expectedX(),

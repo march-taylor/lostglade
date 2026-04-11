@@ -549,7 +549,7 @@ public final class RendererBotClientVideoRecording {
 			int captureHeight
 	) {
 		return new RendererBotOffscreenWorldRenderer.RenderRequest(
-				payload.requestId(),
+				payload.renderSessionId(),
 				payload.dimensionId(),
 				payload.followEntityUuid(),
 				payload.expectedX(),
