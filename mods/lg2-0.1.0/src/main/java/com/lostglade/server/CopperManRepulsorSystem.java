@@ -647,7 +647,7 @@ public final class CopperManRepulsorSystem {
 	}
 
 	private static boolean shouldShowAmmoHud(ServerPlayer player) {
-		if (player == null || !player.isAlive() || player.isSpectator() || !isAttackUnlocked(player)) {
+		if (player == null || !player.isAlive() || player.isSpectator() || !isCopperMan(player) || !isAttackUnlocked(player)) {
 			return false;
 		}
 
@@ -717,7 +717,9 @@ public final class CopperManRepulsorSystem {
 	}
 
 	private static boolean isAttackUnlocked(ServerPlayer player) {
-		return player != null && ServerRaceSystem.hasUnlockedAbility(player, RaceAbilitySlot.ATTACK);
+		return player != null
+				&& isCopperMan(player)
+				&& ServerRaceSystem.hasUnlockedAbility(player, RaceAbilitySlot.ATTACK);
 	}
 
 	private static int getMaxCharges(ServerPlayer player) {
