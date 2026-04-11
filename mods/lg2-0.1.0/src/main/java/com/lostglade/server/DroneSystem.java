@@ -34,6 +34,7 @@ import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
+import net.minecraft.network.protocol.game.ClientboundGameEventPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
@@ -48,6 +49,7 @@ import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
@@ -139,6 +141,7 @@ public final class DroneSystem {
 	private static final Map<UUID, Long> CAMERA_SUPPRESSED_UNTIL_TICK = new HashMap<>();
 	private static final Set<UUID> FORCED_CONTROLLED_PLAYERS = new HashSet<>();
 	private static final Map<UUID, ControlledInventorySnapshot> CONTROLLED_INVENTORY_SNAPSHOTS = new HashMap<>();
+	private static final Map<UUID, UUID> DUMMY_OWNER_BY_UUID = new HashMap<>();
 
 	private DroneSystem() {
 	}
@@ -194,6 +197,7 @@ public final class DroneSystem {
 			CAMERA_SUPPRESSED_UNTIL_TICK.clear();
 			FORCED_CONTROLLED_PLAYERS.clear();
 			CONTROLLED_INVENTORY_SNAPSHOTS.clear();
+			DUMMY_OWNER_BY_UUID.clear();
 		});
 	}
 
@@ -509,6 +513,7 @@ public final class DroneSystem {
 			detachAnyDronePassengersFromController(player);
 			clearForcedControlMovementState(player);
 			markCameraSuppressedForPlayer(player);
+			spoofClientGameMode(player, resolveServerGameMode(player));
 			restoreControlledInventoryIfNeeded(player);
 			setHotbarVisualHidden(player, false);
 			broadcastDronePilotEquipmentHidden(player, false);
@@ -540,6 +545,7 @@ public final class DroneSystem {
 			}
 			clearForcedControlMovementState(player);
 			detachAnyDronePassengersFromController(player);
+			spoofClientGameMode(player, resolveServerGameMode(player));
 			restoreControlledInventoryIfNeeded(player);
 			setHotbarVisualHidden(player, false);
 			broadcastDronePilotEquipmentHidden(player, false);
@@ -899,6 +905,7 @@ public final class DroneSystem {
 		if (server == null || session == null || session.dummyUuid() == null) {
 			return;
 		}
+		DUMMY_OWNER_BY_UUID.remove(session.dummyUuid());
 		if (loadedDummy != null) {
 			loadedDummy.discard();
 			return;
@@ -960,6 +967,25 @@ public final class DroneSystem {
 		player.fallDistance = 0.0F;
 		player.hurtMarked = true;
 		FORCED_CONTROLLED_PLAYERS.remove(player.getUUID());
+	}
+
+	private static GameType resolveServerGameMode(ServerPlayer player) {
+		if (player == null || player.gameMode == null) {
+			return GameType.SURVIVAL;
+		}
+		GameType gameMode = player.gameMode.getGameModeForPlayer();
+		return gameMode == null ? GameType.SURVIVAL : gameMode;
+	}
+
+	private static void spoofClientGameMode(ServerPlayer player, GameType gameMode) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		GameType resolved = gameMode == null ? GameType.SURVIVAL : gameMode;
+		player.connection.send(new ClientboundGameEventPacket(
+				ClientboundGameEventPacket.CHANGE_GAME_MODE,
+				resolved.getId()
+		));
 	}
 
 	private static void ensureControlledPlayerState(ServerPlayer player) {
@@ -1180,6 +1206,7 @@ public final class DroneSystem {
 		MapImageRenderSystem.cancelRender(player.getUUID());
 		RendererBotCameraSystem.stopCameraHotbarWarmupForPlayer(player.getUUID());
 		ServerRaceSystem.suspendCopperManJetpackForDrone(player);
+		GameType originalServerGameMode = resolveServerGameMode(player);
 		UNCONTROLLED_DRONES.remove(root.getUUID());
 		root.noPhysics = true;
 
@@ -1194,9 +1221,13 @@ public final class DroneSystem {
 		boolean hadMayfly = player.getAbilities().mayfly;
 		boolean wasFlying = player.getAbilities().flying;
 		DronePilotDummyEntity dummy = spawnPlayerDummy(originLevel, player, originPos);
+		if (dummy != null) {
+			DUMMY_OWNER_BY_UUID.put(dummy.getUUID(), player.getUUID());
+		}
 		root.level().getChunkAt(root.blockPosition());
 		player.teleportTo(droneLevel, root.getX(), root.getY(), root.getZ(), ABSOLUTE_TELEPORT, root.getYRot(), root.getXRot(), false);
 		stashAndHideControlledInventory(player);
+		spoofClientGameMode(player, GameType.SPECTATOR);
 		broadcastDronePilotEquipmentHidden(player, true);
 		setHotbarVisualHidden(player, true);
 		player.stopFallFlying();
@@ -1218,7 +1249,8 @@ public final class DroneSystem {
 				wasNoPhysics,
 				wasInvulnerable,
 				hadMayfly,
-				wasFlying
+				wasFlying,
+				originalServerGameMode
 		);
 		session.setLastPlayerPos(player.position());
 		ACTIVE_SESSIONS.put(player.getUUID(), session);
@@ -1237,6 +1269,7 @@ public final class DroneSystem {
 		DroneControlSession session = ACTIVE_SESSIONS.remove(player.getUUID());
 		INPUTS.remove(player.getUUID());
 		if (session == null) {
+			spoofClientGameMode(player, resolveServerGameMode(player));
 			restoreControlledInventoryIfNeeded(player);
 			if (!FORCED_CONTROLLED_PLAYERS.contains(player.getUUID())) {
 				return;
@@ -1248,6 +1281,9 @@ public final class DroneSystem {
 			setHotbarVisualHidden(player, false);
 			broadcastDronePilotEquipmentHidden(player, false);
 			return;
+		}
+		if (session.dummyUuid() != null) {
+			DUMMY_OWNER_BY_UUID.remove(session.dummyUuid());
 		}
 
 		CONTROLLERS_BY_DRONE.remove(session.droneUuid(), player.getUUID());
@@ -1282,6 +1318,7 @@ public final class DroneSystem {
 		restoreControlledPlayerState(player, session);
 		clearDroneHud(player, session, true);
 		broadcastDronePilotEquipmentHidden(player, false);
+		spoofClientGameMode(player, session.serverGameMode());
 		restoreControlledInventoryIfNeeded(player);
 		setHotbarVisualHidden(player, false);
 
@@ -1556,14 +1593,58 @@ public final class DroneSystem {
 			return;
 		}
 
-		ItemStack main = sourcePlayer.getMainHandItem();
-		ItemStack off = sourcePlayer.getOffhandItem();
+		ItemStack head = sourcePlayer.getItemBySlot(EquipmentSlot.HEAD);
+		ItemStack chest = sourcePlayer.getItemBySlot(EquipmentSlot.CHEST);
+		ItemStack legs = sourcePlayer.getItemBySlot(EquipmentSlot.LEGS);
+		ItemStack feet = sourcePlayer.getItemBySlot(EquipmentSlot.FEET);
+		ItemStack main = resolveDummyMainHandStack(sourcePlayer);
+		ItemStack off = resolveDummyOffhandStack(sourcePlayer);
+		if (!stacksEqual(dummy.getItemBySlot(EquipmentSlot.HEAD), head)) {
+			dummy.setItemSlot(EquipmentSlot.HEAD, head.copy());
+		}
+		if (!stacksEqual(dummy.getItemBySlot(EquipmentSlot.CHEST), chest)) {
+			dummy.setItemSlot(EquipmentSlot.CHEST, chest.copy());
+		}
+		if (!stacksEqual(dummy.getItemBySlot(EquipmentSlot.LEGS), legs)) {
+			dummy.setItemSlot(EquipmentSlot.LEGS, legs.copy());
+		}
+		if (!stacksEqual(dummy.getItemBySlot(EquipmentSlot.FEET), feet)) {
+			dummy.setItemSlot(EquipmentSlot.FEET, feet.copy());
+		}
 		if (!stacksEqual(dummy.getItemBySlot(EquipmentSlot.MAINHAND), main)) {
 			dummy.setItemSlot(EquipmentSlot.MAINHAND, main.copy());
 		}
 		if (!stacksEqual(dummy.getItemBySlot(EquipmentSlot.OFFHAND), off)) {
 			dummy.setItemSlot(EquipmentSlot.OFFHAND, off.copy());
 		}
+	}
+
+	private static ItemStack resolveDummyMainHandStack(ServerPlayer player) {
+		if (player == null) {
+			return ItemStack.EMPTY;
+		}
+		ControlledInventorySnapshot snapshot = CONTROLLED_INVENTORY_SNAPSHOTS.get(player.getUUID());
+		if (snapshot == null || snapshot.hotbar().isEmpty()) {
+			return player.getMainHandItem();
+		}
+		int selectedSlot = net.minecraft.util.Mth.clamp(player.getInventory().getSelectedSlot(), 0, 8);
+		if (selectedSlot < 0 || selectedSlot >= snapshot.hotbar().size()) {
+			return ItemStack.EMPTY;
+		}
+		ItemStack stack = snapshot.hotbar().get(selectedSlot);
+		return stack == null ? ItemStack.EMPTY : stack;
+	}
+
+	private static ItemStack resolveDummyOffhandStack(ServerPlayer player) {
+		if (player == null) {
+			return ItemStack.EMPTY;
+		}
+		ControlledInventorySnapshot snapshot = CONTROLLED_INVENTORY_SNAPSHOTS.get(player.getUUID());
+		if (snapshot == null) {
+			return player.getOffhandItem();
+		}
+		ItemStack stack = snapshot.offhand();
+		return stack == null ? ItemStack.EMPTY : stack;
 	}
 
 	private static boolean stacksEqual(ItemStack first, ItemStack second) {
@@ -1577,6 +1658,58 @@ public final class DroneSystem {
 			return false;
 		}
 		return ItemStack.isSameItemSameComponents(first, second);
+	}
+
+	private static ServerPlayer resolveDummyController(ServerLevel level, UUID dummyUuid) {
+		if (level == null || dummyUuid == null) {
+			return null;
+		}
+		MinecraftServer server = level.getServer();
+		if (server == null) {
+			return null;
+		}
+		UUID controllerId = DUMMY_OWNER_BY_UUID.get(dummyUuid);
+		ServerPlayer controller = controllerId == null ? null : server.getPlayerList().getPlayer(controllerId);
+		if (controller != null && ACTIVE_SESSIONS.containsKey(controller.getUUID())) {
+			return controller;
+		}
+		for (Map.Entry<UUID, DroneControlSession> entry : ACTIVE_SESSIONS.entrySet()) {
+			DroneControlSession session = entry.getValue();
+			if (session == null || !Objects.equals(session.dummyUuid(), dummyUuid)) {
+				continue;
+			}
+			ServerPlayer resolved = server.getPlayerList().getPlayer(entry.getKey());
+			if (resolved != null) {
+				DUMMY_OWNER_BY_UUID.put(dummyUuid, resolved.getUUID());
+				return resolved;
+			}
+		}
+		DUMMY_OWNER_BY_UUID.remove(dummyUuid);
+		return null;
+	}
+
+	private static boolean forwardDummyDamageToController(DronePilotDummyEntity dummy, ServerLevel level, DamageSource source, float amount) {
+		if (dummy == null || level == null || amount <= 0.0F) {
+			return false;
+		}
+		ServerPlayer controller = resolveDummyController(level, dummy.getUUID());
+		if (controller == null || !controller.isAlive()) {
+			return false;
+		}
+		if (!(controller.level() instanceof ServerLevel controllerLevel)) {
+			return false;
+		}
+		DamageSource forwardedSource = source != null ? source : controllerLevel.damageSources().generic();
+		boolean damaged;
+		try {
+			damaged = controller.hurtServer(controllerLevel, forwardedSource, amount);
+		} catch (Exception exception) {
+			damaged = controller.hurtServer(controllerLevel, controllerLevel.damageSources().generic(), amount);
+		}
+		if (!controller.isAlive() || controller.isDeadOrDying()) {
+			stopControlling(controller, true, false);
+		}
+		return damaged;
 	}
 
 	private static void broadcastDronePilotEquipmentHidden(ServerPlayer player, boolean hidden) {
@@ -1958,7 +2091,7 @@ public final class DroneSystem {
 			this.xpReward = 0;
 			this.setPersistenceRequired();
 			this.setSilent(true);
-			this.setInvulnerable(true);
+			this.setInvulnerable(false);
 			this.setNoAi(true);
 			this.setNoGravity(true);
 			this.refreshDimensions();
@@ -1978,6 +2111,11 @@ public final class DroneSystem {
 		@Override
 		public void checkDespawn() {
 		}
+
+		@Override
+		public boolean hurtServer(ServerLevel level, DamageSource source, float amount) {
+			return forwardDummyDamageToController(this, level, source, amount);
+		}
 	}
 
 	private static final class DroneControlSession {
@@ -1994,6 +2132,7 @@ public final class DroneSystem {
 		private boolean wasInvulnerable;
 		private boolean hadMayfly;
 		private boolean wasFlying;
+		private final GameType serverGameMode;
 		private Vec3 velocity = Vec3.ZERO;
 		private Vec3 lastPlayerPos = Vec3.ZERO;
 		private double forwardDrive;
@@ -2015,7 +2154,8 @@ public final class DroneSystem {
 				boolean wasNoPhysics,
 				boolean wasInvulnerable,
 				boolean hadMayfly,
-				boolean wasFlying
+				boolean wasFlying,
+				GameType serverGameMode
 		) {
 			this.droneUuid = droneUuid;
 			this.droneDimension = droneDimension;
@@ -2030,6 +2170,7 @@ public final class DroneSystem {
 			this.wasInvulnerable = wasInvulnerable;
 			this.hadMayfly = hadMayfly;
 			this.wasFlying = wasFlying;
+			this.serverGameMode = serverGameMode == null ? GameType.SURVIVAL : serverGameMode;
 		}
 
 		private UUID droneUuid() {
@@ -2082,6 +2223,10 @@ public final class DroneSystem {
 
 		private boolean wasFlying() {
 			return this.wasFlying;
+		}
+
+		private GameType serverGameMode() {
+			return this.serverGameMode;
 		}
 
 		private Vec3 velocity() {
