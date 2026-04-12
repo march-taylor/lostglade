@@ -265,9 +265,10 @@ public final class ServerRaceSystem {
 	private static final double WOMAN_DEFENSE_DEFAULT_DURATION_SECONDS = 20.0D;
 	private static final double WOMAN_DEFENSE_DEFAULT_RANGE_BLOCKS = 32.0D;
 	private static final int WOMAN_DEFENSE_EFFECT_REFRESH_TICKS = 8;
-	private static final double WOMAN_DEFENSE_LIGHT_SHAKE_STRENGTH = 0.07D;
-	private static final double WOMAN_DEFENSE_MEDIUM_SHAKE_STRENGTH = 0.13D;
-	private static final double WOMAN_DEFENSE_STRONG_SHAKE_STRENGTH = 0.22D;
+	private static final double WOMAN_DEFENSE_LIGHT_SHAKE_STRENGTH = 0.035D;
+	private static final double WOMAN_DEFENSE_MEDIUM_SHAKE_STRENGTH = 0.065D;
+	private static final double WOMAN_DEFENSE_STRONG_SHAKE_STRENGTH = 0.11D;
+	private static final double WOMAN_DEFENSE_SHAKE_SKIP_CHANCE = 0.25D;
 	private static final double WOMAN_ATTACK_DEFAULT_CHARGE_RADIUS_BLOCKS = 1.5D;
 	private static final double WOMAN_ATTACK_DEFAULT_RANGE_BLOCKS = 64.0D;
 	private static final double WOMAN_ATTACK_DEFAULT_DAMAGE = 2.0D;
@@ -2167,6 +2168,9 @@ public final class ServerRaceSystem {
 
 	private static void applyWomanDefenseShake(ServerPlayer viewer, double strength) {
 		if (viewer == null || strength <= 0.0D) {
+			return;
+		}
+		if (viewer.getRandom().nextDouble() < WOMAN_DEFENSE_SHAKE_SKIP_CHANCE) {
 			return;
 		}
 
