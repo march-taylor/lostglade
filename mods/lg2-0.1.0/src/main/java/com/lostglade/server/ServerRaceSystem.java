@@ -269,6 +269,8 @@ public final class ServerRaceSystem {
 	private static final double WOMAN_DEFENSE_MEDIUM_SHAKE_STRENGTH = 0.065D;
 	private static final double WOMAN_DEFENSE_STRONG_SHAKE_STRENGTH = 0.11D;
 	private static final double WOMAN_DEFENSE_SHAKE_SKIP_CHANCE = 0.25D;
+	private static final double WOMAN_DEFENSE_SHAKE_MIN_MOVE_SPEED = 0.015D;
+	private static final double WOMAN_DEFENSE_SHAKE_MOVEMENT_RATIO = 0.28D;
 	private static final double WOMAN_ATTACK_DEFAULT_CHARGE_RADIUS_BLOCKS = 1.5D;
 	private static final double WOMAN_ATTACK_DEFAULT_RANGE_BLOCKS = 64.0D;
 	private static final double WOMAN_ATTACK_DEFAULT_DAMAGE = 2.0D;
@@ -2175,22 +2177,19 @@ public final class ServerRaceSystem {
 		}
 
 		Vec3 movement = viewer.getDeltaMovement();
-		Vec3 basis = new Vec3(movement.x, 0.0D, movement.z);
-		if (basis.lengthSqr() <= 1.0E-4D) {
-			Vec3 look = viewer.getLookAngle();
-			basis = new Vec3(look.x, 0.0D, look.z);
+		Vec3 horizontalMovement = new Vec3(movement.x, 0.0D, movement.z);
+		double moveSpeed = horizontalMovement.length();
+		if (moveSpeed < WOMAN_DEFENSE_SHAKE_MIN_MOVE_SPEED) {
+			return;
 		}
-		if (basis.lengthSqr() <= 1.0E-6D) {
-			basis = new Vec3(1.0D, 0.0D, 0.0D);
-		}
-		basis = basis.normalize();
-		Vec3 lateral = new Vec3(-basis.z, 0.0D, basis.x);
-		double lateralOffset = (viewer.getRandom().nextBoolean() ? 1.0D : -1.0D) * strength;
-		double forwardOffset = (viewer.getRandom().nextDouble() - 0.5D) * strength * 0.35D;
+		Vec3 direction = horizontalMovement.normalize();
+		Vec3 lateral = new Vec3(-direction.z, 0.0D, direction.x);
+		double lateralOffset = (viewer.getRandom().nextBoolean() ? 1.0D : -1.0D)
+				* Math.min(strength, moveSpeed * WOMAN_DEFENSE_SHAKE_MOVEMENT_RATIO);
 		viewer.setDeltaMovement(
-				movement.x + lateral.x * lateralOffset + basis.x * forwardOffset,
+				movement.x + lateral.x * lateralOffset,
 				movement.y,
-				movement.z + lateral.z * lateralOffset + basis.z * forwardOffset
+				movement.z + lateral.z * lateralOffset
 		);
 		viewer.hurtMarked = true;
 		viewer.connection.send(new ClientboundSetEntityMotionPacket(viewer));
