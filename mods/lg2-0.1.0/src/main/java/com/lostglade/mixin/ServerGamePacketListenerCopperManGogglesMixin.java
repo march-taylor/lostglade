@@ -2,6 +2,7 @@ package com.lostglade.mixin;
 
 import com.lostglade.server.CopperManGogglesSystem;
 import com.lostglade.server.CopperManRepulsorSystem;
+import com.lostglade.server.ServerRaceSystem;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
@@ -72,5 +73,6 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 	private void lg2$syncCopperManInvisibleTriggersOnMove(ServerboundMovePlayerPacket packet, CallbackInfo ci) {
 		CopperManGogglesSystem.handleMovePacket(this.player);
 		CopperManRepulsorSystem.handleMovePacket(this.player);
+		ServerRaceSystem.handleMovePacket(this.player);
 	}
 }

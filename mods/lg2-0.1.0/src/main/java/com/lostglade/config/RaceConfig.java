@@ -165,6 +165,11 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.copperGogglesTrackingHighlightSeconds, value -> ability.copperGogglesTrackingHighlightSeconds = value);
 		changed |= normalizeNonNegative(ability.womanFlowerCooldownSeconds, value -> ability.womanFlowerCooldownSeconds = value);
 		changed |= normalizeNonNegative(ability.womanAnimalBreedCooldownSeconds, value -> ability.womanAnimalBreedCooldownSeconds = value);
+		changed |= normalizeNonNegative(ability.womanAttackChargeRadiusBlocks, value -> ability.womanAttackChargeRadiusBlocks = value);
+		changed |= normalizeNonNegative(ability.womanAttackChargeSeconds, value -> ability.womanAttackChargeSeconds = value);
+		changed |= normalizeNonNegative(ability.womanAttackRangeBlocks, value -> ability.womanAttackRangeBlocks = value);
+		changed |= normalizeNonNegative(ability.womanAttackDamage, value -> ability.womanAttackDamage = value);
+		changed |= normalizeNonNegative(ability.womanAttackFollowSeconds, value -> ability.womanAttackFollowSeconds = value);
 		changed |= normalizeNonNegative(ability.jetpackMaxRiseBlocks, value -> ability.jetpackMaxRiseBlocks = value);
 		changed |= normalizeChance(ability.repulsorNaturalLightningChargeChance, value -> ability.repulsorNaturalLightningChargeChance = value);
 		changed |= normalizeNonNegative(ability.copperIngotFoodPoints, (java.util.function.IntConsumer) value -> ability.copperIngotFoodPoints = value);
@@ -336,6 +341,11 @@ public final class RaceConfig {
 		public double copperGogglesTrackingHighlightSeconds = 0.0D;
 		public double womanFlowerCooldownSeconds = 0.0D;
 		public double womanAnimalBreedCooldownSeconds = 0.0D;
+		public double womanAttackChargeRadiusBlocks = 0.0D;
+		public double womanAttackChargeSeconds = 0.0D;
+		public double womanAttackRangeBlocks = 0.0D;
+		public double womanAttackDamage = 0.0D;
+		public double womanAttackFollowSeconds = 0.0D;
 		public double jetpackMaxRiseBlocks = 0.0D;
 		public int repulsorMaxCharges = 0;
 		public int repulsorCopperIngotChargeRestore = 0;

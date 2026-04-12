@@ -107,7 +107,7 @@ public final class RendererBotProcessSystem {
 			return;
 		}
 
-		Path gradlew = modDir.resolve("gradlew");
+		Path gradlew = resolveGradleLauncher(modDir);
 		if (!Files.isRegularFile(gradlew)) {
 			Lg2.LOGGER.warn("Renderer bot autostart skipped: {} is missing", gradlew);
 			return;
@@ -228,7 +228,22 @@ public final class RendererBotProcessSystem {
 	}
 
 	private static boolean looksLikeModProjectDir(Path directory) {
-		return Files.isRegularFile(directory.resolve("build.gradle")) && Files.isRegularFile(directory.resolve("gradlew"));
+		return Files.isRegularFile(directory.resolve("build.gradle")) && Files.isRegularFile(resolveGradleLauncher(directory));
+	}
+
+	private static Path resolveGradleLauncher(Path directory) {
+		if (isWindows()) {
+			Path gradlewBat = directory.resolve("gradlew.bat");
+			if (Files.isRegularFile(gradlewBat)) {
+				return gradlewBat;
+			}
+		}
+		return directory.resolve("gradlew");
+	}
+
+	private static boolean isWindows() {
+		String osName = System.getProperty("os.name", "");
+		return osName.toLowerCase().contains("win");
 	}
 
 	private static boolean isBlank(String value) {

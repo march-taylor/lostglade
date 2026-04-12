@@ -177,7 +177,12 @@
                                      "abilityId":  "woman_attack",
                                      "name":  "Сила любви",
                                      "description":  "Выпускает шар из сердец, который наносит урон и привлекает к цели всех животных.",
-                                     "priceBitcoins":  300
+                                     "priceBitcoins":  300,
+                                     "womanAttackChargeRadiusBlocks":  0.5,
+                                     "womanAttackChargeSeconds":  2.0,
+                                     "womanAttackRangeBlocks":  64.0,
+                                     "womanAttackDamage":  2.0,
+                                     "womanAttackFollowSeconds":  30.0
                                  },
                       "defense":  {
                                       "enabled":  true,
