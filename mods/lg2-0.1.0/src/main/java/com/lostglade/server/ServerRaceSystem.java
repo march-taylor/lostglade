@@ -16,6 +16,7 @@ import com.lostglade.item.ModItems;
 import com.lostglade.item.TubochkaItem;
 import com.lostglade.mixin.ArmorStandAccessor;
 import com.lostglade.mixin.EntityPassengerAccessor;
+import com.lostglade.mixin.MerchantMenuAccessor;
 import com.lostglade.mixin.MobXpRewardAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.mojang.authlib.GameProfile;
@@ -98,6 +99,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.MerchantMenu;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.Container;
@@ -125,6 +127,9 @@ import net.minecraft.world.level.block.DoublePlantBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.storage.LevelResource;
+import net.minecraft.world.item.trading.Merchant;
+import net.minecraft.world.item.trading.MerchantOffer;
+import net.minecraft.world.item.trading.MerchantOffers;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
@@ -264,13 +269,23 @@ public final class ServerRaceSystem {
 	private static final float WOMAN_FLOWER_HEAL_AMOUNT = 1.0F;
 	private static final double WOMAN_DEFENSE_DEFAULT_DURATION_SECONDS = 20.0D;
 	private static final double WOMAN_DEFENSE_DEFAULT_RANGE_BLOCKS = 32.0D;
+	private static final double WOMAN_UNIQUE_DEFAULT_DURATION_SECONDS = 600.0D;
+	private static final double WOMAN_UNIQUE_DEFAULT_RANGE_BLOCKS = 32.0D;
+	private static final double WOMAN_UNIQUE_DEFAULT_DROP_MIN_SECONDS = 30.0D;
+	private static final double WOMAN_UNIQUE_DEFAULT_DROP_MAX_SECONDS = 60.0D;
+	private static final double WOMAN_UNIQUE_DEFAULT_DROP_CHANCE = 0.4D;
+	private static final double WOMAN_UNIQUE_DEFAULT_TRADE_PRICE_INCREASE = 0.3D;
+	private static final double WOMAN_UNIQUE_DEFAULT_ABSORPTION_HEARTS = 2.0D;
+	private static final int WOMAN_UNIQUE_WEAKNESS_DURATION_TICKS = 40;
+	private static final int WOMAN_UNIQUE_MAIN_INVENTORY_SIZE = 36;
 	private static final int WOMAN_DEFENSE_EFFECT_DURATION_TICKS = 18;
 	private static final double WOMAN_DEFENSE_LIGHT_SHAKE_STRENGTH = 0.018D;
-	private static final double WOMAN_DEFENSE_MEDIUM_SHAKE_STRENGTH = 0.026D;
-	private static final double WOMAN_DEFENSE_STRONG_SHAKE_STRENGTH = 0.034D;
+	private static final double WOMAN_DEFENSE_MEDIUM_SHAKE_STRENGTH = 0.033D;
+	private static final double WOMAN_DEFENSE_STRONG_SHAKE_STRENGTH = 0.052D;
+	private static final double WOMAN_DEFENSE_VERY_STRONG_SHAKE_STRENGTH = 0.068D;
 	private static final double WOMAN_DEFENSE_SHAKE_MIN_MOVE_SPEED = 0.015D;
-	private static final double WOMAN_DEFENSE_SHAKE_MOVEMENT_RATIO = 0.14D;
-	private static final long WOMAN_DEFENSE_SHAKE_INTERVAL_TICKS = 2L;
+	private static final double WOMAN_DEFENSE_SHAKE_MOVEMENT_RATIO = 0.65D;
+	private static final long WOMAN_DEFENSE_SHAKE_INTERVAL_TICKS = 1L;
 	private static final double WOMAN_ATTACK_DEFAULT_CHARGE_RADIUS_BLOCKS = 1.5D;
 	private static final double WOMAN_ATTACK_DEFAULT_RANGE_BLOCKS = 64.0D;
 	private static final double WOMAN_ATTACK_DEFAULT_DAMAGE = 2.0D;
@@ -370,6 +385,10 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, Long> WOMAN_FLOWER_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, Long> WOMAN_ANIMAL_BREED_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, WomanDefenseSession> WOMAN_DEFENSE_SESSIONS = new LinkedHashMap<>();
+	private static final Set<UUID> WOMAN_DEFENSE_BLIND_PLAYERS = new HashSet<>();
+	private static final Map<UUID, Vec3> WOMAN_DEFENSE_LAST_POSITIONS = new HashMap<>();
+	private static final Map<UUID, WomanUniqueSession> WOMAN_UNIQUE_SESSIONS = new LinkedHashMap<>();
+	private static final Map<UUID, Integer> WOMAN_UNIQUE_SYNCED_MERCHANT_MENUS = new HashMap<>();
 	private static final Map<UUID, WomanAttackChargeSession> WOMAN_ATTACK_CHARGE_SESSIONS = new LinkedHashMap<>();
 	private static final List<WomanAttackProjectile> WOMAN_ATTACK_PROJECTILES = new ArrayList<>();
 	private static final Map<UUID, WomanAttackFollowSession> WOMAN_ATTACK_FOLLOWS = new LinkedHashMap<>();
@@ -547,6 +566,10 @@ public final class ServerRaceSystem {
 			WOMAN_FLOWER_COOLDOWNS.clear();
 			WOMAN_ANIMAL_BREED_COOLDOWNS.clear();
 			WOMAN_DEFENSE_SESSIONS.clear();
+			WOMAN_DEFENSE_BLIND_PLAYERS.clear();
+			WOMAN_DEFENSE_LAST_POSITIONS.clear();
+			WOMAN_UNIQUE_SESSIONS.clear();
+			WOMAN_UNIQUE_SYNCED_MERCHANT_MENUS.clear();
 			CARTEL_DISGUISE_SESSIONS.clear();
 			COPPER_MAN_DEFENSE_COOLDOWNS.clear();
 			COPPER_MAN_DEFENSE_VISUAL_SESSIONS.clear();
@@ -588,6 +611,11 @@ public final class ServerRaceSystem {
 			clearCopperManDefenseVisual(handler.player);
 			clearCopperManJetpack(handler.player);
 			WOMAN_DEFENSE_SESSIONS.remove(handler.player.getUUID());
+			if (WOMAN_DEFENSE_BLIND_PLAYERS.remove(handler.player.getUUID())) {
+				handler.player.removeEffect(MobEffects.BLINDNESS);
+			}
+			WOMAN_DEFENSE_LAST_POSITIONS.remove(handler.player.getUUID());
+			clearWomanUniqueState(server, handler.player.getUUID());
 			clearWomanAttackState(handler.player.getUUID());
 		});
 		UseItemCallback.EVENT.register((player, world, hand) -> {
@@ -633,6 +661,7 @@ public final class ServerRaceSystem {
 			tickCopperManDefense(server);
 			tickWomanStock(server);
 			tickWomanDefense(server);
+			tickWomanUnique(server);
 			tickWomanAttack(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
@@ -761,6 +790,9 @@ public final class ServerRaceSystem {
 		}
 		if (slot == RaceAbilitySlot.DEFENSE && WOMAN_RACE_ID.equals(raceId)) {
 			return useWomanDefense(player, race, ability);
+		}
+		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && WOMAN_RACE_ID.equals(raceId)) {
+			return useWomanUnique(player, race, ability);
 		}
 
 		startGenericAbilityCooldown(player, slot, ability);
@@ -1655,6 +1687,34 @@ public final class ServerRaceSystem {
 	private record WomanDefenseExposure(int severity) {
 	}
 
+	private static final class WomanUniqueSession {
+		private final UUID targetId;
+		private long endTick;
+		private long nextDropCheckTick;
+		private final long dropMinTicks;
+		private final long dropMaxTicks;
+		private final double dropChance;
+		private final double tradePriceIncrease;
+
+		private WomanUniqueSession(
+				UUID targetId,
+				long endTick,
+				long nextDropCheckTick,
+				long dropMinTicks,
+				long dropMaxTicks,
+				double dropChance,
+				double tradePriceIncrease
+		) {
+			this.targetId = targetId;
+			this.endTick = endTick;
+			this.nextDropCheckTick = nextDropCheckTick;
+			this.dropMinTicks = dropMinTicks;
+			this.dropMaxTicks = dropMaxTicks;
+			this.dropChance = dropChance;
+			this.tradePriceIncrease = tradePriceIncrease;
+		}
+	}
+
 	private static final class WomanAttackChargeSession {
 		private final UUID playerId;
 		private final ResourceKey<Level> dimension;
@@ -1996,6 +2056,56 @@ public final class ServerRaceSystem {
 		return 1;
 	}
 
+	private static int useWomanUnique(ServerPlayer caster, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (caster == null || ability == null || caster.isSpectator() || !caster.isAlive()) {
+			return 0;
+		}
+		if (!(caster.level() instanceof ServerLevel level)) {
+			return 0;
+		}
+
+		double activationRange = getWomanUniqueRange(ability);
+		LivingEntity lookedAt = findLookTarget(caster, activationRange);
+		if (!(lookedAt instanceof ServerPlayer target) || target == caster) {
+			return 0;
+		}
+
+		long nowTick = level.getGameTime();
+		long durationTicks = Math.max(1L, asTicks(getWomanUniqueDurationSeconds(ability)));
+		long dropMinTicks = Math.max(1L, asTicks(getWomanUniqueDropMinSeconds(ability)));
+		long dropMaxTicks = Math.max(dropMinTicks, asTicks(getWomanUniqueDropMaxSeconds(ability)));
+		double dropChance = getWomanUniqueDropChance(ability);
+		double tradePriceIncrease = getWomanUniqueTradePriceIncrease(ability);
+		WOMAN_UNIQUE_SESSIONS.put(
+				target.getUUID(),
+				new WomanUniqueSession(
+						target.getUUID(),
+						nowTick + durationTicks,
+						scheduleWomanUniqueNextDropTick(level, nowTick, dropMinTicks, dropMaxTicks),
+						dropMinTicks,
+						dropMaxTicks,
+						dropChance,
+						tradePriceIncrease
+				)
+		);
+		WOMAN_UNIQUE_SYNCED_MERCHANT_MENUS.remove(target.getUUID());
+
+		float absorptionAmount = (float) (getWomanUniqueAbsorptionHearts(ability) * 2.0D);
+		if (absorptionAmount > 0.0F) {
+			caster.setAbsorptionAmount(Math.min(caster.getMaxAbsorption(), caster.getAbsorptionAmount() + absorptionAmount));
+		}
+		startGenericAbilityCooldown(caster, RaceAbilitySlot.UNIQUE_ABILITY, ability);
+
+		Lg2.LOGGER.info(
+				"Player {} used woman unique ability '{}' from race '{}' on {}",
+				caster.getGameProfile().name(),
+				ability.abilityId,
+				race.id,
+				target.getGameProfile().name()
+		);
+		return 1;
+	}
+
 	private static int useWomanAttack(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
 		if (player == null || ability == null || player.isSpectator() || !player.isAlive()) {
 			return 0;
@@ -2022,13 +2132,196 @@ public final class ServerRaceSystem {
 		return 1;
 	}
 
+	private static void tickWomanUnique(MinecraftServer server) {
+		if (server == null || WOMAN_UNIQUE_SESSIONS.isEmpty()) {
+			return;
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		Iterator<Map.Entry<UUID, WomanUniqueSession>> iterator = WOMAN_UNIQUE_SESSIONS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, WomanUniqueSession> entry = iterator.next();
+			UUID targetId = entry.getKey();
+			WomanUniqueSession session = entry.getValue();
+			ServerPlayer target = server.getPlayerList().getPlayer(targetId);
+			if (target == null || nowTick >= session.endTick) {
+				cleanupWomanUniqueState(server, targetId);
+				iterator.remove();
+				continue;
+			}
+
+			if (target.isAlive() && !target.isSpectator()) {
+				refreshWomanDefenseEffect(target, MobEffects.WEAKNESS, WOMAN_UNIQUE_WEAKNESS_DURATION_TICKS, 0, false);
+				processWomanUniqueDrop(target, session, nowTick);
+			}
+			syncWomanUniqueMerchantOffers(target, session);
+		}
+	}
+
+	private static void clearWomanUniqueState(MinecraftServer server, UUID targetId) {
+		if (targetId == null) {
+			return;
+		}
+		WOMAN_UNIQUE_SESSIONS.remove(targetId);
+		cleanupWomanUniqueState(server, targetId);
+	}
+
+	private static void cleanupWomanUniqueState(MinecraftServer server, UUID targetId) {
+		if (targetId == null) {
+			return;
+		}
+		WOMAN_UNIQUE_SYNCED_MERCHANT_MENUS.remove(targetId);
+		if (server == null) {
+			return;
+		}
+		ServerPlayer target = server.getPlayerList().getPlayer(targetId);
+		if (target != null) {
+			restoreWomanUniqueMerchantOffers(target);
+		}
+	}
+
+	private static long scheduleWomanUniqueNextDropTick(ServerLevel level, long nowTick, long minTicks, long maxTicks) {
+		long min = Math.max(1L, minTicks);
+		long max = Math.max(min, maxTicks);
+		if (level == null || max == min) {
+			return nowTick + min;
+		}
+		long delta = max - min;
+		long offset = Math.round(level.random.nextDouble() * (double) delta);
+		return nowTick + min + offset;
+	}
+
+	private static void processWomanUniqueDrop(ServerPlayer target, WomanUniqueSession session, long nowTick) {
+		if (target == null || session == null || nowTick < session.nextDropCheckTick) {
+			return;
+		}
+
+		if (target.getRandom().nextDouble() < session.dropChance) {
+			dropRandomWomanUniqueInventoryItem(target);
+		}
+		session.nextDropCheckTick = scheduleWomanUniqueNextDropTick(target.level(), nowTick, session.dropMinTicks, session.dropMaxTicks);
+	}
+
+	private static boolean dropRandomWomanUniqueInventoryItem(ServerPlayer player) {
+		if (player == null) {
+			return false;
+		}
+
+		Inventory inventory = player.getInventory();
+		int size = Math.min(WOMAN_UNIQUE_MAIN_INVENTORY_SIZE, inventory.getContainerSize());
+		List<Integer> candidates = new ArrayList<>();
+		for (int slot = 0; slot < size; slot++) {
+			if (!inventory.getItem(slot).isEmpty()) {
+				candidates.add(slot);
+			}
+		}
+		if (candidates.isEmpty()) {
+			return false;
+		}
+
+		int slot = candidates.get(player.getRandom().nextInt(candidates.size()));
+		ItemStack dropped = inventory.removeItemNoUpdate(slot);
+		if (dropped.isEmpty()) {
+			return false;
+		}
+		inventory.setChanged();
+		player.containerMenu.broadcastChanges();
+		player.drop(dropped, false);
+		return true;
+	}
+
+	private static void syncWomanUniqueMerchantOffers(ServerPlayer target, WomanUniqueSession session) {
+		if (target == null || session == null) {
+			return;
+		}
+		if (!(target.containerMenu instanceof MerchantMenu menu)) {
+			WOMAN_UNIQUE_SYNCED_MERCHANT_MENUS.remove(target.getUUID());
+			return;
+		}
+
+		Integer syncedContainerId = WOMAN_UNIQUE_SYNCED_MERCHANT_MENUS.get(target.getUUID());
+		if (syncedContainerId != null && syncedContainerId == menu.containerId) {
+			return;
+		}
+
+		Merchant merchant = ((MerchantMenuAccessor) menu).lg2$getTrader();
+		if (merchant == null) {
+			return;
+		}
+		MerchantOffers originalOffers = merchant.getOffers();
+		if (originalOffers == null) {
+			return;
+		}
+		MerchantOffers adjustedOffers = buildWomanUniqueAdjustedOffers(originalOffers, session.tradePriceIncrease);
+		menu.setOffers(adjustedOffers);
+		target.sendMerchantOffers(
+				menu.containerId,
+				adjustedOffers,
+				menu.getTraderLevel(),
+				menu.getTraderXp(),
+				menu.showProgressBar(),
+				menu.canRestock()
+		);
+		WOMAN_UNIQUE_SYNCED_MERCHANT_MENUS.put(target.getUUID(), menu.containerId);
+	}
+
+	private static void restoreWomanUniqueMerchantOffers(ServerPlayer target) {
+		if (target == null || !(target.containerMenu instanceof MerchantMenu menu)) {
+			return;
+		}
+
+		Merchant merchant = ((MerchantMenuAccessor) menu).lg2$getTrader();
+		if (merchant == null) {
+			return;
+		}
+		MerchantOffers originalOffers = merchant.getOffers();
+		if (originalOffers == null) {
+			return;
+		}
+		MerchantOffers restored = originalOffers.copy();
+		menu.setOffers(restored);
+		target.sendMerchantOffers(
+				menu.containerId,
+				restored,
+				menu.getTraderLevel(),
+				menu.getTraderXp(),
+				menu.showProgressBar(),
+				menu.canRestock()
+		);
+	}
+
+	private static MerchantOffers buildWomanUniqueAdjustedOffers(MerchantOffers originalOffers, double tradePriceIncrease) {
+		MerchantOffers adjusted = originalOffers == null ? new MerchantOffers() : originalOffers.copy();
+		if (tradePriceIncrease <= 0.0D) {
+			return adjusted;
+		}
+
+		for (MerchantOffer offer : adjusted) {
+			if (offer == null) {
+				continue;
+			}
+			int baseCount = offer.getBaseCostA().getCount();
+			if (baseCount <= 0) {
+				continue;
+			}
+			int extra = Math.max(1, (int) Math.ceil(baseCount * tradePriceIncrease));
+			offer.addToSpecialPriceDiff(extra);
+		}
+		return adjusted;
+	}
+
 	private static void tickWomanDefense(MinecraftServer server) {
-		if (server == null || WOMAN_DEFENSE_SESSIONS.isEmpty()) {
+		if (server == null) {
+			return;
+		}
+		if (WOMAN_DEFENSE_SESSIONS.isEmpty() && WOMAN_DEFENSE_BLIND_PLAYERS.isEmpty()) {
 			return;
 		}
 
 		long nowTick = server.overworld().getGameTime();
 		Map<UUID, WomanDefenseExposure> exposures = new HashMap<>();
+		Set<UUID> blindPlayers = new HashSet<>();
+		Set<UUID> exposedPlayers = new HashSet<>();
 		Iterator<Map.Entry<UUID, WomanDefenseSession>> iterator = WOMAN_DEFENSE_SESSIONS.entrySet().iterator();
 		while (iterator.hasNext()) {
 			Map.Entry<UUID, WomanDefenseSession> entry = iterator.next();
@@ -2072,8 +2365,14 @@ public final class ServerRaceSystem {
 			if (viewer == null || !viewer.isAlive() || viewer.isSpectator()) {
 				continue;
 			}
+			exposedPlayers.add(entry.getKey());
 			applyWomanDefenseExposure(viewer, entry.getValue());
+			if (entry.getValue().severity() >= 4) {
+				blindPlayers.add(entry.getKey());
+			}
 		}
+		syncWomanDefenseBlindness(server, blindPlayers);
+		WOMAN_DEFENSE_LAST_POSITIONS.entrySet().removeIf(entry -> !exposedPlayers.contains(entry.getKey()));
 	}
 
 	private static WomanDefenseExposure pickStrongerWomanDefenseExposure(WomanDefenseExposure left, WomanDefenseExposure right) {
@@ -2141,12 +2440,10 @@ public final class ServerRaceSystem {
 			default -> 0;
 		};
 		refreshWomanDefenseEffect(viewer, MobEffects.SLOWNESS, WOMAN_DEFENSE_EFFECT_DURATION_TICKS, slownessAmplifier, false);
-		if (exposure.severity() >= 4) {
-			refreshWomanDefenseEffect(viewer, MobEffects.BLINDNESS, WOMAN_DEFENSE_EFFECT_DURATION_TICKS, 0, false);
-		}
 
 		double shakeStrength = switch (exposure.severity()) {
-			case 4, 3 -> WOMAN_DEFENSE_STRONG_SHAKE_STRENGTH;
+			case 4 -> WOMAN_DEFENSE_VERY_STRONG_SHAKE_STRENGTH;
+			case 3 -> WOMAN_DEFENSE_STRONG_SHAKE_STRENGTH;
 			case 2 -> WOMAN_DEFENSE_MEDIUM_SHAKE_STRENGTH;
 			default -> WOMAN_DEFENSE_LIGHT_SHAKE_STRENGTH;
 		};
@@ -2168,6 +2465,38 @@ public final class ServerRaceSystem {
 		viewer.addEffect(new MobEffectInstance(effect, durationTicks, amplifier, false, false, showIcon));
 	}
 
+	private static void syncWomanDefenseBlindness(MinecraftServer server, Set<UUID> desiredBlindPlayers) {
+		if (server == null) {
+			return;
+		}
+
+		WOMAN_DEFENSE_BLIND_PLAYERS.removeIf(playerId -> {
+			if (desiredBlindPlayers.contains(playerId)) {
+				return false;
+			}
+			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+			if (player != null) {
+				player.removeEffect(MobEffects.BLINDNESS);
+			}
+			return true;
+		});
+
+		for (UUID playerId : desiredBlindPlayers) {
+			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+			if (player == null || !player.isAlive() || player.isSpectator()) {
+				continue;
+			}
+
+			MobEffectInstance current = player.getEffect(MobEffects.BLINDNESS);
+			if (current == null
+					|| current.getAmplifier() != 0
+					|| current.getDuration() != MobEffectInstance.INFINITE_DURATION) {
+				player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, MobEffectInstance.INFINITE_DURATION, 0, false, false, false));
+			}
+			WOMAN_DEFENSE_BLIND_PLAYERS.add(playerId);
+		}
+	}
+
 	private static void applyWomanDefenseShake(ServerPlayer viewer, double strength) {
 		if (viewer == null || strength <= 0.0D) {
 			return;
@@ -2177,21 +2506,29 @@ public final class ServerRaceSystem {
 			return;
 		}
 
-		Vec3 movement = viewer.getDeltaMovement();
-		Vec3 horizontalMovement = new Vec3(movement.x, 0.0D, movement.z);
+		Vec3 currentPosition = viewer.position();
+		Vec3 previousPosition = WOMAN_DEFENSE_LAST_POSITIONS.put(viewer.getUUID(), currentPosition);
+		if (previousPosition == null) {
+			return;
+		}
+
+		Vec3 horizontalMovement = new Vec3(currentPosition.x - previousPosition.x, 0.0D, currentPosition.z - previousPosition.z);
 		double moveSpeed = horizontalMovement.length();
 		if (moveSpeed < WOMAN_DEFENSE_SHAKE_MIN_MOVE_SPEED) {
 			return;
 		}
-		Vec3 direction = horizontalMovement.normalize();
-		Vec3 lateral = new Vec3(-direction.z, 0.0D, direction.x);
+		Vec3 look = viewer.getLookAngle();
+		Vec3 basis = new Vec3(look.x, 0.0D, look.z);
+		if (basis.lengthSqr() <= 1.0E-6D) {
+			basis = horizontalMovement;
+		}
+		if (basis.lengthSqr() <= 1.0E-6D) {
+			return;
+		}
+		Vec3 lateral = new Vec3(-basis.normalize().z, 0.0D, basis.normalize().x);
 		double maxOffset = Math.min(strength, moveSpeed * WOMAN_DEFENSE_SHAKE_MOVEMENT_RATIO);
 		double lateralOffset = Math.floorMod(tick / WOMAN_DEFENSE_SHAKE_INTERVAL_TICKS, 2L) == 0L ? maxOffset : -maxOffset;
-		viewer.setDeltaMovement(
-				movement.x + lateral.x * lateralOffset,
-				movement.y,
-				movement.z + lateral.z * lateralOffset
-		);
+		viewer.push(lateral.x * lateralOffset, 0.0D, lateral.z * lateralOffset);
 		viewer.hurtMarked = true;
 		viewer.connection.send(new ClientboundSetEntityMotionPacket(viewer));
 	}
@@ -2655,6 +2992,35 @@ public final class ServerRaceSystem {
 
 	private static double getWomanDefenseDurationSeconds(RaceAbilityConfig ability) {
 		return positiveOrDefault(ability == null ? 0.0D : ability.durationSeconds, WOMAN_DEFENSE_DEFAULT_DURATION_SECONDS);
+	}
+
+	private static double getWomanUniqueRange(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.activationRangeBlocks, WOMAN_UNIQUE_DEFAULT_RANGE_BLOCKS);
+	}
+
+	private static double getWomanUniqueDurationSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.durationSeconds, WOMAN_UNIQUE_DEFAULT_DURATION_SECONDS);
+	}
+
+	private static double getWomanUniqueDropMinSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.womanUniqueDropMinSeconds, WOMAN_UNIQUE_DEFAULT_DROP_MIN_SECONDS);
+	}
+
+	private static double getWomanUniqueDropMaxSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.womanUniqueDropMaxSeconds, WOMAN_UNIQUE_DEFAULT_DROP_MAX_SECONDS);
+	}
+
+	private static double getWomanUniqueDropChance(RaceAbilityConfig ability) {
+		double configured = ability == null ? 0.0D : ability.womanUniqueDropChance;
+		return configured > 0.0D ? Math.min(1.0D, configured) : WOMAN_UNIQUE_DEFAULT_DROP_CHANCE;
+	}
+
+	private static double getWomanUniqueTradePriceIncrease(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.womanUniqueTradePriceIncrease, WOMAN_UNIQUE_DEFAULT_TRADE_PRICE_INCREASE);
+	}
+
+	private static double getWomanUniqueAbsorptionHearts(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.womanUniqueAbsorptionHearts, WOMAN_UNIQUE_DEFAULT_ABSORPTION_HEARTS);
 	}
 
 	private static double getWomanAttackChargeRadius(RaceAbilityConfig ability) {

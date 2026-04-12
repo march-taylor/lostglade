@@ -44,6 +44,7 @@
 		"LivingEntityTrackedDataAccessor",
 		"LivingEntityStabilityLuckMixin",
 		"LivingEntityTrojanRoosterInvulnerabilityMixin",
+		"MerchantMenuAccessor",
 		"MsgCommandMixin",
 		"MinecraftServerRendererBotStatusMixin",
 		"MobTrojanRoosterLeashMixin",

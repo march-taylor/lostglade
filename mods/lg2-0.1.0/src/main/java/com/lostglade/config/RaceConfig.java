@@ -169,6 +169,11 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.womanAttackRangeBlocks, value -> ability.womanAttackRangeBlocks = value);
 		changed |= normalizeNonNegative(ability.womanAttackDamage, value -> ability.womanAttackDamage = value);
 		changed |= normalizeNonNegative(ability.womanAttackFollowSeconds, value -> ability.womanAttackFollowSeconds = value);
+		changed |= normalizeNonNegative(ability.womanUniqueDropMinSeconds, value -> ability.womanUniqueDropMinSeconds = value);
+		changed |= normalizeNonNegative(ability.womanUniqueDropMaxSeconds, value -> ability.womanUniqueDropMaxSeconds = value);
+		changed |= normalizeChance(ability.womanUniqueDropChance, value -> ability.womanUniqueDropChance = value);
+		changed |= normalizeNonNegative(ability.womanUniqueTradePriceIncrease, value -> ability.womanUniqueTradePriceIncrease = value);
+		changed |= normalizeNonNegative(ability.womanUniqueAbsorptionHearts, value -> ability.womanUniqueAbsorptionHearts = value);
 		changed |= normalizeNonNegative(ability.jetpackMaxRiseBlocks, value -> ability.jetpackMaxRiseBlocks = value);
 		changed |= normalizeChance(ability.repulsorNaturalLightningChargeChance, value -> ability.repulsorNaturalLightningChargeChance = value);
 		changed |= normalizeNonNegative(ability.copperIngotFoodPoints, (java.util.function.IntConsumer) value -> ability.copperIngotFoodPoints = value);
@@ -176,6 +181,10 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.repulsorCopperIngotChargeRestore, (java.util.function.IntConsumer) value -> ability.repulsorCopperIngotChargeRestore = value);
 		changed |= normalizeNonNegative(ability.repulsorNaturalLightningChargeRestore, (java.util.function.IntConsumer) value -> ability.repulsorNaturalLightningChargeRestore = value);
 		changed |= normalizeChance(ability.chance, value -> ability.chance = value);
+		if (ability.womanUniqueDropMaxSeconds < ability.womanUniqueDropMinSeconds) {
+			ability.womanUniqueDropMaxSeconds = ability.womanUniqueDropMinSeconds;
+			changed = true;
+		}
 		if (ability.maxGrowthSeconds < ability.minGrowthSeconds) {
 			ability.maxGrowthSeconds = ability.minGrowthSeconds;
 			changed = true;
@@ -344,6 +353,11 @@ public final class RaceConfig {
 		public double womanAttackRangeBlocks = 0.0D;
 		public double womanAttackDamage = 0.0D;
 		public double womanAttackFollowSeconds = 0.0D;
+		public double womanUniqueDropMinSeconds = 0.0D;
+		public double womanUniqueDropMaxSeconds = 0.0D;
+		public double womanUniqueDropChance = 0.0D;
+		public double womanUniqueTradePriceIncrease = 0.0D;
+		public double womanUniqueAbsorptionHearts = 0.0D;
 		public double jetpackMaxRiseBlocks = 0.0D;
 		public int repulsorMaxCharges = 0;
 		public int repulsorCopperIngotChargeRestore = 0;
