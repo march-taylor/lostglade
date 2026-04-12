@@ -58,6 +58,7 @@ import net.minecraft.network.protocol.game.ClientboundOpenBookPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
@@ -264,9 +265,9 @@ public final class ServerRaceSystem {
 	private static final double WOMAN_DEFENSE_DEFAULT_DURATION_SECONDS = 20.0D;
 	private static final double WOMAN_DEFENSE_DEFAULT_RANGE_BLOCKS = 32.0D;
 	private static final int WOMAN_DEFENSE_EFFECT_REFRESH_TICKS = 8;
-	private static final double WOMAN_DEFENSE_LIGHT_SHAKE_STRENGTH = 0.018D;
-	private static final double WOMAN_DEFENSE_MEDIUM_SHAKE_STRENGTH = 0.04D;
-	private static final double WOMAN_DEFENSE_STRONG_SHAKE_STRENGTH = 0.075D;
+	private static final double WOMAN_DEFENSE_LIGHT_SHAKE_STRENGTH = 0.07D;
+	private static final double WOMAN_DEFENSE_MEDIUM_SHAKE_STRENGTH = 0.13D;
+	private static final double WOMAN_DEFENSE_STRONG_SHAKE_STRENGTH = 0.22D;
 	private static final double WOMAN_ATTACK_DEFAULT_CHARGE_RADIUS_BLOCKS = 1.5D;
 	private static final double WOMAN_ATTACK_DEFAULT_RANGE_BLOCKS = 64.0D;
 	private static final double WOMAN_ATTACK_DEFAULT_DAMAGE = 2.0D;
@@ -2170,10 +2171,12 @@ public final class ServerRaceSystem {
 		}
 
 		Vec3 movement = viewer.getDeltaMovement();
-		double shakeX = (viewer.getRandom().nextDouble() - 0.5D) * strength;
-		double shakeZ = (viewer.getRandom().nextDouble() - 0.5D) * strength;
-		viewer.setDeltaMovement(movement.x + shakeX, movement.y, movement.z + shakeZ);
+		double angle = viewer.getRandom().nextDouble() * (Math.PI * 2.0D);
+		double shakeX = Math.cos(angle) * strength;
+		double shakeZ = Math.sin(angle) * strength;
+		viewer.setDeltaMovement(movement.x * 0.2D + shakeX, movement.y, movement.z * 0.2D + shakeZ);
 		viewer.hurtMarked = true;
+		viewer.connection.send(new ClientboundSetEntityMotionPacket(viewer));
 	}
 
 	private static void tickWomanAttack(MinecraftServer server) {

@@ -190,7 +190,7 @@
                                       "name":  "Страх перед училкой",
                                       "description":  "Вокруг вас создаётся область страха. Чем ближе враг, тем сильнее негативные эффекты.",
                                       "priceBitcoins":  600,
-                                      "cooldownSeconds":  180.0,
+                                      "cooldownSeconds":  600.0,
                                       "activationRangeBlocks":  32.0,
                                       "durationSeconds":  20.0
                                   },
