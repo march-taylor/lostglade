@@ -29,6 +29,7 @@ import eu.pb4.polymer.core.api.item.PolymerItemUtils;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import it.unimi.dsi.fastutil.Pair;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
@@ -50,8 +51,11 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.ClickEvent;
+import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
@@ -90,6 +94,8 @@ import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.animal.Animal;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
 import net.minecraft.world.entity.ai.navigation.PathNavigation;
 import net.minecraft.world.entity.decoration.ArmorStand;
@@ -118,6 +124,7 @@ import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
@@ -150,12 +157,14 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Reader;
 import java.net.URI;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.Writer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -276,6 +285,10 @@ public final class ServerRaceSystem {
 	private static final double WOMAN_UNIQUE_DEFAULT_DROP_CHANCE = 0.4D;
 	private static final double WOMAN_UNIQUE_DEFAULT_TRADE_PRICE_INCREASE = 0.3D;
 	private static final double WOMAN_UNIQUE_DEFAULT_ABSORPTION_HEARTS = 2.0D;
+	private static final double WOMAN_SHNYAGA_DEFAULT_TRANSFER_HEARTS = 3.0D;
+	private static final double WOMAN_SHNYAGA_DEFAULT_BUFF_RANGE_BLOCKS = 16.0D;
+	private static final double WOMAN_SHNYAGA_DEFAULT_REJECT_DAMAGE_HEARTS = 5.0D;
+	private static final double WOMAN_SHNYAGA_DEFAULT_REJECT_DEBUFF_SECONDS = 900.0D;
 	private static final int WOMAN_UNIQUE_WEAKNESS_DURATION_TICKS = 40;
 	private static final int WOMAN_UNIQUE_MAIN_INVENTORY_SIZE = 36;
 	private static final int WOMAN_DEFENSE_EFFECT_DURATION_TICKS = 18;
@@ -298,6 +311,13 @@ public final class ServerRaceSystem {
 	private static final float WOMAN_ATTACK_AIR_TRIGGER_HEIGHT = 1.8F;
 	private static final long WOMAN_ATTACK_FOLLOW_NAV_INTERVAL_TICKS = 8L;
 	private static final double WOMAN_ATTACK_FOLLOW_SPEED = 1.1D;
+	private static final long WOMAN_SHNYAGA_WHITELIST_CHECK_INTERVAL_TICKS = 100L;
+	private static final int WOMAN_SHNYAGA_EFFECT_DURATION_TICKS = 60;
+	private static final String WOMAN_SHNYAGA_STATE_FILE_NAME = "lg2_woman_shnyaga_links.json";
+	private static final Identifier WOMAN_SHNYAGA_WOMAN_HEALTH_MODIFIER_ID =
+			Objects.requireNonNull(Identifier.tryParse("lg2:woman_shnyaga_woman_health"));
+	private static final Identifier WOMAN_SHNYAGA_BOYFRIEND_HEALTH_MODIFIER_ID =
+			Objects.requireNonNull(Identifier.tryParse("lg2:woman_shnyaga_boyfriend_health"));
 	private static final Item[] WOMAN_ATTACK_TEMPT_ITEMS = {
 			Items.WHEAT,
 			Items.CARROT,
@@ -389,6 +409,12 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, Vec3> WOMAN_DEFENSE_LAST_POSITIONS = new HashMap<>();
 	private static final Map<UUID, WomanUniqueSession> WOMAN_UNIQUE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, Integer> WOMAN_UNIQUE_SYNCED_MERCHANT_MENUS = new HashMap<>();
+	private static final Map<UUID, WomanShnyagaPendingSelection> WOMAN_SHNYAGA_PENDING_SELECTIONS = new LinkedHashMap<>();
+	private static final Map<UUID, WomanShnyagaProposal> WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN = new LinkedHashMap<>();
+	private static final Map<UUID, WomanShnyagaProposal> WOMAN_SHNYAGA_PROPOSALS_BY_TARGET = new LinkedHashMap<>();
+	private static final Map<UUID, WomanShnyagaLink> WOMAN_SHNYAGA_LINKS_BY_WOMAN = new LinkedHashMap<>();
+	private static final Map<UUID, WomanShnyagaLink> WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND = new LinkedHashMap<>();
+	private static final Set<UUID> WOMAN_SHNYAGA_BUFFED_BOYFRIENDS = new HashSet<>();
 	private static final Map<UUID, WomanAttackChargeSession> WOMAN_ATTACK_CHARGE_SESSIONS = new LinkedHashMap<>();
 	private static final List<WomanAttackProjectile> WOMAN_ATTACK_PROJECTILES = new ArrayList<>();
 	private static final Map<UUID, WomanAttackFollowSession> WOMAN_ATTACK_FOLLOWS = new LinkedHashMap<>();
@@ -414,6 +440,7 @@ public final class ServerRaceSystem {
 	private static final ThreadLocal<Boolean> CARTEL_DEFENSE_REFLECTION_ACTIVE = ThreadLocal.withInitial(() -> Boolean.FALSE);
 	private static final Set<CocaineCauldronKey> PROCESSED_COCAINE_CAULDRONS = new HashSet<>();
 	private static long processedCocaineCauldronTick = Long.MIN_VALUE;
+	private static long womanShnyagaNextWhitelistCheckTick = Long.MIN_VALUE;
 	private static CompletableFuture<Property> CARTEL_LAWYER_SKIN_FUTURE;
 	private static volatile Property CARTEL_LAWYER_SKIN_PROPERTY;
 	private static final class CartelSummonSession {
@@ -542,12 +569,16 @@ public final class ServerRaceSystem {
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			RaceConfig.load();
 			rebuildCache();
+			loadWomanShnyagaLinks(server);
+			pruneWomanShnyagaLinksAgainstWhitelist(server);
+			syncWomanShnyagaLinks(server);
 			prewarmCartelLawyerSkinAsync();
 			cleanupCopperManDefenseTintCache(server, true);
 			syncGeneratedDialogs(server, true);
 			Lg2.LOGGER.info("Loaded {} configured personal races", RACES_BY_NICKNAME.size());
 		});
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			saveWomanShnyagaLinks(server);
 			cleanupAllCartelRaceEntities(server, true);
 			restoreAllCartelDisguises(server);
 			restoreAllCopperManJetpacks(server);
@@ -570,6 +601,12 @@ public final class ServerRaceSystem {
 			WOMAN_DEFENSE_LAST_POSITIONS.clear();
 			WOMAN_UNIQUE_SESSIONS.clear();
 			WOMAN_UNIQUE_SYNCED_MERCHANT_MENUS.clear();
+			WOMAN_SHNYAGA_PENDING_SELECTIONS.clear();
+			WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN.clear();
+			WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.clear();
+			WOMAN_SHNYAGA_LINKS_BY_WOMAN.clear();
+			WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.clear();
+			WOMAN_SHNYAGA_BUFFED_BOYFRIENDS.clear();
 			CARTEL_DISGUISE_SESSIONS.clear();
 			COPPER_MAN_DEFENSE_COOLDOWNS.clear();
 			COPPER_MAN_DEFENSE_VISUAL_SESSIONS.clear();
@@ -590,6 +627,7 @@ public final class ServerRaceSystem {
 			CARTEL_LAWYER_OWNER_BY_ENTITY.clear();
 			CARTEL_LAWYER_SKIN_FUTURE = null;
 			CARTEL_LAWYER_SKIN_PROPERTY = null;
+			womanShnyagaNextWhitelistCheckTick = Long.MIN_VALUE;
 		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
 				server.execute(() -> {
@@ -598,6 +636,7 @@ public final class ServerRaceSystem {
 					);
 					CartelSecretRecipeBookSystem.syncJoinedPlayer(handler.player);
 					CopperManGogglesSystem.syncPlayerRecipeBook(handler.player);
+					syncWomanShnyagaLinks(server);
 					prewarmCopperManDefenseTint(server, handler.player);
 				})
 		);
@@ -617,7 +656,10 @@ public final class ServerRaceSystem {
 			WOMAN_DEFENSE_LAST_POSITIONS.remove(handler.player.getUUID());
 			clearWomanUniqueState(server, handler.player.getUUID());
 			clearWomanAttackState(handler.player.getUUID());
+			clearWomanShnyagaPendingState(handler.player.getUUID());
+			syncWomanShnyagaLinks(server);
 		});
+		ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(ServerRaceSystem::onAllowChatMessage);
 		UseItemCallback.EVENT.register((player, world, hand) -> {
 			if (!(player instanceof ServerPlayer serverPlayer) || world.isClientSide()) {
 				return InteractionResult.PASS;
@@ -662,6 +704,7 @@ public final class ServerRaceSystem {
 			tickWomanStock(server);
 			tickWomanDefense(server);
 			tickWomanUnique(server);
+			tickWomanShnyaga(server);
 			tickWomanAttack(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
@@ -686,6 +729,10 @@ public final class ServerRaceSystem {
 								.then(literal("defense").executes(context -> useAbility(context, RaceAbilitySlot.DEFENSE)))
 								.then(literal("ability").executes(context -> useAbility(context, RaceAbilitySlot.UNIQUE_ABILITY)))
 								.then(literal("shnyaga").executes(context -> useAbility(context, RaceAbilitySlot.SHNYAGA)))
+						)
+						.then(literal("woman_shnyaga")
+								.then(literal("accept").executes(ServerRaceSystem::acceptWomanShnyagaProposal))
+								.then(literal("reject").executes(ServerRaceSystem::rejectWomanShnyagaProposal))
 						)
 				)
 		);
@@ -725,6 +772,40 @@ public final class ServerRaceSystem {
 
 		return 1;
 	}
+
+	private static boolean onAllowChatMessage(PlayerChatMessage message, ServerPlayer sender, ChatType.Bound params) {
+		if (sender == null || message == null) {
+			return true;
+		}
+
+		WomanShnyagaPendingSelection selection = WOMAN_SHNYAGA_PENDING_SELECTIONS.get(sender.getUUID());
+		if (selection == null) {
+			return true;
+		}
+
+		String content = message.signedContent() == null ? "" : message.signedContent().trim();
+		handleWomanShnyagaChatSubmission(sender, selection, content);
+		return false;
+	}
+
+	private static int acceptWomanShnyagaProposal(CommandContext<CommandSourceStack> context) {
+		ServerPlayer player = context.getSource().getPlayer();
+		if (player == null) {
+			context.getSource().sendFailure(Component.literal("Player only."));
+			return 0;
+		}
+		return handleWomanShnyagaProposalResponse(player, true);
+	}
+
+	private static int rejectWomanShnyagaProposal(CommandContext<CommandSourceStack> context) {
+		ServerPlayer player = context.getSource().getPlayer();
+		if (player == null) {
+			context.getSource().sendFailure(Component.literal("Player only."));
+			return 0;
+		}
+		return handleWomanShnyagaProposalResponse(player, false);
+	}
+
 	private static int useAbility(CommandContext<CommandSourceStack> context, RaceAbilitySlot slot) {
 		ServerPlayer player = context.getSource().getPlayer();
 		if (player == null) {
@@ -793,6 +874,9 @@ public final class ServerRaceSystem {
 		}
 		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && WOMAN_RACE_ID.equals(raceId)) {
 			return useWomanUnique(player, race, ability);
+		}
+		if (slot == RaceAbilitySlot.SHNYAGA && WOMAN_RACE_ID.equals(raceId)) {
+			return useWomanShnyaga(player, race, ability);
 		}
 
 		startGenericAbilityCooldown(player, slot, ability);
@@ -1715,6 +1799,69 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private record WomanShnyagaPendingSelection(UUID targetId, String targetName) {
+	}
+
+	private record WomanShnyagaProposal(
+			UUID womanId,
+			String womanName,
+			UUID targetId,
+			String targetName,
+			String message,
+			double transferHealthPoints,
+			double buffRangeBlocks
+	) {
+	}
+
+	private record WomanShnyagaLink(
+			UUID womanId,
+			String womanName,
+			UUID boyfriendId,
+			String boyfriendName,
+			double transferHealthPoints,
+			double buffRangeBlocks
+	) {
+	}
+
+	private static final class WomanShnyagaPersistedState {
+		private final List<WomanShnyagaPersistedLink> links = new ArrayList<>();
+	}
+
+	private static final class WomanShnyagaPersistedLink {
+		private UUID womanId;
+		private String womanName;
+		private UUID boyfriendId;
+		private String boyfriendName;
+		private double transferHealthPoints;
+		private double buffRangeBlocks;
+
+		private WomanShnyagaPersistedLink(
+				UUID womanId,
+				String womanName,
+				UUID boyfriendId,
+				String boyfriendName,
+				double transferHealthPoints,
+				double buffRangeBlocks
+		) {
+			this.womanId = womanId;
+			this.womanName = womanName;
+			this.boyfriendId = boyfriendId;
+			this.boyfriendName = boyfriendName;
+			this.transferHealthPoints = transferHealthPoints;
+			this.buffRangeBlocks = buffRangeBlocks;
+		}
+	}
+
+	private static final class WomanShnyagaWhitelistEntry {
+		private String uuid;
+	}
+
+	private enum WomanShnyagaBreakReason {
+		NONE,
+		WOMAN_KILLED_BY_BOYFRIEND,
+		BOYFRIEND_REMOVED_FROM_WHITELIST
+	}
+
 	private static final class WomanAttackChargeSession {
 		private final UUID playerId;
 		private final ResourceKey<Level> dimension;
@@ -2021,6 +2168,19 @@ public final class ServerRaceSystem {
 		return race.stock;
 	}
 
+	private static RaceAbilityConfig getWomanShnyagaAbility(ServerPlayer player) {
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isEmpty()) {
+			return null;
+		}
+
+		PlayerRaceConfig race = raceOptional.get();
+		if (!WOMAN_RACE_ID.equals(sanitizePath(race.id)) || race.shnyaga == null || !race.shnyaga.enabled) {
+			return null;
+		}
+		return race.shnyaga;
+	}
+
 	private static double getWomanFlowerCooldownSeconds(RaceAbilityConfig stock) {
 		return positiveOrDefault(stock == null ? 0.0D : stock.womanFlowerCooldownSeconds, WOMAN_FLOWER_DEFAULT_COOLDOWN_SECONDS);
 	}
@@ -2114,6 +2274,645 @@ public final class ServerRaceSystem {
 				target.getGameProfile().name()
 		);
 		return 1;
+	}
+
+	private static int useWomanShnyaga(ServerPlayer caster, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (caster == null || ability == null || caster.isSpectator() || !caster.isAlive()) {
+			return 0;
+		}
+		if (hasWomanShnyagaLink(caster.getUUID())) {
+			caster.displayClientMessage(
+					Component.literal(localizeWomanShnyagaText(caster, "already_linked"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return 0;
+		}
+
+		List<ServerPlayer> candidates = collectWomanShnyagaCandidates(caster);
+		if (candidates.isEmpty()) {
+			caster.displayClientMessage(
+					Component.literal(localizeWomanShnyagaText(caster, "no_players_online"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return 0;
+		}
+
+		openWomanShnyagaMenu(caster, candidates, 0, ability);
+		Lg2.LOGGER.info(
+				"Player {} opened woman shnyaga '{}' menu from race '{}'",
+				caster.getGameProfile().name(),
+				ability.abilityId,
+				race.id
+		);
+		return 1;
+	}
+
+	private static List<ServerPlayer> collectWomanShnyagaCandidates(ServerPlayer caster) {
+		if (caster == null || caster.level().getServer() == null) {
+			return List.of();
+		}
+
+		List<ServerPlayer> candidates = new ArrayList<>();
+		for (ServerPlayer player : caster.level().getServer().getPlayerList().getPlayers()) {
+			if (player == null || player == caster || !player.isAlive() || player.isSpectator()) {
+				continue;
+			}
+			if (hasWomanShnyagaLink(player.getUUID())) {
+				continue;
+			}
+			WomanShnyagaProposal pending = WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.get(player.getUUID());
+			if (pending != null && !caster.getUUID().equals(pending.womanId())) {
+				continue;
+			}
+			candidates.add(player);
+		}
+		return candidates;
+	}
+
+	private static void openWomanShnyagaMenu(ServerPlayer caster, List<ServerPlayer> candidates, int selectedIndex, RaceAbilityConfig ability) {
+		if (caster == null) {
+			return;
+		}
+		int normalizedIndex = candidates == null || candidates.isEmpty() ? 0 : Math.floorMod(selectedIndex, candidates.size());
+		ServerPlayer selectedPlayer = candidates == null || candidates.isEmpty() ? null : candidates.get(normalizedIndex);
+		caster.openMenu(new SimpleMenuProvider(
+				(syncId, inventory, menuPlayer) -> new WomanShnyagaMenu(syncId, inventory, caster, ability, normalizedIndex),
+				buildCartelDisguiseMenuTitle(caster, selectedPlayer)
+		));
+	}
+
+	private static int beginWomanShnyagaPrompt(ServerPlayer caster, ServerPlayer target, RaceAbilityConfig ability) {
+		if (caster == null || target == null || ability == null) {
+			return 0;
+		}
+		if (hasWomanShnyagaLink(caster.getUUID())) {
+			caster.displayClientMessage(
+					Component.literal(localizeWomanShnyagaText(caster, "already_linked"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return 0;
+		}
+		if (hasWomanShnyagaLink(target.getUUID())) {
+			caster.displayClientMessage(
+					Component.literal(localizeWomanShnyagaText(caster, "target_already_linked"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return 0;
+		}
+
+		WomanShnyagaProposal pending = WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.get(target.getUUID());
+		if (pending != null && !caster.getUUID().equals(pending.womanId())) {
+			caster.displayClientMessage(
+					Component.literal(localizeWomanShnyagaText(caster, "target_busy"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return 0;
+		}
+
+		WOMAN_SHNYAGA_PENDING_SELECTIONS.put(
+				caster.getUUID(),
+				new WomanShnyagaPendingSelection(target.getUUID(), target.getGameProfile().name())
+		);
+		caster.closeContainer();
+		caster.displayClientMessage(
+				Component.literal(localizeWomanShnyagaText(caster, "write_prompt"))
+						.withStyle(style -> style.withItalic(false)),
+				true
+		);
+		return 1;
+	}
+
+	private static void handleWomanShnyagaChatSubmission(ServerPlayer sender, WomanShnyagaPendingSelection selection, String messageText) {
+		if (sender == null || selection == null) {
+			return;
+		}
+		if (messageText == null || messageText.isBlank()) {
+			sender.displayClientMessage(
+					Component.literal(localizeWomanShnyagaText(sender, "write_prompt"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return;
+		}
+
+		Optional<PlayerRaceConfig> raceOptional = getRace(sender);
+		if (raceOptional.isEmpty()) {
+			WOMAN_SHNYAGA_PENDING_SELECTIONS.remove(sender.getUUID());
+			return;
+		}
+
+		PlayerRaceConfig race = raceOptional.get();
+		if (!WOMAN_RACE_ID.equals(sanitizePath(race.id)) || race.shnyaga == null || !race.shnyaga.enabled || !hasUnlockedAbility(sender, race, RaceAbilitySlot.SHNYAGA)) {
+			WOMAN_SHNYAGA_PENDING_SELECTIONS.remove(sender.getUUID());
+			return;
+		}
+
+		MinecraftServer server = sender.level().getServer();
+		if (server == null) {
+			WOMAN_SHNYAGA_PENDING_SELECTIONS.remove(sender.getUUID());
+			return;
+		}
+
+		ServerPlayer target = server.getPlayerList().getPlayer(selection.targetId());
+		if (target == null || !target.isAlive() || target.isSpectator()) {
+			WOMAN_SHNYAGA_PENDING_SELECTIONS.remove(sender.getUUID());
+			sender.displayClientMessage(
+					Component.literal(localizeWomanShnyagaText(sender, "target_unavailable"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return;
+		}
+		if (hasWomanShnyagaLink(sender.getUUID())) {
+			WOMAN_SHNYAGA_PENDING_SELECTIONS.remove(sender.getUUID());
+			sender.displayClientMessage(
+					Component.literal(localizeWomanShnyagaText(sender, "already_linked"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return;
+		}
+		if (hasWomanShnyagaLink(target.getUUID())) {
+			WOMAN_SHNYAGA_PENDING_SELECTIONS.remove(sender.getUUID());
+			sender.displayClientMessage(
+					Component.literal(localizeWomanShnyagaText(sender, "target_already_linked"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return;
+		}
+
+		WomanShnyagaProposal existingForTarget = WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.get(target.getUUID());
+		if (existingForTarget != null && !sender.getUUID().equals(existingForTarget.womanId())) {
+			WOMAN_SHNYAGA_PENDING_SELECTIONS.remove(sender.getUUID());
+			sender.displayClientMessage(
+					Component.literal(localizeWomanShnyagaText(sender, "target_busy"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return;
+		}
+
+		removeWomanShnyagaProposal(WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN.get(sender.getUUID()));
+		WOMAN_SHNYAGA_PENDING_SELECTIONS.remove(sender.getUUID());
+		WomanShnyagaProposal proposal = new WomanShnyagaProposal(
+				sender.getUUID(),
+				sender.getGameProfile().name(),
+				target.getUUID(),
+				target.getGameProfile().name(),
+				messageText,
+				getWomanShnyagaTransferHealthPoints(race.shnyaga),
+				getWomanShnyagaBuffRange(race.shnyaga)
+		);
+		WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN.put(sender.getUUID(), proposal);
+		WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.put(target.getUUID(), proposal);
+		startGenericAbilityCooldown(sender, RaceAbilitySlot.SHNYAGA, race.shnyaga);
+
+		sender.displayClientMessage(Component.empty(), true);
+		sender.sendSystemMessage(
+				Component.literal(localizeWomanShnyagaText(sender, "proposal_sent"))
+						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false))
+		);
+		target.sendSystemMessage(buildWomanShnyagaProposalMessage(target, proposal));
+	}
+
+	private static int handleWomanShnyagaProposalResponse(ServerPlayer target, boolean accept) {
+		if (target == null) {
+			return 0;
+		}
+		WomanShnyagaProposal proposal = WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.get(target.getUUID());
+		if (proposal == null) {
+			target.sendSystemMessage(
+					Component.literal(localizeWomanShnyagaText(target, "no_pending_proposal"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
+			);
+			return 0;
+		}
+
+		MinecraftServer server = target.level().getServer();
+		ServerPlayer woman = server == null ? null : server.getPlayerList().getPlayer(proposal.womanId());
+		removeWomanShnyagaProposal(proposal);
+		if (server == null || woman == null || !woman.isAlive() || woman.isSpectator()) {
+			target.sendSystemMessage(
+					Component.literal(localizeWomanShnyagaText(target, "proposal_expired"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
+			);
+			return 0;
+		}
+		if (hasWomanShnyagaLink(woman.getUUID()) || hasWomanShnyagaLink(target.getUUID())) {
+			target.sendSystemMessage(
+					Component.literal(localizeWomanShnyagaText(target, "proposal_expired"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
+			);
+			return 0;
+		}
+
+		if (accept) {
+			createWomanShnyagaLink(server, woman, target, proposal);
+			return 1;
+		}
+
+		applyWomanShnyagaRejection(woman, target);
+		return 1;
+	}
+
+	private static boolean hasWomanShnyagaLink(UUID playerId) {
+		return playerId != null && (WOMAN_SHNYAGA_LINKS_BY_WOMAN.containsKey(playerId) || WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.containsKey(playerId));
+	}
+
+	private static void removeWomanShnyagaProposal(WomanShnyagaProposal proposal) {
+		if (proposal == null) {
+			return;
+		}
+		WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN.remove(proposal.womanId(), proposal);
+		WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.remove(proposal.targetId(), proposal);
+	}
+
+	private static void clearWomanShnyagaPendingState(UUID playerId) {
+		if (playerId == null) {
+			return;
+		}
+		WOMAN_SHNYAGA_PENDING_SELECTIONS.remove(playerId);
+		removeWomanShnyagaProposal(WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN.get(playerId));
+		removeWomanShnyagaProposal(WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.get(playerId));
+	}
+
+	private static void createWomanShnyagaLink(MinecraftServer server, ServerPlayer woman, ServerPlayer boyfriend, WomanShnyagaProposal proposal) {
+		if (server == null || woman == null || boyfriend == null || proposal == null) {
+			return;
+		}
+
+		WomanShnyagaLink link = new WomanShnyagaLink(
+				proposal.womanId(),
+				proposal.womanName(),
+				proposal.targetId(),
+				proposal.targetName(),
+				proposal.transferHealthPoints(),
+				proposal.buffRangeBlocks()
+		);
+		WOMAN_SHNYAGA_LINKS_BY_WOMAN.put(link.womanId(), link);
+		WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.put(link.boyfriendId(), link);
+		saveWomanShnyagaLinks(server);
+		syncWomanShnyagaLinks(server);
+
+		woman.sendSystemMessage(
+				Component.literal(localizeWomanShnyagaText(woman, "accepted_woman"))
+						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false))
+		);
+		boyfriend.sendSystemMessage(
+				Component.literal(localizeWomanShnyagaText(boyfriend, "accepted_target"))
+						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false))
+		);
+	}
+
+	private static void applyWomanShnyagaRejection(ServerPlayer woman, ServerPlayer target) {
+		if (woman == null || target == null) {
+			return;
+		}
+		RaceAbilityConfig shnyaga = getWomanShnyagaAbility(woman);
+		float damage = (float) getWomanShnyagaRejectDamagePoints(shnyaga);
+		if (damage > 0.0F && woman.level() instanceof ServerLevel level) {
+			woman.hurtServer(level, level.damageSources().generic(), damage);
+		}
+		int debuffTicks = (int) Math.max(1L, asTicks(getWomanShnyagaRejectDebuffSeconds(shnyaga)));
+		woman.addEffect(new MobEffectInstance(MobEffects.HUNGER, debuffTicks, 0, false, false, false));
+		woman.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, debuffTicks, 0, false, false, false));
+		woman.sendSystemMessage(
+				Component.literal(localizeWomanShnyagaText(woman, "rejected_woman"))
+						.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
+		);
+		target.sendSystemMessage(
+				Component.literal(localizeWomanShnyagaText(target, "rejected_target"))
+						.withStyle(style -> style.withColor(ChatFormatting.AQUA).withItalic(false))
+		);
+	}
+
+	private static Component buildWomanShnyagaProposalMessage(ServerPlayer viewer, WomanShnyagaProposal proposal) {
+		MutableComponent root = Component.empty();
+		root.append(Component.literal(localizeWomanShnyagaText(viewer, "warning_line")).withStyle(style -> style.withColor(ChatFormatting.RED).withBold(true).withItalic(false)));
+		root.append(Component.literal(" "));
+		root.append(Component.literal(proposal.womanName()).withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)));
+		root.append(Component.literal(" " + localizeWomanShnyagaText(viewer, "warning_suffix")).withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)));
+		root.append(Component.literal("\n\n"));
+		root.append(Component.literal("«" + proposal.message() + "»").withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false)));
+		root.append(Component.literal("\n\n"));
+		root.append(
+				Component.literal(localizeWomanShnyagaText(viewer, "accept_button"))
+						.withStyle(style -> style
+								.withColor(0xFF7FD4)
+								.withUnderlined(true)
+								.withItalic(false)
+								.withClickEvent(new ClickEvent.RunCommand("/race woman_shnyaga accept")))
+		);
+		root.append(Component.literal(" "));
+		root.append(
+				Component.literal(localizeWomanShnyagaText(viewer, "reject_button"))
+						.withStyle(style -> style
+								.withColor(0x59B7FF)
+								.withUnderlined(true)
+								.withItalic(false)
+								.withClickEvent(new ClickEvent.RunCommand("/race woman_shnyaga reject")))
+		);
+		return root;
+	}
+
+	private static void tickWomanShnyaga(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		long nowTick = server.overworld().getGameTime();
+		if (!WOMAN_SHNYAGA_LINKS_BY_WOMAN.isEmpty() && nowTick >= womanShnyagaNextWhitelistCheckTick) {
+			pruneWomanShnyagaLinksAgainstWhitelist(server);
+			womanShnyagaNextWhitelistCheckTick = nowTick + WOMAN_SHNYAGA_WHITELIST_CHECK_INTERVAL_TICKS;
+		}
+		syncWomanShnyagaLinks(server);
+	}
+
+	private static void syncWomanShnyagaLinks(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			WomanShnyagaLink womanLink = WOMAN_SHNYAGA_LINKS_BY_WOMAN.get(player.getUUID());
+			WomanShnyagaLink boyfriendLink = WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.get(player.getUUID());
+			syncWomanShnyagaHealthModifier(
+					player,
+					WOMAN_SHNYAGA_WOMAN_HEALTH_MODIFIER_ID,
+					womanLink == null ? 0.0D : womanLink.transferHealthPoints()
+			);
+			syncWomanShnyagaHealthModifier(
+					player,
+					WOMAN_SHNYAGA_BOYFRIEND_HEALTH_MODIFIER_ID,
+					boyfriendLink == null ? 0.0D : -boyfriendLink.transferHealthPoints()
+			);
+		}
+
+		Set<UUID> buffedNow = new HashSet<>();
+		for (WomanShnyagaLink link : WOMAN_SHNYAGA_LINKS_BY_WOMAN.values()) {
+			ServerPlayer woman = server.getPlayerList().getPlayer(link.womanId());
+			ServerPlayer boyfriend = server.getPlayerList().getPlayer(link.boyfriendId());
+			if (woman == null || boyfriend == null || !woman.isAlive() || !boyfriend.isAlive() || woman.isSpectator() || boyfriend.isSpectator()) {
+				continue;
+			}
+			if (woman.level() != boyfriend.level()) {
+				continue;
+			}
+			double maxDistance = link.buffRangeBlocks();
+			if (boyfriend.distanceToSqr(woman) > maxDistance * maxDistance) {
+				continue;
+			}
+
+			refreshWomanShnyagaBuff(boyfriend, MobEffects.STRENGTH, 0);
+			refreshWomanShnyagaBuff(boyfriend, MobEffects.SPEED, 0);
+			refreshWomanShnyagaBuff(boyfriend, MobEffects.REGENERATION, 0);
+			refreshWomanShnyagaBuff(boyfriend, MobEffects.HASTE, 1);
+			buffedNow.add(boyfriend.getUUID());
+		}
+
+		Set<UUID> toClear = new HashSet<>(WOMAN_SHNYAGA_BUFFED_BOYFRIENDS);
+		toClear.removeAll(buffedNow);
+		for (UUID boyfriendId : toClear) {
+			ServerPlayer boyfriend = server.getPlayerList().getPlayer(boyfriendId);
+			if (boyfriend != null) {
+				clearWomanShnyagaBuffs(boyfriend);
+			}
+		}
+		WOMAN_SHNYAGA_BUFFED_BOYFRIENDS.clear();
+		WOMAN_SHNYAGA_BUFFED_BOYFRIENDS.addAll(buffedNow);
+	}
+
+	private static void refreshWomanShnyagaBuff(ServerPlayer player, Holder<MobEffect> effect, int amplifier) {
+		if (player == null || effect == null) {
+			return;
+		}
+		player.addEffect(new MobEffectInstance(effect, WOMAN_SHNYAGA_EFFECT_DURATION_TICKS, amplifier, false, false, false));
+	}
+
+	private static void clearWomanShnyagaBuffs(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		player.removeEffect(MobEffects.STRENGTH);
+		player.removeEffect(MobEffects.SPEED);
+		player.removeEffect(MobEffects.REGENERATION);
+		player.removeEffect(MobEffects.HASTE);
+	}
+
+	private static void syncWomanShnyagaHealthModifier(ServerPlayer player, Identifier modifierId, double amount) {
+		if (player == null || modifierId == null) {
+			return;
+		}
+		AttributeInstance attribute = player.getAttribute(Attributes.MAX_HEALTH);
+		if (attribute == null) {
+			return;
+		}
+
+		AttributeModifier current = attribute.getModifier(modifierId);
+		if (Math.abs(amount) <= 1.0E-6D) {
+			if (current != null) {
+				attribute.removeModifier(modifierId);
+			}
+		} else if (current == null
+				|| current.operation() != AttributeModifier.Operation.ADD_VALUE
+				|| Double.compare(current.amount(), amount) != 0) {
+			if (current != null) {
+				attribute.removeModifier(modifierId);
+			}
+			attribute.addTransientModifier(new AttributeModifier(modifierId, amount, AttributeModifier.Operation.ADD_VALUE));
+		}
+		if (player.getHealth() > player.getMaxHealth()) {
+			player.setHealth(player.getMaxHealth());
+		}
+	}
+
+	private static void pruneWomanShnyagaLinksAgainstWhitelist(MinecraftServer server) {
+		if (server == null || WOMAN_SHNYAGA_LINKS_BY_WOMAN.isEmpty()) {
+			return;
+		}
+		Set<UUID> whitelistIds = readWhitelistedPlayerIds(server);
+		if (whitelistIds == null) {
+			return;
+		}
+
+		List<WomanShnyagaLink> toRemove = new ArrayList<>();
+		for (WomanShnyagaLink link : WOMAN_SHNYAGA_LINKS_BY_WOMAN.values()) {
+			if (!whitelistIds.contains(link.boyfriendId())) {
+				toRemove.add(link);
+			}
+		}
+		for (WomanShnyagaLink link : toRemove) {
+			dissolveWomanShnyagaLink(server, link, WomanShnyagaBreakReason.BOYFRIEND_REMOVED_FROM_WHITELIST);
+		}
+	}
+
+	private static Set<UUID> readWhitelistedPlayerIds(MinecraftServer server) {
+		if (server == null) {
+			return null;
+		}
+		Path whitelistPath = server.getWorldPath(LevelResource.ROOT).getParent().resolve("whitelist.json");
+		if (!Files.exists(whitelistPath)) {
+			return null;
+		}
+
+		Set<UUID> ids = new HashSet<>();
+		try (Reader reader = Files.newBufferedReader(whitelistPath)) {
+			WomanShnyagaWhitelistEntry[] entries = GSON.fromJson(reader, WomanShnyagaWhitelistEntry[].class);
+			if (entries == null) {
+				return ids;
+			}
+			for (WomanShnyagaWhitelistEntry entry : entries) {
+				if (entry == null || entry.uuid == null || entry.uuid.isBlank()) {
+					continue;
+				}
+				try {
+					ids.add(UUID.fromString(entry.uuid.trim()));
+				} catch (IllegalArgumentException ignored) {
+				}
+			}
+		} catch (IOException exception) {
+			Lg2.LOGGER.warn("Failed to read whitelist for woman shnyaga state", exception);
+		}
+		return ids;
+	}
+
+	private static void dissolveWomanShnyagaLink(MinecraftServer server, WomanShnyagaLink link, WomanShnyagaBreakReason reason) {
+		if (link == null) {
+			return;
+		}
+		WOMAN_SHNYAGA_LINKS_BY_WOMAN.remove(link.womanId());
+		WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.remove(link.boyfriendId());
+		saveWomanShnyagaLinks(server);
+		syncWomanShnyagaLinks(server);
+
+		if (server == null || reason == WomanShnyagaBreakReason.NONE) {
+			return;
+		}
+		ServerPlayer woman = server.getPlayerList().getPlayer(link.womanId());
+		ServerPlayer boyfriend = server.getPlayerList().getPlayer(link.boyfriendId());
+		if (reason == WomanShnyagaBreakReason.WOMAN_KILLED_BY_BOYFRIEND) {
+			if (woman != null) {
+				woman.sendSystemMessage(
+						Component.literal(localizeWomanShnyagaText(woman, "link_broken_kill_woman"))
+								.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
+				);
+			}
+			if (boyfriend != null) {
+				boyfriend.sendSystemMessage(
+						Component.literal(localizeWomanShnyagaText(boyfriend, "link_broken_kill_target"))
+								.withStyle(style -> style.withColor(ChatFormatting.AQUA).withItalic(false))
+				);
+			}
+			return;
+		}
+		if (reason == WomanShnyagaBreakReason.BOYFRIEND_REMOVED_FROM_WHITELIST) {
+			if (woman != null) {
+				woman.sendSystemMessage(
+						Component.literal(localizeWomanShnyagaText(woman, "link_broken_whitelist_woman"))
+								.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
+				);
+			}
+			if (boyfriend != null) {
+				boyfriend.sendSystemMessage(
+						Component.literal(localizeWomanShnyagaText(boyfriend, "link_broken_whitelist_target"))
+								.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
+				);
+			}
+		}
+	}
+
+	public static void onPlayerDeath(ServerPlayer player, DamageSource damageSource) {
+		if (player == null) {
+			return;
+		}
+		WomanShnyagaLink link = WOMAN_SHNYAGA_LINKS_BY_WOMAN.get(player.getUUID());
+		if (link == null) {
+			return;
+		}
+		Entity attacker = damageSource == null ? null : damageSource.getEntity();
+		if (!(attacker instanceof ServerPlayer attackerPlayer) || !link.boyfriendId().equals(attackerPlayer.getUUID())) {
+			return;
+		}
+
+		MinecraftServer server = player.level().getServer();
+		if (server != null) {
+			dissolveWomanShnyagaLink(server, link, WomanShnyagaBreakReason.WOMAN_KILLED_BY_BOYFRIEND);
+		}
+	}
+
+	private static void saveWomanShnyagaLinks(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		Path path = getWomanShnyagaStatePath(server);
+		WomanShnyagaPersistedState state = new WomanShnyagaPersistedState();
+		for (WomanShnyagaLink link : WOMAN_SHNYAGA_LINKS_BY_WOMAN.values()) {
+			state.links.add(new WomanShnyagaPersistedLink(
+					link.womanId(),
+					link.womanName(),
+					link.boyfriendId(),
+					link.boyfriendName(),
+					link.transferHealthPoints(),
+					link.buffRangeBlocks()
+			));
+		}
+		try {
+			Files.createDirectories(path.getParent());
+			try (Writer writer = Files.newBufferedWriter(path)) {
+				GSON.toJson(state, writer);
+			}
+		} catch (IOException exception) {
+			Lg2.LOGGER.error("Failed to save woman shnyaga state to {}", path, exception);
+		}
+	}
+
+	private static void loadWomanShnyagaLinks(MinecraftServer server) {
+		WOMAN_SHNYAGA_LINKS_BY_WOMAN.clear();
+		WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.clear();
+		if (server == null) {
+			return;
+		}
+
+		Path path = getWomanShnyagaStatePath(server);
+		if (!Files.exists(path)) {
+			return;
+		}
+
+		try (Reader reader = Files.newBufferedReader(path)) {
+			WomanShnyagaPersistedState state = GSON.fromJson(reader, WomanShnyagaPersistedState.class);
+			if (state == null || state.links == null) {
+				return;
+			}
+			for (WomanShnyagaPersistedLink stored : state.links) {
+				if (stored == null || stored.womanId == null || stored.boyfriendId == null || stored.womanId.equals(stored.boyfriendId)) {
+					continue;
+				}
+				WomanShnyagaLink link = new WomanShnyagaLink(
+						stored.womanId,
+						nonBlank(stored.womanName, ""),
+						stored.boyfriendId,
+						nonBlank(stored.boyfriendName, ""),
+						Math.max(0.0D, stored.transferHealthPoints),
+						Math.max(0.0D, stored.buffRangeBlocks)
+				);
+				if (WOMAN_SHNYAGA_LINKS_BY_WOMAN.containsKey(link.womanId()) || WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.containsKey(link.boyfriendId())) {
+					continue;
+				}
+				WOMAN_SHNYAGA_LINKS_BY_WOMAN.put(link.womanId(), link);
+				WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.put(link.boyfriendId(), link);
+			}
+		} catch (Exception exception) {
+			Lg2.LOGGER.error("Failed to load woman shnyaga state from {}", path, exception);
+		}
+	}
+
+	private static Path getWomanShnyagaStatePath(MinecraftServer server) {
+		return server.getWorldPath(LevelResource.ROOT).resolve("data").resolve(WOMAN_SHNYAGA_STATE_FILE_NAME);
 	}
 
 	private static int useWomanAttack(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
@@ -3031,6 +3830,30 @@ public final class ServerRaceSystem {
 
 	private static double getWomanUniqueAbsorptionHearts(RaceAbilityConfig ability) {
 		return positiveOrDefault(ability == null ? 0.0D : ability.womanUniqueAbsorptionHearts, WOMAN_UNIQUE_DEFAULT_ABSORPTION_HEARTS);
+	}
+
+	private static double getWomanShnyagaTransferHearts(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.womanShnyagaTransferHearts, WOMAN_SHNYAGA_DEFAULT_TRANSFER_HEARTS);
+	}
+
+	private static double getWomanShnyagaTransferHealthPoints(RaceAbilityConfig ability) {
+		return getWomanShnyagaTransferHearts(ability) * 2.0D;
+	}
+
+	private static double getWomanShnyagaBuffRange(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.womanShnyagaBuffRangeBlocks, WOMAN_SHNYAGA_DEFAULT_BUFF_RANGE_BLOCKS);
+	}
+
+	private static double getWomanShnyagaRejectDamageHearts(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.womanShnyagaRejectDamageHearts, WOMAN_SHNYAGA_DEFAULT_REJECT_DAMAGE_HEARTS);
+	}
+
+	private static double getWomanShnyagaRejectDamagePoints(RaceAbilityConfig ability) {
+		return getWomanShnyagaRejectDamageHearts(ability) * 2.0D;
+	}
+
+	private static double getWomanShnyagaRejectDebuffSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.womanShnyagaRejectDebuffSeconds, WOMAN_SHNYAGA_DEFAULT_REJECT_DEBUFF_SECONDS);
 	}
 
 	private static double getWomanAttackChargeRadius(RaceAbilityConfig ability) {
@@ -5015,6 +5838,138 @@ public final class ServerRaceSystem {
 		};
 	}
 
+	private static String localizeWomanShnyagaText(ServerPlayer player, String key) {
+		String locale = normalizeCartelDisguiseLocale(player);
+		if (locale.startsWith("rpr")) {
+			return switch (key) {
+				case "no_players_online" -> "На серверѣ нѣтъ подходящихъ игроковъ";
+				case "already_linked" -> "Связь уже имѣется";
+				case "target_already_linked" -> "Сей игрокъ уже связанъ";
+				case "target_busy" -> "Сей игрокъ уже получилъ иное предложеніе";
+				case "write_prompt" -> "Напишите посланіе для избраннаго парня въ чатъ.";
+				case "target_unavailable" -> "Избранный игрокъ болѣе недоступенъ";
+				case "proposal_sent" -> "Предложеніе отправлено.";
+				case "no_pending_proposal" -> "Нѣтъ ожидающаго предложенія.";
+				case "proposal_expired" -> "Предложеніе уже недѣйственно.";
+				case "accepted_woman" -> "Онъ согласился. Связь установлена.";
+				case "accepted_target" -> "Вы согласились. Связь установлена.";
+				case "rejected_woman" -> "Васъ отшили.";
+				case "rejected_target" -> "Вы отказались.";
+				case "warning_line" -> "ВНИМАНІЕ!";
+				case "warning_suffix" -> "избрала ТЕБЯ.";
+				case "accept_button" -> "[❤️ Согласиться]";
+				case "reject_button" -> "[💔 Отшить]";
+				case "link_broken_kill_woman" -> "Связь расторгнута: избранникъ васъ убилъ.";
+				case "link_broken_kill_target" -> "Связь расторгнута: вы убили женщину.";
+				case "link_broken_whitelist_woman" -> "Связь расторгнута: избранникъ удалёнъ из whitelist.";
+				case "link_broken_whitelist_target" -> "Связь расторгнута: вы удалены из whitelist.";
+				default -> "";
+			};
+		}
+		if (locale.startsWith("uk")) {
+			return switch (key) {
+				case "no_players_online" -> "На сервері немає відповідних гравців";
+				case "already_linked" -> "У вас уже є зв'язок";
+				case "target_already_linked" -> "Цей гравець уже пов'язаний";
+				case "target_busy" -> "Цей гравець уже отримав іншу пропозицію";
+				case "write_prompt" -> "Напишіть повідомлення для вибраного хлопця в чат.";
+				case "target_unavailable" -> "Вибраний гравець більше недоступний";
+				case "proposal_sent" -> "Пропозицію відправлено.";
+				case "no_pending_proposal" -> "Немає активної пропозиції.";
+				case "proposal_expired" -> "Пропозиція вже недійсна.";
+				case "accepted_woman" -> "Він погодився. Зв'язок встановлено.";
+				case "accepted_target" -> "Ви погодилися. Зв'язок встановлено.";
+				case "rejected_woman" -> "Вас відшили.";
+				case "rejected_target" -> "Ви відмовилися.";
+				case "warning_line" -> "УВАГА!";
+				case "warning_suffix" -> "обрала ТЕБЕ.";
+				case "accept_button" -> "[❤️ Погодитися]";
+				case "reject_button" -> "[💔 Відшити]";
+				case "link_broken_kill_woman" -> "Зв'язок розірвано: обранець вас убив.";
+				case "link_broken_kill_target" -> "Зв'язок розірвано: ви вбили жінку.";
+				case "link_broken_whitelist_woman" -> "Зв'язок розірвано: обранця видалено з whitelist.";
+				case "link_broken_whitelist_target" -> "Зв'язок розірвано: вас видалено з whitelist.";
+				default -> "";
+			};
+		}
+		if (locale.startsWith("ja")) {
+			return switch (key) {
+				case "no_players_online" -> "対象にできるプレイヤーがいません";
+				case "already_linked" -> "すでに絆があります";
+				case "target_already_linked" -> "そのプレイヤーはすでに結ばれています";
+				case "target_busy" -> "そのプレイヤーには別の申し込みがあります";
+				case "write_prompt" -> "選んだ相手へのメッセージをチャットに入力してください。";
+				case "target_unavailable" -> "選んだプレイヤーはもう利用できません";
+				case "proposal_sent" -> "申し込みを送りました。";
+				case "no_pending_proposal" -> "返答する申し込みがありません。";
+				case "proposal_expired" -> "その申し込みはもう無効です。";
+				case "accepted_woman" -> "相手が承諾しました。絆が結ばれました。";
+				case "accepted_target" -> "あなたは承諾しました。絆が結ばれました。";
+				case "rejected_woman" -> "振られました。";
+				case "rejected_target" -> "断りました。";
+				case "warning_line" -> "警告!";
+				case "warning_suffix" -> "があなたを選びました。";
+				case "accept_button" -> "[❤️ 承諾する]";
+				case "reject_button" -> "[💔 振る]";
+				case "link_broken_kill_woman" -> "絆が切れました: 相手に倒されました。";
+				case "link_broken_kill_target" -> "絆が切れました: あなたが女性を倒しました。";
+				case "link_broken_whitelist_woman" -> "絆が切れました: 相手が whitelist から削除されました。";
+				case "link_broken_whitelist_target" -> "絆が切れました: あなたが whitelist から削除されました。";
+				default -> "";
+			};
+		}
+		if (locale.startsWith("ru")) {
+			return switch (key) {
+				case "no_players_online" -> "На сервере нет подходящих игроков";
+				case "already_linked" -> "У вас уже есть связь";
+				case "target_already_linked" -> "Этот игрок уже связан";
+				case "target_busy" -> "Этот игрок уже получил другое предложение";
+				case "write_prompt" -> "Напишите сообщение для выбранного парня в чат.";
+				case "target_unavailable" -> "Выбранный игрок больше недоступен";
+				case "proposal_sent" -> "Предложение отправлено.";
+				case "no_pending_proposal" -> "Нет активного предложения.";
+				case "proposal_expired" -> "Предложение уже недействительно.";
+				case "accepted_woman" -> "Он согласился. Связь установлена.";
+				case "accepted_target" -> "Вы согласились. Связь установлена.";
+				case "rejected_woman" -> "Вас отшили.";
+				case "rejected_target" -> "Вы отказались.";
+				case "warning_line" -> "ВНИМАНИЕ!";
+				case "warning_suffix" -> "выбрала ТЕБЯ.";
+				case "accept_button" -> "[❤️ Согласиться]";
+				case "reject_button" -> "[💔 Отшить]";
+				case "link_broken_kill_woman" -> "Связь расторгнута: парень убил вас.";
+				case "link_broken_kill_target" -> "Связь расторгнута: вы убили женщину.";
+				case "link_broken_whitelist_woman" -> "Связь расторгнута: парень удалён из whitelist.";
+				case "link_broken_whitelist_target" -> "Связь расторгнута: вас удалили из whitelist.";
+				default -> "";
+			};
+		}
+		return switch (key) {
+			case "no_players_online" -> "There are no suitable players on the server";
+			case "already_linked" -> "You already have a bond";
+			case "target_already_linked" -> "That player is already bonded";
+			case "target_busy" -> "That player already has another proposal";
+			case "write_prompt" -> "Write a message for the selected guy in chat.";
+			case "target_unavailable" -> "The selected player is no longer available";
+			case "proposal_sent" -> "Proposal sent.";
+			case "no_pending_proposal" -> "There is no active proposal.";
+			case "proposal_expired" -> "That proposal is no longer valid.";
+			case "accepted_woman" -> "He accepted. The bond is established.";
+			case "accepted_target" -> "You accepted. The bond is established.";
+			case "rejected_woman" -> "You were rejected.";
+			case "rejected_target" -> "You refused.";
+			case "warning_line" -> "WARNING!";
+			case "warning_suffix" -> "chose YOU.";
+			case "accept_button" -> "[❤️ Accept]";
+			case "reject_button" -> "[💔 Reject]";
+			case "link_broken_kill_woman" -> "The bond is broken: the guy killed you.";
+			case "link_broken_kill_target" -> "The bond is broken: you killed the woman.";
+			case "link_broken_whitelist_woman" -> "The bond is broken: the guy was removed from the whitelist.";
+			case "link_broken_whitelist_target" -> "The bond is broken: you were removed from the whitelist.";
+			default -> "";
+		};
+	}
+
 	private static String normalizeCartelDisguiseLocale(ServerPlayer player) {
 		if (player == null || player.clientInformation() == null || player.clientInformation().language() == null) {
 			return "ru_ru";
@@ -6155,6 +7110,115 @@ public final class ServerRaceSystem {
 			}
 
 			List<ServerPlayer> candidates = collectCartelDisguiseCandidates(this.viewer);
+			int previousSlot = getCartelDisguisePreviousSlot(this.viewer);
+			int headSlot = getCartelDisguiseHeadSlot(this.viewer);
+			int nextSlot = getCartelDisguiseNextSlot(this.viewer);
+			if (candidates.isEmpty()) {
+				this.container.setItem(headSlot, buildCartelDisguiseEmptyState(this.viewer));
+				return;
+			}
+
+			this.selectedIndex = Math.floorMod(this.selectedIndex, candidates.size());
+			this.container.setItem(previousSlot, buildCartelDisguiseArrow(this.viewer, false));
+			this.container.setItem(headSlot, buildCartelDisguiseHead(this.viewer, candidates.get(this.selectedIndex)));
+			this.container.setItem(nextSlot, buildCartelDisguiseArrow(this.viewer, true));
+			if (this.viewer.containerMenu == this) {
+				this.slotsChanged(this.container);
+				this.broadcastChanges();
+			}
+		}
+	}
+
+	private static final class WomanShnyagaMenu extends ChestMenu {
+		private final SimpleContainer container;
+		private final ServerPlayer viewer;
+		private final RaceAbilityConfig ability;
+		private int selectedIndex;
+
+		private WomanShnyagaMenu(int syncId, Inventory inventory, ServerPlayer viewer, RaceAbilityConfig ability, int selectedIndex) {
+			this(syncId, inventory, new SimpleContainer(CARTEL_DISGUISE_MENU_ROWS * 9), viewer, ability, selectedIndex);
+		}
+
+		private WomanShnyagaMenu(
+				int syncId,
+				Inventory inventory,
+				SimpleContainer container,
+				ServerPlayer viewer,
+				RaceAbilityConfig ability,
+				int selectedIndex
+		) {
+			super(MenuType.GENERIC_9x3, syncId, inventory, container, CARTEL_DISGUISE_MENU_ROWS);
+			this.container = container;
+			this.viewer = viewer;
+			this.ability = ability;
+			this.selectedIndex = selectedIndex;
+			this.refreshContents();
+		}
+
+		@Override
+		public void clicked(int slotId, int button, ClickType clickType, Player player) {
+			if (slotId < 0 || !(clickType == ClickType.PICKUP || clickType == ClickType.QUICK_MOVE || clickType == ClickType.SWAP)) {
+				return;
+			}
+
+			List<ServerPlayer> candidates = collectWomanShnyagaCandidates(this.viewer);
+			if (candidates.isEmpty()) {
+				return;
+			}
+
+			this.selectedIndex = Math.floorMod(this.selectedIndex, candidates.size());
+			int previousSlot = getCartelDisguisePreviousSlot(this.viewer);
+			int headSlot = getCartelDisguiseHeadSlot(this.viewer);
+			int nextSlot = getCartelDisguiseNextSlot(this.viewer);
+			if (slotId == previousSlot) {
+				this.selectedIndex = Math.floorMod(this.selectedIndex - 1, candidates.size());
+				openWomanShnyagaMenu(this.viewer, candidates, this.selectedIndex, this.ability);
+				return;
+			}
+			if (slotId == nextSlot) {
+				this.selectedIndex = Math.floorMod(this.selectedIndex + 1, candidates.size());
+				openWomanShnyagaMenu(this.viewer, candidates, this.selectedIndex, this.ability);
+				return;
+			}
+			if (slotId == headSlot) {
+				beginWomanShnyagaPrompt(this.viewer, candidates.get(this.selectedIndex), this.ability);
+			}
+		}
+
+		@Override
+		public ItemStack quickMoveStack(Player player, int index) {
+			return ItemStack.EMPTY;
+		}
+
+		@Override
+		public boolean stillValid(Player player) {
+			return player.isAlive();
+		}
+
+		@Override
+		public void broadcastChanges() {
+			super.broadcastChanges();
+			hideCartelDisguiseInventoryVisuals(this.viewer, this);
+		}
+
+		@Override
+		public void broadcastFullState() {
+			super.broadcastFullState();
+			hideCartelDisguiseInventoryVisuals(this.viewer, this);
+		}
+
+		@Override
+		public void removed(Player player) {
+			super.removed(player);
+			restoreCartelDisguiseInventoryVisuals(this.viewer, this);
+		}
+
+		private void refreshContents() {
+			for (int slot = 0; slot < this.container.getContainerSize(); slot++) {
+				this.container.setItem(slot, ItemStack.EMPTY);
+			}
+
+			List<ServerPlayer> candidates = collectWomanShnyagaCandidates(this.viewer);
 			int previousSlot = getCartelDisguisePreviousSlot(this.viewer);
 			int headSlot = getCartelDisguiseHeadSlot(this.viewer);
 			int nextSlot = getCartelDisguiseNextSlot(this.viewer);

@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.CopperManRepulsorSystem;
+import com.lostglade.server.ServerRaceSystem;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.server.level.ServerPlayer;
@@ -16,6 +17,7 @@ public abstract class LivingEntityCopperManRepulsorDeathMixin {
 		LivingEntity self = (LivingEntity) (Object) this;
 		if (self instanceof ServerPlayer player) {
 			CopperManRepulsorSystem.onPlayerDeath(player);
+			ServerRaceSystem.onPlayerDeath(player, damageSource);
 		}
 	}
 }

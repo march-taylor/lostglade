@@ -174,6 +174,10 @@ public final class RaceConfig {
 		changed |= normalizeChance(ability.womanUniqueDropChance, value -> ability.womanUniqueDropChance = value);
 		changed |= normalizeNonNegative(ability.womanUniqueTradePriceIncrease, value -> ability.womanUniqueTradePriceIncrease = value);
 		changed |= normalizeNonNegative(ability.womanUniqueAbsorptionHearts, value -> ability.womanUniqueAbsorptionHearts = value);
+		changed |= normalizeNonNegative(ability.womanShnyagaTransferHearts, value -> ability.womanShnyagaTransferHearts = value);
+		changed |= normalizeNonNegative(ability.womanShnyagaBuffRangeBlocks, value -> ability.womanShnyagaBuffRangeBlocks = value);
+		changed |= normalizeNonNegative(ability.womanShnyagaRejectDamageHearts, value -> ability.womanShnyagaRejectDamageHearts = value);
+		changed |= normalizeNonNegative(ability.womanShnyagaRejectDebuffSeconds, value -> ability.womanShnyagaRejectDebuffSeconds = value);
 		changed |= normalizeNonNegative(ability.jetpackMaxRiseBlocks, value -> ability.jetpackMaxRiseBlocks = value);
 		changed |= normalizeChance(ability.repulsorNaturalLightningChargeChance, value -> ability.repulsorNaturalLightningChargeChance = value);
 		changed |= normalizeNonNegative(ability.copperIngotFoodPoints, (java.util.function.IntConsumer) value -> ability.copperIngotFoodPoints = value);
@@ -358,6 +362,10 @@ public final class RaceConfig {
 		public double womanUniqueDropChance = 0.0D;
 		public double womanUniqueTradePriceIncrease = 0.0D;
 		public double womanUniqueAbsorptionHearts = 0.0D;
+		public double womanShnyagaTransferHearts = 0.0D;
+		public double womanShnyagaBuffRangeBlocks = 0.0D;
+		public double womanShnyagaRejectDamageHearts = 0.0D;
+		public double womanShnyagaRejectDebuffSeconds = 0.0D;
 		public double jetpackMaxRiseBlocks = 0.0D;
 		public int repulsorMaxCharges = 0;
 		public int repulsorCopperIngotChargeRestore = 0;
