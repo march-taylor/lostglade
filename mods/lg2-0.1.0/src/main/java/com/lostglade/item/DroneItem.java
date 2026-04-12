@@ -122,14 +122,13 @@ public final class DroneItem extends SimplePolymerItem {
 		if (!isDroneCompatibleStack(stack)) {
 			return NO_KAMIKAZE_POWER;
 		}
-		int defaultPower = stack.getItem() == ModItems.DRONE_KAMIKAZE ? MIN_KAMIKAZE_POWER : NO_KAMIKAZE_POWER;
 		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
 		if (customData == null) {
-			return defaultPower;
+			return NO_KAMIKAZE_POWER;
 		}
 		int rawPower = customData.copyTag()
 				.getCompoundOrEmpty(DATA_ROOT_TAG)
-				.getIntOr(KAMIKAZE_POWER_TAG, defaultPower);
+				.getIntOr(KAMIKAZE_POWER_TAG, NO_KAMIKAZE_POWER);
 		return net.minecraft.util.Mth.clamp(rawPower, NO_KAMIKAZE_POWER, MAX_KAMIKAZE_POWER);
 	}
 
@@ -203,6 +202,6 @@ public final class DroneItem extends SimplePolymerItem {
 		if (stack == null || stack.isEmpty()) {
 			return false;
 		}
-		return stack.getItem() == ModItems.DRONE || stack.getItem() == ModItems.DRONE_KAMIKAZE;
+		return stack.getItem() == ModItems.DRONE;
 	}
 }

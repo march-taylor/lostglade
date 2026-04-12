@@ -25,7 +25,6 @@ public final class ModItems {
 	private static final Identifier SPECIAL_PICKAXE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "special_pickaxe");
 	private static final Identifier CAMERA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera");
 	private static final Identifier DRONE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone");
-	private static final Identifier DRONE_KAMIKAZE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_kamikaze");
 	private static final Identifier MONITOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "monitor");
 	private static final Identifier BLUETOOTH_ADAPTER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "bluetooth_adapter");
 	private static final Identifier COPPER_JETPACK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_jetpack");
@@ -47,7 +46,6 @@ public final class ModItems {
 	private static final ResourceKey<Item> SPECIAL_PICKAXE_KEY = ResourceKey.create(Registries.ITEM, SPECIAL_PICKAXE_ID);
 	private static final ResourceKey<Item> CAMERA_KEY = ResourceKey.create(Registries.ITEM, CAMERA_ID);
 	private static final ResourceKey<Item> DRONE_KEY = ResourceKey.create(Registries.ITEM, DRONE_ID);
-	private static final ResourceKey<Item> DRONE_KAMIKAZE_KEY = ResourceKey.create(Registries.ITEM, DRONE_KAMIKAZE_ID);
 	private static final ResourceKey<Item> MONITOR_KEY = ResourceKey.create(Registries.ITEM, MONITOR_ID);
 	private static final ResourceKey<Item> BLUETOOTH_ADAPTER_KEY = ResourceKey.create(Registries.ITEM, BLUETOOTH_ADAPTER_ID);
 	private static final ResourceKey<Item> COPPER_JETPACK_KEY = ResourceKey.create(Registries.ITEM, COPPER_JETPACK_ID);
@@ -70,8 +68,6 @@ public final class ModItems {
 			Identifier.fromNamespaceAndPath("minecraft", "ingredients")
 	);
 	private static final Identifier STABILITY_POTION_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "stability_potion");
-	private static final Identifier DRONE_KAMIKAZE_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_kamikaze");
-	private static final Identifier DRONE_KAMIKAZE_DISPLAY_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_kamikaze_display");
 	private static final int STABILITY_DURATION_TICKS = 8 * 60 * 20;
 	private static final int LONG_STABILITY_DURATION_TICKS = 16 * 60 * 20;
 	private static final int GREATER_STABILITY_DURATION_TICKS = 8 * 60 * 20;
@@ -111,19 +107,6 @@ public final class ModItems {
 							.setId(DRONE_KEY)
 							.stacksTo(16)
 							.rarity(Rarity.UNCOMMON)
-			)
-	);
-	public static final Item DRONE_KAMIKAZE = Registry.register(
-			BuiltInRegistries.ITEM,
-			DRONE_KAMIKAZE_ID,
-			new DroneItem(
-					new Item.Properties()
-							.setId(DRONE_KAMIKAZE_KEY)
-							.stacksTo(16)
-							.rarity(Rarity.UNCOMMON),
-					DRONE_KAMIKAZE_MODEL_ID,
-					DRONE_KAMIKAZE_DISPLAY_MODEL_ID,
-					true
 			)
 	);
 	public static final Item MONITOR = Registry.register(

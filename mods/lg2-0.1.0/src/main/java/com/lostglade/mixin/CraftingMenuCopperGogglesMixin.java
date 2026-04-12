@@ -1,7 +1,5 @@
 package com.lostglade.mixin;
 
-import com.lostglade.item.DroneItem;
-import com.lostglade.item.ModItems;
 import com.lostglade.server.CopperManGogglesSystem;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.server.level.ServerLevel;
@@ -12,7 +10,6 @@ import net.minecraft.world.inventory.CraftingContainer;
 import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.inventory.ResultContainer;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
 import org.spongepowered.asm.mixin.Mixin;
@@ -38,17 +35,12 @@ public abstract class CraftingMenuCopperGogglesMixin {
 
 		ItemStack result = resultContainer.getItem(0);
 		if (CopperManGogglesSystem.canShowCraftingResult(serverPlayer, recipeHolder, result)) {
-			ItemStack adjusted = lg2$applyKamikazePowerToCraftResult(craftingContainer, result);
-			if (result.getCount() == adjusted.getCount() && ItemStack.isSameItemSameComponents(result, adjusted)) {
-				return;
-			}
-			resultContainer.setItem(0, adjusted);
-			menu.setRemoteSlot(0, adjusted);
+			menu.setRemoteSlot(0, result);
 			serverPlayer.connection.send(new ClientboundContainerSetSlotPacket(
 					menu.containerId,
 					menu.incrementStateId(),
 					0,
-					adjusted
+					result
 			));
 			return;
 		}
@@ -61,23 +53,5 @@ public abstract class CraftingMenuCopperGogglesMixin {
 				0,
 				ItemStack.EMPTY
 		));
-	}
-
-	private static ItemStack lg2$applyKamikazePowerToCraftResult(CraftingContainer craftingContainer, ItemStack result) {
-		if (craftingContainer == null || result == null || result.isEmpty() || !result.is(ModItems.DRONE_KAMIKAZE)) {
-			return result;
-		}
-		int centerSlot = craftingContainer.getContainerSize() >= 9 ? 4 : craftingContainer.getContainerSize() / 2;
-		if (centerSlot < 0 || centerSlot >= craftingContainer.getContainerSize()) {
-			return result;
-		}
-		ItemStack center = craftingContainer.getItem(centerSlot);
-		if (center == null || center.isEmpty() || !center.is(Items.TNT)) {
-			return result;
-		}
-		int kamikazePower = net.minecraft.util.Mth.clamp(center.getCount(), 1, 3);
-		ItemStack adjusted = result.copy();
-		DroneItem.setKamikazePower(adjusted, kamikazePower);
-		return adjusted;
 	}
 }

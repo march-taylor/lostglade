@@ -332,9 +332,6 @@ public final class ServerMechanicsGateSystem {
 			}
 			return IT_DRONE;
 		}
-		if (item == ModItems.DRONE_KAMIKAZE) {
-			return IT_DRONE_KAMIKAZE;
-		}
 		String eraRequirement = requiredEraForItem(item);
 		if (eraRequirement != null) {
 			return eraRequirement;

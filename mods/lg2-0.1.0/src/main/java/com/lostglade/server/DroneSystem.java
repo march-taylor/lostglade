@@ -94,7 +94,6 @@ public final class DroneSystem {
 	private static final String IT_DRONE_SCOUT = "it_drone_scout";
 	private static final String IT_DRONE_KAMIKAZE = "it_drone_kamikaze";
 	private static final String DRONE_ROOT_TAG = "lg2_drone_root";
-	private static final String DRONE_VARIANT_KAMIKAZE_TAG = "lg2_drone_variant_kamikaze";
 	private static final String DRONE_KAMIKAZE_POWER_TAG_PREFIX = "lg2_drone_kamikaze_power_";
 	private static final String DRONE_DISPLAY_TAG = "lg2_drone_display";
 	private static final String DRONE_DISPLAY_OWNER_TAG_PREFIX = "lg2_drone_display_owner_";
@@ -165,6 +164,7 @@ public final class DroneSystem {
 	private static final Map<UUID, UUID> CAMERA_ANCHORS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UncontrolledDroneState> UNCONTROLLED_DRONES = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
+	private static final Map<UUID, Long> NEXT_DRONE_ARM_ALLOWED_TICK = new HashMap<>();
 	private static final Map<UUID, DroneDisplayWobbleState> DISPLAY_WOBBLE_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, Long> CAMERA_SUPPRESSED_UNTIL_TICK = new HashMap<>();
 	private static final Set<UUID> FORCED_CONTROLLED_PLAYERS = new HashSet<>();
@@ -227,6 +227,7 @@ public final class DroneSystem {
 			DISPLAYS_BY_DRONE.clear();
 			CAMERA_ANCHORS_BY_DRONE.clear();
 			UNCONTROLLED_DRONES.clear();
+			NEXT_DRONE_ARM_ALLOWED_TICK.clear();
 			CAMERA_SUPPRESSED_UNTIL_TICK.clear();
 			FORCED_CONTROLLED_PLAYERS.clear();
 			CONTROLLED_INVENTORY_SNAPSHOTS.clear();
@@ -252,8 +253,7 @@ public final class DroneSystem {
 		if (requiredUpgrade != null && !ServerUpgradeUiSystem.hasUpgrade(player, requiredUpgrade)) {
 			return InteractionResult.FAIL;
 		}
-		boolean kamikazeDrone = DroneItem.isKamikazeDroneStack(placementSnapshot);
-		int kamikazePower = DroneItem.getKamikazePower(placementSnapshot);
+		int kamikazePower = DRONE_KAMIKAZE_NO_POWER;
 
 		Vec3 spawnPos = resolvePlacementPosition(context);
 		AABB placementBox = droneBoxAt(spawnPos);
@@ -264,8 +264,7 @@ public final class DroneSystem {
 		float yRot = player.getYRot();
 		Interaction root = new Interaction(EntityType.INTERACTION, serverLevel);
 		root.addTag(DRONE_ROOT_TAG);
-		if (kamikazeDrone) {
-			root.addTag(DRONE_VARIANT_KAMIKAZE_TAG);
+		if (kamikazePower > DRONE_KAMIKAZE_NO_POWER) {
 			root.addTag(droneKamikazePowerTag(kamikazePower));
 		}
 		root.setPos(spawnPos.x, spawnPos.y, spawnPos.z);
@@ -977,6 +976,7 @@ public final class DroneSystem {
 		}
 		UNCONTROLLED_DRONES.remove(root.getUUID());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
+		NEXT_DRONE_ARM_ALLOWED_TICK.remove(root.getUUID());
 		DISPLAY_WOBBLE_BY_DRONE.remove(root.getUUID());
 	}
 
@@ -1447,6 +1447,7 @@ public final class DroneSystem {
 		playDroneBreakEffects(level, droneCameraOrigin(root), root.getDeltaMovement());
 		UNCONTROLLED_DRONES.remove(root.getUUID());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
+		NEXT_DRONE_ARM_ALLOWED_TICK.remove(root.getUUID());
 		DISPLAY_WOBBLE_BY_DRONE.remove(root.getUUID());
 		BluetoothLinkSystem.removeDroneEndpoint(level, root.getUUID(), root.blockPosition());
 		UUID controllerId = CONTROLLERS_BY_DRONE.get(root.getUUID());
@@ -1505,10 +1506,7 @@ public final class DroneSystem {
 		if (stack == null || stack.isEmpty()) {
 			return null;
 		}
-		if (stack.getItem() == ModItems.DRONE || stack.getItem() == ModItems.DRONE_KAMIKAZE) {
-			if (DroneItem.getKamikazePower(stack) > DRONE_KAMIKAZE_NO_POWER) {
-				return IT_DRONE_KAMIKAZE;
-			}
+		if (stack.getItem() == ModItems.DRONE) {
 			return IT_DRONE_SCOUT;
 		}
 		return null;
@@ -1519,6 +1517,13 @@ public final class DroneSystem {
 			return InteractionResult.PASS;
 		}
 
+		long now = level.getGameTime();
+		long nextAllowedTick = NEXT_DRONE_ARM_ALLOWED_TICK.getOrDefault(root.getUUID(), Long.MIN_VALUE);
+		if (now < nextAllowedTick) {
+			return InteractionResult.CONSUME;
+		}
+		NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
+
 		int currentPower = resolveDroneKamikazePower(root);
 		if (currentPower >= DRONE_KAMIKAZE_MAX_POWER) {
 			playDroneKamikazeInsertFailFeedback(level, droneCameraOrigin(root));
@@ -1526,7 +1531,7 @@ public final class DroneSystem {
 			return InteractionResult.CONSUME;
 		}
 
-		if (!isKamikazeDrone(root) && !ServerUpgradeUiSystem.hasUpgrade(player, IT_DRONE_KAMIKAZE)) {
+		if (currentPower <= DRONE_KAMIKAZE_NO_POWER && !ServerUpgradeUiSystem.hasUpgrade(player, IT_DRONE_KAMIKAZE)) {
 			playDroneKamikazeInsertFailFeedback(level, droneCameraOrigin(root));
 			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.NEGATIVE);
 			return InteractionResult.FAIL;
@@ -1559,14 +1564,14 @@ public final class DroneSystem {
 	}
 
 	private static boolean isKamikazeDrone(Entity root) {
-		return root != null && root.getTags().contains(DRONE_VARIANT_KAMIKAZE_TAG);
+		return resolveDroneKamikazePower(root) > DRONE_KAMIKAZE_NO_POWER;
 	}
 
 	private static int resolveDroneKamikazePower(Entity root) {
-		if (!isKamikazeDrone(root)) {
+		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
 			return DRONE_KAMIKAZE_NO_POWER;
 		}
-		int resolvedPower = DRONE_KAMIKAZE_MIN_POWER;
+		int resolvedPower = DRONE_KAMIKAZE_NO_POWER;
 		for (String tag : root.getTags()) {
 			if (!tag.startsWith(DRONE_KAMIKAZE_POWER_TAG_PREFIX)) {
 				continue;
@@ -1587,10 +1592,7 @@ public final class DroneSystem {
 		}
 		int clampedPower = net.minecraft.util.Mth.clamp(power, DRONE_KAMIKAZE_NO_POWER, DRONE_KAMIKAZE_MAX_POWER);
 		removeDroneKamikazePowerTags(root);
-		if (clampedPower <= DRONE_KAMIKAZE_NO_POWER) {
-			root.removeTag(DRONE_VARIANT_KAMIKAZE_TAG);
-		} else {
-			root.addTag(DRONE_VARIANT_KAMIKAZE_TAG);
+		if (clampedPower > DRONE_KAMIKAZE_NO_POWER) {
 			root.addTag(droneKamikazePowerTag(clampedPower));
 		}
 
