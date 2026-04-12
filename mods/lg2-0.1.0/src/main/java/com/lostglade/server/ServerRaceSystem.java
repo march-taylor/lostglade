@@ -410,7 +410,7 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, WomanUniqueSession> WOMAN_UNIQUE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, Integer> WOMAN_UNIQUE_SYNCED_MERCHANT_MENUS = new HashMap<>();
 	private static final Map<UUID, WomanShnyagaPendingSelection> WOMAN_SHNYAGA_PENDING_SELECTIONS = new LinkedHashMap<>();
-	private static final Map<UUID, WomanShnyagaProposal> WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN = new LinkedHashMap<>();
+	private static final Map<UUID, LinkedHashMap<UUID, WomanShnyagaProposal>> WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN = new LinkedHashMap<>();
 	private static final Map<UUID, WomanShnyagaProposal> WOMAN_SHNYAGA_PROPOSALS_BY_TARGET = new LinkedHashMap<>();
 	private static final Map<UUID, WomanShnyagaLink> WOMAN_SHNYAGA_LINKS_BY_WOMAN = new LinkedHashMap<>();
 	private static final Map<UUID, WomanShnyagaLink> WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND = new LinkedHashMap<>();
@@ -774,18 +774,22 @@ public final class ServerRaceSystem {
 	}
 
 	private static boolean onAllowChatMessage(PlayerChatMessage message, ServerPlayer sender, ChatType.Bound params) {
+		return !handlePendingWomanShnyagaChatMessage(message, sender);
+	}
+
+	public static boolean handlePendingWomanShnyagaChatMessage(PlayerChatMessage message, ServerPlayer sender) {
 		if (sender == null || message == null) {
-			return true;
+			return false;
 		}
 
 		WomanShnyagaPendingSelection selection = WOMAN_SHNYAGA_PENDING_SELECTIONS.get(sender.getUUID());
 		if (selection == null) {
-			return true;
+			return false;
 		}
 
 		String content = message.signedContent() == null ? "" : message.signedContent().trim();
 		handleWomanShnyagaChatSubmission(sender, selection, content);
-		return false;
+		return true;
 	}
 
 	private static int acceptWomanShnyagaProposal(CommandContext<CommandSourceStack> context) {
@@ -983,6 +987,40 @@ public final class ServerRaceSystem {
 			return false;
 		}
 		return displayRemainingCooldown(player, remainingTicks);
+	}
+
+	private static long getRemainingGenericAbilityCooldownTicks(ServerPlayer player, RaceAbilitySlot slot) {
+		if (player == null || slot == null || slot == RaceAbilitySlot.STOCK) {
+			return 0L;
+		}
+
+		EnumMap<RaceAbilitySlot, Long> cooldownEndTicks = GENERIC_ABILITY_COOLDOWN_END_TICKS.get(player.getUUID());
+		if (cooldownEndTicks == null) {
+			return 0L;
+		}
+
+		Long cooldownEndTick = cooldownEndTicks.get(slot);
+		if (cooldownEndTick == null) {
+			return 0L;
+		}
+
+		long remainingTicks = cooldownEndTick - player.level().getGameTime();
+		if (remainingTicks <= 0L) {
+			cooldownEndTicks.remove(slot);
+			if (cooldownEndTicks.isEmpty()) {
+				GENERIC_ABILITY_COOLDOWN_END_TICKS.remove(player.getUUID());
+			}
+			return 0L;
+		}
+		return remainingTicks;
+	}
+
+	private static boolean isGenericAbilityOnInfiniteCooldown(UUID playerId, RaceAbilitySlot slot) {
+		if (playerId == null || slot == null || slot == RaceAbilitySlot.STOCK) {
+			return false;
+		}
+		EnumSet<RaceAbilitySlot> infiniteCooldowns = GENERIC_ABILITY_INFINITE_COOLDOWNS.get(playerId);
+		return infiniteCooldowns != null && infiniteCooldowns.contains(slot);
 	}
 
 	private static void startGenericAbilityCooldown(ServerPlayer player, RaceAbilitySlot slot, RaceAbilityConfig ability) {
@@ -2458,8 +2496,11 @@ public final class ServerRaceSystem {
 			return;
 		}
 
-		removeWomanShnyagaProposal(WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN.get(sender.getUUID()));
 		WOMAN_SHNYAGA_PENDING_SELECTIONS.remove(sender.getUUID());
+		sender.displayClientMessage(Component.empty(), true);
+		if (existingForTarget != null) {
+			removeWomanShnyagaProposal(existingForTarget);
+		}
 		WomanShnyagaProposal proposal = new WomanShnyagaProposal(
 				sender.getUUID(),
 				sender.getGameProfile().name(),
@@ -2469,11 +2510,10 @@ public final class ServerRaceSystem {
 				getWomanShnyagaTransferHealthPoints(race.shnyaga),
 				getWomanShnyagaBuffRange(race.shnyaga)
 		);
-		WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN.put(sender.getUUID(), proposal);
+		WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN
+				.computeIfAbsent(sender.getUUID(), ignored -> new LinkedHashMap<>())
+				.put(target.getUUID(), proposal);
 		WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.put(target.getUUID(), proposal);
-		startGenericAbilityCooldown(sender, RaceAbilitySlot.SHNYAGA, race.shnyaga);
-
-		sender.displayClientMessage(Component.empty(), true);
 		sender.sendSystemMessage(
 				Component.literal(localizeWomanShnyagaText(sender, "proposal_sent"))
 						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false))
@@ -2496,8 +2536,8 @@ public final class ServerRaceSystem {
 
 		MinecraftServer server = target.level().getServer();
 		ServerPlayer woman = server == null ? null : server.getPlayerList().getPlayer(proposal.womanId());
-		removeWomanShnyagaProposal(proposal);
 		if (server == null || woman == null || !woman.isAlive() || woman.isSpectator()) {
+			removeWomanShnyagaProposal(proposal);
 			target.sendSystemMessage(
 					Component.literal(localizeWomanShnyagaText(target, "proposal_expired"))
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
@@ -2505,12 +2545,35 @@ public final class ServerRaceSystem {
 			return 0;
 		}
 		if (hasWomanShnyagaLink(woman.getUUID()) || hasWomanShnyagaLink(target.getUUID())) {
+			removeWomanShnyagaProposal(proposal);
 			target.sendSystemMessage(
 					Component.literal(localizeWomanShnyagaText(target, "proposal_expired"))
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
 			);
 			return 0;
 		}
+
+		Optional<PlayerRaceConfig> womanRaceOptional = getRace(woman);
+		RaceAbilityConfig shnyaga = getWomanShnyagaAbility(woman);
+		if (womanRaceOptional.isEmpty() || shnyaga == null || !hasUnlockedAbility(woman, womanRaceOptional.get(), RaceAbilitySlot.SHNYAGA)) {
+			removeWomanShnyagaProposal(proposal);
+			target.sendSystemMessage(
+					Component.literal(localizeWomanShnyagaText(target, "proposal_expired"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
+			);
+			return 0;
+		}
+		long remainingCooldownTicks = getRemainingGenericAbilityCooldownTicks(woman, RaceAbilitySlot.SHNYAGA);
+		if (remainingCooldownTicks > 0L || isGenericAbilityOnInfiniteCooldown(woman.getUUID(), RaceAbilitySlot.SHNYAGA)) {
+			target.sendSystemMessage(
+					Component.literal(localizeWomanShnyagaText(target, "proposal_on_cooldown"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
+			);
+			return 0;
+		}
+
+		removeWomanShnyagaProposal(proposal);
+		startGenericAbilityCooldown(woman, RaceAbilitySlot.SHNYAGA, shnyaga);
 
 		if (accept) {
 			createWomanShnyagaLink(server, woman, target, proposal);
@@ -2529,7 +2592,10 @@ public final class ServerRaceSystem {
 		if (proposal == null) {
 			return;
 		}
-		WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN.remove(proposal.womanId(), proposal);
+		WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN.computeIfPresent(proposal.womanId(), (womanId, proposals) -> {
+			proposals.remove(proposal.targetId(), proposal);
+			return proposals.isEmpty() ? null : proposals;
+		});
 		WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.remove(proposal.targetId(), proposal);
 	}
 
@@ -2538,8 +2604,26 @@ public final class ServerRaceSystem {
 			return;
 		}
 		WOMAN_SHNYAGA_PENDING_SELECTIONS.remove(playerId);
-		removeWomanShnyagaProposal(WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN.get(playerId));
+		LinkedHashMap<UUID, WomanShnyagaProposal> proposalsByWoman = WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN.remove(playerId);
+		if (proposalsByWoman != null) {
+			for (WomanShnyagaProposal proposal : new ArrayList<>(proposalsByWoman.values())) {
+				WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.remove(proposal.targetId(), proposal);
+			}
+		}
 		removeWomanShnyagaProposal(WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.get(playerId));
+	}
+
+	private static void clearWomanShnyagaProposalsForWoman(UUID womanId) {
+		if (womanId == null) {
+			return;
+		}
+		LinkedHashMap<UUID, WomanShnyagaProposal> proposals = WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN.remove(womanId);
+		if (proposals == null) {
+			return;
+		}
+		for (WomanShnyagaProposal proposal : proposals.values()) {
+			WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.remove(proposal.targetId(), proposal);
+		}
 	}
 
 	private static void createWomanShnyagaLink(MinecraftServer server, ServerPlayer woman, ServerPlayer boyfriend, WomanShnyagaProposal proposal) {
@@ -2547,6 +2631,7 @@ public final class ServerRaceSystem {
 			return;
 		}
 
+		clearWomanShnyagaProposalsForWoman(proposal.womanId());
 		WomanShnyagaLink link = new WomanShnyagaLink(
 				proposal.womanId(),
 				proposal.womanName(),
@@ -2625,12 +2710,47 @@ public final class ServerRaceSystem {
 		if (server == null) {
 			return;
 		}
+		tickWomanShnyagaPendingSelections(server);
 		long nowTick = server.overworld().getGameTime();
 		if (!WOMAN_SHNYAGA_LINKS_BY_WOMAN.isEmpty() && nowTick >= womanShnyagaNextWhitelistCheckTick) {
 			pruneWomanShnyagaLinksAgainstWhitelist(server);
 			womanShnyagaNextWhitelistCheckTick = nowTick + WOMAN_SHNYAGA_WHITELIST_CHECK_INTERVAL_TICKS;
 		}
 		syncWomanShnyagaLinks(server);
+	}
+
+	private static void tickWomanShnyagaPendingSelections(MinecraftServer server) {
+		if (server == null || WOMAN_SHNYAGA_PENDING_SELECTIONS.isEmpty()) {
+			return;
+		}
+
+		Iterator<Map.Entry<UUID, WomanShnyagaPendingSelection>> iterator = WOMAN_SHNYAGA_PENDING_SELECTIONS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, WomanShnyagaPendingSelection> entry = iterator.next();
+			ServerPlayer woman = server.getPlayerList().getPlayer(entry.getKey());
+			WomanShnyagaPendingSelection selection = entry.getValue();
+			if (woman == null || selection == null || !woman.isAlive() || woman.isSpectator()) {
+				iterator.remove();
+				continue;
+			}
+
+			ServerPlayer target = server.getPlayerList().getPlayer(selection.targetId());
+			if (target == null || !target.isAlive() || target.isSpectator()) {
+				woman.displayClientMessage(Component.empty(), true);
+				woman.sendSystemMessage(
+						Component.literal(localizeWomanShnyagaText(woman, "target_unavailable"))
+								.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
+				);
+				iterator.remove();
+				continue;
+			}
+
+			woman.displayClientMessage(
+					Component.literal(localizeWomanShnyagaText(woman, "write_prompt"))
+							.withStyle(style -> style.withItalic(false)),
+					true
+			);
+		}
 	}
 
 	private static void syncWomanShnyagaLinks(MinecraftServer server) {
@@ -5851,6 +5971,7 @@ public final class ServerRaceSystem {
 				case "proposal_sent" -> "Предложеніе отправлено.";
 				case "no_pending_proposal" -> "Нѣтъ ожидающаго предложенія.";
 				case "proposal_expired" -> "Предложеніе уже недѣйственно.";
+				case "proposal_on_cooldown" -> "Нынѣ отвѣтъ невозможенъ: умѣніе въ охлажденіи.";
 				case "accepted_woman" -> "Онъ согласился. Связь установлена.";
 				case "accepted_target" -> "Вы согласились. Связь установлена.";
 				case "rejected_woman" -> "Васъ отшили.";
@@ -5877,6 +5998,7 @@ public final class ServerRaceSystem {
 				case "proposal_sent" -> "Пропозицію відправлено.";
 				case "no_pending_proposal" -> "Немає активної пропозиції.";
 				case "proposal_expired" -> "Пропозиція вже недійсна.";
+				case "proposal_on_cooldown" -> "Відповідь зараз неможлива: здібність на відновленні.";
 				case "accepted_woman" -> "Він погодився. Зв'язок встановлено.";
 				case "accepted_target" -> "Ви погодилися. Зв'язок встановлено.";
 				case "rejected_woman" -> "Вас відшили.";
@@ -5903,6 +6025,7 @@ public final class ServerRaceSystem {
 				case "proposal_sent" -> "申し込みを送りました。";
 				case "no_pending_proposal" -> "返答する申し込みがありません。";
 				case "proposal_expired" -> "その申し込みはもう無効です。";
+				case "proposal_on_cooldown" -> "今は返答できません。この能力はクールダウン中です。";
 				case "accepted_woman" -> "相手が承諾しました。絆が結ばれました。";
 				case "accepted_target" -> "あなたは承諾しました。絆が結ばれました。";
 				case "rejected_woman" -> "振られました。";
@@ -5929,6 +6052,7 @@ public final class ServerRaceSystem {
 				case "proposal_sent" -> "Предложение отправлено.";
 				case "no_pending_proposal" -> "Нет активного предложения.";
 				case "proposal_expired" -> "Предложение уже недействительно.";
+				case "proposal_on_cooldown" -> "Сейчас ответить нельзя: способность женщины в КД.";
 				case "accepted_woman" -> "Он согласился. Связь установлена.";
 				case "accepted_target" -> "Вы согласились. Связь установлена.";
 				case "rejected_woman" -> "Вас отшили.";
@@ -5954,6 +6078,7 @@ public final class ServerRaceSystem {
 			case "proposal_sent" -> "Proposal sent.";
 			case "no_pending_proposal" -> "There is no active proposal.";
 			case "proposal_expired" -> "That proposal is no longer valid.";
+			case "proposal_on_cooldown" -> "You can't answer right now: her ability is on cooldown.";
 			case "accepted_woman" -> "He accepted. The bond is established.";
 			case "accepted_target" -> "You accepted. The bond is established.";
 			case "rejected_woman" -> "You were rejected.";

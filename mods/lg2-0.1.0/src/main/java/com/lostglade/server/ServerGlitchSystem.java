@@ -241,6 +241,9 @@ public final class ServerGlitchSystem {
 		if (sender == null || message == null || params == null) {
 			return true;
 		}
+		if (ServerRaceSystem.handlePendingWomanShnyagaChatMessage(message, sender)) {
+			return false;
+		}
 
 		MinecraftServer server = sender.level().getServer();
 		if (server == null) {
