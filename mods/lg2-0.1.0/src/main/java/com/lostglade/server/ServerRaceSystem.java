@@ -2171,10 +2171,23 @@ public final class ServerRaceSystem {
 		}
 
 		Vec3 movement = viewer.getDeltaMovement();
-		double angle = viewer.getRandom().nextDouble() * (Math.PI * 2.0D);
-		double shakeX = Math.cos(angle) * strength;
-		double shakeZ = Math.sin(angle) * strength;
-		viewer.setDeltaMovement(movement.x * 0.2D + shakeX, movement.y, movement.z * 0.2D + shakeZ);
+		Vec3 basis = new Vec3(movement.x, 0.0D, movement.z);
+		if (basis.lengthSqr() <= 1.0E-4D) {
+			Vec3 look = viewer.getLookAngle();
+			basis = new Vec3(look.x, 0.0D, look.z);
+		}
+		if (basis.lengthSqr() <= 1.0E-6D) {
+			basis = new Vec3(1.0D, 0.0D, 0.0D);
+		}
+		basis = basis.normalize();
+		Vec3 lateral = new Vec3(-basis.z, 0.0D, basis.x);
+		double lateralOffset = (viewer.getRandom().nextBoolean() ? 1.0D : -1.0D) * strength;
+		double forwardOffset = (viewer.getRandom().nextDouble() - 0.5D) * strength * 0.35D;
+		viewer.setDeltaMovement(
+				movement.x + lateral.x * lateralOffset + basis.x * forwardOffset,
+				movement.y,
+				movement.z + lateral.z * lateralOffset + basis.z * forwardOffset
+		);
 		viewer.hurtMarked = true;
 		viewer.connection.send(new ClientboundSetEntityMotionPacket(viewer));
 	}
