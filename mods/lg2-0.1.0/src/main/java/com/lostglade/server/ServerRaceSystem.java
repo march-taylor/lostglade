@@ -2092,8 +2092,9 @@ public final class ServerRaceSystem {
 
 		float absorptionAmount = (float) (getWomanUniqueAbsorptionHearts(ability) * 2.0D);
 		if (absorptionAmount > 0.0F) {
-			caster.setAbsorptionAmount(Math.min(caster.getMaxAbsorption(), caster.getAbsorptionAmount() + absorptionAmount));
+			caster.setAbsorptionAmount(caster.getAbsorptionAmount() + absorptionAmount);
 		}
+		emitSmoke(level, target.position());
 		startGenericAbilityCooldown(caster, RaceAbilitySlot.UNIQUE_ABILITY, ability);
 
 		Lg2.LOGGER.info(
