@@ -264,13 +264,13 @@ public final class ServerRaceSystem {
 	private static final float WOMAN_FLOWER_HEAL_AMOUNT = 1.0F;
 	private static final double WOMAN_DEFENSE_DEFAULT_DURATION_SECONDS = 20.0D;
 	private static final double WOMAN_DEFENSE_DEFAULT_RANGE_BLOCKS = 32.0D;
-	private static final int WOMAN_DEFENSE_EFFECT_REFRESH_TICKS = 8;
-	private static final double WOMAN_DEFENSE_LIGHT_SHAKE_STRENGTH = 0.035D;
-	private static final double WOMAN_DEFENSE_MEDIUM_SHAKE_STRENGTH = 0.065D;
-	private static final double WOMAN_DEFENSE_STRONG_SHAKE_STRENGTH = 0.11D;
-	private static final double WOMAN_DEFENSE_SHAKE_SKIP_CHANCE = 0.25D;
+	private static final int WOMAN_DEFENSE_EFFECT_DURATION_TICKS = 18;
+	private static final double WOMAN_DEFENSE_LIGHT_SHAKE_STRENGTH = 0.018D;
+	private static final double WOMAN_DEFENSE_MEDIUM_SHAKE_STRENGTH = 0.026D;
+	private static final double WOMAN_DEFENSE_STRONG_SHAKE_STRENGTH = 0.034D;
 	private static final double WOMAN_DEFENSE_SHAKE_MIN_MOVE_SPEED = 0.015D;
-	private static final double WOMAN_DEFENSE_SHAKE_MOVEMENT_RATIO = 0.28D;
+	private static final double WOMAN_DEFENSE_SHAKE_MOVEMENT_RATIO = 0.14D;
+	private static final long WOMAN_DEFENSE_SHAKE_INTERVAL_TICKS = 2L;
 	private static final double WOMAN_ATTACK_DEFAULT_CHARGE_RADIUS_BLOCKS = 1.5D;
 	private static final double WOMAN_ATTACK_DEFAULT_RANGE_BLOCKS = 64.0D;
 	private static final double WOMAN_ATTACK_DEFAULT_DAMAGE = 2.0D;
@@ -2140,9 +2140,9 @@ public final class ServerRaceSystem {
 			case 2 -> 1;
 			default -> 0;
 		};
-		refreshWomanDefenseEffect(viewer, MobEffects.SLOWNESS, WOMAN_DEFENSE_EFFECT_REFRESH_TICKS, slownessAmplifier);
+		refreshWomanDefenseEffect(viewer, MobEffects.SLOWNESS, WOMAN_DEFENSE_EFFECT_DURATION_TICKS, slownessAmplifier, false);
 		if (exposure.severity() >= 4) {
-			refreshWomanDefenseEffect(viewer, MobEffects.BLINDNESS, WOMAN_DEFENSE_EFFECT_REFRESH_TICKS, 0);
+			refreshWomanDefenseEffect(viewer, MobEffects.BLINDNESS, WOMAN_DEFENSE_EFFECT_DURATION_TICKS, 0, false);
 		}
 
 		double shakeStrength = switch (exposure.severity()) {
@@ -2153,7 +2153,7 @@ public final class ServerRaceSystem {
 		applyWomanDefenseShake(viewer, shakeStrength);
 	}
 
-	private static void refreshWomanDefenseEffect(ServerPlayer viewer, Holder<MobEffect> effect, int durationTicks, int amplifier) {
+	private static void refreshWomanDefenseEffect(ServerPlayer viewer, Holder<MobEffect> effect, int durationTicks, int amplifier, boolean showIcon) {
 		if (viewer == null || effect == null || durationTicks <= 0) {
 			return;
 		}
@@ -2165,14 +2165,15 @@ public final class ServerRaceSystem {
 		if (current != null && current.getAmplifier() == amplifier && current.getDuration() > durationTicks / 2) {
 			return;
 		}
-		viewer.addEffect(new MobEffectInstance(effect, durationTicks, amplifier, false, false, true));
+		viewer.addEffect(new MobEffectInstance(effect, durationTicks, amplifier, false, false, showIcon));
 	}
 
 	private static void applyWomanDefenseShake(ServerPlayer viewer, double strength) {
 		if (viewer == null || strength <= 0.0D) {
 			return;
 		}
-		if (viewer.getRandom().nextDouble() < WOMAN_DEFENSE_SHAKE_SKIP_CHANCE) {
+		long tick = viewer.level().getGameTime() + viewer.getUUID().getLeastSignificantBits();
+		if (Math.floorMod(tick, WOMAN_DEFENSE_SHAKE_INTERVAL_TICKS) != 0L) {
 			return;
 		}
 
@@ -2184,8 +2185,8 @@ public final class ServerRaceSystem {
 		}
 		Vec3 direction = horizontalMovement.normalize();
 		Vec3 lateral = new Vec3(-direction.z, 0.0D, direction.x);
-		double lateralOffset = (viewer.getRandom().nextBoolean() ? 1.0D : -1.0D)
-				* Math.min(strength, moveSpeed * WOMAN_DEFENSE_SHAKE_MOVEMENT_RATIO);
+		double maxOffset = Math.min(strength, moveSpeed * WOMAN_DEFENSE_SHAKE_MOVEMENT_RATIO);
+		double lateralOffset = Math.floorMod(tick / WOMAN_DEFENSE_SHAKE_INTERVAL_TICKS, 2L) == 0L ? maxOffset : -maxOffset;
 		viewer.setDeltaMovement(
 				movement.x + lateral.x * lateralOffset,
 				movement.y,
