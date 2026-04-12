@@ -178,8 +178,8 @@
                                      "name":  "Сила любви",
                                      "description":  "Выпускает шар из сердец, который наносит урон и привлекает к цели всех животных.",
                                      "priceBitcoins":  300,
+                                     "cooldownSeconds":  30.0,
                                      "womanAttackChargeRadiusBlocks":  0.5,
-                                     "womanAttackChargeSeconds":  2.0,
                                      "womanAttackRangeBlocks":  64.0,
                                      "womanAttackDamage":  2.0,
                                      "womanAttackFollowSeconds":  30.0
@@ -189,7 +189,10 @@
                                       "abilityId":  "woman_defense",
                                       "name":  "Страх перед училкой",
                                       "description":  "Вокруг вас создаётся область страха. Чем ближе враг, тем сильнее негативные эффекты.",
-                                      "priceBitcoins":  600
+                                      "priceBitcoins":  600,
+                                      "cooldownSeconds":  180.0,
+                                      "activationRangeBlocks":  32.0,
+                                      "durationSeconds":  20.0
                                   },
                       "uniqueAbility":  {
                                             "enabled":  true,

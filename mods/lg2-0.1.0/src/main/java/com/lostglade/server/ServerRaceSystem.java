@@ -45,6 +45,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -111,6 +112,7 @@ import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.item.component.Consumable;
 import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.food.FoodProperties;
+import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.level.GameType;
@@ -154,6 +156,7 @@ import java.util.Comparator;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -258,8 +261,13 @@ public final class ServerRaceSystem {
 	private static final double WOMAN_FLOWER_DEFAULT_COOLDOWN_SECONDS = 5.0D;
 	private static final double WOMAN_ANIMAL_BREED_DEFAULT_COOLDOWN_SECONDS = 30.0D;
 	private static final float WOMAN_FLOWER_HEAL_AMOUNT = 1.0F;
+	private static final double WOMAN_DEFENSE_DEFAULT_DURATION_SECONDS = 20.0D;
+	private static final double WOMAN_DEFENSE_DEFAULT_RANGE_BLOCKS = 32.0D;
+	private static final int WOMAN_DEFENSE_EFFECT_REFRESH_TICKS = 8;
+	private static final double WOMAN_DEFENSE_LIGHT_SHAKE_STRENGTH = 0.018D;
+	private static final double WOMAN_DEFENSE_MEDIUM_SHAKE_STRENGTH = 0.04D;
+	private static final double WOMAN_DEFENSE_STRONG_SHAKE_STRENGTH = 0.075D;
 	private static final double WOMAN_ATTACK_DEFAULT_CHARGE_RADIUS_BLOCKS = 1.5D;
-	private static final double WOMAN_ATTACK_DEFAULT_CHARGE_SECONDS = 2.0D;
 	private static final double WOMAN_ATTACK_DEFAULT_RANGE_BLOCKS = 64.0D;
 	private static final double WOMAN_ATTACK_DEFAULT_DAMAGE = 2.0D;
 	private static final double WOMAN_ATTACK_DEFAULT_FOLLOW_SECONDS = 30.0D;
@@ -357,6 +365,7 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, EnumSet<RaceAbilitySlot>> GENERIC_ABILITY_INFINITE_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, Long> WOMAN_FLOWER_COOLDOWNS = new LinkedHashMap<>();
 	private static final Map<UUID, Long> WOMAN_ANIMAL_BREED_COOLDOWNS = new LinkedHashMap<>();
+	private static final Map<UUID, WomanDefenseSession> WOMAN_DEFENSE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, WomanAttackChargeSession> WOMAN_ATTACK_CHARGE_SESSIONS = new LinkedHashMap<>();
 	private static final List<WomanAttackProjectile> WOMAN_ATTACK_PROJECTILES = new ArrayList<>();
 	private static final Map<UUID, WomanAttackFollowSession> WOMAN_ATTACK_FOLLOWS = new LinkedHashMap<>();
@@ -533,6 +542,7 @@ public final class ServerRaceSystem {
 			GENERIC_ABILITY_INFINITE_COOLDOWNS.clear();
 			WOMAN_FLOWER_COOLDOWNS.clear();
 			WOMAN_ANIMAL_BREED_COOLDOWNS.clear();
+			WOMAN_DEFENSE_SESSIONS.clear();
 			CARTEL_DISGUISE_SESSIONS.clear();
 			COPPER_MAN_DEFENSE_COOLDOWNS.clear();
 			COPPER_MAN_DEFENSE_VISUAL_SESSIONS.clear();
@@ -573,6 +583,7 @@ public final class ServerRaceSystem {
 			COPPER_GOLEM_FOLLOWERS.entrySet().removeIf(entry -> handler.player.getUUID().equals(entry.getValue()));
 			clearCopperManDefenseVisual(handler.player);
 			clearCopperManJetpack(handler.player);
+			WOMAN_DEFENSE_SESSIONS.remove(handler.player.getUUID());
 			clearWomanAttackState(handler.player.getUUID());
 		});
 		UseItemCallback.EVENT.register((player, world, hand) -> {
@@ -617,6 +628,7 @@ public final class ServerRaceSystem {
 			tickCopperManJetpack(server);
 			tickCopperManDefense(server);
 			tickWomanStock(server);
+			tickWomanDefense(server);
 			tickWomanAttack(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
@@ -742,6 +754,9 @@ public final class ServerRaceSystem {
 		}
 		if (slot == RaceAbilitySlot.ATTACK && WOMAN_RACE_ID.equals(raceId)) {
 			return useWomanAttack(player, race, ability);
+		}
+		if (slot == RaceAbilitySlot.DEFENSE && WOMAN_RACE_ID.equals(raceId)) {
+			return useWomanDefense(player, race, ability);
 		}
 
 		startGenericAbilityCooldown(player, slot, ability);
@@ -1630,21 +1645,24 @@ public final class ServerRaceSystem {
 	private record FoodDataSnapshot(int foodLevel, float saturationLevel) {
 	}
 
+	private record WomanDefenseSession(UUID playerId, ResourceKey<Level> dimension, long endTick, double range) {
+	}
+
+	private record WomanDefenseExposure(int severity) {
+	}
+
 	private static final class WomanAttackChargeSession {
 		private final UUID playerId;
 		private final ResourceKey<Level> dimension;
-		private final long chargeEndTick;
 		private final double radius;
 		private final double range;
 		private final double damage;
 		private final long followTicks;
-		private boolean charged;
 		private Interaction airTriggerEntity;
 
 		private WomanAttackChargeSession(
 				UUID playerId,
 				ResourceKey<Level> dimension,
-				long chargeEndTick,
 				double radius,
 				double range,
 				double damage,
@@ -1652,12 +1670,10 @@ public final class ServerRaceSystem {
 		) {
 			this.playerId = playerId;
 			this.dimension = dimension;
-			this.chargeEndTick = chargeEndTick;
 			this.radius = radius;
 			this.range = range;
 			this.damage = damage;
 			this.followTicks = followTicks;
-			this.charged = false;
 			this.airTriggerEntity = null;
 		}
 	}
@@ -1949,6 +1965,33 @@ public final class ServerRaceSystem {
 		return positiveOrDefault(stock == null ? 0.0D : stock.womanAnimalBreedCooldownSeconds, WOMAN_ANIMAL_BREED_DEFAULT_COOLDOWN_SECONDS);
 	}
 
+	private static int useWomanDefense(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || ability == null || player.isSpectator() || !player.isAlive()) {
+			return 0;
+		}
+		if (!(player.level() instanceof ServerLevel level)) {
+			return 0;
+		}
+
+		UUID playerId = player.getUUID();
+		if (WOMAN_DEFENSE_SESSIONS.containsKey(playerId)) {
+			return 0;
+		}
+
+		startGenericAbilityCooldown(player, RaceAbilitySlot.DEFENSE, ability);
+		long durationTicks = Math.max(1L, asTicks(getWomanDefenseDurationSeconds(ability)));
+		WOMAN_DEFENSE_SESSIONS.put(
+				playerId,
+				new WomanDefenseSession(
+						playerId,
+						level.dimension(),
+						level.getGameTime() + durationTicks,
+						getWomanDefenseRange(ability)
+				)
+		);
+		return 1;
+	}
+
 	private static int useWomanAttack(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
 		if (player == null || ability == null || player.isSpectator() || !player.isAlive()) {
 			return 0;
@@ -1964,19 +2007,173 @@ public final class ServerRaceSystem {
 
 		startGenericAbilityCooldown(player, RaceAbilitySlot.ATTACK, ability);
 
-		long nowTick = level.getGameTime();
 		double radius = getWomanAttackChargeRadius(ability);
 		double range = getWomanAttackRange(ability);
 		double damage = getWomanAttackDamage(ability);
 		long followTicks = asTicks(getWomanAttackFollowSeconds(ability));
-		long chargeTicks = asTicks(getWomanAttackChargeSeconds(ability));
-		long chargeEndTick = nowTick + Math.max(0L, chargeTicks);
 		WOMAN_ATTACK_CHARGE_SESSIONS.put(
 				playerId,
-				new WomanAttackChargeSession(playerId, level.dimension(), chargeEndTick, radius, range, damage, followTicks)
+				new WomanAttackChargeSession(playerId, level.dimension(), radius, range, damage, followTicks)
 		);
-		WOMAN_ATTACK_CHARGE_SESSIONS.get(playerId).charged = true;
 		return 1;
+	}
+
+	private static void tickWomanDefense(MinecraftServer server) {
+		if (server == null || WOMAN_DEFENSE_SESSIONS.isEmpty()) {
+			return;
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		Map<UUID, WomanDefenseExposure> exposures = new HashMap<>();
+		Iterator<Map.Entry<UUID, WomanDefenseSession>> iterator = WOMAN_DEFENSE_SESSIONS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, WomanDefenseSession> entry = iterator.next();
+			WomanDefenseSession session = entry.getValue();
+			ServerPlayer woman = session == null ? null : server.getPlayerList().getPlayer(session.playerId());
+			if (woman == null
+					|| !woman.isAlive()
+					|| woman.isSpectator()
+					|| !(woman.level() instanceof ServerLevel level)
+					|| !level.dimension().equals(session.dimension())
+					|| nowTick >= session.endTick()) {
+				iterator.remove();
+				continue;
+			}
+
+			double range = Math.max(0.0D, session.range());
+			double rangeSqr = range * range;
+			for (ServerPlayer viewer : level.players()) {
+				if (viewer == null || viewer == woman || !viewer.isAlive() || viewer.isSpectator()) {
+					continue;
+				}
+				double distanceSqr = viewer.distanceToSqr(woman);
+				if (distanceSqr > rangeSqr) {
+					continue;
+				}
+				if (!isWomanDefenseVisibleToViewer(viewer, woman)) {
+					continue;
+				}
+
+				int severity = getWomanDefenseSeverity(Math.sqrt(distanceSqr));
+				exposures.merge(
+						viewer.getUUID(),
+						new WomanDefenseExposure(severity),
+						ServerRaceSystem::pickStrongerWomanDefenseExposure
+				);
+			}
+		}
+
+		for (Map.Entry<UUID, WomanDefenseExposure> entry : exposures.entrySet()) {
+			ServerPlayer viewer = server.getPlayerList().getPlayer(entry.getKey());
+			if (viewer == null || !viewer.isAlive() || viewer.isSpectator()) {
+				continue;
+			}
+			applyWomanDefenseExposure(viewer, entry.getValue());
+		}
+	}
+
+	private static WomanDefenseExposure pickStrongerWomanDefenseExposure(WomanDefenseExposure left, WomanDefenseExposure right) {
+		if (left == null) {
+			return right;
+		}
+		if (right == null) {
+			return left;
+		}
+		return right.severity() > left.severity() ? right : left;
+	}
+
+	private static boolean isWomanDefenseVisibleToViewer(ServerPlayer viewer, ServerPlayer woman) {
+		if (viewer == null || woman == null || viewer.level() != woman.level() || !viewer.hasLineOfSight(woman)) {
+			return false;
+		}
+
+		Vec3 eyePosition = viewer.getEyePosition();
+		Vec3 look = viewer.getViewVector(1.0F);
+		if (look.lengthSqr() <= 1.0E-6D) {
+			return false;
+		}
+
+		Vec3 targetPoint = clampPointToAabb(eyePosition, woman.getBoundingBox().inflate(0.15D));
+		Vec3 toWoman = targetPoint.subtract(eyePosition);
+		return toWoman.lengthSqr() <= 1.0E-6D || look.normalize().dot(toWoman.normalize()) >= 0.0D;
+	}
+
+	private static Vec3 clampPointToAabb(Vec3 point, AABB box) {
+		if (point == null || box == null) {
+			return Vec3.ZERO;
+		}
+		return new Vec3(
+				clampToRange(point.x, box.minX, box.maxX),
+				clampToRange(point.y, box.minY, box.maxY),
+				clampToRange(point.z, box.minZ, box.maxZ)
+		);
+	}
+
+	private static double clampToRange(double value, double min, double max) {
+		return Math.max(min, Math.min(max, value));
+	}
+
+	private static int getWomanDefenseSeverity(double distance) {
+		if (distance <= 4.0D) {
+			return 4;
+		}
+		if (distance <= 8.0D) {
+			return 3;
+		}
+		if (distance <= 16.0D) {
+			return 2;
+		}
+		return 1;
+	}
+
+	private static void applyWomanDefenseExposure(ServerPlayer viewer, WomanDefenseExposure exposure) {
+		if (viewer == null || exposure == null) {
+			return;
+		}
+
+		int slownessAmplifier = switch (exposure.severity()) {
+			case 4, 3 -> 2;
+			case 2 -> 1;
+			default -> 0;
+		};
+		refreshWomanDefenseEffect(viewer, MobEffects.SLOWNESS, WOMAN_DEFENSE_EFFECT_REFRESH_TICKS, slownessAmplifier);
+		if (exposure.severity() >= 4) {
+			refreshWomanDefenseEffect(viewer, MobEffects.BLINDNESS, WOMAN_DEFENSE_EFFECT_REFRESH_TICKS, 0);
+		}
+
+		double shakeStrength = switch (exposure.severity()) {
+			case 4, 3 -> WOMAN_DEFENSE_STRONG_SHAKE_STRENGTH;
+			case 2 -> WOMAN_DEFENSE_MEDIUM_SHAKE_STRENGTH;
+			default -> WOMAN_DEFENSE_LIGHT_SHAKE_STRENGTH;
+		};
+		applyWomanDefenseShake(viewer, shakeStrength);
+	}
+
+	private static void refreshWomanDefenseEffect(ServerPlayer viewer, Holder<MobEffect> effect, int durationTicks, int amplifier) {
+		if (viewer == null || effect == null || durationTicks <= 0) {
+			return;
+		}
+
+		MobEffectInstance current = viewer.getEffect(effect);
+		if (current != null && current.getAmplifier() > amplifier && current.getDuration() > durationTicks / 2) {
+			return;
+		}
+		if (current != null && current.getAmplifier() == amplifier && current.getDuration() > durationTicks / 2) {
+			return;
+		}
+		viewer.addEffect(new MobEffectInstance(effect, durationTicks, amplifier, false, false, true));
+	}
+
+	private static void applyWomanDefenseShake(ServerPlayer viewer, double strength) {
+		if (viewer == null || strength <= 0.0D) {
+			return;
+		}
+
+		Vec3 movement = viewer.getDeltaMovement();
+		double shakeX = (viewer.getRandom().nextDouble() - 0.5D) * strength;
+		double shakeZ = (viewer.getRandom().nextDouble() - 0.5D) * strength;
+		viewer.setDeltaMovement(movement.x + shakeX, movement.y, movement.z + shakeZ);
+		viewer.hurtMarked = true;
 	}
 
 	private static void tickWomanAttack(MinecraftServer server) {
@@ -1984,7 +2181,7 @@ public final class ServerRaceSystem {
 			return;
 		}
 		long nowTick = server.overworld().getGameTime();
-		tickWomanAttackCharges(server, nowTick);
+		tickWomanAttackCharges(server);
 		tickWomanAttackProjectiles(server);
 		tickWomanAttackFollows(server, nowTick);
 	}
@@ -1999,7 +2196,7 @@ public final class ServerRaceSystem {
 		}
 	}
 
-	private static void tickWomanAttackCharges(MinecraftServer server, long nowTick) {
+	private static void tickWomanAttackCharges(MinecraftServer server) {
 		if (WOMAN_ATTACK_CHARGE_SESSIONS.isEmpty()) {
 			return;
 		}
@@ -2022,6 +2219,13 @@ public final class ServerRaceSystem {
 
 			Vec3 center = player.getEyePosition().add(player.getLookAngle().normalize().scale(WOMAN_ATTACK_CHARGE_FORWARD_OFFSET));
 			emitWomanAttackSphereParticles(level, center, session.radius, WOMAN_ATTACK_PARTICLE_COUNT);
+			LivingEntity touchedTarget = findWomanAttackChargeTarget(level, player, center, session.radius);
+			if (touchedTarget != null) {
+				iterator.remove();
+				removeWomanAttackAirTrigger(session);
+				applyWomanAttackHit(level, player, touchedTarget, session.damage, player.getLookAngle(), session.followTicks, session.range);
+				continue;
+			}
 
 			syncWomanAttackAirTrigger(player, session);
 		}
@@ -2149,7 +2353,7 @@ public final class ServerRaceSystem {
 			return InteractionResult.PASS;
 		}
 		WomanAttackChargeSession session = WOMAN_ATTACK_CHARGE_SESSIONS.get(player.getUUID());
-		if (session == null || !session.charged) {
+		if (session == null) {
 			return InteractionResult.PASS;
 		}
 		if (!(player.level() instanceof ServerLevel level)) {
@@ -2231,7 +2435,6 @@ public final class ServerRaceSystem {
 	private static boolean shouldMaintainWomanAttackAirTrigger(ServerPlayer player, WomanAttackChargeSession session) {
 		return player != null
 				&& session != null
-				&& session.charged
 				&& player.isAlive()
 				&& !player.isSpectator()
 				&& player.getMainHandItem().isEmpty()
@@ -2277,15 +2480,38 @@ public final class ServerRaceSystem {
 		if (level == null || owner == null || target == null || projectile == null) {
 			return;
 		}
-		float damage = (float) Math.max(0.0D, projectile.damage());
+		applyWomanAttackHit(
+				level,
+				owner,
+				target,
+				projectile.damage(),
+				projectile.velocity(),
+				projectile.followTicks(),
+				Math.max(0.0D, projectile.originalRange())
+		);
+	}
+
+	private static void applyWomanAttackHit(
+			ServerLevel level,
+			ServerPlayer owner,
+			LivingEntity target,
+			double damageValue,
+			Vec3 knockDirection,
+			long followTicks,
+			double range
+	) {
+		if (level == null || owner == null || target == null || knockDirection == null) {
+			return;
+		}
+		float damage = (float) Math.max(0.0D, damageValue);
 		target.hurtServer(level, level.damageSources().magic(), damage);
 
-		Vec3 knock = projectile.velocity().normalize().scale(0.4D);
+		Vec3 normalizedKnock = knockDirection.lengthSqr() <= 1.0E-6D ? owner.getLookAngle() : knockDirection.normalize();
+		Vec3 knock = normalizedKnock.scale(0.4D);
 		target.push(knock.x, 0.1D, knock.z);
 
 		long nowTick = level.getGameTime();
-		double range = Math.max(0.0D, projectile.originalRange());
-		startWomanAttackFollow(target, nowTick, projectile.followTicks(), range);
+		startWomanAttackFollow(target, nowTick, followTicks, Math.max(0.0D, range));
 	}
 
 	private static void startWomanAttackFollow(LivingEntity target, long nowTick, long followTicks, double range) {
@@ -2326,6 +2552,46 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private static LivingEntity findWomanAttackChargeTarget(ServerLevel level, ServerPlayer owner, Vec3 center, double radius) {
+		if (level == null || owner == null || center == null || radius <= 0.0D) {
+			return null;
+		}
+
+		double maxDistanceSqr = radius * radius;
+		AABB searchBox = new AABB(center, center).inflate(radius);
+		LivingEntity bestTarget = null;
+		double bestDistanceSqr = Double.POSITIVE_INFINITY;
+		for (LivingEntity target : level.getEntitiesOfClass(LivingEntity.class, searchBox, entity -> canWomanAttackHit(owner, entity))) {
+			double distanceSqr = distanceToAabbSqr(center, target.getBoundingBox());
+			if (distanceSqr > maxDistanceSqr || distanceSqr >= bestDistanceSqr) {
+				continue;
+			}
+			bestTarget = target;
+			bestDistanceSqr = distanceSqr;
+		}
+		return bestTarget;
+	}
+
+	private static double distanceToAabbSqr(Vec3 point, AABB box) {
+		if (point == null || box == null) {
+			return Double.POSITIVE_INFINITY;
+		}
+		double dx = clampDistance(point.x, box.minX, box.maxX);
+		double dy = clampDistance(point.y, box.minY, box.maxY);
+		double dz = clampDistance(point.z, box.minZ, box.maxZ);
+		return dx * dx + dy * dy + dz * dz;
+	}
+
+	private static double clampDistance(double value, double min, double max) {
+		if (value < min) {
+			return min - value;
+		}
+		if (value > max) {
+			return value - max;
+		}
+		return 0.0D;
+	}
+
 	private static boolean canWomanAttackHit(ServerPlayer owner, Entity entity) {
 		if (owner == null) {
 			return false;
@@ -2363,12 +2629,16 @@ public final class ServerRaceSystem {
 		return false;
 	}
 
-	private static double getWomanAttackChargeRadius(RaceAbilityConfig ability) {
-		return positiveOrDefault(ability == null ? 0.0D : ability.womanAttackChargeRadiusBlocks, WOMAN_ATTACK_DEFAULT_CHARGE_RADIUS_BLOCKS);
+	private static double getWomanDefenseRange(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.activationRangeBlocks, WOMAN_DEFENSE_DEFAULT_RANGE_BLOCKS);
 	}
 
-	private static double getWomanAttackChargeSeconds(RaceAbilityConfig ability) {
-		return positiveOrDefault(ability == null ? 0.0D : ability.womanAttackChargeSeconds, WOMAN_ATTACK_DEFAULT_CHARGE_SECONDS);
+	private static double getWomanDefenseDurationSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.durationSeconds, WOMAN_DEFENSE_DEFAULT_DURATION_SECONDS);
+	}
+
+	private static double getWomanAttackChargeRadius(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.womanAttackChargeRadiusBlocks, WOMAN_ATTACK_DEFAULT_CHARGE_RADIUS_BLOCKS);
 	}
 
 	private static double getWomanAttackRange(RaceAbilityConfig ability) {

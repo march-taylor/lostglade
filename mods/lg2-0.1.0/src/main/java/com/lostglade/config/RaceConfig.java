@@ -166,7 +166,6 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.womanFlowerCooldownSeconds, value -> ability.womanFlowerCooldownSeconds = value);
 		changed |= normalizeNonNegative(ability.womanAnimalBreedCooldownSeconds, value -> ability.womanAnimalBreedCooldownSeconds = value);
 		changed |= normalizeNonNegative(ability.womanAttackChargeRadiusBlocks, value -> ability.womanAttackChargeRadiusBlocks = value);
-		changed |= normalizeNonNegative(ability.womanAttackChargeSeconds, value -> ability.womanAttackChargeSeconds = value);
 		changed |= normalizeNonNegative(ability.womanAttackRangeBlocks, value -> ability.womanAttackRangeBlocks = value);
 		changed |= normalizeNonNegative(ability.womanAttackDamage, value -> ability.womanAttackDamage = value);
 		changed |= normalizeNonNegative(ability.womanAttackFollowSeconds, value -> ability.womanAttackFollowSeconds = value);
@@ -342,7 +341,6 @@ public final class RaceConfig {
 		public double womanFlowerCooldownSeconds = 0.0D;
 		public double womanAnimalBreedCooldownSeconds = 0.0D;
 		public double womanAttackChargeRadiusBlocks = 0.0D;
-		public double womanAttackChargeSeconds = 0.0D;
 		public double womanAttackRangeBlocks = 0.0D;
 		public double womanAttackDamage = 0.0D;
 		public double womanAttackFollowSeconds = 0.0D;
