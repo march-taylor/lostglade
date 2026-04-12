@@ -2092,7 +2092,16 @@ public final class ServerRaceSystem {
 
 		float absorptionAmount = (float) (getWomanUniqueAbsorptionHearts(ability) * 2.0D);
 		if (absorptionAmount > 0.0F) {
-			caster.setAbsorptionAmount(caster.getAbsorptionAmount() + absorptionAmount);
+			int absorptionAmplifier = Math.max(0, (int) Math.ceil(absorptionAmount / 4.0F) - 1);
+			caster.addEffect(new MobEffectInstance(
+					MobEffects.ABSORPTION,
+					(int) Math.min(Integer.MAX_VALUE, durationTicks),
+					absorptionAmplifier,
+					false,
+					false,
+					false
+			));
+			caster.setAbsorptionAmount(Math.max(caster.getAbsorptionAmount(), Math.min(caster.getMaxAbsorption(), absorptionAmount)));
 		}
 		emitSmoke(level, target.position());
 		startGenericAbilityCooldown(caster, RaceAbilitySlot.UNIQUE_ABILITY, ability);
