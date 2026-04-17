@@ -1,5 +1,6 @@
 package com.lostglade.mixin;
 
+import com.lostglade.server.DroneSystem;
 import com.lostglade.server.RendererBotCameraSystem;
 import com.lostglade.server.RendererBotPresenceSystem;
 import net.minecraft.server.level.ChunkMap;
@@ -20,14 +21,27 @@ public abstract class ChunkMapVirtualCameraTrackingMixin {
 
 	@Inject(method = "updateChunkTracking", at = @At("HEAD"), cancellable = true)
 	private void lg2$useVirtualCameraChunkTracking(ServerPlayer player, CallbackInfo ci) {
-		if (!RendererBotPresenceSystem.isRendererBot(player)) {
+		if (RendererBotPresenceSystem.isRendererBot(player)) {
+			ChunkTrackingView desiredView = RendererBotCameraSystem.createVirtualChunkTrackingView(player);
+			if (Objects.equals(player.getChunkTrackingView(), desiredView)) {
+				ci.cancel();
+				return;
+			}
+			this.applyChunkTrackingView(player, desiredView);
+			ci.cancel();
 			return;
 		}
-		ChunkTrackingView desiredView = RendererBotCameraSystem.createVirtualChunkTrackingView(player);
+
+		if (!DroneSystem.isControllingDrone(player)) {
+			return;
+		}
+
+		ChunkTrackingView desiredView = DroneSystem.createVirtualChunkTrackingView(player);
 		if (Objects.equals(player.getChunkTrackingView(), desiredView)) {
 			ci.cancel();
 			return;
 		}
+
 		this.applyChunkTrackingView(player, desiredView);
 		ci.cancel();
 	}

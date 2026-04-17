@@ -1,5 +1,6 @@
 package com.lostglade.mixin;
 
+import com.lostglade.server.DroneSystem;
 import com.lostglade.server.RendererBotCameraSystem;
 import com.lostglade.server.RendererBotPresenceSystem;
 import net.minecraft.server.level.ServerLevel;
@@ -40,7 +41,9 @@ public abstract class ChunkMapTrackedEntityRendererBotMixin {
 
 	@Inject(method = "updatePlayer", at = @At("HEAD"), cancellable = true)
 	private void lg2$trackEntitiesFromVirtualCameraPositions(ServerPlayer player, CallbackInfo ci) {
-		if (!RendererBotPresenceSystem.isRendererBot(player)) {
+		boolean rendererBot = RendererBotPresenceSystem.isRendererBot(player);
+		boolean droneOperator = DroneSystem.isControllingDrone(player);
+		if (!rendererBot && !droneOperator) {
 			return;
 		}
 
@@ -54,12 +57,18 @@ public abstract class ChunkMapTrackedEntityRendererBotMixin {
 		}
 
 		double horizontalRange = this.getEffectiveRange();
-		boolean withinRealPlayerRange = lg2$isWithinHorizontalRange(player.position(), this.entity, horizontalRange);
-		boolean withinVirtualCameraRange = RendererBotCameraSystem.isEntityWithinAnyVirtualTrackingRange(player, this.entity, horizontalRange);
 		ChunkPos chunkPos = this.entity.chunkPosition();
-		boolean realChunkTracked = entityLevel.getChunkSource().chunkMap.isChunkTracked(player, chunkPos.x, chunkPos.z);
-		boolean shouldTrack = this.entity.broadcastToPlayer(player)
-				&& ((withinRealPlayerRange && realChunkTracked) || withinVirtualCameraRange);
+		boolean chunkTracked = entityLevel.getChunkSource().chunkMap.isChunkTracked(player, chunkPos.x, chunkPos.z);
+		boolean shouldTrack;
+		if (rendererBot) {
+			boolean withinRealPlayerRange = lg2$isWithinHorizontalRange(player.position(), this.entity, horizontalRange);
+			boolean withinVirtualCameraRange = RendererBotCameraSystem.isEntityWithinAnyVirtualTrackingRange(player, this.entity, horizontalRange);
+			shouldTrack = this.entity.broadcastToPlayer(player)
+					&& ((withinRealPlayerRange && chunkTracked) || withinVirtualCameraRange);
+		} else {
+			boolean withinDroneRange = DroneSystem.isEntityWithinVirtualTrackingRange(player, this.entity, horizontalRange);
+			shouldTrack = this.entity.broadcastToPlayer(player) && chunkTracked && withinDroneRange;
+		}
 
 		if (!shouldTrack) {
 			this.removePlayer(player);

@@ -13,7 +13,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class LivingEntityDroneTravelMixin {
 	@Inject(method = "travel", at = @At("HEAD"), cancellable = true)
 	private void lg2$useDroneTravel(Vec3 travelVector, CallbackInfo ci) {
-		if (!((Object) this instanceof ServerPlayer player) || !DroneSystem.isControllingDrone(player)) {
+		if (!((Object) this instanceof ServerPlayer player)
+				|| !DroneSystem.isControllingDrone(player)
+				|| !DroneSystem.shouldApplyDroneTravelToPlayer(player)) {
 			return;
 		}
 		DroneSystem.applyControlledTravel(player);
