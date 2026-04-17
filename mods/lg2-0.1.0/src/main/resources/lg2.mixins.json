@@ -18,6 +18,7 @@
 		"ChickenTrojanRoosterAmbientSoundMixin",
 		"ChickenTrojanRoosterMixin",
 		"ChunkMapRendererBotShadowEventsMixin",
+		"ClientboundSetPassengersPacketAccessor",
 		"CrafterBlockCopperGogglesMixin",
 		"CraftingMenuCopperGogglesMixin",
 		"EntityCartelNoSaveMixin",

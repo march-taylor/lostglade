@@ -4,6 +4,7 @@ import com.google.common.collect.ImmutableMultimap;
 import com.lostglade.Lg2;
 import com.lostglade.item.DroneItem;
 import com.lostglade.item.ModItems;
+import com.lostglade.mixin.ClientboundSetPassengersPacketAccessor;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
 import com.lostglade.server.map.MapImageRenderSystem;
 import com.lostglade.mixin.EntityPassengerAccessor;
@@ -33,6 +34,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.RemoteChatSession;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundBundlePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
@@ -176,6 +178,8 @@ public final class DroneSystem {
 	private static final byte ENTITY_FLAG_SWIMMING = 0x10;
 	private static final byte ENTITY_FLAG_INVISIBLE = 0x20;
 	private static final byte ENTITY_FLAG_FALL_FLYING = (byte) 0x80;
+	private static final double CONTROLLED_PROXY_RESYNC_DISTANCE_SQR = 0.55D * 0.55D;
+	private static final int CONTROLLED_PROXY_RESYNC_INTERVAL_TICKS = 12;
 	private static final Map<UUID, DroneControlSession> ACTIVE_SESSIONS = new HashMap<>();
 	private static final Map<UUID, DroneInputState> INPUTS = new HashMap<>();
 	private static final Map<UUID, UUID> CONTROLLERS_BY_DRONE = new HashMap<>();
@@ -372,6 +376,16 @@ public final class DroneSystem {
 		float currentPitch = session.proxyPitch();
 		session.setProxyYaw(packet.getYRot(currentYaw));
 		session.setProxyPitch(net.minecraft.util.Mth.clamp(packet.getXRot(currentPitch), -90.0F, 90.0F));
+		if (packet.hasPosition()) {
+			double currentX = session.lastPlayerPos().x;
+			double currentY = session.lastPlayerPos().y;
+			double currentZ = session.lastPlayerPos().z;
+			session.setLastPlayerPos(new Vec3(
+					packet.getX(currentX),
+					packet.getY(currentY),
+					packet.getZ(currentZ)
+			));
+		}
 	}
 
 	public static void handleControlledAcceptTeleportPacket(ServerPlayer player, int teleportId) {
@@ -435,6 +449,19 @@ public final class DroneSystem {
 			return packet;
 		}
 
+		if (packet instanceof ClientboundBundlePacket bundlePacket) {
+			List<Packet<? super net.minecraft.network.protocol.game.ClientGamePacketListener>> rewrittenPackets = new ArrayList<>();
+			boolean changed = false;
+			for (Packet<? super net.minecraft.network.protocol.game.ClientGamePacketListener> bundledPacket : bundlePacket.subPackets()) {
+				Packet<?> rewritten = rewriteOutgoingControlledOperatorPacket(receiver, (Packet<?>) bundledPacket);
+				rewrittenPackets.add((Packet<? super net.minecraft.network.protocol.game.ClientGamePacketListener>) rewritten);
+				if (rewritten != bundledPacket) {
+					changed = true;
+				}
+			}
+			return changed ? new ClientboundBundlePacket(rewrittenPackets) : packet;
+		}
+
 		if (packet instanceof ClientboundGameEventPacket gameEventPacket
 				&& gameEventPacket.getEvent() == ClientboundGameEventPacket.CHANGE_GAME_MODE) {
 			return new ClientboundGameEventPacket(
@@ -464,6 +491,11 @@ public final class DroneSystem {
 		if (packet instanceof ClientboundSetEntityDataPacket entityDataPacket
 				&& entityDataPacket.id() == receiver.getId()) {
 			return buildControlledSelfMetadataPacket(receiver);
+		}
+
+		if (packet instanceof ClientboundSetPassengersPacket passengersPacket
+				&& passengersPacket.getVehicle() == receiver.getId()) {
+			return buildControlledOperatorPassengerPacket(receiver, session);
 		}
 
 		if (packet instanceof ClientboundContainerSetSlotPacket slotPacket
@@ -895,7 +927,11 @@ public final class DroneSystem {
 		session.setDisplayForwardDrive(displayForwardDrive);
 		session.setDisplayStrafeDrive(displayStrafeDrive);
 		syncDroneDisplay(root, yaw, pitch, displayForwardDrive, displayStrafeDrive);
-		syncControlledPlayer(player, root);
+		boolean forcePosSync = root.horizontalCollision
+				|| root.verticalCollision
+				|| session.proxyResyncTicks() >= CONTROLLED_PROXY_RESYNC_INTERVAL_TICKS
+				|| session.lastPlayerPos().distanceToSqr(session.proxyPos()) > CONTROLLED_PROXY_RESYNC_DISTANCE_SQR;
+		syncControlledPlayer(player, root, forcePosSync);
 		updateDroneHud(player, session, false);
 	}
 
@@ -1276,7 +1312,17 @@ public final class DroneSystem {
 		if (player != null) {
 			DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
 			if (session != null) {
-				syncControlledOperatorView(player, session, root, false);
+				syncControlledOperatorView(player, session, root, false, false);
+			}
+			return;
+		}
+	}
+
+	private static void syncControlledPlayer(ServerPlayer player, Entity root, boolean forcePositionSync) {
+		if (player != null) {
+			DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
+			if (session != null) {
+				syncControlledOperatorView(player, session, root, false, forcePositionSync);
 			}
 			return;
 		}
@@ -1368,6 +1414,16 @@ public final class DroneSystem {
 		return ClientboundPlayerPositionPacket.of(session.nextProxyTeleportId(), change, ABSOLUTE_TELEPORT);
 	}
 
+	private static ClientboundSetPassengersPacket buildControlledOperatorPassengerPacket(ServerPlayer player, DroneControlSession session) {
+		ClientboundSetPassengersPacket packet = new ClientboundSetPassengersPacket(player);
+		Entity root = (player != null && player.level() != null && player.level().getServer() != null && session != null)
+				? findDroneRoot(player.level().getServer(), session.droneDimension(), session.droneUuid())
+				: null;
+		int[] passengerIds = root != null && root.isAlive() ? new int[]{root.getId()} : new int[0];
+		((ClientboundSetPassengersPacketAccessor) (Object) packet).lg2$setPassengers(passengerIds);
+		return packet;
+	}
+
 	private static void sendControlledOperatorPacket(ServerPlayer player, Packet<?> packet) {
 		if (player == null || player.connection == null || packet == null) {
 			return;
@@ -1375,7 +1431,13 @@ public final class DroneSystem {
 		runWithControlledOperatorPacketRewriteBypass(() -> player.connection.send(packet));
 	}
 
-	private static void syncControlledOperatorView(ServerPlayer player, DroneControlSession session, Entity root, boolean forceGameMode) {
+	private static void syncControlledOperatorView(
+			ServerPlayer player,
+			DroneControlSession session,
+			Entity root,
+			boolean forceGameMode,
+			boolean forcePositionSync
+	) {
 		if (player == null || session == null || root == null || player.connection == null) {
 			return;
 		}
@@ -1386,9 +1448,16 @@ public final class DroneSystem {
 			));
 			sendControlledOperatorPacket(player, new ClientboundPlayerAbilitiesPacket(buildControlledOperatorAbilities(player)));
 		}
-		sendControlledOperatorPacket(player, buildControlledPlayerPositionPacket(session));
+		if (forceGameMode || forcePositionSync) {
+			sendControlledOperatorPacket(player, buildControlledPlayerPositionPacket(session));
+			session.setLastPlayerPos(session.proxyPos());
+			session.setProxyResyncTicks(0);
+		} else {
+			session.setProxyResyncTicks(session.proxyResyncTicks() + 1);
+		}
 		sendControlledOperatorPacket(player, new ClientboundSetEntityMotionPacket(player.getId(), session.velocity()));
 		sendControlledOperatorPacket(player, buildControlledSelfMetadataPacket(player));
+		sendControlledOperatorPacket(player, buildControlledOperatorPassengerPacket(player, session));
 	}
 
 	private static void updateDroneHud(ServerPlayer player, DroneControlSession session, boolean force) {
@@ -1601,10 +1670,12 @@ public final class DroneSystem {
 		session.setProxyPos(root.position());
 		session.setProxyYaw(root.getYRot());
 		session.setProxyPitch(root.getXRot());
+		session.setLastPlayerPos(root.position());
+		session.setProxyResyncTicks(0);
 		ACTIVE_SESSIONS.put(player.getUUID(), session);
 		INPUTS.put(player.getUUID(), DroneInputState.EMPTY);
 		CONTROLLERS_BY_DRONE.put(root.getUUID(), player.getUUID());
-		syncControlledOperatorView(player, session, root, true);
+		syncControlledOperatorView(player, session, root, true, true);
 		notifyDroneNetworkChanged(root);
 		updateDroneHud(player, session, true);
 		player.sendSystemMessage(Component.literal("Управление дроном начато. Shift — выйти."));
@@ -1683,6 +1754,7 @@ public final class DroneSystem {
 						)
 				)
 		));
+		sendControlledOperatorPacket(player, new ClientboundSetPassengersPacket(player));
 		detachAnyDronePassengersFromController(player);
 		markCameraSuppressedForPlayer(player);
 		discardDummyIfPresent(server, session, dummy);
@@ -2163,7 +2235,7 @@ public final class DroneSystem {
 		if (anchor != null) {
 			return anchor;
 		}
-		Vec3 origin = droneCameraOrigin(root);
+		Vec3 origin = resolveSafeDroneCameraOrigin(root, droneCameraOrigin(root));
 		Interaction created = createDroneCameraAnchor(level, origin, root.getYRot(), root.getXRot());
 		created.addTag(DRONE_CAMERA_OWNER_TAG_PREFIX + root.getUUID());
 		level.addFreshEntity(created);
@@ -2176,12 +2248,48 @@ public final class DroneSystem {
 		if (anchor == null) {
 			return;
 		}
-		Vec3 origin = droneCameraOrigin(root);
+		Vec3 origin = resolveSafeDroneCameraOrigin(root, droneCameraOrigin(root));
 		anchor.setPos(origin.x, origin.y, origin.z);
 		anchor.setYRot(root.getYRot());
 		anchor.setXRot(root.getXRot());
 		anchor.setDeltaMovement(velocity == null ? Vec3.ZERO : velocity);
 		anchor.hurtMarked = true;
+	}
+
+	private static Vec3 resolveSafeDroneCameraOrigin(Entity root, Vec3 desiredOrigin) {
+		if (root == null || desiredOrigin == null || !(root.level() instanceof ServerLevel level)) {
+			return desiredOrigin == null ? Vec3.ZERO : desiredOrigin;
+		}
+		if (!isCameraOriginInsideSolid(level, desiredOrigin)) {
+			return desiredOrigin;
+		}
+		double minY = root.getY() + 0.01D;
+		for (int step = 1; step <= 8; step++) {
+			double candidateY = desiredOrigin.y - step * 0.05D;
+			if (candidateY < minY) {
+				break;
+			}
+			Vec3 candidate = new Vec3(desiredOrigin.x, candidateY, desiredOrigin.z);
+			if (!isCameraOriginInsideSolid(level, candidate)) {
+				return candidate;
+			}
+		}
+		return new Vec3(desiredOrigin.x, minY, desiredOrigin.z);
+	}
+
+	private static boolean isCameraOriginInsideSolid(ServerLevel level, Vec3 origin) {
+		if (level == null || origin == null) {
+			return false;
+		}
+		AABB probe = new AABB(
+				origin.x - 0.04D,
+				origin.y - 0.04D,
+				origin.z - 0.04D,
+				origin.x + 0.04D,
+				origin.y + 0.04D,
+				origin.z + 0.04D
+		);
+		return !level.noCollision(probe);
 	}
 
 	private static DronePilotDummyEntity spawnPlayerDummy(ServerLevel level, ServerPlayer sourcePlayer, Vec3 position) {
@@ -2769,19 +2877,20 @@ public final class DroneSystem {
 		private boolean wasInvisible;
 		private boolean wasNoGravity;
 		private boolean wasNoPhysics;
-		private boolean wasInvulnerable;
-		private boolean hadMayfly;
-		private boolean wasFlying;
-		private final GameType serverGameMode;
-		private Vec3 velocity = Vec3.ZERO;
-		private Vec3 intendedVelocity = Vec3.ZERO;
-		private Vec3 lastPlayerPos = Vec3.ZERO;
-		private Vec3 proxyPos = Vec3.ZERO;
-		private float proxyYaw;
-		private float proxyPitch;
-		private int nextProxyTeleportId = 1;
-		private int lastAcceptedProxyTeleportId;
-		private double forwardDrive;
+			private boolean wasInvulnerable;
+			private boolean hadMayfly;
+			private boolean wasFlying;
+			private final GameType serverGameMode;
+			private Vec3 velocity = Vec3.ZERO;
+			private Vec3 intendedVelocity = Vec3.ZERO;
+			private Vec3 lastPlayerPos = Vec3.ZERO;
+			private Vec3 proxyPos = Vec3.ZERO;
+			private float proxyYaw;
+			private float proxyPitch;
+			private int nextProxyTeleportId = 1;
+			private int lastAcceptedProxyTeleportId;
+			private int proxyResyncTicks;
+			private double forwardDrive;
 		private double strafeDrive;
 		private double displayForwardDrive;
 		private double displayStrafeDrive;
@@ -2929,17 +3038,25 @@ public final class DroneSystem {
 			return this.nextProxyTeleportId++;
 		}
 
-		private int lastAcceptedProxyTeleportId() {
-			return this.lastAcceptedProxyTeleportId;
-		}
+			private int lastAcceptedProxyTeleportId() {
+				return this.lastAcceptedProxyTeleportId;
+			}
 
-		private void setLastAcceptedProxyTeleportId(int lastAcceptedProxyTeleportId) {
-			this.lastAcceptedProxyTeleportId = Math.max(0, lastAcceptedProxyTeleportId);
-		}
+			private void setLastAcceptedProxyTeleportId(int lastAcceptedProxyTeleportId) {
+				this.lastAcceptedProxyTeleportId = Math.max(0, lastAcceptedProxyTeleportId);
+			}
 
-		private double forwardDrive() {
-			return this.forwardDrive;
-		}
+			private int proxyResyncTicks() {
+				return this.proxyResyncTicks;
+			}
+
+			private void setProxyResyncTicks(int proxyResyncTicks) {
+				this.proxyResyncTicks = Math.max(0, proxyResyncTicks);
+			}
+
+			private double forwardDrive() {
+				return this.forwardDrive;
+			}
 
 		private void setForwardDrive(double forwardDrive) {
 			this.forwardDrive = forwardDrive;
