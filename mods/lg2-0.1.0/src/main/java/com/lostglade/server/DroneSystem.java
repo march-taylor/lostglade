@@ -378,11 +378,10 @@ public final class DroneSystem {
 		session.setProxyPitch(net.minecraft.util.Mth.clamp(packet.getXRot(currentPitch), -90.0F, 90.0F));
 		if (packet.hasPosition()) {
 			double currentX = session.lastPlayerPos().x;
-			double currentY = session.lastPlayerPos().y;
 			double currentZ = session.lastPlayerPos().z;
 			session.setLastPlayerPos(new Vec3(
 					packet.getX(currentX),
-					packet.getY(currentY),
+					session.proxyPos().y,
 					packet.getZ(currentZ)
 			));
 		}
@@ -927,10 +926,12 @@ public final class DroneSystem {
 		session.setDisplayForwardDrive(displayForwardDrive);
 		session.setDisplayStrafeDrive(displayStrafeDrive);
 		syncDroneDisplay(root, yaw, pitch, displayForwardDrive, displayStrafeDrive);
+		double horizontalDx = session.lastPlayerPos().x - session.proxyPos().x;
+		double horizontalDz = session.lastPlayerPos().z - session.proxyPos().z;
+		double horizontalDriftSqr = horizontalDx * horizontalDx + horizontalDz * horizontalDz;
 		boolean forcePosSync = root.horizontalCollision
-				|| root.verticalCollision
 				|| session.proxyResyncTicks() >= CONTROLLED_PROXY_RESYNC_INTERVAL_TICKS
-				|| session.lastPlayerPos().distanceToSqr(session.proxyPos()) > CONTROLLED_PROXY_RESYNC_DISTANCE_SQR;
+				|| horizontalDriftSqr > CONTROLLED_PROXY_RESYNC_DISTANCE_SQR;
 		syncControlledPlayer(player, root, forcePosSync);
 		updateDroneHud(player, session, false);
 	}
