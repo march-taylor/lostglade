@@ -86,6 +86,7 @@
 	"client": [
 		"client.CameraDroneProxyMixin",
 		"client.ClientInputAccessor",
+		"client.EntityDroneProxyCollisionMixin",
 		"client.LocalPlayerAbsoluteInvisibilityMixin",
 		"client.LocalPlayerDroneProxyMixin"
 	],

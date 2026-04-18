@@ -17,6 +17,26 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class CameraDroneProxyMixin {
 	@Unique
 	private static final double LG2_DRONE_CAMERA_HEIGHT = 0.35D * 0.5D;
+	@Unique
+	private static final double LG2_CAMERA_ANCHOR_MAX_DISTANCE_SQR = 2.0D * 2.0D;
+	@Unique
+	private static final double LG2_DRONE_CAMERA_ESCAPE_STEP = 0.04D;
+	@Unique
+	private static final int LG2_DRONE_CAMERA_ESCAPE_XZ_RADIUS_STEPS = 4;
+	@Unique
+	private static final double[] LG2_DRONE_CAMERA_ESCAPE_Y_OFFSETS = new double[]{
+			0.0D,
+			-0.05D,
+			0.05D,
+			-0.10D,
+			0.10D,
+			-0.15D,
+			-0.20D,
+			-0.25D,
+			-0.30D,
+			-0.35D,
+			-0.40D
+	};
 
 	@Inject(method = "setup", at = @At("TAIL"))
 	private void lg2$lockDroneProxyCameraToDrone(
@@ -38,7 +58,9 @@ public abstract class CameraDroneProxyMixin {
 
 		Vec3 rootPos = root.getPosition(partialTick);
 		Vec3 desiredOrigin = new Vec3(rootPos.x, rootPos.y + LG2_DRONE_CAMERA_HEIGHT, rootPos.z);
-		Vec3 safeOrigin = lg2$resolveSafeDroneCameraOrigin(level, rootPos.y, desiredOrigin);
+		Entity cameraAnchor = lg2$findDroneCameraAnchor(level, root, desiredOrigin);
+		Vec3 anchorOrigin = cameraAnchor == null ? desiredOrigin : cameraAnchor.getPosition(partialTick);
+		Vec3 safeOrigin = lg2$resolveSafeDroneCameraOrigin(level, rootPos.y, anchorOrigin);
 		((CameraPositionInvoker) (Object) this).lg2$setPosition(safeOrigin);
 	}
 
@@ -64,6 +86,33 @@ public abstract class CameraDroneProxyMixin {
 	}
 
 	@Unique
+	private static Entity lg2$findDroneCameraAnchor(Level level, Entity root, Vec3 desiredOrigin) {
+		if (level == null || root == null || desiredOrigin == null) {
+			return null;
+		}
+		Entity best = null;
+		double bestDistanceSqr = LG2_CAMERA_ANCHOR_MAX_DISTANCE_SQR;
+		for (Entity candidate : level.getEntities(
+				root,
+				root.getBoundingBox().inflate(2.0D),
+				entity -> entity != null
+						&& entity != root
+						&& entity.getType() == EntityType.INTERACTION
+						&& !root.hasPassenger(entity)
+		)) {
+			if (candidate.getBbWidth() > 0.08F || candidate.getBbHeight() > 0.08F) {
+				continue;
+			}
+			double distanceSqr = candidate.position().distanceToSqr(desiredOrigin);
+			if (distanceSqr < bestDistanceSqr) {
+				bestDistanceSqr = distanceSqr;
+				best = candidate;
+			}
+		}
+		return best;
+	}
+
+	@Unique
 	private static Vec3 lg2$resolveSafeDroneCameraOrigin(Level level, double rootY, Vec3 desiredOrigin) {
 		if (level == null || desiredOrigin == null) {
 			return desiredOrigin == null ? Vec3.ZERO : desiredOrigin;
@@ -71,17 +120,39 @@ public abstract class CameraDroneProxyMixin {
 		if (!lg2$isCameraOriginInsideSolid(level, desiredOrigin)) {
 			return desiredOrigin;
 		}
-
 		double minY = rootY + 0.01D;
-		for (int step = 1; step <= 8; step++) {
-			double candidateY = desiredOrigin.y - step * 0.05D;
+		Vec3 best = null;
+		double bestDistanceSqr = Double.POSITIVE_INFINITY;
+		for (double yOffset : LG2_DRONE_CAMERA_ESCAPE_Y_OFFSETS) {
+			double candidateY = desiredOrigin.y + yOffset;
 			if (candidateY < minY) {
-				break;
+				continue;
 			}
-			Vec3 candidate = new Vec3(desiredOrigin.x, candidateY, desiredOrigin.z);
-			if (!lg2$isCameraOriginInsideSolid(level, candidate)) {
-				return candidate;
+			for (int xStep = -LG2_DRONE_CAMERA_ESCAPE_XZ_RADIUS_STEPS; xStep <= LG2_DRONE_CAMERA_ESCAPE_XZ_RADIUS_STEPS; xStep++) {
+				for (int zStep = -LG2_DRONE_CAMERA_ESCAPE_XZ_RADIUS_STEPS; zStep <= LG2_DRONE_CAMERA_ESCAPE_XZ_RADIUS_STEPS; zStep++) {
+					if (xStep == 0 && zStep == 0 && yOffset == 0.0D) {
+						continue;
+					}
+					double xOffset = xStep * LG2_DRONE_CAMERA_ESCAPE_STEP;
+					double zOffset = zStep * LG2_DRONE_CAMERA_ESCAPE_STEP;
+					Vec3 candidate = new Vec3(
+							desiredOrigin.x + xOffset,
+							candidateY,
+							desiredOrigin.z + zOffset
+					);
+					if (lg2$isCameraOriginInsideSolid(level, candidate)) {
+						continue;
+					}
+					double distanceSqr = xOffset * xOffset + yOffset * yOffset + zOffset * zOffset;
+					if (distanceSqr < bestDistanceSqr) {
+						best = candidate;
+						bestDistanceSqr = distanceSqr;
+					}
+				}
 			}
+		}
+		if (best != null) {
+			return best;
 		}
 		return new Vec3(desiredOrigin.x, minY, desiredOrigin.z);
 	}

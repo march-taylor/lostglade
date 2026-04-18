@@ -179,6 +179,22 @@ public final class DroneSystem {
 	private static final byte ENTITY_FLAG_INVISIBLE = 0x20;
 	private static final byte ENTITY_FLAG_FALL_FLYING = (byte) 0x80;
 	private static final double CONTROLLED_PROXY_RESYNC_DISTANCE_SQR = 0.55D * 0.55D;
+	private static final double CONTROLLED_PROXY_COLLISION_RESYNC_MARGIN = 0.02D;
+	private static final double DRONE_CAMERA_ESCAPE_STEP = 0.04D;
+	private static final int DRONE_CAMERA_ESCAPE_XZ_RADIUS_STEPS = 4;
+	private static final double[] DRONE_CAMERA_ESCAPE_Y_OFFSETS = new double[]{
+			0.0D,
+			-0.05D,
+			0.05D,
+			-0.10D,
+			0.10D,
+			-0.15D,
+			-0.20D,
+			-0.25D,
+			-0.30D,
+			-0.35D,
+			-0.40D
+	};
 	private static final Map<UUID, DroneControlSession> ACTIVE_SESSIONS = new HashMap<>();
 	private static final Map<UUID, DroneInputState> INPUTS = new HashMap<>();
 	private static final Map<UUID, UUID> CONTROLLERS_BY_DRONE = new HashMap<>();
@@ -925,10 +941,23 @@ public final class DroneSystem {
 		double horizontalDx = session.lastPlayerPos().x - session.proxyPos().x;
 		double horizontalDz = session.lastPlayerPos().z - session.proxyPos().z;
 		double horizontalDriftSqr = horizontalDx * horizontalDx + horizontalDz * horizontalDz;
-		boolean forcePosSync = root.horizontalCollision
-				|| horizontalDriftSqr > CONTROLLED_PROXY_RESYNC_DISTANCE_SQR;
+		boolean forcePosSync = shouldForceControlledProxyResync(player, root, horizontalDriftSqr);
 		syncControlledPlayer(player, root, forcePosSync);
 		updateDroneHud(player, session, false);
+	}
+
+	private static boolean shouldForceControlledProxyResync(ServerPlayer player, Entity root, double horizontalDriftSqr) {
+		if (horizontalDriftSqr > CONTROLLED_PROXY_RESYNC_DISTANCE_SQR) {
+			return true;
+		}
+		if (player == null || root == null || !root.horizontalCollision) {
+			return false;
+		}
+		double driftThreshold = Math.max(
+				0.0D,
+				(DRONE_WIDTH - Math.max(0.0F, player.getBbWidth())) * 0.5D + CONTROLLED_PROXY_COLLISION_RESYNC_MARGIN
+		);
+		return horizontalDriftSqr > driftThreshold * driftThreshold;
 	}
 
 	private static void tickUncontrolledDrone(Entity root, UncontrolledDroneState state) {
@@ -2274,15 +2303,38 @@ public final class DroneSystem {
 			return desiredOrigin;
 		}
 		double minY = root.getY() + 0.01D;
-		for (int step = 1; step <= 8; step++) {
-			double candidateY = desiredOrigin.y - step * 0.05D;
+		Vec3 best = null;
+		double bestDistanceSqr = Double.POSITIVE_INFINITY;
+		for (double yOffset : DRONE_CAMERA_ESCAPE_Y_OFFSETS) {
+			double candidateY = desiredOrigin.y + yOffset;
 			if (candidateY < minY) {
-				break;
+				continue;
 			}
-			Vec3 candidate = new Vec3(desiredOrigin.x, candidateY, desiredOrigin.z);
-			if (!isCameraOriginInsideSolid(level, candidate)) {
-				return candidate;
+			for (int xStep = -DRONE_CAMERA_ESCAPE_XZ_RADIUS_STEPS; xStep <= DRONE_CAMERA_ESCAPE_XZ_RADIUS_STEPS; xStep++) {
+				for (int zStep = -DRONE_CAMERA_ESCAPE_XZ_RADIUS_STEPS; zStep <= DRONE_CAMERA_ESCAPE_XZ_RADIUS_STEPS; zStep++) {
+					if (xStep == 0 && zStep == 0 && yOffset == 0.0D) {
+						continue;
+					}
+					double xOffset = xStep * DRONE_CAMERA_ESCAPE_STEP;
+					double zOffset = zStep * DRONE_CAMERA_ESCAPE_STEP;
+					Vec3 candidate = new Vec3(
+							desiredOrigin.x + xOffset,
+							candidateY,
+							desiredOrigin.z + zOffset
+					);
+					if (isCameraOriginInsideSolid(level, candidate)) {
+						continue;
+					}
+					double distanceSqr = xOffset * xOffset + yOffset * yOffset + zOffset * zOffset;
+					if (distanceSqr < bestDistanceSqr) {
+						best = candidate;
+						bestDistanceSqr = distanceSqr;
+					}
+				}
 			}
+		}
+		if (best != null) {
+			return best;
 		}
 		return new Vec3(desiredOrigin.x, minY, desiredOrigin.z);
 	}
