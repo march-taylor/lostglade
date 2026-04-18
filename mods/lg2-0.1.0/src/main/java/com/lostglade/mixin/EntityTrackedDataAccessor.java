@@ -17,4 +17,9 @@ public interface EntityTrackedDataAccessor {
 	static EntityDataAccessor<Pose> lg2$getDataPose() {
 		throw new AssertionError();
 	}
+
+	@Accessor("DATA_NO_GRAVITY")
+	static EntityDataAccessor<Boolean> lg2$getDataNoGravity() {
+		throw new AssertionError();
+	}
 }

@@ -84,7 +84,9 @@
 		"ZombieNaturalSpawnMarkerMixin"
 	],
 	"client": [
-		"client.LocalPlayerAbsoluteInvisibilityMixin"
+		"client.ClientInputAccessor",
+		"client.LocalPlayerAbsoluteInvisibilityMixin",
+		"client.LocalPlayerDroneProxyMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

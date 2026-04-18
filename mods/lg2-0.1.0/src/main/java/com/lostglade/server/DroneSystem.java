@@ -834,13 +834,10 @@ public final class DroneSystem {
 				continue;
 			}
 
-			// If someone is actively controlling the drone, it should follow the player, not our physics.
-			if (root.isPassenger() && root.getVehicle() instanceof ServerPlayer controller) {
-				DroneControlSession session = ACTIVE_SESSIONS.get(controller.getUUID());
-				if (session != null && Objects.equals(session.droneUuid(), root.getUUID())) {
-					UNCONTROLLED_DRONES.remove(entry.getKey());
-					continue;
-				}
+			// If someone is actively controlling the drone, it should follow the operator proxy, not uncontrolled physics.
+			if (isDroneActivelyControlled(root)) {
+				UNCONTROLLED_DRONES.remove(entry.getKey());
+				continue;
 			}
 
 			tickUncontrolledDrone(root, state);
@@ -1182,7 +1179,7 @@ public final class DroneSystem {
 			return;
 		}
 		// After a restart we want drones to keep falling without a controller; seed the physics state from entity motion.
-		if (root.isPassenger() && root.getVehicle() instanceof ServerPlayer) {
+		if (isDroneActivelyControlled(root)) {
 			return;
 		}
 		UNCONTROLLED_DRONES.putIfAbsent(
@@ -1349,6 +1346,18 @@ public final class DroneSystem {
 		);
 	}
 
+	private static boolean isDroneActivelyControlled(Entity root) {
+		if (root == null) {
+			return false;
+		}
+		UUID controllerId = CONTROLLERS_BY_DRONE.get(root.getUUID());
+		if (controllerId == null) {
+			return false;
+		}
+		DroneControlSession session = ACTIVE_SESSIONS.get(controllerId);
+		return session != null && Objects.equals(session.droneUuid(), root.getUUID());
+	}
+
 	private static boolean isWithinHorizontalRange(Vec3 origin, Entity entity, double horizontalRange) {
 		if (origin == null || entity == null || horizontalRange <= 0.0D) {
 			return false;
@@ -1378,6 +1387,7 @@ public final class DroneSystem {
 
 	private static Packet<?> buildControlledSelfMetadataPacket(ServerPlayer player) {
 		EntityDataAccessor<Byte> sharedFlagsAccessor = EntityTrackedDataAccessor.lg2$getDataSharedFlagsId();
+		EntityDataAccessor<Boolean> noGravityAccessor = EntityTrackedDataAccessor.lg2$getDataNoGravity();
 		EntityDataAccessor<Pose> poseAccessor = EntityTrackedDataAccessor.lg2$getDataPose();
 		byte flags = 0;
 		if (player != null) {
@@ -1390,6 +1400,7 @@ public final class DroneSystem {
 				player.getId(),
 				List.of(
 						SynchedEntityData.DataValue.create(sharedFlagsAccessor, flags),
+						SynchedEntityData.DataValue.create(noGravityAccessor, true),
 						SynchedEntityData.DataValue.create(poseAccessor, Pose.FALL_FLYING)
 				)
 		);
@@ -1750,6 +1761,10 @@ public final class DroneSystem {
 								player.getEntityData().get(EntityTrackedDataAccessor.lg2$getDataSharedFlagsId())
 						),
 						SynchedEntityData.DataValue.create(
+								EntityTrackedDataAccessor.lg2$getDataNoGravity(),
+								player.getEntityData().get(EntityTrackedDataAccessor.lg2$getDataNoGravity())
+						),
+						SynchedEntityData.DataValue.create(
 								EntityTrackedDataAccessor.lg2$getDataPose(),
 								player.getPose()
 						)
@@ -2100,7 +2115,7 @@ public final class DroneSystem {
 	private static void syncDroneDisplay(Entity root, float yRot, float xRot, double forwardDrive, double strafeDrive) {
 		Entity entity = findDroneDisplay(root);
 		if (entity instanceof Display.ItemDisplay display) {
-			boolean controlled = root != null && root.isPassenger() && root.getVehicle() instanceof ServerPlayer;
+			boolean controlled = isDroneActivelyControlled(root);
 			display.setPosRotInterpolationDuration(DRONE_DISPLAY_INTERPOLATION_TICKS);
 			display.setTransformationInterpolationDelay(0);
 			display.setTransformationInterpolationDuration(DRONE_DISPLAY_INTERPOLATION_TICKS);
@@ -2115,7 +2130,7 @@ public final class DroneSystem {
 
 	private static Transformation buildDroneDisplayTransformation(Entity root, double forwardDrive, double strafeDrive) {
 		float yOffset = 0.0F;
-		if (root != null && root.isPassenger() && root.getVehicle() instanceof ServerPlayer) {
+		if (isDroneActivelyControlled(root)) {
 			yOffset = DRONE_DISPLAY_CONTROLLED_Y_OFFSET;
 		}
 
