@@ -412,7 +412,7 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, WomanShnyagaPendingSelection> WOMAN_SHNYAGA_PENDING_SELECTIONS = new LinkedHashMap<>();
 	private static final Map<UUID, LinkedHashMap<UUID, WomanShnyagaProposal>> WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN = new LinkedHashMap<>();
 	private static final Map<UUID, WomanShnyagaProposal> WOMAN_SHNYAGA_PROPOSALS_BY_TARGET = new LinkedHashMap<>();
-	private static final Map<UUID, WomanShnyagaLink> WOMAN_SHNYAGA_LINKS_BY_WOMAN = new LinkedHashMap<>();
+	private static final Map<UUID, LinkedHashMap<UUID, WomanShnyagaLink>> WOMAN_SHNYAGA_LINKS_BY_WOMAN = new LinkedHashMap<>();
 	private static final Map<UUID, WomanShnyagaLink> WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND = new LinkedHashMap<>();
 	private static final Set<UUID> WOMAN_SHNYAGA_BUFFED_BOYFRIENDS = new HashSet<>();
 	private static final Map<UUID, WomanAttackChargeSession> WOMAN_ATTACK_CHARGE_SESSIONS = new LinkedHashMap<>();
@@ -2318,14 +2318,6 @@ public final class ServerRaceSystem {
 		if (caster == null || ability == null || caster.isSpectator() || !caster.isAlive()) {
 			return 0;
 		}
-		if (hasWomanShnyagaLink(caster.getUUID())) {
-			caster.displayClientMessage(
-					Component.literal(localizeWomanShnyagaText(caster, "already_linked"))
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
-					true
-			);
-			return 0;
-		}
 
 		List<ServerPlayer> candidates = collectWomanShnyagaCandidates(caster);
 		if (candidates.isEmpty()) {
@@ -2383,14 +2375,6 @@ public final class ServerRaceSystem {
 
 	private static int beginWomanShnyagaPrompt(ServerPlayer caster, ServerPlayer target, RaceAbilityConfig ability) {
 		if (caster == null || target == null || ability == null) {
-			return 0;
-		}
-		if (hasWomanShnyagaLink(caster.getUUID())) {
-			caster.displayClientMessage(
-					Component.literal(localizeWomanShnyagaText(caster, "already_linked"))
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
-					true
-			);
 			return 0;
 		}
 		if (hasWomanShnyagaLink(target.getUUID())) {
@@ -2466,15 +2450,6 @@ public final class ServerRaceSystem {
 			);
 			return;
 		}
-		if (hasWomanShnyagaLink(sender.getUUID())) {
-			WOMAN_SHNYAGA_PENDING_SELECTIONS.remove(sender.getUUID());
-			sender.displayClientMessage(
-					Component.literal(localizeWomanShnyagaText(sender, "already_linked"))
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
-					true
-			);
-			return;
-		}
 		if (hasWomanShnyagaLink(target.getUUID())) {
 			WOMAN_SHNYAGA_PENDING_SELECTIONS.remove(sender.getUUID());
 			sender.displayClientMessage(
@@ -2544,7 +2519,7 @@ public final class ServerRaceSystem {
 			);
 			return 0;
 		}
-		if (hasWomanShnyagaLink(woman.getUUID()) || hasWomanShnyagaLink(target.getUUID())) {
+		if (hasWomanShnyagaLink(target.getUUID())) {
 			removeWomanShnyagaProposal(proposal);
 			target.sendSystemMessage(
 					Component.literal(localizeWomanShnyagaText(target, "proposal_expired"))
@@ -2585,7 +2560,11 @@ public final class ServerRaceSystem {
 	}
 
 	private static boolean hasWomanShnyagaLink(UUID playerId) {
-		return playerId != null && (WOMAN_SHNYAGA_LINKS_BY_WOMAN.containsKey(playerId) || WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.containsKey(playerId));
+		if (playerId == null) {
+			return false;
+		}
+		LinkedHashMap<UUID, WomanShnyagaLink> womanLinks = WOMAN_SHNYAGA_LINKS_BY_WOMAN.get(playerId);
+		return (womanLinks != null && !womanLinks.isEmpty()) || WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.containsKey(playerId);
 	}
 
 	private static void removeWomanShnyagaProposal(WomanShnyagaProposal proposal) {
@@ -2613,25 +2592,11 @@ public final class ServerRaceSystem {
 		removeWomanShnyagaProposal(WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.get(playerId));
 	}
 
-	private static void clearWomanShnyagaProposalsForWoman(UUID womanId) {
-		if (womanId == null) {
-			return;
-		}
-		LinkedHashMap<UUID, WomanShnyagaProposal> proposals = WOMAN_SHNYAGA_PROPOSALS_BY_WOMAN.remove(womanId);
-		if (proposals == null) {
-			return;
-		}
-		for (WomanShnyagaProposal proposal : proposals.values()) {
-			WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.remove(proposal.targetId(), proposal);
-		}
-	}
-
 	private static void createWomanShnyagaLink(MinecraftServer server, ServerPlayer woman, ServerPlayer boyfriend, WomanShnyagaProposal proposal) {
 		if (server == null || woman == null || boyfriend == null || proposal == null) {
 			return;
 		}
 
-		clearWomanShnyagaProposalsForWoman(proposal.womanId());
 		WomanShnyagaLink link = new WomanShnyagaLink(
 				proposal.womanId(),
 				proposal.womanName(),
@@ -2640,7 +2605,9 @@ public final class ServerRaceSystem {
 				proposal.transferHealthPoints(),
 				proposal.buffRangeBlocks()
 		);
-		WOMAN_SHNYAGA_LINKS_BY_WOMAN.put(link.womanId(), link);
+		WOMAN_SHNYAGA_LINKS_BY_WOMAN
+				.computeIfAbsent(link.womanId(), ignored -> new LinkedHashMap<>())
+				.put(link.boyfriendId(), link);
 		WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.put(link.boyfriendId(), link);
 		saveWomanShnyagaLinks(server);
 		syncWomanShnyagaLinks(server);
@@ -2759,12 +2726,18 @@ public final class ServerRaceSystem {
 		}
 
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			WomanShnyagaLink womanLink = WOMAN_SHNYAGA_LINKS_BY_WOMAN.get(player.getUUID());
+			LinkedHashMap<UUID, WomanShnyagaLink> womanLinks = WOMAN_SHNYAGA_LINKS_BY_WOMAN.get(player.getUUID());
 			WomanShnyagaLink boyfriendLink = WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.get(player.getUUID());
+			double womanHealthBonus = 0.0D;
+			if (womanLinks != null) {
+				for (WomanShnyagaLink womanLink : womanLinks.values()) {
+					womanHealthBonus += Math.max(0.0D, womanLink.transferHealthPoints());
+				}
+			}
 			syncWomanShnyagaHealthModifier(
 					player,
 					WOMAN_SHNYAGA_WOMAN_HEALTH_MODIFIER_ID,
-					womanLink == null ? 0.0D : womanLink.transferHealthPoints()
+					womanHealthBonus
 			);
 			syncWomanShnyagaHealthModifier(
 					player,
@@ -2774,25 +2747,27 @@ public final class ServerRaceSystem {
 		}
 
 		Set<UUID> buffedNow = new HashSet<>();
-		for (WomanShnyagaLink link : WOMAN_SHNYAGA_LINKS_BY_WOMAN.values()) {
-			ServerPlayer woman = server.getPlayerList().getPlayer(link.womanId());
-			ServerPlayer boyfriend = server.getPlayerList().getPlayer(link.boyfriendId());
-			if (woman == null || boyfriend == null || !woman.isAlive() || !boyfriend.isAlive() || woman.isSpectator() || boyfriend.isSpectator()) {
-				continue;
-			}
-			if (woman.level() != boyfriend.level()) {
-				continue;
-			}
-			double maxDistance = link.buffRangeBlocks();
-			if (boyfriend.distanceToSqr(woman) > maxDistance * maxDistance) {
-				continue;
-			}
+		for (LinkedHashMap<UUID, WomanShnyagaLink> womanLinks : WOMAN_SHNYAGA_LINKS_BY_WOMAN.values()) {
+			for (WomanShnyagaLink link : womanLinks.values()) {
+				ServerPlayer woman = server.getPlayerList().getPlayer(link.womanId());
+				ServerPlayer boyfriend = server.getPlayerList().getPlayer(link.boyfriendId());
+				if (woman == null || boyfriend == null || !woman.isAlive() || !boyfriend.isAlive() || woman.isSpectator() || boyfriend.isSpectator()) {
+					continue;
+				}
+				if (woman.level() != boyfriend.level()) {
+					continue;
+				}
+				double maxDistance = link.buffRangeBlocks();
+				if (boyfriend.distanceToSqr(woman) > maxDistance * maxDistance) {
+					continue;
+				}
 
-			refreshWomanShnyagaBuff(boyfriend, MobEffects.STRENGTH, 0);
-			refreshWomanShnyagaBuff(boyfriend, MobEffects.SPEED, 0);
-			refreshWomanShnyagaBuff(boyfriend, MobEffects.REGENERATION, 0);
-			refreshWomanShnyagaBuff(boyfriend, MobEffects.HASTE, 1);
-			buffedNow.add(boyfriend.getUUID());
+				refreshWomanShnyagaBuff(boyfriend, MobEffects.STRENGTH, 0);
+				refreshWomanShnyagaBuff(boyfriend, MobEffects.SPEED, 0);
+				refreshWomanShnyagaBuff(boyfriend, MobEffects.REGENERATION, 0);
+				refreshWomanShnyagaBuff(boyfriend, MobEffects.HASTE, 1);
+				buffedNow.add(boyfriend.getUUID());
+			}
 		}
 
 		Set<UUID> toClear = new HashSet<>(WOMAN_SHNYAGA_BUFFED_BOYFRIENDS);
@@ -2861,9 +2836,11 @@ public final class ServerRaceSystem {
 		}
 
 		List<WomanShnyagaLink> toRemove = new ArrayList<>();
-		for (WomanShnyagaLink link : WOMAN_SHNYAGA_LINKS_BY_WOMAN.values()) {
-			if (!whitelistIds.contains(link.boyfriendId())) {
-				toRemove.add(link);
+		for (LinkedHashMap<UUID, WomanShnyagaLink> womanLinks : WOMAN_SHNYAGA_LINKS_BY_WOMAN.values()) {
+			for (WomanShnyagaLink link : womanLinks.values()) {
+				if (!whitelistIds.contains(link.boyfriendId())) {
+					toRemove.add(link);
+				}
 			}
 		}
 		for (WomanShnyagaLink link : toRemove) {
@@ -2905,8 +2882,11 @@ public final class ServerRaceSystem {
 		if (link == null) {
 			return;
 		}
-		WOMAN_SHNYAGA_LINKS_BY_WOMAN.remove(link.womanId());
-		WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.remove(link.boyfriendId());
+		WOMAN_SHNYAGA_LINKS_BY_WOMAN.computeIfPresent(link.womanId(), (womanId, links) -> {
+			links.remove(link.boyfriendId(), link);
+			return links.isEmpty() ? null : links;
+		});
+		WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.remove(link.boyfriendId(), link);
 		saveWomanShnyagaLinks(server);
 		syncWomanShnyagaLinks(server);
 
@@ -2950,12 +2930,12 @@ public final class ServerRaceSystem {
 		if (player == null) {
 			return;
 		}
-		WomanShnyagaLink link = WOMAN_SHNYAGA_LINKS_BY_WOMAN.get(player.getUUID());
-		if (link == null) {
+		Entity attacker = damageSource == null ? null : damageSource.getEntity();
+		if (!(attacker instanceof ServerPlayer attackerPlayer)) {
 			return;
 		}
-		Entity attacker = damageSource == null ? null : damageSource.getEntity();
-		if (!(attacker instanceof ServerPlayer attackerPlayer) || !link.boyfriendId().equals(attackerPlayer.getUUID())) {
+		WomanShnyagaLink link = WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.get(attackerPlayer.getUUID());
+		if (link == null || !player.getUUID().equals(link.womanId())) {
 			return;
 		}
 
@@ -2971,15 +2951,17 @@ public final class ServerRaceSystem {
 		}
 		Path path = getWomanShnyagaStatePath(server);
 		WomanShnyagaPersistedState state = new WomanShnyagaPersistedState();
-		for (WomanShnyagaLink link : WOMAN_SHNYAGA_LINKS_BY_WOMAN.values()) {
-			state.links.add(new WomanShnyagaPersistedLink(
-					link.womanId(),
-					link.womanName(),
-					link.boyfriendId(),
-					link.boyfriendName(),
-					link.transferHealthPoints(),
-					link.buffRangeBlocks()
-			));
+		for (LinkedHashMap<UUID, WomanShnyagaLink> womanLinks : WOMAN_SHNYAGA_LINKS_BY_WOMAN.values()) {
+			for (WomanShnyagaLink link : womanLinks.values()) {
+				state.links.add(new WomanShnyagaPersistedLink(
+						link.womanId(),
+						link.womanName(),
+						link.boyfriendId(),
+						link.boyfriendName(),
+						link.transferHealthPoints(),
+						link.buffRangeBlocks()
+				));
+			}
 		}
 		try {
 			Files.createDirectories(path.getParent());
@@ -3020,10 +3002,12 @@ public final class ServerRaceSystem {
 						Math.max(0.0D, stored.transferHealthPoints),
 						Math.max(0.0D, stored.buffRangeBlocks)
 				);
-				if (WOMAN_SHNYAGA_LINKS_BY_WOMAN.containsKey(link.womanId()) || WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.containsKey(link.boyfriendId())) {
+				if (WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.containsKey(link.boyfriendId())) {
 					continue;
 				}
-				WOMAN_SHNYAGA_LINKS_BY_WOMAN.put(link.womanId(), link);
+				WOMAN_SHNYAGA_LINKS_BY_WOMAN
+						.computeIfAbsent(link.womanId(), ignored -> new LinkedHashMap<>())
+						.put(link.boyfriendId(), link);
 				WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.put(link.boyfriendId(), link);
 			}
 		} catch (Exception exception) {
