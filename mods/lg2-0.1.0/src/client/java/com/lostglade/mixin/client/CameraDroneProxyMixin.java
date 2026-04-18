@@ -4,7 +4,7 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
@@ -20,7 +20,7 @@ public abstract class CameraDroneProxyMixin {
 
 	@Inject(method = "setup", at = @At("TAIL"))
 	private void lg2$lockDroneProxyCameraToDrone(
-			BlockGetter level,
+			Level level,
 			Entity entity,
 			boolean detached,
 			boolean thirdPersonReverse,
@@ -38,7 +38,7 @@ public abstract class CameraDroneProxyMixin {
 
 		Vec3 rootPos = root.getPosition(partialTick);
 		Vec3 desiredOrigin = new Vec3(rootPos.x, rootPos.y + LG2_DRONE_CAMERA_HEIGHT, rootPos.z);
-		Vec3 safeOrigin = lg2$resolveSafeDroneCameraOrigin(player, rootPos.y, desiredOrigin);
+		Vec3 safeOrigin = lg2$resolveSafeDroneCameraOrigin(level, rootPos.y, desiredOrigin);
 		((CameraPositionInvoker) (Object) this).lg2$setPosition(safeOrigin);
 	}
 
@@ -64,11 +64,11 @@ public abstract class CameraDroneProxyMixin {
 	}
 
 	@Unique
-	private static Vec3 lg2$resolveSafeDroneCameraOrigin(LocalPlayer player, double rootY, Vec3 desiredOrigin) {
-		if (player == null || desiredOrigin == null || player.level() == null) {
+	private static Vec3 lg2$resolveSafeDroneCameraOrigin(Level level, double rootY, Vec3 desiredOrigin) {
+		if (level == null || desiredOrigin == null) {
 			return desiredOrigin == null ? Vec3.ZERO : desiredOrigin;
 		}
-		if (!lg2$isCameraOriginInsideSolid(player, desiredOrigin)) {
+		if (!lg2$isCameraOriginInsideSolid(level, desiredOrigin)) {
 			return desiredOrigin;
 		}
 
@@ -79,7 +79,7 @@ public abstract class CameraDroneProxyMixin {
 				break;
 			}
 			Vec3 candidate = new Vec3(desiredOrigin.x, candidateY, desiredOrigin.z);
-			if (!lg2$isCameraOriginInsideSolid(player, candidate)) {
+			if (!lg2$isCameraOriginInsideSolid(level, candidate)) {
 				return candidate;
 			}
 		}
@@ -87,8 +87,8 @@ public abstract class CameraDroneProxyMixin {
 	}
 
 	@Unique
-	private static boolean lg2$isCameraOriginInsideSolid(LocalPlayer player, Vec3 origin) {
-		if (player == null || origin == null || player.level() == null) {
+	private static boolean lg2$isCameraOriginInsideSolid(Level level, Vec3 origin) {
+		if (level == null || origin == null) {
 			return false;
 		}
 		AABB probe = new AABB(
@@ -99,6 +99,6 @@ public abstract class CameraDroneProxyMixin {
 				origin.y + 0.04D,
 				origin.z + 0.04D
 		);
-		return !player.level().noCollision(probe);
+		return !level.noCollision(probe);
 	}
 }
