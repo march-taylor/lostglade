@@ -112,6 +112,7 @@ import net.minecraft.world.Container;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.raid.Raider;
+import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -2567,6 +2568,42 @@ public final class ServerRaceSystem {
 		return (womanLinks != null && !womanLinks.isEmpty()) || WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.containsKey(playerId);
 	}
 
+	private static WomanShnyagaLink getWomanShnyagaLink(UUID womanId, UUID boyfriendId) {
+		if (womanId == null || boyfriendId == null) {
+			return null;
+		}
+		LinkedHashMap<UUID, WomanShnyagaLink> womanLinks = WOMAN_SHNYAGA_LINKS_BY_WOMAN.get(womanId);
+		if (womanLinks != null) {
+			WomanShnyagaLink byWoman = womanLinks.get(boyfriendId);
+			if (byWoman != null) {
+				return byWoman;
+			}
+		}
+		WomanShnyagaLink byBoyfriend = WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.get(boyfriendId);
+		if (byBoyfriend != null && womanId.equals(byBoyfriend.womanId())) {
+			return byBoyfriend;
+		}
+		return null;
+	}
+
+	private static ServerPlayer resolveWomanShnyagaAttackerPlayer(DamageSource damageSource) {
+		if (damageSource == null) {
+			return null;
+		}
+		Entity attacker = damageSource.getEntity();
+		if (attacker instanceof ServerPlayer attackerPlayer) {
+			return attackerPlayer;
+		}
+		Entity direct = damageSource.getDirectEntity();
+		if (direct instanceof ServerPlayer directPlayer) {
+			return directPlayer;
+		}
+		if (direct instanceof Projectile projectile && projectile.getOwner() instanceof ServerPlayer projectileOwner) {
+			return projectileOwner;
+		}
+		return null;
+	}
+
 	private static void removeWomanShnyagaProposal(WomanShnyagaProposal proposal) {
 		if (proposal == null) {
 			return;
@@ -2890,11 +2927,19 @@ public final class ServerRaceSystem {
 		saveWomanShnyagaLinks(server);
 		syncWomanShnyagaLinks(server);
 
+		ServerPlayer woman = server == null ? null : server.getPlayerList().getPlayer(link.womanId());
+		ServerPlayer boyfriend = server == null ? null : server.getPlayerList().getPlayer(link.boyfriendId());
+		if (boyfriend != null && boyfriend.isAlive()) {
+			boyfriend.setHealth(Math.min(boyfriend.getMaxHealth(), boyfriend.getHealth() + (float) link.transferHealthPoints()));
+			clearWomanShnyagaBuffs(boyfriend);
+		}
+		if (woman != null && woman.isAlive() && woman.getHealth() > woman.getMaxHealth()) {
+			woman.setHealth(woman.getMaxHealth());
+		}
+
 		if (server == null || reason == WomanShnyagaBreakReason.NONE) {
 			return;
 		}
-		ServerPlayer woman = server.getPlayerList().getPlayer(link.womanId());
-		ServerPlayer boyfriend = server.getPlayerList().getPlayer(link.boyfriendId());
 		if (reason == WomanShnyagaBreakReason.WOMAN_KILLED_BY_BOYFRIEND) {
 			if (woman != null) {
 				woman.sendSystemMessage(
@@ -2930,12 +2975,12 @@ public final class ServerRaceSystem {
 		if (player == null) {
 			return;
 		}
-		Entity attacker = damageSource == null ? null : damageSource.getEntity();
-		if (!(attacker instanceof ServerPlayer attackerPlayer)) {
+		ServerPlayer attackerPlayer = resolveWomanShnyagaAttackerPlayer(damageSource);
+		if (attackerPlayer == null) {
 			return;
 		}
-		WomanShnyagaLink link = WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.get(attackerPlayer.getUUID());
-		if (link == null || !player.getUUID().equals(link.womanId())) {
+		WomanShnyagaLink link = getWomanShnyagaLink(player.getUUID(), attackerPlayer.getUUID());
+		if (link == null) {
 			return;
 		}
 
