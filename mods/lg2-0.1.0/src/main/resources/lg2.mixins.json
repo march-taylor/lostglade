@@ -84,6 +84,7 @@
 		"ZombieNaturalSpawnMarkerMixin"
 	],
 	"client": [
+		"client.CameraDroneProxyMixin",
 		"client.ClientInputAccessor",
 		"client.LocalPlayerAbsoluteInvisibilityMixin",
 		"client.LocalPlayerDroneProxyMixin"

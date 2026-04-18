@@ -179,7 +179,6 @@ public final class DroneSystem {
 	private static final byte ENTITY_FLAG_INVISIBLE = 0x20;
 	private static final byte ENTITY_FLAG_FALL_FLYING = (byte) 0x80;
 	private static final double CONTROLLED_PROXY_RESYNC_DISTANCE_SQR = 0.55D * 0.55D;
-	private static final int CONTROLLED_PROXY_RESYNC_INTERVAL_TICKS = 12;
 	private static final Map<UUID, DroneControlSession> ACTIVE_SESSIONS = new HashMap<>();
 	private static final Map<UUID, DroneInputState> INPUTS = new HashMap<>();
 	private static final Map<UUID, UUID> CONTROLLERS_BY_DRONE = new HashMap<>();
@@ -927,7 +926,6 @@ public final class DroneSystem {
 		double horizontalDz = session.lastPlayerPos().z - session.proxyPos().z;
 		double horizontalDriftSqr = horizontalDx * horizontalDx + horizontalDz * horizontalDz;
 		boolean forcePosSync = root.horizontalCollision
-				|| session.proxyResyncTicks() >= CONTROLLED_PROXY_RESYNC_INTERVAL_TICKS
 				|| horizontalDriftSqr > CONTROLLED_PROXY_RESYNC_DISTANCE_SQR;
 		syncControlledPlayer(player, root, forcePosSync);
 		updateDroneHud(player, session, false);
@@ -1463,9 +1461,6 @@ public final class DroneSystem {
 		if (forceGameMode || forcePositionSync) {
 			sendControlledOperatorPacket(player, buildControlledPlayerPositionPacket(session));
 			session.setLastPlayerPos(session.proxyPos());
-			session.setProxyResyncTicks(0);
-		} else {
-			session.setProxyResyncTicks(session.proxyResyncTicks() + 1);
 		}
 		sendControlledOperatorPacket(player, new ClientboundSetEntityMotionPacket(player.getId(), session.velocity()));
 		sendControlledOperatorPacket(player, buildControlledSelfMetadataPacket(player));
@@ -1683,7 +1678,6 @@ public final class DroneSystem {
 		session.setProxyYaw(root.getYRot());
 		session.setProxyPitch(root.getXRot());
 		session.setLastPlayerPos(root.position());
-		session.setProxyResyncTicks(0);
 		ACTIVE_SESSIONS.put(player.getUUID(), session);
 		INPUTS.put(player.getUUID(), DroneInputState.EMPTY);
 		CONTROLLERS_BY_DRONE.put(root.getUUID(), player.getUUID());
@@ -2893,20 +2887,19 @@ public final class DroneSystem {
 		private boolean wasInvisible;
 		private boolean wasNoGravity;
 		private boolean wasNoPhysics;
-			private boolean wasInvulnerable;
-			private boolean hadMayfly;
-			private boolean wasFlying;
-			private final GameType serverGameMode;
-			private Vec3 velocity = Vec3.ZERO;
-			private Vec3 intendedVelocity = Vec3.ZERO;
-			private Vec3 lastPlayerPos = Vec3.ZERO;
-			private Vec3 proxyPos = Vec3.ZERO;
-			private float proxyYaw;
-			private float proxyPitch;
-			private int nextProxyTeleportId = 1;
-			private int lastAcceptedProxyTeleportId;
-			private int proxyResyncTicks;
-			private double forwardDrive;
+		private boolean wasInvulnerable;
+		private boolean hadMayfly;
+		private boolean wasFlying;
+		private final GameType serverGameMode;
+		private Vec3 velocity = Vec3.ZERO;
+		private Vec3 intendedVelocity = Vec3.ZERO;
+		private Vec3 lastPlayerPos = Vec3.ZERO;
+		private Vec3 proxyPos = Vec3.ZERO;
+		private float proxyYaw;
+		private float proxyPitch;
+		private int nextProxyTeleportId = 1;
+		private int lastAcceptedProxyTeleportId;
+		private double forwardDrive;
 		private double strafeDrive;
 		private double displayForwardDrive;
 		private double displayStrafeDrive;
@@ -3054,25 +3047,17 @@ public final class DroneSystem {
 			return this.nextProxyTeleportId++;
 		}
 
-			private int lastAcceptedProxyTeleportId() {
-				return this.lastAcceptedProxyTeleportId;
-			}
+		private int lastAcceptedProxyTeleportId() {
+			return this.lastAcceptedProxyTeleportId;
+		}
 
-			private void setLastAcceptedProxyTeleportId(int lastAcceptedProxyTeleportId) {
-				this.lastAcceptedProxyTeleportId = Math.max(0, lastAcceptedProxyTeleportId);
-			}
+		private void setLastAcceptedProxyTeleportId(int lastAcceptedProxyTeleportId) {
+			this.lastAcceptedProxyTeleportId = Math.max(0, lastAcceptedProxyTeleportId);
+		}
 
-			private int proxyResyncTicks() {
-				return this.proxyResyncTicks;
-			}
-
-			private void setProxyResyncTicks(int proxyResyncTicks) {
-				this.proxyResyncTicks = Math.max(0, proxyResyncTicks);
-			}
-
-			private double forwardDrive() {
-				return this.forwardDrive;
-			}
+		private double forwardDrive() {
+			return this.forwardDrive;
+		}
 
 		private void setForwardDrive(double forwardDrive) {
 			this.forwardDrive = forwardDrive;
