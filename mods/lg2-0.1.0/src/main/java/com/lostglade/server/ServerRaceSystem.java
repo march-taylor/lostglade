@@ -2127,6 +2127,7 @@ public final class ServerRaceSystem {
 
 		consumeWomanFlower(level, pos, state, player);
 		level.sendParticles(ParticleTypes.END_ROD, pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 6, 0.22D, 0.22D, 0.22D, 0.02D);
+		level.playSound(null, player.getX(), player.getY(), player.getZ(), SoundEvents.GENERIC_EAT, SoundSource.PLAYERS, 0.9F, 1.0F);
 		player.heal(WOMAN_FLOWER_HEAL_AMOUNT);
 		startOnlineCooldown(WOMAN_FLOWER_COOLDOWNS, player.getUUID(), asTicks(getWomanFlowerCooldownSeconds(stock)));
 		return InteractionResult.SUCCESS;
@@ -2252,6 +2253,7 @@ public final class ServerRaceSystem {
 						getWomanDefenseRange(ability)
 				)
 		);
+		emitWomanOmenParticles(level, player.position());
 		return 1;
 	}
 
@@ -2302,7 +2304,7 @@ public final class ServerRaceSystem {
 			));
 			caster.setAbsorptionAmount(Math.max(caster.getAbsorptionAmount(), Math.min(caster.getMaxAbsorption(), absorptionAmount)));
 		}
-		emitSmoke(level, target.position());
+		emitWomanOmenParticles(level, target.position());
 		startGenericAbilityCooldown(caster, RaceAbilitySlot.UNIQUE_ABILITY, ability);
 
 		Lg2.LOGGER.info(
@@ -2490,10 +2492,7 @@ public final class ServerRaceSystem {
 				.computeIfAbsent(sender.getUUID(), ignored -> new LinkedHashMap<>())
 				.put(target.getUUID(), proposal);
 		WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.put(target.getUUID(), proposal);
-		sender.sendSystemMessage(
-				Component.literal(localizeWomanShnyagaText(sender, "proposal_sent"))
-						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false))
-		);
+		displayWomanShnyagaStatus(sender, "proposal_sent", ChatFormatting.LIGHT_PURPLE);
 		target.sendSystemMessage(buildWomanShnyagaProposalMessage(target, proposal));
 	}
 
@@ -2503,10 +2502,7 @@ public final class ServerRaceSystem {
 		}
 		WomanShnyagaProposal proposal = WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.get(target.getUUID());
 		if (proposal == null) {
-			target.sendSystemMessage(
-					Component.literal(localizeWomanShnyagaText(target, "no_pending_proposal"))
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
-			);
+			displayWomanShnyagaStatus(target, "no_pending_proposal", ChatFormatting.RED);
 			return 0;
 		}
 
@@ -2514,18 +2510,12 @@ public final class ServerRaceSystem {
 		ServerPlayer woman = server == null ? null : server.getPlayerList().getPlayer(proposal.womanId());
 		if (server == null || woman == null || !woman.isAlive() || woman.isSpectator()) {
 			removeWomanShnyagaProposal(proposal);
-			target.sendSystemMessage(
-					Component.literal(localizeWomanShnyagaText(target, "proposal_expired"))
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
-			);
+			displayWomanShnyagaStatus(target, "proposal_expired", ChatFormatting.RED);
 			return 0;
 		}
 		if (hasWomanShnyagaLink(target.getUUID())) {
 			removeWomanShnyagaProposal(proposal);
-			target.sendSystemMessage(
-					Component.literal(localizeWomanShnyagaText(target, "proposal_expired"))
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
-			);
+			displayWomanShnyagaStatus(target, "proposal_expired", ChatFormatting.RED);
 			return 0;
 		}
 
@@ -2533,18 +2523,12 @@ public final class ServerRaceSystem {
 		RaceAbilityConfig shnyaga = getWomanShnyagaAbility(woman);
 		if (womanRaceOptional.isEmpty() || shnyaga == null || !hasUnlockedAbility(woman, womanRaceOptional.get(), RaceAbilitySlot.SHNYAGA)) {
 			removeWomanShnyagaProposal(proposal);
-			target.sendSystemMessage(
-					Component.literal(localizeWomanShnyagaText(target, "proposal_expired"))
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
-			);
+			displayWomanShnyagaStatus(target, "proposal_expired", ChatFormatting.RED);
 			return 0;
 		}
 		long remainingCooldownTicks = getRemainingGenericAbilityCooldownTicks(woman, RaceAbilitySlot.SHNYAGA);
 		if (remainingCooldownTicks > 0L || isGenericAbilityOnInfiniteCooldown(woman.getUUID(), RaceAbilitySlot.SHNYAGA)) {
-			target.sendSystemMessage(
-					Component.literal(localizeWomanShnyagaText(target, "proposal_on_cooldown"))
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
-			);
+			displayWomanShnyagaStatus(target, "proposal_on_cooldown", ChatFormatting.RED);
 			return 0;
 		}
 
@@ -2586,9 +2570,13 @@ public final class ServerRaceSystem {
 		return null;
 	}
 
-	private static ServerPlayer resolveWomanShnyagaAttackerPlayer(DamageSource damageSource) {
+	private static ServerPlayer resolveWomanShnyagaAttackerPlayer(ServerPlayer victim, DamageSource damageSource) {
 		if (damageSource == null) {
-			return null;
+			if (victim == null) {
+				return null;
+			}
+			LivingEntity killCredit = victim.getKillCredit();
+			return killCredit instanceof ServerPlayer killCreditPlayer ? killCreditPlayer : null;
 		}
 		Entity attacker = damageSource.getEntity();
 		if (attacker instanceof ServerPlayer attackerPlayer) {
@@ -2600,6 +2588,13 @@ public final class ServerRaceSystem {
 		}
 		if (direct instanceof Projectile projectile && projectile.getOwner() instanceof ServerPlayer projectileOwner) {
 			return projectileOwner;
+		}
+		if (victim == null) {
+			return null;
+		}
+		LivingEntity killCredit = victim.getKillCredit();
+		if (killCredit instanceof ServerPlayer killCreditPlayer) {
+			return killCreditPlayer;
 		}
 		return null;
 	}
@@ -2649,14 +2644,8 @@ public final class ServerRaceSystem {
 		saveWomanShnyagaLinks(server);
 		syncWomanShnyagaLinks(server);
 
-		woman.sendSystemMessage(
-				Component.literal(localizeWomanShnyagaText(woman, "accepted_woman"))
-						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false))
-		);
-		boyfriend.sendSystemMessage(
-				Component.literal(localizeWomanShnyagaText(boyfriend, "accepted_target"))
-						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false))
-		);
+		displayWomanShnyagaStatus(woman, "accepted_woman", ChatFormatting.LIGHT_PURPLE);
+		displayWomanShnyagaStatus(boyfriend, "accepted_target", ChatFormatting.LIGHT_PURPLE, link.womanName());
 	}
 
 	private static void applyWomanShnyagaRejection(ServerPlayer woman, ServerPlayer target) {
@@ -2671,14 +2660,8 @@ public final class ServerRaceSystem {
 		int debuffTicks = (int) Math.max(1L, asTicks(getWomanShnyagaRejectDebuffSeconds(shnyaga)));
 		woman.addEffect(new MobEffectInstance(MobEffects.HUNGER, debuffTicks, 0, false, false, false));
 		woman.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, debuffTicks, 0, false, false, false));
-		woman.sendSystemMessage(
-				Component.literal(localizeWomanShnyagaText(woman, "rejected_woman"))
-						.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
-		);
-		target.sendSystemMessage(
-				Component.literal(localizeWomanShnyagaText(target, "rejected_target"))
-						.withStyle(style -> style.withColor(ChatFormatting.AQUA).withItalic(false))
-		);
+		displayWomanShnyagaStatus(woman, "rejected_woman", ChatFormatting.RED, target.getName().getString());
+		displayWomanShnyagaStatus(target, "rejected_target", ChatFormatting.AQUA, woman.getName().getString());
 	}
 
 	private static Component buildWomanShnyagaProposalMessage(ServerPlayer viewer, WomanShnyagaProposal proposal) {
@@ -2688,7 +2671,7 @@ public final class ServerRaceSystem {
 		root.append(Component.literal(proposal.womanName()).withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)));
 		root.append(Component.literal(" " + localizeWomanShnyagaText(viewer, "warning_suffix")).withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)));
 		root.append(Component.literal("\n\n"));
-		root.append(Component.literal("«" + proposal.message() + "»").withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false)));
+		root.append(Component.literal("\u00AB" + proposal.message() + "\u00BB").withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false)));
 		root.append(Component.literal("\n\n"));
 		root.append(
 				Component.literal(localizeWomanShnyagaText(viewer, "accept_button"))
@@ -2710,17 +2693,65 @@ public final class ServerRaceSystem {
 		return root;
 	}
 
+	private static void displayWomanShnyagaStatus(ServerPlayer player, String key, ChatFormatting color) {
+		displayWomanShnyagaStatus(player, key, color, new Object[0]);
+	}
+
+	private static void displayWomanShnyagaStatus(ServerPlayer player, String key, ChatFormatting color, Object... args) {
+		if (player == null || key == null || color == null) {
+			return;
+		}
+		String text = localizeWomanShnyagaText(player, key);
+		if (args != null && args.length > 0) {
+			text = String.format(Locale.ROOT, text, args);
+		}
+		player.displayClientMessage(
+				Component.literal(text)
+						.withStyle(style -> style.withColor(color).withItalic(false)),
+				true
+		);
+	}
+
 	private static void tickWomanShnyaga(MinecraftServer server) {
 		if (server == null) {
 			return;
 		}
 		tickWomanShnyagaPendingSelections(server);
+		tickWomanShnyagaDeathBreaks(server);
 		long nowTick = server.overworld().getGameTime();
 		if (!WOMAN_SHNYAGA_LINKS_BY_WOMAN.isEmpty() && nowTick >= womanShnyagaNextWhitelistCheckTick) {
 			pruneWomanShnyagaLinksAgainstWhitelist(server);
 			womanShnyagaNextWhitelistCheckTick = nowTick + WOMAN_SHNYAGA_WHITELIST_CHECK_INTERVAL_TICKS;
 		}
 		syncWomanShnyagaLinks(server);
+	}
+
+	private static void tickWomanShnyagaDeathBreaks(MinecraftServer server) {
+		if (server == null || WOMAN_SHNYAGA_LINKS_BY_WOMAN.isEmpty()) {
+			return;
+		}
+
+		List<WomanShnyagaLink> toRemove = new ArrayList<>();
+		for (Map.Entry<UUID, LinkedHashMap<UUID, WomanShnyagaLink>> entry : WOMAN_SHNYAGA_LINKS_BY_WOMAN.entrySet()) {
+			ServerPlayer woman = server.getPlayerList().getPlayer(entry.getKey());
+			if (woman == null || woman.isAlive()) {
+				continue;
+			}
+
+			ServerPlayer attackerPlayer = resolveWomanShnyagaAttackerPlayer(woman, woman.getLastDamageSource());
+			if (attackerPlayer == null) {
+				continue;
+			}
+
+			WomanShnyagaLink link = getWomanShnyagaLink(woman.getUUID(), attackerPlayer.getUUID());
+			if (link != null) {
+				toRemove.add(link);
+			}
+		}
+
+		for (WomanShnyagaLink link : toRemove) {
+			dissolveWomanShnyagaLink(server, link, WomanShnyagaBreakReason.WOMAN_KILLED_BY_BOYFRIEND);
+		}
 	}
 
 	private static void tickWomanShnyagaPendingSelections(MinecraftServer server) {
@@ -2741,10 +2772,7 @@ public final class ServerRaceSystem {
 			ServerPlayer target = server.getPlayerList().getPlayer(selection.targetId());
 			if (target == null || !target.isAlive() || target.isSpectator()) {
 				woman.displayClientMessage(Component.empty(), true);
-				woman.sendSystemMessage(
-						Component.literal(localizeWomanShnyagaText(woman, "target_unavailable"))
-								.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
-				);
+				displayWomanShnyagaStatus(woman, "target_unavailable", ChatFormatting.RED);
 				iterator.remove();
 				continue;
 			}
@@ -2942,51 +2970,20 @@ public final class ServerRaceSystem {
 		}
 		if (reason == WomanShnyagaBreakReason.WOMAN_KILLED_BY_BOYFRIEND) {
 			if (woman != null) {
-				woman.sendSystemMessage(
-						Component.literal(localizeWomanShnyagaText(woman, "link_broken_kill_woman"))
-								.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
-				);
+				displayWomanShnyagaStatus(woman, "link_broken_kill_woman", ChatFormatting.RED, link.boyfriendName());
 			}
 			if (boyfriend != null) {
-				boyfriend.sendSystemMessage(
-						Component.literal(localizeWomanShnyagaText(boyfriend, "link_broken_kill_target"))
-								.withStyle(style -> style.withColor(ChatFormatting.AQUA).withItalic(false))
-				);
+				displayWomanShnyagaStatus(boyfriend, "link_broken_kill_target", ChatFormatting.AQUA, link.womanName());
 			}
 			return;
 		}
 		if (reason == WomanShnyagaBreakReason.BOYFRIEND_REMOVED_FROM_WHITELIST) {
 			if (woman != null) {
-				woman.sendSystemMessage(
-						Component.literal(localizeWomanShnyagaText(woman, "link_broken_whitelist_woman"))
-								.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
-				);
+				displayWomanShnyagaStatus(woman, "link_broken_whitelist_woman", ChatFormatting.RED);
 			}
 			if (boyfriend != null) {
-				boyfriend.sendSystemMessage(
-						Component.literal(localizeWomanShnyagaText(boyfriend, "link_broken_whitelist_target"))
-								.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false))
-				);
+				displayWomanShnyagaStatus(boyfriend, "link_broken_whitelist_target", ChatFormatting.RED, link.womanName());
 			}
-		}
-	}
-
-	public static void onPlayerDeath(ServerPlayer player, DamageSource damageSource) {
-		if (player == null) {
-			return;
-		}
-		ServerPlayer attackerPlayer = resolveWomanShnyagaAttackerPlayer(damageSource);
-		if (attackerPlayer == null) {
-			return;
-		}
-		WomanShnyagaLink link = getWomanShnyagaLink(player.getUUID(), attackerPlayer.getUUID());
-		if (link == null) {
-			return;
-		}
-
-		MinecraftServer server = player.level().getServer();
-		if (server != null) {
-			dissolveWomanShnyagaLink(server, link, WomanShnyagaBreakReason.WOMAN_KILLED_BY_BOYFRIEND);
 		}
 	}
 
@@ -3297,6 +3294,7 @@ public final class ServerRaceSystem {
 
 			double range = Math.max(0.0D, session.range());
 			double rangeSqr = range * range;
+			emitWomanDefenseOmenAura(level, woman, nowTick);
 			for (ServerPlayer viewer : level.players()) {
 				if (viewer == null || viewer == woman || !viewer.isAlive() || viewer.isSpectator()) {
 					continue;
@@ -6002,17 +6000,17 @@ public final class ServerRaceSystem {
 				case "proposal_expired" -> "Предложеніе уже недѣйственно.";
 				case "proposal_on_cooldown" -> "Нынѣ отвѣтъ невозможенъ: умѣніе въ охлажденіи.";
 				case "accepted_woman" -> "Онъ согласился. Связь установлена.";
-				case "accepted_target" -> "Вы согласились. Связь установлена.";
-				case "rejected_woman" -> "Васъ отшили.";
-				case "rejected_target" -> "Вы отказались.";
+				case "accepted_target" -> "Вы согласились. Вы стали парнемъ %s.";
+				case "rejected_woman" -> "Васъ отшилъ %s.";
+				case "rejected_target" -> "Вы отшили %s.";
 				case "warning_line" -> "ВНИМАНІЕ!";
 				case "warning_suffix" -> "избрала ТЕБЯ.";
-				case "accept_button" -> "[❤️ Согласиться]";
+				case "accept_button" -> "[❤ Согласиться]";
 				case "reject_button" -> "[💔 Отшить]";
-				case "link_broken_kill_woman" -> "Связь расторгнута: избранникъ васъ убилъ.";
-				case "link_broken_kill_target" -> "Связь расторгнута: вы убили женщину.";
+				case "link_broken_kill_woman" -> "Васъ убилъ %s. Отношенія разрушены.";
+				case "link_broken_kill_target" -> "Вы бросили %s, предательски убив её!";
 				case "link_broken_whitelist_woman" -> "Связь расторгнута: избранникъ удалёнъ из whitelist.";
-				case "link_broken_whitelist_target" -> "Связь расторгнута: вы удалены из whitelist.";
+				case "link_broken_whitelist_target" -> "Вы бросили %s: вы удалены из whitelist.";
 				default -> "";
 			};
 		}
@@ -6029,17 +6027,17 @@ public final class ServerRaceSystem {
 				case "proposal_expired" -> "Пропозиція вже недійсна.";
 				case "proposal_on_cooldown" -> "Відповідь зараз неможлива: здібність на відновленні.";
 				case "accepted_woman" -> "Він погодився. Зв'язок встановлено.";
-				case "accepted_target" -> "Ви погодилися. Зв'язок встановлено.";
-				case "rejected_woman" -> "Вас відшили.";
-				case "rejected_target" -> "Ви відмовилися.";
+				case "accepted_target" -> "Ви погодилися. Ви стали хлопцем %s.";
+				case "rejected_woman" -> "Вас відшив %s.";
+				case "rejected_target" -> "Ви відшили %s.";
 				case "warning_line" -> "УВАГА!";
 				case "warning_suffix" -> "обрала ТЕБЕ.";
-				case "accept_button" -> "[❤️ Погодитися]";
+				case "accept_button" -> "[❤ Погодитися]";
 				case "reject_button" -> "[💔 Відшити]";
-				case "link_broken_kill_woman" -> "Зв'язок розірвано: обранець вас убив.";
-				case "link_broken_kill_target" -> "Зв'язок розірвано: ви вбили жінку.";
+				case "link_broken_kill_woman" -> "Вас убив %s. Стосунки зруйновано.";
+				case "link_broken_kill_target" -> "Ви кинули %s, підступно вбивши її!";
 				case "link_broken_whitelist_woman" -> "Зв'язок розірвано: обранця видалено з whitelist.";
-				case "link_broken_whitelist_target" -> "Зв'язок розірвано: вас видалено з whitelist.";
+				case "link_broken_whitelist_target" -> "Ви кинули %s: вас видалено з whitelist.";
 				default -> "";
 			};
 		}
@@ -6056,17 +6054,17 @@ public final class ServerRaceSystem {
 				case "proposal_expired" -> "その申し込みはもう無効です。";
 				case "proposal_on_cooldown" -> "今は返答できません。この能力はクールダウン中です。";
 				case "accepted_woman" -> "相手が承諾しました。絆が結ばれました。";
-				case "accepted_target" -> "あなたは承諾しました。絆が結ばれました。";
-				case "rejected_woman" -> "振られました。";
-				case "rejected_target" -> "断りました。";
+				case "accepted_target" -> "あなたは承諾しました。あなたは %s の彼氏になりました。";
+				case "rejected_woman" -> "%s に振られました。";
+				case "rejected_target" -> "あなたは %s を振りました。";
 				case "warning_line" -> "警告!";
 				case "warning_suffix" -> "があなたを選びました。";
-				case "accept_button" -> "[❤️ 承諾する]";
+				case "accept_button" -> "[❤ 承諾する]";
 				case "reject_button" -> "[💔 振る]";
-				case "link_broken_kill_woman" -> "絆が切れました: 相手に倒されました。";
-				case "link_broken_kill_target" -> "絆が切れました: あなたが女性を倒しました。";
+				case "link_broken_kill_woman" -> "%s に殺されました。関係は壊れました。";
+				case "link_broken_kill_target" -> "%s を裏切って殺し、振りました。";
 				case "link_broken_whitelist_woman" -> "絆が切れました: 相手が whitelist から削除されました。";
-				case "link_broken_whitelist_target" -> "絆が切れました: あなたが whitelist から削除されました。";
+				case "link_broken_whitelist_target" -> "%s を振りました: あなたが whitelist から削除されました。";
 				default -> "";
 			};
 		}
@@ -6083,17 +6081,17 @@ public final class ServerRaceSystem {
 				case "proposal_expired" -> "Предложение уже недействительно.";
 				case "proposal_on_cooldown" -> "Сейчас ответить нельзя: способность женщины в КД.";
 				case "accepted_woman" -> "Он согласился. Связь установлена.";
-				case "accepted_target" -> "Вы согласились. Связь установлена.";
-				case "rejected_woman" -> "Вас отшили.";
-				case "rejected_target" -> "Вы отказались.";
+				case "accepted_target" -> "Вы согласились. Вы стали парнем %s.";
+				case "rejected_woman" -> "Вас отшил %s.";
+				case "rejected_target" -> "Вы отшили %s.";
 				case "warning_line" -> "ВНИМАНИЕ!";
 				case "warning_suffix" -> "выбрала ТЕБЯ.";
-				case "accept_button" -> "[❤️ Согласиться]";
+				case "accept_button" -> "[❤ Согласиться]";
 				case "reject_button" -> "[💔 Отшить]";
-				case "link_broken_kill_woman" -> "Связь расторгнута: парень убил вас.";
-				case "link_broken_kill_target" -> "Связь расторгнута: вы убили женщину.";
+				case "link_broken_kill_woman" -> "Вас убил %s. Отношения разрушены.";
+				case "link_broken_kill_target" -> "Вы бросили %s, предательски убив её!";
 				case "link_broken_whitelist_woman" -> "Связь расторгнута: парень удалён из whitelist.";
-				case "link_broken_whitelist_target" -> "Связь расторгнута: вас удалили из whitelist.";
+				case "link_broken_whitelist_target" -> "Вы бросили %s: вас удалили из whitelist.";
 				default -> "";
 			};
 		}
@@ -6109,17 +6107,17 @@ public final class ServerRaceSystem {
 			case "proposal_expired" -> "That proposal is no longer valid.";
 			case "proposal_on_cooldown" -> "You can't answer right now: her ability is on cooldown.";
 			case "accepted_woman" -> "He accepted. The bond is established.";
-			case "accepted_target" -> "You accepted. The bond is established.";
-			case "rejected_woman" -> "You were rejected.";
-			case "rejected_target" -> "You refused.";
+			case "accepted_target" -> "You accepted. You became %s's boyfriend.";
+			case "rejected_woman" -> "You were dumped by %s.";
+			case "rejected_target" -> "You dumped %s.";
 			case "warning_line" -> "WARNING!";
 			case "warning_suffix" -> "chose YOU.";
-			case "accept_button" -> "[❤️ Accept]";
+			case "accept_button" -> "[❤ Accept]";
 			case "reject_button" -> "[💔 Reject]";
-			case "link_broken_kill_woman" -> "The bond is broken: the guy killed you.";
-			case "link_broken_kill_target" -> "The bond is broken: you killed the woman.";
+			case "link_broken_kill_woman" -> "%s killed you. The relationship is ruined.";
+			case "link_broken_kill_target" -> "You dumped %s by treacherously killing her!";
 			case "link_broken_whitelist_woman" -> "The bond is broken: the guy was removed from the whitelist.";
-			case "link_broken_whitelist_target" -> "The bond is broken: you were removed from the whitelist.";
+			case "link_broken_whitelist_target" -> "You broke up with %s: you were removed from the whitelist.";
 			default -> "";
 		};
 	}
@@ -6854,6 +6852,34 @@ public final class ServerRaceSystem {
 		level.sendParticles(ParticleTypes.SMOKE, pos.x, pos.y + 0.7D, pos.z, 16, 0.35D, 0.5D, 0.35D, 0.01D);
 	}
 
+	private static void emitWomanOmenParticles(ServerLevel level, Vec3 pos) {
+		level.sendParticles(ParticleTypes.RAID_OMEN, pos.x, pos.y + 0.7D, pos.z, 16, 0.35D, 0.5D, 0.35D, 0.01D);
+	}
+
+	private static void emitWomanDefenseOmenAura(ServerLevel level, LivingEntity woman, long gameTime) {
+		if (level == null || woman == null) {
+			return;
+		}
+
+		double radius = Math.max(0.34D, woman.getBbWidth() * 0.58D);
+		double baseY = woman.getY() + 0.2D;
+		double height = Math.max(0.7D, woman.getBbHeight() - 0.35D);
+		double rotation = gameTime * 0.12D;
+		int primaryIndex = (int) Math.floorMod(gameTime, 4L);
+		emitWomanDefenseOmenAuraParticle(level, woman, baseY, height, radius, rotation, primaryIndex);
+		if (Math.floorMod(gameTime, 3L) == 0L) {
+			emitWomanDefenseOmenAuraParticle(level, woman, baseY, height, radius, rotation, (primaryIndex + 2) % 4);
+		}
+	}
+
+	private static void emitWomanDefenseOmenAuraParticle(ServerLevel level, LivingEntity woman, double baseY, double height, double radius, double rotation, int index) {
+		double angle = rotation + (Math.PI * 0.5D * index);
+		double x = woman.getX() + Math.cos(angle) * radius;
+		double z = woman.getZ() + Math.sin(angle) * radius;
+		double y = baseY + height * (index % 2 == 0 ? 0.25D : 0.75D);
+		level.sendParticles(ParticleTypes.RAID_OMEN, x, y, z, 0, 0.0D, 0.018D, 0.0D, 1.0D);
+	}
+
 	private static long asTicks(double seconds) {
 		return Math.max(0L, Math.round(seconds * 20.0D));
 	}
@@ -7505,3 +7531,4 @@ public final class ServerRaceSystem {
 		}
 	}
 }
+
