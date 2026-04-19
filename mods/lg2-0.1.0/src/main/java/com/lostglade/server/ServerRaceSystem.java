@@ -751,6 +751,7 @@ public final class ServerRaceSystem {
 								.then(literal("shnyaga").executes(context -> useAbility(context, RaceAbilitySlot.SHNYAGA)))
 						)
 						.then(literal("woman_shnyaga")
+								.requires(ServerRaceSystem::canUseWomanShnyagaResponseCommand)
 								.then(argument("response", StringArgumentType.word())
 										.suggests((context, builder) -> builder.buildFuture())
 										.executes(ServerRaceSystem::handleWomanShnyagaProposalCommand)
@@ -863,6 +864,14 @@ public final class ServerRaceSystem {
 				yield 0;
 			}
 		};
+	}
+
+	private static boolean canUseWomanShnyagaResponseCommand(CommandSourceStack source) {
+		if (source == null) {
+			return false;
+		}
+		ServerPlayer player = source.getPlayer();
+		return player != null && WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.containsKey(player.getUUID());
 	}
 
 	private static int useAbility(CommandContext<CommandSourceStack> context, RaceAbilitySlot slot) {
@@ -3685,7 +3694,7 @@ public final class ServerRaceSystem {
 			case 2 -> 0.82F;
 			default -> 0.92F;
 		};
-		sendPersonalSound(viewer, SoundEvents.WARDEN_HEARTBEAT, SoundSource.AMBIENT, viewer.position(), volume, pitch, nowTick ^ viewer.getUUID().getLeastSignificantBits());
+		sendPersonalSound(viewer, SoundEvents.WARDEN_HEARTBEAT, SoundSource.MASTER, viewer.position(), volume, pitch, nowTick ^ viewer.getUUID().getLeastSignificantBits());
 		WOMAN_DEFENSE_PANIC_SOUND_NEXT_TICKS.put(viewer.getUUID(), nowTick + WOMAN_DEFENSE_PANIC_SOUND_INTERVAL_TICKS);
 	}
 
