@@ -29,6 +29,7 @@
 		"EntityAbsoluteInvisibilityMixin",
 		"ExampleMixin",
 		"EntityTrackedDataAccessor",
+		"FoodDataWomanUniqueMixin",
 		"GiantMixin",
 		"IllusionerMixin",
 		"ItemCopperManUseMixin",

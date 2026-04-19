@@ -206,6 +206,11 @@ public final class CopperManGogglesSystem {
 		});
 	}
 
+	public static void resetAllAbilityCooldowns(MinecraftServer server) {
+		SCAN_COOLDOWNS.clear();
+		LAST_SCAN_ACTIVATION_TICKS.clear();
+	}
+
 	public static int toggleMode(ServerPlayer player) {
 		if (player == null) {
 			return 0;
@@ -215,9 +220,11 @@ public final class CopperManGogglesSystem {
 		}
 		ItemStack equippedGoggles = getEquippedGogglesStack(player);
 		if (equippedGoggles.isEmpty()) {
+			MutableComponent notEquippedMessage = PolymerResourcePackUtils.hasMainPack(player)
+					? Component.translatable("message.lg2.copper_goggles.not_equipped")
+					: Component.literal(localizeGogglesNotEquipped(player));
 			player.displayClientMessage(
-					Component.translatable("message.lg2.copper_goggles.not_equipped")
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					notEquippedMessage.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
 			return 0;
@@ -1547,6 +1554,16 @@ public final class CopperManGogglesSystem {
 			case "ja", "ja_jp" -> "ゴーグルモード: " + modeName;
 			case "ru", "ru_ru" -> "Режим очков: " + modeName;
 			default -> "Goggles mode: " + modeName;
+		};
+	}
+
+	private static String localizeGogglesNotEquipped(ServerPlayer player) {
+		return switch (normalizeGogglesLocale(player)) {
+			case "rpr" -> "Стекла не прилажены къ носу";
+			case "uk", "uk_ua" -> "Окуляри не вдягнені";
+			case "ja", "ja_jp" -> "ゴーグルを装備していません";
+			case "ru", "ru_ru" -> "Очки не экипированы";
+			default -> "Goggles are not equipped";
 		};
 	}
 

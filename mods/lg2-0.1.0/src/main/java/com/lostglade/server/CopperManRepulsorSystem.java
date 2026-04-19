@@ -174,6 +174,10 @@ public final class CopperManRepulsorSystem {
 		});
 	}
 
+	public static void resetAllAbilityCooldowns(MinecraftServer server) {
+		NEXT_MODE_SWITCH_TICKS.clear();
+	}
+
 	public static int toggleMode(ServerPlayer player) {
 		if (player == null) {
 			return 0;

@@ -18,16 +18,24 @@ public abstract class LivingEntityCopperManFoodMixin {
 	private int lg2$copperFoodLevelBeforeUse;
 	private float lg2$copperSaturationBeforeUse;
 	private boolean lg2$pendingCopperIngotRestore;
+	private boolean lg2$pendingWomanUniqueFoodUnlock;
 
 	@Inject(method = "completeUsingItem", at = @At("HEAD"))
 	private void lg2$captureCopperManFoodState(CallbackInfo ci) {
 		LivingEntity self = (LivingEntity) (Object) this;
-		if (!(self instanceof ServerPlayer player) || !ServerRaceSystem.isCopperManStockEnabled(player)) {
+		if (!(self instanceof ServerPlayer player)) {
 			this.lg2$pendingCopperFoodAdjustment = false;
+			this.lg2$pendingWomanUniqueFoodUnlock = false;
 			return;
 		}
 
 		ItemStack useItem = self.getUseItem();
+		this.lg2$pendingWomanUniqueFoodUnlock = !useItem.isEmpty() && useItem.get(DataComponents.FOOD) != null;
+		if (!ServerRaceSystem.isCopperManStockEnabled(player)) {
+			this.lg2$pendingCopperFoodAdjustment = false;
+			return;
+		}
+
 		this.lg2$pendingCopperIngotRestore = useItem.is(Items.COPPER_INGOT);
 		if (useItem.isEmpty() || useItem.is(Items.COPPER_INGOT) || useItem.get(DataComponents.FOOD) == null) {
 			this.lg2$pendingCopperFoodAdjustment = false;
@@ -61,5 +69,17 @@ public abstract class LivingEntityCopperManFoodMixin {
 
 		this.lg2$pendingCopperIngotRestore = false;
 		CopperManRepulsorSystem.onCopperIngotConsumed(player);
+	}
+
+	@Inject(method = "completeUsingItem", at = @At("TAIL"))
+	private void lg2$unlockWomanUniqueHealingAfterEating(CallbackInfo ci) {
+		LivingEntity self = (LivingEntity) (Object) this;
+		if (!this.lg2$pendingWomanUniqueFoodUnlock || !(self instanceof ServerPlayer player)) {
+			this.lg2$pendingWomanUniqueFoodUnlock = false;
+			return;
+		}
+
+		this.lg2$pendingWomanUniqueFoodUnlock = false;
+		ServerRaceSystem.onPlayerConsumedFood(player);
 	}
 }

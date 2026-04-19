@@ -180,7 +180,7 @@
                                      "priceBitcoins":  300,
                                      "cooldownSeconds":  30.0,
                                      "womanAttackChargeRadiusBlocks":  0.5,
-                                     "womanAttackRangeBlocks":  64.0,
+                                     "womanAttackRangeBlocks":  128.0,
                                      "womanAttackDamage":  2.0,
                                      "womanAttackFollowSeconds":  30.0
                                  },
