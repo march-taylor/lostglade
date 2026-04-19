@@ -70,6 +70,7 @@ import java.awt.Composite;
 import java.awt.Font;
 import java.awt.GradientPaint;
 import java.awt.Graphics2D;
+import java.awt.Paint;
 import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.Stroke;
@@ -129,11 +130,14 @@ public final class MonitorScreenSystem {
 	private static final String PERSISTED_GALLERY_LOCAL_MEDIA_TAG = "local_media";
 	private static final String PERSISTED_WALLPAPER_URL_TAG = "wallpaper_url";
 	private static final String PERSISTED_WALLPAPER_SCALE_TAG = "wallpaper_scale";
+	private static final String PERSISTED_WALLPAPER_BACKGROUND_MODE_TAG = "wallpaper_background_mode";
+	private static final String PERSISTED_PLAYER_BACKGROUND_MODE_TAG = "player_background_mode";
 	private static final String CACHE_ROOT_DIR_NAME = "cache";
 	private static final String CACHE_NAMESPACE_DIR_NAME = "lg2-monitor";
 	private static final String POS_TAG_PREFIX = "lg2_monitor_display_pos:";
 	private static final String FACING_TAG_PREFIX = "lg2_monitor_display_facing:";
 	private static final int MAP_SIZE = 128;
+	private static final int MAP_TRANSPARENT_ALPHA_THRESHOLD = 12;
 	private static final int PHOTO_MAP_CENTER = 30_000_000;
 	private static final int CONNECTION_LEFT = 1;
 	private static final int CONNECTION_RIGHT = 2;
@@ -199,6 +203,8 @@ public final class MonitorScreenSystem {
 	private static volatile ScheduledExecutorService mediaScheduler;
 	private static volatile BufferedImage offBaseImage;
 	private static volatile BufferedImage onBaseImage;
+	private static final Composite REPLACING_IMAGE_COMPOSITE = AlphaComposite.getInstance(AlphaComposite.SRC);
+	private static final Composite PRESERVE_TRANSPARENCY_COMPOSITE = AlphaComposite.getInstance(AlphaComposite.SRC_ATOP);
 
 	private MonitorScreenSystem() {
 	}
@@ -1349,6 +1355,7 @@ public final class MonitorScreenSystem {
 		Integer youtubeQueuePlayIndex = null;
 		boolean galleryDownloadRequested = false;
 		boolean galleryWallpaperRequested = false;
+		boolean restartPlayback = false;
 		boolean youtubeDownloadRequested = false;
 		boolean returnToGalleryAfterDelete = false;
 		String releasedRelaySessionId = null;
@@ -1391,10 +1398,12 @@ public final class MonitorScreenSystem {
 			} else if (component.viewMode() == ScreenViewMode.SBER_DRONES) {
 				ensureSberDronesStateHydrated(level.getServer(), component.runtimeKey(), mediaState);
 			}
+			ensurePlayerBackgroundModeHydrated(level.getServer(), component.runtimeKey(), mediaState);
 			MediaOverlayMode overlayMode;
 			boolean hasMedia;
 			boolean galleryBrowser;
 			boolean galleryDeleteConfirmOpen;
+			boolean playerBackgroundMenuOpen;
 			boolean playerUiVisible;
 			boolean controlsWereHidden = false;
 			synchronized (mediaState) {
@@ -1402,6 +1411,7 @@ public final class MonitorScreenSystem {
 				hasMedia = hasDisplayableMediaLocked(mediaState);
 				galleryBrowser = isLibraryAppMode(mediaState.mode) && mediaState.gallerySurfaceMode == GallerySurfaceMode.BROWSER;
 				galleryDeleteConfirmOpen = mediaState.galleryDeleteConfirmOpen;
+				playerBackgroundMenuOpen = mediaState.playerBackgroundMenuOpen;
 				playerUiVisible = mediaControlUiVisibleLocked(mediaState);
 			}
 			if (!galleryBrowser && (playerUiVisible || mediaState.loading) && overlayMode == MediaOverlayMode.VIEW) {
@@ -1438,6 +1448,25 @@ public final class MonitorScreenSystem {
 						mediaState.statusText = "";
 						mediaState.version++;
 						persistGallery = true;
+					}
+				}
+				rerenderCurrent = true;
+			} else if (playerBackgroundMenuOpen) {
+				synchronized (mediaState) {
+					if (!playerBackgroundPanelRect(layout).contains(touchPoint.x(), touchPoint.y())
+							|| playerBackgroundCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+						mediaState.playerBackgroundMenuOpen = false;
+						mediaState.version++;
+					} else {
+						PlayerBackgroundMode selectedMode = playerBackgroundModeForTouch(layout, touchPoint);
+						if (selectedMode != null) {
+							mediaState.playerBackgroundMode = selectedMode;
+							mediaState.playerBackgroundModeHydrated = true;
+							mediaState.playerBackgroundMenuOpen = false;
+							mediaState.version++;
+							persistGallery = true;
+							restartPlayback = true;
+						}
 					}
 				}
 				rerenderCurrent = true;
@@ -1746,6 +1775,18 @@ public final class MonitorScreenSystem {
 					mediaState.version++;
 				}
 				rerenderCurrent = true;
+			} else if (playerUiVisible
+					&& !galleryBrowser
+					&& mediaPlayerMenuRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					mediaState.playerBackgroundMenuOpen = !mediaState.playerBackgroundMenuOpen;
+					if (mediaState.playerBackgroundMenuOpen) {
+						mediaState.galleryDeleteConfirmOpen = false;
+						mediaState.youtubeQueueOpen = false;
+					}
+					mediaState.version++;
+				}
+				rerenderCurrent = true;
 			} else if (playerUiVisible && mediaScaleRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					mediaState.scaleMode = mediaState.scaleMode.next();
@@ -1883,7 +1924,11 @@ public final class MonitorScreenSystem {
 		} else if (rerenderCurrent) {
 			requestComponentRender(level.getServer(), component, component.viewMode(), component.launcherPage());
 			if (isPlayerMode(component.viewMode())) {
-				resumeMediaPlaybackIfNeeded(level.getServer(), component.runtimeKey());
+				if (restartPlayback) {
+					restartMediaPlaybackIfNeeded(level.getServer(), component.runtimeKey());
+				} else {
+					resumeMediaPlaybackIfNeeded(level.getServer(), component.runtimeKey());
+				}
 			}
 		}
 		if (galleryLoadRequest) {
@@ -2672,6 +2717,7 @@ public final class MonitorScreenSystem {
 			state.wallpaperUrl = item.url();
 			state.wallpaperMedia = item.media();
 			state.wallpaperScaleMode = state.scaleMode != null ? state.scaleMode : MediaScaleMode.FIT;
+			state.wallpaperBackgroundMode = wallpaperBackgroundModeForCurrentSelectionLocked(state);
 			state.wallpaperFrameIndex = 0;
 			state.wallpaperHydrated = true;
 			state.version++;
@@ -2680,7 +2726,7 @@ public final class MonitorScreenSystem {
 		persistGalleryState(server, key, state);
 		requestRuntimeRender(server, key);
 		if (shouldAnimate) {
-			resumeMediaPlaybackIfNeeded(server, key);
+			restartMediaPlaybackIfNeeded(server, key);
 		}
 		ServerPlayer requester = requesterUuid != null ? server.getPlayerList().getPlayer(requesterUuid) : null;
 		if (requester != null) {
@@ -3652,6 +3698,7 @@ public final class MonitorScreenSystem {
 			}
 			state.wallpaperUrl = persisted.url();
 			state.wallpaperScaleMode = persisted.scaleMode() != null ? persisted.scaleMode() : MediaScaleMode.FIT;
+			state.wallpaperBackgroundMode = safeWallpaperBackgroundMode(persisted.backgroundMode());
 			state.wallpaperMedia = currentGalleryItemMatchingUrlLocked(state, state.wallpaperUrl)
 					.map(GalleryItem::media)
 					.orElse(null);
@@ -3665,6 +3712,26 @@ public final class MonitorScreenSystem {
 		}
 		if (shouldRender) {
 			requestRuntimeRender(server, key);
+		}
+	}
+
+	private static void ensurePlayerBackgroundModeHydrated(MinecraftServer server, ScreenRuntimeKey key, MediaRuntimeState state) {
+		if (server == null || key == null || state == null) {
+			return;
+		}
+		synchronized (state) {
+			if (state.playerBackgroundModeHydrated) {
+				return;
+			}
+		}
+		ScreenComponent component = resolveScreenComponent(server, key);
+		PlayerBackgroundMode persisted = component != null ? resolvePersistedPlayerBackgroundMode(component) : null;
+		synchronized (state) {
+			if (state.playerBackgroundModeHydrated) {
+				return;
+			}
+			state.playerBackgroundMode = persisted;
+			state.playerBackgroundModeHydrated = true;
 		}
 	}
 
@@ -3778,9 +3845,7 @@ public final class MonitorScreenSystem {
 								resolvedKind,
 								resolvedKind == GalleryItemKind.VIDEO
 										? null
-										: localMediaKey != null && !localMediaKey.isBlank()
-										? MonitorMediaApp.loadSavedGalleryMedia(localMediaKey, finalProgress)
-										: MonitorMediaApp.loadFromUrl(url, finalProgress),
+										: loadGalleryMedia(url, localMediaKey, finalProgress),
 								resolvedKind == GalleryItemKind.VIDEO
 										? localMediaKey != null && !localMediaKey.isBlank()
 										? MonitorMediaApp.loadSavedGalleryVideo(localMediaKey, finalProgress)
@@ -3795,6 +3860,42 @@ public final class MonitorScreenSystem {
 					}
 				}, mediaIoExecutor)
 				.thenAccept(result -> server.execute(() -> applyGalleryItemLoadResult(server, result)));
+	}
+
+	private static MonitorMediaApp.LoadedMedia loadGalleryMedia(String url, String localMediaKey, TaskProgress progress) throws IOException {
+		if (isCameraGalleryVideoUrl(url)) {
+			return loadCameraGalleryVideoMedia(url, localMediaKey, progress);
+		}
+		return localMediaKey != null && !localMediaKey.isBlank()
+				? MonitorMediaApp.loadSavedGalleryMedia(localMediaKey, progress)
+				: MonitorMediaApp.loadFromUrl(url, progress);
+	}
+
+	private static MonitorMediaApp.LoadedMedia loadCameraGalleryVideoMedia(String url, String localMediaKey, TaskProgress progress) throws IOException {
+		IOException primaryException = null;
+		if (localMediaKey != null && !localMediaKey.isBlank()) {
+			try {
+				return MonitorMediaApp.loadSavedGalleryVideoAsMedia(localMediaKey, progress);
+			} catch (IOException exception) {
+				primaryException = exception;
+			}
+		}
+		String sourceKey = cameraGallerySourceKey(url, "video");
+		if (!sourceKey.isBlank()) {
+			try {
+				return MonitorMediaApp.loadLocalVideoAsMedia(CameraMediaCache.videoSourcePath(sourceKey), progress);
+			} catch (IOException exception) {
+				if (primaryException != null) {
+					primaryException.addSuppressed(exception);
+					throw primaryException;
+				}
+				throw exception;
+			}
+		}
+		if (primaryException != null) {
+			throw primaryException;
+		}
+		throw new IOException("Camera video source is missing");
 	}
 
 	private static void applyGalleryItemLoadResult(MinecraftServer server, GalleryItemLoadResult result) {
@@ -4127,6 +4228,9 @@ public final class MonitorScreenSystem {
 	private static GalleryItemKind effectiveGalleryItemKind(String url, String localMediaKey, GalleryItemKind kind) {
 		if (kind == GalleryItemKind.LIVE_CAMERA || (url != null && url.startsWith(LIVE_CAMERA_GALLERY_URL_PREFIX))) {
 			return GalleryItemKind.LIVE_CAMERA;
+		}
+		if (isCameraGalleryVideoUrl(url)) {
+			return GalleryItemKind.MEDIA;
 		}
 		if (kind == GalleryItemKind.AUDIO || looksLikeDirectAudioReference(localMediaKey) || looksLikeDirectAudioReference(url)) {
 			return GalleryItemKind.AUDIO;
@@ -4473,9 +4577,11 @@ public final class MonitorScreenSystem {
 		}
 		List<GalleryItem> galleryItems;
 		PersistedWallpaperState wallpaperState;
+		PlayerBackgroundMode playerBackgroundMode;
 		synchronized (state) {
 			galleryItems = List.copyOf(state.galleryItems);
 			wallpaperState = persistedWallpaperStateLocked(state);
+			playerBackgroundMode = persistedPlayerBackgroundModeLocked(state);
 		}
 		for (ItemFrame frame : component.frameCoords().keySet()) {
 			ItemStack stack = frame.getItem();
@@ -4483,7 +4589,7 @@ public final class MonitorScreenSystem {
 				continue;
 			}
 			ItemStack updated = stack.copy();
-			writePersistedGalleryState(updated, galleryItems, wallpaperState);
+			writePersistedGalleryState(updated, galleryItems, wallpaperState, playerBackgroundMode);
 			frame.setItem(updated, false);
 		}
 	}
@@ -4510,9 +4616,7 @@ public final class MonitorScreenSystem {
 								key,
 								url,
 								localMediaKey,
-								localMediaKey != null && !localMediaKey.isBlank()
-										? MonitorMediaApp.loadSavedGalleryMedia(localMediaKey, null)
-										: MonitorMediaApp.loadFromUrl(url),
+								loadGalleryMedia(url, localMediaKey, null),
 								null
 						);
 					} catch (Exception exception) {
@@ -4569,7 +4673,7 @@ public final class MonitorScreenSystem {
 			requestRuntimeRender(server, result.screenKey());
 		}
 		if (shouldAnimate) {
-			resumeMediaPlaybackIfNeeded(server, result.screenKey());
+			restartMediaPlaybackIfNeeded(server, result.screenKey());
 		}
 	}
 
@@ -4933,7 +5037,8 @@ public final class MonitorScreenSystem {
 			MinecraftServer server,
 			ScreenRuntimeKey key,
 			List<PersistedGalleryItem> persistedGallery,
-			PersistedWallpaperState persistedWallpaper
+			PersistedWallpaperState persistedWallpaper,
+			PlayerBackgroundMode persistedPlayerBackgroundMode
 	) {
 		if (key == null) {
 			return;
@@ -4960,6 +5065,7 @@ public final class MonitorScreenSystem {
 						&& !persistedWallpaper.url().isBlank()) {
 					state.wallpaperUrl = persistedWallpaper.url();
 					state.wallpaperScaleMode = persistedWallpaper.scaleMode() != null ? persistedWallpaper.scaleMode() : MediaScaleMode.FIT;
+					state.wallpaperBackgroundMode = safeWallpaperBackgroundMode(persistedWallpaper.backgroundMode());
 					state.wallpaperMedia = null;
 					state.wallpaperFrameIndex = 0;
 					state.wallpaperLoading = false;
@@ -4969,6 +5075,9 @@ public final class MonitorScreenSystem {
 					clearWallpaperLocked(state);
 					state.wallpaperHydrated = true;
 				}
+				state.playerBackgroundMode = persistedPlayerBackgroundMode;
+				state.playerBackgroundModeHydrated = persistedPlayerBackgroundMode != null;
+				state.playerBackgroundMenuOpen = false;
 				state.mode = ScreenViewMode.HOME;
 				state.overlayMode = MediaOverlayMode.VIEW;
 				state.statusText = "";
@@ -5025,11 +5134,27 @@ public final class MonitorScreenSystem {
 	}
 
 	private static void cancelPlaybackLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		cancelPlaybackFutureLocked(state);
+		clearAnimatedFrameScheduleLocked(state);
+	}
+
+	private static void cancelPlaybackFutureLocked(MediaRuntimeState state) {
 		if (state == null || state.playbackFuture == null) {
 			return;
 		}
 		state.playbackFuture.cancel(false);
 		state.playbackFuture = null;
+	}
+
+	private static void clearAnimatedFrameScheduleLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		state.nextLoadedMediaFrameAtMillis = 0L;
+		state.nextWallpaperFrameAtMillis = 0L;
 	}
 
 	private static long bumpAudioSyncTokenLocked(MediaRuntimeState state) {
@@ -5325,6 +5450,9 @@ public final class MonitorScreenSystem {
 		if (!isPlayerMode(viewMode)) {
 			return true;
 		}
+		if (resolvedPlayerBackgroundModeLocked(state) == PlayerBackgroundMode.WALLPAPER) {
+			return true;
+		}
 		if (viewMode == ScreenViewMode.YOUTUBE_MUSIC
 				&& state.loading
 				&& state.streamFrame == null
@@ -5343,6 +5471,56 @@ public final class MonitorScreenSystem {
 		return state != null
 				&& wallpaperVisibleForCurrentViewLocked(state)
 				&& wallpaperVisibleForViewMode(nextMode, state);
+	}
+
+	private static boolean wallpaperAnimationActiveLocked(MediaRuntimeState state) {
+		return state != null
+				&& wallpaperVisibleForCurrentViewLocked(state)
+				&& state.wallpaperMedia != null
+				&& state.wallpaperMedia.animated()
+				&& state.wallpaperMedia.frameCount() > 1;
+	}
+
+	private static boolean loadedMediaAnimationActiveLocked(MediaRuntimeState state) {
+		return state != null
+				&& state.loadedMedia != null
+				&& state.loadedMedia.animated()
+				&& state.loadedMedia.frameCount() > 1
+				&& !state.waitingForLink
+				&& !state.loading
+				&& !isPlaybackPausedLocked(state);
+	}
+
+	private static long sanitizedAnimationDelayMillis(int delayMillis) {
+		return Math.max(1L, delayMillis);
+	}
+
+	private static long nextAnimationDeadlineMillis(long currentDeadlineMillis, long nowMillis, int delayMillis) {
+		if (currentDeadlineMillis > nowMillis) {
+			return currentDeadlineMillis;
+		}
+		return nowMillis + sanitizedAnimationDelayMillis(delayMillis);
+	}
+
+	private static long earliestPositiveDeadlineMillis(long first, long second) {
+		if (first > 0L && second > 0L) {
+			return Math.min(first, second);
+		}
+		return Math.max(first, second);
+	}
+
+	private static void restartMediaPlaybackIfNeeded(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		synchronized (state) {
+			cancelPlaybackLocked(state);
+		}
+		resumeMediaPlaybackIfNeeded(server, key);
 	}
 
 	private static void scheduleProgressFadeRenders(MinecraftServer server, ScreenRuntimeKey key) {
@@ -5372,12 +5550,11 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
-			synchronized (state) {
-				cancelPlaybackLocked(state);
-				if (hasActiveStreamPlaybackLocked(state)) {
-					if (state.waitingForLink) {
-						return;
-					}
+		synchronized (state) {
+			cancelPlaybackFutureLocked(state);
+			if (hasActiveStreamPlaybackLocked(state)) {
+				if (!state.waitingForLink) {
+					clearAnimatedFrameScheduleLocked(state);
 					if (state.streamKind == PlaybackStreamKind.LIVE_CAMERA) {
 						long delayMillis = state.streamFrame == null ? 1L : LIVE_CAMERA_HEALTH_CHECK_INTERVAL_MS;
 						state.playbackFuture = mediaScheduler.schedule(() -> refreshLiveCameraStreamHealth(server, key), delayMillis, TimeUnit.MILLISECONDS);
@@ -5394,23 +5571,51 @@ public final class MonitorScreenSystem {
 					state.playbackFuture = mediaScheduler.schedule(() -> refreshYoutubeSnapshot(server, key), delayMillis, TimeUnit.MILLISECONDS);
 					return;
 				}
-				if (state.loading) {
-					state.playbackFuture = mediaScheduler.schedule(() -> refreshLoadingUi(server, key), youtubePollActiveIntervalMs(), TimeUnit.MILLISECONDS);
-					return;
+			}
+			if (state.loading && !state.waitingForLink) {
+				clearAnimatedFrameScheduleLocked(state);
+				state.playbackFuture = mediaScheduler.schedule(() -> refreshLoadingUi(server, key), youtubePollActiveIntervalMs(), TimeUnit.MILLISECONDS);
+				return;
+			}
+
+			long now = System.currentTimeMillis();
+			boolean wallpaperActive = wallpaperAnimationActiveLocked(state);
+			boolean mediaActive = loadedMediaAnimationActiveLocked(state);
+			boolean wallpaperVisibleToViewer = wallpaperActive && hasNearbyMediaViewer(server, key);
+			if (!wallpaperActive) {
+				state.nextWallpaperFrameAtMillis = 0L;
+			}
+			if (!mediaActive) {
+				state.nextLoadedMediaFrameAtMillis = 0L;
+			}
+			if (!wallpaperVisibleToViewer) {
+				state.nextWallpaperFrameAtMillis = 0L;
+			}
+			if (!wallpaperVisibleToViewer && !mediaActive) {
+				if (wallpaperActive) {
+					state.playbackFuture = scheduleWallpaperVisibilityRecheck(server, key);
 				}
-				if (wallpaperVisibleForCurrentViewLocked(state) && state.wallpaperMedia != null && state.wallpaperMedia.animated()) {
-					if (!hasNearbyMediaViewer(server, key)) {
-						state.playbackFuture = scheduleWallpaperVisibilityRecheck(server, key);
-						return;
-					}
-					int delayMillis = state.wallpaperMedia.delayMillis(state.wallpaperFrameIndex);
-					state.playbackFuture = mediaScheduler.schedule(() -> advanceMediaFrame(server, key), delayMillis, TimeUnit.MILLISECONDS);
-					return;
-				}
-				if (state.loadedMedia == null || !state.loadedMedia.animated() || state.waitingForLink || state.loading || isPlaybackPausedLocked(state)) {
-					return;
-				}
-			int delayMillis = state.loadedMedia.delayMillis(state.frameIndex);
+				return;
+			}
+			if (wallpaperVisibleToViewer) {
+				state.nextWallpaperFrameAtMillis = nextAnimationDeadlineMillis(
+						state.nextWallpaperFrameAtMillis,
+						now,
+						state.wallpaperMedia.delayMillis(state.wallpaperFrameIndex)
+				);
+			}
+			if (mediaActive) {
+				state.nextLoadedMediaFrameAtMillis = nextAnimationDeadlineMillis(
+						state.nextLoadedMediaFrameAtMillis,
+						now,
+						state.loadedMedia.delayMillis(state.frameIndex)
+				);
+			}
+			long nextDeadlineMillis = earliestPositiveDeadlineMillis(state.nextWallpaperFrameAtMillis, state.nextLoadedMediaFrameAtMillis);
+			if (nextDeadlineMillis <= 0L) {
+				return;
+			}
+			long delayMillis = Math.max(1L, nextDeadlineMillis - now);
 			state.playbackFuture = mediaScheduler.schedule(() -> advanceMediaFrame(server, key), delayMillis, TimeUnit.MILLISECONDS);
 		}
 	}
@@ -5447,9 +5652,7 @@ public final class MonitorScreenSystem {
 		boolean visibleAnimatedWallpaper;
 		synchronized (state) {
 			state.playbackFuture = null;
-			visibleAnimatedWallpaper = wallpaperVisibleForCurrentViewLocked(state)
-					&& state.wallpaperMedia != null
-					&& state.wallpaperMedia.animated();
+			visibleAnimatedWallpaper = wallpaperAnimationActiveLocked(state);
 		}
 		if (!visibleAnimatedWallpaper) {
 			return;
@@ -5919,30 +6122,46 @@ public final class MonitorScreenSystem {
 			return;
 		}
 
+		boolean shouldRender = false;
 		boolean shouldContinue;
 		synchronized (state) {
-			if (hasActiveStreamPlaybackLocked(state)) {
+			if (hasActiveStreamPlaybackLocked(state) && !state.waitingForLink) {
 				state.playbackFuture = null;
+				clearAnimatedFrameScheduleLocked(state);
 				return;
 			}
-			if (wallpaperVisibleForCurrentViewLocked(state) && state.wallpaperMedia != null && state.wallpaperMedia.animated()) {
+			state.playbackFuture = null;
+			long now = System.currentTimeMillis();
+			boolean wallpaperActive = wallpaperAnimationActiveLocked(state);
+			boolean mediaActive = loadedMediaAnimationActiveLocked(state);
+			if (!wallpaperActive) {
+				state.nextWallpaperFrameAtMillis = 0L;
+			}
+			if (!mediaActive) {
+				state.nextLoadedMediaFrameAtMillis = 0L;
+			}
+			if (wallpaperActive
+					&& state.nextWallpaperFrameAtMillis > 0L
+					&& now >= state.nextWallpaperFrameAtMillis) {
 				state.wallpaperFrameIndex = (state.wallpaperFrameIndex + 1) % state.wallpaperMedia.frameCount();
-				state.playbackFuture = null;
-				shouldContinue = state.wallpaperMedia.frameCount() > 1;
-			} else {
-				if (state.loadedMedia == null || !state.loadedMedia.animated() || state.waitingForLink || state.loading || isPlaybackPausedLocked(state)) {
-					state.playbackFuture = null;
-					return;
-				}
+				state.nextWallpaperFrameAtMillis = now + sanitizedAnimationDelayMillis(state.wallpaperMedia.delayMillis(state.wallpaperFrameIndex));
+				shouldRender = true;
+			}
+			if (mediaActive
+					&& state.nextLoadedMediaFrameAtMillis > 0L
+					&& now >= state.nextLoadedMediaFrameAtMillis) {
 				// Frame playback must not invalidate an in-flight large-screen render, or the first
 				// completed frame can get discarded forever while animation keeps advancing.
 				state.frameIndex = (state.frameIndex + 1) % state.loadedMedia.frameCount();
-				state.playbackFuture = null;
-				shouldContinue = state.loadedMedia.frameCount() > 1;
+				state.nextLoadedMediaFrameAtMillis = now + sanitizedAnimationDelayMillis(state.loadedMedia.delayMillis(state.frameIndex));
+				shouldRender = true;
 			}
+			shouldContinue = wallpaperActive || mediaActive;
 		}
 
-		requestRuntimeRender(server, key);
+		if (shouldRender) {
+			requestRuntimeRender(server, key);
+		}
 		if (shouldContinue) {
 			scheduleNextMediaFrame(server, key);
 		}
@@ -5956,25 +6175,26 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
-			synchronized (state) {
-				if (state.playbackFuture != null
-						|| state.waitingForLink) {
-					return;
-				}
-				if (state.loading) {
-					// Keep loading spinners animating even before the relay session is fully connected.
-				} else if (hasActiveStreamPlaybackLocked(state)) {
-					if (state.relaySessionId == null) {
-						return;
-					}
-				} else if (wallpaperVisibleForCurrentViewLocked(state) && state.wallpaperMedia != null && state.wallpaperMedia.animated()) {
-					// Animated wallpaper uses the same scheduler path as gallery GIF playback.
-				} else if (state.loadedMedia == null || !state.loadedMedia.animated() || isPlaybackPausedLocked(state)) {
-					return;
-				}
+		synchronized (state) {
+			if (state.playbackFuture != null) {
+				return;
 			}
-			scheduleNextMediaFrame(server, key);
+			boolean wallpaperAnimated = wallpaperAnimationActiveLocked(state);
+			if (state.waitingForLink && !wallpaperAnimated) {
+				return;
+			}
+			if (state.loading) {
+				// Keep loading spinners animating even before the relay session is fully connected.
+			} else if (hasActiveStreamPlaybackLocked(state)) {
+				if (state.relaySessionId == null && !wallpaperAnimated) {
+					return;
+				}
+			} else if (!wallpaperAnimated && !loadedMediaAnimationActiveLocked(state)) {
+				return;
+			}
 		}
+		scheduleNextMediaFrame(server, key);
+	}
 
 	private static void refreshYoutubeSnapshot(MinecraftServer server, ScreenRuntimeKey key) {
 		if (server == null || key == null) {
@@ -6410,6 +6630,9 @@ public final class MonitorScreenSystem {
 			ensureWallpaperStateHydrated(server, component.runtimeKey(), mediaState);
 		}
 		if (isPlayerMode(viewMode)) {
+			if (mediaState != null) {
+				ensurePlayerBackgroundModeHydrated(server, component.runtimeKey(), mediaState);
+			}
 			if (viewMode == ScreenViewMode.GALLERY) {
 				ensureGalleryStateHydrated(server, component.runtimeKey(), mediaState);
 			} else if (viewMode == ScreenViewMode.SBER_DRONES) {
@@ -6635,11 +6858,12 @@ public final class MonitorScreenSystem {
 		}
 		List<PersistedGalleryItem> persistedGallery = resolvePersistedGalleryState(component);
 		PersistedWallpaperState persistedWallpaper = resolvePersistedWallpaperState(component);
+		PlayerBackgroundMode persistedPlayerBackgroundMode = resolvePersistedPlayerBackgroundMode(component);
 		String persistedGroupId = resolvePersistedGroupId(component);
 		if (!powered) {
 			viewMode = ScreenViewMode.HOME;
 			launcherPage = 0;
-			resetMediaSessionForPowerOff(level.getServer(), component.runtimeKey(), persistedGallery, persistedWallpaper);
+			resetMediaSessionForPowerOff(level.getServer(), component.runtimeKey(), persistedGallery, persistedWallpaper, persistedPlayerBackgroundMode);
 		}
 		int effectiveLauncherPage = viewMode == ScreenViewMode.HOME
 				? clampInt(launcherPage, 0, homeMaxScroll(createUiLayout(component.width(), component.height())))
@@ -6702,16 +6926,17 @@ public final class MonitorScreenSystem {
 			}
 			List<PersistedGalleryItem> currentGalleryState = readPersistedGalleryState(ensured);
 			PersistedWallpaperState currentWallpaperState = readPersistedWallpaperState(ensured);
+			PlayerBackgroundMode currentPlayerBackgroundMode = readPersistedPlayerBackgroundMode(ensured);
 			boolean galleryChanged = !Objects.equals(currentGalleryState, persistedGallery);
 			boolean wallpaperChanged = !Objects.equals(currentWallpaperState, persistedWallpaper);
-			if (galleryChanged || wallpaperChanged) {
+			boolean playerBackgroundChanged = currentPlayerBackgroundMode != persistedPlayerBackgroundMode;
+			if (galleryChanged || wallpaperChanged || playerBackgroundChanged) {
 				rerenderMaps = true;
 			}
-			if (!currentState.equals(updatedState) || galleryChanged || wallpaperChanged) {
+			if (!currentState.equals(updatedState) || galleryChanged || wallpaperChanged || playerBackgroundChanged) {
 				ItemStack updated = ensured.copy();
 				writeScreenState(updated, updatedState);
-				writePersistedGalleryState(updated, galleryItemsFromPersisted(persistedGallery));
-				writePersistedWallpaperState(updated, persistedWallpaper);
+				writePersistedGalleryState(updated, galleryItemsFromPersisted(persistedGallery), persistedWallpaper, persistedPlayerBackgroundMode);
 				frame.setItem(updated, false);
 			}
 			ensureDisplay(level, frame, connectionMask);
@@ -7286,7 +7511,11 @@ public final class MonitorScreenSystem {
 		if (runtimeState != null) {
 			synchronized (runtimeState) {
 				if (runtimeState.wallpaperUrl != null && !runtimeState.wallpaperUrl.isBlank()) {
-					return new PersistedWallpaperState(runtimeState.wallpaperUrl, runtimeState.wallpaperScaleMode);
+					return new PersistedWallpaperState(
+							runtimeState.wallpaperUrl,
+							runtimeState.wallpaperScaleMode,
+							runtimeState.wallpaperBackgroundMode
+					);
 				}
 			}
 		}
@@ -7294,6 +7523,27 @@ public final class MonitorScreenSystem {
 			PersistedWallpaperState state = readPersistedWallpaperState(frame.getItem());
 			if (state != null && state.url() != null && !state.url().isBlank()) {
 				return state;
+			}
+		}
+		return null;
+	}
+
+	private static PlayerBackgroundMode resolvePersistedPlayerBackgroundMode(ScreenComponent component) {
+		if (component == null) {
+			return null;
+		}
+		MediaRuntimeState runtimeState = MEDIA_STATES.get(component.runtimeKey());
+		if (runtimeState != null) {
+			synchronized (runtimeState) {
+				if (runtimeState.playerBackgroundMode != null) {
+					return runtimeState.playerBackgroundMode;
+				}
+			}
+		}
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			PlayerBackgroundMode mode = readPersistedPlayerBackgroundMode(frame.getItem());
+			if (mode != null) {
+				return mode;
 			}
 		}
 		return null;
@@ -7477,8 +7727,25 @@ public final class MonitorScreenSystem {
 		}
 		return new PersistedWallpaperState(
 				url,
-				parsePersistedScaleMode(mediaTag.getStringOr(PERSISTED_WALLPAPER_SCALE_TAG, MediaScaleMode.FIT.name()))
+				parsePersistedScaleMode(mediaTag.getStringOr(PERSISTED_WALLPAPER_SCALE_TAG, MediaScaleMode.FIT.name())),
+				parsePersistedWallpaperBackgroundMode(mediaTag.getStringOr(PERSISTED_WALLPAPER_BACKGROUND_MODE_TAG, ""))
 		);
+	}
+
+	private static PlayerBackgroundMode readPersistedPlayerBackgroundMode(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return null;
+		}
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData == null) {
+			return null;
+		}
+		CompoundTag root = customData.copyTag();
+		if (!root.contains(PERSISTED_MEDIA_ROOT_TAG)) {
+			return null;
+		}
+		CompoundTag mediaTag = root.getCompoundOrEmpty(PERSISTED_MEDIA_ROOT_TAG);
+		return PlayerBackgroundMode.fromPersisted(mediaTag.getStringOr(PERSISTED_PLAYER_BACKGROUND_MODE_TAG, ""));
 	}
 
 	private static MediaScaleMode parsePersistedScaleMode(String value) {
@@ -7492,18 +7759,28 @@ public final class MonitorScreenSystem {
 		}
 	}
 
+	private static PlayerBackgroundMode parsePersistedWallpaperBackgroundMode(String value) {
+		return safeWallpaperBackgroundMode(PlayerBackgroundMode.fromPersisted(value));
+	}
+
 	private static void writePersistedGalleryState(ItemStack stack, List<GalleryItem> galleryItems) {
-		writePersistedGalleryState(stack, galleryItems, null);
+		writePersistedGalleryState(stack, galleryItems, null, null);
 	}
 
 	private static void writePersistedGalleryState(ItemStack stack, List<GalleryItem> galleryItems, PersistedWallpaperState wallpaperState) {
+		writePersistedGalleryState(stack, galleryItems, wallpaperState, null);
+	}
+
+	private static void writePersistedGalleryState(ItemStack stack, List<GalleryItem> galleryItems, PersistedWallpaperState wallpaperState, PlayerBackgroundMode playerBackgroundMode) {
 		if (stack == null || stack.isEmpty()) {
 			return;
 		}
 		List<PersistedGalleryItem> persistedItems = persistedGalleryItems(galleryItems);
 		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
 			tag.remove(PERSISTED_MEDIA_ROOT_TAG);
-			if (persistedItems.isEmpty() && (wallpaperState == null || wallpaperState.url() == null || wallpaperState.url().isBlank())) {
+			boolean hasWallpaperState = wallpaperState != null && wallpaperState.url() != null && !wallpaperState.url().isBlank();
+			boolean hasPlayerBackgroundMode = playerBackgroundMode != null;
+			if (persistedItems.isEmpty() && !hasWallpaperState && !hasPlayerBackgroundMode) {
 				return;
 			}
 			CompoundTag mediaTag = new CompoundTag();
@@ -7520,12 +7797,19 @@ public final class MonitorScreenSystem {
 				}
 				mediaTag.put(PERSISTED_GALLERY_ITEM_PREFIX + index, itemTag);
 			}
-			if (wallpaperState != null && wallpaperState.url() != null && !wallpaperState.url().isBlank()) {
+			if (hasWallpaperState) {
 				mediaTag.putString(PERSISTED_WALLPAPER_URL_TAG, wallpaperState.url());
 				mediaTag.putString(
 						PERSISTED_WALLPAPER_SCALE_TAG,
 						(wallpaperState.scaleMode() != null ? wallpaperState.scaleMode() : MediaScaleMode.FIT).name().toLowerCase(Locale.ROOT)
 				);
+				mediaTag.putString(
+						PERSISTED_WALLPAPER_BACKGROUND_MODE_TAG,
+						safeWallpaperBackgroundMode(wallpaperState.backgroundMode()).persistedName()
+				);
+			}
+			if (hasPlayerBackgroundMode) {
+				mediaTag.putString(PERSISTED_PLAYER_BACKGROUND_MODE_TAG, playerBackgroundMode.persistedName());
 			}
 			tag.put(PERSISTED_MEDIA_ROOT_TAG, mediaTag);
 		});
@@ -7537,7 +7821,16 @@ public final class MonitorScreenSystem {
 		}
 		List<PersistedGalleryItem> persistedItems = readPersistedGalleryState(stack);
 		List<GalleryItem> galleryItems = galleryItemsFromPersisted(persistedItems);
-		writePersistedGalleryState(stack, galleryItems, wallpaperState);
+		writePersistedGalleryState(stack, galleryItems, wallpaperState, readPersistedPlayerBackgroundMode(stack));
+	}
+
+	private static void writePersistedPlayerBackgroundMode(ItemStack stack, PlayerBackgroundMode playerBackgroundMode) {
+		if (stack == null || stack.isEmpty()) {
+			return;
+		}
+		List<PersistedGalleryItem> persistedItems = readPersistedGalleryState(stack);
+		List<GalleryItem> galleryItems = galleryItemsFromPersisted(persistedItems);
+		writePersistedGalleryState(stack, galleryItems, readPersistedWallpaperState(stack), playerBackgroundMode);
 	}
 
 	private static List<PersistedGalleryItem> persistedGalleryItems(List<GalleryItem> galleryItems) {
@@ -7596,7 +7889,7 @@ public final class MonitorScreenSystem {
 
 	private static MediaVisualSnapshot captureMediaSnapshot(MediaRuntimeState state) {
 		if (state == null) {
-			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, false, true, false, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, false, 0, -1, null);
+			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, false, true, false, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, PlayerBackgroundMode.BLACK, false, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, false, 0, -1, null);
 		}
 		boolean youtubeMode = state.mode == ScreenViewMode.YOUTUBE;
 		boolean youtubeMusicMode = state.mode == ScreenViewMode.YOUTUBE_MUSIC;
@@ -7647,7 +7940,13 @@ public final class MonitorScreenSystem {
 		boolean wallpaperActionVisible = galleryMode && currentGalleryItemCanBeWallpaperLocked(state);
 		MediaActionGlyph wallpaperActionGlyph = currentGalleryItemIsWallpaperLocked(state) ? MediaActionGlyph.CHECK : MediaActionGlyph.WALLPAPER;
 		MediaActionVisualState wallpaperActionState = currentGalleryItemIsWallpaperLocked(state) ? MediaActionVisualState.COMPLETE : MediaActionVisualState.IDLE;
-		MediaOverlayWindowSnapshot overlayWindow = youtubeFamilyMode && state.youtubeQueueOpen
+		PlayerBackgroundMode playerBackgroundMode = resolvedPlayerBackgroundModeLocked(state);
+		boolean wallpaperAvailable = state.wallpaperUrl != null
+				&& !state.wallpaperUrl.isBlank()
+				&& state.wallpaperMedia != null;
+		MediaOverlayWindowSnapshot overlayWindow = state.playerBackgroundMenuOpen
+				? playerBackgroundMenuWindowSnapshot(state, playerBackgroundMode, wallpaperAvailable)
+				: youtubeFamilyMode && state.youtubeQueueOpen
 				? youtubeQueueWindowSnapshot(state, queueItems)
 				: galleryMode && state.galleryDeleteConfirmOpen
 				? galleryDeleteConfirmWindowSnapshot(state)
@@ -7677,6 +7976,8 @@ public final class MonitorScreenSystem {
 				isPlaybackPausedLocked(state),
 				state.overlayMode,
 				state.scaleMode,
+				playerBackgroundMode,
+				wallpaperAvailable,
 				state.statusText,
 				youtubeMusicMode ? "YT MUSIC URL" : youtubeMode ? "YOUTUBE URL" : "URL",
 				state.mediaTitle != null ? state.mediaTitle : "",
@@ -7708,7 +8009,8 @@ public final class MonitorScreenSystem {
 		}
 		return new WallpaperVisualSnapshot(
 				frame,
-				state.wallpaperScaleMode != null ? state.wallpaperScaleMode : MediaScaleMode.FIT
+				state.wallpaperScaleMode != null ? state.wallpaperScaleMode : MediaScaleMode.FIT,
+				resolvedWallpaperBackgroundModeLocked(state)
 		);
 	}
 
@@ -7731,12 +8033,8 @@ public final class MonitorScreenSystem {
 		configureUiGraphics(graphics);
 		drawBaseBackground(graphics, work.width(), work.height(), work.powered());
 		if (work.powered() && work.wallpaperSnapshot() != null && work.wallpaperSnapshot().frame() != null) {
-			drawScaledImage(
-					graphics,
-					work.wallpaperSnapshot().frame(),
-					mediaCanvasRect(createUiLayout(work.width(), work.height())),
-					work.wallpaperSnapshot().scaleMode()
-			);
+			UiLayout layout = createUiLayout(work.width(), work.height());
+			drawWallpaperSnapshot(graphics, layout, mediaCanvasRect(layout), work.wallpaperSnapshot());
 		}
 		if (work.powered()) {
 			UiLayout layout = createUiLayout(work.width(), work.height());
@@ -7820,7 +8118,13 @@ public final class MonitorScreenSystem {
 			int tileRowStart = localY * MAP_SIZE;
 			for (int localX = 0; localX < MAP_SIZE; localX++) {
 				int globalX = tileOriginX + localX;
-				int rgb = rgbPixels[rowStart + localX] & 0xFFFFFF;
+				int argb = rgbPixels[rowStart + localX];
+				int alpha = (argb >>> 24) & 0xFF;
+				if (alpha <= MAP_TRANSPARENT_ALPHA_THRESHOLD) {
+					tile[tileRowStart + localX] = 0;
+					continue;
+				}
+				int rgb = argb & 0xFFFFFF;
 				tile[tileRowStart + localX] = MapPaletteQuantizer.quantizeDithered(rgb, globalX, globalY);
 			}
 		}
@@ -8016,82 +8320,73 @@ public final class MonitorScreenSystem {
 			queueButtonSegment = showYoutubeMusicDownloadButton ? MediaButtonSegment.MIDDLE : MediaButtonSegment.RIGHT;
 			primaryActionSegment = showQueueButton ? MediaButtonSegment.RIGHT : MediaButtonSegment.MIDDLE;
 		}
+		PlayerBackgroundMode playerBackgroundMode = resolvedPlayerBackgroundMode(state);
+		boolean customWallpaperLoaded = state != null && state.wallpaperAvailable();
+		boolean wallpaperBackgroundVisible = state != null
+				&& playerBackgroundMode == PlayerBackgroundMode.WALLPAPER;
+		boolean artworkBackgroundVisible = state != null
+				&& playerBackgroundMode == PlayerBackgroundMode.ARTWORK
+				&& mediaBackgroundFrame != null;
+		UiRect menuRect = mediaPlayerMenuRect(layout);
 		UiRect titleRect = libraryMode && !musicPlayerLayout ? mediaGalleryPlayerTitleRect(layout) : mediaLinkRect(layout, controlUi);
+		if (titleRect.right() > menuRect.x() - clampInt(layout.unit() / 2, 4, 8)) {
+			titleRect = new UiRect(
+					titleRect.x(),
+					titleRect.y(),
+					Math.max(48, menuRect.x() - clampInt(layout.unit() / 2, 4, 8) - titleRect.x()),
+					titleRect.height()
+			);
+		}
 		UiRect scaleRect = mediaScaleRect(layout);
 		UiRect downloadRect = mediaDownloadRect(layout);
 		UiRect queueToggleRect = mediaQueueToggleRect(layout, chromeMode);
 		UiRect timelineRect = mediaTimelineRect(layout, chromeMode);
 		boolean darkPlayerSurface = usesDarkMediaPlayerSurface(state);
-
-		if (darkPlayerSurface && !musicPlayerLayout) {
-			graphics.setColor(Color.BLACK);
-			graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
-		}
+		drawPlayerBackgroundSurface(
+				graphics,
+				layout,
+				canvasRect,
+				mediaBackgroundFrame,
+				state,
+				playerBackgroundMode,
+				wallpaperBackgroundVisible,
+				customWallpaperLoaded,
+				artworkBackgroundVisible,
+				darkPlayerSurface,
+				musicPlayerLayout,
+				youtubeHomePrompt
+		);
 		if (musicPlayerLayout && !youtubeHomePrompt) {
-			if (mediaBackgroundFrame != null) {
-				drawYoutubeMusicArtworkBackground(
-						graphics,
-						canvasRect,
-						mediaBackgroundFrame,
-						secondaryArtworkScaleMode(state != null ? state.scaleMode() : MediaScaleMode.FIT)
-				);
-				graphics.setPaint(new GradientPaint(
-						canvasRect.x(),
-						canvasRect.y(),
-						new Color(6, 8, 10, 122),
-						canvasRect.right(),
-						canvasRect.bottom(),
-						new Color(10, 10, 14, 164)
-				));
-				graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
-			}
 			if (mediaFrame != null && !queueOverlayActive) {
 				drawYoutubeMusicArtworkCard(graphics, layout, mediaFrame, state != null ? state.scaleMode() : MediaScaleMode.FIT);
 			}
 		} else if (mediaFrame != null) {
 			drawScaledImage(graphics, mediaFrame, canvasRect, state.scaleMode());
 			if (queueOverlayActive && youtubeMode) {
-				graphics.setPaint(new GradientPaint(
-						canvasRect.x(),
-						canvasRect.y(),
-						new Color(246, 244, 246, 116),
-						canvasRect.right(),
-						canvasRect.bottom(),
-						new Color(228, 224, 230, 148)
-				));
-				graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
-				graphics.setPaint(new GradientPaint(
-						canvasRect.x(),
-						canvasRect.y(),
-						new Color(32, 24, 30, 28),
-						canvasRect.right(),
-						canvasRect.bottom(),
-						new Color(18, 14, 18, 42)
-				));
-				graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
-			}
-		} else if (!youtubeHomePrompt) {
-			if (darkPlayerSurface) {
-				graphics.setPaint(new GradientPaint(
-						canvasRect.x(),
-						canvasRect.y(),
-						new Color(6, 8, 12, 222),
-						canvasRect.right(),
-						canvasRect.bottom(),
-						new Color(14, 18, 24, 248)
-				));
-				graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
-			} else {
-				graphics.setPaint(new GradientPaint(
-						canvasRect.x(),
-						canvasRect.y(),
-						new Color(230, 236, 242, 24),
-						canvasRect.right(),
-						canvasRect.bottom(),
-						new Color(32, 40, 48, 54)
-				));
-				fillRoundedRect(graphics, canvasRect, clampInt(layout.unit() * 2, 12, 22), null);
-				strokeRoundedRect(graphics, canvasRect, clampInt(layout.unit() * 2, 12, 22), 1.0F, new Color(255, 255, 255, 36));
+				fillRectPreservingTransparency(
+						graphics,
+						canvasRect,
+						new GradientPaint(
+								canvasRect.x(),
+								canvasRect.y(),
+								new Color(246, 244, 246, 116),
+								canvasRect.right(),
+								canvasRect.bottom(),
+								new Color(228, 224, 230, 148)
+						)
+				);
+				fillRectPreservingTransparency(
+						graphics,
+						canvasRect,
+						new GradientPaint(
+								canvasRect.x(),
+								canvasRect.y(),
+								new Color(32, 24, 30, 28),
+								canvasRect.right(),
+								canvasRect.bottom(),
+								new Color(18, 14, 18, 42)
+						)
+				);
 			}
 		}
 
@@ -8103,24 +8398,30 @@ public final class MonitorScreenSystem {
 		if (controlsActive) {
 			if (!youtubeHomePrompt) {
 				int shadeHeight = clampInt(layout.unit() * 5, 40, 72);
-				graphics.setPaint(new GradientPaint(
-						0.0F,
-						canvasRect.y(),
-						new Color(0, 0, 0, 118),
-						0.0F,
-						canvasRect.y() + shadeHeight,
-						new Color(0, 0, 0, 0)
-				));
-				graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), shadeHeight);
-				graphics.setPaint(new GradientPaint(
-						0.0F,
-						canvasRect.bottom() - shadeHeight,
-						new Color(0, 0, 0, 0),
-						0.0F,
-						canvasRect.bottom(),
-						new Color(0, 0, 0, 126)
-				));
-				graphics.fillRect(canvasRect.x(), canvasRect.bottom() - shadeHeight, canvasRect.width(), shadeHeight);
+				fillRectPreservingTransparency(
+						graphics,
+						new UiRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), shadeHeight),
+						new GradientPaint(
+								0.0F,
+								canvasRect.y(),
+								new Color(0, 0, 0, 118),
+								0.0F,
+								canvasRect.y() + shadeHeight,
+								new Color(0, 0, 0, 0)
+						)
+				);
+				fillRectPreservingTransparency(
+						graphics,
+						new UiRect(canvasRect.x(), canvasRect.bottom() - shadeHeight, canvasRect.width(), shadeHeight),
+						new GradientPaint(
+								0.0F,
+								canvasRect.bottom() - shadeHeight,
+								new Color(0, 0, 0, 0),
+								0.0F,
+								canvasRect.bottom(),
+								new Color(0, 0, 0, 126)
+						)
+				);
 			}
 
 			if (libraryMode) {
@@ -8128,35 +8429,36 @@ public final class MonitorScreenSystem {
 			} else {
 				drawMediaCloseButton(graphics, closeRect, layout, controlUi && !musicPlayerLayout ? MediaButtonSegment.LEFT : MediaButtonSegment.SINGLE);
 			}
-				if (controlUi) {
-					boolean titleBarMode = libraryMode
-							|| galleryBackedYoutube
-							|| (youtubeMusicMode && (hasMedia
+			drawMediaPlayerMenuButton(graphics, menuRect, layout, state != null && state.overlayWindow() != null && state.overlayWindow().type() == MediaOverlayWindowType.PLAYER_BACKGROUND);
+			if (controlUi) {
+				boolean titleBarMode = libraryMode
+						|| galleryBackedYoutube
+						|| (youtubeMusicMode && (hasMedia
+						|| state.loading()
+						|| (state.mediaTitle() != null && !state.mediaTitle().isBlank())));
+				if (musicPlayerLayout) {
+					if (hasMedia
 							|| state.loading()
-							|| (state.mediaTitle() != null && !state.mediaTitle().isBlank())));
-					if (musicPlayerLayout) {
-						if (hasMedia
-								|| state.loading()
-								|| (state.mediaTitle() != null && !state.mediaTitle().isBlank())) {
-							drawYoutubeMusicTrackInfo(graphics, layout, state);
-						}
-					} else if (titleBarMode && !youtubeMusicMode) {
-						drawMediaTitleBar(graphics, titleRect, state != null ? state.mediaTitle() : "", layout, MediaButtonSegment.RIGHT);
-						if (showPrimaryActionButton && galleryMode) {
-							drawGalleryPlayerActionButton(graphics, mediaGalleryPlayerActionRect(layout), state, layout, primaryActionSegment);
-						}
-						if (showWallpaperActionButton && galleryMode) {
-							drawGalleryWallpaperActionButton(graphics, downloadRect, state, layout, wallpaperActionSegment);
-						}
-					} else {
-						drawMediaSearchBar(
-								graphics,
-								titleRect,
-								state != null ? state.linkPlaceholder() : "ВСТАВЬ URL",
-								true,
-								layout,
-								MediaButtonSegment.RIGHT
-						);
+							|| (state.mediaTitle() != null && !state.mediaTitle().isBlank())) {
+						drawYoutubeMusicTrackInfo(graphics, layout, state);
+					}
+				} else if (titleBarMode && !youtubeMusicMode) {
+					drawMediaTitleBar(graphics, titleRect, state != null ? state.mediaTitle() : "", layout, MediaButtonSegment.RIGHT);
+					if (showPrimaryActionButton && galleryMode) {
+						drawGalleryPlayerActionButton(graphics, mediaGalleryPlayerActionRect(layout), state, layout, primaryActionSegment);
+					}
+					if (showWallpaperActionButton && galleryMode) {
+						drawGalleryWallpaperActionButton(graphics, downloadRect, state, layout, wallpaperActionSegment);
+					}
+				} else {
+					drawMediaSearchBar(
+							graphics,
+							titleRect,
+							state != null ? state.linkPlaceholder() : "ВСТАВЬ URL",
+							true,
+							layout,
+							MediaButtonSegment.RIGHT
+					);
 				}
 				if (!musicPlayerLayout) {
 					drawMediaScaleButton(graphics, scaleRect, state != null ? state.scaleMode() : MediaScaleMode.FIT, layout, scaleButtonSegment);
@@ -8370,6 +8672,12 @@ public final class MonitorScreenSystem {
 	private static void drawMediaBackButton(Graphics2D graphics, UiRect rect, UiLayout layout, MediaButtonSegment segment) {
 		Color color = drawMediaHeaderControlBase(graphics, rect, segment);
 		drawBackArrow(graphics, mediaChromeIconRect(rect, layout), color);
+	}
+
+	private static void drawMediaPlayerMenuButton(Graphics2D graphics, UiRect rect, UiLayout layout, boolean active) {
+		float strokeWidth = mediaChromeStrokeWidth(rect);
+		Color iconColor = drawSmallMediaButtonBase(graphics, rect, MediaButtonSegment.SINGLE, active, strokeWidth);
+		drawMenuGlyph(graphics, mediaChromeIconRect(rect, layout), iconColor);
 	}
 
 	private static void drawMediaScaleButton(Graphics2D graphics, UiRect rect, MediaScaleMode scaleMode, UiLayout layout, MediaButtonSegment segment) {
@@ -8847,6 +9155,7 @@ public final class MonitorScreenSystem {
 		switch (window.type()) {
 			case YOUTUBE_QUEUE -> drawYoutubeQueueWindow(overlayGraphics, layout, window);
 			case GALLERY_DELETE_CONFIRM -> drawGalleryDeleteConfirmWindow(overlayGraphics, layout, window);
+			case PLAYER_BACKGROUND -> drawPlayerBackgroundWindow(overlayGraphics, layout, window);
 		}
 		overlayGraphics.dispose();
 		return image;
@@ -8860,6 +9169,7 @@ public final class MonitorScreenSystem {
 		switch (type) {
 			case YOUTUBE_QUEUE -> drawYoutubeQueueWindowPlaceholder(overlayGraphics, layout);
 			case GALLERY_DELETE_CONFIRM -> drawGalleryDeleteConfirmWindowPlaceholder(overlayGraphics, layout);
+			case PLAYER_BACKGROUND -> drawPlayerBackgroundWindowPlaceholder(overlayGraphics, layout);
 		}
 		overlayGraphics.dispose();
 		return image;
@@ -9029,9 +9339,136 @@ public final class MonitorScreenSystem {
 						0,
 						-1,
 						false,
+						false,
+						null,
 						false
 				)
 		);
+	}
+
+	private static void drawPlayerBackgroundWindow(Graphics2D graphics, UiLayout layout, MediaOverlayWindowSnapshot window) {
+		UiRect panel = playerBackgroundPanelRect(layout);
+		UiRect header = playerBackgroundHeaderRect(layout);
+		UiRect closeRect = playerBackgroundCloseRect(layout);
+		drawOverlayModalBase(graphics, layout, panel, header, closeRect, window.title(), window.subtitle());
+		drawPlayerBackgroundOptionButton(graphics, layout, playerBackgroundOptionRect(layout, 0), PlayerBackgroundMode.ARTWORK, window.playerBackgroundMode() == PlayerBackgroundMode.ARTWORK, true, false);
+		drawPlayerBackgroundOptionButton(graphics, layout, playerBackgroundOptionRect(layout, 1), PlayerBackgroundMode.WALLPAPER, window.playerBackgroundMode() == PlayerBackgroundMode.WALLPAPER, true, window.wallpaperAvailable());
+		drawPlayerBackgroundOptionButton(graphics, layout, playerBackgroundOptionRect(layout, 2), PlayerBackgroundMode.BLACK, window.playerBackgroundMode() == PlayerBackgroundMode.BLACK, true, false);
+		drawPlayerBackgroundOptionButton(graphics, layout, playerBackgroundOptionRect(layout, 3), PlayerBackgroundMode.EMPTY, window.playerBackgroundMode() == PlayerBackgroundMode.EMPTY, true, false);
+	}
+
+	private static void drawPlayerBackgroundWindowPlaceholder(Graphics2D graphics, UiLayout layout) {
+		drawPlayerBackgroundWindow(
+				graphics,
+				layout,
+				new MediaOverlayWindowSnapshot(
+						MediaOverlayWindowType.PLAYER_BACKGROUND,
+						"ФОН ПЛЕЕРА",
+						"Для видео, музыки, картинок и трансляций",
+						List.of(),
+						0,
+						-1,
+						false,
+						false,
+						PlayerBackgroundMode.BLACK,
+						true
+				)
+		);
+	}
+
+	private static void drawPlayerBackgroundOptionButton(Graphics2D graphics, UiLayout layout, UiRect rect, PlayerBackgroundMode mode, boolean selected, boolean enabled, boolean customWallpaperLoaded) {
+		if (graphics == null || layout == null || rect == null || mode == null) {
+			return;
+		}
+		Color fill = selected
+				? new Color(248, 246, 246, 238)
+				: enabled ? new Color(255, 255, 255, 14) : new Color(255, 255, 255, 8);
+		Color stroke = selected
+				? new Color(255, 255, 255, 86)
+				: enabled ? new Color(255, 255, 255, 34) : new Color(255, 255, 255, 20);
+		Color titleColor = selected ? new Color(22, 20, 24, 244) : enabled ? new Color(248, 240, 244, 236) : new Color(200, 208, 218, 166);
+		Color subtitleColor = selected ? new Color(68, 60, 66, 220) : enabled ? new Color(214, 221, 230, 188) : new Color(164, 174, 186, 144);
+		int arc = clampInt(layout.unit() * 2, 12, 18);
+		fillRoundedRect(graphics, rect, arc, fill);
+		strokeRoundedRect(graphics, rect, arc, 1.0F, stroke);
+		UiRect iconRect = new UiRect(
+				rect.x() + clampInt(layout.unit() / 2, 4, 8),
+				rect.y() + (rect.height() - clampInt(layout.unit() + 6, 14, 22)) / 2,
+				clampInt(layout.unit() + 6, 14, 22),
+				clampInt(layout.unit() + 6, 14, 22)
+		);
+		if (selected) {
+			drawCheckGlyph(graphics, iconRect, titleColor, mediaChromeStrokeWidth(iconRect));
+		} else if (mode == PlayerBackgroundMode.WALLPAPER) {
+			drawWallpaperGlyph(graphics, iconRect, titleColor, mediaChromeStrokeWidth(iconRect));
+		} else if (mode == PlayerBackgroundMode.ARTWORK) {
+			drawMediaFillGlyph(graphics, iconRect, titleColor, mediaChromeStrokeWidth(iconRect));
+		} else if (mode == PlayerBackgroundMode.EMPTY) {
+			strokeRoundedRect(graphics, iconRect, clampInt(layout.unit(), 8, 12), mediaChromeStrokeWidth(iconRect), titleColor);
+		} else {
+			fillRoundedRect(graphics, iconRect, clampInt(layout.unit(), 8, 12), titleColor);
+		}
+		UiRect titleRect = new UiRect(
+				iconRect.right() + clampInt(layout.unit() / 2, 4, 8),
+				rect.y() + clampInt(layout.unit() / 4, 2, 5),
+				Math.max(24, rect.width() - (iconRect.right() - rect.x()) - clampInt(layout.unit() * 2, 14, 24)),
+				Math.max(12, rect.height() / 2)
+		);
+		UiRect subtitleRect = new UiRect(
+				titleRect.x(),
+				titleRect.bottom() - clampInt(layout.unit() / 6, 1, 2),
+				titleRect.width(),
+				Math.max(10, rect.bottom() - titleRect.bottom() - clampInt(layout.unit() / 4, 2, 4))
+		);
+		drawVerticalText(graphics, playerBackgroundModeTitle(mode), titleRect, titleColor, Font.BOLD, compactScreenLayout(layout) ? clampInt(layout.unit(), 8, 13) : clampInt(layout.unit() + 1, 10, 16));
+		drawVerticalText(graphics, playerBackgroundModeSubtitle(mode, customWallpaperLoaded), subtitleRect, subtitleColor, Font.PLAIN, compactScreenLayout(layout) ? clampInt(layout.unit() - 1, 7, 10) : clampInt(layout.unit(), 9, 13));
+	}
+
+	private static String playerBackgroundModeTitle(PlayerBackgroundMode mode) {
+		return switch (mode) {
+			case ARTWORK -> "ОТ КАРТИНКИ";
+			case WALLPAPER -> "ОБОИ";
+			case BLACK -> "ЧЕРНЫЙ";
+			case EMPTY -> "ПУСТОЙ";
+		};
+	}
+
+	private static String playerBackgroundModeSubtitle(PlayerBackgroundMode mode, boolean available) {
+		return switch (mode) {
+			case ARTWORK -> "Фильтрованный фон по текущему медиа";
+			case WALLPAPER -> available ? "Использовать обои этого экрана" : "Стандартные обои экрана";
+			case BLACK -> "Чистый темный фон";
+			case EMPTY -> "Пустота под картами";
+		};
+	}
+
+	private static void drawWallpaperSnapshot(Graphics2D graphics, UiLayout layout, UiRect rect, WallpaperVisualSnapshot wallpaperSnapshot) {
+		if (graphics == null || layout == null || rect == null || wallpaperSnapshot == null || wallpaperSnapshot.frame() == null) {
+			return;
+		}
+		PlayerBackgroundMode backgroundMode = safeWallpaperBackgroundMode(wallpaperSnapshot.backgroundMode());
+		if (backgroundMode == PlayerBackgroundMode.EMPTY) {
+			clearRectToTransparent(graphics, rect);
+		} else if (backgroundMode == PlayerBackgroundMode.BLACK) {
+			graphics.setPaint(new GradientPaint(
+					rect.x(),
+					rect.y(),
+					new Color(6, 8, 12, 222),
+					rect.right(),
+					rect.bottom(),
+					new Color(14, 18, 24, 248)
+			));
+			graphics.fillRect(rect.x(), rect.y(), rect.width(), rect.height());
+		} else if (backgroundMode == PlayerBackgroundMode.ARTWORK) {
+			drawYoutubeMusicArtworkBackground(
+					graphics,
+					rect,
+					wallpaperSnapshot.frame(),
+					secondaryArtworkScaleMode(wallpaperSnapshot.scaleMode())
+			);
+			drawPlayerBackgroundShadeOverlay(graphics, rect, new Color(8, 10, 14, 94), new Color(12, 14, 18, 124));
+		}
+		drawScaledImageReplacingContent(graphics, wallpaperSnapshot.frame(), rect, wallpaperSnapshot.scaleMode());
 	}
 
 	private static void drawOverlayModalActionButton(Graphics2D graphics, UiRect rect, String label, boolean destructive, UiLayout layout) {
@@ -9160,41 +9597,109 @@ public final class MonitorScreenSystem {
 	}
 
 	private static void drawScaledImage(Graphics2D graphics, BufferedImage image, UiRect rect, MediaScaleMode scaleMode) {
+		drawScaledImageWithComposite(graphics, image, rect, scaleMode, null);
+	}
+
+	private static void drawTransparentBackdropImage(Graphics2D graphics, BufferedImage image, UiRect rect, MediaScaleMode scaleMode) {
+		clearRectToTransparent(graphics, rect);
+		drawScaledImage(graphics, image, rect, scaleMode);
+	}
+
+	private static void fillRectPreservingTransparency(Graphics2D graphics, UiRect rect, Paint paint) {
+		if (graphics == null || rect == null || rect.width() <= 0 || rect.height() <= 0 || paint == null) {
+			return;
+		}
+		Paint previousPaint = graphics.getPaint();
+		Composite previousComposite = graphics.getComposite();
+		try {
+			graphics.setPaint(paint);
+			graphics.setComposite(PRESERVE_TRANSPARENCY_COMPOSITE);
+			graphics.fillRect(rect.x(), rect.y(), rect.width(), rect.height());
+		} finally {
+			graphics.setComposite(previousComposite);
+			graphics.setPaint(previousPaint);
+		}
+	}
+
+	private static void drawScaledImageReplacingContent(Graphics2D graphics, BufferedImage image, UiRect rect, MediaScaleMode scaleMode) {
+		drawScaledImageWithComposite(graphics, image, rect, scaleMode, REPLACING_IMAGE_COMPOSITE);
+	}
+
+	private static void clearRectToTransparent(Graphics2D graphics, UiRect rect) {
+		if (graphics == null || rect == null || rect.width() <= 0 || rect.height() <= 0) {
+			return;
+		}
+		Composite previousComposite = graphics.getComposite();
+		Color previousColor = graphics.getColor();
+		try {
+			graphics.setComposite(REPLACING_IMAGE_COMPOSITE);
+			graphics.setColor(new Color(0, 0, 0, 0));
+			graphics.fillRect(rect.x(), rect.y(), rect.width(), rect.height());
+		} finally {
+			graphics.setComposite(previousComposite);
+			graphics.setColor(previousColor);
+		}
+	}
+
+	private static void drawScaledImageWithComposite(Graphics2D graphics, BufferedImage image, UiRect rect, MediaScaleMode scaleMode, Composite composite) {
 		if (image == null || rect.width() <= 0 || rect.height() <= 0) {
 			return;
 		}
 		Shape previousClip = graphics.getClip();
-		if (previousClip == null) {
-			graphics.setClip(rect.x(), rect.y(), rect.width(), rect.height());
-		} else {
-			graphics.clipRect(rect.x(), rect.y(), rect.width(), rect.height());
-		}
-		if (scaleMode == MediaScaleMode.STRETCH) {
-			graphics.drawImage(image, rect.x(), rect.y(), rect.width(), rect.height(), null);
-			graphics.setClip(previousClip);
-			return;
-		}
+		Composite previousComposite = graphics.getComposite();
+		try {
+			if (previousClip == null) {
+				graphics.setClip(rect.x(), rect.y(), rect.width(), rect.height());
+			} else {
+				graphics.clipRect(rect.x(), rect.y(), rect.width(), rect.height());
+			}
+			if (composite != null) {
+				graphics.setComposite(composite);
+			}
+			if (scaleMode == MediaScaleMode.STRETCH) {
+				graphics.drawImage(image, rect.x(), rect.y(), rect.width(), rect.height(), null);
+				return;
+			}
 
-		double scale = scaleMode == MediaScaleMode.FILL
-				? Math.max(rect.width() / (double) image.getWidth(), rect.height() / (double) image.getHeight())
-				: Math.min(rect.width() / (double) image.getWidth(), rect.height() / (double) image.getHeight());
-		int drawWidth = Math.max(1, (int) Math.round(image.getWidth() * scale));
-		int drawHeight = Math.max(1, (int) Math.round(image.getHeight() * scale));
-		int drawX = rect.x() + (rect.width() - drawWidth) / 2;
-		int drawY = rect.y() + (rect.height() - drawHeight) / 2;
-		graphics.drawImage(image, drawX, drawY, drawWidth, drawHeight, null);
-		graphics.setClip(previousClip);
+			double scale = scaleMode == MediaScaleMode.FILL
+					? Math.max(rect.width() / (double) image.getWidth(), rect.height() / (double) image.getHeight())
+					: Math.min(rect.width() / (double) image.getWidth(), rect.height() / (double) image.getHeight());
+			int drawWidth = Math.max(1, (int) Math.round(image.getWidth() * scale));
+			int drawHeight = Math.max(1, (int) Math.round(image.getHeight() * scale));
+			int drawX = rect.x() + (rect.width() - drawWidth) / 2;
+			int drawY = rect.y() + (rect.height() - drawHeight) / 2;
+			graphics.drawImage(image, drawX, drawY, drawWidth, drawHeight, null);
+		} finally {
+			graphics.setComposite(previousComposite);
+			graphics.setClip(previousClip);
+		}
 	}
 
 	private static void drawRoundedScaledImage(Graphics2D graphics, BufferedImage image, UiRect rect, MediaScaleMode scaleMode, int arc) {
+		drawRoundedScaledImage(graphics, image, rect, scaleMode, arc, null);
+	}
+
+	private static void drawRoundedScaledImageReplacingContent(Graphics2D graphics, BufferedImage image, UiRect rect, MediaScaleMode scaleMode, int arc) {
+		drawRoundedScaledImage(graphics, image, rect, scaleMode, arc, REPLACING_IMAGE_COMPOSITE);
+	}
+
+	private static void drawRoundedScaledImage(Graphics2D graphics, BufferedImage image, UiRect rect, MediaScaleMode scaleMode, int arc, Composite composite) {
 		if (graphics == null || image == null || rect == null || rect.width() <= 0 || rect.height() <= 0) {
 			return;
 		}
 		Shape previousClip = graphics.getClip();
-		RoundRectangle2D.Float clip = new RoundRectangle2D.Float(rect.x(), rect.y(), rect.width(), rect.height(), arc, arc);
-		graphics.setClip(clip);
-		drawScaledImage(graphics, image, rect, scaleMode);
-		graphics.setClip(previousClip);
+		Composite previousComposite = graphics.getComposite();
+		try {
+			RoundRectangle2D.Float clip = new RoundRectangle2D.Float(rect.x(), rect.y(), rect.width(), rect.height(), arc, arc);
+			graphics.setClip(clip);
+			if (composite != null) {
+				graphics.setComposite(composite);
+			}
+			drawScaledImageWithComposite(graphics, image, rect, scaleMode, composite);
+		} finally {
+			graphics.setComposite(previousComposite);
+			graphics.setClip(previousClip);
+		}
 	}
 
 	private static void drawYoutubeMusicArtworkBackground(Graphics2D graphics, UiRect rect, BufferedImage image, MediaScaleMode scaleMode) {
@@ -9205,6 +9710,110 @@ public final class MonitorScreenSystem {
 		graphics.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.26F));
 		drawScaledImage(graphics, image, rect, scaleMode);
 		graphics.setComposite(previousComposite);
+	}
+
+	private static void drawPlayerBackgroundSurface(
+			Graphics2D graphics,
+			UiLayout layout,
+			UiRect canvasRect,
+			BufferedImage mediaBackgroundFrame,
+			MediaVisualSnapshot state,
+			PlayerBackgroundMode playerBackgroundMode,
+			boolean wallpaperBackgroundVisible,
+			boolean customWallpaperLoaded,
+			boolean artworkBackgroundVisible,
+			boolean darkPlayerSurface,
+			boolean musicPlayerLayout,
+			boolean youtubeHomePrompt
+	) {
+		if (graphics == null || layout == null || canvasRect == null) {
+			return;
+		}
+		if (playerBackgroundMode == PlayerBackgroundMode.EMPTY) {
+			clearRectToTransparent(graphics, canvasRect);
+			return;
+		}
+		if (musicPlayerLayout && !youtubeHomePrompt) {
+			if (artworkBackgroundVisible && mediaBackgroundFrame != null) {
+				drawYoutubeMusicArtworkBackground(
+						graphics,
+						canvasRect,
+						mediaBackgroundFrame,
+						secondaryArtworkScaleMode(state != null ? state.scaleMode() : MediaScaleMode.FIT)
+				);
+				drawPlayerBackgroundShadeOverlay(graphics, canvasRect, new Color(6, 8, 10, 122), new Color(10, 10, 14, 164));
+				return;
+			}
+			if (wallpaperBackgroundVisible) {
+				if (customWallpaperLoaded) {
+					return;
+				}
+				return;
+			}
+			graphics.setPaint(new GradientPaint(
+					canvasRect.x(),
+					canvasRect.y(),
+					new Color(8, 10, 14, 236),
+					canvasRect.right(),
+					canvasRect.bottom(),
+					new Color(10, 12, 16, 250)
+			));
+			graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
+			return;
+		}
+		if (artworkBackgroundVisible && mediaBackgroundFrame != null) {
+			drawYoutubeMusicArtworkBackground(
+					graphics,
+					canvasRect,
+					mediaBackgroundFrame,
+					secondaryArtworkScaleMode(state != null ? state.scaleMode() : MediaScaleMode.FIT)
+			);
+			drawPlayerBackgroundShadeOverlay(graphics, canvasRect, new Color(8, 10, 14, 94), new Color(12, 14, 18, 124));
+			return;
+		}
+		if (wallpaperBackgroundVisible) {
+			return;
+		}
+		if (darkPlayerSurface || playerBackgroundMode == PlayerBackgroundMode.BLACK) {
+			graphics.setPaint(new GradientPaint(
+					canvasRect.x(),
+					canvasRect.y(),
+					new Color(6, 8, 12, 222),
+					canvasRect.right(),
+					canvasRect.bottom(),
+					new Color(14, 18, 24, 248)
+			));
+			graphics.fillRect(canvasRect.x(), canvasRect.y(), canvasRect.width(), canvasRect.height());
+			return;
+		}
+		graphics.setPaint(new GradientPaint(
+				canvasRect.x(),
+				canvasRect.y(),
+				new Color(230, 236, 242, 24),
+				canvasRect.right(),
+				canvasRect.bottom(),
+				new Color(32, 40, 48, 54)
+		));
+		fillRoundedRect(graphics, canvasRect, clampInt(layout.unit() * 2, 12, 22), null);
+		strokeRoundedRect(graphics, canvasRect, clampInt(layout.unit() * 2, 12, 22), 1.0F, new Color(255, 255, 255, 36));
+	}
+
+	private static void drawPlayerBackgroundShadeOverlay(Graphics2D graphics, UiRect rect, Color start, Color end) {
+		if (graphics == null || rect == null) {
+			return;
+		}
+		fillRectPreservingTransparency(
+				graphics,
+				rect,
+				new GradientPaint(
+						rect.x(),
+						rect.y(),
+						start != null ? start : new Color(8, 10, 14, 84),
+						rect.right(),
+						rect.bottom(),
+						end != null ? end : new Color(12, 14, 18, 120)
+				)
+		);
 	}
 
 	private static MediaScaleMode secondaryArtworkScaleMode(MediaScaleMode scaleMode) {
@@ -9219,6 +9828,18 @@ public final class MonitorScreenSystem {
 		UiRect artworkRect = mediaYoutubeMusicArtworkRect(layout);
 		int arc = clampInt(layout.unit() * 2, 12, 28);
 		drawRoundedScaledImage(
+				graphics,
+				image,
+				artworkRect,
+				scaleMode == MediaScaleMode.STRETCH ? MediaScaleMode.FILL : scaleMode,
+				arc
+		);
+	}
+
+	private static void drawYoutubeMusicArtworkCardReplacingContent(Graphics2D graphics, UiLayout layout, BufferedImage image, MediaScaleMode scaleMode) {
+		UiRect artworkRect = mediaYoutubeMusicArtworkRect(layout);
+		int arc = clampInt(layout.unit() * 2, 12, 28);
+		drawRoundedScaledImageReplacingContent(
 				graphics,
 				image,
 				artworkRect,
@@ -9471,6 +10092,10 @@ public final class MonitorScreenSystem {
 
 	private static void drawDropdownGlyph(Graphics2D graphics, UiRect rect, Color color) {
 		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.DROPDOWN, color);
+	}
+
+	private static void drawMenuGlyph(Graphics2D graphics, UiRect rect, Color color) {
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.MENU, color);
 	}
 
 	private static void drawQueueGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
@@ -9839,6 +10464,12 @@ public final class MonitorScreenSystem {
 		UiRect canvas = mediaCanvasRect(layout);
 		int size = clampInt(layout.unit() * 2, 18, 28);
 		return new UiRect(canvas.x() + layout.unit() / 2, canvas.y() + layout.unit() / 2, size, size);
+	}
+
+	private static UiRect mediaPlayerMenuRect(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int size = clampInt(layout.unit() * 2, 18, 28);
+		return new UiRect(canvas.right() - size - layout.unit() / 2, canvas.y() + layout.unit() / 2, size, size);
 	}
 
 	private static UiRect mediaOverlayToggleRect(UiLayout layout) {
@@ -10213,6 +10844,16 @@ public final class MonitorScreenSystem {
 		);
 	}
 
+	private static UiRect playerBackgroundPanelRect(UiLayout layout) {
+		return centeredOverlayPanelRect(
+				layout,
+				ultraCompactScreenLayout(layout) ? 13.0D / 16.0D : compactScreenLayout(layout) ? 3.0D / 4.0D : 11.0D / 16.0D,
+				ultraCompactScreenLayout(layout) ? 11.0D / 24.0D : compactScreenLayout(layout) ? 1.0D / 2.0D : 13.0D / 24.0D,
+				88,
+				70
+		);
+	}
+
 	private static UiRect centeredOverlayPanelRect(UiLayout layout, double widthFraction, double heightFraction, int minWidth, int minHeight) {
 		UiRect canvas = mediaCanvasRect(layout);
 		int width = clampInt((int) Math.round(canvas.width() * widthFraction), minWidth, canvas.width() - layout.unit() * 2);
@@ -10229,6 +10870,7 @@ public final class MonitorScreenSystem {
 		return switch (type) {
 			case YOUTUBE_QUEUE -> mediaQueuePanelRect(layout);
 			case GALLERY_DELETE_CONFIRM -> galleryDeleteConfirmPanelRect(layout);
+			case PLAYER_BACKGROUND -> playerBackgroundPanelRect(layout);
 		};
 	}
 
@@ -10374,6 +11016,64 @@ public final class MonitorScreenSystem {
 		UiRect cancel = galleryDeleteConfirmCancelRect(layout);
 		int gap = clampInt(layout.unit() / 2, 4, 8);
 		return new UiRect(cancel.right() + gap, row.y(), Math.max(28, row.right() - cancel.right() - gap), row.height());
+	}
+
+	private static UiRect playerBackgroundHeaderRect(UiLayout layout) {
+		UiRect panel = overlayWindowRect(layout, MediaOverlayWindowType.PLAYER_BACKGROUND);
+		int inset = clampInt(layout.unit() / 2, 4, 8);
+		int height = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 1, 20, 26)
+				: compactScreenLayout(layout)
+				? clampInt(layout.unit() * 3, 26, 34)
+				: clampInt(layout.unit() * 4 - 1, 32, 46);
+		return new UiRect(panel.x() + inset, panel.y() + inset, panel.width() - inset * 2, height);
+	}
+
+	private static UiRect playerBackgroundCloseRect(UiLayout layout) {
+		UiRect header = playerBackgroundHeaderRect(layout);
+		int size = Math.max(16, header.height() - clampInt(layout.unit() / 2, 4, 8));
+		return new UiRect(header.right() - size - clampInt(layout.unit() / 3, 3, 6), header.y() + (header.height() - size) / 2, size, size);
+	}
+
+	private static UiRect playerBackgroundBodyRect(UiLayout layout) {
+		UiRect panel = overlayWindowRect(layout, MediaOverlayWindowType.PLAYER_BACKGROUND);
+		UiRect header = playerBackgroundHeaderRect(layout);
+		int inset = clampInt(layout.unit(), 8, 14);
+		int top = header.bottom() + clampInt(layout.unit() / 2, 4, 8);
+		return new UiRect(panel.x() + inset, top, panel.width() - inset * 2, Math.max(24, panel.bottom() - top - inset));
+	}
+
+	private static UiRect playerBackgroundOptionRect(UiLayout layout, int index) {
+		UiRect body = playerBackgroundBodyRect(layout);
+		int optionCount = 4;
+		int safeIndex = clampInt(index, 0, optionCount - 1);
+		int gap = clampInt(layout.unit() / 2, 4, 8);
+		int height = Math.max(16, (body.height() - gap * (optionCount - 1)) / optionCount);
+		return new UiRect(
+				body.x(),
+				body.y() + safeIndex * (height + gap),
+				body.width(),
+				height
+		);
+	}
+
+	private static PlayerBackgroundMode playerBackgroundModeForTouch(UiLayout layout, UiPoint touchPoint) {
+		if (layout == null || touchPoint == null) {
+			return null;
+		}
+		if (playerBackgroundOptionRect(layout, 0).contains(touchPoint.x(), touchPoint.y())) {
+			return PlayerBackgroundMode.ARTWORK;
+		}
+		if (playerBackgroundOptionRect(layout, 1).contains(touchPoint.x(), touchPoint.y())) {
+			return PlayerBackgroundMode.WALLPAPER;
+		}
+		if (playerBackgroundOptionRect(layout, 2).contains(touchPoint.x(), touchPoint.y())) {
+			return PlayerBackgroundMode.BLACK;
+		}
+		if (playerBackgroundOptionRect(layout, 3).contains(touchPoint.x(), touchPoint.y())) {
+			return PlayerBackgroundMode.EMPTY;
+		}
+		return null;
 	}
 
 	private static UiRect mediaQueueScrollbarTrackRect(UiLayout layout) {
@@ -11910,7 +12610,9 @@ public final class MonitorScreenSystem {
 				Math.max(0, state.youtubeQueueScroll),
 				Math.max(-1, state.youtubeQueueIndex),
 				state.youtubeMusicShuffleEnabled,
-				state.youtubeRepeatOneEnabled
+				state.youtubeRepeatOneEnabled,
+				null,
+				false
 		);
 	}
 
@@ -11927,7 +12629,27 @@ public final class MonitorScreenSystem {
 				0,
 				-1,
 				false,
+				false,
+				null,
 				false
+		);
+	}
+
+	private static MediaOverlayWindowSnapshot playerBackgroundMenuWindowSnapshot(MediaRuntimeState state, PlayerBackgroundMode backgroundMode, boolean wallpaperAvailable) {
+		if (state == null) {
+			return null;
+		}
+		return new MediaOverlayWindowSnapshot(
+				MediaOverlayWindowType.PLAYER_BACKGROUND,
+				"ФОН ПЛЕЕРА",
+				"Для видео, музыки, картинок и трансляций",
+				List.of(),
+				0,
+				-1,
+				false,
+				false,
+				backgroundMode != null ? backgroundMode : PlayerBackgroundMode.BLACK,
+				wallpaperAvailable
 		);
 	}
 
@@ -12437,6 +13159,7 @@ public final class MonitorScreenSystem {
 		state.galleryIndex = -1;
 		state.galleryScroll = 0;
 		state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+		state.playerBackgroundMenuOpen = false;
 		clearGallerySelectionLocked(state);
 	}
 
@@ -12447,6 +13170,7 @@ public final class MonitorScreenSystem {
 		state.wallpaperUrl = null;
 		state.wallpaperMedia = null;
 		state.wallpaperScaleMode = MediaScaleMode.FIT;
+		state.wallpaperBackgroundMode = PlayerBackgroundMode.EMPTY;
 		state.wallpaperFrameIndex = 0;
 		state.wallpaperLoading = false;
 	}
@@ -12504,6 +13228,7 @@ public final class MonitorScreenSystem {
 		state.loading = false;
 		state.waitingForLink = false;
 		state.youtubeReturnToGallery = false;
+		state.playerBackgroundMenuOpen = false;
 		clearGallerySelectionLocked(state);
 		if (clearYoutubeQueue) {
 			clearYoutubeQueueLocked(state);
@@ -12561,7 +13286,9 @@ public final class MonitorScreenSystem {
 		return item != null
 				&& item.url() != null
 				&& !item.url().isBlank()
-				&& Objects.equals(item.url(), state.wallpaperUrl);
+				&& Objects.equals(item.url(), state.wallpaperUrl)
+				&& (state.scaleMode != null ? state.scaleMode : MediaScaleMode.FIT) == (state.wallpaperScaleMode != null ? state.wallpaperScaleMode : MediaScaleMode.FIT)
+				&& resolvedPlayerBackgroundModeLocked(state) == resolvedWallpaperBackgroundModeLocked(state);
 	}
 
 	private static PersistedWallpaperState persistedWallpaperStateLocked(MediaRuntimeState state) {
@@ -12570,8 +13297,50 @@ public final class MonitorScreenSystem {
 		}
 		return new PersistedWallpaperState(
 				state.wallpaperUrl,
-				state.wallpaperScaleMode != null ? state.wallpaperScaleMode : MediaScaleMode.FIT
+				state.wallpaperScaleMode != null ? state.wallpaperScaleMode : MediaScaleMode.FIT,
+				resolvedWallpaperBackgroundModeLocked(state)
 		);
+	}
+
+	private static PlayerBackgroundMode safeWallpaperBackgroundMode(PlayerBackgroundMode mode) {
+		if (mode == PlayerBackgroundMode.ARTWORK || mode == PlayerBackgroundMode.BLACK || mode == PlayerBackgroundMode.EMPTY) {
+			return mode;
+		}
+		return PlayerBackgroundMode.EMPTY;
+	}
+
+	private static PlayerBackgroundMode resolvedWallpaperBackgroundModeLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return PlayerBackgroundMode.EMPTY;
+		}
+		return safeWallpaperBackgroundMode(state.wallpaperBackgroundMode);
+	}
+
+	private static PlayerBackgroundMode wallpaperBackgroundModeForCurrentSelectionLocked(MediaRuntimeState state) {
+		PlayerBackgroundMode selectedMode = resolvedPlayerBackgroundModeLocked(state);
+		if (selectedMode == PlayerBackgroundMode.WALLPAPER) {
+			return resolvedWallpaperBackgroundModeLocked(state);
+		}
+		return safeWallpaperBackgroundMode(selectedMode);
+	}
+
+	private static PlayerBackgroundMode persistedPlayerBackgroundModeLocked(MediaRuntimeState state) {
+		return state != null ? state.playerBackgroundMode : null;
+	}
+
+	private static PlayerBackgroundMode defaultPlayerBackgroundModeLocked(MediaRuntimeState state) {
+		return usesMusicPlayerLayoutLocked(state) ? PlayerBackgroundMode.ARTWORK : PlayerBackgroundMode.BLACK;
+	}
+
+	private static PlayerBackgroundMode resolvedPlayerBackgroundModeLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return PlayerBackgroundMode.BLACK;
+		}
+		return state.playerBackgroundMode != null ? state.playerBackgroundMode : defaultPlayerBackgroundModeLocked(state);
+	}
+
+	private static PlayerBackgroundMode resolvedPlayerBackgroundMode(MediaVisualSnapshot state) {
+		return state != null && state.playerBackgroundMode() != null ? state.playerBackgroundMode() : PlayerBackgroundMode.BLACK;
 	}
 
 	private static BufferedImage copyBufferedImage(BufferedImage source) {
@@ -12738,7 +13507,7 @@ public final class MonitorScreenSystem {
 			player.sendSystemMessage(literal("Не удалось импортировать карту: " + sanitizeMediaError(exception.getMessage())));
 			return;
 		}
-		GalleryItemKind kind = data.isVideo() ? GalleryItemKind.VIDEO : GalleryItemKind.MEDIA;
+		GalleryItemKind kind = GalleryItemKind.MEDIA;
 		int preferredIndex;
 		synchronized (state) {
 			preferredIndex = upsertGalleryItemLocked(state, title, "", syntheticUrl, localMediaKey, null, null, kind);
@@ -12762,6 +13531,22 @@ public final class MonitorScreenSystem {
 			return "";
 		}
 		return CAMERA_GALLERY_URL_PREFIX + (data.isVideo() ? "video:" : "photo:") + data.sourceKey().trim();
+	}
+
+	private static boolean isCameraGalleryVideoUrl(String url) {
+		return !cameraGallerySourceKey(url, "video").isBlank();
+	}
+
+	private static String cameraGallerySourceKey(String url, String mediaKind) {
+		if (url == null || mediaKind == null || mediaKind.isBlank()) {
+			return "";
+		}
+		String normalized = url.trim();
+		String prefix = CAMERA_GALLERY_URL_PREFIX + mediaKind + ":";
+		if (!normalized.startsWith(prefix)) {
+			return "";
+		}
+		return normalized.substring(prefix.length()).trim();
 	}
 
 	private static boolean saveCurrentGalleryItemLocked(MediaRuntimeState state, UiLayout layout) {
@@ -13481,9 +14266,32 @@ public final class MonitorScreenSystem {
 		PLAYER
 	}
 
+	private enum PlayerBackgroundMode {
+		ARTWORK,
+		WALLPAPER,
+		BLACK,
+		EMPTY;
+
+		private static PlayerBackgroundMode fromPersisted(String value) {
+			if (value == null || value.isBlank()) {
+				return null;
+			}
+			try {
+				return PlayerBackgroundMode.valueOf(value.trim().toUpperCase(Locale.ROOT));
+			} catch (IllegalArgumentException ignored) {
+				return null;
+			}
+		}
+
+		private String persistedName() {
+			return this.name().toLowerCase(Locale.ROOT);
+		}
+	}
+
 	private enum MediaOverlayWindowType {
 		YOUTUBE_QUEUE,
-		GALLERY_DELETE_CONFIRM
+		GALLERY_DELETE_CONFIRM,
+		PLAYER_BACKGROUND
 	}
 
 	private enum YoutubeLinkRequestAction {
@@ -13800,6 +14608,8 @@ public final class MonitorScreenSystem {
 			boolean paused,
 			MediaOverlayMode overlayMode,
 			MediaScaleMode scaleMode,
+			PlayerBackgroundMode playerBackgroundMode,
+			boolean wallpaperAvailable,
 			String statusText,
 			String linkPlaceholder,
 			String mediaTitle,
@@ -13823,7 +14633,8 @@ public final class MonitorScreenSystem {
 
 	private record WallpaperVisualSnapshot(
 			BufferedImage frame,
-			MediaScaleMode scaleMode
+			MediaScaleMode scaleMode,
+			PlayerBackgroundMode backgroundMode
 	) {
 	}
 
@@ -13835,7 +14646,9 @@ public final class MonitorScreenSystem {
 			int scroll,
 			int currentIndex,
 			boolean shuffleEnabled,
-			boolean repeatOneEnabled
+			boolean repeatOneEnabled,
+			PlayerBackgroundMode playerBackgroundMode,
+			boolean wallpaperAvailable
 		) {
 	}
 
@@ -13909,7 +14722,7 @@ public final class MonitorScreenSystem {
 	) {
 	}
 
-	private record PersistedWallpaperState(String url, MediaScaleMode scaleMode) {
+	private record PersistedWallpaperState(String url, MediaScaleMode scaleMode, PlayerBackgroundMode backgroundMode) {
 	}
 
 	private record GalleryItemLoadResult(
@@ -14030,6 +14843,7 @@ public final class MonitorScreenSystem {
 		SHUFFLE("/assets/lg2/textures/monitor/ui_icons/shuffle.png"),
 		REPEAT_ONE("/assets/lg2/textures/monitor/ui_icons/repeat_one.png"),
 		DROPDOWN("/assets/lg2/textures/monitor/ui_icons/dropdown.png"),
+		MENU("/assets/lg2/textures/monitor/ui_icons/menu.png"),
 		QUEUE("/assets/lg2/textures/monitor/ui_icons/queue.png"),
 		DOWNLOAD("/assets/lg2/textures/monitor/ui_icons/download.png"),
 		TRASH("/assets/lg2/textures/monitor/ui_icons/trash.png"),
@@ -14131,20 +14945,24 @@ public final class MonitorScreenSystem {
 		private MediaOverlayMode overlayMode;
 		private MediaScaleMode scaleMode;
 		private GallerySurfaceMode gallerySurfaceMode;
+		private PlayerBackgroundMode playerBackgroundMode;
 		private boolean liveStream;
 		private boolean audioPlaceholder;
 		private boolean userPaused;
 		private boolean waitingForLink;
 		private boolean loading;
 		private boolean galleryDeleteConfirmOpen;
+		private boolean playerBackgroundMenuOpen;
 		private String statusText;
 		private boolean galleryHydrated;
 		private boolean wallpaperHydrated;
+		private boolean playerBackgroundModeHydrated;
 		private final List<GalleryItem> galleryItems;
 		private final Set<String> galleryLoadingUrls;
 		private MonitorMediaApp.LoadedMedia wallpaperMedia;
 		private String wallpaperUrl;
 		private MediaScaleMode wallpaperScaleMode;
+		private PlayerBackgroundMode wallpaperBackgroundMode;
 		private int wallpaperFrameIndex;
 		private boolean wallpaperLoading;
 		private String galleryPendingOpenUrl;
@@ -14179,6 +14997,8 @@ public final class MonitorScreenSystem {
 		private String pendingLiveCameraApplyUrl;
 		private boolean liveCameraApplyScheduled;
 		private long nextLiveCameraGallerySyncAtMillis;
+		private long nextLoadedMediaFrameAtMillis;
+		private long nextWallpaperFrameAtMillis;
 		private int activeRenderJobs;
 		private boolean rerenderRequested;
 		private MediaDispatchKey lastDispatchKey;
@@ -14192,14 +15012,17 @@ public final class MonitorScreenSystem {
 			this.overlayMode = MediaOverlayMode.CONTROLS;
 			this.scaleMode = MediaScaleMode.FIT;
 			this.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+			this.playerBackgroundMode = null;
 			this.liveStream = false;
 			this.audioPlaceholder = true;
 			this.userPaused = false;
 			this.waitingForLink = false;
 			this.loading = false;
 			this.galleryDeleteConfirmOpen = false;
+			this.playerBackgroundMenuOpen = false;
 			this.galleryHydrated = false;
 			this.wallpaperHydrated = false;
+			this.playerBackgroundModeHydrated = false;
 			this.version = 0L;
 			this.statusText = "";
 			this.mediaSubtitle = "";
@@ -14209,6 +15032,7 @@ public final class MonitorScreenSystem {
 			this.wallpaperMedia = null;
 			this.wallpaperUrl = null;
 			this.wallpaperScaleMode = MediaScaleMode.FIT;
+			this.wallpaperBackgroundMode = PlayerBackgroundMode.EMPTY;
 			this.wallpaperFrameIndex = 0;
 			this.wallpaperLoading = false;
 			this.galleryPendingOpenUrl = null;
@@ -14243,6 +15067,8 @@ public final class MonitorScreenSystem {
 			this.pendingLiveCameraApplyUrl = null;
 			this.liveCameraApplyScheduled = false;
 			this.nextLiveCameraGallerySyncAtMillis = 0L;
+			this.nextLoadedMediaFrameAtMillis = 0L;
+			this.nextWallpaperFrameAtMillis = 0L;
 			this.activeRenderJobs = 0;
 			this.nextProgressRenderAtMillis = 0L;
 			this.progress = new TaskProgress(progressListener);

@@ -16,6 +16,7 @@
 /polymer/resource_pack.zip
 
 # Bot client runtime outputs
+/run-renderer-bot/.fabric/
 /run-renderer-bot/logs/
 /run-renderer-bot/debug/
 /run-renderer-bot/crash-reports/

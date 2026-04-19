@@ -60,6 +60,12 @@ public final class MonitorMediaApp implements MonitorApp {
 	private static final String DEFAULT_FFMPEG_BIN = "ffmpeg";
 	private static final String DEFAULT_FFPROBE_BIN = "ffprobe";
 	private static final int VIDEO_PREVIEW_WIDTH = 480;
+	// Gallery wallpapers keep decoded frames in memory, so camera videos use a bounded frame sequence.
+	private static final int VIDEO_MEDIA_TARGET_FPS = 8;
+	private static final int VIDEO_MEDIA_MAX_DIMENSION = 512;
+	private static final int VIDEO_MEDIA_MAX_FRAMES = 240;
+	private static final int VIDEO_MEDIA_MAX_TOTAL_PIXELS = 32 * 1024 * 1024;
+	private static final int VIDEO_MEDIA_COMMAND_TIMEOUT_SEC = 30;
 	private static final int AUDIO_COVER_SIZE = 640;
 	private static final Set<String> DIRECT_VIDEO_EXTENSIONS = Set.of(".mp4", ".m4v", ".mov", ".webm");
 	private static final Set<String> DIRECT_AUDIO_EXTENSIONS = Set.of(".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wav", ".flac", ".weba");
@@ -239,6 +245,21 @@ public final class MonitorMediaApp implements MonitorApp {
 			progress.setIndeterminate("PROBING VIDEO");
 		}
 		return probeVideo(savedPath.toAbsolutePath().toString(), savedPath.toAbsolutePath().toString(), progress);
+	}
+
+	public static LoadedMedia loadSavedGalleryVideoAsMedia(String mediaKey, TaskProgress progress) throws IOException {
+		Path savedPath = savedGalleryMediaPath(mediaKey);
+		if (savedPath == null || !Files.isRegularFile(savedPath)) {
+			throw new IOException("Saved gallery video is missing");
+		}
+		return loadLocalVideoAsMedia(savedPath, progress);
+	}
+
+	public static LoadedMedia loadLocalVideoAsMedia(Path sourcePath, TaskProgress progress) throws IOException {
+		if (sourcePath == null || !Files.isRegularFile(sourcePath)) {
+			throw new IOException("Video source is missing");
+		}
+		return decodeVideoFileAsMedia(sourcePath, progress);
 	}
 
 	public static LoadedAudioTrack loadSavedGalleryAudio(String mediaKey, TaskProgress progress) throws IOException {
@@ -910,6 +931,79 @@ public final class MonitorMediaApp implements MonitorApp {
 			}
 			if (frames.isEmpty()) {
 				throw new IOException("Unsupported image");
+			}
+			if (progress != null) {
+				progress.complete("READY");
+			}
+			BufferedImage first = frames.get(0);
+			return new LoadedMedia(frames, delays, first.getWidth(), first.getHeight(), frames.size() > 1);
+		} finally {
+			deleteRecursivelyQuietly(tempDirectory);
+		}
+	}
+
+	private static LoadedMedia decodeVideoFileAsMedia(Path inputPath, TaskProgress progress) throws IOException {
+		if (inputPath == null || !Files.isRegularFile(inputPath)) {
+			throw new IOException("Video source is missing");
+		}
+		if (progress != null) {
+			progress.setIndeterminate("DECODING VIDEO");
+		}
+		Path tempDirectory = Files.createTempDirectory("lg2-video-media-decode-");
+		Path framesDirectory = tempDirectory.resolve("frames");
+		try {
+			Files.createDirectories(framesDirectory);
+			runCommand(List.of(
+					ffmpegBin(),
+					"-hide_banner",
+					"-loglevel",
+					"error",
+					"-nostdin",
+					"-i",
+					inputPath.toAbsolutePath().toString(),
+					"-an",
+					"-vf",
+					"fps=" + VIDEO_MEDIA_TARGET_FPS
+							+ ",scale=w=" + VIDEO_MEDIA_MAX_DIMENSION
+							+ ":h=" + VIDEO_MEDIA_MAX_DIMENSION
+							+ ":force_original_aspect_ratio=decrease",
+					"-frames:v",
+					Integer.toString(VIDEO_MEDIA_MAX_FRAMES),
+					framesDirectory.resolve("frame_%06d.png").toString()
+			), VIDEO_MEDIA_COMMAND_TIMEOUT_SEC);
+
+			List<BufferedImage> frames = new ArrayList<>();
+			List<Integer> delays = new ArrayList<>();
+			try (Stream<Path> paths = Files.list(framesDirectory)) {
+				List<Path> framePaths = paths.filter(Files::isRegularFile).sorted().toList();
+				if (framePaths.isEmpty()) {
+					throw new IOException("Video has no frames");
+				}
+				int totalFrames = Math.min(framePaths.size(), VIDEO_MEDIA_MAX_FRAMES);
+				if (progress != null) {
+					progress.setProgress("DECODING VIDEO", 0L, totalFrames);
+				}
+				int delayMillis = Math.max(20, Math.round(1000.0F / VIDEO_MEDIA_TARGET_FPS));
+				long totalPixels = 0L;
+				for (int index = 0; index < totalFrames; index++) {
+					BufferedImage frame = ImageIO.read(framePaths.get(index).toFile());
+					if (frame == null) {
+						continue;
+					}
+					BufferedImage argbFrame = toArgb(frame);
+					totalPixels += (long) argbFrame.getWidth() * argbFrame.getHeight();
+					if (!frames.isEmpty() && totalPixels > VIDEO_MEDIA_MAX_TOTAL_PIXELS) {
+						break;
+					}
+					frames.add(argbFrame);
+					delays.add(delayMillis);
+					if (progress != null) {
+						progress.setProgress("DECODING VIDEO", index + 1L, totalFrames);
+					}
+				}
+			}
+			if (frames.isEmpty()) {
+				throw new IOException("Video has no frames");
 			}
 			if (progress != null) {
 				progress.complete("READY");
