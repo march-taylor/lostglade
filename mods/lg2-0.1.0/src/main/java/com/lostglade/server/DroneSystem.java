@@ -375,7 +375,11 @@ public final class DroneSystem {
 	}
 
 	public static boolean shouldApplyDroneTravelToPlayer(ServerPlayer player) {
-		return false;
+		if (!isControllingDrone(player) || player == null) {
+			return false;
+		}
+		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
+		return session != null && session.controlledProxyPlayer() == null;
 	}
 
 	public static void handleControlledMovePacket(ServerPlayer player, ServerboundMovePlayerPacket packet) {
@@ -859,8 +863,8 @@ public final class DroneSystem {
 		}
 	}
 
-	private static void advanceControlledDroneMotion(ServerPlayer player, Entity root, DroneControlSession session, DroneInputState input) {
-		if (player == null || root == null || session == null) {
+	private static void advanceControlledDroneMotion(ServerPlayer player, ServerPlayer proxyPlayer, DroneControlSession session, DroneInputState input) {
+		if (player == null || proxyPlayer == null || session == null) {
 			return;
 		}
 
@@ -893,14 +897,21 @@ public final class DroneSystem {
 				session.forwardDrive(),
 				session.strafeDrive()
 		);
-		Vec3 startPos = root.position();
-		root.noPhysics = false;
-		root.move(MoverType.SELF, intendedVelocity);
-		Vec3 actualMovement = root.position().subtract(startPos);
+		proxyPlayer.setYRot(session.proxyYaw());
+		proxyPlayer.setXRot(session.proxyPitch());
+		proxyPlayer.setYHeadRot(session.proxyYaw());
+		proxyPlayer.setYBodyRot(session.proxyYaw());
+		proxyPlayer.setNoGravity(true);
+		proxyPlayer.noPhysics = false;
+		proxyPlayer.fallDistance = 0.0F;
+		Vec3 startPos = proxyPlayer.position();
+		proxyPlayer.setDeltaMovement(intendedVelocity);
+		proxyPlayer.move(MoverType.SELF, intendedVelocity);
+		Vec3 actualMovement = proxyPlayer.position().subtract(startPos);
 
 		session.setIntendedVelocity(intendedVelocity);
 		session.setVelocity(actualMovement);
-		session.setProxyPos(root.position());
+		session.setProxyPos(proxyPlayer.position());
 	}
 
 	private static void tickControlledDrone(ServerPlayer player, Entity root, DroneControlSession session, DroneInputState input) {
@@ -908,11 +919,21 @@ public final class DroneSystem {
 			return;
 		}
 
-		advanceControlledDroneMotion(player, root, session, input);
+		ServerPlayer proxyPlayer = session.controlledProxyPlayer();
+		if (proxyPlayer == null || proxyPlayer.level() != root.level()) {
+			stopControlling(player, true, true);
+			return;
+		}
+
+		advanceControlledDroneMotion(player, proxyPlayer, session, input);
 		Vec3 actualMovement = session.velocity();
 		Vec3 intendedMovement = session.intendedVelocity();
 		float yaw = session.proxyYaw();
 		float pitch = session.proxyPitch();
+		broadcastDronePilotEquipmentHidden(player, true);
+		syncDummyHeldItems(player, session);
+		Vec3 proxyPos = session.proxyPos();
+		root.setPos(proxyPos.x, proxyPos.y, proxyPos.z);
 		root.setYRot(yaw);
 		root.setXRot(pitch);
 		root.setDeltaMovement(actualMovement);
@@ -920,7 +941,7 @@ public final class DroneSystem {
 		syncDroneCameraAnchor(root, actualMovement);
 		maybePlayDroneLoopSound(root, session.forwardDrive(), session.strafeDrive(), true);
 		setHotbarVisualHidden(player, true);
-		if (shouldDestroyDroneFromCollision(intendedMovement, actualMovement, root.horizontalCollision, root.verticalCollision)) {
+		if (shouldDestroyDroneFromCollision(intendedMovement, actualMovement, proxyPlayer.horizontalCollision, proxyPlayer.verticalCollision)) {
 			destroyDrone(root, null, false);
 			stopControlling(player, true, true);
 			return;
@@ -941,21 +962,21 @@ public final class DroneSystem {
 		double horizontalDx = session.lastPlayerPos().x - session.proxyPos().x;
 		double horizontalDz = session.lastPlayerPos().z - session.proxyPos().z;
 		double horizontalDriftSqr = horizontalDx * horizontalDx + horizontalDz * horizontalDz;
-		boolean forcePosSync = shouldForceControlledProxyResync(player, root, horizontalDriftSqr);
+		boolean forcePosSync = shouldForceControlledProxyResync(proxyPlayer, horizontalDriftSqr);
 		syncControlledPlayer(player, root, forcePosSync);
 		updateDroneHud(player, session, false);
 	}
 
-	private static boolean shouldForceControlledProxyResync(ServerPlayer player, Entity root, double horizontalDriftSqr) {
+	private static boolean shouldForceControlledProxyResync(ServerPlayer collisionEntity, double horizontalDriftSqr) {
 		if (horizontalDriftSqr > CONTROLLED_PROXY_RESYNC_DISTANCE_SQR) {
 			return true;
 		}
-		if (player == null || root == null || !root.horizontalCollision) {
+		if (collisionEntity == null || !collisionEntity.horizontalCollision) {
 			return false;
 		}
 		double driftThreshold = Math.max(
 				0.0D,
-				(DRONE_WIDTH - Math.max(0.0F, player.getBbWidth())) * 0.5D + CONTROLLED_PROXY_COLLISION_RESYNC_MARGIN
+				(DRONE_WIDTH - Math.max(0.0F, collisionEntity.getBbWidth())) * 0.5D + CONTROLLED_PROXY_COLLISION_RESYNC_MARGIN
 		);
 		return horizontalDriftSqr > driftThreshold * driftThreshold;
 	}
@@ -1258,6 +1279,34 @@ public final class DroneSystem {
 		}
 	}
 
+	private static ServerPlayer createControlledProxyPlayer(ServerPlayer controller, ServerLevel droneLevel, Entity root) {
+		if (controller == null || droneLevel == null || root == null) {
+			return null;
+		}
+		GameProfile sourceProfile = controller.getGameProfile();
+		String profileName = sourceProfile == null || sourceProfile.name() == null || sourceProfile.name().isBlank()
+				? "DroneProxy"
+				: sourceProfile.name();
+		PropertyMap sourceProperties = sourceProfile != null
+				? new PropertyMap(ImmutableMultimap.copyOf(sourceProfile.properties()))
+				: new PropertyMap(ImmutableMultimap.of());
+		GameProfile proxyProfile = new GameProfile(UUID.randomUUID(), profileName, sourceProperties);
+
+		ServerPlayer proxyPlayer = new ServerPlayer(droneLevel.getServer(), droneLevel, proxyProfile, controller.clientInformation());
+		proxyPlayer.setPos(root.getX(), root.getY(), root.getZ());
+		proxyPlayer.setYRot(root.getYRot());
+		proxyPlayer.setXRot(root.getXRot());
+		proxyPlayer.setYHeadRot(root.getYRot());
+		proxyPlayer.setYBodyRot(root.getYRot());
+		proxyPlayer.setDeltaMovement(Vec3.ZERO);
+		proxyPlayer.setInvisible(true);
+		proxyPlayer.setNoGravity(true);
+		proxyPlayer.setInvulnerable(true);
+		proxyPlayer.noPhysics = false;
+		proxyPlayer.fallDistance = 0.0F;
+		return proxyPlayer;
+	}
+
 	private static void detachDroneFromController(ServerPlayer player, Entity root) {
 		if (player == null || root == null) {
 			return;
@@ -1292,7 +1341,16 @@ public final class DroneSystem {
 			return;
 		}
 		player.setCamera(player);
+		player.setInvisible(session.wasInvisible());
+		player.setNoGravity(session.wasNoGravity());
 		player.noPhysics = session.wasNoPhysics();
+		player.setInvulnerable(session.wasInvulnerable());
+		player.stopFallFlying();
+		player.setDeltaMovement(Vec3.ZERO);
+		player.getAbilities().mayfly = session.hadMayfly();
+		player.getAbilities().flying = session.wasFlying();
+		player.onUpdateAbilities();
+		player.fallDistance = 0.0F;
 		player.hurtMarked = true;
 		FORCED_CONTROLLED_PLAYERS.remove(player.getUUID());
 	}
@@ -1320,8 +1378,21 @@ public final class DroneSystem {
 		if (player == null) {
 			return;
 		}
+		FORCED_CONTROLLED_PLAYERS.add(player.getUUID());
 		player.setCamera(player);
+		player.setInvisible(true);
+		player.setNoGravity(true);
 		player.noPhysics = false;
+		player.setInvulnerable(true);
+		if (player.getAbilities().flying) {
+			player.getAbilities().flying = false;
+			player.onUpdateAbilities();
+		}
+		player.fallDistance = 0.0F;
+		if (!player.isFallFlying()) {
+			player.startFallFlying();
+		}
+		player.hurtMarked = true;
 	}
 
 	private static void clearForcedControlMovementState(ServerPlayer player) {
@@ -1329,7 +1400,13 @@ public final class DroneSystem {
 			return;
 		}
 		player.setCamera(player);
+		if (!player.getAbilities().mayfly) {
+			player.setNoGravity(false);
+		}
 		player.noPhysics = false;
+		player.stopFallFlying();
+		player.setDeltaMovement(Vec3.ZERO);
+		player.fallDistance = 0.0F;
 		player.hurtMarked = true;
 	}
 
@@ -1337,7 +1414,16 @@ public final class DroneSystem {
 		if (player != null) {
 			DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
 			if (session != null) {
-				syncControlledOperatorView(player, session, root, false, false);
+				if (session.controlledProxyPlayer() != null) {
+					syncControlledOperatorView(player, session, root, false, false);
+				} else {
+					ensureControlledPlayerState(player);
+				}
+				return;
+			}
+			player.fallDistance = 0.0F;
+			if (player.getCamera() != player) {
+				player.setCamera(player);
 			}
 			return;
 		}
@@ -1347,7 +1433,11 @@ public final class DroneSystem {
 		if (player != null) {
 			DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
 			if (session != null) {
-				syncControlledOperatorView(player, session, root, false, forcePositionSync);
+				if (session.controlledProxyPlayer() != null) {
+					syncControlledOperatorView(player, session, root, false, forcePositionSync);
+				} else {
+					ensureControlledPlayerState(player);
+				}
 			}
 			return;
 		}
@@ -1681,16 +1771,28 @@ public final class DroneSystem {
 		boolean wasInvulnerable = player.isInvulnerable();
 		boolean hadMayfly = player.getAbilities().mayfly;
 		boolean wasFlying = player.getAbilities().flying;
+		ServerPlayer controlledProxyPlayer = createControlledProxyPlayer(player, droneLevel, root);
+		if (controlledProxyPlayer == null) {
+			return false;
+		}
+		DronePilotDummyEntity dummy = spawnPlayerDummy(originLevel, player, originPos);
+		if (dummy != null) {
+			DUMMY_OWNER_BY_UUID.put(dummy.getUUID(), player.getUUID());
+		}
 		root.level().getChunkAt(root.blockPosition());
+		stashAndHideControlledInventory(player);
 		spoofClientGameMode(player, GameType.SPECTATOR);
+		broadcastDronePilotEquipmentHidden(player, true);
 		setHotbarVisualHidden(player, true);
+		player.stopFallFlying();
+		player.setDeltaMovement(Vec3.ZERO);
 		ensureControlledPlayerState(player);
 		syncDroneCameraAnchor(root, Vec3.ZERO);
 
 		DroneControlSession session = new DroneControlSession(
 				root.getUUID(),
 				droneLevel.dimension(),
-				null,
+				dummy != null ? dummy.getUUID() : null,
 				originLevel.dimension(),
 				originPos,
 				originYaw,
@@ -1703,6 +1805,7 @@ public final class DroneSystem {
 				wasFlying,
 				originalServerGameMode
 		);
+		session.setControlledProxyPlayer(controlledProxyPlayer);
 		session.setProxyPos(root.position());
 		session.setProxyYaw(root.getYRot());
 		session.setProxyPitch(root.getXRot());
@@ -1725,6 +1828,7 @@ public final class DroneSystem {
 		INPUTS.remove(player.getUUID());
 		if (session == null) {
 			spoofClientGameMode(player, resolveServerGameMode(player));
+			restoreControlledInventoryIfNeeded(player);
 			if (!FORCED_CONTROLLED_PLAYERS.contains(player.getUUID())) {
 				return;
 			}
@@ -1733,6 +1837,7 @@ public final class DroneSystem {
 			clearForcedControlMovementState(player);
 			detachAnyDronePassengersFromController(player);
 			setHotbarVisualHidden(player, false);
+			broadcastDronePilotEquipmentHidden(player, false);
 			return;
 		}
 		if (session.dummyUuid() != null) {
@@ -1749,11 +1854,13 @@ public final class DroneSystem {
 		player.setCamera(player);
 		detachAnyDronePassengersFromController(player);
 		if (root != null) {
+			Vec3 proxyPos = session.proxyPos();
+			root.setPos(proxyPos.x, proxyPos.y, proxyPos.z);
+			root.setYRot(session.proxyYaw());
+			root.setXRot(session.proxyPitch());
 			Vec3 releasedVelocity = session.velocity();
 			root.noPhysics = false;
 			root.setDeltaMovement(releasedVelocity);
-			root.setYRot(session.proxyYaw());
-			root.setXRot(session.proxyPitch());
 			root.hurtMarked = true;
 			UNCONTROLLED_DRONES.put(
 					root.getUUID(),
@@ -1767,33 +1874,22 @@ public final class DroneSystem {
 		}
 		restoreControlledPlayerState(player, session);
 		clearDroneHud(player, session, true);
+		broadcastDronePilotEquipmentHidden(player, false);
 		spoofClientGameMode(player, session.serverGameMode());
+		restoreControlledInventoryIfNeeded(player);
 		setHotbarVisualHidden(player, false);
-		sendControlledOperatorPacket(player, new ClientboundPlayerAbilitiesPacket(player.getAbilities()));
-		sendControlledOperatorPacket(player, ClientboundPlayerPositionPacket.of(
-				0,
-				new PositionMoveRotation(player.position(), player.getDeltaMovement(), player.getYRot(), player.getXRot()),
-				ABSOLUTE_TELEPORT
-		));
-		sendControlledOperatorPacket(player, new ClientboundSetEntityMotionPacket(player.getId(), player.getDeltaMovement()));
-		sendControlledOperatorPacket(player, new ClientboundSetEntityDataPacket(
-				player.getId(),
-				List.of(
-						SynchedEntityData.DataValue.create(
-								EntityTrackedDataAccessor.lg2$getDataSharedFlagsId(),
-								player.getEntityData().get(EntityTrackedDataAccessor.lg2$getDataSharedFlagsId())
-						),
-						SynchedEntityData.DataValue.create(
-								EntityTrackedDataAccessor.lg2$getDataNoGravity(),
-								player.getEntityData().get(EntityTrackedDataAccessor.lg2$getDataNoGravity())
-						),
-						SynchedEntityData.DataValue.create(
-								EntityTrackedDataAccessor.lg2$getDataPose(),
-								player.getPose()
-						)
-				)
-		));
-		sendControlledOperatorPacket(player, new ClientboundSetPassengersPacket(player));
+
+		if (returnToOrigin && server != null) {
+			ReturnLocation returnLocation = resolveReturnLocation(server, session, dummy);
+			ServerLevel level = returnLocation.level();
+			Vec3 returnPos = returnLocation.pos();
+			if (level != null && returnPos != null) {
+				level.getChunkAt(net.minecraft.core.BlockPos.containing(returnPos));
+				player.teleportTo(level, returnPos.x, returnPos.y, returnPos.z, ABSOLUTE_TELEPORT, returnLocation.yaw(), returnLocation.pitch(), false);
+				restoreControlledPlayerState(player, session);
+				broadcastDronePilotEquipmentHidden(player, false);
+			}
+		}
 		detachAnyDronePassengersFromController(player);
 		markCameraSuppressedForPlayer(player);
 		discardDummyIfPresent(server, session, dummy);
@@ -2943,6 +3039,7 @@ public final class DroneSystem {
 		private boolean hadMayfly;
 		private boolean wasFlying;
 		private final GameType serverGameMode;
+		private ServerPlayer controlledProxyPlayer;
 		private Vec3 velocity = Vec3.ZERO;
 		private Vec3 intendedVelocity = Vec3.ZERO;
 		private Vec3 lastPlayerPos = Vec3.ZERO;
@@ -3045,6 +3142,14 @@ public final class DroneSystem {
 
 		private GameType serverGameMode() {
 			return this.serverGameMode;
+		}
+
+		private ServerPlayer controlledProxyPlayer() {
+			return this.controlledProxyPlayer;
+		}
+
+		private void setControlledProxyPlayer(ServerPlayer controlledProxyPlayer) {
+			this.controlledProxyPlayer = controlledProxyPlayer;
 		}
 
 		private Vec3 velocity() {
