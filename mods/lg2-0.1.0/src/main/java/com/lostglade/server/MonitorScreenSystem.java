@@ -3845,9 +3845,7 @@ public final class MonitorScreenSystem {
 								resolvedKind,
 								resolvedKind == GalleryItemKind.VIDEO
 										? null
-										: localMediaKey != null && !localMediaKey.isBlank()
-										? MonitorMediaApp.loadSavedGalleryMedia(localMediaKey, finalProgress)
-										: MonitorMediaApp.loadFromUrl(url, finalProgress),
+										: loadGalleryMedia(url, localMediaKey, finalProgress),
 								resolvedKind == GalleryItemKind.VIDEO
 										? localMediaKey != null && !localMediaKey.isBlank()
 										? MonitorMediaApp.loadSavedGalleryVideo(localMediaKey, finalProgress)
@@ -3862,6 +3860,42 @@ public final class MonitorScreenSystem {
 					}
 				}, mediaIoExecutor)
 				.thenAccept(result -> server.execute(() -> applyGalleryItemLoadResult(server, result)));
+	}
+
+	private static MonitorMediaApp.LoadedMedia loadGalleryMedia(String url, String localMediaKey, TaskProgress progress) throws IOException {
+		if (isCameraGalleryVideoUrl(url)) {
+			return loadCameraGalleryVideoMedia(url, localMediaKey, progress);
+		}
+		return localMediaKey != null && !localMediaKey.isBlank()
+				? MonitorMediaApp.loadSavedGalleryMedia(localMediaKey, progress)
+				: MonitorMediaApp.loadFromUrl(url, progress);
+	}
+
+	private static MonitorMediaApp.LoadedMedia loadCameraGalleryVideoMedia(String url, String localMediaKey, TaskProgress progress) throws IOException {
+		IOException primaryException = null;
+		if (localMediaKey != null && !localMediaKey.isBlank()) {
+			try {
+				return MonitorMediaApp.loadSavedGalleryVideoAsMedia(localMediaKey, progress);
+			} catch (IOException exception) {
+				primaryException = exception;
+			}
+		}
+		String sourceKey = cameraGallerySourceKey(url, "video");
+		if (!sourceKey.isBlank()) {
+			try {
+				return MonitorMediaApp.loadLocalVideoAsMedia(CameraMediaCache.videoSourcePath(sourceKey), progress);
+			} catch (IOException exception) {
+				if (primaryException != null) {
+					primaryException.addSuppressed(exception);
+					throw primaryException;
+				}
+				throw exception;
+			}
+		}
+		if (primaryException != null) {
+			throw primaryException;
+		}
+		throw new IOException("Camera video source is missing");
 	}
 
 	private static void applyGalleryItemLoadResult(MinecraftServer server, GalleryItemLoadResult result) {
@@ -4194,6 +4228,9 @@ public final class MonitorScreenSystem {
 	private static GalleryItemKind effectiveGalleryItemKind(String url, String localMediaKey, GalleryItemKind kind) {
 		if (kind == GalleryItemKind.LIVE_CAMERA || (url != null && url.startsWith(LIVE_CAMERA_GALLERY_URL_PREFIX))) {
 			return GalleryItemKind.LIVE_CAMERA;
+		}
+		if (isCameraGalleryVideoUrl(url)) {
+			return GalleryItemKind.MEDIA;
 		}
 		if (kind == GalleryItemKind.AUDIO || looksLikeDirectAudioReference(localMediaKey) || looksLikeDirectAudioReference(url)) {
 			return GalleryItemKind.AUDIO;
@@ -4579,9 +4616,7 @@ public final class MonitorScreenSystem {
 								key,
 								url,
 								localMediaKey,
-								localMediaKey != null && !localMediaKey.isBlank()
-										? MonitorMediaApp.loadSavedGalleryMedia(localMediaKey, null)
-										: MonitorMediaApp.loadFromUrl(url),
+								loadGalleryMedia(url, localMediaKey, null),
 								null
 						);
 					} catch (Exception exception) {
@@ -13472,7 +13507,7 @@ public final class MonitorScreenSystem {
 			player.sendSystemMessage(literal("Не удалось импортировать карту: " + sanitizeMediaError(exception.getMessage())));
 			return;
 		}
-		GalleryItemKind kind = data.isVideo() ? GalleryItemKind.VIDEO : GalleryItemKind.MEDIA;
+		GalleryItemKind kind = GalleryItemKind.MEDIA;
 		int preferredIndex;
 		synchronized (state) {
 			preferredIndex = upsertGalleryItemLocked(state, title, "", syntheticUrl, localMediaKey, null, null, kind);
@@ -13496,6 +13531,22 @@ public final class MonitorScreenSystem {
 			return "";
 		}
 		return CAMERA_GALLERY_URL_PREFIX + (data.isVideo() ? "video:" : "photo:") + data.sourceKey().trim();
+	}
+
+	private static boolean isCameraGalleryVideoUrl(String url) {
+		return !cameraGallerySourceKey(url, "video").isBlank();
+	}
+
+	private static String cameraGallerySourceKey(String url, String mediaKind) {
+		if (url == null || mediaKind == null || mediaKind.isBlank()) {
+			return "";
+		}
+		String normalized = url.trim();
+		String prefix = CAMERA_GALLERY_URL_PREFIX + mediaKind + ":";
+		if (!normalized.startsWith(prefix)) {
+			return "";
+		}
+		return normalized.substring(prefix.length()).trim();
 	}
 
 	private static boolean saveCurrentGalleryItemLocked(MediaRuntimeState state, UiLayout layout) {
