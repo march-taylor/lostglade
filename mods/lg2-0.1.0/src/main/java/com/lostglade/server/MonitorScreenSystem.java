@@ -8323,10 +8323,10 @@ public final class MonitorScreenSystem {
 		);
 		if (musicPlayerLayout && !youtubeHomePrompt) {
 			if (mediaFrame != null && !queueOverlayActive) {
-				drawYoutubeMusicArtworkCardReplacingContent(graphics, layout, mediaFrame, state != null ? state.scaleMode() : MediaScaleMode.FIT);
+				drawYoutubeMusicArtworkCard(graphics, layout, mediaFrame, state != null ? state.scaleMode() : MediaScaleMode.FIT);
 			}
 		} else if (mediaFrame != null) {
-			drawScaledImageReplacingContent(graphics, mediaFrame, canvasRect, state.scaleMode());
+			drawScaledImage(graphics, mediaFrame, canvasRect, state.scaleMode());
 			if (queueOverlayActive && youtubeMode) {
 				fillRectPreservingTransparency(
 						graphics,
