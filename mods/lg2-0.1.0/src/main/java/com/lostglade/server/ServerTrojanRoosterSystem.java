@@ -30,12 +30,15 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Display;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Leashable;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.animal.chicken.Chicken;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.portal.TeleportTransition;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -114,6 +117,9 @@ public final class ServerTrojanRoosterSystem {
 
 			if (entity instanceof Chicken chicken) {
 				TRACKED_TROJAN_CHICKENS.remove(chicken);
+				if (chicken.getRemovalReason() == Entity.RemovalReason.CHANGED_DIMENSION) {
+					return;
+				}
 				if (chicken.isRemoved() || !chicken.isAlive()) {
 					stopTheme(ACTIVE_STATES.remove(chicken.getUUID()), world instanceof ServerLevel serverLevel ? serverLevel : null);
 				}
@@ -380,10 +386,15 @@ public final class ServerTrojanRoosterSystem {
 			return;
 		}
 
-		spawnCloud(level, chicken.position());
-		teleportBehindTarget(chicken, ambushTarget);
-		spawnCloud(level, chicken.position());
-		playSpawnHiss(ambushTarget, chicken.position());
+		Vec3 sourcePos = chicken.position();
+		spawnCloud(level, sourcePos);
+		Chicken activeChicken = teleportBehindTarget(chicken, ambushTarget);
+		if (activeChicken == null || activeChicken.isRemoved() || !(activeChicken.level() instanceof ServerLevel activeLevel)) {
+			vanish(level, chicken, state);
+			return;
+		}
+		spawnCloud(activeLevel, activeChicken.position());
+		playSpawnHiss(ambushTarget, activeChicken.position());
 
 		state.targetPlayerId = ambushTarget.getUUID();
 		state.themePlaying = false;
@@ -392,11 +403,11 @@ public final class ServerTrojanRoosterSystem {
 		state.phaseEndTick = now + AMBUSH_TIMEOUT_TICKS;
 		state.despawnTick = now + AMBUSH_TIMEOUT_TICKS;
 
-		stopHorizontalMovement(chicken);
-		chicken.setXRot(0.0F);
-		chicken.setYRot(ambushTarget.getYRot());
-		chicken.setYHeadRot(ambushTarget.getYRot());
-		chicken.setYBodyRot(ambushTarget.getYRot());
+		stopHorizontalMovement(activeChicken);
+		activeChicken.setXRot(0.0F);
+		activeChicken.setYRot(ambushTarget.getYRot());
+		activeChicken.setYHeadRot(ambushTarget.getYRot());
+		activeChicken.setYBodyRot(ambushTarget.getYRot());
 	}
 
 	private static void tickAmbushIdle(ServerLevel level, Chicken chicken, TrojanRoosterState state) {
@@ -407,7 +418,7 @@ public final class ServerTrojanRoosterSystem {
 			vanish(level, chicken, state);
 			return;
 		}
-		if (isTargetClaimedByAnotherRooster(level, target.getUUID(), chicken)) {
+		if (isTargetClaimedByAnotherRooster(target.getUUID(), chicken)) {
 			vanish(level, chicken, state);
 			return;
 		}
@@ -448,7 +459,7 @@ public final class ServerTrojanRoosterSystem {
 			vanish(level, chicken, state);
 			return;
 		}
-		if (isTargetClaimedByAnotherRooster(level, target.getUUID(), chicken)) {
+		if (isTargetClaimedByAnotherRooster(target.getUUID(), chicken)) {
 			vanish(level, chicken, state);
 			return;
 		}
@@ -481,7 +492,7 @@ public final class ServerTrojanRoosterSystem {
 			vanish(level, chicken, state);
 			return;
 		}
-		if (isTargetClaimedByAnotherRooster(level, target.getUUID(), chicken)) {
+		if (isTargetClaimedByAnotherRooster(target.getUUID(), chicken)) {
 			vanish(level, chicken, state);
 			return;
 		}
@@ -586,7 +597,7 @@ public final class ServerTrojanRoosterSystem {
 		level.playSound(null, pos.x, pos.y, pos.z, SoundEvents.GENERIC_EXTINGUISH_FIRE, SoundSource.HOSTILE, 0.7F, 1.0F);
 	}
 
-	private static void teleportBehindTarget(Chicken chicken, ServerPlayer target) {
+	private static Chicken teleportBehindTarget(Chicken chicken, ServerPlayer target) {
 		Vec3 look = target.getLookAngle();
 		Vec3 backward = new Vec3(-look.x, 0.0D, -look.z);
 		if (backward.lengthSqr() < 1.0E-6D) {
@@ -595,8 +606,30 @@ public final class ServerTrojanRoosterSystem {
 
 		Vec3 offset = backward.normalize().scale(AMBUSH_BEHIND_DISTANCE);
 		Vec3 desiredPos = new Vec3(target.getX() + offset.x, target.getY(), target.getZ() + offset.z);
-		Vec3 resolvedPos = findNearestReachableSpawnPos((ServerLevel) target.level(), chicken, desiredPos, target.position());
-		chicken.teleportTo(resolvedPos.x, resolvedPos.y, resolvedPos.z);
+		ServerLevel targetLevel = target.level() instanceof ServerLevel serverLevel ? serverLevel : null;
+		if (targetLevel == null) {
+			return null;
+		}
+		Vec3 resolvedPos = findNearestReachableSpawnPos(targetLevel, chicken, desiredPos, target.position());
+		if (chicken.level() == targetLevel) {
+			chicken.teleportTo(resolvedPos.x, resolvedPos.y, resolvedPos.z);
+			return chicken;
+		}
+
+		var teleported = chicken.teleport(new TeleportTransition(
+				targetLevel,
+				resolvedPos,
+				Vec3.ZERO,
+				target.getYRot(),
+				0.0F,
+				TeleportTransition.DO_NOTHING
+		));
+		if (teleported instanceof Chicken teleportedChicken) {
+			TRACKED_TROJAN_CHICKENS.add(teleportedChicken);
+			prepareTrojanChicken(teleportedChicken);
+			return teleportedChicken;
+		}
+		return null;
 	}
 
 	private static Vec3 findNearestReachableSpawnPos(ServerLevel level, Chicken chicken, Vec3 desiredPos, Vec3 playerPos) {
@@ -658,7 +691,7 @@ public final class ServerTrojanRoosterSystem {
 	}
 
 	private static boolean isTargetLookingAtChicken(ServerPlayer target, Chicken chicken) {
-		if (target.level() != chicken.level() || !target.isAlive() || target.isSpectator()) {
+		if (target.level() != chicken.level() || !isEligiblePlayer(target)) {
 			return false;
 		}
 
@@ -687,26 +720,46 @@ public final class ServerTrojanRoosterSystem {
 	}
 
 	private static ServerPlayer findNearestPlayer(ServerLevel level, Vec3 origin) {
+		if (level == null || level.getServer() == null) {
+			return null;
+		}
+
 		ServerPlayer best = null;
 		double bestDistance = Double.MAX_VALUE;
-		for (ServerPlayer player : level.players()) {
+		for (ServerPlayer player : level.getServer().getPlayerList().getPlayers()) {
 			if (!isEligiblePlayer(player)) {
 				continue;
 			}
 
+			if (player.level() != level) {
+				continue;
+			}
 			double distance = player.position().distanceToSqr(origin);
 			if (distance < bestDistance) {
 				best = player;
 				bestDistance = distance;
 			}
 		}
-		return best;
+		if (best != null) {
+			return best;
+		}
+
+		for (ServerPlayer player : level.getServer().getPlayerList().getPlayers()) {
+			if (isEligiblePlayer(player)) {
+				return player;
+			}
+		}
+		return null;
 	}
 
 	private static ServerPlayer pickRandomPlayer(ServerLevel level, Chicken sourceChicken) {
+		if (level == null || level.getServer() == null) {
+			return null;
+		}
+
 		List<ServerPlayer> players = new ArrayList<>();
-		for (ServerPlayer player : level.players()) {
-			if (isEligiblePlayer(player) && !isTargetClaimedByAnotherRooster(level, player.getUUID(), sourceChicken)) {
+		for (ServerPlayer player : level.getServer().getPlayerList().getPlayers()) {
+			if (isEligiblePlayer(player) && !isTargetClaimedByAnotherRooster(player.getUUID(), sourceChicken)) {
 				players.add(player);
 			}
 		}
@@ -717,9 +770,9 @@ public final class ServerTrojanRoosterSystem {
 		return players.get(level.random.nextInt(players.size()));
 	}
 
-	private static boolean isTargetClaimedByAnotherRooster(ServerLevel level, UUID targetPlayerId, Chicken sourceChicken) {
+	private static boolean isTargetClaimedByAnotherRooster(UUID targetPlayerId, Chicken sourceChicken) {
 		for (Chicken chicken : TRACKED_TROJAN_CHICKENS) {
-			if (chicken == sourceChicken || chicken.isRemoved() || !chicken.isAlive() || chicken.level() != level) {
+			if (chicken == sourceChicken || chicken.isRemoved() || !chicken.isAlive()) {
 				continue;
 			}
 
@@ -737,16 +790,23 @@ public final class ServerTrojanRoosterSystem {
 	}
 
 	private static ServerPlayer resolvePlayer(ServerLevel level, UUID playerId) {
-		if (playerId == null) {
+		if (level == null || level.getServer() == null || playerId == null) {
 			return null;
 		}
 
 		ServerPlayer player = level.getServer().getPlayerList().getPlayer(playerId);
-		return player != null && player.level() == level && isEligiblePlayer(player) ? player : null;
+		return isEligiblePlayer(player) ? player : null;
 	}
 
 	private static boolean isEligiblePlayer(ServerPlayer player) {
-		return player != null && player.isAlive() && !player.isSpectator();
+		if (player == null || !player.isAlive() || player.isSpectator()) {
+			return false;
+		}
+
+		GameType gameMode = player.gameMode == null ? null : player.gameMode.getGameModeForPlayer();
+		return gameMode == GameType.SURVIVAL
+				|| gameMode == GameType.CREATIVE
+				|| gameMode == GameType.ADVENTURE;
 	}
 
 	private static void playTheme(ServerPlayer player, Vec3 pos) {
