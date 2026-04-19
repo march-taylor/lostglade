@@ -264,19 +264,19 @@ public final class MonitorScreenSystem {
 	private static int monitorRenderThreads() {
 		Lg2Config.ConfigData config = Lg2Config.get();
 		int configured = config != null ? Math.max(1, config.monitorRenderThreads) : recommendedMonitorRenderThreads();
-		return Math.min(configured, recommendedMonitorRenderThreads());
+		return Math.min(configured, maxMonitorWorkerThreads());
 	}
 
 	private static int monitorTileQuantizerThreads() {
 		Lg2Config.ConfigData config = Lg2Config.get();
 		int configured = config != null ? Math.max(1, config.monitorTileQuantizerThreads) : recommendedMonitorQuantizerThreads();
-		return Math.min(configured, recommendedMonitorQuantizerThreads());
+		return Math.min(configured, maxMonitorWorkerThreads());
 	}
 
 	private static int monitorMediaIoThreads() {
 		Lg2Config.ConfigData config = Lg2Config.get();
 		int configured = config != null ? Math.max(1, config.monitorMediaIoThreads) : recommendedMonitorMediaIoThreads();
-		return Math.min(configured, recommendedMonitorMediaIoThreads());
+		return Math.min(configured, maxMonitorIoThreads());
 	}
 
 	private static int monitorMediaSchedulerThreads() {
@@ -295,6 +295,14 @@ public final class MonitorScreenSystem {
 		return Math.max(1, Runtime.getRuntime().availableProcessors());
 	}
 
+	private static int maxMonitorWorkerThreads() {
+		return Math.max(1, availableWorkerCores() - 1);
+	}
+
+	private static int maxMonitorIoThreads() {
+		return Math.max(2, Math.min(maxMonitorWorkerThreads(), Math.max(2, availableWorkerCores() / 2)));
+	}
+
 	private static int recommendedMonitorRenderThreads() {
 		return Math.max(1, Math.min(4, Math.max(1, (availableWorkerCores() - 1) / 2)));
 	}
@@ -308,7 +316,7 @@ public final class MonitorScreenSystem {
 	}
 
 	private static int recommendedMonitorLiveCameraThreads() {
-		return Math.max(1, Math.min(2, Math.max(1, (availableWorkerCores() - 1) / 3)));
+		return Math.max(2, Math.min(8, maxMonitorWorkerThreads()));
 	}
 
 	private static int recommendedMonitorOverlayThreads() {
@@ -5669,7 +5677,7 @@ public final class MonitorScreenSystem {
 		}
 		MediaRuntimeState state = MEDIA_STATES.get(key);
 		if (state == null) {
-			RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(key));
+			server.execute(() -> RendererBotCameraSystem.stopLiveStream(liveCameraStreamOwnerId(key)));
 			return;
 		}
 		synchronized (state) {
@@ -5968,7 +5976,7 @@ public final class MonitorScreenSystem {
 			ServerLevel level = server.getLevel(key.dimension());
 			ScreenComponent component = resolveScreenComponent(server, key);
 			if (level != null && component != null && component.powered() && hasNearbyMediaViewer(level, component)) {
-				scheduleLiveCameraApply(server, key);
+				processPendingLiveCameraApply(server, key);
 			} else {
 				clearPendingLiveCameraApply(state);
 			}
@@ -6014,6 +6022,9 @@ public final class MonitorScreenSystem {
 		}
 		int tilesWide = fullWidth / MAP_SIZE;
 		int tilesHigh = fullHeight / MAP_SIZE;
+		if (tilesWide == 1 && tilesHigh == 1) {
+			return new byte[][]{pixels};
+		}
 		byte[][] renderedTiles = new byte[tilesWide * tilesHigh][MAP_SIZE * MAP_SIZE];
 		for (int tileY = 0; tileY < tilesHigh; tileY++) {
 			for (int tileX = 0; tileX < tilesWide; tileX++) {
@@ -6055,7 +6066,7 @@ public final class MonitorScreenSystem {
 			return null;
 		}
 		if (previousTile == null || previousTile.length < MAP_SIZE * MAP_SIZE) {
-			return new TileFramePatch(0, 0, MAP_SIZE, MAP_SIZE, currentTile.clone());
+			return new TileFramePatch(0, 0, MAP_SIZE, MAP_SIZE, currentTile);
 		}
 		int minX = MAP_SIZE;
 		int minY = MAP_SIZE;
@@ -6079,6 +6090,9 @@ public final class MonitorScreenSystem {
 		}
 		int patchWidth = maxX - minX + 1;
 		int patchHeight = maxY - minY + 1;
+		if (patchWidth == MAP_SIZE && patchHeight == MAP_SIZE) {
+			return new TileFramePatch(0, 0, MAP_SIZE, MAP_SIZE, currentTile);
+		}
 		byte[] patch = new byte[patchWidth * patchHeight];
 		for (int row = 0; row < patchHeight; row++) {
 			int sourceOffset = (minY + row) * MAP_SIZE + minX;
@@ -6648,13 +6662,13 @@ public final class MonitorScreenSystem {
 					mediaState.activeRenderJobs++;
 					mediaState.lastDispatchKey = dispatchKey;
 					mediaState.rerenderRequested = false;
-					work = createRenderWork(component, viewMode, launcherPage, mediaState);
+					work = createRenderWork(server, component, viewMode, launcherPage, mediaState);
 				}
 			} else {
-				work = createRenderWork(component, viewMode, launcherPage, null);
+				work = createRenderWork(server, component, viewMode, launcherPage, null);
 			}
 		} else {
-			work = createRenderWork(component, viewMode, launcherPage, mediaState);
+			work = createRenderWork(server, component, viewMode, launcherPage, mediaState);
 		}
 		if (work == null) {
 			if (mediaState != null) {
@@ -6681,7 +6695,8 @@ public final class MonitorScreenSystem {
 		renderExecutor.submit(() -> {
 			try {
 				byte[][] renderedTiles = renderTiles(server, work);
-				server.execute(() -> applyRenderedWork(server, work, renderedTiles));
+				RenderedTileBatch renderedBatch = new RenderedTileBatch(renderedTiles, prepareRenderedMapUpdates(work, renderedTiles));
+				server.execute(() -> applyRenderedWork(server, work, renderedBatch));
 			} catch (Exception exception) {
 				Lg2.LOGGER.error("Monitor render job failed for {}", work.runtimeKey(), exception);
 				server.execute(() -> handleRenderFailure(server, work, exception));
@@ -6711,10 +6726,10 @@ public final class MonitorScreenSystem {
 		}
 	}
 
-	private static void applyRenderedWork(MinecraftServer server, RenderWork work, byte[][] renderedTiles) {
+	private static void applyRenderedWork(MinecraftServer server, RenderWork work, RenderedTileBatch renderedBatch) {
 		boolean rerenderAgain = false;
 		try {
-			if (server == null || work == null || renderedTiles == null) {
+			if (server == null || work == null || renderedBatch == null || renderedBatch.renderedTiles() == null) {
 				return;
 			}
 			ServerLevel level = server.getLevel(work.runtimeKey().dimension());
@@ -6736,7 +6751,7 @@ public final class MonitorScreenSystem {
 					}
 				}
 			}
-			applyRenderedTiles(level, component, renderedTiles);
+			applyRenderedTiles(level, component, renderedBatch);
 		} finally {
 			if (work != null && isPlayerMode(work.viewMode())) {
 				rerenderAgain = finishMediaRender(work.runtimeKey(), work.mediaVersion());
@@ -7613,7 +7628,7 @@ public final class MonitorScreenSystem {
 		writeScreenState(screenMap, state);
 		MapItemSavedData mapData = mapLevel.getMapData(mapId);
 		if (mapData != null) {
-			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null, null));
+			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null, null, false, List.of()));
 			applyFrameToMap(mapData, tiles[0]);
 		}
 		return screenMap;
@@ -7863,7 +7878,7 @@ public final class MonitorScreenSystem {
 				|| level.hasNeighborSignal(frame.blockPosition());
 	}
 
-	private static RenderWork createRenderWork(ScreenComponent component, ScreenViewMode viewMode, int launcherPage, MediaRuntimeState mediaState) {
+	private static RenderWork createRenderWork(MinecraftServer server, ScreenComponent component, ScreenViewMode viewMode, int launcherPage, MediaRuntimeState mediaState) {
 		if (component == null) {
 			return null;
 		}
@@ -7874,6 +7889,7 @@ public final class MonitorScreenSystem {
 			mediaSnapshot = captureMediaSnapshot(mediaState);
 			mediaVersion = mediaSnapshot != null ? mediaSnapshot.version() : 0L;
 		}
+		boolean transparentOutput = transparentOutputPossible(viewMode, mediaSnapshot, wallpaperSnapshot);
 		return new RenderWork(
 				component.runtimeKey(),
 				component.powered(),
@@ -7883,8 +7899,59 @@ public final class MonitorScreenSystem {
 				component.height(),
 				mediaVersion,
 				mediaSnapshot,
-				wallpaperSnapshot
+				wallpaperSnapshot,
+				transparentOutput,
+				captureRenderTileTargets(server, component)
 		);
+	}
+
+	private static boolean transparentOutputPossible(ScreenViewMode viewMode, MediaVisualSnapshot mediaSnapshot, WallpaperVisualSnapshot wallpaperSnapshot) {
+		if (wallpaperSnapshot != null) {
+			return true;
+		}
+		return isPlayerMode(viewMode)
+				&& mediaSnapshot != null
+				&& mediaSnapshot.playerBackgroundMode() == PlayerBackgroundMode.EMPTY;
+	}
+
+	private static List<RenderTileTarget> captureRenderTileTargets(MinecraftServer server, ScreenComponent component) {
+		if (server == null || component == null || component.frameCoords().isEmpty()) {
+			return List.of();
+		}
+		ServerLevel level = server.getLevel(component.runtimeKey().dimension());
+		if (level == null) {
+			return List.of();
+		}
+		ServerLevel mapStorageLevel = photoMapLevel(server, level);
+		List<RenderTileTarget> targets = new ArrayList<>(component.frameCoords().size());
+		for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
+			ItemFrame frame = entry.getKey();
+			if (frame == null || !frame.isAlive()) {
+				continue;
+			}
+			ItemStack stack = frame.getItem();
+			ScreenTileState state = readScreenState(stack);
+			MapId mapId = stack.get(DataComponents.MAP_ID);
+			if (state == null || mapId == null) {
+				continue;
+			}
+			MapItemSavedData mapData = mapStorageLevel.getMapData(mapId);
+			if (mapData == null) {
+				continue;
+			}
+			int tileIndex = state.tileY() * component.width() + state.tileX();
+			if (tileIndex < 0 || tileIndex >= component.width() * component.height()) {
+				continue;
+			}
+			targets.add(new RenderTileTarget(
+					tileIndex,
+					mapId,
+					mapData.scale,
+					mapData.locked,
+					LAST_RENDERED_MAP_FRAMES.get(mapId.id())
+			));
+		}
+		return targets.isEmpty() ? List.of() : List.copyOf(targets);
 	}
 
 	private static MediaVisualSnapshot captureMediaSnapshot(MediaRuntimeState state) {
@@ -7932,8 +7999,9 @@ public final class MonitorScreenSystem {
 		String timelineLabel = streamPlayback
 				? state.liveStream ? "LIVE" : formatPlaybackTime(state.positionMs) + " / " + formatPlaybackTime(state.durationMs)
 				: (!galleryBrowser && timelineCount > 0 ? (timelineIndex + 1) + "/" + Math.max(1, timelineCount) : "");
-		List<YoutubeQueueItemSnapshot> queueItems = youtubeFamilyMode ? youtubeQueueSnapshots(state) : libraryMode ? galleryItemSnapshots(state) : List.of();
-		List<GalleryCardSnapshot> galleryCards = libraryMode ? galleryCardSnapshots(state) : List.of();
+		boolean youtubeQueueWindowOpen = youtubeFamilyMode && state.youtubeQueueOpen;
+		List<YoutubeQueueItemSnapshot> queueItems = youtubeQueueWindowOpen ? youtubeQueueSnapshots(state) : List.of();
+		List<GalleryCardSnapshot> galleryCards = galleryBrowser ? galleryCardSnapshots(state) : List.of();
 		MediaActionGlyph actionGlyph = resolvedActionGlyph(state);
 		MediaActionVisualState actionState = resolvedActionVisualState(state);
 		boolean actionVisible = resolvedActionVisible(state);
@@ -7946,7 +8014,7 @@ public final class MonitorScreenSystem {
 				&& state.wallpaperMedia != null;
 		MediaOverlayWindowSnapshot overlayWindow = state.playerBackgroundMenuOpen
 				? playerBackgroundMenuWindowSnapshot(state, playerBackgroundMode, wallpaperAvailable)
-				: youtubeFamilyMode && state.youtubeQueueOpen
+				: youtubeQueueWindowOpen
 				? youtubeQueueWindowSnapshot(state, queueItems)
 				: galleryMode && state.galleryDeleteConfirmOpen
 				? galleryDeleteConfirmWindowSnapshot(state)
@@ -8030,7 +8098,7 @@ public final class MonitorScreenSystem {
 		int pixelHeight = work.height() * MAP_SIZE;
 		BufferedImage canvas = new BufferedImage(pixelWidth, pixelHeight, BufferedImage.TYPE_INT_ARGB);
 		Graphics2D graphics = canvas.createGraphics();
-		configureUiGraphics(graphics);
+		configureUiGraphics(graphics, dynamicRenderWork(work));
 		drawBaseBackground(graphics, work.width(), work.height(), work.powered());
 		if (work.powered() && work.wallpaperSnapshot() != null && work.wallpaperSnapshot().frame() != null) {
 			UiLayout layout = createUiLayout(work.width(), work.height());
@@ -8058,12 +8126,26 @@ public final class MonitorScreenSystem {
 		return tiles;
 	}
 
+	private static boolean dynamicRenderWork(RenderWork work) {
+		if (work == null || work.mediaSnapshot() == null) {
+			return false;
+		}
+		MediaVisualSnapshot state = work.mediaSnapshot();
+		return state.streamPlayback()
+				|| state.frameCount() > 1
+				|| work.wallpaperSnapshot() != null;
+	}
+
 	private static void configureUiGraphics(Graphics2D graphics) {
-		graphics.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION, RenderingHints.VALUE_ALPHA_INTERPOLATION_QUALITY);
+		configureUiGraphics(graphics, false);
+	}
+
+	private static void configureUiGraphics(Graphics2D graphics, boolean dynamic) {
+		graphics.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION, dynamic ? RenderingHints.VALUE_ALPHA_INTERPOLATION_SPEED : RenderingHints.VALUE_ALPHA_INTERPOLATION_QUALITY);
 		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-		graphics.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING, RenderingHints.VALUE_COLOR_RENDER_QUALITY);
+		graphics.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING, dynamic ? RenderingHints.VALUE_COLOR_RENDER_SPEED : RenderingHints.VALUE_COLOR_RENDER_QUALITY);
 		graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-		graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+		graphics.setRenderingHint(RenderingHints.KEY_RENDERING, dynamic ? RenderingHints.VALUE_RENDER_SPEED : RenderingHints.VALUE_RENDER_QUALITY);
 		graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 	}
 
@@ -8074,7 +8156,7 @@ public final class MonitorScreenSystem {
 		int tileCount = work.width() * work.height();
 		if (tileCount <= 1 || quantizeExecutor == null) {
 			for (int tileIndex = 0; tileIndex < tileCount; tileIndex++) {
-				quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex]);
+				quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex], work.transparentOutput());
 			}
 			return;
 		}
@@ -8082,7 +8164,7 @@ public final class MonitorScreenSystem {
 		int workerCount = Math.max(1, Math.min(tileCount, monitorTileQuantizerThreads()));
 		if (workerCount <= 1) {
 			for (int tileIndex = 0; tileIndex < tileCount; tileIndex++) {
-				quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex]);
+				quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex], work.transparentOutput());
 			}
 			return;
 		}
@@ -8097,15 +8179,19 @@ public final class MonitorScreenSystem {
 			}
 			futures[workerIndex] = CompletableFuture.runAsync(() -> {
 				for (int tileIndex = startTileIndex; tileIndex < endTileIndex; tileIndex++) {
-					quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex]);
+					quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex], work.transparentOutput());
 				}
 			}, quantizeExecutor);
 		}
 		CompletableFuture.allOf(futures).join();
 	}
 
-	private static void quantizeSingleTile(int tilesWide, int[] rgbPixels, int pixelWidth, int tileIndex, byte[] tile) {
+	private static void quantizeSingleTile(int tilesWide, int[] rgbPixels, int pixelWidth, int tileIndex, byte[] tile, boolean transparentOutput) {
 		if (tilesWide <= 0 || rgbPixels == null || tile == null) {
+			return;
+		}
+		if (!transparentOutput) {
+			quantizeSingleTileOpaque(tilesWide, rgbPixels, pixelWidth, tileIndex, tile);
 			return;
 		}
 		int tileX = Math.floorMod(tileIndex, tilesWide);
@@ -8126,6 +8212,22 @@ public final class MonitorScreenSystem {
 				}
 				int rgb = argb & 0xFFFFFF;
 				tile[tileRowStart + localX] = MapPaletteQuantizer.quantizeDithered(rgb, globalX, globalY);
+			}
+		}
+	}
+
+	private static void quantizeSingleTileOpaque(int tilesWide, int[] rgbPixels, int pixelWidth, int tileIndex, byte[] tile) {
+		int tileX = Math.floorMod(tileIndex, tilesWide);
+		int tileY = tileIndex / tilesWide;
+		int tileOriginX = tileX * MAP_SIZE;
+		int tileOriginY = tileY * MAP_SIZE;
+		for (int localY = 0; localY < MAP_SIZE; localY++) {
+			int globalY = tileOriginY + localY;
+			int rowStart = globalY * pixelWidth + tileOriginX;
+			int tileRowStart = localY * MAP_SIZE;
+			for (int localX = 0; localX < MAP_SIZE; localX++) {
+				int globalX = tileOriginX + localX;
+				tile[tileRowStart + localX] = MapPaletteQuantizer.quantizeDithered(rgbPixels[rowStart + localX] & 0xFFFFFF, globalX, globalY);
 			}
 		}
 	}
@@ -11817,30 +11919,79 @@ public final class MonitorScreenSystem {
 		mapData.setDirty();
 	}
 
-	private static void applyRenderedTiles(ServerLevel level, ScreenComponent component, byte[][] renderedTiles) {
-		if (level == null || component == null || renderedTiles == null) {
+	private static List<PreparedMapUpdate> prepareRenderedMapUpdates(RenderWork work, byte[][] renderedTiles) {
+		if (work == null || renderedTiles == null || work.tileTargets() == null || work.tileTargets().isEmpty()) {
+			return List.of();
+		}
+		List<PreparedMapUpdate> updates = new ArrayList<>();
+		for (RenderTileTarget target : work.tileTargets()) {
+			if (target == null || target.tileIndex() < 0 || target.tileIndex() >= renderedTiles.length) {
+				continue;
+			}
+			byte[] tileFrame = renderedTiles[target.tileIndex()];
+			if (tileFrame == null || tileFrame.length < MAP_SIZE * MAP_SIZE) {
+				continue;
+			}
+			MapPacketUpdate packetUpdate = buildMapUpdate(
+					target.mapId(),
+					target.scale(),
+					target.locked(),
+					target.baselineFrame(),
+					tileFrame
+			);
+			if (packetUpdate == null) {
+				continue;
+			}
+			updates.add(new PreparedMapUpdate(
+					target.mapId(),
+					target.scale(),
+					target.locked(),
+					packetUpdate.startX(),
+					packetUpdate.startY(),
+					packetUpdate.width(),
+					packetUpdate.height(),
+					packetUpdate.frame(),
+					tileFrame,
+					target.baselineFrame()
+			));
+		}
+		return updates.isEmpty() ? List.of() : List.copyOf(updates);
+	}
+
+	private static void applyRenderedTiles(ServerLevel level, ScreenComponent component, RenderedTileBatch renderedBatch) {
+		if (level == null || component == null || renderedBatch == null || renderedBatch.renderedTiles() == null) {
+			return;
+		}
+		if (renderedBatch.updates() == null || renderedBatch.updates().isEmpty()) {
 			return;
 		}
 		ServerLevel mapStorageLevel = photoMapLevel(level.getServer(), level);
 		List<MapPacketUpdate> changedUpdates = new ArrayList<>();
-		for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
-			ItemFrame frame = entry.getKey();
-			ItemStack frameStack = frame.getItem();
-			ScreenTileState state = readScreenState(frameStack);
-			MapId mapId = frameStack.get(DataComponents.MAP_ID);
-			if (state == null || mapId == null) {
+		Set<Integer> currentMapIds = currentComponentMapIds(component);
+		for (PreparedMapUpdate prepared : renderedBatch.updates()) {
+			if (prepared == null || prepared.mapId() == null || !currentMapIds.contains(prepared.mapId().id())) {
 				continue;
 			}
-			MapItemSavedData mapData = mapStorageLevel.getMapData(mapId);
+			MapItemSavedData mapData = mapStorageLevel.getMapData(prepared.mapId());
 			if (mapData == null) {
 				continue;
 			}
-			int tileIndex = state.tileY() * component.width() + state.tileX();
-			if (tileIndex < 0 || tileIndex >= renderedTiles.length) {
-				continue;
+			MapPacketUpdate update;
+			if (renderBaselineMatches(prepared.mapId(), prepared.baselineFrame())) {
+				update = new MapPacketUpdate(
+						prepared.mapId(),
+						mapData.scale,
+						mapData.locked,
+						prepared.startX(),
+						prepared.startY(),
+						prepared.width(),
+						prepared.height(),
+						prepared.frame()
+				);
+				LAST_RENDERED_MAP_FRAMES.put(prepared.mapId().id(), prepared.fullFrame());
+			} else {
+				update = buildRenderedMapUpdate(prepared.mapId(), mapData.scale, mapData.locked, prepared.fullFrame());
 			}
-			byte[] tileFrame = renderedTiles[tileIndex];
-			MapPacketUpdate update = buildRenderedMapUpdate(mapId, mapData.scale, mapData.locked, tileFrame);
 			if (update == null) {
 				continue;
 			}
@@ -11848,6 +11999,37 @@ public final class MonitorScreenSystem {
 			changedUpdates.add(update);
 		}
 		sendMapToPlayers(level, component, changedUpdates);
+	}
+
+	private static Set<Integer> currentComponentMapIds(ScreenComponent component) {
+		if (component == null || component.frameCoords().isEmpty()) {
+			return Set.of();
+		}
+		Set<Integer> ids = new HashSet<>();
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			if (frame == null || !frame.isAlive()) {
+				continue;
+			}
+			MapId mapId = frame.getItem().get(DataComponents.MAP_ID);
+			if (mapId != null) {
+				ids.add(mapId.id());
+			}
+		}
+		return ids;
+	}
+
+	private static boolean renderBaselineMatches(MapId mapId, byte[] expectedBaseline) {
+		if (mapId == null) {
+			return false;
+		}
+		byte[] currentBaseline = LAST_RENDERED_MAP_FRAMES.get(mapId.id());
+		if (currentBaseline == expectedBaseline) {
+			return true;
+		}
+		if (currentBaseline == null || expectedBaseline == null) {
+			return false;
+		}
+		return Arrays.equals(currentBaseline, expectedBaseline);
 	}
 
 	private static void applyPreparedRenderedTiles(ServerLevel level, ScreenComponent component, MediaRuntimeState mediaState, PreparedRenderedTiles preparedTiles) {
@@ -11884,7 +12066,7 @@ public final class MonitorScreenSystem {
 				continue;
 			}
 			changed = true;
-			LAST_RENDERED_MAP_FRAMES.put(mapId.id(), tileFrame.clone());
+			LAST_RENDERED_MAP_FRAMES.put(mapId.id(), tileFrame);
 			MapPacketUpdate update = new MapPacketUpdate(
 					mapId,
 					mapData.scale,
@@ -11933,9 +12115,19 @@ public final class MonitorScreenSystem {
 			return null;
 		}
 		byte[] previous = LAST_RENDERED_MAP_FRAMES.get(mapId.id());
-		LAST_RENDERED_MAP_FRAMES.put(mapId.id(), tileFrame.clone());
+		MapPacketUpdate update = buildMapUpdate(mapId, scale, locked, previous, tileFrame);
+		if (update != null) {
+			LAST_RENDERED_MAP_FRAMES.put(mapId.id(), tileFrame);
+		}
+		return update;
+	}
+
+	private static MapPacketUpdate buildMapUpdate(MapId mapId, byte scale, boolean locked, byte[] previous, byte[] tileFrame) {
+		if (mapId == null || tileFrame == null || tileFrame.length < MAP_SIZE * MAP_SIZE) {
+			return null;
+		}
 		if (previous == null || previous.length < MAP_SIZE * MAP_SIZE) {
-			return new MapPacketUpdate(mapId, scale, locked, 0, 0, MAP_SIZE, MAP_SIZE, tileFrame.clone());
+			return new MapPacketUpdate(mapId, scale, locked, 0, 0, MAP_SIZE, MAP_SIZE, tileFrame);
 		}
 
 		int minX = MAP_SIZE;
@@ -11961,6 +12153,9 @@ public final class MonitorScreenSystem {
 
 		int patchWidth = maxX - minX + 1;
 		int patchHeight = maxY - minY + 1;
+		if (patchWidth == MAP_SIZE && patchHeight == MAP_SIZE) {
+			return new MapPacketUpdate(mapId, scale, locked, 0, 0, MAP_SIZE, MAP_SIZE, tileFrame);
+		}
 		byte[] patch = new byte[patchWidth * patchHeight];
 		for (int row = 0; row < patchHeight; row++) {
 			int sourceOffset = (minY + row) * MAP_SIZE + minX;
@@ -14638,6 +14833,15 @@ public final class MonitorScreenSystem {
 	) {
 	}
 
+	private record RenderTileTarget(
+			int tileIndex,
+			MapId mapId,
+			byte scale,
+			boolean locked,
+			byte[] baselineFrame
+	) {
+	}
+
 	private record MediaOverlayWindowSnapshot(
 			MediaOverlayWindowType type,
 			String title,
@@ -14661,7 +14865,9 @@ public final class MonitorScreenSystem {
 			int height,
 			long mediaVersion,
 			MediaVisualSnapshot mediaSnapshot,
-			WallpaperVisualSnapshot wallpaperSnapshot
+			WallpaperVisualSnapshot wallpaperSnapshot,
+			boolean transparentOutput,
+			List<RenderTileTarget> tileTargets
 		) {
 	}
 
@@ -14891,6 +15097,23 @@ public final class MonitorScreenSystem {
 			int height,
 			byte[] frame
 	) {
+	}
+
+	private record PreparedMapUpdate(
+			MapId mapId,
+			byte scale,
+			boolean locked,
+			int startX,
+			int startY,
+			int width,
+			int height,
+			byte[] frame,
+			byte[] fullFrame,
+			byte[] baselineFrame
+	) {
+	}
+
+	private record RenderedTileBatch(byte[][] renderedTiles, List<PreparedMapUpdate> updates) {
 	}
 
 	private record TileFramePatch(int startX, int startY, int width, int height, byte[] frame) {

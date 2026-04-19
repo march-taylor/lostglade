@@ -149,13 +149,15 @@ public final class RendererBotCameraSystem {
 						return;
 					}
 					stream.markFrameReceived();
-					context.player().level().getServer().execute(() -> {
-						ActiveLiveStream current = ACTIVE_LIVE_STREAMS.get(payload.streamId());
-						if (current == null || !current.botUuid().equals(context.player().getUUID())) {
-							return;
-						}
+					ActiveLiveStream current = ACTIVE_LIVE_STREAMS.get(payload.streamId());
+					if (current == null || !current.botUuid().equals(context.player().getUUID())) {
+						return;
+					}
+					try {
 						current.onFrame().accept(payload.pixels());
-					});
+					} catch (Exception exception) {
+						Lg2.LOGGER.warn("Renderer bot live stream frame callback failed for {}", payload.streamId(), exception);
+					}
 				}
 		);
 		ServerPlayNetworking.registerGlobalReceiver(

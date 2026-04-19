@@ -2164,7 +2164,7 @@ public final class DroneSystem {
 
 		// Forward drive pitches the nose down; strafe drive rolls into the turn.
 		float pitchTiltRad = (float) Math.toRadians((float) (forwardNorm * DRONE_MAX_TILT_DEGREES));
-		float rollTiltRad = (float) Math.toRadians((float) (-strafeNorm * DRONE_MAX_TILT_DEGREES));
+		float rollTiltRad = (float) Math.toRadians((float) (strafeNorm * DRONE_MAX_TILT_DEGREES));
 		Quaternionf rotation = new Quaternionf().rotateXYZ(pitchTiltRad, 0.0F, rollTiltRad);
 		DroneDisplayWobble wobble = resolveActiveDroneDisplayWobble(root);
 		if (wobble != null) {
