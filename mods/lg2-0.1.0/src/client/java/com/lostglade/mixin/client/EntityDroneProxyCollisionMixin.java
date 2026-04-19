@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(Entity.class)
 public abstract class EntityDroneProxyCollisionMixin {
 	@Inject(method = "moveTowardsClosestSpace", at = @At("HEAD"), cancellable = true)
-	private void lg2$disableClosestSpacePushDuringDroneControl(double x, double z, CallbackInfo ci) {
+	private void lg2$disableClosestSpacePushDuringDroneControl(double x, double y, double z, CallbackInfo ci) {
 		if (!((Object) this instanceof LocalPlayer player) || !lg2$isDroneProxyActive(player)) {
 			return;
 		}
