@@ -5361,7 +5361,7 @@ public final class ServerRaceSystem {
 
 		List<ServerPlayer> players = new ArrayList<>();
 		for (ServerPlayer player : caster.level().getServer().getPlayerList().getPlayers()) {
-			if (player == null || player == caster) {
+			if (player == null || player == caster || !player.isAlive() || player.isSpectator()) {
 				continue;
 			}
 			players.add(player);
@@ -5387,6 +5387,14 @@ public final class ServerRaceSystem {
 			return 0;
 		}
 		if (caster.getUUID().equals(target.getUUID())) {
+			return 0;
+		}
+		if (!target.isAlive() || target.isSpectator()) {
+			caster.displayClientMessage(
+					Component.literal(localizeCartelDisguiseText(caster, "target_unavailable"))
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
 			return 0;
 		}
 
