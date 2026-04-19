@@ -18,6 +18,7 @@ import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
+import net.minecraft.network.protocol.game.ClientboundSoundEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
@@ -258,6 +259,7 @@ public final class CocaineHallucinationSystem {
 				|| packet instanceof ClientboundSetEntityDataPacket
 				|| packet instanceof ClientboundSetEntityMotionPacket
 				|| packet instanceof ClientboundSetEquipmentPacket
+				|| packet instanceof ClientboundSoundEntityPacket
 				|| packet instanceof ClientboundUpdateAttributesPacket
 				|| packet instanceof ClientboundEntityPositionSyncPacket
 				|| packet instanceof ClientboundMoveEntityPacket
