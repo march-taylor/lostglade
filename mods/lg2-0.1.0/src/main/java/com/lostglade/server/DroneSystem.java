@@ -6,9 +6,11 @@ import com.lostglade.item.DroneItem;
 import com.lostglade.item.ModItems;
 import com.lostglade.mixin.ClientboundSetPassengersPacketAccessor;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
-import com.lostglade.server.map.MapImageRenderSystem;
 import com.lostglade.mixin.EntityPassengerAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
+import com.lostglade.mixin.ServerCommonPacketListenerImplAccessor;
+import com.lostglade.mixin.ServerGamePacketListenerImplAccessor;
+import com.lostglade.server.map.MapImageRenderSystem;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.PropertyMap;
 import com.mojang.datafixers.util.Pair;
@@ -55,9 +57,12 @@ import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ChunkTrackingView;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.network.CommonListenerCookie;
+import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
@@ -178,6 +183,7 @@ public final class DroneSystem {
 	private static final byte ENTITY_FLAG_SWIMMING = 0x10;
 	private static final byte ENTITY_FLAG_INVISIBLE = 0x20;
 	private static final byte ENTITY_FLAG_FALL_FLYING = (byte) 0x80;
+	private static final int CONTROLLED_VIEW_TELEPORT_ID_BASE = 1_000_000_000;
 	private static final double CONTROLLED_PROXY_RESYNC_DISTANCE_SQR = 0.55D * 0.55D;
 	private static final double CONTROLLED_PROXY_COLLISION_RESYNC_MARGIN = 0.02D;
 	private static final double DRONE_CAMERA_ESCAPE_STEP = 0.04D;
@@ -201,6 +207,7 @@ public final class DroneSystem {
 	private static final Map<UUID, UUID> DISPLAYS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UUID> CAMERA_ANCHORS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UncontrolledDroneState> UNCONTROLLED_DRONES = new HashMap<>();
+	private static final Map<UUID, UUID> CONTROLLED_PROXY_TO_CONTROLLER = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_ARM_ALLOWED_TICK = new HashMap<>();
 	private static final Map<UUID, DroneDisplayWobbleState> DISPLAY_WOBBLE_BY_DRONE = new HashMap<>();
@@ -266,6 +273,7 @@ public final class DroneSystem {
 			DISPLAYS_BY_DRONE.clear();
 			CAMERA_ANCHORS_BY_DRONE.clear();
 			UNCONTROLLED_DRONES.clear();
+			CONTROLLED_PROXY_TO_CONTROLLER.clear();
 			NEXT_DRONE_ARM_ALLOWED_TICK.clear();
 			CAMERA_SUPPRESSED_UNTIL_TICK.clear();
 			FORCED_CONTROLLED_PLAYERS.clear();
@@ -374,12 +382,12 @@ public final class DroneSystem {
 		return Objects.equals(CONTROLLERS_BY_DRONE.get(session.droneUuid()), player.getUUID());
 	}
 
+	public static boolean isControlledDroneProxy(ServerPlayer player) {
+		return player != null && CONTROLLED_PROXY_TO_CONTROLLER.containsKey(player.getUUID());
+	}
+
 	public static boolean shouldApplyDroneTravelToPlayer(ServerPlayer player) {
-		if (!isControllingDrone(player) || player == null) {
-			return false;
-		}
-		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
-		return session != null && session.controlledProxyPlayer() == null;
+		return isControlledDroneProxy(player);
 	}
 
 	public static void handleControlledMovePacket(ServerPlayer player, ServerboundMovePlayerPacket packet) {
@@ -390,20 +398,14 @@ public final class DroneSystem {
 		if (session == null) {
 			return;
 		}
-
-		float currentYaw = session.proxyYaw();
-		float currentPitch = session.proxyPitch();
-		session.setProxyYaw(packet.getYRot(currentYaw));
-		session.setProxyPitch(net.minecraft.util.Mth.clamp(packet.getXRot(currentPitch), -90.0F, 90.0F));
-		if (packet.hasPosition()) {
-			double currentX = session.lastPlayerPos().x;
-			double currentZ = session.lastPlayerPos().z;
-			session.setLastPlayerPos(new Vec3(
-					packet.getX(currentX),
-					session.proxyPos().y,
-					packet.getZ(currentZ)
-			));
+		ServerGamePacketListenerImpl proxyListener = session.controlledProxyListener();
+		ServerPlayer proxyPlayer = session.controlledProxyPlayer();
+		if (proxyListener == null || proxyPlayer == null) {
+			return;
 		}
+		syncControlledProxyListenerTickState(player, session);
+		runWithControlledOperatorPacketRewriteBypass(() -> proxyListener.handleMovePlayer(packet));
+		syncControlledProxyShellState(session, proxyPlayer);
 	}
 
 	public static void handleControlledAcceptTeleportPacket(ServerPlayer player, int teleportId) {
@@ -414,7 +416,17 @@ public final class DroneSystem {
 		if (session == null) {
 			return;
 		}
-		session.setLastAcceptedProxyTeleportId(teleportId);
+		if (teleportId >= CONTROLLED_VIEW_TELEPORT_ID_BASE) {
+			session.setLastAcceptedProxyTeleportId(teleportId);
+			return;
+		}
+		ServerGamePacketListenerImpl proxyListener = session.controlledProxyListener();
+		if (proxyListener == null) {
+			return;
+		}
+		runWithControlledOperatorPacketRewriteBypass(() ->
+				proxyListener.handleAcceptTeleportPacket(new net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket(teleportId))
+		);
 	}
 
 	public static ChunkTrackingView createVirtualChunkTrackingView(ServerPlayer player) {
@@ -666,14 +678,15 @@ public final class DroneSystem {
 		if (player == null) {
 			return;
 		}
-		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
-		if (session == null) {
+		DroneControlSession session = resolveDroneControlSession(player);
+		ServerPlayer controller = resolveDroneController(player);
+		if (session == null || controller == null) {
 			return;
 		}
-		int controlSpeedSlot = getControlSpeedSlot(player);
+		int controlSpeedSlot = getControlSpeedSlot(controller);
 		double driveStep = getControlDriveStep(controlSpeedSlot);
 
-		DroneInputState input = INPUTS.getOrDefault(player.getUUID(), DroneInputState.EMPTY);
+		DroneInputState input = INPUTS.getOrDefault(controller.getUUID(), DroneInputState.EMPTY);
 		session.setForwardDrive(
 				DroneFlightPhysics.adjustDrive(
 						session.forwardDrive(),
@@ -693,7 +706,7 @@ public final class DroneSystem {
 				)
 		);
 
-		ensureControlledPlayerState(player);
+		ensureControlledProxyState(player);
 
 		Vec3 nextVelocity = DroneFlightPhysics.step(
 				player.getXRot(),
@@ -705,6 +718,53 @@ public final class DroneSystem {
 		player.move(MoverType.SELF, nextVelocity);
 		session.setVelocity(nextVelocity);
 		player.hurtMarked = true;
+	}
+
+	private static DroneControlSession resolveDroneControlSession(ServerPlayer player) {
+		if (player == null) {
+			return null;
+		}
+		if (isControllingDrone(player)) {
+			return ACTIVE_SESSIONS.get(player.getUUID());
+		}
+		UUID controllerId = CONTROLLED_PROXY_TO_CONTROLLER.get(player.getUUID());
+		return controllerId == null ? null : ACTIVE_SESSIONS.get(controllerId);
+	}
+
+	private static ServerPlayer resolveDroneController(ServerPlayer player) {
+		if (player == null) {
+			return null;
+		}
+		if (isControllingDrone(player)) {
+			return player;
+		}
+		UUID controllerId = CONTROLLED_PROXY_TO_CONTROLLER.get(player.getUUID());
+		if (controllerId == null) {
+			return null;
+		}
+		MinecraftServer server = player.level() != null ? player.level().getServer() : null;
+		return server == null ? null : server.getPlayerList().getPlayer(controllerId);
+	}
+
+	private static void syncControlledProxyShellState(DroneControlSession session, ServerPlayer proxyPlayer) {
+		if (session == null || proxyPlayer == null) {
+			return;
+		}
+		session.setProxyPos(proxyPlayer.position());
+		session.setProxyYaw(proxyPlayer.getYRot());
+		session.setProxyPitch(proxyPlayer.getXRot());
+	}
+
+	private static void syncControlledProxyListenerTickState(ServerPlayer controller, DroneControlSession session) {
+		if (controller == null || controller.connection == null || session == null || session.controlledProxyListener() == null) {
+			return;
+		}
+		ServerGamePacketListenerImplAccessor controllerAccessor = (ServerGamePacketListenerImplAccessor) controller.connection;
+		ServerGamePacketListenerImplAccessor proxyAccessor = (ServerGamePacketListenerImplAccessor) session.controlledProxyListener();
+		proxyAccessor.lg2$setTickCount(Math.max(1, controllerAccessor.lg2$getTickCount()));
+		proxyAccessor.lg2$setKnownMovePacketCount(proxyAccessor.lg2$getReceivedMovePacketCount());
+		session.controlledProxyListener().resetPosition();
+		session.controlledProxyListener().resetFlyingTicks();
 	}
 
 	public static boolean isDroneEntity(Entity entity) {
@@ -863,82 +923,35 @@ public final class DroneSystem {
 		}
 	}
 
-	private static void advanceControlledDroneMotion(ServerPlayer player, ServerPlayer proxyPlayer, DroneControlSession session, DroneInputState input) {
-		if (player == null || proxyPlayer == null || session == null) {
-			return;
-		}
-
-		int controlSpeedSlot = getControlSpeedSlot(player);
-		double driveStep = getControlDriveStep(controlSpeedSlot);
-		DroneInputState resolvedInput = input == null ? DroneInputState.EMPTY : input;
-
-		session.setForwardDrive(
-				DroneFlightPhysics.adjustDrive(
-						session.forwardDrive(),
-						resolvedInput.forward(),
-						resolvedInput.backward(),
-						driveStep,
-						DroneFlightPhysics.MAX_FORWARD_DRIVE
-				)
-		);
-		session.setStrafeDrive(
-				DroneFlightPhysics.adjustDrive(
-						session.strafeDrive(),
-						resolvedInput.right(),
-						resolvedInput.left(),
-						driveStep,
-						DroneFlightPhysics.MAX_STRAFE_DRIVE
-				)
-		);
-
-		Vec3 intendedVelocity = DroneFlightPhysics.step(
-				session.proxyPitch(),
-				session.proxyYaw(),
-				session.forwardDrive(),
-				session.strafeDrive()
-		);
-		proxyPlayer.setYRot(session.proxyYaw());
-		proxyPlayer.setXRot(session.proxyPitch());
-		proxyPlayer.setYHeadRot(session.proxyYaw());
-		proxyPlayer.setYBodyRot(session.proxyYaw());
-		proxyPlayer.setNoGravity(true);
-		proxyPlayer.noPhysics = false;
-		proxyPlayer.fallDistance = 0.0F;
-		Vec3 startPos = proxyPlayer.position();
-		proxyPlayer.setDeltaMovement(intendedVelocity);
-		proxyPlayer.move(MoverType.SELF, intendedVelocity);
-		Vec3 actualMovement = proxyPlayer.position().subtract(startPos);
-
-		session.setIntendedVelocity(intendedVelocity);
-		session.setVelocity(actualMovement);
-		session.setProxyPos(proxyPlayer.position());
-	}
-
 	private static void tickControlledDrone(ServerPlayer player, Entity root, DroneControlSession session, DroneInputState input) {
 		if (!(root.level() instanceof ServerLevel)) {
 			return;
 		}
 
 		ServerPlayer proxyPlayer = session.controlledProxyPlayer();
-		if (proxyPlayer == null || proxyPlayer.level() != root.level()) {
+		ServerGamePacketListenerImpl proxyListener = session.controlledProxyListener();
+		if (proxyPlayer == null || proxyListener == null || proxyPlayer.level() != root.level()) {
 			stopControlling(player, true, true);
 			return;
 		}
 
-		advanceControlledDroneMotion(player, proxyPlayer, session, input);
-		Vec3 actualMovement = session.velocity();
-		Vec3 intendedMovement = session.intendedVelocity();
-		float yaw = session.proxyYaw();
-		float pitch = session.proxyPitch();
-		broadcastDronePilotEquipmentHidden(player, true);
-		syncDummyHeldItems(player, session);
-		Vec3 proxyPos = session.proxyPos();
-		root.setPos(proxyPos.x, proxyPos.y, proxyPos.z);
+		Vec3 intendedMovement = session.velocity();
+		syncControlledProxyListenerTickState(player, session);
+		applyControlledTravel(proxyPlayer);
+		Vec3 currentPos = proxyPlayer.position();
+		Vec3 actualMovement = currentPos.subtract(session.lastPlayerPos());
+		float yaw = proxyPlayer.getYRot();
+		float pitch = proxyPlayer.getXRot();
+		syncControlledProxyShellState(session, proxyPlayer);
+		proxyListener.resetPosition();
+		root.noPhysics = true;
+		root.setPos(currentPos.x, currentPos.y, currentPos.z);
 		root.setYRot(yaw);
 		root.setXRot(pitch);
-		root.setDeltaMovement(actualMovement);
+		root.setDeltaMovement(proxyPlayer.getDeltaMovement());
 		root.hurtMarked = true;
-		syncDroneCameraAnchor(root, actualMovement);
+		syncDroneCameraAnchor(root, proxyPlayer.getDeltaMovement());
+		session.setLastPlayerPos(currentPos);
 		maybePlayDroneLoopSound(root, session.forwardDrive(), session.strafeDrive(), true);
 		setHotbarVisualHidden(player, true);
 		if (shouldDestroyDroneFromCollision(intendedMovement, actualMovement, proxyPlayer.horizontalCollision, proxyPlayer.verticalCollision)) {
@@ -959,26 +972,8 @@ public final class DroneSystem {
 		session.setDisplayForwardDrive(displayForwardDrive);
 		session.setDisplayStrafeDrive(displayStrafeDrive);
 		syncDroneDisplay(root, yaw, pitch, displayForwardDrive, displayStrafeDrive);
-		double horizontalDx = session.lastPlayerPos().x - session.proxyPos().x;
-		double horizontalDz = session.lastPlayerPos().z - session.proxyPos().z;
-		double horizontalDriftSqr = horizontalDx * horizontalDx + horizontalDz * horizontalDz;
-		boolean forcePosSync = shouldForceControlledProxyResync(proxyPlayer, horizontalDriftSqr);
-		syncControlledPlayer(player, root, forcePosSync);
+		syncControlledPlayer(player, root);
 		updateDroneHud(player, session, false);
-	}
-
-	private static boolean shouldForceControlledProxyResync(ServerPlayer collisionEntity, double horizontalDriftSqr) {
-		if (horizontalDriftSqr > CONTROLLED_PROXY_RESYNC_DISTANCE_SQR) {
-			return true;
-		}
-		if (collisionEntity == null || !collisionEntity.horizontalCollision) {
-			return false;
-		}
-		double driftThreshold = Math.max(
-				0.0D,
-				(DRONE_WIDTH - Math.max(0.0F, collisionEntity.getBbWidth())) * 0.5D + CONTROLLED_PROXY_COLLISION_RESYNC_MARGIN
-		);
-		return horizontalDriftSqr > driftThreshold * driftThreshold;
 	}
 
 	private static void tickUncontrolledDrone(Entity root, UncontrolledDroneState state) {
@@ -1302,9 +1297,40 @@ public final class DroneSystem {
 		proxyPlayer.setInvisible(true);
 		proxyPlayer.setNoGravity(true);
 		proxyPlayer.setInvulnerable(true);
+		proxyPlayer.setSilent(true);
 		proxyPlayer.noPhysics = false;
 		proxyPlayer.fallDistance = 0.0F;
 		return proxyPlayer;
+	}
+
+	private static ServerGamePacketListenerImpl createControlledProxyListener(ServerPlayer controller, ServerPlayer proxyPlayer) {
+		if (controller == null || controller.connection == null || proxyPlayer == null) {
+			return null;
+		}
+		ClientInformation clientInformation = controller.clientInformation();
+		if (clientInformation == null) {
+			return null;
+		}
+		CommonListenerCookie cookie = new CommonListenerCookie(
+				proxyPlayer.getGameProfile(),
+				0,
+				clientInformation,
+				false
+		);
+		MinecraftServer server = controller.level() != null ? controller.level().getServer() : null;
+		if (server == null) {
+			return null;
+		}
+		ServerGamePacketListenerImpl listener = new ServerGamePacketListenerImpl(
+				server,
+				((ServerCommonPacketListenerImplAccessor) controller.connection).lg2$getConnection(),
+				proxyPlayer,
+				cookie
+		);
+		ServerGamePacketListenerImplAccessor accessor = (ServerGamePacketListenerImplAccessor) listener;
+		accessor.lg2$markClientLoaded();
+		listener.resetPosition();
+		return listener;
 	}
 
 	private static void detachDroneFromController(ServerPlayer player, Entity root) {
@@ -1395,6 +1421,27 @@ public final class DroneSystem {
 		player.hurtMarked = true;
 	}
 
+	private static void ensureControlledProxyState(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		player.setCamera(player);
+		player.setInvisible(true);
+		player.setNoGravity(true);
+		player.noPhysics = false;
+		player.setInvulnerable(true);
+		player.setSilent(true);
+		if (player.getAbilities().flying) {
+			player.getAbilities().flying = false;
+			player.onUpdateAbilities();
+		}
+		player.fallDistance = 0.0F;
+		if (!player.isFallFlying()) {
+			player.startFallFlying();
+		}
+		player.hurtMarked = true;
+	}
+
 	private static void clearForcedControlMovementState(ServerPlayer player) {
 		if (player == null) {
 			return;
@@ -1416,8 +1463,6 @@ public final class DroneSystem {
 			if (session != null) {
 				if (session.controlledProxyPlayer() != null) {
 					syncControlledOperatorView(player, session, root, false, false);
-				} else {
-					ensureControlledPlayerState(player);
 				}
 				return;
 			}
@@ -1435,8 +1480,6 @@ public final class DroneSystem {
 			if (session != null) {
 				if (session.controlledProxyPlayer() != null) {
 					syncControlledOperatorView(player, session, root, false, forcePositionSync);
-				} else {
-					ensureControlledPlayerState(player);
 				}
 			}
 			return;
@@ -1540,7 +1583,7 @@ public final class DroneSystem {
 				session.proxyYaw(),
 				session.proxyPitch()
 		);
-		return ClientboundPlayerPositionPacket.of(session.nextProxyTeleportId(), change, ABSOLUTE_TELEPORT);
+		return ClientboundPlayerPositionPacket.of(session.nextViewSyncTeleportId(), change, ABSOLUTE_TELEPORT);
 	}
 
 	private static ClientboundSetPassengersPacket buildControlledOperatorPassengerPacket(ServerPlayer player, DroneControlSession session) {
@@ -1558,6 +1601,21 @@ public final class DroneSystem {
 			return;
 		}
 		runWithControlledOperatorPacketRewriteBypass(() -> player.connection.send(packet));
+	}
+
+	private static void refreshControlledOperatorActualView(ServerPlayer player) {
+		if (player == null || player.connection == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+		level.getChunkAt(BlockPos.containing(player.position()));
+		player.teleportTo(level, player.getX(), player.getY(), player.getZ(), ABSOLUTE_TELEPORT, player.getYRot(), player.getXRot(), false);
+		List<SynchedEntityData.DataValue<?>> actualValues = player.getEntityData().getNonDefaultValues();
+		if (actualValues != null && !actualValues.isEmpty()) {
+			player.connection.send(new ClientboundSetEntityDataPacket(player.getId(), actualValues));
+		}
+		player.connection.send(new ClientboundSetEntityMotionPacket(player.getId(), player.getDeltaMovement()));
+		player.connection.send(new ClientboundSetPassengersPacket(player));
+		player.connection.send(new ClientboundPlayerAbilitiesPacket(player.getAbilities()));
 	}
 
 	private static void syncControlledOperatorView(
@@ -1579,7 +1637,6 @@ public final class DroneSystem {
 		}
 		if (forceGameMode || forcePositionSync) {
 			sendControlledOperatorPacket(player, buildControlledPlayerPositionPacket(session));
-			session.setLastPlayerPos(session.proxyPos());
 		}
 		sendControlledOperatorPacket(player, new ClientboundSetEntityMotionPacket(player.getId(), session.velocity()));
 		sendControlledOperatorPacket(player, buildControlledSelfMetadataPacket(player));
@@ -1775,24 +1832,19 @@ public final class DroneSystem {
 		if (controlledProxyPlayer == null) {
 			return false;
 		}
-		DronePilotDummyEntity dummy = spawnPlayerDummy(originLevel, player, originPos);
-		if (dummy != null) {
-			DUMMY_OWNER_BY_UUID.put(dummy.getUUID(), player.getUUID());
+		ServerGamePacketListenerImpl controlledProxyListener = createControlledProxyListener(player, controlledProxyPlayer);
+		if (controlledProxyListener == null) {
+			return false;
 		}
 		root.level().getChunkAt(root.blockPosition());
-		stashAndHideControlledInventory(player);
 		spoofClientGameMode(player, GameType.SPECTATOR);
-		broadcastDronePilotEquipmentHidden(player, true);
 		setHotbarVisualHidden(player, true);
-		player.stopFallFlying();
-		player.setDeltaMovement(Vec3.ZERO);
-		ensureControlledPlayerState(player);
 		syncDroneCameraAnchor(root, Vec3.ZERO);
 
 		DroneControlSession session = new DroneControlSession(
 				root.getUUID(),
 				droneLevel.dimension(),
-				dummy != null ? dummy.getUUID() : null,
+				null,
 				originLevel.dimension(),
 				originPos,
 				originYaw,
@@ -1806,6 +1858,7 @@ public final class DroneSystem {
 				originalServerGameMode
 		);
 		session.setControlledProxyPlayer(controlledProxyPlayer);
+		session.setControlledProxyListener(controlledProxyListener);
 		session.setProxyPos(root.position());
 		session.setProxyYaw(root.getYRot());
 		session.setProxyPitch(root.getXRot());
@@ -1813,6 +1866,7 @@ public final class DroneSystem {
 		ACTIVE_SESSIONS.put(player.getUUID(), session);
 		INPUTS.put(player.getUUID(), DroneInputState.EMPTY);
 		CONTROLLERS_BY_DRONE.put(root.getUUID(), player.getUUID());
+		CONTROLLED_PROXY_TO_CONTROLLER.put(controlledProxyPlayer.getUUID(), player.getUUID());
 		syncControlledOperatorView(player, session, root, true, true);
 		notifyDroneNetworkChanged(root);
 		updateDroneHud(player, session, true);
@@ -1828,8 +1882,9 @@ public final class DroneSystem {
 		INPUTS.remove(player.getUUID());
 		if (session == null) {
 			spoofClientGameMode(player, resolveServerGameMode(player));
-			restoreControlledInventoryIfNeeded(player);
 			if (!FORCED_CONTROLLED_PLAYERS.contains(player.getUUID())) {
+				setHotbarVisualHidden(player, false);
+				refreshControlledOperatorActualView(player);
 				return;
 			}
 			FORCED_CONTROLLED_PLAYERS.remove(player.getUUID());
@@ -1837,8 +1892,12 @@ public final class DroneSystem {
 			clearForcedControlMovementState(player);
 			detachAnyDronePassengersFromController(player);
 			setHotbarVisualHidden(player, false);
-			broadcastDronePilotEquipmentHidden(player, false);
+			refreshControlledOperatorActualView(player);
 			return;
+		}
+		ServerPlayer controlledProxyPlayer = session.controlledProxyPlayer();
+		if (controlledProxyPlayer != null) {
+			CONTROLLED_PROXY_TO_CONTROLLER.remove(controlledProxyPlayer.getUUID(), player.getUUID());
 		}
 		if (session.dummyUuid() != null) {
 			DUMMY_OWNER_BY_UUID.remove(session.dummyUuid());
@@ -1847,9 +1906,6 @@ public final class DroneSystem {
 		CONTROLLERS_BY_DRONE.remove(session.droneUuid(), player.getUUID());
 		MinecraftServer server = player.level().getServer();
 		Entity root = server == null ? null : findDroneRoot(server, session.droneDimension(), session.droneUuid());
-		Entity dummy = server != null && session.dummyUuid() != null
-				? findEntity(server, session.originDimension(), session.dummyUuid())
-				: null;
 
 		player.setCamera(player);
 		detachAnyDronePassengersFromController(player);
@@ -1872,27 +1928,13 @@ public final class DroneSystem {
 		} else {
 			NEXT_DRONE_SOUND_TICK.remove(session.droneUuid());
 		}
-		restoreControlledPlayerState(player, session);
 		clearDroneHud(player, session, true);
-		broadcastDronePilotEquipmentHidden(player, false);
 		spoofClientGameMode(player, session.serverGameMode());
-		restoreControlledInventoryIfNeeded(player);
 		setHotbarVisualHidden(player, false);
+		refreshControlledOperatorActualView(player);
 
-		if (returnToOrigin && server != null) {
-			ReturnLocation returnLocation = resolveReturnLocation(server, session, dummy);
-			ServerLevel level = returnLocation.level();
-			Vec3 returnPos = returnLocation.pos();
-			if (level != null && returnPos != null) {
-				level.getChunkAt(net.minecraft.core.BlockPos.containing(returnPos));
-				player.teleportTo(level, returnPos.x, returnPos.y, returnPos.z, ABSOLUTE_TELEPORT, returnLocation.yaw(), returnLocation.pitch(), false);
-				restoreControlledPlayerState(player, session);
-				broadcastDronePilotEquipmentHidden(player, false);
-			}
-		}
 		detachAnyDronePassengersFromController(player);
 		markCameraSuppressedForPlayer(player);
-		discardDummyIfPresent(server, session, dummy);
 		ServerRaceSystem.resumeCopperManJetpackAfterDrone(player);
 
 		if (notify) {
@@ -3040,13 +3082,14 @@ public final class DroneSystem {
 		private boolean wasFlying;
 		private final GameType serverGameMode;
 		private ServerPlayer controlledProxyPlayer;
+		private ServerGamePacketListenerImpl controlledProxyListener;
 		private Vec3 velocity = Vec3.ZERO;
 		private Vec3 intendedVelocity = Vec3.ZERO;
 		private Vec3 lastPlayerPos = Vec3.ZERO;
 		private Vec3 proxyPos = Vec3.ZERO;
 		private float proxyYaw;
 		private float proxyPitch;
-		private int nextProxyTeleportId = 1;
+		private int nextViewSyncTeleportId = CONTROLLED_VIEW_TELEPORT_ID_BASE;
 		private int lastAcceptedProxyTeleportId;
 		private double forwardDrive;
 		private double strafeDrive;
@@ -3152,6 +3195,14 @@ public final class DroneSystem {
 			this.controlledProxyPlayer = controlledProxyPlayer;
 		}
 
+		private ServerGamePacketListenerImpl controlledProxyListener() {
+			return this.controlledProxyListener;
+		}
+
+		private void setControlledProxyListener(ServerGamePacketListenerImpl controlledProxyListener) {
+			this.controlledProxyListener = controlledProxyListener;
+		}
+
 		private Vec3 velocity() {
 			return this.velocity;
 		}
@@ -3200,8 +3251,8 @@ public final class DroneSystem {
 			this.proxyPitch = proxyPitch;
 		}
 
-		private int nextProxyTeleportId() {
-			return this.nextProxyTeleportId++;
+		private int nextViewSyncTeleportId() {
+			return this.nextViewSyncTeleportId++;
 		}
 
 		private int lastAcceptedProxyTeleportId() {

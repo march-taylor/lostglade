@@ -62,11 +62,14 @@
 		"ResultSlotMechanicsGateMixin",
 		"ServerCommonPacketListenerCocaineHallucinationMixin",
 		"ServerCommonPacketListenerAbsoluteInvisibilityMixin",
+		"ServerCommonPacketListenerImplAccessor",
 		"ServerCommonPacketListenerDroneProxyMixin",
 		"ServerGamePacketListenerCameraCaptureMixin",
 		"ServerGamePacketListenerCopperManGogglesMixin",
 		"ServerGamePacketListenerCopperManJetpackMixin",
 		"ServerGamePacketListenerDroneControlMixin",
+		"ServerGamePacketListenerDroneProxyChunkMoveMixin",
+		"ServerGamePacketListenerImplAccessor",
 		"ServerGamePacketListenerMonitorTimelineMixin",
 		"ServerChunkCacheRendererBotShadowDirtyMixin",
 		"ServerLevelAbsoluteInvisibilityMixin",
@@ -86,10 +89,8 @@
 	],
 	"client": [
 		"client.CameraDroneProxyMixin",
-		"client.ClientInputAccessor",
 		"client.EntityDroneProxyCollisionMixin",
-		"client.LocalPlayerAbsoluteInvisibilityMixin",
-		"client.LocalPlayerDroneProxyMixin"
+		"client.LocalPlayerAbsoluteInvisibilityMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

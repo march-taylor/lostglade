@@ -17,12 +17,15 @@ public abstract class ServerGamePacketListenerDroneControlMixin {
 	@Shadow
 	public ServerPlayer player;
 
-	@Inject(method = "handlePlayerInput", at = @At("HEAD"))
+	@Inject(method = "handlePlayerInput", at = @At("HEAD"), cancellable = true)
 	private void lg2$trackDroneInput(ServerboundPlayerInputPacket packet, CallbackInfo ci) {
 		if (packet == null) {
 			return;
 		}
 		DroneSystem.handleInput(this.player, packet.input());
+		if (DroneSystem.isControllingDrone(this.player)) {
+			ci.cancel();
+		}
 	}
 
 	@Inject(method = "handleMovePlayer", at = @At("HEAD"), cancellable = true)
