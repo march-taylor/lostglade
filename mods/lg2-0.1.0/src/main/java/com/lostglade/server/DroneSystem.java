@@ -826,6 +826,7 @@ public final class DroneSystem {
 			restoreControlledInventoryIfNeeded(player);
 			setHotbarVisualHidden(player, false);
 			broadcastDronePilotEquipmentHidden(player, false);
+			refreshControlledOperatorActualView(player);
 		}
 	}
 
@@ -858,6 +859,7 @@ public final class DroneSystem {
 			restoreControlledInventoryIfNeeded(player);
 			setHotbarVisualHidden(player, false);
 			broadcastDronePilotEquipmentHidden(player, false);
+			refreshControlledOperatorActualView(player);
 			FORCED_CONTROLLED_PLAYERS.remove(playerId);
 		}
 	}
@@ -1566,6 +1568,31 @@ public final class DroneSystem {
 		);
 	}
 
+	private static Packet<?> buildActualSelfMetadataPacket(ServerPlayer player) {
+		EntityDataAccessor<Byte> sharedFlagsAccessor = EntityTrackedDataAccessor.lg2$getDataSharedFlagsId();
+		EntityDataAccessor<Boolean> noGravityAccessor = EntityTrackedDataAccessor.lg2$getDataNoGravity();
+		EntityDataAccessor<Pose> poseAccessor = EntityTrackedDataAccessor.lg2$getDataPose();
+		byte flags = 0;
+		boolean noGravity = false;
+		Pose pose = Pose.STANDING;
+		if (player != null) {
+			Byte currentFlags = player.getEntityData().get(sharedFlagsAccessor);
+			flags = currentFlags == null ? 0 : currentFlags;
+			Boolean currentNoGravity = player.getEntityData().get(noGravityAccessor);
+			noGravity = Boolean.TRUE.equals(currentNoGravity);
+			Pose currentPose = player.getEntityData().get(poseAccessor);
+			pose = currentPose == null ? player.getPose() : currentPose;
+		}
+		return new ClientboundSetEntityDataPacket(
+				player.getId(),
+				List.of(
+						SynchedEntityData.DataValue.create(sharedFlagsAccessor, flags),
+						SynchedEntityData.DataValue.create(noGravityAccessor, noGravity),
+						SynchedEntityData.DataValue.create(poseAccessor, pose)
+				)
+		);
+	}
+
 	private static Packet<?> buildControlledSelfTeleportPacket(ServerPlayer player, DroneControlSession session) {
 		PositionMoveRotation change = new PositionMoveRotation(
 				session.proxyPos(),
@@ -1609,10 +1636,7 @@ public final class DroneSystem {
 		}
 		level.getChunkAt(BlockPos.containing(player.position()));
 		player.teleportTo(level, player.getX(), player.getY(), player.getZ(), ABSOLUTE_TELEPORT, player.getYRot(), player.getXRot(), false);
-		List<SynchedEntityData.DataValue<?>> actualValues = player.getEntityData().getNonDefaultValues();
-		if (actualValues != null && !actualValues.isEmpty()) {
-			player.connection.send(new ClientboundSetEntityDataPacket(player.getId(), actualValues));
-		}
+		player.connection.send(buildActualSelfMetadataPacket(player));
 		player.connection.send(new ClientboundSetEntityMotionPacket(player.getId(), player.getDeltaMovement()));
 		player.connection.send(new ClientboundSetPassengersPacket(player));
 		player.connection.send(new ClientboundPlayerAbilitiesPacket(player.getAbilities()));
