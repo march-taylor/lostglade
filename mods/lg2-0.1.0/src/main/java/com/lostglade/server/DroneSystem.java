@@ -119,6 +119,7 @@ public final class DroneSystem {
 	private static final String DRONE_DISPLAY_OWNER_TAG_PREFIX = "lg2_drone_display_owner_";
 	private static final String DRONE_CAMERA_TAG = "lg2_drone_camera_anchor";
 	private static final String DRONE_CAMERA_OWNER_TAG_PREFIX = "lg2_drone_camera_owner_";
+	private static final String DRONE_CONTROLLED_PROXY_TAG = "lg2_drone_controlled_proxy";
 	private static final String DRONE_DUMMY_TAG = "lg2_drone_dummy";
 	private static final Identifier DRONE_LOOP_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_loop");
 	private static final Identifier DRONE_KAMIKAZE_LOOP_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_kamikaze_loop");
@@ -208,6 +209,7 @@ public final class DroneSystem {
 	private static final Map<UUID, UUID> CAMERA_ANCHORS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UncontrolledDroneState> UNCONTROLLED_DRONES = new HashMap<>();
 	private static final Map<UUID, UUID> CONTROLLED_PROXY_TO_CONTROLLER = new HashMap<>();
+	private static final Map<UUID, Vec3> CONTROLLED_OPERATOR_KNOCKBACK_VELOCITY = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_ARM_ALLOWED_TICK = new HashMap<>();
 	private static final Map<UUID, DroneDisplayWobbleState> DISPLAY_WOBBLE_BY_DRONE = new HashMap<>();
@@ -274,6 +276,7 @@ public final class DroneSystem {
 			CAMERA_ANCHORS_BY_DRONE.clear();
 			UNCONTROLLED_DRONES.clear();
 			CONTROLLED_PROXY_TO_CONTROLLER.clear();
+			CONTROLLED_OPERATOR_KNOCKBACK_VELOCITY.clear();
 			NEXT_DRONE_ARM_ALLOWED_TICK.clear();
 			CAMERA_SUPPRESSED_UNTIL_TICK.clear();
 			FORCED_CONTROLLED_PLAYERS.clear();
@@ -383,11 +386,56 @@ public final class DroneSystem {
 	}
 
 	public static boolean isControlledDroneProxy(ServerPlayer player) {
-		return player != null && CONTROLLED_PROXY_TO_CONTROLLER.containsKey(player.getUUID());
+		if (player == null) {
+			return false;
+		}
+		if (CONTROLLED_PROXY_TO_CONTROLLER.containsKey(player.getUUID())) {
+			return true;
+		}
+		if (player.getTags().contains(DRONE_CONTROLLED_PROXY_TAG)) {
+			return true;
+		}
+		for (DroneControlSession session : ACTIVE_SESSIONS.values()) {
+			if (session != null && session.controlledProxyPlayer() == player) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	public static boolean shouldSkipChunkTrackingMove(ServerPlayer player) {
+		if (player == null) {
+			return true;
+		}
+		if (isControlledDroneProxy(player)) {
+			return true;
+		}
+		MinecraftServer server = player.level() != null ? player.level().getServer() : null;
+		if (server == null || server.getPlayerList() == null) {
+			return false;
+		}
+		ServerPlayer listed = server.getPlayerList().getPlayer(player.getUUID());
+		return listed != player;
 	}
 
 	public static boolean shouldApplyDroneTravelToPlayer(ServerPlayer player) {
 		return isControlledDroneProxy(player);
+	}
+
+	public static void recordControlledOperatorKnockback(ServerPlayer player, Vec3 velocity) {
+		if (player == null || velocity == null || !isControllingDrone(player) || velocity.lengthSqr() <= 1.0E-5D) {
+			return;
+		}
+		CONTROLLED_OPERATOR_KNOCKBACK_VELOCITY.put(player.getUUID(), velocity);
+		player.hurtMarked = true;
+	}
+
+	public static Vec3 consumeControlledOperatorKnockback(ServerPlayer player) {
+		if (player == null) {
+			return Vec3.ZERO;
+		}
+		Vec3 velocity = CONTROLLED_OPERATOR_KNOCKBACK_VELOCITY.remove(player.getUUID());
+		return velocity == null ? Vec3.ZERO : velocity;
 	}
 
 	public static void handleControlledMovePacket(ServerPlayer player, ServerboundMovePlayerPacket packet) {
@@ -1300,6 +1348,7 @@ public final class DroneSystem {
 		proxyPlayer.setNoGravity(true);
 		proxyPlayer.setInvulnerable(true);
 		proxyPlayer.setSilent(true);
+		proxyPlayer.addTag(DRONE_CONTROLLED_PROXY_TAG);
 		proxyPlayer.noPhysics = false;
 		proxyPlayer.fallDistance = 0.0F;
 		return proxyPlayer;
@@ -1904,6 +1953,7 @@ public final class DroneSystem {
 		}
 		DroneControlSession session = ACTIVE_SESSIONS.remove(player.getUUID());
 		INPUTS.remove(player.getUUID());
+		CONTROLLED_OPERATOR_KNOCKBACK_VELOCITY.remove(player.getUUID());
 		if (session == null) {
 			spoofClientGameMode(player, resolveServerGameMode(player));
 			if (!FORCED_CONTROLLED_PLAYERS.contains(player.getUUID())) {

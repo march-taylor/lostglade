@@ -18,8 +18,9 @@ public abstract class ServerGamePacketListenerDroneProxyChunkMoveMixin {
 			)
 	)
 	private void lg2$skipChunkTrackingForDroneProxy(ServerChunkCache chunkCache, ServerPlayer player) {
-		if (!DroneSystem.isControlledDroneProxy(player)) {
-			chunkCache.move(player);
+		if (DroneSystem.shouldSkipChunkTrackingMove(player)) {
+			return;
 		}
+		chunkCache.move(player);
 	}
 }

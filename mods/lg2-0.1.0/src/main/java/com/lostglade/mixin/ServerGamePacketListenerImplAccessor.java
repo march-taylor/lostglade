@@ -21,4 +21,7 @@ public interface ServerGamePacketListenerImplAccessor {
 
 	@Accessor("knownMovePacketCount")
 	void lg2$setKnownMovePacketCount(int knownMovePacketCount);
+
+	@Accessor("receivedMovementThisTick")
+	void lg2$setReceivedMovementThisTick(boolean receivedMovementThisTick);
 }
