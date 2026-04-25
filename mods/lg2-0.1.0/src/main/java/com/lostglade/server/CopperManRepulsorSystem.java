@@ -535,7 +535,7 @@ public final class CopperManRepulsorSystem {
 	}
 
 	private static boolean hasAirTriggerObstruction(ServerPlayer player, RepulsorState state) {
-		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange()) + 0.5D;
+		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange());
 		HitResult hit = player.pick(reach, 1.0F, false);
 		if (hit instanceof EntityHitResult entityHit && entityHit.getEntity() == state.airTriggerEntity) {
 			return false;

@@ -1016,7 +1016,7 @@ public final class CopperManGogglesSystem {
 	}
 
 	private static boolean hasTrackingAirTriggerObstruction(ServerPlayer player) {
-		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange()) + 0.5D;
+		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange());
 		HitResult hit = player.pick(reach, 1.0F, false);
 		if (hit instanceof EntityHitResult entityHit && isTrackingAirTrigger(player, entityHit.getEntity())) {
 			return false;
