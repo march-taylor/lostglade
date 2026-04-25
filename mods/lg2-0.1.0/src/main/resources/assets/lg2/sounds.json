@@ -39,6 +39,14 @@
       }
     ]
   },
+  "repulsor_shoot": {
+    "sounds": [
+      {
+        "name": "lg2:repulsor_shoot",
+        "preload": true
+      }
+    ]
+  },
   "cocaine_consume": {
     "sounds": [
       {
