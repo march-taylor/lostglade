@@ -102,6 +102,8 @@ public final class CopperManRepulsorSystem {
 	private static final int REPULSOR_MODE_PREFIX_COLOR = 0xC97B3B;
 	private static final String REPULSOR_SHIFT_GLYPH = "\uef80";
 	private static final String REPULSOR_SLOT_TO_AMMO_SHIFT_GLYPH = "\uef81";
+	private static final String REPULSOR_AMMO_RIGHT_SHIFT_GLYPH = "\uef82";
+	private static final String REPULSOR_AMMO_POST_COMPENSATION_GLYPH = "\uef7e";
 	private static final String REPULSOR_SLOT_ICON_CENTER_BASE_SHIFT_GLYPH = "\uef85";
 	private static final String REPULSOR_SLOT_ICON_CENTER_PER_CHAR_SHIFT_GLYPH = "\uef86";
 	private static final String REPULSOR_SLOT_ICON_ONLY_POST_SHIFT_GLYPH = "\uef87";
@@ -633,6 +635,8 @@ public final class CopperManRepulsorSystem {
 				component.append(Component.literal(REPULSOR_SHIFT_GLYPH)
 						.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 			}
+			component.append(Component.literal(REPULSOR_AMMO_RIGHT_SHIFT_GLYPH)
+					.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 			if (extraLeftDigits > 0) {
 				component.append(Component.literal(REPULSOR_AMMO_EXTRA_LEFT_DIGIT_SHIFT_GLYPH.repeat(extraLeftDigits))
 						.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
@@ -647,6 +651,8 @@ public final class CopperManRepulsorSystem {
 				component.append(Component.literal(REPULSOR_SINGLE_DIGIT_AMMO_POST_COMPENSATION_GLYPH)
 						.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 			}
+			component.append(Component.literal(REPULSOR_AMMO_POST_COMPENSATION_GLYPH)
+					.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 		}
 		return component;
 	}
