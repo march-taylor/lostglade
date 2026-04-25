@@ -31,6 +31,14 @@
       }
     ]
   },
+  "copper_jetpack_steam": {
+    "sounds": [
+      {
+        "name": "lg2:copper_jetpack_steam",
+        "preload": true
+      }
+    ]
+  },
   "ui_purchase_blocked": {
     "sounds": [
       {

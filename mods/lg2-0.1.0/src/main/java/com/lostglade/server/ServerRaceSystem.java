@@ -68,6 +68,7 @@ import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.RemoteChatSession;
@@ -352,15 +353,34 @@ public final class ServerRaceSystem {
 	private static final double COPPER_MAN_JETPACK_DEFAULT_MAX_RISE_BLOCKS = 30.0D;
 	private static final double COPPER_MAN_JETPACK_ASCEND_SPEED = 0.42D;
 	private static final double COPPER_MAN_JETPACK_GLIDE_DESCEND_SPEED = -0.32D;
-	private static final double COPPER_MAN_JETPACK_HORIZONTAL_SPEED = 0.0275D;
+	private static final double COPPER_MAN_JETPACK_AIR_CONTROL_SPEED = 0.0275D;
+	private static final double COPPER_MAN_JETPACK_HORIZONTAL_INERTIA_HALF_LIFE_TICKS = 8.0D;
+	private static final double COPPER_MAN_JETPACK_HORIZONTAL_INERTIA_DECAY_PER_TICK =
+			Math.pow(0.5D, 1.0D / COPPER_MAN_JETPACK_HORIZONTAL_INERTIA_HALF_LIFE_TICKS);
+	private static final double COPPER_MAN_JETPACK_HORIZONTAL_INERTIA_STOP_SPEED = 0.001D;
+	private static final double COPPER_MAN_JETPACK_MIN_STORED_GROUND_SPEED = 0.005D;
+	private static final double COPPER_MAN_JETPACK_MAX_STORED_GROUND_SPEED = 1.0D;
+	private static final long COPPER_MAN_JETPACK_GROUND_INERTIA_GRACE_TICKS = 8L;
 	private static final double COPPER_MAN_JETPACK_VERTICAL_ACCEL = 0.255D;
-	private static final double COPPER_MAN_JETPACK_DESCEND_ACCEL = 0.165D;
-	private static final double COPPER_MAN_JETPACK_HORIZONTAL_BLEND = 0.4D;
 	private static final double COPPER_MAN_JETPACK_ASCEND_BRAKE_RANGE_BLOCKS = 4.0D;
 	private static final double COPPER_MAN_JETPACK_PARTICLE_BACK_OFFSET = 0.34D;
 	private static final double COPPER_MAN_JETPACK_PARTICLE_SIDE_OFFSET = 0.2D;
 	private static final double COPPER_MAN_JETPACK_PARTICLE_UP_OFFSET = 0.80D;
 	private static final double COPPER_MAN_JETPACK_PARTICLE_UP_OFFSET_CROUCHING = 0.64D;
+	private static final Identifier COPPER_MAN_JETPACK_STEAM_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_jetpack_steam");
+	private static final Identifier COPPER_MAN_JETPACK_FALLBACK_BUZZ_SOUND_ID = BuiltInRegistries.SOUND_EVENT.getKey(SoundEvents.MINECART_RIDING);
+	private static final Identifier COPPER_MAN_JETPACK_FALLBACK_STEAM_SOUND_ID = BuiltInRegistries.SOUND_EVENT.getKey(SoundEvents.FURNACE_FIRE_CRACKLE);
+	private static final Holder<SoundEvent> COPPER_MAN_JETPACK_STEAM_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(COPPER_MAN_JETPACK_STEAM_SOUND_ID));
+	private static final long COPPER_MAN_JETPACK_SOUND_INTERVAL_TICKS = 8L;
+	private static final double COPPER_MAN_JETPACK_SOUND_RANGE_BLOCKS = 16.0D;
+	private static final float COPPER_MAN_JETPACK_SOUND_VOLUME = 2.0F;
+	private static final float COPPER_MAN_JETPACK_SOUND_PITCH = 1.0F;
+	private static final float COPPER_MAN_JETPACK_FALLBACK_BUZZ_VOLUME = 2.0F;
+	private static final float COPPER_MAN_JETPACK_FALLBACK_BUZZ_PITCH = 0.68F;
+	private static final float COPPER_MAN_JETPACK_FALLBACK_STEAM_VOLUME = 2.0F;
+	private static final float COPPER_MAN_JETPACK_FALLBACK_STEAM_PITCH = 0.8F;
+	private static final float COPPER_MAN_DEFENSE_ACTIVATION_SOUND_VOLUME = 2.0F;
+	private static final double COPPER_MAN_DEFENSE_ACTIVATION_SOUND_RANGE_BLOCKS = 16.0D;
 	private static final String COPPER_MAN_JETPACK_DISPLAY_TAG = "lg2_copper_jetpack_display";
 	private static final String COPPER_MAN_JETPACK_DISPLAY_OWNER_TAG_PREFIX = "lg2_copper_jetpack_owner:";
 	private static final long COPPER_MAN_DEFENSE_PREWARM_INTERVAL_TICKS = 10L;
@@ -436,6 +456,11 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, CopperManJetpackSession> COPPER_MAN_JETPACK_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, CopperManJetpackSession> COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE = new LinkedHashMap<>();
 	private static final Map<UUID, CopperManJetpackInputState> COPPER_MAN_JETPACK_INPUTS = new ConcurrentHashMap<>();
+	private static final Map<UUID, Long> COPPER_MAN_JETPACK_NEXT_SOUND_TICKS = new ConcurrentHashMap<>();
+	private static final Set<UUID> COPPER_MAN_JETPACK_SOUND_ACTIVE = ConcurrentHashMap.newKeySet();
+	private static final Map<UUID, CopperManJetpackMovementSample> COPPER_MAN_JETPACK_MOVEMENT_SAMPLES = new ConcurrentHashMap<>();
+	private static final Map<UUID, CopperManJetpackGroundInertia> COPPER_MAN_JETPACK_GROUND_INERTIA = new ConcurrentHashMap<>();
+	private static final Map<UUID, CopperManJetpackFlightMomentum> COPPER_MAN_JETPACK_FLIGHT_MOMENTUM = new ConcurrentHashMap<>();
 	private static final Map<UUID, UUID> COPPER_MAN_JETPACK_DISPLAY_IDS = new LinkedHashMap<>();
 	private static final Map<String, Property> COPPER_MAN_DEFENSE_TINT_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, Long> COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS = new ConcurrentHashMap<>();
@@ -626,6 +651,11 @@ public final class ServerRaceSystem {
 			COPPER_MAN_JETPACK_SESSIONS.clear();
 			COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE.clear();
 			COPPER_MAN_JETPACK_INPUTS.clear();
+			COPPER_MAN_JETPACK_NEXT_SOUND_TICKS.clear();
+			COPPER_MAN_JETPACK_SOUND_ACTIVE.clear();
+			COPPER_MAN_JETPACK_MOVEMENT_SAMPLES.clear();
+			COPPER_MAN_JETPACK_GROUND_INERTIA.clear();
+			COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.clear();
 			COPPER_MAN_JETPACK_DISPLAY_IDS.clear();
 			COPPER_MAN_DEFENSE_TINT_CACHE.clear();
 			COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS.clear();
@@ -661,6 +691,9 @@ public final class ServerRaceSystem {
 			COPPER_GOLEM_FOLLOWERS.entrySet().removeIf(entry -> handler.player.getUUID().equals(entry.getValue()));
 			clearCopperManDefenseVisual(handler.player);
 			clearCopperManJetpack(handler.player);
+			COPPER_MAN_JETPACK_MOVEMENT_SAMPLES.remove(handler.player.getUUID());
+			COPPER_MAN_JETPACK_GROUND_INERTIA.remove(handler.player.getUUID());
+			COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.remove(handler.player.getUUID());
 			WOMAN_DEFENSE_SESSIONS.remove(handler.player.getUUID());
 			if (WOMAN_DEFENSE_BLIND_PLAYERS.remove(handler.player.getUUID())) {
 				handler.player.removeEffect(MobEffects.BLINDNESS);
@@ -715,6 +748,7 @@ public final class ServerRaceSystem {
 			tickCartelTravkaGrowthAttempts(server);
 			tickCartelFernGrowths(server);
 			tickCopperManStock(server);
+			tickCopperManJetpackMovementSamples(server);
 			tickCopperManJetpack(server);
 			tickCopperManDefense(server);
 			tickWomanStock(server);
@@ -1251,6 +1285,7 @@ public final class ServerRaceSystem {
 			long durationTicks = Math.max(1L, asTicks(positiveOrDefault(ability.durationSeconds, COPPER_MAN_DEFENSE_DEFAULT_DURATION_SECONDS)));
 			caster.addEffect(new MobEffectInstance(MobEffects.RESISTANCE, (int) Math.min(Integer.MAX_VALUE, durationTicks), 1, false, false, true));
 			startCopperManDefenseVisual(server, caster, nowTick + durationTicks);
+			playCopperManDefenseActivationSound(level, caster);
 			startOnlineCooldown(COPPER_MAN_DEFENSE_COOLDOWNS, caster.getUUID(), cooldownTicks);
 
 			Lg2.LOGGER.info("Player {} used copper man defense '{}' from race '{}'", caster.getGameProfile().name(), ability.abilityId, race.id);
@@ -1291,6 +1326,56 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private static void tickCopperManJetpackMovementSamples(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		Set<UUID> onlinePlayers = new HashSet<>();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (player == null) {
+				continue;
+			}
+			UUID playerId = player.getUUID();
+			onlinePlayers.add(playerId);
+			Vec3 currentPosition = player.position();
+			CopperManJetpackMovementSample previous = COPPER_MAN_JETPACK_MOVEMENT_SAMPLES.put(
+					playerId,
+					new CopperManJetpackMovementSample(currentPosition, nowTick)
+			);
+			if (previous == null || previous.position() == null || previous.tick() == nowTick) {
+				continue;
+			}
+
+			Vec3 movement = currentPosition.subtract(previous.position());
+			Vec3 horizontalMovement = new Vec3(movement.x, 0.0D, movement.z);
+			double horizontalSpeed = horizontalMovement.length();
+			if (player.onGround()) {
+				COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.remove(playerId);
+				if (horizontalSpeed >= COPPER_MAN_JETPACK_MIN_STORED_GROUND_SPEED
+						&& horizontalSpeed <= COPPER_MAN_JETPACK_MAX_STORED_GROUND_SPEED) {
+					COPPER_MAN_JETPACK_GROUND_INERTIA.put(
+							playerId,
+							new CopperManJetpackGroundInertia(horizontalMovement, nowTick)
+					);
+				} else if (horizontalSpeed < COPPER_MAN_JETPACK_MIN_STORED_GROUND_SPEED) {
+					COPPER_MAN_JETPACK_GROUND_INERTIA.remove(playerId);
+				}
+			}
+		}
+
+		COPPER_MAN_JETPACK_MOVEMENT_SAMPLES.keySet().removeIf(playerId -> !onlinePlayers.contains(playerId));
+		COPPER_MAN_JETPACK_GROUND_INERTIA.entrySet().removeIf(entry ->
+				!onlinePlayers.contains(entry.getKey())
+						|| entry.getValue() == null
+						|| nowTick - entry.getValue().tick() > COPPER_MAN_JETPACK_GROUND_INERTIA_GRACE_TICKS
+		);
+		COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.keySet().removeIf(playerId ->
+				!onlinePlayers.contains(playerId) || !COPPER_MAN_JETPACK_SESSIONS.containsKey(playerId)
+		);
+	}
+
 	private static void tickCopperManJetpack(MinecraftServer server) {
 		if (server == null) {
 			return;
@@ -1308,11 +1393,18 @@ public final class ServerRaceSystem {
 			if (player == null || session == null) {
 				COPPER_MAN_JETPACK_SESSIONS.remove(entry.getKey());
 				COPPER_MAN_JETPACK_INPUTS.remove(entry.getKey());
+				COPPER_MAN_JETPACK_NEXT_SOUND_TICKS.remove(entry.getKey());
+				COPPER_MAN_JETPACK_SOUND_ACTIVE.remove(entry.getKey());
+				COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.remove(entry.getKey());
 				continue;
 			}
 
-			if (!player.isAlive() || player.isSpectator() || nowTick >= session.expireTick()) {
+			if (!player.isAlive() || player.isSpectator()) {
 				clearCopperManJetpack(player);
+				continue;
+			}
+			if (nowTick >= session.expireTick()) {
+				clearCopperManJetpack(player, true);
 				continue;
 			}
 			if (DroneSystem.isControllingDrone(player)) {
@@ -1320,7 +1412,7 @@ public final class ServerRaceSystem {
 				continue;
 			}
 
-			applyCopperManJetpackMovement(player, session);
+			applyCopperManJetpackMovement(player, session, nowTick);
 			syncCopperManJetpackVisual(player, true);
 		}
 	}
@@ -1360,7 +1452,7 @@ public final class ServerRaceSystem {
 		}
 	}
 
-	private static void applyCopperManJetpackMovement(ServerPlayer player, CopperManJetpackSession session) {
+	private static void applyCopperManJetpackMovement(ServerPlayer player, CopperManJetpackSession session, long nowTick) {
 		if (player == null || session == null) {
 			return;
 		}
@@ -1371,44 +1463,105 @@ public final class ServerRaceSystem {
 		double maxAllowedY = session.maxAllowedY();
 
 		if (player.onGround() && !input.jump()) {
+			COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.remove(player.getUUID());
 			player.fallDistance = 0.0F;
+			beginCopperManJetpackLandingFade(player);
 			return;
 		}
 
-		double verticalTarget;
+		double nextVertical;
 		if (input.jump()) {
 			double remaining = Math.max(0.0D, maxAllowedY - currentY);
 			float brakeFactor = clamp01((float) (remaining / COPPER_MAN_JETPACK_ASCEND_BRAKE_RANGE_BLOCKS));
-			verticalTarget = remaining <= 0.02D
+			double verticalTarget = remaining <= 0.02D
 					? 0.0D
 					: Math.min(COPPER_MAN_JETPACK_ASCEND_SPEED * brakeFactor, remaining);
+			nextVertical = approach(currentMotion.y, verticalTarget, COPPER_MAN_JETPACK_VERTICAL_ACCEL);
 		} else {
-			verticalTarget = player.onGround() ? 0.0D : COPPER_MAN_JETPACK_GLIDE_DESCEND_SPEED;
+			nextVertical = computeCopperManJetpackFallVelocity(player, currentMotion.y);
 		}
 
-		double verticalAccel = input.jump() ? COPPER_MAN_JETPACK_VERTICAL_ACCEL : COPPER_MAN_JETPACK_DESCEND_ACCEL;
-		double nextVertical = approach(currentMotion.y, verticalTarget, verticalAccel);
 		if (currentY >= maxAllowedY - 0.02D && nextVertical > 0.0D) {
 			nextVertical = 0.0D;
 		}
 
-		double nextX = currentMotion.x;
-		double nextZ = currentMotion.z;
-		if (!player.onGround()) {
-			Vec3 horizontalTarget = computeCopperManJetpackHorizontalVelocity(player, input);
-			Vec3 currentHorizontal = new Vec3(currentMotion.x, 0.0D, currentMotion.z);
-			Vec3 nextHorizontal = currentHorizontal.add(horizontalTarget.subtract(currentHorizontal).scale(COPPER_MAN_JETPACK_HORIZONTAL_BLEND));
-			nextX = nextHorizontal.x;
-			nextZ = nextHorizontal.z;
+		CopperManJetpackFlightMomentum flightMomentum = resolveCopperManJetpackFlightMomentum(player, currentMotion, nowTick);
+		Vec3 baseHorizontal = flightMomentum.inertia();
+		Vec3 nextInertia = player.onGround()
+				? baseHorizontal
+				: decayCopperManJetpackHorizontalInertia(baseHorizontal);
+		Vec3 airControlTarget = computeCopperManJetpackAirControlVelocity(player, input);
+		Vec3 nextHorizontal = applyCopperManJetpackAirControl(nextInertia, airControlTarget, flightMomentum.capSpeed());
+		if (nextInertia.lengthSqr() <= 1.0E-6D) {
+			COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.remove(player.getUUID());
+		} else {
+			COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.put(player.getUUID(), new CopperManJetpackFlightMomentum(nextInertia, flightMomentum.capSpeed()));
 		}
+		double nextX = nextHorizontal.x;
+		double nextZ = nextHorizontal.z;
 
 		player.setDeltaMovement(nextX, nextVertical, nextZ);
 		player.hurtMarked = true;
+		if (player.connection != null) {
+			player.connection.send(new ClientboundSetEntityMotionPacket(player));
+		}
 		player.fallDistance = 0.0F;
 		emitCopperManJetpackParticles(player, input);
+		playCopperManJetpackFlightSound(player, nowTick);
 	}
 
-	private static Vec3 computeCopperManJetpackHorizontalVelocity(ServerPlayer player, CopperManJetpackInputState input) {
+	private static double computeCopperManJetpackFallVelocity(ServerPlayer player, double currentVertical) {
+		if (player != null && player.onGround()) {
+			return 0.0D;
+		}
+		return Math.max(currentVertical, COPPER_MAN_JETPACK_GLIDE_DESCEND_SPEED);
+	}
+
+	private static CopperManJetpackFlightMomentum resolveCopperManJetpackFlightMomentum(ServerPlayer player, Vec3 currentMotion, long nowTick) {
+		if (player == null) {
+			return new CopperManJetpackFlightMomentum(Vec3.ZERO, COPPER_MAN_JETPACK_AIR_CONTROL_SPEED);
+		}
+
+		UUID playerId = player.getUUID();
+		Vec3 currentHorizontal = currentMotion == null
+				? Vec3.ZERO
+				: new Vec3(currentMotion.x, 0.0D, currentMotion.z);
+		CopperManJetpackGroundInertia groundInertia = COPPER_MAN_JETPACK_GROUND_INERTIA.get(playerId);
+		if (player.onGround()) {
+			Vec3 inherited = currentHorizontal;
+			if (groundInertia != null
+					&& groundInertia.velocity() != null
+					&& nowTick - groundInertia.tick() <= COPPER_MAN_JETPACK_GROUND_INERTIA_GRACE_TICKS
+					&& groundInertia.velocity().lengthSqr() > currentHorizontal.lengthSqr()) {
+				inherited = groundInertia.velocity();
+			}
+			return new CopperManJetpackFlightMomentum(inherited, Math.max(inherited.length(), COPPER_MAN_JETPACK_AIR_CONTROL_SPEED));
+		}
+
+		CopperManJetpackFlightMomentum flightMomentum = COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.get(playerId);
+		if (flightMomentum != null && flightMomentum.inertia() != null) {
+			return flightMomentum;
+		}
+		if (groundInertia != null
+				&& groundInertia.velocity() != null
+				&& nowTick - groundInertia.tick() <= COPPER_MAN_JETPACK_GROUND_INERTIA_GRACE_TICKS) {
+			return new CopperManJetpackFlightMomentum(
+					groundInertia.velocity(),
+					Math.max(groundInertia.velocity().length(), COPPER_MAN_JETPACK_AIR_CONTROL_SPEED)
+			);
+		}
+		return new CopperManJetpackFlightMomentum(Vec3.ZERO, COPPER_MAN_JETPACK_AIR_CONTROL_SPEED);
+	}
+
+	private static Vec3 decayCopperManJetpackHorizontalInertia(Vec3 inertia) {
+		if (inertia == null || inertia.lengthSqr() <= 1.0E-8D) {
+			return Vec3.ZERO;
+		}
+		Vec3 decayed = inertia.scale(COPPER_MAN_JETPACK_HORIZONTAL_INERTIA_DECAY_PER_TICK);
+		return decayed.length() <= COPPER_MAN_JETPACK_HORIZONTAL_INERTIA_STOP_SPEED ? Vec3.ZERO : decayed;
+	}
+
+	private static Vec3 computeCopperManJetpackAirControlVelocity(ServerPlayer player, CopperManJetpackInputState input) {
 		if (player == null || input == null) {
 			return Vec3.ZERO;
 		}
@@ -1430,7 +1583,22 @@ public final class ServerRaceSystem {
 		if (desired.lengthSqr() <= 1.0E-6D) {
 			return Vec3.ZERO;
 		}
-		return desired.normalize().scale(COPPER_MAN_JETPACK_HORIZONTAL_SPEED);
+		return desired.normalize().scale(COPPER_MAN_JETPACK_AIR_CONTROL_SPEED);
+	}
+
+	private static Vec3 applyCopperManJetpackAirControl(Vec3 inertialVelocity, Vec3 airControlTarget, double capSpeed) {
+		Vec3 result = inertialVelocity == null ? Vec3.ZERO : inertialVelocity;
+		if (airControlTarget == null || airControlTarget.lengthSqr() <= 1.0E-6D) {
+			return result;
+		}
+
+		result = result.add(airControlTarget);
+		double maxSpeed = Math.max(capSpeed, COPPER_MAN_JETPACK_AIR_CONTROL_SPEED);
+		double resultSpeed = result.length();
+		if (resultSpeed > maxSpeed && resultSpeed > 1.0E-6D) {
+			return result.scale(maxSpeed / resultSpeed);
+		}
+		return result;
 	}
 
 	private static void emitCopperManJetpackParticles(ServerPlayer player, CopperManJetpackInputState input) {
@@ -1468,7 +1636,129 @@ public final class ServerRaceSystem {
 		level.sendParticles(ParticleTypes.CLOUD, rightTube.x, rightTube.y, rightTube.z, particleCount, spread, spread, spread, speed);
 	}
 
+	private static void playCopperManJetpackFlightSound(ServerPlayer player, long nowTick) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		UUID playerId = player.getUUID();
+		long nextSoundTick = COPPER_MAN_JETPACK_NEXT_SOUND_TICKS.getOrDefault(playerId, Long.MIN_VALUE);
+		if (nowTick < nextSoundTick) {
+			return;
+		}
+		COPPER_MAN_JETPACK_NEXT_SOUND_TICKS.put(playerId, nowTick + COPPER_MAN_JETPACK_SOUND_INTERVAL_TICKS);
+		COPPER_MAN_JETPACK_SOUND_ACTIVE.add(playerId);
+
+		Vec3 origin = player.position().add(0.0D, Math.max(0.4D, player.getBbHeight() * 0.45D), 0.0D);
+		long seed = level.getRandom().nextLong();
+		double range = COPPER_MAN_JETPACK_SOUND_RANGE_BLOCKS;
+		double rangeSqr = range * range;
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+
+			if (PolymerResourcePackUtils.hasMainPack(viewer)) {
+				sendCopperManJetpackSound(viewer, COPPER_MAN_JETPACK_STEAM_SOUND, origin, COPPER_MAN_JETPACK_SOUND_VOLUME, COPPER_MAN_JETPACK_SOUND_PITCH, seed);
+			} else {
+				sendCopperManJetpackSound(
+						viewer,
+						BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.MINECART_RIDING),
+						origin,
+						COPPER_MAN_JETPACK_FALLBACK_BUZZ_VOLUME,
+						COPPER_MAN_JETPACK_FALLBACK_BUZZ_PITCH,
+						seed
+				);
+				sendCopperManJetpackSound(
+						viewer,
+						BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.FURNACE_FIRE_CRACKLE),
+						origin,
+						COPPER_MAN_JETPACK_FALLBACK_STEAM_VOLUME,
+						COPPER_MAN_JETPACK_FALLBACK_STEAM_PITCH,
+						seed + 1L
+				);
+			}
+		}
+	}
+
+	private static void beginCopperManJetpackLandingFade(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		COPPER_MAN_JETPACK_NEXT_SOUND_TICKS.remove(playerId);
+		COPPER_MAN_JETPACK_SOUND_ACTIVE.remove(playerId);
+	}
+
+	private static void stopCopperManJetpackFlightSound(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		COPPER_MAN_JETPACK_NEXT_SOUND_TICKS.remove(playerId);
+		if (!COPPER_MAN_JETPACK_SOUND_ACTIVE.remove(playerId)) {
+			return;
+		}
+
+		Vec3 origin = player.position().add(0.0D, Math.max(0.4D, player.getBbHeight() * 0.45D), 0.0D);
+		double rangeSqr = COPPER_MAN_JETPACK_SOUND_RANGE_BLOCKS * COPPER_MAN_JETPACK_SOUND_RANGE_BLOCKS;
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+			viewer.connection.send(new ClientboundStopSoundPacket(COPPER_MAN_JETPACK_STEAM_SOUND_ID, SoundSource.PLAYERS));
+			viewer.connection.send(new ClientboundStopSoundPacket(COPPER_MAN_JETPACK_FALLBACK_BUZZ_SOUND_ID, SoundSource.PLAYERS));
+			viewer.connection.send(new ClientboundStopSoundPacket(COPPER_MAN_JETPACK_FALLBACK_STEAM_SOUND_ID, SoundSource.PLAYERS));
+		}
+	}
+
+	private static void sendCopperManJetpackSound(ServerPlayer viewer, Holder<SoundEvent> sound, Vec3 origin, float volume, float pitch, long seed) {
+		if (viewer == null || viewer.connection == null || sound == null || origin == null) {
+			return;
+		}
+		viewer.connection.send(new ClientboundSoundPacket(
+				sound,
+				SoundSource.PLAYERS,
+				origin.x,
+				origin.y,
+				origin.z,
+				volume,
+				pitch,
+				seed
+		));
+	}
+
+	private static void playCopperManDefenseActivationSound(ServerLevel level, ServerPlayer caster) {
+		if (level == null || caster == null) {
+			return;
+		}
+
+		Vec3 origin = caster.position();
+		double rangeSqr = COPPER_MAN_DEFENSE_ACTIVATION_SOUND_RANGE_BLOCKS * COPPER_MAN_DEFENSE_ACTIVATION_SOUND_RANGE_BLOCKS;
+		long seed = level.getRandom().nextLong();
+		Holder<SoundEvent> sound = BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.COPPER_PLACE);
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+			viewer.connection.send(new ClientboundSoundPacket(
+					sound,
+					SoundSource.PLAYERS,
+					origin.x,
+					origin.y,
+					origin.z,
+					COPPER_MAN_DEFENSE_ACTIVATION_SOUND_VOLUME,
+					1.0F,
+					seed
+			));
+		}
+	}
+
 	private static void clearCopperManJetpack(ServerPlayer player) {
+		clearCopperManJetpack(player, false);
+	}
+
+	private static void clearCopperManJetpack(ServerPlayer player, boolean fadeSound) {
 		if (player == null) {
 			return;
 		}
@@ -1476,6 +1766,12 @@ public final class ServerRaceSystem {
 		COPPER_MAN_JETPACK_SESSIONS.remove(player.getUUID());
 		COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE.remove(player.getUUID());
 		COPPER_MAN_JETPACK_INPUTS.remove(player.getUUID());
+		COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.remove(player.getUUID());
+		if (fadeSound) {
+			beginCopperManJetpackLandingFade(player);
+		} else {
+			stopCopperManJetpackFlightSound(player);
+		}
 		player.fallDistance = 0.0F;
 		syncCopperManJetpackVisual(player, false);
 	}
@@ -1495,6 +1791,9 @@ public final class ServerRaceSystem {
 		COPPER_MAN_JETPACK_SESSIONS.clear();
 		COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE.clear();
 		COPPER_MAN_JETPACK_INPUTS.clear();
+		COPPER_MAN_JETPACK_NEXT_SOUND_TICKS.clear();
+		COPPER_MAN_JETPACK_SOUND_ACTIVE.clear();
+		COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.clear();
 		COPPER_MAN_JETPACK_DISPLAY_IDS.clear();
 	}
 
@@ -2093,6 +2392,15 @@ public final class ServerRaceSystem {
 
 	private record CopperManJetpackInputState(boolean forward, boolean backward, boolean left, boolean right, boolean jump, boolean shift, boolean sprint) {
 		private static final CopperManJetpackInputState EMPTY = new CopperManJetpackInputState(false, false, false, false, false, false, false);
+	}
+
+	private record CopperManJetpackMovementSample(Vec3 position, long tick) {
+	}
+
+	private record CopperManJetpackGroundInertia(Vec3 velocity, long tick) {
+	}
+
+	private record CopperManJetpackFlightMomentum(Vec3 inertia, double capSpeed) {
 	}
 
 	private record CopperManJetpackSession(long expireTick, double baseY, double maxRiseBlocks) {
@@ -7320,6 +7628,8 @@ public final class ServerRaceSystem {
 		if (session != null) {
 			COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE.put(playerId, session);
 		}
+		COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.remove(playerId);
+		stopCopperManJetpackFlightSound(player);
 		syncCopperManJetpackVisual(player, false);
 	}
 
@@ -7954,4 +8264,5 @@ public final class ServerRaceSystem {
 		}
 	}
 }
+
 
