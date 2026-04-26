@@ -39,6 +39,14 @@
       }
     ]
   },
+  "goggles_scan": {
+    "sounds": [
+      {
+        "name": "lg2:goggles_scan",
+        "preload": true
+      }
+    ]
+  },
   "ui_purchase_blocked": {
     "sounds": [
       {
