@@ -664,7 +664,12 @@ public final class CopperManGogglesSystem {
 		double rangeSqr = SCAN_SOUND_RANGE_BLOCKS * SCAN_SOUND_RANGE_BLOCKS;
 		long seed = level.getRandom().nextLong();
 		for (ServerPlayer viewer : level.players()) {
-			if (viewer == null || viewer.connection == null || viewer.distanceToSqr(origin) > rangeSqr) {
+			if (viewer == null
+					|| viewer.connection == null
+					|| !viewer.isAlive()
+					|| viewer.isSpectator()
+					|| !isWearingCopperGoggles(viewer)
+					|| viewer.distanceToSqr(origin) > rangeSqr) {
 				continue;
 			}
 
