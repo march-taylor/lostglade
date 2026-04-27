@@ -1,6 +1,8 @@
 package com.lostglade.mixin.client;
 
+import com.lostglade.network.DronePayloads;
 import com.lostglade.server.DroneFlightPhysics;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.player.ClientInput;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
@@ -29,6 +31,8 @@ public abstract class LocalPlayerDroneProxyMixin {
 	private double lg2$strafeDrive;
 	@Unique
 	private boolean lg2$proxyWasActive;
+	@Unique
+	private long lg2$lastKineticCollisionReportTick = Long.MIN_VALUE;
 
 	@Inject(method = "travel", at = @At("HEAD"), cancellable = true)
 	private void lg2$applyDroneProxyTravel(Vec3 travelVector, CallbackInfo ci) {
@@ -68,8 +72,12 @@ public abstract class LocalPlayerDroneProxyMixin {
 				this.lg2$forwardDrive,
 				this.lg2$strafeDrive
 		);
+		Vec3 startPos = player.position();
+		double horizontalSpeedBefore = nextVelocity.horizontalDistance();
 		player.setDeltaMovement(nextVelocity);
 		player.move(MoverType.SELF, nextVelocity);
+		Vec3 actualMovement = player.position().subtract(startPos);
+		lg2$reportKineticCollision(player, horizontalSpeedBefore, actualMovement.horizontalDistance());
 		this.lg2$proxyWasActive = true;
 		ci.cancel();
 	}
@@ -96,6 +104,34 @@ public abstract class LocalPlayerDroneProxyMixin {
 		this.lg2$proxyWasActive = false;
 		this.lg2$forwardDrive = 0.0D;
 		this.lg2$strafeDrive = 0.0D;
+		this.lg2$lastKineticCollisionReportTick = Long.MIN_VALUE;
+	}
+
+	@Unique
+	private void lg2$reportKineticCollision(LocalPlayer player, double horizontalSpeedBefore, double horizontalSpeedAfter) {
+		if (player == null || !player.horizontalCollision) {
+			return;
+		}
+		if (lg2$computeFallFlyingKineticDamage(horizontalSpeedBefore, horizontalSpeedAfter) <= 0.0F) {
+			return;
+		}
+		long gameTime = player.level().getGameTime();
+		if (this.lg2$lastKineticCollisionReportTick == gameTime) {
+			return;
+		}
+		this.lg2$lastKineticCollisionReportTick = gameTime;
+		if (ClientPlayNetworking.canSend(DronePayloads.DroneKineticCollisionC2SPayload.TYPE)) {
+			ClientPlayNetworking.send(new DronePayloads.DroneKineticCollisionC2SPayload(horizontalSpeedBefore, horizontalSpeedAfter));
+		}
+	}
+
+	@Unique
+	private static float lg2$computeFallFlyingKineticDamage(double horizontalSpeedBefore, double horizontalSpeedAfter) {
+		if (!Double.isFinite(horizontalSpeedBefore) || !Double.isFinite(horizontalSpeedAfter)) {
+			return 0.0F;
+		}
+		double speedLoss = Math.max(0.0D, horizontalSpeedBefore - horizontalSpeedAfter);
+		return (float) Math.max(0.0D, speedLoss * 10.0D - 3.0D);
 	}
 
 	@Unique

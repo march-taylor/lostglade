@@ -5,6 +5,7 @@
 	"compatibilityLevel": "JAVA_21",
 	"client": [
 		"ClientLevelMapDataAccessor",
+		"ClientInputAccessor",
 		"CameraPositionInvoker",
 		"ClientPacketListenerShadowAccessor",
 		"ClientPacketListenerShadowMapSyncMixin",
@@ -12,6 +13,7 @@
 		"GameRendererOffscreenProjectionMixin",
 		"GameRendererRenderLevelInvoker",
 		"LevelRendererRenderStateAccessor",
+		"LocalPlayerDroneProxyMixin",
 		"MinecraftOffscreenWorldAccessor",
 		"MinecraftMainRenderTargetAccessor",
 		"RendererBotMinecraftAuthMixin",
