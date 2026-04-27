@@ -47,6 +47,14 @@
       }
     ]
   },
+  "cartel_attack_finger": {
+    "sounds": [
+      {
+        "name": "lg2:cartel_attack_finger",
+        "preload": true
+      }
+    ]
+  },
   "ui_purchase_blocked": {
     "sounds": [
       {

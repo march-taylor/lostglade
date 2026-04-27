@@ -255,8 +255,19 @@ public final class ServerRaceSystem {
 	private static final String CARTEL_SUMMON_TAG = "lg2.cartel_summon";
 	private static final String CARTEL_LAWYER_TAG = "lg2.cartel_lawyer";
 	private static final String CARTEL_LAWYER_MARKER_NAME = "lg2_cartel_lawyer_marker";
+	private static final Identifier CARTEL_ATTACK_FINGER_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "cartel_attack_finger");
+	private static final Holder<SoundEvent> CARTEL_ATTACK_FINGER_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(CARTEL_ATTACK_FINGER_SOUND_ID));
 	private static final double CARTEL_TARGET_RANGE = 7.0D;
 	private static final int CARTEL_SPAWN_OFFSET_BLOCKS = 3;
+	private static final double CARTEL_SOUND_RANGE_BLOCKS = 16.0D;
+	private static final float CARTEL_ATTACK_ACTIVATION_SOUND_VOLUME = 1.0F;
+	private static final float CARTEL_ATTACK_ACTIVATION_SOUND_PITCH = 1.0F;
+	private static final float CARTEL_SUMMON_OUTCOME_SOUND_VOLUME = 1.0F;
+	private static final float CARTEL_SUMMON_OUTCOME_SOUND_PITCH = 1.0F;
+	private static final float CARTEL_LAWYER_REACTION_SOUND_VOLUME = 1.0F;
+	private static final float CARTEL_LAWYER_REACTION_SOUND_PITCH = 1.0F;
+	private static final float CARTEL_DISGUISE_PAGE_SOUND_VOLUME = 0.75F;
+	private static final float CARTEL_DISGUISE_PAGE_SOUND_PITCH = 1.0F;
 	private static final double CARTEL_DEFAULT_COOLDOWN_SECONDS = 5.0D;
 	private static final double CARTEL_DEFAULT_LIFETIME_SECONDS = 30.0D;
 	private static final double CARTEL_DEFAULT_AFTER_KILL_SECONDS = 2.0D;
@@ -484,14 +495,17 @@ public final class ServerRaceSystem {
 		private final long normalExpireTick;
 		private final long afterKillTicks;
 		private final List<UUID> raiderIds = new ArrayList<>();
+		private Vec3 lastTargetPosition;
 		private Long afterKillExpireTick;
+		private boolean outcomeSoundPlayed;
 
-		private CartelSummonSession(ResourceKey<Level> dimension, UUID ownerPlayerId, UUID targetPlayerId, long normalExpireTick, long afterKillTicks) {
+		private CartelSummonSession(ResourceKey<Level> dimension, UUID ownerPlayerId, UUID targetPlayerId, long normalExpireTick, long afterKillTicks, Vec3 lastTargetPosition) {
 			this.dimension = dimension;
 			this.ownerPlayerId = ownerPlayerId;
 			this.targetPlayerId = targetPlayerId;
 			this.normalExpireTick = normalExpireTick;
 			this.afterKillTicks = afterKillTicks;
+			this.lastTargetPosition = lastTargetPosition;
 		}
 	}
 
@@ -5740,6 +5754,7 @@ public final class ServerRaceSystem {
 		startOnlineCooldown(CARTEL_UNIQUE_COOLDOWNS, caster.getUUID(), cooldownTicks);
 
 		caster.closeContainer();
+		sendPersonalSound(caster, SoundEvents.BOOK_PAGE_TURN, SoundSource.PLAYERS, caster.position(), CARTEL_DISGUISE_PAGE_SOUND_VOLUME, CARTEL_DISGUISE_PAGE_SOUND_PITCH, nowTick ^ caster.getUUID().getLeastSignificantBits());
 		Lg2.LOGGER.info(
 				"Player {} disguised as {} using mister cartel unique ability '{}'",
 				caster.getGameProfile().name(),
@@ -6951,6 +6966,7 @@ public final class ServerRaceSystem {
 		if (session == null) {
 			return;
 		}
+		playCartelLawyerReactionSound(level, session, SoundEvents.VILLAGER_NO);
 
 		LivingEntity attacker = resolveDamageAttacker(damageSource);
 		if (attacker == null || attacker == victim || !attacker.isAlive()) {
@@ -6987,6 +7003,91 @@ public final class ServerRaceSystem {
 			ownerId = CARTEL_LAWYER_OWNER_BY_ENTITY.get(victim.getUUID());
 		}
 		return ownerId != null && ownerId.equals(attacker.getUUID());
+	}
+
+	private static void playCartelAttackActivationSound(ServerLevel level, LivingEntity target) {
+		if (level == null || target == null) {
+			return;
+		}
+		Vec3 origin = target.position().add(0.0D, Math.max(0.4D, target.getBbHeight() * 0.5D), 0.0D);
+		playCartelResourcePackAwarePositionedSound(
+				level,
+				origin,
+				CARTEL_ATTACK_FINGER_SOUND,
+				SoundEvents.PILLAGER_AMBIENT,
+				CARTEL_ATTACK_ACTIVATION_SOUND_VOLUME,
+				CARTEL_ATTACK_ACTIVATION_SOUND_PITCH
+		);
+	}
+
+	private static void playCartelSummonOutcomeSound(ServerLevel level, Vec3 origin, SoundEvent sound) {
+		playCartelVanillaPositionedSound(level, origin, sound, CARTEL_SUMMON_OUTCOME_SOUND_VOLUME, CARTEL_SUMMON_OUTCOME_SOUND_PITCH);
+	}
+
+	private static void playCartelLawyerReactionSound(ServerLevel level, CartelDefenseSession session, SoundEvent sound) {
+		if (level == null || session == null || sound == null) {
+			return;
+		}
+		Entity lawyerEntity = level.getEntity(session.lawyerEntityId);
+		if (lawyerEntity == null) {
+			return;
+		}
+		playCartelVanillaPositionedSound(level, lawyerEntity.position(), sound, CARTEL_LAWYER_REACTION_SOUND_VOLUME, CARTEL_LAWYER_REACTION_SOUND_PITCH);
+	}
+
+	private static void playCartelResourcePackAwarePositionedSound(
+			ServerLevel level,
+			Vec3 origin,
+			Holder<SoundEvent> packSound,
+			SoundEvent fallbackSound,
+			float volume,
+			float pitch
+	) {
+		if (level == null || origin == null || packSound == null || fallbackSound == null) {
+			return;
+		}
+		double rangeSqr = CARTEL_SOUND_RANGE_BLOCKS * CARTEL_SOUND_RANGE_BLOCKS;
+		long seed = level.getRandom().nextLong();
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer == null || viewer.connection == null || viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+			Holder<SoundEvent> sound = PolymerResourcePackUtils.hasMainPack(viewer)
+					? packSound
+					: BuiltInRegistries.SOUND_EVENT.wrapAsHolder(fallbackSound);
+			sendPositionedSound(viewer, sound, SoundSource.PLAYERS, origin, volume, pitch, seed);
+		}
+	}
+
+	private static void playCartelVanillaPositionedSound(ServerLevel level, Vec3 origin, SoundEvent sound, float volume, float pitch) {
+		if (level == null || origin == null || sound == null) {
+			return;
+		}
+		double rangeSqr = CARTEL_SOUND_RANGE_BLOCKS * CARTEL_SOUND_RANGE_BLOCKS;
+		long seed = level.getRandom().nextLong();
+		Holder<SoundEvent> soundHolder = BuiltInRegistries.SOUND_EVENT.wrapAsHolder(sound);
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer == null || viewer.connection == null || viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+			sendPositionedSound(viewer, soundHolder, SoundSource.PLAYERS, origin, volume, pitch, seed);
+		}
+	}
+
+	private static void sendPositionedSound(ServerPlayer viewer, Holder<SoundEvent> sound, SoundSource source, Vec3 origin, float volume, float pitch, long seed) {
+		if (viewer == null || viewer.connection == null || sound == null || source == null || origin == null) {
+			return;
+		}
+		viewer.connection.send(new ClientboundSoundPacket(
+				sound,
+				source,
+				origin.x,
+				origin.y,
+				origin.z,
+				volume,
+				pitch,
+				seed
+		));
 	}
 
 	private static LivingEntity resolveDamageAttacker(net.minecraft.world.damagesource.DamageSource damageSource) {
@@ -7382,7 +7483,7 @@ public final class ServerRaceSystem {
 		List<Direction> directions = List.of(Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST);
 		long lifetimeTicks = asTicks(positiveOrDefault(ability.summonLifetimeSeconds, CARTEL_DEFAULT_LIFETIME_SECONDS));
 		long afterKillTicks = asTicks(positiveOrDefault(ability.summonAfterKillSeconds, CARTEL_DEFAULT_AFTER_KILL_SECONDS));
-		CartelSummonSession session = new CartelSummonSession(level.dimension(), caster.getUUID(), target.getUUID(), nowTick + Math.max(1L, lifetimeTicks), Math.max(1L, afterKillTicks));
+		CartelSummonSession session = new CartelSummonSession(level.dimension(), caster.getUUID(), target.getUUID(), nowTick + Math.max(1L, lifetimeTicks), Math.max(1L, afterKillTicks), target.position());
 
 		BlockPos center = target.blockPosition();
 		for (int i = 0; i < directions.size(); i++) {
@@ -7400,6 +7501,7 @@ public final class ServerRaceSystem {
 
 		CARTEL_SUMMON_SESSIONS.put(UUID.randomUUID(), session);
 		startOnlineCooldown(CARTEL_ATTACK_COOLDOWNS, caster.getUUID(), cooldownTicks);
+		playCartelAttackActivationSound(level, target);
 
 		Lg2.LOGGER.info(
 				"Player {} used mister cartel attack '{}' from race '{}' and summoned {} raiders around target {}",
@@ -7430,13 +7532,22 @@ public final class ServerRaceSystem {
 			Entity targetEntity = level.getEntity(session.targetPlayerId);
 			if (targetEntity instanceof LivingEntity livingEntity && livingEntity.isAlive()) {
 				target = livingEntity;
+				session.lastTargetPosition = livingEntity.position();
 			} else if (session.afterKillExpireTick == null) {
 				session.afterKillExpireTick = nowTick + session.afterKillTicks;
+				if (!session.outcomeSoundPlayed) {
+					playCartelSummonOutcomeSound(level, session.lastTargetPosition, SoundEvents.PILLAGER_CELEBRATE);
+					session.outcomeSoundPlayed = true;
+				}
 			}
 			final LivingEntity chaseTarget = target;
 
 			boolean timedOut = nowTick >= session.normalExpireTick
 					|| (session.afterKillExpireTick != null && nowTick >= session.afterKillExpireTick);
+			if (timedOut && chaseTarget != null && !session.outcomeSoundPlayed) {
+				playCartelSummonOutcomeSound(level, chaseTarget.position(), SoundEvents.PILLAGER_HURT);
+				session.outcomeSoundPlayed = true;
+			}
 
 			session.raiderIds.removeIf(raiderId -> {
 				Entity entity = level.getEntity(raiderId);
