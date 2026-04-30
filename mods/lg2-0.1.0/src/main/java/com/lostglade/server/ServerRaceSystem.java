@@ -5536,11 +5536,11 @@ public final class ServerRaceSystem {
 
 	private static final CartelManualPage[] CARTEL_MANUAL_PAGES_RU = {
 			new CartelManualPage("1. Личная книга", "Это твоя ЛИЧНАЯ книга. Никому не показывай рецепты. Если другие узнают, как ты делаешь товар, они смогут конкурировать с тобой. Крафты доступны всем, но знаешь их ТОЛЬКО ТЫ.", -1, ""),
-			new CartelManualPage("2. Травка", "Посади обычный папоротник. Когда он вырастет, есть шанс получить «Травку». Костная мука ускоряет рост.", 0, ""),
-			new CartelManualPage("3. Сушка", "Обычная травка не годится для рецептов. Для качественного товара высуши её в печи.", 1, ""),
+			new CartelManualPage("2. Травка", "", 0, "Посади обычный папоротник. Когда он вырастет, есть шанс получить «Травку». Костная мука ускоряет рост."),
+			new CartelManualPage("3. Сушка", "Обычная травка не годится для рецептов.", 1, "Для создания товара высуши её в печи."),
 			new CartelManualPage("4. Косячок", "Сверху и снизу по 3 бумаги. В центре 3 сушённой травки. На выходе получишь «Косячок».", 2, ""),
 			new CartelManualPage("5. Прикуривание", "Возьми в одну руку зажигалку, во вторую — косячок. Нажми ПКМ для прикуривания. Чтобы затянуться, зажми ПКМ: чем дольше затяг, тем больше дыма.", -1, ""),
-			new CartelManualPage("6. Кокаин", "В котёл с водой добавь сушённую травку и костную муку в пропорции 1:1. Как итог — получишь «Кокаин».", 3, ""),
+			new CartelManualPage("6. Кокаин", "В котёл с водой добавь сушённую травку и костную муку в пропорции 1:1.", 3, "Как итог — получишь «Кокаин»."),
 			new CartelManualPage("7. Партии", "Каждая операция тратит немного воды из котла. Выгоднее загружать сразу много сырья, например: 16 костной муки + 16 сушённой травки = 16 кокаина. Воды в котле хватает на 48 кокаина, но при малых партиях она расходуется быстрее.", -1, ""),
 			new CartelManualPage("8. Заурядное зелье", "В варочной стойке: пузырёк с водой + любой ингредиент из списка: паучий глаз, сверкающий ломтик арбуза, сахар, огненный порошок, магмовый крем, слеза гаста, кроличья лапка, стержень вихря, блок слизи, камень или паутина.", -1, ""),
 			new CartelManualPage("9. Метадон", "Варится в зельеварке. В заурядное зелье добавь кокаин. На выходе получишь «Метадон».", 4, ""),
@@ -5549,11 +5549,11 @@ public final class ServerRaceSystem {
 
 	private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 			new CartelManualPage("1. Personal Book", "This is your PERSONAL book. Do not show the recipes. If others learn how you make the goods, they can compete with you. The crafts work for everyone, but ONLY YOU know them.", -1, ""),
-			new CartelManualPage("2. Travka", "Plant a normal fern. When it grows, it has a chance to drop Travka. Bone meal speeds up the growth.", 0, ""),
-			new CartelManualPage("3. Drying", "Raw Travka is not good for recipes. Dry it in a furnace to make quality goods.", 1, ""),
+			new CartelManualPage("2. Travka", "", 0, "Plant a normal fern. When it grows, it has a chance to drop Travka. Bone meal speeds up the growth."),
+			new CartelManualPage("3. Drying", "Raw Travka is not good for recipes.", 1, "Dry it in a furnace to make goods."),
 			new CartelManualPage("4. Joint", "Put 3 papers on the top and bottom rows. Put 3 Dried Travka in the center row. Output: Joint.", 2, ""),
 			new CartelManualPage("5. Lighting Up", "Hold flint and steel in one hand and the Joint in the other. Right-click to light it. Hold right-click to take a drag: the longer the drag, the more smoke.", -1, ""),
-			new CartelManualPage("6. Cocaine", "Add Dried Travka and bone meal to a water cauldron in a 1:1 ratio. Result: Cocaine.", 3, ""),
+			new CartelManualPage("6. Cocaine", "Add Dried Travka and bone meal to a water cauldron in a 1:1 ratio.", 3, "Result: Cocaine."),
 			new CartelManualPage("7. Batches", "Each operation spends some cauldron water. It is better to load many ingredients at once, for example: 16 bone meal + 16 Dried Travka = 16 Cocaine. A full cauldron is enough for 48 Cocaine, but small batches waste water faster.", -1, ""),
 			new CartelManualPage("8. Mundane Potion", "In a brewing stand: water bottle + any ingredient from the list: spider eye, glistering melon slice, sugar, blaze powder, magma cream, ghast tear, rabbit foot, breeze rod, slime block, stone, or cobweb.", -1, ""),
 			new CartelManualPage("9. Methadone", "Brew it in a brewing stand. Add Cocaine to a Mundane Potion. Output: Methadone.", 4, ""),
