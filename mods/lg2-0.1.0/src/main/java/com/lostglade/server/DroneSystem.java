@@ -132,6 +132,16 @@ public final class DroneSystem {
 	);
 	private static final double DRONE_CRASH_EQUIVALENT_FALL_BLOCKS = 3.25D;
 	private static final double DRONE_CRASH_REFERENCE_ACCELERATION = 0.04D;
+	private static final double DRONE_CONTROL_IMPACT_BREAK_DAMAGE = 1.0D;
+	private static final double DRONE_CONTROL_IMPACT_SAFE_NORMAL_SPEED = 0.22D;
+	private static final double DRONE_CONTROL_IMPACT_REFERENCE_NORMAL_SPEED = 0.40D;
+	private static final double DRONE_SURFACE_WEAR_BREAK_LEVEL = 1.0D;
+	private static final double DRONE_SURFACE_WEAR_DECAY_PER_TICK = 0.018D;
+	private static final double DRONE_SURFACE_WEAR_MIN_TANGENTIAL_SPEED = 0.16D;
+	private static final double DRONE_SURFACE_WEAR_BASE_GROUND_PRESSURE = 0.015D;
+	private static final double DRONE_SURFACE_WEAR_REFERENCE_PRESSURE = 0.24D;
+	private static final double DRONE_SURFACE_WEAR_MAX_DELTA_PER_TICK = 0.085D;
+	private static final int DRONE_SURFACE_WEAR_PARTICLE_INTERVAL_TICKS = 2;
 	private static final float DRONE_WIDTH = 0.95F;
 	private static final float DRONE_HEIGHT = 0.35F;
 	private static final float DRONE_CAMERA_ANCHOR_SIZE = 0.01F;
@@ -264,13 +274,9 @@ public final class DroneSystem {
 		ServerEntityEvents.ENTITY_LOAD.register(DroneSystem::onEntityLoad);
 		ServerEntityEvents.ENTITY_UNLOAD.register(DroneSystem::onEntityUnload);
 		ServerPlayNetworking.registerGlobalReceiver(
-				DronePayloads.DroneKineticCollisionC2SPayload.TYPE,
+				DronePayloads.DroneCollisionSampleC2SPayload.TYPE,
 				(payload, context) -> context.server().execute(() ->
-						handleControlledClientKineticCollision(
-								context.player(),
-								payload.horizontalSpeedBefore(),
-								payload.horizontalSpeedAfter()
-						)
+						handleControlledClientCollisionSample(context.player(), payload)
 				)
 		);
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> stopControlling((ServerPlayer) handler.player, true, false));
@@ -470,25 +476,43 @@ public final class DroneSystem {
 		syncControlledProxyShellState(session, proxyPlayer);
 	}
 
-	public static void handleControlledClientKineticCollision(
+	public static void handleControlledClientCollisionSample(
 			ServerPlayer player,
-			double horizontalSpeedBefore,
-			double horizontalSpeedAfter
+			DronePayloads.DroneCollisionSampleC2SPayload payload
 	) {
-		if (player == null || !isControllingDrone(player)) {
-			return;
-		}
-		if (computeFallFlyingKineticDamage(horizontalSpeedBefore, horizontalSpeedAfter) <= 0.0F) {
+		if (player == null || payload == null || !isControllingDrone(player)) {
 			return;
 		}
 		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
 		if (session == null) {
 			return;
 		}
+		Vec3 intendedMovement = readClientCollisionVector(payload.intendedX(), payload.intendedY(), payload.intendedZ());
+		Vec3 actualMovement = readClientCollisionVector(payload.actualX(), payload.actualY(), payload.actualZ());
+		if (intendedMovement == null || actualMovement == null) {
+			return;
+		}
 		MinecraftServer server = player.level() == null ? null : player.level().getServer();
 		Entity root = server == null ? null : findDroneRoot(server, session.droneDimension(), session.droneUuid());
 		if (root == null || !root.isAlive()) {
 			stopControlling(player, true, true);
+			return;
+		}
+		float impactDamage = computeControlledClientImpactDamage(
+				intendedMovement,
+				actualMovement,
+				payload.horizontalCollision(),
+				payload.verticalCollision() || payload.onGround()
+		);
+		long gameTime = player.level() == null ? Long.MIN_VALUE : player.level().getGameTime();
+		if (impactDamage > DRONE_CONTROL_IMPACT_BREAK_DAMAGE
+				|| updateControlledDroneSurfaceWear(session, root, intendedMovement, actualMovement, payload.onGround(), gameTime)) {
+			destroyControlledDroneFromClientCollision(player, session, root);
+		}
+	}
+
+	private static void destroyControlledDroneFromClientCollision(ServerPlayer player, DroneControlSession session, Entity root) {
+		if (player == null || session == null || root == null || !root.isAlive()) {
 			return;
 		}
 		destroyDrone(root, null, false);
@@ -1058,18 +1082,22 @@ public final class DroneSystem {
 		Vec3 visualMovement = controlledOperatorVisualVelocity(session);
 		float yaw = proxyPlayer.getYRot();
 		float pitch = proxyPlayer.getXRot();
-		syncControlledProxyShellState(session, proxyPlayer);
-		proxyListener.resetPosition();
 		root.noPhysics = true;
 		root.setPos(currentPos.x, currentPos.y, currentPos.z);
 		root.setYRot(yaw);
 		root.setXRot(pitch);
 		root.setDeltaMovement(visualMovement);
 		root.hurtMarked = true;
+		if (handleControlledServerCollision(player, root, session, proxyPlayer, intendedMovement, actualMovement)) {
+			return;
+		}
+		syncControlledProxyShellState(session, proxyPlayer);
+		proxyListener.resetPosition();
 		syncDroneCameraAnchor(root, visualMovement);
 		session.setLastPlayerPos(currentPos);
 		maybePlayDroneLoopSound(root, session.forwardDrive(), session.strafeDrive(), true);
 		setHotbarVisualHidden(player, true);
+		decayControlledDroneSurfaceWear(session, root.level().getGameTime());
 		double displayForwardDrive = net.minecraft.util.Mth.lerp(
 				DRONE_DISPLAY_DRIVE_SMOOTHING,
 				session.displayForwardDrive(),
@@ -1089,6 +1117,38 @@ public final class DroneSystem {
 		syncDroneDisplay(root, yaw, pitch, displayForwardDrive, displayStrafeDrive);
 		syncControlledPlayer(player, root, forcePositionSync);
 		updateDroneHud(player, session, false);
+	}
+
+	private static boolean handleControlledServerCollision(
+			ServerPlayer player,
+			Entity root,
+			DroneControlSession session,
+			ServerPlayer proxyPlayer,
+			Vec3 intendedMovement,
+			Vec3 actualMovement
+	) {
+		if (player == null || root == null || session == null || proxyPlayer == null) {
+			return false;
+		}
+		boolean horizontalCollision = proxyPlayer.horizontalCollision;
+		boolean verticalCollision = proxyPlayer.verticalCollision || proxyPlayer.onGround();
+		if (!horizontalCollision && !verticalCollision && !proxyPlayer.onGround()) {
+			return false;
+		}
+
+		float impactDamage = computeControlledClientImpactDamage(
+				intendedMovement,
+				actualMovement,
+				horizontalCollision,
+				verticalCollision
+		);
+		long gameTime = root.level() == null ? Long.MIN_VALUE : root.level().getGameTime();
+		if (impactDamage > DRONE_CONTROL_IMPACT_BREAK_DAMAGE
+				|| updateControlledDroneSurfaceWear(session, root, intendedMovement, actualMovement, proxyPlayer.onGround(), gameTime)) {
+			destroyControlledDroneFromClientCollision(player, session, root);
+			return true;
+		}
+		return false;
 	}
 
 	private static boolean shouldForceControlledOperatorPositionSync(
@@ -1212,12 +1272,187 @@ public final class DroneSystem {
 		return crashEnergy / (2.0D * DRONE_CRASH_REFERENCE_ACCELERATION);
 	}
 
-	private static float computeFallFlyingKineticDamage(double horizontalSpeedBefore, double horizontalSpeedAfter) {
-		if (!Double.isFinite(horizontalSpeedBefore) || !Double.isFinite(horizontalSpeedAfter)) {
+	private static Vec3 readClientCollisionVector(double x, double y, double z) {
+		if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) {
+			return null;
+		}
+		return new Vec3(x, y, z);
+	}
+
+	private static float computeControlledClientImpactDamage(
+			Vec3 intendedMovement,
+			Vec3 actualMovement,
+			boolean horizontalCollision,
+			boolean verticalCollision
+	) {
+		DroneCollisionForces forces = computeDroneCollisionForces(
+				intendedMovement,
+				actualMovement,
+				horizontalCollision,
+				verticalCollision
+		);
+		if (forces.normalSpeed() <= DRONE_CONTROL_IMPACT_SAFE_NORMAL_SPEED) {
 			return 0.0F;
 		}
-		double speedLoss = Math.max(0.0D, horizontalSpeedBefore - horizontalSpeedAfter);
-		return (float) Math.max(0.0D, speedLoss * 10.0D - 3.0D);
+
+		double angleSeverity = Math.pow(forces.angleFactor(), 0.65D);
+		double normalSeverity = (forces.normalSpeed() - DRONE_CONTROL_IMPACT_SAFE_NORMAL_SPEED)
+				/ DRONE_CONTROL_IMPACT_REFERENCE_NORMAL_SPEED;
+		double glancingForgiveness = net.minecraft.util.Mth.lerp(angleSeverity, 0.48D, 1.75D);
+		return (float) Math.max(0.0D, normalSeverity * glancingForgiveness);
+	}
+
+	private static boolean updateControlledDroneSurfaceWear(
+			DroneControlSession session,
+			Entity root,
+			Vec3 intendedMovement,
+			Vec3 actualMovement,
+			boolean onGround,
+			long gameTime
+	) {
+		if (session == null || intendedMovement == null || actualMovement == null || !onGround) {
+			return false;
+		}
+
+		DroneCollisionForces forces = computeDroneCollisionForces(
+				intendedMovement,
+				actualMovement,
+				false,
+				true
+		);
+		double tangentialSpeed = Math.sqrt(actualMovement.x * actualMovement.x + actualMovement.z * actualMovement.z);
+		if (tangentialSpeed < DRONE_SURFACE_WEAR_MIN_TANGENTIAL_SPEED) {
+			return false;
+		}
+
+		double downwardPressure = Math.max(forces.normalSpeed(), DRONE_SURFACE_WEAR_BASE_GROUND_PRESSURE);
+		double speedFactor = net.minecraft.util.Mth.clamp(
+				(tangentialSpeed - DRONE_SURFACE_WEAR_MIN_TANGENTIAL_SPEED)
+						/ Math.max(0.001D, DroneFlightPhysics.MAX_COMBINED_SPEED - DRONE_SURFACE_WEAR_MIN_TANGENTIAL_SPEED),
+				0.0D,
+				1.0D
+		);
+		double pressureFactor = net.minecraft.util.Mth.clamp(
+				downwardPressure / DRONE_SURFACE_WEAR_REFERENCE_PRESSURE,
+				0.0D,
+				1.0D
+		);
+		double wearDelta = Math.min(
+				DRONE_SURFACE_WEAR_MAX_DELTA_PER_TICK,
+				(0.004D + 0.055D * pressureFactor) * speedFactor * speedFactor
+		);
+		session.setLastSurfaceWearContactTick(gameTime);
+		session.setSurfaceWear(Math.min(DRONE_SURFACE_WEAR_BREAK_LEVEL, session.surfaceWear() + wearDelta));
+		playDroneSurfaceWearEffects(root, actualMovement, speedFactor, pressureFactor, wearDelta, gameTime);
+		return session.surfaceWear() >= DRONE_SURFACE_WEAR_BREAK_LEVEL;
+	}
+
+	private static DroneCollisionForces computeDroneCollisionForces(
+			Vec3 intendedMovement,
+			Vec3 actualMovement,
+			boolean horizontalCollision,
+			boolean verticalCollision
+	) {
+		if (intendedMovement == null || actualMovement == null || (!horizontalCollision && !verticalCollision)) {
+			return DroneCollisionForces.NONE;
+		}
+
+		Vec3 blockedMovement = intendedMovement.subtract(actualMovement);
+		double horizontalNormalSq = horizontalCollision
+				? blockedMovement.x * blockedMovement.x + blockedMovement.z * blockedMovement.z
+				: 0.0D;
+		double verticalNormal = 0.0D;
+		if (verticalCollision) {
+			verticalNormal = Math.max(0.0D, actualMovement.y - intendedMovement.y);
+			if (verticalNormal <= 1.0E-6D && intendedMovement.y < 0.0D) {
+				verticalNormal = -intendedMovement.y;
+			}
+		}
+		double normalSpeed = Math.sqrt(horizontalNormalSq + verticalNormal * verticalNormal);
+		double intendedSpeed = intendedMovement.length();
+		double tangentialSpeed = Math.sqrt(Math.max(0.0D, intendedSpeed * intendedSpeed - normalSpeed * normalSpeed));
+		double angleFactor = normalSpeed / Math.max(1.0E-6D, normalSpeed + tangentialSpeed);
+		return new DroneCollisionForces(normalSpeed, tangentialSpeed, angleFactor);
+	}
+
+	private static void playDroneSurfaceWearEffects(
+			Entity root,
+			Vec3 actualMovement,
+			double speedFactor,
+			double pressureFactor,
+			double wearDelta,
+			long gameTime
+	) {
+		if (root == null || !(root.level() instanceof ServerLevel level) || actualMovement == null || wearDelta <= 1.0E-6D) {
+			return;
+		}
+		double scrapeStrength = net.minecraft.util.Mth.clamp(speedFactor * 0.70D + pressureFactor * 0.30D, 0.0D, 1.0D);
+		if (scrapeStrength < 0.08D && gameTime % 4L != 0L) {
+			return;
+		}
+		if (gameTime % DRONE_SURFACE_WEAR_PARTICLE_INTERVAL_TICKS != 0L && scrapeStrength < 0.72D) {
+			return;
+		}
+
+		Vec3 origin = root.position();
+		Vec3 slide = new Vec3(actualMovement.x, 0.0D, actualMovement.z);
+		if (slide.lengthSqr() > 1.0E-6D) {
+			slide = slide.normalize();
+		}
+		double particleX = origin.x - slide.x * DRONE_WIDTH * 0.24D;
+		double particleY = origin.y + 0.035D;
+		double particleZ = origin.z - slide.z * DRONE_WIDTH * 0.24D;
+		int scrapeCount = 1 + (int) Math.round(scrapeStrength * 5.0D);
+		int sparkCount = pressureFactor > 0.28D ? Math.max(1, (int) Math.round(scrapeStrength * pressureFactor * 4.0D)) : 0;
+		double spraySpeed = 0.015D + scrapeStrength * 0.055D;
+
+		level.sendParticles(
+				ParticleTypes.SCRAPE,
+				particleX,
+				particleY,
+				particleZ,
+				scrapeCount,
+				0.10D + scrapeStrength * 0.10D,
+				0.015D,
+				0.10D + scrapeStrength * 0.10D,
+				spraySpeed
+		);
+		if (sparkCount > 0) {
+			level.sendParticles(
+					ParticleTypes.ELECTRIC_SPARK,
+					particleX,
+					particleY + 0.02D,
+					particleZ,
+					sparkCount,
+					0.06D + scrapeStrength * 0.08D,
+					0.025D,
+					0.06D + scrapeStrength * 0.08D,
+					spraySpeed * 0.8D
+			);
+		}
+		if (scrapeStrength > 0.48D) {
+			level.sendParticles(
+					ParticleTypes.DUST_PLUME,
+					particleX,
+					particleY,
+					particleZ,
+					1 + (int) Math.round(scrapeStrength * 2.0D),
+					0.08D,
+					0.02D,
+					0.08D,
+					0.005D + scrapeStrength * 0.015D
+			);
+		}
+	}
+
+	private static void decayControlledDroneSurfaceWear(DroneControlSession session, long gameTime) {
+		if (session == null || session.surfaceWear() <= 0.0D) {
+			return;
+		}
+		if (session.lastSurfaceWearContactTick() == gameTime) {
+			return;
+		}
+		session.setSurfaceWear(Math.max(0.0D, session.surfaceWear() - DRONE_SURFACE_WEAR_DECAY_PER_TICK));
 	}
 
 	private static boolean isUncontrolledDroneSettled(Entity root, Vec3 velocity) {
@@ -3150,6 +3385,10 @@ public final class DroneSystem {
 	private record ReturnLocation(ServerLevel level, Vec3 pos, float yaw, float pitch) {
 	}
 
+	private record DroneCollisionForces(double normalSpeed, double tangentialSpeed, double angleFactor) {
+		private static final DroneCollisionForces NONE = new DroneCollisionForces(0.0D, 0.0D, 0.0D);
+	}
+
 	private static final class UncontrolledDroneState {
 		private final UUID droneUuid;
 		private final net.minecraft.resources.ResourceKey<Level> dimension;
@@ -3264,6 +3503,8 @@ public final class DroneSystem {
 		private double strafeDrive;
 		private double displayForwardDrive;
 		private double displayStrafeDrive;
+		private double surfaceWear;
+		private long lastSurfaceWearContactTick = Long.MIN_VALUE;
 		private boolean hudVisible;
 		private String lastHudSnapshot = "";
 		private long lastHudTick = Long.MIN_VALUE;
@@ -3462,6 +3703,22 @@ public final class DroneSystem {
 
 		private void setDisplayStrafeDrive(double displayStrafeDrive) {
 			this.displayStrafeDrive = displayStrafeDrive;
+		}
+
+		private double surfaceWear() {
+			return this.surfaceWear;
+		}
+
+		private void setSurfaceWear(double surfaceWear) {
+			this.surfaceWear = net.minecraft.util.Mth.clamp(surfaceWear, 0.0D, DRONE_SURFACE_WEAR_BREAK_LEVEL);
+		}
+
+		private long lastSurfaceWearContactTick() {
+			return this.lastSurfaceWearContactTick;
+		}
+
+		private void setLastSurfaceWearContactTick(long lastSurfaceWearContactTick) {
+			this.lastSurfaceWearContactTick = lastSurfaceWearContactTick;
 		}
 
 		private boolean hudVisible() {

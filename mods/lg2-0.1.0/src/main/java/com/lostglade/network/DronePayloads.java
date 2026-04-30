@@ -20,28 +20,52 @@ public final class DronePayloads {
 			return;
 		}
 
-		PayloadTypeRegistry.playC2S().register(DroneKineticCollisionC2SPayload.TYPE, DroneKineticCollisionC2SPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playC2S().register(DroneCollisionSampleC2SPayload.TYPE, DroneCollisionSampleC2SPayload.STREAM_CODEC);
 	}
 
-	public record DroneKineticCollisionC2SPayload(
-			double horizontalSpeedBefore,
-			double horizontalSpeedAfter
+	public record DroneCollisionSampleC2SPayload(
+			double intendedX,
+			double intendedY,
+			double intendedZ,
+			double actualX,
+			double actualY,
+			double actualZ,
+			boolean horizontalCollision,
+			boolean verticalCollision,
+			boolean onGround
 	) implements CustomPacketPayload {
-		public static final Type<DroneKineticCollisionC2SPayload> TYPE = new Type<>(id("drone_kinetic_collision"));
-		public static final StreamCodec<FriendlyByteBuf, DroneKineticCollisionC2SPayload> STREAM_CODEC =
-				CustomPacketPayload.codec(DroneKineticCollisionC2SPayload::write, DroneKineticCollisionC2SPayload::new);
+		public static final Type<DroneCollisionSampleC2SPayload> TYPE = new Type<>(id("drone_collision_sample"));
+		public static final StreamCodec<FriendlyByteBuf, DroneCollisionSampleC2SPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(DroneCollisionSampleC2SPayload::write, DroneCollisionSampleC2SPayload::new);
 
-		public DroneKineticCollisionC2SPayload(FriendlyByteBuf buffer) {
-			this(buffer.readDouble(), buffer.readDouble());
+		public DroneCollisionSampleC2SPayload(FriendlyByteBuf buffer) {
+			this(
+					buffer.readDouble(),
+					buffer.readDouble(),
+					buffer.readDouble(),
+					buffer.readDouble(),
+					buffer.readDouble(),
+					buffer.readDouble(),
+					buffer.readBoolean(),
+					buffer.readBoolean(),
+					buffer.readBoolean()
+			);
 		}
 
 		private void write(FriendlyByteBuf buffer) {
-			buffer.writeDouble(this.horizontalSpeedBefore);
-			buffer.writeDouble(this.horizontalSpeedAfter);
+			buffer.writeDouble(this.intendedX);
+			buffer.writeDouble(this.intendedY);
+			buffer.writeDouble(this.intendedZ);
+			buffer.writeDouble(this.actualX);
+			buffer.writeDouble(this.actualY);
+			buffer.writeDouble(this.actualZ);
+			buffer.writeBoolean(this.horizontalCollision);
+			buffer.writeBoolean(this.verticalCollision);
+			buffer.writeBoolean(this.onGround);
 		}
 
 		@Override
-		public Type<DroneKineticCollisionC2SPayload> type() {
+		public Type<DroneCollisionSampleC2SPayload> type() {
 			return TYPE;
 		}
 	}

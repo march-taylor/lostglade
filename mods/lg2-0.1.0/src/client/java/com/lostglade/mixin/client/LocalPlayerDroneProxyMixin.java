@@ -32,7 +32,7 @@ public abstract class LocalPlayerDroneProxyMixin {
 	@Unique
 	private boolean lg2$proxyWasActive;
 	@Unique
-	private long lg2$lastKineticCollisionReportTick = Long.MIN_VALUE;
+	private long lg2$lastCollisionReportTick = Long.MIN_VALUE;
 
 	@Inject(method = "travel", at = @At("HEAD"), cancellable = true)
 	private void lg2$applyDroneProxyTravel(Vec3 travelVector, CallbackInfo ci) {
@@ -73,11 +73,10 @@ public abstract class LocalPlayerDroneProxyMixin {
 				this.lg2$strafeDrive
 		);
 		Vec3 startPos = player.position();
-		double horizontalSpeedBefore = nextVelocity.horizontalDistance();
 		player.setDeltaMovement(nextVelocity);
 		player.move(MoverType.SELF, nextVelocity);
 		Vec3 actualMovement = player.position().subtract(startPos);
-		lg2$reportKineticCollision(player, horizontalSpeedBefore, actualMovement.horizontalDistance());
+		lg2$reportCollisionSample(player, nextVelocity, actualMovement);
 		this.lg2$proxyWasActive = true;
 		ci.cancel();
 	}
@@ -104,34 +103,38 @@ public abstract class LocalPlayerDroneProxyMixin {
 		this.lg2$proxyWasActive = false;
 		this.lg2$forwardDrive = 0.0D;
 		this.lg2$strafeDrive = 0.0D;
-		this.lg2$lastKineticCollisionReportTick = Long.MIN_VALUE;
+		this.lg2$lastCollisionReportTick = Long.MIN_VALUE;
 	}
 
 	@Unique
-	private void lg2$reportKineticCollision(LocalPlayer player, double horizontalSpeedBefore, double horizontalSpeedAfter) {
-		if (player == null || !player.horizontalCollision) {
+	private void lg2$reportCollisionSample(LocalPlayer player, Vec3 intendedMovement, Vec3 actualMovement) {
+		if (player == null || intendedMovement == null || actualMovement == null) {
 			return;
 		}
-		if (lg2$computeFallFlyingKineticDamage(horizontalSpeedBefore, horizontalSpeedAfter) <= 0.0F) {
+		if (!player.horizontalCollision && !player.verticalCollision && !player.onGround()) {
 			return;
 		}
 		long gameTime = player.level().getGameTime();
-		if (this.lg2$lastKineticCollisionReportTick == gameTime) {
+		if (this.lg2$lastCollisionReportTick == gameTime) {
 			return;
 		}
-		this.lg2$lastKineticCollisionReportTick = gameTime;
-		if (ClientPlayNetworking.canSend(DronePayloads.DroneKineticCollisionC2SPayload.TYPE)) {
-			ClientPlayNetworking.send(new DronePayloads.DroneKineticCollisionC2SPayload(horizontalSpeedBefore, horizontalSpeedAfter));
+		this.lg2$lastCollisionReportTick = gameTime;
+		try {
+			if (ClientPlayNetworking.canSend(DronePayloads.DroneCollisionSampleC2SPayload.TYPE)) {
+				ClientPlayNetworking.send(new DronePayloads.DroneCollisionSampleC2SPayload(
+						intendedMovement.x,
+						intendedMovement.y,
+						intendedMovement.z,
+						actualMovement.x,
+						actualMovement.y,
+						actualMovement.z,
+						player.horizontalCollision,
+						player.verticalCollision,
+						player.onGround()
+				));
+			}
+		} catch (IllegalArgumentException | IllegalStateException ignored) {
 		}
-	}
-
-	@Unique
-	private static float lg2$computeFallFlyingKineticDamage(double horizontalSpeedBefore, double horizontalSpeedAfter) {
-		if (!Double.isFinite(horizontalSpeedBefore) || !Double.isFinite(horizontalSpeedAfter)) {
-			return 0.0F;
-		}
-		double speedLoss = Math.max(0.0D, horizontalSpeedBefore - horizontalSpeedAfter);
-		return (float) Math.max(0.0D, speedLoss * 10.0D - 3.0D);
 	}
 
 	@Unique
