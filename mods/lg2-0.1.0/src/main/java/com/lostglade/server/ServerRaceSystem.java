@@ -224,14 +224,11 @@ public final class ServerRaceSystem {
 	private static final FontDescription CARTEL_MANUAL_PAGE_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:cartel_manual_pages"))
 	);
-	private static final String[] CARTEL_MANUAL_PAGE_GLYPHS = {
-			"\uef60",
-			"\uef61",
-			"\uef62",
-			"\uef63",
-			"\uef64",
-			"\uef65"
-	};
+	private static final int CARTEL_MANUAL_IMAGE_COUNT = 6;
+	private static final int CARTEL_MANUAL_IMAGE_COLUMNS = 2;
+	private static final int CARTEL_MANUAL_IMAGE_FIRST_GLYPH = 0xEFA0;
+	private static final int CARTEL_MANUAL_IMAGE_LEADING_LINES = 7;
+	private static final String CARTEL_MANUAL_IMAGE_COLUMN_JOINER = "\ueff0";
 	private static final String[] CARTEL_PASSPORT_NAME_FONT_ROWS = {
 			"ABCDEFGH",
 			"IJKLMNOP",
@@ -5458,9 +5455,8 @@ public final class ServerRaceSystem {
 
 	private static WrittenBookContent buildCartelShnyagaBookContent(ServerPlayer player) {
 		List<Filterable<Component>> pages = new ArrayList<>();
-		boolean hasPack = PolymerResourcePackUtils.hasMainPack(player);
-		for (int i = 0; i < CARTEL_MANUAL_PAGE_GLYPHS.length; i++) {
-			pages.add(Filterable.passThrough(buildCartelShnyagaPage(player, i, hasPack)));
+		for (CartelManualPage manualPage : cartelManualPages(player)) {
+			pages.add(Filterable.passThrough(buildCartelShnyagaPage(manualPage)));
 		}
 
 		return new WrittenBookContent(
@@ -5472,20 +5468,49 @@ public final class ServerRaceSystem {
 		);
 	}
 
-	private static Component buildCartelShnyagaPage(ServerPlayer player, int pageIndex, boolean hasPack) {
+	private static Component buildCartelShnyagaPage(CartelManualPage manualPage) {
 		MutableComponent page = Component.empty();
-		if (hasPack && pageIndex >= 0 && pageIndex < CARTEL_MANUAL_PAGE_GLYPHS.length) {
-			page = page.append(Component.literal(CARTEL_MANUAL_PAGE_GLYPHS[pageIndex])
-					.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CARTEL_MANUAL_PAGE_FONT)));
-			page = page.append(Component.literal("\n"));
-		}
-
-		page = page.append(Component.literal(localizeCartelShnyagaPageTitle(player, pageIndex))
+		page = page.append(Component.literal(manualPage.title())
 				.withStyle(style -> style.withBold(true).withItalic(false).withColor(0x5B3118)));
 		page = page.append(Component.literal("\n"));
-		page = page.append(Component.literal(localizeCartelShnyagaPageBody(player, pageIndex))
-				.withStyle(style -> style.withItalic(false).withColor(0x2E2016)));
+		if (!manualPage.beforeImage().isBlank()) {
+			page = page.append(cartelManualBodyComponent(manualPage.beforeImage()));
+			if (manualPage.imageIndex() >= 0 || !manualPage.afterImage().isBlank()) {
+				page = page.append(Component.literal("\n"));
+			}
+		}
+		if (manualPage.imageIndex() >= 0) {
+			page = page.append(Component.literal("\n".repeat(CARTEL_MANUAL_IMAGE_LEADING_LINES)));
+			page = page.append(Component.literal(cartelManualImageGlyphRow(manualPage.imageIndex()))
+					.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CARTEL_MANUAL_PAGE_FONT)));
+			if (!manualPage.afterImage().isBlank()) {
+				page = page.append(Component.literal("\n"));
+			}
+		}
+		if (!manualPage.afterImage().isBlank()) {
+			page = page.append(cartelManualBodyComponent(manualPage.afterImage()));
+		}
 		return page;
+	}
+
+	private static MutableComponent cartelManualBodyComponent(String text) {
+		return Component.literal(text)
+				.withStyle(style -> style.withItalic(false).withColor(0x2E2016));
+	}
+
+	private static String cartelManualImageGlyphRow(int imageIndex) {
+		if (imageIndex < 0 || imageIndex >= CARTEL_MANUAL_IMAGE_COUNT) {
+			return "";
+		}
+		StringBuilder builder = new StringBuilder(CARTEL_MANUAL_IMAGE_COLUMNS * 2);
+		for (int column = 0; column < CARTEL_MANUAL_IMAGE_COLUMNS; column++) {
+			if (column > 0) {
+				builder.append(CARTEL_MANUAL_IMAGE_COLUMN_JOINER);
+			}
+			int glyph = CARTEL_MANUAL_IMAGE_FIRST_GLYPH + imageIndex * CARTEL_MANUAL_IMAGE_COLUMNS + column;
+			builder.appendCodePoint(glyph);
+		}
+		return builder.toString();
 	}
 
 	private static String localizeCartelShnyagaBookTitle(ServerPlayer player) {
@@ -5508,24 +5533,43 @@ public final class ServerRaceSystem {
 		};
 	}
 
-	private static String localizeCartelShnyagaPageTitle(ServerPlayer player, int pageIndex) {
-		return switch (cartelBookLanguage(player)) {
-			case RPR -> localizeCartelShnyagaPageTitleRpr(pageIndex);
-			case UK -> localizeCartelShnyagaPageTitleUk(pageIndex);
-			case JA -> localizeCartelShnyagaPageTitleJa(pageIndex);
-			case EN -> localizeCartelShnyagaPageTitleEn(pageIndex);
-			case RU -> localizeCartelShnyagaPageTitleRu(pageIndex);
-		};
+	private static final CartelManualPage[] CARTEL_MANUAL_PAGES_RU = {
+			new CartelManualPage("1. Главное", "Это твоя книга. Никому не показывай рецепты. Если другие узнают, как ты делаешь товары — у тебя появятся конкуренты. Держи всё в тайне.", -1, ""),
+			new CartelManualPage("2. Травка", "Посади папоротник. Вырос — сломай: шанс получить «Травку». Костная мука ускоряет рост.", 0, ""),
+			new CartelManualPage("3. Сушка", "Сырая травка не идёт в рецепты.", 1, "Печь: 1 травка -> 1 сушенная травка."),
+			new CartelManualPage("4. Косячок", "Верстак: сверху 3 бумаги, в середине 3 сушенных травки, снизу 3 бумаги. Выход — косячок.", 2, ""),
+			new CartelManualPage("5. Розжиг", "Зажигалка может быть в любой руке. Косячок держи в другой руке и нажми ПКМ. При успешном розжиге зажигалка расходуется.", -1, ""),
+			new CartelManualPage("6. Кокаин", "Котёл должен быть с водой.", 3, "Брось муку и травку 1:1. Пара даёт 1 кокаин."),
+			new CartelManualPage("7. Партии", "Каждая операция тратит немного воды из котла. Можно загружать много сразу: 10 костной муки + 10 сушенной травки = 10 кокаина. Главное — держать пропорцию 1:1 и доливать воду.", -1, ""),
+			new CartelManualPage("8. Заурядное зелье", "В варочной стойке поставь пузырёк с водой и добавь любой ингредиент из списка: паучий глаз, сверкающий ломтик арбуза, сахар, огненный порошок, магмовый крем, слеза гаста, кроличья лапка, стержень вихря, блок слизи, камень или паутина.", -1, ""),
+			new CartelManualPage("9. Схема зелья", "", 4, "Пузырёк снизу, ингредиент сверху. Получится заурядное зелье для метадона."),
+			new CartelManualPage("10. Метадон", "Метадон варится в стойке.", 5, "Зелье снизу, кокаин сверху. После варки — метадон."),
+			new CartelManualPage("11. Использование", "Метадон пьётся как обычное зелье: возьми в руку и нажми ПКМ. Стойка держит до трёх бутылочек, поэтому выгоднее варить партиями, а не по одной.", -1, ""),
+			new CartelManualPage("12. Коротко", "Папоротник или костная мука -> Травка. Печь -> Сушенная травка. Верстак: бумага сверху и снизу, три травки по центру -> Косячок. Котёл: мука + травка 1:1 -> Кокаин. Стойка: заурядное зелье + кокаин -> Метадон.", -1, "")
+	};
+
+	private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
+			new CartelManualPage("1. Main Rule", "This is your book. Do not show the recipes. If others learn how you make the goods, you get competitors. Keep everything secret.", -1, ""),
+			new CartelManualPage("2. Travka", "Plant a fern. When it grows, break it: Travka may drop. Bone meal makes the fern grow immediately.", 0, ""),
+			new CartelManualPage("3. Drying", "Raw Travka is not used in recipes.", 1, "Furnace: 1 Travka -> 1 Dried Travka."),
+			new CartelManualPage("4. Joint", "Table: 3 paper on top, 3 Dried Travka in the middle row, 3 paper below. Output: Joint.", 2, ""),
+			new CartelManualPage("5. Lighting", "Flint and steel can be in either hand. Hold the Joint in the other hand and right click. A successful light consumes the flint and steel.", -1, ""),
+			new CartelManualPage("6. Cocaine", "The cauldron must hold water.", 3, "Throw meal and Travka 1:1. Each pair gives 1 Cocaine."),
+			new CartelManualPage("7. Batches", "Each operation spends some cauldron water. You can load many at once: 10 bone meal + 10 Dried Travka = 10 Cocaine. Keep the 1:1 ratio and refill water.", -1, ""),
+			new CartelManualPage("8. Mundane Potion", "In a brewing stand, place a water bottle and add any listed ingredient: spider eye, glistering melon slice, sugar, blaze powder, magma cream, ghast tear, rabbit foot, breeze rod, slime block, stone, or cobweb.", -1, ""),
+			new CartelManualPage("9. Potion Scheme", "", 4, "Water bottle below, ingredient above. Result: Mundane Potion for Methadone."),
+			new CartelManualPage("10. Methadone", "Methadone is brewed in a stand.", 5, "Potion below, Cocaine above. After brewing, you get Methadone."),
+			new CartelManualPage("11. Using It", "Methadone is drunk like a normal potion: hold it and right click. The stand holds up to three bottles, so batches are better than single runs.", -1, ""),
+			new CartelManualPage("12. Summary", "Fern or bone meal -> Travka. Furnace -> Dried Travka. Table: paper top and bottom, three Travka in middle -> Joint. Cauldron: meal + Travka 1:1 -> Cocaine. Stand: Mundane Potion + Cocaine -> Methadone.", -1, "")
+	};
+
+	private static CartelManualPage[] cartelManualPages(ServerPlayer player) {
+		return cartelBookLanguage(player) == CartelBookLanguage.EN
+				? CARTEL_MANUAL_PAGES_EN
+				: CARTEL_MANUAL_PAGES_RU;
 	}
 
-	private static String localizeCartelShnyagaPageBody(ServerPlayer player, int pageIndex) {
-		return switch (cartelBookLanguage(player)) {
-			case RPR -> localizeCartelShnyagaPageBodyRpr(pageIndex);
-			case UK -> localizeCartelShnyagaPageBodyUk(pageIndex);
-			case JA -> localizeCartelShnyagaPageBodyJa(pageIndex);
-			case EN -> localizeCartelShnyagaPageBodyEn(pageIndex);
-			case RU -> localizeCartelShnyagaPageBodyRu(pageIndex);
-		};
+	private record CartelManualPage(String title, String beforeImage, int imageIndex, String afterImage) {
 	}
 
 	private static CartelBookLanguage cartelBookLanguage(ServerPlayer player) {
@@ -5547,126 +5591,6 @@ public final class ServerRaceSystem {
 			return CartelBookLanguage.JA;
 		}
 		return CartelBookLanguage.EN;
-	}
-
-	private static String localizeCartelShnyagaPageTitleRu(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u0421\u0435\u043A\u0440\u0435\u0442\u043D\u043E\u0441\u0442\u044C";
-			case 1 -> "\u0422\u0440\u0430\u0432\u043A\u0430";
-			case 2 -> "\u0421\u0443\u0448\u043A\u0430";
-			case 3 -> "\u041A\u043E\u0441\u044F\u0447\u043E\u043A";
-			case 4 -> "\u041A\u043E\u043A\u0430\u0438\u043D";
-			case 5 -> "\u041C\u0435\u0442\u0430\u0434\u043E\u043D";
-			default -> "Раздел";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageBodyRu(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u0414\u0435\u0440\u0436\u0438 \u0440\u0435\u0446\u0435\u043F\u0442\u044B \u0432 \u0442\u0430\u0439\u043D\u0435.\n\u0412\u0441\u0435 \u044D\u0442\u0438 \u0432\u0430\u0440\u043A\u0438 \u0438 \u043A\u0440\u0430\u0444\u0442\u044B\n\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B \u043A\u0430\u0436\u0434\u043E\u043C\u0443, \u043A\u0442\u043E\n\u0443\u0437\u043D\u0430\u0435\u0442 \u0441\u0445\u0435\u043C\u0443.";
-			case 1 -> "\u0421\u0430\u043C \u043F\u043E\u0441\u0430\u0434\u0438 \u043C\u0430\u043B\u044B\u0439\n\u043F\u0430\u043F\u043E\u0440\u043E\u0442\u043D\u0438\u043A.\n\u041E\u043D \u0432\u044B\u0440\u0430\u0441\u0442\u0435\u0442 \u0432 \u0431\u043E\u043B\u044C\u0448\u043E\u0439.\n\u0420\u043E\u0441\u0442 \u0438 \u043A\u043E\u0441\u0442\u043D\u0430\u044F \u043C\u0443\u043A\u0430\n\u043C\u043E\u0433\u0443\u0442 \u0443\u0440\u043E\u043D\u0438\u0442\u044C \u0422\u0440\u0430\u0432\u043A\u0443.";
-			case 2 -> "\u041F\u0435\u0440\u0435\u0436\u0430\u0440\u044C \u0422\u0440\u0430\u0432\u043A\u0443 \u0432\n\u043F\u0435\u0447\u0438 \u0438\u043B\u0438 \u043A\u043E\u043F\u0442\u0438\u043B\u044C\u043D\u0435.\n\u041F\u043E\u043B\u0443\u0447\u0438\u0448\u044C \u0421\u0443\u0448\u0451\u043D\u0443\u044E\n\u0442\u0440\u0430\u0432\u043A\u0443.";
-			case 3 -> "\u0412\u0435\u0440\u0441\u0442\u0430\u043A 3x3:\n\u0432\u0435\u0440\u0445 3 \u0431\u0443\u043C\u0430\u0433\u0438,\n\u0441\u0435\u0440\u0435\u0434\u0438\u043D\u0430 3 \u0441\u0443\u0448\u0451\u043D\u043E\u0439\n\u0442\u0440\u0430\u0432\u043A\u0438, \u043D\u0438\u0437 3 \u0431\u0443\u043C\u0430\u0433\u0438.\n\u0412\u044B\u0445\u043E\u0434: 3 \u041A\u043E\u0441\u044F\u0447\u043A\u0430.";
-			case 4 -> "\u0412 \u043A\u043E\u0442\u0451\u043B \u0441 \u0432\u043E\u0434\u043E\u0439 \u043A\u0438\u0434\u0430\u0439\n\u0441\u0443\u0448\u0451\u043D\u0443\u044E \u0442\u0440\u0430\u0432\u043A\u0443 \u0438\n\u043A\u043E\u0441\u0442\u043D\u0443\u044E \u043C\u0443\u043A\u0443 1 \u043A 1.\n\u041A\u0430\u0436\u0434\u044B\u0435 16 \u0448\u0442\u0443\u043A\n\u0441\u044A\u0435\u0434\u0430\u044E\u0442 1/3 \u0432\u043E\u0434\u044B.";
-			case 5 -> "\u0412 \u0432\u0430\u0440\u043E\u0447\u043D\u043E\u0439 \u0441\u0442\u043E\u0439\u043A\u0435:\nMundane Potion +\n1 \u041A\u043E\u043A\u0430\u0438\u043D.\n\u0412\u044B\u0445\u043E\u0434: \u041C\u0435\u0442\u0430\u0434\u043E\u043D.\n\u0420\u0435\u0446\u0435\u043F\u0442 \u0442\u043E\u0436\u0435 \u0437\u043D\u0430\u044E\u0442 \u0432\u0441\u0435.";
-			default -> "";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageTitleEn(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "Secrecy";
-			case 1 -> "Travka";
-			case 2 -> "Drying";
-			case 3 -> "Joint";
-			case 4 -> "Cocaine";
-			case 5 -> "Methadone";
-			default -> "Manual";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageBodyEn(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "Keep every recipe secret.\nAll of these crafts are\navailable to anyone who\nlearns the method.";
-			case 1 -> "Plant a small fern\nyourself.\nIt grows into a large fern.\nGrowth and bone meal\ncan drop Travka.";
-			case 2 -> "Smelt Travka in a\nfurnace or smoker.\nYou get Dried Travka.";
-			case 3 -> "3x3 crafting:\n3 paper on top,\n3 dried travka in the\nmiddle, 3 paper below.\nOutput: 3 Joints.";
-			case 4 -> "Water cauldron:\ndried travka + bone meal\nat 1 to 1.\nEvery 16 pieces use\n1/3 of the water.";
-			case 5 -> "Brewing stand:\nMundane Potion +\n1 Cocaine.\nOutput: Methadone.\nEveryone can brew it.";
-			default -> "";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageTitleUk(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u0422\u0430\u0454\u043C\u043D\u0438\u0446\u044F";
-			case 1 -> "\u0422\u0440\u0430\u0432\u043A\u0430";
-			case 2 -> "\u0421\u0443\u0448\u043A\u0430";
-			case 3 -> "\u041A\u043E\u0441\u044F\u0447\u043E\u043A";
-			case 4 -> "\u041A\u043E\u043A\u0430\u0457\u043D";
-			case 5 -> "\u041C\u0435\u0442\u0430\u0434\u043E\u043D";
-			default -> "Розділ";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageBodyUk(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u0422\u0440\u0438\u043C\u0430\u0439 \u0440\u0435\u0446\u0435\u043F\u0442\u0438 \u0432 \u0442\u0430\u0454\u043C\u043D\u0438\u0446\u0456.\n\u0423\u0441\u0456 \u0446\u0456 \u0432\u0430\u0440\u043A\u0438 \u0439 \u043A\u0440\u0430\u0444\u0442\u0438\n\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0456 \u043A\u043E\u0436\u043D\u043E\u043C\u0443, \u0445\u0442\u043E\n\u0434\u0456\u0437\u043D\u0430\u0454\u0442\u044C\u0441\u044F \u0441\u0445\u0435\u043C\u0443.";
-			case 1 -> "\u0421\u0430\u043C \u043F\u043E\u0441\u0430\u0434\u0438 \u043C\u0430\u043B\u0443\n\u043F\u0430\u043F\u043E\u0440\u043E\u0442\u044C.\n\u0412\u043E\u043D\u0430 \u0432\u0438\u0440\u043E\u0441\u0442\u0435 \u0443 \u0432\u0435\u043B\u0438\u043A\u0443.\n\u0420\u0456\u0441\u0442 \u0456 \u043A\u0456\u0441\u0442\u043A\u043E\u0432\u0435 \u0431\u043E\u0440\u043E\u0448\u043D\u043E\n\u043C\u043E\u0436\u0443\u0442\u044C \u0434\u0430\u0442\u0438 \u0422\u0440\u0430\u0432\u043A\u0443.";
-			case 2 -> "\u041F\u0435\u0440\u0435\u043F\u043B\u0430\u0432 \u0422\u0440\u0430\u0432\u043A\u0443 \u0432\n\u043F\u0435\u0447\u0456 \u0430\u0431\u043E \u043A\u043E\u043F\u0442\u0438\u043B\u044C\u043D\u0456.\n\u041E\u0442\u0440\u0438\u043C\u0430\u0454\u0448 \u0421\u0443\u0448\u0435\u043D\u0443\n\u0442\u0440\u0430\u0432\u043A\u0443.";
-			case 3 -> "\u0412\u0435\u0440\u0441\u0442\u0430\u043A 3x3:\n\u0432\u0435\u0440\u0445 3 \u043F\u0430\u043F\u0435\u0440\u0443,\n\u0441\u0435\u0440\u0435\u0434\u0438\u043D\u0430 3 \u0441\u0443\u0448\u0435\u043D\u043E\u0457\n\u0442\u0440\u0430\u0432\u043A\u0438, \u043D\u0438\u0437 3 \u043F\u0430\u043F\u0435\u0440\u0443.\n\u0412\u0438\u0445\u0456\u0434: 3 \u041A\u043E\u0441\u044F\u0447\u043A\u0438.";
-			case 4 -> "\u0423 \u043A\u0430\u0437\u0430\u043D \u0437 \u0432\u043E\u0434\u043E\u044E \u043A\u0438\u0434\u0430\u0439\n\u0441\u0443\u0448\u0435\u043D\u0443 \u0442\u0440\u0430\u0432\u043A\u0443 \u0442\u0430\n\u043A\u0456\u0441\u0442\u043A\u043E\u0432\u0435 \u0431\u043E\u0440\u043E\u0448\u043D\u043E 1 \u0434\u043E 1.\n\u041A\u043E\u0436\u043D\u0456 16 \u0448\u0442\u0443\u043A\n\u0437\u0430\u0431\u0438\u0440\u0430\u044E\u0442\u044C 1/3 \u0432\u043E\u0434\u0438.";
-			case 5 -> "\u0423 \u0432\u0430\u0440\u0438\u043B\u044C\u043D\u0456\u0439 \u0441\u0442\u0456\u0439\u0446\u0456:\nMundane Potion +\n1 \u041A\u043E\u043A\u0430\u0457\u043D.\n\u0412\u0438\u0445\u0456\u0434: \u041C\u0435\u0442\u0430\u0434\u043E\u043D.\n\u0420\u0435\u0446\u0435\u043F\u0442 \u0437\u043D\u0430\u044E\u0442\u044C \u0443\u0441\u0456.";
-			default -> "";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageTitleJa(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u79D8\u5BC6";
-			case 1 -> "\u30C8\u30E9\u30D5\u30AB";
-			case 2 -> "\u4E7E\u71E5";
-			case 3 -> "\u30B8\u30E7\u30A4\u30F3\u30C8";
-			case 4 -> "\u30B3\u30AB\u30A4\u30F3";
-			case 5 -> "\u30E1\u30BF\u30C9\u30F3";
-			default -> "???";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageBodyJa(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u914D\u5408\u306F\u79D8\u5BC6\u306B\u3057\u308D\u3002\n\u4F5C\u308A\u65B9\u3092\u77E5\u308C\u3070\n\u8AB0\u3067\u3082\u540C\u3058\u7269\u3092\n\u4F5C\u308C\u3066\u3057\u307E\u3046\u3002";
-			case 1 -> "\u5C0F\u3055\u306A\u30B7\u30C0\u3092\n\u81EA\u5206\u3067\u690D\u3048\u308B\u3002\n\u3084\u304C\u3066\u5927\u304D\u306A\u30B7\u30C0\u306B\u80B2\u3061\u3001\n\u6210\u9577\u6642\u3084\u9AA8\u7C89\u3067\n\u30C8\u30E9\u30D5\u30AB\u304C\u843D\u3061\u308B\u3002";
-			case 2 -> "\u30C8\u30E9\u30D5\u30AB\u3092\n\u304B\u307E\u3069\u304B\u71FB\u88FD\u5668\u3067\u713C\u304F\u3002\n\u4E7E\u71E5\u30C8\u30E9\u30D5\u30AB\u306B\u306A\u308B\u3002";
-			case 3 -> "\u4F5C\u696D\u53F03x3:\n\u4E0A\u306B\u7D193\u3001\u4E2D\u592E\u306B\n\u4E7E\u71E5\u30C8\u30E9\u30D5\u30AB3\u3001\u4E0B\u306B\u7D193\u3002\n\u7D50\u679C\u306F\u30B8\u30E7\u30A4\u30F3\u30C83\u672C\u3002";
-			case 4 -> "\u6C34\u5165\u308A\u5927\u91DC\u3078\n\u4E7E\u71E5\u30C8\u30E9\u30D5\u30AB\u3068\u9AA8\u7C89\u3092\n1\u5BFE1\u3067\u5165\u308C\u308B\u3002\n16\u500B\u3054\u3068\u306B\u6C34\u3092\n1/3\u4F7F\u3046\u3002";
-			case 5 -> "\u91B8\u9020\u53F0\u3067\nMundane Potion \u306B\n\u30B3\u30AB\u30A4\u30F31\u500B\u3002\n\u7D50\u679C\u306F\u30E1\u30BF\u30C9\u30F3\u3002\n\u8AB0\u3067\u3082\u4F5C\u308C\u308B\u3002";
-			default -> "";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageTitleRpr(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u0422\u0430\u0439\u043D\u0430";
-			case 1 -> "\u0422\u0440\u0430\u0432\u0443\u0448\u043A\u0430";
-			case 2 -> "\u0421\u0443\u0448\u043A\u0430";
-			case 3 -> "\u041A\u0443\u0440\u0435\u0432\u043E";
-			case 4 -> "\u041F\u0440\u0430\u0445\u044A";
-			case 5 -> "\u0414\u0440\u0435\u043C\u0430\u0442\u0438\u043D\u044A";
-			default -> "Раздѣл";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageBodyRpr(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u0425\u0440\u0430\u043D\u0438 \u0440\u0435\u0446\u0435\u043F\u0442\u044B \u0432\u044A \u0442\u0430\u0439\u043D\u0435.\n\u0421\u0438\u0438 \u0432\u0430\u0440\u043A\u0438 \u0438 \u043A\u0440\u0430\u0444\u0442\u044B\n\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B \u0432\u0441\u044F\u043A\u043E\u043C\u0443,\n\u043A\u0442\u043E \u0441\u0445\u0435\u043C\u0443 \u043F\u043E\u0437\u043D\u0430\u0435\u0442\u044A.";
-			case 1 -> "\u0421\u0430\u043C\u044A \u043D\u0430\u0441\u0430\u0434\u0438 \u043C\u0430\u043B\u044B\u0439\n\u043F\u0430\u043F\u043E\u0440\u043E\u0442\u043D\u0438\u043A\u044A.\n\u0412\u043E\u0437\u0440\u0430\u0441\u0442\u0435\u0442\u044A \u0432\u044A \u0432\u0435\u043B\u0438\u043A\u0456\u0439.\n\u0420\u043E\u0441\u0442\u044A \u0438 \u043A\u043E\u0441\u0442\u043D\u0430\u044F \u043C\u0443\u043A\u0430\n\u043C\u043E\u0433\u0443\u0442\u044A \u0434\u0430\u0442\u044C \u0422\u0440\u0430\u0432\u0443\u0448\u043A\u0443.";
-			case 2 -> "\u041F\u0435\u0440\u0435\u0436\u0430\u0440\u044C \u0422\u0440\u0430\u0432\u0443\u0448\u043A\u0443 \u0432\u044A\n\u043F\u0435\u0447\u0438 \u043B\u0438\u0431\u043E \u043A\u043E\u043F\u0442\u0438\u043B\u044C\u043D\u0435.\n\u041F\u043E\u043B\u0443\u0447\u0438\u0448\u044C \u0421\u0443\u0448\u0451\u043D\u043D\u0443\u044E\n\u0442\u0440\u0430\u0432\u0443\u0448\u043A\u0443-\u043C\u0443\u0440\u0430\u0432\u0443\u0448\u043A\u0443.";
-			case 3 -> "\u0412\u0435\u0440\u0441\u0442\u0430\u043A\u044A 3x3:\n\u0441\u0432\u0435\u0440\u0445\u0443 3 \u0431\u0443\u043C\u0430\u0433\u0438,\n\u043F\u043E\u0441\u0440\u0435\u0434\u0438 3 \u0441\u0443\u0448\u0451\u043D\u043D\u043E\u0439\n\u0442\u0440\u0430\u0432\u0443\u0448\u043A\u0438, \u0441\u043D\u0438\u0437\u0443 3 \u0431\u0443\u043C\u0430\u0433\u0438.\n\u0412\u044B\u0445\u043E\u0434\u044A: 3 \u041A\u0443\u0440\u0435\u0432\u0430.";
-			case 4 -> "\u0412\u043E \u043A\u043E\u0442\u0451\u043B\u044A \u0441\u044A \u0432\u043E\u0434\u043E\u044E\n\u043C\u0435\u0447\u0438 \u0441\u0443\u0448\u0451\u043D\u043D\u0443\u044E \u0442\u0440\u0430\u0432\u0443\u0448\u043A\u0443\n\u0438 \u043A\u043E\u0441\u0442\u043D\u0443\u044E \u043C\u0443\u043A\u0443 1 \u043A 1.\n\u041A\u0430\u0436\u0434\u044B\u044F 16 \u0448\u0442\u0443\u043A\u0438\n\u0441\u044A\u0435\u0434\u0430\u044E\u0442\u044A 1/3 \u0432\u043E\u0434\u044B.";
-			case 5 -> "\u0412\u043E \u0432\u0430\u0440\u043E\u0447\u043D\u043E\u0439 \u0441\u0442\u043E\u0439\u043A\u0435:\nMundane Potion +\n1 \u041F\u0440\u0430\u0445\u044A.\n\u0412\u044B\u0445\u043E\u0434\u044A: \u0414\u0440\u0435\u043C\u0430\u0442\u0438\u043D\u044A.\n\u0420\u0435\u0446\u0435\u043F\u0442\u044A \u0432\u0441\u0435\u043C\u044A \u0432\u0435\u0434\u043E\u043C\u044A.";
-			default -> "";
-		};
 	}
 
 	private enum CartelBookLanguage {
@@ -8375,5 +8299,3 @@ public final class ServerRaceSystem {
 		}
 	}
 }
-
-

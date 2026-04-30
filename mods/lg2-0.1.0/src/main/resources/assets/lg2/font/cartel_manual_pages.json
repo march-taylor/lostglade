@@ -1,17 +1,29 @@
 {
   "providers": [
     {
+      "type": "space",
+      "advances": {
+        "": -1
+      }
+    },
+    {
       "type": "bitmap",
       "file": "lg2:font/cartel_manual_pages.png",
-      "ascent": 6,
-      "height": 40,
+      "ascent": 64,
+      "height": 64,
       "chars": [
-        "",
-        "",
-        "",
-        "",
-        "",
-        ""
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
       ]
     },
     {
