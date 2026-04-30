@@ -3,27 +3,25 @@
     {
       "type": "space",
       "advances": {
-        "": -1
+        "\ueff0": -1
       }
     },
     {
       "type": "bitmap",
       "file": "lg2:font/cartel_manual_pages.png",
-      "ascent": 64,
+      "ascent": 35,
       "height": 64,
       "chars": [
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        ""
+        "\uefa0",
+        "\uefa1",
+        "\uefa2",
+        "\uefa3",
+        "\uefa4",
+        "\uefa5",
+        "\uefa6",
+        "\uefa7",
+        "\uefa8",
+        "\uefa9"
       ]
     },
     {

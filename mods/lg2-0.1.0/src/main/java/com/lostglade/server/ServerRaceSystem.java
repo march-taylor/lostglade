@@ -224,10 +224,11 @@ public final class ServerRaceSystem {
 	private static final FontDescription CARTEL_MANUAL_PAGE_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:cartel_manual_pages"))
 	);
-	private static final int CARTEL_MANUAL_IMAGE_COUNT = 6;
+	private static final int CARTEL_MANUAL_IMAGE_COUNT = 5;
 	private static final int CARTEL_MANUAL_IMAGE_COLUMNS = 2;
 	private static final int CARTEL_MANUAL_IMAGE_FIRST_GLYPH = 0xEFA0;
-	private static final int CARTEL_MANUAL_IMAGE_LEADING_LINES = 7;
+	private static final int CARTEL_MANUAL_IMAGE_LEADING_LINES = 3;
+	private static final int CARTEL_MANUAL_IMAGE_TRAILING_LINES = 3;
 	private static final String CARTEL_MANUAL_IMAGE_COLUMN_JOINER = "\ueff0";
 	private static final String[] CARTEL_PASSPORT_NAME_FONT_ROWS = {
 			"ABCDEFGH",
@@ -5484,7 +5485,7 @@ public final class ServerRaceSystem {
 			page = page.append(Component.literal(cartelManualImageGlyphRow(manualPage.imageIndex()))
 					.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CARTEL_MANUAL_PAGE_FONT)));
 			if (!manualPage.afterImage().isBlank()) {
-				page = page.append(Component.literal("\n"));
+				page = page.append(Component.literal("\n".repeat(CARTEL_MANUAL_IMAGE_TRAILING_LINES + 1)));
 			}
 		}
 		if (!manualPage.afterImage().isBlank()) {
@@ -5534,35 +5535,30 @@ public final class ServerRaceSystem {
 	}
 
 	private static final CartelManualPage[] CARTEL_MANUAL_PAGES_RU = {
-			new CartelManualPage("1. Главное", "Это твоя книга. Никому не показывай рецепты. Если другие узнают, как ты делаешь товары — у тебя появятся конкуренты. Держи всё в тайне.", -1, ""),
-			new CartelManualPage("2. Травка", "Посади папоротник. Вырос — сломай: шанс получить «Травку». Костная мука ускоряет рост.", 0, ""),
-			new CartelManualPage("3. Сушка", "Сырая травка не идёт в рецепты.", 1, "Печь: 1 травка -> 1 сушенная травка."),
-			new CartelManualPage("4. Косячок", "Верстак: сверху 3 бумаги, в середине 3 сушенных травки, снизу 3 бумаги. Выход — косячок.", 2, ""),
-			new CartelManualPage("5. Розжиг", "Зажигалка может быть в любой руке. Косячок держи в другой руке и нажми ПКМ. При успешном розжиге зажигалка расходуется.", -1, ""),
-			new CartelManualPage("6. Кокаин", "Котёл должен быть с водой.", 3, "Брось муку и травку 1:1. Пара даёт 1 кокаин."),
-			new CartelManualPage("7. Партии", "Каждая операция тратит немного воды из котла. Можно загружать много сразу: 10 костной муки + 10 сушенной травки = 10 кокаина. Главное — держать пропорцию 1:1 и доливать воду.", -1, ""),
-			new CartelManualPage("8. Заурядное зелье", "В варочной стойке поставь пузырёк с водой и добавь любой ингредиент из списка: паучий глаз, сверкающий ломтик арбуза, сахар, огненный порошок, магмовый крем, слеза гаста, кроличья лапка, стержень вихря, блок слизи, камень или паутина.", -1, ""),
-			new CartelManualPage("9. Схема зелья", "", 4, "Пузырёк снизу, ингредиент сверху. Получится заурядное зелье для метадона."),
-			new CartelManualPage("10. Метадон", "Метадон варится в стойке.", 5, "Зелье снизу, кокаин сверху. После варки — метадон."),
-			new CartelManualPage("11. Использование", "Метадон пьётся как обычное зелье: возьми в руку и нажми ПКМ. Стойка держит до трёх бутылочек, поэтому выгоднее варить партиями, а не по одной.", -1, ""),
-			new CartelManualPage("12. Коротко", "Папоротник или костная мука -> Травка. Печь -> Сушенная травка. Верстак: бумага сверху и снизу, три травки по центру -> Косячок. Котёл: мука + травка 1:1 -> Кокаин. Стойка: заурядное зелье + кокаин -> Метадон.", -1, "")
+			new CartelManualPage("1. Личная книга", "Это твоя ЛИЧНАЯ книга. Никому не показывай рецепты. Если другие узнают, как ты делаешь товар, они смогут конкурировать с тобой. Крафты доступны всем, но знаешь их ТОЛЬКО ТЫ.", -1, ""),
+			new CartelManualPage("2. Травка", "Посади обычный папоротник. Когда он вырастет, есть шанс получить «Травку». Костная мука ускоряет рост.", 0, ""),
+			new CartelManualPage("3. Сушка", "Обычная травка не годится для рецептов. Для качественного товара высуши её в печи.", 1, ""),
+			new CartelManualPage("4. Косячок", "Сверху и снизу по 3 бумаги. В центре 3 сушённой травки. На выходе получишь «Косячок».", 2, ""),
+			new CartelManualPage("5. Прикуривание", "Возьми в одну руку зажигалку, во вторую — косячок. Нажми ПКМ для прикуривания. Чтобы затянуться, зажми ПКМ: чем дольше затяг, тем больше дыма.", -1, ""),
+			new CartelManualPage("6. Кокаин", "В котёл с водой добавь сушённую травку и костную муку в пропорции 1:1. Как итог — получишь «Кокаин».", 3, ""),
+			new CartelManualPage("7. Партии", "Каждая операция тратит немного воды из котла. Выгоднее загружать сразу много сырья, например: 16 костной муки + 16 сушённой травки = 16 кокаина. Воды в котле хватает на 48 кокаина, но при малых партиях она расходуется быстрее.", -1, ""),
+			new CartelManualPage("8. Заурядное зелье", "В варочной стойке: пузырёк с водой + любой ингредиент из списка: паучий глаз, сверкающий ломтик арбуза, сахар, огненный порошок, магмовый крем, слеза гаста, кроличья лапка, стержень вихря, блок слизи, камень или паутина.", -1, ""),
+			new CartelManualPage("9. Метадон", "Варится в зельеварке. В заурядное зелье добавь кокаин. На выходе получишь «Метадон».", 4, ""),
+			new CartelManualPage("10. Зависимость", "Тебе метадон даёт положительные эффекты. Другим — зависимость. Первые уколы для других дают негативные эффекты, последующие — положительные. Если зависимый долго не колет метадон, у него начинается ломка.", -1, "")
 	};
 
 	private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
-			new CartelManualPage("1. Main Rule", "This is your book. Do not show the recipes. If others learn how you make the goods, you get competitors. Keep everything secret.", -1, ""),
-			new CartelManualPage("2. Travka", "Plant a fern. When it grows, break it: Travka may drop. Bone meal makes the fern grow immediately.", 0, ""),
-			new CartelManualPage("3. Drying", "Raw Travka is not used in recipes.", 1, "Furnace: 1 Travka -> 1 Dried Travka."),
-			new CartelManualPage("4. Joint", "Table: 3 paper on top, 3 Dried Travka in the middle row, 3 paper below. Output: Joint.", 2, ""),
-			new CartelManualPage("5. Lighting", "Flint and steel can be in either hand. Hold the Joint in the other hand and right click. A successful light consumes the flint and steel.", -1, ""),
-			new CartelManualPage("6. Cocaine", "The cauldron must hold water.", 3, "Throw meal and Travka 1:1. Each pair gives 1 Cocaine."),
-			new CartelManualPage("7. Batches", "Each operation spends some cauldron water. You can load many at once: 10 bone meal + 10 Dried Travka = 10 Cocaine. Keep the 1:1 ratio and refill water.", -1, ""),
-			new CartelManualPage("8. Mundane Potion", "In a brewing stand, place a water bottle and add any listed ingredient: spider eye, glistering melon slice, sugar, blaze powder, magma cream, ghast tear, rabbit foot, breeze rod, slime block, stone, or cobweb.", -1, ""),
-			new CartelManualPage("9. Potion Scheme", "", 4, "Water bottle below, ingredient above. Result: Mundane Potion for Methadone."),
-			new CartelManualPage("10. Methadone", "Methadone is brewed in a stand.", 5, "Potion below, Cocaine above. After brewing, you get Methadone."),
-			new CartelManualPage("11. Using It", "Methadone is drunk like a normal potion: hold it and right click. The stand holds up to three bottles, so batches are better than single runs.", -1, ""),
-			new CartelManualPage("12. Summary", "Fern or bone meal -> Travka. Furnace -> Dried Travka. Table: paper top and bottom, three Travka in middle -> Joint. Cauldron: meal + Travka 1:1 -> Cocaine. Stand: Mundane Potion + Cocaine -> Methadone.", -1, "")
+			new CartelManualPage("1. Personal Book", "This is your PERSONAL book. Do not show the recipes. If others learn how you make the goods, they can compete with you. The crafts work for everyone, but ONLY YOU know them.", -1, ""),
+			new CartelManualPage("2. Travka", "Plant a normal fern. When it grows, it has a chance to drop Travka. Bone meal speeds up the growth.", 0, ""),
+			new CartelManualPage("3. Drying", "Raw Travka is not good for recipes. Dry it in a furnace to make quality goods.", 1, ""),
+			new CartelManualPage("4. Joint", "Put 3 papers on the top and bottom rows. Put 3 Dried Travka in the center row. Output: Joint.", 2, ""),
+			new CartelManualPage("5. Lighting Up", "Hold flint and steel in one hand and the Joint in the other. Right-click to light it. Hold right-click to take a drag: the longer the drag, the more smoke.", -1, ""),
+			new CartelManualPage("6. Cocaine", "Add Dried Travka and bone meal to a water cauldron in a 1:1 ratio. Result: Cocaine.", 3, ""),
+			new CartelManualPage("7. Batches", "Each operation spends some cauldron water. It is better to load many ingredients at once, for example: 16 bone meal + 16 Dried Travka = 16 Cocaine. A full cauldron is enough for 48 Cocaine, but small batches waste water faster.", -1, ""),
+			new CartelManualPage("8. Mundane Potion", "In a brewing stand: water bottle + any ingredient from the list: spider eye, glistering melon slice, sugar, blaze powder, magma cream, ghast tear, rabbit foot, breeze rod, slime block, stone, or cobweb.", -1, ""),
+			new CartelManualPage("9. Methadone", "Brew it in a brewing stand. Add Cocaine to a Mundane Potion. Output: Methadone.", 4, ""),
+			new CartelManualPage("10. Addiction", "Methadone gives you positive effects. For others, it gives addiction. Their first injections cause negative effects; later ones become positive. If an addicted player goes too long without injecting Methadone, withdrawal begins.", -1, "")
 	};
-
 	private static CartelManualPage[] cartelManualPages(ServerPlayer player) {
 		return cartelBookLanguage(player) == CartelBookLanguage.EN
 				? CARTEL_MANUAL_PAGES_EN
