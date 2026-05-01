@@ -4,7 +4,6 @@ import com.lostglade.client.RendererBotClientCapture;
 import com.lostglade.client.RendererBotClientMode;
 import com.lostglade.client.RendererBotShadowWorldManager;
 import com.lostglade.client.RendererBotClientVideoRecording;
-import com.lostglade.network.DronePayloads;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.server.CameraMediaCache;
 import net.fabricmc.api.ClientModInitializer;
@@ -14,7 +13,6 @@ public class Lg2Client implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		CameraMediaCache.initialize(FabricLoader.getInstance().getGameDir());
-		DronePayloads.registerPayloadTypes();
 		RendererBotPayloads.registerPayloadTypes();
 		RendererBotClientMode.register();
 		RendererBotShadowWorldManager.register();

@@ -3,7 +3,6 @@ package com.lostglade;
 import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.config.RaceConfig;
-import com.lostglade.network.DronePayloads;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.server.ServerGlitchSystem;
 import com.lostglade.server.ServerBackroomsSystem;
@@ -66,7 +65,6 @@ public class Lg2 implements ModInitializer {
 		RendererBotProcessSystem.preflightServerProperties();
 		RaceConfig.load();
 		PolymerResourcePackUtils.addModAssets(MOD_ID);
-		DronePayloads.registerPayloadTypes();
 		RendererBotPayloads.registerPayloadTypes();
 
 		ModItems.register();

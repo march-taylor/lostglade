@@ -172,6 +172,22 @@ tasks.withType(JavaCompile).configureEach {
 	it.options.release = 21
 }
 
+tasks.named("test", Test) {
+	failOnNoDiscoveredTests = false
+}
+
+tasks.register("runDronePhysicsSimulationTest", JavaExec) {
+	group = "verification"
+	description = "Runs the standalone drone physics simulation checks."
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = "com.lostglade.server.DronePhysicsSimulationTest"
+	dependsOn(tasks.named("testClasses"))
+}
+
+tasks.named("check") {
+	dependsOn(tasks.named("runDronePhysicsSimulationTest"))
+}
+
 java {
 	// Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
 	// if it is present.

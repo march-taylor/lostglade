@@ -42,7 +42,8 @@ public abstract class ServerGamePacketListenerDroneControlMixin {
 		if (packet == null || !DroneSystem.isControllingDrone(this.player)) {
 			return;
 		}
-		DroneSystem.handleControlledAcceptTeleportPacket(this.player, packet.getId());
-		ci.cancel();
+		if (DroneSystem.handleControlledAcceptTeleportPacket(this.player, packet.getId())) {
+			ci.cancel();
+		}
 	}
 }

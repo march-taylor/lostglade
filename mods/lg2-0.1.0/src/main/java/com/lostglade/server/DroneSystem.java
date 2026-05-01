@@ -1,22 +1,12 @@
 package com.lostglade.server;
 
-import com.google.common.collect.ImmutableMultimap;
 import com.lostglade.Lg2;
 import com.lostglade.item.DroneItem;
 import com.lostglade.item.ModItems;
 import com.lostglade.mixin.ClientboundSetPassengersPacketAccessor;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
 import com.lostglade.mixin.EntityPassengerAccessor;
-import com.lostglade.mixin.PlayerTrackedDataAccessor;
-import com.lostglade.mixin.ServerCommonPacketListenerImplAccessor;
-import com.lostglade.mixin.ServerGamePacketListenerImplAccessor;
-import com.lostglade.network.DronePayloads;
 import com.lostglade.server.map.MapImageRenderSystem;
-import com.mojang.authlib.GameProfile;
-import com.mojang.authlib.properties.PropertyMap;
-import com.mojang.datafixers.util.Pair;
-import eu.pb4.polymer.core.api.entity.PolymerEntity;
-import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import com.mojang.math.Transformation;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
@@ -26,17 +16,12 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.lionarius.skinrestorer.SkinRestorer;
-import net.lionarius.skinrestorer.skin.SkinStorage;
-import net.lionarius.skinrestorer.skin.SkinValue;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
-import net.minecraft.network.chat.RemoteChatSession;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
@@ -45,9 +30,6 @@ import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
-import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
-import net.minecraft.network.protocol.game.ClientboundGameEventPacket;
-import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
@@ -59,52 +41,39 @@ import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ChunkTrackingView;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.server.network.CommonListenerCookie;
-import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
-import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.entity.EquipmentSlot;
-import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.Interaction;
 import net.minecraft.world.entity.MoverType;
-import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.player.Input;
-import net.minecraft.world.entity.player.Abilities;
-import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
-import net.minecraft.world.entity.ai.navigation.PathNavigation;
 import net.minecraft.world.entity.item.PrimedTnt;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
-import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
-import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -121,8 +90,6 @@ public final class DroneSystem {
 	private static final String DRONE_DISPLAY_OWNER_TAG_PREFIX = "lg2_drone_display_owner_";
 	private static final String DRONE_CAMERA_TAG = "lg2_drone_camera_anchor";
 	private static final String DRONE_CAMERA_OWNER_TAG_PREFIX = "lg2_drone_camera_owner_";
-	private static final String DRONE_CONTROLLED_PROXY_TAG = "lg2_drone_controlled_proxy";
-	private static final String DRONE_DUMMY_TAG = "lg2_drone_dummy";
 	private static final Identifier DRONE_LOOP_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_loop");
 	private static final Identifier DRONE_KAMIKAZE_LOOP_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_kamikaze_loop");
 	private static final Identifier DRONE_BREAK_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "entity.firework_rocket.blast");
@@ -132,15 +99,7 @@ public final class DroneSystem {
 	);
 	private static final double DRONE_CRASH_EQUIVALENT_FALL_BLOCKS = 3.25D;
 	private static final double DRONE_CRASH_REFERENCE_ACCELERATION = 0.04D;
-	private static final double DRONE_CONTROL_IMPACT_BREAK_DAMAGE = 1.0D;
-	private static final double DRONE_CONTROL_IMPACT_SAFE_NORMAL_SPEED = 0.22D;
-	private static final double DRONE_CONTROL_IMPACT_REFERENCE_NORMAL_SPEED = 0.40D;
-	private static final double DRONE_SURFACE_WEAR_BREAK_LEVEL = 1.0D;
 	private static final double DRONE_SURFACE_WEAR_DECAY_PER_TICK = 0.018D;
-	private static final double DRONE_SURFACE_WEAR_MIN_TANGENTIAL_SPEED = 0.16D;
-	private static final double DRONE_SURFACE_WEAR_BASE_GROUND_PRESSURE = 0.015D;
-	private static final double DRONE_SURFACE_WEAR_REFERENCE_PRESSURE = 0.24D;
-	private static final double DRONE_SURFACE_WEAR_MAX_DELTA_PER_TICK = 0.085D;
 	private static final int DRONE_SURFACE_WEAR_PARTICLE_INTERVAL_TICKS = 2;
 	private static final float DRONE_WIDTH = 0.95F;
 	private static final float DRONE_HEIGHT = 0.35F;
@@ -178,7 +137,6 @@ public final class DroneSystem {
 	private static final double UNCONTROLLED_SETTLED_VERTICAL_SPEED = 0.045D;
 	private static final int PLAYER_HOTBAR_MENU_SLOT_START = 36;
 	private static final int PLAYER_OFFHAND_MENU_SLOT = 45;
-	private static final byte ALL_PLAYER_SKIN_PARTS = (byte) 0x7F;
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
 	private static final long DRONE_HUD_REFRESH_TICKS = 2L;
 	private static final int DRONE_HUD_GRID_SIZE = 11;
@@ -197,8 +155,10 @@ public final class DroneSystem {
 	private static final byte ENTITY_FLAG_INVISIBLE = 0x20;
 	private static final byte ENTITY_FLAG_FALL_FLYING = (byte) 0x80;
 	private static final int CONTROLLED_VIEW_TELEPORT_ID_BASE = 1_000_000_000;
-	private static final double CONTROLLED_PROXY_RESYNC_DISTANCE_SQR = 0.55D * 0.55D;
-	private static final double CONTROLLED_PROXY_COLLISION_RESYNC_MARGIN = 0.02D;
+	private static final double CONTROLLED_OPERATOR_RESYNC_DISTANCE_SQR = 0.55D * 0.55D;
+	private static final double CONTROLLED_OPERATOR_COLLISION_RESYNC_MARGIN = 0.02D;
+	private static final double CONTROLLED_OPERATOR_VISUAL_DRIFT_RESYNC_DISTANCE_SQR = 1.35D * 1.35D;
+	private static final double CONTROLLED_DRONE_BLOCKED_MOVEMENT_EPSILON = 1.0E-5D;
 	private static final double DRONE_CONTROL_ANOMALOUS_MOVEMENT_SYNC_DISTANCE = DroneFlightPhysics.MAX_COMBINED_SPEED + 0.35D;
 	private static final double DRONE_CAMERA_ESCAPE_STEP = 0.04D;
 	private static final int DRONE_CAMERA_ESCAPE_XZ_RADIUS_STEPS = 4;
@@ -221,15 +181,10 @@ public final class DroneSystem {
 	private static final Map<UUID, UUID> DISPLAYS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UUID> CAMERA_ANCHORS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UncontrolledDroneState> UNCONTROLLED_DRONES = new HashMap<>();
-	private static final Map<UUID, UUID> CONTROLLED_PROXY_TO_CONTROLLER = new HashMap<>();
-	private static final Map<UUID, Vec3> CONTROLLED_OPERATOR_KNOCKBACK_VELOCITY = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_ARM_ALLOWED_TICK = new HashMap<>();
 	private static final Map<UUID, DroneDisplayWobbleState> DISPLAY_WOBBLE_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, Long> CAMERA_SUPPRESSED_UNTIL_TICK = new HashMap<>();
-	private static final Set<UUID> FORCED_CONTROLLED_PLAYERS = new HashSet<>();
-	private static final Map<UUID, ControlledInventorySnapshot> CONTROLLED_INVENTORY_SNAPSHOTS = new HashMap<>();
-	private static final Map<UUID, UUID> DUMMY_OWNER_BY_UUID = new HashMap<>();
 	private static final ThreadLocal<Boolean> CONTROLLED_OPERATOR_PACKET_REWRITE_BYPASS = ThreadLocal.withInitial(() -> false);
 
 	private DroneSystem() {
@@ -273,19 +228,13 @@ public final class DroneSystem {
 		ServerTickEvents.END_SERVER_TICK.register(DroneSystem::tick);
 		ServerEntityEvents.ENTITY_LOAD.register(DroneSystem::onEntityLoad);
 		ServerEntityEvents.ENTITY_UNLOAD.register(DroneSystem::onEntityUnload);
-		ServerPlayNetworking.registerGlobalReceiver(
-				DronePayloads.DroneCollisionSampleC2SPayload.TYPE,
-				(payload, context) -> context.server().execute(() ->
-						handleControlledClientCollisionSample(context.player(), payload)
-				)
-		);
-		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> stopControlling((ServerPlayer) handler.player, true, false));
-		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> stopControlling(newPlayer, false, false));
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> stopControlling((ServerPlayer) handler.player, false));
+		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> stopControlling(newPlayer, false));
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			for (UUID playerId : new ArrayList<>(ACTIVE_SESSIONS.keySet())) {
 				ServerPlayer player = server.getPlayerList().getPlayer(playerId);
 				if (player != null) {
-					stopControlling(player, true, false);
+					stopControlling(player, false);
 				}
 			}
 			ACTIVE_SESSIONS.clear();
@@ -294,13 +243,8 @@ public final class DroneSystem {
 			DISPLAYS_BY_DRONE.clear();
 			CAMERA_ANCHORS_BY_DRONE.clear();
 			UNCONTROLLED_DRONES.clear();
-			CONTROLLED_PROXY_TO_CONTROLLER.clear();
-			CONTROLLED_OPERATOR_KNOCKBACK_VELOCITY.clear();
 			NEXT_DRONE_ARM_ALLOWED_TICK.clear();
 			CAMERA_SUPPRESSED_UNTIL_TICK.clear();
-			FORCED_CONTROLLED_PLAYERS.clear();
-			CONTROLLED_INVENTORY_SNAPSHOTS.clear();
-			DUMMY_OWNER_BY_UUID.clear();
 			DISPLAY_WOBBLE_BY_DRONE.clear();
 		});
 	}
@@ -404,59 +348,6 @@ public final class DroneSystem {
 		return Objects.equals(CONTROLLERS_BY_DRONE.get(session.droneUuid()), player.getUUID());
 	}
 
-	public static boolean isControlledDroneProxy(ServerPlayer player) {
-		if (player == null) {
-			return false;
-		}
-		if (CONTROLLED_PROXY_TO_CONTROLLER.containsKey(player.getUUID())) {
-			return true;
-		}
-		if (player.getTags().contains(DRONE_CONTROLLED_PROXY_TAG)) {
-			return true;
-		}
-		for (DroneControlSession session : ACTIVE_SESSIONS.values()) {
-			if (session != null && session.controlledProxyPlayer() == player) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	public static boolean shouldSkipChunkTrackingMove(ServerPlayer player) {
-		if (player == null) {
-			return true;
-		}
-		if (isControlledDroneProxy(player)) {
-			return true;
-		}
-		MinecraftServer server = player.level() != null ? player.level().getServer() : null;
-		if (server == null || server.getPlayerList() == null) {
-			return false;
-		}
-		ServerPlayer listed = server.getPlayerList().getPlayer(player.getUUID());
-		return listed != player;
-	}
-
-	public static boolean shouldApplyDroneTravelToPlayer(ServerPlayer player) {
-		return isControlledDroneProxy(player);
-	}
-
-	public static void recordControlledOperatorKnockback(ServerPlayer player, Vec3 velocity) {
-		if (player == null || velocity == null || !isControllingDrone(player) || velocity.lengthSqr() <= 1.0E-5D) {
-			return;
-		}
-		CONTROLLED_OPERATOR_KNOCKBACK_VELOCITY.put(player.getUUID(), velocity);
-		player.hurtMarked = true;
-	}
-
-	public static Vec3 consumeControlledOperatorKnockback(ServerPlayer player) {
-		if (player == null) {
-			return Vec3.ZERO;
-		}
-		Vec3 velocity = CONTROLLED_OPERATOR_KNOCKBACK_VELOCITY.remove(player.getUUID());
-		return velocity == null ? Vec3.ZERO : velocity;
-	}
-
 	public static void handleControlledMovePacket(ServerPlayer player, ServerboundMovePlayerPacket packet) {
 		if (player == null || packet == null) {
 			return;
@@ -465,79 +356,29 @@ public final class DroneSystem {
 		if (session == null) {
 			return;
 		}
-		ServerGamePacketListenerImpl proxyListener = session.controlledProxyListener();
-		ServerPlayer proxyPlayer = session.controlledProxyPlayer();
-		if (proxyListener == null || proxyPlayer == null) {
-			return;
-		}
-		alignControlledProxyHitbox(proxyPlayer);
-		applyControlledProxyRotationFromPacket(proxyPlayer, packet);
-		alignControlledProxyHitbox(proxyPlayer);
-		syncControlledProxyShellState(session, proxyPlayer);
+		recordControlledOperatorVisualPosition(session, packet);
+		applyControlledRotationFromPacket(session, packet);
 	}
 
-	public static void handleControlledClientCollisionSample(
-			ServerPlayer player,
-			DronePayloads.DroneCollisionSampleC2SPayload payload
-	) {
-		if (player == null || payload == null || !isControllingDrone(player)) {
-			return;
-		}
-		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
-		if (session == null) {
-			return;
-		}
-		Vec3 intendedMovement = readClientCollisionVector(payload.intendedX(), payload.intendedY(), payload.intendedZ());
-		Vec3 actualMovement = readClientCollisionVector(payload.actualX(), payload.actualY(), payload.actualZ());
-		if (intendedMovement == null || actualMovement == null) {
-			return;
-		}
-		MinecraftServer server = player.level() == null ? null : player.level().getServer();
-		Entity root = server == null ? null : findDroneRoot(server, session.droneDimension(), session.droneUuid());
-		if (root == null || !root.isAlive()) {
-			stopControlling(player, true, true);
-			return;
-		}
-		float impactDamage = computeControlledClientImpactDamage(
-				intendedMovement,
-				actualMovement,
-				payload.horizontalCollision(),
-				payload.verticalCollision() || payload.onGround()
-		);
-		long gameTime = player.level() == null ? Long.MIN_VALUE : player.level().getGameTime();
-		if (impactDamage > DRONE_CONTROL_IMPACT_BREAK_DAMAGE
-				|| updateControlledDroneSurfaceWear(session, root, intendedMovement, actualMovement, payload.onGround(), gameTime)) {
-			destroyControlledDroneFromClientCollision(player, session, root);
-		}
-	}
-
-	private static void destroyControlledDroneFromClientCollision(ServerPlayer player, DroneControlSession session, Entity root) {
+	private static void destroyControlledDroneFromImpact(ServerPlayer player, DroneControlSession session, Entity root) {
 		if (player == null || session == null || root == null || !root.isAlive()) {
 			return;
 		}
 		destroyDrone(root, null, false);
-		stopControlling(player, true, true);
+		if (ACTIVE_SESSIONS.containsKey(player.getUUID())) {
+			stopControlling(player, true, false);
+		}
 	}
 
-	public static void handleControlledAcceptTeleportPacket(ServerPlayer player, int teleportId) {
+	public static boolean handleControlledAcceptTeleportPacket(ServerPlayer player, int teleportId) {
 		if (player == null) {
-			return;
+			return false;
 		}
 		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
 		if (session == null) {
-			return;
+			return false;
 		}
-		if (teleportId >= CONTROLLED_VIEW_TELEPORT_ID_BASE) {
-			session.setLastAcceptedProxyTeleportId(teleportId);
-			return;
-		}
-		ServerGamePacketListenerImpl proxyListener = session.controlledProxyListener();
-		if (proxyListener == null) {
-			return;
-		}
-		runWithControlledOperatorPacketRewriteBypass(() ->
-				proxyListener.handleAcceptTeleportPacket(new net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket(teleportId))
-		);
+		return teleportId >= CONTROLLED_VIEW_TELEPORT_ID_BASE;
 	}
 
 	public static ChunkTrackingView createVirtualChunkTrackingView(ServerPlayer player) {
@@ -605,20 +446,8 @@ public final class DroneSystem {
 			return changed ? (rewrittenPackets.isEmpty() ? null : new ClientboundBundlePacket(rewrittenPackets)) : packet;
 		}
 
-		if (packet instanceof ClientboundGameEventPacket gameEventPacket
-				&& gameEventPacket.getEvent() == ClientboundGameEventPacket.CHANGE_GAME_MODE) {
-			return new ClientboundGameEventPacket(
-					ClientboundGameEventPacket.CHANGE_GAME_MODE,
-					GameType.SPECTATOR.getId()
-			);
-		}
-
-		if (packet instanceof ClientboundPlayerAbilitiesPacket) {
-			return new ClientboundPlayerAbilitiesPacket(buildControlledOperatorAbilities(receiver));
-		}
-
-		if (packet instanceof ClientboundPlayerPositionPacket) {
-			return buildControlledPlayerPositionPacket(session);
+		if (packet instanceof ClientboundPlayerPositionPacket playerPositionPacket) {
+			return buildControlledPlayerPositionPacket(session, playerPositionPacket.id());
 		}
 
 		if (packet instanceof ClientboundSetEntityMotionPacket entityMotionPacket
@@ -787,24 +616,24 @@ public final class DroneSystem {
 		);
 	}
 
-	public static void applyControlledTravel(ServerPlayer player) {
-		if (player == null) {
-			return;
-		}
-		DroneControlSession session = resolveDroneControlSession(player);
-		ServerPlayer controller = resolveDroneController(player);
-		if (session == null || controller == null) {
+	private static void applyControlledDroneTravel(
+			ServerPlayer controller,
+			Entity root,
+			DroneControlSession session,
+			DroneInputState input
+	) {
+		if (controller == null || root == null || session == null) {
 			return;
 		}
 		int controlSpeedSlot = getControlSpeedSlot(controller);
 		double driveStep = getControlDriveStep(controlSpeedSlot);
+		DroneInputState controlInput = input == null ? DroneInputState.EMPTY : input;
 
-		DroneInputState input = INPUTS.getOrDefault(controller.getUUID(), DroneInputState.EMPTY);
 		session.setForwardDrive(
 				DroneFlightPhysics.adjustDrive(
 						session.forwardDrive(),
-						input.forward(),
-						input.backward(),
+						controlInput.forward(),
+						controlInput.backward(),
 						driveStep,
 						DroneFlightPhysics.MAX_FORWARD_DRIVE
 				)
@@ -812,96 +641,70 @@ public final class DroneSystem {
 		session.setStrafeDrive(
 				DroneFlightPhysics.adjustDrive(
 						session.strafeDrive(),
-						input.right(),
-						input.left(),
+						controlInput.right(),
+						controlInput.left(),
 						driveStep,
 						DroneFlightPhysics.MAX_STRAFE_DRIVE
 				)
 		);
 
-		ensureControlledProxyState(player);
-		alignControlledProxyHitbox(player);
-
 		Vec3 nextVelocity = DroneFlightPhysics.step(
-				player.getXRot(),
-				player.getYRot(),
+				session.proxyPitch(),
+				session.proxyYaw(),
 				session.forwardDrive(),
 				session.strafeDrive()
 		);
-		Vec3 startPos = player.position();
-		player.setDeltaMovement(nextVelocity);
-		player.move(MoverType.SELF, nextVelocity);
-		Vec3 actualVelocity = player.position().subtract(startPos);
-		player.setDeltaMovement(actualVelocity);
+
+		prepareControlledDroneBody(root);
+		Vec3 startPos = root.position();
+		root.setDeltaMovement(nextVelocity);
+		root.move(MoverType.SELF, nextVelocity);
+		Vec3 actualVelocity = root.position().subtract(startPos);
+		root.setBoundingBox(droneBoxAt(root.position()));
+		root.setYRot(session.proxyYaw());
+		root.setXRot(session.proxyPitch());
+		root.setDeltaMovement(actualVelocity);
+		root.hurtMarked = true;
+
 		session.setIntendedVelocity(nextVelocity);
 		session.setVelocity(actualVelocity);
-		player.hurtMarked = true;
+		session.setProxyPos(root.position());
 	}
 
-	private static void alignControlledProxyHitbox(ServerPlayer player) {
-		if (player == null || !isControlledDroneProxy(player)) {
+	private static void prepareControlledDroneBody(Entity root) {
+		if (root == null) {
 			return;
 		}
-		player.setBoundingBox(droneBoxAt(player.position()));
+		root.setNoGravity(true);
+		root.noPhysics = false;
+		root.fallDistance = 0.0F;
+		root.setBoundingBox(droneBoxAt(root.position()));
 	}
 
-	private static void applyControlledProxyRotationFromPacket(ServerPlayer proxyPlayer, ServerboundMovePlayerPacket packet) {
-		if (proxyPlayer == null || packet == null || !packet.hasRotation()) {
+	private static void applyControlledRotationFromPacket(DroneControlSession session, ServerboundMovePlayerPacket packet) {
+		if (session == null || packet == null || !packet.hasRotation()) {
 			return;
 		}
-		float yaw = packet.getYRot(proxyPlayer.getYRot());
-		float pitch = net.minecraft.util.Mth.clamp(packet.getXRot(proxyPlayer.getXRot()), -90.0F, 90.0F);
-		proxyPlayer.setYRot(yaw);
-		proxyPlayer.setXRot(pitch);
-		proxyPlayer.setYHeadRot(yaw);
-		proxyPlayer.setYBodyRot(yaw);
+		session.setProxyYaw(packet.getYRot(session.proxyYaw()));
+		session.setProxyPitch(net.minecraft.util.Mth.clamp(packet.getXRot(session.proxyPitch()), -90.0F, 90.0F));
 	}
 
-	private static DroneControlSession resolveDroneControlSession(ServerPlayer player) {
-		if (player == null) {
-			return null;
-		}
-		if (isControllingDrone(player)) {
-			return ACTIVE_SESSIONS.get(player.getUUID());
-		}
-		UUID controllerId = CONTROLLED_PROXY_TO_CONTROLLER.get(player.getUUID());
-		return controllerId == null ? null : ACTIVE_SESSIONS.get(controllerId);
-	}
-
-	private static ServerPlayer resolveDroneController(ServerPlayer player) {
-		if (player == null) {
-			return null;
-		}
-		if (isControllingDrone(player)) {
-			return player;
-		}
-		UUID controllerId = CONTROLLED_PROXY_TO_CONTROLLER.get(player.getUUID());
-		if (controllerId == null) {
-			return null;
-		}
-		MinecraftServer server = player.level() != null ? player.level().getServer() : null;
-		return server == null ? null : server.getPlayerList().getPlayer(controllerId);
-	}
-
-	private static void syncControlledProxyShellState(DroneControlSession session, ServerPlayer proxyPlayer) {
-		if (session == null || proxyPlayer == null) {
+	private static void recordControlledOperatorVisualPosition(DroneControlSession session, ServerboundMovePlayerPacket packet) {
+		if (session == null || packet == null || !packet.hasPosition()) {
 			return;
 		}
-		session.setProxyPos(proxyPlayer.position());
-		session.setProxyYaw(proxyPlayer.getYRot());
-		session.setProxyPitch(proxyPlayer.getXRot());
-	}
-
-	private static void syncControlledProxyListenerTickState(ServerPlayer controller, DroneControlSession session) {
-		if (controller == null || controller.connection == null || session == null || session.controlledProxyListener() == null) {
+		Vec3 expected = session.proxyPos();
+		Vec3 reported = new Vec3(
+				packet.getX(expected.x),
+				packet.getY(expected.y),
+				packet.getZ(expected.z)
+		);
+		if (!Double.isFinite(reported.x) || !Double.isFinite(reported.y) || !Double.isFinite(reported.z)) {
 			return;
 		}
-		ServerGamePacketListenerImplAccessor controllerAccessor = (ServerGamePacketListenerImplAccessor) controller.connection;
-		ServerGamePacketListenerImplAccessor proxyAccessor = (ServerGamePacketListenerImplAccessor) session.controlledProxyListener();
-		proxyAccessor.lg2$setTickCount(Math.max(1, controllerAccessor.lg2$getTickCount()));
-		proxyAccessor.lg2$setKnownMovePacketCount(proxyAccessor.lg2$getReceivedMovePacketCount());
-		session.controlledProxyListener().resetPosition();
-		session.controlledProxyListener().resetFlyingTicks();
+		if (reported.subtract(expected).lengthSqr() > CONTROLLED_OPERATOR_VISUAL_DRIFT_RESYNC_DISTANCE_SQR) {
+			session.requestPositionSync();
+		}
 	}
 
 	public static boolean isDroneEntity(Entity entity) {
@@ -920,7 +723,6 @@ public final class DroneSystem {
 		tickControlledSessions(server);
 		tickUncontrolledDrones(server);
 		cleanupExpiredCameraSuppression(server);
-		recoverOrphanedControlledPlayers(server);
 		recoverPlayersWithStaleDronePassenger(server);
 	}
 
@@ -957,12 +759,8 @@ public final class DroneSystem {
 				continue;
 			}
 			detachAnyDronePassengersFromController(player);
-			clearForcedControlMovementState(player);
 			markCameraSuppressedForPlayer(player);
-			spoofClientGameMode(player, resolveServerGameMode(player));
-			restoreControlledInventoryIfNeeded(player);
 			setHotbarVisualHidden(player, false);
-			broadcastDronePilotEquipmentHidden(player, false);
 			refreshControlledOperatorActualView(player);
 		}
 	}
@@ -975,30 +773,6 @@ public final class DroneSystem {
 				player.getUUID(),
 				player.level().getGameTime() + DRONE_CAMERA_SUPPRESS_AFTER_CONTROL_TICKS
 		);
-	}
-
-	private static void recoverOrphanedControlledPlayers(MinecraftServer server) {
-		if (server == null || FORCED_CONTROLLED_PLAYERS.isEmpty()) {
-			return;
-		}
-		for (UUID playerId : new ArrayList<>(FORCED_CONTROLLED_PLAYERS)) {
-			if (playerId == null || ACTIVE_SESSIONS.containsKey(playerId)) {
-				continue;
-			}
-			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
-			if (player == null) {
-				FORCED_CONTROLLED_PLAYERS.remove(playerId);
-				continue;
-			}
-			clearForcedControlMovementState(player);
-			detachAnyDronePassengersFromController(player);
-			spoofClientGameMode(player, resolveServerGameMode(player));
-			restoreControlledInventoryIfNeeded(player);
-			setHotbarVisualHidden(player, false);
-			broadcastDronePilotEquipmentHidden(player, false);
-			refreshControlledOperatorActualView(player);
-			FORCED_CONTROLLED_PLAYERS.remove(playerId);
-		}
 	}
 
 	private static void tickControlledSessions(MinecraftServer server) {
@@ -1014,21 +788,21 @@ public final class DroneSystem {
 
 			Entity root = findDroneRoot(server, session.droneDimension(), session.droneUuid());
 			if (root == null || !root.isAlive()) {
-				stopControlling(player, true, true);
+				stopControlling(player, true);
 				continue;
 			}
 			if (!player.isAlive() || player.isSpectator()) {
-				stopControlling(player, false, false);
+				stopControlling(player, false);
 				continue;
 			}
 			if (!Objects.equals(CONTROLLERS_BY_DRONE.get(session.droneUuid()), player.getUUID())) {
-				stopControlling(player, true, false);
+				stopControlling(player, false);
 				continue;
 			}
 
 			DroneInputState input = INPUTS.getOrDefault(player.getUUID(), DroneInputState.EMPTY);
 			if (input.shift()) {
-				stopControlling(player, true, true);
+				stopControlling(player, true);
 				continue;
 			}
 			tickControlledDrone(player, root, session, input);
@@ -1052,7 +826,7 @@ public final class DroneSystem {
 				continue;
 			}
 
-			// If someone is actively controlling the drone, it should follow the operator proxy, not uncontrolled physics.
+			// If someone is actively controlling the drone, controlled physics owns the root body.
 			if (isDroneActivelyControlled(root)) {
 				UNCONTROLLED_DRONES.remove(entry.getKey());
 				continue;
@@ -1067,34 +841,18 @@ public final class DroneSystem {
 			return;
 		}
 
-		ServerPlayer proxyPlayer = session.controlledProxyPlayer();
-		ServerGamePacketListenerImpl proxyListener = session.controlledProxyListener();
-		if (proxyPlayer == null || proxyListener == null || proxyPlayer.level() != root.level()) {
-			stopControlling(player, true, true);
-			return;
-		}
-
-		syncControlledProxyListenerTickState(player, session);
-		applyControlledTravel(proxyPlayer);
-		Vec3 currentPos = proxyPlayer.position();
+		applyControlledDroneTravel(player, root, session, input);
 		Vec3 intendedMovement = session.intendedVelocity();
 		Vec3 actualMovement = session.velocity();
 		Vec3 visualMovement = controlledOperatorVisualVelocity(session);
-		float yaw = proxyPlayer.getYRot();
-		float pitch = proxyPlayer.getXRot();
-		root.noPhysics = true;
-		root.setPos(currentPos.x, currentPos.y, currentPos.z);
-		root.setYRot(yaw);
-		root.setXRot(pitch);
+		float yaw = session.proxyYaw();
+		float pitch = session.proxyPitch();
 		root.setDeltaMovement(visualMovement);
 		root.hurtMarked = true;
-		if (handleControlledServerCollision(player, root, session, proxyPlayer, intendedMovement, actualMovement)) {
+		if (handleControlledServerCollision(player, root, session, intendedMovement, actualMovement)) {
 			return;
 		}
-		syncControlledProxyShellState(session, proxyPlayer);
-		proxyListener.resetPosition();
 		syncDroneCameraAnchor(root, visualMovement);
-		session.setLastPlayerPos(currentPos);
 		maybePlayDroneLoopSound(root, session.forwardDrive(), session.strafeDrive(), true);
 		setHotbarVisualHidden(player, true);
 		decayControlledDroneSurfaceWear(session, root.level().getGameTime());
@@ -1108,7 +866,7 @@ public final class DroneSystem {
 				session.displayStrafeDrive(),
 				session.strafeDrive()
 		);
-		boolean forcePositionSync = shouldForceControlledOperatorPositionSync(
+		boolean forcePositionSync = session.consumeRequestedPositionSync() || shouldForceControlledOperatorPositionSync(
 				intendedMovement,
 				actualMovement
 		);
@@ -1123,32 +881,78 @@ public final class DroneSystem {
 			ServerPlayer player,
 			Entity root,
 			DroneControlSession session,
-			ServerPlayer proxyPlayer,
 			Vec3 intendedMovement,
 			Vec3 actualMovement
 	) {
-		if (player == null || root == null || session == null || proxyPlayer == null) {
+		if (player == null || root == null || session == null) {
 			return false;
 		}
-		boolean horizontalCollision = proxyPlayer.horizontalCollision;
-		boolean verticalCollision = proxyPlayer.verticalCollision || proxyPlayer.onGround();
-		if (!horizontalCollision && !verticalCollision && !proxyPlayer.onGround()) {
+		boolean horizontalCollision = root.horizontalCollision || hasBlockedHorizontalMovement(intendedMovement, actualMovement);
+		boolean verticalCollisionBelow = root.verticalCollisionBelow || hasBlockedDownwardMovement(intendedMovement, actualMovement);
+		boolean verticalCollision = DroneImpactModel.hasMeaningfulVerticalCollision(
+				intendedMovement,
+				actualMovement,
+				root.verticalCollision || hasBlockedVerticalMovement(intendedMovement, actualMovement),
+				verticalCollisionBelow
+		);
+		boolean groundContact = DroneImpactModel.hasVerifiedGroundWearContact(
+				intendedMovement,
+				actualMovement,
+				verticalCollisionBelow,
+				hasSupportingBlockBelow(root)
+		);
+		if (!horizontalCollision && !verticalCollision && !groundContact) {
 			return false;
 		}
 
-		float impactDamage = computeControlledClientImpactDamage(
+		float impactDamage = DroneImpactModel.computeImpactDamage(
 				intendedMovement,
 				actualMovement,
 				horizontalCollision,
 				verticalCollision
 		);
 		long gameTime = root.level() == null ? Long.MIN_VALUE : root.level().getGameTime();
-		if (impactDamage > DRONE_CONTROL_IMPACT_BREAK_DAMAGE
-				|| updateControlledDroneSurfaceWear(session, root, intendedMovement, actualMovement, proxyPlayer.onGround(), gameTime)) {
-			destroyControlledDroneFromClientCollision(player, session, root);
+		if (impactDamage > DroneImpactModel.CONTROL_IMPACT_BREAK_DAMAGE
+				|| updateControlledDroneSurfaceWear(session, root, intendedMovement, actualMovement, groundContact, gameTime)) {
+			destroyControlledDroneFromImpact(player, session, root);
 			return true;
 		}
 		return false;
+	}
+
+	private static boolean hasBlockedHorizontalMovement(Vec3 intendedMovement, Vec3 actualMovement) {
+		if (intendedMovement == null || actualMovement == null) {
+			return false;
+		}
+		double blockedX = intendedMovement.x - actualMovement.x;
+		double blockedZ = intendedMovement.z - actualMovement.z;
+		double epsilonSqr = CONTROLLED_DRONE_BLOCKED_MOVEMENT_EPSILON * CONTROLLED_DRONE_BLOCKED_MOVEMENT_EPSILON;
+		return blockedX * blockedX + blockedZ * blockedZ > epsilonSqr;
+	}
+
+	private static boolean hasBlockedVerticalMovement(Vec3 intendedMovement, Vec3 actualMovement) {
+		if (intendedMovement == null || actualMovement == null) {
+			return false;
+		}
+		return Math.abs(intendedMovement.y - actualMovement.y) > CONTROLLED_DRONE_BLOCKED_MOVEMENT_EPSILON;
+	}
+
+	private static boolean hasBlockedDownwardMovement(Vec3 intendedMovement, Vec3 actualMovement) {
+		if (intendedMovement == null || actualMovement == null) {
+			return false;
+		}
+		return intendedMovement.y < actualMovement.y - CONTROLLED_DRONE_BLOCKED_MOVEMENT_EPSILON;
+	}
+
+	private static boolean hasSupportingBlockBelow(Entity entity) {
+		if (entity == null || entity.level() == null) {
+			return false;
+		}
+		AABB box = entity.getBoundingBox();
+		if (box == null) {
+			return false;
+		}
+		return !entity.level().noCollision(box.move(0.0D, -1.0E-4D, 0.0D));
 	}
 
 	private static boolean shouldForceControlledOperatorPositionSync(
@@ -1159,12 +963,12 @@ public final class DroneSystem {
 			return false;
 		}
 		double maxExpectedMovement = Math.max(intendedMovement.length(), DroneFlightPhysics.MAX_COMBINED_SPEED)
-				+ CONTROLLED_PROXY_COLLISION_RESYNC_MARGIN;
+				+ CONTROLLED_OPERATOR_COLLISION_RESYNC_MARGIN;
 		double anomalousMovement = Math.max(maxExpectedMovement, DRONE_CONTROL_ANOMALOUS_MOVEMENT_SYNC_DISTANCE);
 		if (actualMovement.lengthSqr() <= anomalousMovement * anomalousMovement) {
 			return false;
 		}
-		return actualMovement.subtract(intendedMovement).lengthSqr() > CONTROLLED_PROXY_RESYNC_DISTANCE_SQR;
+		return actualMovement.subtract(intendedMovement).lengthSqr() > CONTROLLED_OPERATOR_RESYNC_DISTANCE_SQR;
 	}
 
 	private static void tickUncontrolledDrone(Entity root, UncontrolledDroneState state) {
@@ -1272,107 +1076,38 @@ public final class DroneSystem {
 		return crashEnergy / (2.0D * DRONE_CRASH_REFERENCE_ACCELERATION);
 	}
 
-	private static Vec3 readClientCollisionVector(double x, double y, double z) {
-		if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) {
-			return null;
-		}
-		return new Vec3(x, y, z);
-	}
-
-	private static float computeControlledClientImpactDamage(
-			Vec3 intendedMovement,
-			Vec3 actualMovement,
-			boolean horizontalCollision,
-			boolean verticalCollision
-	) {
-		DroneCollisionForces forces = computeDroneCollisionForces(
-				intendedMovement,
-				actualMovement,
-				horizontalCollision,
-				verticalCollision
-		);
-		if (forces.normalSpeed() <= DRONE_CONTROL_IMPACT_SAFE_NORMAL_SPEED) {
-			return 0.0F;
-		}
-
-		double angleSeverity = Math.pow(forces.angleFactor(), 0.65D);
-		double normalSeverity = (forces.normalSpeed() - DRONE_CONTROL_IMPACT_SAFE_NORMAL_SPEED)
-				/ DRONE_CONTROL_IMPACT_REFERENCE_NORMAL_SPEED;
-		double glancingForgiveness = net.minecraft.util.Mth.lerp(angleSeverity, 0.48D, 1.75D);
-		return (float) Math.max(0.0D, normalSeverity * glancingForgiveness);
-	}
-
 	private static boolean updateControlledDroneSurfaceWear(
 			DroneControlSession session,
 			Entity root,
 			Vec3 intendedMovement,
 			Vec3 actualMovement,
-			boolean onGround,
+			boolean verifiedGroundContact,
 			long gameTime
 	) {
-		if (session == null || intendedMovement == null || actualMovement == null || !onGround) {
+		if (session == null || intendedMovement == null || actualMovement == null || !verifiedGroundContact) {
 			return false;
 		}
 
-		DroneCollisionForces forces = computeDroneCollisionForces(
+		DroneImpactModel.SurfaceWear surfaceWear = DroneImpactModel.computeSurfaceWear(
 				intendedMovement,
 				actualMovement,
-				false,
 				true
 		);
-		double tangentialSpeed = Math.sqrt(actualMovement.x * actualMovement.x + actualMovement.z * actualMovement.z);
-		if (tangentialSpeed < DRONE_SURFACE_WEAR_MIN_TANGENTIAL_SPEED) {
+		if (surfaceWear.delta() <= 0.0D) {
 			return false;
 		}
 
-		double downwardPressure = Math.max(forces.normalSpeed(), DRONE_SURFACE_WEAR_BASE_GROUND_PRESSURE);
-		double speedFactor = net.minecraft.util.Mth.clamp(
-				(tangentialSpeed - DRONE_SURFACE_WEAR_MIN_TANGENTIAL_SPEED)
-						/ Math.max(0.001D, DroneFlightPhysics.MAX_COMBINED_SPEED - DRONE_SURFACE_WEAR_MIN_TANGENTIAL_SPEED),
-				0.0D,
-				1.0D
-		);
-		double pressureFactor = net.minecraft.util.Mth.clamp(
-				downwardPressure / DRONE_SURFACE_WEAR_REFERENCE_PRESSURE,
-				0.0D,
-				1.0D
-		);
-		double wearDelta = Math.min(
-				DRONE_SURFACE_WEAR_MAX_DELTA_PER_TICK,
-				(0.004D + 0.055D * pressureFactor) * speedFactor * speedFactor
-		);
 		session.setLastSurfaceWearContactTick(gameTime);
-		session.setSurfaceWear(Math.min(DRONE_SURFACE_WEAR_BREAK_LEVEL, session.surfaceWear() + wearDelta));
-		playDroneSurfaceWearEffects(root, actualMovement, speedFactor, pressureFactor, wearDelta, gameTime);
-		return session.surfaceWear() >= DRONE_SURFACE_WEAR_BREAK_LEVEL;
-	}
-
-	private static DroneCollisionForces computeDroneCollisionForces(
-			Vec3 intendedMovement,
-			Vec3 actualMovement,
-			boolean horizontalCollision,
-			boolean verticalCollision
-	) {
-		if (intendedMovement == null || actualMovement == null || (!horizontalCollision && !verticalCollision)) {
-			return DroneCollisionForces.NONE;
-		}
-
-		Vec3 blockedMovement = intendedMovement.subtract(actualMovement);
-		double horizontalNormalSq = horizontalCollision
-				? blockedMovement.x * blockedMovement.x + blockedMovement.z * blockedMovement.z
-				: 0.0D;
-		double verticalNormal = 0.0D;
-		if (verticalCollision) {
-			verticalNormal = Math.max(0.0D, actualMovement.y - intendedMovement.y);
-			if (verticalNormal <= 1.0E-6D && intendedMovement.y < 0.0D) {
-				verticalNormal = -intendedMovement.y;
-			}
-		}
-		double normalSpeed = Math.sqrt(horizontalNormalSq + verticalNormal * verticalNormal);
-		double intendedSpeed = intendedMovement.length();
-		double tangentialSpeed = Math.sqrt(Math.max(0.0D, intendedSpeed * intendedSpeed - normalSpeed * normalSpeed));
-		double angleFactor = normalSpeed / Math.max(1.0E-6D, normalSpeed + tangentialSpeed);
-		return new DroneCollisionForces(normalSpeed, tangentialSpeed, angleFactor);
+		session.setSurfaceWear(Math.min(DroneImpactModel.SURFACE_WEAR_BREAK_LEVEL, session.surfaceWear() + surfaceWear.delta()));
+		playDroneSurfaceWearEffects(
+				root,
+				actualMovement,
+				surfaceWear.speedFactor(),
+				surfaceWear.pressureFactor(),
+				surfaceWear.delta(),
+				gameTime
+		);
+		return session.surfaceWear() >= DroneImpactModel.SURFACE_WEAR_BREAK_LEVEL;
 	}
 
 	private static void playDroneSurfaceWearEffects(
@@ -1615,109 +1350,6 @@ public final class DroneSystem {
 		DISPLAY_WOBBLE_BY_DRONE.remove(root.getUUID());
 	}
 
-	private static ReturnLocation resolveReturnLocation(MinecraftServer server, DroneControlSession session, Entity dummy) {
-		if (server == null || session == null) {
-			return new ReturnLocation(null, null, 0.0F, 0.0F);
-		}
-		if (dummy != null && dummy.level() instanceof ServerLevel dummyLevel && dummy.isAlive()) {
-			return new ReturnLocation(dummyLevel, dummy.position(), dummy.getYRot(), dummy.getXRot());
-		}
-		ServerLevel origin = server.getLevel(session.originDimension());
-		return origin == null
-				? new ReturnLocation(null, null, session.originYaw(), session.originPitch())
-				: new ReturnLocation(origin, session.originPos(), session.originYaw(), session.originPitch());
-	}
-
-	private static void discardDummyIfPresent(MinecraftServer server, DroneControlSession session, Entity loadedDummy) {
-		if (server == null || session == null || session.dummyUuid() == null) {
-			return;
-		}
-		DUMMY_OWNER_BY_UUID.remove(session.dummyUuid());
-		if (loadedDummy != null) {
-			loadedDummy.discard();
-			return;
-		}
-		ServerLevel originLevel = server.getLevel(session.originDimension());
-		if (originLevel == null) {
-			return;
-		}
-		originLevel.getChunkAt(net.minecraft.core.BlockPos.containing(session.originPos()));
-		Entity dummy = findEntity(server, session.originDimension(), session.dummyUuid());
-		if (dummy != null) {
-			dummy.discard();
-		}
-	}
-
-	private static ServerPlayer createControlledProxyPlayer(ServerPlayer controller, ServerLevel droneLevel, Entity root) {
-		if (controller == null || droneLevel == null || root == null) {
-			return null;
-		}
-		GameProfile sourceProfile = controller.getGameProfile();
-		String profileName = sourceProfile == null || sourceProfile.name() == null || sourceProfile.name().isBlank()
-				? "DroneProxy"
-				: sourceProfile.name();
-		PropertyMap sourceProperties = sourceProfile != null
-				? new PropertyMap(ImmutableMultimap.copyOf(sourceProfile.properties()))
-				: new PropertyMap(ImmutableMultimap.of());
-		GameProfile proxyProfile = new GameProfile(UUID.randomUUID(), profileName, sourceProperties);
-
-		ServerPlayer proxyPlayer = new ServerPlayer(droneLevel.getServer(), droneLevel, proxyProfile, controller.clientInformation());
-		proxyPlayer.setPos(root.getX(), root.getY(), root.getZ());
-		proxyPlayer.setYRot(root.getYRot());
-		proxyPlayer.setXRot(root.getXRot());
-		proxyPlayer.setYHeadRot(root.getYRot());
-		proxyPlayer.setYBodyRot(root.getYRot());
-		proxyPlayer.setDeltaMovement(Vec3.ZERO);
-		proxyPlayer.setInvisible(true);
-		proxyPlayer.setNoGravity(true);
-		proxyPlayer.setInvulnerable(true);
-		proxyPlayer.setSilent(true);
-		proxyPlayer.addTag(DRONE_CONTROLLED_PROXY_TAG);
-		proxyPlayer.noPhysics = false;
-		proxyPlayer.fallDistance = 0.0F;
-		return proxyPlayer;
-	}
-
-	private static ServerGamePacketListenerImpl createControlledProxyListener(ServerPlayer controller, ServerPlayer proxyPlayer) {
-		if (controller == null || controller.connection == null || proxyPlayer == null) {
-			return null;
-		}
-		ClientInformation clientInformation = controller.clientInformation();
-		if (clientInformation == null) {
-			return null;
-		}
-		CommonListenerCookie cookie = new CommonListenerCookie(
-				proxyPlayer.getGameProfile(),
-				0,
-				clientInformation,
-				false
-		);
-		MinecraftServer server = controller.level() != null ? controller.level().getServer() : null;
-		if (server == null) {
-			return null;
-		}
-		ServerGamePacketListenerImpl listener = new ServerGamePacketListenerImpl(
-				server,
-				((ServerCommonPacketListenerImplAccessor) controller.connection).lg2$getConnection(),
-				proxyPlayer,
-				cookie
-		);
-		ServerGamePacketListenerImplAccessor accessor = (ServerGamePacketListenerImplAccessor) listener;
-		accessor.lg2$markClientLoaded();
-		listener.resetPosition();
-		return listener;
-	}
-
-	private static void detachDroneFromController(ServerPlayer player, Entity root) {
-		if (player == null || root == null) {
-			return;
-		}
-		if (root.getVehicle() == player || root.isPassenger() || player.hasPassenger(root)) {
-			root.stopRiding();
-		}
-		syncPassengerAttachment(player);
-	}
-
 	private static void detachAnyDronePassengersFromController(ServerPlayer player) {
 		if (player == null) {
 			return;
@@ -1737,125 +1369,11 @@ public final class DroneSystem {
 		}
 	}
 
-	private static void restoreControlledPlayerState(ServerPlayer player, DroneControlSession session) {
-		if (player == null || session == null) {
-			return;
-		}
-		player.setCamera(player);
-		player.setInvisible(session.wasInvisible());
-		player.setNoGravity(session.wasNoGravity());
-		player.noPhysics = session.wasNoPhysics();
-		player.setInvulnerable(session.wasInvulnerable());
-		player.stopFallFlying();
-		player.setDeltaMovement(Vec3.ZERO);
-		player.getAbilities().mayfly = session.hadMayfly();
-		player.getAbilities().flying = session.wasFlying();
-		player.onUpdateAbilities();
-		player.fallDistance = 0.0F;
-		player.hurtMarked = true;
-		FORCED_CONTROLLED_PLAYERS.remove(player.getUUID());
-	}
-
-	private static GameType resolveServerGameMode(ServerPlayer player) {
-		if (player == null || player.gameMode == null) {
-			return GameType.SURVIVAL;
-		}
-		GameType gameMode = player.gameMode.getGameModeForPlayer();
-		return gameMode == null ? GameType.SURVIVAL : gameMode;
-	}
-
-	private static void spoofClientGameMode(ServerPlayer player, GameType gameMode) {
-		if (player == null || player.connection == null) {
-			return;
-		}
-		GameType resolved = gameMode == null ? GameType.SURVIVAL : gameMode;
-		sendControlledOperatorPacket(player, new ClientboundGameEventPacket(
-			ClientboundGameEventPacket.CHANGE_GAME_MODE,
-			resolved.getId()
-		));
-	}
-
-	private static void ensureControlledPlayerState(ServerPlayer player) {
-		if (player == null) {
-			return;
-		}
-		FORCED_CONTROLLED_PLAYERS.add(player.getUUID());
-		player.setCamera(player);
-		player.setInvisible(true);
-		player.setNoGravity(true);
-		player.noPhysics = false;
-		player.setInvulnerable(true);
-		if (player.getAbilities().flying) {
-			player.getAbilities().flying = false;
-			player.onUpdateAbilities();
-		}
-		player.fallDistance = 0.0F;
-		if (!player.isFallFlying()) {
-			player.startFallFlying();
-		}
-		player.hurtMarked = true;
-	}
-
-	private static void ensureControlledProxyState(ServerPlayer player) {
-		if (player == null) {
-			return;
-		}
-		player.setCamera(player);
-		player.setInvisible(true);
-		player.setNoGravity(true);
-		player.noPhysics = false;
-		player.setInvulnerable(true);
-		player.setSilent(true);
-		if (player.getAbilities().flying) {
-			player.getAbilities().flying = false;
-			player.onUpdateAbilities();
-		}
-		player.fallDistance = 0.0F;
-		if (!player.isFallFlying()) {
-			player.startFallFlying();
-		}
-		player.hurtMarked = true;
-	}
-
-	private static void clearForcedControlMovementState(ServerPlayer player) {
-		if (player == null) {
-			return;
-		}
-		player.setCamera(player);
-		if (!player.getAbilities().mayfly) {
-			player.setNoGravity(false);
-		}
-		player.noPhysics = false;
-		player.stopFallFlying();
-		player.setDeltaMovement(Vec3.ZERO);
-		player.fallDistance = 0.0F;
-		player.hurtMarked = true;
-	}
-
-	private static void syncControlledPlayer(ServerPlayer player, Entity root) {
-		if (player != null) {
-			DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
-			if (session != null) {
-				if (session.controlledProxyPlayer() != null) {
-					syncControlledOperatorView(player, session, root, false, false);
-				}
-				return;
-			}
-			player.fallDistance = 0.0F;
-			if (player.getCamera() != player) {
-				player.setCamera(player);
-			}
-			return;
-		}
-	}
-
 	private static void syncControlledPlayer(ServerPlayer player, Entity root, boolean forcePositionSync) {
 		if (player != null) {
 			DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
 			if (session != null) {
-				if (session.controlledProxyPlayer() != null) {
-					syncControlledOperatorView(player, session, root, false, forcePositionSync);
-				}
+				syncControlledOperatorView(player, session, root, false, forcePositionSync);
 			}
 			return;
 		}
@@ -1906,18 +1424,6 @@ public final class DroneSystem {
 	private static boolean isControlledHotbarSlot(int slot) {
 		return (slot >= PLAYER_HOTBAR_MENU_SLOT_START && slot < PLAYER_HOTBAR_MENU_SLOT_START + 9)
 				|| slot == PLAYER_OFFHAND_MENU_SLOT;
-	}
-
-	private static Abilities buildControlledOperatorAbilities(ServerPlayer player) {
-		Abilities abilities = new Abilities();
-		abilities.invulnerable = false;
-		abilities.flying = false;
-		abilities.mayfly = false;
-		abilities.instabuild = player != null && player.getAbilities().instabuild;
-		abilities.mayBuild = player == null || player.getAbilities().mayBuild;
-		abilities.setFlyingSpeed(player == null ? 0.05F : player.getAbilities().getFlyingSpeed());
-		abilities.setWalkingSpeed(player == null ? 0.1F : player.getAbilities().getWalkingSpeed());
-		return abilities;
 	}
 
 	private static Packet<?> buildControlledSelfMetadataPacket(ServerPlayer player) {
@@ -1977,17 +1483,21 @@ public final class DroneSystem {
 	}
 
 	private static ClientboundPlayerPositionPacket buildControlledPlayerPositionPacket(DroneControlSession session) {
+		return buildControlledPlayerPositionPacket(session, session.nextViewSyncTeleportId());
+	}
+
+	private static ClientboundPlayerPositionPacket buildControlledPlayerPositionPacket(DroneControlSession session, int teleportId) {
 		PositionMoveRotation change = new PositionMoveRotation(
 				session.proxyPos(),
 				controlledOperatorVisualVelocity(session),
 				session.proxyYaw(),
 				session.proxyPitch()
 		);
-		return ClientboundPlayerPositionPacket.of(session.nextViewSyncTeleportId(), change, ABSOLUTE_TELEPORT);
+		return ClientboundPlayerPositionPacket.of(teleportId, change, ABSOLUTE_TELEPORT);
 	}
 
 	private static Vec3 controlledOperatorVisualVelocity(DroneControlSession session) {
-		Vec3 velocity = session == null ? null : session.intendedVelocity();
+		Vec3 velocity = session == null ? null : session.velocity();
 		return velocity == null ? Vec3.ZERO : velocity;
 	}
 
@@ -2024,20 +1534,13 @@ public final class DroneSystem {
 			ServerPlayer player,
 			DroneControlSession session,
 			Entity root,
-			boolean forceGameMode,
+			boolean initialSync,
 			boolean forcePositionSync
 	) {
 		if (player == null || session == null || root == null || player.connection == null) {
 			return;
 		}
-		if (forceGameMode) {
-			sendControlledOperatorPacket(player, new ClientboundGameEventPacket(
-					ClientboundGameEventPacket.CHANGE_GAME_MODE,
-					GameType.SPECTATOR.getId()
-			));
-			sendControlledOperatorPacket(player, new ClientboundPlayerAbilitiesPacket(buildControlledOperatorAbilities(player)));
-		}
-		if (forceGameMode || forcePositionSync) {
+		if (initialSync || forcePositionSync) {
 			sendControlledOperatorPacket(player, buildControlledPlayerPositionPacket(session));
 		}
 		sendControlledOperatorPacket(player, new ClientboundSetEntityMotionPacket(player.getId(), controlledOperatorVisualVelocity(session)));
@@ -2210,65 +1713,29 @@ public final class DroneSystem {
 			return false;
 		}
 
-		stopControlling(player, true, false);
+		stopControlling(player, false);
 		markCameraSuppressedForPlayer(player);
 		CameraVideoRecordingSystem.stopForDroneControl(player);
 		MapImageRenderSystem.cancelRender(player.getUUID());
 		RendererBotCameraSystem.stopCameraHotbarWarmupForPlayer(player.getUUID());
 		ServerRaceSystem.suspendCopperManJetpackForDrone(player);
-		GameType originalServerGameMode = resolveServerGameMode(player);
 		UNCONTROLLED_DRONES.remove(root.getUUID());
-		root.noPhysics = true;
-
-		ServerLevel originLevel = player.level();
-		Vec3 originPos = player.position();
-		float originYaw = player.getYRot();
-		float originPitch = player.getXRot();
-		boolean wasInvisible = player.isInvisible();
-		boolean wasNoGravity = player.isNoGravity();
-		boolean wasNoPhysics = player.noPhysics;
-		boolean wasInvulnerable = player.isInvulnerable();
-		boolean hadMayfly = player.getAbilities().mayfly;
-		boolean wasFlying = player.getAbilities().flying;
-		ServerPlayer controlledProxyPlayer = createControlledProxyPlayer(player, droneLevel, root);
-		if (controlledProxyPlayer == null) {
-			return false;
-		}
-		ServerGamePacketListenerImpl controlledProxyListener = createControlledProxyListener(player, controlledProxyPlayer);
-		if (controlledProxyListener == null) {
-			return false;
-		}
-		root.level().getChunkAt(root.blockPosition());
-		spoofClientGameMode(player, GameType.SPECTATOR);
+		prepareControlledDroneBody(root);
+		root.setDeltaMovement(Vec3.ZERO);
+		droneLevel.getChunkAt(root.blockPosition());
 		setHotbarVisualHidden(player, true);
 		syncDroneCameraAnchor(root, Vec3.ZERO);
 
 		DroneControlSession session = new DroneControlSession(
 				root.getUUID(),
-				droneLevel.dimension(),
-				null,
-				originLevel.dimension(),
-				originPos,
-				originYaw,
-				originPitch,
-				wasInvisible,
-				wasNoGravity,
-				wasNoPhysics,
-				wasInvulnerable,
-				hadMayfly,
-				wasFlying,
-				originalServerGameMode
+				droneLevel.dimension()
 		);
-		session.setControlledProxyPlayer(controlledProxyPlayer);
-		session.setControlledProxyListener(controlledProxyListener);
 		session.setProxyPos(root.position());
 		session.setProxyYaw(root.getYRot());
 		session.setProxyPitch(root.getXRot());
-		session.setLastPlayerPos(root.position());
 		ACTIVE_SESSIONS.put(player.getUUID(), session);
 		INPUTS.put(player.getUUID(), DroneInputState.EMPTY);
 		CONTROLLERS_BY_DRONE.put(root.getUUID(), player.getUUID());
-		CONTROLLED_PROXY_TO_CONTROLLER.put(controlledProxyPlayer.getUUID(), player.getUUID());
 		syncControlledOperatorView(player, session, root, true, true);
 		notifyDroneNetworkChanged(root);
 		updateDroneHud(player, session, true);
@@ -2276,45 +1743,31 @@ public final class DroneSystem {
 		return true;
 	}
 
-	private static void stopControlling(ServerPlayer player, boolean returnToOrigin, boolean notify) {
+	private static void stopControlling(ServerPlayer player, boolean notify) {
+		stopControlling(player, notify, true);
+	}
+
+	private static void stopControlling(ServerPlayer player, boolean notify, boolean releaseDrone) {
 		if (player == null) {
 			return;
 		}
 		DroneControlSession session = ACTIVE_SESSIONS.remove(player.getUUID());
 		INPUTS.remove(player.getUUID());
-		CONTROLLED_OPERATOR_KNOCKBACK_VELOCITY.remove(player.getUUID());
 		if (session == null) {
-			spoofClientGameMode(player, resolveServerGameMode(player));
-			if (!FORCED_CONTROLLED_PLAYERS.contains(player.getUUID())) {
-				setHotbarVisualHidden(player, false);
-				refreshControlledOperatorActualView(player);
-				return;
-			}
-			FORCED_CONTROLLED_PLAYERS.remove(player.getUUID());
-			markCameraSuppressedForPlayer(player);
-			clearForcedControlMovementState(player);
-			detachAnyDronePassengersFromController(player);
 			setHotbarVisualHidden(player, false);
 			refreshControlledOperatorActualView(player);
 			return;
 		}
-		ServerPlayer controlledProxyPlayer = session.controlledProxyPlayer();
-		if (controlledProxyPlayer != null) {
-			CONTROLLED_PROXY_TO_CONTROLLER.remove(controlledProxyPlayer.getUUID(), player.getUUID());
-		}
-		if (session.dummyUuid() != null) {
-			DUMMY_OWNER_BY_UUID.remove(session.dummyUuid());
-		}
-
 		CONTROLLERS_BY_DRONE.remove(session.droneUuid(), player.getUUID());
 		MinecraftServer server = player.level().getServer();
 		Entity root = server == null ? null : findDroneRoot(server, session.droneDimension(), session.droneUuid());
 
 		player.setCamera(player);
 		detachAnyDronePassengersFromController(player);
-		if (root != null) {
+		if (releaseDrone && root != null) {
 			Vec3 proxyPos = session.proxyPos();
 			root.setPos(proxyPos.x, proxyPos.y, proxyPos.z);
+			root.setBoundingBox(droneBoxAt(root.position()));
 			root.setYRot(session.proxyYaw());
 			root.setXRot(session.proxyPitch());
 			Vec3 releasedVelocity = session.velocity();
@@ -2332,12 +1785,9 @@ public final class DroneSystem {
 			NEXT_DRONE_SOUND_TICK.remove(session.droneUuid());
 		}
 		clearDroneHud(player, session, true);
-		restoreControlledPlayerState(player, session);
-		spoofClientGameMode(player, session.serverGameMode());
 		setHotbarVisualHidden(player, false);
 		refreshControlledOperatorActualView(player);
 
-		detachAnyDronePassengersFromController(player);
 		markCameraSuppressedForPlayer(player);
 		ServerRaceSystem.resumeCopperManJetpackAfterDrone(player);
 
@@ -2362,7 +1812,7 @@ public final class DroneSystem {
 		if (controllerId != null && level.getServer() != null) {
 			ServerPlayer controller = level.getServer().getPlayerList().getPlayer(controllerId);
 			if (controller != null) {
-				stopControlling(controller, true, true);
+				stopControlling(controller, true, false);
 			}
 		}
 		UUID displayId = DISPLAYS_BY_DRONE.remove(root.getUUID());
@@ -2896,259 +2346,6 @@ public final class DroneSystem {
 		return !level.noCollision(probe);
 	}
 
-	private static DronePilotDummyEntity spawnPlayerDummy(ServerLevel level, ServerPlayer sourcePlayer, Vec3 position) {
-		DronePilotDummyEntity dummy = new DronePilotDummyEntity(level);
-		dummy.addTag(DRONE_DUMMY_TAG);
-		dummy.setPos(position.x, position.y, position.z);
-		dummy.setYRot(sourcePlayer.getYRot());
-		dummy.setXRot(sourcePlayer.getXRot());
-		dummy.setYHeadRot(sourcePlayer.getYRot());
-		dummy.yBodyRot = sourcePlayer.getYRot();
-		dummy.setCustomName(Component.literal(sourcePlayer.getGameProfile().name()));
-		dummy.setCustomNameVisible(true);
-		dummy.setNoAi(true);
-		dummy.setNoGravity(true);
-		dummy.setInvulnerable(true);
-		dummy.setSilent(true);
-		dummy.setPersistenceRequired();
-		copyEquipmentToDummy(sourcePlayer, dummy);
-		GameProfile profile = createDummyProfile(sourcePlayer, dummy.getUUID());
-		PolymerEntityUtils.setPolymerEntity(dummy, new DronePilotOverlay(profile));
-		level.addFreshEntity(dummy);
-		return dummy;
-	}
-
-	private static void copyEquipmentToDummy(ServerPlayer sourcePlayer, DronePilotDummyEntity dummy) {
-		if (sourcePlayer == null || dummy == null) {
-			return;
-		}
-
-		dummy.setItemSlot(EquipmentSlot.HEAD, sourcePlayer.getItemBySlot(EquipmentSlot.HEAD).copy());
-		dummy.setItemSlot(EquipmentSlot.CHEST, sourcePlayer.getItemBySlot(EquipmentSlot.CHEST).copy());
-		dummy.setItemSlot(EquipmentSlot.LEGS, sourcePlayer.getItemBySlot(EquipmentSlot.LEGS).copy());
-		dummy.setItemSlot(EquipmentSlot.FEET, sourcePlayer.getItemBySlot(EquipmentSlot.FEET).copy());
-		dummy.setItemSlot(EquipmentSlot.MAINHAND, sourcePlayer.getMainHandItem().copy());
-		dummy.setItemSlot(EquipmentSlot.OFFHAND, sourcePlayer.getOffhandItem().copy());
-	}
-
-	private static void syncDummyHeldItems(ServerPlayer sourcePlayer, DroneControlSession session) {
-		if (sourcePlayer == null || session == null || session.dummyUuid() == null) {
-			return;
-		}
-		MinecraftServer server = sourcePlayer.level().getServer();
-		if (server == null) {
-			return;
-		}
-
-		Entity entity = findEntity(server, session.originDimension(), session.dummyUuid());
-		if (!(entity instanceof DronePilotDummyEntity dummy)) {
-			return;
-		}
-
-		ItemStack head = sourcePlayer.getItemBySlot(EquipmentSlot.HEAD);
-		ItemStack chest = sourcePlayer.getItemBySlot(EquipmentSlot.CHEST);
-		ItemStack legs = sourcePlayer.getItemBySlot(EquipmentSlot.LEGS);
-		ItemStack feet = sourcePlayer.getItemBySlot(EquipmentSlot.FEET);
-		ItemStack main = resolveDummyMainHandStack(sourcePlayer);
-		ItemStack off = resolveDummyOffhandStack(sourcePlayer);
-		if (!stacksEqual(dummy.getItemBySlot(EquipmentSlot.HEAD), head)) {
-			dummy.setItemSlot(EquipmentSlot.HEAD, head.copy());
-		}
-		if (!stacksEqual(dummy.getItemBySlot(EquipmentSlot.CHEST), chest)) {
-			dummy.setItemSlot(EquipmentSlot.CHEST, chest.copy());
-		}
-		if (!stacksEqual(dummy.getItemBySlot(EquipmentSlot.LEGS), legs)) {
-			dummy.setItemSlot(EquipmentSlot.LEGS, legs.copy());
-		}
-		if (!stacksEqual(dummy.getItemBySlot(EquipmentSlot.FEET), feet)) {
-			dummy.setItemSlot(EquipmentSlot.FEET, feet.copy());
-		}
-		if (!stacksEqual(dummy.getItemBySlot(EquipmentSlot.MAINHAND), main)) {
-			dummy.setItemSlot(EquipmentSlot.MAINHAND, main.copy());
-		}
-		if (!stacksEqual(dummy.getItemBySlot(EquipmentSlot.OFFHAND), off)) {
-			dummy.setItemSlot(EquipmentSlot.OFFHAND, off.copy());
-		}
-	}
-
-	private static ItemStack resolveDummyMainHandStack(ServerPlayer player) {
-		if (player == null) {
-			return ItemStack.EMPTY;
-		}
-		ControlledInventorySnapshot snapshot = CONTROLLED_INVENTORY_SNAPSHOTS.get(player.getUUID());
-		if (snapshot == null || snapshot.hotbar().isEmpty()) {
-			return player.getMainHandItem();
-		}
-		int selectedSlot = net.minecraft.util.Mth.clamp(player.getInventory().getSelectedSlot(), 0, 8);
-		if (selectedSlot < 0 || selectedSlot >= snapshot.hotbar().size()) {
-			return ItemStack.EMPTY;
-		}
-		ItemStack stack = snapshot.hotbar().get(selectedSlot);
-		return stack == null ? ItemStack.EMPTY : stack;
-	}
-
-	private static ItemStack resolveDummyOffhandStack(ServerPlayer player) {
-		if (player == null) {
-			return ItemStack.EMPTY;
-		}
-		ControlledInventorySnapshot snapshot = CONTROLLED_INVENTORY_SNAPSHOTS.get(player.getUUID());
-		if (snapshot == null) {
-			return player.getOffhandItem();
-		}
-		ItemStack stack = snapshot.offhand();
-		return stack == null ? ItemStack.EMPTY : stack;
-	}
-
-	private static boolean stacksEqual(ItemStack first, ItemStack second) {
-		if (first == null || first.isEmpty()) {
-			return second == null || second.isEmpty();
-		}
-		if (second == null || second.isEmpty()) {
-			return false;
-		}
-		if (first.getCount() != second.getCount()) {
-			return false;
-		}
-		return ItemStack.isSameItemSameComponents(first, second);
-	}
-
-	private static ServerPlayer resolveDummyController(ServerLevel level, UUID dummyUuid) {
-		if (level == null || dummyUuid == null) {
-			return null;
-		}
-		MinecraftServer server = level.getServer();
-		if (server == null) {
-			return null;
-		}
-		UUID controllerId = DUMMY_OWNER_BY_UUID.get(dummyUuid);
-		ServerPlayer controller = controllerId == null ? null : server.getPlayerList().getPlayer(controllerId);
-		if (controller != null && ACTIVE_SESSIONS.containsKey(controller.getUUID())) {
-			return controller;
-		}
-		for (Map.Entry<UUID, DroneControlSession> entry : ACTIVE_SESSIONS.entrySet()) {
-			DroneControlSession session = entry.getValue();
-			if (session == null || !Objects.equals(session.dummyUuid(), dummyUuid)) {
-				continue;
-			}
-			ServerPlayer resolved = server.getPlayerList().getPlayer(entry.getKey());
-			if (resolved != null) {
-				DUMMY_OWNER_BY_UUID.put(dummyUuid, resolved.getUUID());
-				return resolved;
-			}
-		}
-		DUMMY_OWNER_BY_UUID.remove(dummyUuid);
-		return null;
-	}
-
-	private static boolean forwardDummyDamageToController(DronePilotDummyEntity dummy, ServerLevel level, DamageSource source, float amount) {
-		if (dummy == null || level == null || amount <= 0.0F) {
-			return false;
-		}
-		ServerPlayer controller = resolveDummyController(level, dummy.getUUID());
-		if (controller == null || !controller.isAlive()) {
-			return false;
-		}
-		if (!(controller.level() instanceof ServerLevel controllerLevel)) {
-			return false;
-		}
-		DamageSource forwardedSource = source != null ? source : controllerLevel.damageSources().generic();
-		boolean damaged;
-		try {
-			damaged = controller.hurtServer(controllerLevel, forwardedSource, amount);
-		} catch (Exception exception) {
-			damaged = controller.hurtServer(controllerLevel, controllerLevel.damageSources().generic(), amount);
-		}
-		if (!controller.isAlive() || controller.isDeadOrDying()) {
-			stopControlling(controller, true, false);
-		}
-		return damaged;
-	}
-
-	private static void broadcastDronePilotEquipmentHidden(ServerPlayer player, boolean hidden) {
-		if (player == null || !(player.level() instanceof ServerLevel level)) {
-			return;
-		}
-
-		List<Pair<EquipmentSlot, ItemStack>> slots = new ArrayList<>(6);
-		slots.add(Pair.of(EquipmentSlot.HEAD, hidden ? ItemStack.EMPTY : player.getItemBySlot(EquipmentSlot.HEAD).copy()));
-		slots.add(Pair.of(EquipmentSlot.CHEST, hidden ? ItemStack.EMPTY : player.getItemBySlot(EquipmentSlot.CHEST).copy()));
-		slots.add(Pair.of(EquipmentSlot.LEGS, hidden ? ItemStack.EMPTY : player.getItemBySlot(EquipmentSlot.LEGS).copy()));
-		slots.add(Pair.of(EquipmentSlot.FEET, hidden ? ItemStack.EMPTY : player.getItemBySlot(EquipmentSlot.FEET).copy()));
-		slots.add(Pair.of(EquipmentSlot.MAINHAND, hidden ? ItemStack.EMPTY : player.getMainHandItem().copy()));
-		slots.add(Pair.of(EquipmentSlot.OFFHAND, hidden ? ItemStack.EMPTY : player.getOffhandItem().copy()));
-
-		ClientboundSetEquipmentPacket packet = new ClientboundSetEquipmentPacket(player.getId(), slots);
-		for (ServerPlayer viewer : level.players()) {
-			viewer.connection.send(packet);
-		}
-	}
-
-	private static void stashAndHideControlledInventory(ServerPlayer player) {
-		if (player == null) {
-			return;
-		}
-		UUID playerId = player.getUUID();
-		if (CONTROLLED_INVENTORY_SNAPSHOTS.containsKey(playerId)) {
-			return;
-		}
-		List<ItemStack> hotbar = new ArrayList<>(9);
-		for (int index = 0; index < 9; index++) {
-			hotbar.add(player.getInventory().getItem(index).copy());
-			player.getInventory().setItem(index, ItemStack.EMPTY);
-		}
-		ItemStack offhand = player.getOffhandItem().copy();
-		player.setItemInHand(InteractionHand.OFF_HAND, ItemStack.EMPTY);
-		CONTROLLED_INVENTORY_SNAPSHOTS.put(playerId, new ControlledInventorySnapshot(hotbar, offhand));
-		player.inventoryMenu.broadcastChanges();
-		setHotbarVisualHidden(player, true);
-	}
-
-	private static void restoreControlledInventoryIfNeeded(ServerPlayer player) {
-		if (player == null) {
-			return;
-		}
-		ControlledInventorySnapshot snapshot = CONTROLLED_INVENTORY_SNAPSHOTS.remove(player.getUUID());
-		if (snapshot == null) {
-			return;
-		}
-		List<ItemStack> hotbar = snapshot.hotbar();
-		for (int index = 0; index < 9; index++) {
-			ItemStack saved = index < hotbar.size() ? hotbar.get(index) : ItemStack.EMPTY;
-			restoreSavedStackToHotbarSlot(player, index, saved);
-		}
-		restoreSavedStackToOffhand(player, snapshot.offhand());
-		player.inventoryMenu.broadcastChanges();
-		player.inventoryMenu.sendAllDataToRemote();
-	}
-
-	private static void restoreSavedStackToHotbarSlot(ServerPlayer player, int slot, ItemStack saved) {
-		if (player == null || slot < 0 || slot >= 9 || saved == null || saved.isEmpty()) {
-			return;
-		}
-		ItemStack current = player.getInventory().getItem(slot);
-		if (current == null || current.isEmpty()) {
-			player.getInventory().setItem(slot, saved.copy());
-			return;
-		}
-		if (!player.getInventory().add(saved.copy())) {
-			player.drop(saved.copy(), false);
-		}
-	}
-
-	private static void restoreSavedStackToOffhand(ServerPlayer player, ItemStack saved) {
-		if (player == null || saved == null || saved.isEmpty()) {
-			return;
-		}
-		ItemStack current = player.getOffhandItem();
-		if (current == null || current.isEmpty()) {
-			player.setItemInHand(InteractionHand.OFF_HAND, saved.copy());
-			return;
-		}
-		if (!player.getInventory().add(saved.copy())) {
-			player.drop(saved.copy(), false);
-		}
-	}
-
 	private static void setHotbarVisualHidden(ServerPlayer player, boolean hidden) {
 		if (player == null || player.connection == null) {
 			return;
@@ -3172,35 +2369,6 @@ public final class DroneSystem {
 				PLAYER_OFFHAND_MENU_SLOT,
 				offhand
 		));
-	}
-
-	private static GameProfile createDummyProfile(ServerPlayer sourcePlayer, UUID fakeProfileId) {
-		GameProfile sourceProfile = sourcePlayer.getGameProfile();
-		PropertyMap properties = sourceProfile != null
-				? new PropertyMap(ImmutableMultimap.copyOf(sourceProfile.properties()))
-				: new PropertyMap(ImmutableMultimap.of());
-		applySkinRestorerSkin(sourcePlayer, properties);
-		return new GameProfile(fakeProfileId, sourcePlayer.getGameProfile().name(), properties);
-	}
-
-	private static void applySkinRestorerSkin(ServerPlayer sourcePlayer, PropertyMap properties) {
-		if (sourcePlayer == null || properties == null) {
-			return;
-		}
-		try {
-			SkinStorage skinStorage = SkinRestorer.getSkinStorage();
-			if (skinStorage == null) {
-				return;
-			}
-			SkinValue skinValue = skinStorage.getSkin(sourcePlayer.getUUID());
-			if (skinValue == null || skinValue.value() == null) {
-				return;
-			}
-			properties.removeAll("textures");
-			properties.put("textures", skinValue.value());
-		} catch (Exception exception) {
-			Lg2.LOGGER.debug("Failed to resolve drone dummy skin for {}", sourcePlayer.getScoreboardName(), exception);
-		}
 	}
 
 	private static Vec3 resolvePlacementPosition(UseOnContext context) {
@@ -3269,20 +2437,6 @@ public final class DroneSystem {
 		return level == null ? null : level.getEntity(uuid);
 	}
 
-	private static void ensureDroneMounted(ServerPlayer player, Entity root) {
-		if (player == null || root == null || !root.isAlive() || root.level() != player.level()) {
-			return;
-		}
-		if (root.getVehicle() == player && player.hasPassenger(root)) {
-			return;
-		}
-		forceEntityPassenger(player, root);
-		Entity display = findDroneDisplay(root);
-		if (display != null && !(display.getVehicle() == root && root.hasPassenger(display))) {
-			forceEntityPassenger(root, display);
-		}
-	}
-
 	private static void forceEntityPassenger(Entity vehicle, Entity passenger) {
 		if (vehicle == null || passenger == null || vehicle == passenger) {
 			return;
@@ -3311,82 +2465,6 @@ public final class DroneSystem {
 		for (ServerPlayer viewer : level.players()) {
 			viewer.connection.send(packet);
 		}
-	}
-
-	private static final class DronePilotOverlay implements PolymerEntity {
-		private final GameProfile profile;
-
-		private DronePilotOverlay(GameProfile profile) {
-			this.profile = profile;
-		}
-
-		@Override
-		public EntityType<?> getPolymerEntityType(PacketContext context) {
-			return EntityType.PLAYER;
-		}
-
-		@Override
-		public void onBeforeSpawnPacket(ServerPlayer player, java.util.function.Consumer<Packet<?>> packetConsumer) {
-			EnumSet<ClientboundPlayerInfoUpdatePacket.Action> actions = EnumSet.of(
-					ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER,
-					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED,
-					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE,
-					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LATENCY,
-					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME,
-					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LIST_ORDER,
-					ClientboundPlayerInfoUpdatePacket.Action.UPDATE_HAT
-			);
-			ClientboundPlayerInfoUpdatePacket packet = PolymerEntityUtils.createMutablePlayerListPacket(actions);
-			ClientboundPlayerInfoUpdatePacket.Entry entry = new ClientboundPlayerInfoUpdatePacket.Entry(
-					this.profile.id(),
-					this.profile,
-					false,
-					0,
-					GameType.SURVIVAL,
-					null,
-					true,
-					0,
-					(RemoteChatSession.Data) null
-			);
-			packet.entries().add(entry);
-			packetConsumer.accept(packet);
-		}
-
-		@Override
-		public void modifyRawTrackedData(List<SynchedEntityData.DataValue<?>> data, ServerPlayer player, boolean initial) {
-			upsertTrackedData(data, SynchedEntityData.DataValue.create(PlayerTrackedDataAccessor.lg2$getDataPlayerMainHand(), HumanoidArm.RIGHT));
-			upsertTrackedData(data, SynchedEntityData.DataValue.create(PlayerTrackedDataAccessor.lg2$getDataPlayerModeCustomisation(), ALL_PLAYER_SKIN_PARTS));
-		}
-
-		private static void upsertTrackedData(List<SynchedEntityData.DataValue<?>> data, SynchedEntityData.DataValue<?> replacement) {
-			for (int i = 0; i < data.size(); i++) {
-				SynchedEntityData.DataValue<?> current = data.get(i);
-				if (current.id() == replacement.id()) {
-					data.set(i, replacement);
-					return;
-				}
-			}
-			data.add(replacement);
-		}
-	}
-
-	private record ControlledInventorySnapshot(List<ItemStack> hotbar, ItemStack offhand) {
-		private ControlledInventorySnapshot {
-			List<ItemStack> safeHotbar = hotbar == null ? List.of() : hotbar;
-			List<ItemStack> copiedHotbar = new ArrayList<>(safeHotbar.size());
-			for (ItemStack stack : safeHotbar) {
-				copiedHotbar.add(stack == null ? ItemStack.EMPTY : stack.copy());
-			}
-			hotbar = List.copyOf(copiedHotbar);
-			offhand = offhand == null ? ItemStack.EMPTY : offhand.copy();
-		}
-	}
-
-	private record ReturnLocation(ServerLevel level, Vec3 pos, float yaw, float pitch) {
-	}
-
-	private record DroneCollisionForces(double normalSpeed, double tangentialSpeed, double angleFactor) {
-		private static final DroneCollisionForces NONE = new DroneCollisionForces(0.0D, 0.0D, 0.0D);
 	}
 
 	private static final class UncontrolledDroneState {
@@ -3441,64 +2519,15 @@ public final class DroneSystem {
 		private static final DroneInputState EMPTY = new DroneInputState(false, false, false, false, false, false, false);
 	}
 
-	private static final class DronePilotDummyEntity extends PathfinderMob {
-		private DronePilotDummyEntity(ServerLevel level) {
-			super(EntityType.HUSK, level);
-			this.xpReward = 0;
-			this.setPersistenceRequired();
-			this.setSilent(true);
-			this.setInvulnerable(false);
-			this.setNoAi(true);
-			this.setNoGravity(true);
-			this.refreshDimensions();
-		}
-
-		@Override
-		protected void registerGoals() {
-		}
-
-		@Override
-		protected PathNavigation createNavigation(Level level) {
-			GroundPathNavigation navigation = new GroundPathNavigation(this, level);
-			navigation.setCanFloat(true);
-			return navigation;
-		}
-
-		@Override
-		public void checkDespawn() {
-		}
-
-		@Override
-		public boolean hurtServer(ServerLevel level, DamageSource source, float amount) {
-			return forwardDummyDamageToController(this, level, source, amount);
-		}
-	}
-
 	private static final class DroneControlSession {
 		private final UUID droneUuid;
 		private final net.minecraft.resources.ResourceKey<Level> droneDimension;
-		private final UUID dummyUuid;
-		private final net.minecraft.resources.ResourceKey<Level> originDimension;
-		private final Vec3 originPos;
-		private final float originYaw;
-		private final float originPitch;
-		private boolean wasInvisible;
-		private boolean wasNoGravity;
-		private boolean wasNoPhysics;
-		private boolean wasInvulnerable;
-		private boolean hadMayfly;
-		private boolean wasFlying;
-		private final GameType serverGameMode;
-		private ServerPlayer controlledProxyPlayer;
-		private ServerGamePacketListenerImpl controlledProxyListener;
 		private Vec3 velocity = Vec3.ZERO;
 		private Vec3 intendedVelocity = Vec3.ZERO;
-		private Vec3 lastPlayerPos = Vec3.ZERO;
 		private Vec3 proxyPos = Vec3.ZERO;
 		private float proxyYaw;
 		private float proxyPitch;
 		private int nextViewSyncTeleportId = CONTROLLED_VIEW_TELEPORT_ID_BASE;
-		private int lastAcceptedProxyTeleportId;
 		private double forwardDrive;
 		private double strafeDrive;
 		private double displayForwardDrive;
@@ -3506,39 +2535,16 @@ public final class DroneSystem {
 		private double surfaceWear;
 		private long lastSurfaceWearContactTick = Long.MIN_VALUE;
 		private boolean hudVisible;
+		private boolean positionSyncRequested;
 		private String lastHudSnapshot = "";
 		private long lastHudTick = Long.MIN_VALUE;
 
 		private DroneControlSession(
 				UUID droneUuid,
-				net.minecraft.resources.ResourceKey<Level> droneDimension,
-				UUID dummyUuid,
-				net.minecraft.resources.ResourceKey<Level> originDimension,
-				Vec3 originPos,
-				float originYaw,
-				float originPitch,
-				boolean wasInvisible,
-				boolean wasNoGravity,
-				boolean wasNoPhysics,
-				boolean wasInvulnerable,
-				boolean hadMayfly,
-				boolean wasFlying,
-				GameType serverGameMode
+				net.minecraft.resources.ResourceKey<Level> droneDimension
 		) {
 			this.droneUuid = droneUuid;
 			this.droneDimension = droneDimension;
-			this.dummyUuid = dummyUuid;
-			this.originDimension = originDimension;
-			this.originPos = originPos;
-			this.originYaw = originYaw;
-			this.originPitch = originPitch;
-			this.wasInvisible = wasInvisible;
-			this.wasNoGravity = wasNoGravity;
-			this.wasNoPhysics = wasNoPhysics;
-			this.wasInvulnerable = wasInvulnerable;
-			this.hadMayfly = hadMayfly;
-			this.wasFlying = wasFlying;
-			this.serverGameMode = serverGameMode == null ? GameType.SURVIVAL : serverGameMode;
 		}
 
 		private UUID droneUuid() {
@@ -3547,70 +2553,6 @@ public final class DroneSystem {
 
 		private net.minecraft.resources.ResourceKey<Level> droneDimension() {
 			return this.droneDimension;
-		}
-
-		private UUID dummyUuid() {
-			return this.dummyUuid;
-		}
-
-		private net.minecraft.resources.ResourceKey<Level> originDimension() {
-			return this.originDimension;
-		}
-
-		private Vec3 originPos() {
-			return this.originPos;
-		}
-
-		private float originYaw() {
-			return this.originYaw;
-		}
-
-		private float originPitch() {
-			return this.originPitch;
-		}
-
-		private boolean wasInvisible() {
-			return this.wasInvisible;
-		}
-
-		private boolean wasNoGravity() {
-			return this.wasNoGravity;
-		}
-
-		private boolean wasNoPhysics() {
-			return this.wasNoPhysics;
-		}
-
-		private boolean wasInvulnerable() {
-			return this.wasInvulnerable;
-		}
-
-		private boolean hadMayfly() {
-			return this.hadMayfly;
-		}
-
-		private boolean wasFlying() {
-			return this.wasFlying;
-		}
-
-		private GameType serverGameMode() {
-			return this.serverGameMode;
-		}
-
-		private ServerPlayer controlledProxyPlayer() {
-			return this.controlledProxyPlayer;
-		}
-
-		private void setControlledProxyPlayer(ServerPlayer controlledProxyPlayer) {
-			this.controlledProxyPlayer = controlledProxyPlayer;
-		}
-
-		private ServerGamePacketListenerImpl controlledProxyListener() {
-			return this.controlledProxyListener;
-		}
-
-		private void setControlledProxyListener(ServerGamePacketListenerImpl controlledProxyListener) {
-			this.controlledProxyListener = controlledProxyListener;
 		}
 
 		private Vec3 velocity() {
@@ -3627,14 +2569,6 @@ public final class DroneSystem {
 
 		private void setIntendedVelocity(Vec3 intendedVelocity) {
 			this.intendedVelocity = intendedVelocity == null ? Vec3.ZERO : intendedVelocity;
-		}
-
-		private Vec3 lastPlayerPos() {
-			return this.lastPlayerPos;
-		}
-
-		private void setLastPlayerPos(Vec3 lastPlayerPos) {
-			this.lastPlayerPos = lastPlayerPos == null ? Vec3.ZERO : lastPlayerPos;
 		}
 
 		private Vec3 proxyPos() {
@@ -3665,12 +2599,14 @@ public final class DroneSystem {
 			return this.nextViewSyncTeleportId++;
 		}
 
-		private int lastAcceptedProxyTeleportId() {
-			return this.lastAcceptedProxyTeleportId;
+		private void requestPositionSync() {
+			this.positionSyncRequested = true;
 		}
 
-		private void setLastAcceptedProxyTeleportId(int lastAcceptedProxyTeleportId) {
-			this.lastAcceptedProxyTeleportId = Math.max(0, lastAcceptedProxyTeleportId);
+		private boolean consumeRequestedPositionSync() {
+			boolean requested = this.positionSyncRequested;
+			this.positionSyncRequested = false;
+			return requested;
 		}
 
 		private double forwardDrive() {
@@ -3710,7 +2646,7 @@ public final class DroneSystem {
 		}
 
 		private void setSurfaceWear(double surfaceWear) {
-			this.surfaceWear = net.minecraft.util.Mth.clamp(surfaceWear, 0.0D, DRONE_SURFACE_WEAR_BREAK_LEVEL);
+			this.surfaceWear = net.minecraft.util.Mth.clamp(surfaceWear, 0.0D, DroneImpactModel.SURFACE_WEAR_BREAK_LEVEL);
 		}
 
 		private long lastSurfaceWearContactTick() {

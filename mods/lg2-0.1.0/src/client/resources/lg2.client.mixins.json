@@ -13,7 +13,6 @@
 		"GameRendererOffscreenProjectionMixin",
 		"GameRendererRenderLevelInvoker",
 		"LevelRendererRenderStateAccessor",
-		"LocalPlayerDroneProxyMixin",
 		"MinecraftOffscreenWorldAccessor",
 		"MinecraftMainRenderTargetAccessor",
 		"RendererBotMinecraftAuthMixin",
