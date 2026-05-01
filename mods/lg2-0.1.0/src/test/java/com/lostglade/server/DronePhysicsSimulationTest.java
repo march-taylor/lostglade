@@ -357,6 +357,13 @@ public final class DronePhysicsSimulationTest {
 		require(server.contains("sendControlledOperatorPacket(player, buildControlledPlayerPositionPacket(session));"), "controlled view must hard-sync the virtual self only on start or rare resync");
 		require(server.contains("buildControlledOperatorPassengerPacket(player, session)"), "controlled view should keep the old self-camera passenger sync");
 		require(server.contains("shouldSuppressPostControlMovePacket"), "stale drone-position move packets after control must be rejected");
+		require(server.contains("isCameraBlockedByDroneControl"), "camera conflicts should be gated only by active drone-control state");
+		require(!server.contains("CAMERA_SUPPRESSED_UNTIL_TICK"), "camera systems must not stay blocked by a post-exit suppression timer");
+		require(!server.contains("markCameraSuppressedForPlayer"), "camera systems must not depend on a delayed post-exit suppression hook");
+		require(server.contains("VISUALLY_CONTROLLED_PLAYERS"), "client-authoritative control should track players whose client view is still forced");
+		require(server.contains("recoverOrphanedControlledOperators"), "destroyed drones should have an orphaned-control recovery path");
+		require(server.contains("restoreOrphanedControlledOperator"), "orphaned controlled players should be force-restored");
+		require(server.contains("clearControlledOperatorMovementState"), "orphaned controlled players should clear their forced movement state");
 		require(server.contains("restoreControlledOperatorClientState"), "player camera and inventory restore should share one resync path");
 		require(server.contains("ServerMechanicsGateSystem.syncPlayerInventory(player);"), "leaving drone control must force an inventory resync");
 		require(server.contains("private static final float DRONE_DISPLAY_CONTROLLED_Y_OFFSET = 0.0F;"), "controlled display must not be offset away from the physical root hitbox");

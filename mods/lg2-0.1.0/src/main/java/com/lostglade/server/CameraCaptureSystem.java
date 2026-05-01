@@ -69,7 +69,7 @@ public final class CameraCaptureSystem {
 	}
 
 	public static boolean handleLeftClickAir(ServerPlayer player, InteractionHand hand) {
-		if (DroneSystem.isDroneCameraSuppressed(player)) {
+		if (DroneSystem.isCameraBlockedByDroneControl(player)) {
 			return false;
 		}
 		if (!isLeftClickCameraTrigger(player, hand)) {
@@ -96,7 +96,7 @@ public final class CameraCaptureSystem {
 	}
 
 	public static boolean tryCapture(ServerPlayer player, ItemStack stack) {
-		if (DroneSystem.isDroneCameraSuppressed(player)) {
+		if (DroneSystem.isCameraBlockedByDroneControl(player)) {
 			return false;
 		}
 		if (player == null || stack == null || stack.isEmpty() || !stack.is(ModItems.CAMERA)) {
@@ -328,7 +328,7 @@ public final class CameraCaptureSystem {
 				&& hand == InteractionHand.MAIN_HAND
 				&& player.isAlive()
 				&& !player.isSpectator()
-				&& !DroneSystem.isDroneCameraSuppressed(player)
+				&& !DroneSystem.isCameraBlockedByDroneControl(player)
 				&& player.getItemInHand(hand).is(ModItems.CAMERA);
 	}
 
