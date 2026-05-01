@@ -10,6 +10,7 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -17,32 +18,50 @@ import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.context.UseOnContext;
 import xyz.nucleoid.packettweaker.PacketContext;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
 public final class DroneItem extends SimplePolymerItem {
+	public enum DroneType {
+		NORMAL,
+		KAMIKAZE,
+		COMBAT
+	}
+
+	public record DisplayLayer(String key, Identifier modelId) {
+	}
+
 	private static final Identifier DEFAULT_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone");
-	private static final Identifier DEFAULT_DISPLAY_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_display");
-	private static final Identifier KAMIKAZE_DISPLAY_MODEL_ID_LEVEL_1 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_kamikaze_display_1");
-	private static final Identifier KAMIKAZE_DISPLAY_MODEL_ID_LEVEL_2 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_kamikaze_display_2");
-	private static final Identifier KAMIKAZE_DISPLAY_MODEL_ID_LEVEL_3 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_kamikaze_display_3");
+	private static final Identifier NORMAL_DISPLAY_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_display");
+	private static final Identifier KAMIKAZE_DISPLAY_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_type_kamikaze_display");
+	private static final Identifier COMBAT_DISPLAY_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_type_combat_display");
+	private static final Identifier TNT_LAYER_MODEL_ID_LEVEL_1 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_tnt_1");
+	private static final Identifier TNT_LAYER_MODEL_ID_LEVEL_2 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_tnt_2");
+	private static final Identifier TNT_LAYER_MODEL_ID_LEVEL_3 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_tnt_3");
+	private static final Identifier NIGHT_VISION_LAYER_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_night_vision");
+	private static final Identifier AUTO_AIM_LAYER_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_auto_aim");
 	private static final String DISPLAY_ROOT_TAG = "lg2_drone_display";
 	private static final String DISPLAY_ONLY_TAG = "display_only";
+	private static final String DISPLAY_MODEL_OVERRIDE_TAG = "model_override";
 	private static final String DATA_ROOT_TAG = "lg2_drone";
+	private static final String TYPE_TAG = "type";
 	private static final String KAMIKAZE_POWER_TAG = "kamikaze_power";
+	private static final String NIGHT_VISION_TAG = "night_vision";
+	private static final String AUTO_AIM_TAG = "auto_aim";
+	private static final String PAINT_COLOR_TAG = "paint";
 	private static final int NO_KAMIKAZE_POWER = 0;
 	private static final int MIN_KAMIKAZE_POWER = 1;
 	private static final int MAX_KAMIKAZE_POWER = 3;
 	private final Identifier modelId;
-	private final Identifier displayModelId;
-	private final boolean kamikaze;
 
 	public DroneItem(Item.Properties settings) {
-		this(settings, DEFAULT_MODEL_ID, DEFAULT_DISPLAY_MODEL_ID, false);
+		this(settings, DEFAULT_MODEL_ID);
 	}
 
-	public DroneItem(Item.Properties settings, Identifier modelId, Identifier displayModelId, boolean kamikaze) {
+	public DroneItem(Item.Properties settings, Identifier modelId) {
 		super(settings, Items.FIREWORK_ROCKET);
 		this.modelId = modelId == null ? DEFAULT_MODEL_ID : modelId;
-		this.displayModelId = displayModelId == null ? DEFAULT_DISPLAY_MODEL_ID : displayModelId;
-		this.kamikaze = kamikaze;
 	}
 
 	@Override
@@ -53,11 +72,11 @@ public final class DroneItem extends SimplePolymerItem {
 		if (!isDroneDisplayStack(itemStack)) {
 			return this.modelId;
 		}
-		int kamikazePower = getKamikazePower(itemStack);
-		if (kamikazePower > 0) {
-			return kamikazeDisplayModelForPower(kamikazePower);
+		Identifier overrideModel = getDisplayModelOverride(itemStack);
+		if (overrideModel != null) {
+			return overrideModel;
 		}
-		return this.displayModelId;
+		return displayModelForType(getDroneType(itemStack));
 	}
 
 	@Override
@@ -65,20 +84,28 @@ public final class DroneItem extends SimplePolymerItem {
 		if (isDroneDisplayStack(original) || PolymerResourcePackUtils.hasMainPack(context)) {
 			return;
 		}
+		DroneType type = getDroneType(original);
 		int power = getKamikazePower(original);
-		out.set(DataComponents.CUSTOM_NAME, localizedName(context, power > 0, power).withStyle(style -> style.withItalic(false)));
+		out.set(DataComponents.CUSTOM_NAME, localizedName(context, type, power).withStyle(style -> style.withItalic(false)));
 	}
 
 	@Override
 	public Component getName(ItemStack stack) {
-		int power = getKamikazePower(stack);
-		if (power <= 0) {
-			return super.getName(stack);
+		DroneType type = getDroneType(stack);
+		if (type == DroneType.COMBAT) {
+			return Component.literal("Combat Drone");
 		}
-		return Component.translatable(
-				"item.lg2.drone_kamikaze.with_power",
-				Component.translatable("item.lg2.drone_kamikaze.power." + power)
-		);
+		if (type == DroneType.KAMIKAZE) {
+			int power = getKamikazePower(stack);
+			if (power > 0) {
+				return Component.translatable(
+						"item.lg2.drone_kamikaze.with_power",
+						Component.translatable("item.lg2.drone_kamikaze.power." + power)
+				);
+			}
+			return Component.translatable("item.lg2.drone_kamikaze");
+		}
+		return super.getName(stack);
 	}
 
 	@Override
@@ -87,18 +114,38 @@ public final class DroneItem extends SimplePolymerItem {
 	}
 
 	public static ItemStack createDisplayStack() {
-		return createDisplayStack(ModItems.DRONE, NO_KAMIKAZE_POWER);
+		return createDisplayStack(ModItems.DRONE, DroneType.NORMAL, NO_KAMIKAZE_POWER, false, false, null);
 	}
 
 	public static ItemStack createDisplayStack(Item droneItem, int kamikazePower) {
-		ItemStack stack = new ItemStack(droneItem == null ? ModItems.DRONE : droneItem);
-		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
-			var displayTag = tag.getCompoundOrEmpty(DISPLAY_ROOT_TAG);
-			displayTag.putBoolean(DISPLAY_ONLY_TAG, true);
-			tag.put(DISPLAY_ROOT_TAG, displayTag);
-		});
-		setKamikazePower(stack, kamikazePower);
-		return stack;
+		DroneType type = kamikazePower > 0 ? DroneType.KAMIKAZE : DroneType.NORMAL;
+		return createDisplayStack(droneItem, type, kamikazePower, false, false, null);
+	}
+
+	public static ItemStack createDisplayStack(
+			Item droneItem,
+			DroneType type,
+			int kamikazePower,
+			boolean nightVision,
+			boolean autoAim,
+			DyeColor paintColor
+	) {
+		return createDroneStack(droneItem, true, null, type, kamikazePower, nightVision, autoAim, paintColor);
+	}
+
+	public static ItemStack createConfiguredStack(
+			Item droneItem,
+			DroneType type,
+			int kamikazePower,
+			boolean nightVision,
+			boolean autoAim,
+			DyeColor paintColor
+	) {
+		return createDroneStack(droneItem, false, null, type, kamikazePower, nightVision, autoAim, paintColor);
+	}
+
+	public static ItemStack createDisplayLayerStack(Identifier modelId) {
+		return createDroneStack(ModItems.DRONE, true, modelId, DroneType.NORMAL, NO_KAMIKAZE_POWER, false, false, null);
 	}
 
 	public static boolean isDroneDisplayStack(ItemStack stack) {
@@ -114,8 +161,39 @@ public final class DroneItem extends SimplePolymerItem {
 				.getBooleanOr(DISPLAY_ONLY_TAG, false);
 	}
 
+	public static DroneType getDroneType(ItemStack stack) {
+		if (!isDroneCompatibleStack(stack)) {
+			return DroneType.NORMAL;
+		}
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		String rawType = customData == null
+				? ""
+				: customData.copyTag().getCompoundOrEmpty(DATA_ROOT_TAG).getStringOr(TYPE_TAG, "");
+		if (rawType != null && !rawType.isBlank()) {
+			try {
+				return DroneType.valueOf(rawType.trim().toUpperCase(Locale.ROOT));
+			} catch (IllegalArgumentException ignored) {
+			}
+		}
+		return getKamikazePower(stack) > 0 ? DroneType.KAMIKAZE : DroneType.NORMAL;
+	}
+
+	public static void setDroneType(ItemStack stack, DroneType type) {
+		if (!isDroneCompatibleStack(stack)) {
+			return;
+		}
+		DroneType resolvedType = type == null ? DroneType.NORMAL : type;
+		updateDroneData(stack, droneTag -> {
+			if (resolvedType == DroneType.NORMAL) {
+				droneTag.remove(TYPE_TAG);
+			} else {
+				droneTag.putString(TYPE_TAG, resolvedType.name().toLowerCase(Locale.ROOT));
+			}
+		});
+	}
+
 	public static boolean isKamikazeDroneStack(ItemStack stack) {
-		return getKamikazePower(stack) > 0;
+		return getDroneType(stack) == DroneType.KAMIKAZE;
 	}
 
 	public static int getKamikazePower(ItemStack stack) {
@@ -137,49 +215,198 @@ public final class DroneItem extends SimplePolymerItem {
 			return;
 		}
 		int clamped = net.minecraft.util.Mth.clamp(power, NO_KAMIKAZE_POWER, MAX_KAMIKAZE_POWER);
-		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+		updateDroneData(stack, droneTag -> {
 			if (clamped <= 0) {
-				var droneTag = tag.getCompoundOrEmpty(DATA_ROOT_TAG);
 				droneTag.remove(KAMIKAZE_POWER_TAG);
-				if (droneTag.isEmpty()) {
-					tag.remove(DATA_ROOT_TAG);
-				} else {
-					tag.put(DATA_ROOT_TAG, droneTag);
-				}
 				return;
 			}
-			var droneTag = tag.getCompoundOrEmpty(DATA_ROOT_TAG);
 			droneTag.putInt(KAMIKAZE_POWER_TAG, clamped);
-			tag.put(DATA_ROOT_TAG, droneTag);
+		});
+		if (clamped > 0 && getDroneType(stack) != DroneType.KAMIKAZE) {
+			setDroneType(stack, DroneType.KAMIKAZE);
+		}
+	}
+
+	public static boolean hasNightVisionModule(ItemStack stack) {
+		return getBooleanModule(stack, NIGHT_VISION_TAG);
+	}
+
+	public static void setNightVisionModule(ItemStack stack, boolean enabled) {
+		setBooleanModule(stack, NIGHT_VISION_TAG, enabled);
+	}
+
+	public static boolean hasAutoAimModule(ItemStack stack) {
+		return getBooleanModule(stack, AUTO_AIM_TAG);
+	}
+
+	public static void setAutoAimModule(ItemStack stack, boolean enabled) {
+		setBooleanModule(stack, AUTO_AIM_TAG, enabled);
+	}
+
+	public static DyeColor getPaintColor(ItemStack stack) {
+		if (!isDroneCompatibleStack(stack)) {
+			return null;
+		}
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData == null) {
+			return null;
+		}
+		String rawColor = customData.copyTag()
+				.getCompoundOrEmpty(DATA_ROOT_TAG)
+				.getStringOr(PAINT_COLOR_TAG, "");
+		if (rawColor == null || rawColor.isBlank()) {
+			return null;
+		}
+		for (DyeColor color : DyeColor.values()) {
+			if (color.getName().equalsIgnoreCase(rawColor)) {
+				return color;
+			}
+		}
+		return null;
+	}
+
+	public static void setPaintColor(ItemStack stack, DyeColor color) {
+		if (!isDroneCompatibleStack(stack)) {
+			return;
+		}
+		updateDroneData(stack, droneTag -> {
+			if (color == null) {
+				droneTag.remove(PAINT_COLOR_TAG);
+			} else {
+				droneTag.putString(PAINT_COLOR_TAG, color.getName());
+			}
 		});
 	}
 
 	public static ItemStack createKamikazeStack(int power) {
-		ItemStack stack = new ItemStack(ModItems.DRONE);
-		setKamikazePower(stack, power);
+		return createConfiguredStack(ModItems.DRONE, DroneType.KAMIKAZE, power, false, false, null);
+	}
+
+	public static Identifier getDisplayModelOverride(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return null;
+		}
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData == null) {
+			return null;
+		}
+		String rawId = customData.copyTag()
+				.getCompoundOrEmpty(DISPLAY_ROOT_TAG)
+				.getStringOr(DISPLAY_MODEL_OVERRIDE_TAG, "");
+		if (rawId == null || rawId.isBlank()) {
+			return null;
+		}
+		return Identifier.tryParse(rawId);
+	}
+
+	public static List<DisplayLayer> resolveDisplayLayers(
+			DroneType type,
+			int kamikazePower,
+			boolean nightVision,
+			boolean autoAim,
+			DyeColor paintColor
+	) {
+		List<DisplayLayer> layers = new ArrayList<>();
+		int clampedPower = net.minecraft.util.Mth.clamp(kamikazePower, NO_KAMIKAZE_POWER, MAX_KAMIKAZE_POWER);
+		if (type == DroneType.KAMIKAZE && clampedPower > 0) {
+			layers.add(new DisplayLayer("tnt", tntLayerModelForPower(clampedPower)));
+		}
+		if (nightVision) {
+			layers.add(new DisplayLayer("night_vision", NIGHT_VISION_LAYER_MODEL_ID));
+		}
+		if (autoAim) {
+			layers.add(new DisplayLayer("auto_aim", AUTO_AIM_LAYER_MODEL_ID));
+		}
+		if (paintColor != null) {
+			layers.add(new DisplayLayer("paint", paintLayerModelForColor(paintColor)));
+		}
+		return layers;
+	}
+
+	public static Identifier displayModelForType(DroneType type) {
+		DroneType resolvedType = type == null ? DroneType.NORMAL : type;
+		return switch (resolvedType) {
+			case KAMIKAZE -> KAMIKAZE_DISPLAY_MODEL_ID;
+			case COMBAT -> COMBAT_DISPLAY_MODEL_ID;
+			default -> NORMAL_DISPLAY_MODEL_ID;
+		};
+	}
+
+	private static ItemStack createDroneStack(
+			Item droneItem,
+			boolean displayOnly,
+			Identifier displayModelOverride,
+			DroneType type,
+			int kamikazePower,
+			boolean nightVision,
+			boolean autoAim,
+			DyeColor paintColor
+	) {
+		ItemStack stack = new ItemStack(droneItem == null ? ModItems.DRONE : droneItem);
+		if (displayOnly || displayModelOverride != null) {
+			CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+				var displayTag = tag.getCompoundOrEmpty(DISPLAY_ROOT_TAG);
+				displayTag.putBoolean(DISPLAY_ONLY_TAG, displayOnly);
+				if (displayModelOverride == null) {
+					displayTag.remove(DISPLAY_MODEL_OVERRIDE_TAG);
+				} else {
+					displayTag.putString(DISPLAY_MODEL_OVERRIDE_TAG, displayModelOverride.toString());
+				}
+				tag.put(DISPLAY_ROOT_TAG, displayTag);
+			});
+		}
+		setDroneType(stack, type);
+		setKamikazePower(stack, kamikazePower);
+		setNightVisionModule(stack, nightVision);
+		setAutoAimModule(stack, autoAim);
+		setPaintColor(stack, paintColor);
 		return stack;
 	}
 
-	private static MutableComponent localizedName(PacketContext context, boolean kamikaze, int power) {
+	private static MutableComponent localizedName(PacketContext context, DroneType type, int power) {
 		ServerPlayer player = context.getPlayer();
 		if (player == null) {
-			return Component.literal(kamikaze ? "Kamikaze Drone " + romanPower(power) : "Drone");
+			return fallbackEnglishName(type, power);
 		}
 		String language = player.clientInformation().language();
-		String normalized = language == null ? "" : language.toLowerCase();
+		String normalized = language == null ? "" : language.toLowerCase(Locale.ROOT);
 		if (normalized.startsWith("rpr")) {
-			return Component.literal(kamikaze ? "Дронъ-камикадзе " + romanPower(power) : "Дронъ");
+			return switch (type) {
+				case COMBAT -> Component.literal("Боевой дронъ");
+				case KAMIKAZE -> Component.literal(power > 0 ? "Дронъ-камикадзе " + romanPower(power) : "Дронъ-камикадзе");
+				default -> Component.literal("Дронъ");
+			};
 		}
 		if (normalized.startsWith("ru")) {
-			return Component.literal(kamikaze ? "Дрон-камикадзе " + romanPower(power) : "Дрон");
+			return switch (type) {
+				case COMBAT -> Component.literal("Боевой дрон");
+				case KAMIKAZE -> Component.literal(power > 0 ? "Дрон-камикадзе " + romanPower(power) : "Дрон-камикадзе");
+				default -> Component.literal("Дрон");
+			};
 		}
 		if (normalized.startsWith("uk")) {
-			return Component.literal(kamikaze ? "Дрон-камікадзе " + romanPower(power) : "Дрон");
+			return switch (type) {
+				case COMBAT -> Component.literal("Бойовий дрон");
+				case KAMIKAZE -> Component.literal(power > 0 ? "Дрон-камікадзе " + romanPower(power) : "Дрон-камікадзе");
+				default -> Component.literal("Дрон");
+			};
 		}
 		if (normalized.startsWith("ja")) {
-			return Component.literal(kamikaze ? "カミカゼドローン " + romanPower(power) : "ドローン");
+			return switch (type) {
+				case COMBAT -> Component.literal("戦闘ドローン");
+				case KAMIKAZE -> Component.literal(power > 0 ? "カミカゼドローン " + romanPower(power) : "カミカゼドローン");
+				default -> Component.literal("ドローン");
+			};
 		}
-		return Component.literal(kamikaze ? "Kamikaze Drone " + romanPower(power) : "Drone");
+		return fallbackEnglishName(type, power);
+	}
+
+	private static MutableComponent fallbackEnglishName(DroneType type, int power) {
+		return switch (type == null ? DroneType.NORMAL : type) {
+			case COMBAT -> Component.literal("Combat Drone");
+			case KAMIKAZE -> Component.literal(power > 0 ? "Kamikaze Drone " + romanPower(power) : "Kamikaze Drone");
+			default -> Component.literal("Drone");
+		};
 	}
 
 	private static String romanPower(int power) {
@@ -190,12 +417,58 @@ public final class DroneItem extends SimplePolymerItem {
 		};
 	}
 
-	private static Identifier kamikazeDisplayModelForPower(int power) {
+	private static Identifier tntLayerModelForPower(int power) {
 		return switch (net.minecraft.util.Mth.clamp(power, MIN_KAMIKAZE_POWER, MAX_KAMIKAZE_POWER)) {
-			case 1 -> KAMIKAZE_DISPLAY_MODEL_ID_LEVEL_1;
-			case 2 -> KAMIKAZE_DISPLAY_MODEL_ID_LEVEL_2;
-			default -> KAMIKAZE_DISPLAY_MODEL_ID_LEVEL_3;
+			case 1 -> TNT_LAYER_MODEL_ID_LEVEL_1;
+			case 2 -> TNT_LAYER_MODEL_ID_LEVEL_2;
+			default -> TNT_LAYER_MODEL_ID_LEVEL_3;
 		};
+	}
+
+	private static Identifier paintLayerModelForColor(DyeColor color) {
+		DyeColor resolved = color == null ? DyeColor.WHITE : color;
+		return Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_paint_" + resolved.getName());
+	}
+
+	private static void setBooleanModule(ItemStack stack, String key, boolean enabled) {
+		if (!isDroneCompatibleStack(stack) || key == null || key.isBlank()) {
+			return;
+		}
+		updateDroneData(stack, droneTag -> {
+			if (enabled) {
+				droneTag.putBoolean(key, true);
+			} else {
+				droneTag.remove(key);
+			}
+		});
+	}
+
+	private static boolean getBooleanModule(ItemStack stack, String key) {
+		if (!isDroneCompatibleStack(stack) || key == null || key.isBlank()) {
+			return false;
+		}
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData == null) {
+			return false;
+		}
+		return customData.copyTag()
+				.getCompoundOrEmpty(DATA_ROOT_TAG)
+				.getBooleanOr(key, false);
+	}
+
+	private static void updateDroneData(ItemStack stack, java.util.function.Consumer<net.minecraft.nbt.CompoundTag> updater) {
+		if (!isDroneCompatibleStack(stack) || updater == null) {
+			return;
+		}
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+			var droneTag = tag.getCompoundOrEmpty(DATA_ROOT_TAG);
+			updater.accept(droneTag);
+			if (droneTag.isEmpty()) {
+				tag.remove(DATA_ROOT_TAG);
+			} else {
+				tag.put(DATA_ROOT_TAG, droneTag);
+			}
+		});
 	}
 
 	private static boolean isDroneCompatibleStack(ItemStack stack) {

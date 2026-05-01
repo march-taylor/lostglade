@@ -60,6 +60,9 @@ import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.entity.item.PrimedTnt;
+import net.minecraft.world.item.DyeColor;
+import net.minecraft.world.item.DyeItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -76,6 +79,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -86,9 +90,15 @@ public final class DroneSystem {
 	private static final String IT_DRONE_SCOUT = "it_drone_scout";
 	private static final String IT_DRONE_KAMIKAZE = "it_drone_kamikaze";
 	private static final String DRONE_ROOT_TAG = "lg2_drone_root";
+	private static final String DRONE_TYPE_TAG_PREFIX = "lg2_drone_type_";
 	private static final String DRONE_KAMIKAZE_POWER_TAG_PREFIX = "lg2_drone_kamikaze_power_";
+	private static final String DRONE_NIGHT_VISION_TAG = "lg2_drone_night_vision";
+	private static final String DRONE_AUTO_AIM_TAG = "lg2_drone_auto_aim";
+	private static final String DRONE_PAINT_TAG_PREFIX = "lg2_drone_paint_";
 	private static final String DRONE_DISPLAY_TAG = "lg2_drone_display";
 	private static final String DRONE_DISPLAY_OWNER_TAG_PREFIX = "lg2_drone_display_owner_";
+	private static final String DRONE_DISPLAY_LAYER_TAG_PREFIX = "lg2_drone_display_layer_";
+	private static final String DRONE_DISPLAY_LAYER_BASE = "base";
 	private static final String DRONE_CAMERA_TAG = "lg2_drone_camera_anchor";
 	private static final String DRONE_CAMERA_OWNER_TAG_PREFIX = "lg2_drone_camera_owner_";
 	private static final Identifier DRONE_LOOP_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_loop");
@@ -203,9 +213,11 @@ public final class DroneSystem {
 			if (activeSession != null && Objects.equals(activeSession.droneUuid(), root.getUUID())) {
 				return InteractionResult.CONSUME;
 			}
-			InteractionResult armResult = tryArmDroneWithTnt(serverPlayer, root, serverPlayer.getItemInHand(hand));
-			if (armResult != InteractionResult.PASS) {
-				return armResult;
+			InteractionResult tuningResult = serverPlayer.isShiftKeyDown()
+					? tryUnloadDroneModule(serverPlayer, root)
+					: tryTuneDrone(serverPlayer, root, serverPlayer.getItemInHand(hand));
+			if (tuningResult != InteractionResult.PASS) {
+				return tuningResult;
 			}
 			String requiredUpgrade = resolveRequiredUpgradeForDroneRoot(root);
 			if (requiredUpgrade != null && !ServerUpgradeUiSystem.hasUpgrade(serverPlayer, requiredUpgrade)) {
@@ -268,7 +280,11 @@ public final class DroneSystem {
 		if (requiredUpgrade != null && !ServerUpgradeUiSystem.hasUpgrade(player, requiredUpgrade)) {
 			return InteractionResult.FAIL;
 		}
-		int kamikazePower = DRONE_KAMIKAZE_NO_POWER;
+		DroneItem.DroneType droneType = DroneItem.getDroneType(placementSnapshot);
+		int kamikazePower = DroneItem.getKamikazePower(placementSnapshot);
+		boolean nightVision = DroneItem.hasNightVisionModule(placementSnapshot);
+		boolean autoAim = DroneItem.hasAutoAimModule(placementSnapshot);
+		DyeColor paintColor = DroneItem.getPaintColor(placementSnapshot);
 
 		Vec3 spawnPos = resolvePlacementPosition(context);
 		AABB placementBox = droneBoxAt(spawnPos);
@@ -279,9 +295,6 @@ public final class DroneSystem {
 		float yRot = player.getYRot();
 		Interaction root = new Interaction(EntityType.INTERACTION, serverLevel);
 		root.addTag(DRONE_ROOT_TAG);
-		if (kamikazePower > DRONE_KAMIKAZE_NO_POWER) {
-			root.addTag(droneKamikazePowerTag(kamikazePower));
-		}
 		root.setPos(spawnPos.x, spawnPos.y, spawnPos.z);
 		root.setYRot(yRot);
 		root.setXRot(0.0F);
@@ -291,14 +304,29 @@ public final class DroneSystem {
 		root.setResponse(true);
 		root.setWidth(DRONE_WIDTH);
 		root.setHeight(DRONE_HEIGHT);
+		if (droneType != DroneItem.DroneType.NORMAL) {
+			root.addTag(DRONE_TYPE_TAG_PREFIX + droneType.name().toLowerCase(java.util.Locale.ROOT));
+		}
+		if (kamikazePower > DRONE_KAMIKAZE_NO_POWER) {
+			root.addTag(droneKamikazePowerTag(kamikazePower));
+		}
+		if (nightVision) {
+			root.addTag(DRONE_NIGHT_VISION_TAG);
+		}
+		if (autoAim) {
+			root.addTag(DRONE_AUTO_AIM_TAG);
+		}
+		if (paintColor != null) {
+			root.addTag(DRONE_PAINT_TAG_PREFIX + paintColor.getName());
+		}
 
 		Display.ItemDisplay display = createDroneDisplay(
 				serverLevel,
 				spawnPos,
 				yRot,
 				0.0F,
-				ModItems.DRONE,
-				kamikazePower
+				DroneItem.createDisplayStack(ModItems.DRONE, droneType, kamikazePower, nightVision, autoAim, paintColor),
+				DRONE_DISPLAY_LAYER_BASE
 		);
 		Interaction cameraAnchor = createDroneCameraAnchor(serverLevel, droneCameraOrigin(spawnPos), yRot, 0.0F);
 		serverLevel.addFreshEntity(root);
@@ -309,6 +337,7 @@ public final class DroneSystem {
 		DISPLAYS_BY_DRONE.put(root.getUUID(), display.getUUID());
 		cameraAnchor.addTag(DRONE_CAMERA_OWNER_TAG_PREFIX + root.getUUID());
 		CAMERA_ANCHORS_BY_DRONE.put(root.getUUID(), cameraAnchor.getUUID());
+		syncDroneDisplayLayers(root);
 		syncDroneDisplay(root, yRot, 0.0F, 0.0D, 0.0D);
 		UNCONTROLLED_DRONES.put(
 				root.getUUID(),
@@ -1900,9 +1929,8 @@ public final class DroneSystem {
 				stopControlling(controller, true, false);
 			}
 		}
-		UUID displayId = DISPLAYS_BY_DRONE.remove(root.getUUID());
-		Entity display = displayId == null ? findDroneDisplay(root) : findEntity(level.getServer(), level.dimension(), displayId);
-		if (display != null) {
+		DISPLAYS_BY_DRONE.remove(root.getUUID());
+		for (Display.ItemDisplay display : findDroneDisplayLayers(root)) {
 			display.discard();
 		}
 		UUID cameraAnchorId = CAMERA_ANCHORS_BY_DRONE.remove(root.getUUID());
@@ -1950,13 +1978,13 @@ public final class DroneSystem {
 			return null;
 		}
 		if (stack.getItem() == ModItems.DRONE) {
-			return IT_DRONE_SCOUT;
+			return DroneItem.getDroneType(stack) == DroneItem.DroneType.KAMIKAZE ? IT_DRONE_KAMIKAZE : IT_DRONE_SCOUT;
 		}
 		return null;
 	}
 
-	private static InteractionResult tryArmDroneWithTnt(ServerPlayer player, Entity root, ItemStack heldStack) {
-		if (player == null || root == null || !(root.level() instanceof ServerLevel level) || heldStack == null || !heldStack.is(Items.TNT)) {
+	private static InteractionResult tryTuneDrone(ServerPlayer player, Entity root, ItemStack heldStack) {
+		if (player == null || root == null || !(root.level() instanceof ServerLevel level)) {
 			return InteractionResult.PASS;
 		}
 
@@ -1965,19 +1993,48 @@ public final class DroneSystem {
 		if (now < nextAllowedTick) {
 			return InteractionResult.CONSUME;
 		}
-		NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
+		if (heldStack == null || heldStack.isEmpty()) {
+			return InteractionResult.PASS;
+		}
+
+		if (heldStack.is(Items.TNT)) {
+			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
+			return tryArmDroneWithTnt(player, root, heldStack);
+		}
+		if (heldStack.is(Items.STRING)) {
+			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
+			return tryInstallDroneType(player, root, heldStack, DroneItem.DroneType.KAMIKAZE, Items.STRING);
+		}
+		if (heldStack.is(Items.DISPENSER)) {
+			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
+			return tryInstallDroneType(player, root, heldStack, DroneItem.DroneType.COMBAT, Items.DISPENSER);
+		}
+		if (heldStack.is(Items.SPIDER_EYE)) {
+			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
+			return tryInstallNightVisionModule(player, root, heldStack);
+		}
+		if (heldStack.is(Items.CALIBRATED_SCULK_SENSOR)) {
+			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
+			return tryInstallAutoAimModule(player, root, heldStack);
+		}
+		if (heldStack.getItem() instanceof DyeItem dyeItem) {
+			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
+			return tryPaintDrone(player, root, heldStack, dyeItem.getDyeColor());
+		}
+		return InteractionResult.PASS;
+	}
+
+	private static InteractionResult tryArmDroneWithTnt(ServerPlayer player, Entity root, ItemStack heldStack) {
+		if (player == null || root == null || !(root.level() instanceof ServerLevel level) || heldStack == null || !heldStack.is(Items.TNT)) {
+			return InteractionResult.PASS;
+		}
+		if (resolveDroneType(root) != DroneItem.DroneType.KAMIKAZE) {
+			return InteractionResult.PASS;
+		}
 
 		int currentPower = resolveDroneKamikazePower(root);
 		if (currentPower >= DRONE_KAMIKAZE_MAX_POWER) {
-			playDroneKamikazeInsertFailFeedback(level, droneCameraOrigin(root));
-			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.NEGATIVE);
-			return InteractionResult.CONSUME;
-		}
-
-		if (currentPower <= DRONE_KAMIKAZE_NO_POWER && !ServerUpgradeUiSystem.hasUpgrade(player, IT_DRONE_KAMIKAZE)) {
-			playDroneKamikazeInsertFailFeedback(level, droneCameraOrigin(root));
-			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.NEGATIVE);
-			return InteractionResult.FAIL;
+			return InteractionResult.PASS;
 		}
 
 		int newPower = net.minecraft.util.Mth.clamp(currentPower + 1, DRONE_KAMIKAZE_MIN_POWER, DRONE_KAMIKAZE_MAX_POWER);
@@ -1992,22 +2049,224 @@ public final class DroneSystem {
 		return InteractionResult.SUCCESS;
 	}
 
+	private static InteractionResult tryInstallDroneType(
+			ServerPlayer player,
+			Entity root,
+			ItemStack heldStack,
+			DroneItem.DroneType targetType,
+			Item installedItem
+	) {
+		if (player == null || root == null || heldStack == null || targetType == null || installedItem == null) {
+			return InteractionResult.PASS;
+		}
+		if (targetType == DroneItem.DroneType.KAMIKAZE && !ServerUpgradeUiSystem.hasUpgrade(player, IT_DRONE_KAMIKAZE)) {
+			return InteractionResult.PASS;
+		}
+
+		DroneItem.DroneType currentType = resolveDroneType(root);
+		if (currentType == targetType) {
+			return InteractionResult.PASS;
+		}
+		if (currentType == DroneItem.DroneType.KAMIKAZE && resolveDroneKamikazePower(root) > 0) {
+			return InteractionResult.PASS;
+		}
+
+		Item returnedTypeItem = switch (currentType) {
+			case KAMIKAZE -> Items.STRING;
+			case COMBAT -> Items.DISPENSER;
+			default -> null;
+		};
+		setDroneType(root, targetType);
+		if (targetType != DroneItem.DroneType.KAMIKAZE) {
+			setDroneKamikazePower(root, DRONE_KAMIKAZE_NO_POWER);
+		}
+		triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+		notifyDroneNetworkChanged(root);
+
+		if (!player.getAbilities().instabuild) {
+			heldStack.shrink(1);
+			giveOrDropTuningItem(player, root, returnedTypeItem);
+		}
+		return InteractionResult.SUCCESS;
+	}
+
+	private static InteractionResult tryInstallNightVisionModule(ServerPlayer player, Entity root, ItemStack heldStack) {
+		if (hasDroneNightVisionModule(root)) {
+			return InteractionResult.PASS;
+		}
+		setDroneNightVisionModule(root, true);
+		triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+		notifyDroneNetworkChanged(root);
+		if (!player.getAbilities().instabuild) {
+			heldStack.shrink(1);
+		}
+		return InteractionResult.SUCCESS;
+	}
+
+	private static InteractionResult tryInstallAutoAimModule(ServerPlayer player, Entity root, ItemStack heldStack) {
+		if (hasDroneAutoAimModule(root)) {
+			return InteractionResult.PASS;
+		}
+		setDroneAutoAimModule(root, true);
+		triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+		notifyDroneNetworkChanged(root);
+		if (!player.getAbilities().instabuild) {
+			heldStack.shrink(1);
+		}
+		return InteractionResult.SUCCESS;
+	}
+
+	private static InteractionResult tryPaintDrone(ServerPlayer player, Entity root, ItemStack heldStack, DyeColor color) {
+		if (color == null) {
+			return InteractionResult.PASS;
+		}
+		DyeColor currentColor = resolveDronePaintColor(root);
+		if (currentColor == color) {
+			return InteractionResult.PASS;
+		}
+		if (!player.getAbilities().instabuild && currentColor != null) {
+			giveOrDropTuningItem(player, root, dyeItemForColor(currentColor));
+		}
+		setDronePaintColor(root, color);
+		triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+		notifyDroneNetworkChanged(root);
+		if (!player.getAbilities().instabuild) {
+			heldStack.shrink(1);
+		}
+		return InteractionResult.SUCCESS;
+	}
+
+	private static InteractionResult tryUnloadDroneModule(ServerPlayer player, Entity root) {
+		if (player == null || root == null) {
+			return InteractionResult.PASS;
+		}
+
+		int currentPower = resolveDroneKamikazePower(root);
+		if (currentPower > DRONE_KAMIKAZE_NO_POWER) {
+			setDroneKamikazePower(root, currentPower - 1);
+			giveOrDropTuningItem(player, root, Items.TNT);
+			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+			notifyDroneNetworkChanged(root);
+			return InteractionResult.SUCCESS;
+		}
+		if (hasDroneNightVisionModule(root)) {
+			setDroneNightVisionModule(root, false);
+			giveOrDropTuningItem(player, root, Items.SPIDER_EYE);
+			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+			notifyDroneNetworkChanged(root);
+			return InteractionResult.SUCCESS;
+		}
+		if (hasDroneAutoAimModule(root)) {
+			setDroneAutoAimModule(root, false);
+			giveOrDropTuningItem(player, root, Items.CALIBRATED_SCULK_SENSOR);
+			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+			notifyDroneNetworkChanged(root);
+			return InteractionResult.SUCCESS;
+		}
+		DyeColor paintColor = resolveDronePaintColor(root);
+		if (paintColor != null) {
+			setDronePaintColor(root, null);
+			giveOrDropTuningItem(player, root, dyeItemForColor(paintColor));
+			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+			notifyDroneNetworkChanged(root);
+			return InteractionResult.SUCCESS;
+		}
+		DroneItem.DroneType currentType = resolveDroneType(root);
+		if (currentType == DroneItem.DroneType.COMBAT) {
+			setDroneType(root, DroneItem.DroneType.NORMAL);
+			giveOrDropTuningItem(player, root, Items.DISPENSER);
+			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+			notifyDroneNetworkChanged(root);
+			return InteractionResult.SUCCESS;
+		}
+		if (currentType == DroneItem.DroneType.KAMIKAZE) {
+			setDroneType(root, DroneItem.DroneType.NORMAL);
+			giveOrDropTuningItem(player, root, Items.STRING);
+			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+			notifyDroneNetworkChanged(root);
+			return InteractionResult.SUCCESS;
+		}
+		return InteractionResult.PASS;
+	}
+
+	private static void giveOrDropTuningItem(ServerPlayer player, Entity root, Item item) {
+		if (player == null || root == null || item == null) {
+			return;
+		}
+		giveOrDropTuningItem(player, root, new ItemStack(item));
+	}
+
+	private static void giveOrDropTuningItem(ServerPlayer player, Entity root, ItemStack stack) {
+		if (player == null || root == null || stack == null || stack.isEmpty()) {
+			return;
+		}
+		boolean inserted = player.getInventory().add(stack);
+		if (!inserted && root.level() instanceof ServerLevel level) {
+			root.spawnAtLocation(level, stack);
+		}
+	}
+
+	private static Item dyeItemForColor(DyeColor color) {
+		if (color == null) {
+			return null;
+		}
+		return switch (color) {
+			case WHITE -> Items.WHITE_DYE;
+			case ORANGE -> Items.ORANGE_DYE;
+			case MAGENTA -> Items.MAGENTA_DYE;
+			case LIGHT_BLUE -> Items.LIGHT_BLUE_DYE;
+			case YELLOW -> Items.YELLOW_DYE;
+			case LIME -> Items.LIME_DYE;
+			case PINK -> Items.PINK_DYE;
+			case GRAY -> Items.GRAY_DYE;
+			case LIGHT_GRAY -> Items.LIGHT_GRAY_DYE;
+			case CYAN -> Items.CYAN_DYE;
+			case PURPLE -> Items.PURPLE_DYE;
+			case BLUE -> Items.BLUE_DYE;
+			case BROWN -> Items.BROWN_DYE;
+			case GREEN -> Items.GREEN_DYE;
+			case RED -> Items.RED_DYE;
+			case BLACK -> Items.BLACK_DYE;
+		};
+	}
+
 	private static String resolveRequiredUpgradeForDroneRoot(Entity root) {
 		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
 			return null;
 		}
-		return isKamikazeDrone(root) ? IT_DRONE_KAMIKAZE : IT_DRONE_SCOUT;
+		return resolveDroneType(root) == DroneItem.DroneType.KAMIKAZE ? IT_DRONE_KAMIKAZE : IT_DRONE_SCOUT;
 	}
 
 	private static ItemStack buildDroneDropStack(Entity root) {
-		if (isKamikazeDrone(root)) {
-			return DroneItem.createKamikazeStack(resolveDroneKamikazePower(root));
-		}
-		return new ItemStack(ModItems.DRONE);
+		return DroneItem.createConfiguredStack(
+				ModItems.DRONE,
+				resolveDroneType(root),
+				resolveDroneKamikazePower(root),
+				hasDroneNightVisionModule(root),
+				hasDroneAutoAimModule(root),
+				resolveDronePaintColor(root)
+		);
 	}
 
 	private static boolean isKamikazeDrone(Entity root) {
 		return resolveDroneKamikazePower(root) > DRONE_KAMIKAZE_NO_POWER;
+	}
+
+	private static DroneItem.DroneType resolveDroneType(Entity root) {
+		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
+			return DroneItem.DroneType.NORMAL;
+		}
+		for (String tag : root.getTags()) {
+			if (!tag.startsWith(DRONE_TYPE_TAG_PREFIX)) {
+				continue;
+			}
+			String rawType = tag.substring(DRONE_TYPE_TAG_PREFIX.length());
+			try {
+				return DroneItem.DroneType.valueOf(rawType.trim().toUpperCase(java.util.Locale.ROOT));
+			} catch (IllegalArgumentException ignored) {
+			}
+		}
+		return resolveDroneKamikazePower(root) > DRONE_KAMIKAZE_NO_POWER ? DroneItem.DroneType.KAMIKAZE : DroneItem.DroneType.NORMAL;
 	}
 
 	private static int resolveDroneKamikazePower(Entity root) {
@@ -2038,11 +2297,10 @@ public final class DroneSystem {
 		if (clampedPower > DRONE_KAMIKAZE_NO_POWER) {
 			root.addTag(droneKamikazePowerTag(clampedPower));
 		}
-
-		Entity displayEntity = findDroneDisplay(root);
-		if (displayEntity instanceof Display.ItemDisplay display) {
-			display.setItemStack(DroneItem.createDisplayStack(ModItems.DRONE, clampedPower));
+		if (clampedPower > DRONE_KAMIKAZE_NO_POWER && resolveDroneType(root) != DroneItem.DroneType.KAMIKAZE) {
+			setDroneType(root, DroneItem.DroneType.KAMIKAZE);
 		}
+		syncDroneDisplayLayers(root);
 	}
 
 	private static void removeDroneKamikazePowerTags(Entity root) {
@@ -2054,6 +2312,105 @@ public final class DroneSystem {
 				root.removeTag(tag);
 			}
 		}
+	}
+
+	private static void applyDroneVisualState(
+			Entity root,
+			DroneItem.DroneType type,
+			int kamikazePower,
+			boolean nightVision,
+			boolean autoAim,
+			DyeColor paintColor
+	) {
+		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
+			return;
+		}
+		setDroneType(root, type);
+		setDroneKamikazePower(root, kamikazePower);
+		setDroneNightVisionModule(root, nightVision);
+		setDroneAutoAimModule(root, autoAim);
+		setDronePaintColor(root, paintColor);
+	}
+
+	private static void setDroneType(Entity root, DroneItem.DroneType type) {
+		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
+			return;
+		}
+		for (String tag : new ArrayList<>(root.getTags())) {
+			if (tag != null && tag.startsWith(DRONE_TYPE_TAG_PREFIX)) {
+				root.removeTag(tag);
+			}
+		}
+		DroneItem.DroneType resolvedType = type == null ? DroneItem.DroneType.NORMAL : type;
+		if (resolvedType != DroneItem.DroneType.NORMAL) {
+			root.addTag(DRONE_TYPE_TAG_PREFIX + resolvedType.name().toLowerCase(java.util.Locale.ROOT));
+		}
+		syncDroneDisplayLayers(root);
+	}
+
+	private static boolean hasDroneNightVisionModule(Entity root) {
+		return root != null && root.getTags().contains(DRONE_NIGHT_VISION_TAG);
+	}
+
+	private static void setDroneNightVisionModule(Entity root, boolean enabled) {
+		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
+			return;
+		}
+		if (enabled) {
+			root.addTag(DRONE_NIGHT_VISION_TAG);
+		} else {
+			root.removeTag(DRONE_NIGHT_VISION_TAG);
+		}
+		syncDroneDisplayLayers(root);
+	}
+
+	private static boolean hasDroneAutoAimModule(Entity root) {
+		return root != null && root.getTags().contains(DRONE_AUTO_AIM_TAG);
+	}
+
+	private static void setDroneAutoAimModule(Entity root, boolean enabled) {
+		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
+			return;
+		}
+		if (enabled) {
+			root.addTag(DRONE_AUTO_AIM_TAG);
+		} else {
+			root.removeTag(DRONE_AUTO_AIM_TAG);
+		}
+		syncDroneDisplayLayers(root);
+	}
+
+	private static DyeColor resolveDronePaintColor(Entity root) {
+		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
+			return null;
+		}
+		for (String tag : root.getTags()) {
+			if (!tag.startsWith(DRONE_PAINT_TAG_PREFIX)) {
+				continue;
+			}
+			String rawColor = tag.substring(DRONE_PAINT_TAG_PREFIX.length());
+			for (DyeColor color : DyeColor.values()) {
+				if (color.getName().equalsIgnoreCase(rawColor)) {
+					return color;
+				}
+			}
+		}
+		return null;
+	}
+
+	private static void setDronePaintColor(Entity root, DyeColor color) {
+		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
+			return;
+		}
+		for (String tag : new ArrayList<>(root.getTags())) {
+			if (tag != null && tag.startsWith(DRONE_PAINT_TAG_PREFIX)) {
+				root.removeTag(tag);
+			}
+		}
+		if (color != null) {
+			root.addTag(DRONE_PAINT_TAG_PREFIX + color.getName());
+		}
+		syncDroneDisplayLayers(root);
 	}
 
 	private static void playDroneKamikazeInsertFeedback(ServerLevel level, Vec3 origin, int newPower) {
@@ -2171,17 +2528,18 @@ public final class DroneSystem {
 			Vec3 position,
 			float yRot,
 			float xRot,
-			net.minecraft.world.item.Item droneItem,
-			int kamikazePower
+			ItemStack displayStack,
+			String layerKey
 	) {
 		Display.ItemDisplay display = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
 		display.addTag(DRONE_DISPLAY_TAG);
+		display.addTag(DRONE_DISPLAY_LAYER_TAG_PREFIX + (layerKey == null || layerKey.isBlank() ? DRONE_DISPLAY_LAYER_BASE : layerKey));
 		display.setPos(position.x, position.y, position.z);
 		display.setYRot(yRot);
 		display.setXRot(xRot);
 		display.setYHeadRot(yRot);
 		display.setYBodyRot(yRot);
-		display.setItemStack(DroneItem.createDisplayStack(droneItem, kamikazePower));
+		display.setItemStack(displayStack == null ? DroneItem.createDisplayStack() : displayStack);
 		display.setItemTransform(ItemDisplayContext.FIXED);
 		display.setBillboardConstraints(Display.BillboardConstraints.FIXED);
 		display.setNoGravity(true);
@@ -2213,8 +2571,7 @@ public final class DroneSystem {
 	}
 
 	private static void syncDroneDisplay(Entity root, float yRot, float xRot, double forwardDrive, double strafeDrive) {
-		Entity entity = findDroneDisplay(root);
-		if (entity instanceof Display.ItemDisplay display) {
+		for (Display.ItemDisplay display : findDroneDisplayLayers(root)) {
 			boolean controlled = isDroneActivelyControlled(root);
 			display.setPosRotInterpolationDuration(DRONE_DISPLAY_INTERPOLATION_TICKS);
 			display.setTransformationInterpolationDelay(0);
@@ -2307,17 +2664,112 @@ public final class DroneSystem {
 		}
 		UUID displayId = DISPLAYS_BY_DRONE.get(root.getUUID());
 		Entity display = displayId == null ? null : level.getEntity(displayId);
-		if (display != null && display.getTags().contains(DRONE_DISPLAY_TAG)) {
+		if (display != null
+				&& display.getTags().contains(DRONE_DISPLAY_TAG)
+				&& display.getTags().contains(DRONE_DISPLAY_LAYER_TAG_PREFIX + DRONE_DISPLAY_LAYER_BASE)) {
 			return display;
 		}
 		for (Entity candidate : level.getEntities(root, root.getBoundingBox().inflate(8.0D))) {
 			if (!candidate.getTags().contains(DRONE_DISPLAY_TAG)) {
 				continue;
 			}
-			if (candidate.getTags().contains(DRONE_DISPLAY_OWNER_TAG_PREFIX + root.getUUID())) {
+			if (candidate.getTags().contains(DRONE_DISPLAY_OWNER_TAG_PREFIX + root.getUUID())
+					&& candidate.getTags().contains(DRONE_DISPLAY_LAYER_TAG_PREFIX + DRONE_DISPLAY_LAYER_BASE)) {
 				DISPLAYS_BY_DRONE.put(root.getUUID(), candidate.getUUID());
 				return candidate;
 			}
+		}
+		return null;
+	}
+
+	private static List<Display.ItemDisplay> findDroneDisplayLayers(Entity root) {
+		List<Display.ItemDisplay> displays = new ArrayList<>();
+		if (root == null || !(root.level() instanceof ServerLevel level)) {
+			return displays;
+		}
+		for (Entity candidate : level.getEntities(root, root.getBoundingBox().inflate(8.0D))) {
+			if (!(candidate instanceof Display.ItemDisplay display)) {
+				continue;
+			}
+			if (!candidate.getTags().contains(DRONE_DISPLAY_TAG)) {
+				continue;
+			}
+			if (!candidate.getTags().contains(DRONE_DISPLAY_OWNER_TAG_PREFIX + root.getUUID())) {
+				continue;
+			}
+			displays.add(display);
+		}
+		return displays;
+	}
+
+	private static void syncDroneDisplayLayers(Entity root) {
+		if (root == null || !(root.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		DroneItem.DroneType droneType = resolveDroneType(root);
+		int kamikazePower = resolveDroneKamikazePower(root);
+		boolean nightVision = hasDroneNightVisionModule(root);
+		boolean autoAim = hasDroneAutoAimModule(root);
+		DyeColor paintColor = resolveDronePaintColor(root);
+
+		Map<String, ItemStack> desiredLayers = new LinkedHashMap<>();
+		desiredLayers.put(
+				DRONE_DISPLAY_LAYER_BASE,
+				DroneItem.createDisplayStack(ModItems.DRONE, droneType, kamikazePower, nightVision, autoAim, paintColor)
+		);
+		for (DroneItem.DisplayLayer layer : DroneItem.resolveDisplayLayers(droneType, kamikazePower, nightVision, autoAim, paintColor)) {
+			if (layer == null || layer.key() == null || layer.key().isBlank() || layer.modelId() == null) {
+				continue;
+			}
+			desiredLayers.put(layer.key(), DroneItem.createDisplayLayerStack(layer.modelId()));
+		}
+
+		Map<String, Display.ItemDisplay> existingLayers = new LinkedHashMap<>();
+		for (Display.ItemDisplay display : findDroneDisplayLayers(root)) {
+			String layerKey = resolveDroneDisplayLayerKey(display);
+			if (layerKey == null || layerKey.isBlank()) {
+				layerKey = DRONE_DISPLAY_LAYER_BASE;
+			}
+			existingLayers.put(layerKey, display);
+		}
+
+		for (Map.Entry<String, Display.ItemDisplay> entry : existingLayers.entrySet()) {
+			if (desiredLayers.containsKey(entry.getKey())) {
+				continue;
+			}
+			entry.getValue().discard();
+		}
+
+		for (Map.Entry<String, ItemStack> entry : desiredLayers.entrySet()) {
+			String layerKey = entry.getKey();
+			Display.ItemDisplay existing = existingLayers.get(layerKey);
+			if (existing != null) {
+				existing.setItemStack(entry.getValue());
+				if (DRONE_DISPLAY_LAYER_BASE.equals(layerKey)) {
+					DISPLAYS_BY_DRONE.put(root.getUUID(), existing.getUUID());
+				}
+				continue;
+			}
+			Display.ItemDisplay created = createDroneDisplay(level, root.position(), root.getYRot(), root.getXRot(), entry.getValue(), layerKey);
+			created.addTag(DRONE_DISPLAY_OWNER_TAG_PREFIX + root.getUUID());
+			level.addFreshEntity(created);
+			forceEntityPassenger(root, created);
+			if (DRONE_DISPLAY_LAYER_BASE.equals(layerKey)) {
+				DISPLAYS_BY_DRONE.put(root.getUUID(), created.getUUID());
+			}
+		}
+	}
+
+	private static String resolveDroneDisplayLayerKey(Entity entity) {
+		if (entity == null) {
+			return null;
+		}
+		for (String tag : entity.getTags()) {
+			if (tag == null || !tag.startsWith(DRONE_DISPLAY_LAYER_TAG_PREFIX)) {
+				continue;
+			}
+			return tag.substring(DRONE_DISPLAY_LAYER_TAG_PREFIX.length());
 		}
 		return null;
 	}

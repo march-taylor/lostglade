@@ -1,0 +1,15 @@
+{
+  "format_version": "1.9.0",
+  "credit": "Lostglade FPV drone paint shell overlay",
+  "texture_size": [32, 32],
+  "textures": {
+    "0": "lg2:item/drone_paint_white",
+    "particle": "lg2:item/drone_paint_white"
+  },
+  "elements": [
+    {"name":"top_shell","from":[5.9,4.9,4.9],"to":[10.1,5.3,11.1],"faces":{"north":{"uv":[0,0,16,2],"texture":"#0"},"east":{"uv":[0,2,16,4],"texture":"#0"},"south":{"uv":[0,4,16,6],"texture":"#0"},"west":{"uv":[0,6,16,8],"texture":"#0"},"up":{"uv":[0,8,16,16],"texture":"#0"},"down":{"uv":[16,8,32,16],"texture":"#0"}}},
+    {"name":"camera_shell","from":[5.8,3.9,2.8],"to":[10.2,6.2,5.2],"faces":{"north":{"uv":[16,0,32,8],"texture":"#0"},"east":{"uv":[16,8,24,16],"texture":"#0"},"south":{"uv":[0,16,16,24],"texture":"#0"},"west":{"uv":[24,8,32,16],"texture":"#0"},"up":{"uv":[16,16,32,24],"texture":"#0"},"down":{"uv":[0,24,16,32],"texture":"#0"}}},
+    {"name":"left_rail_shell","from":[5.9,1.9,5.9],"to":[7.1,3.2,10.1],"faces":{"north":{"uv":[16,24,20,28],"texture":"#0"},"east":{"uv":[20,24,28,28],"texture":"#0"},"south":{"uv":[28,24,32,28],"texture":"#0"},"west":{"uv":[20,28,28,32],"texture":"#0"},"up":{"uv":[16,28,20,32],"texture":"#0"},"down":{"uv":[28,28,32,32],"texture":"#0"}}},
+    {"name":"right_rail_shell","from":[8.9,1.9,5.9],"to":[10.1,3.2,10.1],"faces":{"north":{"uv":[16,24,20,28],"texture":"#0"},"east":{"uv":[20,24,28,28],"texture":"#0"},"south":{"uv":[28,24,32,28],"texture":"#0"},"west":{"uv":[20,28,28,32],"texture":"#0"},"up":{"uv":[16,28,20,32],"texture":"#0"},"down":{"uv":[28,28,32,32],"texture":"#0"}}}
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "format_version": "1.9.0",
+  "credit": "Lostglade FPV drone night vision module layer",
+  "texture_size": [32, 32],
+  "textures": {
+    "0": "lg2:item/drone_module_night_vision",
+    "particle": "lg2:item/drone_module_night_vision"
+  },
+  "elements": [
+    {"name":"goggle_plate","from":[5.8,4.2,2.2],"to":[10.2,6.2,3.4],"faces":{"north":{"uv":[0,0,16,8],"texture":"#0"},"east":{"uv":[0,8,4,16],"texture":"#0"},"south":{"uv":[16,0,32,8],"texture":"#0"},"west":{"uv":[4,8,8,16],"texture":"#0"},"up":{"uv":[0,16,16,20],"texture":"#0"},"down":{"uv":[16,16,32,20],"texture":"#0"}}},
+    {"name":"left_lens","from":[6.1,4.5,1.6],"to":[7.8,5.8,2.2],"faces":{"north":{"uv":[0,20,8,26],"texture":"#0"},"east":{"uv":[8,20,10,26],"texture":"#0"},"south":{"uv":[10,20,18,26],"texture":"#0"},"west":{"uv":[18,20,20,26],"texture":"#0"},"up":{"uv":[20,20,28,22],"texture":"#0"},"down":{"uv":[20,22,28,24],"texture":"#0"}}},
+    {"name":"right_lens","from":[8.2,4.5,1.6],"to":[9.9,5.8,2.2],"faces":{"north":{"uv":[0,20,8,26],"texture":"#0"},"east":{"uv":[8,20,10,26],"texture":"#0"},"south":{"uv":[10,20,18,26],"texture":"#0"},"west":{"uv":[18,20,20,26],"texture":"#0"},"up":{"uv":[20,20,28,22],"texture":"#0"},"down":{"uv":[20,22,28,24],"texture":"#0"}}},
+    {"name":"ir_pack","from":[7,6.2,3.8],"to":[9,7.2,5.3],"faces":{"north":{"uv":[0,26,8,30],"texture":"#0"},"east":{"uv":[8,26,12,30],"texture":"#0"},"south":{"uv":[12,26,20,30],"texture":"#0"},"west":{"uv":[20,26,24,30],"texture":"#0"},"up":{"uv":[24,26,32,30],"texture":"#0"},"down":{"uv":[24,30,32,32],"texture":"#0"}}}
+  ]
+}

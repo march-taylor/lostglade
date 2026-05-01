@@ -1,0 +1,7 @@
+{
+  "parent": "lg2:item/drone_paint_base",
+  "textures": {
+    "0": "lg2:item/drone_paint_green",
+    "particle": "lg2:item/drone_paint_green"
+  }
+}
