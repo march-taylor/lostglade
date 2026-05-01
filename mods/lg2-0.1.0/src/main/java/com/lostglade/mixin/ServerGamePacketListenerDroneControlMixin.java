@@ -30,7 +30,14 @@ public abstract class ServerGamePacketListenerDroneControlMixin {
 
 	@Inject(method = "handleMovePlayer", at = @At("HEAD"), cancellable = true)
 	private void lg2$redirectDroneOperatorMovement(ServerboundMovePlayerPacket packet, CallbackInfo ci) {
-		if (packet == null || !DroneSystem.isControllingDrone(this.player)) {
+		if (packet == null) {
+			return;
+		}
+		if (DroneSystem.shouldSuppressPostControlMovePacket(this.player, packet)) {
+			ci.cancel();
+			return;
+		}
+		if (!DroneSystem.isControllingDrone(this.player)) {
 			return;
 		}
 		DroneSystem.handleControlledMovePacket(this.player, packet);
