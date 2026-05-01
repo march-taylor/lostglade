@@ -4,7 +4,7 @@
                       "enabled":  true,
                       "id":  "mister_cartel_49",
                       "displayName":  "Мистер Картель 49",
-                      "ownerNickname":  "Rajas_YT",
+                      "ownerNickname":  "pines2",
                       "description":  "Глава всего преступного мира.",
                       "attack":  {
                                      "enabled":  true,
@@ -12,7 +12,7 @@
                                      "name":  "Шестёрки",
                                      "description":  "Призывает 4 наёмников, которые атакуют выбранную цель.",
                                      "priceBitcoins":  300,
-                                     "cooldownSeconds":  300.0,
+                                     "cooldownSeconds":  180.0,
                                      "activationRangeBlocks":  7.0,
                                      "summonLifetimeSeconds":  30.0,
                                      "summonAfterKillSeconds":  2.0
@@ -170,7 +170,7 @@
                       "enabled":  true,
                       "id":  "woman",
                       "displayName":  "ЖЕНЩИНА!!!",
-                      "ownerNickname":  "pines2",
+                      "ownerNickname":  "Rajas_YT",
                       "description":  "Хрупкая снаружи, но опасная внутри. Она не бьёт в лоб — она манипулирует, соблазняет и наказывает.",
                       "attack":  {
                                      "enabled":  true,

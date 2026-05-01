@@ -322,11 +322,13 @@ public final class ServerRaceSystem {
 	private static final double WOMAN_ATTACK_PROJECTILE_SPEED = 1.4D;
 	private static final double WOMAN_ATTACK_CHARGE_FORWARD_OFFSET = 2.0D;
 	private static final int WOMAN_ATTACK_PARTICLE_COUNT = 9;
+	private static final long WOMAN_ATTACK_CHARGE_SOUND_INTERVAL_TICKS = 12L;
 	private static final double WOMAN_ATTACK_AIR_TRIGGER_HEAD_FORWARD_OFFSET = 0.22D;
 	private static final float WOMAN_ATTACK_AIR_TRIGGER_WIDTH = 1.8F;
 	private static final float WOMAN_ATTACK_AIR_TRIGGER_HEIGHT = 1.8F;
 	private static final long WOMAN_ATTACK_FOLLOW_NAV_INTERVAL_TICKS = 8L;
 	private static final double WOMAN_ATTACK_FOLLOW_SPEED = 1.1D;
+	private static final double WOMAN_SOUND_RANGE_BLOCKS = 16.0D;
 	private static final long WOMAN_SHNYAGA_WHITELIST_CHECK_INTERVAL_TICKS = 100L;
 	private static final int WOMAN_SHNYAGA_EFFECT_DURATION_TICKS = 60;
 	private static final String WOMAN_SHNYAGA_STATE_FILE_NAME = "lg2_woman_shnyaga_links.json";
@@ -443,6 +445,7 @@ public final class ServerRaceSystem {
 	private static final Set<UUID> WOMAN_DEFENSE_BLIND_PLAYERS = new HashSet<>();
 	private static final Map<UUID, Integer> WOMAN_DEFENSE_SLOWNESS_PLAYERS = new HashMap<>();
 	private static final Map<UUID, Long> WOMAN_DEFENSE_PANIC_SOUND_NEXT_TICKS = new HashMap<>();
+	private static final Map<UUID, Long> WOMAN_DEFENSE_SELF_SOUND_NEXT_TICKS = new HashMap<>();
 	private static final Map<UUID, Vec3> WOMAN_DEFENSE_LAST_POSITIONS = new HashMap<>();
 	private static final Map<UUID, WomanUniqueSession> WOMAN_UNIQUE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, Integer> WOMAN_UNIQUE_SYNCED_MERCHANT_MENUS = new HashMap<>();
@@ -646,6 +649,7 @@ public final class ServerRaceSystem {
 			WOMAN_DEFENSE_BLIND_PLAYERS.clear();
 			WOMAN_DEFENSE_SLOWNESS_PLAYERS.clear();
 			WOMAN_DEFENSE_PANIC_SOUND_NEXT_TICKS.clear();
+			WOMAN_DEFENSE_SELF_SOUND_NEXT_TICKS.clear();
 			WOMAN_DEFENSE_LAST_POSITIONS.clear();
 			WOMAN_UNIQUE_SESSIONS.clear();
 			WOMAN_UNIQUE_SYNCED_MERCHANT_MENUS.clear();
@@ -714,6 +718,7 @@ public final class ServerRaceSystem {
 				handler.player.removeEffect(MobEffects.SLOWNESS);
 			}
 			WOMAN_DEFENSE_PANIC_SOUND_NEXT_TICKS.remove(handler.player.getUUID());
+			WOMAN_DEFENSE_SELF_SOUND_NEXT_TICKS.remove(handler.player.getUUID());
 			WOMAN_DEFENSE_LAST_POSITIONS.remove(handler.player.getUUID());
 			clearWomanUniqueState(server, handler.player.getUUID());
 			clearWomanAttackState(handler.player.getUUID());
@@ -796,8 +801,8 @@ public final class ServerRaceSystem {
 								.then(literal("ability").executes(context -> useAbility(context, RaceAbilitySlot.UNIQUE_ABILITY)))
 								.then(literal("shnyaga").executes(context -> useAbility(context, RaceAbilitySlot.SHNYAGA)))
 						)
-						.then(literal("woman_shnyaga")
-								.requires(ServerRaceSystem::canUseWomanShnyagaResponseCommand)
+						.then(argument("internal_action", StringArgumentType.word())
+								.suggests((context, builder) -> builder.buildFuture())
 								.then(argument("response", StringArgumentType.word())
 										.suggests((context, builder) -> builder.buildFuture())
 										.executes(ServerRaceSystem::handleWomanShnyagaProposalCommand)
@@ -901,6 +906,11 @@ public final class ServerRaceSystem {
 	}
 
 	private static int handleWomanShnyagaProposalCommand(CommandContext<CommandSourceStack> context) {
+		String internalAction = StringArgumentType.getString(context, "internal_action").trim().toLowerCase(Locale.ROOT);
+		if (!"woman_shnyaga".equals(internalAction)) {
+			context.getSource().sendFailure(Component.literal("Unknown race command."));
+			return 0;
+		}
 		String response = StringArgumentType.getString(context, "response").trim().toLowerCase(Locale.ROOT);
 		return switch (response) {
 			case "accept" -> acceptWomanShnyagaProposal(context);
@@ -910,14 +920,6 @@ public final class ServerRaceSystem {
 				yield 0;
 			}
 		};
-	}
-
-	private static boolean canUseWomanShnyagaResponseCommand(CommandSourceStack source) {
-		if (source == null) {
-			return false;
-		}
-		ServerPlayer player = source.getPlayer();
-		return player != null && WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.containsKey(player.getUUID());
 	}
 
 	private static int useAbility(CommandContext<CommandSourceStack> context, RaceAbilitySlot slot) {
@@ -2303,6 +2305,7 @@ public final class ServerRaceSystem {
 		private final double damage;
 		private final long followTicks;
 		private Interaction airTriggerEntity;
+		private long nextChargeSoundTick;
 
 		private WomanAttackChargeSession(
 				UUID playerId,
@@ -2319,6 +2322,7 @@ public final class ServerRaceSystem {
 			this.damage = damage;
 			this.followTicks = followTicks;
 			this.airTriggerEntity = null;
+			this.nextChargeSoundTick = 0L;
 		}
 	}
 
@@ -2335,6 +2339,7 @@ public final class ServerRaceSystem {
 		private final double radius;
 		private final double damage;
 		private final long followTicks;
+		private long nextFlightSoundTick;
 
 		private WomanAttackProjectile(
 				UUID ownerId,
@@ -2355,6 +2360,7 @@ public final class ServerRaceSystem {
 			this.radius = radius;
 			this.damage = damage;
 			this.followTicks = followTicks;
+			this.nextFlightSoundTick = 0L;
 		}
 
 		private UUID ownerId() {
@@ -2560,6 +2566,7 @@ public final class ServerRaceSystem {
 		}
 
 		animal.setInLove(player);
+		playWomanAnimalBreedStockSound(player);
 		startOnlineCooldown(WOMAN_ANIMAL_BREED_COOLDOWNS, player.getUUID(), asTicks(getWomanAnimalBreedCooldownSeconds(stock)));
 		return InteractionResult.SUCCESS;
 	}
@@ -2630,6 +2637,13 @@ public final class ServerRaceSystem {
 
 	private static double getWomanAnimalBreedCooldownSeconds(RaceAbilityConfig stock) {
 		return positiveOrDefault(stock == null ? 0.0D : stock.womanAnimalBreedCooldownSeconds, WOMAN_ANIMAL_BREED_DEFAULT_COOLDOWN_SECONDS);
+	}
+
+	private static void playWomanAnimalBreedStockSound(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		sendPersonalSound(player, SoundEvents.ALLAY_ITEM_GIVEN, SoundSource.PLAYERS, player.position(), 0.55F, 1.2F, player.level().getGameTime() ^ player.getUUID().getLeastSignificantBits());
 	}
 
 	private static int useWomanDefense(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
@@ -2711,6 +2725,7 @@ public final class ServerRaceSystem {
 		}
 		target.hurtServer(level, level.damageSources().magic(), 4.0F);
 		emitSmoke(level, target.position());
+		playWomanUniqueActivationSound(caster, target);
 		startGenericAbilityCooldown(caster, RaceAbilitySlot.UNIQUE_ABILITY, ability);
 
 		Lg2.LOGGER.info(
@@ -2900,6 +2915,7 @@ public final class ServerRaceSystem {
 		WOMAN_SHNYAGA_PROPOSALS_BY_TARGET.put(target.getUUID(), proposal);
 		displayWomanShnyagaStatus(sender, "proposal_sent", ChatFormatting.LIGHT_PURPLE);
 		target.sendSystemMessage(buildWomanShnyagaProposalMessage(target, proposal));
+		playWomanShnyagaMessageSentSound(sender, target);
 	}
 
 	private static int handleWomanShnyagaProposalResponse(ServerPlayer target, boolean accept) {
@@ -3073,6 +3089,16 @@ public final class ServerRaceSystem {
 		ServerUpgradeUiSystem.playPurchaseBlockedSound(target);
 		displayWomanShnyagaStatus(woman, "rejected_woman", ChatFormatting.RED, target.getName().getString());
 		displayWomanShnyagaStatus(target, "rejected_target", ChatFormatting.AQUA, woman.getName().getString());
+	}
+
+	private static void playWomanShnyagaMessageSentSound(ServerPlayer sender, ServerPlayer target) {
+		long seed = sender == null ? 0L : sender.level().getGameTime() ^ sender.getUUID().getMostSignificantBits();
+		if (sender != null) {
+			sendPersonalSound(sender, SoundEvents.BOOK_PAGE_TURN, SoundSource.PLAYERS, sender.position(), 0.45F, 1.25F, seed);
+		}
+		if (target != null) {
+			sendPersonalSound(target, SoundEvents.BOOK_PAGE_TURN, SoundSource.PLAYERS, target.position(), 0.55F, 1.05F, seed ^ target.getUUID().getLeastSignificantBits());
+		}
 	}
 
 	private static Component buildWomanShnyagaProposalMessage(ServerPlayer viewer, WomanShnyagaProposal proposal) {
@@ -3597,10 +3623,10 @@ public final class ServerRaceSystem {
 		double range = getWomanAttackRange(ability);
 		double damage = getWomanAttackDamage(ability);
 		long followTicks = asTicks(getWomanAttackFollowSeconds(ability));
-		WOMAN_ATTACK_CHARGE_SESSIONS.put(
-				playerId,
-				new WomanAttackChargeSession(playerId, level.dimension(), radius, range, damage, followTicks)
-		);
+		WomanAttackChargeSession session = new WomanAttackChargeSession(playerId, level.dimension(), radius, range, damage, followTicks);
+		WOMAN_ATTACK_CHARGE_SESSIONS.put(playerId, session);
+		Vec3 center = player.getEyePosition().add(player.getLookAngle().normalize().scale(WOMAN_ATTACK_CHARGE_FORWARD_OFFSET));
+		playWomanAttackChargeSound(level, session, center, level.getGameTime());
 		return 1;
 	}
 
@@ -3850,6 +3876,7 @@ public final class ServerRaceSystem {
 			return;
 		}
 		if (WOMAN_DEFENSE_SESSIONS.isEmpty() && WOMAN_DEFENSE_BLIND_PLAYERS.isEmpty() && WOMAN_DEFENSE_SLOWNESS_PLAYERS.isEmpty()) {
+			WOMAN_DEFENSE_SELF_SOUND_NEXT_TICKS.clear();
 			return;
 		}
 
@@ -3858,6 +3885,7 @@ public final class ServerRaceSystem {
 		Map<UUID, Integer> slownessPlayers = new HashMap<>();
 		Set<UUID> blindPlayers = new HashSet<>();
 		Set<UUID> exposedPlayers = new HashSet<>();
+		Set<UUID> activeDefenseWomen = new HashSet<>();
 		Iterator<Map.Entry<UUID, WomanDefenseSession>> iterator = WOMAN_DEFENSE_SESSIONS.entrySet().iterator();
 		while (iterator.hasNext()) {
 			Map.Entry<UUID, WomanDefenseSession> entry = iterator.next();
@@ -3875,7 +3903,9 @@ public final class ServerRaceSystem {
 
 			double range = Math.max(0.0D, session.range());
 			double rangeSqr = range * range;
+			activeDefenseWomen.add(woman.getUUID());
 			emitWomanDefenseOmenAura(level, woman, nowTick);
+			playWomanDefenseSelfSound(woman, nowTick);
 			for (ServerPlayer viewer : level.players()) {
 				if (viewer == null || viewer == woman || !viewer.isAlive() || viewer.isSpectator()) {
 					continue;
@@ -3911,6 +3941,7 @@ public final class ServerRaceSystem {
 			}
 		}
 		WOMAN_DEFENSE_PANIC_SOUND_NEXT_TICKS.keySet().removeIf(playerId -> !exposedPlayers.contains(playerId));
+		WOMAN_DEFENSE_SELF_SOUND_NEXT_TICKS.keySet().removeIf(playerId -> !activeDefenseWomen.contains(playerId));
 		syncWomanDefenseSlowness(server, slownessPlayers);
 		syncWomanDefenseBlindness(server, blindPlayers);
 		WOMAN_DEFENSE_LAST_POSITIONS.entrySet().removeIf(entry -> !exposedPlayers.contains(entry.getKey()));
@@ -4014,8 +4045,22 @@ public final class ServerRaceSystem {
 			case 2 -> 0.82F;
 			default -> 0.92F;
 		};
-		sendPersonalSound(viewer, SoundEvents.WARDEN_HEARTBEAT, SoundSource.MASTER, viewer.position(), volume, pitch, nowTick ^ viewer.getUUID().getLeastSignificantBits());
+		sendPersonalSound(viewer, SoundEvents.WARDEN_HEARTBEAT, SoundSource.PLAYERS, viewer.position(), volume, pitch, nowTick ^ viewer.getUUID().getLeastSignificantBits());
 		WOMAN_DEFENSE_PANIC_SOUND_NEXT_TICKS.put(viewer.getUUID(), nowTick + WOMAN_DEFENSE_PANIC_SOUND_INTERVAL_TICKS);
+	}
+
+	private static void playWomanDefenseSelfSound(ServerPlayer woman, long nowTick) {
+		if (woman == null || woman.connection == null) {
+			return;
+		}
+
+		long nextTick = WOMAN_DEFENSE_SELF_SOUND_NEXT_TICKS.getOrDefault(woman.getUUID(), Long.MIN_VALUE);
+		if (nowTick < nextTick) {
+			return;
+		}
+
+		sendPersonalSound(woman, SoundEvents.WARDEN_HEARTBEAT, SoundSource.PLAYERS, woman.position(), 0.36F, 0.98F, nowTick ^ woman.getUUID().getMostSignificantBits());
+		WOMAN_DEFENSE_SELF_SOUND_NEXT_TICKS.put(woman.getUUID(), nowTick + WOMAN_DEFENSE_PANIC_SOUND_INTERVAL_TICKS);
 	}
 
 	private static void refreshWomanDefenseEffect(ServerPlayer viewer, Holder<MobEffect> effect, int durationTicks, int amplifier, boolean showIcon) {
@@ -4165,6 +4210,7 @@ public final class ServerRaceSystem {
 			return;
 		}
 
+		long nowTick = server.overworld().getGameTime();
 		Iterator<Map.Entry<UUID, WomanAttackChargeSession>> iterator = WOMAN_ATTACK_CHARGE_SESSIONS.entrySet().iterator();
 		while (iterator.hasNext()) {
 			Map.Entry<UUID, WomanAttackChargeSession> entry = iterator.next();
@@ -4182,6 +4228,7 @@ public final class ServerRaceSystem {
 			}
 
 			Vec3 center = player.getEyePosition().add(player.getLookAngle().normalize().scale(WOMAN_ATTACK_CHARGE_FORWARD_OFFSET));
+			playWomanAttackChargeSound(level, session, center, nowTick);
 			emitWomanAttackSphereParticles(level, center, session.radius, WOMAN_ATTACK_PARTICLE_COUNT);
 			LivingEntity touchedTarget = findWomanAttackChargeTarget(level, player, center, session.radius);
 			if (touchedTarget != null) {
@@ -4200,6 +4247,7 @@ public final class ServerRaceSystem {
 			return;
 		}
 
+		long nowTick = server.overworld().getGameTime();
 		for (int i = WOMAN_ATTACK_PROJECTILES.size() - 1; i >= 0; i--) {
 			WomanAttackProjectile projectile = WOMAN_ATTACK_PROJECTILES.get(i);
 			ServerLevel level = projectile == null ? null : server.getLevel(projectile.dimension());
@@ -4216,6 +4264,7 @@ public final class ServerRaceSystem {
 				WOMAN_ATTACK_PROJECTILES.remove(i);
 				continue;
 			}
+			playWomanAttackFlightSound(level, projectile, start, nowTick);
 
 			BlockHitResult blockHit = level.clip(new ClipContext(start, next, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, owner));
 			Vec3 blockLocation = blockHit.getType() == net.minecraft.world.phys.HitResult.Type.MISS ? null : blockHit.getLocation();
@@ -4426,6 +4475,26 @@ public final class ServerRaceSystem {
 		session.airTriggerEntity = null;
 	}
 
+	private static void playWomanAttackChargeSound(ServerLevel level, WomanAttackChargeSession session, Vec3 origin, long nowTick) {
+		if (level == null || session == null || origin == null || nowTick < session.nextChargeSoundTick) {
+			return;
+		}
+		playWomanPositionedSound(level, origin, SoundEvents.AMETHYST_BLOCK_CHIME, 2.2F, 1.45F);
+		session.nextChargeSoundTick = nowTick + WOMAN_ATTACK_CHARGE_SOUND_INTERVAL_TICKS;
+	}
+
+	private static void playWomanAttackReleaseSound(ServerLevel level, Vec3 origin) {
+		playWomanPositionedSound(level, origin, SoundEvents.BREEZE_SHOOT, 0.33F, 1.35F);
+	}
+
+	private static void playWomanAttackFlightSound(ServerLevel level, WomanAttackProjectile projectile, Vec3 origin, long nowTick) {
+		if (level == null || projectile == null || origin == null || nowTick < projectile.nextFlightSoundTick) {
+			return;
+		}
+		playWomanPositionedSound(level, origin, SoundEvents.AMETHYST_BLOCK_CHIME, 2.2F, 1.45F);
+		projectile.nextFlightSoundTick = nowTick + WOMAN_ATTACK_CHARGE_SOUND_INTERVAL_TICKS;
+	}
+
 	private static void launchWomanAttackProjectile(
 			ServerPlayer player,
 			ServerLevel level,
@@ -4437,6 +4506,7 @@ public final class ServerRaceSystem {
 		Vec3 direction = player.getLookAngle().normalize();
 		Vec3 start = player.getEyePosition().add(direction.scale(WOMAN_ATTACK_CHARGE_FORWARD_OFFSET));
 		Vec3 velocity = direction.scale(WOMAN_ATTACK_PROJECTILE_SPEED);
+		playWomanAttackReleaseSound(level, start);
 		WOMAN_ATTACK_PROJECTILES.add(new WomanAttackProjectile(player.getUUID(), level.dimension(), start, velocity, range, radius, damage, followTicks));
 	}
 
@@ -7600,6 +7670,30 @@ public final class ServerRaceSystem {
 
 	private static void emitWomanOmenParticles(ServerLevel level, Vec3 pos) {
 		level.sendParticles(ParticleTypes.RAID_OMEN, pos.x, pos.y + 0.7D, pos.z, 16, 0.35D, 0.5D, 0.35D, 0.01D);
+	}
+
+	private static void playWomanUniqueActivationSound(ServerPlayer caster, ServerPlayer target) {
+		if (caster == null || target == null) {
+			return;
+		}
+		long seed = caster.level().getGameTime() ^ caster.getUUID().getLeastSignificantBits() ^ target.getUUID().getMostSignificantBits();
+		sendPersonalSound(caster, SoundEvents.ENCHANTMENT_TABLE_USE, SoundSource.PLAYERS, caster.position(), 0.2F, 1.35F, seed);
+		sendPersonalSound(target, SoundEvents.ENCHANTMENT_TABLE_USE, SoundSource.PLAYERS, target.position(), 0.2F, 1.35F, seed);
+	}
+
+	private static void playWomanPositionedSound(ServerLevel level, Vec3 origin, SoundEvent sound, float volume, float pitch) {
+		if (level == null || origin == null || sound == null) {
+			return;
+		}
+		double rangeSqr = WOMAN_SOUND_RANGE_BLOCKS * WOMAN_SOUND_RANGE_BLOCKS;
+		long seed = level.getRandom().nextLong();
+		Holder<SoundEvent> soundHolder = BuiltInRegistries.SOUND_EVENT.wrapAsHolder(sound);
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer == null || viewer.connection == null || viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+			sendPositionedSound(viewer, soundHolder, SoundSource.PLAYERS, origin, volume, pitch, seed);
+		}
 	}
 
 	private static void emitWomanDefenseOmenAura(ServerLevel level, LivingEntity woman, long gameTime) {
