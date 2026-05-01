@@ -68,6 +68,7 @@ import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.RemoteChatSession;
@@ -223,14 +224,12 @@ public final class ServerRaceSystem {
 	private static final FontDescription CARTEL_MANUAL_PAGE_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:cartel_manual_pages"))
 	);
-	private static final String[] CARTEL_MANUAL_PAGE_GLYPHS = {
-			"\uef60",
-			"\uef61",
-			"\uef62",
-			"\uef63",
-			"\uef64",
-			"\uef65"
-	};
+	private static final int CARTEL_MANUAL_IMAGE_COUNT = 5;
+	private static final int CARTEL_MANUAL_IMAGE_COLUMNS = 2;
+	private static final int CARTEL_MANUAL_IMAGE_FIRST_GLYPH = 0xEFA0;
+	private static final int CARTEL_MANUAL_IMAGE_LEADING_LINES = 3;
+	private static final int CARTEL_MANUAL_IMAGE_TRAILING_LINES = 3;
+	private static final String CARTEL_MANUAL_IMAGE_COLUMN_JOINER = "\ueff0";
 	private static final String[] CARTEL_PASSPORT_NAME_FONT_ROWS = {
 			"ABCDEFGH",
 			"IJKLMNOP",
@@ -254,8 +253,19 @@ public final class ServerRaceSystem {
 	private static final String CARTEL_SUMMON_TAG = "lg2.cartel_summon";
 	private static final String CARTEL_LAWYER_TAG = "lg2.cartel_lawyer";
 	private static final String CARTEL_LAWYER_MARKER_NAME = "lg2_cartel_lawyer_marker";
+	private static final Identifier CARTEL_ATTACK_FINGER_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "cartel_attack_finger");
+	private static final Holder<SoundEvent> CARTEL_ATTACK_FINGER_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(CARTEL_ATTACK_FINGER_SOUND_ID));
 	private static final double CARTEL_TARGET_RANGE = 7.0D;
 	private static final int CARTEL_SPAWN_OFFSET_BLOCKS = 3;
+	private static final double CARTEL_SOUND_RANGE_BLOCKS = 16.0D;
+	private static final float CARTEL_ATTACK_ACTIVATION_SOUND_VOLUME = 1.0F;
+	private static final float CARTEL_ATTACK_ACTIVATION_SOUND_PITCH = 1.0F;
+	private static final float CARTEL_SUMMON_OUTCOME_SOUND_VOLUME = 1.0F;
+	private static final float CARTEL_SUMMON_OUTCOME_SOUND_PITCH = 1.0F;
+	private static final float CARTEL_LAWYER_REACTION_SOUND_VOLUME = 1.0F;
+	private static final float CARTEL_LAWYER_REACTION_SOUND_PITCH = 1.0F;
+	private static final float CARTEL_DISGUISE_PAGE_SOUND_VOLUME = 0.75F;
+	private static final float CARTEL_DISGUISE_PAGE_SOUND_PITCH = 1.0F;
 	private static final double CARTEL_DEFAULT_COOLDOWN_SECONDS = 5.0D;
 	private static final double CARTEL_DEFAULT_LIFETIME_SECONDS = 30.0D;
 	private static final double CARTEL_DEFAULT_AFTER_KILL_SECONDS = 2.0D;
@@ -352,15 +362,34 @@ public final class ServerRaceSystem {
 	private static final double COPPER_MAN_JETPACK_DEFAULT_MAX_RISE_BLOCKS = 30.0D;
 	private static final double COPPER_MAN_JETPACK_ASCEND_SPEED = 0.42D;
 	private static final double COPPER_MAN_JETPACK_GLIDE_DESCEND_SPEED = -0.32D;
-	private static final double COPPER_MAN_JETPACK_HORIZONTAL_SPEED = 0.0275D;
+	private static final double COPPER_MAN_JETPACK_AIR_CONTROL_SPEED = 0.0275D;
+	private static final double COPPER_MAN_JETPACK_HORIZONTAL_INERTIA_HALF_LIFE_TICKS = 8.0D;
+	private static final double COPPER_MAN_JETPACK_HORIZONTAL_INERTIA_DECAY_PER_TICK =
+			Math.pow(0.5D, 1.0D / COPPER_MAN_JETPACK_HORIZONTAL_INERTIA_HALF_LIFE_TICKS);
+	private static final double COPPER_MAN_JETPACK_HORIZONTAL_INERTIA_STOP_SPEED = 0.001D;
+	private static final double COPPER_MAN_JETPACK_MIN_STORED_GROUND_SPEED = 0.005D;
+	private static final double COPPER_MAN_JETPACK_MAX_STORED_GROUND_SPEED = 1.0D;
+	private static final long COPPER_MAN_JETPACK_GROUND_INERTIA_GRACE_TICKS = 8L;
 	private static final double COPPER_MAN_JETPACK_VERTICAL_ACCEL = 0.255D;
-	private static final double COPPER_MAN_JETPACK_DESCEND_ACCEL = 0.165D;
-	private static final double COPPER_MAN_JETPACK_HORIZONTAL_BLEND = 0.4D;
 	private static final double COPPER_MAN_JETPACK_ASCEND_BRAKE_RANGE_BLOCKS = 4.0D;
 	private static final double COPPER_MAN_JETPACK_PARTICLE_BACK_OFFSET = 0.34D;
 	private static final double COPPER_MAN_JETPACK_PARTICLE_SIDE_OFFSET = 0.2D;
 	private static final double COPPER_MAN_JETPACK_PARTICLE_UP_OFFSET = 0.80D;
 	private static final double COPPER_MAN_JETPACK_PARTICLE_UP_OFFSET_CROUCHING = 0.64D;
+	private static final Identifier COPPER_MAN_JETPACK_STEAM_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_jetpack_steam");
+	private static final Identifier COPPER_MAN_JETPACK_FALLBACK_BUZZ_SOUND_ID = BuiltInRegistries.SOUND_EVENT.getKey(SoundEvents.MINECART_RIDING);
+	private static final Identifier COPPER_MAN_JETPACK_FALLBACK_STEAM_SOUND_ID = BuiltInRegistries.SOUND_EVENT.getKey(SoundEvents.FURNACE_FIRE_CRACKLE);
+	private static final Holder<SoundEvent> COPPER_MAN_JETPACK_STEAM_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(COPPER_MAN_JETPACK_STEAM_SOUND_ID));
+	private static final long COPPER_MAN_JETPACK_SOUND_INTERVAL_TICKS = 8L;
+	private static final double COPPER_MAN_JETPACK_SOUND_RANGE_BLOCKS = 16.0D;
+	private static final float COPPER_MAN_JETPACK_SOUND_VOLUME = 2.0F;
+	private static final float COPPER_MAN_JETPACK_SOUND_PITCH = 1.0F;
+	private static final float COPPER_MAN_JETPACK_FALLBACK_BUZZ_VOLUME = 2.0F;
+	private static final float COPPER_MAN_JETPACK_FALLBACK_BUZZ_PITCH = 0.68F;
+	private static final float COPPER_MAN_JETPACK_FALLBACK_STEAM_VOLUME = 2.0F;
+	private static final float COPPER_MAN_JETPACK_FALLBACK_STEAM_PITCH = 0.8F;
+	private static final float COPPER_MAN_DEFENSE_ACTIVATION_SOUND_VOLUME = 2.0F;
+	private static final double COPPER_MAN_DEFENSE_ACTIVATION_SOUND_RANGE_BLOCKS = 16.0D;
 	private static final String COPPER_MAN_JETPACK_DISPLAY_TAG = "lg2_copper_jetpack_display";
 	private static final String COPPER_MAN_JETPACK_DISPLAY_OWNER_TAG_PREFIX = "lg2_copper_jetpack_owner:";
 	private static final long COPPER_MAN_DEFENSE_PREWARM_INTERVAL_TICKS = 10L;
@@ -436,6 +465,11 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, CopperManJetpackSession> COPPER_MAN_JETPACK_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, CopperManJetpackSession> COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE = new LinkedHashMap<>();
 	private static final Map<UUID, CopperManJetpackInputState> COPPER_MAN_JETPACK_INPUTS = new ConcurrentHashMap<>();
+	private static final Map<UUID, Long> COPPER_MAN_JETPACK_NEXT_SOUND_TICKS = new ConcurrentHashMap<>();
+	private static final Set<UUID> COPPER_MAN_JETPACK_SOUND_ACTIVE = ConcurrentHashMap.newKeySet();
+	private static final Map<UUID, CopperManJetpackMovementSample> COPPER_MAN_JETPACK_MOVEMENT_SAMPLES = new ConcurrentHashMap<>();
+	private static final Map<UUID, CopperManJetpackGroundInertia> COPPER_MAN_JETPACK_GROUND_INERTIA = new ConcurrentHashMap<>();
+	private static final Map<UUID, CopperManJetpackFlightMomentum> COPPER_MAN_JETPACK_FLIGHT_MOMENTUM = new ConcurrentHashMap<>();
 	private static final Map<UUID, UUID> COPPER_MAN_JETPACK_DISPLAY_IDS = new LinkedHashMap<>();
 	private static final Map<String, Property> COPPER_MAN_DEFENSE_TINT_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, Long> COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS = new ConcurrentHashMap<>();
@@ -459,14 +493,17 @@ public final class ServerRaceSystem {
 		private final long normalExpireTick;
 		private final long afterKillTicks;
 		private final List<UUID> raiderIds = new ArrayList<>();
+		private Vec3 lastTargetPosition;
 		private Long afterKillExpireTick;
+		private boolean outcomeSoundPlayed;
 
-		private CartelSummonSession(ResourceKey<Level> dimension, UUID ownerPlayerId, UUID targetPlayerId, long normalExpireTick, long afterKillTicks) {
+		private CartelSummonSession(ResourceKey<Level> dimension, UUID ownerPlayerId, UUID targetPlayerId, long normalExpireTick, long afterKillTicks, Vec3 lastTargetPosition) {
 			this.dimension = dimension;
 			this.ownerPlayerId = ownerPlayerId;
 			this.targetPlayerId = targetPlayerId;
 			this.normalExpireTick = normalExpireTick;
 			this.afterKillTicks = afterKillTicks;
+			this.lastTargetPosition = lastTargetPosition;
 		}
 	}
 
@@ -626,6 +663,11 @@ public final class ServerRaceSystem {
 			COPPER_MAN_JETPACK_SESSIONS.clear();
 			COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE.clear();
 			COPPER_MAN_JETPACK_INPUTS.clear();
+			COPPER_MAN_JETPACK_NEXT_SOUND_TICKS.clear();
+			COPPER_MAN_JETPACK_SOUND_ACTIVE.clear();
+			COPPER_MAN_JETPACK_MOVEMENT_SAMPLES.clear();
+			COPPER_MAN_JETPACK_GROUND_INERTIA.clear();
+			COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.clear();
 			COPPER_MAN_JETPACK_DISPLAY_IDS.clear();
 			COPPER_MAN_DEFENSE_TINT_CACHE.clear();
 			COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS.clear();
@@ -661,6 +703,9 @@ public final class ServerRaceSystem {
 			COPPER_GOLEM_FOLLOWERS.entrySet().removeIf(entry -> handler.player.getUUID().equals(entry.getValue()));
 			clearCopperManDefenseVisual(handler.player);
 			clearCopperManJetpack(handler.player);
+			COPPER_MAN_JETPACK_MOVEMENT_SAMPLES.remove(handler.player.getUUID());
+			COPPER_MAN_JETPACK_GROUND_INERTIA.remove(handler.player.getUUID());
+			COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.remove(handler.player.getUUID());
 			WOMAN_DEFENSE_SESSIONS.remove(handler.player.getUUID());
 			if (WOMAN_DEFENSE_BLIND_PLAYERS.remove(handler.player.getUUID())) {
 				handler.player.removeEffect(MobEffects.BLINDNESS);
@@ -715,6 +760,7 @@ public final class ServerRaceSystem {
 			tickCartelTravkaGrowthAttempts(server);
 			tickCartelFernGrowths(server);
 			tickCopperManStock(server);
+			tickCopperManJetpackMovementSamples(server);
 			tickCopperManJetpack(server);
 			tickCopperManDefense(server);
 			tickWomanStock(server);
@@ -1251,6 +1297,7 @@ public final class ServerRaceSystem {
 			long durationTicks = Math.max(1L, asTicks(positiveOrDefault(ability.durationSeconds, COPPER_MAN_DEFENSE_DEFAULT_DURATION_SECONDS)));
 			caster.addEffect(new MobEffectInstance(MobEffects.RESISTANCE, (int) Math.min(Integer.MAX_VALUE, durationTicks), 1, false, false, true));
 			startCopperManDefenseVisual(server, caster, nowTick + durationTicks);
+			playCopperManDefenseActivationSound(level, caster);
 			startOnlineCooldown(COPPER_MAN_DEFENSE_COOLDOWNS, caster.getUUID(), cooldownTicks);
 
 			Lg2.LOGGER.info("Player {} used copper man defense '{}' from race '{}'", caster.getGameProfile().name(), ability.abilityId, race.id);
@@ -1291,6 +1338,56 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private static void tickCopperManJetpackMovementSamples(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		Set<UUID> onlinePlayers = new HashSet<>();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (player == null) {
+				continue;
+			}
+			UUID playerId = player.getUUID();
+			onlinePlayers.add(playerId);
+			Vec3 currentPosition = player.position();
+			CopperManJetpackMovementSample previous = COPPER_MAN_JETPACK_MOVEMENT_SAMPLES.put(
+					playerId,
+					new CopperManJetpackMovementSample(currentPosition, nowTick)
+			);
+			if (previous == null || previous.position() == null || previous.tick() == nowTick) {
+				continue;
+			}
+
+			Vec3 movement = currentPosition.subtract(previous.position());
+			Vec3 horizontalMovement = new Vec3(movement.x, 0.0D, movement.z);
+			double horizontalSpeed = horizontalMovement.length();
+			if (player.onGround()) {
+				COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.remove(playerId);
+				if (horizontalSpeed >= COPPER_MAN_JETPACK_MIN_STORED_GROUND_SPEED
+						&& horizontalSpeed <= COPPER_MAN_JETPACK_MAX_STORED_GROUND_SPEED) {
+					COPPER_MAN_JETPACK_GROUND_INERTIA.put(
+							playerId,
+							new CopperManJetpackGroundInertia(horizontalMovement, nowTick)
+					);
+				} else if (horizontalSpeed < COPPER_MAN_JETPACK_MIN_STORED_GROUND_SPEED) {
+					COPPER_MAN_JETPACK_GROUND_INERTIA.remove(playerId);
+				}
+			}
+		}
+
+		COPPER_MAN_JETPACK_MOVEMENT_SAMPLES.keySet().removeIf(playerId -> !onlinePlayers.contains(playerId));
+		COPPER_MAN_JETPACK_GROUND_INERTIA.entrySet().removeIf(entry ->
+				!onlinePlayers.contains(entry.getKey())
+						|| entry.getValue() == null
+						|| nowTick - entry.getValue().tick() > COPPER_MAN_JETPACK_GROUND_INERTIA_GRACE_TICKS
+		);
+		COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.keySet().removeIf(playerId ->
+				!onlinePlayers.contains(playerId) || !COPPER_MAN_JETPACK_SESSIONS.containsKey(playerId)
+		);
+	}
+
 	private static void tickCopperManJetpack(MinecraftServer server) {
 		if (server == null) {
 			return;
@@ -1308,11 +1405,18 @@ public final class ServerRaceSystem {
 			if (player == null || session == null) {
 				COPPER_MAN_JETPACK_SESSIONS.remove(entry.getKey());
 				COPPER_MAN_JETPACK_INPUTS.remove(entry.getKey());
+				COPPER_MAN_JETPACK_NEXT_SOUND_TICKS.remove(entry.getKey());
+				COPPER_MAN_JETPACK_SOUND_ACTIVE.remove(entry.getKey());
+				COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.remove(entry.getKey());
 				continue;
 			}
 
-			if (!player.isAlive() || player.isSpectator() || nowTick >= session.expireTick()) {
+			if (!player.isAlive() || player.isSpectator()) {
 				clearCopperManJetpack(player);
+				continue;
+			}
+			if (nowTick >= session.expireTick()) {
+				clearCopperManJetpack(player, true);
 				continue;
 			}
 			if (DroneSystem.isControllingDrone(player)) {
@@ -1320,7 +1424,7 @@ public final class ServerRaceSystem {
 				continue;
 			}
 
-			applyCopperManJetpackMovement(player, session);
+			applyCopperManJetpackMovement(player, session, nowTick);
 			syncCopperManJetpackVisual(player, true);
 		}
 	}
@@ -1360,7 +1464,7 @@ public final class ServerRaceSystem {
 		}
 	}
 
-	private static void applyCopperManJetpackMovement(ServerPlayer player, CopperManJetpackSession session) {
+	private static void applyCopperManJetpackMovement(ServerPlayer player, CopperManJetpackSession session, long nowTick) {
 		if (player == null || session == null) {
 			return;
 		}
@@ -1371,44 +1475,105 @@ public final class ServerRaceSystem {
 		double maxAllowedY = session.maxAllowedY();
 
 		if (player.onGround() && !input.jump()) {
+			COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.remove(player.getUUID());
 			player.fallDistance = 0.0F;
+			beginCopperManJetpackLandingFade(player);
 			return;
 		}
 
-		double verticalTarget;
+		double nextVertical;
 		if (input.jump()) {
 			double remaining = Math.max(0.0D, maxAllowedY - currentY);
 			float brakeFactor = clamp01((float) (remaining / COPPER_MAN_JETPACK_ASCEND_BRAKE_RANGE_BLOCKS));
-			verticalTarget = remaining <= 0.02D
+			double verticalTarget = remaining <= 0.02D
 					? 0.0D
 					: Math.min(COPPER_MAN_JETPACK_ASCEND_SPEED * brakeFactor, remaining);
+			nextVertical = approach(currentMotion.y, verticalTarget, COPPER_MAN_JETPACK_VERTICAL_ACCEL);
 		} else {
-			verticalTarget = player.onGround() ? 0.0D : COPPER_MAN_JETPACK_GLIDE_DESCEND_SPEED;
+			nextVertical = computeCopperManJetpackFallVelocity(player, currentMotion.y);
 		}
 
-		double verticalAccel = input.jump() ? COPPER_MAN_JETPACK_VERTICAL_ACCEL : COPPER_MAN_JETPACK_DESCEND_ACCEL;
-		double nextVertical = approach(currentMotion.y, verticalTarget, verticalAccel);
 		if (currentY >= maxAllowedY - 0.02D && nextVertical > 0.0D) {
 			nextVertical = 0.0D;
 		}
 
-		double nextX = currentMotion.x;
-		double nextZ = currentMotion.z;
-		if (!player.onGround()) {
-			Vec3 horizontalTarget = computeCopperManJetpackHorizontalVelocity(player, input);
-			Vec3 currentHorizontal = new Vec3(currentMotion.x, 0.0D, currentMotion.z);
-			Vec3 nextHorizontal = currentHorizontal.add(horizontalTarget.subtract(currentHorizontal).scale(COPPER_MAN_JETPACK_HORIZONTAL_BLEND));
-			nextX = nextHorizontal.x;
-			nextZ = nextHorizontal.z;
+		CopperManJetpackFlightMomentum flightMomentum = resolveCopperManJetpackFlightMomentum(player, currentMotion, nowTick);
+		Vec3 baseHorizontal = flightMomentum.inertia();
+		Vec3 nextInertia = player.onGround()
+				? baseHorizontal
+				: decayCopperManJetpackHorizontalInertia(baseHorizontal);
+		Vec3 airControlTarget = computeCopperManJetpackAirControlVelocity(player, input);
+		Vec3 nextHorizontal = applyCopperManJetpackAirControl(nextInertia, airControlTarget, flightMomentum.capSpeed());
+		if (nextInertia.lengthSqr() <= 1.0E-6D) {
+			COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.remove(player.getUUID());
+		} else {
+			COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.put(player.getUUID(), new CopperManJetpackFlightMomentum(nextInertia, flightMomentum.capSpeed()));
 		}
+		double nextX = nextHorizontal.x;
+		double nextZ = nextHorizontal.z;
 
 		player.setDeltaMovement(nextX, nextVertical, nextZ);
 		player.hurtMarked = true;
+		if (player.connection != null) {
+			player.connection.send(new ClientboundSetEntityMotionPacket(player));
+		}
 		player.fallDistance = 0.0F;
 		emitCopperManJetpackParticles(player, input);
+		playCopperManJetpackFlightSound(player, nowTick);
 	}
 
-	private static Vec3 computeCopperManJetpackHorizontalVelocity(ServerPlayer player, CopperManJetpackInputState input) {
+	private static double computeCopperManJetpackFallVelocity(ServerPlayer player, double currentVertical) {
+		if (player != null && player.onGround()) {
+			return 0.0D;
+		}
+		return Math.max(currentVertical, COPPER_MAN_JETPACK_GLIDE_DESCEND_SPEED);
+	}
+
+	private static CopperManJetpackFlightMomentum resolveCopperManJetpackFlightMomentum(ServerPlayer player, Vec3 currentMotion, long nowTick) {
+		if (player == null) {
+			return new CopperManJetpackFlightMomentum(Vec3.ZERO, COPPER_MAN_JETPACK_AIR_CONTROL_SPEED);
+		}
+
+		UUID playerId = player.getUUID();
+		Vec3 currentHorizontal = currentMotion == null
+				? Vec3.ZERO
+				: new Vec3(currentMotion.x, 0.0D, currentMotion.z);
+		CopperManJetpackGroundInertia groundInertia = COPPER_MAN_JETPACK_GROUND_INERTIA.get(playerId);
+		if (player.onGround()) {
+			Vec3 inherited = currentHorizontal;
+			if (groundInertia != null
+					&& groundInertia.velocity() != null
+					&& nowTick - groundInertia.tick() <= COPPER_MAN_JETPACK_GROUND_INERTIA_GRACE_TICKS
+					&& groundInertia.velocity().lengthSqr() > currentHorizontal.lengthSqr()) {
+				inherited = groundInertia.velocity();
+			}
+			return new CopperManJetpackFlightMomentum(inherited, Math.max(inherited.length(), COPPER_MAN_JETPACK_AIR_CONTROL_SPEED));
+		}
+
+		CopperManJetpackFlightMomentum flightMomentum = COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.get(playerId);
+		if (flightMomentum != null && flightMomentum.inertia() != null) {
+			return flightMomentum;
+		}
+		if (groundInertia != null
+				&& groundInertia.velocity() != null
+				&& nowTick - groundInertia.tick() <= COPPER_MAN_JETPACK_GROUND_INERTIA_GRACE_TICKS) {
+			return new CopperManJetpackFlightMomentum(
+					groundInertia.velocity(),
+					Math.max(groundInertia.velocity().length(), COPPER_MAN_JETPACK_AIR_CONTROL_SPEED)
+			);
+		}
+		return new CopperManJetpackFlightMomentum(Vec3.ZERO, COPPER_MAN_JETPACK_AIR_CONTROL_SPEED);
+	}
+
+	private static Vec3 decayCopperManJetpackHorizontalInertia(Vec3 inertia) {
+		if (inertia == null || inertia.lengthSqr() <= 1.0E-8D) {
+			return Vec3.ZERO;
+		}
+		Vec3 decayed = inertia.scale(COPPER_MAN_JETPACK_HORIZONTAL_INERTIA_DECAY_PER_TICK);
+		return decayed.length() <= COPPER_MAN_JETPACK_HORIZONTAL_INERTIA_STOP_SPEED ? Vec3.ZERO : decayed;
+	}
+
+	private static Vec3 computeCopperManJetpackAirControlVelocity(ServerPlayer player, CopperManJetpackInputState input) {
 		if (player == null || input == null) {
 			return Vec3.ZERO;
 		}
@@ -1430,7 +1595,22 @@ public final class ServerRaceSystem {
 		if (desired.lengthSqr() <= 1.0E-6D) {
 			return Vec3.ZERO;
 		}
-		return desired.normalize().scale(COPPER_MAN_JETPACK_HORIZONTAL_SPEED);
+		return desired.normalize().scale(COPPER_MAN_JETPACK_AIR_CONTROL_SPEED);
+	}
+
+	private static Vec3 applyCopperManJetpackAirControl(Vec3 inertialVelocity, Vec3 airControlTarget, double capSpeed) {
+		Vec3 result = inertialVelocity == null ? Vec3.ZERO : inertialVelocity;
+		if (airControlTarget == null || airControlTarget.lengthSqr() <= 1.0E-6D) {
+			return result;
+		}
+
+		result = result.add(airControlTarget);
+		double maxSpeed = Math.max(capSpeed, COPPER_MAN_JETPACK_AIR_CONTROL_SPEED);
+		double resultSpeed = result.length();
+		if (resultSpeed > maxSpeed && resultSpeed > 1.0E-6D) {
+			return result.scale(maxSpeed / resultSpeed);
+		}
+		return result;
 	}
 
 	private static void emitCopperManJetpackParticles(ServerPlayer player, CopperManJetpackInputState input) {
@@ -1468,7 +1648,129 @@ public final class ServerRaceSystem {
 		level.sendParticles(ParticleTypes.CLOUD, rightTube.x, rightTube.y, rightTube.z, particleCount, spread, spread, spread, speed);
 	}
 
+	private static void playCopperManJetpackFlightSound(ServerPlayer player, long nowTick) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		UUID playerId = player.getUUID();
+		long nextSoundTick = COPPER_MAN_JETPACK_NEXT_SOUND_TICKS.getOrDefault(playerId, Long.MIN_VALUE);
+		if (nowTick < nextSoundTick) {
+			return;
+		}
+		COPPER_MAN_JETPACK_NEXT_SOUND_TICKS.put(playerId, nowTick + COPPER_MAN_JETPACK_SOUND_INTERVAL_TICKS);
+		COPPER_MAN_JETPACK_SOUND_ACTIVE.add(playerId);
+
+		Vec3 origin = player.position().add(0.0D, Math.max(0.4D, player.getBbHeight() * 0.45D), 0.0D);
+		long seed = level.getRandom().nextLong();
+		double range = COPPER_MAN_JETPACK_SOUND_RANGE_BLOCKS;
+		double rangeSqr = range * range;
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+
+			if (PolymerResourcePackUtils.hasMainPack(viewer)) {
+				sendCopperManJetpackSound(viewer, COPPER_MAN_JETPACK_STEAM_SOUND, origin, COPPER_MAN_JETPACK_SOUND_VOLUME, COPPER_MAN_JETPACK_SOUND_PITCH, seed);
+			} else {
+				sendCopperManJetpackSound(
+						viewer,
+						BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.MINECART_RIDING),
+						origin,
+						COPPER_MAN_JETPACK_FALLBACK_BUZZ_VOLUME,
+						COPPER_MAN_JETPACK_FALLBACK_BUZZ_PITCH,
+						seed
+				);
+				sendCopperManJetpackSound(
+						viewer,
+						BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.FURNACE_FIRE_CRACKLE),
+						origin,
+						COPPER_MAN_JETPACK_FALLBACK_STEAM_VOLUME,
+						COPPER_MAN_JETPACK_FALLBACK_STEAM_PITCH,
+						seed + 1L
+				);
+			}
+		}
+	}
+
+	private static void beginCopperManJetpackLandingFade(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		COPPER_MAN_JETPACK_NEXT_SOUND_TICKS.remove(playerId);
+		COPPER_MAN_JETPACK_SOUND_ACTIVE.remove(playerId);
+	}
+
+	private static void stopCopperManJetpackFlightSound(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		COPPER_MAN_JETPACK_NEXT_SOUND_TICKS.remove(playerId);
+		if (!COPPER_MAN_JETPACK_SOUND_ACTIVE.remove(playerId)) {
+			return;
+		}
+
+		Vec3 origin = player.position().add(0.0D, Math.max(0.4D, player.getBbHeight() * 0.45D), 0.0D);
+		double rangeSqr = COPPER_MAN_JETPACK_SOUND_RANGE_BLOCKS * COPPER_MAN_JETPACK_SOUND_RANGE_BLOCKS;
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+			viewer.connection.send(new ClientboundStopSoundPacket(COPPER_MAN_JETPACK_STEAM_SOUND_ID, SoundSource.PLAYERS));
+			viewer.connection.send(new ClientboundStopSoundPacket(COPPER_MAN_JETPACK_FALLBACK_BUZZ_SOUND_ID, SoundSource.PLAYERS));
+			viewer.connection.send(new ClientboundStopSoundPacket(COPPER_MAN_JETPACK_FALLBACK_STEAM_SOUND_ID, SoundSource.PLAYERS));
+		}
+	}
+
+	private static void sendCopperManJetpackSound(ServerPlayer viewer, Holder<SoundEvent> sound, Vec3 origin, float volume, float pitch, long seed) {
+		if (viewer == null || viewer.connection == null || sound == null || origin == null) {
+			return;
+		}
+		viewer.connection.send(new ClientboundSoundPacket(
+				sound,
+				SoundSource.PLAYERS,
+				origin.x,
+				origin.y,
+				origin.z,
+				volume,
+				pitch,
+				seed
+		));
+	}
+
+	private static void playCopperManDefenseActivationSound(ServerLevel level, ServerPlayer caster) {
+		if (level == null || caster == null) {
+			return;
+		}
+
+		Vec3 origin = caster.position();
+		double rangeSqr = COPPER_MAN_DEFENSE_ACTIVATION_SOUND_RANGE_BLOCKS * COPPER_MAN_DEFENSE_ACTIVATION_SOUND_RANGE_BLOCKS;
+		long seed = level.getRandom().nextLong();
+		Holder<SoundEvent> sound = BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.COPPER_PLACE);
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+			viewer.connection.send(new ClientboundSoundPacket(
+					sound,
+					SoundSource.PLAYERS,
+					origin.x,
+					origin.y,
+					origin.z,
+					COPPER_MAN_DEFENSE_ACTIVATION_SOUND_VOLUME,
+					1.0F,
+					seed
+			));
+		}
+	}
+
 	private static void clearCopperManJetpack(ServerPlayer player) {
+		clearCopperManJetpack(player, false);
+	}
+
+	private static void clearCopperManJetpack(ServerPlayer player, boolean fadeSound) {
 		if (player == null) {
 			return;
 		}
@@ -1476,6 +1778,12 @@ public final class ServerRaceSystem {
 		COPPER_MAN_JETPACK_SESSIONS.remove(player.getUUID());
 		COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE.remove(player.getUUID());
 		COPPER_MAN_JETPACK_INPUTS.remove(player.getUUID());
+		COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.remove(player.getUUID());
+		if (fadeSound) {
+			beginCopperManJetpackLandingFade(player);
+		} else {
+			stopCopperManJetpackFlightSound(player);
+		}
 		player.fallDistance = 0.0F;
 		syncCopperManJetpackVisual(player, false);
 	}
@@ -1495,6 +1803,9 @@ public final class ServerRaceSystem {
 		COPPER_MAN_JETPACK_SESSIONS.clear();
 		COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE.clear();
 		COPPER_MAN_JETPACK_INPUTS.clear();
+		COPPER_MAN_JETPACK_NEXT_SOUND_TICKS.clear();
+		COPPER_MAN_JETPACK_SOUND_ACTIVE.clear();
+		COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.clear();
 		COPPER_MAN_JETPACK_DISPLAY_IDS.clear();
 	}
 
@@ -2093,6 +2404,15 @@ public final class ServerRaceSystem {
 
 	private record CopperManJetpackInputState(boolean forward, boolean backward, boolean left, boolean right, boolean jump, boolean shift, boolean sprint) {
 		private static final CopperManJetpackInputState EMPTY = new CopperManJetpackInputState(false, false, false, false, false, false, false);
+	}
+
+	private record CopperManJetpackMovementSample(Vec3 position, long tick) {
+	}
+
+	private record CopperManJetpackGroundInertia(Vec3 velocity, long tick) {
+	}
+
+	private record CopperManJetpackFlightMomentum(Vec3 inertia, double capSpeed) {
 	}
 
 	private record CopperManJetpackSession(long expireTick, double baseY, double maxRiseBlocks) {
@@ -4089,7 +4409,7 @@ public final class ServerRaceSystem {
 		if (player == null || session == null) {
 			return true;
 		}
-		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange()) + 0.5D;
+		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange());
 		HitResult hit = player.pick(reach, 1.0F, false);
 		if (hit instanceof EntityHitResult entityHit && entityHit.getEntity() == session.airTriggerEntity) {
 			return false;
@@ -5136,9 +5456,8 @@ public final class ServerRaceSystem {
 
 	private static WrittenBookContent buildCartelShnyagaBookContent(ServerPlayer player) {
 		List<Filterable<Component>> pages = new ArrayList<>();
-		boolean hasPack = PolymerResourcePackUtils.hasMainPack(player);
-		for (int i = 0; i < CARTEL_MANUAL_PAGE_GLYPHS.length; i++) {
-			pages.add(Filterable.passThrough(buildCartelShnyagaPage(player, i, hasPack)));
+		for (CartelManualPage manualPage : cartelManualPages(player)) {
+			pages.add(Filterable.passThrough(buildCartelShnyagaPage(manualPage)));
 		}
 
 		return new WrittenBookContent(
@@ -5150,20 +5469,49 @@ public final class ServerRaceSystem {
 		);
 	}
 
-	private static Component buildCartelShnyagaPage(ServerPlayer player, int pageIndex, boolean hasPack) {
+	private static Component buildCartelShnyagaPage(CartelManualPage manualPage) {
 		MutableComponent page = Component.empty();
-		if (hasPack && pageIndex >= 0 && pageIndex < CARTEL_MANUAL_PAGE_GLYPHS.length) {
-			page = page.append(Component.literal(CARTEL_MANUAL_PAGE_GLYPHS[pageIndex])
-					.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CARTEL_MANUAL_PAGE_FONT)));
-			page = page.append(Component.literal("\n"));
-		}
-
-		page = page.append(Component.literal(localizeCartelShnyagaPageTitle(player, pageIndex))
+		page = page.append(Component.literal(manualPage.title())
 				.withStyle(style -> style.withBold(true).withItalic(false).withColor(0x5B3118)));
 		page = page.append(Component.literal("\n"));
-		page = page.append(Component.literal(localizeCartelShnyagaPageBody(player, pageIndex))
-				.withStyle(style -> style.withItalic(false).withColor(0x2E2016)));
+		if (!manualPage.beforeImage().isBlank()) {
+			page = page.append(cartelManualBodyComponent(manualPage.beforeImage()));
+			if (manualPage.imageIndex() >= 0 || !manualPage.afterImage().isBlank()) {
+				page = page.append(Component.literal("\n"));
+			}
+		}
+		if (manualPage.imageIndex() >= 0) {
+			page = page.append(Component.literal("\n".repeat(CARTEL_MANUAL_IMAGE_LEADING_LINES)));
+			page = page.append(Component.literal(cartelManualImageGlyphRow(manualPage.imageIndex()))
+					.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CARTEL_MANUAL_PAGE_FONT)));
+			if (!manualPage.afterImage().isBlank()) {
+				page = page.append(Component.literal("\n".repeat(CARTEL_MANUAL_IMAGE_TRAILING_LINES + 1)));
+			}
+		}
+		if (!manualPage.afterImage().isBlank()) {
+			page = page.append(cartelManualBodyComponent(manualPage.afterImage()));
+		}
 		return page;
+	}
+
+	private static MutableComponent cartelManualBodyComponent(String text) {
+		return Component.literal(text)
+				.withStyle(style -> style.withItalic(false).withColor(0x2E2016));
+	}
+
+	private static String cartelManualImageGlyphRow(int imageIndex) {
+		if (imageIndex < 0 || imageIndex >= CARTEL_MANUAL_IMAGE_COUNT) {
+			return "";
+		}
+		StringBuilder builder = new StringBuilder(CARTEL_MANUAL_IMAGE_COLUMNS * 2);
+		for (int column = 0; column < CARTEL_MANUAL_IMAGE_COLUMNS; column++) {
+			if (column > 0) {
+				builder.append(CARTEL_MANUAL_IMAGE_COLUMN_JOINER);
+			}
+			int glyph = CARTEL_MANUAL_IMAGE_FIRST_GLYPH + imageIndex * CARTEL_MANUAL_IMAGE_COLUMNS + column;
+			builder.appendCodePoint(glyph);
+		}
+		return builder.toString();
 	}
 
 	private static String localizeCartelShnyagaBookTitle(ServerPlayer player) {
@@ -5186,24 +5534,38 @@ public final class ServerRaceSystem {
 		};
 	}
 
-	private static String localizeCartelShnyagaPageTitle(ServerPlayer player, int pageIndex) {
-		return switch (cartelBookLanguage(player)) {
-			case RPR -> localizeCartelShnyagaPageTitleRpr(pageIndex);
-			case UK -> localizeCartelShnyagaPageTitleUk(pageIndex);
-			case JA -> localizeCartelShnyagaPageTitleJa(pageIndex);
-			case EN -> localizeCartelShnyagaPageTitleEn(pageIndex);
-			case RU -> localizeCartelShnyagaPageTitleRu(pageIndex);
-		};
+	private static final CartelManualPage[] CARTEL_MANUAL_PAGES_RU = {
+			new CartelManualPage("1. Личная книга", "Это твоя ЛИЧНАЯ книга. Никому не показывай рецепты. Если другие узнают, как ты делаешь товар, они смогут конкурировать с тобой. Крафты доступны всем, но знаешь их ТОЛЬКО ТЫ.", -1, ""),
+			new CartelManualPage("2. Травка", "", 0, "Посади обычный папоротник. Когда он вырастет, есть шанс получить «Травку». Костная мука ускоряет рост."),
+			new CartelManualPage("3. Сушка", "Обычная травка не годится для рецептов.", 1, "Для создания товара высуши её в печи."),
+			new CartelManualPage("4. Косячок", "Сверху и снизу по 3 бумаги. В центре 3 сушённой травки. На выходе получишь «Косячок».", 2, ""),
+			new CartelManualPage("5. Прикуривание", "Возьми в одну руку зажигалку, во вторую — косячок. Нажми ПКМ для прикуривания. Чтобы затянуться, зажми ПКМ: чем дольше затяг, тем больше дыма.", -1, ""),
+			new CartelManualPage("6. Кокаин", "В котёл с водой добавь сушённую травку и костную муку в пропорции 1:1.", 3, "Как итог — получишь «Кокаин»."),
+			new CartelManualPage("7. Партии", "Каждая операция тратит немного воды из котла. Выгоднее загружать сразу много сырья, например: 16 костной муки + 16 сушённой травки = 16 кокаина. Воды в котле хватает на 48 кокаина, но при малых партиях она расходуется быстрее.", -1, ""),
+			new CartelManualPage("8. Заурядное зелье", "В варочной стойке: пузырёк с водой + любой ингредиент из списка: паучий глаз, сверкающий ломтик арбуза, сахар, огненный порошок, магмовый крем, слеза гаста, кроличья лапка, стержень вихря, блок слизи, камень или паутина.", -1, ""),
+			new CartelManualPage("9. Метадон", "Варится в зельеварке. В заурядное зелье добавь кокаин. На выходе получишь «Метадон».", 4, ""),
+			new CartelManualPage("10. Зависимость", "Тебе метадон даёт положительные эффекты. Другим — зависимость. Первые уколы для других дают негативные эффекты, последующие — положительные. Если зависимый долго не колет метадон, у него начинается ломка.", -1, "")
+	};
+
+	private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
+			new CartelManualPage("1. Personal Book", "This is your PERSONAL book. Do not show the recipes. If others learn how you make the goods, they can compete with you. The crafts work for everyone, but ONLY YOU know them.", -1, ""),
+			new CartelManualPage("2. Travka", "", 0, "Plant a normal fern. When it grows, it has a chance to drop Travka. Bone meal speeds up the growth."),
+			new CartelManualPage("3. Drying", "Raw Travka is not good for recipes.", 1, "Dry it in a furnace to make goods."),
+			new CartelManualPage("4. Joint", "Put 3 papers on the top and bottom rows. Put 3 Dried Travka in the center row. Output: Joint.", 2, ""),
+			new CartelManualPage("5. Lighting Up", "Hold flint and steel in one hand and the Joint in the other. Right-click to light it. Hold right-click to take a drag: the longer the drag, the more smoke.", -1, ""),
+			new CartelManualPage("6. Cocaine", "Add Dried Travka and bone meal to a water cauldron in a 1:1 ratio.", 3, "Result: Cocaine."),
+			new CartelManualPage("7. Batches", "Each operation spends some cauldron water. It is better to load many ingredients at once, for example: 16 bone meal + 16 Dried Travka = 16 Cocaine. A full cauldron is enough for 48 Cocaine, but small batches waste water faster.", -1, ""),
+			new CartelManualPage("8. Mundane Potion", "In a brewing stand: water bottle + any ingredient from the list: spider eye, glistering melon slice, sugar, blaze powder, magma cream, ghast tear, rabbit foot, breeze rod, slime block, stone, or cobweb.", -1, ""),
+			new CartelManualPage("9. Methadone", "Brew it in a brewing stand. Add Cocaine to a Mundane Potion. Output: Methadone.", 4, ""),
+			new CartelManualPage("10. Addiction", "Methadone gives you positive effects. For others, it gives addiction. Their first injections cause negative effects; later ones become positive. If an addicted player goes too long without injecting Methadone, withdrawal begins.", -1, "")
+	};
+	private static CartelManualPage[] cartelManualPages(ServerPlayer player) {
+		return cartelBookLanguage(player) == CartelBookLanguage.EN
+				? CARTEL_MANUAL_PAGES_EN
+				: CARTEL_MANUAL_PAGES_RU;
 	}
 
-	private static String localizeCartelShnyagaPageBody(ServerPlayer player, int pageIndex) {
-		return switch (cartelBookLanguage(player)) {
-			case RPR -> localizeCartelShnyagaPageBodyRpr(pageIndex);
-			case UK -> localizeCartelShnyagaPageBodyUk(pageIndex);
-			case JA -> localizeCartelShnyagaPageBodyJa(pageIndex);
-			case EN -> localizeCartelShnyagaPageBodyEn(pageIndex);
-			case RU -> localizeCartelShnyagaPageBodyRu(pageIndex);
-		};
+	private record CartelManualPage(String title, String beforeImage, int imageIndex, String afterImage) {
 	}
 
 	private static CartelBookLanguage cartelBookLanguage(ServerPlayer player) {
@@ -5225,126 +5587,6 @@ public final class ServerRaceSystem {
 			return CartelBookLanguage.JA;
 		}
 		return CartelBookLanguage.EN;
-	}
-
-	private static String localizeCartelShnyagaPageTitleRu(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u0421\u0435\u043A\u0440\u0435\u0442\u043D\u043E\u0441\u0442\u044C";
-			case 1 -> "\u0422\u0440\u0430\u0432\u043A\u0430";
-			case 2 -> "\u0421\u0443\u0448\u043A\u0430";
-			case 3 -> "\u041A\u043E\u0441\u044F\u0447\u043E\u043A";
-			case 4 -> "\u041A\u043E\u043A\u0430\u0438\u043D";
-			case 5 -> "\u041C\u0435\u0442\u0430\u0434\u043E\u043D";
-			default -> "Раздел";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageBodyRu(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u0414\u0435\u0440\u0436\u0438 \u0440\u0435\u0446\u0435\u043F\u0442\u044B \u0432 \u0442\u0430\u0439\u043D\u0435.\n\u0412\u0441\u0435 \u044D\u0442\u0438 \u0432\u0430\u0440\u043A\u0438 \u0438 \u043A\u0440\u0430\u0444\u0442\u044B\n\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B \u043A\u0430\u0436\u0434\u043E\u043C\u0443, \u043A\u0442\u043E\n\u0443\u0437\u043D\u0430\u0435\u0442 \u0441\u0445\u0435\u043C\u0443.";
-			case 1 -> "\u0421\u0430\u043C \u043F\u043E\u0441\u0430\u0434\u0438 \u043C\u0430\u043B\u044B\u0439\n\u043F\u0430\u043F\u043E\u0440\u043E\u0442\u043D\u0438\u043A.\n\u041E\u043D \u0432\u044B\u0440\u0430\u0441\u0442\u0435\u0442 \u0432 \u0431\u043E\u043B\u044C\u0448\u043E\u0439.\n\u0420\u043E\u0441\u0442 \u0438 \u043A\u043E\u0441\u0442\u043D\u0430\u044F \u043C\u0443\u043A\u0430\n\u043C\u043E\u0433\u0443\u0442 \u0443\u0440\u043E\u043D\u0438\u0442\u044C \u0422\u0440\u0430\u0432\u043A\u0443.";
-			case 2 -> "\u041F\u0435\u0440\u0435\u0436\u0430\u0440\u044C \u0422\u0440\u0430\u0432\u043A\u0443 \u0432\n\u043F\u0435\u0447\u0438 \u0438\u043B\u0438 \u043A\u043E\u043F\u0442\u0438\u043B\u044C\u043D\u0435.\n\u041F\u043E\u043B\u0443\u0447\u0438\u0448\u044C \u0421\u0443\u0448\u0451\u043D\u0443\u044E\n\u0442\u0440\u0430\u0432\u043A\u0443.";
-			case 3 -> "\u0412\u0435\u0440\u0441\u0442\u0430\u043A 3x3:\n\u0432\u0435\u0440\u0445 3 \u0431\u0443\u043C\u0430\u0433\u0438,\n\u0441\u0435\u0440\u0435\u0434\u0438\u043D\u0430 3 \u0441\u0443\u0448\u0451\u043D\u043E\u0439\n\u0442\u0440\u0430\u0432\u043A\u0438, \u043D\u0438\u0437 3 \u0431\u0443\u043C\u0430\u0433\u0438.\n\u0412\u044B\u0445\u043E\u0434: 3 \u041A\u043E\u0441\u044F\u0447\u043A\u0430.";
-			case 4 -> "\u0412 \u043A\u043E\u0442\u0451\u043B \u0441 \u0432\u043E\u0434\u043E\u0439 \u043A\u0438\u0434\u0430\u0439\n\u0441\u0443\u0448\u0451\u043D\u0443\u044E \u0442\u0440\u0430\u0432\u043A\u0443 \u0438\n\u043A\u043E\u0441\u0442\u043D\u0443\u044E \u043C\u0443\u043A\u0443 1 \u043A 1.\n\u041A\u0430\u0436\u0434\u044B\u0435 16 \u0448\u0442\u0443\u043A\n\u0441\u044A\u0435\u0434\u0430\u044E\u0442 1/3 \u0432\u043E\u0434\u044B.";
-			case 5 -> "\u0412 \u0432\u0430\u0440\u043E\u0447\u043D\u043E\u0439 \u0441\u0442\u043E\u0439\u043A\u0435:\nMundane Potion +\n1 \u041A\u043E\u043A\u0430\u0438\u043D.\n\u0412\u044B\u0445\u043E\u0434: \u041C\u0435\u0442\u0430\u0434\u043E\u043D.\n\u0420\u0435\u0446\u0435\u043F\u0442 \u0442\u043E\u0436\u0435 \u0437\u043D\u0430\u044E\u0442 \u0432\u0441\u0435.";
-			default -> "";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageTitleEn(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "Secrecy";
-			case 1 -> "Travka";
-			case 2 -> "Drying";
-			case 3 -> "Joint";
-			case 4 -> "Cocaine";
-			case 5 -> "Methadone";
-			default -> "Manual";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageBodyEn(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "Keep every recipe secret.\nAll of these crafts are\navailable to anyone who\nlearns the method.";
-			case 1 -> "Plant a small fern\nyourself.\nIt grows into a large fern.\nGrowth and bone meal\ncan drop Travka.";
-			case 2 -> "Smelt Travka in a\nfurnace or smoker.\nYou get Dried Travka.";
-			case 3 -> "3x3 crafting:\n3 paper on top,\n3 dried travka in the\nmiddle, 3 paper below.\nOutput: 3 Joints.";
-			case 4 -> "Water cauldron:\ndried travka + bone meal\nat 1 to 1.\nEvery 16 pieces use\n1/3 of the water.";
-			case 5 -> "Brewing stand:\nMundane Potion +\n1 Cocaine.\nOutput: Methadone.\nEveryone can brew it.";
-			default -> "";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageTitleUk(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u0422\u0430\u0454\u043C\u043D\u0438\u0446\u044F";
-			case 1 -> "\u0422\u0440\u0430\u0432\u043A\u0430";
-			case 2 -> "\u0421\u0443\u0448\u043A\u0430";
-			case 3 -> "\u041A\u043E\u0441\u044F\u0447\u043E\u043A";
-			case 4 -> "\u041A\u043E\u043A\u0430\u0457\u043D";
-			case 5 -> "\u041C\u0435\u0442\u0430\u0434\u043E\u043D";
-			default -> "Розділ";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageBodyUk(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u0422\u0440\u0438\u043C\u0430\u0439 \u0440\u0435\u0446\u0435\u043F\u0442\u0438 \u0432 \u0442\u0430\u0454\u043C\u043D\u0438\u0446\u0456.\n\u0423\u0441\u0456 \u0446\u0456 \u0432\u0430\u0440\u043A\u0438 \u0439 \u043A\u0440\u0430\u0444\u0442\u0438\n\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0456 \u043A\u043E\u0436\u043D\u043E\u043C\u0443, \u0445\u0442\u043E\n\u0434\u0456\u0437\u043D\u0430\u0454\u0442\u044C\u0441\u044F \u0441\u0445\u0435\u043C\u0443.";
-			case 1 -> "\u0421\u0430\u043C \u043F\u043E\u0441\u0430\u0434\u0438 \u043C\u0430\u043B\u0443\n\u043F\u0430\u043F\u043E\u0440\u043E\u0442\u044C.\n\u0412\u043E\u043D\u0430 \u0432\u0438\u0440\u043E\u0441\u0442\u0435 \u0443 \u0432\u0435\u043B\u0438\u043A\u0443.\n\u0420\u0456\u0441\u0442 \u0456 \u043A\u0456\u0441\u0442\u043A\u043E\u0432\u0435 \u0431\u043E\u0440\u043E\u0448\u043D\u043E\n\u043C\u043E\u0436\u0443\u0442\u044C \u0434\u0430\u0442\u0438 \u0422\u0440\u0430\u0432\u043A\u0443.";
-			case 2 -> "\u041F\u0435\u0440\u0435\u043F\u043B\u0430\u0432 \u0422\u0440\u0430\u0432\u043A\u0443 \u0432\n\u043F\u0435\u0447\u0456 \u0430\u0431\u043E \u043A\u043E\u043F\u0442\u0438\u043B\u044C\u043D\u0456.\n\u041E\u0442\u0440\u0438\u043C\u0430\u0454\u0448 \u0421\u0443\u0448\u0435\u043D\u0443\n\u0442\u0440\u0430\u0432\u043A\u0443.";
-			case 3 -> "\u0412\u0435\u0440\u0441\u0442\u0430\u043A 3x3:\n\u0432\u0435\u0440\u0445 3 \u043F\u0430\u043F\u0435\u0440\u0443,\n\u0441\u0435\u0440\u0435\u0434\u0438\u043D\u0430 3 \u0441\u0443\u0448\u0435\u043D\u043E\u0457\n\u0442\u0440\u0430\u0432\u043A\u0438, \u043D\u0438\u0437 3 \u043F\u0430\u043F\u0435\u0440\u0443.\n\u0412\u0438\u0445\u0456\u0434: 3 \u041A\u043E\u0441\u044F\u0447\u043A\u0438.";
-			case 4 -> "\u0423 \u043A\u0430\u0437\u0430\u043D \u0437 \u0432\u043E\u0434\u043E\u044E \u043A\u0438\u0434\u0430\u0439\n\u0441\u0443\u0448\u0435\u043D\u0443 \u0442\u0440\u0430\u0432\u043A\u0443 \u0442\u0430\n\u043A\u0456\u0441\u0442\u043A\u043E\u0432\u0435 \u0431\u043E\u0440\u043E\u0448\u043D\u043E 1 \u0434\u043E 1.\n\u041A\u043E\u0436\u043D\u0456 16 \u0448\u0442\u0443\u043A\n\u0437\u0430\u0431\u0438\u0440\u0430\u044E\u0442\u044C 1/3 \u0432\u043E\u0434\u0438.";
-			case 5 -> "\u0423 \u0432\u0430\u0440\u0438\u043B\u044C\u043D\u0456\u0439 \u0441\u0442\u0456\u0439\u0446\u0456:\nMundane Potion +\n1 \u041A\u043E\u043A\u0430\u0457\u043D.\n\u0412\u0438\u0445\u0456\u0434: \u041C\u0435\u0442\u0430\u0434\u043E\u043D.\n\u0420\u0435\u0446\u0435\u043F\u0442 \u0437\u043D\u0430\u044E\u0442\u044C \u0443\u0441\u0456.";
-			default -> "";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageTitleJa(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u79D8\u5BC6";
-			case 1 -> "\u30C8\u30E9\u30D5\u30AB";
-			case 2 -> "\u4E7E\u71E5";
-			case 3 -> "\u30B8\u30E7\u30A4\u30F3\u30C8";
-			case 4 -> "\u30B3\u30AB\u30A4\u30F3";
-			case 5 -> "\u30E1\u30BF\u30C9\u30F3";
-			default -> "???";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageBodyJa(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u914D\u5408\u306F\u79D8\u5BC6\u306B\u3057\u308D\u3002\n\u4F5C\u308A\u65B9\u3092\u77E5\u308C\u3070\n\u8AB0\u3067\u3082\u540C\u3058\u7269\u3092\n\u4F5C\u308C\u3066\u3057\u307E\u3046\u3002";
-			case 1 -> "\u5C0F\u3055\u306A\u30B7\u30C0\u3092\n\u81EA\u5206\u3067\u690D\u3048\u308B\u3002\n\u3084\u304C\u3066\u5927\u304D\u306A\u30B7\u30C0\u306B\u80B2\u3061\u3001\n\u6210\u9577\u6642\u3084\u9AA8\u7C89\u3067\n\u30C8\u30E9\u30D5\u30AB\u304C\u843D\u3061\u308B\u3002";
-			case 2 -> "\u30C8\u30E9\u30D5\u30AB\u3092\n\u304B\u307E\u3069\u304B\u71FB\u88FD\u5668\u3067\u713C\u304F\u3002\n\u4E7E\u71E5\u30C8\u30E9\u30D5\u30AB\u306B\u306A\u308B\u3002";
-			case 3 -> "\u4F5C\u696D\u53F03x3:\n\u4E0A\u306B\u7D193\u3001\u4E2D\u592E\u306B\n\u4E7E\u71E5\u30C8\u30E9\u30D5\u30AB3\u3001\u4E0B\u306B\u7D193\u3002\n\u7D50\u679C\u306F\u30B8\u30E7\u30A4\u30F3\u30C83\u672C\u3002";
-			case 4 -> "\u6C34\u5165\u308A\u5927\u91DC\u3078\n\u4E7E\u71E5\u30C8\u30E9\u30D5\u30AB\u3068\u9AA8\u7C89\u3092\n1\u5BFE1\u3067\u5165\u308C\u308B\u3002\n16\u500B\u3054\u3068\u306B\u6C34\u3092\n1/3\u4F7F\u3046\u3002";
-			case 5 -> "\u91B8\u9020\u53F0\u3067\nMundane Potion \u306B\n\u30B3\u30AB\u30A4\u30F31\u500B\u3002\n\u7D50\u679C\u306F\u30E1\u30BF\u30C9\u30F3\u3002\n\u8AB0\u3067\u3082\u4F5C\u308C\u308B\u3002";
-			default -> "";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageTitleRpr(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u0422\u0430\u0439\u043D\u0430";
-			case 1 -> "\u0422\u0440\u0430\u0432\u0443\u0448\u043A\u0430";
-			case 2 -> "\u0421\u0443\u0448\u043A\u0430";
-			case 3 -> "\u041A\u0443\u0440\u0435\u0432\u043E";
-			case 4 -> "\u041F\u0440\u0430\u0445\u044A";
-			case 5 -> "\u0414\u0440\u0435\u043C\u0430\u0442\u0438\u043D\u044A";
-			default -> "Раздѣл";
-		};
-	}
-
-	private static String localizeCartelShnyagaPageBodyRpr(int pageIndex) {
-		return switch (pageIndex) {
-			case 0 -> "\u0425\u0440\u0430\u043D\u0438 \u0440\u0435\u0446\u0435\u043F\u0442\u044B \u0432\u044A \u0442\u0430\u0439\u043D\u0435.\n\u0421\u0438\u0438 \u0432\u0430\u0440\u043A\u0438 \u0438 \u043A\u0440\u0430\u0444\u0442\u044B\n\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B \u0432\u0441\u044F\u043A\u043E\u043C\u0443,\n\u043A\u0442\u043E \u0441\u0445\u0435\u043C\u0443 \u043F\u043E\u0437\u043D\u0430\u0435\u0442\u044A.";
-			case 1 -> "\u0421\u0430\u043C\u044A \u043D\u0430\u0441\u0430\u0434\u0438 \u043C\u0430\u043B\u044B\u0439\n\u043F\u0430\u043F\u043E\u0440\u043E\u0442\u043D\u0438\u043A\u044A.\n\u0412\u043E\u0437\u0440\u0430\u0441\u0442\u0435\u0442\u044A \u0432\u044A \u0432\u0435\u043B\u0438\u043A\u0456\u0439.\n\u0420\u043E\u0441\u0442\u044A \u0438 \u043A\u043E\u0441\u0442\u043D\u0430\u044F \u043C\u0443\u043A\u0430\n\u043C\u043E\u0433\u0443\u0442\u044A \u0434\u0430\u0442\u044C \u0422\u0440\u0430\u0432\u0443\u0448\u043A\u0443.";
-			case 2 -> "\u041F\u0435\u0440\u0435\u0436\u0430\u0440\u044C \u0422\u0440\u0430\u0432\u0443\u0448\u043A\u0443 \u0432\u044A\n\u043F\u0435\u0447\u0438 \u043B\u0438\u0431\u043E \u043A\u043E\u043F\u0442\u0438\u043B\u044C\u043D\u0435.\n\u041F\u043E\u043B\u0443\u0447\u0438\u0448\u044C \u0421\u0443\u0448\u0451\u043D\u043D\u0443\u044E\n\u0442\u0440\u0430\u0432\u0443\u0448\u043A\u0443-\u043C\u0443\u0440\u0430\u0432\u0443\u0448\u043A\u0443.";
-			case 3 -> "\u0412\u0435\u0440\u0441\u0442\u0430\u043A\u044A 3x3:\n\u0441\u0432\u0435\u0440\u0445\u0443 3 \u0431\u0443\u043C\u0430\u0433\u0438,\n\u043F\u043E\u0441\u0440\u0435\u0434\u0438 3 \u0441\u0443\u0448\u0451\u043D\u043D\u043E\u0439\n\u0442\u0440\u0430\u0432\u0443\u0448\u043A\u0438, \u0441\u043D\u0438\u0437\u0443 3 \u0431\u0443\u043C\u0430\u0433\u0438.\n\u0412\u044B\u0445\u043E\u0434\u044A: 3 \u041A\u0443\u0440\u0435\u0432\u0430.";
-			case 4 -> "\u0412\u043E \u043A\u043E\u0442\u0451\u043B\u044A \u0441\u044A \u0432\u043E\u0434\u043E\u044E\n\u043C\u0435\u0447\u0438 \u0441\u0443\u0448\u0451\u043D\u043D\u0443\u044E \u0442\u0440\u0430\u0432\u0443\u0448\u043A\u0443\n\u0438 \u043A\u043E\u0441\u0442\u043D\u0443\u044E \u043C\u0443\u043A\u0443 1 \u043A 1.\n\u041A\u0430\u0436\u0434\u044B\u044F 16 \u0448\u0442\u0443\u043A\u0438\n\u0441\u044A\u0435\u0434\u0430\u044E\u0442\u044A 1/3 \u0432\u043E\u0434\u044B.";
-			case 5 -> "\u0412\u043E \u0432\u0430\u0440\u043E\u0447\u043D\u043E\u0439 \u0441\u0442\u043E\u0439\u043A\u0435:\nMundane Potion +\n1 \u041F\u0440\u0430\u0445\u044A.\n\u0412\u044B\u0445\u043E\u0434\u044A: \u0414\u0440\u0435\u043C\u0430\u0442\u0438\u043D\u044A.\n\u0420\u0435\u0446\u0435\u043F\u0442\u044A \u0432\u0441\u0435\u043C\u044A \u0432\u0435\u0434\u043E\u043C\u044A.";
-			default -> "";
-		};
 	}
 
 	private enum CartelBookLanguage {
@@ -5432,6 +5674,7 @@ public final class ServerRaceSystem {
 		startOnlineCooldown(CARTEL_UNIQUE_COOLDOWNS, caster.getUUID(), cooldownTicks);
 
 		caster.closeContainer();
+		sendPersonalSound(caster, SoundEvents.BOOK_PAGE_TURN, SoundSource.PLAYERS, caster.position(), CARTEL_DISGUISE_PAGE_SOUND_VOLUME, CARTEL_DISGUISE_PAGE_SOUND_PITCH, nowTick ^ caster.getUUID().getLeastSignificantBits());
 		Lg2.LOGGER.info(
 				"Player {} disguised as {} using mister cartel unique ability '{}'",
 				caster.getGameProfile().name(),
@@ -6643,6 +6886,7 @@ public final class ServerRaceSystem {
 		if (session == null) {
 			return;
 		}
+		playCartelLawyerReactionSound(level, session, SoundEvents.VILLAGER_NO);
 
 		LivingEntity attacker = resolveDamageAttacker(damageSource);
 		if (attacker == null || attacker == victim || !attacker.isAlive()) {
@@ -6679,6 +6923,91 @@ public final class ServerRaceSystem {
 			ownerId = CARTEL_LAWYER_OWNER_BY_ENTITY.get(victim.getUUID());
 		}
 		return ownerId != null && ownerId.equals(attacker.getUUID());
+	}
+
+	private static void playCartelAttackActivationSound(ServerLevel level, LivingEntity target) {
+		if (level == null || target == null) {
+			return;
+		}
+		Vec3 origin = target.position().add(0.0D, Math.max(0.4D, target.getBbHeight() * 0.5D), 0.0D);
+		playCartelResourcePackAwarePositionedSound(
+				level,
+				origin,
+				CARTEL_ATTACK_FINGER_SOUND,
+				SoundEvents.PILLAGER_AMBIENT,
+				CARTEL_ATTACK_ACTIVATION_SOUND_VOLUME,
+				CARTEL_ATTACK_ACTIVATION_SOUND_PITCH
+		);
+	}
+
+	private static void playCartelSummonOutcomeSound(ServerLevel level, Vec3 origin, SoundEvent sound) {
+		playCartelVanillaPositionedSound(level, origin, sound, CARTEL_SUMMON_OUTCOME_SOUND_VOLUME, CARTEL_SUMMON_OUTCOME_SOUND_PITCH);
+	}
+
+	private static void playCartelLawyerReactionSound(ServerLevel level, CartelDefenseSession session, SoundEvent sound) {
+		if (level == null || session == null || sound == null) {
+			return;
+		}
+		Entity lawyerEntity = level.getEntity(session.lawyerEntityId);
+		if (lawyerEntity == null) {
+			return;
+		}
+		playCartelVanillaPositionedSound(level, lawyerEntity.position(), sound, CARTEL_LAWYER_REACTION_SOUND_VOLUME, CARTEL_LAWYER_REACTION_SOUND_PITCH);
+	}
+
+	private static void playCartelResourcePackAwarePositionedSound(
+			ServerLevel level,
+			Vec3 origin,
+			Holder<SoundEvent> packSound,
+			SoundEvent fallbackSound,
+			float volume,
+			float pitch
+	) {
+		if (level == null || origin == null || packSound == null || fallbackSound == null) {
+			return;
+		}
+		double rangeSqr = CARTEL_SOUND_RANGE_BLOCKS * CARTEL_SOUND_RANGE_BLOCKS;
+		long seed = level.getRandom().nextLong();
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer == null || viewer.connection == null || viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+			Holder<SoundEvent> sound = PolymerResourcePackUtils.hasMainPack(viewer)
+					? packSound
+					: BuiltInRegistries.SOUND_EVENT.wrapAsHolder(fallbackSound);
+			sendPositionedSound(viewer, sound, SoundSource.PLAYERS, origin, volume, pitch, seed);
+		}
+	}
+
+	private static void playCartelVanillaPositionedSound(ServerLevel level, Vec3 origin, SoundEvent sound, float volume, float pitch) {
+		if (level == null || origin == null || sound == null) {
+			return;
+		}
+		double rangeSqr = CARTEL_SOUND_RANGE_BLOCKS * CARTEL_SOUND_RANGE_BLOCKS;
+		long seed = level.getRandom().nextLong();
+		Holder<SoundEvent> soundHolder = BuiltInRegistries.SOUND_EVENT.wrapAsHolder(sound);
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer == null || viewer.connection == null || viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+			sendPositionedSound(viewer, soundHolder, SoundSource.PLAYERS, origin, volume, pitch, seed);
+		}
+	}
+
+	private static void sendPositionedSound(ServerPlayer viewer, Holder<SoundEvent> sound, SoundSource source, Vec3 origin, float volume, float pitch, long seed) {
+		if (viewer == null || viewer.connection == null || sound == null || source == null || origin == null) {
+			return;
+		}
+		viewer.connection.send(new ClientboundSoundPacket(
+				sound,
+				source,
+				origin.x,
+				origin.y,
+				origin.z,
+				volume,
+				pitch,
+				seed
+		));
 	}
 
 	private static LivingEntity resolveDamageAttacker(net.minecraft.world.damagesource.DamageSource damageSource) {
@@ -7074,7 +7403,7 @@ public final class ServerRaceSystem {
 		List<Direction> directions = List.of(Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST);
 		long lifetimeTicks = asTicks(positiveOrDefault(ability.summonLifetimeSeconds, CARTEL_DEFAULT_LIFETIME_SECONDS));
 		long afterKillTicks = asTicks(positiveOrDefault(ability.summonAfterKillSeconds, CARTEL_DEFAULT_AFTER_KILL_SECONDS));
-		CartelSummonSession session = new CartelSummonSession(level.dimension(), caster.getUUID(), target.getUUID(), nowTick + Math.max(1L, lifetimeTicks), Math.max(1L, afterKillTicks));
+		CartelSummonSession session = new CartelSummonSession(level.dimension(), caster.getUUID(), target.getUUID(), nowTick + Math.max(1L, lifetimeTicks), Math.max(1L, afterKillTicks), target.position());
 
 		BlockPos center = target.blockPosition();
 		for (int i = 0; i < directions.size(); i++) {
@@ -7092,6 +7421,7 @@ public final class ServerRaceSystem {
 
 		CARTEL_SUMMON_SESSIONS.put(UUID.randomUUID(), session);
 		startOnlineCooldown(CARTEL_ATTACK_COOLDOWNS, caster.getUUID(), cooldownTicks);
+		playCartelAttackActivationSound(level, target);
 
 		Lg2.LOGGER.info(
 				"Player {} used mister cartel attack '{}' from race '{}' and summoned {} raiders around target {}",
@@ -7122,13 +7452,22 @@ public final class ServerRaceSystem {
 			Entity targetEntity = level.getEntity(session.targetPlayerId);
 			if (targetEntity instanceof LivingEntity livingEntity && livingEntity.isAlive()) {
 				target = livingEntity;
+				session.lastTargetPosition = livingEntity.position();
 			} else if (session.afterKillExpireTick == null) {
 				session.afterKillExpireTick = nowTick + session.afterKillTicks;
+				if (!session.outcomeSoundPlayed) {
+					playCartelSummonOutcomeSound(level, session.lastTargetPosition, SoundEvents.PILLAGER_CELEBRATE);
+					session.outcomeSoundPlayed = true;
+				}
 			}
 			final LivingEntity chaseTarget = target;
 
 			boolean timedOut = nowTick >= session.normalExpireTick
 					|| (session.afterKillExpireTick != null && nowTick >= session.afterKillExpireTick);
+			if (timedOut && chaseTarget != null && !session.outcomeSoundPlayed) {
+				playCartelSummonOutcomeSound(level, chaseTarget.position(), SoundEvents.PILLAGER_HURT);
+				session.outcomeSoundPlayed = true;
+			}
 
 			session.raiderIds.removeIf(raiderId -> {
 				Entity entity = level.getEntity(raiderId);
@@ -7320,6 +7659,8 @@ public final class ServerRaceSystem {
 		if (session != null) {
 			COPPER_MAN_JETPACK_SUSPENDED_FOR_DRONE.put(playerId, session);
 		}
+		COPPER_MAN_JETPACK_FLIGHT_MOMENTUM.remove(playerId);
+		stopCopperManJetpackFlightSound(player);
 		syncCopperManJetpackVisual(player, false);
 	}
 
@@ -7954,4 +8295,3 @@ public final class ServerRaceSystem {
 		}
 	}
 }
-

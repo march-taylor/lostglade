@@ -27,11 +27,14 @@ import net.lionarius.skinrestorer.skin.provider.SkinProviderContext;
 import net.lionarius.skinrestorer.util.PlayerUtils;
 import net.lionarius.skinrestorer.util.Result;
 import net.minecraft.ChatFormatting;
+import net.minecraft.core.Holder;
 import net.minecraft.core.particles.DustParticleOptions;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
@@ -39,6 +42,9 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Interaction;
@@ -99,15 +105,27 @@ public final class CopperManRepulsorSystem {
 	private static final float SINGLE_DAMAGE = 4.0F;
 	private static final int LASER_PARTICLE_COLOR = 0xFF2A2A;
 	private static final float LASER_PARTICLE_SCALE = 0.75F;
+	private static final Identifier REPULSOR_SHOOT_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "repulsor_shoot");
+	private static final Holder<SoundEvent> REPULSOR_SHOOT_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(REPULSOR_SHOOT_SOUND_ID));
+	private static final float REPULSOR_SHOOT_SOUND_VOLUME = 0.85F;
+	private static final float REPULSOR_SHOOT_SOUND_PITCH = 1.0F;
+	private static final float REPULSOR_SHOOT_FALLBACK_PITCH = 1.45F;
 	private static final int REPULSOR_MODE_PREFIX_COLOR = 0xC97B3B;
 	private static final String REPULSOR_SHIFT_GLYPH = "\uef80";
 	private static final String REPULSOR_SLOT_TO_AMMO_SHIFT_GLYPH = "\uef81";
+	private static final String REPULSOR_AMMO_RIGHT_SHIFT_GLYPH = "\uef82";
+	private static final String REPULSOR_AMMO_POST_COMPENSATION_GLYPH = "\uef7e";
 	private static final String REPULSOR_SLOT_ICON_CENTER_BASE_SHIFT_GLYPH = "\uef85";
 	private static final String REPULSOR_SLOT_ICON_CENTER_PER_CHAR_SHIFT_GLYPH = "\uef86";
 	private static final String REPULSOR_SLOT_ICON_ONLY_POST_SHIFT_GLYPH = "\uef87";
 	private static final String REPULSOR_AMMO_EXTRA_LEFT_DIGIT_SHIFT_GLYPH = "\uef88";
 	private static final String REPULSOR_ICON_AMMO_EXTRA_LEFT_DIGIT_SHIFT_GLYPH = "\uef89";
+	private static final String REPULSOR_SINGLE_DIGIT_ICON_LEFT_SHIFT_GLYPH = "\uef89";
+	private static final String REPULSOR_SINGLE_DIGIT_ICON_POST_COMPENSATION_GLYPH = "\uef7f";
+	private static final String REPULSOR_SINGLE_DIGIT_AMMO_LEFT_SHIFT_GLYPH = "\uef89";
+	private static final String REPULSOR_SINGLE_DIGIT_AMMO_POST_COMPENSATION_GLYPH = "\uef7f";
 	private static final String REPULSOR_SLOT_ICON_GLYPH = "\uef83";
+	private static final String REPULSOR_SLOT_ICON_NO_AMMO_GLYPH = "\uef84";
 	private static final int REPULSOR_ICON_AMMO_BASE_CHAR_COUNT = 4;
 	private static final FontDescription REPULSOR_SHIFT_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:repulsor_ammo_shift"))
@@ -444,6 +462,38 @@ public final class CopperManRepulsorSystem {
 		}
 
 		spawnLaserParticles(level, start, particleEnd);
+		playShootSound(level, player, start);
+	}
+
+	private static void playShootSound(ServerLevel level, ServerPlayer shooter, Vec3 origin) {
+		if (level == null || shooter == null || origin == null) {
+			return;
+		}
+
+		long seed = level.getRandom().nextLong();
+		double range = REPULSOR_SHOOT_SOUND_VOLUME > 1.0F ? 16.0D * REPULSOR_SHOOT_SOUND_VOLUME : 16.0D;
+		double rangeSqr = range * range;
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+
+			boolean hasPack = PolymerResourcePackUtils.hasMainPack(viewer);
+			Holder<SoundEvent> sound = hasPack
+					? REPULSOR_SHOOT_SOUND
+					: BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.BLAZE_SHOOT);
+			float pitch = hasPack ? REPULSOR_SHOOT_SOUND_PITCH : REPULSOR_SHOOT_FALLBACK_PITCH;
+			viewer.connection.send(new ClientboundSoundPacket(
+					sound,
+					SoundSource.PLAYERS,
+					origin.x,
+					origin.y,
+					origin.z,
+					REPULSOR_SHOOT_SOUND_VOLUME,
+					pitch,
+					seed
+			));
+		}
 	}
 
 	private static boolean canLaserHit(ServerPlayer player, Entity entity) {
@@ -528,7 +578,7 @@ public final class CopperManRepulsorSystem {
 	}
 
 	private static boolean hasAirTriggerObstruction(ServerPlayer player, RepulsorState state) {
-		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange()) + 0.5D;
+		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange());
 		HitResult hit = player.pick(reach, 1.0F, false);
 		if (hit instanceof EntityHitResult entityHit && entityHit.getEntity() == state.airTriggerEntity) {
 			return false;
@@ -600,14 +650,16 @@ public final class CopperManRepulsorSystem {
 		MutableComponent component = Component.empty();
 		int slashIndex = text.indexOf('/');
 		int extraLeftDigits = Math.max(0, slashIndex - 1);
+		boolean singleLeftDigitAmmo = slashIndex == 1;
 		if (showAttackSlotIcon && showAmmo) {
-			component.append(Component.literal(REPULSOR_ICON_AMMO_EXTRA_LEFT_DIGIT_SHIFT_GLYPH.repeat(extraLeftDigits)
+			component.append(Component.literal((singleLeftDigitAmmo ? REPULSOR_SINGLE_DIGIT_ICON_LEFT_SHIFT_GLYPH : "")
+					+ REPULSOR_ICON_AMMO_EXTRA_LEFT_DIGIT_SHIFT_GLYPH.repeat(extraLeftDigits)
 					+ REPULSOR_SLOT_ICON_CENTER_BASE_SHIFT_GLYPH
 					+ REPULSOR_SLOT_ICON_CENTER_PER_CHAR_SHIFT_GLYPH.repeat(REPULSOR_ICON_AMMO_BASE_CHAR_COUNT))
 					.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 		}
 		if (showAttackSlotIcon) {
-			component.append(Component.literal(REPULSOR_SLOT_ICON_GLYPH)
+			component.append(Component.literal(showAmmo ? REPULSOR_SLOT_ICON_GLYPH : REPULSOR_SLOT_ICON_NO_AMMO_GLYPH)
 					.withStyle(style -> style.withColor(iconColor).withItalic(false).withFont(REPULSOR_SLOT_ICON_FONT).withShadowColor(0x00000000)));
 			if (!showAmmo) {
 				component.append(Component.literal(REPULSOR_SLOT_ICON_ONLY_POST_SHIFT_GLYPH)
@@ -616,18 +668,34 @@ public final class CopperManRepulsorSystem {
 		}
 		if (showAmmo) {
 			if (showAttackSlotIcon) {
+				if (singleLeftDigitAmmo) {
+					component.append(Component.literal(REPULSOR_SINGLE_DIGIT_ICON_POST_COMPENSATION_GLYPH)
+							.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
+				}
 				component.append(Component.literal(REPULSOR_SLOT_TO_AMMO_SHIFT_GLYPH)
 						.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 			} else {
 				component.append(Component.literal(REPULSOR_SHIFT_GLYPH)
 						.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 			}
+			component.append(Component.literal(REPULSOR_AMMO_RIGHT_SHIFT_GLYPH)
+					.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 			if (extraLeftDigits > 0) {
 				component.append(Component.literal(REPULSOR_AMMO_EXTRA_LEFT_DIGIT_SHIFT_GLYPH.repeat(extraLeftDigits))
 						.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 			}
+			if (singleLeftDigitAmmo) {
+				component.append(Component.literal(REPULSOR_SINGLE_DIGIT_AMMO_LEFT_SHIFT_GLYPH)
+						.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
+			}
 			component.append(Component.literal(text)
 					.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_AMMO_FONT)));
+			if (singleLeftDigitAmmo) {
+				component.append(Component.literal(REPULSOR_SINGLE_DIGIT_AMMO_POST_COMPENSATION_GLYPH)
+						.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
+			}
+			component.append(Component.literal(REPULSOR_AMMO_POST_COMPENSATION_GLYPH)
+					.withStyle(style -> style.withColor(hudColor).withItalic(false).withFont(REPULSOR_SHIFT_FONT)));
 		}
 		return component;
 	}

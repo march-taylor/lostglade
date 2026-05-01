@@ -3,10 +3,19 @@
     {
       "type": "bitmap",
       "file": "lg2:font/repulsor_slot_icon.png",
-      "ascent": -65,
-      "height": 10,
+      "ascent": -97,
+      "height": 11,
       "chars": [
         "\uef83"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "lg2:font/repulsor_slot_icon_no_ammo.png",
+      "ascent": -97,
+      "height": 11,
+      "chars": [
+        "\uef84"
       ]
     }
   ]

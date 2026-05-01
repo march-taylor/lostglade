@@ -17,8 +17,10 @@ import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.particles.DustParticleOptions;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.MutableComponent;
@@ -31,6 +33,7 @@ import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.resources.Identifier;
@@ -39,7 +42,9 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerEntity;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.stats.ServerRecipeBook;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -95,6 +100,8 @@ public final class CopperManGogglesSystem {
 	private static final Identifier HEAD_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_goggles_head");
 	private static final Identifier INVISIBLE_MAGNIFIER_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "gui/button/invisible");
 	private static final Identifier ORE_HIGHLIGHT_CARRIER_ITEM_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "ore_highlight_carrier");
+	private static final Identifier SCAN_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "goggles_scan");
+	private static final Holder<SoundEvent> SCAN_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(SCAN_SOUND_ID));
 	private static final Identifier RECIPE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_goggles");
 	private static final String GOGGLES_META_TAG = "lg2_copper_goggles";
 	private static final String GOGGLES_MODE_TAG = "mode";
@@ -128,6 +135,13 @@ public final class CopperManGogglesSystem {
 	private static final int ORE_SEARCH_MAX_HIGHLIGHTS = 128;
 	private static final int TRACKING_MAX_HIGHLIGHTS = 128;
 	private static final long TRACKING_REFRESH_INTERVAL_TICKS = 10L;
+	private static final double SCAN_SOUND_RANGE_BLOCKS = 16.0D;
+	private static final float SCAN_SOUND_VOLUME = 0.9F;
+	private static final float SCAN_SOUND_PITCH = 1.0F;
+	private static final float SCAN_FALLBACK_SOUND_VOLUME = 0.8F;
+	private static final float SCAN_FALLBACK_SOUND_PITCH = 1.25F;
+	private static final float SCAN_TECH_LAYER_FALLBACK_VOLUME = 0.32F;
+	private static final float SCAN_TECH_LAYER_PITCH = 1.65F;
 	private static final float HIGHLIGHT_VIEW_RANGE = 1_000_000.0F;
 	private static final float ORE_HIGHLIGHT_SCALE = 2.0F;
 	private static final byte GLOWING_FLAG_MASK = 0x40;
@@ -612,6 +626,7 @@ public final class CopperManGogglesSystem {
 		showOreSearchHighlights(player, matchingOres, nowTick + highlightTicks);
 		SCAN_COOLDOWNS.put(player.getUUID(), nowTick + cooldownTicks);
 		LAST_SCAN_ACTIVATION_TICKS.put(player.getUUID(), nowTick);
+		playScanActivationSound(player);
 		return true;
 	}
 
@@ -636,7 +651,56 @@ public final class CopperManGogglesSystem {
 		showTrackingHighlights(player, findTrackingTargets(player, center, radius), nowTick + highlightTicks);
 		SCAN_COOLDOWNS.put(player.getUUID(), nowTick + cooldownTicks);
 		LAST_SCAN_ACTIVATION_TICKS.put(player.getUUID(), nowTick);
+		playScanActivationSound(player);
 		return true;
+	}
+
+	private static void playScanActivationSound(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		Vec3 origin = player.position().add(0.0D, Math.max(0.4D, player.getBbHeight() * 0.5D), 0.0D);
+		double rangeSqr = SCAN_SOUND_RANGE_BLOCKS * SCAN_SOUND_RANGE_BLOCKS;
+		long seed = level.getRandom().nextLong();
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer == null
+					|| viewer.connection == null
+					|| !viewer.isAlive()
+					|| viewer.isSpectator()
+					|| !isWearingCopperGoggles(viewer)
+					|| viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+
+			boolean hasPack = PolymerResourcePackUtils.hasMainPack(viewer);
+			Holder<SoundEvent> sound = hasPack
+					? SCAN_SOUND
+					: BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.TRIAL_SPAWNER_DETECT_PLAYER);
+			viewer.connection.send(new ClientboundSoundPacket(
+					sound,
+					SoundSource.PLAYERS,
+					origin.x,
+					origin.y,
+					origin.z,
+					hasPack ? SCAN_SOUND_VOLUME : SCAN_FALLBACK_SOUND_VOLUME,
+					hasPack ? SCAN_SOUND_PITCH : SCAN_FALLBACK_SOUND_PITCH,
+					seed
+			));
+			if (hasPack) {
+				continue;
+			}
+			viewer.connection.send(new ClientboundSoundPacket(
+					BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.BEACON_POWER_SELECT),
+					SoundSource.PLAYERS,
+					origin.x,
+					origin.y,
+					origin.z,
+					SCAN_TECH_LAYER_FALLBACK_VOLUME,
+					SCAN_TECH_LAYER_PITCH,
+					seed + 1L
+			));
+		}
 	}
 
 	private static boolean shouldHandleModeUse(ServerPlayer player, InteractionHand hand) {
@@ -1016,7 +1080,7 @@ public final class CopperManGogglesSystem {
 	}
 
 	private static boolean hasTrackingAirTriggerObstruction(ServerPlayer player) {
-		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange()) + 0.5D;
+		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange());
 		HitResult hit = player.pick(reach, 1.0F, false);
 		if (hit instanceof EntityHitResult entityHit && isTrackingAirTrigger(player, entityHit.getEntity())) {
 			return false;

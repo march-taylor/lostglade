@@ -31,10 +31,42 @@
       }
     ]
   },
+  "copper_jetpack_steam": {
+    "sounds": [
+      {
+        "name": "lg2:copper_jetpack_steam",
+        "preload": true
+      }
+    ]
+  },
+  "goggles_scan": {
+    "sounds": [
+      {
+        "name": "lg2:goggles_scan",
+        "preload": true
+      }
+    ]
+  },
+  "cartel_attack_finger": {
+    "sounds": [
+      {
+        "name": "lg2:cartel_attack_finger",
+        "preload": true
+      }
+    ]
+  },
   "ui_purchase_blocked": {
     "sounds": [
       {
         "name": "lg2:ui_purchase_blocked",
+        "preload": true
+      }
+    ]
+  },
+  "repulsor_shoot": {
+    "sounds": [
+      {
+        "name": "lg2:repulsor_shoot",
         "preload": true
       }
     ]

@@ -3,7 +3,7 @@
     {
       "type": "bitmap",
       "file": "lg2:font/repulsor_ammo_small.png",
-      "ascent": -65,
+      "ascent": -91,
       "height": 6,
       "chars": [
         " !\"#$%&'()*+,-./",
