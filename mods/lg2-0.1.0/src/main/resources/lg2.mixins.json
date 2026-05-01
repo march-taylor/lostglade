@@ -42,8 +42,6 @@
 		"LivingEntityCartelOwnerFriendlyFireMixin",
 		"LivingEntityCartelLawyerInvulnerabilityMixin",
 		"LivingEntityCartelSummonLootMixin",		"LivingEntityCopperManFoodMixin",
-		"LivingEntityDroneOperatorKnockbackMixin",
-		"LivingEntityDroneTravelMixin",
 		"LivingEntityTrackedDataAccessor",
 		"LivingEntityStabilityLuckMixin",
 		"LivingEntityTrojanRoosterInvulnerabilityMixin",
@@ -69,8 +67,6 @@
 		"ServerGamePacketListenerCopperManGogglesMixin",
 		"ServerGamePacketListenerCopperManJetpackMixin",
 		"ServerGamePacketListenerDroneControlMixin",
-		"ServerGamePacketListenerDroneControllerPhysicsMixin",
-		"ServerGamePacketListenerDroneProxyChunkMoveMixin",
 		"ServerGamePacketListenerImplAccessor",
 		"ServerGamePacketListenerMonitorTimelineMixin",
 		"ServerChunkCacheRendererBotShadowDirtyMixin",
@@ -90,8 +86,6 @@
 		"ZombieNaturalSpawnMarkerMixin"
 	],
 	"client": [
-		"client.CameraDroneProxyMixin",
-		"client.EntityDroneProxyCollisionMixin",
 		"client.LocalPlayerAbsoluteInvisibilityMixin"
 	],
 	"injectors": {

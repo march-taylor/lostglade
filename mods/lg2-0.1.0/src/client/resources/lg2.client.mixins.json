@@ -5,6 +5,7 @@
 	"compatibilityLevel": "JAVA_21",
 	"client": [
 		"ClientLevelMapDataAccessor",
+		"ClientInputAccessor",
 		"CameraPositionInvoker",
 		"ClientPacketListenerShadowAccessor",
 		"ClientPacketListenerShadowMapSyncMixin",
