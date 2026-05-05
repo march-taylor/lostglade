@@ -80,6 +80,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -165,6 +166,7 @@ public final class DroneSystem {
 	private static final int CONTROLLED_VIEW_TELEPORT_ID_BASE = 1_000_000_000;
 	private static final double CONTROLLED_DRONE_BLOCKED_MOVEMENT_EPSILON = 1.0E-5D;
 	private static final long POST_CONTROL_MOVE_PACKET_SUPPRESSION_TICKS = 20L;
+	private static final long POST_CONTROL_CLIENT_RESYNC_TICKS = 8L;
 	private static final double POST_CONTROL_MOVE_ACCEPT_DISTANCE_SQR = 2.0D * 2.0D;
 	private static final double DRONE_CAMERA_ESCAPE_STEP = 0.04D;
 	private static final int DRONE_CAMERA_ESCAPE_XZ_RADIUS_STEPS = 4;
@@ -191,6 +193,7 @@ public final class DroneSystem {
 	private static final Map<UUID, Long> NEXT_DRONE_ARM_ALLOWED_TICK = new HashMap<>();
 	private static final Map<UUID, DroneDisplayWobbleState> DISPLAY_WOBBLE_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, Long> POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK = new HashMap<>();
+	private static final Map<UUID, Long> POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK = new HashMap<>();
 	private static final Set<UUID> VISUALLY_CONTROLLED_PLAYERS = new HashSet<>();
 	private static final ThreadLocal<Boolean> CONTROLLED_OPERATOR_PACKET_REWRITE_BYPASS = ThreadLocal.withInitial(() -> false);
 
@@ -258,6 +261,7 @@ public final class DroneSystem {
 			UNCONTROLLED_DRONES.clear();
 			NEXT_DRONE_ARM_ALLOWED_TICK.clear();
 			POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK.clear();
+			POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.clear();
 			VISUALLY_CONTROLLED_PLAYERS.clear();
 			DISPLAY_WOBBLE_BY_DRONE.clear();
 		});
@@ -373,10 +377,59 @@ public final class DroneSystem {
 			return false;
 		}
 		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
-		if (session == null) {
+		return session != null && Objects.equals(resolveAuthoritativeDroneControllerId(session.droneUuid()), player.getUUID());
+	}
+
+	private static boolean isActiveDroneController(UUID controllerId, UUID droneUuid) {
+		if (controllerId == null || droneUuid == null) {
 			return false;
 		}
-		return Objects.equals(CONTROLLERS_BY_DRONE.get(session.droneUuid()), player.getUUID());
+		DroneControlSession session = ACTIVE_SESSIONS.get(controllerId);
+		return session != null && Objects.equals(session.droneUuid(), droneUuid);
+	}
+
+	private static Set<UUID> collectDroneControllerIds(UUID droneUuid) {
+		Set<UUID> controllerIds = new LinkedHashSet<>();
+		if (droneUuid == null) {
+			return controllerIds;
+		}
+
+		UUID indexedControllerId = CONTROLLERS_BY_DRONE.get(droneUuid);
+		if (isActiveDroneController(indexedControllerId, droneUuid)) {
+			controllerIds.add(indexedControllerId);
+		} else if (indexedControllerId != null) {
+			CONTROLLERS_BY_DRONE.remove(droneUuid, indexedControllerId);
+		}
+
+		for (Map.Entry<UUID, DroneControlSession> entry : ACTIVE_SESSIONS.entrySet()) {
+			UUID controllerId = entry.getKey();
+			DroneControlSession session = entry.getValue();
+			if (controllerId == null || session == null || !Objects.equals(session.droneUuid(), droneUuid)) {
+				continue;
+			}
+			controllerIds.add(controllerId);
+		}
+		return controllerIds;
+	}
+
+	private static UUID resolveAuthoritativeDroneControllerId(UUID droneUuid) {
+		if (droneUuid == null) {
+			return null;
+		}
+		Set<UUID> controllerIds = collectDroneControllerIds(droneUuid);
+		if (controllerIds.isEmpty()) {
+			CONTROLLERS_BY_DRONE.remove(droneUuid);
+			return null;
+		}
+
+		UUID indexedControllerId = CONTROLLERS_BY_DRONE.get(droneUuid);
+		UUID resolvedControllerId = indexedControllerId != null && controllerIds.contains(indexedControllerId)
+				? indexedControllerId
+				: controllerIds.iterator().next();
+		if (!Objects.equals(indexedControllerId, resolvedControllerId)) {
+			CONTROLLERS_BY_DRONE.put(droneUuid, resolvedControllerId);
+		}
+		return resolvedControllerId;
 	}
 
 	public static void handleControlledMovePacket(ServerPlayer player, ServerboundMovePlayerPacket packet) {
@@ -623,7 +676,7 @@ public final class DroneSystem {
 					null
 			);
 		}
-		UUID controllerId = CONTROLLERS_BY_DRONE.get(root.getUUID());
+		UUID controllerId = resolveAuthoritativeDroneControllerId(root.getUUID());
 		ServerPlayer controller = controllerId == null ? null : server.getPlayerList().getPlayer(controllerId);
 		UUID displayId = DISPLAYS_BY_DRONE.get(root.getUUID());
 		Entity cameraAnchor = ensureDroneCameraAnchor(root);
@@ -767,6 +820,7 @@ public final class DroneSystem {
 		cleanupExpiredPostControlMoveSuppression(server);
 		recoverOrphanedControlledOperators(server);
 		recoverPlayersWithStaleDronePassenger(server);
+		processPendingPostControlClientResync(server);
 	}
 
 	private static void cleanupExpiredPostControlMoveSuppression(MinecraftServer server) {
@@ -835,6 +889,7 @@ public final class DroneSystem {
 		clearControlledOperatorMovementState(player);
 		markPostControlMoveSuppressedForPlayer(player);
 		restoreControlledOperatorClientState(player);
+		schedulePostControlClientResync(player);
 	}
 
 	private static void markPostControlMoveSuppressedForPlayer(ServerPlayer player) {
@@ -845,6 +900,42 @@ public final class DroneSystem {
 				player.getUUID(),
 				player.level().getGameTime() + POST_CONTROL_MOVE_PACKET_SUPPRESSION_TICKS
 		);
+	}
+
+	private static void schedulePostControlClientResync(ServerPlayer player) {
+		if (player == null || player.level() == null) {
+			return;
+		}
+		POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.put(
+				player.getUUID(),
+				player.level().getGameTime() + POST_CONTROL_CLIENT_RESYNC_TICKS
+		);
+	}
+
+	private static void processPendingPostControlClientResync(MinecraftServer server) {
+		if (server == null || POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.isEmpty() || server.getPlayerList() == null) {
+			return;
+		}
+		ServerLevel overworld = server.overworld();
+		long now = overworld == null ? Long.MAX_VALUE : overworld.getGameTime();
+		for (Map.Entry<UUID, Long> entry : new ArrayList<>(POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.entrySet())) {
+			UUID playerId = entry.getKey();
+			Long untilTick = entry.getValue();
+			if (playerId == null || untilTick == null || now > untilTick) {
+				POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.remove(playerId, untilTick);
+				continue;
+			}
+			if (ACTIVE_SESSIONS.containsKey(playerId)) {
+				POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.remove(playerId, untilTick);
+				continue;
+			}
+			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+			if (player == null) {
+				POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.remove(playerId, untilTick);
+				continue;
+			}
+			restoreControlledOperatorClientState(player, false);
+		}
 	}
 
 	private static void tickControlledSessions(MinecraftServer server) {
@@ -867,7 +958,7 @@ public final class DroneSystem {
 				stopControlling(player, false);
 				continue;
 			}
-			if (!Objects.equals(CONTROLLERS_BY_DRONE.get(session.droneUuid()), player.getUUID())) {
+			if (!Objects.equals(resolveAuthoritativeDroneControllerId(session.droneUuid()), player.getUUID())) {
 				stopControlling(player, false);
 				continue;
 			}
@@ -1488,12 +1579,7 @@ public final class DroneSystem {
 		if (root == null) {
 			return false;
 		}
-		UUID controllerId = CONTROLLERS_BY_DRONE.get(root.getUUID());
-		if (controllerId == null) {
-			return false;
-		}
-		DroneControlSession session = ACTIVE_SESSIONS.get(controllerId);
-		return session != null && Objects.equals(session.droneUuid(), root.getUUID());
+		return resolveAuthoritativeDroneControllerId(root.getUUID()) != null;
 	}
 
 	private static boolean isWithinHorizontalRange(Vec3 origin, Entity entity, double horizontalRange) {
@@ -1608,12 +1694,34 @@ public final class DroneSystem {
 		runWithControlledOperatorPacketRewriteBypass(() -> player.connection.send(packet));
 	}
 
+	private static void applyControlledOperatorExitRotation(ServerPlayer player, DroneControlSession session) {
+		if (player == null || session == null) {
+			return;
+		}
+		float yaw = session.proxyYaw();
+		float pitch = session.proxyPitch();
+		player.setYRot(yaw);
+		player.setXRot(pitch);
+		player.setYHeadRot(yaw);
+		player.setYBodyRot(yaw);
+		player.yRotO = yaw;
+		player.xRotO = pitch;
+		player.yHeadRotO = yaw;
+		player.yBodyRotO = yaw;
+	}
+
 	private static void refreshControlledOperatorActualView(ServerPlayer player) {
+		refreshControlledOperatorActualView(player, true);
+	}
+
+	private static void refreshControlledOperatorActualView(ServerPlayer player, boolean includeTeleport) {
 		if (player == null || player.connection == null || !(player.level() instanceof ServerLevel level)) {
 			return;
 		}
-		level.getChunkAt(BlockPos.containing(player.position()));
-		player.connection.teleport(player.getX(), player.getY(), player.getZ(), player.getYRot(), player.getXRot());
+		if (includeTeleport) {
+			level.getChunkAt(BlockPos.containing(player.position()));
+			player.connection.teleport(player.getX(), player.getY(), player.getZ(), player.getYRot(), player.getXRot());
+		}
 		player.connection.send(buildActualSelfMetadataPacket(player));
 		player.connection.send(new ClientboundSetEntityMotionPacket(player.getId(), player.getDeltaMovement()));
 		player.connection.send(new ClientboundSetPassengersPacket(player));
@@ -1621,11 +1729,15 @@ public final class DroneSystem {
 	}
 
 	private static void restoreControlledOperatorClientState(ServerPlayer player) {
+		restoreControlledOperatorClientState(player, true);
+	}
+
+	private static void restoreControlledOperatorClientState(ServerPlayer player, boolean includeViewTeleport) {
 		if (player == null) {
 			return;
 		}
 		setHotbarVisualHidden(player, false);
-		refreshControlledOperatorActualView(player);
+		refreshControlledOperatorActualView(player, includeViewTeleport);
 		ServerMechanicsGateSystem.syncPlayerInventory(player);
 	}
 
@@ -1816,7 +1928,8 @@ public final class DroneSystem {
 		if (player == null || root == null || !root.isAlive() || !(root.level() instanceof ServerLevel droneLevel)) {
 			return false;
 		}
-		UUID currentControllerId = CONTROLLERS_BY_DRONE.get(root.getUUID());
+		POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.remove(player.getUUID());
+		UUID currentControllerId = resolveAuthoritativeDroneControllerId(root.getUUID());
 		if (currentControllerId != null && !Objects.equals(currentControllerId, player.getUUID())) {
 			player.sendSystemMessage(Component.literal("Этот дрон уже управляется другим игроком."));
 			return false;
@@ -1869,6 +1982,7 @@ public final class DroneSystem {
 			} else {
 				markPostControlMoveSuppressedForPlayer(player);
 				restoreControlledOperatorClientState(player);
+				schedulePostControlClientResync(player);
 			}
 			return;
 		}
@@ -1900,7 +2014,9 @@ public final class DroneSystem {
 			NEXT_DRONE_SOUND_TICK.remove(session.droneUuid());
 		}
 		clearDroneHud(player, session, true);
+		applyControlledOperatorExitRotation(player, session);
 		restoreControlledOperatorClientState(player);
+		schedulePostControlClientResync(player);
 		VISUALLY_CONTROLLED_PLAYERS.remove(player.getUUID());
 
 		ServerRaceSystem.resumeCopperManJetpackAfterDrone(player);
@@ -1922,13 +2038,8 @@ public final class DroneSystem {
 		NEXT_DRONE_ARM_ALLOWED_TICK.remove(root.getUUID());
 		DISPLAY_WOBBLE_BY_DRONE.remove(root.getUUID());
 		BluetoothLinkSystem.removeDroneEndpoint(level, root.getUUID(), root.blockPosition());
-		UUID controllerId = CONTROLLERS_BY_DRONE.get(root.getUUID());
-		if (controllerId != null && level.getServer() != null) {
-			ServerPlayer controller = level.getServer().getPlayerList().getPlayer(controllerId);
-			if (controller != null) {
-				stopControlling(controller, true, false);
-			}
-		}
+		stopAllDroneControllers(root, true);
+		CONTROLLERS_BY_DRONE.remove(root.getUUID());
 		DISPLAYS_BY_DRONE.remove(root.getUUID());
 		for (Display.ItemDisplay display : findDroneDisplayLayers(root)) {
 			display.discard();
@@ -1948,6 +2059,36 @@ public final class DroneSystem {
 			detonateKamikazeDrone(level, droneCameraOrigin(root), root.getDeltaMovement(), kamikazePower);
 		}
 		root.discard();
+	}
+
+	private static void stopAllDroneControllers(Entity root, boolean notify) {
+		if (root == null) {
+			return;
+		}
+		MinecraftServer server = root.level() == null ? null : root.level().getServer();
+		if (server == null || server.getPlayerList() == null) {
+			return;
+		}
+
+		UUID rootUuid = root.getUUID();
+		Set<UUID> controllerIds = collectDroneControllerIds(rootUuid);
+
+		for (UUID controllerId : controllerIds) {
+			if (controllerId == null) {
+				continue;
+			}
+			ServerPlayer controller = server.getPlayerList().getPlayer(controllerId);
+			if (controller == null) {
+				continue;
+			}
+			stopControlling(controller, notify, false);
+		}
+		CONTROLLERS_BY_DRONE.remove(rootUuid);
+
+		if (server != null) {
+			recoverOrphanedControlledOperators(server);
+			recoverPlayersWithStaleDronePassenger(server);
+		}
 	}
 
 	private static void playDroneBreakEffects(ServerLevel level, Vec3 origin, Vec3 velocity) {
