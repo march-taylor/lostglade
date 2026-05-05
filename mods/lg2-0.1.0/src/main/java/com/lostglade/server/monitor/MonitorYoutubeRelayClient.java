@@ -229,6 +229,22 @@ public final class MonitorYoutubeRelayClient {
 		return isQueuePreloadReady(loadPersistentQueuePreload(url));
 	}
 
+	public static QueueEntryCacheStatus queueEntryCacheStatus(String rawUrl) {
+		if (!looksLikeYoutubeUrl(rawUrl)) {
+			return new QueueEntryCacheStatus(0.0F, false, false);
+		}
+		String url = rawUrl.trim();
+		QueuePreloadState state = QUEUE_PRELOADS.get(url);
+		if (state != null) {
+			return state.cacheStatus();
+		}
+		QueuePreloadSnapshot snapshot = loadPersistentQueuePreload(url);
+		if (isQueuePreloadReady(snapshot)) {
+			return new QueueEntryCacheStatus(1.0F, false, true);
+		}
+		return new QueueEntryCacheStatus(0.0F, false, false);
+	}
+
 	public static BufferedImage queueEntryPreview(String rawUrl) {
 		if (!looksLikeYoutubeUrl(rawUrl)) {
 			return null;
@@ -1087,6 +1103,27 @@ public final class MonitorYoutubeRelayClient {
 						this.bufferedEndMs,
 						this.bufferedFromStart
 				));
+			}
+		}
+
+		private QueueEntryCacheStatus cacheStatus() {
+			synchronized (this.lock) {
+				loadPersistentCacheLocked();
+				QueuePreloadSnapshot snapshot = this.resolved == null ? null : new QueuePreloadSnapshot(
+						this.resolved,
+						new TreeMap<>(this.cachedPreviewFrames),
+						this.bufferedStartMs,
+						this.bufferedEndMs,
+						this.bufferedFromStart
+				);
+				if (isQueuePreloadReady(snapshot)) {
+					return new QueueEntryCacheStatus(1.0F, false, true);
+				}
+				long targetMs = Math.max(PREVIEW_CACHE_BUCKET_MS, QUEUE_PRELOAD_DURATION_MS - PREVIEW_CACHE_BUCKET_MS);
+				float fraction = this.bufferedFromStart && targetMs > 0L
+						? Math.max(0.0F, Math.min(0.99F, (float) this.bufferedEndMs / (float) targetMs))
+						: 0.0F;
+				return new QueueEntryCacheStatus(fraction, this.started || this.process != null || this.retainCount > 0, false);
 			}
 		}
 
@@ -2167,5 +2204,8 @@ public final class MonitorYoutubeRelayClient {
 				running.destroyForcibly();
 			}
 		}
+	}
+
+	public record QueueEntryCacheStatus(float fraction, boolean active, boolean complete) {
 	}
 }
