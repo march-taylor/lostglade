@@ -40,4 +40,9 @@ public final class MonitorYoutubeApp implements MonitorApp {
 	public String screenHint() {
 		return "Видео и стримы по ссылке";
 	}
+
+	@Override
+	public MonitorAppRole role() {
+		return MonitorAppRole.YOUTUBE_VIDEO;
+	}
 }

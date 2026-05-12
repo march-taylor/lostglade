@@ -9,8 +9,11 @@ import com.lostglade.item.MonitorItem;
 import com.lostglade.item.PhotoPrintData;
 import com.lostglade.server.map.MapPaletteQuantizer;
 import com.lostglade.server.monitor.MonitorApp;
+import com.lostglade.server.monitor.MonitorAppRole;
 import com.lostglade.server.monitor.MonitorAppRegistry;
+import com.lostglade.server.monitor.MonitorBackgroundPlaybackPolicy;
 import com.lostglade.server.monitor.MonitorMediaApp;
+import com.lostglade.server.monitor.MonitorSberDronesCatalog;
 import com.lostglade.server.monitor.MonitorYoutubeRelayClient;
 import com.lostglade.server.monitor.MonitorYoutubeMusicCache;
 import com.lostglade.server.progress.TaskProgress;
@@ -97,7 +100,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -175,7 +177,7 @@ public final class MonitorScreenSystem {
 	private static final long RENDER_CACHE_CLEANUP_INTERVAL_TICKS = 200L;
 	private static final int MAX_TILE_CACHE_ENTRIES = 128;
 	private static final String CAMERA_GALLERY_URL_PREFIX = "lg2-camera:";
-	private static final String LIVE_CAMERA_GALLERY_URL_PREFIX = "lg2-live-camera:";
+	private static final String LIVE_CAMERA_GALLERY_URL_PREFIX = MonitorSberDronesCatalog.URL_PREFIX;
 	private static final double RENDERER_BOT_EYE_HEIGHT = 1.62D;
 	private static final int LIVE_CAMERA_PREVIEW_SIZE = 128;
 	private static final int LIVE_CAMERA_FOV_DEGREES = 70;
@@ -359,7 +361,7 @@ public final class MonitorScreenSystem {
 				continue;
 			}
 			synchronized (state) {
-				cancelPlaybackLocked(state);
+				cancelRuntimePlaybackLocked(state);
 				clearPendingLiveCameraApply(state);
 			}
 		}
@@ -960,7 +962,8 @@ public final class MonitorScreenSystem {
 						state.audioSyncToken,
 						state.loading,
 						state.userPaused,
-						state.liveStream
+						state.liveStream,
+						state.streamKind != PlaybackStreamKind.DIRECT_VIDEO
 				));
 			}
 		}
@@ -1248,6 +1251,8 @@ public final class MonitorScreenSystem {
 				state.waitingForLink = false;
 				state.loading = true;
 				state.statusText = loadingStatus(pending.mode(), sender);
+				replaceProgressTrackerLocked(state);
+				state.progress.setIndeterminate("LOADING");
 			}
 			state.version++;
 		}
@@ -1258,9 +1263,15 @@ public final class MonitorScreenSystem {
 		if (!preservePlaybackDuringPrompt) {
 			resumeMediaPlaybackIfNeeded(server, pending.screenKey());
 		}
+		TaskProgress linkLoadProgress;
+		long sessionGeneration;
+		synchronized (state) {
+			linkLoadProgress = state.progress;
+			sessionGeneration = state.sessionGeneration;
+		}
 
-			if (isYoutubeFamilyMode(pending.mode())) {
-				CompletableFuture
+		if (isYoutubeFamilyMode(pending.mode())) {
+			CompletableFuture
 					.supplyAsync(() -> {
 						try {
 							return new YoutubeQueueResolveResult(
@@ -1272,6 +1283,7 @@ public final class MonitorScreenSystem {
 											? MonitorYoutubeMusicCache.resolveQueue(url)
 											: MonitorYoutubeRelayClient.resolveQueue(url),
 									pending.youtubeAction(),
+									sessionGeneration,
 									null
 							);
 						} catch (Exception exception) {
@@ -1282,6 +1294,7 @@ public final class MonitorScreenSystem {
 									url,
 									null,
 									pending.youtubeAction(),
+									sessionGeneration,
 									sanitizeMediaError(exception.getMessage())
 							);
 						}
@@ -1292,7 +1305,7 @@ public final class MonitorScreenSystem {
 					.supplyAsync(() -> {
 						try {
 							if (pending.mode() == ScreenViewMode.GALLERY && MonitorYoutubeMusicCache.looksLikeSupportedUrl(url)) {
-								MonitorYoutubeMusicCache.LoadedTrack track = MonitorYoutubeMusicCache.load(url, state.progress);
+								MonitorYoutubeMusicCache.LoadedTrack track = MonitorYoutubeMusicCache.load(url, linkLoadProgress);
 								return new MediaLoadResult(
 										pending.screenKey(),
 										sender.getUUID(),
@@ -1302,11 +1315,12 @@ public final class MonitorScreenSystem {
 										GalleryItemKind.AUDIO,
 										null,
 										track.video(),
+										sessionGeneration,
 										null
 								);
 							}
 							if (MonitorMediaApp.looksLikeDirectAudioUrl(url)) {
-								MonitorMediaApp.LoadedAudioTrack track = MonitorMediaApp.loadAudioFromUrl(url, state.progress);
+								MonitorMediaApp.LoadedAudioTrack track = MonitorMediaApp.loadAudioFromUrl(url, linkLoadProgress);
 								return new MediaLoadResult(
 										pending.screenKey(),
 										sender.getUUID(),
@@ -1316,15 +1330,16 @@ public final class MonitorScreenSystem {
 										GalleryItemKind.AUDIO,
 										null,
 										track.video(),
+										sessionGeneration,
 										null
 								);
 							}
 							if (MonitorMediaApp.looksLikeDirectVideoUrl(url)) {
-								return new MediaLoadResult(pending.screenKey(), sender.getUUID(), url, null, "", GalleryItemKind.VIDEO, null, MonitorMediaApp.loadVideoFromUrl(url, state.progress), null);
+								return new MediaLoadResult(pending.screenKey(), sender.getUUID(), url, null, "", GalleryItemKind.VIDEO, null, MonitorMediaApp.loadVideoFromUrl(url, linkLoadProgress), sessionGeneration, null);
 							}
-							return new MediaLoadResult(pending.screenKey(), sender.getUUID(), url, null, "", GalleryItemKind.MEDIA, MonitorMediaApp.loadFromUrl(url, state.progress), null, null);
+							return new MediaLoadResult(pending.screenKey(), sender.getUUID(), url, null, "", GalleryItemKind.MEDIA, MonitorMediaApp.loadFromUrl(url, linkLoadProgress), null, sessionGeneration, null);
 						} catch (Exception exception) {
-							return new MediaLoadResult(pending.screenKey(), sender.getUUID(), url, null, "", GalleryItemKind.MEDIA, null, null, sanitizeMediaError(exception.getMessage()));
+							return new MediaLoadResult(pending.screenKey(), sender.getUUID(), url, null, "", GalleryItemKind.MEDIA, null, null, sessionGeneration, sanitizeMediaError(exception.getMessage()));
 						}
 					}, mediaIoExecutor)
 					.thenAccept(result -> server.execute(() -> applyMediaLoadResult(server, result)));
@@ -1969,6 +1984,7 @@ public final class MonitorScreenSystem {
 					releaseYoutubeQueuePreloads(preservedReleasedQueueUrls);
 					releaseYoutubeMusicQueuePreloads(preservedReleasedMusicQueueUrls);
 					clearMediaSessionBindings(level.getServer(), component.runtimeKey());
+					scheduleBackgroundPlaybackIfNeeded(level.getServer(), component.runtimeKey());
 				} else if (!preserveRuntimeTransition) {
 					deactivateMediaSession(level.getServer(), component.runtimeKey());
 				}
@@ -2793,12 +2809,12 @@ public final class MonitorScreenSystem {
 			state.wallpaperFrameIndex = 0;
 			state.wallpaperHydrated = true;
 			state.version++;
-			shouldAnimate = wallpaperVisibleForCurrentViewLocked(state) && item.media().animated();
+			shouldAnimate = wallpaperAnimationActiveLocked(state);
 		}
 		persistGalleryState(server, key, state);
 		requestRuntimeRender(server, key);
 		if (shouldAnimate) {
-			restartMediaPlaybackIfNeeded(server, key);
+			scheduleBackgroundPlaybackIfNeeded(server, key);
 		}
 		ServerPlayer requester = requesterUuid != null ? server.getPlayerList().getPlayer(requesterUuid) : null;
 		if (requester != null) {
@@ -2831,7 +2847,7 @@ public final class MonitorScreenSystem {
 			state.playerBackgroundHydrated = true;
 			if (item.media() != null) {
 				state.playerBackgroundMedia = item.media();
-				shouldAnimate = playerBackgroundVisibleForCurrentViewLocked(state) && item.media().animated();
+				shouldAnimate = playerBackgroundAnimationActiveLocked(state);
 			} else {
 				state.playerBackgroundMedia = null;
 				backgroundUrlToLoad = item.url();
@@ -2845,7 +2861,7 @@ public final class MonitorScreenSystem {
 			schedulePlayerBackgroundLoad(server, key, backgroundUrlToLoad, backgroundLocalMediaKeyToLoad);
 		}
 		if (shouldAnimate) {
-			restartMediaPlaybackIfNeeded(server, key);
+			scheduleBackgroundPlaybackIfNeeded(server, key);
 		}
 		ServerPlayer requester = requesterUuid != null ? server.getPlayerList().getPlayer(requesterUuid) : null;
 		if (requester != null) {
@@ -2987,6 +3003,7 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
+		TaskProgress progress;
 		synchronized (state) {
 			cancelPlaybackLocked(state);
 			clearYoutubePlaybackLocked(state);
@@ -3002,12 +3019,15 @@ public final class MonitorScreenSystem {
 			state.youtubeQueueOpen = false;
 			state.overlayMode = MediaOverlayMode.CONTROLS;
 			state.statusText = "BUFFERING";
+			replaceProgressTrackerLocked(state);
 			state.progress.setIndeterminate("LOADING");
+			progress = state.progress;
 			state.version++;
 		}
 		requestRuntimeRender(server, key);
 		resumeMediaPlaybackIfNeeded(server, key);
 		ensureExecutors();
+		TaskProgress queuePlaybackProgress = progress;
 		CompletableFuture
 				.supplyAsync(() -> {
 					try {
@@ -3018,7 +3038,7 @@ public final class MonitorScreenSystem {
 								ScreenViewMode.YOUTUBE,
 								PlaybackStreamKind.YOUTUBE,
 								null,
-								MonitorYoutubeRelayClient.load(relaySessionId(key), url, state.progress),
+								MonitorYoutubeRelayClient.load(relaySessionId(key), url, queuePlaybackProgress),
 								null
 						);
 					} catch (Exception exception) {
@@ -3043,6 +3063,7 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
+		TaskProgress progress;
 		synchronized (state) {
 			cancelPlaybackLocked(state);
 			clearYoutubePlaybackLocked(state);
@@ -3061,12 +3082,15 @@ public final class MonitorScreenSystem {
 			state.youtubeQueueOpen = false;
 			state.overlayMode = MediaOverlayMode.CONTROLS;
 			state.statusText = "BUFFERING";
+			replaceProgressTrackerLocked(state);
 			state.progress.setIndeterminate("LOADING");
+			progress = state.progress;
 			state.version++;
 		}
 		requestRuntimeRender(server, key);
 		resumeMediaPlaybackIfNeeded(server, key);
 		ensureExecutors();
+		TaskProgress queuePlaybackProgress = progress;
 		CompletableFuture
 				.supplyAsync(() -> {
 					try {
@@ -3077,7 +3101,7 @@ public final class MonitorScreenSystem {
 								ScreenViewMode.GALLERY,
 								PlaybackStreamKind.YOUTUBE,
 								null,
-								MonitorYoutubeRelayClient.load(relaySessionId(key), url, state.progress),
+								MonitorYoutubeRelayClient.load(relaySessionId(key), url, progress),
 								null
 						);
 					} catch (Exception exception) {
@@ -3106,6 +3130,7 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
+		TaskProgress progress;
 		synchronized (state) {
 			cancelPlaybackLocked(state);
 			clearYoutubePlaybackLocked(state);
@@ -3141,7 +3166,9 @@ public final class MonitorScreenSystem {
 			state.bufferedStartMs = 0L;
 			state.bufferedEndMs = 0L;
 			state.audioStreamUrl = video.audioInput();
+			replaceProgressTrackerLocked(state);
 			state.progress.setIndeterminate("LOADING");
+			progress = state.progress;
 			if (preserveQueue && isYoutubeFamilyMode(targetMode)) {
 				ensureYoutubeQueueCurrentEntryLocked(state);
 			}
@@ -3150,6 +3177,7 @@ public final class MonitorScreenSystem {
 		requestRuntimeRender(server, key);
 		resumeMediaPlaybackIfNeeded(server, key);
 		ensureExecutors();
+		TaskProgress queuePlaybackProgress = progress;
 		CompletableFuture
 				.supplyAsync(() -> {
 					try {
@@ -3175,7 +3203,7 @@ public final class MonitorScreenSystem {
 												? video.preview()
 												: null,
 										video.width(),
-										state.progress
+										progress
 								),
 								null
 						);
@@ -3323,14 +3351,6 @@ public final class MonitorScreenSystem {
 		if (shouldRender) {
 			requestRuntimeRender(server, key);
 		}
-		for (PersistedGalleryItem item : persistedItems) {
-			GalleryItemKind resolvedKind = effectiveGalleryItemKind(item);
-			if (resolvedKind == GalleryItemKind.MEDIA
-					|| resolvedKind == GalleryItemKind.VIDEO
-					|| resolvedKind == GalleryItemKind.AUDIO) {
-				scheduleGalleryItemLoad(server, key, item.title(), item.url(), item.localMediaKey(), resolvedKind, false, -1);
-			}
-		}
 	}
 
 	private static void ensureSberDronesStateHydrated(MinecraftServer server, ScreenRuntimeKey key, MediaRuntimeState state) {
@@ -3342,16 +3362,36 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		boolean initialSyncNeeded;
+		boolean shouldRender = false;
 		synchronized (state) {
-			initialSyncNeeded = !state.galleryHydrated;
+			boolean hadForeignGalleryItems = hasNonLiveCameraItemsLocked(state);
+			initialSyncNeeded = !state.galleryHydrated || hadForeignGalleryItems;
+			if (hadForeignGalleryItems) {
+				state.galleryItems.removeIf(item -> !isLiveCameraGalleryItem(item));
+				state.galleryIndex = resolveGalleryItemIndex(state, state.sourceUrl, state.galleryIndex);
+				if (state.galleryIndex < 0 && state.streamKind != PlaybackStreamKind.LIVE_CAMERA) {
+					clearGallerySelectionLocked(state);
+				}
+				state.galleryScroll = 0;
+				state.version++;
+				shouldRender = true;
+			}
 			state.galleryHydrated = true;
-			if (state.gallerySurfaceMode != GallerySurfaceMode.PLAYER) {
+			if (state.streamKind != PlaybackStreamKind.LIVE_CAMERA) {
 				state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+			}
+			if (state.playerBackgroundGalleryPickerOpen) {
+				clearPlayerBackgroundGalleryPickerLocked(state);
+				state.version++;
+				shouldRender = true;
 			}
 		}
 		ServerLevel level = server.getLevel(key.dimension());
 		if (initialSyncNeeded && level != null) {
 			enqueueCameraRefresh(level, key);
+		}
+		if (shouldRender) {
+			requestRuntimeRender(server, key);
 		}
 	}
 
@@ -3427,15 +3467,43 @@ public final class MonitorScreenSystem {
 	}
 
 	private static boolean hasLiveCameraItemsLocked(MediaRuntimeState state) {
+		return countLiveCameraItemsLocked(state) > 0;
+	}
+
+	private static int countLiveCameraItemsLocked(MediaRuntimeState state) {
+		if (state == null || state.galleryItems.isEmpty()) {
+			return 0;
+		}
+		int liveCameraItems = 0;
+		for (GalleryItem item : state.galleryItems) {
+			if (isLiveCameraGalleryItem(item)) {
+				liveCameraItems++;
+			}
+		}
+		return liveCameraItems;
+	}
+
+	private static boolean hasNonLiveCameraItemsLocked(MediaRuntimeState state) {
 		if (state == null || state.galleryItems.isEmpty()) {
 			return false;
 		}
 		for (GalleryItem item : state.galleryItems) {
-			if (isLiveCameraGalleryItem(item)) {
+			if (!isLiveCameraGalleryItem(item)) {
 				return true;
 			}
 		}
 		return false;
+	}
+
+	private static boolean hasSavedGalleryItemsLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return false;
+		}
+		return MonitorGalleryRuntimePolicy.hasSavedGalleryItems(
+				state.mode,
+				state.galleryItems.size(),
+				countLiveCameraItemsLocked(state)
+		);
 	}
 
 	private static List<LiveCameraReference> collectConnectedCameraPositions(ServerLevel level, ScreenComponent component) {
@@ -3469,39 +3537,7 @@ public final class MonitorScreenSystem {
 			collectCameraTouchPoints(level, wirePos, cameraPositions);
 		}
 		List<LiveCameraReference> ordered = new ArrayList<>(cameraPositions);
-		ordered.sort((first, second) -> {
-			int compareType = first.sourceType().compareTo(second.sourceType());
-			if (compareType != 0) {
-				return compareType;
-			}
-			if (first.sourceType() == LiveCameraSourceType.DRONE || second.sourceType() == LiveCameraSourceType.DRONE) {
-				String firstUuid = first.sourceUuid() == null ? "" : first.sourceUuid().toString();
-				String secondUuid = second.sourceUuid() == null ? "" : second.sourceUuid().toString();
-				int compareUuid = firstUuid.compareTo(secondUuid);
-				if (compareUuid != 0) {
-					return compareUuid;
-				}
-			}
-			if (first.dimension() == null || second.dimension() == null) {
-				return Boolean.compare(first.dimension() != null, second.dimension() != null);
-			}
-			int compareDimension = first.dimension().identifier().toString().compareTo(second.dimension().identifier().toString());
-			if (compareDimension != 0) {
-				return compareDimension;
-			}
-			if (first.pos() == null || second.pos() == null) {
-				return Boolean.compare(first.pos() != null, second.pos() != null);
-			}
-			int compareX = Integer.compare(first.pos().getX(), second.pos().getX());
-			if (compareX != 0) {
-				return compareX;
-			}
-			int compareY = Integer.compare(first.pos().getY(), second.pos().getY());
-			if (compareY != 0) {
-				return compareY;
-			}
-			return Integer.compare(first.pos().getZ(), second.pos().getZ());
-		});
+		ordered.sort((first, second) -> MonitorSberDronesCatalog.compare(toSberDronesSource(first), toSberDronesSource(second)));
 		return List.copyOf(ordered);
 	}
 
@@ -3577,135 +3613,72 @@ public final class MonitorScreenSystem {
 	}
 
 	private static boolean sameLiveCameraIdentity(LiveCameraReference first, LiveCameraReference second) {
-		if (first == second) {
-			return true;
+		return MonitorSberDronesCatalog.sameIdentity(toSberDronesSource(first), toSberDronesSource(second));
+	}
+
+	private static MonitorSberDronesCatalog.Source toSberDronesSource(LiveCameraReference cameraRef) {
+		if (cameraRef == null) {
+			return null;
 		}
-		if (first == null || second == null || first.sourceType() != second.sourceType()) {
-			return false;
+		String dimensionId = cameraRef.dimension() != null ? cameraRef.dimension().identifier().toString() : "";
+		BlockPos pos = cameraRef.pos();
+		if (cameraRef.sourceType() == LiveCameraSourceType.DRONE) {
+			return MonitorSberDronesCatalog.Source.drone(
+					dimensionId,
+					pos != null ? pos.getX() : null,
+					pos != null ? pos.getY() : null,
+					pos != null ? pos.getZ() : null,
+					cameraRef.sourceUuid()
+			);
 		}
-		if (first.sourceType() == LiveCameraSourceType.DRONE && first.sourceUuid() != null && second.sourceUuid() != null) {
-			return Objects.equals(first.sourceUuid(), second.sourceUuid());
+		if (pos == null) {
+			return null;
 		}
-		return Objects.equals(first.dimension(), second.dimension()) && Objects.equals(first.pos(), second.pos());
+		return MonitorSberDronesCatalog.Source.camera(dimensionId, pos.getX(), pos.getY(), pos.getZ());
+	}
+
+	private static LiveCameraReference fromSberDronesSource(MonitorSberDronesCatalog.Source source) {
+		if (source == null) {
+			return null;
+		}
+		ResourceKey<Level> dimension = null;
+		if (source.dimensionId() != null && !source.dimensionId().isBlank()) {
+			Identifier dimensionId = Identifier.tryParse(source.dimensionId());
+			if (dimensionId != null) {
+				dimension = ResourceKey.create(Registries.DIMENSION, dimensionId);
+			}
+		}
+		if (source.sourceType() == MonitorSberDronesCatalog.SourceType.DRONE) {
+			return LiveCameraReference.drone(
+					dimension,
+					source.hasPosition() ? new BlockPos(source.x(), source.y(), source.z()) : null,
+					source.sourceUuid()
+			);
+		}
+		if (dimension == null || !source.hasPosition()) {
+			return null;
+		}
+		return LiveCameraReference.camera(dimension, new BlockPos(source.x(), source.y(), source.z()));
 	}
 
 	private static String liveCameraGalleryUrl(LiveCameraReference cameraRef) {
-		if (cameraRef == null) {
-			return "";
-		}
-		if (cameraRef.sourceType() == LiveCameraSourceType.DRONE && cameraRef.sourceUuid() != null) {
-			StringBuilder builder = new StringBuilder(LIVE_CAMERA_GALLERY_URL_PREFIX)
-					.append("drone|")
-					.append(cameraRef.sourceUuid());
-			if (cameraRef.dimension() != null) {
-				builder.append("|").append(cameraRef.dimension().identifier());
-			}
-			return builder.toString();
-		}
-		if (cameraRef.dimension() == null || cameraRef.pos() == null) {
-			return "";
-		}
-		BlockPos cameraPos = cameraRef.pos();
-		return LIVE_CAMERA_GALLERY_URL_PREFIX
-				+ cameraRef.dimension().identifier()
-				+ "|"
-				+ cameraPos.getX()
-				+ ","
-				+ cameraPos.getY()
-				+ ","
-				+ cameraPos.getZ();
+		return MonitorSberDronesCatalog.url(toSberDronesSource(cameraRef));
 	}
 
 	private static LiveCameraReference liveCameraGalleryReference(String url, ResourceKey<Level> fallbackDimension) {
-		if (url == null || !url.startsWith(LIVE_CAMERA_GALLERY_URL_PREFIX)) {
-			return null;
-		}
-		String payload = url.substring(LIVE_CAMERA_GALLERY_URL_PREFIX.length()).trim();
-		if (payload.startsWith("drone|")) {
-			String[] parts = payload.split("\\|", 3);
-			if (parts.length < 2) {
-				return null;
-			}
-			try {
-				UUID droneUuid = UUID.fromString(parts[1].trim());
-				ResourceKey<Level> dimension = fallbackDimension;
-				if (parts.length >= 3) {
-					Identifier dimensionId = Identifier.tryParse(parts[2].trim());
-					if (dimensionId != null) {
-						dimension = ResourceKey.create(Registries.DIMENSION, dimensionId);
-					}
-				}
-				return LiveCameraReference.drone(dimension, null, droneUuid);
-			} catch (IllegalArgumentException exception) {
-				return null;
-			}
-		}
-		if (payload.startsWith("camera|")) {
-			payload = payload.substring("camera|".length()).trim();
-		}
-		ResourceKey<Level> dimension = fallbackDimension;
-		String coordinatesPayload = payload;
-		int dimensionSeparator = payload.indexOf('|');
-		if (dimensionSeparator >= 0) {
-			Identifier dimensionId = Identifier.tryParse(payload.substring(0, dimensionSeparator).trim());
-			if (dimensionId == null) {
-				return null;
-			}
-			dimension = ResourceKey.create(Registries.DIMENSION, dimensionId);
-			coordinatesPayload = payload.substring(dimensionSeparator + 1).trim();
-		}
-		if (dimension == null) {
-			return null;
-		}
-		String[] parts = coordinatesPayload.split(",", 3);
-		if (parts.length != 3) {
-			return null;
-		}
-		try {
-			return LiveCameraReference.camera(
-					dimension,
-					new BlockPos(
-							Integer.parseInt(parts[0].trim()),
-							Integer.parseInt(parts[1].trim()),
-							Integer.parseInt(parts[2].trim())
-					)
-			);
-		} catch (NumberFormatException exception) {
-			return null;
-		}
+		MonitorSberDronesCatalog.Source source = MonitorSberDronesCatalog.parseUrl(
+				url,
+				fallbackDimension != null ? fallbackDimension.identifier().toString() : ""
+		);
+		return fromSberDronesSource(source);
 	}
 
 	private static String liveCameraGalleryTitle(LiveCameraReference cameraRef) {
-		if (cameraRef != null && cameraRef.sourceType() == LiveCameraSourceType.DRONE) {
-			return "Дрон";
-		}
-		return "Камера";
+		return MonitorSberDronesCatalog.title(toSberDronesSource(cameraRef));
 	}
 
 	private static String liveCameraGallerySubtitle(LiveCameraReference cameraRef, boolean online) {
-		if (cameraRef == null) {
-			return "Прямая трансляция";
-		}
-		String status = online ? "online" : "offline";
-		if (cameraRef.dimension() == null || cameraRef.pos() == null) {
-			if (cameraRef.sourceType() == LiveCameraSourceType.DRONE && cameraRef.sourceUuid() != null) {
-				return status + "  •  drone  •  " + cameraRef.sourceUuid();
-			}
-			return "Прямая трансляция";
-		}
-		BlockPos cameraPos = cameraRef.pos();
-		String sourceLabel = cameraRef.sourceType() == LiveCameraSourceType.DRONE ? "drone" : "camera";
-		return status
-				+ "  •  "
-				+ sourceLabel
-				+ "  •  "
-				+ cameraRef.dimension().identifier()
-				+ "  •  X: "
-				+ cameraPos.getX()
-				+ "  Y: "
-				+ cameraPos.getY()
-				+ "  Z: "
-				+ cameraPos.getZ();
+		return MonitorSberDronesCatalog.subtitle(toSberDronesSource(cameraRef), online);
 	}
 
 	private static String liveCameraStreamOwnerId(ScreenRuntimeKey key) {
@@ -3994,7 +3967,7 @@ public final class MonitorScreenSystem {
 					: state.retainedYoutubePreloadUrls.contains(url);
 			if (youtubeMusicQueue) {
 				MonitorYoutubeMusicCache.QueueEntryCacheStatus status = MonitorYoutubeMusicCache.queueEntryCacheStatus(url);
-				if (!status.complete() && (status.active() || retained)) {
+				if (!status.complete() && status.active()) {
 					return true;
 				}
 			} else {
@@ -4016,6 +3989,7 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		TaskProgress progress = null;
+		long sessionGeneration;
 		synchronized (state) {
 			if (state.galleryLoadingUrls.contains(url)) {
 				if (openWhenReady) {
@@ -4024,18 +3998,21 @@ public final class MonitorScreenSystem {
 					state.waitingForLink = false;
 					state.overlayMode = MediaOverlayMode.CONTROLS;
 					state.statusText = "BUFFERING";
+					replaceProgressTrackerLocked(state);
 					state.progress.setIndeterminate("LOADING");
 					state.version++;
 				}
 				return;
 			}
 			state.galleryLoadingUrls.add(url);
+			sessionGeneration = state.sessionGeneration;
 			if (openWhenReady) {
 				beginGalleryPendingOpenLocked(state, url, preferredIndex);
 				state.loading = true;
 				state.waitingForLink = false;
 				state.overlayMode = MediaOverlayMode.CONTROLS;
 				state.statusText = "BUFFERING";
+				replaceProgressTrackerLocked(state);
 				state.progress.setIndeterminate("LOADING");
 				state.version++;
 				progress = state.progress;
@@ -4064,6 +4041,7 @@ public final class MonitorScreenSystem {
 										track.video(),
 										openWhenReady,
 										preferredIndex,
+										sessionGeneration,
 										null
 								);
 							}
@@ -4081,6 +4059,7 @@ public final class MonitorScreenSystem {
 									track.video(),
 									openWhenReady,
 									preferredIndex,
+									sessionGeneration,
 									null
 							);
 						}
@@ -4101,10 +4080,11 @@ public final class MonitorScreenSystem {
 										: null,
 								openWhenReady,
 								preferredIndex,
+								sessionGeneration,
 								null
 						);
 					} catch (Exception exception) {
-						return new GalleryItemLoadResult(key, title, "", url, localMediaKey, kind != null ? kind : GalleryItemKind.MEDIA, null, null, openWhenReady, preferredIndex, sanitizeMediaError(exception.getMessage()));
+						return new GalleryItemLoadResult(key, title, "", url, localMediaKey, kind != null ? kind : GalleryItemKind.MEDIA, null, null, openWhenReady, preferredIndex, sessionGeneration, sanitizeMediaError(exception.getMessage()));
 					}
 				}, mediaIoExecutor)
 				.thenAccept(result -> server.execute(() -> applyGalleryItemLoadResult(server, result)));
@@ -4167,6 +4147,10 @@ public final class MonitorScreenSystem {
 		int loadedVideoIndex = -1;
 		synchronized (state) {
 			state.galleryLoadingUrls.remove(result.url());
+			if (result.sessionGeneration() != state.sessionGeneration
+					&& !acceptLateResultWhileGalleryStillActive(server, result.screenKey())) {
+				return;
+			}
 			boolean pendingOpenMatches = Objects.equals(state.galleryPendingOpenUrl, result.url())
 					&& state.galleryPendingOpenIndex >= 0
 					&& state.galleryPendingOpenRequestId > 0;
@@ -4260,6 +4244,7 @@ public final class MonitorScreenSystem {
 				state.version++;
 				shouldRender = true;
 			}
+			compactGalleryRuntimeMediaLocked(state);
 		}
 		if (shouldRender) {
 			requestRuntimeRender(server, result.screenKey());
@@ -4864,11 +4849,13 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
+		long sessionGeneration;
 		synchronized (state) {
 			if (state.wallpaperLoading || (state.wallpaperMedia != null && Objects.equals(state.wallpaperUrl, url))) {
 				return;
 			}
 			state.wallpaperLoading = true;
+			sessionGeneration = state.sessionGeneration;
 		}
 		ensureExecutors();
 		CompletableFuture
@@ -4879,10 +4866,11 @@ public final class MonitorScreenSystem {
 								url,
 								localMediaKey,
 								loadGalleryMedia(url, localMediaKey, null),
+								sessionGeneration,
 								null
 						);
 					} catch (Exception exception) {
-						return new WallpaperLoadResult(key, url, localMediaKey, null, sanitizeMediaError(exception.getMessage()));
+						return new WallpaperLoadResult(key, url, localMediaKey, null, sessionGeneration, sanitizeMediaError(exception.getMessage()));
 					}
 				}, mediaIoExecutor)
 				.thenAccept(result -> server.execute(() -> applyWallpaperLoadResult(server, result)));
@@ -4896,11 +4884,13 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
+		long sessionGeneration;
 		synchronized (state) {
 			if (state.playerBackgroundLoading || (state.playerBackgroundMedia != null && Objects.equals(state.playerBackgroundUrl, url))) {
 				return;
 			}
 			state.playerBackgroundLoading = true;
+			sessionGeneration = state.sessionGeneration;
 		}
 		ensureExecutors();
 		CompletableFuture
@@ -4911,10 +4901,11 @@ public final class MonitorScreenSystem {
 								url,
 								localMediaKey,
 								loadGalleryMedia(url, localMediaKey, null),
+								sessionGeneration,
 								null
 						);
 					} catch (Exception exception) {
-						return new PlayerBackgroundLoadResult(key, url, localMediaKey, null, sanitizeMediaError(exception.getMessage()));
+						return new PlayerBackgroundLoadResult(key, url, localMediaKey, null, sessionGeneration, sanitizeMediaError(exception.getMessage()));
 					}
 				}, mediaIoExecutor)
 				.thenAccept(result -> server.execute(() -> applyPlayerBackgroundLoadResult(server, result)));
@@ -4931,6 +4922,9 @@ public final class MonitorScreenSystem {
 		boolean shouldRender = false;
 		boolean shouldAnimate = false;
 		synchronized (state) {
+			if (result.sessionGeneration() != state.sessionGeneration) {
+				return;
+			}
 			state.wallpaperLoading = false;
 			if (!Objects.equals(state.wallpaperUrl, result.url())) {
 				return;
@@ -4959,15 +4953,16 @@ public final class MonitorScreenSystem {
 					);
 				}
 			}
+			compactGalleryRuntimeMediaLocked(state);
 			state.version++;
 			shouldRender = true;
-			shouldAnimate = wallpaperVisibleForCurrentViewLocked(state) && result.loadedMedia().animated();
+			shouldAnimate = wallpaperAnimationActiveLocked(state);
 		}
 		if (shouldRender) {
 			requestRuntimeRender(server, result.screenKey());
 		}
 		if (shouldAnimate) {
-			restartMediaPlaybackIfNeeded(server, result.screenKey());
+			scheduleBackgroundPlaybackIfNeeded(server, result.screenKey());
 		}
 	}
 
@@ -4982,6 +4977,9 @@ public final class MonitorScreenSystem {
 		boolean shouldRender = false;
 		boolean shouldAnimate = false;
 		synchronized (state) {
+			if (result.sessionGeneration() != state.sessionGeneration) {
+				return;
+			}
 			state.playerBackgroundLoading = false;
 			if (!Objects.equals(state.playerBackgroundUrl, result.url())) {
 				return;
@@ -5010,15 +5008,16 @@ public final class MonitorScreenSystem {
 					);
 				}
 			}
+			compactGalleryRuntimeMediaLocked(state);
 			state.version++;
 			shouldRender = true;
-			shouldAnimate = playerBackgroundVisibleForCurrentViewLocked(state) && result.loadedMedia().animated();
+			shouldAnimate = playerBackgroundAnimationActiveLocked(state);
 		}
 		if (shouldRender) {
 			requestRuntimeRender(server, result.screenKey());
 		}
 		if (shouldAnimate) {
-			restartMediaPlaybackIfNeeded(server, result.screenKey());
+			scheduleBackgroundPlaybackIfNeeded(server, result.screenKey());
 		}
 	}
 
@@ -5040,6 +5039,10 @@ public final class MonitorScreenSystem {
 		YoutubeMusicQueuePreloadDiff musicPreloadDiff = YoutubeMusicQueuePreloadDiff.EMPTY;
 
 		synchronized (state) {
+			if (result.sessionGeneration() != state.sessionGeneration
+					&& !acceptLateResultForCurrentView(server, result.screenKey(), result.mode())) {
+				return;
+			}
 			state.mode = result.mode();
 			state.waitingForLink = false;
 			state.overlayMode = MediaOverlayMode.CONTROLS;
@@ -5137,6 +5140,7 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		String url;
+		TaskProgress progress = null;
 		YoutubeQueuePreloadDiff preloadDiff = YoutubeQueuePreloadDiff.EMPTY;
 		YoutubeMusicQueuePreloadDiff musicPreloadDiff = YoutubeMusicQueuePreloadDiff.EMPTY;
 		synchronized (state) {
@@ -5144,6 +5148,7 @@ public final class MonitorScreenSystem {
 			if (resolvedIndex < 0) {
 				state.loading = false;
 				state.statusText = "";
+				replaceProgressTrackerLocked(state);
 				state.progress.clear();
 				preloadDiff = syncYoutubeQueuePreloadsLocked(state);
 				musicPreloadDiff = syncYoutubeMusicQueuePreloadsLocked(state);
@@ -5166,7 +5171,9 @@ public final class MonitorScreenSystem {
 				state.loading = true;
 				state.userPaused = false;
 				state.statusText = "BUFFERING";
+				replaceProgressTrackerLocked(state);
 				state.progress.setIndeterminate("LOADING");
+				progress = state.progress;
 				preloadDiff = syncYoutubeQueuePreloadsLocked(state);
 				musicPreloadDiff = syncYoutubeMusicQueuePreloadsLocked(state);
 				state.version++;
@@ -5182,6 +5189,7 @@ public final class MonitorScreenSystem {
 		requestRuntimeRender(server, key);
 		resumeMediaPlaybackIfNeeded(server, key);
 		ensureExecutors();
+		TaskProgress queuePlaybackProgress = progress;
 		CompletableFuture
 				.supplyAsync(() -> {
 					try {
@@ -5192,7 +5200,7 @@ public final class MonitorScreenSystem {
 								ScreenViewMode.YOUTUBE,
 								PlaybackStreamKind.YOUTUBE,
 								null,
-								MonitorYoutubeRelayClient.load(relaySessionId(key), url, state.progress),
+								MonitorYoutubeRelayClient.load(relaySessionId(key), url, queuePlaybackProgress),
 								null
 						);
 					} catch (Exception exception) {
@@ -5213,6 +5221,7 @@ public final class MonitorScreenSystem {
 		String url;
 		String title;
 		int resolvedIndex;
+		TaskProgress progress = null;
 		YoutubeQueuePreloadDiff preloadDiff = YoutubeQueuePreloadDiff.EMPTY;
 		YoutubeMusicQueuePreloadDiff musicPreloadDiff = YoutubeMusicQueuePreloadDiff.EMPTY;
 		synchronized (state) {
@@ -5220,6 +5229,7 @@ public final class MonitorScreenSystem {
 			if (resolvedIndex < 0) {
 				state.loading = false;
 				state.statusText = "";
+				replaceProgressTrackerLocked(state);
 				state.progress.clear();
 				preloadDiff = syncYoutubeQueuePreloadsLocked(state);
 				musicPreloadDiff = syncYoutubeMusicQueuePreloadsLocked(state);
@@ -5247,7 +5257,9 @@ public final class MonitorScreenSystem {
 				state.loading = true;
 				state.userPaused = false;
 				state.statusText = "BUFFERING";
+				replaceProgressTrackerLocked(state);
 				state.progress.setIndeterminate("LOADING");
+				progress = state.progress;
 				preloadDiff = syncYoutubeQueuePreloadsLocked(state);
 				musicPreloadDiff = syncYoutubeMusicQueuePreloadsLocked(state);
 				state.version++;
@@ -5264,22 +5276,41 @@ public final class MonitorScreenSystem {
 		requestRuntimeRender(server, key);
 		resumeMediaPlaybackIfNeeded(server, key);
 		ensureExecutors();
+		TaskProgress youtubeMusicProgress = progress;
 		CompletableFuture
 				.supplyAsync(() -> {
 					try {
-						MonitorYoutubeMusicCache.LoadedTrack track = MonitorYoutubeMusicCache.load(url, state.progress);
+						MonitorYoutubeMusicCache.LoadedTrack cachedTrack = MonitorYoutubeMusicCache.loadCompleteTrackIfPresent(url, youtubeMusicProgress);
+						if (cachedTrack != null) {
+							return new YoutubeMusicLoadResult(
+									key,
+									requesterUuid,
+									url,
+									cachedTrack.title(),
+									cachedTrack.artist(),
+									cachedTrack.video(),
+									null,
+									resolvedIndex,
+									null
+							);
+						}
+					} catch (Exception exception) {
+						Lg2.LOGGER.debug("Failed to open complete YouTube Music cache for {}", url, exception);
+					}
+					try {
 						return new YoutubeMusicLoadResult(
 								key,
 								requesterUuid,
 								url,
-								track.title(),
-								track.artist(),
-								track.video(),
+								title,
+								"",
+								null,
+								MonitorYoutubeRelayClient.load(relaySessionId(key), url, youtubeMusicProgress),
 								resolvedIndex,
 								null
 						);
 					} catch (Exception exception) {
-						return new YoutubeMusicLoadResult(key, requesterUuid, url, title, "", null, resolvedIndex, sanitizeMediaError(exception.getMessage()));
+						return new YoutubeMusicLoadResult(key, requesterUuid, url, title, "", null, null, resolvedIndex, sanitizeMediaError(exception.getMessage()));
 					}
 				}, mediaIoExecutor)
 				.thenAccept(result -> server.execute(() -> applyYoutubeMusicLoadResult(server, result)));
@@ -5297,6 +5328,22 @@ public final class MonitorScreenSystem {
 			if (!youtubeMusicLoadResultStillCurrentLocked(state, result)) {
 				return;
 			}
+		}
+		if (result.relayLoadResponse() != null) {
+			applyYoutubeLoadResult(
+					server,
+					new YoutubeLoadResult(
+							result.screenKey(),
+							result.requesterUuid(),
+							result.url(),
+							ScreenViewMode.YOUTUBE_MUSIC,
+							PlaybackStreamKind.YOUTUBE,
+							result.artist(),
+							result.relayLoadResponse(),
+							null
+					)
+			);
+			return;
 		}
 		if (result.loadedVideo() == null) {
 			synchronized (state) {
@@ -5346,7 +5393,8 @@ public final class MonitorScreenSystem {
 		List<String> releasedMusicQueueUrls = List.of();
 		if (removed != null) {
 			synchronized (removed) {
-				cancelPlaybackLocked(removed);
+				cancelRuntimePlaybackLocked(removed);
+				clearSessionLiveLoadsLocked(removed);
 				removed.progress.clear();
 				releasedQueueUrls = retainedYoutubePreloadUrlsLocked(removed);
 				releasedMusicQueueUrls = retainedYoutubeMusicPreloadUrlsLocked(removed);
@@ -5361,6 +5409,7 @@ public final class MonitorScreenSystem {
 		releaseYoutubeMusicQueuePreloads(releasedMusicQueueUrls);
 		releaseYoutubeRelaySession(relaySessionId);
 		clearMediaSessionBindings(server, key);
+		refreshConnectedSpeakersNow(server, key);
 	}
 
 	private static void deactivateMediaSession(MinecraftServer server, ScreenRuntimeKey key) {
@@ -5374,8 +5423,8 @@ public final class MonitorScreenSystem {
 		List<String> releasedMusicQueueUrls = List.of();
 		if (state != null) {
 			synchronized (state) {
-				cancelPlaybackLocked(state);
-				state.progress.clear();
+				cancelRuntimePlaybackLocked(state);
+				advanceSessionGenerationLocked(state);
 				releasedQueueUrls = retainedYoutubePreloadUrlsLocked(state);
 				releasedMusicQueueUrls = retainedYoutubeMusicPreloadUrlsLocked(state);
 				state.retainedYoutubePreloadUrls.clear();
@@ -5384,6 +5433,7 @@ public final class MonitorScreenSystem {
 					relaySessionId = state.relaySessionId;
 				}
 				clearTransientPlaybackStateLocked(state, true);
+				compactGalleryRuntimeMediaLocked(state);
 				state.activeRenderJobs = 0;
 				state.lastDispatchKey = null;
 				state.rerenderRequested = false;
@@ -5396,6 +5446,7 @@ public final class MonitorScreenSystem {
 		releaseYoutubeMusicQueuePreloads(releasedMusicQueueUrls);
 		releaseYoutubeRelaySession(relaySessionId);
 		clearMediaSessionBindings(server, key);
+		refreshConnectedSpeakersNow(server, key);
 	}
 
 	private static void resetMediaSessionForPowerOff(
@@ -5416,8 +5467,8 @@ public final class MonitorScreenSystem {
 		List<String> releasedMusicQueueUrls = List.of();
 		if (state != null) {
 			synchronized (state) {
-				cancelPlaybackLocked(state);
-				state.progress.clear();
+				cancelRuntimePlaybackLocked(state);
+				advanceSessionGenerationLocked(state);
 				releasedQueueUrls = retainedYoutubePreloadUrlsLocked(state);
 				releasedMusicQueueUrls = retainedYoutubeMusicPreloadUrlsLocked(state);
 				state.retainedYoutubePreloadUrls.clear();
@@ -5426,6 +5477,7 @@ public final class MonitorScreenSystem {
 					relaySessionId = state.relaySessionId;
 				}
 				clearTransientPlaybackStateLocked(state, true);
+				compactGalleryRuntimeMediaLocked(state);
 				if (persistedWallpaper != null
 						&& persistedWallpaper.url() != null
 						&& !persistedWallpaper.url().isBlank()) {
@@ -5479,6 +5531,7 @@ public final class MonitorScreenSystem {
 		releaseYoutubeMusicQueuePreloads(releasedMusicQueueUrls);
 		releaseYoutubeRelaySession(relaySessionId);
 		clearMediaSessionBindings(server, key);
+		refreshConnectedSpeakersNow(server, key);
 	}
 
 	private static void releaseYoutubeRelaySession(String relaySessionId) {
@@ -5512,11 +5565,50 @@ public final class MonitorScreenSystem {
 		PLAYER_MEDIA_FOCUS.entrySet().removeIf(entry -> entry.getValue().screenKey().equals(key));
 	}
 
+	private static TaskProgress replaceProgressTrackerLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return new TaskProgress();
+		}
+		state.progress = new TaskProgress(state.progressListener);
+		return state.progress;
+	}
+
+	private static void clearSessionLiveLoadsLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		state.galleryLoadingUrls.clear();
+		state.wallpaperLoading = false;
+		state.playerBackgroundLoading = false;
+	}
+
+	private static long advanceSessionGenerationLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return 0L;
+		}
+		clearSessionLiveLoadsLocked(state);
+		state.sessionGeneration++;
+		if (state.sessionGeneration <= 0L) {
+			state.sessionGeneration = 1L;
+		}
+		replaceProgressTrackerLocked(state);
+		return state.sessionGeneration;
+	}
+
 	private static void cancelPlaybackLocked(MediaRuntimeState state) {
 		if (state == null) {
 			return;
 		}
 		cancelPlaybackFutureLocked(state);
+		clearPlaybackFrameScheduleLocked(state);
+	}
+
+	private static void cancelRuntimePlaybackLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		cancelPlaybackFutureLocked(state);
+		cancelBackgroundFutureLocked(state);
 		clearAnimatedFrameScheduleLocked(state);
 	}
 
@@ -5528,13 +5620,35 @@ public final class MonitorScreenSystem {
 		state.playbackFuture = null;
 	}
 
-	private static void clearAnimatedFrameScheduleLocked(MediaRuntimeState state) {
+	private static void cancelBackgroundFutureLocked(MediaRuntimeState state) {
+		if (state == null || state.backgroundFuture == null) {
+			return;
+		}
+		state.backgroundFuture.cancel(false);
+		state.backgroundFuture = null;
+	}
+
+	private static void clearPlaybackFrameScheduleLocked(MediaRuntimeState state) {
 		if (state == null) {
 			return;
 		}
 		state.nextLoadedMediaFrameAtMillis = 0L;
+	}
+
+	private static void clearBackgroundFrameScheduleLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
 		state.nextWallpaperFrameAtMillis = 0L;
 		state.nextPlayerBackgroundFrameAtMillis = 0L;
+	}
+
+	private static void clearAnimatedFrameScheduleLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		clearPlaybackFrameScheduleLocked(state);
+		clearBackgroundFrameScheduleLocked(state);
 	}
 
 	private static long bumpAudioSyncTokenLocked(MediaRuntimeState state) {
@@ -5643,6 +5757,10 @@ public final class MonitorScreenSystem {
 		GalleryItemKind directKind = result.kind();
 
 		synchronized (state) {
+			if (result.sessionGeneration() != state.sessionGeneration
+					&& !acceptLateResultWhileGalleryStillActive(server, result.screenKey())) {
+				return;
+			}
 			ScreenViewMode previousMode = state.mode;
 				state.mode = ScreenViewMode.GALLERY;
 				if (isYoutubeFamilyMode(previousMode) || !state.youtubeQueue.isEmpty()) {
@@ -5900,24 +6018,27 @@ public final class MonitorScreenSystem {
 
 	private static boolean shouldPreserveWallpaperPlaybackOnTransitionLocked(MediaRuntimeState state, ScreenViewMode nextMode) {
 		return state != null
-				&& ((wallpaperVisibleForCurrentViewLocked(state) && wallpaperVisibleForViewMode(nextMode, state))
+				&& (wallpaperAnimationActiveLocked(state)
+				|| playerBackgroundAnimationActiveLocked(state)
+				|| (wallpaperVisibleForCurrentViewLocked(state) && wallpaperVisibleForViewMode(nextMode, state))
 				|| (playerBackgroundVisibleForCurrentViewLocked(state) && playerBackgroundVisibleForViewMode(nextMode, state)));
 	}
 
 	private static boolean wallpaperAnimationActiveLocked(MediaRuntimeState state) {
 		return state != null
-				&& wallpaperVisibleForCurrentViewLocked(state)
 				&& state.wallpaperMedia != null
-				&& state.wallpaperMedia.animated()
-				&& state.wallpaperMedia.frameCount() > 1;
+				&& state.wallpaperUrl != null
+				&& !state.wallpaperUrl.isBlank()
+				&& MonitorBackgroundPlaybackPolicy.animatedMediaActive(true, state.wallpaperMedia.animated(), state.wallpaperMedia.frameCount());
 	}
 
 	private static boolean playerBackgroundAnimationActiveLocked(MediaRuntimeState state) {
 		return state != null
-				&& playerBackgroundVisibleForCurrentViewLocked(state)
 				&& state.playerBackgroundMedia != null
-				&& state.playerBackgroundMedia.animated()
-				&& state.playerBackgroundMedia.frameCount() > 1;
+				&& state.playerBackgroundUrl != null
+				&& !state.playerBackgroundUrl.isBlank()
+				&& resolvedPlayerBackgroundModeLocked(state) == PlayerBackgroundMode.GALLERY
+				&& MonitorBackgroundPlaybackPolicy.animatedMediaActive(true, state.playerBackgroundMedia.animated(), state.playerBackgroundMedia.frameCount());
 	}
 
 	private static boolean loadedMediaAnimationActiveLocked(MediaRuntimeState state) {
@@ -5931,28 +6052,15 @@ public final class MonitorScreenSystem {
 	}
 
 	private static long sanitizedAnimationDelayMillis(int delayMillis) {
-		return Math.max(1L, delayMillis);
+		return MonitorBackgroundPlaybackPolicy.sanitizedDelayMillis(delayMillis);
 	}
 
 	private static long nextAnimationDeadlineMillis(long currentDeadlineMillis, long nowMillis, int delayMillis) {
-		if (currentDeadlineMillis > nowMillis) {
-			return currentDeadlineMillis;
-		}
-		return nowMillis + sanitizedAnimationDelayMillis(delayMillis);
+		return MonitorBackgroundPlaybackPolicy.nextFrameDeadlineMillis(currentDeadlineMillis, nowMillis, delayMillis);
 	}
 
 	private static long earliestPositiveDeadlineMillis(long... deadlines) {
-		long best = 0L;
-		if (deadlines == null) {
-			return 0L;
-		}
-		for (long deadline : deadlines) {
-			if (deadline <= 0L) {
-				continue;
-			}
-			best = best <= 0L ? deadline : Math.min(best, deadline);
-		}
-		return best;
+		return MonitorBackgroundPlaybackPolicy.earliestPositiveDeadlineMillis(deadlines);
 	}
 
 	private static void restartMediaPlaybackIfNeeded(MinecraftServer server, ScreenRuntimeKey key) {
@@ -5985,7 +6093,67 @@ public final class MonitorScreenSystem {
 		if (server == null || key == null) {
 			return null;
 		}
-		return mediaScheduler.schedule(() -> server.execute(() -> refreshWallpaperPlayback(server, key)), WALLPAPER_IDLE_VISIBILITY_RECHECK_MS, TimeUnit.MILLISECONDS);
+		return mediaScheduler.schedule(() -> server.execute(() -> refreshBackgroundPlayback(server, key)), WALLPAPER_IDLE_VISIBILITY_RECHECK_MS, TimeUnit.MILLISECONDS);
+	}
+
+	private static void scheduleBackgroundPlaybackIfNeeded(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		ensureExecutors();
+		synchronized (state) {
+			scheduleBackgroundPlaybackLocked(server, key, state);
+		}
+	}
+
+	private static void scheduleBackgroundPlaybackLocked(MinecraftServer server, ScreenRuntimeKey key, MediaRuntimeState state) {
+		if (server == null || key == null || state == null || state.backgroundFuture != null) {
+			return;
+		}
+		long now = System.currentTimeMillis();
+		boolean wallpaperActive = wallpaperAnimationActiveLocked(state);
+		boolean playerBackgroundActive = playerBackgroundAnimationActiveLocked(state);
+		if (!wallpaperActive) {
+			state.nextWallpaperFrameAtMillis = 0L;
+		}
+		if (!playerBackgroundActive) {
+			state.nextPlayerBackgroundFrameAtMillis = 0L;
+		}
+		if (!wallpaperActive && !playerBackgroundActive) {
+			return;
+		}
+		if (!hasNearbyMediaViewer(server, key)) {
+			clearBackgroundFrameScheduleLocked(state);
+			state.backgroundFuture = scheduleWallpaperVisibilityRecheck(server, key);
+			return;
+		}
+		if (wallpaperActive) {
+			state.nextWallpaperFrameAtMillis = nextAnimationDeadlineMillis(
+					state.nextWallpaperFrameAtMillis,
+					now,
+					state.wallpaperMedia.delayMillis(state.wallpaperFrameIndex)
+			);
+		}
+		if (playerBackgroundActive) {
+			state.nextPlayerBackgroundFrameAtMillis = nextAnimationDeadlineMillis(
+					state.nextPlayerBackgroundFrameAtMillis,
+					now,
+					state.playerBackgroundMedia.delayMillis(state.playerBackgroundFrameIndex)
+			);
+		}
+		long nextDeadlineMillis = earliestPositiveDeadlineMillis(
+				state.nextWallpaperFrameAtMillis,
+				state.nextPlayerBackgroundFrameAtMillis
+		);
+		if (nextDeadlineMillis <= 0L) {
+			return;
+		}
+		long delayMillis = Math.max(1L, nextDeadlineMillis - now);
+		state.backgroundFuture = mediaScheduler.schedule(() -> advanceBackgroundFrame(server, key), delayMillis, TimeUnit.MILLISECONDS);
 	}
 
 	private static void scheduleNextMediaFrame(MinecraftServer server, ScreenRuntimeKey key) {
@@ -5996,205 +6164,50 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
+		scheduleBackgroundPlaybackIfNeeded(server, key);
 		synchronized (state) {
 			cancelPlaybackFutureLocked(state);
 			if (hasActiveStreamPlaybackLocked(state)) {
-				if (!state.waitingForLink) {
-					if (state.streamKind == PlaybackStreamKind.LIVE_CAMERA) {
-						clearAnimatedFrameScheduleLocked(state);
-						long delayMillis = state.streamFrame == null ? 1L : LIVE_CAMERA_HEALTH_CHECK_INTERVAL_MS;
-						state.playbackFuture = mediaScheduler.schedule(() -> refreshLiveCameraStreamHealth(server, key), delayMillis, TimeUnit.MILLISECONDS);
-						return;
-					}
-					if (state.relaySessionId == null) {
-						boolean wallpaperActive = wallpaperAnimationActiveLocked(state);
-						boolean playerBackgroundActive = playerBackgroundAnimationActiveLocked(state);
-						boolean animatedBackground = wallpaperActive || playerBackgroundActive;
-						if (!state.loading && !animatedBackground) {
-							return;
-						}
-						long now = System.currentTimeMillis();
-						boolean wallpaperVisibleToViewer = wallpaperActive && hasNearbyMediaViewer(server, key);
-						boolean playerBackgroundVisibleToViewer = playerBackgroundActive && hasNearbyMediaViewer(server, key);
-						if (!wallpaperActive || !wallpaperVisibleToViewer) {
-							state.nextWallpaperFrameAtMillis = 0L;
-						}
-						if (!playerBackgroundActive || !playerBackgroundVisibleToViewer) {
-							state.nextPlayerBackgroundFrameAtMillis = 0L;
-						}
-						if (wallpaperVisibleToViewer) {
-							state.nextWallpaperFrameAtMillis = nextAnimationDeadlineMillis(
-									state.nextWallpaperFrameAtMillis,
-									now,
-									state.wallpaperMedia.delayMillis(state.wallpaperFrameIndex)
-							);
-						}
-						if (playerBackgroundVisibleToViewer) {
-							state.nextPlayerBackgroundFrameAtMillis = nextAnimationDeadlineMillis(
-									state.nextPlayerBackgroundFrameAtMillis,
-									now,
-									state.playerBackgroundMedia.delayMillis(state.playerBackgroundFrameIndex)
-							);
-						}
-						long loadingRefreshAtMillis = now + youtubePollActiveIntervalMs();
-						long nextDeadlineMillis = earliestPositiveDeadlineMillis(
-								loadingRefreshAtMillis,
-								state.nextWallpaperFrameAtMillis,
-								state.nextPlayerBackgroundFrameAtMillis
-						);
-						long delayMillis = Math.max(1L, nextDeadlineMillis - now);
-						state.playbackFuture = mediaScheduler.schedule(
-								nextDeadlineMillis == loadingRefreshAtMillis
-										? () -> refreshLoadingUi(server, key)
-										: () -> advanceMediaFrame(server, key),
-								delayMillis,
-								TimeUnit.MILLISECONDS
-						);
-						return;
-					}
-					long now = System.currentTimeMillis();
-					boolean wallpaperActive = wallpaperAnimationActiveLocked(state);
-					boolean playerBackgroundActive = playerBackgroundAnimationActiveLocked(state);
-					boolean wallpaperVisibleToViewer = wallpaperActive && hasNearbyMediaViewer(server, key);
-					boolean playerBackgroundVisibleToViewer = playerBackgroundActive && hasNearbyMediaViewer(server, key);
-					if (!wallpaperActive || !wallpaperVisibleToViewer) {
-						state.nextWallpaperFrameAtMillis = 0L;
-					}
-					if (!playerBackgroundActive || !playerBackgroundVisibleToViewer) {
-						state.nextPlayerBackgroundFrameAtMillis = 0L;
-					}
-					if (wallpaperVisibleToViewer) {
-						state.nextWallpaperFrameAtMillis = nextAnimationDeadlineMillis(
-								state.nextWallpaperFrameAtMillis,
-								now,
-								state.wallpaperMedia.delayMillis(state.wallpaperFrameIndex)
-						);
-					}
-					if (playerBackgroundVisibleToViewer) {
-						state.nextPlayerBackgroundFrameAtMillis = nextAnimationDeadlineMillis(
-								state.nextPlayerBackgroundFrameAtMillis,
-								now,
-								state.playerBackgroundMedia.delayMillis(state.playerBackgroundFrameIndex)
-						);
-					}
-					long youtubeRefreshAtMillis = now + effectiveYoutubePollDelayMs(server, key, isPlaybackPausedLocked(state));
-					long nextDeadlineMillis = earliestPositiveDeadlineMillis(
-							youtubeRefreshAtMillis,
-							state.nextWallpaperFrameAtMillis,
-							state.nextPlayerBackgroundFrameAtMillis
-					);
-					long delayMillis = Math.max(1L, nextDeadlineMillis - now);
-					state.playbackFuture = mediaScheduler.schedule(
-							nextDeadlineMillis == youtubeRefreshAtMillis
-									? () -> refreshYoutubeSnapshot(server, key)
-									: () -> advanceMediaFrame(server, key),
-							delayMillis,
-							TimeUnit.MILLISECONDS
-					);
+				if (state.waitingForLink) {
 					return;
 				}
+				if (state.streamKind == PlaybackStreamKind.LIVE_CAMERA) {
+					clearPlaybackFrameScheduleLocked(state);
+					long delayMillis = state.streamFrame == null ? 1L : LIVE_CAMERA_HEALTH_CHECK_INTERVAL_MS;
+					state.playbackFuture = mediaScheduler.schedule(() -> refreshLiveCameraStreamHealth(server, key), delayMillis, TimeUnit.MILLISECONDS);
+					return;
+				}
+				if (state.relaySessionId == null) {
+					if (!state.loading) {
+						return;
+					}
+					long delayMillis = Math.max(1L, youtubePollActiveIntervalMs());
+					state.playbackFuture = mediaScheduler.schedule(() -> refreshLoadingUi(server, key), delayMillis, TimeUnit.MILLISECONDS);
+					return;
+				}
+				long delayMillis = Math.max(1L, effectiveYoutubePollDelayMs(server, key, isPlaybackPausedLocked(state)));
+				state.playbackFuture = mediaScheduler.schedule(() -> refreshYoutubeSnapshot(server, key), delayMillis, TimeUnit.MILLISECONDS);
+				return;
 			}
+
 			if (state.loading && !state.waitingForLink) {
-				long now = System.currentTimeMillis();
-				boolean wallpaperActive = wallpaperAnimationActiveLocked(state);
-				boolean playerBackgroundActive = playerBackgroundAnimationActiveLocked(state);
-				boolean hasViewer = (wallpaperActive || playerBackgroundActive) && hasNearbyMediaViewer(server, key);
-				boolean wallpaperVisibleToViewer = wallpaperActive && hasViewer;
-				boolean playerBackgroundVisibleToViewer = playerBackgroundActive && hasViewer;
-				if (!wallpaperActive || !wallpaperVisibleToViewer) {
-					state.nextWallpaperFrameAtMillis = 0L;
-				}
-				if (!playerBackgroundActive || !playerBackgroundVisibleToViewer) {
-					state.nextPlayerBackgroundFrameAtMillis = 0L;
-				}
-				if (wallpaperVisibleToViewer) {
-					state.nextWallpaperFrameAtMillis = nextAnimationDeadlineMillis(
-							state.nextWallpaperFrameAtMillis,
-							now,
-							state.wallpaperMedia.delayMillis(state.wallpaperFrameIndex)
-					);
-				}
-				if (playerBackgroundVisibleToViewer) {
-					state.nextPlayerBackgroundFrameAtMillis = nextAnimationDeadlineMillis(
-							state.nextPlayerBackgroundFrameAtMillis,
-							now,
-							state.playerBackgroundMedia.delayMillis(state.playerBackgroundFrameIndex)
-					);
-				}
-				long loadingRefreshAtMillis = now + youtubePollActiveIntervalMs();
-				long nextDeadlineMillis = earliestPositiveDeadlineMillis(
-						loadingRefreshAtMillis,
-						state.nextWallpaperFrameAtMillis,
-						state.nextPlayerBackgroundFrameAtMillis
-				);
-				long delayMillis = Math.max(1L, nextDeadlineMillis - now);
-				state.playbackFuture = mediaScheduler.schedule(
-						nextDeadlineMillis == loadingRefreshAtMillis
-								? () -> refreshLoadingUi(server, key)
-								: () -> advanceMediaFrame(server, key),
-						delayMillis,
-						TimeUnit.MILLISECONDS
-				);
+				long delayMillis = Math.max(1L, youtubePollActiveIntervalMs());
+				state.playbackFuture = mediaScheduler.schedule(() -> refreshLoadingUi(server, key), delayMillis, TimeUnit.MILLISECONDS);
 				return;
 			}
 
 			long now = System.currentTimeMillis();
-			boolean wallpaperActive = wallpaperAnimationActiveLocked(state);
-			boolean playerBackgroundActive = playerBackgroundAnimationActiveLocked(state);
 			boolean mediaActive = loadedMediaAnimationActiveLocked(state);
-			boolean wallpaperVisibleToViewer = wallpaperActive && hasNearbyMediaViewer(server, key);
-			boolean playerBackgroundVisibleToViewer = playerBackgroundActive && hasNearbyMediaViewer(server, key);
-			if (!wallpaperActive) {
-				state.nextWallpaperFrameAtMillis = 0L;
-			}
-			if (!playerBackgroundActive) {
-				state.nextPlayerBackgroundFrameAtMillis = 0L;
-			}
 			if (!mediaActive) {
 				state.nextLoadedMediaFrameAtMillis = 0L;
-			}
-			if (!wallpaperVisibleToViewer) {
-				state.nextWallpaperFrameAtMillis = 0L;
-			}
-			if (!playerBackgroundVisibleToViewer) {
-				state.nextPlayerBackgroundFrameAtMillis = 0L;
-			}
-			if (!wallpaperVisibleToViewer && !playerBackgroundVisibleToViewer && !mediaActive) {
-				if (wallpaperActive || playerBackgroundActive) {
-					state.playbackFuture = scheduleWallpaperVisibilityRecheck(server, key);
-				}
 				return;
 			}
-			if (wallpaperVisibleToViewer) {
-				state.nextWallpaperFrameAtMillis = nextAnimationDeadlineMillis(
-						state.nextWallpaperFrameAtMillis,
-						now,
-						state.wallpaperMedia.delayMillis(state.wallpaperFrameIndex)
-				);
-			}
-			if (playerBackgroundVisibleToViewer) {
-				state.nextPlayerBackgroundFrameAtMillis = nextAnimationDeadlineMillis(
-						state.nextPlayerBackgroundFrameAtMillis,
-						now,
-						state.playerBackgroundMedia.delayMillis(state.playerBackgroundFrameIndex)
-				);
-			}
-			if (mediaActive) {
-				state.nextLoadedMediaFrameAtMillis = nextAnimationDeadlineMillis(
-						state.nextLoadedMediaFrameAtMillis,
-						now,
-						state.loadedMedia.delayMillis(state.frameIndex)
-				);
-			}
-			long nextDeadlineMillis = earliestPositiveDeadlineMillis(
-					state.nextWallpaperFrameAtMillis,
-					state.nextPlayerBackgroundFrameAtMillis,
-					state.nextLoadedMediaFrameAtMillis
+			state.nextLoadedMediaFrameAtMillis = nextAnimationDeadlineMillis(
+					state.nextLoadedMediaFrameAtMillis,
+					now,
+					state.loadedMedia.delayMillis(state.frameIndex)
 			);
-			if (nextDeadlineMillis <= 0L) {
-				return;
-			}
-			long delayMillis = Math.max(1L, nextDeadlineMillis - now);
+			long delayMillis = Math.max(1L, state.nextLoadedMediaFrameAtMillis - now);
 			state.playbackFuture = mediaScheduler.schedule(() -> advanceMediaFrame(server, key), delayMillis, TimeUnit.MILLISECONDS);
 		}
 	}
@@ -6220,7 +6233,7 @@ public final class MonitorScreenSystem {
 		resumeMediaPlaybackIfNeeded(server, key);
 	}
 
-	private static void refreshWallpaperPlayback(MinecraftServer server, ScreenRuntimeKey key) {
+	private static void refreshBackgroundPlayback(MinecraftServer server, ScreenRuntimeKey key) {
 		if (server == null || key == null) {
 			return;
 		}
@@ -6228,18 +6241,18 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
-		boolean visibleAnimatedBackground;
+		boolean activeAnimatedBackground;
 		synchronized (state) {
-			state.playbackFuture = null;
-			visibleAnimatedBackground = wallpaperAnimationActiveLocked(state) || playerBackgroundAnimationActiveLocked(state);
+			state.backgroundFuture = null;
+			activeAnimatedBackground = wallpaperAnimationActiveLocked(state) || playerBackgroundAnimationActiveLocked(state);
 		}
-		if (!visibleAnimatedBackground) {
+		if (!activeAnimatedBackground) {
 			return;
 		}
 		if (hasNearbyMediaViewer(server, key)) {
 			requestRuntimeRender(server, key);
 		}
-		resumeMediaPlaybackIfNeeded(server, key);
+		scheduleBackgroundPlaybackIfNeeded(server, key);
 	}
 
 	private static void refreshLiveCameraStreamHealth(MinecraftServer server, ScreenRuntimeKey key) {
@@ -6712,18 +6725,52 @@ public final class MonitorScreenSystem {
 		synchronized (state) {
 			state.playbackFuture = null;
 			long now = System.currentTimeMillis();
-			boolean wallpaperActive = wallpaperAnimationActiveLocked(state);
-			boolean playerBackgroundActive = playerBackgroundAnimationActiveLocked(state);
 			boolean streamPlaybackActive = hasActiveStreamPlaybackLocked(state) && !state.waitingForLink;
 			boolean mediaActive = !streamPlaybackActive && loadedMediaAnimationActiveLocked(state);
+			if (!mediaActive) {
+				state.nextLoadedMediaFrameAtMillis = 0L;
+			}
+			if (mediaActive
+					&& state.nextLoadedMediaFrameAtMillis > 0L
+					&& now >= state.nextLoadedMediaFrameAtMillis) {
+				// Frame playback must not invalidate an in-flight large-screen render, or the first
+				// completed frame can get discarded forever while animation keeps advancing.
+				state.frameIndex = (state.frameIndex + 1) % state.loadedMedia.frameCount();
+				state.nextLoadedMediaFrameAtMillis = now + sanitizedAnimationDelayMillis(state.loadedMedia.delayMillis(state.frameIndex));
+				shouldRender = true;
+			}
+			shouldContinue = mediaActive;
+		}
+
+		if (shouldRender) {
+			requestRuntimeRender(server, key);
+		}
+		if (shouldContinue) {
+			scheduleNextMediaFrame(server, key);
+		}
+	}
+
+	private static void advanceBackgroundFrame(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+
+		boolean shouldRender = false;
+		boolean shouldContinue;
+		synchronized (state) {
+			state.backgroundFuture = null;
+			long now = System.currentTimeMillis();
+			boolean wallpaperActive = wallpaperAnimationActiveLocked(state);
+			boolean playerBackgroundActive = playerBackgroundAnimationActiveLocked(state);
 			if (!wallpaperActive) {
 				state.nextWallpaperFrameAtMillis = 0L;
 			}
 			if (!playerBackgroundActive) {
 				state.nextPlayerBackgroundFrameAtMillis = 0L;
-			}
-			if (!mediaActive) {
-				state.nextLoadedMediaFrameAtMillis = 0L;
 			}
 			if (wallpaperActive
 					&& state.nextWallpaperFrameAtMillis > 0L
@@ -6739,23 +6786,14 @@ public final class MonitorScreenSystem {
 				state.nextPlayerBackgroundFrameAtMillis = now + sanitizedAnimationDelayMillis(state.playerBackgroundMedia.delayMillis(state.playerBackgroundFrameIndex));
 				shouldRender = true;
 			}
-			if (mediaActive
-					&& state.nextLoadedMediaFrameAtMillis > 0L
-					&& now >= state.nextLoadedMediaFrameAtMillis) {
-				// Frame playback must not invalidate an in-flight large-screen render, or the first
-				// completed frame can get discarded forever while animation keeps advancing.
-				state.frameIndex = (state.frameIndex + 1) % state.loadedMedia.frameCount();
-				state.nextLoadedMediaFrameAtMillis = now + sanitizedAnimationDelayMillis(state.loadedMedia.delayMillis(state.frameIndex));
-				shouldRender = true;
+			shouldContinue = wallpaperActive || playerBackgroundActive;
+			if (shouldContinue) {
+				scheduleBackgroundPlaybackLocked(server, key, state);
 			}
-			shouldContinue = wallpaperActive || playerBackgroundActive || mediaActive;
 		}
 
-		if (shouldRender) {
+		if (shouldRender && hasNearbyMediaViewer(server, key)) {
 			requestRuntimeRender(server, key);
-		}
-		if (shouldContinue) {
-			scheduleNextMediaFrame(server, key);
 		}
 	}
 
@@ -6767,23 +6805,21 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
+		scheduleBackgroundPlaybackIfNeeded(server, key);
 		synchronized (state) {
 			if (state.playbackFuture != null) {
 				return;
 			}
-			boolean wallpaperAnimated = wallpaperAnimationActiveLocked(state);
-			boolean playerBackgroundAnimated = playerBackgroundAnimationActiveLocked(state);
-			boolean animatedBackground = wallpaperAnimated || playerBackgroundAnimated;
-			if (state.waitingForLink && !animatedBackground) {
+			if (state.waitingForLink) {
 				return;
 			}
 			if (state.loading) {
 				// Keep loading spinners animating even before the relay session is fully connected.
 			} else if (hasActiveStreamPlaybackLocked(state)) {
-				if (state.relaySessionId == null && !animatedBackground) {
+				if (state.relaySessionId == null) {
 					return;
 				}
-			} else if (!animatedBackground && !loadedMediaAnimationActiveLocked(state)) {
+			} else if (!loadedMediaAnimationActiveLocked(state)) {
 				return;
 			}
 		}
@@ -7211,9 +7247,37 @@ public final class MonitorScreenSystem {
 		}
 		RenderWork work;
 		MediaRuntimeState mediaState = MEDIA_STATES.get(component.runtimeKey());
-		boolean hasPersistedWallpaper = resolvePersistedWallpaperState(component) != null;
-		boolean hasPersistedPlayerBackground = resolvePersistedPlayerBackgroundState(component) != null;
-		boolean hasPersistedGalleryItems = !resolvePersistedGalleryState(component).isEmpty();
+		boolean hasPersistedWallpaper;
+		boolean hasPersistedPlayerBackground;
+		boolean hasPersistedGalleryItems;
+		if (mediaState != null) {
+			boolean wallpaperNeedsPersistedRead;
+			boolean playerBackgroundNeedsPersistedRead;
+			boolean galleryNeedsPersistedRead;
+			synchronized (mediaState) {
+				hasPersistedWallpaper = mediaState.wallpaperUrl != null && !mediaState.wallpaperUrl.isBlank();
+				hasPersistedPlayerBackground = mediaState.playerBackgroundUrl != null && !mediaState.playerBackgroundUrl.isBlank();
+				hasPersistedGalleryItems = hasSavedGalleryItemsLocked(mediaState);
+				wallpaperNeedsPersistedRead = !hasPersistedWallpaper && !mediaState.wallpaperHydrated;
+				playerBackgroundNeedsPersistedRead = !hasPersistedPlayerBackground && !mediaState.playerBackgroundHydrated;
+				galleryNeedsPersistedRead = viewMode != ScreenViewMode.SBER_DRONES
+						&& !hasPersistedGalleryItems
+						&& !mediaState.galleryHydrated;
+			}
+			if (wallpaperNeedsPersistedRead) {
+				hasPersistedWallpaper = resolvePersistedWallpaperState(component) != null;
+			}
+			if (playerBackgroundNeedsPersistedRead) {
+				hasPersistedPlayerBackground = resolvePersistedPlayerBackgroundState(component) != null;
+			}
+			if (galleryNeedsPersistedRead) {
+				hasPersistedGalleryItems = !resolvePersistedGalleryState(component).isEmpty();
+			}
+		} else {
+			hasPersistedWallpaper = resolvePersistedWallpaperState(component) != null;
+			hasPersistedPlayerBackground = resolvePersistedPlayerBackgroundState(component) != null;
+			hasPersistedGalleryItems = viewMode != ScreenViewMode.SBER_DRONES && !resolvePersistedGalleryState(component).isEmpty();
+		}
 		if (mediaState == null && (isPlayerMode(viewMode) || hasPersistedWallpaper || hasPersistedPlayerBackground || hasPersistedGalleryItems)) {
 			mediaState = MEDIA_STATES.computeIfAbsent(
 					component.runtimeKey(),
@@ -7227,7 +7291,7 @@ public final class MonitorScreenSystem {
 			ensureWallpaperStateHydrated(server, component.runtimeKey(), mediaState);
 			ensurePlayerBackgroundModeHydrated(server, component.runtimeKey(), mediaState);
 			ensurePlayerBackgroundStateHydrated(server, component.runtimeKey(), mediaState);
-			if (hasPersistedGalleryItems) {
+			if (hasPersistedGalleryItems && viewMode == ScreenViewMode.GALLERY) {
 				ensureGalleryStateHydrated(server, component.runtimeKey(), mediaState);
 			}
 		}
@@ -7530,17 +7594,25 @@ public final class MonitorScreenSystem {
 			}
 			List<PersistedGalleryItem> currentGalleryState = readPersistedGalleryState(ensured);
 			PersistedWallpaperState currentWallpaperState = readPersistedWallpaperState(ensured);
+			PersistedPlayerBackgroundState currentPlayerBackgroundState = readPersistedPlayerBackgroundState(ensured);
 			PlayerBackgroundMode currentPlayerBackgroundMode = readPersistedPlayerBackgroundMode(ensured);
 			boolean galleryChanged = !Objects.equals(currentGalleryState, persistedGallery);
 			boolean wallpaperChanged = !Objects.equals(currentWallpaperState, persistedWallpaper);
-			boolean playerBackgroundChanged = currentPlayerBackgroundMode != persistedPlayerBackgroundMode;
+			boolean playerBackgroundChanged = !Objects.equals(currentPlayerBackgroundState, persistedPlayerBackground)
+					|| currentPlayerBackgroundMode != persistedPlayerBackgroundMode;
 			if (galleryChanged || wallpaperChanged || playerBackgroundChanged) {
 				rerenderMaps = true;
 			}
 			if (!currentState.equals(updatedState) || galleryChanged || wallpaperChanged || playerBackgroundChanged) {
 				ItemStack updated = ensured.copy();
 				writeScreenState(updated, updatedState);
-				writePersistedGalleryState(updated, galleryItemsFromPersisted(persistedGallery), persistedWallpaper, persistedPlayerBackgroundMode);
+				writePersistedGalleryState(
+						updated,
+						galleryItemsFromPersisted(persistedGallery),
+						persistedWallpaper,
+						persistedPlayerBackground,
+						persistedPlayerBackgroundMode
+				);
 				frame.setItem(updated, false);
 			}
 			ensureDisplay(level, frame, connectionMask);
@@ -9006,10 +9078,7 @@ public final class MonitorScreenSystem {
 			drawHomeScreen(graphics, layout, 0);
 			return;
 		}
-		if ("gallery".equalsIgnoreCase(app.id())
-				|| "sberdrones".equalsIgnoreCase(app.id())
-				|| "youtube".equalsIgnoreCase(app.id())
-				|| "youtubemusic".equalsIgnoreCase(app.id())) {
+		if (app.role().usesMediaRenderer()) {
 			drawMediaScreen(graphics, layout, runtimeKey, server, mediaSnapshot);
 			return;
 		}
@@ -10352,7 +10421,7 @@ public final class MonitorScreenSystem {
 			fillRoundedRect(graphics, rowRect, clampInt(layout.unit() * 2, 12, 18), current ? new Color(248, 246, 246, 232) : new Color(255, 255, 255, 8));
 			fillRoundedRect(graphics, new UiRect(titleRect.x(), titleRect.y(), Math.max(18, titleRect.width() * 3 / 4), clampInt(layout.unit(), 10, 14)), clampInt(layout.unit(), 8, 12), current ? new Color(32, 24, 30, 54) : new Color(255, 255, 255, 18));
 			fillRoundedRect(graphics, new UiRect(metaRect.x(), metaRect.y() + Math.max(1, layout.unit() / 6), Math.max(16, metaRect.width() / 2), clampInt(layout.unit(), 10, 14)), clampInt(layout.unit(), 8, 12), current ? new Color(32, 24, 30, 42) : new Color(255, 255, 255, 14));
-			drawQueueCacheStatusPlaceholder(graphics, cacheStatusRect, rowIndex == 0 ? 0.72F : 0.36F, current);
+			drawQueueCacheStatusPlaceholder(graphics, cacheStatusRect, rowIndex == 0 ? 0.72F : 0.36F, current, true);
 			drawSmallMediaButtonBase(graphics, removeRect, MediaButtonSegment.SINGLE, false, mediaChromeStrokeWidth(removeRect));
 		}
 		graphics.setClip(previousClip);
@@ -10382,21 +10451,23 @@ public final class MonitorScreenSystem {
 			drawCheckGlyph(graphics, mediaChromeIconRect(rect, layout), iconColor, strokeWidth);
 			return;
 		}
-		drawQueueCacheStatusPlaceholder(graphics, rect, item.cacheFraction(), item.current());
+		drawQueueCacheStatusPlaceholder(graphics, rect, item.cacheFraction(), item.current(), item.cacheActive());
 	}
 
-	private static void drawQueueCacheStatusPlaceholder(Graphics2D graphics, UiRect rect, float fraction, boolean highlighted) {
+	private static void drawQueueCacheStatusPlaceholder(Graphics2D graphics, UiRect rect, float fraction, boolean highlighted, boolean active) {
 		if (graphics == null || rect == null || rect.width() <= 0 || rect.height() <= 0) {
 			return;
 		}
 		float clampedFraction = Math.max(0.0F, Math.min(0.99F, fraction));
 		Color trackColor = highlighted ? new Color(36, 28, 32, 58) : new Color(255, 255, 255, 44);
-		Color progressColor = highlighted ? new Color(36, 28, 32, 214) : new Color(248, 240, 244, 228);
+		Color progressColor = highlighted
+				? (active ? new Color(36, 28, 32, 214) : new Color(36, 28, 32, 164))
+				: (active ? new Color(248, 240, 244, 228) : new Color(230, 224, 228, 164));
 		Stroke previousStroke = graphics.getStroke();
 		graphics.setStroke(new BasicStroke(Math.max(1.6F, Math.min(rect.width(), rect.height()) / 7.0F), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 		graphics.setColor(trackColor);
 		graphics.drawArc(rect.x(), rect.y(), rect.width() - 1, rect.height() - 1, 0, 360);
-		int startAngle = (int) (-(System.currentTimeMillis() / 12L) % 360L);
+		int startAngle = active ? (int) (-(System.currentTimeMillis() / 12L) % 360L) : 90;
 		int sweepAngle = Math.max(22, Math.round(360.0F * clampedFraction));
 		graphics.setColor(progressColor);
 		graphics.drawArc(rect.x(), rect.y(), rect.width() - 1, rect.height() - 1, startAngle, sweepAngle);
@@ -12394,6 +12465,11 @@ public final class MonitorScreenSystem {
 		return MonitorAppRegistry.findById(mode.serializedName());
 	}
 
+	private static MonitorAppRole appRoleForViewMode(ScreenViewMode mode) {
+		MonitorApp app = appForViewMode(mode);
+		return app != null ? app.role() : MonitorAppRole.GENERIC;
+	}
+
 	private static void fillRoundedRect(Graphics2D graphics, UiRect rect, int arc, Color color) {
 		if (color != null) {
 			graphics.setColor(color);
@@ -13535,15 +13611,15 @@ public final class MonitorScreenSystem {
 	}
 
 	private static boolean isPlayerMode(ScreenViewMode mode) {
-		return isLibraryAppMode(mode) || mode == ScreenViewMode.YOUTUBE || mode == ScreenViewMode.YOUTUBE_MUSIC;
+		return appRoleForViewMode(mode).usesMediaRuntime();
 	}
 
 	private static boolean isLibraryAppMode(ScreenViewMode mode) {
-		return mode == ScreenViewMode.GALLERY || mode == ScreenViewMode.SBER_DRONES;
+		return appRoleForViewMode(mode).usesLibrarySurface();
 	}
 
 	private static boolean isSberDronesMode(ScreenViewMode mode) {
-		return mode == ScreenViewMode.SBER_DRONES;
+		return appRoleForViewMode(mode) == MonitorAppRole.SBER_DRONES;
 	}
 
 	private static int youtubeQueueVisibleRowsPreview(MediaRuntimeState state) {
@@ -14138,68 +14214,52 @@ public final class MonitorScreenSystem {
 		if (urls == null || urls.isEmpty()) {
 			return;
 		}
-		ensureExecutors();
-		List<String> snapshot = List.copyOf(urls);
-		CompletableFuture.runAsync(() -> {
-			for (String url : snapshot) {
-				try {
-					MonitorYoutubeRelayClient.retainQueueEntry(url);
-				} catch (Exception exception) {
-					Lg2.LOGGER.debug("Failed to retain YouTube queue preload for {}", url, exception);
-				}
+		for (String url : List.copyOf(urls)) {
+			try {
+				MonitorYoutubeRelayClient.retainQueueEntry(url);
+			} catch (Exception exception) {
+				Lg2.LOGGER.debug("Failed to retain YouTube queue preload for {}", url, exception);
 			}
-		}, mediaIoExecutor);
+		}
 	}
 
 	private static void releaseYoutubeQueuePreloads(List<String> urls) {
 		if (urls == null || urls.isEmpty()) {
 			return;
 		}
-		ensureExecutors();
-		List<String> snapshot = List.copyOf(urls);
-		CompletableFuture.runAsync(() -> {
-			for (String url : snapshot) {
-				try {
-					MonitorYoutubeRelayClient.releaseQueueEntry(url);
-				} catch (Exception exception) {
-					Lg2.LOGGER.debug("Failed to release YouTube queue preload for {}", url, exception);
-				}
+		for (String url : List.copyOf(urls)) {
+			try {
+				MonitorYoutubeRelayClient.releaseQueueEntry(url);
+			} catch (Exception exception) {
+				Lg2.LOGGER.debug("Failed to release YouTube queue preload for {}", url, exception);
 			}
-		}, mediaIoExecutor);
+		}
 	}
 
 	private static void retainYoutubeMusicQueuePreloads(List<String> urls) {
 		if (urls == null || urls.isEmpty()) {
 			return;
 		}
-		ensureExecutors();
-		List<String> snapshot = List.copyOf(urls);
-		CompletableFuture.runAsync(() -> {
-			for (String url : snapshot) {
-				try {
-					MonitorYoutubeMusicCache.retainQueueEntry(url);
-				} catch (Exception exception) {
-					Lg2.LOGGER.debug("Failed to retain YouTube Music queue preload for {}", url, exception);
-				}
+		for (String url : List.copyOf(urls)) {
+			try {
+				MonitorYoutubeMusicCache.retainQueueEntry(url);
+			} catch (Exception exception) {
+				Lg2.LOGGER.debug("Failed to retain YouTube Music queue preload for {}", url, exception);
 			}
-		}, mediaIoExecutor);
+		}
 	}
 
 	private static void releaseYoutubeMusicQueuePreloads(List<String> urls) {
 		if (urls == null || urls.isEmpty()) {
 			return;
 		}
-		ensureExecutors();
-		List<String> snapshot = List.copyOf(urls);
-		CompletableFuture.runAsync(() -> {
-			for (String url : snapshot) {
-				try {
-					MonitorYoutubeMusicCache.releaseQueueEntry(url);
-				} catch (Exception exception) {
-					Lg2.LOGGER.debug("Failed to release YouTube Music queue preload for {}", url, exception);
-				}
+		for (String url : List.copyOf(urls)) {
+			try {
+				MonitorYoutubeMusicCache.releaseQueueEntry(url);
+			} catch (Exception exception) {
+				Lg2.LOGGER.debug("Failed to release YouTube Music queue preload for {}", url, exception);
 			}
-		}, mediaIoExecutor);
+		}
 	}
 
 	private static void clearYoutubeQueueLocked(MediaRuntimeState state) {
@@ -14296,6 +14356,7 @@ public final class MonitorScreenSystem {
 		state.wallpaperScaleMode = MediaScaleMode.FIT;
 		state.wallpaperBackgroundMode = PlayerBackgroundMode.EMPTY;
 		state.wallpaperFrameIndex = 0;
+		state.nextWallpaperFrameAtMillis = 0L;
 		state.wallpaperLoading = false;
 	}
 
@@ -14307,6 +14368,7 @@ public final class MonitorScreenSystem {
 		state.playerBackgroundUrl = null;
 		state.playerBackgroundScaleMode = MediaScaleMode.FIT;
 		state.playerBackgroundFrameIndex = 0;
+		state.nextPlayerBackgroundFrameAtMillis = 0L;
 		state.playerBackgroundLoading = false;
 	}
 
@@ -14481,6 +14543,48 @@ public final class MonitorScreenSystem {
 				&& !item.url().isBlank();
 	}
 
+	private static boolean compactGalleryRuntimeMediaLocked(MediaRuntimeState state) {
+		if (state == null || state.galleryItems.isEmpty()) {
+			return false;
+		}
+		boolean changed = false;
+		for (int index = 0; index < state.galleryItems.size(); index++) {
+			GalleryItem item = state.galleryItems.get(index);
+			if (item == null || item.media() == null) {
+				continue;
+			}
+			if (MonitorGalleryRuntimePolicy.shouldRetainDecodedMedia(
+					effectiveGalleryItemKind(item),
+					item.url(),
+					index,
+					state.galleryIndex,
+					state.sourceUrl,
+					state.wallpaperUrl,
+					state.playerBackgroundUrl
+			)) {
+				continue;
+			}
+			BufferedImage preview = item.preview();
+			if (preview == null && item.media().frameCount() > 0) {
+				preview = item.media().frame(0);
+			}
+			state.galleryItems.set(
+					index,
+					new GalleryItem(
+							item.title(),
+							item.subtitle(),
+							item.url(),
+							item.localMediaKey(),
+							null,
+							preview,
+							item.kind()
+					)
+			);
+			changed = true;
+		}
+		return changed;
+	}
+
 	private static boolean currentGalleryItemIsWallpaperLocked(MediaRuntimeState state) {
 		GalleryItem item = currentGalleryItemLocked(state);
 		return item != null
@@ -14642,6 +14746,7 @@ public final class MonitorScreenSystem {
 			state.galleryScroll = targetRow - visibleRows + 1;
 		}
 		state.galleryScroll = clampInt(state.galleryScroll, 0, maxScroll);
+		compactGalleryRuntimeMediaLocked(state);
 		return true;
 	}
 
@@ -15442,6 +15547,18 @@ public final class MonitorScreenSystem {
 		}
 	}
 
+	private static boolean acceptLateResultForCurrentView(MinecraftServer server, ScreenRuntimeKey key, ScreenViewMode expectedViewMode) {
+		if (server == null || key == null || expectedViewMode == null) {
+			return false;
+		}
+		ScreenComponent component = resolveScreenComponent(server, key);
+		return component != null && component.powered() && component.viewMode() == expectedViewMode;
+	}
+
+	private static boolean acceptLateResultWhileGalleryStillActive(MinecraftServer server, ScreenRuntimeKey key) {
+		return acceptLateResultForCurrentView(server, key, ScreenViewMode.GALLERY);
+	}
+
 	private static long clampLong(long value, long min, long max) {
 		return Math.max(min, Math.min(max, value));
 	}
@@ -15467,358 +15584,6 @@ public final class MonitorScreenSystem {
 
 	private static boolean isYoutubeMusicMode(ScreenViewMode mode) {
 		return mode == ScreenViewMode.YOUTUBE_MUSIC;
-	}
-
-	private enum ScreenViewMode {
-		HOME("home"),
-		GALLERY("gallery"),
-		SBER_DRONES("sberdrones"),
-		MAX("max"),
-		YOUTUBE("youtube"),
-		YOUTUBE_MUSIC("youtubemusic");
-
-		private final String serializedName;
-
-		ScreenViewMode(String serializedName) {
-			this.serializedName = serializedName;
-		}
-
-		String serializedName() {
-			return this.serializedName;
-		}
-
-		static ScreenViewMode fromTag(String value) {
-			if ("media".equalsIgnoreCase(value)) {
-				return GALLERY;
-			}
-			for (ScreenViewMode mode : values()) {
-				if (mode.serializedName.equalsIgnoreCase(value)) {
-					return mode;
-				}
-			}
-			return HOME;
-		}
-	}
-
-	private enum MediaOverlayMode {
-		VIEW,
-		CONTROLS
-	}
-
-	private enum GallerySurfaceMode {
-		BROWSER,
-		PLAYER
-	}
-
-	private enum PlayerBackgroundMode {
-		ARTWORK,
-		GALLERY,
-		BLACK,
-		EMPTY;
-
-		private static PlayerBackgroundMode fromPersisted(String value) {
-			if (value == null || value.isBlank()) {
-				return null;
-			}
-			if ("wallpaper".equalsIgnoreCase(value.trim())) {
-				return GALLERY;
-			}
-			try {
-				return PlayerBackgroundMode.valueOf(value.trim().toUpperCase(Locale.ROOT));
-			} catch (IllegalArgumentException ignored) {
-				return null;
-			}
-		}
-
-		private String persistedName() {
-			return this == GALLERY ? "gallery" : this.name().toLowerCase(Locale.ROOT);
-		}
-	}
-
-	private enum MediaOverlayWindowType {
-		YOUTUBE_QUEUE,
-		GALLERY_DELETE_CONFIRM,
-		PLAYER_BACKGROUND
-	}
-
-	private enum YoutubeLinkRequestAction {
-		REPLACE_QUEUE,
-		APPEND_QUEUE
-	}
-
-	private enum PlaybackStreamKind {
-		NONE,
-		YOUTUBE,
-		LIVE_CAMERA,
-		DIRECT_VIDEO
-	}
-
-	private enum MediaScaleMode {
-		FIT,
-		FILL,
-		STRETCH;
-
-		MediaScaleMode next() {
-			MediaScaleMode[] values = values();
-			return values[(this.ordinal() + 1) % values.length];
-		}
-	}
-
-	private enum TransportButtonKind {
-		BACK,
-		PLAY_PAUSE,
-		FORWARD
-	}
-
-	private enum MediaButtonSegment {
-		SINGLE,
-		LEFT,
-		MIDDLE,
-		RIGHT
-	}
-
-	private enum MediaActionGlyph {
-		TRASH,
-		DOWNLOAD,
-		CHECK,
-		WALLPAPER
-	}
-
-	private enum MediaActionVisualState {
-		IDLE,
-		DOWNLOADING,
-		COMPLETE
-	}
-
-	private enum GalleryItemKind {
-		MEDIA,
-		AUDIO,
-		VIDEO,
-		LIVE_CAMERA,
-		YOUTUBE;
-
-		private static GalleryItemKind fromPersisted(String value, String url) {
-			if ("audio".equalsIgnoreCase(value)) {
-				return AUDIO;
-			}
-			if ("live_camera".equalsIgnoreCase(value)) {
-				return LIVE_CAMERA;
-			}
-			if ("youtube".equalsIgnoreCase(value)) {
-				return YOUTUBE;
-			}
-			if ("video".equalsIgnoreCase(value)) {
-				return VIDEO;
-			}
-			return MonitorYoutubeRelayClient.looksLikeYoutubeUrl(url) ? YOUTUBE : MEDIA;
-		}
-
-		private String persistedName() {
-			return switch (this) {
-				case AUDIO -> "audio";
-				case LIVE_CAMERA -> "live_camera";
-				case YOUTUBE -> "youtube";
-				case VIDEO -> "video";
-				case MEDIA -> "media";
-			};
-		}
-	}
-
-	private enum TimelineCounterDetailLevel {
-		NONE,
-		COMPACT,
-		FULL
-	}
-
-	private record ScreenKey(BlockPos pos, Direction direction) {
-	}
-
-	private record ScreenRuntimeKey(ResourceKey<Level> dimension, BlockPos pos, Direction facing) {
-	}
-
-	private enum LiveCameraSourceType {
-		CAMERA,
-		DRONE
-	}
-
-	private record LiveCameraReference(LiveCameraSourceType sourceType, ResourceKey<Level> dimension, BlockPos pos, UUID sourceUuid) {
-		private static LiveCameraReference camera(ResourceKey<Level> dimension, BlockPos pos) {
-			return new LiveCameraReference(LiveCameraSourceType.CAMERA, dimension, pos == null ? null : pos.immutable(), null);
-		}
-
-		private static LiveCameraReference drone(ResourceKey<Level> dimension, BlockPos pos, UUID sourceUuid) {
-			return new LiveCameraReference(LiveCameraSourceType.DRONE, dimension, pos == null ? null : pos.immutable(), sourceUuid);
-		}
-	}
-
-	private record TileCoord(int x, int y) {
-	}
-
-	private record UiPoint(int x, int y) {
-	}
-
-	private record PlacementSurfacePoint(double u, double v) {
-	}
-
-	private record UiRect(int x, int y, int width, int height) {
-		boolean contains(int px, int py) {
-			return px >= this.x && px < this.x + this.width && py >= this.y && py < this.y + this.height;
-		}
-
-		int right() {
-			return this.x + this.width;
-		}
-
-		int bottom() {
-			return this.y + this.height;
-		}
-
-		UiRect inset(int amount) {
-			int nextWidth = Math.max(1, this.width - amount * 2);
-			int nextHeight = Math.max(1, this.height - amount * 2);
-			return new UiRect(this.x + amount, this.y + amount, nextWidth, nextHeight);
-		}
-	}
-
-	private record UiLayout(
-			int canvasWidth,
-			int canvasHeight,
-			int viewportX,
-			int viewportY,
-			int viewportWidth,
-			int viewportHeight,
-			int margin,
-			int unit
-	) {
-	}
-
-	private static final class MonitorLevelState {
-		private final ResourceKey<Level> dimension;
-		private final Set<ScreenKey> knownFrames = ConcurrentHashMap.newKeySet();
-		private final Map<ScreenKey, ScreenRuntimeKey> frameToRuntime = new ConcurrentHashMap<>();
-		private final Map<ScreenRuntimeKey, ScreenComponent> components = new ConcurrentHashMap<>();
-		private final Map<ScreenRuntimeKey, List<LiveCameraReference>> connectedCameraPositions = new ConcurrentHashMap<>();
-		private final Set<ScreenKey> dirtyFramesSet = ConcurrentHashMap.newKeySet();
-		private final ConcurrentLinkedQueue<ScreenKey> dirtyFrames = new ConcurrentLinkedQueue<>();
-		private final Set<ScreenRuntimeKey> dirtyRuntimeSet = ConcurrentHashMap.newKeySet();
-		private final ConcurrentLinkedQueue<ScreenRuntimeKey> dirtyRuntimes = new ConcurrentLinkedQueue<>();
-		private final Set<ScreenRuntimeKey> cameraRefreshRuntimeSet = ConcurrentHashMap.newKeySet();
-		private final ConcurrentLinkedQueue<ScreenRuntimeKey> cameraRefreshRuntimes = new ConcurrentLinkedQueue<>();
-		private final Set<ScreenRuntimeKey> powerRuntimeSet = ConcurrentHashMap.newKeySet();
-		private final ConcurrentLinkedQueue<ScreenRuntimeKey> powerRuntimes = new ConcurrentLinkedQueue<>();
-		private final Set<ScreenRuntimeKey> speakerRefreshRuntimeSet = ConcurrentHashMap.newKeySet();
-		private final ConcurrentLinkedQueue<ScreenRuntimeKey> speakerRefreshRuntimes = new ConcurrentLinkedQueue<>();
-
-		private MonitorLevelState(ResourceKey<Level> dimension) {
-			this.dimension = dimension;
-		}
-
-		private ResourceKey<Level> dimension() {
-			return this.dimension;
-		}
-
-		private Set<ScreenKey> knownFrames() {
-			return this.knownFrames;
-		}
-
-		private Map<ScreenKey, ScreenRuntimeKey> frameToRuntime() {
-			return this.frameToRuntime;
-		}
-
-		private Map<ScreenRuntimeKey, ScreenComponent> components() {
-			return this.components;
-		}
-
-		private Map<ScreenRuntimeKey, List<LiveCameraReference>> connectedCameraPositions() {
-			return this.connectedCameraPositions;
-		}
-
-		private void enqueueDirtyFrame(ScreenKey key) {
-			if (key != null && this.dirtyFramesSet.add(key)) {
-				this.dirtyFrames.add(key);
-			}
-		}
-
-		private ScreenKey pollDirtyFrame() {
-			ScreenKey key = this.dirtyFrames.poll();
-			if (key != null) {
-				this.dirtyFramesSet.remove(key);
-			}
-			return key;
-		}
-
-		private void enqueueDirtyRuntime(ScreenRuntimeKey key) {
-			if (key != null && this.dirtyRuntimeSet.add(key)) {
-				this.dirtyRuntimes.add(key);
-			}
-		}
-
-		private ScreenRuntimeKey pollDirtyRuntime() {
-			ScreenRuntimeKey key = this.dirtyRuntimes.poll();
-			if (key != null) {
-				this.dirtyRuntimeSet.remove(key);
-			}
-			return key;
-		}
-
-		private void enqueueCameraRefreshRuntime(ScreenRuntimeKey key) {
-			if (key != null && this.cameraRefreshRuntimeSet.add(key)) {
-				this.cameraRefreshRuntimes.add(key);
-			}
-		}
-
-		private ScreenRuntimeKey pollCameraRefreshRuntime() {
-			ScreenRuntimeKey key = this.cameraRefreshRuntimes.poll();
-			if (key != null) {
-				this.cameraRefreshRuntimeSet.remove(key);
-			}
-			return key;
-		}
-
-		private void enqueuePowerRuntime(ScreenRuntimeKey key) {
-			if (key != null && this.powerRuntimeSet.add(key)) {
-				this.powerRuntimes.add(key);
-			}
-		}
-
-		private void enqueueSpeakerRefreshRuntime(ScreenRuntimeKey key) {
-			if (key != null && this.speakerRefreshRuntimeSet.add(key)) {
-				this.speakerRefreshRuntimes.add(key);
-			}
-		}
-
-		private ScreenRuntimeKey pollPowerRuntime() {
-			ScreenRuntimeKey key = this.powerRuntimes.poll();
-			if (key != null) {
-				this.powerRuntimeSet.remove(key);
-			}
-			return key;
-		}
-
-		private ScreenRuntimeKey pollSpeakerRefreshRuntime() {
-			ScreenRuntimeKey key = this.speakerRefreshRuntimes.poll();
-			if (key != null) {
-				this.speakerRefreshRuntimeSet.remove(key);
-			}
-			return key;
-		}
-	}
-
-	private record ScreenFrame(ItemFrame frame, ScreenTileState state) {
-	}
-
-	private record ScreenComponent(
-			ScreenRuntimeKey runtimeKey,
-			Direction facing,
-			Direction right,
-			int width,
-			int height,
-			boolean powered,
-			ScreenViewMode viewMode,
-			int launcherPage,
-			Map<ItemFrame, TileCoord> frameCoords,
-			Map<TileCoord, ScreenFrame> byCoord
-	) {
 	}
 
 	private record RenderCacheKey(boolean powered, ScreenViewMode viewMode, int launcherPage, int width, int height) {
@@ -16011,6 +15776,7 @@ public final class MonitorScreenSystem {
 			MonitorMediaApp.LoadedVideo loadedVideo,
 			boolean openWhenReady,
 			int preferredIndex,
+			long sessionGeneration,
 			String error
 	) {
 	}
@@ -16027,6 +15793,7 @@ public final class MonitorScreenSystem {
 			String url,
 			String localMediaKey,
 			MonitorMediaApp.LoadedMedia loadedMedia,
+			long sessionGeneration,
 			String error
 	) {
 	}
@@ -16036,6 +15803,7 @@ public final class MonitorScreenSystem {
 			String url,
 			String localMediaKey,
 			MonitorMediaApp.LoadedMedia loadedMedia,
+			long sessionGeneration,
 			String error
 	) {
 	}
@@ -16067,6 +15835,7 @@ public final class MonitorScreenSystem {
 			GalleryItemKind kind,
 			MonitorMediaApp.LoadedMedia loadedMedia,
 			MonitorMediaApp.LoadedVideo loadedVideo,
+			long sessionGeneration,
 			String error
 	) {
 	}
@@ -16090,6 +15859,7 @@ public final class MonitorScreenSystem {
 			String url,
 			MonitorYoutubeRelayClient.QueueResolveResponse queueResponse,
 			YoutubeLinkRequestAction action,
+			long sessionGeneration,
 			String error
 	) {
 	}
@@ -16101,6 +15871,7 @@ public final class MonitorScreenSystem {
 			String title,
 			String artist,
 			MonitorMediaApp.LoadedVideo loadedVideo,
+			MonitorYoutubeRelayClient.SessionLoadResponse relayLoadResponse,
 			int queueIndex,
 			String error
 	) {
@@ -16153,18 +15924,6 @@ public final class MonitorScreenSystem {
 	private record PlayerUiIconTintKey(PlayerUiIcon icon, int argb) {
 	}
 
-	public record SpeakerAudioSource(
-			String sourceKey,
-			String relaySessionId,
-			String audioStreamUrl,
-			long positionMs,
-			long audioSyncToken,
-			boolean loading,
-			boolean paused,
-			boolean liveStream
-	) {
-	}
-
 	private record MapPacketUpdate(
 			MapId mapId,
 			byte scale,
@@ -16198,30 +15957,6 @@ public final class MonitorScreenSystem {
 	}
 
 	private record PreparedRenderedTiles(byte[][] renderedTiles, TileFramePatch[] tilePatches, long baselineGeneration) {
-	}
-
-	private record ScreenTileState(
-			int attachmentMask,
-			int gridWidth,
-			int gridHeight,
-			int tileX,
-			int tileY,
-			int connectionMask,
-			boolean powered,
-			ScreenViewMode viewMode,
-			int launcherPage,
-			String groupId
-	) {
-		boolean sameRenderState(ScreenTileState other) {
-			return other != null
-					&& this.gridWidth == other.gridWidth
-					&& this.gridHeight == other.gridHeight
-					&& this.tileX == other.tileX
-					&& this.tileY == other.tileY
-					&& this.powered == other.powered
-					&& this.viewMode == other.viewMode
-					&& this.launcherPage == other.launcherPage;
-		}
 	}
 
 	private static final class MediaRuntimeState {
@@ -16318,8 +16053,11 @@ public final class MonitorScreenSystem {
 		private boolean rerenderRequested;
 		private MediaDispatchKey lastDispatchKey;
 		private ScheduledFuture<?> playbackFuture;
+		private ScheduledFuture<?> backgroundFuture;
 		private long nextProgressRenderAtMillis;
-		private final TaskProgress progress;
+		private long sessionGeneration;
+		private final Runnable progressListener;
+		private TaskProgress progress;
 
 		private MediaRuntimeState(ScreenViewMode mode, Runnable progressListener) {
 			this.mode = mode;
@@ -16400,6 +16138,9 @@ public final class MonitorScreenSystem {
 			this.nextPlayerBackgroundFrameAtMillis = 0L;
 			this.activeRenderJobs = 0;
 			this.nextProgressRenderAtMillis = 0L;
+			this.backgroundFuture = null;
+			this.sessionGeneration = 1L;
+			this.progressListener = progressListener;
 			this.progress = new TaskProgress(progressListener);
 		}
 

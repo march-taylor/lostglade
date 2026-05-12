@@ -16,4 +16,8 @@ public interface MonitorApp {
 	String screenTitle();
 
 	String screenHint();
+
+	default MonitorAppRole role() {
+		return MonitorAppRole.GENERIC;
+	}
 }

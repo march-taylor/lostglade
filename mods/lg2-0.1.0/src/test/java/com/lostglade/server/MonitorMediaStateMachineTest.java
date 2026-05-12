@@ -1,6 +1,10 @@
 package com.lostglade.server;
 
 import com.lostglade.server.monitor.MonitorYoutubeMusicCache;
+import com.lostglade.server.monitor.MonitorAppRegistry;
+import com.lostglade.server.monitor.MonitorAppRole;
+import com.lostglade.server.monitor.MonitorBackgroundPlaybackPolicy;
+import com.lostglade.server.monitor.MonitorSberDronesCatalog;
 import com.lostglade.server.progress.TaskProgress;
 
 import javax.imageio.ImageIO;
@@ -24,7 +28,17 @@ public final class MonitorMediaStateMachineTest {
 		youtubeRelayRejectsStaleResults();
 		youtubeMusicRejectsStaleQueueResults();
 		youtubeMusicPartialCacheUsesLocalTrackAndRealProgress();
+		youtubeMusicCompleteCacheUsesLocalTrackPlayback();
+		youtubeMusicRelayFallbackSkipsIncompleteCache();
+		youtubeMusicPartialCacheDoesNotPretendToBeActive();
 		youtubeMusicNeedsCompleteMarkerBeforeReportingFullCache();
+		youtubeMusicRejectsLegacyMarkerWithoutVerifiedFinalSize();
+		youtubeMusicDirectThumbnailUsesStableYoutubeCoverUrl();
+		sberDronesUsesDedicatedLiveCameraCatalog();
+		galleryRuntimePolicyIgnoresLiveCameraOnlyCollections();
+		galleryRuntimePolicyRetainsOnlyActiveDecodedMedia();
+		backgroundPlaybackPolicyIgnoresViewVisibility();
+		directAudioSourcesDoNotResyncFromStaleMonitorPosition();
 		System.out.println("Monitor media state-machine checks passed");
 	}
 
@@ -128,15 +142,116 @@ public final class MonitorMediaStateMachineTest {
 			MonitorYoutubeMusicCache.QueueEntryCacheStatus status = MonitorYoutubeMusicCache.queueEntryCacheStatus(url);
 			require(!status.complete(), "partial YouTube Music cache must not report itself as complete");
 			require(status.fraction() >= 0.24F && status.fraction() <= 0.26F, "partial YouTube Music cache fraction must come from real downloaded bytes");
+		} catch (IOException exception) {
+			throw new AssertionError("Failed to prepare partial YouTube Music cache test", exception);
+		} finally {
+			MonitorYoutubeMusicCache.setCacheDirectory(originalCacheRoot);
+			deleteDirectoryQuietly(tempRoot);
+		}
+	}
+
+	private static void youtubeMusicCompleteCacheUsesLocalTrackPlayback() {
+		Path tempRoot = null;
+		String url = "https://www.youtube.com/watch?v=complete-local";
+		Path originalCacheRoot = defaultYoutubeMusicCacheRoot();
+		try {
+			tempRoot = Files.createTempDirectory("lg2-ytmusic-complete-local-test");
+			MonitorYoutubeMusicCache.setCacheDirectory(tempRoot);
+			MonitorYoutubeMusicCache.deletePersistentTrack(url);
+			Path entryDir = youtubeMusicEntryDir(tempRoot, url);
+			Files.createDirectories(entryDir);
+			writeCover(entryDir.resolve("cover.png"));
+			Files.write(entryDir.resolve("audio.source"), new byte[100]);
+			Files.writeString(
+					entryDir.resolve("meta.json"),
+					"""
+					{"title":"Complete","artist":"Local","durationMs":1234,"thumbnailUrl":"","fallbackCover":false,"expectedAudioBytes":100,"completedAudioBytes":100}
+					""".trim(),
+					StandardCharsets.UTF_8
+			);
+			Files.writeString(entryDir.resolve("complete.marker"), "ready", StandardCharsets.UTF_8);
 
 			MonitorYoutubeMusicCache.LoadedTrack loaded = MonitorYoutubeMusicCache.load(url, new TaskProgress());
 			String expectedPath = entryDir.resolve("audio.source").toAbsolutePath().toString();
 			require(
 					expectedPath.equals(loaded.video().playbackInput()) && expectedPath.equals(loaded.video().audioInput()),
-					"partially cached YouTube Music track must open from the local growing cache file"
+					"fully cached YouTube Music track must open from the local cache file"
 			);
 		} catch (IOException exception) {
-			throw new AssertionError("Failed to prepare partial YouTube Music cache test", exception);
+			throw new AssertionError("Failed to prepare complete local YouTube Music cache test", exception);
+		} finally {
+			MonitorYoutubeMusicCache.setCacheDirectory(originalCacheRoot);
+			deleteDirectoryQuietly(tempRoot);
+		}
+	}
+
+	private static void youtubeMusicRelayFallbackSkipsIncompleteCache() {
+		Path tempRoot = null;
+		String url = "https://www.youtube.com/watch?v=incomplete-relay-fallback";
+		Path originalCacheRoot = defaultYoutubeMusicCacheRoot();
+		try {
+			tempRoot = Files.createTempDirectory("lg2-ytmusic-incomplete-fallback-test");
+			MonitorYoutubeMusicCache.setCacheDirectory(tempRoot);
+			MonitorYoutubeMusicCache.deletePersistentTrack(url);
+			Path entryDir = youtubeMusicEntryDir(tempRoot, url);
+			Files.createDirectories(entryDir);
+			writeCover(entryDir.resolve("cover.png"));
+			Files.write(entryDir.resolve("audio.source"), new byte[55]);
+			Files.writeString(
+					entryDir.resolve("meta.json"),
+					"""
+					{"title":"Incomplete","artist":"Fallback","durationMs":1234,"thumbnailUrl":"","fallbackCover":false,"expectedAudioBytes":100}
+					""".trim(),
+					StandardCharsets.UTF_8
+			);
+
+			MonitorYoutubeMusicCache.LoadedTrack cached = MonitorYoutubeMusicCache.loadCompleteTrackIfPresent(url, new TaskProgress());
+			require(cached == null, "YouTube Music playback startup must not treat incomplete cache files as the primary playable track");
+
+			Files.writeString(
+					entryDir.resolve("meta.json"),
+					"""
+					{"title":"Complete","artist":"Fallback","durationMs":1234,"thumbnailUrl":"","fallbackCover":false,"expectedAudioBytes":100,"completedAudioBytes":100}
+					""".trim(),
+					StandardCharsets.UTF_8
+			);
+			Files.write(entryDir.resolve("audio.source"), new byte[100]);
+			Files.writeString(entryDir.resolve("complete.marker"), "ready", StandardCharsets.UTF_8);
+			MonitorYoutubeMusicCache.LoadedTrack complete = MonitorYoutubeMusicCache.loadCompleteTrackIfPresent(url, new TaskProgress());
+			require(complete != null, "YouTube Music playback startup should still use a verified complete local cache");
+		} catch (IOException exception) {
+			throw new AssertionError("Failed to prepare incomplete YouTube Music fallback test", exception);
+		} finally {
+			MonitorYoutubeMusicCache.setCacheDirectory(originalCacheRoot);
+			deleteDirectoryQuietly(tempRoot);
+		}
+	}
+
+	private static void youtubeMusicPartialCacheDoesNotPretendToBeActive() {
+		Path tempRoot = null;
+		String url = "https://www.youtube.com/watch?v=partial-inactive";
+		Path originalCacheRoot = defaultYoutubeMusicCacheRoot();
+		try {
+			tempRoot = Files.createTempDirectory("lg2-ytmusic-partial-inactive-test");
+			MonitorYoutubeMusicCache.setCacheDirectory(tempRoot);
+			MonitorYoutubeMusicCache.deletePersistentTrack(url);
+			Path entryDir = youtubeMusicEntryDir(tempRoot, url);
+			Files.createDirectories(entryDir);
+			writeCover(entryDir.resolve("cover.png"));
+			Files.write(entryDir.resolve("audio.source"), new byte[40]);
+			Files.writeString(
+					entryDir.resolve("meta.json"),
+					"""
+					{"title":"Partial","artist":"Inactive","durationMs":1234,"thumbnailUrl":"","fallbackCover":false,"expectedAudioBytes":100}
+					""".trim(),
+					StandardCharsets.UTF_8
+			);
+
+			MonitorYoutubeMusicCache.QueueEntryCacheStatus status = MonitorYoutubeMusicCache.queueEntryCacheStatus(url);
+			require(!status.active(), "partial YouTube Music cache without an active downloader must stay visually inactive");
+			require(!status.complete(), "partial inactive YouTube Music cache must stay incomplete");
+		} catch (IOException exception) {
+			throw new AssertionError("Failed to prepare inactive partial YouTube Music cache test", exception);
 		} finally {
 			MonitorYoutubeMusicCache.setCacheDirectory(originalCacheRoot);
 			deleteDirectoryQuietly(tempRoot);
@@ -167,6 +282,13 @@ public final class MonitorMediaStateMachineTest {
 			require(!incomplete.complete(), "cache without completion marker must stay incomplete");
 			require(incomplete.fraction() >= 0.98F && incomplete.fraction() <= 0.99F, "cache without completion marker must stay below 100 percent");
 
+			Files.writeString(
+					entryDir.resolve("meta.json"),
+					"""
+					{"title":"Complete","artist":"Marker","durationMs":1234,"thumbnailUrl":"","fallbackCover":false,"expectedAudioBytes":100,"completedAudioBytes":100}
+					""".trim(),
+					StandardCharsets.UTF_8
+			);
 			Files.writeString(entryDir.resolve("complete.marker"), "ready", StandardCharsets.UTF_8);
 			MonitorYoutubeMusicCache.QueueEntryCacheStatus complete = MonitorYoutubeMusicCache.queueEntryCacheStatus(url);
 			require(complete.complete(), "cache with completion marker must report itself as complete");
@@ -177,6 +299,157 @@ public final class MonitorMediaStateMachineTest {
 			MonitorYoutubeMusicCache.setCacheDirectory(originalCacheRoot);
 			deleteDirectoryQuietly(tempRoot);
 		}
+	}
+
+	private static void youtubeMusicRejectsLegacyMarkerWithoutVerifiedFinalSize() {
+		Path tempRoot = null;
+		String url = "https://www.youtube.com/watch?v=legacy-marker";
+		Path originalCacheRoot = defaultYoutubeMusicCacheRoot();
+		try {
+			tempRoot = Files.createTempDirectory("lg2-ytmusic-legacy-marker-test");
+			MonitorYoutubeMusicCache.setCacheDirectory(tempRoot);
+			MonitorYoutubeMusicCache.deletePersistentTrack(url);
+			Path entryDir = youtubeMusicEntryDir(tempRoot, url);
+			Files.createDirectories(entryDir);
+			writeCover(entryDir.resolve("cover.png"));
+			Files.write(entryDir.resolve("audio.source"), new byte[35]);
+			Files.writeString(
+					entryDir.resolve("meta.json"),
+					"""
+					{"title":"Legacy","artist":"Marker","durationMs":1234,"thumbnailUrl":"","fallbackCover":false,"expectedAudioBytes":100}
+					""".trim(),
+					StandardCharsets.UTF_8
+			);
+			Files.writeString(entryDir.resolve("complete.marker"), "ready", StandardCharsets.UTF_8);
+
+			MonitorYoutubeMusicCache.QueueEntryCacheStatus status = MonitorYoutubeMusicCache.queueEntryCacheStatus(url);
+			require(!status.complete(), "legacy completion marker without verified final size must not show a cached checkmark");
+			require(status.fraction() >= 0.34F && status.fraction() <= 0.36F, "legacy completion marker must keep using real downloaded bytes for progress");
+		} catch (IOException exception) {
+			throw new AssertionError("Failed to prepare legacy completion marker YouTube Music cache test", exception);
+		} finally {
+			MonitorYoutubeMusicCache.setCacheDirectory(originalCacheRoot);
+			deleteDirectoryQuietly(tempRoot);
+		}
+	}
+
+	private static void youtubeMusicDirectThumbnailUsesStableYoutubeCoverUrl() {
+		require(
+				"https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg".equals(
+						MonitorYoutubeMusicCache.directThumbnailUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PL123")
+				),
+				"watch URLs must resolve to the stable direct YouTube thumbnail"
+		);
+		require(
+				"https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg".equals(
+						MonitorYoutubeMusicCache.directThumbnailUrl("https://youtu.be/dQw4w9WgXcQ?si=test")
+				),
+				"youtu.be URLs must resolve to the stable direct YouTube thumbnail"
+		);
+		require(
+				"https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg".equals(
+						MonitorYoutubeMusicCache.directThumbnailUrl("https://music.youtube.com/watch?v=dQw4w9WgXcQ&si=test")
+				),
+				"YouTube Music URLs must resolve to the stable direct YouTube thumbnail"
+		);
+	}
+
+	private static void sberDronesUsesDedicatedLiveCameraCatalog() {
+		require(
+				MonitorAppRegistry.findById("sberdrones").role() == MonitorAppRole.SBER_DRONES,
+				"Sber Drones must be routed through the dedicated live-camera app role"
+		);
+		MonitorSberDronesCatalog.Source camera = MonitorSberDronesCatalog.Source.camera("minecraft:overworld", 1, 64, -3);
+		String cameraUrl = MonitorSberDronesCatalog.url(camera);
+		MonitorSberDronesCatalog.Source parsedCamera = MonitorSberDronesCatalog.parseUrl(cameraUrl, "");
+		require(
+				MonitorSberDronesCatalog.sameIdentity(camera, parsedCamera),
+				"Sber Drones camera links must round-trip without using gallery media identity"
+		);
+		require(
+				MonitorSberDronesCatalog.card(camera, true).subtitle().contains("online"),
+				"Sber Drones cards must carry live-camera status metadata"
+		);
+	}
+
+	private static void galleryRuntimePolicyIgnoresLiveCameraOnlyCollections() {
+		require(
+				!MonitorGalleryRuntimePolicy.hasSavedGalleryItems(ScreenViewMode.SBER_DRONES, 4, 4),
+				"Sber Drones runtime state must not treat live camera cards as saved gallery entries"
+		);
+		require(
+				!MonitorGalleryRuntimePolicy.hasSavedGalleryItems(ScreenViewMode.GALLERY, 3, 3),
+				"a live-camera-only gallery list must stay lightweight and non-persisted"
+		);
+		require(
+				MonitorGalleryRuntimePolicy.hasSavedGalleryItems(ScreenViewMode.GALLERY, 5, 2),
+				"real saved gallery entries must still be detected inside mixed collections"
+		);
+	}
+
+	private static void galleryRuntimePolicyRetainsOnlyActiveDecodedMedia() {
+		require(
+				MonitorGalleryRuntimePolicy.shouldRetainDecodedMedia(
+						GalleryItemKind.MEDIA,
+						"gallery://selected",
+						2,
+						2,
+						"",
+						"",
+						""
+				),
+				"the selected gallery card must keep its decoded media"
+		);
+		require(
+				MonitorGalleryRuntimePolicy.shouldRetainDecodedMedia(
+						GalleryItemKind.MEDIA,
+						"gallery://wallpaper",
+						0,
+						2,
+						"",
+						"gallery://wallpaper",
+						""
+				),
+				"wallpaper media must survive gallery compaction"
+		);
+		require(
+				!MonitorGalleryRuntimePolicy.shouldRetainDecodedMedia(
+						GalleryItemKind.MEDIA,
+						"gallery://stale",
+						0,
+						2,
+						"gallery://selected",
+						"gallery://wallpaper",
+						"gallery://background"
+				),
+				"unused decoded gallery media should be eligible for eviction"
+		);
+	}
+
+	private static void backgroundPlaybackPolicyIgnoresViewVisibility() {
+		require(
+				MonitorBackgroundPlaybackPolicy.animatedMediaActive(true, true, 2),
+				"animated gallery backgrounds must stay active independently from the currently opened player UI"
+		);
+		require(
+				MonitorBackgroundPlaybackPolicy.nextFrameDeadlineMillis(1200L, 1000L, 16) == 1200L,
+				"existing background frame deadlines must not be pulled backward by unrelated playback refreshes"
+		);
+		require(
+				MonitorBackgroundPlaybackPolicy.earliestPositiveDeadlineMillis(0L, 1400L, 1200L) == 1200L,
+				"background scheduler must choose the closest real frame deadline"
+		);
+	}
+
+	private static void directAudioSourcesDoNotResyncFromStaleMonitorPosition() {
+		require(
+				!SpeakerAudioPlaybackPolicy.shouldResyncPosition(false, false, false, 1800L, 100L, 500L),
+				"local direct audio must not restart just because the monitor snapshot position is stale"
+		);
+		require(
+				SpeakerAudioPlaybackPolicy.shouldResyncPosition(false, false, true, 1800L, 100L, 500L),
+				"authoritative stream positions should still resync when drift exceeds tolerance"
+		);
 	}
 
 	private static void require(boolean condition, String message) {
