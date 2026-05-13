@@ -38,6 +38,9 @@ public final class MonitorMediaStateMachineTest {
 		galleryRuntimePolicyIgnoresLiveCameraOnlyCollections();
 		galleryRuntimePolicyRetainsOnlyActiveDecodedMedia();
 		backgroundPlaybackPolicyIgnoresViewVisibility();
+		audioTransportPolicyPrefersFreshLocalTransportIntent();
+		audioTransportPolicyKeepsSeekTargetUntilRelaySettles();
+		audioTransportPolicyDropsExpiredLocalTransportOverride();
 		directAudioSourcesDoNotResyncFromStaleMonitorPosition();
 		System.out.println("Monitor media state-machine checks passed");
 	}
@@ -438,6 +441,66 @@ public final class MonitorMediaStateMachineTest {
 		require(
 				MonitorBackgroundPlaybackPolicy.earliestPositiveDeadlineMillis(0L, 1400L, 1200L) == 1200L,
 				"background scheduler must choose the closest real frame deadline"
+		);
+	}
+
+	private static void audioTransportPolicyPrefersFreshLocalTransportIntent() {
+		MonitorAudioTransportPolicy.Resolution resolution = MonitorAudioTransportPolicy.reconcile(
+				true,
+				12_000L,
+				Boolean.FALSE,
+				true,
+				12_000L,
+				1_000L,
+				2_000L
+		);
+		require(
+				!resolution.paused(),
+				"a fresh local resume should not be overwritten by an older paused relay snapshot"
+		);
+		require(
+				Boolean.FALSE.equals(resolution.pendingPauseState()),
+				"resume override should stay pending until the relay catches up"
+		);
+	}
+
+	private static void audioTransportPolicyKeepsSeekTargetUntilRelaySettles() {
+		MonitorAudioTransportPolicy.Resolution resolution = MonitorAudioTransportPolicy.reconcile(
+				false,
+				1_000L,
+				null,
+				true,
+				60_000L,
+				1_000L,
+				2_000L
+		);
+		require(
+				resolution.positionMs() == 60_000L,
+				"a fresh seek should keep the intended playback position while the relay still reports the old one"
+		);
+		require(
+				resolution.pendingPositionActive(),
+				"seek override should remain active until the relay position settles"
+		);
+	}
+
+	private static void audioTransportPolicyDropsExpiredLocalTransportOverride() {
+		MonitorAudioTransportPolicy.Resolution expired = MonitorAudioTransportPolicy.reconcile(
+				true,
+				8_000L,
+				Boolean.FALSE,
+				true,
+				6_000L,
+				1_000L,
+				5_000L
+		);
+		require(
+				expired.paused(),
+				"expired local resume overrides must yield back to the actual relay pause state"
+		);
+		require(
+				!expired.pendingPositionActive(),
+				"expired local seek overrides must not pin the monitor or speaker timeline forever"
 		);
 	}
 

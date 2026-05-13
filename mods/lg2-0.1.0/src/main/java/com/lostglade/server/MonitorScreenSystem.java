@@ -950,7 +950,6 @@ public final class MonitorScreenSystem {
 						|| state.audioStreamUrl == null
 						|| state.audioStreamUrl.isBlank()
 						|| state.waitingForLink
-						|| state.userPaused
 						|| (state.loading && !allowWhileLoading)) {
 					continue;
 				}
@@ -1744,7 +1743,8 @@ public final class MonitorScreenSystem {
 					if (isStreamPlaybackLocked(mediaState) && mediaState.relaySessionId != null) {
 						boolean shouldPause = !isPlaybackPausedLocked(mediaState);
 						cancelPlaybackLocked(mediaState);
-						mediaState.userPaused = shouldPause;
+						markPendingAudioPauseLocked(mediaState, shouldPause);
+						markPendingAudioPositionLocked(mediaState, mediaState.positionMs);
 						bumpAudioSyncTokenLocked(mediaState);
 						youtubePauseAction = shouldPause;
 					} else if (mediaState.loadedMedia != null && mediaState.loadedMedia.animated()) {
@@ -1808,7 +1808,7 @@ public final class MonitorScreenSystem {
 				synchronized (mediaState) {
 					if (isStreamPlaybackLocked(mediaState) && canSeekTimelineLocked(mediaState)) {
 						youtubeSeekTargetMs = youtubePositionForFraction(mediaState, mediaTimelineFraction(layout, touchPoint, mediaChromeMode(mediaState)));
-						mediaState.positionMs = youtubeSeekTargetMs;
+						markPendingAudioPositionLocked(mediaState, youtubeSeekTargetMs);
 						bumpAudioSyncTokenLocked(mediaState);
 					} else if (mediaState.loadedMedia != null && mediaState.loadedMedia.frameCount() > 1) {
 						mediaState.frameIndex = mediaFrameIndexForFraction(mediaState.loadedMedia, mediaTimelineFraction(layout, touchPoint, mediaChromeMode(mediaState)));
@@ -5662,6 +5662,57 @@ public final class MonitorScreenSystem {
 		return state.audioSyncToken;
 	}
 
+	private static void clearPendingAudioTransportLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		state.pendingAudioPauseState = null;
+		state.pendingAudioPositionActive = false;
+		state.pendingAudioPositionMs = 0L;
+		state.pendingAudioIssuedAtMillis = 0L;
+	}
+
+	private static void markPendingAudioPauseLocked(MediaRuntimeState state, boolean paused) {
+		if (state == null) {
+			return;
+		}
+		state.userPaused = paused;
+		state.pendingAudioPauseState = paused;
+		state.pendingAudioIssuedAtMillis = System.currentTimeMillis();
+	}
+
+	private static void markPendingAudioPositionLocked(MediaRuntimeState state, long positionMs) {
+		if (state == null) {
+			return;
+		}
+		long clampedPositionMs = Math.max(0L, positionMs);
+		state.positionMs = clampedPositionMs;
+		state.pendingAudioPositionMs = clampedPositionMs;
+		state.pendingAudioPositionActive = true;
+		state.pendingAudioIssuedAtMillis = System.currentTimeMillis();
+	}
+
+	private static void reconcilePendingAudioTransportLocked(MediaRuntimeState state, boolean snapshotPaused, long snapshotPositionMs) {
+		if (state == null) {
+			return;
+		}
+		MonitorAudioTransportPolicy.Resolution resolution = MonitorAudioTransportPolicy.reconcile(
+				snapshotPaused,
+				snapshotPositionMs,
+				state.pendingAudioPauseState,
+				state.pendingAudioPositionActive,
+				state.pendingAudioPositionMs,
+				state.pendingAudioIssuedAtMillis,
+				System.currentTimeMillis()
+		);
+		state.userPaused = resolution.paused();
+		state.positionMs = resolution.positionMs();
+		state.pendingAudioPauseState = resolution.pendingPauseState();
+		state.pendingAudioPositionActive = resolution.pendingPositionActive();
+		state.pendingAudioPositionMs = resolution.pendingPositionMs();
+		state.pendingAudioIssuedAtMillis = resolution.pendingIssuedAtMillis();
+	}
+
 	private static void onMediaProgressChanged(MinecraftServer server, ScreenRuntimeKey key) {
 		if (server == null || key == null) {
 			return;
@@ -6892,13 +6943,12 @@ public final class MonitorScreenSystem {
 					state.streamFrame = result.snapshot().frame();
 					shouldRender = true;
 				}
-				state.positionMs = result.snapshot().positionMs();
 				state.durationMs = result.snapshot().durationMs();
 				state.bufferedStartMs = result.snapshot().bufferedStartMs();
 				state.bufferedEndMs = result.snapshot().bufferedEndMs();
 				state.liveStream = result.snapshot().live();
 				state.audioPlaceholder = result.snapshot().audioPlaceholder();
-				state.userPaused = result.snapshot().paused();
+				reconcilePendingAudioTransportLocked(state, result.snapshot().paused(), result.snapshot().positionMs());
 				state.statusText = result.snapshot().status();
 				state.loading = !result.snapshot().ready();
 				if (previousDurationMs != state.durationMs
@@ -7069,7 +7119,7 @@ public final class MonitorScreenSystem {
 					long duration = Math.max(1L, state.durationMs);
 					long seekStep = Math.max(YOUTUBE_SCROLL_SEEK_MS, duration / 120L);
 					youtubeSeekTargetMs = clampLong(state.positionMs + delta * seekStep, 0L, duration);
-					state.positionMs = youtubeSeekTargetMs;
+					markPendingAudioPositionLocked(state, youtubeSeekTargetMs);
 					bumpAudioSyncTokenLocked(state);
 					handled = true;
 				} else if (state.loadedMedia != null && state.loadedMedia.animated() && state.loadedMedia.frameCount() > 1) {
@@ -14278,6 +14328,7 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
+		clearPendingAudioTransportLocked(state);
 		clearDownloadStateLocked(state);
 		state.streamKind = PlaybackStreamKind.NONE;
 		state.loadedMedia = null;
@@ -16056,6 +16107,10 @@ public final class MonitorScreenSystem {
 		private ScheduledFuture<?> backgroundFuture;
 		private long nextProgressRenderAtMillis;
 		private long sessionGeneration;
+		private Boolean pendingAudioPauseState;
+		private boolean pendingAudioPositionActive;
+		private long pendingAudioPositionMs;
+		private long pendingAudioIssuedAtMillis;
 		private final Runnable progressListener;
 		private TaskProgress progress;
 
@@ -16073,6 +16128,10 @@ public final class MonitorScreenSystem {
 			this.loading = false;
 			this.galleryDeleteConfirmOpen = false;
 			this.playerBackgroundMenuOpen = false;
+			this.pendingAudioPauseState = null;
+			this.pendingAudioPositionActive = false;
+			this.pendingAudioPositionMs = 0L;
+			this.pendingAudioIssuedAtMillis = 0L;
 			this.galleryHydrated = false;
 			this.wallpaperHydrated = false;
 			this.playerBackgroundHydrated = false;

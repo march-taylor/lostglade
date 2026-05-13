@@ -258,7 +258,7 @@ public final class SpeakerSystem {
 				: List.of();
 
 		List<SpeakerAudioSource> playableSources = connectedSources.stream()
-				.filter(source -> source != null && !source.paused() && source.audioStreamUrl() != null && !source.audioStreamUrl().isBlank())
+				.filter(source -> source != null && source.audioStreamUrl() != null && !source.audioStreamUrl().isBlank())
 				.toList();
 		VoicechatApi voicechatApi = ServerVoicechatIntegration.getApi();
 		VoicechatServerApi voicechatServerApi = ServerVoicechatIntegration.getServerApi();
@@ -905,6 +905,7 @@ public final class SpeakerSystem {
 		private String relaySessionId;
 		private String audioStreamUrl;
 		private boolean liveStream;
+		private boolean paused;
 		private long processBasePositionMs;
 		private long audioSyncToken;
 		private long nextFrameSequence;
@@ -952,6 +953,12 @@ public final class SpeakerSystem {
 				if (this.closed || source == null || source.audioStreamUrl() == null || source.audioStreamUrl().isBlank()) {
 					return false;
 				}
+				if (source.paused()) {
+					return suspendProcessLocked(source);
+				}
+				if (this.paused) {
+					return restartProcessLocked(source);
+				}
 				if (shouldRestartLocked(source)) {
 					return restartProcessLocked(source);
 				}
@@ -961,6 +968,9 @@ public final class SpeakerSystem {
 
 		private short[] frameAt(long nowNanos) {
 			synchronized (this.lock) {
+				if (this.paused) {
+					return null;
+				}
 				if (this.frameBuffer.isEmpty()) {
 					return null;
 				}
@@ -1025,6 +1035,7 @@ public final class SpeakerSystem {
 			this.relaySessionId = source.relaySessionId();
 			this.audioStreamUrl = source.audioStreamUrl();
 			this.liveStream = source.liveStream();
+			this.paused = false;
 			this.processBasePositionMs = Math.max(0L, source.positionMs());
 			this.audioSyncToken = source.audioSyncToken();
 			this.nextFrameSequence = 0L;
@@ -1073,6 +1084,20 @@ public final class SpeakerSystem {
 			thread.setDaemon(true);
 			this.readerThread = thread;
 			thread.start();
+			return true;
+		}
+
+		private boolean suspendProcessLocked(SpeakerAudioSource source) {
+			stopProcessLocked();
+			this.frameBuffer.clear();
+			this.relaySessionId = source.relaySessionId();
+			this.audioStreamUrl = source.audioStreamUrl();
+			this.liveStream = source.liveStream();
+			this.paused = true;
+			this.processBasePositionMs = Math.max(0L, source.positionMs());
+			this.audioSyncToken = source.audioSyncToken();
+			this.nextFrameSequence = 0L;
+			this.playbackEpochNanos = 0L;
 			return true;
 		}
 
