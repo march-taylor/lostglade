@@ -22,4 +22,9 @@ public abstract class ServerGamePacketListenerCopperManJetpackMixin {
 		}
 		ServerRaceSystem.handleCopperManJetpackInput(this.player, packet.input());
 	}
+
+	@Inject(method = "handlePlayerInput", at = @At("TAIL"))
+	private void lg2$forceGennadiyDefenseInputPose(ServerboundPlayerInputPacket packet, CallbackInfo ci) {
+		ServerRaceSystem.handlePlayerInputPacket(this.player);
+	}
 }

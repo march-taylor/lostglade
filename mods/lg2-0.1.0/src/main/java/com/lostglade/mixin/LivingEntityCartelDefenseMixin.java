@@ -11,6 +11,18 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(LivingEntity.class)
 public abstract class LivingEntityCartelDefenseMixin {
+	@Inject(method = "hurtServer", at = @At("HEAD"), cancellable = true)
+	private void lg2$blockGennadiyDefenseDamage(
+			ServerLevel level,
+			DamageSource damageSource,
+			float damage,
+			CallbackInfoReturnable<Boolean> cir
+	) {
+		if (ServerRaceSystem.handleGennadiyDefenseDamage(level, (LivingEntity) (Object) this, damageSource, damage)) {
+			cir.setReturnValue(false);
+		}
+	}
+
 	@Inject(method = "hurtServer", at = @At("RETURN"))
 	private void lg2$reflectDamageToCartelAttackers(
 			ServerLevel level,
@@ -19,6 +31,6 @@ public abstract class LivingEntityCartelDefenseMixin {
 			CallbackInfoReturnable<Boolean> cir
 	) {
 		ServerRaceSystem.handleCartelDefenseDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
+		ServerRaceSystem.handleGennadiyCombatDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 	}
 }
-

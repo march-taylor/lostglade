@@ -6,6 +6,7 @@ import com.lostglade.server.ServerRaceSystem;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
+import net.minecraft.network.protocol.game.ServerboundMoveVehiclePacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
@@ -74,5 +75,14 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 		CopperManGogglesSystem.handleMovePacket(this.player);
 		CopperManRepulsorSystem.handleMovePacket(this.player);
 		ServerRaceSystem.handleMovePacket(this.player);
+	}
+
+	@Inject(method = "handleMoveVehicle", at = @At("TAIL"))
+	private void lg2$syncGennadiyDonkeyTurretOnVehicleMove(ServerboundMoveVehiclePacket packet, CallbackInfo ci) {
+		if (packet != null) {
+			ServerRaceSystem.handleVehicleMovePacket(this.player, packet.yRot());
+		} else {
+			ServerRaceSystem.handleVehicleMovePacket(this.player);
+		}
 	}
 }
