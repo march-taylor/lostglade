@@ -79,9 +79,10 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 
 	@Inject(method = "handleMoveVehicle", at = @At("TAIL"))
 	private void lg2$syncGennadiyDonkeyTurretOnVehicleMove(ServerboundMoveVehiclePacket packet, CallbackInfo ci) {
-		ServerRaceSystem.handleVehicleMovePacket(this.player);
 		if (packet != null) {
 			ServerRaceSystem.handleVehicleMovePacket(this.player, packet.yRot());
+		} else {
+			ServerRaceSystem.handleVehicleMovePacket(this.player);
 		}
 	}
 }

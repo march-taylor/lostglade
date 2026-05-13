@@ -2,6 +2,7 @@ package com.lostglade.mixin;
 
 import com.lostglade.server.CopperManGogglesSystem;
 import com.lostglade.server.CopperManRepulsorSystem;
+import com.lostglade.server.ServerRaceSystem;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerPlayerGameMode;
 import net.minecraft.world.InteractionHand;
@@ -25,6 +26,22 @@ public abstract class ServerPlayerGameModeCopperManRepulsorMixin {
 			CallbackInfoReturnable<InteractionResult> cir
 	) {
 		if (CopperManGogglesSystem.handleHeldModeToggle(player, hand)) {
+			cir.setReturnValue(InteractionResult.SUCCESS);
+		}
+	}
+
+	@Inject(method = "useItem", at = @At("RETURN"), cancellable = true)
+	private void lg2$fireGennadiyDonkeyAfterVanillaItemPass(
+			ServerPlayer player,
+			Level level,
+			ItemStack stack,
+			InteractionHand hand,
+			CallbackInfoReturnable<InteractionResult> cir
+	) {
+		if (cir.getReturnValue() != InteractionResult.PASS) {
+			return;
+		}
+		if (ServerRaceSystem.handleGennadiyDonkeyUseInteraction(player, hand)) {
 			cir.setReturnValue(InteractionResult.SUCCESS);
 		}
 	}
@@ -58,6 +75,10 @@ public abstract class ServerPlayerGameModeCopperManRepulsorMixin {
 			return;
 		}
 		if (CopperManRepulsorSystem.handleUseInteraction(player, hand)) {
+			cir.setReturnValue(InteractionResult.SUCCESS);
+			return;
+		}
+		if (ServerRaceSystem.handleGennadiyDonkeyUseInteraction(player, hand)) {
 			cir.setReturnValue(InteractionResult.SUCCESS);
 			return;
 		}

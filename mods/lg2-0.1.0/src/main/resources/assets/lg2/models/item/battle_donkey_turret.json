@@ -2,8 +2,10 @@
   "format_version": "1.21.11",
   "credit": "Made with Blockbench",
   "textures": {
-    "0": "lg2:item/battle_donkey_turret",
-    "particle": "lg2:item/battle_donkey_turret"
+    "0": "lg2:item/battle_donkey_turret_strap",
+    "1": "lg2:item/battle_donkey_turret_base",
+    "2": "lg2:item/battle_donkey_turret_barrel",
+    "particle": "lg2:item/battle_donkey_turret_base"
   },
   "elements": [
     {
@@ -34,7 +36,7 @@
             12,
             8
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "east": {
           "uv": [
@@ -43,7 +45,7 @@
             10,
             8
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "south": {
           "uv": [
@@ -52,7 +54,7 @@
             12,
             8
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "west": {
           "uv": [
@@ -61,7 +63,7 @@
             10,
             8
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "up": {
           "uv": [
@@ -70,7 +72,7 @@
             12,
             10
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "down": {
           "uv": [
@@ -79,7 +81,7 @@
             12,
             10
           ],
-          "texture": "#0"
+          "texture": "#1"
         }
       },
       "name": "turret_imported_01"
@@ -112,7 +114,7 @@
             2,
             7
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "east": {
           "uv": [
@@ -121,7 +123,7 @@
             8,
             7
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "south": {
           "uv": [
@@ -130,7 +132,7 @@
             3,
             7
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "west": {
           "uv": [
@@ -139,7 +141,7 @@
             12,
             7
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "up": {
           "uv": [
@@ -148,7 +150,7 @@
             3,
             12
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "down": {
           "uv": [
@@ -157,7 +159,7 @@
             3,
             8
           ],
-          "texture": "#0"
+          "texture": "#1"
         }
       },
       "name": "turret_imported_02"
@@ -190,7 +192,7 @@
             2,
             7
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "east": {
           "uv": [
@@ -199,7 +201,7 @@
             8,
             7
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "south": {
           "uv": [
@@ -208,7 +210,7 @@
             3,
             7
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "west": {
           "uv": [
@@ -217,7 +219,7 @@
             12,
             7
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "up": {
           "uv": [
@@ -226,7 +228,7 @@
             3,
             12
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "down": {
           "uv": [
@@ -235,7 +237,7 @@
             3,
             8
           ],
-          "texture": "#0"
+          "texture": "#1"
         }
       },
       "name": "turret_imported_03"
@@ -268,7 +270,7 @@
             14,
             5
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "east": {
           "uv": [
@@ -277,7 +279,7 @@
             3,
             5
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "south": {
           "uv": [
@@ -286,7 +288,7 @@
             14,
             5
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "west": {
           "uv": [
@@ -295,7 +297,7 @@
             2,
             5
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "up": {
           "uv": [
@@ -304,7 +306,7 @@
             14,
             2
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "down": {
           "uv": [
@@ -313,7 +315,7 @@
             14,
             3
           ],
-          "texture": "#0"
+          "texture": "#1"
         }
       },
       "name": "turret_imported_04"
@@ -346,7 +348,7 @@
             4,
             2
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "east": {
           "uv": [
@@ -355,7 +357,7 @@
             6,
             2
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "south": {
           "uv": [
@@ -364,7 +366,7 @@
             5,
             2
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "west": {
           "uv": [
@@ -373,7 +375,7 @@
             6,
             2
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "up": {
           "uv": [
@@ -382,7 +384,7 @@
             5,
             6
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "down": {
           "uv": [
@@ -391,7 +393,7 @@
             5,
             6
           ],
-          "texture": "#0"
+          "texture": "#1"
         }
       },
       "name": "turret_imported_05"
@@ -424,7 +426,7 @@
             5,
             2
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "east": {
           "uv": [
@@ -433,7 +435,7 @@
             6,
             2
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "south": {
           "uv": [
@@ -442,7 +444,7 @@
             4,
             2
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "west": {
           "uv": [
@@ -451,7 +453,7 @@
             9,
             2
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "up": {
           "uv": [
@@ -460,7 +462,7 @@
             4,
             9
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "down": {
           "uv": [
@@ -469,7 +471,7 @@
             4,
             6
           ],
-          "texture": "#0"
+          "texture": "#1"
         }
       },
       "name": "turret_imported_06"
@@ -502,7 +504,7 @@
             14,
             3
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "east": {
           "uv": [
@@ -511,7 +513,7 @@
             2,
             3
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "south": {
           "uv": [
@@ -520,7 +522,7 @@
             14,
             3
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "west": {
           "uv": [
@@ -529,7 +531,7 @@
             3,
             3
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "up": {
           "uv": [
@@ -538,7 +540,7 @@
             14,
             3
           ],
-          "texture": "#0"
+          "texture": "#1"
         },
         "down": {
           "uv": [
@@ -547,7 +549,7 @@
             14,
             2
           ],
-          "texture": "#0"
+          "texture": "#1"
         }
       },
       "name": "turret_imported_07"
@@ -580,7 +582,7 @@
             1,
             1
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "east": {
           "uv": [
@@ -589,7 +591,7 @@
             16,
             1
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "south": {
           "uv": [
@@ -598,7 +600,7 @@
             2,
             1
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "west": {
           "uv": [
@@ -607,7 +609,7 @@
             13,
             1
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "up": {
           "uv": [
@@ -616,7 +618,7 @@
             2,
             13
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "down": {
           "uv": [
@@ -625,7 +627,7 @@
             2,
             16
           ],
-          "texture": "#0"
+          "texture": "#2"
         }
       },
       "name": "turret_imported_08"
@@ -658,7 +660,7 @@
             1,
             1
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "east": {
           "uv": [
@@ -667,7 +669,7 @@
             14,
             1
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "south": {
           "uv": [
@@ -676,7 +678,7 @@
             2,
             1
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "west": {
           "uv": [
@@ -685,7 +687,7 @@
             15,
             1
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "up": {
           "uv": [
@@ -694,7 +696,7 @@
             2,
             15
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "down": {
           "uv": [
@@ -703,7 +705,7 @@
             2,
             14
           ],
-          "texture": "#0"
+          "texture": "#2"
         }
       },
       "name": "turret_imported_09"
@@ -736,7 +738,7 @@
             2,
             2
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "east": {
           "uv": [
@@ -745,7 +747,7 @@
             3,
             2
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "south": {
           "uv": [
@@ -754,7 +756,7 @@
             2,
             2
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "west": {
           "uv": [
@@ -763,7 +765,7 @@
             3,
             2
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "up": {
           "uv": [
@@ -772,7 +774,7 @@
             2,
             3
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "down": {
           "uv": [
@@ -781,7 +783,7 @@
             2,
             3
           ],
-          "texture": "#0"
+          "texture": "#2"
         }
       },
       "name": "turret_imported_10"
@@ -814,7 +816,7 @@
             2,
             2
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "east": {
           "uv": [
@@ -823,7 +825,7 @@
             3,
             2
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "south": {
           "uv": [
@@ -832,7 +834,7 @@
             2,
             2
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "west": {
           "uv": [
@@ -841,7 +843,7 @@
             3,
             2
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "up": {
           "uv": [
@@ -850,7 +852,7 @@
             2,
             3
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "down": {
           "uv": [
@@ -859,7 +861,7 @@
             2,
             3
           ],
-          "texture": "#0"
+          "texture": "#2"
         }
       },
       "name": "turret_imported_11"
@@ -892,7 +894,7 @@
             1.8,
             1.8
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "east": {
           "uv": [
@@ -901,7 +903,7 @@
             2,
             1.8
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "south": {
           "uv": [
@@ -910,7 +912,7 @@
             1.8,
             1.8
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "west": {
           "uv": [
@@ -919,7 +921,7 @@
             3,
             1.8
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "up": {
           "uv": [
@@ -928,7 +930,7 @@
             1.8,
             3
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "down": {
           "uv": [
@@ -937,7 +939,7 @@
             1.8,
             2
           ],
-          "texture": "#0"
+          "texture": "#2"
         }
       },
       "name": "turret_imported_12"
@@ -970,7 +972,7 @@
             1.8,
             1.8
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "east": {
           "uv": [
@@ -979,7 +981,7 @@
             2,
             1.8
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "south": {
           "uv": [
@@ -988,7 +990,7 @@
             1.8,
             1.8
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "west": {
           "uv": [
@@ -997,7 +999,7 @@
             3,
             1.8
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "up": {
           "uv": [
@@ -1006,7 +1008,7 @@
             1.8,
             3
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "down": {
           "uv": [
@@ -1015,7 +1017,7 @@
             1.8,
             2
           ],
-          "texture": "#0"
+          "texture": "#2"
         }
       },
       "name": "turret_imported_13"
@@ -1048,7 +1050,7 @@
             12,
             1
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "east": {
           "uv": [
@@ -1057,7 +1059,7 @@
             1,
             1
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "south": {
           "uv": [
@@ -1066,7 +1068,7 @@
             12,
             1
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "west": {
           "uv": [
@@ -1075,7 +1077,7 @@
             2,
             1
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "up": {
           "uv": [
@@ -1084,7 +1086,7 @@
             12,
             2
           ],
-          "texture": "#0"
+          "texture": "#2"
         },
         "down": {
           "uv": [
@@ -1093,7 +1095,7 @@
             12,
             1
           ],
-          "texture": "#0"
+          "texture": "#2"
         }
       },
       "name": "turret_imported_14"

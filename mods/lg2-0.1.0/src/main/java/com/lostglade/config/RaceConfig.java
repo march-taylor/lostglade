@@ -193,6 +193,12 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.gennadiyDonkeyBulletRangeBlocks, value -> ability.gennadiyDonkeyBulletRangeBlocks = value);
 		changed |= normalizeNonNegative(ability.gennadiyDonkeyFollowMaxDistanceBlocks, value -> ability.gennadiyDonkeyFollowMaxDistanceBlocks = value);
 		changed |= normalizeNonNegative(ability.gennadiyDonkeyAmmoRegenSeconds, value -> ability.gennadiyDonkeyAmmoRegenSeconds = value);
+		changed |= normalizeNonNegative(ability.gennadiyDefenseDurationSeconds, value -> ability.gennadiyDefenseDurationSeconds = value);
+		changed |= normalizeNonNegative(ability.gennadiyDefenseKnockbackBlocksPerDamage, value -> ability.gennadiyDefenseKnockbackBlocksPerDamage = value);
+		changed |= normalizeNonNegative(ability.gennadiyDefenseMaxKnockbackBlocks, value -> ability.gennadiyDefenseMaxKnockbackBlocks = value);
+		changed |= normalizeNonNegative(ability.gennadiyDefenseWaveRangeBlocks, value -> ability.gennadiyDefenseWaveRangeBlocks = value);
+		changed |= normalizeNonNegative(ability.gennadiyDefenseMinDamage, value -> ability.gennadiyDefenseMinDamage = value);
+		changed |= normalizeNonNegative(ability.gennadiyDefenseMaxDamage, value -> ability.gennadiyDefenseMaxDamage = value);
 		changed |= normalizeNonNegative(ability.jetpackMaxRiseBlocks, value -> ability.jetpackMaxRiseBlocks = value);
 		changed |= normalizeChance(ability.repulsorNaturalLightningChargeChance, value -> ability.repulsorNaturalLightningChargeChance = value);
 		changed |= normalizeNonNegative(ability.gennadiyDonkeyMaxAmmo, (java.util.function.IntConsumer) value -> ability.gennadiyDonkeyMaxAmmo = value);
@@ -212,6 +218,10 @@ public final class RaceConfig {
 		}
 		if (ability.methadoneAddictionSeconds > 0.0D && ability.methadoneWithdrawalStartSeconds > ability.methadoneAddictionSeconds) {
 			ability.methadoneWithdrawalStartSeconds = ability.methadoneAddictionSeconds;
+			changed = true;
+		}
+		if (ability.gennadiyDefenseMaxDamage < ability.gennadiyDefenseMinDamage) {
+			ability.gennadiyDefenseMaxDamage = ability.gennadiyDefenseMinDamage;
 			changed = true;
 		}
 		return changed;
@@ -345,6 +355,12 @@ public final class RaceConfig {
 			addDoubleIfNonZero(json, "gennadiyDonkeyBulletDamage", ability.gennadiyDonkeyBulletDamage);
 			addDoubleIfNonZero(json, "gennadiyDonkeyBulletRangeBlocks", ability.gennadiyDonkeyBulletRangeBlocks);
 			addDoubleIfNonZero(json, "gennadiyDonkeyFollowMaxDistanceBlocks", ability.gennadiyDonkeyFollowMaxDistanceBlocks);
+			addDoubleIfNonZero(json, "gennadiyDefenseDurationSeconds", ability.gennadiyDefenseDurationSeconds);
+			addDoubleIfNonZero(json, "gennadiyDefenseKnockbackBlocksPerDamage", ability.gennadiyDefenseKnockbackBlocksPerDamage);
+			addDoubleIfNonZero(json, "gennadiyDefenseMaxKnockbackBlocks", ability.gennadiyDefenseMaxKnockbackBlocks);
+			addDoubleIfNonZero(json, "gennadiyDefenseWaveRangeBlocks", ability.gennadiyDefenseWaveRangeBlocks);
+			addDoubleIfNonZero(json, "gennadiyDefenseMinDamage", ability.gennadiyDefenseMinDamage);
+			addDoubleIfNonZero(json, "gennadiyDefenseMaxDamage", ability.gennadiyDefenseMaxDamage);
 			addDoubleIfNonZero(json, "jetpackMaxRiseBlocks", ability.jetpackMaxRiseBlocks);
 			addIntIfNonZero(json, "repulsorMaxCharges", ability.repulsorMaxCharges);
 			addIntIfNonZero(json, "repulsorCopperIngotChargeRestore", ability.repulsorCopperIngotChargeRestore);
@@ -480,6 +496,12 @@ public final class RaceConfig {
 		public double gennadiyDonkeyBulletDamage = 0.0D;
 		public double gennadiyDonkeyBulletRangeBlocks = 0.0D;
 		public double gennadiyDonkeyFollowMaxDistanceBlocks = 0.0D;
+		public double gennadiyDefenseDurationSeconds = 0.0D;
+		public double gennadiyDefenseKnockbackBlocksPerDamage = 0.0D;
+		public double gennadiyDefenseMaxKnockbackBlocks = 0.0D;
+		public double gennadiyDefenseWaveRangeBlocks = 0.0D;
+		public double gennadiyDefenseMinDamage = 0.0D;
+		public double gennadiyDefenseMaxDamage = 0.0D;
 		public double jetpackMaxRiseBlocks = 0.0D;
 		public int repulsorMaxCharges = 0;
 		public int repulsorCopperIngotChargeRestore = 0;

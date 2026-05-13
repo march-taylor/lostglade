@@ -249,7 +249,7 @@
         "gennadiyDonkeyMaxAmmo": 128,
         "gennadiyDonkeyAmmoRegenAmount": 2,
         "gennadiyDonkeyAmmoRegenSeconds": 9.375,
-        "gennadiyDonkeyBulletDamage": 2.0,
+        "gennadiyDonkeyBulletDamage": 3.0,
         "gennadiyDonkeyBulletRangeBlocks": 16.0,
         "gennadiyDonkeyFollowMaxDistanceBlocks": 8.0
       },
@@ -258,7 +258,14 @@
         "abilityId": "gennadiy_sharoyobov_defense",
         "name": "Тильт",
         "description": "Вы становитесь неуязвимы на несколько секунд. Весь полученный за это время урон превращается во взрывную волну.",
-        "priceBitcoins": 600
+        "priceBitcoins": 600,
+        "cooldownSeconds": 600.0,
+        "gennadiyDefenseDurationSeconds": 10.0,
+        "gennadiyDefenseKnockbackBlocksPerDamage": 1.0,
+        "gennadiyDefenseMaxKnockbackBlocks": 32.0,
+        "gennadiyDefenseWaveRangeBlocks": 32.0,
+        "gennadiyDefenseMinDamage": 1.0,
+        "gennadiyDefenseMaxDamage": 3.0
       },
       "uniqueAbility": {
         "enabled": true,
