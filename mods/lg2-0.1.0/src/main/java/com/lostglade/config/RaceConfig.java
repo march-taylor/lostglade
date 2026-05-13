@@ -2,6 +2,10 @@ package com.lostglade.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonSerializationContext;
+import com.google.gson.JsonSerializer;
 import com.google.gson.annotations.SerializedName;
 import com.lostglade.Lg2;
 import net.fabricmc.loader.api.FabricLoader;
@@ -11,11 +15,15 @@ import java.io.Reader;
 import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
 
 public final class RaceConfig {
-	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+	private static final Gson GSON = new GsonBuilder()
+			.setPrettyPrinting()
+			.registerTypeAdapter(RaceAbilityConfig.class, new RaceAbilityConfigSerializer())
+			.create();
 	private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve(Lg2.MOD_ID + "-races.json");
 	private static final int MAX_PRICE_BITCOINS = 1_000_000;
 	private static final String NO_RACE_ID = "no_race";
@@ -178,8 +186,17 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.womanShnyagaBuffRangeBlocks, value -> ability.womanShnyagaBuffRangeBlocks = value);
 		changed |= normalizeNonNegative(ability.womanShnyagaRejectDamageHearts, value -> ability.womanShnyagaRejectDamageHearts = value);
 		changed |= normalizeNonNegative(ability.womanShnyagaRejectDebuffSeconds, value -> ability.womanShnyagaRejectDebuffSeconds = value);
+		changed |= normalizeNonNegative(ability.gennadiyDonkeyHealthPoints, value -> ability.gennadiyDonkeyHealthPoints = value);
+		changed |= normalizeNonNegative(ability.gennadiyDonkeyArmorDivider, value -> ability.gennadiyDonkeyArmorDivider = value);
+		changed |= normalizeNonNegative(ability.gennadiyDonkeyHealthRegenSeconds, value -> ability.gennadiyDonkeyHealthRegenSeconds = value);
+		changed |= normalizeNonNegative(ability.gennadiyDonkeyBulletDamage, value -> ability.gennadiyDonkeyBulletDamage = value);
+		changed |= normalizeNonNegative(ability.gennadiyDonkeyBulletRangeBlocks, value -> ability.gennadiyDonkeyBulletRangeBlocks = value);
+		changed |= normalizeNonNegative(ability.gennadiyDonkeyFollowMaxDistanceBlocks, value -> ability.gennadiyDonkeyFollowMaxDistanceBlocks = value);
+		changed |= normalizeNonNegative(ability.gennadiyDonkeyAmmoRegenSeconds, value -> ability.gennadiyDonkeyAmmoRegenSeconds = value);
 		changed |= normalizeNonNegative(ability.jetpackMaxRiseBlocks, value -> ability.jetpackMaxRiseBlocks = value);
 		changed |= normalizeChance(ability.repulsorNaturalLightningChargeChance, value -> ability.repulsorNaturalLightningChargeChance = value);
+		changed |= normalizeNonNegative(ability.gennadiyDonkeyMaxAmmo, (java.util.function.IntConsumer) value -> ability.gennadiyDonkeyMaxAmmo = value);
+		changed |= normalizeNonNegative(ability.gennadiyDonkeyAmmoRegenAmount, (java.util.function.IntConsumer) value -> ability.gennadiyDonkeyAmmoRegenAmount = value);
 		changed |= normalizeNonNegative(ability.copperIngotFoodPoints, (java.util.function.IntConsumer) value -> ability.copperIngotFoodPoints = value);
 		changed |= normalizeNonNegative(ability.repulsorMaxCharges, (java.util.function.IntConsumer) value -> ability.repulsorMaxCharges = value);
 		changed |= normalizeNonNegative(ability.repulsorCopperIngotChargeRestore, (java.util.function.IntConsumer) value -> ability.repulsorCopperIngotChargeRestore = value);
@@ -266,6 +283,94 @@ public final class RaceConfig {
 		}
 		setter.accept(normalized);
 		return true;
+	}
+
+	private static final class RaceAbilityConfigSerializer implements JsonSerializer<RaceAbilityConfig> {
+		@Override
+		public JsonElement serialize(RaceAbilityConfig ability, Type type, JsonSerializationContext context) {
+			JsonObject json = new JsonObject();
+			json.addProperty("enabled", ability.enabled);
+			addString(json, "abilityId", ability.abilityId);
+			addString(json, "name", ability.name);
+			addString(json, "description", ability.description);
+			addIntIfNonZero(json, "priceBitcoins", ability.priceBitcoins);
+			addDoubleIfNonZero(json, "cooldownSeconds", ability.cooldownSeconds);
+			addDoubleIfNonZero(json, "activationRangeBlocks", ability.activationRangeBlocks);
+			addDoubleIfNonZero(json, "durationSeconds", ability.durationSeconds);
+			addDoubleIfNonZero(json, "innerMinDistanceBlocks", ability.innerMinDistanceBlocks);
+			addDoubleIfNonZero(json, "followMaxDistanceBlocks", ability.followMaxDistanceBlocks);
+			addDoubleIfNonZero(json, "maxOutsideAreaSeconds", ability.maxOutsideAreaSeconds);
+			addDoubleIfNonZero(json, "healthPoints", ability.healthPoints);
+			addDoubleIfNonZero(json, "reflectedDamageRatio", ability.reflectedDamageRatio);
+			addDoubleIfNonZero(json, "summonLifetimeSeconds", ability.summonLifetimeSeconds);
+			addDoubleIfNonZero(json, "summonAfterKillSeconds", ability.summonAfterKillSeconds);
+			addDoubleIfNonZero(json, "minGrowthSeconds", ability.minGrowthSeconds);
+			addDoubleIfNonZero(json, "maxGrowthSeconds", ability.maxGrowthSeconds);
+			addDoubleIfNonZero(json, "tubochkaBurnSeconds", ability.tubochkaBurnSeconds);
+			if (Double.compare(ability.tubochkaMaxReleaseSmokeParticles, 8.0D) != 0) {
+				addDoubleIfNonZero(json, "tubochkaMaxReleaseSmokeParticles", ability.tubochkaMaxReleaseSmokeParticles);
+			}
+			addDoubleIfNonZero(json, "methadoneAddictionSeconds", ability.methadoneAddictionSeconds);
+			addDoubleIfNonZero(json, "methadoneWithdrawalStartSeconds", ability.methadoneWithdrawalStartSeconds);
+			addDoubleIfNonZero(json, "cocaineHallucinationChance", ability.cocaineHallucinationChance);
+			addDoubleIfNonZero(json, "foodRestoreMultiplier", ability.foodRestoreMultiplier);
+			addIntIfNonZero(json, "copperIngotFoodPoints", ability.copperIngotFoodPoints);
+			addDoubleIfNonZero(json, "copperGolemNoticeRangeBlocks", ability.copperGolemNoticeRangeBlocks);
+			addDoubleIfNonZero(json, "copperGogglesScanCooldownSeconds", ability.copperGogglesScanCooldownSeconds);
+			addDoubleIfNonZero(json, "copperGogglesOreSearchRadiusBlocks", ability.copperGogglesOreSearchRadiusBlocks);
+			addDoubleIfNonZero(json, "copperGogglesOreSearchHighlightSeconds", ability.copperGogglesOreSearchHighlightSeconds);
+			addDoubleIfNonZero(json, "copperGogglesTrackingRadiusBlocks", ability.copperGogglesTrackingRadiusBlocks);
+			addDoubleIfNonZero(json, "copperGogglesTrackingHighlightSeconds", ability.copperGogglesTrackingHighlightSeconds);
+			addDoubleIfNonZero(json, "womanFlowerCooldownSeconds", ability.womanFlowerCooldownSeconds);
+			addDoubleIfNonZero(json, "womanAnimalBreedCooldownSeconds", ability.womanAnimalBreedCooldownSeconds);
+			addDoubleIfNonZero(json, "womanAttackChargeRadiusBlocks", ability.womanAttackChargeRadiusBlocks);
+			addDoubleIfNonZero(json, "womanAttackRangeBlocks", ability.womanAttackRangeBlocks);
+			addDoubleIfNonZero(json, "womanAttackDamage", ability.womanAttackDamage);
+			addDoubleIfNonZero(json, "womanAttackFollowSeconds", ability.womanAttackFollowSeconds);
+			addDoubleIfNonZero(json, "womanUniqueDropMinSeconds", ability.womanUniqueDropMinSeconds);
+			addDoubleIfNonZero(json, "womanUniqueDropMaxSeconds", ability.womanUniqueDropMaxSeconds);
+			addDoubleIfNonZero(json, "womanUniqueDropChance", ability.womanUniqueDropChance);
+			addDoubleIfNonZero(json, "womanUniqueTradePriceIncrease", ability.womanUniqueTradePriceIncrease);
+			addDoubleIfNonZero(json, "womanUniqueAbsorptionHearts", ability.womanUniqueAbsorptionHearts);
+			addDoubleIfNonZero(json, "womanShnyagaTransferHearts", ability.womanShnyagaTransferHearts);
+			addDoubleIfNonZero(json, "womanShnyagaBuffRangeBlocks", ability.womanShnyagaBuffRangeBlocks);
+			addDoubleIfNonZero(json, "womanShnyagaRejectDamageHearts", ability.womanShnyagaRejectDamageHearts);
+			addDoubleIfNonZero(json, "womanShnyagaRejectDebuffSeconds", ability.womanShnyagaRejectDebuffSeconds);
+			addDoubleIfNonZero(json, "gennadiyDonkeyHealthPoints", ability.gennadiyDonkeyHealthPoints);
+			addDoubleIfNonZero(json, "gennadiyDonkeyArmorDivider", ability.gennadiyDonkeyArmorDivider);
+			addDoubleIfNonZero(json, "gennadiyDonkeyHealthRegenSeconds", ability.gennadiyDonkeyHealthRegenSeconds);
+			addIntIfNonZero(json, "gennadiyDonkeyMaxAmmo", ability.gennadiyDonkeyMaxAmmo);
+			addIntIfNonZero(json, "gennadiyDonkeyAmmoRegenAmount", ability.gennadiyDonkeyAmmoRegenAmount);
+			addDoubleIfNonZero(json, "gennadiyDonkeyAmmoRegenSeconds", ability.gennadiyDonkeyAmmoRegenSeconds);
+			addDoubleIfNonZero(json, "gennadiyDonkeyBulletDamage", ability.gennadiyDonkeyBulletDamage);
+			addDoubleIfNonZero(json, "gennadiyDonkeyBulletRangeBlocks", ability.gennadiyDonkeyBulletRangeBlocks);
+			addDoubleIfNonZero(json, "gennadiyDonkeyFollowMaxDistanceBlocks", ability.gennadiyDonkeyFollowMaxDistanceBlocks);
+			addDoubleIfNonZero(json, "jetpackMaxRiseBlocks", ability.jetpackMaxRiseBlocks);
+			addIntIfNonZero(json, "repulsorMaxCharges", ability.repulsorMaxCharges);
+			addIntIfNonZero(json, "repulsorCopperIngotChargeRestore", ability.repulsorCopperIngotChargeRestore);
+			addDoubleIfNonZero(json, "repulsorNaturalLightningChargeChance", ability.repulsorNaturalLightningChargeChance);
+			addIntIfNonZero(json, "repulsorNaturalLightningChargeRestore", ability.repulsorNaturalLightningChargeRestore);
+			addDoubleIfNonZero(json, "chance", ability.chance);
+			return json;
+		}
+
+		private static void addString(JsonObject json, String key, String value) {
+			if (value != null) {
+				json.addProperty(key, value);
+			}
+		}
+
+		private static void addIntIfNonZero(JsonObject json, String key, int value) {
+			if (value != 0) {
+				json.addProperty(key, value);
+			}
+		}
+
+		private static void addDoubleIfNonZero(JsonObject json, String key, double value) {
+			if (Double.compare(value, 0.0D) != 0) {
+				json.addProperty(key, value);
+			}
+		}
 	}
 
 	public enum RaceAbilitySlot {
@@ -366,6 +471,15 @@ public final class RaceConfig {
 		public double womanShnyagaBuffRangeBlocks = 0.0D;
 		public double womanShnyagaRejectDamageHearts = 0.0D;
 		public double womanShnyagaRejectDebuffSeconds = 0.0D;
+		public double gennadiyDonkeyHealthPoints = 0.0D;
+		public double gennadiyDonkeyArmorDivider = 0.0D;
+		public double gennadiyDonkeyHealthRegenSeconds = 0.0D;
+		public int gennadiyDonkeyMaxAmmo = 0;
+		public int gennadiyDonkeyAmmoRegenAmount = 0;
+		public double gennadiyDonkeyAmmoRegenSeconds = 0.0D;
+		public double gennadiyDonkeyBulletDamage = 0.0D;
+		public double gennadiyDonkeyBulletRangeBlocks = 0.0D;
+		public double gennadiyDonkeyFollowMaxDistanceBlocks = 0.0D;
 		public double jetpackMaxRiseBlocks = 0.0D;
 		public int repulsorMaxCharges = 0;
 		public int repulsorCopperIngotChargeRestore = 0;

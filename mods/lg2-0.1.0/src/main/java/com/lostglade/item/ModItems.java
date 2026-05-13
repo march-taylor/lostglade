@@ -29,6 +29,7 @@ public final class ModItems {
 	private static final Identifier BLUETOOTH_ADAPTER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "bluetooth_adapter");
 	private static final Identifier COPPER_JETPACK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_jetpack");
 	private static final Identifier COPPER_GOGGLES_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_goggles");
+	private static final Identifier BATTLE_DONKEY_TURRET_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "battle_donkey_turret");
 	private static final Identifier PHOTO_PRINT_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "photo_print");
 	private static final Identifier TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "travka");
 	private static final Identifier DRIED_TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "dried_travka");
@@ -50,6 +51,7 @@ public final class ModItems {
 	private static final ResourceKey<Item> BLUETOOTH_ADAPTER_KEY = ResourceKey.create(Registries.ITEM, BLUETOOTH_ADAPTER_ID);
 	private static final ResourceKey<Item> COPPER_JETPACK_KEY = ResourceKey.create(Registries.ITEM, COPPER_JETPACK_ID);
 	private static final ResourceKey<Item> COPPER_GOGGLES_KEY = ResourceKey.create(Registries.ITEM, COPPER_GOGGLES_ID);
+	private static final ResourceKey<Item> BATTLE_DONKEY_TURRET_KEY = ResourceKey.create(Registries.ITEM, BATTLE_DONKEY_TURRET_ID);
 	private static final ResourceKey<Item> PHOTO_PRINT_KEY = ResourceKey.create(Registries.ITEM, PHOTO_PRINT_ID);
 	private static final ResourceKey<Item> TRAVKA_KEY = ResourceKey.create(Registries.ITEM, TRAVKA_ID);
 	private static final ResourceKey<Item> DRIED_TRAVKA_KEY = ResourceKey.create(Registries.ITEM, DRIED_TRAVKA_ID);
@@ -147,6 +149,16 @@ public final class ModItems {
 							.setId(COPPER_GOGGLES_KEY)
 							.stacksTo(1)
 							.equippable(EquipmentSlot.HEAD)
+							.rarity(Rarity.UNCOMMON)
+			)
+	);
+	public static final Item BATTLE_DONKEY_TURRET = Registry.register(
+			BuiltInRegistries.ITEM,
+			BATTLE_DONKEY_TURRET_ID,
+			new BattleDonkeyTurretItem(
+					new Item.Properties()
+							.setId(BATTLE_DONKEY_TURRET_KEY)
+							.stacksTo(1)
 							.rarity(Rarity.UNCOMMON)
 			)
 	);

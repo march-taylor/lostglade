@@ -19,6 +19,6 @@ public abstract class LivingEntityCartelDefenseMixin {
 			CallbackInfoReturnable<Boolean> cir
 	) {
 		ServerRaceSystem.handleCartelDefenseDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
+		ServerRaceSystem.handleGennadiyCombatDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 	}
 }
-

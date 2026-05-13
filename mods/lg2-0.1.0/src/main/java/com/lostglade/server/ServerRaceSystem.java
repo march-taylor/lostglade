@@ -11,6 +11,7 @@ import com.lostglade.config.RaceConfig.RaceAbilityConfig;
 import com.lostglade.config.RaceConfig.RaceAbilitySlot;
 import com.lostglade.item.CocaineItem;
 import com.lostglade.item.CopperJetpackItem;
+import com.lostglade.item.BattleDonkeyTurretItem;
 import com.lostglade.item.MethadoneItem;
 import com.lostglade.item.ModItems;
 import com.lostglade.item.TubochkaItem;
@@ -31,6 +32,7 @@ import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import it.unimi.dsi.fastutil.Pair;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
+import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
@@ -49,6 +51,7 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
+import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -60,9 +63,11 @@ import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
+import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundOpenBookPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
@@ -96,6 +101,7 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.animal.Animal;
+import net.minecraft.world.entity.animal.equine.Donkey;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
@@ -117,6 +123,7 @@ import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.raid.Raider;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
+import net.minecraft.world.entity.projectile.arrow.Arrow;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -210,6 +217,7 @@ public final class ServerRaceSystem {
 	private static final String COPPER_MAN_RACE_ID = "copper_man";
 	private static final String NO_RACE_ID = "no_race";
 	private static final String WOMAN_RACE_ID = "woman";
+	private static final String GENNADIY_SHAROYOBOV_RACE_ID = "gennadiy_sharoyobov";
 	private static final String TITLE_OVERLAY_SHIFT = "\ue905";
 	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
 	private static final int TITLE_OVERLAY_TARGET_ADVANCE = 168;
@@ -329,6 +337,37 @@ public final class ServerRaceSystem {
 	private static final long WOMAN_ATTACK_FOLLOW_NAV_INTERVAL_TICKS = 8L;
 	private static final double WOMAN_ATTACK_FOLLOW_SPEED = 1.1D;
 	private static final double WOMAN_SOUND_RANGE_BLOCKS = 16.0D;
+	private static final double GENNADIY_DONKEY_DEFAULT_HEALTH_POINTS = 30.0D;
+	private static final double GENNADIY_DONKEY_DEFAULT_ARMOR_DIVIDER = 2.0D;
+	private static final double GENNADIY_DONKEY_DEFAULT_HEALTH_REGEN_SECONDS = 40.0D;
+	private static final double GENNADIY_DONKEY_DEFAULT_COOLDOWN_SECONDS = 600.0D;
+	private static final int GENNADIY_DONKEY_DEFAULT_MAX_AMMO = 128;
+	private static final int GENNADIY_DONKEY_DEFAULT_AMMO_REGEN_AMOUNT = 2;
+	private static final double GENNADIY_DONKEY_DEFAULT_AMMO_REGEN_SECONDS = 9.375D;
+	private static final double GENNADIY_DONKEY_DEFAULT_BULLET_DAMAGE = 2.0D;
+	private static final double GENNADIY_DONKEY_DEFAULT_BULLET_RANGE_BLOCKS = 16.0D;
+	private static final double GENNADIY_DONKEY_DEFAULT_FOLLOW_MAX_DISTANCE_BLOCKS = 8.0D;
+	private static final long GENNADIY_DONKEY_SHOT_INTERVAL_TICKS = 2L;
+	private static final long GENNADIY_DONKEY_MANUAL_INPUT_GRACE_TICKS = 4L;
+	private static final double GENNADIY_DONKEY_WALK_SPEED = 0.18D;
+	private static final double GENNADIY_DONKEY_RETURN_SPEED = 0.29D;
+	private static final double GENNADIY_DONKEY_STEERING_SMOOTHING = 0.35D;
+	private static final long GENNADIY_DONKEY_MOVEMENT_LOGIC_INTERVAL_TICKS = 4L;
+	private static final double GENNADIY_DONKEY_TARGET_FORGET_RANGE_BLOCKS = 96.0D;
+	private static final double GENNADIY_DONKEY_OWNER_MIN_DISTANCE_BLOCKS = 2.25D;
+	private static final long GENNADIY_DONKEY_MAX_OUTSIDE_TICKS = 100L;
+	private static final double GENNADIY_DONKEY_MANUAL_VISUAL_YAW_LEAD = 1.0D;
+	private static final float GENNADIY_DONKEY_MANUAL_VISUAL_MAX_YAW_LEAD_DEGREES = 24.0F;
+	private static final String GENNADIY_DONKEY_TAG = "lg2.gennadiy_battle_donkey";
+	private static final String GENNADIY_DONKEY_VISUAL_TAG = "lg2.gennadiy_battle_donkey_visual";
+	private static final String GENNADIY_DONKEY_HELMET_VISUAL_TAG = "lg2.gennadiy_battle_donkey_helmet_visual";
+	private static final String GENNADIY_DONKEY_TRIGGER_TAG = "lg2.gennadiy_battle_donkey_trigger";
+	private static final String GENNADIY_DONKEY_OWNER_TAG_PREFIX = "lg2_gennadiy_donkey_owner:";
+	private static final EntityDimensions GENNADIY_DONKEY_DIMENSIONS = EntityDimensions.fixed(1.4F, 1.6F);
+	private static final float GENNADIY_DONKEY_AIR_TRIGGER_WIDTH = 1.6F;
+	private static final float GENNADIY_DONKEY_AIR_TRIGGER_HEIGHT = 1.6F;
+	private static final double GENNADIY_DONKEY_AIR_TRIGGER_HEAD_FORWARD_OFFSET = 0.24D;
+	private static final double GENNADIY_DONKEY_BULLET_VISUAL_SPEED_BLOCKS = 4.0D;
 	private static final long WOMAN_SHNYAGA_WHITELIST_CHECK_INTERVAL_TICKS = 100L;
 	private static final int WOMAN_SHNYAGA_EFFECT_DURATION_TICKS = 60;
 	private static final String WOMAN_SHNYAGA_STATE_FILE_NAME = "lg2_woman_shnyaga_links.json";
@@ -459,6 +498,10 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, WomanAttackChargeSession> WOMAN_ATTACK_CHARGE_SESSIONS = new LinkedHashMap<>();
 	private static final List<WomanAttackProjectile> WOMAN_ATTACK_PROJECTILES = new ArrayList<>();
 	private static final Map<UUID, WomanAttackFollowSession> WOMAN_ATTACK_FOLLOWS = new LinkedHashMap<>();
+	private static final Map<UUID, Long> GENNADIY_DONKEY_COOLDOWNS = new LinkedHashMap<>();
+	private static final Map<UUID, GennadiyDonkeyState> GENNADIY_DONKEY_STATES = new LinkedHashMap<>();
+	private static final Map<UUID, UUID> GENNADIY_DONKEY_OWNER_BY_ENTITY = new LinkedHashMap<>();
+	private static final List<GennadiyDonkeyBulletVisual> GENNADIY_DONKEY_BULLET_VISUALS = new ArrayList<>();
 	private static final Map<UUID, CartelDisguiseSession> CARTEL_DISGUISE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelManualBookRestore> CARTEL_MANUAL_BOOK_RESTORES = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> COPPER_GOLEM_FOLLOWERS = new LinkedHashMap<>();
@@ -632,6 +675,7 @@ public final class ServerRaceSystem {
 			restoreAllCartelDisguises(server);
 			restoreAllCopperManJetpacks(server);
 			restoreAllCopperManDefenseVisuals(server);
+			cleanupAllGennadiyDonkeys(server);
 			CartelWebcamBridge.clearAll();
 			RACES_BY_NICKNAME.clear();
 			DIALOG_ID_BY_NICKNAME.clear();
@@ -676,6 +720,10 @@ public final class ServerRaceSystem {
 			COPPER_MAN_DEFENSE_TINT_CACHE.clear();
 			COPPER_MAN_DEFENSE_TINT_RETRY_AT_MS.clear();
 			COPPER_MAN_DEFENSE_TINT_BUILD_IN_FLIGHT.clear();
+			GENNADIY_DONKEY_COOLDOWNS.clear();
+			GENNADIY_DONKEY_STATES.clear();
+			GENNADIY_DONKEY_OWNER_BY_ENTITY.clear();
+			GENNADIY_DONKEY_BULLET_VISUALS.clear();
 			copperManDefenseTintCacheLastCleanupTick = Long.MIN_VALUE;
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.clear();
 			CARTEL_PLANTED_FERN_GROWTHS.clear();
@@ -723,12 +771,22 @@ public final class ServerRaceSystem {
 			clearWomanUniqueState(server, handler.player.getUUID());
 			clearWomanAttackState(handler.player.getUUID());
 			clearWomanShnyagaPendingState(handler.player.getUUID());
+			recallGennadiyDonkey(server, handler.player.getUUID(), false);
 			syncWomanShnyagaLinks(server);
+		});
+		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> {
+			if (!alive) {
+				recallGennadiyDonkey(newPlayer.level().getServer(), newPlayer.getUUID(), false);
+			}
 		});
 		ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(ServerRaceSystem::onAllowChatMessage);
 		UseItemCallback.EVENT.register((player, world, hand) -> {
 			if (!(player instanceof ServerPlayer serverPlayer) || world.isClientSide()) {
 				return InteractionResult.PASS;
+			}
+			InteractionResult donkeyResult = tryUseGennadiyDonkeyManualShoot(serverPlayer, hand);
+			if (donkeyResult != InteractionResult.PASS) {
+				return donkeyResult;
 			}
 			InteractionResult womanResult = tryReleaseWomanAttack(serverPlayer, hand);
 			if (womanResult != InteractionResult.PASS) {
@@ -773,6 +831,7 @@ public final class ServerRaceSystem {
 			tickWomanUnique(server);
 			tickWomanShnyaga(server);
 			tickWomanAttack(server);
+			tickGennadiyDonkeys(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
 		});
@@ -836,6 +895,7 @@ public final class ServerRaceSystem {
 		WOMAN_ANIMAL_BREED_COOLDOWNS.clear();
 		COPPER_MAN_DEFENSE_COOLDOWNS.clear();
 		COPPER_MAN_JETPACK_COOLDOWNS.clear();
+		GENNADIY_DONKEY_COOLDOWNS.clear();
 		CopperManGogglesSystem.resetAllAbilityCooldowns(server);
 		CopperManRepulsorSystem.resetAllAbilityCooldowns(server);
 	}
@@ -994,6 +1054,9 @@ public final class ServerRaceSystem {
 		if (slot == RaceAbilitySlot.SHNYAGA && WOMAN_RACE_ID.equals(raceId)) {
 			return useWomanShnyaga(player, race, ability);
 		}
+		if (slot == RaceAbilitySlot.ATTACK && GENNADIY_SHAROYOBOV_RACE_ID.equals(raceId)) {
+			return useGennadiyDonkeyAttack(player, race, ability);
+		}
 
 		startGenericAbilityCooldown(player, slot, ability);
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
@@ -1064,6 +1127,9 @@ public final class ServerRaceSystem {
 					|| slot == RaceAbilitySlot.DEFENSE
 					|| slot == RaceAbilitySlot.UNIQUE_ABILITY
 					|| slot == RaceAbilitySlot.SHNYAGA;
+		}
+		if (GENNADIY_SHAROYOBOV_RACE_ID.equals(raceId)) {
+			return slot == RaceAbilitySlot.ATTACK;
 		}
 		return false;
 	}
@@ -2408,6 +2474,79 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private static final class GennadiyDonkeyState {
+		private final UUID ownerId;
+		private ResourceKey<Level> dimension;
+		private UUID donkeyId;
+		private UUID visualId;
+		private UUID helmetVisualId;
+		private UUID manualTriggerId;
+		private double health;
+		private double maxHealth;
+		private int ammo;
+		private int maxAmmo;
+		private double armorDivider;
+		private long healthRegenTicks;
+		private int ammoRegenAmount;
+		private long ammoRegenTicks;
+		private double bulletDamage;
+		private double bulletRange;
+		private double followMaxDistance;
+		private long cooldownTicks;
+		private long nextHealthRegenTick;
+		private long nextAmmoRegenTick;
+		private long nextShotTick;
+		private long lastManualInputTick;
+		private long nextMovementLogicTick;
+		private long nextWanderRetargetTick;
+		private Long outsideSinceTick;
+		private Vec3 wanderTarget;
+		private UUID targetId;
+		private boolean hasManualVisualYaw;
+		private float lastManualVisualYaw;
+
+		private GennadiyDonkeyState(UUID ownerId) {
+			this.ownerId = ownerId;
+			this.health = GENNADIY_DONKEY_DEFAULT_HEALTH_POINTS;
+			this.maxHealth = GENNADIY_DONKEY_DEFAULT_HEALTH_POINTS;
+			this.ammo = GENNADIY_DONKEY_DEFAULT_MAX_AMMO;
+			this.maxAmmo = GENNADIY_DONKEY_DEFAULT_MAX_AMMO;
+			this.armorDivider = GENNADIY_DONKEY_DEFAULT_ARMOR_DIVIDER;
+			this.healthRegenTicks = asTicks(GENNADIY_DONKEY_DEFAULT_HEALTH_REGEN_SECONDS);
+			this.ammoRegenAmount = GENNADIY_DONKEY_DEFAULT_AMMO_REGEN_AMOUNT;
+			this.ammoRegenTicks = asTicks(GENNADIY_DONKEY_DEFAULT_AMMO_REGEN_SECONDS);
+			this.bulletDamage = GENNADIY_DONKEY_DEFAULT_BULLET_DAMAGE;
+			this.bulletRange = GENNADIY_DONKEY_DEFAULT_BULLET_RANGE_BLOCKS;
+			this.followMaxDistance = GENNADIY_DONKEY_DEFAULT_FOLLOW_MAX_DISTANCE_BLOCKS;
+			this.cooldownTicks = asTicks(GENNADIY_DONKEY_DEFAULT_COOLDOWN_SECONDS);
+			this.nextHealthRegenTick = Long.MIN_VALUE;
+			this.nextAmmoRegenTick = Long.MIN_VALUE;
+			this.lastManualInputTick = Long.MIN_VALUE;
+			this.hasManualVisualYaw = false;
+			this.lastManualVisualYaw = 0.0F;
+		}
+
+		private boolean isActive() {
+			return this.donkeyId != null;
+		}
+	}
+
+	private static final class GennadiyDonkeyBulletVisual {
+		private final ResourceKey<Level> dimension;
+		private final Vec3 direction;
+		private Vec3 position;
+		private double remainingDistance;
+
+		private GennadiyDonkeyBulletVisual(ResourceKey<Level> dimension, Vec3 start, Vec3 end) {
+			this.dimension = dimension;
+			Vec3 delta = end.subtract(start);
+			double distance = delta.length();
+			this.direction = distance <= 1.0E-6D ? Vec3.ZERO : delta.scale(1.0D / distance);
+			this.position = start;
+			this.remainingDistance = distance;
+		}
+	}
+
 	private record CopperManJetpackInputState(boolean forward, boolean backward, boolean left, boolean right, boolean jump, boolean shift, boolean sprint) {
 		private static final CopperManJetpackInputState EMPTY = new CopperManJetpackInputState(false, false, false, false, false, false, false);
 	}
@@ -2465,6 +2604,10 @@ public final class ServerRaceSystem {
 	}
 
 	private static InteractionResult onUseBlock(ServerPlayer player, InteractionHand hand, BlockPos pos) {
+		InteractionResult donkeyResult = tryUseGennadiyDonkeyManualShoot(player, hand);
+		if (donkeyResult != InteractionResult.PASS) {
+			return donkeyResult;
+		}
 		InteractionResult womanAttack = tryReleaseWomanAttack(player, hand);
 		if (womanAttack != InteractionResult.PASS) {
 			return womanAttack;
@@ -2503,6 +2646,10 @@ public final class ServerRaceSystem {
 	}
 
 	private static InteractionResult onUseEntity(ServerPlayer player, InteractionHand hand, Entity entity) {
+		InteractionResult donkeyInteraction = handleGennadiyDonkeyEntityUse(player, hand, entity);
+		if (donkeyInteraction != InteractionResult.PASS) {
+			return donkeyInteraction;
+		}
 		InteractionResult womanAttack = tryReleaseWomanAttack(player, hand);
 		if (womanAttack != InteractionResult.PASS) {
 			return womanAttack;
@@ -4199,10 +4346,46 @@ public final class ServerRaceSystem {
 		if (player == null) {
 			return;
 		}
+		syncGennadiyDonkeyManualTrigger(player);
+		syncGennadiyDonkeyManualVisual(player);
 		WomanAttackChargeSession session = WOMAN_ATTACK_CHARGE_SESSIONS.get(player.getUUID());
 		if (session != null) {
 			syncWomanAttackAirTrigger(player, session);
 		}
+	}
+
+	public static void handleVehicleMovePacket(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		syncGennadiyDonkeyManualTrigger(player);
+		syncGennadiyDonkeyManualVisual(player);
+	}
+
+	public static void handleVehicleMovePacket(ServerPlayer player, float vehicleYaw) {
+		if (player == null) {
+			return;
+		}
+		syncGennadiyDonkeyManualVisual(player, vehicleYaw, true);
+	}
+
+	private static void syncGennadiyDonkeyManualVisual(ServerPlayer player) {
+		syncGennadiyDonkeyManualVisual(player, 0.0F, false);
+	}
+
+	private static void syncGennadiyDonkeyManualVisual(ServerPlayer player, float vehicleYaw, boolean usePacketYaw) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+		GennadiyDonkeyState state = GENNADIY_DONKEY_STATES.get(player.getUUID());
+		if (state == null || !state.isActive() || state.donkeyId == null) {
+			return;
+		}
+		Entity vehicle = player.getVehicle();
+		if (!(vehicle instanceof Donkey donkey) || !state.donkeyId.equals(donkey.getUUID())) {
+			return;
+		}
+		updateGennadiyDonkeyVisual(level, player, donkey, state, usePacketYaw, vehicleYaw, usePacketYaw ? player : null);
 	}
 
 	private static void tickWomanAttackCharges(MinecraftServer server) {
@@ -4738,6 +4921,1241 @@ public final class ServerRaceSystem {
 
 	private static double getWomanAttackFollowSeconds(RaceAbilityConfig ability) {
 		return positiveOrDefault(ability == null ? 0.0D : ability.womanAttackFollowSeconds, WOMAN_ATTACK_DEFAULT_FOLLOW_SECONDS);
+	}
+
+	private static int useGennadiyDonkeyAttack(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || ability == null || player.isSpectator() || !player.isAlive()) {
+			return 0;
+		}
+		if (!(player.level() instanceof ServerLevel level)) {
+			return 0;
+		}
+
+		UUID ownerId = player.getUUID();
+		GennadiyDonkeyState state = getGennadiyDonkeyState(ownerId);
+		syncGennadiyDonkeyConfig(state, ability);
+		if (isGennadiyDonkeyActive(level.getServer(), state)) {
+			recallGennadiyDonkey(level.getServer(), ownerId, false);
+			return 1;
+		}
+
+		long remainingCooldownTicks = getRemainingOnlineCooldownTicks(GENNADIY_DONKEY_COOLDOWNS, ownerId);
+		if (displayRemainingCooldown(player, remainingCooldownTicks)) {
+			return 0;
+		}
+
+		applyGennadiyDonkeyStoredRegen(state, level.getGameTime());
+		if (state.health <= 0.0D) {
+			state.health = state.maxHealth;
+		}
+		if (state.ammo < 0) {
+			state.ammo = state.maxAmmo;
+		}
+
+		Donkey donkey = spawnGennadiyDonkey(level, player, state);
+		if (donkey == null) {
+			player.sendSystemMessage(Component.literal("Не удалось призвать боевого ослика."));
+			return 0;
+		}
+
+		state.dimension = level.dimension();
+		state.donkeyId = donkey.getUUID();
+		state.visualId = null;
+		state.helmetVisualId = null;
+		state.manualTriggerId = null;
+		state.targetId = null;
+		state.wanderTarget = null;
+		state.outsideSinceTick = null;
+		state.nextShotTick = 0L;
+		state.lastManualInputTick = Long.MIN_VALUE;
+		state.nextMovementLogicTick = 0L;
+		state.nextWanderRetargetTick = 0L;
+		state.hasManualVisualYaw = false;
+		state.lastManualVisualYaw = 0.0F;
+		GENNADIY_DONKEY_OWNER_BY_ENTITY.put(donkey.getUUID(), ownerId);
+		ensureGennadiyDonkeyVisual(level, donkey, state);
+		emitSmoke(level, donkey.position());
+		Lg2.LOGGER.info("Player {} summoned battle donkey '{}'", player.getGameProfile().name(), ability.abilityId);
+		return 1;
+	}
+
+	private static GennadiyDonkeyState getGennadiyDonkeyState(UUID ownerId) {
+		return GENNADIY_DONKEY_STATES.computeIfAbsent(ownerId, GennadiyDonkeyState::new);
+	}
+
+	private static void syncGennadiyDonkeyConfig(GennadiyDonkeyState state, RaceAbilityConfig ability) {
+		if (state == null) {
+			return;
+		}
+		double oldMaxHealth = state.maxHealth;
+		state.maxHealth = positiveOrDefault(ability == null ? 0.0D : ability.gennadiyDonkeyHealthPoints, GENNADIY_DONKEY_DEFAULT_HEALTH_POINTS);
+		state.armorDivider = positiveOrDefault(ability == null ? 0.0D : ability.gennadiyDonkeyArmorDivider, GENNADIY_DONKEY_DEFAULT_ARMOR_DIVIDER);
+		state.healthRegenTicks = Math.max(1L, asTicks(positiveOrDefault(ability == null ? 0.0D : ability.gennadiyDonkeyHealthRegenSeconds, GENNADIY_DONKEY_DEFAULT_HEALTH_REGEN_SECONDS)));
+		state.cooldownTicks = Math.max(1L, asTicks(positiveOrDefault(ability == null ? 0.0D : ability.cooldownSeconds, GENNADIY_DONKEY_DEFAULT_COOLDOWN_SECONDS)));
+		state.maxAmmo = Math.max(1, positiveIntOrDefault(ability == null ? 0 : ability.gennadiyDonkeyMaxAmmo, GENNADIY_DONKEY_DEFAULT_MAX_AMMO));
+		state.ammoRegenAmount = Math.max(1, positiveIntOrDefault(ability == null ? 0 : ability.gennadiyDonkeyAmmoRegenAmount, GENNADIY_DONKEY_DEFAULT_AMMO_REGEN_AMOUNT));
+		state.ammoRegenTicks = Math.max(1L, asTicks(positiveOrDefault(ability == null ? 0.0D : ability.gennadiyDonkeyAmmoRegenSeconds, GENNADIY_DONKEY_DEFAULT_AMMO_REGEN_SECONDS)));
+		state.bulletDamage = positiveOrDefault(ability == null ? 0.0D : ability.gennadiyDonkeyBulletDamage, GENNADIY_DONKEY_DEFAULT_BULLET_DAMAGE);
+		state.bulletRange = positiveOrDefault(ability == null ? 0.0D : ability.gennadiyDonkeyBulletRangeBlocks, GENNADIY_DONKEY_DEFAULT_BULLET_RANGE_BLOCKS);
+		state.followMaxDistance = positiveOrDefault(ability == null ? 0.0D : ability.gennadiyDonkeyFollowMaxDistanceBlocks, GENNADIY_DONKEY_DEFAULT_FOLLOW_MAX_DISTANCE_BLOCKS);
+		if (oldMaxHealth <= 0.0D || state.health <= 0.0D) {
+			state.health = state.maxHealth;
+		} else {
+			state.health = Math.min(state.maxHealth, state.health);
+		}
+		state.ammo = Math.max(0, Math.min(state.maxAmmo, state.ammo));
+	}
+
+	private static int positiveIntOrDefault(int value, int fallback) {
+		return value > 0 ? value : fallback;
+	}
+
+	private static Donkey spawnGennadiyDonkey(ServerLevel level, ServerPlayer owner, GennadiyDonkeyState state) {
+		if (level == null || owner == null || state == null) {
+			return null;
+		}
+		Donkey donkey = EntityType.DONKEY.create(level, EntitySpawnReason.TRIGGERED);
+		if (donkey == null) {
+			return null;
+		}
+		Vec3 spawnPos = findGennadiyDonkeySpawnPos(level, owner);
+		donkey.setPos(spawnPos.x, spawnPos.y, spawnPos.z);
+		donkey.setYRot(owner.getYRot());
+		donkey.setYBodyRot(owner.getYRot());
+		donkey.setYHeadRot(owner.getYRot());
+		donkey.setTamed(true);
+		donkey.setOwner(owner);
+		donkey.setChest(false);
+		donkey.setCanPickUpLoot(false);
+		donkey.setPersistenceRequired();
+		donkey.addTag(GENNADIY_DONKEY_TAG);
+		donkey.addTag(GENNADIY_DONKEY_OWNER_TAG_PREFIX + owner.getUUID());
+		donkey.setCustomName(null);
+		donkey.setCustomNameVisible(false);
+		donkey.setItemSlot(EquipmentSlot.SADDLE, new ItemStack(Items.SADDLE));
+		for (EquipmentSlot slot : EquipmentSlot.values()) {
+			donkey.setDropChance(slot, 0.0F);
+		}
+		((MobXpRewardAccessor) (Object) donkey).lg2$setXpReward(0);
+		if (donkey.getAttribute(Attributes.MAX_HEALTH) != null) {
+			donkey.getAttribute(Attributes.MAX_HEALTH).setBaseValue(state.maxHealth);
+		}
+		if (donkey.getAttribute(Attributes.MOVEMENT_SPEED) != null) {
+			donkey.getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.18D);
+		}
+		if (donkey.getAttribute(Attributes.KNOCKBACK_RESISTANCE) != null) {
+			donkey.getAttribute(Attributes.KNOCKBACK_RESISTANCE).setBaseValue(0.45D);
+		}
+		donkey.setHealth((float) Math.max(1.0D, Math.min(state.maxHealth, state.health)));
+		donkey.refreshDimensions();
+		return level.addFreshEntity(donkey) ? donkey : null;
+	}
+
+	private static Vec3 findGennadiyDonkeySpawnPos(ServerLevel level, ServerPlayer owner) {
+		Vec3 forward = owner.getLookAngle();
+		Vec3 horizontal = new Vec3(forward.x, 0.0D, forward.z);
+		if (horizontal.lengthSqr() <= 1.0E-6D) {
+			horizontal = Vec3.directionFromRotation(0.0F, owner.getYRot());
+		}
+		horizontal = horizontal.normalize();
+		for (int attempt = 0; attempt < 12; attempt++) {
+			double angle = (Math.PI * 2.0D * attempt) / 12.0D;
+			Vec3 offset = attempt == 0
+					? horizontal.scale(1.8D)
+					: new Vec3(Math.cos(angle) * 2.0D, 0.0D, Math.sin(angle) * 2.0D);
+			Vec3 resolved = resolveGennadiyDonkeySpawnPosition(level, owner.position().add(offset));
+			if (resolved != null) {
+				return resolved;
+			}
+		}
+		Vec3 fallback = owner.position().add(horizontal.scale(1.8D));
+		return new Vec3(fallback.x, owner.getY(), fallback.z);
+	}
+
+	private static Vec3 resolveGennadiyDonkeySpawnPosition(ServerLevel level, Vec3 desiredCenter) {
+		BlockPos origin = BlockPos.containing(desiredCenter.x, desiredCenter.y, desiredCenter.z);
+		for (int dy = -1; dy <= 2; dy++) {
+			BlockPos candidate = origin.offset(0, dy, 0);
+			if (!level.getBlockState(candidate).canBeReplaced() || !level.getBlockState(candidate.above()).canBeReplaced()) {
+				continue;
+			}
+			AABB box = GENNADIY_DONKEY_DIMENSIONS.makeBoundingBox(candidate.getX() + 0.5D, candidate.getY(), candidate.getZ() + 0.5D);
+			if (level.noCollision(box)) {
+				return new Vec3(candidate.getX() + 0.5D, candidate.getY(), candidate.getZ() + 0.5D);
+			}
+		}
+		return null;
+	}
+
+	private static void tickGennadiyDonkeys(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		tickOnlineCooldowns(server, GENNADIY_DONKEY_COOLDOWNS);
+		long nowTick = server.overworld().getGameTime();
+		tickGennadiyDonkeyBulletVisuals(server);
+		for (Map.Entry<UUID, GennadiyDonkeyState> entry : new ArrayList<>(GENNADIY_DONKEY_STATES.entrySet())) {
+			UUID ownerId = entry.getKey();
+			GennadiyDonkeyState state = entry.getValue();
+			if (state == null) {
+				continue;
+			}
+			if (!state.isActive()) {
+				applyGennadiyDonkeyStoredRegen(state, nowTick);
+				continue;
+			}
+			ServerLevel level = state.dimension == null ? null : server.getLevel(state.dimension);
+			Entity entity = level == null ? null : level.getEntity(state.donkeyId);
+			ServerPlayer owner = server.getPlayerList().getPlayer(ownerId);
+			if (!(entity instanceof Donkey donkey)) {
+				handleGennadiyDonkeyKilledOrMissing(server, ownerId, state);
+				continue;
+			}
+			if (!donkey.isAlive()) {
+				handleGennadiyDonkeyKilledOrMissing(server, ownerId, state);
+				continue;
+			}
+			if (owner == null || !owner.isAlive() || owner.isSpectator()) {
+				recallGennadiyDonkey(server, ownerId, false);
+				continue;
+			}
+			if (!owner.level().dimension().equals(state.dimension)) {
+				recallGennadiyDonkey(server, ownerId, false);
+				continue;
+			}
+			if (donkey.hasCustomName()) {
+				donkey.setCustomName(null);
+				donkey.setCustomNameVisible(false);
+			}
+			state.health = donkey.getHealth();
+			updateGennadiyDonkeyArmor(owner, donkey, state);
+			ensureGennadiyDonkeyVisual(level, donkey, state);
+			syncGennadiyDonkeyManualTrigger(owner);
+			tickGennadiyDonkeyCombat(level, owner, donkey, state, nowTick);
+			tickGennadiyDonkeyMovement(level, owner, donkey, state, nowTick);
+			updateGennadiyDonkeyVisual(level, owner, donkey, state);
+		}
+	}
+
+	private static void applyGennadiyDonkeyStoredRegen(GennadiyDonkeyState state, long nowTick) {
+		if (state == null || state.isActive()) {
+			return;
+		}
+		if (state.health < state.maxHealth && state.healthRegenTicks > 0L) {
+			if (state.nextHealthRegenTick == Long.MIN_VALUE) {
+				state.nextHealthRegenTick = nowTick + state.healthRegenTicks;
+			}
+			while (state.health < state.maxHealth && nowTick >= state.nextHealthRegenTick) {
+				state.health = Math.min(state.maxHealth, state.health + 1.0D);
+				state.nextHealthRegenTick += state.healthRegenTicks;
+			}
+		}
+		if (state.health >= state.maxHealth) {
+			state.nextHealthRegenTick = Long.MIN_VALUE;
+		}
+		if (state.ammo < state.maxAmmo && state.ammoRegenTicks > 0L) {
+			if (state.nextAmmoRegenTick == Long.MIN_VALUE) {
+				state.nextAmmoRegenTick = nowTick + state.ammoRegenTicks;
+			}
+			while (state.ammo < state.maxAmmo && nowTick >= state.nextAmmoRegenTick) {
+				state.ammo = Math.min(state.maxAmmo, state.ammo + state.ammoRegenAmount);
+				state.nextAmmoRegenTick += state.ammoRegenTicks;
+			}
+		}
+		if (state.ammo >= state.maxAmmo) {
+			state.nextAmmoRegenTick = Long.MIN_VALUE;
+		}
+	}
+
+	private static boolean isGennadiyDonkeyActive(MinecraftServer server, GennadiyDonkeyState state) {
+		if (server == null || state == null || !state.isActive() || state.dimension == null) {
+			return false;
+		}
+		ServerLevel level = server.getLevel(state.dimension);
+		Entity entity = level == null ? null : level.getEntity(state.donkeyId);
+		return entity instanceof Donkey donkey && donkey.isAlive();
+	}
+
+	private static void handleGennadiyDonkeyKilledOrMissing(MinecraftServer server, UUID ownerId, GennadiyDonkeyState state) {
+		if (server == null || ownerId == null || state == null) {
+			return;
+		}
+		removeGennadiyDonkeyVisual(server, state);
+		removeGennadiyDonkeyManualTrigger(server, state);
+		if (state.donkeyId != null) {
+			GENNADIY_DONKEY_OWNER_BY_ENTITY.remove(state.donkeyId);
+		}
+		state.donkeyId = null;
+		state.visualId = null;
+		state.manualTriggerId = null;
+		state.targetId = null;
+		state.wanderTarget = null;
+		state.outsideSinceTick = null;
+		state.health = state.maxHealth;
+		state.ammo = state.maxAmmo;
+		state.nextHealthRegenTick = Long.MIN_VALUE;
+		state.nextAmmoRegenTick = Long.MIN_VALUE;
+		startOnlineCooldown(GENNADIY_DONKEY_COOLDOWNS, ownerId, Math.max(1L, state.cooldownTicks));
+	}
+
+	private static void recallGennadiyDonkey(MinecraftServer server, UUID ownerId, boolean killed) {
+		if (server == null || ownerId == null) {
+			return;
+		}
+		GennadiyDonkeyState state = GENNADIY_DONKEY_STATES.get(ownerId);
+		if (state == null || !state.isActive()) {
+			return;
+		}
+		ServerLevel level = state.dimension == null ? null : server.getLevel(state.dimension);
+		Entity entity = level == null ? null : level.getEntity(state.donkeyId);
+		if (entity instanceof Donkey donkey && donkey.isAlive() && !killed) {
+			state.health = Math.max(1.0D, donkey.getHealth());
+			emitSmoke(level, donkey.position());
+			donkey.discard();
+		} else if (entity != null) {
+			entity.discard();
+		}
+		removeGennadiyDonkeyVisual(server, state);
+		removeGennadiyDonkeyManualTrigger(server, state);
+		if (state.donkeyId != null) {
+			GENNADIY_DONKEY_OWNER_BY_ENTITY.remove(state.donkeyId);
+		}
+		long nowTick = server.overworld().getGameTime();
+		state.donkeyId = null;
+		state.visualId = null;
+		state.manualTriggerId = null;
+		state.targetId = null;
+		state.wanderTarget = null;
+		state.outsideSinceTick = null;
+		state.nextHealthRegenTick = state.health < state.maxHealth ? nowTick + state.healthRegenTicks : Long.MIN_VALUE;
+		state.nextAmmoRegenTick = state.ammo < state.maxAmmo ? nowTick + state.ammoRegenTicks : Long.MIN_VALUE;
+	}
+
+	private static void cleanupAllGennadiyDonkeys(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		for (GennadiyDonkeyState state : new ArrayList<>(GENNADIY_DONKEY_STATES.values())) {
+			if (state == null) {
+				continue;
+			}
+			ServerLevel level = state.dimension == null ? null : server.getLevel(state.dimension);
+			if (level != null && state.donkeyId != null) {
+				Entity entity = level.getEntity(state.donkeyId);
+				if (entity != null) {
+					entity.discard();
+				}
+			}
+			removeGennadiyDonkeyVisual(server, state);
+			removeGennadiyDonkeyManualTrigger(server, state);
+		}
+	}
+
+	private static void updateGennadiyDonkeyArmor(ServerPlayer owner, Donkey donkey, GennadiyDonkeyState state) {
+		if (owner == null || donkey == null || state == null) {
+			return;
+		}
+		AttributeInstance armor = donkey.getAttribute(Attributes.ARMOR);
+		if (armor == null) {
+			return;
+		}
+		boolean manual = donkey.hasPassenger(owner);
+		double value = manual ? Math.max(0.0D, owner.getArmorValue() / Math.max(1.0D, state.armorDivider)) : 0.0D;
+		if (Math.abs(armor.getBaseValue() - value) > 1.0E-4D) {
+			armor.setBaseValue(value);
+		}
+	}
+
+	private static void tickGennadiyDonkeyCombat(ServerLevel level, ServerPlayer owner, Donkey donkey, GennadiyDonkeyState state, long nowTick) {
+		if (level == null || owner == null || donkey == null || state == null) {
+			return;
+		}
+		if (!donkey.hasPassenger(owner) && state.ammo < 2) {
+			clearGennadiyDonkeyTarget(state);
+			return;
+		}
+		LivingEntity target = resolveGennadiyDonkeyTarget(level.getServer(), owner, donkey, state);
+		if (target == null) {
+			clearGennadiyDonkeyTarget(state);
+		}
+		if (donkey.hasPassenger(owner)) {
+			if (state.lastManualInputTick + GENNADIY_DONKEY_MANUAL_INPUT_GRACE_TICKS >= nowTick && nowTick >= state.nextShotTick) {
+				fireGennadiyDonkeyTwinShot(level, owner, donkey, state, owner.getLookAngle().normalize());
+			}
+			return;
+		}
+		if (target == null || nowTick < state.nextShotTick || state.ammo < 2) {
+			return;
+		}
+		Vec3 origin = getGennadiyDonkeyTurretOrigin(donkey);
+		Vec3 targetCenter = target.position().add(0.0D, Math.max(0.25D, target.getBbHeight() * 0.55D), 0.0D);
+		Vec3 direction = targetCenter.subtract(origin);
+		if (direction.lengthSqr() <= 1.0E-6D || direction.length() > state.bulletRange) {
+			return;
+		}
+		fireGennadiyDonkeyTwinShot(level, owner, donkey, state, direction.normalize());
+	}
+
+	private static LivingEntity resolveGennadiyDonkeyTarget(MinecraftServer server, ServerPlayer owner, Donkey donkey, GennadiyDonkeyState state) {
+		if (server == null || owner == null || donkey == null || state == null || state.targetId == null) {
+			return null;
+		}
+		if (state.ammo < 2) {
+			clearGennadiyDonkeyTarget(state);
+			return null;
+		}
+		Entity entity = findEntity(server, state.targetId);
+		if (!(entity instanceof LivingEntity target) || !canGennadiyDonkeyTarget(owner, donkey, target)) {
+			return null;
+		}
+		if (target.level() != donkey.level()) {
+			return null;
+		}
+		double maxRange = Math.max(GENNADIY_DONKEY_TARGET_FORGET_RANGE_BLOCKS, state.bulletRange + state.followMaxDistance + 16.0D);
+		if (target.distanceToSqr(donkey) > maxRange * maxRange) {
+			return null;
+		}
+		return target;
+	}
+
+	private static boolean canGennadiyDonkeyTarget(ServerPlayer owner, Donkey donkey, Entity entity) {
+		if (owner == null || donkey == null || !(entity instanceof LivingEntity target)) {
+			return false;
+		}
+		if (!target.isAlive() || target.isSpectator() || target == owner || target == donkey) {
+			return false;
+		}
+		if (target instanceof ArmorStand) {
+			return false;
+		}
+		if (target instanceof ServerPlayer playerTarget && owner.isAlliedTo(playerTarget)) {
+			return false;
+		}
+		return true;
+	}
+
+	private static void fireGennadiyDonkeyTwinShot(ServerLevel level, ServerPlayer owner, Donkey donkey, GennadiyDonkeyState state, Vec3 direction) {
+		if (level == null || owner == null || donkey == null || state == null || direction == null || direction.lengthSqr() <= 1.0E-6D) {
+			return;
+		}
+		if (state.ammo < 2) {
+			return;
+		}
+		Vec3 normalized = direction.normalize();
+		Vec3 origin = getGennadiyDonkeyTurretOrigin(donkey);
+		Vec3 right = new Vec3(-normalized.z, 0.0D, normalized.x);
+		if (right.lengthSqr() <= 1.0E-6D) {
+			right = Vec3.directionFromRotation(0.0F, donkey.getYRot() + 90.0F);
+		}
+		right = right.normalize();
+		Vec3 leftMuzzle = origin.add(right.scale(-0.28D)).add(normalized.scale(0.55D));
+		Vec3 rightMuzzle = origin.add(right.scale(0.28D)).add(normalized.scale(0.55D));
+		fireGennadiyDonkeyBullet(level, owner, donkey, state, leftMuzzle, normalized);
+		fireGennadiyDonkeyBullet(level, owner, donkey, state, rightMuzzle, normalized);
+		state.ammo = Math.max(0, state.ammo - 2);
+		if (state.ammo < 2) {
+			clearGennadiyDonkeyTarget(state);
+		}
+		state.nextShotTick = level.getGameTime() + GENNADIY_DONKEY_SHOT_INTERVAL_TICKS;
+		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.CROSSBOW_SHOOT, SoundSource.PLAYERS, 0.9F, 1.55F);
+	}
+
+	private static Vec3 getGennadiyDonkeyTurretOrigin(Donkey donkey) {
+		return donkey.position().add(0.0D, Math.max(1.25D, donkey.getBbHeight() * 0.86D), 0.0D);
+	}
+
+	private static void fireGennadiyDonkeyBullet(ServerLevel level, ServerPlayer owner, Donkey donkey, GennadiyDonkeyState state, Vec3 start, Vec3 direction) {
+		Vec3 end = start.add(direction.scale(state.bulletRange));
+		BlockHitResult blockHit = level.clip(new ClipContext(start, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, donkey));
+		Vec3 blockEnd = blockHit.getType() == HitResult.Type.MISS ? end : blockHit.getLocation();
+		EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
+				level,
+				donkey,
+				start,
+				blockEnd,
+				new AABB(start, blockEnd).inflate(0.35D),
+				entity -> canGennadiyBulletHit(owner, donkey, entity),
+				0.25F
+		);
+		Vec3 impact = blockEnd;
+		if (entityHit != null && entityHit.getEntity() instanceof LivingEntity target) {
+			impact = entityHit.getLocation();
+			Arrow arrow = new Arrow(level, donkey, new ItemStack(Items.ARROW), new ItemStack(Items.CROSSBOW));
+			arrow.setPos(start);
+			target.hurtServer(level, level.damageSources().arrow(arrow, donkey), (float) Math.max(0.0D, state.bulletDamage));
+			arrow.discard();
+		}
+		spawnGennadiyBulletVisual(level, start, impact);
+	}
+
+	private static boolean canGennadiyBulletHit(ServerPlayer owner, Donkey donkey, Entity entity) {
+		return canGennadiyDonkeyTarget(owner, donkey, entity);
+	}
+
+	private static void spawnGennadiyBulletVisual(ServerLevel level, Vec3 start, Vec3 end) {
+		if (level == null || start == null || end == null) {
+			return;
+		}
+		Vec3 delta = end.subtract(start);
+		double length = delta.length();
+		if (length <= 1.0E-6D) {
+			spawnGennadiyBulletImpactParticles(level, start);
+			return;
+		}
+		GENNADIY_DONKEY_BULLET_VISUALS.add(new GennadiyDonkeyBulletVisual(level.dimension(), start, end));
+	}
+
+	private static void tickGennadiyDonkeyBulletVisuals(MinecraftServer server) {
+		if (server == null || GENNADIY_DONKEY_BULLET_VISUALS.isEmpty()) {
+			return;
+		}
+		Iterator<GennadiyDonkeyBulletVisual> iterator = GENNADIY_DONKEY_BULLET_VISUALS.iterator();
+		while (iterator.hasNext()) {
+			GennadiyDonkeyBulletVisual bullet = iterator.next();
+			ServerLevel level = bullet.dimension == null ? null : server.getLevel(bullet.dimension);
+			if (level == null || bullet.remainingDistance <= 1.0E-6D || bullet.direction.lengthSqr() <= 1.0E-6D) {
+				iterator.remove();
+				continue;
+			}
+			double step = Math.min(GENNADIY_DONKEY_BULLET_VISUAL_SPEED_BLOCKS, bullet.remainingDistance);
+			Vec3 previous = bullet.position;
+			bullet.position = bullet.position.add(bullet.direction.scale(step));
+			bullet.remainingDistance -= step;
+			spawnGennadiyBulletHeadParticles(level, previous, bullet.position, bullet.direction);
+			if (bullet.remainingDistance <= 1.0E-6D) {
+				spawnGennadiyBulletImpactParticles(level, bullet.position);
+				iterator.remove();
+			}
+		}
+	}
+
+	private static void spawnGennadiyBulletHeadParticles(ServerLevel level, Vec3 previous, Vec3 current, Vec3 direction) {
+		Vec3 tail = current.subtract(direction.scale(0.28D));
+		level.sendParticles(new DustParticleOptions(0xD69A35, 0.95F), current.x, current.y, current.z, 1, 0.0D, 0.0D, 0.0D, 0.0D);
+		level.sendParticles(new DustParticleOptions(0xF4C06A, 0.45F), tail.x, tail.y, tail.z, 1, 0.0D, 0.0D, 0.0D, 0.0D);
+		if (previous.distanceToSqr(current) > 1.0D) {
+			Vec3 middle = previous.lerp(current, 0.55D);
+			level.sendParticles(new DustParticleOptions(0x9A6B2A, 0.35F), middle.x, middle.y, middle.z, 1, 0.0D, 0.0D, 0.0D, 0.0D);
+		}
+		level.sendParticles(ParticleTypes.SMOKE, tail.x, tail.y, tail.z, 1, 0.01D, 0.01D, 0.01D, 0.0D);
+	}
+
+	private static void spawnGennadiyBulletImpactParticles(ServerLevel level, Vec3 position) {
+		level.sendParticles(new DustParticleOptions(0xF4C06A, 0.65F), position.x, position.y, position.z, 2, 0.03D, 0.03D, 0.03D, 0.0D);
+		level.sendParticles(ParticleTypes.SMOKE, position.x, position.y, position.z, 2, 0.035D, 0.035D, 0.035D, 0.0D);
+	}
+
+	private static void tickGennadiyDonkeyMovement(ServerLevel level, ServerPlayer owner, Donkey donkey, GennadiyDonkeyState state, long nowTick) {
+		if (level == null || owner == null || donkey == null || state == null || donkey.hasPassenger(owner)) {
+			return;
+		}
+		LivingEntity target = state.ammo < 2 ? null : resolveGennadiyDonkeyTarget(level.getServer(), owner, donkey, state);
+		if (state.ammo < 2) {
+			clearGennadiyDonkeyTarget(state);
+		}
+		Vec3 ownerPos = owner.position();
+		Vec3 donkeyPos = donkey.position();
+		double distanceSqr = horizontalDistanceToSqr(donkeyPos, ownerPos);
+		double maxDistance = Math.max(GENNADIY_DONKEY_OWNER_MIN_DISTANCE_BLOCKS + 0.5D, state.followMaxDistance);
+		double maxDistanceSqr = maxDistance * maxDistance;
+		Vec3 movementTarget;
+		double speed = GENNADIY_DONKEY_WALK_SPEED;
+		if (distanceSqr > maxDistanceSqr) {
+			if (state.outsideSinceTick == null) {
+				state.outsideSinceTick = nowTick;
+			}
+			movementTarget = projectGennadiyDonkeyToOwnerRing(level, ownerPos, donkeyPos, Math.max(GENNADIY_DONKEY_OWNER_MIN_DISTANCE_BLOCKS, maxDistance - 0.5D));
+			speed = GENNADIY_DONKEY_RETURN_SPEED;
+			if (nowTick - state.outsideSinceTick >= GENNADIY_DONKEY_MAX_OUTSIDE_TICKS) {
+				Vec3 returnPos = findGennadiyDonkeySpawnPos(level, owner);
+				donkey.teleportTo(returnPos.x, returnPos.y, returnPos.z);
+				donkey.getNavigation().stop();
+				state.outsideSinceTick = null;
+				state.wanderTarget = returnPos;
+				state.nextWanderRetargetTick = nowTick + 20L;
+			}
+		} else if (target != null) {
+			state.outsideSinceTick = null;
+			state.wanderTarget = projectGennadiyDonkeyCombatPosition(level, owner, donkey, target, maxDistance);
+			state.nextWanderRetargetTick = nowTick + 10L;
+			movementTarget = state.wanderTarget == null ? findGennadiyDonkeySpawnPos(level, owner) : state.wanderTarget;
+			speed = GENNADIY_DONKEY_RETURN_SPEED;
+		} else {
+			state.outsideSinceTick = null;
+			if (nowTick >= state.nextMovementLogicTick) {
+				state.nextMovementLogicTick = nowTick + GENNADIY_DONKEY_MOVEMENT_LOGIC_INTERVAL_TICKS;
+				if (state.wanderTarget == null
+						|| nowTick >= state.nextWanderRetargetTick
+						|| donkey.position().distanceToSqr(state.wanderTarget) <= 1.0D
+						|| horizontalDistanceToSqr(owner.position(), state.wanderTarget) > maxDistanceSqr) {
+					state.wanderTarget = sampleGennadiyDonkeyWanderTarget(level, owner, donkey.position(), maxDistance);
+					state.nextWanderRetargetTick = nowTick + 30L;
+				}
+			}
+			movementTarget = state.wanderTarget == null ? findGennadiyDonkeySpawnPos(level, owner) : state.wanderTarget;
+		}
+		moveGennadiyDonkeyTowardTarget(donkey, movementTarget, speed, target);
+	}
+
+	private static Vec3 projectGennadiyDonkeyCombatPosition(ServerLevel level, ServerPlayer owner, Donkey donkey, LivingEntity target, double outerRadius) {
+		if (level == null || owner == null || target == null) {
+			return donkey == null ? null : donkey.position();
+		}
+		Vec3 ownerPos = owner.position();
+		Vec3 awayFromTarget = new Vec3(ownerPos.x - target.getX(), 0.0D, ownerPos.z - target.getZ());
+		if (awayFromTarget.lengthSqr() < 1.0E-4D && donkey != null) {
+			awayFromTarget = new Vec3(donkey.getX() - target.getX(), 0.0D, donkey.getZ() - target.getZ());
+		}
+		if (awayFromTarget.lengthSqr() < 1.0E-4D) {
+			return donkey == null ? ownerPos : donkey.position();
+		}
+		double radius = Math.max(GENNADIY_DONKEY_OWNER_MIN_DISTANCE_BLOCKS, outerRadius - 0.35D);
+		Vec3 desired = ownerPos.add(awayFromTarget.normalize().scale(radius));
+		Vec3 resolved = resolveGennadiyDonkeySpawnPosition(level, desired);
+		return resolved != null ? resolved : desired;
+	}
+
+	private static Vec3 sampleGennadiyDonkeyWanderTarget(ServerLevel level, ServerPlayer owner, Vec3 donkeyPosition, double outerRadius) {
+		double minDistance = GENNADIY_DONKEY_OWNER_MIN_DISTANCE_BLOCKS;
+		double maxDistance = Math.max(minDistance + 0.5D, outerRadius - 0.35D);
+		for (int attempt = 0; attempt < 10; attempt++) {
+			double angle = owner.getRandom().nextDouble() * Math.PI * 2.0D;
+			double distance = minDistance + owner.getRandom().nextDouble() * Math.max(0.001D, maxDistance - minDistance);
+			Vec3 desired = new Vec3(
+					owner.getX() + Math.cos(angle) * distance,
+					owner.getY(),
+					owner.getZ() + Math.sin(angle) * distance
+			);
+			Vec3 resolved = resolveGennadiyDonkeySpawnPosition(level, desired);
+			if (resolved != null && (donkeyPosition == null || !segmentIntersectsInnerRadius(owner.position(), donkeyPosition, resolved, minDistance - 0.2D))) {
+				return resolved;
+			}
+		}
+		return findGennadiyDonkeySpawnPos(level, owner);
+	}
+
+	private static Vec3 projectGennadiyDonkeyToOwnerRing(ServerLevel level, Vec3 center, Vec3 currentPosition, double targetDistance) {
+		Vec3 horizontal = new Vec3(currentPosition.x - center.x, 0.0D, currentPosition.z - center.z);
+		if (horizontal.lengthSqr() < 1.0E-4D) {
+			horizontal = new Vec3(1.0D, 0.0D, 0.0D);
+		}
+		Vec3 desired = center.add(horizontal.normalize().scale(Math.max(0.35D, targetDistance)));
+		Vec3 resolved = resolveGennadiyDonkeySpawnPosition(level, desired);
+		return resolved != null ? resolved : desired;
+	}
+
+	private static void moveGennadiyDonkeyTowardTarget(Donkey donkey, Vec3 target, double speed, LivingEntity lookTarget) {
+		if (donkey == null || target == null) {
+			return;
+		}
+		donkey.getNavigation().stop();
+		Vec3 position = donkey.position();
+		Vec3 horizontal = new Vec3(target.x - position.x, 0.0D, target.z - position.z);
+		double distance = horizontal.length();
+		if (distance <= 0.08D) {
+			Vec3 delta = donkey.getDeltaMovement();
+			donkey.setDeltaMovement(delta.x * 0.5D, delta.y, delta.z * 0.5D);
+			updateGennadiyDonkeyLook(donkey, lookTarget, null);
+			return;
+		}
+		Vec3 desiredMovement = horizontal.scale(Math.min(speed, distance) / distance);
+		Vec3 delta = donkey.getDeltaMovement();
+		Vec3 currentHorizontal = new Vec3(delta.x, 0.0D, delta.z);
+		Vec3 movement = currentHorizontal.scale(1.0D - GENNADIY_DONKEY_STEERING_SMOOTHING).add(desiredMovement.scale(GENNADIY_DONKEY_STEERING_SMOOTHING));
+		if (distance <= 0.55D) {
+			movement = movement.scale(0.65D);
+		}
+		donkey.setDeltaMovement(movement.x, delta.y, movement.z);
+		if (donkey.horizontalCollision && donkey.onGround()) {
+			donkey.jumpFromGround();
+		}
+		updateGennadiyDonkeyLook(donkey, lookTarget, movement);
+		donkey.hurtMarked = true;
+	}
+
+	private static void updateGennadiyDonkeyLook(Donkey donkey, LivingEntity lookTarget, Vec3 movement) {
+		if (donkey == null) {
+			return;
+		}
+		float yaw;
+		if (lookTarget != null) {
+			Vec3 toTarget = lookTarget.position().subtract(donkey.position());
+			yaw = (float) (Math.toDegrees(Math.atan2(toTarget.z, toTarget.x)) - 90.0D);
+		} else if (movement != null && movement.horizontalDistanceSqr() > 1.0E-6D) {
+			yaw = (float) (Math.toDegrees(Math.atan2(movement.z, movement.x)) - 90.0D);
+		} else {
+			yaw = donkey.getYRot();
+		}
+		donkey.setYRot(yaw);
+		donkey.setYBodyRot(yaw);
+		donkey.setYHeadRot(yaw);
+	}
+
+	private static InteractionResult handleGennadiyDonkeyEntityUse(ServerPlayer player, InteractionHand hand, Entity entity) {
+		if (player == null || entity == null) {
+			return InteractionResult.PASS;
+		}
+		if (isGennadiyDonkeyManualTrigger(player, entity)) {
+			return tryUseGennadiyDonkeyManualShoot(player, hand);
+		}
+		if (isGennadiyDonkeyVisual(player, entity)) {
+			GennadiyDonkeyState state = GENNADIY_DONKEY_STATES.get(player.getUUID());
+			Donkey donkey = getActiveGennadiyDonkey(player.level().getServer(), state);
+			if (donkey != null) {
+				forceGennadiyDonkeyRider(player, donkey, state);
+				return InteractionResult.SUCCESS;
+			}
+			return InteractionResult.SUCCESS;
+		}
+		UUID ownerId = GENNADIY_DONKEY_OWNER_BY_ENTITY.get(entity.getUUID());
+		if (ownerId == null) {
+			return InteractionResult.PASS;
+		}
+		if (!ownerId.equals(player.getUUID())) {
+			return InteractionResult.SUCCESS;
+		}
+		if (entity instanceof Donkey donkey) {
+			GennadiyDonkeyState state = GENNADIY_DONKEY_STATES.get(ownerId);
+			forceGennadiyDonkeyRider(player, donkey, state);
+			return InteractionResult.SUCCESS;
+		}
+		return InteractionResult.PASS;
+	}
+
+	private static Donkey getActiveGennadiyDonkey(MinecraftServer server, GennadiyDonkeyState state) {
+		if (server == null || state == null || state.dimension == null || state.donkeyId == null) {
+			return null;
+		}
+		ServerLevel level = server.getLevel(state.dimension);
+		Entity entity = level == null ? null : level.getEntity(state.donkeyId);
+		return entity instanceof Donkey donkey && donkey.isAlive() ? donkey : null;
+	}
+
+	private static boolean isGennadiyDonkeyVisual(ServerPlayer player, Entity entity) {
+		if (player == null || entity == null) {
+			return false;
+		}
+		GennadiyDonkeyState state = GENNADIY_DONKEY_STATES.get(player.getUUID());
+		return state != null && (
+				(state.visualId != null && state.visualId.equals(entity.getUUID()))
+						|| (state.helmetVisualId != null && state.helmetVisualId.equals(entity.getUUID()))
+		);
+	}
+
+	private static void forceGennadiyDonkeyRider(ServerPlayer player, Donkey donkey, GennadiyDonkeyState state) {
+		if (player == null || donkey == null || state == null || !state.isActive()) {
+			return;
+		}
+		ServerLevel level = donkey.level() instanceof ServerLevel serverLevel ? serverLevel : null;
+		ArmorStand visual = level == null ? null : findGennadiyDonkeyVisual(level, state);
+		ArmorStand helmetVisual = level == null ? null : findGennadiyDonkeyHelmetVisual(level, state);
+		if (visual != null && visual.getVehicle() == donkey) {
+			visual.stopRiding();
+		}
+		if (helmetVisual != null && helmetVisual.getVehicle() == donkey) {
+			helmetVisual.stopRiding();
+		}
+		if (!(player.getVehicle() == donkey && donkey.hasPassenger(player))) {
+			forceEntityPassenger(donkey, player);
+		}
+		if (visual != null) {
+			attachGennadiyDonkeyVisual(donkey, visual);
+		}
+		if (helmetVisual != null) {
+			attachGennadiyDonkeyVisual(donkey, helmetVisual);
+		}
+	}
+
+	private static InteractionResult tryUseGennadiyDonkeyManualShoot(ServerPlayer player, InteractionHand hand) {
+		if (player == null || hand != InteractionHand.MAIN_HAND) {
+			return InteractionResult.PASS;
+		}
+		GennadiyDonkeyState state = GENNADIY_DONKEY_STATES.get(player.getUUID());
+		if (state == null || !state.isActive() || !(player.level() instanceof ServerLevel level)) {
+			return InteractionResult.PASS;
+		}
+		Entity entity = level.getEntity(state.donkeyId);
+		if (!(entity instanceof Donkey donkey) || !donkey.hasPassenger(player) || state.ammo <= 0) {
+			return InteractionResult.PASS;
+		}
+		long nowTick = level.getGameTime();
+		state.lastManualInputTick = nowTick;
+		if (nowTick >= state.nextShotTick) {
+			fireGennadiyDonkeyTwinShot(level, player, donkey, state, player.getLookAngle().normalize());
+		}
+		return InteractionResult.SUCCESS;
+	}
+
+	private static void syncGennadiyDonkeyManualTrigger(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+		GennadiyDonkeyState state = GENNADIY_DONKEY_STATES.get(player.getUUID());
+		if (!shouldMaintainGennadiyDonkeyManualTrigger(player, state)) {
+			removeGennadiyDonkeyManualTrigger(player.level().getServer(), state);
+			return;
+		}
+		Entity vehicle = player.getVehicle();
+		if (!(vehicle instanceof Donkey donkey) || state == null) {
+			removeGennadiyDonkeyManualTrigger(player.level().getServer(), state);
+			return;
+		}
+		if (hasGennadiyDonkeyManualTriggerObstruction(player, state)) {
+			removeGennadiyDonkeyManualTrigger(player.level().getServer(), state);
+			return;
+		}
+		Interaction trigger = null;
+		if (state.manualTriggerId != null) {
+			Entity existing = level.getEntity(state.manualTriggerId);
+			if (existing instanceof Interaction existingTrigger && existingTrigger.isAlive()) {
+				trigger = existingTrigger;
+			}
+		}
+		if (trigger == null) {
+			trigger = new Interaction(EntityType.INTERACTION, level);
+			trigger.addTag(GENNADIY_DONKEY_TRIGGER_TAG);
+			trigger.addTag(GENNADIY_DONKEY_OWNER_TAG_PREFIX + player.getUUID());
+			trigger.setNoGravity(true);
+			trigger.setSilent(true);
+			trigger.setInvisible(true);
+			trigger.setResponse(false);
+			trigger.setWidth(GENNADIY_DONKEY_AIR_TRIGGER_WIDTH);
+			trigger.setHeight(GENNADIY_DONKEY_AIR_TRIGGER_HEIGHT);
+			level.addFreshEntity(trigger);
+			state.manualTriggerId = trigger.getUUID();
+		}
+		Vec3 pos = player.getEyePosition()
+				.add(player.getLookAngle().normalize().scale(GENNADIY_DONKEY_AIR_TRIGGER_HEAD_FORWARD_OFFSET))
+				.subtract(0.0D, GENNADIY_DONKEY_AIR_TRIGGER_HEIGHT * 0.5D, 0.0D);
+		trigger.setInvisible(true);
+		trigger.setPos(pos.x, pos.y, pos.z);
+		trigger.setDeltaMovement(Vec3.ZERO);
+		trigger.setYRot(player.getYRot());
+		trigger.setXRot(player.getXRot());
+		player.connection.send(ClientboundEntityPositionSyncPacket.of(trigger));
+	}
+
+	private static boolean shouldMaintainGennadiyDonkeyManualTrigger(ServerPlayer player, GennadiyDonkeyState state) {
+		if (player == null || state == null || !state.isActive() || !player.isAlive() || player.isSpectator()) {
+			return false;
+		}
+		Entity vehicle = player.getVehicle();
+		return vehicle instanceof Donkey donkey && state.donkeyId != null && state.donkeyId.equals(donkey.getUUID()) && state.ammo > 0;
+	}
+
+	private static boolean hasGennadiyDonkeyManualTriggerObstruction(ServerPlayer player, GennadiyDonkeyState state) {
+		if (player == null || state == null) {
+			return true;
+		}
+		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange());
+		HitResult hit = player.pick(reach, 1.0F, false);
+		if (hit instanceof EntityHitResult entityHit) {
+			Entity hitEntity = entityHit.getEntity();
+			if ((state.manualTriggerId != null && state.manualTriggerId.equals(hitEntity.getUUID()))
+					|| (state.visualId != null && state.visualId.equals(hitEntity.getUUID()))
+					|| (state.helmetVisualId != null && state.helmetVisualId.equals(hitEntity.getUUID()))) {
+				return false;
+			}
+		}
+		return hit.getType() != HitResult.Type.MISS;
+	}
+
+	private static boolean isGennadiyDonkeyManualTrigger(ServerPlayer player, Entity entity) {
+		if (player == null || entity == null) {
+			return false;
+		}
+		GennadiyDonkeyState state = GENNADIY_DONKEY_STATES.get(player.getUUID());
+		return state != null && state.manualTriggerId != null && state.manualTriggerId.equals(entity.getUUID());
+	}
+
+	private static void removeGennadiyDonkeyManualTrigger(MinecraftServer server, GennadiyDonkeyState state) {
+		if (server == null || state == null || state.manualTriggerId == null) {
+			return;
+		}
+		Entity trigger = findEntity(server, state.manualTriggerId);
+		if (trigger != null) {
+			trigger.discard();
+		}
+		state.manualTriggerId = null;
+	}
+
+	private static void ensureGennadiyDonkeyVisual(ServerLevel level, Donkey donkey, GennadiyDonkeyState state) {
+		if (level == null || donkey == null || state == null) {
+			return;
+		}
+		ArmorStand stand = findGennadiyDonkeyVisual(level, state);
+		if (stand != null) {
+			configureGennadiyDonkeyVisual(stand);
+			attachGennadiyDonkeyVisual(donkey, stand);
+			syncGennadiyDonkeyVisualEquipment(stand);
+		} else {
+			stand = EntityType.ARMOR_STAND.create(level, EntitySpawnReason.TRIGGERED);
+			if (stand != null) {
+				stand.addTag(GENNADIY_DONKEY_VISUAL_TAG);
+				stand.addTag(GENNADIY_DONKEY_OWNER_TAG_PREFIX + state.ownerId);
+				configureGennadiyDonkeyVisual(stand);
+				stand.setPos(donkey.getX(), donkey.getY(), donkey.getZ());
+				applyGennadiyDonkeyVisualYaw(stand, donkey.yBodyRot);
+				level.addFreshEntity(stand);
+				state.visualId = stand.getUUID();
+				attachGennadiyDonkeyVisual(donkey, stand);
+			}
+		}
+
+		ArmorStand helmetStand = findGennadiyDonkeyHelmetVisual(level, state);
+		if (helmetStand != null) {
+			configureGennadiyDonkeyHelmetVisual(helmetStand);
+			attachGennadiyDonkeyVisual(donkey, helmetStand);
+			syncGennadiyDonkeyVisualEquipment(helmetStand);
+		} else {
+			helmetStand = EntityType.ARMOR_STAND.create(level, EntitySpawnReason.TRIGGERED);
+			if (helmetStand != null) {
+				helmetStand.addTag(GENNADIY_DONKEY_HELMET_VISUAL_TAG);
+				helmetStand.addTag(GENNADIY_DONKEY_OWNER_TAG_PREFIX + state.ownerId);
+				configureGennadiyDonkeyHelmetVisual(helmetStand);
+				helmetStand.setPos(donkey.getX(), donkey.getY(), donkey.getZ());
+				applyGennadiyDonkeyVisualYaw(helmetStand, donkey.getYHeadRot());
+				level.addFreshEntity(helmetStand);
+				state.helmetVisualId = helmetStand.getUUID();
+				attachGennadiyDonkeyVisual(donkey, helmetStand);
+			}
+		}
+		updateGennadiyDonkeyVisual(level, null, donkey, state);
+	}
+
+	private static ArmorStand findGennadiyDonkeyVisual(ServerLevel level, GennadiyDonkeyState state) {
+		if (level == null || state == null) {
+			return null;
+		}
+		if (state.visualId != null) {
+			Entity entity = level.getEntity(state.visualId);
+			if (entity instanceof ArmorStand stand) {
+				return stand;
+			}
+			if (entity != null) {
+				entity.discard();
+			}
+		}
+		Entity donkey = state.donkeyId == null ? null : level.getEntity(state.donkeyId);
+		if (donkey == null) {
+			state.visualId = null;
+			return null;
+		}
+		String ownerTag = GENNADIY_DONKEY_OWNER_TAG_PREFIX + state.ownerId;
+		List<ArmorStand> stands = level.getEntitiesOfClass(
+				ArmorStand.class,
+				donkey.getBoundingBox().inflate(32.0D),
+				candidate -> candidate.getTags().contains(GENNADIY_DONKEY_VISUAL_TAG) && candidate.getTags().contains(ownerTag)
+		);
+		if (!stands.isEmpty()) {
+			ArmorStand keep = stands.get(0);
+			for (int i = 1; i < stands.size(); i++) {
+				stands.get(i).discard();
+			}
+			state.visualId = keep.getUUID();
+			return keep;
+		}
+		state.visualId = null;
+		return null;
+	}
+
+	private static ArmorStand findGennadiyDonkeyHelmetVisual(ServerLevel level, GennadiyDonkeyState state) {
+		if (level == null || state == null) {
+			return null;
+		}
+		if (state.helmetVisualId != null) {
+			Entity entity = level.getEntity(state.helmetVisualId);
+			if (entity instanceof ArmorStand stand) {
+				return stand;
+			}
+			if (entity != null) {
+				entity.discard();
+			}
+		}
+		Entity donkey = state.donkeyId == null ? null : level.getEntity(state.donkeyId);
+		if (donkey == null) {
+			state.helmetVisualId = null;
+			return null;
+		}
+		String ownerTag = GENNADIY_DONKEY_OWNER_TAG_PREFIX + state.ownerId;
+		List<ArmorStand> stands = level.getEntitiesOfClass(
+				ArmorStand.class,
+				donkey.getBoundingBox().inflate(32.0D),
+				candidate -> candidate.getTags().contains(GENNADIY_DONKEY_HELMET_VISUAL_TAG) && candidate.getTags().contains(ownerTag)
+		);
+		if (!stands.isEmpty()) {
+			ArmorStand keep = stands.get(0);
+			for (int i = 1; i < stands.size(); i++) {
+				stands.get(i).discard();
+			}
+			state.helmetVisualId = keep.getUUID();
+			return keep;
+		}
+		state.helmetVisualId = null;
+		return null;
+	}
+
+	private static void updateGennadiyDonkeyVisual(ServerLevel level, ServerPlayer owner, Donkey donkey, GennadiyDonkeyState state) {
+		updateGennadiyDonkeyVisual(level, owner, donkey, state, false, 0.0F, null);
+	}
+
+	private static void updateGennadiyDonkeyVisual(ServerLevel level, ServerPlayer owner, Donkey donkey, GennadiyDonkeyState state, boolean useYawOverride, float yawOverride, ServerPlayer rotationOnlyViewer) {
+		if (level == null || donkey == null || state == null) {
+			return;
+		}
+		ArmorStand stand = findGennadiyDonkeyVisual(level, state);
+		ArmorStand helmetStand = findGennadiyDonkeyHelmetVisual(level, state);
+		if (stand == null && helmetStand == null) {
+			return;
+		}
+		if (stand != null) {
+			attachGennadiyDonkeyVisual(donkey, stand);
+		}
+		if (helmetStand != null) {
+			attachGennadiyDonkeyVisual(donkey, helmetStand);
+		}
+		boolean manual = owner != null && donkey.hasPassenger(owner);
+		float turretYaw = donkey.yBodyRot;
+		float helmetYaw;
+		if (manual) {
+			helmetYaw = useYawOverride ? computeGennadiyDonkeyManualVisualYaw(state, yawOverride) : donkey.getYHeadRot();
+		} else {
+			state.hasManualVisualYaw = false;
+			helmetYaw = donkey.getYHeadRot();
+		}
+		if (stand != null) {
+			donkey.positionRider(stand);
+			applyGennadiyDonkeyVisualYaw(stand, turretYaw);
+			stand.setOldPosAndRot(stand.position(), turretYaw, stand.getXRot());
+		}
+		if (helmetStand != null) {
+			donkey.positionRider(helmetStand);
+			applyGennadiyDonkeyVisualYaw(helmetStand, helmetYaw);
+			helmetStand.setOldPosAndRot(helmetStand.position(), helmetYaw, helmetStand.getXRot());
+		}
+		if (rotationOnlyViewer != null) {
+			if (stand != null) {
+				syncGennadiyDonkeyVisualRotation(rotationOnlyViewer, stand, turretYaw);
+			}
+			if (helmetStand != null) {
+				syncGennadiyDonkeyVisualRotation(rotationOnlyViewer, helmetStand, helmetYaw);
+			}
+		} else {
+			if (stand != null) {
+				syncGennadiyDonkeyVisualTransform(level, stand, manual ? owner : null);
+				syncGennadiyDonkeyVisualEquipment(stand);
+			}
+			if (helmetStand != null) {
+				syncGennadiyDonkeyVisualTransform(level, helmetStand, manual ? owner : null);
+				syncGennadiyDonkeyVisualEquipment(helmetStand);
+			}
+		}
+	}
+
+	private static float computeGennadiyDonkeyManualVisualYaw(GennadiyDonkeyState state, float yaw) {
+		if (state == null) {
+			return yaw;
+		}
+		if (!state.hasManualVisualYaw) {
+			state.hasManualVisualYaw = true;
+			state.lastManualVisualYaw = yaw;
+			return yaw;
+		}
+		float delta = wrapDegrees(yaw - state.lastManualVisualYaw);
+		state.lastManualVisualYaw = yaw;
+		float lead = clampFloat(
+				(float) (delta * GENNADIY_DONKEY_MANUAL_VISUAL_YAW_LEAD),
+				-GENNADIY_DONKEY_MANUAL_VISUAL_MAX_YAW_LEAD_DEGREES,
+				GENNADIY_DONKEY_MANUAL_VISUAL_MAX_YAW_LEAD_DEGREES
+		);
+		return yaw + lead;
+	}
+
+	private static float wrapDegrees(float degrees) {
+		float wrapped = degrees % 360.0F;
+		if (wrapped >= 180.0F) {
+			wrapped -= 360.0F;
+		}
+		if (wrapped < -180.0F) {
+			wrapped += 360.0F;
+		}
+		return wrapped;
+	}
+
+	private static float clampFloat(float value, float min, float max) {
+		return Math.max(min, Math.min(max, value));
+	}
+
+	private static void applyGennadiyDonkeyVisualYaw(ArmorStand stand, float yaw) {
+		if (stand == null) {
+			return;
+		}
+		stand.absSnapRotationTo(yaw, 0.0F);
+		stand.setYHeadRot(yaw);
+		stand.yHeadRotO = yaw;
+		stand.setYBodyRot(yaw);
+		stand.yBodyRotO = yaw;
+	}
+
+	private static void attachGennadiyDonkeyVisual(Donkey donkey, ArmorStand stand) {
+		if (stand == null || donkey == null) {
+			return;
+		}
+		if (stand.getVehicle() == donkey && donkey.hasPassenger(stand)) {
+			return;
+		}
+		forceEntityPassenger(donkey, stand);
+	}
+
+	private static void configureGennadiyDonkeyVisual(ArmorStand stand) {
+		if (stand == null) {
+			return;
+		}
+		stand.setInvisible(true);
+		stand.setInvulnerable(true);
+		stand.setSilent(true);
+		stand.setNoGravity(true);
+		stand.setCustomName(null);
+		stand.setCustomNameVisible(false);
+		stand.setItemSlot(EquipmentSlot.HEAD, BattleDonkeyTurretItem.createDisplayStack());
+		((ArmorStandAccessor) stand).lg2$setSmall(false);
+		((ArmorStandAccessor) stand).lg2$setMarker(true);
+	}
+
+	private static void configureGennadiyDonkeyHelmetVisual(ArmorStand stand) {
+		if (stand == null) {
+			return;
+		}
+		stand.setInvisible(true);
+		stand.setInvulnerable(true);
+		stand.setSilent(true);
+		stand.setNoGravity(true);
+		stand.setCustomName(null);
+		stand.setCustomNameVisible(false);
+		stand.setItemSlot(EquipmentSlot.HEAD, BattleDonkeyTurretItem.createHelmetDisplayStack());
+		((ArmorStandAccessor) stand).lg2$setSmall(false);
+		((ArmorStandAccessor) stand).lg2$setMarker(true);
+	}
+
+	private static void syncGennadiyDonkeyVisualEquipment(ArmorStand stand) {
+		if (stand == null || !(stand.level() instanceof ServerLevel level)) {
+			return;
+		}
+		ClientboundSetEquipmentPacket packet = new ClientboundSetEquipmentPacket(
+				stand.getId(),
+				List.of(com.mojang.datafixers.util.Pair.of(EquipmentSlot.HEAD, stand.getItemBySlot(EquipmentSlot.HEAD).copy()))
+		);
+		for (ServerPlayer viewer : level.players()) {
+			viewer.connection.send(packet);
+		}
+	}
+
+	private static void syncGennadiyDonkeyVisualTransform(ServerLevel level, ArmorStand stand) {
+		syncGennadiyDonkeyVisualTransform(level, stand, null);
+	}
+
+	private static void syncGennadiyDonkeyVisualTransform(ServerLevel level, ArmorStand stand, ServerPlayer excludedViewer) {
+		if (level == null || stand == null) {
+			return;
+		}
+		ClientboundEntityPositionSyncPacket packet = ClientboundEntityPositionSyncPacket.of(stand);
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer == excludedViewer) {
+				continue;
+			}
+			if (viewer.distanceToSqr(stand) <= 128.0D * 128.0D) {
+				viewer.connection.send(packet);
+			}
+		}
+	}
+
+	private static void syncGennadiyDonkeyVisualRotation(ServerPlayer viewer, ArmorStand stand, float yaw) {
+		if (viewer == null || stand == null) {
+			return;
+		}
+		byte bodyYaw = toEntityRotationByte(yaw);
+		byte pitch = toEntityRotationByte(stand.getXRot());
+		byte headYaw = toEntityRotationByte(yaw);
+		viewer.connection.send(new ClientboundMoveEntityPacket.Rot(stand.getId(), bodyYaw, pitch, stand.onGround()));
+		viewer.connection.send(new ClientboundRotateHeadPacket(stand, headYaw));
+	}
+
+	private static byte toEntityRotationByte(float degrees) {
+		return (byte) Math.floor((degrees * 256.0F) / 360.0F);
+	}
+
+	private static void removeGennadiyDonkeyVisual(MinecraftServer server, GennadiyDonkeyState state) {
+		if (server == null || state == null) {
+			return;
+		}
+		if (state.visualId != null) {
+			Entity visual = findEntity(server, state.visualId);
+			if (visual != null) {
+				visual.discard();
+			}
+		}
+		if (state.helmetVisualId != null) {
+			Entity visual = findEntity(server, state.helmetVisualId);
+			if (visual != null) {
+				visual.discard();
+			}
+		}
+		state.visualId = null;
+		state.helmetVisualId = null;
+	}
+
+	public static void handleGennadiyCombatDamage(ServerLevel level, LivingEntity victim, DamageSource damageSource, float damage, boolean applied) {
+		if (!applied || level == null || victim == null || damageSource == null || damage <= 0.0F) {
+			return;
+		}
+		LivingEntity attacker = resolveDamageAttacker(damageSource);
+		if (attacker == null || !attacker.isAlive() || attacker == victim) {
+			return;
+		}
+		UUID donkeyOwnerId = GENNADIY_DONKEY_OWNER_BY_ENTITY.get(victim.getUUID());
+		if (donkeyOwnerId != null) {
+			setGennadiyDonkeyTarget(donkeyOwnerId, attacker);
+			return;
+		}
+		if (victim instanceof ServerPlayer victimPlayer) {
+			GennadiyDonkeyState victimState = GENNADIY_DONKEY_STATES.get(victimPlayer.getUUID());
+			if (victimState != null && victimState.isActive()) {
+				setGennadiyDonkeyTarget(victimPlayer.getUUID(), attacker);
+			}
+		}
+		if (attacker instanceof ServerPlayer attackerPlayer) {
+			GennadiyDonkeyState attackerState = GENNADIY_DONKEY_STATES.get(attackerPlayer.getUUID());
+			if (attackerState != null && attackerState.isActive()) {
+				setGennadiyDonkeyTarget(attackerPlayer.getUUID(), victim);
+			}
+		}
+	}
+
+	private static void setGennadiyDonkeyTarget(UUID ownerId, LivingEntity target) {
+		if (ownerId == null || target == null || !target.isAlive() || target.isSpectator()) {
+			return;
+		}
+		GennadiyDonkeyState state = GENNADIY_DONKEY_STATES.get(ownerId);
+		if (state == null || !state.isActive()) {
+			return;
+		}
+		if (state.ammo < 2) {
+			clearGennadiyDonkeyTarget(state);
+			return;
+		}
+		if (ownerId.equals(target.getUUID())) {
+			return;
+		}
+		state.targetId = target.getUUID();
+	}
+
+	private static void clearGennadiyDonkeyTarget(GennadiyDonkeyState state) {
+		if (state == null) {
+			return;
+		}
+		state.targetId = null;
+		state.wanderTarget = null;
+		state.nextWanderRetargetTick = 0L;
 	}
 
 	public static void tryProcessCocaineCauldron(ItemEntity itemEntity) {
