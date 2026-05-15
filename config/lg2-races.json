@@ -249,7 +249,7 @@
         "gennadiyDonkeyMaxAmmo": 128,
         "gennadiyDonkeyAmmoRegenAmount": 2,
         "gennadiyDonkeyAmmoRegenSeconds": 9.375,
-        "gennadiyDonkeyBulletDamage": 3.0,
+        "gennadiyDonkeyBulletDamage": 2.0,
         "gennadiyDonkeyBulletRangeBlocks": 16.0,
         "gennadiyDonkeyFollowMaxDistanceBlocks": 8.0
       },
@@ -261,7 +261,7 @@
         "priceBitcoins": 600,
         "cooldownSeconds": 600.0,
         "gennadiyDefenseDurationSeconds": 10.0,
-        "gennadiyDefenseKnockbackBlocksPerDamage": 1.0,
+        "gennadiyDefenseKnockbackBlocksPerDamage": 0.25,
         "gennadiyDefenseMaxKnockbackBlocks": 32.0,
         "gennadiyDefenseWaveRangeBlocks": 32.0,
         "gennadiyDefenseMinDamage": 1.0,

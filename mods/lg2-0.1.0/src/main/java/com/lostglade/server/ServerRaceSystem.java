@@ -5510,8 +5510,18 @@ public final class ServerRaceSystem {
 		right = right.normalize();
 		Vec3 leftMuzzle = origin.add(right.scale(-0.28D)).add(normalized.scale(0.55D));
 		Vec3 rightMuzzle = origin.add(right.scale(0.28D)).add(normalized.scale(0.55D));
-		fireGennadiyDonkeyBullet(level, owner, donkey, state, leftMuzzle, normalized);
-		fireGennadiyDonkeyBullet(level, owner, donkey, state, rightMuzzle, normalized);
+		Map<LivingEntity, Double> damageByTarget = new LinkedHashMap<>();
+		LivingEntity leftTarget = fireGennadiyDonkeyBullet(level, owner, donkey, state, leftMuzzle, normalized);
+		if (leftTarget != null) {
+			damageByTarget.merge(leftTarget, Math.max(0.0D, state.bulletDamage), Double::sum);
+		}
+		LivingEntity rightTarget = fireGennadiyDonkeyBullet(level, owner, donkey, state, rightMuzzle, normalized);
+		if (rightTarget != null) {
+			damageByTarget.merge(rightTarget, Math.max(0.0D, state.bulletDamage), Double::sum);
+		}
+		for (Map.Entry<LivingEntity, Double> entry : damageByTarget.entrySet()) {
+			damageGennadiyDonkeyBulletTarget(level, donkey, origin, entry.getKey(), entry.getValue());
+		}
 		state.ammo = Math.max(0, state.ammo - 2);
 		if (state.ammo < 2) {
 			clearGennadiyDonkeyTarget(state);
@@ -5524,7 +5534,7 @@ public final class ServerRaceSystem {
 		return donkey.position().add(0.0D, Math.max(1.25D, donkey.getBbHeight() * 0.86D), 0.0D);
 	}
 
-	private static void fireGennadiyDonkeyBullet(ServerLevel level, ServerPlayer owner, Donkey donkey, GennadiyDonkeyState state, Vec3 start, Vec3 direction) {
+	private static LivingEntity fireGennadiyDonkeyBullet(ServerLevel level, ServerPlayer owner, Donkey donkey, GennadiyDonkeyState state, Vec3 start, Vec3 direction) {
 		Vec3 end = start.add(direction.scale(state.bulletRange));
 		BlockHitResult blockHit = level.clip(new ClipContext(start, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, donkey));
 		Vec3 blockEnd = blockHit.getType() == HitResult.Type.MISS ? end : blockHit.getLocation();
@@ -5538,14 +5548,25 @@ public final class ServerRaceSystem {
 				0.25F
 		);
 		Vec3 impact = blockEnd;
+		LivingEntity hitTarget = null;
 		if (entityHit != null && entityHit.getEntity() instanceof LivingEntity target) {
 			impact = entityHit.getLocation();
-			Arrow arrow = new Arrow(level, donkey, new ItemStack(Items.ARROW), new ItemStack(Items.CROSSBOW));
-			arrow.setPos(start);
-			target.hurtServer(level, level.damageSources().arrow(arrow, donkey), (float) Math.max(0.0D, state.bulletDamage));
-			arrow.discard();
+			hitTarget = target;
 		}
 		spawnGennadiyBulletVisual(level, start, impact);
+		return hitTarget;
+	}
+
+	private static void damageGennadiyDonkeyBulletTarget(ServerLevel level, Donkey donkey, Vec3 sourcePos, LivingEntity target, double damage) {
+		if (level == null || donkey == null || sourcePos == null || target == null || !target.isAlive() || damage <= 0.0D) {
+			return;
+		}
+		Arrow arrow = new Arrow(level, donkey, new ItemStack(Items.ARROW), new ItemStack(Items.CROSSBOW));
+		arrow.setPos(sourcePos);
+		target.invulnerableTime = 0;
+		target.hurtServer(level, level.damageSources().arrow(arrow, donkey), (float) damage);
+		target.invulnerableTime = 0;
+		arrow.discard();
 	}
 
 	private static boolean canGennadiyBulletHit(ServerPlayer owner, Donkey donkey, Entity entity) {
