@@ -40,4 +40,9 @@ public final class MonitorSberDronesApp implements MonitorApp {
 	public String screenHint() {
 		return "Подключённые live-камеры";
 	}
+
+	@Override
+	public MonitorAppRole role() {
+		return MonitorAppRole.SBER_DRONES;
+	}
 }

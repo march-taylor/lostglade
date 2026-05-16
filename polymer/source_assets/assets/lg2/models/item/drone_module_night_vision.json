@@ -1,15 +1,115 @@
 {
   "format_version": "1.9.0",
-  "credit": "Lostglade FPV drone night vision module layer",
+  "credit": "Lostglade FPV drone night vision visor module layer",
   "texture_size": [32, 32],
   "textures": {
     "0": "lg2:item/drone_module_night_vision",
     "particle": "lg2:item/drone_module_night_vision"
   },
   "elements": [
-    {"name":"goggle_plate","from":[5.8,4.2,2.2],"to":[10.2,6.2,3.4],"faces":{"north":{"uv":[0,0,16,8],"texture":"#0"},"east":{"uv":[0,8,4,16],"texture":"#0"},"south":{"uv":[16,0,32,8],"texture":"#0"},"west":{"uv":[4,8,8,16],"texture":"#0"},"up":{"uv":[0,16,16,20],"texture":"#0"},"down":{"uv":[16,16,32,20],"texture":"#0"}}},
-    {"name":"left_lens","from":[6.1,4.5,1.6],"to":[7.8,5.8,2.2],"faces":{"north":{"uv":[0,20,8,26],"texture":"#0"},"east":{"uv":[8,20,10,26],"texture":"#0"},"south":{"uv":[10,20,18,26],"texture":"#0"},"west":{"uv":[18,20,20,26],"texture":"#0"},"up":{"uv":[20,20,28,22],"texture":"#0"},"down":{"uv":[20,22,28,24],"texture":"#0"}}},
-    {"name":"right_lens","from":[8.2,4.5,1.6],"to":[9.9,5.8,2.2],"faces":{"north":{"uv":[0,20,8,26],"texture":"#0"},"east":{"uv":[8,20,10,26],"texture":"#0"},"south":{"uv":[10,20,18,26],"texture":"#0"},"west":{"uv":[18,20,20,26],"texture":"#0"},"up":{"uv":[20,20,28,22],"texture":"#0"},"down":{"uv":[20,22,28,24],"texture":"#0"}}},
-    {"name":"ir_pack","from":[7,6.2,3.8],"to":[9,7.2,5.3],"faces":{"north":{"uv":[0,26,8,30],"texture":"#0"},"east":{"uv":[8,26,12,30],"texture":"#0"},"south":{"uv":[12,26,20,30],"texture":"#0"},"west":{"uv":[20,26,24,30],"texture":"#0"},"up":{"uv":[24,26,32,30],"texture":"#0"},"down":{"uv":[24,30,32,32],"texture":"#0"}}}
+    {
+      "name": "mount_plate",
+      "from": [5, 5, 3],
+      "to": [11, 6, 6],
+      "faces": {
+        "north": {"uv": [0, 0, 6, 1], "texture": "#0"},
+        "east": {"uv": [12, 0, 15, 1], "texture": "#0"},
+        "south": {"uv": [6, 0, 12, 1], "texture": "#0"},
+        "west": {"uv": [15, 0, 18, 1], "texture": "#0"},
+        "up": {"uv": [0, 1, 6, 4], "texture": "#0"},
+        "down": {"uv": [6, 1, 12, 4], "texture": "#0"}
+      }
+    },
+    {
+      "name": "visor_brow",
+      "from": [5, 6, 2],
+      "to": [11, 7, 5],
+      "faces": {
+        "north": {"uv": [0, 4, 6, 5], "texture": "#0"},
+        "east": {"uv": [12, 4, 15, 5], "texture": "#0"},
+        "south": {"uv": [6, 4, 12, 5], "texture": "#0"},
+        "west": {"uv": [15, 4, 18, 5], "texture": "#0"},
+        "up": {"uv": [0, 5, 6, 8], "texture": "#0"},
+        "down": {"uv": [6, 5, 12, 8], "texture": "#0"}
+      }
+    },
+    {
+      "name": "left_lens_housing",
+      "from": [5, 5, 1],
+      "to": [8, 7, 3],
+      "faces": {
+        "north": {"uv": [0, 8, 3, 10], "texture": "#0"},
+        "east": {"uv": [6, 8, 8, 10], "texture": "#0"},
+        "south": {"uv": [3, 8, 6, 10], "texture": "#0"},
+        "west": {"uv": [8, 8, 10, 10], "texture": "#0"},
+        "up": {"uv": [10, 8, 13, 10], "texture": "#0"},
+        "down": {"uv": [13, 8, 16, 10], "texture": "#0"}
+      }
+    },
+    {
+      "name": "right_lens_housing",
+      "from": [8, 5, 1],
+      "to": [11, 7, 3],
+      "faces": {
+        "north": {"uv": [0, 8, 3, 10], "texture": "#0"},
+        "east": {"uv": [6, 8, 8, 10], "texture": "#0"},
+        "south": {"uv": [3, 8, 6, 10], "texture": "#0"},
+        "west": {"uv": [8, 8, 10, 10], "texture": "#0"},
+        "up": {"uv": [10, 8, 13, 10], "texture": "#0"},
+        "down": {"uv": [13, 8, 16, 10], "texture": "#0"}
+      }
+    },
+    {
+      "name": "bridge_emitter",
+      "from": [7, 5, 0],
+      "to": [9, 6, 1],
+      "faces": {
+        "north": {"uv": [16, 8, 18, 9], "texture": "#0"},
+        "east": {"uv": [18, 8, 19, 9], "texture": "#0"},
+        "south": {"uv": [20, 8, 22, 9], "texture": "#0"},
+        "west": {"uv": [19, 8, 20, 9], "texture": "#0"},
+        "up": {"uv": [22, 8, 24, 9], "texture": "#0"},
+        "down": {"uv": [20, 8, 22, 9], "texture": "#0"}
+      }
+    },
+    {
+      "name": "rear_power_pack",
+      "from": [6, 6, 5],
+      "to": [10, 8, 7],
+      "faces": {
+        "north": {"uv": [0, 10, 4, 12], "texture": "#0"},
+        "east": {"uv": [8, 10, 10, 12], "texture": "#0"},
+        "south": {"uv": [4, 10, 8, 12], "texture": "#0"},
+        "west": {"uv": [10, 10, 12, 12], "texture": "#0"},
+        "up": {"uv": [12, 10, 16, 12], "texture": "#0"},
+        "down": {"uv": [16, 10, 20, 12], "texture": "#0"}
+      }
+    },
+    {
+      "name": "left_mount_fin",
+      "from": [4, 5, 2],
+      "to": [5, 7, 5],
+      "faces": {
+        "north": {"uv": [0, 12, 1, 14], "texture": "#0"},
+        "east": {"uv": [2, 12, 5, 14], "texture": "#0"},
+        "south": {"uv": [1, 12, 2, 14], "texture": "#0"},
+        "west": {"uv": [5, 12, 8, 14], "texture": "#0"},
+        "up": {"uv": [8, 12, 9, 15], "texture": "#0"},
+        "down": {"uv": [9, 12, 10, 15], "texture": "#0"}
+      }
+    },
+    {
+      "name": "right_mount_fin",
+      "from": [11, 5, 2],
+      "to": [12, 7, 5],
+      "faces": {
+        "north": {"uv": [0, 12, 1, 14], "texture": "#0"},
+        "east": {"uv": [2, 12, 5, 14], "texture": "#0"},
+        "south": {"uv": [1, 12, 2, 14], "texture": "#0"},
+        "west": {"uv": [5, 12, 8, 14], "texture": "#0"},
+        "up": {"uv": [8, 12, 9, 15], "texture": "#0"},
+        "down": {"uv": [9, 12, 10, 15], "texture": "#0"}
+      }
+    }
   ]
 }

@@ -111,6 +111,11 @@ public final class MonitorMediaApp implements MonitorApp {
 		return "Картинки, гифки, видео и музыка по ссылке";
 	}
 
+	@Override
+	public MonitorAppRole role() {
+		return MonitorAppRole.GALLERY_LIBRARY;
+	}
+
 	public static LoadedMedia loadFromUrl(String rawUrl) throws IOException {
 		return loadFromUrl(rawUrl, null);
 	}

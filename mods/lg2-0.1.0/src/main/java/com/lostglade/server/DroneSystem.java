@@ -678,21 +678,18 @@ public final class DroneSystem {
 		}
 		UUID controllerId = resolveAuthoritativeDroneControllerId(root.getUUID());
 		ServerPlayer controller = controllerId == null ? null : server.getPlayerList().getPlayer(controllerId);
-		UUID displayId = DISPLAYS_BY_DRONE.get(root.getUUID());
 		Entity cameraAnchor = ensureDroneCameraAnchor(root);
 		Vec3 cameraOrigin = cameraAnchor != null ? cameraAnchor.position() : droneCameraOrigin(root);
 		float cameraYaw = cameraAnchor != null ? cameraAnchor.getYRot() : root.getYRot();
 		float cameraPitch = cameraAnchor != null ? cameraAnchor.getXRot() : root.getXRot();
 		UUID cameraAnchorUuid = cameraAnchor != null ? cameraAnchor.getUUID() : null;
-		Set<UUID> hiddenEntities = displayId == null ? Set.of(root.getUUID()) : Set.of(root.getUUID(), displayId);
+		Set<UUID> hiddenEntities = hiddenDroneCameraEntityUuids(root, null);
 		if (controller != null && ACTIVE_SESSIONS.containsKey(controller.getUUID())) {
 			DroneControlSession session = ACTIVE_SESSIONS.get(controller.getUUID());
 			if (session != null
 					&& Objects.equals(session.droneUuid(), root.getUUID())
 					&& controller.level() == droneLevel) {
-				Set<UUID> activeHiddenEntities = displayId == null
-						? Set.of(root.getUUID(), controller.getUUID())
-						: Set.of(root.getUUID(), controller.getUUID(), displayId);
+				Set<UUID> activeHiddenEntities = hiddenDroneCameraEntityUuids(root, controller);
 				return new DroneLiveFeedState(
 						root.getUUID(),
 						droneLevel.dimension(),
@@ -725,6 +722,27 @@ public final class DroneSystem {
 				true,
 				null
 		);
+	}
+
+	private static Set<UUID> hiddenDroneCameraEntityUuids(Entity root, ServerPlayer controller) {
+		if (root == null) {
+			return Set.of();
+		}
+		Set<UUID> hidden = new LinkedHashSet<>();
+		hidden.add(root.getUUID());
+		UUID baseDisplayId = DISPLAYS_BY_DRONE.get(root.getUUID());
+		if (baseDisplayId != null) {
+			hidden.add(baseDisplayId);
+		}
+		for (Display.ItemDisplay display : findDroneDisplayLayers(root)) {
+			if (display != null) {
+				hidden.add(display.getUUID());
+			}
+		}
+		if (controller != null) {
+			hidden.add(controller.getUUID());
+		}
+		return Set.copyOf(hidden);
 	}
 
 	private static void applyControlledMovePacket(

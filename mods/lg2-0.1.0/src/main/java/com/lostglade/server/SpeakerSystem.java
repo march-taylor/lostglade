@@ -253,12 +253,12 @@ public final class SpeakerSystem {
 			return true;
 		}
 
-		List<MonitorScreenSystem.SpeakerAudioSource> connectedSources = connectedToPoweredMonitor
+		List<SpeakerAudioSource> connectedSources = connectedToPoweredMonitor
 				? MonitorScreenSystem.findSpeakerAudioSources(level, key.pos())
 				: List.of();
 
-		List<MonitorScreenSystem.SpeakerAudioSource> playableSources = connectedSources.stream()
-				.filter(source -> source != null && !source.paused() && source.audioStreamUrl() != null && !source.audioStreamUrl().isBlank())
+		List<SpeakerAudioSource> playableSources = connectedSources.stream()
+				.filter(source -> source != null && source.audioStreamUrl() != null && !source.audioStreamUrl().isBlank())
 				.toList();
 		VoicechatApi voicechatApi = ServerVoicechatIntegration.getApi();
 		VoicechatServerApi voicechatServerApi = ServerVoicechatIntegration.getServerApi();
@@ -327,7 +327,7 @@ public final class SpeakerSystem {
 		speakerVolumeCategoryRegistered = false;
 	}
 
-	private static SharedSourceFeed acquireSharedSourceFeed(SpeakerKey speakerKey, MonitorScreenSystem.SpeakerAudioSource source) {
+	private static SharedSourceFeed acquireSharedSourceFeed(SpeakerKey speakerKey, SpeakerAudioSource source) {
 		if (speakerKey == null || source == null || source.sourceKey() == null || source.sourceKey().isBlank()) {
 			return null;
 		}
@@ -481,7 +481,7 @@ public final class SpeakerSystem {
 		private boolean start(
 				ServerLevel level,
 				BlockState state,
-				List<MonitorScreenSystem.SpeakerAudioSource> sources,
+				List<SpeakerAudioSource> sources,
 				VoicechatApi voicechatApi,
 				VoicechatServerApi voicechatServerApi
 		) {
@@ -499,7 +499,7 @@ public final class SpeakerSystem {
 		private boolean update(
 				ServerLevel level,
 				BlockState state,
-				List<MonitorScreenSystem.SpeakerAudioSource> sources,
+				List<SpeakerAudioSource> sources,
 				VoicechatApi voicechatApi,
 				VoicechatServerApi voicechatServerApi
 		) {
@@ -593,10 +593,10 @@ public final class SpeakerSystem {
 			return ensureVoicechatPlayer(level, voicechatApi, voicechatServerApi);
 		}
 
-		private boolean synchronizeSources(List<MonitorScreenSystem.SpeakerAudioSource> sources) {
+		private boolean synchronizeSources(List<SpeakerAudioSource> sources) {
 			Set<String> keepKeys = new HashSet<>();
 			boolean[] playbackResyncNeeded = new boolean[] {false};
-			for (MonitorScreenSystem.SpeakerAudioSource source : sources) {
+			for (SpeakerAudioSource source : sources) {
 				if (source == null || source.sourceKey() == null || source.sourceKey().isBlank()) {
 					continue;
 				}
@@ -905,6 +905,7 @@ public final class SpeakerSystem {
 		private String relaySessionId;
 		private String audioStreamUrl;
 		private boolean liveStream;
+		private boolean paused;
 		private long processBasePositionMs;
 		private long audioSyncToken;
 		private long nextFrameSequence;
@@ -947,10 +948,16 @@ public final class SpeakerSystem {
 			return this.closed;
 		}
 
-		private boolean update(MonitorScreenSystem.SpeakerAudioSource source) {
+		private boolean update(SpeakerAudioSource source) {
 			synchronized (this.lock) {
 				if (this.closed || source == null || source.audioStreamUrl() == null || source.audioStreamUrl().isBlank()) {
 					return false;
+				}
+				if (source.paused()) {
+					return suspendProcessLocked(source);
+				}
+				if (this.paused) {
+					return restartProcessLocked(source);
 				}
 				if (shouldRestartLocked(source)) {
 					return restartProcessLocked(source);
@@ -961,6 +968,9 @@ public final class SpeakerSystem {
 
 		private short[] frameAt(long nowNanos) {
 			synchronized (this.lock) {
+				if (this.paused) {
+					return null;
+				}
 				if (this.frameBuffer.isEmpty()) {
 					return null;
 				}
@@ -988,7 +998,7 @@ public final class SpeakerSystem {
 			}
 		}
 
-		private boolean shouldRestartLocked(MonitorScreenSystem.SpeakerAudioSource source) {
+		private boolean shouldRestartLocked(SpeakerAudioSource source) {
 			if (this.process == null || !this.process.isAlive()) {
 				return true;
 			}
@@ -998,10 +1008,14 @@ public final class SpeakerSystem {
 					|| this.audioSyncToken != source.audioSyncToken()) {
 				return true;
 			}
-			if (!this.liveStream && !source.loading()) {
-				return Math.abs(expectedPositionMsLocked() - source.positionMs()) > AUDIO_RESYNC_TOLERANCE_MS;
-			}
-			return false;
+			return SpeakerAudioPlaybackPolicy.shouldResyncPosition(
+					this.liveStream,
+					source.loading(),
+					source.positionAuthoritative(),
+					expectedPositionMsLocked(),
+					source.positionMs(),
+					AUDIO_RESYNC_TOLERANCE_MS
+			);
 		}
 
 		private long expectedPositionMsLocked() {
@@ -1015,12 +1029,13 @@ public final class SpeakerSystem {
 			return Math.max(0L, (nowNanos - this.playbackEpochNanos) / AUDIO_FRAME_NANOS);
 		}
 
-		private boolean restartProcessLocked(MonitorScreenSystem.SpeakerAudioSource source) {
+		private boolean restartProcessLocked(SpeakerAudioSource source) {
 			stopProcessLocked();
 			this.frameBuffer.clear();
 			this.relaySessionId = source.relaySessionId();
 			this.audioStreamUrl = source.audioStreamUrl();
 			this.liveStream = source.liveStream();
+			this.paused = false;
 			this.processBasePositionMs = Math.max(0L, source.positionMs());
 			this.audioSyncToken = source.audioSyncToken();
 			this.nextFrameSequence = 0L;
@@ -1069,6 +1084,20 @@ public final class SpeakerSystem {
 			thread.setDaemon(true);
 			this.readerThread = thread;
 			thread.start();
+			return true;
+		}
+
+		private boolean suspendProcessLocked(SpeakerAudioSource source) {
+			stopProcessLocked();
+			this.frameBuffer.clear();
+			this.relaySessionId = source.relaySessionId();
+			this.audioStreamUrl = source.audioStreamUrl();
+			this.liveStream = source.liveStream();
+			this.paused = true;
+			this.processBasePositionMs = Math.max(0L, source.positionMs());
+			this.audioSyncToken = source.audioSyncToken();
+			this.nextFrameSequence = 0L;
+			this.playbackEpochNanos = 0L;
 			return true;
 		}
 

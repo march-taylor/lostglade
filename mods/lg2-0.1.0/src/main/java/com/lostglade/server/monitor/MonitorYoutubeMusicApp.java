@@ -40,4 +40,9 @@ public final class MonitorYoutubeMusicApp implements MonitorApp {
 	public String screenHint() {
 		return "Музыка, альбомы и плейлисты";
 	}
+
+	@Override
+	public MonitorAppRole role() {
+		return MonitorAppRole.YOUTUBE_MUSIC;
+	}
 }
