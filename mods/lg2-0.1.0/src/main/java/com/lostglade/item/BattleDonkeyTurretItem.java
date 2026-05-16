@@ -14,9 +14,13 @@ import xyz.nucleoid.packettweaker.PacketContext;
 public final class BattleDonkeyTurretItem extends Item implements PolymerItem {
 	private static final Identifier TURRET_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "battle_donkey_turret");
 	private static final Identifier HELMET_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "battle_donkey_helmet");
+	private static final Identifier HOOK_CHAIN_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "hook_chain");
+	private static final Identifier HOOK_CLAW_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "hook_claw");
 	private static final String ROOT_TAG = "lg2_battle_donkey_turret";
 	private static final String DISPLAY_ONLY_TAG = "display_only";
 	private static final String HELMET_DISPLAY_TAG = "helmet";
+	private static final String HOOK_CHAIN_DISPLAY_TAG = "hook_chain";
+	private static final String HOOK_CLAW_DISPLAY_TAG = "hook_claw";
 
 	public BattleDonkeyTurretItem(Properties properties) {
 		super(properties);
@@ -24,6 +28,12 @@ public final class BattleDonkeyTurretItem extends Item implements PolymerItem {
 
 	@Override
 	public Item getPolymerItem(ItemStack stack, PacketContext context) {
+		if (isHookClawDisplay(stack) && !PolymerResourcePackUtils.hasMainPack(context)) {
+			return Items.BONE;
+		}
+		if (isHookChainDisplay(stack) && !PolymerResourcePackUtils.hasMainPack(context)) {
+			return Items.IRON_NUGGET;
+		}
 		if (isDisplayOnly(stack) && !PolymerResourcePackUtils.hasMainPack(context)) {
 			return Items.IRON_HORSE_ARMOR;
 		}
@@ -34,6 +44,12 @@ public final class BattleDonkeyTurretItem extends Item implements PolymerItem {
 	public Identifier getPolymerItemModel(ItemStack stack, PacketContext context) {
 		if (!PolymerResourcePackUtils.hasMainPack(context)) {
 			return null;
+		}
+		if (isHookClawDisplay(stack)) {
+			return HOOK_CLAW_MODEL_ID;
+		}
+		if (isHookChainDisplay(stack)) {
+			return HOOK_CHAIN_MODEL_ID;
 		}
 		return isHelmetDisplay(stack) ? HELMET_MODEL_ID : TURRET_MODEL_ID;
 	}
@@ -52,6 +68,28 @@ public final class BattleDonkeyTurretItem extends Item implements PolymerItem {
 
 	public static ItemStack createHelmetDisplayStack() {
 		return createDisplayStack(true);
+	}
+
+	public static ItemStack createHookChainDisplayStack() {
+		ItemStack stack = new ItemStack(ModItems.BATTLE_DONKEY_TURRET);
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+			var root = tag.getCompoundOrEmpty(ROOT_TAG);
+			root.putBoolean(DISPLAY_ONLY_TAG, true);
+			root.putBoolean(HOOK_CHAIN_DISPLAY_TAG, true);
+			tag.put(ROOT_TAG, root);
+		});
+		return stack;
+	}
+
+	public static ItemStack createHookClawDisplayStack() {
+		ItemStack stack = new ItemStack(ModItems.BATTLE_DONKEY_TURRET);
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+			var root = tag.getCompoundOrEmpty(ROOT_TAG);
+			root.putBoolean(DISPLAY_ONLY_TAG, true);
+			root.putBoolean(HOOK_CLAW_DISPLAY_TAG, true);
+			tag.put(ROOT_TAG, root);
+		});
+		return stack;
 	}
 
 	private static ItemStack createDisplayStack(boolean helmet) {
@@ -89,5 +127,31 @@ public final class BattleDonkeyTurretItem extends Item implements PolymerItem {
 		return customData.copyTag()
 				.getCompoundOrEmpty(ROOT_TAG)
 				.getBooleanOr(HELMET_DISPLAY_TAG, false);
+	}
+
+	private static boolean isHookChainDisplay(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return false;
+		}
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData == null) {
+			return false;
+		}
+		return customData.copyTag()
+				.getCompoundOrEmpty(ROOT_TAG)
+				.getBooleanOr(HOOK_CHAIN_DISPLAY_TAG, false);
+	}
+
+	private static boolean isHookClawDisplay(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return false;
+		}
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData == null) {
+			return false;
+		}
+		return customData.copyTag()
+				.getCompoundOrEmpty(ROOT_TAG)
+				.getBooleanOr(HOOK_CLAW_DISPLAY_TAG, false);
 	}
 }

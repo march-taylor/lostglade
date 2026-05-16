@@ -16,6 +16,7 @@ import com.lostglade.item.MethadoneItem;
 import com.lostglade.item.ModItems;
 import com.lostglade.item.TubochkaItem;
 import com.lostglade.mixin.ArmorStandAccessor;
+import com.lostglade.mixin.DisplayAccessor;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
 import com.lostglade.mixin.EntityPassengerAccessor;
 import com.lostglade.mixin.MerchantMenuAccessor;
@@ -77,6 +78,7 @@ import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.RemoteChatSession;
 import net.minecraft.resources.Identifier;
@@ -131,9 +133,11 @@ import net.minecraft.world.entity.projectile.arrow.Arrow;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemUseAnimation;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.item.component.Consumable;
+import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.effect.MobEffect;
@@ -146,8 +150,10 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LayeredCauldronBlock;
 import net.minecraft.world.level.block.DoublePlantBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.item.trading.Merchant;
 import net.minecraft.world.item.trading.MerchantOffer;
@@ -357,8 +363,33 @@ public final class ServerRaceSystem {
 	private static final double GENNADIY_DEFENSE_DEFAULT_WAVE_RANGE_BLOCKS = 32.0D;
 	private static final double GENNADIY_DEFENSE_DEFAULT_MIN_DAMAGE = 1.0D;
 	private static final double GENNADIY_DEFENSE_DEFAULT_MAX_DAMAGE = 3.0D;
+	private static final double GENNADIY_HOOK_DEFAULT_RANGE_BLOCKS = 16.0D;
+	private static final double GENNADIY_HOOK_DEFAULT_DAMAGE = 4.0D;
+	private static final double GENNADIY_HOOK_DEFAULT_SLOWNESS_SECONDS = 1.5D;
+	private static final double GENNADIY_HOOK_EXTEND_SPEED_BLOCKS = 1.35D;
+	private static final double GENNADIY_HOOK_RETRACT_SPEED_BLOCKS = 1.0D;
+	private static final double GENNADIY_HOOK_PULL_SPEED_BLOCKS = 0.82D;
+	private static final double GENNADIY_HOOK_SEGMENT_SPACING_BLOCKS = 0.42D;
+	private static final double GENNADIY_HOOK_CHAIN_END_OFFSET_BLOCKS = 4.0D / 16.0D;
+	private static final double GENNADIY_HOOK_TIP_ATTACH_CORRECTION_BLOCKS = 3.0D / 16.0D;
+	private static final Vec3 GENNADIY_HOOK_TIP_RED_LINK_ATTACH_OFFSET = new Vec3(0.0D, -5.5D / 16.0D, 8.0D / 16.0D);
+	private static final double GENNADIY_HOOK_HIT_RADIUS_BLOCKS = 0.45D;
+	private static final double GENNADIY_HOOK_FINISH_DISTANCE_BLOCKS = 1.45D;
+	private static final int GENNADIY_HOOK_MAX_SEGMENTS = 48;
+	private static final double GENNADIY_RAGE_DEFAULT_HEALTH_THRESHOLD_RATIO = 0.2D;
+	private static final int GENNADIY_RAGE_DEFAULT_HASTE_LEVEL = 1;
+	private static final double GENNADIY_RAGE_DEFAULT_MELEE_DAMAGE_BONUS_RATIO = 0.15D;
+	private static final double GENNADIY_REPORT_DEFAULT_COOLDOWN_SECONDS = 1800.0D;
+	private static final long GENNADIY_REPORT_ITEM_SYNC_INTERVAL_TICKS = 20L;
+	private static final int GENNADIY_REPORT_CONTAINER_SCAN_CHUNK_RADIUS = 16;
+	private static final int GENNADIY_REPORT_CONFIRM_LINE_WIDTH_CHARS = 42;
 	private static final long GENNADIY_DEFENSE_WAVE_VISUAL_DURATION_TICKS = 18L;
 	private static final float GENNADIY_DEFENSE_FORCED_PITCH = 72.0F;
+	private static final String FSIT_SEAT_ENTITY_CLASS_NAME = "dev.rvbsm.fsit.entity.SeatEntity";
+	private static final String FSIT_SEAT_COMPANION_CLASS_NAME = "dev.rvbsm.fsit.entity.SeatEntity$Companion";
+	private static volatile Boolean FSIT_SEAT_AVAILABLE;
+	private static volatile Object FSIT_SEAT_COMPANION;
+	private static volatile java.lang.reflect.Method FSIT_SEAT_CREATE_METHOD;
 	private static final byte ENTITY_FLAG_SHIFTING = 0x02;
 	private static final byte ENTITY_FLAG_SPRINTING = 0x08;
 	private static final long GENNADIY_DONKEY_SHOT_INTERVAL_TICKS = 2L;
@@ -378,6 +409,13 @@ public final class ServerRaceSystem {
 	private static final String GENNADIY_DONKEY_VISUAL_TAG = "lg2.gennadiy_battle_donkey_visual";
 	private static final String GENNADIY_DONKEY_HELMET_VISUAL_TAG = "lg2.gennadiy_battle_donkey_helmet_visual";
 	private static final String GENNADIY_DONKEY_TRIGGER_TAG = "lg2.gennadiy_battle_donkey_trigger";
+	private static final String GENNADIY_HOOK_CHAIN_TAG = "lg2.gennadiy_hook_chain";
+	private static final String GENNADIY_REPORT_DATA_TAG = "lg2_gennadiy_report";
+	private static final String GENNADIY_REPORT_ID_TAG = "id";
+	private static final String GENNADIY_REPORT_CREATOR_TAG = "creator";
+	private static final String GENNADIY_REPORT_HOLDER_TAG = "holder";
+	private static final String GENNADIY_REPORT_COOLDOWN_END_TAG = "cooldown_end_tick";
+	private static final Identifier GENNADIY_REPORT_COOLDOWN_GROUP_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "gennadiy_report");
 	private static final String GENNADIY_DONKEY_OWNER_TAG_PREFIX = "lg2_gennadiy_donkey_owner:";
 	private static final EntityDimensions GENNADIY_DONKEY_DIMENSIONS = EntityDimensions.fixed(1.4F, 1.6F);
 	private static final float GENNADIY_DONKEY_AIR_TRIGGER_WIDTH = 1.6F;
@@ -519,7 +557,11 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, UUID> GENNADIY_DONKEY_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final List<GennadiyDonkeyBulletVisual> GENNADIY_DONKEY_BULLET_VISUALS = new ArrayList<>();
 	private static final Map<UUID, GennadiyDefenseSession> GENNADIY_DEFENSE_SESSIONS = new LinkedHashMap<>();
+	private static final Map<UUID, UUID> GENNADIY_DEFENSE_FSIT_SEATS = new LinkedHashMap<>();
 	private static final List<GennadiyDefenseWaveVisual> GENNADIY_DEFENSE_WAVE_VISUALS = new ArrayList<>();
+	private static final Map<UUID, GennadiyHookSession> GENNADIY_HOOK_SESSIONS = new LinkedHashMap<>();
+	private static final Map<UUID, Integer> GENNADIY_RAGE_HASTE_PLAYERS = new HashMap<>();
+	private static final Map<UUID, GennadiyReportPending> GENNADIY_REPORT_PENDING = new LinkedHashMap<>();
 	private static final Map<UUID, CartelDisguiseSession> CARTEL_DISGUISE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelManualBookRestore> CARTEL_MANUAL_BOOK_RESTORES = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> COPPER_GOLEM_FOLLOWERS = new LinkedHashMap<>();
@@ -546,6 +588,7 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, UUID> CARTEL_LAWYER_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final ThreadLocal<Boolean> CARTEL_DEFENSE_REFLECTION_ACTIVE = ThreadLocal.withInitial(() -> Boolean.FALSE);
 	private static final ThreadLocal<Boolean> GENNADIY_DEFENSE_APPLYING_EFFECT = ThreadLocal.withInitial(() -> Boolean.FALSE);
+	private static final ThreadLocal<Boolean> GENNADIY_RAGE_APPLYING_DAMAGE = ThreadLocal.withInitial(() -> Boolean.FALSE);
 	private static final Set<CocaineCauldronKey> PROCESSED_COCAINE_CAULDRONS = new HashSet<>();
 	private static long processedCocaineCauldronTick = Long.MIN_VALUE;
 	private static long womanShnyagaNextWhitelistCheckTick = Long.MIN_VALUE;
@@ -685,6 +728,7 @@ public final class ServerRaceSystem {
 			syncWomanShnyagaLinks(server);
 			prewarmCartelLawyerSkinAsync();
 			cleanupCopperManDefenseTintCache(server, true);
+			cleanupAllGennadiyHookChains(server);
 			syncGeneratedDialogs(server, true);
 			Lg2.LOGGER.info("Loaded {} configured personal races", RACES_BY_NICKNAME.size());
 		});
@@ -695,6 +739,7 @@ public final class ServerRaceSystem {
 			restoreAllCopperManJetpacks(server);
 			restoreAllCopperManDefenseVisuals(server);
 			cleanupAllGennadiyDonkeys(server);
+			cleanupAllGennadiyHookChains(server);
 			CartelWebcamBridge.clearAll();
 			RACES_BY_NICKNAME.clear();
 			DIALOG_ID_BY_NICKNAME.clear();
@@ -745,6 +790,9 @@ public final class ServerRaceSystem {
 			GENNADIY_DONKEY_BULLET_VISUALS.clear();
 			GENNADIY_DEFENSE_SESSIONS.clear();
 			GENNADIY_DEFENSE_WAVE_VISUALS.clear();
+			GENNADIY_HOOK_SESSIONS.clear();
+			GENNADIY_RAGE_HASTE_PLAYERS.clear();
+			GENNADIY_REPORT_PENDING.clear();
 			copperManDefenseTintCacheLastCleanupTick = Long.MIN_VALUE;
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.clear();
 			CARTEL_PLANTED_FERN_GROWTHS.clear();
@@ -793,12 +841,15 @@ public final class ServerRaceSystem {
 			clearWomanAttackState(handler.player.getUUID());
 			clearWomanShnyagaPendingState(handler.player.getUUID());
 			clearGennadiyDefense(handler.player);
+			cleanupGennadiyHookSession(server, GENNADIY_HOOK_SESSIONS.remove(handler.player.getUUID()));
+			GENNADIY_REPORT_PENDING.remove(handler.player.getUUID());
 			recallGennadiyDonkey(server, handler.player.getUUID(), false);
 			syncWomanShnyagaLinks(server);
 		});
 		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> {
 			if (!alive) {
 				clearGennadiyDefense(newPlayer);
+				cleanupGennadiyHookSession(newPlayer.level().getServer(), GENNADIY_HOOK_SESSIONS.remove(newPlayer.getUUID()));
 				recallGennadiyDonkey(newPlayer.level().getServer(), newPlayer.getUUID(), false);
 			}
 		});
@@ -852,6 +903,9 @@ public final class ServerRaceSystem {
 			tickWomanAttack(server);
 			tickGennadiyDonkeys(server);
 			tickGennadiyDefense(server);
+			tickGennadiyHook(server);
+			tickGennadiyRage(server);
+			tickGennadiyReport(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
 		});
@@ -874,6 +928,10 @@ public final class ServerRaceSystem {
 								.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
 								.executes(ServerRaceSystem::resetAllRaceAbilityCooldownsFromCommand)
 						)
+						.then(literal("reset_cooldown")
+								.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
+								.executes(ServerRaceSystem::resetAllRaceAbilityCooldownsFromCommand)
+						)
 						.then(literal("use")
 								.then(literal("attack").executes(context -> useAbility(context, RaceAbilitySlot.ATTACK)))
 								.then(literal("defense").executes(context -> useAbility(context, RaceAbilitySlot.DEFENSE)))
@@ -884,7 +942,7 @@ public final class ServerRaceSystem {
 								.suggests((context, builder) -> builder.buildFuture())
 								.then(argument("response", StringArgumentType.word())
 										.suggests((context, builder) -> builder.buildFuture())
-										.executes(ServerRaceSystem::handleWomanShnyagaProposalCommand)
+										.executes(ServerRaceSystem::handleInternalRaceCommand)
 								)
 						)
 				)
@@ -916,6 +974,8 @@ public final class ServerRaceSystem {
 		COPPER_MAN_DEFENSE_COOLDOWNS.clear();
 		COPPER_MAN_JETPACK_COOLDOWNS.clear();
 		GENNADIY_DONKEY_COOLDOWNS.clear();
+		GENNADIY_RAGE_HASTE_PLAYERS.clear();
+		clearAllGennadiyReportCooldowns(server);
 		CopperManGogglesSystem.resetAllAbilityCooldowns(server);
 		CopperManRepulsorSystem.resetAllAbilityCooldowns(server);
 	}
@@ -985,21 +1045,30 @@ public final class ServerRaceSystem {
 		return handleWomanShnyagaProposalResponse(player, false);
 	}
 
-	private static int handleWomanShnyagaProposalCommand(CommandContext<CommandSourceStack> context) {
+	private static int handleInternalRaceCommand(CommandContext<CommandSourceStack> context) {
 		String internalAction = StringArgumentType.getString(context, "internal_action").trim().toLowerCase(Locale.ROOT);
-		if (!"woman_shnyaga".equals(internalAction)) {
-			context.getSource().sendFailure(Component.literal("Unknown race command."));
-			return 0;
-		}
 		String response = StringArgumentType.getString(context, "response").trim().toLowerCase(Locale.ROOT);
-		return switch (response) {
-			case "accept" -> acceptWomanShnyagaProposal(context);
-			case "reject" -> rejectWomanShnyagaProposal(context);
-			default -> {
-				context.getSource().sendFailure(Component.literal("Unknown woman_shnyaga response."));
-				yield 0;
-			}
-		};
+		if ("woman_shnyaga".equals(internalAction)) {
+			return switch (response) {
+				case "accept" -> acceptWomanShnyagaProposal(context);
+				case "reject" -> rejectWomanShnyagaProposal(context);
+				default -> {
+					context.getSource().sendFailure(Component.literal("Unknown woman_shnyaga response."));
+					yield 0;
+				}
+			};
+		}
+		if ("gennadiy_report".equals(internalAction)) {
+			return switch (response) {
+				case "confirm" -> confirmGennadiyReport(context);
+				default -> {
+					context.getSource().sendFailure(Component.literal("Unknown gennadiy_report response."));
+					yield 0;
+				}
+			};
+		}
+		context.getSource().sendFailure(Component.literal("Unknown race command."));
+		return 0;
 	}
 
 	private static int useAbility(CommandContext<CommandSourceStack> context, RaceAbilitySlot slot) {
@@ -1080,6 +1149,12 @@ public final class ServerRaceSystem {
 		if (slot == RaceAbilitySlot.DEFENSE && GENNADIY_SHAROYOBOV_RACE_ID.equals(raceId)) {
 			return useGennadiyDefense(player, race, ability);
 		}
+		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && GENNADIY_SHAROYOBOV_RACE_ID.equals(raceId)) {
+			return useGennadiyHook(player, race, ability);
+		}
+		if (slot == RaceAbilitySlot.SHNYAGA && GENNADIY_SHAROYOBOV_RACE_ID.equals(raceId)) {
+			return useGennadiyReport(player, race, ability);
+		}
 
 		startGenericAbilityCooldown(player, slot, ability);
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
@@ -1152,7 +1227,10 @@ public final class ServerRaceSystem {
 					|| slot == RaceAbilitySlot.SHNYAGA;
 		}
 		if (GENNADIY_SHAROYOBOV_RACE_ID.equals(raceId)) {
-			return slot == RaceAbilitySlot.ATTACK || slot == RaceAbilitySlot.DEFENSE;
+			return slot == RaceAbilitySlot.ATTACK
+					|| slot == RaceAbilitySlot.DEFENSE
+					|| slot == RaceAbilitySlot.UNIQUE_ABILITY
+					|| slot == RaceAbilitySlot.SHNYAGA;
 		}
 		return false;
 	}
@@ -2122,6 +2200,262 @@ public final class ServerRaceSystem {
 		tickOnlineCooldowns(server, WOMAN_ANIMAL_BREED_COOLDOWNS);
 	}
 
+	private static void tickGennadiyRage(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		Set<UUID> activeNow = new HashSet<>();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			RaceAbilityConfig stock = getGennadiyStockAbility(player);
+			if (!isGennadiyRageActive(player, stock)) {
+				continue;
+			}
+
+			int hasteLevel = getGennadiyRageHasteLevel(stock);
+			if (hasteLevel <= 0) {
+				continue;
+			}
+
+			int amplifier = hasteLevel - 1;
+			UUID playerId = player.getUUID();
+			Integer managedAmplifier = GENNADIY_RAGE_HASTE_PLAYERS.get(playerId);
+			MobEffectInstance current = player.getEffect(MobEffects.HASTE);
+
+			if (current != null
+					&& current.getDuration() == MobEffectInstance.INFINITE_DURATION
+					&& managedAmplifier == null
+					&& current.getAmplifier() >= amplifier) {
+				continue;
+			}
+			if (current != null
+					&& current.getDuration() == MobEffectInstance.INFINITE_DURATION
+					&& managedAmplifier != null
+					&& managedAmplifier == amplifier
+					&& current.getAmplifier() == amplifier) {
+				activeNow.add(playerId);
+				continue;
+			}
+
+			player.addEffect(new MobEffectInstance(MobEffects.HASTE, MobEffectInstance.INFINITE_DURATION, amplifier, false, false, false));
+			GENNADIY_RAGE_HASTE_PLAYERS.put(playerId, amplifier);
+			activeNow.add(playerId);
+		}
+
+		Iterator<Map.Entry<UUID, Integer>> iterator = GENNADIY_RAGE_HASTE_PLAYERS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, Integer> entry = iterator.next();
+			if (activeNow.contains(entry.getKey())) {
+				continue;
+			}
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			if (player != null) {
+				clearGennadiyRageHaste(player, entry.getValue());
+			}
+			iterator.remove();
+		}
+	}
+
+	private static void clearGennadiyRageHaste(ServerPlayer player, int amplifier) {
+		if (player == null) {
+			return;
+		}
+		MobEffectInstance current = player.getEffect(MobEffects.HASTE);
+		if (current != null
+				&& current.getAmplifier() == amplifier
+				&& current.getDuration() == MobEffectInstance.INFINITE_DURATION) {
+			player.removeEffect(MobEffects.HASTE);
+		}
+	}
+
+	private static void tickGennadiyReport(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		long nowTick = server.overworld().getGameTime();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			tickGennadiyReportPlayerInventory(player, nowTick);
+		}
+		if (nowTick % GENNADIY_REPORT_ITEM_SYNC_INTERVAL_TICKS != 0L) {
+			return;
+		}
+		for (ServerLevel level : server.getAllLevels()) {
+			for (Entity entity : level.getAllEntities()) {
+				if (entity instanceof ItemEntity itemEntity && isGennadiyReportItem(itemEntity.getItem())) {
+					enforceGennadiyReportComponents(itemEntity.getItem());
+				}
+			}
+		}
+	}
+
+	private static void tickGennadiyReportPlayerInventory(ServerPlayer player, long nowTick) {
+		if (player == null) {
+			return;
+		}
+		boolean changed = false;
+		Inventory inventory = player.getInventory();
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			ItemStack stack = inventory.getItem(slot);
+			changed |= tickGennadiyReportHeldStack(player, stack, nowTick);
+		}
+		if (player.containerMenu != null) {
+			changed |= tickGennadiyReportHeldStack(player, player.containerMenu.getCarried(), nowTick);
+		}
+		player.getCooldowns().removeCooldown(GENNADIY_REPORT_COOLDOWN_GROUP_ID);
+		displayHeldGennadiyReportCooldown(player, nowTick);
+		if (changed) {
+			player.inventoryMenu.broadcastChanges();
+		}
+	}
+
+	private static boolean tickGennadiyReportHeldStack(ServerPlayer player, ItemStack stack, long nowTick) {
+		GennadiyReportData data = readGennadiyReportData(stack);
+		if (player == null || data == null) {
+			return false;
+		}
+		boolean changed = false;
+		if (!player.getUUID().equals(data.holderId())) {
+			resetGennadiyReportCooldown(stack, player, nowTick);
+			changed = true;
+			data = readGennadiyReportData(stack);
+		}
+		enforceGennadiyReportComponents(stack);
+		return changed;
+	}
+
+	private static void resetGennadiyReportCooldown(ItemStack stack, ServerPlayer holder, long nowTick) {
+		if (stack == null || stack.isEmpty() || holder == null || readGennadiyReportData(stack) == null) {
+			return;
+		}
+		long cooldownTicks = getGennadiyReportCooldownTicks();
+		long cooldownEndTick = nowTick + cooldownTicks;
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+			CompoundTag root = tag.getCompoundOrEmpty(GENNADIY_REPORT_DATA_TAG);
+			root.putString(GENNADIY_REPORT_HOLDER_TAG, holder.getUUID().toString());
+			root.putLong(GENNADIY_REPORT_COOLDOWN_END_TAG, cooldownEndTick);
+			tag.put(GENNADIY_REPORT_DATA_TAG, root);
+		});
+		enforceGennadiyReportComponents(stack);
+		holder.getCooldowns().removeCooldown(GENNADIY_REPORT_COOLDOWN_GROUP_ID);
+	}
+
+	private static void displayHeldGennadiyReportCooldown(ServerPlayer player, long nowTick) {
+		if (player == null || nowTick % GENNADIY_REPORT_ITEM_SYNC_INTERVAL_TICKS != 0L) {
+			return;
+		}
+		ItemStack stack = player.getMainHandItem();
+		GennadiyReportData data = readGennadiyReportData(stack);
+		if (data == null) {
+			stack = player.getOffhandItem();
+			data = readGennadiyReportData(stack);
+		}
+		if (data == null) {
+			return;
+		}
+		long remainingTicks = data.cooldownEndTick() - nowTick;
+		if (remainingTicks > 0L) {
+			displayRemainingCooldown(player, remainingTicks);
+		}
+	}
+
+	private static void clearAllGennadiyReportCooldowns(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		boolean changedPlayerInventory;
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			changedPlayerInventory = clearGennadiyReportCooldownsInPlayer(player);
+			player.getCooldowns().removeCooldown(GENNADIY_REPORT_COOLDOWN_GROUP_ID);
+			if (changedPlayerInventory) {
+				player.inventoryMenu.broadcastChanges();
+			}
+		}
+		for (ServerLevel level : server.getAllLevels()) {
+			for (Entity entity : level.getAllEntities()) {
+				if (entity instanceof ItemEntity itemEntity) {
+					clearGennadiyReportCooldown(itemEntity.getItem());
+				}
+			}
+			clearGennadiyReportCooldownsInLoadedContainers(level);
+		}
+	}
+
+	private static boolean clearGennadiyReportCooldownsInPlayer(ServerPlayer player) {
+		if (player == null) {
+			return false;
+		}
+		boolean changed = false;
+		Inventory inventory = player.getInventory();
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			changed |= clearGennadiyReportCooldown(inventory.getItem(slot));
+		}
+		if (player.containerMenu != null) {
+			changed |= clearGennadiyReportCooldown(player.containerMenu.getCarried());
+		}
+		return changed;
+	}
+
+	private static boolean clearGennadiyReportCooldownsInLoadedContainers(ServerLevel level) {
+		if (level == null) {
+			return false;
+		}
+		boolean changed = false;
+		Set<Long> checkedChunks = new HashSet<>();
+		for (ServerPlayer player : level.players()) {
+			int centerChunkX = player.chunkPosition().x;
+			int centerChunkZ = player.chunkPosition().z;
+			for (int chunkX = centerChunkX - GENNADIY_REPORT_CONTAINER_SCAN_CHUNK_RADIUS; chunkX <= centerChunkX + GENNADIY_REPORT_CONTAINER_SCAN_CHUNK_RADIUS; chunkX++) {
+				for (int chunkZ = centerChunkZ - GENNADIY_REPORT_CONTAINER_SCAN_CHUNK_RADIUS; chunkZ <= centerChunkZ + GENNADIY_REPORT_CONTAINER_SCAN_CHUNK_RADIUS; chunkZ++) {
+					long chunkKey = net.minecraft.world.level.ChunkPos.asLong(chunkX, chunkZ);
+					if (!checkedChunks.add(chunkKey)) {
+						continue;
+					}
+					LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
+					if (chunk == null) {
+						continue;
+					}
+					for (BlockEntity blockEntity : chunk.getBlockEntities().values()) {
+						if (blockEntity instanceof Container container) {
+							boolean containerChanged = clearGennadiyReportCooldownsInContainer(container);
+							if (containerChanged) {
+								blockEntity.setChanged();
+							}
+							changed |= containerChanged;
+						}
+					}
+				}
+			}
+		}
+		return changed;
+	}
+
+	private static boolean clearGennadiyReportCooldownsInContainer(Container container) {
+		if (container == null) {
+			return false;
+		}
+		boolean changed = false;
+		for (int slot = 0; slot < container.getContainerSize(); slot++) {
+			changed |= clearGennadiyReportCooldown(container.getItem(slot));
+		}
+		return changed;
+	}
+
+	private static boolean clearGennadiyReportCooldown(ItemStack stack) {
+		GennadiyReportData data = readGennadiyReportData(stack);
+		if (stack == null || stack.isEmpty() || data == null) {
+			return false;
+		}
+		boolean changed = data.cooldownEndTick() != 0L || stack.has(DataComponents.USE_COOLDOWN);
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+			CompoundTag root = tag.getCompoundOrEmpty(GENNADIY_REPORT_DATA_TAG);
+			root.putLong(GENNADIY_REPORT_COOLDOWN_END_TAG, 0L);
+			tag.put(GENNADIY_REPORT_DATA_TAG, root);
+		});
+		enforceGennadiyReportComponents(stack);
+		return changed;
+	}
+
 	private static void sanitizeCopperIngots(ServerPlayer player) {
 		if (player == null) {
 			return;
@@ -2580,6 +2914,7 @@ public final class ServerRaceSystem {
 		private final double minDamage;
 		private final double maxDamage;
 		private double accumulatedDamage;
+		private UUID fsitSeatId;
 
 		private GennadiyDefenseSession(
 				UUID playerId,
@@ -2616,6 +2951,50 @@ public final class ServerRaceSystem {
 			this.startTick = startTick;
 			this.durationTicks = Math.max(1L, durationTicks);
 		}
+	}
+
+	private enum GennadiyHookPhase {
+		EXTENDING,
+		PULLING,
+		RETRACTING
+	}
+
+	private static final class GennadiyHookSession {
+		private final UUID playerId;
+		private final ResourceKey<Level> dimension;
+		private final Vec3 castDirection;
+		private final UUID targetId;
+		private final double endpointDistance;
+		private final double damage;
+		private final long slownessTicks;
+		private final List<UUID> segmentIds = new ArrayList<>();
+		private UUID hookTipId;
+		private GennadiyHookPhase phase = GennadiyHookPhase.EXTENDING;
+		private double visibleLength;
+
+		private GennadiyHookSession(
+				UUID playerId,
+				ResourceKey<Level> dimension,
+				Vec3 castDirection,
+				UUID targetId,
+				double endpointDistance,
+				double damage,
+				long slownessTicks
+		) {
+			this.playerId = playerId;
+			this.dimension = dimension;
+			this.castDirection = castDirection == null || castDirection.lengthSqr() <= 1.0E-6D ? new Vec3(0.0D, 0.0D, 1.0D) : castDirection.normalize();
+			this.targetId = targetId;
+			this.endpointDistance = Math.max(0.0D, endpointDistance);
+			this.damage = Math.max(0.0D, damage);
+			this.slownessTicks = Math.max(1L, slownessTicks);
+		}
+	}
+
+    private record GennadiyReportPending(InteractionHand hand, long expireTick) {
+    }
+
+	private record GennadiyReportData(UUID id, UUID holderId, long cooldownEndTick) {
 	}
 
 	private record CopperManJetpackInputState(boolean forward, boolean backward, boolean left, boolean right, boolean jump, boolean shift, boolean sprint) {
@@ -2851,6 +3230,43 @@ public final class ServerRaceSystem {
 
 	private static double getWomanAnimalBreedCooldownSeconds(RaceAbilityConfig stock) {
 		return positiveOrDefault(stock == null ? 0.0D : stock.womanAnimalBreedCooldownSeconds, WOMAN_ANIMAL_BREED_DEFAULT_COOLDOWN_SECONDS);
+	}
+
+	private static RaceAbilityConfig getGennadiyStockAbility(ServerPlayer player) {
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isEmpty()) {
+			return null;
+		}
+
+		PlayerRaceConfig race = raceOptional.get();
+		if (!GENNADIY_SHAROYOBOV_RACE_ID.equals(sanitizePath(race.id)) || race.stock == null || !race.stock.enabled) {
+			return null;
+		}
+		return race.stock;
+	}
+
+	private static boolean isGennadiyRageActive(ServerPlayer player, RaceAbilityConfig stock) {
+		if (player == null || stock == null || !player.isAlive() || player.isSpectator()) {
+			return false;
+		}
+		double maxHealth = player.getMaxHealth();
+		if (maxHealth <= 0.0D) {
+			return false;
+		}
+		double threshold = Math.min(1.0D, getGennadiyRageHealthThresholdRatio(stock));
+		return threshold > 0.0D && player.getHealth() / maxHealth < threshold;
+	}
+
+	private static double getGennadiyRageHealthThresholdRatio(RaceAbilityConfig stock) {
+		return positiveOrDefault(stock == null ? 0.0D : stock.gennadiyRageHealthThresholdRatio, GENNADIY_RAGE_DEFAULT_HEALTH_THRESHOLD_RATIO);
+	}
+
+	private static int getGennadiyRageHasteLevel(RaceAbilityConfig stock) {
+		return positiveIntOrDefault(stock == null ? 0 : stock.gennadiyRageHasteLevel, GENNADIY_RAGE_DEFAULT_HASTE_LEVEL);
+	}
+
+	private static double getGennadiyRageMeleeDamageBonusRatio(RaceAbilityConfig stock) {
+		return positiveOrDefault(stock == null ? 0.0D : stock.gennadiyRageMeleeDamageBonusRatio, GENNADIY_RAGE_DEFAULT_MELEE_DAMAGE_BONUS_RATIO);
 	}
 
 	private static void playWomanAnimalBreedStockSound(ServerPlayer player) {
@@ -4426,6 +4842,22 @@ public final class ServerRaceSystem {
 		syncGennadiyDefenseForcedPose(player, true);
 	}
 
+	public static boolean handleGennadiyDefenseMovementPacket(ServerPlayer player, float yaw) {
+		if (player == null || !isGennadiyDefenseActive(player)) {
+			return false;
+		}
+		if (Float.isFinite(yaw)) {
+			player.setYRot(yaw);
+			player.setYHeadRot(yaw);
+			player.setYBodyRot(yaw);
+			player.yRotO = yaw;
+			player.yHeadRotO = yaw;
+			player.yBodyRotO = yaw;
+		}
+		syncGennadiyDefenseForcedPose(player, true);
+		return true;
+	}
+
 	public static void handleVehicleMovePacket(ServerPlayer player) {
 		if (player == null) {
 			return;
@@ -5022,6 +5454,18 @@ public final class ServerRaceSystem {
 		return positiveOrDefault(ability == null ? 0.0D : ability.gennadiyDefenseMaxDamage, GENNADIY_DEFENSE_DEFAULT_MAX_DAMAGE);
 	}
 
+	private static double getGennadiyHookRange(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.gennadiyHookRangeBlocks, GENNADIY_HOOK_DEFAULT_RANGE_BLOCKS);
+	}
+
+	private static double getGennadiyHookDamage(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.gennadiyHookDamage, GENNADIY_HOOK_DEFAULT_DAMAGE);
+	}
+
+	private static double getGennadiyHookSlownessSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.gennadiyHookSlownessSeconds, GENNADIY_HOOK_DEFAULT_SLOWNESS_SECONDS);
+	}
+
 	private static int useGennadiyDefense(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
 		if (player == null || ability == null || player.isSpectator() || !player.isAlive()) {
 			return 0;
@@ -5054,6 +5498,377 @@ public final class ServerRaceSystem {
 		startGenericAbilityCooldown(player, RaceAbilitySlot.DEFENSE, ability);
 		Lg2.LOGGER.info("Player {} activated gennadiy defense '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
+	}
+
+	private static int useGennadiyHook(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || ability == null || player.isSpectator() || !player.isAlive()) {
+			return 0;
+		}
+		if (!(player.level() instanceof ServerLevel level)) {
+			return 0;
+		}
+		if (displayGenericAbilityCooldown(player, RaceAbilitySlot.UNIQUE_ABILITY)) {
+			return 0;
+		}
+
+		cleanupGennadiyHookSession(level.getServer(), GENNADIY_HOOK_SESSIONS.remove(player.getUUID()));
+		Vec3 origin = getGennadiyHookOrigin(player);
+		Vec3 direction = player.getLookAngle();
+		if (direction.lengthSqr() <= 1.0E-6D) {
+			return 0;
+		}
+		direction = direction.normalize();
+
+		double range = getGennadiyHookRange(ability);
+		Vec3 maxEnd = origin.add(direction.scale(range));
+		BlockHitResult blockHit = level.clip(new ClipContext(origin, maxEnd, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, player));
+		Vec3 rayEnd = blockHit.getType() == HitResult.Type.MISS ? maxEnd : blockHit.getLocation();
+		EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
+				level,
+				player,
+				origin,
+				rayEnd,
+				new AABB(origin, rayEnd).inflate(GENNADIY_HOOK_HIT_RADIUS_BLOCKS),
+				entity -> canGennadiyHookHit(player, entity),
+				(float) GENNADIY_HOOK_HIT_RADIUS_BLOCKS
+		);
+
+		LivingEntity target = null;
+		Vec3 endpoint = rayEnd;
+		if (entityHit != null && entityHit.getEntity() instanceof LivingEntity hitTarget) {
+			target = hitTarget;
+			endpoint = entityHit.getLocation();
+		}
+
+		double endpointDistance = Math.min(range, Math.max(0.0D, endpoint.distanceTo(origin)));
+		if (endpointDistance <= 0.05D) {
+			return 0;
+		}
+
+		GennadiyHookSession session = new GennadiyHookSession(
+				player.getUUID(),
+				level.dimension(),
+				direction,
+				target == null ? null : target.getUUID(),
+				endpointDistance,
+				getGennadiyHookDamage(ability),
+				asTicks(getGennadiyHookSlownessSeconds(ability))
+		);
+		GENNADIY_HOOK_SESSIONS.put(player.getUUID(), session);
+		startGenericAbilityCooldown(player, RaceAbilitySlot.UNIQUE_ABILITY, ability);
+		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.CHAIN_STEP, SoundSource.PLAYERS, 0.85F, 1.25F);
+		Lg2.LOGGER.info("Player {} fired gennadiy hook '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
+		return 1;
+	}
+
+	private static boolean canGennadiyHookHit(ServerPlayer caster, Entity entity) {
+		if (caster == null || !(entity instanceof LivingEntity target)) {
+			return false;
+		}
+		if (!target.isAlive() || target.isSpectator() || target == caster || target instanceof ArmorStand) {
+			return false;
+		}
+		if (target.getTags().contains(GENNADIY_DONKEY_TAG)) {
+			return false;
+		}
+		return !(target instanceof ServerPlayer targetPlayer) || !caster.isAlliedTo(targetPlayer);
+	}
+
+	private static Vec3 getGennadiyHookOrigin(ServerPlayer player) {
+		return player.getEyePosition().subtract(0.0D, 0.12D, 0.0D);
+	}
+
+	private static int useGennadiyReport(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || ability == null || player.isSpectator() || !player.isAlive()) {
+			return 0;
+		}
+		MinecraftServer server = player.level().getServer();
+		if (hasActiveGennadiyReport(server)) {
+			displayGennadiyReportActionbar(player, "Уже есть активный REPORT. Уничтожьте текущий предмет, чтобы создать новый.");
+			return 0;
+		}
+
+		InteractionHand hand = selectGennadiyReportHand(player);
+		if (hand == null) {
+			displayGennadiyReportActionbar(player, "Возьмите предмет в руку, чтобы создать REPORT.");
+			return 0;
+		}
+
+		ItemStack stack = player.getItemInHand(hand);
+        // expireTick is kept in the record shape for compatibility with already-loaded old outer classes.
+		// REPORT confirmation itself intentionally lives until disconnect or the next proposal.
+		GENNADIY_REPORT_PENDING.put(player.getUUID(), new GennadiyReportPending(hand, Long.MAX_VALUE));
+		Component itemName = stack.getHoverName().copy().withStyle(style -> style.withColor(ChatFormatting.DARK_RED).withItalic(false));
+		MutableComponent message = centeredGennadiyReportLiteral("Вы уверены, что хотите наложить", ChatFormatting.RED)
+				.append(Component.literal("\n"))
+				.append(centeredGennadiyReportLineWithItem(
+						"проклятие REPORT на ",
+						itemName,
+						stack.getHoverName().getString(),
+						"?"
+				))
+				.append(Component.literal("\n"))
+				.append(centeredGennadiyReportLiteral("В мире может существовать только один REPORT.", ChatFormatting.RED))
+				.append(Component.literal("\n"))
+				.append(centeredGennadiyReportLiteral("Новый можно создать только после", ChatFormatting.RED))
+				.append(Component.literal("\n"))
+				.append(centeredGennadiyReportLiteral("уничтожения старого.", ChatFormatting.RED));
+		MutableComponent button = Component.literal("[Подтвердить]")
+				.withStyle(style -> style
+						.withColor(ChatFormatting.DARK_RED)
+						.withBold(true)
+						.withClickEvent(new ClickEvent.RunCommand("/race gennadiy_report confirm")));
+		player.sendSystemMessage(message.append(Component.literal("\n")).append(centeredGennadiyReportComponent(button, "[Подтвердить]")));
+		Lg2.LOGGER.info("Player {} requested gennadiy REPORT curse for race '{}'", player.getGameProfile().name(), race.id);
+		return 1;
+	}
+
+	private static int confirmGennadiyReport(CommandContext<CommandSourceStack> context) {
+		ServerPlayer player = context.getSource().getPlayer();
+		if (player == null) {
+			context.getSource().sendFailure(Component.literal("Player only."));
+			return 0;
+		}
+
+		GennadiyReportPending pending = GENNADIY_REPORT_PENDING.remove(player.getUUID());
+		if (pending == null) {
+			displayGennadiyReportActionbar(player, "Сначала выберите предмет для REPORT.");
+			return 0;
+		}
+		if (hasActiveGennadiyReport(player.level().getServer())) {
+			displayGennadiyReportActionbar(player, "Уже есть активный REPORT. Уничтожьте текущий предмет, чтобы создать новый.");
+			return 0;
+		}
+
+		ItemStack selected = player.getItemInHand(pending.hand());
+		if (selected.isEmpty()) {
+			displayGennadiyReportActionbar(player, "Возьмите предмет в руку, чтобы создать REPORT.");
+			return 0;
+		}
+
+		long nowTick = player.level().getGameTime();
+		long cooldownTicks = getGennadiyReportCooldownTicks();
+		ItemStack reportStack = selected.copyWithCount(1);
+		applyGennadiyReport(reportStack, player, nowTick, cooldownTicks);
+		if (selected.getCount() > 1) {
+			ItemStack remainder = selected.copy();
+			remainder.setCount(selected.getCount() - 1);
+			player.setItemInHand(pending.hand(), reportStack);
+			if (!player.getInventory().add(remainder)) {
+				player.drop(remainder, false);
+			}
+		} else {
+			player.setItemInHand(pending.hand(), reportStack);
+		}
+
+		player.getCooldowns().removeCooldown(GENNADIY_REPORT_COOLDOWN_GROUP_ID);
+		sendPersonalSound(player, SoundEvents.WITHER_SPAWN, SoundSource.PLAYERS, player.position(), 1.0F, 1.0F, nowTick ^ player.getUUID().getLeastSignificantBits());
+		return 1;
+	}
+
+	private static InteractionHand selectGennadiyReportHand(ServerPlayer player) {
+		if (player == null) {
+			return null;
+		}
+		if (!player.getItemInHand(InteractionHand.MAIN_HAND).isEmpty()) {
+			return InteractionHand.MAIN_HAND;
+		}
+		return player.getItemInHand(InteractionHand.OFF_HAND).isEmpty() ? null : InteractionHand.OFF_HAND;
+	}
+
+	private static void displayGennadiyReportActionbar(ServerPlayer player, String text) {
+		if (player == null || text == null || text.isBlank()) {
+			return;
+		}
+		player.displayClientMessage(Component.literal(text).withStyle(ChatFormatting.RED), true);
+	}
+
+	private static MutableComponent centeredGennadiyReportLiteral(String text, ChatFormatting color) {
+		return Component.literal(gennadiyReportCenterPadding(text) + text).withStyle(color);
+	}
+
+	private static MutableComponent centeredGennadiyReportLineWithItem(String prefix, Component itemName, String itemText, String suffix) {
+		String visibleText = prefix + itemText + suffix;
+		return Component.literal(gennadiyReportCenterPadding(visibleText) + prefix)
+				.withStyle(ChatFormatting.RED)
+				.append(itemName)
+				.append(Component.literal(suffix).withStyle(ChatFormatting.RED));
+	}
+
+	private static MutableComponent centeredGennadiyReportComponent(Component component, String visibleText) {
+		return Component.literal(gennadiyReportCenterPadding(visibleText)).append(component);
+	}
+
+	private static String gennadiyReportCenterPadding(String visibleText) {
+		int length = visibleText == null ? 0 : visibleText.length();
+		int padding = Math.max(0, (GENNADIY_REPORT_CONFIRM_LINE_WIDTH_CHARS - length) / 2);
+		return " ".repeat(padding);
+	}
+
+	private static void applyGennadiyReport(ItemStack stack, ServerPlayer creator, long nowTick, long cooldownTicks) {
+		if (stack == null || stack.isEmpty()) {
+			return;
+		}
+		UUID reportId = UUID.randomUUID();
+		long cooldownEndTick = nowTick + Math.max(1L, cooldownTicks);
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+			CompoundTag root = tag.getCompoundOrEmpty(GENNADIY_REPORT_DATA_TAG);
+			root.putString(GENNADIY_REPORT_ID_TAG, reportId.toString());
+			root.putString(GENNADIY_REPORT_CREATOR_TAG, creator.getUUID().toString());
+			root.putString(GENNADIY_REPORT_HOLDER_TAG, creator.getUUID().toString());
+			root.putLong(GENNADIY_REPORT_COOLDOWN_END_TAG, cooldownEndTick);
+			tag.put(GENNADIY_REPORT_DATA_TAG, root);
+		});
+		enforceGennadiyReportComponents(stack);
+	}
+
+	public static boolean isGennadiyReportItem(ItemStack stack) {
+		return readGennadiyReportData(stack) != null;
+	}
+
+	private static GennadiyReportData readGennadiyReportData(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return null;
+		}
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData == null) {
+			return null;
+		}
+		CompoundTag root = customData.copyTag().getCompoundOrEmpty(GENNADIY_REPORT_DATA_TAG);
+		String idText = root.getStringOr(GENNADIY_REPORT_ID_TAG, "");
+		if (idText.isBlank()) {
+			return null;
+		}
+		try {
+			UUID id = UUID.fromString(idText);
+			UUID holderId = parseOptionalUuid(root.getStringOr(GENNADIY_REPORT_HOLDER_TAG, ""));
+			return new GennadiyReportData(id, holderId, root.getLongOr(GENNADIY_REPORT_COOLDOWN_END_TAG, 0L));
+		} catch (IllegalArgumentException ignored) {
+			return null;
+		}
+	}
+
+	private static UUID parseOptionalUuid(String value) {
+		if (value == null || value.isBlank()) {
+			return null;
+		}
+		try {
+			return UUID.fromString(value);
+		} catch (IllegalArgumentException ignored) {
+			return null;
+		}
+	}
+
+	private static void enforceGennadiyReportComponents(ItemStack stack) {
+		if (stack == null || stack.isEmpty() || readGennadiyReportData(stack) == null) {
+			return;
+		}
+		stack.set(DataComponents.CUSTOM_NAME, Component.literal("REPORT").withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)));
+		stack.remove(DataComponents.USE_COOLDOWN);
+		stack.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, Boolean.TRUE);
+	}
+
+	private static boolean hasActiveGennadiyReport(MinecraftServer server) {
+		if (server == null) {
+			return false;
+		}
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (findGennadiyReportInPlayer(player) != null) {
+				return true;
+			}
+		}
+		for (ServerLevel level : server.getAllLevels()) {
+			for (Entity entity : level.getAllEntities()) {
+				if (entity instanceof ItemEntity itemEntity && isGennadiyReportItem(itemEntity.getItem())) {
+					enforceGennadiyReportComponents(itemEntity.getItem());
+					return true;
+				}
+			}
+			if (hasGennadiyReportInLoadedContainers(level)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static ItemStack findGennadiyReportInPlayer(ServerPlayer player) {
+		if (player == null) {
+			return null;
+		}
+		Inventory inventory = player.getInventory();
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			ItemStack stack = inventory.getItem(slot);
+			if (isGennadiyReportItem(stack)) {
+				enforceGennadiyReportComponents(stack);
+				return stack;
+			}
+		}
+		ItemStack carried = player.containerMenu == null ? ItemStack.EMPTY : player.containerMenu.getCarried();
+		if (isGennadiyReportItem(carried)) {
+			enforceGennadiyReportComponents(carried);
+			return carried;
+		}
+		return null;
+	}
+
+	private static boolean hasGennadiyReportInLoadedContainers(ServerLevel level) {
+		if (level == null) {
+			return false;
+		}
+		Set<Long> checkedChunks = new HashSet<>();
+		for (ServerPlayer player : level.players()) {
+			int centerChunkX = player.chunkPosition().x;
+			int centerChunkZ = player.chunkPosition().z;
+			for (int chunkX = centerChunkX - GENNADIY_REPORT_CONTAINER_SCAN_CHUNK_RADIUS; chunkX <= centerChunkX + GENNADIY_REPORT_CONTAINER_SCAN_CHUNK_RADIUS; chunkX++) {
+				for (int chunkZ = centerChunkZ - GENNADIY_REPORT_CONTAINER_SCAN_CHUNK_RADIUS; chunkZ <= centerChunkZ + GENNADIY_REPORT_CONTAINER_SCAN_CHUNK_RADIUS; chunkZ++) {
+					long chunkKey = net.minecraft.world.level.ChunkPos.asLong(chunkX, chunkZ);
+					if (!checkedChunks.add(chunkKey)) {
+						continue;
+					}
+					LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
+					if (chunk == null) {
+						continue;
+					}
+					for (BlockEntity blockEntity : chunk.getBlockEntities().values()) {
+						if (blockEntity instanceof Container container && containsGennadiyReport(container)) {
+							return true;
+						}
+					}
+				}
+			}
+		}
+		return false;
+	}
+
+	private static boolean containsGennadiyReport(Container container) {
+		if (container == null) {
+			return false;
+		}
+		for (int slot = 0; slot < container.getContainerSize(); slot++) {
+			ItemStack stack = container.getItem(slot);
+			if (isGennadiyReportItem(stack)) {
+				enforceGennadiyReportComponents(stack);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static long getGennadiyReportCooldownTicks() {
+		return Math.max(1L, asTicks(getGennadiyReportCooldownSeconds()));
+	}
+
+	private static double getGennadiyReportCooldownSeconds() {
+		for (PlayerRaceConfig race : RaceConfig.get().races) {
+			if (race != null && GENNADIY_SHAROYOBOV_RACE_ID.equals(sanitizePath(race.id))) {
+				return getGennadiyReportCooldownSeconds(race.shnyaga);
+			}
+		}
+		return GENNADIY_REPORT_DEFAULT_COOLDOWN_SECONDS;
+	}
+
+	private static double getGennadiyReportCooldownSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.gennadiyReportCooldownSeconds, GENNADIY_REPORT_DEFAULT_COOLDOWN_SECONDS);
 	}
 
 	private static int useGennadiyDonkeyAttack(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
@@ -5629,6 +6444,339 @@ public final class ServerRaceSystem {
 		level.sendParticles(ParticleTypes.SMOKE, position.x, position.y, position.z, 2, 0.035D, 0.035D, 0.035D, 0.0D);
 	}
 
+	private static void tickGennadiyHook(MinecraftServer server) {
+		if (server == null || GENNADIY_HOOK_SESSIONS.isEmpty()) {
+			return;
+		}
+
+		Iterator<Map.Entry<UUID, GennadiyHookSession>> iterator = GENNADIY_HOOK_SESSIONS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, GennadiyHookSession> entry = iterator.next();
+			GennadiyHookSession session = entry.getValue();
+			ServerPlayer player = session == null ? null : server.getPlayerList().getPlayer(session.playerId);
+			ServerLevel level = session == null || session.dimension == null ? null : server.getLevel(session.dimension);
+			if (session == null
+					|| player == null
+					|| level == null
+					|| player.level() != level
+					|| !player.isAlive()
+					|| player.isSpectator()) {
+				cleanupGennadiyHookSession(server, session);
+				iterator.remove();
+				continue;
+			}
+
+			if (!tickGennadiyHookSession(server, level, player, session)) {
+				cleanupGennadiyHookSession(server, session);
+				iterator.remove();
+			}
+		}
+	}
+
+	private static boolean tickGennadiyHookSession(MinecraftServer server, ServerLevel level, ServerPlayer player, GennadiyHookSession session) {
+		Vec3 origin = getGennadiyHookOrigin(player);
+		if (session.phase == GennadiyHookPhase.EXTENDING) {
+			session.visibleLength = Math.min(session.endpointDistance, session.visibleLength + GENNADIY_HOOK_EXTEND_SPEED_BLOCKS);
+			updateGennadiyHookSegments(server, level, session, origin, session.castDirection, session.visibleLength);
+			if (session.visibleLength + 1.0E-4D < session.endpointDistance) {
+				return true;
+			}
+			session.phase = session.targetId == null ? GennadiyHookPhase.RETRACTING : GennadiyHookPhase.PULLING;
+			return true;
+		}
+
+		if (session.phase == GennadiyHookPhase.RETRACTING) {
+			session.visibleLength = Math.max(0.0D, session.visibleLength - GENNADIY_HOOK_RETRACT_SPEED_BLOCKS);
+			updateGennadiyHookSegments(server, level, session, origin, session.castDirection, session.visibleLength);
+			return session.visibleLength > 0.05D;
+		}
+
+		Entity entity = findEntity(server, session.targetId);
+		if (!(entity instanceof LivingEntity target) || !canGennadiyHookHit(player, target) || target.level() != level) {
+			session.phase = GennadiyHookPhase.RETRACTING;
+			return true;
+		}
+
+		Vec3 targetCenter = target.position().add(0.0D, Math.max(0.25D, target.getBbHeight() * 0.55D), 0.0D);
+		Vec3 toTarget = targetCenter.subtract(origin);
+		double distance = toTarget.length();
+		if (distance <= GENNADIY_HOOK_FINISH_DISTANCE_BLOCKS) {
+			finishGennadiyHookPull(level, player, target, session);
+			return false;
+		}
+		if (distance <= 1.0E-6D) {
+			return false;
+		}
+
+		Vec3 directionToTarget = toTarget.scale(1.0D / distance);
+		updateGennadiyHookSegments(server, level, session, origin, directionToTarget, distance);
+		pullGennadiyHookTarget(player, target, directionToTarget, distance);
+		return true;
+	}
+
+	private static void pullGennadiyHookTarget(ServerPlayer player, LivingEntity target, Vec3 directionToTarget, double distance) {
+		if (player == null || target == null || directionToTarget == null || directionToTarget.lengthSqr() <= 1.0E-6D) {
+			return;
+		}
+		double pull = Math.min(GENNADIY_HOOK_PULL_SPEED_BLOCKS, Math.max(0.25D, distance * 0.28D));
+		Vec3 current = target.getDeltaMovement();
+		Vec3 next = current.scale(0.25D).add(directionToTarget.scale(-pull));
+		target.setDeltaMovement(next);
+		target.hurtMarked = true;
+		target.resetFallDistance();
+		if (target instanceof ServerPlayer targetPlayer) {
+			targetPlayer.connection.send(new ClientboundSetEntityMotionPacket(targetPlayer));
+		}
+	}
+
+	private static void finishGennadiyHookPull(ServerLevel level, ServerPlayer player, LivingEntity target, GennadiyHookSession session) {
+		if (level == null || player == null || target == null || session == null) {
+			return;
+		}
+		if (session.damage > 0.0D) {
+			target.hurtServer(level, level.damageSources().magic(), (float) session.damage);
+		}
+		target.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, (int) Math.min(Integer.MAX_VALUE, session.slownessTicks), 2, false, true, true));
+		Vec3 center = target.position().add(0.0D, Math.max(0.25D, target.getBbHeight() * 0.55D), 0.0D);
+		level.sendParticles(
+				ParticleTypes.CRIT,
+				center.x,
+				center.y,
+				center.z,
+				18,
+				Math.max(0.15D, target.getBbWidth() * 0.35D),
+				Math.max(0.18D, target.getBbHeight() * 0.25D),
+				Math.max(0.15D, target.getBbWidth() * 0.35D),
+				0.16D
+		);
+		level.playSound(null, center.x, center.y, center.z, SoundEvents.CHAIN_BREAK, SoundSource.PLAYERS, 0.75F, 1.35F);
+	}
+
+	private static void updateGennadiyHookSegments(MinecraftServer server, ServerLevel level, GennadiyHookSession session, Vec3 origin, Vec3 direction, double length) {
+		if (server == null || level == null || session == null || origin == null || direction == null) {
+			return;
+		}
+		if (direction.lengthSqr() <= 1.0E-6D || length <= 0.02D) {
+			trimGennadiyHookSegments(server, session, 0);
+			removeGennadiyHookTip(server, session);
+			return;
+		}
+		Vec3 normalized = direction.normalize();
+		double chainBodyLength = Math.max(0.0D, length - GENNADIY_HOOK_SEGMENT_SPACING_BLOCKS);
+		int desiredCount = Math.max(0, Math.min(GENNADIY_HOOK_MAX_SEGMENTS, (int) Math.ceil(chainBodyLength / GENNADIY_HOOK_SEGMENT_SPACING_BLOCKS)));
+		trimGennadiyHookSegments(server, session, desiredCount);
+		while (session.segmentIds.size() < desiredCount) {
+			session.segmentIds.add(null);
+		}
+
+		float yaw = yawFromDirection(normalized);
+		float pitch = pitchFromDirection(normalized);
+		double lastSegmentDistance = 0.0D;
+		for (int i = 0; i < desiredCount; i++) {
+			double distance = Math.min(chainBodyLength, (i + 0.5D) * GENNADIY_HOOK_SEGMENT_SPACING_BLOCKS);
+			lastSegmentDistance = distance;
+			Vec3 position = origin.add(normalized.scale(distance));
+			Display.ItemDisplay display = resolveGennadiyHookSegment(server, level, session, i);
+			if (display == null) {
+				continue;
+			}
+			display.setPos(position.x, position.y, position.z);
+			clearGennadiyHookChainHitbox(display);
+			display.setYRot(yaw);
+			display.setXRot(pitch);
+			display.yRotO = yaw;
+			display.xRotO = pitch;
+			display.hurtMarked = true;
+		}
+		double tipAttachDistance = desiredCount > 0
+				? lastSegmentDistance + GENNADIY_HOOK_CHAIN_END_OFFSET_BLOCKS
+				: length;
+		updateGennadiyHookTip(server, level, session, origin, normalized, tipAttachDistance, yaw, pitch);
+	}
+
+	private static Display.ItemDisplay resolveGennadiyHookSegment(MinecraftServer server, ServerLevel level, GennadiyHookSession session, int index) {
+		UUID id = index < session.segmentIds.size() ? session.segmentIds.get(index) : null;
+		Entity existing = findEntity(server, id);
+		if (existing instanceof Display.ItemDisplay display && display.isAlive()) {
+			configureGennadiyHookDisplay(display);
+			clearGennadiyHookChainHitbox(display);
+			return display;
+		}
+		Display.ItemDisplay display = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
+		display.addTag(GENNADIY_HOOK_CHAIN_TAG);
+		display.addTag(GENNADIY_DONKEY_OWNER_TAG_PREFIX + session.playerId);
+		display.setNoGravity(true);
+		display.noPhysics = true;
+		display.setInvulnerable(true);
+		display.setSilent(true);
+		configureGennadiyHookDisplay(display);
+		display.setItemStack(BattleDonkeyTurretItem.createHookChainDisplayStack());
+		clearGennadiyHookChainHitbox(display);
+		level.addFreshEntity(display);
+		session.segmentIds.set(index, display.getUUID());
+		return display;
+	}
+
+	private static void updateGennadiyHookTip(
+			MinecraftServer server,
+			ServerLevel level,
+			GennadiyHookSession session,
+			Vec3 origin,
+			Vec3 direction,
+			double tipAttachDistance,
+			float chainYaw,
+			float chainPitch
+	) {
+		if (server == null || level == null || session == null || origin == null || direction == null || tipAttachDistance <= 0.02D) {
+			removeGennadiyHookTip(server, session);
+			return;
+		}
+		Display.ItemDisplay display = resolveGennadiyHookTip(server, level, session);
+		if (display == null) {
+			return;
+		}
+
+		float yaw = chainYaw;
+		float pitch = chainPitch;
+		Vec3 redLinkAttachPosition = origin.add(direction.scale(Math.max(0.0D, tipAttachDistance - GENNADIY_HOOK_TIP_ATTACH_CORRECTION_BLOCKS)));
+		Vec3 redLinkAttachOffset = rotateDisplayLocalOffset(GENNADIY_HOOK_TIP_RED_LINK_ATTACH_OFFSET, yaw, pitch);
+		Vec3 position = redLinkAttachPosition.subtract(redLinkAttachOffset);
+		display.setPos(position.x, position.y, position.z);
+		clearGennadiyHookChainHitbox(display);
+
+		display.setYRot(yaw);
+		display.setXRot(pitch);
+		display.yRotO = yaw;
+		display.xRotO = pitch;
+		display.hurtMarked = true;
+	}
+
+	private static Display.ItemDisplay resolveGennadiyHookTip(MinecraftServer server, ServerLevel level, GennadiyHookSession session) {
+		Entity existing = findEntity(server, session.hookTipId);
+		if (existing instanceof Display.ItemDisplay display && display.isAlive()) {
+			configureGennadiyHookDisplay(display);
+			clearGennadiyHookChainHitbox(display);
+			return display;
+		}
+		Display.ItemDisplay display = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
+		display.addTag(GENNADIY_HOOK_CHAIN_TAG);
+		display.addTag(GENNADIY_DONKEY_OWNER_TAG_PREFIX + session.playerId);
+		display.setNoGravity(true);
+		display.noPhysics = true;
+		display.setInvulnerable(true);
+		display.setSilent(true);
+		configureGennadiyHookDisplay(display);
+		display.setItemStack(BattleDonkeyTurretItem.createHookClawDisplayStack());
+		clearGennadiyHookChainHitbox(display);
+		level.addFreshEntity(display);
+		session.hookTipId = display.getUUID();
+		return display;
+	}
+
+	private static void configureGennadiyHookDisplay(Display.ItemDisplay display) {
+		if (display == null) {
+			return;
+		}
+		display.setBillboardConstraints(Display.BillboardConstraints.FIXED);
+		display.setItemTransform(ItemDisplayContext.FIXED);
+		display.setViewRange(32.0F);
+		display.setTransformationInterpolationDelay(0);
+		display.setTransformationInterpolationDuration(0);
+	}
+
+	private static Vec3 rotateDisplayLocalOffset(Vec3 localOffset, float yawDegrees, float pitchDegrees) {
+		if (localOffset == null || localOffset.lengthSqr() <= 1.0E-9D) {
+			return Vec3.ZERO;
+		}
+		double yaw = Math.toRadians(yawDegrees);
+		double pitch = Math.toRadians(pitchDegrees);
+		double cosPitch = Math.cos(pitch);
+		Vec3 forward = new Vec3(
+				-Math.sin(yaw) * cosPitch,
+				-Math.sin(pitch),
+				Math.cos(yaw) * cosPitch
+		);
+		Vec3 right = new Vec3(Math.cos(yaw), 0.0D, Math.sin(yaw));
+		Vec3 up = forward.cross(right);
+		return right.scale(localOffset.x)
+				.add(up.scale(localOffset.y))
+				.add(forward.scale(localOffset.z));
+	}
+
+	private static void clearGennadiyHookChainHitbox(Display.ItemDisplay display) {
+		if (display == null) {
+			return;
+		}
+		display.noPhysics = true;
+		((DisplayAccessor) display).lg2$setDisplayWidth(0.0F);
+		((DisplayAccessor) display).lg2$setDisplayHeight(0.0F);
+		display.refreshDimensions();
+		Vec3 position = display.position();
+		display.setBoundingBox(new AABB(position.x, position.y, position.z, position.x, position.y, position.z));
+	}
+
+	private static void trimGennadiyHookSegments(MinecraftServer server, GennadiyHookSession session, int desiredCount) {
+		if (session == null) {
+			return;
+		}
+		for (int i = session.segmentIds.size() - 1; i >= desiredCount; i--) {
+			UUID id = session.segmentIds.remove(i);
+			Entity entity = findEntity(server, id);
+			if (entity != null) {
+				entity.discard();
+			}
+		}
+	}
+
+	private static void cleanupGennadiyHookSession(MinecraftServer server, GennadiyHookSession session) {
+		if (session == null) {
+			return;
+		}
+		trimGennadiyHookSegments(server, session, 0);
+		removeGennadiyHookTip(server, session);
+	}
+
+	private static void removeGennadiyHookTip(MinecraftServer server, GennadiyHookSession session) {
+		if (session == null || session.hookTipId == null) {
+			return;
+		}
+		Entity entity = findEntity(server, session.hookTipId);
+		if (entity != null) {
+			entity.discard();
+		}
+		session.hookTipId = null;
+	}
+
+	private static void cleanupAllGennadiyHookChains(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		for (GennadiyHookSession session : new ArrayList<>(GENNADIY_HOOK_SESSIONS.values())) {
+			cleanupGennadiyHookSession(server, session);
+		}
+		GENNADIY_HOOK_SESSIONS.clear();
+		for (ServerLevel level : server.getAllLevels()) {
+			List<Entity> entities = new ArrayList<>();
+			for (Entity entity : level.getAllEntities()) {
+				entities.add(entity);
+			}
+			for (Entity entity : entities) {
+				if (entity != null && entity.getTags().contains(GENNADIY_HOOK_CHAIN_TAG)) {
+					entity.discard();
+				}
+			}
+		}
+	}
+
+	private static float yawFromDirection(Vec3 direction) {
+		return (float) (Math.atan2(-direction.x, direction.z) * (180.0D / Math.PI));
+	}
+
+	private static float pitchFromDirection(Vec3 direction) {
+		double horizontal = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
+		return (float) (-(Math.atan2(direction.y, horizontal) * (180.0D / Math.PI)));
+	}
+
 	private static void tickGennadiyDefense(MinecraftServer server) {
 		if (server == null) {
 			return;
@@ -5654,6 +6802,7 @@ public final class ServerRaceSystem {
 					|| !(player.level() instanceof ServerLevel level)
 					|| !level.dimension().equals(session.dimension)) {
 				iterator.remove();
+				cleanupGennadiyDefenseSeat(server, session, player);
 				if (player != null) {
 					cleanupGennadiyDefenseEffects(player);
 				}
@@ -5662,6 +6811,7 @@ public final class ServerRaceSystem {
 
 			if (nowTick >= session.endTick) {
 				iterator.remove();
+				cleanupGennadiyDefenseSeat(server, session, player);
 				cleanupGennadiyDefenseEffects(player);
 				releaseGennadiyDefenseWave(level, player, session, nowTick);
 				continue;
@@ -5685,9 +6835,81 @@ public final class ServerRaceSystem {
 			GENNADIY_DEFENSE_APPLYING_EFFECT.set(Boolean.FALSE);
 		}
 		player.setSprinting(false);
-		player.setShiftKeyDown(true);
-		player.setPose(Pose.CROUCHING);
+		boolean sitting = ensureGennadiyDefenseFsitSeat(player);
+		if (sitting) {
+			player.setShiftKeyDown(false);
+			player.setDeltaMovement(Vec3.ZERO);
+		} else {
+			player.setShiftKeyDown(true);
+			player.setPose(Pose.CROUCHING);
+		}
 		syncGennadiyDefenseForcedPose(player, false);
+	}
+
+	private static boolean ensureGennadiyDefenseFsitSeat(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		GennadiyDefenseSession session = GENNADIY_DEFENSE_SESSIONS.get(player.getUUID());
+		if (session == null || !level.dimension().equals(session.dimension) || level.getGameTime() >= session.endTick) {
+			return false;
+		}
+		Entity vehicle = player.getVehicle();
+		if (isFsitSeatEntity(vehicle)) {
+			session.fsitSeatId = vehicle.getUUID();
+			GENNADIY_DEFENSE_FSIT_SEATS.put(player.getUUID(), vehicle.getUUID());
+			vehicle.setDeltaMovement(Vec3.ZERO);
+			vehicle.hurtMarked = true;
+			return true;
+		}
+		if (!prepareFsitSeatReflection()) {
+			return false;
+		}
+		if (player.isPassenger()) {
+			player.stopRiding();
+		}
+		player.setDeltaMovement(Vec3.ZERO);
+		player.hurtMarked = true;
+		try {
+			FSIT_SEAT_CREATE_METHOD.invoke(FSIT_SEAT_COMPANION, player, player.position());
+		} catch (ReflectiveOperationException | RuntimeException exception) {
+			FSIT_SEAT_AVAILABLE = Boolean.FALSE;
+			Lg2.LOGGER.warn("Failed to create FSit seat for gennadiy defense", exception);
+			return false;
+		}
+
+		vehicle = player.getVehicle();
+		if (!isFsitSeatEntity(vehicle)) {
+			return false;
+		}
+		session.fsitSeatId = vehicle.getUUID();
+		GENNADIY_DEFENSE_FSIT_SEATS.put(player.getUUID(), vehicle.getUUID());
+		vehicle.setDeltaMovement(Vec3.ZERO);
+		vehicle.hurtMarked = true;
+		return true;
+	}
+
+	private static boolean prepareFsitSeatReflection() {
+		Boolean cached = FSIT_SEAT_AVAILABLE;
+		if (cached != null) {
+			return cached;
+		}
+		try {
+			Class<?> seatClass = Class.forName(FSIT_SEAT_ENTITY_CLASS_NAME);
+			Class<?> companionClass = Class.forName(FSIT_SEAT_COMPANION_CLASS_NAME);
+			FSIT_SEAT_COMPANION = seatClass.getField("Companion").get(null);
+			FSIT_SEAT_CREATE_METHOD = companionClass.getMethod("create", ServerPlayer.class, Vec3.class);
+			FSIT_SEAT_AVAILABLE = Boolean.TRUE;
+			return true;
+		} catch (ReflectiveOperationException | RuntimeException exception) {
+			FSIT_SEAT_AVAILABLE = Boolean.FALSE;
+			Lg2.LOGGER.warn("FSit is not available for gennadiy defense seating; falling back to crouch stasis", exception);
+			return false;
+		}
+	}
+
+	private static boolean isFsitSeatEntity(Entity entity) {
+		return entity != null && FSIT_SEAT_ENTITY_CLASS_NAME.equals(entity.getClass().getName());
 	}
 
 	private static void syncGennadiyDefenseForcedPose(ServerPlayer player, boolean forceViewSync) {
@@ -5696,18 +6918,60 @@ public final class ServerRaceSystem {
 		}
 
 		player.setSprinting(false);
-		player.setShiftKeyDown(true);
-		player.setPose(Pose.CROUCHING);
+		boolean sitting = ensureGennadiyDefenseFsitSeat(player);
+		if (sitting) {
+			player.setShiftKeyDown(false);
+			player.setDeltaMovement(Vec3.ZERO);
+		} else {
+			player.setShiftKeyDown(true);
+			player.setPose(Pose.CROUCHING);
+		}
 		player.setXRot(GENNADIY_DEFENSE_FORCED_PITCH);
 		player.xRotO = GENNADIY_DEFENSE_FORCED_PITCH;
+		player.setYHeadRot(player.getYRot());
+		player.setYBodyRot(player.getYRot());
+		player.yHeadRotO = player.getYRot();
+		player.yBodyRotO = player.getYRot();
 		player.hurtMarked = true;
-		sendGennadiyDefensePoseMetadata(player, true);
+		syncGennadiyDefenseSeatRotation(player);
+		if (!sitting) {
+			sendGennadiyDefensePoseMetadata(player, true);
+		}
 
 		long nowTick = player.level().getGameTime();
 		if (forceViewSync || Math.floorMod(nowTick, 2L) == 0L) {
 			player.connection.teleport(player.getX(), player.getY(), player.getZ(), player.getYRot(), GENNADIY_DEFENSE_FORCED_PITCH);
 		}
 		sendGennadiyDefenseRotationToViewers(player);
+	}
+
+	private static void syncGennadiyDefenseSeatRotation(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		Entity vehicle = player.getVehicle();
+		if (!isFsitSeatEntity(vehicle)) {
+			return;
+		}
+		vehicle.setYRot(player.getYRot());
+		vehicle.setXRot(GENNADIY_DEFENSE_FORCED_PITCH);
+		vehicle.yRotO = player.getYRot();
+		vehicle.xRotO = GENNADIY_DEFENSE_FORCED_PITCH;
+		vehicle.hurtMarked = true;
+		if (vehicle.level() instanceof ServerLevel level) {
+			PositionMoveRotation rotation = new PositionMoveRotation(
+					vehicle.position(),
+					vehicle.getDeltaMovement(),
+					vehicle.getYRot(),
+					GENNADIY_DEFENSE_FORCED_PITCH
+			);
+			ClientboundTeleportEntityPacket packet = ClientboundTeleportEntityPacket.teleport(vehicle.getId(), rotation, Collections.emptySet(), vehicle.onGround());
+			for (ServerPlayer viewer : level.players()) {
+				if (viewer != null && viewer.connection != null) {
+					viewer.connection.send(packet);
+				}
+			}
+		}
 	}
 
 	private static void sendGennadiyDefensePoseMetadata(ServerPlayer player, boolean forced) {
@@ -5758,6 +7022,38 @@ public final class ServerRaceSystem {
 			if (viewer != null && viewer != player && viewer.connection != null) {
 				viewer.connection.send(packet);
 			}
+		}
+	}
+
+	private static void cleanupGennadiyDefenseSeat(MinecraftServer server, GennadiyDefenseSession session, ServerPlayer player) {
+		UUID seatId = null;
+		if (session != null) {
+			seatId = session.fsitSeatId;
+			UUID mappedSeatId = GENNADIY_DEFENSE_FSIT_SEATS.remove(session.playerId);
+			if (seatId == null) {
+				seatId = mappedSeatId;
+			}
+		}
+		if (player != null) {
+			UUID mappedSeatId = GENNADIY_DEFENSE_FSIT_SEATS.remove(player.getUUID());
+			if (seatId == null) {
+				seatId = mappedSeatId;
+			}
+		}
+		if (seatId == null) {
+			return;
+		}
+
+		Entity vehicle = player == null ? null : player.getVehicle();
+		if (vehicle != null && seatId.equals(vehicle.getUUID())) {
+			player.stopRiding();
+			vehicle.discard();
+			return;
+		}
+
+		Entity seat = findEntity(server, seatId);
+		if (seat != null && isFsitSeatEntity(seat)) {
+			seat.discard();
 		}
 	}
 
@@ -6586,6 +7882,13 @@ public final class ServerRaceSystem {
 		return entity instanceof ServerPlayer player && isGennadiyDefenseActive(player);
 	}
 
+	public static boolean shouldBlockGennadiyDefenseDismount(ServerPlayer player) {
+		return player != null
+				&& player.isAlive()
+				&& isGennadiyDefenseActive(player)
+				&& isFsitSeatEntity(player.getVehicle());
+	}
+
 	private static boolean isGennadiyDefenseActive(ServerPlayer player) {
 		if (player == null || !(player.level() instanceof ServerLevel level)) {
 			return false;
@@ -6598,7 +7901,8 @@ public final class ServerRaceSystem {
 		if (player == null) {
 			return;
 		}
-		GENNADIY_DEFENSE_SESSIONS.remove(player.getUUID());
+		GennadiyDefenseSession session = GENNADIY_DEFENSE_SESSIONS.remove(player.getUUID());
+		cleanupGennadiyDefenseSeat(player.level().getServer(), session, player);
 		cleanupGennadiyDefenseEffects(player);
 	}
 
@@ -6606,6 +7910,10 @@ public final class ServerRaceSystem {
 		if (!applied || level == null || victim == null || damageSource == null || damage <= 0.0F) {
 			return;
 		}
+		if (victim instanceof ServerPlayer damagedPlayer) {
+			resetGennadiyReportsForDamagedHolder(damagedPlayer, level.getGameTime());
+		}
+		handleGennadiyReportHit(level, victim, damageSource);
 		LivingEntity attacker = resolveDamageAttacker(damageSource);
 		if (attacker == null || !attacker.isAlive() || attacker == victim) {
 			return;
@@ -6626,6 +7934,94 @@ public final class ServerRaceSystem {
 			if (attackerState != null && attackerState.isActive()) {
 				setGennadiyDonkeyTarget(attackerPlayer.getUUID(), victim, GENNADIY_DONKEY_TARGET_PRIORITY_OWNER_COMBAT);
 			}
+		}
+	}
+
+	private static void resetGennadiyReportsForDamagedHolder(ServerPlayer player, long nowTick) {
+		if (player == null) {
+			return;
+		}
+		boolean changed = false;
+		Inventory inventory = player.getInventory();
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			ItemStack stack = inventory.getItem(slot);
+			if (isGennadiyReportItem(stack)) {
+				resetGennadiyReportCooldown(stack, player, nowTick);
+				changed = true;
+			}
+		}
+		if (player.containerMenu != null && isGennadiyReportItem(player.containerMenu.getCarried())) {
+			resetGennadiyReportCooldown(player.containerMenu.getCarried(), player, nowTick);
+			changed = true;
+		}
+		if (changed) {
+			displayRemainingCooldown(player, getGennadiyReportCooldownTicks());
+			player.inventoryMenu.broadcastChanges();
+		}
+	}
+
+	private static void handleGennadiyReportHit(ServerLevel level, LivingEntity victim, DamageSource damageSource) {
+		if (!(victim instanceof ServerPlayer target)
+				|| !(damageSource.getEntity() instanceof ServerPlayer attacker)
+				|| damageSource.getDirectEntity() != attacker
+				|| target == attacker
+				|| target.connection == null) {
+			return;
+		}
+		ItemStack weapon = attacker.getMainHandItem();
+		GennadiyReportData data = readGennadiyReportData(weapon);
+		if (data == null) {
+			return;
+		}
+		long nowTick = level.getGameTime();
+		if (!attacker.getUUID().equals(data.holderId())) {
+			resetGennadiyReportCooldown(weapon, attacker, nowTick);
+			return;
+		}
+		enforceGennadiyReportComponents(weapon);
+		if (data.cooldownEndTick() > nowTick) {
+			long remainingTicks = data.cooldownEndTick() - nowTick;
+			displayRemainingCooldown(attacker, remainingTicks);
+			return;
+		}
+		target.connection.disconnect(Component.literal("Вас зарепортил " + attacker.getGameProfile().name() + "."));
+	}
+
+	public static void handleGennadiyRageMeleeDamage(ServerLevel level, LivingEntity victim, DamageSource damageSource, float damage, boolean applied) {
+		if (!applied
+				|| level == null
+				|| victim == null
+				|| damageSource == null
+				|| damage <= 0.0F
+				|| GENNADIY_RAGE_APPLYING_DAMAGE.get()) {
+			return;
+		}
+		if (!(damageSource.getEntity() instanceof ServerPlayer attacker) || damageSource.getDirectEntity() != attacker) {
+			return;
+		}
+
+		RaceAbilityConfig stock = getGennadiyStockAbility(attacker);
+		if (!isGennadiyRageActive(attacker, stock)) {
+			return;
+		}
+		double bonusRatio = getGennadiyRageMeleeDamageBonusRatio(stock);
+		if (bonusRatio <= 0.0D) {
+			return;
+		}
+
+		float bonusDamage = (float) (damage * bonusRatio);
+		if (bonusDamage <= 0.0F) {
+			return;
+		}
+
+		int previousInvulnerableTime = victim.invulnerableTime;
+		victim.invulnerableTime = 0;
+		GENNADIY_RAGE_APPLYING_DAMAGE.set(Boolean.TRUE);
+		try {
+			victim.hurtServer(level, damageSource, bonusDamage);
+		} finally {
+			GENNADIY_RAGE_APPLYING_DAMAGE.set(Boolean.FALSE);
+			victim.invulnerableTime = Math.max(victim.invulnerableTime, previousInvulnerableTime);
 		}
 	}
 

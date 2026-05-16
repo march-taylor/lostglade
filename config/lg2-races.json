@@ -272,20 +272,28 @@
         "abilityId": "gennadiy_sharoyobov_unique",
         "name": "Хук",
         "description": "Выбрасывает цепь по направлению взгляда. Попавший игрок или моб притягивается к вам и получает урон.",
-        "priceBitcoins": 1000
+        "priceBitcoins": 1000,
+        "cooldownSeconds": 600.0,
+        "gennadiyHookRangeBlocks": 16.0,
+        "gennadiyHookDamage": 4.0,
+        "gennadiyHookSlownessSeconds": 1.5
       },
       "shnyaga": {
         "enabled": true,
         "abilityId": "gennadiy_sharoyobov_shnyaga",
         "name": "Репорт",
         "description": "Вы можете проклясть любой предмет в единственном экземпляре на сервере. Ударивший им другого игрока кикнет жертву с сервера.",
-        "priceBitcoins": 1500
+        "priceBitcoins": 1500,
+        "gennadiyReportCooldownSeconds": 1800.0
       },
       "stock": {
-        "enabled": false,
+        "enabled": true,
         "abilityId": "gennadiy_sharoyobov_stock",
-        "name": "Сток",
-        "description": ""
+        "name": "Неукротимая Ярость",
+        "description": "Когда здоровье Генадия падает ниже порога, он быстрее копает и сильнее бьет в ближнем бою.",
+        "gennadiyRageHealthThresholdRatio": 0.2,
+        "gennadiyRageHasteLevel": 1,
+        "gennadiyRageMeleeDamageBonusRatio": 0.25
       }
     }
   ]
