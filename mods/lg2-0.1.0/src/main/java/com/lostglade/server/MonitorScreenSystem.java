@@ -1486,27 +1486,33 @@ public final class MonitorScreenSystem {
 						mediaState.playerBackgroundMenuOpen = false;
 						mediaState.version++;
 					} else {
-						MediaScaleMode selectedScaleMode = playerBackgroundScaleModeForTouch(layout, touchPoint);
-						if (selectedScaleMode != null) {
-							mediaState.playerBackgroundScaleMode = selectedScaleMode;
-							mediaState.version++;
-							persistGallery = true;
-							restartPlayback = true;
-						} else {
-						PlayerBackgroundMode selectedMode = playerBackgroundModeForTouch(layout, touchPoint);
-						if (selectedMode != null) {
-							mediaState.playerBackgroundMode = selectedMode;
-							mediaState.playerBackgroundModeHydrated = true;
-							mediaState.playerBackgroundMenuOpen = false;
-							if (selectedMode == PlayerBackgroundMode.GALLERY) {
-								beginPlayerBackgroundGalleryPickerLocked(mediaState);
-								galleryBackgroundPickerOpened = true;
-								nextMode = ScreenViewMode.GALLERY;
+						PlayerBackgroundMode currentBackgroundMode = resolvedPlayerBackgroundModeLocked(mediaState);
+						if (playerBackgroundScaleButtonContains(layout, currentBackgroundMode, touchPoint)) {
+							if (currentBackgroundMode == PlayerBackgroundMode.ARTWORK) {
+								mediaState.scaleMode = mediaState.scaleMode != null ? mediaState.scaleMode.next() : MediaScaleMode.FILL;
+							} else if (currentBackgroundMode == PlayerBackgroundMode.GALLERY) {
+								mediaState.playerBackgroundScaleMode = mediaState.playerBackgroundScaleMode != null
+										? mediaState.playerBackgroundScaleMode.next()
+										: MediaScaleMode.FILL;
+								persistGallery = true;
+								restartPlayback = true;
 							}
 							mediaState.version++;
-							persistGallery = true;
-							restartPlayback = true;
-						}
+						} else {
+							PlayerBackgroundMode selectedMode = playerBackgroundModeForTouch(layout, touchPoint);
+							if (selectedMode != null) {
+								mediaState.playerBackgroundMode = selectedMode;
+								mediaState.playerBackgroundModeHydrated = true;
+								mediaState.playerBackgroundMenuOpen = false;
+								if (selectedMode == PlayerBackgroundMode.GALLERY) {
+									beginPlayerBackgroundGalleryPickerLocked(mediaState);
+									galleryBackgroundPickerOpened = true;
+									nextMode = ScreenViewMode.GALLERY;
+								}
+								mediaState.version++;
+								persistGallery = true;
+								restartPlayback = true;
+							}
 						}
 					}
 				}
@@ -8826,12 +8832,12 @@ public final class MonitorScreenSystem {
 		boolean galleryBackgroundAvailable = state.playerBackgroundUrl != null
 				&& !state.playerBackgroundUrl.isBlank()
 				&& state.playerBackgroundMedia != null;
-			MediaOverlayWindowSnapshot overlayWindow = state.playerBackgroundMenuOpen
+		MediaOverlayWindowSnapshot overlayWindow = state.playerBackgroundMenuOpen
 				? playerBackgroundMenuWindowSnapshot(
 						state,
 						playerBackgroundMode,
 						galleryBackgroundAvailable,
-						state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FIT
+						playerBackgroundScaleButtonModeLocked(state, playerBackgroundMode)
 				)
 				: youtubeQueueWindowOpen
 				? youtubeQueueWindowSnapshot(state, queueItems)
@@ -9622,9 +9628,13 @@ public final class MonitorScreenSystem {
 	}
 
 	private static Color drawSmallMediaButtonBase(Graphics2D graphics, UiRect rect, MediaButtonSegment segment, boolean active, float strokeWidth) {
+		return drawSmallMediaButtonBase(graphics, rect, segment, active, strokeWidth, null);
+	}
+
+	private static Color drawSmallMediaButtonBase(Graphics2D graphics, UiRect rect, MediaButtonSegment segment, boolean active, float strokeWidth, Color idleFill) {
 		Shape shape = mediaButtonShape(rect, segment);
 		Color outline = active ? new Color(255, 255, 255, 76) : new Color(255, 255, 255, 76);
-		Color fill = active ? new Color(248, 246, 246, 242) : null;
+		Color fill = active ? new Color(248, 246, 246, 242) : idleFill;
 		if (fill != null) {
 			fillShape(graphics, shape, fill);
 		}
@@ -9785,7 +9795,7 @@ public final class MonitorScreenSystem {
 	private static void drawMediaIconActionButton(Graphics2D graphics, UiRect rect, Color fill, UiLayout layout, MediaActionGlyph glyph, MediaActionVisualState visualState, MediaButtonSegment segment) {
 		boolean active = visualState == MediaActionVisualState.COMPLETE || visualState == MediaActionVisualState.DOWNLOADING;
 		float strokeWidth = mediaChromeStrokeWidth(rect);
-		Color iconColor = drawSmallMediaButtonBase(graphics, rect, segment, active, strokeWidth);
+		Color iconColor = drawSmallMediaButtonBase(graphics, rect, segment, active, strokeWidth, fill);
 		UiRect iconRect = mediaChromeIconRect(rect, layout);
 		if (visualState == MediaActionVisualState.DOWNLOADING) {
 			drawLoadingSpinner(graphics, iconRect, iconColor, Math.max(1.6F, strokeWidth));
@@ -10279,9 +10289,11 @@ public final class MonitorScreenSystem {
 		UiRect header = playerBackgroundHeaderRect(layout);
 		UiRect closeRect = playerBackgroundCloseRect(layout);
 		drawOverlayModalBase(graphics, layout, panel, header, closeRect, window.title(), window.subtitle());
-		drawPlayerBackgroundOptionButton(graphics, layout, playerBackgroundOptionRect(layout, 0), PlayerBackgroundMode.ARTWORK, window.playerBackgroundMode() == PlayerBackgroundMode.ARTWORK, true, false, false);
-		drawPlayerBackgroundOptionButton(graphics, layout, playerBackgroundOptionRect(layout, 1), PlayerBackgroundMode.GALLERY, window.playerBackgroundMode() == PlayerBackgroundMode.GALLERY, true, window.galleryBackgroundAvailable(), true);
-		drawPlayerBackgroundScaleButtons(graphics, layout, window);
+		boolean artworkSelected = window.playerBackgroundMode() == PlayerBackgroundMode.ARTWORK;
+		boolean gallerySelected = window.playerBackgroundMode() == PlayerBackgroundMode.GALLERY;
+		drawPlayerBackgroundOptionButton(graphics, layout, playerBackgroundOptionRect(layout, 0), PlayerBackgroundMode.ARTWORK, artworkSelected, true, false, artworkSelected);
+		drawPlayerBackgroundOptionButton(graphics, layout, playerBackgroundOptionRect(layout, 1), PlayerBackgroundMode.GALLERY, gallerySelected, true, window.galleryBackgroundAvailable(), gallerySelected);
+		drawPlayerBackgroundScaleButton(graphics, layout, window);
 		drawPlayerBackgroundOptionButton(graphics, layout, playerBackgroundOptionRect(layout, 2), PlayerBackgroundMode.BLACK, window.playerBackgroundMode() == PlayerBackgroundMode.BLACK, true, false, false);
 		drawPlayerBackgroundOptionButton(graphics, layout, playerBackgroundOptionRect(layout, 3), PlayerBackgroundMode.EMPTY, window.playerBackgroundMode() == PlayerBackgroundMode.EMPTY, true, false, false);
 	}
@@ -10341,7 +10353,7 @@ public final class MonitorScreenSystem {
 		UiRect titleRect = new UiRect(
 				iconRect.right() + clampInt(layout.unit() / 2, 4, 8),
 				rect.y() + clampInt(layout.unit() / 4, 2, 5),
-				Math.max(24, rect.width() - (iconRect.right() - rect.x()) - clampInt(layout.unit() * 2, 14, 24) - (reserveScaleButtonsSpace ? playerBackgroundScaleButtonsRect(layout).width() + clampInt(layout.unit(), 8, 14) : 0)),
+				Math.max(24, rect.width() - (iconRect.right() - rect.x()) - clampInt(layout.unit() * 2, 14, 24) - (reserveScaleButtonsSpace ? playerBackgroundScaleButtonReserveWidth(layout) : 0)),
 				Math.max(12, rect.height() / 2)
 		);
 		UiRect subtitleRect = new UiRect(
@@ -10354,22 +10366,22 @@ public final class MonitorScreenSystem {
 		drawVerticalText(graphics, playerBackgroundModeSubtitle(mode, customWallpaperLoaded), subtitleRect, subtitleColor, Font.PLAIN, compactScreenLayout(layout) ? clampInt(layout.unit() - 1, 7, 10) : clampInt(layout.unit(), 9, 13));
 	}
 
-	private static void drawPlayerBackgroundScaleButtons(Graphics2D graphics, UiLayout layout, MediaOverlayWindowSnapshot window) {
+	private static void drawPlayerBackgroundScaleButton(Graphics2D graphics, UiLayout layout, MediaOverlayWindowSnapshot window) {
 		if (graphics == null || layout == null || window == null) {
 			return;
 		}
+		if (!playerBackgroundModeHasScaleButton(window.playerBackgroundMode())) {
+			return;
+		}
 		MediaScaleMode current = window.playerBackgroundScaleMode() != null ? window.playerBackgroundScaleMode() : MediaScaleMode.FIT;
-		for (int index = 0; index < 3; index++) {
-			MediaScaleMode mode = index == 0 ? MediaScaleMode.FIT : index == 1 ? MediaScaleMode.FILL : MediaScaleMode.STRETCH;
-			UiRect rect = playerBackgroundScaleButtonRect(layout, index);
-			float strokeWidth = mediaChromeStrokeWidth(rect);
-			Color iconColor = drawSmallMediaButtonBase(graphics, rect, mediaButtonSegment(index, 3), current == mode, strokeWidth);
-			UiRect iconRect = mediaChromeIconRect(rect, layout);
-			switch (mode) {
-				case FILL -> drawMediaFillGlyph(graphics, iconRect, iconColor, strokeWidth);
-				case STRETCH -> drawMediaStretchGlyph(graphics, iconRect, iconColor, strokeWidth);
-				case FIT -> drawMediaFitGlyph(graphics, iconRect, iconColor, strokeWidth);
-			}
+		UiRect rect = playerBackgroundScaleButtonRect(layout, window.playerBackgroundMode());
+		float strokeWidth = mediaChromeStrokeWidth(rect);
+		Color iconColor = drawSmallMediaButtonBase(graphics, rect, MediaButtonSegment.SINGLE, true, strokeWidth);
+		UiRect iconRect = mediaChromeIconRect(rect, layout);
+		switch (current) {
+			case FILL -> drawMediaFillGlyph(graphics, iconRect, iconColor, strokeWidth);
+			case STRETCH -> drawMediaStretchGlyph(graphics, iconRect, iconColor, strokeWidth);
+			case FIT -> drawMediaFitGlyph(graphics, iconRect, iconColor, strokeWidth);
 		}
 	}
 
@@ -11582,7 +11594,7 @@ public final class MonitorScreenSystem {
 
 	private static UiRect mediaDownloadRect(UiLayout layout) {
 		UiRect queueRect = mediaQueueToggleRect(layout, ScreenViewMode.HOME);
-		int gap = clampInt(layout.unit() / 2, 4, 8);
+		int gap = mediaHeaderControlGap(layout);
 		return new UiRect(queueRect.x() - queueRect.width() - gap, queueRect.y(), queueRect.width(), queueRect.height());
 	}
 
@@ -11595,7 +11607,7 @@ public final class MonitorScreenSystem {
 			return mediaYoutubeMusicActionButtonRect(layout, 2, 4);
 		}
 		UiRect scaleRect = mediaScaleRect(layout);
-		int gap = clampInt(layout.unit() / 2, 4, 8);
+		int gap = mediaHeaderControlGap(layout);
 		return new UiRect(scaleRect.x() - scaleRect.width() - gap, scaleRect.y(), scaleRect.width(), scaleRect.height());
 	}
 
@@ -11604,7 +11616,7 @@ public final class MonitorScreenSystem {
 	}
 
 	private static int mediaYoutubeMusicActionButtonsGap(UiLayout layout) {
-		return clampInt(layout.unit() / 2, 4, 8);
+		return mediaHeaderControlGap(layout);
 	}
 
 	private static UiRect mediaYoutubeMusicActionButtonRect(UiLayout layout, int slot, int total) {
@@ -12086,30 +12098,36 @@ public final class MonitorScreenSystem {
 		);
 	}
 
-	private static UiRect playerBackgroundScaleButtonsRect(UiLayout layout) {
-		UiRect wallpaperOption = playerBackgroundOptionRect(layout, 1);
+	private static int playerBackgroundScaleButtonReserveWidth(UiLayout layout) {
+		return playerBackgroundScaleButtonWidth(layout) + clampInt(layout.unit(), 8, 14);
+	}
+
+	private static int playerBackgroundScaleButtonWidth(UiLayout layout) {
+		return clampInt(layout.unit() * 2 + 2, 18, 28);
+	}
+
+	private static UiRect playerBackgroundScaleButtonRect(UiLayout layout, PlayerBackgroundMode mode) {
+		UiRect option = playerBackgroundOptionRect(layout, mode == PlayerBackgroundMode.ARTWORK ? 0 : 1);
 		int gap = clampInt(layout.unit() / 2, 4, 8);
-		int buttonHeight = Math.max(14, wallpaperOption.height() - clampInt(layout.unit() / 2, 4, 8));
-		int buttonWidth = clampInt(layout.unit() * 2 + 2, 18, 28);
-		int totalWidth = buttonWidth * 3;
+		int buttonHeight = Math.max(14, option.height() - clampInt(layout.unit() / 2, 4, 8));
+		int buttonWidth = playerBackgroundScaleButtonWidth(layout);
 		return new UiRect(
-				wallpaperOption.right() - totalWidth - gap,
-				wallpaperOption.y() + (wallpaperOption.height() - buttonHeight) / 2,
-				totalWidth,
+				option.right() - buttonWidth - gap,
+				option.y() + (option.height() - buttonHeight) / 2,
+				buttonWidth,
 				buttonHeight
 		);
 	}
 
-	private static UiRect playerBackgroundScaleButtonRect(UiLayout layout, int index) {
-		UiRect buttons = playerBackgroundScaleButtonsRect(layout);
-		int buttonWidth = Math.max(1, buttons.width() / 3);
-		int safeIndex = clampInt(index, 0, 2);
-		return new UiRect(
-				buttons.x() + safeIndex * buttonWidth,
-				buttons.y(),
-				safeIndex == 2 ? buttons.right() - (buttons.x() + safeIndex * buttonWidth) : buttonWidth,
-				buttons.height()
-		);
+	private static boolean playerBackgroundModeHasScaleButton(PlayerBackgroundMode mode) {
+		return mode == PlayerBackgroundMode.ARTWORK || mode == PlayerBackgroundMode.GALLERY;
+	}
+
+	private static boolean playerBackgroundScaleButtonContains(UiLayout layout, PlayerBackgroundMode mode, UiPoint touchPoint) {
+		return layout != null
+				&& touchPoint != null
+				&& playerBackgroundModeHasScaleButton(mode)
+				&& playerBackgroundScaleButtonRect(layout, mode).contains(touchPoint.x(), touchPoint.y());
 	}
 
 	private static PlayerBackgroundMode playerBackgroundModeForTouch(UiLayout layout, UiPoint touchPoint) {
@@ -12127,22 +12145,6 @@ public final class MonitorScreenSystem {
 		}
 		if (playerBackgroundOptionRect(layout, 3).contains(touchPoint.x(), touchPoint.y())) {
 			return PlayerBackgroundMode.EMPTY;
-		}
-		return null;
-	}
-
-	private static MediaScaleMode playerBackgroundScaleModeForTouch(UiLayout layout, UiPoint touchPoint) {
-		if (layout == null || touchPoint == null) {
-			return null;
-		}
-		if (playerBackgroundScaleButtonRect(layout, 0).contains(touchPoint.x(), touchPoint.y())) {
-			return MediaScaleMode.FIT;
-		}
-		if (playerBackgroundScaleButtonRect(layout, 1).contains(touchPoint.x(), touchPoint.y())) {
-			return MediaScaleMode.FILL;
-		}
-		if (playerBackgroundScaleButtonRect(layout, 2).contains(touchPoint.x(), touchPoint.y())) {
-			return MediaScaleMode.STRETCH;
 		}
 		return null;
 	}
@@ -12340,11 +12342,7 @@ public final class MonitorScreenSystem {
 		} else {
 			height = clampInt(layout.unit() * 6, 46, 92);
 		}
-		int width = clampInt(
-				(int) Math.round(height * 2.05D),
-				Math.max(44, height + 16),
-				Math.max(52, canvas.width() - clampInt(layout.unit() * 10, 40, 120))
-		);
+		int width = height;
 		return new UiRect(
 				canvas.x() + (canvas.width() - width) / 2,
 				canvas.y() + (canvas.height() - height) / 2,
@@ -13861,7 +13859,7 @@ public final class MonitorScreenSystem {
 			MediaRuntimeState state,
 			PlayerBackgroundMode backgroundMode,
 			boolean galleryBackgroundAvailable,
-			MediaScaleMode playerBackgroundScaleMode
+			MediaScaleMode selectedBackgroundScaleMode
 	) {
 		if (state == null) {
 			return null;
@@ -13877,7 +13875,7 @@ public final class MonitorScreenSystem {
 				false,
 				backgroundMode != null ? backgroundMode : PlayerBackgroundMode.BLACK,
 				galleryBackgroundAvailable,
-				playerBackgroundScaleMode != null ? playerBackgroundScaleMode : MediaScaleMode.FIT
+				selectedBackgroundScaleMode != null ? selectedBackgroundScaleMode : MediaScaleMode.FIT
 		);
 	}
 
@@ -14702,6 +14700,17 @@ public final class MonitorScreenSystem {
 			return PlayerBackgroundMode.BLACK;
 		}
 		return state.playerBackgroundMode != null ? state.playerBackgroundMode : defaultPlayerBackgroundModeLocked(state);
+	}
+
+	private static MediaScaleMode playerBackgroundScaleButtonModeLocked(MediaRuntimeState state, PlayerBackgroundMode backgroundMode) {
+		if (state == null) {
+			return MediaScaleMode.FIT;
+		}
+		return switch (backgroundMode != null ? backgroundMode : resolvedPlayerBackgroundModeLocked(state)) {
+			case ARTWORK -> state.scaleMode != null ? state.scaleMode : MediaScaleMode.FIT;
+			case GALLERY -> state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FIT;
+			case BLACK, EMPTY -> MediaScaleMode.FIT;
+		};
 	}
 
 	private static PlayerBackgroundMode resolvedPlayerBackgroundMode(MediaVisualSnapshot state) {
