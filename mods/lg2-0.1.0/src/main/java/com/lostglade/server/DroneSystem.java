@@ -77,6 +77,9 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.BooleanOp;
+import net.minecraft.world.phys.shapes.Shapes;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
@@ -121,6 +124,7 @@ public final class DroneSystem {
 	private static final double DRONE_CRASH_EQUIVALENT_FALL_BLOCKS = 3.25D;
 	private static final double DRONE_CRASH_REFERENCE_ACCELERATION = 0.04D;
 	private static final double DRONE_SURFACE_WEAR_DECAY_PER_TICK = 0.018D;
+	private static final double DRONE_COLLISION_SWEEP_STEP = 0.12D;
 	private static final int DRONE_SURFACE_WEAR_PARTICLE_INTERVAL_TICKS = 2;
 	private static final float DRONE_WIDTH = DroneGeometry.WIDTH;
 	private static final float DRONE_HEIGHT = DroneGeometry.HEIGHT;
@@ -180,9 +184,9 @@ public final class DroneSystem {
 	private static final int DRONE_MANAGED_NIGHT_VISION_AMPLIFIER = 1;
 	private static final double DRONE_AUTO_AIM_SELECTION_RANGE_BLOCKS = 64.0D;
 	private static final double DRONE_AUTO_AIM_INTERACTION_RANGE_BONUS = 64.0D;
-	private static final float DRONE_AUTO_AIM_ROTATION_BLEND = 0.16F;
-	private static final float DRONE_AUTO_AIM_MAX_YAW_STEP_DEGREES = 2.0F;
-	private static final float DRONE_AUTO_AIM_MAX_PITCH_STEP_DEGREES = 1.4F;
+	private static final float DRONE_AUTO_AIM_ROTATION_BLEND = 0.10F;
+	private static final float DRONE_AUTO_AIM_MAX_YAW_STEP_DEGREES = 1.20F;
+	private static final float DRONE_AUTO_AIM_MAX_PITCH_STEP_DEGREES = 0.90F;
 	private static final float DRONE_AUTO_AIM_ROTATION_EPSILON_DEGREES = 0.05F;
 	private static final Identifier DRONE_AUTO_AIM_BLOCK_INTERACTION_RANGE_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_auto_aim_block_interaction_range");
 	private static final Identifier DRONE_AUTO_AIM_ENTITY_INTERACTION_RANGE_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_auto_aim_entity_interaction_range");
@@ -800,10 +804,12 @@ public final class DroneSystem {
 		if (previousPos == null) {
 			previousPos = root.position();
 		}
-		float yaw = packet.hasRotation() ? packet.getYRot(session.proxyYaw()) : session.proxyYaw();
+		float yaw = packet.hasRotation() ? packet.getYRot(session.controlYaw()) : session.controlYaw();
 		float pitch = packet.hasRotation()
-				? net.minecraft.util.Mth.clamp(packet.getXRot(session.proxyPitch()), -90.0F, 90.0F)
-				: session.proxyPitch();
+				? net.minecraft.util.Mth.clamp(packet.getXRot(session.controlPitch()), -90.0F, 90.0F)
+				: session.controlPitch();
+		session.setControlYaw(yaw);
+		session.setControlPitch(pitch);
 		session.setProxyYaw(yaw);
 		session.setProxyPitch(pitch);
 
@@ -834,15 +840,22 @@ public final class DroneSystem {
 		session.setIntendedVelocity(intendedMovement);
 		session.setVelocity(actualVelocity);
 
+		ControlledCollisionState collisionState = resolveControlledCollisionState(
+				root,
+				previousPos,
+				intendedMovement,
+				actualVelocity
+		);
+
 		prepareControlledDroneBody(root);
 		root.setPos(reportedPos.x, reportedPos.y, reportedPos.z);
 		root.setBoundingBox(droneBoxAt(reportedPos));
 		root.setYRot(yaw);
 		root.setXRot(pitch);
 		root.setDeltaMovement(actualVelocity);
-		root.horizontalCollision = hasBlockedHorizontalMovement(intendedMovement, actualVelocity);
-		root.verticalCollision = hasBlockedVerticalMovement(intendedMovement, actualVelocity);
-		root.verticalCollisionBelow = hasBlockedDownwardMovement(intendedMovement, actualVelocity);
+		root.horizontalCollision = collisionState.horizontalCollision();
+		root.verticalCollision = collisionState.verticalCollision();
+		root.verticalCollisionBelow = collisionState.verticalCollisionBelow();
 		root.hurtMarked = true;
 
 		if (handleControlledServerCollision(player, root, session, intendedMovement, actualVelocity)) {
@@ -1065,13 +1078,13 @@ public final class DroneSystem {
 		if (!(root.level() instanceof ServerLevel)) {
 			return;
 		}
-		boolean autoAimAdjustedView = syncControlledOperatorAutoAim(player, session, root);
 		session.setIntendedVelocity(DroneFlightPhysics.step(
-				session.proxyPitch(),
-				session.proxyYaw(),
+				session.controlPitch(),
+				session.controlYaw(),
 				session.forwardDrive(),
 				session.strafeDrive()
 		));
+		boolean autoAimAdjustedView = syncControlledOperatorAutoAim(player, session, root);
 		decayControlledDroneSurfaceWear(session, root.level().getGameTime());
 		syncControlledDronePresentation(player, root, session);
 		syncControlledOperatorView(player, session, root, false, autoAimAdjustedView);
@@ -1136,12 +1149,12 @@ public final class DroneSystem {
 		if (player == null || root == null || session == null) {
 			return false;
 		}
-		boolean horizontalCollision = root.horizontalCollision || hasBlockedHorizontalMovement(intendedMovement, actualMovement);
-		boolean verticalCollisionBelow = root.verticalCollisionBelow || hasBlockedDownwardMovement(intendedMovement, actualMovement);
+		boolean horizontalCollision = root.horizontalCollision;
+		boolean verticalCollisionBelow = root.verticalCollisionBelow;
 		boolean verticalCollision = DroneImpactModel.hasMeaningfulVerticalCollision(
 				intendedMovement,
 				actualMovement,
-				root.verticalCollision || hasBlockedVerticalMovement(intendedMovement, actualMovement),
+				root.verticalCollision,
 				verticalCollisionBelow
 		);
 		boolean groundContact = DroneImpactModel.hasVerifiedGroundWearContact(
@@ -1173,10 +1186,13 @@ public final class DroneSystem {
 		if (intendedMovement == null || actualMovement == null) {
 			return false;
 		}
-		double blockedX = positiveMovementDeficit(intendedMovement.x, actualMovement.x);
-		double blockedZ = positiveMovementDeficit(intendedMovement.z, actualMovement.z);
-		double epsilonSqr = CONTROLLED_DRONE_BLOCKED_MOVEMENT_EPSILON * CONTROLLED_DRONE_BLOCKED_MOVEMENT_EPSILON;
-		return blockedX * blockedX + blockedZ * blockedZ > epsilonSqr;
+		double intendedHorizontal = Math.sqrt(intendedMovement.x * intendedMovement.x + intendedMovement.z * intendedMovement.z);
+		if (intendedHorizontal <= CONTROLLED_DRONE_BLOCKED_MOVEMENT_EPSILON) {
+			return false;
+		}
+		double actualHorizontal = Math.sqrt(actualMovement.x * actualMovement.x + actualMovement.z * actualMovement.z);
+		double requiredLoss = Math.max(CONTROLLED_DRONE_BLOCKED_MOVEMENT_EPSILON, intendedHorizontal * 0.12D);
+		return intendedHorizontal - actualHorizontal > requiredLoss;
 	}
 
 	private static boolean hasBlockedVerticalMovement(Vec3 intendedMovement, Vec3 actualMovement) {
@@ -1207,6 +1223,80 @@ public final class DroneSystem {
 			return 0.0D;
 		}
 		return Math.max(0.0D, intendedMagnitude - actualMagnitude);
+	}
+
+	private static ControlledCollisionState resolveControlledCollisionState(
+			Entity root,
+			Vec3 previousPos,
+			Vec3 intendedMovement,
+			Vec3 actualMovement
+	) {
+		if (root == null || !(root.level() instanceof ServerLevel level) || previousPos == null) {
+			return ControlledCollisionState.NONE;
+		}
+		boolean blockedHorizontal = hasBlockedHorizontalMovement(intendedMovement, actualMovement);
+		boolean blockedVertical = hasBlockedVerticalMovement(intendedMovement, actualMovement);
+		boolean blockedDownward = hasBlockedDownwardMovement(intendedMovement, actualMovement);
+		if (!blockedHorizontal && !blockedVertical && !blockedDownward) {
+			return ControlledCollisionState.NONE;
+		}
+
+		AABB previousBox = droneBoxAt(previousPos);
+		Vec3 horizontalMovement = intendedMovement == null
+				? Vec3.ZERO
+				: new Vec3(intendedMovement.x, 0.0D, intendedMovement.z);
+		AABB horizontalTargetBox = previousBox.move(horizontalMovement);
+		Vec3 verticalMovement = intendedMovement == null
+				? Vec3.ZERO
+				: new Vec3(0.0D, intendedMovement.y, 0.0D);
+		boolean horizontalCollision = blockedHorizontal && pathHitsSolidCollision(level, previousBox, horizontalMovement);
+		boolean verticalCollisionBelow = blockedDownward && pathHitsSolidCollision(level, horizontalTargetBox, verticalMovement);
+		boolean verticalCollision = blockedVertical && pathHitsSolidCollision(level, horizontalTargetBox, verticalMovement);
+		return new ControlledCollisionState(horizontalCollision, verticalCollision, verticalCollisionBelow);
+	}
+
+	private static boolean pathHitsSolidCollision(ServerLevel level, AABB startBox, Vec3 movement) {
+		if (level == null || startBox == null || movement == null) {
+			return false;
+		}
+		double movementLength = movement.length();
+		if (movementLength <= CONTROLLED_DRONE_BLOCKED_MOVEMENT_EPSILON) {
+			return false;
+		}
+		int steps = Math.max(1, net.minecraft.util.Mth.ceil(movementLength / DRONE_COLLISION_SWEEP_STEP));
+		for (int step = 1; step <= steps; step++) {
+			double progress = (double) step / (double) steps;
+			AABB sampleBox = startBox.move(movement.scale(progress));
+			if (boxHitsSolidCollision(level, sampleBox)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean boxHitsSolidCollision(ServerLevel level, AABB box) {
+		if (level == null || box == null) {
+			return false;
+		}
+		VoxelShape probeShape = Shapes.create(box);
+		int minX = net.minecraft.util.Mth.floor(box.minX + 1.0E-7D);
+		int minY = net.minecraft.util.Mth.floor(box.minY + 1.0E-7D);
+		int minZ = net.minecraft.util.Mth.floor(box.minZ + 1.0E-7D);
+		int maxX = net.minecraft.util.Mth.floor(box.maxX - 1.0E-7D);
+		int maxY = net.minecraft.util.Mth.floor(box.maxY - 1.0E-7D);
+		int maxZ = net.minecraft.util.Mth.floor(box.maxZ - 1.0E-7D);
+		for (BlockPos pos : BlockPos.betweenClosed(minX, minY, minZ, maxX, maxY, maxZ)) {
+			BlockState state = level.getBlockState(pos);
+			VoxelShape collisionShape = state.getCollisionShape(level, pos);
+			if (collisionShape.isEmpty()) {
+				continue;
+			}
+			VoxelShape shiftedShape = collisionShape.move(pos.getX(), pos.getY(), pos.getZ());
+			if (Shapes.joinIsNotEmpty(shiftedShape, probeShape, BooleanOp.AND)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static boolean hasSupportingBlockBelow(Entity entity) {
@@ -1967,10 +2057,13 @@ public final class DroneSystem {
 			return InteractionResult.SUCCESS;
 		}
 		BlockState state = level.getBlockState(pos);
-		if (state.isAir()) {
+		if (!isSelectableAutoAimBlock(level, pos, state)) {
 			return InteractionResult.SUCCESS;
 		}
-		Vec3 targetPoint = Vec3.atCenterOf(pos);
+		Vec3 targetPoint = resolveAutoAimBlockTargetPoint(level, pos, state);
+		if (targetPoint == null) {
+			return InteractionResult.SUCCESS;
+		}
 		if (!isWithinControlledAutoAimSelectionRange(root, targetPoint)) {
 			return InteractionResult.SUCCESS;
 		}
@@ -2037,12 +2130,16 @@ public final class DroneSystem {
 				return List.of();
 			}
 			BlockState state = level.getBlockState(blockTarget.blockPos());
-			if (state.isAir()) {
+			if (!isSelectableAutoAimBlock(level, blockTarget.blockPos(), state)) {
+				return List.of();
+			}
+			Vec3 highlightPos = resolveAutoAimBlockTargetPoint(level, blockTarget.blockPos(), state);
+			if (highlightPos == null) {
 				return List.of();
 			}
 			return List.of(new ServerSelectionHighlightSystem.ItemDisplayBlueprint(
 					level,
-					Vec3.atCenterOf(blockTarget.blockPos()),
+					highlightPos,
 					0.0F,
 					0.0F,
 					ServerSelectionHighlightSystem.createHighlightCarrierStack(),
@@ -2067,9 +2164,29 @@ public final class DroneSystem {
 				return null;
 			}
 			BlockState state = level.getBlockState(blockTarget.blockPos());
-			return state.isAir() ? null : Vec3.atCenterOf(blockTarget.blockPos());
+			return resolveAutoAimBlockTargetPoint(level, blockTarget.blockPos(), state);
 		}
 		return null;
+	}
+
+	private static boolean isSelectableAutoAimBlock(ServerLevel level, BlockPos pos, BlockState state) {
+		return level != null
+				&& pos != null
+				&& state != null
+				&& !state.isAir()
+				&& !state.getCollisionShape(level, pos).isEmpty();
+	}
+
+	private static Vec3 resolveAutoAimBlockTargetPoint(ServerLevel level, BlockPos pos, BlockState state) {
+		if (!isSelectableAutoAimBlock(level, pos, state)) {
+			return null;
+		}
+		AABB bounds = state.getCollisionShape(level, pos).bounds();
+		return new Vec3(
+				pos.getX() + (bounds.minX + bounds.maxX) * 0.5D,
+				pos.getY() + (bounds.minY + bounds.maxY) * 0.5D,
+				pos.getZ() + (bounds.minZ + bounds.maxZ) * 0.5D
+		);
 	}
 
 	private static boolean isWithinControlledAutoAimSelectionRange(Entity root, Vec3 targetPoint) {
@@ -2314,6 +2431,8 @@ public final class DroneSystem {
 				droneLevel.dimension()
 		);
 		session.setProxyPos(root.position());
+		session.setControlYaw(root.getYRot());
+		session.setControlPitch(root.getXRot());
 		session.setProxyYaw(root.getYRot());
 		session.setProxyPitch(root.getXRot());
 		VISUALLY_CONTROLLED_PLAYERS.add(player.getUUID());
@@ -3551,12 +3670,22 @@ public final class DroneSystem {
 		private static final DroneInputState EMPTY = new DroneInputState(false, false, false, false, false, false, false);
 	}
 
+	private record ControlledCollisionState(
+			boolean horizontalCollision,
+			boolean verticalCollision,
+			boolean verticalCollisionBelow
+	) {
+		private static final ControlledCollisionState NONE = new ControlledCollisionState(false, false, false);
+	}
+
 	private static final class DroneControlSession {
 		private final UUID droneUuid;
 		private final net.minecraft.resources.ResourceKey<Level> droneDimension;
 		private Vec3 velocity = Vec3.ZERO;
 		private Vec3 intendedVelocity = Vec3.ZERO;
 		private Vec3 proxyPos = Vec3.ZERO;
+		private float controlYaw;
+		private float controlPitch;
 		private float proxyYaw;
 		private float proxyPitch;
 		private int nextViewSyncTeleportId = CONTROLLED_VIEW_TELEPORT_ID_BASE;
@@ -3609,6 +3738,22 @@ public final class DroneSystem {
 
 		private void setProxyPos(Vec3 proxyPos) {
 			this.proxyPos = proxyPos == null ? Vec3.ZERO : proxyPos;
+		}
+
+		private float controlYaw() {
+			return this.controlYaw;
+		}
+
+		private void setControlYaw(float controlYaw) {
+			this.controlYaw = controlYaw;
+		}
+
+		private float controlPitch() {
+			return this.controlPitch;
+		}
+
+		private void setControlPitch(float controlPitch) {
+			this.controlPitch = controlPitch;
 		}
 
 		private float proxyYaw() {
