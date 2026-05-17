@@ -373,6 +373,7 @@ public final class ServerRaceSystem {
 	private static final double GENNADIY_HOOK_CHAIN_END_OFFSET_BLOCKS = 4.0D / 16.0D;
 	private static final double GENNADIY_HOOK_TIP_ATTACH_CORRECTION_BLOCKS = 3.0D / 16.0D;
 	private static final Vec3 GENNADIY_HOOK_TIP_RED_LINK_ATTACH_OFFSET = new Vec3(0.0D, -5.5D / 16.0D, 8.0D / 16.0D);
+	private static final double GENNADIY_HOOK_TARGET_INSET_BLOCKS = 2.0D;
 	private static final double GENNADIY_HOOK_HIT_RADIUS_BLOCKS = 0.45D;
 	private static final double GENNADIY_HOOK_FINISH_DISTANCE_BLOCKS = 1.45D;
 	private static final int GENNADIY_HOOK_MAX_SEGMENTS = 48;
@@ -6497,7 +6498,8 @@ public final class ServerRaceSystem {
 			return true;
 		}
 
-		Vec3 targetCenter = target.position().add(0.0D, Math.max(0.25D, target.getBbHeight() * 0.55D), 0.0D);
+		double targetCenterYOffset = getGennadiyHookTargetCenterYOffset(target);
+		Vec3 targetCenter = target.position().add(0.0D, targetCenterYOffset, 0.0D);
 		Vec3 toTarget = targetCenter.subtract(origin);
 		double distance = toTarget.length();
 		if (distance <= GENNADIY_HOOK_FINISH_DISTANCE_BLOCKS) {
@@ -6509,23 +6511,70 @@ public final class ServerRaceSystem {
 		}
 
 		Vec3 directionToTarget = toTarget.scale(1.0D / distance);
-		updateGennadiyHookSegments(server, level, session, origin, directionToTarget, distance);
-		pullGennadiyHookTarget(player, target, directionToTarget, distance);
+		double pull = getGennadiyHookPullDistance(distance);
+		double nextDistance = Math.max(GENNADIY_HOOK_FINISH_DISTANCE_BLOCKS, distance - pull);
+		Vec3 nextTargetCenter = origin.add(directionToTarget.scale(Math.max(0.0D, nextDistance - GENNADIY_HOOK_TARGET_INSET_BLOCKS)));
+		moveGennadiyHookTargetToCenter(target, nextTargetCenter, targetCenterYOffset);
+		if (nextDistance <= GENNADIY_HOOK_FINISH_DISTANCE_BLOCKS + 1.0E-4D) {
+			finishGennadiyHookPull(level, player, target, session);
+			return false;
+		}
+		updateGennadiyHookSegments(server, level, session, origin, directionToTarget, nextDistance);
 		return true;
 	}
 
-	private static void pullGennadiyHookTarget(ServerPlayer player, LivingEntity target, Vec3 directionToTarget, double distance) {
-		if (player == null || target == null || directionToTarget == null || directionToTarget.lengthSqr() <= 1.0E-6D) {
+	private static double getGennadiyHookTargetCenterYOffset(LivingEntity target) {
+		return target == null ? 0.25D : Math.max(0.25D, target.getBbHeight() * 0.55D);
+	}
+
+	private static double getGennadiyHookPullDistance(double distance) {
+		return Math.min(GENNADIY_HOOK_PULL_SPEED_BLOCKS, Math.max(0.25D, distance * 0.28D));
+	}
+
+	private static void moveGennadiyHookTargetToCenter(LivingEntity target, Vec3 targetCenter, double centerYOffset) {
+		if (target == null || targetCenter == null) {
 			return;
 		}
-		double pull = Math.min(GENNADIY_HOOK_PULL_SPEED_BLOCKS, Math.max(0.25D, distance * 0.28D));
-		Vec3 current = target.getDeltaMovement();
-		Vec3 next = current.scale(0.25D).add(directionToTarget.scale(-pull));
-		target.setDeltaMovement(next);
+		double x = targetCenter.x;
+		double y = targetCenter.y - centerYOffset;
+		double z = targetCenter.z;
+		target.setDeltaMovement(Vec3.ZERO);
+		if (target instanceof ServerPlayer targetPlayer) {
+			targetPlayer.connection.teleport(x, y, z, targetPlayer.getYRot(), targetPlayer.getXRot());
+		} else {
+			target.teleportTo(x, y, z);
+		}
 		target.hurtMarked = true;
 		target.resetFallDistance();
 		if (target instanceof ServerPlayer targetPlayer) {
 			targetPlayer.connection.send(new ClientboundSetEntityMotionPacket(targetPlayer));
+		}
+		sendGennadiyHookTargetTeleportToViewers(target);
+	}
+
+	private static void sendGennadiyHookTargetTeleportToViewers(LivingEntity target) {
+		if (target == null || !(target.level() instanceof ServerLevel level)) {
+			return;
+		}
+		PositionMoveRotation rotation = new PositionMoveRotation(
+				target.position(),
+				Vec3.ZERO,
+				target.getYRot(),
+				target.getXRot()
+		);
+		ClientboundTeleportEntityPacket teleportPacket = ClientboundTeleportEntityPacket.teleport(
+				target.getId(),
+				rotation,
+				Collections.emptySet(),
+				target.onGround()
+		);
+		ClientboundSetEntityMotionPacket motionPacket = new ClientboundSetEntityMotionPacket(target);
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer == null || viewer.connection == null || viewer == target) {
+				continue;
+			}
+			viewer.connection.send(teleportPacket);
+			viewer.connection.send(motionPacket);
 		}
 	}
 
