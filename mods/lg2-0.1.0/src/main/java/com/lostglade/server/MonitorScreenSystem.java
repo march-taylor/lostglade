@@ -9773,7 +9773,6 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
-		float strokeWidth = mediaChromeStrokeWidth(rect);
 		drawMediaIconActionButton(
 				graphics,
 				rect,
@@ -9783,7 +9782,6 @@ public final class MonitorScreenSystem {
 				state.wallpaperActionState(),
 				segment
 		);
-		strokeShape(graphics, mediaButtonShape(rect, segment), Math.max(1.0F, strokeWidth * 0.65F), new Color(255, 255, 255, 96));
 	}
 
 	private static void drawYoutubePlayerActionButton(Graphics2D graphics, UiRect rect, MediaVisualSnapshot state, UiLayout layout, MediaButtonSegment segment) {
@@ -9802,9 +9800,18 @@ public final class MonitorScreenSystem {
 	}
 
 	private static void drawMediaIconActionButton(Graphics2D graphics, UiRect rect, Color fill, UiLayout layout, MediaActionGlyph glyph, MediaActionVisualState visualState, MediaButtonSegment segment) {
-		boolean active = visualState == MediaActionVisualState.COMPLETE || visualState == MediaActionVisualState.DOWNLOADING;
 		float strokeWidth = mediaChromeStrokeWidth(rect);
-		Color iconColor = drawSmallMediaButtonBase(graphics, rect, segment, active, strokeWidth, fill);
+		Color outlineColor = switch (visualState) {
+			case COMPLETE -> new Color(248, 251, 255, 176);
+			case DOWNLOADING -> new Color(248, 251, 255, 160);
+			case IDLE -> new Color(248, 251, 255, 124);
+		};
+		Color iconColor = switch (visualState) {
+			case COMPLETE -> new Color(248, 251, 255, 246);
+			case DOWNLOADING -> new Color(248, 251, 255, 236);
+			case IDLE -> new Color(248, 251, 255, 214);
+		};
+		strokeShape(graphics, mediaButtonShape(rect, segment), Math.max(0.9F, strokeWidth * 0.55F), outlineColor);
 		UiRect iconRect = mediaChromeIconRect(rect, layout);
 		if (visualState == MediaActionVisualState.DOWNLOADING) {
 			drawLoadingSpinner(graphics, iconRect, iconColor, Math.max(1.6F, strokeWidth));
