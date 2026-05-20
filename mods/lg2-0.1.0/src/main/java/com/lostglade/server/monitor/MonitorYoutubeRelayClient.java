@@ -522,7 +522,7 @@ public final class MonitorYoutubeRelayClient {
 	private static ResolvedYoutube resolveYoutube(String url) throws IOException {
 		String metadataJson = runTextCommand(List.of(ytDlpBin(), "--dump-single-json", "--no-playlist", url), COMMAND_TIMEOUT_SEC);
 		JsonObject metadata = GSON.fromJson(metadataJson, JsonObject.class);
-		String title = getString(metadata, "title", "YouTube");
+		String title = getNonBlankString(metadata, "title", "YouTube");
 		long durationMs = Math.round(getDouble(metadata, "duration", 0.0D) * 1000.0D);
 		boolean isLive = getBoolean(metadata, "is_live", false)
 				|| "is_live".equalsIgnoreCase(getString(metadata, "live_status", ""));
@@ -538,9 +538,12 @@ public final class MonitorYoutubeRelayClient {
 	}
 
 	private static QueueResolveResponse resolveYoutubeQueue(String url) throws IOException {
+		if (shouldResolveSingleQueueEntry(url)) {
+			return resolveSingleYoutubeQueueEntry(url);
+		}
 		String metadataJson = runTextCommand(List.of(ytDlpBin(), "--dump-single-json", "--flat-playlist", url), COMMAND_TIMEOUT_SEC);
 		JsonObject metadata = GSON.fromJson(metadataJson, JsonObject.class);
-		String containerTitle = getString(metadata, "title", "YouTube");
+		String containerTitle = getNonBlankString(metadata, "title", "YouTube");
 		String containerSubtitle = resolveQueueEntrySubtitle(metadata);
 		long containerDurationMs = resolveQueueEntryDurationMs(metadata);
 		JsonArray entriesArray = metadata != null && metadata.has("entries") && metadata.get("entries").isJsonArray()
@@ -557,7 +560,7 @@ public final class MonitorYoutubeRelayClient {
 				if (entryUrl == null || entryUrl.isBlank()) {
 					continue;
 				}
-				String entryTitle = getString(entry, "title", "YouTube");
+				String entryTitle = getNonBlankString(entry, "title", "YouTube");
 				String entrySubtitle = resolveQueueEntrySubtitle(entry);
 				long entryDurationMs = resolveQueueEntryDurationMs(entry);
 				entries.add(new QueueEntry(entryTitle, entrySubtitle, entryDurationMs, entryUrl));
@@ -572,6 +575,76 @@ public final class MonitorYoutubeRelayClient {
 				List.of(new QueueEntry(containerTitle, containerSubtitle, containerDurationMs, canonicalUrl)),
 				false
 		);
+	}
+
+	private static QueueResolveResponse resolveSingleYoutubeQueueEntry(String url) throws IOException {
+		String metadataJson = runTextCommand(List.of(ytDlpBin(), "--dump-single-json", "--no-playlist", url), COMMAND_TIMEOUT_SEC);
+		JsonObject metadata = GSON.fromJson(metadataJson, JsonObject.class);
+		String title = getNonBlankString(metadata, "title", "YouTube");
+		String subtitle = resolveQueueEntrySubtitle(metadata);
+		long durationMs = resolveQueueEntryDurationMs(metadata);
+		String canonicalUrl = getString(metadata, "webpage_url", url);
+		return new QueueResolveResponse(
+				title,
+				List.of(new QueueEntry(title, subtitle, durationMs, canonicalUrl == null || canonicalUrl.isBlank() ? url : canonicalUrl)),
+				false
+		);
+	}
+
+	private static boolean shouldResolveSingleQueueEntry(String rawUrl) {
+		if (rawUrl == null || rawUrl.isBlank()) {
+			return false;
+		}
+		try {
+			java.net.URI uri = java.net.URI.create(rawUrl.trim());
+			String host = uri.getHost();
+			if (host == null || host.isBlank()) {
+				return false;
+			}
+			String normalizedHost = host.toLowerCase(Locale.ROOT);
+			if (normalizedHost.equals("youtu.be") || normalizedHost.endsWith(".youtu.be")) {
+				return true;
+			}
+			String path = uri.getPath();
+			String normalizedPath = path == null ? "" : path.toLowerCase(Locale.ROOT);
+			String videoId = queryParameter(uri, "v");
+			String playlistId = queryParameter(uri, "list");
+			if (normalizedPath.equals("/playlist")) {
+				return false;
+			}
+			if (!videoId.isBlank() && playlistId.isBlank()) {
+				return true;
+			}
+			return normalizedPath.startsWith("/shorts/")
+					|| normalizedPath.startsWith("/live/")
+					|| normalizedPath.startsWith("/embed/")
+					|| normalizedPath.startsWith("/v/");
+		} catch (IllegalArgumentException exception) {
+			return false;
+		}
+	}
+
+	private static String queryParameter(java.net.URI uri, String name) {
+		if (uri == null || name == null || name.isBlank()) {
+			return "";
+		}
+		String query = uri.getRawQuery();
+		if (query == null || query.isBlank()) {
+			return "";
+		}
+		for (String entry : query.split("&")) {
+			if (entry == null || entry.isBlank()) {
+				continue;
+			}
+			int separator = entry.indexOf('=');
+			String key = separator >= 0 ? entry.substring(0, separator) : entry;
+			if (!name.equals(key)) {
+				continue;
+			}
+			String value = separator >= 0 && separator + 1 < entry.length() ? entry.substring(separator + 1) : "";
+			return value == null ? "" : value.trim();
+		}
+		return "";
 	}
 
 	private static String resolveQueueEntrySubtitle(JsonObject entry) {
@@ -637,19 +710,41 @@ public final class MonitorYoutubeRelayClient {
 
 	private static String runTextCommand(List<String> command, int timeoutSeconds) throws IOException {
 		ProcessBuilder builder = new ProcessBuilder(command);
-		builder.redirectErrorStream(true);
 		Process process = builder.start();
 		try {
-			byte[] outputBytes = readProcessOutput(process, timeoutSeconds, "Timed out: " + String.join(" ", command));
-			String output = new String(outputBytes, StandardCharsets.UTF_8);
+			ProcessOutputReader stdoutReader = new ProcessOutputReader(process.getInputStream());
+			ProcessOutputReader stderrReader = new ProcessOutputReader(process.getErrorStream());
+			Thread stdoutThread = new Thread(stdoutReader, "lg2-youtube-process-stdout");
+			Thread stderrThread = new Thread(stderrReader, "lg2-youtube-process-stderr");
+			stdoutThread.setDaemon(true);
+			stderrThread.setDaemon(true);
+			stdoutThread.start();
+			stderrThread.start();
+			boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+			if (!finished) {
+				process.destroyForcibly();
+				stdoutThread.join(1000L);
+				stderrThread.join(1000L);
+				throw new IOException("Timed out: " + String.join(" ", command));
+			}
+			stdoutThread.join(1000L);
+			stderrThread.join(1000L);
+			if (stdoutReader.exception() != null) {
+				throw stdoutReader.exception();
+			}
+			if (stderrReader.exception() != null) {
+				throw stderrReader.exception();
+			}
+			String stdout = new String(stdoutReader.bytes(), StandardCharsets.UTF_8).trim();
+			String stderr = new String(stderrReader.bytes(), StandardCharsets.UTF_8).trim();
 			if (process.exitValue() != 0) {
-				String message = output.trim();
+				String message = stderr.isBlank() ? stdout : stderr;
 				if (message.isBlank()) {
 					message = "Command failed: " + String.join(" ", command);
 				}
 				throw new IOException(message);
 			}
-			return output;
+			return stdout;
 		} catch (InterruptedException exception) {
 			Thread.currentThread().interrupt();
 			process.destroyForcibly();
@@ -894,6 +989,11 @@ public final class MonitorYoutubeRelayClient {
 
 	private static String getString(JsonObject object, String key, String fallback) {
 		return object != null && object.has(key) && !object.get(key).isJsonNull() ? object.get(key).getAsString() : fallback;
+	}
+
+	private static String getNonBlankString(JsonObject object, String key, String fallback) {
+		String value = getString(object, key, fallback);
+		return value == null || value.isBlank() ? fallback : value;
 	}
 
 	private static boolean getBoolean(JsonObject object, String key, boolean fallback) {

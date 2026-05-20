@@ -37,6 +37,7 @@
 /usercache.json
 /fabricloader.log
 /config/skinrestorer/mojang_profile_cache.json
+/server-secrets/yt-dlp/*.cookies.txt
 
 # Temp files
 /.tmp/
