@@ -85,6 +85,11 @@ public final class RendererBotCameraSystem {
 	private static final double SHADOW_FORWARD_HALF_FOV_DEGREES = 80.0D;
 	private static final double SHADOW_NEAR_OMNI_RADIUS_CHUNKS = 3.0D;
 	private static final double SHADOW_SIDE_SAFETY_MARGIN_CHUNKS = 1.5D;
+	// Static screen cameras keep a wider local buffer so large angle changes stay smooth without full-circle loading.
+	private static final double STATIC_CAMERA_FORWARD_HALF_FOV_DEGREES = 90.0D;
+	private static final double STATIC_CAMERA_NEAR_OMNI_RADIUS_CHUNKS = 6.0D;
+	private static final int STATIC_CAMERA_REAR_VIEW_CHUNKS = 4;
+	private static final double STATIC_CAMERA_SIDE_SAFETY_MARGIN_CHUNKS = 2.0D;
 	private static final double SHARED_RENDER_RADIUS_BLOCKS = 96.0D;
 	private static final double SHARED_RENDER_RADIUS_SQ = SHARED_RENDER_RADIUS_BLOCKS * SHARED_RENDER_RADIUS_BLOCKS;
 	private static final Map<UUID, BotHandshake> READY_BOTS = new ConcurrentHashMap<>();
@@ -722,6 +727,21 @@ public final class RendererBotCameraSystem {
 		return isEntityWithinAnyTrackingTarget(server, viewer.getUUID(), entity, horizontalRangeBlocks * horizontalRangeBlocks);
 	}
 
+	public static boolean shouldReceiveNearbyWebcam(ServerPlayer viewer, Entity source, double horizontalRangeBlocks) {
+		if (viewer == null
+				|| source == null
+				|| horizontalRangeBlocks <= 0.0D
+				|| !RendererBotPresenceSystem.isRendererBot(viewer)
+				|| !(source.level() instanceof ServerLevel sourceLevel)) {
+			return false;
+		}
+		MinecraftServer server = sourceLevel.getServer();
+		if (server == null) {
+			return false;
+		}
+		return isEntityWithinAnyTrackingTarget(server, viewer.getUUID(), source, horizontalRangeBlocks * horizontalRangeBlocks);
+	}
+
 	private static void applyTimeout(UUID requestId, PendingCapture capture, long timeoutMillis) {
 		capture.previewFuture()
 				.orTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
@@ -1178,7 +1198,14 @@ public final class RendererBotCameraSystem {
 					spec.expectedPitch(),
 					spec.followEntityUuid()
 			);
-			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance, spec.omnidirectionalChunkLoading());
+			appendVirtualTargetChunks(
+					chunks,
+					botLevel,
+					target,
+					viewDistance,
+					spec.omnidirectionalChunkLoading(),
+					spec.cameraPos() != null && spec.followEntityUuid() == null
+			);
 		}
 		for (PendingCapture capture : PENDING_CAPTURES.values()) {
 			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.isDone()) {
@@ -1188,7 +1215,7 @@ public final class RendererBotCameraSystem {
 			if (target == null || target.level() != botLevel) {
 				continue;
 			}
-			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance, false);
+			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance, false, false);
 		}
 		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
 			if (recording == null || !botUuid.equals(recording.botUuid()) || recording.stopRequested() || recording.completionFuture().isDone()) {
@@ -1198,44 +1225,104 @@ public final class RendererBotCameraSystem {
 			if (target == null || target.level() != botLevel) {
 				continue;
 			}
-			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance, false);
+			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance, false, false);
 		}
 		return chunks;
 	}
 
-	private static void appendVirtualTargetChunks(LongSet chunks, ServerLevel level, ScheduledServiceTarget target, int viewDistance, boolean omnidirectionalChunkLoading) {
+	private static void appendVirtualTargetChunks(
+			LongSet chunks,
+			ServerLevel level,
+			ScheduledServiceTarget target,
+			int viewDistance,
+			boolean omnidirectionalChunkLoading,
+			boolean staticCameraChunkBuffer
+	) {
 		if (chunks == null || level == null || target == null || target.level() != level) {
 			return;
 		}
-		appendVirtualCameraChunks(chunks, target.x(), target.z(), target.yaw(), viewDistance, omnidirectionalChunkLoading);
+		appendVirtualCameraChunks(
+				chunks,
+				target.x(),
+				target.z(),
+				target.yaw(),
+				viewDistance,
+				omnidirectionalChunkLoading,
+				staticCameraChunkBuffer
+		);
 	}
 
-	private static void appendVirtualCameraChunks(LongSet target, double x, double z, float yaw, int viewDistance, boolean omnidirectionalChunkLoading) {
+	private static void appendVirtualCameraChunks(
+			LongSet target,
+			double x,
+			double z,
+			float yaw,
+			int viewDistance,
+			boolean omnidirectionalChunkLoading,
+			boolean staticCameraChunkBuffer
+	) {
 		if (target == null || viewDistance <= 0) {
 			return;
 		}
-		LongSet chunks = computeVirtualCameraChunks(x, z, yaw, viewDistance, omnidirectionalChunkLoading);
+		LongSet chunks = computeVirtualCameraChunks(x, z, yaw, viewDistance, omnidirectionalChunkLoading, staticCameraChunkBuffer);
 		LongIterator iterator = chunks.iterator();
 		while (iterator.hasNext()) {
 			target.add(iterator.nextLong());
 		}
 	}
 
-	private static LongSet computeVirtualCameraChunks(double x, double z, float yaw, int viewDistance, boolean omnidirectionalChunkLoading) {
+	private static LongSet computeVirtualCameraChunks(
+			double x,
+			double z,
+			float yaw,
+			int viewDistance,
+			boolean omnidirectionalChunkLoading,
+			boolean staticCameraChunkBuffer
+	) {
 		if (omnidirectionalChunkLoading) {
 			return computeOmnidirectionalCameraChunks(x, z, viewDistance);
 		}
-		return computeDirectionalCameraChunks(x, z, yaw, viewDistance);
+		if (staticCameraChunkBuffer) {
+			return computeDirectionalCameraChunks(
+					x,
+					z,
+					yaw,
+					viewDistance,
+					STATIC_CAMERA_FORWARD_HALF_FOV_DEGREES,
+					STATIC_CAMERA_NEAR_OMNI_RADIUS_CHUNKS,
+					STATIC_CAMERA_REAR_VIEW_CHUNKS,
+					STATIC_CAMERA_SIDE_SAFETY_MARGIN_CHUNKS
+			);
+		}
+		return computeDirectionalCameraChunks(
+				x,
+				z,
+				yaw,
+				viewDistance,
+				SHADOW_FORWARD_HALF_FOV_DEGREES,
+				SHADOW_NEAR_OMNI_RADIUS_CHUNKS,
+				SHADOW_REAR_VIEW_CHUNKS,
+				SHADOW_SIDE_SAFETY_MARGIN_CHUNKS
+		);
 	}
 
-	private static LongSet computeDirectionalCameraChunks(double x, double z, float yaw, int viewDistance) {
+	private static LongSet computeDirectionalCameraChunks(
+			double x,
+			double z,
+			float yaw,
+			int viewDistance,
+			double halfFovDegrees,
+			double nearOmniRadiusChunks,
+			int rearViewChunks,
+			double sideSafetyMarginChunks
+	) {
 		LongOpenHashSet chunks = new LongOpenHashSet();
 		int centerChunkX = SectionPos.blockToSectionCoord(Mth.floor(x));
 		int centerChunkZ = SectionPos.blockToSectionCoord(Mth.floor(z));
 		double yawRadians = Math.toRadians(yaw);
 		double forwardX = -Math.sin(yawRadians);
 		double forwardZ = Math.cos(yawRadians);
-		double halfFovRadians = Math.toRadians(SHADOW_FORWARD_HALF_FOV_DEGREES);
+		double halfFovRadians = Math.toRadians(halfFovDegrees);
 		double tangentLimit = Math.tan(halfFovRadians);
 		for (int dx = -viewDistance; dx <= viewDistance; dx++) {
 			for (int dz = -viewDistance; dz <= viewDistance; dz++) {
@@ -1249,18 +1336,18 @@ public final class RendererBotCameraSystem {
 				double deltaChunkX = (chunkCenterX - x) / 16.0D;
 				double deltaChunkZ = (chunkCenterZ - z) / 16.0D;
 				double horizontalDistanceChunks = Math.sqrt(deltaChunkX * deltaChunkX + deltaChunkZ * deltaChunkZ);
-				if (horizontalDistanceChunks <= SHADOW_NEAR_OMNI_RADIUS_CHUNKS) {
+				if (horizontalDistanceChunks <= nearOmniRadiusChunks) {
 					chunks.add(new ChunkPos(chunkX, chunkZ).toLong());
 					continue;
 				}
 				double forwardDistance = deltaChunkX * forwardX + deltaChunkZ * forwardZ;
-				if (forwardDistance < -SHADOW_REAR_VIEW_CHUNKS || forwardDistance > viewDistance + SHADOW_SIDE_SAFETY_MARGIN_CHUNKS) {
+				if (forwardDistance < -rearViewChunks || forwardDistance > viewDistance + sideSafetyMarginChunks) {
 					continue;
 				}
 				double sideDistance = Math.abs(deltaChunkX * forwardZ - deltaChunkZ * forwardX);
 				double allowedSideDistance = forwardDistance <= 0.0D
-						? SHADOW_NEAR_OMNI_RADIUS_CHUNKS + SHADOW_SIDE_SAFETY_MARGIN_CHUNKS
-						: forwardDistance * tangentLimit + SHADOW_SIDE_SAFETY_MARGIN_CHUNKS;
+						? nearOmniRadiusChunks + sideSafetyMarginChunks
+						: forwardDistance * tangentLimit + sideSafetyMarginChunks;
 				if (sideDistance > allowedSideDistance) {
 					continue;
 				}
@@ -1324,7 +1411,8 @@ public final class RendererBotCameraSystem {
 					target.z(),
 					target.yaw(),
 					viewDistance,
-					spec.omnidirectionalChunkLoading()
+					spec.omnidirectionalChunkLoading(),
+					spec.cameraPos() != null && spec.followEntityUuid() == null
 			);
 			LongIterator iterator = chunks.iterator();
 			while (iterator.hasNext()) {
@@ -1508,7 +1596,8 @@ public final class RendererBotCameraSystem {
 					target,
 					viewDistance,
 					spec.hiddenEntityUuids(),
-					spec.omnidirectionalChunkLoading()
+					spec.omnidirectionalChunkLoading(),
+					spec.cameraPos() != null && spec.followEntityUuid() == null
 			);
 		}
 
@@ -1522,7 +1611,7 @@ public final class RendererBotCameraSystem {
 				failCapture(entry.getKey(), capture, "Renderer bot capture target is unavailable");
 				continue;
 			}
-			accumulateShadowDesiredState(desiredStates, botUuid, capture.renderSessionId(), target, viewDistance, Set.of(), false);
+			accumulateShadowDesiredState(desiredStates, botUuid, capture.renderSessionId(), target, viewDistance, Set.of(), false, false);
 		}
 
 		for (Map.Entry<UUID, PendingVideoRecording> entry : PENDING_VIDEO_RECORDINGS.entrySet()) {
@@ -1535,7 +1624,7 @@ public final class RendererBotCameraSystem {
 				failVideoRecording(entry.getKey(), recording, "Renderer bot recording target is unavailable");
 				continue;
 			}
-			accumulateShadowDesiredState(desiredStates, botUuid, recording.renderSessionId(), target, viewDistance, Set.of(), false);
+			accumulateShadowDesiredState(desiredStates, botUuid, recording.renderSessionId(), target, viewDistance, Set.of(), false, false);
 		}
 
 		if (server.getPlayerList() != null) {
@@ -1562,7 +1651,8 @@ public final class RendererBotCameraSystem {
 						),
 						viewDistance,
 						Set.of(),
-						true
+						true,
+						false
 				);
 			}
 		}
@@ -1576,7 +1666,8 @@ public final class RendererBotCameraSystem {
 			ScheduledServiceTarget target,
 			int viewDistance,
 			Set<UUID> hiddenEntityUuids,
-			boolean omnidirectionalChunkLoading
+			boolean omnidirectionalChunkLoading,
+			boolean staticCameraChunkBuffer
 	) {
 		if (desiredStates == null || botUuid == null || sessionId == null || target == null || !(target.level() instanceof ServerLevel level)) {
 			return;
@@ -1594,7 +1685,8 @@ public final class RendererBotCameraSystem {
 				target,
 				viewDistance,
 				hiddenEntityUuids == null ? Set.of() : Set.copyOf(hiddenEntityUuids),
-				omnidirectionalChunkLoading
+				omnidirectionalChunkLoading,
+				staticCameraChunkBuffer
 		);
 	}
 
@@ -2558,7 +2650,8 @@ public final class RendererBotCameraSystem {
 				ScheduledServiceTarget target,
 				int viewDistance,
 				Set<UUID> hiddenEntityUuids,
-				boolean omnidirectionalChunkLoading
+				boolean omnidirectionalChunkLoading,
+				boolean staticCameraChunkBuffer
 		) {
 			if (target == null || target.level() != this.level) {
 				return;
@@ -2568,7 +2661,14 @@ public final class RendererBotCameraSystem {
 			if (hiddenEntityUuids != null && !hiddenEntityUuids.isEmpty()) {
 				this.hiddenEntityUuids.addAll(hiddenEntityUuids);
 			}
-			appendVirtualTargetChunks(this.trackedChunks, this.level, target, Math.max(2, viewDistance), omnidirectionalChunkLoading);
+			appendVirtualTargetChunks(
+					this.trackedChunks,
+					this.level,
+					target,
+					Math.max(2, viewDistance),
+					omnidirectionalChunkLoading,
+					staticCameraChunkBuffer
+			);
 			recomputeViewWindow(target);
 		}
 

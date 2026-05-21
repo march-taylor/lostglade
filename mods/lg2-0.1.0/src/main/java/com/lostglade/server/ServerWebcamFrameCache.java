@@ -101,7 +101,7 @@ public final class ServerWebcamFrameCache {
 			return null;
 		}
 		UUID logicalSourceId = player.getUUID();
-		if (!canViewerSeeSource(viewer, logicalSourceId, player.position(), config)) {
+		if (!canViewerSeeSource(viewer, player, logicalSourceId, config)) {
 			return null;
 		}
 		UUID frameSourceId = MIRROR_TARGET_BY_SOURCE.getOrDefault(logicalSourceId, logicalSourceId);
@@ -118,12 +118,13 @@ public final class ServerWebcamFrameCache {
 		return new WebcamDisplay(displayImage, materialKey, config.displayShape(), config.displayOffsetY(), config.displaySize());
 	}
 
-	private static boolean canViewerSeeSource(ServerPlayer viewer, UUID logicalSourceId, Vec3 sourcePosition, ServerConfig config) {
-		if (viewer == null || logicalSourceId == null || sourcePosition == null || config == null) {
+	private static boolean canViewerSeeSource(ServerPlayer viewer, Player sourcePlayer, UUID logicalSourceId, ServerConfig config) {
+		if (viewer == null || sourcePlayer == null || logicalSourceId == null || config == null) {
 			return false;
 		}
 		double maxDistance = config.maxDisplayDistance();
-		if (viewer.position().distanceToSqr(sourcePosition) > maxDistance * maxDistance) {
+		boolean withinPhysicalDistance = viewer.position().distanceToSqr(sourcePlayer.position()) <= maxDistance * maxDistance;
+		if (!withinPhysicalDistance && !RendererBotCameraSystem.shouldReceiveNearbyWebcam(viewer, sourcePlayer, maxDistance)) {
 			return false;
 		}
 		WebcamServer webcamServer = WebcamServer.getInstance();

@@ -3,6 +3,7 @@ package com.lostglade.server;
 import com.lostglade.Lg2;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.server.MinecraftServer;
 import ru.dimaskama.webcam.Webcam;
 import ru.dimaskama.webcam.WebcamService;
 import ru.dimaskama.webcam.message.Channel;
@@ -14,12 +15,14 @@ import java.util.UUID;
 import java.util.function.Consumer;
 
 public final class ServerWebcamIntegration {
+	private static volatile MinecraftServer ACTIVE_SERVER;
 
 	private ServerWebcamIntegration() {
 	}
 
 	public static void register() {
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+			ACTIVE_SERVER = server;
 			ServerWebcamFrameCache.clearAll();
 			if (!isLoaded()) {
 				Lg2.LOGGER.warn("Webcam is not loaded even though it is listed as a dependency");
@@ -27,7 +30,12 @@ public final class ServerWebcamIntegration {
 			}
 			Lg2.LOGGER.info("Connected Webcam integration");
 		});
-		ServerLifecycleEvents.SERVER_STOPPING.register(server -> ServerWebcamFrameCache.clearAll());
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			ServerWebcamFrameCache.clearAll();
+			if (ACTIVE_SERVER == server) {
+				ACTIVE_SERVER = null;
+			}
+		});
 	}
 
 	public static boolean isLoaded() {
@@ -41,6 +49,10 @@ public final class ServerWebcamIntegration {
 			Lg2.LOGGER.warn("Failed to access Webcam API", throwable);
 			return null;
 		}
+	}
+
+	public static MinecraftServer currentServer() {
+		return ACTIVE_SERVER;
 	}
 
 	public static <T extends Message> void registerChannel(Channel<T> channel, ServerMessaging.ServerHandler<T> handler) {
