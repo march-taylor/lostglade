@@ -77,6 +77,7 @@ public final class RendererBotCameraSystem {
 	private static final int CAMERA_HOTBAR_WARMUP_FPS = 2;
 	private static final int CAMERA_HOTBAR_WARMUP_SIZE = 1;
 	private static final int CAMERA_HOTBAR_WARMUP_FOV_DEGREES = 70;
+	private static final int CAMERA_CHUNK_TICKET_UNIQUE_FLAG = 128;
 	private static final int SHADOW_VIEW_DISTANCE_MARGIN_CHUNKS = 6;
 	private static final int SHADOW_REAR_VIEW_CHUNKS = 2;
 	private static final long LIVE_STREAM_STALE_MS = 1_500L;
@@ -92,12 +93,16 @@ public final class RendererBotCameraSystem {
 	private static final double STATIC_CAMERA_SIDE_SAFETY_MARGIN_CHUNKS = 2.0D;
 	private static final double SHARED_RENDER_RADIUS_BLOCKS = 96.0D;
 	private static final double SHARED_RENDER_RADIUS_SQ = SHARED_RENDER_RADIUS_BLOCKS * SHARED_RENDER_RADIUS_BLOCKS;
+	private static final TicketType CAMERA_CHUNK_TICKET_TYPE = new TicketType(
+			0L,
+			TicketType.FLAG_LOADING | CAMERA_CHUNK_TICKET_UNIQUE_FLAG
+	);
 	private static final Map<UUID, BotHandshake> READY_BOTS = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingCapture> PENDING_CAPTURES = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingVideoRecording> PENDING_VIDEO_RECORDINGS = new ConcurrentHashMap<>();
 	private static final Map<UUID, ActiveLiveStream> ACTIVE_LIVE_STREAMS = new ConcurrentHashMap<>();
 	private static final Map<String, UUID> LIVE_STREAMS_BY_OWNER = new ConcurrentHashMap<>();
-	private static final Map<ChunkTicketKey, Integer> ACTIVE_CAMERA_CHUNK_TICKETS = new HashMap<>();
+	private static final Map<CameraChunkTicketKey, Integer> ACTIVE_CAMERA_CHUNK_TICKETS = new HashMap<>();
 	private static final Map<ShadowSyncKey, ShadowDimensionSyncState> ACTIVE_SHADOW_SYNC_STATES = new HashMap<>();
 	private static final Set<ChunkTicketKey> DIRTY_SHADOW_CHUNKS = ConcurrentHashMap.newKeySet();
 
@@ -1520,7 +1525,7 @@ public final class RendererBotCameraSystem {
 	}
 
 	private static boolean updateVirtualCameraChunkTickets(MinecraftServer server) {
-		Map<ChunkTicketKey, Integer> desiredRefs = new HashMap<>();
+		Map<CameraChunkTicketKey, Integer> desiredRefs = new HashMap<>();
 		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
 			if (stream == null) {
 				continue;
@@ -1551,40 +1556,28 @@ public final class RendererBotCameraSystem {
 				continue;
 			}
 			int viewDistance = resolveShadowViewDistance(bot);
-			LongSet chunks = computeVirtualCameraChunks(
-					target.x(),
-					target.z(),
-					target.yaw(),
-					viewDistance,
-					spec.omnidirectionalChunkLoading(),
-					spec.cameraPos() != null && spec.followEntityUuid() == null
-			);
-			LongIterator iterator = chunks.iterator();
-			while (iterator.hasNext()) {
-				long packed = iterator.nextLong();
-				desiredRefs.merge(new ChunkTicketKey(target.level().dimension(), packed), 1, Integer::sum);
-			}
+			addCameraChunkTicket(desiredRefs, target.level().dimension(), chunkPosAt(target.x(), target.z()), viewDistance);
 		}
 
 		if (Objects.equals(ACTIVE_CAMERA_CHUNK_TICKETS, desiredRefs)) {
 			return false;
 		}
 
-		Set<ChunkTicketKey> keys = new LinkedHashSet<>();
+		Set<CameraChunkTicketKey> keys = new LinkedHashSet<>();
 		keys.addAll(ACTIVE_CAMERA_CHUNK_TICKETS.keySet());
 		keys.addAll(desiredRefs.keySet());
-		for (ChunkTicketKey key : keys) {
+		for (CameraChunkTicketKey key : keys) {
 			int current = ACTIVE_CAMERA_CHUNK_TICKETS.getOrDefault(key, 0);
 			int desired = desiredRefs.getOrDefault(key, 0);
 			if (current <= 0 && desired > 0) {
 				ServerLevel level = server.getLevel(key.dimension());
 				if (level != null) {
-					level.getChunkSource().addTicketWithRadius(TicketType.UNKNOWN, new ChunkPos(key.chunkLong()), 0);
+					level.getChunkSource().addTicketWithRadius(CAMERA_CHUNK_TICKET_TYPE, new ChunkPos(key.chunkLong()), key.radius());
 				}
 			} else if (current > 0 && desired <= 0) {
 				ServerLevel level = server.getLevel(key.dimension());
 				if (level != null) {
-					level.getChunkSource().removeTicketWithRadius(TicketType.UNKNOWN, new ChunkPos(key.chunkLong()), 0);
+					level.getChunkSource().removeTicketWithRadius(CAMERA_CHUNK_TICKET_TYPE, new ChunkPos(key.chunkLong()), key.radius());
 				}
 			}
 		}
@@ -1598,10 +1591,10 @@ public final class RendererBotCameraSystem {
 			ACTIVE_CAMERA_CHUNK_TICKETS.clear();
 			return;
 		}
-		for (ChunkTicketKey key : new ArrayList<>(ACTIVE_CAMERA_CHUNK_TICKETS.keySet())) {
+		for (CameraChunkTicketKey key : new ArrayList<>(ACTIVE_CAMERA_CHUNK_TICKETS.keySet())) {
 			ServerLevel level = server.getLevel(key.dimension());
 			if (level != null) {
-				level.getChunkSource().removeTicketWithRadius(TicketType.UNKNOWN, new ChunkPos(key.chunkLong()), 0);
+				level.getChunkSource().removeTicketWithRadius(CAMERA_CHUNK_TICKET_TYPE, new ChunkPos(key.chunkLong()), key.radius());
 			}
 		}
 		ACTIVE_CAMERA_CHUNK_TICKETS.clear();
@@ -1663,7 +1656,7 @@ public final class RendererBotCameraSystem {
 	}
 
 	private static void syncShadowChunkTickets(MinecraftServer server, Iterable<ShadowDesiredState> desiredStates) {
-		Map<ChunkTicketKey, Integer> desiredRefs = new HashMap<>();
+		Map<CameraChunkTicketKey, Integer> desiredRefs = new HashMap<>();
 		if (server == null) {
 			ACTIVE_CAMERA_CHUNK_TICKETS.clear();
 			return;
@@ -1673,20 +1666,23 @@ public final class RendererBotCameraSystem {
 				if (desiredState == null || desiredState.level() == null) {
 					continue;
 				}
-				LongIterator iterator = desiredState.trackedChunks().iterator();
-				while (iterator.hasNext()) {
-					long chunkLong = iterator.nextLong();
-					desiredRefs.merge(new ChunkTicketKey(desiredState.level().dimension(), chunkLong), 1, Integer::sum);
+				for (Map.Entry<CameraChunkTicketKey, Integer> entry : desiredState.chunkTickets().entrySet()) {
+					CameraChunkTicketKey key = entry.getKey();
+					int refs = entry.getValue() == null ? 0 : entry.getValue();
+					if (key == null || refs <= 0) {
+						continue;
+					}
+					desiredRefs.merge(key, refs, Integer::sum);
 				}
 			}
 		}
 		if (Objects.equals(ACTIVE_CAMERA_CHUNK_TICKETS, desiredRefs)) {
 			return;
 		}
-		Set<ChunkTicketKey> keys = new LinkedHashSet<>();
+		Set<CameraChunkTicketKey> keys = new LinkedHashSet<>();
 		keys.addAll(ACTIVE_CAMERA_CHUNK_TICKETS.keySet());
 		keys.addAll(desiredRefs.keySet());
-		for (ChunkTicketKey key : keys) {
+		for (CameraChunkTicketKey key : keys) {
 			int current = ACTIVE_CAMERA_CHUNK_TICKETS.getOrDefault(key, 0);
 			int desired = desiredRefs.getOrDefault(key, 0);
 			ServerLevel level = server.getLevel(key.dimension());
@@ -1694,13 +1690,26 @@ public final class RendererBotCameraSystem {
 				continue;
 			}
 			if (current <= 0 && desired > 0) {
-				level.getChunkSource().addTicketWithRadius(TicketType.UNKNOWN, new ChunkPos(key.chunkLong()), 0);
+				level.getChunkSource().addTicketWithRadius(CAMERA_CHUNK_TICKET_TYPE, new ChunkPos(key.chunkLong()), key.radius());
 			} else if (current > 0 && desired <= 0) {
-				level.getChunkSource().removeTicketWithRadius(TicketType.UNKNOWN, new ChunkPos(key.chunkLong()), 0);
+				level.getChunkSource().removeTicketWithRadius(CAMERA_CHUNK_TICKET_TYPE, new ChunkPos(key.chunkLong()), key.radius());
 			}
 		}
 		ACTIVE_CAMERA_CHUNK_TICKETS.clear();
 		ACTIVE_CAMERA_CHUNK_TICKETS.putAll(desiredRefs);
+	}
+
+	private static void addCameraChunkTicket(
+			Map<CameraChunkTicketKey, Integer> desiredRefs,
+			ResourceKey<Level> dimension,
+			ChunkPos center,
+			int radius
+	) {
+		if (desiredRefs == null || dimension == null || center == null) {
+			return;
+		}
+		int clampedRadius = Mth.clamp(radius, 2, 32);
+		desiredRefs.merge(new CameraChunkTicketKey(dimension, center.toLong(), clampedRadius), 1, Integer::sum);
 	}
 
 	private static Map<ShadowSyncKey, ShadowDesiredState> collectDesiredShadowStates(MinecraftServer server) {
@@ -2714,6 +2723,9 @@ public final class RendererBotCameraSystem {
 	private record ChunkTicketKey(ResourceKey<Level> dimension, long chunkLong) {
 	}
 
+	private record CameraChunkTicketKey(ResourceKey<Level> dimension, long chunkLong, int radius) {
+	}
+
 	private record ShadowSyncKey(UUID botUuid, UUID sessionId) {
 	}
 
@@ -2723,6 +2735,7 @@ public final class RendererBotCameraSystem {
 		private final List<ScheduledServiceTarget> targets = new ArrayList<>();
 		private final Set<UUID> hiddenEntityUuids = new HashSet<>();
 		private final LongOpenHashSet trackedChunks = new LongOpenHashSet();
+		private final Map<CameraChunkTicketKey, Integer> chunkTickets = new HashMap<>();
 		private int requestedViewDistance;
 		private int viewDistance = 2;
 		private int centerChunkX;
@@ -2775,6 +2788,10 @@ public final class RendererBotCameraSystem {
 			return this.trackedChunks;
 		}
 
+		private Map<CameraChunkTicketKey, Integer> chunkTickets() {
+			return this.chunkTickets;
+		}
+
 		private int minChunkX() {
 			return this.minChunkX;
 		}
@@ -2813,6 +2830,12 @@ public final class RendererBotCameraSystem {
 					Math.max(2, viewDistance),
 					omnidirectionalChunkLoading,
 					staticCameraChunkBuffer
+			);
+			addCameraChunkTicket(
+					this.chunkTickets,
+					this.level.dimension(),
+					chunkPosAt(target.x(), target.z()),
+					Math.max(2, viewDistance)
 			);
 			recomputeViewWindow(target);
 		}
