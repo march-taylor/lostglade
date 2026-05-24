@@ -5601,32 +5601,15 @@ public final class MonitorScreenSystem {
 		CompletableFuture
 				.supplyAsync(() -> {
 					try {
-						MonitorYoutubeMusicCache.LoadedTrack cachedTrack = MonitorYoutubeMusicCache.loadCompleteTrackIfPresent(url, youtubeMusicProgress);
-						if (cachedTrack != null) {
-							return new YoutubeMusicLoadResult(
-									key,
-									requesterUuid,
-									url,
-									cachedTrack.title(),
-									cachedTrack.artist(),
-									cachedTrack.video(),
-									null,
-									resolvedIndex,
-									null
-							);
-						}
-					} catch (Exception exception) {
-						Lg2.LOGGER.debug("Failed to open complete YouTube Music cache for {}", url, exception);
-					}
-					try {
+						MonitorYoutubeMusicCache.LoadedTrack track = MonitorYoutubeMusicCache.load(url, youtubeMusicProgress);
 						return new YoutubeMusicLoadResult(
 								key,
 								requesterUuid,
 								url,
-								title,
-								"",
+								track.title(),
+								track.artist(),
+								track.video(),
 								null,
-								MonitorYoutubeRelayClient.load(relaySessionId(key), url, youtubeMusicProgress),
 								resolvedIndex,
 								null
 						);
@@ -6259,7 +6242,7 @@ public final class MonitorScreenSystem {
 						state.youtubeFrameSequence = result.loadResponse().initialFrameSequence();
 					}
 					state.liveStream = result.loadResponse().live();
-					state.audioPlaceholder = true;
+					state.audioPlaceholder = result.streamKind() != PlaybackStreamKind.DIRECT_VIDEO;
 					state.loading = !result.loadResponse().ready();
 					state.userPaused = false;
 					state.statusText = result.loadResponse().status();
