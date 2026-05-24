@@ -721,7 +721,12 @@ public final class RendererBotCameraSystem {
 			ChunkPos realCenter = bot.chunkPosition();
 			return ChunkTrackingView.of(realCenter, resolveViewDistance(bot));
 		}
-		LongSet virtualChunks = collectVirtualTrackedChunks(bot, resolveShadowViewDistance(bot));
+		int viewDistance = resolveShadowViewDistance(bot);
+		ChunkTrackingView positionedView = createPositionedVirtualChunkTrackingView(bot, viewDistance);
+		if (positionedView != null) {
+			return positionedView;
+		}
+		LongSet virtualChunks = collectVirtualTrackedChunks(bot, viewDistance);
 		return virtualChunks.isEmpty() ? ChunkTrackingView.EMPTY : new VirtualChunkTrackingView(virtualChunks);
 	}
 
@@ -1168,9 +1173,9 @@ public final class RendererBotCameraSystem {
 	private static int resolveViewDistance(ServerPlayer bot) {
 		MinecraftServer server = bot != null && bot.level() != null ? bot.level().getServer() : null;
 		return Mth.clamp(
-				bot != null ? bot.requestedViewDistance() : 2,
+				server != null && server.getPlayerList() != null ? server.getPlayerList().getViewDistance() : 2,
 				2,
-				Math.max(2, server != null ? server.getPlayerList().getViewDistance() : 2)
+				32
 		);
 	}
 
@@ -1178,8 +1183,132 @@ public final class RendererBotCameraSystem {
 		return Mth.clamp(resolveViewDistance(bot) + SHADOW_VIEW_DISTANCE_MARGIN_CHUNKS, 2, 32);
 	}
 
+	public static int resolveCameraShadowViewDistance(ServerPlayer viewer) {
+		return resolveShadowViewDistance(viewer);
+	}
+
+	public static int resolveCameraShadowViewDistance(MinecraftServer server) {
+		ServerPlayer bot = selectBot(server);
+		return bot == null ? 2 : resolveShadowViewDistance(bot);
+	}
+
+	public static ChunkTrackingView createCameraChunkTrackingView(
+			double x,
+			double z,
+			float yaw,
+			int viewDistance,
+			boolean omnidirectionalChunkLoading,
+			boolean staticCameraChunkBuffer
+	) {
+		int clampedViewDistance = Mth.clamp(viewDistance, 2, 32);
+		if (omnidirectionalChunkLoading) {
+			return ChunkTrackingView.of(chunkPosAt(x, z), clampedViewDistance);
+		}
+		LongSet chunks = collectCameraViewChunks(x, z, yaw, viewDistance, omnidirectionalChunkLoading, staticCameraChunkBuffer);
+		return chunks.isEmpty() ? ChunkTrackingView.EMPTY : new VirtualChunkTrackingView(chunks);
+	}
+
+	public static LongSet collectCameraViewChunks(
+			double x,
+			double z,
+			float yaw,
+			int viewDistance,
+			boolean omnidirectionalChunkLoading,
+			boolean staticCameraChunkBuffer
+	) {
+		return computeVirtualCameraChunks(
+				x,
+				z,
+				yaw,
+				Mth.clamp(viewDistance, 2, 32),
+				omnidirectionalChunkLoading,
+				staticCameraChunkBuffer
+		);
+	}
+
 	private static boolean canBotRenderLevel(ServerPlayer bot, ServerLevel level) {
 		return bot != null && level != null && READY_BOTS.containsKey(bot.getUUID());
+	}
+
+	private static ChunkTrackingView createPositionedVirtualChunkTrackingView(ServerPlayer bot, int viewDistance) {
+		if (bot == null || !(bot.level() instanceof ServerLevel botLevel)) {
+			return null;
+		}
+		MinecraftServer server = botLevel.getServer();
+		if (server == null) {
+			return null;
+		}
+		UUID botUuid = bot.getUUID();
+		ChunkPos center = null;
+
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null || !botUuid.equals(stream.botUuid())) {
+				continue;
+			}
+			LiveStreamSpec spec = stream.spec();
+			if (spec == null || spec.dimension() == null || !botLevel.dimension().equals(spec.dimension())) {
+				continue;
+			}
+			if (spec.cameraPos() != null && !isCameraPlayerLoaded(botLevel, spec.cameraPos())) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(
+					server,
+					spec.dimension(),
+					spec.expectedX(),
+					spec.expectedY(),
+					spec.expectedZ(),
+					spec.expectedYaw(),
+					spec.expectedPitch(),
+					spec.followEntityUuid()
+			);
+			center = mergePositionedVirtualCenter(center, botLevel, target);
+			if (center == null && target != null) {
+				return null;
+			}
+		}
+
+		for (PendingCapture capture : PENDING_CAPTURES.values()) {
+			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.isDone()) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.x(), capture.y(), capture.z(), capture.yaw(), capture.pitch(), capture.followEntityUuid());
+			center = mergePositionedVirtualCenter(center, botLevel, target);
+			if (center == null && target != null) {
+				return null;
+			}
+		}
+
+		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
+			if (recording == null || !botUuid.equals(recording.botUuid()) || recording.stopRequested() || recording.completionFuture().isDone()) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, recording.dimension(), recording.x(), recording.y(), recording.z(), recording.yaw(), recording.pitch(), recording.followEntityUuid());
+			center = mergePositionedVirtualCenter(center, botLevel, target);
+			if (center == null && target != null) {
+				return null;
+			}
+		}
+
+		return center == null ? null : ChunkTrackingView.of(center, Mth.clamp(viewDistance, 2, 32));
+	}
+
+	private static ChunkPos mergePositionedVirtualCenter(ChunkPos current, ServerLevel expectedLevel, ScheduledServiceTarget target) {
+		if (target == null || target.level() != expectedLevel) {
+			return current;
+		}
+		ChunkPos candidate = chunkPosAt(target.x(), target.z());
+		if (current == null || current.equals(candidate)) {
+			return candidate;
+		}
+		return null;
+	}
+
+	private static ChunkPos chunkPosAt(double x, double z) {
+		return new ChunkPos(
+				SectionPos.blockToSectionCoord(Mth.floor(x)),
+				SectionPos.blockToSectionCoord(Mth.floor(z))
+		);
 	}
 
 	private static LongSet collectVirtualTrackedChunks(ServerPlayer bot, int viewDistance) {

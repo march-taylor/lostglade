@@ -3,6 +3,7 @@ package com.lostglade.server;
 import com.lostglade.Lg2;
 import com.lostglade.item.DroneItem;
 import com.lostglade.item.ModItems;
+import com.lostglade.mixin.ChunkMapChunkTrackingInvoker;
 import com.lostglade.mixin.ClientboundSetPassengersPacketAccessor;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
 import com.lostglade.server.map.MapImageRenderSystem;
@@ -19,6 +20,7 @@ import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
+import net.minecraft.core.SectionPos;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -45,6 +47,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ChunkTrackingView;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.TicketType;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
@@ -159,6 +162,17 @@ public final class DroneSystem {
 	private static final double UNCONTROLLED_SETTLED_HORIZONTAL_SPEED_SQR = 1.0E-6D;
 	private static final double UNCONTROLLED_SETTLED_VERTICAL_SPEED = 0.045D;
 	private static final long UNCONTROLLED_DRONE_RELEASE_GLIDE_TICKS = 60L;
+	private static final int DRONE_LOADING_CHUNK_TICKET_UNIQUE_FLAG = 32;
+	private static final int DRONE_SIMULATION_CHUNK_TICKET_UNIQUE_FLAG = 64;
+	// TicketType equality is based on timeout/flags, so keep these distinct from vanilla player tickets.
+	private static final TicketType DRONE_LOADING_CHUNK_TICKET_TYPE = new TicketType(
+			0L,
+			TicketType.FLAG_LOADING | DRONE_LOADING_CHUNK_TICKET_UNIQUE_FLAG
+	);
+	private static final TicketType DRONE_SIMULATION_CHUNK_TICKET_TYPE = new TicketType(
+			0L,
+			TicketType.FLAG_SIMULATION | TicketType.FLAG_KEEP_DIMENSION_ACTIVE | DRONE_SIMULATION_CHUNK_TICKET_UNIQUE_FLAG
+	);
 	private static final int PLAYER_HOTBAR_MENU_SLOT_START = 36;
 	private static final int PLAYER_OFFHAND_MENU_SLOT = 45;
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
@@ -211,6 +225,7 @@ public final class DroneSystem {
 	private static final Map<UUID, UUID> DISPLAYS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UUID> CAMERA_ANCHORS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UncontrolledDroneState> UNCONTROLLED_DRONES = new HashMap<>();
+	private static final Map<DroneChunkTicketKey, Integer> ACTIVE_DRONE_CHUNK_TICKETS = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_ARM_ALLOWED_TICK = new HashMap<>();
 	private static final Map<UUID, DroneDisplayWobbleState> DISPLAY_WOBBLE_BY_DRONE = new HashMap<>();
@@ -297,12 +312,14 @@ public final class DroneSystem {
 					stopControlling(player, false);
 				}
 			}
+			releaseAllDroneChunkTickets(server);
 			ACTIVE_SESSIONS.clear();
 			INPUTS.clear();
 			CONTROLLERS_BY_DRONE.clear();
 			DISPLAYS_BY_DRONE.clear();
 			CAMERA_ANCHORS_BY_DRONE.clear();
 			UNCONTROLLED_DRONES.clear();
+			ACTIVE_DRONE_CHUNK_TICKETS.clear();
 			NEXT_DRONE_ARM_ALLOWED_TICK.clear();
 			POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK.clear();
 			POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.clear();
@@ -570,7 +587,8 @@ public final class DroneSystem {
 		if (root == null) {
 			return ChunkTrackingView.EMPTY;
 		}
-		return ChunkTrackingView.of(root.chunkPosition(), resolveRequestedViewDistance(player));
+		DroneCameraChunkTarget target = resolveDroneCameraChunkTarget(root);
+		return ChunkTrackingView.of(chunkPosAt(target.x(), target.z()), resolveServerViewDistance(player.level().getServer()));
 	}
 
 	public static boolean isEntityWithinVirtualTrackingRange(ServerPlayer viewer, Entity entity, double horizontalRangeBlocks) {
@@ -648,6 +666,12 @@ public final class DroneSystem {
 		if (packet instanceof ClientboundSetPassengersPacket passengersPacket
 				&& passengersPacket.getVehicle() == receiver.getId()) {
 			return buildControlledOperatorPassengerPacket(receiver, session);
+		}
+		if (packet instanceof ClientboundSetPassengersPacket passengersPacket) {
+			Entity root = resolveControlledDroneRoot(receiver);
+			if (root != null && passengersPacket.getVehicle() == root.getId()) {
+				return buildControlledOperatorDroneLayerPassengerPacket(root);
+			}
 		}
 
 		if (packet instanceof ClientboundContainerSetSlotPacket slotPacket
@@ -895,12 +919,127 @@ public final class DroneSystem {
 		if (server == null) {
 			return;
 		}
+		updateDroneChunkTickets(server);
 		tickControlledSessions(server);
 		tickUncontrolledDrones(server);
+		updateDroneChunkTickets(server);
 		cleanupExpiredPostControlMoveSuppression(server);
 		recoverOrphanedControlledOperators(server);
 		recoverPlayersWithStaleDronePassenger(server);
 		processPendingPostControlClientResync(server);
+	}
+
+	private static void updateDroneChunkTickets(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		Map<DroneChunkTicketKey, Integer> desiredRefs = new HashMap<>();
+		for (Map.Entry<UUID, DroneControlSession> entry : ACTIVE_SESSIONS.entrySet()) {
+			DroneControlSession session = entry.getValue();
+			if (session == null) {
+				continue;
+			}
+			Entity root = findDroneRoot(server, session.droneDimension(), session.droneUuid());
+			if (root == null || !root.isAlive()) {
+				continue;
+			}
+			ServerPlayer controller = server.getPlayerList().getPlayer(entry.getKey());
+			if (controller == null || !controller.isAlive() || controller.isSpectator()) {
+				continue;
+			}
+			addDroneChunkTickets(server, desiredRefs, root);
+		}
+
+		for (UncontrolledDroneState state : UNCONTROLLED_DRONES.values()) {
+			if (state == null) {
+				continue;
+			}
+			Entity root = findDroneRoot(server, state.dimension(), state.droneUuid());
+			if (root == null || !root.isAlive() || !isDroneStreamingToScreen(root)) {
+				continue;
+			}
+			addDroneChunkTickets(server, desiredRefs, root);
+		}
+
+		syncDroneChunkTickets(server, desiredRefs);
+	}
+
+	private static void addDroneChunkTickets(MinecraftServer server, Map<DroneChunkTicketKey, Integer> desiredRefs, Entity root) {
+		if (desiredRefs == null || root == null || !(root.level() instanceof ServerLevel level)) {
+			return;
+		}
+		DroneCameraChunkTarget target = resolveDroneCameraChunkTarget(root);
+		ChunkPos loadingCenter = chunkPosAt(target.x(), target.z());
+		desiredRefs.merge(
+				new DroneChunkTicketKey(level.dimension(), loadingCenter.toLong(), resolveServerViewDistance(server), false),
+				1,
+				Integer::sum
+		);
+		desiredRefs.merge(
+				new DroneChunkTicketKey(level.dimension(), root.chunkPosition().toLong(), resolveServerSimulationTicketRadius(server), true),
+				1,
+				Integer::sum
+		);
+	}
+
+	private static void syncDroneChunkTickets(MinecraftServer server, Map<DroneChunkTicketKey, Integer> desiredRefs) {
+		if (server == null || desiredRefs == null) {
+			return;
+		}
+		if (Objects.equals(ACTIVE_DRONE_CHUNK_TICKETS, desiredRefs)) {
+			return;
+		}
+
+		for (DroneChunkTicketKey key : desiredRefs.keySet()) {
+			if (ACTIVE_DRONE_CHUNK_TICKETS.getOrDefault(key, 0) > 0) {
+				continue;
+			}
+			ServerLevel level = server.getLevel(key.dimension());
+			if (level != null) {
+				level.getChunkSource().addTicketWithRadius(droneChunkTicketType(key), new ChunkPos(key.chunkLong()), key.radius());
+			}
+		}
+		for (DroneChunkTicketKey key : ACTIVE_DRONE_CHUNK_TICKETS.keySet()) {
+			if (desiredRefs.getOrDefault(key, 0) > 0) {
+				continue;
+			}
+			ServerLevel level = server.getLevel(key.dimension());
+			if (level != null) {
+				level.getChunkSource().removeTicketWithRadius(droneChunkTicketType(key), new ChunkPos(key.chunkLong()), key.radius());
+			}
+		}
+		ACTIVE_DRONE_CHUNK_TICKETS.clear();
+		ACTIVE_DRONE_CHUNK_TICKETS.putAll(desiredRefs);
+	}
+
+	private static void releaseAllDroneChunkTickets(MinecraftServer server) {
+		if (server == null || ACTIVE_DRONE_CHUNK_TICKETS.isEmpty()) {
+			ACTIVE_DRONE_CHUNK_TICKETS.clear();
+			return;
+		}
+		for (DroneChunkTicketKey key : new ArrayList<>(ACTIVE_DRONE_CHUNK_TICKETS.keySet())) {
+			ServerLevel level = server.getLevel(key.dimension());
+			if (level != null) {
+				level.getChunkSource().removeTicketWithRadius(droneChunkTicketType(key), new ChunkPos(key.chunkLong()), key.radius());
+			}
+		}
+		ACTIVE_DRONE_CHUNK_TICKETS.clear();
+	}
+
+	private static TicketType droneChunkTicketType(DroneChunkTicketKey key) {
+		return key != null && key.simulation() ? DRONE_SIMULATION_CHUNK_TICKET_TYPE : DRONE_LOADING_CHUNK_TICKET_TYPE;
+	}
+
+	private static void syncControlledOperatorChunkTracking(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+		ChunkTrackingView desiredView = createVirtualChunkTrackingView(player);
+		if (Objects.equals(player.getChunkTrackingView(), desiredView)) {
+			return;
+		}
+		((ChunkMapChunkTrackingInvoker) level.getChunkSource().chunkMap).lg2$applyChunkTrackingView(player, desiredView);
 	}
 
 	private static void cleanupExpiredPostControlMoveSuppression(MinecraftServer server) {
@@ -971,6 +1110,7 @@ public final class DroneSystem {
 		markPostControlMoveSuppressedForPlayer(player);
 		restoreControlledOperatorClientState(player);
 		schedulePostControlClientResync(player);
+		syncControlledOperatorChunkTracking(player);
 	}
 
 	private static void markPostControlMoveSuppressedForPlayer(ServerPlayer player) {
@@ -1051,6 +1191,7 @@ public final class DroneSystem {
 			}
 			updateControlledDrives(player, session, input);
 			tickControlledDrone(player, root, session);
+			syncControlledOperatorChunkTracking(player);
 		}
 	}
 
@@ -1354,7 +1495,11 @@ public final class DroneSystem {
 			settleUncontrolledDrone(root, state);
 			return;
 		}
-		applyUncontrolledRotation(root, state, actualMovement);
+		if (holdWithoutGravity) {
+			applyUncontrolledHeldFlightRotation(root, state);
+		} else {
+			applyUncontrolledRotation(root, state, actualMovement);
+		}
 		root.setDeltaMovement(actualMovement);
 		root.hurtMarked = true;
 		syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
@@ -1375,6 +1520,32 @@ public final class DroneSystem {
 		}
 		Entity cameraAnchor = findDroneCameraAnchor(root);
 		return cameraAnchor != null && RendererBotCameraSystem.hasHealthyLiveStreamFollowingEntity(cameraAnchor.getUUID());
+	}
+
+	private static DroneCameraChunkTarget resolveDroneCameraChunkTarget(Entity root) {
+		if (root == null) {
+			return new DroneCameraChunkTarget(0.0D, 0.0D, 0.0F);
+		}
+		Entity cameraAnchor = findDroneCameraAnchor(root);
+		Vec3 origin = cameraAnchor != null ? cameraAnchor.position() : droneCameraOrigin(root);
+		float yaw = cameraAnchor != null ? cameraAnchor.getYRot() : root.getYRot();
+		return new DroneCameraChunkTarget(origin.x, origin.z, yaw);
+	}
+
+	private static ChunkPos chunkPosAt(double x, double z) {
+		return new ChunkPos(
+				SectionPos.blockToSectionCoord(net.minecraft.util.Mth.floor(x)),
+				SectionPos.blockToSectionCoord(net.minecraft.util.Mth.floor(z))
+		);
+	}
+
+	private static void applyUncontrolledHeldFlightRotation(Entity root, UncontrolledDroneState state) {
+		if (root == null || state == null) {
+			return;
+		}
+		state.setPitch(0.0F);
+		root.setYRot(state.yaw());
+		root.setXRot(0.0F);
 	}
 
 	private static void applyUncontrolledRotation(Entity root, UncontrolledDroneState state, Vec3 velocity) {
@@ -1759,6 +1930,23 @@ public final class DroneSystem {
 		);
 	}
 
+	private static int resolveServerViewDistance(MinecraftServer server) {
+		return net.minecraft.util.Mth.clamp(
+				server != null && server.getPlayerList() != null ? server.getPlayerList().getViewDistance() : 2,
+				2,
+				32
+		);
+	}
+
+	private static int resolveServerSimulationTicketRadius(MinecraftServer server) {
+		int simulationDistance = net.minecraft.util.Mth.clamp(
+				server != null && server.getPlayerList() != null ? server.getPlayerList().getSimulationDistance() : 0,
+				0,
+				32
+		);
+		return Math.min(33, simulationDistance + 2);
+	}
+
 	private static boolean isDroneActivelyControlled(Entity root) {
 		if (root == null) {
 			return false;
@@ -1871,6 +2059,45 @@ public final class DroneSystem {
 		return packet;
 	}
 
+	private static ClientboundSetPassengersPacket buildControlledOperatorDroneLayerPassengerPacket(Entity root) {
+		ClientboundSetPassengersPacket packet = new ClientboundSetPassengersPacket(root);
+		if (!root.isAlive()) {
+			((ClientboundSetPassengersPacketAccessor) (Object) packet).lg2$setPassengers(new int[0]);
+			return packet;
+		}
+
+		List<Display.ItemDisplay> displays = findDroneDisplayLayers(root);
+		int[] passengerIds = new int[displays.size()];
+		int count = 0;
+		for (Display.ItemDisplay display : displays) {
+			if (display == null || !display.isAlive()) {
+				continue;
+			}
+			passengerIds[count++] = display.getId();
+		}
+		if (count != passengerIds.length) {
+			int[] compact = new int[count];
+			System.arraycopy(passengerIds, 0, compact, 0, count);
+			passengerIds = compact;
+		}
+		((ClientboundSetPassengersPacketAccessor) (Object) packet).lg2$setPassengers(passengerIds);
+		return packet;
+	}
+
+	private static void syncControlledOperatorDroneLayerAttachment(ServerPlayer player, Entity root) {
+		if (player == null || root == null || player.connection == null || !root.isAlive()) {
+			return;
+		}
+		sendControlledOperatorPacket(player, buildControlledOperatorDroneLayerPassengerPacket(root));
+	}
+
+	private static void clearControlledOperatorDroneLayerAttachment(ServerPlayer player, Entity root) {
+		if (player == null || root == null || player.connection == null || !root.isAlive()) {
+			return;
+		}
+		sendControlledOperatorPacket(player, new ClientboundSetPassengersPacket(root));
+	}
+
 	private static void sendControlledOperatorPacket(ServerPlayer player, Packet<?> packet) {
 		if (player == null || player.connection == null || packet == null) {
 			return;
@@ -1958,6 +2185,7 @@ public final class DroneSystem {
 		sendControlledOperatorPacket(player, new ClientboundSetEntityMotionPacket(player.getId(), controlledOperatorDriveVelocity(session)));
 		sendControlledOperatorPacket(player, buildControlledSelfMetadataPacket(player));
 		sendControlledOperatorPacket(player, buildControlledOperatorPassengerPacket(player, session));
+		syncControlledOperatorDroneLayerAttachment(player, root);
 	}
 
 	private static void syncControlledOperatorNightVision(ServerPlayer player, DroneControlSession session, Entity root) {
@@ -2466,6 +2694,8 @@ public final class DroneSystem {
 		ACTIVE_SESSIONS.put(player.getUUID(), session);
 		INPUTS.put(player.getUUID(), DroneInputState.EMPTY);
 		CONTROLLERS_BY_DRONE.put(root.getUUID(), player.getUUID());
+		updateDroneChunkTickets(player.level().getServer());
+		syncControlledOperatorChunkTracking(player);
 		syncControlledOperatorAutoAimInteractionRange(player, hasDroneAutoAimModule(root));
 		syncControlledOperatorView(player, session, root, true, true);
 		syncControlledOperatorNightVision(player, session, root);
@@ -2494,6 +2724,7 @@ public final class DroneSystem {
 				restoreControlledOperatorClientState(player);
 				schedulePostControlClientResync(player);
 			}
+			syncControlledOperatorChunkTracking(player);
 			return;
 		}
 		CONTROLLERS_BY_DRONE.remove(session.droneUuid(), player.getUUID());
@@ -2503,6 +2734,7 @@ public final class DroneSystem {
 		clearControlledOperatorTransientState(player, session);
 		clearControlledOperatorMovementState(player);
 		markPostControlMoveSuppressedForPlayer(player);
+		clearControlledOperatorDroneLayerAttachment(player, root);
 		detachAnyDronePassengersFromController(player);
 		if (releaseDrone && root != null) {
 			Vec3 proxyPos = session.proxyPos();
@@ -2535,6 +2767,7 @@ public final class DroneSystem {
 		applyControlledOperatorExitRotation(player, session);
 		restoreControlledOperatorClientState(player);
 		schedulePostControlClientResync(player);
+		syncControlledOperatorChunkTracking(player);
 		VISUALLY_CONTROLLED_PLAYERS.remove(player.getUUID());
 
 		ServerRaceSystem.resumeCopperManJetpackAfterDrone(player);
@@ -3534,7 +3767,7 @@ public final class DroneSystem {
 				origin.y + 0.04D,
 				origin.z + 0.04D
 		);
-		return !level.noCollision(probe);
+		return boxHitsSolidCollision(level, probe);
 	}
 
 	private static void setHotbarVisualHidden(ServerPlayer player, boolean hidden) {
@@ -3684,6 +3917,12 @@ public final class DroneSystem {
 		private long holdWithoutGravityUntilTick() {
 			return this.holdWithoutGravityUntilTick;
 		}
+	}
+
+	private record DroneChunkTicketKey(net.minecraft.resources.ResourceKey<Level> dimension, long chunkLong, int radius, boolean simulation) {
+	}
+
+	private record DroneCameraChunkTarget(double x, double z, float yaw) {
 	}
 
 	private record DroneInputState(boolean forward, boolean backward, boolean left, boolean right, boolean jump, boolean shift, boolean sprint) {
