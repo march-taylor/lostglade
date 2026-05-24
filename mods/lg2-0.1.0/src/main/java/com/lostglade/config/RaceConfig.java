@@ -164,6 +164,7 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.methadoneAddictionSeconds, value -> ability.methadoneAddictionSeconds = value);
 		changed |= normalizeNonNegative(ability.methadoneWithdrawalStartSeconds, value -> ability.methadoneWithdrawalStartSeconds = value);
 		changed |= normalizeChance(ability.cocaineHallucinationChance, value -> ability.cocaineHallucinationChance = value);
+		changed |= normalizeNonNegative(ability.cartelRaiderArmorDivider, value -> ability.cartelRaiderArmorDivider = value);
 		changed |= normalizeNonNegative(ability.foodRestoreMultiplier, value -> ability.foodRestoreMultiplier = value);
 		changed |= normalizeNonNegative(ability.copperGolemNoticeRangeBlocks, value -> ability.copperGolemNoticeRangeBlocks = value);
 		changed |= normalizeNonNegative(ability.copperGogglesScanCooldownSeconds, value -> ability.copperGogglesScanCooldownSeconds = value);
@@ -205,6 +206,11 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.gennadiyRageHealthThresholdRatio, value -> ability.gennadiyRageHealthThresholdRatio = value);
 		changed |= normalizeNonNegative(ability.gennadiyRageMeleeDamageBonusRatio, value -> ability.gennadiyRageMeleeDamageBonusRatio = value);
 		changed |= normalizeNonNegative(ability.gennadiyReportCooldownSeconds, value -> ability.gennadiyReportCooldownSeconds = value);
+		changed |= normalizeNonNegative(ability.markAxeRangeBlocks, value -> ability.markAxeRangeBlocks = value);
+		changed |= normalizeNonNegative(ability.markAxeBleedingOneDamage, value -> ability.markAxeBleedingOneDamage = value);
+		changed |= normalizeNonNegative(ability.markAxeBleedingTwoDamage, value -> ability.markAxeBleedingTwoDamage = value);
+		changed |= normalizeNonNegative(ability.markAxeBleedingIntervalSeconds, value -> ability.markAxeBleedingIntervalSeconds = value);
+		changed |= normalizeNonNegative(ability.markAxeBleedingTwoDurationSeconds, value -> ability.markAxeBleedingTwoDurationSeconds = value);
 		changed |= normalizeNonNegative(ability.jetpackMaxRiseBlocks, value -> ability.jetpackMaxRiseBlocks = value);
 		changed |= normalizeChance(ability.repulsorNaturalLightningChargeChance, value -> ability.repulsorNaturalLightningChargeChance = value);
 		changed |= normalizeNonNegative(ability.gennadiyDonkeyMaxAmmo, (java.util.function.IntConsumer) value -> ability.gennadiyDonkeyMaxAmmo = value);
@@ -330,6 +336,7 @@ public final class RaceConfig {
 			addDoubleIfNonZero(json, "methadoneAddictionSeconds", ability.methadoneAddictionSeconds);
 			addDoubleIfNonZero(json, "methadoneWithdrawalStartSeconds", ability.methadoneWithdrawalStartSeconds);
 			addDoubleIfNonZero(json, "cocaineHallucinationChance", ability.cocaineHallucinationChance);
+			addDoubleIfNonZero(json, "cartelRaiderArmorDivider", ability.cartelRaiderArmorDivider);
 			addDoubleIfNonZero(json, "foodRestoreMultiplier", ability.foodRestoreMultiplier);
 			addIntIfNonZero(json, "copperIngotFoodPoints", ability.copperIngotFoodPoints);
 			addDoubleIfNonZero(json, "copperGolemNoticeRangeBlocks", ability.copperGolemNoticeRangeBlocks);
@@ -375,6 +382,11 @@ public final class RaceConfig {
 			addIntIfNonZero(json, "gennadiyRageHasteLevel", ability.gennadiyRageHasteLevel);
 			addDoubleIfNonZero(json, "gennadiyRageMeleeDamageBonusRatio", ability.gennadiyRageMeleeDamageBonusRatio);
 			addDoubleIfNonZero(json, "gennadiyReportCooldownSeconds", ability.gennadiyReportCooldownSeconds);
+			addDoubleIfNonZero(json, "markAxeRangeBlocks", ability.markAxeRangeBlocks);
+			addDoubleIfNonZero(json, "markAxeBleedingOneDamage", ability.markAxeBleedingOneDamage);
+			addDoubleIfNonZero(json, "markAxeBleedingTwoDamage", ability.markAxeBleedingTwoDamage);
+			addDoubleIfNonZero(json, "markAxeBleedingIntervalSeconds", ability.markAxeBleedingIntervalSeconds);
+			addDoubleIfNonZero(json, "markAxeBleedingTwoDurationSeconds", ability.markAxeBleedingTwoDurationSeconds);
 			addDoubleIfNonZero(json, "jetpackMaxRiseBlocks", ability.jetpackMaxRiseBlocks);
 			addIntIfNonZero(json, "repulsorMaxCharges", ability.repulsorMaxCharges);
 			addIntIfNonZero(json, "repulsorCopperIngotChargeRestore", ability.repulsorCopperIngotChargeRestore);
@@ -477,6 +489,7 @@ public final class RaceConfig {
 		public double methadoneAddictionSeconds = 0.0D;
 		public double methadoneWithdrawalStartSeconds = 0.0D;
 		public double cocaineHallucinationChance = 0.0D;
+		public double cartelRaiderArmorDivider = 0.0D;
 		public double foodRestoreMultiplier = 0.0D;
 		public int copperIngotFoodPoints = 0;
 		public double copperGolemNoticeRangeBlocks = 0.0D;
@@ -523,6 +536,11 @@ public final class RaceConfig {
 		public int gennadiyRageHasteLevel = 0;
 		public double gennadiyRageMeleeDamageBonusRatio = 0.0D;
 		public double gennadiyReportCooldownSeconds = 0.0D;
+		public double markAxeRangeBlocks = 0.0D;
+		public double markAxeBleedingOneDamage = 0.0D;
+		public double markAxeBleedingTwoDamage = 0.0D;
+		public double markAxeBleedingIntervalSeconds = 0.0D;
+		public double markAxeBleedingTwoDurationSeconds = 0.0D;
 		public double jetpackMaxRiseBlocks = 0.0D;
 		public int repulsorMaxCharges = 0;
 		public int repulsorCopperIngotChargeRestore = 0;

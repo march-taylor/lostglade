@@ -22,6 +22,7 @@ import com.lostglade.mixin.EntityPassengerAccessor;
 import com.lostglade.mixin.MerchantMenuAccessor;
 import com.lostglade.mixin.MobXpRewardAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
+import com.mojang.math.Transformation;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.Property;
 import com.mojang.authlib.properties.PropertyMap;
@@ -134,15 +135,18 @@ import net.minecraft.world.entity.raid.Raider;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
 import net.minecraft.world.entity.projectile.arrow.Arrow;
+import net.minecraft.world.item.AxeItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemUseAnimation;
+import net.minecraft.world.item.component.ItemAttributeModifiers;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.item.component.Consumable;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.ResolvableProfile;
+import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
@@ -175,6 +179,8 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.BlockTags;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 import javax.imageio.ImageIO;
@@ -233,16 +239,24 @@ public final class ServerRaceSystem {
 	private static final String NO_RACE_ID = "no_race";
 	private static final String WOMAN_RACE_ID = "woman";
 	private static final String GENNADIY_SHAROYOBOV_RACE_ID = "gennadiy_sharoyobov";
+	private static final String MARK_POTROSHITEL_RACE_ID = "mark_potroshitel";
 	private static final String TITLE_OVERLAY_SHIFT = "\ue905";
 	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
 	private static final int TITLE_OVERLAY_TARGET_ADVANCE = 168;
 	private static final int TITLE_OVERLAY_SHIFT_ADVANCE = -8;
 	private static final String CARTEL_PASSPORT_OVERLAY_GLYPH = "\uef10";
+	private static final String WOMAN_SHNYAGA_LETTER_OVERLAY_GLYPH = "\uef20";
 	private static final FontDescription CARTEL_PASSPORT_OVERLAY_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:passport_title"))
 	);
+	private static final FontDescription WOMAN_SHNYAGA_LETTER_OVERLAY_FONT = new FontDescription.Resource(
+			Objects.requireNonNull(Identifier.tryParse("lg2:woman_shnyaga_letter"))
+	);
 	private static final FontDescription CARTEL_PASSPORT_NAME_FONT = new FontDescription.Resource(
 		Objects.requireNonNull(Identifier.tryParse("lg2:passport_name"))
+	);
+	private static final FontDescription WOMAN_SHNYAGA_NAME_FONT = new FontDescription.Resource(
+			Objects.requireNonNull(Identifier.tryParse("lg2:woman_shnyaga_name"))
 	);
 	private static final FontDescription CARTEL_MANUAL_PAGE_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:cartel_manual_pages"))
@@ -268,10 +282,35 @@ public final class ServerRaceSystem {
 	private static final int CARTEL_PASSPORT_NAME_BITMAP_ROWS = 8;
 	private static final int CARTEL_PASSPORT_NAME_RENDER_HEIGHT = 5;
 	private static final int CARTEL_PASSPORT_NAME_CHAR_ADVANCE = 5;
+	private static final String WOMAN_SHNYAGA_NAME_TEXTURE_RESOURCE = "/assets/lg2/textures/font/woman_shnyaga_name.png";
+	private static final String[] WOMAN_SHNYAGA_NAME_FONT_ROWS = {
+			"АБВГДЕЖЗИЙКЛМНОП",
+			"РСТУФХЦЧШЩЪЫЬЭЮЯ",
+			"Ёабвгдежзийклмно",
+			"прстуфхцчшщъыьэю",
+			"яёABCDEFGHIJKLMN",
+			"OPQRSTUVWXYZabcd",
+			"efghijklmnopqrst",
+			"uvwxyz0123456789",
+			"_:-.!?\0\0\0\0\0\0\0\0\0\0"
+	};
+	private static final int WOMAN_SHNYAGA_NAME_BITMAP_COLUMNS = 16;
+	private static final int WOMAN_SHNYAGA_NAME_BITMAP_ROWS = 9;
+	private static final int WOMAN_SHNYAGA_NAME_RENDER_HEIGHT = 5;
+	private static final int WOMAN_SHNYAGA_NAME_CHAR_ADVANCE = 5;
+	private static final int WOMAN_SHNYAGA_NAME_SPACE_ADVANCE = 3;
 	private static final int CARTEL_PASSPORT_NAME_MIN_X = 18;
 	private static final int CARTEL_PASSPORT_NAME_CENTER_X = 131;
 	private static volatile Map<Character, Integer> CARTEL_PASSPORT_NAME_ADVANCE_CACHE;
+	private static volatile Map<Character, Integer> WOMAN_SHNYAGA_NAME_ADVANCE_CACHE;
 	private static final int CARTEL_PASSPORT_OVERLAY_X_OFFSET = 168;
+	// Calibrated letter overlay anchor; keep this position when replacing the texture.
+	private static final int WOMAN_SHNYAGA_LETTER_OVERLAY_X_OFFSET = 189;
+	private static final int WOMAN_SHNYAGA_LETTER_OVERLAY_WIDTH = 134;
+	private static final double WOMAN_SHNYAGA_SENDER_LINE_CENTER_X = 36.5D;
+	private static final double WOMAN_SHNYAGA_RECIPIENT_LINE_CENTER_X = 122.5D;
+	private static final double WOMAN_SHNYAGA_SENDER_NAME_CORRECTION_X = 6.5D;
+	private static final double WOMAN_SHNYAGA_RECIPIENT_NAME_CORRECTION_X = -2.5D;
 	private static final int MISTER_CARTEL_49_STACK_LIMIT = 49;
 	private static final String CARTEL_SUMMON_TAG = "lg2.cartel_summon";
 	private static final String CARTEL_LAWYER_TAG = "lg2.cartel_lawyer";
@@ -292,6 +331,7 @@ public final class ServerRaceSystem {
 	private static final double CARTEL_DEFAULT_COOLDOWN_SECONDS = 5.0D;
 	private static final double CARTEL_DEFAULT_LIFETIME_SECONDS = 30.0D;
 	private static final double CARTEL_DEFAULT_AFTER_KILL_SECONDS = 2.0D;
+	private static final double CARTEL_DEFAULT_RAIDER_ARMOR_DIVIDER = 3.0D;
 	private static final double CARTEL_CHASE_SPEED = 1.0D;
 	private static final long CARTEL_RAIDER_NAV_INTERVAL_TICKS = 4L;
 	private static final double CARTEL_DEFAULT_DEFENSE_DURATION_SECONDS = 20.0D;
@@ -455,6 +495,28 @@ public final class ServerRaceSystem {
 	private static final float GENNADIY_DONKEY_SHOOT_FALLBACK_SOUND_PITCH = 1.55F;
 	private static final Identifier GENNADIY_DONKEY_SHOOT_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "gennadiy_donkey_shoot");
 	private static final Holder<SoundEvent> GENNADIY_DONKEY_SHOOT_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(GENNADIY_DONKEY_SHOOT_SOUND_ID));
+	private static final double MARK_AXE_DEFAULT_RANGE_BLOCKS = 32.0D;
+	private static final double MARK_AXE_DEFAULT_BLEEDING_ONE_DAMAGE = 1.0D;
+	private static final double MARK_AXE_DEFAULT_BLEEDING_TWO_DAMAGE = 2.0D;
+	private static final double MARK_AXE_DEFAULT_BLEEDING_INTERVAL_SECONDS = 3.0D;
+	private static final double MARK_AXE_DEFAULT_BLEEDING_TWO_DURATION_SECONDS = 10.0D;
+	private static final double MARK_AXE_DEFAULT_COOLDOWN_SECONDS = 600.0D;
+	private static final double MARK_AXE_FLIGHT_SPEED_BLOCKS = 1.25D;
+	private static final double MARK_AXE_FALL_SPEED_BLOCKS = 0.75D;
+	private static final double MARK_AXE_HEAD_FIRST_SPIN_RADIANS = Math.PI;
+	private static final double MARK_AXE_FALL_ROLL_MIN_RADIANS = Math.toRadians(180.0D);
+	private static final double MARK_AXE_FALL_ROLL_MAX_RADIANS = Math.toRadians(270.0D);
+	private static final double MARK_AXE_HIT_RADIUS_BLOCKS = 0.45D;
+	private static final double MARK_AXE_BLOCK_STICK_INSET_BLOCKS = 0.24D;
+	private static final double MARK_AXE_ENTITY_STICK_INSET_BLOCKS = 0.10D;
+	private static final double MARK_AXE_ENTITY_VISUAL_WIDTH_SCALE = 0.82D;
+	private static final double MARK_AXE_ENTITY_VISUAL_MIN_WIDTH = 0.26D;
+	private static final double MARK_AXE_PICKUP_TRIGGER_SIZE = 0.72D;
+	private static final float MARK_AXE_DISPLAY_SCALE = 1.0F;
+	private static final int MARK_AXE_DISPLAY_INTERPOLATION_TICKS = 2;
+	private static final int MARK_AXE_BLOOD_COLOR = 0xB40A18;
+	private static final String MARK_AXE_DISPLAY_TAG = "lg2.mark_throwing_axe";
+	private static final String MARK_AXE_TRIGGER_TAG = "lg2.mark_throwing_axe_trigger";
 	private static final long WOMAN_SHNYAGA_WHITELIST_CHECK_INTERVAL_TICKS = 100L;
 	private static final int WOMAN_SHNYAGA_EFFECT_DURATION_TICKS = 60;
 	private static final String WOMAN_SHNYAGA_STATE_FILE_NAME = "lg2_woman_shnyaga_links.json";
@@ -551,6 +613,9 @@ public final class ServerRaceSystem {
 	private static final int CARTEL_DISGUISE_PACK_PREVIOUS_SLOT = 12;
 	private static final int CARTEL_DISGUISE_PACK_HEAD_SLOT = 13;
 	private static final int CARTEL_DISGUISE_PACK_NEXT_SLOT = 14;
+	private static final int WOMAN_SHNYAGA_PREVIOUS_SLOT = 12;
+	private static final int WOMAN_SHNYAGA_HEAD_SLOT = 13;
+	private static final int WOMAN_SHNYAGA_NEXT_SLOT = 14;
 	private static final String CARTEL_LAWYER_SKIN_VALUE = "ewogICJ0aW1lc3RhbXAiIDogMTc1MjAzMzk0NjY5MSwKICAicHJvZmlsZUlkIiA6ICI0ZWE3NGM1ZGUyZGI0OGY2YjViOTk1YTVhNTYzMmU0NCIsCiAgInByb2ZpbGVOYW1lIiA6ICJNclNjYXJ5U3BhY2VDYXQiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvMjRkNDQ3MDc4N2M4NWRlNWI5ODE5ODVkNDBmOTI5NzNhNmQxMmQ5ZDYxNzc0NGM3YWQzOGY4MWZmMTA3YTE5ZCIKICAgIH0KICB9Cn0=";
 	private static final URI CARTEL_LAWYER_SKIN_URI = URI.create("https://textures.minecraft.net/texture/24d4470787c85de5b981985d40f92973a6d12d9d617744c7ad38f81ff107a19d");
 	private static final Property CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY = new Property("textures", CARTEL_LAWYER_SKIN_VALUE);
@@ -595,6 +660,9 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, GennadiyHookSession> GENNADIY_HOOK_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, Integer> GENNADIY_RAGE_HASTE_PLAYERS = new HashMap<>();
 	private static final Map<UUID, GennadiyReportPending> GENNADIY_REPORT_PENDING = new LinkedHashMap<>();
+	private static final Map<UUID, Long> MARK_ATTACK_COOLDOWNS = new LinkedHashMap<>();
+	private static final List<MarkThrownAxeSession> MARK_THROWN_AXES = new ArrayList<>();
+	private static final Map<UUID, MarkBleedingSession> MARK_BLEEDING_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelDisguiseSession> CARTEL_DISGUISE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelManualBookRestore> CARTEL_MANUAL_BOOK_RESTORES = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> COPPER_GOLEM_FOLLOWERS = new LinkedHashMap<>();
@@ -633,17 +701,19 @@ public final class ServerRaceSystem {
 		private final UUID targetPlayerId;
 		private final long normalExpireTick;
 		private final long afterKillTicks;
+		private final double armorDivider;
 		private final List<UUID> raiderIds = new ArrayList<>();
 		private Vec3 lastTargetPosition;
 		private Long afterKillExpireTick;
 		private boolean outcomeSoundPlayed;
 
-		private CartelSummonSession(ResourceKey<Level> dimension, UUID ownerPlayerId, UUID targetPlayerId, long normalExpireTick, long afterKillTicks, Vec3 lastTargetPosition) {
+		private CartelSummonSession(ResourceKey<Level> dimension, UUID ownerPlayerId, UUID targetPlayerId, long normalExpireTick, long afterKillTicks, double armorDivider, Vec3 lastTargetPosition) {
 			this.dimension = dimension;
 			this.ownerPlayerId = ownerPlayerId;
 			this.targetPlayerId = targetPlayerId;
 			this.normalExpireTick = normalExpireTick;
 			this.afterKillTicks = afterKillTicks;
+			this.armorDivider = armorDivider;
 			this.lastTargetPosition = lastTargetPosition;
 		}
 	}
@@ -773,6 +843,7 @@ public final class ServerRaceSystem {
 			restoreAllCopperManDefenseVisuals(server);
 			cleanupAllGennadiyDonkeys(server);
 			cleanupAllGennadiyHookChains(server);
+			dropAllMarkThrownAxes(server);
 			CartelWebcamBridge.clearAll();
 			RACES_BY_NICKNAME.clear();
 			DIALOG_ID_BY_NICKNAME.clear();
@@ -827,6 +898,9 @@ public final class ServerRaceSystem {
 			GENNADIY_HOOK_SESSIONS.clear();
 			GENNADIY_RAGE_HASTE_PLAYERS.clear();
 			GENNADIY_REPORT_PENDING.clear();
+			MARK_ATTACK_COOLDOWNS.clear();
+			MARK_THROWN_AXES.clear();
+			MARK_BLEEDING_SESSIONS.clear();
 			copperManDefenseTintCacheLastCleanupTick = Long.MIN_VALUE;
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.clear();
 			CARTEL_PLANTED_FERN_GROWTHS.clear();
@@ -940,6 +1014,7 @@ public final class ServerRaceSystem {
 			tickGennadiyHook(server);
 			tickGennadiyRage(server);
 			tickGennadiyReport(server);
+			tickMarkPotroshitel(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
 		});
@@ -1009,6 +1084,8 @@ public final class ServerRaceSystem {
 		COPPER_MAN_JETPACK_COOLDOWNS.clear();
 		GENNADIY_DONKEY_COOLDOWNS.clear();
 		GENNADIY_RAGE_HASTE_PLAYERS.clear();
+		MARK_ATTACK_COOLDOWNS.clear();
+		unlockAllMarkThrownAxes(server);
 		clearAllGennadiyReportCooldowns(server);
 		CopperManGogglesSystem.resetAllAbilityCooldowns(server);
 		CopperManRepulsorSystem.resetAllAbilityCooldowns(server);
@@ -1189,6 +1266,9 @@ public final class ServerRaceSystem {
 		if (slot == RaceAbilitySlot.SHNYAGA && GENNADIY_SHAROYOBOV_RACE_ID.equals(raceId)) {
 			return useGennadiyReport(player, race, ability);
 		}
+		if (slot == RaceAbilitySlot.ATTACK && MARK_POTROSHITEL_RACE_ID.equals(raceId)) {
+			return useMarkPotroshitelAttack(player, race, ability);
+		}
 
 		startGenericAbilityCooldown(player, slot, ability);
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
@@ -1265,6 +1345,9 @@ public final class ServerRaceSystem {
 					|| slot == RaceAbilitySlot.DEFENSE
 					|| slot == RaceAbilitySlot.UNIQUE_ABILITY
 					|| slot == RaceAbilitySlot.SHNYAGA;
+		}
+		if (MARK_POTROSHITEL_RACE_ID.equals(raceId)) {
+			return slot == RaceAbilitySlot.ATTACK;
 		}
 		return false;
 	}
@@ -2865,6 +2948,98 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private enum MarkAxePhase {
+		FLYING,
+		FALLING,
+		STUCK_BLOCK,
+		STUCK_ENTITY
+	}
+
+	private static final class MarkThrownAxeSession {
+		private final UUID ownerId;
+		private final ResourceKey<Level> dimension;
+		private final ItemStack axeStack;
+		private long publicPickupTick;
+		private final long bleedIntervalTicks;
+		private final double bleedingOneDamage;
+		private final double bleedingTwoDamage;
+		private final long bleedingTwoDurationTicks;
+		private final double impactDamage;
+		private UUID displayId;
+		private UUID pickupTriggerId;
+		private UUID targetId;
+		private MarkAxePhase phase;
+		private Vec3 position;
+		private Vec3 velocity;
+		private Vec3 direction;
+		private Vec3 targetOffset;
+		private Vec3 targetWoundOffset;
+		private Vec3 targetLocalDirection;
+		private double remainingHorizontalRange;
+		private long nextBleedTick;
+		private int ageTicks;
+		private int stuckSnapTicks;
+		private double baseSpinRadians;
+		private double spinRadians;
+		private double rollRadians;
+		private int fallingTicks;
+		private boolean cleaned;
+
+		private MarkThrownAxeSession(
+				UUID ownerId,
+				ResourceKey<Level> dimension,
+				ItemStack axeStack,
+				long publicPickupTick,
+				long bleedIntervalTicks,
+				double bleedingOneDamage,
+				double bleedingTwoDamage,
+				long bleedingTwoDurationTicks,
+				double impactDamage,
+				Vec3 position,
+				Vec3 velocity,
+				double range
+		) {
+			this.ownerId = ownerId;
+			this.dimension = dimension;
+			this.axeStack = axeStack;
+			this.publicPickupTick = publicPickupTick;
+			this.bleedIntervalTicks = bleedIntervalTicks;
+			this.bleedingOneDamage = bleedingOneDamage;
+			this.bleedingTwoDamage = bleedingTwoDamage;
+			this.bleedingTwoDurationTicks = Math.max(1L, bleedingTwoDurationTicks);
+			this.impactDamage = impactDamage;
+			this.position = position;
+			this.velocity = velocity;
+			this.direction = velocity.lengthSqr() <= 1.0E-6D ? Vec3.ZERO : velocity.normalize();
+			this.remainingHorizontalRange = range;
+			this.phase = MarkAxePhase.FLYING;
+			this.baseSpinRadians = MARK_AXE_HEAD_FIRST_SPIN_RADIANS;
+			this.nextBleedTick = Long.MIN_VALUE;
+		}
+	}
+
+	private static final class MarkBleedingSession {
+		private final UUID targetId;
+		private final ResourceKey<Level> dimension;
+		private final UUID attackerId;
+		private final double damage;
+		private final long intervalTicks;
+		private final long expireTick;
+		private final Vec3 woundLocalOffset;
+		private long nextDamageTick;
+
+		private MarkBleedingSession(UUID targetId, ResourceKey<Level> dimension, UUID attackerId, double damage, long intervalTicks, long nowTick, long expireTick, Vec3 woundLocalOffset) {
+			this.targetId = targetId;
+			this.dimension = dimension;
+			this.attackerId = attackerId;
+			this.damage = damage;
+			this.intervalTicks = Math.max(1L, intervalTicks);
+			this.expireTick = Math.max(nowTick + 1L, expireTick);
+			this.woundLocalOffset = woundLocalOffset;
+			this.nextDamageTick = nowTick + this.intervalTicks;
+		}
+	}
+
 	private static final class GennadiyDonkeyState {
 		private final UUID ownerId;
 		private ResourceKey<Level> dimension;
@@ -3131,6 +3306,10 @@ public final class ServerRaceSystem {
 	}
 
 	private static InteractionResult onUseEntity(ServerPlayer player, InteractionHand hand, Entity entity, Vec3 location) {
+		InteractionResult markAxeInteraction = tryPickupMarkThrownAxe(player, hand, entity);
+		if (markAxeInteraction != InteractionResult.PASS) {
+			return markAxeInteraction;
+		}
 		InteractionResult donkeyInteraction = handleGennadiyDonkeyEntityUse(player, hand, entity, location);
 		if (donkeyInteraction != InteractionResult.PASS) {
 			return donkeyInteraction;
@@ -3462,7 +3641,7 @@ public final class ServerRaceSystem {
 		ServerPlayer selectedPlayer = candidates == null || candidates.isEmpty() ? null : candidates.get(normalizedIndex);
 		caster.openMenu(new SimpleMenuProvider(
 				(syncId, inventory, menuPlayer) -> new WomanShnyagaMenu(syncId, inventory, caster, ability, normalizedIndex),
-				buildCartelDisguiseMenuTitle(caster, selectedPlayer)
+				buildWomanShnyagaMenuTitle(caster, selectedPlayer)
 		));
 	}
 
@@ -5259,7 +5438,7 @@ public final class ServerRaceSystem {
 			return;
 		}
 		float damage = (float) Math.max(0.0D, damageValue);
-		target.hurtServer(level, level.damageSources().magic(), damage);
+		target.hurtServer(level, womanAttackDamageSource(level, owner), damage);
 
 		Vec3 normalizedKnock = knockDirection.lengthSqr() <= 1.0E-6D ? owner.getLookAngle() : knockDirection.normalize();
 		Vec3 knock = normalizedKnock.scale(0.4D);
@@ -5267,6 +5446,14 @@ public final class ServerRaceSystem {
 
 		long nowTick = level.getGameTime();
 		startWomanAttackFollow(target, nowTick, followTicks, Math.max(0.0D, range));
+	}
+
+	private static DamageSource womanAttackDamageSource(ServerLevel level, ServerPlayer owner) {
+		return new DamageSource(
+				level.registryAccess().lookupOrThrow(Registries.DAMAGE_TYPE).getOrThrow(DamageTypes.GENERIC),
+				owner,
+				owner
+		);
 	}
 
 	private static void startWomanAttackFollow(LivingEntity target, long nowTick, long followTicks, double range) {
@@ -5382,6 +5569,887 @@ public final class ServerRaceSystem {
 			}
 		}
 		return false;
+	}
+
+	private static int useMarkPotroshitelAttack(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || ability == null || player.isSpectator() || !player.isAlive()) {
+			return 0;
+		}
+		if (!(player.level() instanceof ServerLevel level)) {
+			return 0;
+		}
+
+		ItemStack held = player.getMainHandItem();
+		if (!isMarkThrowableAxe(held)) {
+			player.displayClientMessage(
+					Component.literal("Возьмите в руку топор, чтобы бросить его.").withStyle(ChatFormatting.RED),
+					true
+			);
+			return 0;
+		}
+
+		long remainingCooldownTicks = getRemainingOnlineCooldownTicks(MARK_ATTACK_COOLDOWNS, player.getUUID());
+		if (displayRemainingCooldown(player, remainingCooldownTicks)) {
+			return 0;
+		}
+
+		long cooldownTicks = Math.max(1L, asTicks(positiveOrDefault(ability.cooldownSeconds, MARK_AXE_DEFAULT_COOLDOWN_SECONDS)));
+		double range = getMarkAxeRange(ability);
+		long bleedIntervalTicks = Math.max(1L, asTicks(getMarkAxeBleedingIntervalSeconds(ability)));
+		double bleedOneDamage = getMarkAxeBleedingOneDamage(ability);
+		double bleedTwoDamage = getMarkAxeBleedingTwoDamage(ability);
+		long bleedTwoDurationTicks = Math.max(1L, asTicks(getMarkAxeBleedingTwoDurationSeconds(ability)));
+		ItemStack thrownStack = held.copyWithCount(1);
+		double fullChargeDamage = Math.max(1.0D, player.getAttributeValue(Attributes.ATTACK_DAMAGE));
+
+		held.shrink(1);
+		if (held.isEmpty()) {
+			player.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+		}
+		player.containerMenu.broadcastChanges();
+
+		Vec3 direction = player.getLookAngle();
+		if (direction.lengthSqr() <= 1.0E-6D) {
+			direction = Vec3.directionFromRotation(player.getXRot(), player.getYRot());
+		}
+		direction = direction.normalize();
+		Vec3 start = player.getEyePosition().add(direction.scale(0.55D));
+		Vec3 velocity = direction.scale(MARK_AXE_FLIGHT_SPEED_BLOCKS);
+		MarkThrownAxeSession session = new MarkThrownAxeSession(
+				player.getUUID(),
+				level.dimension(),
+				thrownStack,
+				level.getGameTime() + cooldownTicks,
+				bleedIntervalTicks,
+				bleedOneDamage,
+				bleedTwoDamage,
+				bleedTwoDurationTicks,
+				fullChargeDamage,
+				start,
+				velocity,
+				range
+		);
+
+		Display.ItemDisplay display = createMarkAxeDisplay(level, session);
+		if (display == null) {
+			giveMarkAxeStackBack(player, thrownStack);
+			return 0;
+		}
+		MARK_THROWN_AXES.add(session);
+		startOnlineCooldown(MARK_ATTACK_COOLDOWNS, player.getUUID(), cooldownTicks);
+		return 1;
+	}
+
+	private static boolean isMarkThrowableAxe(ItemStack stack) {
+		return stack != null && !stack.isEmpty() && stack.getItem() instanceof AxeItem;
+	}
+
+	private static Display.ItemDisplay createMarkAxeDisplay(ServerLevel level, MarkThrownAxeSession session) {
+		if (level == null || session == null || session.axeStack == null || session.axeStack.isEmpty()) {
+			return null;
+		}
+		Display.ItemDisplay display = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
+		display.addTag(MARK_AXE_DISPLAY_TAG);
+		display.setNoGravity(true);
+		display.noPhysics = true;
+		display.setInvulnerable(true);
+		display.setSilent(true);
+		display.setItemStack(session.axeStack.copyWithCount(1));
+		configureMarkAxeDisplay(display);
+		clearMarkAxeDisplayHitbox(display);
+		level.addFreshEntity(display);
+		session.displayId = display.getUUID();
+		updateMarkAxeDisplay(display, session, session.direction);
+		return display;
+	}
+
+	private static void configureMarkAxeDisplay(Display.ItemDisplay display) {
+		if (display == null) {
+			return;
+		}
+		display.setBillboardConstraints(Display.BillboardConstraints.FIXED);
+		display.setItemTransform(ItemDisplayContext.FIXED);
+		display.setViewRange(48.0F);
+		display.setTransformationInterpolationDelay(0);
+		display.setTransformationInterpolationDuration(MARK_AXE_DISPLAY_INTERPOLATION_TICKS);
+		display.setPosRotInterpolationDuration(MARK_AXE_DISPLAY_INTERPOLATION_TICKS);
+	}
+
+	private static void clearMarkAxeDisplayHitbox(Display.ItemDisplay display) {
+		if (display == null) {
+			return;
+		}
+		display.noPhysics = true;
+		((DisplayAccessor) display).lg2$setDisplayWidth(0.0F);
+		((DisplayAccessor) display).lg2$setDisplayHeight(0.0F);
+		display.refreshDimensions();
+		Vec3 position = display.position();
+		display.setBoundingBox(new AABB(position.x, position.y, position.z, position.x, position.y, position.z));
+	}
+
+	private static void updateMarkAxeDisplay(Display.ItemDisplay display, MarkThrownAxeSession session, Vec3 visualDirection) {
+		if (display == null || session == null || session.position == null) {
+			return;
+		}
+		Vec3 direction = visualDirection == null || visualDirection.lengthSqr() <= 1.0E-6D ? session.direction : visualDirection.normalize();
+		float yaw = yawFromDirection(direction);
+		float pitch = pitchFromDirection(direction);
+		display.setPos(session.position.x, session.position.y, session.position.z);
+		display.setYRot(yaw);
+		display.setXRot(pitch);
+		display.yRotO = yaw;
+		display.xRotO = pitch;
+		boolean snapStuck = session.phase == MarkAxePhase.STUCK_BLOCK || session.stuckSnapTicks > 0;
+		display.setTransformationInterpolationDuration(snapStuck ? 0 : MARK_AXE_DISPLAY_INTERPOLATION_TICKS);
+		display.setPosRotInterpolationDuration(snapStuck ? 0 : MARK_AXE_DISPLAY_INTERPOLATION_TICKS);
+		display.setTransformation(new Transformation(
+				new Vector3f(0.0F, 0.0F, 0.0F),
+				buildMarkAxeDisplayRotation(session),
+				new Vector3f(MARK_AXE_DISPLAY_SCALE, MARK_AXE_DISPLAY_SCALE, MARK_AXE_DISPLAY_SCALE),
+				new Quaternionf()
+		));
+		if (session.stuckSnapTicks > 0) {
+			session.stuckSnapTicks--;
+		}
+		clearMarkAxeDisplayHitbox(display);
+		display.hurtMarked = true;
+	}
+
+	private static Quaternionf buildMarkAxeDisplayRotation(MarkThrownAxeSession session) {
+		double baseSpin = session == null ? MARK_AXE_HEAD_FIRST_SPIN_RADIANS : session.baseSpinRadians;
+		if (session != null && session.phase == MarkAxePhase.FLYING) {
+			return new Quaternionf()
+					.rotateY((float) baseSpin)
+					.rotateX((float) (Math.PI * 0.5D))
+					.rotateZ((float) session.spinRadians);
+		}
+		double roll = session == null ? 0.0D : session.rollRadians;
+		return new Quaternionf()
+				.rotateY((float) baseSpin)
+				.rotateX((float) (Math.PI * 0.5D))
+				.rotateZ((float) roll);
+	}
+
+	private static void tickMarkPotroshitel(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		tickOnlineCooldowns(server, MARK_ATTACK_COOLDOWNS);
+		tickMarkThrownAxes(server);
+		tickMarkBleedingSessions(server);
+	}
+
+	private static void tickMarkThrownAxes(MinecraftServer server) {
+		if (server == null || MARK_THROWN_AXES.isEmpty()) {
+			return;
+		}
+
+		Iterator<MarkThrownAxeSession> iterator = MARK_THROWN_AXES.iterator();
+		while (iterator.hasNext()) {
+			MarkThrownAxeSession session = iterator.next();
+			ServerLevel level = session == null || session.dimension == null ? null : server.getLevel(session.dimension);
+			if (session == null || level == null || session.cleaned || session.axeStack == null || session.axeStack.isEmpty()) {
+				cleanupMarkThrownAxe(server, session, false);
+				iterator.remove();
+				continue;
+			}
+			if (!tickMarkThrownAxeSession(server, level, session)) {
+				cleanupMarkThrownAxe(server, session, true);
+				iterator.remove();
+			}
+		}
+	}
+
+	private static boolean tickMarkThrownAxeSession(MinecraftServer server, ServerLevel level, MarkThrownAxeSession session) {
+		Display.ItemDisplay display = resolveMarkAxeDisplay(server, level, session);
+		if (display == null) {
+			return false;
+		}
+		session.ageTicks++;
+
+		return switch (session.phase) {
+			case FLYING -> tickMarkAxeFlying(server, level, session, display);
+			case FALLING -> tickMarkAxeFalling(server, level, session, display);
+			case STUCK_BLOCK -> tickMarkAxeStuckBlock(server, level, session, display);
+			case STUCK_ENTITY -> tickMarkAxeStuckEntity(server, level, session, display);
+		};
+	}
+
+	private static Display.ItemDisplay resolveMarkAxeDisplay(MinecraftServer server, ServerLevel level, MarkThrownAxeSession session) {
+		Entity existing = findEntity(server, session.displayId);
+		if (existing instanceof Display.ItemDisplay display && display.isAlive()) {
+			configureMarkAxeDisplay(display);
+			clearMarkAxeDisplayHitbox(display);
+			return display;
+		}
+		if (session.phase == MarkAxePhase.FLYING || session.phase == MarkAxePhase.FALLING) {
+			return null;
+		}
+		return createMarkAxeDisplay(level, session);
+	}
+
+	private static boolean tickMarkAxeFlying(MinecraftServer server, ServerLevel level, MarkThrownAxeSession session, Display.ItemDisplay display) {
+		Vec3 start = session.position;
+		Vec3 velocity = session.velocity;
+		double stepDistance = velocity.length();
+		if (stepDistance <= 1.0E-6D) {
+			switchMarkAxeToFalling(session);
+			return true;
+		}
+		if (session.remainingHorizontalRange <= 0.0D) {
+			switchMarkAxeToFalling(session);
+			return true;
+		}
+
+		double step = Math.min(stepDistance, session.remainingHorizontalRange);
+		Vec3 next = start.add(velocity.normalize().scale(step));
+		MarkAxeImpact impact = findMarkAxeImpact(level, session, start, next, display);
+		if (impact != null) {
+			handleMarkAxeImpact(server, level, session, display, impact);
+			return true;
+		}
+
+		session.position = next;
+		session.remainingHorizontalRange -= step;
+		session.direction = velocity.normalize();
+		session.spinRadians += 1.05D;
+		updateMarkAxeDisplay(display, session, session.direction);
+		if (session.remainingHorizontalRange <= 1.0E-4D) {
+			switchMarkAxeToFalling(session);
+			updateMarkAxeDisplay(display, session, session.direction);
+		}
+		return true;
+	}
+
+	private static boolean tickMarkAxeFalling(MinecraftServer server, ServerLevel level, MarkThrownAxeSession session, Display.ItemDisplay display) {
+		Vec3 start = session.position;
+		Vec3 velocity = new Vec3(0.0D, -MARK_AXE_FALL_SPEED_BLOCKS, 0.0D);
+		Vec3 next = start.add(velocity);
+		MarkAxeImpact impact = findMarkAxeImpact(level, session, start, next, display);
+		if (impact != null) {
+			handleMarkAxeImpact(server, level, session, display, impact);
+			return true;
+		}
+
+		session.position = next;
+		session.velocity = velocity;
+		session.fallingTicks++;
+		session.direction = new Vec3(0.0D, -1.0D, 0.0D);
+		session.baseSpinRadians = MARK_AXE_HEAD_FIRST_SPIN_RADIANS;
+		session.spinRadians = 0.0D;
+		updateMarkAxeDisplay(display, session, session.direction);
+
+		if (session.position.y < level.getMinY() - 8.0D) {
+			return false;
+		}
+		return true;
+	}
+
+	private static void switchMarkAxeToFalling(MarkThrownAxeSession session) {
+		if (session == null) {
+			return;
+		}
+		session.phase = MarkAxePhase.FALLING;
+		session.velocity = new Vec3(0.0D, -MARK_AXE_FALL_SPEED_BLOCKS, 0.0D);
+		session.baseSpinRadians = MARK_AXE_HEAD_FIRST_SPIN_RADIANS;
+		session.rollRadians = randomMarkAxeFallingRollRadians();
+		session.fallingTicks = 0;
+		session.direction = new Vec3(0.0D, -1.0D, 0.0D);
+		session.spinRadians = 0.0D;
+	}
+
+	private static double randomMarkAxeFallingRollRadians() {
+		return java.util.concurrent.ThreadLocalRandom.current().nextDouble(
+				MARK_AXE_FALL_ROLL_MIN_RADIANS,
+				MARK_AXE_FALL_ROLL_MAX_RADIANS
+		);
+	}
+
+	private static MarkAxeImpact findMarkAxeImpact(ServerLevel level, MarkThrownAxeSession session, Vec3 start, Vec3 end, Display.ItemDisplay display) {
+		if (level == null || session == null || start == null || end == null) {
+			return null;
+		}
+		ServerPlayer owner = level.getServer().getPlayerList().getPlayer(session.ownerId);
+		BlockHitResult blockHit = level.clip(new ClipContext(start, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, owner));
+		Vec3 blockLocation = blockHit.getType() == HitResult.Type.MISS ? null : blockHit.getLocation();
+		Vec3 entityEnd = blockLocation == null ? end : blockLocation;
+		EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
+				level,
+				display,
+				start,
+				entityEnd,
+				new AABB(start, entityEnd).inflate(MARK_AXE_HIT_RADIUS_BLOCKS),
+				entity -> canMarkAxeHit(owner, entity),
+				0.25F
+		);
+		if (entityHit != null && entityHit.getEntity() instanceof LivingEntity target) {
+			return new MarkAxeImpact(resolveMarkAxeEntityVisualImpact(target, start, entityEnd, entityHit.getLocation()), target, null);
+		}
+		if (blockLocation != null) {
+			return new MarkAxeImpact(blockLocation, null, blockHit);
+		}
+		return null;
+	}
+
+	private static boolean canMarkAxeHit(ServerPlayer owner, Entity entity) {
+		if (!(entity instanceof LivingEntity target) || entity instanceof ArmorStand) {
+			return false;
+		}
+		if (!target.isAlive() || target.isSpectator() || target == owner) {
+			return false;
+		}
+		if (entity.getTags().contains(MARK_AXE_DISPLAY_TAG) || entity.getTags().contains(MARK_AXE_TRIGGER_TAG)) {
+			return false;
+		}
+		return !(target instanceof ServerPlayer playerTarget) || owner == null || !owner.isAlliedTo(playerTarget);
+	}
+
+	private static void handleMarkAxeImpact(
+			MinecraftServer server,
+			ServerLevel level,
+			MarkThrownAxeSession session,
+			Display.ItemDisplay display,
+			MarkAxeImpact impact
+	) {
+		if (impact.target() != null) {
+			stickMarkAxeInEntity(server, level, session, display, impact.location(), impact.target());
+			return;
+		}
+		stickMarkAxeInBlock(server, level, session, display, impact.location());
+	}
+
+	private static void stickMarkAxeInBlock(MinecraftServer server, ServerLevel level, MarkThrownAxeSession session, Display.ItemDisplay display, Vec3 impactLocation) {
+		detachMarkAxeDisplayPassenger(display);
+		boolean wasFalling = session.phase == MarkAxePhase.FALLING;
+		Vec3 direction = wasFalling || session.velocity == null || session.velocity.lengthSqr() <= 1.0E-6D ? session.direction : session.velocity.normalize();
+		direction = direction == null || direction.lengthSqr() <= 1.0E-6D ? new Vec3(0.0D, -1.0D, 0.0D) : direction.normalize();
+		double impactRoll = wasFalling && Math.abs(direction.y) > 0.85D ? session.rollRadians : randomMarkAxeFallingRollRadians();
+		session.position = impactLocation.subtract(direction.scale(MARK_AXE_BLOCK_STICK_INSET_BLOCKS));
+		session.direction = direction;
+		session.velocity = Vec3.ZERO;
+		session.phase = MarkAxePhase.STUCK_BLOCK;
+		if (!wasFalling) {
+			session.baseSpinRadians = MARK_AXE_HEAD_FIRST_SPIN_RADIANS;
+		}
+		session.spinRadians = 0.0D;
+		session.rollRadians = impactRoll;
+		session.stuckSnapTicks = 1;
+		updateMarkAxeDisplay(display, session, direction);
+		syncMarkAxePickupTrigger(server, level, session);
+	}
+
+	private static void stickMarkAxeInEntity(MinecraftServer server, ServerLevel level, MarkThrownAxeSession session, Display.ItemDisplay display, Vec3 hitLocation, LivingEntity target) {
+		ServerPlayer owner = server.getPlayerList().getPlayer(session.ownerId);
+		boolean wasFalling = session.phase == MarkAxePhase.FALLING;
+		Vec3 direction = wasFalling || session.velocity == null || session.velocity.lengthSqr() <= 1.0E-6D ? session.direction : session.velocity.normalize();
+		direction = direction == null || direction.lengthSqr() <= 1.0E-6D ? new Vec3(0.0D, -1.0D, 0.0D) : direction.normalize();
+		double impactRoll = randomMarkAxeFallingRollRadians();
+		Vec3 woundLocation = adjustMarkAxeEntityHitLocation(target, hitLocation);
+		float damage = computeMarkAxeImpactDamage(level, owner, target, session);
+		DamageSource source = markAxeImpactDamageSource(level, owner);
+		target.invulnerableTime = 0;
+		target.hurtServer(level, source, damage);
+		target.invulnerableTime = 0;
+
+		if (!target.isAlive()) {
+			releaseMarkAxeAfterLethalEntityHit(session, display, direction, woundLocation);
+			return;
+		}
+
+		session.position = woundLocation.subtract(direction.scale(MARK_AXE_ENTITY_STICK_INSET_BLOCKS));
+		session.direction = direction;
+		session.velocity = Vec3.ZERO;
+		session.phase = MarkAxePhase.STUCK_ENTITY;
+		session.baseSpinRadians = MARK_AXE_HEAD_FIRST_SPIN_RADIANS;
+		session.spinRadians = 0.0D;
+		session.rollRadians = impactRoll;
+		session.stuckSnapTicks = 1;
+		session.targetId = target.getUUID();
+		float targetYaw = getMarkAxeEntityAttachmentYaw(target);
+		session.targetOffset = rotateMarkAxeWorldToLocal(session.position.subtract(getMarkAxeEntityAttachmentAnchor(target)), targetYaw);
+		session.targetWoundOffset = rotateMarkAxeWorldToLocal(woundLocation.subtract(getMarkAxeEntityAttachmentAnchor(target)), targetYaw);
+		session.targetLocalDirection = rotateMarkAxeWorldToLocal(direction, targetYaw);
+		session.nextBleedTick = level.getGameTime() + session.bleedIntervalTicks;
+		updateMarkAxeDisplay(display, session, direction);
+		syncMarkAxePickupTrigger(server, level, session);
+		emitMarkBloodDrip(level, woundLocation);
+	}
+
+	private static boolean tickMarkAxeStuckBlock(MinecraftServer server, ServerLevel level, MarkThrownAxeSession session, Display.ItemDisplay display) {
+		updateMarkAxeDisplay(display, session, session.direction);
+		syncMarkAxePickupTrigger(server, level, session);
+		return true;
+	}
+
+	private static boolean tickMarkAxeStuckEntity(MinecraftServer server, ServerLevel level, MarkThrownAxeSession session, Display.ItemDisplay display) {
+		Entity entity = findEntity(server, session.targetId);
+		if (!(entity instanceof LivingEntity target) || target.level() != level || !target.isAlive()) {
+			releaseMarkAxeFromDeadTarget(server, level, session, display);
+			return true;
+		}
+
+		Vec3 offset = session.targetOffset == null ? new Vec3(0.0D, target.getBbHeight() * 0.55D, 0.0D) : session.targetOffset;
+		float targetYaw = getMarkAxeEntityAttachmentYaw(target);
+		session.position = getMarkAxeEntityAttachmentAnchor(target).add(rotateMarkAxeLocalToWorld(offset, targetYaw));
+		Vec3 localDirection = session.targetLocalDirection == null ? session.direction : session.targetLocalDirection;
+		Vec3 direction = rotateMarkAxeLocalToWorld(localDirection, targetYaw);
+		if (direction.lengthSqr() > 1.0E-6D) {
+			session.direction = direction.normalize();
+		}
+		updateMarkAxeDisplay(display, session, session.direction);
+		syncMarkAxePickupTrigger(server, level, session);
+		long nowTick = level.getGameTime();
+		if ((session.ageTicks & 1) == 0) {
+			emitMarkBloodDrip(level, getMarkAxeEntityWoundPosition(target, session));
+		}
+		if (nowTick >= session.nextBleedTick) {
+			applyMarkBleedingDamage(level, target, session.ownerId, session.bleedingOneDamage);
+			session.nextBleedTick = nowTick + session.bleedIntervalTicks;
+		}
+		return true;
+	}
+
+	private static void releaseMarkAxeAfterLethalEntityHit(MarkThrownAxeSession session, Display.ItemDisplay display, Vec3 direction, Vec3 woundLocation) {
+		if (session == null) {
+			return;
+		}
+		detachMarkAxeDisplayPassenger(display);
+		Vec3 normalizedDirection = direction == null || direction.lengthSqr() <= 1.0E-6D ? new Vec3(0.0D, -1.0D, 0.0D) : direction.normalize();
+		session.targetId = null;
+		session.targetOffset = null;
+		session.targetWoundOffset = null;
+		session.targetLocalDirection = null;
+		session.position = woundLocation == null ? session.position : woundLocation.subtract(normalizedDirection.scale(MARK_AXE_ENTITY_STICK_INSET_BLOCKS));
+		if (session.position == null) {
+			session.position = Vec3.ZERO;
+		}
+		session.direction = normalizedDirection;
+		session.velocity = new Vec3(normalizedDirection.x * 0.08D, -0.12D, normalizedDirection.z * 0.08D);
+		session.stuckSnapTicks = 0;
+		switchMarkAxeToFalling(session);
+		updateMarkAxeDisplay(display, session, session.direction);
+	}
+
+	private static void detachMarkAxeDisplayPassenger(Display.ItemDisplay display) {
+		if (display == null || !display.isPassenger()) {
+			return;
+		}
+		Entity vehicle = display.getVehicle();
+		display.stopRiding();
+		if (vehicle != null) {
+			syncPassengerAttachment(vehicle);
+		}
+	}
+
+	private static void releaseMarkAxeFromDeadTarget(MinecraftServer server, ServerLevel level, MarkThrownAxeSession session, Display.ItemDisplay display) {
+		if (session == null) {
+			return;
+		}
+		detachMarkAxeDisplayPassenger(display);
+		session.targetId = null;
+		session.targetOffset = null;
+		session.targetWoundOffset = null;
+		session.targetLocalDirection = null;
+		session.spinRadians = 0.0D;
+		session.stuckSnapTicks = 0;
+		Entity trigger = findEntity(server, session.pickupTriggerId);
+		if (trigger != null) {
+			trigger.discard();
+		}
+		session.pickupTriggerId = null;
+		Vec3 previousDirection = session.direction == null || session.direction.lengthSqr() <= 1.0E-6D
+				? new Vec3(0.0D, -1.0D, 0.0D)
+				: session.direction.normalize();
+		session.velocity = new Vec3(previousDirection.x * 0.08D, -0.12D, previousDirection.z * 0.08D);
+		switchMarkAxeToFalling(session);
+		updateMarkAxeDisplay(display, session, session.direction);
+	}
+
+	private static Vec3 getMarkAxeEntityAttachmentAnchor(LivingEntity target) {
+		return target == null ? Vec3.ZERO : target.position();
+	}
+
+	private static float getMarkAxeEntityAttachmentYaw(LivingEntity target) {
+		return target == null ? 0.0F : target.yBodyRot;
+	}
+
+	private static Vec3 rotateMarkAxeLocalToWorld(Vec3 local, float yawDegrees) {
+		if (local == null) {
+			return Vec3.ZERO;
+		}
+		double yaw = Math.toRadians(yawDegrees);
+		double sin = Math.sin(yaw);
+		double cos = Math.cos(yaw);
+		return new Vec3(
+				local.x * cos - local.z * sin,
+				local.y,
+				local.x * sin + local.z * cos
+		);
+	}
+
+	private static Vec3 rotateMarkAxeWorldToLocal(Vec3 world, float yawDegrees) {
+		if (world == null) {
+			return Vec3.ZERO;
+		}
+		double yaw = Math.toRadians(yawDegrees);
+		double sin = Math.sin(yaw);
+		double cos = Math.cos(yaw);
+		return new Vec3(
+				world.x * cos + world.z * sin,
+				world.y,
+				-world.x * sin + world.z * cos
+		);
+	}
+
+	private static Vec3 getMarkAxeEntityWoundPosition(LivingEntity target, MarkThrownAxeSession session) {
+		if (target == null) {
+			return Vec3.ZERO;
+		}
+		Vec3 woundOffset = session == null ? null : session.targetWoundOffset;
+		if (woundOffset == null) {
+			woundOffset = session == null ? null : session.targetOffset;
+		}
+		if (woundOffset == null) {
+			return target.position().add(0.0D, Math.max(0.4D, target.getBbHeight() * 0.55D), 0.0D);
+		}
+		return getMarkAxeEntityAttachmentAnchor(target).add(
+				rotateMarkAxeLocalToWorld(woundOffset, getMarkAxeEntityAttachmentYaw(target))
+		);
+	}
+
+	private static Vec3 resolveMarkAxeEntityVisualImpact(LivingEntity target, Vec3 start, Vec3 end, Vec3 fallback) {
+		if (target == null || start == null || end == null) {
+			return fallback;
+		}
+		AABB visualBox = getMarkAxeEntityVisualHitBox(target);
+		Optional<Vec3> visualHit = visualBox.clip(start, end);
+		if (visualHit.isPresent()) {
+			return visualHit.get();
+		}
+		return closestPointInMarkAxeBox(visualBox, fallback == null ? end : fallback);
+	}
+
+	private static AABB getMarkAxeEntityVisualHitBox(LivingEntity target) {
+		AABB box = target.getBoundingBox();
+		double halfWidth = Math.max(MARK_AXE_ENTITY_VISUAL_MIN_WIDTH * 0.5D, target.getBbWidth() * MARK_AXE_ENTITY_VISUAL_WIDTH_SCALE * 0.5D);
+		double bottomInset = Math.min(0.12D, target.getBbHeight() * 0.08D);
+		double topInset = Math.min(0.08D, target.getBbHeight() * 0.04D);
+		double minY = box.minY + bottomInset;
+		double maxY = Math.max(minY + 0.12D, box.maxY - topInset);
+		return new AABB(
+				target.getX() - halfWidth,
+				minY,
+				target.getZ() - halfWidth,
+				target.getX() + halfWidth,
+				maxY,
+				target.getZ() + halfWidth
+		);
+	}
+
+	private static Vec3 closestPointInMarkAxeBox(AABB box, Vec3 point) {
+		if (box == null || point == null) {
+			return point;
+		}
+		return new Vec3(
+				Math.max(box.minX, Math.min(box.maxX, point.x)),
+				Math.max(box.minY, Math.min(box.maxY, point.y)),
+				Math.max(box.minZ, Math.min(box.maxZ, point.z))
+		);
+	}
+
+	private static Vec3 adjustMarkAxeEntityHitLocation(LivingEntity target, Vec3 hitLocation) {
+		if (target == null || hitLocation == null) {
+			return hitLocation;
+		}
+		return closestPointInMarkAxeBox(getMarkAxeEntityVisualHitBox(target), hitLocation);
+	}
+
+	private record MarkAxeImpact(Vec3 location, LivingEntity target, BlockHitResult blockHit) {
+	}
+
+	private static float computeMarkAxeImpactDamage(ServerLevel level, ServerPlayer owner, LivingEntity target, MarkThrownAxeSession session) {
+		if (level == null || owner == null || target == null || session == null) {
+			return (float) Math.max(0.0D, session == null ? 0.0D : session.impactDamage);
+		}
+		float baseCriticalDamage = (float) Math.max(0.0D, session.impactDamage);
+		float enchantedDamage = EnchantmentHelper.modifyDamage(level, session.axeStack, target, markAxeImpactDamageSource(level, owner), baseCriticalDamage);
+		return Math.max(baseCriticalDamage, enchantedDamage);
+	}
+
+	private static DamageSource markAxeImpactDamageSource(ServerLevel level, ServerPlayer owner) {
+		if (owner == null) {
+			return new DamageSource(level.registryAccess().lookupOrThrow(Registries.DAMAGE_TYPE).getOrThrow(DamageTypes.THROWN));
+		}
+		return new DamageSource(
+				level.registryAccess().lookupOrThrow(Registries.DAMAGE_TYPE).getOrThrow(DamageTypes.PLAYER_ATTACK),
+				owner,
+				owner
+		);
+	}
+
+	private static DamageSource markBleedingDamageSource(ServerLevel level, ServerPlayer owner) {
+		if (owner == null) {
+			return new DamageSource(level.registryAccess().lookupOrThrow(Registries.DAMAGE_TYPE).getOrThrow(DamageTypes.GENERIC));
+		}
+		return new DamageSource(
+				level.registryAccess().lookupOrThrow(Registries.DAMAGE_TYPE).getOrThrow(DamageTypes.GENERIC),
+				owner,
+				owner
+		);
+	}
+
+	private static void applyMarkBleedingDamage(ServerLevel level, LivingEntity target, UUID ownerId, double damageValue) {
+		if (level == null || target == null || !target.isAlive() || damageValue <= 0.0D) {
+			return;
+		}
+		ServerPlayer owner = ownerId == null ? null : level.getServer().getPlayerList().getPlayer(ownerId);
+		target.invulnerableTime = 0;
+		target.hurtServer(level, markBleedingDamageSource(level, owner), (float) damageValue);
+		target.invulnerableTime = 0;
+	}
+
+	private static void tickMarkBleedingSessions(MinecraftServer server) {
+		if (server == null || MARK_BLEEDING_SESSIONS.isEmpty()) {
+			return;
+		}
+		Iterator<Map.Entry<UUID, MarkBleedingSession>> iterator = MARK_BLEEDING_SESSIONS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, MarkBleedingSession> entry = iterator.next();
+			MarkBleedingSession session = entry.getValue();
+			ServerLevel level = session == null || session.dimension == null ? null : server.getLevel(session.dimension);
+			Entity entity = session == null ? null : findEntity(server, session.targetId);
+			if (!(entity instanceof LivingEntity target) || level == null || target.level() != level || !target.isAlive()) {
+				iterator.remove();
+				continue;
+			}
+			long nowTick = level.getGameTime();
+			if (nowTick >= session.expireTick) {
+				iterator.remove();
+				continue;
+			}
+			Vec3 woundPosition = getMarkBleedingWoundPosition(target, session);
+			if ((nowTick & 1L) == 0L) {
+				emitMarkBloodDrip(level, woundPosition);
+			}
+			if (nowTick < session.nextDamageTick) {
+				continue;
+			}
+			applyMarkBleedingDamage(level, target, session.attackerId, session.damage);
+			session.nextDamageTick = nowTick + session.intervalTicks;
+		}
+	}
+
+	private static void startMarkBleedingTwo(ServerLevel level, LivingEntity target, MarkThrownAxeSession axeSession) {
+		if (level == null || target == null || axeSession == null || !target.isAlive() || axeSession.bleedingTwoDamage <= 0.0D) {
+			return;
+		}
+		long nowTick = level.getGameTime();
+		Vec3 woundLocalOffset = axeSession.targetWoundOffset == null ? axeSession.targetOffset : axeSession.targetWoundOffset;
+		if (woundLocalOffset == null && axeSession.position != null) {
+			woundLocalOffset = rotateMarkAxeWorldToLocal(
+					axeSession.position.subtract(getMarkAxeEntityAttachmentAnchor(target)),
+					getMarkAxeEntityAttachmentYaw(target)
+			);
+		}
+		MARK_BLEEDING_SESSIONS.put(
+				target.getUUID(),
+				new MarkBleedingSession(
+						target.getUUID(),
+						level.dimension(),
+						axeSession.ownerId,
+						axeSession.bleedingTwoDamage,
+						axeSession.bleedIntervalTicks,
+						nowTick,
+						nowTick + axeSession.bleedingTwoDurationTicks,
+						woundLocalOffset
+				)
+		);
+	}
+
+	private static Vec3 getMarkBleedingWoundPosition(LivingEntity target, MarkBleedingSession session) {
+		if (target == null) {
+			return Vec3.ZERO;
+		}
+		if (session != null && session.woundLocalOffset != null) {
+			return getMarkAxeEntityAttachmentAnchor(target).add(
+					rotateMarkAxeLocalToWorld(session.woundLocalOffset, getMarkAxeEntityAttachmentYaw(target))
+			);
+		}
+		return target.position().add(0.0D, Math.max(0.4D, target.getBbHeight() * 0.55D), 0.0D);
+	}
+
+	private static void emitMarkBloodDrip(ServerLevel level, Vec3 origin) {
+		if (level == null || origin == null) {
+			return;
+		}
+		for (int i = 0; i < 3; i++) {
+			double y = origin.y - i * 0.18D;
+			level.sendParticles(new DustParticleOptions(MARK_AXE_BLOOD_COLOR, 0.85F), origin.x, y, origin.z, 1, 0.015D, 0.015D, 0.015D, 0.0D);
+		}
+	}
+
+	private static void syncMarkAxePickupTrigger(MinecraftServer server, ServerLevel level, MarkThrownAxeSession session) {
+		if (server == null || level == null || session == null || session.position == null) {
+			return;
+		}
+		Interaction trigger = null;
+		Entity existing = findEntity(server, session.pickupTriggerId);
+		if (existing instanceof Interaction interaction && interaction.isAlive() && interaction.level() == level) {
+			trigger = interaction;
+		}
+		if (trigger == null) {
+			trigger = new Interaction(EntityType.INTERACTION, level);
+			trigger.addTag(MARK_AXE_TRIGGER_TAG);
+			trigger.setNoGravity(true);
+			trigger.setSilent(true);
+			trigger.setInvisible(true);
+			trigger.setResponse(true);
+			trigger.setWidth((float) MARK_AXE_PICKUP_TRIGGER_SIZE);
+			trigger.setHeight((float) MARK_AXE_PICKUP_TRIGGER_SIZE);
+			level.addFreshEntity(trigger);
+			session.pickupTriggerId = trigger.getUUID();
+		}
+		Vec3 pos = session.position.subtract(0.0D, MARK_AXE_PICKUP_TRIGGER_SIZE * 0.5D, 0.0D);
+		trigger.setInvisible(true);
+		trigger.setPos(pos.x, pos.y, pos.z);
+		trigger.setDeltaMovement(Vec3.ZERO);
+		trigger.setYRot(yawFromDirection(session.direction));
+		trigger.setXRot(pitchFromDirection(session.direction));
+		trigger.hurtMarked = true;
+	}
+
+	private static InteractionResult tryPickupMarkThrownAxe(ServerPlayer player, InteractionHand hand, Entity entity) {
+		if (player == null || entity == null || MARK_THROWN_AXES.isEmpty()) {
+			return InteractionResult.PASS;
+		}
+		MarkThrownAxeSession session = findMarkThrownAxeByEntity(entity.getUUID());
+		if (session == null || session.phase == MarkAxePhase.FLYING || session.phase == MarkAxePhase.FALLING) {
+			return InteractionResult.PASS;
+		}
+		if (!(player.level() instanceof ServerLevel level)) {
+			return InteractionResult.SUCCESS;
+		}
+		long nowTick = level.getGameTime();
+		boolean publicPickup = nowTick >= session.publicPickupTick;
+		boolean ownerPickup = player.getUUID().equals(session.ownerId);
+		if (!publicPickup && !ownerPickup) {
+			player.displayClientMessage(Component.literal("Этот топор может забрать только Марк.").withStyle(ChatFormatting.RED), true);
+			return InteractionResult.SUCCESS;
+		}
+
+		if (session.phase == MarkAxePhase.STUCK_ENTITY) {
+			Entity targetEntity = findEntity(level.getServer(), session.targetId);
+			if (targetEntity instanceof LivingEntity target && target.isAlive()) {
+				startMarkBleedingTwo(level, target, session);
+			}
+		}
+
+		giveMarkAxeStackBack(player, session.axeStack);
+		if (ownerPickup && !publicPickup) {
+			MARK_ATTACK_COOLDOWNS.remove(session.ownerId);
+		}
+		cleanupMarkThrownAxe(level.getServer(), session, false);
+		MARK_THROWN_AXES.remove(session);
+		return InteractionResult.SUCCESS;
+	}
+
+	private static MarkThrownAxeSession findMarkThrownAxeByEntity(UUID entityId) {
+		if (entityId == null) {
+			return null;
+		}
+		for (MarkThrownAxeSession session : MARK_THROWN_AXES) {
+			if (session == null) {
+				continue;
+			}
+			if (entityId.equals(session.displayId) || entityId.equals(session.pickupTriggerId)) {
+				return session;
+			}
+		}
+		return null;
+	}
+
+	private static void giveMarkAxeStackBack(ServerPlayer player, ItemStack stack) {
+		if (player == null || stack == null || stack.isEmpty()) {
+			return;
+		}
+		ItemStack remaining = stack.copy();
+		boolean added = player.getInventory().add(remaining);
+		if (!added || !remaining.isEmpty()) {
+			player.drop(remaining, false);
+		}
+		player.containerMenu.broadcastChanges();
+	}
+
+	private static void dropMarkAxeItem(ServerLevel level, Vec3 position, ItemStack stack) {
+		if (level == null || position == null || stack == null || stack.isEmpty()) {
+			return;
+		}
+		ItemEntity itemEntity = new ItemEntity(level, position.x, position.y, position.z, stack.copy());
+		itemEntity.setDefaultPickUpDelay();
+		level.addFreshEntity(itemEntity);
+	}
+
+	private static void cleanupMarkThrownAxe(MinecraftServer server, MarkThrownAxeSession session, boolean dropItem) {
+		if (session == null || session.cleaned) {
+			return;
+		}
+		session.cleaned = true;
+		if (dropItem && server != null) {
+			ServerLevel level = session.dimension == null ? null : server.getLevel(session.dimension);
+			if (level != null) {
+				dropMarkAxeItem(level, session.position, session.axeStack);
+			}
+		}
+		Entity display = findEntity(server, session.displayId);
+		if (display != null) {
+			display.discard();
+		}
+		Entity trigger = findEntity(server, session.pickupTriggerId);
+		if (trigger != null) {
+			trigger.discard();
+		}
+	}
+
+	private static void dropAllMarkThrownAxes(MinecraftServer server) {
+		if (server == null || MARK_THROWN_AXES.isEmpty()) {
+			return;
+		}
+		for (MarkThrownAxeSession session : new ArrayList<>(MARK_THROWN_AXES)) {
+			cleanupMarkThrownAxe(server, session, true);
+		}
+		MARK_THROWN_AXES.clear();
+	}
+
+	private static void unlockAllMarkThrownAxes(MinecraftServer server) {
+		if (server == null || MARK_THROWN_AXES.isEmpty()) {
+			return;
+		}
+		long nowTick = server.overworld().getGameTime();
+		for (MarkThrownAxeSession session : MARK_THROWN_AXES) {
+			if (session != null) {
+				session.publicPickupTick = nowTick;
+			}
+		}
+	}
+
+	private static double getMarkAxeRange(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markAxeRangeBlocks, MARK_AXE_DEFAULT_RANGE_BLOCKS);
+	}
+
+	private static double getMarkAxeBleedingOneDamage(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markAxeBleedingOneDamage, MARK_AXE_DEFAULT_BLEEDING_ONE_DAMAGE);
+	}
+
+	private static double getMarkAxeBleedingTwoDamage(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markAxeBleedingTwoDamage, MARK_AXE_DEFAULT_BLEEDING_TWO_DAMAGE);
+	}
+
+	private static double getMarkAxeBleedingIntervalSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markAxeBleedingIntervalSeconds, MARK_AXE_DEFAULT_BLEEDING_INTERVAL_SECONDS);
+	}
+
+	private static double getMarkAxeBleedingTwoDurationSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markAxeBleedingTwoDurationSeconds, MARK_AXE_DEFAULT_BLEEDING_TWO_DURATION_SECONDS);
 	}
 
 	private static double getWomanDefenseRange(RaceAbilityConfig ability) {
@@ -9844,6 +10912,94 @@ public final class ServerRaceSystem {
 						.withStyle(style -> style.withColor(0x2E2016).withItalic(false).withFont(CARTEL_PASSPORT_NAME_FONT)));
 	}
 
+	private static ItemStack buildWomanShnyagaArrow(ServerPlayer viewer, boolean next) {
+		if (viewer != null && PolymerResourcePackUtils.hasMainPack(viewer)) {
+			return ItemStack.EMPTY;
+		}
+
+		ItemStack stack = new ItemStack(Items.ARROW);
+		stack.set(
+				DataComponents.CUSTOM_NAME,
+				Component.literal(localizeWomanShnyagaMenuText(viewer, next ? "next" : "previous"))
+						.withStyle(style -> style.withItalic(false))
+		);
+		return stack;
+	}
+
+	private static ItemStack buildWomanShnyagaHead(ServerPlayer viewer, ServerPlayer target) {
+		ItemStack stack = new ItemStack(Items.PLAYER_HEAD);
+		if (target == null) {
+			stack.set(DataComponents.CUSTOM_NAME, Component.literal(" "));
+			return stack;
+		}
+
+		GameProfile sourceProfile = target.getGameProfile();
+		PropertyMap properties = sourceProfile != null
+				? new PropertyMap(ImmutableMultimap.copyOf(sourceProfile.properties()))
+				: new PropertyMap(ImmutableMultimap.of());
+		applySkinRestorerSkin(target, properties);
+		GameProfile profile = new GameProfile(target.getUUID(), target.getGameProfile().name(), properties);
+		stack.set(DataComponents.PROFILE, ResolvableProfile.createResolved(profile));
+		stack.set(
+				DataComponents.CUSTOM_NAME,
+				Component.literal(localizeWomanShnyagaMenuText(viewer, "select"))
+						.withStyle(style -> style.withColor(0xFF6F9A).withItalic(false).withBold(true))
+		);
+		return stack;
+	}
+
+	private static ItemStack buildWomanShnyagaEmptyState(ServerPlayer viewer) {
+		ItemStack stack = new ItemStack(Items.BARRIER);
+		stack.set(DataComponents.CUSTOM_NAME, Component.literal(localizeWomanShnyagaMenuText(viewer, "empty")));
+		return stack;
+	}
+
+	private static Component buildWomanShnyagaMenuTitle(ServerPlayer viewer, ServerPlayer target) {
+		if (viewer != null && PolymerResourcePackUtils.hasMainPack(viewer)) {
+			return buildWomanShnyagaPackTitle(viewer, target);
+		}
+
+		if (target == null) {
+			return Component.literal(" ");
+		}
+		return Component.literal(localizeWomanShnyagaMenuText(viewer, "recipient") + target.getGameProfile().name());
+	}
+
+	private static Component buildWomanShnyagaPackTitle(ServerPlayer viewer, ServerPlayer target) {
+		Component title = Component.literal(buildHorizontalAdvance(WOMAN_SHNYAGA_LETTER_OVERLAY_X_OFFSET) + buildOverlayGlyph(WOMAN_SHNYAGA_LETTER_OVERLAY_GLYPH, WOMAN_SHNYAGA_LETTER_OVERLAY_WIDTH))
+				.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(WOMAN_SHNYAGA_LETTER_OVERLAY_FONT));
+		if (viewer == null || target == null) {
+			return title;
+		}
+
+		String senderText = viewer.getGameProfile().name();
+		String recipientText = target.getGameProfile().name();
+		int senderWidth = measureWomanShnyagaNameWidth(senderText);
+		int senderStartX = centerWomanShnyagaName(WOMAN_SHNYAGA_SENDER_LINE_CENTER_X, senderText);
+		int recipientStartX = centerWomanShnyagaRecipientName(WOMAN_SHNYAGA_RECIPIENT_LINE_CENTER_X, recipientText);
+		return title.copy()
+				.append(Component.literal(buildWomanShnyagaTitleAdvance(senderStartX))
+						.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
+				.append(Component.literal(senderText)
+						.withStyle(style -> style.withColor(0xC88D62).withItalic(false).withFont(WOMAN_SHNYAGA_NAME_FONT)))
+				.append(Component.literal(buildHorizontalAdvance(recipientStartX - (senderStartX + senderWidth)))
+						.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
+				.append(Component.literal(recipientText)
+						.withStyle(style -> style.withColor(0xC88D62).withItalic(false).withFont(WOMAN_SHNYAGA_NAME_FONT)));
+	}
+
+	private static String buildWomanShnyagaTitleAdvance(int targetX) {
+		return buildHorizontalAdvance(targetX - WOMAN_SHNYAGA_LETTER_OVERLAY_X_OFFSET);
+	}
+
+	private static int centerWomanShnyagaName(double centerX, String text) {
+		return (int) Math.round(centerX + WOMAN_SHNYAGA_SENDER_NAME_CORRECTION_X - measureWomanShnyagaNameWidth(text) / 2.0D);
+	}
+
+	private static int centerWomanShnyagaRecipientName(double centerX, String text) {
+		return (int) Math.round(centerX + WOMAN_SHNYAGA_RECIPIENT_NAME_CORRECTION_X - measureWomanShnyagaNameWidth(text) / 2.0D);
+	}
+
 	private static int measureCartelPassportNameWidth(String text) {
 		if (text == null || text.isEmpty()) {
 			return 0;
@@ -9852,6 +11008,21 @@ public final class ServerRaceSystem {
 		int width = 0;
 		for (int i = 0; i < text.length(); i++) {
 			width += advances.getOrDefault(text.charAt(i), CARTEL_PASSPORT_NAME_CHAR_ADVANCE);
+		}
+		return width;
+	}
+
+	private static int measureWomanShnyagaNameWidth(String text) {
+		if (text == null || text.isEmpty()) {
+			return 0;
+		}
+		Map<Character, Integer> advances = getWomanShnyagaNameAdvanceMap();
+		int width = 0;
+		for (int i = 0; i < text.length(); i++) {
+			char character = text.charAt(i);
+			width += character == ' '
+					? WOMAN_SHNYAGA_NAME_SPACE_ADVANCE
+					: advances.getOrDefault(character, WOMAN_SHNYAGA_NAME_CHAR_ADVANCE);
 		}
 		return width;
 	}
@@ -9869,9 +11040,50 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private static Map<Character, Integer> getWomanShnyagaNameAdvanceMap() {
+		Map<Character, Integer> cached = WOMAN_SHNYAGA_NAME_ADVANCE_CACHE;
+		if (cached != null) {
+			return cached;
+		}
+		synchronized (ServerRaceSystem.class) {
+			if (WOMAN_SHNYAGA_NAME_ADVANCE_CACHE == null) {
+				WOMAN_SHNYAGA_NAME_ADVANCE_CACHE = loadBitmapFontAdvanceMap(
+						WOMAN_SHNYAGA_NAME_TEXTURE_RESOURCE,
+						WOMAN_SHNYAGA_NAME_FONT_ROWS,
+						WOMAN_SHNYAGA_NAME_BITMAP_COLUMNS,
+						WOMAN_SHNYAGA_NAME_BITMAP_ROWS,
+						WOMAN_SHNYAGA_NAME_RENDER_HEIGHT,
+						WOMAN_SHNYAGA_NAME_CHAR_ADVANCE,
+						"woman_shnyaga_name"
+				);
+			}
+			return WOMAN_SHNYAGA_NAME_ADVANCE_CACHE;
+		}
+	}
+
 	private static Map<Character, Integer> loadCartelPassportNameAdvanceMap() {
+		return loadBitmapFontAdvanceMap(
+				CARTEL_PASSPORT_NAME_TEXTURE_RESOURCE,
+				CARTEL_PASSPORT_NAME_FONT_ROWS,
+				CARTEL_PASSPORT_NAME_BITMAP_COLUMNS,
+				CARTEL_PASSPORT_NAME_BITMAP_ROWS,
+				CARTEL_PASSPORT_NAME_RENDER_HEIGHT,
+				CARTEL_PASSPORT_NAME_CHAR_ADVANCE,
+				"passport_name"
+		);
+	}
+
+	private static Map<Character, Integer> loadBitmapFontAdvanceMap(
+			String textureResource,
+			String[] rows,
+			int columns,
+			int rowCount,
+			int renderHeight,
+			int fallbackAdvance,
+			String debugName
+	) {
 		Map<Character, Integer> advances = new LinkedHashMap<>();
-		try (InputStream stream = ServerRaceSystem.class.getResourceAsStream(CARTEL_PASSPORT_NAME_TEXTURE_RESOURCE)) {
+		try (InputStream stream = ServerRaceSystem.class.getResourceAsStream(textureResource)) {
 			if (stream == null) {
 				return advances;
 			}
@@ -9880,12 +11092,12 @@ public final class ServerRaceSystem {
 				return advances;
 			}
 
-			int cellWidth = image.getWidth() / CARTEL_PASSPORT_NAME_BITMAP_COLUMNS;
-			int cellHeight = image.getHeight() / CARTEL_PASSPORT_NAME_BITMAP_ROWS;
-			float renderScale = (float) CARTEL_PASSPORT_NAME_RENDER_HEIGHT / (float) cellHeight;
+			int cellWidth = image.getWidth() / columns;
+			int cellHeight = image.getHeight() / rowCount;
+			float renderScale = (float) renderHeight / (float) cellHeight;
 
-			for (int row = 0; row < CARTEL_PASSPORT_NAME_FONT_ROWS.length; row++) {
-				String rowChars = CARTEL_PASSPORT_NAME_FONT_ROWS[row];
+			for (int row = 0; row < rows.length; row++) {
+				String rowChars = rows[row];
 				for (int column = 0; column < rowChars.length(); column++) {
 					char character = rowChars.charAt(column);
 					if (character == '\0') {
@@ -9906,7 +11118,7 @@ public final class ServerRaceSystem {
 
 					int advance;
 					if (right < left) {
-						advance = CARTEL_PASSPORT_NAME_CHAR_ADVANCE;
+						advance = fallbackAdvance;
 					} else {
 						int glyphWidth = right - left + 1;
 						advance = Math.max(1, Math.round(glyphWidth * renderScale)) + 1;
@@ -9915,7 +11127,7 @@ public final class ServerRaceSystem {
 				}
 			}
 		} catch (IOException exception) {
-			Lg2.LOGGER.warn("Failed to measure passport_name font glyph widths, using fallback centering", exception);
+			Lg2.LOGGER.warn("Failed to measure {} font glyph widths, using fallback centering", debugName, exception);
 		}
 		return advances;
 	}
@@ -9936,6 +11148,18 @@ public final class ServerRaceSystem {
 		return viewer != null && PolymerResourcePackUtils.hasMainPack(viewer)
 				? CARTEL_DISGUISE_PACK_NEXT_SLOT
 				: CARTEL_DISGUISE_NEXT_SLOT;
+	}
+
+	private static int getWomanShnyagaPreviousSlot(ServerPlayer viewer) {
+		return WOMAN_SHNYAGA_PREVIOUS_SLOT;
+	}
+
+	private static int getWomanShnyagaHeadSlot(ServerPlayer viewer) {
+		return WOMAN_SHNYAGA_HEAD_SLOT;
+	}
+
+	private static int getWomanShnyagaNextSlot(ServerPlayer viewer) {
+		return WOMAN_SHNYAGA_NEXT_SLOT;
 	}
 
 	private static void hideCartelDisguiseInventoryVisuals(ServerPlayer player, AbstractContainerMenu menu) {
@@ -10066,6 +11290,58 @@ public final class ServerRaceSystem {
 			case "next" -> "Next";
 			case "empty" -> "No players";
 			case "no_players_online" -> "There is nobody on the server";
+			default -> "";
+		};
+	}
+
+	private static String localizeWomanShnyagaMenuText(ServerPlayer player, String key) {
+		String locale = normalizeCartelDisguiseLocale(player);
+		if (locale.startsWith("rpr")) {
+			return switch (key) {
+				case "recipient" -> "Получатель: ";
+				case "select" -> "Выбрать";
+				case "previous" -> "Предыдущiй";
+				case "next" -> "Слѣдующiй";
+				case "empty" -> "Нѣтъ игроковъ";
+				default -> "";
+			};
+		}
+		if (locale.startsWith("uk")) {
+			return switch (key) {
+				case "recipient" -> "Одержувач: ";
+				case "select" -> "Вибрати";
+				case "previous" -> "Попередній";
+				case "next" -> "Наступний";
+				case "empty" -> "Немає гравців";
+				default -> "";
+			};
+		}
+		if (locale.startsWith("ja")) {
+			return switch (key) {
+				case "recipient" -> "宛先: ";
+				case "select" -> "選択";
+				case "previous" -> "前へ";
+				case "next" -> "次へ";
+				case "empty" -> "プレイヤーがいません";
+				default -> "";
+			};
+		}
+		if (locale.startsWith("ru")) {
+			return switch (key) {
+				case "recipient" -> "Получатель: ";
+				case "select" -> "Выбрать";
+				case "previous" -> "Предыдущий";
+				case "next" -> "Следующий";
+				case "empty" -> "Нет игроков";
+				default -> "";
+			};
+		}
+		return switch (key) {
+			case "recipient" -> "Recipient: ";
+			case "select" -> "Select";
+			case "previous" -> "Previous";
+			case "next" -> "Next";
+			case "empty" -> "No players";
 			default -> "";
 		};
 	}
@@ -11065,13 +12341,14 @@ public final class ServerRaceSystem {
 		List<Direction> directions = List.of(Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST);
 		long lifetimeTicks = asTicks(positiveOrDefault(ability.summonLifetimeSeconds, CARTEL_DEFAULT_LIFETIME_SECONDS));
 		long afterKillTicks = asTicks(positiveOrDefault(ability.summonAfterKillSeconds, CARTEL_DEFAULT_AFTER_KILL_SECONDS));
-		CartelSummonSession session = new CartelSummonSession(level.dimension(), caster.getUUID(), target.getUUID(), nowTick + Math.max(1L, lifetimeTicks), Math.max(1L, afterKillTicks), target.position());
+		double armorDivider = positiveOrDefault(ability.cartelRaiderArmorDivider, CARTEL_DEFAULT_RAIDER_ARMOR_DIVIDER);
+		CartelSummonSession session = new CartelSummonSession(level.dimension(), caster.getUUID(), target.getUUID(), nowTick + Math.max(1L, lifetimeTicks), Math.max(1L, afterKillTicks), armorDivider, target.position());
 
 		BlockPos center = target.blockPosition();
 		for (int i = 0; i < directions.size(); i++) {
 			Direction direction = directions.get(i);
 			BlockPos anchor = center.relative(direction, CARTEL_SPAWN_OFFSET_BLOCKS);
-			Raider raider = spawnCartelRaider(level, raiderTypes.get(i), anchor, target, caster.getUUID());
+			Raider raider = spawnCartelRaider(level, raiderTypes.get(i), anchor, target, caster, armorDivider);
 			if (raider != null) {
 				session.raiderIds.add(raider.getUUID());
 			}
@@ -11131,12 +12408,14 @@ public final class ServerRaceSystem {
 				session.outcomeSoundPlayed = true;
 			}
 
+			ServerPlayer owner = server.getPlayerList().getPlayer(session.ownerPlayerId);
 			session.raiderIds.removeIf(raiderId -> {
 				Entity entity = level.getEntity(raiderId);
 				if (!(entity instanceof Raider raider) || !raider.isAlive()) {
 					CARTEL_SUMMON_OWNER_BY_ENTITY.remove(raiderId);
 					return true;
 				}
+				updateCartelRaiderArmor(owner, raider, session.armorDivider);
 
 				if (timedOut) {
 					despawnRaiderWithSmoke(level, raider);
@@ -11194,7 +12473,7 @@ public final class ServerRaceSystem {
 		return best;
 	}
 
-	private static Raider spawnCartelRaider(ServerLevel level, EntityType<? extends Raider> type, BlockPos anchor, LivingEntity target, UUID ownerPlayerId) {
+	private static Raider spawnCartelRaider(ServerLevel level, EntityType<? extends Raider> type, BlockPos anchor, LivingEntity target, ServerPlayer owner, double armorDivider) {
 		BlockPos spawnPos = resolveRaiderSpawnPos(level, type, anchor);
 		if (spawnPos == null) {
 			return null;
@@ -11209,6 +12488,8 @@ public final class ServerRaceSystem {
 		raider.snapTo(spawnPos, spawnYaw, 0.0F);
 		raider.finalizeSpawn(level, level.getCurrentDifficultyAt(spawnPos), EntitySpawnReason.EVENT, null);
 		raider.setCanPickUpLoot(false);
+		clearCartelRaiderArmorEquipment(raider);
+		updateCartelRaiderArmor(owner, raider, armorDivider);
 		for (EquipmentSlot slot : EquipmentSlot.values()) {
 			raider.setDropChance(slot, 0.0F);
 		}
@@ -11220,9 +12501,33 @@ public final class ServerRaceSystem {
 			return null;
 		}
 
-		CARTEL_SUMMON_OWNER_BY_ENTITY.put(raider.getUUID(), ownerPlayerId);
+		CARTEL_SUMMON_OWNER_BY_ENTITY.put(raider.getUUID(), owner.getUUID());
 		emitSmoke(level, raider.position());
 		return raider;
+	}
+
+	private static void clearCartelRaiderArmorEquipment(Raider raider) {
+		if (raider == null) {
+			return;
+		}
+		raider.setItemSlot(EquipmentSlot.HEAD, ItemStack.EMPTY);
+		raider.setItemSlot(EquipmentSlot.CHEST, ItemStack.EMPTY);
+		raider.setItemSlot(EquipmentSlot.LEGS, ItemStack.EMPTY);
+		raider.setItemSlot(EquipmentSlot.FEET, ItemStack.EMPTY);
+	}
+
+	private static void updateCartelRaiderArmor(ServerPlayer owner, Raider raider, double armorDivider) {
+		if (owner == null || raider == null) {
+			return;
+		}
+		AttributeInstance armor = raider.getAttribute(Attributes.ARMOR);
+		if (armor == null) {
+			return;
+		}
+		double value = Math.max(0.0D, owner.getArmorValue() / Math.max(1.0D, armorDivider));
+		if (Math.abs(armor.getBaseValue() - value) > 1.0E-4D) {
+			armor.setBaseValue(value);
+		}
 	}
 
 	private static BlockPos resolveRaiderSpawnPos(ServerLevel level, EntityType<? extends Raider> type, BlockPos anchor) {
@@ -11797,9 +13102,9 @@ public final class ServerRaceSystem {
 			}
 
 			this.selectedIndex = Math.floorMod(this.selectedIndex, candidates.size());
-			int previousSlot = getCartelDisguisePreviousSlot(this.viewer);
-			int headSlot = getCartelDisguiseHeadSlot(this.viewer);
-			int nextSlot = getCartelDisguiseNextSlot(this.viewer);
+			int previousSlot = getWomanShnyagaPreviousSlot(this.viewer);
+			int headSlot = getWomanShnyagaHeadSlot(this.viewer);
+			int nextSlot = getWomanShnyagaNextSlot(this.viewer);
 			if (slotId == previousSlot) {
 				this.selectedIndex = Math.floorMod(this.selectedIndex - 1, candidates.size());
 				openWomanShnyagaMenu(this.viewer, candidates, this.selectedIndex, this.ability);
@@ -11849,18 +13154,18 @@ public final class ServerRaceSystem {
 			}
 
 			List<ServerPlayer> candidates = collectWomanShnyagaCandidates(this.viewer);
-			int previousSlot = getCartelDisguisePreviousSlot(this.viewer);
-			int headSlot = getCartelDisguiseHeadSlot(this.viewer);
-			int nextSlot = getCartelDisguiseNextSlot(this.viewer);
+			int previousSlot = getWomanShnyagaPreviousSlot(this.viewer);
+			int headSlot = getWomanShnyagaHeadSlot(this.viewer);
+			int nextSlot = getWomanShnyagaNextSlot(this.viewer);
 			if (candidates.isEmpty()) {
-				this.container.setItem(headSlot, buildCartelDisguiseEmptyState(this.viewer));
+				this.container.setItem(headSlot, buildWomanShnyagaEmptyState(this.viewer));
 				return;
 			}
 
 			this.selectedIndex = Math.floorMod(this.selectedIndex, candidates.size());
-			this.container.setItem(previousSlot, buildCartelDisguiseArrow(this.viewer, false));
-			this.container.setItem(headSlot, buildCartelDisguiseHead(this.viewer, candidates.get(this.selectedIndex)));
-			this.container.setItem(nextSlot, buildCartelDisguiseArrow(this.viewer, true));
+			this.container.setItem(previousSlot, buildWomanShnyagaArrow(this.viewer, false));
+			this.container.setItem(headSlot, buildWomanShnyagaHead(this.viewer, candidates.get(this.selectedIndex)));
+			this.container.setItem(nextSlot, buildWomanShnyagaArrow(this.viewer, true));
 			if (this.viewer.containerMenu == this) {
 				this.slotsChanged(this.container);
 				this.broadcastChanges();
