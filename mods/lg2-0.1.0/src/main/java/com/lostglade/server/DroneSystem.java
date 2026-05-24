@@ -178,6 +178,8 @@ public final class DroneSystem {
 	private static final double UNCONTROLLED_SETTLED_VERTICAL_SPEED = 0.045D;
 	private static final long UNCONTROLLED_DRONE_RELEASE_GLIDE_TICKS = 60L;
 	private static final long CONTROLLED_DRONE_MISSING_ROOT_GRACE_TICKS = 20L * 20L;
+	private static final long DRONE_CONTROL_PRELOAD_TIMEOUT_TICKS = 20L * 8L;
+	private static final int DRONE_CONTROL_PRELOAD_READY_RADIUS_CHUNKS = 2;
 	private static final int DRONE_LOADING_CHUNK_TICKET_UNIQUE_FLAG = 32;
 	private static final int DRONE_SIMULATION_CHUNK_TICKET_UNIQUE_FLAG = 64;
 	private static final int OPERATOR_BODY_MIRROR_ENTITY_ID_START = -1_700_000_000;
@@ -245,6 +247,7 @@ public final class DroneSystem {
 	private static final Map<UUID, UncontrolledDroneState> UNCONTROLLED_DRONES = new HashMap<>();
 	private static final Map<DroneChunkTicketKey, Integer> ACTIVE_DRONE_CHUNK_TICKETS = new HashMap<>();
 	private static final Map<UUID, DroneScreenStreamLoadState> SCREEN_STREAM_DRONE_LOAD_STATES = new HashMap<>();
+	private static final Map<UUID, PendingDroneControlStart> PENDING_CONTROL_STARTS = new HashMap<>();
 	private static final Map<UUID, OperatorBodyMirror> OPERATOR_BODY_MIRRORS = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_ARM_ALLOWED_TICK = new HashMap<>();
@@ -342,6 +345,7 @@ public final class DroneSystem {
 			UNCONTROLLED_DRONES.clear();
 			ACTIVE_DRONE_CHUNK_TICKETS.clear();
 			SCREEN_STREAM_DRONE_LOAD_STATES.clear();
+			PENDING_CONTROL_STARTS.clear();
 			OPERATOR_BODY_MIRRORS.clear();
 			NEXT_DRONE_ARM_ALLOWED_TICK.clear();
 			POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK.clear();
@@ -473,8 +477,21 @@ public final class DroneSystem {
 		if (player == null || droneUuid == null || dimension == null || player.level() == null || player.level().getServer() == null) {
 			return false;
 		}
-		Entity root = findDroneRoot(player.level().getServer(), dimension, droneUuid);
-		return root != null && startControlling(player, root);
+		MinecraftServer server = player.level().getServer();
+		Entity root = findDroneRoot(server, dimension, droneUuid);
+		if (root == null || !root.isAlive()) {
+			return false;
+		}
+		UUID currentControllerId = resolveAuthoritativeDroneControllerId(root.getUUID());
+		if (currentControllerId != null && !Objects.equals(currentControllerId, player.getUUID())) {
+			player.sendSystemMessage(Component.literal("Этот дрон уже управляется другим игроком."));
+			return false;
+		}
+		if (isDroneControlStartAreaReady(root, DRONE_CONTROL_PRELOAD_READY_RADIUS_CHUNKS)) {
+			return startControlling(player, root);
+		}
+		queueDroneControlStartPreload(player, root);
+		return true;
 	}
 
 	private static boolean isActiveDroneController(UUID controllerId, UUID droneUuid) {
@@ -977,6 +994,7 @@ public final class DroneSystem {
 			return;
 		}
 		updateDroneChunkTickets(server);
+		tickPendingControlStarts(server);
 		tickControlledSessions(server);
 		tickUncontrolledDrones(server);
 		updateDroneChunkTickets(server);
@@ -1027,6 +1045,16 @@ public final class DroneSystem {
 				addDroneChunkTickets(server, desiredRefs, root);
 			} else {
 				addDroneChunkTickets(server, desiredRefs, session);
+			}
+		}
+
+		for (PendingDroneControlStart pending : PENDING_CONTROL_STARTS.values()) {
+			if (pending == null) {
+				continue;
+			}
+			Entity root = findDroneRoot(server, pending.droneDimension(), pending.droneUuid());
+			if (root != null && root.isAlive()) {
+				addDroneChunkTickets(server, desiredRefs, root);
 			}
 		}
 
@@ -1378,6 +1406,74 @@ public final class DroneSystem {
 			level = server.overworld();
 		}
 		return level == null ? Long.MAX_VALUE : level.getGameTime();
+	}
+
+	private static void queueDroneControlStartPreload(ServerPlayer player, Entity root) {
+		if (player == null || root == null || !(root.level() instanceof ServerLevel level)) {
+			return;
+		}
+		PENDING_CONTROL_STARTS.put(
+				player.getUUID(),
+				new PendingDroneControlStart(root.getUUID(), level.dimension(), level.getGameTime())
+		);
+		updateDroneChunkTickets(level.getServer());
+		player.sendSystemMessage(Component.literal("Подготавливаю связь с дроном..."));
+	}
+
+	private static void tickPendingControlStarts(MinecraftServer server) {
+		if (server == null || PENDING_CONTROL_STARTS.isEmpty()) {
+			return;
+		}
+		for (Map.Entry<UUID, PendingDroneControlStart> entry : new ArrayList<>(PENDING_CONTROL_STARTS.entrySet())) {
+			UUID playerUuid = entry.getKey();
+			PendingDroneControlStart pending = entry.getValue();
+			ServerPlayer player = playerUuid == null ? null : server.getPlayerList().getPlayer(playerUuid);
+			if (player == null || pending == null || pending.droneDimension() == null || pending.droneUuid() == null) {
+				PENDING_CONTROL_STARTS.remove(playerUuid);
+				continue;
+			}
+			if (!player.isAlive() || player.isSpectator()) {
+				PENDING_CONTROL_STARTS.remove(playerUuid);
+				continue;
+			}
+			Entity root = findDroneRoot(server, pending.droneDimension(), pending.droneUuid());
+			if (root == null || !root.isAlive()) {
+				PENDING_CONTROL_STARTS.remove(playerUuid);
+				player.sendSystemMessage(Component.literal("Дрон недоступен."));
+				continue;
+			}
+			UUID currentControllerId = resolveAuthoritativeDroneControllerId(root.getUUID());
+			if (currentControllerId != null && !Objects.equals(currentControllerId, player.getUUID())) {
+				PENDING_CONTROL_STARTS.remove(playerUuid);
+				player.sendSystemMessage(Component.literal("Этот дрон уже управляется другим игроком."));
+				continue;
+			}
+			long now = root.level().getGameTime();
+			boolean ready = isDroneControlStartAreaReady(root, DRONE_CONTROL_PRELOAD_READY_RADIUS_CHUNKS);
+			boolean timedOut = now - pending.startedAtTick() >= DRONE_CONTROL_PRELOAD_TIMEOUT_TICKS;
+			if (!ready && !(timedOut && isDroneControlStartAreaReady(root, 0))) {
+				continue;
+			}
+			PENDING_CONTROL_STARTS.remove(playerUuid);
+			startControlling(player, root);
+		}
+	}
+
+	private static boolean isDroneControlStartAreaReady(Entity root, int radiusChunks) {
+		if (root == null || !(root.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		Vec3 cameraPos = resolveDroneCameraPosition(root);
+		ChunkPos center = chunkPosAt(cameraPos.x, cameraPos.z);
+		int radius = Math.max(0, radiusChunks);
+		for (int dx = -radius; dx <= radius; dx++) {
+			for (int dz = -radius; dz <= radius; dz++) {
+				if (level.getChunkSource().getChunkNow(center.x + dx, center.z + dz) == null) {
+					return false;
+				}
+			}
+		}
+		return level.getChunkSource().getChunkNow(root.chunkPosition().x, root.chunkPosition().z) != null;
 	}
 
 	private static void tickUncontrolledDrones(MinecraftServer server) {
@@ -3043,6 +3139,7 @@ public final class DroneSystem {
 		if (player == null || root == null || !root.isAlive() || !(root.level() instanceof ServerLevel droneLevel)) {
 			return false;
 		}
+		PENDING_CONTROL_STARTS.remove(player.getUUID());
 		POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.remove(player.getUUID());
 		UUID currentControllerId = resolveAuthoritativeDroneControllerId(root.getUUID());
 		if (currentControllerId != null && !Objects.equals(currentControllerId, player.getUUID())) {
@@ -4304,6 +4401,13 @@ public final class DroneSystem {
 	}
 
 	private record DroneChunkTicketKey(net.minecraft.resources.ResourceKey<Level> dimension, long chunkLong, int radius, boolean simulation) {
+	}
+
+	private record PendingDroneControlStart(
+			UUID droneUuid,
+			net.minecraft.resources.ResourceKey<Level> droneDimension,
+			long startedAtTick
+	) {
 	}
 
 	private record DroneScreenStreamLoadState(

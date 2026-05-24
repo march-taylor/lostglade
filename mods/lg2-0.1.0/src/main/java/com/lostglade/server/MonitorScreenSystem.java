@@ -13369,7 +13369,6 @@ public final class MonitorScreenSystem {
 		ServerLevel mapStorageLevel = photoMapLevel(level.getServer(), level);
 		List<MapPacketUpdate> changedUpdates = new ArrayList<>();
 		byte[][] renderedTiles = preparedTiles.renderedTiles();
-		TileFramePatch[] patches = resolvePreparedRenderedTilePatches(mediaState, preparedTiles);
 		boolean changed = false;
 		for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
 			ItemFrame frame = entry.getKey();
@@ -13391,22 +13390,12 @@ public final class MonitorScreenSystem {
 			if (tileFrame == null || tileFrame.length < MAP_SIZE * MAP_SIZE) {
 				continue;
 			}
-			TileFramePatch patch = patches != null && tileIndex < patches.length ? patches[tileIndex] : null;
-			if (patch == null) {
+			MapPacketUpdate update = buildMapUpdate(mapId, mapData.scale, mapData.locked, mapData.colors, tileFrame);
+			if (update == null) {
 				continue;
 			}
 			changed = true;
 			LAST_RENDERED_MAP_FRAMES.put(mapId.id(), tileFrame);
-			MapPacketUpdate update = new MapPacketUpdate(
-					mapId,
-					mapData.scale,
-					mapData.locked,
-					patch.startX(),
-					patch.startY(),
-					patch.width(),
-					patch.height(),
-					patch.frame()
-			);
 			applyPatchToMap(mapData, update);
 			changedUpdates.add(update);
 		}
