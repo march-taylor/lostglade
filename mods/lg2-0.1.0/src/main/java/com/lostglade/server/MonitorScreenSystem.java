@@ -1383,6 +1383,7 @@ public final class MonitorScreenSystem {
 		boolean galleryBackgroundPickerOpened = false;
 		boolean restartPlayback = false;
 		boolean youtubeDownloadRequested = false;
+		LiveCameraReference droneControlRequested = null;
 		boolean returnToGalleryAfterDelete = false;
 		String releasedRelaySessionId = null;
 		GalleryCacheCandidate deletedGalleryCacheCandidate = null;
@@ -1742,6 +1743,15 @@ public final class MonitorScreenSystem {
 				}
 				rerenderCurrent = true;
 			} else if (playerUiVisible
+					&& mediaState.mode == ScreenViewMode.SBER_DRONES
+					&& mediaCenterPlayPauseRect(layout, mediaChromeMode(mediaState)).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					if (currentDroneControlActionVisibleLocked(mediaState)) {
+						droneControlRequested = liveCameraGalleryReference(mediaState.sourceUrl, component.runtimeKey().dimension());
+					}
+				}
+				rerenderCurrent = true;
+			} else if (playerUiVisible
 					&& canTogglePlaybackLocked(mediaState)
 					&& (mediaCenterPlayPauseRect(layout, mediaChromeMode(mediaState)).contains(touchPoint.x(), touchPoint.y())
 					|| mediaPlayPauseRect(layout, mediaChromeMode(mediaState)).contains(touchPoint.x(), touchPoint.y()))) {
@@ -1927,7 +1937,7 @@ public final class MonitorScreenSystem {
 					&& !controlsWereHidden
 					&& !mediaState.loading) {
 				synchronized (mediaState) {
-					mediaState.overlayMode = MediaOverlayMode.VIEW;
+					setMediaOverlayModeLocked(mediaState, MediaOverlayMode.VIEW);
 					mediaState.version++;
 				}
 				rerenderCurrent = true;
@@ -2131,6 +2141,13 @@ public final class MonitorScreenSystem {
 		if (server != null && galleryYoutubeUrl != null) {
 			startGalleryYoutubePlayback(server, component.runtimeKey(), player.getUUID(), galleryYoutubeTitle, galleryYoutubeUrl, galleryYoutubeIndex);
 		}
+		if (server != null && droneControlRequested != null && droneControlRequested.sourceType() == LiveCameraSourceType.DRONE) {
+			DroneSystem.tryStartControllingDrone(
+					player,
+					droneControlRequested.sourceUuid(),
+					droneControlRequested.dimension() != null ? droneControlRequested.dimension() : component.runtimeKey().dimension()
+			);
+		}
 		return InteractionResult.SUCCESS;
 	}
 
@@ -2322,6 +2339,25 @@ public final class MonitorScreenSystem {
 			state.pendingLiveCameraApplyUrl = null;
 			state.liveCameraApplyScheduled = false;
 		}
+	}
+
+	private static void setMediaOverlayModeLocked(MediaRuntimeState state, MediaOverlayMode mode) {
+		if (state == null || mode == null) {
+			return;
+		}
+		MediaOverlayMode previousMode = state.overlayMode;
+		state.overlayMode = mode;
+		if (previousMode != mode && mode == MediaOverlayMode.VIEW && state.streamKind == PlaybackStreamKind.LIVE_CAMERA) {
+			invalidateLiveCameraDisplayedTilesLocked(state);
+		}
+	}
+
+	private static void invalidateLiveCameraDisplayedTilesLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		state.liveCameraDisplayedTiles = null;
+		state.liveCameraDisplayedGeneration++;
 	}
 
 	private static void scheduleLiveCameraApply(MinecraftServer server, ScreenRuntimeKey key) {
@@ -8777,7 +8813,7 @@ public final class MonitorScreenSystem {
 
 	private static MediaVisualSnapshot captureMediaSnapshot(MediaRuntimeState state) {
 		if (state == null) {
-			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, null, false, true, false, false, false, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, MediaScaleMode.FIT, PlayerBackgroundMode.BLACK, false, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, false, 0, -1, null);
+			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, null, false, true, false, false, false, false, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, MediaScaleMode.FIT, PlayerBackgroundMode.BLACK, false, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, false, 0, -1, null);
 		}
 		boolean youtubeMode = state.mode == ScreenViewMode.YOUTUBE;
 		boolean youtubeMusicMode = state.mode == ScreenViewMode.YOUTUBE_MUSIC;
@@ -8806,6 +8842,7 @@ public final class MonitorScreenSystem {
 		boolean playbackControlsVisible = mediaControlUiVisibleLocked(state);
 		boolean timelineVisible = (streamPlayback && !liveCameraPlayback) || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.frameCount() > 1);
 		boolean centerPlayPauseVisible = (streamPlayback && !liveCameraPlayback) || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.animated());
+		boolean droneControlVisible = currentDroneControlActionVisibleLocked(state);
 		boolean timelineSeekable = streamPlayback
 				? state.durationMs > 0L && !state.liveStream
 				: !galleryBrowser && state.loadedMedia != null && state.loadedMedia.frameCount() > 1;
@@ -8867,6 +8904,7 @@ public final class MonitorScreenSystem {
 				state.waitingForLink,
 				timelineVisible,
 				centerPlayPauseVisible,
+				droneControlVisible,
 				timelineSeekable,
 				timelineIndex,
 				timelineCount,
@@ -9829,6 +9867,38 @@ public final class MonitorScreenSystem {
 			case DOWNLOAD -> drawDownloadGlyph(graphics, iconRect, iconColor, strokeWidth);
 			case CHECK -> drawCheckGlyph(graphics, iconRect, iconColor, strokeWidth);
 			case WALLPAPER -> drawWallpaperGlyph(graphics, iconRect, iconColor, strokeWidth);
+		}
+	}
+
+	private static void drawGamepadGlyph(Graphics2D graphics, UiRect rect, Color color, float strokeWidth) {
+		if (graphics == null || rect == null || rect.width() <= 0 || rect.height() <= 0) {
+			return;
+		}
+		Graphics2D g = (Graphics2D) graphics.create();
+		try {
+			g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+			g.setColor(color);
+			g.setStroke(new BasicStroke(Math.max(1.3F, strokeWidth), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+			int w = rect.width();
+			int h = rect.height();
+			int bodyX = rect.x() + Math.round(w * 0.12F);
+			int bodyY = rect.y() + Math.round(h * 0.30F);
+			int bodyW = Math.round(w * 0.76F);
+			int bodyH = Math.round(h * 0.42F);
+			int arc = Math.max(4, Math.min(bodyW, bodyH) / 2);
+			g.drawRoundRect(bodyX, bodyY, bodyW, bodyH, arc, arc);
+			int cx = bodyX + Math.round(bodyW * 0.28F);
+			int cy = bodyY + bodyH / 2;
+			int arm = Math.max(2, Math.round(Math.min(w, h) * 0.10F));
+			g.drawLine(cx - arm, cy, cx + arm, cy);
+			g.drawLine(cx, cy - arm, cx, cy + arm);
+			int dotR = Math.max(2, Math.round(Math.min(w, h) * 0.08F));
+			int dot1X = bodyX + Math.round(bodyW * 0.66F);
+			int dot2X = bodyX + Math.round(bodyW * 0.80F);
+			g.fillOval(dot1X - dotR / 2, cy - dotR / 2, dotR, dotR);
+			g.fillOval(dot2X - dotR / 2, cy - dotR / 2, dotR, dotR);
+		} finally {
+			g.dispose();
 		}
 	}
 
@@ -11270,10 +11340,45 @@ public final class MonitorScreenSystem {
 		}
 		ScreenViewMode chromeMode = mediaChromeMode(state);
 		drawMediaTransportButton(graphics, mediaCenterBackRect(layout, chromeMode), TransportButtonKind.BACK, false, state.paused(), chromeMode, layout);
-		if (state.centerPlayPauseVisible()) {
+		if (state.droneControlVisible()) {
+			drawDroneControlButton(graphics, mediaCenterPlayPauseRect(layout, chromeMode), layout);
+		} else if (state.centerPlayPauseVisible()) {
 			drawMediaTransportButton(graphics, mediaCenterPlayPauseRect(layout, chromeMode), TransportButtonKind.PLAY_PAUSE, state.loading(), state.paused(), chromeMode, layout);
 		}
 		drawMediaTransportButton(graphics, mediaCenterForwardRect(layout, chromeMode), TransportButtonKind.FORWARD, false, state.paused(), chromeMode, layout);
+	}
+
+	private static void drawDroneControlButton(Graphics2D graphics, UiRect rect, UiLayout layout) {
+		if (graphics == null || rect == null || layout == null || rect.width() <= 0 || rect.height() <= 0) {
+			return;
+		}
+		fillRoundedRect(graphics, rect, rect.height(), new Color(248, 246, 246, 244));
+		strokeRoundedRect(graphics, rect, rect.height(), 1.0F, new Color(20, 18, 20, 42));
+		int padding = clampInt(rect.height() / 4, 4, 12);
+		int iconSize = clampInt((int) Math.round(rect.height() * 0.46D), 11, Math.max(11, rect.height() - padding * 2));
+		UiRect iconRect = new UiRect(
+				rect.x() + padding + Math.max(0, rect.height() - iconSize) / 3,
+				rect.y() + (rect.height() - iconSize) / 2,
+				iconSize,
+				iconSize
+		);
+		drawGamepadGlyph(graphics, iconRect, new Color(20, 18, 20, 244), Math.max(1.4F, mediaChromeStrokeWidth(rect) * 0.75F));
+		int labelGap = clampInt(layout.unit() / 2, 4, 9);
+		UiRect labelRect = new UiRect(
+				iconRect.right() + labelGap,
+				rect.y(),
+				Math.max(12, rect.right() - iconRect.right() - padding - labelGap),
+				rect.height()
+		);
+		drawCenteredTextFitted(
+				graphics,
+				"Управлять",
+				labelRect,
+				new Color(20, 18, 20, 246),
+				Font.BOLD,
+				clampInt(layout.unit() + 2, 10, 18),
+				8
+		);
 	}
 
 	private static void drawMediaTransportButton(Graphics2D graphics, UiRect rect, TransportButtonKind kind, boolean loading, boolean paused, ScreenViewMode mode, UiLayout layout) {
@@ -12536,7 +12641,13 @@ public final class MonitorScreenSystem {
 		} else {
 			height = clampInt(layout.unit() * 6, 46, 92);
 		}
-		int width = height;
+		int width = mode == ScreenViewMode.SBER_DRONES
+				? clampInt(
+						(int) Math.round(canvas.width() * 0.34D),
+						height * 3,
+						Math.max(height * 3, canvas.width() - layout.unit() * 4)
+				)
+				: height;
 		return new UiRect(
 				canvas.x() + (canvas.width() - width) / 2,
 				canvas.y() + (canvas.height() - height) / 2,
@@ -15490,6 +15601,22 @@ public final class MonitorScreenSystem {
 		return MediaActionGlyph.DOWNLOAD;
 	}
 
+	private static boolean currentDroneControlActionVisibleLocked(MediaRuntimeState state) {
+		if (state == null
+				|| state.mode != ScreenViewMode.SBER_DRONES
+				|| state.gallerySurfaceMode != GallerySurfaceMode.PLAYER
+				|| state.streamKind != PlaybackStreamKind.LIVE_CAMERA
+				|| state.sourceUrl == null
+				|| state.sourceUrl.isBlank()) {
+			return false;
+		}
+		LiveCameraReference cameraRef = liveCameraGalleryReference(state.sourceUrl, null);
+		return cameraRef != null
+				&& cameraRef.sourceType() == LiveCameraSourceType.DRONE
+				&& cameraRef.sourceUuid() != null
+				&& !DroneSystem.hasActiveController(cameraRef.sourceUuid());
+	}
+
 	private static MediaActionVisualState resolvedActionVisualState(MediaRuntimeState state) {
 		if (state == null) {
 			return MediaActionVisualState.IDLE;
@@ -15867,6 +15994,7 @@ public final class MonitorScreenSystem {
 			boolean waitingForLink,
 			boolean timelineVisible,
 			boolean centerPlayPauseVisible,
+			boolean droneControlVisible,
 			boolean timelineSeekable,
 			int frameIndex,
 			int frameCount,

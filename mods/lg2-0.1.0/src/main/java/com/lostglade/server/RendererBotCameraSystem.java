@@ -562,6 +562,22 @@ public final class RendererBotCameraSystem {
 		return stream != null && !stream.isStale();
 	}
 
+	public static boolean hasHealthyLiveStreamFollowingEntity(UUID entityUuid) {
+		if (entityUuid == null) {
+			return false;
+		}
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null || stream.isStale()) {
+				continue;
+			}
+			LiveStreamSpec spec = stream.spec();
+			if (spec != null && entityUuid.equals(spec.followEntityUuid())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	public static VideoRecordingHandle startVideoRecording(ServerPlayer requester, int mapsWide, int mapsHigh, int targetFps, int maxDurationSeconds) {
 		MinecraftServer server = requester == null || requester.level() == null ? null : requester.level().getServer();
 		if (server == null) {
