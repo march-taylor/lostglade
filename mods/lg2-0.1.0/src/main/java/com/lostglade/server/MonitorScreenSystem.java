@@ -1026,6 +1026,53 @@ public final class MonitorScreenSystem {
 		triggerLiveCameraTargets(server, targets);
 	}
 
+	public static List<DroneSystem.DroneScreenStreamReference> collectActiveDroneScreenStreams(MinecraftServer server) {
+		if (server == null || MEDIA_STATES.isEmpty()) {
+			return List.of();
+		}
+		List<DroneSystem.DroneScreenStreamReference> streams = new ArrayList<>();
+		Set<UUID> emittedDrones = new HashSet<>();
+		for (Map.Entry<ScreenRuntimeKey, MediaRuntimeState> entry : MEDIA_STATES.entrySet()) {
+			ScreenRuntimeKey runtimeKey = entry.getKey();
+			MediaRuntimeState state = entry.getValue();
+			if (runtimeKey == null || state == null) {
+				continue;
+			}
+			ServerLevel screenLevel = server.getLevel(runtimeKey.dimension());
+			if (screenLevel == null) {
+				continue;
+			}
+			ScreenComponent component = resolveScreenComponent(server, runtimeKey);
+			if (component == null
+					|| !component.powered()
+					|| component.viewMode() != ScreenViewMode.SBER_DRONES
+					|| !hasNearbyMediaViewer(screenLevel, component)) {
+				continue;
+			}
+			String sourceUrl;
+			synchronized (state) {
+				if (state.mode != ScreenViewMode.SBER_DRONES
+						|| state.streamKind != PlaybackStreamKind.LIVE_CAMERA
+						|| state.sourceUrl == null
+						|| state.sourceUrl.isBlank()) {
+					continue;
+				}
+				sourceUrl = state.sourceUrl;
+			}
+			LiveCameraReference cameraRef = liveCameraGalleryReference(sourceUrl, runtimeKey.dimension());
+			if (cameraRef == null
+					|| cameraRef.sourceType() != LiveCameraSourceType.DRONE
+					|| cameraRef.sourceUuid() == null
+					|| !emittedDrones.add(cameraRef.sourceUuid())) {
+				continue;
+			}
+			ResourceKey<Level> dimension = cameraRef.dimension() == null ? runtimeKey.dimension() : cameraRef.dimension();
+			BlockPos pos = cameraRef.pos() == null ? BlockPos.ZERO : cameraRef.pos().immutable();
+			streams.add(new DroneSystem.DroneScreenStreamReference(cameraRef.sourceUuid(), dimension, pos));
+		}
+		return streams;
+	}
+
 	private static void triggerLiveCameraTargets(MinecraftServer server, Set<ScreenRuntimeKey> targets) {
 		if (server == null || targets == null || targets.isEmpty()) {
 			return;
