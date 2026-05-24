@@ -54,6 +54,7 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
+import net.minecraft.core.particles.BlockParticleOption;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -156,6 +157,7 @@ import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LayeredCauldronBlock;
 import net.minecraft.world.level.block.DoublePlantBlock;
@@ -172,6 +174,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.scores.PlayerTeam;
 import net.minecraft.world.scores.Scoreboard;
 import net.minecraft.world.scores.Team;
@@ -503,6 +506,7 @@ public final class ServerRaceSystem {
 	private static final double MARK_AXE_DEFAULT_COOLDOWN_SECONDS = 600.0D;
 	private static final double MARK_AXE_FLIGHT_SPEED_BLOCKS = 1.25D;
 	private static final double MARK_AXE_FALL_SPEED_BLOCKS = 0.75D;
+	private static final int MARK_AXE_FALL_TRANSITION_TICKS = 8;
 	private static final double MARK_AXE_HEAD_FIRST_SPIN_RADIANS = Math.PI;
 	private static final double MARK_AXE_FALL_ROLL_MIN_RADIANS = Math.toRadians(180.0D);
 	private static final double MARK_AXE_FALL_ROLL_MAX_RADIANS = Math.toRadians(270.0D);
@@ -515,6 +519,7 @@ public final class ServerRaceSystem {
 	private static final float MARK_AXE_DISPLAY_SCALE = 1.0F;
 	private static final int MARK_AXE_DISPLAY_INTERPOLATION_TICKS = 2;
 	private static final int MARK_AXE_BLOOD_COLOR = 0xB40A18;
+	private static final BlockParticleOption MARK_AXE_BLOOD_DRIP_PARTICLE = new BlockParticleOption(ParticleTypes.FALLING_DUST, Blocks.REDSTONE_BLOCK.defaultBlockState());
 	private static final String MARK_AXE_DISPLAY_TAG = "lg2.mark_throwing_axe";
 	private static final String MARK_AXE_TRIGGER_TAG = "lg2.mark_throwing_axe_trigger";
 	private static final long WOMAN_SHNYAGA_WHITELIST_CHECK_INTERVAL_TICKS = 100L;
@@ -2982,6 +2987,12 @@ public final class ServerRaceSystem {
 		private double baseSpinRadians;
 		private double spinRadians;
 		private double rollRadians;
+		private Vec3 fallingStartVelocity;
+		private Vec3 fallingStartDirection;
+		private double fallingStartRollRadians;
+		private double fallingTargetRollRadians;
+		private double fallingStartY;
+		private double fallingTargetY;
 		private int fallingTicks;
 		private boolean cleaned;
 
@@ -5636,6 +5647,7 @@ public final class ServerRaceSystem {
 			return 0;
 		}
 		MARK_THROWN_AXES.add(session);
+		playMarkAxeThrowSound(level, start);
 		startOnlineCooldown(MARK_ATTACK_COOLDOWNS, player.getUUID(), cooldownTicks);
 		return 1;
 	}
@@ -5691,6 +5703,13 @@ public final class ServerRaceSystem {
 		if (display == null || session == null || session.position == null) {
 			return;
 		}
+		if (session.phase == MarkAxePhase.STUCK_ENTITY && display.level() instanceof ServerLevel level) {
+			Entity entity = findEntity(level.getServer(), session.targetId);
+			if (entity instanceof LivingEntity target && target.isAlive() && target.level() == level) {
+				updateMarkAxeAttachedEntityDisplay(display, session, target);
+				return;
+			}
+		}
 		Vec3 direction = visualDirection == null || visualDirection.lengthSqr() <= 1.0E-6D ? session.direction : visualDirection.normalize();
 		float yaw = yawFromDirection(direction);
 		float pitch = pitchFromDirection(direction);
@@ -5699,9 +5718,9 @@ public final class ServerRaceSystem {
 		display.setXRot(pitch);
 		display.yRotO = yaw;
 		display.xRotO = pitch;
-		boolean snapStuck = session.phase == MarkAxePhase.STUCK_BLOCK || session.stuckSnapTicks > 0;
-		display.setTransformationInterpolationDuration(snapStuck ? 0 : MARK_AXE_DISPLAY_INTERPOLATION_TICKS);
-		display.setPosRotInterpolationDuration(snapStuck ? 0 : MARK_AXE_DISPLAY_INTERPOLATION_TICKS);
+		boolean stuck = session.phase == MarkAxePhase.STUCK_BLOCK || session.phase == MarkAxePhase.STUCK_ENTITY || session.stuckSnapTicks > 0;
+		display.setTransformationInterpolationDuration(stuck ? 0 : MARK_AXE_DISPLAY_INTERPOLATION_TICKS);
+		display.setPosRotInterpolationDuration(stuck ? 0 : MARK_AXE_DISPLAY_INTERPOLATION_TICKS);
 		display.setTransformation(new Transformation(
 				new Vector3f(0.0F, 0.0F, 0.0F),
 				buildMarkAxeDisplayRotation(session),
@@ -5728,6 +5747,52 @@ public final class ServerRaceSystem {
 				.rotateY((float) baseSpin)
 				.rotateX((float) (Math.PI * 0.5D))
 				.rotateZ((float) roll);
+	}
+
+	private static void updateMarkAxeAttachedEntityDisplay(Display.ItemDisplay display, MarkThrownAxeSession session, LivingEntity target) {
+		if (display == null || session == null || target == null) {
+			return;
+		}
+		// Keep the axe bound by a saved local body offset instead of riding the target.
+		// Passenger rotation fights the manual display transform and jitters on fast turns.
+		detachMarkAxeDisplayPassenger(display);
+
+		float targetYaw = getMarkAxeEntityAttachmentYaw(target);
+		Vec3 localOffset = session.targetOffset == null
+				? new Vec3(0.0D, Math.max(0.4D, target.getBbHeight() * 0.55D), 0.0D)
+				: session.targetOffset;
+		Vec3 desiredWorldPosition = getMarkAxeEntityAttachmentAnchor(target).add(rotateMarkAxeLocalToWorld(localOffset, targetYaw));
+		session.position = desiredWorldPosition;
+
+		Vec3 localDirection = session.targetLocalDirection == null ? session.direction : session.targetLocalDirection;
+		if (localDirection == null || localDirection.lengthSqr() <= 1.0E-6D) {
+			localDirection = new Vec3(0.0D, 0.0D, 1.0D);
+		}
+		localDirection = localDirection.normalize();
+		Vec3 worldDirection = rotateMarkAxeLocalToWorld(localDirection, targetYaw);
+		if (worldDirection.lengthSqr() > 1.0E-6D) {
+			session.direction = worldDirection.normalize();
+		}
+
+		Vec3 visualDirection = session.direction == null || session.direction.lengthSqr() <= 1.0E-6D
+				? worldDirection
+				: session.direction;
+		float yaw = yawFromDirection(visualDirection);
+		float pitch = pitchFromDirection(visualDirection);
+		display.setPos(desiredWorldPosition.x, desiredWorldPosition.y, desiredWorldPosition.z);
+		display.setYRot(yaw);
+		display.setXRot(pitch);
+		display.setTransformationInterpolationDelay(0);
+		display.setTransformationInterpolationDuration(0);
+		display.setPosRotInterpolationDuration(MARK_AXE_DISPLAY_INTERPOLATION_TICKS);
+		display.setTransformation(new Transformation(
+				new Vector3f(0.0F, 0.0F, 0.0F),
+				buildMarkAxeDisplayRotation(session),
+				new Vector3f(MARK_AXE_DISPLAY_SCALE, MARK_AXE_DISPLAY_SCALE, MARK_AXE_DISPLAY_SCALE),
+				new Quaternionf()
+		));
+		clearMarkAxeDisplayHitbox(display);
+		display.hurtMarked = true;
 	}
 
 	private static void tickMarkPotroshitel(MinecraftServer server) {
@@ -5793,11 +5858,11 @@ public final class ServerRaceSystem {
 		Vec3 velocity = session.velocity;
 		double stepDistance = velocity.length();
 		if (stepDistance <= 1.0E-6D) {
-			switchMarkAxeToFalling(session);
+			switchMarkAxeToFalling(level, session);
 			return true;
 		}
 		if (session.remainingHorizontalRange <= 0.0D) {
-			switchMarkAxeToFalling(session);
+			switchMarkAxeToFalling(level, session);
 			return true;
 		}
 
@@ -5815,7 +5880,7 @@ public final class ServerRaceSystem {
 		session.spinRadians += 1.05D;
 		updateMarkAxeDisplay(display, session, session.direction);
 		if (session.remainingHorizontalRange <= 1.0E-4D) {
-			switchMarkAxeToFalling(session);
+			switchMarkAxeToFalling(level, session);
 			updateMarkAxeDisplay(display, session, session.direction);
 		}
 		return true;
@@ -5823,8 +5888,24 @@ public final class ServerRaceSystem {
 
 	private static boolean tickMarkAxeFalling(MinecraftServer server, ServerLevel level, MarkThrownAxeSession session, Display.ItemDisplay display) {
 		Vec3 start = session.position;
-		Vec3 velocity = new Vec3(0.0D, -MARK_AXE_FALL_SPEED_BLOCKS, 0.0D);
+		double velocityProgress = smoothMarkAxeFallTransitionProgress(session.fallingTicks + 1);
+		Vec3 startVelocity = session.fallingStartVelocity == null || session.fallingStartVelocity.lengthSqr() <= 1.0E-6D
+				? new Vec3(0.0D, -MARK_AXE_FALL_SPEED_BLOCKS, 0.0D)
+				: session.fallingStartVelocity;
+		Vec3 velocity = lerpMarkAxeVec(startVelocity, new Vec3(0.0D, -MARK_AXE_FALL_SPEED_BLOCKS, 0.0D), velocityProgress);
+		if (velocity.lengthSqr() <= 1.0E-6D) {
+			velocity = new Vec3(0.0D, -MARK_AXE_FALL_SPEED_BLOCKS, 0.0D);
+		}
 		Vec3 next = start.add(velocity);
+		double angleProgress = computeMarkAxeFallingDistanceProgress(session, next.y);
+		Vec3 startDirection = session.fallingStartDirection == null || session.fallingStartDirection.lengthSqr() <= 1.0E-6D
+				? new Vec3(0.0D, -1.0D, 0.0D)
+				: session.fallingStartDirection.normalize();
+		Vec3 visualDirection = lerpMarkAxeVec(startDirection, new Vec3(0.0D, -1.0D, 0.0D), angleProgress);
+		session.direction = visualDirection.lengthSqr() <= 1.0E-6D ? new Vec3(0.0D, -1.0D, 0.0D) : visualDirection.normalize();
+		session.baseSpinRadians = MARK_AXE_HEAD_FIRST_SPIN_RADIANS;
+		session.spinRadians = 0.0D;
+		session.rollRadians = lerpMarkAxeRadians(session.fallingStartRollRadians, session.fallingTargetRollRadians, angleProgress);
 		MarkAxeImpact impact = findMarkAxeImpact(level, session, start, next, display);
 		if (impact != null) {
 			handleMarkAxeImpact(server, level, session, display, impact);
@@ -5834,9 +5915,6 @@ public final class ServerRaceSystem {
 		session.position = next;
 		session.velocity = velocity;
 		session.fallingTicks++;
-		session.direction = new Vec3(0.0D, -1.0D, 0.0D);
-		session.baseSpinRadians = MARK_AXE_HEAD_FIRST_SPIN_RADIANS;
-		session.spinRadians = 0.0D;
 		updateMarkAxeDisplay(display, session, session.direction);
 
 		if (session.position.y < level.getMinY() - 8.0D) {
@@ -5845,24 +5923,85 @@ public final class ServerRaceSystem {
 		return true;
 	}
 
-	private static void switchMarkAxeToFalling(MarkThrownAxeSession session) {
+	private static void switchMarkAxeToFalling(ServerLevel level, MarkThrownAxeSession session) {
 		if (session == null) {
 			return;
 		}
+		Vec3 startVelocity = session.velocity == null || session.velocity.lengthSqr() <= 1.0E-6D
+				? new Vec3(0.0D, -MARK_AXE_FALL_SPEED_BLOCKS, 0.0D)
+				: session.velocity;
+		Vec3 startDirection = session.direction == null || session.direction.lengthSqr() <= 1.0E-6D
+				? startVelocity.normalize()
+				: session.direction.normalize();
+		double startRoll = session.spinRadians;
 		session.phase = MarkAxePhase.FALLING;
-		session.velocity = new Vec3(0.0D, -MARK_AXE_FALL_SPEED_BLOCKS, 0.0D);
+		session.velocity = startVelocity;
 		session.baseSpinRadians = MARK_AXE_HEAD_FIRST_SPIN_RADIANS;
-		session.rollRadians = randomMarkAxeFallingRollRadians();
+		session.fallingStartVelocity = startVelocity;
+		session.fallingStartDirection = startDirection;
+		session.fallingStartRollRadians = startRoll;
+		session.fallingTargetRollRadians = randomMarkAxeRollInRangeNear(startRoll);
+		session.fallingStartY = session.position == null ? 0.0D : session.position.y;
+		session.fallingTargetY = computeMarkAxeFallingTargetY(level, session);
+		session.rollRadians = startRoll;
 		session.fallingTicks = 0;
-		session.direction = new Vec3(0.0D, -1.0D, 0.0D);
+		session.direction = startDirection;
 		session.spinRadians = 0.0D;
 	}
 
-	private static double randomMarkAxeFallingRollRadians() {
-		return java.util.concurrent.ThreadLocalRandom.current().nextDouble(
+	private static double randomMarkAxeRollInRangeNear(double currentRadians) {
+		double randomRoll = java.util.concurrent.ThreadLocalRandom.current().nextDouble(
 				MARK_AXE_FALL_ROLL_MIN_RADIANS,
 				MARK_AXE_FALL_ROLL_MAX_RADIANS
 		);
+		return nearestMarkAxeEquivalentAngle(currentRadians, randomRoll);
+	}
+
+	private static double computeMarkAxeFallingTargetY(ServerLevel level, MarkThrownAxeSession session) {
+		if (level == null || session == null || session.position == null) {
+			return session == null ? 0.0D : session.fallingStartY - 1.0D;
+		}
+		Vec3 start = session.position;
+		Vec3 end = new Vec3(start.x, level.getMinY() - 8.0D, start.z);
+		BlockHitResult hit = level.clip(new ClipContext(start, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, CollisionContext.empty()));
+		if (hit.getType() != HitResult.Type.MISS) {
+			return hit.getLocation().y;
+		}
+		return end.y;
+	}
+
+	private static double computeMarkAxeFallingDistanceProgress(MarkThrownAxeSession session, double currentY) {
+		if (session == null) {
+			return 1.0D;
+		}
+		double total = session.fallingStartY - session.fallingTargetY;
+		if (total <= 1.0E-4D) {
+			return smoothMarkAxeFallTransitionProgress(session.fallingTicks + 1);
+		}
+		double travelled = session.fallingStartY - currentY;
+		double linear = Math.max(0.0D, Math.min(1.0D, travelled / total));
+		return linear * linear * (3.0D - 2.0D * linear);
+	}
+
+	private static Vec3 lerpMarkAxeVec(Vec3 from, Vec3 to, double progress) {
+		double clamped = Math.max(0.0D, Math.min(1.0D, progress));
+		return from.scale(1.0D - clamped).add(to.scale(clamped));
+	}
+
+	private static double lerpMarkAxeRadians(double from, double to, double progress) {
+		double clamped = Math.max(0.0D, Math.min(1.0D, progress));
+		double target = nearestMarkAxeEquivalentAngle(from, to);
+		return from + (target - from) * clamped;
+	}
+
+	private static double nearestMarkAxeEquivalentAngle(double currentRadians, double targetRadians) {
+		double fullTurn = Math.PI * 2.0D;
+		return targetRadians + Math.rint((currentRadians - targetRadians) / fullTurn) * fullTurn;
+	}
+
+	private static double smoothMarkAxeFallTransitionProgress(int fallingTicks) {
+		double progress = Math.max(0.0D, Math.min(1.0D, fallingTicks / (double) MARK_AXE_FALL_TRANSITION_TICKS));
+		return progress * progress * (3.0D - 2.0D * progress);
 	}
 
 	private static MarkAxeImpact findMarkAxeImpact(ServerLevel level, MarkThrownAxeSession session, Vec3 start, Vec3 end, Display.ItemDisplay display) {
@@ -5870,7 +6009,8 @@ public final class ServerRaceSystem {
 			return null;
 		}
 		ServerPlayer owner = level.getServer().getPlayerList().getPlayer(session.ownerId);
-		BlockHitResult blockHit = level.clip(new ClipContext(start, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, owner));
+		CollisionContext collisionContext = owner == null ? CollisionContext.empty() : CollisionContext.of(owner);
+		BlockHitResult blockHit = level.clip(new ClipContext(start, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, collisionContext));
 		Vec3 blockLocation = blockHit.getType() == HitResult.Type.MISS ? null : blockHit.getLocation();
 		Vec3 entityEnd = blockLocation == null ? end : blockLocation;
 		EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
@@ -5915,15 +6055,15 @@ public final class ServerRaceSystem {
 			stickMarkAxeInEntity(server, level, session, display, impact.location(), impact.target());
 			return;
 		}
-		stickMarkAxeInBlock(server, level, session, display, impact.location());
+		stickMarkAxeInBlock(server, level, session, display, impact.location(), impact.blockHit());
 	}
 
-	private static void stickMarkAxeInBlock(MinecraftServer server, ServerLevel level, MarkThrownAxeSession session, Display.ItemDisplay display, Vec3 impactLocation) {
+	private static void stickMarkAxeInBlock(MinecraftServer server, ServerLevel level, MarkThrownAxeSession session, Display.ItemDisplay display, Vec3 impactLocation, BlockHitResult blockHit) {
 		detachMarkAxeDisplayPassenger(display);
 		boolean wasFalling = session.phase == MarkAxePhase.FALLING;
 		Vec3 direction = wasFalling || session.velocity == null || session.velocity.lengthSqr() <= 1.0E-6D ? session.direction : session.velocity.normalize();
 		direction = direction == null || direction.lengthSqr() <= 1.0E-6D ? new Vec3(0.0D, -1.0D, 0.0D) : direction.normalize();
-		double impactRoll = wasFalling && Math.abs(direction.y) > 0.85D ? session.rollRadians : randomMarkAxeFallingRollRadians();
+		double impactRoll = wasFalling ? session.rollRadians : randomMarkAxeRollInRangeNear(session.spinRadians);
 		session.position = impactLocation.subtract(direction.scale(MARK_AXE_BLOCK_STICK_INSET_BLOCKS));
 		session.direction = direction;
 		session.velocity = Vec3.ZERO;
@@ -5934,8 +6074,38 @@ public final class ServerRaceSystem {
 		session.spinRadians = 0.0D;
 		session.rollRadians = impactRoll;
 		session.stuckSnapTicks = 1;
+		playMarkAxeBlockImpactSound(level, impactLocation, blockHit);
 		updateMarkAxeDisplay(display, session, direction);
 		syncMarkAxePickupTrigger(server, level, session);
+	}
+
+	private static void playMarkAxeThrowSound(ServerLevel level, Vec3 origin) {
+		if (level == null || origin == null) {
+			return;
+		}
+		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.TRIDENT_THROW, SoundSource.PLAYERS, 0.38F, 0.82F);
+	}
+
+	private static void playMarkAxeBlockImpactSound(ServerLevel level, Vec3 impactLocation, BlockHitResult blockHit) {
+		if (level == null || impactLocation == null) {
+			return;
+		}
+		BlockPos pos = blockHit == null ? BlockPos.containing(impactLocation) : blockHit.getBlockPos();
+		BlockState state = level.getBlockState(pos);
+		if (state.isAir()) {
+			return;
+		}
+		SoundType soundType = state.getSoundType();
+		level.playSound(
+				null,
+				impactLocation.x,
+				impactLocation.y,
+				impactLocation.z,
+				soundType.getBreakSound(),
+				SoundSource.BLOCKS,
+				(soundType.getVolume() + 1.0F) * 0.5F,
+				soundType.getPitch() * 0.8F
+		);
 	}
 
 	private static void stickMarkAxeInEntity(MinecraftServer server, ServerLevel level, MarkThrownAxeSession session, Display.ItemDisplay display, Vec3 hitLocation, LivingEntity target) {
@@ -5943,7 +6113,7 @@ public final class ServerRaceSystem {
 		boolean wasFalling = session.phase == MarkAxePhase.FALLING;
 		Vec3 direction = wasFalling || session.velocity == null || session.velocity.lengthSqr() <= 1.0E-6D ? session.direction : session.velocity.normalize();
 		direction = direction == null || direction.lengthSqr() <= 1.0E-6D ? new Vec3(0.0D, -1.0D, 0.0D) : direction.normalize();
-		double impactRoll = randomMarkAxeFallingRollRadians();
+		double impactRoll = wasFalling ? session.rollRadians : randomMarkAxeRollInRangeNear(session.spinRadians);
 		Vec3 woundLocation = adjustMarkAxeEntityHitLocation(target, hitLocation);
 		float damage = computeMarkAxeImpactDamage(level, owner, target, session);
 		DamageSource source = markAxeImpactDamageSource(level, owner);
@@ -5952,7 +6122,7 @@ public final class ServerRaceSystem {
 		target.invulnerableTime = 0;
 
 		if (!target.isAlive()) {
-			releaseMarkAxeAfterLethalEntityHit(session, display, direction, woundLocation);
+			releaseMarkAxeAfterLethalEntityHit(level, session, display, direction, woundLocation);
 			return;
 		}
 
@@ -5999,7 +6169,7 @@ public final class ServerRaceSystem {
 		updateMarkAxeDisplay(display, session, session.direction);
 		syncMarkAxePickupTrigger(server, level, session);
 		long nowTick = level.getGameTime();
-		if ((session.ageTicks & 1) == 0) {
+		if (session.ageTicks % 6 == 0) {
 			emitMarkBloodDrip(level, getMarkAxeEntityWoundPosition(target, session));
 		}
 		if (nowTick >= session.nextBleedTick) {
@@ -6009,7 +6179,7 @@ public final class ServerRaceSystem {
 		return true;
 	}
 
-	private static void releaseMarkAxeAfterLethalEntityHit(MarkThrownAxeSession session, Display.ItemDisplay display, Vec3 direction, Vec3 woundLocation) {
+	private static void releaseMarkAxeAfterLethalEntityHit(ServerLevel level, MarkThrownAxeSession session, Display.ItemDisplay display, Vec3 direction, Vec3 woundLocation) {
 		if (session == null) {
 			return;
 		}
@@ -6026,7 +6196,7 @@ public final class ServerRaceSystem {
 		session.direction = normalizedDirection;
 		session.velocity = new Vec3(normalizedDirection.x * 0.08D, -0.12D, normalizedDirection.z * 0.08D);
 		session.stuckSnapTicks = 0;
-		switchMarkAxeToFalling(session);
+		switchMarkAxeToFalling(level, session);
 		updateMarkAxeDisplay(display, session, session.direction);
 	}
 
@@ -6061,7 +6231,7 @@ public final class ServerRaceSystem {
 				? new Vec3(0.0D, -1.0D, 0.0D)
 				: session.direction.normalize();
 		session.velocity = new Vec3(previousDirection.x * 0.08D, -0.12D, previousDirection.z * 0.08D);
-		switchMarkAxeToFalling(session);
+		switchMarkAxeToFalling(level, session);
 		updateMarkAxeDisplay(display, session, session.direction);
 	}
 
@@ -6228,7 +6398,7 @@ public final class ServerRaceSystem {
 				continue;
 			}
 			Vec3 woundPosition = getMarkBleedingWoundPosition(target, session);
-			if ((nowTick & 1L) == 0L) {
+			if (nowTick % 6L == 0L) {
 				emitMarkBloodDrip(level, woundPosition);
 			}
 			if (nowTick < session.nextDamageTick) {
@@ -6282,9 +6452,12 @@ public final class ServerRaceSystem {
 		if (level == null || origin == null) {
 			return;
 		}
-		for (int i = 0; i < 3; i++) {
-			double y = origin.y - i * 0.18D;
-			level.sendParticles(new DustParticleOptions(MARK_AXE_BLOOD_COLOR, 0.85F), origin.x, y, origin.z, 1, 0.015D, 0.015D, 0.015D, 0.0D);
+		level.sendParticles(new DustParticleOptions(MARK_AXE_BLOOD_COLOR, 0.55F), origin.x, origin.y, origin.z, 1, 0.01D, 0.01D, 0.01D, 0.0D);
+		for (int i = 0; i < 2; i++) {
+			double x = origin.x + (level.random.nextDouble() - 0.5D) * 0.055D;
+			double y = origin.y - 0.03D - level.random.nextDouble() * 0.035D;
+			double z = origin.z + (level.random.nextDouble() - 0.5D) * 0.055D;
+			level.sendParticles(MARK_AXE_BLOOD_DRIP_PARTICLE, x, y, z, 0, 0.0D, -0.095D, 0.0D, 1.0D);
 		}
 	}
 
