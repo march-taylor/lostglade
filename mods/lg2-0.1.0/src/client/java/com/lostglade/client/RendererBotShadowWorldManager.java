@@ -299,7 +299,6 @@ public final class RendererBotShadowWorldManager {
 			return;
 		}
 		applyViewState(client.getConnection(), session.level(), payload.viewDistance(), payload.centerChunkX(), payload.centerChunkZ());
-		session.levelRenderer().needsUpdate();
 	}
 
 	private static void applyChunkData(Minecraft client, RendererBotPayloads.RendererBotShadowChunkDataS2CPayload payload) {

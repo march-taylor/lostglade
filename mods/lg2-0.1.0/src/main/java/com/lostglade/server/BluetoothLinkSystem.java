@@ -146,6 +146,20 @@ public final class BluetoothLinkSystem {
 		return List.copyOf(linked);
 	}
 
+	public static boolean unlinkEndpoints(MinecraftServer server, Endpoint first, Endpoint second) {
+		if (first == null || second == null) {
+			return false;
+		}
+		ensureLoaded(server);
+		boolean removed = unlink(first, second);
+		if (!removed) {
+			return false;
+		}
+		notifyEndpointChanged(server, first);
+		notifyEndpointChanged(server, second);
+		return true;
+	}
+
 	public static void removeScreenEndpoint(ServerLevel level, BlockPos pos, Direction facing) {
 		removeEndpoint(level, screenEndpoint(level == null ? null : level.dimension(), pos, facing));
 	}

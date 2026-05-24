@@ -1431,6 +1431,7 @@ public final class MonitorScreenSystem {
 		boolean restartPlayback = false;
 		boolean youtubeDownloadRequested = false;
 		LiveCameraReference droneControlRequested = null;
+		LiveCameraReference galleryDisconnectRequested = null;
 		boolean returnToGalleryAfterDelete = false;
 		String releasedRelaySessionId = null;
 		GalleryCacheCandidate deletedGalleryCacheCandidate = null;
@@ -1441,6 +1442,7 @@ public final class MonitorScreenSystem {
 		YoutubeQueuePreloadDiff youtubeQueuePreloadDiff = YoutubeQueuePreloadDiff.EMPTY;
 		YoutubeMusicQueuePreloadDiff youtubeMusicQueuePreloadDiff = YoutubeMusicQueuePreloadDiff.EMPTY;
 		boolean youtubeQueueStatusRefreshRequested = false;
+		boolean restoreLiveCameraView = false;
 		if (component.viewMode() == ScreenViewMode.HOME) {
 			List<MonitorApp> visibleApps = visibleHomeApps(layout, component.launcherPage());
 			for (int index = 0; index < visibleApps.size(); index++) {
@@ -1704,6 +1706,21 @@ public final class MonitorScreenSystem {
 									break;
 								}
 								GalleryItemKind itemKind = effectiveGalleryItemKind(item);
+								if (mediaState.mode == ScreenViewMode.SBER_DRONES
+										&& item != null
+										&& itemKind == GalleryItemKind.LIVE_CAMERA) {
+									LiveCameraReference cameraRef = liveCameraGalleryReference(
+											item.url(),
+											component.runtimeKey() != null ? component.runtimeKey().dimension() : level.dimension()
+									);
+									if (cameraRef != null
+											&& mediaGalleryCardDisconnectRect(cardRect, layout).contains(touchPoint.x(), touchPoint.y())
+											&& isBluetoothLinkedLiveCamera(level, component, cameraRef)) {
+										galleryDisconnectRequested = cameraRef;
+										visibleRow = rowCount;
+										break;
+									}
+								}
 								if (item != null && itemKind == GalleryItemKind.YOUTUBE && item.url() != null && !item.url().isBlank()) {
 									mediaState.galleryIndex = galleryIndex;
 									galleryYoutubeIndex = galleryIndex;
@@ -1724,6 +1741,9 @@ public final class MonitorScreenSystem {
 							}
 						}
 					}
+				}
+				if (galleryDisconnectRequested != null) {
+					unlinkLiveCameraFromScreen(level, component, galleryDisconnectRequested);
 				}
 				if (!galleryGridHandled
 						&& mediaState.mode == ScreenViewMode.GALLERY
@@ -1983,11 +2003,14 @@ public final class MonitorScreenSystem {
 					&& !isYoutubeMusicMode(mediaChromeMode(mediaState))
 					&& !controlsWereHidden
 					&& !mediaState.loading) {
+				boolean liveCameraPlayback;
 				synchronized (mediaState) {
+					liveCameraPlayback = mediaState.streamKind == PlaybackStreamKind.LIVE_CAMERA;
 					setMediaOverlayModeLocked(mediaState, MediaOverlayMode.VIEW);
 					mediaState.version++;
 				}
-				rerenderCurrent = true;
+				restoreLiveCameraView = liveCameraPlayback;
+				rerenderCurrent = !liveCameraPlayback;
 			}
 		} else {
 			UiRect closeRect = genericCloseRect(layout);
@@ -2074,6 +2097,9 @@ public final class MonitorScreenSystem {
 					resumeMediaPlaybackIfNeeded(level.getServer(), component.runtimeKey());
 				}
 			}
+		}
+		if (restoreLiveCameraView) {
+			restoreLiveCameraViewFromBufferedTiles(level.getServer(), component.runtimeKey());
 		}
 		if (galleryLoadRequest) {
 			requestMediaLink(player, component.runtimeKey(), false, ScreenViewMode.GALLERY, YoutubeLinkRequestAction.REPLACE_QUEUE);
@@ -2188,13 +2214,14 @@ public final class MonitorScreenSystem {
 		if (server != null && galleryYoutubeUrl != null) {
 			startGalleryYoutubePlayback(server, component.runtimeKey(), player.getUUID(), galleryYoutubeTitle, galleryYoutubeUrl, galleryYoutubeIndex);
 		}
-		if (server != null && droneControlRequested != null && droneControlRequested.sourceType() == LiveCameraSourceType.DRONE) {
-			DroneSystem.tryStartControllingDrone(
-					player,
-					droneControlRequested.sourceUuid(),
-					droneControlRequested.dimension() != null ? droneControlRequested.dimension() : component.runtimeKey().dimension()
-			);
-		}
+			if (server != null && droneControlRequested != null && droneControlRequested.sourceType() == LiveCameraSourceType.DRONE) {
+				DroneSystem.tryStartControllingDrone(
+						player,
+						droneControlRequested.sourceUuid(),
+						droneControlRequested.dimension() != null ? droneControlRequested.dimension() : component.runtimeKey().dimension(),
+						droneControlRequested.pos()
+				);
+			}
 		return InteractionResult.SUCCESS;
 	}
 
@@ -2403,8 +2430,42 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
-		state.liveCameraDisplayedTiles = null;
+		// Keep the last full live frame so closing controls can restore it without a stale preview render.
 		state.liveCameraDisplayedGeneration++;
+	}
+
+	private static boolean restoreLiveCameraViewFromBufferedTiles(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return false;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return false;
+		}
+		byte[][] liveTiles;
+		long displayedGeneration;
+		synchronized (state) {
+			if (state.streamKind != PlaybackStreamKind.LIVE_CAMERA || state.overlayMode != MediaOverlayMode.VIEW) {
+				return false;
+			}
+			liveTiles = state.liveCameraBufferedTiles != null ? state.liveCameraBufferedTiles : state.liveCameraDisplayedTiles;
+			displayedGeneration = state.liveCameraDisplayedGeneration;
+		}
+		if (liveTiles == null || liveTiles.length == 0) {
+			return false;
+		}
+		ServerLevel level = server.getLevel(key.dimension());
+		ScreenComponent component = resolveScreenComponent(server, key);
+		if (level == null || component == null || !component.powered() || !hasNearbyMediaViewer(level, component)) {
+			return false;
+		}
+		applyPreparedRenderedTiles(
+				level,
+				component,
+				state,
+				new PreparedRenderedTiles(liveTiles, new TileFramePatch[0], displayedGeneration)
+		);
+		return true;
 	}
 
 	private static void scheduleLiveCameraApply(MinecraftServer server, ScreenRuntimeKey key) {
@@ -3509,8 +3570,22 @@ public final class MonitorScreenSystem {
 			for (LiveCameraReference cameraRef : resolvedPositions) {
 				boolean online = isLiveCameraOnline(server, cameraRef);
 				String url = liveCameraGalleryUrl(cameraRef);
-				String title = liveCameraGalleryTitle(cameraRef);
-				String subtitle = liveCameraGallerySubtitle(cameraRef, online);
+				ResourceKey<Level> displayDimension = cameraRef != null ? cameraRef.dimension() : null;
+				BlockPos displayPos = cameraRef != null ? cameraRef.pos() : null;
+				if (cameraRef != null && cameraRef.sourceType() == LiveCameraSourceType.DRONE && cameraRef.sourceUuid() != null) {
+					DroneSystem.DroneLiveFeedState droneState = DroneSystem.resolveLiveFeedState(server, cameraRef.sourceUuid(), cameraRef.dimension(), cameraRef.pos());
+					if (droneState != null) {
+						if (droneState.dimension() != null) {
+							displayDimension = droneState.dimension();
+						}
+						if (droneState.pos() != null) {
+							displayPos = droneState.pos();
+						}
+						online = droneState.online();
+					}
+				}
+				String title = liveSourceDisplayTitle(cameraRef, displayPos);
+				String subtitle = formatLiveSourceCoordinates(displayPos);
 				GalleryItem existing = existingLiveItems.get(url);
 				if (existing != null
 						&& Objects.equals(existing.title(), title)
@@ -3518,7 +3593,7 @@ public final class MonitorScreenSystem {
 						&& existing.kind() == GalleryItemKind.LIVE_CAMERA) {
 					rebuilt.add(existing);
 				} else {
-					BufferedImage preview = createLiveCameraPlaceholderPreview(title, subtitle, online);
+					BufferedImage preview = createLiveCameraPlaceholderPreview(title, subtitle, online, cameraRef != null ? cameraRef.sourceType() : LiveCameraSourceType.CAMERA);
 					rebuilt.add(new GalleryItem(title, subtitle, url, null, null, preview, GalleryItemKind.LIVE_CAMERA));
 				}
 			}
@@ -3772,6 +3847,72 @@ public final class MonitorScreenSystem {
 		return MonitorSberDronesCatalog.subtitle(toSberDronesSource(cameraRef), online);
 	}
 
+	private static String compactDimensionLabel(ResourceKey<Level> dimension) {
+		if (dimension == null) {
+			return "UNKNOWN";
+		}
+		Identifier id = dimension.identifier();
+		String namespace = id.getNamespace();
+		String path = id.getPath();
+		if ("minecraft".equals(namespace)) {
+			return switch (path) {
+				case "overworld" -> "OVERWORLD";
+				case "the_nether" -> "NETHER";
+				case "the_end" -> "END";
+				default -> path.replace('_', ' ').toUpperCase(Locale.ROOT);
+			};
+		}
+		return (namespace + ":" + path).replace('_', ' ').toUpperCase(Locale.ROOT);
+	}
+
+	private static String minimalDimensionLabel(ResourceKey<Level> dimension) {
+		if (dimension == null) {
+			return "unknown";
+		}
+		Identifier id = dimension.identifier();
+		String namespace = id.getNamespace();
+		String path = id.getPath();
+		if ("minecraft".equals(namespace)) {
+			return switch (path) {
+				case "overworld" -> "overworld";
+				case "the_nether" -> "nether";
+				case "the_end" -> "end";
+				default -> path.replace('_', ' ');
+			};
+		}
+		return namespace + ":" + path.replace('_', ' ');
+	}
+
+	private static String formatLiveSourceCoordinates(BlockPos pos) {
+		if (pos == null) {
+			return "X --  Y --  Z --";
+		}
+		return "X " + String.format(Locale.ROOT, "%+d", pos.getX())
+				+ "  Y " + String.format(Locale.ROOT, "%+d", pos.getY())
+				+ "  Z " + String.format(Locale.ROOT, "%+d", pos.getZ());
+	}
+
+	private static String liveSourceDisplayTitle(LiveCameraReference cameraRef, BlockPos pos) {
+		if (cameraRef == null) {
+			return "SOURCE";
+		}
+		if (cameraRef.sourceType() == LiveCameraSourceType.DRONE) {
+			return "UAV " + shortLiveSourceToken(cameraRef.sourceUuid());
+		}
+		if (pos == null) {
+			return "NODE";
+		}
+		return "NODE " + Math.abs(pos.getX()) + ":" + Math.abs(pos.getZ());
+	}
+
+	private static String shortLiveSourceToken(UUID uuid) {
+		if (uuid == null) {
+			return "----";
+		}
+		String compact = uuid.toString().replace("-", "").toUpperCase(Locale.ROOT);
+		return compact.substring(0, Math.min(4, compact.length()));
+	}
+
 	private static String liveCameraStreamOwnerId(ScreenRuntimeKey key) {
 		if (key == null) {
 			return "";
@@ -3803,28 +3944,84 @@ public final class MonitorScreenSystem {
 				&& RendererBotCameraSystem.isCameraPlayerLoaded(cameraLevel, cameraPos);
 	}
 
-	private static BufferedImage createLiveCameraPlaceholderPreview(String title, String subtitle, boolean online) {
+	private static boolean isBluetoothLinkedLiveCamera(ServerLevel level, ScreenComponent component, LiveCameraReference cameraRef) {
+		return linkedLiveCameraEndpoint(level, component, cameraRef) != null;
+	}
+
+	private static boolean unlinkLiveCameraFromScreen(ServerLevel level, ScreenComponent component, LiveCameraReference cameraRef) {
+		if (level == null || component == null || cameraRef == null) {
+			return false;
+		}
+		MinecraftServer server = level.getServer();
+		if (server == null) {
+			return false;
+		}
+		BluetoothLinkSystem.Endpoint screenEndpoint = bluetoothScreenEndpoint(level, component);
+		BluetoothLinkSystem.Endpoint sourceEndpoint = linkedLiveCameraEndpoint(level, component, cameraRef);
+		if (screenEndpoint == null || sourceEndpoint == null) {
+			return false;
+		}
+		return BluetoothLinkSystem.unlinkEndpoints(server, screenEndpoint, sourceEndpoint);
+	}
+
+	private static BluetoothLinkSystem.Endpoint linkedLiveCameraEndpoint(ServerLevel level, ScreenComponent component, LiveCameraReference cameraRef) {
+		if (level == null || component == null || cameraRef == null) {
+			return null;
+		}
+		BluetoothLinkSystem.Endpoint screenEndpoint = bluetoothScreenEndpoint(level, component);
+		if (screenEndpoint == null) {
+			return null;
+		}
+		for (BluetoothLinkSystem.Endpoint linked : BluetoothLinkSystem.linkedEndpoints(screenEndpoint)) {
+			if (matchesLiveCameraEndpoint(linked, cameraRef)) {
+				return linked;
+			}
+		}
+		return null;
+	}
+
+	private static boolean matchesLiveCameraEndpoint(BluetoothLinkSystem.Endpoint endpoint, LiveCameraReference cameraRef) {
+		if (endpoint == null || cameraRef == null) {
+			return false;
+		}
+		if (cameraRef.sourceType() == LiveCameraSourceType.DRONE) {
+			return endpoint.type() == BluetoothLinkSystem.EndpointType.DRONE
+					&& cameraRef.sourceUuid() != null
+					&& Objects.equals(cameraRef.sourceUuid(), endpoint.deviceUuid());
+		}
+		return endpoint.type() == BluetoothLinkSystem.EndpointType.CAMERA
+				&& cameraRef.dimension() != null
+				&& Objects.equals(cameraRef.dimension(), endpoint.dimension())
+				&& cameraRef.pos() != null
+				&& Objects.equals(cameraRef.pos(), endpoint.pos());
+	}
+
+	private static BufferedImage createLiveCameraPlaceholderPreview(String title, String subtitle, boolean online, LiveCameraSourceType sourceType) {
 		BufferedImage image = new BufferedImage(256, 256, BufferedImage.TYPE_INT_ARGB);
 		Graphics2D graphics = image.createGraphics();
 		try {
 			graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-			graphics.setColor(new Color(0x11171D));
+			configureUiGraphics(graphics);
+			graphics.setColor(new Color(0x06080C));
 			graphics.fillRect(0, 0, image.getWidth(), image.getHeight());
-			graphics.setPaint(new GradientPaint(0, 0, new Color(0x19242F), image.getWidth(), image.getHeight(), new Color(0x0B0F14)));
+			graphics.setPaint(new GradientPaint(0, 0, new Color(0x10151C), image.getWidth(), image.getHeight(), new Color(0x06090D)));
 			graphics.fillRoundRect(12, 12, image.getWidth() - 24, image.getHeight() - 24, 28, 28);
-			graphics.setColor(online ? new Color(0x2ECC71) : new Color(0xE74C3C));
-			graphics.fillOval(24, 24, 22, 22);
-			graphics.setColor(new Color(0xFFFFFF));
-			graphics.setFont(new Font("SansSerif", Font.BOLD, 24));
-			graphics.drawString(online ? "ONLINE" : "OFFLINE", 56, 42);
-			graphics.setFont(new Font("SansSerif", Font.BOLD, 22));
-			graphics.drawString(title != null && !title.isBlank() ? title : "Live Camera", 24, 176);
-			graphics.setColor(new Color(0xC7D0D9));
-			graphics.setFont(new Font("SansSerif", Font.PLAIN, 16));
-			graphics.drawString(subtitle != null && !subtitle.isBlank() ? subtitle : "Прямая трансляция", 24, 204);
-		} finally {
-			graphics.dispose();
-		}
+			graphics.setColor(new Color(255, 255, 255, 10));
+			for (int step = 28; step < image.getWidth(); step += 24) {
+				graphics.drawLine(step, 12, step, image.getHeight() - 12);
+				graphics.drawLine(12, step, image.getWidth() - 12, step);
+			}
+				graphics.setColor(new Color(255, 255, 255, 24));
+				graphics.drawRoundRect(12, 12, image.getWidth() - 24, image.getHeight() - 24, 28, 28);
+				drawPlayerUiIcon(
+						graphics,
+						new UiRect(76, 76, 104, 104),
+						sourceType == LiveCameraSourceType.DRONE ? PlayerUiIcon.DRONE : PlayerUiIcon.CAMERA,
+						new Color(248, 251, 255, 210)
+				);
+			} finally {
+				graphics.dispose();
+			}
 		return image;
 	}
 
@@ -3839,6 +4036,38 @@ public final class MonitorScreenSystem {
 			int packedId = Byte.toUnsignedInt(pixels[index]);
 			int rgb = MapColor.getColorFromPackedId(packedId) & 0xFFFFFF;
 			argb[index] = 0xFF000000 | rgb;
+		}
+		return image;
+	}
+
+	private static BufferedImage mapPaletteImage(byte[][] renderedTiles, int tilesWide, int tilesHigh) {
+		if (renderedTiles == null
+				|| renderedTiles.length == 0
+				|| tilesWide <= 0
+				|| tilesHigh <= 0
+				|| renderedTiles.length < tilesWide * tilesHigh) {
+			return null;
+		}
+		int width = tilesWide * MAP_SIZE;
+		int height = tilesHigh * MAP_SIZE;
+		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+		int[] argb = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
+		for (int tileY = 0; tileY < tilesHigh; tileY++) {
+			for (int tileX = 0; tileX < tilesWide; tileX++) {
+				byte[] tile = renderedTiles[tileY * tilesWide + tileX];
+				if (tile == null || tile.length < MAP_SIZE * MAP_SIZE) {
+					return null;
+				}
+				for (int row = 0; row < MAP_SIZE; row++) {
+					int tileOffset = row * MAP_SIZE;
+					int imageOffset = (tileY * MAP_SIZE + row) * width + tileX * MAP_SIZE;
+					for (int column = 0; column < MAP_SIZE; column++) {
+						int packedId = Byte.toUnsignedInt(tile[tileOffset + column]);
+						int rgb = MapColor.getColorFromPackedId(packedId) & 0xFFFFFF;
+						argb[imageOffset + column] = 0xFF000000 | rgb;
+					}
+				}
+			}
 		}
 		return image;
 	}
@@ -6227,7 +6456,7 @@ public final class MonitorScreenSystem {
 		long stepMillis = Math.max(1L, TaskProgress.COMPLETION_VISIBLE_MILLIS / PROGRESS_FADE_RENDER_STEPS);
 		for (int index = 1; index <= PROGRESS_FADE_RENDER_STEPS; index++) {
 			long delayMillis = stepMillis * index;
-			mediaScheduler.schedule(() -> requestRuntimeRender(server, key), delayMillis, TimeUnit.MILLISECONDS);
+			mediaScheduler.schedule(() -> server.execute(() -> requestRuntimeRender(server, key)), delayMillis, TimeUnit.MILLISECONDS);
 		}
 	}
 
@@ -6295,7 +6524,7 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		long delayMillis = Math.max(1L, nextDeadlineMillis - now);
-		state.backgroundFuture = mediaScheduler.schedule(() -> advanceBackgroundFrame(server, key), delayMillis, TimeUnit.MILLISECONDS);
+		state.backgroundFuture = mediaScheduler.schedule(() -> server.execute(() -> advanceBackgroundFrame(server, key)), delayMillis, TimeUnit.MILLISECONDS);
 	}
 
 	private static void scheduleNextMediaFrame(MinecraftServer server, ScreenRuntimeKey key) {
@@ -6316,7 +6545,7 @@ public final class MonitorScreenSystem {
 				if (state.streamKind == PlaybackStreamKind.LIVE_CAMERA) {
 					clearPlaybackFrameScheduleLocked(state);
 					long delayMillis = state.streamFrame == null ? 1L : LIVE_CAMERA_HEALTH_CHECK_INTERVAL_MS;
-					state.playbackFuture = mediaScheduler.schedule(() -> refreshLiveCameraStreamHealth(server, key), delayMillis, TimeUnit.MILLISECONDS);
+					state.playbackFuture = mediaScheduler.schedule(() -> server.execute(() -> refreshLiveCameraStreamHealth(server, key)), delayMillis, TimeUnit.MILLISECONDS);
 					return;
 				}
 				if (state.relaySessionId == null) {
@@ -6324,17 +6553,17 @@ public final class MonitorScreenSystem {
 						return;
 					}
 					long delayMillis = Math.max(1L, youtubePollActiveIntervalMs());
-					state.playbackFuture = mediaScheduler.schedule(() -> refreshLoadingUi(server, key), delayMillis, TimeUnit.MILLISECONDS);
+					state.playbackFuture = mediaScheduler.schedule(() -> server.execute(() -> refreshLoadingUi(server, key)), delayMillis, TimeUnit.MILLISECONDS);
 					return;
 				}
 				long delayMillis = Math.max(1L, effectiveYoutubePollDelayMs(server, key, isPlaybackPausedLocked(state)));
-				state.playbackFuture = mediaScheduler.schedule(() -> refreshYoutubeSnapshot(server, key), delayMillis, TimeUnit.MILLISECONDS);
+				state.playbackFuture = mediaScheduler.schedule(() -> server.execute(() -> refreshYoutubeSnapshot(server, key)), delayMillis, TimeUnit.MILLISECONDS);
 				return;
 			}
 
 			if (state.loading && !state.waitingForLink) {
 				long delayMillis = Math.max(1L, youtubePollActiveIntervalMs());
-				state.playbackFuture = mediaScheduler.schedule(() -> refreshLoadingUi(server, key), delayMillis, TimeUnit.MILLISECONDS);
+				state.playbackFuture = mediaScheduler.schedule(() -> server.execute(() -> refreshLoadingUi(server, key)), delayMillis, TimeUnit.MILLISECONDS);
 				return;
 			}
 
@@ -6350,7 +6579,7 @@ public final class MonitorScreenSystem {
 					state.loadedMedia.delayMillis(state.frameIndex)
 			);
 			long delayMillis = Math.max(1L, state.nextLoadedMediaFrameAtMillis - now);
-			state.playbackFuture = mediaScheduler.schedule(() -> advanceMediaFrame(server, key), delayMillis, TimeUnit.MILLISECONDS);
+			state.playbackFuture = mediaScheduler.schedule(() -> server.execute(() -> advanceMediaFrame(server, key)), delayMillis, TimeUnit.MILLISECONDS);
 		}
 	}
 
@@ -6471,10 +6700,10 @@ public final class MonitorScreenSystem {
 			if (cameraRef.sourceUuid() == null) {
 				return resetLiveCameraToHome(server, screenLevel, component, state);
 			}
-			DroneSystem.DroneLiveFeedState droneState = DroneSystem.resolveLiveFeedState(server, cameraRef.sourceUuid(), cameraRef.dimension(), cameraRef.pos());
-			if (droneState == null || !droneState.online()) {
-				return resetLiveCameraToHome(server, screenLevel, component, state);
-			}
+				DroneSystem.DroneLiveFeedState droneState = DroneSystem.resolveLiveFeedState(server, cameraRef.sourceUuid(), cameraRef.dimension(), cameraRef.pos());
+				if (droneState == null) {
+					return resetLiveCameraToHome(server, screenLevel, component, state);
+				}
 			ServerLevel droneLevel = server.getLevel(droneState.dimension());
 			if (droneLevel == null) {
 				return resetLiveCameraToHome(server, screenLevel, component, state);
@@ -6675,6 +6904,7 @@ public final class MonitorScreenSystem {
 			if (state.streamKind != PlaybackStreamKind.LIVE_CAMERA || !Objects.equals(state.sourceUrl, url)) {
 				return;
 			}
+			state.liveCameraBufferedTiles = preparedTiles.renderedTiles();
 			boolean stateChanged = state.loading || !state.liveStream || !"LIVE".equals(state.statusText);
 			if (previewFrame != null) {
 				state.streamFrame = previewFrame;
@@ -8783,7 +9013,7 @@ public final class MonitorScreenSystem {
 		WallpaperVisualSnapshot wallpaperSnapshot = captureWallpaperSnapshot(mediaState, viewMode);
 		long mediaVersion = 0L;
 		if (isPlayerMode(viewMode)) {
-			mediaSnapshot = captureMediaSnapshot(mediaState);
+			mediaSnapshot = captureMediaSnapshot(server, mediaState, component);
 			mediaVersion = mediaSnapshot != null ? mediaSnapshot.version() : 0L;
 		}
 		boolean transparentOutput = transparentOutputPossible(viewMode, mediaSnapshot, wallpaperSnapshot);
@@ -8858,7 +9088,7 @@ public final class MonitorScreenSystem {
 		return targets.isEmpty() ? List.of() : List.copyOf(targets);
 	}
 
-	private static MediaVisualSnapshot captureMediaSnapshot(MediaRuntimeState state) {
+	private static MediaVisualSnapshot captureMediaSnapshot(MinecraftServer server, MediaRuntimeState state, ScreenComponent component) {
 		if (state == null) {
 			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, null, false, true, false, false, false, false, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, MediaScaleMode.FIT, PlayerBackgroundMode.BLACK, false, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, false, 0, -1, null);
 		}
@@ -8873,9 +9103,12 @@ public final class MonitorScreenSystem {
 		boolean galleryBackedYoutube = isGalleryBackedYoutubeLocked(state);
 		boolean streamPlayback = isStreamPlaybackLocked(state);
 		boolean liveCameraPlayback = state.streamKind == PlaybackStreamKind.LIVE_CAMERA;
-		List<GalleryCardSnapshot> galleryCards = galleryBrowser ? galleryCardSnapshots(state) : List.of();
+		BufferedImage liveControlsFrame = liveCameraPlayback && state.overlayMode == MediaOverlayMode.CONTROLS && component != null
+				? mapPaletteImage(state.liveCameraBufferedTiles, component.width(), component.height())
+				: null;
+		List<GalleryCardSnapshot> galleryCards = galleryBrowser ? galleryCardSnapshots(server, component, state) : List.of();
 		BufferedImage frame = streamPlayback
-				? state.streamFrame
+				? liveControlsFrame != null ? liveControlsFrame : state.streamFrame
 				: !galleryBrowser && state.loadedMedia != null ? state.loadedMedia.frame(state.frameIndex) : null;
 		BufferedImage backgroundFrame = youtubeMusicMode && state.loading && state.loadingBackdropFrame != null
 				? state.loadingBackdropFrame
@@ -9568,6 +9801,11 @@ public final class MonitorScreenSystem {
 		boolean galleryPickerMode = state != null && state.galleryPickerMode();
 		MonitorApp app = state != null ? appForViewMode(state.mode()) : null;
 
+		if (droneMode && !galleryPickerMode) {
+			drawSberDronesBrowserScreen(graphics, layout, state, app, closeRect, linkRect, gridRect, scrollbarTrackRect);
+			return;
+		}
+
 		drawMediaCloseButton(graphics, closeRect, layout, MediaButtonSegment.LEFT);
 		if (galleryPickerMode) {
 			drawMediaTitleBar(graphics, linkRect, "ВЫБЕРИ ФОН", layout, MediaButtonSegment.RIGHT);
@@ -9600,6 +9838,102 @@ public final class MonitorScreenSystem {
 						continue;
 					}
 					drawGalleryCard(graphics, layout, mediaGalleryCardRect(layout, visibleRow, column), cards.get(index));
+				}
+			}
+			drawGalleryScrollbar(graphics, scrollbarTrackRect, scroll, visibleRows, totalRows, layout);
+		}
+
+		TaskProgress.Snapshot progress = state != null ? state.progress() : null;
+		if (progress != null && progress.visible()) {
+			drawProgressBar(graphics, mediaProgressRect(layout), progress, layout);
+		}
+	}
+
+	private static void drawSberDronesBrowserScreen(
+			Graphics2D graphics,
+			UiLayout layout,
+			MediaVisualSnapshot state,
+			MonitorApp app,
+			UiRect closeRect,
+			UiRect linkRect,
+			UiRect gridRect,
+			UiRect scrollbarTrackRect
+	) {
+		UiRect canvas = mediaCanvasRect(layout);
+		graphics.setPaint(new GradientPaint(
+				canvas.x(),
+				canvas.y(),
+				new Color(6, 12, 18, 160),
+				canvas.right(),
+				canvas.bottom(),
+				new Color(2, 6, 10, 188)
+		));
+		graphics.fillRect(canvas.x(), canvas.y(), canvas.width(), canvas.height());
+
+		drawMediaCloseButton(graphics, closeRect, layout, MediaButtonSegment.LEFT);
+
+		List<GalleryCardSnapshot> cards = state != null ? state.galleryCards() : List.of();
+		int cameraCount = 0;
+		int droneCount = 0;
+		for (GalleryCardSnapshot card : cards) {
+			if (card == null) {
+				continue;
+			}
+			if ("DRONE".equals(card.sourceLabel())) {
+				droneCount++;
+			} else {
+				cameraCount++;
+			}
+		}
+		int chipHeight = linkRect.height();
+		int[] chipCounts = new int[]{cameraCount, droneCount};
+		PlayerUiIcon[] chipIcons = new PlayerUiIcon[]{PlayerUiIcon.CAMERA, PlayerUiIcon.DRONE};
+		int[] chipWidths = new int[chipCounts.length];
+		Font chipFont = new Font(Font.SANS_SERIF, Font.BOLD, clampInt(layout.unit() - 1, 7, 10));
+		var metrics = graphics.getFontMetrics(chipFont);
+		int totalChipWidth = 0;
+		int chipGap = mediaHeaderControlGap(layout);
+		for (int index = 0; index < chipCounts.length; index++) {
+			String countText = Integer.toString(Math.max(0, chipCounts[index]));
+			int iconWidth = clampInt(layout.unit() + 4, 12, 16);
+			chipWidths[index] = Math.max(
+					chipHeight,
+					iconWidth + metrics.stringWidth(countText) + clampInt(layout.unit() * 2 + 10, 18, 30)
+			);
+			totalChipWidth += chipWidths[index];
+			if (index > 0) {
+				totalChipWidth += chipGap;
+			}
+		}
+		int chipStartX = Math.max(linkRect.x(), linkRect.right() - totalChipWidth);
+		int chipX = chipStartX;
+		for (int index = 0; index < chipCounts.length; index++) {
+			drawSberDronesSummaryIconChip(
+					graphics,
+					new UiRect(chipX, linkRect.y(), chipWidths[index], chipHeight),
+					chipIcons[index],
+					chipCounts[index],
+					layout,
+					MediaButtonSegment.SINGLE
+			);
+			chipX += chipWidths[index] + chipGap;
+		}
+
+		int columns = mediaGalleryColumns(layout);
+		int visibleRows = mediaGalleryVisibleRows(layout);
+		int totalRows = mediaGalleryTotalRows(cards.size(), layout);
+		int scroll = state != null ? clampInt(state.mediaListScroll(), 0, Math.max(0, totalRows - visibleRows)) : 0;
+		if (cards.isEmpty()) {
+			drawSberDronesEmptyState(graphics, layout, gridRect);
+		} else {
+			int rowCount = Math.min(visibleRows, Math.max(0, totalRows - scroll));
+			for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
+				for (int column = 0; column < columns; column++) {
+					int index = (scroll + visibleRow) * columns + column;
+					if (index < 0 || index >= cards.size()) {
+						continue;
+					}
+					drawSberDronesGalleryCard(graphics, layout, mediaGalleryCardRect(layout, visibleRow, column), cards.get(index));
 				}
 			}
 			drawGalleryScrollbar(graphics, scrollbarTrackRect, scroll, visibleRows, totalRows, layout);
@@ -10061,6 +10395,138 @@ public final class MonitorScreenSystem {
 			drawWrappedText(graphics, card.subtitle(), subtitleRect, new Color(185, 196, 208, 214), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 2);
 		}
 	}
+
+	private static void drawSberDronesGalleryCard(Graphics2D graphics, UiLayout layout, UiRect rect, GalleryCardSnapshot card) {
+		if (graphics == null || layout == null || rect == null || card == null) {
+			return;
+		}
+		int arc = clampInt(layout.unit() * 2, 10, 18);
+		Color fill = card.current() ? new Color(18, 22, 28, 236) : new Color(10, 14, 18, 228);
+		Color stroke = card.current() ? new Color(255, 255, 255, 92) : new Color(255, 255, 255, 34);
+		fillRoundedRect(graphics, rect, arc, fill);
+		strokeRoundedRect(graphics, rect, arc, 1.15F, stroke);
+
+		UiRect previewRect = sberDronesGalleryCardPreviewRect(rect, layout);
+		if (card.preview() != null) {
+			drawScaledImage(graphics, card.preview(), previewRect, MediaScaleMode.FILL);
+		} else {
+			fillRoundedRect(graphics, previewRect, clampInt(layout.unit() * 2, 8, 14), new Color(18, 28, 36, 220));
+		}
+
+		graphics.setPaint(new GradientPaint(
+				previewRect.x(),
+				previewRect.bottom() - Math.max(8, previewRect.height() / 2),
+				new Color(4, 8, 12, 0),
+				previewRect.x(),
+				previewRect.bottom(),
+				new Color(4, 8, 12, 220)
+		));
+		graphics.fillRect(previewRect.x(), previewRect.y(), previewRect.width(), previewRect.height());
+
+		if (card.disconnectVisible()) {
+			UiRect unlinkRect = mediaGalleryCardDisconnectRect(rect, layout);
+			drawSberOutlinedIconButton(graphics, unlinkRect, layout, PlayerUiIcon.UNLINK, MediaButtonSegment.SINGLE, new Color(248, 251, 255, 206));
+		}
+
+		UiRect metadataRect = sberDronesGalleryCardMetadataRect(rect, layout);
+		int gap = Math.max(2, layout.unit() / 5);
+		UiRect metadataContentRect = metadataRect;
+		int lineHeight = Math.max(9, (metadataContentRect.height() - gap) / 2);
+		UiRect locationRect = new UiRect(metadataContentRect.x(), metadataContentRect.y(), lineHeight, lineHeight);
+		UiRect subtitleRect = new UiRect(locationRect.right() + Math.max(2, layout.unit() / 5), metadataContentRect.y(), Math.max(12, metadataContentRect.right() - locationRect.right() - Math.max(2, layout.unit() / 5)), lineHeight);
+		UiRect tertiaryRect = new UiRect(metadataContentRect.x(), subtitleRect.bottom() + gap, metadataContentRect.width(), Math.max(8, metadataContentRect.bottom() - subtitleRect.bottom() - gap));
+		graphics.setColor(new Color(255, 255, 255, 18));
+		graphics.fillRect(metadataRect.x(), metadataRect.y(), metadataRect.width(), 1);
+		drawSberLocationGlyph(graphics, locationRect, new Color(248, 251, 255, 188));
+		drawWrappedText(graphics, card.subtitle(), subtitleRect, new Color(244, 248, 252, 228), Font.PLAIN, clampInt(layout.unit() - 2, 7, 10), 1);
+		drawWrappedText(graphics, card.tertiary(), tertiaryRect, new Color(176, 192, 204, 214), Font.PLAIN, clampInt(layout.unit() - 2, 7, 10), 1);
+	}
+
+	private static void drawSberDronesBackdropGrid(Graphics2D graphics, UiRect canvas, UiLayout layout) {
+		if (graphics == null || canvas == null || layout == null) {
+			return;
+		}
+		graphics.setColor(new Color(255, 255, 255, 8));
+		int step = clampInt(layout.unit() * 2, 12, 28);
+		for (int x = canvas.x(); x <= canvas.right(); x += step) {
+			graphics.drawLine(x, canvas.y(), x, canvas.bottom());
+		}
+		for (int y = canvas.y(); y <= canvas.bottom(); y += step) {
+			graphics.drawLine(canvas.x(), y, canvas.right(), y);
+		}
+	}
+
+	private static void drawSberDronesSummaryChip(Graphics2D graphics, UiRect rect, String text, UiLayout layout, MediaButtonSegment segment) {
+		if (graphics == null || rect == null || layout == null || text == null) {
+			return;
+		}
+		Color color = drawMediaHeaderControlBase(graphics, rect, segment);
+		drawCenteredTextFitted(
+				graphics,
+				text,
+				rect,
+				color,
+				Font.BOLD,
+				clampInt(layout.unit() - 2, 7, 10),
+					6
+			);
+	}
+
+	private static void drawSberDronesSummaryIconChip(
+			Graphics2D graphics,
+			UiRect rect,
+			PlayerUiIcon icon,
+			int count,
+			UiLayout layout,
+			MediaButtonSegment segment
+	) {
+		if (graphics == null || rect == null || layout == null || icon == null) {
+			return;
+		}
+		Color color = drawMediaHeaderControlBase(graphics, rect, segment);
+		int inset = clampInt(layout.unit() / 2, 4, 8);
+		int iconSize = Math.min(
+				Math.max(10, rect.height() - inset * 2),
+				clampInt(layout.unit() + 4, 12, 16)
+		);
+		UiRect iconRect = new UiRect(
+				rect.x() + inset,
+				rect.y() + (rect.height() - iconSize) / 2,
+				iconSize,
+				iconSize
+		);
+		drawPlayerUiIcon(graphics, iconRect, icon, color);
+		UiRect countRect = new UiRect(
+				iconRect.right() + Math.max(3, layout.unit() / 4),
+				rect.y(),
+				Math.max(8, rect.right() - iconRect.right() - inset - Math.max(3, layout.unit() / 4)),
+				rect.height()
+		);
+		drawCenteredText(
+				graphics,
+				Integer.toString(Math.max(0, count)),
+				countRect,
+				color,
+				Font.BOLD,
+				clampInt(layout.unit() - 1, 8, 10)
+		);
+	}
+
+	private static void drawSberDronesEmptyState(Graphics2D graphics, UiLayout layout, UiRect gridRect) {
+		if (graphics == null || layout == null || gridRect == null) {
+			return;
+		}
+		UiRect panel = new UiRect(
+				gridRect.x() + gridRect.width() / 10,
+				gridRect.y() + gridRect.height() / 5,
+				gridRect.width() * 4 / 5,
+				gridRect.height() * 3 / 5
+			);
+			fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 12, 22), new Color(10, 18, 26, 222));
+			strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 12, 22), 1.0F, new Color(255, 255, 255, 44));
+			drawCenteredText(graphics, "Сбер дроны", new UiRect(panel.x(), panel.y() + panel.height() / 5, panel.width(), clampInt(layout.unit() * 2, 18, 28)), new Color(236, 244, 252), Font.BOLD, clampInt(layout.unit() + 1, 11, 16));
+			drawCenteredText(graphics, "Подключи дрон или камеру через bluetooth или проводную сеть", new UiRect(panel.x() + clampInt(layout.unit(), 8, 16), panel.y() + panel.height() / 2 - clampInt(layout.unit(), 8, 14), panel.width() - clampInt(layout.unit() * 2, 16, 32), clampInt(layout.unit() * 3, 26, 42)), new Color(178, 194, 208, 224), Font.PLAIN, clampInt(layout.unit() - 1, 8, 12));
+		}
 
 	private static void drawMediaQueueToggleButton(Graphics2D graphics, UiRect rect, boolean open, UiLayout layout, MediaButtonSegment segment) {
 		float strokeWidth = mediaChromeStrokeWidth(rect);
@@ -11295,6 +11761,43 @@ public final class MonitorScreenSystem {
 		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.WALLPAPER, color);
 	}
 
+	private static void drawSberSourceGlyph(Graphics2D graphics, UiRect rect, String sourceLabel, Color color) {
+		if (sourceLabel != null && sourceLabel.equalsIgnoreCase("DRONE")) {
+			drawPlayerUiIcon(graphics, rect, PlayerUiIcon.DRONE, color);
+			return;
+		}
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.CAMERA, color);
+	}
+
+	private static void drawSberStatusGlyph(Graphics2D graphics, UiRect rect, boolean online, Color color) {
+		drawPlayerUiIcon(graphics, rect, online ? PlayerUiIcon.SIGNAL : PlayerUiIcon.OFFLINE, color);
+	}
+
+	private static void drawSberLocationGlyph(Graphics2D graphics, UiRect rect, Color color) {
+		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.LOCATION, color);
+	}
+
+	private static void drawSberOutlinedIconButton(
+			Graphics2D graphics,
+			UiRect rect,
+			UiLayout layout,
+			PlayerUiIcon icon,
+			MediaButtonSegment segment,
+			Color color
+	) {
+		if (graphics == null || rect == null || layout == null || icon == null || color == null) {
+			return;
+		}
+		float strokeWidth = mediaChromeStrokeWidth(rect);
+		strokeShape(
+				graphics,
+				mediaButtonShape(rect, segment),
+				Math.max(0.9F, strokeWidth * 0.55F),
+				new Color(color.getRed(), color.getGreen(), color.getBlue(), Math.max(72, color.getAlpha()))
+		);
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), icon, color);
+	}
+
 	private static void drawAppIcon(Graphics2D graphics, MonitorApp app, UiRect rect, int padding) {
 		if (app == null) {
 			return;
@@ -12113,8 +12616,34 @@ public final class MonitorScreenSystem {
 		);
 	}
 
+	private static UiRect sberDronesGalleryCardPreviewRect(UiRect cardRect, UiLayout layout) {
+		int inset = clampInt(layout.unit() / 3, 3, 6);
+		int metadataHeight = clampInt(
+				(int) Math.round(cardRect.height() * 0.38D),
+				clampInt(layout.unit() * 4 - 2, 30, 38),
+				clampInt(layout.unit() * 6, 42, 62)
+		);
+		return new UiRect(
+				cardRect.x() + inset,
+				cardRect.y() + inset,
+				cardRect.width() - inset * 2,
+				Math.max(18, cardRect.height() - inset * 2 - metadataHeight)
+		);
+	}
+
 	private static UiRect mediaGalleryCardMetadataRect(UiRect cardRect, UiLayout layout) {
 		UiRect preview = mediaGalleryCardPreviewRectWithMetadata(cardRect, layout);
+		int inset = clampInt(layout.unit() / 3, 3, 6);
+		return new UiRect(
+				cardRect.x() + inset,
+				preview.bottom() + inset,
+				cardRect.width() - inset * 2,
+				Math.max(12, cardRect.bottom() - preview.bottom() - inset * 2)
+		);
+	}
+
+	private static UiRect sberDronesGalleryCardMetadataRect(UiRect cardRect, UiLayout layout) {
+		UiRect preview = sberDronesGalleryCardPreviewRect(cardRect, layout);
 		int inset = clampInt(layout.unit() / 3, 3, 6);
 		return new UiRect(
 				cardRect.x() + inset,
@@ -12138,6 +12667,45 @@ public final class MonitorScreenSystem {
 	private static UiRect mediaGalleryCardPlayBadgeRect(UiRect previewRect, UiLayout layout) {
 		int size = clampInt(layout.unit() * 2, 18, 30);
 		return new UiRect(previewRect.right() - size - clampInt(layout.unit() / 3, 3, 6), previewRect.y() + clampInt(layout.unit() / 3, 3, 6), size, size);
+	}
+
+	private static UiRect mediaGalleryCardStatusBadgeRect(UiRect cardRect, UiLayout layout) {
+		UiRect previewRect = sberDronesGalleryCardPreviewRect(cardRect, layout);
+		int inset = clampInt(layout.unit() / 3, 3, 6);
+		int height = clampInt(layout.unit() + 4, 14, 20);
+		int width = height;
+		UiRect unlinkRect = mediaGalleryCardDisconnectRect(cardRect, layout);
+		return new UiRect(
+				unlinkRect.x() - width,
+				previewRect.y() + inset,
+				width,
+				height
+		);
+	}
+
+	private static UiRect mediaGalleryCardSourceBadgeRect(UiRect cardRect, UiLayout layout) {
+		UiRect previewRect = sberDronesGalleryCardPreviewRect(cardRect, layout);
+		int inset = clampInt(layout.unit() / 3, 3, 6);
+		int height = clampInt(layout.unit() + 4, 14, 20);
+		int resolvedWidth = height;
+		return new UiRect(
+				previewRect.x() + inset,
+				previewRect.y() + inset,
+				resolvedWidth,
+				height
+		);
+	}
+
+	private static UiRect mediaGalleryCardDisconnectRect(UiRect cardRect, UiLayout layout) {
+		UiRect previewRect = sberDronesGalleryCardPreviewRect(cardRect, layout);
+		int inset = clampInt(layout.unit() / 3, 3, 6);
+		int height = clampInt(layout.unit() + 4, 14, 20);
+		return new UiRect(
+				previewRect.right() - height - inset,
+				previewRect.y() + inset,
+				height,
+				height
+		);
 	}
 
 	private static UiRect mediaGalleryBrowserScrollbarTrackRect(UiLayout layout) {
@@ -13401,6 +13969,7 @@ public final class MonitorScreenSystem {
 		}
 		if (mediaState != null) {
 			synchronized (mediaState) {
+				mediaState.liveCameraBufferedTiles = renderedTiles;
 				mediaState.liveCameraDisplayedTiles = renderedTiles;
 				if (changed) {
 					mediaState.liveCameraDisplayedGeneration++;
@@ -14096,7 +14665,7 @@ public final class MonitorScreenSystem {
 		return items;
 	}
 
-	private static List<GalleryCardSnapshot> galleryCardSnapshots(MediaRuntimeState state) {
+	private static List<GalleryCardSnapshot> galleryCardSnapshots(MinecraftServer server, ScreenComponent component, MediaRuntimeState state) {
 		if (state == null || state.galleryItems.isEmpty()) {
 			return List.of();
 		}
@@ -14113,19 +14682,80 @@ public final class MonitorScreenSystem {
 					|| (itemKind == GalleryItemKind.AUDIO && item.url() != null && !item.url().isBlank() && MonitorYoutubeMusicCache.isQueueEntryLoaded(item.url())))
 					&& item.url() != null
 					&& !item.url().isBlank();
+			if (metadataVisible && itemKind == GalleryItemKind.LIVE_CAMERA) {
+				items.add(buildLiveCameraGalleryCardSnapshot(server, component, state, index, item, preview));
+				continue;
+			}
 			items.add(new GalleryCardSnapshot(
 					index,
 					item != null ? item.title() : "Gallery",
 					item != null ? item.subtitle() : "",
+					"",
+					"",
+					false,
+					"",
 					metadataVisible,
 					(item != null && (itemKind == GalleryItemKind.YOUTUBE || itemKind == GalleryItemKind.VIDEO || itemKind == GalleryItemKind.AUDIO || itemKind == GalleryItemKind.LIVE_CAMERA))
 							|| (media != null && media.animated()),
 					preview,
 					index == state.galleryIndex,
-					youtubeLoaded || itemKind == GalleryItemKind.LIVE_CAMERA
+					youtubeLoaded || itemKind == GalleryItemKind.LIVE_CAMERA,
+					false
 			));
 		}
 		return items;
+	}
+
+	private static GalleryCardSnapshot buildLiveCameraGalleryCardSnapshot(
+			MinecraftServer server,
+			ScreenComponent component,
+			MediaRuntimeState state,
+			int index,
+			GalleryItem item,
+			BufferedImage preview
+	) {
+		LiveCameraReference cameraRef = item == null ? null : liveCameraGalleryReference(
+				item.url(),
+				component != null && component.runtimeKey() != null ? component.runtimeKey().dimension() : null
+		);
+		LiveCameraSourceType sourceType = cameraRef != null ? cameraRef.sourceType() : LiveCameraSourceType.CAMERA;
+		ServerLevel level = server != null && component != null && component.runtimeKey() != null
+				? server.getLevel(component.runtimeKey().dimension())
+				: null;
+		ResourceKey<Level> dimension = cameraRef != null ? cameraRef.dimension() : null;
+		BlockPos pos = cameraRef != null ? cameraRef.pos() : null;
+		if (cameraRef != null && cameraRef.sourceType() == LiveCameraSourceType.DRONE && cameraRef.sourceUuid() != null && server != null) {
+			DroneSystem.DroneLiveFeedState droneState = DroneSystem.resolveLiveFeedState(server, cameraRef.sourceUuid(), cameraRef.dimension(), cameraRef.pos());
+			if (droneState != null) {
+				if (droneState.dimension() != null) {
+					dimension = droneState.dimension();
+				}
+				if (droneState.pos() != null) {
+					pos = droneState.pos();
+				}
+			}
+		}
+		String tertiary = minimalDimensionLabel(dimension);
+		String title = "";
+		String subtitle = formatLiveSourceCoordinates(pos);
+		String statusLabel = "";
+		String sourceLabel = sourceType == LiveCameraSourceType.DRONE ? "DRONE" : "CAMERA";
+		boolean disconnectVisible = cameraRef != null && isBluetoothLinkedLiveCamera(level, component, cameraRef);
+		return new GalleryCardSnapshot(
+				index,
+				title,
+				subtitle,
+				tertiary,
+				statusLabel,
+				false,
+				sourceLabel,
+				true,
+				true,
+				preview,
+				state != null && index == state.galleryIndex,
+				true,
+				disconnectVisible
+		);
 	}
 
 	private static List<Integer> galleryBrowserVisibleIndexesLocked(MediaRuntimeState state) {
@@ -14690,6 +15320,7 @@ public final class MonitorScreenSystem {
 		state.pendingLiveCameraPixels = null;
 		state.liveCameraDecodeScheduled = false;
 		state.liveCameraLastFrameAtMillis = 0L;
+		state.liveCameraBufferedTiles = null;
 		state.liveCameraDisplayedTiles = null;
 		state.liveCameraDisplayedGeneration = 0L;
 		state.nextLiveCameraPreviewDecodeAtMillis = 0L;
@@ -14831,6 +15462,7 @@ public final class MonitorScreenSystem {
 		state.pendingLiveCameraPixels = null;
 		state.liveCameraDecodeScheduled = false;
 		state.liveCameraLastFrameAtMillis = 0L;
+		state.liveCameraBufferedTiles = null;
 		state.liveCameraDisplayedTiles = null;
 		state.liveCameraDisplayedGeneration = 0L;
 		state.nextLiveCameraPreviewDecodeAtMillis = 0L;
@@ -15129,6 +15761,7 @@ public final class MonitorScreenSystem {
 			state.pendingLiveCameraPixels = null;
 			state.liveCameraDecodeScheduled = false;
 			state.liveCameraLastFrameAtMillis = 0L;
+			state.liveCameraBufferedTiles = null;
 			state.liveCameraDisplayedTiles = null;
 			state.liveCameraDisplayedGeneration = 0L;
 			state.nextLiveCameraPreviewDecodeAtMillis = 0L;
@@ -15911,7 +16544,7 @@ public final class MonitorScreenSystem {
 				return;
 			}
 			cancelPlaybackLocked(state);
-			state.playbackFuture = mediaScheduler.schedule(() -> refreshYoutubeSnapshot(server, key), Math.max(0L, delayMillis), TimeUnit.MILLISECONDS);
+			state.playbackFuture = mediaScheduler.schedule(() -> server.execute(() -> refreshYoutubeSnapshot(server, key)), Math.max(0L, delayMillis), TimeUnit.MILLISECONDS);
 		}
 	}
 
@@ -16226,7 +16859,21 @@ public final class MonitorScreenSystem {
 	) {
 	}
 
-	private record GalleryCardSnapshot(int index, String title, String subtitle, boolean metadataVisible, boolean animated, BufferedImage preview, boolean current, boolean loaded) {
+	private record GalleryCardSnapshot(
+			int index,
+			String title,
+			String subtitle,
+			String tertiary,
+			String statusLabel,
+			boolean statusActive,
+			String sourceLabel,
+			boolean metadataVisible,
+			boolean animated,
+			BufferedImage preview,
+			boolean current,
+			boolean loaded,
+			boolean disconnectVisible
+	) {
 	}
 
 	private static final class OverlayWindowRenderState {
@@ -16333,7 +16980,13 @@ public final class MonitorScreenSystem {
 		FILL("/assets/lg2/textures/monitor/ui_icons/fill.png"),
 		STRETCH("/assets/lg2/textures/monitor/ui_icons/stretch.png"),
 		CLOSE("/assets/lg2/textures/monitor/ui_icons/close.png"),
-		BACK("/assets/lg2/textures/monitor/ui_icons/back.png");
+		BACK("/assets/lg2/textures/monitor/ui_icons/back.png"),
+		DRONE("/assets/lg2/textures/monitor/ui_icons/drone.png"),
+		CAMERA("/assets/lg2/textures/monitor/ui_icons/camera.png"),
+		SIGNAL("/assets/lg2/textures/monitor/ui_icons/signal.png"),
+		OFFLINE("/assets/lg2/textures/monitor/ui_icons/offline.png"),
+		UNLINK("/assets/lg2/textures/monitor/ui_icons/unlink.png"),
+		LOCATION("/assets/lg2/textures/monitor/ui_icons/location.png");
 
 		private final String resourcePath;
 
@@ -16464,6 +17117,7 @@ public final class MonitorScreenSystem {
 		private byte[] pendingLiveCameraPixels;
 		private boolean liveCameraDecodeScheduled;
 		private long liveCameraLastFrameAtMillis;
+		private byte[][] liveCameraBufferedTiles;
 		private byte[][] liveCameraDisplayedTiles;
 		private long liveCameraDisplayedGeneration;
 		private long nextLiveCameraPreviewDecodeAtMillis;
@@ -16559,6 +17213,7 @@ public final class MonitorScreenSystem {
 			this.pendingLiveCameraPixels = null;
 			this.liveCameraDecodeScheduled = false;
 			this.liveCameraLastFrameAtMillis = 0L;
+			this.liveCameraBufferedTiles = null;
 			this.liveCameraDisplayedTiles = null;
 			this.liveCameraDisplayedGeneration = 0L;
 			this.nextLiveCameraPreviewDecodeAtMillis = 0L;

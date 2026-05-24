@@ -45,6 +45,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.phys.AABB;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
@@ -132,64 +133,88 @@ public final class RendererBotCameraSystem {
 		ServerPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotPreviewFrameC2SPayload.TYPE,
 				(payload, context) -> {
-					PendingCapture capture = PENDING_CAPTURES.get(payload.requestId());
-					if (capture == null || !capture.botUuid().equals(context.player().getUUID())) {
+					MinecraftServer server = context.player().level().getServer();
+					if (server == null) {
 						return;
 					}
-					capture.previewFuture().complete(payload.pixels());
-					cleanupIfFinished(payload.requestId(), capture);
+					server.execute(() -> {
+						PendingCapture capture = PENDING_CAPTURES.get(payload.requestId());
+						if (capture == null || !capture.botUuid().equals(context.player().getUUID())) {
+							return;
+						}
+						capture.previewFuture().complete(payload.pixels());
+						cleanupIfFinished(payload.requestId(), capture);
+					});
 				}
 		);
 		ServerPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotFullFrameC2SPayload.TYPE,
 				(payload, context) -> {
-					PendingCapture capture = PENDING_CAPTURES.get(payload.requestId());
-					if (capture == null || !capture.botUuid().equals(context.player().getUUID())) {
+					MinecraftServer server = context.player().level().getServer();
+					if (server == null) {
 						return;
 					}
-					capture.fullFuture().complete(payload.pixels());
-					cleanupIfFinished(payload.requestId(), capture);
+					server.execute(() -> {
+						PendingCapture capture = PENDING_CAPTURES.get(payload.requestId());
+						if (capture == null || !capture.botUuid().equals(context.player().getUUID())) {
+							return;
+						}
+						capture.fullFuture().complete(payload.pixels());
+						cleanupIfFinished(payload.requestId(), capture);
+					});
 				}
 		);
 		ServerPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotLiveFrameC2SPayload.TYPE,
 				(payload, context) -> {
-					ActiveLiveStream stream = ACTIVE_LIVE_STREAMS.get(payload.streamId());
-					if (stream == null || !stream.botUuid().equals(context.player().getUUID())) {
+					MinecraftServer server = context.player().level().getServer();
+					if (server == null) {
 						return;
 					}
-					stream.markFrameReceived();
-					ActiveLiveStream current = ACTIVE_LIVE_STREAMS.get(payload.streamId());
-					if (current == null || !current.botUuid().equals(context.player().getUUID())) {
-						return;
-					}
-					try {
-						current.onFrame().accept(payload.pixels());
-					} catch (Exception exception) {
-						Lg2.LOGGER.warn("Renderer bot live stream frame callback failed for {}", payload.streamId(), exception);
-					}
+					server.execute(() -> {
+						ActiveLiveStream stream = ACTIVE_LIVE_STREAMS.get(payload.streamId());
+						if (stream == null || !stream.botUuid().equals(context.player().getUUID())) {
+							return;
+						}
+						stream.markFrameReceived();
+						ActiveLiveStream current = ACTIVE_LIVE_STREAMS.get(payload.streamId());
+						if (current == null || !current.botUuid().equals(context.player().getUUID())) {
+							return;
+						}
+						try {
+							current.onFrame().accept(payload.pixels());
+						} catch (Exception exception) {
+							Lg2.LOGGER.warn("Renderer bot live stream frame callback failed for {}", payload.streamId(), exception);
+						}
+					});
 				}
 		);
 		ServerPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotCaptureFailureC2SPayload.TYPE,
 				(payload, context) -> {
-					PendingCapture capture = PENDING_CAPTURES.get(payload.requestId());
-					if (capture == null || !capture.botUuid().equals(context.player().getUUID())) {
-						PendingVideoRecording recording = PENDING_VIDEO_RECORDINGS.get(payload.requestId());
-						if (recording == null || !recording.botUuid().equals(context.player().getUUID())) {
+					MinecraftServer server = context.player().level().getServer();
+					if (server == null) {
+						return;
+					}
+					server.execute(() -> {
+						PendingCapture capture = PENDING_CAPTURES.get(payload.requestId());
+						if (capture == null || !capture.botUuid().equals(context.player().getUUID())) {
+							PendingVideoRecording recording = PENDING_VIDEO_RECORDINGS.get(payload.requestId());
+							if (recording == null || !recording.botUuid().equals(context.player().getUUID())) {
+								return;
+							}
+							IllegalStateException failure = new IllegalStateException(payload.message());
+							recording.completionFuture().completeExceptionally(failure);
+							PENDING_VIDEO_RECORDINGS.remove(payload.requestId());
+							releaseBotCameraIfNeeded(recording.server(), recording.botUuid(), recording.resetCameraOnFinish());
 							return;
 						}
 						IllegalStateException failure = new IllegalStateException(payload.message());
-						recording.completionFuture().completeExceptionally(failure);
-						PENDING_VIDEO_RECORDINGS.remove(payload.requestId());
-						releaseBotCameraIfNeeded(recording.server(), recording.botUuid(), recording.resetCameraOnFinish());
-						return;
-					}
-					IllegalStateException failure = new IllegalStateException(payload.message());
-					capture.previewFuture().completeExceptionally(failure);
-					capture.fullFuture().completeExceptionally(failure);
-					PENDING_CAPTURES.remove(payload.requestId());
-					releaseBotCameraIfNeeded(capture.server(), capture.botUuid(), capture.resetCameraOnFinish());
+						capture.previewFuture().completeExceptionally(failure);
+						capture.fullFuture().completeExceptionally(failure);
+						PENDING_CAPTURES.remove(payload.requestId());
+						releaseBotCameraIfNeeded(capture.server(), capture.botUuid(), capture.resetCameraOnFinish());
+					});
 				}
 		);
 		ServerPlayNetworking.registerGlobalReceiver(
@@ -211,13 +236,19 @@ public final class RendererBotCameraSystem {
 		ServerPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotVideoRecordingCompleteC2SPayload.TYPE,
 				(payload, context) -> {
-					PendingVideoRecording recording = PENDING_VIDEO_RECORDINGS.get(payload.requestId());
-					if (recording == null || !recording.botUuid().equals(context.player().getUUID())) {
+					MinecraftServer server = context.player().level().getServer();
+					if (server == null) {
 						return;
 					}
-					recording.completionFuture().complete(new VideoRecordingResult(payload.durationMs(), payload.fps(), payload.previewPixels(), payload.fullPixels()));
-					PENDING_VIDEO_RECORDINGS.remove(payload.requestId());
-					releaseBotCameraIfNeeded(recording.server(), recording.botUuid(), recording.resetCameraOnFinish());
+					server.execute(() -> {
+						PendingVideoRecording recording = PENDING_VIDEO_RECORDINGS.get(payload.requestId());
+						if (recording == null || !recording.botUuid().equals(context.player().getUUID())) {
+							return;
+						}
+						recording.completionFuture().complete(new VideoRecordingResult(payload.durationMs(), payload.fps(), payload.previewPixels(), payload.fullPixels()));
+						PENDING_VIDEO_RECORDINGS.remove(payload.requestId());
+						releaseBotCameraIfNeeded(recording.server(), recording.botUuid(), recording.resetCameraOnFinish());
+					});
 				}
 		);
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
@@ -633,7 +664,10 @@ public final class RendererBotCameraSystem {
 		completionFuture.orTimeout(Math.max(timeoutMillis, maxDurationSeconds * 1_000L + 30_000L), TimeUnit.MILLISECONDS)
 				.exceptionally(throwable -> {
 					if (PENDING_VIDEO_RECORDINGS.remove(requestId, pending)) {
-						releaseBotCameraIfNeeded(pending.server(), pending.botUuid(), pending.resetCameraOnFinish());
+						MinecraftServer callbackServer = pending.server();
+						if (callbackServer != null) {
+							callbackServer.execute(() -> releaseBotCameraIfNeeded(callbackServer, pending.botUuid(), pending.resetCameraOnFinish()));
+						}
 						completionFuture.completeExceptionally(throwable);
 					}
 					return null;
@@ -791,7 +825,10 @@ public final class RendererBotCameraSystem {
 		if (!capture.fullFuture().isDone()) {
 			capture.fullFuture().completeExceptionally(throwable);
 		}
-		releaseBotCameraIfNeeded(capture.server(), capture.botUuid(), capture.resetCameraOnFinish());
+		MinecraftServer server = capture.server();
+		if (server != null) {
+			server.execute(() -> releaseBotCameraIfNeeded(server, capture.botUuid(), capture.resetCameraOnFinish()));
+		}
 	}
 
 	private static boolean isLevelActivelyRenderedByBot(MinecraftServer server, UUID botUuid, ResourceKey<Level> dimension) {
@@ -1981,9 +2018,7 @@ public final class RendererBotCameraSystem {
 		LongSet previousChunks = new LongOpenHashSet(activeState.trackedChunks());
 		LongSet newTrackedChunks = new LongOpenHashSet();
 
-		LongIterator desiredIterator = desiredState.trackedChunks().iterator();
-		while (desiredIterator.hasNext()) {
-			long chunkLong = desiredIterator.nextLong();
+		for (long chunkLong : orderedTrackedChunks(desiredState)) {
 			ChunkPos pos = new ChunkPos(chunkLong);
 			ChunkTicketKey dirtyKey = new ChunkTicketKey(level.dimension(), chunkLong);
 			boolean alreadyTracked = previousChunks.contains(chunkLong);
@@ -2032,6 +2067,40 @@ public final class RendererBotCameraSystem {
 
 		activeState.trackedChunks().clear();
 		activeState.trackedChunks().addAll(newTrackedChunks);
+	}
+
+	private static LongArrayList orderedTrackedChunks(ShadowDesiredState desiredState) {
+		LongArrayList ordered = new LongArrayList();
+		if (desiredState == null || desiredState.trackedChunks().isEmpty()) {
+			return ordered;
+		}
+		LongIterator iterator = desiredState.trackedChunks().iterator();
+		while (iterator.hasNext()) {
+			ordered.add(iterator.nextLong());
+		}
+		int centerChunkX = desiredState.centerChunkX();
+		int centerChunkZ = desiredState.centerChunkZ();
+		ordered.sort((leftChunkLong, rightChunkLong) -> compareTrackedChunks(leftChunkLong, rightChunkLong, centerChunkX, centerChunkZ));
+		return ordered;
+	}
+
+	private static int compareTrackedChunks(long leftChunkLong, long rightChunkLong, int centerChunkX, int centerChunkZ) {
+		ChunkPos left = new ChunkPos(leftChunkLong);
+		ChunkPos right = new ChunkPos(rightChunkLong);
+		int leftChebyshevDistance = Math.max(Math.abs(left.x - centerChunkX), Math.abs(left.z - centerChunkZ));
+		int rightChebyshevDistance = Math.max(Math.abs(right.x - centerChunkX), Math.abs(right.z - centerChunkZ));
+		if (leftChebyshevDistance != rightChebyshevDistance) {
+			return Integer.compare(leftChebyshevDistance, rightChebyshevDistance);
+		}
+		int leftManhattanDistance = Math.abs(left.x - centerChunkX) + Math.abs(left.z - centerChunkZ);
+		int rightManhattanDistance = Math.abs(right.x - centerChunkX) + Math.abs(right.z - centerChunkZ);
+		if (leftManhattanDistance != rightManhattanDistance) {
+			return Integer.compare(leftManhattanDistance, rightManhattanDistance);
+		}
+		if (left.z != right.z) {
+			return Integer.compare(left.z, right.z);
+		}
+		return Integer.compare(left.x, right.x);
 	}
 
 	private static void syncShadowEntities(ServerPlayer bot, ShadowDesiredState desiredState, ShadowDimensionSyncState activeState) {
