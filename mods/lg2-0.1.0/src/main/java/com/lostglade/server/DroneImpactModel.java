@@ -8,7 +8,7 @@ final class DroneImpactModel {
 	static final double SURFACE_WEAR_MIN_TANGENTIAL_SPEED = 0.16D;
 	static final double SURFACE_WEAR_BASE_GROUND_PRESSURE = 0.015D;
 	static final double SURFACE_WEAR_REFERENCE_PRESSURE = 0.24D;
-	static final double SURFACE_WEAR_MAX_DELTA_PER_TICK = 0.085D;
+	static final double SURFACE_WEAR_MAX_DELTA_PER_TICK = 0.18D;
 	private static final double MEANINGFUL_BLOCKED_MOVEMENT = 1.0E-5D;
 	private static final double CONTROL_IMPACT_SAFE_NORMAL_SPEED = 0.22D;
 	private static final double CONTROL_IMPACT_REFERENCE_NORMAL_SPEED = 0.40D;
@@ -100,7 +100,7 @@ final class DroneImpactModel {
 		);
 		double wearDelta = Math.min(
 				SURFACE_WEAR_MAX_DELTA_PER_TICK,
-				(0.004D + 0.055D * pressureFactor) * speedFactor * speedFactor
+				(0.018D + 0.145D * pressureFactor) * Math.pow(speedFactor, 1.35D)
 		);
 		return new SurfaceWear(wearDelta, speedFactor, pressureFactor);
 	}

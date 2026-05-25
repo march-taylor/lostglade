@@ -8,6 +8,7 @@ import com.lostglade.Lg2;
 import com.lostglade.item.DroneItem;
 import com.lostglade.item.ModItems;
 import com.lostglade.mixin.ClientboundSetPassengersPacketAccessor;
+import com.lostglade.mixin.DisplayAccessor;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.lostglade.server.map.MapImageRenderSystem;
@@ -24,6 +25,7 @@ import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.core.SectionPos;
 import net.minecraft.core.particles.ParticleTypes;
@@ -63,6 +65,8 @@ import net.minecraft.server.level.TicketType;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.tags.FluidTags;
+import net.minecraft.tags.TagKey;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.SimpleContainer;
@@ -108,7 +112,13 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.BaseFireBlock;
+import net.minecraft.world.level.block.BubbleColumnBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
@@ -196,6 +206,33 @@ public final class DroneSystem {
 	private static final float DRONE_VANILLA_WOBBLE_NEGATIVE_PROGRESS_TO_RADIANS = (float) (Math.PI * 3.0D);
 	private static final double UNCONTROLLED_GRAVITY = 0.04D;
 	private static final double UNCONTROLLED_AIR_DRAG = 0.985D;
+	private static final double DRONE_WATER_HORIZONTAL_DRAG = 0.88D;
+	private static final double DRONE_WATER_VERTICAL_DRAG = 0.78D;
+	private static final double DRONE_WATER_BUOYANCY = 0.005D;
+	private static final double DRONE_WATER_FLOW_SCALE = 0.008D;
+	private static final double DRONE_WATER_STRESS_MIN_SPEED = 0.16D;
+	private static final double DRONE_WATER_STRESS_BASE_DAMAGE_PER_TICK = 0.006D;
+	private static final double DRONE_WATER_STRESS_DAMAGE_PER_TICK = 0.045D;
+	private static final double DRONE_LAVA_HORIZONTAL_DRAG = 0.50D;
+	private static final double DRONE_LAVA_VERTICAL_DRAG = 0.35D;
+	private static final double DRONE_COBWEB_HORIZONTAL_DRAG = 0.25D;
+	private static final double DRONE_COBWEB_VERTICAL_DRAG = 0.05D;
+	private static final double DRONE_SOUL_SAND_HORIZONTAL_DRAG = 0.42D;
+	private static final double DRONE_HONEY_HORIZONTAL_DRAG = 0.45D;
+	private static final double DRONE_SLIME_BOUNCE_MIN_SPEED = 0.08D;
+	private static final double DRONE_SLIME_BOUNCE_MULTIPLIER = 0.82D;
+	private static final double DRONE_BUBBLE_COLUMN_PUSH = 0.10D;
+	private static final double DRONE_EXTERNAL_PUSH_MAX_DISTANCE = 2.0D;
+	private static final double DRONE_EXTERNAL_PUSH_IMPULSE_SCALE = 0.45D;
+	private static final double DRONE_EXTERNAL_PUSH_MAX_COMPONENT = 0.34D;
+	private static final double DRONE_ENTITY_PUSH_SEARCH_XZ = 0.10D;
+	private static final double DRONE_ENTITY_PUSH_SEARCH_Y = 0.36D;
+	private static final double DRONE_ENVIRONMENT_BREAK_DAMAGE = 1.0D;
+	private static final double DRONE_LAVA_DAMAGE_PER_TICK = 1.20D;
+	private static final double DRONE_FIRE_DAMAGE_PER_TICK = 0.10D;
+	private static final double DRONE_MAGMA_DAMAGE_PER_TICK = 0.045D;
+	private static final double DRONE_ENVIRONMENT_DAMAGE_DECAY_PER_TICK = 0.02D;
+	private static final double DRONE_ENVIRONMENT_WATER_COOLING_PER_TICK = 0.08D;
 	private static final float UNCONTROLLED_ROTATION_LERP = 0.35F;
 	private static final double UNCONTROLLED_SETTLED_HORIZONTAL_SPEED_SQR = 1.0E-6D;
 	private static final double UNCONTROLLED_SETTLED_VERTICAL_SPEED = 0.045D;
@@ -305,6 +342,7 @@ public final class DroneSystem {
 	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_ARM_ALLOWED_TICK = new HashMap<>();
 	private static final Map<UUID, DroneDisplayWobbleState> DISPLAY_WOBBLE_BY_DRONE = new HashMap<>();
+	private static final Map<UUID, Double> DRONE_ENVIRONMENT_DAMAGE = new HashMap<>();
 	private static final Map<UUID, Long> POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK = new HashMap<>();
 	private static final Map<UUID, Long> POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK = new HashMap<>();
 	private static final Set<UUID> VISUALLY_CONTROLLED_PLAYERS = new HashSet<>();
@@ -415,6 +453,7 @@ public final class DroneSystem {
 			POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.clear();
 			VISUALLY_CONTROLLED_PLAYERS.clear();
 			DISPLAY_WOBBLE_BY_DRONE.clear();
+			DRONE_ENVIRONMENT_DAMAGE.clear();
 			CONTROLLED_OPERATOR_MANAGED_NIGHT_VISION.clear();
 			CONTROLLED_OPERATOR_AUTO_AIM_HIGHLIGHTS.clear();
 		});
@@ -458,6 +497,7 @@ public final class DroneSystem {
 		root.setNoGravity(true);
 		root.setInvulnerable(true);
 		root.setSilent(true);
+		root.noPhysics = false;
 		root.setResponse(true);
 		root.setWidth(DRONE_WIDTH);
 		root.setHeight(DRONE_HEIGHT);
@@ -495,10 +535,9 @@ public final class DroneSystem {
 		CAMERA_ANCHORS_BY_DRONE.put(root.getUUID(), cameraAnchor.getUUID());
 		syncDroneDisplayLayers(root);
 		syncDroneDisplay(root, yRot, 0.0F, 0.0D, 0.0D);
-		UNCONTROLLED_DRONES.put(
-				root.getUUID(),
-				new UncontrolledDroneState(root.getUUID(), serverLevel.dimension(), Vec3.ZERO, yRot, 0.0F)
-		);
+		UncontrolledDroneState uncontrolledState = new UncontrolledDroneState(root.getUUID(), serverLevel.dimension(), Vec3.ZERO, yRot, 0.0F);
+		uncontrolledState.setLastPosition(root.position());
+		UNCONTROLLED_DRONES.put(root.getUUID(), uncontrolledState);
 
 		if (!player.getAbilities().instabuild) {
 			context.getItemInHand().shrink(1);
@@ -673,6 +712,7 @@ public final class DroneSystem {
 		if (player == null || session == null || root == null || !root.isAlive()) {
 			return;
 		}
+		igniteDroneCrashSite(root, session.velocity());
 		destroyDrone(root, null, false);
 		if (ACTIVE_SESSIONS.containsKey(player.getUUID())) {
 			stopControlling(player, true, false);
@@ -1537,6 +1577,9 @@ public final class DroneSystem {
 				stopControlling(player, false);
 				continue;
 			}
+			if (tickDroneProjectileImpact(root) || tickDroneEnvironmentDamage(root)) {
+				continue;
+			}
 
 			DroneInputState input = INPUTS.getOrDefault(player.getUUID(), DroneInputState.EMPTY);
 			if (input.shift()) {
@@ -1863,6 +1906,11 @@ public final class DroneSystem {
 		if (!horizontalCollision && !verticalCollision && !groundContact) {
 			return false;
 		}
+		Vec3 currentPos = root.position();
+		Vec3 previousPos = currentPos.subtract(actualMovement == null ? Vec3.ZERO : actualMovement);
+		if (isDroneCollisionWaterProtected(root, previousPos, intendedMovement)) {
+			return false;
+		}
 
 		float impactDamage = DroneImpactModel.computeImpactDamage(
 				intendedMovement,
@@ -2027,14 +2075,455 @@ public final class DroneSystem {
 		return !entity.level().noCollision(box.move(0.0D, -1.0E-4D, 0.0D));
 	}
 
+	private static Vec3 applyUncontrolledDroneEnvironment(Entity root, Vec3 velocity) {
+		if (root == null || !(root.level() instanceof ServerLevel level)) {
+			return finiteVecOr(velocity, Vec3.ZERO);
+		}
+		Vec3 adjusted = finiteVecOr(velocity, Vec3.ZERO);
+		AABB box = root.getBoundingBox();
+		if (box == null) {
+			return adjusted;
+		}
+
+		boolean inWater = boxIntersectsFluid(level, box, FluidTags.WATER);
+		boolean inLava = boxIntersectsFluid(level, box, FluidTags.LAVA);
+		boolean stickyBlock = boxIntersectsAnyBlock(level, box, Blocks.COBWEB, Blocks.POWDER_SNOW, Blocks.SWEET_BERRY_BUSH);
+		boolean honeyContact = boxIntersectsAnyBlock(level, box, Blocks.HONEY_BLOCK);
+		boolean soulSandContact = boxTouchesAnyBlockBelow(level, box, Blocks.SOUL_SAND);
+
+		if (stickyBlock) {
+			adjusted = new Vec3(
+					adjusted.x * DRONE_COBWEB_HORIZONTAL_DRAG,
+					adjusted.y * DRONE_COBWEB_VERTICAL_DRAG,
+					adjusted.z * DRONE_COBWEB_HORIZONTAL_DRAG
+			);
+		}
+		if (inWater) {
+			Vec3 flow = averageFluidFlow(level, box, FluidTags.WATER);
+			adjusted = new Vec3(
+					adjusted.x * DRONE_WATER_HORIZONTAL_DRAG,
+					adjusted.y * DRONE_WATER_VERTICAL_DRAG + DRONE_WATER_BUOYANCY,
+					adjusted.z * DRONE_WATER_HORIZONTAL_DRAG
+			).add(flow.scale(DRONE_WATER_FLOW_SCALE));
+		}
+		if (inLava) {
+			Vec3 flow = averageFluidFlow(level, box, FluidTags.LAVA);
+			adjusted = new Vec3(
+					adjusted.x * DRONE_LAVA_HORIZONTAL_DRAG,
+					adjusted.y * DRONE_LAVA_VERTICAL_DRAG,
+					adjusted.z * DRONE_LAVA_HORIZONTAL_DRAG
+			).add(flow.scale(DRONE_WATER_FLOW_SCALE * 0.45D));
+		}
+		if (honeyContact) {
+			adjusted = new Vec3(
+					adjusted.x * DRONE_HONEY_HORIZONTAL_DRAG,
+					Math.min(adjusted.y, 0.0D) * 0.80D + Math.max(adjusted.y, 0.0D) * 0.45D,
+					adjusted.z * DRONE_HONEY_HORIZONTAL_DRAG
+			);
+		}
+		if (soulSandContact) {
+			adjusted = new Vec3(
+					adjusted.x * DRONE_SOUL_SAND_HORIZONTAL_DRAG,
+					adjusted.y,
+					adjusted.z * DRONE_SOUL_SAND_HORIZONTAL_DRAG
+			);
+		}
+
+		BlockState bubbleColumn = findIntersectingBubbleColumn(level, box);
+		if (bubbleColumn != null) {
+			double push = bubbleColumn.getValue(BubbleColumnBlock.DRAG_DOWN)
+					? -DRONE_BUBBLE_COLUMN_PUSH
+					: DRONE_BUBBLE_COLUMN_PUSH;
+			adjusted = new Vec3(adjusted.x, adjusted.y + push, adjusted.z);
+		}
+		return finiteVecOr(adjusted, Vec3.ZERO);
+	}
+
+	private static boolean hasUncontrolledDroneEnvironmentalMotion(Entity root) {
+		if (root == null || !(root.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		AABB box = root.getBoundingBox();
+		if (box == null) {
+			return false;
+		}
+		if (findIntersectingBubbleColumn(level, box) != null) {
+			return true;
+		}
+		Vec3 waterFlow = averageFluidFlow(level, box, FluidTags.WATER);
+		Vec3 lavaFlow = averageFluidFlow(level, box, FluidTags.LAVA);
+		return waterFlow.lengthSqr() > 1.0E-6D || lavaFlow.lengthSqr() > 1.0E-6D;
+	}
+
+	private static boolean tryApplyUncontrolledDroneSlimeBounce(Entity root, Vec3 incomingVelocity, boolean waterProtectedImpact) {
+		if (root == null || !(root.level() instanceof ServerLevel level) || incomingVelocity == null || waterProtectedImpact) {
+			return false;
+		}
+		if (!root.verticalCollisionBelow && !root.onGround()) {
+			return false;
+		}
+		if (incomingVelocity.y >= -DRONE_SLIME_BOUNCE_MIN_SPEED) {
+			return false;
+		}
+		AABB box = root.getBoundingBox();
+		BlockState bounceState = box == null ? null : findTouchedBlockStateBelow(level, box, Blocks.SLIME_BLOCK);
+		if (bounceState == null) {
+			return false;
+		}
+		root.setDeltaMovement(incomingVelocity);
+		bounceState.getBlock().updateEntityMovementAfterFallOn(level, root);
+		Vec3 bounce = finiteVecOr(root.getDeltaMovement(), Vec3.ZERO);
+		if (bounce.y <= 0.0D) {
+			bounce = new Vec3(
+					incomingVelocity.x * 0.80D,
+					-incomingVelocity.y * DRONE_SLIME_BOUNCE_MULTIPLIER,
+					incomingVelocity.z * 0.80D
+			);
+		}
+		root.setDeltaMovement(bounce);
+		root.hurtMarked = true;
+		return true;
+	}
+
+	private static boolean tickDroneProjectileImpact(Entity root) {
+		if (root == null || !root.isAlive() || !(root.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		AABB hitbox = droneBoxAt(root.position()).inflate(0.08D);
+		List<Projectile> projectiles = level.getEntitiesOfClass(
+				Projectile.class,
+				hitbox.inflate(4.0D),
+				projectile -> projectile != null
+						&& projectile.isAlive()
+						&& projectile.getOwner() != root
+						&& !isDroneInternalEntity(projectile.getOwner())
+						&& projectileIntersectsDroneHitbox(projectile, hitbox)
+		);
+		if (projectiles.isEmpty()) {
+			return false;
+		}
+		Projectile projectile = projectiles.get(0);
+		Entity owner = projectile.getOwner();
+		projectile.discard();
+		ServerPlayer breaker = owner instanceof ServerPlayer player ? player : null;
+		destroyDrone(root, breaker, breaker != null);
+		return true;
+	}
+
+	private static boolean projectileIntersectsDroneHitbox(Projectile projectile, AABB droneHitbox) {
+		if (projectile == null || droneHitbox == null) {
+			return false;
+		}
+		AABB projectileBox = projectile.getBoundingBox();
+		AABB expandedDroneHitbox = droneHitbox.inflate(0.08D);
+		if (projectileBox != null && projectileBox.inflate(0.03D).intersects(expandedDroneHitbox)) {
+			return true;
+		}
+		Vec3 end = projectile.position();
+		Vec3 movement = finiteVecOr(projectile.getDeltaMovement(), Vec3.ZERO);
+		Vec3 start = end.subtract(movement);
+		double movementLength = movement.length();
+		int steps = Math.max(1, net.minecraft.util.Mth.ceil(movementLength / 0.10D));
+		for (int step = 0; step <= steps; step++) {
+			double progress = (double) step / (double) steps;
+			Vec3 sample = start.lerp(end, progress);
+			if (expandedDroneHitbox.contains(sample)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean tickDroneEnvironmentDamage(Entity root) {
+		if (root == null || !root.isAlive() || !(root.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		AABB box = root.getBoundingBox();
+		if (box == null) {
+			return false;
+		}
+
+		double damage = 0.0D;
+		boolean inWater = boxIntersectsFluid(level, box, FluidTags.WATER);
+		if (boxIntersectsFluid(level, box, FluidTags.LAVA)) {
+			damage += DRONE_LAVA_DAMAGE_PER_TICK;
+		}
+		if (boxIntersectsAnyBlock(level, box, Blocks.FIRE, Blocks.SOUL_FIRE)) {
+			damage += DRONE_FIRE_DAMAGE_PER_TICK;
+		}
+		if (boxIntersectsAnyBlock(level, box, Blocks.MAGMA_BLOCK) || boxTouchesAnyBlockBelow(level, box, Blocks.MAGMA_BLOCK)) {
+			damage += DRONE_MAGMA_DAMAGE_PER_TICK;
+		}
+		if (inWater) {
+			double waterSpeed = finiteVecOr(root.getDeltaMovement(), Vec3.ZERO).length();
+			damage += DRONE_WATER_STRESS_BASE_DAMAGE_PER_TICK;
+			if (waterSpeed > DRONE_WATER_STRESS_MIN_SPEED) {
+				damage += (waterSpeed - DRONE_WATER_STRESS_MIN_SPEED) * DRONE_WATER_STRESS_DAMAGE_PER_TICK;
+			}
+		}
+
+		UUID droneId = root.getUUID();
+		double accumulated = DRONE_ENVIRONMENT_DAMAGE.getOrDefault(droneId, 0.0D);
+		if (damage > 0.0D) {
+			accumulated += damage;
+		} else {
+			double decay = inWater
+					? DRONE_ENVIRONMENT_WATER_COOLING_PER_TICK
+					: DRONE_ENVIRONMENT_DAMAGE_DECAY_PER_TICK;
+			accumulated = Math.max(0.0D, accumulated - decay);
+		}
+
+		if (accumulated >= DRONE_ENVIRONMENT_BREAK_DAMAGE) {
+			destroyDrone(root, null, false);
+			return true;
+		}
+		if (accumulated <= 1.0E-6D) {
+			DRONE_ENVIRONMENT_DAMAGE.remove(droneId);
+		} else {
+			DRONE_ENVIRONMENT_DAMAGE.put(droneId, accumulated);
+		}
+		return false;
+	}
+
+	private static boolean isDroneCollisionWaterProtected(Entity root, Vec3 startPos, Vec3 movement) {
+		if (root == null || !(root.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		AABB currentBox = root.getBoundingBox();
+		if (currentBox != null && boxIntersectsFluid(level, currentBox, FluidTags.WATER)) {
+			return true;
+		}
+		if (startPos != null) {
+			AABB startBox = droneBoxAt(startPos);
+			if (boxIntersectsFluid(level, startBox, FluidTags.WATER)) {
+				return true;
+			}
+			return pathIntersectsFluid(level, startBox, movement, FluidTags.WATER);
+		}
+		return false;
+	}
+
+	private static boolean pathIntersectsFluid(ServerLevel level, AABB startBox, Vec3 movement, TagKey<Fluid> fluidTag) {
+		if (level == null || startBox == null || movement == null || fluidTag == null) {
+			return false;
+		}
+		double movementLength = movement.length();
+		if (movementLength <= CONTROLLED_DRONE_BLOCKED_MOVEMENT_EPSILON) {
+			return false;
+		}
+		int steps = Math.max(1, net.minecraft.util.Mth.ceil(movementLength / DRONE_COLLISION_SWEEP_STEP));
+		for (int step = 1; step <= steps; step++) {
+			double progress = (double) step / (double) steps;
+			if (boxIntersectsFluid(level, startBox.move(movement.scale(progress)), fluidTag)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean boxIntersectsFluid(ServerLevel level, AABB box, TagKey<Fluid> fluidTag) {
+		if (level == null || box == null || fluidTag == null) {
+			return false;
+		}
+		for (BlockPos pos : blockPositionsTouchedBy(box)) {
+			FluidState fluidState = level.getFluidState(pos);
+			if (fluidState == null || !fluidState.is(fluidTag)) {
+				continue;
+			}
+			double fluidHeight = fluidState.getHeight(level, pos);
+			if (fluidHeight <= 0.0D) {
+				continue;
+			}
+			AABB fluidBox = new AABB(
+					pos.getX(),
+					pos.getY(),
+					pos.getZ(),
+					pos.getX() + 1.0D,
+					pos.getY() + fluidHeight,
+					pos.getZ() + 1.0D
+			);
+			if (fluidBox.intersects(box)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static Vec3 averageFluidFlow(ServerLevel level, AABB box, TagKey<Fluid> fluidTag) {
+		if (level == null || box == null || fluidTag == null) {
+			return Vec3.ZERO;
+		}
+		Vec3 flow = Vec3.ZERO;
+		int samples = 0;
+		for (BlockPos pos : blockPositionsTouchedBy(box)) {
+			FluidState fluidState = level.getFluidState(pos);
+			if (fluidState == null || !fluidState.is(fluidTag)) {
+				continue;
+			}
+			Vec3 sampleFlow = fluidState.getFlow(level, pos);
+			if (sampleFlow.lengthSqr() <= 1.0E-8D) {
+				continue;
+			}
+			flow = flow.add(sampleFlow);
+			samples++;
+		}
+		return samples <= 0 ? Vec3.ZERO : flow.scale(1.0D / samples);
+	}
+
+	private static boolean boxIntersectsAnyBlock(ServerLevel level, AABB box, Block... blocks) {
+		if (level == null || box == null || blocks == null || blocks.length == 0) {
+			return false;
+		}
+		for (BlockPos pos : blockPositionsTouchedBy(box)) {
+			BlockState state = level.getBlockState(pos);
+			for (Block block : blocks) {
+				if (block != null && state.is(block)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private static boolean boxTouchesAnyBlockBelow(ServerLevel level, AABB box, Block... blocks) {
+		return findTouchedBlockStateBelow(level, box, blocks) != null;
+	}
+
+	private static BlockState findTouchedBlockStateBelow(ServerLevel level, AABB box, Block... blocks) {
+		if (level == null || box == null || blocks == null || blocks.length == 0) {
+			return null;
+		}
+		AABB below = new AABB(
+				box.minX,
+				box.minY - 0.055D,
+				box.minZ,
+				box.maxX,
+				box.minY + 0.025D,
+				box.maxZ
+		);
+		for (BlockPos pos : blockPositionsTouchedBy(below)) {
+			BlockState state = level.getBlockState(pos);
+			for (Block block : blocks) {
+				if (block != null && state.is(block)) {
+					return state;
+				}
+			}
+		}
+		return null;
+	}
+
+	private static BlockState findIntersectingBubbleColumn(ServerLevel level, AABB box) {
+		if (level == null || box == null) {
+			return null;
+		}
+		for (BlockPos pos : blockPositionsTouchedBy(box)) {
+			BlockState state = level.getBlockState(pos);
+			if (state.is(Blocks.BUBBLE_COLUMN)) {
+				return state;
+			}
+		}
+		return null;
+	}
+
+	private static Iterable<BlockPos> blockPositionsTouchedBy(AABB box) {
+		int minX = net.minecraft.util.Mth.floor(box.minX + 1.0E-7D);
+		int minY = net.minecraft.util.Mth.floor(box.minY + 1.0E-7D);
+		int minZ = net.minecraft.util.Mth.floor(box.minZ + 1.0E-7D);
+		int maxX = net.minecraft.util.Mth.floor(box.maxX - 1.0E-7D);
+		int maxY = net.minecraft.util.Mth.floor(box.maxY - 1.0E-7D);
+		int maxZ = net.minecraft.util.Mth.floor(box.maxZ - 1.0E-7D);
+		return BlockPos.betweenClosed(minX, minY, minZ, maxX, maxY, maxZ);
+	}
+
+	private static Vec3 resolveExternalUncontrolledDroneImpulse(Entity root, UncontrolledDroneState state) {
+		if (root == null || state == null) {
+			return Vec3.ZERO;
+		}
+		Vec3 currentPos = root.position();
+		Vec3 lastPos = state.lastPosition();
+		if (lastPos == null) {
+			state.setLastPosition(currentPos);
+			return Vec3.ZERO;
+		}
+		Vec3 externalMovement = currentPos.subtract(lastPos);
+		double externalMovementSqr = externalMovement.lengthSqr();
+		if (externalMovementSqr <= 1.0E-8D) {
+			return Vec3.ZERO;
+		}
+		double maxDistanceSqr = DRONE_EXTERNAL_PUSH_MAX_DISTANCE * DRONE_EXTERNAL_PUSH_MAX_DISTANCE;
+		if (externalMovementSqr > maxDistanceSqr) {
+			state.setLastPosition(currentPos);
+			return Vec3.ZERO;
+		}
+		return limitExternalDroneImpulse(externalMovement);
+	}
+
+	private static boolean applyUncontrolledDroneEntityPushes(Entity root) {
+		if (root == null || !(root.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		AABB pushSearchBox = root.getBoundingBox().inflate(
+				DRONE_ENTITY_PUSH_SEARCH_XZ,
+				DRONE_ENTITY_PUSH_SEARCH_Y,
+				DRONE_ENTITY_PUSH_SEARCH_XZ
+		);
+		boolean pushed = false;
+		for (Entity entity : level.getEntities(root, pushSearchBox)) {
+			if (entity == null
+					|| !entity.isAlive()
+					|| entity.isSpectator()
+					|| isDroneInternalEntity(entity)
+					|| !entity.isPushable()) {
+				continue;
+			}
+			root.push(entity);
+			pushed = true;
+		}
+		return pushed;
+	}
+
+	private static void absorbVanillaUncontrolledDroneVelocity(Entity root, UncontrolledDroneState state) {
+		if (root == null || state == null) {
+			return;
+		}
+		Vec3 vanillaVelocity = finiteVecOr(root.getDeltaMovement(), Vec3.ZERO);
+		Vec3 trackedVelocity = finiteVecOr(state.velocity(), Vec3.ZERO);
+		Vec3 extraVelocity = vanillaVelocity.subtract(trackedVelocity);
+		if (extraVelocity.lengthSqr() <= 1.0E-8D) {
+			return;
+		}
+		state.setVelocity(trackedVelocity.add(limitExternalDroneImpulse(extraVelocity)));
+		root.setDeltaMovement(state.velocity());
+	}
+
+	private static Vec3 limitExternalDroneImpulse(Vec3 impulse) {
+		Vec3 safeImpulse = finiteVecOr(impulse, Vec3.ZERO).scale(DRONE_EXTERNAL_PUSH_IMPULSE_SCALE);
+		return new Vec3(
+				net.minecraft.util.Mth.clamp(safeImpulse.x, -DRONE_EXTERNAL_PUSH_MAX_COMPONENT, DRONE_EXTERNAL_PUSH_MAX_COMPONENT),
+				net.minecraft.util.Mth.clamp(safeImpulse.y, -DRONE_EXTERNAL_PUSH_MAX_COMPONENT, DRONE_EXTERNAL_PUSH_MAX_COMPONENT),
+				net.minecraft.util.Mth.clamp(safeImpulse.z, -DRONE_EXTERNAL_PUSH_MAX_COMPONENT, DRONE_EXTERNAL_PUSH_MAX_COMPONENT)
+		);
+	}
+
 	private static void tickUncontrolledDrone(Entity root, UncontrolledDroneState state) {
 		if (root == null || state == null) {
 			return;
 		}
+		if (tickDroneProjectileImpact(root) || tickDroneEnvironmentDamage(root)) {
+			UNCONTROLLED_DRONES.remove(root.getUUID());
+			return;
+		}
+		boolean pushedByEntity = applyUncontrolledDroneEntityPushes(root);
+		absorbVanillaUncontrolledDroneVelocity(root, state);
+		Vec3 externalImpulse = pushedByEntity ? Vec3.ZERO : resolveExternalUncontrolledDroneImpulse(root, state);
+		if (externalImpulse.lengthSqr() > 1.0E-8D) {
+			state.setVelocity(finiteVecOr(state.velocity(), Vec3.ZERO).add(externalImpulse));
+			root.setDeltaMovement(state.velocity());
+		}
 		boolean heldByReleaseGlide = isUncontrolledReleaseGlideActive(root, state);
 		boolean heldByScreenStream = isDroneStreamingToScreen(root);
 		boolean holdWithoutGravity = heldByReleaseGlide || heldByScreenStream;
-		if (!holdWithoutGravity && isUncontrolledDroneSettled(root, state.velocity())) {
+		if (!holdWithoutGravity && isUncontrolledDroneSettled(root, state.velocity()) && !hasUncontrolledDroneEnvironmentalMotion(root)) {
 			settleUncontrolledDrone(root, state);
 			return;
 		}
@@ -2060,20 +2549,29 @@ public final class DroneSystem {
 					velocity.z * UNCONTROLLED_AIR_DRAG
 			);
 		}
+		velocity = applyUncontrolledDroneEnvironment(root, velocity);
 
 		Vec3 startPos = root.position();
 		root.noPhysics = false;
 		root.move(MoverType.SELF, velocity);
 		Vec3 actualMovement = root.position().subtract(startPos);
+		boolean waterProtectedImpact = isDroneCollisionWaterProtected(root, startPos, velocity);
+		boolean slimeBounce = tryApplyUncontrolledDroneSlimeBounce(root, velocity, waterProtectedImpact);
+		if (slimeBounce) {
+			actualMovement = root.getDeltaMovement();
+		}
 
-		if (shouldDestroyDroneFromCollision(velocity, actualMovement, root.horizontalCollision, root.verticalCollision)) {
+		if (!waterProtectedImpact
+				&& !slimeBounce
+				&& shouldDestroyDroneFromCollision(velocity, actualMovement, root.horizontalCollision, root.verticalCollision)) {
+			igniteDroneCrashSite(root, velocity);
 			destroyDrone(root, null, false);
 			UNCONTROLLED_DRONES.remove(root.getUUID());
 			return;
 		}
 
 		state.setVelocity(actualMovement);
-		if (!holdWithoutGravity && isUncontrolledDroneSettled(root, actualMovement)) {
+		if (!holdWithoutGravity && isUncontrolledDroneSettled(root, actualMovement) && !hasUncontrolledDroneEnvironmentalMotion(root)) {
 			settleUncontrolledDrone(root, state);
 			return;
 		}
@@ -2107,6 +2605,7 @@ public final class DroneSystem {
 		}
 		syncDroneDisplay(root, root.getYRot(), root.getXRot(), displayForwardDrive, displayStrafeDrive);
 		syncDroneCameraAnchor(root, actualMovement);
+		state.setLastPosition(root.position());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
 	}
 
@@ -2321,6 +2820,7 @@ public final class DroneSystem {
 				surfaceWear.speedFactor(),
 				surfaceWear.pressureFactor(),
 				surfaceWear.delta(),
+				session.surfaceWear(),
 				gameTime
 		);
 		return session.surfaceWear() >= DroneImpactModel.SURFACE_WEAR_BREAK_LEVEL;
@@ -2332,6 +2832,7 @@ public final class DroneSystem {
 			double speedFactor,
 			double pressureFactor,
 			double wearDelta,
+			double surfaceWearLevel,
 			long gameTime
 	) {
 		if (root == null || !(root.level() instanceof ServerLevel level) || actualMovement == null || wearDelta <= 1.0E-6D) {
@@ -2353,8 +2854,12 @@ public final class DroneSystem {
 		double particleX = origin.x - slide.x * DRONE_WIDTH * 0.24D;
 		double particleY = origin.y + 0.035D;
 		double particleZ = origin.z - slide.z * DRONE_WIDTH * 0.24D;
-		int scrapeCount = 1 + (int) Math.round(scrapeStrength * 5.0D);
-		int sparkCount = pressureFactor > 0.28D ? Math.max(1, (int) Math.round(scrapeStrength * pressureFactor * 4.0D)) : 0;
+		double wearRatio = net.minecraft.util.Mth.clamp(surfaceWearLevel / DroneImpactModel.SURFACE_WEAR_BREAK_LEVEL, 0.0D, 1.0D);
+		double dangerRatio = wearRatio * wearRatio;
+		int scrapeCount = 1 + (int) Math.round(scrapeStrength * 5.0D + dangerRatio * 5.0D);
+		int sparkCount = pressureFactor > 0.28D
+				? Math.max(1, (int) Math.round(scrapeStrength * pressureFactor * (4.0D + dangerRatio * 5.0D)))
+				: (wearRatio > 0.78D && scrapeStrength > 0.35D ? 1 : 0);
 		double spraySpeed = 0.015D + scrapeStrength * 0.055D;
 
 		level.sendParticles(
@@ -2381,13 +2886,13 @@ public final class DroneSystem {
 					spraySpeed * 0.8D
 			);
 		}
-		if (scrapeStrength > 0.48D) {
+		if (scrapeStrength > 0.48D || wearRatio > 0.65D) {
 			level.sendParticles(
 					ParticleTypes.DUST_PLUME,
 					particleX,
 					particleY,
 					particleZ,
-					1 + (int) Math.round(scrapeStrength * 2.0D),
+					1 + (int) Math.round(scrapeStrength * 2.0D + dangerRatio * 3.0D),
 					0.08D,
 					0.02D,
 					0.08D,
@@ -2410,6 +2915,9 @@ public final class DroneSystem {
 		if (root == null || velocity == null || !root.onGround()) {
 			return false;
 		}
+		if (!hasSupportingBlockBelow(root)) {
+			return false;
+		}
 		double horizontalSpeedSq = velocity.x * velocity.x + velocity.z * velocity.z;
 		return horizontalSpeedSq <= UNCONTROLLED_SETTLED_HORIZONTAL_SPEED_SQR
 				&& Math.abs(velocity.y) <= UNCONTROLLED_SETTLED_VERTICAL_SPEED;
@@ -2426,6 +2934,7 @@ public final class DroneSystem {
 		root.hurtMarked = true;
 		syncDroneDisplay(root, root.getYRot(), 0.0F, 0.0D, 0.0D);
 		syncDroneCameraAnchor(root, Vec3.ZERO);
+		state.setLastPosition(root.position());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
 	}
 
@@ -2554,10 +3063,15 @@ public final class DroneSystem {
 		if (isDroneActivelyControlled(root)) {
 			return;
 		}
-		UNCONTROLLED_DRONES.putIfAbsent(
+		UncontrolledDroneState uncontrolledState = new UncontrolledDroneState(
 				root.getUUID(),
-				new UncontrolledDroneState(root.getUUID(), level.dimension(), root.getDeltaMovement(), root.getYRot(), root.getXRot())
+				level.dimension(),
+				root.getDeltaMovement(),
+				root.getYRot(),
+				root.getXRot()
 		);
+		uncontrolledState.setLastPosition(root.position());
+		UNCONTROLLED_DRONES.putIfAbsent(root.getUUID(), uncontrolledState);
 	}
 
 	private static void onEntityUnload(Entity entity, ServerLevel level) {
@@ -2568,6 +3082,7 @@ public final class DroneSystem {
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
 		NEXT_DRONE_ARM_ALLOWED_TICK.remove(root.getUUID());
 		DISPLAY_WOBBLE_BY_DRONE.remove(root.getUUID());
+		DRONE_ENVIRONMENT_DAMAGE.remove(root.getUUID());
 	}
 
 	private static void detachAnyDronePassengersFromController(ServerPlayer player) {
@@ -3752,23 +4267,22 @@ public final class DroneSystem {
 			root.noPhysics = false;
 			root.setDeltaMovement(releasedVelocity);
 			root.hurtMarked = true;
-			UNCONTROLLED_DRONES.put(
+			UncontrolledDroneState uncontrolledState = new UncontrolledDroneState(
 					root.getUUID(),
-					new UncontrolledDroneState(
-								root.getUUID(),
-								((ServerLevel) root.level()).dimension(),
-								releasedVelocity,
-								root.getYRot(),
-								root.getXRot(),
-								releasedAutoAimTarget,
-								root.level().getGameTime() + UNCONTROLLED_DRONE_RELEASE_GLIDE_TICKS,
-								session.forwardDrive(),
-								session.strafeDrive(),
-								session.displayForwardDrive(),
-								session.displayStrafeDrive(),
-								true
-						)
-				);
+					((ServerLevel) root.level()).dimension(),
+					releasedVelocity,
+					root.getYRot(),
+					root.getXRot(),
+					releasedAutoAimTarget,
+					root.level().getGameTime() + UNCONTROLLED_DRONE_RELEASE_GLIDE_TICKS,
+					session.forwardDrive(),
+					session.strafeDrive(),
+					session.displayForwardDrive(),
+					session.displayStrafeDrive(),
+					true
+			);
+			uncontrolledState.setLastPosition(root.position());
+			UNCONTROLLED_DRONES.put(root.getUUID(), uncontrolledState);
 			syncDroneDisplayLayers(root);
 			syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
 			syncDroneCameraAnchor(root, releasedVelocity);
@@ -3801,6 +4315,7 @@ public final class DroneSystem {
 		NEXT_DRONE_ARM_ALLOWED_TICK.remove(root.getUUID());
 		NEXT_DRONE_TURRET_FIRE_TICK.remove(root.getUUID());
 		DISPLAY_WOBBLE_BY_DRONE.remove(root.getUUID());
+		DRONE_ENVIRONMENT_DAMAGE.remove(root.getUUID());
 		SCREEN_STREAM_DRONE_LOAD_STATES.remove(root.getUUID());
 		BluetoothLinkSystem.removeDroneEndpoint(level, root.getUUID(), root.blockPosition());
 		stopAllDroneControllers(root, true);
@@ -3825,6 +4340,54 @@ public final class DroneSystem {
 			detonateKamikazeDrone(level, droneCameraOrigin(root), root.getDeltaMovement(), kamikazePower);
 		}
 		root.discard();
+	}
+
+	private static void igniteDroneCrashSite(Entity root, Vec3 crashMovement) {
+		if (root == null || !(root.level() instanceof ServerLevel level)) {
+			return;
+		}
+		Vec3 origin = droneCameraOrigin(root);
+		Vec3 rootPos = root.position();
+		Vec3 movement = finiteVecOr(crashMovement, Vec3.ZERO);
+		LinkedHashSet<BlockPos> candidates = new LinkedHashSet<>();
+		BlockPos rootBlock = BlockPos.containing(rootPos);
+		BlockPos cameraBlock = BlockPos.containing(origin);
+		candidates.add(rootBlock);
+		candidates.add(cameraBlock);
+		candidates.add(rootBlock.above());
+		candidates.add(cameraBlock.above());
+		candidates.add(rootBlock.below());
+		candidates.add(cameraBlock.below());
+		if (movement.lengthSqr() > 1.0E-6D) {
+			Vec3 normal = movement.normalize();
+			candidates.add(BlockPos.containing(rootPos.subtract(normal.scale(0.28D))));
+			candidates.add(BlockPos.containing(origin.subtract(normal.scale(0.28D))));
+			candidates.add(BlockPos.containing(rootPos.add(normal.scale(0.18D))));
+		}
+		for (Direction direction : Direction.values()) {
+			candidates.add(rootBlock.relative(direction));
+			candidates.add(cameraBlock.relative(direction));
+		}
+		for (BlockPos candidate : candidates) {
+			if (tryPlaceDroneCrashFire(level, candidate)) {
+				return;
+			}
+			if (tryPlaceDroneCrashFire(level, candidate.above())) {
+				return;
+			}
+		}
+	}
+
+	private static boolean tryPlaceDroneCrashFire(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null || !level.isEmptyBlock(pos)) {
+			return false;
+		}
+		BlockState fire = BaseFireBlock.getState(level, pos);
+		if (!fire.canSurvive(level, pos)) {
+			return false;
+		}
+		level.setBlockAndUpdate(pos, fire);
+		return true;
 	}
 
 	private static void stopAllDroneControllers(Entity root, boolean notify) {
@@ -4804,6 +5367,7 @@ public final class DroneSystem {
 		display.setTransformationInterpolationDelay(0);
 		display.setTransformationInterpolationDuration(DRONE_DISPLAY_INTERPOLATION_TICKS);
 		display.setTransformation(Transformation.identity());
+		collapseDroneDisplayHitbox(display);
 		return display;
 	}
 
@@ -4840,7 +5404,20 @@ public final class DroneSystem {
 			display.setXRot(controlled ? 0.0F : xRot);
 			display.setTransformation(buildDroneDisplayTransformation(root, forwardDrive, strafeDrive));
 			display.setPos(root.getX(), root.getY(), root.getZ());
+			collapseDroneDisplayHitbox(display);
 		}
+	}
+
+	private static void collapseDroneDisplayHitbox(Display.ItemDisplay display) {
+		if (display == null) {
+			return;
+		}
+		display.noPhysics = true;
+		((DisplayAccessor) display).lg2$setDisplayWidth(0.0F);
+		((DisplayAccessor) display).lg2$setDisplayHeight(0.0F);
+		display.refreshDimensions();
+		Vec3 position = display.position();
+		display.setBoundingBox(new AABB(position.x, position.y, position.z, position.x, position.y, position.z));
 	}
 
 	private static Transformation buildDroneDisplayTransformation(Entity root, double forwardDrive, double strafeDrive) {
@@ -5039,6 +5616,7 @@ public final class DroneSystem {
 			Display.ItemDisplay existing = existingLayers.get(layerKey);
 			if (existing != null) {
 				existing.setItemStack(entry.getValue());
+				collapseDroneDisplayHitbox(existing);
 				if (DRONE_DISPLAY_LAYER_BASE.equals(layerKey)) {
 					DISPLAYS_BY_DRONE.put(root.getUUID(), existing.getUUID());
 				}
@@ -5292,6 +5870,7 @@ public final class DroneSystem {
 		private double displayForwardDrive;
 		private double displayStrafeDrive;
 		private boolean driveStateKnown;
+		private Vec3 lastPosition;
 
 		private UncontrolledDroneState(UUID droneUuid, net.minecraft.resources.ResourceKey<Level> dimension, Vec3 velocity, float yaw, float pitch) {
 			this(droneUuid, dimension, velocity, yaw, pitch, null, Long.MIN_VALUE);
@@ -5351,6 +5930,14 @@ public final class DroneSystem {
 
 		private void setVelocity(Vec3 velocity) {
 			this.velocity = velocity == null ? Vec3.ZERO : velocity;
+		}
+
+		private Vec3 lastPosition() {
+			return this.lastPosition;
+		}
+
+		private void setLastPosition(Vec3 lastPosition) {
+			this.lastPosition = lastPosition;
 		}
 
 		private float yaw() {
