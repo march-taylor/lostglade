@@ -58,13 +58,26 @@ public final class ServerBossBarVisibilitySystem {
 		state.needsReorder = false;
 	}
 
+	public static void reorderTrackedBossBarsBelowReservedHud(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		PlayerBossBarState state = PLAYER_STATES.get(player.getUUID());
+		if (state == null || state.activeBossBars.isEmpty()) {
+			return;
+		}
+		reorderTrackedBossBarsBelowServerHud(player, state);
+		state.needsReorder = false;
+	}
+
 	public static boolean handleOutgoingBossEventPacket(ServerPlayer receiver, ClientboundBossEventPacket packet) {
 		BossBarPacketUpdate update = BossBarPacketUpdate.from(packet);
 		if (update == null) {
 			return false;
 		}
 
-		boolean reservedHud = ServerStabilitySystem.isHudBossBar(receiver, update.id);
+		boolean reservedHud = ServerStabilitySystem.isHudBossBar(receiver, update.id)
+				|| ServerRaceSystem.isMarkRageBossBar(receiver, update.id);
 		PlayerBossBarState state = PLAYER_STATES.computeIfAbsent(receiver.getUUID(), id -> new PlayerBossBarState());
 
 		if (!reservedHud) {

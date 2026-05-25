@@ -15,6 +15,7 @@ import com.lostglade.item.BattleDonkeyTurretItem;
 import com.lostglade.item.MethadoneItem;
 import com.lostglade.item.ModItems;
 import com.lostglade.item.TubochkaItem;
+import com.lostglade.mixin.AbstractArrowAccessor;
 import com.lostglade.mixin.ArmorStandAccessor;
 import com.lostglade.mixin.DisplayAccessor;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
@@ -79,6 +80,8 @@ import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
@@ -90,6 +93,7 @@ import net.minecraft.network.chat.RemoteChatSession;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerBossEvent;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.Filterable;
@@ -99,6 +103,7 @@ import net.minecraft.SharedConstants;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.BossEvent;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.EntitySpawnReason;
@@ -109,11 +114,13 @@ import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.Interaction;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.NeutralMob;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.entity.animal.Animal;
 import net.minecraft.world.entity.animal.equine.Donkey;
+import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
@@ -133,9 +140,14 @@ import net.minecraft.world.Container;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.raid.Raider;
+import net.minecraft.world.entity.projectile.FireworkRocketEntity;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
+import net.minecraft.world.entity.projectile.ThrowableProjectile;
 import net.minecraft.world.entity.projectile.arrow.Arrow;
+import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
+import net.minecraft.world.entity.projectile.arrow.ThrownTrident;
+import net.minecraft.world.entity.projectile.hurtingprojectile.AbstractHurtingProjectile;
 import net.minecraft.world.item.AxeItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -154,6 +166,7 @@ import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.damagesource.DamageTypes;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
@@ -491,6 +504,8 @@ public final class ServerRaceSystem {
 	private static final float GENNADIY_DONKEY_AIR_TRIGGER_HEIGHT = 1.6F;
 	private static final double GENNADIY_DONKEY_AIR_TRIGGER_HEAD_FORWARD_OFFSET = 0.24D;
 	private static final double GENNADIY_DONKEY_BULLET_VISUAL_SPEED_BLOCKS = 4.0D;
+	private static final double GENNADIY_DONKEY_BULLET_PARTICLE_SPEED = 1.65D;
+	private static final double GENNADIY_DONKEY_BULLET_SMOKE_PARTICLE_SPEED = 0.55D;
 	private static final double GENNADIY_DONKEY_SHOOT_SOUND_RANGE_BLOCKS = 16.0D;
 	private static final float GENNADIY_DONKEY_SHOOT_SOUND_VOLUME = 1.0F;
 	private static final float GENNADIY_DONKEY_SHOOT_SOUND_PITCH = 1.0F;
@@ -504,6 +519,48 @@ public final class ServerRaceSystem {
 	private static final double MARK_AXE_DEFAULT_BLEEDING_INTERVAL_SECONDS = 3.0D;
 	private static final double MARK_AXE_DEFAULT_BLEEDING_TWO_DURATION_SECONDS = 10.0D;
 	private static final double MARK_AXE_DEFAULT_COOLDOWN_SECONDS = 600.0D;
+	private static final double MARK_DEFENSE_DEFAULT_RADIUS_BLOCKS = 3.0D;
+	private static final double MARK_DEFENSE_DEFAULT_DURATION_SECONDS = 20.0D;
+	private static final double MARK_DEFENSE_DEFAULT_COOLDOWN_SECONDS = 300.0D;
+	private static final int MARK_DEFENSE_ACTIVATION_PARTICLE_COLOR = 0xE31222;
+	private static final int MARK_DEFENSE_ACTIVATION_PARTICLE_MIN_COUNT = 112;
+	private static final int MARK_DEFENSE_ACTIVATION_PARTICLE_MAX_COUNT = 420;
+	private static final double MARK_RAGE_DEFAULT_MAX_POINTS = 100.0D;
+	private static final double MARK_RAGE_DEFAULT_PASSIVE_KILL_POINTS = 1.0D;
+	private static final double MARK_RAGE_DEFAULT_HOSTILE_KILL_POINTS = 2.0D;
+	private static final double MARK_RAGE_DEFAULT_BOSS_KILL_POINTS = 5.0D;
+	private static final double MARK_RAGE_DEFAULT_PLAYER_KILL_POINTS = 10.0D;
+	private static final double MARK_RAGE_DEFAULT_DRAIN_POINTS_PER_SECOND = 10.0D;
+	private static final double MARK_RAGE_DEFAULT_EXHAUSTION_SECONDS = 45.0D;
+	private static final double MARK_RAGE_DEFAULT_BLEEDING_DAMAGE = 2.0D;
+	private static final double MARK_RAGE_DEFAULT_BLEEDING_INTERVAL_SECONDS = 3.0D;
+	private static final double MARK_RAGE_DEFAULT_BLEEDING_DURATION_SECONDS = 10.0D;
+	private static final int MARK_RAGE_STRENGTH_AMPLIFIER = 1;
+	private static final int MARK_RAGE_SPEED_AMPLIFIER = 1;
+	private static final int MARK_RAGE_RESISTANCE_AMPLIFIER = 0;
+	private static final int MARK_RAGE_BAR_TITLE_COLOR = 0xFF2A1F;
+	private static final int MARK_RAGE_BAR_PACK_SYMBOL_COLOR = 0xFFFFFF;
+	private static final String MARK_RAGE_BAR_SYMBOL = "\ue904";
+	private static final FontDescription MARK_RAGE_OVERLAY_FONT = new FontDescription.Resource(
+			Objects.requireNonNull(Identifier.tryParse("lg2:mark_rage_overlay"))
+	);
+	private static final FontDescription MARK_RAGE_BAR_FONT = new FontDescription.Resource(
+			Objects.requireNonNull(Identifier.tryParse("lg2:mark_rage_bar"))
+	);
+	private static final int MARK_RAGE_OVERLAY_X_OFFSET = -120;
+	private static final int MARK_RAGE_OVERLAY_TITLE_COLOR = 0xFFFFFF;
+	private static final long MARK_RAGE_OVERLAY_FRAME_TICKS = 3L;
+	private static final String[] MARK_RAGE_OVERLAY_GLYPH_FRAMES = {
+			"\uefb0" + buildHorizontalAdvance(-1) + "\uefb1" + buildHorizontalAdvance(-1) + "\uefb2",
+			"\uefb3" + buildHorizontalAdvance(-1) + "\uefb4" + buildHorizontalAdvance(-1) + "\uefb5",
+			"\uefb6" + buildHorizontalAdvance(-1) + "\uefb7" + buildHorizontalAdvance(-1) + "\uefb8",
+			"\uefb9" + buildHorizontalAdvance(-1) + "\uefba" + buildHorizontalAdvance(-1) + "\uefbb"
+	};
+	private static final Identifier MARK_RAGE_MUSIC_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "mark_rage_music");
+	private static final Holder<SoundEvent> MARK_RAGE_MUSIC_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(MARK_RAGE_MUSIC_SOUND_ID));
+	private static final Holder<SoundEvent> MARK_RAGE_FALLBACK_MUSIC_SOUND = SoundEvents.MUSIC_DISC_PIGSTEP;
+	private static final float MARK_RAGE_MUSIC_VOLUME = 0.75F;
+	private static final float MARK_RAGE_MUSIC_PITCH = 1.0F;
 	private static final double MARK_AXE_FLIGHT_SPEED_BLOCKS = 1.25D;
 	private static final double MARK_AXE_FALL_SPEED_BLOCKS = 0.75D;
 	private static final int MARK_AXE_FALL_TRANSITION_TICKS = 8;
@@ -666,8 +723,15 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, Integer> GENNADIY_RAGE_HASTE_PLAYERS = new HashMap<>();
 	private static final Map<UUID, GennadiyReportPending> GENNADIY_REPORT_PENDING = new LinkedHashMap<>();
 	private static final Map<UUID, Long> MARK_ATTACK_COOLDOWNS = new LinkedHashMap<>();
+	private static final Map<UUID, Long> MARK_DEFENSE_COOLDOWNS = new LinkedHashMap<>();
+	private static final Map<UUID, MarkDefenseSession> MARK_DEFENSE_SESSIONS = new LinkedHashMap<>();
 	private static final List<MarkThrownAxeSession> MARK_THROWN_AXES = new ArrayList<>();
 	private static final Map<UUID, MarkBleedingSession> MARK_BLEEDING_SESSIONS = new LinkedHashMap<>();
+	private static final Map<UUID, Double> MARK_RAGE_POINTS = new LinkedHashMap<>();
+	private static final Map<UUID, MarkRageSession> MARK_RAGE_SESSIONS = new LinkedHashMap<>();
+	private static final Map<UUID, ServerBossEvent> MARK_RAGE_BOSS_BARS = new LinkedHashMap<>();
+	private static final Set<UUID> MARK_RAGE_BAR_HIDDEN = new HashSet<>();
+	private static final Set<UUID> MARK_RAGE_OVERLAY_ACTIVE = new HashSet<>();
 	private static final Map<UUID, CartelDisguiseSession> CARTEL_DISGUISE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelManualBookRestore> CARTEL_MANUAL_BOOK_RESTORES = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> COPPER_GOLEM_FOLLOWERS = new LinkedHashMap<>();
@@ -904,6 +968,9 @@ public final class ServerRaceSystem {
 			GENNADIY_RAGE_HASTE_PLAYERS.clear();
 			GENNADIY_REPORT_PENDING.clear();
 			MARK_ATTACK_COOLDOWNS.clear();
+			MARK_DEFENSE_COOLDOWNS.clear();
+			releaseAllMarkDefenseFields(server);
+			clearAllMarkRage(server);
 			MARK_THROWN_AXES.clear();
 			MARK_BLEEDING_SESSIONS.clear();
 			copperManDefenseTintCacheLastCleanupTick = Long.MIN_VALUE;
@@ -925,6 +992,7 @@ public final class ServerRaceSystem {
 					CartelSecretRecipeBookSystem.syncJoinedPlayer(handler.player);
 					CopperManGogglesSystem.syncPlayerRecipeBook(handler.player);
 					syncWomanShnyagaLinks(server);
+					updateMarkRageHud(handler.player);
 					prewarmCopperManDefenseTint(server, handler.player);
 				})
 		);
@@ -956,6 +1024,8 @@ public final class ServerRaceSystem {
 			clearGennadiyDefense(handler.player);
 			cleanupGennadiyHookSession(server, GENNADIY_HOOK_SESSIONS.remove(handler.player.getUUID()));
 			GENNADIY_REPORT_PENDING.remove(handler.player.getUUID());
+			releaseMarkDefenseField(server, MARK_DEFENSE_SESSIONS.remove(handler.player.getUUID()), false, null);
+			stopMarkRage(server, handler.player, false);
 			recallGennadiyDonkey(server, handler.player.getUUID(), false);
 			syncWomanShnyagaLinks(server);
 		});
@@ -963,6 +1033,8 @@ public final class ServerRaceSystem {
 			if (!alive) {
 				clearGennadiyDefense(newPlayer);
 				cleanupGennadiyHookSession(newPlayer.level().getServer(), GENNADIY_HOOK_SESSIONS.remove(newPlayer.getUUID()));
+				releaseMarkDefenseField(newPlayer.level().getServer(), MARK_DEFENSE_SESSIONS.remove(newPlayer.getUUID()), false, null);
+				stopMarkRage(newPlayer.level().getServer(), newPlayer, false);
 				recallGennadiyDonkey(newPlayer.level().getServer(), newPlayer.getUUID(), false);
 			}
 		});
@@ -1038,13 +1110,13 @@ public final class ServerRaceSystem {
 								.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
 								.executes(ServerRaceSystem::reloadFromCommand)
 						)
-						.then(literal("reset_cooldowns")
-								.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
-								.executes(ServerRaceSystem::resetAllRaceAbilityCooldownsFromCommand)
-						)
 						.then(literal("reset_cooldown")
 								.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
 								.executes(ServerRaceSystem::resetAllRaceAbilityCooldownsFromCommand)
+						)
+						.then(literal("ragebar")
+								.requires(ServerRaceSystem::canUseMarkRageBarCommand)
+								.executes(ServerRaceSystem::toggleMarkRageBarFromCommand)
 						)
 						.then(literal("use")
 								.then(literal("attack").executes(context -> useAbility(context, RaceAbilitySlot.ATTACK)))
@@ -1077,6 +1149,34 @@ public final class ServerRaceSystem {
 		return 1;
 	}
 
+	private static boolean canUseMarkRageBarCommand(CommandSourceStack source) {
+		ServerPlayer player = source == null ? null : source.getPlayer();
+		return player != null && isMarkPotroshitelPlayer(player);
+	}
+
+	private static int toggleMarkRageBarFromCommand(CommandContext<CommandSourceStack> context) {
+		ServerPlayer player = context.getSource().getPlayer();
+		if (player == null || !isMarkPotroshitelPlayer(player)) {
+			return 0;
+		}
+		UUID playerId = player.getUUID();
+		boolean hidden;
+		if (MARK_RAGE_BAR_HIDDEN.contains(playerId)) {
+			MARK_RAGE_BAR_HIDDEN.remove(playerId);
+			hidden = false;
+		} else {
+			MARK_RAGE_BAR_HIDDEN.add(playerId);
+			hidden = true;
+		}
+		updateMarkRageHud(player);
+		player.displayClientMessage(
+				Component.literal(hidden ? "Шкала ярости скрыта." : "Шкала ярости включена.")
+						.withStyle(style -> style.withColor(hidden ? ChatFormatting.GRAY : ChatFormatting.RED).withItalic(false)),
+				true
+		);
+		return 1;
+	}
+
 	public static void resetAllRaceAbilityCooldowns(MinecraftServer server) {
 		CARTEL_ATTACK_COOLDOWNS.clear();
 		CARTEL_DEFENSE_COOLDOWNS.clear();
@@ -1090,6 +1190,7 @@ public final class ServerRaceSystem {
 		GENNADIY_DONKEY_COOLDOWNS.clear();
 		GENNADIY_RAGE_HASTE_PLAYERS.clear();
 		MARK_ATTACK_COOLDOWNS.clear();
+		MARK_DEFENSE_COOLDOWNS.clear();
 		unlockAllMarkThrownAxes(server);
 		clearAllGennadiyReportCooldowns(server);
 		CopperManGogglesSystem.resetAllAbilityCooldowns(server);
@@ -1274,6 +1375,12 @@ public final class ServerRaceSystem {
 		if (slot == RaceAbilitySlot.ATTACK && MARK_POTROSHITEL_RACE_ID.equals(raceId)) {
 			return useMarkPotroshitelAttack(player, race, ability);
 		}
+		if (slot == RaceAbilitySlot.DEFENSE && MARK_POTROSHITEL_RACE_ID.equals(raceId)) {
+			return useMarkPotroshitelDefense(player, race, ability);
+		}
+		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && MARK_POTROSHITEL_RACE_ID.equals(raceId)) {
+			return useMarkPotroshitelUnique(player, race, ability);
+		}
 
 		startGenericAbilityCooldown(player, slot, ability);
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
@@ -1352,7 +1459,9 @@ public final class ServerRaceSystem {
 					|| slot == RaceAbilitySlot.SHNYAGA;
 		}
 		if (MARK_POTROSHITEL_RACE_ID.equals(raceId)) {
-			return slot == RaceAbilitySlot.ATTACK;
+			return slot == RaceAbilitySlot.ATTACK
+					|| slot == RaceAbilitySlot.DEFENSE
+					|| slot == RaceAbilitySlot.UNIQUE_ABILITY;
 		}
 		return false;
 	}
@@ -3029,6 +3138,43 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private static final class MarkDefenseCapturedProjectile {
+		private final UUID projectileId;
+		private final Vec3 localOffset;
+		private final boolean originalNoGravity;
+		private final boolean originalNoPhysics;
+		private final boolean originalInvisible;
+		private final double originalSpeed;
+		private final float fixedYRot;
+		private final float fixedXRot;
+
+		private MarkDefenseCapturedProjectile(UUID projectileId, Vec3 localOffset, boolean originalNoGravity, boolean originalNoPhysics, boolean originalInvisible, double originalSpeed, float fixedYRot, float fixedXRot) {
+			this.projectileId = projectileId;
+			this.localOffset = localOffset == null ? Vec3.ZERO : localOffset;
+			this.originalNoGravity = originalNoGravity;
+			this.originalNoPhysics = originalNoPhysics;
+			this.originalInvisible = originalInvisible;
+			this.originalSpeed = Math.max(0.0D, originalSpeed);
+			this.fixedYRot = fixedYRot;
+			this.fixedXRot = fixedXRot;
+		}
+	}
+
+	private static final class MarkDefenseSession {
+		private final UUID playerId;
+		private final ResourceKey<Level> dimension;
+		private final long endTick;
+		private final double radius;
+		private final Map<UUID, MarkDefenseCapturedProjectile> capturedProjectiles = new LinkedHashMap<>();
+
+		private MarkDefenseSession(UUID playerId, ResourceKey<Level> dimension, long endTick, double radius) {
+			this.playerId = playerId;
+			this.dimension = dimension;
+			this.endTick = endTick;
+			this.radius = Math.max(0.1D, radius);
+		}
+	}
+
 	private static final class MarkBleedingSession {
 		private final UUID targetId;
 		private final ResourceKey<Level> dimension;
@@ -3048,6 +3194,20 @@ public final class ServerRaceSystem {
 			this.expireTick = Math.max(nowTick + 1L, expireTick);
 			this.woundLocalOffset = woundLocalOffset;
 			this.nextDamageTick = nowTick + this.intervalTicks;
+		}
+	}
+
+	private static final class MarkRageSession {
+		private final UUID playerId;
+		private ResourceKey<Level> dimension;
+		private final double drainPointsPerTick;
+		private final long exhaustionTicks;
+
+		private MarkRageSession(UUID playerId, ResourceKey<Level> dimension, double drainPointsPerTick, long exhaustionTicks) {
+			this.playerId = playerId;
+			this.dimension = dimension;
+			this.drainPointsPerTick = Math.max(0.0D, drainPointsPerTick);
+			this.exhaustionTicks = Math.max(1L, exhaustionTicks);
 		}
 	}
 
@@ -5652,6 +5812,446 @@ public final class ServerRaceSystem {
 		return 1;
 	}
 
+	private static int useMarkPotroshitelDefense(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return 0;
+		}
+
+		MarkDefenseSession active = MARK_DEFENSE_SESSIONS.remove(player.getUUID());
+		if (active != null) {
+			releaseMarkDefenseField(level.getServer(), active, true, player);
+			Lg2.LOGGER.info("Player {} released mark defense field '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
+			return 1;
+		}
+
+		long remainingCooldownTicks = getRemainingOnlineCooldownTicks(MARK_DEFENSE_COOLDOWNS, player.getUUID());
+		if (displayRemainingCooldown(player, remainingCooldownTicks)) {
+			return 0;
+		}
+
+		long durationTicks = Math.max(1L, asTicks(getMarkDefenseDurationSeconds(ability)));
+		long cooldownTicks = Math.max(1L, asTicks(positiveOrDefault(ability.cooldownSeconds, MARK_DEFENSE_DEFAULT_COOLDOWN_SECONDS)));
+		double radius = getMarkDefenseRadius(ability);
+		MarkDefenseSession session = new MarkDefenseSession(
+				player.getUUID(),
+				level.dimension(),
+				level.getGameTime() + durationTicks,
+				radius
+		);
+		MARK_DEFENSE_SESSIONS.put(player.getUUID(), session);
+		captureMarkDefenseProjectiles(level, player, session);
+		spawnMarkDefenseActivationSphere(level, player, radius);
+		startOnlineCooldown(MARK_DEFENSE_COOLDOWNS, player.getUUID(), cooldownTicks);
+		Lg2.LOGGER.info("Player {} used mark defense '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
+		return 1;
+	}
+
+	private static void spawnMarkDefenseActivationSphere(ServerLevel level, ServerPlayer player, double radius) {
+		if (level == null || player == null || radius <= 0.0D) {
+			return;
+		}
+		Vec3 center = getMarkDefenseCenter(player);
+		int particleCount = (int) Math.round(Math.max(MARK_DEFENSE_ACTIVATION_PARTICLE_MIN_COUNT, radius * radius * 18.0D));
+		particleCount = Math.min(MARK_DEFENSE_ACTIVATION_PARTICLE_MAX_COUNT, particleCount);
+		DustParticleOptions particle = new DustParticleOptions(MARK_DEFENSE_ACTIVATION_PARTICLE_COLOR, 0.72F);
+		double goldenAngle = Math.PI * (3.0D - Math.sqrt(5.0D));
+		for (int index = 0; index < particleCount; index++) {
+			double y = 1.0D - (2.0D * (index + 0.5D) / particleCount);
+			double horizontalRadius = Math.sqrt(Math.max(0.0D, 1.0D - y * y));
+			double theta = index * goldenAngle;
+			Vec3 normal = new Vec3(
+					Math.cos(theta) * horizontalRadius,
+					y,
+					Math.sin(theta) * horizontalRadius
+			);
+			Vec3 position = center.add(normal.scale(radius));
+			level.sendParticles(
+					particle,
+					position.x,
+					position.y,
+					position.z,
+					0,
+					normal.x * 0.035D,
+					normal.y * 0.035D,
+					normal.z * 0.035D,
+					1.0D
+			);
+		}
+	}
+
+	private static int useMarkPotroshitelUnique(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || ability == null || !(player.level() instanceof ServerLevel level) || player.isSpectator() || !player.isAlive()) {
+			return 0;
+		}
+		UUID playerId = player.getUUID();
+		if (MARK_RAGE_SESSIONS.containsKey(playerId)) {
+			return 0;
+		}
+
+		double points = getMarkRagePoints(playerId, ability);
+		if (points <= 0.0D) {
+			player.displayClientMessage(
+					Component.literal("Вы слишком спокойны, чтобы войти в ярость.").withStyle(ChatFormatting.RED),
+					true
+			);
+			return 0;
+		}
+
+		double drainPerTick = getMarkRageDrainPointsPerSecond(ability) / 20.0D;
+		long exhaustionTicks = Math.max(1L, asTicks(getMarkRageExhaustionSeconds(ability)));
+		MARK_RAGE_SESSIONS.put(playerId, new MarkRageSession(playerId, level.dimension(), drainPerTick, exhaustionTicks));
+		applyMarkRageEffects(player);
+		updateMarkRageHud(player);
+		syncMarkRageOverlay(player, true);
+		playMarkRageMusic(player);
+		Lg2.LOGGER.info("Player {} entered mark rage '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
+		return 1;
+	}
+
+	private static void tickMarkRage(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		Set<UUID> online = new HashSet<>();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			UUID playerId = player.getUUID();
+			online.add(playerId);
+
+			Optional<PlayerRaceConfig> raceOptional = getRace(player);
+			boolean isMark = raceOptional.isPresent() && MARK_POTROSHITEL_RACE_ID.equals(sanitizePath(raceOptional.get().id));
+			boolean hasUnique = isMark && hasUnlockedAbility(player, raceOptional.get(), RaceAbilitySlot.UNIQUE_ABILITY);
+			if (!isMark || !hasUnique) {
+				stopMarkRage(server, player, false);
+				hideMarkRageHud(player);
+				continue;
+			}
+
+			MarkRageSession session = MARK_RAGE_SESSIONS.get(playerId);
+			if (session != null) {
+				if (!player.isAlive()
+						|| player.isSpectator()
+						|| player.level() == null
+						|| player.level().dimension() != session.dimension) {
+					stopMarkRage(server, player, false);
+					updateMarkRageHud(player);
+					continue;
+				}
+
+				RaceAbilityConfig ability = getAbility(raceOptional.get(), RaceAbilitySlot.UNIQUE_ABILITY);
+				double points = getMarkRagePoints(playerId, ability);
+				double nextPoints = Math.max(0.0D, points - session.drainPointsPerTick);
+				setMarkRagePoints(playerId, nextPoints, ability);
+				applyMarkRageEffects(player);
+				syncMarkRageOverlay(player, true);
+				if (nextPoints <= 0.0D) {
+					stopMarkRage(server, player, true);
+				}
+			} else {
+				syncMarkRageOverlay(player, false);
+			}
+
+			updateMarkRageHud(player);
+		}
+
+		for (UUID playerId : new ArrayList<>(MARK_RAGE_SESSIONS.keySet())) {
+			if (!online.contains(playerId)) {
+				MARK_RAGE_SESSIONS.remove(playerId);
+			}
+		}
+		MARK_RAGE_BOSS_BARS.entrySet().removeIf(entry -> {
+			if (online.contains(entry.getKey())) {
+				return false;
+			}
+			entry.getValue().removeAllPlayers();
+			return true;
+		});
+		MARK_RAGE_OVERLAY_ACTIVE.removeIf(playerId -> !online.contains(playerId));
+	}
+
+	private static void applyMarkRageEffects(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		refreshMarkRageEffect(player, MobEffects.STRENGTH, MARK_RAGE_STRENGTH_AMPLIFIER);
+		refreshMarkRageEffect(player, MobEffects.SPEED, MARK_RAGE_SPEED_AMPLIFIER);
+		refreshMarkRageEffect(player, MobEffects.RESISTANCE, MARK_RAGE_RESISTANCE_AMPLIFIER);
+	}
+
+	private static void refreshMarkRageEffect(ServerPlayer player, Holder<MobEffect> effect, int amplifier) {
+		if (player == null || effect == null) {
+			return;
+		}
+		MobEffectInstance current = player.getEffect(effect);
+		if (current != null && current.getAmplifier() == amplifier && current.getDuration() == MobEffectInstance.INFINITE_DURATION) {
+			return;
+		}
+		player.addEffect(new MobEffectInstance(effect, MobEffectInstance.INFINITE_DURATION, amplifier, false, false, false));
+	}
+
+	private static void stopMarkRage(MinecraftServer server, ServerPlayer player, boolean exhausted) {
+		if (player == null) {
+			return;
+		}
+		MarkRageSession session = MARK_RAGE_SESSIONS.remove(player.getUUID());
+		clearMarkRageEffects(player);
+		syncMarkRageOverlay(player, false);
+		stopMarkRageMusic(player);
+		if (exhausted && session != null) {
+			int duration = (int) Math.min(Integer.MAX_VALUE, Math.max(1L, session.exhaustionTicks));
+			player.addEffect(new MobEffectInstance(MobEffects.HUNGER, duration, 2, false, false, false));
+			player.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, duration, 1, false, false, false));
+			player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, duration, 0, false, false, false));
+		}
+		updateMarkRageHud(player);
+	}
+
+	private static void clearMarkRageEffects(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		removeMarkRageManagedEffect(player, MobEffects.STRENGTH, MARK_RAGE_STRENGTH_AMPLIFIER);
+		removeMarkRageManagedEffect(player, MobEffects.SPEED, MARK_RAGE_SPEED_AMPLIFIER);
+		removeMarkRageManagedEffect(player, MobEffects.RESISTANCE, MARK_RAGE_RESISTANCE_AMPLIFIER);
+	}
+
+	private static void removeMarkRageManagedEffect(ServerPlayer player, Holder<MobEffect> effect, int amplifier) {
+		if (player == null || effect == null) {
+			return;
+		}
+		MobEffectInstance current = player.getEffect(effect);
+		if (current != null && current.getAmplifier() == amplifier && current.getDuration() == MobEffectInstance.INFINITE_DURATION) {
+			player.removeEffect(effect);
+		}
+	}
+
+	private static void clearAllMarkRage(MinecraftServer server) {
+		if (server != null) {
+			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+				clearMarkRageEffects(player);
+				syncMarkRageOverlay(player, false);
+				stopMarkRageMusic(player);
+				hideMarkRageHud(player);
+			}
+		}
+		MARK_RAGE_SESSIONS.clear();
+		MARK_RAGE_BOSS_BARS.values().forEach(ServerBossEvent::removeAllPlayers);
+		MARK_RAGE_BOSS_BARS.clear();
+		MARK_RAGE_OVERLAY_ACTIVE.clear();
+	}
+
+	private static void updateMarkRageHud(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isEmpty()
+				|| !MARK_POTROSHITEL_RACE_ID.equals(sanitizePath(raceOptional.get().id))
+				|| !hasUnlockedAbility(player, raceOptional.get(), RaceAbilitySlot.UNIQUE_ABILITY)
+				|| MARK_RAGE_BAR_HIDDEN.contains(player.getUUID())) {
+			hideMarkRageHud(player);
+			return;
+		}
+
+		RaceAbilityConfig ability = getAbility(raceOptional.get(), RaceAbilitySlot.UNIQUE_ABILITY);
+		ServerBossEvent bossBar = MARK_RAGE_BOSS_BARS.computeIfAbsent(player.getUUID(), id -> createMarkRageBossBar());
+		double maxPoints = getMarkRageMaxPoints(ability);
+		double points = getMarkRagePoints(player.getUUID(), ability);
+		float progress = (float) (maxPoints <= 0.0D ? 0.0D : points / maxPoints);
+		progress = Math.max(0.0F, Math.min(1.0F, progress));
+		bossBar.setName(buildMarkRageBossBarTitle(player, points, maxPoints));
+		bossBar.setProgress(progress);
+		bossBar.setColor(BossEvent.BossBarColor.RED);
+		bossBar.setVisible(true);
+		boolean addedNow = false;
+		if (!bossBar.getPlayers().contains(player)) {
+			bossBar.addPlayer(player);
+			addedNow = true;
+		}
+		long gameTime = player.level() == null ? 0L : player.level().getGameTime();
+		if (addedNow || gameTime % 20L == 0L) {
+			ServerStabilitySystem.reorderHudBelowExternalBossBar(player);
+			ServerBossBarVisibilitySystem.reorderTrackedBossBarsBelowReservedHud(player);
+		}
+	}
+
+	private static ServerBossEvent createMarkRageBossBar() {
+		ServerBossEvent event = new ServerBossEvent(
+				Component.empty(),
+				BossEvent.BossBarColor.RED,
+				BossEvent.BossBarOverlay.PROGRESS
+		);
+		event.setDarkenScreen(false);
+		event.setPlayBossMusic(false);
+		event.setCreateWorldFog(false);
+		return event;
+	}
+
+	private static Component buildMarkRageBossBarTitle(ServerPlayer player, double points, double maxPoints) {
+		if (PolymerResourcePackUtils.hasMainPack(player)) {
+			return Component.literal(MARK_RAGE_BAR_SYMBOL)
+					.withStyle(style -> style
+							.withColor(MARK_RAGE_BAR_PACK_SYMBOL_COLOR)
+							.withItalic(false)
+							.withBold(false)
+							.withFont(MARK_RAGE_BAR_FONT)
+							.withShadowColor(0x00000000));
+		}
+		String text = getMarkRageTextTitle(player) + ": " + formatMarkRageNumber(points) + "/" + formatMarkRageNumber(maxPoints);
+		return Component.literal(text).withStyle(style -> style.withColor(MARK_RAGE_BAR_TITLE_COLOR).withBold(true).withItalic(false));
+	}
+
+	private static String getMarkRageTextTitle(ServerPlayer player) {
+		String language = player == null || player.clientInformation() == null ? null : player.clientInformation().language();
+		if (language == null) {
+			return "Rage";
+		}
+		String normalized = language.toLowerCase(Locale.ROOT);
+		if (normalized.startsWith("ru")) {
+			return "\u042f\u0440\u043e\u0441\u0442\u044c";
+		}
+		if (normalized.startsWith("uk")) {
+			return "\u041b\u044e\u0442\u044c";
+		}
+		if (normalized.startsWith("rpr")) {
+			return "\u042f\u0440\u043e\u0441\u0442\u044c";
+		}
+		return "Rage";
+	}
+
+	private static void hideMarkRageHud(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		ServerBossEvent bossBar = MARK_RAGE_BOSS_BARS.get(player.getUUID());
+		if (bossBar == null) {
+			return;
+		}
+		bossBar.removePlayer(player);
+		if (bossBar.getPlayers().isEmpty()) {
+			MARK_RAGE_BOSS_BARS.remove(player.getUUID());
+		}
+	}
+
+	public static boolean isMarkRageBossBar(ServerPlayer player, UUID bossBarId) {
+		if (player == null || bossBarId == null) {
+			return false;
+		}
+		ServerBossEvent bossBar = MARK_RAGE_BOSS_BARS.get(player.getUUID());
+		return bossBar != null && bossBar.getId().equals(bossBarId);
+	}
+
+	private static Component buildMarkRageOverlayTitle(ServerPlayer player) {
+		long gameTime = player == null || player.level() == null ? 0L : player.level().getGameTime();
+		int frameIndex = (int) ((gameTime / MARK_RAGE_OVERLAY_FRAME_TICKS) % MARK_RAGE_OVERLAY_GLYPH_FRAMES.length);
+		Component glyph = Component.literal(MARK_RAGE_OVERLAY_GLYPH_FRAMES[frameIndex])
+				.withStyle(style -> style
+						.withColor(MARK_RAGE_OVERLAY_TITLE_COLOR)
+						.withItalic(false)
+						.withFont(MARK_RAGE_OVERLAY_FONT)
+						.withShadowColor(0x00000000));
+		return Component.empty()
+				.append(Component.literal(buildHorizontalAdvance(MARK_RAGE_OVERLAY_X_OFFSET)).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
+				.append(Component.literal(TITLE_OVERLAY_SHIFT).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
+				.append(glyph)
+				.append(Component.literal(TITLE_OVERLAY_RESET).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)));
+	}
+
+	private static void syncMarkRageOverlay(ServerPlayer player, boolean enabled) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		boolean shouldShow = enabled && PolymerResourcePackUtils.hasMainPack(player);
+		if (shouldShow) {
+			MARK_RAGE_OVERLAY_ACTIVE.add(playerId);
+			player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 16, 0));
+			player.connection.send(new ClientboundSetTitleTextPacket(buildMarkRageOverlayTitle(player)));
+			return;
+		}
+		if (MARK_RAGE_OVERLAY_ACTIVE.remove(playerId)) {
+			player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 16, 0));
+			player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
+		}
+	}
+
+	private static void playMarkRageMusic(ServerPlayer player) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		Vec3 pos = player.position();
+		Holder<SoundEvent> sound = PolymerResourcePackUtils.hasMainPack(player)
+				? MARK_RAGE_MUSIC_SOUND
+				: MARK_RAGE_FALLBACK_MUSIC_SOUND;
+		player.connection.send(new ClientboundSoundPacket(
+				sound,
+				SoundSource.PLAYERS,
+				pos.x,
+				pos.y,
+				pos.z,
+				MARK_RAGE_MUSIC_VOLUME,
+				MARK_RAGE_MUSIC_PITCH,
+				player.level().getGameTime() ^ player.getUUID().getLeastSignificantBits()
+		));
+	}
+
+	private static void stopMarkRageMusic(ServerPlayer player) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		player.connection.send(new ClientboundStopSoundPacket(BuiltInRegistries.SOUND_EVENT.getKey(SoundEvents.MUSIC_DISC_PIGSTEP.value()), SoundSource.PLAYERS));
+		player.connection.send(new ClientboundStopSoundPacket(MARK_RAGE_MUSIC_SOUND_ID, SoundSource.PLAYERS));
+	}
+
+	private static void addMarkRagePoints(ServerPlayer player, RaceAbilityConfig ability, double amount) {
+		if (player == null || ability == null || amount <= 0.0D) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		double next = getMarkRagePoints(playerId, ability) + amount;
+		setMarkRagePoints(playerId, next, ability);
+		updateMarkRageHud(player);
+	}
+
+	private static double getMarkRagePoints(UUID playerId, RaceAbilityConfig ability) {
+		if (playerId == null) {
+			return 0.0D;
+		}
+		double max = getMarkRageMaxPoints(ability);
+		double value = MARK_RAGE_POINTS.getOrDefault(playerId, 0.0D);
+		if (value <= 0.0D) {
+			return 0.0D;
+		}
+		return Math.min(max, value);
+	}
+
+	private static void setMarkRagePoints(UUID playerId, double points, RaceAbilityConfig ability) {
+		if (playerId == null) {
+			return;
+		}
+		double max = getMarkRageMaxPoints(ability);
+		double clamped = Math.max(0.0D, Math.min(max, points));
+		if (clamped <= 0.0D) {
+			MARK_RAGE_POINTS.remove(playerId);
+		} else {
+			MARK_RAGE_POINTS.put(playerId, clamped);
+		}
+	}
+
+	private static boolean isMarkPotroshitelPlayer(ServerPlayer player) {
+		return player != null
+				&& getRace(player)
+						.map(race -> MARK_POTROSHITEL_RACE_ID.equals(sanitizePath(race.id)))
+						.orElse(false);
+	}
+
+	private static String formatMarkRageNumber(double value) {
+		if (Math.abs(value - Math.rint(value)) < 0.01D) {
+			return Long.toString(Math.round(value));
+		}
+		return String.format(Locale.ROOT, "%.1f", value);
+	}
+
 	private static boolean isMarkThrowableAxe(ItemStack stack) {
 		return stack != null && !stack.isEmpty() && stack.getItem() instanceof AxeItem;
 	}
@@ -5800,8 +6400,268 @@ public final class ServerRaceSystem {
 			return;
 		}
 		tickOnlineCooldowns(server, MARK_ATTACK_COOLDOWNS);
+		tickOnlineCooldowns(server, MARK_DEFENSE_COOLDOWNS);
+		tickMarkDefense(server);
 		tickMarkThrownAxes(server);
 		tickMarkBleedingSessions(server);
+		tickMarkRage(server);
+	}
+
+	private static void tickMarkDefense(MinecraftServer server) {
+		if (server == null || MARK_DEFENSE_SESSIONS.isEmpty()) {
+			return;
+		}
+
+		Iterator<Map.Entry<UUID, MarkDefenseSession>> iterator = MARK_DEFENSE_SESSIONS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, MarkDefenseSession> entry = iterator.next();
+			MarkDefenseSession session = entry.getValue();
+			ServerPlayer player = session == null ? null : server.getPlayerList().getPlayer(session.playerId);
+			ServerLevel level = session == null || session.dimension == null ? null : server.getLevel(session.dimension);
+			if (session == null
+					|| player == null
+					|| !player.isAlive()
+					|| player.isSpectator()
+					|| level == null
+					|| player.level() != level) {
+				releaseMarkDefenseField(server, session, false, null);
+				iterator.remove();
+				continue;
+			}
+
+			if (level.getGameTime() >= session.endTick) {
+				releaseMarkDefenseField(server, session, false, null);
+				iterator.remove();
+				continue;
+			}
+
+			captureMarkDefenseProjectiles(level, player, session);
+			syncMarkDefenseCapturedProjectiles(server, level, player, session);
+		}
+	}
+
+	private static void captureMarkDefenseProjectiles(ServerLevel level, ServerPlayer player, MarkDefenseSession session) {
+		if (level == null || player == null || session == null) {
+			return;
+		}
+		Vec3 center = getMarkDefenseCenter(player);
+		double radius = Math.max(0.1D, session.radius);
+		double radiusSqr = radius * radius;
+		AABB bounds = new AABB(center, center).inflate(radius);
+		for (Projectile projectile : level.getEntitiesOfClass(
+				Projectile.class,
+				bounds,
+				projectile -> canMarkDefenseCaptureProjectile(projectile, center, radiusSqr)
+		)) {
+			UUID projectileId = projectile.getUUID();
+			if (session.capturedProjectiles.containsKey(projectileId) || isMarkDefenseProjectileCaptured(projectileId)) {
+				continue;
+			}
+			Vec3 localOffset = projectile.position().subtract(center);
+			if (localOffset.lengthSqr() <= 1.0E-4D) {
+				Vec3 movement = projectile.getDeltaMovement();
+				localOffset = movement.lengthSqr() > 1.0E-6D
+						? movement.normalize().scale(-Math.min(0.75D, radius))
+						: new Vec3(0.0D, Math.min(0.75D, radius), 0.0D);
+			}
+			if (localOffset.lengthSqr() > radiusSqr) {
+				localOffset = localOffset.normalize().scale(radius);
+			}
+			MarkDefenseCapturedProjectile captured = new MarkDefenseCapturedProjectile(
+					projectileId,
+					localOffset,
+					projectile.isNoGravity(),
+					projectile.noPhysics,
+					projectile.isInvisible(),
+					projectile.getDeltaMovement().length(),
+					projectile.getYRot(),
+					projectile.getXRot()
+			);
+			session.capturedProjectiles.put(projectileId, captured);
+			freezeMarkDefenseProjectile(level, projectile, center.add(localOffset), captured);
+		}
+	}
+
+	private static boolean canMarkDefenseCaptureProjectile(Projectile projectile, Vec3 center, double radiusSqr) {
+		if (projectile == null || center == null || !projectile.isAlive() || projectile.isRemoved()) {
+			return false;
+		}
+		if (projectile.getTags().contains(MARK_AXE_DISPLAY_TAG)
+				|| projectile.getTags().contains(MARK_AXE_TRIGGER_TAG)
+				|| projectile.getTags().contains(GENNADIY_HOOK_CHAIN_TAG)) {
+			return false;
+		}
+		return projectile.position().distanceToSqr(center) <= radiusSqr;
+	}
+
+	private static boolean isMarkDefenseProjectileCaptured(UUID projectileId) {
+		if (projectileId == null) {
+			return false;
+		}
+		for (MarkDefenseSession session : MARK_DEFENSE_SESSIONS.values()) {
+			if (session != null && session.capturedProjectiles.containsKey(projectileId)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static void syncMarkDefenseCapturedProjectiles(MinecraftServer server, ServerLevel level, ServerPlayer player, MarkDefenseSession session) {
+		if (server == null || level == null || player == null || session == null || session.capturedProjectiles.isEmpty()) {
+			return;
+		}
+		Vec3 center = getMarkDefenseCenter(player);
+		Iterator<Map.Entry<UUID, MarkDefenseCapturedProjectile>> iterator = session.capturedProjectiles.entrySet().iterator();
+		while (iterator.hasNext()) {
+			MarkDefenseCapturedProjectile captured = iterator.next().getValue();
+			Entity entity = findEntity(server, captured.projectileId);
+			if (!(entity instanceof Projectile projectile) || projectile.level() != level || !projectile.isAlive()) {
+				iterator.remove();
+				continue;
+			}
+			freezeMarkDefenseProjectile(level, projectile, center.add(captured.localOffset), captured);
+		}
+	}
+
+	private static void freezeMarkDefenseProjectile(ServerLevel level, Projectile projectile, Vec3 position, MarkDefenseCapturedProjectile captured) {
+		if (projectile == null || position == null || captured == null) {
+			return;
+		}
+		projectile.setPos(position.x, position.y, position.z);
+		projectile.setDeltaMovement(Vec3.ZERO);
+		projectile.setNoGravity(true);
+		setMarkDefenseProjectileFrozenState(projectile, true);
+		lockMarkDefenseProjectileRotation(projectile, captured);
+	}
+
+	private static void lockMarkDefenseProjectileRotation(Projectile projectile, MarkDefenseCapturedProjectile captured) {
+		if (projectile == null || captured == null) {
+			return;
+		}
+		projectile.setYRot(captured.fixedYRot);
+		projectile.setXRot(captured.fixedXRot);
+		projectile.yRotO = captured.fixedYRot;
+		projectile.xRotO = captured.fixedXRot;
+	}
+
+	private static void setMarkDefenseProjectileFrozenState(Projectile projectile, boolean frozen) {
+		if (projectile == null) {
+			return;
+		}
+		if (projectile instanceof AbstractArrow arrow) {
+			((AbstractArrowAccessor) arrow).lg2$setInGround(frozen);
+			arrow.shakeTime = 0;
+			arrow.noPhysics = false;
+			return;
+		}
+		projectile.noPhysics = frozen;
+	}
+
+	private static void releaseAllMarkDefenseFields(MinecraftServer server) {
+		if (MARK_DEFENSE_SESSIONS.isEmpty()) {
+			return;
+		}
+		for (MarkDefenseSession session : new ArrayList<>(MARK_DEFENSE_SESSIONS.values())) {
+			releaseMarkDefenseField(server, session, false, null);
+		}
+		MARK_DEFENSE_SESSIONS.clear();
+	}
+
+	private static void releaseMarkDefenseField(MinecraftServer server, MarkDefenseSession session, boolean repel, ServerPlayer player) {
+		if (server == null || session == null || session.capturedProjectiles.isEmpty()) {
+			return;
+		}
+		ServerLevel level = session.dimension == null ? null : server.getLevel(session.dimension);
+		Vec3 center = player != null && player.level() == level ? getMarkDefenseCenter(player) : null;
+		for (MarkDefenseCapturedProjectile captured : new ArrayList<>(session.capturedProjectiles.values())) {
+			Entity entity = findEntity(server, captured.projectileId);
+			if (!(entity instanceof Projectile projectile) || !projectile.isAlive()) {
+				continue;
+			}
+			if (repel && player != null && center != null && projectile.level() == player.level()) {
+				repelMarkDefenseProjectile(player, projectile, captured, center);
+			} else {
+				releaseMarkDefenseProjectileInert(projectile, captured);
+			}
+		}
+		session.capturedProjectiles.clear();
+	}
+
+	private static void releaseMarkDefenseProjectileInert(Projectile projectile, MarkDefenseCapturedProjectile captured) {
+		if (projectile == null || captured == null) {
+			return;
+		}
+		setMarkDefenseProjectileFrozenState(projectile, false);
+		setMarkDefenseProjectileNoPhysics(projectile, false);
+		projectile.setNoGravity(false);
+		projectile.setInvisible(captured.originalInvisible);
+		projectile.setDeltaMovement(Vec3.ZERO);
+		projectile.hurtMarked = true;
+	}
+
+	private static void repelMarkDefenseProjectile(ServerPlayer player, Projectile projectile, MarkDefenseCapturedProjectile captured, Vec3 center) {
+		if (player == null || projectile == null || captured == null || center == null) {
+			return;
+		}
+		Vec3 direction = projectile.position().subtract(center);
+		if (direction.lengthSqr() <= 1.0E-6D) {
+			direction = captured.localOffset;
+		}
+		if (direction.lengthSqr() <= 1.0E-6D) {
+			direction = player.getLookAngle().scale(-1.0D);
+		}
+		if (direction.lengthSqr() <= 1.0E-6D) {
+			direction = new Vec3(0.0D, 1.0D, 0.0D);
+		}
+		direction = direction.normalize();
+		double speed = getMarkDefenseProjectileReleaseSpeed(projectile, captured);
+		setMarkDefenseProjectileFrozenState(projectile, false);
+		setMarkDefenseProjectileNoPhysics(projectile, captured.originalNoPhysics);
+		projectile.setNoGravity(captured.originalNoGravity);
+		projectile.setInvisible(captured.originalInvisible);
+		projectile.setOwner(player);
+		projectile.shoot(direction.x, direction.y, direction.z, (float) speed, 0.0F);
+		projectile.hurtMarked = true;
+	}
+
+	private static void setMarkDefenseProjectileNoPhysics(Projectile projectile, boolean noPhysics) {
+		if (projectile == null) {
+			return;
+		}
+		if (projectile instanceof AbstractArrow arrow) {
+			arrow.setNoPhysics(noPhysics);
+			arrow.shakeTime = 0;
+		}
+		projectile.noPhysics = noPhysics;
+	}
+
+	private static double getMarkDefenseProjectileReleaseSpeed(Projectile projectile, MarkDefenseCapturedProjectile captured) {
+		double speed;
+		if (projectile instanceof ThrownTrident) {
+			speed = 2.5D;
+		} else if (projectile instanceof AbstractArrow) {
+			speed = 3.0D;
+		} else if (projectile instanceof FireworkRocketEntity) {
+			speed = 1.6D;
+		} else if (projectile instanceof ThrowableProjectile) {
+			speed = 1.5D;
+		} else if (projectile instanceof AbstractHurtingProjectile) {
+			speed = 1.2D;
+		} else {
+			speed = 1.5D;
+		}
+		double originalSpeed = captured == null ? 0.0D : captured.originalSpeed;
+		if (originalSpeed > speed) {
+			speed = Math.min(originalSpeed, speed * 1.25D);
+		}
+		return Math.max(0.25D, speed);
+	}
+
+	private static Vec3 getMarkDefenseCenter(ServerPlayer player) {
+		if (player == null) {
+			return Vec3.ZERO;
+		}
+		return player.getEyePosition();
 	}
 
 	private static void tickMarkThrownAxes(MinecraftServer server) {
@@ -6623,6 +7483,42 @@ public final class ServerRaceSystem {
 
 	private static double getMarkAxeBleedingTwoDurationSeconds(RaceAbilityConfig ability) {
 		return positiveOrDefault(ability == null ? 0.0D : ability.markAxeBleedingTwoDurationSeconds, MARK_AXE_DEFAULT_BLEEDING_TWO_DURATION_SECONDS);
+	}
+
+	private static double getMarkDefenseRadius(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markDefenseRadiusBlocks, MARK_DEFENSE_DEFAULT_RADIUS_BLOCKS);
+	}
+
+	private static double getMarkDefenseDurationSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markDefenseDurationSeconds, MARK_DEFENSE_DEFAULT_DURATION_SECONDS);
+	}
+
+	private static double getMarkRageMaxPoints(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markRageMaxPoints, MARK_RAGE_DEFAULT_MAX_POINTS);
+	}
+
+	private static double getMarkRagePassiveKillPoints(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markRagePassiveKillPoints, MARK_RAGE_DEFAULT_PASSIVE_KILL_POINTS);
+	}
+
+	private static double getMarkRageHostileKillPoints(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markRageHostileKillPoints, MARK_RAGE_DEFAULT_HOSTILE_KILL_POINTS);
+	}
+
+	private static double getMarkRageBossKillPoints(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markRageBossKillPoints, MARK_RAGE_DEFAULT_BOSS_KILL_POINTS);
+	}
+
+	private static double getMarkRagePlayerKillPoints(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markRagePlayerKillPoints, MARK_RAGE_DEFAULT_PLAYER_KILL_POINTS);
+	}
+
+	private static double getMarkRageDrainPointsPerSecond(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markRageDrainPointsPerSecond, MARK_RAGE_DEFAULT_DRAIN_POINTS_PER_SECOND);
+	}
+
+	private static double getMarkRageExhaustionSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markRageExhaustionSeconds, MARK_RAGE_DEFAULT_EXHAUSTION_SECONDS);
 	}
 
 	private static double getWomanDefenseRange(RaceAbilityConfig ability) {
@@ -7703,14 +8599,71 @@ public final class ServerRaceSystem {
 
 	private static void spawnGennadiyBulletMuzzleParticles(ServerLevel level, Vec3 position, Vec3 direction) {
 		Vec3 smoke = position.subtract(direction.scale(0.12D));
-		level.sendParticles(ParticleTypes.SMOKE, smoke.x, smoke.y, smoke.z, 1, 0.02D, 0.02D, 0.02D, 0.003D);
-		level.sendParticles(ParticleTypes.CRIT, position.x, position.y, position.z, 1, 0.01D, 0.01D, 0.01D, 0.008D);
+		level.sendParticles(
+				ParticleTypes.SMOKE,
+				smoke.x,
+				smoke.y,
+				smoke.z,
+				0,
+				direction.x,
+				direction.y,
+				direction.z,
+				GENNADIY_DONKEY_BULLET_SMOKE_PARTICLE_SPEED
+		);
+		level.sendParticles(
+				ParticleTypes.CRIT,
+				position.x,
+				position.y,
+				position.z,
+				0,
+				direction.x,
+				direction.y,
+				direction.z,
+				GENNADIY_DONKEY_BULLET_PARTICLE_SPEED
+		);
 	}
 
 	private static void spawnGennadiyBulletHeadParticles(ServerLevel level, Vec3 previous, Vec3 current, Vec3 direction) {
-		Vec3 tail = current.subtract(direction.scale(0.18D));
-		level.sendParticles(new DustParticleOptions(0xC27A2C, 0.45F), current.x, current.y, current.z, 1, 0.0D, 0.0D, 0.0D, 0.0D);
-		level.sendParticles(ParticleTypes.SMOKE, tail.x, tail.y, tail.z, 1, 0.006D, 0.006D, 0.006D, 0.0D);
+		Vec3 origin = previous == null ? current : previous;
+		if (origin == null || current == null || direction == null || direction.lengthSqr() <= 1.0E-6D) {
+			return;
+		}
+		Vec3 normalized = direction.normalize();
+		Vec3 tracerOrigin = origin.add(normalized.scale(0.08D));
+		Vec3 smokeOrigin = origin.subtract(normalized.scale(0.1D));
+		level.sendParticles(
+				new DustParticleOptions(0xD39A42, 0.42F),
+				tracerOrigin.x,
+				tracerOrigin.y,
+				tracerOrigin.z,
+				0,
+				normalized.x,
+				normalized.y,
+				normalized.z,
+				GENNADIY_DONKEY_BULLET_PARTICLE_SPEED
+		);
+		level.sendParticles(
+				ParticleTypes.CRIT,
+				tracerOrigin.x,
+				tracerOrigin.y,
+				tracerOrigin.z,
+				0,
+				normalized.x,
+				normalized.y,
+				normalized.z,
+				GENNADIY_DONKEY_BULLET_PARTICLE_SPEED * 0.9D
+		);
+		level.sendParticles(
+				ParticleTypes.SMOKE,
+				smokeOrigin.x,
+				smokeOrigin.y,
+				smokeOrigin.z,
+				0,
+				normalized.x,
+				normalized.y,
+				normalized.z,
+				GENNADIY_DONKEY_BULLET_SMOKE_PARTICLE_SPEED
+		);
 	}
 
 	private static void spawnGennadiyBulletImpactParticles(ServerLevel level, Vec3 position) {
@@ -9365,6 +10318,134 @@ public final class ServerRaceSystem {
 			GENNADIY_RAGE_APPLYING_DAMAGE.set(Boolean.FALSE);
 			victim.invulnerableTime = Math.max(victim.invulnerableTime, previousInvulnerableTime);
 		}
+	}
+
+	public static void handleMarkRageMeleeDamage(ServerLevel level, LivingEntity victim, DamageSource damageSource, float damage, boolean applied) {
+		if (!applied
+				|| level == null
+				|| victim == null
+				|| damageSource == null
+				|| damage <= 0.0F
+				|| !damageSource.is(DamageTypes.PLAYER_ATTACK)) {
+			return;
+		}
+		if (!(damageSource.getEntity() instanceof ServerPlayer attacker) || damageSource.getDirectEntity() != attacker || attacker == victim) {
+			return;
+		}
+		if (!isMarkRageActive(attacker)) {
+			return;
+		}
+		startMarkRageBleeding(level, attacker, victim);
+	}
+
+	public static void handleMarkRageKill(ServerLevel level, LivingEntity victim, DamageSource damageSource) {
+		if (level == null || victim == null || damageSource == null) {
+			return;
+		}
+		LivingEntity attacker = resolveDamageAttacker(damageSource);
+		if (!(attacker instanceof ServerPlayer player) || player == victim || !isMarkPotroshitelPlayer(player)) {
+			return;
+		}
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isEmpty() || !hasUnlockedAbility(player, raceOptional.get(), RaceAbilitySlot.UNIQUE_ABILITY)) {
+			return;
+		}
+		RaceAbilityConfig ability = getAbility(raceOptional.get(), RaceAbilitySlot.UNIQUE_ABILITY);
+		boolean active = isMarkRageActive(player);
+		if (active && !(victim instanceof ServerPlayer)) {
+			return;
+		}
+		double gained = getMarkRageKillPoints(ability, victim);
+		if (gained <= 0.0D) {
+			return;
+		}
+		addMarkRagePoints(player, ability, gained);
+	}
+
+	private static boolean isMarkRageActive(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		MarkRageSession session = MARK_RAGE_SESSIONS.get(player.getUUID());
+		return session != null && level.dimension().equals(session.dimension);
+	}
+
+	private static double getMarkRageKillPoints(RaceAbilityConfig ability, LivingEntity victim) {
+		if (victim == null) {
+			return 0.0D;
+		}
+		if (victim instanceof ServerPlayer) {
+			return getMarkRagePlayerKillPoints(ability);
+		}
+		if (isMarkRageBoss(victim)) {
+			return getMarkRageBossKillPoints(ability);
+		}
+		if (victim instanceof Enemy || victim instanceof NeutralMob) {
+			return getMarkRageHostileKillPoints(ability);
+		}
+		if (victim instanceof Mob) {
+			return getMarkRagePassiveKillPoints(ability);
+		}
+		return 0.0D;
+	}
+
+	private static boolean isMarkRageBoss(LivingEntity victim) {
+		if (victim == null) {
+			return false;
+		}
+		EntityType<?> type = victim.getType();
+		return type == EntityType.WITHER || type == EntityType.ENDER_DRAGON;
+	}
+
+	private static void startMarkRageBleeding(ServerLevel level, ServerPlayer attacker, LivingEntity target) {
+		if (level == null || attacker == null || target == null || !target.isAlive()) {
+			return;
+		}
+		RaceAbilityConfig attackAbility = getRace(attacker)
+				.map(race -> getAbility(race, RaceAbilitySlot.ATTACK))
+				.orElse(null);
+		long nowTick = level.getGameTime();
+		long intervalTicks = Math.max(1L, asTicks(positiveOrDefault(
+				attackAbility == null ? 0.0D : attackAbility.markAxeBleedingIntervalSeconds,
+				MARK_RAGE_DEFAULT_BLEEDING_INTERVAL_SECONDS
+		)));
+		long durationTicks = Math.max(1L, asTicks(positiveOrDefault(
+				attackAbility == null ? 0.0D : attackAbility.markAxeBleedingTwoDurationSeconds,
+				MARK_RAGE_DEFAULT_BLEEDING_DURATION_SECONDS
+		)));
+		double damageValue = positiveOrDefault(
+				attackAbility == null ? 0.0D : attackAbility.markAxeBleedingTwoDamage,
+				MARK_RAGE_DEFAULT_BLEEDING_DAMAGE
+		);
+		Vec3 woundLocalOffset = randomMarkRageWoundLocalOffset(level, target);
+		MARK_BLEEDING_SESSIONS.put(
+				target.getUUID(),
+				new MarkBleedingSession(
+						target.getUUID(),
+						level.dimension(),
+						attacker.getUUID(),
+						damageValue,
+						intervalTicks,
+						nowTick,
+						nowTick + durationTicks,
+						woundLocalOffset
+				)
+		);
+		emitMarkBloodDrip(level, getMarkBleedingWoundPosition(target, MARK_BLEEDING_SESSIONS.get(target.getUUID())));
+	}
+
+	private static Vec3 randomMarkRageWoundLocalOffset(ServerLevel level, LivingEntity target) {
+		if (target == null) {
+			return Vec3.ZERO;
+		}
+		RandomSource random = level == null ? RandomSource.create() : level.random;
+		double halfWidth = Math.max(0.08D, target.getBbWidth() * 0.28D);
+		double x = (random.nextDouble() - 0.5D) * halfWidth * 2.0D;
+		double z = (random.nextDouble() - 0.5D) * halfWidth * 2.0D;
+		double minY = Math.max(0.18D, target.getBbHeight() * 0.28D);
+		double maxY = Math.max(minY + 0.05D, target.getBbHeight() * 0.82D);
+		double y = minY + random.nextDouble() * (maxY - minY);
+		return new Vec3(x, y, z);
 	}
 
 	private static void setGennadiyDonkeyTarget(UUID ownerId, LivingEntity target, int priority) {

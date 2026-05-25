@@ -722,6 +722,24 @@ public final class ServerStabilitySystem {
 		return spacer != null && spacer.getId().equals(bossBarId);
 	}
 
+	public static void reorderHudBelowExternalBossBar(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+
+		ServerBossEvent spacer = PLAYER_SPACER_HUDS.get(player.getUUID());
+		if (spacer != null && spacer.getPlayers().contains(player)) {
+			spacer.removePlayer(player);
+			spacer.addPlayer(player);
+		}
+
+		ServerBossEvent hud = PLAYER_HUDS.get(player.getUUID());
+		if (hud != null && hud.getPlayers().contains(player)) {
+			hud.removePlayer(player);
+			hud.addPlayer(player);
+		}
+	}
+
 	private static int getMaxStability() {
 		return Math.max(1, Lg2Config.get().stabilityMax);
 	}

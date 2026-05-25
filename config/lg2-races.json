@@ -320,15 +320,25 @@
         "enabled": true,
         "abilityId": "mark_potroshitel_defense",
         "name": "Неуловимость маньяка",
-        "description": "Ваша кожа становится устойчивой к стрелам и снарядам. Вы можете откинуть их обратно.",
-        "priceBitcoins": 600
+        "description": "Вы становитесь устойчивым к стрелам и снарядам. Можно откинуть их обратно.",
+        "priceBitcoins": 600,
+        "cooldownSeconds": 300.0,
+        "markDefenseRadiusBlocks": 3.0,
+        "markDefenseDurationSeconds": 20.0
       },
       "uniqueAbility": {
         "enabled": true,
         "abilityId": "mark_potroshitel_unique",
         "name": "Шкала гнева",
         "description": "Заполняйте шкалу убийствами. При полной шкале вы входите в состояние ярости: получаете силу, скорость и сопротивление, а ваши удары вызывают сильное кровотечение.",
-        "priceBitcoins": 1000
+        "priceBitcoins": 1000,
+        "markRageMaxPoints": 100.0,
+        "markRagePassiveKillPoints": 1.0,
+        "markRageHostileKillPoints": 2.0,
+        "markRageBossKillPoints": 5.0,
+        "markRagePlayerKillPoints": 10.0,
+        "markRageDrainPointsPerSecond": 10.0,
+        "markRageExhaustionSeconds": 45.0
       },
       "shnyaga": {
         "enabled": true,
