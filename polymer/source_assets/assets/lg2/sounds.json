@@ -55,6 +55,38 @@
       }
     ]
   },
+  "gennadiy_hook_chain": {
+    "sounds": [
+      {
+        "name": "lg2:gennadiy_hook_chain",
+        "preload": true
+      }
+    ]
+  },
+  "gennadiy_hook_impact": {
+    "sounds": [
+      {
+        "name": "lg2:gennadiy_hook_impact",
+        "preload": true
+      }
+    ]
+  },
+  "gennadiy_hook_end": {
+    "sounds": [
+      {
+        "name": "lg2:gennadiy_hook_end",
+        "preload": true
+      }
+    ]
+  },
+  "gennadiy_donkey_shoot": {
+    "sounds": [
+      {
+        "name": "lg2:gennadiy_donkey_shoot",
+        "preload": true
+      }
+    ]
+  },
   "ui_purchase_blocked": {
     "sounds": [
       {

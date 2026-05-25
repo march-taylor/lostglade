@@ -79,8 +79,7 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 
 	@Inject(method = "handleMovePlayer", at = @At("HEAD"), cancellable = true)
 	private void lg2$forceGennadiyDefenseLookOnPlayerMove(ServerboundMovePlayerPacket packet, CallbackInfo ci) {
-		float yaw = packet != null && packet.hasRotation() ? packet.getYRot(this.player.getYRot()) : this.player.getYRot();
-		if (ServerRaceSystem.handleGennadiyDefenseMovementPacket(this.player, yaw)) {
+		if (ServerRaceSystem.handleGennadiyDefenseMovementPacket(this.player)) {
 			ci.cancel();
 		}
 	}
@@ -96,8 +95,7 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 
 	@Inject(method = "handleMoveVehicle", at = @At("HEAD"), cancellable = true)
 	private void lg2$forceGennadiyDefenseLookOnVehicleMove(ServerboundMoveVehiclePacket packet, CallbackInfo ci) {
-		float yaw = packet != null ? packet.yRot() : this.player.getYRot();
-		if (ServerRaceSystem.handleGennadiyDefenseMovementPacket(this.player, yaw)) {
+		if (ServerRaceSystem.handleGennadiyDefenseMovementPacket(this.player)) {
 			ci.cancel();
 		}
 	}

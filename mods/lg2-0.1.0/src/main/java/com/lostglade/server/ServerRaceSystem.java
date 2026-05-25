@@ -56,6 +56,7 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.ChatType;
@@ -65,9 +66,12 @@ import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
+import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundOpenBookPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
+import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
@@ -144,6 +148,7 @@ import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
@@ -363,6 +368,11 @@ public final class ServerRaceSystem {
 	private static final double GENNADIY_DEFENSE_DEFAULT_WAVE_RANGE_BLOCKS = 32.0D;
 	private static final double GENNADIY_DEFENSE_DEFAULT_MIN_DAMAGE = 1.0D;
 	private static final double GENNADIY_DEFENSE_DEFAULT_MAX_DAMAGE = 3.0D;
+	private static final double GENNADIY_DEFENSE_EXPLOSION_SOUND_RANGE_BLOCKS = 16.0D;
+	private static final float GENNADIY_DEFENSE_CHARGE_SOUND_VOLUME = 0.36F;
+	private static final float GENNADIY_DEFENSE_CHARGE_SOUND_PITCH = 0.98F;
+	private static final float GENNADIY_DEFENSE_EXPLOSION_SOUND_VOLUME = 2.0F;
+	private static final float GENNADIY_DEFENSE_EXPLOSION_SOUND_PITCH = 0.72F;
 	private static final double GENNADIY_HOOK_DEFAULT_RANGE_BLOCKS = 16.0D;
 	private static final double GENNADIY_HOOK_DEFAULT_DAMAGE = 4.0D;
 	private static final double GENNADIY_HOOK_DEFAULT_SLOWNESS_SECONDS = 1.5D;
@@ -377,6 +387,21 @@ public final class ServerRaceSystem {
 	private static final double GENNADIY_HOOK_HIT_RADIUS_BLOCKS = 0.45D;
 	private static final double GENNADIY_HOOK_FINISH_DISTANCE_BLOCKS = 1.45D;
 	private static final int GENNADIY_HOOK_MAX_SEGMENTS = 48;
+	private static final double GENNADIY_HOOK_SOUND_RANGE_BLOCKS = 32.0D;
+	private static final long GENNADIY_HOOK_CHAIN_SOUND_REPEAT_TICKS = 50L;
+	private static final float GENNADIY_HOOK_CHAIN_SOUND_VOLUME = 0.85F;
+	private static final float GENNADIY_HOOK_CHAIN_SOUND_PITCH = 1.0F;
+	private static final float GENNADIY_HOOK_IMPACT_SOUND_VOLUME = 1.875F;
+	private static final float GENNADIY_HOOK_IMPACT_SOUND_PITCH = 1.0F;
+	private static final float GENNADIY_HOOK_END_SOUND_VOLUME = 0.95F;
+	private static final float GENNADIY_HOOK_END_SOUND_PITCH = 1.0F;
+	private static final Identifier GENNADIY_HOOK_CHAIN_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "gennadiy_hook_chain");
+	private static final Identifier GENNADIY_HOOK_IMPACT_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "gennadiy_hook_impact");
+	private static final Identifier GENNADIY_HOOK_END_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "gennadiy_hook_end");
+	private static final Identifier GENNADIY_HOOK_CHAIN_FALLBACK_SOUND_ID = BuiltInRegistries.SOUND_EVENT.getKey(SoundEvents.CHAIN_STEP);
+	private static final Holder<SoundEvent> GENNADIY_HOOK_CHAIN_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(GENNADIY_HOOK_CHAIN_SOUND_ID));
+	private static final Holder<SoundEvent> GENNADIY_HOOK_IMPACT_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(GENNADIY_HOOK_IMPACT_SOUND_ID));
+	private static final Holder<SoundEvent> GENNADIY_HOOK_END_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(GENNADIY_HOOK_END_SOUND_ID));
 	private static final double GENNADIY_RAGE_DEFAULT_HEALTH_THRESHOLD_RATIO = 0.2D;
 	private static final int GENNADIY_RAGE_DEFAULT_HASTE_LEVEL = 1;
 	private static final double GENNADIY_RAGE_DEFAULT_MELEE_DAMAGE_BONUS_RATIO = 0.15D;
@@ -385,7 +410,7 @@ public final class ServerRaceSystem {
 	private static final int GENNADIY_REPORT_CONTAINER_SCAN_CHUNK_RADIUS = 16;
 	private static final int GENNADIY_REPORT_CONFIRM_LINE_WIDTH_CHARS = 42;
 	private static final long GENNADIY_DEFENSE_WAVE_VISUAL_DURATION_TICKS = 18L;
-	private static final float GENNADIY_DEFENSE_FORCED_PITCH = 72.0F;
+	private static final float GENNADIY_DEFENSE_FORCED_PITCH = 90.0F;
 	private static final String FSIT_SEAT_ENTITY_CLASS_NAME = "dev.rvbsm.fsit.entity.SeatEntity";
 	private static final String FSIT_SEAT_COMPANION_CLASS_NAME = "dev.rvbsm.fsit.entity.SeatEntity$Companion";
 	private static volatile Boolean FSIT_SEAT_AVAILABLE;
@@ -423,6 +448,13 @@ public final class ServerRaceSystem {
 	private static final float GENNADIY_DONKEY_AIR_TRIGGER_HEIGHT = 1.6F;
 	private static final double GENNADIY_DONKEY_AIR_TRIGGER_HEAD_FORWARD_OFFSET = 0.24D;
 	private static final double GENNADIY_DONKEY_BULLET_VISUAL_SPEED_BLOCKS = 4.0D;
+	private static final double GENNADIY_DONKEY_SHOOT_SOUND_RANGE_BLOCKS = 16.0D;
+	private static final float GENNADIY_DONKEY_SHOOT_SOUND_VOLUME = 1.0F;
+	private static final float GENNADIY_DONKEY_SHOOT_SOUND_PITCH = 1.0F;
+	private static final float GENNADIY_DONKEY_SHOOT_FALLBACK_SOUND_VOLUME = 0.9F;
+	private static final float GENNADIY_DONKEY_SHOOT_FALLBACK_SOUND_PITCH = 1.55F;
+	private static final Identifier GENNADIY_DONKEY_SHOOT_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "gennadiy_donkey_shoot");
+	private static final Holder<SoundEvent> GENNADIY_DONKEY_SHOOT_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(GENNADIY_DONKEY_SHOOT_SOUND_ID));
 	private static final long WOMAN_SHNYAGA_WHITELIST_CHECK_INTERVAL_TICKS = 100L;
 	private static final int WOMAN_SHNYAGA_EFFECT_DURATION_TICKS = 60;
 	private static final String WOMAN_SHNYAGA_STATE_FILE_NAME = "lg2_woman_shnyaga_links.json";
@@ -790,6 +822,7 @@ public final class ServerRaceSystem {
 			GENNADIY_DONKEY_OWNER_BY_ENTITY.clear();
 			GENNADIY_DONKEY_BULLET_VISUALS.clear();
 			GENNADIY_DEFENSE_SESSIONS.clear();
+			GENNADIY_DEFENSE_FSIT_SEATS.clear();
 			GENNADIY_DEFENSE_WAVE_VISUALS.clear();
 			GENNADIY_HOOK_SESSIONS.clear();
 			GENNADIY_RAGE_HASTE_PLAYERS.clear();
@@ -2914,8 +2947,10 @@ public final class ServerRaceSystem {
 		private final double waveRange;
 		private final double minDamage;
 		private final double maxDamage;
+		private final float lockedYaw;
 		private double accumulatedDamage;
 		private UUID fsitSeatId;
+		private long nextChargeSoundTick = -1L;
 
 		private GennadiyDefenseSession(
 				UUID playerId,
@@ -2925,7 +2960,8 @@ public final class ServerRaceSystem {
 				double maxKnockbackBlocks,
 				double waveRange,
 				double minDamage,
-				double maxDamage
+				double maxDamage,
+				float lockedYaw
 		) {
 			this.playerId = playerId;
 			this.dimension = dimension;
@@ -2935,6 +2971,7 @@ public final class ServerRaceSystem {
 			this.waveRange = waveRange;
 			this.minDamage = minDamage;
 			this.maxDamage = Math.max(minDamage, maxDamage);
+			this.lockedYaw = lockedYaw;
 		}
 	}
 
@@ -2972,6 +3009,7 @@ public final class ServerRaceSystem {
 		private UUID hookTipId;
 		private GennadiyHookPhase phase = GennadiyHookPhase.EXTENDING;
 		private double visibleLength;
+		private long nextChainSoundTick = -1L;
 
 		private GennadiyHookSession(
 				UUID playerId,
@@ -4832,7 +4870,7 @@ public final class ServerRaceSystem {
 		}
 		syncGennadiyDonkeyManualTrigger(player);
 		syncGennadiyDonkeyManualVisual(player);
-		syncGennadiyDefenseForcedPose(player, true);
+		syncGennadiyDefenseHeadLock(player);
 		WomanAttackChargeSession session = WOMAN_ATTACK_CHARGE_SESSIONS.get(player.getUUID());
 		if (session != null) {
 			syncWomanAttackAirTrigger(player, session);
@@ -4840,22 +4878,14 @@ public final class ServerRaceSystem {
 	}
 
 	public static void handlePlayerInputPacket(ServerPlayer player) {
-		syncGennadiyDefenseForcedPose(player, true);
+		syncGennadiyDefenseHeadLock(player);
 	}
 
-	public static boolean handleGennadiyDefenseMovementPacket(ServerPlayer player, float yaw) {
+	public static boolean handleGennadiyDefenseMovementPacket(ServerPlayer player) {
 		if (player == null || !isGennadiyDefenseActive(player)) {
 			return false;
 		}
-		if (Float.isFinite(yaw)) {
-			player.setYRot(yaw);
-			player.setYHeadRot(yaw);
-			player.setYBodyRot(yaw);
-			player.yRotO = yaw;
-			player.yHeadRotO = yaw;
-			player.yBodyRotO = yaw;
-		}
-		syncGennadiyDefenseForcedPose(player, true);
+		syncGennadiyDefenseHeadLock(player);
 		return true;
 	}
 
@@ -4865,7 +4895,7 @@ public final class ServerRaceSystem {
 		}
 		syncGennadiyDonkeyManualTrigger(player);
 		syncGennadiyDonkeyManualVisual(player);
-		syncGennadiyDefenseForcedPose(player, true);
+		syncGennadiyDefenseHeadLock(player);
 	}
 
 	public static void handleVehicleMovePacket(ServerPlayer player, float vehicleYaw) {
@@ -4874,7 +4904,7 @@ public final class ServerRaceSystem {
 		}
 		syncGennadiyDonkeyManualTrigger(player);
 		syncGennadiyDonkeyManualVisual(player, vehicleYaw, true);
-		syncGennadiyDefenseForcedPose(player, true);
+		syncGennadiyDefenseHeadLock(player);
 	}
 
 	private static void syncGennadiyDonkeyManualVisual(ServerPlayer player) {
@@ -5481,21 +5511,22 @@ public final class ServerRaceSystem {
 		long durationTicks = Math.max(1L, asTicks(getGennadiyDefenseDurationSeconds(ability)));
 		double minDamage = getGennadiyDefenseMinDamage(ability);
 		double maxDamage = Math.max(minDamage, getGennadiyDefenseMaxDamage(ability));
-		GENNADIY_DEFENSE_SESSIONS.put(
+		GennadiyDefenseSession session = new GennadiyDefenseSession(
 				player.getUUID(),
-				new GennadiyDefenseSession(
-						player.getUUID(),
-						level.dimension(),
-						level.getGameTime() + durationTicks,
-						getGennadiyDefenseKnockbackBlocksPerDamage(ability),
-						getGennadiyDefenseMaxKnockbackBlocks(ability),
-						getGennadiyDefenseWaveRange(ability),
-						minDamage,
-						maxDamage
-				)
+				level.dimension(),
+				level.getGameTime() + durationTicks,
+				getGennadiyDefenseKnockbackBlocksPerDamage(ability),
+				getGennadiyDefenseMaxKnockbackBlocks(ability),
+				getGennadiyDefenseWaveRange(ability),
+				minDamage,
+				maxDamage,
+				player.getYRot()
 		);
+		GENNADIY_DEFENSE_SESSIONS.put(player.getUUID(), session);
 		applyGennadiyDefenseStasis(player, durationTicks);
 		emitGennadiyDefenseSmokeAura(level, player, level.getGameTime());
+		playGennadiyDefenseChargeSound(player, level.getGameTime());
+		session.nextChargeSoundTick = level.getGameTime() + WOMAN_DEFENSE_PANIC_SOUND_INTERVAL_TICKS;
 		startGenericAbilityCooldown(player, RaceAbilitySlot.DEFENSE, ability);
 		Lg2.LOGGER.info("Player {} activated gennadiy defense '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
@@ -5557,7 +5588,8 @@ public final class ServerRaceSystem {
 		);
 		GENNADIY_HOOK_SESSIONS.put(player.getUUID(), session);
 		startGenericAbilityCooldown(player, RaceAbilitySlot.UNIQUE_ABILITY, ability);
-		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.CHAIN_STEP, SoundSource.PLAYERS, 0.85F, 1.25F);
+		playGennadiyHookChainSound(level, origin);
+		session.nextChainSoundTick = level.getGameTime() + GENNADIY_HOOK_CHAIN_SOUND_REPEAT_TICKS;
 		Lg2.LOGGER.info("Player {} fired gennadiy hook '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
 	}
@@ -6343,7 +6375,7 @@ public final class ServerRaceSystem {
 			clearGennadiyDonkeyTarget(state);
 		}
 		state.nextShotTick = level.getGameTime() + GENNADIY_DONKEY_SHOT_INTERVAL_TICKS;
-		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.CROSSBOW_SHOOT, SoundSource.PLAYERS, 0.9F, 1.55F);
+		playGennadiyDonkeyShootSound(level, origin);
 	}
 
 	private static Vec3 getGennadiyDonkeyTurretOrigin(Donkey donkey) {
@@ -6476,20 +6508,36 @@ public final class ServerRaceSystem {
 
 	private static boolean tickGennadiyHookSession(MinecraftServer server, ServerLevel level, ServerPlayer player, GennadiyHookSession session) {
 		Vec3 origin = getGennadiyHookOrigin(player);
+		maybeRefreshGennadiyHookChainSound(level, session, origin);
 		if (session.phase == GennadiyHookPhase.EXTENDING) {
 			session.visibleLength = Math.min(session.endpointDistance, session.visibleLength + GENNADIY_HOOK_EXTEND_SPEED_BLOCKS);
 			updateGennadiyHookSegments(server, level, session, origin, session.castDirection, session.visibleLength);
 			if (session.visibleLength + 1.0E-4D < session.endpointDistance) {
 				return true;
 			}
-			session.phase = session.targetId == null ? GennadiyHookPhase.RETRACTING : GennadiyHookPhase.PULLING;
+			Vec3 hookEnd = origin.add(session.castDirection.scale(session.endpointDistance));
+			Entity latchedEntity = session.targetId == null ? null : findEntity(server, session.targetId);
+			if (!(latchedEntity instanceof LivingEntity latchedTarget)
+					|| !canGennadiyHookHit(player, latchedTarget)
+					|| latchedTarget.level() != level) {
+				session.phase = GennadiyHookPhase.RETRACTING;
+			} else {
+				session.phase = GennadiyHookPhase.PULLING;
+				Vec3 latchedCenter = latchedTarget.position().add(0.0D, getGennadiyHookTargetCenterYOffset(latchedTarget), 0.0D);
+				playGennadiyHookImpactSound(level, latchedCenter);
+			}
 			return true;
 		}
 
 		if (session.phase == GennadiyHookPhase.RETRACTING) {
 			session.visibleLength = Math.max(0.0D, session.visibleLength - GENNADIY_HOOK_RETRACT_SPEED_BLOCKS);
 			updateGennadiyHookSegments(server, level, session, origin, session.castDirection, session.visibleLength);
-			return session.visibleLength > 0.05D;
+			if (session.visibleLength > 0.05D) {
+				return true;
+			}
+			stopGennadiyHookChainSound(level, origin);
+			playGennadiyHookEndSound(level, origin);
+			return false;
 		}
 
 		Entity entity = findEntity(server, session.targetId);
@@ -6529,6 +6577,18 @@ public final class ServerRaceSystem {
 
 	private static double getGennadiyHookPullDistance(double distance) {
 		return Math.min(GENNADIY_HOOK_PULL_SPEED_BLOCKS, Math.max(0.25D, distance * 0.28D));
+	}
+
+	private static void maybeRefreshGennadiyHookChainSound(ServerLevel level, GennadiyHookSession session, Vec3 origin) {
+		if (level == null || session == null || origin == null || session.nextChainSoundTick < 0L) {
+			return;
+		}
+		if (level.getGameTime() < session.nextChainSoundTick) {
+			return;
+		}
+		stopGennadiyHookChainSound(level, origin);
+		playGennadiyHookChainSound(level, origin);
+		session.nextChainSoundTick = level.getGameTime() + GENNADIY_HOOK_CHAIN_SOUND_REPEAT_TICKS;
 	}
 
 	private static void moveGennadiyHookTargetToCenter(LivingEntity target, Vec3 targetCenter, double centerYOffset) {
@@ -6583,7 +6643,7 @@ public final class ServerRaceSystem {
 			return;
 		}
 		if (session.damage > 0.0D) {
-			target.hurtServer(level, level.damageSources().magic(), (float) session.damage);
+			target.hurtServer(level, gennadiyHookDamageSource(level, player), (float) session.damage);
 		}
 		target.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, (int) Math.min(Integer.MAX_VALUE, session.slownessTicks), 2, false, true, true));
 		Vec3 center = target.position().add(0.0D, Math.max(0.25D, target.getBbHeight() * 0.55D), 0.0D);
@@ -6598,7 +6658,17 @@ public final class ServerRaceSystem {
 				Math.max(0.15D, target.getBbWidth() * 0.35D),
 				0.16D
 		);
-		level.playSound(null, center.x, center.y, center.z, SoundEvents.CHAIN_BREAK, SoundSource.PLAYERS, 0.75F, 1.35F);
+		stopGennadiyHookChainSound(level, getGennadiyHookOrigin(player));
+		stopGennadiyHookChainSound(level, center);
+		playGennadiyHookEndSound(level, center);
+	}
+
+	private static DamageSource gennadiyHookDamageSource(ServerLevel level, ServerPlayer player) {
+		return new DamageSource(
+				level.registryAccess().lookupOrThrow(Registries.DAMAGE_TYPE).getOrThrow(DamageTypes.GENERIC),
+				player,
+				player
+		);
 	}
 
 	private static void updateGennadiyHookSegments(MinecraftServer server, ServerLevel level, GennadiyHookSession session, Vec3 origin, Vec3 direction, double length) {
@@ -6781,6 +6851,7 @@ public final class ServerRaceSystem {
 		if (session == null) {
 			return;
 		}
+		stopGennadiyHookChainSound(server, session);
 		trimGennadiyHookSegments(server, session, 0);
 		removeGennadiyHookTip(server, session);
 	}
@@ -6868,6 +6939,7 @@ public final class ServerRaceSystem {
 
 			applyGennadiyDefenseStasis(player, session.endTick - nowTick);
 			emitGennadiyDefenseSmokeAura(level, player, nowTick);
+			maybePlayGennadiyDefenseChargeSound(player, session, nowTick);
 		}
 	}
 
@@ -6884,143 +6956,113 @@ public final class ServerRaceSystem {
 			GENNADIY_DEFENSE_APPLYING_EFFECT.set(Boolean.FALSE);
 		}
 		player.setSprinting(false);
-		boolean sitting = ensureGennadiyDefenseFsitSeat(player);
-		if (sitting) {
-			player.setShiftKeyDown(false);
-			player.setDeltaMovement(Vec3.ZERO);
-		} else {
-			player.setShiftKeyDown(true);
-			player.setPose(Pose.CROUCHING);
-		}
-		syncGennadiyDefenseForcedPose(player, false);
-	}
-
-	private static boolean ensureGennadiyDefenseFsitSeat(ServerPlayer player) {
-		if (player == null || !(player.level() instanceof ServerLevel level)) {
-			return false;
-		}
-		GennadiyDefenseSession session = GENNADIY_DEFENSE_SESSIONS.get(player.getUUID());
-		if (session == null || !level.dimension().equals(session.dimension) || level.getGameTime() >= session.endTick) {
-			return false;
-		}
-		Entity vehicle = player.getVehicle();
-		if (isFsitSeatEntity(vehicle)) {
-			session.fsitSeatId = vehicle.getUUID();
-			GENNADIY_DEFENSE_FSIT_SEATS.put(player.getUUID(), vehicle.getUUID());
-			vehicle.setDeltaMovement(Vec3.ZERO);
-			vehicle.hurtMarked = true;
-			return true;
-		}
-		if (!prepareFsitSeatReflection()) {
-			return false;
-		}
-		if (player.isPassenger()) {
-			player.stopRiding();
-		}
+		ensureGennadiyDefenseFsitSeat(player, GENNADIY_DEFENSE_SESSIONS.get(player.getUUID()));
 		player.setDeltaMovement(Vec3.ZERO);
-		player.hurtMarked = true;
-		try {
-			FSIT_SEAT_CREATE_METHOD.invoke(FSIT_SEAT_COMPANION, player, player.position());
-		} catch (ReflectiveOperationException | RuntimeException exception) {
-			FSIT_SEAT_AVAILABLE = Boolean.FALSE;
-			Lg2.LOGGER.warn("Failed to create FSit seat for gennadiy defense", exception);
-			return false;
-		}
-
-		vehicle = player.getVehicle();
-		if (!isFsitSeatEntity(vehicle)) {
-			return false;
-		}
-		session.fsitSeatId = vehicle.getUUID();
-		GENNADIY_DEFENSE_FSIT_SEATS.put(player.getUUID(), vehicle.getUUID());
-		vehicle.setDeltaMovement(Vec3.ZERO);
-		vehicle.hurtMarked = true;
-		return true;
-	}
-
-	private static boolean prepareFsitSeatReflection() {
-		Boolean cached = FSIT_SEAT_AVAILABLE;
-		if (cached != null) {
-			return cached;
-		}
-		try {
-			Class<?> seatClass = Class.forName(FSIT_SEAT_ENTITY_CLASS_NAME);
-			Class<?> companionClass = Class.forName(FSIT_SEAT_COMPANION_CLASS_NAME);
-			FSIT_SEAT_COMPANION = seatClass.getField("Companion").get(null);
-			FSIT_SEAT_CREATE_METHOD = companionClass.getMethod("create", ServerPlayer.class, Vec3.class);
-			FSIT_SEAT_AVAILABLE = Boolean.TRUE;
-			return true;
-		} catch (ReflectiveOperationException | RuntimeException exception) {
-			FSIT_SEAT_AVAILABLE = Boolean.FALSE;
-			Lg2.LOGGER.warn("FSit is not available for gennadiy defense seating; falling back to crouch stasis", exception);
-			return false;
-		}
+		player.setShiftKeyDown(false);
+		player.setPose(Pose.STANDING);
+		syncGennadiyDefenseHeadLock(player);
 	}
 
 	private static boolean isFsitSeatEntity(Entity entity) {
 		return entity != null && FSIT_SEAT_ENTITY_CLASS_NAME.equals(entity.getClass().getName());
 	}
 
-	private static void syncGennadiyDefenseForcedPose(ServerPlayer player, boolean forceViewSync) {
+	private static void ensureGennadiyDefenseFsitSeat(ServerPlayer player, GennadiyDefenseSession session) {
+		if (player == null || session == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		Entity vehicle = player.getVehicle();
+		if (isFsitSeatEntity(vehicle)) {
+			session.fsitSeatId = vehicle.getUUID();
+			GENNADIY_DEFENSE_FSIT_SEATS.put(player.getUUID(), vehicle.getUUID());
+			return;
+		}
+
+		if (session.fsitSeatId != null) {
+			Entity existing = findEntity(level.getServer(), session.fsitSeatId);
+			if (existing != null && isFsitSeatEntity(existing)) {
+				existing.discard();
+			}
+			session.fsitSeatId = null;
+		}
+
+		if (player.getVehicle() != null) {
+			return;
+		}
+
+		if (!createGennadiyDefenseFsitSeat(player)) {
+			return;
+		}
+
+		Entity seat = player.getVehicle();
+		if (isFsitSeatEntity(seat)) {
+			session.fsitSeatId = seat.getUUID();
+			GENNADIY_DEFENSE_FSIT_SEATS.put(player.getUUID(), seat.getUUID());
+		}
+	}
+
+	private static boolean createGennadiyDefenseFsitSeat(ServerPlayer player) {
+		if (player == null || Boolean.FALSE.equals(FSIT_SEAT_AVAILABLE)) {
+			return false;
+		}
+		try {
+			java.lang.reflect.Method createMethod = resolveFsitSeatCreateMethod();
+			Object companion = FSIT_SEAT_COMPANION;
+			if (createMethod == null || companion == null) {
+				return false;
+			}
+			createMethod.invoke(companion, player, player.position());
+			return true;
+		} catch (ReflectiveOperationException | LinkageError exception) {
+			FSIT_SEAT_AVAILABLE = Boolean.FALSE;
+			Lg2.LOGGER.warn("Failed to create FSit seat for Gennadiy defense", exception);
+			return false;
+		}
+	}
+
+	private static java.lang.reflect.Method resolveFsitSeatCreateMethod() throws ReflectiveOperationException {
+		if (FSIT_SEAT_CREATE_METHOD != null && FSIT_SEAT_COMPANION != null) {
+			return FSIT_SEAT_CREATE_METHOD;
+		}
+		Class<?> seatClass = Class.forName(FSIT_SEAT_ENTITY_CLASS_NAME);
+		Class<?> companionClass = Class.forName(FSIT_SEAT_COMPANION_CLASS_NAME);
+		Object companion = seatClass.getField("Companion").get(null);
+		java.lang.reflect.Method createMethod = companionClass.getMethod("create", ServerPlayer.class, Vec3.class);
+		FSIT_SEAT_COMPANION = companion;
+		FSIT_SEAT_CREATE_METHOD = createMethod;
+		FSIT_SEAT_AVAILABLE = Boolean.TRUE;
+		return createMethod;
+	}
+
+	private static void syncGennadiyDefenseHeadLock(ServerPlayer player) {
 		if (player == null || player.connection == null || !isGennadiyDefenseActive(player)) {
+			return;
+		}
+		GennadiyDefenseSession session = GENNADIY_DEFENSE_SESSIONS.get(player.getUUID());
+		if (session == null) {
 			return;
 		}
 
 		player.setSprinting(false);
-		boolean sitting = ensureGennadiyDefenseFsitSeat(player);
-		if (sitting) {
-			player.setShiftKeyDown(false);
-			player.setDeltaMovement(Vec3.ZERO);
-		} else {
-			player.setShiftKeyDown(true);
-			player.setPose(Pose.CROUCHING);
-		}
+		ensureGennadiyDefenseFsitSeat(player, session);
+		player.setDeltaMovement(Vec3.ZERO);
+		player.setShiftKeyDown(false);
+		player.setPose(Pose.STANDING);
+		float lockedYaw = session.lockedYaw;
+		player.setYRot(lockedYaw);
 		player.setXRot(GENNADIY_DEFENSE_FORCED_PITCH);
+		player.yRotO = lockedYaw;
 		player.xRotO = GENNADIY_DEFENSE_FORCED_PITCH;
-		player.setYHeadRot(player.getYRot());
-		player.setYBodyRot(player.getYRot());
-		player.yHeadRotO = player.getYRot();
-		player.yBodyRotO = player.getYRot();
+		player.setYHeadRot(lockedYaw);
+		player.setYBodyRot(lockedYaw);
+		player.yHeadRotO = lockedYaw;
+		player.yBodyRotO = lockedYaw;
 		player.hurtMarked = true;
-		syncGennadiyDefenseSeatRotation(player);
-		if (!sitting) {
-			sendGennadiyDefensePoseMetadata(player, true);
-		}
+		sendGennadiyDefensePoseMetadata(player, true);
 
-		long nowTick = player.level().getGameTime();
-		if (forceViewSync || Math.floorMod(nowTick, 2L) == 0L) {
-			player.connection.teleport(player.getX(), player.getY(), player.getZ(), player.getYRot(), GENNADIY_DEFENSE_FORCED_PITCH);
-		}
+		player.connection.send(new ClientboundPlayerRotationPacket(lockedYaw, false, GENNADIY_DEFENSE_FORCED_PITCH, false));
 		sendGennadiyDefenseRotationToViewers(player);
-	}
-
-	private static void syncGennadiyDefenseSeatRotation(ServerPlayer player) {
-		if (player == null) {
-			return;
-		}
-		Entity vehicle = player.getVehicle();
-		if (!isFsitSeatEntity(vehicle)) {
-			return;
-		}
-		vehicle.setYRot(player.getYRot());
-		vehicle.setXRot(GENNADIY_DEFENSE_FORCED_PITCH);
-		vehicle.yRotO = player.getYRot();
-		vehicle.xRotO = GENNADIY_DEFENSE_FORCED_PITCH;
-		vehicle.hurtMarked = true;
-		if (vehicle.level() instanceof ServerLevel level) {
-			PositionMoveRotation rotation = new PositionMoveRotation(
-					vehicle.position(),
-					vehicle.getDeltaMovement(),
-					vehicle.getYRot(),
-					GENNADIY_DEFENSE_FORCED_PITCH
-			);
-			ClientboundTeleportEntityPacket packet = ClientboundTeleportEntityPacket.teleport(vehicle.getId(), rotation, Collections.emptySet(), vehicle.onGround());
-			for (ServerPlayer viewer : level.players()) {
-				if (viewer != null && viewer.connection != null) {
-					viewer.connection.send(packet);
-				}
-			}
-		}
 	}
 
 	private static void sendGennadiyDefensePoseMetadata(ServerPlayer player, boolean forced) {
@@ -7034,9 +7076,9 @@ public final class ServerRaceSystem {
 		byte flags = currentFlags == null ? 0 : currentFlags;
 		Pose pose = player.getPose();
 		if (forced) {
-			flags |= ENTITY_FLAG_SHIFTING;
+			flags &= (byte) ~ENTITY_FLAG_SHIFTING;
 			flags &= (byte) ~ENTITY_FLAG_SPRINTING;
-			pose = Pose.CROUCHING;
+			pose = Pose.STANDING;
 		} else {
 			flags &= (byte) ~ENTITY_FLAG_SHIFTING;
 			pose = Pose.STANDING;
@@ -7067,11 +7109,21 @@ public final class ServerRaceSystem {
 				GENNADIY_DEFENSE_FORCED_PITCH
 		);
 		ClientboundTeleportEntityPacket packet = ClientboundTeleportEntityPacket.teleport(player.getId(), rotation, Collections.emptySet(), player.onGround());
+		byte yaw = toGennadiyDefenseRotationByte(player.getYRot());
+		byte pitch = toGennadiyDefenseRotationByte(GENNADIY_DEFENSE_FORCED_PITCH);
+		ClientboundMoveEntityPacket.Rot rotationPacket = new ClientboundMoveEntityPacket.Rot(player.getId(), yaw, pitch, player.onGround());
+		ClientboundRotateHeadPacket headPacket = new ClientboundRotateHeadPacket(player, yaw);
 		for (ServerPlayer viewer : level.players()) {
 			if (viewer != null && viewer != player && viewer.connection != null) {
 				viewer.connection.send(packet);
+				viewer.connection.send(rotationPacket);
+				viewer.connection.send(headPacket);
 			}
 		}
+	}
+
+	private static byte toGennadiyDefenseRotationByte(float degrees) {
+		return (byte) net.minecraft.util.Mth.floor((degrees * 256.0F) / 360.0F);
 	}
 
 	private static void cleanupGennadiyDefenseSeat(MinecraftServer server, GennadiyDefenseSession session, ServerPlayer player) {
@@ -7181,7 +7233,7 @@ public final class ServerRaceSystem {
 
 		GENNADIY_DEFENSE_WAVE_VISUALS.add(new GennadiyDefenseWaveVisual(level.dimension(), origin, range, nowTick, GENNADIY_DEFENSE_WAVE_VISUAL_DURATION_TICKS));
 		emitGennadiyDefenseBurst(level, origin);
-		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.GENERIC_EXPLODE, SoundSource.PLAYERS, 0.9F, 0.72F);
+		playGennadiyDefenseExplosionSound(level, origin);
 	}
 
 	private static boolean canGennadiyDefenseWaveHit(ServerPlayer player, LivingEntity target) {
@@ -10404,6 +10456,165 @@ public final class ServerRaceSystem {
 			return;
 		}
 		playCartelVanillaPositionedSound(level, lawyerEntity.position(), sound, CARTEL_LAWYER_REACTION_SOUND_VOLUME, CARTEL_LAWYER_REACTION_SOUND_PITCH);
+	}
+
+	private static void maybePlayGennadiyDefenseChargeSound(ServerPlayer player, GennadiyDefenseSession session, long nowTick) {
+		if (player == null || session == null || session.nextChargeSoundTick < 0L || nowTick < session.nextChargeSoundTick) {
+			return;
+		}
+		playGennadiyDefenseChargeSound(player, nowTick);
+		session.nextChargeSoundTick = nowTick + WOMAN_DEFENSE_PANIC_SOUND_INTERVAL_TICKS;
+	}
+
+	private static void playGennadiyDefenseChargeSound(ServerPlayer player, long nowTick) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		sendPersonalSound(
+				player,
+				SoundEvents.WARDEN_HEARTBEAT,
+				SoundSource.PLAYERS,
+				player.position(),
+				GENNADIY_DEFENSE_CHARGE_SOUND_VOLUME,
+				GENNADIY_DEFENSE_CHARGE_SOUND_PITCH,
+				nowTick ^ player.getUUID().getMostSignificantBits()
+		);
+	}
+
+	private static void playGennadiyDefenseExplosionSound(ServerLevel level, Vec3 origin) {
+		if (level == null || origin == null) {
+			return;
+		}
+		double rangeSqr = GENNADIY_DEFENSE_EXPLOSION_SOUND_RANGE_BLOCKS * GENNADIY_DEFENSE_EXPLOSION_SOUND_RANGE_BLOCKS;
+		long seed = level.getRandom().nextLong();
+		Holder<SoundEvent> sound = SoundEvents.GENERIC_EXPLODE;
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer == null || viewer.connection == null || viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+			sendPositionedSound(
+					viewer,
+					sound,
+					SoundSource.PLAYERS,
+					origin,
+					GENNADIY_DEFENSE_EXPLOSION_SOUND_VOLUME,
+					GENNADIY_DEFENSE_EXPLOSION_SOUND_PITCH,
+					seed
+			);
+		}
+	}
+
+	private static void playGennadiyDonkeyShootSound(ServerLevel level, Vec3 origin) {
+		if (level == null || origin == null) {
+			return;
+		}
+		double rangeSqr = GENNADIY_DONKEY_SHOOT_SOUND_RANGE_BLOCKS * GENNADIY_DONKEY_SHOOT_SOUND_RANGE_BLOCKS;
+		long seed = level.getRandom().nextLong();
+		Holder<SoundEvent> fallbackSound = BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.CROSSBOW_SHOOT);
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer == null || viewer.connection == null || viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+			boolean hasPack = PolymerResourcePackUtils.hasMainPack(viewer);
+			sendPositionedSound(
+					viewer,
+					hasPack ? GENNADIY_DONKEY_SHOOT_SOUND : fallbackSound,
+					SoundSource.PLAYERS,
+					origin,
+					hasPack ? GENNADIY_DONKEY_SHOOT_SOUND_VOLUME : GENNADIY_DONKEY_SHOOT_FALLBACK_SOUND_VOLUME,
+					hasPack ? GENNADIY_DONKEY_SHOOT_SOUND_PITCH : GENNADIY_DONKEY_SHOOT_FALLBACK_SOUND_PITCH,
+					seed
+			);
+		}
+	}
+
+	private static void playGennadiyHookChainSound(ServerLevel level, Vec3 origin) {
+		playGennadiyHookResourcePackAwareSound(
+				level,
+				origin,
+				GENNADIY_HOOK_CHAIN_SOUND,
+				SoundEvents.CHAIN_STEP,
+				GENNADIY_HOOK_CHAIN_SOUND_VOLUME,
+				GENNADIY_HOOK_CHAIN_SOUND_PITCH
+		);
+	}
+
+	private static void playGennadiyHookImpactSound(ServerLevel level, Vec3 origin) {
+		playGennadiyHookResourcePackAwareSound(
+				level,
+				origin,
+				GENNADIY_HOOK_IMPACT_SOUND,
+				SoundEvents.CHAIN_BREAK,
+				GENNADIY_HOOK_IMPACT_SOUND_VOLUME,
+				GENNADIY_HOOK_IMPACT_SOUND_PITCH
+		);
+	}
+
+	private static void playGennadiyHookEndSound(ServerLevel level, Vec3 origin) {
+		playGennadiyHookResourcePackAwareSound(
+				level,
+				origin,
+				GENNADIY_HOOK_END_SOUND,
+				SoundEvents.CHAIN_BREAK,
+				GENNADIY_HOOK_END_SOUND_VOLUME,
+				GENNADIY_HOOK_END_SOUND_PITCH
+		);
+	}
+
+	private static void stopGennadiyHookChainSound(MinecraftServer server, GennadiyHookSession session) {
+		if (server == null || session == null) {
+			return;
+		}
+		ServerLevel level = server.getLevel(session.dimension);
+		if (level == null) {
+			return;
+		}
+		Entity caster = findEntity(server, session.playerId);
+		if (caster != null && caster.level() == level) {
+			stopGennadiyHookChainSound(level, caster.position());
+		}
+		Entity hookTip = session.hookTipId == null ? null : findEntity(server, session.hookTipId);
+		if (hookTip != null && hookTip.level() == level) {
+			stopGennadiyHookChainSound(level, hookTip.position());
+		}
+	}
+
+	private static void stopGennadiyHookChainSound(ServerLevel level, Vec3 origin) {
+		if (level == null || origin == null) {
+			return;
+		}
+		double rangeSqr = GENNADIY_HOOK_SOUND_RANGE_BLOCKS * GENNADIY_HOOK_SOUND_RANGE_BLOCKS;
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer == null || viewer.connection == null || viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+			viewer.connection.send(new ClientboundStopSoundPacket(GENNADIY_HOOK_CHAIN_SOUND_ID, SoundSource.PLAYERS));
+			viewer.connection.send(new ClientboundStopSoundPacket(GENNADIY_HOOK_CHAIN_FALLBACK_SOUND_ID, SoundSource.PLAYERS));
+		}
+	}
+
+	private static void playGennadiyHookResourcePackAwareSound(
+			ServerLevel level,
+			Vec3 origin,
+			Holder<SoundEvent> packSound,
+			SoundEvent fallbackSound,
+			float volume,
+			float pitch
+	) {
+		if (level == null || origin == null || packSound == null || fallbackSound == null) {
+			return;
+		}
+		double rangeSqr = GENNADIY_HOOK_SOUND_RANGE_BLOCKS * GENNADIY_HOOK_SOUND_RANGE_BLOCKS;
+		long seed = level.getRandom().nextLong();
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer == null || viewer.connection == null || viewer.distanceToSqr(origin) > rangeSqr) {
+				continue;
+			}
+			Holder<SoundEvent> sound = PolymerResourcePackUtils.hasMainPack(viewer)
+					? packSound
+					: BuiltInRegistries.SOUND_EVENT.wrapAsHolder(fallbackSound);
+			sendPositionedSound(viewer, sound, SoundSource.PLAYERS, origin, volume, pitch, seed);
+		}
 	}
 
 	private static void playCartelResourcePackAwarePositionedSound(
