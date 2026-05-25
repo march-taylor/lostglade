@@ -87,6 +87,15 @@
       }
     ]
   },
+  "mark_rage_music": {
+    "sounds": [
+      {
+        "name": "lg2:mark_rage_music",
+        "preload": true,
+        "stream": true
+      }
+    ]
+  },
   "ui_purchase_blocked": {
     "sounds": [
       {

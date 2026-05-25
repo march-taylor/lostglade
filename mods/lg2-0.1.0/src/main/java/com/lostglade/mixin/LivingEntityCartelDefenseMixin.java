@@ -7,6 +7,7 @@ import net.minecraft.world.entity.LivingEntity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(LivingEntity.class)
@@ -33,5 +34,14 @@ public abstract class LivingEntityCartelDefenseMixin {
 		ServerRaceSystem.handleCartelDefenseDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handleGennadiyCombatDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handleGennadiyRageMeleeDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
+		ServerRaceSystem.handleMarkRageMeleeDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
+	}
+
+	@Inject(method = "die", at = @At("HEAD"))
+	private void lg2$trackMarkRageKill(DamageSource damageSource, CallbackInfo ci) {
+		LivingEntity self = (LivingEntity) (Object) this;
+		if (self.level() instanceof ServerLevel level) {
+			ServerRaceSystem.handleMarkRageKill(level, self, damageSource);
+		}
 	}
 }

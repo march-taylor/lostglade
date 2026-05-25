@@ -7,6 +7,7 @@
 		"AbstractContainerMenuCopperGogglesMixin",
 		"AbstractCookingRecipeMixin",
 		"AbstractFurnaceBlockEntityMixin",
+		"AbstractArrowAccessor",
 		"AnvilMenuGennadiyReportMixin",
 		"ArmorStandAccessor",
 		"BackroomsDayTimeMixin",

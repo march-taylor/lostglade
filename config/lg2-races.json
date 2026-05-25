@@ -1,9 +1,9 @@
-{
+﻿{
   "races": [
     {
       "enabled": true,
       "id": "mister_cartel_49",
-      "displayName": "Мистер Картель 49",
+      "displayName": "Мистер Картель",
       "ownerNickname": "pines0",
       "description": "Глава всего преступного мира.",
       "attack": {
@@ -15,7 +15,8 @@
         "cooldownSeconds": 180.0,
         "activationRangeBlocks": 7.0,
         "summonLifetimeSeconds": 30.0,
-        "summonAfterKillSeconds": 2.0
+        "summonAfterKillSeconds": 2.0,
+        "cartelRaiderArmorDivider": 3.0
       },
       "defense": {
         "enabled": true,
@@ -65,7 +66,7 @@
     {
       "enabled": true,
       "id": "copper_man",
-      "displayName": "Медный человек",
+      "displayName": "Медный Человек",
       "ownerNickname": "pines1",
       "description": "Искал медь сгорел медведь.",
       "attack": {
@@ -171,7 +172,7 @@
       "id": "woman",
       "displayName": "ЖЕНЩИНА!!!",
       "ownerNickname": "pines3",
-      "description": "Хрупкая снаружи, но опасная внутри. Она не бьёт в лоб — она манипулирует, соблазняет и наказывает.",
+      "description": "Хрупкая снаружи, но опасная внутри.",
       "attack": {
         "enabled": true,
         "abilityId": "woman_attack",
@@ -234,8 +235,8 @@
       "enabled": true,
       "id": "gennadiy_sharoyobov",
       "displayName": "Генадий Шароёбов",
-      "ownerNickname": "Rajas_YT",
-      "description": "Человек, который решает проблемы ослом, цепью, тильтом и очень серьёзным репортом.",
+      "ownerNickname": "pines4",
+      "description": "Дотер придет...",
       "attack": {
         "enabled": true,
         "abilityId": "gennadiy_sharoyobov_attack",
@@ -249,7 +250,7 @@
         "gennadiyDonkeyMaxAmmo": 128,
         "gennadiyDonkeyAmmoRegenAmount": 2,
         "gennadiyDonkeyAmmoRegenSeconds": 9.375,
-        "gennadiyDonkeyBulletDamage": 2.0,
+        "gennadiyDonkeyBulletDamage": 1.0,
         "gennadiyDonkeyBulletRangeBlocks": 16.0,
         "gennadiyDonkeyFollowMaxDistanceBlocks": 8.0
       },
@@ -294,6 +295,63 @@
         "gennadiyRageHealthThresholdRatio": 0.2,
         "gennadiyRageHasteLevel": 1,
         "gennadiyRageMeleeDamageBonusRatio": 0.25
+      }
+    },
+    {
+      "enabled": true,
+      "id": "mark_potroshitel",
+      "displayName": "Марк Потрошитель",
+      "ownerNickname": "Rajas_YT",
+      "description": "У всех нас есть сила в руках для того, чтобы убить, но большинство боится ее использовать.",
+      "attack": {
+        "enabled": true,
+        "abilityId": "mark_potroshitel_attack",
+        "name": "Бросок братюни",
+        "description": "Вы бросаете топор во врага. Топор застревает в цели и вызывает кровотечение.",
+        "priceBitcoins": 300,
+        "cooldownSeconds": 600.0,
+        "markAxeRangeBlocks": 32.0,
+        "markAxeBleedingOneDamage": 1.0,
+        "markAxeBleedingTwoDamage": 2.0,
+        "markAxeBleedingIntervalSeconds": 3.0,
+        "markAxeBleedingTwoDurationSeconds": 10.0
+      },
+      "defense": {
+        "enabled": true,
+        "abilityId": "mark_potroshitel_defense",
+        "name": "Неуловимость маньяка",
+        "description": "Вы становитесь устойчивым к стрелам и снарядам. Можно откинуть их обратно.",
+        "priceBitcoins": 600,
+        "cooldownSeconds": 300.0,
+        "markDefenseRadiusBlocks": 3.0,
+        "markDefenseDurationSeconds": 20.0
+      },
+      "uniqueAbility": {
+        "enabled": true,
+        "abilityId": "mark_potroshitel_unique",
+        "name": "Шкала гнева",
+        "description": "Заполняйте шкалу убийствами. При полной шкале вы входите в состояние ярости: получаете силу, скорость и сопротивление, а ваши удары вызывают сильное кровотечение.",
+        "priceBitcoins": 1000,
+        "markRageMaxPoints": 100.0,
+        "markRagePassiveKillPoints": 1.0,
+        "markRageHostileKillPoints": 2.0,
+        "markRageBossKillPoints": 5.0,
+        "markRagePlayerKillPoints": 10.0,
+        "markRageDrainPointsPerSecond": 10.0,
+        "markRageExhaustionSeconds": 45.0
+      },
+      "shnyaga": {
+        "enabled": true,
+        "abilityId": "mark_potroshitel_shnyaga",
+        "name": "Oh, shit",
+        "description": "Вы можете крафтить щиты из любых материалов. Прочность и сила отбрасывания зависят от материала. Начиная с железного, щитом можно оттолкнуть врага.",
+        "priceBitcoins": 1500
+      },
+      "stock": {
+        "enabled": true,
+        "abilityId": "mark_potroshitel_stock",
+        "name": "Большой и злой",
+        "description": ""
       }
     }
   ]
