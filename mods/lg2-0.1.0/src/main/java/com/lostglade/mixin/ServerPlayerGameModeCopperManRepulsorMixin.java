@@ -2,6 +2,7 @@ package com.lostglade.mixin;
 
 import com.lostglade.server.CopperManGogglesSystem;
 import com.lostglade.server.CopperManRepulsorSystem;
+import com.lostglade.server.DroneSystem;
 import com.lostglade.server.ServerRaceSystem;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerPlayerGameMode;
@@ -43,6 +44,10 @@ public abstract class ServerPlayerGameModeCopperManRepulsorMixin {
 		}
 		if (ServerRaceSystem.handleGennadiyDonkeyUseInteraction(player, hand)) {
 			cir.setReturnValue(InteractionResult.SUCCESS);
+			return;
+		}
+		if (DroneSystem.handleControlledUseItem(player, hand)) {
+			cir.setReturnValue(InteractionResult.SUCCESS);
 		}
 	}
 
@@ -79,6 +84,10 @@ public abstract class ServerPlayerGameModeCopperManRepulsorMixin {
 			return;
 		}
 		if (ServerRaceSystem.handleGennadiyDonkeyUseInteraction(player, hand)) {
+			cir.setReturnValue(InteractionResult.SUCCESS);
+			return;
+		}
+		if (DroneSystem.handleControlledUseItem(player, hand)) {
 			cir.setReturnValue(InteractionResult.SUCCESS);
 			return;
 		}

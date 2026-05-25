@@ -42,6 +42,7 @@ import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
+import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
@@ -64,6 +65,8 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
@@ -76,6 +79,18 @@ import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.player.Input;
+import net.minecraft.world.entity.projectile.FireworkRocketEntity;
+import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.entity.projectile.arrow.Arrow;
+import net.minecraft.world.entity.projectile.arrow.SpectralArrow;
+import net.minecraft.world.entity.projectile.arrow.ThrownTrident;
+import net.minecraft.world.entity.projectile.hurtingprojectile.SmallFireball;
+import net.minecraft.world.entity.projectile.hurtingprojectile.windcharge.WindCharge;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.Snowball;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEgg;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownExperienceBottle;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownLingeringPotion;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownSplashPotion;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.item.PrimedTnt;
@@ -87,6 +102,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.DispenserMenu;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.GameType;
@@ -131,6 +147,8 @@ public final class DroneSystem {
 	private static final String DRONE_CAMERA_TAG = "lg2_drone_camera_anchor";
 	private static final String DRONE_CAMERA_OWNER_TAG_PREFIX = "lg2_drone_camera_owner_";
 	private static final String DRONE_NIGHT_VISION_CAMERA_TAG = "lg2_drone_night_vision_camera";
+	private static final String DRONE_TURRET_TRIGGER_TAG = "lg2_drone_turret_trigger";
+	private static final String DRONE_TURRET_TRIGGER_OWNER_TAG_PREFIX = "lg2_drone_turret_trigger_owner_";
 	private static final Identifier DRONE_LOOP_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_loop");
 	private static final Identifier DRONE_KAMIKAZE_LOOP_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_kamikaze_loop");
 	private static final Identifier DRONE_BREAK_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "entity.firework_rocket.blast");
@@ -178,6 +196,13 @@ public final class DroneSystem {
 	private static final double UNCONTROLLED_SETTLED_VERTICAL_SPEED = 0.045D;
 	private static final long UNCONTROLLED_DRONE_RELEASE_GLIDE_TICKS = 60L;
 	private static final long CONTROLLED_DRONE_MISSING_ROOT_GRACE_TICKS = 20L * 20L;
+	private static final int DRONE_TURRET_INVENTORY_SIZE = 9;
+	private static final long DRONE_TURRET_FIRE_COOLDOWN_TICKS = 4L;
+	private static final long DRONE_TURRET_CONTROL_START_SUPPRESS_TICKS = 6L;
+	private static final float DRONE_TURRET_AIR_TRIGGER_WIDTH = 1.6F;
+	private static final float DRONE_TURRET_AIR_TRIGGER_HEIGHT = 1.6F;
+	private static final double DRONE_TURRET_AIR_TRIGGER_HEAD_FORWARD_OFFSET = 0.24D;
+	private static final double DRONE_TURRET_MUZZLE_FORWARD_OFFSET = 0.36D;
 	private static final long DRONE_CONTROL_PRELOAD_TIMEOUT_TICKS = 20L * 8L;
 	private static final int DRONE_CONTROL_PRELOAD_READY_RADIUS_CHUNKS = 2;
 	private static final int DRONE_LOADING_CHUNK_TICKET_UNIQUE_FLAG = 32;
@@ -249,6 +274,23 @@ public final class DroneSystem {
 	private static final Map<UUID, UUID> CONTROLLERS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UUID> DISPLAYS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UUID> CAMERA_ANCHORS_BY_DRONE = new HashMap<>();
+	private static final Set<Item> DRONE_TURRET_PROJECTILES = Set.of(
+			Items.ARROW,
+			Items.TIPPED_ARROW,
+			Items.SPECTRAL_ARROW,
+			Items.TRIDENT,
+			Items.FIREWORK_ROCKET,
+			Items.FIRE_CHARGE,
+			Items.WIND_CHARGE,
+			Items.SNOWBALL,
+			Items.EGG,
+			Items.EXPERIENCE_BOTTLE,
+			Items.SPLASH_POTION,
+			Items.LINGERING_POTION
+	);
+	private static final Map<UUID, TurretInventory> DRONE_TURRET_INVENTORIES = new HashMap<>();
+	private static final Map<UUID, Long> NEXT_DRONE_TURRET_FIRE_TICK = new HashMap<>();
+	private static final Map<UUID, UUID> CONTROLLED_DRONE_TURRET_TRIGGERS = new HashMap<>();
 	private static final Map<UUID, UncontrolledDroneState> UNCONTROLLED_DRONES = new HashMap<>();
 	private static final Map<DroneChunkTicketKey, Integer> ACTIVE_DRONE_CHUNK_TICKETS = new HashMap<>();
 	private static final Map<UUID, DroneScreenStreamLoadState> SCREEN_STREAM_DRONE_LOAD_STATES = new HashMap<>();
@@ -288,6 +330,12 @@ public final class DroneSystem {
 			DroneControlSession activeSession = ACTIVE_SESSIONS.get(serverPlayer.getUUID());
 			if (activeSession != null && Objects.equals(activeSession.droneUuid(), root.getUUID())) {
 				return InteractionResult.CONSUME;
+			}
+			if (serverPlayer.isShiftKeyDown()
+					&& hasDroneTurretModule(root)
+					&& !serverPlayer.getItemInHand(hand).is(Items.DISPENSER)
+					&& openDroneTurretMenu(serverPlayer, root)) {
+				return InteractionResult.SUCCESS;
 			}
 			InteractionResult tuningResult = serverPlayer.isShiftKeyDown()
 					? tryUnloadDroneModule(serverPlayer, root)
@@ -348,6 +396,9 @@ public final class DroneSystem {
 			CONTROLLERS_BY_DRONE.clear();
 			DISPLAYS_BY_DRONE.clear();
 			CAMERA_ANCHORS_BY_DRONE.clear();
+			DRONE_TURRET_INVENTORIES.clear();
+			NEXT_DRONE_TURRET_FIRE_TICK.clear();
+			CONTROLLED_DRONE_TURRET_TRIGGERS.clear();
 			UNCONTROLLED_DRONES.clear();
 			ACTIVE_DRONE_CHUNK_TICKETS.clear();
 			SCREEN_STREAM_DRONE_LOAD_STATES.clear();
@@ -1462,6 +1513,7 @@ public final class DroneSystem {
 
 			Entity root = findDroneRoot(server, session.droneDimension(), session.droneUuid());
 			if (root == null || !root.isAlive()) {
+				removeControlledDroneTurretAirTrigger(player);
 				if (shouldKeepControlledSessionWaitingForDroneRoot(server, session)) {
 					syncControlledOperatorFallbackView(player, session);
 					syncControlledOperatorBodyMirror(player, false);
@@ -1489,6 +1541,8 @@ public final class DroneSystem {
 			tickControlledOperatorBodyPhysics(player);
 			updateControlledDrives(player, session, input);
 			tickControlledDrone(player, root, session);
+			handleControlledTurretJumpInput(player, root, session, input);
+			syncControlledDroneTurretAirTrigger(player, root);
 		}
 	}
 
@@ -2787,6 +2841,7 @@ public final class DroneSystem {
 		clearManagedDroneNightVision(player);
 		clearControlledAutoAimTarget(player, session);
 		syncControlledOperatorAutoAimInteractionRange(player, false);
+		removeControlledDroneTurretAirTrigger(player);
 	}
 
 	private static void syncControlledOperatorView(
@@ -3546,6 +3601,7 @@ public final class DroneSystem {
 		session.setProxyYaw(root.getYRot());
 		session.setProxyPitch(root.getXRot());
 		session.refreshKnownDroneLocation(root);
+		session.setTurretInputSuppressedUntilTick(droneLevel.getGameTime() + DRONE_TURRET_CONTROL_START_SUPPRESS_TICKS);
 		if (previousUncontrolledState != null) {
 			session.setAutoAimTarget(previousUncontrolledState.autoAimTarget());
 			restoreControlledDrivesFromUncontrolledState(session, previousUncontrolledState, root.getYRot(), root.getXRot());
@@ -3667,6 +3723,7 @@ public final class DroneSystem {
 		UNCONTROLLED_DRONES.remove(root.getUUID());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
 		NEXT_DRONE_ARM_ALLOWED_TICK.remove(root.getUUID());
+		NEXT_DRONE_TURRET_FIRE_TICK.remove(root.getUUID());
 		DISPLAY_WOBBLE_BY_DRONE.remove(root.getUUID());
 		SCREEN_STREAM_DRONE_LOAD_STATES.remove(root.getUUID());
 		BluetoothLinkSystem.removeDroneEndpoint(level, root.getUUID(), root.blockPosition());
@@ -3684,6 +3741,7 @@ public final class DroneSystem {
 		for (Entity passenger : new ArrayList<>(root.getPassengers())) {
 			passenger.discard();
 		}
+		dropDroneTurretInventory(root);
 		if (dropItem && breaker != null && !breaker.getAbilities().instabuild && !kamikazeDrone) {
 			root.spawnAtLocation(level, buildDroneDropStack(root));
 		}
@@ -4109,6 +4167,7 @@ public final class DroneSystem {
 		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
 			return;
 		}
+		DroneItem.DroneType previousType = resolveDroneType(root);
 		for (String tag : new ArrayList<>(root.getTags())) {
 			if (tag != null && tag.startsWith(DRONE_TYPE_TAG_PREFIX)) {
 				root.removeTag(tag);
@@ -4118,7 +4177,322 @@ public final class DroneSystem {
 		if (resolvedType != DroneItem.DroneType.NORMAL) {
 			root.addTag(DRONE_TYPE_TAG_PREFIX + resolvedType.name().toLowerCase(java.util.Locale.ROOT));
 		}
+		if (previousType == DroneItem.DroneType.COMBAT && resolvedType != DroneItem.DroneType.COMBAT) {
+			dropDroneTurretInventory(root);
+			NEXT_DRONE_TURRET_FIRE_TICK.remove(root.getUUID());
+		}
 		syncDroneDisplayLayers(root);
+	}
+
+	private static boolean hasDroneTurretModule(Entity root) {
+		return resolveDroneType(root) == DroneItem.DroneType.COMBAT;
+	}
+
+	private static boolean openDroneTurretMenu(ServerPlayer player, Entity root) {
+		if (player == null || root == null || !root.isAlive() || !hasDroneTurretModule(root)) {
+			return false;
+		}
+		TurretInventory inventory = droneTurretInventory(root);
+		return player.openMenu(new SimpleMenuProvider(
+				(syncId, playerInventory, opener) -> new DispenserMenu(syncId, playerInventory, inventory),
+				Component.literal("Турель дрона")
+		)).isPresent();
+	}
+
+	private static TurretInventory droneTurretInventory(Entity root) {
+		return DRONE_TURRET_INVENTORIES.computeIfAbsent(root.getUUID(), ignored -> new TurretInventory());
+	}
+
+	private static boolean isDroneTurretProjectileStack(ItemStack stack) {
+		return stack != null && !stack.isEmpty() && DRONE_TURRET_PROJECTILES.contains(stack.getItem());
+	}
+
+	private static void dropDroneTurretInventory(Entity root) {
+		if (root == null) {
+			return;
+		}
+		TurretInventory inventory = DRONE_TURRET_INVENTORIES.remove(root.getUUID());
+		if (inventory == null || !(root.level() instanceof ServerLevel level)) {
+			return;
+		}
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			ItemStack stack = inventory.getItem(slot);
+			if (stack.isEmpty()) {
+				continue;
+			}
+			root.spawnAtLocation(level, stack.copy());
+			inventory.setItem(slot, ItemStack.EMPTY);
+		}
+	}
+
+	public static boolean handleControlledUseItem(ServerPlayer player, InteractionHand hand) {
+		if (player == null || hand != InteractionHand.MAIN_HAND || player.level() == null) {
+			return false;
+		}
+		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
+		if (session == null || !Objects.equals(resolveAuthoritativeDroneControllerId(session.droneUuid()), player.getUUID())) {
+			return false;
+		}
+		MinecraftServer server = player.level().getServer();
+		Entity root = server == null ? null : findDroneRoot(server, session.droneDimension(), session.droneUuid());
+		if (root == null || !root.isAlive()) {
+			return false;
+		}
+		return fireDroneTurret(player, root, session, false);
+	}
+
+	private static void handleControlledTurretJumpInput(
+			ServerPlayer player,
+			Entity root,
+			DroneControlSession session,
+			DroneInputState input
+	) {
+		if (player == null || root == null || session == null || input == null) {
+			return;
+		}
+		if (!hasDroneTurretModule(root)) {
+			return;
+		}
+		if (!input.jump()) {
+			return;
+		}
+		fireDroneTurret(player, root, session, false);
+	}
+
+	private static boolean fireDroneTurret(
+			ServerPlayer player,
+			Entity root,
+			DroneControlSession session,
+			boolean ignoreInputSuppression
+	) {
+		if (player == null || root == null || session == null || !(root.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		if (!hasDroneTurretModule(root)) {
+			return false;
+		}
+		long now = level.getGameTime();
+		if (!ignoreInputSuppression && now < session.turretInputSuppressedUntilTick()) {
+			return true;
+		}
+		long nextAllowed = NEXT_DRONE_TURRET_FIRE_TICK.getOrDefault(root.getUUID(), Long.MIN_VALUE);
+		if (now < nextAllowed) {
+			return true;
+		}
+		TurretInventory inventory = droneTurretInventory(root);
+		int slot = selectRandomDroneTurretProjectileSlot(level, inventory);
+		if (slot < 0) {
+			level.levelEvent(1001, BlockPos.containing(droneCameraOrigin(root)), 0);
+			NEXT_DRONE_TURRET_FIRE_TICK.put(root.getUUID(), now + DRONE_TURRET_FIRE_COOLDOWN_TICKS);
+			return true;
+		}
+		ItemStack stack = inventory.getItem(slot);
+		ItemStack shotStack = stack.copyWithCount(1);
+		Vec3 direction = controlledTurretDirection(player, session);
+		Vec3 origin = controlledTurretMuzzleOrigin(root, session, direction);
+		Projectile projectile = createDroneTurretProjectile(level, player, origin, direction, shotStack);
+		if (projectile == null) {
+			level.levelEvent(1001, BlockPos.containing(origin), 0);
+			NEXT_DRONE_TURRET_FIRE_TICK.put(root.getUUID(), now + DRONE_TURRET_FIRE_COOLDOWN_TICKS);
+			return true;
+		}
+
+		level.addFreshEntity(projectile);
+		stack.shrink(1);
+		inventory.setItem(slot, stack.isEmpty() ? ItemStack.EMPTY : stack);
+		inventory.setChanged();
+		level.levelEvent(1000, BlockPos.containing(origin), 0);
+		NEXT_DRONE_TURRET_FIRE_TICK.put(root.getUUID(), now + DRONE_TURRET_FIRE_COOLDOWN_TICKS);
+		return true;
+	}
+
+	private static int selectRandomDroneTurretProjectileSlot(ServerLevel level, TurretInventory inventory) {
+		if (level == null || inventory == null) {
+			return -1;
+		}
+		int selectedSlot = -1;
+		int validCount = 0;
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			if (!isDroneTurretProjectileStack(inventory.getItem(slot))) {
+				continue;
+			}
+			validCount++;
+			if (level.random.nextInt(validCount) == 0) {
+				selectedSlot = slot;
+			}
+		}
+		return selectedSlot;
+	}
+
+	private static Vec3 controlledTurretDirection(ServerPlayer player, DroneControlSession session) {
+		Vec3 direction = session == null ? null : Vec3.directionFromRotation(session.proxyPitch(), session.proxyYaw());
+		if (direction == null || direction.lengthSqr() < 1.0E-8D) {
+			direction = player == null ? Vec3.ZERO : player.getLookAngle();
+		}
+		if (direction.lengthSqr() < 1.0E-8D) {
+			return new Vec3(0.0D, 0.0D, 1.0D);
+		}
+		return direction.normalize();
+	}
+
+	private static Vec3 controlledTurretMuzzleOrigin(Entity root, DroneControlSession session, Vec3 direction) {
+		Vec3 fallback = root == null ? Vec3.ZERO : droneCameraOrigin(root);
+		Vec3 base = session == null ? fallback : finiteVecOr(session.proxyPos(), fallback);
+		return droneCameraOrigin(base).add(direction.normalize().scale(DRONE_TURRET_MUZZLE_FORWARD_OFFSET));
+	}
+
+	private static Projectile createDroneTurretProjectile(
+			ServerLevel level,
+			ServerPlayer owner,
+			Vec3 origin,
+			Vec3 direction,
+			ItemStack stack
+	) {
+		if (level == null || origin == null || direction == null || stack == null || stack.isEmpty()) {
+			return null;
+		}
+		Vec3 normalized = direction.lengthSqr() < 1.0E-8D ? new Vec3(0.0D, 0.0D, 1.0D) : direction.normalize();
+		Projectile projectile;
+		float speed;
+		Item item = stack.getItem();
+		if (item == Items.SPECTRAL_ARROW) {
+			projectile = new SpectralArrow(level, origin.x, origin.y, origin.z, stack, new ItemStack(Items.CROSSBOW));
+			speed = 3.0F;
+		} else if (item == Items.ARROW || item == Items.TIPPED_ARROW) {
+			projectile = new Arrow(level, origin.x, origin.y, origin.z, stack, new ItemStack(Items.CROSSBOW));
+			speed = 3.0F;
+		} else if (item == Items.TRIDENT) {
+			projectile = new ThrownTrident(level, origin.x, origin.y, origin.z, stack);
+			speed = 2.5F;
+		} else if (item == Items.FIREWORK_ROCKET) {
+			projectile = new FireworkRocketEntity(level, stack, owner, origin.x, origin.y, origin.z, true);
+			speed = 1.8F;
+		} else if (item == Items.FIRE_CHARGE) {
+			projectile = new SmallFireball(level, origin.x, origin.y, origin.z, normalized);
+			speed = 1.5F;
+		} else if (item == Items.WIND_CHARGE) {
+			projectile = new WindCharge(level, origin.x, origin.y, origin.z, normalized);
+			speed = 1.4F;
+		} else if (item == Items.SNOWBALL) {
+			projectile = new Snowball(level, origin.x, origin.y, origin.z, stack);
+			speed = 1.5F;
+		} else if (item == Items.EGG) {
+			projectile = new ThrownEgg(level, origin.x, origin.y, origin.z, stack);
+			speed = 1.5F;
+		} else if (item == Items.EXPERIENCE_BOTTLE) {
+			projectile = new ThrownExperienceBottle(level, origin.x, origin.y, origin.z, stack);
+			speed = 1.3F;
+		} else if (item == Items.SPLASH_POTION) {
+			projectile = new ThrownSplashPotion(level, origin.x, origin.y, origin.z, stack);
+			speed = 1.3F;
+		} else if (item == Items.LINGERING_POTION) {
+			projectile = new ThrownLingeringPotion(level, origin.x, origin.y, origin.z, stack);
+			speed = 1.3F;
+		} else {
+			return null;
+		}
+		projectile.setOwner(owner);
+		projectile.setPos(origin.x, origin.y, origin.z);
+		projectile.shoot(normalized.x, normalized.y, normalized.z, speed, 0.0F);
+		return projectile;
+	}
+
+	private static void syncControlledDroneTurretAirTrigger(ServerPlayer player, Entity root) {
+		if (player == null || root == null || !(root.level() instanceof ServerLevel level)) {
+			return;
+		}
+		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
+		if (session == null) {
+			removeControlledDroneTurretAirTrigger(player);
+			return;
+		}
+		if (!shouldMaintainControlledDroneTurretAirTrigger(player, root)) {
+			removeControlledDroneTurretAirTrigger(player);
+			return;
+		}
+		Vec3 look = controlledTurretDirection(player, session);
+		Vec3 cameraOrigin = droneCameraOrigin(finiteVecOr(session.proxyPos(), root.position()));
+		Vec3 pos = cameraOrigin
+				.add(look.normalize().scale(DRONE_TURRET_AIR_TRIGGER_HEAD_FORWARD_OFFSET))
+				.subtract(0.0D, DRONE_TURRET_AIR_TRIGGER_HEIGHT * 0.5D, 0.0D);
+		UUID triggerId = CONTROLLED_DRONE_TURRET_TRIGGERS.get(player.getUUID());
+		Interaction trigger = null;
+		if (triggerId != null) {
+			Entity existing = level.getEntity(triggerId);
+			if (existing instanceof Interaction existingTrigger && existingTrigger.isAlive()) {
+				trigger = existingTrigger;
+			}
+		}
+		if (trigger == null) {
+			trigger = new Interaction(EntityType.INTERACTION, level);
+			trigger.addTag(DRONE_TURRET_TRIGGER_TAG);
+			trigger.addTag(DRONE_TURRET_TRIGGER_OWNER_TAG_PREFIX + player.getUUID());
+			trigger.setNoGravity(true);
+			trigger.setSilent(true);
+			trigger.setInvisible(true);
+			trigger.setResponse(false);
+			trigger.setWidth(DRONE_TURRET_AIR_TRIGGER_WIDTH);
+			trigger.setHeight(DRONE_TURRET_AIR_TRIGGER_HEIGHT);
+			trigger.setPos(pos.x, pos.y, pos.z);
+			trigger.setDeltaMovement(Vec3.ZERO);
+			trigger.setYRot(session.proxyYaw());
+			trigger.setXRot(session.proxyPitch());
+			level.addFreshEntity(trigger);
+			CONTROLLED_DRONE_TURRET_TRIGGERS.put(player.getUUID(), trigger.getUUID());
+			sendControlledOperatorPacket(player, new ClientboundAddEntityPacket(
+					trigger.getId(),
+					trigger.getUUID(),
+					trigger.getX(),
+					trigger.getY(),
+					trigger.getZ(),
+					trigger.getXRot(),
+					trigger.getYRot(),
+					EntityType.INTERACTION,
+					0,
+					Vec3.ZERO,
+					trigger.getYHeadRot()
+			));
+			List<SynchedEntityData.DataValue<?>> trackedData = trigger.getEntityData().getNonDefaultValues();
+			if (trackedData != null && !trackedData.isEmpty()) {
+				sendControlledOperatorPacket(player, new ClientboundSetEntityDataPacket(trigger.getId(), trackedData));
+			}
+		}
+		trigger.setInvisible(true);
+		trigger.setPos(pos.x, pos.y, pos.z);
+		trigger.setDeltaMovement(Vec3.ZERO);
+		trigger.setYRot(session.proxyYaw());
+		trigger.setXRot(session.proxyPitch());
+		sendControlledOperatorPacket(player, ClientboundEntityPositionSyncPacket.of(trigger));
+	}
+
+	private static boolean shouldMaintainControlledDroneTurretAirTrigger(ServerPlayer player, Entity root) {
+		if (player == null
+				|| root == null
+				|| !root.isAlive()
+				|| !hasDroneTurretModule(root)
+				|| !player.isAlive()
+				|| player.isSpectator()) {
+			return false;
+		}
+		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
+		return session != null
+				&& Objects.equals(session.droneUuid(), root.getUUID())
+				&& Objects.equals(resolveAuthoritativeDroneControllerId(root.getUUID()), player.getUUID());
+	}
+
+	private static void removeControlledDroneTurretAirTrigger(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		UUID triggerId = CONTROLLED_DRONE_TURRET_TRIGGERS.remove(player.getUUID());
+		if (triggerId == null || player.level() == null || player.level().getServer() == null) {
+			return;
+		}
+		Entity trigger = findEntity(player.level().getServer(), triggerId);
+		if (trigger != null) {
+			sendControlledOperatorPacket(player, new ClientboundRemoveEntitiesPacket(trigger.getId()));
+			trigger.discard();
+		}
 	}
 
 	private static boolean hasDroneNightVisionModule(Entity root) {
@@ -4805,6 +5179,19 @@ public final class DroneSystem {
 		return level == null ? null : level.getEntity(uuid);
 	}
 
+	private static Entity findEntity(MinecraftServer server, UUID uuid) {
+		if (server == null || uuid == null) {
+			return null;
+		}
+		for (ServerLevel level : server.getAllLevels()) {
+			Entity entity = level.getEntity(uuid);
+			if (entity != null) {
+				return entity;
+			}
+		}
+		return null;
+	}
+
 	private static void syncPassengerAttachment(Entity vehicle) {
 		if (vehicle == null || !(vehicle.level() instanceof ServerLevel level)) {
 			return;
@@ -5019,6 +5406,22 @@ public final class DroneSystem {
 		private static final DroneInputState EMPTY = new DroneInputState(false, false, false, false, false, false, false);
 	}
 
+	private static final class TurretInventory extends SimpleContainer {
+		private TurretInventory() {
+			super(DRONE_TURRET_INVENTORY_SIZE);
+		}
+
+		@Override
+		public boolean canPlaceItem(int slot, ItemStack stack) {
+			return isDroneTurretProjectileStack(stack);
+		}
+
+		@Override
+		public void setItem(int slot, ItemStack stack) {
+			super.setItem(slot, isDroneTurretProjectileStack(stack) ? stack : ItemStack.EMPTY);
+		}
+	}
+
 	private record ControlledCollisionState(
 			boolean horizontalCollision,
 			boolean verticalCollision,
@@ -5055,6 +5458,7 @@ public final class DroneSystem {
 		private long lastHudTick = Long.MIN_VALUE;
 		private DroneAutoAimTarget autoAimTarget;
 		private long lastManualLookTick = Long.MIN_VALUE;
+		private long turretInputSuppressedUntilTick = Long.MIN_VALUE;
 
 		private DroneControlSession(
 				UUID droneUuid,
@@ -5255,6 +5659,15 @@ public final class DroneSystem {
 		private void setAutoAimTarget(DroneAutoAimTarget autoAimTarget) {
 			this.autoAimTarget = autoAimTarget;
 		}
+
+		private long turretInputSuppressedUntilTick() {
+			return this.turretInputSuppressedUntilTick;
+		}
+
+		private void setTurretInputSuppressedUntilTick(long turretInputSuppressedUntilTick) {
+			this.turretInputSuppressedUntilTick = turretInputSuppressedUntilTick;
+		}
+
 	}
 
 	private sealed interface DroneAutoAimTarget permits DroneAutoAimEntityTarget, DroneAutoAimBlockTarget {
