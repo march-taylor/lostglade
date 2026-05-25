@@ -218,10 +218,15 @@ public final class DroneSystem {
 	private static final int DRONE_MANAGED_NIGHT_VISION_AMPLIFIER = 1;
 	private static final double DRONE_AUTO_AIM_SELECTION_RANGE_BLOCKS = 64.0D;
 	private static final double DRONE_AUTO_AIM_INTERACTION_RANGE_BONUS = 64.0D;
-	private static final float DRONE_AUTO_AIM_ROTATION_BLEND = 0.10F;
-	private static final float DRONE_AUTO_AIM_MAX_YAW_STEP_DEGREES = 1.20F;
-	private static final float DRONE_AUTO_AIM_MAX_PITCH_STEP_DEGREES = 0.90F;
-	private static final float DRONE_AUTO_AIM_ROTATION_EPSILON_DEGREES = 0.05F;
+	private static final float DRONE_AUTO_AIM_CONTROLLED_ROTATION_BLEND = 0.045F;
+	private static final float DRONE_AUTO_AIM_CONTROLLED_MAX_YAW_STEP_DEGREES = 0.42F;
+	private static final float DRONE_AUTO_AIM_CONTROLLED_MAX_PITCH_STEP_DEGREES = 0.32F;
+	private static final float DRONE_AUTO_AIM_MANUAL_LOOK_THRESHOLD_DEGREES = 0.08F;
+	private static final long DRONE_AUTO_AIM_MANUAL_SUPPRESSION_TICKS = 3L;
+	private static final double DRONE_AUTO_AIM_UNCONTROLLED_VELOCITY_BLEND = 0.22D;
+	private static final float DRONE_AUTO_AIM_UNCONTROLLED_ROTATION_BLEND = 0.09F;
+	private static final float DRONE_AUTO_AIM_UNCONTROLLED_MAX_YAW_STEP_DEGREES = 1.00F;
+	private static final float DRONE_AUTO_AIM_UNCONTROLLED_MAX_PITCH_STEP_DEGREES = 0.75F;
 	private static final Identifier DRONE_AUTO_AIM_BLOCK_INTERACTION_RANGE_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_auto_aim_block_interaction_range");
 	private static final Identifier DRONE_AUTO_AIM_ENTITY_INTERACTION_RANGE_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_auto_aim_entity_interaction_range");
 	private static final double DRONE_CAMERA_ESCAPE_STEP = 0.04D;
@@ -934,10 +939,19 @@ public final class DroneSystem {
 		if (previousPos == null) {
 			previousPos = root.position();
 		}
+		float previousYaw = session.proxyYaw();
+		float previousPitch = session.proxyPitch();
 		float yaw = packet.hasRotation() ? packet.getYRot(session.controlYaw()) : session.controlYaw();
 		float pitch = packet.hasRotation()
 				? net.minecraft.util.Mth.clamp(packet.getXRot(session.controlPitch()), -90.0F, 90.0F)
 				: session.controlPitch();
+		if (packet.hasRotation()) {
+			session.recordManualLookDelta(
+					net.minecraft.util.Mth.wrapDegrees(yaw - previousYaw),
+					pitch - previousPitch,
+					root.level() == null ? Long.MIN_VALUE : root.level().getGameTime()
+			);
+		}
 		session.setControlYaw(yaw);
 		session.setControlPitch(pitch);
 		session.setProxyYaw(yaw);
@@ -1582,13 +1596,13 @@ public final class DroneSystem {
 		if (!(root.level() instanceof ServerLevel)) {
 			return;
 		}
+		boolean autoAimAdjustedView = syncControlledOperatorAutoAim(player, session, root);
 		session.setIntendedVelocity(DroneFlightPhysics.step(
 				session.controlPitch(),
 				session.controlYaw(),
 				session.forwardDrive(),
 				session.strafeDrive()
 		));
-		boolean autoAimAdjustedView = syncControlledOperatorAutoAim(player, session, root);
 		decayControlledDroneSurfaceWear(session, root.level().getGameTime());
 		syncControlledDronePresentation(player, root, session);
 		syncControlledOperatorView(player, session, root, false, autoAimAdjustedView);
@@ -1828,12 +1842,19 @@ public final class DroneSystem {
 		}
 
 		Vec3 velocity = state.velocity() == null ? Vec3.ZERO : state.velocity();
+		Vec3 autoAimTargetPoint = resolveUncontrolledDroneAutoAimTargetPoint(root, state);
+		if (state.autoAimTarget() != null && autoAimTargetPoint == null) {
+			state.setAutoAimTarget(null);
+		}
 		if (!holdWithoutGravity) {
 			velocity = new Vec3(
 					velocity.x * UNCONTROLLED_AIR_DRAG,
 					velocity.y * UNCONTROLLED_AIR_DRAG - UNCONTROLLED_GRAVITY,
 					velocity.z * UNCONTROLLED_AIR_DRAG
 			);
+		}
+		if (autoAimTargetPoint != null) {
+			velocity = applyUncontrolledDroneAutoAimMovementAssist(root, velocity, autoAimTargetPoint);
 		}
 
 		Vec3 startPos = root.position();
@@ -1852,7 +1873,7 @@ public final class DroneSystem {
 			settleUncontrolledDrone(root, state);
 			return;
 		}
-		boolean autoAimAdjusted = syncUncontrolledDroneAutoAim(root, state);
+		boolean autoAimAdjusted = syncUncontrolledDroneAutoAim(root, state, autoAimTargetPoint);
 		if (autoAimAdjusted) {
 			root.hurtMarked = true;
 		} else if (holdWithoutGravity) {
@@ -1935,21 +1956,51 @@ public final class DroneSystem {
 		root.setXRot(0.0F);
 	}
 
-	private static boolean syncUncontrolledDroneAutoAim(Entity root, UncontrolledDroneState state) {
+	private static Vec3 resolveUncontrolledDroneAutoAimTargetPoint(Entity root, UncontrolledDroneState state) {
 		if (root == null
 				|| state == null
 				|| state.autoAimTarget() == null
 				|| !root.isAlive()
 				|| !hasDroneAutoAimModule(root)
 				|| root.level() == null) {
-			return false;
+			return null;
 		}
 		MinecraftServer server = root.level().getServer();
-		Vec3 targetPoint = resolveDroneAutoAimTargetPoint(
+		return resolveDroneAutoAimTargetPoint(
 				server,
 				state.dimension() != null ? state.dimension() : root.level().dimension(),
 				state.autoAimTarget()
 		);
+	}
+
+	private static Vec3 applyUncontrolledDroneAutoAimMovementAssist(Entity root, Vec3 velocity, Vec3 targetPoint) {
+		if (root == null || velocity == null || targetPoint == null) {
+			return velocity == null ? Vec3.ZERO : velocity;
+		}
+		double speed = velocity.length();
+		if (speed <= 1.0E-6D) {
+			return velocity;
+		}
+		Vec3 origin = resolveSafeDroneCameraOrigin(root, droneCameraOrigin(root));
+		Vec3 targetDelta = targetPoint.subtract(origin);
+		if (targetDelta.lengthSqr() <= 1.0E-6D) {
+			return velocity;
+		}
+		Vec3 desiredVelocity = targetDelta.normalize().scale(speed);
+		Vec3 assisted = velocity.lerp(desiredVelocity, DRONE_AUTO_AIM_UNCONTROLLED_VELOCITY_BLEND);
+		return limitDroneVelocity(assisted, Math.max(speed, DroneFlightPhysics.MAX_COMBINED_SPEED));
+	}
+
+	private static boolean syncUncontrolledDroneAutoAim(Entity root, UncontrolledDroneState state, Vec3 targetPoint) {
+		if (root == null
+				|| state == null
+				|| targetPoint == null
+				|| state.autoAimTarget() == null
+				|| !root.isAlive()
+				|| !hasDroneAutoAimModule(root)
+				|| root.level() == null) {
+			return false;
+		}
 		if (targetPoint == null || !isWithinControlledAutoAimSelectionRange(root, targetPoint)) {
 			state.setAutoAimTarget(null);
 			return false;
@@ -1957,18 +2008,21 @@ public final class DroneSystem {
 		Vec3 origin = resolveSafeDroneCameraOrigin(root, droneCameraOrigin(root));
 		float targetYaw = yawTo(origin, targetPoint);
 		float targetPitch = pitchTo(origin, targetPoint);
-		float nextYaw = approachAngleDegrees(state.yaw(), targetYaw, DRONE_AUTO_AIM_ROTATION_BLEND, DRONE_AUTO_AIM_MAX_YAW_STEP_DEGREES);
-		float nextPitch = net.minecraft.util.Mth.clamp(
-				approachLinearDegrees(state.pitch(), targetPitch, DRONE_AUTO_AIM_ROTATION_BLEND, DRONE_AUTO_AIM_MAX_PITCH_STEP_DEGREES),
-				-90.0F,
-				90.0F
+		DroneAutoAimAngles nextAngles = approachDroneAutoAimAngles(
+				state.yaw(),
+				state.pitch(),
+				targetYaw,
+				targetPitch,
+				DRONE_AUTO_AIM_UNCONTROLLED_ROTATION_BLEND,
+				DRONE_AUTO_AIM_UNCONTROLLED_MAX_YAW_STEP_DEGREES,
+				DRONE_AUTO_AIM_UNCONTROLLED_MAX_PITCH_STEP_DEGREES
 		);
-			state.setYaw(nextYaw);
-			state.setPitch(nextPitch);
-			root.setYRot(nextYaw);
-			root.setXRot(nextPitch);
-			return true;
-		}
+		state.setYaw(nextAngles.yaw());
+		state.setPitch(nextAngles.pitch());
+		root.setYRot(nextAngles.yaw());
+		root.setXRot(nextAngles.pitch());
+		return true;
+	}
 
 	private static void applyUncontrolledRotation(Entity root, UncontrolledDroneState state, Vec3 velocity) {
 		if (root == null || state == null || velocity == null) {
@@ -2283,6 +2337,19 @@ public final class DroneSystem {
 	private static float lerpAngleDegrees(float current, float target, float delta) {
 		float wrapped = net.minecraft.util.Mth.wrapDegrees(target - current);
 		return current + wrapped * net.minecraft.util.Mth.clamp(delta, 0.0F, 1.0F);
+	}
+
+	private static Vec3 limitDroneVelocity(Vec3 velocity, double maxSpeed) {
+		if (velocity == null) {
+			return Vec3.ZERO;
+		}
+		double speedSqr = velocity.lengthSqr();
+		double cappedMaxSpeed = Math.max(0.0D, maxSpeed);
+		if (cappedMaxSpeed <= 1.0E-6D || speedSqr <= cappedMaxSpeed * cappedMaxSpeed) {
+			return velocity;
+		}
+		double speed = Math.sqrt(speedSqr);
+		return speed <= 1.0E-6D ? Vec3.ZERO : velocity.scale(cappedMaxSpeed / speed);
 	}
 
 	private static void onEntityLoad(Entity entity, ServerLevel level) {
@@ -2849,26 +2916,34 @@ public final class DroneSystem {
 			clearControlledAutoAimTarget(player, session);
 			return false;
 		}
+		if (session.isManualLookRecentlyActive(root.level() == null ? Long.MIN_VALUE : root.level().getGameTime())) {
+			return false;
+		}
 
 		Vec3 origin = resolveSafeDroneCameraOrigin(root, droneCameraOrigin(root));
 		float targetYaw = yawTo(origin, targetPoint);
 		float targetPitch = pitchTo(origin, targetPoint);
-		float nextYaw = approachAngleDegrees(session.proxyYaw(), targetYaw, DRONE_AUTO_AIM_ROTATION_BLEND, DRONE_AUTO_AIM_MAX_YAW_STEP_DEGREES);
-		float nextPitch = net.minecraft.util.Mth.clamp(
-				approachLinearDegrees(session.proxyPitch(), targetPitch, DRONE_AUTO_AIM_ROTATION_BLEND, DRONE_AUTO_AIM_MAX_PITCH_STEP_DEGREES),
-				-90.0F,
-				90.0F
+		DroneAutoAimAngles nextAngles = approachDroneAutoAimAngles(
+				session.proxyYaw(),
+				session.proxyPitch(),
+				targetYaw,
+				targetPitch,
+				DRONE_AUTO_AIM_CONTROLLED_ROTATION_BLEND,
+				DRONE_AUTO_AIM_CONTROLLED_MAX_YAW_STEP_DEGREES,
+				DRONE_AUTO_AIM_CONTROLLED_MAX_PITCH_STEP_DEGREES
 		);
-		boolean changed = Math.abs(net.minecraft.util.Mth.wrapDegrees(nextYaw - session.proxyYaw())) > DRONE_AUTO_AIM_ROTATION_EPSILON_DEGREES
-				|| Math.abs(nextPitch - session.proxyPitch()) > DRONE_AUTO_AIM_ROTATION_EPSILON_DEGREES;
+		boolean changed = Math.abs(net.minecraft.util.Mth.wrapDegrees(nextAngles.yaw() - session.proxyYaw())) > 1.0E-4F
+				|| Math.abs(nextAngles.pitch() - session.proxyPitch()) > 1.0E-4F;
 		if (!changed) {
 			return false;
 		}
 
-		session.setProxyYaw(nextYaw);
-		session.setProxyPitch(nextPitch);
-		root.setYRot(nextYaw);
-		root.setXRot(nextPitch);
+		session.setControlYaw(nextAngles.yaw());
+		session.setControlPitch(nextAngles.pitch());
+		session.setProxyYaw(nextAngles.yaw());
+		session.setProxyPitch(nextAngles.pitch());
+		root.setYRot(nextAngles.yaw());
+		root.setXRot(nextAngles.pitch());
 		root.hurtMarked = true;
 		return true;
 	}
@@ -3095,14 +3170,28 @@ public final class DroneSystem {
 		return (float) -Math.toDegrees(Math.atan2(delta.y, horizontal));
 	}
 
-	private static float approachAngleDegrees(float current, float target, float blend, float maxStep) {
-		float delta = net.minecraft.util.Mth.wrapDegrees(target - current) * net.minecraft.util.Mth.clamp(blend, 0.0F, 1.0F);
-		return current + net.minecraft.util.Mth.clamp(delta, -Math.abs(maxStep), Math.abs(maxStep));
-	}
-
-	private static float approachLinearDegrees(float current, float target, float blend, float maxStep) {
-		float delta = (target - current) * net.minecraft.util.Mth.clamp(blend, 0.0F, 1.0F);
-		return current + net.minecraft.util.Mth.clamp(delta, -Math.abs(maxStep), Math.abs(maxStep));
+	private static DroneAutoAimAngles approachDroneAutoAimAngles(
+			float currentYaw,
+			float currentPitch,
+			float targetYaw,
+			float targetPitch,
+			float blend,
+			float maxYawStep,
+			float maxPitchStep
+	) {
+		float yawError = net.minecraft.util.Mth.wrapDegrees(targetYaw - currentYaw);
+		float pitchError = targetPitch - currentPitch;
+		float nextYaw = currentYaw + net.minecraft.util.Mth.clamp(
+				yawError * net.minecraft.util.Mth.clamp(blend, 0.0F, 1.0F),
+				-Math.abs(maxYawStep),
+				Math.abs(maxYawStep)
+		);
+		float nextPitch = currentPitch + net.minecraft.util.Mth.clamp(
+				pitchError * net.minecraft.util.Mth.clamp(blend, 0.0F, 1.0F),
+				-Math.abs(maxPitchStep),
+				Math.abs(maxPitchStep)
+		);
+		return new DroneAutoAimAngles(nextYaw, net.minecraft.util.Mth.clamp(nextPitch, -90.0F, 90.0F));
 	}
 
 	private static void updateDroneHud(ServerPlayer player, DroneControlSession session, boolean force) {
@@ -3337,6 +3426,7 @@ public final class DroneSystem {
 		CONTROLLERS_BY_DRONE.remove(session.droneUuid(), player.getUUID());
 		MinecraftServer server = player.level().getServer();
 		Entity root = server == null ? null : findDroneRoot(server, session.droneDimension(), session.droneUuid());
+		DroneAutoAimTarget releasedAutoAimTarget = session.autoAimTarget();
 
 		clearControlledOperatorTransientState(player, session);
 		removeControlledOperatorBodyMirror(player);
@@ -3354,18 +3444,18 @@ public final class DroneSystem {
 			root.noPhysics = false;
 			root.setDeltaMovement(releasedVelocity);
 			root.hurtMarked = true;
-				UNCONTROLLED_DRONES.put(
-						root.getUUID(),
-						new UncontrolledDroneState(
-								root.getUUID(),
-								((ServerLevel) root.level()).dimension(),
-								releasedVelocity,
-								root.getYRot(),
-								root.getXRot(),
-								session.autoAimTarget(),
-								root.level().getGameTime() + UNCONTROLLED_DRONE_RELEASE_GLIDE_TICKS
-						)
-				);
+			UNCONTROLLED_DRONES.put(
+					root.getUUID(),
+					new UncontrolledDroneState(
+							root.getUUID(),
+							((ServerLevel) root.level()).dimension(),
+							releasedVelocity,
+							root.getYRot(),
+							root.getXRot(),
+							releasedAutoAimTarget,
+							root.level().getGameTime() + UNCONTROLLED_DRONE_RELEASE_GLIDE_TICKS
+					)
+			);
 			syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
 			syncDroneCameraAnchor(root, releasedVelocity);
 			notifyDroneNetworkChanged(root);
@@ -4626,6 +4716,9 @@ public final class DroneSystem {
 		private static final ControlledCollisionState NONE = new ControlledCollisionState(false, false, false);
 	}
 
+	private record DroneAutoAimAngles(float yaw, float pitch) {
+	}
+
 	private static final class DroneControlSession {
 		private final UUID droneUuid;
 		private final net.minecraft.resources.ResourceKey<Level> droneDimension;
@@ -4650,6 +4743,7 @@ public final class DroneSystem {
 		private String lastHudSnapshot = "";
 		private long lastHudTick = Long.MIN_VALUE;
 		private DroneAutoAimTarget autoAimTarget;
+		private long lastManualLookTick = Long.MIN_VALUE;
 
 		private DroneControlSession(
 				UUID droneUuid,
@@ -4750,6 +4844,21 @@ public final class DroneSystem {
 
 		private void setProxyPitch(float proxyPitch) {
 			this.proxyPitch = proxyPitch;
+		}
+
+		private void recordManualLookDelta(float yawDelta, float pitchDelta, long gameTime) {
+			if (gameTime == Long.MIN_VALUE) {
+				return;
+			}
+			if (Math.max(Math.abs(yawDelta), Math.abs(pitchDelta)) > DRONE_AUTO_AIM_MANUAL_LOOK_THRESHOLD_DEGREES) {
+				this.lastManualLookTick = gameTime;
+			}
+		}
+
+		private boolean isManualLookRecentlyActive(long gameTime) {
+			return gameTime != Long.MIN_VALUE
+					&& this.lastManualLookTick != Long.MIN_VALUE
+					&& gameTime - this.lastManualLookTick <= DRONE_AUTO_AIM_MANUAL_SUPPRESSION_TICKS;
 		}
 
 		private int nextViewSyncTeleportId() {
