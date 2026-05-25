@@ -81,6 +81,7 @@ import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.entity.projectile.FireworkRocketEntity;
 import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.entity.projectile.ProjectileUtil;
 import net.minecraft.world.entity.projectile.arrow.Arrow;
 import net.minecraft.world.entity.projectile.arrow.SpectralArrow;
 import net.minecraft.world.entity.projectile.arrow.ThrownTrident;
@@ -105,9 +106,13 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.DispenserMenu;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.BooleanOp;
 import net.minecraft.world.phys.shapes.Shapes;
@@ -202,7 +207,7 @@ public final class DroneSystem {
 	private static final float DRONE_TURRET_AIR_TRIGGER_WIDTH = 1.6F;
 	private static final float DRONE_TURRET_AIR_TRIGGER_HEIGHT = 1.6F;
 	private static final double DRONE_TURRET_AIR_TRIGGER_HEAD_FORWARD_OFFSET = 0.24D;
-	private static final double DRONE_TURRET_MUZZLE_FORWARD_OFFSET = 0.36D;
+	private static final double DRONE_TURRET_MUZZLE_FORWARD_OFFSET = 0.62D;
 	private static final long DRONE_CONTROL_PRELOAD_TIMEOUT_TICKS = 20L * 8L;
 	private static final int DRONE_CONTROL_PRELOAD_READY_RADIUS_CHUNKS = 2;
 	private static final int DRONE_LOADING_CHUNK_TICKET_UNIQUE_FLAG = 32;
@@ -3140,12 +3145,18 @@ public final class DroneSystem {
 	}
 
 	private static InteractionResult handleControlledAutoAimEntityInteraction(ServerPlayer player, InteractionHand hand, Entity entity) {
-		if (player == null || hand != InteractionHand.MAIN_HAND || entity == null || resolveDroneRoot(entity) != null || entity == player) {
+		if (player == null || hand != InteractionHand.MAIN_HAND || entity == null) {
 			return InteractionResult.PASS;
 		}
 		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
 		Entity root = resolveControlledDroneRoot(player);
 		if (session == null || root == null || !hasDroneAutoAimModule(root)) {
+			return InteractionResult.PASS;
+		}
+		if (isDroneInternalEntity(entity)) {
+			return selectControlledAutoAimTargetFromView(player, session, root);
+		}
+		if (entity == player || !isSelectableControlledAutoAimEntityTarget(player, root, entity)) {
 			return InteractionResult.PASS;
 		}
 		Vec3 targetPoint = entity.getEyePosition();
@@ -3154,6 +3165,58 @@ public final class DroneSystem {
 		}
 		toggleControlledAutoAimTarget(player, session, new DroneAutoAimEntityTarget(entity.getUUID()));
 		return InteractionResult.SUCCESS;
+	}
+
+	private static InteractionResult selectControlledAutoAimTargetFromView(
+			ServerPlayer player,
+			DroneControlSession session,
+			Entity root
+	) {
+		if (player == null || session == null || root == null || !(root.level() instanceof ServerLevel level)) {
+			return InteractionResult.PASS;
+		}
+		if (!hasDroneAutoAimModule(root)) {
+			return InteractionResult.PASS;
+		}
+		Vec3 origin = resolveSafeDroneCameraOrigin(root, droneCameraOrigin(finiteVecOr(session.proxyPos(), root.position())));
+		Vec3 direction = controlledTurretDirection(player, session);
+		Vec3 end = origin.add(direction.scale(DRONE_AUTO_AIM_SELECTION_RANGE_BLOCKS));
+		BlockHitResult blockHit = level.clip(new ClipContext(origin, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, root));
+		Vec3 blockLimitedEnd = blockHit.getType() == HitResult.Type.MISS ? end : blockHit.getLocation();
+		EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
+				level,
+				root,
+				origin,
+				blockLimitedEnd,
+				new AABB(origin, blockLimitedEnd).inflate(0.75D),
+				entity -> isSelectableControlledAutoAimEntityTarget(player, root, entity),
+				0.25F
+		);
+		if (entityHit != null && entityHit.getEntity() != null) {
+			toggleControlledAutoAimTarget(player, session, new DroneAutoAimEntityTarget(entityHit.getEntity().getUUID()));
+			return InteractionResult.SUCCESS;
+		}
+		if (blockHit.getType() == HitResult.Type.MISS) {
+			return InteractionResult.SUCCESS;
+		}
+		BlockPos blockPos = blockHit.getBlockPos();
+		if (!level.hasChunkAt(blockPos)) {
+			return InteractionResult.SUCCESS;
+		}
+		BlockState state = level.getBlockState(blockPos);
+		if (!isSelectableAutoAimBlock(level, blockPos, state)) {
+			return InteractionResult.SUCCESS;
+		}
+		toggleControlledAutoAimTarget(player, session, new DroneAutoAimBlockTarget(blockPos.immutable()));
+		return InteractionResult.SUCCESS;
+	}
+
+	private static boolean isSelectableControlledAutoAimEntityTarget(ServerPlayer player, Entity root, Entity entity) {
+		return entity != null
+				&& entity.isAlive()
+				&& entity != player
+				&& entity != root
+				&& !isDroneInternalEntity(entity);
 	}
 
 	private static InteractionResult handleControlledAutoAimBlockInteraction(ServerPlayer player, InteractionHand hand, BlockPos pos) {
@@ -3283,7 +3346,7 @@ public final class DroneSystem {
 		}
 		if (target instanceof DroneAutoAimEntityTarget entityTarget) {
 			Entity entity = findEntity(server, droneDimension, entityTarget.entityUuid());
-			return entity != null && entity.isAlive() ? entity.getEyePosition() : null;
+			return entity != null && entity.isAlive() && !isDroneInternalEntity(entity) ? entity.getEyePosition() : null;
 		}
 		if (target instanceof DroneAutoAimBlockTarget blockTarget) {
 			ServerLevel level = server.getLevel(droneDimension);
@@ -3306,7 +3369,7 @@ public final class DroneSystem {
 		}
 		if (target instanceof DroneAutoAimEntityTarget entityTarget) {
 			Entity entity = findEntity(server, droneDimension, entityTarget.entityUuid());
-			return entity != null && !entity.isAlive();
+			return entity != null && (!entity.isAlive() || isDroneInternalEntity(entity));
 		}
 		if (target instanceof DroneAutoAimBlockTarget blockTarget) {
 			ServerLevel level = server.getLevel(droneDimension);
@@ -3324,6 +3387,19 @@ public final class DroneSystem {
 				&& state != null
 				&& !state.isAir()
 				&& !state.getCollisionShape(level, pos).isEmpty();
+	}
+
+	private static boolean isDroneInternalEntity(Entity entity) {
+		if (entity == null) {
+			return false;
+		}
+		if (entity instanceof Display || entity instanceof Interaction) {
+			return true;
+		}
+		return entity.getTags().contains(DRONE_ROOT_TAG)
+				|| entity.getTags().contains(DRONE_DISPLAY_TAG)
+				|| entity.getTags().contains(DRONE_CAMERA_TAG)
+				|| entity.getTags().contains(DRONE_TURRET_TRIGGER_TAG);
 	}
 
 	private static Vec3 resolveAutoAimBlockTargetPoint(ServerLevel level, BlockPos pos, BlockState state) {
@@ -4290,7 +4366,7 @@ public final class DroneSystem {
 		ItemStack shotStack = stack.copyWithCount(1);
 		Vec3 direction = controlledTurretDirection(player, session);
 		Vec3 origin = controlledTurretMuzzleOrigin(root, session, direction);
-		Projectile projectile = createDroneTurretProjectile(level, player, origin, direction, shotStack);
+		Projectile projectile = createDroneTurretProjectile(level, root, origin, direction, shotStack);
 		if (projectile == null) {
 			level.levelEvent(1001, BlockPos.containing(origin), 0);
 			NEXT_DRONE_TURRET_FIRE_TICK.put(root.getUUID(), now + DRONE_TURRET_FIRE_COOLDOWN_TICKS);
@@ -4343,7 +4419,7 @@ public final class DroneSystem {
 
 	private static Projectile createDroneTurretProjectile(
 			ServerLevel level,
-			ServerPlayer owner,
+			Entity owner,
 			Vec3 origin,
 			Vec3 direction,
 			ItemStack stack
