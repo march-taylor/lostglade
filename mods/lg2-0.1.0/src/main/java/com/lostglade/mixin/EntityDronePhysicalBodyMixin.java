@@ -1,5 +1,6 @@
 package com.lostglade.mixin;
 
+import com.lostglade.server.DroneSystem;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.material.PushReaction;
 import org.spongepowered.asm.mixin.Mixin;
@@ -13,8 +14,9 @@ public abstract class EntityDronePhysicalBodyMixin {
 
 	@Inject(method = "isPushable", at = @At("HEAD"), cancellable = true)
 	private void lg2$makeDroneRootPushable(CallbackInfoReturnable<Boolean> cir) {
-		if (lg2$isDroneRoot()) {
-			cir.setReturnValue(true);
+		Entity self = (Entity) (Object) this;
+		if (lg2$isDroneRoot(self)) {
+			cir.setReturnValue(DroneSystem.shouldDroneRootCollideWithEntities(self));
 		}
 	}
 
@@ -36,18 +38,19 @@ public abstract class EntityDronePhysicalBodyMixin {
 	private void lg2$makeDroneRootCollideWithEntities(Entity other, CallbackInfoReturnable<Boolean> cir) {
 		Entity self = (Entity) (Object) this;
 		if (lg2$isDroneRoot(self)) {
-			cir.setReturnValue(other == null || !other.isSpectator());
+			cir.setReturnValue(DroneSystem.shouldDroneRootCollideWithEntities(self) && (other == null || !other.isSpectator()));
 			return;
 		}
 		if (lg2$isDroneRoot(other)) {
-			cir.setReturnValue(!self.isSpectator());
+			cir.setReturnValue(DroneSystem.shouldDroneRootCollideWithEntities(other) && !self.isSpectator());
 		}
 	}
 
 	@Inject(method = "canBeCollidedWith", at = @At("HEAD"), cancellable = true)
 	private void lg2$makeDroneRootReceiveEntityCollisions(Entity other, CallbackInfoReturnable<Boolean> cir) {
-		if (lg2$isDroneRoot()) {
-			cir.setReturnValue(other == null || !other.isSpectator());
+		Entity self = (Entity) (Object) this;
+		if (lg2$isDroneRoot(self)) {
+			cir.setReturnValue(DroneSystem.shouldDroneRootCollideWithEntities(self) && (other == null || !other.isSpectator()));
 		}
 	}
 

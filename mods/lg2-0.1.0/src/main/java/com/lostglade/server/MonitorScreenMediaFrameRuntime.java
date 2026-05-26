@@ -394,10 +394,112 @@ final class MonitorScreenMediaFrameRuntime {
 		for (ScreenRuntimeKey key : Set.copyOf(MEDIA_STATES.keySet())) {
 			if (!isMediaSessionAlive(server, key)) {
 				closeMediaSession(server, key);
+			} else {
+				discardEmptyIdleMediaSession(server, key);
 			}
 		}
 		PENDING_MEDIA_LINKS.entrySet().removeIf(entry -> !isMediaSessionAlive(server, entry.getValue().screenKey()));
 		IN_FLIGHT_MEDIA_LINKS.entrySet().removeIf(entry -> !isMediaSessionAlive(server, entry.getValue().screenKey()));
+	}
+
+	static void discardEmptyIdleMediaSession(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		ScreenComponent component = resolveScreenComponent(server, key);
+		if (component == null || !component.runtimeKey().equals(key)) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		boolean removed = false;
+		long now = System.currentTimeMillis();
+		synchronized (state) {
+			if (emptyIdleMediaStateCanBeDiscardedLocked(state, now)) {
+				removed = MEDIA_STATES.remove(key, state);
+			}
+		}
+		if (!removed) {
+			return;
+		}
+		levelState(key.dimension()).connectedCameraPositions().remove(key);
+		clearMediaSessionBindings(server, key);
+	}
+
+	static boolean emptyIdleMediaStateCanBeDiscardedLocked(MediaRuntimeState state, long now) {
+		if (state == null) {
+			return false;
+		}
+		if (state.activeRenderJobs > 0
+				|| state.rerenderRequested
+				|| state.lastDispatchKey != null
+				|| state.playbackFuture != null
+				|| state.backgroundFuture != null) {
+			return false;
+		}
+		if (state.loading
+				|| state.waitingForLink
+				|| state.wallpaperLoading
+				|| state.playerBackgroundLoading
+				|| state.liveCameraCaptureInFlight
+				|| state.liveCameraDecodeScheduled
+				|| state.liveCameraApplyScheduled
+				|| !state.galleryLoadingUrls.isEmpty()
+				|| state.galleryPreloadStatusRefreshScheduled
+				|| state.youtubeQueueCacheStatusRefreshScheduled
+				|| state.pendingAudioPauseState != null
+				|| state.pendingAudioPositionActive) {
+			return false;
+		}
+		if (state.progress.snapshot().visible()) {
+			return false;
+		}
+		if (state.downloadInProgress
+				|| (state.downloadCompletedUrl != null && now < state.downloadCompletedUntilMillis)) {
+			return false;
+		}
+		if (state.loadedMedia != null
+				|| state.streamFrame != null
+				|| state.loadingBackdropFrame != null
+				|| state.wallpaperMedia != null
+				|| state.playerBackgroundMedia != null
+				|| state.pendingLiveCameraPixels != null
+				|| state.liveCameraBufferedTiles != null
+				|| state.liveCameraDisplayedTiles != null
+				|| state.pendingLiveCameraPreparedTiles != null) {
+			return false;
+		}
+		if (state.streamKind != PlaybackStreamKind.NONE
+				|| !emptyText(state.sourceUrl)
+				|| !emptyText(state.relaySessionId)
+				|| !emptyText(state.audioStreamUrl)
+				|| !emptyText(state.wallpaperUrl)
+				|| !emptyText(state.playerBackgroundUrl)
+				|| !emptyText(state.pendingLiveCameraApplyUrl)
+				|| !emptyText(state.galleryPendingOpenUrl)
+				|| !emptyText(state.statusText)
+				|| !emptyText(state.mediaTitle)
+				|| !emptyText(state.mediaSubtitle)) {
+			return false;
+		}
+		if (!state.galleryItems.isEmpty()
+				|| !state.youtubeQueue.isEmpty()
+				|| !state.retainedYoutubePreloadUrls.isEmpty()
+				|| !state.retainedYoutubeMusicUrls.isEmpty()
+				|| !state.youtubeMusicShuffleOrder.isEmpty()) {
+			return false;
+		}
+		return !state.youtubeQueueOpen
+				&& !state.galleryDeleteConfirmOpen
+				&& !state.playerBackgroundMenuOpen
+				&& !state.playerBackgroundGalleryPickerOpen
+				&& !state.preserveRuntimeOnNextViewModeTransition;
+	}
+
+	static boolean emptyText(String value) {
+		return value == null || value.isBlank();
 	}
 
 	static void cleanupExpiredMediaFocus() {

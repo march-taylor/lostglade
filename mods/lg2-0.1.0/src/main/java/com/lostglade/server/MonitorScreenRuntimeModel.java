@@ -478,6 +478,8 @@ final class MediaRuntimeState {
 	int galleryNextOpenRequestId;
 	int galleryIndex;
 	int galleryScroll;
+	boolean galleryPreloadStatusRefreshScheduled;
+	int galleryPreloadStatusRefreshStep;
 	boolean playerBackgroundGalleryPickerOpen;
 	ScreenViewMode playerBackgroundGalleryPickerReturnMode;
 	GallerySurfaceMode playerBackgroundGalleryPickerReturnSurfaceMode;
@@ -574,6 +576,8 @@ final class MediaRuntimeState {
 		this.galleryNextOpenRequestId = 0;
 		this.galleryIndex = -1;
 		this.galleryScroll = 0;
+		this.galleryPreloadStatusRefreshScheduled = false;
+		this.galleryPreloadStatusRefreshStep = 0;
 		this.playerBackgroundGalleryPickerOpen = false;
 		this.playerBackgroundGalleryPickerReturnMode = null;
 		this.playerBackgroundGalleryPickerReturnSurfaceMode = null;

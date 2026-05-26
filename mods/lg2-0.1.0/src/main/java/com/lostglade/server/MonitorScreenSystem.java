@@ -3840,10 +3840,11 @@ public final class MonitorScreenSystem {
 			int markerCenterX = trackRect.x() + Math.round(trackRect.width() * fraction);
 			int markerX = clampInt(markerCenterX - markerWidth / 2, trackRect.x(), Math.max(trackRect.x(), trackRect.right() - markerWidth));
 			int markerY = trackRect.y() + (trackRect.height() - markerHeight) / 2;
+			int markerArc = Math.max(markerHeight, markerWidth * 2);
 			fillRoundedRect(
 					graphics,
 					new UiRect(markerX, markerY, markerWidth, markerHeight),
-					markerWidth,
+					markerArc,
 					new Color(248, 251, 255, 248)
 			);
 		}
@@ -6723,10 +6724,14 @@ public final class MonitorScreenSystem {
 		if (isYoutubeMusicMode(mode)) {
 			UiRect controls = mediaYoutubeMusicControlsRowRect(layout);
 			int height = controls.height();
+			int sideButtonSize = mediaCenterSideButtonSize(layout, mode, height);
+			int gap = mediaCenterControlGap(layout, mode);
+			int maxWidth = Math.max(32, controls.width() - sideButtonSize * 2 - gap * 2);
+			int minWidth = Math.min(ultraCompactScreenLayout(layout) ? 48 : 72, maxWidth);
 			int width = clampInt(
 					(int) Math.round(controls.width() * (youtubeMusicLandscapeLayout(layout) ? 0.46D : 0.54D)),
-					ultraCompactScreenLayout(layout) ? 48 : 72,
-					Math.max(56, controls.width() - clampInt(layout.unit() * 4, 24, 80))
+					Math.max(32, minWidth),
+					Math.max(Math.max(32, minWidth), maxWidth)
 			);
 			return new UiRect(
 					controls.x() + (controls.width() - width) / 2,
@@ -6768,8 +6773,8 @@ public final class MonitorScreenSystem {
 		int size;
 		int gap;
 		if (isYoutubeMusicMode(mode)) {
-			size = clampInt(center.height(), ultraCompactScreenLayout(layout) ? 22 : 28, 54);
-			gap = clampInt(layout.unit(), 8, 18);
+			size = mediaCenterSideButtonSize(layout, mode, center.height());
+			gap = mediaCenterControlGap(layout, mode);
 		} else if (ultraCompactScreenLayout(layout)) {
 			size = center.height();
 			gap = clampInt(layout.unit(), 8, 12);
@@ -6792,8 +6797,8 @@ public final class MonitorScreenSystem {
 		int size;
 		int gap;
 		if (isYoutubeMusicMode(mode)) {
-			size = clampInt(center.height(), ultraCompactScreenLayout(layout) ? 22 : 28, 54);
-			gap = clampInt(layout.unit(), 8, 18);
+			size = mediaCenterSideButtonSize(layout, mode, center.height());
+			gap = mediaCenterControlGap(layout, mode);
 		} else if (ultraCompactScreenLayout(layout)) {
 			size = center.height();
 			gap = clampInt(layout.unit(), 8, 12);
@@ -6805,6 +6810,26 @@ public final class MonitorScreenSystem {
 			gap = clampInt(layout.unit() * 2, 14, 28);
 		}
 		return new UiRect(center.right() + gap, center.y() + (center.height() - size) / 2, size, size);
+	}
+
+	static int mediaCenterSideButtonSize(UiLayout layout, ScreenViewMode mode, int rowHeight) {
+		if (isYoutubeMusicMode(mode)) {
+			return clampInt(rowHeight, ultraCompactScreenLayout(layout) ? 22 : 28, 54);
+		}
+		return rowHeight;
+	}
+
+	static int mediaCenterControlGap(UiLayout layout, ScreenViewMode mode) {
+		if (isYoutubeMusicMode(mode)) {
+			return mediaYoutubeMusicActionButtonsGap(layout);
+		}
+		if (ultraCompactScreenLayout(layout)) {
+			return clampInt(layout.unit(), 8, 12);
+		}
+		if (compactScreenLayout(layout)) {
+			return clampInt(layout.unit() + 2, 10, 18);
+		}
+		return clampInt(layout.unit() * 2, 14, 28);
 	}
 
 	static UiRect mediaStatusRect(UiLayout layout) {
@@ -8341,6 +8366,8 @@ public final class MonitorScreenSystem {
 		clearGalleryPendingOpenLocked(state);
 		state.galleryIndex = -1;
 		state.galleryScroll = 0;
+		state.galleryPreloadStatusRefreshScheduled = false;
+		state.galleryPreloadStatusRefreshStep = 0;
 		state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
 		state.playerBackgroundMenuOpen = false;
 		state.preserveRuntimeOnNextViewModeTransition = false;

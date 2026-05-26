@@ -345,21 +345,63 @@ final class MonitorScreenMediaHydration {
 		if (server == null || key == null) {
 			return;
 		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		synchronized (state) {
+			if (state.galleryPreloadStatusRefreshScheduled
+					|| state.mode != ScreenViewMode.GALLERY
+					|| state.gallerySurfaceMode != GallerySurfaceMode.BROWSER
+					|| state.galleryItems.isEmpty()) {
+				return;
+			}
+			state.galleryPreloadStatusRefreshScheduled = true;
+			state.galleryPreloadStatusRefreshStep = 0;
+		}
 		ensureExecutors();
-		for (int refreshIndex = 1; refreshIndex <= 24; refreshIndex++) {
-			long delayMillis = refreshIndex * 1250L;
-			mediaScheduler.schedule(() -> server.execute(() -> {
-				MediaRuntimeState state = MEDIA_STATES.get(key);
-				if (state == null) {
-					return;
-				}
-				synchronized (state) {
-					if (state.mode != ScreenViewMode.GALLERY || state.gallerySurfaceMode != GallerySurfaceMode.BROWSER) {
-						return;
-					}
-				}
-				requestRuntimeRender(server, key);
-			}), delayMillis, TimeUnit.MILLISECONDS);
+		scheduleNextGalleryPreloadStatusRefresh(server, key);
+	}
+
+	static void scheduleNextGalleryPreloadStatusRefresh(MinecraftServer server, ScreenRuntimeKey key) {
+		mediaScheduler.schedule(() -> server.execute(() -> refreshGalleryPreloadStatus(server, key)), 1250L, TimeUnit.MILLISECONDS);
+	}
+
+	static void refreshGalleryPreloadStatus(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		boolean shouldRender = false;
+		boolean shouldContinue = false;
+		synchronized (state) {
+			if (!state.galleryPreloadStatusRefreshScheduled) {
+				return;
+			}
+			boolean active = state.mode == ScreenViewMode.GALLERY
+					&& state.gallerySurfaceMode == GallerySurfaceMode.BROWSER
+					&& !state.galleryItems.isEmpty();
+			if (!active) {
+				state.galleryPreloadStatusRefreshScheduled = false;
+				state.galleryPreloadStatusRefreshStep = 0;
+				return;
+			}
+			state.galleryPreloadStatusRefreshStep++;
+			shouldRender = true;
+			shouldContinue = state.galleryPreloadStatusRefreshStep < 24;
+			if (!shouldContinue) {
+				state.galleryPreloadStatusRefreshScheduled = false;
+				state.galleryPreloadStatusRefreshStep = 0;
+			}
+		}
+		if (shouldRender) {
+			requestRuntimeRender(server, key);
+		}
+		if (shouldContinue) {
+			scheduleNextGalleryPreloadStatusRefresh(server, key);
 		}
 	}
 

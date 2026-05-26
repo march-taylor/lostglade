@@ -1141,6 +1141,20 @@ public final class DroneSystem {
 		return resolveDroneRoot(entity) != null;
 	}
 
+	public static boolean shouldDroneRootCollideWithEntities(Entity root) {
+		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
+			return false;
+		}
+		if (isDroneActivelyControlled(root)) {
+			return false;
+		}
+		UncontrolledDroneState state = UNCONTROLLED_DRONES.get(root.getUUID());
+		if (state != null && (isUncontrolledReleaseGlideActive(root, state) || isDroneScreenStreamActive(root))) {
+			return false;
+		}
+		return root.onGround() || hasSupportingBlockBelow(root);
+	}
+
 	public static String requiredUpgradeForDroneEntity(Entity entity) {
 		Entity root = resolveDroneRoot(entity);
 		return root == null ? null : resolveRequiredUpgradeForDroneRoot(root);
@@ -2459,7 +2473,7 @@ public final class DroneSystem {
 	}
 
 	private static boolean applyUncontrolledDroneEntityPushes(Entity root) {
-		if (root == null || !(root.level() instanceof ServerLevel level)) {
+		if (root == null || !shouldDroneRootCollideWithEntities(root) || !(root.level() instanceof ServerLevel level)) {
 			return false;
 		}
 		AABB pushSearchBox = root.getBoundingBox().inflate(
@@ -2635,12 +2649,19 @@ public final class DroneSystem {
 		if (root == null || !root.isAlive()) {
 			return false;
 		}
-		Entity cameraAnchor = findDroneCameraAnchor(root);
-		boolean streaming = cameraAnchor != null && RendererBotCameraSystem.hasHealthyLiveStreamFollowingEntity(cameraAnchor.getUUID());
+		boolean streaming = isDroneScreenStreamActive(root);
 		if (streaming) {
 			rememberDroneScreenStreamLoadState(root);
 		}
 		return streaming;
+	}
+
+	private static boolean isDroneScreenStreamActive(Entity root) {
+		if (root == null || !root.isAlive()) {
+			return false;
+		}
+		Entity cameraAnchor = findDroneCameraAnchor(root);
+		return cameraAnchor != null && RendererBotCameraSystem.hasHealthyLiveStreamFollowingEntity(cameraAnchor.getUUID());
 	}
 
 	private static DroneCameraChunkTarget resolveDroneCameraChunkTarget(Entity root) {
