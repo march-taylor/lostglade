@@ -174,6 +174,7 @@ public final class DroneSystem {
 	private static final double DRONE_CRASH_EQUIVALENT_FALL_BLOCKS = 3.25D;
 	private static final double DRONE_CRASH_REFERENCE_ACCELERATION = 0.04D;
 	private static final double DRONE_SURFACE_WEAR_DECAY_PER_TICK = 0.018D;
+	private static final double DRONE_UNCONTROLLED_SURFACE_WEAR_MULTIPLIER = 1.35D;
 	private static final double DRONE_COLLISION_SWEEP_STEP = 0.12D;
 	private static final int DRONE_SURFACE_WEAR_PARTICLE_INTERVAL_TICKS = 2;
 	private static final float DRONE_WIDTH = DroneGeometry.WIDTH;
@@ -2538,6 +2539,7 @@ public final class DroneSystem {
 		if (root == null || state == null) {
 			return;
 		}
+		long gameTime = root.level() == null ? Long.MIN_VALUE : root.level().getGameTime();
 		if (tickDroneProjectileImpact(root) || tickDroneEnvironmentDamage(root)) {
 			UNCONTROLLED_DRONES.remove(root.getUUID());
 			return;
@@ -2553,6 +2555,7 @@ public final class DroneSystem {
 		boolean heldByScreenStream = isDroneStreamingToScreen(root);
 		boolean holdWithoutGravity = heldByReleaseGlide || heldByScreenStream;
 		if (!holdWithoutGravity && isUncontrolledDroneSettled(root, state.velocity()) && !hasUncontrolledDroneEnvironmentalMotion(root)) {
+			decayUncontrolledDroneSurfaceWear(state, gameTime);
 			settleUncontrolledDrone(root, state);
 			return;
 		}
@@ -2598,6 +2601,16 @@ public final class DroneSystem {
 			UNCONTROLLED_DRONES.remove(root.getUUID());
 			return;
 		}
+		if (!screenDrive
+				&& !waterProtectedImpact
+				&& !slimeBounce
+				&& updateUncontrolledDroneSurfaceWear(state, root, velocity, actualMovement, gameTime)) {
+			igniteDroneCrashSite(root, actualMovement);
+			destroyDrone(root, null, false);
+			UNCONTROLLED_DRONES.remove(root.getUUID());
+			return;
+		}
+		decayUncontrolledDroneSurfaceWear(state, gameTime);
 
 		state.setVelocity(actualMovement);
 		if (!holdWithoutGravity && isUncontrolledDroneSettled(root, actualMovement) && !hasUncontrolledDroneEnvironmentalMotion(root)) {
@@ -2862,6 +2875,51 @@ public final class DroneSystem {
 		return session.surfaceWear() >= DroneImpactModel.SURFACE_WEAR_BREAK_LEVEL;
 	}
 
+	private static boolean updateUncontrolledDroneSurfaceWear(
+			UncontrolledDroneState state,
+			Entity root,
+			Vec3 intendedMovement,
+			Vec3 actualMovement,
+			long gameTime
+	) {
+		if (state == null || root == null || intendedMovement == null || actualMovement == null) {
+			return false;
+		}
+		if (!hasUncontrolledSurfaceWearGroundContact(root)) {
+			return false;
+		}
+
+		DroneImpactModel.SurfaceWear surfaceWear = DroneImpactModel.computeSurfaceWear(
+				intendedMovement,
+				actualMovement,
+				true
+		);
+		if (surfaceWear.delta() <= 0.0D) {
+			return false;
+		}
+
+		double wearDelta = Math.min(
+				DroneImpactModel.SURFACE_WEAR_MAX_DELTA_PER_TICK,
+				surfaceWear.delta() * DRONE_UNCONTROLLED_SURFACE_WEAR_MULTIPLIER
+		);
+		state.setLastSurfaceWearContactTick(gameTime);
+		state.setSurfaceWear(Math.min(DroneImpactModel.SURFACE_WEAR_BREAK_LEVEL, state.surfaceWear() + wearDelta));
+		playDroneSurfaceWearEffects(
+				root,
+				actualMovement,
+				surfaceWear.speedFactor(),
+				surfaceWear.pressureFactor(),
+				wearDelta,
+				state.surfaceWear(),
+				gameTime
+		);
+		return state.surfaceWear() >= DroneImpactModel.SURFACE_WEAR_BREAK_LEVEL;
+	}
+
+	private static boolean hasUncontrolledSurfaceWearGroundContact(Entity root) {
+		return root != null && (root.onGround() || root.verticalCollisionBelow || hasSupportingBlockBelow(root));
+	}
+
 	private static void playDroneSurfaceWearEffects(
 			Entity root,
 			Vec3 actualMovement,
@@ -2945,6 +3003,16 @@ public final class DroneSystem {
 			return;
 		}
 		session.setSurfaceWear(Math.max(0.0D, session.surfaceWear() - DRONE_SURFACE_WEAR_DECAY_PER_TICK));
+	}
+
+	private static void decayUncontrolledDroneSurfaceWear(UncontrolledDroneState state, long gameTime) {
+		if (state == null || state.surfaceWear() <= 0.0D) {
+			return;
+		}
+		if (state.lastSurfaceWearContactTick() == gameTime) {
+			return;
+		}
+		state.setSurfaceWear(Math.max(0.0D, state.surfaceWear() - DRONE_SURFACE_WEAR_DECAY_PER_TICK));
 	}
 
 	private static boolean isUncontrolledDroneSettled(Entity root, Vec3 velocity) {
@@ -4318,6 +4386,8 @@ public final class DroneSystem {
 					true
 			);
 			uncontrolledState.setLastPosition(root.position());
+			uncontrolledState.setSurfaceWear(session.surfaceWear());
+			uncontrolledState.setLastSurfaceWearContactTick(session.lastSurfaceWearContactTick());
 			UNCONTROLLED_DRONES.put(root.getUUID(), uncontrolledState);
 			syncDroneDisplayLayers(root);
 			syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
@@ -5907,6 +5977,8 @@ public final class DroneSystem {
 		private double displayStrafeDrive;
 		private boolean driveStateKnown;
 		private Vec3 lastPosition;
+		private double surfaceWear;
+		private long lastSurfaceWearContactTick = Long.MIN_VALUE;
 
 		private UncontrolledDroneState(UUID droneUuid, net.minecraft.resources.ResourceKey<Level> dimension, Vec3 velocity, float yaw, float pitch) {
 			this(droneUuid, dimension, velocity, yaw, pitch, null, Long.MIN_VALUE);
@@ -6030,6 +6102,22 @@ public final class DroneSystem {
 
 		private boolean hasDriveState() {
 			return this.driveStateKnown;
+		}
+
+		private double surfaceWear() {
+			return this.surfaceWear;
+		}
+
+		private void setSurfaceWear(double surfaceWear) {
+			this.surfaceWear = net.minecraft.util.Mth.clamp(surfaceWear, 0.0D, DroneImpactModel.SURFACE_WEAR_BREAK_LEVEL);
+		}
+
+		private long lastSurfaceWearContactTick() {
+			return this.lastSurfaceWearContactTick;
+		}
+
+		private void setLastSurfaceWearContactTick(long lastSurfaceWearContactTick) {
+			this.lastSurfaceWearContactTick = lastSurfaceWearContactTick;
 		}
 	}
 
