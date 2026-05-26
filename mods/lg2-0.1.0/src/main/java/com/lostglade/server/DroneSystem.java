@@ -2476,10 +2476,25 @@ public final class DroneSystem {
 					|| !entity.isPushable()) {
 				continue;
 			}
-			root.push(entity);
-			pushed = true;
+			pushed |= pushDroneAwayFromEntity(root, entity);
 		}
 		return pushed;
+	}
+
+	private static boolean pushDroneAwayFromEntity(Entity root, Entity entity) {
+		if (root == null || entity == null) {
+			return false;
+		}
+		double pushX = root.getX() - entity.getX();
+		double pushZ = root.getZ() - entity.getZ();
+		double horizontalDistanceSqr = pushX * pushX + pushZ * pushZ;
+		if (horizontalDistanceSqr <= 1.0E-8D) {
+			return false;
+		}
+		double horizontalDistance = Math.sqrt(horizontalDistanceSqr);
+		double scale = 0.05D * Math.min(1.0D, 1.0D / horizontalDistance);
+		root.push(pushX / horizontalDistance * scale, 0.0D, pushZ / horizontalDistance * scale);
+		return true;
 	}
 
 	private static void absorbVanillaUncontrolledDroneVelocity(Entity root, UncontrolledDroneState state) {
