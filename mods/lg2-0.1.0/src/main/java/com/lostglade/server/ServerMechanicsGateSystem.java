@@ -87,7 +87,8 @@ public final class ServerMechanicsGateSystem {
 			Items.STONE_SHOVEL,
 			Items.STONE_HOE,
 			Items.STONE_SWORD,
-			Items.STONE_SPEAR
+			Items.STONE_SPEAR,
+			ModItems.STONE_SHIELD
 	);
 	private static final Set<Item> IRON_AND_GOLD_ERA_ITEMS = Set.of(
 			Items.IRON_PICKAXE,
@@ -100,6 +101,7 @@ public final class ServerMechanicsGateSystem {
 			Items.IRON_CHESTPLATE,
 			Items.IRON_LEGGINGS,
 			Items.IRON_BOOTS,
+			Items.SHIELD,
 			Items.GOLDEN_PICKAXE,
 			Items.GOLDEN_AXE,
 			Items.GOLDEN_SHOVEL,
@@ -110,6 +112,7 @@ public final class ServerMechanicsGateSystem {
 			Items.GOLDEN_CHESTPLATE,
 			Items.GOLDEN_LEGGINGS,
 			Items.GOLDEN_BOOTS,
+			ModItems.GOLDEN_SHIELD,
 			Items.GOLDEN_APPLE,
 			Items.GOLDEN_CARROT,
 			Items.GLISTERING_MELON_SLICE
@@ -125,7 +128,7 @@ public final class ServerMechanicsGateSystem {
 			Items.DIAMOND_CHESTPLATE,
 			Items.DIAMOND_LEGGINGS,
 			Items.DIAMOND_BOOTS,
-			Items.SHIELD
+			ModItems.DIAMOND_SHIELD
 	);
 	private static final Set<Item> NETHERITE_ERA_ITEMS = Set.of(
 			Items.NETHERITE_PICKAXE,
@@ -137,7 +140,8 @@ public final class ServerMechanicsGateSystem {
 			Items.NETHERITE_HELMET,
 			Items.NETHERITE_CHESTPLATE,
 			Items.NETHERITE_LEGGINGS,
-			Items.NETHERITE_BOOTS
+			Items.NETHERITE_BOOTS,
+			ModItems.NETHERITE_SHIELD
 	);
 	private static final Set<String> COPPER_GEAR_SUFFIXES = Set.of(
 			"pickaxe",
@@ -149,7 +153,8 @@ public final class ServerMechanicsGateSystem {
 			"helmet",
 			"chestplate",
 			"leggings",
-			"boots"
+			"boots",
+			"shield"
 	);
 	private static final ThreadLocal<TrackedGolemPlacement> TRACKED_GOLEM_PLACEMENT = new ThreadLocal<>();
 	private static final ThreadLocal<ItemStack> PENDING_GOLEM_HEAD_REFUND = new ThreadLocal<>();

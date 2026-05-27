@@ -14,6 +14,7 @@ import com.lostglade.server.RendererBotPresenceSystem;
 import com.lostglade.server.RendererBotProcessSystem;
 import com.lostglade.server.SpeakerSystem;
 import com.lostglade.item.ModItems;
+import com.lostglade.item.ModRecipeSerializers;
 import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
 import com.lostglade.server.ServerBossBarVisibilitySystem;
 import com.lostglade.server.CameraAnimatedMapPlaybackSystem;
@@ -67,6 +68,7 @@ public class Lg2 implements ModInitializer {
 		PolymerResourcePackUtils.addModAssets(MOD_ID);
 		RendererBotPayloads.registerPayloadTypes();
 
+		ModRecipeSerializers.register();
 		ModItems.register();
 		ModBlocks.register();
 		CameraOrientationStore.register();

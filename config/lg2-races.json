@@ -235,7 +235,7 @@
       "enabled": true,
       "id": "gennadiy_sharoyobov",
       "displayName": "Генадий Шароёбов",
-      "ownerNickname": "pines4",
+      "ownerNickname": "Rajas_YT",
       "description": "Дотер придет...",
       "attack": {
         "enabled": true,
@@ -250,7 +250,7 @@
         "gennadiyDonkeyMaxAmmo": 128,
         "gennadiyDonkeyAmmoRegenAmount": 2,
         "gennadiyDonkeyAmmoRegenSeconds": 9.375,
-        "gennadiyDonkeyBulletDamage": 1.0,
+        "gennadiyDonkeyBulletDamage": 0.5,
         "gennadiyDonkeyBulletRangeBlocks": 16.0,
         "gennadiyDonkeyFollowMaxDistanceBlocks": 8.0
       },
@@ -301,7 +301,7 @@
       "enabled": true,
       "id": "mark_potroshitel",
       "displayName": "Марк Потрошитель",
-      "ownerNickname": "Rajas_YT",
+      "ownerNickname": "pines5",
       "description": "У всех нас есть сила в руках для того, чтобы убить, но большинство боится ее использовать.",
       "attack": {
         "enabled": true,
@@ -343,9 +343,17 @@
       "shnyaga": {
         "enabled": true,
         "abilityId": "mark_potroshitel_shnyaga",
-        "name": "Oh, shit",
+        "name": "Оу, щит",
         "description": "Вы можете крафтить щиты из любых материалов. Прочность и сила отбрасывания зависят от материала. Начиная с железного, щитом можно оттолкнуть врага.",
-        "priceBitcoins": 1500
+        "priceBitcoins": 1500,
+        "cooldownSeconds": 20.0,
+        "markShieldBashRangeBlocks": 3.0,
+        "markShieldBashAngleDegrees": 90.0,
+        "markShieldBashForwardImpulseBlocks": 1.0,
+        "markShieldBashIronKnockbackBlocks": 4.0,
+        "markShieldBashGoldenKnockbackBlocks": 6.0,
+        "markShieldBashDiamondKnockbackBlocks": 4.5,
+        "markShieldBashNetheriteKnockbackBlocks": 5.0
       },
       "stock": {
         "enabled": true,

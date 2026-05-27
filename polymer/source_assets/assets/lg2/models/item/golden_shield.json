@@ -1,0 +1,7 @@
+﻿{
+    "parent":  "lg2:item/mark_shield_base",
+    "textures":  {
+                     "shield":  "lg2:item/golden_shield",
+                     "particle":  "lg2:item/golden_shield"
+                 }
+}

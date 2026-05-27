@@ -2141,6 +2141,7 @@ public final class ServerUpgradeUiSystem {
 		saveState(server);
 		CartelSecretRecipeBookSystem.syncPlayerRecipeBook(player);
 		CopperManGogglesSystem.syncPlayerRecipeBook(player);
+		MarkShieldRecipeSystem.syncPlayerRecipeBook(player);
 	}
 
 	private static Path getStatePath(MinecraftServer server) {

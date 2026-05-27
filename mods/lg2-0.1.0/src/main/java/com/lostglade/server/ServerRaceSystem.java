@@ -415,7 +415,7 @@ public final class ServerRaceSystem {
 	private static final int GENNADIY_DONKEY_DEFAULT_MAX_AMMO = 128;
 	private static final int GENNADIY_DONKEY_DEFAULT_AMMO_REGEN_AMOUNT = 2;
 	private static final double GENNADIY_DONKEY_DEFAULT_AMMO_REGEN_SECONDS = 9.375D;
-	private static final double GENNADIY_DONKEY_DEFAULT_BULLET_DAMAGE = 2.0D;
+	private static final double GENNADIY_DONKEY_DEFAULT_BULLET_DAMAGE = 0.5D;
 	private static final double GENNADIY_DONKEY_DEFAULT_BULLET_RANGE_BLOCKS = 16.0D;
 	private static final double GENNADIY_DONKEY_DEFAULT_FOLLOW_MAX_DISTANCE_BLOCKS = 8.0D;
 	private static final double GENNADIY_DEFENSE_DEFAULT_DURATION_SECONDS = 10.0D;
@@ -506,6 +506,7 @@ public final class ServerRaceSystem {
 	private static final double GENNADIY_DONKEY_BULLET_VISUAL_SPEED_BLOCKS = 4.0D;
 	private static final double GENNADIY_DONKEY_BULLET_PARTICLE_SPEED = 1.65D;
 	private static final double GENNADIY_DONKEY_BULLET_SMOKE_PARTICLE_SPEED = 0.55D;
+	private static final int GENNADIY_DONKEY_BULLET_MAX_HURT_ANIMATION_TICKS = 2;
 	private static final double GENNADIY_DONKEY_SHOOT_SOUND_RANGE_BLOCKS = 16.0D;
 	private static final float GENNADIY_DONKEY_SHOOT_SOUND_VOLUME = 1.0F;
 	private static final float GENNADIY_DONKEY_SHOOT_SOUND_PITCH = 1.0F;
@@ -535,6 +536,15 @@ public final class ServerRaceSystem {
 	private static final double MARK_RAGE_DEFAULT_BLEEDING_DAMAGE = 2.0D;
 	private static final double MARK_RAGE_DEFAULT_BLEEDING_INTERVAL_SECONDS = 3.0D;
 	private static final double MARK_RAGE_DEFAULT_BLEEDING_DURATION_SECONDS = 10.0D;
+	private static final double MARK_SHIELD_BASH_DEFAULT_COOLDOWN_SECONDS = 20.0D;
+	private static final double MARK_SHIELD_BASH_DEFAULT_RANGE_BLOCKS = 3.0D;
+	private static final double MARK_SHIELD_BASH_DEFAULT_ANGLE_DEGREES = 90.0D;
+	private static final double MARK_SHIELD_BASH_DEFAULT_FORWARD_IMPULSE_BLOCKS = 1.0D;
+	private static final double MARK_SHIELD_BASH_DEFAULT_IRON_KNOCKBACK_BLOCKS = 4.0D;
+	private static final double MARK_SHIELD_BASH_DEFAULT_GOLDEN_KNOCKBACK_BLOCKS = 6.0D;
+	private static final double MARK_SHIELD_BASH_DEFAULT_DIAMOND_KNOCKBACK_BLOCKS = 4.5D;
+	private static final double MARK_SHIELD_BASH_DEFAULT_NETHERITE_KNOCKBACK_BLOCKS = 5.0D;
+	private static final double MARK_SHIELD_BASH_BLOCKS_TO_VELOCITY = 0.115D;
 	private static final int MARK_RAGE_STRENGTH_AMPLIFIER = 1;
 	private static final int MARK_RAGE_SPEED_AMPLIFIER = 1;
 	private static final int MARK_RAGE_RESISTANCE_AMPLIFIER = 0;
@@ -991,6 +1001,7 @@ public final class ServerRaceSystem {
 					);
 					CartelSecretRecipeBookSystem.syncJoinedPlayer(handler.player);
 					CopperManGogglesSystem.syncPlayerRecipeBook(handler.player);
+					MarkShieldRecipeSystem.syncJoinedPlayer(handler.player);
 					syncWomanShnyagaLinks(server);
 					updateMarkRageHud(handler.player);
 					prewarmCopperManDefenseTint(server, handler.player);
@@ -1381,6 +1392,9 @@ public final class ServerRaceSystem {
 		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && MARK_POTROSHITEL_RACE_ID.equals(raceId)) {
 			return useMarkPotroshitelUnique(player, race, ability);
 		}
+		if (slot == RaceAbilitySlot.SHNYAGA && MARK_POTROSHITEL_RACE_ID.equals(raceId)) {
+			return useMarkPotroshitelShnyaga(player, race, ability);
+		}
 
 		startGenericAbilityCooldown(player, slot, ability);
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
@@ -1461,7 +1475,8 @@ public final class ServerRaceSystem {
 		if (MARK_POTROSHITEL_RACE_ID.equals(raceId)) {
 			return slot == RaceAbilitySlot.ATTACK
 					|| slot == RaceAbilitySlot.DEFENSE
-					|| slot == RaceAbilitySlot.UNIQUE_ABILITY;
+					|| slot == RaceAbilitySlot.UNIQUE_ABILITY
+					|| slot == RaceAbilitySlot.SHNYAGA;
 		}
 		return false;
 	}
@@ -3069,6 +3084,13 @@ public final class ServerRaceSystem {
 		STUCK_ENTITY
 	}
 
+	private enum MarkShieldBashProfile {
+		IRON,
+		GOLDEN,
+		DIAMOND,
+		NETHERITE
+	}
+
 	private static final class MarkThrownAxeSession {
 		private final UUID ownerId;
 		private final ResourceKey<Level> dimension;
@@ -3704,6 +3726,7 @@ public final class ServerRaceSystem {
 		double activationRange = getWomanUniqueRange(ability);
 		LivingEntity lookedAt = findLookTarget(caster, activationRange);
 		if (!(lookedAt instanceof ServerPlayer target) || target == caster) {
+			displayTargetNotSelected(caster);
 			return 0;
 		}
 
@@ -5841,9 +5864,17 @@ public final class ServerRaceSystem {
 		MARK_DEFENSE_SESSIONS.put(player.getUUID(), session);
 		captureMarkDefenseProjectiles(level, player, session);
 		spawnMarkDefenseActivationSphere(level, player, radius);
+		playMarkDefenseActivationSound(level, player);
 		startOnlineCooldown(MARK_DEFENSE_COOLDOWNS, player.getUUID(), cooldownTicks);
 		Lg2.LOGGER.info("Player {} used mark defense '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
+	}
+
+	private static void playMarkDefenseActivationSound(ServerLevel level, ServerPlayer player) {
+		if (level == null || player == null) {
+			return;
+		}
+		level.playSound(null, player.getX(), player.getY(), player.getZ(), SoundEvents.SHIELD_BLOCK, SoundSource.PLAYERS, 0.55F, 1.18F);
 	}
 
 	private static void spawnMarkDefenseActivationSphere(ServerLevel level, ServerPlayer player, double radius) {
@@ -5906,6 +5937,155 @@ public final class ServerRaceSystem {
 		playMarkRageMusic(player);
 		Lg2.LOGGER.info("Player {} entered mark rage '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
+	}
+
+	private static int useMarkPotroshitelShnyaga(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || ability == null || player.isSpectator() || !player.isAlive() || !(player.level() instanceof ServerLevel level)) {
+			return 0;
+		}
+
+		MarkShieldBashProfile shield = findMarkShieldBashProfile(player);
+		if (shield == null) {
+			player.displayClientMessage(
+					Component.literal("Возьмите железный, золотой, алмазный или незеритовый щит в руку.").withStyle(ChatFormatting.RED),
+					true
+			);
+			return 0;
+		}
+
+		if (displayGenericAbilityCooldown(player, RaceAbilitySlot.SHNYAGA)) {
+			return 0;
+		}
+
+		performMarkShieldBash(level, player, ability, shield);
+		startMarkShieldBashCooldown(player, ability);
+		Lg2.LOGGER.info("Player {} used mark shield bash '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
+		return 1;
+	}
+
+	private static void startMarkShieldBashCooldown(ServerPlayer player, RaceAbilityConfig ability) {
+		if (player == null || ability == null) {
+			return;
+		}
+		if (isInfiniteCooldown(ability.cooldownSeconds)) {
+			startGenericAbilityCooldown(player, RaceAbilitySlot.SHNYAGA, ability);
+			return;
+		}
+		long cooldownTicks = Math.max(1L, asTicks(positiveOrDefault(ability.cooldownSeconds, MARK_SHIELD_BASH_DEFAULT_COOLDOWN_SECONDS)));
+		GENERIC_ABILITY_INFINITE_COOLDOWNS.computeIfPresent(player.getUUID(), (id, cooldowns) -> {
+			cooldowns.remove(RaceAbilitySlot.SHNYAGA);
+			return cooldowns.isEmpty() ? null : cooldowns;
+		});
+		GENERIC_ABILITY_COOLDOWN_END_TICKS
+				.computeIfAbsent(player.getUUID(), id -> new EnumMap<>(RaceAbilitySlot.class))
+				.put(RaceAbilitySlot.SHNYAGA, player.level().getGameTime() + cooldownTicks);
+	}
+
+	private static MarkShieldBashProfile findMarkShieldBashProfile(ServerPlayer player) {
+		if (player == null) {
+			return null;
+		}
+		MarkShieldBashProfile mainHand = getMarkShieldBashProfile(player.getMainHandItem());
+		return mainHand != null ? mainHand : getMarkShieldBashProfile(player.getOffhandItem());
+	}
+
+	private static MarkShieldBashProfile getMarkShieldBashProfile(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return null;
+		}
+		Item item = stack.getItem();
+		if (item == Items.SHIELD) {
+			return MarkShieldBashProfile.IRON;
+		}
+		if (item == ModItems.GOLDEN_SHIELD) {
+			return MarkShieldBashProfile.GOLDEN;
+		}
+		if (item == ModItems.DIAMOND_SHIELD) {
+			return MarkShieldBashProfile.DIAMOND;
+		}
+		if (item == ModItems.NETHERITE_SHIELD) {
+			return MarkShieldBashProfile.NETHERITE;
+		}
+		return null;
+	}
+
+	private static void performMarkShieldBash(ServerLevel level, ServerPlayer player, RaceAbilityConfig ability, MarkShieldBashProfile shield) {
+		if (level == null || player == null || shield == null) {
+			return;
+		}
+		Vec3 look = player.getLookAngle();
+		if (look.lengthSqr() <= 1.0E-6D) {
+			look = Vec3.directionFromRotation(player.getXRot(), player.getYRot());
+		}
+		look = look.normalize();
+		Vec3 horizontalLook = new Vec3(look.x, 0.0D, look.z);
+		if (horizontalLook.lengthSqr() <= 1.0E-6D) {
+			horizontalLook = Vec3.directionFromRotation(0.0F, player.getYRot());
+		}
+		if (horizontalLook.lengthSqr() > 1.0E-6D) {
+			horizontalLook = horizontalLook.normalize();
+			double impulse = getMarkShieldBashForwardImpulse(ability) * 0.42D;
+			player.push(horizontalLook.x * impulse, 0.08D, horizontalLook.z * impulse);
+			player.hurtMarked = true;
+			player.connection.send(new ClientboundSetEntityMotionPacket(player));
+		}
+
+		double range = getMarkShieldBashRange(ability);
+		if (range <= 0.0D) {
+			return;
+		}
+		double angleDegrees = Math.max(0.0D, Math.min(180.0D, getMarkShieldBashAngleDegrees(ability)));
+		double minDot = Math.cos(Math.toRadians(angleDegrees * 0.5D));
+		double knockbackBlocks = getMarkShieldBashKnockbackBlocks(ability, shield);
+		Vec3 eye = player.getEyePosition();
+		AABB searchBox = player.getBoundingBox().inflate(range + 0.5D);
+		for (LivingEntity target : level.getEntitiesOfClass(LivingEntity.class, searchBox, target -> canMarkShieldBashHit(player, target))) {
+			Vec3 targetCenter = target.position().add(0.0D, Math.max(0.25D, target.getBbHeight() * 0.5D), 0.0D);
+			Vec3 toTarget = targetCenter.subtract(eye);
+			double distance = toTarget.length();
+			if (distance <= 1.0E-6D || distance > range) {
+				continue;
+			}
+			Vec3 toTargetNormal = toTarget.scale(1.0D / distance);
+			if (toTargetNormal.dot(look) < minDot) {
+				continue;
+			}
+			knockMarkShieldBashTarget(player, target, knockbackBlocks);
+		}
+	}
+
+	private static boolean canMarkShieldBashHit(ServerPlayer player, LivingEntity target) {
+		return player != null
+				&& target != null
+				&& target != player
+				&& target.isAlive()
+				&& !target.isSpectator()
+				&& !(target instanceof ArmorStand);
+	}
+
+	private static void knockMarkShieldBashTarget(ServerPlayer player, LivingEntity target, double knockbackBlocks) {
+		if (player == null || target == null || knockbackBlocks <= 0.0D) {
+			return;
+		}
+		Vec3 horizontal = new Vec3(target.getX() - player.getX(), 0.0D, target.getZ() - player.getZ());
+		if (horizontal.lengthSqr() <= 1.0E-6D) {
+			Vec3 look = player.getLookAngle();
+			horizontal = new Vec3(look.x, 0.0D, look.z);
+		}
+		if (horizontal.lengthSqr() <= 1.0E-6D) {
+			horizontal = Vec3.directionFromRotation(0.0F, player.getYRot());
+		}
+		if (horizontal.lengthSqr() <= 1.0E-6D) {
+			horizontal = new Vec3(1.0D, 0.0D, 0.0D);
+		}
+		Vec3 direction = horizontal.normalize();
+		double velocity = knockbackBlocks * MARK_SHIELD_BASH_BLOCKS_TO_VELOCITY;
+		double vertical = Math.min(0.58D, 0.12D + velocity * 0.11D);
+		target.push(direction.x * velocity, vertical, direction.z * velocity);
+		target.hurtMarked = true;
+		if (target instanceof ServerPlayer targetPlayer) {
+			targetPlayer.connection.send(new ClientboundSetEntityMotionPacket(targetPlayer));
+		}
 	}
 
 	private static void tickMarkRage(MinecraftServer server) {
@@ -7521,6 +7701,42 @@ public final class ServerRaceSystem {
 		return positiveOrDefault(ability == null ? 0.0D : ability.markRageExhaustionSeconds, MARK_RAGE_DEFAULT_EXHAUSTION_SECONDS);
 	}
 
+	private static double getMarkShieldBashRange(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markShieldBashRangeBlocks, MARK_SHIELD_BASH_DEFAULT_RANGE_BLOCKS);
+	}
+
+	private static double getMarkShieldBashAngleDegrees(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markShieldBashAngleDegrees, MARK_SHIELD_BASH_DEFAULT_ANGLE_DEGREES);
+	}
+
+	private static double getMarkShieldBashForwardImpulse(RaceAbilityConfig ability) {
+		return positiveOrDefault(ability == null ? 0.0D : ability.markShieldBashForwardImpulseBlocks, MARK_SHIELD_BASH_DEFAULT_FORWARD_IMPULSE_BLOCKS);
+	}
+
+	private static double getMarkShieldBashKnockbackBlocks(RaceAbilityConfig ability, MarkShieldBashProfile shield) {
+		if (shield == null) {
+			return 0.0D;
+		}
+		return switch (shield) {
+			case IRON -> positiveOrDefault(
+					ability == null ? 0.0D : ability.markShieldBashIronKnockbackBlocks,
+					MARK_SHIELD_BASH_DEFAULT_IRON_KNOCKBACK_BLOCKS
+			);
+			case GOLDEN -> positiveOrDefault(
+					ability == null ? 0.0D : ability.markShieldBashGoldenKnockbackBlocks,
+					MARK_SHIELD_BASH_DEFAULT_GOLDEN_KNOCKBACK_BLOCKS
+			);
+			case DIAMOND -> positiveOrDefault(
+					ability == null ? 0.0D : ability.markShieldBashDiamondKnockbackBlocks,
+					MARK_SHIELD_BASH_DEFAULT_DIAMOND_KNOCKBACK_BLOCKS
+			);
+			case NETHERITE -> positiveOrDefault(
+					ability == null ? 0.0D : ability.markShieldBashNetheriteKnockbackBlocks,
+					MARK_SHIELD_BASH_DEFAULT_NETHERITE_KNOCKBACK_BLOCKS
+			);
+		};
+	}
+
 	private static double getWomanDefenseRange(RaceAbilityConfig ability) {
 		return positiveOrDefault(ability == null ? 0.0D : ability.activationRangeBlocks, WOMAN_DEFENSE_DEFAULT_RANGE_BLOCKS);
 	}
@@ -7645,6 +7861,8 @@ public final class ServerRaceSystem {
 			return 0;
 		}
 
+		forceGennadiyDefenseDismountFromTransport(player);
+
 		long durationTicks = Math.max(1L, asTicks(getGennadiyDefenseDurationSeconds(ability)));
 		double minDamage = getGennadiyDefenseMinDamage(ability);
 		double maxDamage = Math.max(minDamage, getGennadiyDefenseMaxDamage(ability));
@@ -7667,6 +7885,15 @@ public final class ServerRaceSystem {
 		startGenericAbilityCooldown(player, RaceAbilitySlot.DEFENSE, ability);
 		Lg2.LOGGER.info("Player {} activated gennadiy defense '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
+	}
+
+	private static void forceGennadiyDefenseDismountFromTransport(ServerPlayer player) {
+		if (player == null || !player.isPassenger()) {
+			return;
+		}
+		player.stopRiding();
+		player.setDeltaMovement(Vec3.ZERO);
+		player.hurtMarked = true;
 	}
 
 	private static int useGennadiyHook(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
@@ -8550,8 +8777,17 @@ public final class ServerRaceSystem {
 		arrow.setPos(sourcePos);
 		target.invulnerableTime = 0;
 		target.hurtServer(level, level.damageSources().arrow(arrow, donkey), (float) damage);
+		softenGennadiyDonkeyBulletHurtAnimation(target);
 		target.invulnerableTime = 0;
 		arrow.discard();
+	}
+
+	private static void softenGennadiyDonkeyBulletHurtAnimation(LivingEntity target) {
+		if (target == null) {
+			return;
+		}
+		target.hurtTime = Math.min(target.hurtTime, GENNADIY_DONKEY_BULLET_MAX_HURT_ANIMATION_TICKS);
+		target.hurtDuration = Math.min(target.hurtDuration, GENNADIY_DONKEY_BULLET_MAX_HURT_ANIMATION_TICKS);
 	}
 
 	private static boolean canGennadiyBulletHit(ServerPlayer owner, Donkey donkey, Entity entity) {
@@ -13579,6 +13815,7 @@ public final class ServerRaceSystem {
 		double activationRange = positiveOrDefault(ability.activationRangeBlocks, CARTEL_TARGET_RANGE);
 		LivingEntity target = findLookTarget(caster, activationRange);
 		if (target == null) {
+			displayTargetNotSelected(caster);
 			return 0;
 		}
 
@@ -13704,7 +13941,7 @@ public final class ServerRaceSystem {
 
 		LivingEntity best = null;
 		double bestDistanceSqr = Double.MAX_VALUE;
-		for (Entity entity : player.level().getEntities(player, searchBox, entity -> entity instanceof LivingEntity living && living.isAlive())) {
+		for (Entity entity : player.level().getEntities(player, searchBox, entity -> entity instanceof LivingEntity living && living.isAlive() && !living.isSpectator())) {
 			if (!(entity instanceof LivingEntity living)) {
 				continue;
 			}
@@ -13948,6 +14185,13 @@ public final class ServerRaceSystem {
 				true
 		);
 		return true;
+	}
+
+	private static void displayTargetNotSelected(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		player.displayClientMessage(Component.literal("Цель не выбрана").withStyle(ChatFormatting.RED), true);
 	}
 
 	private static boolean displayInfiniteCooldown(ServerPlayer player) {
