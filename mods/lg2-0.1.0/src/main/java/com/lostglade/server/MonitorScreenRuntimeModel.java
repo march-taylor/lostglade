@@ -117,9 +117,79 @@ record RenderWork(
 		int height,
 		long mediaVersion,
 		MediaVisualSnapshot mediaSnapshot,
+		MaxVisualSnapshot maxSnapshot,
 		WallpaperVisualSnapshot wallpaperSnapshot,
 		boolean transparentOutput,
 		List<RenderTileTarget> tileTargets
+) {
+}
+
+record MaxVisualSnapshot(
+		long version,
+		String accountCode,
+		BufferedImage avatarFrame,
+		List<MaxContactSnapshot> contacts,
+		MaxCallVisualSnapshot call,
+		List<MaxAvatarCandidateSnapshot> avatarCandidates,
+		boolean avatarPickerOpen,
+		String statusText
+) {
+	boolean dynamic() {
+		return this.call != null && this.call.dynamic();
+	}
+}
+
+record MaxContactSnapshot(
+		String code,
+		BufferedImage avatarFrame,
+		boolean online,
+		boolean ringing,
+		boolean active
+) {
+}
+
+record MaxCallVisualSnapshot(
+		MaxCallPhase phase,
+		String peerCode,
+		BufferedImage peerAvatarFrame,
+		BufferedImage localPreviewFrame,
+		BufferedImage remoteFrame,
+		String statusText,
+		boolean cameraEnabled,
+		boolean microphoneEnabled,
+		List<MaxCameraOptionSnapshot> cameras,
+		int selectedCameraIndex,
+		int microphoneCount,
+		int selectedMicrophoneIndex,
+		boolean menuOpen,
+		boolean selfFocused,
+		boolean peerFocused,
+		boolean focusFillMode,
+		long elapsedMillis
+) {
+	boolean dynamic() {
+		return this.phase == MaxCallPhase.OUTGOING
+				|| this.phase == MaxCallPhase.INCOMING
+				|| this.phase == MaxCallPhase.ACTIVE
+				|| this.remoteFrame != null;
+	}
+}
+
+record MaxCameraOptionSnapshot(
+		String title,
+		String subtitle,
+		String url,
+		BufferedImage preview,
+		boolean selected,
+		boolean online
+) {
+}
+
+record MaxAvatarCandidateSnapshot(
+		String title,
+		String url,
+		String localMediaKey,
+		BufferedImage preview
 ) {
 }
 
@@ -370,6 +440,15 @@ enum PlayerUiIcon {
 	BACK("/assets/lg2/textures/monitor/ui_icons/back.png"),
 	DRONE("/assets/lg2/textures/monitor/ui_icons/drone.png"),
 	CAMERA("/assets/lg2/textures/monitor/ui_icons/camera.png"),
+	CALL_ACCEPT("/assets/lg2/textures/monitor/ui_icons/call_accept.png"),
+	CALL_DECLINE("/assets/lg2/textures/monitor/ui_icons/call_decline.png"),
+	MIC("/assets/lg2/textures/monitor/ui_icons/mic.png"),
+	MIC_OFF("/assets/lg2/textures/monitor/ui_icons/mic_off.png"),
+	VIDEO_CAMERA("/assets/lg2/textures/monitor/ui_icons/video_camera.png"),
+	VIDEO_CAMERA_OFF("/assets/lg2/textures/monitor/ui_icons/video_camera_off.png"),
+	DEVICE_SELECT("/assets/lg2/textures/monitor/ui_icons/device_select.png"),
+	FULLSCREEN("/assets/lg2/textures/monitor/ui_icons/fullscreen.png"),
+	FULLSCREEN_EXIT("/assets/lg2/textures/monitor/ui_icons/fullscreen_exit.png"),
 	SIGNAL("/assets/lg2/textures/monitor/ui_icons/signal.png"),
 	OFFLINE("/assets/lg2/textures/monitor/ui_icons/offline.png"),
 	UNLINK("/assets/lg2/textures/monitor/ui_icons/unlink.png"),

@@ -58,6 +58,9 @@ final class MonitorScreenInputController {
 		}
 
 		UiLayout layout = createUiLayout(component.width(), component.height());
+		if (MonitorMaxRuntime.handleGlobalTouch(player, level, component, layout, touchPoint)) {
+			return InteractionResult.SUCCESS;
+		}
 		MinecraftServer server = level.getServer();
 		ScreenViewMode nextMode = null;
 		Integer nextLauncherPage = null;
@@ -657,6 +660,8 @@ final class MonitorScreenInputController {
 				restoreLiveCameraView = liveCameraPlayback;
 				rerenderCurrent = !liveCameraPlayback;
 			}
+		} else if (component.viewMode() == ScreenViewMode.MAX) {
+			MonitorMaxRuntime.handleTouch(player, level, component, layout, touchPoint);
 		} else {
 			UiRect closeRect = genericCloseRect(layout);
 			if (closeRect.contains(touchPoint.x(), touchPoint.y())) {

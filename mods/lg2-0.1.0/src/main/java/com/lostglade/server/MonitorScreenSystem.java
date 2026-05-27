@@ -386,6 +386,7 @@ public final class MonitorScreenSystem {
 		IN_FLIGHT_MEDIA_LINKS.clear();
 		ACTIVE_MEDIA_ACTIONBARS.clear();
 		PLAYER_MEDIA_FOCUS.clear();
+		MonitorMaxRuntime.clearRuntime();
 		TILE_CACHE.clear();
 		OVERLAY_WINDOW_CACHE.clear();
 		OVERLAY_WINDOW_FAMILY_CACHE.clear();
@@ -654,6 +655,7 @@ public final class MonitorScreenSystem {
 		if (removed == null) {
 			return null;
 		}
+		MonitorMaxRuntime.closeRuntime(null, runtimeKey);
 		state.connectedCameraPositions().remove(runtimeKey);
 		for (ItemFrame frame : removed.frameCoords().keySet()) {
 			ScreenKey frameKey = new ScreenKey(frame.blockPosition(), frame.getDirection());
@@ -978,10 +980,12 @@ public final class MonitorScreenSystem {
 						state.loading,
 						state.userPaused,
 						state.liveStream,
-						state.streamKind != PlaybackStreamKind.DIRECT_VIDEO
+						state.streamKind != PlaybackStreamKind.DIRECT_VIDEO,
+						false
 				));
 			}
 		}
+		sources.addAll(MonitorMaxRuntime.findSpeakerAudioSources(level.getServer(), connectedComponents.values()));
 		return sources;
 	}
 
@@ -2262,7 +2266,7 @@ public final class MonitorScreenSystem {
 		writeScreenState(screenMap, state);
 		MapItemSavedData mapData = mapLevel.getMapData(mapId);
 		if (mapData != null) {
-			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null, null, false, List.of()));
+			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null, null, null, false, List.of()));
 			applyFrameToMap(mapData, tiles[0]);
 		}
 		return screenMap;
@@ -2585,6 +2589,9 @@ public final class MonitorScreenSystem {
 			return null;
 		}
 		MediaVisualSnapshot mediaSnapshot = null;
+		MaxVisualSnapshot maxSnapshot = viewMode == ScreenViewMode.MAX || MonitorMaxRuntime.hasVisibleCall(component.runtimeKey())
+				? MonitorMaxRuntime.captureSnapshot(server, component)
+				: null;
 		WallpaperVisualSnapshot wallpaperSnapshot = captureWallpaperSnapshot(mediaState, viewMode);
 		long mediaVersion = 0L;
 		if (isPlayerMode(viewMode)) {
@@ -2601,6 +2608,7 @@ public final class MonitorScreenSystem {
 				component.height(),
 				mediaVersion,
 				mediaSnapshot,
+				maxSnapshot,
 				wallpaperSnapshot,
 				transparentOutput,
 				captureRenderTileTargets(server, component)
@@ -2813,7 +2821,7 @@ public final class MonitorScreenSystem {
 		if (work == null) {
 			return new byte[0][];
 		}
-		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null) {
+		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null && work.maxSnapshot() == null) {
 			RenderCacheKey key = new RenderCacheKey(work.powered(), work.viewMode(), work.launcherPage(), work.width(), work.height());
 			byte[][] cached = TILE_CACHE.get(key);
 			if (cached != null) {
@@ -2835,8 +2843,13 @@ public final class MonitorScreenSystem {
 			UiLayout layout = createUiLayout(work.width(), work.height());
 			if (work.viewMode() == ScreenViewMode.HOME) {
 				drawHomeScreen(graphics, layout, work.launcherPage());
+			} else if (work.viewMode() == ScreenViewMode.MAX) {
+				MonitorMaxRuntime.drawMaxScreen(graphics, layout, appForViewMode(work.viewMode()), work.maxSnapshot());
 			} else {
 				drawAppScreen(graphics, layout, appForViewMode(work.viewMode()), work.runtimeKey(), server, work.mediaSnapshot());
+			}
+			if (work.viewMode() != ScreenViewMode.MAX && MonitorMaxRuntime.hasCallOverlay(work.maxSnapshot())) {
+				MonitorMaxRuntime.drawCallOverlay(graphics, layout, work.maxSnapshot());
 			}
 		}
 		graphics.dispose();
@@ -2847,15 +2860,21 @@ public final class MonitorScreenSystem {
 		byte[][] tiles = new byte[work.width() * work.height()][MAP_SIZE * MAP_SIZE];
 		quantizeTiles(work, rgbPixels, pixelWidth, tiles);
 
-		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null) {
+		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null && work.maxSnapshot() == null) {
 			TILE_CACHE.put(new RenderCacheKey(work.powered(), work.viewMode(), work.launcherPage(), work.width(), work.height()), tiles);
 		}
 		return tiles;
 	}
 
 	static boolean dynamicRenderWork(RenderWork work) {
-		if (work == null || work.mediaSnapshot() == null) {
+		if (work == null) {
 			return false;
+		}
+		if (work.maxSnapshot() != null && work.maxSnapshot().dynamic()) {
+			return true;
+		}
+		if (work.mediaSnapshot() == null) {
+			return work.wallpaperSnapshot() != null;
 		}
 		MediaVisualSnapshot state = work.mediaSnapshot();
 		return state.streamPlayback()

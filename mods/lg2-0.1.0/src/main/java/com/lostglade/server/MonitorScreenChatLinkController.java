@@ -32,6 +32,9 @@ final class MonitorScreenChatLinkController {
 		if (server == null) {
 			return true;
 		}
+		if (!MonitorMaxRuntime.onAllowChatMessage(message, sender, params)) {
+			return false;
+		}
 		PendingMediaLinkRequest pending = PENDING_MEDIA_LINKS.remove(sender.getUUID());
 		if (pending == null) {
 			return true;
