@@ -9,6 +9,7 @@ public record SpeakerAudioSource(
 		boolean loading,
 		boolean paused,
 		boolean liveStream,
-		boolean positionAuthoritative
+		boolean positionAuthoritative,
+		boolean loop
 ) {
 }

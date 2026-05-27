@@ -99,6 +99,13 @@ enum PlaybackStreamKind {
 	DIRECT_VIDEO
 }
 
+enum MaxCallPhase {
+	IDLE,
+	OUTGOING,
+	INCOMING,
+	ACTIVE
+}
+
 enum MediaScaleMode {
 	FIT,
 	FILL,

@@ -1052,6 +1052,10 @@ public final class SpeakerSystem {
 				command.add("-ss");
 				command.add(String.format(java.util.Locale.ROOT, "%.3f", source.positionMs() / 1000.0D));
 			}
+			if (source.loop()) {
+				command.add("-stream_loop");
+				command.add("-1");
+			}
 			command.add("-i");
 			command.add(source.audioStreamUrl());
 			command.add("-vn");

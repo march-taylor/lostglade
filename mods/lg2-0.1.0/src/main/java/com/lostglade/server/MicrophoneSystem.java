@@ -21,15 +21,19 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -55,6 +59,7 @@ public final class MicrophoneSystem {
 	private static final short[] SILENCE_FRAME = new short[AUDIO_FRAME_SAMPLES];
 	private static final Set<MicrophoneKey> KNOWN_MICROPHONES = ConcurrentHashMap.newKeySet();
 	private static final ConcurrentHashMap<MicrophoneKey, MicrophoneRuntime> ACTIVE_MICROPHONES = new ConcurrentHashMap<>();
+	private static final ConcurrentHashMap<String, CallMicrophoneRouteRuntime> ACTIVE_CALL_ROUTES = new ConcurrentHashMap<>();
 	private static volatile long tickCounter = 0L;
 
 	private MicrophoneSystem() {
@@ -185,6 +190,7 @@ public final class MicrophoneSystem {
 		for (MicrophoneKey staleKey : staleKeys) {
 			stopRuntime(staleKey);
 		}
+		synchronizeCallRoutes(server);
 	}
 
 	private static boolean refreshMicrophone(MinecraftServer server, MicrophoneKey key) {
@@ -243,9 +249,209 @@ public final class MicrophoneSystem {
 			runtime.close();
 		}
 		ACTIVE_MICROPHONES.clear();
+		for (CallMicrophoneRouteRuntime runtime : ACTIVE_CALL_ROUTES.values()) {
+			runtime.close();
+		}
+		ACTIVE_CALL_ROUTES.clear();
+	}
+
+	private static void synchronizeCallRoutes(MinecraftServer server) {
+		List<ScreenMicrophoneCallRoute> routes = MonitorMaxRuntime.collectMicrophoneCallRoutes(server);
+		if (routes.isEmpty()) {
+			for (CallMicrophoneRouteRuntime runtime : ACTIVE_CALL_ROUTES.values()) {
+				runtime.close();
+			}
+			ACTIVE_CALL_ROUTES.clear();
+			return;
+		}
+
+		Set<String> keep = new HashSet<>();
+		for (ScreenMicrophoneCallRoute route : routes) {
+			if (route == null || route.routeId() == null || route.routeId().isBlank()) {
+				continue;
+			}
+			keep.add(route.routeId());
+			ACTIVE_CALL_ROUTES.compute(route.routeId(), (ignored, existing) -> {
+				CallMicrophoneRouteRuntime runtime = existing != null ? existing : new CallMicrophoneRouteRuntime();
+				if (!runtime.update(server, route)) {
+					runtime.close();
+					return null;
+				}
+				return runtime;
+			});
+		}
+		for (Map.Entry<String, CallMicrophoneRouteRuntime> entry : new ArrayList<>(ACTIVE_CALL_ROUTES.entrySet())) {
+			if (keep.contains(entry.getKey())) {
+				continue;
+			}
+			CallMicrophoneRouteRuntime removed = ACTIVE_CALL_ROUTES.remove(entry.getKey());
+			if (removed != null) {
+				removed.close();
+			}
+		}
+	}
+
+	private static List<Map.Entry<MicrophoneKey, MicrophoneRuntime>> connectedScreenMicrophones(MinecraftServer server, ScreenRuntimeKey screenKey) {
+		if (server == null || screenKey == null) {
+			return List.of();
+		}
+		List<Map.Entry<MicrophoneKey, MicrophoneRuntime>> microphones = new ArrayList<>();
+		for (Map.Entry<MicrophoneKey, MicrophoneRuntime> entry : ACTIVE_MICROPHONES.entrySet()) {
+			MicrophoneKey key = entry.getKey();
+			MicrophoneRuntime runtime = entry.getValue();
+			if (key == null || runtime == null || !runtime.captureEnabled || !isMicrophoneConnectedToScreen(server, key, screenKey)) {
+				continue;
+			}
+			microphones.add(entry);
+		}
+		microphones.sort(Comparator.comparing(entry -> microphoneSortKey(entry.getKey())));
+		return microphones;
+	}
+
+	public static int connectedMicrophoneCount(MinecraftServer server, ScreenRuntimeKey screenKey) {
+		return connectedScreenMicrophones(server, screenKey).size();
+	}
+
+	private static String microphoneSortKey(MicrophoneKey key) {
+		if (key == null || key.pos() == null || key.dimension() == null) {
+			return "";
+		}
+		return key.dimension().identifier() + ":" + key.pos().getX() + ":" + key.pos().getY() + ":" + key.pos().getZ();
+	}
+
+	private static boolean isMicrophoneConnectedToScreen(MinecraftServer server, MicrophoneKey microphoneKey, ScreenRuntimeKey screenKey) {
+		ServerLevel level = server.getLevel(microphoneKey.dimension());
+		if (level == null || !level.hasChunkAt(microphoneKey.pos())) {
+			return false;
+		}
+		return MonitorScreenWireConnectivity.collectConnectedComponentsForWireSource(level, microphoneKey.pos()).containsKey(screenKey);
+	}
+
+	private static List<SpeakerOutputTarget> connectedScreenSpeakers(MinecraftServer server, ScreenRuntimeKey screenKey) {
+		if (server == null || screenKey == null) {
+			return List.of();
+		}
+		ServerLevel level = server.getLevel(screenKey.dimension());
+		if (level == null) {
+			return List.of();
+		}
+		ScreenComponent component = MonitorScreenSystem.resolveScreenComponent(server, screenKey);
+		if (component == null || !component.powered()) {
+			return List.of();
+		}
+
+		LinkedHashSet<SpeakerOutputTarget> speakers = new LinkedHashSet<>();
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			BlockPos framePos = frame.blockPosition();
+			BlockPos supportPos = framePos.relative(frame.getDirection().getOpposite());
+			for (BlockPos speakerPos : SpeakerSystem.findConnectedPoweredSpeakerPositions(level, framePos)) {
+				speakers.add(new SpeakerOutputTarget(level.dimension(), speakerPos.immutable()));
+			}
+			for (BlockPos speakerPos : SpeakerSystem.findConnectedPoweredSpeakerPositions(level, supportPos)) {
+				speakers.add(new SpeakerOutputTarget(level.dimension(), speakerPos.immutable()));
+			}
+		}
+
+		BluetoothLinkSystem.Endpoint screenEndpoint = MonitorScreenSystem.bluetoothScreenEndpoint(level, component);
+		for (BluetoothLinkSystem.Endpoint linked : BluetoothLinkSystem.linkedEndpoints(screenEndpoint)) {
+			if (linked.type() != BluetoothLinkSystem.EndpointType.SPEAKER) {
+				continue;
+			}
+			ServerLevel linkedLevel = server.getLevel(linked.dimension());
+			if (isUsableSpeaker(linkedLevel, linked.pos())) {
+				speakers.add(new SpeakerOutputTarget(linked.dimension(), linked.pos().immutable()));
+			}
+		}
+		return List.copyOf(speakers);
+	}
+
+	private static boolean isUsableSpeaker(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null || !level.hasChunkAt(pos)) {
+			return false;
+		}
+		BlockState state = level.getBlockState(pos);
+		return state.is(ModBlocks.SPEAKER)
+				&& (level.hasNeighborSignal(pos) || level.getBestNeighborSignal(pos) > 0)
+				&& SpeakerBlock.readVolumePercent(state) > 0;
+	}
+
+	static record ScreenMicrophoneCallRoute(String routeId, ScreenRuntimeKey sourceScreen, ScreenRuntimeKey outputScreen, int selectedMicrophoneIndex) {
+	}
+
+	private record SpeakerOutputTarget(ResourceKey<Level> dimension, BlockPos pos) {
+	}
+
+	private record CallOutputKey(MicrophoneKey microphone, SpeakerOutputTarget speaker) {
 	}
 
 	private record MicrophoneKey(ResourceKey<Level> dimension, BlockPos pos) {
+	}
+
+	private static final class CallMicrophoneRouteRuntime {
+		private final ConcurrentHashMap<CallOutputKey, MicrophoneOutputRuntime> outputs = new ConcurrentHashMap<>();
+		private volatile boolean closed;
+
+		private boolean update(MinecraftServer server, ScreenMicrophoneCallRoute route) {
+			if (this.closed || server == null || route == null) {
+				return false;
+			}
+			List<Map.Entry<MicrophoneKey, MicrophoneRuntime>> microphones = connectedScreenMicrophones(server, route.sourceScreen());
+			if (route.selectedMicrophoneIndex() >= 0 && route.selectedMicrophoneIndex() < microphones.size()) {
+				microphones = List.of(microphones.get(route.selectedMicrophoneIndex()));
+			}
+			List<SpeakerOutputTarget> speakers = connectedScreenSpeakers(server, route.outputScreen());
+			Set<CallOutputKey> keep = new HashSet<>();
+			for (Map.Entry<MicrophoneKey, MicrophoneRuntime> microphoneEntry : microphones) {
+				MicrophoneKey microphoneKey = microphoneEntry.getKey();
+				MicrophoneRuntime microphoneRuntime = microphoneEntry.getValue();
+				if (microphoneKey == null || microphoneRuntime == null || microphoneRuntime.closed) {
+					continue;
+				}
+				for (SpeakerOutputTarget speaker : speakers) {
+					ServerLevel speakerLevel = server.getLevel(speaker.dimension());
+					if (!isUsableSpeaker(speakerLevel, speaker.pos())) {
+						continue;
+					}
+					BlockState speakerState = speakerLevel.getBlockState(speaker.pos());
+					CallOutputKey outputKey = new CallOutputKey(microphoneKey, speaker);
+					keep.add(outputKey);
+					this.outputs.compute(outputKey, (ignored, existing) -> {
+						MicrophoneOutputRuntime runtime = existing;
+						if (runtime == null) {
+							runtime = new MicrophoneOutputRuntime(microphoneRuntime.feed, speaker.pos());
+							if (!runtime.start(speakerLevel, speakerState, ServerVoicechatIntegration.getApi(), ServerVoicechatIntegration.getServerApi())) {
+								runtime.close();
+								return null;
+							}
+							return runtime;
+						}
+						if (!runtime.update(speakerLevel, speakerState, ServerVoicechatIntegration.getApi(), ServerVoicechatIntegration.getServerApi())) {
+							runtime.close();
+							return null;
+						}
+						return runtime;
+					});
+				}
+			}
+			for (Map.Entry<CallOutputKey, MicrophoneOutputRuntime> entry : new ArrayList<>(this.outputs.entrySet())) {
+				if (keep.contains(entry.getKey())) {
+					continue;
+				}
+				MicrophoneOutputRuntime removed = this.outputs.remove(entry.getKey());
+				if (removed != null) {
+					removed.close();
+				}
+			}
+			return true;
+		}
+
+		private void close() {
+			this.closed = true;
+			for (MicrophoneOutputRuntime runtime : this.outputs.values()) {
+				runtime.close();
+			}
+			this.outputs.clear();
+		}
 	}
 
 	private static final class MicrophoneRuntime {
