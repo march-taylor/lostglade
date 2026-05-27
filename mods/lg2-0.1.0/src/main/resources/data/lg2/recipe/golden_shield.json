@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "pattern": [
+    "WMW",
+    "WWW",
+    " W "
+  ],
+  "key": {
+    "W": "#minecraft:wooden_tool_materials",
+    "M": "#minecraft:gold_tool_materials"
+  },
+  "result": {
+    "id": "lg2:golden_shield"
+  }
+}

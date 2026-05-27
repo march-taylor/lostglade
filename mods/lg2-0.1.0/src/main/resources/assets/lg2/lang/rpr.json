@@ -86,5 +86,11 @@
   "container.lg2.cartel_disguise.previous": "Предыдущiй",
   "container.lg2.cartel_disguise.next": "Слѣдующiй",
   "container.lg2.cartel_disguise.empty": "Нѣтъ игроковъ",
-  "item.lg2.travka": "Травка"
+  "item.lg2.travka": "Травка",
+  "item.lg2.wooden_shield": "Древяный щитъ",
+  "item.lg2.stone_shield": "Каменный щитъ",
+  "item.lg2.copper_shield": "Мѣдный щитъ",
+  "item.lg2.golden_shield": "Златой щитъ",
+  "item.lg2.diamond_shield": "Алмазный щитъ",
+  "item.lg2.netherite_shield": "Незеритовый щитъ"
 }

@@ -2,6 +2,7 @@ package com.lostglade.mixin;
 
 import com.lostglade.server.CartelSecretRecipeBookSystem;
 import com.lostglade.server.CopperManGogglesSystem;
+import com.lostglade.server.MarkShieldRecipeSystem;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.crafting.Recipe;
@@ -19,13 +20,15 @@ public abstract class ServerPlayerCartelRecipeBookMixin {
 	private Collection<RecipeHolder<?>> lg2$filterCartelSecretRecipeAwards(Collection<RecipeHolder<?>> recipes) {
 		ServerPlayer player = (ServerPlayer) (Object) this;
 		recipes = CartelSecretRecipeBookSystem.filterAwardedRecipes(player, recipes);
-		return CopperManGogglesSystem.filterAwardedRecipes(player, recipes);
+		recipes = CopperManGogglesSystem.filterAwardedRecipes(player, recipes);
+		return MarkShieldRecipeSystem.filterAwardedRecipes(player, recipes);
 	}
 
 	@ModifyVariable(method = "awardRecipesByKey", at = @At("HEAD"), argsOnly = true)
 	private List<ResourceKey<Recipe<?>>> lg2$filterCartelSecretRecipeAwardKeys(List<ResourceKey<Recipe<?>>> recipeKeys) {
 		ServerPlayer player = (ServerPlayer) (Object) this;
 		recipeKeys = CartelSecretRecipeBookSystem.filterAwardedRecipeKeys(player, recipeKeys);
-		return CopperManGogglesSystem.filterAwardedRecipeKeys(player, recipeKeys);
+		recipeKeys = CopperManGogglesSystem.filterAwardedRecipeKeys(player, recipeKeys);
+		return MarkShieldRecipeSystem.filterAwardedRecipeKeys(player, recipeKeys);
 	}
 }

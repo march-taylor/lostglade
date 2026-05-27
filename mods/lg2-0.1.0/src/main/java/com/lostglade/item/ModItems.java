@@ -5,6 +5,7 @@ import com.lostglade.block.CameraBlock;
 import com.lostglade.block.ModBlocks;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.component.DataComponentType;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
@@ -13,6 +14,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.item.Rarity;
 import net.minecraft.world.item.ToolMaterial;
 import net.minecraft.world.item.alchemy.PotionContents;
@@ -30,6 +32,12 @@ public final class ModItems {
 	private static final Identifier COPPER_JETPACK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_jetpack");
 	private static final Identifier COPPER_GOGGLES_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_goggles");
 	private static final Identifier BATTLE_DONKEY_TURRET_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "battle_donkey_turret");
+	private static final Identifier WOODEN_SHIELD_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "wooden_shield");
+	private static final Identifier STONE_SHIELD_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "stone_shield");
+	private static final Identifier COPPER_SHIELD_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_shield");
+	private static final Identifier GOLDEN_SHIELD_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "golden_shield");
+	private static final Identifier DIAMOND_SHIELD_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "diamond_shield");
+	private static final Identifier NETHERITE_SHIELD_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "netherite_shield");
 	private static final Identifier PHOTO_PRINT_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "photo_print");
 	private static final Identifier TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "travka");
 	private static final Identifier DRIED_TRAVKA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "dried_travka");
@@ -52,6 +60,12 @@ public final class ModItems {
 	private static final ResourceKey<Item> COPPER_JETPACK_KEY = ResourceKey.create(Registries.ITEM, COPPER_JETPACK_ID);
 	private static final ResourceKey<Item> COPPER_GOGGLES_KEY = ResourceKey.create(Registries.ITEM, COPPER_GOGGLES_ID);
 	private static final ResourceKey<Item> BATTLE_DONKEY_TURRET_KEY = ResourceKey.create(Registries.ITEM, BATTLE_DONKEY_TURRET_ID);
+	private static final ResourceKey<Item> WOODEN_SHIELD_KEY = ResourceKey.create(Registries.ITEM, WOODEN_SHIELD_ID);
+	private static final ResourceKey<Item> STONE_SHIELD_KEY = ResourceKey.create(Registries.ITEM, STONE_SHIELD_ID);
+	private static final ResourceKey<Item> COPPER_SHIELD_KEY = ResourceKey.create(Registries.ITEM, COPPER_SHIELD_ID);
+	private static final ResourceKey<Item> GOLDEN_SHIELD_KEY = ResourceKey.create(Registries.ITEM, GOLDEN_SHIELD_ID);
+	private static final ResourceKey<Item> DIAMOND_SHIELD_KEY = ResourceKey.create(Registries.ITEM, DIAMOND_SHIELD_ID);
+	private static final ResourceKey<Item> NETHERITE_SHIELD_KEY = ResourceKey.create(Registries.ITEM, NETHERITE_SHIELD_ID);
 	private static final ResourceKey<Item> PHOTO_PRINT_KEY = ResourceKey.create(Registries.ITEM, PHOTO_PRINT_ID);
 	private static final ResourceKey<Item> TRAVKA_KEY = ResourceKey.create(Registries.ITEM, TRAVKA_ID);
 	private static final ResourceKey<Item> DRIED_TRAVKA_KEY = ResourceKey.create(Registries.ITEM, DRIED_TRAVKA_ID);
@@ -160,6 +174,84 @@ public final class ModItems {
 							.setId(BATTLE_DONKEY_TURRET_KEY)
 							.stacksTo(1)
 							.rarity(Rarity.UNCOMMON)
+			)
+	);
+	public static final Item WOODEN_SHIELD = Registry.register(
+			BuiltInRegistries.ITEM,
+			WOODEN_SHIELD_ID,
+			new MarkShieldItem(
+					shieldProperties(WOODEN_SHIELD_KEY, 79),
+					"wooden_shield",
+					"Wooden Shield",
+					"\u0414\u0435\u0440\u0435\u0432\u044f\u043d\u043d\u044b\u0439 \u0449\u0438\u0442",
+					"\u0414\u0435\u0440\u0435\u0432'\u044f\u043d\u0438\u0439 \u0449\u0438\u0442",
+					"\u0414\u0440\u0435\u0432\u044f\u043d\u044b\u0439 \u0449\u0438\u0442\u044a",
+					"\u6728\u306e\u76fe"
+			)
+	);
+	public static final Item STONE_SHIELD = Registry.register(
+			BuiltInRegistries.ITEM,
+			STONE_SHIELD_ID,
+			new MarkShieldItem(
+					shieldProperties(STONE_SHIELD_KEY, 176),
+					"stone_shield",
+					"Stone Shield",
+					"\u041a\u0430\u043c\u0435\u043d\u043d\u044b\u0439 \u0449\u0438\u0442",
+					"\u041a\u0430\u043c'\u044f\u043d\u0438\u0439 \u0449\u0438\u0442",
+					"\u041a\u0430\u043c\u0435\u043d\u043d\u044b\u0439 \u0449\u0438\u0442\u044a",
+					"\u77f3\u306e\u76fe"
+			)
+	);
+	public static final Item COPPER_SHIELD = Registry.register(
+			BuiltInRegistries.ITEM,
+			COPPER_SHIELD_ID,
+			new MarkShieldItem(
+					shieldProperties(COPPER_SHIELD_KEY, 250),
+					"copper_shield",
+					"Copper Shield",
+					"\u041c\u0435\u0434\u043d\u044b\u0439 \u0449\u0438\u0442",
+					"\u041c\u0456\u0434\u043d\u0438\u0439 \u0449\u0438\u0442",
+					"\u041c\u0463\u0434\u043d\u044b\u0439 \u0449\u0438\u0442\u044a",
+					"\u9285\u306e\u76fe"
+			)
+	);
+	public static final Item GOLDEN_SHIELD = Registry.register(
+			BuiltInRegistries.ITEM,
+			GOLDEN_SHIELD_ID,
+			new MarkShieldItem(
+					shieldProperties(GOLDEN_SHIELD_KEY, 43),
+					"golden_shield",
+					"Golden Shield",
+					"\u0417\u043e\u043b\u043e\u0442\u043e\u0439 \u0449\u0438\u0442",
+					"\u0417\u043e\u043b\u043e\u0442\u0438\u0439 \u0449\u0438\u0442",
+					"\u0417\u043b\u0430\u0442\u043e\u0439 \u0449\u0438\u0442\u044a",
+					"\u91d1\u306e\u76fe"
+			)
+	);
+	public static final Item DIAMOND_SHIELD = Registry.register(
+			BuiltInRegistries.ITEM,
+			DIAMOND_SHIELD_ID,
+			new MarkShieldItem(
+					shieldProperties(DIAMOND_SHIELD_KEY, 2098),
+					"diamond_shield",
+					"Diamond Shield",
+					"\u0410\u043b\u043c\u0430\u0437\u043d\u044b\u0439 \u0449\u0438\u0442",
+					"\u0414\u0456\u0430\u043c\u0430\u043d\u0442\u043e\u0432\u0438\u0439 \u0449\u0438\u0442",
+					"\u0410\u043b\u043c\u0430\u0437\u043d\u044b\u0439 \u0449\u0438\u0442\u044a",
+					"\u30c0\u30a4\u30e4\u30e2\u30f3\u30c9\u306e\u76fe"
+			)
+	);
+	public static final Item NETHERITE_SHIELD = Registry.register(
+			BuiltInRegistries.ITEM,
+			NETHERITE_SHIELD_ID,
+			new MarkShieldItem(
+					shieldProperties(NETHERITE_SHIELD_KEY, 2730),
+					"netherite_shield",
+					"Netherite Shield",
+					"\u041d\u0435\u0437\u0435\u0440\u0438\u0442\u043e\u0432\u044b\u0439 \u0449\u0438\u0442",
+					"\u041d\u0435\u0437\u0435\u0440\u0438\u0442\u043e\u0432\u0438\u0439 \u0449\u0438\u0442",
+					"\u041d\u0435\u0437\u0435\u0440\u0438\u0442\u043e\u0432\u044b\u0439 \u0449\u0438\u0442\u044a",
+					"\u30cd\u30b6\u30e9\u30a4\u30c8\u306e\u76fe"
 			)
 	);
 	public static final Item PHOTO_PRINT = Registry.register(
@@ -322,7 +414,32 @@ public final class ModItems {
 			entries.prepend(CAMERA);
 			entries.prepend(DRONE);
 			entries.prepend(COPPER_GOGGLES);
+			entries.prepend(NETHERITE_SHIELD);
+			entries.prepend(DIAMOND_SHIELD);
+			entries.prepend(GOLDEN_SHIELD);
+			entries.prepend(COPPER_SHIELD);
+			entries.prepend(STONE_SHIELD);
+			entries.prepend(WOODEN_SHIELD);
 			entries.prepend(BITCOIN);
 		});
+	}
+
+	private static Item.Properties shieldProperties(ResourceKey<Item> key, int durability) {
+		Item.Properties properties = new Item.Properties()
+				.setId(key)
+				.durability(durability);
+		copyShieldComponent(properties, DataComponents.BANNER_PATTERNS);
+		copyShieldComponent(properties, DataComponents.REPAIRABLE);
+		copyShieldComponent(properties, DataComponents.EQUIPPABLE);
+		copyShieldComponent(properties, DataComponents.BLOCKS_ATTACKS);
+		copyShieldComponent(properties, DataComponents.BREAK_SOUND);
+		return properties;
+	}
+
+	private static <T> void copyShieldComponent(Item.Properties properties, DataComponentType<T> type) {
+		T value = Items.SHIELD.components().get(type);
+		if (value != null) {
+			properties.component(type, value);
+		}
 	}
 }

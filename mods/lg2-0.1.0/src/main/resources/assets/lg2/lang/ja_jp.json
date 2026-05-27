@@ -86,5 +86,11 @@
   "container.lg2.cartel_disguise.previous": "前へ",
   "container.lg2.cartel_disguise.next": "次へ",
   "container.lg2.cartel_disguise.empty": "プレイヤーがいません",
-  "item.lg2.travka": "トラフカ"
+  "item.lg2.travka": "トラフカ",
+  "item.lg2.wooden_shield": "木の盾",
+  "item.lg2.stone_shield": "石の盾",
+  "item.lg2.copper_shield": "銅の盾",
+  "item.lg2.golden_shield": "金の盾",
+  "item.lg2.diamond_shield": "ダイヤモンドの盾",
+  "item.lg2.netherite_shield": "ネザライトの盾"
 }
