@@ -68,7 +68,10 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
+import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
+import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
+import net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket;
 import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundOpenBookPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
@@ -506,7 +509,8 @@ public final class ServerRaceSystem {
 	private static final double GENNADIY_DONKEY_BULLET_VISUAL_SPEED_BLOCKS = 4.0D;
 	private static final double GENNADIY_DONKEY_BULLET_PARTICLE_SPEED = 1.65D;
 	private static final double GENNADIY_DONKEY_BULLET_SMOKE_PARTICLE_SPEED = 0.55D;
-	private static final int GENNADIY_DONKEY_BULLET_MAX_HURT_ANIMATION_TICKS = 2;
+	private static final int GENNADIY_DONKEY_BULLET_MAX_HURT_ANIMATION_TICKS = 0;
+	private static final long GENNADIY_DONKEY_BULLET_FEEDBACK_SUPPRESSION_TICKS = 3L;
 	private static final double GENNADIY_DONKEY_SHOOT_SOUND_RANGE_BLOCKS = 16.0D;
 	private static final float GENNADIY_DONKEY_SHOOT_SOUND_VOLUME = 1.0F;
 	private static final float GENNADIY_DONKEY_SHOOT_SOUND_PITCH = 1.0F;
@@ -726,6 +730,8 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, GennadiyDonkeyState> GENNADIY_DONKEY_STATES = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> GENNADIY_DONKEY_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final List<GennadiyDonkeyBulletVisual> GENNADIY_DONKEY_BULLET_VISUALS = new ArrayList<>();
+	private static final ThreadLocal<Integer> GENNADIY_DONKEY_SUPPRESSED_HURT_ANIMATION_ENTITY_ID = new ThreadLocal<>();
+	private static final Map<UUID, Long> GENNADIY_DONKEY_SUPPRESSED_DAMAGE_FEEDBACK_UNTIL = new LinkedHashMap<>();
 	private static final Map<UUID, GennadiyDefenseSession> GENNADIY_DEFENSE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> GENNADIY_DEFENSE_FSIT_SEATS = new LinkedHashMap<>();
 	private static final List<GennadiyDefenseWaveVisual> GENNADIY_DEFENSE_WAVE_VISUALS = new ArrayList<>();
@@ -971,6 +977,7 @@ public final class ServerRaceSystem {
 			GENNADIY_DONKEY_STATES.clear();
 			GENNADIY_DONKEY_OWNER_BY_ENTITY.clear();
 			GENNADIY_DONKEY_BULLET_VISUALS.clear();
+			GENNADIY_DONKEY_SUPPRESSED_DAMAGE_FEEDBACK_UNTIL.clear();
 			GENNADIY_DEFENSE_SESSIONS.clear();
 			GENNADIY_DEFENSE_FSIT_SEATS.clear();
 			GENNADIY_DEFENSE_WAVE_VISUALS.clear();
@@ -8775,11 +8782,28 @@ public final class ServerRaceSystem {
 		}
 		Arrow arrow = new Arrow(level, donkey, new ItemStack(Items.ARROW), new ItemStack(Items.CROSSBOW));
 		arrow.setPos(sourcePos);
-		target.invulnerableTime = 0;
-		target.hurtServer(level, level.damageSources().arrow(arrow, donkey), (float) damage);
-		softenGennadiyDonkeyBulletHurtAnimation(target);
-		target.invulnerableTime = 0;
-		arrow.discard();
+		Integer previousSuppressedEntityId = GENNADIY_DONKEY_SUPPRESSED_HURT_ANIMATION_ENTITY_ID.get();
+		GENNADIY_DONKEY_SUPPRESSED_HURT_ANIMATION_ENTITY_ID.set(target.getId());
+		Vec3 previousDelta = target.getDeltaMovement();
+		boolean previousHurtMarked = target.hurtMarked;
+		if (target instanceof ServerPlayer targetPlayer) {
+			suppressGennadiyDonkeyBulletDamageFeedback(targetPlayer, level.getGameTime());
+		}
+		try {
+			target.invulnerableTime = 0;
+			target.hurtServer(level, level.damageSources().arrow(arrow, donkey), (float) damage);
+			target.setDeltaMovement(previousDelta);
+			target.hurtMarked = previousHurtMarked;
+			softenGennadiyDonkeyBulletHurtAnimation(target);
+			target.invulnerableTime = 0;
+		} finally {
+			if (previousSuppressedEntityId == null) {
+				GENNADIY_DONKEY_SUPPRESSED_HURT_ANIMATION_ENTITY_ID.remove();
+			} else {
+				GENNADIY_DONKEY_SUPPRESSED_HURT_ANIMATION_ENTITY_ID.set(previousSuppressedEntityId);
+			}
+			arrow.discard();
+		}
 	}
 
 	private static void softenGennadiyDonkeyBulletHurtAnimation(LivingEntity target) {
@@ -8788,6 +8812,52 @@ public final class ServerRaceSystem {
 		}
 		target.hurtTime = Math.min(target.hurtTime, GENNADIY_DONKEY_BULLET_MAX_HURT_ANIMATION_TICKS);
 		target.hurtDuration = Math.min(target.hurtDuration, GENNADIY_DONKEY_BULLET_MAX_HURT_ANIMATION_TICKS);
+	}
+
+	private static void suppressGennadiyDonkeyBulletDamageFeedback(ServerPlayer target, long nowTick) {
+		if (target == null) {
+			return;
+		}
+		GENNADIY_DONKEY_SUPPRESSED_DAMAGE_FEEDBACK_UNTIL.put(
+				target.getUUID(),
+				nowTick + GENNADIY_DONKEY_BULLET_FEEDBACK_SUPPRESSION_TICKS
+		);
+	}
+
+	public static boolean shouldSuppressGennadiyDonkeyBulletHurtAnimation(ServerPlayer receiver, Packet<?> packet) {
+		if (receiver == null || packet == null) {
+			return false;
+		}
+		Integer immediateSuppressedEntityId = GENNADIY_DONKEY_SUPPRESSED_HURT_ANIMATION_ENTITY_ID.get();
+		boolean active = immediateSuppressedEntityId != null && receiver.getId() == immediateSuppressedEntityId;
+		if (!active && receiver.level() instanceof ServerLevel level) {
+			Long suppressedUntilTick = GENNADIY_DONKEY_SUPPRESSED_DAMAGE_FEEDBACK_UNTIL.get(receiver.getUUID());
+			if (suppressedUntilTick != null) {
+				long nowTick = level.getGameTime();
+				if (nowTick <= suppressedUntilTick) {
+					active = true;
+				} else {
+					GENNADIY_DONKEY_SUPPRESSED_DAMAGE_FEEDBACK_UNTIL.remove(receiver.getUUID());
+				}
+			}
+		}
+		if (!active) {
+			return false;
+		}
+		int receiverId = receiver.getId();
+		if (packet instanceof ClientboundHurtAnimationPacket hurtAnimationPacket) {
+			return hurtAnimationPacket.id() == receiverId;
+		}
+		if (packet instanceof ClientboundDamageEventPacket damageEventPacket) {
+			return damageEventPacket.entityId() == receiverId;
+		}
+		if (packet instanceof ClientboundSetEntityMotionPacket motionPacket) {
+			return motionPacket.getId() == receiverId;
+		}
+		if (packet instanceof ClientboundEntityEventPacket entityEventPacket) {
+			return entityEventPacket.getEntity(receiver.level()) == receiver;
+		}
+		return false;
 	}
 
 	private static boolean canGennadiyBulletHit(ServerPlayer owner, Donkey donkey, Entity entity) {
@@ -12433,7 +12503,7 @@ public final class ServerRaceSystem {
 		stack.set(
 				DataComponents.CUSTOM_NAME,
 				Component.literal(localizeWomanShnyagaMenuText(viewer, "select"))
-						.withStyle(style -> style.withColor(0xFF6F9A).withItalic(false).withBold(true))
+						.withStyle(style -> style.withColor(0xFF0000).withItalic(false).withBold(true))
 		);
 		return stack;
 	}
