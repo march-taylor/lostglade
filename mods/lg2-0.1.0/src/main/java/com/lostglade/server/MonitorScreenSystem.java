@@ -928,6 +928,7 @@ public final class MonitorScreenSystem {
 		}
 		enqueueCameraRefresh(level, component.runtimeKey());
 		refreshConnectedSpeakersNow(server, component);
+		MonitorMaxRuntime.onDeviceNetworkChanged(server, component.runtimeKey());
 		if (hasNearbyMediaViewer(level, component)) {
 			requestRuntimeRender(server, component.runtimeKey());
 		}

@@ -131,11 +131,14 @@ record MaxVisualSnapshot(
 		List<MaxContactSnapshot> contacts,
 		MaxCallVisualSnapshot call,
 		List<MaxAvatarCandidateSnapshot> avatarCandidates,
+		List<MaxRingtoneCandidateSnapshot> ringtoneCandidates,
 		boolean avatarPickerOpen,
+		boolean ringtonePickerOpen,
+		boolean ringtonePreviewPlaying,
 		String statusText
 ) {
 	boolean dynamic() {
-		return this.call != null && this.call.dynamic();
+		return (this.call != null && this.call.dynamic()) || this.ringtonePreviewPlaying;
 	}
 }
 
@@ -162,9 +165,10 @@ record MaxCallVisualSnapshot(
 		int microphoneCount,
 		int selectedMicrophoneIndex,
 		boolean menuOpen,
+		boolean cameraPickerOpen,
+		boolean contactPickerOpen,
 		boolean selfFocused,
 		boolean peerFocused,
-		boolean focusFillMode,
 		long elapsedMillis
 ) {
 	boolean dynamic() {
@@ -190,6 +194,17 @@ record MaxAvatarCandidateSnapshot(
 		String url,
 		String localMediaKey,
 		BufferedImage preview
+) {
+}
+
+record MaxRingtoneCandidateSnapshot(
+		String title,
+		String subtitle,
+		String url,
+		String localMediaKey,
+		boolean selected,
+		boolean playing,
+		float timelineFraction
 ) {
 }
 
@@ -433,6 +448,9 @@ enum PlayerUiIcon {
 	TRASH("/assets/lg2/textures/monitor/ui_icons/trash.png"),
 	WALLPAPER("/assets/lg2/textures/monitor/ui_icons/wallpaper.png"),
 	CHECK("/assets/lg2/textures/monitor/ui_icons/check.png"),
+	PLAY("/assets/lg2/textures/monitor/ui_icons/play.png"),
+	PAUSE("/assets/lg2/textures/monitor/ui_icons/pause.png"),
+	FILE_MUSIC("/assets/lg2/textures/monitor/ui_icons/file_music.png"),
 	FIT("/assets/lg2/textures/monitor/ui_icons/fit.png"),
 	FILL("/assets/lg2/textures/monitor/ui_icons/fill.png"),
 	STRETCH("/assets/lg2/textures/monitor/ui_icons/stretch.png"),
@@ -447,7 +465,7 @@ enum PlayerUiIcon {
 	VIDEO_CAMERA("/assets/lg2/textures/monitor/ui_icons/video_camera.png"),
 	VIDEO_CAMERA_OFF("/assets/lg2/textures/monitor/ui_icons/video_camera_off.png"),
 	DEVICE_SELECT("/assets/lg2/textures/monitor/ui_icons/device_select.png"),
-	FULLSCREEN("/assets/lg2/textures/monitor/ui_icons/fullscreen.png"),
+	CONTACT_ADD("/assets/lg2/textures/monitor/ui_icons/contact_add.png"),
 	FULLSCREEN_EXIT("/assets/lg2/textures/monitor/ui_icons/fullscreen_exit.png"),
 	SIGNAL("/assets/lg2/textures/monitor/ui_icons/signal.png"),
 	OFFLINE("/assets/lg2/textures/monitor/ui_icons/offline.png"),

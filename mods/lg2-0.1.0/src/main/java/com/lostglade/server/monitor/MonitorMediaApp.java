@@ -278,6 +278,11 @@ public final class MonitorMediaApp implements MonitorApp {
 		return probeAudio(savedPath.getFileName().toString(), savedPath.toAbsolutePath().toString(), progress);
 	}
 
+	public static Path savedGalleryMediaFile(String mediaKey) {
+		Path savedPath = savedGalleryMediaPath(mediaKey);
+		return savedPath != null && Files.isRegularFile(savedPath) ? savedPath : null;
+	}
+
 	public static void setCacheDirectory(Path directory) {
 		if (directory != null) {
 			cacheDirectory = directory;

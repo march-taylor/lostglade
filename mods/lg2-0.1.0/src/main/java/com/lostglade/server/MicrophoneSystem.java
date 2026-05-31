@@ -218,7 +218,8 @@ public final class MicrophoneSystem {
 			return true;
 		}
 
-		boolean routedToScreen = MonitorScreenSystem.hasPoweredConnectedMonitor(level, key.pos());
+		Set<ScreenRuntimeKey> connectedScreens = connectedPoweredScreenKeys(level, key.pos());
+		boolean routedToScreen = !connectedScreens.isEmpty();
 		List<BlockPos> connectedSpeakers = routedToScreen ? List.of() : SpeakerSystem.findConnectedPoweredSpeakerPositions(level, key.pos());
 		if (connectedSpeakers.isEmpty() && !routedToScreen) {
 			stopRuntime(key);
@@ -226,10 +227,28 @@ public final class MicrophoneSystem {
 		}
 
 		MicrophoneRuntime runtime = ACTIVE_MICROPHONES.computeIfAbsent(key, MicrophoneRuntime::new);
-		if (!runtime.update(level, connectedSpeakers, routedToScreen, voicechatApi, voicechatServerApi)) {
+		if (!runtime.update(level, connectedSpeakers, connectedScreens, voicechatApi, voicechatServerApi)) {
 			stopRuntime(key);
 		}
 		return true;
+	}
+
+	private static Set<ScreenRuntimeKey> connectedPoweredScreenKeys(ServerLevel level, BlockPos microphonePos) {
+		if (level == null || microphonePos == null) {
+			return Set.of();
+		}
+		Map<ScreenRuntimeKey, ScreenComponent> components = MonitorScreenWireConnectivity.collectConnectedComponentsForWireSource(level, microphonePos);
+		if (components.isEmpty()) {
+			return Set.of();
+		}
+		Set<ScreenRuntimeKey> connected = new HashSet<>();
+		for (Map.Entry<ScreenRuntimeKey, ScreenComponent> entry : components.entrySet()) {
+			ScreenComponent component = entry.getValue();
+			if (entry.getKey() != null && component != null && component.powered()) {
+				connected.add(entry.getKey());
+			}
+		}
+		return connected.isEmpty() ? Set.of() : Set.copyOf(connected);
 	}
 
 	private static boolean hasMicrophonePower(ServerLevel level, BlockPos pos) {
@@ -291,6 +310,12 @@ public final class MicrophoneSystem {
 		}
 	}
 
+	public static void onMaxCallStateChanged(MinecraftServer server) {
+		if (server != null) {
+			synchronizeCallRoutes(server);
+		}
+	}
+
 	private static List<Map.Entry<MicrophoneKey, MicrophoneRuntime>> connectedScreenMicrophones(MinecraftServer server, ScreenRuntimeKey screenKey) {
 		if (server == null || screenKey == null) {
 			return List.of();
@@ -299,7 +324,7 @@ public final class MicrophoneSystem {
 		for (Map.Entry<MicrophoneKey, MicrophoneRuntime> entry : ACTIVE_MICROPHONES.entrySet()) {
 			MicrophoneKey key = entry.getKey();
 			MicrophoneRuntime runtime = entry.getValue();
-			if (key == null || runtime == null || !runtime.captureEnabled || !isMicrophoneConnectedToScreen(server, key, screenKey)) {
+			if (key == null || runtime == null || !runtime.captureEnabled || !runtime.connectedScreenKeys.contains(screenKey)) {
 				continue;
 			}
 			microphones.add(entry);
@@ -317,14 +342,6 @@ public final class MicrophoneSystem {
 			return "";
 		}
 		return key.dimension().identifier() + ":" + key.pos().getX() + ":" + key.pos().getY() + ":" + key.pos().getZ();
-	}
-
-	private static boolean isMicrophoneConnectedToScreen(MinecraftServer server, MicrophoneKey microphoneKey, ScreenRuntimeKey screenKey) {
-		ServerLevel level = server.getLevel(microphoneKey.dimension());
-		if (level == null || !level.hasChunkAt(microphoneKey.pos())) {
-			return false;
-		}
-		return MonitorScreenWireConnectivity.collectConnectedComponentsForWireSource(level, microphoneKey.pos()).containsKey(screenKey);
 	}
 
 	private static List<SpeakerOutputTarget> connectedScreenSpeakers(MinecraftServer server, ScreenRuntimeKey screenKey) {
@@ -460,18 +477,20 @@ public final class MicrophoneSystem {
 		private final ConcurrentHashMap<BlockPos, MicrophoneOutputRuntime> outputs;
 		private volatile boolean closed;
 		private volatile boolean captureEnabled;
+		private volatile Set<ScreenRuntimeKey> connectedScreenKeys;
 		private volatile double captureDistanceSq;
 
 		private MicrophoneRuntime(MicrophoneKey key) {
 			this.key = key;
 			this.feed = new SharedMicrophoneFeed();
 			this.outputs = new ConcurrentHashMap<>();
+			this.connectedScreenKeys = Set.of();
 		}
 
 		private boolean update(
 				ServerLevel level,
 				List<BlockPos> connectedSpeakers,
-				boolean routedToScreen,
+				Set<ScreenRuntimeKey> connectedScreens,
 				VoicechatApi voicechatApi,
 				VoicechatServerApi voicechatServerApi
 		) {
@@ -480,7 +499,8 @@ public final class MicrophoneSystem {
 			}
 			double captureDistance = Math.max(MIN_CAPTURE_DISTANCE, voicechatApi.getVoiceChatDistance());
 			this.captureDistanceSq = captureDistance * captureDistance;
-			this.captureEnabled = routedToScreen || !connectedSpeakers.isEmpty();
+			this.connectedScreenKeys = connectedScreens == null || connectedScreens.isEmpty() ? Set.of() : Set.copyOf(connectedScreens);
+			this.captureEnabled = !this.connectedScreenKeys.isEmpty() || !connectedSpeakers.isEmpty();
 			synchronizeOutputs(level, connectedSpeakers, voicechatApi, voicechatServerApi);
 			return true;
 		}
@@ -552,6 +572,7 @@ public final class MicrophoneSystem {
 		private void close() {
 			this.closed = true;
 			this.captureEnabled = false;
+			this.connectedScreenKeys = Set.of();
 			for (MicrophoneOutputRuntime runtime : this.outputs.values()) {
 				runtime.close();
 			}
