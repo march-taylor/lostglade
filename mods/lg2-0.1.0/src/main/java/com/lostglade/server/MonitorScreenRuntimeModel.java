@@ -157,6 +157,8 @@ record MaxCallVisualSnapshot(
 		BufferedImage peerAvatarFrame,
 		BufferedImage localPreviewFrame,
 		BufferedImage remoteFrame,
+		List<MaxCallParticipantSnapshot> participants,
+		String focusedParticipantCode,
 		String statusText,
 		boolean cameraEnabled,
 		boolean microphoneEnabled,
@@ -175,8 +177,20 @@ record MaxCallVisualSnapshot(
 		return this.phase == MaxCallPhase.OUTGOING
 				|| this.phase == MaxCallPhase.INCOMING
 				|| this.phase == MaxCallPhase.ACTIVE
-				|| this.remoteFrame != null;
+				|| this.remoteFrame != null
+				|| this.participants.stream().anyMatch(participant -> participant != null && participant.videoFrame() != null);
 	}
+}
+
+record MaxCallParticipantSnapshot(
+		String code,
+		BufferedImage avatarFrame,
+		BufferedImage videoFrame,
+		boolean self,
+		boolean cameraEnabled,
+		boolean microphoneEnabled,
+		boolean ringing
+) {
 }
 
 record MaxCameraOptionSnapshot(

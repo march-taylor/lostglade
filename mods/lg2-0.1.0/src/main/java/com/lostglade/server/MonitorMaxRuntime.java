@@ -28,6 +28,7 @@ import net.minecraft.world.phys.Vec3;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Font;
+import java.awt.FontMetrics;
 import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.Shape;
@@ -318,12 +319,15 @@ final class MonitorMaxRuntime {
 				return true;
 			}
 			if (menuVisible) {
-				if (focusedPeer && maxCallSelfTileRect(layout, state).contains(touchPoint.x(), touchPoint.y())) {
-					focusCallParticipant(server, component.runtimeKey(), true);
-					return true;
-				}
-				if (focusedSelf && maxCallPeerTileRect(layout, state).contains(touchPoint.x(), touchPoint.y())) {
-					focusCallParticipant(server, component.runtimeKey(), false);
+				List<ScreenRuntimeKey> miniParticipants = callMiniParticipantKeys(component.runtimeKey(), state, call);
+				int miniIndex = maxCallMiniParticipantIndexAt(layout, miniParticipants.size(), touchPoint);
+				if (miniIndex >= 0 && miniIndex < miniParticipants.size()) {
+					ScreenRuntimeKey selected = miniParticipants.get(miniIndex);
+					if (Objects.equals(selected, component.runtimeKey())) {
+						focusCallParticipant(server, component.runtimeKey(), true);
+					} else {
+						focusCallParticipant(server, component.runtimeKey(), selected);
+					}
 					return true;
 				}
 			}
@@ -333,12 +337,15 @@ final class MonitorMaxRuntime {
 			}
 			return true;
 		}
-		if (maxCallPeerTileRect(layout, state).contains(touchPoint.x(), touchPoint.y())) {
-			focusCallParticipant(server, component.runtimeKey(), false);
-			return true;
-		}
-		if (maxCallSelfTileRect(layout, state).contains(touchPoint.x(), touchPoint.y())) {
-			focusCallParticipant(server, component.runtimeKey(), true);
+		List<ScreenRuntimeKey> participants = call.participants();
+		int participantIndex = maxCallParticipantIndexAt(layout, participants.size(), menuVisible, touchPoint);
+		if (participantIndex >= 0 && participantIndex < participants.size()) {
+			ScreenRuntimeKey selected = participants.get(participantIndex);
+			if (Objects.equals(selected, component.runtimeKey())) {
+				focusCallParticipant(server, component.runtimeKey(), true);
+			} else {
+				focusCallParticipant(server, component.runtimeKey(), selected);
+			}
 			return true;
 		}
 		toggleCallMenu(server, component.runtimeKey());
@@ -784,6 +791,7 @@ final class MonitorMaxRuntime {
 		boolean contactPickerOpen;
 		boolean focusSelf;
 		boolean focusPeer;
+		ScreenRuntimeKey focusedPeerKey;
 		int selectedMicrophoneIndex;
 		BufferedImage remoteFrame;
 		synchronized (state) {
@@ -794,8 +802,13 @@ final class MonitorMaxRuntime {
 			contactPickerOpen = state.callContactPickerOpen;
 			focusSelf = state.focusSelf;
 			focusPeer = state.focusPeer;
+			focusedPeerKey = state.focusedPeerKey;
 			selectedMicrophoneIndex = state.selectedMicrophoneIndex;
 			remoteFrame = state.remoteFrame;
+		}
+		if (focusPeer && focusedPeerKey != null && call.isParticipant(focusedPeerKey) && !Objects.equals(focusedPeerKey, component.runtimeKey())) {
+			peerKey = focusedPeerKey;
+			peerState = MAX_STATES.get(peerKey);
 		}
 		if (peerState != null) {
 			synchronized (peerState) {
@@ -829,6 +842,8 @@ final class MonitorMaxRuntime {
 		} else {
 			RendererBotCameraSystem.stopLiveStream(maxVideoStreamOwnerId(component.runtimeKey()));
 		}
+		List<MaxCallParticipantSnapshot> participants = captureCallParticipants(component.runtimeKey(), state, call, peerKey, localPreview, remoteFrame);
+		String focusedParticipantCode = focusSelf ? state.accountCode : focusPeer ? peerCode : "";
 		String status = switch (phase) {
 			case INCOMING -> "Входящий вызов";
 			case OUTGOING -> "Ожидание ответа";
@@ -841,6 +856,8 @@ final class MonitorMaxRuntime {
 				peerAvatar,
 				localPreview,
 				remoteFrame,
+				participants,
+				focusedParticipantCode,
 				status,
 				cameraEnabled,
 				microphoneEnabled,
@@ -855,6 +872,59 @@ final class MonitorMaxRuntime {
 				focusPeer,
 				phase == MaxCallPhase.ACTIVE ? Math.max(0L, System.currentTimeMillis() - call.acceptedAtMillis) : 0L
 		);
+	}
+
+	private static List<MaxCallParticipantSnapshot> captureCallParticipants(
+			ScreenRuntimeKey selfKey,
+			MaxRuntimeState selfState,
+			MaxCallSession call,
+			ScreenRuntimeKey videoPeerKey,
+			BufferedImage localPreview,
+			BufferedImage remoteFrame
+	) {
+		if (selfKey == null || selfState == null || call == null) {
+			return List.of();
+		}
+		List<ScreenRuntimeKey> participantKeys = call.participants();
+		if (participantKeys.isEmpty()) {
+			return List.of();
+		}
+		List<MaxCallParticipantSnapshot> participants = new ArrayList<>(participantKeys.size());
+		for (ScreenRuntimeKey participantKey : participantKeys) {
+			if (participantKey == null) {
+				continue;
+			}
+			boolean self = Objects.equals(participantKey, selfKey);
+			MaxRuntimeState participantState = self ? selfState : MAX_STATES.get(participantKey);
+			String code = call.participantCode(participantKey);
+			BufferedImage avatar = null;
+			BufferedImage video = null;
+			boolean cameraEnabled = false;
+			boolean microphoneEnabled = true;
+			if (participantState != null) {
+				synchronized (participantState) {
+					code = participantState.accountCode == null || participantState.accountCode.isBlank() ? code : participantState.accountCode;
+					avatar = participantState.avatarFrame;
+					cameraEnabled = participantState.cameraEnabled;
+					microphoneEnabled = participantState.microphoneEnabled;
+				}
+			}
+			if (self) {
+				video = localPreview;
+			} else if (Objects.equals(participantKey, videoPeerKey)) {
+				video = remoteFrame;
+			}
+			participants.add(new MaxCallParticipantSnapshot(
+					code,
+					avatar,
+					video,
+					self,
+					cameraEnabled && (self || video != null),
+					microphoneEnabled,
+					call.isRinging(participantKey)
+			));
+		}
+		return participants.isEmpty() ? List.of() : List.copyOf(participants);
 	}
 
 	private static List<MaxContactSnapshot> captureContactSnapshots(MinecraftServer server, MaxRuntimeState state, ScreenRuntimeKey selfKey) {
@@ -947,6 +1017,7 @@ final class MonitorMaxRuntime {
 			callerState.callContactPickerOpen = false;
 			callerState.focusPeer = false;
 			callerState.focusSelf = false;
+			callerState.focusedPeerKey = null;
 			callerState.version++;
 		}
 		MaxRuntimeState calleeState = ensureState(server, calleeComponent);
@@ -957,6 +1028,7 @@ final class MonitorMaxRuntime {
 				calleeState.callContactPickerOpen = false;
 				calleeState.focusPeer = false;
 				calleeState.focusSelf = false;
+				calleeState.focusedPeerKey = null;
 				calleeState.version++;
 			}
 		}
@@ -1012,6 +1084,7 @@ final class MonitorMaxRuntime {
 				inviteeState.callContactPickerOpen = false;
 				inviteeState.focusPeer = false;
 				inviteeState.focusSelf = false;
+				inviteeState.focusedPeerKey = null;
 				inviteeState.version++;
 			}
 		}
@@ -1135,6 +1208,7 @@ final class MonitorMaxRuntime {
 			state.callContactPickerOpen = false;
 			state.focusPeer = false;
 			state.focusSelf = false;
+			state.focusedPeerKey = null;
 			state.version++;
 		}
 	}
@@ -1202,6 +1276,42 @@ final class MonitorMaxRuntime {
 		}
 	}
 
+	private static ScreenRuntimeKey focusedCallParticipantKey(ScreenRuntimeKey selfKey, MaxRuntimeState state, MaxCallSession call) {
+		if (selfKey == null || state == null || call == null) {
+			return null;
+		}
+		synchronized (state) {
+			if (state.focusSelf) {
+				return selfKey;
+			}
+			if (state.focusPeer && state.focusedPeerKey != null && call.isParticipant(state.focusedPeerKey)) {
+				return state.focusedPeerKey;
+			}
+			if (state.focusPeer) {
+				return call.peer(selfKey);
+			}
+		}
+		return null;
+	}
+
+	private static List<ScreenRuntimeKey> callMiniParticipantKeys(ScreenRuntimeKey selfKey, MaxRuntimeState state, MaxCallSession call) {
+		if (call == null) {
+			return List.of();
+		}
+		ScreenRuntimeKey focusedKey = focusedCallParticipantKey(selfKey, state, call);
+		List<ScreenRuntimeKey> participants = call.participants();
+		if (participants.isEmpty()) {
+			return List.of();
+		}
+		List<ScreenRuntimeKey> miniParticipants = new ArrayList<>(participants.size());
+		for (ScreenRuntimeKey participant : participants) {
+			if (!Objects.equals(participant, focusedKey)) {
+				miniParticipants.add(participant);
+			}
+		}
+		return List.copyOf(miniParticipants);
+	}
+
 	private static void toggleCallMenu(MinecraftServer server, ScreenRuntimeKey key) {
 		MaxRuntimeState state = MAX_STATES.get(key);
 		if (state == null) {
@@ -1222,6 +1332,22 @@ final class MonitorMaxRuntime {
 		synchronized (state) {
 			state.focusSelf = self;
 			state.focusPeer = !self;
+			state.focusedPeerKey = null;
+			state.callMenuOpen = true;
+			state.version++;
+		}
+		requestRuntimeRender(server, key);
+	}
+
+	private static void focusCallParticipant(MinecraftServer server, ScreenRuntimeKey key, ScreenRuntimeKey participantKey) {
+		MaxRuntimeState state = MAX_STATES.get(key);
+		if (state == null || participantKey == null) {
+			return;
+		}
+		synchronized (state) {
+			state.focusSelf = false;
+			state.focusPeer = true;
+			state.focusedPeerKey = participantKey;
 			state.callMenuOpen = true;
 			state.version++;
 		}
@@ -1236,6 +1362,7 @@ final class MonitorMaxRuntime {
 		synchronized (state) {
 			state.focusSelf = false;
 			state.focusPeer = false;
+			state.focusedPeerKey = null;
 			state.callMenuOpen = true;
 			state.version++;
 		}
@@ -2147,62 +2274,26 @@ final class MonitorMaxRuntime {
 		UiRect canvas = mediaCanvasRect(layout);
 		graphics.setPaint(new GradientPaint(canvas.x(), canvas.y(), new Color(10, 12, 18), canvas.right(), canvas.bottom(), new Color(20, 26, 36)));
 		graphics.fillRect(canvas.x(), canvas.y(), canvas.width(), canvas.height());
+		List<MaxCallParticipantSnapshot> participants = maxCallParticipants(state, call);
 		boolean focused = call.selfFocused() || call.peerFocused();
 		if (focused) {
-			boolean self = call.selfFocused();
+			MaxCallParticipantSnapshot focusedParticipant = maxCallFocusedParticipant(state, call, participants);
 			UiRect focusedRect = maxCallFocusedTileRect(layout);
-			drawMaxParticipantTile(
-					graphics,
-					layout,
-					focusedRect,
-					self ? displayAccountCode(state.accountCode()) : displayAccountCode(call.peerCode()),
-					self ? state.avatarFrame() : call.peerAvatarFrame(),
-					self ? call.localPreviewFrame() : call.remoteFrame(),
-					true,
-					self ? call.cameraEnabled() : call.remoteFrame() != null,
-					self ? call.microphoneEnabled() : true,
-					MediaScaleMode.FILL
-			);
+			drawMaxParticipantTile(graphics, layout, focusedRect, focusedParticipant, true, MediaScaleMode.FILL);
 			if (call.menuOpen()) {
-				UiRect mini = maxCallMiniParticipantRect(layout);
-				drawMaxParticipantTile(
-						graphics,
-						layout,
-						mini,
-						self ? displayAccountCode(call.peerCode()) : displayAccountCode(state.accountCode()),
-						self ? call.peerAvatarFrame() : state.avatarFrame(),
-						self ? call.remoteFrame() : call.localPreviewFrame(),
-						false,
-						self ? call.remoteFrame() != null : call.cameraEnabled(),
-						self ? true : call.microphoneEnabled(),
-						MediaScaleMode.FILL
-				);
+				List<MaxCallParticipantSnapshot> miniParticipants = participants.stream()
+						.filter(participant -> !sameMaxParticipant(participant, focusedParticipant))
+						.toList();
+				int count = Math.min(miniParticipants.size(), maxCallMiniParticipantCapacity(layout));
+				for (int index = 0; index < count; index++) {
+					drawMaxParticipantTile(graphics, layout, maxCallMiniParticipantRect(layout, index), miniParticipants.get(index), false, MediaScaleMode.FILL);
+				}
 			}
 		} else {
-			drawMaxParticipantTile(
-					graphics,
-					layout,
-					maxCallPeerTileRect(layout, call),
-					displayAccountCode(call.peerCode()),
-					call.peerAvatarFrame(),
-					call.remoteFrame(),
-					false,
-					call.remoteFrame() != null,
-					true,
-					MediaScaleMode.FILL
-			);
-			drawMaxParticipantTile(
-					graphics,
-					layout,
-					maxCallSelfTileRect(layout, call),
-					displayAccountCode(state.accountCode()),
-					state.avatarFrame(),
-					call.localPreviewFrame(),
-					false,
-					call.cameraEnabled(),
-					call.microphoneEnabled(),
-					MediaScaleMode.FILL
-			);
+			int count = participants.size();
+			for (int index = 0; index < count; index++) {
+				drawMaxParticipantTile(graphics, layout, maxCallParticipantTileRect(layout, count, index, call.menuOpen()), participants.get(index), false, MediaScaleMode.FILL);
+			}
 		}
 		if (call.menuOpen()) {
 			drawMaxCallMenu(graphics, layout, call);
@@ -2212,6 +2303,90 @@ final class MonitorMaxRuntime {
 		} else if (call.contactPickerOpen()) {
 			drawMaxContactPicker(graphics, layout, state, call);
 		}
+	}
+
+	private static List<MaxCallParticipantSnapshot> maxCallParticipants(MaxVisualSnapshot state, MaxCallVisualSnapshot call) {
+		if (call.participants() != null && !call.participants().isEmpty()) {
+			return call.participants();
+		}
+		List<MaxCallParticipantSnapshot> fallback = new ArrayList<>(2);
+		fallback.add(new MaxCallParticipantSnapshot(
+				state.accountCode(),
+				state.avatarFrame(),
+				call.localPreviewFrame(),
+				true,
+				call.cameraEnabled(),
+				call.microphoneEnabled(),
+				false
+		));
+		if (call.peerCode() != null && !call.peerCode().isBlank()) {
+			fallback.add(new MaxCallParticipantSnapshot(
+					call.peerCode(),
+					call.peerAvatarFrame(),
+					call.remoteFrame(),
+					false,
+					call.remoteFrame() != null,
+					true,
+					false
+			));
+		}
+		return List.copyOf(fallback);
+	}
+
+	private static MaxCallParticipantSnapshot maxCallFocusedParticipant(MaxVisualSnapshot state, MaxCallVisualSnapshot call, List<MaxCallParticipantSnapshot> participants) {
+		String focusedCode = call.focusedParticipantCode();
+		if (focusedCode != null && !focusedCode.isBlank()) {
+			for (MaxCallParticipantSnapshot participant : participants) {
+				if (participant != null && Objects.equals(participant.code(), focusedCode)) {
+					return participant;
+				}
+			}
+		}
+		if (call.selfFocused()) {
+			for (MaxCallParticipantSnapshot participant : participants) {
+				if (participant != null && participant.self()) {
+					return participant;
+				}
+			}
+		}
+		for (MaxCallParticipantSnapshot participant : participants) {
+			if (participant != null && !participant.self()) {
+				return participant;
+			}
+		}
+		return new MaxCallParticipantSnapshot(state.accountCode(), state.avatarFrame(), call.localPreviewFrame(), true, call.cameraEnabled(), call.microphoneEnabled(), false);
+	}
+
+	private static boolean sameMaxParticipant(MaxCallParticipantSnapshot left, MaxCallParticipantSnapshot right) {
+		if (left == null || right == null) {
+			return false;
+		}
+		return left.self() == right.self() && Objects.equals(left.code(), right.code());
+	}
+
+	private static void drawMaxParticipantTile(
+			Graphics2D graphics,
+			UiLayout layout,
+			UiRect rect,
+			MaxCallParticipantSnapshot participant,
+			boolean focused,
+			MediaScaleMode scaleMode
+	) {
+		if (participant == null) {
+			return;
+		}
+		drawMaxParticipantTile(
+				graphics,
+				layout,
+				rect,
+				displayAccountCode(participant.code()),
+				participant.avatarFrame(),
+				participant.videoFrame(),
+				focused,
+				participant.cameraEnabled(),
+				participant.microphoneEnabled(),
+				scaleMode
+		);
 	}
 
 	private static void drawMaxParticipantTile(
@@ -2226,6 +2401,9 @@ final class MonitorMaxRuntime {
 			boolean microphoneEnabled,
 			MediaScaleMode scaleMode
 	) {
+		if (rect.width() <= 1 || rect.height() <= 1) {
+			return;
+		}
 		int arc = clampInt(focused ? layout.unit() * 2 : layout.unit() + 8, 12, focused ? 30 : 22);
 		Shape previousClip = graphics.getClip();
 		Shape shape = roundedRectShape(rect, arc, arc, arc, arc);
@@ -2236,20 +2414,43 @@ final class MonitorMaxRuntime {
 			Color accent = participantAccent(code, avatar);
 			graphics.setColor(accent);
 			graphics.fillRect(rect.x(), rect.y(), rect.width(), rect.height());
-			int avatarSize = clampInt(Math.min(rect.width(), rect.height()) / (focused ? 4 : 3), 28, focused ? 116 : 72);
+			int maxAvatar = Math.max(12, Math.min(rect.width(), rect.height()) - 6);
+			int avatarSize = clampInt(Math.min(rect.width(), rect.height()) / (focused ? 4 : 3), Math.min(18, maxAvatar), Math.min(focused ? 116 : 72, maxAvatar));
 			UiRect avatarRect = new UiRect(rect.x() + (rect.width() - avatarSize) / 2, rect.y() + (rect.height() - avatarSize) / 2, avatarSize, avatarSize);
 			drawAvatar(graphics, avatarRect, avatar, layout);
 		}
 		graphics.setClip(previousClip);
 		strokeRoundedRect(graphics, rect, arc, 1.0F, new Color(255, 255, 255, focused ? 70 : 46));
-		UiRect label = new UiRect(rect.x() + layout.unit(), rect.bottom() - clampInt(layout.unit() * 3, 26, 44), rect.width() - layout.unit() * 2, clampInt(layout.unit() * 2, 18, 30));
-		fillRoundedRect(graphics, label, label.height(), new Color(0, 0, 0, 86));
-		drawCenteredTextFitted(graphics, code, label.inset(Math.max(2, layout.unit() / 4)), new Color(248, 251, 255, 238), Font.BOLD, clampInt(layout.unit() - 1, 8, 13), 6);
-		if (!microphoneEnabled) {
-			UiRect micOff = new UiRect(rect.right() - layout.unit() - clampInt(layout.unit() * 2, 18, 30), rect.y() + layout.unit(), clampInt(layout.unit() * 2, 18, 30), clampInt(layout.unit() * 2, 18, 30));
+		drawMaxParticipantLabel(graphics, layout, rect, code, focused);
+		if (!microphoneEnabled && rect.width() >= 20 && rect.height() >= 20) {
+			int micSize = clampInt(Math.min(rect.width(), rect.height()) / 5, 12, 30);
+			int inset = Math.max(2, layout.unit() / 2);
+			UiRect micOff = new UiRect(rect.right() - inset - micSize, rect.y() + inset, micSize, micSize);
 			fillRoundedRect(graphics, micOff, micOff.height(), new Color(0, 0, 0, 108));
 			drawPlayerUiIcon(graphics, mediaChromeIconRect(micOff, layout), PlayerUiIcon.MIC_OFF, new Color(248, 251, 255, 230));
 		}
+	}
+
+	private static void drawMaxParticipantLabel(Graphics2D graphics, UiLayout layout, UiRect tile, String code, boolean focused) {
+		if (code == null || code.isBlank() || tile.width() < 16 || tile.height() < 12) {
+			return;
+		}
+		int textSize = clampInt(layout.unit() - (focused ? 0 : 2), tile.height() < 32 ? 6 : 7, focused ? 13 : 11);
+		Font font = new Font(Font.SANS_SERIF, Font.BOLD, textSize);
+		FontMetrics metrics = graphics.getFontMetrics(font);
+		int padX = Math.max(3, layout.unit() / 3);
+		int padY = Math.max(2, layout.unit() / 5);
+		int maxWidth = Math.max(8, tile.width() - padX * 4);
+		String labelText = truncateWithEllipsis(metrics, code, maxWidth);
+		int labelWidth = Math.min(tile.width() - padX * 2, metrics.stringWidth(labelText) + padX * 2);
+		int labelHeight = Math.min(tile.height(), metrics.getHeight() + padY * 2);
+		int x = tile.x() + padX;
+		int y = tile.bottom() - labelHeight - padX;
+		UiRect label = new UiRect(x, Math.max(tile.y(), y), Math.max(1, labelWidth), Math.max(1, labelHeight));
+		fillRoundedRect(graphics, label, label.height(), new Color(0, 0, 0, 92));
+		graphics.setFont(font);
+		graphics.setColor(new Color(248, 251, 255, 238));
+		graphics.drawString(labelText, label.x() + padX, label.y() + (label.height() - metrics.getHeight()) / 2 + metrics.getAscent());
 	}
 
 	private static void drawMaxCallMenu(Graphics2D graphics, UiLayout layout, MaxCallVisualSnapshot call) {
@@ -2655,7 +2856,7 @@ final class MonitorMaxRuntime {
 
 	private static UiRect maxIncomingAvatarRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(Math.min(canvas.width(), canvas.height()) / 4, 58, 132);
+		int size = clampInt(Math.min(canvas.width(), canvas.height()) / 4, 30, 132);
 		return new UiRect(canvas.x() + (canvas.width() - size) / 2, canvas.y() + canvas.height() / 2 - size, size, size);
 	}
 
@@ -2671,87 +2872,142 @@ final class MonitorMaxRuntime {
 
 	private static UiRect maxIncomingAcceptRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(layout.unit() * 4, 38, 58);
-		int gap = clampInt(layout.unit() * 2, 18, 34);
-		int y = canvas.bottom() - size - clampInt(layout.unit() * 3, 24, 48);
+		int gap = clampInt(layout.unit(), 6, 20);
+		int fit = Math.max(14, (canvas.width() - gap - clampInt(layout.unit(), 4, 12) * 2) / 2);
+		int size = Math.min(clampInt(Math.min(canvas.width(), canvas.height()) / 5, 18, 58), fit);
+		int y = canvas.bottom() - size - clampInt(layout.unit() * 2, 10, 34);
 		return new UiRect(canvas.x() + (canvas.width() - size * 2 - gap) / 2, y, size, size);
 	}
 
 	private static UiRect maxIncomingDeclineRect(UiLayout layout) {
 		UiRect accept = maxIncomingAcceptRect(layout);
-		return new UiRect(accept.right() + clampInt(layout.unit() * 2, 18, 34), accept.y(), accept.width(), accept.height());
+		return new UiRect(accept.right() + clampInt(layout.unit(), 6, 20), accept.y(), accept.width(), accept.height());
 	}
 
 	private static UiRect maxOutgoingCancelRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(layout.unit() * 4, 38, 58);
-		return new UiRect(canvas.x() + (canvas.width() - size) / 2, canvas.bottom() - size - clampInt(layout.unit() * 3, 24, 48), size, size);
+		int size = clampInt(Math.min(canvas.width(), canvas.height()) / 5, 18, 58);
+		return new UiRect(canvas.x() + (canvas.width() - size) / 2, canvas.bottom() - size - clampInt(layout.unit() * 2, 10, 34), size, size);
 	}
 
 	private static UiRect maxCallFocusedTileRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int inset = Math.max(2, layout.unit() / 2);
+		int inset = clampInt(layout.unit() / 2, 1, 6);
 		return new UiRect(canvas.x() + inset, canvas.y() + inset, canvas.width() - inset * 2, canvas.height() - inset * 2);
 	}
 
-	private static UiRect maxCallMiniParticipantRect(UiLayout layout) {
+	private static UiRect maxCallParticipantsAreaRect(UiLayout layout, boolean menuOpen) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int width = clampInt(canvas.width() / 4, 56, 118);
-		int height = clampInt(canvas.height() / 5, 38, 82);
-		return new UiRect(canvas.x() + layout.unit(), canvas.y() + layout.unit(), width, height);
-	}
-
-	private static UiRect maxCallPeerTileRect(UiLayout layout, MaxCallVisualSnapshot call) {
-		return maxCallPeerTileRect(layout, call.selfFocused(), call.peerFocused(), call.menuOpen());
-	}
-
-	private static UiRect maxCallSelfTileRect(UiLayout layout, MaxCallVisualSnapshot call) {
-		return maxCallSelfTileRect(layout, call.selfFocused(), call.peerFocused(), call.menuOpen());
-	}
-
-	private static UiRect maxCallPeerTileRect(UiLayout layout, MaxRuntimeState state) {
-		synchronized (state) {
-			return maxCallPeerTileRect(layout, state.focusSelf, state.focusPeer, state.callMenuOpen);
+		int inset = clampInt(layout.unit() / 2, 1, 6);
+		int bottom = canvas.bottom() - inset;
+		if (menuOpen) {
+			bottom -= maxCallMenuButtonSize(layout) + clampInt(layout.unit(), 4, 10);
 		}
+		int top = canvas.y() + inset;
+		if (bottom <= top + 8) {
+			bottom = canvas.bottom() - inset;
+		}
+		return new UiRect(canvas.x() + inset, top, Math.max(1, canvas.width() - inset * 2), Math.max(1, bottom - top));
 	}
 
-	private static UiRect maxCallSelfTileRect(UiLayout layout, MaxRuntimeState state) {
-		synchronized (state) {
-			return maxCallSelfTileRect(layout, state.focusSelf, state.focusPeer, state.callMenuOpen);
-		}
+	private static int maxCallGridGap(UiLayout layout) {
+		return clampInt(layout.unit() / 2, 2, 8);
 	}
 
-	private static UiRect maxCallPeerTileRect(UiLayout layout, boolean selfFocused, boolean peerFocused, boolean menuOpen) {
-		if (peerFocused) {
-			return maxCallFocusedTileRect(layout);
+	private static int maxCallGridColumns(int count, UiRect area, int gap) {
+		if (count <= 1) {
+			return 1;
 		}
-		if (selfFocused) {
-			return menuOpen ? maxCallMiniParticipantRect(layout) : emptyRect();
+		int bestColumns = 1;
+		double bestScore = Double.MAX_VALUE;
+		for (int columns = 1; columns <= count; columns++) {
+			int rows = (count + columns - 1) / columns;
+			int cellWidth = (area.width() - gap * (columns - 1)) / columns;
+			int cellHeight = (area.height() - gap * (rows - 1)) / rows;
+			if (cellWidth <= 0 || cellHeight <= 0) {
+				continue;
+			}
+			double aspect = cellWidth / (double) cellHeight;
+			double score = Math.abs(Math.log(Math.max(0.01D, aspect))) - Math.min(cellWidth, cellHeight) * 0.002D;
+			if (score < bestScore) {
+				bestScore = score;
+				bestColumns = columns;
+			}
 		}
-		return maxCallSplitTileRect(layout, 0);
+		return Math.max(1, bestColumns);
 	}
 
-	private static UiRect maxCallSelfTileRect(UiLayout layout, boolean selfFocused, boolean peerFocused, boolean menuOpen) {
-		if (selfFocused) {
-			return maxCallFocusedTileRect(layout);
+	private static UiRect maxCallParticipantTileRect(UiLayout layout, int participantCount, int index, boolean menuOpen) {
+		if (participantCount <= 0 || index < 0 || index >= participantCount) {
+			return emptyRect();
 		}
-		if (peerFocused) {
-			return menuOpen ? maxCallMiniParticipantRect(layout) : emptyRect();
-		}
-		return maxCallSplitTileRect(layout, 1);
+		UiRect area = maxCallParticipantsAreaRect(layout, menuOpen);
+		int gap = maxCallGridGap(layout);
+		int columns = maxCallGridColumns(participantCount, area, gap);
+		int rows = (participantCount + columns - 1) / columns;
+		int cellWidth = Math.max(1, (area.width() - gap * (columns - 1)) / columns);
+		int cellHeight = Math.max(1, (area.height() - gap * (rows - 1)) / rows);
+		int row = index / columns;
+		int itemInRow = index % columns;
+		int itemsInRow = Math.min(columns, participantCount - row * columns);
+		int rowWidth = itemsInRow * cellWidth + Math.max(0, itemsInRow - 1) * gap;
+		int gridHeight = rows * cellHeight + Math.max(0, rows - 1) * gap;
+		int x = area.x() + (area.width() - rowWidth) / 2 + itemInRow * (cellWidth + gap);
+		int y = area.y() + (area.height() - gridHeight) / 2 + row * (cellHeight + gap);
+		return new UiRect(x, y, cellWidth, cellHeight);
 	}
 
-	private static UiRect maxCallSplitTileRect(UiLayout layout, int index) {
+	private static int maxCallParticipantIndexAt(UiLayout layout, int participantCount, boolean menuOpen, UiPoint point) {
+		for (int index = 0; index < participantCount; index++) {
+			if (maxCallParticipantTileRect(layout, participantCount, index, menuOpen).contains(point.x(), point.y())) {
+				return index;
+			}
+		}
+		return -1;
+	}
+
+	private static int maxCallMiniParticipantWidth(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int gap = Math.max(4, layout.unit());
-		int inset = Math.max(2, layout.unit() / 2);
-		UiRect area = new UiRect(canvas.x() + inset, canvas.y() + inset, canvas.width() - inset * 2, canvas.height() - inset * 2);
-		if (area.width() >= area.height()) {
-			int width = (area.width() - gap) / 2;
-			return new UiRect(area.x() + index * (width + gap), area.y(), width, area.height());
+		return clampInt(canvas.width() / 5, 24, 96);
+	}
+
+	private static int maxCallMiniParticipantHeight(UiLayout layout) {
+		return clampInt(maxCallMiniParticipantWidth(layout) * 9 / 16, 18, 64);
+	}
+
+	private static UiRect maxCallMiniParticipantRect(UiLayout layout, int index) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int inset = clampInt(layout.unit() / 2, 2, 8);
+		int gap = maxCallGridGap(layout);
+		int width = maxCallMiniParticipantWidth(layout);
+		int height = maxCallMiniParticipantHeight(layout);
+		int columns = Math.max(1, (canvas.width() - inset * 2 + gap) / Math.max(1, width + gap));
+		int row = index / columns;
+		int column = index % columns;
+		return new UiRect(canvas.x() + inset + column * (width + gap), canvas.y() + inset + row * (height + gap), width, height);
+	}
+
+	private static int maxCallMiniParticipantCapacity(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int inset = clampInt(layout.unit() / 2, 2, 8);
+		int gap = maxCallGridGap(layout);
+		int width = maxCallMiniParticipantWidth(layout);
+		int height = maxCallMiniParticipantHeight(layout);
+		int columns = Math.max(1, (canvas.width() - inset * 2 + gap) / Math.max(1, width + gap));
+		int bottom = maxCallMenuDockRect(layout, false, true).y() - gap;
+		int availableHeight = Math.max(height, bottom - canvas.y() - inset);
+		int rows = Math.max(1, (availableHeight + gap) / Math.max(1, height + gap));
+		return Math.max(1, columns * rows);
+	}
+
+	private static int maxCallMiniParticipantIndexAt(UiLayout layout, int participantCount, UiPoint point) {
+		int count = Math.min(participantCount, maxCallMiniParticipantCapacity(layout));
+		for (int index = 0; index < count; index++) {
+			if (maxCallMiniParticipantRect(layout, index).contains(point.x(), point.y())) {
+				return index;
+			}
 		}
-		int height = (area.height() - gap) / 2;
-		return new UiRect(area.x(), area.y() + index * (height + gap), area.width(), height);
+		return -1;
 	}
 
 	private static UiRect maxCallMenuDockRect(UiLayout layout, MaxCallVisualSnapshot call) {
@@ -2761,18 +3017,24 @@ final class MonitorMaxRuntime {
 	private static UiRect maxCallMenuDockRect(UiLayout layout, boolean multiMicrophone, boolean focused) {
 		UiRect canvas = mediaCanvasRect(layout);
 		int size = maxCallMenuButtonSize(layout);
-		int gap = Math.max(5, layout.unit() / 2);
+		int gap = maxCallGridGap(layout);
+		int padding = clampInt(layout.unit() / 2, 2, 6);
 		int micWidth = multiMicrophone ? size * 2 : size;
 		int width = micWidth + gap + size * 2 + gap + size + gap + (focused ? size + gap : 0) + size;
-		return new UiRect(canvas.x() + (canvas.width() - width) / 2 - layout.unit(), canvas.bottom() - size - clampInt(layout.unit(), 10, 18) - layout.unit() / 2, width + layout.unit() * 2, size + layout.unit());
+		int dockWidth = Math.min(canvas.width() - padding * 2, width + padding * 2);
+		int dockHeight = size + padding * 2;
+		int x = canvas.x() + (canvas.width() - dockWidth) / 2;
+		int y = canvas.bottom() - dockHeight - clampInt(layout.unit() / 2, 2, 8);
+		return new UiRect(x, y, Math.max(1, dockWidth), Math.max(1, dockHeight));
 	}
 
 	private static int maxCallMenuButtonSize(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int gap = Math.max(5, layout.unit() / 2);
-		int fit = (canvas.width() - layout.unit() * 4 - gap * 4) / 7;
-		int desired = clampInt(layout.unit() * 2 + 2, 24, 36);
-		return Math.max(22, Math.min(desired, fit));
+		int gap = maxCallGridGap(layout);
+		int padding = clampInt(layout.unit() / 2, 2, 6);
+		int fit = (canvas.width() - padding * 2 - gap * 5) / 7;
+		int desired = clampInt(layout.unit() * 2, 16, 34);
+		return Math.max(10, Math.min(desired, fit));
 	}
 
 	private static UiRect maxCallMicrophoneToggleRect(UiLayout layout, MaxCallVisualSnapshot call) {
@@ -2786,7 +3048,8 @@ final class MonitorMaxRuntime {
 	private static UiRect maxCallMicrophoneToggleRect(UiLayout layout, boolean multiMicrophone, boolean focused) {
 		UiRect dock = maxCallMenuDockRect(layout, multiMicrophone, focused);
 		int size = maxCallMenuButtonSize(layout);
-		return new UiRect(dock.x() + layout.unit(), dock.y() + layout.unit() / 2, size, size);
+		int padding = Math.max(1, (dock.height() - size) / 2);
+		return new UiRect(dock.x() + padding, dock.y() + padding, size, size);
 	}
 
 	private static UiRect maxCallMicrophoneSelectRect(UiLayout layout, MaxCallVisualSnapshot call) {
@@ -2817,9 +3080,9 @@ final class MonitorMaxRuntime {
 	private static UiRect maxCallCameraToggleRect(UiLayout layout, boolean multiMicrophone, boolean focused) {
 		UiRect dock = maxCallMenuDockRect(layout, multiMicrophone, focused);
 		int size = maxCallMenuButtonSize(layout);
-		int gap = Math.max(5, layout.unit() / 2);
+		int gap = maxCallGridGap(layout);
 		UiRect mic = multiMicrophone ? maxCallMicrophoneSelectRect(layout, focused) : maxCallMicrophoneToggleRect(layout, false, focused);
-		return new UiRect(mic.right() + gap, dock.y() + layout.unit() / 2, size, size);
+		return new UiRect(mic.right() + gap, dock.y() + Math.max(1, (dock.height() - size) / 2), size, size);
 	}
 
 	private static UiRect maxCallCameraSelectRect(UiLayout layout) {
@@ -2844,7 +3107,7 @@ final class MonitorMaxRuntime {
 	}
 
 	private static UiRect maxCallInviteRect(UiLayout layout, boolean multiMicrophone, boolean focused) {
-		int gap = Math.max(5, layout.unit() / 2);
+		int gap = maxCallGridGap(layout);
 		UiRect camera = maxCallCameraSelectRect(layout, multiMicrophone, focused);
 		return new UiRect(camera.right() + gap, camera.y(), camera.width(), camera.height());
 	}
@@ -2859,7 +3122,7 @@ final class MonitorMaxRuntime {
 
 	private static UiRect maxCallLeaveRect(UiLayout layout, boolean multiMicrophone, boolean focused) {
 		int size = maxCallMenuButtonSize(layout);
-		int gap = Math.max(5, layout.unit() / 2);
+		int gap = maxCallGridGap(layout);
 		UiRect previous = focused ? maxCallExitFullscreenRect(layout, multiMicrophone, true) : maxCallInviteRect(layout, multiMicrophone, false);
 		return new UiRect(previous.right() + gap, previous.y(), size, size);
 	}
@@ -2872,7 +3135,7 @@ final class MonitorMaxRuntime {
 		if (!focused) {
 			return emptyRect();
 		}
-		int gap = Math.max(5, layout.unit() / 2);
+		int gap = maxCallGridGap(layout);
 		UiRect invite = maxCallInviteRect(layout, multiMicrophone, true);
 		return new UiRect(invite.right() + gap, invite.y(), invite.width(), invite.height());
 	}
@@ -3046,6 +3309,7 @@ final class MonitorMaxRuntime {
 		private boolean callContactPickerOpen;
 		private boolean focusSelf;
 		private boolean focusPeer;
+		private ScreenRuntimeKey focusedPeerKey;
 		private String statusText = "";
 		private BufferedImage localFrame;
 		private String localVideoUrl = "";
@@ -3125,6 +3389,20 @@ final class MonitorMaxRuntime {
 		private synchronized ScreenRuntimeKey inviterFor(ScreenRuntimeKey key) {
 			ScreenRuntimeKey inviter = this.ringingInviters.get(key);
 			return inviter != null ? inviter : this.caller;
+		}
+
+		private synchronized String participantCode(ScreenRuntimeKey key) {
+			String code = this.participantCodes.get(key);
+			if (code != null && !code.isBlank()) {
+				return code;
+			}
+			if (Objects.equals(this.caller, key)) {
+				return this.callerCode;
+			}
+			if (Objects.equals(this.callee, key)) {
+				return this.calleeCode;
+			}
+			return "";
 		}
 
 		private synchronized boolean isParticipant(ScreenRuntimeKey key) {
