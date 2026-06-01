@@ -662,6 +662,8 @@ final class MonitorScreenInputController {
 			}
 		} else if (component.viewMode() == ScreenViewMode.MAX) {
 			MonitorMaxRuntime.handleTouch(player, level, component, layout, touchPoint);
+		} else if (component.viewMode() == ScreenViewMode.YANDEX_MAPS) {
+			MonitorYandexMapsRuntime.handleTouch(player, level, component, layout, touchPoint);
 		} else {
 			UiRect closeRect = genericCloseRect(layout);
 			if (closeRect.contains(touchPoint.x(), touchPoint.y())) {

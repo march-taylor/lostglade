@@ -84,6 +84,18 @@ record WallpaperVisualSnapshot(
 ) {
 }
 
+record YandexMapsVisualSnapshot(
+		long version,
+		BufferedImage frame,
+		String statusText,
+		String dimensionLabel,
+		int centerX,
+		int centerZ,
+		double zoomBlocks,
+		boolean healthy
+) {
+}
+
 record RenderTileTarget(
 		int tileIndex,
 		MapId mapId,
@@ -118,6 +130,7 @@ record RenderWork(
 		long mediaVersion,
 		MediaVisualSnapshot mediaSnapshot,
 		MaxVisualSnapshot maxSnapshot,
+		YandexMapsVisualSnapshot yandexMapsSnapshot,
 		WallpaperVisualSnapshot wallpaperSnapshot,
 		boolean transparentOutput,
 		List<RenderTileTarget> tileTargets
@@ -484,7 +497,8 @@ enum PlayerUiIcon {
 	SIGNAL("/assets/lg2/textures/monitor/ui_icons/signal.png"),
 	OFFLINE("/assets/lg2/textures/monitor/ui_icons/offline.png"),
 	UNLINK("/assets/lg2/textures/monitor/ui_icons/unlink.png"),
-	LOCATION("/assets/lg2/textures/monitor/ui_icons/location.png");
+	LOCATION("/assets/lg2/textures/monitor/ui_icons/location.png"),
+	TARGET("/assets/lg2/textures/monitor/ui_icons/target.png");
 
 	private final String resourcePath;
 

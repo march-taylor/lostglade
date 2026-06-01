@@ -20,6 +20,7 @@ enum ScreenViewMode {
 	GALLERY("gallery"),
 	SBER_DRONES("sberdrones"),
 	MAX("max"),
+	YANDEX_MAPS("yandexmaps"),
 	YOUTUBE("youtube"),
 	YOUTUBE_MUSIC("youtubemusic");
 
