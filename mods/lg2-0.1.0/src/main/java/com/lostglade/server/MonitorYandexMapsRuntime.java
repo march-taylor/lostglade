@@ -20,6 +20,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 
 import static com.lostglade.server.MonitorScreenSystem.*;
 
@@ -29,8 +31,12 @@ final class MonitorYandexMapsRuntime {
 	private static final double MAX_BLOCKS_PER_PIXEL = 4096.0D;
 	private static final double BUTTON_ZOOM_FACTOR = 2.0D;
 	private static final double WHEEL_ZOOM_FACTOR = 1.25D;
-	private static final long PAN_ANIMATION_MS = 520L;
-	private static final int AUTO_REFRESH_TICKS = 20;
+	private static final long PAN_ANIMATION_MS = 320L;
+	private static final long PAN_FRAME_DELAY_MS = 40L;
+	private static final long TILE_READY_RENDER_DEBOUNCE_MS = 35L;
+	private static final long DISPLAY_OVERLAY_CACHE_MS = 750L;
+	private static final int DISPLAY_OVERLAY_CAPTURE_PADDING_PX = MAP_SIZE;
+	private static final int STATE_CLEANUP_INTERVAL_TICKS = 40;
 	private static final Map<ScreenRuntimeKey, YandexMapState> STATES = new ConcurrentHashMap<>();
 
 	private MonitorYandexMapsRuntime() {
@@ -77,13 +83,14 @@ final class MonitorYandexMapsRuntime {
 					false
 			);
 		}
-		List<MonitorYandexMapsBlueMapRenderer.DisplayOverlay> displayOverlays = MonitorYandexMapsBlueMapRenderer.captureDisplayOverlays(
+		List<MonitorYandexMapsBlueMapRenderer.DisplayOverlay> displayOverlays = captureDisplayOverlays(
+				component,
+				state,
 				level,
 				centerX,
 				centerZ,
-				Math.max(1, component.width() * MAP_SIZE),
-				Math.max(1, component.height() * MAP_SIZE),
-				blocksPerPixel
+				blocksPerPixel,
+				now
 		);
 		return new YandexMapsVisualSnapshot(
 				version,
@@ -166,7 +173,7 @@ final class MonitorYandexMapsRuntime {
 						Math.max(1, layout.canvasHeight()),
 						snapshot.zoomBlocks(),
 						snapshot.displayOverlays(),
-						() -> server.execute(() -> requestRuntimeRender(server, runtimeKey))
+						() -> notifyTileReady(server, runtimeKey)
 				);
 				frame = rendered.image();
 				effectiveSnapshot = new YandexMapsVisualSnapshot(
@@ -230,9 +237,11 @@ final class MonitorYandexMapsRuntime {
 			synchronized (state) {
 				initializeStateLocked(state, component);
 				applyPanAnimationLocked(state, System.currentTimeMillis());
-				beginPanLocked(state, player.getX(), player.getZ(), System.currentTimeMillis());
+				BlockPos screenPos = component.runtimeKey().pos();
+				beginPanLocked(state, screenPos.getX() + 0.5D, screenPos.getZ() + 0.5D, System.currentTimeMillis());
 			}
 			requestRuntimeRender(server, component.runtimeKey());
+			schedulePanAnimationFrame(server, component.runtimeKey());
 			return true;
 		}
 		if (yandexWorldCenterRect(layout).contains(touchPoint.x(), touchPoint.y())) {
@@ -242,6 +251,7 @@ final class MonitorYandexMapsRuntime {
 				beginPanLocked(state, 0.0D, 0.0D, System.currentTimeMillis());
 			}
 			requestRuntimeRender(server, component.runtimeKey());
+			schedulePanAnimationFrame(server, component.runtimeKey());
 			return true;
 		}
 		UiRect canvas = mediaCanvasRect(layout);
@@ -255,6 +265,7 @@ final class MonitorYandexMapsRuntime {
 				beginPanLocked(state, nextX, nextZ, System.currentTimeMillis());
 			}
 			requestRuntimeRender(server, component.runtimeKey());
+			schedulePanAnimationFrame(server, component.runtimeKey());
 			return true;
 		}
 		return true;
@@ -264,30 +275,13 @@ final class MonitorYandexMapsRuntime {
 		if (server == null || STATES.isEmpty()) {
 			return;
 		}
-		int tick = server.getTickCount();
+		if (Math.floorMod(server.getTickCount(), STATE_CLEANUP_INTERVAL_TICKS) != 0) {
+			return;
+		}
 		for (ScreenRuntimeKey key : List.copyOf(STATES.keySet())) {
 			ScreenComponent component = resolveScreenComponent(server, key);
 			if (component == null || component.viewMode() != ScreenViewMode.YANDEX_MAPS || !component.powered()) {
-				if (component == null) {
-					STATES.remove(key);
-				}
-				continue;
-			}
-			ServerLevel level = server.getLevel(key.dimension());
-			if (level == null || !hasNearbyMediaViewer(level, component)) {
-				continue;
-			}
-			YandexMapState state = STATES.get(key);
-			boolean animating;
-			if (state == null) {
-				animating = false;
-			} else {
-				synchronized (state) {
-					animating = state.panStartedAtMillis > 0L;
-				}
-			}
-			if (animating || tick % AUTO_REFRESH_TICKS == 0) {
-				requestRuntimeRender(server, key);
+				STATES.remove(key);
 			}
 		}
 	}
@@ -317,6 +311,32 @@ final class MonitorYandexMapsRuntime {
 		return true;
 	}
 
+	static void notifyTileReady(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		YandexMapState state = STATES.get(key);
+		if (state == null) {
+			requestRuntimeRender(server, key);
+			return;
+		}
+		synchronized (state) {
+			if (state.tileReadyRenderScheduled) {
+				return;
+			}
+			state.tileReadyRenderScheduled = true;
+		}
+		scheduleRuntimeCallback(server, TILE_READY_RENDER_DEBOUNCE_MS, () -> {
+			YandexMapState current = STATES.get(key);
+			if (current != null) {
+				synchronized (current) {
+					current.tileReadyRenderScheduled = false;
+				}
+			}
+			requestRuntimeRender(server, key);
+		});
+	}
+
 	private static void drawMapHeader(Graphics2D graphics, UiLayout layout, MonitorApp app, YandexMapsVisualSnapshot snapshot) {
 		UiRect canvas = mediaCanvasRect(layout);
 		UiRect header = new UiRect(
@@ -335,24 +355,13 @@ final class MonitorYandexMapsRuntime {
 		drawVerticalText(graphics, "Яндекс Карты", new UiRect(iconRect.right() + 6, header.y() + 1, header.right() - iconRect.right() - 10, header.height() / 2), new Color(30, 34, 36), Font.BOLD, clampInt(layout.unit() - 1, 9, 13));
 		drawVerticalText(graphics, coords, new UiRect(iconRect.right() + 6, header.y() + header.height() / 2 - 2, header.right() - iconRect.right() - 10, header.height() / 2), new Color(78, 86, 92), Font.PLAIN, clampInt(layout.unit() - 3, 7, 10));
 		drawMediaCloseButton(graphics, mediaCloseRect(layout), layout);
-		UiRect status = new UiRect(canvas.right() - Math.min(canvas.width() / 2, clampInt(layout.unit() * 20, 120, 260)) - clampInt(layout.unit() / 2, 4, 10), header.y(), Math.min(canvas.width() / 2, clampInt(layout.unit() * 20, 120, 260)), header.height());
-		if (snapshot != null && snapshot.statusText() != null && !snapshot.statusText().isBlank() && status.x() > header.right() + 4) {
-			fillRoundedRect(graphics, status, status.height(), new Color(8, 14, 18, 128));
-			drawCenteredTextFitted(graphics, snapshot.statusText(), status.inset(4), new Color(244, 250, 255, 230), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
-		}
 	}
 
 	private static void drawZoomControls(Graphics2D graphics, UiLayout layout) {
-		drawZoomButton(graphics, yandexZoomInRect(layout), "+", layout);
-		drawZoomButton(graphics, yandexZoomOutRect(layout), "-", layout);
-		drawMapIconButton(graphics, yandexGeoRect(layout), PlayerUiIcon.LOCATION, layout);
-		drawMapIconButton(graphics, yandexWorldCenterRect(layout), PlayerUiIcon.TARGET, layout);
-	}
-
-	private static void drawZoomButton(Graphics2D graphics, UiRect rect, String label, UiLayout layout) {
-		fillRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 14), new Color(250, 252, 248, 232));
-		strokeRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 14), 1.0F, new Color(0, 0, 0, 42));
-		drawCenteredTextFitted(graphics, label, rect, new Color(20, 24, 26), Font.BOLD, clampInt(layout.unit() * 2, 16, 28), 10);
+		drawMapIconButton(graphics, yandexZoomInRect(layout), PlayerUiIcon.ADD, layout);
+		drawMapIconButton(graphics, yandexZoomOutRect(layout), PlayerUiIcon.MINUS, layout);
+		drawMapIconButton(graphics, yandexGeoRect(layout), PlayerUiIcon.AIMING_2, layout);
+		drawMapIconButton(graphics, yandexWorldCenterRect(layout), PlayerUiIcon.LOCATION, layout);
 	}
 
 	private static void drawMapIconButton(Graphics2D graphics, UiRect rect, PlayerUiIcon icon, UiLayout layout) {
@@ -377,28 +386,28 @@ final class MonitorYandexMapsRuntime {
 	}
 
 	private static UiRect yandexZoomInRect(UiLayout layout) {
-		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(layout.unit() * 3, 28, 42);
+		UiRect minus = yandexZoomOutRect(layout);
 		int gap = Math.max(2, layout.unit() / 3);
-		int inset = clampInt(layout.unit(), 8, 16);
-		return new UiRect(canvas.x() + inset, canvas.bottom() - inset - size * 2 - gap, size, size);
+		return new UiRect(minus.x(), minus.y() - gap - minus.height(), minus.width(), minus.height());
 	}
 
 	private static UiRect yandexZoomOutRect(UiLayout layout) {
-		UiRect plus = yandexZoomInRect(layout);
-		return new UiRect(plus.x(), plus.bottom() + Math.max(2, layout.unit() / 3), plus.width(), plus.height());
+		UiRect canvas = mediaCanvasRect(layout);
+		int size = clampInt(layout.unit() * 3, 28, 42);
+		int inset = clampInt(layout.unit(), 8, 16);
+		return new UiRect(canvas.right() - inset - size, canvas.bottom() - inset - size, size, size);
 	}
 
 	private static UiRect yandexGeoRect(UiLayout layout) {
 		UiRect plus = yandexZoomInRect(layout);
 		int gap = Math.max(2, layout.unit() / 3);
-		return new UiRect(plus.right() + gap, plus.y(), plus.width(), plus.height());
+		return new UiRect(plus.x(), plus.y() - gap - plus.height(), plus.width(), plus.height());
 	}
 
 	private static UiRect yandexWorldCenterRect(UiLayout layout) {
-		UiRect minus = yandexZoomOutRect(layout);
+		UiRect current = yandexGeoRect(layout);
 		int gap = Math.max(2, layout.unit() / 3);
-		return new UiRect(minus.right() + gap, minus.y(), minus.width(), minus.height());
+		return new UiRect(current.x(), current.y() - gap - current.height(), current.width(), current.height());
 	}
 
 	private static String formatZoom(double blocksPerPixel) {
@@ -427,6 +436,68 @@ final class MonitorYandexMapsRuntime {
 		state.version++;
 	}
 
+	private static List<MonitorYandexMapsBlueMapRenderer.DisplayOverlay> captureDisplayOverlays(
+			ScreenComponent component,
+			YandexMapState state,
+			ServerLevel level,
+			double centerX,
+			double centerZ,
+			double blocksPerPixel,
+			long now
+	) {
+		if (component == null || state == null || level == null) {
+			return List.of();
+		}
+		int visiblePixelWidth = Math.max(1, component.width() * MAP_SIZE);
+		int visiblePixelHeight = Math.max(1, component.height() * MAP_SIZE);
+		synchronized (state) {
+			if (displayOverlayCacheCoversLocked(state, centerX, centerZ, visiblePixelWidth, visiblePixelHeight, blocksPerPixel, now)) {
+				return state.cachedDisplayOverlays;
+			}
+		}
+		int capturePixelWidth = visiblePixelWidth + DISPLAY_OVERLAY_CAPTURE_PADDING_PX * 2;
+		int capturePixelHeight = visiblePixelHeight + DISPLAY_OVERLAY_CAPTURE_PADDING_PX * 2;
+		List<MonitorYandexMapsBlueMapRenderer.DisplayOverlay> overlays = MonitorYandexMapsBlueMapRenderer.captureDisplayOverlays(
+				level,
+				centerX,
+				centerZ,
+				capturePixelWidth,
+				capturePixelHeight,
+				blocksPerPixel
+		);
+		synchronized (state) {
+			state.cachedDisplayOverlays = overlays;
+			state.displayOverlayCapturedAtMs = now;
+			state.displayOverlayCenterX = centerX;
+			state.displayOverlayCenterZ = centerZ;
+			state.displayOverlayHalfWidth = capturePixelWidth * blocksPerPixel * 0.5D;
+			state.displayOverlayHalfHeight = capturePixelHeight * blocksPerPixel * 0.5D;
+		}
+		return overlays;
+	}
+
+	private static boolean displayOverlayCacheCoversLocked(
+			YandexMapState state,
+			double centerX,
+			double centerZ,
+			int visiblePixelWidth,
+			int visiblePixelHeight,
+			double blocksPerPixel,
+			long now
+	) {
+		if (state.cachedDisplayOverlays == null || now - state.displayOverlayCapturedAtMs > DISPLAY_OVERLAY_CACHE_MS) {
+			return false;
+		}
+		double visibleHalfWidth = visiblePixelWidth * blocksPerPixel * 0.5D;
+		double visibleHalfHeight = visiblePixelHeight * blocksPerPixel * 0.5D;
+		double marginX = state.displayOverlayHalfWidth - visibleHalfWidth - 8.0D;
+		double marginZ = state.displayOverlayHalfHeight - visibleHalfHeight - 8.0D;
+		return marginX >= 0.0D
+				&& marginZ >= 0.0D
+				&& Math.abs(centerX - state.displayOverlayCenterX) <= marginX
+				&& Math.abs(centerZ - state.displayOverlayCenterZ) <= marginZ;
+	}
+
 	private static void zoomLocked(YandexMapState state, double factor) {
 		if (state == null || !Double.isFinite(factor) || factor <= 0.0D) {
 			return;
@@ -451,6 +522,54 @@ final class MonitorYandexMapsRuntime {
 		state.panStartedAtMillis = now;
 		state.streamStatus = "Карта online";
 		state.version++;
+	}
+
+	private static void schedulePanAnimationFrame(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		YandexMapState state = STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		synchronized (state) {
+			if (state.panStartedAtMillis <= 0L || state.panFrameScheduled) {
+				return;
+			}
+			state.panFrameScheduled = true;
+		}
+		scheduleRuntimeCallback(server, PAN_FRAME_DELAY_MS, () -> {
+			YandexMapState current = STATES.get(key);
+			if (current == null) {
+				return;
+			}
+			boolean keepAnimating;
+			synchronized (current) {
+				current.panFrameScheduled = false;
+				keepAnimating = current.panStartedAtMillis > 0L;
+			}
+			if (!keepAnimating) {
+				return;
+			}
+			requestRuntimeRender(server, key);
+			schedulePanAnimationFrame(server, key);
+		});
+	}
+
+	private static void scheduleRuntimeCallback(MinecraftServer server, long delayMillis, Runnable callback) {
+		if (server == null || callback == null) {
+			return;
+		}
+		ensureExecutors();
+		if (mediaScheduler == null) {
+			server.execute(callback);
+			return;
+		}
+		try {
+			mediaScheduler.schedule(() -> server.execute(callback), Math.max(0L, delayMillis), TimeUnit.MILLISECONDS);
+		} catch (RejectedExecutionException ignored) {
+			server.execute(callback);
+		}
 	}
 
 	private static boolean applyPanAnimationLocked(YandexMapState state, long now) {
@@ -535,5 +654,13 @@ final class MonitorYandexMapsRuntime {
 		private long panStartedAtMillis;
 		private double blocksPerPixel = DEFAULT_BLOCKS_PER_PIXEL;
 		private String streamStatus = "Ожидание карты";
+		private boolean panFrameScheduled;
+		private boolean tileReadyRenderScheduled;
+		private long displayOverlayCapturedAtMs;
+		private double displayOverlayCenterX;
+		private double displayOverlayCenterZ;
+		private double displayOverlayHalfWidth;
+		private double displayOverlayHalfHeight;
+		private List<MonitorYandexMapsBlueMapRenderer.DisplayOverlay> cachedDisplayOverlays = List.of();
 	}
 }

@@ -32,6 +32,8 @@ public final class YandexMapTopDownRenderTest {
 		redstoneWireProducesTopPixel();
 		leverProducesTopPixel();
 		wallLeverProjectionUsesItsAttachedSide();
+		wallLeverProjectionCoversAllAttachedSides();
+		ceilingLeverKeepsBodyProjection();
 		buttonProducesTopPixel();
 		redstoneLineKeepsTexturedProjection();
 		fenceHasTransparentProjectionGaps();
@@ -88,8 +90,33 @@ public final class YandexMapTopDownRenderTest {
 		int eastStrip = geometryHitsInArea(westWall, 20, 0.68D, 1.0D, 0.0D, 1.0D);
 		int northStrip = geometryHitsInArea(northWall, 20, 0.0D, 1.0D, 0.0D, 0.32D);
 		int southStrip = geometryHitsInArea(northWall, 20, 0.0D, 1.0D, 0.68D, 1.0D);
-		require(westStrip > eastStrip, "wall lever facing west must project toward the west side, west=" + westStrip + " east=" + eastStrip);
-		require(northStrip > southStrip, "wall lever facing north must project toward the north side, north=" + northStrip + " south=" + southStrip);
+		require(eastStrip > westStrip, "wall lever facing west must project on its vanilla support side, west=" + westStrip + " east=" + eastStrip);
+		require(southStrip > northStrip, "wall lever facing north must project on its vanilla support side, north=" + northStrip + " south=" + southStrip);
+	}
+
+	private static void wallLeverProjectionCoversAllAttachedSides() {
+		for (Direction direction : Direction.Plane.HORIZONTAL) {
+			BlockState state = Blocks.LEVER.defaultBlockState()
+					.setValue(LeverBlock.FACE, AttachFace.WALL)
+					.setValue(LeverBlock.FACING, direction);
+			int facingHits = stripHits(state, direction);
+			int supportHits = stripHits(state, direction.getOpposite());
+			require(supportHits > facingHits,
+					"wall lever facing " + direction + " must keep its top-down projection on the vanilla support side, support="
+							+ supportHits + " facing=" + facingHits);
+		}
+	}
+
+	private static void ceilingLeverKeepsBodyProjection() {
+		for (Direction direction : Direction.Plane.HORIZONTAL) {
+			BlockState state = Blocks.LEVER.defaultBlockState()
+					.setValue(LeverBlock.FACE, AttachFace.CEILING)
+					.setValue(LeverBlock.FACING, direction);
+			int totalHits = geometryHits(state, 28);
+			int bodyHits = geometryHitsInArea(state, 28, 0.28D, 0.72D, 0.28D, 0.72D);
+			require(totalHits > 40, "ceiling lever facing " + direction + " must keep visible top-down geometry, hits=" + totalHits);
+			require(bodyHits > 10, "ceiling lever facing " + direction + " must keep its body/base visible, body=" + bodyHits);
+		}
 	}
 
 	private static void buttonProducesTopPixel() {
@@ -386,6 +413,16 @@ public final class YandexMapTopDownRenderTest {
 			}
 		}
 		return hits;
+	}
+
+	private static int stripHits(BlockState state, Direction direction) {
+		return switch (direction) {
+			case NORTH -> geometryHitsInArea(state, 24, 0.0D, 1.0D, 0.0D, 0.34D);
+			case SOUTH -> geometryHitsInArea(state, 24, 0.0D, 1.0D, 0.66D, 1.0D);
+			case WEST -> geometryHitsInArea(state, 24, 0.0D, 0.34D, 0.0D, 1.0D);
+			case EAST -> geometryHitsInArea(state, 24, 0.66D, 1.0D, 0.0D, 1.0D);
+			default -> 0;
+		};
 	}
 
 	private static int colorDistance(int left, int right) {

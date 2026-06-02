@@ -3,6 +3,8 @@ package com.lostglade.server.map;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.mojang.math.OctahedralGroup;
+import com.mojang.math.Quadrant;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -12,6 +14,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix3fc;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
@@ -263,7 +266,7 @@ public final class BlockTextureRaycaster {
 	private static boolean isTopVisible(Direction direction, ModelTransform transform, ElementRotation elementRotation) {
 		Vec3 normal = new Vec3(direction.getStepX(), direction.getStepY(), direction.getStepZ());
 		normal = rotateElementVector(normal, elementRotation);
-		normal = rotateAroundX(rotateAroundY(normal, transform.y()), transform.x());
+		normal = transformVariantVector(normal, transform);
 		return normal.y > EPSILON;
 	}
 
@@ -377,7 +380,7 @@ public final class BlockTextureRaycaster {
 		}
 		Vec3 hitPoint = transformElementPoint(new Vec3(x, y, z), element.rotation());
 		double rayT = projectRayParameter(ray, hitPoint);
-		if (rayT < minT || rayT > maxT) {
+		if (rayT < minT - EPSILON || rayT > maxT + EPSILON) {
 			return null;
 		}
 		return new FaceHit(rayT, direction, new ModelFace(resolvedTexture, uv, face.rotation(), face.tintIndex()), point.u(), point.v(), hitPoint, element.shade(), element.rotation(), transform);
@@ -471,21 +474,51 @@ public final class BlockTextureRaycaster {
 
 	private static Ray inverseRotateVariant(Vec3 origin, Vec3 direction, ModelTransform transform) {
 		Vec3 center = new Vec3(8.0D, 8.0D, 8.0D);
-		Vec3 rotatedOrigin = rotateAroundY(rotateAroundX(origin.subtract(center), -transform.x()), -transform.y()).add(center);
-		Vec3 rotatedDirection = rotateAroundY(rotateAroundX(direction, -transform.x()), -transform.y());
+		Vec3 rotatedOrigin = inverseTransformVariantVector(origin.subtract(center), transform).add(center);
+		Vec3 rotatedDirection = inverseTransformVariantVector(direction, transform);
 		return new Ray(rotatedOrigin, rotatedDirection);
 	}
 
 	private static Vec3 rotateVariantPointForward(Vec3 point, ModelTransform transform) {
 		Vec3 center = new Vec3(8.0D, 8.0D, 8.0D);
-		return rotateAroundX(rotateAroundY(point.subtract(center), transform.y()), transform.x()).add(center);
+		return transformVariantVector(point.subtract(center), transform).add(center);
 	}
 
 	private static Direction rotateDirectionForward(Direction direction, ModelTransform transform, ElementRotation elementRotation) {
 		Vec3 normal = new Vec3(direction.getStepX(), direction.getStepY(), direction.getStepZ());
 		normal = rotateElementVector(normal, elementRotation);
-		normal = rotateAroundX(rotateAroundY(normal, transform.y()), transform.x());
+		normal = transformVariantVector(normal, transform);
 		return dominantDirection(normal);
+	}
+
+	private static Vec3 transformVariantVector(Vec3 vector, ModelTransform transform) {
+		return transformMatrix(transform.rotation().transformation(), vector);
+	}
+
+	private static Vec3 inverseTransformVariantVector(Vec3 vector, ModelTransform transform) {
+		return transformMatrix(transform.inverseRotation().transformation(), vector);
+	}
+
+	private static Vec3 transformMatrix(Matrix3fc matrix, Vec3 vector) {
+		return new Vec3(
+				matrix.m00() * vector.x + matrix.m10() * vector.y + matrix.m20() * vector.z,
+				matrix.m01() * vector.x + matrix.m11() * vector.y + matrix.m21() * vector.z,
+				matrix.m02() * vector.x + matrix.m12() * vector.y + matrix.m22() * vector.z
+		);
+	}
+
+	private static OctahedralGroup blockModelRotation(int x, int y) {
+		return Quadrant.fromXYZAngles(parseQuadrant(x), parseQuadrant(y), Quadrant.R0);
+	}
+
+	private static Quadrant parseQuadrant(int degrees) {
+		return switch (Mth.positiveModulo(degrees, 360)) {
+			case 0 -> Quadrant.R0;
+			case 90 -> Quadrant.R90;
+			case 180 -> Quadrant.R180;
+			case 270 -> Quadrant.R270;
+			default -> throw new IllegalArgumentException("Unsupported block model rotation: " + degrees);
+		};
 	}
 
 	private static Direction dominantDirection(Vec3 vector) {
@@ -1032,7 +1065,14 @@ public final class BlockTextureRaycaster {
 	private record ModelPart(ResolvedModel model, ModelTransform transform) {
 	}
 
-	private record ModelTransform(int x, int y, boolean uvlock) {
+	private record ModelTransform(int x, int y, boolean uvlock, OctahedralGroup rotation, OctahedralGroup inverseRotation) {
+		private ModelTransform(int x, int y, boolean uvlock) {
+			this(x, y, uvlock, blockModelRotation(x, y));
+		}
+
+		private ModelTransform(int x, int y, boolean uvlock, OctahedralGroup rotation) {
+			this(x, y, uvlock, rotation, rotation.inverse());
+		}
 	}
 
 	private record ResolvedModel(Map<String, String> textures, List<ModelElement> elements) {

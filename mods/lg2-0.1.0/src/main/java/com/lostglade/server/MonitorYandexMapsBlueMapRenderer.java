@@ -44,6 +44,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -60,7 +61,7 @@ final class MonitorYandexMapsBlueMapRenderer {
 	private static final int MAX_LOD = 16;
 	private static final int MAX_CACHED_TILES_PER_DIMENSION = 8192;
 	private static final int TILE_RENDER_WORKERS = Mth.clamp(Runtime.getRuntime().availableProcessors() - 1, 2, 8);
-	private static final int MAX_TILE_REQUESTS_PER_FRAME = TILE_RENDER_WORKERS * 8;
+	private static final int MAX_TILE_REQUESTS_PER_FRAME = TILE_RENDER_WORKERS * 16;
 	private static final long TILE_TTL_MS = 10 * 60_000L;
 	private static final long REGION_INDEX_TTL_MS = 60_000L;
 	private static final int ABOVE_SURFACE_SCAN_BLOCKS = 32;
@@ -193,6 +194,9 @@ final class MonitorYandexMapsBlueMapRenderer {
 			return List.of();
 		}
 		double safeBlocksPerPixel = Mth.clamp(blocksPerPixel, 1.0D / 512.0D, 4096.0D);
+		if (safeBlocksPerPixel > 32.0D) {
+			return List.of();
+		}
 		double halfWidth = width * safeBlocksPerPixel * 0.5D;
 		double halfHeight = height * safeBlocksPerPixel * 0.5D;
 		AABB box = new AABB(
@@ -412,12 +416,8 @@ final class MonitorYandexMapsBlueMapRenderer {
 	}
 
 	private static final class DimensionTileCache {
-		private final LinkedHashMap<TileKey, TileImage> tiles = new LinkedHashMap<>(256, 0.75F, true) {
-			@Override
-			protected boolean removeEldestEntry(Map.Entry<TileKey, TileImage> eldest) {
-				return this.size() > MAX_CACHED_TILES_PER_DIMENSION;
-			}
-		};
+		private final LinkedHashMap<TileKey, TileImage> tiles = new LinkedHashMap<>(256, 0.75F, true);
+		private final Map<TileKey, TileImage> tileLookup = new ConcurrentHashMap<>();
 		private final Set<TileKey> inFlight = ConcurrentHashMap.newKeySet();
 
 		private boolean requestTile(
@@ -448,6 +448,8 @@ final class MonitorYandexMapsBlueMapRenderer {
 					TileImage rendered = renderTile(blueMap, world, levelMinY, levelMaxY, overlaysSnapshot, key, tileBlocksPerPixel, System.currentTimeMillis());
 					synchronized (LOCK) {
 						this.tiles.put(key, rendered);
+						this.tileLookup.put(key, rendered);
+						trimToBudget();
 					}
 				} catch (Throwable throwable) {
 					Lg2.LOGGER.warn("BlueMap monitor async tile render failed at lod {} {},{}", key.lod(), key.tileX(), key.tileZ(), throwable);
@@ -498,10 +500,7 @@ final class MonitorYandexMapsBlueMapRenderer {
 				return MISSING_RGB;
 			}
 			TileKey key = tileKeyAt(lod, worldX, worldZ);
-			TileImage image;
-			synchronized (LOCK) {
-				image = this.tiles.get(key);
-			}
+			TileImage image = this.tileLookup.get(key);
 			if (image == null) {
 				return MISSING_RGB;
 			}
@@ -515,6 +514,18 @@ final class MonitorYandexMapsBlueMapRenderer {
 		private TileKey tileKeyAt(int lod, double worldX, double worldZ) {
 			double size = tileWorldSize(lod);
 			return new TileKey(lod, floorToLong(worldX / size), floorToLong(worldZ / size));
+		}
+
+		private void trimToBudget() {
+			while (this.tiles.size() > MAX_CACHED_TILES_PER_DIMENSION) {
+				Iterator<Map.Entry<TileKey, TileImage>> iterator = this.tiles.entrySet().iterator();
+				if (!iterator.hasNext()) {
+					return;
+				}
+				Map.Entry<TileKey, TileImage> eldest = iterator.next();
+				iterator.remove();
+				this.tileLookup.remove(eldest.getKey(), eldest.getValue());
+			}
 		}
 
 		private TileImage renderTile(BlueMapBridge blueMap, Object world, int levelMinY, int levelMaxY, List<DisplayOverlay> displayOverlays, TileKey key, double tileBlocksPerPixel, long now) {

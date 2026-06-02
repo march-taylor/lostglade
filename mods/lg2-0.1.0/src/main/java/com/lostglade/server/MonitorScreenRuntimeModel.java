@@ -499,6 +499,9 @@ enum PlayerUiIcon {
 	OFFLINE("/assets/lg2/textures/monitor/ui_icons/offline.png"),
 	UNLINK("/assets/lg2/textures/monitor/ui_icons/unlink.png"),
 	LOCATION("/assets/lg2/textures/monitor/ui_icons/location.png"),
+	AIMING_2("/assets/lg2/textures/monitor/ui_icons/aiming_2.png"),
+	ADD("/assets/lg2/textures/monitor/ui_icons/add.png"),
+	MINUS("/assets/lg2/textures/monitor/ui_icons/minus.png"),
 	TARGET("/assets/lg2/textures/monitor/ui_icons/target.png");
 
 	private final String resourcePath;
