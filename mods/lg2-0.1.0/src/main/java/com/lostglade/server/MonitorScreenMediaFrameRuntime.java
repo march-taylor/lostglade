@@ -298,6 +298,7 @@ final class MonitorScreenMediaFrameRuntime {
 				boolean previousAudioPlaceholder = state.audioPlaceholder;
 				boolean previousPaused = state.userPaused;
 				String previousStatusText = state.statusText;
+				String previousAudioStreamUrl = state.audioStreamUrl;
 				long previousFrameSequence = state.youtubeFrameSequence;
 				state.mediaTitle = result.snapshot().title();
 				if (result.snapshot().frameSequence() != previousFrameSequence) {
@@ -313,6 +314,14 @@ final class MonitorScreenMediaFrameRuntime {
 				state.bufferedEndMs = result.snapshot().bufferedEndMs();
 				state.liveStream = result.snapshot().live();
 				state.audioPlaceholder = result.snapshot().audioPlaceholder();
+				String snapshotAudioStreamUrl = result.snapshot().audioStreamUrl();
+				if (snapshotAudioStreamUrl != null
+						&& !snapshotAudioStreamUrl.isBlank()
+						&& !Objects.equals(previousAudioStreamUrl, snapshotAudioStreamUrl)) {
+					state.audioStreamUrl = snapshotAudioStreamUrl;
+					bumpAudioSyncTokenLocked(state);
+					speakerRefreshNeeded = true;
+				}
 				reconcilePendingAudioTransportLocked(state, result.snapshot().paused(), result.snapshot().positionMs());
 				state.statusText = result.snapshot().status();
 				state.loading = !result.snapshot().ready();

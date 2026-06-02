@@ -168,7 +168,11 @@ public final class MonitorMediaApp implements MonitorApp {
 
 	public static LoadedAudioTrack loadAudioFromUrl(String rawUrl, TaskProgress progress) throws IOException {
 		URI uri = validateUri(rawUrl);
-		return probeAudio(uri.toString(), uri.toString(), progress);
+		String mediaKey = cachedMediaKey(uri);
+		if (mediaKey == null || mediaKey.isBlank()) {
+			mediaKey = downloadVideoToCache(uri, progress);
+		}
+		return loadSavedGalleryAudio(mediaKey, progress);
 	}
 
 	public static String persistSavedGalleryMedia(String rawUrl) throws IOException {

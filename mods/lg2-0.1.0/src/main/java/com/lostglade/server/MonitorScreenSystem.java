@@ -388,6 +388,7 @@ public final class MonitorScreenSystem {
 		PLAYER_MEDIA_FOCUS.clear();
 		MonitorMaxRuntime.clearRuntime();
 		MonitorYandexMapsRuntime.clearRuntime();
+		MonitorCameraRuntime.clearRuntime();
 		TILE_CACHE.clear();
 		OVERLAY_WINDOW_CACHE.clear();
 		OVERLAY_WINDOW_FAMILY_CACHE.clear();
@@ -2285,7 +2286,7 @@ public final class MonitorScreenSystem {
 		writeScreenState(screenMap, state);
 		MapItemSavedData mapData = mapLevel.getMapData(mapId);
 		if (mapData != null) {
-			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null, null, null, null, false, List.of()));
+			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null, null, null, null, null, false, List.of()));
 			applyFrameToMap(mapData, tiles[0]);
 		}
 		return screenMap;
@@ -2611,6 +2612,9 @@ public final class MonitorScreenSystem {
 		MaxVisualSnapshot maxSnapshot = viewMode == ScreenViewMode.MAX || MonitorMaxRuntime.hasVisibleCall(component.runtimeKey())
 				? MonitorMaxRuntime.captureSnapshot(server, component)
 				: null;
+		CameraAppVisualSnapshot cameraAppSnapshot = viewMode == ScreenViewMode.CAMERA_APP
+				? MonitorCameraRuntime.captureSnapshot(server, component)
+				: null;
 		YandexMapsVisualSnapshot yandexMapsSnapshot = viewMode == ScreenViewMode.YANDEX_MAPS
 				? MonitorYandexMapsRuntime.captureSnapshot(server, component)
 				: null;
@@ -2630,6 +2634,7 @@ public final class MonitorScreenSystem {
 				component.height(),
 				mediaVersion,
 				mediaSnapshot,
+				cameraAppSnapshot,
 				maxSnapshot,
 				yandexMapsSnapshot,
 				wallpaperSnapshot,
@@ -2844,7 +2849,7 @@ public final class MonitorScreenSystem {
 		if (work == null) {
 			return new byte[0][];
 		}
-		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null && work.maxSnapshot() == null && work.yandexMapsSnapshot() == null) {
+		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null && work.cameraAppSnapshot() == null && work.maxSnapshot() == null && work.yandexMapsSnapshot() == null) {
 			RenderCacheKey key = new RenderCacheKey(work.powered(), work.viewMode(), work.launcherPage(), work.width(), work.height());
 			byte[][] cached = TILE_CACHE.get(key);
 			if (cached != null) {
@@ -2866,6 +2871,8 @@ public final class MonitorScreenSystem {
 			UiLayout layout = createUiLayout(work.width(), work.height());
 			if (work.viewMode() == ScreenViewMode.HOME) {
 				drawHomeScreen(graphics, layout, work.launcherPage());
+			} else if (work.viewMode() == ScreenViewMode.CAMERA_APP) {
+				MonitorCameraRuntime.drawScreen(graphics, layout, appForViewMode(work.viewMode()), work.cameraAppSnapshot());
 			} else if (work.viewMode() == ScreenViewMode.MAX) {
 				MonitorMaxRuntime.drawMaxScreen(graphics, layout, appForViewMode(work.viewMode()), work.maxSnapshot());
 			} else if (work.viewMode() == ScreenViewMode.YANDEX_MAPS) {
@@ -2885,7 +2892,7 @@ public final class MonitorScreenSystem {
 		byte[][] tiles = new byte[work.width() * work.height()][MAP_SIZE * MAP_SIZE];
 		quantizeTiles(work, rgbPixels, pixelWidth, tiles);
 
-		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null && work.maxSnapshot() == null && work.yandexMapsSnapshot() == null) {
+		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null && work.cameraAppSnapshot() == null && work.maxSnapshot() == null && work.yandexMapsSnapshot() == null) {
 			TILE_CACHE.put(new RenderCacheKey(work.powered(), work.viewMode(), work.launcherPage(), work.width(), work.height()), tiles);
 		}
 		return tiles;
@@ -2896,6 +2903,9 @@ public final class MonitorScreenSystem {
 			return false;
 		}
 		if (work.maxSnapshot() != null && work.maxSnapshot().dynamic()) {
+			return true;
+		}
+		if (work.cameraAppSnapshot() != null && work.cameraAppSnapshot().dynamic()) {
 			return true;
 		}
 		if (work.yandexMapsSnapshot() != null) {
@@ -3972,7 +3982,7 @@ public final class MonitorScreenSystem {
 		}
 		drawGalleryMediaTypeBadge(graphics, previewRect, layout, card);
 
-		if (card.animated()) {
+		if (galleryCardPlayBadgeVisible(card)) {
 			UiRect playBadge = mediaGalleryCardPlayBadgeRect(previewRect, layout);
 			drawRoundMediaButtonBase(graphics, playBadge, new Color(12, 16, 20, 196));
 			drawPlayGlyph(graphics, playBadge.inset(Math.max(2, layout.unit() / 5)), new Color(248, 251, 255));
@@ -4017,6 +4027,10 @@ public final class MonitorScreenSystem {
 			case LIVE_CAMERA -> PlayerUiIcon.VIDEO_CAMERA;
 			case MEDIA -> card.animatedMedia() ? PlayerUiIcon.MEDIA_GIF : PlayerUiIcon.MEDIA_IMAGE;
 		};
+	}
+
+	static boolean galleryCardPlayBadgeVisible(GalleryCardSnapshot card) {
+		return card != null && card.kind() == GalleryItemKind.LIVE_CAMERA;
 	}
 
 	static void drawSberDronesGalleryCard(Graphics2D graphics, UiLayout layout, UiRect rect, GalleryCardSnapshot card) {
@@ -7412,6 +7426,14 @@ public final class MonitorScreenSystem {
 
 	static long effectiveYoutubePollDelayMs(MinecraftServer server, ScreenRuntimeKey key, boolean paused) {
 		long baseDelay = paused ? youtubePollIdleIntervalMs() : youtubePollActiveIntervalMs();
+		MediaRuntimeState state = key != null ? MEDIA_STATES.get(key) : null;
+		if (state != null) {
+			synchronized (state) {
+				if (isDirectAudioPlaybackLocked(state)) {
+					baseDelay = Math.max(baseDelay, paused ? 350L : 200L);
+				}
+			}
+		}
 		if (!hasNearbyMediaViewer(server, key)) {
 			return Math.max(baseDelay, paused ? youtubePollIdleIntervalMs() * 2L : youtubePollIdleIntervalMs());
 		}
@@ -9539,6 +9561,10 @@ public final class MonitorScreenSystem {
 
 	static boolean isDirectVideoPlaybackLocked(MediaRuntimeState state) {
 		return isStreamPlaybackLocked(state) && state.streamKind == PlaybackStreamKind.DIRECT_VIDEO;
+	}
+
+	static boolean isDirectAudioPlaybackLocked(MediaRuntimeState state) {
+		return isDirectVideoPlaybackLocked(state) && usesMusicPlayerLayoutLocked(state);
 	}
 
 	static boolean hasActiveStreamPlaybackLocked(MediaRuntimeState state) {

@@ -43,6 +43,7 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 public final class MicrophoneSystem {
 	private static final long REFRESH_INTERVAL_TICKS = 5L;
@@ -337,6 +338,41 @@ public final class MicrophoneSystem {
 		return connectedScreenMicrophones(server, screenKey).size();
 	}
 
+	public static List<ScreenMicrophoneDevice> connectedMicrophoneDevices(MinecraftServer server, ScreenRuntimeKey screenKey) {
+		List<Map.Entry<MicrophoneKey, MicrophoneRuntime>> microphones = connectedScreenMicrophones(server, screenKey);
+		if (microphones.isEmpty()) {
+			return List.of();
+		}
+		List<ScreenMicrophoneDevice> devices = new ArrayList<>(microphones.size());
+		for (int index = 0; index < microphones.size(); index++) {
+			MicrophoneKey key = microphones.get(index).getKey();
+			BlockPos pos = key != null ? key.pos() : null;
+			devices.add(new ScreenMicrophoneDevice(
+					index,
+					pos != null ? "Микрофон " + (index + 1) : "Микрофон",
+					pos != null ? pos.getX() + " " + pos.getY() + " " + pos.getZ() : "",
+					key != null ? key.dimension() : null,
+					pos
+			));
+		}
+		return List.copyOf(devices);
+	}
+
+	public static MicrophonePcmRecorder startPcmRecorder(MinecraftServer server, ScreenRuntimeKey screenKey, int selectedMicrophoneIndex, Consumer<short[]> frameConsumer) {
+		List<Map.Entry<MicrophoneKey, MicrophoneRuntime>> microphones = connectedScreenMicrophones(server, screenKey);
+		if (microphones.isEmpty() || frameConsumer == null) {
+			return null;
+		}
+		int index = selectedMicrophoneIndex >= 0 && selectedMicrophoneIndex < microphones.size() ? selectedMicrophoneIndex : 0;
+		MicrophoneRuntime runtime = microphones.get(index).getValue();
+		if (runtime == null || runtime.closed || runtime.feed == null) {
+			return null;
+		}
+		MicrophonePcmRecorder recorder = new MicrophonePcmRecorder(runtime.feed, frameConsumer);
+		recorder.start();
+		return recorder;
+	}
+
 	private static String microphoneSortKey(MicrophoneKey key) {
 		if (key == null || key.pos() == null || key.dimension() == null) {
 			return "";
@@ -393,6 +429,57 @@ public final class MicrophoneSystem {
 	}
 
 	static record ScreenMicrophoneCallRoute(String routeId, ScreenRuntimeKey sourceScreen, ScreenRuntimeKey outputScreen, int selectedMicrophoneIndex) {
+	}
+
+	public static record ScreenMicrophoneDevice(int index, String title, String subtitle, ResourceKey<Level> dimension, BlockPos pos) {
+	}
+
+	public static final class MicrophonePcmRecorder implements AutoCloseable {
+		private final SharedMicrophoneFeed feed;
+		private final Consumer<short[]> frameConsumer;
+		private volatile boolean closed;
+		private Thread thread;
+
+		private MicrophonePcmRecorder(SharedMicrophoneFeed feed, Consumer<short[]> frameConsumer) {
+			this.feed = feed;
+			this.frameConsumer = frameConsumer;
+		}
+
+		private void start() {
+			Thread created = new Thread(this::run, "lg2-monitor-microphone-recorder");
+			created.setDaemon(true);
+			this.thread = created;
+			created.start();
+		}
+
+		private void run() {
+			long nextFrameAt = System.nanoTime();
+			while (!this.closed) {
+				short[] frame = this.feed.frameAt(System.nanoTime());
+				this.frameConsumer.accept(frame != null ? frame.clone() : SILENCE_FRAME.clone());
+				nextFrameAt += AUDIO_FRAME_NANOS;
+				long sleepNanos = nextFrameAt - System.nanoTime();
+				if (sleepNanos > 0L) {
+					try {
+						TimeUnit.NANOSECONDS.sleep(sleepNanos);
+					} catch (InterruptedException exception) {
+						Thread.currentThread().interrupt();
+						return;
+					}
+				} else if (sleepNanos < -AUDIO_FRAME_NANOS * 8L) {
+					nextFrameAt = System.nanoTime();
+				}
+			}
+		}
+
+		@Override
+		public void close() {
+			this.closed = true;
+			Thread current = this.thread;
+			if (current != null) {
+				current.interrupt();
+			}
+		}
 	}
 
 	private record SpeakerOutputTarget(ResourceKey<Level> dimension, BlockPos pos) {

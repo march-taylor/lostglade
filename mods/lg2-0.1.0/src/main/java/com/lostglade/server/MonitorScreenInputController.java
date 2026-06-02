@@ -660,6 +660,10 @@ final class MonitorScreenInputController {
 				restoreLiveCameraView = liveCameraPlayback;
 				rerenderCurrent = !liveCameraPlayback;
 			}
+		} else if (component.viewMode() == ScreenViewMode.CAMERA_APP) {
+			if (!MonitorCameraRuntime.handleTouch(server, component, layout, touchPoint)) {
+				nextMode = ScreenViewMode.HOME;
+			}
 		} else if (component.viewMode() == ScreenViewMode.MAX) {
 			MonitorMaxRuntime.handleTouch(player, level, component, layout, touchPoint);
 		} else if (component.viewMode() == ScreenViewMode.YANDEX_MAPS) {

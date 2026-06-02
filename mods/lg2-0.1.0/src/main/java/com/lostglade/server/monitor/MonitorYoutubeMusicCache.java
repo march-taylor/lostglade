@@ -537,15 +537,7 @@ public final class MonitorYoutubeMusicCache {
 		if (!snapshot.playable()) {
 			return null;
 		}
-		if (snapshot.complete()) {
-			return loadCachedTrack(url, snapshot.trackPath(), snapshot.coverPath(), snapshot.metadataPath(), progress);
-		}
-		try {
-			return loadPartiallyCachedTrack(url, snapshot.coverPath(), snapshot.metadataPath(), progress);
-		} catch (IOException exception) {
-			Lg2.LOGGER.debug("Falling back to partial local YouTube Music cache playback for {}", url, exception);
-			return loadCachedTrack(url, snapshot.trackPath(), snapshot.coverPath(), snapshot.metadataPath(), progress);
-		}
+		return loadCachedTrack(url, snapshot.trackPath(), snapshot.coverPath(), snapshot.metadataPath(), progress);
 	}
 
 	private static LoadedTrack loadCachedTrack(String url, Path trackPath, Path coverPath, Path metadataPath, TaskProgress progress) throws IOException {
@@ -587,45 +579,6 @@ public final class MonitorYoutubeMusicCache {
 		}
 		String inputPath = trackPath.toAbsolutePath().toString();
 		return new LoadedTrack(title, artist, new MonitorMediaApp.LoadedVideo(cover, durationMs, cover.getWidth(), cover.getHeight(), inputPath, inputPath));
-	}
-
-	private static LoadedTrack loadPartiallyCachedTrack(String url, Path coverPath, Path metadataPath, TaskProgress progress) throws IOException {
-		if (coverPath == null || metadataPath == null) {
-			throw new IOException("Invalid partial cache paths");
-		}
-		if (progress != null) {
-			progress.setIndeterminate("RESOLVING AUDIO");
-		}
-		JsonObject metadata = GSON.fromJson(Files.readString(metadataPath, StandardCharsets.UTF_8), JsonObject.class);
-		String title = getString(metadata, "title", "YouTube Music");
-		String artist = getString(metadata, "artist", "");
-		long durationMs = getLong(metadata, "durationMs", 0L);
-		BufferedImage cover = ImageIO.read(coverPath.toFile());
-		if (cover == null) {
-			cover = createFallbackCover();
-		} else {
-			BufferedImage normalized = normalizeCoverArt(cover);
-			if (normalized != cover) {
-				cover = normalized;
-				ImageIO.write(cover, "png", coverPath.toFile());
-			}
-		}
-		String audioStreamUrl = resolveAudioStreamUrl(url);
-		if (progress != null) {
-			progress.complete("READY");
-		}
-		return new LoadedTrack(
-				title,
-				artist,
-				new MonitorMediaApp.LoadedVideo(
-						cover,
-						durationMs,
-						cover.getWidth(),
-						cover.getHeight(),
-						audioStreamUrl,
-						audioStreamUrl
-				)
-		);
 	}
 
 	private static String resolveArtist(JsonObject metadata) {

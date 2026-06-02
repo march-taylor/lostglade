@@ -130,11 +130,40 @@ record RenderWork(
 		int height,
 		long mediaVersion,
 		MediaVisualSnapshot mediaSnapshot,
+		CameraAppVisualSnapshot cameraAppSnapshot,
 		MaxVisualSnapshot maxSnapshot,
 		YandexMapsVisualSnapshot yandexMapsSnapshot,
 		WallpaperVisualSnapshot wallpaperSnapshot,
 		boolean transparentOutput,
 		List<RenderTileTarget> tileTargets
+) {
+}
+
+record CameraAppVisualSnapshot(
+		long version,
+		BufferedImage previewFrame,
+		List<CameraAppDeviceSnapshot> cameras,
+		List<CameraAppDeviceSnapshot> microphones,
+		int selectedCameraIndex,
+		int selectedMicrophoneIndex,
+		CameraAppCaptureMode captureMode,
+		boolean recording,
+		boolean paused,
+		long elapsedMs,
+		boolean deviceMenuOpen,
+		String statusText
+) {
+	boolean dynamic() {
+		return this.recording && !this.paused;
+	}
+}
+
+record CameraAppDeviceSnapshot(
+		String title,
+		String subtitle,
+		String url,
+		boolean selected,
+		boolean online
 ) {
 }
 
