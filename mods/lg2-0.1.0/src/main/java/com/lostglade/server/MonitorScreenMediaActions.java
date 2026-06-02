@@ -260,13 +260,11 @@ final class MonitorScreenMediaActions {
 			return;
 		}
 		ensureGalleryStateHydrated(server, key, state);
-		UUID requesterUuid;
 		boolean saved = false;
 		synchronized (state) {
 			if (!state.downloadInProgress || !Objects.equals(state.downloadTargetUrl, url)) {
 				return;
 			}
-			requesterUuid = state.downloadRequesterUuid;
 			if (savedMediaKey == null || savedMediaKey.isBlank()) {
 				clearDownloadStateLocked(state);
 				state.statusText = saveError != null && !saveError.isBlank() ? saveError : "SAVE FAILED";
@@ -301,10 +299,6 @@ final class MonitorScreenMediaActions {
 		persistGalleryState(server, key, state);
 		requestRuntimeRender(server, key);
 		scheduleActionCompletionReset(server, key);
-		ServerPlayer requester = requesterUuid != null ? server.getPlayerList().getPlayer(requesterUuid) : null;
-		if (requester != null) {
-			requester.sendSystemMessage(Component.literal("Медиа сохранено в галерею"));
-		}
 	}
 
 	static void finishGalleryVideoDownload(
@@ -325,13 +319,11 @@ final class MonitorScreenMediaActions {
 			return;
 		}
 		ensureGalleryStateHydrated(server, key, state);
-		UUID requesterUuid;
 		boolean saved = false;
 		synchronized (state) {
 			if (!state.downloadInProgress || !Objects.equals(state.downloadTargetUrl, url)) {
 				return;
 			}
-			requesterUuid = state.downloadRequesterUuid;
 			if (savedMediaKey == null || savedMediaKey.isBlank()) {
 				clearDownloadStateLocked(state);
 				state.statusText = saveError != null && !saveError.isBlank() ? saveError : "SAVE FAILED";
@@ -369,10 +361,6 @@ final class MonitorScreenMediaActions {
 		persistGalleryState(server, key, state);
 		requestRuntimeRender(server, key);
 		scheduleActionCompletionReset(server, key);
-		ServerPlayer requester = requesterUuid != null ? server.getPlayerList().getPlayer(requesterUuid) : null;
-		if (requester != null) {
-			requester.sendSystemMessage(Component.literal("Видео сохранено в галерею"));
-		}
 	}
 
 	static void finishGalleryAudioDownload(
@@ -393,13 +381,11 @@ final class MonitorScreenMediaActions {
 			return;
 		}
 		ensureGalleryStateHydrated(server, key, state);
-		UUID requesterUuid;
 		boolean saved = false;
 		synchronized (state) {
 			if (!state.downloadInProgress || !Objects.equals(state.downloadTargetUrl, url)) {
 				return;
 			}
-			requesterUuid = state.downloadRequesterUuid;
 			if (savedMediaKey == null || savedMediaKey.isBlank()) {
 				clearDownloadStateLocked(state);
 				state.statusText = saveError != null && !saveError.isBlank() ? saveError : "SAVE FAILED";
@@ -437,10 +423,6 @@ final class MonitorScreenMediaActions {
 		persistGalleryState(server, key, state);
 		requestRuntimeRender(server, key);
 		scheduleActionCompletionReset(server, key);
-		ServerPlayer requester = requesterUuid != null ? server.getPlayerList().getPlayer(requesterUuid) : null;
-		if (requester != null) {
-			requester.sendSystemMessage(Component.literal("Аудио сохранено в галерею"));
-		}
 	}
 
 	static void applyGalleryWallpaper(MinecraftServer server, ScreenRuntimeKey key, UUID requesterUuid) {
@@ -473,10 +455,6 @@ final class MonitorScreenMediaActions {
 		requestRuntimeRender(server, key);
 		if (shouldAnimate) {
 			scheduleBackgroundPlaybackIfNeeded(server, key);
-		}
-		ServerPlayer requester = requesterUuid != null ? server.getPlayerList().getPlayer(requesterUuid) : null;
-		if (requester != null) {
-			requester.sendSystemMessage(Component.literal("Обои обновлены"));
 		}
 	}
 
@@ -521,10 +499,6 @@ final class MonitorScreenMediaActions {
 		if (shouldAnimate) {
 			scheduleBackgroundPlaybackIfNeeded(server, key);
 		}
-		ServerPlayer requester = requesterUuid != null ? server.getPlayerList().getPlayer(requesterUuid) : null;
-		if (requester != null) {
-			requester.sendSystemMessage(Component.literal("Фон плеера обновлен"));
-		}
 	}
 
 	static void beginYoutubeDownload(MinecraftServer server, ScreenRuntimeKey key, UUID requesterUuid) {
@@ -537,14 +511,12 @@ final class MonitorScreenMediaActions {
 		}
 		ensureGalleryStateHydrated(server, key, state);
 		boolean readyNow = false;
-		ScreenViewMode downloadMode;
 		synchronized (state) {
 			if ((state.mode != ScreenViewMode.YOUTUBE && state.mode != ScreenViewMode.YOUTUBE_MUSIC)
 					|| state.sourceUrl == null
 					|| state.sourceUrl.isBlank()) {
 				return;
 			}
-			downloadMode = state.mode;
 			if (hasGalleryItemForUrlLocked(state, state.sourceUrl)) {
 				state.version++;
 				return;
@@ -597,10 +569,8 @@ final class MonitorScreenMediaActions {
 			return;
 		}
 		ensureGalleryStateHydrated(server, key, state);
-		UUID requesterUuid;
 		String savedUrl = null;
 		boolean saved = false;
-		ScreenViewMode downloadMode;
 		synchronized (state) {
 			if (!state.downloadInProgress || !isYoutubeGalleryDownloadReadyLocked(state)) {
 				return;
@@ -608,8 +578,6 @@ final class MonitorScreenMediaActions {
 			if (state.sourceUrl == null || state.sourceUrl.isBlank() || !Objects.equals(state.sourceUrl, state.downloadTargetUrl)) {
 				return;
 			}
-			downloadMode = state.mode;
-			requesterUuid = state.downloadRequesterUuid;
 			saved = saveCurrentYoutubeToGalleryLocked(state);
 			if (saved) {
 				savedUrl = state.sourceUrl;
@@ -640,10 +608,6 @@ final class MonitorScreenMediaActions {
 		scheduleGalleryPreloadStatusRefreshes(server, key);
 		requestRuntimeRender(server, key);
 		scheduleActionCompletionReset(server, key);
-		ServerPlayer requester = requesterUuid != null ? server.getPlayerList().getPlayer(requesterUuid) : null;
-		if (requester != null) {
-			requester.sendSystemMessage(Component.literal(downloadMode == ScreenViewMode.YOUTUBE_MUSIC ? "Трек сохранён в галерею" : "Видео сохранено в галерею"));
-		}
 	}
 
 	static void startStandaloneYoutubePlayback(

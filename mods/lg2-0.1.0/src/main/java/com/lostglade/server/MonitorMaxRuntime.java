@@ -202,7 +202,6 @@ final class MonitorMaxRuntime {
 				state.version++;
 			}
 			player.displayClientMessage(Component.literal(MAX_PENDING_ADD_STATUS), true);
-			player.sendSystemMessage(Component.literal("MAX: введи код контакта в чат. Сообщение не будет отправлено другим игрокам."));
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
@@ -369,7 +368,7 @@ final class MonitorMaxRuntime {
 		String rawCode = message.signedContent() != null ? message.signedContent().trim() : "";
 		String code = normalizeAccountCode(rawCode);
 		if (state == null || code.isBlank()) {
-			sender.sendSystemMessage(Component.literal("MAX: код не распознан."));
+			sender.displayClientMessage(Component.literal("MAX: код не распознан"), true);
 			return false;
 		}
 		String ownCode;
@@ -2111,18 +2110,13 @@ final class MonitorMaxRuntime {
 			return;
 		}
 		String displayCode = displayAccountCode(code);
-		String locale = MonitorScreenMessages.locale(player);
-		boolean russian = locale.startsWith("ru") || locale.startsWith("uk");
-		Component copy = Component.literal(russian ? "[[скопировать код]]" : "[[copy code]]")
+		Component copy = Component.literal(displayCode)
 				.withStyle(style -> style
-						.withColor(ChatFormatting.AQUA)
+						.withColor(ChatFormatting.WHITE)
+						.withBold(true)
 						.withUnderlined(true)
 						.withClickEvent(new ClickEvent.CopyToClipboard(displayCode)));
-		player.sendSystemMessage(Component.literal(russian ? "MAX код: " : "MAX code: ")
-				.withStyle(style -> style.withColor(ChatFormatting.GRAY))
-				.append(Component.literal(displayCode).withStyle(style -> style.withColor(ChatFormatting.WHITE).withBold(true)))
-				.append(Component.literal(" "))
-				.append(copy));
+		player.sendSystemMessage(copy);
 	}
 
 	private static Path defaultRingtonePath() {
