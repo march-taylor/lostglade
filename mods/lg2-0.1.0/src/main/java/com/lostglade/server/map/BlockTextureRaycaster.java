@@ -263,8 +263,8 @@ public final class BlockTextureRaycaster {
 	private static boolean isTopVisible(Direction direction, ModelTransform transform, ElementRotation elementRotation) {
 		Vec3 normal = new Vec3(direction.getStepX(), direction.getStepY(), direction.getStepZ());
 		normal = rotateElementVector(normal, elementRotation);
-		normal = rotateAroundX(rotateAroundY(normal, -transform.y()), transform.x());
-		return Math.abs(normal.y) > EPSILON;
+		normal = rotateAroundX(rotateAroundY(normal, transform.y()), transform.x());
+		return normal.y > EPSILON;
 	}
 
 	private static FaceHit intersectFace(
@@ -471,20 +471,20 @@ public final class BlockTextureRaycaster {
 
 	private static Ray inverseRotateVariant(Vec3 origin, Vec3 direction, ModelTransform transform) {
 		Vec3 center = new Vec3(8.0D, 8.0D, 8.0D);
-		Vec3 rotatedOrigin = rotateAroundY(rotateAroundX(origin.subtract(center), -transform.x()), transform.y()).add(center);
-		Vec3 rotatedDirection = rotateAroundY(rotateAroundX(direction, -transform.x()), transform.y());
+		Vec3 rotatedOrigin = rotateAroundY(rotateAroundX(origin.subtract(center), -transform.x()), -transform.y()).add(center);
+		Vec3 rotatedDirection = rotateAroundY(rotateAroundX(direction, -transform.x()), -transform.y());
 		return new Ray(rotatedOrigin, rotatedDirection);
 	}
 
 	private static Vec3 rotateVariantPointForward(Vec3 point, ModelTransform transform) {
 		Vec3 center = new Vec3(8.0D, 8.0D, 8.0D);
-		return rotateAroundX(rotateAroundY(point.subtract(center), -transform.y()), transform.x()).add(center);
+		return rotateAroundX(rotateAroundY(point.subtract(center), transform.y()), transform.x()).add(center);
 	}
 
 	private static Direction rotateDirectionForward(Direction direction, ModelTransform transform, ElementRotation elementRotation) {
 		Vec3 normal = new Vec3(direction.getStepX(), direction.getStepY(), direction.getStepZ());
 		normal = rotateElementVector(normal, elementRotation);
-		normal = rotateAroundX(rotateAroundY(normal, -transform.y()), transform.x());
+		normal = rotateAroundX(rotateAroundY(normal, transform.y()), transform.x());
 		return dominantDirection(normal);
 	}
 

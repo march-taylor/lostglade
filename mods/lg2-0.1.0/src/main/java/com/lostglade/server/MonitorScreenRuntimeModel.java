@@ -92,6 +92,7 @@ record YandexMapsVisualSnapshot(
 		double centerX,
 		double centerZ,
 		double zoomBlocks,
+		java.util.List<MonitorYandexMapsBlueMapRenderer.DisplayOverlay> displayOverlays,
 		boolean healthy
 ) {
 }

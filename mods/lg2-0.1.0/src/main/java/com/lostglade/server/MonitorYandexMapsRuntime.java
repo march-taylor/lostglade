@@ -73,9 +73,18 @@ final class MonitorYandexMapsRuntime {
 					centerX,
 					centerZ,
 					blocksPerPixel,
+					List.of(),
 					false
 			);
 		}
+		List<MonitorYandexMapsBlueMapRenderer.DisplayOverlay> displayOverlays = MonitorYandexMapsBlueMapRenderer.captureDisplayOverlays(
+				level,
+				centerX,
+				centerZ,
+				Math.max(1, component.width() * MAP_SIZE),
+				Math.max(1, component.height() * MAP_SIZE),
+				blocksPerPixel
+		);
 		return new YandexMapsVisualSnapshot(
 				version,
 				null,
@@ -84,6 +93,7 @@ final class MonitorYandexMapsRuntime {
 				centerX,
 				centerZ,
 				blocksPerPixel,
+				displayOverlays,
 				true
 		);
 	}
@@ -154,7 +164,9 @@ final class MonitorYandexMapsRuntime {
 						snapshot.centerZ(),
 						Math.max(1, layout.canvasWidth()),
 						Math.max(1, layout.canvasHeight()),
-						snapshot.zoomBlocks()
+						snapshot.zoomBlocks(),
+						snapshot.displayOverlays(),
+						() -> server.execute(() -> requestRuntimeRender(server, runtimeKey))
 				);
 				frame = rendered.image();
 				effectiveSnapshot = new YandexMapsVisualSnapshot(
@@ -165,6 +177,7 @@ final class MonitorYandexMapsRuntime {
 						snapshot.centerX(),
 						snapshot.centerZ(),
 						snapshot.zoomBlocks(),
+						snapshot.displayOverlays(),
 						rendered.healthy()
 				);
 			}
@@ -504,7 +517,7 @@ final class MonitorYandexMapsRuntime {
 	}
 
 	private static YandexMapsVisualSnapshot emptySnapshot() {
-		return new YandexMapsVisualSnapshot(0L, null, "", "", 0, 0, DEFAULT_BLOCKS_PER_PIXEL, false);
+		return new YandexMapsVisualSnapshot(0L, null, "", "", 0, 0, DEFAULT_BLOCKS_PER_PIXEL, List.of(), false);
 	}
 
 	private static final class YandexMapState {

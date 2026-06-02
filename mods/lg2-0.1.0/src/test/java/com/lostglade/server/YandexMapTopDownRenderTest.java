@@ -8,10 +8,12 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeverBlock;
+import net.minecraft.world.level.block.RedStoneWireBlock;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.AttachFace;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.RedstoneSide;
 import net.minecraft.world.phys.Vec3;
 
 import java.lang.reflect.Constructor;
@@ -29,7 +31,9 @@ public final class YandexMapTopDownRenderTest {
 		grassBlockUsesTopTexture();
 		redstoneWireProducesTopPixel();
 		leverProducesTopPixel();
+		wallLeverProjectionUsesItsAttachedSide();
 		buttonProducesTopPixel();
+		redstoneLineKeepsTexturedProjection();
 		fenceHasTransparentProjectionGaps();
 		fenceGapDoesNotFallbackToOpaqueMapColor();
 		coarseFenceKeepsLowerLayerVisible();
@@ -41,6 +45,7 @@ public final class YandexMapTopDownRenderTest {
 		transparentBlocksKeepTheirOwnColorWhenUnbacked();
 		rotatedDisplayOverlayCoversAllQuarterTurns();
 		mapVisibleItemDisplayModelsProduceTopPixels();
+		serverDisplayModelUsesTopFacingPixels();
 		System.out.println("Yandex map top-down render checks passed");
 	}
 
@@ -72,12 +77,37 @@ public final class YandexMapTopDownRenderTest {
 		require(result != null && result.alpha() > 8, "floor lever must produce a visible top-down pixel");
 	}
 
+	private static void wallLeverProjectionUsesItsAttachedSide() {
+		BlockState westWall = Blocks.LEVER.defaultBlockState()
+				.setValue(LeverBlock.FACE, AttachFace.WALL)
+				.setValue(LeverBlock.FACING, Direction.WEST);
+		BlockState northWall = Blocks.LEVER.defaultBlockState()
+				.setValue(LeverBlock.FACE, AttachFace.WALL)
+				.setValue(LeverBlock.FACING, Direction.NORTH);
+		int westStrip = geometryHitsInArea(westWall, 20, 0.0D, 0.32D, 0.0D, 1.0D);
+		int eastStrip = geometryHitsInArea(westWall, 20, 0.68D, 1.0D, 0.0D, 1.0D);
+		int northStrip = geometryHitsInArea(northWall, 20, 0.0D, 1.0D, 0.0D, 0.32D);
+		int southStrip = geometryHitsInArea(northWall, 20, 0.0D, 1.0D, 0.68D, 1.0D);
+		require(westStrip > eastStrip, "wall lever facing west must project toward the west side, west=" + westStrip + " east=" + eastStrip);
+		require(northStrip > southStrip, "wall lever facing north must project toward the north side, north=" + northStrip + " south=" + southStrip);
+	}
+
 	private static void buttonProducesTopPixel() {
 		BlockState state = Blocks.STONE_BUTTON.defaultBlockState()
 				.setValue(BlockStateProperties.ATTACH_FACE, AttachFace.FLOOR)
 				.setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.NORTH);
 		BlockTextureRaycaster.BlockTraceResult result = traceTop(state, 0.5D, 0.5D);
 		require(result != null && result.alpha() > 8, "floor button must produce a visible top-down pixel");
+	}
+
+	private static void redstoneLineKeepsTexturedProjection() throws Exception {
+		BlockState state = Blocks.REDSTONE_WIRE.defaultBlockState()
+				.setValue(RedStoneWireBlock.NORTH, RedstoneSide.SIDE)
+				.setValue(RedStoneWireBlock.SOUTH, RedstoneSide.SIDE);
+		int center = sampleState(state, 0.5D, 0.5D);
+		int corner = sampleState(state, 0.08D, 0.08D);
+		require(((center >>> 24) & 0xFF) > 8, "redstone line center must stay visible");
+		require(((corner >>> 24) & 0xFF) <= 8, "redstone line corners must stay transparent instead of becoming a flat fill");
 	}
 
 	private static void fenceHasTransparentProjectionGaps() {
@@ -190,6 +220,25 @@ public final class YandexMapTopDownRenderTest {
 		requireModelTopPixel(Identifier.fromNamespaceAndPath("lg2", "item/monitor_display"), "monitor item display");
 		requireModelTopPixel(Identifier.fromNamespaceAndPath("lg2", "item/server"), "server item display");
 		requireModelTopPixel(Identifier.fromNamespaceAndPath("lg2", "item/exit_sign"), "exit sign item display");
+	}
+
+	private static void serverDisplayModelUsesTopFacingPixels() {
+		Identifier serverModel = Identifier.fromNamespaceAndPath("lg2", "item/server");
+		double[] samples = {0.18D, 0.32D, 0.5D, 0.68D, 0.82D};
+		for (double sampleX : samples) {
+			for (double sampleZ : samples) {
+				BlockTextureRaycaster.BlockTraceResult result = BlockTextureRaycaster.traceModelTopDownNormalized(
+						serverModel,
+						sampleX,
+						sampleZ,
+						new int[]{-1, -1, -1, -1}
+				);
+				if (result != null && result.alpha() > 8 && result.face() == Direction.UP) {
+					return;
+				}
+			}
+		}
+		throw new AssertionError("server item display must expose real upward-facing model pixels on the map");
 	}
 
 	private static void requireModelTopPixel(Identifier modelId, String label) {
@@ -307,6 +356,25 @@ public final class YandexMapTopDownRenderTest {
 			double fracZ = (z + 0.5D) / samplesPerAxis;
 			for (int x = 0; x < samplesPerAxis; x++) {
 				double fracX = (x + 0.5D) / samplesPerAxis;
+				if (BlockTextureRaycaster.hitsTopDownGeometry(
+						state,
+						BlockPos.ZERO,
+						new Vec3(fracX, 1.999D, fracZ),
+						new Vec3(0.0D, -1.0D, 0.0D)
+				)) {
+					hits++;
+				}
+			}
+		}
+		return hits;
+	}
+
+	private static int geometryHitsInArea(BlockState state, int samplesPerAxis, double minX, double maxX, double minZ, double maxZ) {
+		int hits = 0;
+		for (int z = 0; z < samplesPerAxis; z++) {
+			double fracZ = minZ + (z + 0.5D) / samplesPerAxis * (maxZ - minZ);
+			for (int x = 0; x < samplesPerAxis; x++) {
+				double fracX = minX + (x + 0.5D) / samplesPerAxis * (maxX - minX);
 				if (BlockTextureRaycaster.hitsTopDownGeometry(
 						state,
 						BlockPos.ZERO,

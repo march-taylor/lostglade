@@ -50,14 +50,17 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 final class MonitorYandexMapsBlueMapRenderer {
 	private static final int TILE_SIZE = 128;
 	private static final int MIN_LOD = -9;
 	private static final int MAX_LOD = 16;
 	private static final int MAX_CACHED_TILES_PER_DIMENSION = 8192;
-	private static final int MAX_TILE_RENDERS_PER_FRAME = 1;
-	private static final long TILE_RENDER_BUDGET_NANOS = 2_500_000L;
+	private static final int TILE_RENDER_WORKERS = Mth.clamp(Runtime.getRuntime().availableProcessors() - 1, 2, 8);
+	private static final int MAX_TILE_REQUESTS_PER_FRAME = TILE_RENDER_WORKERS * 8;
 	private static final long TILE_TTL_MS = 10 * 60_000L;
 	private static final long REGION_INDEX_TTL_MS = 60_000L;
 	private static final int ABOVE_SURFACE_SCAN_BLOCKS = 32;
@@ -88,6 +91,7 @@ final class MonitorYandexMapsBlueMapRenderer {
 	private static final Identifier LAVA_FLOW_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "block/lava_flow");
 	private static final Object LOCK = new Object();
 	private static final TextureAssetManager ASSETS = TextureAssetManager.get();
+	private static final ExecutorService TILE_RENDER_EXECUTOR = Executors.newFixedThreadPool(TILE_RENDER_WORKERS, new TileThreadFactory());
 	private static final Map<WorldCacheKey, DimensionTileCache> CACHES = new LinkedHashMap<>(8, 0.75F, true);
 	private static final Map<String, BlockState> VANILLA_STATE_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, Integer> STATE_ARGB_CACHE = new ConcurrentHashMap<>();
@@ -100,6 +104,20 @@ final class MonitorYandexMapsBlueMapRenderer {
 	}
 
 	static Frame render(MinecraftServer server, ServerLevel level, double centerX, double centerZ, int width, int height, double blocksPerPixel) {
+		return render(server, level, centerX, centerZ, width, height, blocksPerPixel, List.of(), null);
+	}
+
+	static Frame render(
+			MinecraftServer server,
+			ServerLevel level,
+			double centerX,
+			double centerZ,
+			int width,
+			int height,
+			double blocksPerPixel,
+			List<DisplayOverlay> displayOverlays,
+			Runnable onTileReady
+	) {
 		if (server == null || level == null || width <= 0 || height <= 0 || !Double.isFinite(blocksPerPixel) || blocksPerPixel <= 0.0D) {
 			return Frame.failure(null, "Карта недоступна");
 		}
@@ -123,20 +141,24 @@ final class MonitorYandexMapsBlueMapRenderer {
 		DimensionTileCache cache = cacheFor(cacheKey);
 		List<TileKey> visibleTiles = visibleTiles(lod, tileBlocksPerPixel, worldLeft, worldTop, width, height, safeBlocksPerPixel, centerX, centerZ);
 		long now = System.currentTimeMillis();
-		int renderedTiles = 0;
-		long renderStartedAt = System.nanoTime();
+		int requestedTiles = 0;
+		int missingTiles = 0;
+		int levelMinY = level.getMinY();
+		int levelMaxY = level.getMaxY() - 1;
+		List<DisplayOverlay> safeOverlays = displayOverlays == null || displayOverlays.isEmpty()
+				? List.of()
+				: List.copyOf(displayOverlays);
 		for (TileKey key : visibleTiles) {
 			if (cache.peekFresh(key, now) != null) {
 				continue;
 			}
-			if (renderedTiles >= MAX_TILE_RENDERS_PER_FRAME) {
+			missingTiles++;
+			if (requestedTiles >= MAX_TILE_REQUESTS_PER_FRAME) {
 				continue;
 			}
-			if (renderedTiles > 0 && System.nanoTime() - renderStartedAt >= TILE_RENDER_BUDGET_NANOS) {
-				break;
+			if (cache.requestTile(blueMap, world, levelMinY, levelMaxY, safeOverlays, key, tileBlocksPerPixel, onTileReady)) {
+				requestedTiles++;
 			}
-			cache.tile(blueMap, world, level, key, tileBlocksPerPixel, now);
-			renderedTiles++;
 		}
 
 		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
@@ -159,8 +181,36 @@ final class MonitorYandexMapsBlueMapRenderer {
 				}
 			}
 		}
-		boolean healthy = missing < width * height;
-		return new Frame(image, healthy ? "BlueMap top-down" : "Нет сгенерированных тайлов", healthy);
+		String status = missingTiles > 0
+				? "Загрузка карты: " + Math.min(missingTiles, MAX_TILE_REQUESTS_PER_FRAME) + "/" + visibleTiles.size()
+				: missing < width * height ? "BlueMap top-down" : "Нет сгенерированных тайлов";
+		boolean healthy = missing < width * height || missingTiles > 0;
+		return new Frame(image, status, healthy);
+	}
+
+	static List<DisplayOverlay> captureDisplayOverlays(ServerLevel level, double centerX, double centerZ, int width, int height, double blocksPerPixel) {
+		if (level == null || width <= 0 || height <= 0 || !Double.isFinite(blocksPerPixel) || blocksPerPixel <= 0.0D) {
+			return List.of();
+		}
+		double safeBlocksPerPixel = Mth.clamp(blocksPerPixel, 1.0D / 512.0D, 4096.0D);
+		double halfWidth = width * safeBlocksPerPixel * 0.5D;
+		double halfHeight = height * safeBlocksPerPixel * 0.5D;
+		AABB box = new AABB(
+				centerX - halfWidth - 8.0D,
+				level.getMinY(),
+				centerZ - halfHeight - 8.0D,
+				centerX + halfWidth + 8.0D,
+				level.getMaxY(),
+				centerZ + halfHeight + 8.0D
+		);
+		List<DisplayOverlay> overlays = new ArrayList<>();
+		for (Display.ItemDisplay display : level.getEntities(EntityType.ITEM_DISPLAY, box, MonitorYandexMapsBlueMapRenderer::isMapVisibleDisplay)) {
+			DisplayOverlay overlay = displayOverlay(display);
+			if (overlay != null) {
+				overlays.add(overlay);
+			}
+		}
+		return overlays.isEmpty() ? List.of() : List.copyOf(overlays);
 	}
 
 	static void clear(ResourceKey<Level> dimension) {
@@ -368,19 +418,51 @@ final class MonitorYandexMapsBlueMapRenderer {
 				return this.size() > MAX_CACHED_TILES_PER_DIMENSION;
 			}
 		};
+		private final Set<TileKey> inFlight = ConcurrentHashMap.newKeySet();
 
-		private TileImage tile(BlueMapBridge blueMap, Object world, ServerLevel level, TileKey key, double tileBlocksPerPixel, long now) {
+		private boolean requestTile(
+				BlueMapBridge blueMap,
+				Object world,
+				int levelMinY,
+				int levelMaxY,
+				List<DisplayOverlay> displayOverlays,
+				TileKey key,
+				double tileBlocksPerPixel,
+				Runnable onTileReady
+		) {
+			long now = System.currentTimeMillis();
 			synchronized (LOCK) {
 				TileImage cached = this.tiles.get(key);
 				if (cached != null && now - cached.renderedAt() <= TILE_TTL_MS) {
-					return cached;
+					return false;
 				}
 			}
-			TileImage rendered = renderTile(blueMap, world, level, key, tileBlocksPerPixel, now);
-			synchronized (LOCK) {
-				this.tiles.put(key, rendered);
+			if (!this.inFlight.add(key)) {
+				return false;
 			}
-			return rendered;
+			List<DisplayOverlay> overlaysSnapshot = displayOverlays == null || displayOverlays.isEmpty()
+					? List.of()
+					: List.copyOf(displayOverlays);
+			TILE_RENDER_EXECUTOR.execute(() -> {
+				try {
+					TileImage rendered = renderTile(blueMap, world, levelMinY, levelMaxY, overlaysSnapshot, key, tileBlocksPerPixel, System.currentTimeMillis());
+					synchronized (LOCK) {
+						this.tiles.put(key, rendered);
+					}
+				} catch (Throwable throwable) {
+					Lg2.LOGGER.warn("BlueMap monitor async tile render failed at lod {} {},{}", key.lod(), key.tileX(), key.tileZ(), throwable);
+				} finally {
+					this.inFlight.remove(key);
+					if (onTileReady != null) {
+						try {
+							onTileReady.run();
+						} catch (RuntimeException ignored) {
+							// The render cache is already populated; the next regular refresh will pick it up.
+						}
+					}
+				}
+			});
+			return true;
 		}
 
 		private TileImage peekFresh(TileKey key, long now) {
@@ -435,7 +517,7 @@ final class MonitorYandexMapsBlueMapRenderer {
 			return new TileKey(lod, floorToLong(worldX / size), floorToLong(worldZ / size));
 		}
 
-		private TileImage renderTile(BlueMapBridge blueMap, Object world, ServerLevel level, TileKey key, double tileBlocksPerPixel, long now) {
+		private TileImage renderTile(BlueMapBridge blueMap, Object world, int levelMinY, int levelMaxY, List<DisplayOverlay> displayOverlays, TileKey key, double tileBlocksPerPixel, long now) {
 			int[] pixels = new int[TILE_SIZE * TILE_SIZE];
 			for (int i = 0; i < pixels.length; i++) {
 				pixels[i] = MISSING_RGB;
@@ -444,14 +526,14 @@ final class MonitorYandexMapsBlueMapRenderer {
 			double worldLeft = key.tileX() * tileSize;
 			double worldTop = key.tileZ() * tileSize;
 			try {
-				renderSurfaceTile(blueMap, world, level, worldLeft, worldTop, tileBlocksPerPixel, pixels);
+				renderSurfaceTile(blueMap, world, levelMinY, levelMaxY, displayOverlays, worldLeft, worldTop, tileBlocksPerPixel, pixels);
 			} catch (Exception exception) {
 				Lg2.LOGGER.warn("BlueMap monitor tile render failed at lod {} {},{}", key.lod(), key.tileX(), key.tileZ(), exception);
 			}
 			return new TileImage(pixels, now);
 		}
 
-		private void renderSurfaceTile(BlueMapBridge blueMap, Object world, ServerLevel level, double worldLeft, double worldTop, double tileBlocksPerPixel, int[] pixels) throws ReflectiveOperationException {
+		private void renderSurfaceTile(BlueMapBridge blueMap, Object world, int levelMinY, int levelMaxY, List<DisplayOverlay> displayOverlays, double worldLeft, double worldTop, double tileBlocksPerPixel, int[] pixels) throws ReflectiveOperationException {
 			Map<Long, Object> chunkCache = new HashMap<>();
 			Map<Long, List<SurfaceLayer>> columnCache = new HashMap<>();
 			for (int y = 0; y < TILE_SIZE; y++) {
@@ -464,7 +546,7 @@ final class MonitorYandexMapsBlueMapRenderer {
 					long columnKey = (((long) blockX) << 32) ^ (blockZ & 0xFFFFFFFFL);
 					List<SurfaceLayer> layers = columnCache.get(columnKey);
 					if (layers == null) {
-						layers = blueMap.layersAt(world, chunkCache, blockX, blockZ, level.getMinY(), level.getMaxY() - 1);
+						layers = blueMap.layersAt(world, chunkCache, blockX, blockZ, levelMinY, levelMaxY);
 						columnCache.put(columnKey, layers);
 					}
 					if (layers != null && !layers.isEmpty()) {
@@ -474,28 +556,16 @@ final class MonitorYandexMapsBlueMapRenderer {
 					}
 				}
 			}
-			renderDisplayOverlays(level, worldLeft, worldTop, tileBlocksPerPixel, pixels);
+			renderDisplayOverlays(displayOverlays, worldLeft, worldTop, tileBlocksPerPixel, pixels);
 		}
 	}
 
-	private static void renderDisplayOverlays(ServerLevel level, double worldLeft, double worldTop, double tileBlocksPerPixel, int[] pixels) {
-		if (level == null || pixels == null || pixels.length == 0) {
+	private static void renderDisplayOverlays(List<DisplayOverlay> displayOverlays, double worldLeft, double worldTop, double tileBlocksPerPixel, int[] pixels) {
+		if (displayOverlays == null || displayOverlays.isEmpty() || pixels == null || pixels.length == 0) {
 			return;
 		}
-		double tileWorldSize = TILE_SIZE * tileBlocksPerPixel;
-		AABB box = new AABB(
-				worldLeft - 4.0D,
-				level.getMinY(),
-				worldTop - 4.0D,
-				worldLeft + tileWorldSize + 4.0D,
-				level.getMaxY(),
-				worldTop + tileWorldSize + 4.0D
-		);
-		for (Display.ItemDisplay display : level.getEntities(EntityType.ITEM_DISPLAY, box, MonitorYandexMapsBlueMapRenderer::isMapVisibleDisplay)) {
-			DisplayOverlay overlay = displayOverlay(display);
-			if (overlay != null) {
-				drawDisplayModelOverlay(overlay, worldLeft, worldTop, tileBlocksPerPixel, pixels);
-			}
+		for (DisplayOverlay overlay : displayOverlays) {
+			drawDisplayModelOverlay(overlay, worldLeft, worldTop, tileBlocksPerPixel, pixels);
 		}
 	}
 
@@ -613,7 +683,7 @@ final class MonitorYandexMapsBlueMapRenderer {
 		if (state == null || state.isAir()) {
 			return 0;
 		}
-		if (blocksPerPixel >= 1.0D) {
+		if (blocksPerPixel > 1.0D) {
 			if (usesSinglePointLodSample(state)) {
 				return STATE_ARGB_CACHE.computeIfAbsent(layer.cacheKey() + "|solid-top", ignored -> sampleStateArgb(state, blockX, layer.y(), blockZ, 0.5D, 0.5D, blocksPerPixel));
 			}
@@ -982,7 +1052,7 @@ final class MonitorYandexMapsBlueMapRenderer {
 	private record SurfaceLayer(BlockState state, int y, String cacheKey) {
 	}
 
-	private record DisplayOverlay(double centerX, double centerZ, double widthBlocks, double depthBlocks, double yawRadians, Identifier modelId) {
+	record DisplayOverlay(double centerX, double centerZ, double widthBlocks, double depthBlocks, double yawRadians, Identifier modelId) {
 	}
 
 	private record OverlayBounds(double minX, double minZ, double maxX, double maxZ) {
@@ -1224,6 +1294,18 @@ final class MonitorYandexMapsBlueMapRenderer {
 			if (path != null && Files.exists(path)) {
 				roots.add(path.toAbsolutePath().normalize());
 			}
+		}
+	}
+
+	private static final class TileThreadFactory implements java.util.concurrent.ThreadFactory {
+		private final AtomicInteger nextId = new AtomicInteger(1);
+
+		@Override
+		public Thread newThread(Runnable runnable) {
+			Thread thread = new Thread(runnable, "lg2-yandex-map-tile-" + this.nextId.getAndIncrement());
+			thread.setDaemon(true);
+			thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
+			return thread;
 		}
 	}
 }
