@@ -387,6 +387,7 @@ public final class MonitorScreenSystem {
 		ACTIVE_MEDIA_ACTIONBARS.clear();
 		PLAYER_MEDIA_FOCUS.clear();
 		MonitorMaxRuntime.clearRuntime();
+		MonitorYandexMapsRuntime.clearRuntime();
 		TILE_CACHE.clear();
 		OVERLAY_WINDOW_CACHE.clear();
 		OVERLAY_WINDOW_FAMILY_CACHE.clear();
@@ -1238,6 +1239,9 @@ public final class MonitorScreenSystem {
 			}
 			return;
 		}
+		if (work.yandexMapsSnapshot() != null && !MonitorYandexMapsRuntime.beginRender(work.runtimeKey(), work.yandexMapsSnapshot())) {
+			return;
+		}
 		submitRenderWork(server, work);
 		if (mediaState != null
 				&& (isPlayerMode(viewMode)
@@ -1266,6 +1270,12 @@ public final class MonitorScreenSystem {
 
 	static void handleRenderFailure(MinecraftServer server, RenderWork work, Exception exception) {
 		if (work == null) {
+			return;
+		}
+		if (work.yandexMapsSnapshot() != null) {
+			if (MonitorYandexMapsRuntime.finishRender(work.runtimeKey(), work.yandexMapsSnapshot())) {
+				requestRuntimeRender(server, work.runtimeKey());
+			}
 			return;
 		}
 		if (!isPlayerMode(work.viewMode())) {
@@ -1311,9 +1321,14 @@ public final class MonitorScreenSystem {
 					}
 				}
 			}
+			if (work.yandexMapsSnapshot() != null && !MonitorYandexMapsRuntime.acceptRenderedSnapshot(work.runtimeKey(), work.yandexMapsSnapshot())) {
+				return;
+			}
 			applyRenderedTiles(level, component, renderedBatch);
 		} finally {
-			if (work != null && isPlayerMode(work.viewMode())) {
+			if (work != null && work.yandexMapsSnapshot() != null) {
+				rerenderAgain = MonitorYandexMapsRuntime.finishRender(work.runtimeKey(), work.yandexMapsSnapshot());
+			} else if (work != null && isPlayerMode(work.viewMode())) {
 				rerenderAgain = finishMediaRender(work.runtimeKey(), work.mediaVersion());
 			}
 		}

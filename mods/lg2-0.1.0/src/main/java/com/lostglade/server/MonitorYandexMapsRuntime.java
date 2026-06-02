@@ -36,6 +36,11 @@ final class MonitorYandexMapsRuntime {
 	private MonitorYandexMapsRuntime() {
 	}
 
+	static void clearRuntime() {
+		STATES.clear();
+		MonitorYandexMapsBlueMapRenderer.clear(null);
+	}
+
 	static YandexMapsVisualSnapshot captureSnapshot(MinecraftServer server, ScreenComponent component) {
 		if (server == null || component == null) {
 			return emptySnapshot();
@@ -65,8 +70,8 @@ final class MonitorYandexMapsRuntime {
 					fallbackMapFrame(component, "Мир недоступен"),
 					"Мир недоступен",
 					dimensionLabel(component.runtimeKey().dimension()),
-					(int) Math.round(centerX),
-					(int) Math.round(centerZ),
+					centerX,
+					centerZ,
 					blocksPerPixel,
 					false
 			);
@@ -76,11 +81,60 @@ final class MonitorYandexMapsRuntime {
 				null,
 				status == null || status.isBlank() ? "BlueMap top-down" : status,
 				dimensionLabel(level.dimension()),
-				(int) Math.round(centerX),
-				(int) Math.round(centerZ),
+				centerX,
+				centerZ,
 				blocksPerPixel,
 				true
 		);
+	}
+
+	static boolean beginRender(ScreenRuntimeKey key, YandexMapsVisualSnapshot snapshot) {
+		if (key == null || snapshot == null) {
+			return true;
+		}
+		YandexMapState state = STATES.computeIfAbsent(key, ignored -> new YandexMapState());
+		synchronized (state) {
+			if (state.activeRenderJobs > 0) {
+				state.rerenderRequested = true;
+				return false;
+			}
+			state.activeRenderJobs = 1;
+			state.rerenderRequested = false;
+			return true;
+		}
+	}
+
+	static boolean acceptRenderedSnapshot(ScreenRuntimeKey key, YandexMapsVisualSnapshot snapshot) {
+		if (key == null || snapshot == null) {
+			return true;
+		}
+		YandexMapState state = STATES.get(key);
+		if (state == null) {
+			return true;
+		}
+		synchronized (state) {
+			if (snapshot.version() < state.lastAppliedRenderVersion) {
+				return false;
+			}
+			state.lastAppliedRenderVersion = snapshot.version();
+			return true;
+		}
+	}
+
+	static boolean finishRender(ScreenRuntimeKey key, YandexMapsVisualSnapshot snapshot) {
+		if (key == null || snapshot == null) {
+			return false;
+		}
+		YandexMapState state = STATES.get(key);
+		if (state == null) {
+			return false;
+		}
+		synchronized (state) {
+			state.activeRenderJobs = 0;
+			boolean rerender = state.rerenderRequested || state.version != snapshot.version();
+			state.rerenderRequested = false;
+			return rerender;
+		}
 	}
 
 	static void drawScreen(Graphics2D graphics, UiLayout layout, MonitorApp app, YandexMapsVisualSnapshot snapshot, MinecraftServer server, ScreenRuntimeKey runtimeKey) {
@@ -263,7 +317,7 @@ final class MonitorYandexMapsRuntime {
 		UiRect iconRect = new UiRect(header.x() + 4, header.y() + 4, header.height() - 8, header.height() - 8);
 		drawAppIcon(graphics, app, iconRect, 0);
 		String coords = snapshot != null
-				? snapshot.centerX() + ", " + snapshot.centerZ() + "  |  " + formatZoom(snapshot.zoomBlocks())
+				? Math.round(snapshot.centerX()) + ", " + Math.round(snapshot.centerZ()) + "  |  " + formatZoom(snapshot.zoomBlocks())
 				: "Карта загружается";
 		drawVerticalText(graphics, "Яндекс Карты", new UiRect(iconRect.right() + 6, header.y() + 1, header.right() - iconRect.right() - 10, header.height() / 2), new Color(30, 34, 36), Font.BOLD, clampInt(layout.unit() - 1, 9, 13));
 		drawVerticalText(graphics, coords, new UiRect(iconRect.right() + 6, header.y() + header.height() / 2 - 2, header.right() - iconRect.right() - 10, header.height() / 2), new Color(78, 86, 92), Font.PLAIN, clampInt(layout.unit() - 3, 7, 10));
@@ -456,6 +510,9 @@ final class MonitorYandexMapsRuntime {
 	private static final class YandexMapState {
 		private boolean initialized;
 		private long version;
+		private long lastAppliedRenderVersion;
+		private int activeRenderJobs;
+		private boolean rerenderRequested;
 		private double centerX;
 		private double centerZ;
 		private double targetX;

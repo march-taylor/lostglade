@@ -1,9 +1,9 @@
 package com.lostglade.server;
 
-import com.flowpowered.math.vector.Vector3i;
 import com.flowpowered.math.vector.Vector2i;
 import com.lostglade.Lg2;
 import com.lostglade.server.map.BlockTextureRaycaster;
+import com.lostglade.server.map.TextureAssetManager;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceKey;
@@ -11,29 +11,32 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
+import net.minecraft.world.entity.Display;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.RedStoneWireBlock;
 import net.minecraft.world.level.block.StemBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.level.material.MapColor;
 import net.minecraft.world.level.storage.LevelResource;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.io.IOException;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -47,17 +50,19 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Predicate;
 
 final class MonitorYandexMapsBlueMapRenderer {
 	private static final int TILE_SIZE = 128;
 	private static final int MIN_LOD = -9;
 	private static final int MAX_LOD = 16;
 	private static final int MAX_CACHED_TILES_PER_DIMENSION = 8192;
-	private static final int MAX_TILE_RENDERS_PER_FRAME = 8;
+	private static final int MAX_TILE_RENDERS_PER_FRAME = 1;
+	private static final long TILE_RENDER_BUDGET_NANOS = 2_500_000L;
 	private static final long TILE_TTL_MS = 10 * 60_000L;
 	private static final long REGION_INDEX_TTL_MS = 60_000L;
+	private static final int ABOVE_SURFACE_SCAN_BLOCKS = 32;
 	private static final int MAX_SURFACE_SCAN_BLOCKS = 96;
+	private static final int MAX_COMPOSITE_LAYERS = 10;
 	private static final int[] NO_TINTS = new int[0];
 	private static final int NO_TINT = -1;
 	private static final int MISSING_RGB = 0x18242B;
@@ -67,15 +72,29 @@ final class MonitorYandexMapsBlueMapRenderer {
 	private static final int WATER_TINT_RGB = 0x3F76E4;
 	private static final int ATTACHED_STEM_RGB = 0xE0C71C;
 	private static final int LILY_PAD_RGB = 0x208030;
-	private static final Path BLUEMAP_JAR = Path.of("/home/mart/Downloads/bluemap-5.16-fabric.jar");
-	private static final Path VANILLA_CLIENT_JAR = Path.of(System.getProperty("user.home"), ".gradle", "caches", "fabric-loom", "1.21.11", "minecraft-client.jar");
+	private static final String BLUEMAP_JAR_PROPERTY = "lg2.bluemapJar";
+	private static final String BLUEMAP_JAR_ENV = "LG2_BLUEMAP_JAR";
+	private static final long BRIDGE_RETRY_INTERVAL_MS = 30_000L;
 	private static final Path VANILLA_COMMON_JAR = Path.of(System.getProperty("user.home"), ".gradle", "caches", "fabric-loom", "1.21.11", "minecraft-common.jar");
+	private static final String MONITOR_DISPLAY_TAG = "lg2_monitor_display";
+	private static final String EXIT_SIGN_DISPLAY_TAG = "lg2_exit_sign_display";
+	private static final String SERVER_DISPLAY_TAG = "lg2_server_display";
+	private static final Identifier MONITOR_DISPLAY_MODEL = Identifier.fromNamespaceAndPath("lg2", "item/monitor_display");
+	private static final Identifier EXIT_SIGN_DISPLAY_MODEL = Identifier.fromNamespaceAndPath("lg2", "item/exit_sign");
+	private static final Identifier SERVER_DISPLAY_MODEL = Identifier.fromNamespaceAndPath("lg2", "item/server");
+	private static final Identifier WATER_STILL_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "block/water_still");
+	private static final Identifier WATER_FLOW_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "block/water_flow");
+	private static final Identifier LAVA_STILL_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "block/lava_still");
+	private static final Identifier LAVA_FLOW_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "block/lava_flow");
 	private static final Object LOCK = new Object();
+	private static final TextureAssetManager ASSETS = TextureAssetManager.get();
 	private static final Map<WorldCacheKey, DimensionTileCache> CACHES = new LinkedHashMap<>(8, 0.75F, true);
 	private static final Map<String, BlockState> VANILLA_STATE_CACHE = new ConcurrentHashMap<>();
-	private static final Map<String, Integer> STATE_COLOR_CACHE = new ConcurrentHashMap<>();
+	private static final Map<String, Integer> STATE_ARGB_CACHE = new ConcurrentHashMap<>();
 	private static volatile BlueMapBridge bridge;
 	private static volatile String bridgeError;
+	private static volatile long nextBridgeRetryAtMs;
+	private static volatile String lastBridgeLogKey;
 
 	private MonitorYandexMapsBlueMapRenderer() {
 	}
@@ -105,12 +124,16 @@ final class MonitorYandexMapsBlueMapRenderer {
 		List<TileKey> visibleTiles = visibleTiles(lod, tileBlocksPerPixel, worldLeft, worldTop, width, height, safeBlocksPerPixel, centerX, centerZ);
 		long now = System.currentTimeMillis();
 		int renderedTiles = 0;
+		long renderStartedAt = System.nanoTime();
 		for (TileKey key : visibleTiles) {
 			if (cache.peekFresh(key, now) != null) {
 				continue;
 			}
 			if (renderedTiles >= MAX_TILE_RENDERS_PER_FRAME) {
 				continue;
+			}
+			if (renderedTiles > 0 && System.nanoTime() - renderStartedAt >= TILE_RENDER_BUDGET_NANOS) {
+				break;
 			}
 			cache.tile(blueMap, world, level, key, tileBlocksPerPixel, now);
 			renderedTiles++;
@@ -144,6 +167,9 @@ final class MonitorYandexMapsBlueMapRenderer {
 		synchronized (LOCK) {
 			if (dimension == null) {
 				CACHES.clear();
+				bridgeError = null;
+				nextBridgeRetryAtMs = 0L;
+				lastBridgeLogKey = null;
 			} else {
 				CACHES.keySet().removeIf(key -> dimension.equals(key.dimension()));
 			}
@@ -155,19 +181,105 @@ final class MonitorYandexMapsBlueMapRenderer {
 		if (ready != null) {
 			return ready;
 		}
+		long now = System.currentTimeMillis();
+		if (bridgeError != null && now < nextBridgeRetryAtMs) {
+			return null;
+		}
 		synchronized (LOCK) {
 			if (bridge != null) {
 				return bridge;
 			}
+			now = System.currentTimeMillis();
+			if (bridgeError != null && now < nextBridgeRetryAtMs) {
+				return null;
+			}
 			try {
-				bridge = BlueMapBridge.create(server);
+				Path blueMapJar = resolveBlueMapJar(server);
+				if (blueMapJar == null) {
+					bridgeError = "BlueMap jar не найден";
+					nextBridgeRetryAtMs = now + BRIDGE_RETRY_INTERVAL_MS;
+					logBridgeFailure(bridgeError + ": положи bluemap-*.jar в server-assets или укажи -D" + BLUEMAP_JAR_PROPERTY + "=/path/to/bluemap.jar", null);
+					return null;
+				}
+				bridge = BlueMapBridge.create(server, blueMapJar);
 				bridgeError = null;
+				nextBridgeRetryAtMs = 0L;
 				return bridge;
 			} catch (Exception exception) {
 				bridgeError = "BlueMap init: " + exception.getClass().getSimpleName();
-				Lg2.LOGGER.error("Failed to initialize isolated BlueMap renderer for monitor maps", exception);
+				nextBridgeRetryAtMs = now + BRIDGE_RETRY_INTERVAL_MS;
+				logBridgeFailure("Failed to initialize isolated BlueMap renderer for monitor maps", exception);
 				return null;
 			}
+		}
+	}
+
+	private static Path resolveBlueMapJar(MinecraftServer server) {
+		List<Path> candidates = new ArrayList<>();
+		addCandidate(candidates, System.getProperty(BLUEMAP_JAR_PROPERTY));
+		addCandidate(candidates, System.getenv(BLUEMAP_JAR_ENV));
+		if (server != null) {
+			Path root = server.getServerDirectory();
+			addMatchingJars(candidates, root.resolve("server-assets"));
+			addMatchingJars(candidates, root.resolve("cache").resolve("lg2"));
+			addMatchingJars(candidates, root.resolve("libs"));
+			addMatchingJars(candidates, root.resolve("mods").resolve("lg2-0.1.0").resolve("libs"));
+			addMatchingJars(candidates, root.resolve("mods"));
+		}
+		for (Path candidate : candidates) {
+			if (candidate != null && Files.isRegularFile(candidate)) {
+				return candidate.toAbsolutePath().normalize();
+			}
+		}
+		return null;
+	}
+
+	private static void addCandidate(List<Path> candidates, String path) {
+		if (path == null || path.isBlank()) {
+			return;
+		}
+		addCandidate(candidates, Path.of(path));
+	}
+
+	private static void addCandidate(List<Path> candidates, Path path) {
+		if (path != null) {
+			candidates.add(path);
+		}
+	}
+
+	private static void addMatchingJars(List<Path> candidates, Path directory) {
+		if (directory == null || !Files.isDirectory(directory)) {
+			return;
+		}
+		addMatchingJars(candidates, directory, "bluemap*.jar");
+		addMatchingJars(candidates, directory, "BlueMap*.jar");
+	}
+
+	private static void addMatchingJars(List<Path> candidates, Path directory, String glob) {
+		List<Path> matches = new ArrayList<>();
+		try (DirectoryStream<Path> stream = Files.newDirectoryStream(directory, glob)) {
+			for (Path path : stream) {
+				if (path != null) {
+					matches.add(path);
+				}
+			}
+		} catch (IOException ignored) {
+			return;
+		}
+		matches.sort(Comparator.<Path, String>comparing(path -> path.getFileName().toString(), String.CASE_INSENSITIVE_ORDER).reversed());
+		candidates.addAll(matches);
+	}
+
+	private static void logBridgeFailure(String message, Exception exception) {
+		String key = message + "|" + (exception == null ? "" : exception.getClass().getName() + ":" + exception.getMessage());
+		if (key.equals(lastBridgeLogKey)) {
+			return;
+		}
+		lastBridgeLogKey = key;
+		if (exception == null) {
+			Lg2.LOGGER.warn("Yandex maps renderer unavailable: {}", message);
+		} else {
+			Lg2.LOGGER.error(message, exception);
 		}
 	}
 
@@ -282,6 +394,27 @@ final class MonitorYandexMapsBlueMapRenderer {
 		}
 
 		private int sample(double worldX, double worldZ, int lod) {
+			int exact = sampleAtLod(worldX, worldZ, lod);
+			if (exact != MISSING_RGB) {
+				return exact;
+			}
+			for (int offset = 1; offset <= 6; offset++) {
+				int coarser = sampleAtLod(worldX, worldZ, lod + offset);
+				if (coarser != MISSING_RGB) {
+					return coarser;
+				}
+				int finer = sampleAtLod(worldX, worldZ, lod - offset);
+				if (finer != MISSING_RGB) {
+					return finer;
+				}
+			}
+			return MISSING_RGB;
+		}
+
+		private int sampleAtLod(double worldX, double worldZ, int lod) {
+			if (lod < MIN_LOD || lod > MAX_LOD) {
+				return MISSING_RGB;
+			}
 			TileKey key = tileKeyAt(lod, worldX, worldZ);
 			TileImage image;
 			synchronized (LOCK) {
@@ -320,6 +453,7 @@ final class MonitorYandexMapsBlueMapRenderer {
 
 		private void renderSurfaceTile(BlueMapBridge blueMap, Object world, ServerLevel level, double worldLeft, double worldTop, double tileBlocksPerPixel, int[] pixels) throws ReflectiveOperationException {
 			Map<Long, Object> chunkCache = new HashMap<>();
+			Map<Long, List<SurfaceLayer>> columnCache = new HashMap<>();
 			for (int y = 0; y < TILE_SIZE; y++) {
 				double sampleZ = worldTop + (y + 0.5D) * tileBlocksPerPixel;
 				int blockZ = Mth.floor(sampleZ);
@@ -327,31 +461,242 @@ final class MonitorYandexMapsBlueMapRenderer {
 					double sampleX = worldLeft + (x + 0.5D) * tileBlocksPerPixel;
 					int blockX = Mth.floor(sampleX);
 					int index = y * TILE_SIZE + x;
-					SurfaceSample sample = blueMap.surfaceAt(world, chunkCache, blockX, blockZ, level.getMinY(), level.getMaxY() - 1);
-					if (sample != null) {
+					long columnKey = (((long) blockX) << 32) ^ (blockZ & 0xFFFFFFFFL);
+					List<SurfaceLayer> layers = columnCache.get(columnKey);
+					if (layers == null) {
+						layers = blueMap.layersAt(world, chunkCache, blockX, blockZ, level.getMinY(), level.getMaxY() - 1);
+						columnCache.put(columnKey, layers);
+					}
+					if (layers != null && !layers.isEmpty()) {
 						double fracX = sampleX - Math.floor(sampleX);
 						double fracZ = sampleZ - Math.floor(sampleZ);
-						pixels[index] = colorForSurface(sample, blockX, blockZ, fracX, fracZ, tileBlocksPerPixel);
+						pixels[index] = colorForLayers(layers, blockX, blockZ, fracX, fracZ, tileBlocksPerPixel);
 					}
 				}
+			}
+			renderDisplayOverlays(level, worldLeft, worldTop, tileBlocksPerPixel, pixels);
+		}
+	}
+
+	private static void renderDisplayOverlays(ServerLevel level, double worldLeft, double worldTop, double tileBlocksPerPixel, int[] pixels) {
+		if (level == null || pixels == null || pixels.length == 0) {
+			return;
+		}
+		double tileWorldSize = TILE_SIZE * tileBlocksPerPixel;
+		AABB box = new AABB(
+				worldLeft - 4.0D,
+				level.getMinY(),
+				worldTop - 4.0D,
+				worldLeft + tileWorldSize + 4.0D,
+				level.getMaxY(),
+				worldTop + tileWorldSize + 4.0D
+		);
+		for (Display.ItemDisplay display : level.getEntities(EntityType.ITEM_DISPLAY, box, MonitorYandexMapsBlueMapRenderer::isMapVisibleDisplay)) {
+			DisplayOverlay overlay = displayOverlay(display);
+			if (overlay != null) {
+				drawDisplayModelOverlay(overlay, worldLeft, worldTop, tileBlocksPerPixel, pixels);
 			}
 		}
 	}
 
-	private static int colorForSurface(SurfaceSample sample, int blockX, int blockZ, double fracX, double fracZ, double blocksPerPixel) {
-		BlockState state = sample.state();
-		if (state == null || state.isAir()) {
-			return MISSING_RGB;
+	private static boolean isMapVisibleDisplay(Display.ItemDisplay display) {
+		if (display == null || !display.isAlive()) {
+			return false;
 		}
-		if (blocksPerPixel >= 1.0D) {
-			return STATE_COLOR_CACHE.computeIfAbsent(sample.cacheKey(), ignored -> sampleStateColor(state, blockX, sample.y(), blockZ, 0.5D, 0.5D));
-		}
-		return sampleStateColor(state, blockX, sample.y(), blockZ, fracX, fracZ);
+		Set<String> tags = display.getTags();
+		return tags.contains(MONITOR_DISPLAY_TAG)
+				|| tags.contains(EXIT_SIGN_DISPLAY_TAG)
+				|| tags.contains(SERVER_DISPLAY_TAG);
 	}
 
-	private static int sampleStateColor(BlockState state, int blockX, int blockY, int blockZ, double fracX, double fracZ) {
+	private static DisplayOverlay displayOverlay(Display.ItemDisplay display) {
+		Set<String> tags = display.getTags();
+		if (tags.contains(SERVER_DISPLAY_TAG)) {
+			double width = ServerStructureBreakSystem.STRUCTURE_HALF_WIDTH * 2.0D + 1.0D;
+			double depth = ServerStructureBreakSystem.STRUCTURE_HALF_DEPTH * 2.0D + 1.0D;
+			return new DisplayOverlay(display.getX(), display.getZ(), width, depth, Math.toRadians(display.getYRot()), SERVER_DISPLAY_MODEL);
+		}
+		if (tags.contains(EXIT_SIGN_DISPLAY_TAG)) {
+			return new DisplayOverlay(display.getX(), display.getZ(), 1.15D, 0.20D, Math.toRadians(display.getYRot()), EXIT_SIGN_DISPLAY_MODEL);
+		}
+		if (tags.contains(MONITOR_DISPLAY_TAG)) {
+			return new DisplayOverlay(display.getX(), display.getZ(), 1.15D, 0.16D, Math.toRadians(display.getYRot()), MONITOR_DISPLAY_MODEL);
+		}
+		return null;
+	}
+
+	private static void drawDisplayModelOverlay(DisplayOverlay overlay, double worldLeft, double worldTop, double tileBlocksPerPixel, int[] pixels) {
+		OverlayBounds bounds = overlayBounds(overlay);
+		int minX = Mth.clamp(Mth.floor((bounds.minX() - worldLeft) / tileBlocksPerPixel) - 1, 0, TILE_SIZE - 1);
+		int maxX = Mth.clamp(Mth.ceil((bounds.maxX() - worldLeft) / tileBlocksPerPixel) + 1, 0, TILE_SIZE - 1);
+		int minY = Mth.clamp(Mth.floor((bounds.minZ() - worldTop) / tileBlocksPerPixel) - 1, 0, TILE_SIZE - 1);
+		int maxY = Mth.clamp(Mth.ceil((bounds.maxZ() - worldTop) / tileBlocksPerPixel) + 1, 0, TILE_SIZE - 1);
+		double cos = Math.cos(-overlay.yawRadians());
+		double sin = Math.sin(-overlay.yawRadians());
+		for (int y = minY; y <= maxY; y++) {
+			double worldZ = worldTop + (y + 0.5D) * tileBlocksPerPixel;
+			for (int x = minX; x <= maxX; x++) {
+				double worldX = worldLeft + (x + 0.5D) * tileBlocksPerPixel;
+				double dx = worldX - overlay.centerX();
+				double dz = worldZ - overlay.centerZ();
+				double localX = dx * cos - dz * sin;
+				double localZ = dx * sin + dz * cos;
+				double u = localX / overlay.widthBlocks() + 0.5D;
+				double v = localZ / overlay.depthBlocks() + 0.5D;
+				if (u < 0.0D || u > 1.0D || v < 0.0D || v > 1.0D) {
+					continue;
+				}
+				int foreground = sampleDisplayModel(overlay, u, v);
+				if (((foreground >>> 24) & 0xFF) <= 8) {
+					continue;
+				}
+				int index = y * TILE_SIZE + x;
+				pixels[index] = alphaOver(foreground, 0xFF000000 | pixels[index]) & 0xFFFFFF;
+			}
+		}
+	}
+
+	private static OverlayBounds overlayBounds(DisplayOverlay overlay) {
+		double halfWidth = overlay.widthBlocks() * 0.5D;
+		double halfDepth = overlay.depthBlocks() * 0.5D;
+		double cos = Math.cos(overlay.yawRadians());
+		double sin = Math.sin(overlay.yawRadians());
+		double minX = Double.POSITIVE_INFINITY;
+		double minZ = Double.POSITIVE_INFINITY;
+		double maxX = Double.NEGATIVE_INFINITY;
+		double maxZ = Double.NEGATIVE_INFINITY;
+		for (double localX : new double[]{-halfWidth, halfWidth}) {
+			for (double localZ : new double[]{-halfDepth, halfDepth}) {
+				double worldX = overlay.centerX() + localX * cos - localZ * sin;
+				double worldZ = overlay.centerZ() + localX * sin + localZ * cos;
+				minX = Math.min(minX, worldX);
+				minZ = Math.min(minZ, worldZ);
+				maxX = Math.max(maxX, worldX);
+				maxZ = Math.max(maxZ, worldZ);
+			}
+		}
+		return new OverlayBounds(minX, minZ, maxX, maxZ);
+	}
+
+	private static int sampleDisplayModel(DisplayOverlay overlay, double u, double v) {
+		BlockTextureRaycaster.BlockTraceResult result = BlockTextureRaycaster.traceModelTopDownNormalized(
+				overlay.modelId(),
+				u,
+				v,
+				NO_TINTS
+		);
+		if (result == null) {
+			return 0;
+		}
+		return shadeByFace(result.argb(), result.face(), result.shade());
+	}
+
+	private static int colorForLayers(List<SurfaceLayer> layers, int blockX, int blockZ, double fracX, double fracZ, double blocksPerPixel) {
+		if (layers == null || layers.isEmpty()) {
+			return MISSING_RGB;
+		}
+		int out = 0;
+		for (int i = layers.size() - 1; i >= 0; i--) {
+			SurfaceLayer layer = layers.get(i);
+			int argb = argbForLayer(layer, blockX, blockZ, fracX, fracZ, blocksPerPixel);
+			out = alphaOver(argb, out);
+		}
+		int alpha = (out >>> 24) & 0xFF;
+		if (alpha <= 0) {
+			return MISSING_RGB;
+		}
+		return out & 0xFFFFFF;
+	}
+
+	private static int argbForLayer(SurfaceLayer layer, int blockX, int blockZ, double fracX, double fracZ, double blocksPerPixel) {
+		BlockState state = layer.state();
+		if (state == null || state.isAir()) {
+			return 0;
+		}
+		if (blocksPerPixel >= 1.0D) {
+			if (usesSinglePointLodSample(state)) {
+				return STATE_ARGB_CACHE.computeIfAbsent(layer.cacheKey() + "|solid-top", ignored -> sampleStateArgb(state, blockX, layer.y(), blockZ, 0.5D, 0.5D, blocksPerPixel));
+			}
+			return STATE_ARGB_CACHE.computeIfAbsent(layer.cacheKey() + "|coverage-top:" + coverageSamplesPerAxis(blocksPerPixel), ignored -> sampleCoveredStateArgb(state, blockX, layer.y(), blockZ, blocksPerPixel));
+		}
+		return sampleStateArgb(state, blockX, layer.y(), blockZ, fracX, fracZ, blocksPerPixel);
+	}
+
+	private static boolean usesSinglePointLodSample(BlockState state) {
+		return state != null
+				&& state.canOcclude()
+				&& stopsSurfaceScan(state)
+				&& state.getBlock() != Blocks.WATER
+				&& state.getBlock() != Blocks.LAVA
+				&& !(state.getBlock() instanceof LeavesBlock);
+	}
+
+	private static int sampleCoveredStateArgb(BlockState state, int blockX, int blockY, int blockZ, double blocksPerPixel) {
+		int samplesPerAxis = coverageSamplesPerAxis(blocksPerPixel);
+		int totalAlpha = 0;
+		int totalRed = 0;
+		int totalGreen = 0;
+		int totalBlue = 0;
+		int geometryHits = 0;
+		for (int sampleZ = 0; sampleZ < samplesPerAxis; sampleZ++) {
+			double fracZ = (sampleZ + 0.5D) / samplesPerAxis;
+			for (int sampleX = 0; sampleX < samplesPerAxis; sampleX++) {
+				double fracX = (sampleX + 0.5D) / samplesPerAxis;
+				int argb = sampleStateArgb(state, blockX, blockY, blockZ, fracX, fracZ, 1.0D / samplesPerAxis);
+				if (hitsTopDownGeometry(state, blockX, blockY, blockZ, fracX, fracZ)) {
+					geometryHits++;
+				}
+				int alpha = (argb >>> 24) & 0xFF;
+				totalAlpha += alpha;
+				totalRed += ((argb >> 16) & 0xFF) * alpha;
+				totalGreen += ((argb >> 8) & 0xFF) * alpha;
+				totalBlue += (argb & 0xFF) * alpha;
+			}
+		}
+		int sampleCount = samplesPerAxis * samplesPerAxis;
+		if (sampleCount <= 0 || totalAlpha <= 0) {
+			return 0;
+		}
+		int alpha = Mth.clamp(totalAlpha / sampleCount, 0, 255);
+		int geometryCoverage = geometryHits * 255 / sampleCount;
+		if (alpha > 0 && geometryCoverage >= 220 && !usesSinglePointLodSample(state)) {
+			alpha = Math.max(alpha, 180);
+		}
+		int red = Mth.clamp(totalRed / totalAlpha, 0, 255);
+		int green = Mth.clamp(totalGreen / totalAlpha, 0, 255);
+		int blue = Mth.clamp(totalBlue / totalAlpha, 0, 255);
+		return (alpha << 24) | (red << 16) | (green << 8) | blue;
+	}
+
+	private static boolean hitsTopDownGeometry(BlockState state, int blockX, int blockY, int blockZ, double fracX, double fracZ) {
+		if (state == null || state.isAir() || !BlockTextureRaycaster.hasResolvableModel(state)) {
+			return false;
+		}
+		return BlockTextureRaycaster.hitsTopDownGeometry(
+				state,
+				new BlockPos(blockX, blockY, blockZ),
+				new Vec3(blockX + Mth.clamp(fracX, 0.0D, 0.999D), blockY + 1.999D, blockZ + Mth.clamp(fracZ, 0.0D, 0.999D)),
+				new Vec3(0.0D, -1.0D, 0.0D)
+		);
+	}
+
+	private static int coverageSamplesPerAxis(double blocksPerPixel) {
+		if (blocksPerPixel <= 2.0D) {
+			return 12;
+		}
+		if (blocksPerPixel <= 8.0D) {
+			return 8;
+		}
+		return 6;
+	}
+
+	private static int sampleStateArgb(BlockState state, int blockX, int blockY, int blockZ, double fracX, double fracZ, double blocksPerPixel) {
+		int fluidArgb = fluidArgb(state, fracX, fracZ);
+		if (fluidArgb != 0) {
+			return fluidArgb;
+		}
 		int[] tintColors = defaultTints(state);
-		BlockTextureRaycaster.BlockTraceResult result = BlockTextureRaycaster.trace(
+		BlockTextureRaycaster.BlockTraceResult result = BlockTextureRaycaster.traceTopDown(
 				state,
 				new BlockPos(blockX, blockY, blockZ),
 				new Vec3(blockX + Mth.clamp(fracX, 0.0D, 0.999D), blockY + 1.999D, blockZ + Mth.clamp(fracZ, 0.0D, 0.999D)),
@@ -359,9 +704,54 @@ final class MonitorYandexMapsBlueMapRenderer {
 				tintColors
 		);
 		if (result != null) {
-			return shadeByFace(result.rgb(), result.face(), result.shade());
+			return shadeByFace(result.argb(), result.face(), result.shade());
 		}
-		return fallbackMapColor(state);
+		if (!state.canOcclude() || !stopsSurfaceScan(state)) {
+			return 0;
+		}
+		return 0xFF000000 | fallbackMapColor(state);
+	}
+
+	private static int fluidArgb(BlockState state, double fracX, double fracZ) {
+		if (state == null || state.isAir()) {
+			return 0;
+		}
+		Block block = state.getBlock();
+		if (block == Blocks.WATER || block == Blocks.BUBBLE_COLUMN) {
+			return sampleFluidTexture(isFlowingFluid(state) ? WATER_FLOW_TEXTURE : WATER_STILL_TEXTURE, fracX, fracZ, WATER_TINT_RGB, 172);
+		}
+		if (block == Blocks.LAVA) {
+			return sampleFluidTexture(isFlowingFluid(state) ? LAVA_FLOW_TEXTURE : LAVA_STILL_TEXTURE, fracX, fracZ, 0xFFFFFF, 238);
+		}
+		return 0;
+	}
+
+	private static boolean isFlowingFluid(BlockState state) {
+		return state != null
+				&& state.hasProperty(LiquidBlock.LEVEL)
+				&& state.getValue(LiquidBlock.LEVEL) > 0;
+	}
+
+	private static int sampleFluidTexture(Identifier textureId, double fracX, double fracZ, int tintRgb, int alpha) {
+		BufferedImage texture = ASSETS.loadTexture(textureId);
+		if (texture == null || texture.getWidth() <= 0 || texture.getHeight() <= 0) {
+			return (Mth.clamp(alpha, 0, 255) << 24) | (tintRgb & 0xFFFFFF);
+		}
+		int x = Mth.clamp((int) Math.floor(Math.floorMod((int) Math.floor(fracX * texture.getWidth()), texture.getWidth())), 0, texture.getWidth() - 1);
+		int y = Mth.clamp((int) Math.floor(Math.floorMod((int) Math.floor(fracZ * texture.getHeight()), texture.getHeight())), 0, texture.getHeight() - 1);
+		int argb = texture.getRGB(x, y);
+		int tinted = multiplyTint(argb, tintRgb);
+		int textureAlpha = (tinted >>> 24) & 0xFF;
+		int outAlpha = textureAlpha * Mth.clamp(alpha, 0, 255) / 255;
+		return (outAlpha << 24) | (tinted & 0xFFFFFF);
+	}
+
+	private static int multiplyTint(int argb, int tintRgb) {
+		int alpha = (argb >>> 24) & 0xFF;
+		int red = ((argb >> 16) & 0xFF) * ((tintRgb >> 16) & 0xFF) / 255;
+		int green = ((argb >> 8) & 0xFF) * ((tintRgb >> 8) & 0xFF) / 255;
+		int blue = (argb & 0xFF) * (tintRgb & 0xFF) / 255;
+		return (alpha << 24) | (red << 16) | (green << 8) | blue;
 	}
 
 	private static int[] defaultTints(BlockState state) {
@@ -448,9 +838,9 @@ final class MonitorYandexMapsBlueMapRenderer {
 		return tintLayers;
 	}
 
-	private static int shadeByFace(int rgb, net.minecraft.core.Direction face, boolean shade) {
+	private static int shadeByFace(int argb, net.minecraft.core.Direction face, boolean shade) {
 		if (!shade || face == null) {
-			return rgb & 0xFFFFFF;
+			return argb;
 		}
 		double factor = switch (face) {
 			case DOWN -> 0.50D;
@@ -458,7 +848,33 @@ final class MonitorYandexMapsBlueMapRenderer {
 			case WEST, EAST -> 0.60D;
 			default -> 1.0D;
 		};
-		return multiplyRgb(rgb, factor);
+		int alpha = (argb >>> 24) & 0xFF;
+		return (alpha << 24) | multiplyRgb(argb, factor);
+	}
+
+	private static int alphaOver(int foreground, int background) {
+		int fa = (foreground >>> 24) & 0xFF;
+		if (fa <= 0) {
+			return background;
+		}
+		if (fa >= 255) {
+			return foreground;
+		}
+		int ba = (background >>> 24) & 0xFF;
+		int outA = fa + ba * (255 - fa) / 255;
+		if (outA <= 0) {
+			return 0;
+		}
+		int fr = (foreground >> 16) & 0xFF;
+		int fg = (foreground >> 8) & 0xFF;
+		int fb = foreground & 0xFF;
+		int br = (background >> 16) & 0xFF;
+		int bg = (background >> 8) & 0xFF;
+		int bb = background & 0xFF;
+		int outR = (fr * fa + br * ba * (255 - fa) / 255) / outA;
+		int outG = (fg * fa + bg * ba * (255 - fa) / 255) / outA;
+		int outB = (fb * fa + bb * ba * (255 - fa) / 255) / outA;
+		return (outA << 24) | (outR << 16) | (outG << 8) | outB;
 	}
 
 	private static int fallbackMapColor(BlockState state) {
@@ -477,7 +893,45 @@ final class MonitorYandexMapsBlueMapRenderer {
 		if (block == Blocks.GRASS_BLOCK) {
 			return GRASS_TINT_RGB;
 		}
+		if (block == Blocks.FERN
+				|| block == Blocks.SHORT_GRASS
+				|| block == Blocks.TALL_GRASS
+				|| block == Blocks.LARGE_FERN
+				|| block == Blocks.BUSH
+				|| block == Blocks.SUGAR_CANE
+				|| block == Blocks.PINK_PETALS
+				|| block == Blocks.WILDFLOWERS) {
+			return GRASS_TINT_RGB;
+		}
 		return 0x77746A;
+	}
+
+	private static boolean stopsSurfaceScan(BlockState state) {
+		if (state == null || state.isAir()) {
+			return false;
+		}
+		if (!state.canOcclude() || state.getBlock() instanceof LeavesBlock) {
+			return false;
+		}
+		return hasFullBlockProjection(state);
+	}
+
+	private static boolean hasFullBlockProjection(BlockState state) {
+		if (state == null || state.isAir()) {
+			return false;
+		}
+		try {
+			VoxelShape shape = state.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+			return Block.isShapeFullBlock(shape);
+		} catch (RuntimeException ignored) {
+			return false;
+		}
+	}
+
+	private static boolean hasStateProperty(BlockState state, String propertyName) {
+		return state != null
+				&& propertyName != null
+				&& state.getBlock().getStateDefinition().getProperty(propertyName) != null;
 	}
 
 	private static int multiplyRgb(int rgb, double factor) {
@@ -525,12 +979,13 @@ final class MonitorYandexMapsBlueMapRenderer {
 		return state.setValue(property, parsed.get());
 	}
 
-	@FunctionalInterface
-	private interface TilePixelConsumer {
-		void set(int x, int z, int rgb);
+	private record SurfaceLayer(BlockState state, int y, String cacheKey) {
 	}
 
-	private record SurfaceSample(BlockState state, int y, String cacheKey) {
+	private record DisplayOverlay(double centerX, double centerZ, double widthBlocks, double depthBlocks, double yawRadians, Identifier modelId) {
+	}
+
+	private record OverlayBounds(double minX, double minZ, double maxX, double maxZ) {
 	}
 
 	private record RegionIndex(Set<Long> regions, long loadedAt) {
@@ -539,23 +994,12 @@ final class MonitorYandexMapsBlueMapRenderer {
 	private static final class BlueMapBridge {
 		private final URLClassLoader classLoader;
 		private final Class<?> packVersionClass;
-		private final Class<?> resourcePackClass;
-		private final Class<?> textureGalleryClass;
 		private final Class<?> dataPackClass;
 		private final Class<?> keyClass;
 		private final Class<?> mcaWorldClass;
 		private final Class<?> worldClass;
 		private final Class<?> chunkClass;
 		private final Class<?> blueBlockStateClass;
-		private final Class<?> renderSettingsClass;
-		private final Class<?> blockRenderPassClass;
-		private final Class<?> tileModelViewClass;
-		private final Class<?> tileModelClass;
-		private final Class<?> tileMetaConsumerClass;
-		private final Class<?> resourcePoolClass;
-		private final Method resourcePackLoadResources;
-		private final Method resourcePackGetTextures;
-		private final Method textureGalleryPut;
 		private final Method dataPackLoadResources;
 		private final Method dataPackBake;
 		private final Method keyParse;
@@ -572,49 +1016,24 @@ final class MonitorYandexMapsBlueMapRenderer {
 		private final Method blueBlockStateGetId;
 		private final Method blueBlockStateGetProperties;
 		private final Method blueBlockStateIsAir;
-		private final Method blockRenderPassRender;
-		private final Method colorFlatten;
-		private final Method colorGetInt;
-		private final Constructor<?> blockRenderPassConstructor;
-		private final Constructor<?> tileModelViewConstructor;
-		private final Object resourcePack;
-		private final Object textureGallery;
 		private final Object dataPack;
-		private final Object renderSettings;
-		private final Object voidTileModel;
-		private final ThreadLocal<Object> renderPass;
-		private final ThreadLocal<Object> tileModelView;
 		private final Map<WorldCacheKey, Object> worlds = new LinkedHashMap<>();
 		private final Map<Object, RegionIndex> generatedRegions = new LinkedHashMap<>();
 		private String lastWorldError;
 
-		private BlueMapBridge(MinecraftServer server) throws Exception {
-			if (!Files.isRegularFile(BLUEMAP_JAR)) {
-				throw new IOException("BlueMap jar not found: " + BLUEMAP_JAR);
+		private BlueMapBridge(MinecraftServer server, Path blueMapJar) throws Exception {
+			if (blueMapJar == null || !Files.isRegularFile(blueMapJar)) {
+				throw new IOException("BlueMap jar not found: " + blueMapJar);
 			}
-			this.classLoader = new URLClassLoader(new URL[]{BLUEMAP_JAR.toUri().toURL()}, MonitorYandexMapsBlueMapRenderer.class.getClassLoader());
+			this.classLoader = new URLClassLoader(new URL[]{blueMapJar.toUri().toURL()}, MonitorYandexMapsBlueMapRenderer.class.getClassLoader());
 			this.packVersionClass = load("de.bluecolored.bluemap.core.resources.pack.PackVersion");
-			this.resourcePackClass = load("de.bluecolored.bluemap.core.resources.pack.resourcepack.ResourcePack");
-			this.textureGalleryClass = load("de.bluecolored.bluemap.core.map.TextureGallery");
 			this.dataPackClass = load("de.bluecolored.bluemap.core.resources.pack.datapack.DataPack");
 			this.keyClass = load("de.bluecolored.bluemap.core.util.Key");
 			this.mcaWorldClass = load("de.bluecolored.bluemap.core.world.mca.MCAWorld");
 			this.worldClass = load("de.bluecolored.bluemap.core.world.World");
 			this.chunkClass = load("de.bluecolored.bluemap.core.world.Chunk");
 			this.blueBlockStateClass = load("de.bluecolored.bluemap.core.world.BlockState");
-			this.renderSettingsClass = load("de.bluecolored.bluemap.core.map.hires.RenderSettings");
-			this.blockRenderPassClass = load("de.bluecolored.bluemap.core.map.hires.block.BlockRenderPass");
-			this.tileModelViewClass = load("de.bluecolored.bluemap.core.map.hires.TileModelView");
-			this.tileModelClass = load("de.bluecolored.bluemap.core.map.hires.TileModel");
-			this.tileMetaConsumerClass = load("de.bluecolored.bluemap.core.map.TileMetaConsumer");
-			this.resourcePoolClass = load("de.bluecolored.bluemap.core.resources.pack.ResourcePool");
-			Class<?> maskClass = load("de.bluecolored.bluemap.core.map.mask.Mask");
-			Class<?> voidTileModelClass = load("de.bluecolored.bluemap.core.map.hires.VoidTileModel");
-			Class<?> colorClass = load("de.bluecolored.bluemap.core.util.math.Color");
 
-			this.resourcePackLoadResources = this.resourcePackClass.getMethod("loadResources", Iterable.class);
-			this.resourcePackGetTextures = this.resourcePackClass.getMethod("getTextures");
-			this.textureGalleryPut = this.textureGalleryClass.getMethod("put", this.resourcePoolClass);
 			this.dataPackLoadResources = this.dataPackClass.getMethod("loadResources", Iterable.class);
 			this.dataPackBake = this.dataPackClass.getMethod("bake");
 			this.keyParse = this.keyClass.getMethod("parse", String.class);
@@ -631,36 +1050,14 @@ final class MonitorYandexMapsBlueMapRenderer {
 			this.blueBlockStateGetId = this.blueBlockStateClass.getMethod("getId");
 			this.blueBlockStateGetProperties = this.blueBlockStateClass.getMethod("getProperties");
 			this.blueBlockStateIsAir = this.blueBlockStateClass.getMethod("isAir");
-			this.blockRenderPassRender = this.blockRenderPassClass.getMethod(
-					"render",
-					this.worldClass,
-					Vector3i.class,
-					Vector3i.class,
-					Vector3i.class,
-					this.tileModelViewClass,
-					this.tileMetaConsumerClass
-			);
-			this.colorFlatten = colorClass.getMethod("flatten");
-			this.colorGetInt = colorClass.getMethod("getInt");
-			this.blockRenderPassConstructor = this.blockRenderPassClass.getConstructor(this.resourcePackClass, this.textureGalleryClass, this.renderSettingsClass);
-			this.tileModelViewConstructor = this.tileModelViewClass.getConstructor(this.tileModelClass);
 
-			this.resourcePack = this.resourcePackClass.getConstructor(this.packVersionClass).newInstance(packVersion(75, 0));
-			this.resourcePackLoadResources.invoke(this.resourcePack, resourcePackRoots(server));
-			this.textureGallery = this.textureGalleryClass.getConstructor().newInstance();
-			this.textureGalleryPut.invoke(this.textureGallery, this.resourcePackGetTextures.invoke(this.resourcePack));
 			this.dataPack = this.dataPackClass.getConstructor(this.packVersionClass).newInstance(packVersion(94, 1));
 			this.dataPackLoadResources.invoke(this.dataPack, dataPackRoots(server));
 			this.dataPackBake.invoke(this.dataPack);
-			Object maskAll = staticField(maskClass, "ALL");
-			this.renderSettings = renderSettingsProxy(maskAll);
-			this.voidTileModel = staticField(voidTileModelClass, "INSTANCE");
-			this.renderPass = ThreadLocal.withInitial(() -> newUnchecked(this.blockRenderPassConstructor, this.resourcePack, this.textureGallery, this.renderSettings));
-			this.tileModelView = ThreadLocal.withInitial(() -> newUnchecked(this.tileModelViewConstructor, this.voidTileModel));
 		}
 
-		private static BlueMapBridge create(MinecraftServer server) throws Exception {
-			return new BlueMapBridge(server);
+		private static BlueMapBridge create(MinecraftServer server, Path blueMapJar) throws Exception {
+			return new BlueMapBridge(server, blueMapJar);
 		}
 
 		private Class<?> load(String name) throws ClassNotFoundException {
@@ -669,27 +1066,6 @@ final class MonitorYandexMapsBlueMapRenderer {
 
 		private Object packVersion(int major, int minor) throws ReflectiveOperationException {
 			return this.packVersionClass.getConstructor(int.class, int.class).newInstance(major, minor);
-		}
-
-		private Object staticField(Class<?> type, String name) throws ReflectiveOperationException {
-			Field field = type.getField(name);
-			return field.get(null);
-		}
-
-		private Object renderSettingsProxy(Object maskAll) {
-			return Proxy.newProxyInstance(this.classLoader, new Class[]{this.renderSettingsClass}, (proxy, method, args) -> switch (method.getName()) {
-				case "getRemoveCavesBelowY", "getCaveDetectionOceanFloor" -> Integer.MIN_VALUE;
-				case "isCaveDetectionUsesBlockLight", "isSaveHiresLayer" -> false;
-				case "isRenderTopOnly", "isIgnoreMissingLightData", "isRenderEdges", "isInsideRenderBoundaries" -> true;
-				case "getAmbientLight" -> 0.08F;
-				case "getEdgeLightStrength" -> 15;
-				case "getRenderMask" -> maskAll;
-				case "getCellRenderBoundariesFilter" -> (Predicate<Object>) ignored -> true;
-				case "toString" -> "LostGladeBlueMapTopDownSettings";
-				case "hashCode" -> System.identityHashCode(proxy);
-				case "equals" -> proxy == args[0];
-				default -> defaultValue(method.getReturnType());
-			});
 		}
 
 		private Object world(MinecraftServer server, ServerLevel level) {
@@ -718,13 +1094,13 @@ final class MonitorYandexMapsBlueMapRenderer {
 			}
 		}
 
-		private SurfaceSample surfaceAt(Object world, Map<Long, Object> chunkCache, int blockX, int blockZ, int levelMinY, int levelMaxY) throws ReflectiveOperationException {
+		private List<SurfaceLayer> layersAt(Object world, Map<Long, Object> chunkCache, int blockX, int blockZ, int levelMinY, int levelMaxY) throws ReflectiveOperationException {
 			if (!hasGeneratedRegion(world, blockX, blockZ)) {
-				return null;
+				return List.of();
 			}
 			Object chunk = cachedChunk(world, chunkCache, blockX, blockZ);
 			if (chunk == null || !((Boolean) this.chunkIsGenerated.invoke(chunk))) {
-				return null;
+				return List.of();
 			}
 			int localX = blockX & 15;
 			int localZ = blockZ & 15;
@@ -733,22 +1109,14 @@ final class MonitorYandexMapsBlueMapRenderer {
 			int minY = Math.max(levelMinY, chunkMinY);
 			int maxY = Math.min(levelMaxY, chunkMaxY);
 			if (maxY < minY) {
-				return null;
+				return List.of();
 			}
 			int startY = maxY;
 			if ((Boolean) this.chunkHasWorldSurfaceHeights.invoke(chunk)) {
-				startY = ((Number) this.chunkGetWorldSurfaceY.invoke(chunk, localX, localZ)).intValue();
-				startY = Mth.clamp(startY, minY, maxY);
+				int surfaceY = ((Number) this.chunkGetWorldSurfaceY.invoke(chunk, localX, localZ)).intValue();
+				startY = Mth.clamp(surfaceY + ABOVE_SURFACE_SCAN_BLOCKS, minY, maxY);
 			}
-			int endY = Math.max(minY, startY - MAX_SURFACE_SCAN_BLOCKS);
-			SurfaceSample sample = findSurfaceInRange(chunk, blockX, blockZ, startY, endY);
-			if (sample != null) {
-				return sample;
-			}
-			if (endY > minY) {
-				return findSurfaceInRange(chunk, blockX, blockZ, endY - 1, minY);
-			}
-			return null;
+			return findLayersInRange(chunk, blockX, blockZ, startY, Math.max(minY, startY - MAX_SURFACE_SCAN_BLOCKS));
 		}
 
 		private boolean hasGeneratedRegion(Object world, int blockX, int blockZ) throws ReflectiveOperationException {
@@ -798,7 +1166,8 @@ final class MonitorYandexMapsBlueMapRenderer {
 			return loaded;
 		}
 
-		private SurfaceSample findSurfaceInRange(Object chunk, int blockX, int blockZ, int startY, int endY) throws ReflectiveOperationException {
+		private List<SurfaceLayer> findLayersInRange(Object chunk, int blockX, int blockZ, int startY, int endY) throws ReflectiveOperationException {
+			List<SurfaceLayer> layers = new ArrayList<>(4);
 			for (int y = startY; y >= endY; y--) {
 				Object blueState = this.chunkGetBlockState.invoke(chunk, blockX, y, blockZ);
 				if (blueState == null || (Boolean) this.blueBlockStateIsAir.invoke(blueState)) {
@@ -811,9 +1180,12 @@ final class MonitorYandexMapsBlueMapRenderer {
 				if (state == null || state.isAir()) {
 					continue;
 				}
-				return new SurfaceSample(state, y, cacheKey);
+				layers.add(new SurfaceLayer(state, y, cacheKey));
+				if (stopsSurfaceScan(state) || layers.size() >= MAX_COMPOSITE_LAYERS) {
+					break;
+				}
 			}
-			return null;
+			return layers;
 		}
 
 		private String blueBlockStateId(Object blueState) throws ReflectiveOperationException {
@@ -838,75 +1210,6 @@ final class MonitorYandexMapsBlueMapRenderer {
 				return result;
 			}
 			return Map.of();
-		}
-
-		private void renderColumns(Object world, ServerLevel level, int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, TilePixelConsumer consumer) throws ReflectiveOperationException {
-			Object tileConsumer = Proxy.newProxyInstance(this.classLoader, new Class[]{this.tileMetaConsumerClass}, (proxy, method, args) -> {
-				if ("set".equals(method.getName()) && args != null && args.length >= 5) {
-					consumer.set((Integer) args[0], (Integer) args[1], colorToRgb(args[2]));
-				}
-				return null;
-			});
-			try {
-				this.blockRenderPassRender.invoke(
-						this.renderPass.get(),
-						world,
-						new Vector3i(minBlockX, level.getMinY(), minBlockZ),
-						new Vector3i(maxBlockX, level.getMaxY() - 1, maxBlockZ),
-						new Vector3i(minBlockX, level.getMinY(), minBlockZ),
-						this.tileModelView.get(),
-						tileConsumer
-				);
-			} catch (InvocationTargetException exception) {
-				Throwable cause = exception.getCause();
-				if (cause instanceof RuntimeException runtimeException) {
-					throw runtimeException;
-				}
-				if (cause instanceof Error error) {
-					throw error;
-				}
-				throw exception;
-			}
-		}
-
-		private int colorToRgb(Object color) throws ReflectiveOperationException {
-			if (color == null) {
-				return MISSING_RGB;
-			}
-			Object flattened = this.colorFlatten.invoke(color);
-			int argb = ((Number) this.colorGetInt.invoke(flattened)).intValue();
-			int alpha = (argb >>> 24) & 0xFF;
-			return alpha <= 1 ? MISSING_RGB : argb & 0xFFFFFF;
-		}
-
-		private static Object newUnchecked(Constructor<?> constructor, Object... args) {
-			try {
-				return constructor.newInstance(args);
-			} catch (ReflectiveOperationException exception) {
-				throw new IllegalStateException(exception);
-			}
-		}
-
-		private static Object defaultValue(Class<?> type) {
-			if (type == boolean.class) {
-				return false;
-			}
-			if (type == int.class || type == short.class || type == byte.class || type == long.class) {
-				return 0;
-			}
-			if (type == float.class || type == double.class) {
-				return 0.0F;
-			}
-			return null;
-		}
-
-		private static List<Path> resourcePackRoots(MinecraftServer server) {
-			List<Path> roots = new ArrayList<>();
-			addIfExists(roots, VANILLA_CLIENT_JAR);
-			addIfExists(roots, server.getServerDirectory().resolve("mods").resolve("lg2-0.1.0").resolve("src").resolve("main").resolve("resources"));
-			addIfExists(roots, server.getServerDirectory().resolve("mods").resolve("lg2-0.1.0").resolve("resourcepack"));
-			addIfExists(roots, server.getServerDirectory().resolve("polymer").resolve("source_assets"));
-			return roots;
 		}
 
 		private static List<Path> dataPackRoots(MinecraftServer server) {

@@ -89,8 +89,8 @@ record YandexMapsVisualSnapshot(
 		BufferedImage frame,
 		String statusText,
 		String dimensionLabel,
-		int centerX,
-		int centerZ,
+		double centerX,
+		double centerZ,
 		double zoomBlocks,
 		boolean healthy
 ) {
