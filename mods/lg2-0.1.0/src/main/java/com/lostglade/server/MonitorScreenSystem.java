@@ -9010,7 +9010,7 @@ public final class MonitorScreenSystem {
 		} catch (Exception exception) {
 			return;
 		}
-		GalleryItemKind kind = GalleryItemKind.MEDIA;
+		GalleryItemKind kind = data.isVideo() ? GalleryItemKind.VIDEO : GalleryItemKind.MEDIA;
 		int preferredIndex;
 		synchronized (state) {
 			preferredIndex = upsertGalleryItemLocked(state, title, "", syntheticUrl, localMediaKey, null, null, kind);

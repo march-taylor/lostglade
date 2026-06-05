@@ -1,5 +1,6 @@
 package com.lostglade.server;
 
+import com.lostglade.Lg2;
 import com.lostglade.item.CameraPhotoSettings;
 import com.lostglade.item.ModItems;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -11,6 +12,10 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -165,6 +170,13 @@ public final class CameraVideoRecordingSystem {
 		if (player == null) {
 			return;
 		}
+		try {
+			persistCompletedVideoFile(state.requestId().toString(), result.videoPath());
+		} catch (IOException exception) {
+			Lg2.LOGGER.warn("Failed to persist camera video file for {}", state.requestId(), exception);
+			player.displayClientMessage(Component.literal("Видео записалось, но файл не сохранился на сервере."), true);
+			return;
+		}
 
 		ItemStack videoItem = CameraAnimatedMapPlaybackSystem.createVideoItem(
 				player,
@@ -187,6 +199,37 @@ public final class CameraVideoRecordingSystem {
 		giveOrDrop(player, videoItem);
 		ServerMechanicsGateSystem.syncPlayerInventory(player);
 		player.displayClientMessage(Component.literal("Видео готово."), true);
+	}
+
+	private static void persistCompletedVideoFile(String sourceKey, String rawSourcePath) throws IOException {
+		if (sourceKey == null || sourceKey.isBlank()) {
+			throw new IOException("Video source key is missing");
+		}
+		CameraMediaCache.ensureVideoParent(sourceKey);
+		Path target = CameraMediaCache.videoSourcePath(sourceKey);
+		Path source = rawSourcePath == null || rawSourcePath.isBlank()
+				? target
+				: Path.of(rawSourcePath).toAbsolutePath().normalize();
+		if (!Files.isRegularFile(source)) {
+			throw new IOException("Renderer video file is missing: " + source);
+		}
+		if (source.equals(target.toAbsolutePath().normalize())) {
+			if (Files.size(target) <= 0L) {
+				throw new IOException("Renderer video file is empty");
+			}
+			return;
+		}
+		Path temp = CameraMediaCache.tempVideoSourcePath(sourceKey);
+		Files.copy(source, temp, StandardCopyOption.REPLACE_EXISTING);
+		if (Files.size(temp) <= 0L) {
+			Files.deleteIfExists(temp);
+			throw new IOException("Renderer video file is empty");
+		}
+		try {
+			Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+		} catch (IOException ignored) {
+			Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+		}
 	}
 
 	private static void giveOrDrop(ServerPlayer player, ItemStack stack) {

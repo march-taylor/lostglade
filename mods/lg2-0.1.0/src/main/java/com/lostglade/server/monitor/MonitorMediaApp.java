@@ -256,6 +256,13 @@ public final class MonitorMediaApp implements MonitorApp {
 		return probeVideo(savedPath.toAbsolutePath().toString(), savedPath.toAbsolutePath().toString(), progress);
 	}
 
+	public static LoadedVideo loadLocalVideo(Path sourcePath, TaskProgress progress) throws IOException {
+		if (sourcePath == null || !Files.isRegularFile(sourcePath)) {
+			throw new IOException("Video source is missing");
+		}
+		return probeVideo(sourcePath.toAbsolutePath().toString(), sourcePath.toAbsolutePath().toString(), progress);
+	}
+
 	public static LoadedMedia loadSavedGalleryVideoAsMedia(String mediaKey, TaskProgress progress) throws IOException {
 		Path savedPath = savedGalleryMediaPath(mediaKey);
 		if (savedPath == null || !Files.isRegularFile(savedPath)) {

@@ -403,6 +403,7 @@ public final class RendererBotClientVideoRecording {
 						current.payload().requestId(),
 						durationMs,
 						targetFps,
+						current.finalPath().toAbsolutePath().toString(),
 						current.firstPreviewFrame,
 						current.firstFullFrame
 				));

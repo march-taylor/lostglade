@@ -23,6 +23,7 @@ import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -251,13 +252,19 @@ final class MonitorCameraRuntime {
 		if (mode == CameraAppCaptureMode.PHOTO) {
 			savePhoto(server, component.runtimeKey(), state);
 		} else if (mode == CameraAppCaptureMode.VIDEO) {
-			startVideoRecording(server, component, state, cameras);
+			startVideoRecording(server, component, state, cameras, microphones);
 		} else {
 			startAudioRecording(server, component, state, microphones);
 		}
 	}
 
-	private static void startVideoRecording(MinecraftServer server, ScreenComponent component, CameraRuntimeState state, List<LiveCameraReference> cameras) {
+	private static void startVideoRecording(
+			MinecraftServer server,
+			ScreenComponent component,
+			CameraRuntimeState state,
+			List<LiveCameraReference> cameras,
+			List<MicrophoneSystem.ScreenMicrophoneDevice> microphones
+	) {
 		if (cameras.isEmpty()) {
 			setStatus(server, component.runtimeKey(), state, "Нет камеры для записи");
 			return;
@@ -274,7 +281,19 @@ final class MonitorCameraRuntime {
 			String sourceKey = "camera-app-video-" + UUID.randomUUID();
 			Path output = CameraMediaCache.videoSourcePath(sourceKey);
 			CameraMediaCache.ensureVideoParent(sourceKey);
-			VideoRecordingSession recording = new VideoRecordingSession(sourceKey, output, VIDEO_TARGET_FPS);
+			VideoRecordingSession recording = new VideoRecordingSession(sourceKey, output, VIDEO_TARGET_FPS, microphones != null && !microphones.isEmpty());
+			if (recording.hasAudioTrack()) {
+				int selectedIndex;
+				synchronized (state) {
+					selectedIndex = state.selectedMicrophoneIndex;
+				}
+				MicrophoneSystem.MicrophonePcmRecorder recorder = MicrophoneSystem.startPcmRecorder(server, component.runtimeKey(), selectedIndex, recording::writeAudioFrame);
+				if (recorder != null) {
+					recording.attachAudioRecorder(recorder);
+				} else {
+					recording.disableAudioTrack();
+				}
+			}
 			recording.start();
 			synchronized (state) {
 				state.recording = recording;
@@ -877,30 +896,75 @@ final class MonitorCameraRuntime {
 		void abort();
 	}
 
+	private static final class PauseClock {
+		private final long startedAtMillis = System.currentTimeMillis();
+		private boolean paused;
+		private long pauseStartedAtMillis;
+		private long pausedDurationMs;
+
+		private synchronized boolean paused() {
+			return this.paused;
+		}
+
+		private synchronized boolean setPaused(boolean paused) {
+			if (this.paused == paused) {
+				return this.paused;
+			}
+			long now = System.currentTimeMillis();
+			if (paused) {
+				this.pauseStartedAtMillis = now;
+			} else {
+				this.pausedDurationMs += Math.max(0L, now - this.pauseStartedAtMillis);
+				this.pauseStartedAtMillis = 0L;
+			}
+			this.paused = paused;
+			return this.paused;
+		}
+
+		private synchronized long elapsedMs() {
+			long now = System.currentTimeMillis();
+			long currentPausedMs = this.paused ? Math.max(0L, now - this.pauseStartedAtMillis) : 0L;
+			return Math.max(0L, now - this.startedAtMillis - this.pausedDurationMs - currentPausedMs);
+		}
+	}
+
 	private static final class VideoRecordingSession implements RecordingSession {
 		private final String sourceKey;
 		private final Path outputPath;
+		private final Path videoOnlyPath;
+		private final Path audioPath;
+		private final Path muxPath;
 		private final int targetFps;
-		private final long startedAtMillis = System.currentTimeMillis();
+		private final PauseClock pauseClock = new PauseClock();
 		private final Process process;
 		private final OutputStream input;
 		private final ExecutorService writerExecutor;
+		private PcmAudioTrack audioTrack;
 		private volatile boolean paused;
 		private volatile boolean closed;
 		private long lastWrittenAtMillis;
 		private BufferedImage preview;
 
-		private VideoRecordingSession(String sourceKey, Path outputPath, int targetFps) throws IOException {
+		private VideoRecordingSession(String sourceKey, Path outputPath, int targetFps, boolean captureAudio) throws IOException {
 			this.sourceKey = sourceKey;
 			this.outputPath = outputPath;
+			this.videoOnlyPath = captureAudio ? outputPath.resolveSibling(outputPath.getFileName() + ".video.tmp.mp4") : outputPath;
+			this.audioPath = captureAudio ? outputPath.resolveSibling(outputPath.getFileName() + ".audio.tmp.wav") : null;
+			this.muxPath = captureAudio ? outputPath.resolveSibling(outputPath.getFileName() + ".mux.tmp.mp4") : null;
 			this.targetFps = Math.max(1, targetFps);
+			Files.deleteIfExists(this.videoOnlyPath);
+			if (this.audioPath != null) {
+				Files.deleteIfExists(this.audioPath);
+				Files.deleteIfExists(this.muxPath);
+				this.audioTrack = new PcmAudioTrack(this.audioPath);
+			}
 			List<String> command = List.of(
 					"ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
 					"-f", "image2pipe",
 					"-framerate", Integer.toString(this.targetFps),
 					"-i", "-",
 					"-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
-					outputPath.toAbsolutePath().toString()
+					this.videoOnlyPath.toAbsolutePath().toString()
 			);
 			this.process = new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start();
 			this.input = new BufferedOutputStream(this.process.getOutputStream());
@@ -912,6 +976,36 @@ final class MonitorCameraRuntime {
 		}
 
 		private void start() {
+		}
+
+		private boolean hasAudioTrack() {
+			return this.audioTrack != null;
+		}
+
+		private synchronized void attachAudioRecorder(MicrophoneSystem.MicrophonePcmRecorder recorder) {
+			if (this.audioTrack != null) {
+				this.audioTrack.attach(recorder);
+			} else if (recorder != null) {
+				recorder.close();
+			}
+		}
+
+		private synchronized void disableAudioTrack() {
+			PcmAudioTrack current = this.audioTrack;
+			this.audioTrack = null;
+			if (current != null) {
+				try {
+					current.abort();
+				} catch (IOException ignored) {
+				}
+			}
+		}
+
+		private synchronized void writeAudioFrame(short[] frame) {
+			PcmAudioTrack current = this.audioTrack;
+			if (current != null && !this.paused && !this.closed) {
+				current.writeFrame(frame);
+			}
 		}
 
 		private void offerFrame(BufferedImage frame) {
@@ -944,12 +1038,12 @@ final class MonitorCameraRuntime {
 
 		@Override
 		public void setPaused(boolean paused) {
-			this.paused = paused;
+			this.paused = this.pauseClock.setPaused(paused);
 		}
 
 		@Override
 		public long elapsedMs() {
-			return System.currentTimeMillis() - this.startedAtMillis;
+			return this.pauseClock.elapsedMs();
 		}
 
 		@Override
@@ -974,10 +1068,76 @@ final class MonitorCameraRuntime {
 				Thread.currentThread().interrupt();
 				throw new IOException("Video encoder interrupted", exception);
 			}
+			if (this.audioTrack == null && !this.videoOnlyPath.equals(this.outputPath)) {
+				moveVideoOnlyToOutput();
+			}
+			if (!Files.isRegularFile(this.outputPath) || Files.size(this.outputPath) <= 0L) {
+				PcmAudioTrack currentAudio = this.audioTrack;
+				this.audioTrack = null;
+				if (currentAudio != null) {
+					currentAudio.finish();
+					muxAudio(currentAudio.path());
+				}
+			}
 			if (!Files.isRegularFile(this.outputPath) || Files.size(this.outputPath) <= 0L) {
 				throw new IOException("Video output is empty");
 			}
 			return new RecordedMedia(this.sourceKey, this.outputPath, GalleryItemKind.VIDEO, "Видео", "camera", "lg2-camera:video:" + this.sourceKey, this.preview);
+		}
+
+		private void muxAudio(Path finishedAudioPath) throws IOException {
+			if (finishedAudioPath == null || this.muxPath == null || !Files.isRegularFile(finishedAudioPath)) {
+				moveVideoOnlyToOutput();
+				return;
+			}
+			if (!Files.isRegularFile(this.videoOnlyPath) || Files.size(this.videoOnlyPath) <= 0L) {
+				throw new IOException("Video-only output is empty");
+			}
+			if (Files.size(finishedAudioPath) <= 44L) {
+				moveVideoOnlyToOutput();
+				return;
+			}
+			List<String> command = List.of(
+					"ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+					"-i", this.videoOnlyPath.toAbsolutePath().toString(),
+					"-i", finishedAudioPath.toAbsolutePath().toString(),
+					"-map", "0:v:0",
+					"-map", "1:a:0",
+					"-c:v", "copy",
+					"-c:a", "aac",
+					"-shortest",
+					"-movflags", "+faststart",
+					this.muxPath.toAbsolutePath().toString()
+			);
+			Process muxProcess = new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+			try {
+				if (!muxProcess.waitFor(10, TimeUnit.SECONDS)) {
+					muxProcess.destroyForcibly();
+					throw new IOException("Video audio mux timed out");
+				}
+			} catch (InterruptedException exception) {
+				Thread.currentThread().interrupt();
+				throw new IOException("Video audio mux interrupted", exception);
+			}
+			if (muxProcess.exitValue() != 0 || !Files.isRegularFile(this.muxPath) || Files.size(this.muxPath) <= 0L) {
+				moveVideoOnlyToOutput();
+				return;
+			}
+			replaceOutput(this.muxPath, this.outputPath);
+			deleteQuietly(this.videoOnlyPath);
+			deleteQuietly(finishedAudioPath);
+		}
+
+		private void moveVideoOnlyToOutput() throws IOException {
+			if (!this.videoOnlyPath.equals(this.outputPath)) {
+				replaceOutput(this.videoOnlyPath, this.outputPath);
+			}
+			if (this.audioPath != null) {
+				deleteQuietly(this.audioPath);
+			}
+			if (this.muxPath != null) {
+				deleteQuietly(this.muxPath);
+			}
 		}
 
 		@Override
@@ -989,6 +1149,127 @@ final class MonitorCameraRuntime {
 			} catch (IOException ignored) {
 			}
 			this.process.destroyForcibly();
+			PcmAudioTrack currentAudio = this.audioTrack;
+			this.audioTrack = null;
+			if (currentAudio != null) {
+				try {
+					currentAudio.abort();
+				} catch (IOException ignored) {
+				}
+			}
+			deleteQuietly(this.videoOnlyPath);
+			if (this.muxPath != null) {
+				deleteQuietly(this.muxPath);
+			}
+		}
+	}
+
+	private static void replaceOutput(Path source, Path target) throws IOException {
+		try {
+			Files.move(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+		} catch (IOException ignored) {
+			Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+		}
+	}
+
+	private static void deleteQuietly(Path path) {
+		if (path == null) {
+			return;
+		}
+		try {
+			Files.deleteIfExists(path);
+		} catch (IOException ignored) {
+		}
+	}
+
+	private static final class PcmAudioTrack {
+		private final Path path;
+		private final OutputStream output;
+		private long samplesWritten;
+		private MicrophoneSystem.MicrophonePcmRecorder recorder;
+		private boolean closed;
+
+		private PcmAudioTrack(Path path) throws IOException {
+			this.path = path;
+			this.output = new BufferedOutputStream(Files.newOutputStream(path));
+			this.output.write(wavHeader(0L));
+		}
+
+		private synchronized void attach(MicrophoneSystem.MicrophonePcmRecorder recorder) {
+			this.recorder = recorder;
+		}
+
+		private synchronized void writeFrame(short[] frame) {
+			if (this.closed || frame == null) {
+				return;
+			}
+			try {
+				ByteBuffer buffer = ByteBuffer.allocate(frame.length * 2).order(ByteOrder.LITTLE_ENDIAN);
+				for (short sample : frame) {
+					buffer.putShort(sample);
+				}
+				this.output.write(buffer.array());
+				this.samplesWritten += frame.length;
+			} catch (IOException exception) {
+				this.closed = true;
+				MicrophoneSystem.MicrophonePcmRecorder current = this.recorder;
+				this.recorder = null;
+				if (current != null) {
+					current.close();
+				}
+				try {
+					this.output.close();
+				} catch (IOException ignored) {
+				}
+			}
+		}
+
+		private synchronized Path finish() throws IOException {
+			close();
+			try (SeekableByteChannel channel = Files.newByteChannel(this.path, StandardOpenOption.WRITE)) {
+				channel.position(0L);
+				channel.write(ByteBuffer.wrap(wavHeader(this.samplesWritten * 2L)));
+			}
+			return this.path;
+		}
+
+		private synchronized void abort() throws IOException {
+			close();
+			deleteQuietly(this.path);
+		}
+
+		private synchronized void close() throws IOException {
+			if (this.closed) {
+				return;
+			}
+			this.closed = true;
+			MicrophoneSystem.MicrophonePcmRecorder current = this.recorder;
+			this.recorder = null;
+			if (current != null) {
+				current.close();
+			}
+			this.output.close();
+		}
+
+		private Path path() {
+			return this.path;
+		}
+
+		private static byte[] wavHeader(long dataBytes) {
+			ByteBuffer header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
+			header.put(new byte[]{'R', 'I', 'F', 'F'});
+			header.putInt((int) Math.min(Integer.MAX_VALUE, 36L + dataBytes));
+			header.put(new byte[]{'W', 'A', 'V', 'E', 'f', 'm', 't', ' '});
+			header.putInt(16);
+			header.putShort((short) 1);
+			header.putShort((short) 1);
+			header.putInt(AUDIO_SAMPLE_RATE);
+			header.putInt(AUDIO_SAMPLE_RATE * 2);
+			header.putShort((short) 2);
+			header.putShort((short) 16);
+			header.put(new byte[]{'d', 'a', 't', 'a'});
+			header.putInt((int) Math.min(Integer.MAX_VALUE, dataBytes));
+			return header.array();
 		}
 	}
 
@@ -996,8 +1277,9 @@ final class MonitorCameraRuntime {
 		private final String sourceKey;
 		private final Path outputPath;
 		private final OutputStream output;
-		private final long startedAtMillis = System.currentTimeMillis();
+		private final PauseClock pauseClock = new PauseClock();
 		private volatile boolean paused;
+		private boolean closed;
 		private long samplesWritten;
 		private MicrophoneSystem.MicrophonePcmRecorder recorder;
 
@@ -1013,7 +1295,7 @@ final class MonitorCameraRuntime {
 		}
 
 		private synchronized void writeFrame(short[] frame) {
-			if (this.paused || frame == null) {
+			if (this.closed || this.paused || frame == null) {
 				return;
 			}
 			try {
@@ -1024,7 +1306,7 @@ final class MonitorCameraRuntime {
 				this.output.write(buffer.array());
 				this.samplesWritten += frame.length;
 			} catch (IOException exception) {
-				this.paused = true;
+				setPaused(true);
 			}
 		}
 
@@ -1035,12 +1317,12 @@ final class MonitorCameraRuntime {
 
 		@Override
 		public void setPaused(boolean paused) {
-			this.paused = paused;
+			this.paused = this.pauseClock.setPaused(paused);
 		}
 
 		@Override
 		public long elapsedMs() {
-			return System.currentTimeMillis() - this.startedAtMillis;
+			return this.pauseClock.elapsedMs();
 		}
 
 		@Override
@@ -1062,6 +1344,10 @@ final class MonitorCameraRuntime {
 		}
 
 		private synchronized void close() throws IOException {
+			if (this.closed) {
+				return;
+			}
+			this.closed = true;
 			MicrophoneSystem.MicrophonePcmRecorder current = this.recorder;
 			this.recorder = null;
 			if (current != null) {
