@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
+import com.lostglade.server.ServerRaceSystem;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
@@ -19,7 +20,9 @@ public abstract class TargetingConditionsAbsoluteInvisibilityMixin {
 			LivingEntity target,
 			CallbackInfoReturnable<Boolean> cir
 	) {
-		if (!(observer instanceof Mob mob) || !ServerAbsoluteInvisibilitySystem.shouldSuppressMobDetection(mob, target)) {
+		if (!(observer instanceof Mob mob)
+				|| (!ServerAbsoluteInvisibilitySystem.shouldSuppressMobDetection(mob, target)
+				&& !ServerRaceSystem.shouldSuppressMilkStockMobDetection(mob, target))) {
 			return;
 		}
 

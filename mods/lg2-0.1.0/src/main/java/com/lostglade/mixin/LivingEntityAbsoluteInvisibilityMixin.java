@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
+import com.lostglade.server.ServerRaceSystem;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
@@ -14,7 +15,8 @@ public abstract class LivingEntityAbsoluteInvisibilityMixin {
 	@Inject(method = "getVisibilityPercent", at = @At("HEAD"), cancellable = true)
 	private void lg2$forceZeroVisibilityAgainstMobs(Entity observer, CallbackInfoReturnable<Double> cir) {
 		if (!(observer instanceof Mob mob)
-				|| !ServerAbsoluteInvisibilitySystem.shouldSuppressMobDetection(mob, (LivingEntity) (Object) this)) {
+				|| (!ServerAbsoluteInvisibilitySystem.shouldSuppressMobDetection(mob, (LivingEntity) (Object) this)
+				&& !ServerRaceSystem.shouldSuppressMilkStockMobDetection(mob, (LivingEntity) (Object) this))) {
 			return;
 		}
 

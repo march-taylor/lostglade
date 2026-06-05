@@ -3,9 +3,11 @@ package com.lostglade;
 import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.config.RaceConfig;
+import com.lostglade.network.Lg2Payloads;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.server.ServerGlitchSystem;
 import com.lostglade.server.ServerBackroomsSystem;
+import com.lostglade.server.ServerMilkPocketDimensionSystem;
 import com.lostglade.server.ServerBackroomsBlockBreakSystem;
 import com.lostglade.server.ServerBackroomsStalkerSystem;
 import com.lostglade.server.BluetoothLinkSystem;
@@ -67,6 +69,7 @@ public class Lg2 implements ModInitializer {
 		RaceConfig.load();
 		PolymerResourcePackUtils.addModAssets(MOD_ID);
 		RendererBotPayloads.registerPayloadTypes();
+		Lg2Payloads.registerPayloadTypes();
 
 		ModRecipeSerializers.register();
 		ModItems.register();
@@ -94,6 +97,7 @@ public class Lg2 implements ModInitializer {
 		ServerGlitchSystem.register();
 		ServerAbsoluteInvisibilitySystem.register();
 		ServerBackroomsSystem.register();
+		ServerMilkPocketDimensionSystem.register();
 		ServerBackroomsBlockBreakSystem.register();
 		ServerBackroomsStalkerSystem.register();
 		ServerStructureBreakSystem.register();

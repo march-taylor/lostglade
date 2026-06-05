@@ -19,6 +19,7 @@ public final class ModWorldGen {
 	public static final Identifier BITCOIN_ORE_FEATURE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "bitcoin_ore_feature");
 	public static final Identifier BACKROOMS_BIOME_SOURCE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms");
 	public static final Identifier BACKROOMS_CHUNK_GENERATOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms");
+	public static final Identifier MILK_POCKET_CHUNK_GENERATOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "milk_pocket");
 	public static final ResourceKey<PlacedFeature> BITCOIN_ORE_PLACED_KEY = ResourceKey.create(
 			Registries.PLACED_FEATURE,
 			Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "bitcoin_ore")
@@ -33,6 +34,11 @@ public final class ModWorldGen {
 			BuiltInRegistries.CHUNK_GENERATOR,
 			BACKROOMS_CHUNK_GENERATOR_ID,
 			BackroomsChunkGenerator.CODEC
+	);
+	public static final MapCodec<? extends ChunkGenerator> MILK_POCKET_CHUNK_GENERATOR = Registry.register(
+			BuiltInRegistries.CHUNK_GENERATOR,
+			MILK_POCKET_CHUNK_GENERATOR_ID,
+			MilkPocketChunkGenerator.CODEC
 	);
 	public static final MapCodec<? extends net.minecraft.world.level.biome.BiomeSource> BACKROOMS_BIOME_SOURCE = Registry.register(
 			BuiltInRegistries.BIOME_SOURCE,

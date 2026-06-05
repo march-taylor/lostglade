@@ -1,7 +1,9 @@
 package com.lostglade.mixin;
 
+import com.lostglade.server.ServerMilkPocketDimensionSystem;
 import com.lostglade.server.ServerRaceSystem;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.LivingEntity;
 import org.spongepowered.asm.mixin.Mixin;
@@ -19,6 +21,19 @@ public abstract class LivingEntityCartelDefenseMixin {
 			float damage,
 			CallbackInfoReturnable<Boolean> cir
 	) {
+		if ((Object) this instanceof ServerPlayer player
+				&& ServerMilkPocketDimensionSystem.shouldCancelFirstLandingFallDamage(player, damageSource)) {
+			cir.setReturnValue(false);
+			return;
+		}
+		if (ServerRaceSystem.shouldCancelMilkMouseCombatDamage((LivingEntity) (Object) this, damageSource)) {
+			cir.setReturnValue(false);
+			return;
+		}
+		if (ServerRaceSystem.handleMilkAbsoluteAttack(level, (LivingEntity) (Object) this, damageSource, damage)) {
+			cir.setReturnValue(true);
+			return;
+		}
 		if (ServerRaceSystem.handleGennadiyDefenseDamage(level, (LivingEntity) (Object) this, damageSource, damage)) {
 			cir.setReturnValue(false);
 		}
@@ -35,6 +50,11 @@ public abstract class LivingEntityCartelDefenseMixin {
 		ServerRaceSystem.handleGennadiyCombatDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handleGennadiyRageMeleeDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handleMarkRageMeleeDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
+		ServerRaceSystem.handleMilkStockCombatDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
+		ServerRaceSystem.handleMilkDefenseDodge(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
+		if (cir.getReturnValueZ() && damage > 0.0F && (Object) this instanceof ServerPlayer player) {
+			ServerMilkPocketDimensionSystem.recordPlayerDamage(player);
+		}
 	}
 
 	@Inject(method = "die", at = @At("HEAD"))

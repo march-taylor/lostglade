@@ -21,6 +21,7 @@ public abstract class ServerGamePacketListenerCopperManJetpackMixin {
 			return;
 		}
 		ServerRaceSystem.handleCopperManJetpackInput(this.player, packet.input());
+		ServerRaceSystem.handleMilkMouseInput(this.player, packet.input());
 	}
 
 	@Inject(method = "handlePlayerInput", at = @At("TAIL"))

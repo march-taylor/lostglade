@@ -1,0 +1,44 @@
+{
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "lg2:font/milk_lost_heart.png",
+      "ascent": 7,
+      "height": 10,
+      "chars": [
+        "\ue962"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "lg2:font/milk_lost_heart.png",
+      "ascent": 10,
+      "height": 14,
+      "chars": [
+        "\ue963"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "lg2:font/milk_lost_heart.png",
+      "ascent": 14,
+      "height": 20,
+      "chars": [
+        "\ue964"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "lg2:font/milk_lost_heart.png",
+      "ascent": 26,
+      "height": 38,
+      "chars": [
+        "\ue965"
+      ]
+    },
+    {
+      "type": "reference",
+      "id": "minecraft:default"
+    }
+  ]
+}

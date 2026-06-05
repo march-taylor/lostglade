@@ -26,6 +26,10 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 		if (packet == null) {
 			return;
 		}
+		if (ServerRaceSystem.shouldCancelMarkRangedUsePacket(this.player, packet.getHand())) {
+			ci.cancel();
+			return;
+		}
 		CopperManGogglesSystem.handleUseAirPacket(this.player, packet.getHand());
 		if (CopperManGogglesSystem.shouldCancelUseItemPacket(this.player, packet.getHand())) {
 			ci.cancel();
@@ -79,6 +83,10 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 
 	@Inject(method = "handleMovePlayer", at = @At("HEAD"), cancellable = true)
 	private void lg2$forceGennadiyDefenseLookOnPlayerMove(ServerboundMovePlayerPacket packet, CallbackInfo ci) {
+		if (ServerRaceSystem.handleMilkMouseMovePacket(this.player, packet)) {
+			ci.cancel();
+			return;
+		}
 		if (ServerRaceSystem.handleGennadiyDefenseMovementPacket(this.player)) {
 			ci.cancel();
 		}

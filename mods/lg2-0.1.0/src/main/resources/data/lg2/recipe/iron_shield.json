@@ -1,0 +1,23 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "pattern": [
+    "WMW",
+    "WWW",
+    " W "
+  ],
+  "key": {
+    "W": "#minecraft:wooden_tool_materials",
+    "M": "#minecraft:iron_tool_materials"
+  },
+  "result": {
+    "id": "minecraft:shield",
+    "components": {
+      "minecraft:custom_name": {
+        "translate": "item.lg2.iron_shield",
+        "fallback": "Железный щит",
+        "italic": false
+      }
+    }
+  }
+}

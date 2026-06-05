@@ -2080,14 +2080,14 @@ public final class DroneSystem {
 	}
 
 	private static boolean hasSupportingBlockBelow(Entity entity) {
-		if (entity == null || entity.level() == null) {
+		if (entity == null || !(entity.level() instanceof ServerLevel level)) {
 			return false;
 		}
 		AABB box = entity.getBoundingBox();
 		if (box == null) {
 			return false;
 		}
-		return !entity.level().noCollision(box.move(0.0D, -1.0E-4D, 0.0D));
+		return boxHitsSolidCollision(level, box.move(0.0D, -1.0E-4D, 0.0D));
 	}
 
 	private static Vec3 applyUncontrolledDroneEnvironment(Entity root, Vec3 velocity) {

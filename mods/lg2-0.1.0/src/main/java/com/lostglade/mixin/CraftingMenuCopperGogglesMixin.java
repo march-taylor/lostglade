@@ -37,6 +37,8 @@ public abstract class CraftingMenuCopperGogglesMixin {
 		ItemStack result = resultContainer.getItem(0);
 		if (CopperManGogglesSystem.canShowCraftingResult(serverPlayer, recipeHolder, result)
 				&& MarkShieldRecipeSystem.canShowCraftingResult(serverPlayer, recipeHolder, result)) {
+			result = MarkShieldRecipeSystem.decorateCraftingResult(serverPlayer, recipeHolder, result);
+			resultContainer.setItem(0, result);
 			menu.setRemoteSlot(0, result);
 			serverPlayer.connection.send(new ClientboundContainerSetSlotPacket(
 					menu.containerId,
