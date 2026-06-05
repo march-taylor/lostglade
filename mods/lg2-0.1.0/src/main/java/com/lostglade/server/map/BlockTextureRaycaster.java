@@ -3,6 +3,8 @@ package com.lostglade.server.map;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.mojang.math.OctahedralGroup;
+import com.mojang.math.Quadrant;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -12,6 +14,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix3fc;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
@@ -38,10 +41,121 @@ public final class BlockTextureRaycaster {
 			return null;
 		}
 
-		Vec3 localOrigin = worldOrigin.subtract(pos.getX(), pos.getY(), pos.getZ()).scale(16.0D);
-		Vec3 localDirection = worldDirection.scale(16.0D);
+		return traceVariant(variant, pos, worldOrigin, worldDirection, tintColors, false);
+	}
+
+	public static BlockTraceResult traceTopDown(BlockState state, BlockPos pos, Vec3 worldOrigin, Vec3 worldDirection, int[] tintColors) {
+		ResolvedVariant variant = resolveVariant(state);
+		if (variant == null || variant.parts().isEmpty()) {
+			return null;
+		}
+
+		return traceVariant(variant, pos, worldOrigin, worldDirection, tintColors, true);
+	}
+
+	public static boolean hitsTopDownGeometry(BlockState state, BlockPos pos, Vec3 worldOrigin, Vec3 worldDirection) {
+		ResolvedVariant variant = resolveVariant(state);
+		if (variant == null || variant.parts().isEmpty()) {
+			return false;
+		}
+
+		return traceVariant(variant, pos, worldOrigin, worldDirection, null, true, true) != null;
+	}
+
+	public static BlockTraceResult traceModelTopDown(Identifier modelId, Vec3 localOrigin, Vec3 localDirection, int[] tintColors) {
+		ResolvedModel model = resolveModel(modelId);
+		if (model == null || model.elements().isEmpty()) {
+			return null;
+		}
+		ModelBounds bounds = boundsFor(model);
+		if (bounds == null) {
+			return null;
+		}
+		ResolvedVariant variant = new ResolvedVariant(List.of(new ModelPart(model, new ModelTransform(0, 0, false))));
+		return traceVariant(
+				variant,
+				BlockPos.ZERO,
+				localOrigin,
+				localDirection,
+				tintColors,
+				true,
+				bounds
+		);
+	}
+
+	public static BlockTraceResult traceModelTopDownNormalized(Identifier modelId, double normalizedX, double normalizedZ, int[] tintColors) {
+		ResolvedModel model = resolveModel(modelId);
+		if (model == null || model.elements().isEmpty()) {
+			return null;
+		}
+		ModelBounds bounds = boundsFor(model);
+		if (bounds == null) {
+			return null;
+		}
+		double localX = Mth.lerp(Mth.clamp(normalizedX, 0.0D, 1.0D), bounds.minX(), bounds.maxX());
+		double localZ = Mth.lerp(Mth.clamp(normalizedZ, 0.0D, 1.0D), bounds.minZ(), bounds.maxZ());
+		ResolvedVariant variant = new ResolvedVariant(List.of(new ModelPart(model, new ModelTransform(0, 0, false))));
+		return traceVariant(
+				variant,
+				BlockPos.ZERO,
+				new Vec3(localX, bounds.maxY() + 64.0D, localZ),
+				new Vec3(0.0D, -1.0D, 0.0D),
+				tintColors,
+				true,
+				bounds
+		);
+	}
+
+	private static BlockTraceResult traceVariant(ResolvedVariant variant, BlockPos pos, Vec3 worldOrigin, Vec3 worldDirection, int[] tintColors, boolean topDownOnly) {
+		return traceVariant(variant, pos, worldOrigin, worldDirection, tintColors, topDownOnly, false);
+	}
+
+	private static BlockTraceResult traceVariant(ResolvedVariant variant, BlockPos pos, Vec3 worldOrigin, Vec3 worldDirection, int[] tintColors, boolean topDownOnly, boolean geometryOnly) {
+		return traceVariant(
+				variant,
+				pos,
+				worldOrigin.subtract(pos.getX(), pos.getY(), pos.getZ()).scale(16.0D),
+				worldDirection.scale(16.0D),
+				tintColors,
+				topDownOnly,
+				new ModelBounds(0.0D, 0.0D, 0.0D, 16.0D, 16.0D, 16.0D),
+				geometryOnly
+		);
+	}
+
+	private static BlockTraceResult traceVariant(
+			ResolvedVariant variant,
+			BlockPos pos,
+			Vec3 localOrigin,
+			Vec3 localDirection,
+			int[] tintColors,
+			boolean topDownOnly,
+			ModelBounds bounds
+	) {
+		return traceVariant(variant, pos, localOrigin, localDirection, tintColors, topDownOnly, bounds, false);
+	}
+
+	private static BlockTraceResult traceVariant(
+			ResolvedVariant variant,
+			BlockPos pos,
+			Vec3 localOrigin,
+			Vec3 localDirection,
+			int[] tintColors,
+			boolean topDownOnly,
+			ModelBounds bounds,
+			boolean geometryOnly
+	) {
 		Ray localRay = new Ray(localOrigin, localDirection);
-		DoubleRange blockRange = intersectAabb(localRay.origin(), localRay.direction(), 0.0D, 0.0D, 0.0D, 16.0D, 16.0D, 16.0D);
+		DoubleRange blockRange = intersectAabb(
+				localRay.origin(),
+				localRay.direction(),
+				bounds.minX(),
+				bounds.minY(),
+				bounds.minZ(),
+				bounds.maxX(),
+				bounds.maxY(),
+				bounds.maxZ()
+		);
 		if (blockRange == null) {
 			return null;
 		}
@@ -56,7 +170,7 @@ public final class BlockTextureRaycaster {
 				}
 				Ray partRay = inverseRotateVariant(localRay.origin(), localRay.direction(), part.transform());
 				for (ModelElement element : part.model().elements()) {
-					FaceHit candidate = firstFaceHit(element, partRay, minT, maxT, part.model(), part.transform());
+					FaceHit candidate = firstFaceHit(element, partRay, minT, maxT, part.model(), part.transform(), topDownOnly);
 					if (candidate != null && (nearest == null || candidate.t() < nearest.t())) {
 						nearest = candidate;
 					}
@@ -66,8 +180,8 @@ public final class BlockTextureRaycaster {
 				break;
 			}
 
-			int argb = sampleTexture(nearest, tintColors);
-			if (((argb >>> 24) & 0xFF) > 8) {
+			int argb = geometryOnly ? 0xFFFFFFFF : sampleTexture(nearest, tintColors);
+			if (geometryOnly || ((argb >>> 24) & 0xFF) > 8) {
 				Vec3 blockLocalHit = rotateVariantPointForward(nearest.hitPoint(), nearest.transform());
 				Vec3 worldHit = new Vec3(
 						pos.getX() + blockLocalHit.x / 16.0D,
@@ -75,11 +189,16 @@ public final class BlockTextureRaycaster {
 						pos.getZ() + blockLocalHit.z / 16.0D
 				);
 				Direction shadeDirection = rotateDirectionForward(nearest.direction(), nearest.transform(), nearest.elementRotation());
-				return new BlockTraceResult(argb & 0xFFFFFF, worldHit, shadeDirection, nearest.shade());
+				return new BlockTraceResult(argb, worldHit, shadeDirection, nearest.shade());
 			}
 			minT = nearest.t() + EPSILON;
 		}
 		return null;
+	}
+
+	public static boolean hasResolvableModel(BlockState state) {
+		ResolvedVariant variant = resolveVariant(state);
+		return variant != null && !variant.parts().isEmpty();
 	}
 
 	private static int sampleTexture(FaceHit hit, int[] tintColors) {
@@ -127,17 +246,28 @@ public final class BlockTextureRaycaster {
 			double minT,
 			double maxT,
 			ResolvedModel model,
-			ModelTransform transform
+			ModelTransform transform,
+			boolean topDownOnly
 	) {
 		Ray elementRay = inverseRotateElement(ray, element.rotation());
 		FaceHit nearest = null;
 		for (Map.Entry<Direction, ModelFace> entry : element.faces().entrySet()) {
+			if (topDownOnly && !isTopVisible(entry.getKey(), transform, element.rotation())) {
+				continue;
+			}
 			FaceHit candidate = intersectFace(element, entry.getKey(), entry.getValue(), ray, elementRay, minT, maxT, model, transform);
 			if (candidate != null && (nearest == null || candidate.t() < nearest.t())) {
 				nearest = candidate;
 			}
 		}
 		return nearest;
+	}
+
+	private static boolean isTopVisible(Direction direction, ModelTransform transform, ElementRotation elementRotation) {
+		Vec3 normal = new Vec3(direction.getStepX(), direction.getStepY(), direction.getStepZ());
+		normal = rotateElementVector(normal, elementRotation);
+		normal = transformVariantVector(normal, transform);
+		return normal.y > EPSILON;
 	}
 
 	private static FaceHit intersectFace(
@@ -250,7 +380,7 @@ public final class BlockTextureRaycaster {
 		}
 		Vec3 hitPoint = transformElementPoint(new Vec3(x, y, z), element.rotation());
 		double rayT = projectRayParameter(ray, hitPoint);
-		if (rayT < minT || rayT > maxT) {
+		if (rayT < minT - EPSILON || rayT > maxT + EPSILON) {
 			return null;
 		}
 		return new FaceHit(rayT, direction, new ModelFace(resolvedTexture, uv, face.rotation(), face.tintIndex()), point.u(), point.v(), hitPoint, element.shade(), element.rotation(), transform);
@@ -344,21 +474,51 @@ public final class BlockTextureRaycaster {
 
 	private static Ray inverseRotateVariant(Vec3 origin, Vec3 direction, ModelTransform transform) {
 		Vec3 center = new Vec3(8.0D, 8.0D, 8.0D);
-		Vec3 rotatedOrigin = rotateAroundY(rotateAroundX(origin.subtract(center), -transform.x()), transform.y()).add(center);
-		Vec3 rotatedDirection = rotateAroundY(rotateAroundX(direction, -transform.x()), transform.y());
+		Vec3 rotatedOrigin = inverseTransformVariantVector(origin.subtract(center), transform).add(center);
+		Vec3 rotatedDirection = inverseTransformVariantVector(direction, transform);
 		return new Ray(rotatedOrigin, rotatedDirection);
 	}
 
 	private static Vec3 rotateVariantPointForward(Vec3 point, ModelTransform transform) {
 		Vec3 center = new Vec3(8.0D, 8.0D, 8.0D);
-		return rotateAroundX(rotateAroundY(point.subtract(center), -transform.y()), transform.x()).add(center);
+		return transformVariantVector(point.subtract(center), transform).add(center);
 	}
 
 	private static Direction rotateDirectionForward(Direction direction, ModelTransform transform, ElementRotation elementRotation) {
 		Vec3 normal = new Vec3(direction.getStepX(), direction.getStepY(), direction.getStepZ());
 		normal = rotateElementVector(normal, elementRotation);
-		normal = rotateAroundX(rotateAroundY(normal, -transform.y()), transform.x());
+		normal = transformVariantVector(normal, transform);
 		return dominantDirection(normal);
+	}
+
+	private static Vec3 transformVariantVector(Vec3 vector, ModelTransform transform) {
+		return transformMatrix(transform.rotation().transformation(), vector);
+	}
+
+	private static Vec3 inverseTransformVariantVector(Vec3 vector, ModelTransform transform) {
+		return transformMatrix(transform.inverseRotation().transformation(), vector);
+	}
+
+	private static Vec3 transformMatrix(Matrix3fc matrix, Vec3 vector) {
+		return new Vec3(
+				matrix.m00() * vector.x + matrix.m10() * vector.y + matrix.m20() * vector.z,
+				matrix.m01() * vector.x + matrix.m11() * vector.y + matrix.m21() * vector.z,
+				matrix.m02() * vector.x + matrix.m12() * vector.y + matrix.m22() * vector.z
+		);
+	}
+
+	private static OctahedralGroup blockModelRotation(int x, int y) {
+		return Quadrant.fromXYZAngles(parseQuadrant(x), parseQuadrant(y), Quadrant.R0);
+	}
+
+	private static Quadrant parseQuadrant(int degrees) {
+		return switch (Mth.positiveModulo(degrees, 360)) {
+			case 0 -> Quadrant.R0;
+			case 90 -> Quadrant.R90;
+			case 180 -> Quadrant.R180;
+			case 270 -> Quadrant.R270;
+			default -> throw new IllegalArgumentException("Unsupported block model rotation: " + degrees);
+		};
 	}
 
 	private static Direction dominantDirection(Vec3 vector) {
@@ -585,6 +745,50 @@ public final class BlockTextureRaycaster {
 		return new ResolvedVariant(List.of(new ModelPart(model, new ModelTransform(x, y, uvlock))));
 	}
 
+	private static ModelBounds boundsFor(ResolvedModel model) {
+		if (model == null || model.elements().isEmpty()) {
+			return null;
+		}
+		double minX = Double.POSITIVE_INFINITY;
+		double minY = Double.POSITIVE_INFINITY;
+		double minZ = Double.POSITIVE_INFINITY;
+		double maxX = Double.NEGATIVE_INFINITY;
+		double maxY = Double.NEGATIVE_INFINITY;
+		double maxZ = Double.NEGATIVE_INFINITY;
+		for (ModelElement element : model.elements()) {
+			if (element == null) {
+				continue;
+			}
+			double fromX = Math.min(element.from().x, element.to().x);
+			double fromY = Math.min(element.from().y, element.to().y);
+			double fromZ = Math.min(element.from().z, element.to().z);
+			double toX = Math.max(element.from().x, element.to().x);
+			double toY = Math.max(element.from().y, element.to().y);
+			double toZ = Math.max(element.from().z, element.to().z);
+			double[] xs = {fromX, toX};
+			double[] ys = {fromY, toY};
+			double[] zs = {fromZ, toZ};
+			for (double x : xs) {
+				for (double y : ys) {
+					for (double z : zs) {
+						Vec3 corner = transformElementPoint(new Vec3(x, y, z), element.rotation());
+						minX = Math.min(minX, corner.x);
+						minY = Math.min(minY, corner.y);
+						minZ = Math.min(minZ, corner.z);
+						maxX = Math.max(maxX, corner.x);
+						maxY = Math.max(maxY, corner.y);
+						maxZ = Math.max(maxZ, corner.z);
+					}
+				}
+			}
+		}
+		if (!Double.isFinite(minX) || !Double.isFinite(minY) || !Double.isFinite(minZ)
+				|| !Double.isFinite(maxX) || !Double.isFinite(maxY) || !Double.isFinite(maxZ)) {
+			return null;
+		}
+		return new ModelBounds(minX - EPSILON, minY - EPSILON, minZ - EPSILON, maxX + EPSILON, maxY + EPSILON, maxZ + EPSILON);
+	}
+
 	private static ModelPart resolveModelPart(JsonObject applyObject) {
 		if (!applyObject.has("model")) {
 			return null;
@@ -769,20 +973,47 @@ public final class BlockTextureRaycaster {
 			return null;
 		}
 		JsonObject rotationJson = object.getAsJsonObject("rotation");
-		Vec3 origin = readVec3(rotationJson.getAsJsonArray("origin"));
-		String axisName = rotationJson.get("axis").getAsString();
-		Direction.Axis axis = switch (axisName) {
-			case "x" -> Direction.Axis.X;
-			case "y" -> Direction.Axis.Y;
-			case "z" -> Direction.Axis.Z;
-			default -> null;
-		};
+		Vec3 origin = rotationJson.has("origin") ? readVec3(rotationJson.getAsJsonArray("origin")) : new Vec3(8.0D, 8.0D, 8.0D);
+		Direction.Axis axis;
+		float angle;
+		if (rotationJson.has("axis") && rotationJson.has("angle")) {
+			String axisName = rotationJson.get("axis").getAsString();
+			axis = switch (axisName) {
+				case "x" -> Direction.Axis.X;
+				case "y" -> Direction.Axis.Y;
+				case "z" -> Direction.Axis.Z;
+				default -> null;
+			};
+			angle = rotationJson.get("angle").getAsFloat();
+		} else {
+			AxisAngle blockbenchRotation = firstBlockbenchAxisAngle(rotationJson);
+			if (blockbenchRotation == null) {
+				return null;
+			}
+			axis = blockbenchRotation.axis();
+			angle = blockbenchRotation.angle();
+		}
 		if (axis == null) {
 			return null;
 		}
-		float angle = rotationJson.get("angle").getAsFloat();
 		boolean rescale = rotationJson.has("rescale") && rotationJson.get("rescale").getAsBoolean();
 		return buildElementRotation(origin, axis, angle, rescale);
+	}
+
+	private static AxisAngle firstBlockbenchAxisAngle(JsonObject rotationJson) {
+		float x = rotationJson.has("x") ? rotationJson.get("x").getAsFloat() : 0.0F;
+		float y = rotationJson.has("y") ? rotationJson.get("y").getAsFloat() : 0.0F;
+		float z = rotationJson.has("z") ? rotationJson.get("z").getAsFloat() : 0.0F;
+		if (Math.abs(x) > EPSILON) {
+			return new AxisAngle(Direction.Axis.X, x);
+		}
+		if (Math.abs(y) > EPSILON) {
+			return new AxisAngle(Direction.Axis.Y, y);
+		}
+		if (Math.abs(z) > EPSILON) {
+			return new AxisAngle(Direction.Axis.Z, z);
+		}
+		return null;
 	}
 
 	private static Vec3 readVec3(JsonArray array) {
@@ -815,7 +1046,17 @@ public final class BlockTextureRaycaster {
 		return current;
 	}
 
-	public record BlockTraceResult(int rgb, Vec3 worldHit, Direction face, boolean shade) {
+	public record BlockTraceResult(int argb, Vec3 worldHit, Direction face, boolean shade) {
+		public int rgb() {
+			return this.argb & 0xFFFFFF;
+		}
+
+		public int alpha() {
+			return (this.argb >>> 24) & 0xFF;
+		}
+	}
+
+	private record AxisAngle(Direction.Axis axis, float angle) {
 	}
 
 	private record ResolvedVariant(List<ModelPart> parts) {
@@ -824,7 +1065,14 @@ public final class BlockTextureRaycaster {
 	private record ModelPart(ResolvedModel model, ModelTransform transform) {
 	}
 
-	private record ModelTransform(int x, int y, boolean uvlock) {
+	private record ModelTransform(int x, int y, boolean uvlock, OctahedralGroup rotation, OctahedralGroup inverseRotation) {
+		private ModelTransform(int x, int y, boolean uvlock) {
+			this(x, y, uvlock, blockModelRotation(x, y));
+		}
+
+		private ModelTransform(int x, int y, boolean uvlock, OctahedralGroup rotation) {
+			this(x, y, uvlock, rotation, rotation.inverse());
+		}
 	}
 
 	private record ResolvedModel(Map<String, String> textures, List<ModelElement> elements) {
@@ -840,6 +1088,9 @@ public final class BlockTextureRaycaster {
 	}
 
 	private record ElementRotation(Vec3 origin, Direction.Axis axis, float angle, boolean rescale, Matrix4f transform, Matrix4f inverse) {
+	}
+
+	private record ModelBounds(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
 	}
 
 	private record UvPoint(double u, double v) {

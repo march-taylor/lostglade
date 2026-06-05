@@ -62,6 +62,8 @@ public final class SpeakerSystem {
 	private static final int SHARED_SOURCE_STARTUP_BUFFER_FRAMES = 3;
 	private static final int SHARED_SOURCE_PLAYBACK_LEAD_FRAMES = 2;
 	private static final int SHARED_SOURCE_TARGET_LEAD_FRAMES = 256;
+	private static final long PROCESS_STARTUP_TIMEOUT_MS = 4_000L;
+	private static final long PROCESS_STALL_TIMEOUT_MS = 3_000L;
 	private static final long PROCESS_SHUTDOWN_TIMEOUT_MS = 200L;
 	private static final long CONNECTED_SPEAKER_CACHE_TTL_TICKS = 4L;
 	private static final short[] SILENCE_FRAME = new short[AUDIO_FRAME_SAMPLES];
@@ -381,6 +383,14 @@ public final class SpeakerSystem {
 			return environment.trim();
 		}
 		return "ffmpeg";
+	}
+
+	private static boolean isNetworkAudioInput(String input) {
+		if (input == null) {
+			return false;
+		}
+		String normalized = input.trim().toLowerCase(java.util.Locale.ROOT);
+		return normalized.startsWith("http://") || normalized.startsWith("https://");
 	}
 
 	static float volumeFactor(int volumePercent) {
@@ -910,6 +920,8 @@ public final class SpeakerSystem {
 		private long audioSyncToken;
 		private long nextFrameSequence;
 		private long playbackEpochNanos;
+		private long processStartedAtMillis;
+		private long lastFrameAtMillis;
 		private long generation;
 
 		private SharedSourceFeed(String sourceKey) {
@@ -1008,6 +1020,9 @@ public final class SpeakerSystem {
 					|| this.audioSyncToken != source.audioSyncToken()) {
 				return true;
 			}
+			if (decoderStartupTimedOutLocked() || decoderStalledBeforePlaybackLocked()) {
+				return true;
+			}
 			return SpeakerAudioPlaybackPolicy.shouldResyncPosition(
 					this.liveStream,
 					source.loading(),
@@ -1016,6 +1031,21 @@ public final class SpeakerSystem {
 					source.positionMs(),
 					AUDIO_RESYNC_TOLERANCE_MS
 			);
+		}
+
+		private boolean decoderStartupTimedOutLocked() {
+			long nowMillis = System.currentTimeMillis();
+			return this.processStartedAtMillis > 0L
+					&& this.lastFrameAtMillis == 0L
+					&& nowMillis - this.processStartedAtMillis > PROCESS_STARTUP_TIMEOUT_MS;
+		}
+
+		private boolean decoderStalledBeforePlaybackLocked() {
+			long nowMillis = System.currentTimeMillis();
+			return this.processStartedAtMillis > 0L
+					&& this.lastFrameAtMillis > 0L
+					&& this.playbackEpochNanos == 0L
+					&& nowMillis - this.lastFrameAtMillis > PROCESS_STALL_TIMEOUT_MS;
 		}
 
 		private long expectedPositionMsLocked() {
@@ -1040,6 +1070,8 @@ public final class SpeakerSystem {
 			this.audioSyncToken = source.audioSyncToken();
 			this.nextFrameSequence = 0L;
 			this.playbackEpochNanos = 0L;
+			this.processStartedAtMillis = 0L;
+			this.lastFrameAtMillis = 0L;
 			this.generation++;
 
 			List<String> command = new ArrayList<>();
@@ -1055,6 +1087,18 @@ public final class SpeakerSystem {
 			if (source.loop()) {
 				command.add("-stream_loop");
 				command.add("-1");
+			}
+			if (isNetworkAudioInput(source.audioStreamUrl())) {
+				command.add("-reconnect");
+				command.add("1");
+				command.add("-reconnect_streamed");
+				command.add("1");
+				command.add("-reconnect_at_eof");
+				command.add("1");
+				command.add("-reconnect_delay_max");
+				command.add("3");
+				command.add("-rw_timeout");
+				command.add("15000000");
 			}
 			command.add("-i");
 			command.add(source.audioStreamUrl());
@@ -1073,9 +1117,11 @@ public final class SpeakerSystem {
 				this.process = new ProcessBuilder(command)
 						.redirectError(ProcessBuilder.Redirect.DISCARD)
 						.start();
+				this.processStartedAtMillis = System.currentTimeMillis();
 			} catch (IOException exception) {
 				Lg2.LOGGER.warn("Failed to start shared speaker ffmpeg process for source {}", this.sourceKey, exception);
 				this.process = null;
+				this.processStartedAtMillis = 0L;
 				return false;
 			}
 
@@ -1102,6 +1148,8 @@ public final class SpeakerSystem {
 			this.audioSyncToken = source.audioSyncToken();
 			this.nextFrameSequence = 0L;
 			this.playbackEpochNanos = 0L;
+			this.processStartedAtMillis = 0L;
+			this.lastFrameAtMillis = 0L;
 			return true;
 		}
 
@@ -1119,6 +1167,7 @@ public final class SpeakerSystem {
 						if (this.process != processToRead || this.closed) {
 							return;
 						}
+						this.lastFrameAtMillis = System.currentTimeMillis();
 						long frameSequence = this.nextFrameSequence++;
 						this.frameBuffer.put(frameSequence, frame);
 						if (this.playbackEpochNanos == 0L && this.frameBuffer.size() >= SHARED_SOURCE_STARTUP_BUFFER_FRAMES) {
@@ -1151,6 +1200,8 @@ public final class SpeakerSystem {
 					if (this.process == processToRead) {
 						this.process = null;
 						this.readerThread = null;
+						this.processStartedAtMillis = 0L;
+						this.lastFrameAtMillis = 0L;
 					}
 				}
 				processToRead.destroy();
@@ -1161,6 +1212,8 @@ public final class SpeakerSystem {
 			Process currentProcess = this.process;
 			this.process = null;
 			this.readerThread = null;
+			this.processStartedAtMillis = 0L;
+			this.lastFrameAtMillis = 0L;
 			if (currentProcess == null) {
 				return;
 			}

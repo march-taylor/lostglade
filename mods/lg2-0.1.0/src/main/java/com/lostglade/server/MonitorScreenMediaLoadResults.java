@@ -217,7 +217,6 @@ final class MonitorScreenMediaLoadResults {
 		MonitorMediaApp.LoadedVideo directVideo = result.loadedVideo();
 		String directVideoTitle = null;
 		String directVideoSubtitle = null;
-		GalleryItemKind directKind = result.kind();
 
 		synchronized (state) {
 			if (result.sessionGeneration() != state.sessionGeneration
@@ -268,13 +267,6 @@ final class MonitorScreenMediaLoadResults {
 		if (requester != null) {
 			ACTIVE_MEDIA_ACTIONBARS.remove(requester.getUUID());
 			requester.displayClientMessage(Component.empty(), true);
-			if (result.loadedMedia() != null) {
-				requester.sendSystemMessage(mediaLoadedMessage(requester, animated));
-			} else if (directVideo != null) {
-				requester.sendSystemMessage(literal(directKind == GalleryItemKind.AUDIO ? "Аудио открыто" : "Видео открыто"));
-			} else {
-				requester.sendSystemMessage(mediaLoadFailedMessage(requester, sanitizeMediaError(result.error())));
-			}
 		}
 		requestRuntimeRender(server, result.screenKey());
 		if (directVideo != null) {
@@ -384,23 +376,6 @@ final class MonitorScreenMediaLoadResults {
 		if (requester != null) {
 			ACTIVE_MEDIA_ACTIONBARS.remove(requester.getUUID());
 			requester.displayClientMessage(Component.empty(), true);
-			if (result.loadResponse() != null) {
-				if (result.streamKind() == PlaybackStreamKind.YOUTUBE) {
-					requester.sendSystemMessage(
-							result.targetMode() == ScreenViewMode.YOUTUBE_MUSIC
-									? youtubeMusicLoadedMessage(requester)
-									: youtubeLoadedMessage(requester, result.loadResponse().live())
-					);
-				} else {
-					requester.sendSystemMessage(
-							result.targetMode() == ScreenViewMode.YOUTUBE_MUSIC
-									? youtubeMusicLoadedMessage(requester)
-									: literal("Видео подключено")
-					);
-				}
-			} else {
-				requester.sendSystemMessage(mediaLoadFailedMessage(requester, sanitizeMediaError(result.error())));
-			}
 		}
 		requestRuntimeRender(server, result.screenKey());
 		refreshConnectedSpeakersNow(server, result.screenKey());

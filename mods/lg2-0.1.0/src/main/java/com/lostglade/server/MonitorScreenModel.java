@@ -19,7 +19,9 @@ enum ScreenViewMode {
 	HOME("home"),
 	GALLERY("gallery"),
 	SBER_DRONES("sberdrones"),
+	CAMERA_APP("cameraapp"),
 	MAX("max"),
+	YANDEX_MAPS("yandexmaps"),
 	YOUTUBE("youtube"),
 	YOUTUBE_MUSIC("youtubemusic");
 
@@ -141,6 +143,12 @@ enum MediaActionVisualState {
 	IDLE,
 	DOWNLOADING,
 	COMPLETE
+}
+
+enum CameraAppCaptureMode {
+	PHOTO,
+	VIDEO,
+	AUDIO
 }
 
 enum GalleryItemKind {

@@ -168,7 +168,11 @@ public final class MonitorMediaApp implements MonitorApp {
 
 	public static LoadedAudioTrack loadAudioFromUrl(String rawUrl, TaskProgress progress) throws IOException {
 		URI uri = validateUri(rawUrl);
-		return probeAudio(uri.toString(), uri.toString(), progress);
+		String mediaKey = cachedMediaKey(uri);
+		if (mediaKey == null || mediaKey.isBlank()) {
+			mediaKey = downloadVideoToCache(uri, progress);
+		}
+		return loadSavedGalleryAudio(mediaKey, progress);
 	}
 
 	public static String persistSavedGalleryMedia(String rawUrl) throws IOException {
@@ -252,6 +256,13 @@ public final class MonitorMediaApp implements MonitorApp {
 		return probeVideo(savedPath.toAbsolutePath().toString(), savedPath.toAbsolutePath().toString(), progress);
 	}
 
+	public static LoadedVideo loadLocalVideo(Path sourcePath, TaskProgress progress) throws IOException {
+		if (sourcePath == null || !Files.isRegularFile(sourcePath)) {
+			throw new IOException("Video source is missing");
+		}
+		return probeVideo(sourcePath.toAbsolutePath().toString(), sourcePath.toAbsolutePath().toString(), progress);
+	}
+
 	public static LoadedMedia loadSavedGalleryVideoAsMedia(String mediaKey, TaskProgress progress) throws IOException {
 		Path savedPath = savedGalleryMediaPath(mediaKey);
 		if (savedPath == null || !Files.isRegularFile(savedPath)) {
@@ -276,6 +287,11 @@ public final class MonitorMediaApp implements MonitorApp {
 			progress.setIndeterminate("PROBING AUDIO");
 		}
 		return probeAudio(savedPath.getFileName().toString(), savedPath.toAbsolutePath().toString(), progress);
+	}
+
+	public static Path savedGalleryMediaFile(String mediaKey) {
+		Path savedPath = savedGalleryMediaPath(mediaKey);
+		return savedPath != null && Files.isRegularFile(savedPath) ? savedPath : null;
 	}
 
 	public static void setCacheDirectory(Path directory) {

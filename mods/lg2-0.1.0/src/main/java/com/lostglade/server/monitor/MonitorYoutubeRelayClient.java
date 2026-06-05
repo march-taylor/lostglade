@@ -1053,7 +1053,8 @@ public final class MonitorYoutubeRelayClient {
 			boolean live,
 			boolean audioPlaceholder,
 			boolean ready,
-			String status
+			String status,
+			String audioStreamUrl
 	) {
 	}
 
@@ -1647,7 +1648,8 @@ public final class MonitorYoutubeRelayClient {
 						this.live,
 						this.audioPlaceholder,
 						ready,
-						this.status
+						this.status,
+						this.audioStreamUrl
 				);
 				if (shouldEnsurePrefetch) {
 					// Restart the low-FPS sequential cache reader if it died unexpectedly.

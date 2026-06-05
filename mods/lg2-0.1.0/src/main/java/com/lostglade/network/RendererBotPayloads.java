@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 10;
+	public static final int PROTOCOL_VERSION = 11;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
@@ -406,6 +406,7 @@ public final class RendererBotPayloads {
 			UUID requestId,
 			long durationMs,
 			int fps,
+			String videoPath,
 			byte[] previewPixels,
 			byte[] fullPixels
 	) implements CustomPacketPayload {
@@ -418,6 +419,7 @@ public final class RendererBotPayloads {
 					buffer.readUUID(),
 					buffer.readVarLong(),
 					buffer.readVarInt(),
+					buffer.readUtf(4096),
 					buffer.readByteArray(),
 					buffer.readByteArray()
 			);
@@ -427,6 +429,7 @@ public final class RendererBotPayloads {
 			buffer.writeUUID(this.requestId);
 			buffer.writeVarLong(this.durationMs);
 			buffer.writeVarInt(this.fps);
+			buffer.writeUtf(this.videoPath == null ? "" : this.videoPath, 4096);
 			buffer.writeByteArray(this.previewPixels);
 			buffer.writeByteArray(this.fullPixels);
 		}

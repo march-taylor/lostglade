@@ -192,9 +192,18 @@ tasks.register("runMonitorMediaStateMachineTest", JavaExec) {
 	dependsOn(tasks.named("testClasses"))
 }
 
+tasks.register("runYandexMapTopDownRenderTest", JavaExec) {
+	group = "verification"
+	description = "Runs Yandex map top-down block rendering regression checks."
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = "com.lostglade.server.YandexMapTopDownRenderTest"
+	dependsOn(tasks.named("testClasses"))
+}
+
 tasks.named("check") {
 	dependsOn(tasks.named("runDronePhysicsSimulationTest"))
 	dependsOn(tasks.named("runMonitorMediaStateMachineTest"))
+	dependsOn(tasks.named("runYandexMapTopDownRenderTest"))
 }
 
 java {

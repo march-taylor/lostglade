@@ -4,6 +4,7 @@ public enum MonitorAppRole {
 	GENERIC(false, false),
 	GALLERY_LIBRARY(true, true),
 	SBER_DRONES(true, true),
+	CAMERA_RECORDER(false, false),
 	YOUTUBE_VIDEO(true, false),
 	YOUTUBE_MUSIC(true, false);
 

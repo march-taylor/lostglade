@@ -44,7 +44,6 @@ final class MonitorScreenChatLinkController {
 		if (state == null) {
 			ACTIVE_MEDIA_ACTIONBARS.remove(sender.getUUID());
 			sender.displayClientMessage(Component.empty(), true);
-			sender.sendSystemMessage(mediaCancelledMessage(sender, pending.mode()));
 			return false;
 		}
 
@@ -67,7 +66,6 @@ final class MonitorScreenChatLinkController {
 			PENDING_MEDIA_LINKS.put(sender.getUUID(), pending);
 			ACTIVE_MEDIA_ACTIONBARS.put(sender.getUUID(), pending.screenKey());
 			sender.displayClientMessage(linkPromptMessage(pending.mode(), sender), true);
-			sender.sendSystemMessage(mediaInvalidLinkMessage(sender, pending.mode()));
 			requestRuntimeRender(server, pending.screenKey());
 			return false;
 		}

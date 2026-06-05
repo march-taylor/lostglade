@@ -216,9 +216,7 @@ final class MonitorScreenGalleryRuntime {
 										? null
 										: loadGalleryMedia(url, localMediaKey, finalProgress),
 								resolvedKind == GalleryItemKind.VIDEO
-										? localMediaKey != null && !localMediaKey.isBlank()
-										? MonitorMediaApp.loadSavedGalleryVideo(localMediaKey, finalProgress)
-										: MonitorMediaApp.loadVideoFromUrl(url, finalProgress)
+										? loadGalleryVideo(url, localMediaKey, finalProgress)
 										: null,
 								openWhenReady,
 								preferredIndex,
@@ -239,6 +237,17 @@ final class MonitorScreenGalleryRuntime {
 		return localMediaKey != null && !localMediaKey.isBlank()
 				? MonitorMediaApp.loadSavedGalleryMedia(localMediaKey, progress)
 				: MonitorMediaApp.loadFromUrl(url, progress);
+	}
+
+	static MonitorMediaApp.LoadedVideo loadGalleryVideo(String url, String localMediaKey, TaskProgress progress) throws IOException {
+		if (localMediaKey != null && !localMediaKey.isBlank()) {
+			return MonitorMediaApp.loadSavedGalleryVideo(localMediaKey, progress);
+		}
+		String sourceKey = cameraGallerySourceKey(url, "video");
+		if (!sourceKey.isBlank()) {
+			return MonitorMediaApp.loadLocalVideo(CameraMediaCache.videoSourcePath(sourceKey), progress);
+		}
+		return MonitorMediaApp.loadVideoFromUrl(url, progress);
 	}
 
 	static MonitorMediaApp.LoadedMedia loadCameraGalleryVideoMedia(String url, String localMediaKey, TaskProgress progress) throws IOException {
@@ -617,7 +626,7 @@ final class MonitorScreenGalleryRuntime {
 			return GalleryItemKind.LIVE_CAMERA;
 		}
 		if (isCameraGalleryVideoUrl(url)) {
-			return GalleryItemKind.MEDIA;
+			return GalleryItemKind.VIDEO;
 		}
 		if (kind == GalleryItemKind.AUDIO || looksLikeDirectAudioReference(localMediaKey) || looksLikeDirectAudioReference(url)) {
 			return GalleryItemKind.AUDIO;

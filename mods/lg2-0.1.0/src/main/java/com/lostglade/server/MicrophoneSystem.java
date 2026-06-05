@@ -43,6 +43,7 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 public final class MicrophoneSystem {
 	private static final long REFRESH_INTERVAL_TICKS = 5L;
@@ -50,6 +51,7 @@ public final class MicrophoneSystem {
 	private static final int AUDIO_FRAME_SAMPLES = 960;
 	private static final long AUDIO_FRAME_DURATION_MS = AUDIO_FRAME_SAMPLES * 1000L / AUDIO_SAMPLE_RATE;
 	private static final long AUDIO_FRAME_NANOS = TimeUnit.MILLISECONDS.toNanos(AUDIO_FRAME_DURATION_MS);
+	private static final long RECORDER_CAPTURE_LATENCY_NANOS = AUDIO_FRAME_NANOS * 4L;
 	private static final int FRAME_BUFFER_CAPACITY = 192;
 	private static final long MAX_FRAME_AGE = 3L;
 	private static final long SENDER_EXPIRE_AFTER_FRAMES = 12L;
@@ -218,7 +220,8 @@ public final class MicrophoneSystem {
 			return true;
 		}
 
-		boolean routedToScreen = MonitorScreenSystem.hasPoweredConnectedMonitor(level, key.pos());
+		Set<ScreenRuntimeKey> connectedScreens = connectedPoweredScreenKeys(level, key.pos());
+		boolean routedToScreen = !connectedScreens.isEmpty();
 		List<BlockPos> connectedSpeakers = routedToScreen ? List.of() : SpeakerSystem.findConnectedPoweredSpeakerPositions(level, key.pos());
 		if (connectedSpeakers.isEmpty() && !routedToScreen) {
 			stopRuntime(key);
@@ -226,10 +229,28 @@ public final class MicrophoneSystem {
 		}
 
 		MicrophoneRuntime runtime = ACTIVE_MICROPHONES.computeIfAbsent(key, MicrophoneRuntime::new);
-		if (!runtime.update(level, connectedSpeakers, routedToScreen, voicechatApi, voicechatServerApi)) {
+		if (!runtime.update(level, connectedSpeakers, connectedScreens, voicechatApi, voicechatServerApi)) {
 			stopRuntime(key);
 		}
 		return true;
+	}
+
+	private static Set<ScreenRuntimeKey> connectedPoweredScreenKeys(ServerLevel level, BlockPos microphonePos) {
+		if (level == null || microphonePos == null) {
+			return Set.of();
+		}
+		Map<ScreenRuntimeKey, ScreenComponent> components = MonitorScreenWireConnectivity.collectConnectedComponentsForWireSource(level, microphonePos);
+		if (components.isEmpty()) {
+			return Set.of();
+		}
+		Set<ScreenRuntimeKey> connected = new HashSet<>();
+		for (Map.Entry<ScreenRuntimeKey, ScreenComponent> entry : components.entrySet()) {
+			ScreenComponent component = entry.getValue();
+			if (entry.getKey() != null && component != null && component.powered()) {
+				connected.add(entry.getKey());
+			}
+		}
+		return connected.isEmpty() ? Set.of() : Set.copyOf(connected);
 	}
 
 	private static boolean hasMicrophonePower(ServerLevel level, BlockPos pos) {
@@ -291,6 +312,12 @@ public final class MicrophoneSystem {
 		}
 	}
 
+	public static void onMaxCallStateChanged(MinecraftServer server) {
+		if (server != null) {
+			synchronizeCallRoutes(server);
+		}
+	}
+
 	private static List<Map.Entry<MicrophoneKey, MicrophoneRuntime>> connectedScreenMicrophones(MinecraftServer server, ScreenRuntimeKey screenKey) {
 		if (server == null || screenKey == null) {
 			return List.of();
@@ -299,7 +326,7 @@ public final class MicrophoneSystem {
 		for (Map.Entry<MicrophoneKey, MicrophoneRuntime> entry : ACTIVE_MICROPHONES.entrySet()) {
 			MicrophoneKey key = entry.getKey();
 			MicrophoneRuntime runtime = entry.getValue();
-			if (key == null || runtime == null || !runtime.captureEnabled || !isMicrophoneConnectedToScreen(server, key, screenKey)) {
+			if (key == null || runtime == null || !runtime.captureEnabled || !runtime.connectedScreenKeys.contains(screenKey)) {
 				continue;
 			}
 			microphones.add(entry);
@@ -312,19 +339,59 @@ public final class MicrophoneSystem {
 		return connectedScreenMicrophones(server, screenKey).size();
 	}
 
+	public static List<ScreenMicrophoneDevice> connectedMicrophoneDevices(MinecraftServer server, ScreenRuntimeKey screenKey) {
+		List<Map.Entry<MicrophoneKey, MicrophoneRuntime>> microphones = connectedScreenMicrophones(server, screenKey);
+		if (microphones.isEmpty()) {
+			return List.of();
+		}
+		List<ScreenMicrophoneDevice> devices = new ArrayList<>(microphones.size());
+		for (int index = 0; index < microphones.size(); index++) {
+			MicrophoneKey key = microphones.get(index).getKey();
+			BlockPos pos = key != null ? key.pos() : null;
+			devices.add(new ScreenMicrophoneDevice(
+					index,
+					pos != null ? "Микрофон " + (index + 1) : "Микрофон",
+					pos != null ? pos.getX() + " " + pos.getY() + " " + pos.getZ() : "",
+					key != null ? key.dimension() : null,
+					pos
+			));
+		}
+		return List.copyOf(devices);
+	}
+
+	public static MicrophonePcmRecorder startPcmRecorder(MinecraftServer server, ScreenRuntimeKey screenKey, int selectedMicrophoneIndex, Consumer<short[]> frameConsumer) {
+		if (frameConsumer == null) {
+			return null;
+		}
+		MicrophonePcmRecorder recorder = startTimedPcmRecorder(
+				server,
+				screenKey,
+				selectedMicrophoneIndex,
+				frame -> frameConsumer.accept(frame.samples())
+		);
+		return recorder;
+	}
+
+	public static MicrophonePcmRecorder startTimedPcmRecorder(MinecraftServer server, ScreenRuntimeKey screenKey, int selectedMicrophoneIndex, Consumer<PcmFrame> frameConsumer) {
+		List<Map.Entry<MicrophoneKey, MicrophoneRuntime>> microphones = connectedScreenMicrophones(server, screenKey);
+		if (microphones.isEmpty() || frameConsumer == null) {
+			return null;
+		}
+		int index = selectedMicrophoneIndex >= 0 && selectedMicrophoneIndex < microphones.size() ? selectedMicrophoneIndex : 0;
+		MicrophoneRuntime runtime = microphones.get(index).getValue();
+		if (runtime == null || runtime.closed || runtime.feed == null) {
+			return null;
+		}
+		MicrophonePcmRecorder recorder = new MicrophonePcmRecorder(runtime.feed, frameConsumer);
+		recorder.start();
+		return recorder;
+	}
+
 	private static String microphoneSortKey(MicrophoneKey key) {
 		if (key == null || key.pos() == null || key.dimension() == null) {
 			return "";
 		}
 		return key.dimension().identifier() + ":" + key.pos().getX() + ":" + key.pos().getY() + ":" + key.pos().getZ();
-	}
-
-	private static boolean isMicrophoneConnectedToScreen(MinecraftServer server, MicrophoneKey microphoneKey, ScreenRuntimeKey screenKey) {
-		ServerLevel level = server.getLevel(microphoneKey.dimension());
-		if (level == null || !level.hasChunkAt(microphoneKey.pos())) {
-			return false;
-		}
-		return MonitorScreenWireConnectivity.collectConnectedComponentsForWireSource(level, microphoneKey.pos()).containsKey(screenKey);
 	}
 
 	private static List<SpeakerOutputTarget> connectedScreenSpeakers(MinecraftServer server, ScreenRuntimeKey screenKey) {
@@ -376,6 +443,92 @@ public final class MicrophoneSystem {
 	}
 
 	static record ScreenMicrophoneCallRoute(String routeId, ScreenRuntimeKey sourceScreen, ScreenRuntimeKey outputScreen, int selectedMicrophoneIndex) {
+	}
+
+	public static record ScreenMicrophoneDevice(int index, String title, String subtitle, ResourceKey<Level> dimension, BlockPos pos) {
+	}
+
+	public static record PcmFrame(short[] samples, long captureNanos) {
+	}
+
+	public static final class MicrophonePcmRecorder implements AutoCloseable {
+		private final SharedMicrophoneFeed feed;
+		private final Consumer<PcmFrame> frameConsumer;
+		private volatile boolean finishRequested;
+		private volatile long finishAtNanos = Long.MAX_VALUE;
+		private volatile boolean closed;
+		private Thread thread;
+
+		private MicrophonePcmRecorder(SharedMicrophoneFeed feed, Consumer<PcmFrame> frameConsumer) {
+			this.feed = feed;
+			this.frameConsumer = frameConsumer;
+		}
+
+		private void start() {
+			Thread created = new Thread(this::run, "lg2-monitor-microphone-recorder");
+			created.setDaemon(true);
+			this.thread = created;
+			created.start();
+		}
+
+		private void run() {
+			long sourceFrameAt = System.nanoTime();
+			long nextEmitAt = sourceFrameAt + RECORDER_CAPTURE_LATENCY_NANOS;
+			while (!this.closed) {
+				if (this.finishRequested && sourceFrameAt >= this.finishAtNanos) {
+					return;
+				}
+				long sleepNanos = nextEmitAt - System.nanoTime();
+				if (sleepNanos > 0L) {
+					try {
+						TimeUnit.NANOSECONDS.sleep(sleepNanos);
+					} catch (InterruptedException exception) {
+						if (this.closed) {
+							Thread.currentThread().interrupt();
+							return;
+						}
+					}
+				}
+				if (this.closed || this.finishRequested && sourceFrameAt >= this.finishAtNanos) {
+					return;
+				}
+				short[] frame = this.feed.frameAt(sourceFrameAt);
+				this.frameConsumer.accept(new PcmFrame(frame != null ? frame.clone() : SILENCE_FRAME.clone(), sourceFrameAt));
+				sourceFrameAt += AUDIO_FRAME_NANOS;
+				nextEmitAt += AUDIO_FRAME_NANOS;
+				if (nextEmitAt < System.nanoTime() - AUDIO_FRAME_NANOS * 8L) {
+					long now = System.nanoTime();
+					sourceFrameAt = now - RECORDER_CAPTURE_LATENCY_NANOS;
+					nextEmitAt = now;
+				}
+			}
+		}
+
+		public void finishAndJoin() {
+			this.finishAtNanos = System.nanoTime();
+			this.finishRequested = true;
+			Thread current = this.thread;
+			if (current == null) {
+				return;
+			}
+			try {
+				current.join(TimeUnit.NANOSECONDS.toMillis(RECORDER_CAPTURE_LATENCY_NANOS + AUDIO_FRAME_NANOS * 12L));
+			} catch (InterruptedException exception) {
+				Thread.currentThread().interrupt();
+			}
+			if (current.isAlive()) {
+				close();
+			}
+		}
+
+		@Override
+		public void close() {
+			this.closed = true;
+			Thread current = this.thread;
+			if (current != null) {
+				current.interrupt();
+			}
+		}
 	}
 
 	private record SpeakerOutputTarget(ResourceKey<Level> dimension, BlockPos pos) {
@@ -460,18 +613,20 @@ public final class MicrophoneSystem {
 		private final ConcurrentHashMap<BlockPos, MicrophoneOutputRuntime> outputs;
 		private volatile boolean closed;
 		private volatile boolean captureEnabled;
+		private volatile Set<ScreenRuntimeKey> connectedScreenKeys;
 		private volatile double captureDistanceSq;
 
 		private MicrophoneRuntime(MicrophoneKey key) {
 			this.key = key;
 			this.feed = new SharedMicrophoneFeed();
 			this.outputs = new ConcurrentHashMap<>();
+			this.connectedScreenKeys = Set.of();
 		}
 
 		private boolean update(
 				ServerLevel level,
 				List<BlockPos> connectedSpeakers,
-				boolean routedToScreen,
+				Set<ScreenRuntimeKey> connectedScreens,
 				VoicechatApi voicechatApi,
 				VoicechatServerApi voicechatServerApi
 		) {
@@ -480,7 +635,8 @@ public final class MicrophoneSystem {
 			}
 			double captureDistance = Math.max(MIN_CAPTURE_DISTANCE, voicechatApi.getVoiceChatDistance());
 			this.captureDistanceSq = captureDistance * captureDistance;
-			this.captureEnabled = routedToScreen || !connectedSpeakers.isEmpty();
+			this.connectedScreenKeys = connectedScreens == null || connectedScreens.isEmpty() ? Set.of() : Set.copyOf(connectedScreens);
+			this.captureEnabled = !this.connectedScreenKeys.isEmpty() || !connectedSpeakers.isEmpty();
 			synchronizeOutputs(level, connectedSpeakers, voicechatApi, voicechatServerApi);
 			return true;
 		}
@@ -552,6 +708,7 @@ public final class MicrophoneSystem {
 		private void close() {
 			this.closed = true;
 			this.captureEnabled = false;
+			this.connectedScreenKeys = Set.of();
 			for (MicrophoneOutputRuntime runtime : this.outputs.values()) {
 				runtime.close();
 			}

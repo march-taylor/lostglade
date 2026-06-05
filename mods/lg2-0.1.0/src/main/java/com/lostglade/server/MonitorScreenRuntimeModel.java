@@ -84,6 +84,19 @@ record WallpaperVisualSnapshot(
 ) {
 }
 
+record YandexMapsVisualSnapshot(
+		long version,
+		BufferedImage frame,
+		String statusText,
+		String dimensionLabel,
+		double centerX,
+		double centerZ,
+		double zoomBlocks,
+		java.util.List<MonitorYandexMapsBlueMapRenderer.DisplayOverlay> displayOverlays,
+		boolean healthy
+) {
+}
+
 record RenderTileTarget(
 		int tileIndex,
 		MapId mapId,
@@ -117,10 +130,40 @@ record RenderWork(
 		int height,
 		long mediaVersion,
 		MediaVisualSnapshot mediaSnapshot,
+		CameraAppVisualSnapshot cameraAppSnapshot,
 		MaxVisualSnapshot maxSnapshot,
+		YandexMapsVisualSnapshot yandexMapsSnapshot,
 		WallpaperVisualSnapshot wallpaperSnapshot,
 		boolean transparentOutput,
 		List<RenderTileTarget> tileTargets
+) {
+}
+
+record CameraAppVisualSnapshot(
+		long version,
+		BufferedImage previewFrame,
+		List<CameraAppDeviceSnapshot> cameras,
+		List<CameraAppDeviceSnapshot> microphones,
+		int selectedCameraIndex,
+		int selectedMicrophoneIndex,
+		CameraAppCaptureMode captureMode,
+		boolean recording,
+		boolean paused,
+		long elapsedMs,
+		boolean deviceMenuOpen,
+		String statusText
+) {
+	boolean dynamic() {
+		return this.recording && !this.paused;
+	}
+}
+
+record CameraAppDeviceSnapshot(
+		String title,
+		String subtitle,
+		String url,
+		boolean selected,
+		boolean online
 ) {
 }
 
@@ -131,11 +174,14 @@ record MaxVisualSnapshot(
 		List<MaxContactSnapshot> contacts,
 		MaxCallVisualSnapshot call,
 		List<MaxAvatarCandidateSnapshot> avatarCandidates,
+		List<MaxRingtoneCandidateSnapshot> ringtoneCandidates,
 		boolean avatarPickerOpen,
+		boolean ringtonePickerOpen,
+		boolean ringtonePreviewPlaying,
 		String statusText
 ) {
 	boolean dynamic() {
-		return this.call != null && this.call.dynamic();
+		return (this.call != null && this.call.dynamic()) || this.ringtonePreviewPlaying;
 	}
 }
 
@@ -154,6 +200,8 @@ record MaxCallVisualSnapshot(
 		BufferedImage peerAvatarFrame,
 		BufferedImage localPreviewFrame,
 		BufferedImage remoteFrame,
+		List<MaxCallParticipantSnapshot> participants,
+		String focusedParticipantCode,
 		String statusText,
 		boolean cameraEnabled,
 		boolean microphoneEnabled,
@@ -162,17 +210,30 @@ record MaxCallVisualSnapshot(
 		int microphoneCount,
 		int selectedMicrophoneIndex,
 		boolean menuOpen,
+		boolean cameraPickerOpen,
+		boolean contactPickerOpen,
 		boolean selfFocused,
 		boolean peerFocused,
-		boolean focusFillMode,
 		long elapsedMillis
 ) {
 	boolean dynamic() {
 		return this.phase == MaxCallPhase.OUTGOING
 				|| this.phase == MaxCallPhase.INCOMING
 				|| this.phase == MaxCallPhase.ACTIVE
-				|| this.remoteFrame != null;
+				|| this.remoteFrame != null
+				|| this.participants.stream().anyMatch(participant -> participant != null && participant.videoFrame() != null);
 	}
+}
+
+record MaxCallParticipantSnapshot(
+		String code,
+		BufferedImage avatarFrame,
+		BufferedImage videoFrame,
+		boolean self,
+		boolean cameraEnabled,
+		boolean microphoneEnabled,
+		boolean ringing
+) {
 }
 
 record MaxCameraOptionSnapshot(
@@ -190,6 +251,17 @@ record MaxAvatarCandidateSnapshot(
 		String url,
 		String localMediaKey,
 		BufferedImage preview
+) {
+}
+
+record MaxRingtoneCandidateSnapshot(
+		String title,
+		String subtitle,
+		String url,
+		String localMediaKey,
+		boolean selected,
+		boolean playing,
+		float timelineFraction
 ) {
 }
 
@@ -325,6 +397,8 @@ record GalleryCardSnapshot(
 		boolean statusActive,
 		String sourceLabel,
 		boolean metadataVisible,
+		GalleryItemKind kind,
+		boolean animatedMedia,
 		boolean animated,
 		BufferedImage preview,
 		boolean current,
@@ -433,6 +507,13 @@ enum PlayerUiIcon {
 	TRASH("/assets/lg2/textures/monitor/ui_icons/trash.png"),
 	WALLPAPER("/assets/lg2/textures/monitor/ui_icons/wallpaper.png"),
 	CHECK("/assets/lg2/textures/monitor/ui_icons/check.png"),
+	PLAY("/assets/lg2/textures/monitor/ui_icons/play.png"),
+	PAUSE("/assets/lg2/textures/monitor/ui_icons/pause.png"),
+	FILE_MUSIC("/assets/lg2/textures/monitor/ui_icons/file_music.png"),
+	MEDIA_VIDEO("/assets/lg2/textures/monitor/ui_icons/media_video.png"),
+	MEDIA_IMAGE("/assets/lg2/textures/monitor/ui_icons/media_image.png"),
+	MEDIA_GIF("/assets/lg2/textures/monitor/ui_icons/media_gif.png"),
+	MEDIA_AUDIO("/assets/lg2/textures/monitor/ui_icons/media_audio.png"),
 	FIT("/assets/lg2/textures/monitor/ui_icons/fit.png"),
 	FILL("/assets/lg2/textures/monitor/ui_icons/fill.png"),
 	STRETCH("/assets/lg2/textures/monitor/ui_icons/stretch.png"),
@@ -447,12 +528,16 @@ enum PlayerUiIcon {
 	VIDEO_CAMERA("/assets/lg2/textures/monitor/ui_icons/video_camera.png"),
 	VIDEO_CAMERA_OFF("/assets/lg2/textures/monitor/ui_icons/video_camera_off.png"),
 	DEVICE_SELECT("/assets/lg2/textures/monitor/ui_icons/device_select.png"),
-	FULLSCREEN("/assets/lg2/textures/monitor/ui_icons/fullscreen.png"),
+	CONTACT_ADD("/assets/lg2/textures/monitor/ui_icons/contact_add.png"),
 	FULLSCREEN_EXIT("/assets/lg2/textures/monitor/ui_icons/fullscreen_exit.png"),
 	SIGNAL("/assets/lg2/textures/monitor/ui_icons/signal.png"),
 	OFFLINE("/assets/lg2/textures/monitor/ui_icons/offline.png"),
 	UNLINK("/assets/lg2/textures/monitor/ui_icons/unlink.png"),
-	LOCATION("/assets/lg2/textures/monitor/ui_icons/location.png");
+	LOCATION("/assets/lg2/textures/monitor/ui_icons/location.png"),
+	AIMING_2("/assets/lg2/textures/monitor/ui_icons/aiming_2.png"),
+	ADD("/assets/lg2/textures/monitor/ui_icons/add.png"),
+	MINUS("/assets/lg2/textures/monitor/ui_icons/minus.png"),
+	TARGET("/assets/lg2/textures/monitor/ui_icons/target.png");
 
 	private final String resourcePath;
 

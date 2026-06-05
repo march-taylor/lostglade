@@ -387,6 +387,8 @@ public final class MonitorScreenSystem {
 		ACTIVE_MEDIA_ACTIONBARS.clear();
 		PLAYER_MEDIA_FOCUS.clear();
 		MonitorMaxRuntime.clearRuntime();
+		MonitorYandexMapsRuntime.clearRuntime();
+		MonitorCameraRuntime.clearRuntime();
 		TILE_CACHE.clear();
 		OVERLAY_WINDOW_CACHE.clear();
 		OVERLAY_WINDOW_FAMILY_CACHE.clear();
@@ -928,6 +930,7 @@ public final class MonitorScreenSystem {
 		}
 		enqueueCameraRefresh(level, component.runtimeKey());
 		refreshConnectedSpeakersNow(server, component);
+		MonitorMaxRuntime.onDeviceNetworkChanged(server, component.runtimeKey());
 		if (hasNearbyMediaViewer(level, component)) {
 			requestRuntimeRender(server, component.runtimeKey());
 		}
@@ -1006,7 +1009,8 @@ public final class MonitorScreenSystem {
 	}
 
 	public static boolean onPlayerHotbarScroll(ServerPlayer player, int previousSlot, int currentSlot) {
-		return MonitorScreenMediaFrameRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot);
+		return MonitorScreenMediaFrameRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot)
+				|| MonitorYandexMapsRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot);
 	}
 
 	static ScreenComponent findObservedMediaComponent(ServerPlayer player) {
@@ -1044,7 +1048,9 @@ public final class MonitorScreenSystem {
 			if (component == null || !component.powered()) {
 				continue;
 			}
-			if (component.viewMode() != ScreenViewMode.HOME && !isPlayerMode(component.viewMode())) {
+			if (component.viewMode() != ScreenViewMode.HOME
+					&& component.viewMode() != ScreenViewMode.YANDEX_MAPS
+					&& !isPlayerMode(component.viewMode())) {
 				continue;
 			}
 			double hitDistanceSqr = observedComponentHitDistanceSqr(component, eye, rayEnd);
@@ -1234,6 +1240,9 @@ public final class MonitorScreenSystem {
 			}
 			return;
 		}
+		if (work.yandexMapsSnapshot() != null && !MonitorYandexMapsRuntime.beginRender(work.runtimeKey(), work.yandexMapsSnapshot())) {
+			return;
+		}
 		submitRenderWork(server, work);
 		if (mediaState != null
 				&& (isPlayerMode(viewMode)
@@ -1262,6 +1271,12 @@ public final class MonitorScreenSystem {
 
 	static void handleRenderFailure(MinecraftServer server, RenderWork work, Exception exception) {
 		if (work == null) {
+			return;
+		}
+		if (work.yandexMapsSnapshot() != null) {
+			if (MonitorYandexMapsRuntime.finishRender(work.runtimeKey(), work.yandexMapsSnapshot())) {
+				requestRuntimeRender(server, work.runtimeKey());
+			}
 			return;
 		}
 		if (!isPlayerMode(work.viewMode())) {
@@ -1307,9 +1322,14 @@ public final class MonitorScreenSystem {
 					}
 				}
 			}
+			if (work.yandexMapsSnapshot() != null && !MonitorYandexMapsRuntime.acceptRenderedSnapshot(work.runtimeKey(), work.yandexMapsSnapshot())) {
+				return;
+			}
 			applyRenderedTiles(level, component, renderedBatch);
 		} finally {
-			if (work != null && isPlayerMode(work.viewMode())) {
+			if (work != null && work.yandexMapsSnapshot() != null) {
+				rerenderAgain = MonitorYandexMapsRuntime.finishRender(work.runtimeKey(), work.yandexMapsSnapshot());
+			} else if (work != null && isPlayerMode(work.viewMode())) {
 				rerenderAgain = finishMediaRender(work.runtimeKey(), work.mediaVersion());
 			}
 		}
@@ -2266,7 +2286,7 @@ public final class MonitorScreenSystem {
 		writeScreenState(screenMap, state);
 		MapItemSavedData mapData = mapLevel.getMapData(mapId);
 		if (mapData != null) {
-			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null, null, null, false, List.of()));
+			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null, null, null, null, null, false, List.of()));
 			applyFrameToMap(mapData, tiles[0]);
 		}
 		return screenMap;
@@ -2592,6 +2612,12 @@ public final class MonitorScreenSystem {
 		MaxVisualSnapshot maxSnapshot = viewMode == ScreenViewMode.MAX || MonitorMaxRuntime.hasVisibleCall(component.runtimeKey())
 				? MonitorMaxRuntime.captureSnapshot(server, component)
 				: null;
+		CameraAppVisualSnapshot cameraAppSnapshot = viewMode == ScreenViewMode.CAMERA_APP
+				? MonitorCameraRuntime.captureSnapshot(server, component)
+				: null;
+		YandexMapsVisualSnapshot yandexMapsSnapshot = viewMode == ScreenViewMode.YANDEX_MAPS
+				? MonitorYandexMapsRuntime.captureSnapshot(server, component)
+				: null;
 		WallpaperVisualSnapshot wallpaperSnapshot = captureWallpaperSnapshot(mediaState, viewMode);
 		long mediaVersion = 0L;
 		if (isPlayerMode(viewMode)) {
@@ -2608,7 +2634,9 @@ public final class MonitorScreenSystem {
 				component.height(),
 				mediaVersion,
 				mediaSnapshot,
+				cameraAppSnapshot,
 				maxSnapshot,
+				yandexMapsSnapshot,
 				wallpaperSnapshot,
 				transparentOutput,
 				captureRenderTileTargets(server, component)
@@ -2821,7 +2849,7 @@ public final class MonitorScreenSystem {
 		if (work == null) {
 			return new byte[0][];
 		}
-		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null && work.maxSnapshot() == null) {
+		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null && work.cameraAppSnapshot() == null && work.maxSnapshot() == null && work.yandexMapsSnapshot() == null) {
 			RenderCacheKey key = new RenderCacheKey(work.powered(), work.viewMode(), work.launcherPage(), work.width(), work.height());
 			byte[][] cached = TILE_CACHE.get(key);
 			if (cached != null) {
@@ -2843,8 +2871,12 @@ public final class MonitorScreenSystem {
 			UiLayout layout = createUiLayout(work.width(), work.height());
 			if (work.viewMode() == ScreenViewMode.HOME) {
 				drawHomeScreen(graphics, layout, work.launcherPage());
+			} else if (work.viewMode() == ScreenViewMode.CAMERA_APP) {
+				MonitorCameraRuntime.drawScreen(graphics, layout, appForViewMode(work.viewMode()), work.cameraAppSnapshot());
 			} else if (work.viewMode() == ScreenViewMode.MAX) {
 				MonitorMaxRuntime.drawMaxScreen(graphics, layout, appForViewMode(work.viewMode()), work.maxSnapshot());
+			} else if (work.viewMode() == ScreenViewMode.YANDEX_MAPS) {
+				MonitorYandexMapsRuntime.drawScreen(graphics, layout, appForViewMode(work.viewMode()), work.yandexMapsSnapshot(), server, work.runtimeKey());
 			} else {
 				drawAppScreen(graphics, layout, appForViewMode(work.viewMode()), work.runtimeKey(), server, work.mediaSnapshot());
 			}
@@ -2860,7 +2892,7 @@ public final class MonitorScreenSystem {
 		byte[][] tiles = new byte[work.width() * work.height()][MAP_SIZE * MAP_SIZE];
 		quantizeTiles(work, rgbPixels, pixelWidth, tiles);
 
-		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null && work.maxSnapshot() == null) {
+		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null && work.cameraAppSnapshot() == null && work.maxSnapshot() == null && work.yandexMapsSnapshot() == null) {
 			TILE_CACHE.put(new RenderCacheKey(work.powered(), work.viewMode(), work.launcherPage(), work.width(), work.height()), tiles);
 		}
 		return tiles;
@@ -2871,6 +2903,12 @@ public final class MonitorScreenSystem {
 			return false;
 		}
 		if (work.maxSnapshot() != null && work.maxSnapshot().dynamic()) {
+			return true;
+		}
+		if (work.cameraAppSnapshot() != null && work.cameraAppSnapshot().dynamic()) {
+			return true;
+		}
+		if (work.yandexMapsSnapshot() != null) {
 			return true;
 		}
 		if (work.mediaSnapshot() == null) {
@@ -3316,6 +3354,9 @@ public final class MonitorScreenSystem {
 		if (isYoutubeHomePrompt(state)) {
 			return false;
 		}
+		if (isYoutubeMenuSurface(state)) {
+			return false;
+		}
 		return switch (state.mode()) {
 			case GALLERY -> !state.galleryBrowser();
 			case SBER_DRONES -> !state.galleryBrowser();
@@ -3337,6 +3378,7 @@ public final class MonitorScreenSystem {
 		return state != null
 				&& isYoutubeFamilyMode(state.mode())
 				&& !state.galleryBackedYoutube()
+				&& !state.hasMedia()
 				&& state.frame() == null;
 	}
 
@@ -3484,22 +3526,43 @@ public final class MonitorScreenSystem {
 
 	static void drawProgressBar(Graphics2D graphics, UiRect rect, TaskProgress.Snapshot progress, UiLayout layout) {
 		float alpha = progress.alpha();
-		fillRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 10, 18), withAlpha(new Color(10, 14, 18, 214), alpha));
-		strokeRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 10, 18), 1.0F, withAlpha(new Color(255, 255, 255, 44), alpha));
-		int barHeight = clampInt(layout.unit(), 8, 14);
-		UiRect barRect = new UiRect(rect.x() + layout.unit(), rect.bottom() - barHeight - layout.unit() / 2, rect.width() - layout.unit() * 2, barHeight);
-		fillRoundedRect(graphics, barRect, clampInt(barHeight, 6, 12), withAlpha(new Color(255, 255, 255, 38), alpha));
+		int panelHeight = clampInt(layout.unit() * 3, 26, 42);
+		UiRect panelRect = new UiRect(
+				rect.x(),
+				rect.y() + (rect.height() - panelHeight) / 2,
+				rect.width(),
+				panelHeight
+		);
+		int arc = clampInt(panelHeight, 16, 32);
+		fillRoundedRect(graphics, panelRect, arc, withAlpha(new Color(10, 14, 18, 172), alpha));
+		strokeRoundedRect(graphics, panelRect, arc, 1.0F, withAlpha(new Color(255, 255, 255, 46), alpha));
+		int barHeight = clampInt(layout.unit() / 2, 3, 5);
+		int horizontalPadding = clampInt(layout.unit() + 2, 8, 18);
+		UiRect barRect = new UiRect(
+				panelRect.x() + horizontalPadding,
+				panelRect.bottom() - barHeight - clampInt(layout.unit() / 2, 4, 8),
+				panelRect.width() - horizontalPadding * 2,
+				barHeight
+		);
+		fillRoundedRect(graphics, barRect, barHeight, withAlpha(new Color(255, 255, 255, 42), alpha));
 		if (progress.determinate()) {
-			int fillWidth = Math.max(6, Math.round(barRect.width() * progress.fraction()));
-			fillRoundedRect(graphics, new UiRect(barRect.x(), barRect.y(), Math.min(barRect.width(), fillWidth), barRect.height()), clampInt(barHeight, 6, 12), withAlpha(new Color(86, 188, 255, 224), alpha));
+			int fillWidth = Math.max(barHeight, Math.round(barRect.width() * progress.fraction()));
+			fillRoundedRect(graphics, new UiRect(barRect.x(), barRect.y(), Math.min(barRect.width(), fillWidth), barRect.height()), barHeight, withAlpha(new Color(255, 255, 255, 232), alpha));
 		} else {
 			int pulseWidth = Math.max(12, barRect.width() / 4);
 			long pulse = (System.currentTimeMillis() / 120L) % Math.max(1, barRect.width());
 			int pulseX = barRect.x() + (int) Math.min(barRect.width() - pulseWidth, pulse);
-			fillRoundedRect(graphics, new UiRect(pulseX, barRect.y(), pulseWidth, barRect.height()), clampInt(barHeight, 6, 12), withAlpha(new Color(86, 188, 255, 224), alpha));
+			fillRoundedRect(graphics, new UiRect(pulseX, barRect.y(), pulseWidth, barRect.height()), barHeight, withAlpha(new Color(255, 255, 255, 232), alpha));
 		}
 		String label = localizedProgressStage(progress.stage());
-		drawCenteredText(graphics, label, new UiRect(rect.x() + layout.unit(), rect.y() + 2, rect.width() - layout.unit() * 2, rect.height() / 2), withAlpha(new Color(248, 251, 255), alpha), Font.BOLD, clampInt(layout.unit() - 1, 8, 13));
+		drawCenteredText(
+				graphics,
+				label,
+				new UiRect(panelRect.x() + horizontalPadding, panelRect.y() + 1, panelRect.width() - horizontalPadding * 2, panelRect.height() - barHeight - clampInt(layout.unit() / 2, 4, 8)),
+				withAlpha(new Color(248, 251, 255, 232), alpha),
+				Font.BOLD,
+				clampInt(layout.unit() - 2, 8, 12)
+		);
 	}
 
 	static void drawHomeAppCard(Graphics2D graphics, UiLayout layout, UiRect cardRect, MonitorApp app) {
@@ -3917,8 +3980,9 @@ public final class MonitorScreenSystem {
 		} else {
 			fillRoundedRect(graphics, previewRect, clampInt(layout.unit() * 2, 8, 14), new Color(255, 255, 255, 10));
 		}
+		drawGalleryMediaTypeBadge(graphics, previewRect, layout, card);
 
-		if (card.animated()) {
+		if (galleryCardPlayBadgeVisible(card)) {
 			UiRect playBadge = mediaGalleryCardPlayBadgeRect(previewRect, layout);
 			drawRoundMediaButtonBase(graphics, playBadge, new Color(12, 16, 20, 196));
 			drawPlayGlyph(graphics, playBadge.inset(Math.max(2, layout.unit() / 5)), new Color(248, 251, 255));
@@ -3933,6 +3997,40 @@ public final class MonitorScreenSystem {
 			drawWrappedText(graphics, card.title(), titleRect, new Color(245, 248, 252, 236), Font.BOLD, clampInt(layout.unit() - 1, 8, 13), 1);
 			drawWrappedText(graphics, card.subtitle(), subtitleRect, new Color(185, 196, 208, 214), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 2);
 		}
+	}
+
+	static void drawGalleryMediaTypeBadge(Graphics2D graphics, UiRect previewRect, UiLayout layout, GalleryCardSnapshot card) {
+		if (graphics == null || previewRect == null || layout == null || card == null) {
+			return;
+		}
+		PlayerUiIcon icon = galleryMediaTypeIcon(card);
+		if (icon == null) {
+			return;
+		}
+		int size = clampInt(layout.unit() * 2 + 2, 18, 28);
+		int margin = clampInt(layout.unit() / 2, 4, 8);
+		UiRect badgeRect = new UiRect(previewRect.right() - margin - size, previewRect.y() + margin, size, size);
+		fillRoundedRect(graphics, badgeRect, size, new Color(8, 12, 16, 174));
+		strokeRoundedRect(graphics, badgeRect, size, 1.0F, new Color(255, 255, 255, 42));
+		int inset = clampInt(size / 4, 4, 7);
+		drawPlayerUiIcon(graphics, badgeRect.inset(inset), icon, new Color(248, 251, 255, 226));
+	}
+
+	static PlayerUiIcon galleryMediaTypeIcon(GalleryCardSnapshot card) {
+		if (card == null) {
+			return null;
+		}
+		GalleryItemKind kind = card.kind() != null ? card.kind() : GalleryItemKind.MEDIA;
+		return switch (kind) {
+			case AUDIO -> PlayerUiIcon.MEDIA_AUDIO;
+			case VIDEO, YOUTUBE -> PlayerUiIcon.MEDIA_VIDEO;
+			case LIVE_CAMERA -> PlayerUiIcon.VIDEO_CAMERA;
+			case MEDIA -> card.animatedMedia() ? PlayerUiIcon.MEDIA_GIF : PlayerUiIcon.MEDIA_IMAGE;
+		};
+	}
+
+	static boolean galleryCardPlayBadgeVisible(GalleryCardSnapshot card) {
+		return card != null && card.kind() == GalleryItemKind.LIVE_CAMERA;
 	}
 
 	static void drawSberDronesGalleryCard(Graphics2D graphics, UiLayout layout, UiRect rect, GalleryCardSnapshot card) {
@@ -7328,6 +7426,14 @@ public final class MonitorScreenSystem {
 
 	static long effectiveYoutubePollDelayMs(MinecraftServer server, ScreenRuntimeKey key, boolean paused) {
 		long baseDelay = paused ? youtubePollIdleIntervalMs() : youtubePollActiveIntervalMs();
+		MediaRuntimeState state = key != null ? MEDIA_STATES.get(key) : null;
+		if (state != null) {
+			synchronized (state) {
+				if (isDirectAudioPlaybackLocked(state)) {
+					baseDelay = Math.max(baseDelay, paused ? 350L : 200L);
+				}
+			}
+		}
 		if (!hasNearbyMediaViewer(server, key)) {
 			return Math.max(baseDelay, paused ? youtubePollIdleIntervalMs() * 2L : youtubePollIdleIntervalMs());
 		}
@@ -7739,6 +7845,8 @@ public final class MonitorScreenSystem {
 					false,
 					"",
 					metadataVisible,
+					itemKind,
+					media != null && media.animated(),
 					(item != null && (itemKind == GalleryItemKind.YOUTUBE || itemKind == GalleryItemKind.VIDEO || itemKind == GalleryItemKind.AUDIO || itemKind == GalleryItemKind.LIVE_CAMERA))
 							|| (media != null && media.animated()),
 					preview,
@@ -7794,6 +7902,8 @@ public final class MonitorScreenSystem {
 				false,
 				sourceLabel,
 				true,
+				GalleryItemKind.LIVE_CAMERA,
+				false,
 				true,
 				preview,
 				state != null && index == state.galleryIndex,
@@ -8886,7 +8996,6 @@ public final class MonitorScreenSystem {
 		ItemStack stack = heldPhotoPrintStack(player);
 		PhotoPrintData data = PhotoPrintData.readPhotoItem(stack);
 		if (data == null || !data.isValid() || data.sourceKey() == null || data.sourceKey().isBlank()) {
-			player.sendSystemMessage(literal("Эту карту нельзя импортировать в галерею"));
 			return;
 		}
 		String title = stack.get(DataComponents.CUSTOM_NAME) != null
@@ -8899,10 +9008,9 @@ public final class MonitorScreenSystem {
 					? MonitorMediaApp.persistLocalGalleryFile("camera-video-" + data.sourceKey(), CameraMediaCache.videoSourcePath(data.sourceKey()))
 					: MonitorMediaApp.persistLocalGalleryFile("camera-photo-" + data.sourceKey(), CameraMediaCache.photoSourcePath(data.sourceKey()));
 		} catch (Exception exception) {
-			player.sendSystemMessage(literal("Не удалось импортировать карту: " + sanitizeMediaError(exception.getMessage())));
 			return;
 		}
-		GalleryItemKind kind = GalleryItemKind.MEDIA;
+		GalleryItemKind kind = data.isVideo() ? GalleryItemKind.VIDEO : GalleryItemKind.MEDIA;
 		int preferredIndex;
 		synchronized (state) {
 			preferredIndex = upsertGalleryItemLocked(state, title, "", syntheticUrl, localMediaKey, null, null, kind);
@@ -8917,7 +9025,6 @@ public final class MonitorScreenSystem {
 		persistGalleryState(server, key, state);
 		requestRuntimeRender(server, key);
 		scheduleGalleryItemLoad(server, key, title, syntheticUrl, localMediaKey, kind, true, preferredIndex);
-		player.sendSystemMessage(literal("Карта импортируется в галерею"));
 	}
 
 	static String cameraGalleryUrl(PhotoPrintData data) {
@@ -9291,6 +9398,7 @@ public final class MonitorScreenSystem {
 		return state != null
 				&& isYoutubeFamilyMode(viewMode)
 				&& !isGalleryBackedYoutubeLocked(state)
+				&& !hasDisplayableMediaLocked(state)
 				&& state.streamFrame == null
 				&& state.loadedMedia == null;
 	}
@@ -9453,6 +9561,10 @@ public final class MonitorScreenSystem {
 
 	static boolean isDirectVideoPlaybackLocked(MediaRuntimeState state) {
 		return isStreamPlaybackLocked(state) && state.streamKind == PlaybackStreamKind.DIRECT_VIDEO;
+	}
+
+	static boolean isDirectAudioPlaybackLocked(MediaRuntimeState state) {
+		return isDirectVideoPlaybackLocked(state) && usesMusicPlayerLayoutLocked(state);
 	}
 
 	static boolean hasActiveStreamPlaybackLocked(MediaRuntimeState state) {

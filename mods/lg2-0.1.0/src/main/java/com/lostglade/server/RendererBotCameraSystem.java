@@ -245,7 +245,7 @@ public final class RendererBotCameraSystem {
 						if (recording == null || !recording.botUuid().equals(context.player().getUUID())) {
 							return;
 						}
-						recording.completionFuture().complete(new VideoRecordingResult(payload.durationMs(), payload.fps(), payload.previewPixels(), payload.fullPixels()));
+						recording.completionFuture().complete(new VideoRecordingResult(payload.durationMs(), payload.fps(), payload.videoPath(), payload.previewPixels(), payload.fullPixels()));
 						PENDING_VIDEO_RECORDINGS.remove(payload.requestId());
 						releaseBotCameraIfNeeded(recording.server(), recording.botUuid(), recording.resetCameraOnFinish());
 					});
@@ -3570,6 +3570,7 @@ public final class RendererBotCameraSystem {
 	public record VideoRecordingResult(
 			long durationMs,
 			int fps,
+			String videoPath,
 			byte[] previewPixels,
 			byte[] fullPixels
 	) {
