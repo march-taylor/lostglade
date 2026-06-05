@@ -51,6 +51,7 @@ public final class MicrophoneSystem {
 	private static final int AUDIO_FRAME_SAMPLES = 960;
 	private static final long AUDIO_FRAME_DURATION_MS = AUDIO_FRAME_SAMPLES * 1000L / AUDIO_SAMPLE_RATE;
 	private static final long AUDIO_FRAME_NANOS = TimeUnit.MILLISECONDS.toNanos(AUDIO_FRAME_DURATION_MS);
+	private static final long RECORDER_CAPTURE_LATENCY_NANOS = AUDIO_FRAME_NANOS * 4L;
 	private static final int FRAME_BUFFER_CAPACITY = 192;
 	private static final long MAX_FRAME_AGE = 3L;
 	private static final long SENDER_EXPIRE_AFTER_FRAMES = 12L;
@@ -359,6 +360,19 @@ public final class MicrophoneSystem {
 	}
 
 	public static MicrophonePcmRecorder startPcmRecorder(MinecraftServer server, ScreenRuntimeKey screenKey, int selectedMicrophoneIndex, Consumer<short[]> frameConsumer) {
+		if (frameConsumer == null) {
+			return null;
+		}
+		MicrophonePcmRecorder recorder = startTimedPcmRecorder(
+				server,
+				screenKey,
+				selectedMicrophoneIndex,
+				frame -> frameConsumer.accept(frame.samples())
+		);
+		return recorder;
+	}
+
+	public static MicrophonePcmRecorder startTimedPcmRecorder(MinecraftServer server, ScreenRuntimeKey screenKey, int selectedMicrophoneIndex, Consumer<PcmFrame> frameConsumer) {
 		List<Map.Entry<MicrophoneKey, MicrophoneRuntime>> microphones = connectedScreenMicrophones(server, screenKey);
 		if (microphones.isEmpty() || frameConsumer == null) {
 			return null;
@@ -434,13 +448,18 @@ public final class MicrophoneSystem {
 	public static record ScreenMicrophoneDevice(int index, String title, String subtitle, ResourceKey<Level> dimension, BlockPos pos) {
 	}
 
+	public static record PcmFrame(short[] samples, long captureNanos) {
+	}
+
 	public static final class MicrophonePcmRecorder implements AutoCloseable {
 		private final SharedMicrophoneFeed feed;
-		private final Consumer<short[]> frameConsumer;
+		private final Consumer<PcmFrame> frameConsumer;
+		private volatile boolean finishRequested;
+		private volatile long finishAtNanos = Long.MAX_VALUE;
 		private volatile boolean closed;
 		private Thread thread;
 
-		private MicrophonePcmRecorder(SharedMicrophoneFeed feed, Consumer<short[]> frameConsumer) {
+		private MicrophonePcmRecorder(SharedMicrophoneFeed feed, Consumer<PcmFrame> frameConsumer) {
 			this.feed = feed;
 			this.frameConsumer = frameConsumer;
 		}
@@ -453,22 +472,52 @@ public final class MicrophoneSystem {
 		}
 
 		private void run() {
-			long nextFrameAt = System.nanoTime();
+			long sourceFrameAt = System.nanoTime();
+			long nextEmitAt = sourceFrameAt + RECORDER_CAPTURE_LATENCY_NANOS;
 			while (!this.closed) {
-				short[] frame = this.feed.frameAt(System.nanoTime());
-				this.frameConsumer.accept(frame != null ? frame.clone() : SILENCE_FRAME.clone());
-				nextFrameAt += AUDIO_FRAME_NANOS;
-				long sleepNanos = nextFrameAt - System.nanoTime();
+				if (this.finishRequested && sourceFrameAt >= this.finishAtNanos) {
+					return;
+				}
+				long sleepNanos = nextEmitAt - System.nanoTime();
 				if (sleepNanos > 0L) {
 					try {
 						TimeUnit.NANOSECONDS.sleep(sleepNanos);
 					} catch (InterruptedException exception) {
-						Thread.currentThread().interrupt();
-						return;
+						if (this.closed) {
+							Thread.currentThread().interrupt();
+							return;
+						}
 					}
-				} else if (sleepNanos < -AUDIO_FRAME_NANOS * 8L) {
-					nextFrameAt = System.nanoTime();
 				}
+				if (this.closed || this.finishRequested && sourceFrameAt >= this.finishAtNanos) {
+					return;
+				}
+				short[] frame = this.feed.frameAt(sourceFrameAt);
+				this.frameConsumer.accept(new PcmFrame(frame != null ? frame.clone() : SILENCE_FRAME.clone(), sourceFrameAt));
+				sourceFrameAt += AUDIO_FRAME_NANOS;
+				nextEmitAt += AUDIO_FRAME_NANOS;
+				if (nextEmitAt < System.nanoTime() - AUDIO_FRAME_NANOS * 8L) {
+					long now = System.nanoTime();
+					sourceFrameAt = now - RECORDER_CAPTURE_LATENCY_NANOS;
+					nextEmitAt = now;
+				}
+			}
+		}
+
+		public void finishAndJoin() {
+			this.finishAtNanos = System.nanoTime();
+			this.finishRequested = true;
+			Thread current = this.thread;
+			if (current == null) {
+				return;
+			}
+			try {
+				current.join(TimeUnit.NANOSECONDS.toMillis(RECORDER_CAPTURE_LATENCY_NANOS + AUDIO_FRAME_NANOS * 12L));
+			} catch (InterruptedException exception) {
+				Thread.currentThread().interrupt();
+			}
+			if (current.isAlive()) {
+				close();
 			}
 		}
 

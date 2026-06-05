@@ -38,6 +38,7 @@ public final class RendererBotClientVideoRecording {
 	private static final int DEFAULT_WARMUP_FRAMES = Math.max(1, Integer.getInteger("lg2.rendererBotVideoWarmupFrames", 3));
 	private static final long FINISH_TIMEOUT_MS = Long.getLong("lg2.rendererBotVideoFinishTimeoutMs", 30_000L);
 	private static final int MIN_RECORDING_FRAMES = Math.max(2, Integer.getInteger("lg2.rendererBotVideoMinFrames", 2));
+	private static final int MAX_CATCH_UP_SECONDS = Math.max(1, Integer.getInteger("lg2.rendererBotVideoMaxCatchUpSeconds", 3));
 	private static final int MAX_TARGET_FPS = 20;
 	private static final double TARGET_RENDER_SCALE = Math.max(1.0D, doubleProperty("lg2.rendererBotVideoRenderScale", 2.0D));
 	private static final int MIN_RENDER_WIDTH = Math.max(128, Integer.getInteger("lg2.rendererBotVideoMinRenderWidth", 1024));
@@ -113,6 +114,7 @@ public final class RendererBotClientVideoRecording {
 				return;
 			}
 			recording.stopRequested = true;
+			recording.stopRequestedAtNanos = System.nanoTime();
 			Lg2.LOGGER.info("Renderer bot received stop request for video recording {} after {} frames", requestId, recording.frameCount);
 		}
 	}
@@ -133,6 +135,9 @@ public final class RendererBotClientVideoRecording {
 			long elapsedMs = now - current.startedAtMs();
 			if (elapsedMs >= current.payload().maxDurationSeconds() * 1_000L) {
 				current.stopRequested = true;
+				if (current.stopRequestedAtNanos == 0L) {
+					current.stopRequestedAtNanos = System.nanoTime();
+				}
 			}
 			if (current.stopRequested && !current.frameInFlight && !current.finishScheduled) {
 				scheduleFinish(client, current);
@@ -153,10 +158,6 @@ public final class RendererBotClientVideoRecording {
 				}
 				if (current.remainingWarmupFrames > 0) {
 					current.remainingWarmupFrames--;
-					continue;
-				}
-				long intervalNanos = 1_000_000_000L / Math.clamp(current.payload().targetFps(), 1, MAX_TARGET_FPS);
-				if (current.lastFrameAtNanos != 0L && nowNanos - current.lastFrameAtNanos < intervalNanos) {
 					continue;
 				}
 				recordingsToRender.add(current);
@@ -237,16 +238,14 @@ public final class RendererBotClientVideoRecording {
 			synchronized (LOCK) {
 				for (PendingRecording current : recordings) {
 					PendingRecording active = RECORDINGS.get(current.payload().requestId());
-					if (active == null || active != current || current.stopRequested) {
+					if (active == null || active != current) {
 						continue;
 					}
 					if (current.firstPreviewFrame == null) {
 						current.firstPreviewFrame = quantizeScaledFrame(pixels, width, height, current.payload().previewWidth(), current.payload().previewHeight());
 						current.firstFullFrame = quantizeScaledFrame(pixels, width, height, current.payload().fullWidth(), current.payload().fullHeight());
 					}
-					current.encoderInput.write(rgb);
-					current.encoderInput.flush();
-					current.frameCount++;
+					writeFrameCopiesLocked(current, rgb);
 				}
 			}
 		} catch (Exception exception) {
@@ -288,7 +287,7 @@ public final class RendererBotClientVideoRecording {
 			synchronized (LOCK) {
 				for (PendingRecording current : recordings) {
 					PendingRecording active = RECORDINGS.get(current.payload().requestId());
-					if (active == null || active != current || current.stopRequested) {
+					if (active == null || active != current) {
 						continue;
 					}
 					if (current.firstPreviewFrame == null) {
@@ -299,9 +298,7 @@ public final class RendererBotClientVideoRecording {
 								? fullFrame
 								: quantizeScaledFrame(pixels, image.getWidth(), image.getHeight(), current.payload().fullWidth(), current.payload().fullHeight());
 					}
-					current.encoderInput.write(rgb);
-					current.encoderInput.flush();
-					current.frameCount++;
+					writeFrameCopiesLocked(current, rgb);
 				}
 			}
 		} catch (Exception exception) {
@@ -379,6 +376,7 @@ public final class RendererBotClientVideoRecording {
 
 	private static void finishRecording(Minecraft client, PendingRecording current) {
 		try {
+			appendFinalFrameCopies(current);
 			try {
 				current.encoderInput.close();
 			} catch (IOException ignored) {
@@ -529,9 +527,72 @@ public final class RendererBotClientVideoRecording {
 			if (recording == null || recording.stopRequested || recording.frameInFlight || recording.finishScheduled) {
 				return false;
 			}
-			recording.lastFrameAtNanos = nowNanos;
+			int frameCopies = reserveDueFrameCopiesLocked(recording, nowNanos, true);
+			if (frameCopies <= 0) {
+				return false;
+			}
+			recording.pendingFrameCopies = frameCopies;
 			recording.frameInFlight = true;
 			return true;
+		}
+	}
+
+	private static int reserveDueFrameCopiesLocked(PendingRecording recording, long nowNanos, boolean capCatchUp) {
+		if (recording == null) {
+			return 0;
+		}
+		int targetFps = Math.clamp(recording.payload().targetFps(), 1, MAX_TARGET_FPS);
+		long intervalNanos = 1_000_000_000L / targetFps;
+		if (recording.recordingStartedAtNanos == 0L) {
+			recording.recordingStartedAtNanos = nowNanos;
+		}
+		long elapsedNanos = Math.max(0L, nowNanos - recording.recordingStartedAtNanos);
+		long desiredFrameCount = Math.max(1L, ceilDiv(elapsedNanos, intervalNanos));
+		long maxFrameCount = (long) targetFps * Math.max(1, recording.payload().maxDurationSeconds());
+		desiredFrameCount = Math.min(desiredFrameCount, maxFrameCount);
+		long due = desiredFrameCount - recording.scheduledFrameCount;
+		if (due <= 0L) {
+			return 0;
+		}
+		long maxCopies = capCatchUp ? Math.max(1L, (long) targetFps * MAX_CATCH_UP_SECONDS) : due;
+		int copies = (int) Math.min(due, maxCopies);
+		recording.scheduledFrameCount += copies;
+		return copies;
+	}
+
+	private static long ceilDiv(long value, long divisor) {
+		if (value <= 0L) {
+			return 0L;
+		}
+		return (value + divisor - 1L) / divisor;
+	}
+
+	private static void writeFrameCopiesLocked(PendingRecording recording, byte[] rgb) throws IOException {
+		if (recording == null || rgb == null) {
+			return;
+		}
+		int copies = Math.max(1, recording.pendingFrameCopies);
+		recording.pendingFrameCopies = 0;
+		recording.lastRgbFrame = rgb;
+		for (int index = 0; index < copies; index++) {
+			recording.encoderInput.write(rgb);
+		}
+		recording.encoderInput.flush();
+		recording.frameCount += copies;
+	}
+
+	private static void appendFinalFrameCopies(PendingRecording recording) throws IOException {
+		synchronized (LOCK) {
+			if (recording == null || recording.lastRgbFrame == null) {
+				return;
+			}
+			long stopAtNanos = recording.stopRequestedAtNanos != 0L ? recording.stopRequestedAtNanos : System.nanoTime();
+			int copies = reserveDueFrameCopiesLocked(recording, stopAtNanos, false);
+			if (copies <= 0) {
+				return;
+			}
+			recording.pendingFrameCopies = copies;
+			writeFrameCopiesLocked(recording, recording.lastRgbFrame);
 		}
 	}
 
@@ -539,6 +600,10 @@ public final class RendererBotClientVideoRecording {
 		synchronized (LOCK) {
 			PendingRecording recording = RECORDINGS.get(requestId);
 			if (recording != null) {
+				if (recording.pendingFrameCopies > 0) {
+					recording.scheduledFrameCount = Math.max(0L, recording.scheduledFrameCount - recording.pendingFrameCopies);
+					recording.pendingFrameCopies = 0;
+				}
 				recording.frameInFlight = false;
 			}
 		}
@@ -678,7 +743,11 @@ public final class RendererBotClientVideoRecording {
 		private volatile boolean frameInFlight;
 		private volatile boolean finishScheduled;
 		private volatile int frameCount;
-		private volatile long lastFrameAtNanos;
+		private volatile int pendingFrameCopies;
+		private long recordingStartedAtNanos;
+		private long scheduledFrameCount;
+		private long stopRequestedAtNanos;
+		private byte[] lastRgbFrame;
 
 		private PendingRecording(
 				RendererBotPayloads.RendererBotVideoRecordingStartS2CPayload payload,

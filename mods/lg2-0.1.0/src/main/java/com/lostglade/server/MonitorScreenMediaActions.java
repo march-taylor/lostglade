@@ -753,6 +753,7 @@ final class MonitorScreenMediaActions {
 			return;
 		}
 		TaskProgress progress;
+		BufferedImage staticFrame;
 		synchronized (state) {
 			cancelPlaybackLocked(state);
 			clearYoutubePlaybackLocked(state);
@@ -791,6 +792,7 @@ final class MonitorScreenMediaActions {
 			replaceProgressTrackerLocked(state);
 			state.progress.setIndeterminate("LOADING");
 			progress = state.progress;
+			staticFrame = shouldUseStaticVisualForDirectPlaybackLocked(state, targetMode, url) ? video.preview() : null;
 			if (preserveQueue && isYoutubeFamilyMode(targetMode)) {
 				ensureYoutubeQueueCurrentEntryLocked(state);
 			}
@@ -817,13 +819,7 @@ final class MonitorScreenMediaActions {
 										video.playbackInput(),
 										video.audioInput(),
 										video.durationMs(),
-										(targetMode == ScreenViewMode.YOUTUBE_MUSIC
-												|| (targetMode == ScreenViewMode.GALLERY
-												&& (MonitorYoutubeMusicCache.looksLikeSupportedUrl(url)
-												|| MonitorMediaApp.looksLikeDirectAudioUrl(url)
-												|| subtitle != null && !subtitle.isBlank())))
-												? video.preview()
-												: null,
+										staticFrame,
 										video.width(),
 										progress
 								),
@@ -848,6 +844,16 @@ final class MonitorScreenMediaActions {
 			boolean preserveQueue
 	) {
 		startDirectVideoPlayback(server, key, requesterUuid, title, "", url, video, selectionIndex, targetMode, preserveQueue);
+	}
+
+	private static boolean shouldUseStaticVisualForDirectPlaybackLocked(MediaRuntimeState state, ScreenViewMode targetMode, String url) {
+		if (targetMode == ScreenViewMode.YOUTUBE_MUSIC
+				|| MonitorYoutubeMusicCache.looksLikeSupportedUrl(url)
+				|| MonitorMediaApp.looksLikeDirectAudioUrl(url)) {
+			return true;
+		}
+		GalleryItem current = currentGalleryItemLocked(state);
+		return current != null && effectiveGalleryItemKind(current) == GalleryItemKind.AUDIO;
 	}
 
 	static void requestMediaLink(ServerPlayer player, ScreenRuntimeKey key, boolean clearCurrentMedia, ScreenViewMode mode, YoutubeLinkRequestAction youtubeAction) {

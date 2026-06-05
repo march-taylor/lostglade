@@ -281,13 +281,17 @@ final class MonitorCameraRuntime {
 			String sourceKey = "camera-app-video-" + UUID.randomUUID();
 			Path output = CameraMediaCache.videoSourcePath(sourceKey);
 			CameraMediaCache.ensureVideoParent(sourceKey);
-			VideoRecordingSession recording = new VideoRecordingSession(sourceKey, output, VIDEO_TARGET_FPS, microphones != null && !microphones.isEmpty());
+			BufferedImage initialFrame;
+			synchronized (state) {
+				initialFrame = copyBufferedImage(state.previewFrame);
+			}
+			VideoRecordingSession recording = new VideoRecordingSession(sourceKey, output, VIDEO_TARGET_FPS, microphones != null && !microphones.isEmpty(), initialFrame);
 			if (recording.hasAudioTrack()) {
 				int selectedIndex;
 				synchronized (state) {
 					selectedIndex = state.selectedMicrophoneIndex;
 				}
-				MicrophoneSystem.MicrophonePcmRecorder recorder = MicrophoneSystem.startPcmRecorder(server, component.runtimeKey(), selectedIndex, recording::writeAudioFrame);
+				MicrophoneSystem.MicrophonePcmRecorder recorder = MicrophoneSystem.startTimedPcmRecorder(server, component.runtimeKey(), selectedIndex, recording::writeAudioFrame);
 				if (recorder != null) {
 					recording.attachAudioRecorder(recorder);
 				} else {
@@ -326,9 +330,9 @@ final class MonitorCameraRuntime {
 			synchronized (state) {
 				selectedIndex = state.selectedMicrophoneIndex;
 			}
-			MicrophoneSystem.MicrophonePcmRecorder recorder = MicrophoneSystem.startPcmRecorder(server, component.runtimeKey(), selectedIndex, recording::writeFrame);
+			MicrophoneSystem.MicrophonePcmRecorder recorder = MicrophoneSystem.startTimedPcmRecorder(server, component.runtimeKey(), selectedIndex, recording::writeFrame);
 			if (recorder == null) {
-				recording.close();
+				recording.closeImmediately();
 				setStatus(server, component.runtimeKey(), state, "Микрофон недоступен");
 				return;
 			}
@@ -898,8 +902,11 @@ final class MonitorCameraRuntime {
 
 	private static final class PauseClock {
 		private final long startedAtMillis = System.currentTimeMillis();
+		private final long startedAtNanos = System.nanoTime();
+		private final List<PauseInterval> pauseIntervals = new ArrayList<>();
 		private boolean paused;
 		private long pauseStartedAtMillis;
+		private long pauseStartedAtNanos;
 		private long pausedDurationMs;
 
 		private synchronized boolean paused() {
@@ -911,11 +918,15 @@ final class MonitorCameraRuntime {
 				return this.paused;
 			}
 			long now = System.currentTimeMillis();
+			long nowNanos = System.nanoTime();
 			if (paused) {
 				this.pauseStartedAtMillis = now;
+				this.pauseStartedAtNanos = nowNanos;
 			} else {
 				this.pausedDurationMs += Math.max(0L, now - this.pauseStartedAtMillis);
+				this.pauseIntervals.add(new PauseInterval(this.pauseStartedAtNanos, nowNanos));
 				this.pauseStartedAtMillis = 0L;
+				this.pauseStartedAtNanos = 0L;
 			}
 			this.paused = paused;
 			return this.paused;
@@ -926,6 +937,24 @@ final class MonitorCameraRuntime {
 			long currentPausedMs = this.paused ? Math.max(0L, now - this.pauseStartedAtMillis) : 0L;
 			return Math.max(0L, now - this.startedAtMillis - this.pausedDurationMs - currentPausedMs);
 		}
+
+		private synchronized boolean activeAtNanos(long captureNanos) {
+			if (captureNanos < this.startedAtNanos) {
+				return false;
+			}
+			if (this.paused && captureNanos >= this.pauseStartedAtNanos) {
+				return false;
+			}
+			for (PauseInterval interval : this.pauseIntervals) {
+				if (captureNanos >= interval.startedAtNanos() && captureNanos < interval.endedAtNanos()) {
+					return false;
+				}
+			}
+			return true;
+		}
+	}
+
+	private record PauseInterval(long startedAtNanos, long endedAtNanos) {
 	}
 
 	private static final class VideoRecordingSession implements RecordingSession {
@@ -935,23 +964,32 @@ final class MonitorCameraRuntime {
 		private final Path audioPath;
 		private final Path muxPath;
 		private final int targetFps;
+		private final int frameWidth;
+		private final int frameHeight;
+		private final long frameIntervalNanos;
 		private final PauseClock pauseClock = new PauseClock();
+		private final Object frameLock = new Object();
 		private final Process process;
 		private final OutputStream input;
 		private final ExecutorService writerExecutor;
 		private PcmAudioTrack audioTrack;
 		private volatile boolean paused;
 		private volatile boolean closed;
-		private long lastWrittenAtMillis;
 		private BufferedImage preview;
+		private BufferedImage latestFrame;
 
-		private VideoRecordingSession(String sourceKey, Path outputPath, int targetFps, boolean captureAudio) throws IOException {
+		private VideoRecordingSession(String sourceKey, Path outputPath, int targetFps, boolean captureAudio, BufferedImage initialFrame) throws IOException {
 			this.sourceKey = sourceKey;
 			this.outputPath = outputPath;
 			this.videoOnlyPath = captureAudio ? outputPath.resolveSibling(outputPath.getFileName() + ".video.tmp.mp4") : outputPath;
 			this.audioPath = captureAudio ? outputPath.resolveSibling(outputPath.getFileName() + ".audio.tmp.wav") : null;
 			this.muxPath = captureAudio ? outputPath.resolveSibling(outputPath.getFileName() + ".mux.tmp.mp4") : null;
 			this.targetFps = Math.max(1, targetFps);
+			this.frameWidth = Math.max(1, initialFrame == null ? 1 : initialFrame.getWidth());
+			this.frameHeight = Math.max(1, initialFrame == null ? 1 : initialFrame.getHeight());
+			this.frameIntervalNanos = TimeUnit.SECONDS.toNanos(1L) / this.targetFps;
+			this.preview = initialFrame;
+			this.latestFrame = initialFrame;
 			Files.deleteIfExists(this.videoOnlyPath);
 			if (this.audioPath != null) {
 				Files.deleteIfExists(this.audioPath);
@@ -960,10 +998,13 @@ final class MonitorCameraRuntime {
 			}
 			List<String> command = List.of(
 					"ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-					"-f", "image2pipe",
-					"-framerate", Integer.toString(this.targetFps),
+					"-f", "rawvideo",
+					"-pix_fmt", "rgb24",
+					"-s", this.frameWidth + "x" + this.frameHeight,
+					"-r", Integer.toString(this.targetFps),
 					"-i", "-",
-					"-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+					"-an", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+					"-movflags", "+faststart",
 					this.videoOnlyPath.toAbsolutePath().toString()
 			);
 			this.process = new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start();
@@ -976,6 +1017,7 @@ final class MonitorCameraRuntime {
 		}
 
 		private void start() {
+			this.writerExecutor.execute(this::runVideoWriter);
 		}
 
 		private boolean hasAudioTrack() {
@@ -1001,34 +1043,88 @@ final class MonitorCameraRuntime {
 			}
 		}
 
-		private synchronized void writeAudioFrame(short[] frame) {
+		private synchronized void writeAudioFrame(MicrophoneSystem.PcmFrame frame) {
 			PcmAudioTrack current = this.audioTrack;
-			if (current != null && !this.paused && !this.closed) {
-				current.writeFrame(frame);
+			if (current != null && frame != null && this.pauseClock.activeAtNanos(frame.captureNanos())) {
+				current.writeFrame(frame.samples());
 			}
 		}
 
 		private void offerFrame(BufferedImage frame) {
-			if (this.closed || this.paused || frame == null) {
+			if (this.closed || frame == null) {
 				return;
 			}
-			long now = System.currentTimeMillis();
-			if (this.lastWrittenAtMillis > 0L && now - this.lastWrittenAtMillis < 1000L / this.targetFps) {
-				return;
+			BufferedImage copy = copyBufferedImage(frame);
+			synchronized (this.frameLock) {
+				this.latestFrame = copy;
+				this.preview = copy;
 			}
-			this.lastWrittenAtMillis = now;
-			this.preview = copyBufferedImage(frame);
-			this.writerExecutor.execute(() -> {
-				if (this.closed || this.paused) {
-					return;
+		}
+
+		private void runVideoWriter() {
+			long nextFrameAt = System.nanoTime();
+			int[] pixels = new int[this.frameWidth * this.frameHeight];
+			byte[] rgb = new byte[pixels.length * 3];
+			while (!this.closed) {
+				if (this.paused) {
+					sleepNanos(TimeUnit.MILLISECONDS.toNanos(10L));
+					nextFrameAt = System.nanoTime();
+					continue;
 				}
+				BufferedImage frame;
+				synchronized (this.frameLock) {
+					frame = this.latestFrame;
+				}
+				if (frame != null) {
+					try {
+						writeRawFrame(frame, pixels, rgb);
+					} catch (IOException exception) {
+						this.closed = true;
+						return;
+					}
+				}
+				nextFrameAt += this.frameIntervalNanos;
+				long sleepNanos = nextFrameAt - System.nanoTime();
+				if (sleepNanos > 0L) {
+					sleepNanos(sleepNanos);
+				} else if (sleepNanos < -this.frameIntervalNanos * 8L) {
+					nextFrameAt = System.nanoTime();
+				}
+			}
+		}
+
+		private void writeRawFrame(BufferedImage frame, int[] pixels, byte[] rgb) throws IOException {
+			BufferedImage source = frame;
+			if (source.getWidth() != this.frameWidth || source.getHeight() != this.frameHeight) {
+				BufferedImage scaled = new BufferedImage(this.frameWidth, this.frameHeight, BufferedImage.TYPE_INT_RGB);
+				Graphics2D graphics = scaled.createGraphics();
 				try {
-					ImageIO.write(frame, "png", this.input);
-					this.input.flush();
-				} catch (IOException exception) {
-					this.closed = true;
+					graphics.drawImage(source, 0, 0, this.frameWidth, this.frameHeight, null);
+				} finally {
+					graphics.dispose();
 				}
-			});
+				source = scaled;
+			}
+			source.getRGB(0, 0, this.frameWidth, this.frameHeight, pixels, 0, this.frameWidth);
+			int offset = 0;
+			for (int pixel : pixels) {
+				rgb[offset++] = (byte) ((pixel >> 16) & 0xFF);
+				rgb[offset++] = (byte) ((pixel >> 8) & 0xFF);
+				rgb[offset++] = (byte) (pixel & 0xFF);
+			}
+			this.input.write(rgb, 0, offset);
+			this.input.flush();
+		}
+
+		private static void sleepNanos(long nanos) {
+			if (nanos <= 0L) {
+				return;
+			}
+			try {
+				TimeUnit.NANOSECONDS.sleep(nanos);
+			} catch (InterruptedException exception) {
+				Thread.currentThread().interrupt();
+			}
 		}
 
 		@Override
@@ -1073,16 +1169,20 @@ final class MonitorCameraRuntime {
 			}
 			if (!Files.isRegularFile(this.outputPath) || Files.size(this.outputPath) <= 0L) {
 				PcmAudioTrack currentAudio = this.audioTrack;
-				this.audioTrack = null;
 				if (currentAudio != null) {
 					currentAudio.finish();
+					this.audioTrack = null;
 					muxAudio(currentAudio.path());
 				}
 			}
 			if (!Files.isRegularFile(this.outputPath) || Files.size(this.outputPath) <= 0L) {
 				throw new IOException("Video output is empty");
 			}
-			return new RecordedMedia(this.sourceKey, this.outputPath, GalleryItemKind.VIDEO, "Видео", "camera", "lg2-camera:video:" + this.sourceKey, this.preview);
+			BufferedImage mediaPreview;
+			synchronized (this.frameLock) {
+				mediaPreview = this.preview;
+			}
+			return new RecordedMedia(this.sourceKey, this.outputPath, GalleryItemKind.VIDEO, "Видео", "camera", "lg2-camera:video:" + this.sourceKey, mediaPreview);
 		}
 
 		private void muxAudio(Path finishedAudioPath) throws IOException {
@@ -1105,6 +1205,7 @@ final class MonitorCameraRuntime {
 					"-map", "1:a:0",
 					"-c:v", "copy",
 					"-c:a", "aac",
+					"-af", "apad",
 					"-shortest",
 					"-movflags", "+faststart",
 					this.muxPath.toAbsolutePath().toString()
@@ -1224,31 +1325,51 @@ final class MonitorCameraRuntime {
 			}
 		}
 
-		private synchronized Path finish() throws IOException {
-			close();
+		private Path finish() throws IOException {
+			MicrophoneSystem.MicrophonePcmRecorder current;
+			synchronized (this) {
+				current = this.recorder;
+				this.recorder = null;
+			}
+			if (current != null) {
+				current.finishAndJoin();
+			}
+			long dataBytes;
+			synchronized (this) {
+				if (!this.closed) {
+					this.closed = true;
+					this.output.close();
+				}
+				dataBytes = this.samplesWritten * 2L;
+			}
 			try (SeekableByteChannel channel = Files.newByteChannel(this.path, StandardOpenOption.WRITE)) {
 				channel.position(0L);
-				channel.write(ByteBuffer.wrap(wavHeader(this.samplesWritten * 2L)));
+				channel.write(ByteBuffer.wrap(wavHeader(dataBytes)));
 			}
 			return this.path;
 		}
 
-		private synchronized void abort() throws IOException {
-			close();
+		private void abort() throws IOException {
+			closeImmediately();
 			deleteQuietly(this.path);
 		}
 
-		private synchronized void close() throws IOException {
-			if (this.closed) {
-				return;
+		private void closeImmediately() throws IOException {
+			MicrophoneSystem.MicrophonePcmRecorder current;
+			synchronized (this) {
+				if (this.closed) {
+					return;
+				}
+				this.closed = true;
+				current = this.recorder;
+				this.recorder = null;
 			}
-			this.closed = true;
-			MicrophoneSystem.MicrophonePcmRecorder current = this.recorder;
-			this.recorder = null;
 			if (current != null) {
 				current.close();
 			}
-			this.output.close();
+			synchronized (this) {
+				this.output.close();
+			}
 		}
 
 		private Path path() {
@@ -1294,17 +1415,18 @@ final class MonitorCameraRuntime {
 			this.recorder = recorder;
 		}
 
-		private synchronized void writeFrame(short[] frame) {
-			if (this.closed || this.paused || frame == null) {
+		private synchronized void writeFrame(MicrophoneSystem.PcmFrame frame) {
+			if (this.closed || frame == null || !this.pauseClock.activeAtNanos(frame.captureNanos())) {
 				return;
 			}
 			try {
-				ByteBuffer buffer = ByteBuffer.allocate(frame.length * 2).order(ByteOrder.LITTLE_ENDIAN);
-				for (short sample : frame) {
+				short[] samples = frame.samples();
+				ByteBuffer buffer = ByteBuffer.allocate(samples.length * 2).order(ByteOrder.LITTLE_ENDIAN);
+				for (short sample : samples) {
 					buffer.putShort(sample);
 				}
 				this.output.write(buffer.array());
-				this.samplesWritten += frame.length;
+				this.samplesWritten += samples.length;
 			} catch (IOException exception) {
 				setPaused(true);
 			}
@@ -1326,11 +1448,26 @@ final class MonitorCameraRuntime {
 		}
 
 		@Override
-		public synchronized RecordedMedia finish() throws IOException {
-			close();
+		public RecordedMedia finish() throws IOException {
+			MicrophoneSystem.MicrophonePcmRecorder current;
+			synchronized (this) {
+				current = this.recorder;
+				this.recorder = null;
+			}
+			if (current != null) {
+				current.finishAndJoin();
+			}
+			long dataBytes;
+			synchronized (this) {
+				if (!this.closed) {
+					this.closed = true;
+					this.output.close();
+				}
+				dataBytes = this.samplesWritten * 2L;
+			}
 			try (SeekableByteChannel channel = Files.newByteChannel(this.outputPath, StandardOpenOption.WRITE)) {
 				channel.position(0L);
-				channel.write(ByteBuffer.wrap(wavHeader(this.samplesWritten * 2L)));
+				channel.write(ByteBuffer.wrap(wavHeader(dataBytes)));
 			}
 			return new RecordedMedia(this.sourceKey, this.outputPath, GalleryItemKind.AUDIO, "Диктофон", "audio", "lg2-camera:audio:" + this.sourceKey, null);
 		}
@@ -1338,22 +1475,27 @@ final class MonitorCameraRuntime {
 		@Override
 		public synchronized void abort() {
 			try {
-				close();
+				closeImmediately();
 			} catch (IOException ignored) {
 			}
 		}
 
-		private synchronized void close() throws IOException {
-			if (this.closed) {
-				return;
+		private void closeImmediately() throws IOException {
+			MicrophoneSystem.MicrophonePcmRecorder current;
+			synchronized (this) {
+				if (this.closed) {
+					return;
+				}
+				this.closed = true;
+				current = this.recorder;
+				this.recorder = null;
 			}
-			this.closed = true;
-			MicrophoneSystem.MicrophonePcmRecorder current = this.recorder;
-			this.recorder = null;
 			if (current != null) {
 				current.close();
 			}
-			this.output.close();
+			synchronized (this) {
+				this.output.close();
+			}
 		}
 
 		private static void writeWavHeader(OutputStream output, long dataBytes) throws IOException {
