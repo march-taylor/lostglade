@@ -25,9 +25,11 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -121,7 +123,9 @@ final class MonitorCameraRuntime {
 		drawMediaCloseButton(graphics, mediaCloseRect(layout), layout, MediaButtonSegment.SINGLE);
 		drawCameraMenuButton(graphics, cameraMenuButtonRect(layout), layout, state.deviceMenuOpen());
 		if (state.deviceMenuOpen()) {
-			drawDeviceMenu(graphics, layout, state);
+			drawDevicePicker(graphics, layout, state);
+			drawStatus(graphics, layout, state);
+			return;
 		}
 		drawRecordingPill(graphics, layout, state);
 		drawModeDock(graphics, layout, state);
@@ -142,39 +146,17 @@ final class MonitorCameraRuntime {
 		synchronized (state) {
 			normalizeSelectionLocked(state, cameras, microphones);
 		}
+		boolean devicePickerOpen;
+		synchronized (state) {
+			devicePickerOpen = state.deviceMenuOpen;
+		}
+		if (devicePickerOpen) {
+			return handleDevicePickerTouch(server, component, state, layout, touchPoint, cameras, microphones);
+		}
 		if (cameraMenuButtonRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 			synchronized (state) {
 				state.deviceMenuOpen = !state.deviceMenuOpen;
 				state.version++;
-			}
-			requestRuntimeRender(server, component.runtimeKey());
-			return true;
-		}
-		if (state.deviceMenuOpen && cameraDeviceButtonRect(layout).contains(touchPoint.x(), touchPoint.y())) {
-			synchronized (state) {
-				if (!cameras.isEmpty()) {
-					int selected = selectedCameraIndexLocked(state, cameras);
-					state.selectedCameraUrl = liveCameraGalleryUrl(cameras.get(Math.floorMod(selected + 1, cameras.size())));
-					state.statusText = "";
-					state.version++;
-				} else {
-					state.statusText = "Нет подключённых камер";
-					state.version++;
-				}
-			}
-			requestRuntimeRender(server, component.runtimeKey());
-			return true;
-		}
-		if (state.deviceMenuOpen && microphoneDeviceButtonRect(layout).contains(touchPoint.x(), touchPoint.y())) {
-			synchronized (state) {
-				if (!microphones.isEmpty()) {
-					state.selectedMicrophoneIndex = Math.floorMod(state.selectedMicrophoneIndex + 1, microphones.size());
-					state.statusText = "";
-					state.version++;
-				} else {
-					state.statusText = "Нет подключённых микрофонов";
-					state.version++;
-				}
 			}
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
@@ -197,6 +179,63 @@ final class MonitorCameraRuntime {
 		}
 		if (recordButtonRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 			toggleCapture(server, component, state, cameras, microphones);
+			return true;
+		}
+		return true;
+	}
+
+	private static boolean handleDevicePickerTouch(
+			MinecraftServer server,
+			ScreenComponent component,
+			CameraRuntimeState state,
+			UiLayout layout,
+			UiPoint touchPoint,
+			List<LiveCameraReference> cameras,
+			List<MicrophoneSystem.ScreenMicrophoneDevice> microphones
+	) {
+		if (devicePickerBackRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			synchronized (state) {
+				state.deviceMenuOpen = false;
+				state.statusText = "";
+				state.version++;
+			}
+			requestRuntimeRender(server, component.runtimeKey());
+			return true;
+		}
+		int cameraIndex = devicePickerCameraIndexAt(layout, cameras != null ? cameras.size() : 0, touchPoint);
+		if (cameraIndex >= 0 && cameras != null && cameraIndex < cameras.size()) {
+			LiveCameraReference camera = cameras.get(cameraIndex);
+			synchronized (state) {
+				state.selectedCameraUrl = liveCameraGalleryUrl(camera);
+				state.previewFrame = null;
+				state.previewFrameClientNanos = 0L;
+				state.previewFrameReceivedAtNanos = 0L;
+				state.statusText = "";
+				state.version++;
+			}
+			RendererBotCameraSystem.stopLiveStream(previewOwnerId(component.runtimeKey()));
+			requestRuntimeRender(server, component.runtimeKey());
+			return true;
+		}
+		int microphoneIndex = devicePickerMicrophoneIndexAt(layout, microphones != null ? microphones.size() : 0, touchPoint);
+		if (microphoneIndex >= 0 && microphones != null && microphoneIndex < microphones.size()) {
+			synchronized (state) {
+				normalizeSelectionLocked(state, cameras, microphones);
+				if (state.selectedMicrophoneIndices.contains(microphoneIndex)) {
+					if (state.selectedMicrophoneIndices.size() > 1) {
+						state.selectedMicrophoneIndices.remove(microphoneIndex);
+						state.statusText = "";
+					} else {
+						state.statusText = "Нужен хотя бы один микрофон";
+					}
+				} else {
+					state.selectedMicrophoneIndices.add(microphoneIndex);
+					state.statusText = "";
+				}
+				state.selectedMicrophoneIndex = state.selectedMicrophoneIndices.isEmpty() ? -1 : state.selectedMicrophoneIndices.iterator().next();
+				state.version++;
+			}
+			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
 		return true;
@@ -291,24 +330,24 @@ final class MonitorCameraRuntime {
 				initialFrameClientNanos = state.previewFrameClientNanos;
 				initialFrameReceivedAtNanos = state.previewFrameReceivedAtNanos;
 			}
+			List<Integer> selectedMicrophones;
+			synchronized (state) {
+				selectedMicrophones = selectedMicrophoneIndicesLocked(state, microphones);
+			}
 			VideoRecordingSession recording = new VideoRecordingSession(
 					sourceKey,
 					output,
 					VIDEO_TARGET_FPS,
-					microphones != null && !microphones.isEmpty(),
+					!selectedMicrophones.isEmpty(),
 					initialFrame,
 					initialFrameClientNanos,
 					initialFrameReceivedAtNanos
 			);
 			if (recording.hasAudioTrack()) {
-				int selectedIndex;
-				synchronized (state) {
-					selectedIndex = state.selectedMicrophoneIndex;
-				}
 				MicrophoneSystem.MicrophonePcmRecorder recorder = MicrophoneSystem.startVideoSyncedPcmRecorder(
 						server,
 						component.runtimeKey(),
-						selectedIndex,
+						selectedMicrophones,
 						recording::audioTimelineAnchor,
 						recording::writeAudioFrame
 				);
@@ -345,12 +384,16 @@ final class MonitorCameraRuntime {
 			String sourceKey = "camera-app-audio-" + UUID.randomUUID();
 			Path output = CameraMediaCache.cacheRoot().resolve("audio").resolve(sourceKey + ".wav");
 			Files.createDirectories(output.getParent());
-			AudioRecordingSession recording = new AudioRecordingSession(sourceKey, output);
-			int selectedIndex;
+			BufferedImage coverBackground;
 			synchronized (state) {
-				selectedIndex = state.selectedMicrophoneIndex;
+				coverBackground = copyBufferedImage(state.previewFrame);
 			}
-			MicrophoneSystem.MicrophonePcmRecorder recorder = MicrophoneSystem.startTimedPcmRecorder(server, component.runtimeKey(), selectedIndex, recording::writeFrame);
+			AudioRecordingSession recording = new AudioRecordingSession(sourceKey, output, coverBackground);
+			List<Integer> selectedMicrophones;
+			synchronized (state) {
+				selectedMicrophones = selectedMicrophoneIndicesLocked(state, microphones);
+			}
+			MicrophoneSystem.MicrophonePcmRecorder recorder = MicrophoneSystem.startTimedPcmRecorder(server, component.runtimeKey(), selectedMicrophones, recording::writeFrame);
 			if (recorder == null) {
 				recording.closeImmediately();
 				setStatus(server, component.runtimeKey(), state, "Микрофон недоступен");
@@ -589,13 +632,22 @@ final class MonitorCameraRuntime {
 		if ((state.selectedCameraUrl == null || state.selectedCameraUrl.isBlank()) && cameras != null && !cameras.isEmpty()) {
 			state.selectedCameraUrl = liveCameraGalleryUrl(cameras.get(0));
 		}
-		if (state.selectedMicrophoneIndex < 0 && microphones != null && !microphones.isEmpty()) {
-			state.selectedMicrophoneIndex = 0;
-		}
 		if (microphones == null || microphones.isEmpty()) {
 			state.selectedMicrophoneIndex = -1;
+			state.selectedMicrophoneIndices.clear();
 		} else if (state.selectedMicrophoneIndex >= microphones.size()) {
 			state.selectedMicrophoneIndex = 0;
+			state.selectedMicrophoneIndices.clear();
+			state.selectedMicrophoneIndices.add(0);
+		} else {
+			if (state.selectedMicrophoneIndices.isEmpty() && state.selectedMicrophoneIndex >= 0) {
+				state.selectedMicrophoneIndices.add(state.selectedMicrophoneIndex);
+			}
+			state.selectedMicrophoneIndices.removeIf(index -> index == null || index < 0 || index >= microphones.size());
+			if (state.selectedMicrophoneIndices.isEmpty()) {
+				state.selectedMicrophoneIndices.add(0);
+			}
+			state.selectedMicrophoneIndex = state.selectedMicrophoneIndices.iterator().next();
 		}
 	}
 
@@ -615,7 +667,18 @@ final class MonitorCameraRuntime {
 		if (state == null || microphones == null || microphones.isEmpty()) {
 			return -1;
 		}
-		return Math.max(0, Math.min(state.selectedMicrophoneIndex, microphones.size() - 1));
+		if (state.selectedMicrophoneIndices.isEmpty()) {
+			return Math.max(0, Math.min(state.selectedMicrophoneIndex, microphones.size() - 1));
+		}
+		return Math.max(0, Math.min(state.selectedMicrophoneIndices.iterator().next(), microphones.size() - 1));
+	}
+
+	private static List<Integer> selectedMicrophoneIndicesLocked(CameraRuntimeState state, List<MicrophoneSystem.ScreenMicrophoneDevice> microphones) {
+		if (state == null || microphones == null || microphones.isEmpty()) {
+			return List.of();
+		}
+		normalizeSelectionLocked(state, List.of(), microphones);
+		return state.selectedMicrophoneIndices.isEmpty() ? List.of() : List.copyOf(state.selectedMicrophoneIndices);
 	}
 
 	private static List<CameraAppDeviceSnapshot> cameraSnapshots(MinecraftServer server, CameraRuntimeState state, List<LiveCameraReference> cameras) {
@@ -633,7 +696,8 @@ final class MonitorCameraRuntime {
 			String title = camera.sourceType() == LiveCameraSourceType.DRONE ? "Дрон" : "Камера";
 			String subtitle = pos != null ? pos.getX() + " " + pos.getY() + " " + pos.getZ() : "live";
 			String url = liveCameraGalleryUrl(camera);
-			snapshots.add(new CameraAppDeviceSnapshot(title, subtitle, url, Objects.equals(url, selected), isLiveCameraOnline(server, camera)));
+			boolean online = isLiveCameraOnline(server, camera);
+			snapshots.add(new CameraAppDeviceSnapshot(title, subtitle, url, createLiveCameraPlaceholderPreview(title, subtitle, online, camera.sourceType()), Objects.equals(url, selected), online));
 		}
 		return List.copyOf(snapshots);
 	}
@@ -643,12 +707,15 @@ final class MonitorCameraRuntime {
 			return List.of();
 		}
 		int selected;
+		Set<Integer> selectedIndices;
 		synchronized (state) {
 			selected = state.selectedMicrophoneIndex;
+			selectedIndices = Set.copyOf(state.selectedMicrophoneIndices);
 		}
 		List<CameraAppDeviceSnapshot> snapshots = new ArrayList<>(microphones.size());
 		for (MicrophoneSystem.ScreenMicrophoneDevice microphone : microphones) {
-			snapshots.add(new CameraAppDeviceSnapshot(microphone.title(), microphone.subtitle(), "mic:" + microphone.index(), microphone.index() == selected, true));
+			boolean selectedNow = selectedIndices.isEmpty() ? microphone.index() == selected : selectedIndices.contains(microphone.index());
+			snapshots.add(new CameraAppDeviceSnapshot(microphone.title(), microphone.subtitle(), "mic:" + microphone.index(), null, selectedNow, true));
 		}
 		return List.copyOf(snapshots);
 	}
@@ -719,12 +786,85 @@ final class MonitorCameraRuntime {
 		drawDeviceButton(graphics, microphoneDeviceButtonRect(layout), PlayerUiIcon.MIC, selectedDeviceLabel(state.microphones(), "Микрофон"), layout);
 	}
 
+	private static void drawDevicePicker(Graphics2D graphics, UiLayout layout, CameraAppVisualSnapshot state) {
+		UiRect panel = devicePickerPanelRect(layout);
+		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 232));
+		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
+		drawMediaBackButton(graphics, devicePickerBackRect(layout), layout);
+		drawVerticalText(graphics, "УСТРОЙСТВА", devicePickerTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
+
+		UiRect cameraTitle = devicePickerCameraTitleRect(layout);
+		drawVerticalText(graphics, "КАМЕРА", cameraTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		List<CameraAppDeviceSnapshot> cameras = state.cameras();
+		if (cameras == null || cameras.isEmpty()) {
+			drawCenteredText(graphics, "Подключи камеру или Сбер Дрон к экрану", devicePickerCameraGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+		} else {
+			int count = Math.min(cameras.size(), devicePickerCameraCapacity(layout));
+			for (int index = 0; index < count; index++) {
+				CameraAppDeviceSnapshot camera = cameras.get(index);
+				UiRect rect = devicePickerCameraRect(layout, index);
+				fillRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), new Color(255, 255, 255, camera.selected() ? 34 : 18));
+				BufferedImage preview = camera.selected() && state.previewFrame() != null ? state.previewFrame() : camera.preview();
+				if (preview != null) {
+					drawScaledImage(graphics, preview, rect.inset(Math.max(2, layout.unit() / 4)), MediaScaleMode.FILL);
+				}
+				if (camera.selected()) {
+					strokeRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), 1.5F, new Color(255, 255, 255, 172));
+				}
+				UiRect label = new UiRect(rect.x() + layout.unit() / 2, rect.bottom() - clampInt(layout.unit() * 3, 24, 38), rect.width() - layout.unit(), clampInt(layout.unit() * 2, 18, 28));
+				fillRoundedRect(graphics, label, label.height(), new Color(0, 0, 0, 112));
+				drawCenteredTextFitted(graphics, camera.title() + " " + camera.subtitle(), label.inset(2), camera.online() ? new Color(248, 251, 255, 238) : new Color(248, 251, 255, 136), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
+			}
+		}
+
+		drawVerticalText(graphics, "МИКРОФОНЫ", devicePickerMicrophoneTitleRect(layout), new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		List<CameraAppDeviceSnapshot> microphones = state.microphones();
+		if (microphones == null || microphones.isEmpty()) {
+			drawCenteredText(graphics, "Подключи микрофон к экрану", devicePickerMicrophoneListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			return;
+		}
+		int microphoneCount = Math.min(microphones.size(), devicePickerMicrophoneCapacity(layout));
+		for (int index = 0; index < microphoneCount; index++) {
+			drawDevicePickerMicrophoneRow(graphics, layout, devicePickerMicrophoneRowRect(layout, index), microphones.get(index));
+		}
+	}
+
+	private static void drawDevicePickerMicrophoneRow(Graphics2D graphics, UiLayout layout, UiRect rect, CameraAppDeviceSnapshot microphone) {
+		int arc = clampInt(layout.unit(), 8, 16);
+		fillRoundedRect(graphics, rect, arc, new Color(255, 255, 255, microphone.selected() ? 30 : 14));
+		strokeRoundedRect(graphics, rect, arc, 1.0F, microphone.selected() ? new Color(255, 255, 255, 128) : new Color(255, 255, 255, 42));
+		int iconSize = clampInt(layout.unit() * 2, 18, 28);
+		int gap = Math.max(4, layout.unit() / 2);
+		UiRect check = new UiRect(rect.x() + gap, rect.y() + (rect.height() - iconSize) / 2, iconSize, iconSize);
+		Color checkColor = drawSmallMediaButtonBase(graphics, check, MediaButtonSegment.SINGLE, microphone.selected(), mediaChromeStrokeWidth(check));
+		if (microphone.selected()) {
+			drawPlayerUiIcon(graphics, mediaChromeIconRect(check, layout), PlayerUiIcon.CHECK, checkColor);
+		}
+		UiRect micIcon = new UiRect(check.right() + gap, rect.y() + (rect.height() - iconSize) / 2, iconSize, iconSize);
+		drawPlayerUiIcon(graphics, micIcon.inset(Math.max(2, layout.unit() / 5)), PlayerUiIcon.MIC, new Color(238, 244, 250, 214));
+		UiRect textRect = new UiRect(micIcon.right() + gap, rect.y() + Math.max(2, layout.unit() / 4), Math.max(8, rect.right() - micIcon.right() - gap * 2), rect.height() - Math.max(4, layout.unit() / 2));
+		int titleHeight = Math.max(10, textRect.height() / 2);
+		drawWrappedText(graphics, microphone.title(), new UiRect(textRect.x(), textRect.y(), textRect.width(), titleHeight), new Color(248, 251, 255, 232), Font.BOLD, clampInt(layout.unit() - 1, 8, 13), 1);
+		drawWrappedText(graphics, microphone.subtitle(), new UiRect(textRect.x(), textRect.y() + titleHeight, textRect.width(), textRect.height() - titleHeight), new Color(178, 194, 210, 214), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 1);
+	}
+
 	private static String selectedDeviceLabel(List<CameraAppDeviceSnapshot> devices, String fallback) {
 		if (devices != null) {
+			int selectedCount = 0;
+			String firstTitle = "";
 			for (CameraAppDeviceSnapshot device : devices) {
 				if (device.selected()) {
-					return device.title();
+					selectedCount++;
+					if (firstTitle.isBlank()) {
+						firstTitle = device.title();
+					}
 				}
+			}
+			if (selectedCount > 1) {
+				return selectedCount + " выбрано";
+			}
+			if (selectedCount == 1) {
+				return firstTitle;
 			}
 		}
 		return fallback;
@@ -789,6 +929,120 @@ final class MonitorCameraRuntime {
 
 	private static UiRect previewRect(UiLayout layout) {
 		return mediaCanvasRect(layout);
+	}
+
+	private static UiRect devicePickerPanelRect(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		return new UiRect(canvas.x() + layout.unit(), canvas.y() + clampInt(layout.unit() * 3, 24, 48), canvas.width() - layout.unit() * 2, canvas.height() - clampInt(layout.unit() * 4, 32, 60));
+	}
+
+	private static UiRect devicePickerBackRect(UiLayout layout) {
+		UiRect panel = devicePickerPanelRect(layout);
+		int size = clampInt(layout.unit() * 2 + 4, 24, 36);
+		return new UiRect(panel.x() + layout.unit(), panel.y() + layout.unit(), size, size);
+	}
+
+	private static UiRect devicePickerTitleRect(UiLayout layout) {
+		UiRect panel = devicePickerPanelRect(layout);
+		UiRect back = devicePickerBackRect(layout);
+		return new UiRect(back.right() + layout.unit(), back.y(), panel.right() - back.right() - layout.unit() * 2, back.height());
+	}
+
+	private static UiRect devicePickerContentRect(UiLayout layout) {
+		UiRect panel = devicePickerPanelRect(layout);
+		UiRect back = devicePickerBackRect(layout);
+		int y = back.bottom() + Math.max(4, layout.unit() / 2);
+		return new UiRect(panel.x() + layout.unit(), y, panel.width() - layout.unit() * 2, Math.max(18, panel.bottom() - y - layout.unit()));
+	}
+
+	private static UiRect devicePickerCameraTitleRect(UiLayout layout) {
+		UiRect content = devicePickerContentRect(layout);
+		int height = clampInt(layout.unit() + 4, 14, 22);
+		return new UiRect(content.x(), content.y(), content.width(), height);
+	}
+
+	private static UiRect devicePickerCameraGridRect(UiLayout layout) {
+		UiRect content = devicePickerContentRect(layout);
+		UiRect title = devicePickerCameraTitleRect(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		int height = Math.max(clampInt(layout.unit() * 7, 56, 112), (content.height() - title.height() - gap * 3) / 2);
+		return new UiRect(content.x(), title.bottom() + gap, content.width(), Math.min(height, Math.max(18, content.bottom() - title.bottom() - gap)));
+	}
+
+	private static UiRect devicePickerMicrophoneTitleRect(UiLayout layout) {
+		UiRect cameraGrid = devicePickerCameraGridRect(layout);
+		UiRect content = devicePickerContentRect(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		int height = clampInt(layout.unit() + 4, 14, 22);
+		return new UiRect(content.x(), cameraGrid.bottom() + gap, content.width(), height);
+	}
+
+	private static UiRect devicePickerMicrophoneListRect(UiLayout layout) {
+		UiRect content = devicePickerContentRect(layout);
+		UiRect title = devicePickerMicrophoneTitleRect(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		return new UiRect(content.x(), title.bottom() + gap, content.width(), Math.max(18, content.bottom() - title.bottom() - gap));
+	}
+
+	private static int devicePickerCameraColumns(UiLayout layout) {
+		return compactScreenLayout(layout) ? 3 : 4;
+	}
+
+	private static int devicePickerCameraCapacity(UiLayout layout) {
+		UiRect grid = devicePickerCameraGridRect(layout);
+		int columns = devicePickerCameraColumns(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		int cell = Math.max(1, (grid.width() - gap * (columns - 1)) / columns);
+		int rows = Math.max(1, grid.height() / (cell + gap));
+		return rows * columns;
+	}
+
+	private static UiRect devicePickerCameraRect(UiLayout layout, int index) {
+		UiRect grid = devicePickerCameraGridRect(layout);
+		int columns = devicePickerCameraColumns(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		int cell = Math.max(1, (grid.width() - gap * (columns - 1)) / columns);
+		int row = index / columns;
+		int column = index % columns;
+		return new UiRect(grid.x() + column * (cell + gap), grid.y() + row * (cell + gap), cell, cell);
+	}
+
+	private static int devicePickerCameraIndexAt(UiLayout layout, int cameraCount, UiPoint point) {
+		int count = Math.min(cameraCount, devicePickerCameraCapacity(layout));
+		for (int index = 0; index < count; index++) {
+			if (devicePickerCameraRect(layout, index).contains(point.x(), point.y())) {
+				return index;
+			}
+		}
+		return -1;
+	}
+
+	private static int devicePickerMicrophoneCapacity(UiLayout layout) {
+		UiRect list = devicePickerMicrophoneListRect(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		int rowHeight = devicePickerMicrophoneRowHeight(layout);
+		return Math.max(1, (list.height() + gap) / Math.max(1, rowHeight + gap));
+	}
+
+	private static int devicePickerMicrophoneRowHeight(UiLayout layout) {
+		return clampInt(layout.unit() * 3, 28, 44);
+	}
+
+	private static UiRect devicePickerMicrophoneRowRect(UiLayout layout, int index) {
+		UiRect list = devicePickerMicrophoneListRect(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		int height = devicePickerMicrophoneRowHeight(layout);
+		return new UiRect(list.x(), list.y() + index * (height + gap), list.width(), height);
+	}
+
+	private static int devicePickerMicrophoneIndexAt(UiLayout layout, int microphoneCount, UiPoint point) {
+		int count = Math.min(microphoneCount, devicePickerMicrophoneCapacity(layout));
+		for (int index = 0; index < count; index++) {
+			if (devicePickerMicrophoneRowRect(layout, index).contains(point.x(), point.y())) {
+				return index;
+			}
+		}
+		return -1;
 	}
 
 	private static UiRect cameraDeviceButtonRect(UiLayout layout) {
@@ -895,9 +1149,23 @@ final class MonitorCameraRuntime {
 		return String.format(Locale.ROOT, "%02d:%02d", seconds / 60L, seconds % 60L);
 	}
 
+	private static String shortRecordingIdentifier(String sourceKey) {
+		if (sourceKey == null || sourceKey.isBlank()) {
+			return "REC";
+		}
+		String normalized = sourceKey.trim();
+		int dashIndex = normalized.lastIndexOf('-');
+		String tail = dashIndex >= 0 && dashIndex + 1 < normalized.length() ? normalized.substring(dashIndex + 1) : normalized;
+		if (tail.length() > 6) {
+			tail = tail.substring(tail.length() - 6);
+		}
+		return "REC-" + tail.toUpperCase(Locale.ROOT);
+	}
+
 	private static final class CameraRuntimeState {
 		private String selectedCameraUrl = "";
 		private int selectedMicrophoneIndex = -1;
+		private final Set<Integer> selectedMicrophoneIndices = new LinkedHashSet<>();
 		private CameraAppCaptureMode captureMode = CameraAppCaptureMode.PHOTO;
 		private BufferedImage previewFrame;
 		private long previewFrameClientNanos;
@@ -1457,6 +1725,7 @@ final class MonitorCameraRuntime {
 	private static final class AudioRecordingSession implements RecordingSession {
 		private final String sourceKey;
 		private final Path outputPath;
+		private final BufferedImage coverBackground;
 		private final OutputStream output;
 		private final PauseClock pauseClock = new PauseClock();
 		private volatile boolean paused;
@@ -1464,9 +1733,10 @@ final class MonitorCameraRuntime {
 		private long samplesWritten;
 		private MicrophoneSystem.MicrophonePcmRecorder recorder;
 
-		private AudioRecordingSession(String sourceKey, Path outputPath) throws IOException {
+		private AudioRecordingSession(String sourceKey, Path outputPath, BufferedImage coverBackground) throws IOException {
 			this.sourceKey = sourceKey;
 			this.outputPath = outputPath;
+			this.coverBackground = coverBackground;
 			this.output = new BufferedOutputStream(Files.newOutputStream(outputPath));
 			writeWavHeader(this.output, 0L);
 		}
@@ -1529,7 +1799,59 @@ final class MonitorCameraRuntime {
 				channel.position(0L);
 				channel.write(ByteBuffer.wrap(wavHeader(dataBytes)));
 			}
-			return new RecordedMedia(this.sourceKey, this.outputPath, GalleryItemKind.AUDIO, "Диктофон", "audio", "lg2-camera:audio:" + this.sourceKey, null);
+			BufferedImage cover = MonitorCoverPlaceholderRenderer.recordedAudioCover(shortRecordingIdentifier(this.sourceKey), "Диктофон", this.coverBackground, this.sourceKey);
+			Path coveredPath;
+			try {
+				coveredPath = embedCoverAsMp3(cover);
+			} catch (IOException exception) {
+				Lg2.LOGGER.warn("Failed to embed monitor audio cover", exception);
+				coveredPath = this.outputPath;
+			}
+			return new RecordedMedia(this.sourceKey, coveredPath, GalleryItemKind.AUDIO, "Диктофон", "audio", "lg2-camera:audio:" + this.sourceKey, null);
+		}
+
+		private Path embedCoverAsMp3(BufferedImage cover) throws IOException {
+			if (cover == null) {
+				return this.outputPath;
+			}
+			Path parent = this.outputPath.getParent();
+			Path coverPath = Files.createTempFile(parent, this.sourceKey + "-cover-", ".png");
+			Path mp3Path = parent.resolve(this.sourceKey + ".mp3");
+			try {
+				ImageIO.write(cover, "png", coverPath.toFile());
+				List<String> command = List.of(
+						"ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+						"-i", this.outputPath.toAbsolutePath().toString(),
+						"-i", coverPath.toAbsolutePath().toString(),
+						"-map", "0:a:0",
+						"-map", "1:v:0",
+						"-c:a", "libmp3lame",
+						"-q:a", "2",
+						"-c:v", "mjpeg",
+						"-id3v2_version", "3",
+						"-metadata:s:v", "title=Cover",
+						"-metadata:s:v", "comment=Cover (front)",
+						"-disposition:v:0", "attached_pic",
+						mp3Path.toAbsolutePath().toString()
+				);
+				Process process = new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+				try {
+					if (!process.waitFor(10, TimeUnit.SECONDS)) {
+						process.destroyForcibly();
+						throw new IOException("Audio cover embedding timed out");
+					}
+				} catch (InterruptedException exception) {
+					Thread.currentThread().interrupt();
+					throw new IOException("Audio cover embedding interrupted", exception);
+				}
+				if (process.exitValue() != 0 || !Files.isRegularFile(mp3Path) || Files.size(mp3Path) <= 0L) {
+					throw new IOException("Audio cover embedding failed");
+				}
+				deleteQuietly(this.outputPath);
+				return mp3Path;
+			} finally {
+				deleteQuietly(coverPath);
+			}
 		}
 
 		@Override

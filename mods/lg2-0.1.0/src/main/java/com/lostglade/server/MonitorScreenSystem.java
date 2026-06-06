@@ -2701,7 +2701,7 @@ public final class MonitorScreenSystem {
 
 	static MediaVisualSnapshot captureMediaSnapshot(MinecraftServer server, MediaRuntimeState state, ScreenComponent component) {
 		if (state == null) {
-			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, null, false, true, false, false, false, false, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, MediaScaleMode.FIT, PlayerBackgroundMode.BLACK, false, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, false, 0, -1, null);
+			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, null, false, true, false, false, 0, false, false, false, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, MediaScaleMode.FIT, PlayerBackgroundMode.BLACK, false, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, false, 0, -1, null);
 		}
 		boolean youtubeMode = state.mode == ScreenViewMode.YOUTUBE;
 		boolean youtubeMusicMode = state.mode == ScreenViewMode.YOUTUBE_MUSIC;
@@ -2786,6 +2786,8 @@ public final class MonitorScreenSystem {
 				hasMedia,
 				galleryBrowser,
 				galleryPickerMode,
+				state.galleryBulkSelectionMode,
+				state.galleryBulkSelectedKeys.size(),
 				galleryMode && currentGalleryItemSavedLocked(state),
 				galleryBackedYoutube,
 				musicPlayerLayout,
@@ -3384,11 +3386,15 @@ public final class MonitorScreenSystem {
 
 	static void drawGalleryBrowserScreen(Graphics2D graphics, UiLayout layout, MediaVisualSnapshot state) {
 		UiRect closeRect = mediaGalleryBrowserCloseRect(layout);
-		UiRect linkRect = mediaGalleryBrowserLinkRect(layout);
-		UiRect gridRect = mediaGalleryGridRect(layout);
-		UiRect scrollbarTrackRect = mediaGalleryBrowserScrollbarTrackRect(layout);
 		boolean droneMode = state != null && isSberDronesMode(state.mode());
 		boolean galleryPickerMode = state != null && state.galleryPickerMode();
+		boolean selectionMode = state != null && state.gallerySelectionMode() && state.mode() == ScreenViewMode.GALLERY && !galleryPickerMode;
+		int selectionCount = state != null ? state.gallerySelectionCount() : 0;
+		UiRect linkRect = mediaGalleryBrowserLinkRect(layout, selectionMode);
+		UiRect deleteRect = mediaGalleryBrowserBulkDeleteRect(layout);
+		UiRect selectionRect = mediaGalleryBrowserSelectionRect(layout);
+		UiRect gridRect = mediaGalleryGridRect(layout);
+		UiRect scrollbarTrackRect = mediaGalleryBrowserScrollbarTrackRect(layout);
 		MonitorApp app = state != null ? appForViewMode(state.mode()) : null;
 
 		if (droneMode && !galleryPickerMode) {
@@ -3398,11 +3404,19 @@ public final class MonitorScreenSystem {
 
 		drawMediaCloseButton(graphics, closeRect, layout, MediaButtonSegment.LEFT);
 		if (galleryPickerMode) {
-			drawMediaTitleBar(graphics, linkRect, "ВЫБЕРИ ФОН", layout, MediaButtonSegment.RIGHT);
+			drawMediaTitleBar(graphics, linkRect, "ВЫБЕРИ ФОН", layout, MediaButtonSegment.MIDDLE);
 		} else if (droneMode) {
-			drawMediaTitleBar(graphics, linkRect, app != null ? app.screenTitle() : "Сбер дроны", layout, MediaButtonSegment.RIGHT);
+			drawMediaTitleBar(graphics, linkRect, app != null ? app.screenTitle() : "Сбер дроны", layout, MediaButtonSegment.MIDDLE);
+		} else if (selectionMode) {
+			drawMediaTitleBar(graphics, linkRect, selectionCount > 0 ? "ВЫБРАНО " + selectionCount : "ВЫБЕРИ МЕДИА", layout, MediaButtonSegment.MIDDLE);
 		} else {
-			drawMediaSearchBar(graphics, linkRect, state != null ? state.linkPlaceholder() : "ВСТАВЬ URL", true, layout, MediaButtonSegment.RIGHT);
+			drawMediaSearchBar(graphics, linkRect, state != null ? state.linkPlaceholder() : "ВСТАВЬ URL", true, layout, MediaButtonSegment.MIDDLE);
+		}
+		if (!galleryPickerMode && !droneMode) {
+			if (selectionMode) {
+				drawGalleryHeaderIconButton(graphics, deleteRect, layout, PlayerUiIcon.TRASH, selectionCount > 0, MediaButtonSegment.MIDDLE);
+			}
+			drawGalleryHeaderIconButton(graphics, selectionRect, layout, selectionMode ? PlayerUiIcon.CHECKBOX_FILL : PlayerUiIcon.CHECKBOX_LINE, selectionMode, MediaButtonSegment.RIGHT);
 		}
 
 		List<GalleryCardSnapshot> cards = state != null ? state.galleryCards() : List.of();
@@ -3841,13 +3855,13 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		if (visualState == MediaActionVisualState.COMPLETE) {
-			drawCheckGlyph(graphics, iconRect, iconColor, strokeWidth);
+			drawPlayerUiIcon(graphics, iconRect, PlayerUiIcon.CHECK, iconColor);
 			return;
 		}
 		switch (glyph) {
 			case TRASH -> drawTrashGlyph(graphics, iconRect, iconColor, strokeWidth);
 			case DOWNLOAD -> drawDownloadGlyph(graphics, iconRect, iconColor, strokeWidth);
-			case CHECK -> drawCheckGlyph(graphics, iconRect, iconColor, strokeWidth);
+			case CHECK -> drawPlayerUiIcon(graphics, iconRect, PlayerUiIcon.CHECK, iconColor);
 			case WALLPAPER -> drawWallpaperGlyph(graphics, iconRect, iconColor, strokeWidth);
 		}
 	}
@@ -3969,10 +3983,14 @@ public final class MonitorScreenSystem {
 		if (graphics == null || layout == null || rect == null || card == null) {
 			return;
 		}
-		Color fill = card.current() ? new Color(86, 188, 255, 82) : new Color(255, 255, 255, 14);
-		Color stroke = card.current() ? new Color(140, 220, 255, 116) : new Color(255, 255, 255, 28);
+		Color fill = card.selectedForBulk()
+				? new Color(248, 251, 255, 50)
+				: card.current() ? new Color(86, 188, 255, 82) : new Color(255, 255, 255, 14);
+		Color stroke = card.selectedForBulk()
+				? new Color(248, 251, 255, 176)
+				: card.current() ? new Color(140, 220, 255, 116) : new Color(255, 255, 255, 28);
 		fillRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 10, 18), fill);
-		strokeRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 10, 18), 1.0F, stroke);
+		strokeRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 10, 18), card.selectedForBulk() ? 1.5F : 1.0F, stroke);
 
 		UiRect previewRect = card.metadataVisible() ? mediaGalleryCardPreviewRectWithMetadata(rect, layout) : mediaGalleryCardPreviewRect(rect, layout);
 		if (card.preview() != null) {
@@ -3981,6 +3999,9 @@ public final class MonitorScreenSystem {
 			fillRoundedRect(graphics, previewRect, clampInt(layout.unit() * 2, 8, 14), new Color(255, 255, 255, 10));
 		}
 		drawGalleryMediaTypeBadge(graphics, previewRect, layout, card);
+		if (card.bulkSelectionMode()) {
+			drawGallerySelectionBadge(graphics, previewRect, layout, card.selectedForBulk());
+		}
 
 		if (galleryCardPlayBadgeVisible(card)) {
 			UiRect playBadge = mediaGalleryCardPlayBadgeRect(previewRect, layout);
@@ -4031,6 +4052,34 @@ public final class MonitorScreenSystem {
 
 	static boolean galleryCardPlayBadgeVisible(GalleryCardSnapshot card) {
 		return card != null && card.kind() == GalleryItemKind.LIVE_CAMERA;
+	}
+
+	static void drawGalleryHeaderIconButton(
+			Graphics2D graphics,
+			UiRect rect,
+			UiLayout layout,
+			PlayerUiIcon icon,
+			boolean active,
+			MediaButtonSegment segment
+	) {
+		float strokeWidth = mediaChromeStrokeWidth(rect);
+		Color iconColor = drawSmallMediaButtonBase(graphics, rect, segment, active, strokeWidth, active ? null : new Color(255, 255, 255, 8));
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), icon, iconColor);
+	}
+
+	static void drawGallerySelectionBadge(Graphics2D graphics, UiRect previewRect, UiLayout layout, boolean selected) {
+		int size = clampInt(layout.unit() * 2 + 2, 18, 28);
+		int margin = clampInt(layout.unit() / 2, 4, 8);
+		UiRect badgeRect = new UiRect(previewRect.x() + margin, previewRect.y() + margin, size, size);
+		fillRoundedRect(graphics, badgeRect, size, selected ? new Color(248, 251, 255, 232) : new Color(8, 12, 16, 174));
+		strokeRoundedRect(graphics, badgeRect, size, 1.0F, selected ? new Color(255, 255, 255, 132) : new Color(255, 255, 255, 70));
+		int inset = clampInt(size / 4, 4, 7);
+		drawPlayerUiIcon(
+				graphics,
+				badgeRect.inset(inset),
+				selected ? PlayerUiIcon.CHECKBOX_FILL : PlayerUiIcon.CHECKBOX_LINE,
+				selected ? new Color(18, 22, 28, 238) : new Color(248, 251, 255, 218)
+		);
 	}
 
 	static void drawSberDronesGalleryCard(Graphics2D graphics, UiLayout layout, UiRect rect, GalleryCardSnapshot card) {
@@ -4579,7 +4628,7 @@ public final class MonitorScreenSystem {
 				clampInt(layout.unit() + 6, 14, 22)
 		);
 		if (selected) {
-			drawCheckGlyph(graphics, iconRect, titleColor, mediaChromeStrokeWidth(iconRect));
+			drawPlayerUiIcon(graphics, iconRect, PlayerUiIcon.CHECK, titleColor);
 		} else if (mode == PlayerBackgroundMode.GALLERY) {
 			drawWallpaperGlyph(graphics, iconRect, titleColor, mediaChromeStrokeWidth(iconRect));
 		} else if (mode == PlayerBackgroundMode.ARTWORK) {
@@ -4749,7 +4798,7 @@ public final class MonitorScreenSystem {
 		if (item.cacheComplete()) {
 			float strokeWidth = mediaChromeStrokeWidth(rect);
 			Color iconColor = drawSmallMediaButtonBase(graphics, rect, MediaButtonSegment.SINGLE, true, strokeWidth);
-			drawCheckGlyph(graphics, mediaChromeIconRect(rect, layout), iconColor, strokeWidth);
+			drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), PlayerUiIcon.CHECK, iconColor);
 			return;
 		}
 		drawQueueCacheStatusPlaceholder(graphics, rect, item.cacheFraction(), item.current(), item.cacheActive());
@@ -5860,12 +5909,34 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect mediaGalleryBrowserLinkRect(UiLayout layout) {
+		return mediaGalleryBrowserLinkRect(layout, false);
+	}
+
+	static UiRect mediaGalleryBrowserLinkRect(UiLayout layout, boolean bulkDeleteVisible) {
 		UiRect closeRect = mediaGalleryBrowserCloseRect(layout);
 		UiRect canvas = mediaCanvasRect(layout);
 		int height = clampInt(layout.unit() * 2, 18, 28);
 		int x = closeRect.right() + mediaHeaderControlGap(layout);
-		int width = Math.max(48, canvas.right() - x - layout.unit() / 2);
+		int right = (bulkDeleteVisible ? mediaGalleryBrowserBulkDeleteRect(layout) : mediaGalleryBrowserSelectionRect(layout)).x() - mediaHeaderControlGap(layout);
+		int width = Math.max(48, right - x);
 		return new UiRect(x, canvas.y() + layout.unit() / 2, width, height);
+	}
+
+	static UiRect mediaGalleryBrowserSelectionRect(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int size = clampInt(layout.unit() * 2, 18, 28);
+		return new UiRect(
+				canvas.right() - size - layout.unit() / 2,
+				canvas.y() + layout.unit() / 2,
+				size,
+				size
+		);
+	}
+
+	static UiRect mediaGalleryBrowserBulkDeleteRect(UiLayout layout) {
+		UiRect selection = mediaGalleryBrowserSelectionRect(layout);
+		int gap = mediaHeaderControlGap(layout);
+		return new UiRect(selection.x() - selection.width() - gap, selection.y(), selection.width(), selection.height());
 	}
 
 	static int mediaHeaderControlGap(UiLayout layout) {
@@ -7819,6 +7890,7 @@ public final class MonitorScreenSystem {
 		if (state == null || state.galleryItems.isEmpty()) {
 			return List.of();
 		}
+		normalizeGalleryBulkSelectionLocked(state);
 		boolean metadataVisible = isSberDronesMode(state.mode);
 		List<Integer> visibleIndexes = galleryBrowserVisibleIndexesLocked(state);
 		List<GalleryCardSnapshot> items = new ArrayList<>(visibleIndexes.size());
@@ -7851,6 +7923,8 @@ public final class MonitorScreenSystem {
 							|| (media != null && media.animated()),
 					preview,
 					index == state.galleryIndex,
+					state.galleryBulkSelectionMode,
+					galleryBulkItemSelectedLocked(state, index),
 					youtubeLoaded || itemKind == GalleryItemKind.LIVE_CAMERA,
 					false
 			));
@@ -7907,6 +7981,8 @@ public final class MonitorScreenSystem {
 				true,
 				preview,
 				state != null && index == state.galleryIndex,
+				false,
+				false,
 				true,
 				disconnectVisible
 		);
@@ -8501,6 +8577,7 @@ public final class MonitorScreenSystem {
 		state.playerBackgroundMenuOpen = false;
 		state.preserveRuntimeOnNextViewModeTransition = false;
 		clearPlayerBackgroundGalleryPickerLocked(state);
+		clearGalleryBulkSelectionLocked(state);
 		clearGallerySelectionLocked(state);
 	}
 
@@ -8561,6 +8638,7 @@ public final class MonitorScreenSystem {
 		if (state == null) {
 			return;
 		}
+		clearGalleryBulkSelectionLocked(state);
 		state.playerBackgroundGalleryPickerOpen = true;
 		state.playerBackgroundGalleryPickerReturnMode = state.mode;
 		state.playerBackgroundGalleryPickerReturnSurfaceMode = state.gallerySurfaceMode;
@@ -8595,6 +8673,112 @@ public final class MonitorScreenSystem {
 		state.playerBackgroundGalleryPickerOpen = false;
 		state.playerBackgroundGalleryPickerReturnMode = null;
 		state.playerBackgroundGalleryPickerReturnSurfaceMode = null;
+	}
+
+	static void setGalleryBulkSelectionModeLocked(MediaRuntimeState state, boolean enabled) {
+		if (state == null) {
+			return;
+		}
+		state.galleryBulkSelectionMode = enabled;
+		if (enabled) {
+			normalizeGalleryBulkSelectionLocked(state);
+		} else {
+			state.galleryBulkSelectedKeys.clear();
+		}
+	}
+
+	static void clearGalleryBulkSelectionLocked(MediaRuntimeState state) {
+		setGalleryBulkSelectionModeLocked(state, false);
+	}
+
+	static boolean toggleGalleryBulkItemLocked(MediaRuntimeState state, int galleryIndex) {
+		if (state == null || galleryIndex < 0 || galleryIndex >= state.galleryItems.size()) {
+			return false;
+		}
+		String key = galleryBulkSelectionKey(state.galleryItems.get(galleryIndex), galleryIndex);
+		if (key.isBlank()) {
+			return false;
+		}
+		state.galleryBulkSelectionMode = true;
+		boolean selected;
+		if (state.galleryBulkSelectedKeys.contains(key)) {
+			state.galleryBulkSelectedKeys.remove(key);
+			selected = false;
+		} else {
+			state.galleryBulkSelectedKeys.add(key);
+			selected = true;
+		}
+		normalizeGalleryBulkSelectionLocked(state);
+		return selected;
+	}
+
+	static boolean galleryBulkItemSelectedLocked(MediaRuntimeState state, int galleryIndex) {
+		if (state == null || galleryIndex < 0 || galleryIndex >= state.galleryItems.size()) {
+			return false;
+		}
+		return state.galleryBulkSelectedKeys.contains(galleryBulkSelectionKey(state.galleryItems.get(galleryIndex), galleryIndex));
+	}
+
+	static void normalizeGalleryBulkSelectionLocked(MediaRuntimeState state) {
+		if (state == null || state.galleryBulkSelectedKeys.isEmpty()) {
+			return;
+		}
+		Set<String> activeKeys = new HashSet<>();
+		for (int index = 0; index < state.galleryItems.size(); index++) {
+			String key = galleryBulkSelectionKey(state.galleryItems.get(index), index);
+			if (!key.isBlank()) {
+				activeKeys.add(key);
+			}
+		}
+		state.galleryBulkSelectedKeys.removeIf(key -> !activeKeys.contains(key));
+	}
+
+	static String galleryBulkSelectionKey(GalleryItem item, int index) {
+		if (item == null) {
+			return index >= 0 ? "slot:" + index : "";
+		}
+		if (item.localMediaKey() != null && !item.localMediaKey().isBlank()) {
+			return "local:" + item.localMediaKey();
+		}
+		if (item.url() != null && !item.url().isBlank()) {
+			return "url:" + item.url();
+		}
+		return index >= 0 ? "slot:" + index : "";
+	}
+
+	static List<GalleryCacheCandidate> removeGalleryBulkSelectionLocked(MediaRuntimeState state, UiLayout layout) {
+		if (state == null || state.galleryItems.isEmpty()) {
+			clearGalleryBulkSelectionLocked(state);
+			return List.of();
+		}
+		normalizeGalleryBulkSelectionLocked(state);
+		if (state.galleryBulkSelectedKeys.isEmpty()) {
+			return List.of();
+		}
+		Set<String> selectedKeys = new HashSet<>(state.galleryBulkSelectedKeys);
+		List<GalleryCacheCandidate> removedCandidates = new ArrayList<>();
+		boolean removedCurrentPlayback = false;
+		for (int index = state.galleryItems.size() - 1; index >= 0; index--) {
+			GalleryItem item = state.galleryItems.get(index);
+			if (!selectedKeys.contains(galleryBulkSelectionKey(item, index))) {
+				continue;
+			}
+			if (item != null && item.url() != null && Objects.equals(item.url(), state.sourceUrl)) {
+				removedCurrentPlayback = true;
+			}
+			GalleryRemovalResult removal = removeGalleryItemLocked(state, index, layout);
+			GalleryCacheCandidate candidate = galleryCacheCandidate(removal.removedItem());
+			if (candidate != null) {
+				removedCandidates.add(candidate);
+			}
+		}
+		if (removedCurrentPlayback) {
+			cancelPlaybackLocked(state);
+			clearGallerySelectionLocked(state);
+			state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+		}
+		clearGalleryBulkSelectionLocked(state);
+		return removedCandidates.isEmpty() ? List.of() : List.copyOf(removedCandidates);
 	}
 
 	static void clearGallerySelectionLocked(MediaRuntimeState state) {
@@ -8653,6 +8837,7 @@ public final class MonitorScreenSystem {
 		state.playerBackgroundMenuOpen = false;
 		state.preserveRuntimeOnNextViewModeTransition = false;
 		clearPlayerBackgroundGalleryPickerLocked(state);
+		clearGalleryBulkSelectionLocked(state);
 		clearGallerySelectionLocked(state);
 		if (clearYoutubeQueue) {
 			clearYoutubeQueueLocked(state);
@@ -9218,12 +9403,17 @@ public final class MonitorScreenSystem {
 	static GalleryRemovalResult removeGalleryItemLocked(MediaRuntimeState state, int requestedIndex, UiLayout layout) {
 		if (state == null || state.galleryItems.isEmpty()) {
 			clearGallerySelectionLocked(state);
+			clearGalleryBulkSelectionLocked(state);
 			state.galleryIndex = -1;
 			state.galleryScroll = 0;
 			return new GalleryRemovalResult(null, false);
 		}
 		int resolvedIndex = clampInt(requestedIndex, 0, state.galleryItems.size() - 1);
 		GalleryItem removed = state.galleryItems.remove(resolvedIndex);
+		if (removed != null) {
+			state.galleryBulkSelectedKeys.remove(galleryBulkSelectionKey(removed, resolvedIndex));
+			normalizeGalleryBulkSelectionLocked(state);
+		}
 		if (removed != null && removed.url() != null && Objects.equals(removed.url(), state.wallpaperUrl)) {
 			clearWallpaperLocked(state);
 		}
@@ -9232,6 +9422,7 @@ public final class MonitorScreenSystem {
 		}
 		if (state.galleryItems.isEmpty()) {
 			clearGallerySelectionLocked(state);
+			clearGalleryBulkSelectionLocked(state);
 			state.galleryIndex = -1;
 			state.galleryScroll = 0;
 			return new GalleryRemovalResult(removed, false);

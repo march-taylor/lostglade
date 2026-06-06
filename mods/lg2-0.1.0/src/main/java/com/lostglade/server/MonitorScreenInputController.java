@@ -82,7 +82,7 @@ final class MonitorScreenInputController {
 		LiveCameraReference galleryDisconnectRequested = null;
 		boolean returnToGalleryAfterDelete = false;
 		String releasedRelaySessionId = null;
-		GalleryCacheCandidate deletedGalleryCacheCandidate = null;
+		List<GalleryCacheCandidate> deletedGalleryCacheCandidates = List.of();
 		String galleryYoutubeUrl = null;
 		String galleryYoutubeTitle = null;
 		Integer galleryYoutubeIndex = null;
@@ -163,7 +163,8 @@ final class MonitorScreenInputController {
 						GalleryRemovalResult removal = removeGalleryItemLocked(mediaState, mediaState.galleryIndex >= 0 ? mediaState.galleryIndex : 0, layout);
 						GalleryItem deletedItem = removal.removedItem();
 						boolean stillSelected = removal.selectionRetained();
-						deletedGalleryCacheCandidate = galleryCacheCandidate(deletedItem);
+						GalleryCacheCandidate deletedGalleryCacheCandidate = galleryCacheCandidate(deletedItem);
+						deletedGalleryCacheCandidates = deletedGalleryCacheCandidate != null ? List.of(deletedGalleryCacheCandidate) : List.of();
 						if (deletedItem != null && deletedItem.url() != null && Objects.equals(deletedItem.url(), mediaState.wallpaperUrl)) {
 							clearWallpaperLocked(mediaState);
 						}
@@ -300,11 +301,40 @@ final class MonitorScreenInputController {
 			} else if (galleryBrowser && mediaGalleryBrowserCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					nextMode = restorePlayerBackgroundGalleryPickerLocked(mediaState) ? mediaState.mode : ScreenViewMode.HOME;
+					clearGalleryBulkSelectionLocked(mediaState);
 					mediaState.version++;
 				}
 			} else if (galleryBrowser
 					&& mediaState.mode == ScreenViewMode.GALLERY
 					&& !mediaState.playerBackgroundGalleryPickerOpen
+					&& mediaGalleryBrowserSelectionRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					setGalleryBulkSelectionModeLocked(mediaState, !mediaState.galleryBulkSelectionMode);
+					mediaState.statusText = "";
+					mediaState.version++;
+				}
+				rerenderCurrent = true;
+			} else if (galleryBrowser
+					&& mediaState.mode == ScreenViewMode.GALLERY
+					&& !mediaState.playerBackgroundGalleryPickerOpen
+					&& mediaState.galleryBulkSelectionMode
+					&& mediaGalleryBrowserBulkDeleteRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					int selectedCount = mediaState.galleryBulkSelectedKeys.size();
+					deletedGalleryCacheCandidates = removeGalleryBulkSelectionLocked(mediaState, layout);
+					if (!deletedGalleryCacheCandidates.isEmpty()) {
+						persistGallery = true;
+						mediaState.statusText = "Удалено: " + selectedCount;
+					} else {
+						mediaState.statusText = "Ничего не выбрано";
+					}
+					mediaState.version++;
+				}
+				rerenderCurrent = true;
+			} else if (galleryBrowser
+					&& mediaState.mode == ScreenViewMode.GALLERY
+					&& !mediaState.playerBackgroundGalleryPickerOpen
+					&& !mediaState.galleryBulkSelectionMode
 					&& mediaGalleryBrowserLinkRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				galleryPhotoPrintImportRequested = canImportHeldPhotoPrintToGallery(player);
 				galleryLoadRequest = !galleryPhotoPrintImportRequested;
@@ -354,6 +384,15 @@ final class MonitorScreenInputController {
 							}
 							galleryGridHandled = true;
 							GalleryItem item = mediaState.galleryItems.get(galleryIndex);
+							if (mediaState.galleryBulkSelectionMode
+									&& mediaState.mode == ScreenViewMode.GALLERY
+									&& !mediaState.playerBackgroundGalleryPickerOpen) {
+								toggleGalleryBulkItemLocked(mediaState, galleryIndex);
+								mediaState.statusText = "";
+								mediaState.version++;
+								visibleRow = rowCount;
+								break;
+							}
 							if (mediaState.playerBackgroundGalleryPickerOpen) {
 								if (galleryItemCanBePlayerBackgroundCandidate(item)) {
 									galleryPlayerBackgroundRequestedIndex = galleryIndex;
@@ -407,6 +446,7 @@ final class MonitorScreenInputController {
 				if (!galleryGridHandled
 						&& mediaState.mode == ScreenViewMode.GALLERY
 						&& !mediaState.playerBackgroundGalleryPickerOpen
+						&& !mediaState.galleryBulkSelectionMode
 						&& canImportHeldPhotoPrintToGallery(player)) {
 					galleryPhotoPrintImportRequested = true;
 				}
@@ -794,8 +834,8 @@ final class MonitorScreenInputController {
 			if (state != null) {
 				persistGalleryState(server, component.runtimeKey(), state);
 			}
-			if (deletedGalleryCacheCandidate != null) {
-				scheduleGalleryCacheRelease(server, List.of(deletedGalleryCacheCandidate), component.runtimeKey());
+			if (!deletedGalleryCacheCandidates.isEmpty()) {
+				scheduleGalleryCacheRelease(server, deletedGalleryCacheCandidates, component.runtimeKey());
 			}
 		}
 		if (galleryDeferredLoadIndex != null && server != null) {

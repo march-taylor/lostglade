@@ -377,16 +377,19 @@ public final class MicrophoneSystem {
 	}
 
 	public static MicrophonePcmRecorder startTimedPcmRecorder(MinecraftServer server, ScreenRuntimeKey screenKey, int selectedMicrophoneIndex, Consumer<PcmFrame> frameConsumer) {
+		return startTimedPcmRecorder(server, screenKey, List.of(selectedMicrophoneIndex), frameConsumer);
+	}
+
+	public static MicrophonePcmRecorder startTimedPcmRecorder(MinecraftServer server, ScreenRuntimeKey screenKey, Collection<Integer> selectedMicrophoneIndices, Consumer<PcmFrame> frameConsumer) {
 		List<Map.Entry<MicrophoneKey, MicrophoneRuntime>> microphones = connectedScreenMicrophones(server, screenKey);
 		if (microphones.isEmpty() || frameConsumer == null) {
 			return null;
 		}
-		int index = selectedMicrophoneIndex >= 0 && selectedMicrophoneIndex < microphones.size() ? selectedMicrophoneIndex : 0;
-		MicrophoneRuntime runtime = microphones.get(index).getValue();
-		if (runtime == null || runtime.closed || runtime.feed == null) {
+		List<SharedMicrophoneFeed> feeds = selectedMicrophoneFeeds(microphones, selectedMicrophoneIndices);
+		if (feeds.isEmpty()) {
 			return null;
 		}
-		MicrophonePcmRecorder recorder = new MicrophonePcmRecorder(runtime.feed, null, frameConsumer);
+		MicrophonePcmRecorder recorder = new MicrophonePcmRecorder(feeds, null, frameConsumer);
 		recorder.start();
 		return recorder;
 	}
@@ -398,18 +401,55 @@ public final class MicrophoneSystem {
 			Supplier<PcmTimelineAnchor> timelineAnchorSupplier,
 			Consumer<PcmFrame> frameConsumer
 	) {
+		return startVideoSyncedPcmRecorder(server, screenKey, List.of(selectedMicrophoneIndex), timelineAnchorSupplier, frameConsumer);
+	}
+
+	public static MicrophonePcmRecorder startVideoSyncedPcmRecorder(
+			MinecraftServer server,
+			ScreenRuntimeKey screenKey,
+			Collection<Integer> selectedMicrophoneIndices,
+			Supplier<PcmTimelineAnchor> timelineAnchorSupplier,
+			Consumer<PcmFrame> frameConsumer
+	) {
 		List<Map.Entry<MicrophoneKey, MicrophoneRuntime>> microphones = connectedScreenMicrophones(server, screenKey);
 		if (microphones.isEmpty() || timelineAnchorSupplier == null || frameConsumer == null) {
 			return null;
 		}
-		int index = selectedMicrophoneIndex >= 0 && selectedMicrophoneIndex < microphones.size() ? selectedMicrophoneIndex : 0;
-		MicrophoneRuntime runtime = microphones.get(index).getValue();
-		if (runtime == null || runtime.closed || runtime.feed == null) {
+		List<SharedMicrophoneFeed> feeds = selectedMicrophoneFeeds(microphones, selectedMicrophoneIndices);
+		if (feeds.isEmpty()) {
 			return null;
 		}
-		MicrophonePcmRecorder recorder = new MicrophonePcmRecorder(runtime.feed, timelineAnchorSupplier, frameConsumer);
+		MicrophonePcmRecorder recorder = new MicrophonePcmRecorder(feeds, timelineAnchorSupplier, frameConsumer);
 		recorder.start();
 		return recorder;
+	}
+
+	private static List<SharedMicrophoneFeed> selectedMicrophoneFeeds(
+			List<Map.Entry<MicrophoneKey, MicrophoneRuntime>> microphones,
+			Collection<Integer> selectedMicrophoneIndices
+	) {
+		if (microphones == null || microphones.isEmpty()) {
+			return List.of();
+		}
+		Set<Integer> resolvedIndices = new LinkedHashSet<>();
+		if (selectedMicrophoneIndices != null) {
+			for (Integer selectedIndex : selectedMicrophoneIndices) {
+				if (selectedIndex != null && selectedIndex >= 0 && selectedIndex < microphones.size()) {
+					resolvedIndices.add(selectedIndex);
+				}
+			}
+		}
+		if (resolvedIndices.isEmpty()) {
+			resolvedIndices.add(0);
+		}
+		List<SharedMicrophoneFeed> feeds = new ArrayList<>(resolvedIndices.size());
+		for (int index : resolvedIndices) {
+			MicrophoneRuntime runtime = microphones.get(index).getValue();
+			if (runtime != null && !runtime.closed && runtime.feed != null) {
+				feeds.add(runtime.feed);
+			}
+		}
+		return feeds.isEmpty() ? List.of() : List.copyOf(feeds);
 	}
 
 	private static String microphoneSortKey(MicrophoneKey key) {
@@ -491,7 +531,7 @@ public final class MicrophoneSystem {
 	}
 
 	public static final class MicrophonePcmRecorder implements AutoCloseable {
-		private final SharedMicrophoneFeed feed;
+		private final List<SharedMicrophoneFeed> feeds;
 		private final Supplier<PcmTimelineAnchor> timelineAnchorSupplier;
 		private final Consumer<PcmFrame> frameConsumer;
 		private volatile boolean finishRequested;
@@ -499,8 +539,8 @@ public final class MicrophoneSystem {
 		private volatile boolean closed;
 		private Thread thread;
 
-		private MicrophonePcmRecorder(SharedMicrophoneFeed feed, Supplier<PcmTimelineAnchor> timelineAnchorSupplier, Consumer<PcmFrame> frameConsumer) {
-			this.feed = feed;
+		private MicrophonePcmRecorder(List<SharedMicrophoneFeed> feeds, Supplier<PcmTimelineAnchor> timelineAnchorSupplier, Consumer<PcmFrame> frameConsumer) {
+			this.feeds = feeds != null ? feeds : List.of();
 			this.timelineAnchorSupplier = timelineAnchorSupplier;
 			this.frameConsumer = frameConsumer;
 		}
@@ -539,8 +579,8 @@ public final class MicrophoneSystem {
 					return;
 				}
 				short[] frame = videoSynced
-						? this.feed.videoFrameAt(sourceFrameAt, rendererClientNanosAt(timelineAnchor, sourceFrameAt))
-						: this.feed.frameAt(sourceFrameAt);
+						? this.videoFrameAt(sourceFrameAt, rendererClientNanosAt(timelineAnchor, sourceFrameAt))
+						: this.frameAt(sourceFrameAt);
 				this.frameConsumer.accept(new PcmFrame(frame != null ? frame.clone() : SILENCE_FRAME.clone(), sourceFrameAt));
 				sourceFrameAt += AUDIO_FRAME_NANOS;
 				nextEmitAt += AUDIO_FRAME_NANOS;
@@ -582,6 +622,42 @@ public final class MicrophoneSystem {
 				return anchor.rendererClientStartNanos() > Long.MAX_VALUE - offset ? Long.MAX_VALUE : anchor.rendererClientStartNanos() + offset;
 			}
 			return anchor.rendererClientStartNanos() < Long.MIN_VALUE - offset ? Long.MIN_VALUE : anchor.rendererClientStartNanos() + offset;
+		}
+
+		private short[] frameAt(long sourceFrameAt) {
+			short[] mixed = null;
+			for (SharedMicrophoneFeed feed : this.feeds) {
+				if (feed == null) {
+					continue;
+				}
+				mixed = mixRecorderFrame(mixed, feed.frameAt(sourceFrameAt));
+			}
+			return mixed;
+		}
+
+		private short[] videoFrameAt(long serverFrameAt, long rendererClientFrameAt) {
+			short[] mixed = null;
+			for (SharedMicrophoneFeed feed : this.feeds) {
+				if (feed == null) {
+					continue;
+				}
+				mixed = mixRecorderFrame(mixed, feed.videoFrameAt(serverFrameAt, rendererClientFrameAt));
+			}
+			return mixed;
+		}
+
+		private static short[] mixRecorderFrame(short[] mixed, short[] frame) {
+			if (frame == null || frame.length == 0) {
+				return mixed;
+			}
+			if (mixed == null) {
+				return frame.clone();
+			}
+			int length = Math.min(mixed.length, frame.length);
+			for (int index = 0; index < length; index++) {
+				mixed[index] = SpeakerSystem.softLimitSample(mixed[index] + frame[index]);
+			}
+			return mixed;
 		}
 
 		public void finishAndJoin() {
