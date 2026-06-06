@@ -1,6 +1,7 @@
 package com.lostglade;
 
 import com.lostglade.client.RendererBotClientCapture;
+import com.lostglade.client.RendererBotClientAudioCapture;
 import com.lostglade.client.RendererBotClientMode;
 import com.lostglade.client.RendererBotShadowWorldManager;
 import com.lostglade.client.RendererBotClientVideoRecording;
@@ -17,6 +18,7 @@ public class Lg2Client implements ClientModInitializer {
 		RendererBotClientMode.register();
 		RendererBotShadowWorldManager.register();
 		RendererBotClientCapture.register();
+		RendererBotClientAudioCapture.register();
 		RendererBotClientVideoRecording.register();
 	}
 }

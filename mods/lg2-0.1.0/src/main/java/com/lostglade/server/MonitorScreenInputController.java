@@ -309,6 +309,28 @@ final class MonitorScreenInputController {
 				galleryPhotoPrintImportRequested = canImportHeldPhotoPrintToGallery(player);
 				galleryLoadRequest = !galleryPhotoPrintImportRequested;
 				rerenderCurrent = true;
+			} else if (galleryBrowser
+					&& mediaGalleryBrowserScrollbarTrackRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					List<Integer> visibleGalleryIndexes = galleryBrowserVisibleIndexesLocked(mediaState);
+					int visibleRows = mediaGalleryVisibleRows(layout);
+					int totalRows = mediaGalleryTotalRows(visibleGalleryIndexes.size(), layout);
+					int maxScroll = Math.max(0, totalRows - visibleRows);
+					mediaState.galleryScroll = clampInt(mediaState.galleryScroll, 0, maxScroll);
+					if (scrollbarVisible(visibleRows, totalRows)) {
+						int nextScroll = scrollValueForTrack(
+								mediaGalleryBrowserScrollbarTrackRect(layout),
+								visibleRows,
+								totalRows,
+								touchPoint.y()
+						);
+						if (nextScroll != mediaState.galleryScroll) {
+							mediaState.galleryScroll = nextScroll;
+							mediaState.version++;
+						}
+					}
+				}
+				rerenderCurrent = true;
 			} else if (galleryBrowser && mediaGalleryGridRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				boolean galleryGridHandled = false;
 				synchronized (mediaState) {
@@ -318,75 +340,64 @@ final class MonitorScreenInputController {
 					int totalRows = mediaGalleryTotalRows(visibleGalleryIndexes.size(), layout);
 					int maxScroll = Math.max(0, totalRows - visibleRows);
 					mediaState.galleryScroll = clampInt(mediaState.galleryScroll, 0, maxScroll);
-					if (scrollbarVisible(visibleRows, totalRows)
-							&& mediaGalleryBrowserScrollbarTrackRect(layout).contains(touchPoint.x(), touchPoint.y())) {
-						galleryGridHandled = true;
-						mediaState.galleryScroll = scrollValueForTrack(
-								mediaGalleryBrowserScrollbarTrackRect(layout),
-								visibleRows,
-								totalRows,
-								touchPoint.y()
-						);
-					} else {
-						int rowCount = Math.min(visibleRows, Math.max(0, totalRows - mediaState.galleryScroll));
-						for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
-							for (int column = 0; column < columns; column++) {
-								int visibleIndex = (mediaState.galleryScroll + visibleRow) * columns + column;
-								if (visibleIndex < 0 || visibleIndex >= visibleGalleryIndexes.size()) {
-									continue;
-								}
-								int galleryIndex = visibleGalleryIndexes.get(visibleIndex);
-								UiRect cardRect = mediaGalleryCardRect(layout, visibleRow, column);
-								if (!cardRect.contains(touchPoint.x(), touchPoint.y())) {
-									continue;
-								}
-								galleryGridHandled = true;
-								GalleryItem item = mediaState.galleryItems.get(galleryIndex);
-								if (mediaState.playerBackgroundGalleryPickerOpen) {
-									if (galleryItemCanBePlayerBackgroundCandidate(item)) {
-										galleryPlayerBackgroundRequestedIndex = galleryIndex;
-										restorePlayerBackgroundGalleryPickerLocked(mediaState);
-										nextMode = mediaState.mode;
-										mediaState.statusText = "";
-										mediaState.version++;
-									}
-									visibleRow = rowCount;
-									break;
-								}
-								GalleryItemKind itemKind = effectiveGalleryItemKind(item);
-								if (mediaState.mode == ScreenViewMode.SBER_DRONES
-										&& item != null
-										&& itemKind == GalleryItemKind.LIVE_CAMERA) {
-									LiveCameraReference cameraRef = liveCameraGalleryReference(
-											item.url(),
-											component.runtimeKey() != null ? component.runtimeKey().dimension() : level.dimension()
-									);
-									if (cameraRef != null
-											&& mediaGalleryCardDisconnectRect(cardRect, layout).contains(touchPoint.x(), touchPoint.y())
-											&& isBluetoothLinkedLiveCamera(level, component, cameraRef)) {
-										galleryDisconnectRequested = cameraRef;
-										visibleRow = rowCount;
-										break;
-									}
-								}
-								if (item != null && itemKind == GalleryItemKind.YOUTUBE && item.url() != null && !item.url().isBlank()) {
-									mediaState.galleryIndex = galleryIndex;
-									galleryYoutubeIndex = galleryIndex;
-									galleryYoutubeUrl = item.url();
-									galleryYoutubeTitle = item.title();
-									mediaState.version++;
-									visibleRow = rowCount;
-									break;
-								}
-								if (selectGalleryItemLocked(mediaState, galleryIndex, layout)) {
+					int rowCount = Math.min(visibleRows, Math.max(0, totalRows - mediaState.galleryScroll));
+					for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
+						for (int column = 0; column < columns; column++) {
+							int visibleIndex = (mediaState.galleryScroll + visibleRow) * columns + column;
+							if (visibleIndex < 0 || visibleIndex >= visibleGalleryIndexes.size()) {
+								continue;
+							}
+							int galleryIndex = visibleGalleryIndexes.get(visibleIndex);
+							UiRect cardRect = mediaGalleryCardRect(layout, visibleRow, column);
+							if (!cardRect.contains(touchPoint.x(), touchPoint.y())) {
+								continue;
+							}
+							galleryGridHandled = true;
+							GalleryItem item = mediaState.galleryItems.get(galleryIndex);
+							if (mediaState.playerBackgroundGalleryPickerOpen) {
+								if (galleryItemCanBePlayerBackgroundCandidate(item)) {
+									galleryPlayerBackgroundRequestedIndex = galleryIndex;
+									restorePlayerBackgroundGalleryPickerLocked(mediaState);
+									nextMode = mediaState.mode;
 									mediaState.statusText = "";
 									mediaState.version++;
-								} else {
-									galleryDeferredLoadIndex = galleryIndex;
 								}
 								visibleRow = rowCount;
 								break;
 							}
+							GalleryItemKind itemKind = effectiveGalleryItemKind(item);
+							if (mediaState.mode == ScreenViewMode.SBER_DRONES
+									&& item != null
+									&& itemKind == GalleryItemKind.LIVE_CAMERA) {
+								LiveCameraReference cameraRef = liveCameraGalleryReference(
+										item.url(),
+										component.runtimeKey() != null ? component.runtimeKey().dimension() : level.dimension()
+								);
+								if (cameraRef != null
+										&& mediaGalleryCardDisconnectRect(cardRect, layout).contains(touchPoint.x(), touchPoint.y())
+										&& isBluetoothLinkedLiveCamera(level, component, cameraRef)) {
+									galleryDisconnectRequested = cameraRef;
+									visibleRow = rowCount;
+									break;
+								}
+							}
+							if (item != null && itemKind == GalleryItemKind.YOUTUBE && item.url() != null && !item.url().isBlank()) {
+								mediaState.galleryIndex = galleryIndex;
+								galleryYoutubeIndex = galleryIndex;
+								galleryYoutubeUrl = item.url();
+								galleryYoutubeTitle = item.title();
+								mediaState.version++;
+								visibleRow = rowCount;
+								break;
+							}
+							if (selectGalleryItemLocked(mediaState, galleryIndex, layout)) {
+								mediaState.statusText = "";
+								mediaState.version++;
+							} else {
+								galleryDeferredLoadIndex = galleryIndex;
+							}
+							visibleRow = rowCount;
+							break;
 						}
 					}
 				}

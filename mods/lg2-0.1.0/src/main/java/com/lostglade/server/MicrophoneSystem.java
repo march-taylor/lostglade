@@ -27,6 +27,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -57,8 +58,10 @@ public final class MicrophoneSystem {
 	private static final long SENDER_EXPIRE_AFTER_FRAMES = 12L;
 	private static final double WHISPER_DISTANCE_FACTOR = 0.5D;
 	private static final double MIN_CAPTURE_DISTANCE = 6.0D;
+	private static final double VANILLA_AUDIO_CAPTURE_DISTANCE_EXTRA_BLOCKS = 8.0D;
 	private static final float MICROPHONE_GAIN_BOOST = 2.4F;
 	private static final short[] SILENCE_FRAME = new short[AUDIO_FRAME_SAMPLES];
+	private static final UUID RENDERER_AUDIO_SOURCE_UUID = UUID.nameUUIDFromBytes("lg2:renderer-bot-audio".getBytes(StandardCharsets.UTF_8));
 	private static final Set<MicrophoneKey> KNOWN_MICROPHONES = ConcurrentHashMap.newKeySet();
 	private static final ConcurrentHashMap<MicrophoneKey, MicrophoneRuntime> ACTIVE_MICROPHONES = new ConcurrentHashMap<>();
 	private static final ConcurrentHashMap<String, CallMicrophoneRouteRuntime> ACTIVE_CALL_ROUTES = new ConcurrentHashMap<>();
@@ -394,6 +397,17 @@ public final class MicrophoneSystem {
 		return key.dimension().identifier() + ":" + key.pos().getX() + ":" + key.pos().getY() + ":" + key.pos().getZ();
 	}
 
+	private static String rendererAudioOwnerKey(MicrophoneKey key) {
+		return key == null ? null : "lg2:microphone-audio:" + microphoneSortKey(key);
+	}
+
+	private static float distanceAttenuation(double distance, double maxDistance) {
+		if (maxDistance <= 0.0D || distance >= maxDistance) {
+			return 0.0F;
+		}
+		return (float) Math.clamp(1.0D - distance / maxDistance, 0.0D, 1.0D);
+	}
+
 	private static List<SpeakerOutputTarget> connectedScreenSpeakers(MinecraftServer server, ScreenRuntimeKey screenKey) {
 		if (server == null || screenKey == null) {
 			return List.of();
@@ -615,6 +629,7 @@ public final class MicrophoneSystem {
 		private volatile boolean captureEnabled;
 		private volatile Set<ScreenRuntimeKey> connectedScreenKeys;
 		private volatile double captureDistanceSq;
+		private volatile String rendererAudioOwnerKey;
 
 		private MicrophoneRuntime(MicrophoneKey key) {
 			this.key = key;
@@ -637,8 +652,38 @@ public final class MicrophoneSystem {
 			this.captureDistanceSq = captureDistance * captureDistance;
 			this.connectedScreenKeys = connectedScreens == null || connectedScreens.isEmpty() ? Set.of() : Set.copyOf(connectedScreens);
 			this.captureEnabled = !this.connectedScreenKeys.isEmpty() || !connectedSpeakers.isEmpty();
+			synchronizeRendererAudioCapture(level, captureDistance + VANILLA_AUDIO_CAPTURE_DISTANCE_EXTRA_BLOCKS);
 			synchronizeOutputs(level, connectedSpeakers, voicechatApi, voicechatServerApi);
 			return true;
+		}
+
+		private void synchronizeRendererAudioCapture(ServerLevel level, double captureDistance) {
+			if (this.closed || level == null || !this.captureEnabled) {
+				stopRendererAudioCapture();
+				return;
+			}
+			String ownerKey = rendererAudioOwnerKey(this.key);
+			this.rendererAudioOwnerKey = ownerKey;
+			boolean started = RendererBotCameraSystem.ensureAudioCapture(
+					ownerKey,
+					level,
+					this.key.pos(),
+					Math.max(MIN_CAPTURE_DISTANCE, captureDistance),
+					this.feed::offerPcmFrame,
+					message -> {
+					}
+			);
+			if (!started) {
+				stopRendererAudioCapture();
+			}
+		}
+
+		private void stopRendererAudioCapture() {
+			String ownerKey = this.rendererAudioOwnerKey;
+			this.rendererAudioOwnerKey = null;
+			if (ownerKey != null) {
+				RendererBotCameraSystem.stopAudioCapture(ownerKey);
+			}
 		}
 
 		private void offerVoicePacket(
@@ -659,10 +704,15 @@ public final class MicrophoneSystem {
 			double dy = senderPosition.getY() - (this.key.pos().getY() + 0.5D);
 			double dz = senderPosition.getZ() - (this.key.pos().getZ() + 0.5D);
 			double maxDistanceSq = whispering ? this.captureDistanceSq * (WHISPER_DISTANCE_FACTOR * WHISPER_DISTANCE_FACTOR) : this.captureDistanceSq;
-			if ((dx * dx) + (dy * dy) + (dz * dz) > maxDistanceSq) {
+			double distanceSq = (dx * dx) + (dy * dy) + (dz * dz);
+			if (distanceSq > maxDistanceSq) {
 				return;
 			}
-			this.feed.offerPacket(senderUuid, opusData, voicechatApi);
+			float gain = distanceAttenuation(Math.sqrt(distanceSq), Math.sqrt(maxDistanceSq));
+			if (gain <= 0.0F) {
+				return;
+			}
+			this.feed.offerPacket(senderUuid, opusData, gain, voicechatApi);
 		}
 
 		private void synchronizeOutputs(ServerLevel level, List<BlockPos> connectedSpeakers, VoicechatApi voicechatApi, VoicechatServerApi voicechatServerApi) {
@@ -709,6 +759,8 @@ public final class MicrophoneSystem {
 			this.closed = true;
 			this.captureEnabled = false;
 			this.connectedScreenKeys = Set.of();
+			stopRendererAudioCapture();
+			this.feed.close();
 			for (MicrophoneOutputRuntime runtime : this.outputs.values()) {
 				runtime.close();
 			}
@@ -841,7 +893,7 @@ public final class MicrophoneSystem {
 		private final Map<UUID, SenderVoiceBuffer> senderBuffers = new HashMap<>();
 		private volatile boolean closed;
 
-		private void offerPacket(UUID senderUuid, byte[] opusData, VoicechatApi voicechatApi) {
+		private void offerPacket(UUID senderUuid, byte[] opusData, float gain, VoicechatApi voicechatApi) {
 			if (this.closed || senderUuid == null || opusData == null || opusData.length == 0 || voicechatApi == null) {
 				return;
 			}
@@ -851,7 +903,22 @@ public final class MicrophoneSystem {
 				}
 				long baseSequence = System.nanoTime() / AUDIO_FRAME_NANOS;
 				SenderVoiceBuffer buffer = this.senderBuffers.computeIfAbsent(senderUuid, ignored -> new SenderVoiceBuffer(voicechatApi.createDecoder()));
-				buffer.offer(opusData, baseSequence);
+				buffer.offer(opusData, baseSequence, gain);
+				pruneExpiredLocked(baseSequence);
+			}
+		}
+
+		private void offerPcmFrame(short[] samples) {
+			if (this.closed || samples == null || samples.length == 0) {
+				return;
+			}
+			synchronized (this.lock) {
+				if (this.closed) {
+					return;
+				}
+				long baseSequence = System.nanoTime() / AUDIO_FRAME_NANOS;
+				SenderVoiceBuffer buffer = this.senderBuffers.computeIfAbsent(RENDERER_AUDIO_SOURCE_UUID, ignored -> new SenderVoiceBuffer(null));
+				buffer.offerFrame(samples, baseSequence, 1.0F);
 				pruneExpiredLocked(baseSequence);
 			}
 		}
@@ -883,7 +950,7 @@ public final class MicrophoneSystem {
 				}
 				short[] output = new short[AUDIO_FRAME_SAMPLES];
 				for (int index = 0; index < output.length; index++) {
-					output[index] = SpeakerSystem.softLimitSample(mixed[index] / contributors);
+					output[index] = SpeakerSystem.softLimitSample(mixed[index]);
 				}
 				return output;
 			}
@@ -922,7 +989,7 @@ public final class MicrophoneSystem {
 			this.decoder = decoder;
 		}
 
-		private void offer(byte[] opusData, long baseSequence) {
+		private void offer(byte[] opusData, long baseSequence, float gain) {
 			if (this.closed || this.decoder == null || this.decoder.isClosed()) {
 				return;
 			}
@@ -943,13 +1010,45 @@ public final class MicrophoneSystem {
 				int sourceOffset = frameIndex * AUDIO_FRAME_SAMPLES;
 				int copyLength = Math.min(AUDIO_FRAME_SAMPLES, Math.max(0, decoded.length - sourceOffset));
 				if (copyLength > 0) {
-					System.arraycopy(decoded, sourceOffset, frame, 0, copyLength);
+					copyFrame(decoded, sourceOffset, frame, copyLength, gain);
 				}
 				this.frames.put(nextSequence++, frame);
 			}
 			this.lastSequence = nextSequence - 1L;
 			while (this.frames.size() > FRAME_BUFFER_CAPACITY) {
 				this.frames.pollFirstEntry();
+			}
+		}
+
+		private void offerFrame(short[] samples, long baseSequence, float gain) {
+			if (this.closed || samples == null || samples.length == 0) {
+				return;
+			}
+			long nextSequence = Math.max(baseSequence, this.lastSequence + 1L);
+			int frameCount = Math.max(1, (samples.length + AUDIO_FRAME_SAMPLES - 1) / AUDIO_FRAME_SAMPLES);
+			for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+				short[] frame = new short[AUDIO_FRAME_SAMPLES];
+				int sourceOffset = frameIndex * AUDIO_FRAME_SAMPLES;
+				int copyLength = Math.min(AUDIO_FRAME_SAMPLES, Math.max(0, samples.length - sourceOffset));
+				if (copyLength > 0) {
+					copyFrame(samples, sourceOffset, frame, copyLength, gain);
+				}
+				this.frames.put(nextSequence++, frame);
+			}
+			this.lastSequence = nextSequence - 1L;
+			while (this.frames.size() > FRAME_BUFFER_CAPACITY) {
+				this.frames.pollFirstEntry();
+			}
+		}
+
+		private static void copyFrame(short[] source, int sourceOffset, short[] target, int copyLength, float gain) {
+			float safeGain = Math.max(0.0F, gain);
+			if (safeGain == 1.0F) {
+				System.arraycopy(source, sourceOffset, target, 0, copyLength);
+				return;
+			}
+			for (int index = 0; index < copyLength; index++) {
+				target[index] = SpeakerSystem.softLimitSample(source[sourceOffset + index] * safeGain);
 			}
 		}
 
