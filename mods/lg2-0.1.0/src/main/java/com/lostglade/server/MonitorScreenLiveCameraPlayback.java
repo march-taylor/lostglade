@@ -223,7 +223,7 @@ final class MonitorScreenLiveCameraPlayback {
 					fullHeight,
 					LIVE_CAMERA_FOV_DEGREES,
 					LIVE_CAMERA_TARGET_FPS,
-					pixels -> onLiveCameraFrame(server, component.runtimeKey(), sourceUrl, fullWidth, fullHeight, pixels),
+					frame -> onLiveCameraFrame(server, component.runtimeKey(), sourceUrl, fullWidth, fullHeight, frame.pixels()),
 					error -> applyLiveCameraStreamFailure(server, component.runtimeKey(), sourceUrl, error)
 			);
 			if (!started) {
@@ -273,7 +273,7 @@ final class MonitorScreenLiveCameraPlayback {
 				fullHeight,
 				LIVE_CAMERA_FOV_DEGREES,
 				LIVE_CAMERA_TARGET_FPS,
-				pixels -> onLiveCameraFrame(server, component.runtimeKey(), sourceUrl, fullWidth, fullHeight, pixels),
+				frame -> onLiveCameraFrame(server, component.runtimeKey(), sourceUrl, fullWidth, fullHeight, frame.pixels()),
 				error -> applyLiveCameraStreamFailure(server, component.runtimeKey(), sourceUrl, error)
 		);
 		if (!started) {

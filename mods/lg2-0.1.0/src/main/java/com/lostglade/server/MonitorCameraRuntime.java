@@ -285,13 +285,33 @@ final class MonitorCameraRuntime {
 			synchronized (state) {
 				initialFrame = copyBufferedImage(state.previewFrame);
 			}
-			VideoRecordingSession recording = new VideoRecordingSession(sourceKey, output, VIDEO_TARGET_FPS, microphones != null && !microphones.isEmpty(), initialFrame);
+			long initialFrameClientNanos;
+			long initialFrameReceivedAtNanos;
+			synchronized (state) {
+				initialFrameClientNanos = state.previewFrameClientNanos;
+				initialFrameReceivedAtNanos = state.previewFrameReceivedAtNanos;
+			}
+			VideoRecordingSession recording = new VideoRecordingSession(
+					sourceKey,
+					output,
+					VIDEO_TARGET_FPS,
+					microphones != null && !microphones.isEmpty(),
+					initialFrame,
+					initialFrameClientNanos,
+					initialFrameReceivedAtNanos
+			);
 			if (recording.hasAudioTrack()) {
 				int selectedIndex;
 				synchronized (state) {
 					selectedIndex = state.selectedMicrophoneIndex;
 				}
-				MicrophoneSystem.MicrophonePcmRecorder recorder = MicrophoneSystem.startTimedPcmRecorder(server, component.runtimeKey(), selectedIndex, recording::writeAudioFrame);
+				MicrophoneSystem.MicrophonePcmRecorder recorder = MicrophoneSystem.startVideoSyncedPcmRecorder(
+						server,
+						component.runtimeKey(),
+						selectedIndex,
+						recording::audioTimelineAnchor,
+						recording::writeAudioFrame
+				);
 				if (recorder != null) {
 					recording.attachAudioRecorder(recorder);
 				} else {
@@ -481,7 +501,7 @@ final class MonitorCameraRuntime {
 					fullHeight,
 					LIVE_CAMERA_FOV_DEGREES,
 					LIVE_CAMERA_TARGET_FPS,
-					pixels -> onPreviewFrame(server, component.runtimeKey(), sourceUrl, fullWidth, fullHeight, pixels),
+					frame -> onPreviewFrame(server, component.runtimeKey(), sourceUrl, fullWidth, fullHeight, frame),
 					error -> setStatus(server, component.runtimeKey(), state, error)
 			);
 			return;
@@ -507,15 +527,19 @@ final class MonitorCameraRuntime {
 				fullHeight,
 				LIVE_CAMERA_FOV_DEGREES,
 				LIVE_CAMERA_TARGET_FPS,
-				pixels -> onPreviewFrame(server, component.runtimeKey(), sourceUrl, fullWidth, fullHeight, pixels),
+				frame -> onPreviewFrame(server, component.runtimeKey(), sourceUrl, fullWidth, fullHeight, frame),
 				error -> setStatus(server, component.runtimeKey(), state, error)
 		);
 	}
 
-	private static void onPreviewFrame(MinecraftServer server, ScreenRuntimeKey key, String sourceUrl, int width, int height, byte[] pixels) {
+	private static void onPreviewFrame(MinecraftServer server, ScreenRuntimeKey key, String sourceUrl, int width, int height, RendererBotCameraSystem.LiveStreamFrame streamFrame) {
+		byte[] pixels = streamFrame != null ? streamFrame.pixels() : null;
 		if (server == null || key == null || pixels == null) {
 			return;
 		}
+		long nowNanos = System.nanoTime();
+		long clientFrameNanos = streamFrame.clientFrameNanos() > 0L ? streamFrame.clientFrameNanos() : nowNanos;
+		long receivedAtNanos = streamFrame.receivedAtNanos() > 0L ? streamFrame.receivedAtNanos() : nowNanos;
 		BufferedImage frame = mapPaletteImage(pixels, width, height);
 		server.execute(() -> {
 			CameraRuntimeState state = STATES.get(key);
@@ -529,11 +553,13 @@ final class MonitorCameraRuntime {
 					return;
 				}
 				state.previewFrame = frame;
+				state.previewFrameClientNanos = clientFrameNanos;
+				state.previewFrameReceivedAtNanos = receivedAtNanos;
 				recording = state.recording;
 				state.version++;
 			}
 			if (recording instanceof VideoRecordingSession videoRecording) {
-				videoRecording.offerFrame(frame);
+				videoRecording.offerFrame(frame, clientFrameNanos, receivedAtNanos);
 			}
 			requestRuntimeRender(server, key);
 		});
@@ -874,6 +900,8 @@ final class MonitorCameraRuntime {
 		private int selectedMicrophoneIndex = -1;
 		private CameraAppCaptureMode captureMode = CameraAppCaptureMode.PHOTO;
 		private BufferedImage previewFrame;
+		private long previewFrameClientNanos;
+		private long previewFrameReceivedAtNanos;
 		private RecordingSession recording;
 		private boolean deviceMenuOpen;
 		private String statusText = "";
@@ -957,6 +985,9 @@ final class MonitorCameraRuntime {
 	private record PauseInterval(long startedAtNanos, long endedAtNanos) {
 	}
 
+	private record TimedVideoFrame(BufferedImage image, long clientFrameNanos, long receivedAtNanos) {
+	}
+
 	private static final class VideoRecordingSession implements RecordingSession {
 		private final String sourceKey;
 		private final Path outputPath;
@@ -975,10 +1006,19 @@ final class MonitorCameraRuntime {
 		private PcmAudioTrack audioTrack;
 		private volatile boolean paused;
 		private volatile boolean closed;
+		private volatile MicrophoneSystem.PcmTimelineAnchor audioTimelineAnchor;
 		private BufferedImage preview;
-		private BufferedImage latestFrame;
+		private TimedVideoFrame latestFrame;
 
-		private VideoRecordingSession(String sourceKey, Path outputPath, int targetFps, boolean captureAudio, BufferedImage initialFrame) throws IOException {
+		private VideoRecordingSession(
+				String sourceKey,
+				Path outputPath,
+				int targetFps,
+				boolean captureAudio,
+				BufferedImage initialFrame,
+				long initialFrameClientNanos,
+				long initialFrameReceivedAtNanos
+		) throws IOException {
 			this.sourceKey = sourceKey;
 			this.outputPath = outputPath;
 			this.videoOnlyPath = captureAudio ? outputPath.resolveSibling(outputPath.getFileName() + ".video.tmp.mp4") : outputPath;
@@ -989,7 +1029,10 @@ final class MonitorCameraRuntime {
 			this.frameHeight = Math.max(1, initialFrame == null ? 1 : initialFrame.getHeight());
 			this.frameIntervalNanos = TimeUnit.SECONDS.toNanos(1L) / this.targetFps;
 			this.preview = initialFrame;
-			this.latestFrame = initialFrame;
+			long fallbackNanos = System.nanoTime();
+			long safeClientNanos = initialFrameClientNanos > 0L ? initialFrameClientNanos : fallbackNanos;
+			long safeReceivedNanos = initialFrameReceivedAtNanos > 0L ? initialFrameReceivedAtNanos : fallbackNanos;
+			this.latestFrame = initialFrame == null ? null : new TimedVideoFrame(initialFrame, safeClientNanos, safeReceivedNanos);
 			Files.deleteIfExists(this.videoOnlyPath);
 			if (this.audioPath != null) {
 				Files.deleteIfExists(this.audioPath);
@@ -1032,6 +1075,10 @@ final class MonitorCameraRuntime {
 			}
 		}
 
+		private MicrophoneSystem.PcmTimelineAnchor audioTimelineAnchor() {
+			return this.audioTimelineAnchor;
+		}
+
 		private synchronized void disableAudioTrack() {
 			PcmAudioTrack current = this.audioTrack;
 			this.audioTrack = null;
@@ -1050,13 +1097,16 @@ final class MonitorCameraRuntime {
 			}
 		}
 
-		private void offerFrame(BufferedImage frame) {
+		private void offerFrame(BufferedImage frame, long clientFrameNanos, long receivedAtNanos) {
 			if (this.closed || frame == null) {
 				return;
 			}
 			BufferedImage copy = copyBufferedImage(frame);
+			long fallbackNanos = System.nanoTime();
+			long safeClientNanos = clientFrameNanos > 0L ? clientFrameNanos : fallbackNanos;
+			long safeReceivedNanos = receivedAtNanos > 0L ? receivedAtNanos : fallbackNanos;
 			synchronized (this.frameLock) {
-				this.latestFrame = copy;
+				this.latestFrame = new TimedVideoFrame(copy, safeClientNanos, safeReceivedNanos);
 				this.preview = copy;
 			}
 		}
@@ -1071,13 +1121,14 @@ final class MonitorCameraRuntime {
 					nextFrameAt = System.nanoTime();
 					continue;
 				}
-				BufferedImage frame;
+				TimedVideoFrame frame;
 				synchronized (this.frameLock) {
 					frame = this.latestFrame;
 				}
 				if (frame != null) {
 					try {
-						writeRawFrame(frame, pixels, rgb);
+						ensureAudioTimelineAnchor(frame);
+						writeRawFrame(frame.image(), pixels, rgb);
 					} catch (IOException exception) {
 						this.closed = true;
 						return;
@@ -1091,6 +1142,15 @@ final class MonitorCameraRuntime {
 					nextFrameAt = System.nanoTime();
 				}
 			}
+		}
+
+		private void ensureAudioTimelineAnchor(TimedVideoFrame frame) {
+			if (this.audioTimelineAnchor != null || frame == null) {
+				return;
+			}
+			long nowNanos = System.nanoTime();
+			long clientStartNanos = frame.clientFrameNanos() > 0L ? frame.clientFrameNanos() : nowNanos;
+			this.audioTimelineAnchor = new MicrophoneSystem.PcmTimelineAnchor(nowNanos, clientStartNanos);
 		}
 
 		private void writeRawFrame(BufferedImage frame, int[] pixels, byte[] rgb) throws IOException {

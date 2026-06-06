@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 12;
+	public static final int PROTOCOL_VERSION = 14;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
@@ -256,17 +256,18 @@ public final class RendererBotPayloads {
 		}
 	}
 
-	public record RendererBotLiveFrameC2SPayload(UUID streamId, byte[] pixels) implements CustomPacketPayload {
+	public record RendererBotLiveFrameC2SPayload(UUID streamId, long clientFrameNanos, byte[] pixels) implements CustomPacketPayload {
 		public static final Type<RendererBotLiveFrameC2SPayload> TYPE = new Type<>(id("renderer_bot_live_frame"));
 		public static final StreamCodec<FriendlyByteBuf, RendererBotLiveFrameC2SPayload> STREAM_CODEC =
 				CustomPacketPayload.codec(RendererBotLiveFrameC2SPayload::write, RendererBotLiveFrameC2SPayload::new);
 
 		public RendererBotLiveFrameC2SPayload(FriendlyByteBuf buffer) {
-			this(buffer.readUUID(), buffer.readByteArray());
+			this(buffer.readUUID(), buffer.readVarLong(), buffer.readByteArray());
 		}
 
 		private void write(FriendlyByteBuf buffer) {
 			buffer.writeUUID(this.streamId);
+			buffer.writeVarLong(this.clientFrameNanos);
 			buffer.writeByteArray(this.pixels);
 		}
 
@@ -342,17 +343,19 @@ public final class RendererBotPayloads {
 		}
 	}
 
-	public record RendererBotAudioFrameC2SPayload(UUID audioId, byte[] pcm) implements CustomPacketPayload {
+	public record RendererBotAudioFrameC2SPayload(UUID audioId, long frameIndex, long clientFrameNanos, byte[] pcm) implements CustomPacketPayload {
 		public static final Type<RendererBotAudioFrameC2SPayload> TYPE = new Type<>(id("renderer_bot_audio_frame"));
 		public static final StreamCodec<FriendlyByteBuf, RendererBotAudioFrameC2SPayload> STREAM_CODEC =
 				CustomPacketPayload.codec(RendererBotAudioFrameC2SPayload::write, RendererBotAudioFrameC2SPayload::new);
 
 		public RendererBotAudioFrameC2SPayload(FriendlyByteBuf buffer) {
-			this(buffer.readUUID(), buffer.readByteArray(8192));
+			this(buffer.readUUID(), buffer.readVarLong(), buffer.readVarLong(), buffer.readByteArray(8192));
 		}
 
 		private void write(FriendlyByteBuf buffer) {
 			buffer.writeUUID(this.audioId);
+			buffer.writeVarLong(this.frameIndex);
+			buffer.writeVarLong(this.clientFrameNanos);
 			buffer.writeByteArray(this.pcm);
 		}
 

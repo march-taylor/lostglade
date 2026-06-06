@@ -184,6 +184,7 @@ public final class RendererBotCameraSystem {
 					if (server == null) {
 						return;
 					}
+					long receivedAtNanos = System.nanoTime();
 					server.execute(() -> {
 						ActiveLiveStream stream = ACTIVE_LIVE_STREAMS.get(payload.streamId());
 						if (stream == null || !stream.botUuid().equals(context.player().getUUID())) {
@@ -195,7 +196,8 @@ public final class RendererBotCameraSystem {
 							return;
 						}
 						try {
-							current.onFrame().accept(payload.pixels());
+							long clientFrameNanos = payload.clientFrameNanos() > 0L ? payload.clientFrameNanos() : receivedAtNanos;
+							current.onFrame().accept(new LiveStreamFrame(payload.pixels(), clientFrameNanos, receivedAtNanos));
 						} catch (Exception exception) {
 							Lg2.LOGGER.warn("Renderer bot live stream frame callback failed for {}", payload.streamId(), exception);
 						}
@@ -280,9 +282,11 @@ public final class RendererBotCameraSystem {
 						if (frame == null) {
 							return;
 						}
+						long receivedAtNanos = System.nanoTime();
 						capture.markFrameReceived();
 						try {
-							capture.onFrame().accept(frame);
+							long clientFrameNanos = payload.clientFrameNanos() > 0L ? payload.clientFrameNanos() : receivedAtNanos;
+							capture.onFrame().accept(new AudioCaptureFrame(frame, receivedAtNanos, clientFrameNanos));
 						} catch (Exception exception) {
 							Lg2.LOGGER.warn("Renderer bot audio frame callback failed for {}", payload.audioId(), exception);
 						}
@@ -499,7 +503,7 @@ public final class RendererBotCameraSystem {
 			int fullHeight,
 			int fovDegrees,
 			int targetFps,
-			Consumer<byte[]> onFrame,
+			Consumer<LiveStreamFrame> onFrame,
 			Consumer<String> onFailure
 	) {
 		return ensureLiveStream(
@@ -539,7 +543,7 @@ public final class RendererBotCameraSystem {
 			int fullHeight,
 			int fovDegrees,
 			int targetFps,
-			Consumer<byte[]> onFrame,
+			Consumer<LiveStreamFrame> onFrame,
 			Consumer<String> onFailure
 	) {
 		if (ownerKey == null || level == null || onFrame == null || onFailure == null) {
@@ -678,7 +682,7 @@ public final class RendererBotCameraSystem {
 			ServerLevel level,
 			BlockPos microphonePos,
 			double radiusBlocks,
-			Consumer<short[]> onFrame,
+			Consumer<AudioCaptureFrame> onFrame,
 			Consumer<String> onFailure
 	) {
 		if (ownerKey == null || level == null || microphonePos == null || onFrame == null || onFailure == null) {
@@ -3563,6 +3567,12 @@ public final class RendererBotCameraSystem {
 		}
 	}
 
+	public record LiveStreamFrame(byte[] pixels, long clientFrameNanos, long receivedAtNanos) {
+	}
+
+	public record AudioCaptureFrame(short[] samples, long receivedAtNanos, long clientFrameNanos) {
+	}
+
 	private record BotHandshake(UUID playerUuid, String playerName) {
 	}
 
@@ -3850,7 +3860,7 @@ public final class RendererBotCameraSystem {
 		private final String ownerKey;
 		private final UUID botUuid;
 		private final LiveStreamSpec spec;
-		private final Consumer<byte[]> onFrame;
+		private final Consumer<LiveStreamFrame> onFrame;
 		private final Consumer<String> onFailure;
 		private final long startedAtMillis;
 		private volatile long lastFrameAtMillis;
@@ -3862,7 +3872,7 @@ public final class RendererBotCameraSystem {
 				String ownerKey,
 				UUID botUuid,
 				LiveStreamSpec spec,
-				Consumer<byte[]> onFrame,
+				Consumer<LiveStreamFrame> onFrame,
 				Consumer<String> onFailure
 		) {
 			this.server = server;
@@ -3897,7 +3907,7 @@ public final class RendererBotCameraSystem {
 			return this.spec;
 		}
 
-		private Consumer<byte[]> onFrame() {
+		private Consumer<LiveStreamFrame> onFrame() {
 			return this.onFrame;
 		}
 
@@ -3961,7 +3971,7 @@ public final class RendererBotCameraSystem {
 		private final UUID botUuid;
 		private final AudioCaptureSpec spec;
 		private final long startedAtMillis;
-		private volatile Consumer<short[]> onFrame;
+		private volatile Consumer<AudioCaptureFrame> onFrame;
 		private volatile Consumer<String> onFailure;
 		private volatile long lastFrameAtMillis;
 
@@ -3971,7 +3981,7 @@ public final class RendererBotCameraSystem {
 				String ownerKey,
 				UUID botUuid,
 				AudioCaptureSpec spec,
-				Consumer<short[]> onFrame,
+				Consumer<AudioCaptureFrame> onFrame,
 				Consumer<String> onFailure
 		) {
 			this.server = server;
@@ -4005,7 +4015,7 @@ public final class RendererBotCameraSystem {
 			return this.spec;
 		}
 
-		private Consumer<short[]> onFrame() {
+		private Consumer<AudioCaptureFrame> onFrame() {
 			return this.onFrame;
 		}
 
@@ -4013,7 +4023,7 @@ public final class RendererBotCameraSystem {
 			return this.onFailure;
 		}
 
-		private void updateCallbacks(Consumer<short[]> onFrame, Consumer<String> onFailure) {
+		private void updateCallbacks(Consumer<AudioCaptureFrame> onFrame, Consumer<String> onFailure) {
 			if (onFrame != null) {
 				this.onFrame = onFrame;
 			}

@@ -38,7 +38,8 @@ public final class RendererBotClientAudioCapture {
 	private static final int FRAME_SAMPLES = 960;
 	private static final long FRAME_NANOS = TimeUnit.SECONDS.toNanos(1L) * FRAME_SAMPLES / SAMPLE_RATE;
 	private static final int MAX_ACTIVE_SOUNDS_PER_SESSION = 128;
-	private static final float MIX_GAIN = 0.85F;
+	private static final float MIX_GAIN = floatProperty("lg2.rendererBotAudioVanillaGain", 0.55F);
+	private static final float WEATHER_GAIN = floatProperty("lg2.rendererBotAudioWeatherGain", 0.5F);
 	private static final Map<UUID, AudioSession> SESSIONS = new ConcurrentHashMap<>();
 	private static final Map<Identifier, CompletableFuture<DecodedSound>> DECODE_CACHE = new ConcurrentHashMap<>();
 
@@ -246,6 +247,35 @@ public final class RendererBotClientAudioCapture {
 		}
 	}
 
+	private static float floatProperty(String key, float fallback) {
+		String raw = System.getProperty(key);
+		if (raw == null || raw.isBlank()) {
+			return fallback;
+		}
+		try {
+			float value = Float.parseFloat(raw.trim());
+			return Float.isFinite(value) ? Math.clamp(value, 0.0F, 4.0F) : fallback;
+		} catch (NumberFormatException exception) {
+			return fallback;
+		}
+	}
+
+	private static float clientSoundSourceVolume(SoundSource source) {
+		Minecraft client = Minecraft.getInstance();
+		if (client == null || client.options == null) {
+			return 1.0F;
+		}
+		try {
+			return Math.clamp(client.options.getFinalSoundSourceVolume(source == null ? SoundSource.MASTER : source), 0.0F, 1.0F);
+		} catch (RuntimeException exception) {
+			return 1.0F;
+		}
+	}
+
+	private static float sourceCaptureGain(SoundSource source) {
+		return source == SoundSource.WEATHER ? WEATHER_GAIN : 1.0F;
+	}
+
 	private static final class AudioSession {
 		private final UUID audioId;
 		private final UUID renderSessionId;
@@ -278,12 +308,14 @@ public final class RendererBotClientAudioCapture {
 		}
 
 		private void run() {
-			long nextFrameAt = System.nanoTime();
+			long sessionStartNanos = System.nanoTime();
+			long nextFrameAt = sessionStartNanos;
 			while (!this.closed) {
 				RendererBotShadowWorldManager.updateAudioContext(this.renderSessionId, this.x, this.y, this.z);
+				long frameIndex = Math.max(0L, Math.floorDiv(nextFrameAt - sessionStartNanos, FRAME_NANOS));
 				short[] frame = mixFrame(nextFrameAt);
 				try {
-					ClientPlayNetworking.send(new RendererBotPayloads.RendererBotAudioFrameC2SPayload(this.audioId, encodePcmFrame(frame)));
+					ClientPlayNetworking.send(new RendererBotPayloads.RendererBotAudioFrameC2SPayload(this.audioId, frameIndex, nextFrameAt, encodePcmFrame(frame)));
 				} catch (RuntimeException exception) {
 					sendFailure(this.audioId, "Renderer bot failed to send audio frame");
 					close();
@@ -301,7 +333,9 @@ public final class RendererBotClientAudioCapture {
 						}
 					}
 				} else if (sleepNanos < -FRAME_NANOS * 8L) {
-					nextFrameAt = System.nanoTime();
+					long now = System.nanoTime();
+					long nextFrameIndex = Math.max(frameIndex + 1L, Math.floorDiv(now - sessionStartNanos, FRAME_NANOS));
+					nextFrameAt = sessionStartNanos + nextFrameIndex * FRAME_NANOS;
 				}
 			}
 		}
@@ -384,6 +418,7 @@ public final class RendererBotClientAudioCapture {
 		private volatile double y;
 		private volatile double z;
 		private volatile float volume;
+		private volatile float clientGain;
 		private volatile float pitch;
 		private volatile float rangeBlocks;
 		private volatile SoundInstance.Attenuation attenuation;
@@ -421,6 +456,7 @@ public final class RendererBotClientAudioCapture {
 		private void refreshFromInstance(Sound sound) {
 			float rawVolume = Math.max(0.0F, this.instance.getVolume());
 			this.volume = Math.clamp(rawVolume, 0.0F, 1.0F);
+			this.clientGain = clientSoundSourceVolume(this.source) * sourceCaptureGain(this.source);
 			this.pitch = Math.clamp(this.instance.getPitch(), 0.5F, 2.0F);
 			this.x = this.instance.getX();
 			this.y = this.instance.getY();
@@ -449,7 +485,7 @@ public final class RendererBotClientAudioCapture {
 			}
 			float gain = gainFor(session);
 			double elapsedSeconds = (frameStartNanos - this.startedAtNanos) / 1_000_000_000.0D;
-			double sourceBase = Math.max(0.0D, elapsedSeconds * sound.sampleRate() * this.pitch);
+			double sourceBase = elapsedSeconds * sound.sampleRate() * this.pitch;
 			double sourceStep = sound.sampleRate() * this.pitch / SAMPLE_RATE;
 			boolean finished = !this.looping && sourceBase >= sound.samples().length;
 			if (finished) {
@@ -462,7 +498,11 @@ public final class RendererBotClientAudioCapture {
 				return true;
 			}
 			float[] samples = sound.samples();
-			for (int index = 0; index < output.length; index++) {
+			int outputStart = 0;
+			if (sourceBase < 0.0D) {
+				outputStart = Math.min(output.length, (int) Math.ceil(-sourceBase / sourceStep));
+			}
+			for (int index = outputStart; index < output.length; index++) {
 				double sourcePosition = sourceBase + sourceStep * index;
 				if (!this.looping && sourcePosition >= samples.length) {
 					break;
@@ -493,13 +533,13 @@ public final class RendererBotClientAudioCapture {
 				return 0.0F;
 			}
 			if (this.attenuation != SoundInstance.Attenuation.LINEAR) {
-				return this.volume;
+				return this.volume * this.clientGain;
 			}
 			double maxDistance = Math.max(1.0D, Math.min(session.radiusBlocks, this.rangeBlocks));
 			if (distance >= maxDistance) {
 				return 0.0F;
 			}
-			return this.volume * (float) Math.clamp(1.0D - distance / maxDistance, 0.0D, 1.0D);
+			return this.volume * this.clientGain * (float) Math.clamp(1.0D - distance / maxDistance, 0.0D, 1.0D);
 		}
 	}
 

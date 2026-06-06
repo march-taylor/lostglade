@@ -72,11 +72,8 @@
 		"PlayerCocaineSprintMixin",
 		"PlayerContainerMenuAccessor",
 		"PlayerTrackedDataAccessor",
-<<<<<<< HEAD
 		"PlaySoundCommandRendererBotAudioMixin",
-=======
 		"PistonStructureResolverMilkPocketMixin",
->>>>>>> origin/main
 		"PotionBrewingStabilityMixin",
 		"RabbitAccessor",
 		"RabbitNaturalSpawnMarkerMixin",
