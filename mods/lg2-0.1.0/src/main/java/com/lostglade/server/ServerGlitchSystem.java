@@ -257,6 +257,7 @@ public final class ServerGlitchSystem {
 
 		GlitchConfig.ConfigData config = GlitchConfig.get();
 		if (!config.enabled) {
+			ServerMilkPocketDimensionSystem.handleChatMessage(message, sender, params);
 			if (raceDisplayNameOverride == null) {
 				return true;
 			}
@@ -311,6 +312,7 @@ public final class ServerGlitchSystem {
 			return false;
 		}
 
+		ServerMilkPocketDimensionSystem.handleChatMessage(message, sender, params);
 		Component decorated = outgoingParams.decorate(Component.literal(message.signedContent()));
 		server.getPlayerList().broadcastSystemMessage(decorated, false);
 		return false;

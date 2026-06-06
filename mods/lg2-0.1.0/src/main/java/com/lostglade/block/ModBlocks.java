@@ -31,6 +31,7 @@ public final class ModBlocks {
 	private static final Identifier SPEAKER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "speaker");
 	private static final Identifier MICROPHONE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "microphone");
 	private static final Identifier CAMERA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera");
+	private static final Identifier MILK_POCKET_PHANTOM_FLOOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "milk_pocket_phantom_floor");
 
 	private static final ResourceKey<Block> BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, BITCOIN_ORE_ID);
 	private static final ResourceKey<Block> DEEPSLATE_BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, DEEPSLATE_BITCOIN_ORE_ID);
@@ -43,6 +44,7 @@ public final class ModBlocks {
 	private static final ResourceKey<Block> SPEAKER_KEY = ResourceKey.create(Registries.BLOCK, SPEAKER_ID);
 	private static final ResourceKey<Block> MICROPHONE_KEY = ResourceKey.create(Registries.BLOCK, MICROPHONE_ID);
 	private static final ResourceKey<Block> CAMERA_KEY = ResourceKey.create(Registries.BLOCK, CAMERA_ID);
+	private static final ResourceKey<Block> MILK_POCKET_PHANTOM_FLOOR_KEY = ResourceKey.create(Registries.BLOCK, MILK_POCKET_PHANTOM_FLOOR_ID);
 	private static final ResourceKey<Item> BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> DEEPSLATE_BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, DEEPSLATE_BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> BACKROOMS_BLOCK_ITEM_KEY = ResourceKey.create(Registries.ITEM, BACKROOMS_BLOCK_ID);
@@ -104,6 +106,12 @@ public final class ModBlocks {
 			BuiltInRegistries.BLOCK,
 			CAMERA_ID,
 			new CameraBlock(createCameraProperties())
+	);
+
+	public static final Block MILK_POCKET_PHANTOM_FLOOR = Registry.register(
+			BuiltInRegistries.BLOCK,
+			MILK_POCKET_PHANTOM_FLOOR_ID,
+			new MilkPocketPhantomFloorBlock(createMilkPocketPhantomFloorProperties())
 	);
 
 	public static final Block BACKROOMS_BLOCK = Registry.register(
@@ -356,6 +364,16 @@ public final class ModBlocks {
 				.sound(SoundType.METAL)
 				.noOcclusion()
 				.setId(CAMERA_KEY);
+	}
+
+	private static BlockBehaviour.Properties createMilkPocketPhantomFloorProperties() {
+		return BlockBehaviour.Properties.of()
+				.mapColor(MapColor.NONE)
+				.strength(-1.0F, 3600000.0F)
+				.sound(SoundType.EMPTY)
+				.noLootTable()
+				.noOcclusion()
+				.setId(MILK_POCKET_PHANTOM_FLOOR_KEY);
 	}
 
 	public static BlockState getRandomizedBackroomsBlockState(long seed) {

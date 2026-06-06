@@ -220,6 +220,10 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.markRagePlayerKillPoints, value -> ability.markRagePlayerKillPoints = value);
 		changed |= normalizeNonNegative(ability.markRageDrainPointsPerSecond, value -> ability.markRageDrainPointsPerSecond = value);
 		changed |= normalizeNonNegative(ability.markRageExhaustionSeconds, value -> ability.markRageExhaustionSeconds = value);
+		changed |= normalizeNonNegative(ability.markStockPassiveKillHearts, value -> ability.markStockPassiveKillHearts = value);
+		changed |= normalizeNonNegative(ability.markStockHostileKillHearts, value -> ability.markStockHostileKillHearts = value);
+		changed |= normalizeNonNegative(ability.markStockBossKillHearts, value -> ability.markStockBossKillHearts = value);
+		changed |= normalizeNonNegative(ability.markStockPlayerKillHearts, value -> ability.markStockPlayerKillHearts = value);
 		changed |= normalizeNonNegative(ability.markShieldBashRangeBlocks, value -> ability.markShieldBashRangeBlocks = value);
 		changed |= normalizeNonNegative(ability.markShieldBashAngleDegrees, value -> ability.markShieldBashAngleDegrees = value);
 		changed |= normalizeNonNegative(ability.markShieldBashForwardImpulseBlocks, value -> ability.markShieldBashForwardImpulseBlocks = value);
@@ -227,6 +231,10 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.markShieldBashGoldenKnockbackBlocks, value -> ability.markShieldBashGoldenKnockbackBlocks = value);
 		changed |= normalizeNonNegative(ability.markShieldBashDiamondKnockbackBlocks, value -> ability.markShieldBashDiamondKnockbackBlocks = value);
 		changed |= normalizeNonNegative(ability.markShieldBashNetheriteKnockbackBlocks, value -> ability.markShieldBashNetheriteKnockbackBlocks = value);
+		changed |= normalizeNonNegative(ability.milkDefenseTeleportDistanceBlocks, value -> ability.milkDefenseTeleportDistanceBlocks = value);
+		changed |= normalizeNonNegative(ability.milkPocketRecentDamageLockSeconds, value -> ability.milkPocketRecentDamageLockSeconds = value);
+		changed |= normalizeNonNegative(ability.milkStockAvoidRadiusBlocks, value -> ability.milkStockAvoidRadiusBlocks = value);
+		changed |= normalizeNonNegative(ability.milkMouseSilverfishCount, (java.util.function.IntConsumer) value -> ability.milkMouseSilverfishCount = value);
 		changed |= normalizeNonNegative(ability.jetpackMaxRiseBlocks, value -> ability.jetpackMaxRiseBlocks = value);
 		changed |= normalizeChance(ability.repulsorNaturalLightningChargeChance, value -> ability.repulsorNaturalLightningChargeChance = value);
 		changed |= normalizeNonNegative(ability.gennadiyDonkeyMaxAmmo, (java.util.function.IntConsumer) value -> ability.gennadiyDonkeyMaxAmmo = value);
@@ -412,6 +420,10 @@ public final class RaceConfig {
 			addDoubleIfNonZero(json, "markRagePlayerKillPoints", ability.markRagePlayerKillPoints);
 			addDoubleIfNonZero(json, "markRageDrainPointsPerSecond", ability.markRageDrainPointsPerSecond);
 			addDoubleIfNonZero(json, "markRageExhaustionSeconds", ability.markRageExhaustionSeconds);
+			addDoubleIfNonZero(json, "markStockPassiveKillHearts", ability.markStockPassiveKillHearts);
+			addDoubleIfNonZero(json, "markStockHostileKillHearts", ability.markStockHostileKillHearts);
+			addDoubleIfNonZero(json, "markStockBossKillHearts", ability.markStockBossKillHearts);
+			addDoubleIfNonZero(json, "markStockPlayerKillHearts", ability.markStockPlayerKillHearts);
 			addDoubleIfNonZero(json, "markShieldBashRangeBlocks", ability.markShieldBashRangeBlocks);
 			addDoubleIfNonZero(json, "markShieldBashAngleDegrees", ability.markShieldBashAngleDegrees);
 			addDoubleIfNonZero(json, "markShieldBashForwardImpulseBlocks", ability.markShieldBashForwardImpulseBlocks);
@@ -419,6 +431,10 @@ public final class RaceConfig {
 			addDoubleIfNonZero(json, "markShieldBashGoldenKnockbackBlocks", ability.markShieldBashGoldenKnockbackBlocks);
 			addDoubleIfNonZero(json, "markShieldBashDiamondKnockbackBlocks", ability.markShieldBashDiamondKnockbackBlocks);
 			addDoubleIfNonZero(json, "markShieldBashNetheriteKnockbackBlocks", ability.markShieldBashNetheriteKnockbackBlocks);
+			addDoubleIfNonZero(json, "milkDefenseTeleportDistanceBlocks", ability.milkDefenseTeleportDistanceBlocks);
+			addDoubleIfNonZero(json, "milkPocketRecentDamageLockSeconds", ability.milkPocketRecentDamageLockSeconds);
+			addDoubleIfNonZero(json, "milkStockAvoidRadiusBlocks", ability.milkStockAvoidRadiusBlocks);
+			addIntIfNonZero(json, "milkMouseSilverfishCount", ability.milkMouseSilverfishCount);
 			addDoubleIfNonZero(json, "jetpackMaxRiseBlocks", ability.jetpackMaxRiseBlocks);
 			addIntIfNonZero(json, "repulsorMaxCharges", ability.repulsorMaxCharges);
 			addIntIfNonZero(json, "repulsorCopperIngotChargeRestore", ability.repulsorCopperIngotChargeRestore);
@@ -582,6 +598,10 @@ public final class RaceConfig {
 		public double markRagePlayerKillPoints = 0.0D;
 		public double markRageDrainPointsPerSecond = 0.0D;
 		public double markRageExhaustionSeconds = 0.0D;
+		public double markStockPassiveKillHearts = 0.0D;
+		public double markStockHostileKillHearts = 0.0D;
+		public double markStockBossKillHearts = 0.0D;
+		public double markStockPlayerKillHearts = 0.0D;
 		public double markShieldBashRangeBlocks = 0.0D;
 		public double markShieldBashAngleDegrees = 0.0D;
 		public double markShieldBashForwardImpulseBlocks = 0.0D;
@@ -589,6 +609,10 @@ public final class RaceConfig {
 		public double markShieldBashGoldenKnockbackBlocks = 0.0D;
 		public double markShieldBashDiamondKnockbackBlocks = 0.0D;
 		public double markShieldBashNetheriteKnockbackBlocks = 0.0D;
+		public double milkDefenseTeleportDistanceBlocks = 0.0D;
+		public double milkPocketRecentDamageLockSeconds = 0.0D;
+		public double milkStockAvoidRadiusBlocks = 0.0D;
+		public int milkMouseSilverfishCount = 0;
 		public double jetpackMaxRiseBlocks = 0.0D;
 		public int repulsorMaxCharges = 0;
 		public int repulsorCopperIngotChargeRestore = 0;

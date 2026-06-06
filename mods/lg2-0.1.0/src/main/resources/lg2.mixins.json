@@ -59,8 +59,10 @@
 		"LivingEntityTrackedDataAccessor",
 		"LivingEntityGennadiyDefenseEffectMixin",
 		"LivingEntityGennadiyDefenseKnockbackMixin",
+		"LivingEntityMarkStockHealingMixin",
 		"LivingEntityStabilityLuckMixin",
 		"LivingEntityTrojanRoosterInvulnerabilityMixin",
+		"LevelMilkPocketBuildZoneMixin",
 		"MerchantMenuAccessor",
 		"MsgCommandMixin",
 		"MinecraftServerRendererBotStatusMixin",
@@ -70,7 +72,11 @@
 		"PlayerCocaineSprintMixin",
 		"PlayerContainerMenuAccessor",
 		"PlayerTrackedDataAccessor",
+<<<<<<< HEAD
 		"PlaySoundCommandRendererBotAudioMixin",
+=======
+		"PistonStructureResolverMilkPocketMixin",
+>>>>>>> origin/main
 		"PotionBrewingStabilityMixin",
 		"RabbitAccessor",
 		"RabbitNaturalSpawnMarkerMixin",
@@ -95,6 +101,7 @@
 		"ServerPlayerRendererBotListingMixin",
 		"ServerPlayerCartelRecipeBookMixin",
 		"ServerPlayerBackroomsRespawnMixin",
+		"ServerPlayerMarkKillMixin",
 		"ServerPlayerGameModeCopperManRepulsorMixin",
 		"ServerPlayerMenuTitleMixin",
 		"ShieldDecorationRecipeMarkShieldMixin",

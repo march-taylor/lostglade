@@ -235,7 +235,7 @@
       "enabled": true,
       "id": "gennadiy_sharoyobov",
       "displayName": "Генадий Шароёбов",
-      "ownerNickname": "Rajas_YT",
+      "ownerNickname": "pines4",
       "description": "Дотер придет...",
       "attack": {
         "enabled": true,
@@ -346,8 +346,7 @@
         "name": "Оу, щит",
         "description": "Вы можете крафтить щиты из любых материалов. Прочность и сила отбрасывания зависят от материала. Начиная с железного, щитом можно оттолкнуть врага.",
         "priceBitcoins": 1500,
-        "cooldownSeconds": 20.0,
-        "markShieldBashRangeBlocks": 3.0,
+        "markShieldBashRangeBlocks": 2.0,
         "markShieldBashAngleDegrees": 90.0,
         "markShieldBashForwardImpulseBlocks": 1.0,
         "markShieldBashIronKnockbackBlocks": 4.0,
@@ -359,7 +358,60 @@
         "enabled": true,
         "abilityId": "mark_potroshitel_stock",
         "name": "Большой и злой",
-        "description": ""
+        "description": "Марк не восстанавливает здоровье и голод обычными способами. Вместо этого он питается убийствами и не может пользоваться дальнобойным оружием.",
+        "markStockPassiveKillHearts": 0.5,
+        "markStockHostileKillHearts": 1.0,
+        "markStockBossKillHearts": 5.0,
+        "markStockPlayerKillHearts": 10.0
+      }
+    },
+    {
+      "enabled": true,
+      "id": "milk_oligarch",
+      "displayName": "Молочный Олигарх",
+      "ownerNickname": "Rajas_YT",
+      "description": "",
+      "attack": {
+        "enabled": true,
+        "abilityId": "milk_oligarch_attack",
+        "name": "Абсолют",
+        "description": "Мгновенно убивает любого моба или игрока рядом. Но вы навсегда теряете 1 сердце максимального здоровья.",
+        "priceBitcoins": 300
+      },
+      "defense": {
+        "enabled": true,
+        "abilityId": "milk_oligarch_defense",
+        "name": "Хоп, хоп",
+        "description": "Вы входите в состояние уворота на 30 секунд. При ближней атаке вы мгновенно телепортируетесь за спину атакующего с фиксацией прицела.",
+        "priceBitcoins": 600,
+        "cooldownSeconds": 300.0,
+        "durationSeconds": 20.0,
+        "milkDefenseTeleportDistanceBlocks": 3.0
+      },
+        "uniqueAbility": {
+          "enabled": true,
+          "abilityId": "milk_oligarch_unique",
+          "name": "Мистер Мыша",
+          "description": "Вы разваливаетесь на дюжину чешуйниц, превращаясь в одну из них. При получении урона либо по окончании способности вы возвращаетесь в свою форму.",
+          "priceBitcoins": 1000,
+          "cooldownSeconds": 600.0,
+          "durationSeconds": 15.0,
+          "milkMouseSilverfishCount": 12
+        },
+      "shnyaga": {
+        "enabled": true,
+        "abilityId": "milk_oligarch_shnyaga",
+        "name": "Карманное измерение",
+        "description": "Вы можете попасть в своё личное измерение. Можно приглашать туда других игроков. Вход: Сунурп. Выход: Сулам.",
+        "priceBitcoins": 1500,
+        "milkPocketRecentDamageLockSeconds": 10.0
+      },
+      "stock": {
+        "enabled": true,
+        "abilityId": "milk_oligarch_stock",
+        "name": "Слишком крутой",
+        "description": "Слишком крут, чтобы с кем-то драться, даже эффекты не нужны.",
+        "milkStockAvoidRadiusBlocks": 5.0
       }
     }
   ]

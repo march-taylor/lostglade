@@ -1,15 +1,18 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.ServerMechanicsGateSystem;
+import com.lostglade.server.ServerMilkPocketDimensionSystem;
 import com.lostglade.server.ServerRaceSystem;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
@@ -18,13 +21,34 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class BlockItemPlacementGateMixin {
 	private static final ThreadLocal<BlockPos> LG2_CARTEL_FERN_PLACEMENT_POS = new ThreadLocal<>();
 
+	@Shadow
+	public abstract BlockPlaceContext updatePlacementContext(BlockPlaceContext context);
+
+	@Shadow
+	protected abstract BlockState getPlacementState(BlockPlaceContext context);
+
+	@Shadow
+	protected abstract boolean canPlace(BlockPlaceContext context, BlockState state);
+
 	@Inject(method = "place", at = @At("HEAD"), cancellable = true)
 	private void lg2$blockLockedMechanicPlacement(BlockPlaceContext context, CallbackInfoReturnable<InteractionResult> cir) {
-		if (context == null || context.getLevel().isClientSide()) {
+		if (context == null) {
 			return;
 		}
 
 		BlockItem blockItem = (BlockItem) (Object) this;
+		if (lg2$shouldCancelMilkPocketPlacement(context)) {
+			if (!context.getLevel().isClientSide() && context.getPlayer() instanceof ServerPlayer serverPlayer) {
+				ServerMechanicsGateSystem.syncPlayerInventory(serverPlayer);
+			}
+			cir.setReturnValue(InteractionResult.FAIL);
+			return;
+		}
+
+		if (context.getLevel().isClientSide()) {
+			return;
+		}
+
 		if (blockItem.getBlock() == Blocks.FERN) {
 			LG2_CARTEL_FERN_PLACEMENT_POS.set(lg2$resolvePlacementPos(context));
 		}
@@ -37,6 +61,12 @@ public abstract class BlockItemPlacementGateMixin {
 					return;
 				}
 				ServerMechanicsGateSystem.beginTrackedGolemHeadPlacement(serverPlayer, blockItem);
+				return;
+			}
+			if (ServerMilkPocketDimensionSystem.isPhantomFloorBlockPlacement(context)
+					&& !lg2$canPlaceOnMilkPocketPhantomFloor(context)) {
+				ServerMechanicsGateSystem.syncPlayerInventory(serverPlayer);
+				cir.setReturnValue(InteractionResult.FAIL);
 				return;
 			}
 			if (!ServerMechanicsGateSystem.canPlaceBlock(serverPlayer, context, blockItem.getBlock())) {
@@ -57,6 +87,13 @@ public abstract class BlockItemPlacementGateMixin {
 			ServerMechanicsGateSystem.completeTrackedGolemHeadPlacement();
 		}
 		try {
+			if (context != null
+					&& !context.getLevel().isClientSide()
+					&& context.getPlayer() instanceof ServerPlayer serverPlayer
+					&& ServerMilkPocketDimensionSystem.isPhantomFloorBlockPlacement(context)
+					&& !cir.getReturnValue().consumesAction()) {
+				ServerMechanicsGateSystem.syncPlayerInventory(serverPlayer);
+			}
 			if (blockItem.getBlock() == Blocks.FERN
 					&& cir.getReturnValue().consumesAction()
 					&& context != null
@@ -84,5 +121,35 @@ public abstract class BlockItemPlacementGateMixin {
 			return clickedPos;
 		}
 		return clickedPos.relative(context.getClickedFace());
+	}
+
+	private boolean lg2$canPlaceOnMilkPocketPhantomFloor(BlockPlaceContext context) {
+		if (context == null || !context.canPlace()) {
+			return false;
+		}
+		BlockPlaceContext updatedContext = this.updatePlacementContext(context);
+		if (updatedContext == null || !ServerMilkPocketDimensionSystem.isPhantomFloorBlockPlacement(updatedContext)) {
+			return false;
+		}
+		BlockState placementState = this.getPlacementState(updatedContext);
+		return placementState != null
+				&& this.canPlace(updatedContext, placementState)
+				&& ServerMilkPocketDimensionSystem.canPlaceBlockOnPhantomFloor(updatedContext, placementState);
+	}
+
+	private boolean lg2$shouldCancelMilkPocketPlacement(BlockPlaceContext context) {
+		if (context == null || !ServerMilkPocketDimensionSystem.isMilkPocket(context.getLevel())) {
+			return false;
+		}
+
+		BlockPlaceContext updatedContext = this.updatePlacementContext(context);
+		if (updatedContext == null) {
+			return false;
+		}
+		BlockState placementState = this.getPlacementState(updatedContext);
+		if (placementState == null) {
+			return false;
+		}
+		return !ServerMilkPocketDimensionSystem.canPlaceBlockInBuildZone(updatedContext, placementState);
 	}
 }

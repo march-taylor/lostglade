@@ -1,0 +1,17 @@
+{
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "lg2:font/milk_pocket_menu.png",
+      "ascent": 9,
+      "height": 79,
+      "chars": [
+        "\uef30"
+      ]
+    },
+    {
+      "type": "reference",
+      "id": "minecraft:default"
+    }
+  ]
+}
