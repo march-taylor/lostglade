@@ -544,7 +544,7 @@ public final class DroneSystem {
 		cameraAnchor.addTag(DRONE_CAMERA_OWNER_TAG_PREFIX + root.getUUID());
 		CAMERA_ANCHORS_BY_DRONE.put(root.getUUID(), cameraAnchor.getUUID());
 		syncDroneDisplayLayers(root);
-		syncDroneDisplay(root, yRot, 0.0F, 0.0D, 0.0D);
+		syncDroneDisplay(root, yRot, 0.0F, 0.0D, 0.0D, false);
 		UncontrolledDroneState uncontrolledState = new UncontrolledDroneState(root.getUUID(), serverLevel.dimension(), Vec3.ZERO, yRot, 0.0F);
 		uncontrolledState.setLastPosition(root.position());
 		UNCONTROLLED_DRONES.put(root.getUUID(), uncontrolledState);
@@ -1900,7 +1900,7 @@ public final class DroneSystem {
 		);
 		session.setDisplayForwardDrive(displayForwardDrive);
 		session.setDisplayStrafeDrive(displayStrafeDrive);
-		syncDroneDisplay(root, session.proxyYaw(), session.proxyPitch(), displayForwardDrive, displayStrafeDrive);
+		syncDroneDisplay(root, session.proxyYaw(), session.proxyPitch(), displayForwardDrive, displayStrafeDrive, true);
 	}
 
 	private static boolean handleControlledServerCollision(
@@ -2654,7 +2654,7 @@ public final class DroneSystem {
 			state.setDisplayForwardDrive(displayForwardDrive);
 			state.setDisplayStrafeDrive(displayStrafeDrive);
 		}
-		syncDroneDisplay(root, root.getYRot(), root.getXRot(), displayForwardDrive, displayStrafeDrive);
+		syncDroneDisplay(root, root.getYRot(), root.getXRot(), displayForwardDrive, displayStrafeDrive, holdWithoutGravity);
 		syncDroneCameraAnchor(root, actualMovement);
 		state.setLastPosition(root.position());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
@@ -3045,7 +3045,7 @@ public final class DroneSystem {
 		root.setXRot(0.0F);
 		root.setDeltaMovement(Vec3.ZERO);
 		root.hurtMarked = true;
-		syncDroneDisplay(root, root.getYRot(), 0.0F, 0.0D, 0.0D);
+		syncDroneDisplay(root, root.getYRot(), 0.0F, 0.0D, 0.0D, false);
 		syncDroneCameraAnchor(root, Vec3.ZERO);
 		state.setLastPosition(root.position());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
@@ -3186,7 +3186,7 @@ public final class DroneSystem {
 		uncontrolledState.setLastPosition(root.position());
 		UNCONTROLLED_DRONES.putIfAbsent(root.getUUID(), uncontrolledState);
 		syncDroneDisplayLayers(root);
-		syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
+		syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D, false);
 		syncDroneCameraAnchor(root, root.getDeltaMovement());
 	}
 
@@ -4314,7 +4314,7 @@ public final class DroneSystem {
 			session.setAutoAimTarget(previousUncontrolledState.autoAimTarget());
 			restoreControlledDrivesFromUncontrolledState(session, previousUncontrolledState, root.getYRot(), root.getXRot());
 		}
-		syncDroneDisplay(root, root.getYRot(), root.getXRot(), session.displayForwardDrive(), session.displayStrafeDrive());
+		syncDroneDisplay(root, root.getYRot(), root.getXRot(), session.displayForwardDrive(), session.displayStrafeDrive(), true);
 		VISUALLY_CONTROLLED_PLAYERS.add(player.getUUID());
 		ACTIVE_SESSIONS.put(player.getUUID(), session);
 		INPUTS.put(player.getUUID(), DroneInputState.EMPTY);
@@ -4403,7 +4403,7 @@ public final class DroneSystem {
 			uncontrolledState.setLastSurfaceWearContactTick(session.lastSurfaceWearContactTick());
 			UNCONTROLLED_DRONES.put(root.getUUID(), uncontrolledState);
 			syncDroneDisplayLayers(root);
-			syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
+			syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D, true);
 			syncDroneCameraAnchor(root, releasedVelocity);
 			notifyDroneNetworkChanged(root);
 		} else {
@@ -5507,6 +5507,17 @@ public final class DroneSystem {
 	}
 
 	private static void syncDroneDisplay(Entity root, float yRot, float xRot, double forwardDrive, double strafeDrive) {
+		syncDroneDisplay(root, yRot, xRot, forwardDrive, strafeDrive, false);
+	}
+
+	private static void syncDroneDisplay(
+			Entity root,
+			float yRot,
+			float xRot,
+			double forwardDrive,
+			double strafeDrive,
+			boolean propellersShouldSpin
+	) {
 		List<Display.ItemDisplay> displays = findDroneDisplayLayers(root);
 		if (displays.isEmpty()) {
 			syncDroneDisplayLayers(root);
@@ -5515,7 +5526,7 @@ public final class DroneSystem {
 		boolean controlled = isDroneActivelyControlled(root);
 		DyeColor paintColor = resolveDronePaintColor(root);
 		int cameraPitch = visualDroneCameraPitch(xRot);
-		DronePropellerVisual propellerVisual = updateDronePropellerVisual(root, forwardDrive, strafeDrive);
+		DronePropellerVisual propellerVisual = updateDronePropellerVisual(root, propellersShouldSpin);
 		float visualPitch = root != null && root.onGround()
 				? 0.0F
 				: (controlled ? 0.0F : xRot);
@@ -5822,7 +5833,7 @@ public final class DroneSystem {
 		return net.minecraft.util.Mth.clamp(Math.round(90.0F - downwardPitch), 0, 90);
 	}
 
-	private static DronePropellerVisual updateDronePropellerVisual(Entity root, double forwardDrive, double strafeDrive) {
+	private static DronePropellerVisual updateDronePropellerVisual(Entity root, boolean propellersShouldSpin) {
 		if (root == null) {
 			return new DronePropellerVisual(0.0D);
 		}
@@ -5830,7 +5841,7 @@ public final class DroneSystem {
 				root.getUUID(),
 				uuid -> new DronePropellerAnimationState()
 		);
-		boolean active = shouldSpinDronePropellers(root);
+		boolean active = propellersShouldSpin || shouldSpinDronePropellers(root);
 		if (active) {
 			state.setSpeed(1.0D);
 		} else if (state.speed() > 0.0D) {
