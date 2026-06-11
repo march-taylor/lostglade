@@ -1,9 +1,9 @@
 {
   "format_version": "1.21.11",
-  "credit": "Lostglade drone propeller frame extracted from new base model",
+  "credit": "Lostglade drone propeller active extracted from new base model",
   "textures": {
-    "0": "lg2:item/drone_base_pink",
-    "particle": "lg2:item/drone_base_pink"
+    "0": "lg2:item/drone_propeller_left_back_pink_1",
+    "particle": "lg2:item/drone_propeller_left_back_pink_1"
   },
   "elements": [
     {
@@ -58,18 +58,18 @@
         "up": {
           "uv": [
             5.5,
-            11.0,
+            5.5,
             0.0,
-            5.5
+            0.0
           ],
           "texture": "#0"
         },
         "down": {
           "uv": [
             0.0,
+            0.0,
             5.5,
-            5.5,
-            11.0
+            5.5
           ],
           "texture": "#0"
         }

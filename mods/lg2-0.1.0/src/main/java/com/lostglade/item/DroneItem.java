@@ -343,7 +343,7 @@ public final class DroneItem extends SimplePolymerItem {
 		return Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_camera_pitch_" + net.minecraft.util.Mth.clamp(angle, 0, 90));
 	}
 
-	public static Identifier propellerLayerModel(String layerKey, DyeColor color, int frame) {
+	public static Identifier propellerLayerModel(String layerKey, DyeColor color, int state) {
 		if (!isPropellerLayerKey(layerKey)) {
 			return null;
 		}
@@ -354,7 +354,7 @@ public final class DroneItem extends SimplePolymerItem {
 						+ "_"
 						+ resolveDisplayColorName(color)
 						+ "_"
-						+ net.minecraft.util.Mth.clamp(frame, 0, 2)
+						+ net.minecraft.util.Mth.clamp(state, 0, 1)
 		);
 	}
 

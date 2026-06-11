@@ -27,6 +27,7 @@ BASE_TEXTURE_ID_PREFIX = "drone_base_"
 BODY_MODEL_ID_PREFIX = "drone_body_"
 CAMERA_MODEL_ID_PREFIX = "drone_camera_pitch_"
 PROPELLER_MODEL_ID_PREFIX = "drone_propeller_"
+PROPELLER_TEXTURE_ID_PREFIX = "drone_propeller_"
 COLOR_LIFT_FLOOR = 120
 
 COLOR_NAMES = (
@@ -48,11 +49,18 @@ COLOR_NAMES = (
 	"black",
 )
 
-PROPELLER_FRAME_UVS = (
-	[0.0, 0.0, 5.5, 5.5],
-	[0.0, 5.5, 5.5, 11.0],
-	[5.5, 8.0, 11.0, 13.5],
+PROPELLER_MODEL_UV = [0.0, 0.0, 5.5, 5.5]
+PROPELLER_FRAME_BOXES = (
+	(0, 0, 11, 11),
+	(0, 11, 11, 22),
+	(11, 16, 22, 27),
 )
+PROPELLER_ACTIVE_FRAME_ORDER_BY_NAME = {
+	"right_front": (0, 1, 2),
+	"left_back": (0, 1, 2),
+	"right_back": (0, 2, 1),
+	"left_front": (0, 2, 1),
+}
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -110,6 +118,44 @@ def remap_intensity(intensity: int, source_min: int, source_max: int, lifted_min
 	return round(
 		lifted_min
 		+ (source_max - lifted_min) * (clamped - source_min) / (source_max - source_min)
+	)
+
+
+def propeller_animation_frame_order(propeller_name: str) -> tuple[int, int, int]:
+	order = PROPELLER_ACTIVE_FRAME_ORDER_BY_NAME.get(propeller_name)
+	if order is None:
+		raise ValueError(f"Unknown propeller name: {propeller_name}")
+	return order
+
+
+def propeller_frame_canvas(source: Image.Image, frame_box: tuple[int, int, int, int]) -> Image.Image:
+	canvas = Image.new("RGBA", source.size)
+	# Vanilla animated textures only cycle the sprite frame; the content has to stay
+	# anchored in the same UV area for every frame.
+	canvas.paste(source.crop(frame_box), (0, 0))
+	return canvas
+
+
+def propeller_idle_texture(source: Image.Image) -> Image.Image:
+	return propeller_frame_canvas(source, PROPELLER_FRAME_BOXES[0])
+
+
+def propeller_active_texture_sheet(source: Image.Image) -> Image.Image:
+	sheet = Image.new("RGBA", (source.width, source.height * len(PROPELLER_FRAME_BOXES)))
+	for frame_index, frame_box in enumerate(PROPELLER_FRAME_BOXES):
+		sheet.paste(propeller_frame_canvas(source, frame_box), (0, source.height * frame_index))
+	return sheet
+
+
+def write_animation_mcmeta(texture_path: Path, frame_order: tuple[int, int, int]) -> None:
+	write_json(
+		texture_path.with_suffix(texture_path.suffix + ".mcmeta"),
+		{
+			"animation": {
+				"frametime": 1,
+				"frames": list(frame_order),
+			},
+		},
 	)
 
 
@@ -324,9 +370,13 @@ def main() -> None:
 		texture_id = f"{BASE_TEXTURE_ID_PREFIX}{color_name}"
 		texture_path = TEXTURES_DIR / f"{texture_id}.png"
 		if color_name == "red":
-			lift_source_texture(source_image, source_min_intensity, source_max_intensity).save(texture_path)
+			colored_source = lift_source_texture(source_image, source_min_intensity, source_max_intensity)
 		else:
-			recolor_base_texture(source_image, color_targets[color_name], source_min_intensity, source_max_intensity).save(texture_path)
+			colored_source = recolor_base_texture(source_image, color_targets[color_name], source_min_intensity, source_max_intensity)
+		if color_name == "red":
+			colored_source.save(texture_path)
+		else:
+			colored_source.save(texture_path)
 
 		body_model_id = f"{BODY_MODEL_ID_PREFIX}{color_name}"
 		write_json(
@@ -345,30 +395,53 @@ def main() -> None:
 		write_json(ITEM_DEFS_DIR / f"{body_model_id}.json", model_definition(body_model_id))
 
 		for propeller_name, propeller in propeller_by_name.items():
-			for frame_index, propeller_uv in enumerate(PROPELLER_FRAME_UVS):
-				propeller_element = copy.deepcopy(propeller)
-				propeller_element["faces"]["up"]["uv"] = [
-					propeller_uv[2],
-					propeller_uv[3],
-					propeller_uv[0],
-					propeller_uv[1],
-				]
-				propeller_element["faces"]["down"]["uv"] = list(propeller_uv)
-				model_id = f"{PROPELLER_MODEL_ID_PREFIX}{propeller_name}_{color_name}_{frame_index}"
-				write_json(
-					ITEM_MODELS_DIR / f"{model_id}.json",
-					build_model(
-						"Lostglade drone propeller frame extracted from new base model",
-						f"lg2:item/{texture_id}",
-						[
-							bb_element_to_model_element(
-								propeller_element,
-								{texture_index: "0" for texture_index in range(len(texture_index_map))},
-							)
-						],
-					),
-				)
-				write_json(ITEM_DEFS_DIR / f"{model_id}.json", model_definition(model_id))
+			propeller_element = copy.deepcopy(propeller)
+			propeller_element["faces"]["up"]["uv"] = [
+				PROPELLER_MODEL_UV[2],
+				PROPELLER_MODEL_UV[3],
+				PROPELLER_MODEL_UV[0],
+				PROPELLER_MODEL_UV[1],
+			]
+			propeller_element["faces"]["down"]["uv"] = list(PROPELLER_MODEL_UV)
+			propeller_texture_base = f"{PROPELLER_TEXTURE_ID_PREFIX}{propeller_name}_{color_name}"
+			idle_texture_id = f"{propeller_texture_base}_0"
+			idle_texture_path = TEXTURES_DIR / f"{idle_texture_id}.png"
+			propeller_idle_texture(colored_source).save(idle_texture_path)
+			idle_model_id = f"{PROPELLER_MODEL_ID_PREFIX}{propeller_name}_{color_name}_0"
+			write_json(
+				ITEM_MODELS_DIR / f"{idle_model_id}.json",
+				build_model(
+					"Lostglade drone propeller idle extracted from new base model",
+					f"lg2:item/{idle_texture_id}",
+					[
+						bb_element_to_model_element(
+							propeller_element,
+							{texture_index: "0" for texture_index in range(len(texture_index_map))},
+						)
+					],
+				),
+			)
+			write_json(ITEM_DEFS_DIR / f"{idle_model_id}.json", model_definition(idle_model_id))
+
+			active_texture_id = f"{propeller_texture_base}_1"
+			active_texture_path = TEXTURES_DIR / f"{active_texture_id}.png"
+			propeller_active_texture_sheet(colored_source).save(active_texture_path)
+			write_animation_mcmeta(active_texture_path, propeller_animation_frame_order(propeller_name))
+			active_model_id = f"{PROPELLER_MODEL_ID_PREFIX}{propeller_name}_{color_name}_1"
+			write_json(
+				ITEM_MODELS_DIR / f"{active_model_id}.json",
+				build_model(
+					"Lostglade drone propeller active extracted from new base model",
+					f"lg2:item/{active_texture_id}",
+					[
+						bb_element_to_model_element(
+							propeller_element,
+							{texture_index: "0" for texture_index in range(len(texture_index_map))},
+						)
+					],
+				),
+			)
+			write_json(ITEM_DEFS_DIR / f"{active_model_id}.json", model_definition(active_model_id))
 
 
 if __name__ == "__main__":
