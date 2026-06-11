@@ -185,6 +185,9 @@ public final class DroneSystem {
 	// The fixed item-display pivot sits on the middle of the extracted rig.
 	// Lift the display just enough so the lowest visible geometry rests on the ground.
 	private static final float DRONE_DISPLAY_Y_OFFSET = 0.13125F;
+	// Additional lift for module variants that hang lower than the base rig.
+	private static final double DRONE_KAMIKAZE_VISUAL_LIFT = 0.24375D;
+	private static final double DRONE_TURRET_VISUAL_LIFT = 0.2125D;
 	private static final int DRONE_DISPLAY_INTERPOLATION_TICKS = 2;
 	private static final float DRONE_DISPLAY_DRIVE_SMOOTHING = 0.35F;
 	private static final float DRONE_MAX_TILT_DEGREES = 32.0F;
@@ -526,9 +529,15 @@ public final class DroneSystem {
 				yRot,
 				0.0F,
 				DroneItem.createDisplayStack(ModItems.DRONE, droneType, kamikazePower, nightVision, autoAim, paintColor),
-				DRONE_DISPLAY_LAYER_BASE
+				DRONE_DISPLAY_LAYER_BASE,
+				resolveDroneDisplayYOffset(droneType)
 		);
-		Interaction cameraAnchor = createDroneCameraAnchor(serverLevel, droneCameraOrigin(spawnPos), yRot, 0.0F);
+		Interaction cameraAnchor = createDroneCameraAnchor(
+				serverLevel,
+				droneCameraOrigin(spawnPos, resolveDroneVisualLift(droneType)),
+				yRot,
+				0.0F
+		);
 		serverLevel.addFreshEntity(root);
 		serverLevel.addFreshEntity(display);
 		serverLevel.addFreshEntity(cameraAnchor);
@@ -3802,7 +3811,10 @@ public final class DroneSystem {
 		if (!hasDroneAutoAimModule(root)) {
 			return InteractionResult.PASS;
 		}
-		Vec3 origin = resolveSafeDroneCameraOrigin(root, droneCameraOrigin(finiteVecOr(session.proxyPos(), root.position())));
+		Vec3 origin = resolveSafeDroneCameraOrigin(
+				root,
+				droneCameraOrigin(finiteVecOr(session.proxyPos(), root.position()), resolveDroneVisualLift(root))
+		);
 		Vec3 direction = controlledTurretDirection(player, session);
 		Vec3 end = origin.add(direction.scale(DRONE_AUTO_AIM_SELECTION_RANGE_BLOCKS));
 		BlockHitResult blockHit = level.clip(new ClipContext(origin, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, root));
@@ -4582,9 +4594,9 @@ public final class DroneSystem {
 			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
 			return tryArmDroneWithTnt(player, root, heldStack);
 		}
-		if (heldStack.is(Items.STRING)) {
+		if (heldStack.is(Items.RABBIT_HIDE)) {
 			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
-			return tryInstallDroneType(player, root, heldStack, DroneItem.DroneType.KAMIKAZE, Items.STRING);
+			return tryInstallDroneType(player, root, heldStack, DroneItem.DroneType.KAMIKAZE, Items.RABBIT_HIDE);
 		}
 		if (heldStack.is(Items.DISPENSER)) {
 			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
@@ -4640,9 +4652,6 @@ public final class DroneSystem {
 		if (player == null || root == null || heldStack == null || targetType == null || installedItem == null) {
 			return InteractionResult.PASS;
 		}
-		if (targetType == DroneItem.DroneType.KAMIKAZE && !ServerUpgradeUiSystem.hasUpgrade(player, IT_DRONE_KAMIKAZE)) {
-			return InteractionResult.PASS;
-		}
 
 		DroneItem.DroneType currentType = resolveDroneType(root);
 		if (currentType == targetType) {
@@ -4653,7 +4662,7 @@ public final class DroneSystem {
 		}
 
 		Item returnedTypeItem = switch (currentType) {
-			case KAMIKAZE -> Items.STRING;
+			case KAMIKAZE -> Items.RABBIT_HIDE;
 			case COMBAT -> Items.DISPENSER;
 			default -> null;
 		};
@@ -4762,7 +4771,7 @@ public final class DroneSystem {
 		}
 		if (currentType == DroneItem.DroneType.KAMIKAZE) {
 			setDroneType(root, DroneItem.DroneType.NORMAL);
-			giveOrDropTuningItem(player, root, Items.STRING);
+			giveOrDropTuningItem(player, root, Items.RABBIT_HIDE);
 			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
 			notifyDroneNetworkChanged(root);
 			return InteractionResult.SUCCESS;
@@ -4815,7 +4824,7 @@ public final class DroneSystem {
 		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
 			return null;
 		}
-		return resolveDroneType(root) == DroneItem.DroneType.KAMIKAZE ? IT_DRONE_KAMIKAZE : IT_DRONE_SCOUT;
+		return IT_DRONE_SCOUT;
 	}
 
 	private static ItemStack buildDroneDropStack(Entity root) {
@@ -5086,9 +5095,9 @@ public final class DroneSystem {
 	}
 
 	private static Vec3 controlledTurretMuzzleOrigin(Entity root, DroneControlSession session, Vec3 direction) {
-		Vec3 fallback = root == null ? Vec3.ZERO : droneCameraOrigin(root);
+		Vec3 fallback = root == null ? Vec3.ZERO : root.position();
 		Vec3 base = session == null ? fallback : finiteVecOr(session.proxyPos(), fallback);
-		return droneCameraOrigin(base).add(direction.normalize().scale(DRONE_TURRET_MUZZLE_FORWARD_OFFSET));
+		return droneCameraOrigin(base, resolveDroneVisualLift(root)).add(direction.normalize().scale(DRONE_TURRET_MUZZLE_FORWARD_OFFSET));
 	}
 
 	private static Projectile createDroneTurretProjectile(
@@ -5161,7 +5170,10 @@ public final class DroneSystem {
 			return;
 		}
 		Vec3 look = controlledTurretDirection(player, session);
-		Vec3 cameraOrigin = droneCameraOrigin(finiteVecOr(session.proxyPos(), root.position()));
+		Vec3 cameraOrigin = droneCameraOrigin(
+				finiteVecOr(session.proxyPos(), root.position()),
+				resolveDroneVisualLift(root)
+		);
 		Vec3 pos = cameraOrigin
 				.add(look.normalize().scale(DRONE_TURRET_AIR_TRIGGER_HEAD_FORWARD_OFFSET))
 				.subtract(0.0D, DRONE_TURRET_AIR_TRIGGER_HEIGHT * 0.5D, 0.0D);
@@ -5455,12 +5467,13 @@ public final class DroneSystem {
 			float yRot,
 			float xRot,
 			ItemStack displayStack,
-			String layerKey
+			String layerKey,
+			double displayYOffset
 	) {
 		Display.ItemDisplay display = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
 		display.addTag(DRONE_DISPLAY_TAG);
 		display.addTag(DRONE_DISPLAY_LAYER_TAG_PREFIX + (layerKey == null || layerKey.isBlank() ? DRONE_DISPLAY_LAYER_BASE : layerKey));
-		display.setPos(position.x, position.y + DRONE_DISPLAY_Y_OFFSET, position.z);
+		display.setPos(position.x, position.y + displayYOffset, position.z);
 		display.setYRot(yRot);
 		display.setXRot(xRot);
 		display.setYHeadRot(yRot);
@@ -5515,12 +5528,15 @@ public final class DroneSystem {
 			displays = findDroneDisplayLayers(root);
 		}
 		boolean controlled = isDroneActivelyControlled(root);
+		DroneItem.DroneType droneType = resolveDroneType(root);
+		int kamikazePower = resolveDroneKamikazePower(root);
 		DyeColor paintColor = resolveDronePaintColor(root);
 		int cameraPitch = visualDroneCameraPitch(xRot);
-		boolean propellersActive = propellersShouldSpin || shouldSpinDronePropellers(root);
+		boolean propellersActive = propellersShouldSpin;
 		float visualPitch = root != null && root.onGround()
 				? 0.0F
 				: (controlled ? 0.0F : xRot);
+		double displayYOffset = resolveDroneDisplayYOffset(droneType);
 		for (Display.ItemDisplay display : displays) {
 			if (display.isPassenger()) {
 				display.stopRiding();
@@ -5530,9 +5546,9 @@ public final class DroneSystem {
 			display.setTransformationInterpolationDuration(DRONE_DISPLAY_INTERPOLATION_TICKS);
 			display.setYRot(yRot);
 			display.setXRot(visualPitch);
-			applyDynamicDroneDisplayLayer(display, paintColor, cameraPitch, propellersActive);
+			applyDynamicDroneDisplayLayer(display, paintColor, cameraPitch, propellersActive, kamikazePower);
 			display.setTransformation(buildDroneDisplayTransformation(root, forwardDrive, strafeDrive));
-			display.setPos(root.getX(), root.getY() + DRONE_DISPLAY_Y_OFFSET, root.getZ());
+			display.setPos(root.getX(), root.getY() + displayYOffset, root.getZ());
 			collapseDroneDisplayHitbox(display);
 		}
 	}
@@ -5755,7 +5771,15 @@ public final class DroneSystem {
 				}
 				continue;
 			}
-			Display.ItemDisplay created = createDroneDisplay(level, root.position(), root.getYRot(), root.getXRot(), entry.getValue(), layerKey);
+			Display.ItemDisplay created = createDroneDisplay(
+					level,
+					root.position(),
+					root.getYRot(),
+					root.getXRot(),
+					entry.getValue(),
+					layerKey,
+					resolveDroneDisplayYOffset(root)
+			);
 			created.addTag(DRONE_DISPLAY_OWNER_TAG_PREFIX + root.getUUID());
 			level.addFreshEntity(created);
 			if (DRONE_DISPLAY_LAYER_BASE.equals(layerKey)) {
@@ -5781,7 +5805,8 @@ public final class DroneSystem {
 			Display.ItemDisplay display,
 			DyeColor paintColor,
 			int cameraPitch,
-			boolean propellersActive
+			boolean propellersActive,
+			int kamikazePower
 	) {
 		if (display == null) {
 			return;
@@ -5794,6 +5819,10 @@ public final class DroneSystem {
 		Identifier desiredModel = null;
 		if (DroneItem.CAMERA_LAYER_KEY.equals(layerKey)) {
 			desiredModel = DroneItem.cameraLayerModelForAngle(cameraPitch);
+		} else if (DroneItem.isKamikazeLayerKey(layerKey)) {
+			desiredModel = DroneItem.kamikazeLayerModelForPower(kamikazePower);
+		} else if (DroneItem.isTurretLayerKey(layerKey)) {
+			desiredModel = DroneItem.turretLayerModelForAngle(cameraPitch);
 		} else if (DroneItem.isPropellerLayerKey(layerKey)) {
 			desiredModel = DroneItem.propellerLayerModel(
 					layerKey,
@@ -5984,11 +6013,39 @@ public final class DroneSystem {
 	}
 
 	private static Vec3 droneCameraOrigin(Entity root) {
-		return root == null ? Vec3.ZERO : droneCameraOrigin(root.position());
+		if (root == null) {
+			return Vec3.ZERO;
+		}
+		return droneCameraOrigin(root.position(), resolveDroneVisualLift(resolveDroneType(root)));
 	}
 
 	private static Vec3 droneCameraOrigin(Vec3 rootPosition) {
-		return DroneGeometry.cameraOrigin(rootPosition);
+		return droneCameraOrigin(rootPosition, 0.0D);
+	}
+
+	private static Vec3 droneCameraOrigin(Vec3 rootPosition, double additionalLift) {
+		Vec3 base = DroneGeometry.cameraOrigin(rootPosition);
+		return additionalLift == 0.0D ? base : base.add(0.0D, additionalLift, 0.0D);
+	}
+
+	private static double resolveDroneDisplayYOffset(Entity root) {
+		return resolveDroneDisplayYOffset(resolveDroneType(root));
+	}
+
+	private static double resolveDroneDisplayYOffset(DroneItem.DroneType type) {
+		return DRONE_DISPLAY_Y_OFFSET + resolveDroneVisualLift(type);
+	}
+
+	private static double resolveDroneVisualLift(Entity root) {
+		return resolveDroneVisualLift(resolveDroneType(root));
+	}
+
+	private static double resolveDroneVisualLift(DroneItem.DroneType type) {
+		return switch (type == null ? DroneItem.DroneType.NORMAL : type) {
+			case KAMIKAZE -> DRONE_KAMIKAZE_VISUAL_LIFT;
+			case COMBAT -> DRONE_TURRET_VISUAL_LIFT;
+			default -> 0.0D;
+		};
 	}
 
 	private static void notifyDroneNetworkChanged(Entity root) {

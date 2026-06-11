@@ -38,11 +38,14 @@ public final class DroneItem extends SimplePolymerItem {
 	public static final String RIGHT_BACK_PROPELLER_LAYER_KEY = "propeller_right_back";
 	public static final String LEFT_FRONT_PROPELLER_LAYER_KEY = "propeller_left_front";
 	public static final String LEFT_BACK_PROPELLER_LAYER_KEY = "propeller_left_back";
+	public static final String KAMIKAZE_LAYER_KEY = "kamikaze";
+	public static final String TURRET_LAYER_KEY = "turret";
 	private static final Identifier DEFAULT_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone");
 	private static final Identifier NORMAL_DISPLAY_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_display");
-	private static final Identifier TNT_LAYER_MODEL_ID_LEVEL_1 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_tnt_1");
-	private static final Identifier TNT_LAYER_MODEL_ID_LEVEL_2 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_tnt_2");
-	private static final Identifier TNT_LAYER_MODEL_ID_LEVEL_3 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_tnt_3");
+	private static final Identifier KAMIKAZE_LAYER_MODEL_ID_LEVEL_0 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_kamikaze_0");
+	private static final Identifier KAMIKAZE_LAYER_MODEL_ID_LEVEL_1 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_kamikaze_1");
+	private static final Identifier KAMIKAZE_LAYER_MODEL_ID_LEVEL_2 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_kamikaze_2");
+	private static final Identifier KAMIKAZE_LAYER_MODEL_ID_LEVEL_3 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_kamikaze_3");
 	private static final Identifier NIGHT_VISION_LAYER_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_night_vision");
 	private static final Identifier AUTO_AIM_LAYER_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_auto_aim");
 	private static final String DISPLAY_ROOT_TAG = "lg2_drone_display";
@@ -313,14 +316,16 @@ public final class DroneItem extends SimplePolymerItem {
 		List<DisplayLayer> layers = new ArrayList<>();
 		layers.add(new DisplayLayer(BODY_LAYER_KEY, bodyLayerModelForColor(paintColor)));
 		layers.add(new DisplayLayer(CAMERA_LAYER_KEY, cameraLayerModelForAngle(90)));
+		if (type == DroneType.KAMIKAZE) {
+			layers.add(new DisplayLayer(KAMIKAZE_LAYER_KEY, kamikazeLayerModelForPower(clampedKamikazePower(kamikazePower))));
+		}
+		if (type == DroneType.COMBAT) {
+			layers.add(new DisplayLayer(TURRET_LAYER_KEY, turretLayerModelForAngle(90)));
+		}
 		layers.add(new DisplayLayer(RIGHT_FRONT_PROPELLER_LAYER_KEY, propellerLayerModel(RIGHT_FRONT_PROPELLER_LAYER_KEY, paintColor, 0)));
 		layers.add(new DisplayLayer(RIGHT_BACK_PROPELLER_LAYER_KEY, propellerLayerModel(RIGHT_BACK_PROPELLER_LAYER_KEY, paintColor, 0)));
 		layers.add(new DisplayLayer(LEFT_FRONT_PROPELLER_LAYER_KEY, propellerLayerModel(LEFT_FRONT_PROPELLER_LAYER_KEY, paintColor, 0)));
 		layers.add(new DisplayLayer(LEFT_BACK_PROPELLER_LAYER_KEY, propellerLayerModel(LEFT_BACK_PROPELLER_LAYER_KEY, paintColor, 0)));
-		int clampedPower = net.minecraft.util.Mth.clamp(kamikazePower, NO_KAMIKAZE_POWER, MAX_KAMIKAZE_POWER);
-		if (type == DroneType.KAMIKAZE && clampedPower > 0) {
-			layers.add(new DisplayLayer("tnt", tntLayerModelForPower(clampedPower)));
-		}
 		if (nightVision) {
 			layers.add(new DisplayLayer("night_vision", NIGHT_VISION_LAYER_MODEL_ID));
 		}
@@ -356,6 +361,27 @@ public final class DroneItem extends SimplePolymerItem {
 						+ "_"
 						+ net.minecraft.util.Mth.clamp(state, 0, 1)
 		);
+	}
+
+	public static Identifier kamikazeLayerModelForPower(int power) {
+		return switch (net.minecraft.util.Mth.clamp(power, NO_KAMIKAZE_POWER, MAX_KAMIKAZE_POWER)) {
+			case 0 -> KAMIKAZE_LAYER_MODEL_ID_LEVEL_0;
+			case 1 -> KAMIKAZE_LAYER_MODEL_ID_LEVEL_1;
+			case 2 -> KAMIKAZE_LAYER_MODEL_ID_LEVEL_2;
+			default -> KAMIKAZE_LAYER_MODEL_ID_LEVEL_3;
+		};
+	}
+
+	public static Identifier turretLayerModelForAngle(int angle) {
+		return Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_turret_pitch_" + net.minecraft.util.Mth.clamp(angle, 0, 90));
+	}
+
+	public static boolean isKamikazeLayerKey(String layerKey) {
+		return KAMIKAZE_LAYER_KEY.equals(layerKey);
+	}
+
+	public static boolean isTurretLayerKey(String layerKey) {
+		return TURRET_LAYER_KEY.equals(layerKey);
 	}
 
 	public static boolean isPropellerLayerKey(String layerKey) {
@@ -453,12 +479,8 @@ public final class DroneItem extends SimplePolymerItem {
 		};
 	}
 
-	private static Identifier tntLayerModelForPower(int power) {
-		return switch (net.minecraft.util.Mth.clamp(power, MIN_KAMIKAZE_POWER, MAX_KAMIKAZE_POWER)) {
-			case 1 -> TNT_LAYER_MODEL_ID_LEVEL_1;
-			case 2 -> TNT_LAYER_MODEL_ID_LEVEL_2;
-			default -> TNT_LAYER_MODEL_ID_LEVEL_3;
-		};
+	private static int clampedKamikazePower(int power) {
+		return net.minecraft.util.Mth.clamp(power, NO_KAMIKAZE_POWER, MAX_KAMIKAZE_POWER);
 	}
 
 	private static String resolveDisplayColorName(DyeColor color) {

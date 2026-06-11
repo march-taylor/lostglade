@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import json
 from collections import Counter
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -23,11 +25,15 @@ TEXTURES_DIR = ROOT / "src/main/resources/assets/lg2/textures/item"
 
 FRAME_MODEL_ID = "drone_display"
 FRAME_TEXTURE_ID = "drone_frame_camera"
+KAMIKAZE_TEXTURE_ID = "drone_module_kamikaze"
+TURRET_TEXTURE_ID = "drone_module_turret"
 BASE_TEXTURE_ID_PREFIX = "drone_base_"
 BODY_MODEL_ID_PREFIX = "drone_body_"
 CAMERA_MODEL_ID_PREFIX = "drone_camera_pitch_"
 PROPELLER_MODEL_ID_PREFIX = "drone_propeller_"
 PROPELLER_TEXTURE_ID_PREFIX = "drone_propeller_"
+KAMIKAZE_MODEL_ID_PREFIX = "drone_module_kamikaze_"
+TURRET_MODEL_ID_PREFIX = "drone_module_turret_pitch_"
 COLOR_LIFT_FLOOR = 120
 
 COLOR_NAMES = (
@@ -93,6 +99,27 @@ def representative_color(path: Path) -> tuple[int, int, int]:
 	if not counter:
 		raise ValueError(f"No opaque pixels in {path}")
 	return counter.most_common(1)[0][0]
+
+
+def decode_data_url_image(data_url: str) -> Image.Image:
+	if not data_url or "," not in data_url:
+		raise ValueError("Expected an inline data URL")
+	raw = base64.b64decode(data_url.split(",", 1)[1])
+	return Image.open(BytesIO(raw)).convert("RGBA")
+
+
+def texture_image_from_bbmodel(bbmodel: dict[str, Any], texture_id: str) -> Image.Image:
+	for texture in bbmodel.get("textures", []):
+		if texture.get("id") != texture_id:
+			continue
+		source = texture.get("source")
+		if source:
+			return decode_data_url_image(source)
+		relative_path = texture.get("relative_path")
+		if relative_path:
+			return Image.open(SOURCE_DIR / relative_path).convert("RGBA")
+		break
+	raise ValueError(f"Could not resolve texture id {texture_id!r} from source bbmodel")
 
 
 def source_intensity_bounds(source: Image.Image) -> tuple[int, int]:
@@ -214,6 +241,36 @@ def resolve_group_uuids(bbmodel: dict[str, Any]) -> dict[str, str]:
 	return {group["name"]: group["uuid"] for group in bbmodel["groups"]}
 
 
+def resolve_group_origin(bbmodel: dict[str, Any], group_name: str) -> list[float]:
+	for group in bbmodel.get("groups", []):
+		if group.get("name") != group_name:
+			continue
+		origin = group.get("origin")
+		if origin is None:
+			break
+		return origin
+	raise ValueError(f"Could not resolve origin for group {group_name!r} from source bbmodel")
+
+
+def resolve_group_elements(bbmodel: dict[str, Any], group_name: str) -> list[dict[str, Any]]:
+	group_uuids = resolve_group_uuids(bbmodel)
+	group_uuid = group_uuids.get(group_name)
+	if group_uuid is None:
+		raise ValueError(f"Could not resolve group {group_name!r} from source bbmodel")
+	group_node = find_outliner_node(bbmodel["outliner"], group_uuid)
+	if group_node is None:
+		raise ValueError(f"Could not resolve outliner node for group {group_name!r}")
+	element_uuids = collect_element_uuids(group_node)
+	elements_by_uuid = {element["uuid"]: element for element in bbmodel["elements"]}
+	elements: list[dict[str, Any]] = []
+	for element_uuid in element_uuids:
+		element = elements_by_uuid.get(element_uuid)
+		if element is None:
+			raise ValueError(f"Missing element {element_uuid!r} for group {group_name!r}")
+		elements.append(element)
+	return elements
+
+
 def find_outliner_node(nodes: list[Any], target_uuid: str) -> dict[str, Any] | None:
 	for node in nodes:
 		if isinstance(node, str):
@@ -280,6 +337,11 @@ def build_model(
 	}
 
 
+def write_model_with_definition(model_id: str, credit: str, texture_id: str, elements: list[dict[str, Any]]) -> None:
+	write_json(ITEM_MODELS_DIR / f"{model_id}.json", build_model(credit, texture_id, elements))
+	write_json(ITEM_DEFS_DIR / f"{model_id}.json", model_definition(model_id))
+
+
 def main() -> None:
 	bbmodel = load_json(BBMODEL_PATH)
 	texture_index_map = resolve_texture_index_map(bbmodel)
@@ -313,6 +375,13 @@ def main() -> None:
 
 	source_image = Image.open(BASE_TEXTURE_PATH).convert("RGBA")
 	frame_image = Image.open(FRAME_TEXTURE_PATH).convert("RGBA")
+	kamikaze_texture_image = texture_image_from_bbmodel(bbmodel, "3")
+	turret_texture_image = texture_image_from_bbmodel(bbmodel, "6")
+	kamikaze_elements = resolve_group_elements(bbmodel, "kamikatze")
+	combat_elements = resolve_group_elements(bbmodel, "combat")
+	barrel_elements = resolve_group_elements(bbmodel, "barrel")
+	barrel_element_uuids = {element["uuid"] for element in barrel_elements}
+	combat_static_elements = [element for element in combat_elements if element["uuid"] not in barrel_element_uuids]
 
 	frame_model_elements = [
 		bb_element_to_model_element(
@@ -325,7 +394,80 @@ def main() -> None:
 			bb_element_to_model_element(
 				element,
 				{texture_index: "0" for texture_index in range(len(texture_index_map))},
+		)
+	)
+
+	write_model_with_definition(
+		f"{KAMIKAZE_MODEL_ID_PREFIX}0",
+		"Lostglade drone kamikaze strap extracted from new base model",
+		f"lg2:item/{KAMIKAZE_TEXTURE_ID}",
+		[
+			bb_element_to_model_element(
+				element,
+				{texture_index: "0" for texture_index in range(len(texture_index_map))},
 			)
+			for element in kamikaze_elements[:3]
+		],
+	)
+	write_model_with_definition(
+		f"{KAMIKAZE_MODEL_ID_PREFIX}1",
+		"Lostglade drone kamikaze left payload extracted from new base model",
+		f"lg2:item/{KAMIKAZE_TEXTURE_ID}",
+		[
+			bb_element_to_model_element(
+				element,
+				{texture_index: "0" for texture_index in range(len(texture_index_map))},
+			)
+			for element in kamikaze_elements[:4]
+		],
+	)
+	write_model_with_definition(
+		f"{KAMIKAZE_MODEL_ID_PREFIX}2",
+		"Lostglade drone kamikaze left-right payload extracted from new base model",
+		f"lg2:item/{KAMIKAZE_TEXTURE_ID}",
+		[
+			bb_element_to_model_element(
+				element,
+				{texture_index: "0" for texture_index in range(len(texture_index_map))},
+			)
+			for element in kamikaze_elements[:5]
+		],
+	)
+	write_model_with_definition(
+		f"{KAMIKAZE_MODEL_ID_PREFIX}3",
+		"Lostglade drone kamikaze triad payload extracted from new base model",
+		f"lg2:item/{KAMIKAZE_TEXTURE_ID}",
+		[
+			bb_element_to_model_element(
+				element,
+				{texture_index: "0" for texture_index in range(len(texture_index_map))},
+			)
+			for element in kamikaze_elements[:6]
+		],
+	)
+	for angle in range(91):
+		rotated_elements: list[dict[str, Any]] = [
+			bb_element_to_model_element(
+				element,
+				{texture_index: "0" for texture_index in range(len(texture_index_map))},
+			)
+			for element in combat_static_elements
+		]
+		for element in barrel_elements:
+			element_copy = copy.deepcopy(element)
+			rotation = element_copy.get("rotation") or [0.0, 0.0, 0.0]
+			element_copy["rotation"] = [float(angle) - 90.0, float(rotation[1]), float(rotation[2])]
+			rotated_elements.append(
+				bb_element_to_model_element(
+					element_copy,
+					{texture_index: "0" for texture_index in range(len(texture_index_map))},
+				)
+			)
+		write_model_with_definition(
+			f"{TURRET_MODEL_ID_PREFIX}{angle}",
+			"Lostglade drone turret extracted from new base model",
+			f"lg2:item/{TURRET_TEXTURE_ID}",
+			rotated_elements,
 		)
 
 	write_json(
@@ -359,6 +501,8 @@ def main() -> None:
 
 	source_min_intensity, source_max_intensity = source_intensity_bounds(source_image)
 	TEXTURES_DIR.mkdir(parents=True, exist_ok=True)
+	kamikaze_texture_image.save(TEXTURES_DIR / f"{KAMIKAZE_TEXTURE_ID}.png")
+	turret_texture_image.save(TEXTURES_DIR / f"{TURRET_TEXTURE_ID}.png")
 	frame_image.save(TEXTURES_DIR / f"{FRAME_TEXTURE_ID}.png")
 
 	color_targets = {
