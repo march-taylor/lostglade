@@ -32,10 +32,14 @@ public final class DroneItem extends SimplePolymerItem {
 	public record DisplayLayer(String key, Identifier modelId) {
 	}
 
+	public static final String BODY_LAYER_KEY = "body";
+	public static final String CAMERA_LAYER_KEY = "camera";
+	public static final String RIGHT_FRONT_PROPELLER_LAYER_KEY = "propeller_right_front";
+	public static final String RIGHT_BACK_PROPELLER_LAYER_KEY = "propeller_right_back";
+	public static final String LEFT_FRONT_PROPELLER_LAYER_KEY = "propeller_left_front";
+	public static final String LEFT_BACK_PROPELLER_LAYER_KEY = "propeller_left_back";
 	private static final Identifier DEFAULT_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone");
 	private static final Identifier NORMAL_DISPLAY_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_display");
-	private static final Identifier KAMIKAZE_DISPLAY_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_type_kamikaze_display");
-	private static final Identifier COMBAT_DISPLAY_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_type_combat_display");
 	private static final Identifier TNT_LAYER_MODEL_ID_LEVEL_1 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_tnt_1");
 	private static final Identifier TNT_LAYER_MODEL_ID_LEVEL_2 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_tnt_2");
 	private static final Identifier TNT_LAYER_MODEL_ID_LEVEL_3 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_tnt_3");
@@ -307,6 +311,12 @@ public final class DroneItem extends SimplePolymerItem {
 			DyeColor paintColor
 	) {
 		List<DisplayLayer> layers = new ArrayList<>();
+		layers.add(new DisplayLayer(BODY_LAYER_KEY, bodyLayerModelForColor(paintColor)));
+		layers.add(new DisplayLayer(CAMERA_LAYER_KEY, cameraLayerModelForAngle(90)));
+		layers.add(new DisplayLayer(RIGHT_FRONT_PROPELLER_LAYER_KEY, propellerLayerModel(RIGHT_FRONT_PROPELLER_LAYER_KEY, paintColor, 0)));
+		layers.add(new DisplayLayer(RIGHT_BACK_PROPELLER_LAYER_KEY, propellerLayerModel(RIGHT_BACK_PROPELLER_LAYER_KEY, paintColor, 0)));
+		layers.add(new DisplayLayer(LEFT_FRONT_PROPELLER_LAYER_KEY, propellerLayerModel(LEFT_FRONT_PROPELLER_LAYER_KEY, paintColor, 0)));
+		layers.add(new DisplayLayer(LEFT_BACK_PROPELLER_LAYER_KEY, propellerLayerModel(LEFT_BACK_PROPELLER_LAYER_KEY, paintColor, 0)));
 		int clampedPower = net.minecraft.util.Mth.clamp(kamikazePower, NO_KAMIKAZE_POWER, MAX_KAMIKAZE_POWER);
 		if (type == DroneType.KAMIKAZE && clampedPower > 0) {
 			layers.add(new DisplayLayer("tnt", tntLayerModelForPower(clampedPower)));
@@ -317,19 +327,45 @@ public final class DroneItem extends SimplePolymerItem {
 		if (autoAim) {
 			layers.add(new DisplayLayer("auto_aim", AUTO_AIM_LAYER_MODEL_ID));
 		}
-		if (paintColor != null) {
-			layers.add(new DisplayLayer("paint", paintLayerModelForColor(paintColor)));
-		}
 		return layers;
 	}
 
 	public static Identifier displayModelForType(DroneType type) {
-		DroneType resolvedType = type == null ? DroneType.NORMAL : type;
-		return switch (resolvedType) {
-			case KAMIKAZE -> KAMIKAZE_DISPLAY_MODEL_ID;
-			case COMBAT -> COMBAT_DISPLAY_MODEL_ID;
-			default -> NORMAL_DISPLAY_MODEL_ID;
-		};
+		// Type-specific visuals now belong in additive display layers so the base rig stays consistent.
+		return NORMAL_DISPLAY_MODEL_ID;
+	}
+
+	public static Identifier bodyLayerModelForColor(DyeColor color) {
+		return Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_body_" + resolveDisplayColorName(color));
+	}
+
+	public static Identifier cameraLayerModelForAngle(int angle) {
+		return Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_camera_pitch_" + net.minecraft.util.Mth.clamp(angle, 0, 90));
+	}
+
+	public static Identifier propellerLayerModel(String layerKey, DyeColor color, int frame) {
+		if (!isPropellerLayerKey(layerKey)) {
+			return null;
+		}
+		return Identifier.fromNamespaceAndPath(
+				Lg2.MOD_ID,
+				"drone_propeller_"
+						+ layerKey.substring("propeller_".length())
+						+ "_"
+						+ resolveDisplayColorName(color)
+						+ "_"
+						+ net.minecraft.util.Mth.clamp(frame, 0, 2)
+		);
+	}
+
+	public static boolean isPropellerLayerKey(String layerKey) {
+		if (layerKey == null || layerKey.isBlank()) {
+			return false;
+		}
+		return RIGHT_FRONT_PROPELLER_LAYER_KEY.equals(layerKey)
+				|| RIGHT_BACK_PROPELLER_LAYER_KEY.equals(layerKey)
+				|| LEFT_FRONT_PROPELLER_LAYER_KEY.equals(layerKey)
+				|| LEFT_BACK_PROPELLER_LAYER_KEY.equals(layerKey);
 	}
 
 	private static ItemStack createDroneStack(
@@ -425,9 +461,9 @@ public final class DroneItem extends SimplePolymerItem {
 		};
 	}
 
-	private static Identifier paintLayerModelForColor(DyeColor color) {
-		DyeColor resolved = color == null ? DyeColor.WHITE : color;
-		return Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_paint_" + resolved.getName());
+	private static String resolveDisplayColorName(DyeColor color) {
+		DyeColor resolved = color == null ? DyeColor.RED : color;
+		return resolved.getName();
 	}
 
 	private static void setBooleanModule(ItemStack stack, String key, boolean enabled) {

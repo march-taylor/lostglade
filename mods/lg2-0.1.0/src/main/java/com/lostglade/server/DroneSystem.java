@@ -182,10 +182,17 @@ public final class DroneSystem {
 	private static final float DRONE_CAMERA_ANCHOR_SIZE = 0.01F;
 	private static final double DRONE_SPAWN_Y_OFFSET = 0.24D;
 	private static final float DRONE_DISPLAY_VIEW_RANGE = 64.0F;
-	private static final float DRONE_DISPLAY_Y_OFFSET = 0.34F;
+	// The fixed item-display pivot sits on the middle of the extracted rig.
+	// Lift the display just enough so the lowest visible geometry rests on the ground.
+	private static final float DRONE_DISPLAY_Y_OFFSET = 0.13125F;
 	private static final int DRONE_DISPLAY_INTERPOLATION_TICKS = 2;
 	private static final float DRONE_DISPLAY_DRIVE_SMOOTHING = 0.35F;
 	private static final float DRONE_MAX_TILT_DEGREES = 32.0F;
+	private static final double DRONE_PROPELLER_ACCELERATION = 0.45D;
+	private static final double DRONE_PROPELLER_DECELERATION = 0.12D;
+	private static final double DRONE_PROPELLER_PHASE_SPEED = 1.0D;
+	private static final double DRONE_PROPELLER_STOP_EPSILON = 0.02D;
+	private static final int DRONE_PROPELLER_FRAME_COUNT = 3;
 	private static final long DRONE_LOOP_REPLAY_TICKS = 10L;
 	private static final double DRONE_SOUND_RADIUS_SQR = 16.0D * 16.0D;
 	private static final float DRONE_SOUND_SOURCE_POWER = 0.58F;
@@ -343,6 +350,7 @@ public final class DroneSystem {
 	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_ARM_ALLOWED_TICK = new HashMap<>();
 	private static final Map<UUID, DroneDisplayWobbleState> DISPLAY_WOBBLE_BY_DRONE = new HashMap<>();
+	private static final Map<UUID, DronePropellerAnimationState> PROPELLER_ANIMATIONS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, Double> DRONE_ENVIRONMENT_DAMAGE = new HashMap<>();
 	private static final Map<UUID, Long> POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK = new HashMap<>();
 	private static final Map<UUID, Long> POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK = new HashMap<>();
@@ -454,6 +462,7 @@ public final class DroneSystem {
 			POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.clear();
 			VISUALLY_CONTROLLED_PLAYERS.clear();
 			DISPLAY_WOBBLE_BY_DRONE.clear();
+			PROPELLER_ANIMATIONS_BY_DRONE.clear();
 			DRONE_ENVIRONMENT_DAMAGE.clear();
 			CONTROLLED_OPERATOR_MANAGED_NIGHT_VISION.clear();
 			CONTROLLED_OPERATOR_AUTO_AIM_HIGHLIGHTS.clear();
@@ -3176,6 +3185,9 @@ public final class DroneSystem {
 		);
 		uncontrolledState.setLastPosition(root.position());
 		UNCONTROLLED_DRONES.putIfAbsent(root.getUUID(), uncontrolledState);
+		syncDroneDisplayLayers(root);
+		syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D);
+		syncDroneCameraAnchor(root, root.getDeltaMovement());
 	}
 
 	private static void onEntityUnload(Entity entity, ServerLevel level) {
@@ -3186,6 +3198,7 @@ public final class DroneSystem {
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
 		NEXT_DRONE_ARM_ALLOWED_TICK.remove(root.getUUID());
 		DISPLAY_WOBBLE_BY_DRONE.remove(root.getUUID());
+		PROPELLER_ANIMATIONS_BY_DRONE.remove(root.getUUID());
 		DRONE_ENVIRONMENT_DAMAGE.remove(root.getUUID());
 	}
 
@@ -4421,6 +4434,7 @@ public final class DroneSystem {
 		NEXT_DRONE_ARM_ALLOWED_TICK.remove(root.getUUID());
 		NEXT_DRONE_TURRET_FIRE_TICK.remove(root.getUUID());
 		DISPLAY_WOBBLE_BY_DRONE.remove(root.getUUID());
+		PROPELLER_ANIMATIONS_BY_DRONE.remove(root.getUUID());
 		DRONE_ENVIRONMENT_DAMAGE.remove(root.getUUID());
 		SCREEN_STREAM_DRONE_LOAD_STATES.remove(root.getUUID());
 		BluetoothLinkSystem.removeDroneEndpoint(level, root.getUUID(), root.blockPosition());
@@ -5455,7 +5469,7 @@ public final class DroneSystem {
 		Display.ItemDisplay display = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
 		display.addTag(DRONE_DISPLAY_TAG);
 		display.addTag(DRONE_DISPLAY_LAYER_TAG_PREFIX + (layerKey == null || layerKey.isBlank() ? DRONE_DISPLAY_LAYER_BASE : layerKey));
-		display.setPos(position.x, position.y, position.z);
+		display.setPos(position.x, position.y + DRONE_DISPLAY_Y_OFFSET, position.z);
 		display.setYRot(yRot);
 		display.setXRot(xRot);
 		display.setYHeadRot(yRot);
@@ -5499,6 +5513,12 @@ public final class DroneSystem {
 			displays = findDroneDisplayLayers(root);
 		}
 		boolean controlled = isDroneActivelyControlled(root);
+		DyeColor paintColor = resolveDronePaintColor(root);
+		int cameraPitch = visualDroneCameraPitch(xRot);
+		DronePropellerVisual propellerVisual = updateDronePropellerVisual(root, forwardDrive, strafeDrive);
+		float visualPitch = root != null && root.onGround()
+				? 0.0F
+				: (controlled ? 0.0F : xRot);
 		for (Display.ItemDisplay display : displays) {
 			if (display.isPassenger()) {
 				display.stopRiding();
@@ -5507,9 +5527,10 @@ public final class DroneSystem {
 			display.setTransformationInterpolationDelay(0);
 			display.setTransformationInterpolationDuration(DRONE_DISPLAY_INTERPOLATION_TICKS);
 			display.setYRot(yRot);
-			display.setXRot(controlled ? 0.0F : xRot);
+			display.setXRot(visualPitch);
+			applyDynamicDroneDisplayLayer(display, paintColor, cameraPitch, propellerVisual);
 			display.setTransformation(buildDroneDisplayTransformation(root, forwardDrive, strafeDrive));
-			display.setPos(root.getX(), root.getY(), root.getZ());
+			display.setPos(root.getX(), root.getY() + DRONE_DISPLAY_Y_OFFSET, root.getZ());
 			collapseDroneDisplayHitbox(display);
 		}
 	}
@@ -5531,18 +5552,22 @@ public final class DroneSystem {
 		double strafeNorm = strafeDrive / DroneFlightPhysics.MAX_STRAFE_DRIVE;
 		forwardNorm = net.minecraft.util.Mth.clamp(forwardNorm, -1.0D, 1.0D);
 		strafeNorm = net.minecraft.util.Mth.clamp(strafeNorm, -1.0D, 1.0D);
+		if (root != null && root.onGround()) {
+			forwardNorm = 0.0D;
+			strafeNorm = 0.0D;
+		}
 
 		// Forward drive pitches the nose down; strafe drive rolls into the turn.
 		float pitchTiltRad = (float) Math.toRadians((float) (forwardNorm * DRONE_MAX_TILT_DEGREES));
 		float rollTiltRad = (float) Math.toRadians((float) (strafeNorm * DRONE_MAX_TILT_DEGREES));
 		Quaternionf rotation = new Quaternionf().rotateXYZ(pitchTiltRad, 0.0F, rollTiltRad);
-		DroneDisplayWobble wobble = resolveActiveDroneDisplayWobble(root);
+		DroneDisplayWobble wobble = root != null && !root.onGround() ? resolveActiveDroneDisplayWobble(root) : null;
 		if (wobble != null) {
 			applyVanillaPotWobbleRotation(rotation, wobble);
 		}
 
 		return new Transformation(
-				new Vector3f(0.0F, DRONE_DISPLAY_Y_OFFSET, 0.0F),
+				new Vector3f(0.0F, 0.0F, 0.0F),
 				rotation,
 				new Vector3f(1.0F, 1.0F, 1.0F),
 				new Quaternionf()
@@ -5748,6 +5773,119 @@ public final class DroneSystem {
 			return tag.substring(DRONE_DISPLAY_LAYER_TAG_PREFIX.length());
 		}
 		return null;
+	}
+
+	private static void applyDynamicDroneDisplayLayer(
+			Display.ItemDisplay display,
+			DyeColor paintColor,
+			int cameraPitch,
+			DronePropellerVisual propellerVisual
+	) {
+		if (display == null) {
+			return;
+		}
+		String layerKey = resolveDroneDisplayLayerKey(display);
+		if (layerKey == null || layerKey.isBlank()) {
+			return;
+		}
+
+		Identifier desiredModel = null;
+		if (DroneItem.CAMERA_LAYER_KEY.equals(layerKey)) {
+			desiredModel = DroneItem.cameraLayerModelForAngle(cameraPitch);
+		} else if (DroneItem.isPropellerLayerKey(layerKey)) {
+			desiredModel = DroneItem.propellerLayerModel(
+					layerKey,
+					paintColor,
+					propellerFrameIndex(layerKey, propellerVisual)
+			);
+		}
+		if (desiredModel == null) {
+			return;
+		}
+		updateDroneDisplayLayerModel(display, desiredModel);
+	}
+
+	private static void updateDroneDisplayLayerModel(Display.ItemDisplay display, Identifier desiredModel) {
+		if (display == null || desiredModel == null) {
+			return;
+		}
+		Identifier currentModel = DroneItem.getDisplayModelOverride(display.getItemStack());
+		if (Objects.equals(currentModel, desiredModel)) {
+			return;
+		}
+		display.setItemStack(DroneItem.createDisplayLayerStack(desiredModel));
+		display.hurtMarked = true;
+	}
+
+	private static int visualDroneCameraPitch(float pitch) {
+		float downwardPitch = net.minecraft.util.Mth.clamp(pitch, 0.0F, 90.0F);
+		return net.minecraft.util.Mth.clamp(Math.round(90.0F - downwardPitch), 0, 90);
+	}
+
+	private static DronePropellerVisual updateDronePropellerVisual(Entity root, double forwardDrive, double strafeDrive) {
+		if (root == null) {
+			return new DronePropellerVisual(0.0D);
+		}
+		DronePropellerAnimationState state = PROPELLER_ANIMATIONS_BY_DRONE.computeIfAbsent(
+				root.getUUID(),
+				uuid -> new DronePropellerAnimationState()
+		);
+		boolean active = shouldSpinDronePropellers(root);
+		if (active) {
+			state.setSpeed(1.0D);
+		} else if (state.speed() > 0.0D) {
+			state.setSpeed(net.minecraft.util.Mth.lerp(DRONE_PROPELLER_DECELERATION, state.speed(), 0.0D));
+		}
+		if (!active && state.speed() < DRONE_PROPELLER_STOP_EPSILON) {
+			state.setSpeed(0.0D);
+			state.setPhase(0.0D);
+		} else if (state.speed() > 0.0D) {
+			state.setPhase(positiveModulo(
+					state.phase() + state.speed() * DRONE_PROPELLER_PHASE_SPEED,
+					DRONE_PROPELLER_FRAME_COUNT
+			));
+		}
+		return new DronePropellerVisual(state.phase());
+	}
+
+	private static boolean shouldSpinDronePropellers(Entity root) {
+		if (root == null || !root.isAlive()) {
+			return false;
+		}
+		if (isDroneActivelyControlled(root) || isDroneScreenStreamActive(root)) {
+			return true;
+		}
+		UncontrolledDroneState state = UNCONTROLLED_DRONES.get(root.getUUID());
+		return state != null && isUncontrolledReleaseGlideActive(root, state);
+	}
+
+	private static int propellerFrameIndex(String layerKey, DronePropellerVisual visual) {
+		if (!DroneItem.isPropellerLayerKey(layerKey) || visual == null) {
+			return 0;
+		}
+		int baseFrame = Math.floorMod(net.minecraft.util.Mth.floor((float) visual.phase()), DRONE_PROPELLER_FRAME_COUNT);
+		int direction = propellerRotationDirection(layerKey);
+		return direction >= 0 ? baseFrame : Math.floorMod(DRONE_PROPELLER_FRAME_COUNT - baseFrame, DRONE_PROPELLER_FRAME_COUNT);
+	}
+
+	private static int propellerRotationDirection(String layerKey) {
+		if (DroneItem.RIGHT_FRONT_PROPELLER_LAYER_KEY.equals(layerKey)
+				|| DroneItem.LEFT_BACK_PROPELLER_LAYER_KEY.equals(layerKey)) {
+			return 1;
+		}
+		if (DroneItem.RIGHT_BACK_PROPELLER_LAYER_KEY.equals(layerKey)
+				|| DroneItem.LEFT_FRONT_PROPELLER_LAYER_KEY.equals(layerKey)) {
+			return -1;
+		}
+		return 1;
+	}
+
+	private static double positiveModulo(double value, double modulus) {
+		if (modulus <= 0.0D) {
+			return 0.0D;
+		}
+		double result = value % modulus;
+		return result < 0.0D ? result + modulus : result;
 	}
 
 	private static Entity findDroneCameraAnchor(Entity root) {
@@ -6470,6 +6608,30 @@ public final class DroneSystem {
 	}
 
 	private record DroneDisplayWobble(DroneDisplayWobbleType type, float progress) {
+	}
+
+	private static final class DronePropellerAnimationState {
+		private double phase;
+		private double speed;
+
+		private double phase() {
+			return this.phase;
+		}
+
+		private void setPhase(double phase) {
+			this.phase = phase;
+		}
+
+		private double speed() {
+			return this.speed;
+		}
+
+		private void setSpeed(double speed) {
+			this.speed = speed;
+		}
+	}
+
+	private record DronePropellerVisual(double phase) {
 	}
 
 	private enum DroneDisplayWobbleType {
