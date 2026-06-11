@@ -1588,7 +1588,7 @@ final class MonitorMaxRuntime {
 					fullHeight,
 					LIVE_CAMERA_FOV_DEGREES,
 					LIVE_CAMERA_TARGET_FPS,
-					pixels -> onVideoFrame(server, viewerComponent.runtimeKey(), sourceUrl, fullWidth, fullHeight, pixels, localStream),
+					frame -> onVideoFrame(server, viewerComponent.runtimeKey(), sourceUrl, fullWidth, fullHeight, frame.pixels(), localStream),
 					error -> onVideoFailure(server, viewerComponent.runtimeKey(), error, localStream)
 			);
 			return;
@@ -1615,7 +1615,7 @@ final class MonitorMaxRuntime {
 				fullHeight,
 				LIVE_CAMERA_FOV_DEGREES,
 				LIVE_CAMERA_TARGET_FPS,
-				pixels -> onVideoFrame(server, viewerComponent.runtimeKey(), sourceUrl, fullWidth, fullHeight, pixels, localStream),
+				frame -> onVideoFrame(server, viewerComponent.runtimeKey(), sourceUrl, fullWidth, fullHeight, frame.pixels(), localStream),
 				error -> onVideoFailure(server, viewerComponent.runtimeKey(), error, localStream)
 		);
 	}

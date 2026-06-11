@@ -274,7 +274,7 @@ public final class RendererBotClientCapture {
 					clearLiveStreamSession(payload.streamId());
 					return;
 				}
-				ClientPlayNetworking.send(new RendererBotPayloads.RendererBotLiveFrameC2SPayload(payload.streamId(), fullPixels));
+				ClientPlayNetworking.send(new RendererBotPayloads.RendererBotLiveFrameC2SPayload(payload.streamId(), liveStream.lastFrameAtNanos(), fullPixels));
 				clearLiveStreamFrameInFlight(payload.streamId());
 			}));
 		} catch (Throwable throwable) {
@@ -414,7 +414,7 @@ public final class RendererBotClientCapture {
 				RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload = session.payload();
 				byte[] fullPixels = quantizeLiveFrame(pixels, width, height, payload.fullWidth(), payload.fullHeight());
 				client.execute(() -> {
-					ClientPlayNetworking.send(new RendererBotPayloads.RendererBotLiveFrameC2SPayload(payload.streamId(), fullPixels));
+					ClientPlayNetworking.send(new RendererBotPayloads.RendererBotLiveFrameC2SPayload(payload.streamId(), session.lastFrameAtNanos(), fullPixels));
 					clearLiveStreamFrameInFlight(payload.streamId());
 				});
 			}

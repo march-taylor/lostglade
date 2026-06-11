@@ -19,7 +19,9 @@
 		"RendererBotGlfwMixin",
 		"RendererBotSkinManagerMixin",
 		"WebcamRenderLayerOffscreenMixin",
-		"RendererBotWindowMixin"
+		"RendererBotWindowMixin",
+		"SoundEngineBufferAccessor",
+		"SoundEngineRendererBotAudioMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

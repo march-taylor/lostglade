@@ -162,6 +162,34 @@ public final class RendererBotShadowWorldManager {
 		return false;
 	}
 
+	public static UUID sessionIdForLevel(ClientLevel level) {
+		if (level == null) {
+			return null;
+		}
+		synchronized (LOCK) {
+			for (ShadowLevelSession session : SHADOW_SESSIONS.values()) {
+				if (session != null && session.level() == level) {
+					return session.sessionId();
+				}
+			}
+		}
+		return null;
+	}
+
+	public static void updateAudioContext(UUID sessionId, double x, double y, double z) {
+		if (sessionId == null) {
+			return;
+		}
+		synchronized (LOCK) {
+			ShadowLevelSession session = SHADOW_SESSIONS.get(sessionId);
+			if (session == null) {
+				return;
+			}
+			session.setAudioBlockPos(BlockPos.containing(x, y, z));
+			LAST_RENDER_ACTIVITY_AT.put(sessionId, System.currentTimeMillis());
+		}
+	}
+
 	public static boolean isManagedRenderer(LevelRenderer renderer, ClientLevel level) {
 		if (renderer == null || level == null) {
 			return false;
@@ -231,6 +259,9 @@ public final class RendererBotShadowWorldManager {
 			session.level().tick(() -> true);
 			if (camera != null) {
 				BlockPos blockPos = camera.blockPosition();
+				session.level().animateTick(blockPos.getX(), blockPos.getY(), blockPos.getZ());
+			} else if (session.audioBlockPos() != null) {
+				BlockPos blockPos = session.audioBlockPos();
 				session.level().animateTick(blockPos.getX(), blockPos.getY(), blockPos.getZ());
 			}
 			session.particleEngine().tick();
@@ -626,6 +657,7 @@ public final class RendererBotShadowWorldManager {
 		private final FeatureRenderDispatcher featureRenderDispatcher;
 		private final ParticleEngine particleEngine;
 		private Camera lastCamera;
+		private BlockPos audioBlockPos;
 
 		private ShadowLevelSession(
 				UUID sessionId,
@@ -680,6 +712,14 @@ public final class RendererBotShadowWorldManager {
 
 		private void setLastCamera(Camera lastCamera) {
 			this.lastCamera = lastCamera;
+		}
+
+		private BlockPos audioBlockPos() {
+			return this.audioBlockPos;
+		}
+
+		private void setAudioBlockPos(BlockPos audioBlockPos) {
+			this.audioBlockPos = audioBlockPos;
 		}
 	}
 }

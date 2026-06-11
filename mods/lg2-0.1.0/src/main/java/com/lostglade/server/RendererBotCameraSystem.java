@@ -29,7 +29,12 @@ import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityLinkPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
+import net.minecraft.network.protocol.game.ClientboundSoundEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -39,6 +44,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.TicketType;
 import net.minecraft.util.Mth;
 import net.minecraft.world.Difficulty;
+import net.minecraft.core.Holder;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.level.ChunkPos;
@@ -78,11 +84,15 @@ public final class RendererBotCameraSystem {
 	private static final int CAMERA_HOTBAR_WARMUP_FPS = 2;
 	private static final int CAMERA_HOTBAR_WARMUP_SIZE = 1;
 	private static final int CAMERA_HOTBAR_WARMUP_FOV_DEGREES = 70;
+	private static final int AUDIO_SAMPLE_RATE = 48_000;
+	private static final int AUDIO_FRAME_SAMPLES = 960;
 	private static final int CAMERA_CHUNK_TICKET_UNIQUE_FLAG = 128;
 	private static final int SHADOW_VIEW_DISTANCE_MARGIN_CHUNKS = 6;
 	private static final int SHADOW_REAR_VIEW_CHUNKS = 2;
 	private static final long LIVE_STREAM_STALE_MS = 1_500L;
+	private static final long AUDIO_CAPTURE_STALE_MS = 8_000L;
 	private static final long LIVE_STREAM_ORPHAN_CLEANUP_MS = 15_000L;
+	private static final long AUDIO_CAPTURE_ORPHAN_CLEANUP_MS = 15_000L;
 	private static final long PHOTO_CAPTURE_RETRY_INTERVAL_MS = 50L;
 	private static final double SHADOW_FORWARD_HALF_FOV_DEGREES = 80.0D;
 	private static final double SHADOW_NEAR_OMNI_RADIUS_CHUNKS = 3.0D;
@@ -103,6 +113,8 @@ public final class RendererBotCameraSystem {
 	private static final Map<UUID, PendingVideoRecording> PENDING_VIDEO_RECORDINGS = new ConcurrentHashMap<>();
 	private static final Map<UUID, ActiveLiveStream> ACTIVE_LIVE_STREAMS = new ConcurrentHashMap<>();
 	private static final Map<String, UUID> LIVE_STREAMS_BY_OWNER = new ConcurrentHashMap<>();
+	private static final Map<UUID, ActiveAudioCapture> ACTIVE_AUDIO_CAPTURES = new ConcurrentHashMap<>();
+	private static final Map<String, UUID> AUDIO_CAPTURES_BY_OWNER = new ConcurrentHashMap<>();
 	private static final Map<CameraChunkTicketKey, Integer> ACTIVE_CAMERA_CHUNK_TICKETS = new HashMap<>();
 	private static final Map<ShadowSyncKey, ShadowDimensionSyncState> ACTIVE_SHADOW_SYNC_STATES = new HashMap<>();
 	private static final Set<ChunkTicketKey> DIRTY_SHADOW_CHUNKS = ConcurrentHashMap.newKeySet();
@@ -119,6 +131,7 @@ public final class RendererBotCameraSystem {
 			failCapturesForBot(botUuid, "Renderer bot disconnected during capture");
 			failVideoRecordingsForBot(botUuid, "Renderer bot disconnected during video recording");
 			failLiveStreamsForBot(botUuid, "Renderer bot disconnected during live stream");
+			failAudioCapturesForBot(botUuid, "Renderer bot disconnected during audio capture");
 		});
 		ServerPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotHelloC2SPayload.TYPE,
@@ -171,6 +184,7 @@ public final class RendererBotCameraSystem {
 					if (server == null) {
 						return;
 					}
+					long receivedAtNanos = System.nanoTime();
 					server.execute(() -> {
 						ActiveLiveStream stream = ACTIVE_LIVE_STREAMS.get(payload.streamId());
 						if (stream == null || !stream.botUuid().equals(context.player().getUUID())) {
@@ -182,7 +196,8 @@ public final class RendererBotCameraSystem {
 							return;
 						}
 						try {
-							current.onFrame().accept(payload.pixels());
+							long clientFrameNanos = payload.clientFrameNanos() > 0L ? payload.clientFrameNanos() : receivedAtNanos;
+							current.onFrame().accept(new LiveStreamFrame(payload.pixels(), clientFrameNanos, receivedAtNanos));
 						} catch (Exception exception) {
 							Lg2.LOGGER.warn("Renderer bot live stream frame callback failed for {}", payload.streamId(), exception);
 						}
@@ -251,6 +266,49 @@ public final class RendererBotCameraSystem {
 					});
 				}
 		);
+		ServerPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotAudioFrameC2SPayload.TYPE,
+				(payload, context) -> {
+					MinecraftServer server = context.player().level().getServer();
+					if (server == null) {
+						return;
+					}
+					server.execute(() -> {
+						ActiveAudioCapture capture = ACTIVE_AUDIO_CAPTURES.get(payload.audioId());
+						if (capture == null || !capture.botUuid().equals(context.player().getUUID())) {
+							return;
+						}
+						short[] frame = decodePcmFrame(payload.pcm(), AUDIO_FRAME_SAMPLES);
+						if (frame == null) {
+							return;
+						}
+						long receivedAtNanos = System.nanoTime();
+						capture.markFrameReceived();
+						try {
+							long clientFrameNanos = payload.clientFrameNanos() > 0L ? payload.clientFrameNanos() : receivedAtNanos;
+							capture.onFrame().accept(new AudioCaptureFrame(frame, receivedAtNanos, clientFrameNanos));
+						} catch (Exception exception) {
+							Lg2.LOGGER.warn("Renderer bot audio frame callback failed for {}", payload.audioId(), exception);
+						}
+					});
+				}
+		);
+		ServerPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotAudioCaptureFailureC2SPayload.TYPE,
+				(payload, context) -> {
+					ActiveAudioCapture capture = ACTIVE_AUDIO_CAPTURES.get(payload.audioId());
+					if (capture == null || !capture.botUuid().equals(context.player().getUUID())) {
+						return;
+					}
+					context.player().level().getServer().execute(() -> {
+						ActiveAudioCapture current = ACTIVE_AUDIO_CAPTURES.get(payload.audioId());
+						if (current == null || !current.botUuid().equals(context.player().getUUID())) {
+							return;
+						}
+						stopAudioCaptureInternal(current, payload.message(), true);
+					});
+				}
+		);
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			releaseAllVirtualCameraChunkTickets(server);
 			clearAllShadowSyncStates(server, false);
@@ -270,6 +328,11 @@ public final class RendererBotCameraSystem {
 			}
 			ACTIVE_LIVE_STREAMS.clear();
 			LIVE_STREAMS_BY_OWNER.clear();
+			for (ActiveAudioCapture capture : ACTIVE_AUDIO_CAPTURES.values()) {
+				capture.onFailure().accept("Renderer bot audio capture aborted: server stopping");
+			}
+			ACTIVE_AUDIO_CAPTURES.clear();
+			AUDIO_CAPTURES_BY_OWNER.clear();
 		});
 	}
 
@@ -440,7 +503,7 @@ public final class RendererBotCameraSystem {
 			int fullHeight,
 			int fovDegrees,
 			int targetFps,
-			Consumer<byte[]> onFrame,
+			Consumer<LiveStreamFrame> onFrame,
 			Consumer<String> onFailure
 	) {
 		return ensureLiveStream(
@@ -480,7 +543,7 @@ public final class RendererBotCameraSystem {
 			int fullHeight,
 			int fovDegrees,
 			int targetFps,
-			Consumer<byte[]> onFrame,
+			Consumer<LiveStreamFrame> onFrame,
 			Consumer<String> onFailure
 	) {
 		if (ownerKey == null || level == null || onFrame == null || onFailure == null) {
@@ -612,6 +675,102 @@ public final class RendererBotCameraSystem {
 			}
 		}
 		return false;
+	}
+
+	public static boolean ensureAudioCapture(
+			String ownerKey,
+			ServerLevel level,
+			BlockPos microphonePos,
+			double radiusBlocks,
+			Consumer<AudioCaptureFrame> onFrame,
+			Consumer<String> onFailure
+	) {
+		if (ownerKey == null || level == null || microphonePos == null || onFrame == null || onFailure == null) {
+			return false;
+		}
+		MinecraftServer server = level.getServer();
+		if (server == null) {
+			onFailure.accept("Сервер аудио камеры недоступен");
+			return false;
+		}
+
+		ServerPlayer bot = selectBot(server);
+		if (bot == null) {
+			onFailure.accept("Нет активного клиента камеры для аудио");
+			return false;
+		}
+		if (!canBotRenderLevel(bot, level)) {
+			onFailure.accept("Клиент камеры не может записывать аудио в этом мире");
+			return false;
+		}
+		if (!ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotAudioCaptureStartS2CPayload.TYPE)) {
+			onFailure.accept("Клиент камеры не поддерживает запись аудио");
+			return false;
+		}
+
+		double x = microphonePos.getX() + 0.5D;
+		double y = microphonePos.getY() + 0.5D;
+		double z = microphonePos.getZ() + 0.5D;
+		AudioCaptureSpec desiredSpec = new AudioCaptureSpec(
+				resolveRenderSessionId(level.dimension(), microphonePos, x, z, null),
+				level.dimension(),
+				microphonePos.immutable(),
+				x,
+				y,
+				z,
+				Math.max(1.0D, radiusBlocks),
+				AUDIO_SAMPLE_RATE,
+				AUDIO_FRAME_SAMPLES
+		);
+		UUID existingAudioId = AUDIO_CAPTURES_BY_OWNER.get(ownerKey);
+		if (existingAudioId != null) {
+			ActiveAudioCapture existing = ACTIVE_AUDIO_CAPTURES.get(existingAudioId);
+			if (canReuseAudioCapture(existing, bot, desiredSpec)) {
+				existing.updateCallbacks(onFrame, onFailure);
+				return true;
+			}
+			stopAudioCaptureInternal(existing, "Renderer bot audio capture restarted", false);
+		}
+
+		UUID audioId = UUID.randomUUID();
+		ActiveAudioCapture capture = new ActiveAudioCapture(server, audioId, ownerKey, bot.getUUID(), desiredSpec, onFrame, onFailure);
+		ACTIVE_AUDIO_CAPTURES.put(audioId, capture);
+		AUDIO_CAPTURES_BY_OWNER.put(ownerKey, audioId);
+		ServerPlayNetworking.send(
+				bot,
+				new RendererBotPayloads.RendererBotAudioCaptureStartS2CPayload(
+						audioId,
+						desiredSpec.renderSessionId(),
+						desiredSpec.dimension().identifier().toString(),
+						desiredSpec.x(),
+						desiredSpec.y(),
+						desiredSpec.z(),
+						desiredSpec.radiusBlocks(),
+						desiredSpec.sampleRate(),
+						desiredSpec.frameSamples()
+				)
+		);
+		return true;
+	}
+
+	private static boolean canReuseAudioCapture(ActiveAudioCapture existing, ServerPlayer bot, AudioCaptureSpec desiredSpec) {
+		return existing != null
+				&& bot != null
+				&& desiredSpec != null
+				&& !existing.isStale()
+				&& existing.botUuid().equals(bot.getUUID())
+				&& desiredSpec.equals(existing.spec());
+	}
+
+	public static void stopAudioCapture(String ownerKey) {
+		if (ownerKey == null) {
+			return;
+		}
+		UUID audioId = AUDIO_CAPTURES_BY_OWNER.remove(ownerKey);
+		if (audioId == null) {
+			return;
+		}
+		stopAudioCaptureInternal(ACTIVE_AUDIO_CAPTURES.remove(audioId), "Renderer bot audio capture stopped", false);
 	}
 
 	public static VideoRecordingHandle startVideoRecording(ServerPlayer requester, int mapsWide, int mapsHigh, int targetFps, int maxDurationSeconds) {
@@ -831,6 +990,21 @@ public final class RendererBotCameraSystem {
 		}
 	}
 
+	private static short[] decodePcmFrame(byte[] pcm, int expectedSamples) {
+		if (pcm == null || expectedSamples <= 0) {
+			return null;
+		}
+		short[] samples = new short[expectedSamples];
+		int sampleCount = Math.min(expectedSamples, pcm.length / 2);
+		for (int index = 0; index < sampleCount; index++) {
+			int byteIndex = index * 2;
+			int low = pcm[byteIndex] & 0xFF;
+			int high = pcm[byteIndex + 1];
+			samples[index] = (short) (low | (high << 8));
+		}
+		return samples;
+	}
+
 	private static boolean isLevelActivelyRenderedByBot(MinecraftServer server, UUID botUuid, ResourceKey<Level> dimension) {
 		if (server == null || botUuid == null || dimension == null) {
 			return false;
@@ -839,6 +1013,13 @@ public final class RendererBotCameraSystem {
 			if (stream != null
 					&& botUuid.equals(stream.botUuid())
 					&& dimension.equals(stream.spec().dimension())) {
+				return true;
+			}
+		}
+		for (ActiveAudioCapture capture : ACTIVE_AUDIO_CAPTURES.values()) {
+			if (capture != null
+					&& botUuid.equals(capture.botUuid())
+					&& dimension.equals(capture.spec().dimension())) {
 				return true;
 			}
 		}
@@ -898,6 +1079,18 @@ public final class RendererBotCameraSystem {
 		}
 	}
 
+	private static void failAudioCapturesForBot(UUID botUuid, String message) {
+		if (botUuid == null) {
+			return;
+		}
+		for (ActiveAudioCapture capture : ACTIVE_AUDIO_CAPTURES.values()) {
+			if (capture == null || !botUuid.equals(capture.botUuid())) {
+				continue;
+			}
+			stopAudioCaptureInternal(capture, message, true);
+		}
+	}
+
 	private static void stopLiveStreamForBot(UUID botUuid, String message, boolean notifyFailure) {
 		if (botUuid == null) {
 			return;
@@ -923,6 +1116,21 @@ public final class RendererBotCameraSystem {
 		releaseBotCameraIfNeeded(stream.server(), stream.botUuid(), true);
 		if (notifyFailure) {
 			stream.onFailure().accept(message);
+		}
+	}
+
+	private static void stopAudioCaptureInternal(ActiveAudioCapture capture, String message, boolean notifyFailure) {
+		if (capture == null) {
+			return;
+		}
+		ACTIVE_AUDIO_CAPTURES.remove(capture.audioId(), capture);
+		AUDIO_CAPTURES_BY_OWNER.remove(capture.ownerKey(), capture.audioId());
+		ServerPlayer bot = capture.server().getPlayerList().getPlayer(capture.botUuid());
+		if (bot != null && ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotAudioCaptureStopS2CPayload.TYPE)) {
+			ServerPlayNetworking.send(bot, new RendererBotPayloads.RendererBotAudioCaptureStopS2CPayload(capture.audioId()));
+		}
+		if (notifyFailure) {
+			capture.onFailure().accept(message);
 		}
 	}
 
@@ -1052,6 +1260,7 @@ public final class RendererBotCameraSystem {
 		}
 		syncCameraHotbarWarmupStreams(server);
 		cleanupOrphanedLiveStreams(server);
+		cleanupOrphanedAudioCaptures(server);
 		if (!hasActiveShadowSyncWork(server)) {
 			return;
 		}
@@ -1060,6 +1269,7 @@ public final class RendererBotCameraSystem {
 
 	private static boolean hasActiveShadowSyncWork(MinecraftServer server) {
 		return !ACTIVE_LIVE_STREAMS.isEmpty()
+				|| !ACTIVE_AUDIO_CAPTURES.isEmpty()
 				|| !PENDING_CAPTURES.isEmpty()
 				|| !PENDING_VIDEO_RECORDINGS.isEmpty()
 				|| !ACTIVE_SHADOW_SYNC_STATES.isEmpty()
@@ -1188,6 +1398,34 @@ public final class RendererBotCameraSystem {
 		}
 	}
 
+	private static void cleanupOrphanedAudioCaptures(MinecraftServer server) {
+		if (server == null || ACTIVE_AUDIO_CAPTURES.isEmpty()) {
+			return;
+		}
+		long now = System.currentTimeMillis();
+		for (ActiveAudioCapture capture : new ArrayList<>(ACTIVE_AUDIO_CAPTURES.values())) {
+			if (capture == null) {
+				continue;
+			}
+			UUID expectedAudioId = AUDIO_CAPTURES_BY_OWNER.get(capture.ownerKey());
+			boolean ownerMismatch = !Objects.equals(expectedAudioId, capture.audioId());
+			if (ownerMismatch) {
+				stopAudioCaptureInternal(capture, "Renderer bot audio capture orphaned", false);
+				continue;
+			}
+			boolean botUnavailable = !READY_BOTS.containsKey(capture.botUuid())
+					|| server.getPlayerList() == null
+					|| server.getPlayerList().getPlayer(capture.botUuid()) == null;
+			if (botUnavailable) {
+				stopAudioCaptureInternal(capture, "Renderer bot audio capture target is unavailable", true);
+				continue;
+			}
+			if (now - capture.lastActivityAtMillis() > AUDIO_CAPTURE_ORPHAN_CLEANUP_MS) {
+				stopAudioCaptureInternal(capture, "Renderer bot audio capture timed out", true);
+			}
+		}
+	}
+
 	private static UUID resolveRenderSessionId(
 			ResourceKey<Level> dimension,
 			BlockPos cameraPos,
@@ -1310,6 +1548,30 @@ public final class RendererBotCameraSystem {
 			}
 		}
 
+		for (ActiveAudioCapture capture : ACTIVE_AUDIO_CAPTURES.values()) {
+			if (capture == null || !botUuid.equals(capture.botUuid())) {
+				continue;
+			}
+			AudioCaptureSpec spec = capture.spec();
+			if (spec == null || spec.dimension() == null || !botLevel.dimension().equals(spec.dimension())) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(
+					server,
+					spec.dimension(),
+					spec.x(),
+					spec.y(),
+					spec.z(),
+					0.0F,
+					0.0F,
+					null
+			);
+			center = mergePositionedVirtualCenter(center, botLevel, target);
+			if (center == null && target != null) {
+				return null;
+			}
+		}
+
 		for (PendingCapture capture : PENDING_CAPTURES.values()) {
 			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.isDone()) {
 				continue;
@@ -1393,6 +1655,20 @@ public final class RendererBotCameraSystem {
 					spec.omnidirectionalChunkLoading(),
 					spec.cameraPos() != null && spec.followEntityUuid() == null
 			);
+		}
+		for (ActiveAudioCapture capture : ACTIVE_AUDIO_CAPTURES.values()) {
+			if (capture == null || !botUuid.equals(capture.botUuid())) {
+				continue;
+			}
+			AudioCaptureSpec spec = capture.spec();
+			if (spec == null || spec.dimension() == null || !botLevel.dimension().equals(spec.dimension())) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, spec.dimension(), spec.x(), spec.y(), spec.z(), 0.0F, 0.0F, null);
+			if (target == null || target.level() != botLevel) {
+				continue;
+			}
+			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance, true, false);
 		}
 		for (PendingCapture capture : PENDING_CAPTURES.values()) {
 			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.isDone()) {
@@ -1789,6 +2065,37 @@ public final class RendererBotCameraSystem {
 					spec.hiddenEntityUuids(),
 					spec.omnidirectionalChunkLoading(),
 					spec.cameraPos() != null && spec.followEntityUuid() == null
+			);
+		}
+
+		for (ActiveAudioCapture capture : ACTIVE_AUDIO_CAPTURES.values()) {
+			if (capture == null || !botUuid.equals(capture.botUuid())) {
+				continue;
+			}
+			AudioCaptureSpec spec = capture.spec();
+			ScheduledServiceTarget target = resolveServiceTarget(
+					server,
+					spec.dimension(),
+					spec.x(),
+					spec.y(),
+					spec.z(),
+					0.0F,
+					0.0F,
+					null
+			);
+			if (target == null || target.level() == null) {
+				stopAudioCaptureInternal(capture, "Renderer bot audio capture target is unavailable", true);
+				continue;
+			}
+			accumulateShadowDesiredState(
+					desiredStates,
+					botUuid,
+					spec.renderSessionId(),
+					target,
+					viewDistance,
+					Set.of(),
+					true,
+					false
 			);
 		}
 
@@ -2242,6 +2549,63 @@ public final class RendererBotCameraSystem {
 		mirrorTransientLevelPacket(level, BlockPos.containing(x, y, z), packet);
 	}
 
+	public static void mirrorTransientSound(
+			ServerLevel level,
+			Holder<SoundEvent> sound,
+			SoundSource source,
+			double x,
+			double y,
+			double z,
+			float volume,
+			float pitch,
+			long seed
+	) {
+		if (level == null || sound == null || source == null) {
+			return;
+		}
+		mirrorTransientLevelPacket(
+				level,
+				BlockPos.containing(x, y, z),
+				new ClientboundSoundPacket(sound, source, x, y, z, volume, pitch, seed)
+		);
+	}
+
+	public static void mirrorTransientEntitySound(
+			ServerLevel level,
+			Holder<SoundEvent> sound,
+			SoundSource source,
+			Entity entity,
+			float volume,
+			float pitch,
+			long seed
+	) {
+		if (level == null || sound == null || source == null || entity == null) {
+			return;
+		}
+		mirrorTransientLevelPacket(
+				level,
+				entity.blockPosition(),
+					new ClientboundSoundEntityPacket(sound, source, entity, volume, pitch, seed)
+			);
+		}
+
+	public static void mirrorTransientStopSound(MinecraftServer server, Identifier soundId, SoundSource source) {
+		if (server == null) {
+			return;
+		}
+		ClientboundStopSoundPacket packet = new ClientboundStopSoundPacket(soundId, source);
+		for (ShadowDimensionSyncState activeState : ACTIVE_SHADOW_SYNC_STATES.values()) {
+			if (activeState == null || !activeState.initialized()) {
+				continue;
+			}
+			ServerLevel level = server.getLevel(activeState.dimension());
+			if (level == null) {
+				continue;
+			}
+			sendShadowTransientPacket(level, activeState, packet);
+		}
+	}
+
 	private static void mirrorTransientLevelPacket(ServerLevel level, BlockPos pos, Packet<? extends ClientGamePacketListener> packet) {
 		if (level == null || pos == null || packet == null) {
 			return;
@@ -2623,6 +2987,11 @@ public final class RendererBotCameraSystem {
 				return true;
 			}
 		}
+		for (ActiveAudioCapture capture : ACTIVE_AUDIO_CAPTURES.values()) {
+			if (capture != null && botUuid.equals(capture.botUuid())) {
+				return true;
+			}
+		}
 		return false;
 	}
 
@@ -2664,6 +3033,16 @@ public final class RendererBotCameraSystem {
 					spec.expectedPitch(),
 					spec.followEntityUuid()
 			);
+			if (isEntityWithinTrackingTarget(entity, target, horizontalRangeSq)) {
+				return true;
+			}
+		}
+		for (ActiveAudioCapture capture : ACTIVE_AUDIO_CAPTURES.values()) {
+			if (capture == null || !botUuid.equals(capture.botUuid())) {
+				continue;
+			}
+			AudioCaptureSpec spec = capture.spec();
+			ScheduledServiceTarget target = resolveServiceTarget(server, spec.dimension(), spec.x(), spec.y(), spec.z(), 0.0F, 0.0F, null);
 			if (isEntityWithinTrackingTarget(entity, target, horizontalRangeSq)) {
 				return true;
 			}
@@ -2735,6 +3114,16 @@ public final class RendererBotCameraSystem {
 				continue;
 			}
 			ScheduledServiceTarget target = resolveServiceTarget(server, stream.spec().dimension(), stream.spec().expectedX(), stream.spec().expectedY(), stream.spec().expectedZ(), stream.spec().expectedYaw(), stream.spec().expectedPitch(), stream.spec().followEntityUuid());
+			if (target != null) {
+				return target;
+			}
+		}
+		for (ActiveAudioCapture capture : ACTIVE_AUDIO_CAPTURES.values()) {
+			if (capture == null || !botUuid.equals(capture.botUuid())) {
+				continue;
+			}
+			AudioCaptureSpec spec = capture.spec();
+			ScheduledServiceTarget target = resolveServiceTarget(server, spec.dimension(), spec.x(), spec.y(), spec.z(), 0.0F, 0.0F, null);
 			if (target != null) {
 				return target;
 			}
@@ -3178,6 +3567,12 @@ public final class RendererBotCameraSystem {
 		}
 	}
 
+	public record LiveStreamFrame(byte[] pixels, long clientFrameNanos, long receivedAtNanos) {
+	}
+
+	public record AudioCaptureFrame(short[] samples, long receivedAtNanos, long clientFrameNanos) {
+	}
+
 	private record BotHandshake(UUID playerUuid, String playerName) {
 	}
 
@@ -3465,7 +3860,7 @@ public final class RendererBotCameraSystem {
 		private final String ownerKey;
 		private final UUID botUuid;
 		private final LiveStreamSpec spec;
-		private final Consumer<byte[]> onFrame;
+		private final Consumer<LiveStreamFrame> onFrame;
 		private final Consumer<String> onFailure;
 		private final long startedAtMillis;
 		private volatile long lastFrameAtMillis;
@@ -3477,7 +3872,7 @@ public final class RendererBotCameraSystem {
 				String ownerKey,
 				UUID botUuid,
 				LiveStreamSpec spec,
-				Consumer<byte[]> onFrame,
+				Consumer<LiveStreamFrame> onFrame,
 				Consumer<String> onFailure
 		) {
 			this.server = server;
@@ -3512,7 +3907,7 @@ public final class RendererBotCameraSystem {
 			return this.spec;
 		}
 
-		private Consumer<byte[]> onFrame() {
+		private Consumer<LiveStreamFrame> onFrame() {
 			return this.onFrame;
 		}
 
@@ -3553,6 +3948,101 @@ public final class RendererBotCameraSystem {
 				referenceTime = this.lastFrameAtMillis;
 			}
 			return referenceTime;
+		}
+	}
+
+	private record AudioCaptureSpec(
+			UUID renderSessionId,
+			ResourceKey<Level> dimension,
+			BlockPos microphonePos,
+			double x,
+			double y,
+			double z,
+			double radiusBlocks,
+			int sampleRate,
+			int frameSamples
+	) {
+	}
+
+	private static final class ActiveAudioCapture {
+		private final MinecraftServer server;
+		private final UUID audioId;
+		private final String ownerKey;
+		private final UUID botUuid;
+		private final AudioCaptureSpec spec;
+		private final long startedAtMillis;
+		private volatile Consumer<AudioCaptureFrame> onFrame;
+		private volatile Consumer<String> onFailure;
+		private volatile long lastFrameAtMillis;
+
+		private ActiveAudioCapture(
+				MinecraftServer server,
+				UUID audioId,
+				String ownerKey,
+				UUID botUuid,
+				AudioCaptureSpec spec,
+				Consumer<AudioCaptureFrame> onFrame,
+				Consumer<String> onFailure
+		) {
+			this.server = server;
+			this.audioId = audioId;
+			this.ownerKey = ownerKey;
+			this.botUuid = botUuid;
+			this.spec = spec;
+			this.onFrame = onFrame;
+			this.onFailure = onFailure;
+			this.startedAtMillis = System.currentTimeMillis();
+			this.lastFrameAtMillis = 0L;
+		}
+
+		private MinecraftServer server() {
+			return this.server;
+		}
+
+		private UUID audioId() {
+			return this.audioId;
+		}
+
+		private String ownerKey() {
+			return this.ownerKey;
+		}
+
+		private UUID botUuid() {
+			return this.botUuid;
+		}
+
+		private AudioCaptureSpec spec() {
+			return this.spec;
+		}
+
+		private Consumer<AudioCaptureFrame> onFrame() {
+			return this.onFrame;
+		}
+
+		private Consumer<String> onFailure() {
+			return this.onFailure;
+		}
+
+		private void updateCallbacks(Consumer<AudioCaptureFrame> onFrame, Consumer<String> onFailure) {
+			if (onFrame != null) {
+				this.onFrame = onFrame;
+			}
+			if (onFailure != null) {
+				this.onFailure = onFailure;
+			}
+		}
+
+		private void markFrameReceived() {
+			this.lastFrameAtMillis = System.currentTimeMillis();
+		}
+
+		private boolean isStale() {
+			long referenceTime = this.lastFrameAtMillis > 0L ? this.lastFrameAtMillis : this.startedAtMillis;
+			return System.currentTimeMillis() - referenceTime > AUDIO_CAPTURE_STALE_MS;
+		}
+
+		private long lastActivityAtMillis() {
+			return this.lastFrameAtMillis > 0L ? this.lastFrameAtMillis : this.startedAtMillis;
 		}
 	}
 

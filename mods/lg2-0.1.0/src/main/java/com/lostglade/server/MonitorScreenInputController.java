@@ -82,7 +82,7 @@ final class MonitorScreenInputController {
 		LiveCameraReference galleryDisconnectRequested = null;
 		boolean returnToGalleryAfterDelete = false;
 		String releasedRelaySessionId = null;
-		GalleryCacheCandidate deletedGalleryCacheCandidate = null;
+		List<GalleryCacheCandidate> deletedGalleryCacheCandidates = List.of();
 		String galleryYoutubeUrl = null;
 		String galleryYoutubeTitle = null;
 		Integer galleryYoutubeIndex = null;
@@ -163,7 +163,8 @@ final class MonitorScreenInputController {
 						GalleryRemovalResult removal = removeGalleryItemLocked(mediaState, mediaState.galleryIndex >= 0 ? mediaState.galleryIndex : 0, layout);
 						GalleryItem deletedItem = removal.removedItem();
 						boolean stillSelected = removal.selectionRetained();
-						deletedGalleryCacheCandidate = galleryCacheCandidate(deletedItem);
+						GalleryCacheCandidate deletedGalleryCacheCandidate = galleryCacheCandidate(deletedItem);
+						deletedGalleryCacheCandidates = deletedGalleryCacheCandidate != null ? List.of(deletedGalleryCacheCandidate) : List.of();
 						if (deletedItem != null && deletedItem.url() != null && Objects.equals(deletedItem.url(), mediaState.wallpaperUrl)) {
 							clearWallpaperLocked(mediaState);
 						}
@@ -300,14 +301,65 @@ final class MonitorScreenInputController {
 			} else if (galleryBrowser && mediaGalleryBrowserCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					nextMode = restorePlayerBackgroundGalleryPickerLocked(mediaState) ? mediaState.mode : ScreenViewMode.HOME;
+					clearGalleryBulkSelectionLocked(mediaState);
 					mediaState.version++;
 				}
 			} else if (galleryBrowser
 					&& mediaState.mode == ScreenViewMode.GALLERY
 					&& !mediaState.playerBackgroundGalleryPickerOpen
+					&& mediaGalleryBrowserSelectionRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					setGalleryBulkSelectionModeLocked(mediaState, !mediaState.galleryBulkSelectionMode);
+					mediaState.statusText = "";
+					mediaState.version++;
+				}
+				rerenderCurrent = true;
+			} else if (galleryBrowser
+					&& mediaState.mode == ScreenViewMode.GALLERY
+					&& !mediaState.playerBackgroundGalleryPickerOpen
+					&& mediaState.galleryBulkSelectionMode
+					&& mediaGalleryBrowserBulkDeleteRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					int selectedCount = mediaState.galleryBulkSelectedKeys.size();
+					deletedGalleryCacheCandidates = removeGalleryBulkSelectionLocked(mediaState, layout);
+					if (!deletedGalleryCacheCandidates.isEmpty()) {
+						persistGallery = true;
+						mediaState.statusText = "Удалено: " + selectedCount;
+					} else {
+						mediaState.statusText = "Ничего не выбрано";
+					}
+					mediaState.version++;
+				}
+				rerenderCurrent = true;
+			} else if (galleryBrowser
+					&& mediaState.mode == ScreenViewMode.GALLERY
+					&& !mediaState.playerBackgroundGalleryPickerOpen
+					&& !mediaState.galleryBulkSelectionMode
 					&& mediaGalleryBrowserLinkRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				galleryPhotoPrintImportRequested = canImportHeldPhotoPrintToGallery(player);
 				galleryLoadRequest = !galleryPhotoPrintImportRequested;
+				rerenderCurrent = true;
+			} else if (galleryBrowser
+					&& mediaGalleryBrowserScrollbarTrackRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					List<Integer> visibleGalleryIndexes = galleryBrowserVisibleIndexesLocked(mediaState);
+					int visibleRows = mediaGalleryVisibleRows(layout);
+					int totalRows = mediaGalleryTotalRows(visibleGalleryIndexes.size(), layout);
+					int maxScroll = Math.max(0, totalRows - visibleRows);
+					mediaState.galleryScroll = clampInt(mediaState.galleryScroll, 0, maxScroll);
+					if (scrollbarVisible(visibleRows, totalRows)) {
+						int nextScroll = scrollValueForTrack(
+								mediaGalleryBrowserScrollbarTrackRect(layout),
+								visibleRows,
+								totalRows,
+								touchPoint.y()
+						);
+						if (nextScroll != mediaState.galleryScroll) {
+							mediaState.galleryScroll = nextScroll;
+							mediaState.version++;
+						}
+					}
+				}
 				rerenderCurrent = true;
 			} else if (galleryBrowser && mediaGalleryGridRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				boolean galleryGridHandled = false;
@@ -318,75 +370,73 @@ final class MonitorScreenInputController {
 					int totalRows = mediaGalleryTotalRows(visibleGalleryIndexes.size(), layout);
 					int maxScroll = Math.max(0, totalRows - visibleRows);
 					mediaState.galleryScroll = clampInt(mediaState.galleryScroll, 0, maxScroll);
-					if (scrollbarVisible(visibleRows, totalRows)
-							&& mediaGalleryBrowserScrollbarTrackRect(layout).contains(touchPoint.x(), touchPoint.y())) {
-						galleryGridHandled = true;
-						mediaState.galleryScroll = scrollValueForTrack(
-								mediaGalleryBrowserScrollbarTrackRect(layout),
-								visibleRows,
-								totalRows,
-								touchPoint.y()
-						);
-					} else {
-						int rowCount = Math.min(visibleRows, Math.max(0, totalRows - mediaState.galleryScroll));
-						for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
-							for (int column = 0; column < columns; column++) {
-								int visibleIndex = (mediaState.galleryScroll + visibleRow) * columns + column;
-								if (visibleIndex < 0 || visibleIndex >= visibleGalleryIndexes.size()) {
-									continue;
-								}
-								int galleryIndex = visibleGalleryIndexes.get(visibleIndex);
-								UiRect cardRect = mediaGalleryCardRect(layout, visibleRow, column);
-								if (!cardRect.contains(touchPoint.x(), touchPoint.y())) {
-									continue;
-								}
-								galleryGridHandled = true;
-								GalleryItem item = mediaState.galleryItems.get(galleryIndex);
-								if (mediaState.playerBackgroundGalleryPickerOpen) {
-									if (galleryItemCanBePlayerBackgroundCandidate(item)) {
-										galleryPlayerBackgroundRequestedIndex = galleryIndex;
-										restorePlayerBackgroundGalleryPickerLocked(mediaState);
-										nextMode = mediaState.mode;
-										mediaState.statusText = "";
-										mediaState.version++;
-									}
-									visibleRow = rowCount;
-									break;
-								}
-								GalleryItemKind itemKind = effectiveGalleryItemKind(item);
-								if (mediaState.mode == ScreenViewMode.SBER_DRONES
-										&& item != null
-										&& itemKind == GalleryItemKind.LIVE_CAMERA) {
-									LiveCameraReference cameraRef = liveCameraGalleryReference(
-											item.url(),
-											component.runtimeKey() != null ? component.runtimeKey().dimension() : level.dimension()
-									);
-									if (cameraRef != null
-											&& mediaGalleryCardDisconnectRect(cardRect, layout).contains(touchPoint.x(), touchPoint.y())
-											&& isBluetoothLinkedLiveCamera(level, component, cameraRef)) {
-										galleryDisconnectRequested = cameraRef;
-										visibleRow = rowCount;
-										break;
-									}
-								}
-								if (item != null && itemKind == GalleryItemKind.YOUTUBE && item.url() != null && !item.url().isBlank()) {
-									mediaState.galleryIndex = galleryIndex;
-									galleryYoutubeIndex = galleryIndex;
-									galleryYoutubeUrl = item.url();
-									galleryYoutubeTitle = item.title();
-									mediaState.version++;
-									visibleRow = rowCount;
-									break;
-								}
-								if (selectGalleryItemLocked(mediaState, galleryIndex, layout)) {
+					int rowCount = Math.min(visibleRows, Math.max(0, totalRows - mediaState.galleryScroll));
+					for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
+						for (int column = 0; column < columns; column++) {
+							int visibleIndex = (mediaState.galleryScroll + visibleRow) * columns + column;
+							if (visibleIndex < 0 || visibleIndex >= visibleGalleryIndexes.size()) {
+								continue;
+							}
+							int galleryIndex = visibleGalleryIndexes.get(visibleIndex);
+							UiRect cardRect = mediaGalleryCardRect(layout, visibleRow, column);
+							if (!cardRect.contains(touchPoint.x(), touchPoint.y())) {
+								continue;
+							}
+							galleryGridHandled = true;
+							GalleryItem item = mediaState.galleryItems.get(galleryIndex);
+							if (mediaState.galleryBulkSelectionMode
+									&& mediaState.mode == ScreenViewMode.GALLERY
+									&& !mediaState.playerBackgroundGalleryPickerOpen) {
+								toggleGalleryBulkItemLocked(mediaState, galleryIndex);
+								mediaState.statusText = "";
+								mediaState.version++;
+								visibleRow = rowCount;
+								break;
+							}
+							if (mediaState.playerBackgroundGalleryPickerOpen) {
+								if (galleryItemCanBePlayerBackgroundCandidate(item)) {
+									galleryPlayerBackgroundRequestedIndex = galleryIndex;
+									restorePlayerBackgroundGalleryPickerLocked(mediaState);
+									nextMode = mediaState.mode;
 									mediaState.statusText = "";
 									mediaState.version++;
-								} else {
-									galleryDeferredLoadIndex = galleryIndex;
 								}
 								visibleRow = rowCount;
 								break;
 							}
+							GalleryItemKind itemKind = effectiveGalleryItemKind(item);
+							if (mediaState.mode == ScreenViewMode.SBER_DRONES
+									&& item != null
+									&& itemKind == GalleryItemKind.LIVE_CAMERA) {
+								LiveCameraReference cameraRef = liveCameraGalleryReference(
+										item.url(),
+										component.runtimeKey() != null ? component.runtimeKey().dimension() : level.dimension()
+								);
+								if (cameraRef != null
+										&& mediaGalleryCardDisconnectRect(cardRect, layout).contains(touchPoint.x(), touchPoint.y())
+										&& isBluetoothLinkedLiveCamera(level, component, cameraRef)) {
+									galleryDisconnectRequested = cameraRef;
+									visibleRow = rowCount;
+									break;
+								}
+							}
+							if (item != null && itemKind == GalleryItemKind.YOUTUBE && item.url() != null && !item.url().isBlank()) {
+								mediaState.galleryIndex = galleryIndex;
+								galleryYoutubeIndex = galleryIndex;
+								galleryYoutubeUrl = item.url();
+								galleryYoutubeTitle = item.title();
+								mediaState.version++;
+								visibleRow = rowCount;
+								break;
+							}
+							if (selectGalleryItemLocked(mediaState, galleryIndex, layout)) {
+								mediaState.statusText = "";
+								mediaState.version++;
+							} else {
+								galleryDeferredLoadIndex = galleryIndex;
+							}
+							visibleRow = rowCount;
+							break;
 						}
 					}
 				}
@@ -396,6 +446,7 @@ final class MonitorScreenInputController {
 				if (!galleryGridHandled
 						&& mediaState.mode == ScreenViewMode.GALLERY
 						&& !mediaState.playerBackgroundGalleryPickerOpen
+						&& !mediaState.galleryBulkSelectionMode
 						&& canImportHeldPhotoPrintToGallery(player)) {
 					galleryPhotoPrintImportRequested = true;
 				}
@@ -783,8 +834,8 @@ final class MonitorScreenInputController {
 			if (state != null) {
 				persistGalleryState(server, component.runtimeKey(), state);
 			}
-			if (deletedGalleryCacheCandidate != null) {
-				scheduleGalleryCacheRelease(server, List.of(deletedGalleryCacheCandidate), component.runtimeKey());
+			if (!deletedGalleryCacheCandidates.isEmpty()) {
+				scheduleGalleryCacheRelease(server, deletedGalleryCacheCandidates, component.runtimeKey());
 			}
 		}
 		if (galleryDeferredLoadIndex != null && server != null) {

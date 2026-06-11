@@ -9,6 +9,7 @@ import net.minecraft.world.level.saveddata.maps.MapId;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -33,6 +34,8 @@ record MediaVisualSnapshot(
 		boolean hasMedia,
 		boolean galleryBrowser,
 		boolean galleryPickerMode,
+		boolean gallerySelectionMode,
+		int gallerySelectionCount,
 		boolean galleryCurrentSaved,
 		boolean galleryBackedYoutube,
 		boolean musicPlayerLayout,
@@ -162,6 +165,7 @@ record CameraAppDeviceSnapshot(
 		String title,
 		String subtitle,
 		String url,
+		BufferedImage preview,
 		boolean selected,
 		boolean online
 ) {
@@ -402,6 +406,8 @@ record GalleryCardSnapshot(
 		boolean animated,
 		BufferedImage preview,
 		boolean current,
+		boolean bulkSelectionMode,
+		boolean selectedForBulk,
 		boolean loaded,
 		boolean disconnectVisible
 ) {
@@ -507,6 +513,8 @@ enum PlayerUiIcon {
 	TRASH("/assets/lg2/textures/monitor/ui_icons/trash.png"),
 	WALLPAPER("/assets/lg2/textures/monitor/ui_icons/wallpaper.png"),
 	CHECK("/assets/lg2/textures/monitor/ui_icons/check.png"),
+	CHECKBOX_LINE("/assets/lg2/textures/monitor/ui_icons/checkbox_line.png"),
+	CHECKBOX_FILL("/assets/lg2/textures/monitor/ui_icons/checkbox_fill.png"),
 	PLAY("/assets/lg2/textures/monitor/ui_icons/play.png"),
 	PAUSE("/assets/lg2/textures/monitor/ui_icons/pause.png"),
 	FILE_MUSIC("/assets/lg2/textures/monitor/ui_icons/file_music.png"),
@@ -642,6 +650,8 @@ final class MediaRuntimeState {
 	int galleryNextOpenRequestId;
 	int galleryIndex;
 	int galleryScroll;
+	boolean galleryBulkSelectionMode;
+	final Set<String> galleryBulkSelectedKeys;
 	boolean galleryPreloadStatusRefreshScheduled;
 	int galleryPreloadStatusRefreshStep;
 	boolean playerBackgroundGalleryPickerOpen;
@@ -740,6 +750,8 @@ final class MediaRuntimeState {
 		this.galleryNextOpenRequestId = 0;
 		this.galleryIndex = -1;
 		this.galleryScroll = 0;
+		this.galleryBulkSelectionMode = false;
+		this.galleryBulkSelectedKeys = new LinkedHashSet<>();
 		this.galleryPreloadStatusRefreshScheduled = false;
 		this.galleryPreloadStatusRefreshStep = 0;
 		this.playerBackgroundGalleryPickerOpen = false;

@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 11;
+	public static final int PROTOCOL_VERSION = 14;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
@@ -31,13 +31,17 @@ public final class RendererBotPayloads {
 		PayloadTypeRegistry.playC2S().registerLarge(RendererBotFullFrameC2SPayload.TYPE, RendererBotFullFrameC2SPayload.STREAM_CODEC, MAX_CAPTURE_PAYLOAD_BYTES);
 		PayloadTypeRegistry.playC2S().registerLarge(RendererBotLiveFrameC2SPayload.TYPE, RendererBotLiveFrameC2SPayload.STREAM_CODEC, MAX_CAPTURE_PAYLOAD_BYTES);
 		PayloadTypeRegistry.playC2S().registerLarge(RendererBotVideoRecordingCompleteC2SPayload.TYPE, RendererBotVideoRecordingCompleteC2SPayload.STREAM_CODEC, MAX_CAPTURE_PAYLOAD_BYTES);
+		PayloadTypeRegistry.playC2S().register(RendererBotAudioFrameC2SPayload.TYPE, RendererBotAudioFrameC2SPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playC2S().register(RendererBotCaptureFailureC2SPayload.TYPE, RendererBotCaptureFailureC2SPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playC2S().register(RendererBotLiveStreamFailureC2SPayload.TYPE, RendererBotLiveStreamFailureC2SPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playC2S().register(RendererBotAudioCaptureFailureC2SPayload.TYPE, RendererBotAudioCaptureFailureC2SPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotCaptureRequestS2CPayload.TYPE, RendererBotCaptureRequestS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotLiveStreamStartS2CPayload.TYPE, RendererBotLiveStreamStartS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotLiveStreamStopS2CPayload.TYPE, RendererBotLiveStreamStopS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotVideoRecordingStartS2CPayload.TYPE, RendererBotVideoRecordingStartS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotVideoRecordingStopS2CPayload.TYPE, RendererBotVideoRecordingStopS2CPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playS2C().register(RendererBotAudioCaptureStartS2CPayload.TYPE, RendererBotAudioCaptureStartS2CPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playS2C().register(RendererBotAudioCaptureStopS2CPayload.TYPE, RendererBotAudioCaptureStopS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotShadowLevelInitS2CPayload.TYPE, RendererBotShadowLevelInitS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotShadowLevelStateS2CPayload.TYPE, RendererBotShadowLevelStateS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotShadowViewS2CPayload.TYPE, RendererBotShadowViewS2CPayload.STREAM_CODEC);
@@ -252,22 +256,131 @@ public final class RendererBotPayloads {
 		}
 	}
 
-	public record RendererBotLiveFrameC2SPayload(UUID streamId, byte[] pixels) implements CustomPacketPayload {
+	public record RendererBotLiveFrameC2SPayload(UUID streamId, long clientFrameNanos, byte[] pixels) implements CustomPacketPayload {
 		public static final Type<RendererBotLiveFrameC2SPayload> TYPE = new Type<>(id("renderer_bot_live_frame"));
 		public static final StreamCodec<FriendlyByteBuf, RendererBotLiveFrameC2SPayload> STREAM_CODEC =
 				CustomPacketPayload.codec(RendererBotLiveFrameC2SPayload::write, RendererBotLiveFrameC2SPayload::new);
 
 		public RendererBotLiveFrameC2SPayload(FriendlyByteBuf buffer) {
-			this(buffer.readUUID(), buffer.readByteArray());
+			this(buffer.readUUID(), buffer.readVarLong(), buffer.readByteArray());
 		}
 
 		private void write(FriendlyByteBuf buffer) {
 			buffer.writeUUID(this.streamId);
+			buffer.writeVarLong(this.clientFrameNanos);
 			buffer.writeByteArray(this.pixels);
 		}
 
 		@Override
 		public Type<RendererBotLiveFrameC2SPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotAudioCaptureStartS2CPayload(
+			UUID audioId,
+			UUID renderSessionId,
+			String dimensionId,
+			double x,
+			double y,
+			double z,
+			double radiusBlocks,
+			int sampleRate,
+			int frameSamples
+	) implements CustomPacketPayload {
+		public static final Type<RendererBotAudioCaptureStartS2CPayload> TYPE = new Type<>(id("renderer_bot_audio_capture_start"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotAudioCaptureStartS2CPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotAudioCaptureStartS2CPayload::write, RendererBotAudioCaptureStartS2CPayload::new);
+
+		public RendererBotAudioCaptureStartS2CPayload(FriendlyByteBuf buffer) {
+			this(
+					buffer.readUUID(),
+					buffer.readUUID(),
+					buffer.readUtf(),
+					buffer.readDouble(),
+					buffer.readDouble(),
+					buffer.readDouble(),
+					buffer.readDouble(),
+					buffer.readVarInt(),
+					buffer.readVarInt()
+			);
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUUID(this.audioId);
+			buffer.writeUUID(this.renderSessionId);
+			buffer.writeUtf(this.dimensionId);
+			buffer.writeDouble(this.x);
+			buffer.writeDouble(this.y);
+			buffer.writeDouble(this.z);
+			buffer.writeDouble(this.radiusBlocks);
+			buffer.writeVarInt(this.sampleRate);
+			buffer.writeVarInt(this.frameSamples);
+		}
+
+		@Override
+		public Type<RendererBotAudioCaptureStartS2CPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotAudioCaptureStopS2CPayload(UUID audioId) implements CustomPacketPayload {
+		public static final Type<RendererBotAudioCaptureStopS2CPayload> TYPE = new Type<>(id("renderer_bot_audio_capture_stop"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotAudioCaptureStopS2CPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotAudioCaptureStopS2CPayload::write, RendererBotAudioCaptureStopS2CPayload::new);
+
+		public RendererBotAudioCaptureStopS2CPayload(FriendlyByteBuf buffer) {
+			this(buffer.readUUID());
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUUID(this.audioId);
+		}
+
+		@Override
+		public Type<RendererBotAudioCaptureStopS2CPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotAudioFrameC2SPayload(UUID audioId, long frameIndex, long clientFrameNanos, byte[] pcm) implements CustomPacketPayload {
+		public static final Type<RendererBotAudioFrameC2SPayload> TYPE = new Type<>(id("renderer_bot_audio_frame"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotAudioFrameC2SPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotAudioFrameC2SPayload::write, RendererBotAudioFrameC2SPayload::new);
+
+		public RendererBotAudioFrameC2SPayload(FriendlyByteBuf buffer) {
+			this(buffer.readUUID(), buffer.readVarLong(), buffer.readVarLong(), buffer.readByteArray(8192));
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUUID(this.audioId);
+			buffer.writeVarLong(this.frameIndex);
+			buffer.writeVarLong(this.clientFrameNanos);
+			buffer.writeByteArray(this.pcm);
+		}
+
+		@Override
+		public Type<RendererBotAudioFrameC2SPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotAudioCaptureFailureC2SPayload(UUID audioId, String message) implements CustomPacketPayload {
+		public static final Type<RendererBotAudioCaptureFailureC2SPayload> TYPE = new Type<>(id("renderer_bot_audio_capture_failure"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotAudioCaptureFailureC2SPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotAudioCaptureFailureC2SPayload::write, RendererBotAudioCaptureFailureC2SPayload::new);
+
+		public RendererBotAudioCaptureFailureC2SPayload(FriendlyByteBuf buffer) {
+			this(buffer.readUUID(), buffer.readUtf(512));
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUUID(this.audioId);
+			buffer.writeUtf(this.message, 512);
+		}
+
+		@Override
+		public Type<RendererBotAudioCaptureFailureC2SPayload> type() {
 			return TYPE;
 		}
 	}

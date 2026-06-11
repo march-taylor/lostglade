@@ -569,20 +569,24 @@ final class MonitorScreenMediaFrameRuntime {
 		boolean handled = false;
 		Long youtubeSeekTargetMs = null;
 		synchronized (state) {
-			if (state.overlayMode == MediaOverlayMode.CONTROLS
+			if (!state.loading
+					&& !state.waitingForLink
+					&& isLibraryAppMode(state.mode)
+					&& state.gallerySurfaceMode == GallerySurfaceMode.BROWSER
+					&& !state.galleryItems.isEmpty()) {
+				UiLayout layout = createUiLayout(component.width(), component.height());
+				int visibleRows = mediaGalleryVisibleRows(layout);
+				int totalRows = mediaGalleryTotalRows(galleryBrowserVisibleIndexesLocked(state).size(), layout);
+				int maxScroll = Math.max(0, totalRows - visibleRows);
+				if (maxScroll > 0) {
+					state.galleryScroll = clampInt(state.galleryScroll - delta, 0, maxScroll);
+					state.version++;
+					handled = true;
+				}
+			} else if (state.overlayMode == MediaOverlayMode.CONTROLS
 					&& !state.loading
 					&& !state.waitingForLink) {
-				if (isLibraryAppMode(state.mode) && state.gallerySurfaceMode == GallerySurfaceMode.BROWSER && !state.galleryItems.isEmpty()) {
-					UiLayout layout = createUiLayout(component.width(), component.height());
-					int visibleRows = mediaGalleryVisibleRows(layout);
-					int totalRows = mediaGalleryTotalRows(state.galleryItems.size(), layout);
-					int maxScroll = Math.max(0, totalRows - visibleRows);
-					if (maxScroll > 0) {
-						state.galleryScroll = clampInt(state.galleryScroll - delta, 0, maxScroll);
-						state.version++;
-						handled = true;
-					}
-				} else if (isYoutubeFamilyMode(state.mode) && state.youtubeQueueOpen && !state.youtubeQueue.isEmpty()) {
+				if (isYoutubeFamilyMode(state.mode) && state.youtubeQueueOpen && !state.youtubeQueue.isEmpty()) {
 					int visibleRows = youtubeQueueVisibleRowsPreview(state);
 					int maxScroll = Math.max(0, state.youtubeQueue.size() - visibleRows);
 					if (maxScroll > 0) {
