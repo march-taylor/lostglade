@@ -44,6 +44,9 @@ final class ServerTabIntegrationTabImpl {
 
 		List<ServerPlayer> players = new ArrayList<>();
 		for (TabPlayer tabPlayer : api.getOnlinePlayers()) {
+			if (rendererBotVanishIntegration != null && rendererBotVanishIntegration.isVanished(tabPlayer)) {
+				continue;
+			}
 			Object rawPlayer = tabPlayer.getPlayer();
 			if (rawPlayer instanceof ServerPlayer serverPlayer) {
 				players.add(serverPlayer);

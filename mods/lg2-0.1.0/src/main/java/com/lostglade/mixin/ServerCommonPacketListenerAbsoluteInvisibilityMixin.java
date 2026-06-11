@@ -7,6 +7,7 @@ import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundBossEventPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
+import net.minecraft.network.protocol.game.ClientboundTrackedWaypointPacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerCommonPacketListenerImpl;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
@@ -71,6 +72,12 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 
 		if (packet instanceof ClientboundBossEventPacket bossEventPacket
 				&& ServerBossBarVisibilitySystem.handleOutgoingBossEventPacket(receiver, bossEventPacket)) {
+			ci.cancel();
+			return;
+		}
+
+		if (packet instanceof ClientboundTrackedWaypointPacket waypointPacket
+				&& com.lostglade.server.ServerRaceSystem.shouldSuppressMilkMouseWaypoint(receiver, waypointPacket)) {
 			ci.cancel();
 			return;
 		}
