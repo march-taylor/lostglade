@@ -34,6 +34,7 @@ public final class DroneItem extends SimplePolymerItem {
 
 	public static final String BODY_LAYER_KEY = "body";
 	public static final String CAMERA_LAYER_KEY = "camera";
+	public static final String NIGHT_VISION_LAYER_KEY = "night_vision";
 	public static final String RIGHT_FRONT_PROPELLER_LAYER_KEY = "propeller_right_front";
 	public static final String RIGHT_BACK_PROPELLER_LAYER_KEY = "propeller_right_back";
 	public static final String LEFT_FRONT_PROPELLER_LAYER_KEY = "propeller_left_front";
@@ -322,6 +323,9 @@ public final class DroneItem extends SimplePolymerItem {
 		List<DisplayLayer> layers = new ArrayList<>();
 		layers.add(new DisplayLayer(BODY_LAYER_KEY, bodyLayerModelForColor(paintColor)));
 		layers.add(new DisplayLayer(CAMERA_LAYER_KEY, cameraLayerModelForAngle(90)));
+		if (nightVision) {
+			layers.add(new DisplayLayer(NIGHT_VISION_LAYER_KEY, NIGHT_VISION_LAYER_MODEL_ID));
+		}
 		if (type == DroneType.KAMIKAZE) {
 			layers.add(new DisplayLayer(KAMIKAZE_LAYER_KEY, kamikazeLayerModelForPower(clampedKamikazePower(kamikazePower))));
 		}
@@ -332,9 +336,6 @@ public final class DroneItem extends SimplePolymerItem {
 		layers.add(new DisplayLayer(RIGHT_BACK_PROPELLER_LAYER_KEY, propellerLayerModel(RIGHT_BACK_PROPELLER_LAYER_KEY, paintColor, 0)));
 		layers.add(new DisplayLayer(LEFT_FRONT_PROPELLER_LAYER_KEY, propellerLayerModel(LEFT_FRONT_PROPELLER_LAYER_KEY, paintColor, 0)));
 		layers.add(new DisplayLayer(LEFT_BACK_PROPELLER_LAYER_KEY, propellerLayerModel(LEFT_BACK_PROPELLER_LAYER_KEY, paintColor, 0)));
-		if (nightVision) {
-			layers.add(new DisplayLayer("night_vision", NIGHT_VISION_LAYER_MODEL_ID));
-		}
 		if (autoAim) {
 			layers.add(new DisplayLayer(AUTO_AIM_BASE_LAYER_KEY, AUTO_AIM_LAYER_MODEL_ID));
 			layers.add(new DisplayLayer(AUTO_AIM_RIGHT_FRONT_LAYER_KEY, autoAimTentacleLayerModel(AUTO_AIM_RIGHT_FRONT_LAYER_KEY, 0)));
@@ -356,6 +357,10 @@ public final class DroneItem extends SimplePolymerItem {
 
 	public static Identifier cameraLayerModelForAngle(int angle) {
 		return Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_camera_pitch_" + net.minecraft.util.Mth.clamp(angle, 0, 90));
+	}
+
+	public static Identifier nightVisionLayerModelForAngle(int angle) {
+		return Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_night_vision_pitch_" + net.minecraft.util.Mth.clamp(angle, 0, 90));
 	}
 
 	public static Identifier propellerLayerModel(String layerKey, DyeColor color, int state) {
@@ -417,6 +422,10 @@ public final class DroneItem extends SimplePolymerItem {
 
 	public static boolean isAutoAimTentacleLayerKey(String layerKey) {
 		return autoAimTentacleName(layerKey) != null;
+	}
+
+	public static boolean isNightVisionLayerKey(String layerKey) {
+		return NIGHT_VISION_LAYER_KEY.equals(layerKey);
 	}
 
 	private static String autoAimTentacleName(String layerKey) {

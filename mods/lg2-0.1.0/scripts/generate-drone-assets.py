@@ -20,6 +20,7 @@ AUTO_AIM_MODEL_PATH = SOURCE_DIR / "model.json"
 BASE_TEXTURE_PATH = SOURCE_DIR / "base_colored+propellers.png"
 FRAME_TEXTURE_PATH = SOURCE_DIR / "frame+camera.png"
 AUTO_AIM_TEXTURE_PATH = SOURCE_DIR / "auto_aim.png"
+NIGHT_VISION_TEXTURE_PATH = SOURCE_DIR / "night_vision.png"
 
 ITEM_MODELS_DIR = ROOT / "src/main/resources/assets/lg2/models/item"
 ITEM_DEFS_DIR = ROOT / "src/main/resources/assets/lg2/items"
@@ -30,6 +31,7 @@ FRAME_TEXTURE_ID = "drone_frame_camera"
 KAMIKAZE_TEXTURE_ID = "drone_module_kamikaze"
 TURRET_TEXTURE_ID = "drone_module_turret"
 AUTO_AIM_TEXTURE_ID = "drone_module_auto_aim"
+NIGHT_VISION_TEXTURE_ID = "drone_module_night_vision"
 BASE_TEXTURE_ID_PREFIX = "drone_base_"
 BODY_MODEL_ID_PREFIX = "drone_body_"
 CAMERA_MODEL_ID_PREFIX = "drone_camera_pitch_"
@@ -39,6 +41,8 @@ KAMIKAZE_MODEL_ID_PREFIX = "drone_module_kamikaze_"
 TURRET_MODEL_ID_PREFIX = "drone_module_turret_pitch_"
 AUTO_AIM_MODEL_ID = "drone_module_auto_aim"
 AUTO_AIM_MODEL_ID_PREFIX = "drone_module_auto_aim_"
+NIGHT_VISION_MODEL_ID = "drone_module_night_vision"
+NIGHT_VISION_MODEL_ID_PREFIX = "drone_module_night_vision_pitch_"
 COLOR_LIFT_FLOOR = 120
 
 COLOR_NAMES = (
@@ -442,12 +446,14 @@ def main() -> None:
 	source_image = Image.open(BASE_TEXTURE_PATH).convert("RGBA")
 	frame_image = Image.open(FRAME_TEXTURE_PATH).convert("RGBA")
 	auto_aim_texture_image = Image.open(AUTO_AIM_TEXTURE_PATH).convert("RGBA")
+	night_vision_texture_image = Image.open(NIGHT_VISION_TEXTURE_PATH).convert("RGBA")
 	kamikaze_texture_image = texture_image_from_bbmodel(bbmodel, "3")
 	turret_texture_image = texture_image_from_bbmodel(bbmodel, "6")
 	kamikaze_elements = resolve_group_elements(bbmodel, "kamikatze")
 	combat_elements = resolve_group_elements(bbmodel, "combat")
 	barrel_elements = resolve_group_elements(bbmodel, "barrel")
 	auto_aim_elements = resolve_exported_model_group_elements(auto_aim_model, "auto_aim")
+	night_vision_elements = resolve_exported_model_group_elements(auto_aim_model, "night_vision")
 	barrel_element_uuids = {element["uuid"] for element in barrel_elements}
 	combat_static_elements = [element for element in combat_elements if element["uuid"] not in barrel_element_uuids]
 	auto_aim_elements_by_name = {element["name"]: element for element in auto_aim_elements}
@@ -574,6 +580,7 @@ def main() -> None:
 	turret_texture_image.save(TEXTURES_DIR / f"{TURRET_TEXTURE_ID}.png")
 	frame_image.save(TEXTURES_DIR / f"{FRAME_TEXTURE_ID}.png")
 	auto_aim_texture_image.save(TEXTURES_DIR / f"{AUTO_AIM_TEXTURE_ID}.png")
+	night_vision_texture_image.save(TEXTURES_DIR / f"{NIGHT_VISION_TEXTURE_ID}.png")
 
 	auto_aim_base = auto_aim_elements_by_name.get("base")
 	if auto_aim_base is None:
@@ -601,8 +608,43 @@ def main() -> None:
 						normalize_exported_model_element(tentacle),
 						frame_index,
 					)
-				],
+					],
 			)
+
+	night_vision_model_elements = [
+		normalize_exported_model_element(element)
+		for element in night_vision_elements
+	]
+	if not night_vision_model_elements:
+		raise ValueError("Missing night_vision elements in exported drone model")
+	write_model_with_definition(
+		NIGHT_VISION_MODEL_ID,
+		"Lostglade drone night vision module extracted from top module source",
+		f"lg2:item/{NIGHT_VISION_TEXTURE_ID}",
+		night_vision_model_elements,
+	)
+	for angle in range(91):
+		rotated_elements: list[dict[str, Any]] = []
+		for element in night_vision_elements:
+			element_copy = normalize_exported_model_element(element)
+			rotation = copy.deepcopy(element_copy.get("rotation"))
+			if rotation is None:
+				rotation = {
+					"x": float(angle),
+					"y": 0.0,
+					"z": 0.0,
+					"origin": element_copy.get("origin", [0.0, 0.0, 0.0]),
+				}
+			else:
+				rotation["x"] = float(angle)
+			element_copy["rotation"] = rotation
+			rotated_elements.append(element_copy)
+		write_model_with_definition(
+			f"{NIGHT_VISION_MODEL_ID_PREFIX}{angle}",
+			"Lostglade drone night vision module extracted from top module source",
+			f"lg2:item/{NIGHT_VISION_TEXTURE_ID}",
+			rotated_elements,
+		)
 
 	color_targets = {
 		color_name: representative_color(TEXTURES_DIR / f"drone_paint_{color_name}.png")

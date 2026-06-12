@@ -5877,6 +5877,8 @@ public final class DroneSystem {
 		Identifier desiredModel = null;
 		if (DroneItem.CAMERA_LAYER_KEY.equals(layerKey)) {
 			desiredModel = DroneItem.cameraLayerModelForAngle(cameraPitch);
+		} else if (DroneItem.isNightVisionLayerKey(layerKey)) {
+			desiredModel = DroneItem.nightVisionLayerModelForAngle(cameraPitch);
 		} else if (DroneItem.isKamikazeLayerKey(layerKey)) {
 			desiredModel = DroneItem.kamikazeLayerModelForPower(kamikazePower);
 		} else if (DroneItem.isTurretLayerKey(layerKey)) {
