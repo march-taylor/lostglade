@@ -40,6 +40,11 @@ public final class DroneItem extends SimplePolymerItem {
 	public static final String LEFT_BACK_PROPELLER_LAYER_KEY = "propeller_left_back";
 	public static final String KAMIKAZE_LAYER_KEY = "kamikaze";
 	public static final String TURRET_LAYER_KEY = "turret";
+	public static final String AUTO_AIM_BASE_LAYER_KEY = "auto_aim";
+	public static final String AUTO_AIM_RIGHT_FRONT_LAYER_KEY = "auto_aim_right_front";
+	public static final String AUTO_AIM_RIGHT_BOTTOM_LAYER_KEY = "auto_aim_right_bottom";
+	public static final String AUTO_AIM_LEFT_FRONT_LAYER_KEY = "auto_aim_left_front";
+	public static final String AUTO_AIM_LEFT_BOTTOM_LAYER_KEY = "auto_aim_left_bottom";
 	private static final Identifier DEFAULT_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone");
 	private static final Identifier NORMAL_DISPLAY_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_display");
 	private static final Identifier KAMIKAZE_LAYER_MODEL_ID_LEVEL_0 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_kamikaze_0");
@@ -48,6 +53,7 @@ public final class DroneItem extends SimplePolymerItem {
 	private static final Identifier KAMIKAZE_LAYER_MODEL_ID_LEVEL_3 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_kamikaze_3");
 	private static final Identifier NIGHT_VISION_LAYER_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_night_vision");
 	private static final Identifier AUTO_AIM_LAYER_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_auto_aim");
+	private static final int AUTO_AIM_FRAME_COUNT = 8;
 	private static final String DISPLAY_ROOT_TAG = "lg2_drone_display";
 	private static final String DISPLAY_ONLY_TAG = "display_only";
 	private static final String DISPLAY_MODEL_OVERRIDE_TAG = "model_override";
@@ -330,7 +336,11 @@ public final class DroneItem extends SimplePolymerItem {
 			layers.add(new DisplayLayer("night_vision", NIGHT_VISION_LAYER_MODEL_ID));
 		}
 		if (autoAim) {
-			layers.add(new DisplayLayer("auto_aim", AUTO_AIM_LAYER_MODEL_ID));
+			layers.add(new DisplayLayer(AUTO_AIM_BASE_LAYER_KEY, AUTO_AIM_LAYER_MODEL_ID));
+			layers.add(new DisplayLayer(AUTO_AIM_RIGHT_FRONT_LAYER_KEY, autoAimTentacleLayerModel(AUTO_AIM_RIGHT_FRONT_LAYER_KEY, 0)));
+			layers.add(new DisplayLayer(AUTO_AIM_LEFT_BOTTOM_LAYER_KEY, autoAimTentacleLayerModel(AUTO_AIM_LEFT_BOTTOM_LAYER_KEY, 1)));
+			layers.add(new DisplayLayer(AUTO_AIM_LEFT_FRONT_LAYER_KEY, autoAimTentacleLayerModel(AUTO_AIM_LEFT_FRONT_LAYER_KEY, 2)));
+			layers.add(new DisplayLayer(AUTO_AIM_RIGHT_BOTTOM_LAYER_KEY, autoAimTentacleLayerModel(AUTO_AIM_RIGHT_BOTTOM_LAYER_KEY, 3)));
 		}
 		return layers;
 	}
@@ -376,6 +386,17 @@ public final class DroneItem extends SimplePolymerItem {
 		return Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_turret_pitch_" + net.minecraft.util.Mth.clamp(angle, 0, 90));
 	}
 
+	public static Identifier autoAimTentacleLayerModel(String layerKey, int frameIndex) {
+		String tentacleName = autoAimTentacleName(layerKey);
+		if (tentacleName == null) {
+			return null;
+		}
+		return Identifier.fromNamespaceAndPath(
+				Lg2.MOD_ID,
+				"drone_module_auto_aim_" + tentacleName + "_" + net.minecraft.util.Mth.clamp(frameIndex, 0, AUTO_AIM_FRAME_COUNT - 1)
+		);
+	}
+
 	public static boolean isKamikazeLayerKey(String layerKey) {
 		return KAMIKAZE_LAYER_KEY.equals(layerKey);
 	}
@@ -392,6 +413,26 @@ public final class DroneItem extends SimplePolymerItem {
 				|| RIGHT_BACK_PROPELLER_LAYER_KEY.equals(layerKey)
 				|| LEFT_FRONT_PROPELLER_LAYER_KEY.equals(layerKey)
 				|| LEFT_BACK_PROPELLER_LAYER_KEY.equals(layerKey);
+	}
+
+	public static boolean isAutoAimTentacleLayerKey(String layerKey) {
+		return autoAimTentacleName(layerKey) != null;
+	}
+
+	private static String autoAimTentacleName(String layerKey) {
+		if (AUTO_AIM_RIGHT_FRONT_LAYER_KEY.equals(layerKey)) {
+			return "right_front";
+		}
+		if (AUTO_AIM_RIGHT_BOTTOM_LAYER_KEY.equals(layerKey)) {
+			return "right_bottom";
+		}
+		if (AUTO_AIM_LEFT_FRONT_LAYER_KEY.equals(layerKey)) {
+			return "left_front";
+		}
+		if (AUTO_AIM_LEFT_BOTTOM_LAYER_KEY.equals(layerKey)) {
+			return "left_bottom";
+		}
+		return null;
 	}
 
 	private static ItemStack createDroneStack(

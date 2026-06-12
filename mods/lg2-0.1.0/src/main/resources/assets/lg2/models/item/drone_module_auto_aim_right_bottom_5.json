@@ -1,73 +1,73 @@
 {
   "format_version": "1.21.11",
-  "credit": "Lostglade drone auto-aim base extracted from top module source",
+  "credit": "Lostglade drone auto-aim tentacle frame extracted from top module source",
   "textures": {
     "0": "lg2:item/drone_module_auto_aim",
     "particle": "lg2:item/drone_module_auto_aim"
   },
   "elements": [
     {
-      "name": "base",
+      "name": "right_bottom",
       "from": [
-        6,
-        7.5,
-        6
+        7,
+        9.5,
+        8
       ],
       "to": [
-        10,
-        9.5,
+        7,
+        11.5,
         10
       ],
       "rotation": {
-        "angle": 0,
+        "angle": 45,
         "axis": "y",
         "origin": [
           7,
-          7.5,
-          7
+          10.5,
+          9
         ]
       },
       "faces": {
         "north": {
           "uv": [
-            4,
             0,
-            8,
+            0,
+            0,
             2
           ],
           "texture": "#0"
         },
         "east": {
           "uv": [
-            4,
-            0,
-            8,
-            2
+            14.0,
+            4.0,
+            16.0,
+            6.0
           ],
           "texture": "#0"
         },
         "south": {
           "uv": [
-            4,
             0,
-            8,
+            0,
+            0,
             2
           ],
           "texture": "#0"
         },
         "west": {
           "uv": [
-            4,
-            0,
-            8,
-            2
+            12.0,
+            4.0,
+            14.0,
+            6.0
           ],
           "texture": "#0"
         },
         "up": {
           "uv": [
-            4,
-            4,
+            0,
+            2,
             0,
             0
           ],
@@ -75,10 +75,10 @@
         },
         "down": {
           "uv": [
-            4,
             0,
             0,
-            4
+            0,
+            2
           ],
           "texture": "#0"
         }

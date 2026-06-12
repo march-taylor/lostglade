@@ -16,8 +16,10 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIR = Path("/home/mart/Desktop/models/drone")
 BBMODEL_PATH = SOURCE_DIR / "model.bbmodel"
+AUTO_AIM_MODEL_PATH = SOURCE_DIR / "model.json"
 BASE_TEXTURE_PATH = SOURCE_DIR / "base_colored+propellers.png"
 FRAME_TEXTURE_PATH = SOURCE_DIR / "frame+camera.png"
+AUTO_AIM_TEXTURE_PATH = SOURCE_DIR / "auto_aim.png"
 
 ITEM_MODELS_DIR = ROOT / "src/main/resources/assets/lg2/models/item"
 ITEM_DEFS_DIR = ROOT / "src/main/resources/assets/lg2/items"
@@ -27,6 +29,7 @@ FRAME_MODEL_ID = "drone_display"
 FRAME_TEXTURE_ID = "drone_frame_camera"
 KAMIKAZE_TEXTURE_ID = "drone_module_kamikaze"
 TURRET_TEXTURE_ID = "drone_module_turret"
+AUTO_AIM_TEXTURE_ID = "drone_module_auto_aim"
 BASE_TEXTURE_ID_PREFIX = "drone_base_"
 BODY_MODEL_ID_PREFIX = "drone_body_"
 CAMERA_MODEL_ID_PREFIX = "drone_camera_pitch_"
@@ -34,6 +37,8 @@ PROPELLER_MODEL_ID_PREFIX = "drone_propeller_"
 PROPELLER_TEXTURE_ID_PREFIX = "drone_propeller_"
 KAMIKAZE_MODEL_ID_PREFIX = "drone_module_kamikaze_"
 TURRET_MODEL_ID_PREFIX = "drone_module_turret_pitch_"
+AUTO_AIM_MODEL_ID = "drone_module_auto_aim"
+AUTO_AIM_MODEL_ID_PREFIX = "drone_module_auto_aim_"
 COLOR_LIFT_FLOOR = 120
 
 COLOR_NAMES = (
@@ -67,6 +72,13 @@ PROPELLER_ACTIVE_FRAME_ORDER_BY_NAME = {
 	"right_back": (0, 2, 1),
 	"left_front": (0, 2, 1),
 }
+AUTO_AIM_TENTACLE_NAMES = (
+	"right_front",
+	"right_bottom",
+	"left_front",
+	"left_bottom",
+)
+AUTO_AIM_FRAME_COUNT = 8
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -293,6 +305,59 @@ def collect_element_uuids(node: dict[str, Any]) -> list[str]:
 	return collected
 
 
+def find_named_outliner_node(nodes: list[Any], target_name: str) -> dict[str, Any] | None:
+	for node in nodes:
+		if isinstance(node, int):
+			continue
+		if node.get("name") == target_name:
+			return node
+		found = find_named_outliner_node(node.get("children", []), target_name)
+		if found is not None:
+			return found
+	return None
+
+
+def collect_exported_element_indices(node: dict[str, Any]) -> list[int]:
+	collected: list[int] = []
+	for child in node.get("children", []):
+		if isinstance(child, int):
+			collected.append(child)
+			continue
+		collected.extend(collect_exported_element_indices(child))
+	return collected
+
+
+def resolve_exported_model_group_elements(model: dict[str, Any], group_name: str) -> list[dict[str, Any]]:
+	group_node = find_named_outliner_node(model.get("groups", []), group_name)
+	if group_node is None:
+		raise ValueError(f"Could not resolve exported model group {group_name!r}")
+	elements = model.get("elements", [])
+	return [copy.deepcopy(elements[index]) for index in collect_exported_element_indices(group_node)]
+
+
+def normalize_exported_model_element(element: dict[str, Any]) -> dict[str, Any]:
+	normalized = copy.deepcopy(element)
+	for face in normalized.get("faces", {}).values():
+		face["texture"] = "#0"
+	return normalized
+
+
+def apply_auto_aim_frame_uv(element: dict[str, Any], frame_index: int) -> dict[str, Any]:
+	framed = copy.deepcopy(element)
+	row = max(0, min(AUTO_AIM_FRAME_COUNT - 1, frame_index)) // 2
+	mirrored = frame_index % 2 == 1
+	y0 = float(row * 2)
+	y1 = y0 + 2.0
+	left_uv = [12.0, y0, 14.0, y1]
+	right_uv = [14.0, y0, 16.0, y1]
+	faces = framed.get("faces", {})
+	if "east" in faces:
+		faces["east"]["uv"] = right_uv if mirrored else left_uv
+	if "west" in faces:
+		faces["west"]["uv"] = left_uv if mirrored else right_uv
+	return framed
+
+
 def bb_element_to_model_element(
 	element: dict[str, Any],
 	texture_resolver: dict[int, str],
@@ -344,6 +409,7 @@ def write_model_with_definition(model_id: str, credit: str, texture_id: str, ele
 
 def main() -> None:
 	bbmodel = load_json(BBMODEL_PATH)
+	auto_aim_model = load_json(AUTO_AIM_MODEL_PATH)
 	texture_index_map = resolve_texture_index_map(bbmodel)
 	group_uuids = resolve_group_uuids(bbmodel)
 
@@ -375,13 +441,16 @@ def main() -> None:
 
 	source_image = Image.open(BASE_TEXTURE_PATH).convert("RGBA")
 	frame_image = Image.open(FRAME_TEXTURE_PATH).convert("RGBA")
+	auto_aim_texture_image = Image.open(AUTO_AIM_TEXTURE_PATH).convert("RGBA")
 	kamikaze_texture_image = texture_image_from_bbmodel(bbmodel, "3")
 	turret_texture_image = texture_image_from_bbmodel(bbmodel, "6")
 	kamikaze_elements = resolve_group_elements(bbmodel, "kamikatze")
 	combat_elements = resolve_group_elements(bbmodel, "combat")
 	barrel_elements = resolve_group_elements(bbmodel, "barrel")
+	auto_aim_elements = resolve_exported_model_group_elements(auto_aim_model, "auto_aim")
 	barrel_element_uuids = {element["uuid"] for element in barrel_elements}
 	combat_static_elements = [element for element in combat_elements if element["uuid"] not in barrel_element_uuids]
+	auto_aim_elements_by_name = {element["name"]: element for element in auto_aim_elements}
 
 	frame_model_elements = [
 		bb_element_to_model_element(
@@ -504,6 +573,36 @@ def main() -> None:
 	kamikaze_texture_image.save(TEXTURES_DIR / f"{KAMIKAZE_TEXTURE_ID}.png")
 	turret_texture_image.save(TEXTURES_DIR / f"{TURRET_TEXTURE_ID}.png")
 	frame_image.save(TEXTURES_DIR / f"{FRAME_TEXTURE_ID}.png")
+	auto_aim_texture_image.save(TEXTURES_DIR / f"{AUTO_AIM_TEXTURE_ID}.png")
+
+	auto_aim_base = auto_aim_elements_by_name.get("base")
+	if auto_aim_base is None:
+		raise ValueError("Missing auto_aim base element in exported drone model")
+	write_model_with_definition(
+		AUTO_AIM_MODEL_ID,
+		"Lostglade drone auto-aim base extracted from top module source",
+		f"lg2:item/{AUTO_AIM_TEXTURE_ID}",
+		[
+			normalize_exported_model_element(auto_aim_base)
+		],
+	)
+	for tentacle_name in AUTO_AIM_TENTACLE_NAMES:
+		tentacle = auto_aim_elements_by_name.get(tentacle_name)
+		if tentacle is None:
+			raise ValueError(f"Missing auto_aim tentacle element {tentacle_name!r} in exported drone model")
+		for frame_index in range(AUTO_AIM_FRAME_COUNT):
+			model_id = f"{AUTO_AIM_MODEL_ID_PREFIX}{tentacle_name}_{frame_index}"
+			write_model_with_definition(
+				model_id,
+				"Lostglade drone auto-aim tentacle frame extracted from top module source",
+				f"lg2:item/{AUTO_AIM_TEXTURE_ID}",
+				[
+					apply_auto_aim_frame_uv(
+						normalize_exported_model_element(tentacle),
+						frame_index,
+					)
+				],
+			)
 
 	color_targets = {
 		color_name: representative_color(TEXTURES_DIR / f"drone_paint_{color_name}.png")

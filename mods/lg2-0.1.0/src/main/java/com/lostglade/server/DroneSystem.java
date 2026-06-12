@@ -67,6 +67,7 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.tags.TagKey;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.SimpleContainer;
@@ -300,6 +301,9 @@ public final class DroneSystem {
 	private static final float DRONE_AUTO_AIM_UNCONTROLLED_ROTATION_BLEND = 0.09F;
 	private static final float DRONE_AUTO_AIM_UNCONTROLLED_MAX_YAW_STEP_DEGREES = 1.00F;
 	private static final float DRONE_AUTO_AIM_UNCONTROLLED_MAX_PITCH_STEP_DEGREES = 0.75F;
+	private static final int DRONE_AUTO_AIM_DISPLAY_FRAME_PAIR_COUNT = 4;
+	private static final long DRONE_AUTO_AIM_DISPLAY_MIN_FRAME_HOLD_TICKS = 4L;
+	private static final long DRONE_AUTO_AIM_DISPLAY_MAX_FRAME_HOLD_TICKS = 8L;
 	private static final Identifier DRONE_AUTO_AIM_BLOCK_INTERACTION_RANGE_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_auto_aim_block_interaction_range");
 	private static final Identifier DRONE_AUTO_AIM_ENTITY_INTERACTION_RANGE_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_auto_aim_entity_interaction_range");
 	private static final double DRONE_CAMERA_ESCAPE_STEP = 0.04D;
@@ -348,6 +352,7 @@ public final class DroneSystem {
 	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_ARM_ALLOWED_TICK = new HashMap<>();
 	private static final Map<UUID, DroneDisplayWobbleState> DISPLAY_WOBBLE_BY_DRONE = new HashMap<>();
+	private static final Map<UUID, DroneAutoAimDisplayAnimationState> AUTO_AIM_DISPLAY_ANIMATIONS = new HashMap<>();
 	private static final Map<UUID, Double> DRONE_ENVIRONMENT_DAMAGE = new HashMap<>();
 	private static final Map<UUID, Long> POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK = new HashMap<>();
 	private static final Map<UUID, Long> POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK = new HashMap<>();
@@ -459,6 +464,7 @@ public final class DroneSystem {
 			POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.clear();
 			VISUALLY_CONTROLLED_PLAYERS.clear();
 			DISPLAY_WOBBLE_BY_DRONE.clear();
+			AUTO_AIM_DISPLAY_ANIMATIONS.clear();
 			DRONE_ENVIRONMENT_DAMAGE.clear();
 			CONTROLLED_OPERATOR_MANAGED_NIGHT_VISION.clear();
 			CONTROLLED_OPERATOR_AUTO_AIM_HIGHLIGHTS.clear();
@@ -3200,6 +3206,7 @@ public final class DroneSystem {
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
 		NEXT_DRONE_ARM_ALLOWED_TICK.remove(root.getUUID());
 		DISPLAY_WOBBLE_BY_DRONE.remove(root.getUUID());
+		AUTO_AIM_DISPLAY_ANIMATIONS.remove(root.getUUID());
 		DRONE_ENVIRONMENT_DAMAGE.remove(root.getUUID());
 	}
 
@@ -3793,7 +3800,7 @@ public final class DroneSystem {
 			return InteractionResult.PASS;
 		}
 		Vec3 targetPoint = entity.getEyePosition();
-		if (!isWithinControlledAutoAimSelectionRange(root, targetPoint)) {
+		if (!isWithinControlledAutoAimSelectionRange(player, root, targetPoint)) {
 			return InteractionResult.SUCCESS;
 		}
 		toggleControlledAutoAimTarget(player, session, new DroneAutoAimEntityTarget(entity.getUUID()));
@@ -3816,8 +3823,9 @@ public final class DroneSystem {
 				droneCameraOrigin(finiteVecOr(session.proxyPos(), root.position()), resolveDroneVisualLift(root))
 		);
 		Vec3 direction = controlledTurretDirection(player, session);
-		Vec3 end = origin.add(direction.scale(DRONE_AUTO_AIM_SELECTION_RANGE_BLOCKS));
-		BlockHitResult blockHit = level.clip(new ClipContext(origin, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, root));
+		double selectionRangeBlocks = resolveDroneAutoAimSelectionRangeBlocks(player);
+		Vec3 end = origin.add(direction.scale(selectionRangeBlocks));
+		BlockHitResult blockHit = clipAutoAimBlockThroughPartialBlocks(level, origin, end, root);
 		Vec3 blockLimitedEnd = blockHit.getType() == HitResult.Type.MISS ? end : blockHit.getLocation();
 		EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
 				level,
@@ -3869,13 +3877,13 @@ public final class DroneSystem {
 		}
 		BlockState state = level.getBlockState(pos);
 		if (!isSelectableAutoAimBlock(level, pos, state)) {
-			return InteractionResult.SUCCESS;
+			return selectControlledAutoAimTargetFromView(player, session, root);
 		}
 		Vec3 targetPoint = resolveAutoAimBlockTargetPoint(level, pos, state);
 		if (targetPoint == null) {
 			return InteractionResult.SUCCESS;
 		}
-		if (!isWithinControlledAutoAimSelectionRange(root, targetPoint)) {
+		if (!isWithinControlledAutoAimSelectionRange(player, root, targetPoint)) {
 			return InteractionResult.SUCCESS;
 		}
 		toggleControlledAutoAimTarget(player, session, new DroneAutoAimBlockTarget(pos.immutable()));
@@ -4022,7 +4030,7 @@ public final class DroneSystem {
 				&& pos != null
 				&& state != null
 				&& !state.isAir()
-				&& !state.getCollisionShape(level, pos).isEmpty();
+				&& state.isCollisionShapeFullBlock(level, pos);
 	}
 
 	private static boolean isDroneInternalEntity(Entity entity) {
@@ -4042,29 +4050,73 @@ public final class DroneSystem {
 		if (!isSelectableAutoAimBlock(level, pos, state)) {
 			return null;
 		}
-		AABB bounds = state.getCollisionShape(level, pos).bounds();
-		return new Vec3(
-				pos.getX() + (bounds.minX + bounds.maxX) * 0.5D,
-				pos.getY() + (bounds.minY + bounds.maxY) * 0.5D,
-				pos.getZ() + (bounds.minZ + bounds.maxZ) * 0.5D
-		);
+		return Vec3.atCenterOf(pos);
 	}
 
-	private static boolean isWithinControlledAutoAimSelectionRange(Entity root, Vec3 targetPoint) {
-		if (root == null || targetPoint == null) {
+	private static boolean isWithinControlledAutoAimSelectionRange(ServerPlayer player, Entity root, Vec3 targetPoint) {
+		if (player == null || root == null || targetPoint == null) {
 			return false;
 		}
 		Vec3 origin = resolveSafeDroneCameraOrigin(root, droneCameraOrigin(root));
-		return origin.distanceToSqr(targetPoint) <= DRONE_AUTO_AIM_SELECTION_RANGE_BLOCKS * DRONE_AUTO_AIM_SELECTION_RANGE_BLOCKS;
+		double selectionRangeBlocks = resolveDroneAutoAimSelectionRangeBlocks(player);
+		return origin.distanceToSqr(targetPoint) <= selectionRangeBlocks * selectionRangeBlocks;
 	}
 
 	private static void syncControlledOperatorAutoAimInteractionRange(ServerPlayer player, boolean enabled) {
 		if (player == null) {
 			return;
 		}
-		double amount = enabled ? DRONE_AUTO_AIM_INTERACTION_RANGE_BONUS : 0.0D;
-		syncControlledOperatorAttributeModifier(player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE), DRONE_AUTO_AIM_BLOCK_INTERACTION_RANGE_MODIFIER_ID, amount);
-		syncControlledOperatorAttributeModifier(player.getAttribute(Attributes.ENTITY_INTERACTION_RANGE), DRONE_AUTO_AIM_ENTITY_INTERACTION_RANGE_MODIFIER_ID, amount);
+		double targetRangeBlocks = enabled ? resolveDroneAutoAimSelectionRangeBlocks(player) : 0.0D;
+		syncControlledOperatorAttributeModifier(
+				player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE),
+				DRONE_AUTO_AIM_BLOCK_INTERACTION_RANGE_MODIFIER_ID,
+				resolveAutoAimRangeBonus(player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE), targetRangeBlocks)
+		);
+		syncControlledOperatorAttributeModifier(
+				player.getAttribute(Attributes.ENTITY_INTERACTION_RANGE),
+				DRONE_AUTO_AIM_ENTITY_INTERACTION_RANGE_MODIFIER_ID,
+				resolveAutoAimRangeBonus(player.getAttribute(Attributes.ENTITY_INTERACTION_RANGE), targetRangeBlocks)
+		);
+	}
+
+	private static double resolveDroneAutoAimSelectionRangeBlocks(ServerPlayer player) {
+		return resolveRequestedViewDistance(player) * 16.0D;
+	}
+
+	private static double resolveAutoAimRangeBonus(AttributeInstance attribute, double targetRangeBlocks) {
+		if (attribute == null || targetRangeBlocks <= 0.0D) {
+			return 0.0D;
+		}
+		return Math.max(0.0D, targetRangeBlocks - attribute.getBaseValue());
+	}
+
+	private static BlockHitResult clipAutoAimBlockThroughPartialBlocks(ServerLevel level, Vec3 origin, Vec3 end, Entity clipContextEntity) {
+		if (level == null || origin == null || end == null) {
+			return new BlockHitResult(origin == null ? Vec3.ZERO : origin, Direction.UP, BlockPos.containing(origin == null ? Vec3.ZERO : origin), true);
+		}
+		Vec3 currentStart = origin;
+		Vec3 travel = end.subtract(origin);
+		double totalDistanceSqr = travel.lengthSqr();
+		if (totalDistanceSqr <= 1.0E-9D) {
+			return level.clip(new ClipContext(origin, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, clipContextEntity));
+		}
+		Vec3 step = travel.normalize().scale(0.002D);
+		int maxSkips = Math.max(1, net.minecraft.util.Mth.ceil(Math.sqrt(totalDistanceSqr)) + 4);
+		for (int i = 0; i < maxSkips; i++) {
+			BlockHitResult blockHit = level.clip(new ClipContext(currentStart, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, clipContextEntity));
+			if (blockHit.getType() == HitResult.Type.MISS) {
+				return blockHit;
+			}
+			BlockPos blockPos = blockHit.getBlockPos();
+			if (level.hasChunkAt(blockPos) && isSelectableAutoAimBlock(level, blockPos, level.getBlockState(blockPos))) {
+				return blockHit;
+			}
+			currentStart = blockHit.getLocation().add(step);
+			if (currentStart.distanceToSqr(origin) >= totalDistanceSqr) {
+				break;
+			}
+		}
+		return new BlockHitResult(end, Direction.UP, BlockPos.containing(end), true);
 	}
 
 	private static void syncControlledOperatorAttributeModifier(AttributeInstance attribute, Identifier modifierId, double amount) {
@@ -4438,6 +4490,7 @@ public final class DroneSystem {
 		NEXT_DRONE_ARM_ALLOWED_TICK.remove(root.getUUID());
 		NEXT_DRONE_TURRET_FIRE_TICK.remove(root.getUUID());
 		DISPLAY_WOBBLE_BY_DRONE.remove(root.getUUID());
+		AUTO_AIM_DISPLAY_ANIMATIONS.remove(root.getUUID());
 		DRONE_ENVIRONMENT_DAMAGE.remove(root.getUUID());
 		SCREEN_STREAM_DRONE_LOAD_STATES.remove(root.getUUID());
 		BluetoothLinkSystem.removeDroneEndpoint(level, root.getUUID(), root.blockPosition());
@@ -5286,6 +5339,7 @@ public final class DroneSystem {
 			root.addTag(DRONE_AUTO_AIM_TAG);
 		} else {
 			root.removeTag(DRONE_AUTO_AIM_TAG);
+			AUTO_AIM_DISPLAY_ANIMATIONS.remove(root.getUUID());
 		}
 		syncDroneDisplayLayers(root);
 		if (changed) {
@@ -5537,6 +5591,9 @@ public final class DroneSystem {
 				? 0.0F
 				: (controlled ? 0.0F : xRot);
 		double displayYOffset = resolveDroneDisplayYOffset(droneType);
+		DroneAutoAimDisplayAnimationState autoAimAnimation = hasDroneAutoAimModule(root)
+				? resolveDroneAutoAimDisplayAnimation(root)
+				: null;
 		for (Display.ItemDisplay display : displays) {
 			if (display.isPassenger()) {
 				display.stopRiding();
@@ -5546,7 +5603,7 @@ public final class DroneSystem {
 			display.setTransformationInterpolationDuration(DRONE_DISPLAY_INTERPOLATION_TICKS);
 			display.setYRot(yRot);
 			display.setXRot(visualPitch);
-			applyDynamicDroneDisplayLayer(display, paintColor, cameraPitch, propellersActive, kamikazePower);
+			applyDynamicDroneDisplayLayer(display, paintColor, cameraPitch, propellersActive, kamikazePower, autoAimAnimation);
 			display.setTransformation(buildDroneDisplayTransformation(root, forwardDrive, strafeDrive));
 			display.setPos(root.getX(), root.getY() + displayYOffset, root.getZ());
 			collapseDroneDisplayHitbox(display);
@@ -5806,7 +5863,8 @@ public final class DroneSystem {
 			DyeColor paintColor,
 			int cameraPitch,
 			boolean propellersActive,
-			int kamikazePower
+			int kamikazePower,
+			DroneAutoAimDisplayAnimationState autoAimAnimation
 	) {
 		if (display == null) {
 			return;
@@ -5829,6 +5887,11 @@ public final class DroneSystem {
 					paintColor,
 					propellersActive ? 1 : 0
 			);
+		} else if (DroneItem.isAutoAimTentacleLayerKey(layerKey)) {
+			desiredModel = DroneItem.autoAimTentacleLayerModel(
+					layerKey,
+					resolveAutoAimTentacleDisplayFrame(layerKey, autoAimAnimation)
+			);
 		}
 		if (desiredModel == null) {
 			return;
@@ -5837,6 +5900,103 @@ public final class DroneSystem {
 		if (DroneItem.isPropellerLayerKey(layerKey)) {
 			display.setTransformation(Transformation.identity());
 		}
+	}
+
+	private static DroneAutoAimDisplayAnimationState resolveDroneAutoAimDisplayAnimation(Entity root) {
+		if (root == null || root.level() == null) {
+			return null;
+		}
+		DroneAutoAimDisplayAnimationState state = AUTO_AIM_DISPLAY_ANIMATIONS.get(root.getUUID());
+		long gameTime = root.level().getGameTime();
+		if (state == null) {
+			state = createDroneAutoAimDisplayAnimation(root, gameTime);
+			AUTO_AIM_DISPLAY_ANIMATIONS.put(root.getUUID(), state);
+		} else {
+			advanceDroneAutoAimDisplayAnimation(root, state, gameTime);
+		}
+		return state;
+	}
+
+	private static DroneAutoAimDisplayAnimationState createDroneAutoAimDisplayAnimation(Entity root, long gameTime) {
+		RandomSource random = root == null ? RandomSource.create() : root.getRandom();
+		int primaryFrameRow = random.nextInt(DRONE_AUTO_AIM_DISPLAY_FRAME_PAIR_COUNT);
+		int secondaryFrameRow = pickRandomAutoAimDisplayFramePairRow(random, primaryFrameRow, primaryFrameRow);
+		return new DroneAutoAimDisplayAnimationState(
+				primaryFrameRow,
+				secondaryFrameRow,
+				gameTime + sampleAutoAimDisplayFrameHoldTicks(random),
+				gameTime + sampleAutoAimDisplayFrameHoldTicks(random)
+		);
+	}
+
+	private static void advanceDroneAutoAimDisplayAnimation(Entity root, DroneAutoAimDisplayAnimationState state, long gameTime) {
+		if (root == null || state == null || root.level() == null) {
+			return;
+		}
+		RandomSource random = root.getRandom();
+		if (gameTime >= state.nextPrimaryChangeTick()) {
+			state.setPrimaryFrameRow(pickRandomAutoAimDisplayFramePairRow(
+					random,
+					state.secondaryFrameRow(),
+					state.primaryFrameRow()
+			));
+			state.setNextPrimaryChangeTick(gameTime + sampleAutoAimDisplayFrameHoldTicks(random));
+		}
+		if (gameTime >= state.nextSecondaryChangeTick()) {
+			state.setSecondaryFrameRow(pickRandomAutoAimDisplayFramePairRow(
+					random,
+					state.primaryFrameRow(),
+					state.secondaryFrameRow()
+			));
+			state.setNextSecondaryChangeTick(gameTime + sampleAutoAimDisplayFrameHoldTicks(random));
+		}
+	}
+
+	private static int pickRandomAutoAimDisplayFramePairRow(RandomSource random, int excludedA, int excludedB) {
+		int[] candidates = new int[DRONE_AUTO_AIM_DISPLAY_FRAME_PAIR_COUNT];
+		int count = 0;
+		for (int row = 0; row < DRONE_AUTO_AIM_DISPLAY_FRAME_PAIR_COUNT; row++) {
+			if (row == excludedA || row == excludedB) {
+				continue;
+			}
+			candidates[count++] = row;
+		}
+		if (count <= 0) {
+			return 0;
+		}
+		RandomSource resolvedRandom = random == null ? RandomSource.create() : random;
+		return candidates[resolvedRandom.nextInt(count)];
+	}
+
+	private static long sampleAutoAimDisplayFrameHoldTicks(RandomSource random) {
+		RandomSource resolvedRandom = random == null ? RandomSource.create() : random;
+		if (DRONE_AUTO_AIM_DISPLAY_MAX_FRAME_HOLD_TICKS <= DRONE_AUTO_AIM_DISPLAY_MIN_FRAME_HOLD_TICKS) {
+			return DRONE_AUTO_AIM_DISPLAY_MIN_FRAME_HOLD_TICKS;
+		}
+		long spread = DRONE_AUTO_AIM_DISPLAY_MAX_FRAME_HOLD_TICKS - DRONE_AUTO_AIM_DISPLAY_MIN_FRAME_HOLD_TICKS + 1L;
+		return DRONE_AUTO_AIM_DISPLAY_MIN_FRAME_HOLD_TICKS + resolvedRandom.nextInt((int) spread);
+	}
+
+	private static int resolveAutoAimTentacleDisplayFrame(
+			String layerKey,
+			DroneAutoAimDisplayAnimationState autoAimAnimation
+	) {
+		if (autoAimAnimation == null) {
+			return 0;
+		}
+		if (DroneItem.AUTO_AIM_RIGHT_FRONT_LAYER_KEY.equals(layerKey)) {
+			return autoAimAnimation.primaryFrameRow() * 2;
+		}
+		if (DroneItem.AUTO_AIM_LEFT_BOTTOM_LAYER_KEY.equals(layerKey)) {
+			return autoAimAnimation.primaryFrameRow() * 2 + 1;
+		}
+		if (DroneItem.AUTO_AIM_LEFT_FRONT_LAYER_KEY.equals(layerKey)) {
+			return autoAimAnimation.secondaryFrameRow() * 2;
+		}
+		if (DroneItem.AUTO_AIM_RIGHT_BOTTOM_LAYER_KEY.equals(layerKey)) {
+			return autoAimAnimation.secondaryFrameRow() * 2 + 1;
+		}
+		return 0;
 	}
 
 	private static void updateDroneDisplayLayerModel(Display.ItemDisplay display, Identifier desiredModel) {
@@ -6609,6 +6769,57 @@ public final class DroneSystem {
 	}
 
 	private record DroneAutoAimBlockTarget(BlockPos blockPos) implements DroneAutoAimTarget {
+	}
+
+	private static final class DroneAutoAimDisplayAnimationState {
+		private int primaryFrameRow;
+		private int secondaryFrameRow;
+		private long nextPrimaryChangeTick;
+		private long nextSecondaryChangeTick;
+
+		private DroneAutoAimDisplayAnimationState(
+				int primaryFrameRow,
+				int secondaryFrameRow,
+				long nextPrimaryChangeTick,
+				long nextSecondaryChangeTick
+		) {
+			this.primaryFrameRow = net.minecraft.util.Mth.clamp(primaryFrameRow, 0, DRONE_AUTO_AIM_DISPLAY_FRAME_PAIR_COUNT - 1);
+			this.secondaryFrameRow = net.minecraft.util.Mth.clamp(secondaryFrameRow, 0, DRONE_AUTO_AIM_DISPLAY_FRAME_PAIR_COUNT - 1);
+			this.nextPrimaryChangeTick = nextPrimaryChangeTick;
+			this.nextSecondaryChangeTick = nextSecondaryChangeTick;
+		}
+
+		private int primaryFrameRow() {
+			return this.primaryFrameRow;
+		}
+
+		private void setPrimaryFrameRow(int primaryFrameRow) {
+			this.primaryFrameRow = net.minecraft.util.Mth.clamp(primaryFrameRow, 0, DRONE_AUTO_AIM_DISPLAY_FRAME_PAIR_COUNT - 1);
+		}
+
+		private int secondaryFrameRow() {
+			return this.secondaryFrameRow;
+		}
+
+		private void setSecondaryFrameRow(int secondaryFrameRow) {
+			this.secondaryFrameRow = net.minecraft.util.Mth.clamp(secondaryFrameRow, 0, DRONE_AUTO_AIM_DISPLAY_FRAME_PAIR_COUNT - 1);
+		}
+
+		private long nextPrimaryChangeTick() {
+			return this.nextPrimaryChangeTick;
+		}
+
+		private void setNextPrimaryChangeTick(long nextPrimaryChangeTick) {
+			this.nextPrimaryChangeTick = nextPrimaryChangeTick;
+		}
+
+		private long nextSecondaryChangeTick() {
+			return this.nextSecondaryChangeTick;
+		}
+
+		private void setNextSecondaryChangeTick(long nextSecondaryChangeTick) {
+			this.nextSecondaryChangeTick = nextSecondaryChangeTick;
+		}
 	}
 
 	private record DroneDisplayWobbleState(DroneDisplayWobbleType type, long startedAtTick) {
