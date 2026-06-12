@@ -12,6 +12,12 @@ import com.lostglade.mixin.DisplayAccessor;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.lostglade.server.map.MapImageRenderSystem;
+import de.maxhenkel.voicechat.api.VoicechatApi;
+import de.maxhenkel.voicechat.api.VoicechatConnection;
+import de.maxhenkel.voicechat.api.VoicechatServerApi;
+import de.maxhenkel.voicechat.api.audiochannel.AudioPlayer;
+import de.maxhenkel.voicechat.api.audiochannel.StaticAudioChannel;
+import de.maxhenkel.voicechat.api.opus.OpusEncoder;
 import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import com.mojang.math.Transformation;
@@ -143,9 +149,12 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 public final class DroneSystem {
 	private static final String IT_DRONE_SCOUT = "it_drone_scout";
@@ -240,9 +249,12 @@ public final class DroneSystem {
 	private static final double DRONE_MAGMA_DAMAGE_PER_TICK = 0.045D;
 	private static final double DRONE_ENVIRONMENT_DAMAGE_DECAY_PER_TICK = 0.02D;
 	private static final double DRONE_ENVIRONMENT_WATER_COOLING_PER_TICK = 0.08D;
+	private static final double DRONE_GROUND_HORIZONTAL_DRAG = 0.32D;
+	private static final double DRONE_GROUND_STOP_HORIZONTAL_SPEED_SQR = 2.5E-4D;
+	private static final double DRONE_GROUND_STOP_VERTICAL_SPEED = 0.05D;
 	private static final float UNCONTROLLED_ROTATION_LERP = 0.35F;
-	private static final double UNCONTROLLED_SETTLED_HORIZONTAL_SPEED_SQR = 1.0E-6D;
-	private static final double UNCONTROLLED_SETTLED_VERTICAL_SPEED = 0.045D;
+	private static final double UNCONTROLLED_SETTLED_HORIZONTAL_SPEED_SQR = 2.5E-4D;
+	private static final double UNCONTROLLED_SETTLED_VERTICAL_SPEED = 0.05D;
 	private static final long UNCONTROLLED_DRONE_RELEASE_GLIDE_TICKS = 60L;
 	private static final long CONTROLLED_DRONE_MISSING_ROOT_GRACE_TICKS = 20L * 20L;
 	private static final int DRONE_TURRET_INVENTORY_SIZE = 9;
@@ -291,6 +303,7 @@ public final class DroneSystem {
 	private static final long POST_CONTROL_CLIENT_RESYNC_TICKS = 8L;
 	private static final double POST_CONTROL_MOVE_ACCEPT_DISTANCE_SQR = 2.0D * 2.0D;
 	private static final int DRONE_MANAGED_NIGHT_VISION_AMPLIFIER = 1;
+	private static final double CONTROLLED_OPERATOR_DISABLED_INTERACTION_RANGE_BLOCKS = 0.01D;
 	private static final double DRONE_AUTO_AIM_SELECTION_RANGE_BLOCKS = 64.0D;
 	private static final double DRONE_AUTO_AIM_INTERACTION_RANGE_BONUS = 64.0D;
 	private static final float DRONE_AUTO_AIM_CONTROLLED_ROTATION_BLEND = 0.08F;
@@ -306,6 +319,21 @@ public final class DroneSystem {
 	private static final long DRONE_AUTO_AIM_DISPLAY_MAX_FRAME_HOLD_TICKS = 8L;
 	private static final Identifier DRONE_AUTO_AIM_BLOCK_INTERACTION_RANGE_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_auto_aim_block_interaction_range");
 	private static final Identifier DRONE_AUTO_AIM_ENTITY_INTERACTION_RANGE_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_auto_aim_entity_interaction_range");
+	private static final double DRONE_STATIONARY_BREAK_HORIZONTAL_SPEED_SQR = 4.0E-4D;
+	private static final double DRONE_STATIONARY_BREAK_VERTICAL_SPEED = 0.05D;
+	private static final int CONTROLLED_OPERATOR_AUDIO_SAMPLE_RATE = 48_000;
+	private static final int CONTROLLED_OPERATOR_AUDIO_FRAME_SAMPLES = 960;
+	private static final long CONTROLLED_OPERATOR_AUDIO_FRAME_NANOS = TimeUnit.MILLISECONDS.toNanos(
+			CONTROLLED_OPERATOR_AUDIO_FRAME_SAMPLES * 1000L / CONTROLLED_OPERATOR_AUDIO_SAMPLE_RATE
+	);
+	private static final int CONTROLLED_OPERATOR_AUDIO_FRAME_BUFFER_CAPACITY = 192;
+	private static final long CONTROLLED_OPERATOR_AUDIO_MAX_FRAME_AGE = 3L;
+	private static final long CONTROLLED_OPERATOR_AUDIO_SOURCE_EXPIRE_AFTER_FRAMES = 12L;
+	private static final long CONTROLLED_OPERATOR_AUDIO_REFRESH_INTERVAL_TICKS = 5L;
+	private static final double CONTROLLED_OPERATOR_AUDIO_RECENTER_DISTANCE_SQR = 6.0D * 6.0D;
+	private static final double CONTROLLED_OPERATOR_AUDIO_CAPTURE_RADIUS_EXTRA_BLOCKS = 8.0D;
+	private static final double CONTROLLED_OPERATOR_AUDIO_MIN_CAPTURE_RADIUS_BLOCKS = 16.0D;
+	private static final short[] CONTROLLED_OPERATOR_AUDIO_SILENCE_FRAME = new short[CONTROLLED_OPERATOR_AUDIO_FRAME_SAMPLES];
 	private static final double DRONE_CAMERA_ESCAPE_STEP = 0.04D;
 	private static final int DRONE_CAMERA_ESCAPE_XZ_RADIUS_STEPS = 4;
 	private static final double[] DRONE_CAMERA_ESCAPE_Y_OFFSETS = new double[]{
@@ -356,6 +384,7 @@ public final class DroneSystem {
 	private static final Map<UUID, Double> DRONE_ENVIRONMENT_DAMAGE = new HashMap<>();
 	private static final Map<UUID, Long> POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK = new HashMap<>();
 	private static final Map<UUID, Long> POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK = new HashMap<>();
+	private static final Map<UUID, ControlledOperatorAudioRuntime> CONTROLLED_OPERATOR_AUDIO = new HashMap<>();
 	private static final Set<UUID> VISUALLY_CONTROLLED_PLAYERS = new HashSet<>();
 	private static final Set<UUID> CONTROLLED_OPERATOR_MANAGED_NIGHT_VISION = new HashSet<>();
 	private static final Set<UUID> CONTROLLED_OPERATOR_AUTO_AIM_HIGHLIGHTS = new HashSet<>();
@@ -367,12 +396,20 @@ public final class DroneSystem {
 
 	public static void register() {
 		UseEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
-			if (world.isClientSide() || hand != InteractionHand.MAIN_HAND || !(player instanceof ServerPlayer serverPlayer)) {
+			if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer)) {
 				return InteractionResult.PASS;
 			}
-			InteractionResult autoAimResult = handleControlledAutoAimEntityInteraction(serverPlayer, hand, entity);
-			if (autoAimResult != InteractionResult.PASS) {
-				return autoAimResult;
+			if (isControllingDrone(serverPlayer)) {
+				if (hand == InteractionHand.MAIN_HAND) {
+					InteractionResult autoAimResult = handleControlledAutoAimEntityInteraction(serverPlayer, hand, entity);
+					if (autoAimResult != InteractionResult.PASS) {
+						return autoAimResult;
+					}
+				}
+				return InteractionResult.SUCCESS;
+			}
+			if (hand != InteractionHand.MAIN_HAND) {
+				return InteractionResult.PASS;
 			}
 			Entity root = resolveDroneRoot(entity);
 			if (root == null) {
@@ -408,9 +445,12 @@ public final class DroneSystem {
 			if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer)) {
 				return InteractionResult.PASS;
 			}
-			InteractionResult autoAimResult = handleControlledAutoAimEntityInteraction(serverPlayer, hand, entity);
-			if (autoAimResult != InteractionResult.PASS) {
-				return autoAimResult;
+			if (isControllingDrone(serverPlayer)) {
+				InteractionResult autoAimResult = handleControlledAutoAimEntityInteraction(serverPlayer, hand, entity);
+				if (autoAimResult != InteractionResult.PASS) {
+					return autoAimResult;
+				}
+				return InteractionResult.SUCCESS;
 			}
 			Entity root = resolveDroneRoot(entity);
 			if (root == null) {
@@ -423,13 +463,23 @@ public final class DroneSystem {
 			if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer)) {
 				return InteractionResult.PASS;
 			}
-			return handleControlledAutoAimBlockInteraction(serverPlayer, hand, hitResult == null ? null : hitResult.getBlockPos());
+			InteractionResult autoAimResult = hand == InteractionHand.MAIN_HAND
+					? handleControlledAutoAimBlockInteraction(serverPlayer, hand, hitResult == null ? null : hitResult.getBlockPos())
+					: InteractionResult.PASS;
+			if (autoAimResult != InteractionResult.PASS) {
+				return autoAimResult;
+			}
+			return isControllingDrone(serverPlayer) ? InteractionResult.SUCCESS : InteractionResult.PASS;
 		});
 		AttackBlockCallback.EVENT.register((player, world, hand, pos, direction) -> {
 			if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer)) {
 				return InteractionResult.PASS;
 			}
-			return handleControlledAutoAimBlockInteraction(serverPlayer, hand, pos);
+			InteractionResult autoAimResult = handleControlledAutoAimBlockInteraction(serverPlayer, hand, pos);
+			if (autoAimResult != InteractionResult.PASS) {
+				return autoAimResult;
+			}
+			return isControllingDrone(serverPlayer) ? InteractionResult.SUCCESS : InteractionResult.PASS;
 		});
 
 		ServerTickEvents.END_SERVER_TICK.register(DroneSystem::tick);
@@ -466,6 +516,7 @@ public final class DroneSystem {
 			DISPLAY_WOBBLE_BY_DRONE.clear();
 			AUTO_AIM_DISPLAY_ANIMATIONS.clear();
 			DRONE_ENVIRONMENT_DAMAGE.clear();
+			shutdownAllControlledOperatorAudio();
 			CONTROLLED_OPERATOR_MANAGED_NIGHT_VISION.clear();
 			CONTROLLED_OPERATOR_AUTO_AIM_HIGHLIGHTS.clear();
 		});
@@ -1185,6 +1236,7 @@ public final class DroneSystem {
 		updateDroneChunkTickets(server);
 		tickPendingControlStarts(server);
 		tickControlledSessions(server);
+		synchronizeControlledOperatorAudio(server);
 		tickUncontrolledDrones(server);
 		updateDroneChunkTickets(server);
 		cleanupExpiredPostControlMoveSuppression(server);
@@ -1623,6 +1675,40 @@ public final class DroneSystem {
 			tickControlledDrone(player, root, session);
 			handleControlledTurretJumpInput(player, root, session, input);
 			syncControlledDroneTurretAirTrigger(player, root);
+		}
+	}
+
+	private static void synchronizeControlledOperatorAudio(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		if (ACTIVE_SESSIONS.isEmpty()) {
+			shutdownAllControlledOperatorAudio();
+			return;
+		}
+
+		Set<UUID> activePlayers = new HashSet<>();
+		for (Map.Entry<UUID, DroneControlSession> entry : new ArrayList<>(ACTIVE_SESSIONS.entrySet())) {
+			UUID playerId = entry.getKey();
+			DroneControlSession session = entry.getValue();
+			ServerPlayer player = playerId == null ? null : server.getPlayerList().getPlayer(playerId);
+			if (player == null || session == null || !player.isAlive() || player.isSpectator()) {
+				stopControlledOperatorAudio(playerId);
+				continue;
+			}
+			activePlayers.add(playerId);
+			ControlledOperatorAudioRuntime runtime = CONTROLLED_OPERATOR_AUDIO.computeIfAbsent(
+					playerId,
+					ignored -> new ControlledOperatorAudioRuntime(playerId)
+			);
+			if (!runtime.sync(server, player, session)) {
+				stopControlledOperatorAudio(playerId);
+			}
+		}
+		for (UUID playerId : new ArrayList<>(CONTROLLED_OPERATOR_AUDIO.keySet())) {
+			if (!activePlayers.contains(playerId)) {
+				stopControlledOperatorAudio(playerId);
+			}
 		}
 	}
 
@@ -2171,6 +2257,38 @@ public final class DroneSystem {
 		return finiteVecOr(adjusted, Vec3.ZERO);
 	}
 
+	private static Vec3 applyUncontrolledGroundBraking(Vec3 velocity) {
+		if (velocity == null) {
+			return Vec3.ZERO;
+		}
+		double x = velocity.x * DRONE_GROUND_HORIZONTAL_DRAG;
+		double z = velocity.z * DRONE_GROUND_HORIZONTAL_DRAG;
+		double y = Math.abs(velocity.y) <= DRONE_GROUND_STOP_VERTICAL_SPEED ? 0.0D : velocity.y;
+		if (x * x + z * z <= DRONE_GROUND_STOP_HORIZONTAL_SPEED_SQR) {
+			x = 0.0D;
+			z = 0.0D;
+		}
+		return new Vec3(x, y, z);
+	}
+
+	private static boolean shouldApplyUncontrolledGroundBraking(Entity root) {
+		if (root == null || !(root.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		if (!root.onGround() && !root.verticalCollisionBelow && !hasSupportingBlockBelow(root)) {
+			return false;
+		}
+		AABB box = root.getBoundingBox();
+		if (box == null) {
+			return false;
+		}
+		return !boxIntersectsFluid(level, box, FluidTags.WATER)
+				&& !boxIntersectsFluid(level, box, FluidTags.LAVA)
+				&& !boxIntersectsAnyBlock(level, box, Blocks.COBWEB, Blocks.POWDER_SNOW, Blocks.SWEET_BERRY_BUSH)
+				&& !boxIntersectsAnyBlock(level, box, Blocks.HONEY_BLOCK)
+				&& !boxTouchesAnyBlockBelow(level, box, Blocks.SOUL_SAND);
+	}
+
 	private static boolean hasUncontrolledDroneEnvironmentalMotion(Entity root) {
 		if (root == null || !(root.level() instanceof ServerLevel level)) {
 			return false;
@@ -2629,8 +2747,12 @@ public final class DroneSystem {
 		}
 		decayUncontrolledDroneSurfaceWear(state, gameTime);
 
-		state.setVelocity(actualMovement);
-		if (!holdWithoutGravity && isUncontrolledDroneSettled(root, actualMovement) && !hasUncontrolledDroneEnvironmentalMotion(root)) {
+		Vec3 nextVelocity = actualMovement;
+		if (!screenDrive && !holdWithoutGravity && shouldApplyUncontrolledGroundBraking(root)) {
+			nextVelocity = applyUncontrolledGroundBraking(actualMovement);
+		}
+		state.setVelocity(nextVelocity);
+		if (!holdWithoutGravity && isUncontrolledDroneSettled(root, nextVelocity) && !hasUncontrolledDroneEnvironmentalMotion(root)) {
 			settleUncontrolledDrone(root, state);
 			return;
 		}
@@ -2644,7 +2766,7 @@ public final class DroneSystem {
 		} else {
 			applyUncontrolledRotation(root, state, actualMovement);
 		}
-		root.setDeltaMovement(actualMovement);
+		root.setDeltaMovement(nextVelocity);
 		root.hurtMarked = true;
 		double displayForwardDrive = 0.0D;
 		double displayStrafeDrive = 0.0D;
@@ -3173,8 +3295,38 @@ public final class DroneSystem {
 	}
 
 	private static void onEntityLoad(Entity entity, ServerLevel level) {
-		if (entity != null && entity.getTags().contains(DRONE_NIGHT_VISION_CAMERA_TAG)) {
+		if (entity == null) {
+			return;
+		}
+		if (entity.getTags().contains(DRONE_NIGHT_VISION_CAMERA_TAG)) {
 			entity.discard();
+			return;
+		}
+		if (entity.getTags().contains(DRONE_DISPLAY_TAG)) {
+			Entity root = resolveDroneRoot(entity);
+			if (root == null || !root.isAlive()) {
+				entity.discard();
+			} else if (entity instanceof Display.ItemDisplay display) {
+				collapseDroneDisplayHitbox(display);
+			}
+			return;
+		}
+		if (entity.getTags().contains(DRONE_CAMERA_TAG)) {
+			UUID ownerId = resolveTaggedUuid(entity, DRONE_CAMERA_OWNER_TAG_PREFIX);
+			Entity owner = ownerId == null || level == null ? null : level.getEntity(ownerId);
+			if (owner == null || !owner.isAlive() || !owner.getTags().contains(DRONE_ROOT_TAG)) {
+				entity.discard();
+			}
+			return;
+		}
+		if (entity.getTags().contains(DRONE_TURRET_TRIGGER_TAG)) {
+			UUID ownerId = resolveTaggedUuid(entity, DRONE_TURRET_TRIGGER_OWNER_TAG_PREFIX);
+			ServerPlayer owner = ownerId == null || level == null || level.getServer() == null
+					? null
+					: level.getServer().getPlayerList().getPlayer(ownerId);
+			if (owner == null || !isControllingDrone(owner)) {
+				entity.discard();
+			}
 			return;
 		}
 		if (!(entity instanceof Interaction root) || level == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
@@ -3196,6 +3348,22 @@ public final class DroneSystem {
 		syncDroneDisplayLayers(root);
 		syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D, false);
 		syncDroneCameraAnchor(root, root.getDeltaMovement());
+	}
+
+	private static UUID resolveTaggedUuid(Entity entity, String prefix) {
+		if (entity == null || prefix == null || prefix.isBlank()) {
+			return null;
+		}
+		for (String tag : entity.getTags()) {
+			if (tag == null || !tag.startsWith(prefix)) {
+				continue;
+			}
+			try {
+				return UUID.fromString(tag.substring(prefix.length()));
+			} catch (IllegalArgumentException ignored) {
+			}
+		}
+		return null;
 	}
 
 	private static void onEntityUnload(Entity entity, ServerLevel level) {
@@ -3485,8 +3653,49 @@ public final class DroneSystem {
 	private static void clearControlledOperatorTransientState(ServerPlayer player, DroneControlSession session) {
 		clearManagedDroneNightVision(player);
 		clearControlledAutoAimTarget(player, session);
-		syncControlledOperatorAutoAimInteractionRange(player, false);
+		clearControlledOperatorInteractionRange(player);
 		removeControlledDroneTurretAirTrigger(player);
+	}
+
+	private static void clearControlledOperatorInteractionRange(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		syncControlledOperatorAttributeModifier(
+				player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE),
+				DRONE_AUTO_AIM_BLOCK_INTERACTION_RANGE_MODIFIER_ID,
+				0.0D
+		);
+		syncControlledOperatorAttributeModifier(
+				player.getAttribute(Attributes.ENTITY_INTERACTION_RANGE),
+				DRONE_AUTO_AIM_ENTITY_INTERACTION_RANGE_MODIFIER_ID,
+				0.0D
+		);
+	}
+
+	private static void stopControlledOperatorAudio(UUID playerId) {
+		if (playerId == null) {
+			return;
+		}
+		ControlledOperatorAudioRuntime runtime = CONTROLLED_OPERATOR_AUDIO.remove(playerId);
+		if (runtime != null) {
+			runtime.close();
+		}
+	}
+
+	private static void shutdownAllControlledOperatorAudio() {
+		for (ControlledOperatorAudioRuntime runtime : CONTROLLED_OPERATOR_AUDIO.values()) {
+			if (runtime != null) {
+				runtime.close();
+			}
+		}
+		CONTROLLED_OPERATOR_AUDIO.clear();
+	}
+
+	private static double resolveControlledOperatorAudioCaptureRadius(VoicechatApi voicechatApi) {
+		double voiceChatDistance = voicechatApi == null ? 0.0D : voicechatApi.getVoiceChatDistance();
+		return Math.max(CONTROLLED_OPERATOR_AUDIO_MIN_CAPTURE_RADIUS_BLOCKS, voiceChatDistance)
+				+ CONTROLLED_OPERATOR_AUDIO_CAPTURE_RADIUS_EXTRA_BLOCKS;
 	}
 
 	private static void syncControlledOperatorView(
@@ -4066,16 +4275,30 @@ public final class DroneSystem {
 		if (player == null) {
 			return;
 		}
-		double targetRangeBlocks = enabled ? resolveDroneAutoAimSelectionRangeBlocks(player) : 0.0D;
+		if (!enabled && !isControllingDrone(player)) {
+			clearControlledOperatorInteractionRange(player);
+			return;
+		}
+		double targetRangeBlocks = enabled
+				? resolveDroneAutoAimSelectionRangeBlocks(player)
+				: (isControllingDrone(player) ? CONTROLLED_OPERATOR_DISABLED_INTERACTION_RANGE_BLOCKS : 0.0D);
 		syncControlledOperatorAttributeModifier(
 				player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE),
 				DRONE_AUTO_AIM_BLOCK_INTERACTION_RANGE_MODIFIER_ID,
-				resolveAutoAimRangeBonus(player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE), targetRangeBlocks)
+				resolveTargetInteractionRangeOffset(
+						player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE),
+						DRONE_AUTO_AIM_BLOCK_INTERACTION_RANGE_MODIFIER_ID,
+						targetRangeBlocks
+				)
 		);
 		syncControlledOperatorAttributeModifier(
 				player.getAttribute(Attributes.ENTITY_INTERACTION_RANGE),
 				DRONE_AUTO_AIM_ENTITY_INTERACTION_RANGE_MODIFIER_ID,
-				resolveAutoAimRangeBonus(player.getAttribute(Attributes.ENTITY_INTERACTION_RANGE), targetRangeBlocks)
+				resolveTargetInteractionRangeOffset(
+						player.getAttribute(Attributes.ENTITY_INTERACTION_RANGE),
+						DRONE_AUTO_AIM_ENTITY_INTERACTION_RANGE_MODIFIER_ID,
+						targetRangeBlocks
+				)
 		);
 	}
 
@@ -4088,6 +4311,20 @@ public final class DroneSystem {
 			return 0.0D;
 		}
 		return Math.max(0.0D, targetRangeBlocks - attribute.getBaseValue());
+	}
+
+	private static double resolveTargetInteractionRangeOffset(
+			AttributeInstance attribute,
+			Identifier modifierId,
+			double targetRangeBlocks
+	) {
+		if (attribute == null) {
+			return 0.0D;
+		}
+		AttributeModifier current = modifierId == null ? null : attribute.getModifier(modifierId);
+		double currentAmount = current == null ? 0.0D : current.amount();
+		double effectiveValueWithoutControlledModifier = attribute.getValue() - currentAmount;
+		return targetRangeBlocks - effectiveValueWithoutControlledModifier;
 	}
 
 	private static BlockHitResult clipAutoAimBlockThroughPartialBlocks(ServerLevel level, Vec3 origin, Vec3 end, Entity clipContextEntity) {
@@ -4347,6 +4584,7 @@ public final class DroneSystem {
 		MapImageRenderSystem.cancelRender(player.getUUID());
 		RendererBotCameraSystem.stopCameraHotbarWarmupForPlayer(player.getUUID());
 		ServerRaceSystem.suspendCopperManJetpackForDrone(player);
+		player.closeContainer();
 		UncontrolledDroneState previousUncontrolledState = UNCONTROLLED_DRONES.remove(root.getUUID());
 		prepareControlledDroneBody(root);
 		syncDroneDisplayLayers(root);
@@ -4399,6 +4637,7 @@ public final class DroneSystem {
 		}
 		DroneControlSession session = ACTIVE_SESSIONS.remove(player.getUUID());
 		INPUTS.remove(player.getUUID());
+		stopControlledOperatorAudio(player.getUUID());
 		if (session == null) {
 			clearControlledOperatorTransientState(player, null);
 			removeControlledOperatorBodyMirror(player);
@@ -4478,12 +4717,59 @@ public final class DroneSystem {
 		}
 	}
 
+	private static boolean isDroneStationaryForBreakPickup(Entity root) {
+		if (root == null || !root.isAlive()) {
+			return false;
+		}
+		Vec3 velocity = finiteVecOr(root.getDeltaMovement(), Vec3.ZERO);
+		UncontrolledDroneState uncontrolledState = UNCONTROLLED_DRONES.get(root.getUUID());
+		if (uncontrolledState != null && uncontrolledState.velocity() != null) {
+			Vec3 uncontrolledVelocity = uncontrolledState.velocity();
+			if (uncontrolledVelocity.lengthSqr() > velocity.lengthSqr()) {
+				velocity = uncontrolledVelocity;
+			}
+		}
+		double horizontalSpeedSq = velocity.x * velocity.x + velocity.z * velocity.z;
+		return horizontalSpeedSq <= DRONE_STATIONARY_BREAK_HORIZONTAL_SPEED_SQR
+				&& Math.abs(velocity.y) <= DRONE_STATIONARY_BREAK_VERTICAL_SPEED;
+	}
+
+	private static void dropDronePaintRecovery(Entity root, ServerLevel level) {
+		if (root == null || level == null) {
+			return;
+		}
+		DyeColor paintColor = resolveDronePaintColor(root);
+		if (paintColor == null) {
+			return;
+		}
+		Item dyeItem = dyeItemForColor(paintColor);
+		if (dyeItem != null && dyeItem != Items.AIR) {
+			root.spawnAtLocation(level, new ItemStack(dyeItem));
+		}
+	}
+
+	private static void discardOwnedDroneInternalEntities(ServerLevel level, Entity root) {
+		if (level == null || root == null) {
+			return;
+		}
+		String displayOwnerTag = DRONE_DISPLAY_OWNER_TAG_PREFIX + root.getUUID();
+		String cameraOwnerTag = DRONE_CAMERA_OWNER_TAG_PREFIX + root.getUUID();
+		AABB searchBox = root.getBoundingBox().inflate(DRONE_DISPLAY_VIEW_RANGE);
+		for (Entity candidate : level.getEntities(root, searchBox, entity ->
+				entity != null
+						&& entity.isAlive()
+						&& (entity.getTags().contains(displayOwnerTag) || entity.getTags().contains(cameraOwnerTag)))) {
+			candidate.discard();
+		}
+	}
+
 	private static void destroyDrone(Entity root, ServerPlayer breaker, boolean dropItem) {
 		if (root == null || !root.isAlive() || !(root.level() instanceof ServerLevel level)) {
 			return;
 		}
 		boolean kamikazeDrone = isKamikazeDrone(root);
 		int kamikazePower = resolveDroneKamikazePower(root);
+		boolean canDropWholeDrone = dropItem && isDroneStationaryForBreakPickup(root);
 		playDroneBreakEffects(level, droneCameraOrigin(root), root.getDeltaMovement());
 		UNCONTROLLED_DRONES.remove(root.getUUID());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
@@ -4496,6 +4782,7 @@ public final class DroneSystem {
 		BluetoothLinkSystem.removeDroneEndpoint(level, root.getUUID(), root.blockPosition());
 		stopAllDroneControllers(root, true);
 		CONTROLLERS_BY_DRONE.remove(root.getUUID());
+		discardOwnedDroneInternalEntities(level, root);
 		for (Display.ItemDisplay display : findDroneDisplayLayers(root)) {
 			display.discard();
 		}
@@ -4509,10 +4796,11 @@ public final class DroneSystem {
 			passenger.discard();
 		}
 		dropDroneTurretInventory(root);
-		if (dropItem && breaker != null && !breaker.getAbilities().instabuild && !kamikazeDrone) {
+		if (canDropWholeDrone) {
 			root.spawnAtLocation(level, buildDroneDropStack(root));
+			dropDronePaintRecovery(root, level);
 		}
-		if (kamikazeDrone) {
+		if (kamikazeDrone && !canDropWholeDrone) {
 			detonateKamikazeDrone(level, droneCameraOrigin(root), root.getDeltaMovement(), kamikazePower);
 		}
 		root.discard();
@@ -4763,14 +5051,15 @@ public final class DroneSystem {
 		if (color == null) {
 			return InteractionResult.PASS;
 		}
+		DyeColor targetColor = normalizeDronePaintColor(color);
 		DyeColor currentColor = resolveDronePaintColor(root);
-		if (currentColor == color) {
+		if (Objects.equals(currentColor, targetColor)) {
 			return InteractionResult.PASS;
 		}
 		if (!player.getAbilities().instabuild && currentColor != null) {
 			giveOrDropTuningItem(player, root, dyeItemForColor(currentColor));
 		}
-		setDronePaintColor(root, color);
+		setDronePaintColor(root, targetColor);
 		triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
 		notifyDroneNetworkChanged(root);
 		if (!player.getAbilities().instabuild) {
@@ -5383,7 +5672,7 @@ public final class DroneSystem {
 			String rawColor = tag.substring(DRONE_PAINT_TAG_PREFIX.length());
 			for (DyeColor color : DyeColor.values()) {
 				if (color.getName().equalsIgnoreCase(rawColor)) {
-					return color;
+					return normalizeDronePaintColor(color);
 				}
 			}
 		}
@@ -5394,15 +5683,20 @@ public final class DroneSystem {
 		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
 			return;
 		}
+		DyeColor normalizedColor = normalizeDronePaintColor(color);
 		for (String tag : new ArrayList<>(root.getTags())) {
 			if (tag != null && tag.startsWith(DRONE_PAINT_TAG_PREFIX)) {
 				root.removeTag(tag);
 			}
 		}
-		if (color != null) {
-			root.addTag(DRONE_PAINT_TAG_PREFIX + color.getName());
+		if (normalizedColor != null) {
+			root.addTag(DRONE_PAINT_TAG_PREFIX + normalizedColor.getName());
 		}
 		syncDroneDisplayLayers(root);
+	}
+
+	private static DyeColor normalizeDronePaintColor(DyeColor color) {
+		return color == DyeColor.WHITE ? null : color;
 	}
 
 	private static void playDroneKamikazeInsertFeedback(ServerLevel level, Vec3 origin, int newPower) {
@@ -6821,6 +7115,353 @@ public final class DroneSystem {
 
 		private void setNextSecondaryChangeTick(long nextSecondaryChangeTick) {
 			this.nextSecondaryChangeTick = nextSecondaryChangeTick;
+		}
+	}
+
+	private static final class ControlledOperatorAudioRuntime {
+		private final UUID playerUuid;
+		private final UUID channelId;
+		private final String droneCaptureOwnerKey;
+		private final String bodyCaptureOwnerKey;
+		private final ControlledOperatorAudioFeed feed = new ControlledOperatorAudioFeed();
+		private StaticAudioChannel channel;
+		private AudioPlayer player;
+		private OpusEncoder encoder;
+		private net.minecraft.resources.ResourceKey<Level> audioChannelDimension;
+		private net.minecraft.resources.ResourceKey<Level> droneCaptureDimension;
+		private BlockPos droneCaptureCenter;
+		private net.minecraft.resources.ResourceKey<Level> bodyCaptureDimension;
+		private BlockPos bodyCaptureCenter;
+		private long lastRefreshTick = Long.MIN_VALUE;
+		private boolean closed;
+
+		private ControlledOperatorAudioRuntime(UUID playerUuid) {
+			this.playerUuid = playerUuid == null ? UUID.randomUUID() : playerUuid;
+			this.channelId = UUID.nameUUIDFromBytes(
+					("lg2:drone_control_audio:" + this.playerUuid).getBytes(StandardCharsets.UTF_8)
+			);
+			this.droneCaptureOwnerKey = "lg2:drone_control_audio:drone:" + this.playerUuid;
+			this.bodyCaptureOwnerKey = "lg2:drone_control_audio:body:" + this.playerUuid;
+		}
+
+		private boolean sync(MinecraftServer server, ServerPlayer operator, DroneControlSession session) {
+			if (this.closed || server == null || operator == null || session == null || !(operator.level() instanceof ServerLevel operatorLevel)) {
+				return false;
+			}
+			if (!ServerVoicechatIntegration.isLoaded()) {
+				return true;
+			}
+			VoicechatApi voicechatApi = ServerVoicechatIntegration.getApi();
+			VoicechatServerApi voicechatServerApi = ServerVoicechatIntegration.getServerApi();
+			if (voicechatApi == null || voicechatServerApi == null) {
+				return true;
+			}
+			VoicechatConnection connection = voicechatServerApi.getConnectionOf(operator.getUUID());
+			if (connection == null) {
+				return true;
+			}
+			if (!ensurePlayback(operatorLevel, connection, voicechatApi, voicechatServerApi)) {
+				return false;
+			}
+
+			Entity root = findDroneRoot(server, session.droneDimension(), session.droneUuid());
+			ServerLevel droneLevel = root != null && root.isAlive()
+					? (ServerLevel) root.level()
+					: server.getLevel(session.droneDimension());
+			BlockPos desiredDroneCenter = root != null && root.isAlive()
+					? BlockPos.containing(resolveSafeDroneCameraOrigin(root, droneCameraOrigin(root)))
+					: BlockPos.containing(session.lastKnownDronePos());
+			BlockPos desiredBodyCenter = operator.blockPosition().immutable();
+			boolean recenterBody = shouldRecenterCapture(
+					this.bodyCaptureDimension,
+					this.bodyCaptureCenter,
+					operatorLevel.dimension(),
+					desiredBodyCenter
+			);
+			boolean recenterDrone = shouldRecenterCapture(
+					this.droneCaptureDimension,
+					this.droneCaptureCenter,
+					droneLevel == null ? null : droneLevel.dimension(),
+					desiredDroneCenter
+			);
+
+			boolean refreshRequired = this.lastRefreshTick == Long.MIN_VALUE
+					|| operatorLevel.getGameTime() - this.lastRefreshTick >= CONTROLLED_OPERATOR_AUDIO_REFRESH_INTERVAL_TICKS
+					|| recenterBody
+					|| recenterDrone;
+			if (!refreshRequired) {
+				return true;
+			}
+			this.lastRefreshTick = operatorLevel.getGameTime();
+			double captureRadius = resolveControlledOperatorAudioCaptureRadius(voicechatApi);
+			BlockPos requestedBodyCenter = recenterBody || this.bodyCaptureCenter == null
+					? desiredBodyCenter
+					: this.bodyCaptureCenter;
+			synchronizeCapture(
+					this.bodyCaptureOwnerKey,
+					operatorLevel,
+					requestedBodyCenter,
+					captureRadius,
+					this.feed::offerBodyFrame,
+					true
+			);
+			if (droneLevel != null && desiredDroneCenter != null) {
+				BlockPos requestedDroneCenter = recenterDrone || this.droneCaptureCenter == null
+						? desiredDroneCenter
+						: this.droneCaptureCenter;
+				synchronizeCapture(
+						this.droneCaptureOwnerKey,
+						droneLevel,
+						requestedDroneCenter,
+						captureRadius,
+						this.feed::offerDroneFrame,
+						false
+				);
+			} else {
+				RendererBotCameraSystem.stopAudioCapture(this.droneCaptureOwnerKey);
+				this.droneCaptureDimension = null;
+				this.droneCaptureCenter = null;
+			}
+			return true;
+		}
+
+		private boolean ensurePlayback(
+				ServerLevel operatorLevel,
+				VoicechatConnection connection,
+				VoicechatApi voicechatApi,
+				VoicechatServerApi voicechatServerApi
+		) {
+			if (this.closed || operatorLevel == null || connection == null || voicechatApi == null || voicechatServerApi == null) {
+				return false;
+			}
+			if (this.channel != null
+					&& this.player != null
+					&& !this.player.isStopped()
+					&& Objects.equals(this.audioChannelDimension, operatorLevel.dimension())) {
+				this.channel.addTarget(connection);
+				return true;
+			}
+			closePlayback();
+			try {
+				OpusEncoder createdEncoder = voicechatApi.createEncoder();
+				StaticAudioChannel createdChannel = voicechatServerApi.createStaticAudioChannel(
+						this.channelId,
+						voicechatApi.fromServerLevel(operatorLevel),
+						connection
+				);
+				if (SpeakerSystem.isSpeakerVolumeCategoryRegistered()) {
+					createdChannel.setCategory(SpeakerSystem.speakerVolumeCategoryId());
+				}
+				AudioPlayer createdPlayer = voicechatServerApi.createAudioPlayer(createdChannel, createdEncoder, this::nextFrame);
+				createdPlayer.startPlaying();
+				this.encoder = createdEncoder;
+				this.channel = createdChannel;
+				this.player = createdPlayer;
+				this.audioChannelDimension = operatorLevel.dimension();
+				return true;
+			} catch (RuntimeException exception) {
+				Lg2.LOGGER.debug("Failed to initialize controlled drone audio playback for {}", this.playerUuid, exception);
+				closePlayback();
+				return false;
+			}
+		}
+
+		private void synchronizeCapture(
+				String ownerKey,
+				ServerLevel level,
+				BlockPos center,
+				double captureRadius,
+				java.util.function.Consumer<RendererBotCameraSystem.AudioCaptureFrame> frameConsumer,
+				boolean bodyCapture
+		) {
+			if (ownerKey == null || level == null || center == null || frameConsumer == null) {
+				return;
+			}
+			boolean started = RendererBotCameraSystem.ensureAudioCapture(
+					ownerKey,
+					level,
+					center,
+					captureRadius,
+					frameConsumer,
+					ignored -> this.lastRefreshTick = Long.MIN_VALUE
+			);
+			if (!started) {
+				return;
+			}
+			if (bodyCapture) {
+				this.bodyCaptureDimension = level.dimension();
+				this.bodyCaptureCenter = center.immutable();
+				return;
+			}
+			this.droneCaptureDimension = level.dimension();
+			this.droneCaptureCenter = center.immutable();
+		}
+
+		private boolean shouldRecenterCapture(
+				net.minecraft.resources.ResourceKey<Level> currentDimension,
+				BlockPos currentCenter,
+				net.minecraft.resources.ResourceKey<Level> desiredDimension,
+				BlockPos desiredCenter
+		) {
+			if (desiredDimension == null || desiredCenter == null) {
+				return false;
+			}
+			if (!Objects.equals(currentDimension, desiredDimension) || currentCenter == null) {
+				return true;
+			}
+			return currentCenter.distSqr(desiredCenter) > CONTROLLED_OPERATOR_AUDIO_RECENTER_DISTANCE_SQR;
+		}
+
+		private short[] nextFrame() {
+			short[] frame = this.feed.frameAt(System.nanoTime());
+			return frame == null ? CONTROLLED_OPERATOR_AUDIO_SILENCE_FRAME : frame;
+		}
+
+		private void closePlayback() {
+			AudioPlayer currentPlayer = this.player;
+			this.player = null;
+			if (currentPlayer != null && !currentPlayer.isStopped()) {
+				currentPlayer.stopPlaying();
+			}
+			if (this.channel != null) {
+				this.channel.clearTargets();
+			}
+			this.channel = null;
+			if (this.encoder != null && !this.encoder.isClosed()) {
+				this.encoder.close();
+			}
+			this.encoder = null;
+			this.audioChannelDimension = null;
+		}
+
+		private void close() {
+			if (this.closed) {
+				return;
+			}
+			this.closed = true;
+			RendererBotCameraSystem.stopAudioCapture(this.droneCaptureOwnerKey);
+			RendererBotCameraSystem.stopAudioCapture(this.bodyCaptureOwnerKey);
+			closePlayback();
+			this.feed.close();
+			this.droneCaptureDimension = null;
+			this.droneCaptureCenter = null;
+			this.bodyCaptureDimension = null;
+			this.bodyCaptureCenter = null;
+		}
+	}
+
+	private static final class ControlledOperatorAudioFeed {
+		private final Object lock = new Object();
+		private final ControlledOperatorAudioSourceBuffer droneBuffer = new ControlledOperatorAudioSourceBuffer();
+		private final ControlledOperatorAudioSourceBuffer bodyBuffer = new ControlledOperatorAudioSourceBuffer();
+		private boolean closed;
+
+		private void offerDroneFrame(RendererBotCameraSystem.AudioCaptureFrame frame) {
+			offer(this.droneBuffer, frame);
+		}
+
+		private void offerBodyFrame(RendererBotCameraSystem.AudioCaptureFrame frame) {
+			offer(this.bodyBuffer, frame);
+		}
+
+		private void offer(ControlledOperatorAudioSourceBuffer buffer, RendererBotCameraSystem.AudioCaptureFrame frame) {
+			if (buffer == null || frame == null || frame.samples() == null || frame.samples().length == 0) {
+				return;
+			}
+			long sourceNanos = frame.clientFrameNanos() > 0L ? frame.clientFrameNanos() : frame.receivedAtNanos();
+			if (sourceNanos <= 0L) {
+				sourceNanos = System.nanoTime();
+			}
+			synchronized (this.lock) {
+				if (this.closed) {
+					return;
+				}
+				buffer.offerFrame(frame.samples(), sourceNanos / CONTROLLED_OPERATOR_AUDIO_FRAME_NANOS);
+			}
+		}
+
+		private short[] frameAt(long nowNanos) {
+			synchronized (this.lock) {
+				if (this.closed) {
+					return null;
+				}
+				long targetSequence = nowNanos / CONTROLLED_OPERATOR_AUDIO_FRAME_NANOS;
+				short[] drone = this.droneBuffer.frameAt(targetSequence);
+				short[] body = this.bodyBuffer.frameAt(targetSequence);
+				if (this.droneBuffer.isExpired(targetSequence)) {
+					this.droneBuffer.clear();
+				}
+				if (this.bodyBuffer.isExpired(targetSequence)) {
+					this.bodyBuffer.clear();
+				}
+				if (drone == null) {
+					return body;
+				}
+				if (body == null) {
+					return drone;
+				}
+				short[] mixed = new short[CONTROLLED_OPERATOR_AUDIO_FRAME_SAMPLES];
+				for (int index = 0; index < mixed.length; index++) {
+					mixed[index] = SpeakerSystem.softLimitSample(drone[index] + body[index]);
+				}
+				return mixed;
+			}
+		}
+
+		private void close() {
+			synchronized (this.lock) {
+				this.closed = true;
+				this.droneBuffer.clear();
+				this.bodyBuffer.clear();
+			}
+		}
+	}
+
+	private static final class ControlledOperatorAudioSourceBuffer {
+		private final NavigableMap<Long, short[]> frames = new TreeMap<>();
+		private long lastSequence = Long.MIN_VALUE;
+
+		private void offerFrame(short[] samples, long baseSequence) {
+			if (samples == null || samples.length == 0) {
+				return;
+			}
+			long nextSequence = Math.max(baseSequence, this.lastSequence + 1L);
+			int frameCount = Math.max(1, (samples.length + CONTROLLED_OPERATOR_AUDIO_FRAME_SAMPLES - 1) / CONTROLLED_OPERATOR_AUDIO_FRAME_SAMPLES);
+			for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+				short[] frame = new short[CONTROLLED_OPERATOR_AUDIO_FRAME_SAMPLES];
+				int sourceOffset = frameIndex * CONTROLLED_OPERATOR_AUDIO_FRAME_SAMPLES;
+				int copyLength = Math.min(
+						CONTROLLED_OPERATOR_AUDIO_FRAME_SAMPLES,
+						Math.max(0, samples.length - sourceOffset)
+				);
+				if (copyLength > 0) {
+					System.arraycopy(samples, sourceOffset, frame, 0, copyLength);
+				}
+				this.frames.put(nextSequence++, frame);
+			}
+			this.lastSequence = nextSequence - 1L;
+			while (this.frames.size() > CONTROLLED_OPERATOR_AUDIO_FRAME_BUFFER_CAPACITY) {
+				this.frames.pollFirstEntry();
+			}
+		}
+
+		private short[] frameAt(long targetSequence) {
+			Map.Entry<Long, short[]> entry = this.frames.floorEntry(targetSequence);
+			if (entry == null) {
+				return null;
+			}
+			return targetSequence - entry.getKey() <= CONTROLLED_OPERATOR_AUDIO_MAX_FRAME_AGE ? entry.getValue() : null;
+		}
+
+		private boolean isExpired(long targetSequence) {
+			Map.Entry<Long, short[]> latestEntry = this.frames.lastEntry();
+			return latestEntry == null
+					|| targetSequence - latestEntry.getKey() > CONTROLLED_OPERATOR_AUDIO_SOURCE_EXPIRE_AFTER_FRAMES;
+		}
+
+		private void clear() {
+			this.frames.clear();
+			this.lastSequence = Long.MIN_VALUE;
 		}
 	}
 

@@ -4,6 +4,7 @@ import com.lostglade.server.DroneSystem;
 import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
 import net.minecraft.network.protocol.game.ServerboundInteractPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerInputPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
 import net.minecraft.server.level.ServerPlayer;
@@ -26,7 +27,8 @@ public abstract class ServerGamePacketListenerDroneControlMixin {
 		if (packet == null) {
 			return;
 		}
-		if (DroneSystem.handleControlledUseItem(this.player, packet.getHand())) {
+		if (DroneSystem.handleControlledUseItem(this.player, packet.getHand())
+				|| DroneSystem.isControllingDrone(this.player)) {
 			ci.cancel();
 		}
 	}
@@ -55,6 +57,14 @@ public abstract class ServerGamePacketListenerDroneControlMixin {
 		if (handled[0]) {
 			ci.cancel();
 		}
+	}
+
+	@Inject(method = "handlePlayerAction", at = @At("HEAD"), cancellable = true)
+	private void lg2$blockVanillaActionsWhileControllingDrone(ServerboundPlayerActionPacket packet, CallbackInfo ci) {
+		if (packet == null || !DroneSystem.isControllingDrone(this.player)) {
+			return;
+		}
+		ci.cancel();
 	}
 
 	@Inject(method = "handlePlayerInput", at = @At("HEAD"), cancellable = true)

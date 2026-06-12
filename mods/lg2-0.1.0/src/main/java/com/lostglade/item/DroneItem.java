@@ -67,6 +67,7 @@ public final class DroneItem extends SimplePolymerItem {
 	private static final int NO_KAMIKAZE_POWER = 0;
 	private static final int MIN_KAMIKAZE_POWER = 1;
 	private static final int MAX_KAMIKAZE_POWER = 3;
+	private static final DyeColor DEFAULT_DISPLAY_COLOR = DyeColor.WHITE;
 	private final Identifier modelId;
 
 	public DroneItem(Item.Properties settings) {
@@ -273,7 +274,7 @@ public final class DroneItem extends SimplePolymerItem {
 		}
 		for (DyeColor color : DyeColor.values()) {
 			if (color.getName().equalsIgnoreCase(rawColor)) {
-				return color;
+				return normalizeStoredPaintColor(color);
 			}
 		}
 		return null;
@@ -283,11 +284,12 @@ public final class DroneItem extends SimplePolymerItem {
 		if (!isDroneCompatibleStack(stack)) {
 			return;
 		}
+		DyeColor normalized = normalizeStoredPaintColor(color);
 		updateDroneData(stack, droneTag -> {
-			if (color == null) {
+			if (normalized == null) {
 				droneTag.remove(PAINT_COLOR_TAG);
 			} else {
-				droneTag.putString(PAINT_COLOR_TAG, color.getName());
+				droneTag.putString(PAINT_COLOR_TAG, normalized.getName());
 			}
 		});
 	}
@@ -534,8 +536,12 @@ public final class DroneItem extends SimplePolymerItem {
 	}
 
 	private static String resolveDisplayColorName(DyeColor color) {
-		DyeColor resolved = color == null ? DyeColor.RED : color;
+		DyeColor resolved = color == null ? DEFAULT_DISPLAY_COLOR : color;
 		return resolved.getName();
+	}
+
+	private static DyeColor normalizeStoredPaintColor(DyeColor color) {
+		return color == DEFAULT_DISPLAY_COLOR ? null : color;
 	}
 
 	private static void setBooleanModule(ItemStack stack, String key, boolean enabled) {
