@@ -273,16 +273,17 @@ public final class RendererBotCameraSystem {
 					if (server == null) {
 						return;
 					}
+					UUID botUuid = context.player().getUUID();
+					long receivedAtNanos = System.nanoTime();
+					short[] frame = decodePcmFrame(payload.pcm(), AUDIO_FRAME_SAMPLES);
+					if (frame == null) {
+						return;
+					}
 					server.execute(() -> {
 						ActiveAudioCapture capture = ACTIVE_AUDIO_CAPTURES.get(payload.audioId());
-						if (capture == null || !capture.botUuid().equals(context.player().getUUID())) {
+						if (capture == null || !capture.botUuid().equals(botUuid)) {
 							return;
 						}
-						short[] frame = decodePcmFrame(payload.pcm(), AUDIO_FRAME_SAMPLES);
-						if (frame == null) {
-							return;
-						}
-						long receivedAtNanos = System.nanoTime();
 						capture.markFrameReceived();
 						try {
 							long clientFrameNanos = payload.clientFrameNanos() > 0L ? payload.clientFrameNanos() : receivedAtNanos;

@@ -54,6 +54,8 @@ public final class MicrophoneSystem {
 	private static final long AUDIO_FRAME_DURATION_MS = AUDIO_FRAME_SAMPLES * 1000L / AUDIO_SAMPLE_RATE;
 	private static final long AUDIO_FRAME_NANOS = TimeUnit.MILLISECONDS.toNanos(AUDIO_FRAME_DURATION_MS);
 	private static final long RECORDER_CAPTURE_LATENCY_NANOS = AUDIO_FRAME_NANOS * 4L;
+	private static final long RENDERER_AUDIO_LIVE_MAX_LATE_NANOS = AUDIO_FRAME_NANOS * 2L;
+	private static final long RENDERER_AUDIO_CLOCK_RESET_NANOS = TimeUnit.SECONDS.toNanos(10L);
 	private static final int FRAME_BUFFER_CAPACITY = 192;
 	private static final long MAX_FRAME_AGE = 3L;
 	private static final long SENDER_EXPIRE_AFTER_FRAMES = 12L;
@@ -1035,6 +1037,8 @@ public final class MicrophoneSystem {
 		private final Map<UUID, SenderVoiceBuffer> senderBuffers = new HashMap<>();
 		private final Map<UUID, SenderVoiceBuffer> liveSenderBuffers = new HashMap<>();
 		private SenderVoiceBuffer rendererClientBuffer;
+		private long rendererClientToServerOffsetNanos = Long.MAX_VALUE;
+		private long rendererLastClientFrameNanos = Long.MIN_VALUE;
 		private volatile boolean closed;
 
 		private void offerPacket(UUID senderUuid, byte[] opusData, float gain, VoicechatApi voicechatApi) {
@@ -1078,12 +1082,15 @@ public final class MicrophoneSystem {
 				if (this.closed) {
 					return;
 				}
-				long baseSequence = safeReceivedAtNanos / AUDIO_FRAME_NANOS;
+				long serverFrameNanos = safeClientFrameNanos == safeReceivedAtNanos
+						? safeReceivedAtNanos
+						: this.mapRendererClientFrameToServerLocked(safeReceivedAtNanos, safeClientFrameNanos);
+				long baseSequence = serverFrameNanos / AUDIO_FRAME_NANOS;
 				SenderVoiceBuffer buffer = this.senderBuffers.computeIfAbsent(RENDERER_AUDIO_SOURCE_UUID, ignored -> new SenderVoiceBuffer(null));
 				buffer.offerFrame(samples, baseSequence, 1.0F);
 				pruneExpiredLocked(baseSequence);
 
-				long liveSequence = safeReceivedAtNanos / AUDIO_FRAME_NANOS;
+				long liveSequence = serverFrameNanos / AUDIO_FRAME_NANOS;
 				SenderVoiceBuffer liveBuffer = this.liveSenderBuffers.computeIfAbsent(RENDERER_AUDIO_SOURCE_UUID, ignored -> new SenderVoiceBuffer(null));
 				liveBuffer.offerFrame(samples, liveSequence, 1.0F);
 				pruneExpiredLocked(this.liveSenderBuffers, liveSequence);
@@ -1096,6 +1103,26 @@ public final class MicrophoneSystem {
 				}
 				clientBuffer.offerFrame(samples, clientSequence, 1.0F);
 			}
+		}
+
+		private long mapRendererClientFrameToServerLocked(long receivedAtNanos, long clientFrameNanos) {
+			long observedOffset = receivedAtNanos - clientFrameNanos;
+			boolean clientTimelineJumped = this.rendererLastClientFrameNanos != Long.MIN_VALUE
+					&& Math.abs(clientFrameNanos - this.rendererLastClientFrameNanos) > RENDERER_AUDIO_CLOCK_RESET_NANOS
+					&& this.rendererClientToServerOffsetNanos != Long.MAX_VALUE
+					&& Math.abs(observedOffset - this.rendererClientToServerOffsetNanos) > RENDERER_AUDIO_CLOCK_RESET_NANOS;
+			if (this.rendererClientToServerOffsetNanos == Long.MAX_VALUE || clientTimelineJumped || observedOffset < this.rendererClientToServerOffsetNanos) {
+				this.rendererClientToServerOffsetNanos = observedOffset;
+			}
+			this.rendererLastClientFrameNanos = clientFrameNanos;
+			long mappedNanos = clientFrameNanos + this.rendererClientToServerOffsetNanos;
+			if (mappedNanos < receivedAtNanos - RENDERER_AUDIO_LIVE_MAX_LATE_NANOS) {
+				return receivedAtNanos - AUDIO_FRAME_NANOS;
+			}
+			if (mappedNanos > receivedAtNanos + AUDIO_FRAME_NANOS) {
+				return receivedAtNanos;
+			}
+			return mappedNanos;
 		}
 
 		private short[] frameAt(long nowNanos) {

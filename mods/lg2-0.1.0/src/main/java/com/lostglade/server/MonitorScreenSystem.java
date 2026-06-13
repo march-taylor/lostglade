@@ -826,9 +826,7 @@ public final class MonitorScreenSystem {
 		removeDisplays(level, frame.blockPosition(), frame.getDirection());
 		forgetRenderedMapFrame(frame.getItem());
 		frame.setItem(ItemStack.EMPTY, false);
-		if (shouldDropScreen) {
-			frame.spawnAtLocation(level, new ItemStack(ModItems.MONITOR));
-		}
+		frame.spawnAtLocation(level, new ItemStack(ModItems.MONITOR));
 		frame.discard();
 		untrackScreenFrame(level, new ScreenKey(framePos, facing), true);
 		if (removedScreenEndpoint != null) {
