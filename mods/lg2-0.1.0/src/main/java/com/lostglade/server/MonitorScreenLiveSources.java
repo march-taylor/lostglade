@@ -185,13 +185,18 @@ final class MonitorScreenLiveSources {
 				if (currentIndex >= 0) {
 					state.galleryIndex = currentIndex;
 				} else if (currentLivePlayback) {
-					cancelPlaybackLocked(state);
-					clearYoutubePlaybackLocked(state);
-					clearGallerySelectionLocked(state);
-					state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
-					state.galleryIndex = -1;
-					state.loading = false;
-					state.statusText = "";
+					int replacementIndex = rebuilt.isEmpty() ? -1 : clampInt(state.galleryIndex, 0, rebuilt.size() - 1);
+					if (replacementIndex >= 0 && selectGalleryItemLocked(state, replacementIndex, createUiLayout(component.width(), component.height()))) {
+						state.statusText = "";
+					} else {
+						cancelPlaybackLocked(state);
+						clearYoutubePlaybackLocked(state);
+						clearGallerySelectionLocked(state);
+						state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+						state.galleryIndex = -1;
+						state.loading = false;
+						state.statusText = "";
+					}
 				}
 			} else if (state.galleryIndex >= state.galleryItems.size()) {
 				state.galleryIndex = state.galleryItems.isEmpty() ? -1 : state.galleryItems.size() - 1;

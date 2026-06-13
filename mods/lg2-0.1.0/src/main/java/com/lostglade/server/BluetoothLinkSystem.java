@@ -23,6 +23,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
@@ -233,6 +234,7 @@ public final class BluetoothLinkSystem {
 					LINKS.remove(linked);
 				}
 			}
+			dropAdapterAtEndpoint(level == null ? null : level.getServer(), linked);
 			notifyEndpointChanged(level == null ? null : level.getServer(), linked);
 		}
 		dirty = true;
@@ -304,6 +306,9 @@ public final class BluetoothLinkSystem {
 		boolean removed = unlink(selected, endpoint);
 		if (!removed) {
 			link(selected, endpoint);
+			consumeBluetoothAdapter(player);
+		} else {
+			dropAdapterAtEndpoint(server, endpoint);
 		}
 		clearSelectedEndpoint(player, false);
 		notifyEndpointChanged(server, selected);
@@ -349,6 +354,79 @@ public final class BluetoothLinkSystem {
 			dirty = true;
 		}
 		return removed;
+	}
+
+	private static void consumeBluetoothAdapter(ServerPlayer player) {
+		if (player == null || player.getAbilities().instabuild) {
+			return;
+		}
+		ItemStack stack = player.getMainHandItem();
+		if (!stack.is(ModItems.BLUETOOTH_ADAPTER) || stack.isEmpty()) {
+			return;
+		}
+		stack.shrink(1);
+		syncPlayerInventory(player);
+	}
+
+	private static void returnBluetoothAdapterToPlayer(ServerPlayer player) {
+		if (player == null || player.getAbilities().instabuild) {
+			return;
+		}
+		ItemStack refund = new ItemStack(ModItems.BLUETOOTH_ADAPTER);
+		boolean inserted = player.getInventory().add(refund);
+		if (!inserted && !refund.isEmpty()) {
+			ItemEntity dropped = player.drop(refund, false);
+			if (dropped != null) {
+				dropped.setPickUpDelay(0);
+			}
+		}
+		syncPlayerInventory(player);
+	}
+
+	private static void dropAdapterAtEndpoint(MinecraftServer server, Endpoint endpoint) {
+		if (server == null || endpoint == null) {
+			return;
+		}
+		ServerLevel dropLevel = server.getLevel(endpoint.dimension());
+		if (dropLevel == null) {
+			return;
+		}
+		Vec3 dropPosition = adapterDropPosition(endpoint);
+		ItemEntity itemEntity = new ItemEntity(
+				dropLevel,
+				dropPosition.x,
+				dropPosition.y,
+				dropPosition.z,
+				new ItemStack(ModItems.BLUETOOTH_ADAPTER)
+		);
+		itemEntity.setDefaultPickUpDelay();
+		dropLevel.addFreshEntity(itemEntity);
+	}
+
+	private static Vec3 adapterDropPosition(Endpoint endpoint) {
+		Vec3 center = Vec3.atCenterOf(endpoint.pos());
+		if (endpoint.type() == EndpointType.SCREEN && endpoint.facing() != null) {
+			double offset = 0.56D;
+			return center.add(
+					endpoint.facing().getStepX() * offset,
+					endpoint.facing().getStepY() * offset,
+					endpoint.facing().getStepZ() * offset
+			);
+		}
+		return center.add(0.0D, 0.25D, 0.0D);
+	}
+
+	private static void syncPlayerInventory(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		player.getInventory().setChanged();
+		player.inventoryMenu.broadcastFullState();
+		player.inventoryMenu.sendAllDataToRemote();
+		if (player.containerMenu != player.inventoryMenu) {
+			player.containerMenu.broadcastFullState();
+			player.containerMenu.sendAllDataToRemote();
+		}
 	}
 
 	private static void notifyEndpointChanged(MinecraftServer server, Endpoint endpoint) {

@@ -837,6 +837,10 @@ public final class MonitorScreenSystem {
 		return true;
 	}
 
+	public static boolean isMonitorFrame(ItemFrame frame) {
+		return frame != null && readScreenState(frame.getItem()) != null;
+	}
+
 	public static BluetoothLinkSystem.Endpoint resolveBluetoothScreenEndpoint(ServerLevel level, ItemFrame frame) {
 		if (level == null || frame == null || readScreenState(frame.getItem()) == null) {
 			return null;

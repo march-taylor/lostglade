@@ -47,6 +47,7 @@
 		"ItemCopperManUseMixin",
 		"ItemCombinerMenuAccessor",
 		"ItemFramePhotoMixin",
+		"ItemFrameMonitorPickMixin",
 		"LivingEntityAbsoluteInvisibilityCombatMixin",
 		"LivingEntityAbsoluteInvisibilityMixin",
 		"LivingEntityCartelDefenseMixin",

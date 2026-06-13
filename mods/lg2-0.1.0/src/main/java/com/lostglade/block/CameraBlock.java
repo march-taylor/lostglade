@@ -1,5 +1,6 @@
 package com.lostglade.block;
 
+import com.lostglade.item.ModItems;
 import com.lostglade.server.MonitorScreenSystem;
 import com.lostglade.server.CameraOrientationStore;
 import com.lostglade.server.BluetoothLinkSystem;
@@ -27,11 +28,14 @@ import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.redstone.Orientation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.storage.loot.LootParams;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import xyz.nucleoid.packettweaker.PacketContext;
+
+import java.util.List;
 
 public final class CameraBlock extends SimplePolymerBlock {
 	private final BlockState hiddenState;
@@ -87,6 +91,11 @@ public final class CameraBlock extends SimplePolymerBlock {
 	@Override
 	protected VoxelShape getInteractionShape(BlockState state, BlockGetter level, BlockPos pos) {
 		return this.hitboxState.getShape(level, pos);
+	}
+
+	@Override
+	protected List<ItemStack> getDrops(BlockState state, LootParams.Builder builder) {
+		return List.of(new ItemStack(ModItems.CAMERA));
 	}
 
 	@Override

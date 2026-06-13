@@ -61,6 +61,7 @@ final class MonitorMaxRuntime {
 	private static final String MAX_AVATAR_URL_TAG = "avatar_url";
 	private static final String MAX_AVATAR_LOCAL_MEDIA_TAG = "avatar_local_media";
 	private static final String MAX_SELECTED_CAMERA_URL_TAG = "selected_camera_url";
+	private static final String MAX_SELECTED_MICROPHONE_KEY_TAG = "selected_microphone_key";
 	private static final String MAX_SELECTED_MICROPHONE_INDEX_TAG = "selected_microphone_index";
 	private static final String MAX_CAMERA_ENABLED_TAG = "camera_enabled";
 	private static final String MAX_MICROPHONE_ENABLED_TAG = "microphone_enabled";
@@ -519,7 +520,7 @@ final class MonitorMaxRuntime {
 							"max:" + call.id + ":" + componentGroupId(sourceKey) + "-to-" + componentGroupId(targetKey),
 							sourceKey,
 							targetKey,
-							selectedMicrophoneIndex(sourceKey)
+							selectedMicrophoneIndex(server, sourceKey)
 					));
 				}
 			}
@@ -537,13 +538,17 @@ final class MonitorMaxRuntime {
 		}
 	}
 
-	private static int selectedMicrophoneIndex(ScreenRuntimeKey key) {
+	private static int selectedMicrophoneIndex(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return -1;
+		}
 		MaxRuntimeState state = MAX_STATES.get(key);
 		if (state == null) {
 			return -1;
 		}
+		List<MicrophoneSystem.ScreenMicrophoneDevice> microphones = MicrophoneSystem.connectedMicrophoneDevices(server, key);
 		synchronized (state) {
-			return state.selectedMicrophoneIndex;
+			return normalizeSelectedMicrophoneLocked(state, microphones);
 		}
 	}
 
@@ -614,6 +619,7 @@ final class MonitorMaxRuntime {
 				state.avatarUrl = persisted != null ? persisted.avatarUrl() : "";
 				state.avatarLocalMediaKey = persisted != null ? persisted.avatarLocalMediaKey() : "";
 				state.selectedCameraUrl = persisted != null ? persisted.selectedCameraUrl() : "";
+				state.selectedMicrophoneKey = persisted != null ? persisted.selectedMicrophoneKey() : "";
 				state.selectedMicrophoneIndex = persisted != null ? persisted.selectedMicrophoneIndex() : -1;
 				state.cameraEnabled = persisted == null || persisted.cameraEnabled();
 				state.microphoneEnabled = persisted == null || persisted.microphoneEnabled();
@@ -687,6 +693,7 @@ final class MonitorMaxRuntime {
 				maxTag.getStringOr(MAX_AVATAR_LOCAL_MEDIA_TAG, ""),
 				contacts,
 				maxTag.getStringOr(MAX_SELECTED_CAMERA_URL_TAG, ""),
+				maxTag.getStringOr(MAX_SELECTED_MICROPHONE_KEY_TAG, ""),
 				maxTag.getIntOr(MAX_SELECTED_MICROPHONE_INDEX_TAG, -1),
 				maxTag.getBooleanOr(MAX_CAMERA_ENABLED_TAG, true),
 				maxTag.getBooleanOr(MAX_MICROPHONE_ENABLED_TAG, true),
@@ -712,6 +719,7 @@ final class MonitorMaxRuntime {
 					state.avatarLocalMediaKey,
 					List.copyOf(state.contacts),
 					state.selectedCameraUrl,
+					state.selectedMicrophoneKey,
 					state.selectedMicrophoneIndex,
 					state.cameraEnabled,
 					state.microphoneEnabled,
@@ -745,6 +753,9 @@ final class MonitorMaxRuntime {
 			}
 			if (state.selectedCameraUrl() != null && !state.selectedCameraUrl().isBlank()) {
 				maxTag.putString(MAX_SELECTED_CAMERA_URL_TAG, state.selectedCameraUrl());
+			}
+			if (state.selectedMicrophoneKey() != null && !state.selectedMicrophoneKey().isBlank()) {
+				maxTag.putString(MAX_SELECTED_MICROPHONE_KEY_TAG, state.selectedMicrophoneKey());
 			}
 			maxTag.putInt(MAX_SELECTED_MICROPHONE_INDEX_TAG, state.selectedMicrophoneIndex());
 			maxTag.putBoolean(MAX_CAMERA_ENABLED_TAG, state.cameraEnabled());
@@ -791,6 +802,7 @@ final class MonitorMaxRuntime {
 		boolean focusSelf;
 		boolean focusPeer;
 		ScreenRuntimeKey focusedPeerKey;
+		String selectedMicrophoneKey;
 		int selectedMicrophoneIndex;
 		BufferedImage remoteFrame;
 		synchronized (state) {
@@ -802,6 +814,7 @@ final class MonitorMaxRuntime {
 			focusSelf = state.focusSelf;
 			focusPeer = state.focusPeer;
 			focusedPeerKey = state.focusedPeerKey;
+			selectedMicrophoneKey = state.selectedMicrophoneKey;
 			selectedMicrophoneIndex = state.selectedMicrophoneIndex;
 			remoteFrame = state.remoteFrame;
 		}
@@ -830,11 +843,17 @@ final class MonitorMaxRuntime {
 			RendererBotCameraSystem.stopLiveStream(maxLocalVideoStreamOwnerId(component.runtimeKey()));
 			clearLocalFrame(component.runtimeKey());
 		}
-		int microphoneCount = MicrophoneSystem.connectedMicrophoneCount(server, component.runtimeKey());
-		if (microphoneCount <= 0) {
-			selectedMicrophoneIndex = -1;
-		} else if (selectedMicrophoneIndex >= microphoneCount) {
-			selectedMicrophoneIndex = 0;
+		List<MicrophoneSystem.ScreenMicrophoneDevice> microphones = MicrophoneSystem.connectedMicrophoneDevices(server, component.runtimeKey());
+		int microphoneCount = microphones.size();
+		boolean microphoneSelectionChanged = false;
+		synchronized (state) {
+			int normalizedMicrophoneIndex = normalizeSelectedMicrophoneLocked(state, microphones);
+			microphoneSelectionChanged = normalizedMicrophoneIndex != selectedMicrophoneIndex
+					|| !Objects.equals(selectedMicrophoneKey, state.selectedMicrophoneKey);
+			selectedMicrophoneIndex = normalizedMicrophoneIndex;
+		}
+		if (microphoneSelectionChanged) {
+			persistState(server, component.runtimeKey(), state);
 		}
 		if (phase == MaxCallPhase.ACTIVE && peerState != null) {
 			refreshRemoteVideo(server, component, peerState);
@@ -1388,9 +1407,18 @@ final class MonitorMaxRuntime {
 		if (state == null) {
 			return;
 		}
-		int count = MicrophoneSystem.connectedMicrophoneCount(server, key);
+		List<MicrophoneSystem.ScreenMicrophoneDevice> microphones = MicrophoneSystem.connectedMicrophoneDevices(server, key);
+		int count = microphones.size();
 		synchronized (state) {
-			state.selectedMicrophoneIndex = count > 1 ? Math.floorMod(state.selectedMicrophoneIndex + 1, count) : -1;
+			int currentIndex = normalizeSelectedMicrophoneLocked(state, microphones);
+			if (count > 1) {
+				int nextIndex = currentIndex < 0 ? 0 : Math.floorMod(currentIndex + 1, count);
+				state.selectedMicrophoneIndex = nextIndex;
+				state.selectedMicrophoneKey = microphoneDeviceKey(microphones.get(nextIndex));
+			} else {
+				state.selectedMicrophoneIndex = -1;
+				state.selectedMicrophoneKey = "";
+			}
 			state.version++;
 		}
 		persistState(server, key, state);
@@ -2028,6 +2056,42 @@ final class MonitorMaxRuntime {
 			}
 		}
 		return -1;
+	}
+
+	private static int normalizeSelectedMicrophoneLocked(MaxRuntimeState state, List<MicrophoneSystem.ScreenMicrophoneDevice> microphones) {
+		if (state == null || microphones == null || microphones.isEmpty()) {
+			if (state != null) {
+				state.selectedMicrophoneKey = "";
+				state.selectedMicrophoneIndex = -1;
+			}
+			return -1;
+		}
+		if ((state.selectedMicrophoneKey == null || state.selectedMicrophoneKey.isBlank())
+				&& state.selectedMicrophoneIndex >= 0
+				&& state.selectedMicrophoneIndex < microphones.size()) {
+			state.selectedMicrophoneKey = microphoneDeviceKey(microphones.get(state.selectedMicrophoneIndex));
+		}
+		if (state.selectedMicrophoneKey != null && !state.selectedMicrophoneKey.isBlank()) {
+			for (MicrophoneSystem.ScreenMicrophoneDevice microphone : microphones) {
+				if (Objects.equals(state.selectedMicrophoneKey, microphoneDeviceKey(microphone))) {
+					state.selectedMicrophoneIndex = microphone.index();
+					return state.selectedMicrophoneIndex;
+				}
+			}
+			state.selectedMicrophoneKey = "";
+			state.selectedMicrophoneIndex = -1;
+			return -1;
+		}
+		state.selectedMicrophoneIndex = -1;
+		return -1;
+	}
+
+	private static String microphoneDeviceKey(MicrophoneSystem.ScreenMicrophoneDevice microphone) {
+		if (microphone == null || microphone.dimension() == null || microphone.pos() == null) {
+			return "";
+		}
+		BlockPos pos = microphone.pos();
+		return microphone.dimension().identifier() + ":" + pos.getX() + ":" + pos.getY() + ":" + pos.getZ();
 	}
 
 	private static MaxCallSession currentCall(ScreenRuntimeKey key) {
@@ -3267,6 +3331,7 @@ final class MonitorMaxRuntime {
 			String avatarLocalMediaKey,
 			List<String> contacts,
 			String selectedCameraUrl,
+			String selectedMicrophoneKey,
 			int selectedMicrophoneIndex,
 			boolean cameraEnabled,
 			boolean microphoneEnabled,
@@ -3285,6 +3350,7 @@ final class MonitorMaxRuntime {
 		private BufferedImage avatarFrame;
 		private final List<String> contacts = new ArrayList<>();
 		private String selectedCameraUrl = "";
+		private String selectedMicrophoneKey = "";
 		private int selectedMicrophoneIndex = -1;
 		private String ringtoneUrl = "";
 		private String ringtoneLocalMediaKey = "";

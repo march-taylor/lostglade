@@ -342,7 +342,6 @@ public final class ModBlocks {
 				.mapColor(MapColor.COLOR_BLACK)
 				.strength(3.0f, 6.0f)
 				.sound(SoundType.METAL)
-				.requiresCorrectToolForDrops()
 				.noLootTable()
 				.setId(SPEAKER_KEY);
 	}

@@ -70,6 +70,7 @@ final class MonitorCameraRuntime {
 		CameraRuntimeState state = STATES.computeIfAbsent(component.runtimeKey(), ignored -> new CameraRuntimeState());
 		List<LiveCameraReference> cameras = collectCameraReferences(server, component);
 		List<MicrophoneSystem.ScreenMicrophoneDevice> microphones = MicrophoneSystem.connectedMicrophoneDevices(server, component.runtimeKey());
+		UiLayout pickerLayout = createUiLayout(component.width(), component.height());
 		BufferedImage preview;
 		CameraAppCaptureMode mode;
 		boolean recording;
@@ -79,9 +80,22 @@ final class MonitorCameraRuntime {
 		String statusText;
 		int selectedCameraIndex;
 		int selectedMicrophoneIndex;
+		int cameraScroll;
+		int microphoneScroll;
 		long version;
+		boolean shouldStopPreview;
 		synchronized (state) {
+			String previousCameraUrl = state.selectedCameraUrl;
 			normalizeSelectionLocked(state, cameras, microphones);
+			normalizeDevicePickerScrollLocked(state, pickerLayout, cameras != null ? cameras.size() : 0, microphones != null ? microphones.size() : 0);
+			boolean cameraSelectionChanged = !Objects.equals(previousCameraUrl, state.selectedCameraUrl);
+			boolean previewChanged = false;
+			if (cameraSelectionChanged || cameras == null || cameras.isEmpty()) {
+				previewChanged = clearPreviewFrameLocked(state);
+			}
+			if (cameraSelectionChanged || previewChanged) {
+				state.version++;
+			}
 			mode = state.captureMode;
 			recording = state.recording != null;
 			paused = state.recording != null && state.recording.paused();
@@ -90,8 +104,14 @@ final class MonitorCameraRuntime {
 			statusText = state.statusText;
 			selectedCameraIndex = selectedCameraIndexLocked(state, cameras);
 			selectedMicrophoneIndex = selectedMicrophoneIndexLocked(state, microphones);
+			cameraScroll = state.cameraScroll;
+			microphoneScroll = state.microphoneScroll;
 			preview = copyBufferedImage(state.previewFrame);
 			version = state.version + (recording && !paused ? System.currentTimeMillis() / 250L : 0L);
+			shouldStopPreview = cameraSelectionChanged || selectedCameraIndex < 0;
+		}
+		if (shouldStopPreview) {
+			stopPreview(component.runtimeKey());
 		}
 		if (selectedCameraIndex >= 0 && selectedCameraIndex < cameras.size()) {
 			ensurePreviewStream(server, component, cameras.get(selectedCameraIndex), state);
@@ -103,6 +123,8 @@ final class MonitorCameraRuntime {
 				microphoneSnapshots(state, microphones),
 				selectedCameraIndex,
 				selectedMicrophoneIndex,
+				cameraScroll,
+				microphoneScroll,
 				mode,
 				recording,
 				paused,
@@ -202,7 +224,30 @@ final class MonitorCameraRuntime {
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
-		int cameraIndex = devicePickerCameraIndexAt(layout, cameras != null ? cameras.size() : 0, touchPoint);
+		if (cameraPickerScrollLeftRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			scrollCameraPicker(server, component.runtimeKey(), state, layout, cameras != null ? cameras.size() : 0, -cameraPickerScrollStep(layout));
+			return true;
+		}
+		if (cameraPickerScrollRightRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			scrollCameraPicker(server, component.runtimeKey(), state, layout, cameras != null ? cameras.size() : 0, cameraPickerScrollStep(layout));
+			return true;
+		}
+		if (microphonePickerScrollUpRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			scrollMicrophonePicker(server, component.runtimeKey(), state, layout, microphones != null ? microphones.size() : 0, -1);
+			return true;
+		}
+		if (microphonePickerScrollDownRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			scrollMicrophonePicker(server, component.runtimeKey(), state, layout, microphones != null ? microphones.size() : 0, 1);
+			return true;
+		}
+		int cameraScroll;
+		int microphoneScroll;
+		synchronized (state) {
+			normalizeDevicePickerScrollLocked(state, layout, cameras != null ? cameras.size() : 0, microphones != null ? microphones.size() : 0);
+			cameraScroll = state.cameraScroll;
+			microphoneScroll = state.microphoneScroll;
+		}
+		int cameraIndex = devicePickerCameraIndexAt(layout, cameras != null ? cameras.size() : 0, cameraScroll, touchPoint);
 		if (cameraIndex >= 0 && cameras != null && cameraIndex < cameras.size()) {
 			LiveCameraReference camera = cameras.get(cameraIndex);
 			synchronized (state) {
@@ -217,22 +262,24 @@ final class MonitorCameraRuntime {
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
-		int microphoneIndex = devicePickerMicrophoneIndexAt(layout, microphones != null ? microphones.size() : 0, touchPoint);
+		int microphoneIndex = devicePickerMicrophoneIndexAt(layout, microphones != null ? microphones.size() : 0, microphoneScroll, touchPoint);
 		if (microphoneIndex >= 0 && microphones != null && microphoneIndex < microphones.size()) {
+			String microphoneKey = microphoneDeviceKey(microphones.get(microphoneIndex));
 			synchronized (state) {
 				normalizeSelectionLocked(state, cameras, microphones);
-				if (state.selectedMicrophoneIndices.contains(microphoneIndex)) {
-					if (state.selectedMicrophoneIndices.size() > 1) {
-						state.selectedMicrophoneIndices.remove(microphoneIndex);
+				if (state.selectedMicrophoneKeys.contains(microphoneKey)) {
+					if (state.selectedMicrophoneKeys.size() > 1) {
+						state.selectedMicrophoneKeys.remove(microphoneKey);
 						state.statusText = "";
 					} else {
 						state.statusText = "Нужен хотя бы один микрофон";
 					}
 				} else {
-					state.selectedMicrophoneIndices.add(microphoneIndex);
+					state.selectedMicrophoneKeys.add(microphoneKey);
 					state.statusText = "";
 				}
-				state.selectedMicrophoneIndex = state.selectedMicrophoneIndices.isEmpty() ? -1 : state.selectedMicrophoneIndices.iterator().next();
+				syncSelectedMicrophoneSelectionLocked(state, microphones);
+				state.microphoneSelectionInitialized = true;
 				state.version++;
 			}
 			requestRuntimeRender(server, component.runtimeKey());
@@ -242,7 +289,7 @@ final class MonitorCameraRuntime {
 	}
 
 	private static CameraAppVisualSnapshot emptySnapshot() {
-		return new CameraAppVisualSnapshot(0L, null, List.of(), List.of(), -1, -1, CameraAppCaptureMode.PHOTO, false, false, 0L, false, "");
+		return new CameraAppVisualSnapshot(0L, null, List.of(), List.of(), -1, -1, 0, 0, CameraAppCaptureMode.PHOTO, false, false, 0L, false, "");
 	}
 
 	private static void setMode(MinecraftServer server, ScreenRuntimeKey key, CameraRuntimeState state, CameraAppCaptureMode mode) {
@@ -392,6 +439,11 @@ final class MonitorCameraRuntime {
 			List<Integer> selectedMicrophones;
 			synchronized (state) {
 				selectedMicrophones = selectedMicrophoneIndicesLocked(state, microphones);
+			}
+			if (selectedMicrophones.isEmpty()) {
+				recording.closeImmediately();
+				setStatus(server, component.runtimeKey(), state, "Выбери микрофон");
+				return;
 			}
 			MicrophoneSystem.MicrophonePcmRecorder recorder = MicrophoneSystem.startTimedPcmRecorder(server, component.runtimeKey(), selectedMicrophones, recording::writeFrame);
 			if (recorder == null) {
@@ -629,25 +681,98 @@ final class MonitorCameraRuntime {
 			List<LiveCameraReference> cameras,
 			List<MicrophoneSystem.ScreenMicrophoneDevice> microphones
 	) {
-		if ((state.selectedCameraUrl == null || state.selectedCameraUrl.isBlank()) && cameras != null && !cameras.isEmpty()) {
+		boolean selectedCameraMissing = state.selectedCameraUrl != null
+				&& !state.selectedCameraUrl.isBlank()
+				&& (cameras == null || cameras.stream().map(MonitorScreenLiveSources::liveCameraGalleryUrl).noneMatch(url -> Objects.equals(url, state.selectedCameraUrl)));
+		if ((state.selectedCameraUrl == null || state.selectedCameraUrl.isBlank() || selectedCameraMissing) && cameras != null && !cameras.isEmpty()) {
 			state.selectedCameraUrl = liveCameraGalleryUrl(cameras.get(0));
+		} else if (cameras == null || cameras.isEmpty()) {
+			state.selectedCameraUrl = "";
 		}
 		if (microphones == null || microphones.isEmpty()) {
 			state.selectedMicrophoneIndex = -1;
 			state.selectedMicrophoneIndices.clear();
-		} else if (state.selectedMicrophoneIndex >= microphones.size()) {
-			state.selectedMicrophoneIndex = 0;
-			state.selectedMicrophoneIndices.clear();
-			state.selectedMicrophoneIndices.add(0);
-		} else {
-			if (state.selectedMicrophoneIndices.isEmpty() && state.selectedMicrophoneIndex >= 0) {
-				state.selectedMicrophoneIndices.add(state.selectedMicrophoneIndex);
+			state.selectedMicrophoneKeys.clear();
+			return;
+		}
+		if (state.selectedMicrophoneKeys.isEmpty()) {
+			if (!state.selectedMicrophoneIndices.isEmpty()) {
+				for (Integer index : state.selectedMicrophoneIndices) {
+					if (index != null && index >= 0 && index < microphones.size()) {
+						state.selectedMicrophoneKeys.add(microphoneDeviceKey(microphones.get(index)));
+					}
+				}
+			} else if (state.selectedMicrophoneIndex >= 0 && state.selectedMicrophoneIndex < microphones.size()) {
+				state.selectedMicrophoneKeys.add(microphoneDeviceKey(microphones.get(state.selectedMicrophoneIndex)));
 			}
-			state.selectedMicrophoneIndices.removeIf(index -> index == null || index < 0 || index >= microphones.size());
-			if (state.selectedMicrophoneIndices.isEmpty()) {
-				state.selectedMicrophoneIndices.add(0);
+		}
+		if (!state.microphoneSelectionInitialized) {
+			state.selectedMicrophoneKeys.clear();
+			state.selectedMicrophoneKeys.add(microphoneDeviceKey(microphones.get(0)));
+			state.microphoneSelectionInitialized = true;
+		}
+		Set<String> availableKeys = new LinkedHashSet<>();
+		for (MicrophoneSystem.ScreenMicrophoneDevice microphone : microphones) {
+			availableKeys.add(microphoneDeviceKey(microphone));
+		}
+		state.selectedMicrophoneKeys.removeIf(key -> key == null || key.isBlank() || !availableKeys.contains(key));
+		syncSelectedMicrophoneSelectionLocked(state, microphones);
+	}
+
+	private static void normalizeDevicePickerScrollLocked(CameraRuntimeState state, UiLayout layout, int cameraCount, int microphoneCount) {
+		if (state == null || layout == null) {
+			return;
+		}
+		state.cameraScroll = clampInt(state.cameraScroll, 0, maxCameraPickerScroll(layout, cameraCount));
+		state.microphoneScroll = clampInt(state.microphoneScroll, 0, maxMicrophonePickerScroll(layout, microphoneCount));
+	}
+
+	private static boolean clearPreviewFrameLocked(CameraRuntimeState state) {
+		if (state == null) {
+			return false;
+		}
+		boolean changed = state.previewFrame != null || state.previewFrameClientNanos != 0L || state.previewFrameReceivedAtNanos != 0L;
+		state.previewFrame = null;
+		state.previewFrameClientNanos = 0L;
+		state.previewFrameReceivedAtNanos = 0L;
+		return changed;
+	}
+
+	private static void scrollCameraPicker(MinecraftServer server, ScreenRuntimeKey key, CameraRuntimeState state, UiLayout layout, int cameraCount, int delta) {
+		if (server == null || key == null || state == null || layout == null || delta == 0) {
+			return;
+		}
+		boolean changed = false;
+		synchronized (state) {
+			normalizeDevicePickerScrollLocked(state, layout, cameraCount, 0);
+			int nextScroll = clampInt(state.cameraScroll + delta, 0, maxCameraPickerScroll(layout, cameraCount));
+			if (nextScroll != state.cameraScroll) {
+				state.cameraScroll = nextScroll;
+				state.version++;
+				changed = true;
 			}
-			state.selectedMicrophoneIndex = state.selectedMicrophoneIndices.iterator().next();
+		}
+		if (changed) {
+			requestRuntimeRender(server, key);
+		}
+	}
+
+	private static void scrollMicrophonePicker(MinecraftServer server, ScreenRuntimeKey key, CameraRuntimeState state, UiLayout layout, int microphoneCount, int delta) {
+		if (server == null || key == null || state == null || layout == null || delta == 0) {
+			return;
+		}
+		boolean changed = false;
+		synchronized (state) {
+			normalizeDevicePickerScrollLocked(state, layout, 0, microphoneCount);
+			int nextScroll = clampInt(state.microphoneScroll + delta, 0, maxMicrophonePickerScroll(layout, microphoneCount));
+			if (nextScroll != state.microphoneScroll) {
+				state.microphoneScroll = nextScroll;
+				state.version++;
+				changed = true;
+			}
+		}
+		if (changed) {
+			requestRuntimeRender(server, key);
 		}
 	}
 
@@ -667,17 +792,15 @@ final class MonitorCameraRuntime {
 		if (state == null || microphones == null || microphones.isEmpty()) {
 			return -1;
 		}
-		if (state.selectedMicrophoneIndices.isEmpty()) {
-			return Math.max(0, Math.min(state.selectedMicrophoneIndex, microphones.size() - 1));
-		}
-		return Math.max(0, Math.min(state.selectedMicrophoneIndices.iterator().next(), microphones.size() - 1));
+		syncSelectedMicrophoneSelectionLocked(state, microphones);
+		return state.selectedMicrophoneIndex;
 	}
 
 	private static List<Integer> selectedMicrophoneIndicesLocked(CameraRuntimeState state, List<MicrophoneSystem.ScreenMicrophoneDevice> microphones) {
 		if (state == null || microphones == null || microphones.isEmpty()) {
 			return List.of();
 		}
-		normalizeSelectionLocked(state, List.of(), microphones);
+		syncSelectedMicrophoneSelectionLocked(state, microphones);
 		return state.selectedMicrophoneIndices.isEmpty() ? List.of() : List.copyOf(state.selectedMicrophoneIndices);
 	}
 
@@ -707,17 +830,48 @@ final class MonitorCameraRuntime {
 			return List.of();
 		}
 		int selected;
-		Set<Integer> selectedIndices;
+		Set<String> selectedKeys;
 		synchronized (state) {
+			syncSelectedMicrophoneSelectionLocked(state, microphones);
 			selected = state.selectedMicrophoneIndex;
-			selectedIndices = Set.copyOf(state.selectedMicrophoneIndices);
+			selectedKeys = Set.copyOf(state.selectedMicrophoneKeys);
 		}
 		List<CameraAppDeviceSnapshot> snapshots = new ArrayList<>(microphones.size());
 		for (MicrophoneSystem.ScreenMicrophoneDevice microphone : microphones) {
-			boolean selectedNow = selectedIndices.isEmpty() ? microphone.index() == selected : selectedIndices.contains(microphone.index());
+			String microphoneKey = microphoneDeviceKey(microphone);
+			boolean selectedNow = selectedKeys.isEmpty() ? microphone.index() == selected : selectedKeys.contains(microphoneKey);
 			snapshots.add(new CameraAppDeviceSnapshot(microphone.title(), microphone.subtitle(), "mic:" + microphone.index(), null, selectedNow, true));
 		}
 		return List.copyOf(snapshots);
+	}
+
+	private static void syncSelectedMicrophoneSelectionLocked(CameraRuntimeState state, List<MicrophoneSystem.ScreenMicrophoneDevice> microphones) {
+		state.selectedMicrophoneIndices.clear();
+		if (state == null || microphones == null || microphones.isEmpty()) {
+			state.selectedMicrophoneIndex = -1;
+			if (state != null) {
+				state.selectedMicrophoneKeys.clear();
+			}
+			return;
+		}
+		Set<String> availableKeys = new LinkedHashSet<>();
+		for (MicrophoneSystem.ScreenMicrophoneDevice microphone : microphones) {
+			String microphoneKey = microphoneDeviceKey(microphone);
+			availableKeys.add(microphoneKey);
+			if (state.selectedMicrophoneKeys.contains(microphoneKey)) {
+				state.selectedMicrophoneIndices.add(microphone.index());
+			}
+		}
+		state.selectedMicrophoneKeys.removeIf(key -> key == null || key.isBlank() || !availableKeys.contains(key));
+		state.selectedMicrophoneIndex = state.selectedMicrophoneIndices.isEmpty() ? -1 : state.selectedMicrophoneIndices.iterator().next();
+	}
+
+	private static String microphoneDeviceKey(MicrophoneSystem.ScreenMicrophoneDevice microphone) {
+		if (microphone == null || microphone.dimension() == null || microphone.pos() == null) {
+			return "";
+		}
+		BlockPos pos = microphone.pos();
+		return microphone.dimension().identifier() + ":" + pos.getX() + ":" + pos.getY() + ":" + pos.getZ();
 	}
 
 	private static void setStatus(MinecraftServer server, ScreenRuntimeKey key, CameraRuntimeState state, String status) {
@@ -796,13 +950,21 @@ final class MonitorCameraRuntime {
 		UiRect cameraTitle = devicePickerCameraTitleRect(layout);
 		drawVerticalText(graphics, "КАМЕРА", cameraTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
 		List<CameraAppDeviceSnapshot> cameras = state.cameras();
+		int cameraCapacity = devicePickerCameraCapacity(layout);
+		int cameraScroll = clampInt(state.cameraScroll(), 0, Math.max(0, (cameras == null ? 0 : cameras.size()) - cameraCapacity));
+		if (cameras != null && cameras.size() > cameraCapacity) {
+			drawPickerScrollStatus(graphics, cameraTitle, layout, cameraScroll, cameraCapacity, cameras.size());
+			drawPickerScrollButton(graphics, cameraPickerScrollLeftRect(layout), "<", layout, cameraScroll > 0);
+			drawPickerScrollButton(graphics, cameraPickerScrollRightRect(layout), ">", layout, cameraScroll + cameraCapacity < cameras.size());
+		}
 		if (cameras == null || cameras.isEmpty()) {
 			drawCenteredText(graphics, "Подключи камеру или Сбер Дрон к экрану", devicePickerCameraGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 		} else {
-			int count = Math.min(cameras.size(), devicePickerCameraCapacity(layout));
-			for (int index = 0; index < count; index++) {
+			int count = Math.min(Math.max(0, cameras.size() - cameraScroll), cameraCapacity);
+			for (int visibleIndex = 0; visibleIndex < count; visibleIndex++) {
+				int index = cameraScroll + visibleIndex;
 				CameraAppDeviceSnapshot camera = cameras.get(index);
-				UiRect rect = devicePickerCameraRect(layout, index);
+				UiRect rect = devicePickerCameraRect(layout, visibleIndex);
 				fillRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), new Color(255, 255, 255, camera.selected() ? 34 : 18));
 				BufferedImage preview = camera.selected() && state.previewFrame() != null ? state.previewFrame() : camera.preview();
 				if (preview != null) {
@@ -817,15 +979,24 @@ final class MonitorCameraRuntime {
 			}
 		}
 
-		drawVerticalText(graphics, "МИКРОФОНЫ", devicePickerMicrophoneTitleRect(layout), new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		UiRect microphoneTitle = devicePickerMicrophoneTitleRect(layout);
+		drawVerticalText(graphics, "МИКРОФОНЫ", microphoneTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
 		List<CameraAppDeviceSnapshot> microphones = state.microphones();
+		int microphoneCapacity = devicePickerMicrophoneCapacity(layout);
+		int microphoneScroll = clampInt(state.microphoneScroll(), 0, Math.max(0, (microphones == null ? 0 : microphones.size()) - microphoneCapacity));
+		if (microphones != null && microphones.size() > microphoneCapacity) {
+			drawPickerScrollStatus(graphics, microphoneTitle, layout, microphoneScroll, microphoneCapacity, microphones.size());
+			drawPickerScrollButton(graphics, microphonePickerScrollUpRect(layout), "^", layout, microphoneScroll > 0);
+			drawPickerScrollButton(graphics, microphonePickerScrollDownRect(layout), "v", layout, microphoneScroll + microphoneCapacity < microphones.size());
+		}
 		if (microphones == null || microphones.isEmpty()) {
 			drawCenteredText(graphics, "Подключи микрофон к экрану", devicePickerMicrophoneListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
-		int microphoneCount = Math.min(microphones.size(), devicePickerMicrophoneCapacity(layout));
-		for (int index = 0; index < microphoneCount; index++) {
-			drawDevicePickerMicrophoneRow(graphics, layout, devicePickerMicrophoneRowRect(layout, index), microphones.get(index));
+		int microphoneCount = Math.min(Math.max(0, microphones.size() - microphoneScroll), microphoneCapacity);
+		for (int visibleIndex = 0; visibleIndex < microphoneCount; visibleIndex++) {
+			int index = microphoneScroll + visibleIndex;
+			drawDevicePickerMicrophoneRow(graphics, layout, devicePickerMicrophoneRowRect(layout, visibleIndex), microphones.get(index));
 		}
 	}
 
@@ -846,6 +1017,36 @@ final class MonitorCameraRuntime {
 		int titleHeight = Math.max(10, textRect.height() / 2);
 		drawWrappedText(graphics, microphone.title(), new UiRect(textRect.x(), textRect.y(), textRect.width(), titleHeight), new Color(248, 251, 255, 232), Font.BOLD, clampInt(layout.unit() - 1, 8, 13), 1);
 		drawWrappedText(graphics, microphone.subtitle(), new UiRect(textRect.x(), textRect.y() + titleHeight, textRect.width(), textRect.height() - titleHeight), new Color(178, 194, 210, 214), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 1);
+	}
+
+	private static void drawPickerScrollButton(Graphics2D graphics, UiRect rect, String label, UiLayout layout, boolean enabled) {
+		Color color = drawSmallMediaButtonBase(graphics, rect, MediaButtonSegment.SINGLE, false, mediaChromeStrokeWidth(rect));
+		drawCenteredText(
+				graphics,
+				label,
+				rect,
+				enabled ? color : new Color(color.getRed(), color.getGreen(), color.getBlue(), 96),
+				Font.BOLD,
+				clampInt(layout.unit(), 9, 14)
+		);
+	}
+
+	private static void drawPickerScrollStatus(Graphics2D graphics, UiRect titleRect, UiLayout layout, int offset, int visibleCount, int totalCount) {
+		if (totalCount <= visibleCount || visibleCount <= 0) {
+			return;
+		}
+		int width = clampInt(layout.unit() * 4, 30, 56);
+		UiRect statusRect = new UiRect(titleRect.right() - width - clampInt(layout.unit() * 4, 28, 44), titleRect.y(), width, titleRect.height());
+		int from = offset + 1;
+		int to = Math.min(totalCount, offset + visibleCount);
+		drawCenteredText(
+				graphics,
+				from + "-" + to,
+				statusRect,
+				new Color(188, 204, 218, 208),
+				Font.PLAIN,
+				clampInt(layout.unit() - 2, 7, 11)
+		);
 	}
 
 	private static String selectedDeviceLabel(List<CameraAppDeviceSnapshot> devices, String fallback) {
@@ -984,6 +1185,29 @@ final class MonitorCameraRuntime {
 		return new UiRect(content.x(), title.bottom() + gap, content.width(), Math.max(18, content.bottom() - title.bottom() - gap));
 	}
 
+	private static UiRect pickerScrollButtonRect(UiRect titleRect, int indexFromRight, UiLayout layout) {
+		int gap = Math.max(4, layout.unit() / 2);
+		int size = Math.min(titleRect.height(), clampInt(layout.unit() * 2, 18, 30));
+		int x = titleRect.right() - size - indexFromRight * (size + gap);
+		return new UiRect(x, titleRect.y(), size, titleRect.height());
+	}
+
+	private static UiRect cameraPickerScrollLeftRect(UiLayout layout) {
+		return pickerScrollButtonRect(devicePickerCameraTitleRect(layout), 1, layout);
+	}
+
+	private static UiRect cameraPickerScrollRightRect(UiLayout layout) {
+		return pickerScrollButtonRect(devicePickerCameraTitleRect(layout), 0, layout);
+	}
+
+	private static UiRect microphonePickerScrollUpRect(UiLayout layout) {
+		return pickerScrollButtonRect(devicePickerMicrophoneTitleRect(layout), 1, layout);
+	}
+
+	private static UiRect microphonePickerScrollDownRect(UiLayout layout) {
+		return pickerScrollButtonRect(devicePickerMicrophoneTitleRect(layout), 0, layout);
+	}
+
 	private static int devicePickerCameraColumns(UiLayout layout) {
 		return compactScreenLayout(layout) ? 3 : 4;
 	}
@@ -1007,14 +1231,22 @@ final class MonitorCameraRuntime {
 		return new UiRect(grid.x() + column * (cell + gap), grid.y() + row * (cell + gap), cell, cell);
 	}
 
-	private static int devicePickerCameraIndexAt(UiLayout layout, int cameraCount, UiPoint point) {
-		int count = Math.min(cameraCount, devicePickerCameraCapacity(layout));
-		for (int index = 0; index < count; index++) {
-			if (devicePickerCameraRect(layout, index).contains(point.x(), point.y())) {
-				return index;
+	private static int devicePickerCameraIndexAt(UiLayout layout, int cameraCount, int cameraScroll, UiPoint point) {
+		int count = Math.min(Math.max(0, cameraCount - cameraScroll), devicePickerCameraCapacity(layout));
+		for (int visibleIndex = 0; visibleIndex < count; visibleIndex++) {
+			if (devicePickerCameraRect(layout, visibleIndex).contains(point.x(), point.y())) {
+				return cameraScroll + visibleIndex;
 			}
 		}
 		return -1;
+	}
+
+	private static int cameraPickerScrollStep(UiLayout layout) {
+		return Math.max(1, devicePickerCameraColumns(layout));
+	}
+
+	private static int maxCameraPickerScroll(UiLayout layout, int cameraCount) {
+		return Math.max(0, cameraCount - devicePickerCameraCapacity(layout));
 	}
 
 	private static int devicePickerMicrophoneCapacity(UiLayout layout) {
@@ -1035,14 +1267,18 @@ final class MonitorCameraRuntime {
 		return new UiRect(list.x(), list.y() + index * (height + gap), list.width(), height);
 	}
 
-	private static int devicePickerMicrophoneIndexAt(UiLayout layout, int microphoneCount, UiPoint point) {
-		int count = Math.min(microphoneCount, devicePickerMicrophoneCapacity(layout));
-		for (int index = 0; index < count; index++) {
-			if (devicePickerMicrophoneRowRect(layout, index).contains(point.x(), point.y())) {
-				return index;
+	private static int devicePickerMicrophoneIndexAt(UiLayout layout, int microphoneCount, int microphoneScroll, UiPoint point) {
+		int count = Math.min(Math.max(0, microphoneCount - microphoneScroll), devicePickerMicrophoneCapacity(layout));
+		for (int visibleIndex = 0; visibleIndex < count; visibleIndex++) {
+			if (devicePickerMicrophoneRowRect(layout, visibleIndex).contains(point.x(), point.y())) {
+				return microphoneScroll + visibleIndex;
 			}
 		}
 		return -1;
+	}
+
+	private static int maxMicrophonePickerScroll(UiLayout layout, int microphoneCount) {
+		return Math.max(0, microphoneCount - devicePickerMicrophoneCapacity(layout));
 	}
 
 	private static UiRect cameraDeviceButtonRect(UiLayout layout) {
@@ -1166,6 +1402,10 @@ final class MonitorCameraRuntime {
 		private String selectedCameraUrl = "";
 		private int selectedMicrophoneIndex = -1;
 		private final Set<Integer> selectedMicrophoneIndices = new LinkedHashSet<>();
+		private final Set<String> selectedMicrophoneKeys = new LinkedHashSet<>();
+		private boolean microphoneSelectionInitialized;
+		private int cameraScroll;
+		private int microphoneScroll;
 		private CameraAppCaptureMode captureMode = CameraAppCaptureMode.PHOTO;
 		private BufferedImage previewFrame;
 		private long previewFrameClientNanos;

@@ -149,6 +149,8 @@ record CameraAppVisualSnapshot(
 		List<CameraAppDeviceSnapshot> microphones,
 		int selectedCameraIndex,
 		int selectedMicrophoneIndex,
+		int cameraScroll,
+		int microphoneScroll,
 		CameraAppCaptureMode captureMode,
 		boolean recording,
 		boolean paused,
