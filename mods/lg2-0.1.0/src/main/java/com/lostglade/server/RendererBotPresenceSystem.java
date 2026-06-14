@@ -38,7 +38,7 @@ public final class RendererBotPresenceSystem {
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			rebuildOnlineBotSet(server);
 			ensureHiddenTeam(server.getScoreboard());
-			ServerTabIntegration.registerRendererBotVanishIntegration(RendererBotPresenceSystem::isRendererBot);
+			ServerTabIntegration.registerRendererBotVanishIntegration(player -> RendererBotPresenceSystem.isRendererBot(player) || ServerRaceSystem.isMilkMouseActive(player));
 			enforceAllBots(server);
 		});
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> ONLINE_BOT_IDS.clear());

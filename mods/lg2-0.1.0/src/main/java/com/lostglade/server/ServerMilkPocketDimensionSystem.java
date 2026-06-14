@@ -12,6 +12,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
@@ -23,10 +24,10 @@ import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
-import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.level.ChunkTrackingView;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -55,6 +56,7 @@ import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.level.material.Fluids;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
@@ -92,8 +94,8 @@ public final class ServerMilkPocketDimensionSystem {
 	private static final int BUILD_MAX_Y = 83;
 	private static final int ENTITY_MAX_Y = BUILD_MAX_Y + 1;
 	private static final int MILK_POCKET_CHUNK_VIEW_RADIUS = 2;
-	private static final long MILK_POCKET_RETURN_CHUNK_RADIUS_RESTORE_DELAY_TICKS = 12L;
 	private static final long MILK_POCKET_RETURN_MOTION_RESYNC_TICKS = 4L;
+	private static final long MILK_POCKET_JOIN_EXIT_DELAY_TICKS = 10L;
 	private static final int VOID_WRAP_Y = -64;
 	private static final int VOID_WRAP_TARGET_Y = 320;
 	private static final double VOID_FADE_START_Y = -24.0D;
@@ -111,15 +113,16 @@ public final class ServerMilkPocketDimensionSystem {
 	private static final int LEGACY_PLATFORM_CLEANUP_MIN_Y = -64;
 	private static final int LEGACY_PLATFORM_CLEANUP_MAX_Y = 0;
 	private static final double DEFAULT_RECENT_DAMAGE_LOCK_SECONDS = 10.0D;
+	private static final int MILK_POCKET_SELF_TELEPORT_PARTICLE_TICKS = 4;
 	private static final Set<UUID> ACCESS_PLAYERS = new HashSet<>();
 	private static final Map<UUID, ReturnPoint> RETURN_POINTS = new HashMap<>();
 	private static final Map<UUID, Long> LAST_DAMAGE_TICKS = new HashMap<>();
 	private static final Map<UUID, Float> VOID_FADE_ALPHA_BY_PLAYER = new HashMap<>();
 	private static final Map<UUID, Long> VOID_FADE_CLEAR_AT_TICKS = new HashMap<>();
 	private static final Map<UUID, Long> VOID_WRAP_AT_TICKS = new HashMap<>();
-	private static final Set<UUID> MILK_POCKET_CHUNK_RADIUS_PLAYERS = new HashSet<>();
-	private static final Map<UUID, Long> MILK_POCKET_CHUNK_RADIUS_RESTORE_AT_TICKS = new HashMap<>();
 	private static final Map<UUID, Long> MILK_POCKET_RETURN_MOTION_RESYNC_UNTIL_TICKS = new HashMap<>();
+	private static final Map<UUID, Long> MILK_POCKET_PENDING_JOIN_EXITS = new HashMap<>();
+	private static final Map<UUID, Integer> MILK_POCKET_SELF_TELEPORT_PARTICLES = new HashMap<>();
 	private static final Set<UUID> FIRST_LANDING_FALL_PROTECTED_PLAYERS = new HashSet<>();
 
 	private static boolean stateLoaded = false;
@@ -136,9 +139,9 @@ public final class ServerMilkPocketDimensionSystem {
 		VOID_FADE_ALPHA_BY_PLAYER.clear();
 		VOID_FADE_CLEAR_AT_TICKS.clear();
 		VOID_WRAP_AT_TICKS.clear();
-		MILK_POCKET_CHUNK_RADIUS_PLAYERS.clear();
-		MILK_POCKET_CHUNK_RADIUS_RESTORE_AT_TICKS.clear();
 		MILK_POCKET_RETURN_MOTION_RESYNC_UNTIL_TICKS.clear();
+		MILK_POCKET_PENDING_JOIN_EXITS.clear();
+		MILK_POCKET_SELF_TELEPORT_PARTICLES.clear();
 		FIRST_LANDING_FALL_PROTECTED_PLAYERS.clear();
 		stateLoaded = false;
 		stateDirty = false;
@@ -147,6 +150,8 @@ public final class ServerMilkPocketDimensionSystem {
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerMilkPocketDimensionSystem::loadState);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerMilkPocketDimensionSystem::saveState);
 		ServerTickEvents.END_SERVER_TICK.register(ServerMilkPocketDimensionSystem::tickServer);
+		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
+				server.execute(() -> queueJoinExit((ServerPlayer) handler.player, server.getTickCount())));
 		UseBlockCallback.EVENT.register(ServerMilkPocketDimensionSystem::onUseBlock);
 		PlayerBlockBreakEvents.BEFORE.register(ServerMilkPocketDimensionSystem::beforeBlockBreak);
 
@@ -168,17 +173,48 @@ public final class ServerMilkPocketDimensionSystem {
 		return MILK_POCKET_LEVEL.equals(dimension);
 	}
 
+	public static boolean shouldUsePocketChunkTracking(ServerPlayer player) {
+		return player != null && isMilkPocket(player.level());
+	}
+
+	public static ChunkTrackingView createPocketChunkTrackingView(ServerPlayer player) {
+		if (player == null) {
+			return ChunkTrackingView.EMPTY;
+		}
+		return ChunkTrackingView.of(player.chunkPosition(), MILK_POCKET_CHUNK_VIEW_RADIUS);
+	}
+
 	public static boolean handleChatMessage(PlayerChatMessage message, ServerPlayer sender, ChatType.Bound params) {
 		if (message == null || sender == null) {
 			return false;
 		}
 
 		String content = message.signedContent() == null ? "" : message.signedContent().trim();
+		return handleChatContent(content, sender);
+	}
+
+	public static boolean handleChatContent(String content, ServerPlayer actor) {
+		if (actor == null) {
+			return false;
+		}
 		if (matchesPocketWord(content, ENTER_WORD)) {
-			return tryEnterFromChat(sender);
+			return tryEnterFromChat(actor);
 		}
 		if (matchesPocketWord(content, EXIT_WORD)) {
-			return tryExitFromChat(sender);
+			return tryExitFromChat(actor);
+		}
+		return false;
+	}
+
+	public static boolean handleGlitchedChatContent(String content, ServerPlayer conditionPlayer, ServerPlayer actor) {
+		if (conditionPlayer == null || actor == null) {
+			return false;
+		}
+		if (matchesPocketWord(content, ENTER_WORD)) {
+			return tryEnterFromChat(actor, conditionPlayer);
+		}
+		if (matchesPocketWord(content, EXIT_WORD)) {
+			return tryExitFromChat(actor, conditionPlayer);
 		}
 		return false;
 	}
@@ -371,25 +407,36 @@ public final class ServerMilkPocketDimensionSystem {
 	}
 
 	private static boolean tryEnterFromChat(ServerPlayer player) {
-		if (!hasPocketAccess(player)) {
+		return tryEnterFromChat(player, player);
+	}
+
+	private static boolean tryEnterFromChat(ServerPlayer actor, ServerPlayer conditionPlayer) {
+		if (!hasPocketAccess(conditionPlayer)) {
 			return false;
 		}
-		if (isMilkPocket(player.level())) {
+		if (isMilkPocket(actor.level())) {
 			return true;
 		}
-		long remainingTicks = getRecentDamageLockRemainingTicks(player);
+		long remainingTicks = getRecentDamageLockRemainingTicks(conditionPlayer);
 		if (remainingTicks > 0L) {
-			displayRecentDamageLock(player, remainingTicks);
+			displayRecentDamageLock(conditionPlayer, remainingTicks);
 			return true;
 		}
-		return teleportToPocket(player);
+		return teleportToPocket(actor);
 	}
 
 	private static boolean tryExitFromChat(ServerPlayer player) {
-		if (!isMilkPocket(player.level())) {
+		return tryExitFromChat(player, player);
+	}
+
+	private static boolean tryExitFromChat(ServerPlayer actor, ServerPlayer conditionPlayer) {
+		if (!hasPocketAccess(conditionPlayer)) {
 			return false;
 		}
-		teleportFromPocket(player);
+		if (!isMilkPocket(actor.level())) {
+			return false;
+		}
+		teleportFromPocket(actor);
 		return true;
 	}
 
@@ -410,6 +457,7 @@ public final class ServerMilkPocketDimensionSystem {
 		}
 
 		ReturnPoint entryState = storeReturnPoint(player);
+		playPocketTeleportOriginEffect(player);
 		preparePocketSpawn(pocket);
 		BlockPos spawnPos = resolvePocketSpawn(pocket);
 		pocket.getChunkAt(spawnPos);
@@ -425,7 +473,8 @@ public final class ServerMilkPocketDimensionSystem {
 		);
 		restoreReturnPhysicalState(player, entryState, false);
 		clearMilkPocketVoidFade(player);
-		applyMilkPocketChunkViewRadius(player);
+		playPocketTeleportArrivalEffect(player);
+		playPocketTeleportPersonalSound(player);
 		return true;
 	}
 
@@ -444,13 +493,95 @@ public final class ServerMilkPocketDimensionSystem {
 		double z = returnPoint == null ? spawnPos.getZ() + 0.5D : returnPoint.z;
 		float yaw = returnPoint == null ? 0.0F : returnPoint.yaw;
 		float pitch = returnPoint == null ? 0.0F : returnPoint.pitch;
+		playPocketTeleportOriginEffect(player);
 		targetLevel.getChunkAt(BlockPos.containing(x, y, z));
 		FIRST_LANDING_FALL_PROTECTED_PLAYERS.remove(player.getUUID());
-		scheduleMilkPocketChunkViewRadiusRestore(player);
 		player.teleportTo(targetLevel, x, y, z, ABSOLUTE_TELEPORT, yaw, pitch, false);
 		restoreReturnPhysicalState(player, returnPoint, true);
 		scheduleMilkPocketReturnMotionResync(player);
 		clearMilkPocketVoidFade(player);
+		playPocketTeleportArrivalEffect(player);
+		playPocketTeleportPersonalSound(player);
+	}
+
+	private static void playPocketTeleportOriginEffect(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		double centerX = player.getX();
+		double centerY = player.getY() + Math.max(0.35D, player.getBbHeight() * 0.5D);
+		double centerZ = player.getZ();
+		double spreadX = Math.max(0.18D, player.getBbWidth() * 0.4D);
+		double spreadY = Math.max(0.22D, player.getBbHeight() * 0.28D);
+		double spreadZ = Math.max(0.18D, player.getBbWidth() * 0.4D);
+		level.sendParticles(ParticleTypes.SMOKE, centerX, centerY, centerZ, 18, spreadX, spreadY, spreadZ, 0.01D);
+		level.sendParticles(player, ParticleTypes.SMOKE, false, false, centerX, centerY, centerZ, 18, spreadX, spreadY, spreadZ, 0.01D);
+
+		float volume = 0.55F;
+		float pitch = 1.15F;
+		sendLocalPlayerSoundExcept(level, player, new Vec3(centerX, centerY, centerZ), SoundEvents.FIRE_EXTINGUISH, SoundSource.PLAYERS, volume, pitch, 8.0D);
+	}
+
+	private static void playPocketTeleportPersonalSound(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		sendPersonalSound(player, SoundEvents.FIRE_EXTINGUISH, SoundSource.PLAYERS, 0.55F, 1.15F);
+		MILK_POCKET_SELF_TELEPORT_PARTICLES.put(player.getUUID(), MILK_POCKET_SELF_TELEPORT_PARTICLE_TICKS);
+	}
+
+	private static void playPocketTeleportArrivalEffect(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		double centerX = player.getX();
+		double centerY = player.getY() + Math.max(0.35D, player.getBbHeight() * 0.5D);
+		double centerZ = player.getZ();
+		double spreadX = Math.max(0.18D, player.getBbWidth() * 0.4D);
+		double spreadY = Math.max(0.22D, player.getBbHeight() * 0.28D);
+		double spreadZ = Math.max(0.18D, player.getBbWidth() * 0.4D);
+		level.sendParticles(ParticleTypes.SMOKE, centerX, centerY, centerZ, 18, spreadX, spreadY, spreadZ, 0.01D);
+		level.sendParticles(player, ParticleTypes.SMOKE, false, false, centerX, centerY, centerZ, 18, spreadX, spreadY, spreadZ, 0.01D);
+		sendLocalPlayerSoundExcept(level, player, new Vec3(centerX, centerY, centerZ), SoundEvents.FIRE_EXTINGUISH, SoundSource.PLAYERS, 0.55F, 1.15F, 8.0D);
+	}
+
+	private static void tickPocketSelfTeleportParticles(MinecraftServer server) {
+		if (server == null || MILK_POCKET_SELF_TELEPORT_PARTICLES.isEmpty()) {
+			return;
+		}
+
+		Iterator<Map.Entry<UUID, Integer>> iterator = MILK_POCKET_SELF_TELEPORT_PARTICLES.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, Integer> entry = iterator.next();
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			int ticksLeft = entry.getValue() == null ? 0 : entry.getValue();
+			if (player == null || player.connection == null || !player.isAlive() || ticksLeft <= 0) {
+				iterator.remove();
+				continue;
+			}
+			sendPocketTeleportSelfParticles(player);
+			if (ticksLeft <= 1) {
+				iterator.remove();
+			} else {
+				entry.setValue(ticksLeft - 1);
+			}
+		}
+	}
+
+	private static void sendPocketTeleportSelfParticles(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		double centerX = player.getX();
+		double centerY = player.getY() + Math.max(0.35D, player.getBbHeight() * 0.5D);
+		double centerZ = player.getZ();
+		double spreadX = Math.max(0.18D, player.getBbWidth() * 0.4D);
+		double spreadY = Math.max(0.22D, player.getBbHeight() * 0.28D);
+		double spreadZ = Math.max(0.18D, player.getBbWidth() * 0.4D);
+		level.sendParticles(player, ParticleTypes.SMOKE, false, false, centerX, centerY, centerZ, 18, spreadX, spreadY, spreadZ, 0.01D);
 	}
 
 	private static long getRecentDamageLockRemainingTicks(ServerPlayer player) {
@@ -565,6 +696,42 @@ public final class ServerMilkPocketDimensionSystem {
 		}
 	}
 
+	private static void queueJoinExit(ServerPlayer player, long nowTick) {
+		if (player == null || !player.isAlive() || player.isSpectator() || !isMilkPocket(player.level())) {
+			return;
+		}
+		if (!hasPocketAccess(player)) {
+			return;
+		}
+		MILK_POCKET_PENDING_JOIN_EXITS.put(player.getUUID(), nowTick + MILK_POCKET_JOIN_EXIT_DELAY_TICKS);
+	}
+
+	private static void tickPendingJoinExits(MinecraftServer server) {
+		if (server == null || MILK_POCKET_PENDING_JOIN_EXITS.isEmpty()) {
+			return;
+		}
+
+		long nowTick = server.getTickCount();
+		Iterator<Map.Entry<UUID, Long>> iterator = MILK_POCKET_PENDING_JOIN_EXITS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, Long> entry = iterator.next();
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			if (player == null || !player.isAlive() || player.isSpectator()) {
+				iterator.remove();
+				continue;
+			}
+			if (!isMilkPocket(player.level()) || !hasPocketAccess(player)) {
+				iterator.remove();
+				continue;
+			}
+			if (nowTick < entry.getValue()) {
+				continue;
+			}
+			teleportFromPocket(player);
+			iterator.remove();
+		}
+	}
+
 	private static void preparePocketSpawn(ServerLevel level) {
 		ensurePhantomFloor(level);
 		removeBlocksOutsideBuildZone(level);
@@ -607,8 +774,9 @@ public final class ServerMilkPocketDimensionSystem {
 			saveState(server);
 		}
 		cleanupExpiredDamageLocks(server);
-		tickMilkPocketChunkViewRadius(server);
 		tickMilkPocketReturnMotionResync(server);
+		tickPocketSelfTeleportParticles(server);
+		tickPendingJoinExits(server);
 		tickFirstLandingFallProtection(server);
 
 		ServerLevel pocket = server.getLevel(MILK_POCKET_LEVEL);
@@ -654,65 +822,6 @@ public final class ServerMilkPocketDimensionSystem {
 			}
 		}
 		tickMilkPocketVoidFade(server);
-	}
-
-	private static void tickMilkPocketChunkViewRadius(MinecraftServer server) {
-		if (server == null) {
-			return;
-		}
-
-		Set<UUID> onlinePlayers = new HashSet<>();
-		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			UUID playerId = player.getUUID();
-			onlinePlayers.add(playerId);
-			if (isMilkPocket(player.level())) {
-				MILK_POCKET_CHUNK_RADIUS_RESTORE_AT_TICKS.remove(playerId);
-				applyMilkPocketChunkViewRadius(player);
-			} else {
-				Long restoreAtTick = MILK_POCKET_CHUNK_RADIUS_RESTORE_AT_TICKS.get(playerId);
-				if (restoreAtTick != null && server.getTickCount() < restoreAtTick) {
-					continue;
-				}
-				restoreMilkPocketChunkViewRadius(player);
-			}
-		}
-		MILK_POCKET_CHUNK_RADIUS_PLAYERS.removeIf(playerId -> !onlinePlayers.contains(playerId));
-		MILK_POCKET_CHUNK_RADIUS_RESTORE_AT_TICKS.keySet().removeIf(playerId -> !onlinePlayers.contains(playerId));
-	}
-
-	private static void applyMilkPocketChunkViewRadius(ServerPlayer player) {
-		if (player == null || player.connection == null) {
-			return;
-		}
-		if (!MILK_POCKET_CHUNK_RADIUS_PLAYERS.add(player.getUUID())) {
-			return;
-		}
-		player.connection.send(new ClientboundSetChunkCacheRadiusPacket(MILK_POCKET_CHUNK_VIEW_RADIUS));
-	}
-
-	private static void restoreMilkPocketChunkViewRadius(ServerPlayer player) {
-		if (player == null || player.connection == null) {
-			return;
-		}
-		MILK_POCKET_CHUNK_RADIUS_RESTORE_AT_TICKS.remove(player.getUUID());
-		if (!MILK_POCKET_CHUNK_RADIUS_PLAYERS.remove(player.getUUID())) {
-			return;
-		}
-
-		MinecraftServer server = player.level().getServer();
-		int viewDistance = server == null ? 10 : server.getPlayerList().getViewDistance();
-		player.connection.send(new ClientboundSetChunkCacheRadiusPacket(viewDistance));
-	}
-
-	private static void scheduleMilkPocketChunkViewRadiusRestore(ServerPlayer player) {
-		MinecraftServer server = player == null ? null : player.level().getServer();
-		if (server == null || player.connection == null || !MILK_POCKET_CHUNK_RADIUS_PLAYERS.contains(player.getUUID())) {
-			return;
-		}
-		MILK_POCKET_CHUNK_RADIUS_RESTORE_AT_TICKS.put(
-				player.getUUID(),
-				server.getTickCount() + MILK_POCKET_RETURN_CHUNK_RADIUS_RESTORE_DELAY_TICKS
-		);
 	}
 
 	private static void scheduleMilkPocketReturnMotionResync(ServerPlayer player) {
@@ -1224,6 +1333,42 @@ public final class ServerMilkPocketDimensionSystem {
 				pitch,
 				player.level().getGameTime() ^ player.getUUID().getLeastSignificantBits()
 		));
+	}
+
+	private static void sendLocalPlayerSoundExcept(
+			ServerLevel level,
+			ServerPlayer excluded,
+			Vec3 origin,
+			net.minecraft.sounds.SoundEvent sound,
+			SoundSource source,
+			float volume,
+			float pitch,
+			double radius
+	) {
+		if (level == null || origin == null || sound == null || source == null || radius <= 0.0D) {
+			return;
+		}
+
+		double radiusSqr = radius * radius;
+		long seedBase = level.getGameTime() ^ Double.doubleToLongBits(origin.x + origin.y + origin.z);
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer == null || viewer.connection == null || viewer == excluded) {
+				continue;
+			}
+			if (viewer.distanceToSqr(origin.x, origin.y, origin.z) > radiusSqr) {
+				continue;
+			}
+			viewer.connection.send(new ClientboundSoundPacket(
+					BuiltInRegistries.SOUND_EVENT.wrapAsHolder(sound),
+					source,
+					origin.x,
+					origin.y,
+					origin.z,
+					volume,
+					pitch,
+					seedBase ^ viewer.getUUID().getLeastSignificantBits()
+			));
+		}
 	}
 
 	private static String sanitizeRaceId(String raceId) {

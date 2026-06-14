@@ -369,8 +369,8 @@
       "enabled": true,
       "id": "milk_oligarch",
       "displayName": "Молочный Олигарх",
-      "ownerNickname": "Rajas_YT",
-      "description": "",
+      "ownerNickname": "pines6",
+      "description": "Никогда бизнесс не бывает белым, даже молочный.",
       "attack": {
         "enabled": true,
         "abilityId": "milk_oligarch_attack",

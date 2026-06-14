@@ -77,6 +77,7 @@ import net.minecraft.network.protocol.game.ClientboundOpenBookPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
+import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
 import net.minecraft.network.protocol.game.ClientboundSetCameraPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
@@ -90,6 +91,7 @@ import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundTrackedWaypointPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.SynchedEntityData;
@@ -118,9 +120,11 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.Interaction;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.NeutralMob;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.PathfinderMob;
@@ -655,6 +659,7 @@ public final class ServerRaceSystem {
 	private static final double MILK_STOCK_SEARCH_EXTRA_BLOCKS = 2.0D;
 	private static final double MILK_STOCK_AVOID_SPEED = 1.55D;
 	private static final double MILK_STOCK_RANGED_RETREAT_SPEED = 1.15D;
+	private static final double MILK_STOCK_MOUNTED_CHARGE_FLEE_SPEED = 2.65D;
 	private static final int MILK_STOCK_NAV_INTERVAL_TICKS = 5;
 	private static final double MILK_DEFENSE_DEFAULT_DURATION_SECONDS = 30.0D;
 	private static final double MILK_DEFENSE_DEFAULT_COOLDOWN_SECONDS = 300.0D;
@@ -667,7 +672,6 @@ public final class ServerRaceSystem {
 	private static final double MILK_MOUSE_DEFAULT_DURATION_SECONDS = 15.0D;
 	private static final double MILK_MOUSE_DEFAULT_COOLDOWN_SECONDS = 600.0D;
 	private static final int MILK_MOUSE_DEFAULT_SILVERFISH_COUNT = 12;
-	private static final double MILK_MOUSE_FALLBACK_CONTROL_SPEED = 0.25D;
 	private static final double MILK_MOUSE_FLEE_RADIUS_BLOCKS = 8.0D;
 	private static final double MILK_MOUSE_FLEE_SPEED = 1.45D;
 	private static final int MILK_MOUSE_FLEE_NAV_INTERVAL_TICKS = 5;
@@ -840,7 +844,7 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, MilkDefenseSession> MILK_DEFENSE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, MilkMouseSession> MILK_MOUSE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> MILK_MOUSE_SILVERFISH_OWNER_BY_ENTITY = new LinkedHashMap<>();
-	private static final Map<UUID, MilkMouseInputState> MILK_MOUSE_INPUTS = new ConcurrentHashMap<>();
+	private static final List<MilkMouseStepSound> MILK_MOUSE_STEP_SOUNDS = new ArrayList<>();
 	private static final Map<UUID, UUID> MILK_STOCK_RETALIATING_MOBS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelDisguiseSession> CARTEL_DISGUISE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelManualBookRestore> CARTEL_MANUAL_BOOK_RESTORES = new LinkedHashMap<>();
@@ -883,8 +887,7 @@ public final class ServerRaceSystem {
 	private record MilkLostHeartAnimationSession(long startTick, int lastFrame) {
 	}
 
-	private record MilkMouseInputState(boolean forward, boolean backward, boolean left, boolean right, boolean jump, boolean shift, boolean sprint) {
-		private static final MilkMouseInputState EMPTY = new MilkMouseInputState(false, false, false, false, false, false, false);
+	private record MilkMouseStepSound(ResourceKey<Level> dimension, Vec3 position, long playTick, float volume, float pitch) {
 	}
 
 	private static final class MilkMouseSession {
@@ -1144,7 +1147,7 @@ public final class ServerRaceSystem {
 			cleanupAllMilkMouseSessions(server, true);
 			MILK_MOUSE_SESSIONS.clear();
 			MILK_MOUSE_SILVERFISH_OWNER_BY_ENTITY.clear();
-			MILK_MOUSE_INPUTS.clear();
+			MILK_MOUSE_STEP_SOUNDS.clear();
 			MILK_STOCK_RETALIATING_MOBS.clear();
 			copperManDefenseTintCacheLastCleanupTick = Long.MIN_VALUE;
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.clear();
@@ -1904,41 +1907,11 @@ public final class ServerRaceSystem {
 	}
 
 	public static void handleMilkMouseInput(ServerPlayer player, net.minecraft.world.entity.player.Input input) {
-		if (player == null || input == null) {
-			return;
-		}
-
-		MILK_MOUSE_INPUTS.put(
-				player.getUUID(),
-				new MilkMouseInputState(
-						input.forward(),
-						input.backward(),
-						input.left(),
-						input.right(),
-						input.jump(),
-						input.shift(),
-						input.sprint()
-				)
-		);
+		// Milk Mouse movement is controlled by mob navigation.
 	}
 
 	public static boolean handleMilkMouseMovePacket(ServerPlayer player, ServerboundMovePlayerPacket packet) {
-		if (player == null || packet == null) {
-			return false;
-		}
-		MilkMouseSession session = MILK_MOUSE_SESSIONS.get(player.getUUID());
-		if (session == null) {
-			return false;
-		}
-		if (packet.hasRotation()) {
-			session.yaw = packet.getYRot(session.yaw);
-			session.pitch = packet.getXRot(session.pitch);
-			player.setYRot(session.yaw);
-			player.setXRot(session.pitch);
-			player.setYHeadRot(session.yaw);
-			player.setYBodyRot(session.yaw);
-		}
-		return true;
+		return false;
 	}
 
 	public static void adjustCopperManFoodAfterEating(ServerPlayer player, int beforeFood, float beforeSaturation) {
@@ -4018,6 +3991,14 @@ public final class ServerRaceSystem {
 		if (player == null || ability == null || player.isSpectator() || !player.isAlive()) {
 			return 0;
 		}
+		if (!hasMilkAbsoluteHeartToSpend(player)) {
+			player.displayClientMessage(
+					Component.literal("Активация невозможна: осталось последнее сердце.")
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return 0;
+		}
 		UUID playerId = player.getUUID();
 		boolean enabled = !MILK_ABSOLUTE_ATTACK_READY.remove(playerId);
 		if (enabled) {
@@ -4032,6 +4013,13 @@ public final class ServerRaceSystem {
 				race.id
 		);
 		return 1;
+	}
+
+	private static boolean hasMilkAbsoluteHeartToSpend(ServerPlayer player) {
+		if (player == null) {
+			return false;
+		}
+		return player.getMaxHealth() > 2.0F + 1.0E-3F;
 	}
 
 	public static boolean handleMilkAbsoluteAttack(ServerLevel level, LivingEntity victim, DamageSource damageSource, float damage) {
@@ -4093,6 +4081,7 @@ public final class ServerRaceSystem {
 		);
 		startOnlineCooldown(MILK_DEFENSE_COOLDOWNS, player.getUUID(), cooldownTicks);
 		spawnMilkDefenseActivationParticles(level, player);
+		level.playSound(null, player.getX(), player.getY(), player.getZ(), SoundEvents.BREEZE_LAND, SoundSource.PLAYERS, 0.85F, 1.02F);
 		Lg2.LOGGER.info(
 				"Player {} activated milk oligarch defense '{}' from race '{}'",
 				player.getGameProfile().name(),
@@ -4332,6 +4321,8 @@ public final class ServerRaceSystem {
 			MILK_MOUSE_SILVERFISH_OWNER_BY_ENTITY.put(fish.getUUID(), player.getUUID());
 			spawnMilkMousePoof(level, fish.position(), 8);
 		}
+		level.playSound(null, player.getX(), player.getY(), player.getZ(), SoundEvents.SILVERFISH_STEP, SoundSource.PLAYERS, 0.85F, 0.96F);
+		scheduleMilkMouseStepSounds(level, player.position());
 
 		MilkMouseSession previous = MILK_MOUSE_SESSIONS.put(
 				player.getUUID(),
@@ -4352,6 +4343,7 @@ public final class ServerRaceSystem {
 			cleanupMilkMouseSession(level.getServer(), player.getUUID(), previous, true, true);
 		}
 
+		hideMilkMousePlayerFromOthers(player);
 		activateMilkMousePlayerView(player, controlled);
 		startGenericAbilityCooldownSeconds(player, RaceAbilitySlot.UNIQUE_ABILITY, positiveOrDefault(ability.cooldownSeconds, MILK_MOUSE_DEFAULT_COOLDOWN_SECONDS));
 		Lg2.LOGGER.info(
@@ -4436,7 +4428,12 @@ public final class ServerRaceSystem {
 			fish.setYHeadRot(fish.getYRot());
 			fish.setYBodyRot(fish.getYRot());
 			fish.addTag(MILK_MOUSE_SILVERFISH_TAG);
+			fish.setInvulnerable(false);
 			fish.setCanPickUpLoot(false);
+			if (fish.getAttribute(Attributes.MAX_HEALTH) != null) {
+				fish.getAttribute(Attributes.MAX_HEALTH).setBaseValue(1.0D);
+			}
+			fish.setHealth(1.0F);
 			fish.setTarget(null);
 			((MobXpRewardAccessor) fish).lg2$setXpReward(0);
 			level.addFreshEntity(fish);
@@ -4455,25 +4452,48 @@ public final class ServerRaceSystem {
 		player.noPhysics = true;
 		player.setCamera(controlled);
 		player.connection.send(new ClientboundSetCameraPacket(controlled));
-		player.teleportTo(controlled.getX(), controlled.getY(), controlled.getZ());
 		player.setDeltaMovement(Vec3.ZERO);
+	}
+
+	private static void hideMilkMousePlayerFromOthers(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+		ClientboundRemoveEntitiesPacket removeEntityPacket = new ClientboundRemoveEntitiesPacket(player.getId());
+		ClientboundTrackedWaypointPacket removeWaypointPacket = ClientboundTrackedWaypointPacket.removeWaypoint(player.getUUID());
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer == null || viewer == player || viewer.connection == null) {
+				continue;
+			}
+			viewer.connection.send(removeEntityPacket);
+			viewer.connection.send(removeWaypointPacket);
+		}
 	}
 
 	private static void prepareMilkMouseControlledSilverfish(Silverfish controlled) {
 		if (controlled == null) {
 			return;
 		}
-		controlled.setNoAi(true);
+		controlled.setNoAi(false);
+		controlled.setInvulnerable(false);
+		if (controlled.getAttribute(Attributes.MAX_HEALTH) != null) {
+			controlled.getAttribute(Attributes.MAX_HEALTH).setBaseValue(1.0D);
+		}
+		if (controlled.getHealth() > 1.0F) {
+			controlled.setHealth(1.0F);
+		}
 		controlled.setTarget(null);
 		controlled.setAggressive(false);
-		controlled.setSpeed(0.0F);
 		controlled.setCanPickUpLoot(false);
-		controlled.getNavigation().stop();
 		((MobXpRewardAccessor) controlled).lg2$setXpReward(0);
 	}
 
 	private static void tickMilkOligarchUnique(MinecraftServer server) {
-		if (server == null || MILK_MOUSE_SESSIONS.isEmpty()) {
+		if (server == null) {
+			return;
+		}
+		tickMilkMouseStepSounds(server);
+		if (MILK_MOUSE_SESSIONS.isEmpty()) {
 			return;
 		}
 
@@ -4505,7 +4525,7 @@ public final class ServerRaceSystem {
 			}
 
 			tickMilkMouseControlledSilverfish(level, player, controlled, session);
-			tickMilkMouseDecoys(level, session, playerId, controlled.getUUID());
+			tickMilkMouseDecoys(level, session, playerId);
 		}
 	}
 
@@ -4515,77 +4535,23 @@ public final class ServerRaceSystem {
 		}
 		prepareMilkMouseControlledSilverfish(controlled);
 
-		MilkMouseInputState input = MILK_MOUSE_INPUTS.getOrDefault(player.getUUID(), MilkMouseInputState.EMPTY);
-		float yaw = session.yaw;
-		float pitch = session.pitch;
-		double forwardInput = (input.forward() ? 1.0D : 0.0D) - (input.backward() ? 1.0D : 0.0D);
-		double sideInput = (input.right() ? 1.0D : 0.0D) - (input.left() ? 1.0D : 0.0D);
-		controlled.setYRot(yaw);
-		controlled.setYHeadRot(yaw);
-		controlled.setYBodyRot(yaw);
-		controlled.setXRot(pitch);
-		controlled.yRotO = yaw;
-		controlled.xRotO = pitch;
-		controlled.yHeadRotO = yaw;
-		controlled.yBodyRotO = yaw;
-		controlled.setSpeed((float) getMilkMouseControlledMoveSpeed(controlled));
-		controlled.setXxa((float) sideInput);
-		controlled.setYya(0.0F);
-		controlled.setZza((float) forwardInput);
-		if (input.jump() && controlled.onGround()) {
-			controlled.jumpFromGround();
-		}
-		controlled.travel(new Vec3(sideInput, 0.0D, forwardInput));
 		if (controlled.onGround()) {
 			controlled.resetFallDistance();
 		}
-		controlled.hurtMarked = true;
 		controlled.setSprinting(false);
 
 		player.setInvisible(true);
 		player.setNoGravity(true);
 		player.noPhysics = true;
-		player.setYRot(yaw);
-		player.setXRot(pitch);
-		player.setYHeadRot(yaw);
-		player.setYBodyRot(yaw);
 		if (player.getCamera() != controlled) {
 			player.setCamera(controlled);
 			player.connection.send(new ClientboundSetCameraPacket(controlled));
 		}
 		player.teleportTo(controlled.getX(), controlled.getY(), controlled.getZ());
 		player.setDeltaMovement(Vec3.ZERO);
-		sendMilkMouseControlledRotation(level, controlled, yaw, pitch);
 	}
 
-	private static double getMilkMouseControlledMoveSpeed(Silverfish controlled) {
-		if (controlled == null) {
-			return MILK_MOUSE_FALLBACK_CONTROL_SPEED * MILK_MOUSE_FLEE_SPEED;
-		}
-		double speed = controlled.getAttributeValue(Attributes.MOVEMENT_SPEED);
-		if (Double.isNaN(speed) || speed <= 0.0D) {
-			speed = MILK_MOUSE_FALLBACK_CONTROL_SPEED;
-		}
-		return speed * MILK_MOUSE_FLEE_SPEED;
-	}
-
-	private static void sendMilkMouseControlledRotation(ServerLevel level, Silverfish controlled, float yaw, float pitch) {
-		if (level == null || controlled == null) {
-			return;
-		}
-		byte yawByte = toGennadiyDefenseRotationByte(yaw);
-		byte pitchByte = toGennadiyDefenseRotationByte(pitch);
-		ClientboundMoveEntityPacket.Rot rotationPacket = new ClientboundMoveEntityPacket.Rot(controlled.getId(), yawByte, pitchByte, controlled.onGround());
-		ClientboundRotateHeadPacket headPacket = new ClientboundRotateHeadPacket(controlled, yawByte);
-		for (ServerPlayer viewer : level.players()) {
-			if (viewer != null && viewer.connection != null) {
-				viewer.connection.send(rotationPacket);
-				viewer.connection.send(headPacket);
-			}
-		}
-	}
-
-	private static void tickMilkMouseDecoys(ServerLevel level, MilkMouseSession session, UUID ownerId, UUID controlledId) {
+	private static void tickMilkMouseDecoys(ServerLevel level, MilkMouseSession session, UUID ownerId) {
 		if (level == null || session == null) {
 			return;
 		}
@@ -4600,9 +4566,6 @@ public final class ServerRaceSystem {
 			}
 			((MobXpRewardAccessor) fish).lg2$setXpReward(0);
 			fish.setTarget(null);
-			if (fish.getUUID().equals(controlledId)) {
-				continue;
-			}
 			ServerPlayer nearestPlayer = findNearestMilkMouseFleePlayer(level, fish, ownerId);
 			if (nearestPlayer == null) {
 				continue;
@@ -4640,6 +4603,39 @@ public final class ServerRaceSystem {
 		return nearest;
 	}
 
+	private static void scheduleMilkMouseStepSounds(ServerLevel level, Vec3 origin) {
+		if (level == null || origin == null) {
+			return;
+		}
+		long startTick = level.getGameTime();
+		for (int i = 0; i < 6; i++) {
+			float pitch = 0.9F + level.random.nextFloat() * 0.18F;
+			MILK_MOUSE_STEP_SOUNDS.add(new MilkMouseStepSound(level.dimension(), origin, startTick + i, 0.62F, pitch));
+		}
+	}
+
+	private static void tickMilkMouseStepSounds(MinecraftServer server) {
+		if (server == null || MILK_MOUSE_STEP_SOUNDS.isEmpty()) {
+			return;
+		}
+
+		Iterator<MilkMouseStepSound> iterator = MILK_MOUSE_STEP_SOUNDS.iterator();
+		while (iterator.hasNext()) {
+			MilkMouseStepSound sound = iterator.next();
+			ServerLevel level = server.getLevel(sound.dimension());
+			if (level == null) {
+				iterator.remove();
+				continue;
+			}
+			if (level.getGameTime() < sound.playTick()) {
+				continue;
+			}
+			Vec3 position = sound.position();
+			level.playSound(null, position.x, position.y, position.z, SoundEvents.SILVERFISH_STEP, SoundSource.PLAYERS, sound.volume(), sound.pitch());
+			iterator.remove();
+		}
+	}
+
 	private static void cleanupAllMilkMouseSessions(MinecraftServer server, boolean restorePlayers) {
 		if (server == null || MILK_MOUSE_SESSIONS.isEmpty()) {
 			return;
@@ -4651,21 +4647,17 @@ public final class ServerRaceSystem {
 
 	private static void cleanupMilkMouseSession(MinecraftServer server, UUID playerId, MilkMouseSession session, boolean restorePlayer, boolean emitParticles) {
 		if (server == null || playerId == null || session == null) {
-			if (playerId != null) {
-				MILK_MOUSE_INPUTS.remove(playerId);
-			}
 			return;
 		}
 
 		ServerLevel level = server.getLevel(session.dimension);
-		Vec3 returnPosition = session.lastPosition;
+		Vec3 returnPosition = getMilkMouseReturnPosition(level, session);
 		if (level != null) {
 			for (UUID fishId : new ArrayList<>(session.silverfishIds)) {
 				Entity entity = level.getEntity(fishId);
 				if (entity != null) {
-					returnPosition = entity.position();
 					if (emitParticles) {
-						spawnMilkMousePoof(level, entity.position(), 14);
+						spawnMilkMousePoof(level, entity.position(), 2);
 					}
 					entity.discard();
 				}
@@ -4677,7 +4669,6 @@ public final class ServerRaceSystem {
 			}
 		}
 
-		MILK_MOUSE_INPUTS.remove(playerId);
 		if (!restorePlayer) {
 			return;
 		}
@@ -4696,6 +4687,19 @@ public final class ServerRaceSystem {
 			player.connection.teleport(returnPosition.x, returnPosition.y, returnPosition.z, player.getYRot(), player.getXRot());
 		}
 		player.setDeltaMovement(Vec3.ZERO);
+	}
+
+	private static Vec3 getMilkMouseReturnPosition(ServerLevel level, MilkMouseSession session) {
+		if (session == null) {
+			return Vec3.ZERO;
+		}
+		if (level != null) {
+			Entity controlled = level.getEntity(session.controlledSilverfishId);
+			if (controlled != null) {
+				return controlled.position();
+			}
+		}
+		return session.lastPosition == null ? Vec3.ZERO : session.lastPosition;
 	}
 
 	private static boolean canUseMilkMouse(ServerPlayer player) {
@@ -4730,6 +4734,22 @@ public final class ServerRaceSystem {
 
 	public static boolean isMilkMouseSilverfish(Entity entity) {
 		return entity != null && entity.getTags().contains(MILK_MOUSE_SILVERFISH_TAG);
+	}
+
+	public static boolean isMilkMouseActive(ServerPlayer player) {
+		return player != null && MILK_MOUSE_SESSIONS.containsKey(player.getUUID());
+	}
+
+	public static boolean shouldSuppressMilkMouseWaypoint(ServerPlayer receiver, ClientboundTrackedWaypointPacket packet) {
+		if (receiver == null || packet == null || packet.waypoint() == null || receiver.level().getServer() == null) {
+			return false;
+		}
+		UUID waypointPlayerId = packet.waypoint().id().left().orElse(null);
+		if (waypointPlayerId == null || waypointPlayerId.equals(receiver.getUUID())) {
+			return false;
+		}
+		ServerPlayer waypointPlayer = receiver.level().getServer().getPlayerList().getPlayer(waypointPlayerId);
+		return isMilkMouseActive(waypointPlayer);
 	}
 
 	public static boolean shouldCancelMilkMouseCombatDamage(LivingEntity victim, DamageSource damageSource) {
@@ -5070,7 +5090,7 @@ public final class ServerRaceSystem {
 		}
 
 		boolean markedAny = false;
-		for (Mob mob : getMilkStockThreatMobs(victim)) {
+		for (Mob mob : getMilkStockRetaliationGroup(victim)) {
 			markMilkStockRetaliating(mob, player);
 			markedAny = true;
 		}
@@ -8423,8 +8443,13 @@ public final class ServerRaceSystem {
 			AABB area = player.getBoundingBox().inflate(radius + MILK_STOCK_SEARCH_EXTRA_BLOCKS);
 			Set<UUID> movedBodies = new HashSet<>();
 			Set<UUID> processedThreats = new HashSet<>();
-			for (Mob carrier : level.getEntitiesOfClass(Mob.class, area, ServerRaceSystem::isMilkStockThreatCarrier)) {
+			Set<UUID> processedCarriers = new HashSet<>();
+			for (Mob nearbyMob : level.getEntitiesOfClass(Mob.class, area, mob -> mob != null && mob.isAlive())) {
+				Mob carrier = getMilkStockThreatCarrier(nearbyMob);
 				if (!carrier.isAlive()) {
+					continue;
+				}
+				if (!processedCarriers.add(carrier.getUUID())) {
 					continue;
 				}
 				for (Mob threat : getMilkStockThreatMobs(carrier)) {
@@ -8453,7 +8478,9 @@ public final class ServerRaceSystem {
 					if (retaliating && !isMilkStockRangedMob(threat)) {
 						moveMilkStockMountedThreatToward(level, threat, movementBody, player, MILK_STOCK_AVOID_SPEED);
 					} else {
-						double speed = retaliating ? MILK_STOCK_RANGED_RETREAT_SPEED : MILK_STOCK_AVOID_SPEED;
+						double speed = retaliating
+								? MILK_STOCK_RANGED_RETREAT_SPEED
+								: (isMilkStockThreatVehicle(threat) || isMilkStockThreatVehicleBody(movementBody) ? MILK_STOCK_MOUNTED_CHARGE_FLEE_SPEED : MILK_STOCK_AVOID_SPEED);
 						moveMilkStockMobAway(level, threat, movementBody, player, radius, speed, retaliating);
 					}
 				}
@@ -8477,7 +8504,7 @@ public final class ServerRaceSystem {
 					|| player.isSpectator()
 					|| mob.level() != player.level()
 					|| getMilkStockAbility(player) == null
-					|| !isMilkStockAffectedMob(mob)) {
+					|| !isMilkStockRetaliationRelevantMob(mob)) {
 				iterator.remove();
 				continue;
 			}
@@ -8489,7 +8516,54 @@ public final class ServerRaceSystem {
 	}
 
 	private static boolean isMilkStockThreatCarrier(Mob mob) {
-		return mob != null && mob.isAlive() && !getMilkStockThreatMobs(mob).isEmpty();
+		return isMilkStockThreatVehicle(mob) || isMilkStockAffectedMob(mob);
+	}
+
+	private static Mob getMilkStockThreatCarrier(Mob mob) {
+		if (mob == null) {
+			return null;
+		}
+		Entity rootVehicle = mob.getRootVehicle();
+		if (rootVehicle instanceof Mob rootMob && rootMob.isAlive() && rootMob.level() == mob.level()) {
+			return rootMob;
+		}
+		return mob;
+	}
+
+	private static boolean isMilkStockRetaliationRelevantMob(Mob mob) {
+		return mob != null && mob.isAlive() && (isMilkStockAffectedMob(mob) || isMilkStockThreatVehicle(mob));
+	}
+
+	private static List<Mob> getMilkStockRetaliationGroup(Entity entity) {
+		if (entity == null) {
+			return Collections.emptyList();
+		}
+		Entity root = entity.getRootVehicle();
+		if (root == null || !root.isAlive()) {
+			root = entity;
+		}
+		List<Mob> group = new ArrayList<>();
+		addMilkStockRetaliationGroupMob(group, root);
+		boolean hasAffectedThreat = false;
+		for (Mob mob : group) {
+			if (isMilkStockAffectedMob(mob)) {
+				hasAffectedThreat = true;
+				break;
+			}
+		}
+		return hasAffectedThreat ? group : Collections.emptyList();
+	}
+
+	private static void addMilkStockRetaliationGroupMob(List<Mob> group, Entity entity) {
+		if (group == null || entity == null) {
+			return;
+		}
+		if (entity instanceof Mob mob && mob.isAlive() && !isMilkMouseSilverfish(mob) && !isMilkStockBoss(mob) && !group.contains(mob)) {
+			group.add(mob);
+		}
+		for (Entity passenger : entity.getPassengers()) {
+			addMilkStockRetaliationGroupMob(group, passenger);
+		}
 	}
 
 	private static List<Mob> getMilkStockThreatMobs(Entity entity) {
@@ -8497,11 +8571,20 @@ public final class ServerRaceSystem {
 			return Collections.emptyList();
 		}
 		List<Mob> threats = new ArrayList<>();
-		for (Entity passenger : entity.getIndirectPassengers()) {
-			addMilkStockThreatMob(threats, passenger);
-		}
 		addMilkStockThreatMob(threats, entity);
+		addMilkStockThreatVehicle(threats, entity);
+		addMilkStockPassengerThreatMobs(threats, entity);
 		return threats;
+	}
+
+	private static void addMilkStockPassengerThreatMobs(List<Mob> threats, Entity entity) {
+		if (threats == null || entity == null) {
+			return;
+		}
+		for (Entity passenger : entity.getPassengers()) {
+			addMilkStockThreatMob(threats, passenger);
+			addMilkStockPassengerThreatMobs(threats, passenger);
+		}
 	}
 
 	private static void addMilkStockThreatMob(List<Mob> threats, Entity entity) {
@@ -8511,6 +8594,42 @@ public final class ServerRaceSystem {
 		if (!threats.contains(mob)) {
 			threats.add(mob);
 		}
+	}
+
+	private static void addMilkStockThreatVehicle(List<Mob> threats, Entity entity) {
+		if (!(entity instanceof Mob mob) || !isMilkStockThreatVehicle(mob)) {
+			return;
+		}
+		if (!threats.contains(mob)) {
+			threats.add(mob);
+		}
+	}
+
+	private static boolean isMilkStockThreatVehicle(Mob mob) {
+		return mob != null
+				&& mob.isAlive()
+				&& !isMilkMouseSilverfish(mob)
+				&& !isMilkStockBoss(mob)
+				&& hasMilkStockPassengerThreat(mob);
+	}
+
+	private static boolean isMilkStockThreatVehicleBody(Entity entity) {
+		return entity instanceof Mob mob && isMilkStockThreatVehicle(mob);
+	}
+
+	private static boolean hasMilkStockPassengerThreat(Entity entity) {
+		if (entity == null) {
+			return false;
+		}
+		for (Entity passenger : entity.getPassengers()) {
+			if (passenger instanceof Mob passengerMob && isMilkStockAffectedMob(passengerMob)) {
+				return true;
+			}
+			if (hasMilkStockPassengerThreat(passenger)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static Entity getMilkStockMovementBody(Mob mob) {
@@ -8582,9 +8701,13 @@ public final class ServerRaceSystem {
 		if (movementBody instanceof Mob movementMob) {
 			standMilkStockMovementBody(movementBody);
 			PathNavigation navigation = movementMob.getNavigation();
-			if (navigation != null && (navigation.isDone() || (nowTick + movementMob.getId()) % MILK_STOCK_NAV_INTERVAL_TICKS == 0L)) {
+			boolean mountedThreat = movementMob != mob;
+			if (navigation == null || navigation.isDone() || mountedThreat || (nowTick + movementMob.getId()) % MILK_STOCK_NAV_INTERVAL_TICKS == 0L) {
 				Vec3 destination = getMilkStockFleeDestination(movementMob, player, away, radius);
-				navigation.moveTo(destination.x, destination.y, destination.z, speed);
+				commandMilkStockMovement(movementMob, destination, speed);
+				if (mob != movementMob && mob.isPassenger()) {
+					commandMilkStockMovement(mob, destination, speed);
+				}
 			}
 		}
 		if (keepLookingAtPlayer) {
@@ -8600,11 +8723,30 @@ public final class ServerRaceSystem {
 			standMilkStockMovementBody(movementBody);
 			PathNavigation navigation = movementMob.getNavigation();
 			long nowTick = level.getGameTime();
-			if (navigation != null && (navigation.isDone() || (nowTick + movementMob.getId()) % MILK_STOCK_NAV_INTERVAL_TICKS == 0L)) {
-				navigation.moveTo(player, speed);
+			if (navigation == null || navigation.isDone() || (nowTick + movementMob.getId()) % MILK_STOCK_NAV_INTERVAL_TICKS == 0L) {
+				commandMilkStockMovement(movementMob, player.position(), speed);
+				if (mob != movementMob && mob.isPassenger()) {
+					commandMilkStockMovement(mob, player.position(), speed);
+				}
 			}
 		}
 		mob.getLookControl().setLookAt(player, 30.0F, 30.0F);
+	}
+
+	private static void commandMilkStockMovement(Mob movementMob, Vec3 destination, double speed) {
+		if (movementMob == null || destination == null || speed <= 0.0D) {
+			return;
+		}
+		PathNavigation navigation = movementMob.getNavigation();
+		if (navigation != null) {
+			navigation.moveTo(destination.x, destination.y, destination.z, speed);
+		}
+		// Mounted mobs can ignore a normal path update while carrying a rider; MoveControl keeps the motion natural but immediate.
+		movementMob.getMoveControl().setWantedPosition(destination.x, destination.y, destination.z, speed);
+		double baseSpeed = movementMob.getAttributeValue(Attributes.MOVEMENT_SPEED);
+		if (!Double.isNaN(baseSpeed) && baseSpeed > 0.0D) {
+			movementMob.setSpeed((float) (baseSpeed * Math.max(1.0D, speed)));
+		}
 	}
 
 	private static Vec3 getMilkStockFleeDestination(Mob movementMob, ServerPlayer player, Vec3 away, double radius) {
@@ -8620,7 +8762,10 @@ public final class ServerRaceSystem {
 	}
 
 	private static boolean isMilkStockAffectedMob(Mob mob) {
-		return mob != null && !isMilkMouseSilverfish(mob) && !isMilkStockBoss(mob) && (mob instanceof Enemy || mob instanceof NeutralMob);
+		return mob != null
+				&& !isMilkMouseSilverfish(mob)
+				&& !isMilkStockBoss(mob)
+				&& (mob instanceof Enemy || mob instanceof NeutralMob || mob.getType().getCategory() == MobCategory.MONSTER);
 	}
 
 	private static boolean isMilkStockBoss(LivingEntity entity) {
@@ -11837,13 +11982,25 @@ public final class ServerRaceSystem {
 		if (level == null || player == null || Math.floorMod(nowTick, 2L) != 0L) {
 			return;
 		}
-		double radius = Math.max(0.42D, player.getBbWidth() * 0.85D);
-		double y = player.getY() + 0.25D + (Math.floorMod(nowTick, 8L) * 0.045D);
-		for (int i = 0; i < 3; i++) {
-			double angle = nowTick * 0.18D + i * (Math.PI * 2.0D / 3.0D);
+		double radius = Math.max(0.28D, player.getBbWidth() * 0.52D);
+		double baseY = player.getY() + 0.06D;
+		double pulse = Math.floorMod(nowTick, 6L) * 0.01D;
+		for (int i = 0; i < 6; i++) {
+			double angle = nowTick * 0.22D + i * (Math.PI * 2.0D / 6.0D);
 			double x = player.getX() + Math.cos(angle) * radius;
 			double z = player.getZ() + Math.sin(angle) * radius;
-			level.sendParticles(ParticleTypes.SMOKE, x, y, z, 0, 0.0D, 0.018D, 0.0D, 1.0D);
+			level.sendParticles(ParticleTypes.SMOKE, x, baseY + pulse, z, 0, 0.0D, 0.012D, 0.0D, 1.0D);
+			if (i % 2 == 0) {
+				level.sendParticles(ParticleTypes.CLOUD, x, baseY + 0.02D, z, 0, 0.0D, 0.028D, 0.0D, 1.0D);
+			}
+		}
+		if (Math.floorMod(nowTick, 4L) == 0L) {
+			for (int i = 0; i < 2; i++) {
+				double angle = nowTick * 0.11D + i * Math.PI;
+				double x = player.getX() + Math.cos(angle) * (radius * 0.72D);
+				double z = player.getZ() + Math.sin(angle) * (radius * 0.72D);
+				level.sendParticles(ParticleTypes.SMOKE, x, baseY + 0.03D, z, 0, 0.0D, 0.055D, 0.0D, 1.0D);
+			}
 		}
 	}
 

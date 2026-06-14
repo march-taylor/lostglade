@@ -3,6 +3,7 @@ package com.lostglade.server.glitch;
 import com.google.gson.JsonObject;
 import com.lostglade.config.GlitchConfig;
 import com.lostglade.server.ServerBackroomsSystem;
+import com.lostglade.server.ServerMilkPocketDimensionSystem;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
@@ -16,6 +17,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 	private static final String MIN_MUTATIONS = "minMutations";
@@ -134,6 +136,12 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 			}
 			player.sendSystemMessage(glitchedDecorated);
 		}
+		if (mutation.displayNameOverridePlayerId() != null) {
+			ServerPlayer effectiveSender = server.getPlayerList().getPlayer(mutation.displayNameOverridePlayerId());
+			if (effectiveSender != null) {
+				ServerMilkPocketDimensionSystem.handleGlitchedChatContent(mutation.content(), sender, effectiveSender);
+			}
+		}
 		return true;
 	}
 
@@ -199,6 +207,7 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 
 		String finalContent = original;
 		Component displayNameOverride = null;
+		UUID displayNameOverridePlayerId = null;
 		int maxDuplicateExtra = GlitchSettingsHelper.getInt(settings, MAX_DUPLICATE_EXTRA, 3);
 		int targetMutations = Math.max(1, mutationCount);
 		int appliedMutations = 0;
@@ -231,9 +240,10 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 				case SHUFFLE -> finalContent = applyShuffleEffect(random, finalContent, 1);
 				case CASE -> finalContent = applyCaseEffect(random, finalContent, 1, intensity);
 				case SWAP_NICKNAME -> {
-					Component picked = pickRandomOtherDisplayName(server, sender, random);
+					ServerPlayer picked = pickRandomOtherPlayer(server, sender, random);
 					if (picked != null) {
-						displayNameOverride = picked;
+						displayNameOverride = picked.getDisplayName();
+						displayNameOverridePlayerId = picked.getUUID();
 						appliedStep = true;
 					}
 				}
@@ -251,7 +261,7 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 			return null;
 		}
 
-		return new ChatMutationResult(finalContent, displayNameOverride);
+		return new ChatMutationResult(finalContent, displayNameOverride, displayNameOverridePlayerId);
 	}
 
 	private static boolean hasAlternativeOnlinePlayer(MinecraftServer server, ServerPlayer sender) {
@@ -263,7 +273,7 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 		return false;
 	}
 
-	private static Component pickRandomOtherDisplayName(MinecraftServer server, ServerPlayer sender, RandomSource random) {
+	private static ServerPlayer pickRandomOtherPlayer(MinecraftServer server, ServerPlayer sender, RandomSource random) {
 		List<ServerPlayer> candidates = new ArrayList<>();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			if (player.getUUID().equals(sender.getUUID()) || ServerBackroomsSystem.isInBackrooms(player)) {
@@ -277,7 +287,7 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 		}
 
 		ServerPlayer picked = candidates.get(random.nextInt(candidates.size()));
-		return picked.getDisplayName();
+		return picked;
 	}
 
 	private static TextEffect pickEffect(RandomSource random, JsonObject settings, boolean canSwapNickname) {
@@ -661,7 +671,7 @@ public final class ChatInterferenceGlitch implements ChatMessageGlitchHandler {
 	private record WordRange(int start, int end) {
 	}
 
-	private record ChatMutationResult(String content, Component displayNameOverride) {
+	private record ChatMutationResult(String content, Component displayNameOverride, UUID displayNameOverridePlayerId) {
 	}
 }
 
