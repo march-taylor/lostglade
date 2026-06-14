@@ -57,6 +57,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 
@@ -101,6 +102,7 @@ final class MonitorMaxRuntime {
 	private static final Identifier MAX_NOTIFICATION_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "max_notification");
 	private static final SoundEvent MAX_NOTIFICATION_SOUND = SoundEvent.createVariableRangeEvent(MAX_NOTIFICATION_SOUND_ID);
 	private static final long MAX_RINGTONE_PREVIEW_TIMELINE_MS = 30_000L;
+	private static final long MAX_AVATAR_ANIMATION_RENDER_DELAY_MS = 80L;
 	private static final Path DEFAULT_PROJECT_RINGTONE = Path.of(System.getProperty("user.dir"), "server-assets", "max", "default-ringtone.mp3");
 	private static final Path DEFAULT_SOURCE_RINGTONE = Path.of("/home/mart/Downloads/Rington_-_na_zvonok_(SkySound.cc).mp3");
 	private static final Map<ScreenRuntimeKey, MaxRuntimeState> MAX_STATES = new ConcurrentHashMap<>();
@@ -150,10 +152,14 @@ final class MonitorMaxRuntime {
 			ringtoneCandidates = state.ringtonePickerOpen ? ringtoneCandidates(component, state) : List.of();
 			fileShareContacts = state.fileSharePickerOpen ? fileShareContacts(server, state, component.runtimeKey()) : List.of();
 			incomingFile = state.notificationsOpen ? incomingFileSnapshot(server, state) : null;
+			boolean animatedAvatars = maxAnimatedAvatarsVisible(component, state, contacts, callSnapshot, incomingFile);
+			if (animatedAvatars) {
+				scheduleAvatarAnimationRender(server, component.runtimeKey(), state);
+			}
 			return new MaxVisualSnapshot(
 					state.version,
 					state.accountCode,
-					state.avatarFrame,
+					currentAvatarFrameLocked(state),
 					contacts,
 					callSnapshot,
 					avatarCandidates,
@@ -168,6 +174,7 @@ final class MonitorMaxRuntime {
 					state.ringtonePickerOpen,
 					state.fileSharePickerOpen,
 					state.notificationsOpen,
+					animatedAvatars,
 					state.ringtonePreviewPlaying,
 					state.statusText
 			);
@@ -749,7 +756,7 @@ final class MonitorMaxRuntime {
 	}
 
 	private static MaxVisualSnapshot emptySnapshot() {
-		return new MaxVisualSnapshot(0L, "MAX-000000", null, List.of(), null, List.of(), List.of(), List.of(), null, 0, 0, 0, "", false, false, false, false, false, "");
+		return new MaxVisualSnapshot(0L, "MAX-000000", null, List.of(), null, List.of(), List.of(), List.of(), null, 0, 0, 0, "", false, false, false, false, false, false, "");
 	}
 
 	private static MaxRuntimeState ensureState(MinecraftServer server, ScreenComponent component) {
@@ -786,7 +793,9 @@ final class MonitorMaxRuntime {
 						}
 					}
 				}
-				state.avatarFrame = loadAvatarFrame(component, state.avatarUrl, state.avatarLocalMediaKey);
+				state.avatarMedia = loadAvatarMedia(component, state.avatarUrl, state.avatarLocalMediaKey);
+				state.avatarFrame = avatarFrame(state.avatarMedia, 0, null);
+				state.avatarAnimationStartedAtMillis = System.currentTimeMillis();
 				state.hydrated = true;
 				state.version++;
 				ACCOUNT_INDEX.put(state.accountCode, component.runtimeKey());
@@ -989,6 +998,7 @@ final class MonitorMaxRuntime {
 		ScreenRuntimeKey peerKey = call.peer(component.runtimeKey());
 		MaxRuntimeState peerState = peerKey != null ? MAX_STATES.get(peerKey) : null;
 		BufferedImage peerAvatar;
+		boolean peerAvatarAnimated;
 		String peerCode;
 		boolean cameraEnabled;
 		boolean microphoneEnabled;
@@ -1020,11 +1030,13 @@ final class MonitorMaxRuntime {
 		}
 		if (peerState != null) {
 			synchronized (peerState) {
-				peerAvatar = peerState.avatarFrame;
+				peerAvatar = currentAvatarFrameLocked(peerState);
+				peerAvatarAnimated = avatarAnimatedLocked(peerState);
 				peerCode = peerState.accountCode;
 			}
 		} else {
 			peerAvatar = null;
+			peerAvatarAnimated = false;
 			peerCode = call.peerCode(component.runtimeKey());
 		}
 		List<MaxCameraOptionSnapshot> cameraOptions = cameraOptions(server, state, cameras);
@@ -1068,6 +1080,7 @@ final class MonitorMaxRuntime {
 				phase,
 				peerCode,
 				peerAvatar,
+				peerAvatarAnimated,
 				localPreview,
 				remoteFrame,
 				participants,
@@ -1112,13 +1125,15 @@ final class MonitorMaxRuntime {
 			MaxRuntimeState participantState = self ? selfState : MAX_STATES.get(participantKey);
 			String code = call.participantCode(participantKey);
 			BufferedImage avatar = null;
+			boolean avatarAnimated = false;
 			BufferedImage video = null;
 			boolean cameraEnabled = false;
 			boolean microphoneEnabled = true;
 			if (participantState != null) {
 				synchronized (participantState) {
 					code = participantState.accountCode == null || participantState.accountCode.isBlank() ? code : participantState.accountCode;
-					avatar = participantState.avatarFrame;
+					avatar = currentAvatarFrameLocked(participantState);
+					avatarAnimated = avatarAnimatedLocked(participantState);
 					cameraEnabled = participantState.cameraEnabled;
 					microphoneEnabled = participantState.microphoneEnabled;
 				}
@@ -1131,6 +1146,7 @@ final class MonitorMaxRuntime {
 			participants.add(new MaxCallParticipantSnapshot(
 					code,
 					avatar,
+					avatarAnimated,
 					video,
 					self,
 					cameraEnabled && (self || video != null),
@@ -1156,15 +1172,18 @@ final class MonitorMaxRuntime {
 			ScreenComponent component = key != null ? resolveScreenComponent(server, key) : null;
 			MaxCallSession call = key != null ? currentCall(key) : null;
 			BufferedImage avatar = null;
+			boolean avatarAnimated = false;
 			if (peerState != null) {
 				synchronized (peerState) {
-					avatar = peerState.avatarFrame;
+					avatar = currentAvatarFrameLocked(peerState);
+					avatarAnimated = avatarAnimatedLocked(peerState);
 				}
 			}
 			boolean sameCall = call != null && call.isParticipant(selfKey);
 			snapshots.add(new MaxContactSnapshot(
 					contact,
 					avatar,
+					avatarAnimated,
 					component != null && component.powered(),
 					sameCall && call.isRinging(key),
 					sameCall && call.isAccepted(key)
@@ -1201,14 +1220,17 @@ final class MonitorMaxRuntime {
 		MaxIncomingFile incoming = state.incomingFiles.get(0);
 		MaxRuntimeState senderState = MAX_STATES.get(ACCOUNT_INDEX.get(incoming.senderCode()));
 		BufferedImage senderAvatar = null;
+		boolean senderAvatarAnimated = false;
 		if (senderState != null) {
 			synchronized (senderState) {
-				senderAvatar = senderState.avatarFrame;
+				senderAvatar = currentAvatarFrameLocked(senderState);
+				senderAvatarAnimated = avatarAnimatedLocked(senderState);
 			}
 		}
 		return new MaxIncomingFileSnapshot(
 				incoming.senderCode(),
 				senderAvatar,
+				senderAvatarAnimated,
 				incoming.title() == null || incoming.title().isBlank() ? defaultSharedFileTitle(incoming.kind()) : incoming.title(),
 				incoming.subtitle() == null ? "" : incoming.subtitle(),
 				incoming.kind() != null ? incoming.kind() : GalleryItemKind.MEDIA
@@ -1994,10 +2016,15 @@ final class MonitorMaxRuntime {
 		int index = maxAvatarCandidateIndexAt(layout, candidates.size(), touchPoint);
 		if (index >= 0 && index < candidates.size()) {
 			MaxAvatarCandidateSnapshot candidate = candidates.get(index);
+			MonitorMediaApp.LoadedMedia avatarMedia = loadAvatarMedia(component, candidate.url(), candidate.localMediaKey());
+			BufferedImage avatarFrame = avatarFrame(avatarMedia, 0, candidate.preview());
 			synchronized (state) {
 				state.avatarUrl = candidate.url();
 				state.avatarLocalMediaKey = candidate.localMediaKey();
-				state.avatarFrame = candidate.preview();
+				state.avatarMedia = avatarMedia;
+				state.avatarFrame = avatarFrame;
+				state.avatarAnimationStartedAtMillis = System.currentTimeMillis();
+				state.avatarRenderScheduled = false;
 				state.avatarPickerOpen = false;
 				state.statusText = "Аватар обновлён";
 				state.version++;
@@ -2602,7 +2629,7 @@ final class MonitorMaxRuntime {
 		return new MaxRingtoneCandidateSnapshot(title, subtitle, url, localMediaKey, selected, playing, fraction);
 	}
 
-	private static BufferedImage loadAvatarFrame(ScreenComponent component, String avatarUrl, String localMediaKey) {
+	private static MonitorMediaApp.LoadedMedia loadAvatarMedia(ScreenComponent component, String avatarUrl, String localMediaKey) {
 		String localKey = localMediaKey != null ? localMediaKey.trim() : "";
 		if (localKey.isBlank() && avatarUrl != null && !avatarUrl.isBlank()) {
 			for (PersistedGalleryItem item : resolvePersistedGalleryState(component)) {
@@ -2616,13 +2643,128 @@ final class MonitorMaxRuntime {
 			return null;
 		}
 		try {
-			MonitorMediaApp.LoadedMedia media = MonitorMediaApp.loadSavedGalleryMedia(localKey, null);
-			BufferedImage frame = media != null && media.frameCount() > 0 ? media.frame(0) : null;
-			return frame != null ? copyBufferedImage(frame) : null;
+			return MonitorMediaApp.loadSavedGalleryMedia(localKey, null);
 		} catch (Exception exception) {
 			Lg2.LOGGER.debug("Failed to load MAX avatar {}: {}", localKey, sanitizeMediaError(exception.getMessage()));
 			return null;
 		}
+	}
+
+	private static BufferedImage avatarFrame(MonitorMediaApp.LoadedMedia media, int index, BufferedImage fallback) {
+		BufferedImage frame = media != null && media.frameCount() > 0 ? media.frame(index) : null;
+		return frame != null ? frame : fallback;
+	}
+
+	private static BufferedImage currentAvatarFrameLocked(MaxRuntimeState state) {
+		if (state == null) {
+			return null;
+		}
+		MonitorMediaApp.LoadedMedia media = state.avatarMedia;
+		if (media == null || media.frameCount() <= 0) {
+			return state.avatarFrame;
+		}
+		return avatarFrame(media, currentAvatarFrameIndexLocked(state, System.currentTimeMillis()), state.avatarFrame);
+	}
+
+	private static int currentAvatarFrameIndexLocked(MaxRuntimeState state, long nowMillis) {
+		MonitorMediaApp.LoadedMedia media = state != null ? state.avatarMedia : null;
+		if (media == null || media.frameCount() <= 1) {
+			return 0;
+		}
+		long cycleMillis = avatarCycleMillis(media);
+		if (cycleMillis <= 0L) {
+			return 0;
+		}
+		long elapsedMillis = Math.max(0L, nowMillis - state.avatarAnimationStartedAtMillis);
+		long cyclePosition = elapsedMillis % cycleMillis;
+		long cursor = 0L;
+		for (int index = 0; index < media.frameCount(); index++) {
+			cursor += Math.max(20, media.delayMillis(index));
+			if (cyclePosition < cursor) {
+				return index;
+			}
+		}
+		return Math.max(0, media.frameCount() - 1);
+	}
+
+	private static long avatarCycleMillis(MonitorMediaApp.LoadedMedia media) {
+		if (media == null || media.frameCount() <= 0) {
+			return 0L;
+		}
+		long total = 0L;
+		for (int index = 0; index < media.frameCount(); index++) {
+			total += Math.max(20, media.delayMillis(index));
+		}
+		return total;
+	}
+
+	private static boolean avatarAnimatedLocked(MaxRuntimeState state) {
+		return state != null && state.avatarMedia != null && state.avatarMedia.frameCount() > 1;
+	}
+
+	private static boolean maxAnimatedAvatarsVisible(
+			ScreenComponent component,
+			MaxRuntimeState state,
+			List<MaxContactSnapshot> contacts,
+			MaxCallVisualSnapshot call,
+			MaxIncomingFileSnapshot incomingFile
+	) {
+		if (component == null) {
+			return false;
+		}
+		boolean maxVisible = component.viewMode() == ScreenViewMode.MAX || hasVisibleCall(component.runtimeKey());
+		if (!maxVisible) {
+			return false;
+		}
+		if (avatarAnimatedLocked(state)) {
+			return true;
+		}
+		if (contacts != null) {
+			for (MaxContactSnapshot contact : contacts) {
+				if (contact != null && contact.avatarAnimated()) {
+					return true;
+				}
+			}
+		}
+		if (incomingFile != null && incomingFile.senderAvatarAnimated()) {
+			return true;
+		}
+		if (call != null) {
+			if (call.peerAvatarAnimated()) {
+				return true;
+			}
+			for (MaxCallParticipantSnapshot participant : call.participants()) {
+				if (participant != null && participant.avatarAnimated()) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private static void scheduleAvatarAnimationRender(MinecraftServer server, ScreenRuntimeKey key, MaxRuntimeState state) {
+		if (server == null || key == null || state == null) {
+			return;
+		}
+		synchronized (state) {
+			if (state.avatarRenderScheduled) {
+				return;
+			}
+			state.avatarRenderScheduled = true;
+		}
+		ensureExecutors();
+		mediaScheduler.schedule(() -> server.execute(() -> {
+			MaxRuntimeState current = MAX_STATES.get(key);
+			if (current != null) {
+				synchronized (current) {
+					current.avatarRenderScheduled = false;
+				}
+			}
+			ScreenComponent component = resolveScreenComponent(server, key);
+			if (component != null && (component.viewMode() == ScreenViewMode.MAX || hasVisibleCall(key))) {
+				requestRuntimeRender(server, key);
+			}
+		}), MAX_AVATAR_ANIMATION_RENDER_DELAY_MS, TimeUnit.MILLISECONDS);
 	}
 
 	private static List<LiveCameraReference> connectedCameraReferences(MinecraftServer server, ScreenComponent component) {
@@ -2993,6 +3135,7 @@ final class MonitorMaxRuntime {
 		fallback.add(new MaxCallParticipantSnapshot(
 				state.accountCode(),
 				state.avatarFrame(),
+				state.animatedAvatars(),
 				call.localPreviewFrame(),
 				true,
 				call.cameraEnabled(),
@@ -3003,6 +3146,7 @@ final class MonitorMaxRuntime {
 			fallback.add(new MaxCallParticipantSnapshot(
 					call.peerCode(),
 					call.peerAvatarFrame(),
+					call.peerAvatarAnimated(),
 					call.remoteFrame(),
 					false,
 					call.remoteFrame() != null,
@@ -3034,7 +3178,7 @@ final class MonitorMaxRuntime {
 				return participant;
 			}
 		}
-		return new MaxCallParticipantSnapshot(state.accountCode(), state.avatarFrame(), call.localPreviewFrame(), true, call.cameraEnabled(), call.microphoneEnabled(), false);
+		return new MaxCallParticipantSnapshot(state.accountCode(), state.avatarFrame(), state.animatedAvatars(), call.localPreviewFrame(), true, call.cameraEnabled(), call.microphoneEnabled(), false);
 	}
 
 	private static boolean sameMaxParticipant(MaxCallParticipantSnapshot left, MaxCallParticipantSnapshot right) {
@@ -3295,12 +3439,6 @@ final class MonitorMaxRuntime {
 		UiRect text = new UiRect(play.right() + layout.unit(), rect.y() + layout.unit() / 2, select.x() - play.right() - layout.unit() * 2, rect.height() / 2);
 		drawVerticalText(graphics, candidate.title(), text, new Color(248, 251, 255, 238), Font.BOLD, clampInt(layout.unit(), 9, 14));
 		drawVerticalText(graphics, candidate.subtitle(), new UiRect(text.x(), text.bottom(), text.width(), rect.height() / 3), new Color(176, 200, 216, 216), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11));
-		if (candidate.playing()) {
-			UiRect timeline = new UiRect(text.x(), rect.bottom() - Math.max(3, layout.unit() / 3) - layout.unit() / 2, text.width(), Math.max(3, layout.unit() / 3));
-			fillRoundedRect(graphics, timeline, timeline.height(), new Color(255, 255, 255, 36));
-			int width = Math.max(1, Math.round(timeline.width() * Math.max(0.0F, Math.min(1.0F, candidate.timelineFraction()))));
-			fillRoundedRect(graphics, new UiRect(timeline.x(), timeline.y(), width, timeline.height()), timeline.height(), new Color(248, 251, 255, 210));
-		}
 	}
 
 	private static void drawMaxContactPicker(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot state, MaxCallVisualSnapshot call) {
@@ -4134,6 +4272,9 @@ final class MonitorMaxRuntime {
 		private String avatarUrl = "";
 		private String avatarLocalMediaKey = "";
 		private BufferedImage avatarFrame;
+		private MonitorMediaApp.LoadedMedia avatarMedia;
+		private long avatarAnimationStartedAtMillis;
+		private boolean avatarRenderScheduled;
 		private final List<String> contacts = new ArrayList<>();
 		private String selectedCameraUrl = "";
 		private String selectedMicrophoneKey = "";

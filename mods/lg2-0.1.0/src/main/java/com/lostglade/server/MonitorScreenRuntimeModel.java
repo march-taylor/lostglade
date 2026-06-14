@@ -203,17 +203,19 @@ record MaxVisualSnapshot(
 		boolean ringtonePickerOpen,
 		boolean fileSharePickerOpen,
 		boolean notificationsOpen,
+		boolean animatedAvatars,
 		boolean ringtonePreviewPlaying,
 		String statusText
 ) {
 	boolean dynamic() {
-		return (this.call != null && this.call.dynamic()) || this.ringtonePreviewPlaying;
+		return this.animatedAvatars || (this.call != null && this.call.dynamic()) || this.ringtonePreviewPlaying;
 	}
 }
 
 record MaxContactSnapshot(
 		String code,
 		BufferedImage avatarFrame,
+		boolean avatarAnimated,
 		boolean online,
 		boolean ringing,
 		boolean active
@@ -224,6 +226,7 @@ record MaxCallVisualSnapshot(
 		MaxCallPhase phase,
 		String peerCode,
 		BufferedImage peerAvatarFrame,
+		boolean peerAvatarAnimated,
 		BufferedImage localPreviewFrame,
 		BufferedImage remoteFrame,
 		List<MaxCallParticipantSnapshot> participants,
@@ -254,6 +257,7 @@ record MaxCallVisualSnapshot(
 record MaxCallParticipantSnapshot(
 		String code,
 		BufferedImage avatarFrame,
+		boolean avatarAnimated,
 		BufferedImage videoFrame,
 		boolean self,
 		boolean cameraEnabled,
@@ -302,6 +306,7 @@ record MaxFileShareContactSnapshot(
 record MaxIncomingFileSnapshot(
 		String senderCode,
 		BufferedImage senderAvatarFrame,
+		boolean senderAvatarAnimated,
 		String fileName,
 		String subtitle,
 		GalleryItemKind kind

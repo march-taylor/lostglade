@@ -63,6 +63,7 @@ public final class ServerRespectSystem {
 			createRespectParticle(0xFFCB47FF)
 	};
 	private static final Map<UUID, Long> NEXT_RESPECT_AT_MILLIS = new HashMap<>();
+	private static final Map<RespectInteractionKey, Long> RECENT_RESPECT_INTERACTIONS = new HashMap<>();
 
 	private ServerRespectSystem() {
 	}
@@ -76,7 +77,10 @@ public final class ServerRespectSystem {
 			);
 			refreshAllTabSuffixes(server);
 		});
-		ServerLifecycleEvents.SERVER_STOPPING.register(server -> NEXT_RESPECT_AT_MILLIS.clear());
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			NEXT_RESPECT_AT_MILLIS.clear();
+			RECENT_RESPECT_INTERACTIONS.clear();
+		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> refreshTabSuffix((ServerPlayer) handler.player));
 		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> refreshTabSuffix(newPlayer));
 		ServerTabIntegration.registerPlayerLoadHandler(ServerRespectSystem::refreshTabSuffix);
@@ -90,6 +94,9 @@ public final class ServerRespectSystem {
 			}
 			if (!actor.isShiftKeyDown() || actor == target || !actor.isAlive() || !target.isAlive()) {
 				return InteractionResult.PASS;
+			}
+			if (isDuplicateRespectInteraction(actor, target)) {
+				return InteractionResult.SUCCESS;
 			}
 			if (getRemainingCooldownMillis(actor) > 0L) {
 				return InteractionResult.SUCCESS;
@@ -105,6 +112,14 @@ public final class ServerRespectSystem {
 			playRespectSound(target);
 			return InteractionResult.SUCCESS;
 		});
+	}
+
+	private static boolean isDuplicateRespectInteraction(ServerPlayer actor, ServerPlayer target) {
+		long tick = actor.level().getGameTime();
+		RECENT_RESPECT_INTERACTIONS.entrySet().removeIf(entry -> entry.getValue() + 40L < tick);
+		RespectInteractionKey key = new RespectInteractionKey(actor.getUUID(), target.getUUID());
+		Long previousTick = RECENT_RESPECT_INTERACTIONS.put(key, tick);
+		return previousTick != null && previousTick == tick;
 	}
 
 	private static void refreshAllTabSuffixes(MinecraftServer server) {
@@ -401,5 +416,8 @@ public final class ServerRespectSystem {
 				false,
 				null
 		);
+	}
+
+	private record RespectInteractionKey(UUID actor, UUID target) {
 	}
 }
