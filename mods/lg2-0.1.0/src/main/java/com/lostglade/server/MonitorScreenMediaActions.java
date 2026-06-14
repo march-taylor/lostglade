@@ -122,6 +122,8 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 final class MonitorScreenMediaActions {
+	private static final Set<String> YOUTUBE_VIDEO_GALLERY_DOWNLOADS = ConcurrentHashMap.newKeySet();
+
 	private MonitorScreenMediaActions() {
 	}
 
@@ -529,7 +531,7 @@ final class MonitorScreenMediaActions {
 			markDownloadStartedLocked(state, state.sourceUrl, requesterUuid);
 			state.statusText = "";
 			state.version++;
-			readyNow = isYoutubeGalleryDownloadReadyLocked(state);
+			readyNow = isYoutubeVideoDownloadLocked(state) || isYoutubeGalleryDownloadReadyLocked(state);
 		}
 		requestRuntimeRender(server, key);
 		if (readyNow) {
@@ -549,7 +551,7 @@ final class MonitorScreenMediaActions {
 		}
 		long delayMillis;
 		synchronized (state) {
-			if (!state.downloadInProgress || !isYoutubeGalleryDownloadReadyLocked(state)) {
+			if (!state.downloadInProgress || (!isYoutubeVideoDownloadLocked(state) && !isYoutubeGalleryDownloadReadyLocked(state))) {
 				return;
 			}
 			delayMillis = remainingDownloadSpinnerMillisLocked(state);
@@ -573,8 +575,9 @@ final class MonitorScreenMediaActions {
 		ensureGalleryStateHydrated(server, key, state);
 		String urlToSave;
 		boolean youtubeMusicMode;
+		boolean youtubeVideoMode;
 		synchronized (state) {
-			if (!state.downloadInProgress || !isYoutubeGalleryDownloadReadyLocked(state)) {
+			if (!state.downloadInProgress || (!isYoutubeVideoDownloadLocked(state) && !isYoutubeGalleryDownloadReadyLocked(state))) {
 				return;
 			}
 			if (state.sourceUrl == null || state.sourceUrl.isBlank() || !Objects.equals(state.sourceUrl, state.downloadTargetUrl)) {
@@ -582,8 +585,13 @@ final class MonitorScreenMediaActions {
 			}
 			urlToSave = state.sourceUrl;
 			youtubeMusicMode = state.mode == ScreenViewMode.YOUTUBE_MUSIC;
+			youtubeVideoMode = state.mode == ScreenViewMode.YOUTUBE;
 		}
 		String localMediaKey = null;
+		if (youtubeVideoMode) {
+			startYoutubeVideoGalleryDownload(server, key, urlToSave);
+			return;
+		}
 		if (youtubeMusicMode) {
 			try {
 				localMediaKey = persistCompletedYoutubeMusicAudio(urlToSave);
@@ -653,7 +661,7 @@ final class MonitorScreenMediaActions {
 			throw new IOException("YouTube Music audio cache is missing");
 		}
 		String stableKeyBase = "youtube-music-" + UUID.nameUUIDFromBytes(url.getBytes(StandardCharsets.UTF_8));
-		String localMediaKey = MonitorMediaApp.persistLocalGalleryFile(stableKeyBase, audioPath);
+		String localMediaKey = MonitorMediaApp.persistLocalGalleryFileReplacing(stableKeyBase, audioPath);
 		BufferedImage cover = MonitorYoutubeMusicCache.queueEntryPreview(url);
 		if (cover == null) {
 			try {
@@ -668,6 +676,113 @@ final class MonitorScreenMediaActions {
 			MonitorMediaApp.loadSavedGalleryAudioPreview(localMediaKey, "YouTube Music");
 		}
 		return localMediaKey;
+	}
+
+	private static boolean isYoutubeVideoDownloadLocked(MediaRuntimeState state) {
+		return state != null && state.mode == ScreenViewMode.YOUTUBE;
+	}
+
+	private static void startYoutubeVideoGalleryDownload(MinecraftServer server, ScreenRuntimeKey key, String url) {
+		if (server == null || key == null || url == null || url.isBlank()) {
+			return;
+		}
+		String normalizedUrl = url.trim();
+		String flightKey = key + "|" + normalizedUrl;
+		if (!YOUTUBE_VIDEO_GALLERY_DOWNLOADS.add(flightKey)) {
+			return;
+		}
+		ensureExecutors();
+		CompletableFuture
+				.supplyAsync(() -> persistCompletedYoutubeVideo(normalizedUrl), mediaIoExecutor)
+				.whenComplete((result, throwable) -> {
+					YOUTUBE_VIDEO_GALLERY_DOWNLOADS.remove(flightKey);
+					YoutubeVideoGallerySaveResult resolvedResult = result;
+					if (resolvedResult == null) {
+						String error = throwable != null ? sanitizeMediaError(throwable.getMessage()) : "SAVE FAILED";
+						resolvedResult = new YoutubeVideoGallerySaveResult(normalizedUrl, null, null, null, error);
+					}
+					YoutubeVideoGallerySaveResult finalResult = resolvedResult;
+					server.execute(() -> applyYoutubeVideoGallerySaveResult(server, key, finalResult));
+				});
+	}
+
+	private static YoutubeVideoGallerySaveResult persistCompletedYoutubeVideo(String url) {
+		try (MonitorYoutubeRelayClient.DownloadedGalleryVideo video = MonitorYoutubeRelayClient.downloadGalleryVideo(url)) {
+			if (video == null || video.path() == null || !Files.isRegularFile(video.path())) {
+				return new YoutubeVideoGallerySaveResult(url, null, null, null, "SAVE FAILED");
+			}
+			String stableKeyBase = "youtube-video-" + UUID.nameUUIDFromBytes(url.getBytes(StandardCharsets.UTF_8));
+			String localMediaKey = MonitorMediaApp.persistLocalGalleryFileReplacing(stableKeyBase, video.path());
+			MonitorMediaApp.LoadedVideo localVideo = MonitorMediaApp.loadSavedGalleryVideo(localMediaKey, null);
+			return new YoutubeVideoGallerySaveResult(url, localMediaKey, video.title(), localVideo.preview(), null);
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to persist YouTube video {}", url, exception);
+			return new YoutubeVideoGallerySaveResult(url, null, null, null, sanitizeMediaError(exception.getMessage()));
+		}
+	}
+
+	private static void applyYoutubeVideoGallerySaveResult(MinecraftServer server, ScreenRuntimeKey key, YoutubeVideoGallerySaveResult result) {
+		if (server == null || key == null || result == null || result.url() == null || result.url().isBlank()) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		boolean saved = false;
+		synchronized (state) {
+			if (!state.downloadInProgress || !Objects.equals(state.downloadTargetUrl, result.url())) {
+				return;
+			}
+			if (result.localMediaKey() == null || result.localMediaKey().isBlank()) {
+				clearDownloadStateLocked(state);
+				state.statusText = result.error() != null && !result.error().isBlank() ? result.error() : "SAVE FAILED";
+				state.version++;
+				requestRuntimeRender(server, key);
+				return;
+			}
+			String title = state.mediaTitle != null && !state.mediaTitle.isBlank()
+					? state.mediaTitle
+					: result.title() != null && !result.title().isBlank() ? result.title() : "YouTube";
+			int index = upsertGalleryItemLocked(
+					state,
+					title,
+					state.mediaSubtitle,
+					result.url(),
+					result.localMediaKey(),
+					null,
+					result.preview() != null ? copyBufferedImage(result.preview()) : copyBufferedImage(state.streamFrame),
+					GalleryItemKind.VIDEO
+			);
+			saved = index >= 0;
+			if (saved) {
+				if (Objects.equals(state.sourceUrl, result.url())) {
+					state.galleryIndex = index;
+					state.gallerySurfaceMode = GallerySurfaceMode.PLAYER;
+				}
+				markDownloadCompletedLocked(state, result.url());
+			} else {
+				clearDownloadStateLocked(state);
+			}
+			state.statusText = "";
+			state.version++;
+		}
+		if (!saved) {
+			requestRuntimeRender(server, key);
+			return;
+		}
+		persistGalleryState(server, key, state);
+		YoutubeQueuePreloadDiff preloadDiff;
+		synchronized (state) {
+			preloadDiff = syncYoutubeQueuePreloadsLocked(state);
+		}
+		applyYoutubeQueuePreloadDiff(preloadDiff);
+		scheduleGalleryPreloadStatusRefreshes(server, key);
+		requestRuntimeRender(server, key);
+		scheduleActionCompletionReset(server, key);
+	}
+
+	private record YoutubeVideoGallerySaveResult(String url, String localMediaKey, String title, BufferedImage preview, String error) {
 	}
 
 	static void scheduleAudioCoverRefresh(

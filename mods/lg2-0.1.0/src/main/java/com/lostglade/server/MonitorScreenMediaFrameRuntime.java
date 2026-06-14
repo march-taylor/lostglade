@@ -602,6 +602,7 @@ final class MonitorScreenMediaFrameRuntime {
 					youtubeSeekTargetMs = clampLong(state.positionMs + delta * seekStep, 0L, duration);
 					markPendingAudioPositionLocked(state, youtubeSeekTargetMs);
 					bumpAudioSyncTokenLocked(state);
+					markStreamSeekBufferingLocked(state);
 					handled = true;
 				} else if (state.loadedMedia != null && state.loadedMedia.animated() && state.loadedMedia.frameCount() > 1) {
 					cancelPlaybackLocked(state);

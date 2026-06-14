@@ -667,6 +667,9 @@ final class MonitorScreenGalleryRuntime {
 		if (looksLikeDirectVideoReference(localMediaKey) || looksLikeDirectVideoReference(url)) {
 			return GalleryItemKind.VIDEO;
 		}
+		if (kind == GalleryItemKind.YOUTUBE && localMediaKey != null && !localMediaKey.isBlank()) {
+			return GalleryItemKind.VIDEO;
+		}
 		if (kind == GalleryItemKind.YOUTUBE || MonitorYoutubeRelayClient.looksLikeYoutubeUrl(url)) {
 			return GalleryItemKind.YOUTUBE;
 		}

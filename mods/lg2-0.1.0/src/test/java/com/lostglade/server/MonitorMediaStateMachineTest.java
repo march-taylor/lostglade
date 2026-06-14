@@ -506,6 +506,18 @@ public final class MonitorMediaStateMachineTest {
 
 	private static void directAudioSourcesDoNotResyncFromStaleMonitorPosition() {
 		require(
+				!SpeakerAudioPlaybackPolicy.isPositionAuthoritative(PlaybackStreamKind.YOUTUBE),
+				"YouTube speaker audio must not continuously restart while the video preview clock buffers"
+		);
+		require(
+				!SpeakerAudioPlaybackPolicy.isPositionAuthoritative(PlaybackStreamKind.DIRECT_VIDEO),
+				"direct video/audio playback must not continuously restart from stale monitor positions"
+		);
+		require(
+				SpeakerAudioPlaybackPolicy.isPositionAuthoritative(PlaybackStreamKind.LIVE_CAMERA),
+				"live camera audio should still follow its authoritative live source position"
+		);
+		require(
 				!SpeakerAudioPlaybackPolicy.shouldResyncPosition(false, false, false, 1800L, 100L, 500L),
 				"local direct audio must not restart just because the monitor snapshot position is stale"
 		);

@@ -670,12 +670,14 @@ public final class MonitorYoutubeMusicCache {
 		if (!snapshot.complete()) {
 			return null;
 		}
-		try {
-			validateCompleteAudioFile(snapshot.trackPath(), readDurationMs(snapshot.metadataPath()));
-		} catch (IOException exception) {
-			deleteCompleteMarkerQuietly(url);
-			Lg2.LOGGER.debug("Invalidated incomplete YouTube Music cache for {}", url, exception);
-			return null;
+		if (snapshot.validatedComplete()) {
+			try {
+				validateCompleteAudioFile(snapshot.trackPath(), readDurationMs(snapshot.metadataPath()));
+			} catch (IOException exception) {
+				deleteCompleteMarkerQuietly(url);
+				Lg2.LOGGER.debug("Invalidated incomplete YouTube Music cache for {}", url, exception);
+				return null;
+			}
 		}
 		return loadCachedTrack(url, snapshot.trackPath(), snapshot.coverPath(), snapshot.metadataPath(), progress);
 	}
@@ -1447,16 +1449,20 @@ public final class MonitorYoutubeMusicCache {
 		boolean validatedComplete = readValidatedComplete(metadataPath);
 		boolean playable = trackPath != null && hasCover && hasMetadata && audioBytes > 0L;
 		Path markerPath = completeMarkerPath(url);
+		boolean legacyByteComplete = !validatedComplete
+				&& completedAudioBytes > 0L
+				&& audioBytes >= completedAudioBytes
+				&& (expectedAudioBytes <= 0L || completedAudioBytes >= expectedAudioBytes);
 		boolean complete = playable
 				&& markerPath != null
 				&& Files.isRegularFile(markerPath)
-				&& validatedComplete
+				&& (validatedComplete || legacyByteComplete)
 				&& completedAudioBytes > 0L
 				&& audioBytes >= completedAudioBytes;
 		if (complete && expectedAudioBytes <= 0L) {
 			expectedAudioBytes = Math.max(audioBytes, completedAudioBytes);
 		}
-		return new PersistentTrackSnapshot(trackPath, coverPath, metadataPath, audioBytes, expectedAudioBytes, completedAudioBytes, playable, complete);
+		return new PersistentTrackSnapshot(trackPath, coverPath, metadataPath, audioBytes, expectedAudioBytes, completedAudioBytes, validatedComplete, playable, complete);
 	}
 
 	private static long readExpectedAudioBytes(Path metadataPath) {
@@ -1826,6 +1832,7 @@ public final class MonitorYoutubeMusicCache {
 			long audioBytes,
 			long expectedAudioBytes,
 			long completedAudioBytes,
+			boolean validatedComplete,
 			boolean playable,
 			boolean complete
 	) {

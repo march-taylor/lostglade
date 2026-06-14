@@ -966,10 +966,12 @@ public final class MonitorScreenSystem {
 				continue;
 			}
 			synchronized (state) {
-				boolean allowWhileLoading = isYoutubeMusicMode(state.mode)
+				boolean waitingForSeekFrame = state.pendingAudioPositionActive && state.streamKind == PlaybackStreamKind.YOUTUBE;
+				boolean allowWhileLoading = !waitingForSeekFrame
+						&& (isYoutubeMusicMode(state.mode)
 						|| state.streamKind == PlaybackStreamKind.DIRECT_VIDEO
 						|| state.streamFrame != null
-						|| state.bufferedEndMs > state.positionMs + 100L;
+						|| state.bufferedEndMs > state.positionMs + 100L);
 				if (!isStreamPlaybackLocked(state)
 						|| state.relaySessionId == null
 						|| state.audioStreamUrl == null
@@ -987,7 +989,7 @@ public final class MonitorScreenSystem {
 						state.loading,
 						state.userPaused,
 						state.liveStream,
-						state.streamKind != PlaybackStreamKind.DIRECT_VIDEO,
+						SpeakerAudioPlaybackPolicy.isPositionAuthoritative(state.streamKind),
 						false
 				));
 			}
@@ -2187,9 +2189,10 @@ public final class MonitorScreenSystem {
 				continue;
 			}
 			GalleryItemKind resolvedKind = effectiveGalleryItemKind(item);
-			BufferedImage preview = resolvedKind == GalleryItemKind.YOUTUBE
-					? MonitorYoutubeRelayClient.queueEntryPreview(item.url())
-					: resolvedKind == GalleryItemKind.AUDIO
+			if (persistedGalleryItemRequiresLocalMedia(resolvedKind, item) && !persistedGalleryItemHasLocalMedia(item)) {
+				continue;
+			}
+			BufferedImage preview = resolvedKind == GalleryItemKind.AUDIO
 					? persistedGalleryAudioPreview(item)
 					: null;
 			items.add(new GalleryItem(item.title(), item.subtitle(), item.url(), item.localMediaKey(), null, preview, resolvedKind));
@@ -2207,10 +2210,27 @@ public final class MonitorScreenSystem {
 				continue;
 			}
 			GalleryItemKind resolvedKind = effectiveGalleryItemKind(item);
+			if (persistedGalleryItemRequiresLocalMedia(resolvedKind, item) && !persistedGalleryItemHasLocalMedia(item)) {
+				continue;
+			}
 			BufferedImage preview = persistedGalleryPreviewForDisplay(item, resolvedKind);
 			items.add(new GalleryItem(item.title(), item.subtitle(), item.url(), item.localMediaKey(), null, preview, resolvedKind));
 		}
 		return List.copyOf(items);
+	}
+
+	static boolean persistedGalleryItemRequiresLocalMedia(GalleryItemKind kind, PersistedGalleryItem item) {
+		return kind == GalleryItemKind.YOUTUBE
+				|| kind == GalleryItemKind.VIDEO
+				|| kind == GalleryItemKind.MEDIA
+				|| kind == GalleryItemKind.AUDIO;
+	}
+
+	static boolean persistedGalleryItemHasLocalMedia(PersistedGalleryItem item) {
+		if (item == null || item.localMediaKey() == null || item.localMediaKey().isBlank()) {
+			return false;
+		}
+		return MonitorMediaApp.savedGalleryMediaFile(item.localMediaKey()) != null;
 	}
 
 	static BufferedImage persistedGalleryPreviewForDisplay(PersistedGalleryItem item, GalleryItemKind kind) {
@@ -2218,7 +2238,7 @@ public final class MonitorScreenSystem {
 			return null;
 		}
 		if (kind == GalleryItemKind.YOUTUBE) {
-			return MonitorYoutubeRelayClient.queueEntryPreview(item.url());
+			return null;
 		}
 		if (kind == GalleryItemKind.AUDIO) {
 			BufferedImage localPreview = persistedGalleryAudioPreview(item);
@@ -2617,16 +2637,21 @@ public final class MonitorScreenSystem {
 			if (item == null || item.url() == null || item.url().isBlank()) {
 				continue;
 			}
-			if (effectiveGalleryItemKind(item) == GalleryItemKind.LIVE_CAMERA) {
+			GalleryItemKind kind = effectiveGalleryItemKind(item);
+			if (kind == GalleryItemKind.LIVE_CAMERA) {
 				continue;
 			}
-			items.add(new PersistedGalleryItem(
+			PersistedGalleryItem persistedItem = new PersistedGalleryItem(
 					item.title() == null ? "" : item.title(),
 					item.subtitle() == null ? "" : item.subtitle(),
 					item.url().trim(),
-					item.kind() != null ? item.kind() : GalleryItemKind.MEDIA,
+					kind,
 					item.localMediaKey() == null ? "" : item.localMediaKey().trim()
-			));
+			);
+			if (persistedGalleryItemRequiresLocalMedia(kind, persistedItem) && !persistedGalleryItemHasLocalMedia(persistedItem)) {
+				continue;
+			}
+			items.add(persistedItem);
 		}
 		return List.copyOf(items);
 	}
@@ -9548,13 +9573,17 @@ public final class MonitorScreenSystem {
 	}
 
 	static boolean saveCurrentYoutubeToGalleryLocked(MediaRuntimeState state, String localMediaKey) {
+		return saveCurrentYoutubeToGalleryLocked(state, localMediaKey, null);
+	}
+
+	static boolean saveCurrentYoutubeToGalleryLocked(MediaRuntimeState state, String localMediaKey, GalleryItemKind forcedKind) {
 		if (state == null || state.sourceUrl == null || state.sourceUrl.isBlank()) {
 			return false;
 		}
 		String title = state.mediaTitle == null || state.mediaTitle.isBlank()
 				? (state.mode == ScreenViewMode.YOUTUBE_MUSIC ? "Track" : "YouTube")
 				: state.mediaTitle;
-		GalleryItemKind kind = state.mode == ScreenViewMode.YOUTUBE_MUSIC ? GalleryItemKind.AUDIO : GalleryItemKind.YOUTUBE;
+		GalleryItemKind kind = forcedKind != null ? forcedKind : state.mode == ScreenViewMode.YOUTUBE_MUSIC ? GalleryItemKind.AUDIO : GalleryItemKind.YOUTUBE;
 		return upsertGalleryItemLocked(
 				state,
 				title,
@@ -9967,6 +9996,9 @@ public final class MonitorScreenSystem {
 		}
 		GalleryItem item = state.galleryItems.get(index);
 		if (item == null) {
+			return false;
+		}
+		if (effectiveGalleryItemKind(item) == GalleryItemKind.YOUTUBE) {
 			return false;
 		}
 		if (effectiveGalleryItemKind(item) == GalleryItemKind.AUDIO

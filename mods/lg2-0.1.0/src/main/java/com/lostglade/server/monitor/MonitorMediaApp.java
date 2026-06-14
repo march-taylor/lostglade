@@ -202,6 +202,14 @@ public final class MonitorMediaApp implements MonitorApp {
 	}
 
 	public static String persistLocalGalleryFile(String stableKeyBase, Path sourcePath) throws IOException {
+		return persistLocalGalleryFile(stableKeyBase, sourcePath, false);
+	}
+
+	public static String persistLocalGalleryFileReplacing(String stableKeyBase, Path sourcePath) throws IOException {
+		return persistLocalGalleryFile(stableKeyBase, sourcePath, true);
+	}
+
+	private static String persistLocalGalleryFile(String stableKeyBase, Path sourcePath, boolean replaceExisting) throws IOException {
 		if (stableKeyBase == null || stableKeyBase.isBlank()) {
 			throw new IOException("Local media key is missing");
 		}
@@ -218,7 +226,7 @@ public final class MonitorMediaApp implements MonitorApp {
 		if (parent != null) {
 			Files.createDirectories(parent);
 		}
-		if (Files.isRegularFile(targetPath)) {
+		if (Files.isRegularFile(targetPath) && !replaceExisting) {
 			copyExistingAudioCoverSidecar(sourcePath, targetPath);
 			return mediaKey;
 		}

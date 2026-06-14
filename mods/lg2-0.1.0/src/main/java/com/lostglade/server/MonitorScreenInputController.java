@@ -665,6 +665,7 @@ final class MonitorScreenInputController {
 						youtubeSeekTargetMs = youtubePositionForFraction(mediaState, mediaTimelineFraction(layout, touchPoint, mediaChromeMode(mediaState)));
 						markPendingAudioPositionLocked(mediaState, youtubeSeekTargetMs);
 						bumpAudioSyncTokenLocked(mediaState);
+						markStreamSeekBufferingLocked(mediaState);
 					} else if (mediaState.loadedMedia != null && mediaState.loadedMedia.frameCount() > 1) {
 						mediaState.frameIndex = mediaFrameIndexForFraction(mediaState.loadedMedia, mediaTimelineFraction(layout, touchPoint, mediaChromeMode(mediaState)));
 						mediaState.version++;

@@ -15,6 +15,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.lang.ref.SoftReference;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -44,12 +45,29 @@ public final class MonitorYoutubeRelayClient {
 	private static final ExecutorService PRELOAD_EXECUTOR = Executors.newFixedThreadPool(2, daemonThreadFactory("lg2-youtube-queue"));
 	private static final String DEFAULT_YT_DLP_BIN = "yt-dlp";
 	private static final String DEFAULT_FFMPEG_BIN = "ffmpeg";
+	private static final String DEFAULT_FFPROBE_BIN = "ffprobe";
+	private static final String YOUTUBE_VIDEO_STREAM_FORMAT = "bestvideo[height<=480][vcodec^=avc1][protocol=https]"
+			+ "/bestvideo[height<=480][ext=mp4][protocol=https]"
+			+ "/bestvideo[height<=480][protocol=https]"
+			+ "/bestvideo[height<=480][vcodec!=none]"
+			+ "/bestvideo[vcodec^=avc1][protocol=https]"
+			+ "/bestvideo[ext=mp4][protocol=https]"
+			+ "/bestvideo[vcodec!=none]"
+			+ "/best[height<=480][vcodec!=none]"
+			+ "/best[vcodec!=none]"
+			+ "/best";
+	private static final String YOUTUBE_AUDIO_STREAM_FORMAT = "bestaudio[ext=m4a][acodec!=none][protocol=https]"
+			+ "/bestaudio[acodec!=none][protocol=https]"
+			+ "/bestaudio[acodec!=none]"
+			+ "/best[acodec!=none]";
 	private static final double FRAME_RATE = readDoubleSetting("LG2_YT_FRAME_RATE", "lg2.youtube.frameRate", 12.0D);
 	private static final int FRAME_WIDTH = readIntSetting("LG2_YT_FRAME_WIDTH", "lg2.youtube.frameWidth", 480);
 	private static final int DIRECT_FRAME_WIDTH_MAX = Math.max(FRAME_WIDTH, readIntSetting("LG2_YT_DIRECT_FRAME_WIDTH_MAX", "lg2.youtube.directFrameWidthMax", 1536));
 	private static final int DIRECT_FRAME_WIDTH_MIN = Math.max(FRAME_WIDTH, readIntSetting("LG2_YT_DIRECT_FRAME_WIDTH_MIN", "lg2.youtube.directFrameWidthMin", 640));
 	private static final long SESSION_IDLE_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(readIntSetting("LG2_YT_IDLE_TIMEOUT_SEC", "lg2.youtube.idleTimeoutSec", 600));
 	private static final int COMMAND_TIMEOUT_SEC = readIntSetting("LG2_YT_COMMAND_TIMEOUT_SEC", "lg2.youtube.commandTimeoutSec", 45);
+	private static final int GALLERY_VIDEO_DOWNLOAD_TIMEOUT_SEC = readIntSetting("LG2_YT_GALLERY_VIDEO_DOWNLOAD_TIMEOUT_SEC", "lg2.youtube.galleryVideoDownloadTimeoutSec", 1800);
+	private static final int GALLERY_VIDEO_VALIDATE_TIMEOUT_SEC = readIntSetting("LG2_YT_GALLERY_VIDEO_VALIDATE_TIMEOUT_SEC", "lg2.youtube.galleryVideoValidateTimeoutSec", 30);
 	private static final int STREAM_START_TIMEOUT_SEC = readIntSetting("LG2_YT_STREAM_START_TIMEOUT_SEC", "lg2.youtube.streamStartTimeoutSec", 20);
 	private static final long PREVIEW_CACHE_BUCKET_MS = Math.max(1L, Math.round(1000.0D / Math.max(1.0D, FRAME_RATE)));
 	private static final int MAX_CACHED_PREVIEW_FRAMES = 3600;
@@ -168,6 +186,48 @@ public final class MonitorYoutubeRelayClient {
 			return;
 		}
 		requireSession(sessionId).persistQueuePreload(rawUrl.trim());
+	}
+
+	public static DownloadedGalleryVideo downloadGalleryVideo(String rawUrl) throws IOException {
+		validateYoutubeUrl(rawUrl);
+		String url = rawUrl.trim();
+		JsonObject metadata = resolveYoutubeMetadata(url);
+		String title = getNonBlankString(metadata, "title", "YouTube");
+		long durationMs = Math.round(getDouble(metadata, "duration", 0.0D) * 1000.0D);
+		boolean live = getBoolean(metadata, "is_live", false)
+				|| "is_live".equalsIgnoreCase(getString(metadata, "live_status", ""));
+		if (live) {
+			throw new IOException("Live YouTube videos cannot be saved to gallery");
+		}
+		Path downloadDir = persistentPreloadCacheRoot.resolve("gallery-video-downloads").resolve(urlCacheKey(url));
+		deleteDirectoryQuietly(downloadDir, persistentPreloadCacheRoot);
+		Files.createDirectories(downloadDir);
+		try {
+			Path outputTemplatePath = downloadDir.resolve("video.%(ext)s");
+			runTextCommand(List.of(
+					ytDlpBin(),
+					"-f",
+					"bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best",
+					"--merge-output-format",
+					"mp4",
+					"--recode-video",
+					"mp4",
+					"--no-playlist",
+					"-o",
+					outputTemplatePath.toString(),
+					url
+			), GALLERY_VIDEO_DOWNLOAD_TIMEOUT_SEC);
+			Path videoPath = downloadedGalleryVideoPath(downloadDir);
+			validateGalleryVideoFile(videoPath, durationMs);
+			Path stablePath = downloadDir.resolve("video.mp4");
+			if (!videoPath.equals(stablePath)) {
+				moveFileReplacing(videoPath, stablePath);
+			}
+			return new DownloadedGalleryVideo(title, durationMs, stablePath, downloadDir);
+		} catch (IOException exception) {
+			deleteDirectoryQuietly(downloadDir, persistentPreloadCacheRoot);
+			throw exception;
+		}
 	}
 
 	public static void setCacheDirectory(Path directory) {
@@ -519,22 +579,44 @@ public final class MonitorYoutubeRelayClient {
 		}
 	}
 
-	private static ResolvedYoutube resolveYoutube(String url) throws IOException {
+	private static JsonObject resolveYoutubeMetadata(String url) throws IOException {
 		String metadataJson = runTextCommand(List.of(ytDlpBin(), "--dump-single-json", "--no-playlist", url), COMMAND_TIMEOUT_SEC);
 		JsonObject metadata = GSON.fromJson(metadataJson, JsonObject.class);
+		if (metadata == null) {
+			throw new IOException("Failed to resolve YouTube metadata");
+		}
+		return metadata;
+	}
+
+	private static ResolvedYoutube resolveYoutube(String url) throws IOException {
+		JsonObject metadata = resolveYoutubeMetadata(url);
 		String title = getNonBlankString(metadata, "title", "YouTube");
 		long durationMs = Math.round(getDouble(metadata, "duration", 0.0D) * 1000.0D);
 		boolean isLive = getBoolean(metadata, "is_live", false)
 				|| "is_live".equalsIgnoreCase(getString(metadata, "live_status", ""));
-		String streamUrl = firstOutputLine(runTextCommand(List.of(
+		String streamUrl = resolveStreamUrl(url, YOUTUBE_VIDEO_STREAM_FORMAT);
+		String audioStreamUrl = resolveStreamUrl(url, YOUTUBE_AUDIO_STREAM_FORMAT);
+		return new ResolvedYoutube(title, durationMs, isLive, streamUrl, audioStreamUrl.isBlank() ? streamUrl : audioStreamUrl);
+	}
+
+	private static String resolveStreamUrl(String url, String formatSelector) throws IOException {
+		return firstOutputLine(runTextCommand(List.of(
 				ytDlpBin(),
 				"-g",
 				"-f",
-				"best[height<=480][acodec!=none][vcodec!=none]/best[acodec!=none][vcodec!=none]/best",
+				formatSelector,
 				"--no-playlist",
 				url
 		), COMMAND_TIMEOUT_SEC));
-		return new ResolvedYoutube(title, durationMs, isLive, streamUrl, streamUrl);
+	}
+
+	private static boolean hasDedicatedAudioStream(ResolvedYoutube resolved) {
+		if (resolved == null || resolved.streamUrl() == null || resolved.audioStreamUrl() == null) {
+			return false;
+		}
+		String streamUrl = resolved.streamUrl().trim();
+		String audioStreamUrl = resolved.audioStreamUrl().trim();
+		return !streamUrl.isBlank() && !audioStreamUrl.isBlank() && !Objects.equals(streamUrl, audioStreamUrl);
 	}
 
 	private static QueueResolveResponse resolveYoutubeQueue(String url) throws IOException {
@@ -706,6 +788,86 @@ public final class MonitorYoutubeRelayClient {
 		}
 		String[] lines = normalized.split("\\R");
 		return lines[0].trim();
+	}
+
+	private static Path downloadedGalleryVideoPath(Path downloadDir) throws IOException {
+		if (downloadDir == null || !Files.isDirectory(downloadDir)) {
+			throw new IOException("Downloaded YouTube video directory is missing");
+		}
+		Path mp4Path = downloadDir.resolve("video.mp4");
+		if (Files.isRegularFile(mp4Path)) {
+			return mp4Path;
+		}
+		try (Stream<Path> paths = Files.list(downloadDir)) {
+			return paths
+					.filter(Files::isRegularFile)
+					.filter(path -> path.getFileName() != null && path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".mp4"))
+					.findFirst()
+					.orElseThrow(() -> new IOException("Downloaded YouTube mp4 is missing"));
+		}
+	}
+
+	private static void validateGalleryVideoFile(Path videoPath, long expectedDurationMs) throws IOException {
+		if (videoPath == null || !Files.isRegularFile(videoPath) || Files.size(videoPath) <= 0L) {
+			throw new IOException("Downloaded YouTube video is missing");
+		}
+		String output = runTextCommand(List.of(
+				ffprobeBin(),
+				"-v",
+				"error",
+				"-show_entries",
+				"format=duration:stream=codec_type",
+				"-of",
+				"json",
+				videoPath.toString()
+		), GALLERY_VIDEO_VALIDATE_TIMEOUT_SEC);
+		JsonObject root = GSON.fromJson(output, JsonObject.class);
+		JsonArray streams = root != null && root.has("streams") && root.get("streams").isJsonArray()
+				? root.getAsJsonArray("streams")
+				: null;
+		boolean hasVideo = false;
+		boolean hasAudio = false;
+		if (streams != null) {
+			for (JsonElement element : streams) {
+				if (element == null || !element.isJsonObject()) {
+					continue;
+				}
+				String codecType = getString(element.getAsJsonObject(), "codec_type", "");
+				hasVideo |= "video".equalsIgnoreCase(codecType);
+				hasAudio |= "audio".equalsIgnoreCase(codecType);
+			}
+		}
+		if (!hasVideo) {
+			throw new IOException("Downloaded YouTube mp4 has no video stream");
+		}
+		if (!hasAudio) {
+			throw new IOException("Downloaded YouTube mp4 has no audio stream");
+		}
+		JsonObject format = root != null && root.has("format") && root.get("format").isJsonObject()
+				? root.getAsJsonObject("format")
+				: null;
+		long actualDurationMs = Math.round(getDouble(format, "duration", 0.0D) * 1000.0D);
+		if (expectedDurationMs > 0L) {
+			long toleranceMs = Math.min(30_000L, Math.max(7_000L, expectedDurationMs / 50L));
+			if (actualDurationMs <= 0L || actualDurationMs + toleranceMs < expectedDurationMs) {
+				throw new IOException("Downloaded YouTube video is shorter than expected: " + actualDurationMs + "ms < " + expectedDurationMs + "ms");
+			}
+		}
+	}
+
+	private static void moveFileReplacing(Path sourcePath, Path targetPath) throws IOException {
+		if (sourcePath == null || targetPath == null) {
+			throw new IOException("Invalid YouTube video move path");
+		}
+		Path parent = targetPath.getParent();
+		if (parent != null) {
+			Files.createDirectories(parent);
+		}
+		try {
+			Files.move(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+		} catch (IOException ignored) {
+			Files.move(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+		}
 	}
 
 	private static String runTextCommand(List<String> command, int timeoutSeconds) throws IOException {
@@ -957,6 +1119,10 @@ public final class MonitorYoutubeRelayClient {
 		return readStringSetting("FFMPEG_BIN", "lg2.youtube.ffmpegBin", DEFAULT_FFMPEG_BIN);
 	}
 
+	private static String ffprobeBin() {
+		return readStringSetting("FFPROBE_BIN", "lg2.media.ffprobeBin", DEFAULT_FFPROBE_BIN);
+	}
+
 	private static String readStringSetting(String envKey, String propertyKey, String fallback) {
 		String property = System.getProperty(propertyKey);
 		if (property != null && !property.isBlank()) {
@@ -1037,6 +1203,18 @@ public final class MonitorYoutubeRelayClient {
 			long durationMs,
 			String url
 	) {
+	}
+
+	public record DownloadedGalleryVideo(
+			String title,
+			long durationMs,
+			Path path,
+			Path cleanupDirectory
+	) implements AutoCloseable {
+		@Override
+		public void close() {
+			deleteDirectoryQuietly(this.cleanupDirectory, persistentPreloadCacheRoot);
+		}
 	}
 
 	public record SessionSnapshot(
@@ -1418,12 +1596,13 @@ public final class MonitorYoutubeRelayClient {
 
 		private SessionLoadResponse load(String url) throws IOException {
 			QueuePreloadSnapshot queuePreload = snapshotQueuePreload(url);
-			ResolvedYoutube resolved = queuePreload != null && queuePreload.resolved() != null
-					? queuePreload.resolved()
+			ResolvedYoutube preloadedResolved = queuePreload != null ? queuePreload.resolved() : null;
+			boolean usedPreloadedResolved = preloadedResolved != null && hasDedicatedAudioStream(preloadedResolved);
+			ResolvedYoutube resolved = usedPreloadedResolved
+					? preloadedResolved
 					: resolveYoutube(url);
-			boolean loadedFromQueuePreload = queuePreload != null && queuePreload.resolved() != null;
 			SessionLoadResponse response = loadResolved(url, resolved, queuePreload, null);
-			if (loadedFromQueuePreload && !resolved.live()) {
+			if (usedPreloadedResolved && !resolved.live()) {
 				refreshResolvedSourceAsync(url);
 			}
 			return response;
@@ -1729,25 +1908,25 @@ public final class MonitorYoutubeRelayClient {
 		private void seek(long targetPositionMs) throws IOException {
 			boolean capturePreview;
 			boolean shouldStartLiveStream = false;
+			long clampedPositionMs;
 			synchronized (this.lock) {
 				if (this.live) {
 					throw new IOException("live stream is not seekable");
 				}
 				if (this.staticVisual) {
 					long clamped = Math.max(0L, this.durationMs > 0L ? Math.min(targetPositionMs, this.durationMs) : targetPositionMs);
-					this.positionMs = clamped;
-					this.playBasePositionMs = clamped;
-					this.playStartedAtNanos = System.nanoTime();
+					anchorPlaybackClockLocked(clamped);
 					this.status = this.paused ? "PAUSED" : "PLAYING";
 					stopLocked();
 					return;
 				}
-					long clamped = Math.max(0L, this.durationMs > 0L ? Math.min(targetPositionMs, this.durationMs) : targetPositionMs);
-					this.positionMs = clamped;
-					this.playBasePositionMs = clamped;
-					this.playStartedAtNanos = System.nanoTime();
-					trimCachedPreviewWindowLocked();
-					boolean hadCachedPreview = applyCachedPreviewLocked(clamped);
+				long clamped = Math.max(0L, this.durationMs > 0L ? Math.min(targetPositionMs, this.durationMs) : targetPositionMs);
+				clampedPositionMs = clamped;
+				anchorPlaybackClockLocked(clamped);
+				this.prefetchCompleted = false;
+				stopPrefetchLocked();
+				trimCachedPreviewWindowLocked();
+				boolean hadCachedPreview = applyCachedPreviewLocked(clamped);
 				capturePreview = !hadCachedPreview;
 				this.status = this.paused ? "PAUSED" : (hadCachedPreview ? "PLAYING" : "BUFFERING");
 				stopLocked();
@@ -1757,6 +1936,7 @@ public final class MonitorYoutubeRelayClient {
 				boolean captured = tryCapturePreviewFrame("seek");
 				synchronized (this.lock) {
 					if (captured) {
+						anchorPlaybackClockLocked(clampedPositionMs);
 						this.status = this.paused ? "PAUSED" : "PLAYING";
 					} else if (this.paused) {
 						return;
@@ -2021,6 +2201,12 @@ public final class MonitorYoutubeRelayClient {
 				position = Math.min(position, this.durationMs);
 			}
 			return Math.max(0L, position);
+		}
+
+		private void anchorPlaybackClockLocked(long positionMs) {
+			this.positionMs = Math.max(0L, positionMs);
+			this.playBasePositionMs = this.positionMs;
+			this.playStartedAtNanos = System.nanoTime();
 		}
 
 		private void freezePlaybackClockLocked() {

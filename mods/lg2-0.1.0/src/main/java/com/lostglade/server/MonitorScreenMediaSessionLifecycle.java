@@ -442,6 +442,16 @@ final class MonitorScreenMediaSessionLifecycle {
 		state.pendingAudioIssuedAtMillis = System.currentTimeMillis();
 	}
 
+	static void markStreamSeekBufferingLocked(MediaRuntimeState state) {
+		if (state == null || state.streamKind != PlaybackStreamKind.YOUTUBE) {
+			return;
+		}
+		state.loading = true;
+		state.statusText = "BUFFERING";
+		state.progress.setIndeterminate("LOADING");
+		state.version++;
+	}
+
 	static void reconcilePendingAudioTransportLocked(MediaRuntimeState state, boolean snapshotPaused, long snapshotPositionMs) {
 		if (state == null) {
 			return;

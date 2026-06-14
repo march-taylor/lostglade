@@ -4,6 +4,10 @@ final class SpeakerAudioPlaybackPolicy {
 	private SpeakerAudioPlaybackPolicy() {
 	}
 
+	static boolean isPositionAuthoritative(PlaybackStreamKind streamKind) {
+		return streamKind == PlaybackStreamKind.LIVE_CAMERA;
+	}
+
 	static boolean shouldResyncPosition(
 			boolean liveStream,
 			boolean loading,
