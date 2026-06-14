@@ -1154,13 +1154,15 @@ public final class MonitorScreenSystem {
 				}
 			}
 		}
-		requestComponentRender(server, component, component.viewMode(), component.launcherPage());
+		requestComponentRender(server, component, ScreenViewMode.normalize(component.viewMode()), component.launcherPage());
 	}
 
 	static void requestComponentRender(MinecraftServer server, ScreenComponent component, ScreenViewMode viewMode, int launcherPage) {
 		if (server == null || component == null) {
 			return;
 		}
+		ScreenViewMode normalizedViewMode = ScreenViewMode.normalize(viewMode);
+		viewMode = normalizedViewMode;
 		RenderWork work;
 		MediaRuntimeState mediaState = MEDIA_STATES.get(component.runtimeKey());
 		boolean hasPersistedWallpaper;
@@ -1197,7 +1199,7 @@ public final class MonitorScreenSystem {
 		if (mediaState == null && (isPlayerMode(viewMode) || hasPersistedWallpaper || hasPersistedPlayerBackground || hasPersistedGalleryItems)) {
 			mediaState = MEDIA_STATES.computeIfAbsent(
 					component.runtimeKey(),
-					ignored -> MediaRuntimeState.fresh(viewMode, "", () -> onMediaProgressChanged(server, component.runtimeKey()))
+					ignored -> MediaRuntimeState.fresh(normalizedViewMode, "", () -> onMediaProgressChanged(server, component.runtimeKey()))
 			);
 		}
 		if (mediaState != null) {
@@ -1385,7 +1387,7 @@ public final class MonitorScreenSystem {
 		if (server == null || level == null || component == null) {
 			return;
 		}
-		ScreenViewMode effectiveViewMode = viewMode != null ? viewMode : component.viewMode();
+		ScreenViewMode effectiveViewMode = ScreenViewMode.normalize(viewMode != null ? viewMode : component.viewMode());
 		int effectiveLauncherPage = effectiveViewMode == ScreenViewMode.HOME
 				? clampInt(launcherPage, 0, homeMaxScroll(createUiLayout(component.width(), component.height())))
 				: launcherPage;
@@ -1444,7 +1446,7 @@ public final class MonitorScreenSystem {
 		boolean powered = component.frameCoords().keySet().stream()
 				.anyMatch(frame -> frame != null && frame.isAlive() && isPowered(level, frame));
 		Set<ScreenRuntimeKey> previousRuntimeKeys = previousRuntimeKeysForComponent(level, component);
-		ScreenViewMode viewMode = forcedViewMode != null ? forcedViewMode : component.viewMode();
+		ScreenViewMode viewMode = ScreenViewMode.normalize(forcedViewMode != null ? forcedViewMode : component.viewMode());
 		int launcherPage = forcedLauncherPage != null ? forcedLauncherPage : component.launcherPage();
 		if (forcedViewMode == null
 				&& forcedLauncherPage == null
@@ -7365,6 +7367,7 @@ public final class MonitorScreenSystem {
 	}
 
 	static MonitorApp appForViewMode(ScreenViewMode mode) {
+		mode = ScreenViewMode.normalize(mode);
 		if (mode == null || mode == ScreenViewMode.HOME) {
 			return null;
 		}

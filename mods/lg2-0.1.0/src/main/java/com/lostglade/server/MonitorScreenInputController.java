@@ -62,6 +62,10 @@ final class MonitorScreenInputController {
 			return InteractionResult.SUCCESS;
 		}
 		MinecraftServer server = level.getServer();
+		if (component.viewMode() == ScreenViewMode.SBER_DRONES) {
+			applyTransientComponentViewState(server, level, component, ScreenViewMode.CAMERA_APP, component.launcherPage());
+			return InteractionResult.SUCCESS;
+		}
 		ScreenViewMode nextMode = null;
 		Integer nextLauncherPage = null;
 		boolean rerenderCurrent = false;

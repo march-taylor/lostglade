@@ -82,8 +82,11 @@ final class MonitorCameraRuntime {
 		int selectedMicrophoneIndex;
 		int cameraScroll;
 		int microphoneScroll;
+		int connectedCameraCount = connectedCameraCount(cameras);
+		int connectedDroneCount = connectedDroneCount(cameras);
 		long version;
 		boolean shouldStopPreview;
+		boolean chromeHidden;
 		synchronized (state) {
 			String previousCameraUrl = state.selectedCameraUrl;
 			normalizeSelectionLocked(state, cameras, microphones);
@@ -106,6 +109,7 @@ final class MonitorCameraRuntime {
 			selectedMicrophoneIndex = selectedMicrophoneIndexLocked(state, microphones);
 			cameraScroll = state.cameraScroll;
 			microphoneScroll = state.microphoneScroll;
+			chromeHidden = state.chromeHidden;
 			preview = copyBufferedImage(state.previewFrame);
 			version = state.version + (recording && !paused ? System.currentTimeMillis() / 250L : 0L);
 			shouldStopPreview = cameraSelectionChanged || selectedCameraIndex < 0;
@@ -121,6 +125,8 @@ final class MonitorCameraRuntime {
 				preview,
 				cameraSnapshots(server, state, cameras),
 				microphoneSnapshots(state, microphones),
+				connectedCameraCount,
+				connectedDroneCount,
 				selectedCameraIndex,
 				selectedMicrophoneIndex,
 				cameraScroll,
@@ -130,6 +136,7 @@ final class MonitorCameraRuntime {
 				paused,
 				elapsedMs,
 				deviceMenuOpen,
+				chromeHidden,
 				statusText == null ? "" : statusText
 		);
 	}
@@ -142,6 +149,9 @@ final class MonitorCameraRuntime {
 		UiRect canvas = mediaCanvasRect(layout);
 		drawCameraAtmosphere(graphics, canvas, layout);
 		drawPreview(graphics, layout, state);
+		if (state.chromeHidden()) {
+			return;
+		}
 		drawMediaCloseButton(graphics, mediaCloseRect(layout), layout, MediaButtonSegment.SINGLE);
 		drawCameraMenuButton(graphics, cameraMenuButtonRect(layout), layout, state.deviceMenuOpen());
 		if (state.deviceMenuOpen()) {
@@ -159,6 +169,14 @@ final class MonitorCameraRuntime {
 			return false;
 		}
 		CameraRuntimeState state = STATES.computeIfAbsent(component.runtimeKey(), ignored -> new CameraRuntimeState());
+		synchronized (state) {
+			if (state.chromeHidden) {
+				state.chromeHidden = false;
+				state.version++;
+				requestRuntimeRender(server, component.runtimeKey());
+				return true;
+			}
+		}
 		if (mediaCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 			stopPreview(component.runtimeKey());
 			return false;
@@ -177,7 +195,8 @@ final class MonitorCameraRuntime {
 		}
 		if (cameraMenuButtonRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 			synchronized (state) {
-				state.deviceMenuOpen = !state.deviceMenuOpen;
+				state.deviceMenuOpen = true;
+				state.chromeHidden = false;
 				state.version++;
 			}
 			requestRuntimeRender(server, component.runtimeKey());
@@ -203,6 +222,13 @@ final class MonitorCameraRuntime {
 			toggleCapture(server, component, state, cameras, microphones);
 			return true;
 		}
+		synchronized (state) {
+			state.deviceMenuOpen = false;
+			state.chromeHidden = true;
+			state.statusText = "";
+			state.version++;
+		}
+		requestRuntimeRender(server, component.runtimeKey());
 		return true;
 	}
 
@@ -289,7 +315,7 @@ final class MonitorCameraRuntime {
 	}
 
 	private static CameraAppVisualSnapshot emptySnapshot() {
-		return new CameraAppVisualSnapshot(0L, null, List.of(), List.of(), -1, -1, 0, 0, CameraAppCaptureMode.PHOTO, false, false, 0L, false, "");
+		return new CameraAppVisualSnapshot(0L, null, List.of(), List.of(), 0, 0, -1, -1, 0, 0, CameraAppCaptureMode.PHOTO, false, false, 0L, false, false, "");
 	}
 
 	private static void setMode(MinecraftServer server, ScreenRuntimeKey key, CameraRuntimeState state, CameraAppCaptureMode mode) {
@@ -676,6 +702,32 @@ final class MonitorCameraRuntime {
 		return level != null ? collectConnectedCameraPositions(level, component) : List.of();
 	}
 
+	private static int connectedCameraCount(List<LiveCameraReference> cameras) {
+		if (cameras == null || cameras.isEmpty()) {
+			return 0;
+		}
+		int count = 0;
+		for (LiveCameraReference camera : cameras) {
+			if (camera != null && camera.sourceType() != LiveCameraSourceType.DRONE) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	private static int connectedDroneCount(List<LiveCameraReference> cameras) {
+		if (cameras == null || cameras.isEmpty()) {
+			return 0;
+		}
+		int count = 0;
+		for (LiveCameraReference camera : cameras) {
+			if (camera != null && camera.sourceType() == LiveCameraSourceType.DRONE) {
+				count++;
+			}
+		}
+		return count;
+	}
+
 	private static void normalizeSelectionLocked(
 			CameraRuntimeState state,
 			List<LiveCameraReference> cameras,
@@ -945,10 +997,12 @@ final class MonitorCameraRuntime {
 		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 232));
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
 		drawMediaBackButton(graphics, devicePickerBackRect(layout), layout);
-		drawVerticalText(graphics, "УСТРОЙСТВА", devicePickerTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		UiRect title = devicePickerTitleRect(layout);
+		drawVerticalText(graphics, "УСТРОЙСТВА", new UiRect(title.x(), title.y(), title.width() / 2, title.height()), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		drawCenteredTextFitted(graphics, deviceCountLabel(state), new UiRect(title.x() + title.width() / 2, title.y(), title.width() / 2, title.height()), new Color(188, 204, 218, 224), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 5);
 
 		UiRect cameraTitle = devicePickerCameraTitleRect(layout);
-		drawVerticalText(graphics, "КАМЕРА", cameraTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		drawVerticalText(graphics, "КАМЕРЫ " + state.connectedCameraCount() + " · ДРОНЫ " + state.connectedDroneCount(), cameraTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
 		List<CameraAppDeviceSnapshot> cameras = state.cameras();
 		int cameraCapacity = devicePickerCameraCapacity(layout);
 		int cameraScroll = clampInt(state.cameraScroll(), 0, Math.max(0, (cameras == null ? 0 : cameras.size()) - cameraCapacity));
@@ -958,7 +1012,7 @@ final class MonitorCameraRuntime {
 			drawPickerScrollButton(graphics, cameraPickerScrollRightRect(layout), ">", layout, cameraScroll + cameraCapacity < cameras.size());
 		}
 		if (cameras == null || cameras.isEmpty()) {
-			drawCenteredText(graphics, "Подключи камеру или Сбер Дрон к экрану", devicePickerCameraGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			drawCenteredText(graphics, "Подключи камеру или дрон к экрану", devicePickerCameraGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 		} else {
 			int count = Math.min(Math.max(0, cameras.size() - cameraScroll), cameraCapacity);
 			for (int visibleIndex = 0; visibleIndex < count; visibleIndex++) {
@@ -980,7 +1034,7 @@ final class MonitorCameraRuntime {
 		}
 
 		UiRect microphoneTitle = devicePickerMicrophoneTitleRect(layout);
-		drawVerticalText(graphics, "МИКРОФОНЫ", microphoneTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		drawVerticalText(graphics, "МИКРОФОНЫ " + (state.microphones() != null ? state.microphones().size() : 0), microphoneTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
 		List<CameraAppDeviceSnapshot> microphones = state.microphones();
 		int microphoneCapacity = devicePickerMicrophoneCapacity(layout);
 		int microphoneScroll = clampInt(state.microphoneScroll(), 0, Math.max(0, (microphones == null ? 0 : microphones.size()) - microphoneCapacity));
@@ -1069,6 +1123,13 @@ final class MonitorCameraRuntime {
 			}
 		}
 		return fallback;
+	}
+
+	private static String deviceCountLabel(CameraAppVisualSnapshot state) {
+		int cameras = state != null ? Math.max(0, state.connectedCameraCount()) : 0;
+		int drones = state != null ? Math.max(0, state.connectedDroneCount()) : 0;
+		int microphones = state != null && state.microphones() != null ? state.microphones().size() : 0;
+		return "Камер: " + cameras + " · Дронов: " + drones + " · Микрофонов: " + microphones;
 	}
 
 	private static void drawDeviceButton(Graphics2D graphics, UiRect rect, PlayerUiIcon icon, String label, UiLayout layout) {
@@ -1412,6 +1473,7 @@ final class MonitorCameraRuntime {
 		private long previewFrameReceivedAtNanos;
 		private RecordingSession recording;
 		private boolean deviceMenuOpen;
+		private boolean chromeHidden;
 		private String statusText = "";
 		private long version;
 

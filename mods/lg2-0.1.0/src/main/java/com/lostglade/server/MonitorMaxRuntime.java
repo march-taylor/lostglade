@@ -376,7 +376,7 @@ final class MonitorMaxRuntime {
 				return true;
 			}
 			if (multiMicrophone && maxCallMicrophoneSelectRect(layout, focused).contains(touchPoint.x(), touchPoint.y())) {
-				cycleSelectedMicrophone(server, component.runtimeKey());
+				openCameraPicker(server, component.runtimeKey());
 				return true;
 			}
 		}
@@ -1010,6 +1010,8 @@ final class MonitorMaxRuntime {
 		ScreenRuntimeKey focusedPeerKey;
 		String selectedMicrophoneKey;
 		int selectedMicrophoneIndex;
+		int cameraScroll;
+		int microphoneScroll;
 		BufferedImage remoteFrame;
 		synchronized (state) {
 			cameraEnabled = state.cameraEnabled;
@@ -1022,6 +1024,8 @@ final class MonitorMaxRuntime {
 			focusedPeerKey = state.focusedPeerKey;
 			selectedMicrophoneKey = state.selectedMicrophoneKey;
 			selectedMicrophoneIndex = state.selectedMicrophoneIndex;
+			cameraScroll = state.cameraPickerScroll;
+			microphoneScroll = state.microphonePickerScroll;
 			remoteFrame = state.remoteFrame;
 		}
 		if (focusPeer && focusedPeerKey != null && call.isParticipant(focusedPeerKey) && !Objects.equals(focusedPeerKey, component.runtimeKey())) {
@@ -1040,6 +1044,8 @@ final class MonitorMaxRuntime {
 			peerCode = call.peerCode(component.runtimeKey());
 		}
 		List<MaxCameraOptionSnapshot> cameraOptions = cameraOptions(server, state, cameras);
+		int connectedCameraCount = connectedCameraCount(cameras);
+		int connectedDroneCount = connectedDroneCount(cameras);
 		int selectedCameraIndex = selectedCameraIndex(state, cameraOptions);
 		BufferedImage localPreview = null;
 		if (cameraEnabled && selectedCameraIndex >= 0 && selectedCameraIndex < cameraOptions.size()) {
@@ -1053,12 +1059,18 @@ final class MonitorMaxRuntime {
 		}
 		List<MicrophoneSystem.ScreenMicrophoneDevice> microphones = MicrophoneSystem.connectedMicrophoneDevices(server, component.runtimeKey());
 		int microphoneCount = microphones.size();
+		List<MaxMicrophoneOptionSnapshot> microphoneOptions;
 		boolean microphoneSelectionChanged = false;
 		synchronized (state) {
 			int normalizedMicrophoneIndex = normalizeSelectedMicrophoneLocked(state, microphones);
 			microphoneSelectionChanged = normalizedMicrophoneIndex != selectedMicrophoneIndex
 					|| !Objects.equals(selectedMicrophoneKey, state.selectedMicrophoneKey);
 			selectedMicrophoneIndex = normalizedMicrophoneIndex;
+			UiLayout pickerLayout = createUiLayout(component.width(), component.height());
+			normalizeCallDevicePickerScrollLocked(state, pickerLayout, cameraOptions.size(), microphoneCount);
+			cameraScroll = state.cameraPickerScroll;
+			microphoneScroll = state.microphonePickerScroll;
+			microphoneOptions = microphoneOptionsLocked(state, microphones);
 		}
 		if (microphoneSelectionChanged) {
 			persistState(server, component.runtimeKey(), state);
@@ -1089,9 +1101,14 @@ final class MonitorMaxRuntime {
 				cameraEnabled,
 				microphoneEnabled,
 				cameraOptions,
+				microphoneOptions,
+				connectedCameraCount,
+				connectedDroneCount,
 				selectedCameraIndex,
 				microphoneCount,
 				selectedMicrophoneIndex,
+				cameraScroll,
+				microphoneScroll,
 				callMenuOpen,
 				cameraPickerOpen,
 				contactPickerOpen,
@@ -1765,6 +1782,69 @@ final class MonitorMaxRuntime {
 		requestPeerRenderAfterLocalCameraChange(server, component.runtimeKey());
 	}
 
+	private static void selectMicrophone(MinecraftServer server, ScreenRuntimeKey key, MaxRuntimeState state, MaxMicrophoneOptionSnapshot option) {
+		if (server == null || key == null || state == null || option == null) {
+			return;
+		}
+		synchronized (state) {
+			state.selectedMicrophoneIndex = option.index();
+			state.selectedMicrophoneKey = option.deviceKey() == null ? "" : option.deviceKey();
+			state.cameraPickerOpen = false;
+			state.statusText = "";
+			state.version++;
+		}
+		persistState(server, key, state);
+		requestRuntimeRender(server, key);
+		requestPeerRender(server, key);
+		MicrophoneSystem.onMaxCallStateChanged(server);
+	}
+
+	private static void scrollCallCameraPicker(MinecraftServer server, ScreenRuntimeKey key, MaxRuntimeState state, UiLayout layout, int cameraCount, int microphoneCount, int delta) {
+		if (server == null || key == null || state == null || layout == null || delta == 0) {
+			return;
+		}
+		boolean changed = false;
+		synchronized (state) {
+			normalizeCallDevicePickerScrollLocked(state, layout, cameraCount, microphoneCount);
+			int nextScroll = clampInt(state.cameraPickerScroll + delta, 0, maxCallDeviceCameraScroll(layout, cameraCount));
+			if (nextScroll != state.cameraPickerScroll) {
+				state.cameraPickerScroll = nextScroll;
+				state.version++;
+				changed = true;
+			}
+		}
+		if (changed) {
+			requestRuntimeRender(server, key);
+		}
+	}
+
+	private static void scrollCallMicrophonePicker(MinecraftServer server, ScreenRuntimeKey key, MaxRuntimeState state, UiLayout layout, int cameraCount, int microphoneCount, int delta) {
+		if (server == null || key == null || state == null || layout == null || delta == 0) {
+			return;
+		}
+		boolean changed = false;
+		synchronized (state) {
+			normalizeCallDevicePickerScrollLocked(state, layout, cameraCount, microphoneCount);
+			int nextScroll = clampInt(state.microphonePickerScroll + delta, 0, maxCallDeviceMicrophoneScroll(layout, microphoneCount));
+			if (nextScroll != state.microphonePickerScroll) {
+				state.microphonePickerScroll = nextScroll;
+				state.version++;
+				changed = true;
+			}
+		}
+		if (changed) {
+			requestRuntimeRender(server, key);
+		}
+	}
+
+	private static void normalizeCallDevicePickerScrollLocked(MaxRuntimeState state, UiLayout layout, int cameraCount, int microphoneCount) {
+		if (state == null || layout == null) {
+			return;
+		}
+		state.cameraPickerScroll = clampInt(state.cameraPickerScroll, 0, maxCallDeviceCameraScroll(layout, cameraCount));
+		state.microphonePickerScroll = clampInt(state.microphonePickerScroll, 0, maxCallDeviceMicrophoneScroll(layout, microphoneCount));
+	}
+
 	private static void requestPeerRenderAfterLocalCameraChange(MinecraftServer server, ScreenRuntimeKey key) {
 		MaxCallSession call = currentCall(key);
 		List<ScreenRuntimeKey> peers = call != null ? call.otherParticipants(key) : List.of();
@@ -2155,10 +2235,42 @@ final class MonitorMaxRuntime {
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
-		List<MaxCameraOptionSnapshot> options = cameraOptions(server, state, connectedCameraReferences(server, component));
-		int index = maxAvatarCandidateIndexAt(layout, options.size(), touchPoint);
+		List<LiveCameraReference> cameraRefs = connectedCameraReferences(server, component);
+		List<MicrophoneSystem.ScreenMicrophoneDevice> microphones = MicrophoneSystem.connectedMicrophoneDevices(server, component.runtimeKey());
+		if (maxCallDeviceCameraScrollLeftRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			scrollCallCameraPicker(server, component.runtimeKey(), state, layout, cameraRefs.size(), microphones.size(), -maxCallDeviceCameraScrollStep(layout));
+			return true;
+		}
+		if (maxCallDeviceCameraScrollRightRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			scrollCallCameraPicker(server, component.runtimeKey(), state, layout, cameraRefs.size(), microphones.size(), maxCallDeviceCameraScrollStep(layout));
+			return true;
+		}
+		if (maxCallDeviceMicrophoneScrollUpRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			scrollCallMicrophonePicker(server, component.runtimeKey(), state, layout, cameraRefs.size(), microphones.size(), -1);
+			return true;
+		}
+		if (maxCallDeviceMicrophoneScrollDownRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			scrollCallMicrophonePicker(server, component.runtimeKey(), state, layout, cameraRefs.size(), microphones.size(), 1);
+			return true;
+		}
+		int cameraScroll;
+		int microphoneScroll;
+		synchronized (state) {
+			normalizeSelectedMicrophoneLocked(state, microphones);
+			normalizeCallDevicePickerScrollLocked(state, layout, cameraRefs.size(), microphones.size());
+			cameraScroll = state.cameraPickerScroll;
+			microphoneScroll = state.microphonePickerScroll;
+		}
+		List<MaxCameraOptionSnapshot> options = cameraOptions(server, state, cameraRefs);
+		int index = maxCallDeviceCameraIndexAt(layout, options.size(), cameraScroll, touchPoint);
 		if (index >= 0 && index < options.size()) {
 			selectCamera(server, component, state, options.get(index));
+			return true;
+		}
+		List<MaxMicrophoneOptionSnapshot> microphoneOptions = microphoneOptions(state, microphones);
+		int microphoneIndex = maxCallDeviceMicrophoneIndexAt(layout, microphoneOptions.size(), microphoneScroll, touchPoint);
+		if (microphoneIndex >= 0 && microphoneIndex < microphoneOptions.size()) {
+			selectMicrophone(server, component.runtimeKey(), state, microphoneOptions.get(microphoneIndex));
 			return true;
 		}
 		return true;
@@ -2778,6 +2890,32 @@ final class MonitorMaxRuntime {
 		return collectConnectedCameraPositions(level, component);
 	}
 
+	private static int connectedCameraCount(List<LiveCameraReference> cameras) {
+		if (cameras == null || cameras.isEmpty()) {
+			return 0;
+		}
+		int count = 0;
+		for (LiveCameraReference camera : cameras) {
+			if (camera != null && camera.sourceType() != LiveCameraSourceType.DRONE) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	private static int connectedDroneCount(List<LiveCameraReference> cameras) {
+		if (cameras == null || cameras.isEmpty()) {
+			return 0;
+		}
+		int count = 0;
+		for (LiveCameraReference camera : cameras) {
+			if (camera != null && camera.sourceType() == LiveCameraSourceType.DRONE) {
+				count++;
+			}
+		}
+		return count;
+	}
+
 	private static List<MaxCameraOptionSnapshot> cameraOptions(MinecraftServer server, MaxRuntimeState state, List<LiveCameraReference> cameras) {
 		if (cameras == null || cameras.isEmpty()) {
 			return List.of();
@@ -2800,6 +2938,36 @@ final class MonitorMaxRuntime {
 					createLiveCameraPlaceholderPreview(title, subtitle, online, camera.sourceType()),
 					Objects.equals(url, selected),
 					online
+			));
+		}
+		return List.copyOf(options);
+	}
+
+	private static List<MaxMicrophoneOptionSnapshot> microphoneOptions(MaxRuntimeState state, List<MicrophoneSystem.ScreenMicrophoneDevice> microphones) {
+		synchronized (state) {
+			return microphoneOptionsLocked(state, microphones);
+		}
+	}
+
+	private static List<MaxMicrophoneOptionSnapshot> microphoneOptionsLocked(MaxRuntimeState state, List<MicrophoneSystem.ScreenMicrophoneDevice> microphones) {
+		if (state == null || microphones == null || microphones.isEmpty()) {
+			return List.of();
+		}
+		List<MaxMicrophoneOptionSnapshot> options = new ArrayList<>(microphones.size());
+		String selectedKey = state.selectedMicrophoneKey;
+		int selectedIndex = state.selectedMicrophoneIndex;
+		for (MicrophoneSystem.ScreenMicrophoneDevice microphone : microphones) {
+			String deviceKey = microphoneDeviceKey(microphone);
+			boolean selected = selectedKey != null && !selectedKey.isBlank()
+					? Objects.equals(selectedKey, deviceKey)
+					: microphone.index() == selectedIndex;
+			options.add(new MaxMicrophoneOptionSnapshot(
+					microphone.index(),
+					microphone.title(),
+					microphone.subtitle(),
+					deviceKey,
+					selected,
+					true
 			));
 		}
 		return List.copyOf(options);
@@ -3387,27 +3555,102 @@ final class MonitorMaxRuntime {
 		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 230));
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
 		drawMediaBackButton(graphics, maxAvatarPickerBackRect(layout), layout);
-		drawVerticalText(graphics, "ВЫБЕРИ КАМЕРУ", maxAvatarPickerTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		UiRect title = maxAvatarPickerTitleRect(layout);
+		drawVerticalText(graphics, "УСТРОЙСТВА", new UiRect(title.x(), title.y(), title.width() / 2, title.height()), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		drawCenteredTextFitted(graphics, maxCallDeviceCountLabel(call), new UiRect(title.x() + title.width() / 2, title.y(), title.width() / 2, title.height()), new Color(188, 204, 218, 224), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 5);
+
+		UiRect cameraTitle = maxCallDeviceCameraTitleRect(layout);
+		drawVerticalText(graphics, "КАМЕРЫ " + call.connectedCameraCount() + " · ДРОНЫ " + call.connectedDroneCount(), cameraTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
 		List<MaxCameraOptionSnapshot> cameras = call.cameras();
+		int cameraCapacity = maxCallDeviceCameraCapacity(layout);
+		int cameraScroll = clampInt(call.cameraScroll(), 0, Math.max(0, (cameras == null ? 0 : cameras.size()) - cameraCapacity));
+		if (cameras != null && cameras.size() > cameraCapacity) {
+			drawMaxDeviceScrollStatus(graphics, cameraTitle, layout, cameraScroll, cameraCapacity, cameras.size());
+			drawMaxDeviceScrollButton(graphics, maxCallDeviceCameraScrollLeftRect(layout), "<", layout, cameraScroll > 0);
+			drawMaxDeviceScrollButton(graphics, maxCallDeviceCameraScrollRightRect(layout), ">", layout, cameraScroll + cameraCapacity < cameras.size());
+		}
 		if (cameras == null || cameras.isEmpty()) {
-			drawCenteredText(graphics, "Подключи камеру или Сбер Дрон к экрану", maxAvatarPickerGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			drawCenteredText(graphics, "Подключи камеру или дрон к экрану", maxCallDeviceCameraGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+		} else {
+			int count = Math.min(Math.max(0, cameras.size() - cameraScroll), cameraCapacity);
+			for (int visibleIndex = 0; visibleIndex < count; visibleIndex++) {
+				int index = cameraScroll + visibleIndex;
+				MaxCameraOptionSnapshot camera = cameras.get(index);
+				UiRect rect = maxCallDeviceCameraRect(layout, visibleIndex);
+				fillRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), new Color(255, 255, 255, camera.selected() ? 34 : 18));
+				if (camera.preview() != null) {
+					drawScaledImage(graphics, camera.preview(), rect.inset(Math.max(2, layout.unit() / 4)), MediaScaleMode.FILL);
+				}
+				if (camera.selected()) {
+					strokeRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), 1.5F, new Color(255, 255, 255, 172));
+				}
+				UiRect label = new UiRect(rect.x() + layout.unit() / 2, rect.bottom() - clampInt(layout.unit() * 3, 24, 38), rect.width() - layout.unit(), clampInt(layout.unit() * 2, 18, 28));
+				fillRoundedRect(graphics, label, label.height(), new Color(0, 0, 0, 112));
+				drawCenteredTextFitted(graphics, camera.title() + " " + camera.subtitle(), label.inset(2), camera.online() ? new Color(248, 251, 255, 238) : new Color(248, 251, 255, 136), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
+			}
+		}
+
+		UiRect microphoneTitle = maxCallDeviceMicrophoneTitleRect(layout);
+		drawVerticalText(graphics, "МИКРОФОНЫ", microphoneTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		List<MaxMicrophoneOptionSnapshot> microphones = call.microphones();
+		int microphoneCapacity = maxCallDeviceMicrophoneCapacity(layout);
+		int microphoneScroll = clampInt(call.microphoneScroll(), 0, Math.max(0, (microphones == null ? 0 : microphones.size()) - microphoneCapacity));
+		if (microphones != null && microphones.size() > microphoneCapacity) {
+			drawMaxDeviceScrollStatus(graphics, microphoneTitle, layout, microphoneScroll, microphoneCapacity, microphones.size());
+			drawMaxDeviceScrollButton(graphics, maxCallDeviceMicrophoneScrollUpRect(layout), "^", layout, microphoneScroll > 0);
+			drawMaxDeviceScrollButton(graphics, maxCallDeviceMicrophoneScrollDownRect(layout), "v", layout, microphoneScroll + microphoneCapacity < microphones.size());
+		}
+		if (microphones == null || microphones.isEmpty()) {
+			drawCenteredText(graphics, "Подключи микрофон к экрану", maxCallDeviceMicrophoneListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
-		int count = Math.min(cameras.size(), maxAvatarPickerCapacity(layout));
-		for (int index = 0; index < count; index++) {
-			MaxCameraOptionSnapshot camera = cameras.get(index);
-			UiRect rect = maxAvatarCandidateRect(layout, index);
-			fillRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), new Color(255, 255, 255, camera.selected() ? 34 : 18));
-			if (camera.preview() != null) {
-				drawScaledImage(graphics, camera.preview(), rect.inset(Math.max(2, layout.unit() / 4)), MediaScaleMode.FILL);
-			}
-			if (camera.selected()) {
-				strokeRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), 1.5F, new Color(255, 255, 255, 172));
-			}
-			UiRect label = new UiRect(rect.x() + layout.unit() / 2, rect.bottom() - clampInt(layout.unit() * 3, 24, 38), rect.width() - layout.unit(), clampInt(layout.unit() * 2, 18, 28));
-			fillRoundedRect(graphics, label, label.height(), new Color(0, 0, 0, 112));
-			drawCenteredTextFitted(graphics, camera.title() + " " + camera.subtitle(), label.inset(2), camera.online() ? new Color(248, 251, 255, 238) : new Color(248, 251, 255, 136), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
+		int microphoneCount = Math.min(Math.max(0, microphones.size() - microphoneScroll), microphoneCapacity);
+		for (int visibleIndex = 0; visibleIndex < microphoneCount; visibleIndex++) {
+			int index = microphoneScroll + visibleIndex;
+			drawMaxDeviceMicrophoneRow(graphics, layout, maxCallDeviceMicrophoneRowRect(layout, visibleIndex), microphones.get(index));
 		}
+	}
+
+	private static void drawMaxDeviceMicrophoneRow(Graphics2D graphics, UiLayout layout, UiRect rect, MaxMicrophoneOptionSnapshot microphone) {
+		int arc = clampInt(layout.unit(), 8, 16);
+		fillRoundedRect(graphics, rect, arc, new Color(255, 255, 255, microphone.selected() ? 30 : 14));
+		strokeRoundedRect(graphics, rect, arc, 1.0F, microphone.selected() ? new Color(255, 255, 255, 128) : new Color(255, 255, 255, 42));
+		int iconSize = clampInt(layout.unit() * 2, 18, 28);
+		int gap = Math.max(4, layout.unit() / 2);
+		UiRect check = new UiRect(rect.x() + gap, rect.y() + (rect.height() - iconSize) / 2, iconSize, iconSize);
+		Color checkColor = drawSmallMediaButtonBase(graphics, check, MediaButtonSegment.SINGLE, microphone.selected(), mediaChromeStrokeWidth(check));
+		if (microphone.selected()) {
+			drawPlayerUiIcon(graphics, mediaChromeIconRect(check, layout), PlayerUiIcon.CHECK, checkColor);
+		}
+		UiRect micIcon = new UiRect(check.right() + gap, rect.y() + (rect.height() - iconSize) / 2, iconSize, iconSize);
+		drawPlayerUiIcon(graphics, micIcon.inset(Math.max(2, layout.unit() / 5)), PlayerUiIcon.MIC, new Color(238, 244, 250, 214));
+		UiRect textRect = new UiRect(micIcon.right() + gap, rect.y() + Math.max(2, layout.unit() / 4), Math.max(8, rect.right() - micIcon.right() - gap * 2), rect.height() - Math.max(4, layout.unit() / 2));
+		int titleHeight = Math.max(10, textRect.height() / 2);
+		drawWrappedText(graphics, microphone.title(), new UiRect(textRect.x(), textRect.y(), textRect.width(), titleHeight), new Color(248, 251, 255, 232), Font.BOLD, clampInt(layout.unit() - 1, 8, 13), 1);
+		drawWrappedText(graphics, microphone.subtitle(), new UiRect(textRect.x(), textRect.y() + titleHeight, textRect.width(), textRect.height() - titleHeight), new Color(178, 194, 210, 214), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 1);
+	}
+
+	private static void drawMaxDeviceScrollButton(Graphics2D graphics, UiRect rect, String label, UiLayout layout, boolean enabled) {
+		Color color = drawSmallMediaButtonBase(graphics, rect, MediaButtonSegment.SINGLE, false, mediaChromeStrokeWidth(rect));
+		drawCenteredText(graphics, label, rect, enabled ? color : new Color(color.getRed(), color.getGreen(), color.getBlue(), 96), Font.BOLD, clampInt(layout.unit(), 9, 14));
+	}
+
+	private static void drawMaxDeviceScrollStatus(Graphics2D graphics, UiRect titleRect, UiLayout layout, int offset, int visibleCount, int totalCount) {
+		if (totalCount <= visibleCount || visibleCount <= 0) {
+			return;
+		}
+		int width = clampInt(layout.unit() * 4, 30, 56);
+		UiRect statusRect = new UiRect(titleRect.right() - width - clampInt(layout.unit() * 4, 28, 44), titleRect.y(), width, titleRect.height());
+		int from = offset + 1;
+		int to = Math.min(totalCount, offset + visibleCount);
+		drawCenteredText(graphics, from + "-" + to, statusRect, new Color(188, 204, 218, 208), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11));
+	}
+
+	private static String maxCallDeviceCountLabel(MaxCallVisualSnapshot call) {
+		int cameras = call != null ? Math.max(0, call.connectedCameraCount()) : 0;
+		int drones = call != null ? Math.max(0, call.connectedDroneCount()) : 0;
+		int microphones = call != null && call.microphones() != null ? call.microphones().size() : 0;
+		return "Камер: " + cameras + " · Дронов: " + drones + " · Микрофонов: " + microphones;
 	}
 
 	private static void drawMaxRingtonePicker(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot state) {
@@ -4116,6 +4359,138 @@ final class MonitorMaxRuntime {
 		return -1;
 	}
 
+	private static UiRect maxCallDeviceContentRect(UiLayout layout) {
+		UiRect panel = maxAvatarPickerPanelRect(layout);
+		UiRect back = maxAvatarPickerBackRect(layout);
+		int y = back.bottom() + Math.max(4, layout.unit() / 2);
+		return new UiRect(panel.x() + layout.unit(), y, panel.width() - layout.unit() * 2, Math.max(18, panel.bottom() - y - layout.unit()));
+	}
+
+	private static UiRect maxCallDeviceCameraTitleRect(UiLayout layout) {
+		UiRect content = maxCallDeviceContentRect(layout);
+		int height = clampInt(layout.unit() + 4, 14, 22);
+		return new UiRect(content.x(), content.y(), content.width(), height);
+	}
+
+	private static UiRect maxCallDeviceCameraGridRect(UiLayout layout) {
+		UiRect content = maxCallDeviceContentRect(layout);
+		UiRect title = maxCallDeviceCameraTitleRect(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		int height = Math.max(clampInt(layout.unit() * 7, 56, 112), (content.height() - title.height() - gap * 3) / 2);
+		return new UiRect(content.x(), title.bottom() + gap, content.width(), Math.min(height, Math.max(18, content.bottom() - title.bottom() - gap)));
+	}
+
+	private static UiRect maxCallDeviceMicrophoneTitleRect(UiLayout layout) {
+		UiRect cameraGrid = maxCallDeviceCameraGridRect(layout);
+		UiRect content = maxCallDeviceContentRect(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		int height = clampInt(layout.unit() + 4, 14, 22);
+		return new UiRect(content.x(), cameraGrid.bottom() + gap, content.width(), height);
+	}
+
+	private static UiRect maxCallDeviceMicrophoneListRect(UiLayout layout) {
+		UiRect content = maxCallDeviceContentRect(layout);
+		UiRect title = maxCallDeviceMicrophoneTitleRect(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		return new UiRect(content.x(), title.bottom() + gap, content.width(), Math.max(18, content.bottom() - title.bottom() - gap));
+	}
+
+	private static UiRect maxCallDeviceScrollButtonRect(UiRect titleRect, int indexFromRight, UiLayout layout) {
+		int gap = Math.max(4, layout.unit() / 2);
+		int size = Math.min(titleRect.height(), clampInt(layout.unit() * 2, 18, 30));
+		int x = titleRect.right() - size - indexFromRight * (size + gap);
+		return new UiRect(x, titleRect.y(), size, titleRect.height());
+	}
+
+	private static UiRect maxCallDeviceCameraScrollLeftRect(UiLayout layout) {
+		return maxCallDeviceScrollButtonRect(maxCallDeviceCameraTitleRect(layout), 1, layout);
+	}
+
+	private static UiRect maxCallDeviceCameraScrollRightRect(UiLayout layout) {
+		return maxCallDeviceScrollButtonRect(maxCallDeviceCameraTitleRect(layout), 0, layout);
+	}
+
+	private static UiRect maxCallDeviceMicrophoneScrollUpRect(UiLayout layout) {
+		return maxCallDeviceScrollButtonRect(maxCallDeviceMicrophoneTitleRect(layout), 1, layout);
+	}
+
+	private static UiRect maxCallDeviceMicrophoneScrollDownRect(UiLayout layout) {
+		return maxCallDeviceScrollButtonRect(maxCallDeviceMicrophoneTitleRect(layout), 0, layout);
+	}
+
+	private static int maxCallDeviceCameraColumns(UiLayout layout) {
+		return compactScreenLayout(layout) ? 3 : 4;
+	}
+
+	private static int maxCallDeviceCameraCapacity(UiLayout layout) {
+		UiRect grid = maxCallDeviceCameraGridRect(layout);
+		int columns = maxCallDeviceCameraColumns(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		int cell = Math.max(1, (grid.width() - gap * (columns - 1)) / columns);
+		int rows = Math.max(1, grid.height() / (cell + gap));
+		return rows * columns;
+	}
+
+	private static UiRect maxCallDeviceCameraRect(UiLayout layout, int index) {
+		UiRect grid = maxCallDeviceCameraGridRect(layout);
+		int columns = maxCallDeviceCameraColumns(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		int cell = Math.max(1, (grid.width() - gap * (columns - 1)) / columns);
+		int row = index / columns;
+		int column = index % columns;
+		return new UiRect(grid.x() + column * (cell + gap), grid.y() + row * (cell + gap), cell, cell);
+	}
+
+	private static int maxCallDeviceCameraIndexAt(UiLayout layout, int cameraCount, int cameraScroll, UiPoint point) {
+		int count = Math.min(Math.max(0, cameraCount - cameraScroll), maxCallDeviceCameraCapacity(layout));
+		for (int visibleIndex = 0; visibleIndex < count; visibleIndex++) {
+			if (maxCallDeviceCameraRect(layout, visibleIndex).contains(point.x(), point.y())) {
+				return cameraScroll + visibleIndex;
+			}
+		}
+		return -1;
+	}
+
+	private static int maxCallDeviceCameraScrollStep(UiLayout layout) {
+		return Math.max(1, maxCallDeviceCameraColumns(layout));
+	}
+
+	private static int maxCallDeviceCameraScroll(UiLayout layout, int cameraCount) {
+		return Math.max(0, cameraCount - maxCallDeviceCameraCapacity(layout));
+	}
+
+	private static int maxCallDeviceMicrophoneCapacity(UiLayout layout) {
+		UiRect list = maxCallDeviceMicrophoneListRect(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		int rowHeight = maxCallDeviceMicrophoneRowHeight(layout);
+		return Math.max(1, (list.height() + gap) / Math.max(1, rowHeight + gap));
+	}
+
+	private static int maxCallDeviceMicrophoneRowHeight(UiLayout layout) {
+		return clampInt(layout.unit() * 3, 28, 44);
+	}
+
+	private static UiRect maxCallDeviceMicrophoneRowRect(UiLayout layout, int index) {
+		UiRect list = maxCallDeviceMicrophoneListRect(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		int height = maxCallDeviceMicrophoneRowHeight(layout);
+		return new UiRect(list.x(), list.y() + index * (height + gap), list.width(), height);
+	}
+
+	private static int maxCallDeviceMicrophoneIndexAt(UiLayout layout, int microphoneCount, int microphoneScroll, UiPoint point) {
+		int count = Math.min(Math.max(0, microphoneCount - microphoneScroll), maxCallDeviceMicrophoneCapacity(layout));
+		for (int visibleIndex = 0; visibleIndex < count; visibleIndex++) {
+			if (maxCallDeviceMicrophoneRowRect(layout, visibleIndex).contains(point.x(), point.y())) {
+				return microphoneScroll + visibleIndex;
+			}
+		}
+		return -1;
+	}
+
+	private static int maxCallDeviceMicrophoneScroll(UiLayout layout, int microphoneCount) {
+		return Math.max(0, microphoneCount - maxCallDeviceMicrophoneCapacity(layout));
+	}
+
 	private static int maxRingtonePickerCapacity(UiLayout layout) {
 		UiRect list = maxAvatarPickerGridRect(layout);
 		int row = maxRingtoneCandidateHeight(layout);
@@ -4293,6 +4668,8 @@ final class MonitorMaxRuntime {
 		private long ringtonePreviewStartedAtMillis;
 		private boolean callMenuOpen;
 		private boolean cameraPickerOpen;
+		private int cameraPickerScroll;
+		private int microphonePickerScroll;
 		private boolean callContactPickerOpen;
 		private boolean focusSelf;
 		private boolean focusPeer;

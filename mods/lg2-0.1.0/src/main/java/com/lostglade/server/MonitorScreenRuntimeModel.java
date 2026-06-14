@@ -159,6 +159,8 @@ record CameraAppVisualSnapshot(
 		BufferedImage previewFrame,
 		List<CameraAppDeviceSnapshot> cameras,
 		List<CameraAppDeviceSnapshot> microphones,
+		int connectedCameraCount,
+		int connectedDroneCount,
 		int selectedCameraIndex,
 		int selectedMicrophoneIndex,
 		int cameraScroll,
@@ -168,6 +170,7 @@ record CameraAppVisualSnapshot(
 		boolean paused,
 		long elapsedMs,
 		boolean deviceMenuOpen,
+		boolean chromeHidden,
 		String statusText
 ) {
 	boolean dynamic() {
@@ -235,9 +238,14 @@ record MaxCallVisualSnapshot(
 		boolean cameraEnabled,
 		boolean microphoneEnabled,
 		List<MaxCameraOptionSnapshot> cameras,
+		List<MaxMicrophoneOptionSnapshot> microphones,
+		int connectedCameraCount,
+		int connectedDroneCount,
 		int selectedCameraIndex,
 		int microphoneCount,
 		int selectedMicrophoneIndex,
+		int cameraScroll,
+		int microphoneScroll,
 		boolean menuOpen,
 		boolean cameraPickerOpen,
 		boolean contactPickerOpen,
@@ -271,6 +279,16 @@ record MaxCameraOptionSnapshot(
 		String subtitle,
 		String url,
 		BufferedImage preview,
+		boolean selected,
+		boolean online
+) {
+}
+
+record MaxMicrophoneOptionSnapshot(
+		int index,
+		String title,
+		String subtitle,
+		String deviceKey,
 		boolean selected,
 		boolean online
 ) {

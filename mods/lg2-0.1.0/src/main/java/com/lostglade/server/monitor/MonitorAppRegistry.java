@@ -5,7 +5,6 @@ import java.util.List;
 public final class MonitorAppRegistry {
 	private static final List<MonitorApp> APPS = List.of(
 			new MonitorMediaApp(),
-			new MonitorSberDronesApp(),
 			new MonitorCameraApp(),
 			new MonitorMaxApp(),
 			new MonitorYandexMapsApp(),

@@ -39,12 +39,19 @@ enum ScreenViewMode {
 		if ("media".equalsIgnoreCase(value)) {
 			return GALLERY;
 		}
+		if ("sberdrones".equalsIgnoreCase(value)) {
+			return CAMERA_APP;
+		}
 		for (ScreenViewMode mode : values()) {
 			if (mode.serializedName.equalsIgnoreCase(value)) {
 				return mode;
 			}
 		}
 		return HOME;
+	}
+
+	static ScreenViewMode normalize(ScreenViewMode mode) {
+		return mode == SBER_DRONES ? CAMERA_APP : mode;
 	}
 }
 
