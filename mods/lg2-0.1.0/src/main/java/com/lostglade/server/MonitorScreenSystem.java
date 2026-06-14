@@ -210,6 +210,7 @@ public final class MonitorScreenSystem {
 	static final Map<PlayerUiIconTintKey, BufferedImage> PLAYER_UI_ICON_TINT_CACHE = new ConcurrentHashMap<>();
 	static final Map<ScreenRuntimeKey, MediaRuntimeState> MEDIA_STATES = new ConcurrentHashMap<>();
 	static final Map<UUID, PendingMediaLinkRequest> PENDING_MEDIA_LINKS = new ConcurrentHashMap<>();
+	static final Map<UUID, PendingGalleryRenameRequest> PENDING_GALLERY_RENAMES = new ConcurrentHashMap<>();
 	static final Map<UUID, InFlightMediaLinkRequest> IN_FLIGHT_MEDIA_LINKS = new ConcurrentHashMap<>();
 	static final Map<UUID, ScreenRuntimeKey> ACTIVE_MEDIA_ACTIONBARS = new ConcurrentHashMap<>();
 	static final Map<UUID, PlayerMediaFocus> PLAYER_MEDIA_FOCUS = new ConcurrentHashMap<>();
@@ -383,6 +384,7 @@ public final class MonitorScreenSystem {
 		}
 		MEDIA_STATES.clear();
 		PENDING_MEDIA_LINKS.clear();
+		PENDING_GALLERY_RENAMES.clear();
 		IN_FLIGHT_MEDIA_LINKS.clear();
 		ACTIVE_MEDIA_ACTIONBARS.clear();
 		PLAYER_MEDIA_FOCUS.clear();
@@ -2187,8 +2189,8 @@ public final class MonitorScreenSystem {
 			GalleryItemKind resolvedKind = effectiveGalleryItemKind(item);
 			BufferedImage preview = resolvedKind == GalleryItemKind.YOUTUBE
 					? MonitorYoutubeRelayClient.queueEntryPreview(item.url())
-					: resolvedKind == GalleryItemKind.AUDIO && MonitorYoutubeMusicCache.looksLikeSupportedUrl(item.url())
-					? MonitorYoutubeMusicCache.queueEntryPreview(item.url())
+					: resolvedKind == GalleryItemKind.AUDIO
+					? persistedGalleryAudioPreview(item)
 					: null;
 			items.add(new GalleryItem(item.title(), item.subtitle(), item.url(), item.localMediaKey(), null, preview, resolvedKind));
 		}
@@ -2218,12 +2220,20 @@ public final class MonitorScreenSystem {
 		if (kind == GalleryItemKind.YOUTUBE) {
 			return MonitorYoutubeRelayClient.queueEntryPreview(item.url());
 		}
-		if (kind == GalleryItemKind.AUDIO && MonitorYoutubeMusicCache.looksLikeSupportedUrl(item.url())) {
-			return MonitorYoutubeMusicCache.queueEntryPreview(item.url());
+		if (kind == GalleryItemKind.AUDIO) {
+			BufferedImage localPreview = persistedGalleryAudioPreview(item);
+			if (localPreview != null) {
+				return localPreview;
+			}
+			return MonitorYoutubeMusicCache.looksLikeSupportedUrl(item.url())
+					? MonitorYoutubeMusicCache.queueEntryPreview(item.url())
+					: null;
 		}
 		String localMediaKey = item.localMediaKey() != null ? item.localMediaKey().trim() : "";
 		if (localMediaKey.isBlank()) {
-			return null;
+			return MonitorYoutubeMusicCache.looksLikeSupportedUrl(item.url())
+					? MonitorYoutubeMusicCache.queueEntryPreview(item.url())
+					: null;
 		}
 		try {
 			return switch (kind) {
@@ -2236,11 +2246,33 @@ public final class MonitorScreenSystem {
 					MonitorMediaApp.LoadedVideo video = MonitorMediaApp.loadSavedGalleryVideo(localMediaKey, null);
 					yield video.preview() != null ? copyBufferedImage(video.preview()) : null;
 				}
-				case AUDIO, LIVE_CAMERA, YOUTUBE -> null;
+				case AUDIO -> MonitorMediaApp.loadSavedGalleryAudioPreview(localMediaKey, item.title());
+				case LIVE_CAMERA, YOUTUBE -> null;
 			};
 		} catch (Exception exception) {
 			Lg2.LOGGER.debug("Failed to hydrate persisted gallery preview {}: {}", localMediaKey, sanitizeMediaError(exception.getMessage()));
 			return null;
+		}
+	}
+
+	static BufferedImage persistedGalleryAudioPreview(PersistedGalleryItem item) {
+		if (item == null) {
+			return null;
+		}
+		String localMediaKey = item.localMediaKey() != null ? item.localMediaKey().trim() : "";
+		if (localMediaKey.isBlank()) {
+			return MonitorYoutubeMusicCache.looksLikeSupportedUrl(item.url())
+					? MonitorYoutubeMusicCache.queueEntryPreview(item.url())
+					: null;
+		}
+		try {
+			BufferedImage preview = MonitorMediaApp.loadSavedGalleryAudioPreview(localMediaKey, item.title());
+			return preview != null ? copyBufferedImage(preview) : null;
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to hydrate persisted audio cover {}: {}", localMediaKey, sanitizeMediaError(exception.getMessage()));
+			return MonitorYoutubeMusicCache.looksLikeSupportedUrl(item.url())
+					? MonitorYoutubeMusicCache.queueEntryPreview(item.url())
+					: null;
 		}
 	}
 
@@ -2760,14 +2792,16 @@ public final class MonitorScreenSystem {
 		MediaActionGlyph actionGlyph = resolvedActionGlyph(state);
 		MediaActionVisualState actionState = resolvedActionVisualState(state);
 		boolean actionVisible = resolvedActionVisible(state);
-		boolean wallpaperActionVisible = galleryMode && currentGalleryItemCanBeWallpaperLocked(state);
+		boolean wallpaperActionVisible = false;
 		MediaActionGlyph wallpaperActionGlyph = currentGalleryItemIsWallpaperLocked(state) ? MediaActionGlyph.CHECK : MediaActionGlyph.WALLPAPER;
 		MediaActionVisualState wallpaperActionState = currentGalleryItemIsWallpaperLocked(state) ? MediaActionVisualState.COMPLETE : MediaActionVisualState.IDLE;
 		PlayerBackgroundMode playerBackgroundMode = resolvedPlayerBackgroundModeLocked(state);
 		boolean galleryBackgroundAvailable = state.playerBackgroundUrl != null
 				&& !state.playerBackgroundUrl.isBlank()
 				&& state.playerBackgroundMedia != null;
-		MediaOverlayWindowSnapshot overlayWindow = state.playerBackgroundMenuOpen
+		MediaOverlayWindowSnapshot overlayWindow = galleryMode && state.galleryFileMenuOpen
+				? galleryFileMenuWindowSnapshot(state)
+				: state.playerBackgroundMenuOpen
 				? playerBackgroundMenuWindowSnapshot(
 						state,
 						playerBackgroundMode,
@@ -3249,7 +3283,15 @@ public final class MonitorScreenSystem {
 			} else {
 				drawMediaCloseButton(graphics, closeRect, layout, controlUi && !musicPlayerLayout ? MediaButtonSegment.LEFT : MediaButtonSegment.SINGLE);
 			}
-			drawMediaPlayerMenuButton(graphics, menuRect, layout, state != null && state.overlayWindow() != null && state.overlayWindow().type() == MediaOverlayWindowType.PLAYER_BACKGROUND);
+			drawMediaPlayerMenuButton(
+					graphics,
+					menuRect,
+					layout,
+					state != null
+							&& state.overlayWindow() != null
+							&& (state.overlayWindow().type() == MediaOverlayWindowType.PLAYER_BACKGROUND
+							|| state.overlayWindow().type() == MediaOverlayWindowType.GALLERY_FILE_MENU)
+			);
 			if (controlUi) {
 				boolean titleBarMode = libraryMode
 						|| galleryBackedYoutube
@@ -4396,6 +4438,7 @@ public final class MonitorScreenSystem {
 		switch (window.type()) {
 			case YOUTUBE_QUEUE -> drawYoutubeQueueWindow(overlayGraphics, layout, window);
 			case GALLERY_DELETE_CONFIRM -> drawGalleryDeleteConfirmWindow(overlayGraphics, layout, window);
+			case GALLERY_FILE_MENU -> drawGalleryFileMenuWindow(overlayGraphics, layout, window);
 			case PLAYER_BACKGROUND -> drawPlayerBackgroundWindow(overlayGraphics, layout, window);
 		}
 		overlayGraphics.dispose();
@@ -4410,6 +4453,7 @@ public final class MonitorScreenSystem {
 		switch (type) {
 			case YOUTUBE_QUEUE -> drawYoutubeQueueWindowPlaceholder(overlayGraphics, layout);
 			case GALLERY_DELETE_CONFIRM -> drawGalleryDeleteConfirmWindowPlaceholder(overlayGraphics, layout);
+			case GALLERY_FILE_MENU -> drawGalleryFileMenuWindowPlaceholder(overlayGraphics, layout);
 			case PLAYER_BACKGROUND -> drawPlayerBackgroundWindowPlaceholder(overlayGraphics, layout);
 		}
 		overlayGraphics.dispose();
@@ -4579,6 +4623,7 @@ public final class MonitorScreenSystem {
 						"УДАЛИТЬ?",
 						"Подтверждение",
 						List.of(),
+						null,
 						0,
 						-1,
 						false,
@@ -4588,6 +4633,92 @@ public final class MonitorScreenSystem {
 						MediaScaleMode.FIT
 				)
 		);
+	}
+
+	static void drawGalleryFileMenuWindow(Graphics2D graphics, UiLayout layout, MediaOverlayWindowSnapshot window) {
+		UiRect panel = galleryFileMenuPanelRect(layout);
+		UiRect header = galleryFileMenuHeaderRect(layout);
+		UiRect closeRect = galleryFileMenuCloseRect(layout);
+		GalleryFileMenuSnapshot file = window != null ? window.galleryFile() : null;
+		drawOverlayModalBase(graphics, layout, panel, header, closeRect, window != null ? window.title() : "ФАЙЛ", window != null ? window.subtitle() : "");
+		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 0), PlayerUiIcon.EDIT, "ПЕРЕИМЕНОВАТЬ", "Имя файла", file != null && file.canRename(), false, false);
+		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 1), PlayerUiIcon.SEND_PLANE, "ПОДЕЛИТЬСЯ", "Отправить в MAX", file != null && file.canShare(), false, false);
+		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 2), file != null && file.wallpaperSelected() ? PlayerUiIcon.CHECK : PlayerUiIcon.WALLPAPER, file != null && file.wallpaperSelected() ? "ОБОИ УСТАНОВЛЕНЫ" : "СДЕЛАТЬ ОБОЯМИ", "Фон монитора", file != null && file.canWallpaper(), file != null && file.wallpaperSelected(), false);
+		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 3), PlayerUiIcon.SETTINGS, "ФОН ПЛЕЕРА", "Настройки отображения", true, false, false);
+		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 4), PlayerUiIcon.TRASH, "УДАЛИТЬ", "Из галереи экрана", file != null && file.saved(), false, true);
+	}
+
+	static void drawGalleryFileMenuWindowPlaceholder(Graphics2D graphics, UiLayout layout) {
+		drawGalleryFileMenuWindow(
+				graphics,
+				layout,
+				new MediaOverlayWindowSnapshot(
+						MediaOverlayWindowType.GALLERY_FILE_MENU,
+						"ФАЙЛ",
+						"Медиа",
+						List.of(),
+						new GalleryFileMenuSnapshot("Медиа", "", false, false, false, false, false),
+						0,
+						-1,
+						false,
+						false,
+						null,
+						false,
+						MediaScaleMode.FIT
+				)
+		);
+	}
+
+	static void drawGalleryFileMenuActionButton(
+			Graphics2D graphics,
+			UiLayout layout,
+			UiRect rect,
+			PlayerUiIcon icon,
+			String title,
+			String subtitle,
+			boolean enabled,
+			boolean selected,
+			boolean danger
+	) {
+		if (graphics == null || layout == null || rect == null || icon == null) {
+			return;
+		}
+		Color fill = selected
+				? new Color(248, 246, 246, 238)
+				: enabled ? new Color(255, 255, 255, 14) : new Color(255, 255, 255, 8);
+		Color stroke = danger && enabled
+				? new Color(255, 118, 126, 92)
+				: selected ? new Color(255, 255, 255, 86) : enabled ? new Color(255, 255, 255, 34) : new Color(255, 255, 255, 20);
+		Color titleColor = selected
+				? new Color(22, 20, 24, 244)
+				: danger && enabled ? new Color(255, 142, 150, 238) : enabled ? new Color(248, 240, 244, 236) : new Color(200, 208, 218, 150);
+		Color subtitleColor = selected
+				? new Color(68, 60, 66, 220)
+				: enabled ? new Color(214, 221, 230, 188) : new Color(164, 174, 186, 132);
+		int arc = clampInt(layout.unit() * 2, 12, 18);
+		fillRoundedRect(graphics, rect, arc, fill);
+		strokeRoundedRect(graphics, rect, arc, 1.0F, stroke);
+		UiRect iconRect = new UiRect(
+				rect.x() + clampInt(layout.unit() / 2, 4, 8),
+				rect.y() + (rect.height() - clampInt(layout.unit() + 6, 14, 22)) / 2,
+				clampInt(layout.unit() + 6, 14, 22),
+				clampInt(layout.unit() + 6, 14, 22)
+		);
+		drawPlayerUiIcon(graphics, iconRect, icon, titleColor);
+		UiRect titleRect = new UiRect(
+				iconRect.right() + clampInt(layout.unit() / 2, 4, 8),
+				rect.y() + clampInt(layout.unit() / 4, 2, 5),
+				Math.max(24, rect.width() - (iconRect.right() - rect.x()) - clampInt(layout.unit(), 8, 14)),
+				Math.max(12, rect.height() / 2)
+		);
+		UiRect subtitleRect = new UiRect(
+				titleRect.x(),
+				titleRect.bottom() - clampInt(layout.unit() / 6, 1, 2),
+				titleRect.width(),
+				Math.max(10, rect.bottom() - titleRect.bottom() - clampInt(layout.unit() / 4, 2, 4))
+		);
+		drawVerticalText(graphics, title, titleRect, titleColor, Font.BOLD, compactScreenLayout(layout) ? clampInt(layout.unit(), 8, 13) : clampInt(layout.unit() + 1, 10, 16));
+		drawVerticalText(graphics, subtitle, subtitleRect, subtitleColor, Font.PLAIN, compactScreenLayout(layout) ? clampInt(layout.unit() - 1, 7, 10) : clampInt(layout.unit(), 9, 13));
 	}
 
 	static void drawPlayerBackgroundWindow(Graphics2D graphics, UiLayout layout, MediaOverlayWindowSnapshot window) {
@@ -4613,6 +4744,7 @@ public final class MonitorScreenSystem {
 						"ФОН ПЛЕЕРА",
 						"Для видео, музыки, картинок и трансляций",
 						List.of(),
+						null,
 						0,
 						-1,
 						false,
@@ -6034,7 +6166,7 @@ public final class MonitorScreenSystem {
 	}
 
 	static boolean mediaWallpaperActionVisibleLocked(MediaRuntimeState state) {
-		return state != null && state.mode == ScreenViewMode.GALLERY && currentGalleryItemCanBeWallpaperLocked(state);
+		return false;
 	}
 
 	static boolean mediaPrimaryActionVisibleLocked(MediaRuntimeState state) {
@@ -6506,6 +6638,16 @@ public final class MonitorScreenSystem {
 		);
 	}
 
+	static UiRect galleryFileMenuPanelRect(UiLayout layout) {
+		return centeredOverlayPanelRect(
+				layout,
+				ultraCompactScreenLayout(layout) ? 13.0D / 16.0D : compactScreenLayout(layout) ? 3.0D / 4.0D : 2.0D / 3.0D,
+				ultraCompactScreenLayout(layout) ? 7.0D / 12.0D : compactScreenLayout(layout) ? 13.0D / 24.0D : 7.0D / 12.0D,
+				92,
+				76
+		);
+	}
+
 	static UiRect playerBackgroundPanelRect(UiLayout layout) {
 		return centeredOverlayPanelRect(
 				layout,
@@ -6532,6 +6674,7 @@ public final class MonitorScreenSystem {
 		return switch (type) {
 			case YOUTUBE_QUEUE -> mediaQueuePanelRect(layout);
 			case GALLERY_DELETE_CONFIRM -> galleryDeleteConfirmPanelRect(layout);
+			case GALLERY_FILE_MENU -> galleryFileMenuPanelRect(layout);
 			case PLAYER_BACKGROUND -> playerBackgroundPanelRect(layout);
 		};
 	}
@@ -6678,6 +6821,45 @@ public final class MonitorScreenSystem {
 		UiRect cancel = galleryDeleteConfirmCancelRect(layout);
 		int gap = clampInt(layout.unit() / 2, 4, 8);
 		return new UiRect(cancel.right() + gap, row.y(), Math.max(28, row.right() - cancel.right() - gap), row.height());
+	}
+
+	static UiRect galleryFileMenuHeaderRect(UiLayout layout) {
+		UiRect panel = overlayWindowRect(layout, MediaOverlayWindowType.GALLERY_FILE_MENU);
+		int inset = clampInt(layout.unit() / 2, 4, 8);
+		int height = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 1, 20, 26)
+				: compactScreenLayout(layout)
+				? clampInt(layout.unit() * 3, 26, 34)
+				: clampInt(layout.unit() * 4 - 1, 32, 46);
+		return new UiRect(panel.x() + inset, panel.y() + inset, panel.width() - inset * 2, height);
+	}
+
+	static UiRect galleryFileMenuCloseRect(UiLayout layout) {
+		UiRect header = galleryFileMenuHeaderRect(layout);
+		int size = Math.max(16, header.height() - clampInt(layout.unit() / 2, 4, 8));
+		return new UiRect(header.right() - size - clampInt(layout.unit() / 3, 3, 6), header.y() + (header.height() - size) / 2, size, size);
+	}
+
+	static UiRect galleryFileMenuBodyRect(UiLayout layout) {
+		UiRect panel = overlayWindowRect(layout, MediaOverlayWindowType.GALLERY_FILE_MENU);
+		UiRect header = galleryFileMenuHeaderRect(layout);
+		int inset = clampInt(layout.unit(), 8, 14);
+		int top = header.bottom() + clampInt(layout.unit() / 2, 4, 8);
+		return new UiRect(panel.x() + inset, top, panel.width() - inset * 2, Math.max(24, panel.bottom() - top - inset));
+	}
+
+	static UiRect galleryFileMenuActionRect(UiLayout layout, int index) {
+		UiRect body = galleryFileMenuBodyRect(layout);
+		int actionCount = 5;
+		int safeIndex = clampInt(index, 0, actionCount - 1);
+		int gap = clampInt(layout.unit() / 2, 4, 8);
+		int height = Math.max(16, (body.height() - gap * (actionCount - 1)) / actionCount);
+		return new UiRect(
+				body.x(),
+				body.y() + safeIndex * (height + gap),
+				body.width(),
+				height
+		);
 	}
 
 	static UiRect playerBackgroundHeaderRect(UiLayout layout) {
@@ -8056,6 +8238,7 @@ public final class MonitorScreenSystem {
 				totalItems + " " + pluralizeQueueItems(totalItems, state.mode),
 				totalItems <= 0 ? formatPlaybackTime(0L) : totalDurationMs > 0L ? formatPlaybackTime(totalDurationMs) : "Длина неизвестна",
 				items != null ? List.copyOf(items) : List.of(),
+				null,
 				Math.max(0, state.youtubeQueueScroll),
 				Math.max(-1, state.youtubeQueueIndex),
 				state.youtubeMusicShuffleEnabled,
@@ -8076,6 +8259,7 @@ public final class MonitorScreenSystem {
 				"УДАЛИТЬ?",
 				target,
 				List.of(),
+				null,
 				0,
 				-1,
 				false,
@@ -8084,6 +8268,50 @@ public final class MonitorScreenSystem {
 				false,
 				MediaScaleMode.FIT
 		);
+	}
+
+	static MediaOverlayWindowSnapshot galleryFileMenuWindowSnapshot(MediaRuntimeState state) {
+		if (state == null) {
+			return null;
+		}
+		GalleryItem item = currentGalleryItemLocked(state);
+		GalleryItemKind kind = effectiveGalleryItemKind(item);
+		String title = item != null && item.title() != null && !item.title().isBlank() ? item.title() : "Медиа";
+		boolean saved = currentGalleryItemSavedLocked(state);
+		boolean canShare = saved && kind != GalleryItemKind.LIVE_CAMERA;
+		GalleryFileMenuSnapshot file = new GalleryFileMenuSnapshot(
+				title,
+				galleryFileKindLabel(kind),
+				saved,
+				saved,
+				canShare,
+				currentGalleryItemCanBeWallpaperLocked(state),
+				currentGalleryItemIsWallpaperLocked(state)
+		);
+		return new MediaOverlayWindowSnapshot(
+				MediaOverlayWindowType.GALLERY_FILE_MENU,
+				"ФАЙЛ",
+				title,
+				List.of(),
+				file,
+				0,
+				Math.max(-1, state.galleryIndex),
+				false,
+				false,
+				null,
+				false,
+				MediaScaleMode.FIT
+		);
+	}
+
+	static String galleryFileKindLabel(GalleryItemKind kind) {
+		return switch (kind != null ? kind : GalleryItemKind.MEDIA) {
+			case AUDIO -> "Аудио";
+			case VIDEO -> "Видео";
+			case YOUTUBE -> "YouTube";
+			case LIVE_CAMERA -> "Камера";
+			case MEDIA -> "Медиа";
+		};
 	}
 
 	static MediaOverlayWindowSnapshot playerBackgroundMenuWindowSnapshot(
@@ -8100,6 +8328,7 @@ public final class MonitorScreenSystem {
 				"ФОН ПЛЕЕРА",
 				"Для видео, музыки, картинок и трансляций",
 				List.of(),
+				null,
 				0,
 				-1,
 				false,
@@ -8597,6 +8826,7 @@ public final class MonitorScreenSystem {
 		state.galleryItems.clear();
 		state.galleryLoadingUrls.clear();
 		state.galleryDeleteConfirmOpen = false;
+		state.galleryFileMenuOpen = false;
 		state.galleryHydrated = false;
 		clearGalleryPendingOpenLocked(state);
 		state.galleryIndex = -1;
@@ -8883,10 +9113,12 @@ public final class MonitorScreenSystem {
 		clearYoutubePlaybackLocked(state);
 		clearDownloadStateLocked(state);
 		state.galleryDeleteConfirmOpen = false;
+		state.galleryFileMenuOpen = false;
 		clearGalleryPendingOpenLocked(state);
 		state.loading = false;
 		state.waitingForLink = false;
 		state.youtubeReturnToGallery = false;
+		state.galleryFileMenuOpen = false;
 		state.playerBackgroundMenuOpen = false;
 		state.preserveRuntimeOnNextViewModeTransition = false;
 		clearPlayerBackgroundGalleryPickerLocked(state);
@@ -9312,6 +9544,10 @@ public final class MonitorScreenSystem {
 	}
 
 	static boolean saveCurrentYoutubeToGalleryLocked(MediaRuntimeState state) {
+		return saveCurrentYoutubeToGalleryLocked(state, null);
+	}
+
+	static boolean saveCurrentYoutubeToGalleryLocked(MediaRuntimeState state, String localMediaKey) {
 		if (state == null || state.sourceUrl == null || state.sourceUrl.isBlank()) {
 			return false;
 		}
@@ -9324,7 +9560,7 @@ public final class MonitorScreenSystem {
 				title,
 				state.mediaSubtitle,
 				state.sourceUrl,
-				null,
+				localMediaKey,
 				null,
 				copyBufferedImage(state.streamFrame),
 				kind
@@ -9657,6 +9893,9 @@ public final class MonitorScreenSystem {
 		if (isGalleryBackedYoutubeLocked(state)) {
 			return true;
 		}
+		if (state.mode == ScreenViewMode.GALLERY && currentGalleryItemSavedLocked(state)) {
+			return false;
+		}
 		if (state.mode == ScreenViewMode.YOUTUBE || state.mode == ScreenViewMode.YOUTUBE_MUSIC) {
 			return state.sourceUrl != null && !state.sourceUrl.isBlank();
 		}
@@ -9711,7 +9950,7 @@ public final class MonitorScreenSystem {
 		}
 		if ((state.mode == ScreenViewMode.YOUTUBE || state.mode == ScreenViewMode.YOUTUBE_MUSIC)
 				&& currentUrl != null
-				&& hasGalleryItemForUrlLocked(state, currentUrl)) {
+				&& hasCompleteGalleryItemForUrlLocked(state, currentUrl)) {
 			return MediaActionVisualState.COMPLETE;
 		}
 		return MediaActionVisualState.IDLE;
@@ -9719,6 +9958,23 @@ public final class MonitorScreenSystem {
 
 	static boolean hasGalleryItemForUrlLocked(MediaRuntimeState state, String url) {
 		return resolveGalleryItemIndex(state, url, -1) >= 0;
+	}
+
+	static boolean hasCompleteGalleryItemForUrlLocked(MediaRuntimeState state, String url) {
+		int index = resolveGalleryItemIndex(state, url, -1);
+		if (index < 0 || state == null || index >= state.galleryItems.size()) {
+			return false;
+		}
+		GalleryItem item = state.galleryItems.get(index);
+		if (item == null) {
+			return false;
+		}
+		if (effectiveGalleryItemKind(item) == GalleryItemKind.AUDIO
+				&& MonitorYoutubeMusicCache.looksLikeSupportedUrl(item.url())
+				&& (item.localMediaKey() == null || item.localMediaKey().isBlank())) {
+			return false;
+		}
+		return true;
 	}
 
 	static boolean isCurrentLiveCameraLocked(MediaRuntimeState state) {

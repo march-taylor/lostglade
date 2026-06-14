@@ -302,6 +302,7 @@ final class MonitorScreenMediaSessionLifecycle {
 			return;
 		}
 		PENDING_MEDIA_LINKS.entrySet().removeIf(entry -> entry.getValue().screenKey().equals(key));
+		PENDING_GALLERY_RENAMES.entrySet().removeIf(entry -> entry.getValue().screenKey().equals(key));
 		IN_FLIGHT_MEDIA_LINKS.entrySet().removeIf(entry -> entry.getValue().screenKey().equals(key));
 		for (Map.Entry<UUID, ScreenRuntimeKey> entry : List.copyOf(ACTIVE_MEDIA_ACTIONBARS.entrySet())) {
 			if (entry.getValue().equals(key)) {

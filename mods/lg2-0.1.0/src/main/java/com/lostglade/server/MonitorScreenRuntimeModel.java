@@ -114,6 +114,7 @@ record MediaOverlayWindowSnapshot(
 		String title,
 		String subtitle,
 		List<YoutubeQueueItemSnapshot> items,
+		GalleryFileMenuSnapshot galleryFile,
 		int scroll,
 		int currentIndex,
 		boolean shuffleEnabled,
@@ -121,6 +122,17 @@ record MediaOverlayWindowSnapshot(
 		PlayerBackgroundMode playerBackgroundMode,
 		boolean galleryBackgroundAvailable,
 		MediaScaleMode playerBackgroundScaleMode
+) {
+}
+
+record GalleryFileMenuSnapshot(
+		String title,
+		String subtitle,
+		boolean saved,
+		boolean canRename,
+		boolean canShare,
+		boolean canWallpaper,
+		boolean wallpaperSelected
 ) {
 }
 
@@ -309,6 +321,9 @@ record PendingMediaLinkRequest(ScreenRuntimeKey screenKey, ScreenViewMode mode, 
 }
 
 record InFlightMediaLinkRequest(ScreenRuntimeKey screenKey, ScreenViewMode mode, YoutubeLinkRequestAction youtubeAction) {
+}
+
+record PendingGalleryRenameRequest(ScreenRuntimeKey screenKey, int galleryIndex, String itemUrl) {
 }
 
 record YoutubeQueueItemSnapshot(
@@ -538,6 +553,8 @@ enum PlayerUiIcon {
 	QUEUE("/assets/lg2/textures/monitor/ui_icons/queue.png"),
 	DOWNLOAD("/assets/lg2/textures/monitor/ui_icons/download.png"),
 	TRASH("/assets/lg2/textures/monitor/ui_icons/trash.png"),
+	EDIT("/assets/lg2/textures/monitor/ui_icons/edit.png"),
+	SETTINGS("/assets/lg2/textures/monitor/ui_icons/settings.png"),
 	WALLPAPER("/assets/lg2/textures/monitor/ui_icons/wallpaper.png"),
 	CHECK("/assets/lg2/textures/monitor/ui_icons/check.png"),
 	CHECKBOX_LINE("/assets/lg2/textures/monitor/ui_icons/checkbox_line.png"),
@@ -654,6 +671,7 @@ final class MediaRuntimeState {
 	boolean waitingForLink;
 	boolean loading;
 	boolean galleryDeleteConfirmOpen;
+	boolean galleryFileMenuOpen;
 	boolean playerBackgroundMenuOpen;
 	String statusText;
 	boolean galleryHydrated;
@@ -747,6 +765,7 @@ final class MediaRuntimeState {
 		this.waitingForLink = false;
 		this.loading = false;
 		this.galleryDeleteConfirmOpen = false;
+		this.galleryFileMenuOpen = false;
 		this.playerBackgroundMenuOpen = false;
 		this.pendingAudioPauseState = null;
 		this.pendingAudioPositionActive = false;

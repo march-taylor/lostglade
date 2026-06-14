@@ -293,8 +293,10 @@ final class MonitorScreenGalleryRuntime {
 		boolean shouldPersistLocalVideo = false;
 		boolean shouldPersistLocalAudio = false;
 		MonitorMediaApp.LoadedVideo loadedVideoToOpen = null;
+		MonitorMediaApp.LoadedVideo audioCoverVideo = null;
 		String loadedVideoTitle = null;
 		String loadedVideoSubtitle = null;
+		String audioCoverTitle = null;
 		int loadedVideoIndex = -1;
 		synchronized (state) {
 			state.galleryLoadingUrls.remove(result.url());
@@ -360,20 +362,44 @@ final class MonitorScreenGalleryRuntime {
 				String resolvedSubtitle = result.subtitle() != null && !result.subtitle().isBlank()
 						? result.subtitle()
 						: existing != null && existing.subtitle() != null ? existing.subtitle() : "";
+				String resolvedLocalMediaKey = result.localMediaKey() != null && !result.localMediaKey().isBlank()
+						? result.localMediaKey()
+						: existing != null ? existing.localMediaKey() : null;
+				BufferedImage resolvedPreview = result.loadedVideo().preview() != null ? result.loadedVideo().preview() : (existing != null ? existing.preview() : null);
+				MonitorMediaApp.LoadedVideo resolvedLoadedVideo = result.loadedVideo();
+				if (result.kind() == GalleryItemKind.AUDIO
+						&& resolvedLocalMediaKey != null && !resolvedLocalMediaKey.isBlank()
+						&& existing != null && existing.preview() != null
+						&& !MonitorMediaApp.hasSavedGalleryAudioCover(resolvedLocalMediaKey)) {
+					try {
+						MonitorMediaApp.persistSavedGalleryAudioCover(resolvedLocalMediaKey, existing.preview());
+						resolvedPreview = existing.preview();
+						resolvedLoadedVideo = new MonitorMediaApp.LoadedVideo(
+								resolvedPreview,
+								result.loadedVideo().durationMs(),
+								Math.max(1, resolvedPreview.getWidth()),
+								Math.max(1, resolvedPreview.getHeight()),
+								result.loadedVideo().playbackInput(),
+								result.loadedVideo().audioInput()
+						);
+					} catch (Exception exception) {
+						Lg2.LOGGER.debug("Failed to seed gallery audio cover for {}", resolvedLocalMediaKey, exception);
+					}
+				}
 				state.galleryItems.set(
 						targetIndex,
 						new GalleryItem(
 								resolvedTitle,
 								resolvedSubtitle,
 								result.url(),
-								result.localMediaKey() != null && !result.localMediaKey().isBlank() ? result.localMediaKey() : existing != null ? existing.localMediaKey() : null,
+								resolvedLocalMediaKey,
 								null,
-								result.loadedVideo().preview() != null ? result.loadedVideo().preview() : (existing != null ? existing.preview() : null),
+								resolvedPreview,
 								result.kind()
 						)
 				);
 				if (openWhenReady) {
-					loadedVideoToOpen = result.loadedVideo();
+					loadedVideoToOpen = resolvedLoadedVideo;
 					loadedVideoTitle = resolvedTitle;
 					loadedVideoSubtitle = resolvedSubtitle;
 					loadedVideoIndex = targetIndex;
@@ -388,6 +414,10 @@ final class MonitorScreenGalleryRuntime {
 				shouldPersistLocalAudio = result.kind() == GalleryItemKind.AUDIO
 						&& (result.localMediaKey() == null || result.localMediaKey().isBlank())
 						&& !MonitorYoutubeMusicCache.looksLikeSupportedUrl(result.url());
+				if (result.kind() == GalleryItemKind.AUDIO) {
+					audioCoverVideo = resolvedLoadedVideo;
+					audioCoverTitle = resolvedTitle;
+				}
 			} else if (openWhenReady) {
 				state.loading = false;
 				state.statusText = sanitizeMediaError(result.error());
@@ -405,6 +435,9 @@ final class MonitorScreenGalleryRuntime {
 		}
 		if (loadedVideoToOpen != null) {
 			startDirectVideoPlayback(server, result.screenKey(), null, loadedVideoTitle, loadedVideoSubtitle, result.url(), loadedVideoToOpen, loadedVideoIndex, ScreenViewMode.GALLERY, false);
+		}
+		if (audioCoverVideo != null) {
+			scheduleAudioCoverRefresh(server, result.screenKey(), result.url(), result.localMediaKey(), audioCoverTitle, audioCoverVideo.audioInput());
 		}
 		if (shouldPersistLocalMedia) {
 			scheduleGalleryLocalMediaPersistence(server, result.screenKey(), result.url());
@@ -881,7 +914,9 @@ final class MonitorScreenGalleryRuntime {
 		String normalizedLocalMediaKey = localMediaKey != null ? localMediaKey.trim() : "";
 		GalleryItemKind resolvedKind = effectiveGalleryItemKind(normalizedUrl, normalizedLocalMediaKey, kind);
 		if (resolvedKind == GalleryItemKind.AUDIO && MonitorYoutubeMusicCache.looksLikeSupportedUrl(normalizedUrl)) {
-			if (!normalizedUrl.isBlank()) {
+			if (!normalizedLocalMediaKey.isBlank()) {
+				localMediaKeys.add(normalizedLocalMediaKey);
+			} else if (!normalizedUrl.isBlank()) {
 				galleryMusicUrls.add(normalizedUrl);
 			}
 			return;
@@ -930,14 +965,15 @@ final class MonitorScreenGalleryRuntime {
 			String url = candidate.url() != null ? candidate.url().trim() : "";
 			String localMediaKey = candidate.localMediaKey() != null ? candidate.localMediaKey().trim() : "";
 			if (candidate.kind() == GalleryItemKind.AUDIO && MonitorYoutubeMusicCache.looksLikeSupportedUrl(url)) {
-				if (url.isBlank()
-						|| refs.galleryMusicUrls().contains(url)
-						|| refs.activeMusicUrls().contains(url)
-						|| !deletedMusicUrls.add(url)) {
+				if (!url.isBlank()
+						&& !refs.galleryMusicUrls().contains(url)
+						&& !refs.activeMusicUrls().contains(url)
+						&& deletedMusicUrls.add(url)) {
+					MonitorYoutubeMusicCache.deletePersistentTrack(url);
+				}
+				if (localMediaKey.isBlank()) {
 					continue;
 				}
-				MonitorYoutubeMusicCache.deletePersistentTrack(url);
-				continue;
 			}
 			if (candidate.kind() == GalleryItemKind.YOUTUBE) {
 				if (url.isBlank()

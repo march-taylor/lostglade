@@ -129,6 +129,7 @@ final class MonitorScreenInputController {
 			boolean youtubeShouldAppendQueue;
 			boolean galleryBrowser;
 			boolean galleryDeleteConfirmOpen;
+			boolean galleryFileMenuOpen;
 			boolean playerBackgroundMenuOpen;
 			boolean playerUiVisible;
 			boolean controlsWereHidden = false;
@@ -137,6 +138,7 @@ final class MonitorScreenInputController {
 				youtubeShouldAppendQueue = shouldAppendYoutubeRequestLocked(mediaState);
 				galleryBrowser = isLibraryAppMode(mediaState.mode) && mediaState.gallerySurfaceMode == GallerySurfaceMode.BROWSER;
 				galleryDeleteConfirmOpen = mediaState.galleryDeleteConfirmOpen;
+				galleryFileMenuOpen = mediaState.galleryFileMenuOpen;
 				playerBackgroundMenuOpen = mediaState.playerBackgroundMenuOpen;
 				playerUiVisible = mediaControlUiVisibleLocked(mediaState);
 			}
@@ -178,6 +180,59 @@ final class MonitorScreenInputController {
 					}
 				}
 				rerenderCurrent = true;
+			} else if (galleryFileMenuOpen) {
+				GalleryItem shareItem = null;
+				synchronized (mediaState) {
+					if (!galleryFileMenuPanelRect(layout).contains(touchPoint.x(), touchPoint.y())
+							|| galleryFileMenuCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+						mediaState.galleryFileMenuOpen = false;
+						mediaState.version++;
+					} else if (galleryFileMenuActionRect(layout, 0).contains(touchPoint.x(), touchPoint.y())) {
+						GalleryItem item = currentGalleryItemLocked(mediaState);
+						if (currentGalleryItemSavedLocked(mediaState) && item != null) {
+							PENDING_GALLERY_RENAMES.put(player.getUUID(), new PendingGalleryRenameRequest(component.runtimeKey(), mediaState.galleryIndex, item.url()));
+							PENDING_MEDIA_LINKS.remove(player.getUUID());
+							mediaState.galleryFileMenuOpen = false;
+							mediaState.statusText = "Введи новое имя файла";
+							mediaState.version++;
+							player.displayClientMessage(Component.literal("Галерея: введи новое имя файла в чат"), true);
+						}
+					} else if (galleryFileMenuActionRect(layout, 1).contains(touchPoint.x(), touchPoint.y())) {
+						GalleryItem item = currentGalleryItemLocked(mediaState);
+						if (currentGalleryItemSavedLocked(mediaState) && item != null && effectiveGalleryItemKind(item) != GalleryItemKind.LIVE_CAMERA) {
+							shareItem = item;
+							mediaState.galleryFileMenuOpen = false;
+							mediaState.statusText = "";
+							mediaState.version++;
+						}
+					} else if (galleryFileMenuActionRect(layout, 2).contains(touchPoint.x(), touchPoint.y())) {
+						if (currentGalleryItemCanBeWallpaperLocked(mediaState)) {
+							galleryWallpaperRequested = true;
+							mediaState.galleryFileMenuOpen = false;
+							mediaState.statusText = "";
+							mediaState.version++;
+						}
+					} else if (galleryFileMenuActionRect(layout, 3).contains(touchPoint.x(), touchPoint.y())) {
+						mediaState.galleryFileMenuOpen = false;
+						mediaState.playerBackgroundMenuOpen = true;
+						mediaState.galleryDeleteConfirmOpen = false;
+						mediaState.youtubeQueueOpen = false;
+						mediaState.version++;
+					} else if (galleryFileMenuActionRect(layout, 4).contains(touchPoint.x(), touchPoint.y())) {
+						if (currentGalleryItemSavedLocked(mediaState)) {
+							mediaState.galleryFileMenuOpen = false;
+							mediaState.galleryDeleteConfirmOpen = true;
+							mediaState.statusText = "";
+							mediaState.version++;
+						}
+					}
+				}
+				if (shareItem != null && server != null && MonitorMaxRuntime.beginGalleryFileShare(server, component, List.of(shareItem))) {
+					nextMode = ScreenViewMode.MAX;
+					rerenderCurrent = false;
+				} else {
+					rerenderCurrent = true;
+				}
 			} else if (playerBackgroundMenuOpen) {
 				synchronized (mediaState) {
 					if (!playerBackgroundPanelRect(layout).contains(touchPoint.x(), touchPoint.y())
@@ -648,8 +703,14 @@ final class MonitorScreenInputController {
 					&& playerBackgroundMenuButtonVisibleLocked(mediaState)
 					&& mediaPlayerMenuRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
-					mediaState.playerBackgroundMenuOpen = !mediaState.playerBackgroundMenuOpen;
-					if (mediaState.playerBackgroundMenuOpen) {
+					if (mediaState.mode == ScreenViewMode.GALLERY && mediaState.gallerySurfaceMode == GallerySurfaceMode.PLAYER) {
+						mediaState.galleryFileMenuOpen = !mediaState.galleryFileMenuOpen;
+						mediaState.playerBackgroundMenuOpen = false;
+					} else {
+						mediaState.playerBackgroundMenuOpen = !mediaState.playerBackgroundMenuOpen;
+						mediaState.galleryFileMenuOpen = false;
+					}
+					if (mediaState.playerBackgroundMenuOpen || mediaState.galleryFileMenuOpen) {
 						mediaState.galleryDeleteConfirmOpen = false;
 						mediaState.youtubeQueueOpen = false;
 					}

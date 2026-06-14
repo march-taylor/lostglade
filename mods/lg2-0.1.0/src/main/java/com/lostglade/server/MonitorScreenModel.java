@@ -86,6 +86,7 @@ enum PlayerBackgroundMode {
 enum MediaOverlayWindowType {
 	YOUTUBE_QUEUE,
 	GALLERY_DELETE_CONFIRM,
+	GALLERY_FILE_MENU,
 	PLAYER_BACKGROUND
 }
 

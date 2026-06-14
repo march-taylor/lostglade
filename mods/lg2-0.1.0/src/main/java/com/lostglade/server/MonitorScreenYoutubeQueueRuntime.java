@@ -454,6 +454,7 @@ final class MonitorScreenYoutubeQueueRuntime {
 				ScreenViewMode.YOUTUBE_MUSIC,
 				true
 		);
+		scheduleAudioCoverRefresh(server, result.screenKey(), result.url(), "", result.title(), result.loadedVideo().audioInput());
 	}
 
 	static boolean youtubeMusicLoadResultStillCurrentLocked(MediaRuntimeState state, YoutubeMusicLoadResult result) {

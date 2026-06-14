@@ -67,6 +67,9 @@ public final class MonitorMediaApp implements MonitorApp {
 	private static final int VIDEO_MEDIA_MAX_TOTAL_PIXELS = 32 * 1024 * 1024;
 	private static final int VIDEO_MEDIA_COMMAND_TIMEOUT_SEC = 30;
 	private static final int AUDIO_COVER_SIZE = 640;
+	private static final int AUDIO_COVER_PROBE_TIMEOUT_SEC = 10;
+	private static final int AUDIO_COVER_COMMAND_TIMEOUT_SEC = 20;
+	private static final String AUDIO_COVER_SIDECAR_SUFFIX = ".cover.png";
 	private static final Set<String> DIRECT_VIDEO_EXTENSIONS = Set.of(".mp4", ".m4v", ".mov", ".webm");
 	private static final Set<String> DIRECT_AUDIO_EXTENSIONS = Set.of(".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wav", ".flac", ".weba");
 	private static volatile Path cacheDirectory = Path.of("cache", "lg2-monitor", "media");
@@ -216,6 +219,7 @@ public final class MonitorMediaApp implements MonitorApp {
 			Files.createDirectories(parent);
 		}
 		if (Files.isRegularFile(targetPath)) {
+			copyExistingAudioCoverSidecar(sourcePath, targetPath);
 			return mediaKey;
 		}
 		Path tempPath = targetPath.resolveSibling(targetPath.getFileName() + ".tmp");
@@ -226,6 +230,7 @@ public final class MonitorMediaApp implements MonitorApp {
 			} catch (IOException ignored) {
 				Files.move(tempPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
 			}
+			copyExistingAudioCoverSidecar(sourcePath, targetPath);
 			return mediaKey;
 		} catch (IOException exception) {
 			deleteFileQuietly(tempPath, cacheDirectory);
@@ -286,7 +291,56 @@ public final class MonitorMediaApp implements MonitorApp {
 		if (progress != null) {
 			progress.setIndeterminate("PROBING AUDIO");
 		}
-		return probeAudio(savedPath.getFileName().toString(), savedPath.toAbsolutePath().toString(), progress);
+		return probeAudio(mediaKey, savedPath.toAbsolutePath().toString(), progress);
+	}
+
+	public static BufferedImage loadSavedGalleryAudioCover(String mediaKey, String title) throws IOException {
+		Path savedPath = savedGalleryMediaPath(mediaKey);
+		if (savedPath == null || !Files.isRegularFile(savedPath)) {
+			throw new IOException("Saved gallery audio is missing");
+		}
+		return loadOrCreateSavedGalleryAudioCover(mediaKey, savedPath, title, true, true);
+	}
+
+	public static BufferedImage loadSavedGalleryAudioPreview(String mediaKey, String title) throws IOException {
+		Path savedPath = savedGalleryMediaPath(mediaKey);
+		if (savedPath == null || !Files.isRegularFile(savedPath)) {
+			throw new IOException("Saved gallery audio is missing");
+		}
+		return loadOrCreateSavedGalleryAudioCover(mediaKey, savedPath, title, false, true);
+	}
+
+	public static BufferedImage loadAudioCover(String input, String title) {
+		return captureAudioCover(input);
+	}
+
+	public static void persistSavedGalleryAudioCover(String mediaKey, BufferedImage cover) throws IOException {
+		Path coverPath = savedGalleryAudioCoverPath(mediaKey);
+		if (coverPath == null || cover == null) {
+			return;
+		}
+		BufferedImage normalized = normalizeAudioCover(cover);
+		Path parent = coverPath.getParent();
+		if (parent != null) {
+			Files.createDirectories(parent);
+		}
+		Path tempPath = coverPath.resolveSibling(coverPath.getFileName() + ".tmp");
+		try {
+			ImageIO.write(normalized, "png", tempPath.toFile());
+			try {
+				Files.move(tempPath, coverPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			} catch (IOException ignored) {
+				Files.move(tempPath, coverPath, StandardCopyOption.REPLACE_EXISTING);
+			}
+		} catch (IOException exception) {
+			deleteFileQuietly(tempPath, cacheDirectory);
+			throw exception;
+		}
+	}
+
+	public static boolean hasSavedGalleryAudioCover(String mediaKey) {
+		Path coverPath = savedGalleryAudioCoverPath(mediaKey);
+		return coverPath != null && Files.isRegularFile(coverPath);
 	}
 
 	public static Path savedGalleryMediaFile(String mediaKey) {
@@ -301,6 +355,7 @@ public final class MonitorMediaApp implements MonitorApp {
 	}
 
 	public static void deleteSavedGalleryMedia(String mediaKey) {
+		deleteFileQuietly(savedGalleryAudioCoverPath(mediaKey), cacheDirectory);
 		deleteFileQuietly(savedGalleryMediaPath(mediaKey), cacheDirectory);
 	}
 
@@ -414,10 +469,9 @@ public final class MonitorMediaApp implements MonitorApp {
 		}
 		String fallbackTitle = fallbackMediaTitle(displayUrl != null && !displayUrl.isBlank() ? displayUrl : input);
 		AudioMetadata metadata = probeAudioMetadata(input, fallbackTitle);
-		if (progress != null) {
-			progress.setIndeterminate("CAPTURING COVER");
-		}
-		BufferedImage cover = captureAudioPreview(input, metadata.title());
+		BufferedImage cover = savedMediaKey(displayUrl)
+				? loadOrCreateSavedGalleryAudioCover(displayUrl, Path.of(input), metadata.title(), false, false)
+				: createFallbackAudioCover(metadata.title());
 		if (progress != null) {
 			progress.complete("READY");
 		}
@@ -514,6 +568,38 @@ public final class MonitorMediaApp implements MonitorApp {
 			return null;
 		}
 		return cacheDirectory.resolve("blobs").resolve(normalized);
+	}
+
+	private static boolean savedMediaKey(String mediaKey) {
+		return savedGalleryMediaPath(mediaKey) != null;
+	}
+
+	private static Path savedGalleryAudioCoverPath(String mediaKey) {
+		Path mediaPath = savedGalleryMediaPath(mediaKey);
+		return mediaPath != null ? audioCoverSidecarPath(mediaPath) : null;
+	}
+
+	private static Path audioCoverSidecarPath(Path mediaPath) {
+		if (mediaPath == null || mediaPath.getFileName() == null) {
+			return null;
+		}
+		return mediaPath.resolveSibling(mediaPath.getFileName() + AUDIO_COVER_SIDECAR_SUFFIX);
+	}
+
+	private static void copyExistingAudioCoverSidecar(Path sourcePath, Path targetPath) {
+		Path sourceCoverPath = audioCoverSidecarPath(sourcePath);
+		Path targetCoverPath = audioCoverSidecarPath(targetPath);
+		if (sourceCoverPath == null || targetCoverPath == null || !Files.isRegularFile(sourceCoverPath)) {
+			return;
+		}
+		try {
+			Path parent = targetCoverPath.getParent();
+			if (parent != null) {
+				Files.createDirectories(parent);
+			}
+			Files.copy(sourceCoverPath, targetCoverPath, StandardCopyOption.REPLACE_EXISTING);
+		} catch (IOException ignored) {
+		}
 	}
 
 	private static String localFileExtension(Path sourcePath) {
@@ -1306,7 +1392,42 @@ public final class MonitorMediaApp implements MonitorApp {
 		), COMMAND_TIMEOUT_SEC));
 	}
 
-	private static BufferedImage captureAudioPreview(String input, String title) {
+	private static BufferedImage loadOrCreateSavedGalleryAudioCover(String mediaKey, Path savedPath, String title, boolean refreshFromAudio, boolean persistFallback) throws IOException {
+		BufferedImage persistedCover = readSavedGalleryAudioCover(mediaKey);
+		if (refreshFromAudio) {
+			BufferedImage capturedCover = captureAudioCover(savedPath != null ? savedPath.toAbsolutePath().toString() : "");
+			if (capturedCover != null) {
+				persistSavedGalleryAudioCover(mediaKey, capturedCover);
+				return normalizeAudioCover(capturedCover);
+			}
+		}
+		if (persistedCover != null) {
+			return persistedCover;
+		}
+		BufferedImage fallbackCover = createFallbackAudioCover(title);
+		if (persistFallback) {
+			persistSavedGalleryAudioCover(mediaKey, fallbackCover);
+		}
+		return fallbackCover;
+	}
+
+	private static BufferedImage readSavedGalleryAudioCover(String mediaKey) {
+		Path coverPath = savedGalleryAudioCoverPath(mediaKey);
+		if (coverPath == null || !Files.isRegularFile(coverPath)) {
+			return null;
+		}
+		try {
+			BufferedImage cover = ImageIO.read(coverPath.toFile());
+			return normalizeAudioCover(cover);
+		} catch (IOException ignored) {
+			return null;
+		}
+	}
+
+	private static BufferedImage captureAudioCover(String input) {
+		if (!hasAudioCoverStream(input)) {
+			return null;
+		}
 		try {
 			return decodeImageBytes(runBinaryCommand(List.of(
 					ffmpegBin(),
@@ -1314,6 +1435,10 @@ public final class MonitorMediaApp implements MonitorApp {
 					"-loglevel",
 					"error",
 					"-nostdin",
+					"-analyzeduration",
+					"5000000",
+					"-probesize",
+					"5000000",
 					"-i",
 					input,
 					"-map",
@@ -1328,10 +1453,79 @@ public final class MonitorMediaApp implements MonitorApp {
 					"-vcodec",
 					"png",
 					"-"
-			), COMMAND_TIMEOUT_SEC));
+			), AUDIO_COVER_COMMAND_TIMEOUT_SEC));
 		} catch (IOException ignored) {
-			return createFallbackAudioCover(title);
+			return null;
 		}
+	}
+
+	private static BufferedImage normalizeAudioCover(BufferedImage image) {
+		if (image == null || image.getWidth() <= 0 || image.getHeight() <= 0) {
+			return createFallbackAudioCover("");
+		}
+		if (image.getWidth() == AUDIO_COVER_SIZE && image.getHeight() == AUDIO_COVER_SIZE) {
+			return image;
+		}
+		BufferedImage normalized = new BufferedImage(AUDIO_COVER_SIZE, AUDIO_COVER_SIZE, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = normalized.createGraphics();
+		try {
+			graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+			graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+			graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+			double scale = Math.min((double) AUDIO_COVER_SIZE / (double) image.getWidth(), (double) AUDIO_COVER_SIZE / (double) image.getHeight());
+			int width = Math.max(1, (int) Math.round(image.getWidth() * scale));
+			int height = Math.max(1, (int) Math.round(image.getHeight() * scale));
+			int x = (AUDIO_COVER_SIZE - width) / 2;
+			int y = (AUDIO_COVER_SIZE - height) / 2;
+			graphics.drawImage(image, x, y, width, height, null);
+		} finally {
+			graphics.dispose();
+		}
+		return normalized;
+	}
+
+	private static boolean hasAudioCoverStream(String input) {
+		if (input == null || input.isBlank()) {
+			return false;
+		}
+		try {
+			String output = runCommand(List.of(
+					ffprobeBin(),
+					"-v",
+					"error",
+					"-select_streams",
+					"v",
+					"-show_entries",
+					"stream=codec_type,disposition:stream_tags=attached_pic",
+					"-of",
+					"json",
+					input
+			), AUDIO_COVER_PROBE_TIMEOUT_SEC);
+			JsonObject root = GSON.fromJson(output, JsonObject.class);
+			JsonArray streams = root != null && root.has("streams") && root.get("streams").isJsonArray()
+					? root.getAsJsonArray("streams")
+					: null;
+			if (streams == null || streams.isEmpty()) {
+				return false;
+			}
+			for (int index = 0; index < streams.size(); index++) {
+				if (!streams.get(index).isJsonObject()) {
+					continue;
+				}
+				JsonObject stream = streams.get(index).getAsJsonObject();
+				if ("video".equalsIgnoreCase(getString(stream, "codec_type", ""))) {
+					return true;
+				}
+				JsonObject disposition = stream.has("disposition") && stream.get("disposition").isJsonObject()
+						? stream.getAsJsonObject("disposition")
+						: null;
+				if (getInt(disposition, "attached_pic", 0) > 0) {
+					return true;
+				}
+			}
+		} catch (IOException | RuntimeException ignored) {
+		}
+		return false;
 	}
 
 	private static String runCommand(List<String> command, int timeoutSeconds) throws IOException {

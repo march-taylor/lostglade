@@ -271,6 +271,9 @@ final class MonitorScreenMediaLoadResults {
 		requestRuntimeRender(server, result.screenKey());
 		if (directVideo != null) {
 			startDirectVideoPlayback(server, result.screenKey(), result.requesterUuid(), directVideoTitle, directVideoSubtitle, result.url(), directVideo, -1, ScreenViewMode.GALLERY, false);
+			if (result.kind() == GalleryItemKind.AUDIO) {
+				scheduleAudioCoverRefresh(server, result.screenKey(), result.url(), "", directVideoTitle, directVideo.audioInput());
+			}
 			return;
 		}
 		if (result.loadedMedia() != null) {

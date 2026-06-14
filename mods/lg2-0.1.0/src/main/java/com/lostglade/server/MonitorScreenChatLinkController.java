@@ -1,6 +1,7 @@
 package com.lostglade.server;
 
 import static com.lostglade.server.MonitorScreenMessages.*;
+import static com.lostglade.server.MonitorScreenGalleryRuntime.*;
 import static com.lostglade.server.MonitorScreenMediaLoadResults.*;
 import static com.lostglade.server.MonitorScreenMediaActions.*;
 import static com.lostglade.server.MonitorScreenMediaFrameRuntime.*;
@@ -18,6 +19,7 @@ import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
 final class MonitorScreenChatLinkController {
@@ -34,6 +36,10 @@ final class MonitorScreenChatLinkController {
 		}
 		if (!MonitorMaxRuntime.onAllowChatMessage(message, sender, params)) {
 			return false;
+		}
+		PendingGalleryRenameRequest rename = PENDING_GALLERY_RENAMES.remove(sender.getUUID());
+		if (rename != null) {
+			return handleGalleryRenameChatMessage(server, message, sender, rename);
 		}
 		PendingMediaLinkRequest pending = PENDING_MEDIA_LINKS.remove(sender.getUUID());
 		if (pending == null) {
@@ -173,5 +179,94 @@ final class MonitorScreenChatLinkController {
 					.thenAccept(result -> server.execute(() -> applyMediaLoadResult(server, result)));
 		}
 		return false;
+	}
+
+	private static boolean handleGalleryRenameChatMessage(
+			MinecraftServer server,
+			PlayerChatMessage message,
+			ServerPlayer sender,
+			PendingGalleryRenameRequest rename
+	) {
+		String title = sanitizeGalleryRenameTitle(message.signedContent());
+		MediaRuntimeState state = MEDIA_STATES.get(rename.screenKey());
+		if (state == null) {
+			sender.displayClientMessage(Component.literal("Галерея: файл не найден"), true);
+			return false;
+		}
+		boolean renamed = false;
+		synchronized (state) {
+			int index = resolvePendingGalleryRenameIndexLocked(state, rename);
+			if (index < 0 || index >= state.galleryItems.size()) {
+				state.statusText = "Файл не найден";
+				state.version++;
+			} else if (title.isBlank()) {
+				state.statusText = "Имя не изменено";
+				state.version++;
+			} else {
+				GalleryItem item = state.galleryItems.get(index);
+				state.galleryItems.set(
+						index,
+						new GalleryItem(
+								title,
+								item.subtitle(),
+								item.url(),
+								item.localMediaKey(),
+								item.media(),
+								item.preview(),
+								item.kind()
+						)
+				);
+				if (Objects.equals(item.url(), state.sourceUrl)) {
+					state.mediaTitle = title;
+				}
+				state.statusText = "Файл переименован";
+				state.galleryFileMenuOpen = false;
+				state.version++;
+				renamed = true;
+			}
+		}
+		if (renamed) {
+			persistGalleryState(server, rename.screenKey(), state);
+			sender.displayClientMessage(Component.literal("Галерея: файл переименован"), true);
+		} else {
+			sender.displayClientMessage(Component.literal("Галерея: имя не изменено"), true);
+		}
+		requestRuntimeRender(server, rename.screenKey());
+		return false;
+	}
+
+	private static int resolvePendingGalleryRenameIndexLocked(MediaRuntimeState state, PendingGalleryRenameRequest rename) {
+		if (state == null || rename == null || state.galleryItems.isEmpty()) {
+			return -1;
+		}
+		int index = rename.galleryIndex();
+		if (index >= 0 && index < state.galleryItems.size()) {
+			GalleryItem item = state.galleryItems.get(index);
+			if (item != null && Objects.equals(item.url(), rename.itemUrl())) {
+				return index;
+			}
+		}
+		String itemUrl = rename.itemUrl();
+		if (itemUrl == null || itemUrl.isBlank()) {
+			return -1;
+		}
+		for (int candidate = 0; candidate < state.galleryItems.size(); candidate++) {
+			GalleryItem item = state.galleryItems.get(candidate);
+			if (item != null && Objects.equals(item.url(), itemUrl)) {
+				return candidate;
+			}
+		}
+		return -1;
+	}
+
+	private static String sanitizeGalleryRenameTitle(String rawTitle) {
+		if (rawTitle == null) {
+			return "";
+		}
+		String normalized = rawTitle.trim().replaceAll("\\s+", " ");
+		if (normalized.length() <= 64) {
+			return normalized;
+		}
+		return normalized.substring(0, 64).trim();
 	}
 }

@@ -18,6 +18,7 @@ import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -26,6 +27,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -49,12 +51,31 @@ public final class MonitorYoutubeMusicCache {
 	private static final ScheduledExecutorService RETRY_EXECUTOR = Executors.newSingleThreadScheduledExecutor(daemonThreadFactory("lg2-ytmusic-cache-retry"));
 	private static final Map<String, TrackCacheState> TRACKS = new ConcurrentHashMap<>();
 	private static final String DEFAULT_YT_DLP_BIN = "yt-dlp";
+	private static final String DEFAULT_FFMPEG_BIN = "ffmpeg";
+	private static final String DEFAULT_FFPROBE_BIN = "ffprobe";
 	private static final int COMMAND_TIMEOUT_SEC = 1800;
+	private static final int AUDIO_TRANSCODE_TIMEOUT_SEC = 600;
+	private static final int AUDIO_VALIDATE_TIMEOUT_SEC = 30;
 	private static final int COVER_CONNECT_TIMEOUT_MS = 4000;
-	private static final int COVER_READ_TIMEOUT_MS = 15000;
+	private static final int COVER_READ_TIMEOUT_MS = 6000;
+	private static final int MAX_COVER_DOWNLOAD_BYTES = 4 * 1024 * 1024;
+	private static final int MAX_COVER_DOWNLOAD_ATTEMPTS = 5;
 	private static final int COVER_SIZE = 640;
 	private static final String FALLBACK_COVER_RESOURCE = "/monitor/youtube_music_fallback_cover.png";
-	private static final String AUDIO_FILE_NAME = "audio.source";
+	private static final String AUDIO_FILE_NAME = "audio.mp3";
+	private static final String AUDIO_OUTPUT_TEMPLATE_NAME = "audio.%(ext)s";
+	private static final String TEMP_DOWNLOAD_DIR_NAME = "download.tmp";
+	private static final String LEGACY_AUDIO_FILE_NAME = "audio.source";
+	private static final List<String> AUDIO_FILE_CANDIDATE_NAMES = List.of(
+			AUDIO_FILE_NAME,
+			"audio.m4a",
+			"audio.webm",
+			"audio.weba",
+			"audio.opus",
+			"audio.ogg",
+			"audio.aac",
+			LEGACY_AUDIO_FILE_NAME
+	);
 	private static final String COVER_FILE_NAME = "cover.png";
 	private static final String METADATA_FILE_NAME = "meta.json";
 	private static final String COMPLETE_MARKER_FILE_NAME = "complete.marker";
@@ -115,6 +136,64 @@ public final class MonitorYoutubeMusicCache {
 			return false;
 		}
 		return persistentTrackSnapshot(rawUrl.trim()).complete();
+	}
+
+	public static Path completedAudioFile(String rawUrl) throws IOException {
+		if (!looksLikeSupportedUrl(rawUrl)) {
+			return null;
+		}
+		String url = rawUrl.trim();
+		PersistentTrackSnapshot snapshot = persistentTrackSnapshot(url);
+		if (!snapshot.complete()) {
+			return null;
+		}
+		Path trackPath = snapshot.trackPath();
+		if (trackPath == null || !Files.isRegularFile(trackPath)) {
+			return null;
+		}
+		long expectedDurationMs = readDurationMs(snapshot.metadataPath());
+		try {
+			validateCompleteAudioFile(trackPath, expectedDurationMs);
+		} catch (IOException exception) {
+			deleteCompleteMarkerQuietly(url);
+			throw exception;
+		}
+		if (isMp3File(trackPath)) {
+			return trackPath;
+		}
+		Path entryDir = entryDirectory(url);
+		if (entryDir == null) {
+			return trackPath;
+		}
+		Path mp3Path = entryDir.resolve(AUDIO_FILE_NAME);
+		if (!Files.isRegularFile(mp3Path)) {
+			Path tempMp3Path = mp3Path.resolveSibling(mp3Path.getFileName() + ".transcode.tmp");
+			deleteFileQuietly(tempMp3Path);
+			runTextCommand(List.of(
+					ffmpegBin(),
+					"-hide_banner",
+					"-loglevel",
+					"error",
+					"-nostdin",
+					"-y",
+					"-i",
+					trackPath.toString(),
+					"-vn",
+					"-codec:a",
+					"libmp3lame",
+					"-q:a",
+					"0",
+					tempMp3Path.toString()
+			), AUDIO_TRANSCODE_TIMEOUT_SEC);
+			validateCompleteAudioFile(tempMp3Path, expectedDurationMs);
+			moveFileReplacing(tempMp3Path, mp3Path);
+		}
+		long mp3Bytes = safeFileSize(mp3Path);
+		if (mp3Bytes <= 0L) {
+			return trackPath;
+		}
+		updateCompletedAudioBytes(url, mp3Bytes);
+		return mp3Path;
 	}
 
 	public static QueueEntryCacheStatus queueEntryCacheStatus(String rawUrl) {
@@ -380,7 +459,7 @@ public final class MonitorYoutubeMusicCache {
 		String artist = resolveArtist(metadata);
 		long durationMs = Math.round(getDouble(metadata, "duration", 0.0D) * 1000.0D);
 		List<String> thumbnailUrls = resolveThumbnailUrls(url, metadata);
-		BufferedImage cover = downloadOrCreateCover(thumbnailUrls, progress);
+		BufferedImage cover = loadPersistedCoverOrFallback(url);
 		persistMetadataAndCover(
 				url,
 				title,
@@ -415,12 +494,56 @@ public final class MonitorYoutubeMusicCache {
 		);
 	}
 
+	public static BufferedImage refreshCover(String rawUrl) throws IOException {
+		if (!looksLikeSupportedUrl(rawUrl)) {
+			return null;
+		}
+		String url = rawUrl.trim();
+		JsonObject metadata = readTrackMetadata(url);
+		if (metadata == null) {
+			metadata = new JsonObject();
+		}
+		boolean resolvedFreshMetadata = false;
+		if (!hasLikelyAlbumThumbnail(metadata)) {
+			try {
+				JsonObject resolvedMetadata = resolveMetadata(url);
+				if (resolvedMetadata != null) {
+					metadata = resolvedMetadata;
+					resolvedFreshMetadata = true;
+				}
+			} catch (IOException exception) {
+				Lg2.LOGGER.debug("Failed to refresh YouTube Music metadata before cover download for {}", url, exception);
+			}
+		}
+		List<String> thumbnailUrls = resolveThumbnailUrls(url, metadata);
+		BufferedImage cover = downloadCoverFromCandidates(thumbnailUrls, null);
+		if (cover == null && !resolvedFreshMetadata) {
+			try {
+				JsonObject resolvedMetadata = resolveMetadata(url);
+				if (resolvedMetadata != null) {
+					metadata = resolvedMetadata;
+					thumbnailUrls = resolveThumbnailUrls(url, metadata);
+					cover = downloadCoverFromCandidates(thumbnailUrls, null);
+				}
+			} catch (IOException exception) {
+				Lg2.LOGGER.debug("Failed to refresh YouTube Music metadata after cover download miss for {}", url, exception);
+			}
+		}
+		if (cover == null || isFallbackCoverImage(cover)) {
+			return null;
+		}
+		persistRefreshedCover(url, cover, metadata, thumbnailUrls);
+		return cover;
+	}
+
 	private static LoadedTrack buildFullTrack(String url, TaskProgress progress, TrackCacheState state) throws IOException {
 		LoadedTrack cached = loadCompleteCachedTrackIfPresent(url, progress);
 		if (cached != null) {
 			return cached;
 		}
-		Path targetTrackPath = trackPath(url);
+		Path targetTrackPath = finalTrackPath(url);
+		Path tempDownloadDir = tempDownloadDirectory(url);
+		Path outputTemplatePath = trackOutputTemplatePath(url);
 		Path targetMetadataPath = metadataPath(url);
 		JsonObject metadata = resolveMetadata(url);
 		if (progress != null) {
@@ -431,7 +554,7 @@ public final class MonitorYoutubeMusicCache {
 		long durationMs = Math.round(getDouble(metadata, "duration", 0.0D) * 1000.0D);
 		long expectedAudioBytes = resolveExpectedAudioBytes(metadata);
 		List<String> thumbnailUrls = resolveThumbnailUrls(url, metadata);
-		BufferedImage cover = loadPersistedOrCreateCover(url, thumbnailUrls, progress);
+		BufferedImage cover = loadPersistedCoverOrFallback(url);
 		boolean fallbackCover = isFallbackCoverImage(cover);
 		if (progress != null) {
 			progress.setProgress("COVER", 2L, 4L);
@@ -441,10 +564,12 @@ public final class MonitorYoutubeMusicCache {
 		if (entryDir == null) {
 			throw new IOException("Invalid cache key");
 		}
-		if (targetTrackPath == null || targetMetadataPath == null) {
+		if (targetTrackPath == null || tempDownloadDir == null || outputTemplatePath == null || targetMetadataPath == null) {
 			throw new IOException("Invalid track cache path");
 		}
 		Files.createDirectories(entryDir);
+		deleteDirectoryQuietly(tempDownloadDir);
+		Files.createDirectories(tempDownloadDir);
 		persistMetadataAndCover(
 				url,
 				title,
@@ -456,56 +581,68 @@ public final class MonitorYoutubeMusicCache {
 		);
 		deleteCompleteMarkerQuietly(url);
 		if (state != null) {
-			state.updateDownloadProgress(safeFileSize(targetTrackPath), expectedAudioBytes, progress);
+			state.updateDownloadProgress(0L, expectedAudioBytes, progress);
 		}
 		final long[] persistedExpectedAudioBytes = {Math.max(0L, expectedAudioBytes)};
-		runDownloadCommand(
-				List.of(
-						ytDlpBin(),
-						"-f",
-						"bestaudio/best",
-						"--no-playlist",
-						"--continue",
-						"--no-part",
-						"--newline",
-						"--progress",
-						"--progress-template",
-						"download:" + DOWNLOAD_PROGRESS_PREFIX + "%(progress.status)s:%(progress.downloaded_bytes)s:%(progress.total_bytes)s:%(progress.total_bytes_estimate)s",
-						"-o",
-						targetTrackPath.toString(),
-						url
-				),
-				COMMAND_TIMEOUT_SEC,
-				update -> {
-					long observedExpected = update.expectedBytes() > 0L ? update.expectedBytes() : expectedAudioBytes;
-					long observedDownloaded = Math.max(update.downloadedBytes(), safeFileSize(targetTrackPath));
-					if (observedExpected > 0L && observedExpected != persistedExpectedAudioBytes[0]) {
-						persistTrackMetadata(
-								url,
-								title,
-								artist,
-								durationMs,
-								thumbnailUrls.isEmpty() ? "" : thumbnailUrls.get(0),
-								fallbackCover,
-								observedExpected,
-								0L
-						);
-						persistedExpectedAudioBytes[0] = observedExpected;
-					}
-					if (state != null) {
-						state.updateDownloadProgress(observedDownloaded, observedExpected, progress);
-					} else if (progress != null) {
-						if (observedExpected > 0L) {
-							progress.setProgress("AUDIO", Math.min(observedDownloaded, observedExpected), observedExpected);
-						} else {
-							progress.setIndeterminate(observedDownloaded > 0L ? "DOWNLOADING AUDIO" : "PREPARING AUDIO");
+		long finalAudioBytes;
+		try {
+			runDownloadCommand(
+					List.of(
+							ytDlpBin(),
+							"-f",
+							"bestaudio/best",
+							"-x",
+							"--audio-format",
+							"mp3",
+							"--audio-quality",
+							"0",
+							"--no-playlist",
+							"--newline",
+							"--progress",
+							"--progress-template",
+							"download:" + DOWNLOAD_PROGRESS_PREFIX + "%(progress.status)s:%(progress.downloaded_bytes)s:%(progress.total_bytes)s:%(progress.total_bytes_estimate)s",
+							"-o",
+							outputTemplatePath.toString(),
+							url
+					),
+					COMMAND_TIMEOUT_SEC,
+					update -> {
+						long observedExpected = update.expectedBytes() > 0L ? update.expectedBytes() : expectedAudioBytes;
+						long observedDownloaded = Math.max(update.downloadedBytes(), safeFileSize(tempDownloadDir.resolve(AUDIO_FILE_NAME)));
+						if (observedExpected > 0L && observedExpected != persistedExpectedAudioBytes[0]) {
+							persistTrackMetadata(
+									url,
+									title,
+									artist,
+									durationMs,
+									thumbnailUrls.isEmpty() ? "" : thumbnailUrls.get(0),
+									fallbackCover,
+									observedExpected,
+									0L
+							);
+							persistedExpectedAudioBytes[0] = observedExpected;
+						}
+						if (state != null) {
+							state.updateDownloadProgress(observedDownloaded, observedExpected, progress);
+						} else if (progress != null) {
+							if (observedExpected > 0L) {
+								progress.setProgress("AUDIO", Math.min(observedDownloaded, observedExpected), observedExpected);
+							} else {
+								progress.setIndeterminate(observedDownloaded > 0L ? "DOWNLOADING AUDIO" : "PREPARING AUDIO");
+							}
 						}
 					}
-				}
-		);
-		long finalAudioBytes = safeFileSize(targetTrackPath);
-		if (finalAudioBytes <= 0L) {
-			throw new IOException("Failed to download audio track");
+			);
+			Path downloadedTrackPath = ensureDownloadedMp3(downloadedTrackPath(tempDownloadDir), tempDownloadDir);
+			validateCompleteAudioFile(downloadedTrackPath, durationMs);
+			finalAudioBytes = safeFileSize(downloadedTrackPath);
+			if (finalAudioBytes <= 0L) {
+				throw new IOException("Failed to download audio track");
+			}
+			moveFileReplacing(downloadedTrackPath, targetTrackPath);
+			deleteObsoleteAudioCandidates(entryDir, targetTrackPath);
+		} finally {
+			deleteDirectoryQuietly(tempDownloadDir);
 		}
 		persistTrackMetadata(
 				url,
@@ -517,6 +654,7 @@ public final class MonitorYoutubeMusicCache {
 				Math.max(expectedAudioBytes, finalAudioBytes),
 				finalAudioBytes
 		);
+		refreshCoverFromResolvedMetadata(url, metadata, thumbnailUrls);
 		markTrackComplete(url);
 		if (state != null) {
 			state.updateDownloadProgress(finalAudioBytes, Math.max(expectedAudioBytes, finalAudioBytes), progress);
@@ -529,7 +667,17 @@ public final class MonitorYoutubeMusicCache {
 
 	private static LoadedTrack loadCompleteCachedTrackIfPresent(String url, TaskProgress progress) throws IOException {
 		PersistentTrackSnapshot snapshot = persistentTrackSnapshot(url);
-		return snapshot.complete() ? loadCachedTrack(url, snapshot.trackPath(), snapshot.coverPath(), snapshot.metadataPath(), progress) : null;
+		if (!snapshot.complete()) {
+			return null;
+		}
+		try {
+			validateCompleteAudioFile(snapshot.trackPath(), readDurationMs(snapshot.metadataPath()));
+		} catch (IOException exception) {
+			deleteCompleteMarkerQuietly(url);
+			Lg2.LOGGER.debug("Invalidated incomplete YouTube Music cache for {}", url, exception);
+			return null;
+		}
+		return loadCachedTrack(url, snapshot.trackPath(), snapshot.coverPath(), snapshot.metadataPath(), progress);
 	}
 
 	private static LoadedTrack loadPlayableTrackIfPresent(String url, TaskProgress progress) throws IOException {
@@ -559,19 +707,6 @@ public final class MonitorYoutubeMusicCache {
 			if (normalized != cover) {
 				cover = normalized;
 				ImageIO.write(cover, "png", coverPath.toFile());
-			}
-			if (isFallbackCoverImage(cover)) {
-				List<String> thumbnailUrls = resolveThumbnailUrls(url, metadata);
-				if (!thumbnailUrls.isEmpty()) {
-					BufferedImage refreshed = downloadOrCreateCover(thumbnailUrls, progress);
-					if (refreshed != null && !isFallbackCoverImage(refreshed)) {
-						cover = refreshed;
-						ImageIO.write(cover, "png", coverPath.toFile());
-						metadata.addProperty("fallbackCover", false);
-						metadata.addProperty("thumbnailUrl", thumbnailUrls.get(0));
-						Files.writeString(metadataPath, GSON.toJson(metadata), StandardCharsets.UTF_8);
-					}
-				}
 			}
 		}
 		if (progress != null) {
@@ -643,6 +778,11 @@ public final class MonitorYoutubeMusicCache {
 
 	private static List<String> resolveThumbnailUrls(String rawUrl, JsonObject metadata) {
 		LinkedHashSet<String> urls = new LinkedHashSet<>();
+		appendMetadataThumbnailUrls(urls, metadata, true);
+		String persistedThumbnail = getString(metadata, "thumbnailUrl", "");
+		if (!persistedThumbnail.isBlank()) {
+			urls.add(persistedThumbnail);
+		}
 		appendDirectThumbnailUrl(urls, rawUrl);
 		appendDirectThumbnailUrl(urls, getString(metadata, "webpage_url", ""));
 		appendDirectThumbnailUrl(urls, getString(metadata, "original_url", ""));
@@ -655,19 +795,67 @@ public final class MonitorYoutubeMusicCache {
 		if (!thumbnail.isBlank()) {
 			urls.add(thumbnail);
 		}
-		if (metadata != null && metadata.has("thumbnails") && metadata.get("thumbnails").isJsonArray()) {
-			JsonArray thumbnails = metadata.getAsJsonArray("thumbnails");
-			for (int index = thumbnails.size() - 1; index >= 0; index--) {
-				if (!thumbnails.get(index).isJsonObject()) {
-					continue;
-				}
-				String url = getString(thumbnails.get(index).getAsJsonObject(), "url", "");
-				if (!url.isBlank() && !urls.contains(url)) {
-					urls.add(url);
-				}
+		appendMetadataThumbnailUrls(urls, metadata, false);
+		return List.copyOf(urls);
+	}
+
+	private static void appendMetadataThumbnailUrls(LinkedHashSet<String> urls, JsonObject metadata, boolean squareOnly) {
+		if (urls == null || metadata == null || !metadata.has("thumbnails") || !metadata.get("thumbnails").isJsonArray()) {
+			return;
+		}
+		JsonArray thumbnails = metadata.getAsJsonArray("thumbnails");
+		for (int index = thumbnails.size() - 1; index >= 0; index--) {
+			if (!thumbnails.get(index).isJsonObject()) {
+				continue;
+			}
+			JsonObject thumbnail = thumbnails.get(index).getAsJsonObject();
+			String url = getString(thumbnail, "url", "");
+			if (url.isBlank()) {
+				continue;
+			}
+			if (squareOnly && !isLikelyAlbumThumbnail(url, thumbnail)) {
+				continue;
+			}
+			urls.add(url);
+		}
+	}
+
+	private static boolean isLikelyAlbumThumbnail(String url, JsonObject thumbnail) {
+		if (url != null && url.contains("googleusercontent.com")) {
+			return true;
+		}
+		long width = getLong(thumbnail, "width", 0L);
+		long height = getLong(thumbnail, "height", 0L);
+		if (width <= 0L || height <= 0L) {
+			return false;
+		}
+		long tolerance = Math.max(2L, Math.max(width, height) / 20L);
+		return Math.abs(width - height) <= tolerance;
+	}
+
+	private static boolean hasLikelyAlbumThumbnail(JsonObject metadata) {
+		if (metadata == null) {
+			return false;
+		}
+		String persistedThumbnail = getString(metadata, "thumbnailUrl", "");
+		if (persistedThumbnail.contains("googleusercontent.com")) {
+			return true;
+		}
+		if (!metadata.has("thumbnails") || !metadata.get("thumbnails").isJsonArray()) {
+			return false;
+		}
+		JsonArray thumbnails = metadata.getAsJsonArray("thumbnails");
+		for (int index = 0; index < thumbnails.size(); index++) {
+			if (!thumbnails.get(index).isJsonObject()) {
+				continue;
+			}
+			JsonObject thumbnail = thumbnails.get(index).getAsJsonObject();
+			String url = getString(thumbnail, "url", "");
+			if (isLikelyAlbumThumbnail(url, thumbnail)) {
+				return true;
 			}
 		}
-		return List.copyOf(urls);
+		return false;
 	}
 
 	private static void appendDirectThumbnailUrl(LinkedHashSet<String> urls, String rawUrl) {
@@ -781,8 +969,17 @@ public final class MonitorYoutubeMusicCache {
 		connection.setConnectTimeout(COVER_CONNECT_TIMEOUT_MS);
 		connection.setReadTimeout(COVER_READ_TIMEOUT_MS);
 		connection.setRequestProperty("User-Agent", "LostGladeMonitor/1.0");
+		connection.setRequestProperty("Accept", "image/*,*/*;q=0.8");
+		int status = connection.getResponseCode();
+		if (status < 200 || status >= 400) {
+			throw new IOException("Cover request failed: HTTP " + status);
+		}
+		long contentLength = connection.getContentLengthLong();
+		if (contentLength > MAX_COVER_DOWNLOAD_BYTES) {
+			throw new IOException("Cover image is too large");
+		}
 		try (InputStream input = connection.getInputStream()) {
-			byte[] bytes = input.readAllBytes();
+			byte[] bytes = readBoundedBytes(input, MAX_COVER_DOWNLOAD_BYTES);
 			if (bytes.length == 0) {
 				return null;
 			}
@@ -793,11 +990,33 @@ public final class MonitorYoutubeMusicCache {
 		}
 	}
 
-	private static BufferedImage downloadOrCreateCover(List<String> thumbnailUrls, TaskProgress progress) throws IOException {
+	private static byte[] readBoundedBytes(InputStream input, int maxBytes) throws IOException {
+		if (input == null) {
+			return new byte[0];
+		}
+		ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(8192, Math.max(0, maxBytes)));
+		byte[] buffer = new byte[8192];
+		int total = 0;
+		int read;
+		while ((read = input.read(buffer)) >= 0) {
+			total += read;
+			if (total > maxBytes) {
+				throw new IOException("Cover image is too large");
+			}
+			output.write(buffer, 0, read);
+		}
+		return output.toByteArray();
+	}
+
+	private static BufferedImage downloadCoverFromCandidates(List<String> thumbnailUrls, TaskProgress progress) {
 		if (thumbnailUrls != null) {
+			int attempts = 0;
 			for (String thumbnailUrl : thumbnailUrls) {
 				if (thumbnailUrl == null || thumbnailUrl.isBlank()) {
 					continue;
+				}
+				if (attempts++ >= MAX_COVER_DOWNLOAD_ATTEMPTS) {
+					break;
 				}
 				try {
 					BufferedImage cover = downloadCoverImage(thumbnailUrl, progress);
@@ -809,10 +1028,24 @@ public final class MonitorYoutubeMusicCache {
 				}
 			}
 		}
-		return createFallbackCover();
+		return null;
 	}
 
-	private static BufferedImage loadPersistedOrCreateCover(String url, List<String> thumbnailUrls, TaskProgress progress) throws IOException {
+	private static BufferedImage refreshCoverFromResolvedMetadata(String url, JsonObject metadata, List<String> thumbnailUrls) {
+		try {
+			BufferedImage refreshedCover = downloadCoverFromCandidates(thumbnailUrls, null);
+			if (refreshedCover == null || isFallbackCoverImage(refreshedCover)) {
+				return null;
+			}
+			persistRefreshedCover(url, refreshedCover, metadata, thumbnailUrls);
+			return refreshedCover;
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to refresh YouTube Music cover for {}", url, exception);
+			return null;
+		}
+	}
+
+	private static BufferedImage loadPersistedCoverOrFallback(String url) throws IOException {
 		Path existingCoverPath = coverPath(url);
 		if (existingCoverPath != null && Files.isRegularFile(existingCoverPath)) {
 			BufferedImage persisted = ImageIO.read(existingCoverPath.toFile());
@@ -824,7 +1057,59 @@ public final class MonitorYoutubeMusicCache {
 				return normalized;
 			}
 		}
-		return downloadOrCreateCover(thumbnailUrls, progress);
+		return createFallbackCover();
+	}
+
+	private static JsonObject readTrackMetadata(String url) {
+		Path metadataPath = metadataPath(url);
+		if (metadataPath == null || !Files.isRegularFile(metadataPath)) {
+			return null;
+		}
+		try {
+			return GSON.fromJson(Files.readString(metadataPath, StandardCharsets.UTF_8), JsonObject.class);
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to read YouTube Music metadata for {}", url, exception);
+			return null;
+		}
+	}
+
+	private static void persistRefreshedCover(String url, BufferedImage cover, JsonObject metadata, List<String> thumbnailUrls) throws IOException {
+		Path targetCoverPath = coverPath(url);
+		Path targetMetadataPath = metadataPath(url);
+		if (targetCoverPath == null || targetMetadataPath == null || cover == null) {
+			return;
+		}
+		BufferedImage normalizedCover = normalizeCoverArt(cover);
+		Files.createDirectories(targetCoverPath.getParent());
+		Files.createDirectories(targetMetadataPath.getParent());
+		ImageIO.write(normalizedCover, "png", targetCoverPath.toFile());
+		JsonObject persisted = readTrackMetadata(url);
+		if (persisted == null) {
+			persisted = new JsonObject();
+		}
+		if (metadata != null) {
+			copyMetadataStringIfMissing(persisted, metadata, "title");
+			copyMetadataStringIfMissing(persisted, metadata, "artist");
+			if (!persisted.has("durationMs") && metadata.has("durationMs")) {
+				persisted.addProperty("durationMs", getLong(metadata, "durationMs", 0L));
+			}
+		}
+		persisted.addProperty("thumbnailUrl", thumbnailUrls != null && !thumbnailUrls.isEmpty() ? thumbnailUrls.get(0) : "");
+		persisted.addProperty("fallbackCover", false);
+		Files.writeString(targetMetadataPath, GSON.toJson(persisted), StandardCharsets.UTF_8);
+	}
+
+	private static void copyMetadataStringIfMissing(JsonObject target, JsonObject source, String key) {
+		if (target == null || source == null || key == null || key.isBlank()) {
+			return;
+		}
+		if (target.has(key) && !getString(target, key, "").isBlank()) {
+			return;
+		}
+		String value = getString(source, key, "");
+		if (!value.isBlank()) {
+			target.addProperty(key, value);
+		}
 	}
 
 	private static void persistMetadataAndCover(
@@ -842,10 +1127,36 @@ public final class MonitorYoutubeMusicCache {
 			return;
 		}
 		BufferedImage normalizedCover = normalizeCoverArt(cover);
+		boolean fallbackCover = isFallbackCoverImage(normalizedCover);
+		if (fallbackCover) {
+			BufferedImage existingCover = readPersistedRealCover(url);
+			if (existingCover != null) {
+				normalizedCover = existingCover;
+				fallbackCover = false;
+			}
+		}
 		Files.createDirectories(targetCoverPath.getParent());
 		Files.createDirectories(targetMetadataPath.getParent());
 		ImageIO.write(normalizedCover, "png", targetCoverPath.toFile());
-		persistTrackMetadata(url, title, artist, durationMs, thumbnailUrl, isFallbackCoverImage(normalizedCover), expectedAudioBytes, 0L);
+		persistTrackMetadata(url, title, artist, durationMs, thumbnailUrl, fallbackCover, expectedAudioBytes, 0L);
+	}
+
+	private static BufferedImage readPersistedRealCover(String url) {
+		Path existingCoverPath = coverPath(url);
+		if (existingCoverPath == null || !Files.isRegularFile(existingCoverPath)) {
+			return null;
+		}
+		try {
+			BufferedImage existingCover = ImageIO.read(existingCoverPath.toFile());
+			if (existingCover == null) {
+				return null;
+			}
+			BufferedImage normalizedCover = normalizeCoverArt(existingCover);
+			return isFallbackCoverImage(normalizedCover) ? null : normalizedCover;
+		} catch (IOException exception) {
+			Lg2.LOGGER.debug("Failed to read persisted YouTube Music cover for {}", url, exception);
+			return null;
+		}
 	}
 
 	private static boolean isFallbackCoverImage(BufferedImage image) {
@@ -1086,18 +1397,20 @@ public final class MonitorYoutubeMusicCache {
 		if (targetMetadataPath == null) {
 			return;
 		}
+		boolean persistedFallbackCover = fallbackCover && readPersistedRealCover(url) == null;
 		Files.createDirectories(targetMetadataPath.getParent());
 		JsonObject persisted = new JsonObject();
 		persisted.addProperty("title", title);
 		persisted.addProperty("artist", artist);
 		persisted.addProperty("durationMs", durationMs);
 		persisted.addProperty("thumbnailUrl", thumbnailUrl != null ? thumbnailUrl : "");
-		persisted.addProperty("fallbackCover", fallbackCover);
+		persisted.addProperty("fallbackCover", persistedFallbackCover);
 		if (expectedAudioBytes > 0L) {
 			persisted.addProperty("expectedAudioBytes", expectedAudioBytes);
 		}
 		if (completedAudioBytes > 0L) {
 			persisted.addProperty("completedAudioBytes", completedAudioBytes);
+			persisted.addProperty("validatedComplete", true);
 		}
 		Files.writeString(targetMetadataPath, GSON.toJson(persisted), StandardCharsets.UTF_8);
 	}
@@ -1131,11 +1444,13 @@ public final class MonitorYoutubeMusicCache {
 		long audioBytes = safeFileSize(trackPath);
 		long expectedAudioBytes = readExpectedAudioBytes(metadataPath);
 		long completedAudioBytes = readCompletedAudioBytes(metadataPath);
+		boolean validatedComplete = readValidatedComplete(metadataPath);
 		boolean playable = trackPath != null && hasCover && hasMetadata && audioBytes > 0L;
 		Path markerPath = completeMarkerPath(url);
 		boolean complete = playable
 				&& markerPath != null
 				&& Files.isRegularFile(markerPath)
+				&& validatedComplete
 				&& completedAudioBytes > 0L
 				&& audioBytes >= completedAudioBytes;
 		if (complete && expectedAudioBytes <= 0L) {
@@ -1170,6 +1485,74 @@ public final class MonitorYoutubeMusicCache {
 		}
 	}
 
+	private static boolean readValidatedComplete(Path metadataPath) {
+		if (metadataPath == null || !Files.isRegularFile(metadataPath)) {
+			return false;
+		}
+		try {
+			JsonObject metadata = GSON.fromJson(Files.readString(metadataPath, StandardCharsets.UTF_8), JsonObject.class);
+			return metadata != null
+					&& metadata.has("validatedComplete")
+					&& metadata.get("validatedComplete").isJsonPrimitive()
+					&& metadata.get("validatedComplete").getAsBoolean();
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to read persisted YouTube Music validation flag from {}", metadataPath, exception);
+			return false;
+		}
+	}
+
+	private static long readDurationMs(Path metadataPath) {
+		if (metadataPath == null || !Files.isRegularFile(metadataPath)) {
+			return 0L;
+		}
+		try {
+			JsonObject metadata = GSON.fromJson(Files.readString(metadataPath, StandardCharsets.UTF_8), JsonObject.class);
+			return Math.max(0L, getLong(metadata, "durationMs", 0L));
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to read persisted YouTube Music duration from {}", metadataPath, exception);
+			return 0L;
+		}
+	}
+
+	private static void validateCompleteAudioFile(Path audioPath, long expectedDurationMs) throws IOException {
+		if (audioPath == null || !Files.isRegularFile(audioPath) || safeFileSize(audioPath) <= 0L) {
+			throw new IOException("Completed audio file is missing");
+		}
+		if (expectedDurationMs <= 0L) {
+			return;
+		}
+		long actualDurationMs = probeAudioDurationMs(audioPath);
+		if (actualDurationMs <= 0L) {
+			throw new IOException("Completed audio duration is unknown");
+		}
+		long toleranceMs = Math.min(30_000L, Math.max(7_000L, expectedDurationMs / 50L));
+		if (actualDurationMs + toleranceMs < expectedDurationMs) {
+			throw new IOException("Completed audio is shorter than expected: " + actualDurationMs + "ms < " + expectedDurationMs + "ms");
+		}
+	}
+
+	private static long probeAudioDurationMs(Path audioPath) throws IOException {
+		String output = runTextCommand(List.of(
+				ffprobeBin(),
+				"-v",
+				"error",
+				"-show_entries",
+				"format=duration",
+				"-of",
+				"default=noprint_wrappers=1:nokey=1",
+				audioPath.toString()
+		), AUDIO_VALIDATE_TIMEOUT_SEC).trim();
+		if (output.isBlank()) {
+			return 0L;
+		}
+		String firstLine = output.split("\\R", 2)[0].trim();
+		try {
+			return Math.max(0L, Math.round(Double.parseDouble(firstLine) * 1000.0D));
+		} catch (NumberFormatException exception) {
+			throw new IOException("Invalid audio duration: " + firstLine, exception);
+		}
+	}
+
 	private static long safeFileSize(Path path) {
 		if (path == null || !Files.isRegularFile(path)) {
 			return 0L;
@@ -1179,6 +1562,31 @@ public final class MonitorYoutubeMusicCache {
 		} catch (IOException exception) {
 			return 0L;
 		}
+	}
+
+	private static boolean isMp3File(Path path) {
+		if (path == null || path.getFileName() == null) {
+			return false;
+		}
+		return path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".mp3");
+	}
+
+	private static void updateCompletedAudioBytes(String url, long completedAudioBytes) throws IOException {
+		Path metadataPath = metadataPath(url);
+		if (metadataPath == null || !Files.isRegularFile(metadataPath)) {
+			return;
+		}
+		JsonObject metadata = GSON.fromJson(Files.readString(metadataPath, StandardCharsets.UTF_8), JsonObject.class);
+		if (metadata == null) {
+			return;
+		}
+		long expectedAudioBytes = Math.max(getLong(metadata, "expectedAudioBytes", 0L), completedAudioBytes);
+		metadata.addProperty("expectedAudioBytes", expectedAudioBytes);
+		metadata.addProperty("completedAudioBytes", Math.max(0L, completedAudioBytes));
+		if (completedAudioBytes > 0L) {
+			metadata.addProperty("validatedComplete", true);
+		}
+		Files.writeString(metadataPath, GSON.toJson(metadata), StandardCharsets.UTF_8);
 	}
 
 	private static byte[] readProcessOutput(Process process, int timeoutSec, String timeoutMessage) throws IOException, InterruptedException {
@@ -1206,7 +1614,115 @@ public final class MonitorYoutubeMusicCache {
 
 	private static Path trackPath(String url) {
 		Path directory = entryDirectory(url);
+		if (directory == null) {
+			return null;
+		}
+		for (String candidateName : AUDIO_FILE_CANDIDATE_NAMES) {
+			Path candidate = directory.resolve(candidateName);
+			if (Files.isRegularFile(candidate)) {
+				return candidate;
+			}
+		}
+		return directory.resolve(AUDIO_FILE_NAME);
+	}
+
+	private static Path finalTrackPath(String url) {
+		Path directory = entryDirectory(url);
 		return directory != null ? directory.resolve(AUDIO_FILE_NAME) : null;
+	}
+
+	private static Path trackOutputTemplatePath(String url) {
+		Path directory = tempDownloadDirectory(url);
+		return directory != null ? directory.resolve(AUDIO_OUTPUT_TEMPLATE_NAME) : null;
+	}
+
+	private static Path tempDownloadDirectory(String url) {
+		Path directory = entryDirectory(url);
+		return directory != null ? directory.resolve(TEMP_DOWNLOAD_DIR_NAME) : null;
+	}
+
+	private static Path downloadedTrackPath(Path directory) throws IOException {
+		if (directory == null) {
+			throw new IOException("Downloaded audio directory is missing");
+		}
+		for (String candidateName : AUDIO_FILE_CANDIDATE_NAMES) {
+			Path candidate = directory.resolve(candidateName);
+			if (Files.isRegularFile(candidate)) {
+				return candidate;
+			}
+		}
+		throw new IOException("Downloaded audio file is missing");
+	}
+
+	private static Path ensureDownloadedMp3(Path downloadedTrackPath, Path tempDownloadDir) throws IOException {
+		if (downloadedTrackPath == null || !Files.isRegularFile(downloadedTrackPath)) {
+			throw new IOException("Downloaded audio file is missing");
+		}
+		if (isMp3File(downloadedTrackPath)) {
+			return downloadedTrackPath;
+		}
+		Path convertedPath = tempDownloadDir != null ? tempDownloadDir.resolve(AUDIO_FILE_NAME) : null;
+		if (convertedPath == null) {
+			throw new IOException("Invalid mp3 conversion path");
+		}
+		Path tempConvertedPath = convertedPath.resolveSibling(convertedPath.getFileName() + ".convert.tmp");
+		deleteFileQuietly(tempConvertedPath);
+		runTextCommand(List.of(
+				ffmpegBin(),
+				"-hide_banner",
+				"-loglevel",
+				"error",
+				"-nostdin",
+				"-y",
+				"-i",
+				downloadedTrackPath.toString(),
+				"-vn",
+				"-codec:a",
+				"libmp3lame",
+				"-q:a",
+				"0",
+				tempConvertedPath.toString()
+		), AUDIO_TRANSCODE_TIMEOUT_SEC);
+		moveFileReplacing(tempConvertedPath, convertedPath);
+		return convertedPath;
+	}
+
+	private static void moveFileReplacing(Path sourcePath, Path targetPath) throws IOException {
+		if (sourcePath == null || targetPath == null) {
+			throw new IOException("Invalid audio move path");
+		}
+		Path parent = targetPath.getParent();
+		if (parent != null) {
+			Files.createDirectories(parent);
+		}
+		try {
+			Files.move(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+		} catch (IOException ignored) {
+			Files.move(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+		}
+	}
+
+	private static void deleteObsoleteAudioCandidates(Path directory, Path keepPath) {
+		if (directory == null) {
+			return;
+		}
+		for (String candidateName : AUDIO_FILE_CANDIDATE_NAMES) {
+			Path candidate = directory.resolve(candidateName);
+			if (keepPath != null && candidate.equals(keepPath)) {
+				continue;
+			}
+			deleteFileQuietly(candidate);
+		}
+	}
+
+	private static void deleteFileQuietly(Path path) {
+		if (path == null) {
+			return;
+		}
+		try {
+			Files.deleteIfExists(path);
+		} catch (IOException ignored) {
+		}
 	}
 
 	private static Path coverPath(String url) {
@@ -1252,6 +1768,14 @@ public final class MonitorYoutubeMusicCache {
 
 	private static String ytDlpBin() {
 		return readStringSetting("YT_DLP_BIN", "lg2.youtube.ytDlpBin", DEFAULT_YT_DLP_BIN);
+	}
+
+	private static String ffmpegBin() {
+		return readStringSetting("FFMPEG_BIN", "lg2.media.ffmpegBin", DEFAULT_FFMPEG_BIN);
+	}
+
+	private static String ffprobeBin() {
+		return readStringSetting("FFPROBE_BIN", "lg2.media.ffprobeBin", DEFAULT_FFPROBE_BIN);
 	}
 
 	private static String readStringSetting(String envKey, String propertyKey, String fallback) {

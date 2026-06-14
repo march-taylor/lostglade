@@ -408,6 +408,7 @@ final class MonitorScreenMediaFrameRuntime {
 			}
 		}
 		PENDING_MEDIA_LINKS.entrySet().removeIf(entry -> !isMediaSessionAlive(server, entry.getValue().screenKey()));
+		PENDING_GALLERY_RENAMES.entrySet().removeIf(entry -> !isMediaSessionAlive(server, entry.getValue().screenKey()));
 		IN_FLIGHT_MEDIA_LINKS.entrySet().removeIf(entry -> !isMediaSessionAlive(server, entry.getValue().screenKey()));
 	}
 
