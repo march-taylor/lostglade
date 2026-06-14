@@ -42,6 +42,7 @@ public final class MonitorMediaStateMachineTest {
 		audioTransportPolicyKeepsSeekTargetUntilRelaySettles();
 		audioTransportPolicyDropsExpiredLocalTransportOverride();
 		directAudioSourcesDoNotResyncFromStaleMonitorPosition();
+		downloadedYoutubeVideoDoesNotUseStaticVisual();
 		System.out.println("Monitor media state-machine checks passed");
 	}
 
@@ -524,6 +525,29 @@ public final class MonitorMediaStateMachineTest {
 		require(
 				SpeakerAudioPlaybackPolicy.shouldResyncPosition(false, false, true, 1800L, 100L, 500L),
 				"authoritative stream positions should still resync when drift exceeds tolerance"
+		);
+	}
+
+	private static void downloadedYoutubeVideoDoesNotUseStaticVisual() {
+		MediaRuntimeState state = MediaRuntimeState.fresh(ScreenViewMode.GALLERY, "", () -> {
+		});
+		state.galleryItems.add(new GalleryItem(
+				"Downloaded YouTube",
+				"",
+				"https://www.youtube.com/watch?v=KdoaiGTIBY4",
+				"youtube-video-test.mp4",
+				null,
+				null,
+				GalleryItemKind.VIDEO
+		));
+		state.galleryIndex = 0;
+		require(
+				!MonitorScreenMediaActions.shouldUseStaticVisualForDirectPlaybackLocked(
+						state,
+						ScreenViewMode.GALLERY,
+						"https://www.youtube.com/watch?v=KdoaiGTIBY4"
+				),
+				"downloaded YouTube videos must decode the local mp4 instead of freezing on the preview frame"
 		);
 	}
 

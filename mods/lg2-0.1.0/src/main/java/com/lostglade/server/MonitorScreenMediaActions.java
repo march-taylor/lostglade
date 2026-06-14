@@ -1116,14 +1116,16 @@ final class MonitorScreenMediaActions {
 		startDirectVideoPlayback(server, key, requesterUuid, title, "", url, video, selectionIndex, targetMode, preserveQueue);
 	}
 
-	private static boolean shouldUseStaticVisualForDirectPlaybackLocked(MediaRuntimeState state, ScreenViewMode targetMode, String url) {
-		if (targetMode == ScreenViewMode.YOUTUBE_MUSIC
-				|| MonitorYoutubeMusicCache.looksLikeSupportedUrl(url)
-				|| MonitorMediaApp.looksLikeDirectAudioUrl(url)) {
+	static boolean shouldUseStaticVisualForDirectPlaybackLocked(MediaRuntimeState state, ScreenViewMode targetMode, String url) {
+		if (targetMode == ScreenViewMode.YOUTUBE_MUSIC) {
 			return true;
 		}
 		GalleryItem current = currentGalleryItemLocked(state);
-		return current != null && effectiveGalleryItemKind(current) == GalleryItemKind.AUDIO;
+		GalleryItemKind currentKind = effectiveGalleryItemKind(current);
+		if (currentKind == GalleryItemKind.VIDEO) {
+			return false;
+		}
+		return currentKind == GalleryItemKind.AUDIO || MonitorMediaApp.looksLikeDirectAudioUrl(url);
 	}
 
 	static void requestMediaLink(ServerPlayer player, ScreenRuntimeKey key, boolean clearCurrentMedia, ScreenViewMode mode, YoutubeLinkRequestAction youtubeAction) {
