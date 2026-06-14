@@ -12,11 +12,14 @@ import com.lostglade.mixin.DisplayAccessor;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.lostglade.server.map.MapImageRenderSystem;
+import de.maxhenkel.voicechat.api.Position;
 import de.maxhenkel.voicechat.api.VoicechatApi;
 import de.maxhenkel.voicechat.api.VoicechatConnection;
 import de.maxhenkel.voicechat.api.VoicechatServerApi;
 import de.maxhenkel.voicechat.api.audiochannel.AudioPlayer;
 import de.maxhenkel.voicechat.api.audiochannel.StaticAudioChannel;
+import de.maxhenkel.voicechat.api.events.MicrophonePacketEvent;
+import de.maxhenkel.voicechat.api.opus.OpusDecoder;
 import de.maxhenkel.voicechat.api.opus.OpusEncoder;
 import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
@@ -333,6 +336,8 @@ public final class DroneSystem {
 	private static final double CONTROLLED_OPERATOR_AUDIO_RECENTER_DISTANCE_SQR = 6.0D * 6.0D;
 	private static final double CONTROLLED_OPERATOR_AUDIO_CAPTURE_RADIUS_EXTRA_BLOCKS = 8.0D;
 	private static final double CONTROLLED_OPERATOR_AUDIO_MIN_CAPTURE_RADIUS_BLOCKS = 16.0D;
+	private static final double CONTROLLED_OPERATOR_BODY_VOICE_WHISPER_DISTANCE_FACTOR = 0.5D;
+	private static final float CONTROLLED_OPERATOR_BODY_VOICE_GAIN = 1.0F;
 	private static final short[] CONTROLLED_OPERATOR_AUDIO_SILENCE_FRAME = new short[CONTROLLED_OPERATOR_AUDIO_FRAME_SAMPLES];
 	private static final double DRONE_CAMERA_ESCAPE_STEP = 0.04D;
 	private static final int DRONE_CAMERA_ESCAPE_XZ_RADIUS_STEPS = 4;
@@ -1710,6 +1715,139 @@ public final class DroneSystem {
 				stopControlledOperatorAudio(playerId);
 			}
 		}
+	}
+
+	public static void onVoicechatMicrophonePacket(MicrophonePacketEvent event) {
+		if (event == null || !ServerVoicechatIntegration.isLoaded()) {
+			return;
+		}
+		VoicechatApi voicechatApi = ServerVoicechatIntegration.getApi();
+		if (voicechatApi == null) {
+			return;
+		}
+		VoicechatConnection senderConnection = event.getSenderConnection();
+		if (senderConnection == null || senderConnection.getPlayer() == null || event.getPacket() == null) {
+			return;
+		}
+		Object rawPlayer = senderConnection.getPlayer().getPlayer();
+		if (!(rawPlayer instanceof ServerPlayer senderPlayer) || !(senderPlayer.level() instanceof ServerLevel senderLevel)) {
+			return;
+		}
+		Position senderPosition = senderConnection.getPlayer().getPosition();
+		byte[] opusData = event.getPacket().getOpusEncodedData();
+		if (senderPosition == null || opusData == null || opusData.length == 0) {
+			return;
+		}
+		MinecraftServer server = senderLevel.getServer();
+		if (server == null) {
+			return;
+		}
+		UUID senderUuid = senderConnection.getPlayer().getUuid();
+		boolean whispering = event.getPacket().isWhispering();
+		net.minecraft.resources.ResourceKey<Level> senderDimension = senderLevel.dimension();
+		byte[] copiedOpusData = opusData.clone();
+		server.execute(() -> routeControlledOperatorBodyVoice(
+				server,
+				senderDimension,
+				senderPosition,
+				senderUuid,
+				whispering,
+				copiedOpusData,
+				voicechatApi
+		));
+	}
+
+	private static void routeControlledOperatorBodyVoice(
+			MinecraftServer server,
+			net.minecraft.resources.ResourceKey<Level> senderDimension,
+			Position senderPosition,
+			UUID senderUuid,
+			boolean whispering,
+			byte[] opusData,
+			VoicechatApi voicechatApi
+	) {
+		if (server == null || senderDimension == null || senderPosition == null || senderUuid == null || opusData == null || opusData.length == 0 || voicechatApi == null) {
+			return;
+		}
+		if (CONTROLLED_OPERATOR_AUDIO.isEmpty()) {
+			return;
+		}
+		double voiceDistance = Math.max(1.0D, voicechatApi.getVoiceChatDistance());
+		double maxDistance = whispering ? voiceDistance * CONTROLLED_OPERATOR_BODY_VOICE_WHISPER_DISTANCE_FACTOR : voiceDistance;
+		double maxDistanceSqr = maxDistance * maxDistance;
+		for (Map.Entry<UUID, ControlledOperatorAudioRuntime> entry : new ArrayList<>(CONTROLLED_OPERATOR_AUDIO.entrySet())) {
+			UUID operatorUuid = entry.getKey();
+			if (operatorUuid == null || operatorUuid.equals(senderUuid)) {
+				continue;
+			}
+			ControlledOperatorAudioRuntime runtime = entry.getValue();
+			ServerPlayer operator = server.getPlayerList().getPlayer(operatorUuid);
+			DroneControlSession session = ACTIVE_SESSIONS.get(operatorUuid);
+			if (runtime == null
+					|| operator == null
+					|| session == null
+					|| !Objects.equals(resolveAuthoritativeDroneControllerId(session.droneUuid()), operatorUuid)
+					|| !(operator.level() instanceof ServerLevel operatorLevel)
+					|| !Objects.equals(operatorLevel.dimension(), senderDimension)) {
+				continue;
+			}
+			double dx = senderPosition.getX() - operator.getX();
+			double dy = senderPosition.getY() - (operator.getY() + operator.getEyeHeight());
+			double dz = senderPosition.getZ() - operator.getZ();
+			double distanceSqr = (dx * dx) + (dy * dy) + (dz * dz);
+			if (distanceSqr > maxDistanceSqr) {
+				continue;
+			}
+			if (isVoiceAlreadyAudibleAtControlledDrone(server, session, senderDimension, senderPosition, maxDistanceSqr)) {
+				continue;
+			}
+			float attenuation = controlledOperatorBodyVoiceAttenuation(Math.sqrt(distanceSqr), maxDistance);
+			if (attenuation <= 0.0F) {
+				continue;
+			}
+			runtime.offerBodyVoicePacket(senderUuid, opusData, attenuation * CONTROLLED_OPERATOR_BODY_VOICE_GAIN, voicechatApi);
+		}
+	}
+
+	private static boolean isVoiceAlreadyAudibleAtControlledDrone(
+			MinecraftServer server,
+			DroneControlSession session,
+			net.minecraft.resources.ResourceKey<Level> senderDimension,
+			Position senderPosition,
+			double maxDistanceSqr
+	) {
+		if (server == null || session == null || senderDimension == null || senderPosition == null || maxDistanceSqr <= 0.0D) {
+			return false;
+		}
+		if (!Objects.equals(session.droneDimension(), senderDimension)) {
+			return false;
+		}
+		Vec3 droneVoiceOrigin = controlledDroneVoiceOrigin(server, session);
+		if (droneVoiceOrigin == null) {
+			return false;
+		}
+		double dx = senderPosition.getX() - droneVoiceOrigin.x;
+		double dy = senderPosition.getY() - droneVoiceOrigin.y;
+		double dz = senderPosition.getZ() - droneVoiceOrigin.z;
+		return (dx * dx) + (dy * dy) + (dz * dz) <= maxDistanceSqr;
+	}
+
+	private static Vec3 controlledDroneVoiceOrigin(MinecraftServer server, DroneControlSession session) {
+		if (server == null || session == null) {
+			return null;
+		}
+		Entity root = findDroneRoot(server, session.droneDimension(), session.droneUuid());
+		if (root != null && root.isAlive()) {
+			return resolveSafeDroneCameraOrigin(root, droneCameraOrigin(root));
+		}
+		return droneCameraOrigin(session.lastKnownDronePos());
+	}
+
+	private static float controlledOperatorBodyVoiceAttenuation(double distance, double maxDistance) {
+		if (maxDistance <= 0.0D || distance >= maxDistance) {
+			return 0.0F;
+		}
+		return (float) Math.clamp(1.0D - distance / maxDistance, 0.0D, 1.0D);
 	}
 
 	private static void tickControlledOperatorBodyPhysics(ServerPlayer player) {
@@ -7130,8 +7268,6 @@ public final class DroneSystem {
 		private net.minecraft.resources.ResourceKey<Level> audioChannelDimension;
 		private net.minecraft.resources.ResourceKey<Level> droneCaptureDimension;
 		private BlockPos droneCaptureCenter;
-		private net.minecraft.resources.ResourceKey<Level> bodyCaptureDimension;
-		private BlockPos bodyCaptureCenter;
 		private long lastRefreshTick = Long.MIN_VALUE;
 		private boolean closed;
 
@@ -7163,6 +7299,7 @@ public final class DroneSystem {
 			if (!ensurePlayback(operatorLevel, connection, voicechatApi, voicechatServerApi)) {
 				return false;
 			}
+			RendererBotCameraSystem.stopAudioCapture(this.bodyCaptureOwnerKey);
 
 			Entity root = findDroneRoot(server, session.droneDimension(), session.droneUuid());
 			ServerLevel droneLevel = root != null && root.isAlive()
@@ -7171,13 +7308,6 @@ public final class DroneSystem {
 			BlockPos desiredDroneCenter = root != null && root.isAlive()
 					? BlockPos.containing(resolveSafeDroneCameraOrigin(root, droneCameraOrigin(root)))
 					: BlockPos.containing(session.lastKnownDronePos());
-			BlockPos desiredBodyCenter = operator.blockPosition().immutable();
-			boolean recenterBody = shouldRecenterCapture(
-					this.bodyCaptureDimension,
-					this.bodyCaptureCenter,
-					operatorLevel.dimension(),
-					desiredBodyCenter
-			);
 			boolean recenterDrone = shouldRecenterCapture(
 					this.droneCaptureDimension,
 					this.droneCaptureCenter,
@@ -7187,24 +7317,12 @@ public final class DroneSystem {
 
 			boolean refreshRequired = this.lastRefreshTick == Long.MIN_VALUE
 					|| operatorLevel.getGameTime() - this.lastRefreshTick >= CONTROLLED_OPERATOR_AUDIO_REFRESH_INTERVAL_TICKS
-					|| recenterBody
 					|| recenterDrone;
 			if (!refreshRequired) {
 				return true;
 			}
 			this.lastRefreshTick = operatorLevel.getGameTime();
 			double captureRadius = resolveControlledOperatorAudioCaptureRadius(voicechatApi);
-			BlockPos requestedBodyCenter = recenterBody || this.bodyCaptureCenter == null
-					? desiredBodyCenter
-					: this.bodyCaptureCenter;
-			synchronizeCapture(
-					this.bodyCaptureOwnerKey,
-					operatorLevel,
-					requestedBodyCenter,
-					captureRadius,
-					this.feed::offerBodyFrame,
-					true
-			);
 			if (droneLevel != null && desiredDroneCenter != null) {
 				BlockPos requestedDroneCenter = recenterDrone || this.droneCaptureCenter == null
 						? desiredDroneCenter
@@ -7214,8 +7332,7 @@ public final class DroneSystem {
 						droneLevel,
 						requestedDroneCenter,
 						captureRadius,
-						this.feed::offerDroneFrame,
-						false
+						this.feed::offerDroneFrame
 				);
 			} else {
 				RendererBotCameraSystem.stopAudioCapture(this.droneCaptureOwnerKey);
@@ -7271,8 +7388,7 @@ public final class DroneSystem {
 				ServerLevel level,
 				BlockPos center,
 				double captureRadius,
-				java.util.function.Consumer<RendererBotCameraSystem.AudioCaptureFrame> frameConsumer,
-				boolean bodyCapture
+				java.util.function.Consumer<RendererBotCameraSystem.AudioCaptureFrame> frameConsumer
 		) {
 			if (ownerKey == null || level == null || center == null || frameConsumer == null) {
 				return;
@@ -7288,13 +7404,12 @@ public final class DroneSystem {
 			if (!started) {
 				return;
 			}
-			if (bodyCapture) {
-				this.bodyCaptureDimension = level.dimension();
-				this.bodyCaptureCenter = center.immutable();
-				return;
-			}
 			this.droneCaptureDimension = level.dimension();
 			this.droneCaptureCenter = center.immutable();
+		}
+
+		private void offerBodyVoicePacket(UUID senderUuid, byte[] opusData, float gain, VoicechatApi voicechatApi) {
+			this.feed.offerBodyVoicePacket(senderUuid, opusData, gain, voicechatApi);
 		}
 
 		private boolean shouldRecenterCapture(
@@ -7345,23 +7460,35 @@ public final class DroneSystem {
 			this.feed.close();
 			this.droneCaptureDimension = null;
 			this.droneCaptureCenter = null;
-			this.bodyCaptureDimension = null;
-			this.bodyCaptureCenter = null;
 		}
 	}
 
 	private static final class ControlledOperatorAudioFeed {
 		private final Object lock = new Object();
 		private final ControlledOperatorAudioSourceBuffer droneBuffer = new ControlledOperatorAudioSourceBuffer();
-		private final ControlledOperatorAudioSourceBuffer bodyBuffer = new ControlledOperatorAudioSourceBuffer();
+		private final Map<UUID, ControlledOperatorAudioSourceBuffer> bodyVoiceBuffers = new HashMap<>();
 		private boolean closed;
 
 		private void offerDroneFrame(RendererBotCameraSystem.AudioCaptureFrame frame) {
 			offer(this.droneBuffer, frame);
 		}
 
-		private void offerBodyFrame(RendererBotCameraSystem.AudioCaptureFrame frame) {
-			offer(this.bodyBuffer, frame);
+		private void offerBodyVoicePacket(UUID senderUuid, byte[] opusData, float gain, VoicechatApi voicechatApi) {
+			if (senderUuid == null || opusData == null || opusData.length == 0 || gain <= 0.0F || voicechatApi == null) {
+				return;
+			}
+			synchronized (this.lock) {
+				if (this.closed) {
+					return;
+				}
+				long baseSequence = System.nanoTime() / CONTROLLED_OPERATOR_AUDIO_FRAME_NANOS;
+				ControlledOperatorAudioSourceBuffer buffer = this.bodyVoiceBuffers.computeIfAbsent(
+						senderUuid,
+						ignored -> new ControlledOperatorAudioSourceBuffer(voicechatApi.createDecoder())
+				);
+				buffer.offerPacket(opusData, baseSequence, gain);
+				pruneExpiredBodyVoiceBuffersLocked(baseSequence);
+			}
 		}
 
 		private void offer(ControlledOperatorAudioSourceBuffer buffer, RendererBotCameraSystem.AudioCaptureFrame frame) {
@@ -7387,13 +7514,11 @@ public final class DroneSystem {
 				}
 				long targetSequence = nowNanos / CONTROLLED_OPERATOR_AUDIO_FRAME_NANOS;
 				short[] drone = this.droneBuffer.frameAt(targetSequence);
-				short[] body = this.bodyBuffer.frameAt(targetSequence);
+				short[] body = mixBodyVoiceBuffersLocked(targetSequence);
 				if (this.droneBuffer.isExpired(targetSequence)) {
 					this.droneBuffer.clear();
 				}
-				if (this.bodyBuffer.isExpired(targetSequence)) {
-					this.bodyBuffer.clear();
-				}
+				pruneExpiredBodyVoiceBuffersLocked(targetSequence);
 				if (drone == null) {
 					return body;
 				}
@@ -7412,17 +7537,95 @@ public final class DroneSystem {
 			synchronized (this.lock) {
 				this.closed = true;
 				this.droneBuffer.clear();
-				this.bodyBuffer.clear();
+				for (ControlledOperatorAudioSourceBuffer buffer : this.bodyVoiceBuffers.values()) {
+					buffer.close();
+				}
+				this.bodyVoiceBuffers.clear();
 			}
+		}
+
+		private void pruneExpiredBodyVoiceBuffersLocked(long targetSequence) {
+			java.util.Iterator<Map.Entry<UUID, ControlledOperatorAudioSourceBuffer>> iterator = this.bodyVoiceBuffers.entrySet().iterator();
+			while (iterator.hasNext()) {
+				Map.Entry<UUID, ControlledOperatorAudioSourceBuffer> entry = iterator.next();
+				ControlledOperatorAudioSourceBuffer buffer = entry.getValue();
+				if (buffer == null || buffer.isExpired(targetSequence)) {
+					if (buffer != null) {
+						buffer.close();
+					}
+					iterator.remove();
+				}
+			}
+		}
+
+		private short[] mixBodyVoiceBuffersLocked(long targetSequence) {
+			if (this.bodyVoiceBuffers.isEmpty()) {
+				return null;
+			}
+			float[] mixed = null;
+			for (ControlledOperatorAudioSourceBuffer buffer : this.bodyVoiceBuffers.values()) {
+				if (buffer == null) {
+					continue;
+				}
+				short[] frame = buffer.frameAt(targetSequence);
+				if (frame == null) {
+					continue;
+				}
+				if (mixed == null) {
+					mixed = new float[CONTROLLED_OPERATOR_AUDIO_FRAME_SAMPLES];
+				}
+				for (int index = 0; index < frame.length; index++) {
+					mixed[index] += frame[index];
+				}
+			}
+			if (mixed == null) {
+				return null;
+			}
+			short[] output = new short[CONTROLLED_OPERATOR_AUDIO_FRAME_SAMPLES];
+			for (int index = 0; index < output.length; index++) {
+				output[index] = SpeakerSystem.softLimitSample(mixed[index]);
+			}
+			return output;
 		}
 	}
 
 	private static final class ControlledOperatorAudioSourceBuffer {
+		private final OpusDecoder decoder;
 		private final NavigableMap<Long, short[]> frames = new TreeMap<>();
 		private long lastSequence = Long.MIN_VALUE;
+		private boolean closed;
+
+		private ControlledOperatorAudioSourceBuffer() {
+			this(null);
+		}
+
+		private ControlledOperatorAudioSourceBuffer(OpusDecoder decoder) {
+			this.decoder = decoder;
+		}
+
+		private void offerPacket(byte[] opusData, long baseSequence, float gain) {
+			if (this.closed || this.decoder == null || this.decoder.isClosed() || opusData == null || opusData.length == 0) {
+				return;
+			}
+			short[] decoded;
+			try {
+				decoded = this.decoder.decode(opusData);
+			} catch (RuntimeException exception) {
+				Lg2.LOGGER.debug("Failed to decode controlled drone body voice packet", exception);
+				return;
+			}
+			offerSamples(decoded, baseSequence, gain);
+		}
 
 		private void offerFrame(short[] samples, long baseSequence) {
+			offerSamples(samples, baseSequence, 1.0F);
+		}
+
+		private void offerSamples(short[] samples, long baseSequence, float gain) {
 			if (samples == null || samples.length == 0) {
+				return;
+			}
+			if (this.closed) {
 				return;
 			}
 			long nextSequence = Math.max(baseSequence, this.lastSequence + 1L);
@@ -7435,7 +7638,7 @@ public final class DroneSystem {
 						Math.max(0, samples.length - sourceOffset)
 				);
 				if (copyLength > 0) {
-					System.arraycopy(samples, sourceOffset, frame, 0, copyLength);
+					copyAudioSamples(samples, sourceOffset, frame, copyLength, gain);
 				}
 				this.frames.put(nextSequence++, frame);
 			}
@@ -7462,6 +7665,24 @@ public final class DroneSystem {
 		private void clear() {
 			this.frames.clear();
 			this.lastSequence = Long.MIN_VALUE;
+		}
+
+		private void close() {
+			this.closed = true;
+			clear();
+			if (this.decoder != null && !this.decoder.isClosed()) {
+				this.decoder.close();
+			}
+		}
+
+		private static void copyAudioSamples(short[] source, int sourceOffset, short[] target, int copyLength, float gain) {
+			if (gain == 1.0F) {
+				System.arraycopy(source, sourceOffset, target, 0, copyLength);
+				return;
+			}
+			for (int index = 0; index < copyLength; index++) {
+				target[index] = SpeakerSystem.softLimitSample(source[sourceOffset + index] * gain);
+			}
 		}
 	}
 

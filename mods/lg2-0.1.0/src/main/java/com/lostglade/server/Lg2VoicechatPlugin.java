@@ -21,7 +21,10 @@ public final class Lg2VoicechatPlugin implements VoicechatPlugin {
 
 	@Override
 	public void registerEvents(EventRegistration registration) {
-		registration.registerEvent(MicrophonePacketEvent.class, MicrophoneSystem::onMicrophonePacket);
+		registration.registerEvent(MicrophonePacketEvent.class, event -> {
+			MicrophoneSystem.onMicrophonePacket(event);
+			DroneSystem.onVoicechatMicrophonePacket(event);
+		});
 		registration.registerEvent(VoicechatServerStartedEvent.class, event ->
 				ServerVoicechatIntegration.setServerApi(event.getVoicechat())
 		);
