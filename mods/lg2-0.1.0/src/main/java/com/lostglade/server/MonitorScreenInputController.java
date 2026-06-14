@@ -318,6 +318,24 @@ final class MonitorScreenInputController {
 					&& mediaState.mode == ScreenViewMode.GALLERY
 					&& !mediaState.playerBackgroundGalleryPickerOpen
 					&& mediaState.galleryBulkSelectionMode
+					&& mediaGalleryBrowserBulkSendRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				List<GalleryItem> shareItems;
+				synchronized (mediaState) {
+					shareItems = selectedGalleryItemsForShareLocked(mediaState);
+					if (shareItems.isEmpty()) {
+						mediaState.statusText = "Ничего не выбрано";
+						mediaState.version++;
+						rerenderCurrent = true;
+					}
+				}
+				if (!shareItems.isEmpty() && MonitorMaxRuntime.beginGalleryFileShare(server, component, shareItems)) {
+					nextMode = ScreenViewMode.MAX;
+					rerenderCurrent = false;
+				}
+			} else if (galleryBrowser
+					&& mediaState.mode == ScreenViewMode.GALLERY
+					&& !mediaState.playerBackgroundGalleryPickerOpen
+					&& mediaState.galleryBulkSelectionMode
 					&& mediaGalleryBrowserBulkDeleteRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					int selectedCount = mediaState.galleryBulkSelectedKeys.size();

@@ -104,6 +104,14 @@
       }
     ]
   },
+  "max_notification": {
+    "sounds": [
+      {
+        "name": "lg2:max_notification",
+        "preload": true
+      }
+    ]
+  },
   "repulsor_shoot": {
     "sounds": [
       {

@@ -5,18 +5,25 @@ import com.lostglade.block.CameraBlock;
 import com.lostglade.server.monitor.MonitorApp;
 import com.lostglade.server.monitor.MonitorMediaApp;
 import net.minecraft.ChatFormatting;
+import net.minecraft.core.Holder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.PlayerChatMessage;
+import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
@@ -48,10 +55,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+
+import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 
 import static com.lostglade.server.MonitorScreenGalleryRuntime.*;
 import static com.lostglade.server.MonitorScreenLiveSources.*;
+import static com.lostglade.server.MonitorScreenMediaHydration.*;
+import static com.lostglade.server.MonitorScreenMediaLoadResults.*;
 import static com.lostglade.server.MonitorScreenMessages.*;
 import static com.lostglade.server.MonitorScreenSystem.*;
 
@@ -70,10 +82,24 @@ final class MonitorMaxRuntime {
 	private static final String MAX_RINGTONE_TITLE_TAG = "ringtone_title";
 	private static final String MAX_CONTACT_COUNT_TAG = "contact_count";
 	private static final String MAX_CONTACT_PREFIX = "contact_";
+	private static final String MAX_INCOMING_FILE_COUNT_TAG = "incoming_file_count";
+	private static final String MAX_INCOMING_FILE_PREFIX = "incoming_file_";
+	private static final String MAX_INCOMING_FILE_ID_TAG = "id";
+	private static final String MAX_INCOMING_FILE_SENDER_TAG = "sender";
+	private static final String MAX_INCOMING_FILE_TITLE_TAG = "title";
+	private static final String MAX_INCOMING_FILE_SUBTITLE_TAG = "subtitle";
+	private static final String MAX_INCOMING_FILE_URL_TAG = "url";
+	private static final String MAX_INCOMING_FILE_LOCAL_MEDIA_TAG = "local_media";
+	private static final String MAX_INCOMING_FILE_KIND_TAG = "kind";
+	private static final String MAX_INCOMING_FILE_CREATED_TAG = "created";
 	private static final String MAX_PENDING_ADD_STATUS = "Введите 6 цифр MAX в чат";
 	private static final String MAX_RINGTONE_SOURCE_PREFIX = "max:ring:";
 	private static final String MAX_RINGTONE_PREVIEW_SOURCE_PREFIX = "max:ring-preview:";
 	private static final String MAX_DEFAULT_RINGTONE_URL = "max:default-ringtone";
+	private static final String MAX_TRANSFER_URL_PREFIX = "max:file:";
+	private static final String MAX_TRANSFER_LOCAL_KEY_PREFIX = "max_transfer_";
+	private static final Identifier MAX_NOTIFICATION_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "max_notification");
+	private static final SoundEvent MAX_NOTIFICATION_SOUND = SoundEvent.createVariableRangeEvent(MAX_NOTIFICATION_SOUND_ID);
 	private static final long MAX_RINGTONE_PREVIEW_TIMELINE_MS = 30_000L;
 	private static final Path DEFAULT_PROJECT_RINGTONE = Path.of(System.getProperty("user.dir"), "server-assets", "max", "default-ringtone.mp3");
 	private static final Path DEFAULT_SOURCE_RINGTONE = Path.of("/home/mart/Downloads/Rington_-_na_zvonok_(SkySound.cc).mp3");
@@ -117,9 +143,13 @@ final class MonitorMaxRuntime {
 		List<MaxContactSnapshot> contacts = captureContactSnapshots(server, state, component.runtimeKey());
 		List<MaxAvatarCandidateSnapshot> avatarCandidates;
 		List<MaxRingtoneCandidateSnapshot> ringtoneCandidates;
+		List<MaxFileShareContactSnapshot> fileShareContacts;
+		MaxIncomingFileSnapshot incomingFile;
 		synchronized (state) {
 			avatarCandidates = state.avatarPickerOpen ? avatarCandidates(component) : List.of();
 			ringtoneCandidates = state.ringtonePickerOpen ? ringtoneCandidates(component, state) : List.of();
+			fileShareContacts = state.fileSharePickerOpen ? fileShareContacts(server, state, component.runtimeKey()) : List.of();
+			incomingFile = state.notificationsOpen ? incomingFileSnapshot(server, state) : null;
 			return new MaxVisualSnapshot(
 					state.version,
 					state.accountCode,
@@ -128,8 +158,16 @@ final class MonitorMaxRuntime {
 					callSnapshot,
 					avatarCandidates,
 					ringtoneCandidates,
+					fileShareContacts,
+					incomingFile,
+					state.incomingFiles.size(),
+					state.fileShareFiles.size(),
+					state.fileShareSelectedContacts.size(),
+					fileShareTitleLocked(state),
 					state.avatarPickerOpen,
 					state.ringtonePickerOpen,
+					state.fileSharePickerOpen,
+					state.notificationsOpen,
 					state.ringtonePreviewPlaying,
 					state.statusText
 			);
@@ -154,9 +192,19 @@ final class MonitorMaxRuntime {
 		}
 		boolean avatarPickerOpen;
 		boolean ringtonePickerOpen;
+		boolean fileSharePickerOpen;
+		boolean notificationsOpen;
 		synchronized (state) {
 			avatarPickerOpen = state.avatarPickerOpen;
 			ringtonePickerOpen = state.ringtonePickerOpen;
+			fileSharePickerOpen = state.fileSharePickerOpen;
+			notificationsOpen = state.notificationsOpen;
+		}
+		if (fileSharePickerOpen) {
+			return handleFileSharePickerTouch(server, component, state, layout, touchPoint);
+		}
+		if (notificationsOpen) {
+			return handleNotificationsTouch(server, component, state, layout, touchPoint);
 		}
 		if (avatarPickerOpen) {
 			return handleAvatarPickerTouch(server, component, state, layout, touchPoint);
@@ -190,7 +238,21 @@ final class MonitorMaxRuntime {
 			synchronized (state) {
 				state.ringtonePickerOpen = true;
 				state.avatarPickerOpen = false;
+				state.notificationsOpen = false;
+				state.fileSharePickerOpen = false;
 				state.statusText = "";
+				state.version++;
+			}
+			requestRuntimeRender(server, component.runtimeKey());
+			return true;
+		}
+		if (maxNotificationsRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			synchronized (state) {
+				state.notificationsOpen = true;
+				state.avatarPickerOpen = false;
+				state.ringtonePickerOpen = false;
+				state.fileSharePickerOpen = false;
+				state.statusText = state.incomingFiles.isEmpty() ? "Нет уведомлений" : "";
 				state.version++;
 			}
 			requestRuntimeRender(server, component.runtimeKey());
@@ -486,6 +548,83 @@ final class MonitorMaxRuntime {
 		return snapshot != null && snapshot.call() != null && snapshot.call().phase() != MaxCallPhase.IDLE;
 	}
 
+	static boolean beginGalleryFileShare(MinecraftServer server, ScreenComponent component, List<GalleryItem> items) {
+		if (server == null || component == null || component.runtimeKey() == null || items == null || items.isEmpty()) {
+			return false;
+		}
+		MaxRuntimeState state = ensureState(server, component);
+		if (state == null) {
+			return false;
+		}
+		List<MaxSharedGalleryFile> files = new ArrayList<>();
+		for (GalleryItem item : items) {
+			MaxSharedGalleryFile file = sharedGalleryFile(item);
+			if (file != null) {
+				files.add(file);
+			}
+		}
+		synchronized (state) {
+			if (files.isEmpty()) {
+				state.statusText = "Эти файлы нельзя отправить";
+				state.version++;
+				requestRuntimeRender(server, component.runtimeKey());
+				return false;
+			}
+			state.fileShareFiles.clear();
+			state.fileShareFiles.addAll(files);
+			state.fileShareSelectedContacts.clear();
+			state.fileSharePickerOpen = true;
+			state.notificationsOpen = false;
+			state.avatarPickerOpen = false;
+			state.ringtonePickerOpen = false;
+			state.ringtonePreviewPlaying = false;
+			state.statusText = files.size() == 1 ? "Выбери получателя" : "Выбери получателей";
+			state.version++;
+		}
+		refreshConnectedSpeakersNow(server, component);
+		requestRuntimeRender(server, component.runtimeKey());
+		return true;
+	}
+
+	private static MaxSharedGalleryFile sharedGalleryFile(GalleryItem item) {
+		if (item == null || effectiveGalleryItemKind(item) == GalleryItemKind.LIVE_CAMERA) {
+			return null;
+		}
+		String localMediaKey = item.localMediaKey() == null ? "" : item.localMediaKey().trim();
+		String url = item.url() == null ? "" : item.url().trim();
+		if (url.isBlank() && localMediaKey.isBlank()) {
+			return null;
+		}
+		GalleryItemKind kind = effectiveGalleryItemKind(item);
+		String title = item.title() == null || item.title().isBlank() ? defaultSharedFileTitle(kind) : item.title().trim();
+		String subtitle = item.subtitle() == null ? "" : item.subtitle().trim();
+		if (url.isBlank()) {
+			url = MAX_TRANSFER_URL_PREFIX + localMediaKey;
+		}
+		return new MaxSharedGalleryFile(title, subtitle, url, localMediaKey, kind != null ? kind : GalleryItemKind.MEDIA);
+	}
+
+	private static String defaultSharedFileTitle(GalleryItemKind kind) {
+		return switch (kind != null ? kind : GalleryItemKind.MEDIA) {
+			case AUDIO -> "Аудиофайл";
+			case VIDEO -> "Видео";
+			case YOUTUBE -> "YouTube";
+			case LIVE_CAMERA -> "Камера";
+			case MEDIA -> "Файл";
+		};
+	}
+
+	private static String fileShareTitleLocked(MaxRuntimeState state) {
+		if (state == null || state.fileShareFiles.isEmpty()) {
+			return "";
+		}
+		if (state.fileShareFiles.size() == 1) {
+			MaxSharedGalleryFile file = state.fileShareFiles.get(0);
+			return file != null && file.title() != null ? file.title() : "";
+		}
+		return "Файлов: " + state.fileShareFiles.size();
+	}
+
 	static void drawCallOverlay(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot snapshot) {
 		if (!hasCallOverlay(snapshot)) {
 			return;
@@ -586,6 +725,14 @@ final class MonitorMaxRuntime {
 		UiRect canvas = mediaCanvasRect(layout);
 		drawMaxAtmosphere(graphics, canvas, layout);
 		drawMediaCloseButton(graphics, mediaCloseRect(layout), layout, MediaButtonSegment.SINGLE);
+		if (state.fileSharePickerOpen()) {
+			drawMaxFileSharePicker(graphics, layout, state);
+			return;
+		}
+		if (state.notificationsOpen()) {
+			drawMaxNotificationsScreen(graphics, layout, state);
+			return;
+		}
 		if (state.avatarPickerOpen()) {
 			drawMaxAvatarPicker(graphics, layout, state);
 			return;
@@ -602,7 +749,7 @@ final class MonitorMaxRuntime {
 	}
 
 	private static MaxVisualSnapshot emptySnapshot() {
-		return new MaxVisualSnapshot(0L, "MAX-000000", null, List.of(), null, List.of(), List.of(), false, false, false, "");
+		return new MaxVisualSnapshot(0L, "MAX-000000", null, List.of(), null, List.of(), List.of(), List.of(), null, 0, 0, 0, "", false, false, false, false, false, "");
 	}
 
 	private static MaxRuntimeState ensureState(MinecraftServer server, ScreenComponent component) {
@@ -626,6 +773,10 @@ final class MonitorMaxRuntime {
 				state.ringtoneUrl = persisted != null ? persisted.ringtoneUrl() : "";
 				state.ringtoneLocalMediaKey = persisted != null ? persisted.ringtoneLocalMediaKey() : "";
 				state.ringtoneTitle = persisted != null ? persisted.ringtoneTitle() : "";
+				state.incomingFiles.clear();
+				if (persisted != null) {
+					state.incomingFiles.addAll(persisted.incomingFiles());
+				}
 				state.contacts.clear();
 				if (persisted != null) {
 					for (String contact : persisted.contacts()) {
@@ -687,6 +838,31 @@ final class MonitorMaxRuntime {
 				contacts.add(contact);
 			}
 		}
+		int incomingFileCount = Math.max(0, maxTag.getIntOr(MAX_INCOMING_FILE_COUNT_TAG, 0));
+		List<MaxIncomingFile> incomingFiles = new ArrayList<>(incomingFileCount);
+		for (int index = 0; index < incomingFileCount; index++) {
+			CompoundTag fileTag = maxTag.getCompoundOrEmpty(MAX_INCOMING_FILE_PREFIX + index);
+			String id = fileTag.getStringOr(MAX_INCOMING_FILE_ID_TAG, "");
+			String sender = normalizeAccountCode(fileTag.getStringOr(MAX_INCOMING_FILE_SENDER_TAG, ""));
+			String title = fileTag.getStringOr(MAX_INCOMING_FILE_TITLE_TAG, "");
+			String subtitle = fileTag.getStringOr(MAX_INCOMING_FILE_SUBTITLE_TAG, "");
+			String url = fileTag.getStringOr(MAX_INCOMING_FILE_URL_TAG, "");
+			String localMediaKey = fileTag.getStringOr(MAX_INCOMING_FILE_LOCAL_MEDIA_TAG, "");
+			GalleryItemKind kind = effectiveGalleryItemKind(url, localMediaKey, GalleryItemKind.fromPersisted(fileTag.getStringOr(MAX_INCOMING_FILE_KIND_TAG, ""), url));
+			long createdAtMillis = fileTag.getLongOr(MAX_INCOMING_FILE_CREATED_TAG, 0L);
+			if (!sender.isBlank() && (!url.isBlank() || !localMediaKey.isBlank())) {
+				incomingFiles.add(new MaxIncomingFile(
+						id == null || id.isBlank() ? UUID.randomUUID().toString() : id,
+						sender,
+						title,
+						subtitle,
+						url,
+						localMediaKey,
+						kind,
+						createdAtMillis > 0L ? createdAtMillis : System.currentTimeMillis()
+				));
+			}
+		}
 		return new PersistedMaxState(
 				code,
 				maxTag.getStringOr(MAX_AVATAR_URL_TAG, ""),
@@ -699,7 +875,8 @@ final class MonitorMaxRuntime {
 				maxTag.getBooleanOr(MAX_MICROPHONE_ENABLED_TAG, true),
 				maxTag.getStringOr(MAX_RINGTONE_URL_TAG, ""),
 				maxTag.getStringOr(MAX_RINGTONE_LOCAL_MEDIA_TAG, ""),
-				maxTag.getStringOr(MAX_RINGTONE_TITLE_TAG, "")
+				maxTag.getStringOr(MAX_RINGTONE_TITLE_TAG, ""),
+				List.copyOf(incomingFiles)
 		);
 	}
 
@@ -725,7 +902,8 @@ final class MonitorMaxRuntime {
 					state.microphoneEnabled,
 					state.ringtoneUrl,
 					state.ringtoneLocalMediaKey,
-					state.ringtoneTitle
+					state.ringtoneTitle,
+					List.copyOf(state.incomingFiles)
 			);
 		}
 		for (ItemFrame frame : component.frameCoords().keySet()) {
@@ -773,6 +951,24 @@ final class MonitorMaxRuntime {
 			maxTag.putInt(MAX_CONTACT_COUNT_TAG, contacts.size());
 			for (int index = 0; index < contacts.size(); index++) {
 				maxTag.putString(MAX_CONTACT_PREFIX + index, contacts.get(index));
+			}
+			List<MaxIncomingFile> incomingFiles = state.incomingFiles() != null ? state.incomingFiles() : List.of();
+			maxTag.putInt(MAX_INCOMING_FILE_COUNT_TAG, incomingFiles.size());
+			for (int index = 0; index < incomingFiles.size(); index++) {
+				MaxIncomingFile incoming = incomingFiles.get(index);
+				if (incoming == null) {
+					continue;
+				}
+				CompoundTag fileTag = new CompoundTag();
+				fileTag.putString(MAX_INCOMING_FILE_ID_TAG, incoming.id());
+				fileTag.putString(MAX_INCOMING_FILE_SENDER_TAG, incoming.senderCode());
+				fileTag.putString(MAX_INCOMING_FILE_TITLE_TAG, incoming.title());
+				fileTag.putString(MAX_INCOMING_FILE_SUBTITLE_TAG, incoming.subtitle());
+				fileTag.putString(MAX_INCOMING_FILE_URL_TAG, incoming.url());
+				fileTag.putString(MAX_INCOMING_FILE_LOCAL_MEDIA_TAG, incoming.localMediaKey());
+				fileTag.putString(MAX_INCOMING_FILE_KIND_TAG, (incoming.kind() != null ? incoming.kind() : GalleryItemKind.MEDIA).persistedName());
+				fileTag.putLong(MAX_INCOMING_FILE_CREATED_TAG, incoming.createdAtMillis());
+				maxTag.put(MAX_INCOMING_FILE_PREFIX + index, fileTag);
 			}
 			tag.put(PERSISTED_MAX_ROOT_TAG, maxTag);
 		});
@@ -975,6 +1171,48 @@ final class MonitorMaxRuntime {
 			));
 		}
 		return snapshots;
+	}
+
+	private static List<MaxFileShareContactSnapshot> fileShareContacts(MinecraftServer server, MaxRuntimeState state, ScreenRuntimeKey selfKey) {
+		List<MaxContactSnapshot> contacts = captureContactSnapshots(server, state, selfKey);
+		if (contacts.isEmpty()) {
+			return List.of();
+		}
+		Set<String> selected = new HashSet<>(state.fileShareSelectedContacts);
+		List<MaxFileShareContactSnapshot> snapshots = new ArrayList<>(contacts.size());
+		for (MaxContactSnapshot contact : contacts) {
+			if (contact == null) {
+				continue;
+			}
+			snapshots.add(new MaxFileShareContactSnapshot(
+					contact.code(),
+					contact.avatarFrame(),
+					contact.online(),
+					selected.contains(contact.code())
+			));
+		}
+		return snapshots.isEmpty() ? List.of() : List.copyOf(snapshots);
+	}
+
+	private static MaxIncomingFileSnapshot incomingFileSnapshot(MinecraftServer server, MaxRuntimeState state) {
+		if (state == null || state.incomingFiles.isEmpty()) {
+			return null;
+		}
+		MaxIncomingFile incoming = state.incomingFiles.get(0);
+		MaxRuntimeState senderState = MAX_STATES.get(ACCOUNT_INDEX.get(incoming.senderCode()));
+		BufferedImage senderAvatar = null;
+		if (senderState != null) {
+			synchronized (senderState) {
+				senderAvatar = senderState.avatarFrame;
+			}
+		}
+		return new MaxIncomingFileSnapshot(
+				incoming.senderCode(),
+				senderAvatar,
+				incoming.title() == null || incoming.title().isBlank() ? defaultSharedFileTitle(incoming.kind()) : incoming.title(),
+				incoming.subtitle() == null ? "" : incoming.subtitle(),
+				incoming.kind() != null ? incoming.kind() : GalleryItemKind.MEDIA
+		);
 	}
 
 	private static List<MaxContactSnapshot> contactInviteCandidates(MinecraftServer server, MaxRuntimeState state, MaxCallSession call, ScreenRuntimeKey selfKey) {
@@ -1924,6 +2162,389 @@ final class MonitorMaxRuntime {
 		return true;
 	}
 
+	private static boolean handleFileSharePickerTouch(
+			MinecraftServer server,
+			ScreenComponent component,
+			MaxRuntimeState state,
+			UiLayout layout,
+			UiPoint touchPoint
+	) {
+		if (maxAvatarPickerBackRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			synchronized (state) {
+				clearFileShareDraftLocked(state);
+				state.version++;
+			}
+			requestRuntimeRender(server, component.runtimeKey());
+			return true;
+		}
+		if (maxFileShareSendRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			sendPendingFilesToSelectedContacts(server, component.runtimeKey());
+			return true;
+		}
+		List<MaxFileShareContactSnapshot> contacts;
+		synchronized (state) {
+			contacts = fileShareContacts(server, state, component.runtimeKey());
+		}
+		int index = maxContactPickerIndexAt(layout, contacts.size(), touchPoint);
+		if (index >= 0 && index < contacts.size()) {
+			String code = contacts.get(index).code();
+			synchronized (state) {
+				if (state.fileShareSelectedContacts.contains(code)) {
+					state.fileShareSelectedContacts.remove(code);
+				} else {
+					state.fileShareSelectedContacts.add(code);
+				}
+				state.statusText = "";
+				state.version++;
+			}
+			requestRuntimeRender(server, component.runtimeKey());
+		}
+		return true;
+	}
+
+	private static boolean handleNotificationsTouch(
+			MinecraftServer server,
+			ScreenComponent component,
+			MaxRuntimeState state,
+			UiLayout layout,
+			UiPoint touchPoint
+	) {
+		if (maxAvatarPickerBackRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			synchronized (state) {
+				state.notificationsOpen = false;
+				state.version++;
+			}
+			requestRuntimeRender(server, component.runtimeKey());
+			return true;
+		}
+		if (maxNotificationAcceptRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			acceptFirstIncomingFile(server, component.runtimeKey());
+			return true;
+		}
+		if (maxNotificationDeclineRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			ignoreFirstIncomingFile(server, component.runtimeKey());
+			return true;
+		}
+		return true;
+	}
+
+	private static void clearFileShareDraftLocked(MaxRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		state.fileSharePickerOpen = false;
+		state.fileShareFiles.clear();
+		state.fileShareSelectedContacts.clear();
+		state.statusText = "";
+	}
+
+	private static void sendPendingFilesToSelectedContacts(MinecraftServer server, ScreenRuntimeKey senderKey) {
+		if (server == null || senderKey == null) {
+			return;
+		}
+		MaxRuntimeState senderState = MAX_STATES.get(senderKey);
+		if (senderState == null) {
+			return;
+		}
+		String senderCode;
+		List<MaxSharedGalleryFile> files;
+		List<String> recipients;
+		synchronized (senderState) {
+			senderCode = senderState.accountCode;
+			files = List.copyOf(senderState.fileShareFiles);
+			recipients = List.copyOf(senderState.fileShareSelectedContacts);
+			if (files.isEmpty()) {
+				senderState.statusText = "Нет файлов для отправки";
+				senderState.version++;
+				requestRuntimeRender(server, senderKey);
+				return;
+			}
+			if (recipients.isEmpty()) {
+				senderState.statusText = "Выбери хотя бы один контакт";
+				senderState.version++;
+				requestRuntimeRender(server, senderKey);
+				return;
+			}
+			senderState.statusText = "Отправка...";
+			senderState.version++;
+		}
+		requestRuntimeRender(server, senderKey);
+		ensureExecutors();
+		CompletableFuture
+				.supplyAsync(() -> prepareFileDeliveries(senderCode, recipients, files), mediaIoExecutor)
+				.thenAccept(deliveries -> server.execute(() -> applyPreparedFileDeliveries(server, senderKey, deliveries)));
+	}
+
+	private static List<MaxPreparedFileDelivery> prepareFileDeliveries(String senderCode, List<String> recipients, List<MaxSharedGalleryFile> files) {
+		if (senderCode == null || senderCode.isBlank() || recipients == null || recipients.isEmpty() || files == null || files.isEmpty()) {
+			return List.of();
+		}
+		List<MaxPreparedFileDelivery> deliveries = new ArrayList<>();
+		for (String recipient : recipients) {
+			String normalizedRecipient = normalizeAccountCode(recipient);
+			if (normalizedRecipient.isBlank()) {
+				continue;
+			}
+			for (MaxSharedGalleryFile file : files) {
+				if (file == null) {
+					continue;
+				}
+				String id = UUID.randomUUID().toString();
+				String transferLocalMediaKey = copyTransferLocalMedia(file, id);
+				String url = !transferLocalMediaKey.isBlank() ? MAX_TRANSFER_URL_PREFIX + transferLocalMediaKey : file.url();
+				deliveries.add(new MaxPreparedFileDelivery(
+						normalizedRecipient,
+						new MaxIncomingFile(
+								id,
+								senderCode,
+								file.title(),
+								file.subtitle(),
+								url,
+								transferLocalMediaKey.isBlank() ? file.localMediaKey() : transferLocalMediaKey,
+								file.kind(),
+								System.currentTimeMillis()
+						)
+				));
+			}
+		}
+		return deliveries.isEmpty() ? List.of() : List.copyOf(deliveries);
+	}
+
+	private static String copyTransferLocalMedia(MaxSharedGalleryFile file, String id) {
+		if (file == null || id == null || id.isBlank()) {
+			return "";
+		}
+		String sourceLocalMediaKey = file.localMediaKey() == null ? "" : file.localMediaKey().trim();
+		if (sourceLocalMediaKey.isBlank()) {
+			return "";
+		}
+		Path sourcePath = MonitorMediaApp.savedGalleryMediaFile(sourceLocalMediaKey);
+		if (sourcePath == null) {
+			return "";
+		}
+		try {
+			return MonitorMediaApp.persistLocalGalleryFile(MAX_TRANSFER_LOCAL_KEY_PREFIX + id, sourcePath);
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to prepare MAX file transfer {}: {}", sourceLocalMediaKey, sanitizeMediaError(exception.getMessage()));
+			return "";
+		}
+	}
+
+	private static void applyPreparedFileDeliveries(MinecraftServer server, ScreenRuntimeKey senderKey, List<MaxPreparedFileDelivery> deliveries) {
+		MaxRuntimeState senderState = MAX_STATES.get(senderKey);
+		if (server == null || senderKey == null || senderState == null) {
+			return;
+		}
+		int delivered = 0;
+		Set<ScreenRuntimeKey> changedRecipients = new HashSet<>();
+		for (MaxPreparedFileDelivery delivery : deliveries == null ? List.<MaxPreparedFileDelivery>of() : deliveries) {
+			if (delivery == null || delivery.file() == null) {
+				continue;
+			}
+			ScreenRuntimeKey recipientKey = ACCOUNT_INDEX.get(delivery.recipientCode());
+			ScreenComponent recipientComponent = recipientKey != null ? resolveScreenComponent(server, recipientKey) : null;
+			if (recipientKey == null || recipientComponent == null || !recipientComponent.powered()) {
+				deleteTransferLocalMediaIfTemporary(delivery.file());
+				continue;
+			}
+			MaxRuntimeState recipientState = ensureState(server, recipientComponent);
+			if (recipientState == null) {
+				deleteTransferLocalMediaIfTemporary(delivery.file());
+				continue;
+			}
+			synchronized (recipientState) {
+				recipientState.incomingFiles.add(delivery.file());
+				recipientState.version++;
+			}
+			persistState(server, recipientKey, recipientState);
+			playNotificationSound(server, recipientComponent);
+			requestRuntimeRender(server, recipientKey);
+			changedRecipients.add(recipientKey);
+			delivered++;
+		}
+		synchronized (senderState) {
+			clearFileShareDraftLocked(senderState);
+			senderState.statusText = delivered > 0 ? "Отправлено: " + delivered : "Получатели недоступны";
+			senderState.version++;
+		}
+		requestRuntimeRender(server, senderKey);
+		for (ScreenRuntimeKey recipientKey : changedRecipients) {
+			requestRuntimeRender(server, recipientKey);
+		}
+	}
+
+	private static void acceptFirstIncomingFile(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		MaxRuntimeState state = MAX_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		MaxIncomingFile incoming;
+		synchronized (state) {
+			if (state.incomingFiles.isEmpty()) {
+				state.statusText = "Нет уведомлений";
+				state.notificationsOpen = false;
+				state.version++;
+				requestRuntimeRender(server, key);
+				return;
+			}
+			incoming = state.incomingFiles.remove(0);
+			state.statusText = saveIncomingFileToGallery(server, key, incoming) ? "Файл сохранён" : "Не удалось сохранить файл";
+			if (state.incomingFiles.isEmpty()) {
+				state.notificationsOpen = false;
+			}
+			state.version++;
+		}
+		persistState(server, key, state);
+		requestRuntimeRender(server, key);
+	}
+
+	private static void ignoreFirstIncomingFile(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		MaxRuntimeState state = MAX_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		MaxIncomingFile ignored;
+		synchronized (state) {
+			if (state.incomingFiles.isEmpty()) {
+				state.statusText = "Нет уведомлений";
+				state.notificationsOpen = false;
+				state.version++;
+				requestRuntimeRender(server, key);
+				return;
+			}
+			ignored = state.incomingFiles.remove(0);
+			state.statusText = "Файл отклонён";
+			if (state.incomingFiles.isEmpty()) {
+				state.notificationsOpen = false;
+			}
+			state.version++;
+		}
+		deleteTransferLocalMediaIfTemporary(ignored);
+		persistState(server, key, state);
+		requestRuntimeRender(server, key);
+	}
+
+	private static boolean saveIncomingFileToGallery(MinecraftServer server, ScreenRuntimeKey key, MaxIncomingFile incoming) {
+		if (server == null || key == null || incoming == null) {
+			return false;
+		}
+		String url = incoming.url() == null || incoming.url().isBlank()
+				? MAX_TRANSFER_URL_PREFIX + Objects.toString(incoming.localMediaKey(), "")
+				: incoming.url();
+		if (url == null || url.isBlank()) {
+			return false;
+		}
+		GalleryItemKind kind = effectiveGalleryItemKind(url, incoming.localMediaKey(), incoming.kind());
+		PersistedGalleryItem persisted = new PersistedGalleryItem(
+				incoming.title() == null || incoming.title().isBlank() ? defaultSharedFileTitle(kind) : incoming.title(),
+				incoming.subtitle() == null ? "" : incoming.subtitle(),
+				url,
+				kind,
+				incoming.localMediaKey() == null ? "" : incoming.localMediaKey()
+		);
+		MediaRuntimeState mediaState = MEDIA_STATES.computeIfAbsent(
+				key,
+				ignored -> MediaRuntimeState.fresh(ScreenViewMode.GALLERY, "", () -> onMediaProgressChanged(server, key))
+		);
+		ScreenComponent component = resolveScreenComponent(server, key);
+		if (component != null) {
+			ensureGalleryStateHydrated(server, key, mediaState);
+		}
+		synchronized (mediaState) {
+			int existingIndex = resolveGalleryItemIndex(mediaState, persisted.url(), -1);
+			if (existingIndex < 0) {
+				BufferedImage preview = persistedGalleryPreviewForDisplay(persisted, kind);
+				mediaState.galleryItems.add(new GalleryItem(
+						persisted.title(),
+						persisted.subtitle(),
+						persisted.url(),
+						persisted.localMediaKey(),
+						null,
+						preview,
+						kind
+				));
+				mediaState.galleryHydrated = true;
+				mediaState.statusText = "Файл сохранён";
+				mediaState.version++;
+			}
+		}
+		persistGalleryState(server, key, mediaState);
+		requestRuntimeRender(server, key);
+		return true;
+	}
+
+	private static void deleteTransferLocalMediaIfTemporary(MaxIncomingFile incoming) {
+		if (incoming == null || incoming.localMediaKey() == null || incoming.id() == null) {
+			return;
+		}
+		String ownedTransferPrefix = MAX_TRANSFER_LOCAL_KEY_PREFIX + incoming.id();
+		if (!incoming.localMediaKey().startsWith(ownedTransferPrefix)) {
+			return;
+		}
+		MonitorMediaApp.deleteSavedGalleryMedia(incoming.localMediaKey());
+	}
+
+	private static void playNotificationSound(MinecraftServer server, ScreenComponent component) {
+		if (server == null || component == null || component.runtimeKey() == null) {
+			return;
+		}
+		ServerLevel level = server.getLevel(component.runtimeKey().dimension());
+		if (level == null) {
+			return;
+		}
+		Vec3 center = screenCenter(component);
+		long seed = level.random.nextLong();
+		double rangeSqr = 16.0D * 16.0D;
+		for (ServerPlayer viewer : level.players()) {
+			if (viewer.distanceToSqr(center) > rangeSqr) {
+				continue;
+			}
+			boolean hasPack = PolymerResourcePackUtils.hasMainPack(viewer);
+			Holder<SoundEvent> sound = hasPack
+					? Holder.direct(MAX_NOTIFICATION_SOUND)
+					: BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.NOTE_BLOCK_BELL.value());
+			viewer.connection.send(new ClientboundSoundPacket(
+					sound,
+					SoundSource.BLOCKS,
+					center.x,
+					center.y,
+					center.z,
+					0.9F,
+					hasPack ? 1.0F : 1.35F,
+					seed
+			));
+		}
+	}
+
+	private static Vec3 screenCenter(ScreenComponent component) {
+		if (component == null || component.frameCoords().isEmpty()) {
+			return Vec3.ZERO;
+		}
+		double x = 0.0D;
+		double y = 0.0D;
+		double z = 0.0D;
+		int count = 0;
+		for (ItemFrame frame : component.frameCoords().keySet()) {
+			if (frame == null) {
+				continue;
+			}
+			x += frame.getX();
+			y += frame.getY();
+			z += frame.getZ();
+			count++;
+		}
+		if (count <= 0) {
+			return Vec3.ZERO;
+		}
+		return new Vec3(x / count, y / count, z / count);
+	}
+
 	private static List<MaxAvatarCandidateSnapshot> avatarCandidates(ScreenComponent component) {
 		List<PersistedGalleryItem> persisted = resolvePersistedGalleryState(component);
 		if (persisted.isEmpty()) {
@@ -2278,6 +2899,7 @@ final class MonitorMaxRuntime {
 		drawVerticalText(graphics, "MAX", maxAppTitleRect(layout), new Color(248, 251, 255, 240), Font.BOLD, clampInt(layout.unit() + 2, 13, 22));
 		drawVerticalText(graphics, displayAccountCode(state.accountCode()), maxProfileCodeRect(layout), new Color(214, 232, 244, 232), Font.BOLD, clampInt(layout.unit(), 10, 17));
 		drawMaxAddContactButton(graphics, maxAddContactRect(layout), layout);
+		drawMaxNotificationsButton(graphics, maxNotificationsRect(layout), state.notificationCount(), layout);
 		drawMaxRingtoneControls(graphics, layout, state);
 
 		UiRect listRect = maxContactListRect(layout);
@@ -2701,6 +3323,83 @@ final class MonitorMaxRuntime {
 		}
 	}
 
+	private static void drawMaxFileSharePicker(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot state) {
+		UiRect panel = maxAvatarPickerPanelRect(layout);
+		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 232));
+		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
+		drawMediaBackButton(graphics, maxAvatarPickerBackRect(layout), layout);
+		String title = state.fileShareFileCount() <= 1 ? "ОТПРАВИТЬ ФАЙЛ" : "ОТПРАВИТЬ ФАЙЛЫ";
+		drawVerticalText(graphics, title, maxAvatarPickerTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		UiRect send = maxFileShareSendRect(layout);
+		Color sendColor = drawMediaHeaderControlBase(graphics, send, MediaButtonSegment.SINGLE);
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(send, layout), PlayerUiIcon.SEND_PLANE, sendColor);
+
+		List<MaxFileShareContactSnapshot> contacts = state.fileShareContacts() != null ? state.fileShareContacts() : List.of();
+		if (contacts.isEmpty()) {
+			drawCenteredText(graphics, "Добавь контакты в MAX", maxContactPickerListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			return;
+		}
+		UiRect hint = maxFileShareHintRect(layout);
+		String fileLabel = state.fileShareFileCount() <= 1 ? state.fileShareTitle() : "Файлов: " + state.fileShareFileCount();
+		drawCenteredTextFitted(graphics, fileLabel, hint, new Color(176, 202, 220, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
+		int count = Math.min(contacts.size(), maxContactPickerCapacity(layout));
+		for (int index = 0; index < count; index++) {
+			drawMaxFileShareContactRow(graphics, layout, maxContactPickerRowRect(layout, index), contacts.get(index));
+		}
+	}
+
+	private static void drawMaxFileShareContactRow(Graphics2D graphics, UiLayout layout, UiRect rect, MaxFileShareContactSnapshot contact) {
+		fillRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 12, 24), new Color(8, 12, 16, contact.selected() ? 206 : 174));
+		strokeRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 12, 24), contact.selected() ? 1.4F : 1.0F, contact.selected() ? new Color(255, 255, 255, 112) : contact.online() ? new Color(255, 255, 255, 58) : new Color(255, 255, 255, 24));
+		UiRect avatarRect = new UiRect(rect.x() + layout.unit(), rect.y() + layout.unit() / 2, rect.height() - layout.unit(), rect.height() - layout.unit());
+		drawAvatar(graphics, avatarRect, contact.avatarFrame(), layout);
+		UiRect checkRect = maxFileShareContactCheckRect(rect, layout);
+		int textRight = checkRect.x();
+		UiRect codeRect = new UiRect(avatarRect.right() + layout.unit(), rect.y() + layout.unit() / 3, textRight - avatarRect.right() - layout.unit() * 2, rect.height() / 2);
+		drawVerticalText(graphics, displayAccountCode(contact.code()), codeRect, new Color(248, 251, 255, 238), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		drawVerticalText(graphics, contact.online() ? "доступен" : "недоступен", new UiRect(codeRect.x(), codeRect.bottom(), codeRect.width(), rect.height() / 3), new Color(178, 202, 218, 218), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11));
+		fillRoundedRect(graphics, checkRect, checkRect.height(), contact.selected() ? new Color(248, 251, 255, 232) : new Color(255, 255, 255, 16));
+		strokeRoundedRect(graphics, checkRect, checkRect.height(), 1.0F, new Color(255, 255, 255, contact.selected() ? 150 : 48));
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(checkRect, layout), contact.selected() ? PlayerUiIcon.CHECKBOX_FILL : PlayerUiIcon.CHECKBOX_LINE, contact.selected() ? new Color(20, 24, 30, 238) : new Color(248, 251, 255, 220));
+	}
+
+	private static void drawMaxNotificationsScreen(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot state) {
+		UiRect panel = maxAvatarPickerPanelRect(layout);
+		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 232));
+		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
+		drawMediaBackButton(graphics, maxAvatarPickerBackRect(layout), layout);
+		drawVerticalText(graphics, "УВЕДОМЛЕНИЯ", maxAvatarPickerTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		MaxIncomingFileSnapshot incoming = state.incomingFile();
+		if (incoming == null) {
+			drawCenteredText(graphics, "Нет входящих файлов", maxAvatarPickerGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			return;
+		}
+		UiRect card = maxNotificationCardRect(layout);
+		fillRoundedRect(graphics, card, clampInt(layout.unit() * 2, 14, 28), new Color(255, 255, 255, 18));
+		strokeRoundedRect(graphics, card, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 46));
+		UiRect avatar = maxNotificationAvatarRect(layout);
+		drawAvatar(graphics, avatar, incoming.senderAvatarFrame(), layout);
+		drawCenteredTextFitted(graphics, displayAccountCode(incoming.senderCode()), maxNotificationSenderRect(layout), new Color(248, 251, 255, 240), Font.BOLD, clampInt(layout.unit() + 2, 12, 20), 8);
+		drawCenteredTextFitted(graphics, incoming.fileName(), maxNotificationFileRect(layout), new Color(220, 238, 248, 232), Font.BOLD, clampInt(layout.unit(), 9, 15), 7);
+		String subtitle = incoming.subtitle() == null || incoming.subtitle().isBlank() ? notificationKindLabel(incoming.kind()) : incoming.subtitle();
+		drawCenteredTextFitted(graphics, subtitle, maxNotificationSubtitleRect(layout), new Color(166, 194, 214, 218), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 6);
+		drawRoundCallButton(graphics, maxNotificationAcceptRect(layout), PlayerUiIcon.CHECK, new Color(74, 214, 142), new Color(8, 18, 13, 238), layout);
+		drawRoundCallButton(graphics, maxNotificationDeclineRect(layout), PlayerUiIcon.CLOSE, new Color(240, 88, 96), new Color(255, 248, 248, 246), layout);
+		if (state.notificationCount() > 1) {
+			drawCenteredTextFitted(graphics, "Ещё: " + (state.notificationCount() - 1), maxNotificationQueueRect(layout), new Color(210, 224, 236, 210), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
+		}
+	}
+
+	private static String notificationKindLabel(GalleryItemKind kind) {
+		return switch (kind != null ? kind : GalleryItemKind.MEDIA) {
+			case AUDIO -> "аудиофайл";
+			case VIDEO -> "видео";
+			case YOUTUBE -> "ссылка YouTube";
+			case LIVE_CAMERA -> "камера";
+			case MEDIA -> "файл из галереи";
+		};
+	}
+
 	private static void drawMaxAtmosphere(Graphics2D graphics, UiRect canvas, UiLayout layout) {
 		graphics.setPaint(new GradientPaint(canvas.x(), canvas.y(), new Color(0, 184, 255, 40), canvas.right(), canvas.bottom(), new Color(255, 255, 255, 8)));
 		graphics.fillRect(canvas.x(), canvas.y(), canvas.width(), canvas.height());
@@ -2732,6 +3431,14 @@ final class MonitorMaxRuntime {
 	private static void drawMaxAddContactButton(Graphics2D graphics, UiRect rect, UiLayout layout) {
 		Color color = drawMediaHeaderControlBase(graphics, rect, MediaButtonSegment.SINGLE);
 		drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), PlayerUiIcon.CONTACT_ADD, color);
+	}
+
+	private static void drawMaxNotificationsButton(Graphics2D graphics, UiRect rect, int count, UiLayout layout) {
+		Color color = drawMediaHeaderControlBase(graphics, rect, MediaButtonSegment.SINGLE);
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), PlayerUiIcon.NOTIFICATION, color);
+		if (count > 0) {
+			drawNotificationBadge(graphics, maxNotificationButtonBadgeRect(rect, layout), count, layout);
+		}
 	}
 
 	private static void drawMaxRingtoneControls(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot state) {
@@ -2842,6 +3549,18 @@ final class MonitorMaxRuntime {
 		UiRect panel = maxProfilePanelRect(layout);
 		int height = clampInt(layout.unit() * 2 + 4, 24, 34);
 		return new UiRect(panel.right() - height - layout.unit(), panel.y() + (panel.height() - height) / 2, height, height);
+	}
+
+	private static UiRect maxNotificationsRect(UiLayout layout) {
+		UiRect add = maxAddContactRect(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		return new UiRect(add.x() - add.width() - gap, add.y(), add.width(), add.height());
+	}
+
+	private static UiRect maxNotificationButtonBadgeRect(UiRect button, UiLayout layout) {
+		int height = clampInt(layout.unit() + 4, 12, 18);
+		int width = clampInt(height + layout.unit() / 2, height, 30);
+		return new UiRect(button.right() - width / 2, button.y() - height / 3, width, height);
 	}
 
 	private static UiRect maxRingtoneControlsRect(UiLayout layout) {
@@ -3301,6 +4020,72 @@ final class MonitorMaxRuntime {
 		return maxAvatarPickerGridRect(layout);
 	}
 
+	private static UiRect maxFileShareSendRect(UiLayout layout) {
+		UiRect panel = maxAvatarPickerPanelRect(layout);
+		int size = clampInt(layout.unit() * 2 + 4, 24, 36);
+		return new UiRect(panel.right() - size - layout.unit(), panel.y() + layout.unit(), size, size);
+	}
+
+	private static UiRect maxFileShareHintRect(UiLayout layout) {
+		UiRect title = maxAvatarPickerTitleRect(layout);
+		UiRect send = maxFileShareSendRect(layout);
+		return new UiRect(title.x(), title.bottom(), Math.max(1, send.x() - title.x() - layout.unit()), clampInt(layout.unit() * 2, 16, 24));
+	}
+
+	private static UiRect maxFileShareContactCheckRect(UiRect row, UiLayout layout) {
+		int size = clampInt(layout.unit() * 2 + 4, 24, 34);
+		return new UiRect(row.right() - size - layout.unit(), row.y() + (row.height() - size) / 2, size, size);
+	}
+
+	private static UiRect maxNotificationCardRect(UiLayout layout) {
+		UiRect grid = maxAvatarPickerGridRect(layout);
+		int verticalInset = clampInt(layout.unit(), 6, 18);
+		return new UiRect(grid.x(), grid.y() + verticalInset, grid.width(), Math.max(1, grid.height() - verticalInset * 2));
+	}
+
+	private static UiRect maxNotificationAvatarRect(UiLayout layout) {
+		UiRect card = maxNotificationCardRect(layout);
+		int size = clampInt(Math.min(card.width(), card.height()) / 4, 34, 92);
+		return new UiRect(card.x() + (card.width() - size) / 2, card.y() + clampInt(layout.unit() * 2, 12, 28), size, size);
+	}
+
+	private static UiRect maxNotificationSenderRect(UiLayout layout) {
+		UiRect avatar = maxNotificationAvatarRect(layout);
+		UiRect card = maxNotificationCardRect(layout);
+		return new UiRect(card.x() + layout.unit(), avatar.bottom() + layout.unit(), card.width() - layout.unit() * 2, clampInt(layout.unit() * 3, 24, 38));
+	}
+
+	private static UiRect maxNotificationFileRect(UiLayout layout) {
+		UiRect sender = maxNotificationSenderRect(layout);
+		UiRect card = maxNotificationCardRect(layout);
+		return new UiRect(card.x() + layout.unit(), sender.bottom(), card.width() - layout.unit() * 2, clampInt(layout.unit() * 3, 24, 38));
+	}
+
+	private static UiRect maxNotificationSubtitleRect(UiLayout layout) {
+		UiRect file = maxNotificationFileRect(layout);
+		UiRect card = maxNotificationCardRect(layout);
+		return new UiRect(card.x() + layout.unit(), file.bottom(), card.width() - layout.unit() * 2, clampInt(layout.unit() * 2, 16, 28));
+	}
+
+	private static UiRect maxNotificationAcceptRect(UiLayout layout) {
+		UiRect card = maxNotificationCardRect(layout);
+		int gap = clampInt(layout.unit(), 6, 18);
+		int size = clampInt(Math.min(card.width(), card.height()) / 6, 22, 48);
+		int y = card.bottom() - size - clampInt(layout.unit() * 2, 12, 28);
+		return new UiRect(card.x() + (card.width() - size * 2 - gap) / 2, y, size, size);
+	}
+
+	private static UiRect maxNotificationDeclineRect(UiLayout layout) {
+		UiRect accept = maxNotificationAcceptRect(layout);
+		return new UiRect(accept.right() + clampInt(layout.unit(), 6, 18), accept.y(), accept.width(), accept.height());
+	}
+
+	private static UiRect maxNotificationQueueRect(UiLayout layout) {
+		UiRect accept = maxNotificationAcceptRect(layout);
+		UiRect card = maxNotificationCardRect(layout);
+		return new UiRect(card.x() + layout.unit(), accept.y() - clampInt(layout.unit() * 2, 16, 26), card.width() - layout.unit() * 2, clampInt(layout.unit() * 2, 16, 26));
+	}
+
 	private static int maxContactPickerCapacity(UiLayout layout) {
 		UiRect list = maxContactPickerListRect(layout);
 		int gap = Math.max(4, layout.unit() / 2);
@@ -3337,7 +4122,8 @@ final class MonitorMaxRuntime {
 			boolean microphoneEnabled,
 			String ringtoneUrl,
 			String ringtoneLocalMediaKey,
-			String ringtoneTitle
+			String ringtoneTitle,
+			List<MaxIncomingFile> incomingFiles
 	) {
 	}
 
@@ -3375,6 +4161,35 @@ final class MonitorMaxRuntime {
 		private String localVideoUrl = "";
 		private BufferedImage remoteFrame;
 		private String remoteVideoUrl = "";
+		private final List<MaxIncomingFile> incomingFiles = new ArrayList<>();
+		private boolean notificationsOpen;
+		private boolean fileSharePickerOpen;
+		private final List<MaxSharedGalleryFile> fileShareFiles = new ArrayList<>();
+		private final Set<String> fileShareSelectedContacts = new LinkedHashSet<>();
+	}
+
+	private record MaxSharedGalleryFile(
+			String title,
+			String subtitle,
+			String url,
+			String localMediaKey,
+			GalleryItemKind kind
+	) {
+	}
+
+	private record MaxIncomingFile(
+			String id,
+			String senderCode,
+			String title,
+			String subtitle,
+			String url,
+			String localMediaKey,
+			GalleryItemKind kind,
+			long createdAtMillis
+	) {
+	}
+
+	private record MaxPreparedFileDelivery(String recipientCode, MaxIncomingFile file) {
 	}
 
 	private static final class MaxCallSession {

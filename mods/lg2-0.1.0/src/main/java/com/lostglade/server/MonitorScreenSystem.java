@@ -2611,7 +2611,7 @@ public final class MonitorScreenSystem {
 			return null;
 		}
 		MediaVisualSnapshot mediaSnapshot = null;
-		MaxVisualSnapshot maxSnapshot = viewMode == ScreenViewMode.MAX || MonitorMaxRuntime.hasVisibleCall(component.runtimeKey())
+		MaxVisualSnapshot maxSnapshot = viewMode == ScreenViewMode.MAX || viewMode == ScreenViewMode.HOME || MonitorMaxRuntime.hasVisibleCall(component.runtimeKey())
 				? MonitorMaxRuntime.captureSnapshot(server, component)
 				: null;
 		CameraAppVisualSnapshot cameraAppSnapshot = viewMode == ScreenViewMode.CAMERA_APP
@@ -2874,7 +2874,7 @@ public final class MonitorScreenSystem {
 		if (work.powered()) {
 			UiLayout layout = createUiLayout(work.width(), work.height());
 			if (work.viewMode() == ScreenViewMode.HOME) {
-				drawHomeScreen(graphics, layout, work.launcherPage());
+				drawHomeScreen(graphics, layout, work.launcherPage(), work.maxSnapshot());
 			} else if (work.viewMode() == ScreenViewMode.CAMERA_APP) {
 				MonitorCameraRuntime.drawScreen(graphics, layout, appForViewMode(work.viewMode()), work.cameraAppSnapshot());
 			} else if (work.viewMode() == ScreenViewMode.MAX) {
@@ -3028,7 +3028,7 @@ public final class MonitorScreenSystem {
 		graphics.drawImage(base, 0, 0, pixelWidth, pixelHeight, null);
 	}
 
-	static void drawHomeScreen(Graphics2D graphics, UiLayout layout, int launcherPage) {
+	static void drawHomeScreen(Graphics2D graphics, UiLayout layout, int launcherPage, MaxVisualSnapshot maxSnapshot) {
 		UiRect panel = homePanelRect(layout);
 		UiRect header = homeHeaderRect(layout, panel);
 		fillRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 36), new Color(18, 24, 30, 196));
@@ -3037,7 +3037,9 @@ public final class MonitorScreenSystem {
 
 		List<MonitorApp> visibleApps = visibleHomeApps(layout, launcherPage);
 		for (int index = 0; index < visibleApps.size(); index++) {
-			drawHomeAppCard(graphics, layout, homeAppCardRect(layout, launcherPage, index), visibleApps.get(index));
+			MonitorApp app = visibleApps.get(index);
+			int badgeCount = app != null && "max".equals(app.id()) && maxSnapshot != null ? maxSnapshot.notificationCount() : 0;
+			drawHomeAppCard(graphics, layout, homeAppCardRect(layout, launcherPage, index), app, badgeCount);
 		}
 
 		int totalRows = homeTotalRows(layout);
@@ -3062,7 +3064,7 @@ public final class MonitorScreenSystem {
 
 	static void drawAppScreen(Graphics2D graphics, UiLayout layout, MonitorApp app, ScreenRuntimeKey runtimeKey, MinecraftServer server, MediaVisualSnapshot mediaSnapshot) {
 		if (app == null) {
-			drawHomeScreen(graphics, layout, 0);
+			drawHomeScreen(graphics, layout, 0, null);
 			return;
 		}
 		if (app.role().usesMediaRenderer()) {
@@ -3394,6 +3396,7 @@ public final class MonitorScreenSystem {
 		int selectionCount = state != null ? state.gallerySelectionCount() : 0;
 		UiRect linkRect = mediaGalleryBrowserLinkRect(layout, selectionMode);
 		UiRect deleteRect = mediaGalleryBrowserBulkDeleteRect(layout);
+		UiRect sendRect = mediaGalleryBrowserBulkSendRect(layout);
 		UiRect selectionRect = mediaGalleryBrowserSelectionRect(layout);
 		UiRect gridRect = mediaGalleryGridRect(layout);
 		UiRect scrollbarTrackRect = mediaGalleryBrowserScrollbarTrackRect(layout);
@@ -3417,6 +3420,7 @@ public final class MonitorScreenSystem {
 		if (!galleryPickerMode && !droneMode) {
 			if (selectionMode) {
 				drawGalleryHeaderIconButton(graphics, deleteRect, layout, PlayerUiIcon.TRASH, selectionCount > 0, MediaButtonSegment.MIDDLE);
+				drawGalleryHeaderIconButton(graphics, sendRect, layout, PlayerUiIcon.SEND_PLANE, selectionCount > 0, MediaButtonSegment.MIDDLE);
 			}
 			drawGalleryHeaderIconButton(graphics, selectionRect, layout, selectionMode ? PlayerUiIcon.CHECKBOX_FILL : PlayerUiIcon.CHECKBOX_LINE, selectionMode, MediaButtonSegment.RIGHT);
 		}
@@ -3581,7 +3585,7 @@ public final class MonitorScreenSystem {
 		);
 	}
 
-	static void drawHomeAppCard(Graphics2D graphics, UiLayout layout, UiRect cardRect, MonitorApp app) {
+	static void drawHomeAppCard(Graphics2D graphics, UiLayout layout, UiRect cardRect, MonitorApp app, int badgeCount) {
 		graphics.setPaint(new GradientPaint(
 				cardRect.x(),
 				cardRect.y(),
@@ -3595,6 +3599,9 @@ public final class MonitorScreenSystem {
 
 		UiRect iconRect = homeAppIconRect(cardRect, layout);
 		drawAppIcon(graphics, app, iconRect, clampInt(layout.unit() / 3, 2, 12));
+		if (badgeCount > 0) {
+			drawNotificationBadge(graphics, homeAppNotificationBadgeRect(iconRect, layout), badgeCount, layout);
+		}
 
 		UiRect labelRect = homeAppLabelRect(layout, cardRect);
 		int textSize = clampInt(layout.unit() * 2 - 1, 9, 26);
@@ -3609,6 +3616,15 @@ public final class MonitorScreenSystem {
 		);
 		fillRoundedRect(graphics, textBgRect, clampInt(layout.unit(), 8, 24), new Color(12, 16, 20, 112));
 		drawCenteredTextFitted(graphics, app.title(), labelRect, new Color(248, 251, 255), Font.BOLD, textSize, clampInt(layout.unit() - 1, 7, 14));
+	}
+
+	static void drawNotificationBadge(Graphics2D graphics, UiRect rect, int count, UiLayout layout) {
+		if (graphics == null || rect == null || count <= 0 || rect.width() <= 0 || rect.height() <= 0) {
+			return;
+		}
+		fillRoundedRect(graphics, rect, rect.height(), new Color(238, 64, 82, 238));
+		strokeRoundedRect(graphics, rect, rect.height(), Math.max(1.0F, layout.unit() / 12.0F), new Color(255, 255, 255, 210));
+		drawCenteredTextFitted(graphics, count > 99 ? "99+" : Integer.toString(count), rect.inset(Math.max(1, layout.unit() / 6)), new Color(255, 255, 255, 248), Font.BOLD, clampInt(layout.unit() - 2, 7, 12), 5);
 	}
 
 	static void drawFloatingButton(Graphics2D graphics, UiRect rect, String label, Color fill, Color text, UiLayout layout) {
@@ -5812,6 +5828,12 @@ public final class MonitorScreenSystem {
 		);
 	}
 
+	static UiRect homeAppNotificationBadgeRect(UiRect iconRect, UiLayout layout) {
+		int height = clampInt(layout.unit() * 2, 16, 26);
+		int width = clampInt(height + layout.unit(), height, 38);
+		return new UiRect(iconRect.right() - width / 2, iconRect.y() - height / 5, width, height);
+	}
+
 	static UiRect homeAppLabelRect(UiLayout layout, UiRect cardRect) {
 		int labelHeight = homeAppLabelHeight(layout);
 		return new UiRect(
@@ -5936,6 +5958,12 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect mediaGalleryBrowserBulkDeleteRect(UiLayout layout) {
+		UiRect selection = mediaGalleryBrowserBulkSendRect(layout);
+		int gap = mediaHeaderControlGap(layout);
+		return new UiRect(selection.x() - selection.width() - gap, selection.y(), selection.width(), selection.height());
+	}
+
+	static UiRect mediaGalleryBrowserBulkSendRect(UiLayout layout) {
 		UiRect selection = mediaGalleryBrowserSelectionRect(layout);
 		int gap = mediaHeaderControlGap(layout);
 		return new UiRect(selection.x() - selection.width() - gap, selection.y(), selection.width(), selection.height());
@@ -8719,6 +8747,29 @@ public final class MonitorScreenSystem {
 			return false;
 		}
 		return state.galleryBulkSelectedKeys.contains(galleryBulkSelectionKey(state.galleryItems.get(galleryIndex), galleryIndex));
+	}
+
+	static List<GalleryItem> selectedGalleryItemsForShareLocked(MediaRuntimeState state) {
+		if (state == null || state.galleryItems.isEmpty()) {
+			return List.of();
+		}
+		if (!state.galleryBulkSelectionMode || state.galleryBulkSelectedKeys.isEmpty()) {
+			GalleryItem current = currentGalleryItemLocked(state);
+			return current != null ? List.of(current) : List.of();
+		}
+		normalizeGalleryBulkSelectionLocked(state);
+		if (state.galleryBulkSelectedKeys.isEmpty()) {
+			return List.of();
+		}
+		Set<String> selectedKeys = new HashSet<>(state.galleryBulkSelectedKeys);
+		List<GalleryItem> selected = new ArrayList<>();
+		for (int index = 0; index < state.galleryItems.size(); index++) {
+			GalleryItem item = state.galleryItems.get(index);
+			if (selectedKeys.contains(galleryBulkSelectionKey(item, index)) && item != null) {
+				selected.add(item);
+			}
+		}
+		return selected.isEmpty() ? List.of() : List.copyOf(selected);
 	}
 
 	static void normalizeGalleryBulkSelectionLocked(MediaRuntimeState state) {

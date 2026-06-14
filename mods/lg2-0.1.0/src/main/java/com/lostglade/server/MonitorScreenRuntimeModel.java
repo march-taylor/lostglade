@@ -181,8 +181,16 @@ record MaxVisualSnapshot(
 		MaxCallVisualSnapshot call,
 		List<MaxAvatarCandidateSnapshot> avatarCandidates,
 		List<MaxRingtoneCandidateSnapshot> ringtoneCandidates,
+		List<MaxFileShareContactSnapshot> fileShareContacts,
+		MaxIncomingFileSnapshot incomingFile,
+		int notificationCount,
+		int fileShareFileCount,
+		int fileShareSelectedCount,
+		String fileShareTitle,
 		boolean avatarPickerOpen,
 		boolean ringtonePickerOpen,
+		boolean fileSharePickerOpen,
+		boolean notificationsOpen,
 		boolean ringtonePreviewPlaying,
 		String statusText
 ) {
@@ -268,6 +276,23 @@ record MaxRingtoneCandidateSnapshot(
 		boolean selected,
 		boolean playing,
 		float timelineFraction
+) {
+}
+
+record MaxFileShareContactSnapshot(
+		String code,
+		BufferedImage avatarFrame,
+		boolean online,
+		boolean selected
+) {
+}
+
+record MaxIncomingFileSnapshot(
+		String senderCode,
+		BufferedImage senderAvatarFrame,
+		String fileName,
+		String subtitle,
+		GalleryItemKind kind
 ) {
 }
 
@@ -547,6 +572,8 @@ enum PlayerUiIcon {
 	AIMING_2("/assets/lg2/textures/monitor/ui_icons/aiming_2.png"),
 	ADD("/assets/lg2/textures/monitor/ui_icons/add.png"),
 	MINUS("/assets/lg2/textures/monitor/ui_icons/minus.png"),
+	SEND_PLANE("/assets/lg2/textures/monitor/ui_icons/send_plane.png"),
+	NOTIFICATION("/assets/lg2/textures/monitor/ui_icons/notification.png"),
 	TARGET("/assets/lg2/textures/monitor/ui_icons/target.png");
 
 	private final String resourcePath;
