@@ -62,6 +62,7 @@ import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.network.syncher.EntityDataAccessor;
@@ -3799,16 +3800,20 @@ public final class DroneSystem {
 		if (player == null) {
 			return;
 		}
-		syncControlledOperatorAttributeModifier(
+		boolean changed = false;
+		changed |= syncControlledOperatorAttributeModifier(
 				player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE),
 				DRONE_AUTO_AIM_BLOCK_INTERACTION_RANGE_MODIFIER_ID,
 				0.0D
 		);
-		syncControlledOperatorAttributeModifier(
+		changed |= syncControlledOperatorAttributeModifier(
 				player.getAttribute(Attributes.ENTITY_INTERACTION_RANGE),
 				DRONE_AUTO_AIM_ENTITY_INTERACTION_RANGE_MODIFIER_ID,
 				0.0D
 		);
+		if (changed) {
+			syncControlledOperatorInteractionRangeClient(player);
+		}
 	}
 
 	private static void stopControlledOperatorAudio(UUID playerId) {
@@ -4420,7 +4425,8 @@ public final class DroneSystem {
 		double targetRangeBlocks = enabled
 				? resolveDroneAutoAimSelectionRangeBlocks(player)
 				: (isControllingDrone(player) ? CONTROLLED_OPERATOR_DISABLED_INTERACTION_RANGE_BLOCKS : 0.0D);
-		syncControlledOperatorAttributeModifier(
+		boolean changed = false;
+		changed |= syncControlledOperatorAttributeModifier(
 				player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE),
 				DRONE_AUTO_AIM_BLOCK_INTERACTION_RANGE_MODIFIER_ID,
 				resolveTargetInteractionRangeOffset(
@@ -4429,7 +4435,7 @@ public final class DroneSystem {
 						targetRangeBlocks
 				)
 		);
-		syncControlledOperatorAttributeModifier(
+		changed |= syncControlledOperatorAttributeModifier(
 				player.getAttribute(Attributes.ENTITY_INTERACTION_RANGE),
 				DRONE_AUTO_AIM_ENTITY_INTERACTION_RANGE_MODIFIER_ID,
 				resolveTargetInteractionRangeOffset(
@@ -4438,6 +4444,9 @@ public final class DroneSystem {
 						targetRangeBlocks
 				)
 		);
+		if (changed) {
+			syncControlledOperatorInteractionRangeClient(player);
+		}
 	}
 
 	private static double resolveDroneAutoAimSelectionRangeBlocks(ServerPlayer player) {
@@ -4494,16 +4503,36 @@ public final class DroneSystem {
 		return new BlockHitResult(end, Direction.UP, BlockPos.containing(end), true);
 	}
 
-	private static void syncControlledOperatorAttributeModifier(AttributeInstance attribute, Identifier modifierId, double amount) {
-		if (attribute == null || modifierId == null) {
+	private static void syncControlledOperatorInteractionRangeClient(ServerPlayer player) {
+		if (player == null || player.connection == null) {
 			return;
+		}
+		List<AttributeInstance> attributes = new ArrayList<>(2);
+		AttributeInstance blockRange = player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE);
+		if (blockRange != null) {
+			attributes.add(blockRange);
+		}
+		AttributeInstance entityRange = player.getAttribute(Attributes.ENTITY_INTERACTION_RANGE);
+		if (entityRange != null) {
+			attributes.add(entityRange);
+		}
+		if (attributes.isEmpty()) {
+			return;
+		}
+		sendControlledOperatorPacket(player, new ClientboundUpdateAttributesPacket(player.getId(), attributes));
+	}
+
+	private static boolean syncControlledOperatorAttributeModifier(AttributeInstance attribute, Identifier modifierId, double amount) {
+		if (attribute == null || modifierId == null) {
+			return false;
 		}
 		AttributeModifier current = attribute.getModifier(modifierId);
 		if (Math.abs(amount) <= 1.0E-6D) {
 			if (current != null) {
 				attribute.removeModifier(modifierId);
+				return true;
 			}
-			return;
+			return false;
 		}
 		if (current == null
 				|| current.operation() != AttributeModifier.Operation.ADD_VALUE
@@ -4512,7 +4541,9 @@ public final class DroneSystem {
 				attribute.removeModifier(modifierId);
 			}
 			attribute.addTransientModifier(new AttributeModifier(modifierId, amount, AttributeModifier.Operation.ADD_VALUE));
+			return true;
 		}
+		return false;
 	}
 
 	private static float yawTo(Vec3 origin, Vec3 target) {
