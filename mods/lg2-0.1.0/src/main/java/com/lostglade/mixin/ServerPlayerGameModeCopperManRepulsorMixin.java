@@ -60,6 +60,10 @@ public abstract class ServerPlayerGameModeCopperManRepulsorMixin {
 			BlockHitResult hitResult,
 			CallbackInfoReturnable<InteractionResult> cir
 	) {
+		if (DroneSystem.handleControlledUseItemOn(player, hand, hitResult)) {
+			cir.setReturnValue(InteractionResult.SUCCESS);
+			return;
+		}
 		if (CopperManGogglesSystem.handleHeldModeToggle(player, hand)) {
 			cir.setReturnValue(InteractionResult.SUCCESS);
 			return;

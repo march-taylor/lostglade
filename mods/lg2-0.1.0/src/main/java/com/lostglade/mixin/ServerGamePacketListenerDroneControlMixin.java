@@ -52,6 +52,10 @@ public abstract class ServerGamePacketListenerDroneControlMixin {
 
 			@Override
 			public void onAttack() {
+				handled[0] = DroneSystem.handleControlledAttackInteraction(
+						ServerGamePacketListenerDroneControlMixin.this.player,
+						packet
+				);
 			}
 		});
 		if (handled[0]) {
@@ -64,6 +68,7 @@ public abstract class ServerGamePacketListenerDroneControlMixin {
 		if (packet == null || !DroneSystem.isControllingDrone(this.player)) {
 			return;
 		}
+		DroneSystem.handleControlledPlayerAction(this.player, packet);
 		ci.cancel();
 	}
 

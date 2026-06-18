@@ -45,6 +45,7 @@ import net.minecraft.network.chat.RemoteChatSession;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
+import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
@@ -63,7 +64,9 @@ import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
+import net.minecraft.network.protocol.game.ServerboundInteractPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.resources.Identifier;
@@ -407,7 +410,7 @@ public final class DroneSystem {
 			}
 			if (isControllingDrone(serverPlayer)) {
 				if (hand == InteractionHand.MAIN_HAND) {
-					InteractionResult autoAimResult = handleControlledAutoAimEntityInteraction(serverPlayer, hand, entity);
+					InteractionResult autoAimResult = handleControlledAutoAimEntityInteraction(serverPlayer, hand, entity, true);
 					if (autoAimResult != InteractionResult.PASS) {
 						return autoAimResult;
 					}
@@ -452,7 +455,7 @@ public final class DroneSystem {
 				return InteractionResult.PASS;
 			}
 			if (isControllingDrone(serverPlayer)) {
-				InteractionResult autoAimResult = handleControlledAutoAimEntityInteraction(serverPlayer, hand, entity);
+				InteractionResult autoAimResult = handleControlledAutoAimEntityInteraction(serverPlayer, hand, entity, false);
 				if (autoAimResult != InteractionResult.PASS) {
 					return autoAimResult;
 				}
@@ -470,7 +473,7 @@ public final class DroneSystem {
 				return InteractionResult.PASS;
 			}
 			InteractionResult autoAimResult = hand == InteractionHand.MAIN_HAND
-					? handleControlledAutoAimBlockInteraction(serverPlayer, hand, hitResult == null ? null : hitResult.getBlockPos())
+					? handleControlledAutoAimBlockInteraction(serverPlayer, hand, hitResult == null ? null : hitResult.getBlockPos(), true)
 					: InteractionResult.PASS;
 			if (autoAimResult != InteractionResult.PASS) {
 				return autoAimResult;
@@ -481,7 +484,7 @@ public final class DroneSystem {
 			if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer)) {
 				return InteractionResult.PASS;
 			}
-			InteractionResult autoAimResult = handleControlledAutoAimBlockInteraction(serverPlayer, hand, pos);
+			InteractionResult autoAimResult = handleControlledAutoAimBlockInteraction(serverPlayer, hand, pos, false);
 			if (autoAimResult != InteractionResult.PASS) {
 				return autoAimResult;
 			}
@@ -4136,13 +4139,28 @@ public final class DroneSystem {
 		return true;
 	}
 
-	private static InteractionResult handleControlledAutoAimEntityInteraction(ServerPlayer player, InteractionHand hand, Entity entity) {
+	private static boolean shouldHandleControlledAutoAimAttackInput(Entity root) {
+		return root != null && hasDroneAutoAimModule(root);
+	}
+
+	private static boolean shouldHandleControlledAutoAimUseInput(Entity root) {
+		return root != null && hasDroneAutoAimModule(root) && !hasDroneTurretModule(root);
+	}
+
+	private static InteractionResult handleControlledAutoAimEntityInteraction(
+			ServerPlayer player,
+			InteractionHand hand,
+			Entity entity,
+			boolean useInput
+	) {
 		if (player == null || hand != InteractionHand.MAIN_HAND || entity == null) {
 			return InteractionResult.PASS;
 		}
 		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
 		Entity root = resolveControlledDroneRoot(player);
-		if (session == null || root == null || !hasDroneAutoAimModule(root)) {
+		if (session == null
+				|| root == null
+				|| !(useInput ? shouldHandleControlledAutoAimUseInput(root) : shouldHandleControlledAutoAimAttackInput(root))) {
 			return InteractionResult.PASS;
 		}
 		if (isDroneInternalEntity(entity)) {
@@ -4215,13 +4233,20 @@ public final class DroneSystem {
 				&& !isDroneInternalEntity(entity);
 	}
 
-	private static InteractionResult handleControlledAutoAimBlockInteraction(ServerPlayer player, InteractionHand hand, BlockPos pos) {
+	private static InteractionResult handleControlledAutoAimBlockInteraction(
+			ServerPlayer player,
+			InteractionHand hand,
+			BlockPos pos,
+			boolean useInput
+	) {
 		if (player == null || hand != InteractionHand.MAIN_HAND || pos == null || !(player.level() instanceof ServerLevel level)) {
 			return InteractionResult.PASS;
 		}
 		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
 		Entity root = resolveControlledDroneRoot(player);
-		if (session == null || root == null || !hasDroneAutoAimModule(root)) {
+		if (session == null
+				|| root == null
+				|| !(useInput ? shouldHandleControlledAutoAimUseInput(root) : shouldHandleControlledAutoAimAttackInput(root))) {
 			return InteractionResult.PASS;
 		}
 		if (!level.hasChunkAt(pos)) {
@@ -5508,7 +5533,66 @@ public final class DroneSystem {
 		if (root == null || !root.isAlive()) {
 			return false;
 		}
-		return fireDroneTurret(player, root, session, false);
+		if (hasDroneTurretModule(root)) {
+			return fireDroneTurret(player, root, session, false);
+		}
+		if (!shouldHandleControlledAutoAimUseInput(root)) {
+			return false;
+		}
+		return selectControlledAutoAimTargetFromView(player, session, root) != InteractionResult.PASS;
+	}
+
+	public static boolean handleControlledUseItemOn(ServerPlayer player, InteractionHand hand, BlockHitResult hitResult) {
+		if (player == null || hand != InteractionHand.MAIN_HAND || !isControllingDrone(player)) {
+			return false;
+		}
+		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
+		Entity root = resolveControlledDroneRoot(player);
+		if (session == null || root == null || !root.isAlive()) {
+			return true;
+		}
+		if (hasDroneTurretModule(root)) {
+			return fireDroneTurret(player, root, session, false);
+		}
+		if (!shouldHandleControlledAutoAimUseInput(root)) {
+			return true;
+		}
+		BlockPos pos = hitResult == null ? null : hitResult.getBlockPos();
+		InteractionResult result = handleControlledAutoAimBlockInteraction(player, hand, pos, true);
+		if (result != InteractionResult.PASS) {
+			return true;
+		}
+		return selectControlledAutoAimTargetFromView(player, session, root) != InteractionResult.PASS;
+	}
+
+	public static boolean handleControlledAttackInteraction(ServerPlayer player, ServerboundInteractPacket packet) {
+		if (player == null || packet == null || !isControllingDrone(player) || !(player.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
+		Entity root = resolveControlledDroneRoot(player);
+		if (session == null || root == null || !root.isAlive() || !shouldHandleControlledAutoAimAttackInput(root)) {
+			return false;
+		}
+		Entity target = packet.getTarget(level);
+		if (target != null) {
+			return handleControlledAutoAimEntityInteraction(player, InteractionHand.MAIN_HAND, target, false) != InteractionResult.PASS;
+		}
+		return selectControlledAutoAimTargetFromView(player, session, root) != InteractionResult.PASS;
+	}
+
+	public static void handleControlledPlayerAction(ServerPlayer player, ServerboundPlayerActionPacket packet) {
+		if (player == null || packet == null || !isControllingDrone(player)) {
+			return;
+		}
+		if (packet.getAction() != ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK) {
+			return;
+		}
+		BlockPos pos = packet.getPos();
+		handleControlledAutoAimBlockInteraction(player, InteractionHand.MAIN_HAND, pos, false);
+		if (player.connection != null && player.level() instanceof ServerLevel level && pos != null && level.hasChunkAt(pos)) {
+			sendControlledOperatorPacket(player, new ClientboundBlockUpdatePacket(level, pos));
+		}
 	}
 
 	private static void handleControlledTurretJumpInput(
@@ -5742,7 +5826,7 @@ public final class DroneSystem {
 		if (player == null
 				|| root == null
 				|| !root.isAlive()
-				|| !hasDroneTurretModule(root)
+				|| (!hasDroneTurretModule(root) && !hasDroneAutoAimModule(root))
 				|| !player.isAlive()
 				|| player.isSpectator()) {
 			return false;
