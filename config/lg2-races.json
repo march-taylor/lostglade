@@ -1,4 +1,4 @@
-﻿{
+{
   "races": [
     {
       "enabled": true,
@@ -108,7 +108,7 @@
         "priceBitcoins": 1500,
         "copperGogglesScanCooldownSeconds": 600.0,
         "copperGogglesOreSearchRadiusBlocks": 12.0,
-        "copperGogglesOreSearchHighlightSeconds": 5.0,
+        "copperGogglesOreSearchHighlightSeconds": 10.0,
         "copperGogglesTrackingRadiusBlocks": 20.0,
         "copperGogglesTrackingHighlightSeconds": 45.0
       },
@@ -388,16 +388,16 @@
         "durationSeconds": 20.0,
         "milkDefenseTeleportDistanceBlocks": 3.0
       },
-        "uniqueAbility": {
-          "enabled": true,
-          "abilityId": "milk_oligarch_unique",
-          "name": "Мистер Мыша",
-          "description": "Вы разваливаетесь на дюжину чешуйниц, превращаясь в одну из них. При получении урона либо по окончании способности вы возвращаетесь в свою форму.",
-          "priceBitcoins": 1000,
-          "cooldownSeconds": 600.0,
-          "durationSeconds": 15.0,
-          "milkMouseSilverfishCount": 12
-        },
+      "uniqueAbility": {
+        "enabled": true,
+        "abilityId": "milk_oligarch_unique",
+        "name": "Мистер Мыша",
+        "description": "Вы разваливаетесь на дюжину чешуйниц, превращаясь в одну из них. При получении урона либо по окончании способности вы возвращаетесь в свою форму.",
+        "priceBitcoins": 1000,
+        "cooldownSeconds": 600.0,
+        "durationSeconds": 15.0,
+        "milkMouseSilverfishCount": 12
+      },
       "shnyaga": {
         "enabled": true,
         "abilityId": "milk_oligarch_shnyaga",
@@ -411,7 +411,70 @@
         "abilityId": "milk_oligarch_stock",
         "name": "Слишком крутой",
         "description": "Слишком крут, чтобы с кем-то драться, даже эффекты не нужны.",
-        "milkStockAvoidRadiusBlocks": 5.0
+        "milkStockAvoidRadiusBlocks": 16.0
+      }
+    },
+    {
+      "enabled": true,
+      "id": "little_dictator",
+      "displayName": "Маленький Диктатор",
+      "ownerNickname": "Rajas_YT",
+      "description": "",
+      "attack": {
+        "enabled": true,
+        "abilityId": "little_dictator_attack",
+        "name": "Спецоперация",
+        "description": "",
+        "priceBitcoins": 300,
+        "cooldownSeconds": 600.0,
+        "activationRangeBlocks": 32.0,
+        "littleDictatorAttackAggroRadiusBlocks": 15.0,
+        "littleDictatorAttackMobStrengthSeconds": 20.0,
+        "littleDictatorAttackPlayerSlownessSeconds": 10.0
+      },
+      "defense": {
+        "enabled": true,
+        "abilityId": "little_dictator_defense",
+        "name": "Роскомнадзор",
+        "description": "",
+        "priceBitcoins": 600,
+        "cooldownSeconds": 900.0,
+        "littleDictatorDefenseRadiusBlocks": 32.0,
+        "littleDictatorDefensePingDurationSeconds": 300.0,
+        "littleDictatorDefenseMinFakePingMs": 200,
+        "littleDictatorDefenseMaxFakePingMs": 2000
+      },
+      "uniqueAbility": {
+        "enabled": true,
+        "abilityId": "little_dictator_unique",
+        "name": "Культ личности",
+        "description": "",
+        "priceBitcoins": 1000,
+        "cooldownSeconds": 900.0,
+        "littleDictatorUniqueRadiusBlocks": 48.0,
+        "littleDictatorUniqueDurationSeconds": 60.0,
+        "littleDictatorUniqueShockIntervalSeconds": 10.0,
+        "littleDictatorUniqueXpPerHealth": 25.0,
+        "littleDictatorUniqueFoodPerHealth": 4.0
+      },
+      "shnyaga": {
+        "enabled": true,
+        "abilityId": "little_dictator_shnyaga",
+        "name": "Указы",
+        "description": "",
+        "priceBitcoins": 1500,
+        "littleDictatorDecreeSanctionsDurationSeconds": 3600.0,
+        "littleDictatorDecreeSanctionsDropChance": 0.75,
+        "littleDictatorDecreeTaxesDurationSeconds": 3600.0,
+        "littleDictatorDecreeTaxesIntervalSeconds": 300.0,
+        "littleDictatorDecreePropagandaDurationSeconds": 3600.0,
+        "littleDictatorDecreePropagandaTradeDiscount": 0.5
+      },
+      "stock": {
+        "enabled": true,
+        "abilityId": "little_dictator_stock",
+        "name": "Сток",
+        "description": ""
       }
     }
   ]

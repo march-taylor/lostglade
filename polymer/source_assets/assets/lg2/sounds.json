@@ -47,6 +47,14 @@
       }
     ]
   },
+  "little_dictator_defense": {
+    "sounds": [
+      {
+        "name": "lg2:little_dictator_defense",
+        "preload": true
+      }
+    ]
+  },
   "cartel_attack_finger": {
     "sounds": [
       {

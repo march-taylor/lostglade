@@ -51,6 +51,7 @@ public abstract class LivingEntityCartelDefenseMixin {
 		ServerRaceSystem.handleGennadiyRageMeleeDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handleMarkRageMeleeDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handleMilkStockCombatDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
+		ServerRaceSystem.handleLittleDictatorCombatDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handleMilkDefenseDodge(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		if (cir.getReturnValueZ() && damage > 0.0F && (Object) this instanceof ServerPlayer player) {
 			ServerMilkPocketDimensionSystem.recordPlayerDamage(player);
@@ -62,6 +63,7 @@ public abstract class LivingEntityCartelDefenseMixin {
 		LivingEntity self = (LivingEntity) (Object) this;
 		if (self.level() instanceof ServerLevel level) {
 			ServerRaceSystem.handleMarkRageKill(level, self, damageSource);
+			ServerRaceSystem.handleLittleDictatorPlayerKill(level, self, damageSource);
 		}
 	}
 }

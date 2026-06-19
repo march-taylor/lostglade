@@ -89,6 +89,10 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 		}
 		if (ServerRaceSystem.handleGennadiyDefenseMovementPacket(this.player)) {
 			ci.cancel();
+			return;
+		}
+		if (ServerRaceSystem.handleLittleDictatorUniqueMovementPacket(this.player, packet)) {
+			ci.cancel();
 		}
 	}
 
@@ -104,6 +108,10 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 	@Inject(method = "handleMoveVehicle", at = @At("HEAD"), cancellable = true)
 	private void lg2$forceGennadiyDefenseLookOnVehicleMove(ServerboundMoveVehiclePacket packet, CallbackInfo ci) {
 		if (ServerRaceSystem.handleGennadiyDefenseMovementPacket(this.player)) {
+			ci.cancel();
+			return;
+		}
+		if (ServerRaceSystem.handleLittleDictatorUniqueVehicleMovePacket(this.player)) {
 			ci.cancel();
 		}
 	}

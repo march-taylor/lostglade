@@ -22,7 +22,8 @@ public abstract class TargetingConditionsAbsoluteInvisibilityMixin {
 	) {
 		if (!(observer instanceof Mob mob)
 				|| (!ServerAbsoluteInvisibilitySystem.shouldSuppressMobDetection(mob, target)
-				&& !ServerRaceSystem.shouldSuppressMilkStockMobDetection(mob, target))) {
+				&& !ServerRaceSystem.shouldSuppressMilkStockMobDetection(mob, target)
+				&& !ServerRaceSystem.shouldSuppressLittleDictatorMobDetection(mob, target))) {
 			return;
 		}
 

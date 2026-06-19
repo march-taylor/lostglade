@@ -168,9 +168,16 @@ public final class ServerMechanicsGateSystem {
 				return InteractionResult.PASS;
 			}
 
+			InteractionResult dictatorInteraction = ServerRaceSystem.tryHandleLittleDictatorUseInteraction(serverPlayer, hand, hitResult.getBlockPos());
+			if (dictatorInteraction != InteractionResult.PASS) {
+				return dictatorInteraction;
+			}
+
 			BlockState state = world.getBlockState(hitResult.getBlockPos());
 			String interactionRequirement = requiredUpgradeForInteraction(state);
-			if (interactionRequirement != null && !ServerUpgradeUiSystem.hasUpgrade(serverPlayer, interactionRequirement)) {
+			if (interactionRequirement != null
+					&& !ServerUpgradeUiSystem.hasUpgrade(serverPlayer, interactionRequirement)
+					&& !ServerRaceSystem.canLittleDictatorBypassInteraction(serverPlayer, state)) {
 				return InteractionResult.FAIL;
 			}
 

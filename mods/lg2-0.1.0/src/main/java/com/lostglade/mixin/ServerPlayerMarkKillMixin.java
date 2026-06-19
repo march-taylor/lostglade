@@ -16,6 +16,7 @@ public abstract class ServerPlayerMarkKillMixin {
 		ServerPlayer self = (ServerPlayer) (Object) this;
 		if (self.level() instanceof ServerLevel level) {
 			ServerRaceSystem.handleMarkRageKill(level, self, damageSource);
+			ServerRaceSystem.handleLittleDictatorPlayerKill(level, self, damageSource);
 		}
 	}
 }

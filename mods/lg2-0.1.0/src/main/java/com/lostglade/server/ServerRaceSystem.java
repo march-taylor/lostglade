@@ -67,11 +67,13 @@ import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
 import net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket;
+import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
 import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundOpenBookPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
@@ -83,6 +85,7 @@ import net.minecraft.network.protocol.game.ClientboundSetCameraPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.network.protocol.game.ClientboundSetExperiencePacket;
 import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
@@ -102,6 +105,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerBossEvent;
+import net.minecraft.server.level.ServerEntity;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.Filterable;
@@ -155,6 +159,7 @@ import net.minecraft.world.inventory.MerchantMenu;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.Container;
+import net.minecraft.world.MenuProvider;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.raid.Raider;
@@ -173,11 +178,13 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemUseAnimation;
 import net.minecraft.world.item.component.ItemAttributeModifiers;
+import net.minecraft.world.item.component.ItemLore;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.item.component.Consumable;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.item.component.UseCooldown;
+import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.food.FoodData;
 import net.minecraft.world.food.FoodProperties;
@@ -186,18 +193,25 @@ import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.damagesource.DamageTypes;
+import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.LayeredCauldronBlock;
 import net.minecraft.world.level.block.DoublePlantBlock;
+import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.item.trading.Merchant;
 import net.minecraft.world.item.trading.MerchantOffer;
@@ -277,6 +291,7 @@ public final class ServerRaceSystem {
 	private static final String GENNADIY_SHAROYOBOV_RACE_ID = "gennadiy_sharoyobov";
 	private static final String MARK_POTROSHITEL_RACE_ID = "mark_potroshitel";
 	private static final String MILK_OLIGARCH_RACE_ID = "milk_oligarch";
+	private static final String LITTLE_DICTATOR_RACE_ID = "little_dictator";
 	private static final String TITLE_OVERLAY_SHIFT = "\ue905";
 	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
 	private static final int TITLE_OVERLAY_TARGET_ADVANCE = 168;
@@ -346,11 +361,11 @@ public final class ServerRaceSystem {
 	private static final int CARTEL_PASSPORT_NAME_CHAR_ADVANCE = 5;
 	private static final String WOMAN_SHNYAGA_NAME_TEXTURE_RESOURCE = "/assets/lg2/textures/font/woman_shnyaga_name.png";
 	private static final String[] WOMAN_SHNYAGA_NAME_FONT_ROWS = {
-			"АБВГДЕЖЗИЙКЛМНОП",
-			"РСТУФХЦЧШЩЪЫЬЭЮЯ",
-			"Ёабвгдежзийклмно",
-			"прстуфхцчшщъыьэю",
-			"яёABCDEFGHIJKLMN",
+			"РђР‘Р’Р“Р”Р•Р–Р—РР™РљР›РњРќРћРџ",
+			"Р РЎРўРЈР¤РҐР¦Р§РЁР©РЄР«Р¬Р­Р®РЇ",
+			"РЃР°Р±РІРіРґРµР¶Р·РёР№РєР»РјРЅРѕ",
+			"РїСЂСЃС‚СѓС„С…С†С‡С€С‰СЉС‹СЊСЌСЋ",
+			"СЏС‘ABCDEFGHIJKLMN",
 			"OPQRSTUVWXYZabcd",
 			"efghijklmnopqrst",
 			"uvwxyz0123456789",
@@ -456,6 +471,74 @@ public final class ServerRaceSystem {
 	private static final long WOMAN_ATTACK_FOLLOW_NAV_INTERVAL_TICKS = 8L;
 	private static final double WOMAN_ATTACK_FOLLOW_SPEED = 1.1D;
 	private static final double WOMAN_SOUND_RANGE_BLOCKS = 16.0D;
+	private static final double LITTLE_DICTATOR_ATTACK_DEFAULT_TARGET_RANGE_BLOCKS = 32.0D;
+	private static final double LITTLE_DICTATOR_ATTACK_DEFAULT_AGGRO_RADIUS_BLOCKS = 15.0D;
+	private static final double LITTLE_DICTATOR_ATTACK_DEFAULT_MOB_STRENGTH_SECONDS = 20.0D;
+	private static final double LITTLE_DICTATOR_ATTACK_DEFAULT_PLAYER_SLOWNESS_SECONDS = 10.0D;
+	private static final double LITTLE_DICTATOR_ATTACK_DEFAULT_COOLDOWN_SECONDS = 600.0D;
+	private static final int LITTLE_DICTATOR_ATTACK_MOB_STRENGTH_LEVEL = 3;
+	private static final int LITTLE_DICTATOR_ATTACK_PLAYER_SLOWNESS_LEVEL = 1;
+	private static final double LITTLE_DICTATOR_DEFENSE_DEFAULT_RADIUS_BLOCKS = 32.0D;
+	private static final double LITTLE_DICTATOR_DEFENSE_DEFAULT_DURATION_SECONDS = 300.0D;
+	private static final double LITTLE_DICTATOR_DEFENSE_DEFAULT_COOLDOWN_SECONDS = 900.0D;
+	private static final int LITTLE_DICTATOR_DEFENSE_DEFAULT_MIN_FAKE_PING_MS = 200;
+	private static final int LITTLE_DICTATOR_DEFENSE_DEFAULT_MAX_FAKE_PING_MS = 2000;
+	private static final long LITTLE_DICTATOR_DEFENSE_PING_UPDATE_TICKS = 8L;
+	private static final long LITTLE_DICTATOR_DEFENSE_OVERLAY_FRAME_TICKS = 10L;
+	private static final long LITTLE_DICTATOR_DEFENSE_WAVE_DURATION_TICKS = 16L;
+	private static final int LITTLE_DICTATOR_DEFENSE_TITLE_COLOR = 0xFFFFFF;
+	private static final int LITTLE_DICTATOR_DEFENSE_WAVE_PRIMARY_COLOR = 0x0E6D82;
+	private static final int LITTLE_DICTATOR_DEFENSE_WAVE_SECONDARY_COLOR = 0x1CA7C7;
+	private static final FontDescription LITTLE_DICTATOR_DEFENSE_FONT = new FontDescription.Resource(
+			Objects.requireNonNull(Identifier.tryParse("lg2:little_dictator_ping_overlay"))
+	);
+	private static final String[] LITTLE_DICTATOR_DEFENSE_GLYPH_FRAMES = {
+			"\uef70",
+			"\uef71",
+			"\uef72",
+			"\uef73"
+	};
+	private static final Identifier LITTLE_DICTATOR_DEFENSE_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "little_dictator_defense");
+	private static final Holder<SoundEvent> LITTLE_DICTATOR_DEFENSE_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(LITTLE_DICTATOR_DEFENSE_SOUND_ID));
+	private static final Holder<SoundEvent> LITTLE_DICTATOR_DEFENSE_FALLBACK_SOUND = Holder.direct(SoundEvents.REDSTONE_TORCH_BURNOUT);
+	private static final float LITTLE_DICTATOR_DEFENSE_SOUND_VOLUME = 1.0F;
+	private static final float LITTLE_DICTATOR_DEFENSE_SOUND_PITCH = 1.0F;
+	private static final int LITTLE_DICTATOR_DEFENSE_MIN_PACKET_DELAY_TICKS = 2;
+	private static final int LITTLE_DICTATOR_DEFENSE_MAX_PACKET_DELAY_TICKS = 45;
+	private static final int LITTLE_DICTATOR_DEFENSE_MAX_DELAYED_PACKETS_PER_PLAYER = 4000;
+	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_RADIUS_BLOCKS = 48.0D;
+	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_DURATION_SECONDS = 60.0D;
+	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_COOLDOWN_SECONDS = 900.0D;
+	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_SHOCK_INTERVAL_SECONDS = 10.0D;
+	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_XP_PER_HEALTH = 25.0D;
+	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_FOOD_PER_HEALTH = 4.0D;
+	private static final double LITTLE_DICTATOR_UNIQUE_TARGET_SCALE = 16.0D;
+	private static final long LITTLE_DICTATOR_UNIQUE_GROWTH_TICKS = 80L;
+	private static final long LITTLE_DICTATOR_UNIQUE_SHRINK_TICKS = 60L;
+	private static final long LITTLE_DICTATOR_UNIQUE_DRAIN_INTERVAL_TICKS = 4L;
+	private static final long LITTLE_DICTATOR_UNIQUE_DRAIN_PARTICLE_INTERVAL_TICKS = 5L;
+	private static final long LITTLE_DICTATOR_UNIQUE_SHOCK_WAVE_TICKS = 14L;
+	private static final int LITTLE_DICTATOR_UNIQUE_SLOWNESS_LEVEL = 3;
+	private static final float LITTLE_DICTATOR_UNIQUE_LOOK_STEP_DEGREES = 5.5F;
+	private static final Identifier LITTLE_DICTATOR_UNIQUE_SCALE_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "little_dictator_unique_scale");
+	private static final double LITTLE_DICTATOR_TAX_CHEST_HIGHLIGHT_RANGE_BLOCKS = 96.0D;
+	private static final float LITTLE_DICTATOR_TAX_CHEST_HIGHLIGHT_VIEW_RANGE = 1_000_000.0F;
+	private static final float LITTLE_DICTATOR_TAX_CHEST_HIGHLIGHT_SCALE = 1.01F;
+	private static final float LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE = 2.0F;
+	private static final double LITTLE_DICTATOR_MOB_SCAN_RADIUS_BLOCKS = 32.0D;
+	private static final long LITTLE_DICTATOR_NEUTRAL_FLEE_TICKS = 100L;
+	private static final double LITTLE_DICTATOR_NEUTRAL_FLEE_SPEED = 1.18D;
+	private static final double LITTLE_DICTATOR_DECREE_DEFAULT_SANCTIONS_DURATION_SECONDS = 3600.0D;
+	private static final double LITTLE_DICTATOR_DECREE_DEFAULT_SANCTIONS_DROP_CHANCE = 0.75D;
+	private static final double LITTLE_DICTATOR_DECREE_DEFAULT_TAXES_DURATION_SECONDS = 3600.0D;
+	private static final double LITTLE_DICTATOR_DECREE_DEFAULT_TAXES_INTERVAL_SECONDS = 300.0D;
+	private static final double LITTLE_DICTATOR_DECREE_DEFAULT_PROPAGANDA_DURATION_SECONDS = 3600.0D;
+	private static final double LITTLE_DICTATOR_DECREE_DEFAULT_PROPAGANDA_TRADE_DISCOUNT = 0.5D;
+	private static final int LITTLE_DICTATOR_DECREE_EFFECT_REFRESH_TICKS = 40;
+	private static final int LITTLE_DICTATOR_DECREE_PARTICLE_COUNT = 9;
+	private static final String LITTLE_DICTATOR_DECREE_DATA_TAG = "lg2_little_dictator_decree";
+	private static final String LITTLE_DICTATOR_DECREE_TYPE_TAG = "type";
+	private static final Identifier LITTLE_DICTATOR_DECREE_ITEM_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "little_dictator_decree");
 	private static final double GENNADIY_DONKEY_DEFAULT_HEALTH_POINTS = 30.0D;
 	private static final double GENNADIY_DONKEY_DEFAULT_ARMOR_DIVIDER = 2.0D;
 	private static final double GENNADIY_DONKEY_DEFAULT_HEALTH_REGEN_SECONDS = 40.0D;
@@ -679,6 +762,7 @@ public final class ServerRaceSystem {
 	private static final long WOMAN_SHNYAGA_WHITELIST_CHECK_INTERVAL_TICKS = 100L;
 	private static final int WOMAN_SHNYAGA_EFFECT_DURATION_TICKS = 60;
 	private static final String WOMAN_SHNYAGA_STATE_FILE_NAME = "lg2_woman_shnyaga_links.json";
+	private static final String LITTLE_DICTATOR_TAX_CHESTS_STATE_FILE_NAME = "lg2_little_dictator_tax_chests.json";
 	private static final Identifier WOMAN_SHNYAGA_WOMAN_HEALTH_MODIFIER_ID =
 			Objects.requireNonNull(Identifier.tryParse("lg2:woman_shnyaga_woman_health"));
 	private static final Identifier WOMAN_SHNYAGA_BOYFRIEND_HEALTH_MODIFIER_ID =
@@ -846,6 +930,25 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, UUID> MILK_MOUSE_SILVERFISH_OWNER_BY_ENTITY = new LinkedHashMap<>();
 	private static final List<MilkMouseStepSound> MILK_MOUSE_STEP_SOUNDS = new ArrayList<>();
 	private static final Map<UUID, UUID> MILK_STOCK_RETALIATING_MOBS = new LinkedHashMap<>();
+	private static final Map<UUID, UUID> LITTLE_DICTATOR_RETALIATING_MOBS = new LinkedHashMap<>();
+	private static final Map<UUID, Long> LITTLE_DICTATOR_NEUTRAL_FLEE_UNTIL = new LinkedHashMap<>();
+	private static final Map<UUID, LittleDictatorPingSession> LITTLE_DICTATOR_PING_SESSIONS = new LinkedHashMap<>();
+	private static final Set<UUID> LITTLE_DICTATOR_PING_OVERLAY_ACTIVE = new HashSet<>();
+	private static final List<LittleDictatorDefenseWaveSession> LITTLE_DICTATOR_DEFENSE_WAVES = new ArrayList<>();
+	private static final List<LittleDictatorUniqueShockWaveSession> LITTLE_DICTATOR_UNIQUE_SHOCK_WAVES = new ArrayList<>();
+	private static final List<LittleDictatorDelayedPacket> LITTLE_DICTATOR_DELAYED_PACKETS = new ArrayList<>();
+	private static final Map<UUID, Long> LITTLE_DICTATOR_LAST_DELAYED_PACKET_RELEASE_TICKS = new HashMap<>();
+	private static final Map<UUID, LittleDictatorUniqueSession> LITTLE_DICTATOR_UNIQUE_SESSIONS = new LinkedHashMap<>();
+	private static final Set<UUID> LITTLE_DICTATOR_TAX_CHEST_PENDING = new HashSet<>();
+	private static final Map<UUID, Set<LittleDictatorTaxChestRef>> LITTLE_DICTATOR_TAX_CHESTS = new LinkedHashMap<>();
+	private static final Map<UUID, LittleDictatorTaxChestHighlightState> LITTLE_DICTATOR_TAX_CHEST_HIGHLIGHTS = new LinkedHashMap<>();
+	private static final Map<UUID, LittleDictatorSanctionsSession> LITTLE_DICTATOR_SANCTIONS = new LinkedHashMap<>();
+	private static final Map<UUID, LittleDictatorTaxesSession> LITTLE_DICTATOR_TAXES = new LinkedHashMap<>();
+	private static final Map<UUID, LittleDictatorPropagandaSession> LITTLE_DICTATOR_PROPAGANDA = new LinkedHashMap<>();
+	private static final Map<UUID, MobEffectInstance> LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE = new LinkedHashMap<>();
+	private static final Map<UUID, Integer> LITTLE_DICTATOR_PROPAGANDA_MANAGED_HASTE = new LinkedHashMap<>();
+	private static final Map<UUID, LittleDictatorMerchantOfferSync> LITTLE_DICTATOR_SYNCED_MERCHANT_MENUS = new HashMap<>();
+	private static final Map<UUID, Long> LITTLE_DICTATOR_HANDLED_PLAYER_KILL_TICKS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelDisguiseSession> CARTEL_DISGUISE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, CartelManualBookRestore> CARTEL_MANUAL_BOOK_RESTORES = new LinkedHashMap<>();
 	private static final Map<UUID, UUID> COPPER_GOLEM_FOLLOWERS = new LinkedHashMap<>();
@@ -875,6 +978,10 @@ public final class ServerRaceSystem {
 	private static final ThreadLocal<Boolean> GENNADIY_RAGE_APPLYING_DAMAGE = ThreadLocal.withInitial(() -> Boolean.FALSE);
 	private static final ThreadLocal<Boolean> MARK_STOCK_RESTORING_HEALTH = ThreadLocal.withInitial(() -> Boolean.FALSE);
 	private static final ThreadLocal<UUID> MILK_STOCK_ENCHANTED_GOLDEN_APPLE_USER = new ThreadLocal<>();
+	private static final ThreadLocal<Boolean> LITTLE_DICTATOR_REPLAYING_DELAYED_PACKET = ThreadLocal.withInitial(() -> Boolean.FALSE);
+	private static final ThreadLocal<ServerPlayer> LITTLE_DICTATOR_DROP_CONTEXT_PLAYER = new ThreadLocal<>();
+	private static final ThreadLocal<ServerPlayer> LITTLE_DICTATOR_ENCHANTMENT_CONTEXT_PLAYER = new ThreadLocal<>();
+	private static final ThreadLocal<Boolean> LITTLE_DICTATOR_PROPAGANDA_APPLYING_HASTE = ThreadLocal.withInitial(() -> Boolean.FALSE);
 	private static final Set<CocaineCauldronKey> PROCESSED_COCAINE_CAULDRONS = new HashSet<>();
 	private static long processedCocaineCauldronTick = Long.MIN_VALUE;
 	private static long womanShnyagaNextWhitelistCheckTick = Long.MIN_VALUE;
@@ -888,6 +995,160 @@ public final class ServerRaceSystem {
 	}
 
 	private record MilkMouseStepSound(ResourceKey<Level> dimension, Vec3 position, long playTick, float volume, float pitch) {
+	}
+
+	private record LittleDictatorPingSession(
+			long endTick,
+			int minPingMs,
+			int maxPingMs,
+			long nextUpdateTick,
+			int lastSentPingMs
+	) {
+	}
+
+	private record LittleDictatorDelayedPacket(UUID playerId, long releaseTick, Runnable action) {
+	}
+
+	private record LittleDictatorDefenseWaveSession(
+			ResourceKey<Level> dimension,
+			Vec3 origin,
+			long startTick,
+			long endTick,
+			double maxRadius
+	) {
+	}
+
+	private record LittleDictatorUniqueShockWaveSession(
+			ResourceKey<Level> dimension,
+			Vec3 origin,
+			long startTick,
+			long endTick,
+			double maxRadius
+	) {
+	}
+
+	private enum LittleDictatorDecreeType {
+		SANCTIONS("sanctions"),
+		TAXES("taxes"),
+		PROPAGANDA("propaganda");
+
+		private final String id;
+
+		LittleDictatorDecreeType(String id) {
+			this.id = id;
+		}
+
+		private static LittleDictatorDecreeType byId(String id) {
+			for (LittleDictatorDecreeType type : values()) {
+				if (type.id.equals(id)) {
+					return type;
+				}
+			}
+			return null;
+		}
+	}
+
+	private record LittleDictatorTaxChestRef(ResourceKey<Level> dimension, BlockPos pos) {
+		private LittleDictatorTaxChestRef {
+			pos = pos == null ? BlockPos.ZERO : pos.immutable();
+		}
+	}
+
+	private record LittleDictatorTaxChestHighlightPart(LittleDictatorTaxChestRef ref, BlockState state) {
+	}
+
+	private record LittleDictatorTaxChestHighlightState(Set<LittleDictatorTaxChestRef> refs, Map<LittleDictatorTaxChestRef, BlockState> blockStates, int[] entityIds) {
+		private LittleDictatorTaxChestHighlightState {
+			refs = refs == null ? Set.of() : Set.copyOf(refs);
+			blockStates = blockStates == null ? Map.of() : Map.copyOf(blockStates);
+			entityIds = entityIds == null ? new int[0] : entityIds.clone();
+		}
+	}
+
+	private static final class LittleDictatorSanctionsSession {
+		private long remainingTicks;
+		private final double dropChance;
+
+		private LittleDictatorSanctionsSession(long remainingTicks, double dropChance) {
+			this.remainingTicks = Math.max(1L, remainingTicks);
+			this.dropChance = Mth.clamp(dropChance, 0.0D, 1.0D);
+		}
+	}
+
+	private static final class LittleDictatorTaxesSession {
+		private final UUID dictatorId;
+		private long remainingTicks;
+		private long nextTaxTicks;
+		private final long intervalTicks;
+
+		private LittleDictatorTaxesSession(UUID dictatorId, long remainingTicks, long intervalTicks) {
+			this.dictatorId = dictatorId;
+			this.remainingTicks = Math.max(1L, remainingTicks);
+			this.intervalTicks = Math.max(1L, intervalTicks);
+			this.nextTaxTicks = this.intervalTicks;
+		}
+	}
+
+	private static final class LittleDictatorPropagandaSession {
+		private long remainingTicks;
+		private final double tradeDiscount;
+
+		private LittleDictatorPropagandaSession(long remainingTicks, double tradeDiscount) {
+			this.remainingTicks = Math.max(1L, remainingTicks);
+			this.tradeDiscount = Mth.clamp(tradeDiscount, 0.0D, 1.0D);
+		}
+	}
+
+	private record LittleDictatorMerchantOfferSync(int containerId, String mode) {
+	}
+
+	private static final class LittleDictatorUniqueSession {
+		private final ResourceKey<Level> dimension;
+		private final long startTick;
+		private final long growthEndTick;
+		private final long activeEndTick;
+		private final long endTick;
+		private final Vec3 anchorPosition;
+		private final double radius;
+		private final double targetScale;
+		private final double xpPerHealth;
+		private final double foodPerHealth;
+		private final Set<UUID> gazeLockedPlayers = new HashSet<>();
+		private final Set<UUID> slowedPlayers = new HashSet<>();
+		private long nextShockTick;
+		private long shockIntervalTicks;
+		private long nextDrainTick;
+		private double drainedExperienceBank;
+		private double drainedFoodBank;
+		private boolean activeEffectsEnded;
+
+		private LittleDictatorUniqueSession(
+				ResourceKey<Level> dimension,
+				long startTick,
+				long growthEndTick,
+				long activeEndTick,
+				long endTick,
+				Vec3 anchorPosition,
+				double radius,
+				double targetScale,
+				long shockIntervalTicks,
+				double xpPerHealth,
+				double foodPerHealth
+		) {
+			this.dimension = dimension;
+			this.startTick = startTick;
+			this.growthEndTick = growthEndTick;
+			this.activeEndTick = activeEndTick;
+			this.endTick = endTick;
+			this.anchorPosition = anchorPosition == null ? Vec3.ZERO : anchorPosition;
+			this.radius = radius;
+			this.targetScale = targetScale;
+			this.shockIntervalTicks = Math.max(1L, shockIntervalTicks);
+			this.nextShockTick = startTick + this.shockIntervalTicks;
+			this.nextDrainTick = startTick + LITTLE_DICTATOR_UNIQUE_DRAIN_INTERVAL_TICKS;
+			this.xpPerHealth = Math.max(1.0D, xpPerHealth);
+			this.foodPerHealth = Math.max(1.0D, foodPerHealth);
+		}
 	}
 
 	private static final class MilkMouseSession {
@@ -1059,6 +1320,7 @@ public final class ServerRaceSystem {
 			RaceConfig.load();
 			rebuildCache();
 			loadWomanShnyagaLinks(server);
+			loadLittleDictatorTaxChests(server);
 			pruneWomanShnyagaLinksAgainstWhitelist(server);
 			syncWomanShnyagaLinks(server);
 			prewarmCartelLawyerSkinAsync();
@@ -1069,6 +1331,7 @@ public final class ServerRaceSystem {
 		});
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			saveWomanShnyagaLinks(server);
+			saveLittleDictatorTaxChests(server);
 			cleanupAllCartelRaceEntities(server, true);
 			restoreAllCartelDisguises(server);
 			restoreAllCopperManJetpacks(server);
@@ -1149,6 +1412,25 @@ public final class ServerRaceSystem {
 			MILK_MOUSE_SILVERFISH_OWNER_BY_ENTITY.clear();
 			MILK_MOUSE_STEP_SOUNDS.clear();
 			MILK_STOCK_RETALIATING_MOBS.clear();
+			LITTLE_DICTATOR_RETALIATING_MOBS.clear();
+			LITTLE_DICTATOR_NEUTRAL_FLEE_UNTIL.clear();
+			LITTLE_DICTATOR_PING_SESSIONS.clear();
+			LITTLE_DICTATOR_PING_OVERLAY_ACTIVE.clear();
+			LITTLE_DICTATOR_DEFENSE_WAVES.clear();
+			LITTLE_DICTATOR_UNIQUE_SHOCK_WAVES.clear();
+			LITTLE_DICTATOR_DELAYED_PACKETS.clear();
+			LITTLE_DICTATOR_LAST_DELAYED_PACKET_RELEASE_TICKS.clear();
+			LITTLE_DICTATOR_TAX_CHEST_PENDING.clear();
+			LITTLE_DICTATOR_TAX_CHESTS.clear();
+			LITTLE_DICTATOR_TAX_CHEST_HIGHLIGHTS.clear();
+			LITTLE_DICTATOR_SANCTIONS.clear();
+			LITTLE_DICTATOR_TAXES.clear();
+			LITTLE_DICTATOR_PROPAGANDA.clear();
+			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.clear();
+			LITTLE_DICTATOR_PROPAGANDA_MANAGED_HASTE.clear();
+			LITTLE_DICTATOR_SYNCED_MERCHANT_MENUS.clear();
+			LITTLE_DICTATOR_HANDLED_PLAYER_KILL_TICKS.clear();
+			cleanupAllLittleDictatorUniqueSessions(server);
 			copperManDefenseTintCacheLastCleanupTick = Long.MIN_VALUE;
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.clear();
 			CARTEL_PLANTED_FERN_GROWTHS.clear();
@@ -1209,6 +1491,12 @@ public final class ServerRaceSystem {
 			MILK_DEFENSE_SESSIONS.remove(handler.player.getUUID());
 			cleanupMilkMouseSession(server, handler.player.getUUID(), MILK_MOUSE_SESSIONS.remove(handler.player.getUUID()), true, true);
 			MILK_STOCK_RETALIATING_MOBS.entrySet().removeIf(entry -> handler.player.getUUID().equals(entry.getValue()));
+			LITTLE_DICTATOR_RETALIATING_MOBS.entrySet().removeIf(entry -> handler.player.getUUID().equals(entry.getValue()));
+			LITTLE_DICTATOR_TAX_CHEST_PENDING.remove(handler.player.getUUID());
+			LITTLE_DICTATOR_SYNCED_MERCHANT_MENUS.remove(handler.player.getUUID());
+			clearLittleDictatorTaxChestHighlights(handler.player);
+			clearLittleDictatorUniqueTargetState(handler.player);
+			cleanupLittleDictatorUniqueSession(server, handler.player.getUUID(), LITTLE_DICTATOR_UNIQUE_SESSIONS.remove(handler.player.getUUID()), false);
 			recallGennadiyDonkey(server, handler.player.getUUID(), false);
 			syncWomanShnyagaLinks(server);
 		});
@@ -1223,6 +1511,8 @@ public final class ServerRaceSystem {
 				MILK_ABSOLUTE_LOST_HEART_ANIMATIONS.remove(newPlayer.getUUID());
 				MILK_DEFENSE_SESSIONS.remove(newPlayer.getUUID());
 				cleanupMilkMouseSession(newPlayer.level().getServer(), newPlayer.getUUID(), MILK_MOUSE_SESSIONS.remove(newPlayer.getUUID()), true, true);
+				clearLittleDictatorUniqueTargetState(newPlayer);
+				cleanupLittleDictatorUniqueSession(newPlayer.level().getServer(), newPlayer.getUUID(), LITTLE_DICTATOR_UNIQUE_SESSIONS.remove(newPlayer.getUUID()), false);
 				recallGennadiyDonkey(newPlayer.level().getServer(), newPlayer.getUUID(), false);
 			}
 		});
@@ -1238,11 +1528,23 @@ public final class ServerRaceSystem {
 			if (shouldBlockMarkRangedWeaponUse(serverPlayer, hand)) {
 				return InteractionResult.FAIL;
 			}
+			InteractionResult decreeSelfResult = tryUseLittleDictatorDecreeOnSelf(serverPlayer, hand);
+			if (decreeSelfResult != InteractionResult.PASS) {
+				return decreeSelfResult;
+			}
 			return TubochkaItem.tryLightTubochka(serverPlayer) ? InteractionResult.SUCCESS : InteractionResult.PASS;
 		});
 		UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
 			if (!(player instanceof ServerPlayer serverPlayer) || world.isClientSide()) {
 				return InteractionResult.PASS;
+			}
+			InteractionResult dictatorResult = tryHandleLittleDictatorUseInteraction(serverPlayer, hand, hitResult.getBlockPos());
+			if (dictatorResult != InteractionResult.PASS) {
+				return dictatorResult;
+			}
+			InteractionResult decreeSelfResult = tryUseLittleDictatorDecreeOnSelf(serverPlayer, hand);
+			if (decreeSelfResult != InteractionResult.PASS) {
+				return decreeSelfResult;
 			}
 			if (TubochkaItem.tryLightTubochka(serverPlayer)) {
 				return InteractionResult.SUCCESS;
@@ -1288,6 +1590,10 @@ public final class ServerRaceSystem {
 			tickMilkOligarchDefense(server);
 			tickMilkOligarchUnique(server);
 			tickMilkOligarchStock(server);
+			tickLittleDictatorStock(server);
+			tickLittleDictatorDefense(server);
+			tickLittleDictatorUnique(server);
+			tickLittleDictatorShnyaga(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
 		});
@@ -1341,7 +1647,7 @@ public final class ServerRaceSystem {
 	private static int resetAllRaceAbilityCooldownsFromCommand(CommandContext<CommandSourceStack> context) {
 		MinecraftServer server = context.getSource().getServer();
 		resetAllRaceAbilityCooldowns(server);
-		context.getSource().sendSuccess(() -> Component.literal("Все КД расовых способностей сброшены"), true);
+		context.getSource().sendSuccess(() -> Component.literal("Р’СЃРµ РљР” СЂР°СЃРѕРІС‹С… СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№ СЃР±СЂРѕС€РµРЅС‹"), true);
 		return 1;
 	}
 
@@ -1366,7 +1672,7 @@ public final class ServerRaceSystem {
 		}
 		updateMarkRageHud(player);
 		player.displayClientMessage(
-				Component.literal(hidden ? "Шкала ярости скрыта." : "Шкала ярости включена.")
+				Component.literal(hidden ? "РЁРєР°Р»Р° СЏСЂРѕСЃС‚Рё СЃРєСЂС‹С‚Р°." : "РЁРєР°Р»Р° СЏСЂРѕСЃС‚Рё РІРєР»СЋС‡РµРЅР°.")
 						.withStyle(style -> style.withColor(hidden ? ChatFormatting.GRAY : ChatFormatting.RED).withItalic(false)),
 				true
 		);
@@ -1593,6 +1899,18 @@ public final class ServerRaceSystem {
 		if (slot == RaceAbilitySlot.SHNYAGA && MILK_OLIGARCH_RACE_ID.equals(raceId)) {
 			return useMilkOligarchShnyaga(player, race, ability);
 		}
+		if (slot == RaceAbilitySlot.ATTACK && LITTLE_DICTATOR_RACE_ID.equals(raceId)) {
+			return useLittleDictatorAttack(player, race, ability);
+		}
+		if (slot == RaceAbilitySlot.DEFENSE && LITTLE_DICTATOR_RACE_ID.equals(raceId)) {
+			return useLittleDictatorDefense(player, race, ability);
+		}
+		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && LITTLE_DICTATOR_RACE_ID.equals(raceId)) {
+			return useLittleDictatorUnique(player, race, ability);
+		}
+		if (slot == RaceAbilitySlot.SHNYAGA && LITTLE_DICTATOR_RACE_ID.equals(raceId)) {
+			return useLittleDictatorShnyaga(player, race, ability);
+		}
 
 		startGenericAbilityCooldown(player, slot, ability);
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
@@ -1690,6 +2008,12 @@ public final class ServerRaceSystem {
 					|| slot == RaceAbilitySlot.SHNYAGA;
 		}
 		if (MILK_OLIGARCH_RACE_ID.equals(raceId)) {
+			return slot == RaceAbilitySlot.ATTACK
+					|| slot == RaceAbilitySlot.DEFENSE
+					|| slot == RaceAbilitySlot.UNIQUE_ABILITY
+					|| slot == RaceAbilitySlot.SHNYAGA;
+		}
+		if (LITTLE_DICTATOR_RACE_ID.equals(raceId)) {
 			return slot == RaceAbilitySlot.ATTACK
 					|| slot == RaceAbilitySlot.DEFENSE
 					|| slot == RaceAbilitySlot.UNIQUE_ABILITY
@@ -1984,7 +2308,7 @@ public final class ServerRaceSystem {
 			return 1;
 		} catch (Exception exception) {
 			Lg2.LOGGER.error("Failed to activate copper man defense for {}", caster.getGameProfile().name(), exception);
-			caster.sendSystemMessage(Component.literal("Не удалось активировать защиту."));
+			caster.sendSystemMessage(Component.literal("РќРµ СѓРґР°Р»РѕСЃСЊ Р°РєС‚РёРІРёСЂРѕРІР°С‚СЊ Р·Р°С‰РёС‚Сѓ."));
 			return 0;
 		}
 	}
@@ -2013,7 +2337,7 @@ public final class ServerRaceSystem {
 			return 1;
 		} catch (Exception exception) {
 			Lg2.LOGGER.error("Failed to activate copper man jetpack for {}", caster.getGameProfile().name(), exception);
-			caster.sendSystemMessage(Component.literal("Не удалось активировать реактивный ранец."));
+			caster.sendSystemMessage(Component.literal("РќРµ СѓРґР°Р»РѕСЃСЊ Р°РєС‚РёРІРёСЂРѕРІР°С‚СЊ СЂРµР°РєС‚РёРІРЅС‹Р№ СЂР°РЅРµС†."));
 			return 0;
 		}
 	}
@@ -3209,6 +3533,27 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private static final class LittleDictatorTaxChestPersistedState {
+		private final Map<String, List<LittleDictatorTaxChestPersistedRef>> chests = new LinkedHashMap<>();
+	}
+
+	private static final class LittleDictatorTaxChestPersistedRef {
+		private String dimension;
+		private int x;
+		private int y;
+		private int z;
+
+		private LittleDictatorTaxChestPersistedRef() {
+		}
+
+		private LittleDictatorTaxChestPersistedRef(String dimension, BlockPos pos) {
+			this.dimension = dimension;
+			this.x = pos.getX();
+			this.y = pos.getY();
+			this.z = pos.getZ();
+		}
+	}
+
 	private static final class WomanShnyagaWhitelistEntry {
 		private String uuid;
 		private String name;
@@ -3803,7 +4148,112 @@ public final class ServerRaceSystem {
 		return InteractionResult.PASS;
 	}
 
+	private static InteractionResult tryUseLittleDictatorStock(ServerPlayer player, InteractionHand hand, BlockPos pos) {
+		if (player == null
+				|| pos == null
+				|| !(player.level() instanceof ServerLevel level)
+				|| getLittleDictatorStockAbility(player) == null) {
+			return InteractionResult.PASS;
+		}
+
+		BlockState state = level.getBlockState(pos);
+		if (tryToggleLittleDictatorIronDoor(level, player, pos, state)) {
+			return InteractionResult.CONSUME;
+		}
+		if (tryToggleLittleDictatorIronTrapdoor(level, player, pos, state)) {
+			return InteractionResult.CONSUME;
+		}
+		if (!canLittleDictatorOpenStorage(state)) {
+			return InteractionResult.PASS;
+		}
+
+		MenuProvider provider = state.getMenuProvider(level, pos);
+		if (provider == null) {
+			BlockEntity blockEntity = level.getBlockEntity(pos);
+			if (blockEntity instanceof MenuProvider menuProvider) {
+				provider = menuProvider;
+			}
+		}
+		if (provider == null) {
+			return InteractionResult.PASS;
+		}
+		return player.openMenu(provider).isPresent() ? InteractionResult.CONSUME : InteractionResult.PASS;
+	}
+
+	public static InteractionResult tryHandleLittleDictatorUseInteraction(ServerPlayer player, InteractionHand hand, BlockPos pos) {
+		InteractionResult taxChestResult = tryMarkLittleDictatorTaxChest(player, hand, pos);
+		if (taxChestResult != InteractionResult.PASS) {
+			return taxChestResult;
+		}
+		return tryUseLittleDictatorStock(player, hand, pos);
+	}
+
+	private static boolean tryToggleLittleDictatorIronDoor(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state) {
+		if (level == null || player == null || state == null || !state.is(Blocks.IRON_DOOR)) {
+			return false;
+		}
+		BlockPos lowerPos = state.getValue(DoorBlock.HALF) == DoubleBlockHalf.LOWER ? pos : pos.below();
+		BlockState lowerState = level.getBlockState(lowerPos);
+		BlockState upperState = level.getBlockState(lowerPos.above());
+		if (!lowerState.is(Blocks.IRON_DOOR) || !upperState.is(Blocks.IRON_DOOR)) {
+			return false;
+		}
+
+		boolean open = !lowerState.getValue(DoorBlock.OPEN);
+		level.setBlock(lowerPos, lowerState.setValue(DoorBlock.OPEN, open), Block.UPDATE_ALL_IMMEDIATE);
+		level.setBlock(lowerPos.above(), upperState.setValue(DoorBlock.OPEN, open), Block.UPDATE_ALL_IMMEDIATE);
+		level.playSound(null, lowerPos, open ? SoundEvents.IRON_DOOR_OPEN : SoundEvents.IRON_DOOR_CLOSE, SoundSource.BLOCKS, 1.0F, 1.0F);
+		level.gameEvent(player, open ? GameEvent.BLOCK_OPEN : GameEvent.BLOCK_CLOSE, lowerPos);
+		return true;
+	}
+
+	private static boolean tryToggleLittleDictatorIronTrapdoor(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state) {
+		if (level == null || player == null || state == null || !state.is(Blocks.IRON_TRAPDOOR) || !(state.getBlock() instanceof TrapDoorBlock)) {
+			return false;
+		}
+
+		boolean open = !state.getValue(TrapDoorBlock.OPEN);
+		level.setBlock(pos, state.setValue(TrapDoorBlock.OPEN, open), Block.UPDATE_ALL_IMMEDIATE);
+		level.playSound(null, pos, open ? SoundEvents.IRON_TRAPDOOR_OPEN : SoundEvents.IRON_TRAPDOOR_CLOSE, SoundSource.BLOCKS, 1.0F, 1.0F);
+		level.gameEvent(player, open ? GameEvent.BLOCK_OPEN : GameEvent.BLOCK_CLOSE, pos);
+		return true;
+	}
+
+	public static boolean canLittleDictatorBypassInteraction(ServerPlayer player, BlockState state) {
+		return player != null
+				&& state != null
+				&& getLittleDictatorStockAbility(player) != null
+				&& (canLittleDictatorOpenStorage(state) || canLittleDictatorToggleIronMechanism(state));
+	}
+
+	private static boolean canLittleDictatorToggleIronMechanism(BlockState state) {
+		return state != null && (state.is(Blocks.IRON_DOOR) || state.is(Blocks.IRON_TRAPDOOR));
+	}
+
+	private static boolean canLittleDictatorOpenStorage(BlockState state) {
+		if (state == null) {
+			return false;
+		}
+		return state.is(Blocks.CHEST)
+				|| state.is(Blocks.TRAPPED_CHEST)
+				|| state.is(Blocks.BARREL)
+				|| state.is(Blocks.HOPPER)
+				|| state.is(Blocks.DISPENSER)
+				|| state.is(Blocks.DROPPER)
+				|| state.is(Blocks.CRAFTER)
+				|| state.is(Blocks.SHULKER_BOX)
+				|| state.getBlock() instanceof net.minecraft.world.level.block.ShulkerBoxBlock;
+	}
+
 	private static InteractionResult onUseEntity(ServerPlayer player, InteractionHand hand, Entity entity, Vec3 location) {
+		InteractionResult sanctionedTrade = tryBlockLittleDictatorSanctionedTrade(player, entity);
+		if (sanctionedTrade != InteractionResult.PASS) {
+			return sanctionedTrade;
+		}
+		InteractionResult decreeInteraction = tryUseLittleDictatorDecreeOnEntity(player, hand, entity);
+		if (decreeInteraction != InteractionResult.PASS) {
+			return decreeInteraction;
+		}
 		InteractionResult markAxeInteraction = tryPickupMarkThrownAxe(player, hand, entity);
 		if (markAxeInteraction != InteractionResult.PASS) {
 			return markAxeInteraction;
@@ -3987,13 +4437,39 @@ public final class ServerRaceSystem {
 		return race.stock;
 	}
 
+	private static RaceAbilityConfig getLittleDictatorStockAbility(ServerPlayer player) {
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isEmpty()) {
+			return null;
+		}
+
+		PlayerRaceConfig race = raceOptional.get();
+		if (!LITTLE_DICTATOR_RACE_ID.equals(sanitizePath(race.id)) || race.stock == null || !race.stock.enabled) {
+			return null;
+		}
+		return race.stock;
+	}
+
+	private static RaceAbilityConfig getLittleDictatorShnyagaAbility(ServerPlayer player) {
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isEmpty()) {
+			return null;
+		}
+
+		PlayerRaceConfig race = raceOptional.get();
+		if (!LITTLE_DICTATOR_RACE_ID.equals(sanitizePath(race.id)) || race.shnyaga == null || !race.shnyaga.enabled) {
+			return null;
+		}
+		return hasUnlockedAbility(player, race, RaceAbilitySlot.SHNYAGA) ? race.shnyaga : null;
+	}
+
 	private static int useMilkOligarchAttack(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
 		if (player == null || ability == null || player.isSpectator() || !player.isAlive()) {
 			return 0;
 		}
 		if (!hasMilkAbsoluteHeartToSpend(player)) {
 			player.displayClientMessage(
-					Component.literal("Активация невозможна: осталось последнее сердце.")
+					Component.literal("РђРєС‚РёРІР°С†РёСЏ РЅРµРІРѕР·РјРѕР¶РЅР°: РѕСЃС‚Р°Р»РѕСЃСЊ РїРѕСЃР»РµРґРЅРµРµ СЃРµСЂРґС†Рµ.")
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
@@ -4013,6 +4489,2523 @@ public final class ServerRaceSystem {
 				race.id
 		);
 		return 1;
+	}
+
+	private static int useLittleDictatorAttack(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || race == null || ability == null || player.isSpectator() || !player.isAlive()) {
+			return 0;
+		}
+
+		if (displayGenericAbilityCooldown(player, RaceAbilitySlot.ATTACK)) {
+			return 0;
+		}
+
+		ServerLevel level = player.level();
+		double targetRange = positiveOrDefault(ability.activationRangeBlocks, LITTLE_DICTATOR_ATTACK_DEFAULT_TARGET_RANGE_BLOCKS);
+		LivingEntity target = findLookTarget(player, targetRange);
+		if (target == null || target == player || !target.isAlive()) {
+			displayTargetNotSelected(player);
+			return 0;
+		}
+
+		double aggroRadius = getLittleDictatorAttackAggroRadiusBlocks(ability);
+		int mobStrengthDurationTicks = (int) Math.min(Integer.MAX_VALUE, Math.max(1L, asTicks(getLittleDictatorAttackMobStrengthSeconds(ability))));
+		int playerSlownessDurationTicks = (int) Math.min(Integer.MAX_VALUE, Math.max(1L, asTicks(getLittleDictatorAttackPlayerSlownessSeconds(ability))));
+		AABB area = target.getBoundingBox().inflate(aggroRadius);
+		int redirectedCount = 0;
+
+		for (Mob mob : level.getEntitiesOfClass(Mob.class, area, mob -> mob != null && mob.isAlive() && mob != target)) {
+			if (!canLittleDictatorAttackRedirectMob(mob, target)) {
+				continue;
+			}
+			applyLittleDictatorAttackTarget(mob, target);
+			if (mobStrengthDurationTicks > 0) {
+				mob.addEffect(new MobEffectInstance(MobEffects.STRENGTH, mobStrengthDurationTicks, LITTLE_DICTATOR_ATTACK_MOB_STRENGTH_LEVEL - 1, false, false, true));
+			}
+			redirectedCount++;
+		}
+
+		if (target instanceof ServerPlayer targetPlayer && playerSlownessDurationTicks > 0) {
+			targetPlayer.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, playerSlownessDurationTicks, LITTLE_DICTATOR_ATTACK_PLAYER_SLOWNESS_LEVEL - 1, false, true, true));
+		}
+
+		startGenericAbilityCooldownSeconds(player, RaceAbilitySlot.ATTACK, positiveOrDefault(ability.cooldownSeconds, LITTLE_DICTATOR_ATTACK_DEFAULT_COOLDOWN_SECONDS));
+		Lg2.LOGGER.info(
+				"Player {} used little dictator attack '{}' from race '{}' on target {} and redirected {} mobs",
+				player.getGameProfile().name(),
+				ability.abilityId,
+				race.id,
+				target.getUUID(),
+				redirectedCount
+		);
+		return 1;
+	}
+
+	private static int useLittleDictatorDefense(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || race == null || ability == null || player.isSpectator() || !player.isAlive()) {
+			return 0;
+		}
+		if (!(player.level() instanceof ServerLevel level)) {
+			return 0;
+		}
+		if (displayGenericAbilityCooldown(player, RaceAbilitySlot.DEFENSE)) {
+			return 0;
+		}
+
+		double radius = getLittleDictatorDefenseRadiusBlocks(ability);
+		long durationTicks = Math.max(1L, asTicks(getLittleDictatorDefenseDurationSeconds(ability)));
+		long endTick = level.getGameTime() + durationTicks;
+		int minPingMs = getLittleDictatorDefenseMinFakePingMs(ability);
+		int maxPingMs = getLittleDictatorDefenseMaxFakePingMs(ability);
+		Vec3 origin = player.position().add(0.0D, player.getBbHeight() * 0.5D, 0.0D);
+
+		for (ServerPlayer target : level.getEntitiesOfClass(ServerPlayer.class, player.getBoundingBox().inflate(radius), candidate ->
+				candidate != null && candidate.isAlive() && !candidate.isSpectator())) {
+			playLittleDictatorDefenseActivationSound(target, origin);
+			if (isLittleDictatorPlayer(target)) {
+				continue;
+			}
+			LITTLE_DICTATOR_PING_SESSIONS.put(
+					target.getUUID(),
+					new LittleDictatorPingSession(endTick, minPingMs, maxPingMs, 0L, minPingMs)
+			);
+			syncLittleDictatorDefenseOverlay(target, true, true);
+		}
+
+		LITTLE_DICTATOR_DEFENSE_WAVES.add(new LittleDictatorDefenseWaveSession(level.dimension(), origin, level.getGameTime(), level.getGameTime() + LITTLE_DICTATOR_DEFENSE_WAVE_DURATION_TICKS, radius));
+		startGenericAbilityCooldownSeconds(player, RaceAbilitySlot.DEFENSE, positiveOrDefault(ability.cooldownSeconds, LITTLE_DICTATOR_DEFENSE_DEFAULT_COOLDOWN_SECONDS));
+		Lg2.LOGGER.info(
+				"Player {} used little dictator defense '{}' from race '{}' with radius {}",
+				player.getGameProfile().name(),
+				ability.abilityId,
+				race.id,
+				radius
+		);
+		return 1;
+	}
+
+	private static int useLittleDictatorUnique(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || race == null || ability == null || player.isSpectator() || !player.isAlive()) {
+			return 0;
+		}
+		if (!(player.level() instanceof ServerLevel level)) {
+			return 0;
+		}
+		if (displayGenericAbilityCooldown(player, RaceAbilitySlot.UNIQUE_ABILITY)) {
+			return 0;
+		}
+		if (LITTLE_DICTATOR_UNIQUE_SESSIONS.containsKey(player.getUUID())) {
+			return 0;
+		}
+
+		long nowTick = level.getGameTime();
+		long durationTicks = Math.max(1L, asTicks(getLittleDictatorUniqueDurationSeconds(ability)));
+		long activeEndTick = nowTick + durationTicks;
+		long endTick = activeEndTick + LITTLE_DICTATOR_UNIQUE_SHRINK_TICKS;
+		long growthEndTick = Math.min(activeEndTick, nowTick + LITTLE_DICTATOR_UNIQUE_GROWTH_TICKS);
+		long shockIntervalTicks = Math.max(1L, asTicks(getLittleDictatorUniqueShockIntervalSeconds(ability)));
+		double radius = getLittleDictatorUniqueRadiusBlocks(ability);
+		double xpPerHealth = getLittleDictatorUniqueXpPerHealth(ability);
+		double foodPerHealth = getLittleDictatorUniqueFoodPerHealth(ability);
+		LittleDictatorUniqueSession session = new LittleDictatorUniqueSession(
+				level.dimension(),
+				nowTick,
+				growthEndTick,
+				activeEndTick,
+				endTick,
+				player.position(),
+				radius,
+				LITTLE_DICTATOR_UNIQUE_TARGET_SCALE,
+				shockIntervalTicks,
+				xpPerHealth,
+				foodPerHealth
+		);
+
+		player.stopRiding();
+		lockLittleDictatorUniqueCasterMovement(player, session);
+		syncLittleDictatorUniqueScale(player, 1.0D);
+		for (ServerPlayer target : getLittleDictatorUniquePlayersInRadius(level, player, radius)) {
+			if (target == player || target.isSpectator() || !target.isAlive()) {
+				continue;
+			}
+			if (!hasLittleDictatorUniqueLineOfSight(level, player, target)) {
+				continue;
+			}
+			session.gazeLockedPlayers.add(target.getUUID());
+			applyLittleDictatorUniqueSlowness(target, session);
+			forceLittleDictatorUniqueLookAtCaster(target, player);
+		}
+		LITTLE_DICTATOR_UNIQUE_SESSIONS.put(player.getUUID(), session);
+		spawnLittleDictatorUniqueActivationParticles(level, player);
+		startGenericAbilityCooldownSeconds(player, RaceAbilitySlot.UNIQUE_ABILITY, positiveOrDefault(ability.cooldownSeconds, LITTLE_DICTATOR_UNIQUE_DEFAULT_COOLDOWN_SECONDS));
+		Lg2.LOGGER.info(
+				"Player {} used little dictator unique '{}' from race '{}' with radius {}",
+				player.getGameProfile().name(),
+				ability.abilityId,
+				race.id,
+				radius
+		);
+		return 1;
+	}
+
+	private static int useLittleDictatorShnyaga(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || race == null || ability == null || player.isSpectator() || !player.isAlive()) {
+			return 0;
+		}
+		LITTLE_DICTATOR_TAX_CHEST_PENDING.add(player.getUUID());
+		player.displayClientMessage(
+				Component.literal("Откройте сундук, чтобы назначить его налоговым.")
+						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
+				true
+		);
+		return 1;
+	}
+
+	private static InteractionResult tryMarkLittleDictatorTaxChest(ServerPlayer player, InteractionHand hand, BlockPos pos) {
+		if (player == null
+				|| hand != InteractionHand.MAIN_HAND
+				|| pos == null
+				|| !LITTLE_DICTATOR_TAX_CHEST_PENDING.contains(player.getUUID())
+				|| !(player.level() instanceof ServerLevel level)) {
+			return InteractionResult.PASS;
+		}
+		if (getLittleDictatorShnyagaAbility(player) == null) {
+			LITTLE_DICTATOR_TAX_CHEST_PENDING.remove(player.getUUID());
+			player.displayClientMessage(
+					Component.literal("Указы недоступны.")
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return InteractionResult.SUCCESS;
+		}
+
+		BlockState state = level.getBlockState(pos);
+		if (!isLittleDictatorTaxChestBlock(state)) {
+			return InteractionResult.PASS;
+		}
+
+		LITTLE_DICTATOR_TAX_CHEST_PENDING.remove(player.getUUID());
+		LittleDictatorTaxChestRef ref = new LittleDictatorTaxChestRef(level.dimension(), pos);
+		LITTLE_DICTATOR_TAX_CHESTS.computeIfAbsent(player.getUUID(), ignored -> new HashSet<>()).add(ref);
+		saveLittleDictatorTaxChests(level.getServer());
+		spawnLittleDictatorDecreeParticles(level, Vec3.atCenterOf(pos));
+		syncLittleDictatorTaxChestHighlights(level.getServer(), player);
+		player.displayClientMessage(
+				Component.literal("Сундук назначен налоговым.")
+						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
+				true
+		);
+
+		MenuProvider provider = state.getMenuProvider(level, pos);
+		if (provider == null) {
+			BlockEntity blockEntity = level.getBlockEntity(pos);
+			if (blockEntity instanceof MenuProvider menuProvider) {
+				provider = menuProvider;
+			}
+		}
+		return provider != null && player.openMenu(provider).isPresent() ? InteractionResult.CONSUME : InteractionResult.SUCCESS;
+	}
+
+	private static boolean isLittleDictatorTaxChestBlock(BlockState state) {
+		return state != null && (state.is(Blocks.CHEST) || state.is(Blocks.TRAPPED_CHEST));
+	}
+
+	private static InteractionResult tryBlockLittleDictatorSanctionedTrade(ServerPlayer player, Entity entity) {
+		if (player == null || entity == null || !isLittleDictatorSanctioned(player) || !(entity instanceof Merchant)) {
+			return InteractionResult.PASS;
+		}
+		player.displayClientMessage(
+				Component.literal("Санкции запрещают торговлю.")
+						.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+				true
+		);
+		return InteractionResult.FAIL;
+	}
+
+	private static InteractionResult tryUseLittleDictatorDecreeOnSelf(ServerPlayer player, InteractionHand hand) {
+		if (player == null || hand == null) {
+			return InteractionResult.PASS;
+		}
+		ItemStack stack = player.getItemInHand(hand);
+		LittleDictatorDecreeType type = getLittleDictatorDecreeType(stack);
+		if (type == null) {
+			return InteractionResult.PASS;
+		}
+		if (getLittleDictatorShnyagaAbility(player) == null) {
+			player.displayClientMessage(
+					Component.literal("Этот указ может использовать только Диктатор с купленными Указами.")
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return InteractionResult.SUCCESS;
+		}
+		if (type != LittleDictatorDecreeType.PROPAGANDA) {
+			player.displayClientMessage(
+					Component.literal("Нажмите указом по игроку.")
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return InteractionResult.SUCCESS;
+		}
+		applyLittleDictatorPropaganda(player, getLittleDictatorShnyagaAbility(player));
+		consumeLittleDictatorDecree(player, stack);
+		return InteractionResult.SUCCESS;
+	}
+
+	private static InteractionResult tryUseLittleDictatorDecreeOnEntity(ServerPlayer player, InteractionHand hand, Entity entity) {
+		if (player == null || hand == null || entity == null) {
+			return InteractionResult.PASS;
+		}
+		ItemStack stack = player.getItemInHand(hand);
+		LittleDictatorDecreeType type = getLittleDictatorDecreeType(stack);
+		if (type == null) {
+			return InteractionResult.PASS;
+		}
+		RaceAbilityConfig ability = getLittleDictatorShnyagaAbility(player);
+		if (ability == null) {
+			player.displayClientMessage(
+					Component.literal("Этот указ может использовать только Диктатор с купленными Указами.")
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return InteractionResult.SUCCESS;
+		}
+		if (!(entity instanceof ServerPlayer target)) {
+			player.displayClientMessage(
+					Component.literal(type == LittleDictatorDecreeType.PROPAGANDA ? "Этот указ применяется на себя." : "Указ можно применить только на игрока.")
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return InteractionResult.SUCCESS;
+		}
+		if (type == LittleDictatorDecreeType.PROPAGANDA) {
+			player.displayClientMessage(
+					Component.literal("Этот указ применяется на себя.")
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					true
+			);
+			return InteractionResult.SUCCESS;
+		}
+
+		if (type == LittleDictatorDecreeType.SANCTIONS) {
+			applyLittleDictatorSanctions(player, target, ability);
+		} else if (type == LittleDictatorDecreeType.TAXES) {
+			applyLittleDictatorTaxes(player, target, ability);
+		}
+		consumeLittleDictatorDecree(player, stack);
+		return InteractionResult.SUCCESS;
+	}
+
+	private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPlayer target, RaceAbilityConfig ability) {
+		if (dictator == null || target == null || ability == null) {
+			return;
+		}
+		LITTLE_DICTATOR_SANCTIONS.put(
+				target.getUUID(),
+				new LittleDictatorSanctionsSession(
+						Math.max(1L, asTicks(getLittleDictatorDecreeSanctionsDurationSeconds(ability))),
+						getLittleDictatorDecreeSanctionsDropChance(ability)
+				)
+		);
+		refreshLittleDictatorSanctionsFatigue(target);
+		spawnLittleDictatorDecreeParticles((ServerLevel) target.level(), target.position().add(0.0D, target.getBbHeight() * 0.55D, 0.0D));
+		dictator.displayClientMessage(
+				Component.literal("Санкции наложены на " + target.getGameProfile().name() + ".")
+						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
+				true
+		);
+	}
+
+	private static void applyLittleDictatorTaxes(ServerPlayer dictator, ServerPlayer target, RaceAbilityConfig ability) {
+		if (dictator == null || target == null || ability == null) {
+			return;
+		}
+		LITTLE_DICTATOR_TAXES.put(
+				target.getUUID(),
+				new LittleDictatorTaxesSession(
+						dictator.getUUID(),
+						Math.max(1L, asTicks(getLittleDictatorDecreeTaxesDurationSeconds(ability))),
+						Math.max(1L, asTicks(getLittleDictatorDecreeTaxesIntervalSeconds(ability)))
+				)
+		);
+		spawnLittleDictatorDecreeParticles((ServerLevel) target.level(), target.position().add(0.0D, target.getBbHeight() * 0.55D, 0.0D));
+		dictator.displayClientMessage(
+				Component.literal("Налоги назначены для " + target.getGameProfile().name() + ".")
+						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
+				true
+		);
+	}
+
+	private static void applyLittleDictatorPropaganda(ServerPlayer dictator, RaceAbilityConfig ability) {
+		if (dictator == null || ability == null || !(dictator.level() instanceof ServerLevel level)) {
+			return;
+		}
+		finishLittleDictatorPropaganda(dictator, false);
+		LITTLE_DICTATOR_PROPAGANDA.put(
+				dictator.getUUID(),
+				new LittleDictatorPropagandaSession(
+						Math.max(1L, asTicks(getLittleDictatorDecreePropagandaDurationSeconds(ability))),
+						getLittleDictatorDecreePropagandaTradeDiscount(ability)
+				)
+		);
+		MobEffectInstance naturalHaste = copyLittleDictatorPropagandaNaturalHaste(dictator.getEffect(MobEffects.HASTE));
+		if (naturalHaste != null) {
+			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.put(dictator.getUUID(), naturalHaste);
+		}
+		refreshLittleDictatorPropagandaHaste(dictator);
+		spawnLittleDictatorDecreeParticles(level, dictator.position().add(0.0D, dictator.getBbHeight() * 0.55D, 0.0D));
+		dictator.displayClientMessage(
+				Component.literal("Пропаганда запущена.")
+						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
+				true
+		);
+	}
+
+	private static void consumeLittleDictatorDecree(ServerPlayer player, ItemStack stack) {
+		if (player == null || stack == null || stack.isEmpty()) {
+			return;
+		}
+		stack.shrink(1);
+		player.containerMenu.broadcastChanges();
+	}
+
+	private static void spawnLittleDictatorDecreeParticles(ServerLevel level, Vec3 center) {
+		if (level == null || center == null) {
+			return;
+		}
+		level.sendParticles(
+				ParticleTypes.END_ROD,
+				center.x,
+				center.y,
+				center.z,
+				LITTLE_DICTATOR_DECREE_PARTICLE_COUNT,
+				0.2D,
+				0.3D,
+				0.2D,
+				0.03D
+		);
+	}
+
+	private static ItemStack createLittleDictatorDecreeStack(LittleDictatorDecreeType type) {
+		ItemStack stack = new ItemStack(ModItems.LITTLE_DICTATOR_DECREE);
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+			CompoundTag root = tag.getCompoundOrEmpty(LITTLE_DICTATOR_DECREE_DATA_TAG);
+			root.putString(LITTLE_DICTATOR_DECREE_TYPE_TAG, type == null ? "" : type.id);
+			tag.put(LITTLE_DICTATOR_DECREE_DATA_TAG, root);
+		});
+		stack.set(DataComponents.CUSTOM_NAME, getLittleDictatorDecreeName(type));
+		stack.set(DataComponents.ITEM_MODEL, LITTLE_DICTATOR_DECREE_ITEM_MODEL_ID);
+		ItemLore lore = ItemLore.EMPTY;
+		for (Component line : getLittleDictatorDecreeLore(type)) {
+			lore = lore.withLineAdded(line);
+		}
+		stack.set(DataComponents.LORE, lore);
+		return stack;
+	}
+
+	private static MutableComponent getLittleDictatorDecreeName(LittleDictatorDecreeType type) {
+		if (type == null) {
+			return Component.literal("Указ").withStyle(style -> style.withColor(ChatFormatting.GOLD).withItalic(false));
+		}
+		String name = switch (type) {
+			case SANCTIONS -> "Указ: Санкции";
+			case TAXES -> "Указ: Налоги";
+			case PROPAGANDA -> "Указ: Пропаганда";
+		};
+		return Component.literal(name).withStyle(style -> style.withColor(ChatFormatting.GOLD).withItalic(false));
+	}
+
+	private static List<Component> getLittleDictatorDecreeLore(LittleDictatorDecreeType type) {
+		if (type == null) {
+			return List.of(Component.literal("Неизвестный указ.").withStyle(style -> style.withColor(ChatFormatting.GRAY).withItalic(false)));
+		}
+		String first = switch (type) {
+			case SANCTIONS -> "ПКМ по игроку: мешает добыче и закрывает торговлю.";
+			case TAXES -> "ПКМ по игроку: периодически отправляет часть вещей в налоговый сундук.";
+			case PROPAGANDA -> "ПКМ: усиливает удачу, добычу, рыбалку и торговлю Диктатора.";
+		};
+		String second = switch (type) {
+			case SANCTIONS, TAXES, PROPAGANDA -> "Действует 1 час онлайн-времени.";
+		};
+		List<Component> lore = new ArrayList<>();
+		lore.add(Component.literal(first).withStyle(style -> style.withColor(ChatFormatting.GRAY).withItalic(false)));
+		if (!second.isBlank()) {
+			lore.add(Component.literal(second).withStyle(style -> style.withColor(ChatFormatting.DARK_GRAY).withItalic(false)));
+		}
+		return lore;
+	}
+
+	private static LittleDictatorDecreeType getLittleDictatorDecreeType(ItemStack stack) {
+		if (stack == null || stack.isEmpty() || !stack.is(ModItems.LITTLE_DICTATOR_DECREE)) {
+			return null;
+		}
+		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+		if (customData == null) {
+			return null;
+		}
+		CompoundTag root = customData.copyTag().getCompoundOrEmpty(LITTLE_DICTATOR_DECREE_DATA_TAG);
+		return LittleDictatorDecreeType.byId(root.getStringOr(LITTLE_DICTATOR_DECREE_TYPE_TAG, ""));
+	}
+
+	private static void tickLittleDictatorShnyaga(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		if (pruneLittleDictatorTaxChests(server)) {
+			saveLittleDictatorTaxChests(server);
+		}
+		long nowTick = server.overworld().getGameTime();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			tickLittleDictatorSanctions(player);
+			tickLittleDictatorTaxes(server, player);
+			tickLittleDictatorPropaganda(player);
+			syncLittleDictatorMerchantOffers(player);
+			if ((nowTick + player.getId()) % 20L == 0L) {
+				syncLittleDictatorTaxChestHighlights(server, player);
+			}
+		}
+	}
+
+	private static void tickLittleDictatorSanctions(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		LittleDictatorSanctionsSession session = LITTLE_DICTATOR_SANCTIONS.get(player.getUUID());
+		if (session == null) {
+			return;
+		}
+		if (--session.remainingTicks <= 0L) {
+			LITTLE_DICTATOR_SANCTIONS.remove(player.getUUID());
+			removeLittleDictatorSanctionsFatigue(player);
+			return;
+		}
+		refreshLittleDictatorSanctionsFatigue(player);
+	}
+
+	private static void refreshLittleDictatorSanctionsFatigue(ServerPlayer player) {
+		if (player == null || !LITTLE_DICTATOR_SANCTIONS.containsKey(player.getUUID())) {
+			return;
+		}
+		MobEffectInstance current = player.getEffect(MobEffects.MINING_FATIGUE);
+		if (isLittleDictatorSanctionsManagedFatigue(current)) {
+			return;
+		}
+		player.addEffect(new MobEffectInstance(
+				MobEffects.MINING_FATIGUE,
+				MobEffectInstance.INFINITE_DURATION,
+				0,
+				false,
+				false,
+				true
+		));
+	}
+
+	private static void removeLittleDictatorSanctionsFatigue(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		if (isLittleDictatorSanctionsManagedFatigue(player.getEffect(MobEffects.MINING_FATIGUE))) {
+			player.removeEffect(MobEffects.MINING_FATIGUE);
+		}
+	}
+
+	private static boolean isLittleDictatorSanctionsManagedFatigue(MobEffectInstance effect) {
+		return effect != null
+				&& effect.getEffect().equals(MobEffects.MINING_FATIGUE)
+				&& effect.getAmplifier() == 0
+				&& effect.getDuration() == MobEffectInstance.INFINITE_DURATION
+				&& !effect.isVisible()
+				&& effect.showIcon();
+	}
+
+	private static void tickLittleDictatorTaxes(MinecraftServer server, ServerPlayer target) {
+		if (server == null || target == null) {
+			return;
+		}
+		LittleDictatorTaxesSession session = LITTLE_DICTATOR_TAXES.get(target.getUUID());
+		if (session == null) {
+			return;
+		}
+		if (--session.remainingTicks <= 0L) {
+			LITTLE_DICTATOR_TAXES.remove(target.getUUID());
+			return;
+		}
+		if (--session.nextTaxTicks > 0L) {
+			return;
+		}
+		session.nextTaxTicks = session.intervalTicks;
+		collectLittleDictatorTax(server, target, session.dictatorId);
+	}
+
+	private static void tickLittleDictatorPropaganda(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		LittleDictatorPropagandaSession session = LITTLE_DICTATOR_PROPAGANDA.get(player.getUUID());
+		if (session == null) {
+			return;
+		}
+		if (--session.remainingTicks <= 0L) {
+			finishLittleDictatorPropaganda(player, true);
+			return;
+		}
+		tickLittleDictatorPropagandaNaturalHaste(player);
+		refreshLittleDictatorPropagandaHaste(player);
+	}
+
+	private static void finishLittleDictatorPropaganda(ServerPlayer player, boolean removeSession) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		MobEffectInstance current = player.getEffect(MobEffects.HASTE);
+		Integer managedAmplifier = LITTLE_DICTATOR_PROPAGANDA_MANAGED_HASTE.remove(playerId);
+		boolean removeManagedHaste = isLittleDictatorPropagandaManagedHaste(current, managedAmplifier);
+		MobEffectInstance naturalHaste = LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.remove(playerId);
+		if (removeSession) {
+			LITTLE_DICTATOR_PROPAGANDA.remove(playerId);
+		}
+		if (removeManagedHaste) {
+			player.removeEffect(MobEffects.HASTE);
+		}
+		if (naturalHaste != null && (naturalHaste.getDuration() > 0 || naturalHaste.getDuration() == MobEffectInstance.INFINITE_DURATION)) {
+			LITTLE_DICTATOR_PROPAGANDA_APPLYING_HASTE.set(Boolean.TRUE);
+			try {
+				player.addEffect(copyLittleDictatorPropagandaNaturalHaste(naturalHaste));
+			} finally {
+				LITTLE_DICTATOR_PROPAGANDA_APPLYING_HASTE.set(Boolean.FALSE);
+			}
+		}
+	}
+
+	private static void tickLittleDictatorPropagandaNaturalHaste(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		MobEffectInstance naturalHaste = LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.get(playerId);
+		if (naturalHaste == null || naturalHaste.getDuration() == MobEffectInstance.INFINITE_DURATION) {
+			return;
+		}
+		int nextDuration = naturalHaste.getDuration() - 1;
+		if (nextDuration <= 0) {
+			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.remove(playerId);
+			return;
+		}
+		LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.put(playerId, copyLittleDictatorPropagandaNaturalHaste(naturalHaste, nextDuration));
+	}
+
+	private static void refreshLittleDictatorPropagandaHaste(ServerPlayer player) {
+		if (player == null || !LITTLE_DICTATOR_PROPAGANDA.containsKey(player.getUUID())) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		MobEffectInstance naturalHaste = LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.get(playerId);
+		int baseAmplifier = naturalHaste == null ? -1 : naturalHaste.getAmplifier();
+		int amplifier = Math.min(MobEffectInstance.MAX_AMPLIFIER, baseAmplifier + 1);
+		MobEffectInstance current = player.getEffect(MobEffects.HASTE);
+		Integer managedAmplifier = LITTLE_DICTATOR_PROPAGANDA_MANAGED_HASTE.get(playerId);
+		if (isLittleDictatorPropagandaManagedHaste(current, managedAmplifier) && current.getAmplifier() == amplifier) {
+			return;
+		}
+		if (isLittleDictatorPropagandaManagedHaste(current, managedAmplifier)) {
+			player.removeEffect(MobEffects.HASTE);
+		} else if (current != null && current.getEffect().equals(MobEffects.HASTE)) {
+			MobEffectInstance currentNatural = copyLittleDictatorPropagandaNaturalHaste(current);
+			if (currentNatural != null && shouldReplaceLittleDictatorPropagandaNaturalHaste(naturalHaste, currentNatural)) {
+				LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.put(playerId, currentNatural);
+				naturalHaste = currentNatural;
+				baseAmplifier = naturalHaste.getAmplifier();
+				amplifier = Math.min(MobEffectInstance.MAX_AMPLIFIER, baseAmplifier + 1);
+			}
+			player.removeEffect(MobEffects.HASTE);
+		}
+		LITTLE_DICTATOR_PROPAGANDA_APPLYING_HASTE.set(Boolean.TRUE);
+		try {
+			player.addEffect(new MobEffectInstance(MobEffects.HASTE, MobEffectInstance.INFINITE_DURATION, amplifier, false, false, false));
+			LITTLE_DICTATOR_PROPAGANDA_MANAGED_HASTE.put(playerId, amplifier);
+		} finally {
+			LITTLE_DICTATOR_PROPAGANDA_APPLYING_HASTE.set(Boolean.FALSE);
+		}
+	}
+
+	private static boolean isLittleDictatorPropagandaManagedHaste(ServerPlayer player, MobEffectInstance effect) {
+		if (player == null || effect == null || !LITTLE_DICTATOR_PROPAGANDA.containsKey(player.getUUID())) {
+			return false;
+		}
+		return isLittleDictatorPropagandaManagedHaste(effect, LITTLE_DICTATOR_PROPAGANDA_MANAGED_HASTE.get(player.getUUID()));
+	}
+
+	private static boolean isLittleDictatorPropagandaManagedHaste(MobEffectInstance effect, Integer managedAmplifier) {
+		if (effect == null || managedAmplifier == null) {
+			return false;
+		}
+		return effect.getEffect().equals(MobEffects.HASTE)
+				&& effect.getAmplifier() == managedAmplifier
+				&& effect.getDuration() == MobEffectInstance.INFINITE_DURATION
+				&& !effect.isVisible()
+				&& !effect.showIcon();
+	}
+
+	private static MobEffectInstance copyLittleDictatorPropagandaNaturalHaste(MobEffectInstance effect) {
+		if (effect == null || !effect.getEffect().equals(MobEffects.HASTE)) {
+			return null;
+		}
+		return copyLittleDictatorPropagandaNaturalHaste(effect, effect.getDuration());
+	}
+
+	private static MobEffectInstance copyLittleDictatorPropagandaNaturalHaste(MobEffectInstance effect, int duration) {
+		if (effect == null
+				|| !effect.getEffect().equals(MobEffects.HASTE)
+				|| (duration <= 0 && duration != MobEffectInstance.INFINITE_DURATION)) {
+			return null;
+		}
+		return new MobEffectInstance(
+				MobEffects.HASTE,
+				duration,
+				effect.getAmplifier(),
+				effect.isAmbient(),
+				effect.isVisible(),
+				effect.showIcon()
+		);
+	}
+
+	public static boolean handleLittleDictatorPropagandaIncomingHaste(LivingEntity entity, MobEffectInstance effect) {
+		if (!(entity instanceof ServerPlayer player)
+				|| effect == null
+				|| !effect.getEffect().equals(MobEffects.HASTE)
+				|| !LITTLE_DICTATOR_PROPAGANDA.containsKey(player.getUUID())
+				|| LITTLE_DICTATOR_PROPAGANDA_APPLYING_HASTE.get()) {
+			return false;
+		}
+		MobEffectInstance incoming = copyLittleDictatorPropagandaNaturalHaste(effect);
+		if (incoming == null) {
+			return true;
+		}
+		UUID playerId = player.getUUID();
+		MobEffectInstance previous = LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.get(playerId);
+		if (shouldReplaceLittleDictatorPropagandaNaturalHaste(previous, incoming)) {
+			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.put(playerId, incoming);
+		}
+		refreshLittleDictatorPropagandaHaste(player);
+		return true;
+	}
+
+	private static boolean shouldReplaceLittleDictatorPropagandaNaturalHaste(MobEffectInstance previous, MobEffectInstance incoming) {
+		if (incoming == null) {
+			return false;
+		}
+		if (previous == null) {
+			return true;
+		}
+		if (incoming.getAmplifier() != previous.getAmplifier()) {
+			return incoming.getAmplifier() > previous.getAmplifier();
+		}
+		if (incoming.getDuration() == MobEffectInstance.INFINITE_DURATION) {
+			return true;
+		}
+		if (previous.getDuration() == MobEffectInstance.INFINITE_DURATION) {
+			return false;
+		}
+		return incoming.getDuration() > previous.getDuration();
+	}
+
+	private static void collectLittleDictatorTax(MinecraftServer server, ServerPlayer target, UUID dictatorId) {
+		if (server == null || target == null || dictatorId == null) {
+			return;
+		}
+		Container container = getRandomLittleDictatorTaxContainer(server, dictatorId, target.getRandom());
+		if (container == null) {
+			return;
+		}
+		Inventory inventory = target.getInventory();
+		List<Integer> slots = new ArrayList<>();
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			ItemStack stack = inventory.getItem(slot);
+			if (!stack.isEmpty()) {
+				slots.add(slot);
+			}
+		}
+		if (slots.isEmpty()) {
+			return;
+		}
+		int slot = slots.get(target.getRandom().nextInt(slots.size()));
+		ItemStack source = inventory.getItem(slot);
+		if (source.isEmpty()) {
+			return;
+		}
+		int count = 1 + target.getRandom().nextInt(source.getCount());
+		ItemStack removed = inventory.removeItem(slot, count);
+		if (removed.isEmpty()) {
+			return;
+		}
+		ItemStack remaining = insertIntoLittleDictatorTaxContainer(container, removed);
+		if (!remaining.isEmpty()) {
+			if (!inventory.add(remaining)) {
+				target.drop(remaining, false);
+			}
+		}
+		inventory.setChanged();
+		target.containerMenu.broadcastChanges();
+	}
+
+	private static Container getRandomLittleDictatorTaxContainer(MinecraftServer server, UUID dictatorId, RandomSource random) {
+		Set<LittleDictatorTaxChestRef> refs = LITTLE_DICTATOR_TAX_CHESTS.get(dictatorId);
+		if (server == null || refs == null || refs.isEmpty()) {
+			return null;
+		}
+		List<LittleDictatorTaxChestRef> shuffled = new ArrayList<>(refs);
+		Collections.shuffle(shuffled, new java.util.Random(random == null ? 0L : random.nextLong()));
+		for (LittleDictatorTaxChestRef ref : shuffled) {
+			Container container = getLittleDictatorTaxContainer(server, ref);
+			if (container != null) {
+				return container;
+			}
+		}
+		return null;
+	}
+
+	private static Container getLittleDictatorTaxContainer(MinecraftServer server, LittleDictatorTaxChestRef ref) {
+		if (server == null || ref == null) {
+			return null;
+		}
+		ServerLevel level = server.getLevel(ref.dimension());
+		if (level == null || !isLittleDictatorTaxChestBlock(level.getBlockState(ref.pos()))) {
+			return null;
+		}
+		BlockEntity blockEntity = level.getBlockEntity(ref.pos());
+		return blockEntity instanceof Container container ? container : null;
+	}
+
+	private static ItemStack insertIntoLittleDictatorTaxContainer(Container container, ItemStack stack) {
+		if (container == null || stack == null || stack.isEmpty()) {
+			return ItemStack.EMPTY;
+		}
+		ItemStack remaining = stack.copy();
+		for (int slot = 0; slot < container.getContainerSize() && !remaining.isEmpty(); slot++) {
+			ItemStack existing = container.getItem(slot);
+			if (existing.isEmpty()) {
+				int move = Math.min(remaining.getCount(), Math.min(container.getMaxStackSize(), remaining.getMaxStackSize()));
+				ItemStack placed = remaining.copyWithCount(move);
+				container.setItem(slot, placed);
+				remaining.shrink(move);
+			}
+		}
+		for (int slot = 0; slot < container.getContainerSize() && !remaining.isEmpty(); slot++) {
+			ItemStack existing = container.getItem(slot);
+			if (!existing.isEmpty() && ItemStack.isSameItemSameComponents(existing, remaining)) {
+				int limit = Math.min(container.getMaxStackSize(), existing.getMaxStackSize());
+				int move = Math.min(remaining.getCount(), Math.max(0, limit - existing.getCount()));
+				if (move > 0) {
+					existing.grow(move);
+					remaining.shrink(move);
+				}
+			}
+		}
+		container.setChanged();
+		return remaining;
+	}
+
+	private static boolean pruneLittleDictatorTaxChests(MinecraftServer server) {
+		if (server == null || LITTLE_DICTATOR_TAX_CHESTS.isEmpty()) {
+			return false;
+		}
+		boolean changed = false;
+		Iterator<Map.Entry<UUID, Set<LittleDictatorTaxChestRef>>> iterator = LITTLE_DICTATOR_TAX_CHESTS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, Set<LittleDictatorTaxChestRef>> entry = iterator.next();
+			Set<LittleDictatorTaxChestRef> refs = entry.getValue();
+			if (refs == null) {
+				iterator.remove();
+				changed = true;
+				continue;
+			}
+			int before = refs.size();
+			refs.removeIf(ref -> getLittleDictatorTaxContainer(server, ref) == null);
+			if (refs.size() != before) {
+				changed = true;
+			}
+			if (refs.isEmpty()) {
+				iterator.remove();
+				changed = true;
+			}
+		}
+		return changed;
+	}
+
+	private static void syncLittleDictatorTaxChestHighlights(MinecraftServer server, ServerPlayer owner) {
+		if (server == null || owner == null || owner.connection == null || !(owner.level() instanceof ServerLevel ownerLevel)) {
+			return;
+		}
+		Set<LittleDictatorTaxChestRef> visibleRefs = resolveVisibleLittleDictatorTaxChests(ownerLevel, owner);
+		List<LittleDictatorTaxChestHighlightPart> visibleParts = resolveLittleDictatorTaxChestHighlightParts(server, visibleRefs);
+		Map<LittleDictatorTaxChestRef, BlockState> visibleStates = new LinkedHashMap<>();
+		for (LittleDictatorTaxChestHighlightPart part : visibleParts) {
+			if (part != null && part.ref() != null && part.state() != null) {
+				visibleStates.put(part.ref(), part.state());
+			}
+		}
+		LittleDictatorTaxChestHighlightState previous = LITTLE_DICTATOR_TAX_CHEST_HIGHLIGHTS.get(owner.getUUID());
+		if (previous != null && previous.refs().equals(visibleRefs) && previous.blockStates().equals(visibleStates)) {
+			return;
+		}
+		clearLittleDictatorTaxChestHighlights(owner);
+		if (visibleRefs.isEmpty() || visibleStates.isEmpty()) {
+			return;
+		}
+
+		List<Integer> entityIds = new ArrayList<>();
+		visibleParts.sort(Comparator
+				.comparing((LittleDictatorTaxChestHighlightPart part) -> part.ref().dimension().toString())
+				.thenComparingInt(part -> part.ref().pos().getX())
+				.thenComparingInt(part -> part.ref().pos().getY())
+				.thenComparingInt(part -> part.ref().pos().getZ()));
+		for (LittleDictatorTaxChestHighlightPart part : visibleParts) {
+			ServerLevel level = server.getLevel(part.ref().dimension());
+			if (level == null) {
+				continue;
+			}
+			Display.ItemDisplay display = createLittleDictatorTaxChestHighlightDisplay(level, part.ref().pos(), part.state());
+			if (display == null) {
+				continue;
+			}
+			entityIds.add(display.getId());
+			sendLittleDictatorTaxChestHighlightSpawn(owner, display);
+		}
+		if (entityIds.isEmpty()) {
+			return;
+		}
+		int[] ids = new int[entityIds.size()];
+		for (int i = 0; i < entityIds.size(); i++) {
+			ids[i] = entityIds.get(i);
+		}
+		LITTLE_DICTATOR_TAX_CHEST_HIGHLIGHTS.put(owner.getUUID(), new LittleDictatorTaxChestHighlightState(visibleRefs, visibleStates, ids));
+	}
+
+	private static List<LittleDictatorTaxChestHighlightPart> resolveLittleDictatorTaxChestHighlightParts(MinecraftServer server, Set<LittleDictatorTaxChestRef> refs) {
+		if (server == null || refs == null || refs.isEmpty()) {
+			return List.of();
+		}
+		Map<LittleDictatorTaxChestRef, BlockState> states = new LinkedHashMap<>();
+		for (LittleDictatorTaxChestRef ref : refs) {
+			if (ref == null) {
+				continue;
+			}
+			ServerLevel level = server.getLevel(ref.dimension());
+			if (level == null) {
+				continue;
+			}
+			BlockState state = level.getBlockState(ref.pos());
+			if (isLittleDictatorTaxChestBlock(state)) {
+				addLittleDictatorTaxChestHighlightStates(level, ref, state, states);
+			}
+		}
+		List<LittleDictatorTaxChestHighlightPart> parts = new ArrayList<>();
+		for (Map.Entry<LittleDictatorTaxChestRef, BlockState> entry : states.entrySet()) {
+			parts.add(new LittleDictatorTaxChestHighlightPart(entry.getKey(), entry.getValue()));
+		}
+		return parts;
+	}
+
+	private static void addLittleDictatorTaxChestHighlightStates(
+			ServerLevel level,
+			LittleDictatorTaxChestRef ref,
+			BlockState state,
+			Map<LittleDictatorTaxChestRef, BlockState> states
+	) {
+		if (level == null || ref == null || state == null || states == null || !(state.getBlock() instanceof ChestBlock)) {
+			return;
+		}
+		Direction facing = state.hasProperty(ChestBlock.FACING) ? state.getValue(ChestBlock.FACING) : Direction.SOUTH;
+		BlockPos connectedPos = findLittleDictatorConnectedChestPos(level, ref.pos(), state, facing);
+		if (connectedPos == null) {
+			states.put(ref, state.setValue(ChestBlock.TYPE, ChestType.SINGLE));
+			return;
+		}
+		BlockState connectedState = level.getBlockState(connectedPos);
+		Direction right = facing.getClockWise();
+		int deltaX = connectedPos.getX() - ref.pos().getX();
+		int deltaZ = connectedPos.getZ() - ref.pos().getZ();
+		boolean currentIsLeft = deltaX * right.getStepX() + deltaZ * right.getStepZ() > 0;
+		ChestType currentType = currentIsLeft ? ChestType.LEFT : ChestType.RIGHT;
+		ChestType connectedType = currentIsLeft ? ChestType.RIGHT : ChestType.LEFT;
+		states.put(ref, state.setValue(ChestBlock.FACING, facing).setValue(ChestBlock.TYPE, currentType));
+		states.put(
+				new LittleDictatorTaxChestRef(ref.dimension(), connectedPos),
+				connectedState.setValue(ChestBlock.FACING, facing).setValue(ChestBlock.TYPE, connectedType)
+		);
+	}
+
+	private static BlockPos findLittleDictatorConnectedChestPos(ServerLevel level, BlockPos pos, BlockState state, Direction facing) {
+		if (level == null || pos == null || state == null || facing == null) {
+			return null;
+		}
+		if (state.hasProperty(ChestBlock.TYPE) && state.getValue(ChestBlock.TYPE) != ChestType.SINGLE) {
+			BlockPos connectedPos = ChestBlock.getConnectedBlockPos(pos, state);
+			if (isMatchingLittleDictatorChestHalf(level.getBlockState(connectedPos), state, facing)) {
+				return connectedPos;
+			}
+		}
+		for (Direction direction : List.of(facing.getClockWise(), facing.getCounterClockWise())) {
+			BlockPos candidate = pos.relative(direction);
+			if (isMatchingLittleDictatorChestHalf(level.getBlockState(candidate), state, facing)) {
+				return candidate;
+			}
+		}
+		return null;
+	}
+
+	private static boolean isMatchingLittleDictatorChestHalf(BlockState candidate, BlockState source, Direction facing) {
+		return candidate != null
+				&& source != null
+				&& candidate.getBlock() == source.getBlock()
+				&& candidate.hasProperty(ChestBlock.FACING)
+				&& candidate.getValue(ChestBlock.FACING) == facing;
+	}
+
+	private static Set<LittleDictatorTaxChestRef> resolveVisibleLittleDictatorTaxChests(ServerLevel ownerLevel, ServerPlayer owner) {
+		if (ownerLevel == null || owner == null) {
+			return Set.of();
+		}
+		Set<LittleDictatorTaxChestRef> refs = LITTLE_DICTATOR_TAX_CHESTS.get(owner.getUUID());
+		if (refs == null || refs.isEmpty()) {
+			return Set.of();
+		}
+		Set<LittleDictatorTaxChestRef> visible = new HashSet<>();
+		double maxDistanceSqr = LITTLE_DICTATOR_TAX_CHEST_HIGHLIGHT_RANGE_BLOCKS * LITTLE_DICTATOR_TAX_CHEST_HIGHLIGHT_RANGE_BLOCKS;
+		for (LittleDictatorTaxChestRef ref : refs) {
+			if (ref == null || !ref.dimension().equals(ownerLevel.dimension())) {
+				continue;
+			}
+			Vec3 center = Vec3.atCenterOf(ref.pos());
+			if (center.distanceToSqr(owner.position()) <= maxDistanceSqr) {
+				visible.add(ref);
+			}
+		}
+		return visible;
+	}
+
+	private static Display.ItemDisplay createLittleDictatorTaxChestHighlightDisplay(ServerLevel level, BlockPos pos, BlockState state) {
+		if (level == null || pos == null || state == null) {
+			return null;
+		}
+		if (!isLittleDictatorTaxChestBlock(state)) {
+			return null;
+		}
+		Display.ItemDisplay display = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
+		display.setPos(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D);
+		display.setYRot(0.0F);
+		display.setXRot(0.0F);
+		display.setYHeadRot(0.0F);
+		display.setYBodyRot(0.0F);
+		display.setTransformation(createLittleDictatorTaxChestHighlightTransformation(level, pos, state));
+		display.setNoGravity(true);
+		display.setInvulnerable(true);
+		display.setSilent(true);
+		display.setShadowRadius(0.0F);
+		display.setShadowStrength(0.0F);
+		display.setGlowingTag(true);
+		display.setViewRange(LITTLE_DICTATOR_TAX_CHEST_HIGHLIGHT_VIEW_RANGE);
+		display.setItemStack(ServerSelectionHighlightSystem.createHighlightCarrierStack());
+		display.setItemTransform(ItemDisplayContext.FIXED);
+		display.setBillboardConstraints(Display.BillboardConstraints.FIXED);
+		return display;
+	}
+
+	private static Transformation createLittleDictatorTaxChestHighlightTransformation(ServerLevel level, BlockPos pos, BlockState state) {
+		float minX = 1.0F / 16.0F;
+		float maxX = 15.0F / 16.0F;
+		float minZ = 1.0F / 16.0F;
+		float maxZ = 15.0F / 16.0F;
+		if (level != null
+				&& pos != null
+				&& state != null
+				&& state.getBlock() instanceof ChestBlock
+				&& state.hasProperty(ChestBlock.TYPE)
+				&& state.getValue(ChestBlock.TYPE) != ChestType.SINGLE) {
+			BlockPos connectedPos = ChestBlock.getConnectedBlockPos(pos, state);
+			int deltaX = connectedPos.getX() - pos.getX();
+			int deltaZ = connectedPos.getZ() - pos.getZ();
+			if (deltaX > 0) {
+				maxX = 1.0F;
+			} else if (deltaX < 0) {
+				minX = 0.0F;
+			}
+			if (deltaZ > 0) {
+				maxZ = 1.0F;
+			} else if (deltaZ < 0) {
+				minZ = 0.0F;
+			}
+		}
+		float centerX = ((minX + maxX) * 0.5F - 0.5F) * LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE;
+		float centerY = (((14.0F / 16.0F) * 0.5F) - 0.5F) * LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE;
+		float centerZ = ((minZ + maxZ) * 0.5F - 0.5F) * LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE;
+		return new Transformation(
+				new Vector3f(centerX, centerY, centerZ),
+				new Quaternionf(),
+				new Vector3f(
+						(maxX - minX) * LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE,
+						(14.0F / 16.0F) * LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE,
+						(maxZ - minZ) * LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE
+				),
+				new Quaternionf()
+		);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static void sendLittleDictatorTaxChestHighlightSpawn(ServerPlayer owner, Entity entity) {
+		if (owner == null || entity == null || owner.connection == null || !(entity.level() instanceof ServerLevel level)) {
+			return;
+		}
+		ServerEntity tracker = new ServerEntity(
+				level,
+				entity,
+				1,
+				false,
+				LITTLE_DICTATOR_TAX_CHEST_NOOP_SYNCHRONIZER
+		);
+		tracker.sendPairingData(owner, packet -> owner.connection.send((Packet<? super ClientGamePacketListener>) packet));
+		List<SynchedEntityData.DataValue<?>> values = entity.getEntityData().getNonDefaultValues();
+		if (values != null && !values.isEmpty()) {
+			owner.connection.send(new ClientboundSetEntityDataPacket(entity.getId(), values));
+		}
+	}
+
+	private static void clearLittleDictatorTaxChestHighlights(ServerPlayer owner) {
+		if (owner == null) {
+			return;
+		}
+		LittleDictatorTaxChestHighlightState previous = LITTLE_DICTATOR_TAX_CHEST_HIGHLIGHTS.remove(owner.getUUID());
+		if (owner.connection != null && previous != null && previous.entityIds().length > 0) {
+			owner.connection.send(new ClientboundRemoveEntitiesPacket(previous.entityIds()));
+		}
+	}
+
+	private static final ServerEntity.Synchronizer LITTLE_DICTATOR_TAX_CHEST_NOOP_SYNCHRONIZER = new ServerEntity.Synchronizer() {
+		@Override
+		public void sendToTrackingPlayers(Packet<? super ClientGamePacketListener> packet) {
+		}
+
+		@Override
+		public void sendToTrackingPlayersAndSelf(Packet<? super ClientGamePacketListener> packet) {
+		}
+
+		@Override
+		public void sendToTrackingPlayersFiltered(Packet<? super ClientGamePacketListener> packet, java.util.function.Predicate<ServerPlayer> predicate) {
+		}
+	};
+
+	private static void syncLittleDictatorMerchantOffers(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		String mode = getLittleDictatorMerchantMode(player);
+		if (!(player.containerMenu instanceof MerchantMenu menu)) {
+			LITTLE_DICTATOR_SYNCED_MERCHANT_MENUS.remove(player.getUUID());
+			return;
+		}
+		LittleDictatorMerchantOfferSync synced = LITTLE_DICTATOR_SYNCED_MERCHANT_MENUS.get(player.getUUID());
+		if (mode == null) {
+			if (synced != null && synced.containerId() == menu.containerId) {
+				restoreLittleDictatorMerchantOffers(player, menu);
+			}
+			LITTLE_DICTATOR_SYNCED_MERCHANT_MENUS.remove(player.getUUID());
+			return;
+		}
+		if (synced != null && synced.containerId() == menu.containerId && mode.equals(synced.mode())) {
+			return;
+		}
+
+		Merchant merchant = ((MerchantMenuAccessor) menu).lg2$getTrader();
+		if (merchant == null) {
+			return;
+		}
+		MerchantOffers originalOffers = merchant.getOffers();
+		if (originalOffers == null) {
+			return;
+		}
+		MerchantOffers adjusted = buildLittleDictatorAdjustedOffers(originalOffers, player);
+		menu.setOffers(adjusted);
+		player.sendMerchantOffers(
+				menu.containerId,
+				adjusted,
+				menu.getTraderLevel(),
+				menu.getTraderXp(),
+				menu.showProgressBar(),
+				menu.canRestock()
+		);
+		LITTLE_DICTATOR_SYNCED_MERCHANT_MENUS.put(player.getUUID(), new LittleDictatorMerchantOfferSync(menu.containerId, mode));
+	}
+
+	private static String getLittleDictatorMerchantMode(ServerPlayer player) {
+		if (player == null) {
+			return null;
+		}
+		if (isLittleDictatorSanctioned(player)) {
+			return "sanctions";
+		}
+		LittleDictatorPropagandaSession session = LITTLE_DICTATOR_PROPAGANDA.get(player.getUUID());
+		if (session != null) {
+			return "propaganda:" + session.tradeDiscount;
+		}
+		return null;
+	}
+
+	private static MerchantOffers buildLittleDictatorAdjustedOffers(MerchantOffers originalOffers, ServerPlayer player) {
+		MerchantOffers adjusted = originalOffers == null ? new MerchantOffers() : originalOffers.copy();
+		if (player == null) {
+			return adjusted;
+		}
+		if (isLittleDictatorSanctioned(player)) {
+			for (MerchantOffer offer : adjusted) {
+				if (offer != null) {
+					offer.setToOutOfStock();
+				}
+			}
+			return adjusted;
+		}
+		LittleDictatorPropagandaSession session = LITTLE_DICTATOR_PROPAGANDA.get(player.getUUID());
+		if (session == null || session.tradeDiscount <= 0.0D) {
+			return adjusted;
+		}
+		for (MerchantOffer offer : adjusted) {
+			if (offer == null) {
+				continue;
+			}
+			int baseCount = offer.getBaseCostA().getCount();
+			if (baseCount <= 1) {
+				continue;
+			}
+			int discountedCount = Math.max(1, (int) Math.ceil(baseCount * (1.0D - session.tradeDiscount)));
+			int desiredSpecialDiff = discountedCount - baseCount;
+			int currentSpecialDiff = offer.getSpecialPriceDiff();
+			if (desiredSpecialDiff < currentSpecialDiff) {
+				offer.addToSpecialPriceDiff(desiredSpecialDiff - currentSpecialDiff);
+			}
+		}
+		return adjusted;
+	}
+
+	private static void restoreLittleDictatorMerchantOffers(ServerPlayer player, MerchantMenu menu) {
+		if (player == null || menu == null) {
+			return;
+		}
+		Merchant merchant = ((MerchantMenuAccessor) menu).lg2$getTrader();
+		if (merchant == null || merchant.getOffers() == null) {
+			return;
+		}
+		MerchantOffers restored = merchant.getOffers().copy();
+		menu.setOffers(restored);
+		player.sendMerchantOffers(
+				menu.containerId,
+				restored,
+				menu.getTraderLevel(),
+				menu.getTraderXp(),
+				menu.showProgressBar(),
+				menu.canRestock()
+		);
+	}
+
+	private static boolean isLittleDictatorSanctioned(ServerPlayer player) {
+		return player != null && LITTLE_DICTATOR_SANCTIONS.containsKey(player.getUUID());
+	}
+
+	public static boolean isLittleDictatorPropagandaActive(ServerPlayer player) {
+		return player != null && LITTLE_DICTATOR_PROPAGANDA.containsKey(player.getUUID());
+	}
+
+	public static void beginLittleDictatorBlockLootContext(ServerPlayer player) {
+		LITTLE_DICTATOR_DROP_CONTEXT_PLAYER.set(player);
+		LITTLE_DICTATOR_ENCHANTMENT_CONTEXT_PLAYER.set(player);
+	}
+
+	public static void beginLittleDictatorDeathLootContext(ServerLevel level, LivingEntity victim, DamageSource damageSource) {
+		if (level == null || victim == null || damageSource == null) {
+			return;
+		}
+		LivingEntity attacker = resolveMarkKillAttacker(victim, damageSource);
+		ServerPlayer player = attacker instanceof ServerPlayer serverPlayer ? serverPlayer : null;
+		LITTLE_DICTATOR_DROP_CONTEXT_PLAYER.set(player);
+		LITTLE_DICTATOR_ENCHANTMENT_CONTEXT_PLAYER.set(player);
+	}
+
+	public static void endLittleDictatorLootContext() {
+		LITTLE_DICTATOR_DROP_CONTEXT_PLAYER.remove();
+		LITTLE_DICTATOR_ENCHANTMENT_CONTEXT_PLAYER.remove();
+	}
+
+	public static boolean shouldCancelLittleDictatorContextDrop() {
+		ServerPlayer player = LITTLE_DICTATOR_DROP_CONTEXT_PLAYER.get();
+		if (player == null) {
+			return false;
+		}
+		LittleDictatorSanctionsSession session = LITTLE_DICTATOR_SANCTIONS.get(player.getUUID());
+		if (session == null) {
+			return false;
+		}
+		return player.getRandom().nextDouble() >= session.dropChance;
+	}
+
+	public static int getLittleDictatorPropagandaEnchantmentBonus(Holder<net.minecraft.world.item.enchantment.Enchantment> enchantment) {
+		ServerPlayer player = LITTLE_DICTATOR_ENCHANTMENT_CONTEXT_PLAYER.get();
+		if (player == null || enchantment == null || !isLittleDictatorPropagandaActive(player)) {
+			return 0;
+		}
+		if (enchantment.is(Enchantments.FORTUNE)
+				|| enchantment.is(Enchantments.LOOTING)
+				|| enchantment.is(Enchantments.LUCK_OF_THE_SEA)
+				|| enchantment.is(Enchantments.LURE)) {
+			return 1;
+		}
+		return 0;
+	}
+
+	public static int getLittleDictatorPropagandaFishingBonus(Player player) {
+		return player instanceof ServerPlayer serverPlayer && isLittleDictatorPropagandaActive(serverPlayer) ? 1 : 0;
+	}
+
+	public static void handleLittleDictatorPlayerKill(ServerLevel level, LivingEntity victim, DamageSource damageSource) {
+		if (level == null || !(victim instanceof ServerPlayer) || damageSource == null) {
+			return;
+		}
+		long nowTick = level.getGameTime();
+		LITTLE_DICTATOR_HANDLED_PLAYER_KILL_TICKS.entrySet().removeIf(entry -> entry.getValue() == null || nowTick - entry.getValue() > 40L);
+		Long handledTick = LITTLE_DICTATOR_HANDLED_PLAYER_KILL_TICKS.get(victim.getUUID());
+		if (handledTick != null && handledTick == nowTick) {
+			return;
+		}
+		LITTLE_DICTATOR_HANDLED_PLAYER_KILL_TICKS.put(victim.getUUID(), nowTick);
+
+		LivingEntity attacker = resolveMarkKillAttacker(victim, damageSource);
+		if (!(attacker instanceof ServerPlayer dictator) || dictator == victim || getLittleDictatorShnyagaAbility(dictator) == null) {
+			return;
+		}
+		LittleDictatorDecreeType[] types = LittleDictatorDecreeType.values();
+		LittleDictatorDecreeType type = types[level.random.nextInt(types.length)];
+		ItemStack decree = createLittleDictatorDecreeStack(type);
+		if (!dictator.getInventory().add(decree)) {
+			dictator.drop(decree, false);
+		}
+		dictator.containerMenu.broadcastChanges();
+	}
+
+	private static double getLittleDictatorDecreeSanctionsDurationSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorDecreeSanctionsDurationSeconds,
+				LITTLE_DICTATOR_DECREE_DEFAULT_SANCTIONS_DURATION_SECONDS
+		);
+	}
+
+	private static double getLittleDictatorDecreeSanctionsDropChance(RaceAbilityConfig ability) {
+		return Mth.clamp(
+				ability == null || ability.littleDictatorDecreeSanctionsDropChance <= 0.0D
+						? LITTLE_DICTATOR_DECREE_DEFAULT_SANCTIONS_DROP_CHANCE
+						: ability.littleDictatorDecreeSanctionsDropChance,
+				0.0D,
+				1.0D
+		);
+	}
+
+	private static double getLittleDictatorDecreeTaxesDurationSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorDecreeTaxesDurationSeconds,
+				LITTLE_DICTATOR_DECREE_DEFAULT_TAXES_DURATION_SECONDS
+		);
+	}
+
+	private static double getLittleDictatorDecreeTaxesIntervalSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorDecreeTaxesIntervalSeconds,
+				LITTLE_DICTATOR_DECREE_DEFAULT_TAXES_INTERVAL_SECONDS
+		);
+	}
+
+	private static double getLittleDictatorDecreePropagandaDurationSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorDecreePropagandaDurationSeconds,
+				LITTLE_DICTATOR_DECREE_DEFAULT_PROPAGANDA_DURATION_SECONDS
+		);
+	}
+
+	private static double getLittleDictatorDecreePropagandaTradeDiscount(RaceAbilityConfig ability) {
+		return Mth.clamp(
+				ability == null || ability.littleDictatorDecreePropagandaTradeDiscount <= 0.0D
+						? LITTLE_DICTATOR_DECREE_DEFAULT_PROPAGANDA_TRADE_DISCOUNT
+						: ability.littleDictatorDecreePropagandaTradeDiscount,
+				0.0D,
+				1.0D
+		);
+	}
+
+	private static void tickLittleDictatorUnique(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		tickLittleDictatorUniqueShockWaves(server);
+		if (LITTLE_DICTATOR_UNIQUE_SESSIONS.isEmpty()) {
+			return;
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		Iterator<Map.Entry<UUID, LittleDictatorUniqueSession>> iterator = LITTLE_DICTATOR_UNIQUE_SESSIONS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, LittleDictatorUniqueSession> entry = iterator.next();
+			UUID dictatorId = entry.getKey();
+			LittleDictatorUniqueSession session = entry.getValue();
+			ServerPlayer dictator = server.getPlayerList().getPlayer(dictatorId);
+			ServerLevel level = session == null ? null : server.getLevel(session.dimension);
+			if (session == null || level == null || dictator == null || !dictator.isAlive() || dictator.isSpectator() || nowTick >= session.endTick) {
+				iterator.remove();
+				cleanupLittleDictatorUniqueSession(server, dictatorId, session, false);
+				continue;
+			}
+
+			boolean active = nowTick < session.activeEndTick;
+			if (active) {
+				lockLittleDictatorUniqueCasterMovement(dictator, session);
+			} else {
+				endLittleDictatorUniqueActiveEffects(server, session);
+			}
+			double scale = getLittleDictatorUniqueScale(session, nowTick);
+			syncLittleDictatorUniqueScale(dictator, scale);
+			if ((nowTick - session.startTick) % 4L == 0L) {
+				spawnLittleDictatorUniqueGrowthParticles(level, dictator, scale);
+			}
+
+			if (!active) {
+				continue;
+			}
+
+			syncLittleDictatorUniqueTargets(server, level, dictator, session);
+
+			if (nowTick >= session.nextDrainTick) {
+				performLittleDictatorUniqueDrain(level, dictator, session);
+				do {
+					session.nextDrainTick += LITTLE_DICTATOR_UNIQUE_DRAIN_INTERVAL_TICKS;
+				} while (session.nextDrainTick <= nowTick);
+			} else if (dictator.getHealth() < dictator.getMaxHealth()
+					&& (nowTick - session.startTick) % LITTLE_DICTATOR_UNIQUE_DRAIN_PARTICLE_INTERVAL_TICKS == 0L) {
+				spawnLittleDictatorUniqueAmbientDrainParticles(level, dictator, session);
+			}
+
+			if (nowTick >= session.nextShockTick) {
+				performLittleDictatorUniqueShock(level, dictator, session);
+				do {
+					session.nextShockTick += session.shockIntervalTicks;
+				} while (session.nextShockTick <= nowTick);
+			}
+		}
+	}
+
+	public static boolean handleLittleDictatorUniqueMovementPacket(ServerPlayer player, ServerboundMovePlayerPacket packet) {
+		if (player == null || packet == null) {
+			return false;
+		}
+		MinecraftServer server = player.level() == null ? null : player.level().getServer();
+		if (server == null) {
+			return false;
+		}
+		LittleDictatorUniqueSession casterSession = LITTLE_DICTATOR_UNIQUE_SESSIONS.get(player.getUUID());
+		if (casterSession != null && casterSession.dimension == player.level().dimension()) {
+			if (packet.hasRotation()) {
+				float yaw = packet.getYRot(player.getYRot());
+				float pitch = Mth.clamp(packet.getXRot(player.getXRot()), -90.0F, 90.0F);
+				player.setYRot(yaw);
+				player.setXRot(pitch);
+				player.yRotO = yaw;
+				player.xRotO = pitch;
+				player.setYHeadRot(yaw);
+				player.yHeadRotO = yaw;
+				player.setYBodyRot(yaw);
+				player.yBodyRotO = yaw;
+			}
+			lockLittleDictatorUniqueCasterMovement(player, casterSession);
+			return packet.hasPosition() && player.level().getGameTime() < casterSession.activeEndTick;
+		}
+		if (packet.hasRotation() && !packet.hasPosition() && findLittleDictatorUniqueCameraLockDictator(server, player) != null) {
+			return true;
+		}
+		return false;
+	}
+
+	public static boolean handleLittleDictatorUniqueVehicleMovePacket(ServerPlayer player) {
+		if (player == null) {
+			return false;
+		}
+		MinecraftServer server = player.level() == null ? null : player.level().getServer();
+		if (server == null) {
+			return false;
+		}
+		LittleDictatorUniqueSession casterSession = LITTLE_DICTATOR_UNIQUE_SESSIONS.get(player.getUUID());
+		if (casterSession != null && player.level().getGameTime() < casterSession.activeEndTick) {
+			player.stopRiding();
+			lockLittleDictatorUniqueCasterMovement(player);
+			return true;
+		}
+		ServerPlayer dictator = findLittleDictatorUniqueCameraLockDictator(server, player);
+		if (dictator == null) {
+			return false;
+		}
+		return false;
+	}
+
+	private static ServerPlayer findLittleDictatorUniqueCameraLockDictator(MinecraftServer server, ServerPlayer target) {
+		if (server == null || target == null || LITTLE_DICTATOR_UNIQUE_SESSIONS.isEmpty()) {
+			return null;
+		}
+		long nowTick = server.overworld().getGameTime();
+		UUID targetId = target.getUUID();
+		for (Map.Entry<UUID, LittleDictatorUniqueSession> entry : LITTLE_DICTATOR_UNIQUE_SESSIONS.entrySet()) {
+			LittleDictatorUniqueSession session = entry.getValue();
+			if (session == null || nowTick >= session.activeEndTick || !session.gazeLockedPlayers.contains(targetId)) {
+				continue;
+			}
+			ServerPlayer dictator = server.getPlayerList().getPlayer(entry.getKey());
+			if (dictator != null
+					&& dictator.isAlive()
+					&& dictator.level() == target.level()
+					&& dictator.level() instanceof ServerLevel level
+					&& hasLittleDictatorUniqueLineOfSight(level, dictator, target)) {
+				return dictator;
+			}
+		}
+		return null;
+	}
+
+	private static void lockLittleDictatorUniqueCasterMovement(ServerPlayer player) {
+		LittleDictatorUniqueSession session = player == null ? null : LITTLE_DICTATOR_UNIQUE_SESSIONS.get(player.getUUID());
+		lockLittleDictatorUniqueCasterMovement(player, session);
+	}
+
+	private static void lockLittleDictatorUniqueCasterMovement(ServerPlayer player, LittleDictatorUniqueSession session) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		if (session == null || session.anchorPosition == null || session.dimension != player.level().dimension()) {
+			return;
+		}
+		if (player.level().getGameTime() >= session.activeEndTick) {
+			return;
+		}
+		player.setSprinting(false);
+		Vec3 currentVelocity = player.getDeltaMovement();
+		if (Math.abs(currentVelocity.x) > 1.0E-5D || Math.abs(currentVelocity.y) > 1.0E-5D || Math.abs(currentVelocity.z) > 1.0E-5D) {
+			player.setDeltaMovement(Vec3.ZERO);
+			player.hurtMarked = true;
+			player.connection.send(new ClientboundSetEntityMotionPacket(player));
+		}
+		Vec3 anchor = session.anchorPosition;
+		if (player.position().distanceToSqr(anchor) > 1.0E-6D) {
+			player.connection.teleport(anchor.x, anchor.y, anchor.z, player.getYRot(), player.getXRot());
+		}
+	}
+
+	private static void syncLittleDictatorUniqueTargets(MinecraftServer server, ServerLevel level, ServerPlayer dictator, LittleDictatorUniqueSession session) {
+		if (server == null || level == null || dictator == null || session == null) {
+			return;
+		}
+		Set<UUID> currentTargets = new HashSet<>();
+		for (ServerPlayer target : getLittleDictatorUniquePlayersInRadius(level, dictator, session.radius)) {
+			if (target == dictator || target.isSpectator() || !target.isAlive()) {
+				continue;
+			}
+			if (!hasLittleDictatorUniqueLineOfSight(level, dictator, target)) {
+				continue;
+			}
+			UUID targetId = target.getUUID();
+			currentTargets.add(targetId);
+			session.gazeLockedPlayers.add(targetId);
+			applyLittleDictatorUniqueSlowness(target, session);
+			forceLittleDictatorUniqueLookAtCaster(target, dictator);
+		}
+		for (UUID targetId : new ArrayList<>(session.gazeLockedPlayers)) {
+			if (currentTargets.contains(targetId)) {
+				continue;
+			}
+			ServerPlayer target = server.getPlayerList().getPlayer(targetId);
+			if (target != null) {
+				removeLittleDictatorUniqueSlowness(target);
+			}
+			session.gazeLockedPlayers.remove(targetId);
+			session.slowedPlayers.remove(targetId);
+		}
+	}
+
+	private static void syncLittleDictatorUniqueTargetLook(ServerPlayer target) {
+		if (target == null) {
+			return;
+		}
+		MinecraftServer server = target.level() == null ? null : target.level().getServer();
+		ServerPlayer dictator = findLittleDictatorUniqueCameraLockDictator(server, target);
+		if (dictator != null) {
+			forceLittleDictatorUniqueLookAtCaster(target, dictator);
+		}
+	}
+
+	private static boolean hasLittleDictatorUniqueLineOfSight(ServerLevel level, ServerPlayer dictator, ServerPlayer target) {
+		if (level == null || dictator == null || target == null || dictator.level() != level || target.level() != level) {
+			return false;
+		}
+		Vec3 start = dictator.getEyePosition();
+		Vec3 end = target.getEyePosition();
+		BlockHitResult hit = level.clip(new ClipContext(start, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, dictator));
+		return hit.getType() == HitResult.Type.MISS;
+	}
+
+	private static double getLittleDictatorUniqueScale(LittleDictatorUniqueSession session, long nowTick) {
+		if (session == null) {
+			return 1.0D;
+		}
+		if (nowTick < session.activeEndTick) {
+			long growthTicks = Math.max(1L, session.growthEndTick - session.startTick);
+			double progress = Mth.clamp((nowTick - session.startTick) / (double) growthTicks, 0.0D, 1.0D);
+			double eased = progress * progress * (3.0D - 2.0D * progress);
+			return 1.0D + (session.targetScale - 1.0D) * eased;
+		}
+		long shrinkTicks = Math.max(1L, session.endTick - session.activeEndTick);
+		double progress = Mth.clamp((nowTick - session.activeEndTick) / (double) shrinkTicks, 0.0D, 1.0D);
+		double eased = progress * progress * (3.0D - 2.0D * progress);
+		return 1.0D + (session.targetScale - 1.0D) * (1.0D - eased);
+	}
+
+	private static void syncLittleDictatorUniqueScale(ServerPlayer player, double scale) {
+		if (player == null) {
+			return;
+		}
+		AttributeInstance attribute = player.getAttribute(Attributes.SCALE);
+		if (attribute == null) {
+			return;
+		}
+		double amount = Math.max(1.0D, scale) - 1.0D;
+		AttributeModifier current = attribute.getModifier(LITTLE_DICTATOR_UNIQUE_SCALE_MODIFIER_ID);
+		if (Math.abs(amount) <= 1.0E-6D) {
+			if (current != null) {
+				attribute.removeModifier(LITTLE_DICTATOR_UNIQUE_SCALE_MODIFIER_ID);
+			}
+			return;
+		}
+		if (current == null
+				|| current.operation() != AttributeModifier.Operation.ADD_VALUE
+				|| Double.compare(current.amount(), amount) != 0) {
+			if (current != null) {
+				attribute.removeModifier(LITTLE_DICTATOR_UNIQUE_SCALE_MODIFIER_ID);
+			}
+			attribute.addTransientModifier(new AttributeModifier(LITTLE_DICTATOR_UNIQUE_SCALE_MODIFIER_ID, amount, AttributeModifier.Operation.ADD_VALUE));
+		}
+	}
+
+	private static void forceLittleDictatorUniqueLookAtCaster(ServerPlayer target, ServerPlayer dictator) {
+		if (target == null || dictator == null || target.connection == null || target.level() != dictator.level()) {
+			return;
+		}
+		Vec3 direction = dictator.getEyePosition().subtract(target.getEyePosition());
+		if (direction.lengthSqr() <= 1.0E-6D) {
+			return;
+		}
+		float targetYaw = yawFromDirection(direction);
+		float targetPitch = Mth.clamp(pitchFromDirection(direction), -90.0F, 90.0F);
+		float yaw = approachAngleDegrees(target.getYRot(), targetYaw, LITTLE_DICTATOR_UNIQUE_LOOK_STEP_DEGREES);
+		float pitch = approachDegrees(target.getXRot(), targetPitch, LITTLE_DICTATOR_UNIQUE_LOOK_STEP_DEGREES);
+		target.setYRot(yaw);
+		target.setXRot(pitch);
+		target.yRotO = yaw;
+		target.xRotO = pitch;
+		target.setYHeadRot(yaw);
+		target.yHeadRotO = yaw;
+		target.connection.send(new ClientboundPlayerRotationPacket(yaw, false, pitch, false));
+	}
+
+	private static List<ServerPlayer> getLittleDictatorUniquePlayersInRadius(ServerLevel level, ServerPlayer dictator, double radius) {
+		if (level == null || dictator == null || radius <= 0.0D) {
+			return List.of();
+		}
+		double radiusSqr = radius * radius;
+		Vec3 center = dictator.position().add(0.0D, Math.max(0.5D, dictator.getBbHeight() * 0.5D), 0.0D);
+		AABB area = new AABB(
+				center.x - radius,
+				center.y - radius,
+				center.z - radius,
+				center.x + radius,
+				center.y + radius,
+				center.z + radius
+		);
+		return level.getEntitiesOfClass(ServerPlayer.class, area, candidate -> {
+			if (candidate == null || candidate.isSpectator() || !candidate.isAlive()) {
+				return false;
+			}
+			Vec3 candidateCenter = candidate.position().add(0.0D, Math.max(0.5D, candidate.getBbHeight() * 0.5D), 0.0D);
+			return candidateCenter.distanceToSqr(center) <= radiusSqr;
+		});
+	}
+
+	private static void applyLittleDictatorUniqueSlowness(ServerPlayer target, LittleDictatorUniqueSession session) {
+		if (target == null || session == null) {
+			return;
+		}
+		session.slowedPlayers.add(target.getUUID());
+		MobEffectInstance current = target.getEffect(MobEffects.SLOWNESS);
+		int amplifier = LITTLE_DICTATOR_UNIQUE_SLOWNESS_LEVEL - 1;
+		if (current != null && current.getAmplifier() >= amplifier && current.getDuration() == MobEffectInstance.INFINITE_DURATION) {
+			return;
+		}
+		target.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, MobEffectInstance.INFINITE_DURATION, amplifier, false, true, true));
+	}
+
+	private static void removeLittleDictatorUniqueSlowness(ServerPlayer target) {
+		if (target == null) {
+			return;
+		}
+		MobEffectInstance current = target.getEffect(MobEffects.SLOWNESS);
+		if (current != null
+				&& current.getAmplifier() == LITTLE_DICTATOR_UNIQUE_SLOWNESS_LEVEL - 1
+				&& current.getDuration() == MobEffectInstance.INFINITE_DURATION) {
+			target.removeEffect(MobEffects.SLOWNESS);
+		}
+	}
+
+	private static void performLittleDictatorUniqueShock(ServerLevel level, ServerPlayer dictator, LittleDictatorUniqueSession session) {
+		if (level == null || dictator == null || session == null) {
+			return;
+		}
+		List<ServerPlayer> targets = getLittleDictatorUniquePlayersInRadius(level, dictator, session.radius).stream()
+				.filter(target -> target != dictator)
+				.toList();
+		if (!targets.isEmpty()) {
+			float ratio = (float) (0.10D + 0.10D * targets.size());
+			for (ServerPlayer target : targets) {
+				float health = target.getHealth();
+				if (health <= 1.0F) {
+					continue;
+				}
+				float damage = Math.min(health - 1.0F, health * ratio);
+				if (damage > 0.0F) {
+					target.invulnerableTime = 0;
+					target.setLastHurtByPlayer(dictator, 100);
+					target.setLastHurtByMob(dictator);
+					dictator.setLastHurtMob(target);
+					target.setHealth(Math.max(1.0F, health - damage));
+					target.hurtMarked = true;
+				}
+			}
+		}
+		Vec3 origin = dictator.position().add(0.0D, Math.max(1.0D, dictator.getBbHeight() * 0.45D), 0.0D);
+		for (ServerPlayer target : targets) {
+			shakeLittleDictatorUniqueScreen(target, origin);
+		}
+		shakeLittleDictatorUniqueScreen(dictator, origin);
+		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.WARDEN_SONIC_BOOM, SoundSource.PLAYERS, 4.0F, 0.72F);
+		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.GENERIC_EXPLODE, SoundSource.PLAYERS, 2.3F, 0.55F);
+		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.ANVIL_LAND, SoundSource.PLAYERS, 1.8F, 0.45F);
+		spawnLittleDictatorUniqueShockParticles(level, origin, session.radius);
+	}
+
+	private static void shakeLittleDictatorUniqueScreen(ServerPlayer player, Vec3 origin) {
+		if (player == null || player.connection == null || origin == null) {
+			return;
+		}
+		Vec3 direction = player.position().subtract(origin);
+		float yaw = direction.lengthSqr() <= 1.0E-6D ? player.getYRot() : yawFromDirection(direction);
+		player.connection.send(new ClientboundHurtAnimationPacket(player.getId(), yaw));
+	}
+
+	private static void performLittleDictatorUniqueDrain(ServerLevel level, ServerPlayer dictator, LittleDictatorUniqueSession session) {
+		if (level == null || dictator == null || session == null || dictator.getHealth() >= dictator.getMaxHealth()) {
+			return;
+		}
+		for (ServerPlayer target : getLittleDictatorUniquePlayersInRadius(level, dictator, session.radius)) {
+			if (dictator.getHealth() >= dictator.getMaxHealth()) {
+				break;
+			}
+			if (target == dictator || target.isSpectator() || !target.isAlive()) {
+				continue;
+			}
+			if (!hasLittleDictatorUniqueLineOfSight(level, dictator, target)) {
+				continue;
+			}
+			if (drainLittleDictatorUniqueResource(level, target, dictator, session)) {
+				spawnLittleDictatorUniqueDrainParticles(level, target, dictator);
+			}
+		}
+	}
+
+	private static boolean drainLittleDictatorUniqueResource(ServerLevel level, ServerPlayer target, ServerPlayer dictator, LittleDictatorUniqueSession session) {
+		if (level == null || target == null || dictator == null || session == null || dictator.getHealth() >= dictator.getMaxHealth()) {
+			return false;
+		}
+		boolean hasXp = getLittleDictatorUniqueTotalExperience(target) > 0;
+		boolean hasFood = hasLittleDictatorUniqueFoodResource(target);
+		if (!hasXp && !hasFood) {
+			return false;
+		}
+		boolean drainXp = hasXp && (!hasFood || level.random.nextBoolean());
+		if (drainXp) {
+			int drained = drainLittleDictatorUniqueExperience(target, 1);
+			if (drained <= 0) {
+				return false;
+			}
+			session.drainedExperienceBank += drained;
+		} else {
+			double drained = drainLittleDictatorUniqueFood(target, 1.0D);
+			if (drained <= 1.0E-6D) {
+				return false;
+			}
+			session.drainedFoodBank += drained;
+		}
+		convertLittleDictatorUniqueDrainedResourcesToHealth(dictator, session);
+		return true;
+	}
+
+	private static void convertLittleDictatorUniqueDrainedResourcesToHealth(ServerPlayer dictator, LittleDictatorUniqueSession session) {
+		if (dictator == null || session == null) {
+			return;
+		}
+		while (dictator.getHealth() < dictator.getMaxHealth() && session.drainedExperienceBank + 1.0E-6D >= session.xpPerHealth) {
+			session.drainedExperienceBank -= session.xpPerHealth;
+			dictator.heal(1.0F);
+		}
+		while (dictator.getHealth() < dictator.getMaxHealth() && session.drainedFoodBank + 1.0E-6D >= session.foodPerHealth) {
+			session.drainedFoodBank -= session.foodPerHealth;
+			dictator.heal(1.0F);
+		}
+	}
+
+	private static boolean hasLittleDictatorUniqueFoodResource(ServerPlayer target) {
+		if (target == null || target.getFoodData() == null) {
+			return false;
+		}
+		FoodData foodData = target.getFoodData();
+		return foodData.getFoodLevel() > 0 || foodData.getSaturationLevel() > 1.0E-4F;
+	}
+
+	private static double drainLittleDictatorUniqueFood(ServerPlayer target, double amount) {
+		if (target == null || target.getFoodData() == null || amount <= 0.0D) {
+			return 0.0D;
+		}
+		FoodData foodData = target.getFoodData();
+		double remaining = amount;
+		double drained = 0.0D;
+		int foodLevel = foodData.getFoodLevel();
+		int foodDrain = Math.min(foodLevel, (int) Math.ceil(remaining));
+		if (foodDrain > 0) {
+			foodData.setFoodLevel(foodLevel - foodDrain);
+			remaining -= foodDrain;
+			drained += foodDrain;
+		}
+		float saturation = foodData.getSaturationLevel();
+		if (remaining > 0.0D && saturation > 0.0F) {
+			float saturationDrain = Math.min(saturation, (float) remaining);
+			foodData.setSaturation(Math.max(0.0F, saturation - saturationDrain));
+			drained += saturationDrain;
+		}
+		return drained;
+	}
+
+	private static int getLittleDictatorUniqueTotalExperience(ServerPlayer player) {
+		if (player == null) {
+			return 0;
+		}
+		return Math.max(0, player.totalExperience);
+	}
+
+	private static int drainLittleDictatorUniqueExperience(ServerPlayer player, int amount) {
+		if (player == null || amount <= 0) {
+			return 0;
+		}
+		int current = getLittleDictatorUniqueTotalExperience(player);
+		if (current <= 0) {
+			return 0;
+		}
+		int drained = Math.min(current, amount);
+		setLittleDictatorUniqueTotalExperience(player, current - drained);
+		return drained;
+	}
+
+	private static void setLittleDictatorUniqueTotalExperience(ServerPlayer player, int totalExperience) {
+		if (player == null) {
+			return;
+		}
+		int remaining = Math.max(0, totalExperience);
+		int level = 0;
+		while (remaining >= getLittleDictatorUniqueXpNeededForNextLevel(level)) {
+			remaining -= getLittleDictatorUniqueXpNeededForNextLevel(level);
+			level++;
+		}
+		int needed = Math.max(1, getLittleDictatorUniqueXpNeededForNextLevel(level));
+		player.totalExperience = totalExperience;
+		player.experienceLevel = level;
+		player.experienceProgress = remaining / (float) needed;
+		if (player.connection != null) {
+			player.connection.send(new ClientboundSetExperiencePacket(player.experienceProgress, player.totalExperience, player.experienceLevel));
+		}
+	}
+
+	private static int getLittleDictatorUniqueXpNeededForNextLevel(int level) {
+		if (level >= 30) {
+			return 112 + (level - 30) * 9;
+		}
+		if (level >= 15) {
+			return 37 + (level - 15) * 5;
+		}
+		return 7 + level * 2;
+	}
+
+	private static void spawnLittleDictatorUniqueActivationParticles(ServerLevel level, ServerPlayer dictator) {
+		if (level == null || dictator == null) {
+			return;
+		}
+		Vec3 base = dictator.position().add(0.0D, 0.12D, 0.0D);
+		DustParticleOptions dust = new DustParticleOptions(0x520019, 1.25F);
+		for (int i = 0; i < 48; i++) {
+			double angle = (Math.PI * 2.0D * i) / 48.0D;
+			double x = base.x + Math.cos(angle) * 1.15D;
+			double z = base.z + Math.sin(angle) * 1.15D;
+			level.sendParticles(dust, x, base.y, z, 0, 0.0D, 0.055D, 0.0D, 1.0D);
+		}
+		level.sendParticles(ParticleTypes.SMOKE, dictator.getX(), dictator.getY() + 0.25D, dictator.getZ(), 24, 0.45D, 0.1D, 0.45D, 0.045D);
+	}
+
+	private static void spawnLittleDictatorUniqueGrowthParticles(ServerLevel level, ServerPlayer dictator, double scale) {
+		if (level == null || dictator == null) {
+			return;
+		}
+		double radius = Math.min(4.5D, 0.22D * Math.max(1.0D, scale));
+		double y = dictator.getY() + Math.min(dictator.getBbHeight() * 0.75D, Math.max(0.5D, scale * 0.32D));
+		DustParticleOptions dust = new DustParticleOptions(0x7A0026, 0.9F);
+		for (int i = 0; i < 18; i++) {
+			double angle = (Math.PI * 2.0D * i) / 18.0D + level.random.nextDouble() * 0.08D;
+			double x = dictator.getX() + Math.cos(angle) * radius;
+			double z = dictator.getZ() + Math.sin(angle) * radius;
+			level.sendParticles(dust, x, y, z, 0, 0.0D, 0.035D, 0.0D, 1.0D);
+		}
+	}
+
+	private static void spawnLittleDictatorUniqueShockParticles(ServerLevel level, Vec3 origin, double radius) {
+		if (level == null || origin == null || radius <= 0.0D) {
+			return;
+		}
+		double maxRadius = Math.max(3.0D, radius);
+		level.sendParticles(ParticleTypes.SONIC_BOOM, origin.x, origin.y, origin.z, 1, 0.0D, 0.0D, 0.0D, 0.0D);
+		level.sendParticles(ParticleTypes.EXPLOSION, origin.x, origin.y, origin.z, 26, 3.2D, 1.2D, 3.2D, 0.0D);
+		level.sendParticles(ParticleTypes.LARGE_SMOKE, origin.x, origin.y, origin.z, 240, 4.4D, 1.35D, 4.4D, 0.11D);
+		level.sendParticles(ParticleTypes.CLOUD, origin.x, origin.y - 0.1D, origin.z, 180, 2.8D, 0.55D, 2.8D, 0.38D);
+
+		DustParticleOptions edge = new DustParticleOptions(0xE22B34, 1.7F);
+		DustParticleOptions flash = new DustParticleOptions(0xF7FCFF, 1.25F);
+		DustParticleOptions blue = new DustParticleOptions(0x2F8CFF, 1.45F);
+		for (int i = 0; i < 260; i++) {
+			double angle = (Math.PI * 2.0D * i) / 260.0D;
+			double cos = Math.cos(angle);
+			double sin = Math.sin(angle);
+			double y = origin.y + (i % 9 - 4) * 0.12D;
+			DustParticleOptions dust = i % 5 == 0 ? flash : (i % 2 == 0 ? blue : edge);
+			level.sendParticles(dust, origin.x + cos * 1.55D, y, origin.z + sin * 1.55D, 0, cos * 1.05D, 0.08D, sin * 1.05D, 1.0D);
+		}
+		startLittleDictatorUniqueShockWave(level, origin, maxRadius);
+		spawnLittleDictatorUniqueShockWaveFrame(level, origin, maxRadius, 0.03D, 0);
+	}
+
+	private static void startLittleDictatorUniqueShockWave(ServerLevel level, Vec3 origin, double radius) {
+		if (level == null || origin == null || radius <= 0.0D) {
+			return;
+		}
+		long startTick = level.getGameTime();
+		LITTLE_DICTATOR_UNIQUE_SHOCK_WAVES.add(new LittleDictatorUniqueShockWaveSession(
+				level.dimension(),
+				origin,
+				startTick,
+				startTick + LITTLE_DICTATOR_UNIQUE_SHOCK_WAVE_TICKS,
+				radius
+		));
+	}
+
+	private static void tickLittleDictatorUniqueShockWaves(MinecraftServer server) {
+		if (server == null || LITTLE_DICTATOR_UNIQUE_SHOCK_WAVES.isEmpty()) {
+			return;
+		}
+		Iterator<LittleDictatorUniqueShockWaveSession> iterator = LITTLE_DICTATOR_UNIQUE_SHOCK_WAVES.iterator();
+		while (iterator.hasNext()) {
+			LittleDictatorUniqueShockWaveSession session = iterator.next();
+			ServerLevel level = server.getLevel(session.dimension());
+			if (level == null) {
+				iterator.remove();
+				continue;
+			}
+			long nowTick = level.getGameTime();
+			if (nowTick > session.endTick()) {
+				iterator.remove();
+				continue;
+			}
+			double duration = Math.max(1.0D, session.endTick() - session.startTick());
+			double progress = Mth.clamp((nowTick - session.startTick()) / duration, 0.0D, 1.0D);
+			spawnLittleDictatorUniqueShockWaveFrame(level, session.origin(), session.maxRadius(), progress, (int) (nowTick - session.startTick()));
+		}
+	}
+
+	private static void spawnLittleDictatorUniqueShockWaveFrame(ServerLevel level, Vec3 origin, double maxRadius, double progress, int ageTicks) {
+		if (level == null || origin == null || maxRadius <= 0.0D) {
+			return;
+		}
+		double eased = 1.0D - Math.pow(1.0D - Mth.clamp(progress, 0.0D, 1.0D), 1.8D);
+		double frontRadius = Math.max(0.9D, maxRadius * eased);
+		double thickness = 0.38D + frontRadius * 0.018D;
+		double goldenAngle = Math.PI * (3.0D - Math.sqrt(5.0D));
+		double phase = ageTicks * 0.31D;
+		double outwardSpeed = 0.45D + progress * 0.72D;
+
+		DustParticleOptions core = new DustParticleOptions(0xFFFFFF, 2.65F);
+		DustParticleOptions red = new DustParticleOptions(0xD9152D, 2.15F);
+		DustParticleOptions blue = new DustParticleOptions(0x1C76FF, 1.85F);
+		DustParticleOptions flash = new DustParticleOptions(0xF7FCFF, 1.35F);
+		DustParticleOptions paleBlue = new DustParticleOptions(0x9ED8FF, 1.5F);
+
+		for (int layer = -2; layer <= 2; layer++) {
+			double layerRadius = Math.max(0.35D, frontRadius + layer * thickness * 0.42D);
+			int samples = Math.max(300, Math.min(760, (int) Math.round(layerRadius * 13.0D)));
+			for (int i = 0; i < samples; i++) {
+				double unitY = 1.0D - 2.0D * ((i + 0.5D) / samples);
+				double horizontal = Math.sqrt(Math.max(0.0D, 1.0D - unitY * unitY));
+				double angle = i * goldenAngle + phase + layer * 0.27D;
+				Vec3 normal = new Vec3(Math.cos(angle) * horizontal, unitY * 0.9D, Math.sin(angle) * horizontal).normalize();
+				double ripple = Math.sin(i * 0.23D + ageTicks * 0.9D + layer) * thickness * 0.32D;
+				Vec3 pos = origin.add(normal.scale(layerRadius + ripple));
+				Vec3 velocity = normal.scale(outwardSpeed + level.random.nextDouble() * 0.12D);
+				DustParticleOptions dust = switch (Math.floorMod(i + layer + ageTicks, 6)) {
+					case 0 -> flash;
+					case 1 -> blue;
+					case 2 -> paleBlue;
+					case 3 -> red;
+					default -> core;
+				};
+				level.sendParticles(dust, pos.x, pos.y, pos.z, 0, velocity.x, velocity.y, velocity.z, 1.0D);
+				if ((i + ageTicks + layer) % 3 == 0) {
+					level.sendParticles(ParticleTypes.CLOUD, pos.x, pos.y, pos.z, 0, velocity.x * 1.18D, velocity.y * 0.72D, velocity.z * 1.18D, 1.0D);
+				}
+				if ((i + ageTicks + layer) % 8 == 0) {
+					level.sendParticles(ParticleTypes.LARGE_SMOKE, pos.x, pos.y, pos.z, 2, 0.09D, 0.09D, 0.09D, 0.035D);
+				}
+			}
+		}
+
+		for (int rib = 0; rib < 9; rib++) {
+			double tilt = -0.72D + rib * 0.18D;
+			int points = Math.max(160, Math.min(360, (int) Math.round(frontRadius * 8.0D)));
+			double ribPhase = phase + rib * 0.7D;
+			for (int i = 0; i < points; i++) {
+				double angle = (Math.PI * 2.0D * i) / points + ribPhase;
+				double serration = Math.sin(angle * 5.0D + ageTicks * 0.6D) * thickness * 0.6D;
+				Vec3 direction = new Vec3(Math.cos(angle), tilt + Math.sin(angle * 2.0D + rib) * 0.08D, Math.sin(angle)).normalize();
+				Vec3 pos = origin.add(direction.scale(frontRadius + serration));
+				Vec3 velocity = direction.scale(outwardSpeed * 0.82D);
+				level.sendParticles((i + rib) % 4 == 0 ? flash : (i % 2 == 0 ? blue : paleBlue), pos.x, pos.y, pos.z, 0, velocity.x, velocity.y, velocity.z, 1.0D);
+			}
+		}
+
+		int debris = Math.max(180, Math.min(460, (int) Math.round(frontRadius * 7.5D)));
+		for (int i = 0; i < debris; i++) {
+			double distance = Math.max(0.45D, frontRadius - level.random.nextDouble() * Math.max(0.5D, thickness * 4.0D));
+			double angle = level.random.nextDouble() * Math.PI * 2.0D;
+			double unitY = -0.7D + level.random.nextDouble() * 1.4D;
+			Vec3 direction = new Vec3(Math.cos(angle), unitY, Math.sin(angle)).normalize();
+			Vec3 pos = origin.add(direction.scale(distance));
+			Vec3 velocity = direction.scale(0.22D + progress * 0.36D);
+			DustParticleOptions dust = switch (level.random.nextInt(4)) {
+				case 0 -> red;
+				case 1 -> blue;
+				case 2 -> paleBlue;
+				default -> core;
+			};
+			level.sendParticles(dust, pos.x, pos.y, pos.z, 0, velocity.x, velocity.y + 0.03D, velocity.z, 1.0D);
+		}
+	}
+
+	private static void spawnLittleDictatorUniqueAmbientDrainParticles(ServerLevel level, ServerPlayer dictator, LittleDictatorUniqueSession session) {
+		if (level == null || dictator == null || session == null) {
+			return;
+		}
+		List<ServerPlayer> targets = getLittleDictatorUniquePlayersInRadius(level, dictator, Math.min(session.radius, 18.0D)).stream()
+				.filter(target -> target != dictator && hasLittleDictatorUniqueLineOfSight(level, dictator, target))
+				.toList();
+		for (ServerPlayer target : targets) {
+			if (level.random.nextFloat() < 0.65F) {
+				spawnLittleDictatorUniqueDrainParticles(level, target, dictator);
+			}
+		}
+	}
+
+	private static void spawnLittleDictatorUniqueDrainParticles(ServerLevel level, ServerPlayer target, ServerPlayer dictator) {
+		if (level == null || target == null || dictator == null) {
+			return;
+		}
+		Vec3 start = target.position().add(0.0D, Math.max(0.7D, target.getBbHeight() * 0.55D), 0.0D);
+		Vec3 end = dictator.position().add(0.0D, Math.max(1.0D, dictator.getBbHeight() * 0.45D), 0.0D);
+		Vec3 delta = end.subtract(start);
+		double length = delta.length();
+		if (length <= 1.0E-6D) {
+			return;
+		}
+		Vec3 axis = delta.scale(1.0D / length);
+		Vec3 right = axis.cross(new Vec3(0.0D, 1.0D, 0.0D));
+		if (right.lengthSqr() <= 1.0E-6D) {
+			right = new Vec3(1.0D, 0.0D, 0.0D);
+		} else {
+			right = right.normalize();
+		}
+		Vec3 up = right.cross(axis).normalize();
+		int steps = Math.max(28, Math.min(72, (int) Math.round(length * 4.2D)));
+		double phase = level.random.nextDouble() * Math.PI * 2.0D;
+		DustParticleOptions life = new DustParticleOptions(0x86FF12, 1.55F);
+		DustParticleOptions darkLife = new DustParticleOptions(0x1F8A16, 1.25F);
+		DustParticleOptions hunger = new DustParticleOptions(0xB7FF38, 1.35F);
+		DustParticleOptions spoiledHunger = new DustParticleOptions(0x2D6F20, 1.12F);
+		DustParticleOptions core = new DustParticleOptions(0xD8FF7A, 1.05F);
+		for (int ring = 0; ring < 4; ring++) {
+			double ringRadius = 0.55D + ring * 0.22D;
+			int points = 18 + ring * 8;
+			for (int i = 0; i < points; i++) {
+				double angle = phase + (Math.PI * 2.0D * i) / points + ring * 0.35D;
+				Vec3 pos = start
+						.add(right.scale(Math.cos(angle) * ringRadius))
+						.add(up.scale(Math.sin(angle) * ringRadius));
+				Vec3 toCenter = start.subtract(pos).normalize().scale(0.08D + ring * 0.018D).add(axis.scale(0.18D + ring * 0.04D));
+				level.sendParticles((ring & 1) == 0 ? life : hunger, pos.x, pos.y, pos.z, 0, toCenter.x, toCenter.y, toCenter.z, 1.0D);
+			}
+		}
+		for (int i = 1; i <= steps; i++) {
+			double t = i / (double) steps;
+			Vec3 base = start.add(delta.scale(t));
+			double taper = Math.sin(Math.PI * t);
+			double radius = 0.24D + taper * 1.08D;
+			double angle = phase + t * Math.PI * 11.5D;
+			Vec3 swirlA = base.add(right.scale(Math.cos(angle) * radius)).add(up.scale(Math.sin(angle) * radius));
+			Vec3 swirlB = base.add(right.scale(Math.cos(angle + Math.PI) * radius * 0.72D)).add(up.scale(Math.sin(angle + Math.PI) * radius * 0.72D));
+			Vec3 swirlC = base.add(right.scale(Math.cos(angle + Math.PI * 0.52D) * radius * 0.48D)).add(up.scale(Math.sin(angle + Math.PI * 0.52D) * radius * 0.48D));
+			Vec3 swirlD = base.add(right.scale(Math.cos(angle + Math.PI * 1.35D) * radius * 0.94D)).add(up.scale(Math.sin(angle + Math.PI * 1.35D) * radius * 0.94D));
+			Vec3 streamVelocity = axis.scale(0.36D + taper * 0.18D);
+			level.sendParticles(i % 3 == 0 ? darkLife : life, swirlA.x, swirlA.y, swirlA.z, 0, streamVelocity.x, streamVelocity.y, streamVelocity.z, 1.0D);
+			level.sendParticles(i % 4 == 0 ? spoiledHunger : hunger, swirlB.x, swirlB.y, swirlB.z, 0, streamVelocity.x * 0.82D, streamVelocity.y * 0.82D, streamVelocity.z * 0.82D, 1.0D);
+			level.sendParticles((i & 1) == 0 ? darkLife : spoiledHunger, swirlD.x, swirlD.y, swirlD.z, 0, streamVelocity.x * 0.64D, streamVelocity.y * 0.64D, streamVelocity.z * 0.64D, 1.0D);
+			if (i % 2 == 0) {
+				level.sendParticles(core, swirlC.x, swirlC.y, swirlC.z, 0, streamVelocity.x * 1.08D, streamVelocity.y * 1.08D, streamVelocity.z * 1.08D, 1.0D);
+			}
+			if (i % 3 == 0) {
+				level.sendParticles(ParticleTypes.SMOKE, base.x, base.y, base.z, 4, radius * 0.26D, radius * 0.2D, radius * 0.26D, 0.022D);
+			}
+			if (i % 5 == 0) {
+				level.sendParticles(ParticleTypes.WITCH, base.x, base.y, base.z, 2, radius * 0.18D, radius * 0.12D, radius * 0.18D, 0.026D);
+			}
+		}
+		for (int i = 0; i < 42; i++) {
+			double angle = phase + i * 0.57D;
+			double ringRadius = 0.45D + (i % 6) * 0.12D;
+			Vec3 pos = end
+					.add(right.scale(Math.cos(angle) * ringRadius))
+					.add(up.scale(Math.sin(angle) * ringRadius));
+			Vec3 inward = end.subtract(pos).normalize().scale(0.12D).add(axis.scale(0.1D));
+			level.sendParticles(i % 2 == 0 ? life : hunger, pos.x, pos.y, pos.z, 0, inward.x, inward.y, inward.z, 1.0D);
+		}
+		level.sendParticles(life, end.x, end.y, end.z, 34, 0.68D, 0.5D, 0.68D, 0.065D);
+		level.sendParticles(hunger, end.x, end.y - 0.15D, end.z, 26, 0.58D, 0.42D, 0.58D, 0.052D);
+		level.sendParticles(ParticleTypes.SMOKE, end.x, end.y, end.z, 16, 0.46D, 0.34D, 0.46D, 0.032D);
+	}
+
+	private static void cleanupAllLittleDictatorUniqueSessions(MinecraftServer server) {
+		if (LITTLE_DICTATOR_UNIQUE_SESSIONS.isEmpty()) {
+			return;
+		}
+		List<Map.Entry<UUID, LittleDictatorUniqueSession>> sessions = new ArrayList<>(LITTLE_DICTATOR_UNIQUE_SESSIONS.entrySet());
+		LITTLE_DICTATOR_UNIQUE_SESSIONS.clear();
+		for (Map.Entry<UUID, LittleDictatorUniqueSession> entry : sessions) {
+			cleanupLittleDictatorUniqueSession(server, entry.getKey(), entry.getValue(), false);
+		}
+	}
+
+	private static void endLittleDictatorUniqueActiveEffects(MinecraftServer server, LittleDictatorUniqueSession session) {
+		if (server == null || session == null || session.activeEffectsEnded) {
+			return;
+		}
+		session.activeEffectsEnded = true;
+		for (UUID targetId : new ArrayList<>(session.slowedPlayers)) {
+			ServerPlayer target = server.getPlayerList().getPlayer(targetId);
+			removeLittleDictatorUniqueSlowness(target);
+		}
+		session.slowedPlayers.clear();
+		session.gazeLockedPlayers.clear();
+	}
+
+	private static void cleanupLittleDictatorUniqueSession(MinecraftServer server, UUID dictatorId, LittleDictatorUniqueSession session, boolean emitParticles) {
+		if (dictatorId == null || session == null) {
+			return;
+		}
+		endLittleDictatorUniqueActiveEffects(server, session);
+		ServerPlayer dictator = server == null ? null : server.getPlayerList().getPlayer(dictatorId);
+		if (dictator != null) {
+			syncLittleDictatorUniqueScale(dictator, 1.0D);
+			if (emitParticles && dictator.level() instanceof ServerLevel level) {
+				level.sendParticles(ParticleTypes.SMOKE, dictator.getX(), dictator.getY() + 1.0D, dictator.getZ(), 24, 0.45D, 0.6D, 0.45D, 0.025D);
+			}
+		}
+		if (server != null) {
+			for (UUID targetId : session.slowedPlayers) {
+				ServerPlayer target = server.getPlayerList().getPlayer(targetId);
+				removeLittleDictatorUniqueSlowness(target);
+			}
+		}
+	}
+
+	private static void clearLittleDictatorUniqueTargetState(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		removeLittleDictatorUniqueSlowness(player);
+		for (LittleDictatorUniqueSession session : LITTLE_DICTATOR_UNIQUE_SESSIONS.values()) {
+			if (session == null) {
+				continue;
+			}
+			session.gazeLockedPlayers.remove(playerId);
+			session.slowedPlayers.remove(playerId);
+		}
+	}
+
+	private static boolean isLittleDictatorPlayer(ServerPlayer player) {
+		if (player == null) {
+			return false;
+		}
+		return getRace(player)
+				.map(race -> LITTLE_DICTATOR_RACE_ID.equals(sanitizePath(race.id)))
+				.orElse(false);
+	}
+
+	private static void tickLittleDictatorDefense(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		tickLittleDictatorDefenseWaves(server);
+		tickLittleDictatorDelayedPackets(server);
+		tickLittleDictatorPingEffects(server);
+	}
+
+	private static void tickLittleDictatorDelayedPackets(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		List<LittleDictatorDelayedPacket> readyPackets = new ArrayList<>();
+		synchronized (LITTLE_DICTATOR_DELAYED_PACKETS) {
+			if (LITTLE_DICTATOR_DELAYED_PACKETS.isEmpty()) {
+				return;
+			}
+			Iterator<LittleDictatorDelayedPacket> iterator = LITTLE_DICTATOR_DELAYED_PACKETS.iterator();
+			while (iterator.hasNext()) {
+				LittleDictatorDelayedPacket delayedPacket = iterator.next();
+				if (delayedPacket == null || nowTick < delayedPacket.releaseTick()) {
+					continue;
+				}
+				iterator.remove();
+				if (delayedPacket.playerId() == null
+						|| server.getPlayerList().getPlayer(delayedPacket.playerId()) == null
+						|| delayedPacket.action() == null) {
+					continue;
+				}
+				readyPackets.add(delayedPacket);
+			}
+		}
+		for (LittleDictatorDelayedPacket delayedPacket : readyPackets) {
+			LITTLE_DICTATOR_REPLAYING_DELAYED_PACKET.set(Boolean.TRUE);
+			try {
+				delayedPacket.action().run();
+			} catch (RuntimeException exception) {
+				Lg2.LOGGER.warn("Failed to replay delayed Little Dictator packet for {}", delayedPacket.playerId(), exception);
+			} finally {
+				LITTLE_DICTATOR_REPLAYING_DELAYED_PACKET.set(Boolean.FALSE);
+			}
+		}
+	}
+
+	private static void tickLittleDictatorDefenseWaves(MinecraftServer server) {
+		if (server == null || LITTLE_DICTATOR_DEFENSE_WAVES.isEmpty()) {
+			return;
+		}
+
+		Iterator<LittleDictatorDefenseWaveSession> iterator = LITTLE_DICTATOR_DEFENSE_WAVES.iterator();
+		while (iterator.hasNext()) {
+			LittleDictatorDefenseWaveSession session = iterator.next();
+			ServerLevel level = server.getLevel(session.dimension());
+			if (level == null) {
+				iterator.remove();
+				continue;
+			}
+
+			long nowTick = level.getGameTime();
+			if (nowTick > session.endTick()) {
+				iterator.remove();
+				continue;
+			}
+
+			double duration = Math.max(1.0D, session.endTick() - session.startTick());
+			double progress = Mth.clamp((nowTick - session.startTick()) / duration, 0.0D, 1.0D);
+			double radius = Math.max(0.25D, session.maxRadius() * progress);
+			spawnLittleDictatorDefenseWaveParticles(level, session.origin(), radius);
+		}
+	}
+
+	private static void tickLittleDictatorPingEffects(MinecraftServer server) {
+		if (server == null || LITTLE_DICTATOR_PING_SESSIONS.isEmpty()) {
+			return;
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		Iterator<Map.Entry<UUID, LittleDictatorPingSession>> iterator = LITTLE_DICTATOR_PING_SESSIONS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, LittleDictatorPingSession> entry = iterator.next();
+			UUID playerId = entry.getKey();
+			LittleDictatorPingSession session = entry.getValue();
+			if (session == null || nowTick >= session.endTick()) {
+				ServerPlayer onlinePlayer = server.getPlayerList().getPlayer(playerId);
+				if (onlinePlayer != null) {
+					clearLittleDictatorPingEffect(onlinePlayer);
+				} else {
+					LITTLE_DICTATOR_PING_OVERLAY_ACTIVE.remove(playerId);
+				}
+				LITTLE_DICTATOR_LAST_DELAYED_PACKET_RELEASE_TICKS.remove(playerId);
+				iterator.remove();
+				continue;
+			}
+
+			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+			if (player == null || player.connection == null) {
+				continue;
+			}
+			if (isLittleDictatorPlayer(player)) {
+				clearLittleDictatorPingEffect(player);
+				LITTLE_DICTATOR_LAST_DELAYED_PACKET_RELEASE_TICKS.remove(playerId);
+				iterator.remove();
+				continue;
+			}
+
+			if (nowTick >= session.nextUpdateTick()) {
+				int fakePingMs = Mth.nextInt(player.getRandom(), session.minPingMs(), session.maxPingMs());
+				sendLittleDictatorLatency(player, fakePingMs);
+				syncLittleDictatorDefenseOverlay(player, true, true);
+				entry.setValue(new LittleDictatorPingSession(
+						session.endTick(),
+						session.minPingMs(),
+						session.maxPingMs(),
+						nowTick + LITTLE_DICTATOR_DEFENSE_PING_UPDATE_TICKS,
+						fakePingMs
+				));
+				continue;
+			}
+
+			if ((nowTick + player.getId()) % LITTLE_DICTATOR_DEFENSE_OVERLAY_FRAME_TICKS == 0L) {
+				syncLittleDictatorDefenseOverlay(player, true, true);
+			}
+		}
+	}
+
+	private static void clearLittleDictatorPingEffect(ServerPlayer player) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		sendLittleDictatorActualLatency(player);
+		syncLittleDictatorDefenseOverlay(player, false, true);
+	}
+
+	public static boolean delayLittleDictatorServerboundPacket(ServerPlayer player, Runnable action) {
+		if (player == null || player.connection == null || action == null) {
+			return false;
+		}
+		if (isLittleDictatorPlayer(player)) {
+			return false;
+		}
+		if (Boolean.TRUE.equals(LITTLE_DICTATOR_REPLAYING_DELAYED_PACKET.get())) {
+			return false;
+		}
+		LittleDictatorPingSession session = LITTLE_DICTATOR_PING_SESSIONS.get(player.getUUID());
+		if (session == null) {
+			return false;
+		}
+		MinecraftServer server = player.level() instanceof ServerLevel serverLevel ? serverLevel.getServer() : null;
+		long nowTick = server == null ? player.level().getGameTime() : server.overworld().getGameTime();
+		if (nowTick >= session.endTick()) {
+			return false;
+		}
+
+		int pingMs = session.lastSentPingMs() > 0
+				? session.lastSentPingMs()
+				: Mth.nextInt(player.getRandom(), session.minPingMs(), session.maxPingMs());
+		int delayTicks = Mth.clamp(
+				(int) Math.ceil(pingMs / 50.0D),
+				LITTLE_DICTATOR_DEFENSE_MIN_PACKET_DELAY_TICKS,
+				LITTLE_DICTATOR_DEFENSE_MAX_PACKET_DELAY_TICKS
+		);
+		return enqueueLittleDictatorDelayedPacket(player, delayTicks, action);
+	}
+
+	public static boolean delayLittleDictatorClientboundPacket(ServerPlayer player, Packet<?> packet, Runnable action) {
+		if (player == null || player.connection == null || packet == null || action == null) {
+			return false;
+		}
+		if (isLittleDictatorPlayer(player)) {
+			return false;
+		}
+		if (Boolean.TRUE.equals(LITTLE_DICTATOR_REPLAYING_DELAYED_PACKET.get())) {
+			return false;
+		}
+		LittleDictatorPingSession session = LITTLE_DICTATOR_PING_SESSIONS.get(player.getUUID());
+		if (session == null) {
+			return false;
+		}
+		MinecraftServer server = player.level() instanceof ServerLevel serverLevel ? serverLevel.getServer() : null;
+		long nowTick = server == null ? player.level().getGameTime() : server.overworld().getGameTime();
+		if (nowTick >= session.endTick()) {
+			return false;
+		}
+
+		int pingMs = session.lastSentPingMs() > 0
+				? session.lastSentPingMs()
+				: Mth.nextInt(player.getRandom(), session.minPingMs(), session.maxPingMs());
+		int delayTicks = Mth.clamp(
+				(int) Math.ceil(pingMs / 50.0D),
+				LITTLE_DICTATOR_DEFENSE_MIN_PACKET_DELAY_TICKS,
+				LITTLE_DICTATOR_DEFENSE_MAX_PACKET_DELAY_TICKS
+		);
+		return enqueueLittleDictatorDelayedPacket(player, delayTicks, action);
+	}
+
+	private static boolean enqueueLittleDictatorDelayedPacket(ServerPlayer player, int delayTicks, Runnable action) {
+		if (player == null || action == null) {
+			return false;
+		}
+		MinecraftServer server = player.level() instanceof ServerLevel serverLevel ? serverLevel.getServer() : null;
+		long nowTick = server == null ? player.level().getGameTime() : server.overworld().getGameTime();
+		UUID playerId = player.getUUID();
+		long targetReleaseTick = nowTick + delayTicks;
+		long lastReleaseTick = LITTLE_DICTATOR_LAST_DELAYED_PACKET_RELEASE_TICKS.getOrDefault(playerId, Long.MIN_VALUE);
+		long releaseTick = Math.max(targetReleaseTick, lastReleaseTick);
+		LITTLE_DICTATOR_LAST_DELAYED_PACKET_RELEASE_TICKS.put(playerId, releaseTick);
+		synchronized (LITTLE_DICTATOR_DELAYED_PACKETS) {
+			int queuedForPlayer = 0;
+			Iterator<LittleDictatorDelayedPacket> iterator = LITTLE_DICTATOR_DELAYED_PACKETS.iterator();
+			while (iterator.hasNext()) {
+				LittleDictatorDelayedPacket delayedPacket = iterator.next();
+				if (delayedPacket != null && playerId.equals(delayedPacket.playerId())) {
+					queuedForPlayer++;
+					if (queuedForPlayer >= LITTLE_DICTATOR_DEFENSE_MAX_DELAYED_PACKETS_PER_PLAYER) {
+						iterator.remove();
+						break;
+					}
+				}
+			}
+			LITTLE_DICTATOR_DELAYED_PACKETS.add(new LittleDictatorDelayedPacket(playerId, releaseTick, action));
+		}
+		return true;
+	}
+
+	private static void sendLittleDictatorActualLatency(ServerPlayer player) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		sendLittleDictatorLatency(player, Math.max(0, player.connection.latency()));
+	}
+
+	private static void sendLittleDictatorLatency(ServerPlayer player, int latencyMs) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		ClientboundPlayerInfoUpdatePacket packet = PolymerEntityUtils.createMutablePlayerListPacket(
+				EnumSet.of(ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LATENCY)
+		);
+		packet.entries().add(new ClientboundPlayerInfoUpdatePacket.Entry(
+				player.getUUID(),
+				player.getGameProfile(),
+				true,
+				Math.max(0, latencyMs),
+				player.gameMode == null ? GameType.SURVIVAL : player.gameMode.getGameModeForPlayer(),
+				player.getTabListDisplayName(),
+				true,
+				0,
+				(RemoteChatSession.Data) null
+		));
+		player.connection.send(packet);
+	}
+
+	private static void syncLittleDictatorDefenseOverlay(ServerPlayer player, boolean enabled, boolean force) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		if (!enabled) {
+			if (force || LITTLE_DICTATOR_PING_OVERLAY_ACTIVE.remove(playerId)) {
+				player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 0, 10));
+				player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
+			}
+			return;
+		}
+		if (!force && LITTLE_DICTATOR_PING_OVERLAY_ACTIVE.contains(playerId)) {
+			return;
+		}
+		player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 12, 0));
+		player.connection.send(new ClientboundSetTitleTextPacket(buildLittleDictatorDefenseTitle(player)));
+		LITTLE_DICTATOR_PING_OVERLAY_ACTIVE.add(playerId);
+	}
+
+	private static Component buildLittleDictatorDefenseTitle(ServerPlayer player) {
+		long gameTime = player == null || player.level() == null ? 0L : player.level().getGameTime();
+		int frameIndex = (int) ((gameTime / LITTLE_DICTATOR_DEFENSE_OVERLAY_FRAME_TICKS) % LITTLE_DICTATOR_DEFENSE_GLYPH_FRAMES.length);
+		if (PolymerResourcePackUtils.hasMainPack(player)) {
+			Component glyph = Component.literal(LITTLE_DICTATOR_DEFENSE_GLYPH_FRAMES[frameIndex])
+					.withStyle(style -> style
+							.withColor(LITTLE_DICTATOR_DEFENSE_TITLE_COLOR)
+							.withItalic(false)
+							.withFont(LITTLE_DICTATOR_DEFENSE_FONT)
+							.withShadowColor(0x00000000));
+			return glyph;
+		}
+		return Component.empty();
+	}
+
+	private static void playLittleDictatorDefenseActivationSound(ServerPlayer player, Vec3 origin) {
+		if (player == null || player.connection == null || origin == null) {
+			return;
+		}
+		Holder<SoundEvent> sound = PolymerResourcePackUtils.hasMainPack(player)
+				? LITTLE_DICTATOR_DEFENSE_SOUND
+				: LITTLE_DICTATOR_DEFENSE_FALLBACK_SOUND;
+		player.connection.send(new ClientboundSoundPacket(
+				sound,
+				SoundSource.PLAYERS,
+				origin.x,
+				origin.y,
+				origin.z,
+				LITTLE_DICTATOR_DEFENSE_SOUND_VOLUME,
+				LITTLE_DICTATOR_DEFENSE_SOUND_PITCH,
+				player.level().getGameTime() ^ player.getUUID().getLeastSignificantBits()
+		));
+	}
+
+	private static void spawnLittleDictatorDefenseWaveParticles(ServerLevel level, Vec3 origin, double radius) {
+		if (level == null || origin == null || radius <= 0.0D) {
+			return;
+		}
+
+		DustParticleOptions primary = new DustParticleOptions(LITTLE_DICTATOR_DEFENSE_WAVE_PRIMARY_COLOR, 0.92F);
+		DustParticleOptions secondary = new DustParticleOptions(LITTLE_DICTATOR_DEFENSE_WAVE_SECONDARY_COLOR, 0.68F);
+		int points = Math.max(18, (int) Math.round(radius * 5.0D));
+		double[] verticalOffsets = { -1.0D, -0.45D, 0.15D, 0.75D };
+
+		for (double verticalOffset : verticalOffsets) {
+			double ringRadius = Math.max(0.35D, radius * (1.0D - Math.abs(verticalOffset) * 0.2D));
+			for (int index = 0; index < points; index++) {
+				double angle = (Math.PI * 2.0D * index) / points;
+				double x = origin.x + Math.cos(angle) * ringRadius;
+				double y = origin.y + verticalOffset;
+				double z = origin.z + Math.sin(angle) * ringRadius;
+				DustParticleOptions particle = (index & 1) == 0 ? primary : secondary;
+				level.sendParticles(particle, x, y, z, 1, 0.01D, 0.01D, 0.01D, 0.0D);
+			}
+		}
 	}
 
 	private static boolean hasMilkAbsoluteHeartToSpend(ServerPlayer player) {
@@ -4298,7 +7291,7 @@ public final class ServerRaceSystem {
 		}
 		if (MILK_MOUSE_SESSIONS.containsKey(player.getUUID())) {
 			player.displayClientMessage(
-					Component.literal("Вы уже в форме чешуйницы.").withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					Component.literal("Р’С‹ СѓР¶Рµ РІ С„РѕСЂРјРµ С‡РµС€СѓР№РЅРёС†С‹.").withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
 			return 0;
@@ -4363,7 +7356,7 @@ public final class ServerRaceSystem {
 		List<ServerPlayer> candidates = collectMilkPocketInviteCandidates(player);
 		if (candidates.isEmpty()) {
 			player.displayClientMessage(
-					Component.literal("Некого приглашать.")
+					Component.literal("РќРµРєРѕРіРѕ РїСЂРёРіР»Р°С€Р°С‚СЊ.")
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
@@ -5116,6 +8109,304 @@ public final class ServerRaceSystem {
 			warden.increaseAngerAt(player, 150, false);
 			warden.setAttackTarget(player);
 		}
+	}
+
+	public static boolean shouldSuppressLittleDictatorMobDetection(Mob mob, LivingEntity target) {
+		if (!(target instanceof ServerPlayer player) || mob == null || getLittleDictatorStockAbility(player) == null) {
+			return false;
+		}
+		if (isLittleDictatorNeutralMob(mob)) {
+			return true;
+		}
+		return isLittleDictatorHostileMob(mob) && !isLittleDictatorRetaliating(mob, player);
+	}
+
+	public static void handleLittleDictatorCombatDamage(ServerLevel level, LivingEntity victim, DamageSource damageSource, float damage, boolean applied) {
+		if (!applied || level == null || victim == null || damageSource == null || damage <= 0.0F) {
+			return;
+		}
+		LivingEntity attacker = resolveDamageAttacker(damageSource);
+		if (!(attacker instanceof ServerPlayer player)
+				|| player == victim
+				|| getLittleDictatorStockAbility(player) == null) {
+			return;
+		}
+
+		boolean handledAny = false;
+		for (Mob mob : getMilkStockRetaliationGroup(victim)) {
+			if (isLittleDictatorHostileMob(mob)) {
+				markLittleDictatorRetaliating(mob, player);
+				handledAny = true;
+			} else if (isLittleDictatorNeutralMob(mob)) {
+				markLittleDictatorNeutralFlee(level, mob, player);
+				handledAny = true;
+			}
+		}
+		if (!handledAny && victim instanceof Mob mob) {
+			if (isLittleDictatorHostileMob(mob)) {
+				markLittleDictatorRetaliating(mob, player);
+			} else if (isLittleDictatorNeutralMob(mob)) {
+				markLittleDictatorNeutralFlee(level, mob, player);
+			}
+		}
+	}
+
+	private static void tickLittleDictatorStock(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		cleanupLittleDictatorRetaliation(server);
+		cleanupLittleDictatorNeutralFlee(server);
+
+		List<ServerPlayer> dictatorPlayers = new ArrayList<>();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (player.isAlive() && !player.isSpectator() && getLittleDictatorStockAbility(player) != null) {
+				dictatorPlayers.add(player);
+			}
+		}
+		if (dictatorPlayers.isEmpty()) {
+			return;
+		}
+
+		for (ServerPlayer player : dictatorPlayers) {
+			ServerLevel level = player.level() instanceof ServerLevel serverLevel ? serverLevel : null;
+			if (level == null) {
+				continue;
+			}
+			AABB area = player.getBoundingBox().inflate(LITTLE_DICTATOR_MOB_SCAN_RADIUS_BLOCKS);
+			Set<UUID> processed = new HashSet<>();
+			for (Mob mob : level.getEntitiesOfClass(Mob.class, area, mob -> mob != null && mob.isAlive())) {
+				if (!processed.add(mob.getUUID())) {
+					continue;
+				}
+				if (isLittleDictatorNeutralMob(mob)) {
+					clearLittleDictatorMobAggression(mob, player);
+					if (shouldLittleDictatorNeutralFlee(level, mob, player)) {
+						moveMilkStockMobAway(level, mob, getMilkStockMovementBody(mob), player, 6.0D, LITTLE_DICTATOR_NEUTRAL_FLEE_SPEED, false);
+					}
+					continue;
+				}
+				if (isLittleDictatorHostileMob(mob) && !isLittleDictatorRetaliating(mob, player)) {
+					clearLittleDictatorMobAggression(mob, player);
+				}
+			}
+		}
+	}
+
+	private static void cleanupLittleDictatorRetaliation(MinecraftServer server) {
+		if (server == null || LITTLE_DICTATOR_RETALIATING_MOBS.isEmpty()) {
+			return;
+		}
+		Iterator<Map.Entry<UUID, UUID>> iterator = LITTLE_DICTATOR_RETALIATING_MOBS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, UUID> entry = iterator.next();
+			Entity entity = findEntity(server, entry.getKey());
+			ServerPlayer player = entry.getValue() == null ? null : server.getPlayerList().getPlayer(entry.getValue());
+			if (!(entity instanceof Mob mob)
+					|| player == null
+					|| !mob.isAlive()
+					|| !player.isAlive()
+					|| player.isSpectator()
+					|| player.level() != mob.level()
+					|| getLittleDictatorStockAbility(player) == null
+					|| !isLittleDictatorHostileMob(mob)) {
+				iterator.remove();
+				continue;
+			}
+			if (mob.getTarget() != player && mob.getLastHurtByMob() != player) {
+				iterator.remove();
+			}
+		}
+	}
+
+	private static void cleanupLittleDictatorNeutralFlee(MinecraftServer server) {
+		if (server == null || LITTLE_DICTATOR_NEUTRAL_FLEE_UNTIL.isEmpty()) {
+			return;
+		}
+		long nowTick = server.overworld().getGameTime();
+		Iterator<Map.Entry<UUID, Long>> iterator = LITTLE_DICTATOR_NEUTRAL_FLEE_UNTIL.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, Long> entry = iterator.next();
+			Entity entity = findEntity(server, entry.getKey());
+			if (!(entity instanceof Mob mob) || !mob.isAlive() || !isLittleDictatorNeutralMob(mob) || nowTick >= entry.getValue()) {
+				iterator.remove();
+			}
+		}
+	}
+
+	private static void markLittleDictatorRetaliating(Mob mob, ServerPlayer player) {
+		if (mob == null || player == null || !mob.isAlive()) {
+			return;
+		}
+		LITTLE_DICTATOR_RETALIATING_MOBS.put(mob.getUUID(), player.getUUID());
+		mob.setLastHurtByMob(player);
+		mob.setTarget(player);
+		if (mob instanceof NeutralMob neutral && neutral.canAttack(player)) {
+			neutral.setLastHurtByMob(player);
+			neutral.setTarget(player);
+			neutral.setPersistentAngerTarget(EntityReference.<LivingEntity>of(player));
+			neutral.startPersistentAngerTimer();
+		}
+		if (mob instanceof Warden warden) {
+			warden.increaseAngerAt(player, 150, false);
+			warden.setAttackTarget(player);
+		}
+	}
+
+	private static void markLittleDictatorNeutralFlee(ServerLevel level, Mob mob, ServerPlayer player) {
+		if (level == null || mob == null || player == null || !mob.isAlive()) {
+			return;
+		}
+		clearLittleDictatorMobAggression(mob, player);
+		LITTLE_DICTATOR_NEUTRAL_FLEE_UNTIL.put(mob.getUUID(), level.getGameTime() + LITTLE_DICTATOR_NEUTRAL_FLEE_TICKS);
+		moveMilkStockMobAway(level, mob, getMilkStockMovementBody(mob), player, 6.0D, LITTLE_DICTATOR_NEUTRAL_FLEE_SPEED, false);
+	}
+
+	private static void clearLittleDictatorMobAggression(Mob mob, ServerPlayer player) {
+		clearMilkStockMobAggression(mob, player);
+		if (mob != null) {
+			mob.setLastHurtByMob(null);
+		}
+	}
+
+	private static boolean shouldLittleDictatorNeutralFlee(ServerLevel level, Mob mob, ServerPlayer player) {
+		if (level == null || mob == null || player == null) {
+			return false;
+		}
+		Long until = LITTLE_DICTATOR_NEUTRAL_FLEE_UNTIL.get(mob.getUUID());
+		return until != null && until > level.getGameTime();
+	}
+
+	private static boolean isLittleDictatorNeutralMob(Mob mob) {
+		return mob != null && mob.isAlive() && mob instanceof NeutralMob;
+	}
+
+	private static boolean isLittleDictatorHostileMob(Mob mob) {
+		return mob != null
+				&& mob.isAlive()
+				&& !isMilkMouseSilverfish(mob)
+				&& !(mob instanceof NeutralMob)
+				&& (mob instanceof Enemy || mob.getType().getCategory() == MobCategory.MONSTER);
+	}
+
+	private static boolean isLittleDictatorRetaliating(Mob mob, ServerPlayer player) {
+		return mob != null && player != null && player.getUUID().equals(LITTLE_DICTATOR_RETALIATING_MOBS.get(mob.getUUID()));
+	}
+
+	private static boolean canLittleDictatorAttackRedirectMob(Mob mob, LivingEntity target) {
+		if (mob == null || target == null || !mob.isAlive() || mob == target) {
+			return false;
+		}
+		if (!isLittleDictatorNeutralMob(mob) && !isLittleDictatorHostileMob(mob)) {
+			return false;
+		}
+		if (mob.isPassengerOfSameVehicle(target) || target.isPassengerOfSameVehicle(mob)) {
+			return false;
+		}
+		return mob.canAttack(target) || mob instanceof NeutralMob || mob instanceof Enemy || mob.getType().getCategory() == MobCategory.MONSTER;
+	}
+
+	private static void applyLittleDictatorAttackTarget(Mob mob, LivingEntity target) {
+		if (mob == null || target == null || !mob.isAlive()) {
+			return;
+		}
+		mob.setLastHurtByMob(target);
+		mob.setTarget(target);
+		if (mob instanceof NeutralMob neutral && target instanceof ServerPlayer targetPlayer && neutral.canAttack(targetPlayer)) {
+			neutral.setPersistentAngerTarget(EntityReference.<LivingEntity>of(targetPlayer));
+			neutral.startPersistentAngerTimer();
+		}
+		if (mob instanceof Warden warden) {
+			warden.increaseAngerAt(target, 150, false);
+			warden.setAttackTarget(target);
+		}
+	}
+
+	private static double getLittleDictatorAttackAggroRadiusBlocks(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorAttackAggroRadiusBlocks,
+				LITTLE_DICTATOR_ATTACK_DEFAULT_AGGRO_RADIUS_BLOCKS
+		);
+	}
+
+	private static double getLittleDictatorAttackMobStrengthSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorAttackMobStrengthSeconds,
+				LITTLE_DICTATOR_ATTACK_DEFAULT_MOB_STRENGTH_SECONDS
+		);
+	}
+
+	private static double getLittleDictatorAttackPlayerSlownessSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorAttackPlayerSlownessSeconds,
+				LITTLE_DICTATOR_ATTACK_DEFAULT_PLAYER_SLOWNESS_SECONDS
+		);
+	}
+
+	private static double getLittleDictatorDefenseRadiusBlocks(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorDefenseRadiusBlocks,
+				LITTLE_DICTATOR_DEFENSE_DEFAULT_RADIUS_BLOCKS
+		);
+	}
+
+	private static double getLittleDictatorDefenseDurationSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorDefensePingDurationSeconds,
+				LITTLE_DICTATOR_DEFENSE_DEFAULT_DURATION_SECONDS
+		);
+	}
+
+	private static int getLittleDictatorDefenseMinFakePingMs(RaceAbilityConfig ability) {
+		return Math.max(
+				0,
+				ability == null || ability.littleDictatorDefenseMinFakePingMs <= 0
+						? LITTLE_DICTATOR_DEFENSE_DEFAULT_MIN_FAKE_PING_MS
+						: ability.littleDictatorDefenseMinFakePingMs
+		);
+	}
+
+	private static int getLittleDictatorDefenseMaxFakePingMs(RaceAbilityConfig ability) {
+		int min = getLittleDictatorDefenseMinFakePingMs(ability);
+		int value = ability == null || ability.littleDictatorDefenseMaxFakePingMs <= 0
+				? LITTLE_DICTATOR_DEFENSE_DEFAULT_MAX_FAKE_PING_MS
+				: ability.littleDictatorDefenseMaxFakePingMs;
+		return Math.max(min, value);
+	}
+
+	private static double getLittleDictatorUniqueRadiusBlocks(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorUniqueRadiusBlocks,
+				LITTLE_DICTATOR_UNIQUE_DEFAULT_RADIUS_BLOCKS
+		);
+	}
+
+	private static double getLittleDictatorUniqueDurationSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorUniqueDurationSeconds,
+				LITTLE_DICTATOR_UNIQUE_DEFAULT_DURATION_SECONDS
+		);
+	}
+
+	private static double getLittleDictatorUniqueShockIntervalSeconds(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorUniqueShockIntervalSeconds,
+				LITTLE_DICTATOR_UNIQUE_DEFAULT_SHOCK_INTERVAL_SECONDS
+		);
+	}
+
+	private static double getLittleDictatorUniqueXpPerHealth(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorUniqueXpPerHealth,
+				LITTLE_DICTATOR_UNIQUE_DEFAULT_XP_PER_HEALTH
+		);
+	}
+
+	private static double getLittleDictatorUniqueFoodPerHealth(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorUniqueFoodPerHealth,
+				LITTLE_DICTATOR_UNIQUE_DEFAULT_FOOD_PER_HEALTH
+		);
 	}
 
 	public static boolean shouldCancelMarkRangedUsePacket(ServerPlayer player, InteractionHand hand) {
@@ -6133,6 +9424,92 @@ public final class ServerRaceSystem {
 		return server.getWorldPath(LevelResource.ROOT).resolve("data").resolve(WOMAN_SHNYAGA_STATE_FILE_NAME);
 	}
 
+	private static void saveLittleDictatorTaxChests(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		Path path = getLittleDictatorTaxChestsStatePath(server);
+		LittleDictatorTaxChestPersistedState state = new LittleDictatorTaxChestPersistedState();
+		for (Map.Entry<UUID, Set<LittleDictatorTaxChestRef>> entry : LITTLE_DICTATOR_TAX_CHESTS.entrySet()) {
+			UUID ownerId = entry.getKey();
+			Set<LittleDictatorTaxChestRef> refs = entry.getValue();
+			if (ownerId == null || refs == null || refs.isEmpty()) {
+				continue;
+			}
+			List<LittleDictatorTaxChestPersistedRef> storedRefs = new ArrayList<>();
+			for (LittleDictatorTaxChestRef ref : refs) {
+				if (ref == null || ref.dimension() == null || ref.pos() == null) {
+					continue;
+				}
+				storedRefs.add(new LittleDictatorTaxChestPersistedRef(ref.dimension().identifier().toString(), ref.pos()));
+			}
+			if (!storedRefs.isEmpty()) {
+				state.chests.put(ownerId.toString(), storedRefs);
+			}
+		}
+		try {
+			Files.createDirectories(path.getParent());
+			try (Writer writer = Files.newBufferedWriter(path)) {
+				GSON.toJson(state, writer);
+			}
+		} catch (IOException exception) {
+			Lg2.LOGGER.error("Failed to save little dictator tax chests to {}", path, exception);
+		}
+	}
+
+	private static void loadLittleDictatorTaxChests(MinecraftServer server) {
+		LITTLE_DICTATOR_TAX_CHESTS.clear();
+		if (server == null) {
+			return;
+		}
+		Path path = getLittleDictatorTaxChestsStatePath(server);
+		if (!Files.exists(path)) {
+			return;
+		}
+		try (Reader reader = Files.newBufferedReader(path)) {
+			LittleDictatorTaxChestPersistedState state = GSON.fromJson(reader, LittleDictatorTaxChestPersistedState.class);
+			if (state == null || state.chests == null || state.chests.isEmpty()) {
+				return;
+			}
+			for (Map.Entry<String, List<LittleDictatorTaxChestPersistedRef>> entry : state.chests.entrySet()) {
+				UUID ownerId;
+				try {
+					ownerId = UUID.fromString(entry.getKey());
+				} catch (IllegalArgumentException exception) {
+					continue;
+				}
+				List<LittleDictatorTaxChestPersistedRef> storedRefs = entry.getValue();
+				if (storedRefs == null || storedRefs.isEmpty()) {
+					continue;
+				}
+				Set<LittleDictatorTaxChestRef> refs = new HashSet<>();
+				for (LittleDictatorTaxChestPersistedRef stored : storedRefs) {
+					if (stored == null || stored.dimension == null || stored.dimension.isBlank()) {
+						continue;
+					}
+					Identifier dimensionId = Identifier.tryParse(stored.dimension);
+					if (dimensionId == null) {
+						continue;
+					}
+					ResourceKey<Level> dimension = ResourceKey.create(Registries.DIMENSION, dimensionId);
+					refs.add(new LittleDictatorTaxChestRef(dimension, new BlockPos(stored.x, stored.y, stored.z)));
+				}
+				if (!refs.isEmpty()) {
+					LITTLE_DICTATOR_TAX_CHESTS.put(ownerId, refs);
+				}
+			}
+			if (pruneLittleDictatorTaxChests(server)) {
+				saveLittleDictatorTaxChests(server);
+			}
+		} catch (Exception exception) {
+			Lg2.LOGGER.error("Failed to load little dictator tax chests from {}", path, exception);
+		}
+	}
+
+	private static Path getLittleDictatorTaxChestsStatePath(MinecraftServer server) {
+		return server.getWorldPath(LevelResource.ROOT).resolve("data").resolve(LITTLE_DICTATOR_TAX_CHESTS_STATE_FILE_NAME);
+	}
+
 	private static int useWomanAttack(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
 		if (player == null || ability == null || player.isSpectator() || !player.isAlive()) {
 			return 0;
@@ -6731,6 +10108,7 @@ public final class ServerRaceSystem {
 		syncGennadiyDonkeyManualTrigger(player);
 		syncGennadiyDonkeyManualVisual(player);
 		syncGennadiyDefenseHeadLock(player);
+		lockLittleDictatorUniqueCasterMovement(player);
 		WomanAttackChargeSession session = WOMAN_ATTACK_CHARGE_SESSIONS.get(player.getUUID());
 		if (session != null) {
 			syncWomanAttackAirTrigger(player, session);
@@ -7263,7 +10641,7 @@ public final class ServerRaceSystem {
 		ItemStack held = player.getMainHandItem();
 		if (!isMarkThrowableAxe(held)) {
 			player.displayClientMessage(
-					Component.literal("Возьмите в руку топор, чтобы бросить его.").withStyle(ChatFormatting.RED),
+					Component.literal("Р’РѕР·СЊРјРёС‚Рµ РІ СЂСѓРєСѓ С‚РѕРїРѕСЂ, С‡С‚РѕР±С‹ Р±СЂРѕСЃРёС‚СЊ РµРіРѕ.").withStyle(ChatFormatting.RED),
 					true
 			);
 			return 0;
@@ -7409,7 +10787,7 @@ public final class ServerRaceSystem {
 		double points = getMarkRagePoints(playerId, ability);
 		if (points <= 0.0D) {
 			player.displayClientMessage(
-					Component.literal("Вы слишком спокойны, чтобы войти в ярость.").withStyle(ChatFormatting.RED),
+					Component.literal("Р’С‹ СЃР»РёС€РєРѕРј СЃРїРѕРєРѕР№РЅС‹, С‡С‚РѕР±С‹ РІРѕР№С‚Рё РІ СЏСЂРѕСЃС‚СЊ.").withStyle(ChatFormatting.RED),
 					true
 			);
 			return 0;
@@ -7434,7 +10812,7 @@ public final class ServerRaceSystem {
 		MarkShieldBashSelection shield = findMarkShieldBashSelection(player);
 		if (shield == null) {
 			player.displayClientMessage(
-					Component.literal("Возьмите железный, золотой, алмазный или незеритовый щит в руку.").withStyle(ChatFormatting.RED),
+					Component.literal("Р’РѕР·СЊРјРёС‚Рµ Р¶РµР»РµР·РЅС‹Р№, Р·РѕР»РѕС‚РѕР№, Р°Р»РјР°Р·РЅС‹Р№ РёР»Рё РЅРµР·РµСЂРёС‚РѕРІС‹Р№ С‰РёС‚ РІ СЂСѓРєСѓ.").withStyle(ChatFormatting.RED),
 					true
 			);
 			return 0;
@@ -9743,7 +13121,7 @@ public final class ServerRaceSystem {
 		boolean publicPickup = nowTick >= session.publicPickupTick;
 		boolean ownerPickup = player.getUUID().equals(session.ownerId);
 		if (!publicPickup && !ownerPickup) {
-			player.displayClientMessage(Component.literal("Этот топор может забрать только Марк.").withStyle(ChatFormatting.RED), true);
+			player.displayClientMessage(Component.literal("Р­С‚РѕС‚ С‚РѕРїРѕСЂ РјРѕР¶РµС‚ Р·Р°Р±СЂР°С‚СЊ С‚РѕР»СЊРєРѕ РњР°СЂРє.").withStyle(ChatFormatting.RED), true);
 			return InteractionResult.SUCCESS;
 		}
 
@@ -10198,13 +13576,13 @@ public final class ServerRaceSystem {
 		}
 		MinecraftServer server = player.level().getServer();
 		if (hasActiveGennadiyReport(server)) {
-			displayGennadiyReportActionbar(player, "Уже есть активный REPORT. Уничтожьте текущий предмет, чтобы создать новый.");
+			displayGennadiyReportActionbar(player, "РЈР¶Рµ РµСЃС‚СЊ Р°РєС‚РёРІРЅС‹Р№ REPORT. РЈРЅРёС‡С‚РѕР¶СЊС‚Рµ С‚РµРєСѓС‰РёР№ РїСЂРµРґРјРµС‚, С‡С‚РѕР±С‹ СЃРѕР·РґР°С‚СЊ РЅРѕРІС‹Р№.");
 			return 0;
 		}
 
 		InteractionHand hand = selectGennadiyReportHand(player);
 		if (hand == null) {
-			displayGennadiyReportActionbar(player, "Возьмите предмет в руку, чтобы создать REPORT.");
+			displayGennadiyReportActionbar(player, "Р’РѕР·СЊРјРёС‚Рµ РїСЂРµРґРјРµС‚ РІ СЂСѓРєСѓ, С‡С‚РѕР±С‹ СЃРѕР·РґР°С‚СЊ REPORT.");
 			return 0;
 		}
 
@@ -10213,26 +13591,26 @@ public final class ServerRaceSystem {
 		// REPORT confirmation itself intentionally lives until disconnect or the next proposal.
 		GENNADIY_REPORT_PENDING.put(player.getUUID(), new GennadiyReportPending(hand, Long.MAX_VALUE));
 		Component itemName = stack.getHoverName().copy().withStyle(style -> style.withColor(ChatFormatting.DARK_RED).withItalic(false));
-		MutableComponent message = centeredGennadiyReportLiteral("Вы уверены, что хотите наложить", ChatFormatting.RED)
+		MutableComponent message = centeredGennadiyReportLiteral("Р’С‹ СѓРІРµСЂРµРЅС‹, С‡С‚Рѕ С…РѕС‚РёС‚Рµ РЅР°Р»РѕР¶РёС‚СЊ", ChatFormatting.RED)
 				.append(Component.literal("\n"))
 				.append(centeredGennadiyReportLineWithItem(
-						"проклятие REPORT на ",
+						"РїСЂРѕРєР»СЏС‚РёРµ REPORT РЅР° ",
 						itemName,
 						stack.getHoverName().getString(),
 						"?"
 				))
 				.append(Component.literal("\n"))
-				.append(centeredGennadiyReportLiteral("В мире может существовать только один REPORT.", ChatFormatting.RED))
+				.append(centeredGennadiyReportLiteral("Р’ РјРёСЂРµ РјРѕР¶РµС‚ СЃСѓС‰РµСЃС‚РІРѕРІР°С‚СЊ С‚РѕР»СЊРєРѕ РѕРґРёРЅ REPORT.", ChatFormatting.RED))
 				.append(Component.literal("\n"))
-				.append(centeredGennadiyReportLiteral("Новый можно создать только после", ChatFormatting.RED))
+				.append(centeredGennadiyReportLiteral("РќРѕРІС‹Р№ РјРѕР¶РЅРѕ СЃРѕР·РґР°С‚СЊ С‚РѕР»СЊРєРѕ РїРѕСЃР»Рµ", ChatFormatting.RED))
 				.append(Component.literal("\n"))
-				.append(centeredGennadiyReportLiteral("уничтожения старого.", ChatFormatting.RED));
-		MutableComponent button = Component.literal("[Подтвердить]")
+				.append(centeredGennadiyReportLiteral("СѓРЅРёС‡С‚РѕР¶РµРЅРёСЏ СЃС‚Р°СЂРѕРіРѕ.", ChatFormatting.RED));
+		MutableComponent button = Component.literal("[РџРѕРґС‚РІРµСЂРґРёС‚СЊ]")
 				.withStyle(style -> style
 						.withColor(ChatFormatting.DARK_RED)
 						.withBold(true)
 						.withClickEvent(new ClickEvent.RunCommand("/race gennadiy_report confirm")));
-		player.sendSystemMessage(message.append(Component.literal("\n")).append(centeredGennadiyReportComponent(button, "[Подтвердить]")));
+		player.sendSystemMessage(message.append(Component.literal("\n")).append(centeredGennadiyReportComponent(button, "[РџРѕРґС‚РІРµСЂРґРёС‚СЊ]")));
 		Lg2.LOGGER.info("Player {} requested gennadiy REPORT curse for race '{}'", player.getGameProfile().name(), race.id);
 		return 1;
 	}
@@ -10246,17 +13624,17 @@ public final class ServerRaceSystem {
 
 		GennadiyReportPending pending = GENNADIY_REPORT_PENDING.remove(player.getUUID());
 		if (pending == null) {
-			displayGennadiyReportActionbar(player, "Сначала выберите предмет для REPORT.");
+			displayGennadiyReportActionbar(player, "РЎРЅР°С‡Р°Р»Р° РІС‹Р±РµСЂРёС‚Рµ РїСЂРµРґРјРµС‚ РґР»СЏ REPORT.");
 			return 0;
 		}
 		if (hasActiveGennadiyReport(player.level().getServer())) {
-			displayGennadiyReportActionbar(player, "Уже есть активный REPORT. Уничтожьте текущий предмет, чтобы создать новый.");
+			displayGennadiyReportActionbar(player, "РЈР¶Рµ РµСЃС‚СЊ Р°РєС‚РёРІРЅС‹Р№ REPORT. РЈРЅРёС‡С‚РѕР¶СЊС‚Рµ С‚РµРєСѓС‰РёР№ РїСЂРµРґРјРµС‚, С‡С‚РѕР±С‹ СЃРѕР·РґР°С‚СЊ РЅРѕРІС‹Р№.");
 			return 0;
 		}
 
 		ItemStack selected = player.getItemInHand(pending.hand());
 		if (selected.isEmpty()) {
-			displayGennadiyReportActionbar(player, "Возьмите предмет в руку, чтобы создать REPORT.");
+			displayGennadiyReportActionbar(player, "Р’РѕР·СЊРјРёС‚Рµ РїСЂРµРґРјРµС‚ РІ СЂСѓРєСѓ, С‡С‚РѕР±С‹ СЃРѕР·РґР°С‚СЊ REPORT.");
 			return 0;
 		}
 
@@ -10516,7 +13894,7 @@ public final class ServerRaceSystem {
 
 		Donkey donkey = spawnGennadiyDonkey(level, player, state);
 		if (donkey == null) {
-			player.sendSystemMessage(Component.literal("Не удалось призвать боевого ослика."));
+			player.sendSystemMessage(Component.literal("РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёР·РІР°С‚СЊ Р±РѕРµРІРѕРіРѕ РѕСЃР»РёРєР°."));
 			return 0;
 		}
 
@@ -11605,6 +14983,22 @@ public final class ServerRaceSystem {
 	private static float pitchFromDirection(Vec3 direction) {
 		double horizontal = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
 		return (float) (-(Math.atan2(direction.y, horizontal) * (180.0D / Math.PI)));
+	}
+
+	private static float approachAngleDegrees(float current, float target, float maxStep) {
+		float delta = Mth.wrapDegrees(target - current);
+		if (Math.abs(delta) <= maxStep) {
+			return target;
+		}
+		return Mth.wrapDegrees(current + Math.copySign(maxStep, delta));
+	}
+
+	private static float approachDegrees(float current, float target, float maxStep) {
+		float delta = target - current;
+		if (Math.abs(delta) <= maxStep) {
+			return target;
+		}
+		return current + Math.copySign(maxStep, delta);
 	}
 
 	private static void tickGennadiyDefense(MinecraftServer server) {
@@ -12807,7 +16201,7 @@ public final class ServerRaceSystem {
 			displayRemainingCooldown(attacker, remainingTicks);
 			return;
 		}
-		target.connection.disconnect(Component.literal("Вас зарепортил " + attacker.getGameProfile().name() + "."));
+		target.connection.disconnect(Component.literal("Р’Р°СЃ Р·Р°СЂРµРїРѕСЂС‚РёР» " + attacker.getGameProfile().name() + "."));
 	}
 
 	public static void handleGennadiyRageMeleeDamage(ServerLevel level, LivingEntity victim, DamageSource damageSource, float damage, boolean applied) {
@@ -13988,16 +17382,16 @@ public final class ServerRaceSystem {
 	}
 
 	private static final CartelManualPage[] CARTEL_MANUAL_PAGES_RU = {
-			new CartelManualPage("1. Личная книга", "Это твоя ЛИЧНАЯ книга. Никому не показывай рецепты. Если другие узнают, как ты делаешь товар, они смогут конкурировать с тобой. Крафты доступны всем, но знаешь их ТОЛЬКО ТЫ.", -1, ""),
-			new CartelManualPage("2. Травка", "", 0, "Посади обычный папоротник. Когда он вырастет, есть шанс получить «Травку». Костная мука ускоряет рост."),
-			new CartelManualPage("3. Сушка", "Обычная травка не годится для рецептов.", 1, "Для создания товара высуши её в печи."),
-			new CartelManualPage("4. Косячок", "Сверху и снизу по 3 бумаги. В центре 3 сушённой травки. На выходе получишь «Косячок».", 2, ""),
-			new CartelManualPage("5. Прикуривание", "Возьми в одну руку зажигалку, во вторую — косячок. Нажми ПКМ для прикуривания. Чтобы затянуться, зажми ПКМ: чем дольше затяг, тем больше дыма.", -1, ""),
-			new CartelManualPage("6. Кокаин", "В котёл с водой добавь сушённую травку и костную муку в пропорции 1:1.", 3, "Как итог — получишь «Кокаин»."),
-			new CartelManualPage("7. Партии", "Каждая операция тратит немного воды из котла. Выгоднее загружать сразу много сырья, например: 16 костной муки + 16 сушённой травки = 16 кокаина. Воды в котле хватает на 48 кокаина, но при малых партиях она расходуется быстрее.", -1, ""),
-			new CartelManualPage("8. Заурядное зелье", "В варочной стойке: пузырёк с водой + любой ингредиент из списка: паучий глаз, сверкающий ломтик арбуза, сахар, огненный порошок, магмовый крем, слеза гаста, кроличья лапка, стержень вихря, блок слизи, камень или паутина.", -1, ""),
-			new CartelManualPage("9. Метадон", "Варится в зельеварке. В заурядное зелье добавь кокаин. На выходе получишь «Метадон».", 4, ""),
-			new CartelManualPage("10. Зависимость", "Тебе метадон даёт положительные эффекты. Другим — зависимость. Первые уколы для других дают негативные эффекты, последующие — положительные. Если зависимый долго не колет метадон, у него начинается ломка.", -1, "")
+			new CartelManualPage("1. Р›РёС‡РЅР°СЏ РєРЅРёРіР°", "Р­С‚Рѕ С‚РІРѕСЏ Р›РР§РќРђРЇ РєРЅРёРіР°. РќРёРєРѕРјСѓ РЅРµ РїРѕРєР°Р·С‹РІР°Р№ СЂРµС†РµРїС‚С‹. Р•СЃР»Рё РґСЂСѓРіРёРµ СѓР·РЅР°СЋС‚, РєР°Рє С‚С‹ РґРµР»Р°РµС€СЊ С‚РѕРІР°СЂ, РѕРЅРё СЃРјРѕРіСѓС‚ РєРѕРЅРєСѓСЂРёСЂРѕРІР°С‚СЊ СЃ С‚РѕР±РѕР№. РљСЂР°С„С‚С‹ РґРѕСЃС‚СѓРїРЅС‹ РІСЃРµРј, РЅРѕ Р·РЅР°РµС€СЊ РёС… РўРћР›Р¬РљРћ РўР«.", -1, ""),
+			new CartelManualPage("2. РўСЂР°РІРєР°", "", 0, "РџРѕСЃР°РґРё РѕР±С‹С‡РЅС‹Р№ РїР°РїРѕСЂРѕС‚РЅРёРє. РљРѕРіРґР° РѕРЅ РІС‹СЂР°СЃС‚РµС‚, РµСЃС‚СЊ С€Р°РЅСЃ РїРѕР»СѓС‡РёС‚СЊ В«РўСЂР°РІРєСѓВ». РљРѕСЃС‚РЅР°СЏ РјСѓРєР° СѓСЃРєРѕСЂСЏРµС‚ СЂРѕСЃС‚."),
+			new CartelManualPage("3. РЎСѓС€РєР°", "РћР±С‹С‡РЅР°СЏ С‚СЂР°РІРєР° РЅРµ РіРѕРґРёС‚СЃСЏ РґР»СЏ СЂРµС†РµРїС‚РѕРІ.", 1, "Р”Р»СЏ СЃРѕР·РґР°РЅРёСЏ С‚РѕРІР°СЂР° РІС‹СЃСѓС€Рё РµС‘ РІ РїРµС‡Рё."),
+			new CartelManualPage("4. РљРѕСЃСЏС‡РѕРє", "РЎРІРµСЂС…Сѓ Рё СЃРЅРёР·Сѓ РїРѕ 3 Р±СѓРјР°РіРё. Р’ С†РµРЅС‚СЂРµ 3 СЃСѓС€С‘РЅРЅРѕР№ С‚СЂР°РІРєРё. РќР° РІС‹С…РѕРґРµ РїРѕР»СѓС‡РёС€СЊ В«РљРѕСЃСЏС‡РѕРєВ».", 2, ""),
+			new CartelManualPage("5. РџСЂРёРєСѓСЂРёРІР°РЅРёРµ", "Р’РѕР·СЊРјРё РІ РѕРґРЅСѓ СЂСѓРєСѓ Р·Р°Р¶РёРіР°Р»РєСѓ, РІРѕ РІС‚РѕСЂСѓСЋ вЂ” РєРѕСЃСЏС‡РѕРє. РќР°Р¶РјРё РџРљРњ РґР»СЏ РїСЂРёРєСѓСЂРёРІР°РЅРёСЏ. Р§С‚РѕР±С‹ Р·Р°С‚СЏРЅСѓС‚СЊСЃСЏ, Р·Р°Р¶РјРё РџРљРњ: С‡РµРј РґРѕР»СЊС€Рµ Р·Р°С‚СЏРі, С‚РµРј Р±РѕР»СЊС€Рµ РґС‹РјР°.", -1, ""),
+			new CartelManualPage("6. РљРѕРєР°РёРЅ", "Р’ РєРѕС‚С‘Р» СЃ РІРѕРґРѕР№ РґРѕР±Р°РІСЊ СЃСѓС€С‘РЅРЅСѓСЋ С‚СЂР°РІРєСѓ Рё РєРѕСЃС‚РЅСѓСЋ РјСѓРєСѓ РІ РїСЂРѕРїРѕСЂС†РёРё 1:1.", 3, "РљР°Рє РёС‚РѕРі вЂ” РїРѕР»СѓС‡РёС€СЊ В«РљРѕРєР°РёРЅВ»."),
+			new CartelManualPage("7. РџР°СЂС‚РёРё", "РљР°Р¶РґР°СЏ РѕРїРµСЂР°С†РёСЏ С‚СЂР°С‚РёС‚ РЅРµРјРЅРѕРіРѕ РІРѕРґС‹ РёР· РєРѕС‚Р»Р°. Р’С‹РіРѕРґРЅРµРµ Р·Р°РіСЂСѓР¶Р°С‚СЊ СЃСЂР°Р·Сѓ РјРЅРѕРіРѕ СЃС‹СЂСЊСЏ, РЅР°РїСЂРёРјРµСЂ: 16 РєРѕСЃС‚РЅРѕР№ РјСѓРєРё + 16 СЃСѓС€С‘РЅРЅРѕР№ С‚СЂР°РІРєРё = 16 РєРѕРєР°РёРЅР°. Р’РѕРґС‹ РІ РєРѕС‚Р»Рµ С…РІР°С‚Р°РµС‚ РЅР° 48 РєРѕРєР°РёРЅР°, РЅРѕ РїСЂРё РјР°Р»С‹С… РїР°СЂС‚РёСЏС… РѕРЅР° СЂР°СЃС…РѕРґСѓРµС‚СЃСЏ Р±С‹СЃС‚СЂРµРµ.", -1, ""),
+			new CartelManualPage("8. Р—Р°СѓСЂСЏРґРЅРѕРµ Р·РµР»СЊРµ", "Р’ РІР°СЂРѕС‡РЅРѕР№ СЃС‚РѕР№РєРµ: РїСѓР·С‹СЂС‘Рє СЃ РІРѕРґРѕР№ + Р»СЋР±РѕР№ РёРЅРіСЂРµРґРёРµРЅС‚ РёР· СЃРїРёСЃРєР°: РїР°СѓС‡РёР№ РіР»Р°Р·, СЃРІРµСЂРєР°СЋС‰РёР№ Р»РѕРјС‚РёРє Р°СЂР±СѓР·Р°, СЃР°С…Р°СЂ, РѕРіРЅРµРЅРЅС‹Р№ РїРѕСЂРѕС€РѕРє, РјР°РіРјРѕРІС‹Р№ РєСЂРµРј, СЃР»РµР·Р° РіР°СЃС‚Р°, РєСЂРѕР»РёС‡СЊСЏ Р»Р°РїРєР°, СЃС‚РµСЂР¶РµРЅСЊ РІРёС…СЂСЏ, Р±Р»РѕРє СЃР»РёР·Рё, РєР°РјРµРЅСЊ РёР»Рё РїР°СѓС‚РёРЅР°.", -1, ""),
+			new CartelManualPage("9. РњРµС‚Р°РґРѕРЅ", "Р’Р°СЂРёС‚СЃСЏ РІ Р·РµР»СЊРµРІР°СЂРєРµ. Р’ Р·Р°СѓСЂСЏРґРЅРѕРµ Р·РµР»СЊРµ РґРѕР±Р°РІСЊ РєРѕРєР°РёРЅ. РќР° РІС‹С…РѕРґРµ РїРѕР»СѓС‡РёС€СЊ В«РњРµС‚Р°РґРѕРЅВ».", 4, ""),
+			new CartelManualPage("10. Р—Р°РІРёСЃРёРјРѕСЃС‚СЊ", "РўРµР±Рµ РјРµС‚Р°РґРѕРЅ РґР°С‘С‚ РїРѕР»РѕР¶РёС‚РµР»СЊРЅС‹Рµ СЌС„С„РµРєС‚С‹. Р”СЂСѓРіРёРј вЂ” Р·Р°РІРёСЃРёРјРѕСЃС‚СЊ. РџРµСЂРІС‹Рµ СѓРєРѕР»С‹ РґР»СЏ РґСЂСѓРіРёС… РґР°СЋС‚ РЅРµРіР°С‚РёРІРЅС‹Рµ СЌС„С„РµРєС‚С‹, РїРѕСЃР»РµРґСѓСЋС‰РёРµ вЂ” РїРѕР»РѕР¶РёС‚РµР»СЊРЅС‹Рµ. Р•СЃР»Рё Р·Р°РІРёСЃРёРјС‹Р№ РґРѕР»РіРѕ РЅРµ РєРѕР»РµС‚ РјРµС‚Р°РґРѕРЅ, Сѓ РЅРµРіРѕ РЅР°С‡РёРЅР°РµС‚СЃСЏ Р»РѕРјРєР°.", -1, "")
 	};
 
 	private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
@@ -14878,7 +18272,7 @@ public final class ServerRaceSystem {
 		ItemStack stack = new ItemStack(Items.ARROW);
 		stack.set(
 				DataComponents.CUSTOM_NAME,
-				Component.literal(next ? "Следующий" : "Предыдущий")
+				Component.literal(next ? "РЎР»РµРґСѓСЋС‰РёР№" : "РџСЂРµРґС‹РґСѓС‰РёР№")
 						.withStyle(style -> style.withItalic(false))
 		);
 		return stack;
@@ -14900,7 +18294,7 @@ public final class ServerRaceSystem {
 		stack.set(DataComponents.PROFILE, ResolvableProfile.createResolved(profile));
 		stack.set(
 				DataComponents.CUSTOM_NAME,
-				Component.literal("Пригласить")
+				Component.literal("РџСЂРёРіР»Р°СЃРёС‚СЊ")
 						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false).withBold(true))
 		);
 		return stack;
@@ -14908,7 +18302,7 @@ public final class ServerRaceSystem {
 
 	private static ItemStack buildMilkPocketInviteEmptyState() {
 		ItemStack stack = new ItemStack(Items.BARRIER);
-		stack.set(DataComponents.CUSTOM_NAME, Component.literal("Некого приглашать"));
+		stack.set(DataComponents.CUSTOM_NAME, Component.literal("РќРµРєРѕРіРѕ РїСЂРёРіР»Р°С€Р°С‚СЊ"));
 		return stack;
 	}
 
@@ -14918,9 +18312,9 @@ public final class ServerRaceSystem {
 					.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(MILK_POCKET_MENU_OVERLAY_FONT));
 		}
 		if (target == null) {
-			return Component.literal("Карманное измерение");
+			return Component.literal("РљР°СЂРјР°РЅРЅРѕРµ РёР·РјРµСЂРµРЅРёРµ");
 		}
-		return Component.literal("Пригласить: " + target.getGameProfile().name());
+		return Component.literal("РџСЂРёРіР»Р°СЃРёС‚СЊ: " + target.getGameProfile().name());
 	}
 
 	private static String buildWomanShnyagaTitleAdvance(int targetX) {
@@ -15176,45 +18570,45 @@ public final class ServerRaceSystem {
 		String locale = normalizeCartelDisguiseLocale(player);
 		if (locale.startsWith("rpr")) {
 			return switch (key) {
-				case "passport" -> "Паспортъ";
-				case "accept" -> "Приняти";
-				case "previous" -> "Предыдущiй";
-				case "next" -> "Слѣдующiй";
-				case "empty" -> "Нѣтъ игроковъ";
-				case "no_players_online" -> "На серверѣ никого нѣтъ";
+				case "passport" -> "РџР°СЃРїРѕСЂС‚СЉ";
+				case "accept" -> "РџСЂРёРЅСЏС‚Рё";
+				case "previous" -> "РџСЂРµРґС‹РґСѓС‰iР№";
+				case "next" -> "РЎР»СЈРґСѓСЋС‰iР№";
+				case "empty" -> "РќСЈС‚СЉ РёРіСЂРѕРєРѕРІСЉ";
+				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂСЈ РЅРёРєРѕРіРѕ РЅСЈС‚СЉ";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("uk")) {
 			return switch (key) {
-				case "passport" -> "Паспорт";
-				case "accept" -> "Прийняти";
-				case "previous" -> "Попередній";
-				case "next" -> "Наступний";
-				case "empty" -> "Немає гравців";
-				case "no_players_online" -> "На сервері нікого немає";
+				case "passport" -> "РџР°СЃРїРѕСЂС‚";
+				case "accept" -> "РџСЂРёР№РЅСЏС‚Рё";
+				case "previous" -> "РџРѕРїРµСЂРµРґРЅС–Р№";
+				case "next" -> "РќР°СЃС‚СѓРїРЅРёР№";
+				case "empty" -> "РќРµРјР°С” РіСЂР°РІС†С–РІ";
+				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂС– РЅС–РєРѕРіРѕ РЅРµРјР°С”";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("ja")) {
 			return switch (key) {
-				case "passport" -> "パスポート";
-				case "accept" -> "承認";
-				case "previous" -> "前へ";
-				case "next" -> "次へ";
-				case "empty" -> "プレイヤーがいません";
-				case "no_players_online" -> "サーバーに誰もいません";
+				case "passport" -> "гѓ‘г‚№гѓќгѓјгѓ€";
+				case "accept" -> "ж‰їиЄЌ";
+				case "previous" -> "е‰ЌгЃё";
+				case "next" -> "ж¬ЎгЃё";
+				case "empty" -> "гѓ—гѓ¬г‚¤гѓ¤гѓјгЃЊгЃ„гЃѕгЃ›г‚“";
+				case "no_players_online" -> "г‚µгѓјгѓђгѓјгЃ«иЄ°г‚‚гЃ„гЃѕгЃ›г‚“";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("ru")) {
 			return switch (key) {
-				case "passport" -> "Паспорт";
-				case "accept" -> "Принять";
-				case "previous" -> "Предыдущий";
-				case "next" -> "Следующий";
-				case "empty" -> "Нет игроков";
-				case "no_players_online" -> "На сервере никого нет";
+				case "passport" -> "РџР°СЃРїРѕСЂС‚";
+				case "accept" -> "РџСЂРёРЅСЏС‚СЊ";
+				case "previous" -> "РџСЂРµРґС‹РґСѓС‰РёР№";
+				case "next" -> "РЎР»РµРґСѓСЋС‰РёР№";
+				case "empty" -> "РќРµС‚ РёРіСЂРѕРєРѕРІ";
+				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂРµ РЅРёРєРѕРіРѕ РЅРµС‚";
 				default -> "";
 			};
 		}
@@ -15233,41 +18627,41 @@ public final class ServerRaceSystem {
 		String locale = normalizeCartelDisguiseLocale(player);
 		if (locale.startsWith("rpr")) {
 			return switch (key) {
-				case "recipient" -> "Получатель: ";
-				case "select" -> "Выбрать";
-				case "previous" -> "Предыдущiй";
-				case "next" -> "Слѣдующiй";
-				case "empty" -> "Нѣтъ игроковъ";
+				case "recipient" -> "РџРѕР»СѓС‡Р°С‚РµР»СЊ: ";
+				case "select" -> "Р’С‹Р±СЂР°С‚СЊ";
+				case "previous" -> "РџСЂРµРґС‹РґСѓС‰iР№";
+				case "next" -> "РЎР»СЈРґСѓСЋС‰iР№";
+				case "empty" -> "РќСЈС‚СЉ РёРіСЂРѕРєРѕРІСЉ";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("uk")) {
 			return switch (key) {
-				case "recipient" -> "Одержувач: ";
-				case "select" -> "Вибрати";
-				case "previous" -> "Попередній";
-				case "next" -> "Наступний";
-				case "empty" -> "Немає гравців";
+				case "recipient" -> "РћРґРµСЂР¶СѓРІР°С‡: ";
+				case "select" -> "Р’РёР±СЂР°С‚Рё";
+				case "previous" -> "РџРѕРїРµСЂРµРґРЅС–Р№";
+				case "next" -> "РќР°СЃС‚СѓРїРЅРёР№";
+				case "empty" -> "РќРµРјР°С” РіСЂР°РІС†С–РІ";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("ja")) {
 			return switch (key) {
-				case "recipient" -> "宛先: ";
-				case "select" -> "選択";
-				case "previous" -> "前へ";
-				case "next" -> "次へ";
-				case "empty" -> "プレイヤーがいません";
+				case "recipient" -> "е®›е…€: ";
+				case "select" -> "йЃёжЉћ";
+				case "previous" -> "е‰ЌгЃё";
+				case "next" -> "ж¬ЎгЃё";
+				case "empty" -> "гѓ—гѓ¬г‚¤гѓ¤гѓјгЃЊгЃ„гЃѕгЃ›г‚“";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("ru")) {
 			return switch (key) {
-				case "recipient" -> "Получатель: ";
-				case "select" -> "Выбрать";
-				case "previous" -> "Предыдущий";
-				case "next" -> "Следующий";
-				case "empty" -> "Нет игроков";
+				case "recipient" -> "РџРѕР»СѓС‡Р°С‚РµР»СЊ: ";
+				case "select" -> "Р’С‹Р±СЂР°С‚СЊ";
+				case "previous" -> "РџСЂРµРґС‹РґСѓС‰РёР№";
+				case "next" -> "РЎР»РµРґСѓСЋС‰РёР№";
+				case "empty" -> "РќРµС‚ РёРіСЂРѕРєРѕРІ";
 				default -> "";
 			};
 		}
@@ -15285,113 +18679,113 @@ public final class ServerRaceSystem {
 		String locale = normalizeCartelDisguiseLocale(player);
 		if (locale.startsWith("rpr")) {
 			return switch (key) {
-				case "no_players_online" -> "На серверѣ нѣтъ подходящихъ игроковъ";
-				case "already_linked" -> "Связь уже имѣется";
-				case "target_already_linked" -> "Сей игрокъ уже связанъ";
-				case "target_busy" -> "Сей игрокъ уже получилъ иное предложеніе";
-				case "write_prompt" -> "Напишите посланіе для избраннаго парня въ чатъ.";
-				case "target_unavailable" -> "Избранный игрокъ болѣе недоступенъ";
-				case "proposal_sent" -> "Предложеніе отправлено.";
-				case "no_pending_proposal" -> "Нѣтъ ожидающаго предложенія.";
-				case "proposal_expired" -> "Предложеніе уже недѣйственно.";
-				case "proposal_on_cooldown" -> "Нынѣ отвѣтъ невозможенъ: умѣніе въ охлажденіи.";
-				case "accepted_woman" -> "%s согласился. Связь установлена.";
-				case "accepted_target" -> "Вы стали парнемъ %s. Связь установлена.";
-				case "rejected_woman" -> "Васъ отшилъ %s.";
-				case "rejected_target" -> "Вы отшили %s.";
-				case "warning_line" -> "ВНИМАНІЕ!";
-				case "warning_suffix" -> "избрала ТЕБЯ.";
-				case "accept_button" -> "[❤ Согласиться]";
-				case "reject_button" -> "[💔 Отшить]";
-				case "link_broken_kill_woman" -> "Васъ убилъ %s. Отношенія разрушены.";
-				case "link_broken_kill_target" -> "Вы бросили %s, предательски убив её!";
-				case "link_broken_whitelist_woman" -> "%s исключили съ сервера. Отношенія разрушены.";
-				case "link_broken_whitelist_target" -> "Вы бросили %s: вы удалены из whitelist.";
-				case "link_broken_whitelist_target_woman_removed" -> "%s исключили съ сервера. Отношенія разрушены.";
+				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂСЈ РЅСЈС‚СЉ РїРѕРґС…РѕРґСЏС‰РёС…СЉ РёРіСЂРѕРєРѕРІСЉ";
+				case "already_linked" -> "РЎРІСЏР·СЊ СѓР¶Рµ РёРјСЈРµС‚СЃСЏ";
+				case "target_already_linked" -> "РЎРµР№ РёРіСЂРѕРєСЉ СѓР¶Рµ СЃРІСЏР·Р°РЅСЉ";
+				case "target_busy" -> "РЎРµР№ РёРіСЂРѕРєСЉ СѓР¶Рµ РїРѕР»СѓС‡РёР»СЉ РёРЅРѕРµ РїСЂРµРґР»РѕР¶РµРЅС–Рµ";
+				case "write_prompt" -> "РќР°РїРёС€РёС‚Рµ РїРѕСЃР»Р°РЅС–Рµ РґР»СЏ РёР·Р±СЂР°РЅРЅР°РіРѕ РїР°СЂРЅСЏ РІСЉ С‡Р°С‚СЉ.";
+				case "target_unavailable" -> "РР·Р±СЂР°РЅРЅС‹Р№ РёРіСЂРѕРєСЉ Р±РѕР»СЈРµ РЅРµРґРѕСЃС‚СѓРїРµРЅСЉ";
+				case "proposal_sent" -> "РџСЂРµРґР»РѕР¶РµРЅС–Рµ РѕС‚РїСЂР°РІР»РµРЅРѕ.";
+				case "no_pending_proposal" -> "РќСЈС‚СЉ РѕР¶РёРґР°СЋС‰Р°РіРѕ РїСЂРµРґР»РѕР¶РµРЅС–СЏ.";
+				case "proposal_expired" -> "РџСЂРµРґР»РѕР¶РµРЅС–Рµ СѓР¶Рµ РЅРµРґСЈР№СЃС‚РІРµРЅРЅРѕ.";
+				case "proposal_on_cooldown" -> "РќС‹РЅСЈ РѕС‚РІСЈС‚СЉ РЅРµРІРѕР·РјРѕР¶РµРЅСЉ: СѓРјСЈРЅС–Рµ РІСЉ РѕС…Р»Р°Р¶РґРµРЅС–Рё.";
+				case "accepted_woman" -> "%s СЃРѕРіР»Р°СЃРёР»СЃСЏ. РЎРІСЏР·СЊ СѓСЃС‚Р°РЅРѕРІР»РµРЅР°.";
+				case "accepted_target" -> "Р’С‹ СЃС‚Р°Р»Рё РїР°СЂРЅРµРјСЉ %s. РЎРІСЏР·СЊ СѓСЃС‚Р°РЅРѕРІР»РµРЅР°.";
+				case "rejected_woman" -> "Р’Р°СЃСЉ РѕС‚С€РёР»СЉ %s.";
+				case "rejected_target" -> "Р’С‹ РѕС‚С€РёР»Рё %s.";
+				case "warning_line" -> "Р’РќРРњРђРќР†Р•!";
+				case "warning_suffix" -> "РёР·Р±СЂР°Р»Р° РўР•Р‘РЇ.";
+				case "accept_button" -> "[вќ¤ РЎРѕРіР»Р°СЃРёС‚СЊСЃСЏ]";
+				case "reject_button" -> "[рџ’” РћС‚С€РёС‚СЊ]";
+				case "link_broken_kill_woman" -> "Р’Р°СЃСЉ СѓР±РёР»СЉ %s. РћС‚РЅРѕС€РµРЅС–СЏ СЂР°Р·СЂСѓС€РµРЅС‹.";
+				case "link_broken_kill_target" -> "Р’С‹ Р±СЂРѕСЃРёР»Рё %s, РїСЂРµРґР°С‚РµР»СЊСЃРєРё СѓР±РёРІ РµС‘!";
+				case "link_broken_whitelist_woman" -> "%s РёСЃРєР»СЋС‡РёР»Рё СЃСЉ СЃРµСЂРІРµСЂР°. РћС‚РЅРѕС€РµРЅС–СЏ СЂР°Р·СЂСѓС€РµРЅС‹.";
+				case "link_broken_whitelist_target" -> "Р’С‹ Р±СЂРѕСЃРёР»Рё %s: РІС‹ СѓРґР°Р»РµРЅС‹ РёР· whitelist.";
+				case "link_broken_whitelist_target_woman_removed" -> "%s РёСЃРєР»СЋС‡РёР»Рё СЃСЉ СЃРµСЂРІРµСЂР°. РћС‚РЅРѕС€РµРЅС–СЏ СЂР°Р·СЂСѓС€РµРЅС‹.";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("uk")) {
 			return switch (key) {
-				case "no_players_online" -> "На сервері немає відповідних гравців";
-				case "already_linked" -> "У вас уже є зв'язок";
-				case "target_already_linked" -> "Цей гравець уже пов'язаний";
-				case "target_busy" -> "Цей гравець уже отримав іншу пропозицію";
-				case "write_prompt" -> "Напишіть повідомлення для вибраного хлопця в чат.";
-				case "target_unavailable" -> "Вибраний гравець більше недоступний";
-				case "proposal_sent" -> "Пропозицію відправлено.";
-				case "no_pending_proposal" -> "Немає активної пропозиції.";
-				case "proposal_expired" -> "Пропозиція вже недійсна.";
-				case "proposal_on_cooldown" -> "Відповідь зараз неможлива: здібність на відновленні.";
-				case "accepted_woman" -> "%s погодився. Зв'язок встановлено.";
-				case "accepted_target" -> "Ви стали хлопцем %s. Зв'язок встановлено.";
-				case "rejected_woman" -> "Вас відшив %s.";
-				case "rejected_target" -> "Ви відшили %s.";
-				case "warning_line" -> "УВАГА!";
-				case "warning_suffix" -> "обрала ТЕБЕ.";
-				case "accept_button" -> "[❤ Погодитися]";
-				case "reject_button" -> "[💔 Відшити]";
-				case "link_broken_kill_woman" -> "Вас убив %s. Стосунки зруйновано.";
-				case "link_broken_kill_target" -> "Ви кинули %s, підступно вбивши її!";
-				case "link_broken_whitelist_woman" -> "%s виключили з сервера. Стосунки зруйновано.";
-				case "link_broken_whitelist_target" -> "Ви кинули %s: вас видалено з whitelist.";
-				case "link_broken_whitelist_target_woman_removed" -> "%s виключили з сервера. Стосунки зруйновано.";
+				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂС– РЅРµРјР°С” РІС–РґРїРѕРІС–РґРЅРёС… РіСЂР°РІС†С–РІ";
+				case "already_linked" -> "РЈ РІР°СЃ СѓР¶Рµ С” Р·РІ'СЏР·РѕРє";
+				case "target_already_linked" -> "Р¦РµР№ РіСЂР°РІРµС†СЊ СѓР¶Рµ РїРѕРІ'СЏР·Р°РЅРёР№";
+				case "target_busy" -> "Р¦РµР№ РіСЂР°РІРµС†СЊ СѓР¶Рµ РѕС‚СЂРёРјР°РІ С–РЅС€Сѓ РїСЂРѕРїРѕР·РёС†С–СЋ";
+				case "write_prompt" -> "РќР°РїРёС€С–С‚СЊ РїРѕРІС–РґРѕРјР»РµРЅРЅСЏ РґР»СЏ РІРёР±СЂР°РЅРѕРіРѕ С…Р»РѕРїС†СЏ РІ С‡Р°С‚.";
+				case "target_unavailable" -> "Р’РёР±СЂР°РЅРёР№ РіСЂР°РІРµС†СЊ Р±С–Р»СЊС€Рµ РЅРµРґРѕСЃС‚СѓРїРЅРёР№";
+				case "proposal_sent" -> "РџСЂРѕРїРѕР·РёС†С–СЋ РІС–РґРїСЂР°РІР»РµРЅРѕ.";
+				case "no_pending_proposal" -> "РќРµРјР°С” Р°РєС‚РёРІРЅРѕС— РїСЂРѕРїРѕР·РёС†С–С—.";
+				case "proposal_expired" -> "РџСЂРѕРїРѕР·РёС†С–СЏ РІР¶Рµ РЅРµРґС–Р№СЃРЅР°.";
+				case "proposal_on_cooldown" -> "Р’С–РґРїРѕРІС–РґСЊ Р·Р°СЂР°Р· РЅРµРјРѕР¶Р»РёРІР°: Р·РґС–Р±РЅС–СЃС‚СЊ РЅР° РІС–РґРЅРѕРІР»РµРЅРЅС–.";
+				case "accepted_woman" -> "%s РїРѕРіРѕРґРёРІСЃСЏ. Р—РІ'СЏР·РѕРє РІСЃС‚Р°РЅРѕРІР»РµРЅРѕ.";
+				case "accepted_target" -> "Р’Рё СЃС‚Р°Р»Рё С…Р»РѕРїС†РµРј %s. Р—РІ'СЏР·РѕРє РІСЃС‚Р°РЅРѕРІР»РµРЅРѕ.";
+				case "rejected_woman" -> "Р’Р°СЃ РІС–РґС€РёРІ %s.";
+				case "rejected_target" -> "Р’Рё РІС–РґС€РёР»Рё %s.";
+				case "warning_line" -> "РЈР’РђР“Рђ!";
+				case "warning_suffix" -> "РѕР±СЂР°Р»Р° РўР•Р‘Р•.";
+				case "accept_button" -> "[вќ¤ РџРѕРіРѕРґРёС‚РёСЃСЏ]";
+				case "reject_button" -> "[рџ’” Р’С–РґС€РёС‚Рё]";
+				case "link_broken_kill_woman" -> "Р’Р°СЃ СѓР±РёРІ %s. РЎС‚РѕСЃСѓРЅРєРё Р·СЂСѓР№РЅРѕРІР°РЅРѕ.";
+				case "link_broken_kill_target" -> "Р’Рё РєРёРЅСѓР»Рё %s, РїС–РґСЃС‚СѓРїРЅРѕ РІР±РёРІС€Рё С—С—!";
+				case "link_broken_whitelist_woman" -> "%s РІРёРєР»СЋС‡РёР»Рё Р· СЃРµСЂРІРµСЂР°. РЎС‚РѕСЃСѓРЅРєРё Р·СЂСѓР№РЅРѕРІР°РЅРѕ.";
+				case "link_broken_whitelist_target" -> "Р’Рё РєРёРЅСѓР»Рё %s: РІР°СЃ РІРёРґР°Р»РµРЅРѕ Р· whitelist.";
+				case "link_broken_whitelist_target_woman_removed" -> "%s РІРёРєР»СЋС‡РёР»Рё Р· СЃРµСЂРІРµСЂР°. РЎС‚РѕСЃСѓРЅРєРё Р·СЂСѓР№РЅРѕРІР°РЅРѕ.";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("ja")) {
 			return switch (key) {
-				case "no_players_online" -> "対象にできるプレイヤーがいません";
-				case "already_linked" -> "すでに絆があります";
-				case "target_already_linked" -> "そのプレイヤーはすでに結ばれています";
-				case "target_busy" -> "そのプレイヤーには別の申し込みがあります";
-				case "write_prompt" -> "選んだ相手へのメッセージをチャットに入力してください。";
-				case "target_unavailable" -> "選んだプレイヤーはもう利用できません";
-				case "proposal_sent" -> "申し込みを送りました。";
-				case "no_pending_proposal" -> "返答する申し込みがありません。";
-				case "proposal_expired" -> "その申し込みはもう無効です。";
-				case "proposal_on_cooldown" -> "今は返答できません。この能力はクールダウン中です。";
-				case "accepted_woman" -> "%s が承諾しました。絆が結ばれました。";
-				case "accepted_target" -> "あなたは %s の彼氏になりました。絆が結ばれました。";
-				case "rejected_woman" -> "%s に振られました。";
-				case "rejected_target" -> "あなたは %s を振りました。";
-				case "warning_line" -> "警告!";
-				case "warning_suffix" -> "があなたを選びました。";
-				case "accept_button" -> "[❤ 承諾する]";
-				case "reject_button" -> "[💔 振る]";
-				case "link_broken_kill_woman" -> "%s に殺されました。関係は壊れました。";
-				case "link_broken_kill_target" -> "%s を裏切って殺し、振りました。";
-				case "link_broken_whitelist_woman" -> "%s がサーバーから除外されました。関係は壊れました。";
-				case "link_broken_whitelist_target" -> "%s を振りました: あなたが whitelist から削除されました。";
-				case "link_broken_whitelist_target_woman_removed" -> "%s がサーバーから除外されました。関係は壊れました。";
+				case "no_players_online" -> "еЇѕи±ЎгЃ«гЃ§гЃЌг‚‹гѓ—гѓ¬г‚¤гѓ¤гѓјгЃЊгЃ„гЃѕгЃ›г‚“";
+				case "already_linked" -> "гЃ™гЃ§гЃ«зµ†гЃЊгЃ‚г‚ЉгЃѕгЃ™";
+				case "target_already_linked" -> "гЃќгЃ®гѓ—гѓ¬г‚¤гѓ¤гѓјгЃЇгЃ™гЃ§гЃ«зµђгЃ°г‚ЊгЃ¦гЃ„гЃѕгЃ™";
+				case "target_busy" -> "гЃќгЃ®гѓ—гѓ¬г‚¤гѓ¤гѓјгЃ«гЃЇе€ҐгЃ®з”ігЃ—иѕјгЃїгЃЊгЃ‚г‚ЉгЃѕгЃ™";
+				case "write_prompt" -> "йЃёг‚“гЃ з›ёж‰‹гЃёгЃ®гѓЎгѓѓг‚»гѓјг‚ёг‚’гѓЃгѓЈгѓѓгѓ€гЃ«е…ҐеЉ›гЃ—гЃ¦гЃЏгЃ гЃ•гЃ„гЂ‚";
+				case "target_unavailable" -> "йЃёг‚“гЃ гѓ—гѓ¬г‚¤гѓ¤гѓјгЃЇг‚‚гЃ†е€©з”ЁгЃ§гЃЌгЃѕгЃ›г‚“";
+				case "proposal_sent" -> "з”ігЃ—иѕјгЃїг‚’йЂЃг‚ЉгЃѕгЃ—гЃџгЂ‚";
+				case "no_pending_proposal" -> "иї”з­”гЃ™г‚‹з”ігЃ—иѕјгЃїгЃЊгЃ‚г‚ЉгЃѕгЃ›г‚“гЂ‚";
+				case "proposal_expired" -> "гЃќгЃ®з”ігЃ—иѕјгЃїгЃЇг‚‚гЃ†з„ЎеЉ№гЃ§гЃ™гЂ‚";
+				case "proposal_on_cooldown" -> "д»ЉгЃЇиї”з­”гЃ§гЃЌгЃѕгЃ›г‚“гЂ‚гЃ“гЃ®иѓЅеЉ›гЃЇг‚Їгѓјгѓ«гѓЂг‚¦гѓідё­гЃ§гЃ™гЂ‚";
+				case "accepted_woman" -> "%s гЃЊж‰їи«ѕгЃ—гЃѕгЃ—гЃџгЂ‚зµ†гЃЊзµђгЃ°г‚ЊгЃѕгЃ—гЃџгЂ‚";
+				case "accepted_target" -> "гЃ‚гЃЄгЃџгЃЇ %s гЃ®еЅјж°ЏгЃ«гЃЄг‚ЉгЃѕгЃ—гЃџгЂ‚зµ†гЃЊзµђгЃ°г‚ЊгЃѕгЃ—гЃџгЂ‚";
+				case "rejected_woman" -> "%s гЃ«жЊЇг‚‰г‚ЊгЃѕгЃ—гЃџгЂ‚";
+				case "rejected_target" -> "гЃ‚гЃЄгЃџгЃЇ %s г‚’жЊЇг‚ЉгЃѕгЃ—гЃџгЂ‚";
+				case "warning_line" -> "и­¦е‘Љ!";
+				case "warning_suffix" -> "гЃЊгЃ‚гЃЄгЃџг‚’йЃёгЃігЃѕгЃ—гЃџгЂ‚";
+				case "accept_button" -> "[вќ¤ ж‰їи«ѕгЃ™г‚‹]";
+				case "reject_button" -> "[рџ’” жЊЇг‚‹]";
+				case "link_broken_kill_woman" -> "%s гЃ«ж®єгЃ•г‚ЊгЃѕгЃ—гЃџгЂ‚й–ўдї‚гЃЇеЈЉг‚ЊгЃѕгЃ—гЃџгЂ‚";
+				case "link_broken_kill_target" -> "%s г‚’иЈЏе€‡гЃЈгЃ¦ж®єгЃ—гЂЃжЊЇг‚ЉгЃѕгЃ—гЃџгЂ‚";
+				case "link_broken_whitelist_woman" -> "%s гЃЊг‚µгѓјгѓђгѓјгЃ‹г‚‰й™¤е¤–гЃ•г‚ЊгЃѕгЃ—гЃџгЂ‚й–ўдї‚гЃЇеЈЉг‚ЊгЃѕгЃ—гЃџгЂ‚";
+				case "link_broken_whitelist_target" -> "%s г‚’жЊЇг‚ЉгЃѕгЃ—гЃџ: гЃ‚гЃЄгЃџгЃЊ whitelist гЃ‹г‚‰е‰Љй™¤гЃ•г‚ЊгЃѕгЃ—гЃџгЂ‚";
+				case "link_broken_whitelist_target_woman_removed" -> "%s гЃЊг‚µгѓјгѓђгѓјгЃ‹г‚‰й™¤е¤–гЃ•г‚ЊгЃѕгЃ—гЃџгЂ‚й–ўдї‚гЃЇеЈЉг‚ЊгЃѕгЃ—гЃџгЂ‚";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("ru")) {
 			return switch (key) {
-				case "no_players_online" -> "На сервере нет подходящих игроков";
-				case "already_linked" -> "У вас уже есть связь";
-				case "target_already_linked" -> "Этот игрок уже связан";
-				case "target_busy" -> "Этот игрок уже получил другое предложение";
-				case "write_prompt" -> "Напишите сообщение для выбранного парня в чат.";
-				case "target_unavailable" -> "Выбранный игрок больше недоступен";
-				case "proposal_sent" -> "Предложение отправлено.";
-				case "no_pending_proposal" -> "Нет активного предложения.";
-				case "proposal_expired" -> "Предложение уже недействительно.";
-				case "proposal_on_cooldown" -> "Сейчас ответить нельзя: способность женщины в КД.";
-				case "accepted_woman" -> "%s согласился. Связь установлена.";
-				case "accepted_target" -> "Вы стали парнем %s. Связь установлена.";
-				case "rejected_woman" -> "Вас отшил %s.";
-				case "rejected_target" -> "Вы отшили %s.";
-				case "warning_line" -> "ВНИМАНИЕ!";
-				case "warning_suffix" -> "выбрала ТЕБЯ.";
-				case "accept_button" -> "[❤ Согласиться]";
-				case "reject_button" -> "[💔 Отшить]";
-				case "link_broken_kill_woman" -> "Вас убил %s. Отношения разрушены.";
-				case "link_broken_kill_target" -> "Вы бросили %s, предательски убив её!";
-				case "link_broken_whitelist_woman" -> "%s исключили с сервера. Отношения разрушены.";
-				case "link_broken_whitelist_target" -> "Вы бросили %s: вас удалили из whitelist.";
-				case "link_broken_whitelist_target_woman_removed" -> "%s исключили с сервера. Отношения разрушены.";
+				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂРµ РЅРµС‚ РїРѕРґС…РѕРґСЏС‰РёС… РёРіСЂРѕРєРѕРІ";
+				case "already_linked" -> "РЈ РІР°СЃ СѓР¶Рµ РµСЃС‚СЊ СЃРІСЏР·СЊ";
+				case "target_already_linked" -> "Р­С‚РѕС‚ РёРіСЂРѕРє СѓР¶Рµ СЃРІСЏР·Р°РЅ";
+				case "target_busy" -> "Р­С‚РѕС‚ РёРіСЂРѕРє СѓР¶Рµ РїРѕР»СѓС‡РёР» РґСЂСѓРіРѕРµ РїСЂРµРґР»РѕР¶РµРЅРёРµ";
+				case "write_prompt" -> "РќР°РїРёС€РёС‚Рµ СЃРѕРѕР±С‰РµРЅРёРµ РґР»СЏ РІС‹Р±СЂР°РЅРЅРѕРіРѕ РїР°СЂРЅСЏ РІ С‡Р°С‚.";
+				case "target_unavailable" -> "Р’С‹Р±СЂР°РЅРЅС‹Р№ РёРіСЂРѕРє Р±РѕР»СЊС€Рµ РЅРµРґРѕСЃС‚СѓРїРµРЅ";
+				case "proposal_sent" -> "РџСЂРµРґР»РѕР¶РµРЅРёРµ РѕС‚РїСЂР°РІР»РµРЅРѕ.";
+				case "no_pending_proposal" -> "РќРµС‚ Р°РєС‚РёРІРЅРѕРіРѕ РїСЂРµРґР»РѕР¶РµРЅРёСЏ.";
+				case "proposal_expired" -> "РџСЂРµРґР»РѕР¶РµРЅРёРµ СѓР¶Рµ РЅРµРґРµР№СЃС‚РІРёС‚РµР»СЊРЅРѕ.";
+				case "proposal_on_cooldown" -> "РЎРµР№С‡Р°СЃ РѕС‚РІРµС‚РёС‚СЊ РЅРµР»СЊР·СЏ: СЃРїРѕСЃРѕР±РЅРѕСЃС‚СЊ Р¶РµРЅС‰РёРЅС‹ РІ РљР”.";
+				case "accepted_woman" -> "%s СЃРѕРіР»Р°СЃРёР»СЃСЏ. РЎРІСЏР·СЊ СѓСЃС‚Р°РЅРѕРІР»РµРЅР°.";
+				case "accepted_target" -> "Р’С‹ СЃС‚Р°Р»Рё РїР°СЂРЅРµРј %s. РЎРІСЏР·СЊ СѓСЃС‚Р°РЅРѕРІР»РµРЅР°.";
+				case "rejected_woman" -> "Р’Р°СЃ РѕС‚С€РёР» %s.";
+				case "rejected_target" -> "Р’С‹ РѕС‚С€РёР»Рё %s.";
+				case "warning_line" -> "Р’РќРРњРђРќРР•!";
+				case "warning_suffix" -> "РІС‹Р±СЂР°Р»Р° РўР•Р‘РЇ.";
+				case "accept_button" -> "[вќ¤ РЎРѕРіР»Р°СЃРёС‚СЊСЃСЏ]";
+				case "reject_button" -> "[рџ’” РћС‚С€РёС‚СЊ]";
+				case "link_broken_kill_woman" -> "Р’Р°СЃ СѓР±РёР» %s. РћС‚РЅРѕС€РµРЅРёСЏ СЂР°Р·СЂСѓС€РµРЅС‹.";
+				case "link_broken_kill_target" -> "Р’С‹ Р±СЂРѕСЃРёР»Рё %s, РїСЂРµРґР°С‚РµР»СЊСЃРєРё СѓР±РёРІ РµС‘!";
+				case "link_broken_whitelist_woman" -> "%s РёСЃРєР»СЋС‡РёР»Рё СЃ СЃРµСЂРІРµСЂР°. РћС‚РЅРѕС€РµРЅРёСЏ СЂР°Р·СЂСѓС€РµРЅС‹.";
+				case "link_broken_whitelist_target" -> "Р’С‹ Р±СЂРѕСЃРёР»Рё %s: РІР°СЃ СѓРґР°Р»РёР»Рё РёР· whitelist.";
+				case "link_broken_whitelist_target_woman_removed" -> "%s РёСЃРєР»СЋС‡РёР»Рё СЃ СЃРµСЂРІРµСЂР°. РћС‚РЅРѕС€РµРЅРёСЏ СЂР°Р·СЂСѓС€РµРЅС‹.";
 				default -> "";
 			};
 		}
@@ -15412,8 +18806,8 @@ public final class ServerRaceSystem {
 			case "rejected_target" -> "You dumped %s.";
 			case "warning_line" -> "WARNING!";
 			case "warning_suffix" -> "chose YOU.";
-			case "accept_button" -> "[❤ Accept]";
-			case "reject_button" -> "[💔 Reject]";
+			case "accept_button" -> "[вќ¤ Accept]";
+			case "reject_button" -> "[рџ’” Reject]";
 			case "link_broken_kill_woman" -> "%s killed you. The relationship is ruined.";
 			case "link_broken_kill_target" -> "You dumped %s by treacherously killing her!";
 			case "link_broken_whitelist_woman" -> "%s was removed from the server. The relationship is ruined.";
@@ -15433,10 +18827,10 @@ public final class ServerRaceSystem {
 	private static String localizeAbilityNotPurchased(ServerPlayer player, String abilityName) {
 		String locale = normalizeCartelDisguiseLocale(player);
 		return switch (locale) {
-			case "rpr" -> "Умѣніе «" + abilityName + "» не стяжано";
-			case "uk", "uk_ua" -> "Здібність «" + abilityName + "» ще не куплена";
-			case "ja", "ja_jp" -> "能力「" + abilityName + "」はまだ購入されていません";
-			case "ru", "ru_ru" -> "Способность «" + abilityName + "» не куплена";
+			case "rpr" -> "РЈРјСЈРЅС–Рµ В«" + abilityName + "В» РЅРµ СЃС‚СЏР¶Р°РЅРѕ";
+			case "uk", "uk_ua" -> "Р—РґС–Р±РЅС–СЃС‚СЊ В«" + abilityName + "В» С‰Рµ РЅРµ РєСѓРїР»РµРЅР°";
+			case "ja", "ja_jp" -> "иѓЅеЉ›гЂЊ" + abilityName + "гЂЌгЃЇгЃѕгЃ иіје…ҐгЃ•г‚ЊгЃ¦гЃ„гЃѕгЃ›г‚“";
+			case "ru", "ru_ru" -> "РЎРїРѕСЃРѕР±РЅРѕСЃС‚СЊ В«" + abilityName + "В» РЅРµ РєСѓРїР»РµРЅР°";
 			default -> "Ability \"" + abilityName + "\" is not purchased yet";
 		};
 	}
@@ -15461,37 +18855,37 @@ public final class ServerRaceSystem {
 		String locale = normalizeCartelDisguiseLocale(player);
 		if (locale.startsWith("rpr")) {
 			return switch (key) {
-				case "player_only" -> "Сію команду можетъ использовать токмо игрокъ";
-				case "no_race" -> "У тебя пока нѣтъ назначенной расы";
-				case "no_menu" -> "Не удалось открыть меню расы. Исполни /race reload";
-				case "ability_disabled" -> "Умѣніе %s нынѣ недоступно";
+				case "player_only" -> "РЎС–СЋ РєРѕРјР°РЅРґСѓ РјРѕР¶РµС‚СЉ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ С‚РѕРєРјРѕ РёРіСЂРѕРєСЉ";
+				case "no_race" -> "РЈ С‚РµР±СЏ РїРѕРєР° РЅСЈС‚СЉ РЅР°Р·РЅР°С‡РµРЅРЅРѕР№ СЂР°СЃС‹";
+				case "no_menu" -> "РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ РјРµРЅСЋ СЂР°СЃС‹. РСЃРїРѕР»РЅРё /race reload";
+				case "ability_disabled" -> "РЈРјСЈРЅС–Рµ %s РЅС‹РЅСЈ РЅРµРґРѕСЃС‚СѓРїРЅРѕ";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("uk")) {
 			return switch (key) {
-				case "player_only" -> "Цю команду може використовувати лише гравець";
-				case "no_race" -> "У тебе поки немає призначеної раси";
-				case "no_menu" -> "Не вдалося відкрити меню раси. Виконай /race reload";
-				case "ability_disabled" -> "Здібність %s зараз недоступна";
+				case "player_only" -> "Р¦СЋ РєРѕРјР°РЅРґСѓ РјРѕР¶Рµ РІРёРєРѕСЂРёСЃС‚РѕРІСѓРІР°С‚Рё Р»РёС€Рµ РіСЂР°РІРµС†СЊ";
+				case "no_race" -> "РЈ С‚РµР±Рµ РїРѕРєРё РЅРµРјР°С” РїСЂРёР·РЅР°С‡РµРЅРѕС— СЂР°СЃРё";
+				case "no_menu" -> "РќРµ РІРґР°Р»РѕСЃСЏ РІС–РґРєСЂРёС‚Рё РјРµРЅСЋ СЂР°СЃРё. Р’РёРєРѕРЅР°Р№ /race reload";
+				case "ability_disabled" -> "Р—РґС–Р±РЅС–СЃС‚СЊ %s Р·Р°СЂР°Р· РЅРµРґРѕСЃС‚СѓРїРЅР°";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("ja")) {
 			return switch (key) {
-				case "player_only" -> "このコマンドはプレイヤーのみ使用できます";
-				case "no_race" -> "まだ種族が割り当てられていません";
-				case "no_menu" -> "種族メニューを開けませんでした。/race reload を実行してください";
-				case "ability_disabled" -> "能力 %s は現在使用できません";
+				case "player_only" -> "гЃ“гЃ®г‚ігѓћгѓігѓ‰гЃЇгѓ—гѓ¬г‚¤гѓ¤гѓјгЃ®гЃїдЅїз”ЁгЃ§гЃЌгЃѕгЃ™";
+				case "no_race" -> "гЃѕгЃ зЁ®ж—ЏгЃЊе‰Іг‚ЉеЅ“гЃ¦г‚‰г‚ЊгЃ¦гЃ„гЃѕгЃ›г‚“";
+				case "no_menu" -> "зЁ®ж—ЏгѓЎгѓ‹гѓҐгѓјг‚’й–‹гЃ‘гЃѕгЃ›г‚“гЃ§гЃ—гЃџгЂ‚/race reload г‚’е®џиЎЊгЃ—гЃ¦гЃЏгЃ гЃ•гЃ„";
+				case "ability_disabled" -> "иѓЅеЉ› %s гЃЇзЏѕењЁдЅїз”ЁгЃ§гЃЌгЃѕгЃ›г‚“";
 				default -> "";
 			};
 		}
 		if (locale.startsWith("ru")) {
 			return switch (key) {
-				case "player_only" -> "Эту команду может использовать только игрок";
-				case "no_race" -> "У тебя пока нет назначенной расы";
-				case "no_menu" -> "Не удалось открыть меню расы. Выполни /race reload";
-				case "ability_disabled" -> "Способность %s сейчас недоступна";
+				case "player_only" -> "Р­С‚Сѓ РєРѕРјР°РЅРґСѓ РјРѕР¶РµС‚ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ С‚РѕР»СЊРєРѕ РёРіСЂРѕРє";
+				case "no_race" -> "РЈ С‚РµР±СЏ РїРѕРєР° РЅРµС‚ РЅР°Р·РЅР°С‡РµРЅРЅРѕР№ СЂР°СЃС‹";
+				case "no_menu" -> "РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ РјРµРЅСЋ СЂР°СЃС‹. Р’С‹РїРѕР»РЅРё /race reload";
+				case "ability_disabled" -> "РЎРїРѕСЃРѕР±РЅРѕСЃС‚СЊ %s СЃРµР№С‡Р°СЃ РЅРµРґРѕСЃС‚СѓРїРЅР°";
 				default -> "";
 			};
 		}
@@ -16636,7 +20030,7 @@ public final class ServerRaceSystem {
 		if (player == null) {
 			return;
 		}
-		player.displayClientMessage(Component.literal("Цель не выбрана").withStyle(ChatFormatting.RED), true);
+		player.displayClientMessage(Component.literal("Р¦РµР»СЊ РЅРµ РІС‹Р±СЂР°РЅР°").withStyle(ChatFormatting.RED), true);
 	}
 
 	private static boolean displayInfiniteCooldown(ServerPlayer player) {
@@ -17333,3 +20727,12 @@ public final class ServerRaceSystem {
 		}
 	}
 }
+
+
+
+
+
+
+
+
+

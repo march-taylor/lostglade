@@ -1,0 +1,17 @@
+{
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "lg2:font/little_dictator_ping_overlay.png",
+      "ascent": 12,
+      "height": 24,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "reference",
+      "id": "minecraft:default"
+    }
+  ]
+}

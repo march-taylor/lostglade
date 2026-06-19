@@ -54,6 +54,13 @@ public abstract class BlockItemPlacementGateMixin {
 		}
 		boolean golemHead = ServerMechanicsGateSystem.isGolemHeadBlock(blockItem.getBlock());
 		if (context.getPlayer() instanceof ServerPlayer serverPlayer) {
+			BlockState clickedState = context.getLevel().getBlockState(context.getClickedPos());
+			if (ServerRaceSystem.canLittleDictatorBypassInteraction(serverPlayer, clickedState)
+					&& (clickedState.is(Blocks.IRON_DOOR) || clickedState.is(Blocks.IRON_TRAPDOOR))) {
+				ServerMechanicsGateSystem.syncPlayerInventory(serverPlayer);
+				cir.setReturnValue(InteractionResult.FAIL);
+				return;
+			}
 			if (golemHead) {
 				if (ServerMechanicsGateSystem.shouldCancelPlayerGolemHeadPlacement(serverPlayer, context, blockItem.getBlock())) {
 					ServerMechanicsGateSystem.syncPlayerInventory(serverPlayer);
