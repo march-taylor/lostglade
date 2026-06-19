@@ -7,8 +7,10 @@ import com.mojang.datafixers.util.Pair;
 import com.lostglade.Lg2;
 import com.lostglade.item.DroneItem;
 import com.lostglade.item.ModItems;
+import com.lostglade.mixin.ClientboundMoveEntityPacketAccessor;
 import com.lostglade.mixin.ClientboundSetPassengersPacketAccessor;
 import com.lostglade.mixin.DisplayAccessor;
+import com.lostglade.mixin.DisplayTrackedDataAccessor;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
 import com.lostglade.server.map.MapImageRenderSystem;
@@ -46,6 +48,7 @@ import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
@@ -146,6 +149,7 @@ import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
+import org.joml.Vector3fc;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -205,6 +209,9 @@ public final class DroneSystem {
 	// Additional lift for module variants that hang lower than the base rig.
 	private static final double DRONE_KAMIKAZE_VISUAL_LIFT = 0.24375D;
 	private static final double DRONE_TURRET_VISUAL_LIFT = 0.2125D;
+	// Operator-only local tuning for the passenger-mounted body preview while controlling a drone.
+	private static final float CONTROLLED_OPERATOR_PASSENGER_DISPLAY_Y_OFFSET = 0.0F;
+	private static final float CONTROLLED_OPERATOR_PASSENGER_DISPLAY_Z_OFFSET = 0.0F;
 	private static final int DRONE_DISPLAY_INTERPOLATION_TICKS = 2;
 	private static final float DRONE_DISPLAY_DRIVE_SMOOTHING = 0.35F;
 	private static final float DRONE_MAX_TILT_DEGREES = 32.0F;
@@ -885,19 +892,45 @@ public final class DroneSystem {
 			return buildControlledPlayerPositionPacket(session, playerPositionPacket.id());
 		}
 
-		if (packet instanceof ClientboundSetEntityMotionPacket entityMotionPacket
-				&& entityMotionPacket.getId() == receiver.getId()) {
+		if (packet instanceof ClientboundSetEntityMotionPacket entityMotionPacket) {
+			if (entityMotionPacket.getId() == receiver.getId()) {
+				return null;
+			}
+			if (isControlledOperatorPassengerVisualEntity(receiver, entityMotionPacket.getId())) {
+				return null;
+			}
+		}
+
+		if (packet instanceof ClientboundTeleportEntityPacket entityTeleportPacket) {
+			if (entityTeleportPacket.id() == receiver.getId()) {
+				return buildControlledSelfTeleportPacket(receiver, session);
+			}
+			if (isControlledOperatorPassengerVisualEntity(receiver, entityTeleportPacket.id())) {
+				return null;
+			}
+		}
+
+		if (packet instanceof ClientboundEntityPositionSyncPacket positionSyncPacket
+				&& isControlledOperatorPassengerVisualEntity(receiver, positionSyncPacket.id())) {
 			return null;
 		}
 
-		if (packet instanceof ClientboundTeleportEntityPacket entityTeleportPacket
-				&& entityTeleportPacket.id() == receiver.getId()) {
-			return buildControlledSelfTeleportPacket(receiver, session);
+		if (packet instanceof ClientboundMoveEntityPacket moveEntityPacket
+				&& isControlledOperatorPassengerVisualEntity(
+						receiver,
+						((ClientboundMoveEntityPacketAccessor) (Object) moveEntityPacket).lg2$getEntityId()
+				)) {
+			return null;
 		}
 
-		if (packet instanceof ClientboundSetEntityDataPacket entityDataPacket
-				&& entityDataPacket.id() == receiver.getId()) {
-			return buildControlledSelfMetadataPacket(receiver);
+		if (packet instanceof ClientboundSetEntityDataPacket entityDataPacket) {
+			if (entityDataPacket.id() == receiver.getId()) {
+				return buildControlledSelfMetadataPacket(receiver);
+			}
+			Packet<?> rewrittenDisplayMetadataPacket = rewriteControlledOperatorPassengerDisplayMetadata(receiver, entityDataPacket);
+			if (rewrittenDisplayMetadataPacket != entityDataPacket) {
+				return rewrittenDisplayMetadataPacket;
+			}
 		}
 
 		if (packet instanceof ClientboundSetPassengersPacket passengersPacket
@@ -1584,6 +1617,7 @@ public final class DroneSystem {
 		}
 		VISUALLY_CONTROLLED_PLAYERS.remove(player.getUUID());
 		clearControlledOperatorTransientState(player, null);
+		clearControlledOperatorPassengerAttachment(player);
 		removeControlledOperatorBodyMirror(player);
 		detachAnyDronePassengersFromController(player);
 		clearControlledOperatorMovementState(player);
@@ -2022,8 +2056,8 @@ public final class DroneSystem {
 		));
 		decayControlledDroneSurfaceWear(session, root.level().getGameTime());
 		syncControlledDronePresentation(player, root, session);
-		syncControlledOperatorView(player, session, root, false, autoAimAdjustedView);
 		syncControlledOperatorBodyMirror(player, false);
+		syncControlledOperatorView(player, session, root, false, autoAimAdjustedView);
 		syncControlledOperatorNightVision(player, session, root);
 		updateDroneHud(player, session, false);
 	}
@@ -3679,20 +3713,16 @@ public final class DroneSystem {
 	}
 
 	private static ClientboundSetPassengersPacket buildControlledOperatorPassengerPacket(ServerPlayer player, DroneControlSession session) {
-		ClientboundSetPassengersPacket packet = new ClientboundSetPassengersPacket(player);
 		Entity root = (player != null && player.level() != null && player.level().getServer() != null && session != null)
 				? findDroneRoot(player.level().getServer(), session.droneDimension(), session.droneUuid())
 				: null;
 		int[] passengerIds = root != null && root.isAlive() ? new int[]{root.getId()} : new int[0];
-		((ClientboundSetPassengersPacketAccessor) (Object) packet).lg2$setPassengers(passengerIds);
-		return packet;
+		return buildPassengerPacket(player, resolveControlledOperatorPassengerVehicleId(player), passengerIds);
 	}
 
 	private static ClientboundSetPassengersPacket buildControlledOperatorDroneLayerPassengerPacket(Entity root) {
-		ClientboundSetPassengersPacket packet = new ClientboundSetPassengersPacket(root);
 		if (!root.isAlive()) {
-			((ClientboundSetPassengersPacketAccessor) (Object) packet).lg2$setPassengers(new int[0]);
-			return packet;
+			return buildPassengerPacket(root, root.getId(), new int[0]);
 		}
 
 		List<Display.ItemDisplay> displays = findDroneDisplayLayers(root);
@@ -3709,8 +3739,7 @@ public final class DroneSystem {
 			System.arraycopy(passengerIds, 0, compact, 0, count);
 			passengerIds = compact;
 		}
-		((ClientboundSetPassengersPacketAccessor) (Object) packet).lg2$setPassengers(passengerIds);
-		return packet;
+		return buildPassengerPacket(root, root.getId(), passengerIds);
 	}
 
 	private static void syncControlledOperatorDroneLayerAttachment(ServerPlayer player, Entity root) {
@@ -3718,13 +3747,156 @@ public final class DroneSystem {
 			return;
 		}
 		sendControlledOperatorPacket(player, buildControlledOperatorDroneLayerPassengerPacket(root));
+		syncControlledOperatorPassengerDisplayOffsets(player, root);
 	}
 
 	private static void clearControlledOperatorDroneLayerAttachment(ServerPlayer player, Entity root) {
 		if (player == null || root == null || player.connection == null || !root.isAlive()) {
 			return;
 		}
-		sendControlledOperatorPacket(player, new ClientboundSetPassengersPacket(root));
+		syncControlledOperatorBaseDisplayOffsets(player, root);
+		sendControlledOperatorPacket(player, buildPassengerPacket(root, root.getId(), new int[0]));
+	}
+
+	private static void clearControlledOperatorPassengerAttachment(ServerPlayer player) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		if (!ACTIVE_SESSIONS.containsKey(player.getUUID()) && !VISUALLY_CONTROLLED_PLAYERS.contains(player.getUUID())) {
+			return;
+		}
+		sendControlledOperatorPacket(player, buildPassengerPacket(player, player.getId(), new int[0]));
+		OperatorBodyMirror mirror = OPERATOR_BODY_MIRRORS.get(player.getUUID());
+		if (mirror != null && mirror.spawned()) {
+			sendControlledOperatorPacket(player, buildPassengerPacket(player, mirror.entityId(), new int[0]));
+		}
+	}
+
+	private static ClientboundSetPassengersPacket buildPassengerPacket(Entity seedEntity, int vehicleId, int[] passengerIds) {
+		ClientboundSetPassengersPacket packet = new ClientboundSetPassengersPacket(seedEntity);
+		ClientboundSetPassengersPacketAccessor accessor = (ClientboundSetPassengersPacketAccessor) (Object) packet;
+		accessor.lg2$setVehicle(vehicleId);
+		accessor.lg2$setPassengers(passengerIds == null ? new int[0] : passengerIds);
+		return packet;
+	}
+
+	private static int resolveControlledOperatorPassengerVehicleId(ServerPlayer player) {
+		if (player == null) {
+			return 0;
+		}
+		OperatorBodyMirror mirror = OPERATOR_BODY_MIRRORS.get(player.getUUID());
+		if (mirror != null && mirror.spawned()) {
+			return mirror.entityId();
+		}
+		return player.getId();
+	}
+
+	private static void syncControlledOperatorPassengerDisplayOffsets(ServerPlayer player, Entity root) {
+		if (player == null || root == null || player.connection == null || !root.isAlive()) {
+			return;
+		}
+		for (Display.ItemDisplay display : findDroneDisplayLayers(root)) {
+			Packet<?> packet = buildControlledOperatorPassengerDisplayOffsetPacket(display, true);
+			if (packet != null) {
+				sendControlledOperatorPacket(player, packet);
+			}
+		}
+	}
+
+	private static void syncControlledOperatorBaseDisplayOffsets(ServerPlayer player, Entity root) {
+		if (player == null || root == null || player.connection == null || !root.isAlive()) {
+			return;
+		}
+		for (Display.ItemDisplay display : findDroneDisplayLayers(root)) {
+			Packet<?> packet = buildControlledOperatorPassengerDisplayOffsetPacket(display, false);
+			if (packet != null) {
+				sendControlledOperatorPacket(player, packet);
+			}
+		}
+	}
+
+	private static Packet<?> buildControlledOperatorPassengerDisplayOffsetPacket(Display.ItemDisplay display, boolean applyPassengerOffset) {
+		if (display == null || !display.isAlive()) {
+			return null;
+		}
+		EntityDataAccessor<Vector3fc> translationAccessor = DisplayTrackedDataAccessor.lg2$getDataTranslationId();
+		Vector3fc translation = buildControlledOperatorPassengerDisplayTranslation(
+				display.getEntityData().get(translationAccessor),
+				applyPassengerOffset
+		);
+		return new ClientboundSetEntityDataPacket(
+				display.getId(),
+				List.of(SynchedEntityData.DataValue.create(translationAccessor, translation))
+		);
+	}
+
+	private static Packet<?> rewriteControlledOperatorPassengerDisplayMetadata(ServerPlayer player, ClientboundSetEntityDataPacket packet) {
+		Display.ItemDisplay display = resolveControlledOperatorPassengerDisplay(player, packet == null ? Integer.MIN_VALUE : packet.id());
+		if (display == null || packet == null) {
+			return packet;
+		}
+		EntityDataAccessor<Vector3fc> translationAccessor = DisplayTrackedDataAccessor.lg2$getDataTranslationId();
+		List<SynchedEntityData.DataValue<?>> packedItems = packet.packedItems();
+		if (packedItems == null || packedItems.isEmpty()) {
+			return packet;
+		}
+		List<SynchedEntityData.DataValue<?>> rewritten = new ArrayList<>(packedItems.size());
+		boolean changed = false;
+		for (SynchedEntityData.DataValue<?> value : packedItems) {
+			if (value != null && value.id() == translationAccessor.id()) {
+				rewritten.add(SynchedEntityData.DataValue.create(
+						translationAccessor,
+						buildControlledOperatorPassengerDisplayTranslation(display.getEntityData().get(translationAccessor), true)
+				));
+				changed = true;
+				continue;
+			}
+			rewritten.add(value);
+		}
+		return changed ? new ClientboundSetEntityDataPacket(packet.id(), rewritten) : packet;
+	}
+
+	private static Vector3fc buildControlledOperatorPassengerDisplayTranslation(Vector3fc baseTranslation, boolean applyPassengerOffset) {
+		float baseX = baseTranslation == null ? 0.0F : baseTranslation.x();
+		float baseY = baseTranslation == null ? 0.0F : baseTranslation.y();
+		float baseZ = baseTranslation == null ? 0.0F : baseTranslation.z();
+		float offsetY = applyPassengerOffset ? CONTROLLED_OPERATOR_PASSENGER_DISPLAY_Y_OFFSET : 0.0F;
+		float offsetZ = applyPassengerOffset ? CONTROLLED_OPERATOR_PASSENGER_DISPLAY_Z_OFFSET : 0.0F;
+		return new Vector3f(
+				baseX,
+				baseY + offsetY,
+				baseZ + offsetZ
+		);
+	}
+
+	private static boolean isControlledOperatorPassengerVisualEntity(ServerPlayer player, int entityId) {
+		if (player == null || entityId == 0) {
+			return false;
+		}
+		Entity root = resolveControlledDroneRoot(player);
+		if (root == null || !root.isAlive()) {
+			return false;
+		}
+		if (root.getId() == entityId) {
+			return true;
+		}
+		return resolveControlledOperatorPassengerDisplay(player, entityId) != null;
+	}
+
+	private static Display.ItemDisplay resolveControlledOperatorPassengerDisplay(ServerPlayer player, int entityId) {
+		if (player == null) {
+			return null;
+		}
+		Entity root = resolveControlledDroneRoot(player);
+		if (root == null || !root.isAlive()) {
+			return null;
+		}
+		for (Display.ItemDisplay display : findDroneDisplayLayers(root)) {
+			if (display != null && display.isAlive() && display.getId() == entityId) {
+				return display;
+			}
+		}
+		return null;
 	}
 
 	private static void sendControlledOperatorPacket(ServerPlayer player, Packet<?> packet) {
@@ -3869,6 +4041,7 @@ public final class DroneSystem {
 		}
 		sendControlledOperatorPacket(player, new ClientboundSetEntityMotionPacket(player.getId(), controlledOperatorDriveVelocity(session)));
 		sendControlledOperatorPacket(player, buildControlledSelfMetadataPacket(player));
+		clearControlledOperatorPassengerAttachment(player);
 	}
 
 	private static void syncControlledOperatorBodyMirror(ServerPlayer player, boolean forceSpawn) {
@@ -4834,6 +5007,7 @@ public final class DroneSystem {
 		stopControlledOperatorAudio(player.getUUID());
 		if (session == null) {
 			clearControlledOperatorTransientState(player, null);
+			clearControlledOperatorPassengerAttachment(player);
 			removeControlledOperatorBodyMirror(player);
 			if (VISUALLY_CONTROLLED_PLAYERS.contains(player.getUUID())) {
 				restoreOrphanedControlledOperator(player);
@@ -4850,10 +5024,11 @@ public final class DroneSystem {
 		DroneAutoAimTarget releasedAutoAimTarget = session.autoAimTarget();
 
 		clearControlledOperatorTransientState(player, session);
+		clearControlledOperatorPassengerAttachment(player);
+		clearControlledOperatorDroneLayerAttachment(player, root);
 		removeControlledOperatorBodyMirror(player);
 		clearControlledOperatorMovementState(player);
 		markPostControlMoveSuppressedForPlayer(player);
-		clearControlledOperatorDroneLayerAttachment(player, root);
 		detachAnyDronePassengersFromController(player);
 		if (releaseDrone && root != null) {
 			Vec3 currentRootPos = root.position();
