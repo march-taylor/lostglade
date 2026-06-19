@@ -4,6 +4,7 @@ import com.lostglade.Lg2;
 import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.item.ModItems;
+import com.lostglade.mixin.SynchedEntityDataAccessor;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.network.RendererBotShadowPacketCodec;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -33,6 +34,8 @@ import net.minecraft.network.protocol.game.ClientboundSoundEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.resources.Identifier;
@@ -2431,7 +2434,9 @@ public final class RendererBotCameraSystem {
 					trackedEntity.serverEntity().sendPairingData(bot, packets::add);
 				}
 				trackedEntity.collector().clear();
+				List<SynchedEntityData.DataValue<?>> preservedDirtyData = preserveDirtyTrackedData(entity);
 				trackedEntity.serverEntity().sendChanges();
+				restoreDirtyTrackedData(entity, preservedDirtyData);
 				packets.addAll(trackedEntity.collector().drain());
 			}
 		});
@@ -2707,6 +2712,49 @@ public final class RendererBotCameraSystem {
 				),
 				collector
 		);
+	}
+
+	private static List<SynchedEntityData.DataValue<?>> preserveDirtyTrackedData(Entity entity) {
+		if (entity == null) {
+			return List.of();
+		}
+		List<SynchedEntityData.DataValue<?>> dirtyData = entity.getEntityData().packDirty();
+		restoreDirtyTrackedData(entity, dirtyData);
+		return dirtyData == null ? List.of() : dirtyData;
+	}
+
+	private static void restoreDirtyTrackedData(Entity entity, List<SynchedEntityData.DataValue<?>> dirtyData) {
+		if (entity == null || dirtyData == null || dirtyData.isEmpty()) {
+			return;
+		}
+		SynchedEntityData entityData = entity.getEntityData();
+		SynchedEntityData.DataItem<?>[] itemsById = ((SynchedEntityDataAccessor) (Object) entityData).lg2$getItemsById();
+		if (itemsById == null || itemsById.length == 0) {
+			return;
+		}
+		for (SynchedEntityData.DataValue<?> value : dirtyData) {
+			if (value == null || value.id() < 0 || value.id() >= itemsById.length) {
+				continue;
+			}
+			SynchedEntityData.DataItem<?> item = itemsById[value.id()];
+			if (item == null) {
+				continue;
+			}
+			restoreDirtyTrackedDataItem(entityData, item);
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private static <T> void restoreDirtyTrackedDataItem(SynchedEntityData entityData, SynchedEntityData.DataItem<?> item) {
+		if (entityData == null || item == null) {
+			return;
+		}
+		SynchedEntityData.DataItem<T> typedItem = (SynchedEntityData.DataItem<T>) item;
+		EntityDataAccessor<T> accessor = typedItem.getAccessor();
+		if (accessor == null) {
+			return;
+		}
+		entityData.set(accessor, typedItem.getValue(), true);
 	}
 
 	private static void clearAllShadowSyncStates(MinecraftServer server, boolean notifyClient) {

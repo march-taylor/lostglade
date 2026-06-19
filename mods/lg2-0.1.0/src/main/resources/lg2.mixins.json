@@ -104,6 +104,7 @@
 		"ServerPlayerMenuTitleMixin",
 		"ShieldDecorationRecipeMarkShieldMixin",
 		"StopSoundCommandRendererBotAudioMixin",
+		"SynchedEntityDataAccessor",
 		"TemptGoalAbsoluteInvisibilityMixin",
 		"TargetingConditionsAbsoluteInvisibilityMixin",
 		"WebcamNearbyPlayersRendererBotMixin",
