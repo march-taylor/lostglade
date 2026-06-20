@@ -1268,6 +1268,20 @@ public final class DroneSystem {
 		return root.onGround() || hasSupportingBlockBelow(root);
 	}
 
+	public static boolean shouldSuppressDroneEntityPush(Entity self, Entity other) {
+		if (self == null || other == null || self == other) {
+			return false;
+		}
+		Entity root = self.getTags().contains(DRONE_ROOT_TAG)
+				? self
+				: (other.getTags().contains(DRONE_ROOT_TAG) ? other : null);
+		if (root == null || !shouldDroneRootCollideWithEntities(root)) {
+			return false;
+		}
+		Entity counterpart = root == self ? other : self;
+		return counterpart != null && !isDroneInternalEntity(counterpart);
+	}
+
 	public static String requiredUpgradeForDroneEntity(Entity entity) {
 		Entity root = resolveDroneRoot(entity);
 		return root == null ? null : resolveRequiredUpgradeForDroneRoot(root);
@@ -2930,7 +2944,13 @@ public final class DroneSystem {
 			nextVelocity = applyUncontrolledGroundBraking(actualMovement);
 		}
 		state.setVelocity(nextVelocity);
-		if (!holdWithoutGravity && isUncontrolledDroneSettled(root, nextVelocity) && !hasUncontrolledDroneEnvironmentalMotion(root)) {
+		boolean settledAfterBraking = !holdWithoutGravity
+				&& isUncontrolledDroneSettled(root, nextVelocity)
+				&& !hasUncontrolledDroneEnvironmentalMotion(root);
+		if (settledAfterBraking && !autoAimAdjusted && !screenDrive && actualMovement.lengthSqr() > 1.0E-8D) {
+			applyUncontrolledRotation(root, state, actualMovement);
+		}
+		if (settledAfterBraking) {
 			settleUncontrolledDrone(root, state);
 			return;
 		}
