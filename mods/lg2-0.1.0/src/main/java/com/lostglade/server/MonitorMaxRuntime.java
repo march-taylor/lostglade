@@ -98,6 +98,7 @@ final class MonitorMaxRuntime {
 	private static final int MAX_ACCOUNT_NAME_MAX_LENGTH = 24;
 	private static final String MAX_PENDING_ADD_STATUS = "Введи MAX id или ник в чат";
 	private static final String MAX_PENDING_RENAME_STATUS = "Напиши новый ник в чат";
+	private static final String MAX_PENDING_CALL_INVITE_STATUS = "Напиши MAX id или ник, чтобы добавить контакт и пригласить в звонок";
 	private static final String MAX_RINGTONE_SOURCE_PREFIX = "max:ring:";
 	private static final String MAX_RINGTONE_PREVIEW_SOURCE_PREFIX = "max:ring-preview:";
 	private static final String MAX_DEFAULT_RINGTONE_URL = "max:default-ringtone";
@@ -114,6 +115,7 @@ final class MonitorMaxRuntime {
 	private static final Map<String, ScreenRuntimeKey> ACCOUNT_NAME_INDEX = new ConcurrentHashMap<>();
 	private static final Map<UUID, ScreenRuntimeKey> PENDING_CONTACT_CODE_INPUTS = new ConcurrentHashMap<>();
 	private static final Map<UUID, ScreenRuntimeKey> PENDING_ACCOUNT_NAME_INPUTS = new ConcurrentHashMap<>();
+	private static final Map<UUID, ScreenRuntimeKey> PENDING_CALL_CONTACT_INVITES = new ConcurrentHashMap<>();
 	private static final Map<UUID, MaxCallSession> CALLS_BY_ID = new ConcurrentHashMap<>();
 	private static final Map<ScreenRuntimeKey, UUID> CALL_BY_SCREEN = new ConcurrentHashMap<>();
 
@@ -249,6 +251,7 @@ final class MonitorMaxRuntime {
 			}
 			PENDING_ACCOUNT_NAME_INPUTS.put(player.getUUID(), component.runtimeKey());
 			PENDING_CONTACT_CODE_INPUTS.remove(player.getUUID());
+			PENDING_CALL_CONTACT_INVITES.remove(player.getUUID());
 			sendAccountRenamePrompt(player, accountName);
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
@@ -284,6 +287,7 @@ final class MonitorMaxRuntime {
 		if (maxAddContactRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 			PENDING_CONTACT_CODE_INPUTS.put(player.getUUID(), component.runtimeKey());
 			PENDING_ACCOUNT_NAME_INPUTS.remove(player.getUUID());
+			PENDING_CALL_CONTACT_INVITES.remove(player.getUUID());
 			synchronized (state) {
 				state.statusText = MAX_PENDING_ADD_STATUS;
 				state.version++;
@@ -419,7 +423,7 @@ final class MonitorMaxRuntime {
 				return handleCallCameraPickerTouch(server, component, state, layout, touchPoint);
 			}
 			if (contactPickerOpen) {
-				return handleCallContactPickerTouch(server, component, state, call, layout, touchPoint);
+				return handleCallContactPickerTouch(player, server, component, state, call, layout, touchPoint);
 			}
 		}
 		if (phase == MaxCallPhase.INCOMING) {
@@ -544,6 +548,10 @@ final class MonitorMaxRuntime {
 		if (renameKey != null) {
 			return handleAccountNameInput(message, sender, renameKey);
 		}
+		ScreenRuntimeKey inviteKey = PENDING_CALL_CONTACT_INVITES.remove(sender.getUUID());
+		if (inviteKey != null) {
+			return handleCallContactInviteInput(message, sender, inviteKey);
+		}
 		ScreenRuntimeKey key = PENDING_CONTACT_CODE_INPUTS.remove(sender.getUUID());
 		if (key == null) {
 			return true;
@@ -587,6 +595,55 @@ final class MonitorMaxRuntime {
 		}
 		sender.displayClientMessage(maxContactFeedbackMessage(sender, feedbackKey), true);
 		requestRuntimeRender(server, key);
+		return false;
+	}
+
+	private static boolean handleCallContactInviteInput(PlayerChatMessage message, ServerPlayer sender, ScreenRuntimeKey key) {
+		if (sender == null || message == null || key == null) {
+			return false;
+		}
+		MinecraftServer server = sender.level().getServer();
+		if (server == null) {
+			return false;
+		}
+		ScreenComponent component = resolveScreenComponent(server, key);
+		MaxRuntimeState state = component != null ? ensureState(server, component) : MAX_STATES.get(key);
+		if (state == null) {
+			return false;
+		}
+		String code = resolveAccountCode(server, message.signedContent());
+		if (code.isBlank()) {
+			sender.displayClientMessage(maxContactNotFoundMessage(sender), true);
+			return false;
+		}
+		String ownCode;
+		boolean added;
+		synchronized (state) {
+			ownCode = state.accountCode;
+			if (Objects.equals(code, ownCode)) {
+				state.statusText = "Это id этого экрана";
+				state.version++;
+				sender.displayClientMessage(maxContactFeedbackMessage(sender, "self"), true);
+				requestRuntimeRender(server, key);
+				return false;
+			}
+			added = !state.contacts.contains(code);
+			if (added) {
+				state.contacts.add(code);
+				state.version++;
+			}
+		}
+		if (added) {
+			persistState(server, key, state);
+			addReverseContact(server, code, ownCode);
+		}
+		boolean invited = inviteContactToCall(server, key, code);
+		if (invited) {
+			sender.displayClientMessage(maxCallInviteFeedbackMessage(sender, added), true);
+		} else if (added) {
+			sender.displayClientMessage(maxContactFeedbackMessage(sender, "added"), true);
+			requestRuntimeRender(server, key);
+		}
 		return false;
 	}
 
@@ -887,6 +944,7 @@ final class MonitorMaxRuntime {
 		}
 		PENDING_CONTACT_CODE_INPUTS.entrySet().removeIf(entry -> key.equals(entry.getValue()));
 		PENDING_ACCOUNT_NAME_INPUTS.entrySet().removeIf(entry -> key.equals(entry.getValue()));
+		PENDING_CALL_CONTACT_INVITES.entrySet().removeIf(entry -> key.equals(entry.getValue()));
 	}
 
 	static void clearRuntime() {
@@ -899,6 +957,7 @@ final class MonitorMaxRuntime {
 		ACCOUNT_NAME_INDEX.clear();
 		PENDING_CONTACT_CODE_INPUTS.clear();
 		PENDING_ACCOUNT_NAME_INPUTS.clear();
+		PENDING_CALL_CONTACT_INVITES.clear();
 		CALLS_BY_ID.clear();
 		CALL_BY_SCREEN.clear();
 	}
@@ -1474,9 +1533,13 @@ final class MonitorMaxRuntime {
 		if (contacts.isEmpty()) {
 			return List.of();
 		}
+		String peerCode = call.peerCode(selfKey);
 		List<MaxContactSnapshot> candidates = new ArrayList<>();
 		for (MaxContactSnapshot contact : contacts) {
 			if (contact == null) {
+				continue;
+			}
+			if (contact.active() || contact.ringing() || Objects.equals(contact.code(), peerCode)) {
 				continue;
 			}
 			ScreenRuntimeKey key = ACCOUNT_INDEX.get(contact.code());
@@ -1544,9 +1607,9 @@ final class MonitorMaxRuntime {
 		requestRuntimeRender(server, calleeKey);
 	}
 
-	private static void inviteContactToCall(MinecraftServer server, ScreenRuntimeKey inviterKey, String targetCode) {
+	private static boolean inviteContactToCall(MinecraftServer server, ScreenRuntimeKey inviterKey, String targetCode) {
 		if (server == null || inviterKey == null) {
-			return;
+			return false;
 		}
 		MaxCallSession call = currentCall(inviterKey);
 		MaxRuntimeState inviterState = MAX_STATES.get(inviterKey);
@@ -1554,7 +1617,7 @@ final class MonitorMaxRuntime {
 		ScreenRuntimeKey inviteeKey = ACCOUNT_INDEX.get(code);
 		ScreenComponent inviteeComponent = inviteeKey != null ? resolveScreenComponent(server, inviteeKey) : null;
 		if (call == null || !call.isAccepted(inviterKey) || inviterState == null) {
-			return;
+			return false;
 		}
 		if (inviteeKey == null || inviteeComponent == null || !inviteeComponent.powered()) {
 			synchronized (inviterState) {
@@ -1563,7 +1626,7 @@ final class MonitorMaxRuntime {
 				inviterState.version++;
 			}
 			requestRuntimeRender(server, inviterKey);
-			return;
+			return false;
 		}
 		UUID previousCallId = CALL_BY_SCREEN.get(inviteeKey);
 		if (previousCallId != null && !Objects.equals(previousCallId, call.id)) {
@@ -1576,7 +1639,7 @@ final class MonitorMaxRuntime {
 				inviterState.version++;
 			}
 			requestRuntimeRender(server, inviterKey);
-			return;
+			return false;
 		}
 		CALL_BY_SCREEN.put(inviteeKey, call.id);
 		synchronized (inviterState) {
@@ -1602,6 +1665,7 @@ final class MonitorMaxRuntime {
 		for (ScreenRuntimeKey participant : call.acceptedParticipants()) {
 			requestRuntimeRender(server, participant);
 		}
+		return true;
 	}
 
 	private static void acceptCall(MinecraftServer server, ScreenRuntimeKey calleeKey) {
@@ -2563,6 +2627,7 @@ final class MonitorMaxRuntime {
 	}
 
 	private static boolean handleCallContactPickerTouch(
+			ServerPlayer player,
 			MinecraftServer server,
 			ScreenComponent component,
 			MaxRuntimeState state,
@@ -2570,11 +2635,23 @@ final class MonitorMaxRuntime {
 			UiLayout layout,
 			UiPoint touchPoint
 	) {
-		if (maxAvatarPickerBackRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+		if (maxCallContactPickerCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 			synchronized (state) {
 				state.callContactPickerOpen = false;
 				state.version++;
 			}
+			requestRuntimeRender(server, component.runtimeKey());
+			return true;
+		}
+		if (player != null && maxCallContactPickerAddRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			PENDING_CALL_CONTACT_INVITES.put(player.getUUID(), component.runtimeKey());
+			PENDING_CONTACT_CODE_INPUTS.remove(player.getUUID());
+			PENDING_ACCOUNT_NAME_INPUTS.remove(player.getUUID());
+			synchronized (state) {
+				state.statusText = MAX_PENDING_CALL_INVITE_STATUS;
+				state.version++;
+			}
+			player.displayClientMessage(maxCallContactPromptMessage(player), true);
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
@@ -3566,6 +3643,23 @@ final class MonitorMaxRuntime {
 		return MonitorScreenMessages.literal("Type a MAX id or nickname in chat");
 	}
 
+	private static Component maxCallContactPromptMessage(ServerPlayer player) {
+		String locale = MonitorScreenMessages.locale(player);
+		if (locale.startsWith("ja")) {
+			return MonitorScreenMessages.literal("チャットに MAX id またはニックネームを入力すると、連絡先に追加して通話へ招待します");
+		}
+		if (locale.startsWith("uk")) {
+			return MonitorScreenMessages.literal("Напиши в чат MAX id або нік, щоб додати контакт і запросити його в дзвінок");
+		}
+		if (locale.startsWith("rpr")) {
+			return MonitorScreenMessages.literal("Напиши въ чатъ MAX id или никъ, дабы прибавить контактъ и призвать его въ звонокъ");
+		}
+		if (locale.startsWith("ru")) {
+			return MonitorScreenMessages.literal("Напиши в чат MAX id или ник, чтобы добавить контакт и пригласить его в звонок");
+		}
+		return MonitorScreenMessages.literal("Type a MAX id or nickname to add the contact and invite them to the call");
+	}
+
 	private static Component maxContactNotFoundMessage(ServerPlayer player) {
 		String locale = MonitorScreenMessages.locale(player);
 		if (locale.startsWith("ja")) {
@@ -3624,6 +3718,23 @@ final class MonitorMaxRuntime {
 			case "duplicate" -> MonitorScreenMessages.literal("Contact already added");
 			default -> MonitorScreenMessages.literal("MAX");
 		};
+	}
+
+	private static Component maxCallInviteFeedbackMessage(ServerPlayer player, boolean added) {
+		String locale = MonitorScreenMessages.locale(player);
+		if (locale.startsWith("ja")) {
+			return MonitorScreenMessages.literal(added ? "連絡先を追加して通話に招待しました" : "連絡先を通話に招待しました");
+		}
+		if (locale.startsWith("uk")) {
+			return MonitorScreenMessages.literal(added ? "Контакт додано та запрошено в дзвінок" : "Контакт запрошено в дзвінок");
+		}
+		if (locale.startsWith("rpr")) {
+			return MonitorScreenMessages.literal(added ? "Контактъ прибавленъ и призванъ въ звонокъ" : "Контактъ призванъ въ звонокъ");
+		}
+		if (locale.startsWith("ru")) {
+			return MonitorScreenMessages.literal(added ? "Контакт добавлен и приглашён в звонок" : "Контакт приглашён в звонок");
+		}
+		return MonitorScreenMessages.literal(added ? "Contact added and invited to the call" : "Contact invited to the call");
 	}
 
 	private static Component maxAccountNameBlankMessage(ServerPlayer player) {
@@ -4066,6 +4177,11 @@ final class MonitorMaxRuntime {
 		graphics.drawString(labelText, rect.x(), textY);
 	}
 
+	private static void drawMaxContactPickerHeaderButton(Graphics2D graphics, UiRect rect, UiLayout layout, PlayerUiIcon icon) {
+		Color color = drawMediaHeaderControlBase(graphics, rect, MediaButtonSegment.SINGLE);
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), icon, color);
+	}
+
 	private static void drawMaxCallMenu(Graphics2D graphics, UiLayout layout, MaxCallVisualSnapshot call) {
 		drawCallMenuIconButton(
 				graphics,
@@ -4363,14 +4479,25 @@ final class MonitorMaxRuntime {
 		UiRect panel = maxAvatarPickerPanelRect(layout);
 		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 230));
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
-		drawMediaBackButton(graphics, maxAvatarPickerBackRect(layout), layout);
-		drawVerticalText(graphics, "ДОБАВИТЬ В ЗВОНОК", maxAvatarPickerTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		drawMaxContactPickerHeaderButton(graphics, maxCallContactPickerAddRect(layout), layout, PlayerUiIcon.CONTACT_ADD);
+		drawMaxContactPickerHeaderButton(graphics, maxCallContactPickerCloseRect(layout), layout, PlayerUiIcon.CLOSE);
+		drawVerticalText(graphics, "ДОБАВИТЬ В ЗВОНОК", maxCallContactPickerTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		Set<String> participantCodes = new HashSet<>();
+		for (MaxCallParticipantSnapshot participant : call.participants()) {
+			if (participant != null && participant.code() != null && !participant.code().isBlank()) {
+				participantCodes.add(participant.code());
+			}
+		}
 		List<MaxContactSnapshot> contacts = state.contacts() != null ? state.contacts() : List.of();
 		List<MaxContactSnapshot> candidates = contacts.stream()
-				.filter(contact -> contact != null && !contact.active() && !contact.ringing() && !Objects.equals(contact.code(), call.peerCode()))
+				.filter(contact -> contact != null
+						&& !contact.active()
+						&& !contact.ringing()
+						&& !Objects.equals(contact.code(), call.peerCode())
+						&& !participantCodes.contains(contact.code()))
 				.toList();
 		if (candidates.isEmpty()) {
-			drawCenteredText(graphics, "Нет контактов для приглашения", maxAvatarPickerGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			drawCenteredText(graphics, "Нет контактов для приглашения", maxCallContactPickerGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
 		int count = Math.min(candidates.size(), maxContactPickerCapacity(layout));
@@ -5045,16 +5172,41 @@ final class MonitorMaxRuntime {
 		return new UiRect(panel.x() + layout.unit(), panel.y() + layout.unit(), size, size);
 	}
 
+	private static UiRect maxCallContactPickerCloseRect(UiLayout layout) {
+		UiRect panel = maxAvatarPickerPanelRect(layout);
+		int size = clampInt(layout.unit() * 2 + 4, 24, 36);
+		return new UiRect(panel.right() - size - layout.unit(), panel.y() + layout.unit(), size, size);
+	}
+
+	private static UiRect maxCallContactPickerAddRect(UiLayout layout) {
+		UiRect close = maxCallContactPickerCloseRect(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		return new UiRect(close.x() - close.width() - gap, close.y(), close.width(), close.height());
+	}
+
 	private static UiRect maxAvatarPickerTitleRect(UiLayout layout) {
 		UiRect panel = maxAvatarPickerPanelRect(layout);
 		UiRect back = maxAvatarPickerBackRect(layout);
 		return new UiRect(back.right() + layout.unit(), back.y(), panel.right() - back.right() - layout.unit() * 2, back.height());
 	}
 
+	private static UiRect maxCallContactPickerTitleRect(UiLayout layout) {
+		UiRect panel = maxAvatarPickerPanelRect(layout);
+		UiRect add = maxCallContactPickerAddRect(layout);
+		return new UiRect(panel.x() + layout.unit(), add.y(), Math.max(1, add.x() - panel.x() - layout.unit() * 2), add.height());
+	}
+
 	private static UiRect maxAvatarPickerGridRect(UiLayout layout) {
 		UiRect panel = maxAvatarPickerPanelRect(layout);
 		UiRect back = maxAvatarPickerBackRect(layout);
 		int y = back.bottom() + layout.unit();
+		return new UiRect(panel.x() + layout.unit(), y, panel.width() - layout.unit() * 2, panel.bottom() - y - layout.unit());
+	}
+
+	private static UiRect maxCallContactPickerGridRect(UiLayout layout) {
+		UiRect panel = maxAvatarPickerPanelRect(layout);
+		UiRect close = maxCallContactPickerCloseRect(layout);
+		int y = close.bottom() + layout.unit();
 		return new UiRect(panel.x() + layout.unit(), y, panel.width() - layout.unit() * 2, panel.bottom() - y - layout.unit());
 	}
 
