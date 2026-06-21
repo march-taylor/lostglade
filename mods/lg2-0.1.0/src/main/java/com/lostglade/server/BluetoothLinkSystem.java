@@ -180,6 +180,10 @@ public final class BluetoothLinkSystem {
 		removeEndpoint(level, droneEndpoint(level == null ? null : level.dimension(), pos == null ? BlockPos.ZERO : pos, droneUuid));
 	}
 
+	public static void removeDroneEndpoint(ServerLevel level, UUID droneUuid, BlockPos pos, Vec3 adapterDropPosition) {
+		removeEndpoint(level, droneEndpoint(level == null ? null : level.dimension(), pos == null ? BlockPos.ZERO : pos, droneUuid), adapterDropPosition);
+	}
+
 	public static void collapseScreenEndpoints(MinecraftServer server, Endpoint rootEndpoint, Iterable<Endpoint> legacyEndpoints) {
 		if (rootEndpoint == null || rootEndpoint.type() != EndpointType.SCREEN || legacyEndpoints == null) {
 			return;
@@ -217,11 +221,16 @@ public final class BluetoothLinkSystem {
 	}
 
 	private static void removeEndpoint(ServerLevel level, Endpoint endpoint) {
+		removeEndpoint(level, endpoint, null);
+	}
+
+	private static void removeEndpoint(ServerLevel level, Endpoint endpoint, Vec3 adapterDropPosition) {
 		if (endpoint == null) {
 			return;
 		}
-		ensureLoaded(level == null ? null : level.getServer());
-		clearSelectedEndpoint(endpoint, level == null ? null : level.getServer());
+		MinecraftServer server = level == null ? null : level.getServer();
+		ensureLoaded(server);
+		clearSelectedEndpoint(endpoint, server);
 		LinkedHashSet<Endpoint> removedLinks = LINKS.remove(endpoint);
 		if (removedLinks == null || removedLinks.isEmpty()) {
 			return;
@@ -234,8 +243,12 @@ public final class BluetoothLinkSystem {
 					LINKS.remove(linked);
 				}
 			}
-			dropAdapterAtEndpoint(level == null ? null : level.getServer(), linked);
-			notifyEndpointChanged(level == null ? null : level.getServer(), linked);
+			if (adapterDropPosition != null && level != null) {
+				dropAdapterAtPosition(level, adapterDropPosition);
+			} else {
+				dropAdapterAtEndpoint(server, linked);
+			}
+			notifyEndpointChanged(server, linked);
 		}
 		dirty = true;
 	}
@@ -391,16 +404,22 @@ public final class BluetoothLinkSystem {
 		if (dropLevel == null) {
 			return;
 		}
-		Vec3 dropPosition = adapterDropPosition(endpoint);
+		dropAdapterAtPosition(dropLevel, adapterDropPosition(endpoint));
+	}
+
+	private static void dropAdapterAtPosition(ServerLevel level, Vec3 dropPosition) {
+		if (level == null || dropPosition == null) {
+			return;
+		}
 		ItemEntity itemEntity = new ItemEntity(
-				dropLevel,
+				level,
 				dropPosition.x,
 				dropPosition.y,
 				dropPosition.z,
 				new ItemStack(ModItems.BLUETOOTH_ADAPTER)
 		);
 		itemEntity.setDefaultPickUpDelay();
-		dropLevel.addFreshEntity(itemEntity);
+		level.addFreshEntity(itemEntity);
 	}
 
 	private static Vec3 adapterDropPosition(Endpoint endpoint) {

@@ -5240,18 +5240,49 @@ public final class DroneSystem {
 				&& Math.abs(velocity.y) <= DRONE_STATIONARY_BREAK_VERTICAL_SPEED;
 	}
 
-	private static void dropDronePaintRecovery(Entity root, ServerLevel level) {
+	private static void dropDroneBreakRecoveryItems(Entity root, ServerLevel level) {
 		if (root == null || level == null) {
 			return;
+		}
+		DroneItem.DroneType type = resolveDroneType(root);
+		if (type == DroneItem.DroneType.KAMIKAZE) {
+			spawnDroneRecoveryItem(root, level, Items.RABBIT_HIDE);
+		} else if (type == DroneItem.DroneType.COMBAT) {
+			spawnDroneRecoveryItem(root, level, Items.DISPENSER);
+		}
+		int kamikazePower = resolveDroneKamikazePower(root);
+		if (kamikazePower > DRONE_KAMIKAZE_NO_POWER) {
+			spawnDroneRecoveryItem(root, level, new ItemStack(Items.TNT, kamikazePower));
+		}
+		if (hasDroneNightVisionModule(root)) {
+			spawnDroneRecoveryItem(root, level, Items.SPIDER_EYE);
+		}
+		if (hasDroneAutoAimModule(root)) {
+			spawnDroneRecoveryItem(root, level, Items.CALIBRATED_SCULK_SENSOR);
+		}
+		if (hasDroneMicrophoneModule(root)) {
+			spawnDroneRecoveryItem(root, level, ModBlocks.MICROPHONE_ITEM);
 		}
 		DyeColor paintColor = resolveDronePaintColor(root);
 		if (paintColor == null) {
 			return;
 		}
 		Item dyeItem = dyeItemForColor(paintColor);
-		if (dyeItem != null && dyeItem != Items.AIR) {
-			root.spawnAtLocation(level, new ItemStack(dyeItem));
+		spawnDroneRecoveryItem(root, level, dyeItem);
+	}
+
+	private static void spawnDroneRecoveryItem(Entity root, ServerLevel level, Item item) {
+		if (item == null || item == Items.AIR) {
+			return;
 		}
+		spawnDroneRecoveryItem(root, level, new ItemStack(item));
+	}
+
+	private static void spawnDroneRecoveryItem(Entity root, ServerLevel level, ItemStack stack) {
+		if (root == null || level == null || stack == null || stack.isEmpty()) {
+			return;
+		}
+		root.spawnAtLocation(level, stack.copy());
 	}
 
 	private static void discardOwnedDroneInternalEntities(ServerLevel level, Entity root) {
@@ -5285,7 +5316,7 @@ public final class DroneSystem {
 		AUTO_AIM_DISPLAY_ANIMATIONS.remove(root.getUUID());
 		DRONE_ENVIRONMENT_DAMAGE.remove(root.getUUID());
 		SCREEN_STREAM_DRONE_LOAD_STATES.remove(root.getUUID());
-		BluetoothLinkSystem.removeDroneEndpoint(level, root.getUUID(), root.blockPosition());
+		BluetoothLinkSystem.removeDroneEndpoint(level, root.getUUID(), root.blockPosition(), root.position().add(0.0D, 0.25D, 0.0D));
 		stopAllDroneControllers(root, true);
 		CONTROLLERS_BY_DRONE.remove(root.getUUID());
 		discardOwnedDroneInternalEntities(level, root);
@@ -5304,7 +5335,7 @@ public final class DroneSystem {
 		dropDroneTurretInventory(root);
 		if (canDropWholeDrone) {
 			root.spawnAtLocation(level, buildDroneDropStack(root));
-			dropDronePaintRecovery(root, level);
+			dropDroneBreakRecoveryItems(root, level);
 		}
 		if (kamikazeDrone && !canDropWholeDrone) {
 			detonateKamikazeDrone(level, droneCameraOrigin(root), root.getDeltaMovement(), kamikazePower);
@@ -5700,15 +5731,7 @@ public final class DroneSystem {
 	}
 
 	private static ItemStack buildDroneDropStack(Entity root) {
-		return DroneItem.createConfiguredStack(
-				ModItems.DRONE,
-				resolveDroneType(root),
-				resolveDroneKamikazePower(root),
-				hasDroneNightVisionModule(root),
-				hasDroneAutoAimModule(root),
-				hasDroneMicrophoneModule(root),
-				resolveDronePaintColor(root)
-		);
+		return new ItemStack(ModItems.DRONE);
 	}
 
 	private static boolean isKamikazeDrone(Entity root) {
