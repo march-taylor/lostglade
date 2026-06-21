@@ -246,11 +246,13 @@ record MaxCallVisualSnapshot(
 		int selectedMicrophoneIndex,
 		int cameraScroll,
 		int microphoneScroll,
+		int miniParticipantScroll,
 		boolean menuOpen,
 		boolean cameraPickerOpen,
 		boolean contactPickerOpen,
 		boolean selfFocused,
 		boolean peerFocused,
+		boolean miniParticipantsHidden,
 		long elapsedMillis
 ) {
 	boolean dynamic() {
@@ -605,6 +607,7 @@ enum PlayerUiIcon {
 	DEVICE_SELECT("/assets/lg2/textures/monitor/ui_icons/device_select.png"),
 	CONTACT_ADD("/assets/lg2/textures/monitor/ui_icons/contact_add.png"),
 	FULLSCREEN_EXIT("/assets/lg2/textures/monitor/ui_icons/fullscreen_exit.png"),
+	GRID_FILL("/assets/lg2/textures/monitor/ui_icons/grid_fill.png"),
 	SIGNAL("/assets/lg2/textures/monitor/ui_icons/signal.png"),
 	OFFLINE("/assets/lg2/textures/monitor/ui_icons/offline.png"),
 	UNLINK("/assets/lg2/textures/monitor/ui_icons/unlink.png"),

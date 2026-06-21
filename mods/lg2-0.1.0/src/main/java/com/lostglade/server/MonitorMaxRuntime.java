@@ -53,6 +53,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -305,6 +306,79 @@ final class MonitorMaxRuntime {
 		return state != null && handleCallTouch(player, level, component, state, layout, touchPoint);
 	}
 
+	static boolean onPlayerHotbarScroll(ServerPlayer player, int previousSlot, int currentSlot) {
+		if (player == null) {
+			return false;
+		}
+		ObservedCallUiTarget target = findObservedCallUiTarget(player);
+		if (target == null || target.touchPoint() == null) {
+			return false;
+		}
+		MinecraftServer server = player.level().getServer();
+		if (server == null) {
+			return false;
+		}
+		ScreenComponent component = target.component();
+		MaxRuntimeState state = MAX_STATES.get(component.runtimeKey());
+		MaxCallSession call = currentCall(component.runtimeKey());
+		if (state == null || call == null || callPhase(call, component.runtimeKey()) != MaxCallPhase.ACTIVE || !callFocused(state) || callMiniParticipantsHidden(state)) {
+			return false;
+		}
+		List<ScreenRuntimeKey> miniParticipants = callMiniParticipantKeys(component.runtimeKey(), state, call);
+		if (miniParticipants.isEmpty() || !maxCallMiniStripViewportRect(target.layout(), miniParticipants.size()).contains(target.touchPoint().x(), target.touchPoint().y())) {
+			return false;
+		}
+		int delta = normalizeHotbarDelta(previousSlot, currentSlot);
+		if (delta == 0 || maxCallMiniParticipantScroll(target.layout(), miniParticipants.size()) <= 0) {
+			return false;
+		}
+		int previousScroll = callMiniParticipantScroll(state);
+		scrollCallMiniParticipants(server, component.runtimeKey(), state, target.layout(), miniParticipants.size(), -delta);
+		return callMiniParticipantScroll(state) != previousScroll;
+	}
+
+	private static ObservedCallUiTarget findObservedCallUiTarget(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return null;
+		}
+		Vec3 eye = player.getEyePosition();
+		Vec3 rayEnd = eye.add(player.getLookAngle().scale(MEDIA_CONTROL_DISTANCE));
+		ScreenComponent nearestComponent = null;
+		ItemFrame nearestFrame = null;
+		TileCoord nearestTile = null;
+		Vec3 nearestHit = null;
+		double nearestDistanceSqr = Double.POSITIVE_INFINITY;
+		for (ScreenComponent component : cachedComponents(level)) {
+			if (component == null || !component.powered() || (component.viewMode() != ScreenViewMode.MAX && !hasVisibleCall(component.runtimeKey()))) {
+				continue;
+			}
+			for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
+				ItemFrame frame = entry.getKey();
+				if (frame == null || !frame.isAlive()) {
+					continue;
+				}
+				Optional<Vec3> hit = frame.getBoundingBox().inflate(0.08D).clip(eye, rayEnd);
+				if (hit.isEmpty() || hit.get().distanceToSqr(eye) > MEDIA_CONTROL_DISTANCE * MEDIA_CONTROL_DISTANCE) {
+					continue;
+				}
+				double hitDistanceSqr = eye.distanceToSqr(hit.get());
+				if (hitDistanceSqr < nearestDistanceSqr) {
+					nearestDistanceSqr = hitDistanceSqr;
+					nearestComponent = component;
+					nearestFrame = frame;
+					nearestTile = entry.getValue();
+					nearestHit = hit.get();
+				}
+			}
+		}
+		if (nearestComponent == null || nearestFrame == null || nearestTile == null || nearestHit == null) {
+			return null;
+		}
+		UiLayout layout = createUiLayout(nearestComponent.width(), nearestComponent.height());
+		UiPoint touchPoint = screenTouchPoint(nearestFrame, nearestHit, nearestTile, nearestComponent.width(), nearestComponent.height());
+		return touchPoint == null ? null : new ObservedCallUiTarget(nearestComponent, layout, touchPoint);
+	}
+
 	private static boolean handleCallTouch(ServerPlayer player, ServerLevel level, ScreenComponent component, MaxRuntimeState state, UiLayout layout, UiPoint touchPoint) {
 		if (level == null || component == null || state == null || layout == null || touchPoint == null) {
 			return false;
@@ -383,13 +457,38 @@ final class MonitorMaxRuntime {
 		boolean focusedSelf = callFocusSelf(state);
 		boolean focusedPeer = callFocusPeer(state);
 		if (focusedSelf || focusedPeer) {
-			if (menuVisible && maxCallExitFullscreenRect(layout, multiMicrophone, true).contains(touchPoint.x(), touchPoint.y())) {
-				clearCallFocus(server, component.runtimeKey());
-				return true;
-			}
+			List<ScreenRuntimeKey> miniParticipants = callMiniParticipantKeys(component.runtimeKey(), state, call);
+			boolean miniParticipantsHidden = callMiniParticipantsHidden(state);
 			if (menuVisible) {
-				List<ScreenRuntimeKey> miniParticipants = callMiniParticipantKeys(component.runtimeKey(), state, call);
-				int miniIndex = maxCallMiniParticipantIndexAt(layout, miniParticipants.size(), touchPoint);
+				if (maxCallGridExitRect(layout, miniParticipants.size(), miniParticipantsHidden).contains(touchPoint.x(), touchPoint.y())) {
+					clearCallFocus(server, component.runtimeKey());
+					return true;
+				}
+				if (maxCallMiniStripToggleRect(layout, miniParticipants.size(), miniParticipantsHidden).contains(touchPoint.x(), touchPoint.y())) {
+					toggleCallMiniParticipantsHidden(server, component.runtimeKey());
+					return true;
+				}
+			}
+			if (!miniParticipantsHidden && !miniParticipants.isEmpty()) {
+				int visibleRows = maxCallMiniParticipantVisibleRows(layout, miniParticipants.size());
+				if (scrollbarVisible(visibleRows, miniParticipants.size())
+						&& maxCallMiniStripTrackRect(layout, miniParticipants.size()).contains(touchPoint.x(), touchPoint.y())) {
+					setCallMiniParticipantScroll(
+							server,
+							component.runtimeKey(),
+							state,
+							layout,
+							miniParticipants.size(),
+							scrollValueForTrack(
+									maxCallMiniStripTrackRect(layout, miniParticipants.size()),
+									visibleRows,
+									miniParticipants.size(),
+									touchPoint.y()
+							)
+					);
+					return true;
+				}
+				int miniIndex = maxCallMiniParticipantIndexAt(layout, miniParticipants.size(), callMiniParticipantScroll(state), touchPoint);
 				if (miniIndex >= 0 && miniIndex < miniParticipants.size()) {
 					ScreenRuntimeKey selected = miniParticipants.get(miniIndex);
 					if (Objects.equals(selected, component.runtimeKey())) {
@@ -1008,10 +1107,12 @@ final class MonitorMaxRuntime {
 		boolean focusSelf;
 		boolean focusPeer;
 		ScreenRuntimeKey focusedPeerKey;
+		boolean miniParticipantsHidden;
 		String selectedMicrophoneKey;
 		int selectedMicrophoneIndex;
 		int cameraScroll;
 		int microphoneScroll;
+		int miniParticipantScroll;
 		BufferedImage remoteFrame;
 		synchronized (state) {
 			cameraEnabled = state.cameraEnabled;
@@ -1022,10 +1123,12 @@ final class MonitorMaxRuntime {
 			focusSelf = state.focusSelf;
 			focusPeer = state.focusPeer;
 			focusedPeerKey = state.focusedPeerKey;
+			miniParticipantsHidden = state.callMiniParticipantsHidden;
 			selectedMicrophoneKey = state.selectedMicrophoneKey;
 			selectedMicrophoneIndex = state.selectedMicrophoneIndex;
 			cameraScroll = state.cameraPickerScroll;
 			microphoneScroll = state.microphonePickerScroll;
+			miniParticipantScroll = state.callMiniParticipantScroll;
 			remoteFrame = state.remoteFrame;
 		}
 		if (focusPeer && focusedPeerKey != null && call.isParticipant(focusedPeerKey) && !Objects.equals(focusedPeerKey, component.runtimeKey())) {
@@ -1081,6 +1184,11 @@ final class MonitorMaxRuntime {
 			RendererBotCameraSystem.stopLiveStream(maxVideoStreamOwnerId(component.runtimeKey()));
 		}
 		List<MaxCallParticipantSnapshot> participants = captureCallParticipants(component.runtimeKey(), state, call, peerKey, localPreview, remoteFrame);
+		UiLayout callLayout = createUiLayout(component.width(), component.height());
+		synchronized (state) {
+			state.callMiniParticipantScroll = clampInt(state.callMiniParticipantScroll, 0, maxCallMiniParticipantScroll(callLayout, Math.max(0, participants.size() - 1)));
+			miniParticipantScroll = state.callMiniParticipantScroll;
+		}
 		String focusedParticipantCode = focusSelf ? state.accountCode : focusPeer ? peerCode : "";
 		String status = switch (phase) {
 			case INCOMING -> "Входящий вызов";
@@ -1109,11 +1217,13 @@ final class MonitorMaxRuntime {
 				selectedMicrophoneIndex,
 				cameraScroll,
 				microphoneScroll,
+				miniParticipantScroll,
 				callMenuOpen,
 				cameraPickerOpen,
 				contactPickerOpen,
 				focusSelf,
 				focusPeer,
+				miniParticipantsHidden,
 				phase == MaxCallPhase.ACTIVE ? Math.max(0L, System.currentTimeMillis() - call.acceptedAtMillis) : 0L
 		);
 	}
@@ -1500,7 +1610,9 @@ final class MonitorMaxRuntime {
 		synchronized (state) {
 			state.callMenuOpen = false;
 			state.cameraPickerOpen = false;
+			state.callMiniParticipantScroll = 0;
 			state.callContactPickerOpen = false;
+			state.callMiniParticipantsHidden = false;
 			state.focusPeer = false;
 			state.focusSelf = false;
 			state.focusedPeerKey = null;
@@ -1571,6 +1683,60 @@ final class MonitorMaxRuntime {
 		}
 	}
 
+	private static boolean callMiniParticipantsHidden(MaxRuntimeState state) {
+		if (state == null) {
+			return false;
+		}
+		synchronized (state) {
+			return state.callMiniParticipantsHidden;
+		}
+	}
+
+	private static int callMiniParticipantScroll(MaxRuntimeState state) {
+		if (state == null) {
+			return 0;
+		}
+		synchronized (state) {
+			return state.callMiniParticipantScroll;
+		}
+	}
+
+	private static void setCallMiniParticipantScroll(MinecraftServer server, ScreenRuntimeKey key, MaxRuntimeState state, UiLayout layout, int participantCount, int scroll) {
+		if (server == null || key == null || state == null || layout == null) {
+			return;
+		}
+		boolean changed = false;
+		synchronized (state) {
+			int nextScroll = clampInt(scroll, 0, maxCallMiniParticipantScroll(layout, participantCount));
+			if (nextScroll != state.callMiniParticipantScroll) {
+				state.callMiniParticipantScroll = nextScroll;
+				state.version++;
+				changed = true;
+			}
+		}
+		if (changed) {
+			requestRuntimeRender(server, key);
+		}
+	}
+
+	private static void scrollCallMiniParticipants(MinecraftServer server, ScreenRuntimeKey key, MaxRuntimeState state, UiLayout layout, int participantCount, int delta) {
+		if (server == null || key == null || state == null || layout == null || delta == 0) {
+			return;
+		}
+		boolean changed = false;
+		synchronized (state) {
+			int nextScroll = clampInt(state.callMiniParticipantScroll + delta, 0, maxCallMiniParticipantScroll(layout, participantCount));
+			if (nextScroll != state.callMiniParticipantScroll) {
+				state.callMiniParticipantScroll = nextScroll;
+				state.version++;
+				changed = true;
+			}
+		}
+		if (changed) {
+			requestRuntimeRender(server, key);
+		}
+	}
+
 	private static ScreenRuntimeKey focusedCallParticipantKey(ScreenRuntimeKey selfKey, MaxRuntimeState state, MaxCallSession call) {
 		if (selfKey == null || state == null || call == null) {
 			return null;
@@ -1627,6 +1793,8 @@ final class MonitorMaxRuntime {
 		synchronized (state) {
 			state.focusSelf = self;
 			state.focusPeer = !self;
+			state.callMiniParticipantScroll = 0;
+			state.callMiniParticipantsHidden = false;
 			state.focusedPeerKey = null;
 			state.callMenuOpen = true;
 			state.version++;
@@ -1642,6 +1810,8 @@ final class MonitorMaxRuntime {
 		synchronized (state) {
 			state.focusSelf = false;
 			state.focusPeer = true;
+			state.callMiniParticipantScroll = 0;
+			state.callMiniParticipantsHidden = false;
 			state.focusedPeerKey = participantKey;
 			state.callMenuOpen = true;
 			state.version++;
@@ -1657,8 +1827,22 @@ final class MonitorMaxRuntime {
 		synchronized (state) {
 			state.focusSelf = false;
 			state.focusPeer = false;
+			state.callMiniParticipantScroll = 0;
+			state.callMiniParticipantsHidden = false;
 			state.focusedPeerKey = null;
 			state.callMenuOpen = true;
+			state.version++;
+		}
+		requestRuntimeRender(server, key);
+	}
+
+	private static void toggleCallMiniParticipantsHidden(MinecraftServer server, ScreenRuntimeKey key) {
+		MaxRuntimeState state = MAX_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		synchronized (state) {
+			state.callMiniParticipantsHidden = !state.callMiniParticipantsHidden;
 			state.version++;
 		}
 		requestRuntimeRender(server, key);
@@ -3270,14 +3454,24 @@ final class MonitorMaxRuntime {
 			MaxCallParticipantSnapshot focusedParticipant = maxCallFocusedParticipant(state, call, participants);
 			UiRect focusedRect = maxCallFocusedTileRect(layout);
 			drawMaxParticipantTile(graphics, layout, focusedRect, focusedParticipant, true, MediaScaleMode.FILL);
-			if (call.menuOpen()) {
-				List<MaxCallParticipantSnapshot> miniParticipants = participants.stream()
-						.filter(participant -> !sameMaxParticipant(participant, focusedParticipant))
-						.toList();
-				int count = Math.min(miniParticipants.size(), maxCallMiniParticipantCapacity(layout));
-				for (int index = 0; index < count; index++) {
-					drawMaxParticipantTile(graphics, layout, maxCallMiniParticipantRect(layout, index), miniParticipants.get(index), false, MediaScaleMode.FILL);
+			List<MaxCallParticipantSnapshot> miniParticipants = participants.stream()
+					.filter(participant -> !sameMaxParticipant(participant, focusedParticipant))
+					.toList();
+			if (!call.miniParticipantsHidden() && !miniParticipants.isEmpty()) {
+				int visibleRows = maxCallMiniParticipantVisibleRows(layout, miniParticipants.size());
+				int scroll = clampInt(call.miniParticipantScroll(), 0, maxCallMiniParticipantScroll(layout, miniParticipants.size()));
+				int count = Math.min(visibleRows + 1, Math.max(0, miniParticipants.size() - scroll));
+				UiRect listRect = maxCallMiniStripListRect(layout, miniParticipants.size());
+				Shape previousClip = graphics.getClip();
+				graphics.clipRect(listRect.x(), listRect.y(), listRect.width(), listRect.height());
+				for (int visibleIndex = 0; visibleIndex < count; visibleIndex++) {
+					drawMaxParticipantTile(graphics, layout, maxCallMiniParticipantRect(layout, visibleIndex, miniParticipants.size()), miniParticipants.get(scroll + visibleIndex), false, MediaScaleMode.FILL);
 				}
+				graphics.setClip(previousClip);
+				drawQueueScrollbar(graphics, maxCallMiniStripTrackRect(layout, miniParticipants.size()), scroll, visibleRows, miniParticipants.size(), layout);
+			}
+			if (call.menuOpen()) {
+				drawMaxCallFocusControls(graphics, layout, miniParticipants.size(), call.miniParticipantsHidden());
 			}
 		} else {
 			int count = participants.size();
@@ -3412,7 +3606,6 @@ final class MonitorMaxRuntime {
 			drawAvatar(graphics, avatarRect, avatar, layout);
 		}
 		graphics.setClip(previousClip);
-		strokeRoundedRect(graphics, rect, arc, 1.0F, new Color(255, 255, 255, focused ? 70 : 46));
 		drawMaxParticipantLabel(graphics, layout, rect, code, focused);
 		if (!microphoneEnabled && rect.width() >= 20 && rect.height() >= 20) {
 			int micSize = clampInt(Math.min(rect.width(), rect.height()) / 5, 12, 30);
@@ -3446,20 +3639,26 @@ final class MonitorMaxRuntime {
 	}
 
 	private static void drawMaxCallMenu(Graphics2D graphics, UiLayout layout, MaxCallVisualSnapshot call) {
-		UiRect dock = maxCallMenuDockRect(layout, call);
-		fillRoundedRect(graphics, dock, dock.height(), new Color(8, 10, 14, 126));
-		strokeRoundedRect(graphics, dock, dock.height(), 1.0F, new Color(255, 255, 255, 42));
-		drawCallSegmentButton(graphics, maxCallMicrophoneToggleRect(layout, call), call.microphoneEnabled() ? PlayerUiIcon.MIC : PlayerUiIcon.MIC_OFF, call.microphoneEnabled(), call.microphoneCount() > 1 ? MediaButtonSegment.LEFT : MediaButtonSegment.SINGLE, layout);
+		drawCallMenuIconButton(
+				graphics,
+				maxCallMicrophoneToggleRect(layout, call),
+				call.microphoneEnabled() ? PlayerUiIcon.MIC : PlayerUiIcon.MIC_OFF,
+				call.microphoneEnabled() ? new Color(248, 251, 255, 236) : new Color(248, 251, 255, 148),
+				layout
+		);
 		if (call.microphoneCount() > 1) {
-			drawCallSegmentButton(graphics, maxCallMicrophoneSelectRect(layout, call), PlayerUiIcon.DEVICE_SELECT, false, MediaButtonSegment.RIGHT, layout);
+			drawCallMenuIconButton(graphics, maxCallMicrophoneSelectRect(layout, call), PlayerUiIcon.DEVICE_SELECT, new Color(248, 251, 255, 186), layout);
 		}
-		drawCallSegmentButton(graphics, maxCallCameraToggleRect(layout, call), call.cameraEnabled() ? PlayerUiIcon.VIDEO_CAMERA : PlayerUiIcon.VIDEO_CAMERA_OFF, call.cameraEnabled(), MediaButtonSegment.LEFT, layout);
-		drawCallSegmentButton(graphics, maxCallCameraSelectRect(layout, call), PlayerUiIcon.DEVICE_SELECT, false, MediaButtonSegment.RIGHT, layout);
-		drawCallSegmentButton(graphics, maxCallInviteRect(layout, call), PlayerUiIcon.CONTACT_ADD, false, MediaButtonSegment.SINGLE, layout);
-		if (call.selfFocused() || call.peerFocused()) {
-			drawCallSegmentButton(graphics, maxCallExitFullscreenRect(layout, call), PlayerUiIcon.FULLSCREEN_EXIT, false, MediaButtonSegment.SINGLE, layout);
-		}
-		drawRoundCallButton(graphics, maxCallLeaveRect(layout, call), PlayerUiIcon.CALL_DECLINE, new Color(240, 88, 96), new Color(255, 248, 248, 246), layout);
+		drawCallMenuIconButton(
+				graphics,
+				maxCallCameraToggleRect(layout, call),
+				call.cameraEnabled() ? PlayerUiIcon.VIDEO_CAMERA : PlayerUiIcon.VIDEO_CAMERA_OFF,
+				call.cameraEnabled() ? new Color(248, 251, 255, 236) : new Color(248, 251, 255, 148),
+				layout
+		);
+		drawCallMenuIconButton(graphics, maxCallCameraSelectRect(layout, call), PlayerUiIcon.DEVICE_SELECT, new Color(248, 251, 255, 186), layout);
+		drawCallMenuIconButton(graphics, maxCallInviteRect(layout, call), PlayerUiIcon.CONTACT_ADD, new Color(248, 251, 255, 226), layout);
+		drawCallMenuIconButton(graphics, maxCallLeaveRect(layout, call), PlayerUiIcon.CALL_DECLINE, new Color(240, 88, 96, 246), layout);
 	}
 
 	private static void drawCallSegmentButton(Graphics2D graphics, UiRect rect, PlayerUiIcon icon, boolean active, MediaButtonSegment segment, UiLayout layout) {
@@ -3467,10 +3666,58 @@ final class MonitorMaxRuntime {
 		drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), icon, iconColor);
 	}
 
+	private static void drawCallMenuIconButton(Graphics2D graphics, UiRect rect, PlayerUiIcon icon, Color iconColor, UiLayout layout) {
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), icon, iconColor);
+	}
+
+	private static void drawCallSegmentButtonRotated(Graphics2D graphics, UiRect rect, PlayerUiIcon icon, boolean active, MediaButtonSegment segment, UiLayout layout, double rotationRadians) {
+		Color iconColor = drawSmallMediaButtonBase(graphics, rect, segment, active, mediaChromeStrokeWidth(rect), active ? null : new Color(255, 255, 255, 0));
+		drawRotatedPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), icon, iconColor, rotationRadians);
+	}
+
 	private static void drawRoundCallButton(Graphics2D graphics, UiRect rect, PlayerUiIcon icon, Color fill, Color iconColor, UiLayout layout) {
 		fillRoundedRect(graphics, rect, rect.height(), fill);
 		strokeRoundedRect(graphics, rect, rect.height(), 1.0F, new Color(255, 255, 255, 80));
 		drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), icon, iconColor);
+	}
+
+	private static void drawRotatedPlayerUiIcon(Graphics2D graphics, UiRect rect, PlayerUiIcon icon, Color tint, double rotationRadians) {
+		if (graphics == null || rect == null || rect.width() <= 0 || rect.height() <= 0 || icon == null || tint == null) {
+			return;
+		}
+		BufferedImage tinted = tintedPlayerUiIcon(icon, tint);
+		Graphics2D rotated = (Graphics2D) graphics.create();
+		try {
+			double centerX = rect.x() + rect.width() / 2.0D;
+			double centerY = rect.y() + rect.height() / 2.0D;
+			rotated.rotate(rotationRadians, centerX, centerY);
+			rotated.drawImage(tinted, rect.x(), rect.y(), rect.width(), rect.height(), null);
+		} finally {
+			rotated.dispose();
+		}
+	}
+
+	private static void drawMaxCallFocusControls(Graphics2D graphics, UiLayout layout, int miniParticipantCount, boolean miniParticipantsHidden) {
+		UiRect toggleRect = maxCallMiniStripToggleRect(layout, miniParticipantCount, miniParticipantsHidden);
+		if (toggleRect.width() > 0 && toggleRect.height() > 0) {
+			drawCallSegmentButtonRotated(
+					graphics,
+					toggleRect,
+					PlayerUiIcon.DROPDOWN,
+					false,
+					MediaButtonSegment.LEFT,
+					layout,
+					miniParticipantsHidden ? -Math.PI / 2.0D : Math.PI / 2.0D
+			);
+		}
+		drawCallSegmentButton(
+				graphics,
+				maxCallGridExitRect(layout, miniParticipantCount, miniParticipantsHidden),
+				PlayerUiIcon.GRID_FILL,
+				false,
+				toggleRect.width() > 0 ? MediaButtonSegment.RIGHT : MediaButtonSegment.SINGLE,
+				layout
+		);
 	}
 
 	private static void drawAvatarBackdrop(Graphics2D graphics, UiRect canvas, BufferedImage avatar, String code) {
@@ -4126,46 +4373,103 @@ final class MonitorMaxRuntime {
 
 	private static int maxCallMiniParticipantWidth(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		return clampInt(canvas.width() / 5, 24, 96);
+		int preferred = canvas.width() <= 640
+				? Math.round(canvas.width() / 5.3F)
+				: Math.round(canvas.width() / 4.0F);
+		return clampInt(preferred, 24, 220);
 	}
 
-	private static int maxCallMiniParticipantHeight(UiLayout layout) {
-		return clampInt(maxCallMiniParticipantWidth(layout) * 9 / 16, 18, 64);
-	}
-
-	private static UiRect maxCallMiniParticipantRect(UiLayout layout, int index) {
+	private static UiRect maxCallMiniStripViewportRect(UiLayout layout, int participantCount) {
+		if (participantCount <= 0) {
+			return emptyRect();
+		}
 		UiRect canvas = mediaCanvasRect(layout);
 		int inset = clampInt(layout.unit() / 2, 2, 8);
 		int gap = maxCallGridGap(layout);
-		int width = maxCallMiniParticipantWidth(layout);
-		int height = maxCallMiniParticipantHeight(layout);
-		int columns = Math.max(1, (canvas.width() - inset * 2 + gap) / Math.max(1, width + gap));
-		int row = index / columns;
-		int column = index % columns;
-		return new UiRect(canvas.x() + inset + column * (width + gap), canvas.y() + inset + row * (height + gap), width, height);
-	}
-
-	private static int maxCallMiniParticipantCapacity(UiLayout layout) {
-		UiRect canvas = mediaCanvasRect(layout);
-		int inset = clampInt(layout.unit() / 2, 2, 8);
-		int gap = maxCallGridGap(layout);
-		int width = maxCallMiniParticipantWidth(layout);
-		int height = maxCallMiniParticipantHeight(layout);
-		int columns = Math.max(1, (canvas.width() - inset * 2 + gap) / Math.max(1, width + gap));
+		int buttonSize = maxCallMenuButtonSize(layout);
+		int controlGroupWidth = buttonSize * 2;
+		int preferredWidth = maxCallMiniParticipantWidth(layout) + scrollbarGutterWidth(layout);
+		int availableWidth = Math.max(24, canvas.width() - inset * 2 - controlGroupWidth - gap);
+		int viewportWidth = Math.min(preferredWidth, availableWidth);
+		int x = canvas.x() + inset;
+		int top = canvas.y() + inset;
 		int bottom = maxCallMenuDockRect(layout, false, true).y() - gap;
-		int availableHeight = Math.max(height, bottom - canvas.y() - inset);
-		int rows = Math.max(1, (availableHeight + gap) / Math.max(1, height + gap));
-		return Math.max(1, columns * rows);
+		return new UiRect(x, top, Math.max(24, viewportWidth), Math.max(20, bottom - top));
 	}
 
-	private static int maxCallMiniParticipantIndexAt(UiLayout layout, int participantCount, UiPoint point) {
-		int count = Math.min(participantCount, maxCallMiniParticipantCapacity(layout));
-		for (int index = 0; index < count; index++) {
-			if (maxCallMiniParticipantRect(layout, index).contains(point.x(), point.y())) {
-				return index;
+	private static UiRect maxCallMiniStripListRect(UiLayout layout, int participantCount) {
+		return scrollContentRect(maxCallMiniStripViewportRect(layout, participantCount), layout);
+	}
+
+	private static UiRect maxCallMiniStripTrackRect(UiLayout layout, int participantCount) {
+		return scrollTrackRect(maxCallMiniStripViewportRect(layout, participantCount), layout);
+	}
+
+	private static int maxCallMiniParticipantHeight(UiLayout layout, int participantCount) {
+		UiRect list = maxCallMiniStripListRect(layout, participantCount);
+		return clampInt((int) Math.round(list.width() * 9.0D / 16.0D), 18, 128);
+	}
+
+	private static int maxCallMiniParticipantStride(UiLayout layout, int participantCount) {
+		return maxCallMiniParticipantHeight(layout, participantCount) + maxCallGridGap(layout);
+	}
+
+	private static int maxCallMiniParticipantVisibleRows(UiLayout layout, int participantCount) {
+		UiRect list = maxCallMiniStripListRect(layout, participantCount);
+		return Math.max(1, list.height() / Math.max(1, maxCallMiniParticipantStride(layout, participantCount)));
+	}
+
+	private static int maxCallMiniParticipantScroll(UiLayout layout, int participantCount) {
+		return Math.max(0, participantCount - maxCallMiniParticipantVisibleRows(layout, participantCount));
+	}
+
+	private static UiRect maxCallMiniParticipantRect(UiLayout layout, int visibleIndex, int participantCount) {
+		UiRect list = maxCallMiniStripListRect(layout, participantCount);
+		int height = maxCallMiniParticipantHeight(layout, participantCount);
+		int stride = maxCallMiniParticipantStride(layout, participantCount);
+		return new UiRect(list.x(), list.y() + visibleIndex * stride, list.width(), height);
+	}
+
+	private static int maxCallMiniParticipantIndexAt(UiLayout layout, int participantCount, int scroll, UiPoint point) {
+		int rowCount = Math.min(maxCallMiniParticipantVisibleRows(layout, participantCount) + 1, Math.max(0, participantCount - clampInt(scroll, 0, maxCallMiniParticipantScroll(layout, participantCount))));
+		for (int visibleIndex = 0; visibleIndex < rowCount; visibleIndex++) {
+			if (maxCallMiniParticipantRect(layout, visibleIndex, participantCount).contains(point.x(), point.y())) {
+				return clampInt(scroll, 0, maxCallMiniParticipantScroll(layout, participantCount)) + visibleIndex;
 			}
 		}
 		return -1;
+	}
+
+	private static UiRect maxCallFocusedTopControlsGroupRect(UiLayout layout, int miniParticipantCount, boolean miniParticipantsHidden) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int inset = clampInt(layout.unit() / 2, 2, 8);
+		int gap = maxCallGridGap(layout);
+		int size = maxCallMenuButtonSize(layout);
+		boolean showMiniToggle = miniParticipantCount > 0;
+		int groupWidth = showMiniToggle ? size * 2 : size;
+		int x;
+		if (showMiniToggle && !miniParticipantsHidden) {
+			x = maxCallMiniStripViewportRect(layout, miniParticipantCount).right() + gap;
+		} else {
+			x = canvas.x() + inset;
+		}
+		return new UiRect(x, canvas.y() + inset, groupWidth, size);
+	}
+
+	private static UiRect maxCallMiniStripToggleRect(UiLayout layout, int miniParticipantCount, boolean miniParticipantsHidden) {
+		if (miniParticipantCount <= 0) {
+			return emptyRect();
+		}
+		UiRect group = maxCallFocusedTopControlsGroupRect(layout, miniParticipantCount, miniParticipantsHidden);
+		int size = maxCallMenuButtonSize(layout);
+		return new UiRect(group.x(), group.y(), size, size);
+	}
+
+	private static UiRect maxCallGridExitRect(UiLayout layout, int miniParticipantCount, boolean miniParticipantsHidden) {
+		UiRect group = maxCallFocusedTopControlsGroupRect(layout, miniParticipantCount, miniParticipantsHidden);
+		int size = maxCallMenuButtonSize(layout);
+		boolean showMiniToggle = miniParticipantCount > 0;
+		return new UiRect(showMiniToggle ? group.right() - size : group.x(), group.y(), size, size);
 	}
 
 	private static UiRect maxCallMenuDockRect(UiLayout layout, MaxCallVisualSnapshot call) {
@@ -4178,7 +4482,7 @@ final class MonitorMaxRuntime {
 		int gap = maxCallGridGap(layout);
 		int padding = clampInt(layout.unit() / 2, 2, 6);
 		int micWidth = multiMicrophone ? size * 2 : size;
-		int width = micWidth + gap + size * 2 + gap + size + gap + (focused ? size + gap : 0) + size;
+		int width = micWidth + gap + size * 2 + gap + size + gap + size;
 		int dockWidth = Math.min(canvas.width() - padding * 2, width + padding * 2);
 		int dockHeight = size + padding * 2;
 		int x = canvas.x() + (canvas.width() - dockWidth) / 2;
@@ -4190,7 +4494,7 @@ final class MonitorMaxRuntime {
 		UiRect canvas = mediaCanvasRect(layout);
 		int gap = maxCallGridGap(layout);
 		int padding = clampInt(layout.unit() / 2, 2, 6);
-		int fit = (canvas.width() - padding * 2 - gap * 5) / 7;
+		int fit = (canvas.width() - padding * 2 - gap * 3) / 6;
 		int desired = clampInt(layout.unit() * 2, 16, 34);
 		return Math.max(10, Math.min(desired, fit));
 	}
@@ -4281,7 +4585,7 @@ final class MonitorMaxRuntime {
 	private static UiRect maxCallLeaveRect(UiLayout layout, boolean multiMicrophone, boolean focused) {
 		int size = maxCallMenuButtonSize(layout);
 		int gap = maxCallGridGap(layout);
-		UiRect previous = focused ? maxCallExitFullscreenRect(layout, multiMicrophone, true) : maxCallInviteRect(layout, multiMicrophone, false);
+		UiRect previous = maxCallInviteRect(layout, multiMicrophone, focused);
 		return new UiRect(previous.right() + gap, previous.y(), size, size);
 	}
 
@@ -4670,7 +4974,9 @@ final class MonitorMaxRuntime {
 		private boolean cameraPickerOpen;
 		private int cameraPickerScroll;
 		private int microphonePickerScroll;
+		private int callMiniParticipantScroll;
 		private boolean callContactPickerOpen;
+		private boolean callMiniParticipantsHidden;
 		private boolean focusSelf;
 		private boolean focusPeer;
 		private ScreenRuntimeKey focusedPeerKey;
@@ -4708,6 +5014,9 @@ final class MonitorMaxRuntime {
 	}
 
 	private record MaxPreparedFileDelivery(String recipientCode, MaxIncomingFile file) {
+	}
+
+	private record ObservedCallUiTarget(ScreenComponent component, UiLayout layout, UiPoint touchPoint) {
 	}
 
 	private static final class MaxCallSession {

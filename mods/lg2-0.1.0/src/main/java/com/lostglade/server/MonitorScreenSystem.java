@@ -1015,7 +1015,8 @@ public final class MonitorScreenSystem {
 	}
 
 	public static boolean onPlayerHotbarScroll(ServerPlayer player, int previousSlot, int currentSlot) {
-		return MonitorScreenMediaFrameRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot)
+		return MonitorMaxRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot)
+				|| MonitorScreenMediaFrameRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot)
 				|| MonitorYandexMapsRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot);
 	}
 
