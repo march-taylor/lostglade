@@ -90,6 +90,7 @@ public final class ServerUpgradeUiSystem {
 	private static final int BALANCE_DIGIT_WIDTH = 6;
 	private static final int TOOLTIP_DESCRIPTION_WRAP = 42;
 	private static final int TOOLTIP_DESCRIPTION_WRAP_CJK = 22;
+	private static final int TOOLTIP_DESCRIPTION_MAX_LINES = 4;
 	private static final int TOOLTIP_REQUIREMENTS_WRAP = 46;
 	private static final int TOOLTIP_REQUIREMENTS_WRAP_CJK = 24;
 	private static final int ERAS_PROGRESS_GLYPHS_BASE = 0xE991;
@@ -753,7 +754,7 @@ public final class ServerUpgradeUiSystem {
 				resolveLocalizedLines(viewer, button.lore.values),
 				placeholders,
 				tooltipWrapWidth(viewer, TOOLTIP_DESCRIPTION_WRAP, TOOLTIP_DESCRIPTION_WRAP_CJK),
-				2
+				TOOLTIP_DESCRIPTION_MAX_LINES
 		);
 		if (!description.isEmpty()) {
 			result.add(buildSpacerLine(hasPack));
