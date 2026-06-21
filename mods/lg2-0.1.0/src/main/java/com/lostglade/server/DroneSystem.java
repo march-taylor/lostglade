@@ -212,7 +212,7 @@ public final class DroneSystem {
 	private static final double DRONE_KAMIKAZE_VISUAL_LIFT = 0.24375D;
 	private static final double DRONE_TURRET_VISUAL_LIFT = 0.2125D;
 	// Operator-only local tuning for the passenger-mounted body preview while controlling a drone.
-	private static final float CONTROLLED_OPERATOR_PASSENGER_DISPLAY_Y_OFFSET = 1.652´F;
+	private static final float CONTROLLED_OPERATOR_PASSENGER_DISPLAY_Y_OFFSET = 1.652F;
 	private static final float CONTROLLED_OPERATOR_PASSENGER_DISPLAY_Z_OFFSET = -0.3F;
 	private static final int DRONE_DISPLAY_INTERPOLATION_TICKS = 2;
 	private static final float DRONE_DISPLAY_DRIVE_SMOOTHING = 0.35F;

@@ -72,6 +72,7 @@ import static com.lostglade.server.MonitorScreenSystem.*;
 final class MonitorMaxRuntime {
 	private static final String PERSISTED_MAX_ROOT_TAG = "lg2_max";
 	private static final String MAX_ACCOUNT_CODE_TAG = "account_code";
+	private static final String MAX_ACCOUNT_NAME_TAG = "account_name";
 	private static final String MAX_AVATAR_URL_TAG = "avatar_url";
 	private static final String MAX_AVATAR_LOCAL_MEDIA_TAG = "avatar_local_media";
 	private static final String MAX_SELECTED_CAMERA_URL_TAG = "selected_camera_url";
@@ -94,7 +95,9 @@ final class MonitorMaxRuntime {
 	private static final String MAX_INCOMING_FILE_LOCAL_MEDIA_TAG = "local_media";
 	private static final String MAX_INCOMING_FILE_KIND_TAG = "kind";
 	private static final String MAX_INCOMING_FILE_CREATED_TAG = "created";
-	private static final String MAX_PENDING_ADD_STATUS = "Введите 6 цифр MAX в чат";
+	private static final int MAX_ACCOUNT_NAME_MAX_LENGTH = 24;
+	private static final String MAX_PENDING_ADD_STATUS = "Введи MAX id или ник в чат";
+	private static final String MAX_PENDING_RENAME_STATUS = "Напиши новый ник в чат";
 	private static final String MAX_RINGTONE_SOURCE_PREFIX = "max:ring:";
 	private static final String MAX_RINGTONE_PREVIEW_SOURCE_PREFIX = "max:ring-preview:";
 	private static final String MAX_DEFAULT_RINGTONE_URL = "max:default-ringtone";
@@ -108,7 +111,9 @@ final class MonitorMaxRuntime {
 	private static final Path DEFAULT_SOURCE_RINGTONE = Path.of("/home/mart/Downloads/Rington_-_na_zvonok_(SkySound.cc).mp3");
 	private static final Map<ScreenRuntimeKey, MaxRuntimeState> MAX_STATES = new ConcurrentHashMap<>();
 	private static final Map<String, ScreenRuntimeKey> ACCOUNT_INDEX = new ConcurrentHashMap<>();
+	private static final Map<String, ScreenRuntimeKey> ACCOUNT_NAME_INDEX = new ConcurrentHashMap<>();
 	private static final Map<UUID, ScreenRuntimeKey> PENDING_CONTACT_CODE_INPUTS = new ConcurrentHashMap<>();
+	private static final Map<UUID, ScreenRuntimeKey> PENDING_ACCOUNT_NAME_INPUTS = new ConcurrentHashMap<>();
 	private static final Map<UUID, MaxCallSession> CALLS_BY_ID = new ConcurrentHashMap<>();
 	private static final Map<ScreenRuntimeKey, UUID> CALL_BY_SCREEN = new ConcurrentHashMap<>();
 
@@ -160,6 +165,7 @@ final class MonitorMaxRuntime {
 			return new MaxVisualSnapshot(
 					state.version,
 					state.accountCode,
+					state.accountName,
 					currentAvatarFrameLocked(state),
 					contacts,
 					callSnapshot,
@@ -235,7 +241,16 @@ final class MonitorMaxRuntime {
 			return true;
 		}
 		if (maxProfileCodeRect(layout).contains(touchPoint.x(), touchPoint.y())) {
-			sendCopyCodeMessage(player, state.accountCode);
+			String accountName;
+			synchronized (state) {
+				accountName = state.accountName;
+				state.statusText = MAX_PENDING_RENAME_STATUS;
+				state.version++;
+			}
+			PENDING_ACCOUNT_NAME_INPUTS.put(player.getUUID(), component.runtimeKey());
+			PENDING_CONTACT_CODE_INPUTS.remove(player.getUUID());
+			sendAccountRenamePrompt(player, accountName);
+			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
 		if (maxRingtonePreviewRect(layout).contains(touchPoint.x(), touchPoint.y())) {
@@ -268,11 +283,12 @@ final class MonitorMaxRuntime {
 		}
 		if (maxAddContactRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 			PENDING_CONTACT_CODE_INPUTS.put(player.getUUID(), component.runtimeKey());
+			PENDING_ACCOUNT_NAME_INPUTS.remove(player.getUUID());
 			synchronized (state) {
 				state.statusText = MAX_PENDING_ADD_STATUS;
 				state.version++;
 			}
-			player.displayClientMessage(Component.literal(MAX_PENDING_ADD_STATUS), true);
+			player.displayClientMessage(maxAddContactPromptMessage(player), true);
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
@@ -524,6 +540,10 @@ final class MonitorMaxRuntime {
 		if (sender == null || message == null) {
 			return true;
 		}
+		ScreenRuntimeKey renameKey = PENDING_ACCOUNT_NAME_INPUTS.remove(sender.getUUID());
+		if (renameKey != null) {
+			return handleAccountNameInput(message, sender, renameKey);
+		}
 		ScreenRuntimeKey key = PENDING_CONTACT_CODE_INPUTS.remove(sender.getUUID());
 		if (key == null) {
 			return true;
@@ -534,26 +554,30 @@ final class MonitorMaxRuntime {
 		}
 		ScreenComponent component = resolveScreenComponent(server, key);
 		MaxRuntimeState state = component != null ? ensureState(server, component) : MAX_STATES.get(key);
-		String rawCode = message.signedContent() != null ? message.signedContent().trim() : "";
-		String code = normalizeAccountCode(rawCode);
+		String rawInput = message.signedContent() != null ? message.signedContent() : "";
+		String code = resolveAccountCode(server, rawInput);
 		if (state == null || code.isBlank()) {
-			sender.displayClientMessage(Component.literal("MAX: код не распознан"), true);
+			sender.displayClientMessage(maxContactNotFoundMessage(sender), true);
 			return false;
 		}
 		String ownCode;
 		boolean added;
+		String feedbackKey;
 		synchronized (state) {
 			ownCode = state.accountCode;
 			if (Objects.equals(code, ownCode)) {
 				state.statusText = "Это код этого экрана";
 				added = false;
+				feedbackKey = "self";
 			} else if (!state.contacts.contains(code)) {
 				state.contacts.add(code);
 				state.statusText = "Контакт добавлен";
 				added = true;
+				feedbackKey = "added";
 			} else {
 				state.statusText = "Контакт уже добавлен";
 				added = false;
+				feedbackKey = "duplicate";
 			}
 			state.version++;
 		}
@@ -561,8 +585,58 @@ final class MonitorMaxRuntime {
 			persistState(server, key, state);
 			addReverseContact(server, code, ownCode);
 		}
-		sender.displayClientMessage(Component.literal(state.statusText), true);
+		sender.displayClientMessage(maxContactFeedbackMessage(sender, feedbackKey), true);
 		requestRuntimeRender(server, key);
+		return false;
+	}
+
+	private static boolean handleAccountNameInput(PlayerChatMessage message, ServerPlayer sender, ScreenRuntimeKey key) {
+		if (sender == null || message == null || key == null) {
+			return false;
+		}
+		MinecraftServer server = sender.level().getServer();
+		if (server == null) {
+			return false;
+		}
+		ScreenComponent component = resolveScreenComponent(server, key);
+		MaxRuntimeState state = component != null ? ensureState(server, component) : MAX_STATES.get(key);
+		if (state == null) {
+			return false;
+		}
+		String previousName;
+		synchronized (state) {
+			previousName = state.accountName;
+		}
+		String accountName = sanitizeAccountName(message.signedContent());
+		if (accountName.isBlank()) {
+			sender.displayClientMessage(maxAccountNameBlankMessage(sender), true);
+			return false;
+		}
+		if (accountNameCodePointLength(accountName) > MAX_ACCOUNT_NAME_MAX_LENGTH) {
+			sender.displayClientMessage(maxAccountNameTooLongMessage(sender), true);
+			return false;
+		}
+		if (Objects.equals(accountName, previousName)) {
+			sender.displayClientMessage(maxAccountNameUnchangedMessage(sender), true);
+			return false;
+		}
+		if (accountNameTakenByOther(accountName, key) || accountNameConflictsWithAccountCode(accountName, key)) {
+			sender.displayClientMessage(maxAccountNameTakenMessage(sender), true);
+			return false;
+		}
+		String previousNameKey = accountNameLookupKey(previousName);
+		synchronized (state) {
+			state.accountName = accountName;
+			state.statusText = "Ник обновлён";
+			state.version++;
+		}
+		if (!previousNameKey.isBlank()) {
+			ACCOUNT_NAME_INDEX.remove(previousNameKey, key);
+		}
+		ACCOUNT_NAME_INDEX.put(accountNameLookupKey(accountName), key);
+		persistState(server, key, state);
+		requestAllMaxRenders(server);
+		sender.displayClientMessage(maxAccountNameUpdatedMessage(sender), true);
 		return false;
 	}
 
@@ -808,7 +882,11 @@ final class MonitorMaxRuntime {
 		if (removed != null && removed.accountCode != null) {
 			ACCOUNT_INDEX.remove(removed.accountCode, key);
 		}
+		if (removed != null && removed.accountName != null) {
+			ACCOUNT_NAME_INDEX.remove(accountNameLookupKey(removed.accountName), key);
+		}
 		PENDING_CONTACT_CODE_INPUTS.entrySet().removeIf(entry -> key.equals(entry.getValue()));
+		PENDING_ACCOUNT_NAME_INPUTS.entrySet().removeIf(entry -> key.equals(entry.getValue()));
 	}
 
 	static void clearRuntime() {
@@ -818,7 +896,9 @@ final class MonitorMaxRuntime {
 		}
 		MAX_STATES.clear();
 		ACCOUNT_INDEX.clear();
+		ACCOUNT_NAME_INDEX.clear();
 		PENDING_CONTACT_CODE_INPUTS.clear();
+		PENDING_ACCOUNT_NAME_INPUTS.clear();
 		CALLS_BY_ID.clear();
 		CALL_BY_SCREEN.clear();
 	}
@@ -855,7 +935,7 @@ final class MonitorMaxRuntime {
 	}
 
 	private static MaxVisualSnapshot emptySnapshot() {
-		return new MaxVisualSnapshot(0L, "MAX-000000", null, List.of(), null, List.of(), List.of(), List.of(), null, 0, 0, 0, "", false, false, false, false, false, false, "");
+		return new MaxVisualSnapshot(0L, "MAX-000000", "000000", null, List.of(), null, List.of(), List.of(), List.of(), null, 0, 0, 0, "", false, false, false, false, false, false, "");
 	}
 
 	private static MaxRuntimeState ensureState(MinecraftServer server, ScreenComponent component) {
@@ -869,6 +949,8 @@ final class MonitorMaxRuntime {
 				state.accountCode = persisted != null && !persisted.accountCode().isBlank()
 						? normalizeAccountCode(persisted.accountCode())
 						: generateAccountCode();
+				String hydratedAccountName = persisted != null ? persisted.accountName() : "";
+				state.accountName = resolveHydratedAccountName(hydratedAccountName, state.accountCode, component.runtimeKey());
 				state.avatarUrl = persisted != null ? persisted.avatarUrl() : "";
 				state.avatarLocalMediaKey = persisted != null ? persisted.avatarLocalMediaKey() : "";
 				state.selectedCameraUrl = persisted != null ? persisted.selectedCameraUrl() : "";
@@ -898,6 +980,7 @@ final class MonitorMaxRuntime {
 				state.hydrated = true;
 				state.version++;
 				ACCOUNT_INDEX.put(state.accountCode, component.runtimeKey());
+				ACCOUNT_NAME_INDEX.put(accountNameLookupKey(state.accountName), component.runtimeKey());
 				persistState(server, component.runtimeKey(), state);
 			}
 		}
@@ -973,6 +1056,7 @@ final class MonitorMaxRuntime {
 		}
 		return new PersistedMaxState(
 				code,
+				sanitizeAccountName(maxTag.getStringOr(MAX_ACCOUNT_NAME_TAG, "")),
 				maxTag.getStringOr(MAX_AVATAR_URL_TAG, ""),
 				maxTag.getStringOr(MAX_AVATAR_LOCAL_MEDIA_TAG, ""),
 				contacts,
@@ -1000,6 +1084,7 @@ final class MonitorMaxRuntime {
 		synchronized (state) {
 			snapshot = new PersistedMaxState(
 					state.accountCode,
+					state.accountName,
 					state.avatarUrl,
 					state.avatarLocalMediaKey,
 					List.copyOf(state.contacts),
@@ -1031,6 +1116,9 @@ final class MonitorMaxRuntime {
 		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
 			CompoundTag maxTag = new CompoundTag();
 			maxTag.putString(MAX_ACCOUNT_CODE_TAG, state.accountCode());
+			if (state.accountName() != null && !state.accountName().isBlank()) {
+				maxTag.putString(MAX_ACCOUNT_NAME_TAG, state.accountName());
+			}
 			if (state.avatarUrl() != null && !state.avatarUrl().isBlank()) {
 				maxTag.putString(MAX_AVATAR_URL_TAG, state.avatarUrl());
 			}
@@ -1099,6 +1187,7 @@ final class MonitorMaxRuntime {
 		BufferedImage peerAvatar;
 		boolean peerAvatarAnimated;
 		String peerCode;
+		String peerDisplayName;
 		boolean cameraEnabled;
 		boolean microphoneEnabled;
 		boolean callMenuOpen;
@@ -1140,11 +1229,13 @@ final class MonitorMaxRuntime {
 				peerAvatar = currentAvatarFrameLocked(peerState);
 				peerAvatarAnimated = avatarAnimatedLocked(peerState);
 				peerCode = peerState.accountCode;
+				peerDisplayName = peerState.accountName;
 			}
 		} else {
 			peerAvatar = null;
 			peerAvatarAnimated = false;
 			peerCode = call.peerCode(component.runtimeKey());
+			peerDisplayName = defaultAccountName(peerCode);
 		}
 		List<MaxCameraOptionSnapshot> cameraOptions = cameraOptions(server, state, cameras);
 		int connectedCameraCount = connectedCameraCount(cameras);
@@ -1199,6 +1290,7 @@ final class MonitorMaxRuntime {
 		return new MaxCallVisualSnapshot(
 				phase,
 				peerCode,
+				peerDisplayName,
 				peerAvatar,
 				peerAvatarAnimated,
 				localPreview,
@@ -1251,6 +1343,7 @@ final class MonitorMaxRuntime {
 			boolean self = Objects.equals(participantKey, selfKey);
 			MaxRuntimeState participantState = self ? selfState : MAX_STATES.get(participantKey);
 			String code = call.participantCode(participantKey);
+			String displayName = defaultAccountName(code);
 			BufferedImage avatar = null;
 			boolean avatarAnimated = false;
 			BufferedImage video = null;
@@ -1259,6 +1352,7 @@ final class MonitorMaxRuntime {
 			if (participantState != null) {
 				synchronized (participantState) {
 					code = participantState.accountCode == null || participantState.accountCode.isBlank() ? code : participantState.accountCode;
+					displayName = participantState.accountName == null || participantState.accountName.isBlank() ? defaultAccountName(code) : participantState.accountName;
 					avatar = currentAvatarFrameLocked(participantState);
 					avatarAnimated = avatarAnimatedLocked(participantState);
 					cameraEnabled = participantState.cameraEnabled;
@@ -1272,6 +1366,7 @@ final class MonitorMaxRuntime {
 			}
 			participants.add(new MaxCallParticipantSnapshot(
 					code,
+					displayName,
 					avatar,
 					avatarAnimated,
 					video,
@@ -1298,10 +1393,12 @@ final class MonitorMaxRuntime {
 			MaxRuntimeState peerState = key != null ? MAX_STATES.get(key) : null;
 			ScreenComponent component = key != null ? resolveScreenComponent(server, key) : null;
 			MaxCallSession call = key != null ? currentCall(key) : null;
+			String displayName = defaultAccountName(contact);
 			BufferedImage avatar = null;
 			boolean avatarAnimated = false;
 			if (peerState != null) {
 				synchronized (peerState) {
+					displayName = peerState.accountName == null || peerState.accountName.isBlank() ? defaultAccountName(contact) : peerState.accountName;
 					avatar = currentAvatarFrameLocked(peerState);
 					avatarAnimated = avatarAnimatedLocked(peerState);
 				}
@@ -1309,6 +1406,7 @@ final class MonitorMaxRuntime {
 			boolean sameCall = call != null && call.isParticipant(selfKey);
 			snapshots.add(new MaxContactSnapshot(
 					contact,
+					displayName,
 					avatar,
 					avatarAnimated,
 					component != null && component.powered(),
@@ -1332,6 +1430,7 @@ final class MonitorMaxRuntime {
 			}
 			snapshots.add(new MaxFileShareContactSnapshot(
 					contact.code(),
+					contact.displayName(),
 					contact.avatarFrame(),
 					contact.online(),
 					selected.contains(contact.code())
@@ -1346,16 +1445,19 @@ final class MonitorMaxRuntime {
 		}
 		MaxIncomingFile incoming = state.incomingFiles.get(0);
 		MaxRuntimeState senderState = MAX_STATES.get(ACCOUNT_INDEX.get(incoming.senderCode()));
+		String senderDisplayName = defaultAccountName(incoming.senderCode());
 		BufferedImage senderAvatar = null;
 		boolean senderAvatarAnimated = false;
 		if (senderState != null) {
 			synchronized (senderState) {
+				senderDisplayName = senderState.accountName == null || senderState.accountName.isBlank() ? defaultAccountName(incoming.senderCode()) : senderState.accountName;
 				senderAvatar = currentAvatarFrameLocked(senderState);
 				senderAvatarAnimated = avatarAnimatedLocked(senderState);
 			}
 		}
 		return new MaxIncomingFileSnapshot(
 				incoming.senderCode(),
+				senderDisplayName,
 				senderAvatar,
 				senderAvatarAnimated,
 				incoming.title() == null || incoming.title().isBlank() ? defaultSharedFileTitle(incoming.kind()) : incoming.title(),
@@ -3284,18 +3386,329 @@ final class MonitorMaxRuntime {
 		return code == null ? "" : code;
 	}
 
-	private static void sendCopyCodeMessage(ServerPlayer player, String code) {
-		if (player == null || code == null || code.isBlank()) {
+	private static String defaultAccountName(String accountCode) {
+		String displayCode = displayAccountCode(accountCode);
+		return displayCode == null || displayCode.isBlank() ? "MAX" : displayCode;
+	}
+
+	private static String sanitizeAccountName(String accountName) {
+		if (accountName == null) {
+			return "";
+		}
+		String stripped = accountName.strip();
+		if (stripped.isEmpty()) {
+			return "";
+		}
+		StringBuilder builder = new StringBuilder(stripped.length());
+		for (int offset = 0; offset < stripped.length(); ) {
+			int codePoint = stripped.codePointAt(offset);
+			offset += Character.charCount(codePoint);
+			if (codePoint == '\n' || codePoint == '\r' || Character.isISOControl(codePoint)) {
+				continue;
+			}
+			builder.appendCodePoint(codePoint);
+		}
+		return builder.toString().strip();
+	}
+
+	private static int accountNameCodePointLength(String accountName) {
+		return accountName == null ? 0 : accountName.codePointCount(0, accountName.length());
+	}
+
+	private static String truncateAccountName(String accountName, int maxCodePoints) {
+		if (accountName == null || accountName.isBlank() || maxCodePoints <= 0) {
+			return "";
+		}
+		StringBuilder builder = new StringBuilder(accountName.length());
+		int count = 0;
+		for (int offset = 0; offset < accountName.length() && count < maxCodePoints; ) {
+			int codePoint = accountName.codePointAt(offset);
+			builder.appendCodePoint(codePoint);
+			offset += Character.charCount(codePoint);
+			count++;
+		}
+		return builder.toString();
+	}
+
+	private static String accountNameLookupKey(String accountName) {
+		String sanitized = sanitizeAccountName(accountName);
+		return sanitized.isBlank() ? "" : sanitized.toLowerCase(Locale.ROOT);
+	}
+
+	private static boolean accountNameTakenByOther(String accountName, ScreenRuntimeKey selfKey) {
+		String lookupKey = accountNameLookupKey(accountName);
+		if (lookupKey.isBlank()) {
+			return false;
+		}
+		ScreenRuntimeKey existing = ACCOUNT_NAME_INDEX.get(lookupKey);
+		return existing != null && !Objects.equals(existing, selfKey);
+	}
+
+	private static boolean accountNameConflictsWithAccountCode(String accountName, ScreenRuntimeKey selfKey) {
+		String normalizedCode = normalizeAccountCode(accountName);
+		if (normalizedCode.isBlank()) {
+			return false;
+		}
+		ScreenRuntimeKey existing = ACCOUNT_INDEX.get(normalizedCode);
+		return existing != null && !Objects.equals(existing, selfKey);
+	}
+
+	private static String resolveHydratedAccountName(String persistedAccountName, String accountCode, ScreenRuntimeKey selfKey) {
+		String fallback = defaultAccountName(accountCode);
+		String sanitized = sanitizeAccountName(persistedAccountName);
+		if (sanitized.isBlank()) {
+			return fallback;
+		}
+		if (accountNameCodePointLength(sanitized) > MAX_ACCOUNT_NAME_MAX_LENGTH) {
+			sanitized = truncateAccountName(sanitized, MAX_ACCOUNT_NAME_MAX_LENGTH);
+		}
+		if (sanitized.isBlank() || accountNameTakenByOther(sanitized, selfKey) || accountNameConflictsWithAccountCode(sanitized, selfKey)) {
+			return fallback;
+		}
+		return sanitized;
+	}
+
+	private static String resolveAccountCode(MinecraftServer server, String rawInput) {
+		String normalizedCode = normalizeAccountCode(rawInput);
+		if (!normalizedCode.isBlank()) {
+			ScreenRuntimeKey key = ACCOUNT_INDEX.get(normalizedCode);
+			if (key != null) {
+				return normalizedCode;
+			}
+		}
+		String nameKey = accountNameLookupKey(rawInput);
+		if (nameKey.isBlank()) {
+			return "";
+		}
+		ScreenRuntimeKey key = ACCOUNT_NAME_INDEX.get(nameKey);
+		if (key == null) {
+			return "";
+		}
+		ScreenComponent component = server != null ? resolveScreenComponent(server, key) : null;
+		MaxRuntimeState state = component != null ? ensureState(server, component) : MAX_STATES.get(key);
+		if (state == null) {
+			return "";
+		}
+		synchronized (state) {
+			return state.accountCode == null ? "" : state.accountCode;
+		}
+	}
+
+	private static void requestAllMaxRenders(MinecraftServer server) {
+		if (server == null) {
 			return;
 		}
-		String displayCode = displayAccountCode(code);
-		Component copy = Component.literal(displayCode)
+		for (ScreenRuntimeKey key : new ArrayList<>(MAX_STATES.keySet())) {
+			requestRuntimeRender(server, key);
+		}
+	}
+
+	private static Component copyableAccountNameComponent(String accountName) {
+		String value = sanitizeAccountName(accountName);
+		return Component.literal(value)
 				.withStyle(style -> style
-						.withColor(ChatFormatting.WHITE)
-						.withBold(true)
+						.withItalic(false)
+						.withColor(ChatFormatting.BLUE)
 						.withUnderlined(true)
-						.withClickEvent(new ClickEvent.CopyToClipboard(displayCode)));
-		player.sendSystemMessage(copy);
+						.withClickEvent(new ClickEvent.CopyToClipboard(value)));
+	}
+
+	private static void sendAccountRenamePrompt(ServerPlayer player, String accountName) {
+		if (player == null) {
+			return;
+		}
+		Component copyableName = copyableAccountNameComponent(accountName);
+		String locale = MonitorScreenMessages.locale(player);
+		Component message;
+		if (locale.startsWith("ja")) {
+			message = Component.empty()
+					.append(MonitorScreenMessages.literal("現在のニックネーム: "))
+					.append(copyableName)
+					.append(MonitorScreenMessages.literal("。変更するには新しいニックネームをチャットに入力してください"));
+		} else if (locale.startsWith("uk")) {
+			message = Component.empty()
+					.append(MonitorScreenMessages.literal("Поточний нік: "))
+					.append(copyableName)
+					.append(MonitorScreenMessages.literal(". Напиши в чат новий нікнейм, щоб змінити його"));
+		} else if (locale.startsWith("rpr")) {
+			message = Component.empty()
+					.append(MonitorScreenMessages.literal("Текущiй никъ: "))
+					.append(copyableName)
+					.append(MonitorScreenMessages.literal(". Напиши въ чатъ новый никнеймъ, дабы его изменить"));
+		} else if (locale.startsWith("ru")) {
+			message = Component.empty()
+					.append(MonitorScreenMessages.literal("Текущий ник: "))
+					.append(copyableName)
+					.append(MonitorScreenMessages.literal(". Напиши в чат новый никнейм, чтобы изменить его"));
+		} else {
+			message = Component.empty()
+					.append(MonitorScreenMessages.literal("Current nickname: "))
+					.append(copyableName)
+					.append(MonitorScreenMessages.literal(". Type a new nickname in chat to change it"));
+		}
+		player.sendSystemMessage(message);
+	}
+
+	private static Component maxAddContactPromptMessage(ServerPlayer player) {
+		String locale = MonitorScreenMessages.locale(player);
+		if (locale.startsWith("ja")) {
+			return MonitorScreenMessages.literal("MAX の id またはニックネームをチャットに入力してください");
+		}
+		if (locale.startsWith("uk")) {
+			return MonitorScreenMessages.literal("Напиши в чат MAX id або нік");
+		}
+		if (locale.startsWith("rpr")) {
+			return MonitorScreenMessages.literal("Напиши въ чатъ MAX id или никъ");
+		}
+		if (locale.startsWith("ru")) {
+			return MonitorScreenMessages.literal("Напиши в чат MAX id или ник");
+		}
+		return MonitorScreenMessages.literal("Type a MAX id or nickname in chat");
+	}
+
+	private static Component maxContactNotFoundMessage(ServerPlayer player) {
+		String locale = MonitorScreenMessages.locale(player);
+		if (locale.startsWith("ja")) {
+			return MonitorScreenMessages.literal("MAX: 連絡先が見つかりません");
+		}
+		if (locale.startsWith("uk")) {
+			return MonitorScreenMessages.literal("MAX: контакт не знайдено");
+		}
+		if (locale.startsWith("rpr")) {
+			return MonitorScreenMessages.literal("MAX: контактъ не обрѣтенъ");
+		}
+		if (locale.startsWith("ru")) {
+			return MonitorScreenMessages.literal("MAX: контакт не найден");
+		}
+		return MonitorScreenMessages.literal("MAX: contact not found");
+	}
+
+	private static Component maxContactFeedbackMessage(ServerPlayer player, String feedbackKey) {
+		String locale = MonitorScreenMessages.locale(player);
+		String key = feedbackKey == null ? "" : feedbackKey;
+		if (locale.startsWith("ja")) {
+			return switch (key) {
+				case "self" -> MonitorScreenMessages.literal("これはこの画面の MAX id です");
+				case "added" -> MonitorScreenMessages.literal("連絡先を追加しました");
+				case "duplicate" -> MonitorScreenMessages.literal("連絡先はすでに追加されています");
+				default -> MonitorScreenMessages.literal("MAX");
+			};
+		}
+		if (locale.startsWith("uk")) {
+			return switch (key) {
+				case "self" -> MonitorScreenMessages.literal("Це id цього екрана");
+				case "added" -> MonitorScreenMessages.literal("Контакт додано");
+				case "duplicate" -> MonitorScreenMessages.literal("Контакт уже додано");
+				default -> MonitorScreenMessages.literal("MAX");
+			};
+		}
+		if (locale.startsWith("rpr")) {
+			return switch (key) {
+				case "self" -> MonitorScreenMessages.literal("Се id сего экрана");
+				case "added" -> MonitorScreenMessages.literal("Контактъ прибавленъ");
+				case "duplicate" -> MonitorScreenMessages.literal("Контактъ уже прибавленъ");
+				default -> MonitorScreenMessages.literal("MAX");
+			};
+		}
+		if (locale.startsWith("ru")) {
+			return switch (key) {
+				case "self" -> MonitorScreenMessages.literal("Это id этого экрана");
+				case "added" -> MonitorScreenMessages.literal("Контакт добавлен");
+				case "duplicate" -> MonitorScreenMessages.literal("Контакт уже добавлен");
+				default -> MonitorScreenMessages.literal("MAX");
+			};
+		}
+		return switch (key) {
+			case "self" -> MonitorScreenMessages.literal("This is this screen's id");
+			case "added" -> MonitorScreenMessages.literal("Contact added");
+			case "duplicate" -> MonitorScreenMessages.literal("Contact already added");
+			default -> MonitorScreenMessages.literal("MAX");
+		};
+	}
+
+	private static Component maxAccountNameBlankMessage(ServerPlayer player) {
+		String locale = MonitorScreenMessages.locale(player);
+		if (locale.startsWith("ja")) {
+			return MonitorScreenMessages.literal("MAX: ニックネームは空にできません");
+		}
+		if (locale.startsWith("uk")) {
+			return MonitorScreenMessages.literal("MAX: нік не може бути порожнім");
+		}
+		if (locale.startsWith("rpr")) {
+			return MonitorScreenMessages.literal("MAX: никъ не можетъ быть пустымъ");
+		}
+		if (locale.startsWith("ru")) {
+			return MonitorScreenMessages.literal("MAX: ник не может быть пустым");
+		}
+		return MonitorScreenMessages.literal("MAX: nickname cannot be empty");
+	}
+
+	private static Component maxAccountNameTooLongMessage(ServerPlayer player) {
+		String locale = MonitorScreenMessages.locale(player);
+		if (locale.startsWith("ja")) {
+			return MonitorScreenMessages.literal("MAX: ニックネームは " + MAX_ACCOUNT_NAME_MAX_LENGTH + " 文字までです");
+		}
+		if (locale.startsWith("uk")) {
+			return MonitorScreenMessages.literal("MAX: нік може містити до " + MAX_ACCOUNT_NAME_MAX_LENGTH + " символів");
+		}
+		if (locale.startsWith("rpr")) {
+			return MonitorScreenMessages.literal("MAX: никъ можетъ содержати до " + MAX_ACCOUNT_NAME_MAX_LENGTH + " символовъ");
+		}
+		if (locale.startsWith("ru")) {
+			return MonitorScreenMessages.literal("MAX: ник может содержать до " + MAX_ACCOUNT_NAME_MAX_LENGTH + " символов");
+		}
+		return MonitorScreenMessages.literal("MAX: nickname can be at most " + MAX_ACCOUNT_NAME_MAX_LENGTH + " characters");
+	}
+
+	private static Component maxAccountNameTakenMessage(ServerPlayer player) {
+		String locale = MonitorScreenMessages.locale(player);
+		if (locale.startsWith("ja")) {
+			return MonitorScreenMessages.literal("MAX: このニックネームは既に使われています");
+		}
+		if (locale.startsWith("uk")) {
+			return MonitorScreenMessages.literal("MAX: цей нік уже зайнятий");
+		}
+		if (locale.startsWith("rpr")) {
+			return MonitorScreenMessages.literal("MAX: сей никъ уже занятъ");
+		}
+		if (locale.startsWith("ru")) {
+			return MonitorScreenMessages.literal("MAX: этот ник уже занят");
+		}
+		return MonitorScreenMessages.literal("MAX: that nickname is already in use");
+	}
+
+	private static Component maxAccountNameUpdatedMessage(ServerPlayer player) {
+		String locale = MonitorScreenMessages.locale(player);
+		if (locale.startsWith("ja")) {
+			return MonitorScreenMessages.literal("ニックネームを更新しました");
+		}
+		if (locale.startsWith("uk")) {
+			return MonitorScreenMessages.literal("Нік оновлено");
+		}
+		if (locale.startsWith("rpr")) {
+			return MonitorScreenMessages.literal("Никъ обновлёнъ");
+		}
+		if (locale.startsWith("ru")) {
+			return MonitorScreenMessages.literal("Ник обновлён");
+		}
+		return MonitorScreenMessages.literal("Nickname updated");
+	}
+
+	private static Component maxAccountNameUnchangedMessage(ServerPlayer player) {
+		String locale = MonitorScreenMessages.locale(player);
+		if (locale.startsWith("ja")) {
+			return MonitorScreenMessages.literal("ニックネームは変わっていません");
+		}
+		if (locale.startsWith("uk")) {
+			return MonitorScreenMessages.literal("Нік не змінився");
+		}
+		if (locale.startsWith("rpr")) {
+			return MonitorScreenMessages.literal("Никъ не измѣнился");
+		}
+		if (locale.startsWith("ru")) {
+			return MonitorScreenMessages.literal("Ник не изменился");
+		}
+		return MonitorScreenMessages.literal("Nickname did not change");
 	}
 
 	private static Path defaultRingtonePath() {
@@ -3391,7 +3804,7 @@ final class MonitorMaxRuntime {
 		strokeRoundedRect(graphics, header, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 52));
 		drawAvatar(graphics, maxProfileAvatarRect(layout), state.avatarFrame(), layout);
 		drawVerticalText(graphics, "MAX", maxAppTitleRect(layout), new Color(248, 251, 255, 240), Font.BOLD, clampInt(layout.unit() + 2, 13, 22));
-		drawVerticalText(graphics, displayAccountCode(state.accountCode()), maxProfileCodeRect(layout), new Color(214, 232, 244, 232), Font.BOLD, clampInt(layout.unit(), 10, 17));
+		drawEllipsizedVerticalText(graphics, state.accountName(), maxProfileCodeRect(layout), new Color(214, 232, 244, 232), Font.BOLD, clampInt(layout.unit(), 10, 17));
 		drawMaxAddContactButton(graphics, maxAddContactRect(layout), layout);
 		drawMaxNotificationsButton(graphics, maxNotificationsRect(layout), state.notificationCount(), layout);
 		drawMaxRingtoneControls(graphics, layout, state);
@@ -3429,7 +3842,7 @@ final class MonitorMaxRuntime {
 		drawAvatarBackdrop(graphics, canvas, call.peerAvatarFrame(), call.peerCode());
 		UiRect avatar = maxIncomingAvatarRect(layout);
 		drawAvatar(graphics, avatar, call.peerAvatarFrame(), layout);
-		drawCenteredTextFitted(graphics, displayAccountCode(call.peerCode()), maxIncomingCodeRect(layout), new Color(248, 251, 255, 246), Font.BOLD, clampInt(layout.unit() + 4, 16, 28), 8);
+		drawCenteredTextFitted(graphics, call.peerDisplayName(), maxIncomingCodeRect(layout), new Color(248, 251, 255, 246), Font.BOLD, clampInt(layout.unit() + 4, 16, 28), 8);
 		drawCenteredTextFitted(graphics, "Входящий вызов MAX", maxIncomingSubtitleRect(layout), new Color(221, 235, 244, 224), Font.PLAIN, clampInt(layout.unit(), 10, 15), 6);
 		drawRoundCallButton(graphics, maxIncomingAcceptRect(layout), PlayerUiIcon.CALL_ACCEPT, new Color(74, 214, 142), new Color(8, 18, 13, 238), layout);
 		drawRoundCallButton(graphics, maxIncomingDeclineRect(layout), PlayerUiIcon.CALL_DECLINE, new Color(240, 88, 96), new Color(255, 248, 248, 246), layout);
@@ -3439,7 +3852,7 @@ final class MonitorMaxRuntime {
 		UiRect canvas = mediaCanvasRect(layout);
 		drawAvatarBackdrop(graphics, canvas, call.peerAvatarFrame(), call.peerCode());
 		drawAvatar(graphics, maxIncomingAvatarRect(layout), call.peerAvatarFrame(), layout);
-		drawCenteredTextFitted(graphics, displayAccountCode(call.peerCode()), maxIncomingCodeRect(layout), new Color(248, 251, 255, 246), Font.BOLD, clampInt(layout.unit() + 4, 16, 28), 8);
+		drawCenteredTextFitted(graphics, call.peerDisplayName(), maxIncomingCodeRect(layout), new Color(248, 251, 255, 246), Font.BOLD, clampInt(layout.unit() + 4, 16, 28), 8);
 		drawCenteredTextFitted(graphics, "Ожидание ответа", maxIncomingSubtitleRect(layout), new Color(221, 235, 244, 224), Font.PLAIN, clampInt(layout.unit(), 10, 15), 6);
 		drawRoundCallButton(graphics, maxOutgoingCancelRect(layout), PlayerUiIcon.CALL_DECLINE, new Color(240, 88, 96), new Color(255, 248, 248, 246), layout);
 	}
@@ -3496,6 +3909,7 @@ final class MonitorMaxRuntime {
 		List<MaxCallParticipantSnapshot> fallback = new ArrayList<>(2);
 		fallback.add(new MaxCallParticipantSnapshot(
 				state.accountCode(),
+				state.accountName(),
 				state.avatarFrame(),
 				state.animatedAvatars(),
 				call.localPreviewFrame(),
@@ -3507,6 +3921,7 @@ final class MonitorMaxRuntime {
 		if (call.peerCode() != null && !call.peerCode().isBlank()) {
 			fallback.add(new MaxCallParticipantSnapshot(
 					call.peerCode(),
+					call.peerDisplayName(),
 					call.peerAvatarFrame(),
 					call.peerAvatarAnimated(),
 					call.remoteFrame(),
@@ -3540,7 +3955,7 @@ final class MonitorMaxRuntime {
 				return participant;
 			}
 		}
-		return new MaxCallParticipantSnapshot(state.accountCode(), state.avatarFrame(), state.animatedAvatars(), call.localPreviewFrame(), true, call.cameraEnabled(), call.microphoneEnabled(), false);
+		return new MaxCallParticipantSnapshot(state.accountCode(), state.accountName(), state.avatarFrame(), state.animatedAvatars(), call.localPreviewFrame(), true, call.cameraEnabled(), call.microphoneEnabled(), false);
 	}
 
 	private static boolean sameMaxParticipant(MaxCallParticipantSnapshot left, MaxCallParticipantSnapshot right) {
@@ -3565,7 +3980,7 @@ final class MonitorMaxRuntime {
 				graphics,
 				layout,
 				rect,
-				displayAccountCode(participant.code()),
+				participant.displayName(),
 				participant.avatarFrame(),
 				participant.videoFrame(),
 				focused,
@@ -3632,10 +4047,23 @@ final class MonitorMaxRuntime {
 		int x = tile.x() + padX;
 		int y = tile.bottom() - labelHeight - padX;
 		UiRect label = new UiRect(x, Math.max(tile.y(), y), Math.max(1, labelWidth), Math.max(1, labelHeight));
-		fillRoundedRect(graphics, label, label.height(), new Color(0, 0, 0, 92));
 		graphics.setFont(font);
+		graphics.setColor(new Color(0, 0, 0, 120));
+		graphics.drawString(labelText, label.x() + padX + 1, label.y() + (label.height() - metrics.getHeight()) / 2 + metrics.getAscent() + 1);
 		graphics.setColor(new Color(248, 251, 255, 238));
 		graphics.drawString(labelText, label.x() + padX, label.y() + (label.height() - metrics.getHeight()) / 2 + metrics.getAscent());
+	}
+
+	private static void drawEllipsizedVerticalText(Graphics2D graphics, String text, UiRect rect, Color color, int style, int size) {
+		if (graphics == null || rect == null || rect.width() <= 0 || rect.height() <= 0) {
+			return;
+		}
+		graphics.setColor(color);
+		graphics.setFont(new Font(Font.SANS_SERIF, style, size));
+		FontMetrics metrics = graphics.getFontMetrics();
+		String labelText = truncateWithEllipsis(metrics, text == null ? "" : text, rect.width());
+		int textY = rect.y() + (rect.height() - metrics.getHeight()) / 2 + metrics.getAscent();
+		graphics.drawString(labelText, rect.x(), textY);
 	}
 
 	private static void drawMaxCallMenu(Graphics2D graphics, UiLayout layout, MaxCallVisualSnapshot call) {
@@ -3984,7 +4412,7 @@ final class MonitorMaxRuntime {
 		UiRect checkRect = maxFileShareContactCheckRect(rect, layout);
 		int textRight = checkRect.x();
 		UiRect codeRect = new UiRect(avatarRect.right() + layout.unit(), rect.y() + layout.unit() / 3, textRight - avatarRect.right() - layout.unit() * 2, rect.height() / 2);
-		drawVerticalText(graphics, displayAccountCode(contact.code()), codeRect, new Color(248, 251, 255, 238), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		drawEllipsizedVerticalText(graphics, contact.displayName(), codeRect, new Color(248, 251, 255, 238), Font.BOLD, clampInt(layout.unit(), 10, 16));
 		drawVerticalText(graphics, contact.online() ? "доступен" : "недоступен", new UiRect(codeRect.x(), codeRect.bottom(), codeRect.width(), rect.height() / 3), new Color(178, 202, 218, 218), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11));
 		fillRoundedRect(graphics, checkRect, checkRect.height(), contact.selected() ? new Color(248, 251, 255, 232) : new Color(255, 255, 255, 16));
 		strokeRoundedRect(graphics, checkRect, checkRect.height(), 1.0F, new Color(255, 255, 255, contact.selected() ? 150 : 48));
@@ -4007,7 +4435,7 @@ final class MonitorMaxRuntime {
 		strokeRoundedRect(graphics, card, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 46));
 		UiRect avatar = maxNotificationAvatarRect(layout);
 		drawAvatar(graphics, avatar, incoming.senderAvatarFrame(), layout);
-		drawCenteredTextFitted(graphics, displayAccountCode(incoming.senderCode()), maxNotificationSenderRect(layout), new Color(248, 251, 255, 240), Font.BOLD, clampInt(layout.unit() + 2, 12, 20), 8);
+		drawCenteredTextFitted(graphics, incoming.senderDisplayName(), maxNotificationSenderRect(layout), new Color(248, 251, 255, 240), Font.BOLD, clampInt(layout.unit() + 2, 12, 20), 8);
 		drawCenteredTextFitted(graphics, incoming.fileName(), maxNotificationFileRect(layout), new Color(220, 238, 248, 232), Font.BOLD, clampInt(layout.unit(), 9, 15), 7);
 		String subtitle = incoming.subtitle() == null || incoming.subtitle().isBlank() ? notificationKindLabel(incoming.kind()) : incoming.subtitle();
 		drawCenteredTextFitted(graphics, subtitle, maxNotificationSubtitleRect(layout), new Color(166, 194, 214, 218), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 6);
@@ -4088,7 +4516,7 @@ final class MonitorMaxRuntime {
 		UiRect deleteRect = maxContactDeleteRect(rect, layout);
 		int textRight = deleteVisible ? deleteRect.x() : rect.right() - layout.unit();
 		UiRect codeRect = new UiRect(avatarRect.right() + layout.unit(), rect.y() + layout.unit() / 3, textRight - avatarRect.right() - layout.unit() * 2, rect.height() / 2);
-		drawVerticalText(graphics, displayAccountCode(contact.code()), codeRect, new Color(248, 251, 255, 238), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		drawEllipsizedVerticalText(graphics, contact.displayName(), codeRect, new Color(248, 251, 255, 238), Font.BOLD, clampInt(layout.unit(), 10, 16));
 		String status = contact.active() ? "в вызове" : contact.ringing() ? "звонит" : contact.online() ? "доступен" : "недоступен";
 		drawVerticalText(graphics, status, new UiRect(codeRect.x(), codeRect.bottom(), codeRect.width(), rect.height() / 3), new Color(178, 202, 218, 218), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11));
 		if (deleteVisible) {
@@ -4101,7 +4529,7 @@ final class MonitorMaxRuntime {
 		fillRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 14, 28), new Color(8, 12, 16, 148));
 		strokeRoundedRect(graphics, rect, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 34));
 		drawCenteredText(graphics, "Контактов пока нет", new UiRect(rect.x(), rect.y() + rect.height() / 4, rect.width(), rect.height() / 4), new Color(248, 251, 255, 232), Font.BOLD, clampInt(layout.unit() + 1, 11, 18));
-		drawCenteredText(graphics, "Добавь экран по MAX-коду и начни видеозвонок", new UiRect(rect.x() + layout.unit(), rect.y() + rect.height() / 2, rect.width() - layout.unit() * 2, rect.height() / 4), new Color(180, 202, 218, 220), Font.PLAIN, clampInt(layout.unit() - 1, 8, 13));
+		drawCenteredText(graphics, "Добавь экран по MAX id или нику и начни видеозвонок", new UiRect(rect.x() + layout.unit(), rect.y() + rect.height() / 2, rect.width() - layout.unit() * 2, rect.height() / 4), new Color(180, 202, 218, 220), Font.PLAIN, clampInt(layout.unit() - 1, 8, 13));
 	}
 
 	private static void drawMaxCallPillButton(Graphics2D graphics, UiRect rect, String label, Color fill, Color text, UiLayout layout, boolean accept) {
@@ -4929,6 +5357,7 @@ final class MonitorMaxRuntime {
 
 	private record PersistedMaxState(
 			String accountCode,
+			String accountName,
 			String avatarUrl,
 			String avatarLocalMediaKey,
 			List<String> contacts,
@@ -4948,6 +5377,7 @@ final class MonitorMaxRuntime {
 		private boolean hydrated;
 		private long version;
 		private String accountCode = "";
+		private String accountName = "";
 		private String avatarUrl = "";
 		private String avatarLocalMediaKey = "";
 		private BufferedImage avatarFrame;

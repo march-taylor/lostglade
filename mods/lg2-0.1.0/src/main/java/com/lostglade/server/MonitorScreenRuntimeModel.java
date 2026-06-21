@@ -191,6 +191,7 @@ record CameraAppDeviceSnapshot(
 record MaxVisualSnapshot(
 		long version,
 		String accountCode,
+		String accountName,
 		BufferedImage avatarFrame,
 		List<MaxContactSnapshot> contacts,
 		MaxCallVisualSnapshot call,
@@ -217,6 +218,7 @@ record MaxVisualSnapshot(
 
 record MaxContactSnapshot(
 		String code,
+		String displayName,
 		BufferedImage avatarFrame,
 		boolean avatarAnimated,
 		boolean online,
@@ -228,6 +230,7 @@ record MaxContactSnapshot(
 record MaxCallVisualSnapshot(
 		MaxCallPhase phase,
 		String peerCode,
+		String peerDisplayName,
 		BufferedImage peerAvatarFrame,
 		boolean peerAvatarAnimated,
 		BufferedImage localPreviewFrame,
@@ -266,6 +269,7 @@ record MaxCallVisualSnapshot(
 
 record MaxCallParticipantSnapshot(
 		String code,
+		String displayName,
 		BufferedImage avatarFrame,
 		boolean avatarAnimated,
 		BufferedImage videoFrame,
@@ -317,6 +321,7 @@ record MaxRingtoneCandidateSnapshot(
 
 record MaxFileShareContactSnapshot(
 		String code,
+		String displayName,
 		BufferedImage avatarFrame,
 		boolean online,
 		boolean selected
@@ -325,6 +330,7 @@ record MaxFileShareContactSnapshot(
 
 record MaxIncomingFileSnapshot(
 		String senderCode,
+		String senderDisplayName,
 		BufferedImage senderAvatarFrame,
 		boolean senderAvatarAnimated,
 		String fileName,
