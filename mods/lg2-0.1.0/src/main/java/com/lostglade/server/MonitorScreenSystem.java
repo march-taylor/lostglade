@@ -3721,6 +3721,39 @@ public final class MonitorScreenSystem {
 		drawBackArrow(graphics, mediaChromeIconRect(rect, layout), color);
 	}
 
+	static void drawOverlayCloseButton(Graphics2D graphics, UiRect rect, UiLayout layout) {
+		Color color = drawMediaHeaderControlBase(graphics, rect, MediaButtonSegment.SINGLE);
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), PlayerUiIcon.CLOSE, color);
+	}
+
+	static UiRect overlayPanelCloseRect(UiRect panel, UiLayout layout) {
+		if (panel == null || layout == null) {
+			return new UiRect(0, 0, 0, 0);
+		}
+		int size = clampInt(layout.unit() * 2 + 4, 24, 36);
+		return new UiRect(panel.right() - size - layout.unit(), panel.y() + layout.unit(), size, size);
+	}
+
+	static UiRect overlayPanelTitleRect(UiRect panel, UiRect closeRect, UiLayout layout) {
+		if (panel == null || closeRect == null || layout == null) {
+			return new UiRect(0, 0, 0, 0);
+		}
+		return new UiRect(
+				panel.x() + layout.unit(),
+				closeRect.y(),
+				Math.max(1, closeRect.x() - panel.x() - layout.unit() * 2),
+				closeRect.height()
+		);
+	}
+
+	static UiRect overlayPanelContentRect(UiRect panel, UiRect closeRect, UiLayout layout) {
+		if (panel == null || closeRect == null || layout == null) {
+			return new UiRect(0, 0, 0, 0);
+		}
+		int y = closeRect.bottom() + Math.max(4, layout.unit() / 2);
+		return new UiRect(panel.x() + layout.unit(), y, panel.width() - layout.unit() * 2, Math.max(18, panel.bottom() - y - layout.unit()));
+	}
+
 	static void drawMediaPlayerMenuButton(Graphics2D graphics, UiRect rect, UiLayout layout, boolean active) {
 		float strokeWidth = mediaChromeStrokeWidth(rect);
 		Color iconColor = drawSmallMediaButtonBase(graphics, rect, MediaButtonSegment.SINGLE, active, strokeWidth);

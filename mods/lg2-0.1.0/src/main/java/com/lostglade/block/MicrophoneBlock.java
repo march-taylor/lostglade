@@ -2,6 +2,7 @@ package com.lostglade.block;
 
 import com.lostglade.server.MicrophoneSystem;
 import com.lostglade.server.BluetoothLinkSystem;
+import com.lostglade.server.PlacedDeviceNameStore;
 import eu.pb4.polymer.blocks.api.BlockModelType;
 import eu.pb4.polymer.blocks.api.PolymerBlockModel;
 import eu.pb4.polymer.blocks.api.PolymerBlockResourceUtils;
@@ -94,6 +95,7 @@ public final class MicrophoneBlock extends SimplePolymerBlock implements Polymer
 	public void setPlacedBy(Level level, BlockPos pos, BlockState state, LivingEntity placer, ItemStack stack) {
 		super.setPlacedBy(level, pos, state, placer, stack);
 		if (level instanceof ServerLevel serverLevel) {
+			PlacedDeviceNameStore.rememberPlacedMicrophoneName(serverLevel, pos, stack);
 			MicrophoneSystem.trackMicrophone(serverLevel, pos);
 		}
 	}
@@ -109,6 +111,7 @@ public final class MicrophoneBlock extends SimplePolymerBlock implements Polymer
 	@Override
 	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
 		BluetoothLinkSystem.removeBlockEndpoint(level, BluetoothLinkSystem.EndpointType.MICROPHONE, pos);
+		PlacedDeviceNameStore.removeMicrophoneName(level, pos);
 		MicrophoneSystem.untrackMicrophone(level, pos);
 		super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
 	}

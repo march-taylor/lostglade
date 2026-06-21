@@ -354,9 +354,13 @@ public final class MicrophoneSystem {
 		for (int index = 0; index < microphones.size(); index++) {
 			MicrophoneKey key = microphones.get(index).getKey();
 			BlockPos pos = key != null ? key.pos() : null;
+			String fallbackTitle = pos != null ? "Микрофон " + (index + 1) : "Микрофон";
+			String title = key != null
+					? PlacedDeviceNameStore.microphoneName(server, key.dimension(), pos, fallbackTitle)
+					: fallbackTitle;
 			devices.add(new ScreenMicrophoneDevice(
 					index,
-					pos != null ? "Микрофон " + (index + 1) : "Микрофон",
+					title,
 					pos != null ? pos.getX() + " " + pos.getY() + " " + pos.getZ() : "",
 					key != null ? key.dimension() : null,
 					pos

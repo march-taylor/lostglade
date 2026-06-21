@@ -30,6 +30,7 @@ import com.lostglade.server.CopperManRepulsorSystem;
 import com.lostglade.server.DroneSystem;
 import com.lostglade.server.MonitorScreenSystem;
 import com.lostglade.server.MicrophoneSystem;
+import com.lostglade.server.PlacedDeviceNameStore;
 import com.lostglade.server.PhotoFramePlacementSystem;
 import com.lostglade.server.map.MapImageRenderSystem;
 import com.lostglade.server.ServerStabilitySystem;
@@ -75,6 +76,7 @@ public class Lg2 implements ModInitializer {
 		ModItems.register();
 		ModBlocks.register();
 		CameraOrientationStore.register();
+		PlacedDeviceNameStore.register();
 		ModWorldGen.register();
 		ServerBossBarVisibilitySystem.register();
 		MapImageRenderSystem.register();
