@@ -146,7 +146,7 @@ final class MonitorCameraRuntime {
 		);
 	}
 
-	static void drawScreen(Graphics2D graphics, UiLayout layout, MonitorApp app, CameraAppVisualSnapshot snapshot) {
+	static void drawScreen(Graphics2D graphics, UiLayout layout, MonitorApp app, ScreenRuntimeKey runtimeKey, CameraAppVisualSnapshot snapshot) {
 		if (graphics == null || layout == null) {
 			return;
 		}
@@ -160,7 +160,7 @@ final class MonitorCameraRuntime {
 		drawMediaCloseButton(graphics, mediaCloseRect(layout), layout, MediaButtonSegment.SINGLE);
 		drawCameraMenuButton(graphics, cameraMenuButtonRect(layout), layout, state.deviceMenuOpen());
 		if (state.deviceMenuOpen()) {
-			drawDevicePicker(graphics, layout, state);
+			drawDevicePicker(graphics, layout, runtimeKey, state);
 			drawStatus(graphics, layout, state);
 			return;
 		}
@@ -1050,7 +1050,7 @@ final class MonitorCameraRuntime {
 		drawDeviceButton(graphics, microphoneDeviceButtonRect(layout), PlayerUiIcon.MIC, selectedDeviceLabel(state.microphones(), "Микрофон"), layout);
 	}
 
-	private static void drawDevicePicker(Graphics2D graphics, UiLayout layout, CameraAppVisualSnapshot state) {
+	private static void drawDevicePicker(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, CameraAppVisualSnapshot state) {
 		UiRect panel = devicePickerPanelRect(layout);
 		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 232));
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
@@ -1063,6 +1063,12 @@ final class MonitorCameraRuntime {
 		List<CameraAppDeviceSnapshot> cameras = state.cameras();
 		int cameraCapacity = devicePickerCameraCapacity(layout);
 		int cameraScroll = clampInt(state.cameraScroll(), 0, Math.max(0, (cameras == null ? 0 : cameras.size()) - cameraCapacity));
+		MonitorScrollAnimationSystem.ScrollVisualState cameraVisualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.CAMERA_PICKER_CAMERAS,
+				cameraScroll,
+				Math.max(0, (cameras == null ? 0 : cameras.size()) - cameraCapacity)
+		);
 		if (cameras != null && cameras.size() > cameraCapacity) {
 			drawPickerScrollStatus(graphics, cameraTitle, layout, cameraScroll, cameraCapacity, cameras.size());
 			drawPickerScrollButton(graphics, cameraPickerScrollLeftRect(layout), Math.PI / 2.0D, layout, cameraScroll > 0);
@@ -1071,14 +1077,19 @@ final class MonitorCameraRuntime {
 		if (cameras == null || cameras.isEmpty()) {
 			drawCenteredText(graphics, "Подключи камеру или дрон к экрану", devicePickerCameraGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 		} else {
-			int count = Math.min(Math.max(0, cameras.size() - cameraScroll), cameraCapacity);
+			int baseIndex = cameraVisualScroll.anchorIndex();
+			int xOffset = -(int) Math.round(cameraVisualScroll.fraction() * cameraPickerCellStep(layout));
+			int count = Math.min(
+					Math.max(0, cameras.size() - baseIndex),
+					cameraCapacity + (cameraVisualScroll.animated() && baseIndex + cameraCapacity < cameras.size() ? 1 : 0)
+			);
 			Shape previousClip = graphics.getClip();
 			UiRect grid = devicePickerCameraGridRect(layout);
 			graphics.setClip(grid.x(), grid.y(), grid.width(), grid.height());
 			for (int visibleIndex = 0; visibleIndex < count; visibleIndex++) {
-				int index = cameraScroll + visibleIndex;
+				int index = baseIndex + visibleIndex;
 				CameraAppDeviceSnapshot camera = cameras.get(index);
-				UiRect rect = devicePickerCameraRect(layout, visibleIndex);
+				UiRect rect = offsetRect(devicePickerCameraRect(layout, visibleIndex), xOffset, 0);
 				fillRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), new Color(255, 255, 255, camera.selected() ? 34 : 18));
 				BufferedImage preview = camera.selected() && state.previewFrame() != null ? state.previewFrame() : camera.preview();
 				if (preview != null) {
@@ -1099,6 +1110,12 @@ final class MonitorCameraRuntime {
 		List<CameraAppDeviceSnapshot> microphones = state.microphones();
 		int microphoneCapacity = devicePickerMicrophoneCapacity(layout);
 		int microphoneScroll = clampInt(state.microphoneScroll(), 0, Math.max(0, (microphones == null ? 0 : microphones.size()) - microphoneCapacity));
+		MonitorScrollAnimationSystem.ScrollVisualState microphoneVisualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.CAMERA_PICKER_MICROPHONES,
+				microphoneScroll,
+				Math.max(0, (microphones == null ? 0 : microphones.size()) - microphoneCapacity)
+		);
 		if (microphones != null && microphones.size() > microphoneCapacity) {
 			drawPickerScrollStatus(graphics, microphoneTitle, layout, microphoneScroll, microphoneCapacity, microphones.size());
 			drawPickerScrollButton(graphics, microphonePickerScrollUpRect(layout), Math.PI, layout, microphoneScroll > 0);
@@ -1108,13 +1125,18 @@ final class MonitorCameraRuntime {
 			drawCenteredText(graphics, "Подключи микрофон к экрану", devicePickerMicrophoneListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
-		int microphoneCount = Math.min(Math.max(0, microphones.size() - microphoneScroll), microphoneCapacity);
+		int microphoneBaseIndex = microphoneVisualScroll.anchorIndex();
+		int yOffset = -(int) Math.round(microphoneVisualScroll.fraction() * devicePickerMicrophoneRowStep(layout));
+		int microphoneCount = Math.min(
+				Math.max(0, microphones.size() - microphoneBaseIndex),
+				microphoneCapacity + (microphoneVisualScroll.animated() && microphoneBaseIndex + microphoneCapacity < microphones.size() ? 1 : 0)
+		);
 		Shape previousClip = graphics.getClip();
 		UiRect listRect = devicePickerMicrophoneListRect(layout);
 		graphics.setClip(listRect.x(), listRect.y(), listRect.width(), listRect.height());
 		for (int visibleIndex = 0; visibleIndex < microphoneCount; visibleIndex++) {
-			int index = microphoneScroll + visibleIndex;
-			drawDevicePickerMicrophoneRow(graphics, layout, devicePickerMicrophoneRowRect(layout, visibleIndex), microphones.get(index));
+			int index = microphoneBaseIndex + visibleIndex;
+			drawDevicePickerMicrophoneRow(graphics, layout, offsetRect(devicePickerMicrophoneRowRect(layout, visibleIndex), 0, yOffset), microphones.get(index));
 		}
 		graphics.setClip(previousClip);
 	}
@@ -1349,6 +1371,10 @@ final class MonitorCameraRuntime {
 		return new UiRect(grid.x() + index * (cell + gap), grid.y(), cell, cell);
 	}
 
+	private static int cameraPickerCellStep(UiLayout layout) {
+		return devicePickerCameraCell(layout) + devicePickerCameraGap(layout);
+	}
+
 	private static int devicePickerCameraIndexAt(UiLayout layout, int cameraCount, int cameraScroll, UiPoint point) {
 		UiRect grid = devicePickerCameraGridRect(layout);
 		if (point == null || !grid.contains(point.x(), point.y())) {
@@ -1387,6 +1413,10 @@ final class MonitorCameraRuntime {
 		int gap = devicePickerCameraGap(layout);
 		int height = devicePickerMicrophoneRowHeight(layout);
 		return new UiRect(list.x(), list.y() + index * (height + gap), list.width(), height);
+	}
+
+	private static int devicePickerMicrophoneRowStep(UiLayout layout) {
+		return devicePickerMicrophoneRowHeight(layout) + devicePickerCameraGap(layout);
 	}
 
 	private static int devicePickerMicrophoneIndexAt(UiLayout layout, int microphoneCount, int microphoneScroll, UiPoint point) {

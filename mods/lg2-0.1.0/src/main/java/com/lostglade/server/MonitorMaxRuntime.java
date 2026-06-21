@@ -153,19 +153,25 @@ final class MonitorMaxRuntime {
 		UiLayout overlayLayout = createUiLayout(component.width(), component.height());
 		List<MaxContactSnapshot> contacts = captureContactSnapshots(server, state, component.runtimeKey());
 		List<MaxAvatarCandidateSnapshot> avatarCandidates;
+		int avatarPickerScroll;
 		List<MaxRingtoneCandidateSnapshot> ringtoneCandidates;
+		int ringtonePickerScroll;
 		List<MaxFileShareContactSnapshot> fileShareContacts;
+		int fileSharePickerScroll;
 		MaxIncomingFileSnapshot incomingFile;
 		synchronized (state) {
 			List<MaxAvatarCandidateSnapshot> availableAvatarCandidates = state.avatarPickerOpen ? avatarCandidates(component) : List.of();
 			normalizeAvatarPickerScrollLocked(state, overlayLayout, availableAvatarCandidates.size());
-			avatarCandidates = visibleOverlaySlice(availableAvatarCandidates, state.avatarPickerScroll, maxAvatarPickerCapacity(overlayLayout));
+			avatarCandidates = availableAvatarCandidates;
+			avatarPickerScroll = state.avatarPickerScroll;
 			List<MaxRingtoneCandidateSnapshot> availableRingtoneCandidates = state.ringtonePickerOpen ? ringtoneCandidates(component, state) : List.of();
 			normalizeRingtonePickerScrollLocked(state, overlayLayout, availableRingtoneCandidates.size());
-			ringtoneCandidates = visibleOverlaySlice(availableRingtoneCandidates, state.ringtonePickerScroll, maxRingtonePickerCapacity(overlayLayout));
+			ringtoneCandidates = availableRingtoneCandidates;
+			ringtonePickerScroll = state.ringtonePickerScroll;
 			List<MaxFileShareContactSnapshot> availableFileShareContacts = state.fileSharePickerOpen ? fileShareContacts(server, state, component.runtimeKey()) : List.of();
 			normalizeFileSharePickerScrollLocked(state, overlayLayout, availableFileShareContacts.size());
-			fileShareContacts = visibleOverlaySlice(availableFileShareContacts, state.fileSharePickerScroll, maxContactPickerCapacity(overlayLayout));
+			fileShareContacts = availableFileShareContacts;
+			fileSharePickerScroll = state.fileSharePickerScroll;
 			incomingFile = state.notificationsOpen ? incomingFileSnapshot(server, state) : null;
 			boolean animatedAvatars = maxAnimatedAvatarsVisible(component, state, contacts, callSnapshot, incomingFile);
 			if (animatedAvatars) {
@@ -179,8 +185,11 @@ final class MonitorMaxRuntime {
 					contacts,
 					callSnapshot,
 					avatarCandidates,
+					avatarPickerScroll,
 					ringtoneCandidates,
+					ringtonePickerScroll,
 					fileShareContacts,
+					fileSharePickerScroll,
 					incomingFile,
 					state.incomingFiles.size(),
 					state.fileShareFiles.size(),
@@ -965,11 +974,11 @@ final class MonitorMaxRuntime {
 		return "Файлов: " + state.fileShareFiles.size();
 	}
 
-	static void drawCallOverlay(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot snapshot) {
+	static void drawCallOverlay(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MaxVisualSnapshot snapshot) {
 		if (!hasCallOverlay(snapshot)) {
 			return;
 		}
-		drawMaxCallScreen(graphics, layout, snapshot);
+		drawMaxCallScreen(graphics, layout, runtimeKey, snapshot);
 	}
 
 	static List<MicrophoneSystem.ScreenMicrophoneCallRoute> collectMicrophoneCallRoutes(MinecraftServer server) {
@@ -1065,7 +1074,7 @@ final class MonitorMaxRuntime {
 		CALL_BY_SCREEN.clear();
 	}
 
-	static void drawMaxScreen(Graphics2D graphics, UiLayout layout, MonitorApp app, MaxVisualSnapshot snapshot) {
+	static void drawMaxScreen(Graphics2D graphics, UiLayout layout, MonitorApp app, ScreenRuntimeKey runtimeKey, MaxVisualSnapshot snapshot) {
 		if (graphics == null || layout == null) {
 			return;
 		}
@@ -1074,7 +1083,7 @@ final class MonitorMaxRuntime {
 		drawMaxAtmosphere(graphics, canvas, layout);
 		drawMediaCloseButton(graphics, mediaCloseRect(layout), layout, MediaButtonSegment.SINGLE);
 		if (state.fileSharePickerOpen()) {
-			drawMaxFileSharePicker(graphics, layout, state);
+			drawMaxFileSharePicker(graphics, layout, runtimeKey, state);
 			return;
 		}
 		if (state.notificationsOpen()) {
@@ -1082,22 +1091,22 @@ final class MonitorMaxRuntime {
 			return;
 		}
 		if (state.avatarPickerOpen()) {
-			drawMaxAvatarPicker(graphics, layout, state);
+			drawMaxAvatarPicker(graphics, layout, runtimeKey, state);
 			return;
 		}
 		if (state.ringtonePickerOpen()) {
-			drawMaxRingtonePicker(graphics, layout, state);
+			drawMaxRingtonePicker(graphics, layout, runtimeKey, state);
 			return;
 		}
 		if (state.call() != null && state.call().phase() != MaxCallPhase.IDLE) {
-			drawMaxCallScreen(graphics, layout, state);
+			drawMaxCallScreen(graphics, layout, runtimeKey, state);
 			return;
 		}
 		drawMaxFeedScreen(graphics, layout, app, state);
 	}
 
 	private static MaxVisualSnapshot emptySnapshot() {
-		return new MaxVisualSnapshot(0L, "MAX-000000", "000000", null, List.of(), null, List.of(), List.of(), List.of(), null, 0, 0, 0, "", false, false, false, false, false, false, "");
+		return new MaxVisualSnapshot(0L, "MAX-000000", "000000", null, List.of(), null, List.of(), 0, List.of(), 0, List.of(), 0, null, 0, 0, 0, "", false, false, false, false, false, false, "");
 	}
 
 	private static MaxRuntimeState ensureState(MinecraftServer server, ScreenComponent component) {
@@ -4267,7 +4276,7 @@ final class MonitorMaxRuntime {
 		}
 	}
 
-	private static void drawMaxCallScreen(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot state) {
+	private static void drawMaxCallScreen(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MaxVisualSnapshot state) {
 		MaxCallVisualSnapshot call = state.call();
 		if (call.phase() == MaxCallPhase.INCOMING) {
 			drawMaxIncomingCallScreen(graphics, layout, call);
@@ -4277,7 +4286,7 @@ final class MonitorMaxRuntime {
 			drawMaxOutgoingCallScreen(graphics, layout, call);
 			return;
 		}
-		drawMaxActiveCallScreen(graphics, layout, state, call);
+		drawMaxActiveCallScreen(graphics, layout, runtimeKey, state, call);
 	}
 
 	private static void drawMaxIncomingCallScreen(Graphics2D graphics, UiLayout layout, MaxCallVisualSnapshot call) {
@@ -4300,7 +4309,7 @@ final class MonitorMaxRuntime {
 		drawRoundCallButton(graphics, maxOutgoingCancelRect(layout), PlayerUiIcon.CALL_DECLINE, new Color(240, 88, 96), new Color(255, 248, 248, 246), layout);
 	}
 
-	private static void drawMaxActiveCallScreen(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot state, MaxCallVisualSnapshot call) {
+	private static void drawMaxActiveCallScreen(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MaxVisualSnapshot state, MaxCallVisualSnapshot call) {
 		UiRect canvas = mediaCanvasRect(layout);
 		graphics.setPaint(new GradientPaint(canvas.x(), canvas.y(), new Color(10, 12, 18), canvas.right(), canvas.bottom(), new Color(20, 26, 36)));
 		graphics.fillRect(canvas.x(), canvas.y(), canvas.width(), canvas.height());
@@ -4316,15 +4325,33 @@ final class MonitorMaxRuntime {
 			if (!call.miniParticipantsHidden() && !miniParticipants.isEmpty()) {
 				int visibleRows = maxCallMiniParticipantVisibleRows(layout, miniParticipants.size());
 				int scroll = clampInt(call.miniParticipantScroll(), 0, maxCallMiniParticipantScroll(layout, miniParticipants.size()));
-				int count = Math.min(visibleRows + 1, Math.max(0, miniParticipants.size() - scroll));
+				MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+						runtimeKey,
+						MonitorScrollAnimationSystem.ScrollChannel.MAX_CALL_MINI_PARTICIPANTS,
+						scroll,
+						maxCallMiniParticipantScroll(layout, miniParticipants.size())
+				);
+				int baseIndex = visualScroll.anchorIndex();
+				int yOffset = -(int) Math.round(visualScroll.fraction() * maxCallMiniParticipantStride(layout, miniParticipants.size()));
+				int count = Math.min(
+						Math.max(0, miniParticipants.size() - baseIndex),
+						visibleRows + (visualScroll.animated() && baseIndex + visibleRows < miniParticipants.size() ? 1 : 0)
+				);
 				UiRect listRect = maxCallMiniStripListRect(layout, miniParticipants.size());
 				Shape previousClip = graphics.getClip();
 				graphics.clipRect(listRect.x(), listRect.y(), listRect.width(), listRect.height());
 				for (int visibleIndex = 0; visibleIndex < count; visibleIndex++) {
-					drawMaxParticipantTile(graphics, layout, maxCallMiniParticipantRect(layout, visibleIndex, miniParticipants.size()), miniParticipants.get(scroll + visibleIndex), false, MediaScaleMode.FILL);
+					drawMaxParticipantTile(
+							graphics,
+							layout,
+							offsetRect(maxCallMiniParticipantRect(layout, visibleIndex, miniParticipants.size()), 0, yOffset),
+							miniParticipants.get(baseIndex + visibleIndex),
+							false,
+							MediaScaleMode.FILL
+					);
 				}
 				graphics.setClip(previousClip);
-				drawQueueScrollbar(graphics, maxCallMiniStripTrackRect(layout, miniParticipants.size()), scroll, visibleRows, miniParticipants.size(), layout);
+				drawQueueScrollbar(graphics, maxCallMiniStripTrackRect(layout, miniParticipants.size()), visualScroll.displayValue(), visibleRows, miniParticipants.size(), layout);
 			}
 			if (call.menuOpen()) {
 				drawMaxCallFocusControls(graphics, layout, miniParticipants.size(), call.miniParticipantsHidden());
@@ -4339,9 +4366,9 @@ final class MonitorMaxRuntime {
 			drawMaxCallMenu(graphics, layout, call);
 		}
 		if (call.cameraPickerOpen()) {
-			drawMaxCameraPicker(graphics, layout, call);
+			drawMaxCameraPicker(graphics, layout, runtimeKey, call);
 		} else if (call.contactPickerOpen()) {
-			drawMaxContactPicker(graphics, layout, state, call);
+			drawMaxContactPicker(graphics, layout, runtimeKey, state, call);
 		}
 	}
 
@@ -4635,7 +4662,7 @@ final class MonitorMaxRuntime {
 		return new Color(color.getRed(), color.getGreen(), color.getBlue(), clampInt(alpha, 0, 255));
 	}
 
-	private static void drawMaxAvatarPicker(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot state) {
+	private static void drawMaxAvatarPicker(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MaxVisualSnapshot state) {
 		UiRect panel = maxAvatarPickerPanelRect(layout);
 		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 224));
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 50));
@@ -4646,22 +4673,45 @@ final class MonitorMaxRuntime {
 			drawCenteredText(graphics, "В галерее нет картинок или GIF", maxAvatarPickerGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
-		int count = candidates.size();
+		int columns = maxAvatarPickerColumns(layout);
+		int visibleRows = maxAvatarPickerVisibleRows(layout);
+		int totalRows = Math.max(0, (candidates.size() + columns - 1) / columns);
+		int scroll = clampInt(state.avatarPickerScroll(), 0, maxAvatarPickerScroll(layout, candidates.size()));
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MAX_AVATAR_PICKER,
+				scroll,
+				maxAvatarPickerScroll(layout, candidates.size())
+		);
+		double displayRow = visualScroll.displayValue() / Math.max(1, columns);
+		int baseRow = clampInt((int) Math.floor(displayRow + 1.0E-6D), 0, Math.max(0, totalRows - visibleRows));
+		double rowFraction = clampDouble(displayRow - baseRow, 0.0D, 0.999999D);
+		int rowOffset = -(int) Math.round(rowFraction * maxAvatarPickerRowStep(layout));
+		int rowCount = Math.min(
+				Math.max(0, totalRows - baseRow),
+				visibleRows + (rowFraction > 1.0E-4D && baseRow + visibleRows < totalRows ? 1 : 0)
+		);
 		Shape previousClip = graphics.getClip();
 		UiRect grid = maxAvatarPickerGridRect(layout);
 		graphics.setClip(grid.x(), grid.y(), grid.width(), grid.height());
-		for (int index = 0; index < count; index++) {
-			UiRect rect = maxAvatarCandidateRect(layout, index);
-			MaxAvatarCandidateSnapshot candidate = candidates.get(index);
-			fillRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), new Color(255, 255, 255, 18));
-			if (candidate.preview() != null) {
-				drawScaledImage(graphics, candidate.preview(), rect.inset(Math.max(2, layout.unit() / 4)), MediaScaleMode.FILL);
+		for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
+			for (int column = 0; column < columns; column++) {
+				int index = (baseRow + visibleRow) * columns + column;
+				if (index < 0 || index >= candidates.size()) {
+					continue;
+				}
+				UiRect rect = offsetRect(maxAvatarCandidateRect(layout, visibleRow * columns + column), 0, rowOffset);
+				MaxAvatarCandidateSnapshot candidate = candidates.get(index);
+				fillRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), new Color(255, 255, 255, 18));
+				if (candidate.preview() != null) {
+					drawScaledImage(graphics, candidate.preview(), rect.inset(Math.max(2, layout.unit() / 4)), MediaScaleMode.FILL);
+				}
 			}
 		}
 		graphics.setClip(previousClip);
 	}
 
-	private static void drawMaxCameraPicker(Graphics2D graphics, UiLayout layout, MaxCallVisualSnapshot call) {
+	private static void drawMaxCameraPicker(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MaxCallVisualSnapshot call) {
 		UiRect panel = maxAvatarPickerPanelRect(layout);
 		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 230));
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
@@ -4675,6 +4725,12 @@ final class MonitorMaxRuntime {
 		List<MaxCameraOptionSnapshot> cameras = call.cameras();
 		int cameraCapacity = maxCallDeviceCameraCapacity(layout);
 		int cameraScroll = clampInt(call.cameraScroll(), 0, Math.max(0, (cameras == null ? 0 : cameras.size()) - cameraCapacity));
+		MonitorScrollAnimationSystem.ScrollVisualState cameraVisualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MAX_CALL_CAMERA_PICKER,
+				cameraScroll,
+				Math.max(0, (cameras == null ? 0 : cameras.size()) - cameraCapacity)
+		);
 		if (cameras != null && cameras.size() > cameraCapacity) {
 			drawMaxDeviceScrollStatus(graphics, cameraTitle, layout, cameraScroll, cameraCapacity, cameras.size());
 			drawMaxDeviceScrollButton(graphics, maxCallDeviceCameraScrollLeftRect(layout), Math.PI / 2.0D, layout, cameraScroll > 0);
@@ -4683,14 +4739,19 @@ final class MonitorMaxRuntime {
 		if (cameras == null || cameras.isEmpty()) {
 			drawCenteredText(graphics, "Подключи камеру или дрон к экрану", maxCallDeviceCameraGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 		} else {
-			int count = Math.min(Math.max(0, cameras.size() - cameraScroll), cameraCapacity);
+			int baseIndex = cameraVisualScroll.anchorIndex();
+			int xOffset = -(int) Math.round(cameraVisualScroll.fraction() * maxCallDeviceCameraCellStep(layout));
+			int count = Math.min(
+					Math.max(0, cameras.size() - baseIndex),
+					cameraCapacity + (cameraVisualScroll.animated() && baseIndex + cameraCapacity < cameras.size() ? 1 : 0)
+			);
 			Shape previousClip = graphics.getClip();
 			UiRect grid = maxCallDeviceCameraGridRect(layout);
 			graphics.setClip(grid.x(), grid.y(), grid.width(), grid.height());
 			for (int visibleIndex = 0; visibleIndex < count; visibleIndex++) {
-				int index = cameraScroll + visibleIndex;
+				int index = baseIndex + visibleIndex;
 				MaxCameraOptionSnapshot camera = cameras.get(index);
-				UiRect rect = maxCallDeviceCameraRect(layout, visibleIndex);
+				UiRect rect = offsetRect(maxCallDeviceCameraRect(layout, visibleIndex), xOffset, 0);
 				fillRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), new Color(255, 255, 255, camera.selected() ? 34 : 18));
 				if (camera.preview() != null) {
 					drawScaledImage(graphics, camera.preview(), rect.inset(Math.max(2, layout.unit() / 4)), MediaScaleMode.FILL);
@@ -4710,6 +4771,12 @@ final class MonitorMaxRuntime {
 		List<MaxMicrophoneOptionSnapshot> microphones = call.microphones();
 		int microphoneCapacity = maxCallDeviceMicrophoneCapacity(layout);
 		int microphoneScroll = clampInt(call.microphoneScroll(), 0, Math.max(0, (microphones == null ? 0 : microphones.size()) - microphoneCapacity));
+		MonitorScrollAnimationSystem.ScrollVisualState microphoneVisualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MAX_CALL_MICROPHONE_PICKER,
+				microphoneScroll,
+				Math.max(0, (microphones == null ? 0 : microphones.size()) - microphoneCapacity)
+		);
 		if (microphones != null && microphones.size() > microphoneCapacity) {
 			drawMaxDeviceScrollStatus(graphics, microphoneTitle, layout, microphoneScroll, microphoneCapacity, microphones.size());
 			drawMaxDeviceScrollButton(graphics, maxCallDeviceMicrophoneScrollUpRect(layout), Math.PI, layout, microphoneScroll > 0);
@@ -4719,13 +4786,18 @@ final class MonitorMaxRuntime {
 			drawCenteredText(graphics, "Подключи микрофон к экрану", maxCallDeviceMicrophoneListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
-		int microphoneCount = Math.min(Math.max(0, microphones.size() - microphoneScroll), microphoneCapacity);
+		int microphoneBaseIndex = microphoneVisualScroll.anchorIndex();
+		int yOffset = -(int) Math.round(microphoneVisualScroll.fraction() * maxCallDeviceMicrophoneRowStep(layout));
+		int microphoneCount = Math.min(
+				Math.max(0, microphones.size() - microphoneBaseIndex),
+				microphoneCapacity + (microphoneVisualScroll.animated() && microphoneBaseIndex + microphoneCapacity < microphones.size() ? 1 : 0)
+		);
 		Shape previousClip = graphics.getClip();
 		UiRect microphoneList = maxCallDeviceMicrophoneListRect(layout);
 		graphics.setClip(microphoneList.x(), microphoneList.y(), microphoneList.width(), microphoneList.height());
 		for (int visibleIndex = 0; visibleIndex < microphoneCount; visibleIndex++) {
-			int index = microphoneScroll + visibleIndex;
-			drawMaxDeviceMicrophoneRow(graphics, layout, maxCallDeviceMicrophoneRowRect(layout, visibleIndex), microphones.get(index));
+			int index = microphoneBaseIndex + visibleIndex;
+			drawMaxDeviceMicrophoneRow(graphics, layout, offsetRect(maxCallDeviceMicrophoneRowRect(layout, visibleIndex), 0, yOffset), microphones.get(index));
 		}
 		graphics.setClip(previousClip);
 	}
@@ -4771,7 +4843,7 @@ final class MonitorMaxRuntime {
 		return "Камер: " + cameras + " · Дронов: " + drones + " · Микрофонов: " + microphones;
 	}
 
-	private static void drawMaxRingtonePicker(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot state) {
+	private static void drawMaxRingtonePicker(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MaxVisualSnapshot state) {
 		UiRect panel = maxAvatarPickerPanelRect(layout);
 		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 232));
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
@@ -4782,12 +4854,25 @@ final class MonitorMaxRuntime {
 			drawCenteredText(graphics, "В галерее нет аудиофайлов", maxAvatarPickerGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
-		int count = candidates.size();
+		int visibleRows = maxRingtonePickerCapacity(layout);
+		int scroll = clampInt(state.ringtonePickerScroll(), 0, maxRingtonePickerScroll(layout, candidates.size()));
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MAX_RINGTONE_PICKER,
+				scroll,
+				maxRingtonePickerScroll(layout, candidates.size())
+		);
+		int baseIndex = visualScroll.anchorIndex();
+		int yOffset = -(int) Math.round(visualScroll.fraction() * maxRingtonePickerRowStep(layout));
+		int count = Math.min(
+				Math.max(0, candidates.size() - baseIndex),
+				visibleRows + (visualScroll.animated() && baseIndex + visibleRows < candidates.size() ? 1 : 0)
+		);
 		Shape previousClip = graphics.getClip();
 		UiRect list = maxAvatarPickerGridRect(layout);
 		graphics.setClip(list.x(), list.y(), list.width(), list.height());
 		for (int index = 0; index < count; index++) {
-			drawMaxRingtoneCandidate(graphics, layout, maxRingtoneCandidateRect(layout, index), candidates.get(index));
+			drawMaxRingtoneCandidate(graphics, layout, offsetRect(maxRingtoneCandidateRect(layout, index), 0, yOffset), candidates.get(baseIndex + index));
 		}
 		graphics.setClip(previousClip);
 	}
@@ -4806,7 +4891,7 @@ final class MonitorMaxRuntime {
 		drawVerticalText(graphics, candidate.subtitle(), new UiRect(text.x(), text.bottom(), text.width(), rect.height() / 3), new Color(176, 200, 216, 216), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11));
 	}
 
-	private static void drawMaxContactPicker(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot state, MaxCallVisualSnapshot call) {
+	private static void drawMaxContactPicker(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MaxVisualSnapshot state, MaxCallVisualSnapshot call) {
 		UiRect panel = maxAvatarPickerPanelRect(layout);
 		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 230));
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
@@ -4832,17 +4917,28 @@ final class MonitorMaxRuntime {
 			return;
 		}
 		int contactScroll = clampInt(call.contactPickerScroll(), 0, maxCallContactPickerScroll(layout, candidates.size()));
-		int count = Math.min(Math.max(0, candidates.size() - contactScroll), maxCallContactPickerCapacity(layout));
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MAX_CALL_CONTACT_PICKER,
+				contactScroll,
+				maxCallContactPickerScroll(layout, candidates.size())
+		);
+		int baseIndex = visualScroll.anchorIndex();
+		int yOffset = -(int) Math.round(visualScroll.fraction() * maxContactPickerRowStep(layout));
+		int count = Math.min(
+				Math.max(0, candidates.size() - baseIndex),
+				maxCallContactPickerCapacity(layout) + (visualScroll.animated() && baseIndex + maxCallContactPickerCapacity(layout) < candidates.size() ? 1 : 0)
+		);
 		Shape previousClip = graphics.getClip();
 		UiRect list = maxCallContactPickerGridRect(layout);
 		graphics.setClip(list.x(), list.y(), list.width(), list.height());
 		for (int index = 0; index < count; index++) {
-			drawMaxContactRow(graphics, layout, maxCallContactPickerRowRect(layout, index), candidates.get(contactScroll + index), false);
+			drawMaxContactRow(graphics, layout, offsetRect(maxCallContactPickerRowRect(layout, index), 0, yOffset), candidates.get(baseIndex + index), false);
 		}
 		graphics.setClip(previousClip);
 	}
 
-	private static void drawMaxFileSharePicker(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot state) {
+	private static void drawMaxFileSharePicker(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MaxVisualSnapshot state) {
 		UiRect panel = maxAvatarPickerPanelRect(layout);
 		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 232));
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
@@ -4861,12 +4957,24 @@ final class MonitorMaxRuntime {
 		UiRect hint = maxFileShareHintRect(layout);
 		String fileLabel = state.fileShareFileCount() <= 1 ? state.fileShareTitle() : "Файлов: " + state.fileShareFileCount();
 		drawCenteredTextFitted(graphics, fileLabel, hint, new Color(176, 202, 220, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
-		int count = contacts.size();
+		int scroll = clampInt(state.fileSharePickerScroll(), 0, maxContactPickerScroll(layout, contacts.size()));
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MAX_FILE_SHARE_PICKER,
+				scroll,
+				maxContactPickerScroll(layout, contacts.size())
+		);
+		int baseIndex = visualScroll.anchorIndex();
+		int yOffset = -(int) Math.round(visualScroll.fraction() * maxContactPickerRowStep(layout));
+		int count = Math.min(
+				Math.max(0, contacts.size() - baseIndex),
+				maxContactPickerCapacity(layout) + (visualScroll.animated() && baseIndex + maxContactPickerCapacity(layout) < contacts.size() ? 1 : 0)
+		);
 		Shape previousClip = graphics.getClip();
 		UiRect list = maxContactPickerListRect(layout);
 		graphics.setClip(list.x(), list.y(), list.width(), list.height());
 		for (int index = 0; index < count; index++) {
-			drawMaxFileShareContactRow(graphics, layout, maxContactPickerRowRect(layout, index), contacts.get(index));
+			drawMaxFileShareContactRow(graphics, layout, offsetRect(maxContactPickerRowRect(layout, index), 0, yOffset), contacts.get(baseIndex + index));
 		}
 		graphics.setClip(previousClip);
 	}
@@ -5564,6 +5672,14 @@ final class MonitorMaxRuntime {
 		return new UiRect(grid.x() + column * (cell + gap), grid.y() + row * (cell + gap), cell, cell);
 	}
 
+	private static int maxAvatarPickerRowStep(UiLayout layout) {
+		UiRect grid = maxAvatarPickerGridRect(layout);
+		int columns = maxAvatarPickerColumns(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		int cell = Math.max(1, (grid.width() - gap * (columns - 1)) / columns);
+		return cell + gap;
+	}
+
 	private static int maxAvatarCandidateIndexAt(UiLayout layout, int candidateCount, int scroll, UiPoint point) {
 		UiRect grid = maxAvatarPickerGridRect(layout);
 		if (point == null || !grid.contains(point.x(), point.y())) {
@@ -5667,6 +5783,10 @@ final class MonitorMaxRuntime {
 		return new UiRect(grid.x() + index * (cell + gap), grid.y(), cell, cell);
 	}
 
+	private static int maxCallDeviceCameraCellStep(UiLayout layout) {
+		return Math.max(1, maxCallDeviceCameraHeight(layout)) + Math.max(4, layout.unit() / 2);
+	}
+
 	private static int maxCallDeviceCameraIndexAt(UiLayout layout, int cameraCount, int cameraScroll, UiPoint point) {
 		UiRect grid = maxCallDeviceCameraGridRect(layout);
 		if (point == null || !grid.contains(point.x(), point.y())) {
@@ -5707,6 +5827,10 @@ final class MonitorMaxRuntime {
 		return new UiRect(list.x(), list.y() + index * (height + gap), list.width(), height);
 	}
 
+	private static int maxCallDeviceMicrophoneRowStep(UiLayout layout) {
+		return maxCallDeviceMicrophoneRowHeight(layout) + Math.max(4, layout.unit() / 2);
+	}
+
 	private static int maxCallDeviceMicrophoneIndexAt(UiLayout layout, int microphoneCount, int microphoneScroll, UiPoint point) {
 		UiRect list = maxCallDeviceMicrophoneListRect(layout);
 		if (point == null || !list.contains(point.x(), point.y())) {
@@ -5741,6 +5865,10 @@ final class MonitorMaxRuntime {
 		int gap = Math.max(4, layout.unit() / 2);
 		int height = maxRingtoneCandidateHeight(layout);
 		return new UiRect(list.x(), list.y() + index * (height + gap), list.width(), height);
+	}
+
+	private static int maxRingtonePickerRowStep(UiLayout layout) {
+		return maxRingtoneCandidateHeight(layout) + Math.max(4, layout.unit() / 2);
 	}
 
 	private static UiRect maxRingtoneCandidatePlayRect(UiRect row, UiLayout layout) {
@@ -5864,6 +5992,10 @@ final class MonitorMaxRuntime {
 		int gap = Math.max(4, layout.unit() / 2);
 		int height = maxContactRowHeight(layout);
 		return new UiRect(list.x(), list.y() + index * (height + gap), list.width(), height);
+	}
+
+	private static int maxContactPickerRowStep(UiLayout layout) {
+		return maxContactRowHeight(layout) + Math.max(4, layout.unit() / 2);
 	}
 
 	private static UiRect maxCallContactPickerRowRect(UiLayout layout, int index) {

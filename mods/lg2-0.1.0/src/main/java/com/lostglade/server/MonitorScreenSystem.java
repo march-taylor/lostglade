@@ -391,6 +391,7 @@ public final class MonitorScreenSystem {
 		MonitorMaxRuntime.clearRuntime();
 		MonitorYandexMapsRuntime.clearRuntime();
 		MonitorCameraRuntime.clearRuntime();
+		MonitorScrollAnimationSystem.clear();
 		TILE_CACHE.clear();
 		OVERLAY_WINDOW_CACHE.clear();
 		OVERLAY_WINDOW_FAMILY_CACHE.clear();
@@ -2937,18 +2938,18 @@ public final class MonitorScreenSystem {
 		if (work.powered()) {
 			UiLayout layout = createUiLayout(work.width(), work.height());
 			if (work.viewMode() == ScreenViewMode.HOME) {
-				drawHomeScreen(graphics, layout, work.launcherPage(), work.maxSnapshot());
+				drawHomeScreen(graphics, layout, work.runtimeKey(), work.launcherPage(), work.maxSnapshot());
 			} else if (work.viewMode() == ScreenViewMode.CAMERA_APP) {
-				MonitorCameraRuntime.drawScreen(graphics, layout, appForViewMode(work.viewMode()), work.cameraAppSnapshot());
+				MonitorCameraRuntime.drawScreen(graphics, layout, appForViewMode(work.viewMode()), work.runtimeKey(), work.cameraAppSnapshot());
 			} else if (work.viewMode() == ScreenViewMode.MAX) {
-				MonitorMaxRuntime.drawMaxScreen(graphics, layout, appForViewMode(work.viewMode()), work.maxSnapshot());
+				MonitorMaxRuntime.drawMaxScreen(graphics, layout, appForViewMode(work.viewMode()), work.runtimeKey(), work.maxSnapshot());
 			} else if (work.viewMode() == ScreenViewMode.YANDEX_MAPS) {
 				MonitorYandexMapsRuntime.drawScreen(graphics, layout, appForViewMode(work.viewMode()), work.yandexMapsSnapshot(), server, work.runtimeKey());
 			} else {
 				drawAppScreen(graphics, layout, appForViewMode(work.viewMode()), work.runtimeKey(), server, work.mediaSnapshot());
 			}
 			if (work.viewMode() != ScreenViewMode.MAX && MonitorMaxRuntime.hasCallOverlay(work.maxSnapshot())) {
-				MonitorMaxRuntime.drawCallOverlay(graphics, layout, work.maxSnapshot());
+				MonitorMaxRuntime.drawCallOverlay(graphics, layout, work.runtimeKey(), work.maxSnapshot());
 			}
 		}
 		graphics.dispose();
@@ -3091,43 +3092,63 @@ public final class MonitorScreenSystem {
 		graphics.drawImage(base, 0, 0, pixelWidth, pixelHeight, null);
 	}
 
-	static void drawHomeScreen(Graphics2D graphics, UiLayout layout, int launcherPage, MaxVisualSnapshot maxSnapshot) {
+	static void drawHomeScreen(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, int launcherPage, MaxVisualSnapshot maxSnapshot) {
 		UiRect panel = homePanelRect(layout);
 		UiRect header = homeHeaderRect(layout, panel);
-		fillRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 36), new Color(18, 24, 30, 196));
-		strokeRoundedRect(graphics, header, clampInt(layout.unit() * 2, 12, 36), 1.0F, new Color(255, 255, 255, 66));
-		drawCenteredTextFitted(graphics, "ПРИЛОЖЕНИЯ", header, new Color(248, 250, 252), Font.BOLD, clampInt(layout.unit() * 2, 10, 34), clampInt(layout.unit(), 8, 18));
+		drawCenteredTextFitted(
+				graphics,
+				"Приложения",
+				header,
+				new Color(248, 250, 252, 236),
+				Font.BOLD,
+				clampInt((int) Math.round(layout.unit() * 1.45D), 9, 21),
+				clampInt(layout.unit(), 8, 18)
+		);
 
-		List<MonitorApp> visibleApps = visibleHomeApps(layout, launcherPage);
-		for (int index = 0; index < visibleApps.size(); index++) {
-			MonitorApp app = visibleApps.get(index);
-			int badgeCount = app != null && "max".equals(app.id()) && maxSnapshot != null ? maxSnapshot.notificationCount() : 0;
-			drawHomeAppCard(graphics, layout, homeAppCardRect(layout, launcherPage, index), app, badgeCount);
-		}
-
+		UiRect gridRect = homeGridRect(layout, panel);
 		int totalRows = homeTotalRows(layout);
 		int visibleRows = homeRowsPerPage(layout);
 		int maxScroll = Math.max(0, totalRows - visibleRows);
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.HOME_LAUNCHER,
+				launcherPage,
+				maxScroll
+		);
+		int baseRow = visualScroll.anchorIndex();
+		int rowOffset = -(int) Math.round(visualScroll.fraction() * (homeAppCardHeight(layout) + homeAppGap(layout)));
+		int columns = homeColumns(layout);
+		List<MonitorApp> apps = MonitorAppRegistry.apps();
+		int rowCount = Math.min(
+				Math.max(0, totalRows - baseRow),
+				visibleRows + (visualScroll.animated() && baseRow + visibleRows < totalRows ? 1 : 0)
+		);
+		Shape previousClip = graphics.getClip();
+		graphics.clipRect(gridRect.x(), gridRect.y(), gridRect.width(), gridRect.height());
+		try {
+			for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
+				for (int column = 0; column < columns; column++) {
+					int index = (baseRow + visibleRow) * columns + column;
+					if (index < 0 || index >= apps.size()) {
+						continue;
+					}
+					MonitorApp app = apps.get(index);
+					int badgeCount = app != null && "max".equals(app.id()) && maxSnapshot != null ? maxSnapshot.notificationCount() : 0;
+					UiRect baseRect = homeAppCardRect(layout, 0, visibleRow * columns + column);
+					drawHomeAppCard(graphics, layout, offsetRect(baseRect, 0, rowOffset), app, badgeCount);
+				}
+			}
+		} finally {
+			graphics.setClip(previousClip);
+		}
 		if (maxScroll > 0) {
-			UiRect footer = homeFooterRect(layout, panel);
-			fillRoundedRect(graphics, footer, clampInt(layout.unit() * 2, 12, 32), new Color(18, 24, 30, 184));
-			strokeRoundedRect(graphics, footer, clampInt(layout.unit() * 2, 12, 32), 1.0F, new Color(255, 255, 255, 52));
-			drawCenteredTextFitted(
-					graphics,
-					(launcherPage + 1) + "/" + (maxScroll + 1),
-					new UiRect(footer.x() + footer.width() / 4, footer.y(), footer.width() / 2, footer.height()),
-					new Color(248, 251, 255),
-					Font.BOLD,
-					clampInt(layout.unit() * 2 - 1, 10, 28),
-					clampInt(layout.unit(), 8, 16)
-			);
-			drawScrollbar(graphics, homeScrollbarTrackRect(layout), launcherPage, visibleRows, totalRows, layout, homeScrollbarThumbRect(layout, launcherPage, visibleRows, totalRows));
+			drawScrollbar(graphics, homeScrollbarTrackRect(layout), visualScroll.displayValue(), visibleRows, totalRows, layout);
 		}
 	}
 
 	static void drawAppScreen(Graphics2D graphics, UiLayout layout, MonitorApp app, ScreenRuntimeKey runtimeKey, MinecraftServer server, MediaVisualSnapshot mediaSnapshot) {
 		if (app == null) {
-			drawHomeScreen(graphics, layout, 0, null);
+			drawHomeScreen(graphics, layout, runtimeKey, 0, null);
 			return;
 		}
 		if (app.role().usesMediaRenderer()) {
@@ -3194,7 +3215,7 @@ public final class MonitorScreenSystem {
 
 	static void drawMediaScreen(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MinecraftServer server, MediaVisualSnapshot state) {
 		if (state != null && isLibraryAppMode(state.mode()) && state.galleryBrowser()) {
-			drawGalleryBrowserScreen(graphics, layout, state);
+			drawGalleryBrowserScreen(graphics, layout, runtimeKey, state);
 			return;
 		}
 
@@ -3459,7 +3480,7 @@ public final class MonitorScreenSystem {
 				&& state.frame() == null;
 	}
 
-	static void drawGalleryBrowserScreen(Graphics2D graphics, UiLayout layout, MediaVisualSnapshot state) {
+	static void drawGalleryBrowserScreen(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MediaVisualSnapshot state) {
 		UiRect closeRect = mediaGalleryBrowserCloseRect(layout);
 		boolean droneMode = state != null && isSberDronesMode(state.mode());
 		boolean galleryPickerMode = state != null && state.galleryPickerMode();
@@ -3474,7 +3495,7 @@ public final class MonitorScreenSystem {
 		MonitorApp app = state != null ? appForViewMode(state.mode()) : null;
 
 		if (droneMode && !galleryPickerMode) {
-			drawSberDronesBrowserScreen(graphics, layout, state, app, closeRect, linkRect, gridRect, scrollbarTrackRect);
+			drawSberDronesBrowserScreen(graphics, layout, runtimeKey, state, app, closeRect, linkRect, gridRect, scrollbarTrackRect);
 			return;
 		}
 
@@ -3501,6 +3522,12 @@ public final class MonitorScreenSystem {
 		int visibleRows = mediaGalleryVisibleRows(layout);
 		int totalRows = mediaGalleryTotalRows(cards.size(), layout);
 		int scroll = state != null ? clampInt(state.mediaListScroll(), 0, Math.max(0, totalRows - visibleRows)) : 0;
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MEDIA_LIBRARY_BROWSER,
+				scroll,
+				Math.max(0, totalRows - visibleRows)
+		);
 		if (cards.isEmpty()) {
 			drawCenteredText(
 					graphics,
@@ -3511,17 +3538,33 @@ public final class MonitorScreenSystem {
 					clampInt(layout.unit(), 8, 14)
 			);
 		} else {
-			int rowCount = Math.min(visibleRows, Math.max(0, totalRows - scroll));
-			for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
-				for (int column = 0; column < columns; column++) {
-					int index = (scroll + visibleRow) * columns + column;
-					if (index < 0 || index >= cards.size()) {
-						continue;
+			int baseRow = visualScroll.anchorIndex();
+			int rowOffset = -(int) Math.round(visualScroll.fraction() * mediaGalleryRowStep(layout));
+			int rowCount = Math.min(
+					Math.max(0, totalRows - baseRow),
+					visibleRows + (visualScroll.animated() && baseRow + visibleRows < totalRows ? 1 : 0)
+			);
+			Shape previousClip = graphics.getClip();
+			graphics.clipRect(gridRect.x(), gridRect.y(), gridRect.width(), gridRect.height());
+			try {
+				for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
+					for (int column = 0; column < columns; column++) {
+						int index = (baseRow + visibleRow) * columns + column;
+						if (index < 0 || index >= cards.size()) {
+							continue;
+						}
+						drawGalleryCard(
+								graphics,
+								layout,
+								offsetRect(mediaGalleryCardRect(layout, visibleRow, column), 0, rowOffset),
+								cards.get(index)
+						);
 					}
-					drawGalleryCard(graphics, layout, mediaGalleryCardRect(layout, visibleRow, column), cards.get(index));
 				}
+			} finally {
+				graphics.setClip(previousClip);
 			}
-			drawGalleryScrollbar(graphics, scrollbarTrackRect, scroll, visibleRows, totalRows, layout);
+			drawGalleryScrollbar(graphics, scrollbarTrackRect, visualScroll.displayValue(), visibleRows, totalRows, layout);
 		}
 
 		TaskProgress.Snapshot progress = state != null ? state.progress() : null;
@@ -3533,6 +3576,7 @@ public final class MonitorScreenSystem {
 	static void drawSberDronesBrowserScreen(
 			Graphics2D graphics,
 			UiLayout layout,
+			ScreenRuntimeKey runtimeKey,
 			MediaVisualSnapshot state,
 			MonitorApp app,
 			UiRect closeRect,
@@ -3593,20 +3637,42 @@ public final class MonitorScreenSystem {
 		int visibleRows = mediaGalleryVisibleRows(layout);
 		int totalRows = mediaGalleryTotalRows(cards.size(), layout);
 		int scroll = state != null ? clampInt(state.mediaListScroll(), 0, Math.max(0, totalRows - visibleRows)) : 0;
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MEDIA_LIBRARY_BROWSER,
+				scroll,
+				Math.max(0, totalRows - visibleRows)
+		);
 		if (cards.isEmpty()) {
 			drawSberDronesEmptyState(graphics, layout, gridRect);
 		} else {
-			int rowCount = Math.min(visibleRows, Math.max(0, totalRows - scroll));
-			for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
-				for (int column = 0; column < columns; column++) {
-					int index = (scroll + visibleRow) * columns + column;
-					if (index < 0 || index >= cards.size()) {
-						continue;
+			int baseRow = visualScroll.anchorIndex();
+			int rowOffset = -(int) Math.round(visualScroll.fraction() * mediaGalleryRowStep(layout));
+			int rowCount = Math.min(
+					Math.max(0, totalRows - baseRow),
+					visibleRows + (visualScroll.animated() && baseRow + visibleRows < totalRows ? 1 : 0)
+			);
+			Shape previousClip = graphics.getClip();
+			graphics.clipRect(gridRect.x(), gridRect.y(), gridRect.width(), gridRect.height());
+			try {
+				for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
+					for (int column = 0; column < columns; column++) {
+						int index = (baseRow + visibleRow) * columns + column;
+						if (index < 0 || index >= cards.size()) {
+							continue;
+						}
+						drawSberDronesGalleryCard(
+								graphics,
+								layout,
+								offsetRect(mediaGalleryCardRect(layout, visibleRow, column), 0, rowOffset),
+								cards.get(index)
+						);
 					}
-					drawSberDronesGalleryCard(graphics, layout, mediaGalleryCardRect(layout, visibleRow, column), cards.get(index));
 				}
+			} finally {
+				graphics.setClip(previousClip);
 			}
-			drawGalleryScrollbar(graphics, scrollbarTrackRect, scroll, visibleRows, totalRows, layout);
+			drawGalleryScrollbar(graphics, scrollbarTrackRect, visualScroll.displayValue(), visibleRows, totalRows, layout);
 		}
 
 		TaskProgress.Snapshot progress = state != null ? state.progress() : null;
@@ -3657,17 +3723,6 @@ public final class MonitorScreenSystem {
 	}
 
 	static void drawHomeAppCard(Graphics2D graphics, UiLayout layout, UiRect cardRect, MonitorApp app, int badgeCount) {
-		graphics.setPaint(new GradientPaint(
-				cardRect.x(),
-				cardRect.y(),
-				withAlpha(app.accentStartRgb(), 88),
-				cardRect.right(),
-				cardRect.bottom(),
-				withAlpha(app.accentEndRgb(), 88)
-		));
-		fillRoundedRect(graphics, cardRect, clampInt(layout.unit() * 2, 12, 36), null);
-		strokeRoundedRect(graphics, cardRect, clampInt(layout.unit() * 2, 12, 36), 1.0F, new Color(255, 255, 255, 38));
-
 		UiRect iconRect = homeAppIconRect(cardRect, layout);
 		drawAppIcon(graphics, app, iconRect, clampInt(layout.unit() / 3, 2, 12));
 		if (badgeCount > 0) {
@@ -3675,18 +3730,8 @@ public final class MonitorScreenSystem {
 		}
 
 		UiRect labelRect = homeAppLabelRect(layout, cardRect);
-		int textSize = clampInt(layout.unit() * 2 - 1, 9, 26);
-		graphics.setFont(new Font(Font.SANS_SERIF, Font.BOLD, textSize));
-		var metrics = graphics.getFontMetrics();
-		int textBgWidth = Math.min(labelRect.width(), metrics.stringWidth(app.title()) + clampInt(layout.unit(), 10, 28));
-		UiRect textBgRect = new UiRect(
-				labelRect.x() + (labelRect.width() - textBgWidth) / 2,
-				labelRect.y(),
-				textBgWidth,
-				labelRect.height()
-		);
-		fillRoundedRect(graphics, textBgRect, clampInt(layout.unit(), 8, 24), new Color(12, 16, 20, 112));
-		drawCenteredTextFitted(graphics, app.title(), labelRect, new Color(248, 251, 255), Font.BOLD, textSize, clampInt(layout.unit() - 1, 7, 14));
+		int textSize = clampInt((int) Math.round(layout.unit() * 1.25D), 8, 16);
+		drawCenteredTextFitted(graphics, app.title(), labelRect, new Color(248, 251, 255, 238), Font.BOLD, textSize, clampInt(layout.unit() - 1, 7, 14));
 	}
 
 	static void drawNotificationBadge(Graphics2D graphics, UiRect rect, int count, UiLayout layout) {
@@ -4413,8 +4458,11 @@ public final class MonitorScreenSystem {
 
 	static BufferedImage overlayWindowImage(MinecraftServer server, ScreenRuntimeKey runtimeKey, MediaOverlayWindowSnapshot window, UiLayout layout) {
 		UiRect rect = overlayWindowRect(layout, window.type());
+		if (window.type() == MediaOverlayWindowType.YOUTUBE_QUEUE) {
+			return renderOverlayWindowImage(window, layout, rect, runtimeKey);
+		}
 		if (queueCacheAnimationActive(window)) {
-			return renderOverlayWindowImage(window, layout, rect);
+			return renderOverlayWindowImage(window, layout, rect, null);
 		}
 		OverlayWindowCacheKey key = new OverlayWindowCacheKey(window, rect.width(), rect.height(), layout.unit());
 		OverlayWindowFamilyKey familyKey = new OverlayWindowFamilyKey(window.type(), rect.width(), rect.height(), layout.unit());
@@ -4469,7 +4517,7 @@ public final class MonitorScreenSystem {
 				return;
 			}
 			cacheState.future = CompletableFuture
-					.supplyAsync(() -> renderOverlayWindowImage(window, layout, rect), overlayWindowExecutor)
+					.supplyAsync(() -> renderOverlayWindowImage(window, layout, rect, null), overlayWindowExecutor)
 					.whenComplete((rendered, throwable) -> {
 						if (throwable != null) {
 							OVERLAY_WINDOW_CACHE.remove(key, cacheState);
@@ -4507,13 +4555,13 @@ public final class MonitorScreenSystem {
 		}
 	}
 
-	static BufferedImage renderOverlayWindowImage(MediaOverlayWindowSnapshot window, UiLayout layout, UiRect rect) {
+	static BufferedImage renderOverlayWindowImage(MediaOverlayWindowSnapshot window, UiLayout layout, UiRect rect, ScreenRuntimeKey runtimeKey) {
 		BufferedImage image = new BufferedImage(Math.max(1, rect.width()), Math.max(1, rect.height()), BufferedImage.TYPE_INT_ARGB);
 		Graphics2D overlayGraphics = image.createGraphics();
 		configureUiGraphics(overlayGraphics);
 		overlayGraphics.translate(-rect.x(), -rect.y());
 		switch (window.type()) {
-			case YOUTUBE_QUEUE -> drawYoutubeQueueWindow(overlayGraphics, layout, window);
+			case YOUTUBE_QUEUE -> drawYoutubeQueueWindow(overlayGraphics, layout, runtimeKey, window);
 			case GALLERY_DELETE_CONFIRM -> drawGalleryDeleteConfirmWindow(overlayGraphics, layout, window);
 			case GALLERY_FILE_MENU -> drawGalleryFileMenuWindow(overlayGraphics, layout, window);
 			case PLAYER_BACKGROUND -> drawPlayerBackgroundWindow(overlayGraphics, layout, window);
@@ -4585,7 +4633,7 @@ public final class MonitorScreenSystem {
 		drawMediaCloseButton(graphics, closeRect, layout);
 	}
 
-	static void drawYoutubeQueueWindow(Graphics2D graphics, UiLayout layout, MediaOverlayWindowSnapshot window) {
+	static void drawYoutubeQueueWindow(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MediaOverlayWindowSnapshot window) {
 		boolean compact = compactScreenLayout(layout);
 		boolean ultraCompact = ultraCompactScreenLayout(layout);
 		UiRect header = mediaQueueHeaderRect(layout);
@@ -4599,6 +4647,12 @@ public final class MonitorScreenSystem {
 		UiRect scrollbarTrackRect = mediaQueueScrollbarTrackRect(layout);
 		int visibleRows = mediaQueueVisibleRows(layout);
 		int scroll = clampInt(window.scroll(), 0, Math.max(0, window.items().size() - visibleRows));
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MEDIA_QUEUE_WINDOW,
+				scroll,
+				Math.max(0, window.items().size() - visibleRows)
+		);
 		drawCenteredTextFitted(
 				graphics,
 				window.title(),
@@ -4621,12 +4675,17 @@ public final class MonitorScreenSystem {
 		if (window.items().isEmpty()) {
 			drawCenteredText(graphics, "Очередь пуста", list, new Color(210, 218, 226, 214), Font.PLAIN, compact ? clampInt(layout.unit() + 1, 9, 13) : clampInt(layout.unit() + 2, 12, 18));
 		} else {
-			int rowCount = Math.min(visibleRows + 1, Math.max(0, window.items().size() - scroll));
+			int baseRow = visualScroll.anchorIndex();
+			int rowOffset = -(int) Math.round(visualScroll.fraction() * mediaQueueRowHeight(layout));
+			int rowCount = Math.min(
+					Math.max(0, window.items().size() - baseRow),
+					visibleRows + (visualScroll.animated() && baseRow + visibleRows < window.items().size() ? 1 : 0)
+			);
 			Shape previousClip = graphics.getClip();
 			graphics.clipRect(list.x(), list.y(), list.width(), list.height());
 			for (int visibleIndex = 0; visibleIndex < rowCount; visibleIndex++) {
-				YoutubeQueueItemSnapshot item = window.items().get(scroll + visibleIndex);
-				UiRect rowRect = mediaQueueRowRect(layout, visibleIndex);
+				YoutubeQueueItemSnapshot item = window.items().get(baseRow + visibleIndex);
+				UiRect rowRect = offsetRect(mediaQueueRowRect(layout, visibleIndex), 0, rowOffset);
 				UiRect removeRect = mediaQueueRemoveRect(rowRect, layout);
 				UiRect cacheStatusRect = mediaQueueCacheStatusRect(rowRect, removeRect, layout);
 				UiRect titleRect = mediaQueueTitleRect(rowRect, cacheStatusRect, layout);
@@ -4662,7 +4721,7 @@ public final class MonitorScreenSystem {
 				drawCloseGlyph(graphics, mediaChromeIconRect(removeRect, layout), item.current() ? new Color(36, 28, 32, 220) : removeIconColor);
 			}
 			graphics.setClip(previousClip);
-			drawQueueScrollbar(graphics, scrollbarTrackRect, scroll, visibleRows, window.items().size(), layout);
+			drawQueueScrollbar(graphics, scrollbarTrackRect, visualScroll.displayValue(), visibleRows, window.items().size(), layout);
 		}
 
 		drawYoutubeMusicShuffleButton(graphics, shuffleRect, window.shuffleEnabled(), layout, MediaButtonSegment.SINGLE);
@@ -5011,11 +5070,19 @@ public final class MonitorScreenSystem {
 	}
 
 	static void drawQueueScrollbar(Graphics2D graphics, UiRect trackRect, int scroll, int visibleRows, int totalRows, UiLayout layout) {
-		drawScrollbar(graphics, trackRect, scroll, visibleRows, totalRows, layout, mediaQueueScrollbarThumbRect(layout, scroll, visibleRows, totalRows));
+		drawQueueScrollbar(graphics, trackRect, (double) scroll, visibleRows, totalRows, layout);
 	}
 
 	static void drawGalleryScrollbar(Graphics2D graphics, UiRect trackRect, int scroll, int visibleRows, int totalRows, UiLayout layout) {
-		drawScrollbar(graphics, trackRect, scroll, visibleRows, totalRows, layout, mediaGalleryBrowserScrollbarThumbRect(layout, scroll, visibleRows, totalRows));
+		drawGalleryScrollbar(graphics, trackRect, (double) scroll, visibleRows, totalRows, layout);
+	}
+
+	static void drawQueueScrollbar(Graphics2D graphics, UiRect trackRect, double scroll, int visibleRows, int totalRows, UiLayout layout) {
+		drawScrollbar(graphics, trackRect, scroll, visibleRows, totalRows, layout);
+	}
+
+	static void drawGalleryScrollbar(Graphics2D graphics, UiRect trackRect, double scroll, int visibleRows, int totalRows, UiLayout layout) {
+		drawScrollbar(graphics, trackRect, scroll, visibleRows, totalRows, layout);
 	}
 
 	static void drawQueueCacheStatusIcon(Graphics2D graphics, UiRect rect, YoutubeQueueItemSnapshot item, UiLayout layout) {
@@ -5091,6 +5158,10 @@ public final class MonitorScreenSystem {
 		fillRoundedRect(graphics, thumbRect, clampInt(layout.unit(), 6, 10), new Color(255, 255, 255, 72));
 	}
 
+	static void drawScrollbar(Graphics2D graphics, UiRect trackRect, double scroll, int visibleRows, int totalRows, UiLayout layout) {
+		drawScrollbar(graphics, trackRect, clampInt((int) Math.round(scroll), 0, Math.max(0, totalRows - Math.max(1, visibleRows))), visibleRows, totalRows, layout, scrollbarThumbRect(trackRect, scroll, visibleRows, totalRows));
+	}
+
 	static boolean scrollbarVisible(int visibleRows, int totalRows) {
 		return totalRows > visibleRows && visibleRows > 0;
 	}
@@ -5105,6 +5176,26 @@ public final class MonitorScreenSystem {
 		}
 		double fraction = clampDouble((pointerY - trackRect.y()) / (double) Math.max(1, trackRect.height() - 1), 0.0D, 1.0D);
 		return clampInt((int) Math.round(fraction * maxScroll), 0, maxScroll);
+	}
+
+	static UiRect offsetRect(UiRect rect, int dx, int dy) {
+		if (rect == null) {
+			return new UiRect(0, 0, 0, 0);
+		}
+		return new UiRect(rect.x() + dx, rect.y() + dy, rect.width(), rect.height());
+	}
+
+	static UiRect scrollbarThumbRect(UiRect track, double scroll, int visibleRows, int totalRows) {
+		if (track == null || track.height() <= 0 || totalRows <= 0) {
+			return track != null ? track : new UiRect(0, 0, 0, 0);
+		}
+		int safeVisible = Math.max(1, Math.min(visibleRows, totalRows));
+		int maxScroll = Math.max(0, totalRows - safeVisible);
+		int thumbHeight = Math.max(track.width(), Math.round(track.height() * (safeVisible / (float) totalRows)));
+		int travel = Math.max(0, track.height() - thumbHeight);
+		double clampedScroll = clampDouble(scroll, 0.0D, Math.max(0, maxScroll));
+		int thumbY = maxScroll <= 0 ? track.y() : track.y() + (int) Math.round(travel * (clampedScroll / maxScroll));
+		return new UiRect(track.x(), thumbY, track.width(), thumbHeight);
 	}
 
 	static void drawScaledImage(Graphics2D graphics, BufferedImage image, UiRect rect, MediaScaleMode scaleMode) {
@@ -5996,7 +6087,7 @@ public final class MonitorScreenSystem {
 
 	static UiRect homeContentRect(UiLayout layout, UiRect panel) {
 		int contentTop = homeHeaderRect(layout, panel).bottom() + clampInt(layout.unit(), 6, 18);
-		int contentBottom = homeFooterRect(layout, panel).y() - clampInt(layout.unit(), 6, 18);
+		int contentBottom = panel.bottom() - clampInt(layout.unit(), 10, 24);
 		return new UiRect(
 				panel.x() + clampInt(layout.unit() / 2, 4, 14),
 				contentTop,
@@ -6014,16 +6105,7 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect homeScrollbarThumbRect(UiLayout layout, int scroll, int visibleRows, int totalRows) {
-		UiRect track = homeScrollbarTrackRect(layout);
-		if (track.height() <= 0 || totalRows <= 0) {
-			return track;
-		}
-		int safeVisible = Math.max(1, Math.min(visibleRows, totalRows));
-		int maxScroll = Math.max(0, totalRows - safeVisible);
-		int thumbHeight = Math.max(track.width(), Math.round(track.height() * (safeVisible / (float) totalRows)));
-		int travel = Math.max(0, track.height() - thumbHeight);
-		int thumbY = maxScroll <= 0 ? track.y() : track.y() + Math.round(travel * (clampInt(scroll, 0, maxScroll) / (float) maxScroll));
-		return new UiRect(track.x(), thumbY, track.width(), thumbHeight);
+		return scrollbarThumbRect(homeScrollbarTrackRect(layout), scroll, visibleRows, totalRows);
 	}
 
 	static UiRect homeAppCardRect(UiLayout layout, int launcherPage, int slotIndex) {
@@ -6049,11 +6131,17 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect homeAppIconRect(UiRect cardRect, UiLayout layout) {
-		int maxSize = Math.max(18, Math.min(cardRect.width() - layout.unit(), cardRect.height() - homeAppLabelHeight(layout) - layout.unit()));
-		int size = clampInt(Math.round(Math.min(cardRect.width(), cardRect.height()) * 0.48F), 18, maxSize);
+		int maxSize = Math.max(
+				18,
+				Math.min(
+						cardRect.width() - clampInt(layout.unit() / 2, 3, 10),
+						cardRect.height() - homeAppLabelHeight(layout) - clampInt(layout.unit() / 3, 2, 8)
+				)
+		);
+		int size = clampInt(Math.round(Math.min(cardRect.width(), cardRect.height()) * 0.58F), 20, maxSize);
 		return new UiRect(
 				cardRect.x() + (cardRect.width() - size) / 2,
-				cardRect.y() + layout.unit() / 2,
+				cardRect.y() + clampInt(layout.unit() / 4, 2, 8),
 				size,
 				size
 		);
@@ -6069,7 +6157,7 @@ public final class MonitorScreenSystem {
 		int labelHeight = homeAppLabelHeight(layout);
 		return new UiRect(
 				cardRect.x() + clampInt(layout.unit() / 2, 4, 8),
-				cardRect.bottom() - labelHeight - clampInt(layout.unit() / 2, 4, 8),
+				cardRect.bottom() - labelHeight - clampInt(layout.unit() / 4, 2, 6),
 				cardRect.width() - clampInt(layout.unit(), 8, 14),
 				labelHeight
 		);
@@ -6533,6 +6621,10 @@ public final class MonitorScreenSystem {
 		);
 	}
 
+	static int mediaGalleryRowStep(UiLayout layout) {
+		return mediaGalleryCardHeight(layout) + mediaGalleryCardGap(layout);
+	}
+
 	static UiRect mediaGalleryCardPreviewRect(UiRect cardRect, UiLayout layout) {
 		int inset = clampInt(layout.unit() / 3, 3, 6);
 		return new UiRect(
@@ -6660,16 +6752,7 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect mediaGalleryBrowserScrollbarThumbRect(UiLayout layout, int scroll, int visibleRows, int totalRows) {
-		UiRect track = mediaGalleryBrowserScrollbarTrackRect(layout);
-		if (track.height() <= 0 || totalRows <= 0) {
-			return track;
-		}
-		int safeVisible = Math.max(1, Math.min(visibleRows, totalRows));
-		int maxScroll = Math.max(0, totalRows - safeVisible);
-		int thumbHeight = Math.max(track.width(), Math.round(track.height() * (safeVisible / (float) totalRows)));
-		int travel = Math.max(0, track.height() - thumbHeight);
-		int thumbY = maxScroll <= 0 ? track.y() : track.y() + Math.round(travel * (clampInt(scroll, 0, maxScroll) / (float) maxScroll));
-		return new UiRect(track.x(), thumbY, track.width(), thumbHeight);
+		return scrollbarThumbRect(mediaGalleryBrowserScrollbarTrackRect(layout), scroll, visibleRows, totalRows);
 	}
 
 	static UiRect mediaYoutubeMusicArtworkRect(UiLayout layout) {
@@ -7062,18 +7145,7 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect mediaQueueScrollbarThumbRect(UiLayout layout, int scroll, int visibleRows, int totalRows) {
-		UiRect track = mediaQueueScrollbarTrackRect(layout);
-		if (track.height() <= 0 || totalRows <= 0) {
-			return track;
-		}
-		int safeVisible = Math.max(1, Math.min(visibleRows, totalRows));
-		int maxScroll = Math.max(0, totalRows - safeVisible);
-		int thumbHeight = Math.max(track.width(), Math.round(track.height() * (safeVisible / (float) totalRows)));
-		int travel = Math.max(0, track.height() - thumbHeight);
-		int thumbY = maxScroll <= 0
-				? track.y()
-				: track.y() + Math.round(travel * (clampInt(scroll, 0, maxScroll) / (float) maxScroll));
-		return new UiRect(track.x(), thumbY, track.width(), thumbHeight);
+		return scrollbarThumbRect(mediaQueueScrollbarTrackRect(layout), scroll, visibleRows, totalRows);
 	}
 
 	static int mediaQueueVisibleRows(UiLayout layout) {
@@ -7364,7 +7436,7 @@ public final class MonitorScreenSystem {
 	}
 
 	static int homeHeaderHeight(UiLayout layout) {
-		return clampInt((int) Math.round(layout.unit() * 2.0D), 12, 44);
+		return clampInt((int) Math.round(layout.unit() * 1.6D), 12, 34);
 	}
 
 	static int homeRowsPerPage(UiLayout layout) {
@@ -7386,7 +7458,7 @@ public final class MonitorScreenSystem {
 	}
 
 	static int homeAppLabelHeight(UiLayout layout) {
-		return clampInt((int) Math.round(layout.unit() * 1.9D), 12, 34);
+		return clampInt((int) Math.round(layout.unit() * 1.45D), 11, 24);
 	}
 
 	static int homeDesiredCardWidth(UiLayout layout) {
