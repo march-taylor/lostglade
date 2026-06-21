@@ -57,6 +57,7 @@ import java.util.UUID;
 public final class BluetoothLinkSystem {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final String FILE_NAME = "lg2-bluetooth-links.json";
+	private static final String IT_BLUETOOTH_ADAPTER = "it_bluetooth_adapter";
 	private static final long ACTIONBAR_REFRESH_INTERVAL_TICKS = 10L;
 
 	private static final Map<Endpoint, LinkedHashSet<Endpoint>> LINKS = new LinkedHashMap<>();
@@ -263,6 +264,9 @@ public final class BluetoothLinkSystem {
 		if (!serverPlayer.getItemInHand(hand).is(ModItems.BLUETOOTH_ADAPTER)) {
 			return InteractionResult.PASS;
 		}
+		if (!canUseBluetoothAdapter(serverPlayer, true)) {
+			return InteractionResult.FAIL;
+		}
 		Endpoint endpoint = resolveBlockEndpoint(level, hitResult == null ? null : hitResult.getBlockPos());
 		if (endpoint == null) {
 			return InteractionResult.PASS;
@@ -280,6 +284,9 @@ public final class BluetoothLinkSystem {
 		}
 		if (!serverPlayer.getItemInHand(hand).is(ModItems.BLUETOOTH_ADAPTER)) {
 			return InteractionResult.PASS;
+		}
+		if (!canUseBluetoothAdapter(serverPlayer, true)) {
+			return InteractionResult.FAIL;
 		}
 		Endpoint endpoint = MonitorScreenSystem.resolveBluetoothScreenEndpoint(level, entity);
 		if (endpoint == null) {
@@ -476,6 +483,33 @@ public final class BluetoothLinkSystem {
 		return Component.literal(text).withStyle(style -> style.withColor(color).withItalic(false));
 	}
 
+	private static boolean canUseBluetoothAdapter(ServerPlayer player, boolean notify) {
+		if (player == null || ServerUpgradeUiSystem.hasUpgrade(player, IT_BLUETOOTH_ADAPTER)) {
+			return true;
+		}
+		if (notify) {
+			String upgradeName = ServerUpgradeUiSystem.getUpgradeDisplayName(player, IT_BLUETOOTH_ADAPTER);
+			player.displayClientMessage(literal(localizedAdapterLockedMessage(player, upgradeName), ChatFormatting.RED), true);
+		}
+		return false;
+	}
+
+	private static String localizedAdapterLockedMessage(ServerPlayer player, String upgradeName) {
+		String resolvedName = upgradeName == null || upgradeName.isBlank() ? "Bluetooth Adapter" : upgradeName;
+		String language = player != null && player.clientInformation() != null ? player.clientInformation().language() : "";
+		String normalized = language == null ? "" : language.toLowerCase(Locale.ROOT);
+		if (normalized.startsWith("ja")) {
+			return "先に「" + resolvedName + "」を購入してください。";
+		}
+		if (normalized.startsWith("uk")) {
+			return "Спочатку купи " + resolvedName + ".";
+		}
+		if (normalized.startsWith("ru") || normalized.startsWith("rpr")) {
+			return "Сначала купи " + resolvedName + ".";
+		}
+		return "Buy " + resolvedName + " first.";
+	}
+
 	private static String endpointTypeName(EndpointType type) {
 		if (type == null) {
 			return "связь";
@@ -582,7 +616,9 @@ public final class BluetoothLinkSystem {
 				continue;
 			}
 			onlineSelectedPlayers.add(playerId);
-			if (!player.isAlive() || !player.getMainHandItem().is(ModItems.BLUETOOTH_ADAPTER)) {
+			if (!player.isAlive()
+					|| !player.getMainHandItem().is(ModItems.BLUETOOTH_ADAPTER)
+					|| !canUseBluetoothAdapter(player, false)) {
 				clearSelectedEndpoint(player, true);
 				continue;
 			}

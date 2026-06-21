@@ -85,6 +85,18 @@
         "count": 1,
         "foil": false
       }
+    },
+    "drone_tuning_screen_overlay": {
+      "enabled": true,
+      "packTitlePrefix": "",
+      "packTitleSuffix": "",
+      "fillEmptySlots": false,
+      "fillerIcon": {
+        "fallbackItem": "minecraft:gray_stained_glass_pane",
+        "packModel": "lg2:gui/button/filler",
+        "count": 1,
+        "foil": false
+      }
     }
   },
   "screens": {
@@ -3113,10 +3125,7 @@
       "title": {
         "values": {
           "en_us": "IT Branch",
-          "ru_ru": "IT-ветка",
-          "uk_ua": "IT-гілка",
-          "ja_jp": "IT系統",
-          "rpr": "Машинная вѣтвь"
+          "ru_ru": "IT-ветка"
         }
       },
       "buttons": {
@@ -3149,34 +3158,19 @@
           },
           "name": {
             "values": {
-              "en_us": "Signal Tree",
-              "ru_ru": "Дерево сигналов",
-              "uk_ua": "Дерево сигналів",
-              "ja_jp": "信号ツリー",
-              "rpr": "Древо сигналовъ"
+              "en_us": "Signal Chain",
+              "ru_ru": "Цепочка устройств"
             }
           },
           "lore": {
             "values": {
               "en_us": [
-                "Three sensors feed Communication Systems.",
-                "From there the branch splits into displays and drones."
+                "Camera sits at the top of the branch.",
+                "Microphone and speaker feed the drone, then Bluetooth closes the chain."
               ],
               "ru_ru": [
-                "Три сенсора питают Системы связи.",
-                "От них ветка расходится на экраны, глушилку и дронов."
-              ],
-              "uk_ua": [
-                "Три сенсори живлять Системи зв’язку.",
-                "Від них гілка розходиться на екрани, глушилку та дрони."
-              ],
-              "ja_jp": [
-                "3つのセンサーが通信システムに流れ込みます。",
-                "そこから画面系とドローン系に分岐します。"
-              ],
-              "rpr": [
-                "Три чувствилища питаютъ вѣсть-проводы.",
-                "Отъ нихъ вѣтвь расходится къ экранамъ, глушилкѣ и дронамъ."
+                "Камера стоит в вершине ветки.",
+                "Микрофон и динамик питают дрон, а Bluetooth завершает цепочку."
               ]
             }
           },
@@ -3625,85 +3619,9 @@
           "requirementGroups": [],
           "closeAfterClick": false
         },
-        "electronics": {
-          "enabled": true,
-          "slot": 27,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "purchase_upgrade",
-          "targetScreenId": "",
-          "upgradeId": "it_electronics",
-          "pricesBitcoins": [
-            300
-          ],
-          "icon": {
-            "fallbackItem": "minecraft:lightning_rod",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:lightning_rod",
-            "packModel": "",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "en_us": "Electronics",
-              "ru_ru": "Электроника",
-              "uk_ua": "Електроніка",
-              "ja_jp": "電子機器",
-              "rpr": "Электрическiя хитрости"
-            }
-          },
-          "lore": {
-            "values": {
-              "en_us": [
-                "Basic knowledge of circuits and electricity.",
-                "Without it, no cameras, screens or drones exist.",
-                "Level: %level%/%max_level%",
-                "Cost: %cost% BTC | Status: %status%"
-              ],
-              "ru_ru": [
-                "Базовые знания о схемах и электричестве.",
-                "Без неё никаких камер, экранов и дронов не будет.",
-                "Уровень: %level%/%max_level%",
-                "Цена: %cost% BTC | Статус: %status%"
-              ],
-              "uk_ua": [
-                "Базові знання про схеми та електрику.",
-                "Без неї не буде ні камер, ні екранів, ні дронів.",
-                "Рівень: %level%/%max_level%",
-                "Ціна: %cost% BTC | Стан: %status%"
-              ],
-              "ja_jp": [
-                "回路と電気の基礎知識です。",
-                "これがないとカメラも画面もドローンもありません。",
-                "レベル: %level%/%max_level%",
-                "価格: %cost% BTC | 状態: %status%"
-              ],
-              "rpr": [
-                "Начала о проводахъ и молнiи ручной.",
-                "Безъ нея ни камеръ, ни экрановъ, ни дроновъ не сыщешь.",
-                "Чинъ: %level%/%max_level%",
-                "Мзда: %cost% BTC | Состоянiе: %status%"
-              ]
-            }
-          },
-          "requirements": [],
-          "requirementGroups": [],
-          "closeAfterClick": false
-        },
         "camera": {
           "enabled": true,
-          "slot": 36,
+          "slot": 30,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -3713,78 +3631,48 @@
             600
           ],
           "icon": {
-            "fallbackItem": "minecraft:spyglass",
-            "packModel": "",
+            "fallbackItem": "lg2:camera",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": false
           },
           "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
+            "fallbackItem": "lg2:camera",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": false
           },
           "maxedIcon": {
-            "fallbackItem": "minecraft:spyglass",
-            "packModel": "",
+            "fallbackItem": "lg2:camera",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": true
           },
           "name": {
             "values": {
               "en_us": "Camera",
-              "ru_ru": "Камера",
-              "uk_ua": "Камера",
-              "ja_jp": "カメラ",
-              "rpr": "Глазъ стеклянный"
+              "ru_ru": "Камера"
             }
           },
           "lore": {
             "values": {
               "en_us": [
-                "Takes photos and records video.",
-                "Requires Electronics. Needed for scouting and drones.",
-                "Level: %level%/%max_level%",
-                "Cost: %cost% BTC | Status: %status%"
+                "Opens photo capture, live view and the whole visual branch.",
+                "This is the root device that starts every other purchase below."
               ],
               "ru_ru": [
-                "Позволяет делать снимки и записывать видео.",
-                "Требует Электронику. Нужна для разведки и дронов.",
-                "Уровень: %level%/%max_level%",
-                "Цена: %cost% BTC | Статус: %status%"
-              ],
-              "uk_ua": [
-                "Дозволяє робити знімки й записувати відео.",
-                "Потребує Електроніку. Потрібна для розвідки й дронів.",
-                "Рівень: %level%/%max_level%",
-                "Ціна: %cost% BTC | Стан: %status%"
-              ],
-              "ja_jp": [
-                "写真と動画を記録できます。",
-                "電子機器が必要で、偵察とドローンに使います。",
-                "レベル: %level%/%max_level%",
-                "価格: %cost% BTC | 状態: %status%"
-              ],
-              "rpr": [
-                "Снимаетъ образы и записуетъ движенiя.",
-                "Требуетъ электроники; нужна на развѣдку и дроновъ.",
-                "Чинъ: %level%/%max_level%",
-                "Мзда: %cost% BTC | Состоянiе: %status%"
+                "Открывает съёмку, живую картинку и всю визуальную ветку.",
+                "Это корневое устройство, с которого начинаются все покупки ниже."
               ]
             }
           },
-          "requirements": [
-            {
-              "upgradeId": "it_electronics",
-              "minLevel": 1
-            }
-          ],
+          "requirements": [],
           "requirementGroups": [],
           "closeAfterClick": false
         },
         "microphone": {
           "enabled": true,
-          "slot": 38,
+          "slot": 37,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -3794,482 +3682,38 @@
             450
           ],
           "icon": {
-            "fallbackItem": "lg2:camera",
-            "packModel": "",
+            "fallbackItem": "lg2:microphone",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": false
           },
           "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
+            "fallbackItem": "lg2:microphone",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": false
           },
           "maxedIcon": {
-            "fallbackItem": "lg2:camera",
-            "packModel": "",
+            "fallbackItem": "lg2:microphone",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": true
           },
           "name": {
             "values": {
               "en_us": "Microphone",
-              "ru_ru": "Микрофон",
-              "uk_ua": "Мікрофон",
-              "ja_jp": "マイク",
-              "rpr": "Слухачъ"
+              "ru_ru": "Микрофон"
             }
           },
           "lore": {
             "values": {
               "en_us": [
-                "Captures sound.",
-                "Requires Electronics. One of the parts for communication systems.",
-                "Level: %level%/%max_level%",
-                "Cost: %cost% BTC | Status: %status%"
+                "Captures live voice and ambient sound for remote listening.",
+                "Unlocks one of the two signal feeds that must exist before the drone."
               ],
               "ru_ru": [
-                "Записывает звук.",
-                "Требует Электронику. Один из элементов для систем связи.",
-                "Уровень: %level%/%max_level%",
-                "Цена: %cost% BTC | Статус: %status%"
-              ],
-              "uk_ua": [
-                "Записує звук.",
-                "Потребує Електроніку. Один з елементів для систем зв’язку.",
-                "Рівень: %level%/%max_level%",
-                "Ціна: %cost% BTC | Стан: %status%"
-              ],
-              "ja_jp": [
-                "音を記録します。",
-                "電子機器が必要で、通信システムの部品です。",
-                "レベル: %level%/%max_level%",
-                "価格: %cost% BTC | 状態: %status%"
-              ],
-              "rpr": [
-                "Ловитъ голосы и шумы.",
-                "Требуетъ электроники; одна изъ частей вѣсть-проводовъ.",
-                "Чинъ: %level%/%max_level%",
-                "Мзда: %cost% BTC | Состоянiе: %status%"
-              ]
-            }
-          },
-          "requirements": [
-            {
-              "upgradeId": "it_electronics",
-              "minLevel": 1
-            }
-          ],
-          "requirementGroups": [],
-          "closeAfterClick": false
-        },
-        "speaker": {
-          "enabled": true,
-          "slot": 40,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "purchase_upgrade",
-          "targetScreenId": "",
-          "upgradeId": "it_speaker",
-          "pricesBitcoins": [
-            450
-          ],
-          "icon": {
-            "fallbackItem": "minecraft:note_block",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:note_block",
-            "packModel": "",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "en_us": "Speaker",
-              "ru_ru": "Динамик",
-              "uk_ua": "Динамік",
-              "ja_jp": "スピーカー",
-              "rpr": "Громкогласъ"
-            }
-          },
-          "lore": {
-            "values": {
-              "en_us": [
-                "Plays sound.",
-                "Requires Electronics. One of the parts for communication systems.",
-                "Level: %level%/%max_level%",
-                "Cost: %cost% BTC | Status: %status%"
-              ],
-              "ru_ru": [
-                "Воспроизводит звук.",
-                "Требует Электронику. Один из элементов для систем связи.",
-                "Уровень: %level%/%max_level%",
-                "Цена: %cost% BTC | Статус: %status%"
-              ],
-              "uk_ua": [
-                "Відтворює звук.",
-                "Потребує Електроніку. Один з елементів для систем зв’язку.",
-                "Рівень: %level%/%max_level%",
-                "Ціна: %cost% BTC | Стан: %status%"
-              ],
-              "ja_jp": [
-                "音を再生します。",
-                "電子機器が必要で、通信システムの部品です。",
-                "レベル: %level%/%max_level%",
-                "価格: %cost% BTC | 状態: %status%"
-              ],
-              "rpr": [
-                "Гремитъ и вещаетъ вслухъ.",
-                "Требуетъ электроники; тоже часть вѣсть-проводовъ.",
-                "Чинъ: %level%/%max_level%",
-                "Мзда: %cost% BTC | Состоянiе: %status%"
-              ]
-            }
-          },
-          "requirements": [
-            {
-              "upgradeId": "it_electronics",
-              "minLevel": 1
-            }
-          ],
-          "requirementGroups": [],
-          "closeAfterClick": false
-        },
-        "communications": {
-          "enabled": true,
-          "slot": 42,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "purchase_upgrade",
-          "targetScreenId": "",
-          "upgradeId": "it_communications",
-          "pricesBitcoins": [
-            800
-          ],
-          "icon": {
-            "fallbackItem": "minecraft:comparator",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:comparator",
-            "packModel": "",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "en_us": "Communication Systems",
-              "ru_ru": "Системы связи",
-              "uk_ua": "Системи зв’язку",
-              "ja_jp": "通信システム",
-              "rpr": "Вѣсть-проводы"
-            }
-          },
-          "lore": {
-            "values": {
-              "en_us": [
-                "Unlocks remote data transfer and control.",
-                "Needs any 2 of: Camera, Microphone, Speaker.",
-                "Level: %level%/%max_level%",
-                "Cost: %cost% BTC | Status: %status%"
-              ],
-              "ru_ru": [
-                "Открывает удалённую передачу данных и управление.",
-                "Требует любые 2 из 3: Камера, Микрофон, Динамик.",
-                "Уровень: %level%/%max_level%",
-                "Цена: %cost% BTC | Статус: %status%"
-              ],
-              "uk_ua": [
-                "Відкриває віддалену передачу даних і керування.",
-                "Потребує будь-які 2 з 3: Камера, Мікрофон, Динамік.",
-                "Рівень: %level%/%max_level%",
-                "Ціна: %cost% BTC | Стан: %status%"
-              ],
-              "ja_jp": [
-                "遠隔データ伝送と制御を解放します。",
-                "カメラ・マイク・スピーカーのうち2つが必要です。",
-                "レベル: %level%/%max_level%",
-                "価格: %cost% BTC | 状態: %status%"
-              ],
-              "rpr": [
-                "Отворяетъ дальнюю передачу вѣстей и повелѣнiй.",
-                "Надобны двое изъ троихъ: камера, слухачъ, громкогласъ.",
-                "Чинъ: %level%/%max_level%",
-                "Мзда: %cost% BTC | Состоянiе: %status%"
-              ]
-            }
-          },
-          "requirements": [],
-          "requirementGroups": [
-            {
-              "mode": "at_least",
-              "minSatisfiedRequirements": 2,
-              "requirements": [
-                {
-                  "upgradeId": "it_camera",
-                  "minLevel": 1
-                },
-                {
-                  "upgradeId": "it_microphone",
-                  "minLevel": 1
-                },
-                {
-                  "upgradeId": "it_speaker",
-                  "minLevel": 1
-                }
-              ]
-            }
-          ],
-          "closeAfterClick": false
-        },
-        "screen": {
-          "enabled": true,
-          "slot": 44,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "purchase_upgrade",
-          "targetScreenId": "",
-          "upgradeId": "it_screen",
-          "pricesBitcoins": [
-            1000
-          ],
-          "icon": {
-            "fallbackItem": "minecraft:map",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:map",
-            "packModel": "",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "en_us": "Screen",
-              "ru_ru": "Экран",
-              "uk_ua": "Екран",
-              "ja_jp": "画面",
-              "rpr": "Экранъ"
-            }
-          },
-          "lore": {
-            "values": {
-              "en_us": [
-                "A balanced general-purpose display.",
-                "Requires Communication Systems. This is the single display tier.",
-                "Level: %level%/%max_level%",
-                "Cost: %cost% BTC | Status: %status%"
-              ],
-              "ru_ru": [
-                "Сбалансированный универсальный экран.",
-                "Требует Системы связи. Это единственный уровень экрана.",
-                "Уровень: %level%/%max_level%",
-                "Цена: %cost% BTC | Статус: %status%"
-              ],
-              "uk_ua": [
-                "Збалансований універсальний екран.",
-                "Потребує Системи зв’язку. Це єдиний рівень екрана.",
-                "Рівень: %level%/%max_level%",
-                "Ціна: %cost% BTC | Стан: %status%"
-              ],
-              "ja_jp": [
-                "扱いやすい экранです。",
-                "通信システムが必要です。画面段階はこれ一つです。",
-                "レベル: %level%/%max_level%",
-                "価格: %cost% BTC | 状態: %status%"
-              ],
-              "rpr": [
-                "Сбалансированный общий экранъ.",
-                "Требуетъ вѣсть-проводовъ. Экранный чинъ нынѣ одинъ-единственный.",
-                "Чинъ: %level%/%max_level%",
-                "Мзда: %cost% BTC | Состоянiе: %status%"
-              ]
-            }
-          },
-          "requirements": [
-            {
-              "upgradeId": "it_communications",
-              "minLevel": 1
-            }
-          ],
-          "requirementGroups": [],
-          "closeAfterClick": false
-        },
-        "jammer": {
-          "enabled": true,
-          "slot": 45,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "purchase_upgrade",
-          "targetScreenId": "",
-          "upgradeId": "it_jammer",
-          "pricesBitcoins": [
-            1300
-          ],
-          "icon": {
-            "fallbackItem": "minecraft:lodestone",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:lodestone",
-            "packModel": "",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "en_us": "Jammer",
-              "ru_ru": "Глушилка",
-              "uk_ua": "Глушилка",
-              "ja_jp": "ジャマー",
-              "rpr": "Глушилка"
-            }
-          },
-          "lore": {
-            "values": {
-              "en_us": [
-                "Creates a 20-block zone where drones lose control.",
-                "Requires the Screen. Creates a 20-block anti-drone field.",
-                "Level: %level%/%max_level%",
-                "Cost: %cost% BTC | Status: %status%"
-              ],
-              "ru_ru": [
-                "Создаёт зону в 20 блоков, где дроны теряют управление.",
-                "Требует Экран. Создаёт антидронное поле радиусом 20 блоков.",
-                "Уровень: %level%/%max_level%",
-                "Цена: %cost% BTC | Статус: %status%"
-              ],
-              "uk_ua": [
-                "Створює зону в 20 блоків, де дрони втрачають керування.",
-                "Потребує Екран. Створює антидронне поле радіусом 20 блоків.",
-                "Рівень: %level%/%max_level%",
-                "Ціна: %cost% BTC | Стан: %status%"
-              ],
-              "ja_jp": [
-                "20ブロック圏でドローン制御を失わせます。",
-                "画面が必要です。半径20ブロックの対ドローン領域を作ります。",
-                "レベル: %level%/%max_level%",
-                "価格: %cost% BTC | 状態: %status%"
-              ],
-              "rpr": [
-                "Творитъ кругъ въ 20 блоковъ, гдѣ дроны остаются безъ воли.",
-                "Требуетъ экранъ. Творитъ антидронное поле на двадцать блоковъ.",
-                "Чинъ: %level%/%max_level%",
-                "Мзда: %cost% BTC | Состоянiе: %status%"
-              ]
-            }
-          },
-          "requirements": [
-            {
-              "upgradeId": "it_screen",
-              "minLevel": 1
-            }
-          ],
-          "requirementGroups": [],
-          "closeAfterClick": false
-        },
-        "scout": {
-          "enabled": true,
-          "slot": 47,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "purchase_upgrade",
-          "targetScreenId": "",
-          "upgradeId": "it_drone_scout",
-          "pricesBitcoins": [
-            1800
-          ],
-          "icon": {
-            "fallbackItem": "lg2:drone",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "lg2:drone",
-            "packModel": "",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "en_us": "Drone",
-              "ru_ru": "Дрон",
-              "uk_ua": "Дрон",
-              "ja_jp": "ドローン",
-              "rpr": "Дронъ"
-            }
-          },
-          "lore": {
-            "values": {
-              "en_us": [
-                "A remote drone for caves, mines and hostile bases.",
-                "Requires Camera.",
-                "Level: %level%/%max_level%",
-                "Cost: %cost% BTC | Status: %status%"
-              ],
-              "ru_ru": [
-                "Управляемый дрон для разведки пещер, шахт и чужих баз.",
-                "Требует Камеру.",
-                "Уровень: %level%/%max_level%",
-                "Цена: %cost% BTC | Статус: %status%"
-              ],
-              "uk_ua": [
-                "Керований дрон для розвідки печер, шахт і чужих баз.",
-                "Потребує Камеру.",
-                "Рівень: %level%/%max_level%",
-                "Ціна: %cost% BTC | Стан: %status%"
-              ],
-              "ja_jp": [
-                "洞窟・鉱山・敵拠点向けの偵察ドローンです。",
-                "カメラが必要です。",
-                "レベル: %level%/%max_level%",
-                "価格: %cost% BTC | 状態: %status%"
-              ],
-              "rpr": [
-                "Управляемый летунъ для пещеръ, шахтъ и вражьих дворовъ.",
-                "Требуетъ камеру.",
-                "Чинъ: %level%/%max_level%",
-                "Мзда: %cost% BTC | Состоянiе: %status%"
+                "Снимает живой голос и окружающий звук для удалённого прослушивания.",
+                "Открывает один из двух сигнальных каналов, без которых дрон не собрать."
               ]
             }
           },
@@ -4282,162 +3726,172 @@
           "requirementGroups": [],
           "closeAfterClick": false
         },
-        "kamikaze": {
+        "speaker": {
           "enabled": true,
-          "slot": 49,
+          "slot": 41,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
           "targetScreenId": "",
-          "upgradeId": "it_drone_kamikaze",
+          "upgradeId": "it_speaker",
           "pricesBitcoins": [
-            1000
+            450
           ],
           "icon": {
-            "fallbackItem": "minecraft:tnt",
-            "packModel": "",
+            "fallbackItem": "lg2:speaker",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": false
           },
           "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
+            "fallbackItem": "lg2:speaker",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": false
           },
           "maxedIcon": {
-            "fallbackItem": "minecraft:tnt",
-            "packModel": "",
+            "fallbackItem": "lg2:speaker",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": true
           },
           "name": {
             "values": {
-              "en_us": "Kamikaze Drone",
-              "ru_ru": "Дрон-камикадзе",
-              "uk_ua": "Дрон-камікадзе",
-              "ja_jp": "特攻ドローン",
-              "rpr": "Дронъ-камикадзе"
+              "en_us": "Speaker",
+              "ru_ru": "Динамик"
             }
           },
           "lore": {
             "values": {
               "en_us": [
-                "A one-use drone that explodes on contact.",
-                "Requires Scout Drone.",
-                "Level: %level%/%max_level%",
-                "Cost: %cost% BTC | Status: %status%"
+                "Pushes voice and alerts back into the world around the operator.",
+                "Forms the second signal feed required before the drone line opens."
               ],
               "ru_ru": [
-                "Одноразовый дрон, который взрывается при контакте.",
-                "Требует Дрона-разведчика.",
-                "Уровень: %level%/%max_level%",
-                "Цена: %cost% BTC | Статус: %status%"
-              ],
-              "uk_ua": [
-                "Одноразовий дрон, що вибухає при контакті.",
-                "Потребує Дрона-розвідника.",
-                "Рівень: %level%/%max_level%",
-                "Ціна: %cost% BTC | Стан: %status%"
-              ],
-              "ja_jp": [
-                "接触で爆発する使い捨てドローンです。",
-                "偵察ドローンが必要です。",
-                "レベル: %level%/%max_level%",
-                "価格: %cost% BTC | 状態: %status%"
-              ],
-              "rpr": [
-                "Одноразовый летунъ, что рвётся при соприкосновенiи.",
-                "Требуетъ дрона-развѣдчика.",
-                "Чинъ: %level%/%max_level%",
-                "Мзда: %cost% BTC | Состоянiе: %status%"
+                "Возвращает голос и сигналы обратно в мир вокруг оператора.",
+                "Это второй сигнальный канал, который нужен перед открытием ветки дрона."
               ]
             }
           },
           "requirements": [
             {
-              "upgradeId": "it_drone_scout",
+              "upgradeId": "it_camera",
               "minLevel": 1
             }
           ],
           "requirementGroups": [],
           "closeAfterClick": false
         },
-        "combat": {
+        "drone": {
           "enabled": true,
-          "slot": 51,
+          "slot": 43,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
-          "targetScreenId": "",
-          "upgradeId": "it_drone_combat",
+          "targetScreenId": "it_drones",
+          "upgradeId": "it_drone_scout",
           "pricesBitcoins": [
-            3000
+            1800
           ],
           "icon": {
-            "fallbackItem": "minecraft:crossbow",
-            "packModel": "",
+            "fallbackItem": "lg2:drone",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": false
           },
           "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
+            "fallbackItem": "lg2:drone",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": false
           },
           "maxedIcon": {
-            "fallbackItem": "minecraft:crossbow",
-            "packModel": "",
+            "fallbackItem": "lg2:drone",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": true
           },
           "name": {
             "values": {
-              "en_us": "Combat Drone",
-              "ru_ru": "Боевой дрон",
-              "uk_ua": "Бойовий дрон",
-              "ja_jp": "戦闘ドローン",
-              "rpr": "Боевой дронъ"
+              "en_us": "Drone",
+              "ru_ru": "Дрон"
             }
           },
           "lore": {
             "values": {
               "en_us": [
-                "An autonomous guard unit with ranged attacks.",
-                "Requires Kamikaze Drone. The most expensive toy in the branch.",
-                "Level: %level%/%max_level%",
-                "Cost: %cost% BTC | Status: %status%"
+                "Unlocks the base scout drone for caves, roofs and hostile ground.",
+                "First click buys it. Every click after that opens the drone tuning menu."
               ],
               "ru_ru": [
-                "Автономный боевой юнит с дальними атаками.",
-                "Требует Дрона-камикадзе. Самая дорогая игрушка ветки.",
-                "Уровень: %level%/%max_level%",
-                "Цена: %cost% BTC | Статус: %status%"
-              ],
-              "uk_ua": [
-                "Автономний бойовий юніт із дальніми атаками.",
-                "Потребує Дрона-камікадзе. Найдорожча іграшка гілки.",
-                "Рівень: %level%/%max_level%",
-                "Ціна: %cost% BTC | Стан: %status%"
-              ],
-              "ja_jp": [
-                "遠距離攻撃を行う自律警備ドローンです。",
-                "特攻ドローンが必要です。この枝で最も高価なおもちゃです。",
-                "レベル: %level%/%max_level%",
-                "価格: %cost% BTC | 状態: %status%"
-              ],
-              "rpr": [
-                "Самостоятельный стражъ съ дальнiмъ боемъ.",
-                "Требуетъ камикадзе; самая дорогая игрушка во всѣй вѣтви.",
-                "Чинъ: %level%/%max_level%",
-                "Мзда: %cost% BTC | Состоянiе: %status%"
+                "Открывает базовый разведдрон для пещер, крыш и вражеской территории.",
+                "Первый клик покупает его. Каждый следующий клик открывает меню тюнинга."
               ]
             }
           },
           "requirements": [
             {
-              "upgradeId": "it_drone_kamikaze",
+              "upgradeId": "it_microphone",
+              "minLevel": 1
+            },
+            {
+              "upgradeId": "it_speaker",
+              "minLevel": 1
+            }
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "bluetooth_adapter": {
+          "enabled": true,
+          "slot": 48,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "purchase_upgrade",
+          "targetScreenId": "",
+          "upgradeId": "it_bluetooth_adapter",
+          "pricesBitcoins": [
+            700
+          ],
+          "icon": {
+            "fallbackItem": "lg2:bluetooth_adapter",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "lg2:bluetooth_adapter",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "lg2:bluetooth_adapter",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Bluetooth Adapter",
+              "ru_ru": "Bluetooth-адаптер"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks pairing for drones, cameras, microphones and speakers.",
+                "Without it, the devices exist, but they still cannot be linked together."
+              ],
+              "ru_ru": [
+                "Открывает сопряжение дронов, камер, микрофонов и динамиков.",
+                "Без него устройства существуют, но всё ещё не могут связаться друг с другом."
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_drone_scout",
               "minLevel": 1
             }
           ],
@@ -5962,15 +5416,12 @@
     "it_drones": {
       "enabled": true,
       "rows": 3,
-      "theme": "it_branch_screen_overlay",
+      "theme": "drone_tuning_screen_overlay",
       "hideTitleTextWhenPack": true,
       "title": {
         "values": {
-          "en_us": "Drones",
-          "ru_ru": "Дроны",
-          "uk_ua": "Дрони",
-          "ja_jp": "ドローン",
-          "rpr": "Дроны"
+          "en_us": "Drone Tuning",
+          "ru_ru": "Тюнинг дрона"
         }
       },
       "buttons": {
@@ -6003,34 +5454,19 @@
           },
           "name": {
             "values": {
-              "en_us": "Drone Hangar",
-              "ru_ru": "Ангар дронов",
-              "uk_ua": "Ангар дронів",
-              "ja_jp": "ドローン格納庫",
-              "rpr": "Ангаръ дроновъ"
+              "en_us": "Drone Tuning",
+              "ru_ru": "Тюнинг дрона"
             }
           },
           "lore": {
             "values": {
               "en_us": [
-                "This branch needs a camera and the screen.",
-                "Only then does remote flight make sense."
+                "Buy the scout drone in the IT branch first, then unlock this chain from top to bottom.",
+                "Every module below stays inactive until its own purchase is completed."
               ],
               "ru_ru": [
-                "Этой ветке нужны камера и экран.",
-                "Только тогда удалённый полёт вообще имеет смысл."
-              ],
-              "uk_ua": [
-                "Цій гілці потрібні камера та екран.",
-                "Лише тоді віддалений політ має сенс."
-              ],
-              "ja_jp": [
-                "この枝にはカメラと画面が必要です。",
-                "その時だけ遠隔飛行に意味があります。"
-              ],
-              "rpr": [
-                "Сей вѣтви надобны камера и экранъ.",
-                "Только тогда дальнiй полётъ имеетъ здравiе."
+                "Сначала купи разведдрон в IT-ветке, а потом открывай эту цепочку сверху вниз.",
+                "Каждый модуль ниже остаётся нерабочим, пока его покупка не завершена."
               ]
             }
           },
@@ -6479,129 +5915,9 @@
           "requirementGroups": [],
           "closeAfterClick": false
         },
-        "scout": {
-          "enabled": true,
-          "slot": 36,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "purchase_upgrade",
-          "targetScreenId": "",
-          "upgradeId": "it_drone_scout",
-          "pricesBitcoins": [
-            1800
-          ],
-          "icon": {
-            "fallbackItem": "lg2:drone",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "lg2:drone",
-            "packModel": "",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "en_us": "Drone",
-              "ru_ru": "Дрон",
-              "uk_ua": "Дрон",
-              "ja_jp": "ドローン",
-              "rpr": "Дронъ"
-            }
-          },
-          "lore": {
-            "values": {
-              "en_us": [
-                "A remote drone for caves, mines and hostile bases.",
-                "Requires Camera.",
-                "Level: %level%/%max_level%",
-                "Cost: %cost% BTC | Status: %status%"
-              ],
-              "ru_ru": [
-                "Управляемый дрон для разведки пещер, шахт и чужих баз.",
-                "Требует Камеру.",
-                "Уровень: %level%/%max_level%",
-                "Цена: %cost% BTC | Статус: %status%"
-              ],
-              "uk_ua": [
-                "Керований дрон для розвідки печер, шахт і чужих баз.",
-                "Потребує Камеру.",
-                "Рівень: %level%/%max_level%",
-                "Ціна: %cost% BTC | Стан: %status%"
-              ],
-              "ja_jp": [
-                "洞窟・鉱山・敵拠点向けの偵察ドローンです。",
-                "カメラが必要です。",
-                "レベル: %level%/%max_level%",
-                "価格: %cost% BTC | 状態: %status%"
-              ],
-              "rpr": [
-                "Управляемый летунъ для пещеръ, шахтъ и вражьих дворовъ.",
-                "Требуетъ камеру.",
-                "Чинъ: %level%/%max_level%",
-                "Мзда: %cost% BTC | Состоянiе: %status%"
-              ]
-            }
-          },
-          "requirements": [
-            {
-              "upgradeId": "it_camera",
-              "minLevel": 1
-            }
-          ],
-          "requirementGroups": [],
-          "closeAfterClick": false
-        },
-        "scout_hint": {
-          "enabled": true,
-          "slot": 37,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "none",
-          "targetScreenId": "",
-          "upgradeId": "",
-          "pricesBitcoins": [],
-          "icon": {
-            "fallbackItem": "minecraft:spyglass",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:emerald",
-            "packModel": "lg2:gui/button/maxed",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "default": " "
-            }
-          },
-          "lore": {
-            "values": {}
-          },
-          "requirements": [],
-          "requirementGroups": [],
-          "closeAfterClick": false
-        },
         "kamikaze": {
           "enabled": true,
-          "slot": 39,
+          "slot": 13,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -6611,63 +5927,38 @@
             1000
           ],
           "icon": {
-            "fallbackItem": "minecraft:tnt",
-            "packModel": "",
+            "fallbackItem": "minecraft:rabbit_hide",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": false
           },
           "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
+            "fallbackItem": "minecraft:rabbit_hide",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": false
           },
           "maxedIcon": {
-            "fallbackItem": "minecraft:tnt",
-            "packModel": "",
+            "fallbackItem": "minecraft:rabbit_hide",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": true
           },
           "name": {
             "values": {
               "en_us": "Kamikaze Drone",
-              "ru_ru": "Дрон-камикадзе",
-              "uk_ua": "Дрон-камікадзе",
-              "ja_jp": "特攻ドローン",
-              "rpr": "Дронъ-камикадзе"
+              "ru_ru": "Дрон-камикадзе"
             }
           },
           "lore": {
             "values": {
               "en_us": [
-                "A one-use drone that explodes on contact.",
-                "Requires Scout Drone.",
-                "Level: %level%/%max_level%",
-                "Cost: %cost% BTC | Status: %status%"
+                "Unlocks an explosive nose-conversion for your scout drone.",
+                "Use rabbit hide to refit the frame, then feed TNT to raise the blast."
               ],
               "ru_ru": [
-                "Одноразовый дрон, который взрывается при контакте.",
-                "Требует Дрона-разведчика.",
-                "Уровень: %level%/%max_level%",
-                "Цена: %cost% BTC | Статус: %status%"
-              ],
-              "uk_ua": [
-                "Одноразовий дрон, що вибухає при контакті.",
-                "Потребує Дрона-розвідника.",
-                "Рівень: %level%/%max_level%",
-                "Ціна: %cost% BTC | Стан: %status%"
-              ],
-              "ja_jp": [
-                "接触で爆発する使い捨てドローンです。",
-                "偵察ドローンが必要です。",
-                "レベル: %level%/%max_level%",
-                "価格: %cost% BTC | 状態: %status%"
-              ],
-              "rpr": [
-                "Одноразовый летунъ, что рвётся при соприкосновенiи.",
-                "Требуетъ дрона-развѣдчика.",
-                "Чинъ: %level%/%max_level%",
-                "Мзда: %cost% BTC | Состоянiе: %status%"
+                "Открывает взрывную переделку разведдрона в камикадзе.",
+                "Используй кроличью шкуру для смены корпуса, а TNT поднимает силу взрыва."
               ]
             }
           },
@@ -6680,87 +5971,9 @@
           "requirementGroups": [],
           "closeAfterClick": false
         },
-        "kamikaze_hint": {
-          "enabled": true,
-          "slot": 40,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "none",
-          "targetScreenId": "",
-          "upgradeId": "",
-          "pricesBitcoins": [],
-          "icon": {
-            "fallbackItem": "minecraft:gunpowder",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:emerald",
-            "packModel": "lg2:gui/button/maxed",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "default": " "
-            }
-          },
-          "lore": {
-            "values": {}
-          },
-          "requirements": [],
-          "requirementGroups": [],
-          "closeAfterClick": false
-        },
-        "combat_hint": {
-          "enabled": true,
-          "slot": 43,
-          "hitboxWidth": 1,
-          "hitboxHeight": 1,
-          "type": "none",
-          "targetScreenId": "",
-          "upgradeId": "",
-          "pricesBitcoins": [],
-          "icon": {
-            "fallbackItem": "minecraft:shield",
-            "packModel": "",
-            "count": 1,
-            "foil": false
-          },
-          "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
-            "count": 1,
-            "foil": false
-          },
-          "maxedIcon": {
-            "fallbackItem": "minecraft:emerald",
-            "packModel": "lg2:gui/button/maxed",
-            "count": 1,
-            "foil": true
-          },
-          "name": {
-            "values": {
-              "default": " "
-            }
-          },
-          "lore": {
-            "values": {}
-          },
-          "requirements": [],
-          "requirementGroups": [],
-          "closeAfterClick": false
-        },
         "combat": {
           "enabled": true,
-          "slot": 42,
+          "slot": 22,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -6770,69 +5983,268 @@
             3000
           ],
           "icon": {
-            "fallbackItem": "minecraft:crossbow",
-            "packModel": "",
+            "fallbackItem": "minecraft:dispenser",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": false
           },
           "lockedIcon": {
-            "fallbackItem": "minecraft:barrier",
-            "packModel": "lg2:gui/button/locked",
+            "fallbackItem": "minecraft:dispenser",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": false
           },
           "maxedIcon": {
-            "fallbackItem": "minecraft:crossbow",
-            "packModel": "",
+            "fallbackItem": "minecraft:dispenser",
+            "packModel": "lg2:gui/button/invisible",
             "count": 1,
             "foil": true
           },
           "name": {
             "values": {
               "en_us": "Combat Drone",
-              "ru_ru": "Боевой дрон",
-              "uk_ua": "Бойовий дрон",
-              "ja_jp": "戦闘ドローン",
-              "rpr": "Боевой дронъ"
+              "ru_ru": "Боевой дрон"
             }
           },
           "lore": {
             "values": {
               "en_us": [
-                "An autonomous guard unit with ranged attacks.",
-                "Requires Kamikaze Drone. The most expensive toy in the branch.",
-                "Level: %level%/%max_level%",
-                "Cost: %cost% BTC | Status: %status%"
+                "Unlocks a turreted combat frame for ranged suppression.",
+                "Install it with a dispenser once the kamikaze upgrade is already bought."
               ],
               "ru_ru": [
-                "Автономный боевой юнит с дальними атаками.",
-                "Требует Дрона-камикадзе. Самая дорогая игрушка ветки.",
-                "Уровень: %level%/%max_level%",
-                "Цена: %cost% BTC | Статус: %status%"
-              ],
-              "uk_ua": [
-                "Автономний бойовий юніт із дальніми атаками.",
-                "Потребує Дрона-камікадзе. Найдорожча іграшка гілки.",
-                "Рівень: %level%/%max_level%",
-                "Ціна: %cost% BTC | Стан: %status%"
-              ],
-              "ja_jp": [
-                "遠距離攻撃を行う自律警備ドローンです。",
-                "特攻ドローンが必要です。この枝で最も高価なおもちゃです。",
-                "レベル: %level%/%max_level%",
-                "価格: %cost% BTC | 状態: %status%"
-              ],
-              "rpr": [
-                "Самостоятельный стражъ съ дальнiмъ боемъ.",
-                "Требуетъ камикадзе; самая дорогая игрушка во всѣй вѣтви.",
-                "Чинъ: %level%/%max_level%",
-                "Мзда: %cost% BTC | Состоянiе: %status%"
+                "Открывает боевую раму с турелью для дальнего подавления.",
+                "Ставится через раздатчик после покупки ветки камикадзе."
               ]
             }
           },
           "requirements": [
             {
               "upgradeId": "it_drone_kamikaze",
+              "minLevel": 1
+            }
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "paint": {
+          "enabled": true,
+          "slot": 31,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "purchase_upgrade",
+          "targetScreenId": "",
+          "upgradeId": "it_drone_paint",
+          "pricesBitcoins": [
+            650
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:red_dye",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:red_dye",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:red_dye",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Hull Repaint",
+              "ru_ru": "Покраска корпуса"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Unlocks repainting the hull for camouflage, identification and style.",
+                "Any dye can recolor the drone, and the finish can be swapped later."
+              ],
+              "ru_ru": [
+                "Открывает перекраску корпуса для маскировки, маркировки и стиля.",
+                "Любой краситель меняет цвет дрона, а покрытие потом можно заменить."
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_drone_combat",
+              "minLevel": 1
+            }
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "microphone_module": {
+          "enabled": true,
+          "slot": 40,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "purchase_upgrade",
+          "targetScreenId": "",
+          "upgradeId": "it_drone_microphone",
+          "pricesBitcoins": [
+            900
+          ],
+          "icon": {
+            "fallbackItem": "lg2:microphone",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "lg2:microphone",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "lg2:microphone",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Microphone Module",
+              "ru_ru": "Модуль микрофона"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Adds live audio pickup straight from the drone's position.",
+                "Install it with a microphone block to listen through walls, tunnels and rooms."
+              ],
+              "ru_ru": [
+                "Добавляет живой аудиозахват прямо из точки, где висит дрон.",
+                "Ставится через блок микрофона и позволяет слушать комнаты, тоннели и стены."
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_drone_paint",
+              "minLevel": 1
+            }
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "night_vision": {
+          "enabled": true,
+          "slot": 49,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "purchase_upgrade",
+          "targetScreenId": "",
+          "upgradeId": "it_drone_night_vision",
+          "pricesBitcoins": [
+            1200
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:spider_eye",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:spider_eye",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:spider_eye",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Night Vision",
+              "ru_ru": "Ночное зрение"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Upgrades the drone camera for clean low-light scouting.",
+                "Install it with a spider eye to fly caves, nights and dark corridors safely."
+              ],
+              "ru_ru": [
+                "Улучшает камеру дрона для уверенной разведки в темноте.",
+                "Ставится через паучий глаз и помогает летать по пещерам, ночам и тёмным коридорам."
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_drone_microphone",
+              "minLevel": 1
+            }
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
+        "auto_aim": {
+          "enabled": true,
+          "slot": 58,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "purchase_upgrade",
+          "targetScreenId": "",
+          "upgradeId": "it_drone_auto_aim",
+          "pricesBitcoins": [
+            1700
+          ],
+          "icon": {
+            "fallbackItem": "minecraft:calibrated_sculk_sensor",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "minecraft:calibrated_sculk_sensor",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "minecraft:calibrated_sculk_sensor",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Auto Aim",
+              "ru_ru": "Автонаводка"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Adds stabilized target assistance and longer interaction reach.",
+                "Install it with a calibrated sculk sensor for the smartest and deadliest build."
+              ],
+              "ru_ru": [
+                "Добавляет стабилизированную помощь в наведении и увеличенную дальность взаимодействия.",
+                "Ставится через калиброванный скалк-сенсор и делает сборку самой умной и опасной."
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_drone_night_vision",
               "minLevel": 1
             }
           ],

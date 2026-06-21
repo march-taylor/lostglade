@@ -1,5 +1,6 @@
 package com.lostglade.server;
 
+import com.lostglade.block.ModBlocks;
 import com.lostglade.item.DroneItem;
 import com.lostglade.item.ModItems;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
@@ -50,8 +51,11 @@ public final class ServerMechanicsGateSystem {
 	private static final String ERA_DIAMOND = "era_diamond";
 	private static final String ERA_NETHERITE = "era_netherite";
 	private static final String IT_CAMERA = "it_camera";
+	private static final String IT_MICROPHONE = "it_microphone";
+	private static final String IT_SPEAKER = "it_speaker";
 	private static final String IT_DRONE = "it_drone_scout";
 	private static final String IT_DRONE_KAMIKAZE = "it_drone_kamikaze";
+	private static final String IT_BLUETOOTH_ADAPTER = "it_bluetooth_adapter";
 	private static final double AUTOMATED_GOLEM_PLAYER_RADIUS = 16.0D;
 	private static final double AUTOMATED_GOLEM_PLAYER_RADIUS_SQR = AUTOMATED_GOLEM_PLAYER_RADIUS * AUTOMATED_GOLEM_PLAYER_RADIUS;
 
@@ -338,6 +342,9 @@ public final class ServerMechanicsGateSystem {
 		if (item == ModItems.CAMERA) {
 			return IT_CAMERA;
 		}
+		if (item == ModItems.BLUETOOTH_ADAPTER) {
+			return IT_BLUETOOTH_ADAPTER;
+		}
 		if (item == ModItems.DRONE) {
 			if (DroneItem.getKamikazePower(stack) > 0) {
 				return IT_DRONE_KAMIKAZE;
@@ -442,6 +449,15 @@ public final class ServerMechanicsGateSystem {
 		}
 		if (block == Blocks.ENCHANTING_TABLE) {
 			return ENCHANTING;
+		}
+		if (block == ModBlocks.CAMERA) {
+			return IT_CAMERA;
+		}
+		if (block == ModBlocks.MICROPHONE) {
+			return IT_MICROPHONE;
+		}
+		if (block == ModBlocks.SPEAKER) {
+			return IT_SPEAKER;
 		}
 		if (REDSTONE_BLOCKS.contains(block) || block instanceof ButtonBlock || block instanceof BasePressurePlateBlock) {
 			return REDSTONE;

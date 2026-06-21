@@ -164,6 +164,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Objects;
@@ -175,6 +176,11 @@ import java.util.concurrent.TimeUnit;
 public final class DroneSystem {
 	private static final String IT_DRONE_SCOUT = "it_drone_scout";
 	private static final String IT_DRONE_KAMIKAZE = "it_drone_kamikaze";
+	private static final String IT_DRONE_COMBAT = "it_drone_combat";
+	private static final String IT_DRONE_PAINT = "it_drone_paint";
+	private static final String IT_DRONE_NIGHT_VISION = "it_drone_night_vision";
+	private static final String IT_DRONE_AUTO_AIM = "it_drone_auto_aim";
+	private static final String IT_DRONE_MICROPHONE = "it_drone_microphone";
 	private static final String DRONE_ROOT_TAG = "lg2_drone_root";
 	private static final String DRONE_TYPE_TAG_PREFIX = "lg2_drone_type_";
 	private static final String DRONE_KAMIKAZE_POWER_TAG_PREFIX = "lg2_drone_kamikaze_power_";
@@ -5499,12 +5505,40 @@ public final class DroneSystem {
 		return InteractionResult.PASS;
 	}
 
+	private static boolean requireDroneTuningUpgrade(ServerPlayer player, String upgradeId) {
+		if (player == null || upgradeId == null || upgradeId.isBlank() || ServerUpgradeUiSystem.hasUpgrade(player, upgradeId)) {
+			return true;
+		}
+		String upgradeName = ServerUpgradeUiSystem.getUpgradeDisplayName(player, upgradeId);
+		player.displayClientMessage(Component.literal(localizedDroneTuningUpgradeMessage(player, upgradeName)).withStyle(style -> style.withColor(0xFF6B6B).withItalic(false)), true);
+		return false;
+	}
+
+	private static String localizedDroneTuningUpgradeMessage(ServerPlayer player, String upgradeName) {
+		String resolvedName = upgradeName == null || upgradeName.isBlank() ? "drone tuning module" : upgradeName;
+		String language = player != null && player.clientInformation() != null ? player.clientInformation().language() : "";
+		String normalized = language == null ? "" : language.toLowerCase(Locale.ROOT);
+		if (normalized.startsWith("ja")) {
+			return "先に「" + resolvedName + "」を購入してください。";
+		}
+		if (normalized.startsWith("uk")) {
+			return "Спочатку купи \"" + resolvedName + "\" у тюнінгу дрона.";
+		}
+		if (normalized.startsWith("ru") || normalized.startsWith("rpr")) {
+			return "Сначала купи \"" + resolvedName + "\" в тюнинге дрона.";
+		}
+		return "Buy the \"" + resolvedName + "\" drone tuning upgrade first.";
+	}
+
 	private static InteractionResult tryArmDroneWithTnt(ServerPlayer player, Entity root, ItemStack heldStack) {
 		if (player == null || root == null || !(root.level() instanceof ServerLevel level) || heldStack == null || !heldStack.is(Items.TNT)) {
 			return InteractionResult.PASS;
 		}
 		if (resolveDroneType(root) != DroneItem.DroneType.KAMIKAZE) {
 			return InteractionResult.PASS;
+		}
+		if (!requireDroneTuningUpgrade(player, IT_DRONE_KAMIKAZE)) {
+			return InteractionResult.FAIL;
 		}
 
 		int currentPower = resolveDroneKamikazePower(root);
@@ -5542,6 +5576,14 @@ public final class DroneSystem {
 		if (currentType == DroneItem.DroneType.KAMIKAZE && resolveDroneKamikazePower(root) > 0) {
 			return InteractionResult.PASS;
 		}
+		String requiredUpgradeId = switch (targetType) {
+			case KAMIKAZE -> IT_DRONE_KAMIKAZE;
+			case COMBAT -> IT_DRONE_COMBAT;
+			default -> null;
+		};
+		if (!requireDroneTuningUpgrade(player, requiredUpgradeId)) {
+			return InteractionResult.FAIL;
+		}
 
 		Item returnedTypeItem = switch (currentType) {
 			case KAMIKAZE -> Items.RABBIT_HIDE;
@@ -5563,6 +5605,9 @@ public final class DroneSystem {
 	}
 
 	private static InteractionResult tryInstallNightVisionModule(ServerPlayer player, Entity root, ItemStack heldStack) {
+		if (!requireDroneTuningUpgrade(player, IT_DRONE_NIGHT_VISION)) {
+			return InteractionResult.FAIL;
+		}
 		if (hasDroneNightVisionModule(root)) {
 			return InteractionResult.PASS;
 		}
@@ -5576,6 +5621,9 @@ public final class DroneSystem {
 	}
 
 	private static InteractionResult tryInstallAutoAimModule(ServerPlayer player, Entity root, ItemStack heldStack) {
+		if (!requireDroneTuningUpgrade(player, IT_DRONE_AUTO_AIM)) {
+			return InteractionResult.FAIL;
+		}
 		if (hasDroneAutoAimModule(root)) {
 			return InteractionResult.PASS;
 		}
@@ -5589,6 +5637,9 @@ public final class DroneSystem {
 	}
 
 	private static InteractionResult tryInstallMicrophoneModule(ServerPlayer player, Entity root, ItemStack heldStack) {
+		if (!requireDroneTuningUpgrade(player, IT_DRONE_MICROPHONE)) {
+			return InteractionResult.FAIL;
+		}
 		if (hasDroneMicrophoneModule(root)) {
 			return InteractionResult.PASS;
 		}
@@ -5602,6 +5653,9 @@ public final class DroneSystem {
 	}
 
 	private static InteractionResult tryPaintDrone(ServerPlayer player, Entity root, ItemStack heldStack, DyeColor color) {
+		if (!requireDroneTuningUpgrade(player, IT_DRONE_PAINT)) {
+			return InteractionResult.FAIL;
+		}
 		if (color == null) {
 			return InteractionResult.PASS;
 		}
