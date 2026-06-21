@@ -35,6 +35,7 @@ public final class DroneItem extends SimplePolymerItem {
 	public static final String BODY_LAYER_KEY = "body";
 	public static final String CAMERA_LAYER_KEY = "camera";
 	public static final String NIGHT_VISION_LAYER_KEY = "night_vision";
+	public static final String MICROPHONE_LAYER_KEY = "microphone";
 	public static final String RIGHT_FRONT_PROPELLER_LAYER_KEY = "propeller_right_front";
 	public static final String RIGHT_BACK_PROPELLER_LAYER_KEY = "propeller_right_back";
 	public static final String LEFT_FRONT_PROPELLER_LAYER_KEY = "propeller_left_front";
@@ -53,6 +54,7 @@ public final class DroneItem extends SimplePolymerItem {
 	private static final Identifier KAMIKAZE_LAYER_MODEL_ID_LEVEL_2 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_kamikaze_2");
 	private static final Identifier KAMIKAZE_LAYER_MODEL_ID_LEVEL_3 = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_kamikaze_3");
 	private static final Identifier NIGHT_VISION_LAYER_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_night_vision");
+	private static final Identifier MICROPHONE_LAYER_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_microphone");
 	private static final Identifier AUTO_AIM_LAYER_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_module_auto_aim");
 	private static final int AUTO_AIM_FRAME_COUNT = 8;
 	private static final String DISPLAY_ROOT_TAG = "lg2_drone_display";
@@ -63,6 +65,7 @@ public final class DroneItem extends SimplePolymerItem {
 	private static final String KAMIKAZE_POWER_TAG = "kamikaze_power";
 	private static final String NIGHT_VISION_TAG = "night_vision";
 	private static final String AUTO_AIM_TAG = "auto_aim";
+	private static final String MICROPHONE_TAG = "microphone";
 	private static final String PAINT_COLOR_TAG = "paint";
 	private static final int NO_KAMIKAZE_POWER = 0;
 	private static final int MIN_KAMIKAZE_POWER = 1;
@@ -129,12 +132,12 @@ public final class DroneItem extends SimplePolymerItem {
 	}
 
 	public static ItemStack createDisplayStack() {
-		return createDisplayStack(ModItems.DRONE, DroneType.NORMAL, NO_KAMIKAZE_POWER, false, false, null);
+		return createDisplayStack(ModItems.DRONE, DroneType.NORMAL, NO_KAMIKAZE_POWER, false, false, false, null);
 	}
 
 	public static ItemStack createDisplayStack(Item droneItem, int kamikazePower) {
 		DroneType type = kamikazePower > 0 ? DroneType.KAMIKAZE : DroneType.NORMAL;
-		return createDisplayStack(droneItem, type, kamikazePower, false, false, null);
+		return createDisplayStack(droneItem, type, kamikazePower, false, false, false, null);
 	}
 
 	public static ItemStack createDisplayStack(
@@ -145,7 +148,19 @@ public final class DroneItem extends SimplePolymerItem {
 			boolean autoAim,
 			DyeColor paintColor
 	) {
-		return createDroneStack(droneItem, true, null, type, kamikazePower, nightVision, autoAim, paintColor);
+		return createDisplayStack(droneItem, type, kamikazePower, nightVision, autoAim, false, paintColor);
+	}
+
+	public static ItemStack createDisplayStack(
+			Item droneItem,
+			DroneType type,
+			int kamikazePower,
+			boolean nightVision,
+			boolean autoAim,
+			boolean microphone,
+			DyeColor paintColor
+	) {
+		return createDroneStack(droneItem, true, null, type, kamikazePower, nightVision, autoAim, microphone, paintColor);
 	}
 
 	public static ItemStack createConfiguredStack(
@@ -156,11 +171,23 @@ public final class DroneItem extends SimplePolymerItem {
 			boolean autoAim,
 			DyeColor paintColor
 	) {
-		return createDroneStack(droneItem, false, null, type, kamikazePower, nightVision, autoAim, paintColor);
+		return createConfiguredStack(droneItem, type, kamikazePower, nightVision, autoAim, false, paintColor);
+	}
+
+	public static ItemStack createConfiguredStack(
+			Item droneItem,
+			DroneType type,
+			int kamikazePower,
+			boolean nightVision,
+			boolean autoAim,
+			boolean microphone,
+			DyeColor paintColor
+	) {
+		return createDroneStack(droneItem, false, null, type, kamikazePower, nightVision, autoAim, microphone, paintColor);
 	}
 
 	public static ItemStack createDisplayLayerStack(Identifier modelId) {
-		return createDroneStack(ModItems.DRONE, true, modelId, DroneType.NORMAL, NO_KAMIKAZE_POWER, false, false, null);
+		return createDroneStack(ModItems.DRONE, true, modelId, DroneType.NORMAL, NO_KAMIKAZE_POWER, false, false, false, null);
 	}
 
 	public static boolean isDroneDisplayStack(ItemStack stack) {
@@ -258,6 +285,14 @@ public final class DroneItem extends SimplePolymerItem {
 		setBooleanModule(stack, AUTO_AIM_TAG, enabled);
 	}
 
+	public static boolean hasMicrophoneModule(ItemStack stack) {
+		return getBooleanModule(stack, MICROPHONE_TAG);
+	}
+
+	public static void setMicrophoneModule(ItemStack stack, boolean enabled) {
+		setBooleanModule(stack, MICROPHONE_TAG, enabled);
+	}
+
 	public static DyeColor getPaintColor(ItemStack stack) {
 		if (!isDroneCompatibleStack(stack)) {
 			return null;
@@ -295,7 +330,7 @@ public final class DroneItem extends SimplePolymerItem {
 	}
 
 	public static ItemStack createKamikazeStack(int power) {
-		return createConfiguredStack(ModItems.DRONE, DroneType.KAMIKAZE, power, false, false, null);
+		return createConfiguredStack(ModItems.DRONE, DroneType.KAMIKAZE, power, false, false, false, null);
 	}
 
 	public static Identifier getDisplayModelOverride(ItemStack stack) {
@@ -320,6 +355,7 @@ public final class DroneItem extends SimplePolymerItem {
 			int kamikazePower,
 			boolean nightVision,
 			boolean autoAim,
+			boolean microphone,
 			DyeColor paintColor
 	) {
 		List<DisplayLayer> layers = new ArrayList<>();
@@ -327,6 +363,9 @@ public final class DroneItem extends SimplePolymerItem {
 		layers.add(new DisplayLayer(CAMERA_LAYER_KEY, cameraLayerModelForAngle(90)));
 		if (nightVision) {
 			layers.add(new DisplayLayer(NIGHT_VISION_LAYER_KEY, NIGHT_VISION_LAYER_MODEL_ID));
+		}
+		if (microphone) {
+			layers.add(new DisplayLayer(MICROPHONE_LAYER_KEY, MICROPHONE_LAYER_MODEL_ID));
 		}
 		if (type == DroneType.KAMIKAZE) {
 			layers.add(new DisplayLayer(KAMIKAZE_LAYER_KEY, kamikazeLayerModelForPower(clampedKamikazePower(kamikazePower))));
@@ -454,6 +493,7 @@ public final class DroneItem extends SimplePolymerItem {
 			int kamikazePower,
 			boolean nightVision,
 			boolean autoAim,
+			boolean microphone,
 			DyeColor paintColor
 	) {
 		ItemStack stack = new ItemStack(droneItem == null ? ModItems.DRONE : droneItem);
@@ -473,6 +513,7 @@ public final class DroneItem extends SimplePolymerItem {
 		setKamikazePower(stack, kamikazePower);
 		setNightVisionModule(stack, nightVision);
 		setAutoAimModule(stack, autoAim);
+		setMicrophoneModule(stack, microphone);
 		setPaintColor(stack, paintColor);
 		return stack;
 	}

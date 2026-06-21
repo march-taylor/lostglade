@@ -5,6 +5,7 @@ import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.PropertyMap;
 import com.mojang.datafixers.util.Pair;
 import com.lostglade.Lg2;
+import com.lostglade.block.ModBlocks;
 import com.lostglade.item.DroneItem;
 import com.lostglade.item.ModItems;
 import com.lostglade.mixin.ClientboundMoveEntityPacketAccessor;
@@ -23,6 +24,8 @@ import de.maxhenkel.voicechat.api.audiochannel.StaticAudioChannel;
 import de.maxhenkel.voicechat.api.events.MicrophonePacketEvent;
 import de.maxhenkel.voicechat.api.opus.OpusDecoder;
 import de.maxhenkel.voicechat.api.opus.OpusEncoder;
+import de.maxhenkel.voicechat.plugins.impl.packets.LocationalSoundPacketImpl;
+import de.maxhenkel.voicechat.voice.common.LocationSoundPacket;
 import eu.pb4.polymer.core.api.entity.PolymerEntityUtils;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import com.mojang.math.Transformation;
@@ -177,6 +180,7 @@ public final class DroneSystem {
 	private static final String DRONE_KAMIKAZE_POWER_TAG_PREFIX = "lg2_drone_kamikaze_power_";
 	private static final String DRONE_NIGHT_VISION_TAG = "lg2_drone_night_vision";
 	private static final String DRONE_AUTO_AIM_TAG = "lg2_drone_auto_aim";
+	private static final String DRONE_MICROPHONE_TAG = "lg2_drone_microphone";
 	private static final String DRONE_PAINT_TAG_PREFIX = "lg2_drone_paint_";
 	private static final String DRONE_DISPLAY_TAG = "lg2_drone_display";
 	private static final String DRONE_DISPLAY_OWNER_TAG_PREFIX = "lg2_drone_display_owner_";
@@ -345,10 +349,6 @@ public final class DroneSystem {
 	private static final int CONTROLLED_OPERATOR_AUDIO_FRAME_BUFFER_CAPACITY = 192;
 	private static final long CONTROLLED_OPERATOR_AUDIO_MAX_FRAME_AGE = 3L;
 	private static final long CONTROLLED_OPERATOR_AUDIO_SOURCE_EXPIRE_AFTER_FRAMES = 12L;
-	private static final long CONTROLLED_OPERATOR_AUDIO_REFRESH_INTERVAL_TICKS = 5L;
-	private static final double CONTROLLED_OPERATOR_AUDIO_RECENTER_DISTANCE_SQR = 6.0D * 6.0D;
-	private static final double CONTROLLED_OPERATOR_AUDIO_CAPTURE_RADIUS_EXTRA_BLOCKS = 8.0D;
-	private static final double CONTROLLED_OPERATOR_AUDIO_MIN_CAPTURE_RADIUS_BLOCKS = 16.0D;
 	private static final double CONTROLLED_OPERATOR_BODY_VOICE_WHISPER_DISTANCE_FACTOR = 0.5D;
 	private static final float CONTROLLED_OPERATOR_BODY_VOICE_GAIN = 1.0F;
 	private static final short[] CONTROLLED_OPERATOR_AUDIO_SILENCE_FRAME = new short[CONTROLLED_OPERATOR_AUDIO_FRAME_SAMPLES];
@@ -403,6 +403,7 @@ public final class DroneSystem {
 	private static final Map<UUID, Long> POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK = new HashMap<>();
 	private static final Map<UUID, Long> POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK = new HashMap<>();
 	private static final Map<UUID, ControlledOperatorAudioRuntime> CONTROLLED_OPERATOR_AUDIO = new HashMap<>();
+	private static final Map<UUID, Long> DRONE_MICROPHONE_RELAY_SEQUENCES = new HashMap<>();
 	private static final Set<UUID> VISUALLY_CONTROLLED_PLAYERS = new HashSet<>();
 	private static final Set<UUID> CONTROLLED_OPERATOR_MANAGED_NIGHT_VISION = new HashSet<>();
 	private static final Set<UUID> CONTROLLED_OPERATOR_AUTO_AIM_HIGHLIGHTS = new HashSet<>();
@@ -534,6 +535,7 @@ public final class DroneSystem {
 			DISPLAY_WOBBLE_BY_DRONE.clear();
 			AUTO_AIM_DISPLAY_ANIMATIONS.clear();
 			DRONE_ENVIRONMENT_DAMAGE.clear();
+			DRONE_MICROPHONE_RELAY_SEQUENCES.clear();
 			shutdownAllControlledOperatorAudio();
 			CONTROLLED_OPERATOR_MANAGED_NIGHT_VISION.clear();
 			CONTROLLED_OPERATOR_AUTO_AIM_HIGHLIGHTS.clear();
@@ -561,6 +563,7 @@ public final class DroneSystem {
 		int kamikazePower = DroneItem.getKamikazePower(placementSnapshot);
 		boolean nightVision = DroneItem.hasNightVisionModule(placementSnapshot);
 		boolean autoAim = DroneItem.hasAutoAimModule(placementSnapshot);
+		boolean microphone = DroneItem.hasMicrophoneModule(placementSnapshot);
 		DyeColor paintColor = DroneItem.getPaintColor(placementSnapshot);
 
 		Vec3 spawnPos = resolvePlacementPosition(context);
@@ -594,6 +597,9 @@ public final class DroneSystem {
 		if (autoAim) {
 			root.addTag(DRONE_AUTO_AIM_TAG);
 		}
+		if (microphone) {
+			root.addTag(DRONE_MICROPHONE_TAG);
+		}
 		if (paintColor != null) {
 			root.addTag(DRONE_PAINT_TAG_PREFIX + paintColor.getName());
 		}
@@ -603,7 +609,7 @@ public final class DroneSystem {
 				spawnPos,
 				yRot,
 				0.0F,
-				DroneItem.createDisplayStack(ModItems.DRONE, droneType, kamikazePower, nightVision, autoAim, paintColor),
+				DroneItem.createDisplayStack(ModItems.DRONE, droneType, kamikazePower, nightVision, autoAim, microphone, paintColor),
 				DRONE_DISPLAY_LAYER_BASE,
 				resolveDroneDisplayYOffset(droneType)
 		);
@@ -1776,7 +1782,8 @@ public final class DroneSystem {
 			return;
 		}
 		VoicechatApi voicechatApi = ServerVoicechatIntegration.getApi();
-		if (voicechatApi == null) {
+		VoicechatServerApi voicechatServerApi = ServerVoicechatIntegration.getServerApi();
+		if (voicechatApi == null || voicechatServerApi == null) {
 			return;
 		}
 		VoicechatConnection senderConnection = event.getSenderConnection();
@@ -1800,15 +1807,25 @@ public final class DroneSystem {
 		boolean whispering = event.getPacket().isWhispering();
 		net.minecraft.resources.ResourceKey<Level> senderDimension = senderLevel.dimension();
 		byte[] copiedOpusData = opusData.clone();
-		server.execute(() -> routeControlledOperatorBodyVoice(
-				server,
-				senderDimension,
-				senderPosition,
-				senderUuid,
-				whispering,
-				copiedOpusData,
-				voicechatApi
-		));
+		server.execute(() -> {
+			routeControlledOperatorBodyVoice(
+					server,
+					senderDimension,
+					senderPosition,
+					senderUuid,
+					whispering,
+					copiedOpusData,
+					voicechatApi
+			);
+			relayControlledOperatorDroneMicrophoneVoice(
+					server,
+					senderUuid,
+					whispering,
+					copiedOpusData,
+					voicechatApi,
+					voicechatServerApi
+			);
+		});
 	}
 
 	private static void routeControlledOperatorBodyVoice(
@@ -1902,6 +1919,79 @@ public final class DroneSystem {
 			return 0.0F;
 		}
 		return (float) Math.clamp(1.0D - distance / maxDistance, 0.0D, 1.0D);
+	}
+
+	private static void relayControlledOperatorDroneMicrophoneVoice(
+			MinecraftServer server,
+			UUID senderUuid,
+			boolean whispering,
+			byte[] opusData,
+			VoicechatApi voicechatApi,
+			VoicechatServerApi voicechatServerApi
+	) {
+		if (server == null || senderUuid == null || opusData == null || opusData.length == 0 || voicechatApi == null || voicechatServerApi == null) {
+			return;
+		}
+		DroneControlSession session = ACTIVE_SESSIONS.get(senderUuid);
+		if (session == null || !Objects.equals(resolveAuthoritativeDroneControllerId(session.droneUuid()), senderUuid)) {
+			return;
+		}
+		Entity root = findDroneRoot(server, session.droneDimension(), session.droneUuid());
+		if (root == null || !root.isAlive() || !hasDroneMicrophoneModule(root) || !(root.level() instanceof ServerLevel droneLevel)) {
+			return;
+		}
+		Vec3 droneVoiceOrigin = resolveSafeDroneCameraOrigin(root, droneCameraOrigin(root));
+		float relayDistance = resolveDroneMicrophoneRelayDistance(voicechatApi, whispering);
+		if (relayDistance <= 0.0F) {
+			return;
+		}
+		Position relayPosition = voicechatApi.createPosition(droneVoiceOrigin.x, droneVoiceOrigin.y, droneVoiceOrigin.z);
+		long sequence = nextDroneMicrophoneRelaySequence(senderUuid);
+		UUID channelId = droneMicrophoneRelayChannelId(senderUuid);
+		LocationSoundPacket soundPacket = new LocationSoundPacket(
+				channelId,
+				senderUuid,
+				droneVoiceOrigin,
+				opusData,
+				sequence,
+				relayDistance,
+				null
+		);
+		LocationalSoundPacketImpl wrappedPacket = new LocationalSoundPacketImpl(soundPacket);
+		for (de.maxhenkel.voicechat.api.ServerPlayer nearbyPlayer : voicechatServerApi.getPlayersInRange(
+				voicechatApi.fromServerLevel(droneLevel),
+				relayPosition,
+				relayDistance,
+				player -> player != null && !Objects.equals(player.getUuid(), senderUuid)
+		)) {
+			if (nearbyPlayer == null) {
+				continue;
+			}
+			VoicechatConnection receiverConnection = voicechatServerApi.getConnectionOf(nearbyPlayer.getUuid());
+			if (receiverConnection == null) {
+				continue;
+			}
+			voicechatServerApi.sendLocationalSoundPacketTo(receiverConnection, wrappedPacket);
+		}
+	}
+
+	private static float resolveDroneMicrophoneRelayDistance(VoicechatApi voicechatApi, boolean whispering) {
+		double voiceDistance = Math.max(1.0D, voicechatApi == null ? 0.0D : voicechatApi.getVoiceChatDistance());
+		if (whispering) {
+			voiceDistance *= CONTROLLED_OPERATOR_BODY_VOICE_WHISPER_DISTANCE_FACTOR;
+		}
+		return (float) voiceDistance;
+	}
+
+	private static long nextDroneMicrophoneRelaySequence(UUID senderUuid) {
+		long next = DRONE_MICROPHONE_RELAY_SEQUENCES.getOrDefault(senderUuid, 0L);
+		DRONE_MICROPHONE_RELAY_SEQUENCES.put(senderUuid, next + 1L);
+		return next;
+	}
+
+	private static UUID droneMicrophoneRelayChannelId(UUID senderUuid) {
+		UUID resolvedSenderUuid = senderUuid == null ? UUID.randomUUID() : senderUuid;
+		return UUID.nameUUIDFromBytes(("lg2:drone_microphone:" + resolvedSenderUuid).getBytes(StandardCharsets.UTF_8));
 	}
 
 	private static void tickControlledOperatorBodyPhysics(ServerPlayer player) {
@@ -4038,12 +4128,6 @@ public final class DroneSystem {
 		CONTROLLED_OPERATOR_AUDIO.clear();
 	}
 
-	private static double resolveControlledOperatorAudioCaptureRadius(VoicechatApi voicechatApi) {
-		double voiceChatDistance = voicechatApi == null ? 0.0D : voicechatApi.getVoiceChatDistance();
-		return Math.max(CONTROLLED_OPERATOR_AUDIO_MIN_CAPTURE_RADIUS_BLOCKS, voiceChatDistance)
-				+ CONTROLLED_OPERATOR_AUDIO_CAPTURE_RADIUS_EXTRA_BLOCKS;
-	}
-
 	private static void syncControlledOperatorView(
 			ServerPlayer player,
 			DroneControlSession session,
@@ -5373,6 +5457,10 @@ public final class DroneSystem {
 			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
 			return tryInstallAutoAimModule(player, root, heldStack);
 		}
+		if (heldStack.is(ModBlocks.MICROPHONE_ITEM)) {
+			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
+			return tryInstallMicrophoneModule(player, root, heldStack);
+		}
 		if (heldStack.getItem() instanceof DyeItem dyeItem) {
 			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
 			return tryPaintDrone(player, root, heldStack, dyeItem.getDyeColor());
@@ -5469,6 +5557,19 @@ public final class DroneSystem {
 		return InteractionResult.SUCCESS;
 	}
 
+	private static InteractionResult tryInstallMicrophoneModule(ServerPlayer player, Entity root, ItemStack heldStack) {
+		if (hasDroneMicrophoneModule(root)) {
+			return InteractionResult.PASS;
+		}
+		setDroneMicrophoneModule(root, true);
+		triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+		notifyDroneNetworkChanged(root);
+		if (!player.getAbilities().instabuild) {
+			heldStack.shrink(1);
+		}
+		return InteractionResult.SUCCESS;
+	}
+
 	private static InteractionResult tryPaintDrone(ServerPlayer player, Entity root, ItemStack heldStack, DyeColor color) {
 		if (color == null) {
 			return InteractionResult.PASS;
@@ -5513,6 +5614,13 @@ public final class DroneSystem {
 		if (hasDroneAutoAimModule(root)) {
 			setDroneAutoAimModule(root, false);
 			giveOrDropTuningItem(player, root, Items.CALIBRATED_SCULK_SENSOR);
+			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+			notifyDroneNetworkChanged(root);
+			return InteractionResult.SUCCESS;
+		}
+		if (hasDroneMicrophoneModule(root)) {
+			setDroneMicrophoneModule(root, false);
+			giveOrDropTuningItem(player, root, ModBlocks.MICROPHONE_ITEM);
 			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
 			notifyDroneNetworkChanged(root);
 			return InteractionResult.SUCCESS;
@@ -5598,6 +5706,7 @@ public final class DroneSystem {
 				resolveDroneKamikazePower(root),
 				hasDroneNightVisionModule(root),
 				hasDroneAutoAimModule(root),
+				hasDroneMicrophoneModule(root),
 				resolveDronePaintColor(root)
 		);
 	}
@@ -5674,6 +5783,7 @@ public final class DroneSystem {
 			int kamikazePower,
 			boolean nightVision,
 			boolean autoAim,
+			boolean microphone,
 			DyeColor paintColor
 	) {
 		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
@@ -5683,6 +5793,7 @@ public final class DroneSystem {
 		setDroneKamikazePower(root, kamikazePower);
 		setDroneNightVisionModule(root, nightVision);
 		setDroneAutoAimModule(root, autoAim);
+		setDroneMicrophoneModule(root, microphone);
 		setDronePaintColor(root, paintColor);
 	}
 
@@ -6115,6 +6226,22 @@ public final class DroneSystem {
 		if (changed) {
 			syncDroneAutoAimModuleState(root, enabled);
 		}
+	}
+
+	private static boolean hasDroneMicrophoneModule(Entity root) {
+		return root != null && root.getTags().contains(DRONE_MICROPHONE_TAG);
+	}
+
+	private static void setDroneMicrophoneModule(Entity root, boolean enabled) {
+		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
+			return;
+		}
+		if (enabled) {
+			root.addTag(DRONE_MICROPHONE_TAG);
+		} else {
+			root.removeTag(DRONE_MICROPHONE_TAG);
+		}
+		syncDroneDisplayLayers(root);
 	}
 
 	private static void syncDroneAutoAimModuleState(Entity root, boolean enabled) {
@@ -6559,14 +6686,15 @@ public final class DroneSystem {
 		int kamikazePower = resolveDroneKamikazePower(root);
 		boolean nightVision = hasDroneNightVisionModule(root);
 		boolean autoAim = hasDroneAutoAimModule(root);
+		boolean microphone = hasDroneMicrophoneModule(root);
 		DyeColor paintColor = resolveDronePaintColor(root);
 
 		Map<String, ItemStack> desiredLayers = new LinkedHashMap<>();
 		desiredLayers.put(
 				DRONE_DISPLAY_LAYER_BASE,
-				DroneItem.createDisplayStack(ModItems.DRONE, droneType, kamikazePower, nightVision, autoAim, paintColor)
+				DroneItem.createDisplayStack(ModItems.DRONE, droneType, kamikazePower, nightVision, autoAim, microphone, paintColor)
 		);
-		for (DroneItem.DisplayLayer layer : DroneItem.resolveDisplayLayers(droneType, kamikazePower, nightVision, autoAim, paintColor)) {
+		for (DroneItem.DisplayLayer layer : DroneItem.resolveDisplayLayers(droneType, kamikazePower, nightVision, autoAim, microphone, paintColor)) {
 			if (layer == null || layer.key() == null || layer.key().isBlank() || layer.modelId() == null) {
 				continue;
 			}
@@ -7609,9 +7737,6 @@ public final class DroneSystem {
 		private AudioPlayer player;
 		private OpusEncoder encoder;
 		private net.minecraft.resources.ResourceKey<Level> audioChannelDimension;
-		private net.minecraft.resources.ResourceKey<Level> droneCaptureDimension;
-		private BlockPos droneCaptureCenter;
-		private long lastRefreshTick = Long.MIN_VALUE;
 		private boolean closed;
 
 		private ControlledOperatorAudioRuntime(UUID playerUuid) {
@@ -7643,45 +7768,9 @@ public final class DroneSystem {
 				return false;
 			}
 			RendererBotCameraSystem.stopAudioCapture(this.bodyCaptureOwnerKey);
-
-			Entity root = findDroneRoot(server, session.droneDimension(), session.droneUuid());
-			ServerLevel droneLevel = root != null && root.isAlive()
-					? (ServerLevel) root.level()
-					: server.getLevel(session.droneDimension());
-			BlockPos desiredDroneCenter = root != null && root.isAlive()
-					? BlockPos.containing(resolveSafeDroneCameraOrigin(root, droneCameraOrigin(root)))
-					: BlockPos.containing(session.lastKnownDronePos());
-			boolean recenterDrone = shouldRecenterCapture(
-					this.droneCaptureDimension,
-					this.droneCaptureCenter,
-					droneLevel == null ? null : droneLevel.dimension(),
-					desiredDroneCenter
-			);
-
-			boolean refreshRequired = this.lastRefreshTick == Long.MIN_VALUE
-					|| operatorLevel.getGameTime() - this.lastRefreshTick >= CONTROLLED_OPERATOR_AUDIO_REFRESH_INTERVAL_TICKS
-					|| recenterDrone;
-			if (!refreshRequired) {
-				return true;
-			}
-			this.lastRefreshTick = operatorLevel.getGameTime();
-			double captureRadius = resolveControlledOperatorAudioCaptureRadius(voicechatApi);
-			if (droneLevel != null && desiredDroneCenter != null) {
-				BlockPos requestedDroneCenter = recenterDrone || this.droneCaptureCenter == null
-						? desiredDroneCenter
-						: this.droneCaptureCenter;
-				synchronizeCapture(
-						this.droneCaptureOwnerKey,
-						droneLevel,
-						requestedDroneCenter,
-						captureRadius,
-						this.feed::offerDroneFrame
-				);
-			} else {
-				RendererBotCameraSystem.stopAudioCapture(this.droneCaptureOwnerKey);
-				this.droneCaptureDimension = null;
-				this.droneCaptureCenter = null;
-			}
+			// The controlled player's client already hears vanilla world audio from the proxy drone position.
+			// Mirroring the same space again through renderer-bot PCM creates a delayed second copy that crackles.
+			RendererBotCameraSystem.stopAudioCapture(this.droneCaptureOwnerKey);
 			return true;
 		}
 
@@ -7726,48 +7815,8 @@ public final class DroneSystem {
 			}
 		}
 
-		private void synchronizeCapture(
-				String ownerKey,
-				ServerLevel level,
-				BlockPos center,
-				double captureRadius,
-				java.util.function.Consumer<RendererBotCameraSystem.AudioCaptureFrame> frameConsumer
-		) {
-			if (ownerKey == null || level == null || center == null || frameConsumer == null) {
-				return;
-			}
-			boolean started = RendererBotCameraSystem.ensureAudioCapture(
-					ownerKey,
-					level,
-					center,
-					captureRadius,
-					frameConsumer,
-					ignored -> this.lastRefreshTick = Long.MIN_VALUE
-			);
-			if (!started) {
-				return;
-			}
-			this.droneCaptureDimension = level.dimension();
-			this.droneCaptureCenter = center.immutable();
-		}
-
 		private void offerBodyVoicePacket(UUID senderUuid, byte[] opusData, float gain, VoicechatApi voicechatApi) {
 			this.feed.offerBodyVoicePacket(senderUuid, opusData, gain, voicechatApi);
-		}
-
-		private boolean shouldRecenterCapture(
-				net.minecraft.resources.ResourceKey<Level> currentDimension,
-				BlockPos currentCenter,
-				net.minecraft.resources.ResourceKey<Level> desiredDimension,
-				BlockPos desiredCenter
-		) {
-			if (desiredDimension == null || desiredCenter == null) {
-				return false;
-			}
-			if (!Objects.equals(currentDimension, desiredDimension) || currentCenter == null) {
-				return true;
-			}
-			return currentCenter.distSqr(desiredCenter) > CONTROLLED_OPERATOR_AUDIO_RECENTER_DISTANCE_SQR;
 		}
 
 		private short[] nextFrame() {
@@ -7801,20 +7850,13 @@ public final class DroneSystem {
 			RendererBotCameraSystem.stopAudioCapture(this.bodyCaptureOwnerKey);
 			closePlayback();
 			this.feed.close();
-			this.droneCaptureDimension = null;
-			this.droneCaptureCenter = null;
 		}
 	}
 
 	private static final class ControlledOperatorAudioFeed {
 		private final Object lock = new Object();
-		private final ControlledOperatorAudioSourceBuffer droneBuffer = new ControlledOperatorAudioSourceBuffer();
 		private final Map<UUID, ControlledOperatorAudioSourceBuffer> bodyVoiceBuffers = new HashMap<>();
 		private boolean closed;
-
-		private void offerDroneFrame(RendererBotCameraSystem.AudioCaptureFrame frame) {
-			offer(this.droneBuffer, frame);
-		}
 
 		private void offerBodyVoicePacket(UUID senderUuid, byte[] opusData, float gain, VoicechatApi voicechatApi) {
 			if (senderUuid == null || opusData == null || opusData.length == 0 || gain <= 0.0F || voicechatApi == null) {
@@ -7834,52 +7876,21 @@ public final class DroneSystem {
 			}
 		}
 
-		private void offer(ControlledOperatorAudioSourceBuffer buffer, RendererBotCameraSystem.AudioCaptureFrame frame) {
-			if (buffer == null || frame == null || frame.samples() == null || frame.samples().length == 0) {
-				return;
-			}
-			long sourceNanos = frame.clientFrameNanos() > 0L ? frame.clientFrameNanos() : frame.receivedAtNanos();
-			if (sourceNanos <= 0L) {
-				sourceNanos = System.nanoTime();
-			}
-			synchronized (this.lock) {
-				if (this.closed) {
-					return;
-				}
-				buffer.offerFrame(frame.samples(), sourceNanos / CONTROLLED_OPERATOR_AUDIO_FRAME_NANOS);
-			}
-		}
-
 		private short[] frameAt(long nowNanos) {
 			synchronized (this.lock) {
 				if (this.closed) {
 					return null;
 				}
 				long targetSequence = nowNanos / CONTROLLED_OPERATOR_AUDIO_FRAME_NANOS;
-				short[] drone = this.droneBuffer.frameAt(targetSequence);
 				short[] body = mixBodyVoiceBuffersLocked(targetSequence);
-				if (this.droneBuffer.isExpired(targetSequence)) {
-					this.droneBuffer.clear();
-				}
 				pruneExpiredBodyVoiceBuffersLocked(targetSequence);
-				if (drone == null) {
-					return body;
-				}
-				if (body == null) {
-					return drone;
-				}
-				short[] mixed = new short[CONTROLLED_OPERATOR_AUDIO_FRAME_SAMPLES];
-				for (int index = 0; index < mixed.length; index++) {
-					mixed[index] = SpeakerSystem.softLimitSample(drone[index] + body[index]);
-				}
-				return mixed;
+				return body;
 			}
 		}
 
 		private void close() {
 			synchronized (this.lock) {
 				this.closed = true;
-				this.droneBuffer.clear();
 				for (ControlledOperatorAudioSourceBuffer buffer : this.bodyVoiceBuffers.values()) {
 					buffer.close();
 				}
