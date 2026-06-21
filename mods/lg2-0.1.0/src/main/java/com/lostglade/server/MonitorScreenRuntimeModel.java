@@ -249,6 +249,7 @@ record MaxCallVisualSnapshot(
 		int selectedMicrophoneIndex,
 		int cameraScroll,
 		int microphoneScroll,
+		int contactPickerScroll,
 		int miniParticipantScroll,
 		boolean menuOpen,
 		boolean cameraPickerOpen,

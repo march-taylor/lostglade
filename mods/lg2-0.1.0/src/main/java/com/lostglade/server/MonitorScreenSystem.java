@@ -1016,6 +1016,7 @@ public final class MonitorScreenSystem {
 
 	public static boolean onPlayerHotbarScroll(ServerPlayer player, int previousSlot, int currentSlot) {
 		return MonitorMaxRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot)
+				|| MonitorCameraRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot)
 				|| MonitorScreenMediaFrameRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot)
 				|| MonitorYandexMapsRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot);
 	}
@@ -3754,6 +3755,21 @@ public final class MonitorScreenSystem {
 		return new UiRect(panel.x() + layout.unit(), y, panel.width() - layout.unit() * 2, Math.max(18, panel.bottom() - y - layout.unit()));
 	}
 
+	static int clippedListCapacity(int viewportExtent, int itemExtent, int gap) {
+		if (viewportExtent <= 0) {
+			return 1;
+		}
+		int safeGap = Math.max(0, gap);
+		return Math.max(1, (int) Math.ceil((viewportExtent + safeGap) / (double) Math.max(1, itemExtent + safeGap)));
+	}
+
+	static int clippedListCapacity(UiRect viewport, int itemExtent, int gap, boolean horizontal) {
+		if (viewport == null) {
+			return 1;
+		}
+		return clippedListCapacity(horizontal ? viewport.width() : viewport.height(), itemExtent, gap);
+	}
+
 	static void drawMediaPlayerMenuButton(Graphics2D graphics, UiRect rect, UiLayout layout, boolean active) {
 		float strokeWidth = mediaChromeStrokeWidth(rect);
 		Color iconColor = drawSmallMediaButtonBase(graphics, rect, MediaButtonSegment.SINGLE, active, strokeWidth);
@@ -5601,6 +5617,28 @@ public final class MonitorScreenSystem {
 
 	static void drawDropdownGlyph(Graphics2D graphics, UiRect rect, Color color) {
 		drawPlayerUiIcon(graphics, rect, PlayerUiIcon.DROPDOWN, color);
+	}
+
+	static void drawRotatedPlayerUiIcon(Graphics2D graphics, UiRect rect, PlayerUiIcon icon, Color tint, double rotationRadians) {
+		if (graphics == null || rect == null || rect.width() <= 0 || rect.height() <= 0 || icon == null || tint == null) {
+			return;
+		}
+		BufferedImage tinted = tintedPlayerUiIcon(icon, tint);
+		Graphics2D rotated = (Graphics2D) graphics.create();
+		try {
+			double centerX = rect.x() + rect.width() / 2.0D;
+			double centerY = rect.y() + rect.height() / 2.0D;
+			rotated.rotate(rotationRadians, centerX, centerY);
+			rotated.drawImage(tinted, rect.x(), rect.y(), rect.width(), rect.height(), null);
+		} finally {
+			rotated.dispose();
+		}
+	}
+
+	static void drawOverlayChevronButton(Graphics2D graphics, UiRect rect, UiLayout layout, double rotationRadians, boolean enabled) {
+		Color color = drawSmallMediaButtonBase(graphics, rect, MediaButtonSegment.SINGLE, false, mediaChromeStrokeWidth(rect));
+		Color iconColor = enabled ? color : new Color(color.getRed(), color.getGreen(), color.getBlue(), 96);
+		drawRotatedPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), PlayerUiIcon.DROPDOWN, iconColor, rotationRadians);
 	}
 
 	static void drawMenuGlyph(Graphics2D graphics, UiRect rect, Color color) {
