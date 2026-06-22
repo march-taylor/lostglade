@@ -3095,15 +3095,7 @@ public final class MonitorScreenSystem {
 	static void drawHomeScreen(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, int launcherPage, MaxVisualSnapshot maxSnapshot) {
 		UiRect panel = homePanelRect(layout);
 		UiRect header = homeHeaderRect(layout, panel);
-		drawCenteredTextFitted(
-				graphics,
-				"Приложения",
-				header,
-				new Color(248, 250, 252, 236),
-				Font.BOLD,
-				clampInt((int) Math.round(layout.unit() * 1.45D), 9, 21),
-				clampInt(layout.unit(), 8, 18)
-		);
+		drawCenteredTextFitted(graphics, "Приложения", header, new Color(248, 250, 252, 236), Font.BOLD, clampInt(layout.unit() * 2 - 1, 10, 30), clampInt(layout.unit(), 8, 18));
 
 		UiRect gridRect = homeGridRect(layout, panel);
 		int totalRows = homeTotalRows(layout);
@@ -3231,7 +3223,11 @@ public final class MonitorScreenSystem {
 		boolean youtubeMode = actualMode == ScreenViewMode.YOUTUBE;
 		boolean youtubeMusicMode = actualMode == ScreenViewMode.YOUTUBE_MUSIC;
 		boolean youtubeFamilyMode = youtubeMode || youtubeMusicMode;
+		MediaOverlayWindowSnapshot overlayWindow = state != null ? state.overlayWindow() : null;
 		boolean queueOverlayActive = state != null && youtubeFamilyMode && state.youtubeQueueOpen();
+		boolean galleryFileMenuOverlayActive = overlayWindow != null && overlayWindow.type() == MediaOverlayWindowType.GALLERY_FILE_MENU;
+		boolean playerBackgroundOverlayActive = overlayWindow != null && overlayWindow.type() == MediaOverlayWindowType.PLAYER_BACKGROUND;
+		boolean chromeOverlayActive = queueOverlayActive || galleryFileMenuOverlayActive || playerBackgroundOverlayActive;
 		boolean galleryMode = actualMode == ScreenViewMode.GALLERY;
 		boolean droneMode = actualMode == ScreenViewMode.SBER_DRONES;
 		boolean libraryMode = galleryMode || droneMode;
@@ -3313,9 +3309,9 @@ public final class MonitorScreenSystem {
 				youtubeMenuSurface
 		);
 		if (musicPlayerLayout && !youtubeMenuSurface) {
-			if (mediaFrame != null && !queueOverlayActive) {
+			if (mediaFrame != null && !chromeOverlayActive) {
 				drawYoutubeMusicArtworkCard(graphics, layout, mediaFrame, state != null ? state.scaleMode() : MediaScaleMode.FIT);
-			} else if (state != null && state.loading() && !queueOverlayActive) {
+			} else if (state != null && state.loading() && !chromeOverlayActive) {
 				drawYoutubeMusicArtworkLoadingPlaceholder(graphics, layout);
 			}
 		} else if (mediaFrame != null) {
@@ -3326,7 +3322,7 @@ public final class MonitorScreenSystem {
 				&& (state.overlayMode() == MediaOverlayMode.CONTROLS
 				|| state.loading()
 				|| (youtubeFamilyMode && !hasMedia))
-				&& !queueOverlayActive;
+				&& !chromeOverlayActive;
 		if (controlsActive) {
 			if (libraryMode) {
 				drawMediaBackButton(graphics, closeRect, layout, controlUi && !musicPlayerLayout ? MediaButtonSegment.LEFT : MediaButtonSegment.SINGLE);
@@ -3426,12 +3422,12 @@ public final class MonitorScreenSystem {
 			);
 		}
 
-		if (progress != null && progress.visible() && !controlUi && !queueOverlayActive) {
+		if (progress != null && progress.visible() && !controlUi && !chromeOverlayActive) {
 			UiRect progressRect = mediaProgressRect(layout);
 			drawProgressBar(graphics, progressRect, progress, layout);
 		}
 
-		if (!controlUi && !queueOverlayActive && youtubeFamilyMode && (!youtubeMusicMode || youtubeHomePrompt)) {
+		if (!controlUi && !chromeOverlayActive && youtubeFamilyMode && (!youtubeMusicMode || youtubeHomePrompt)) {
 			drawMediaSearchBar(
 					graphics,
 					titleRect,
@@ -3441,6 +3437,9 @@ public final class MonitorScreenSystem {
 			);
 		}
 		if (state != null && state.overlayWindow() != null) {
+			if (state.overlayWindow().type() == MediaOverlayWindowType.YOUTUBE_QUEUE) {
+				drawOverlayBackdrop(graphics, mediaCanvasRect(layout));
+			}
 			drawMediaOverlayWindow(graphics, layout, runtimeKey, server, state.overlayWindow());
 		}
 	}
@@ -3730,7 +3729,7 @@ public final class MonitorScreenSystem {
 		}
 
 		UiRect labelRect = homeAppLabelRect(layout, cardRect);
-		int textSize = clampInt((int) Math.round(layout.unit() * 1.25D), 8, 16);
+		int textSize = clampInt(layout.unit() * 2 - 1, 9, 26);
 		drawCenteredTextFitted(graphics, app.title(), labelRect, new Color(248, 251, 255, 238), Font.BOLD, textSize, clampInt(layout.unit() - 1, 7, 14));
 	}
 
@@ -4113,12 +4112,12 @@ public final class MonitorScreenSystem {
 		int progressWidth = Math.max(trackRect.height(), Math.round(trackRect.width() * fraction));
 		fillRoundedRect(graphics, new UiRect(trackRect.x(), trackRect.y(), Math.min(trackRect.width(), progressWidth), trackRect.height()), trackArc, playedFill);
 		if (state.timelineSeekable()) {
-			int markerWidth = clampInt(Math.max(4, trackRect.height() / 2), 4, 8);
-			int markerHeight = clampInt(trackRect.height() + layout.unit() + 2, trackRect.height() + 8, trackRect.height() + 24);
+			int markerWidth = clampInt(Math.round(trackRect.height() * 0.9F), 6, 10);
+			int markerHeight = clampInt(trackRect.height() + layout.unit() + 1, trackRect.height() + 8, trackRect.height() + 20);
 			int markerCenterX = trackRect.x() + Math.round(trackRect.width() * fraction);
 			int markerX = clampInt(markerCenterX - markerWidth / 2, trackRect.x(), Math.max(trackRect.x(), trackRect.right() - markerWidth));
 			int markerY = trackRect.y() + (trackRect.height() - markerHeight) / 2;
-			int markerArc = Math.max(markerHeight, markerWidth * 2);
+			int markerArc = markerWidth;
 			fillRoundedRect(
 					graphics,
 					new UiRect(markerX, markerY, markerWidth, markerHeight),
@@ -4772,16 +4771,69 @@ public final class MonitorScreenSystem {
 	}
 
 	static void drawGalleryFileMenuWindow(Graphics2D graphics, UiLayout layout, MediaOverlayWindowSnapshot window) {
-		UiRect panel = galleryFileMenuPanelRect(layout);
+		UiRect canvas = mediaCanvasRect(layout);
 		UiRect header = galleryFileMenuHeaderRect(layout);
 		UiRect closeRect = galleryFileMenuCloseRect(layout);
 		GalleryFileMenuSnapshot file = window != null ? window.galleryFile() : null;
-		drawOverlayModalBase(graphics, layout, panel, header, closeRect, window != null ? window.title() : "ФАЙЛ", window != null ? window.subtitle() : "");
-		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 0), PlayerUiIcon.EDIT, "ПЕРЕИМЕНОВАТЬ", "Имя файла", file != null && file.canRename(), false, false);
-		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 1), PlayerUiIcon.SEND_PLANE, "ПОДЕЛИТЬСЯ", "Отправить в MAX", file != null && file.canShare(), false, false);
-		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 2), file != null && file.wallpaperSelected() ? PlayerUiIcon.CHECK : PlayerUiIcon.WALLPAPER, file != null && file.wallpaperSelected() ? "ОБОИ УСТАНОВЛЕНЫ" : "СДЕЛАТЬ ОБОЯМИ", "Фон монитора", file != null && file.canWallpaper(), file != null && file.wallpaperSelected(), false);
-		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 3), PlayerUiIcon.SETTINGS, "ФОН ПЛЕЕРА", "Настройки отображения", true, false, false);
-		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 4), PlayerUiIcon.TRASH, "УДАЛИТЬ", "Из галереи экрана", file != null && file.saved(), false, true);
+		drawOverlayBackdrop(graphics, canvas);
+		drawCloseGlyph(graphics, mediaChromeIconRect(closeRect, layout), new Color(248, 251, 255, 236));
+
+		String headerTitle = file != null && file.title() != null && !file.title().isBlank()
+				? file.title()
+				: window != null && window.subtitle() != null && !window.subtitle().isBlank() ? window.subtitle() : "Медиа";
+		String headerSubtitle = file != null && file.subtitle() != null && !file.subtitle().isBlank()
+				? file.subtitle()
+				: window != null && window.title() != null ? window.title() : "";
+		drawOverlayWindowHeaderText(graphics, layout, header, headerTitle, headerSubtitle);
+
+		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 0), PlayerUiIcon.EDIT, "ПЕРЕИМЕНОВАТЬ", "", file != null && file.canRename(), false, false);
+		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 1), PlayerUiIcon.SEND_PLANE, "ПОДЕЛИТЬСЯ", "", file != null && file.canShare(), false, false);
+		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 2), file != null && file.wallpaperSelected() ? PlayerUiIcon.CHECK : PlayerUiIcon.WALLPAPER, file != null && file.wallpaperSelected() ? "ОБОИ УСТАНОВЛЕНЫ" : "СДЕЛАТЬ ОБОЯМИ", "", file != null && file.canWallpaper(), file != null && file.wallpaperSelected(), false);
+		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 3), PlayerUiIcon.SETTINGS, "ФОН ПЛЕЕРА", "", true, false, false);
+		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 4), PlayerUiIcon.TRASH, "УДАЛИТЬ", "", file != null && file.saved(), false, true);
+	}
+
+	static void drawOverlayBackdrop(Graphics2D graphics, UiRect rect) {
+		if (graphics == null || rect == null) {
+			return;
+		}
+		graphics.setPaint(new GradientPaint(
+				rect.x(),
+				rect.y(),
+				new Color(10, 12, 18, 164),
+				rect.x(),
+				rect.bottom(),
+				new Color(10, 12, 18, 124)
+		));
+		graphics.fillRect(rect.x(), rect.y(), rect.width(), rect.height());
+	}
+
+	static void drawOverlayWindowHeaderText(Graphics2D graphics, UiLayout layout, UiRect header, String title, String subtitle) {
+		if (graphics == null || layout == null || header == null) {
+			return;
+		}
+		String safeTitle = title != null ? title : "";
+		String safeSubtitle = subtitle != null ? subtitle : "";
+		UiRect headerTitleRect = new UiRect(header.x(), header.y(), header.width(), Math.max(12, header.height() / 2));
+		UiRect headerSubtitleRect = new UiRect(header.x(), headerTitleRect.bottom() - 1, header.width(), Math.max(10, header.bottom() - headerTitleRect.bottom() + 1));
+		drawCenteredTextFitted(
+				graphics,
+				safeTitle,
+				headerTitleRect,
+				new Color(248, 240, 244, 238),
+				Font.BOLD,
+				compactScreenLayout(layout) ? clampInt(layout.unit() + 2, 10, 16) : clampInt(layout.unit() + 4, 14, 22),
+				clampInt(layout.unit(), 8, 14)
+		);
+		drawCenteredTextFitted(
+				graphics,
+				safeSubtitle,
+				headerSubtitleRect,
+				new Color(188, 198, 212, 176),
+				Font.PLAIN,
+				compactScreenLayout(layout) ? clampInt(layout.unit(), 8, 11) : clampInt(layout.unit() + 1, 10, 14),
+				clampInt(layout.unit(), 8, 14)
+		);
 	}
 
 	static void drawGalleryFileMenuWindowPlaceholder(Graphics2D graphics, UiLayout layout) {
@@ -4820,48 +4872,36 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		Color fill = selected
-				? new Color(248, 246, 246, 238)
-				: enabled ? new Color(255, 255, 255, 14) : new Color(255, 255, 255, 8);
-		Color stroke = danger && enabled
-				? new Color(255, 118, 126, 92)
-				: selected ? new Color(255, 255, 255, 86) : enabled ? new Color(255, 255, 255, 34) : new Color(255, 255, 255, 20);
+				? new Color(248, 246, 246, 236)
+				: enabled ? new Color(255, 255, 255, 10) : new Color(255, 255, 255, 6);
 		Color titleColor = selected
 				? new Color(22, 20, 24, 244)
 				: danger && enabled ? new Color(255, 142, 150, 238) : enabled ? new Color(248, 240, 244, 236) : new Color(200, 208, 218, 150);
-		Color subtitleColor = selected
-				? new Color(68, 60, 66, 220)
-				: enabled ? new Color(214, 221, 230, 188) : new Color(164, 174, 186, 132);
 		int arc = clampInt(layout.unit() * 2, 12, 18);
 		fillRoundedRect(graphics, rect, arc, fill);
-		strokeRoundedRect(graphics, rect, arc, 1.0F, stroke);
 		UiRect iconRect = new UiRect(
-				rect.x() + clampInt(layout.unit() / 2, 4, 8),
+				rect.x() + clampInt(layout.unit(), 8, 14),
 				rect.y() + (rect.height() - clampInt(layout.unit() + 6, 14, 22)) / 2,
 				clampInt(layout.unit() + 6, 14, 22),
 				clampInt(layout.unit() + 6, 14, 22)
 		);
 		drawPlayerUiIcon(graphics, iconRect, icon, titleColor);
 		UiRect titleRect = new UiRect(
-				iconRect.right() + clampInt(layout.unit() / 2, 4, 8),
-				rect.y() + clampInt(layout.unit() / 4, 2, 5),
-				Math.max(24, rect.width() - (iconRect.right() - rect.x()) - clampInt(layout.unit(), 8, 14)),
-				Math.max(12, rect.height() / 2)
+				iconRect.right() + clampInt(layout.unit(), 8, 14),
+				rect.y(),
+				Math.max(24, rect.width() - (iconRect.right() - rect.x()) - clampInt(layout.unit() * 2, 16, 24)),
+				rect.height()
 		);
-		UiRect subtitleRect = new UiRect(
-				titleRect.x(),
-				titleRect.bottom() - clampInt(layout.unit() / 6, 1, 2),
-				titleRect.width(),
-				Math.max(10, rect.bottom() - titleRect.bottom() - clampInt(layout.unit() / 4, 2, 4))
-		);
-		drawVerticalText(graphics, title, titleRect, titleColor, Font.BOLD, compactScreenLayout(layout) ? clampInt(layout.unit(), 8, 13) : clampInt(layout.unit() + 1, 10, 16));
-		drawVerticalText(graphics, subtitle, subtitleRect, subtitleColor, Font.PLAIN, compactScreenLayout(layout) ? clampInt(layout.unit() - 1, 7, 10) : clampInt(layout.unit(), 9, 13));
+		drawVerticalText(graphics, title, titleRect, titleColor, Font.BOLD, compactScreenLayout(layout) ? clampInt(layout.unit() + 1, 9, 14) : clampInt(layout.unit() + 2, 11, 18));
 	}
 
 	static void drawPlayerBackgroundWindow(Graphics2D graphics, UiLayout layout, MediaOverlayWindowSnapshot window) {
-		UiRect panel = playerBackgroundPanelRect(layout);
+		UiRect canvas = mediaCanvasRect(layout);
 		UiRect header = playerBackgroundHeaderRect(layout);
 		UiRect closeRect = playerBackgroundCloseRect(layout);
-		drawOverlayModalBase(graphics, layout, panel, header, closeRect, window.title(), window.subtitle());
+		drawOverlayBackdrop(graphics, canvas);
+		drawCloseGlyph(graphics, mediaChromeIconRect(closeRect, layout), new Color(248, 251, 255, 236));
+		drawOverlayWindowHeaderText(graphics, layout, header, window.title(), window.subtitle());
 		boolean artworkSelected = window.playerBackgroundMode() == PlayerBackgroundMode.ARTWORK;
 		boolean gallerySelected = window.playerBackgroundMode() == PlayerBackgroundMode.GALLERY;
 		drawPlayerBackgroundOptionButton(graphics, layout, playerBackgroundOptionRect(layout, 0), PlayerBackgroundMode.ARTWORK, artworkSelected, true, false, artworkSelected);
@@ -4897,18 +4937,14 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		Color fill = selected
-				? new Color(248, 246, 246, 238)
-				: enabled ? new Color(255, 255, 255, 14) : new Color(255, 255, 255, 8);
-		Color stroke = selected
-				? new Color(255, 255, 255, 86)
-				: enabled ? new Color(255, 255, 255, 34) : new Color(255, 255, 255, 20);
+				? new Color(248, 246, 246, 236)
+				: enabled ? new Color(255, 255, 255, 10) : new Color(255, 255, 255, 6);
 		Color titleColor = selected ? new Color(22, 20, 24, 244) : enabled ? new Color(248, 240, 244, 236) : new Color(200, 208, 218, 166);
-		Color subtitleColor = selected ? new Color(68, 60, 66, 220) : enabled ? new Color(214, 221, 230, 188) : new Color(164, 174, 186, 144);
+		Color subtitleColor = selected ? new Color(68, 60, 66, 216) : enabled ? new Color(214, 221, 230, 184) : new Color(164, 174, 186, 140);
 		int arc = clampInt(layout.unit() * 2, 12, 18);
 		fillRoundedRect(graphics, rect, arc, fill);
-		strokeRoundedRect(graphics, rect, arc, 1.0F, stroke);
 		UiRect iconRect = new UiRect(
-				rect.x() + clampInt(layout.unit() / 2, 4, 8),
+				rect.x() + clampInt(layout.unit(), 8, 14),
 				rect.y() + (rect.height() - clampInt(layout.unit() + 6, 14, 22)) / 2,
 				clampInt(layout.unit() + 6, 14, 22),
 				clampInt(layout.unit() + 6, 14, 22)
@@ -4925,7 +4961,7 @@ public final class MonitorScreenSystem {
 			fillRoundedRect(graphics, iconRect, clampInt(layout.unit(), 8, 12), titleColor);
 		}
 		UiRect titleRect = new UiRect(
-				iconRect.right() + clampInt(layout.unit() / 2, 4, 8),
+				iconRect.right() + clampInt(layout.unit(), 8, 14),
 				rect.y() + clampInt(layout.unit() / 4, 2, 5),
 				Math.max(24, rect.width() - (iconRect.right() - rect.x()) - clampInt(layout.unit() * 2, 14, 24) - (reserveScaleButtonsSpace ? playerBackgroundScaleButtonReserveWidth(layout) : 0)),
 				Math.max(12, rect.height() / 2)
@@ -4950,7 +4986,8 @@ public final class MonitorScreenSystem {
 		MediaScaleMode current = window.playerBackgroundScaleMode() != null ? window.playerBackgroundScaleMode() : MediaScaleMode.FIT;
 		UiRect rect = playerBackgroundScaleButtonRect(layout, window.playerBackgroundMode());
 		float strokeWidth = mediaChromeStrokeWidth(rect);
-		Color iconColor = drawSmallMediaButtonBase(graphics, rect, MediaButtonSegment.SINGLE, true, strokeWidth);
+		fillRoundedRect(graphics, rect, clampInt(layout.unit() + 1, 10, 16), new Color(22, 20, 24, 40));
+		Color iconColor = new Color(22, 20, 24, 228);
 		UiRect iconRect = mediaChromeIconRect(rect, layout);
 		switch (current) {
 			case FILL -> drawMediaFillGlyph(graphics, iconRect, iconColor, strokeWidth);
@@ -5463,7 +5500,7 @@ public final class MonitorScreenSystem {
 
 	static UiRect mediaYoutubeMusicInfoRect(UiLayout layout) {
 		UiRect artworkRect = mediaYoutubeMusicArtworkRect(layout);
-		int gap = clampInt(layout.unit(), 8, 16);
+		int gap = clampInt(layout.unit() * 3 / 4, 6, 12);
 		if (youtubeMusicLandscapeLayout(layout)) {
 			UiRect closeRect = mediaCloseRect(layout);
 			int sideInset = clampInt(layout.unit() * 2, 12, 28);
@@ -5543,7 +5580,7 @@ public final class MonitorScreenSystem {
 
 	static UiRect mediaYoutubeMusicCurrentTimeRect(UiLayout layout) {
 		UiRect timelineRect = mediaTimelineRect(layout, ScreenViewMode.YOUTUBE_MUSIC);
-		int top = timelineRect.bottom() + clampInt(layout.unit() / 2, 4, 8);
+		int top = timelineRect.bottom() + clampInt(layout.unit() / 3, 2, 6);
 		return new UiRect(timelineRect.x(), top, Math.max(16, timelineRect.width() / 2), mediaYoutubeMusicTimeRowHeight(layout));
 	}
 
@@ -5556,7 +5593,7 @@ public final class MonitorScreenSystem {
 	static UiRect mediaYoutubeMusicControlsRowRect(UiLayout layout) {
 		UiRect timelineRect = mediaTimelineRect(layout, ScreenViewMode.YOUTUBE_MUSIC);
 		UiRect totalTimeRect = mediaYoutubeMusicTotalTimeRect(layout);
-		int top = totalTimeRect.bottom() + clampInt(layout.unit(), 8, 16);
+		int top = totalTimeRect.bottom() + clampInt(layout.unit() * 3 / 4, 6, 12);
 		return new UiRect(timelineRect.x(), top, timelineRect.width(), mediaYoutubeMusicControlsRowHeight(layout));
 	}
 
@@ -5567,7 +5604,7 @@ public final class MonitorScreenSystem {
 			return new UiRect(artworkRect.x(), top, artworkRect.width(), mediaYoutubeMusicActionsRowHeight(layout));
 		}
 		UiRect controlsRect = mediaYoutubeMusicControlsRowRect(layout);
-		int top = controlsRect.bottom() + clampInt(layout.unit(), 8, 16);
+		int top = controlsRect.bottom() + clampInt(layout.unit() * 3 / 4, 6, 12);
 		return new UiRect(controlsRect.x(), top, controlsRect.width(), mediaYoutubeMusicActionsRowHeight(layout));
 	}
 
@@ -6131,17 +6168,11 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect homeAppIconRect(UiRect cardRect, UiLayout layout) {
-		int maxSize = Math.max(
-				18,
-				Math.min(
-						cardRect.width() - clampInt(layout.unit() / 2, 3, 10),
-						cardRect.height() - homeAppLabelHeight(layout) - clampInt(layout.unit() / 3, 2, 8)
-				)
-		);
-		int size = clampInt(Math.round(Math.min(cardRect.width(), cardRect.height()) * 0.58F), 20, maxSize);
+		int maxSize = Math.max(18, Math.min(cardRect.width() - layout.unit(), cardRect.height() - homeAppLabelHeight(layout) - layout.unit()));
+		int size = clampInt(Math.round(Math.min(cardRect.width(), cardRect.height()) * 0.48F), 18, maxSize);
 		return new UiRect(
 				cardRect.x() + (cardRect.width() - size) / 2,
-				cardRect.y() + clampInt(layout.unit() / 4, 2, 8),
+				cardRect.y() + layout.unit() / 2,
 				size,
 				size
 		);
@@ -6157,7 +6188,7 @@ public final class MonitorScreenSystem {
 		int labelHeight = homeAppLabelHeight(layout);
 		return new UiRect(
 				cardRect.x() + clampInt(layout.unit() / 2, 4, 8),
-				cardRect.bottom() - labelHeight - clampInt(layout.unit() / 4, 2, 6),
+				cardRect.bottom() - labelHeight - clampInt(layout.unit() / 2, 4, 8),
 				cardRect.width() - clampInt(layout.unit(), 8, 14),
 				labelHeight
 		);
@@ -6758,7 +6789,7 @@ public final class MonitorScreenSystem {
 	static UiRect mediaYoutubeMusicArtworkRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
 		UiRect closeRect = mediaCloseRect(layout);
-		int topInset = closeRect.bottom() + clampInt(layout.unit(), 6, 16);
+		int topInset = closeRect.bottom() + clampInt(layout.unit() / 2 + 1, 4, 10);
 		int minSize = ultraCompactScreenLayout(layout)
 				? clampInt(layout.unit() * 7, 38, 54)
 				: compactScreenLayout(layout)
@@ -6787,10 +6818,10 @@ public final class MonitorScreenSystem {
 				+ mediaYoutubeMusicTimeRowHeight(layout)
 				+ mediaYoutubeMusicControlsRowHeight(layout)
 				+ mediaYoutubeMusicActionsRowHeight(layout)
-				+ clampInt(layout.unit() * 5, 28, 74);
+				+ clampInt(layout.unit() * 4, 20, 58);
 		int maxWidth = Math.max(minSize, canvas.width() - sideInset * 2);
 		int availableHeight = Math.max(minSize, canvas.height() - topInset - reservedBottom);
-		int preferredSize = (int) Math.round(Math.min(maxWidth, canvas.height() * 0.36D));
+		int preferredSize = (int) Math.round(Math.min(maxWidth, canvas.height() * 0.40D));
 		int size = clampInt(preferredSize, minSize, Math.max(minSize, Math.min(maxWidth, availableHeight)));
 		return new UiRect(
 				canvas.x() + (canvas.width() - size) / 2,
@@ -6856,8 +6887,8 @@ public final class MonitorScreenSystem {
 		return switch (type) {
 			case YOUTUBE_QUEUE -> mediaQueuePanelRect(layout);
 			case GALLERY_DELETE_CONFIRM -> galleryDeleteConfirmPanelRect(layout);
-			case GALLERY_FILE_MENU -> galleryFileMenuPanelRect(layout);
-			case PLAYER_BACKGROUND -> playerBackgroundPanelRect(layout);
+			case GALLERY_FILE_MENU -> mediaCanvasRect(layout);
+			case PLAYER_BACKGROUND -> mediaCanvasRect(layout);
 		};
 	}
 
@@ -7006,28 +7037,31 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect galleryFileMenuHeaderRect(UiLayout layout) {
-		UiRect panel = overlayWindowRect(layout, MediaOverlayWindowType.GALLERY_FILE_MENU);
-		int inset = clampInt(layout.unit() / 2, 4, 8);
+		UiRect canvas = mediaCanvasRect(layout);
+		UiRect panel = galleryFileMenuPanelRect(layout);
 		int height = ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 2 + 1, 20, 26)
+				? clampInt(layout.unit() * 4, 26, 38)
 				: compactScreenLayout(layout)
-				? clampInt(layout.unit() * 3, 26, 34)
-				: clampInt(layout.unit() * 4 - 1, 32, 46);
-		return new UiRect(panel.x() + inset, panel.y() + inset, panel.width() - inset * 2, height);
+				? clampInt(layout.unit() * 5, 34, 52)
+				: clampInt(layout.unit() * 6, 44, 66);
+		int y = Math.max(canvas.y() + clampInt(layout.unit() / 2, 4, 8), panel.y() - height - clampInt(layout.unit(), 8, 16));
+		return new UiRect(panel.x(), y, panel.width(), height);
 	}
 
 	static UiRect galleryFileMenuCloseRect(UiLayout layout) {
 		UiRect header = galleryFileMenuHeaderRect(layout);
-		int size = Math.max(16, header.height() - clampInt(layout.unit() / 2, 4, 8));
-		return new UiRect(header.right() - size - clampInt(layout.unit() / 3, 3, 6), header.y() + (header.height() - size) / 2, size, size);
+		int size = clampInt(layout.unit() * 2 + 2, 22, 34);
+		int inset = clampInt(layout.unit() / 2, 4, 8);
+		return new UiRect(
+				header.right() - size - inset,
+				header.y() + Math.max(0, (header.height() - size) / 2),
+				size,
+				size
+		);
 	}
 
 	static UiRect galleryFileMenuBodyRect(UiLayout layout) {
-		UiRect panel = overlayWindowRect(layout, MediaOverlayWindowType.GALLERY_FILE_MENU);
-		UiRect header = galleryFileMenuHeaderRect(layout);
-		int inset = clampInt(layout.unit(), 8, 14);
-		int top = header.bottom() + clampInt(layout.unit() / 2, 4, 8);
-		return new UiRect(panel.x() + inset, top, panel.width() - inset * 2, Math.max(24, panel.bottom() - top - inset));
+		return galleryFileMenuPanelRect(layout);
 	}
 
 	static UiRect galleryFileMenuActionRect(UiLayout layout, int index) {
@@ -7045,28 +7079,31 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect playerBackgroundHeaderRect(UiLayout layout) {
-		UiRect panel = overlayWindowRect(layout, MediaOverlayWindowType.PLAYER_BACKGROUND);
-		int inset = clampInt(layout.unit() / 2, 4, 8);
+		UiRect canvas = mediaCanvasRect(layout);
+		UiRect panel = playerBackgroundPanelRect(layout);
 		int height = ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 2 + 1, 20, 26)
+				? clampInt(layout.unit() * 4, 26, 38)
 				: compactScreenLayout(layout)
-				? clampInt(layout.unit() * 3, 26, 34)
-				: clampInt(layout.unit() * 4 - 1, 32, 46);
-		return new UiRect(panel.x() + inset, panel.y() + inset, panel.width() - inset * 2, height);
+				? clampInt(layout.unit() * 5, 34, 52)
+				: clampInt(layout.unit() * 6, 44, 66);
+		int y = Math.max(canvas.y() + clampInt(layout.unit() / 2, 4, 8), panel.y() - height - clampInt(layout.unit(), 8, 16));
+		return new UiRect(panel.x(), y, panel.width(), height);
 	}
 
 	static UiRect playerBackgroundCloseRect(UiLayout layout) {
 		UiRect header = playerBackgroundHeaderRect(layout);
-		int size = Math.max(16, header.height() - clampInt(layout.unit() / 2, 4, 8));
-		return new UiRect(header.right() - size - clampInt(layout.unit() / 3, 3, 6), header.y() + (header.height() - size) / 2, size, size);
+		int size = clampInt(layout.unit() * 2 + 2, 22, 34);
+		int inset = clampInt(layout.unit() / 2, 4, 8);
+		return new UiRect(
+				header.right() - size - inset,
+				header.y() + Math.max(0, (header.height() - size) / 2),
+				size,
+				size
+		);
 	}
 
 	static UiRect playerBackgroundBodyRect(UiLayout layout) {
-		UiRect panel = overlayWindowRect(layout, MediaOverlayWindowType.PLAYER_BACKGROUND);
-		UiRect header = playerBackgroundHeaderRect(layout);
-		int inset = clampInt(layout.unit(), 8, 14);
-		int top = header.bottom() + clampInt(layout.unit() / 2, 4, 8);
-		return new UiRect(panel.x() + inset, top, panel.width() - inset * 2, Math.max(24, panel.bottom() - top - inset));
+		return playerBackgroundPanelRect(layout);
 	}
 
 	static UiRect playerBackgroundOptionRect(UiLayout layout, int index) {
@@ -7436,7 +7473,7 @@ public final class MonitorScreenSystem {
 	}
 
 	static int homeHeaderHeight(UiLayout layout) {
-		return clampInt((int) Math.round(layout.unit() * 1.6D), 12, 34);
+		return clampInt((int) Math.round(layout.unit() * 2.0D), 12, 44);
 	}
 
 	static int homeRowsPerPage(UiLayout layout) {
@@ -7458,7 +7495,7 @@ public final class MonitorScreenSystem {
 	}
 
 	static int homeAppLabelHeight(UiLayout layout) {
-		return clampInt((int) Math.round(layout.unit() * 1.45D), 11, 24);
+		return clampInt((int) Math.round(layout.unit() * 1.9D), 12, 34);
 	}
 
 	static int homeDesiredCardWidth(UiLayout layout) {

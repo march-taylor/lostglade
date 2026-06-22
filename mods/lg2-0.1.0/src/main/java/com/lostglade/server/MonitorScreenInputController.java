@@ -187,8 +187,11 @@ final class MonitorScreenInputController {
 			} else if (galleryFileMenuOpen) {
 				GalleryItem shareItem = null;
 				synchronized (mediaState) {
-					if (!galleryFileMenuPanelRect(layout).contains(touchPoint.x(), touchPoint.y())
-							|| galleryFileMenuCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+					UiRect panelRect = galleryFileMenuPanelRect(layout);
+					UiRect headerRect = galleryFileMenuHeaderRect(layout);
+					UiRect closeRect = galleryFileMenuCloseRect(layout);
+					boolean insideWindow = panelRect.contains(touchPoint.x(), touchPoint.y()) || headerRect.contains(touchPoint.x(), touchPoint.y());
+					if (closeRect.contains(touchPoint.x(), touchPoint.y()) || !insideWindow) {
 						mediaState.galleryFileMenuOpen = false;
 						mediaState.version++;
 					} else if (galleryFileMenuActionRect(layout, 0).contains(touchPoint.x(), touchPoint.y())) {
@@ -239,8 +242,11 @@ final class MonitorScreenInputController {
 				}
 			} else if (playerBackgroundMenuOpen) {
 				synchronized (mediaState) {
-					if (!playerBackgroundPanelRect(layout).contains(touchPoint.x(), touchPoint.y())
-							|| playerBackgroundCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+					UiRect panelRect = playerBackgroundPanelRect(layout);
+					UiRect headerRect = playerBackgroundHeaderRect(layout);
+					UiRect closeRect = playerBackgroundCloseRect(layout);
+					boolean insideWindow = panelRect.contains(touchPoint.x(), touchPoint.y()) || headerRect.contains(touchPoint.x(), touchPoint.y());
+					if (closeRect.contains(touchPoint.x(), touchPoint.y()) || !insideWindow) {
 						mediaState.playerBackgroundMenuOpen = false;
 						mediaState.version++;
 					} else {
