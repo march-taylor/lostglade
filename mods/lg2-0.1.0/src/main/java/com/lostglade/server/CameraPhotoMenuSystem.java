@@ -26,8 +26,10 @@ import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.TooltipDisplay;
 import xyz.nucleoid.packettweaker.PacketContext;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -38,18 +40,15 @@ public final class CameraPhotoMenuSystem {
 	private static final int MENU_COLUMNS = 9;
 	private static final int GRID_COLUMNS = CameraPhotoSettings.MAX_MAPS_WIDE;
 	private static final int GRID_ROWS = CameraPhotoSettings.MAX_MAPS_HIGH;
-	private static final int PANEL_SLOT_TOP_LEFT = 6;
-	private static final int MODE_SLOT = 7;
+	private static final int MODE_SLOT_LEFT = 6;
+	private static final int MODE_SLOT_RIGHT = 7;
 	private static final int CLOSE_SLOT = 8;
-	private static final int PANEL_SLOT_BOTTOM_LEFT = 15;
-	private static final int PANEL_SLOT_BOTTOM_CENTER = 16;
-	private static final int PANEL_SLOT_BOTTOM_RIGHT = 17;
 	private static final String TITLE_SHIFT = "\ue905";
 	private static final String TITLE_RESET = "\ue940\ue940\ue941\ue943";
 	private static final String CAMERA_PANEL_PHOTO_GLYPH = "\uebf0";
 	private static final String CAMERA_PANEL_VIDEO_GLYPH = "\uebf1";
-	private static final int CAMERA_SIZE_X = 142;
-	private static final int CAMERA_TOTAL_X = 151;
+	private static final int CAMERA_SIZE_CENTER_X = 139;
+	private static final int CAMERA_TOTAL_CENTER_X = 164;
 	private static final Identifier INVISIBLE_BUTTON_MODEL = Objects.requireNonNull(Identifier.tryParse("lg2:gui/button/invisible"));
 	private static final FontDescription CAMERA_PANEL_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:camera_menu_panel"))
@@ -93,16 +92,19 @@ public final class CameraPhotoMenuSystem {
 		String totalText = Integer.toString(settings.totalMaps());
 		int titleWidth = plainTitle.getString().length() * 6;
 		int sizeWidth = sizeText.length() * 6;
+		int totalWidth = totalText.length() * 6;
+		int sizeStartX = CAMERA_SIZE_CENTER_X - sizeWidth / 2;
+		int totalStartX = CAMERA_TOTAL_CENTER_X - totalWidth / 2;
 
 		MutableComponent title = Component.empty();
 		title.append(defaultStyled(TITLE_SHIFT));
 		title.append(Component.literal(panelGlyph(settings)).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CAMERA_PANEL_FONT)));
 		title.append(defaultStyled(TITLE_RESET));
 		title.append(plainTitle.copy().withStyle(style -> style.withColor(0xD0C4A7).withItalic(false)));
-		title.append(defaultStyled(buildHorizontalAdvance(CAMERA_SIZE_X - titleWidth)));
+		title.append(defaultStyled(buildHorizontalAdvance(sizeStartX - titleWidth)));
 		title.append(Component.literal(sizeText)
-				.withStyle(style -> style.withColor(0xE1D4B1).withItalic(false).withFont(CAMERA_SIZE_FONT)));
-		title.append(defaultStyled(buildHorizontalAdvance(CAMERA_TOTAL_X - CAMERA_SIZE_X - sizeWidth)));
+				.withStyle(style -> style.withColor(0x1A1A1A).withItalic(false).withFont(CAMERA_SIZE_FONT)));
+		title.append(defaultStyled(buildHorizontalAdvance(totalStartX - sizeStartX - sizeWidth)));
 		title.append(Component.literal(totalText)
 				.withStyle(style -> style.withColor(0xD2C39A).withItalic(false).withFont(CAMERA_TOTAL_FONT)));
 		return title;
@@ -190,7 +192,8 @@ public final class CameraPhotoMenuSystem {
 	private static ItemStack invisibleGuiStack() {
 		ItemStack stack = new ItemStack(Items.PAPER);
 		stack.set(DataComponents.ITEM_MODEL, INVISIBLE_BUTTON_MODEL);
-		stack.set(DataComponents.CUSTOM_NAME, Component.literal(" "));
+		stack.set(DataComponents.CUSTOM_NAME, Component.empty());
+		stack.set(DataComponents.TOOLTIP_DISPLAY, new TooltipDisplay(true, new LinkedHashSet<>()));
 		return stack;
 	}
 
@@ -253,7 +256,7 @@ public final class CameraPhotoMenuSystem {
 				return;
 			}
 			CameraPhotoSettings currentSettings = CameraPhotoSettings.read(cameraStack);
-			if (slotId == MODE_SLOT) {
+			if (slotId == MODE_SLOT_LEFT || slotId == MODE_SLOT_RIGHT) {
 				CameraPhotoSettings.CaptureMode nextMode = currentSettings.captureMode() == CameraPhotoSettings.CaptureMode.PHOTO
 						? CameraPhotoSettings.CaptureMode.VIDEO
 						: CameraPhotoSettings.CaptureMode.PHOTO;
@@ -312,12 +315,9 @@ public final class CameraPhotoMenuSystem {
 				}
 			}
 
-			this.container.setItem(PANEL_SLOT_TOP_LEFT, invisibleGuiStack());
-			this.container.setItem(MODE_SLOT, invisibleGuiStack());
+			this.container.setItem(MODE_SLOT_LEFT, invisibleGuiStack());
+			this.container.setItem(MODE_SLOT_RIGHT, invisibleGuiStack());
 			this.container.setItem(CLOSE_SLOT, invisibleGuiStack());
-			this.container.setItem(PANEL_SLOT_BOTTOM_LEFT, invisibleGuiStack());
-			this.container.setItem(PANEL_SLOT_BOTTOM_CENTER, invisibleGuiStack());
-			this.container.setItem(PANEL_SLOT_BOTTOM_RIGHT, invisibleGuiStack());
 			this.refreshTitle(settings);
 		}
 
