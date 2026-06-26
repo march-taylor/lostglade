@@ -57,6 +57,7 @@ import java.util.UUID;
 public final class BluetoothLinkSystem {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final String FILE_NAME = "lg2-bluetooth-links.json";
+	private static final String IT_BLUETOOTH_ADAPTER = "it_bluetooth_adapter";
 	private static final long ACTIONBAR_REFRESH_INTERVAL_TICKS = 10L;
 
 	private static final Map<Endpoint, LinkedHashSet<Endpoint>> LINKS = new LinkedHashMap<>();
@@ -180,6 +181,10 @@ public final class BluetoothLinkSystem {
 		removeEndpoint(level, droneEndpoint(level == null ? null : level.dimension(), pos == null ? BlockPos.ZERO : pos, droneUuid));
 	}
 
+	public static void removeDroneEndpoint(ServerLevel level, UUID droneUuid, BlockPos pos, Vec3 adapterDropPosition) {
+		removeEndpoint(level, droneEndpoint(level == null ? null : level.dimension(), pos == null ? BlockPos.ZERO : pos, droneUuid), adapterDropPosition);
+	}
+
 	public static void collapseScreenEndpoints(MinecraftServer server, Endpoint rootEndpoint, Iterable<Endpoint> legacyEndpoints) {
 		if (rootEndpoint == null || rootEndpoint.type() != EndpointType.SCREEN || legacyEndpoints == null) {
 			return;
@@ -217,11 +222,16 @@ public final class BluetoothLinkSystem {
 	}
 
 	private static void removeEndpoint(ServerLevel level, Endpoint endpoint) {
+		removeEndpoint(level, endpoint, null);
+	}
+
+	private static void removeEndpoint(ServerLevel level, Endpoint endpoint, Vec3 adapterDropPosition) {
 		if (endpoint == null) {
 			return;
 		}
-		ensureLoaded(level == null ? null : level.getServer());
-		clearSelectedEndpoint(endpoint, level == null ? null : level.getServer());
+		MinecraftServer server = level == null ? null : level.getServer();
+		ensureLoaded(server);
+		clearSelectedEndpoint(endpoint, server);
 		LinkedHashSet<Endpoint> removedLinks = LINKS.remove(endpoint);
 		if (removedLinks == null || removedLinks.isEmpty()) {
 			return;
@@ -234,8 +244,12 @@ public final class BluetoothLinkSystem {
 					LINKS.remove(linked);
 				}
 			}
-			dropAdapterAtEndpoint(level == null ? null : level.getServer(), linked);
-			notifyEndpointChanged(level == null ? null : level.getServer(), linked);
+			if (adapterDropPosition != null && level != null) {
+				dropAdapterAtPosition(level, adapterDropPosition);
+			} else {
+				dropAdapterAtEndpoint(server, linked);
+			}
+			notifyEndpointChanged(server, linked);
 		}
 		dirty = true;
 	}
@@ -249,6 +263,9 @@ public final class BluetoothLinkSystem {
 		}
 		if (!serverPlayer.getItemInHand(hand).is(ModItems.BLUETOOTH_ADAPTER)) {
 			return InteractionResult.PASS;
+		}
+		if (!canUseBluetoothAdapter(serverPlayer, true)) {
+			return InteractionResult.FAIL;
 		}
 		Endpoint endpoint = resolveBlockEndpoint(level, hitResult == null ? null : hitResult.getBlockPos());
 		if (endpoint == null) {
@@ -267,6 +284,9 @@ public final class BluetoothLinkSystem {
 		}
 		if (!serverPlayer.getItemInHand(hand).is(ModItems.BLUETOOTH_ADAPTER)) {
 			return InteractionResult.PASS;
+		}
+		if (!canUseBluetoothAdapter(serverPlayer, true)) {
+			return InteractionResult.FAIL;
 		}
 		Endpoint endpoint = MonitorScreenSystem.resolveBluetoothScreenEndpoint(level, entity);
 		if (endpoint == null) {
@@ -391,16 +411,22 @@ public final class BluetoothLinkSystem {
 		if (dropLevel == null) {
 			return;
 		}
-		Vec3 dropPosition = adapterDropPosition(endpoint);
+		dropAdapterAtPosition(dropLevel, adapterDropPosition(endpoint));
+	}
+
+	private static void dropAdapterAtPosition(ServerLevel level, Vec3 dropPosition) {
+		if (level == null || dropPosition == null) {
+			return;
+		}
 		ItemEntity itemEntity = new ItemEntity(
-				dropLevel,
+				level,
 				dropPosition.x,
 				dropPosition.y,
 				dropPosition.z,
 				new ItemStack(ModItems.BLUETOOTH_ADAPTER)
 		);
 		itemEntity.setDefaultPickUpDelay();
-		dropLevel.addFreshEntity(itemEntity);
+		level.addFreshEntity(itemEntity);
 	}
 
 	private static Vec3 adapterDropPosition(Endpoint endpoint) {
@@ -455,6 +481,33 @@ public final class BluetoothLinkSystem {
 
 	private static Component literal(String text, ChatFormatting color) {
 		return Component.literal(text).withStyle(style -> style.withColor(color).withItalic(false));
+	}
+
+	private static boolean canUseBluetoothAdapter(ServerPlayer player, boolean notify) {
+		if (player == null || ServerUpgradeUiSystem.hasUpgrade(player, IT_BLUETOOTH_ADAPTER)) {
+			return true;
+		}
+		if (notify) {
+			String upgradeName = ServerUpgradeUiSystem.getUpgradeDisplayName(player, IT_BLUETOOTH_ADAPTER);
+			player.displayClientMessage(literal(localizedAdapterLockedMessage(player, upgradeName), ChatFormatting.RED), true);
+		}
+		return false;
+	}
+
+	private static String localizedAdapterLockedMessage(ServerPlayer player, String upgradeName) {
+		String resolvedName = upgradeName == null || upgradeName.isBlank() ? "Bluetooth Adapter" : upgradeName;
+		String language = player != null && player.clientInformation() != null ? player.clientInformation().language() : "";
+		String normalized = language == null ? "" : language.toLowerCase(Locale.ROOT);
+		if (normalized.startsWith("ja")) {
+			return "先に「" + resolvedName + "」を購入してください。";
+		}
+		if (normalized.startsWith("uk")) {
+			return "Спочатку купи " + resolvedName + ".";
+		}
+		if (normalized.startsWith("ru") || normalized.startsWith("rpr")) {
+			return "Сначала купи " + resolvedName + ".";
+		}
+		return "Buy " + resolvedName + " first.";
 	}
 
 	private static String endpointTypeName(EndpointType type) {
@@ -563,7 +616,9 @@ public final class BluetoothLinkSystem {
 				continue;
 			}
 			onlineSelectedPlayers.add(playerId);
-			if (!player.isAlive() || !player.getMainHandItem().is(ModItems.BLUETOOTH_ADAPTER)) {
+			if (!player.isAlive()
+					|| !player.getMainHandItem().is(ModItems.BLUETOOTH_ADAPTER)
+					|| !canUseBluetoothAdapter(player, false)) {
 				clearSelectedEndpoint(player, true);
 				continue;
 			}

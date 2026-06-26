@@ -191,12 +191,16 @@ record CameraAppDeviceSnapshot(
 record MaxVisualSnapshot(
 		long version,
 		String accountCode,
+		String accountName,
 		BufferedImage avatarFrame,
 		List<MaxContactSnapshot> contacts,
 		MaxCallVisualSnapshot call,
 		List<MaxAvatarCandidateSnapshot> avatarCandidates,
+		int avatarPickerScroll,
 		List<MaxRingtoneCandidateSnapshot> ringtoneCandidates,
+		int ringtonePickerScroll,
 		List<MaxFileShareContactSnapshot> fileShareContacts,
+		int fileSharePickerScroll,
 		MaxIncomingFileSnapshot incomingFile,
 		int notificationCount,
 		int fileShareFileCount,
@@ -217,6 +221,7 @@ record MaxVisualSnapshot(
 
 record MaxContactSnapshot(
 		String code,
+		String displayName,
 		BufferedImage avatarFrame,
 		boolean avatarAnimated,
 		boolean online,
@@ -228,6 +233,7 @@ record MaxContactSnapshot(
 record MaxCallVisualSnapshot(
 		MaxCallPhase phase,
 		String peerCode,
+		String peerDisplayName,
 		BufferedImage peerAvatarFrame,
 		boolean peerAvatarAnimated,
 		BufferedImage localPreviewFrame,
@@ -246,11 +252,14 @@ record MaxCallVisualSnapshot(
 		int selectedMicrophoneIndex,
 		int cameraScroll,
 		int microphoneScroll,
+		int contactPickerScroll,
+		int miniParticipantScroll,
 		boolean menuOpen,
 		boolean cameraPickerOpen,
 		boolean contactPickerOpen,
 		boolean selfFocused,
 		boolean peerFocused,
+		boolean miniParticipantsHidden,
 		long elapsedMillis
 ) {
 	boolean dynamic() {
@@ -264,6 +273,7 @@ record MaxCallVisualSnapshot(
 
 record MaxCallParticipantSnapshot(
 		String code,
+		String displayName,
 		BufferedImage avatarFrame,
 		boolean avatarAnimated,
 		BufferedImage videoFrame,
@@ -315,6 +325,7 @@ record MaxRingtoneCandidateSnapshot(
 
 record MaxFileShareContactSnapshot(
 		String code,
+		String displayName,
 		BufferedImage avatarFrame,
 		boolean online,
 		boolean selected
@@ -323,6 +334,7 @@ record MaxFileShareContactSnapshot(
 
 record MaxIncomingFileSnapshot(
 		String senderCode,
+		String senderDisplayName,
 		BufferedImage senderAvatarFrame,
 		boolean senderAvatarAnimated,
 		String fileName,
@@ -605,6 +617,7 @@ enum PlayerUiIcon {
 	DEVICE_SELECT("/assets/lg2/textures/monitor/ui_icons/device_select.png"),
 	CONTACT_ADD("/assets/lg2/textures/monitor/ui_icons/contact_add.png"),
 	FULLSCREEN_EXIT("/assets/lg2/textures/monitor/ui_icons/fullscreen_exit.png"),
+	GRID_FILL("/assets/lg2/textures/monitor/ui_icons/grid_fill.png"),
 	SIGNAL("/assets/lg2/textures/monitor/ui_icons/signal.png"),
 	OFFLINE("/assets/lg2/textures/monitor/ui_icons/offline.png"),
 	UNLINK("/assets/lg2/textures/monitor/ui_icons/unlink.png"),

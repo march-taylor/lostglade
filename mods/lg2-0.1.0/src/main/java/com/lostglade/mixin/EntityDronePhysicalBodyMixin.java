@@ -38,11 +38,11 @@ public abstract class EntityDronePhysicalBodyMixin {
 	private void lg2$makeDroneRootCollideWithEntities(Entity other, CallbackInfoReturnable<Boolean> cir) {
 		Entity self = (Entity) (Object) this;
 		if (lg2$isDroneRoot(self)) {
-			cir.setReturnValue(DroneSystem.shouldDroneRootCollideWithEntities(self) && (other == null || !other.isSpectator()));
+			cir.setReturnValue(false);
 			return;
 		}
 		if (lg2$isDroneRoot(other)) {
-			cir.setReturnValue(DroneSystem.shouldDroneRootCollideWithEntities(other) && !self.isSpectator());
+			cir.setReturnValue(false);
 		}
 	}
 
@@ -50,7 +50,7 @@ public abstract class EntityDronePhysicalBodyMixin {
 	private void lg2$makeDroneRootReceiveEntityCollisions(Entity other, CallbackInfoReturnable<Boolean> cir) {
 		Entity self = (Entity) (Object) this;
 		if (lg2$isDroneRoot(self)) {
-			cir.setReturnValue(DroneSystem.shouldDroneRootCollideWithEntities(self) && (other == null || !other.isSpectator()));
+			cir.setReturnValue(false);
 		}
 	}
 

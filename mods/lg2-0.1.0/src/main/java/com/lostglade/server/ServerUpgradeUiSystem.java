@@ -90,6 +90,7 @@ public final class ServerUpgradeUiSystem {
 	private static final int BALANCE_DIGIT_WIDTH = 6;
 	private static final int TOOLTIP_DESCRIPTION_WRAP = 42;
 	private static final int TOOLTIP_DESCRIPTION_WRAP_CJK = 22;
+	private static final int TOOLTIP_DESCRIPTION_MAX_LINES = 4;
 	private static final int TOOLTIP_REQUIREMENTS_WRAP = 46;
 	private static final int TOOLTIP_REQUIREMENTS_WRAP_CJK = 24;
 	private static final int ERAS_PROGRESS_GLYPHS_BASE = 0xE991;
@@ -294,6 +295,10 @@ public final class ServerUpgradeUiSystem {
 
 	public static boolean hasUpgrade(ServerPlayer player, String upgradeId) {
 		return getUpgradeLevel(player, upgradeId) >= 1;
+	}
+
+	public static String getUpgradeDisplayName(ServerPlayer player, String upgradeId) {
+		return resolveUpgradeDisplayName(player, upgradeId);
 	}
 
 	private static int resetAllPurchases(MinecraftServer server, Collection<ServerPlayer> targets) {
@@ -670,7 +675,7 @@ public final class ServerUpgradeUiSystem {
 			ButtonState state,
 			boolean hasPack
 	) {
-		if (shouldShowPurchaseLock(viewer, button, state)) {
+		if (shouldShowPurchaseLock(viewer, screenId, button, state)) {
 			return MENU_LOCK_ICON;
 		}
 
@@ -679,10 +684,14 @@ public final class ServerUpgradeUiSystem {
 
 	private static boolean shouldShowPurchaseLock(
 			ServerPlayer player,
+			String screenId,
 			UpgradeUiConfig.ButtonConfig button,
 			ButtonState state
 	) {
 		if (button == null || !UpgradeUiConfig.ButtonType.PURCHASE_UPGRADE.id.equals(button.type)) {
+			return false;
+		}
+		if (usesInvisibleTreePurchaseVisuals(screenId)) {
 			return false;
 		}
 		if (state == ButtonState.MAXED) {
@@ -692,6 +701,10 @@ public final class ServerUpgradeUiSystem {
 			return true;
 		}
 		return getUpgradeLevel(player, button.upgradeId) <= 0;
+	}
+
+	private static boolean usesInvisibleTreePurchaseVisuals(String screenId) {
+		return "it_hub".equals(screenId) || "it_drones".equals(screenId);
 	}
 
 	private static Component buildTooltipNameComponent(
@@ -741,7 +754,7 @@ public final class ServerUpgradeUiSystem {
 				resolveLocalizedLines(viewer, button.lore.values),
 				placeholders,
 				tooltipWrapWidth(viewer, TOOLTIP_DESCRIPTION_WRAP, TOOLTIP_DESCRIPTION_WRAP_CJK),
-				2
+				TOOLTIP_DESCRIPTION_MAX_LINES
 		);
 		if (!description.isEmpty()) {
 			result.add(buildSpacerLine(hasPack));
@@ -1204,6 +1217,10 @@ public final class ServerUpgradeUiSystem {
 
 		int currentLevel = getUpgradeLevel(player, button.upgradeId);
 		if (currentLevel >= button.pricesBitcoins.size()) {
+			if (button.targetScreenId != null && !button.targetScreenId.isBlank()) {
+				playUiClick(player, true);
+				return openScreen(player, button.targetScreenId);
+			}
 			playUiClick(player, false);
 			sendPlayerMessage(player, localizeSystem(player, "This upgrade is already maxed.", "Это улучшение уже прокачано до максимума."));
 			return true;

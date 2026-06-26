@@ -157,7 +157,7 @@ final class MonitorScreenLiveSources {
 						online = droneState.online();
 					}
 				}
-				String title = liveSourceDisplayTitle(cameraRef, displayPos);
+				String title = liveSourceDisplayTitle(server, cameraRef, displayPos);
 				String subtitle = formatLiveSourceCoordinates(displayPos);
 				GalleryItem existing = existingLiveItems.get(url);
 				if (existing != null
@@ -470,17 +470,29 @@ final class MonitorScreenLiveSources {
 				+ "  Z " + String.format(Locale.ROOT, "%+d", pos.getZ());
 	}
 
-	static String liveSourceDisplayTitle(LiveCameraReference cameraRef, BlockPos pos) {
+	static String liveCameraDeviceTitle(MinecraftServer server, LiveCameraReference cameraRef) {
+		String fallback = cameraRef != null && cameraRef.sourceType() == LiveCameraSourceType.DRONE ? "Дрон" : "Камера";
+		return resolveLiveCameraDisplayTitle(server, cameraRef, fallback);
+	}
+
+	static String liveSourceDisplayTitle(MinecraftServer server, LiveCameraReference cameraRef, BlockPos pos) {
 		if (cameraRef == null) {
 			return "SOURCE";
 		}
-		if (cameraRef.sourceType() == LiveCameraSourceType.DRONE) {
-			return "UAV " + shortLiveSourceToken(cameraRef.sourceUuid());
+		String fallback = cameraRef.sourceType() == LiveCameraSourceType.DRONE
+				? "UAV " + shortLiveSourceToken(cameraRef.sourceUuid())
+				: pos == null ? "NODE" : "NODE " + Math.abs(pos.getX()) + ":" + Math.abs(pos.getZ());
+		return resolveLiveCameraDisplayTitle(server, cameraRef, fallback);
+	}
+
+	private static String resolveLiveCameraDisplayTitle(MinecraftServer server, LiveCameraReference cameraRef, String fallback) {
+		if (cameraRef == null || cameraRef.sourceType() == LiveCameraSourceType.DRONE) {
+			return fallback;
 		}
-		if (pos == null) {
-			return "NODE";
+		if (server == null || cameraRef.dimension() == null || cameraRef.pos() == null) {
+			return fallback;
 		}
-		return "NODE " + Math.abs(pos.getX()) + ":" + Math.abs(pos.getZ());
+		return PlacedDeviceNameStore.cameraName(server, cameraRef.dimension(), cameraRef.pos(), fallback);
 	}
 
 	static String shortLiveSourceToken(UUID uuid) {

@@ -108,6 +108,15 @@
     },
     {
       "type": "bitmap",
+      "file": "minecraft:font/ui_drone_tuning_background.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        ""
+      ]
+    },
+    {
+      "type": "bitmap",
       "file": "minecraft:font/upgrade_balance_digits.png",
       "ascent": 5,
       "height": 240,

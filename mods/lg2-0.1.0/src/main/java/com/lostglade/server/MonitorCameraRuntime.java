@@ -6,6 +6,8 @@ import com.lostglade.server.monitor.MonitorMediaApp;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
@@ -13,6 +15,7 @@ import javax.imageio.ImageIO;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.Graphics2D;
+import java.awt.Shape;
 import java.awt.image.BufferedImage;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
@@ -28,7 +31,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -141,7 +146,7 @@ final class MonitorCameraRuntime {
 		);
 	}
 
-	static void drawScreen(Graphics2D graphics, UiLayout layout, MonitorApp app, CameraAppVisualSnapshot snapshot) {
+	static void drawScreen(Graphics2D graphics, UiLayout layout, MonitorApp app, ScreenRuntimeKey runtimeKey, CameraAppVisualSnapshot snapshot) {
 		if (graphics == null || layout == null) {
 			return;
 		}
@@ -155,7 +160,7 @@ final class MonitorCameraRuntime {
 		drawMediaCloseButton(graphics, mediaCloseRect(layout), layout, MediaButtonSegment.SINGLE);
 		drawCameraMenuButton(graphics, cameraMenuButtonRect(layout), layout, state.deviceMenuOpen());
 		if (state.deviceMenuOpen()) {
-			drawDevicePicker(graphics, layout, state);
+			drawDevicePicker(graphics, layout, runtimeKey, state);
 			drawStatus(graphics, layout, state);
 			return;
 		}
@@ -232,6 +237,49 @@ final class MonitorCameraRuntime {
 		return true;
 	}
 
+	static boolean onPlayerHotbarScroll(ServerPlayer player, int previousSlot, int currentSlot) {
+		if (player == null) {
+			return false;
+		}
+		ObservedCameraUiTarget target = findObservedCameraUiTarget(player);
+		if (target == null || target.touchPoint() == null) {
+			return false;
+		}
+		MinecraftServer server = player.level().getServer();
+		if (server == null) {
+			return false;
+		}
+		int delta = normalizeHotbarDelta(previousSlot, currentSlot);
+		if (delta == 0) {
+			return false;
+		}
+		ScreenComponent component = target.component();
+		CameraRuntimeState state = STATES.get(component.runtimeKey());
+		if (state == null) {
+			return false;
+		}
+		boolean devicePickerOpen;
+		synchronized (state) {
+			devicePickerOpen = state.deviceMenuOpen;
+		}
+		if (!devicePickerOpen) {
+			return false;
+		}
+		List<LiveCameraReference> cameras = collectCameraReferences(server, component);
+		List<MicrophoneSystem.ScreenMicrophoneDevice> microphones = MicrophoneSystem.connectedMicrophoneDevices(server, component.runtimeKey());
+		UiLayout layout = target.layout();
+		UiPoint touchPoint = target.touchPoint();
+		if (devicePickerCameraGridRect(layout).contains(touchPoint.x(), touchPoint.y()) && cameras.size() > devicePickerCameraCapacity(layout)) {
+			scrollCameraPicker(server, component.runtimeKey(), state, layout, cameras.size(), -delta);
+			return true;
+		}
+		if (devicePickerMicrophoneListRect(layout).contains(touchPoint.x(), touchPoint.y()) && microphones.size() > devicePickerMicrophoneCapacity(layout)) {
+			scrollMicrophonePicker(server, component.runtimeKey(), state, layout, microphones.size(), -delta);
+			return true;
+		}
+		return false;
+	}
+
 	private static boolean handleDevicePickerTouch(
 			MinecraftServer server,
 			ScreenComponent component,
@@ -241,13 +289,12 @@ final class MonitorCameraRuntime {
 			List<LiveCameraReference> cameras,
 			List<MicrophoneSystem.ScreenMicrophoneDevice> microphones
 	) {
-		if (devicePickerBackRect(layout).contains(touchPoint.x(), touchPoint.y())) {
-			synchronized (state) {
-				state.deviceMenuOpen = false;
-				state.statusText = "";
-				state.version++;
-			}
-			requestRuntimeRender(server, component.runtimeKey());
+		if (devicePickerCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			closeDevicePicker(server, component.runtimeKey(), state);
+			return true;
+		}
+		if (!devicePickerPanelRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			closeDevicePicker(server, component.runtimeKey(), state);
 			return true;
 		}
 		if (cameraPickerScrollLeftRect(layout).contains(touchPoint.x(), touchPoint.y())) {
@@ -312,6 +359,18 @@ final class MonitorCameraRuntime {
 			return true;
 		}
 		return true;
+	}
+
+	private static void closeDevicePicker(MinecraftServer server, ScreenRuntimeKey key, CameraRuntimeState state) {
+		if (server == null || key == null || state == null) {
+			return;
+		}
+		synchronized (state) {
+			state.deviceMenuOpen = false;
+			state.statusText = "";
+			state.version++;
+		}
+		requestRuntimeRender(server, key);
 	}
 
 	private static CameraAppVisualSnapshot emptySnapshot() {
@@ -868,7 +927,7 @@ final class MonitorCameraRuntime {
 		for (int index = 0; index < cameras.size(); index++) {
 			LiveCameraReference camera = cameras.get(index);
 			BlockPos pos = camera.pos();
-			String title = camera.sourceType() == LiveCameraSourceType.DRONE ? "Дрон" : "Камера";
+			String title = liveCameraDeviceTitle(server, camera);
 			String subtitle = pos != null ? pos.getX() + " " + pos.getY() + " " + pos.getZ() : "live";
 			String url = liveCameraGalleryUrl(camera);
 			boolean online = isLiveCameraOnline(server, camera);
@@ -964,7 +1023,6 @@ final class MonitorCameraRuntime {
 			drawCoveredImage(graphics, state.previewFrame(), rect, 0);
 		} else {
 			fillRoundedRect(graphics, rect, 0, new Color(0, 0, 0, 96));
-			drawCenteredText(graphics, "Выбери камеру", rect, new Color(218, 228, 236, 210), Font.BOLD, clampInt(layout.unit() + 2, 12, 24));
 		}
 	}
 
@@ -992,33 +1050,46 @@ final class MonitorCameraRuntime {
 		drawDeviceButton(graphics, microphoneDeviceButtonRect(layout), PlayerUiIcon.MIC, selectedDeviceLabel(state.microphones(), "Микрофон"), layout);
 	}
 
-	private static void drawDevicePicker(Graphics2D graphics, UiLayout layout, CameraAppVisualSnapshot state) {
+	private static void drawDevicePicker(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, CameraAppVisualSnapshot state) {
 		UiRect panel = devicePickerPanelRect(layout);
 		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 232));
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
-		drawMediaBackButton(graphics, devicePickerBackRect(layout), layout);
+		drawOverlayCloseButton(graphics, devicePickerCloseRect(layout), layout);
 		UiRect title = devicePickerTitleRect(layout);
 		drawVerticalText(graphics, "УСТРОЙСТВА", new UiRect(title.x(), title.y(), title.width() / 2, title.height()), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
 		drawCenteredTextFitted(graphics, deviceCountLabel(state), new UiRect(title.x() + title.width() / 2, title.y(), title.width() / 2, title.height()), new Color(188, 204, 218, 224), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 5);
 
 		UiRect cameraTitle = devicePickerCameraTitleRect(layout);
-		drawVerticalText(graphics, "КАМЕРЫ " + state.connectedCameraCount() + " · ДРОНЫ " + state.connectedDroneCount(), cameraTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
 		List<CameraAppDeviceSnapshot> cameras = state.cameras();
 		int cameraCapacity = devicePickerCameraCapacity(layout);
 		int cameraScroll = clampInt(state.cameraScroll(), 0, Math.max(0, (cameras == null ? 0 : cameras.size()) - cameraCapacity));
+		MonitorScrollAnimationSystem.ScrollVisualState cameraVisualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.CAMERA_PICKER_CAMERAS,
+				cameraScroll,
+				Math.max(0, (cameras == null ? 0 : cameras.size()) - cameraCapacity)
+		);
 		if (cameras != null && cameras.size() > cameraCapacity) {
 			drawPickerScrollStatus(graphics, cameraTitle, layout, cameraScroll, cameraCapacity, cameras.size());
-			drawPickerScrollButton(graphics, cameraPickerScrollLeftRect(layout), "<", layout, cameraScroll > 0);
-			drawPickerScrollButton(graphics, cameraPickerScrollRightRect(layout), ">", layout, cameraScroll + cameraCapacity < cameras.size());
+			drawPickerScrollButton(graphics, cameraPickerScrollLeftRect(layout), Math.PI / 2.0D, layout, cameraScroll > 0);
+			drawPickerScrollButton(graphics, cameraPickerScrollRightRect(layout), -Math.PI / 2.0D, layout, cameraScroll + cameraCapacity < cameras.size());
 		}
 		if (cameras == null || cameras.isEmpty()) {
 			drawCenteredText(graphics, "Подключи камеру или дрон к экрану", devicePickerCameraGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 		} else {
-			int count = Math.min(Math.max(0, cameras.size() - cameraScroll), cameraCapacity);
+			int baseIndex = cameraVisualScroll.anchorIndex();
+			int xOffset = -(int) Math.round(cameraVisualScroll.fraction() * cameraPickerCellStep(layout));
+			int count = Math.min(
+					Math.max(0, cameras.size() - baseIndex),
+					cameraCapacity + (cameraVisualScroll.animated() && baseIndex + cameraCapacity < cameras.size() ? 1 : 0)
+			);
+			Shape previousClip = graphics.getClip();
+			UiRect grid = devicePickerCameraGridRect(layout);
+			graphics.setClip(grid.x(), grid.y(), grid.width(), grid.height());
 			for (int visibleIndex = 0; visibleIndex < count; visibleIndex++) {
-				int index = cameraScroll + visibleIndex;
+				int index = baseIndex + visibleIndex;
 				CameraAppDeviceSnapshot camera = cameras.get(index);
-				UiRect rect = devicePickerCameraRect(layout, visibleIndex);
+				UiRect rect = offsetRect(devicePickerCameraRect(layout, visibleIndex), xOffset, 0);
 				fillRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), new Color(255, 255, 255, camera.selected() ? 34 : 18));
 				BufferedImage preview = camera.selected() && state.previewFrame() != null ? state.previewFrame() : camera.preview();
 				if (preview != null) {
@@ -1031,6 +1102,7 @@ final class MonitorCameraRuntime {
 				fillRoundedRect(graphics, label, label.height(), new Color(0, 0, 0, 112));
 				drawCenteredTextFitted(graphics, camera.title() + " " + camera.subtitle(), label.inset(2), camera.online() ? new Color(248, 251, 255, 238) : new Color(248, 251, 255, 136), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
 			}
+			graphics.setClip(previousClip);
 		}
 
 		UiRect microphoneTitle = devicePickerMicrophoneTitleRect(layout);
@@ -1038,20 +1110,35 @@ final class MonitorCameraRuntime {
 		List<CameraAppDeviceSnapshot> microphones = state.microphones();
 		int microphoneCapacity = devicePickerMicrophoneCapacity(layout);
 		int microphoneScroll = clampInt(state.microphoneScroll(), 0, Math.max(0, (microphones == null ? 0 : microphones.size()) - microphoneCapacity));
+		MonitorScrollAnimationSystem.ScrollVisualState microphoneVisualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.CAMERA_PICKER_MICROPHONES,
+				microphoneScroll,
+				Math.max(0, (microphones == null ? 0 : microphones.size()) - microphoneCapacity)
+		);
 		if (microphones != null && microphones.size() > microphoneCapacity) {
 			drawPickerScrollStatus(graphics, microphoneTitle, layout, microphoneScroll, microphoneCapacity, microphones.size());
-			drawPickerScrollButton(graphics, microphonePickerScrollUpRect(layout), "^", layout, microphoneScroll > 0);
-			drawPickerScrollButton(graphics, microphonePickerScrollDownRect(layout), "v", layout, microphoneScroll + microphoneCapacity < microphones.size());
+			drawPickerScrollButton(graphics, microphonePickerScrollUpRect(layout), Math.PI, layout, microphoneScroll > 0);
+			drawPickerScrollButton(graphics, microphonePickerScrollDownRect(layout), 0.0D, layout, microphoneScroll + microphoneCapacity < microphones.size());
 		}
 		if (microphones == null || microphones.isEmpty()) {
 			drawCenteredText(graphics, "Подключи микрофон к экрану", devicePickerMicrophoneListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
-		int microphoneCount = Math.min(Math.max(0, microphones.size() - microphoneScroll), microphoneCapacity);
+		int microphoneBaseIndex = microphoneVisualScroll.anchorIndex();
+		int yOffset = -(int) Math.round(microphoneVisualScroll.fraction() * devicePickerMicrophoneRowStep(layout));
+		int microphoneCount = Math.min(
+				Math.max(0, microphones.size() - microphoneBaseIndex),
+				microphoneCapacity + (microphoneVisualScroll.animated() && microphoneBaseIndex + microphoneCapacity < microphones.size() ? 1 : 0)
+		);
+		Shape previousClip = graphics.getClip();
+		UiRect listRect = devicePickerMicrophoneListRect(layout);
+		graphics.setClip(listRect.x(), listRect.y(), listRect.width(), listRect.height());
 		for (int visibleIndex = 0; visibleIndex < microphoneCount; visibleIndex++) {
-			int index = microphoneScroll + visibleIndex;
-			drawDevicePickerMicrophoneRow(graphics, layout, devicePickerMicrophoneRowRect(layout, visibleIndex), microphones.get(index));
+			int index = microphoneBaseIndex + visibleIndex;
+			drawDevicePickerMicrophoneRow(graphics, layout, offsetRect(devicePickerMicrophoneRowRect(layout, visibleIndex), 0, yOffset), microphones.get(index));
 		}
+		graphics.setClip(previousClip);
 	}
 
 	private static void drawDevicePickerMicrophoneRow(Graphics2D graphics, UiLayout layout, UiRect rect, CameraAppDeviceSnapshot microphone) {
@@ -1073,16 +1160,8 @@ final class MonitorCameraRuntime {
 		drawWrappedText(graphics, microphone.subtitle(), new UiRect(textRect.x(), textRect.y() + titleHeight, textRect.width(), textRect.height() - titleHeight), new Color(178, 194, 210, 214), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 1);
 	}
 
-	private static void drawPickerScrollButton(Graphics2D graphics, UiRect rect, String label, UiLayout layout, boolean enabled) {
-		Color color = drawSmallMediaButtonBase(graphics, rect, MediaButtonSegment.SINGLE, false, mediaChromeStrokeWidth(rect));
-		drawCenteredText(
-				graphics,
-				label,
-				rect,
-				enabled ? color : new Color(color.getRed(), color.getGreen(), color.getBlue(), 96),
-				Font.BOLD,
-				clampInt(layout.unit(), 9, 14)
-		);
+	private static void drawPickerScrollButton(Graphics2D graphics, UiRect rect, double rotationRadians, UiLayout layout, boolean enabled) {
+		drawOverlayChevronButton(graphics, rect, layout, rotationRadians, enabled);
 	}
 
 	private static void drawPickerScrollStatus(Graphics2D graphics, UiRect titleRect, UiLayout layout, int offset, int visibleCount, int totalCount) {
@@ -1198,23 +1277,16 @@ final class MonitorCameraRuntime {
 		return new UiRect(canvas.x() + layout.unit(), canvas.y() + clampInt(layout.unit() * 3, 24, 48), canvas.width() - layout.unit() * 2, canvas.height() - clampInt(layout.unit() * 4, 32, 60));
 	}
 
-	private static UiRect devicePickerBackRect(UiLayout layout) {
-		UiRect panel = devicePickerPanelRect(layout);
-		int size = clampInt(layout.unit() * 2 + 4, 24, 36);
-		return new UiRect(panel.x() + layout.unit(), panel.y() + layout.unit(), size, size);
+	private static UiRect devicePickerCloseRect(UiLayout layout) {
+		return overlayPanelCloseRect(devicePickerPanelRect(layout), layout);
 	}
 
 	private static UiRect devicePickerTitleRect(UiLayout layout) {
-		UiRect panel = devicePickerPanelRect(layout);
-		UiRect back = devicePickerBackRect(layout);
-		return new UiRect(back.right() + layout.unit(), back.y(), panel.right() - back.right() - layout.unit() * 2, back.height());
+		return overlayPanelTitleRect(devicePickerPanelRect(layout), devicePickerCloseRect(layout), layout);
 	}
 
 	private static UiRect devicePickerContentRect(UiLayout layout) {
-		UiRect panel = devicePickerPanelRect(layout);
-		UiRect back = devicePickerBackRect(layout);
-		int y = back.bottom() + Math.max(4, layout.unit() / 2);
-		return new UiRect(panel.x() + layout.unit(), y, panel.width() - layout.unit() * 2, Math.max(18, panel.bottom() - y - layout.unit()));
+		return overlayPanelContentRect(devicePickerPanelRect(layout), devicePickerCloseRect(layout), layout);
 	}
 
 	private static UiRect devicePickerCameraTitleRect(UiLayout layout) {
@@ -1226,9 +1298,9 @@ final class MonitorCameraRuntime {
 	private static UiRect devicePickerCameraGridRect(UiLayout layout) {
 		UiRect content = devicePickerContentRect(layout);
 		UiRect title = devicePickerCameraTitleRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
-		int height = Math.max(clampInt(layout.unit() * 7, 56, 112), (content.height() - title.height() - gap * 3) / 2);
-		return new UiRect(content.x(), title.bottom() + gap, content.width(), Math.min(height, Math.max(18, content.bottom() - title.bottom() - gap)));
+		int gap = devicePickerCameraGap(layout);
+		int height = devicePickerCameraHeight(layout);
+		return new UiRect(content.x(), title.bottom() + gap, content.width(), height);
 	}
 
 	private static UiRect devicePickerMicrophoneTitleRect(UiLayout layout) {
@@ -1247,7 +1319,7 @@ final class MonitorCameraRuntime {
 	}
 
 	private static UiRect pickerScrollButtonRect(UiRect titleRect, int indexFromRight, UiLayout layout) {
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = devicePickerCameraGap(layout);
 		int size = Math.min(titleRect.height(), clampInt(layout.unit() * 2, 18, 30));
 		int x = titleRect.right() - size - indexFromRight * (size + gap);
 		return new UiRect(x, titleRect.y(), size, titleRect.height());
@@ -1269,30 +1341,45 @@ final class MonitorCameraRuntime {
 		return pickerScrollButtonRect(devicePickerMicrophoneTitleRect(layout), 0, layout);
 	}
 
-	private static int devicePickerCameraColumns(UiLayout layout) {
-		return compactScreenLayout(layout) ? 3 : 4;
+	private static int devicePickerCameraGap(UiLayout layout) {
+		return Math.max(4, layout.unit() / 2);
+	}
+
+	private static int devicePickerCameraHeight(UiLayout layout) {
+		UiRect content = devicePickerContentRect(layout);
+		UiRect title = devicePickerCameraTitleRect(layout);
+		int gap = devicePickerCameraGap(layout);
+		int preferred = Math.max(clampInt(layout.unit() * 7, 56, 112), (content.height() - title.height() - gap * 3) / 2);
+		return Math.min(preferred, Math.max(18, content.bottom() - title.bottom() - gap));
+	}
+
+	private static int devicePickerCameraCell(UiLayout layout) {
+		return Math.max(1, devicePickerCameraHeight(layout));
 	}
 
 	private static int devicePickerCameraCapacity(UiLayout layout) {
 		UiRect grid = devicePickerCameraGridRect(layout);
-		int columns = devicePickerCameraColumns(layout);
-		int gap = Math.max(4, layout.unit() / 2);
-		int cell = Math.max(1, (grid.width() - gap * (columns - 1)) / columns);
-		int rows = Math.max(1, grid.height() / (cell + gap));
-		return rows * columns;
+		int gap = devicePickerCameraGap(layout);
+		int cell = devicePickerCameraCell(layout);
+		return clippedListCapacity(grid, cell, gap, true);
 	}
 
 	private static UiRect devicePickerCameraRect(UiLayout layout, int index) {
 		UiRect grid = devicePickerCameraGridRect(layout);
-		int columns = devicePickerCameraColumns(layout);
-		int gap = Math.max(4, layout.unit() / 2);
-		int cell = Math.max(1, (grid.width() - gap * (columns - 1)) / columns);
-		int row = index / columns;
-		int column = index % columns;
-		return new UiRect(grid.x() + column * (cell + gap), grid.y() + row * (cell + gap), cell, cell);
+		int gap = devicePickerCameraGap(layout);
+		int cell = devicePickerCameraCell(layout);
+		return new UiRect(grid.x() + index * (cell + gap), grid.y(), cell, cell);
+	}
+
+	private static int cameraPickerCellStep(UiLayout layout) {
+		return devicePickerCameraCell(layout) + devicePickerCameraGap(layout);
 	}
 
 	private static int devicePickerCameraIndexAt(UiLayout layout, int cameraCount, int cameraScroll, UiPoint point) {
+		UiRect grid = devicePickerCameraGridRect(layout);
+		if (point == null || !grid.contains(point.x(), point.y())) {
+			return -1;
+		}
 		int count = Math.min(Math.max(0, cameraCount - cameraScroll), devicePickerCameraCapacity(layout));
 		for (int visibleIndex = 0; visibleIndex < count; visibleIndex++) {
 			if (devicePickerCameraRect(layout, visibleIndex).contains(point.x(), point.y())) {
@@ -1303,7 +1390,7 @@ final class MonitorCameraRuntime {
 	}
 
 	private static int cameraPickerScrollStep(UiLayout layout) {
-		return Math.max(1, devicePickerCameraColumns(layout));
+		return 1;
 	}
 
 	private static int maxCameraPickerScroll(UiLayout layout, int cameraCount) {
@@ -1312,9 +1399,9 @@ final class MonitorCameraRuntime {
 
 	private static int devicePickerMicrophoneCapacity(UiLayout layout) {
 		UiRect list = devicePickerMicrophoneListRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = devicePickerCameraGap(layout);
 		int rowHeight = devicePickerMicrophoneRowHeight(layout);
-		return Math.max(1, (list.height() + gap) / Math.max(1, rowHeight + gap));
+		return clippedListCapacity(list, rowHeight, gap, false);
 	}
 
 	private static int devicePickerMicrophoneRowHeight(UiLayout layout) {
@@ -1323,12 +1410,20 @@ final class MonitorCameraRuntime {
 
 	private static UiRect devicePickerMicrophoneRowRect(UiLayout layout, int index) {
 		UiRect list = devicePickerMicrophoneListRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = devicePickerCameraGap(layout);
 		int height = devicePickerMicrophoneRowHeight(layout);
 		return new UiRect(list.x(), list.y() + index * (height + gap), list.width(), height);
 	}
 
+	private static int devicePickerMicrophoneRowStep(UiLayout layout) {
+		return devicePickerMicrophoneRowHeight(layout) + devicePickerCameraGap(layout);
+	}
+
 	private static int devicePickerMicrophoneIndexAt(UiLayout layout, int microphoneCount, int microphoneScroll, UiPoint point) {
+		UiRect list = devicePickerMicrophoneListRect(layout);
+		if (point == null || !list.contains(point.x(), point.y())) {
+			return -1;
+		}
 		int count = Math.min(Math.max(0, microphoneCount - microphoneScroll), devicePickerMicrophoneCapacity(layout));
 		for (int visibleIndex = 0; visibleIndex < count; visibleIndex++) {
 			if (devicePickerMicrophoneRowRect(layout, visibleIndex).contains(point.x(), point.y())) {
@@ -1340,6 +1435,48 @@ final class MonitorCameraRuntime {
 
 	private static int maxMicrophonePickerScroll(UiLayout layout, int microphoneCount) {
 		return Math.max(0, microphoneCount - devicePickerMicrophoneCapacity(layout));
+	}
+
+	private static ObservedCameraUiTarget findObservedCameraUiTarget(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return null;
+		}
+		Vec3 eye = player.getEyePosition();
+		Vec3 rayEnd = eye.add(player.getLookAngle().scale(MEDIA_CONTROL_DISTANCE));
+		ScreenComponent nearestComponent = null;
+		ItemFrame nearestFrame = null;
+		TileCoord nearestTile = null;
+		Vec3 nearestHit = null;
+		double nearestDistanceSqr = Double.POSITIVE_INFINITY;
+		for (ScreenComponent component : cachedComponents(level)) {
+			if (component == null || !component.powered() || component.viewMode() != ScreenViewMode.CAMERA_APP) {
+				continue;
+			}
+			for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
+				ItemFrame frame = entry.getKey();
+				if (frame == null || !frame.isAlive()) {
+					continue;
+				}
+				Optional<Vec3> hit = frame.getBoundingBox().inflate(0.08D).clip(eye, rayEnd);
+				if (hit.isEmpty() || hit.get().distanceToSqr(eye) > MEDIA_CONTROL_DISTANCE * MEDIA_CONTROL_DISTANCE) {
+					continue;
+				}
+				double hitDistanceSqr = eye.distanceToSqr(hit.get());
+				if (hitDistanceSqr < nearestDistanceSqr) {
+					nearestDistanceSqr = hitDistanceSqr;
+					nearestComponent = component;
+					nearestFrame = frame;
+					nearestTile = entry.getValue();
+					nearestHit = hit.get();
+				}
+			}
+		}
+		if (nearestComponent == null || nearestFrame == null || nearestTile == null || nearestHit == null) {
+			return null;
+		}
+		UiLayout layout = createUiLayout(nearestComponent.width(), nearestComponent.height());
+		UiPoint touchPoint = screenTouchPoint(nearestFrame, nearestHit, nearestTile, nearestComponent.width(), nearestComponent.height());
+		return touchPoint == null ? null : new ObservedCameraUiTarget(nearestComponent, layout, touchPoint);
 	}
 
 	private static UiRect cameraDeviceButtonRect(UiLayout layout) {
@@ -1484,6 +1621,9 @@ final class MonitorCameraRuntime {
 				current.abort();
 			}
 		}
+	}
+
+	private record ObservedCameraUiTarget(ScreenComponent component, UiLayout layout, UiPoint touchPoint) {
 	}
 
 	private interface RecordingSession {

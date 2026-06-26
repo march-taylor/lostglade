@@ -4,6 +4,7 @@ import com.lostglade.item.ModItems;
 import com.lostglade.server.MonitorScreenSystem;
 import com.lostglade.server.CameraOrientationStore;
 import com.lostglade.server.BluetoothLinkSystem;
+import com.lostglade.server.PlacedDeviceNameStore;
 import eu.pb4.polymer.core.api.block.SimplePolymerBlock;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
@@ -109,7 +110,11 @@ public final class CameraBlock extends SimplePolymerBlock {
 	@Override
 	public void setPlacedBy(Level level, BlockPos pos, BlockState state, LivingEntity placer, ItemStack stack) {
 		super.setPlacedBy(level, pos, state, placer, stack);
-		if (!(level instanceof ServerLevel serverLevel) || placer == null) {
+		if (!(level instanceof ServerLevel serverLevel)) {
+			return;
+		}
+		PlacedDeviceNameStore.rememberPlacedCameraName(serverLevel, pos, stack);
+		if (placer == null) {
 			return;
 		}
 		aimAt(serverLevel, pos, placer.getEyePosition());
@@ -136,6 +141,7 @@ public final class CameraBlock extends SimplePolymerBlock {
 	@Override
 	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
 		CameraOrientationStore.remove(level, pos);
+		PlacedDeviceNameStore.removeCameraName(level, pos);
 		BluetoothLinkSystem.removeBlockEndpoint(level, BluetoothLinkSystem.EndpointType.CAMERA, pos);
 		MonitorScreenSystem.onCameraNetworkChanged(level, pos);
 		super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
