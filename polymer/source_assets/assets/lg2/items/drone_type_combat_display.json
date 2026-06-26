@@ -1,6 +1,6 @@
-{
+﻿{
   "model": {
     "type": "minecraft:model",
-    "model": "lg2:item/drone_type_combat_display"
+    "model": "lg2:item/drone_type_combat_display_v2"
   }
 }

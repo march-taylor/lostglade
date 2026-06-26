@@ -48,6 +48,10 @@ public final class RaceConfig {
 		return data;
 	}
 
+	public static synchronized void save() {
+		write(data);
+	}
+
 	private static ConfigData readOrCreate() {
 		if (!Files.exists(PATH)) {
 			ConfigData defaults = ConfigData.defaults();
@@ -686,3 +690,4 @@ public final class RaceConfig {
 		}
 	}
 }
+

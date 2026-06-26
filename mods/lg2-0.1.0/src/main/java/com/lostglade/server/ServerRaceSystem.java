@@ -51,6 +51,7 @@ import net.lionarius.skinrestorer.skin.SkinValue;
 import net.lionarius.skinrestorer.skin.SkinVariant;
 import net.lionarius.skinrestorer.util.PlayerUtils;
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -159,6 +160,7 @@ import net.minecraft.world.inventory.MerchantMenu;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.Container;
+import net.minecraft.world.CompoundContainer;
 import net.minecraft.world.MenuProvider;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.SimpleMenuProvider;
@@ -361,11 +363,11 @@ public final class ServerRaceSystem {
 	private static final int CARTEL_PASSPORT_NAME_CHAR_ADVANCE = 5;
 	private static final String WOMAN_SHNYAGA_NAME_TEXTURE_RESOURCE = "/assets/lg2/textures/font/woman_shnyaga_name.png";
 	private static final String[] WOMAN_SHNYAGA_NAME_FONT_ROWS = {
-			"РђР‘Р’Р“Р”Р•Р–Р—РР™РљР›РњРќРћРџ",
-			"Р РЎРўРЈР¤РҐР¦Р§РЁР©РЄР«Р¬Р­Р®РЇ",
-			"РЃР°Р±РІРіРґРµР¶Р·РёР№РєР»РјРЅРѕ",
-			"РїСЂСЃС‚СѓС„С…С†С‡С€С‰СЉС‹СЊСЌСЋ",
-			"СЏС‘ABCDEFGHIJKLMN",
+			"Р С’Р вЂР вЂ™Р вЂњР вЂќР вЂўР вЂ“Р вЂ”Р ВР в„ўР С™Р вЂєР СљР СњР С›Р Сџ",
+			"Р В Р РЋР СћР Р€Р В¤Р ТђР В¦Р В§Р РЃР В©Р Р„Р В«Р В¬Р В­Р В®Р Р‡",
+			"Р РѓР В°Р В±Р Р†Р С–Р Т‘Р ВµР В¶Р В·Р С‘Р в„–Р С”Р В»Р СР Р…Р С•",
+			"Р С—РЎР‚РЎРѓРЎвЂљРЎС“РЎвЂћРЎвЂ¦РЎвЂ РЎвЂЎРЎв‚¬РЎвЂ°РЎР‰РЎвЂ№РЎРЉРЎРЊРЎР‹",
+			"РЎРЏРЎвЂABCDEFGHIJKLMN",
 			"OPQRSTUVWXYZabcd",
 			"efghijklmnopqrst",
 			"uvwxyz0123456789",
@@ -518,9 +520,13 @@ public final class ServerRaceSystem {
 	private static final long LITTLE_DICTATOR_UNIQUE_DRAIN_INTERVAL_TICKS = 4L;
 	private static final long LITTLE_DICTATOR_UNIQUE_DRAIN_PARTICLE_INTERVAL_TICKS = 5L;
 	private static final long LITTLE_DICTATOR_UNIQUE_SHOCK_WAVE_TICKS = 14L;
+	private static final long LITTLE_DICTATOR_UNIQUE_SHOCK_WAVE_FRAME_INTERVAL_TICKS = 2L;
 	private static final int LITTLE_DICTATOR_UNIQUE_SLOWNESS_LEVEL = 3;
 	private static final float LITTLE_DICTATOR_UNIQUE_LOOK_STEP_DEGREES = 5.5F;
+	private static final float LITTLE_DICTATOR_UNIQUE_LOOK_RETURN_STEP_DEGREES = 18.0F;
+	private static final double LITTLE_DICTATOR_UNIQUE_CLIENT_POSITION_EPSILON = 1.0E-4D;
 	private static final Identifier LITTLE_DICTATOR_UNIQUE_SCALE_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "little_dictator_unique_scale");
+	private static final Identifier LITTLE_DICTATOR_UNIQUE_JUMP_LOCK_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "little_dictator_unique_jump_lock");
 	private static final double LITTLE_DICTATOR_TAX_CHEST_HIGHLIGHT_RANGE_BLOCKS = 96.0D;
 	private static final float LITTLE_DICTATOR_TAX_CHEST_HIGHLIGHT_VIEW_RANGE = 1_000_000.0F;
 	private static final float LITTLE_DICTATOR_TAX_CHEST_HIGHLIGHT_SCALE = 1.01F;
@@ -763,6 +769,8 @@ public final class ServerRaceSystem {
 	private static final int WOMAN_SHNYAGA_EFFECT_DURATION_TICKS = 60;
 	private static final String WOMAN_SHNYAGA_STATE_FILE_NAME = "lg2_woman_shnyaga_links.json";
 	private static final String LITTLE_DICTATOR_TAX_CHESTS_STATE_FILE_NAME = "lg2_little_dictator_tax_chests.json";
+	private static final String LONG_PASSIVE_EFFECTS_STATE_FILE_NAME = "lg2_long_passive_effects.json";
+	private static final long LONG_PASSIVE_EFFECTS_AUTOSAVE_INTERVAL_TICKS = 400L;
 	private static final Identifier WOMAN_SHNYAGA_WOMAN_HEALTH_MODIFIER_ID =
 			Objects.requireNonNull(Identifier.tryParse("lg2:woman_shnyaga_woman_health"));
 	private static final Identifier WOMAN_SHNYAGA_BOYFRIEND_HEALTH_MODIFIER_ID =
@@ -945,7 +953,9 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, LittleDictatorSanctionsSession> LITTLE_DICTATOR_SANCTIONS = new LinkedHashMap<>();
 	private static final Map<UUID, LittleDictatorTaxesSession> LITTLE_DICTATOR_TAXES = new LinkedHashMap<>();
 	private static final Map<UUID, LittleDictatorPropagandaSession> LITTLE_DICTATOR_PROPAGANDA = new LinkedHashMap<>();
+	private static final Map<UUID, Long> LITTLE_DICTATOR_LAST_DECREE_USE_TICKS = new LinkedHashMap<>();
 	private static final Map<UUID, MobEffectInstance> LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE = new LinkedHashMap<>();
+	private static final Map<UUID, Long> LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE_END_TICKS = new LinkedHashMap<>();
 	private static final Map<UUID, Integer> LITTLE_DICTATOR_PROPAGANDA_MANAGED_HASTE = new LinkedHashMap<>();
 	private static final Map<UUID, LittleDictatorMerchantOfferSync> LITTLE_DICTATOR_SYNCED_MERCHANT_MENUS = new HashMap<>();
 	private static final Map<UUID, Long> LITTLE_DICTATOR_HANDLED_PLAYER_KILL_TICKS = new LinkedHashMap<>();
@@ -987,6 +997,7 @@ public final class ServerRaceSystem {
 	private static long womanShnyagaNextWhitelistCheckTick = Long.MIN_VALUE;
 	private static CompletableFuture<Property> CARTEL_LAWYER_SKIN_FUTURE;
 	private static volatile Property CARTEL_LAWYER_SKIN_PROPERTY;
+	private static long longPassiveEffectsNextSaveTick = Long.MIN_VALUE;
 
 	private record MilkDefenseSession(ResourceKey<Level> dimension, long endTick, double teleportDistanceBlocks) {
 	}
@@ -1020,7 +1031,7 @@ public final class ServerRaceSystem {
 
 	private record LittleDictatorUniqueShockWaveSession(
 			ResourceKey<Level> dimension,
-			Vec3 origin,
+			UUID dictatorId,
 			long startTick,
 			long endTick,
 			double maxRadius
@@ -1108,7 +1119,8 @@ public final class ServerRaceSystem {
 		private final long growthEndTick;
 		private final long activeEndTick;
 		private final long endTick;
-		private final Vec3 anchorPosition;
+		private final Vec3 lockedPosition;
+		private final boolean originalNoGravity;
 		private final double radius;
 		private final double targetScale;
 		private final double xpPerHealth;
@@ -1128,7 +1140,8 @@ public final class ServerRaceSystem {
 				long growthEndTick,
 				long activeEndTick,
 				long endTick,
-				Vec3 anchorPosition,
+				Vec3 lockedPosition,
+				boolean originalNoGravity,
 				double radius,
 				double targetScale,
 				long shockIntervalTicks,
@@ -1140,7 +1153,8 @@ public final class ServerRaceSystem {
 			this.growthEndTick = growthEndTick;
 			this.activeEndTick = activeEndTick;
 			this.endTick = endTick;
-			this.anchorPosition = anchorPosition == null ? Vec3.ZERO : anchorPosition;
+			this.lockedPosition = lockedPosition == null ? Vec3.ZERO : lockedPosition;
+			this.originalNoGravity = originalNoGravity;
 			this.radius = radius;
 			this.targetScale = targetScale;
 			this.shockIntervalTicks = Math.max(1L, shockIntervalTicks);
@@ -1252,12 +1266,14 @@ public final class ServerRaceSystem {
 	private static final class CartelDisguiseSession {
 		private final SkinValue originalSkin;
 		private final SkinValue disguisedSkin;
+		private final UUID disguisedPlayerId;
 		private final String disguisedName;
-		private final long endTick;
+		private long endTick;
 
-		private CartelDisguiseSession(SkinValue originalSkin, SkinValue disguisedSkin, String disguisedName, long endTick) {
+		private CartelDisguiseSession(SkinValue originalSkin, SkinValue disguisedSkin, UUID disguisedPlayerId, String disguisedName, long endTick) {
 			this.originalSkin = originalSkin;
 			this.disguisedSkin = disguisedSkin;
+			this.disguisedPlayerId = disguisedPlayerId;
 			this.disguisedName = disguisedName;
 			this.endTick = endTick;
 		}
@@ -1321,6 +1337,7 @@ public final class ServerRaceSystem {
 			rebuildCache();
 			loadWomanShnyagaLinks(server);
 			loadLittleDictatorTaxChests(server);
+			loadLongPassiveEffects(server);
 			pruneWomanShnyagaLinksAgainstWhitelist(server);
 			syncWomanShnyagaLinks(server);
 			prewarmCartelLawyerSkinAsync();
@@ -1332,6 +1349,8 @@ public final class ServerRaceSystem {
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			saveWomanShnyagaLinks(server);
 			saveLittleDictatorTaxChests(server);
+			saveLongPassiveEffects(server);
+			cleanupLongPassiveEffectsForShutdown(server);
 			cleanupAllCartelRaceEntities(server, true);
 			restoreAllCartelDisguises(server);
 			restoreAllCopperManJetpacks(server);
@@ -1426,7 +1445,9 @@ public final class ServerRaceSystem {
 			LITTLE_DICTATOR_SANCTIONS.clear();
 			LITTLE_DICTATOR_TAXES.clear();
 			LITTLE_DICTATOR_PROPAGANDA.clear();
+			LITTLE_DICTATOR_LAST_DECREE_USE_TICKS.clear();
 			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.clear();
+			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE_END_TICKS.clear();
 			LITTLE_DICTATOR_PROPAGANDA_MANAGED_HASTE.clear();
 			LITTLE_DICTATOR_SYNCED_MERCHANT_MENUS.clear();
 			LITTLE_DICTATOR_HANDLED_PLAYER_KILL_TICKS.clear();
@@ -1441,6 +1462,7 @@ public final class ServerRaceSystem {
 			CARTEL_LAWYER_SKIN_FUTURE = null;
 			CARTEL_LAWYER_SKIN_PROPERTY = null;
 			womanShnyagaNextWhitelistCheckTick = Long.MIN_VALUE;
+			longPassiveEffectsNextSaveTick = Long.MIN_VALUE;
 		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
 				server.execute(() -> {
@@ -1453,11 +1475,11 @@ public final class ServerRaceSystem {
 					syncWomanShnyagaLinks(server);
 					updateMarkRageHud(handler.player);
 					prewarmCopperManDefenseTint(server, handler.player);
+					restoreLongPassiveEffectsForPlayer(server, handler.player);
 				})
 		);
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
 			cleanupCartelEntitiesForDisconnect(server, handler.player);
-			clearCartelDisguise(handler.player);
 			CartelWebcamBridge.handlePlayerDisconnected(handler.player.getUUID());
 			CARTEL_MANUAL_BOOK_RESTORES.remove(handler.player.getUUID());
 			CARTEL_TRAVKA_GROWTH_ATTEMPTS.removeIf(attempt -> attempt.playerId.equals(handler.player.getUUID()));
@@ -1477,7 +1499,7 @@ public final class ServerRaceSystem {
 			WOMAN_DEFENSE_PANIC_SOUND_NEXT_TICKS.remove(handler.player.getUUID());
 			WOMAN_DEFENSE_SELF_SOUND_NEXT_TICKS.remove(handler.player.getUUID());
 			WOMAN_DEFENSE_LAST_POSITIONS.remove(handler.player.getUUID());
-			clearWomanUniqueState(server, handler.player.getUUID());
+			WOMAN_UNIQUE_SYNCED_MERCHANT_MENUS.remove(handler.player.getUUID());
 			clearWomanAttackState(handler.player.getUUID());
 			clearWomanShnyagaPendingState(handler.player.getUUID());
 			clearGennadiyDefense(handler.player);
@@ -1494,6 +1516,10 @@ public final class ServerRaceSystem {
 			LITTLE_DICTATOR_RETALIATING_MOBS.entrySet().removeIf(entry -> handler.player.getUUID().equals(entry.getValue()));
 			LITTLE_DICTATOR_TAX_CHEST_PENDING.remove(handler.player.getUUID());
 			LITTLE_DICTATOR_SYNCED_MERCHANT_MENUS.remove(handler.player.getUUID());
+			removeLittleDictatorSanctionsFatigue(handler.player);
+			if (LITTLE_DICTATOR_PROPAGANDA.containsKey(handler.player.getUUID())) {
+				finishLittleDictatorPropaganda(handler.player, false);
+			}
 			clearLittleDictatorTaxChestHighlights(handler.player);
 			clearLittleDictatorUniqueTargetState(handler.player);
 			cleanupLittleDictatorUniqueSession(server, handler.player.getUUID(), LITTLE_DICTATOR_UNIQUE_SESSIONS.remove(handler.player.getUUID()), false);
@@ -1541,10 +1567,6 @@ public final class ServerRaceSystem {
 			InteractionResult dictatorResult = tryHandleLittleDictatorUseInteraction(serverPlayer, hand, hitResult.getBlockPos());
 			if (dictatorResult != InteractionResult.PASS) {
 				return dictatorResult;
-			}
-			InteractionResult decreeSelfResult = tryUseLittleDictatorDecreeOnSelf(serverPlayer, hand);
-			if (decreeSelfResult != InteractionResult.PASS) {
-				return decreeSelfResult;
 			}
 			if (TubochkaItem.tryLightTubochka(serverPlayer)) {
 				return InteractionResult.SUCCESS;
@@ -1596,6 +1618,7 @@ public final class ServerRaceSystem {
 			tickLittleDictatorShnyaga(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
+			tickLongPassiveEffectsPersistence(server);
 		});
 	}
 
@@ -1609,10 +1632,35 @@ public final class ServerRaceSystem {
 				dispatcher.register(literal("race")
 						.then(literal("menu").executes(ServerRaceSystem::openMenu))
 						.then(literal("reload")
-								.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
-								.executes(ServerRaceSystem::reloadFromCommand)
-						)
-						.then(literal("reset_cooldown")
+							.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
+							.executes(ServerRaceSystem::reloadFromCommand)
+					)
+					.then(literal("set")
+							.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
+							.then(argument("race_id", StringArgumentType.word())
+									.suggests((context, builder) -> {
+										for (PlayerRaceConfig race : RaceConfig.get().races) {
+											if (race == null || race.id == null || race.id.isBlank()) {
+												continue;
+											}
+											builder.suggest(race.id);
+										}
+										return builder.buildFuture();
+									})
+									.executes(ServerRaceSystem::setOwnRaceFromCommand)
+									.then(argument("player", EntityArgument.player())
+											.executes(ServerRaceSystem::setPlayerRaceFromCommand)
+									)
+							)
+					)
+					.then(literal("clear")
+							.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
+							.executes(ServerRaceSystem::clearOwnRaceFromCommand)
+							.then(argument("player", EntityArgument.player())
+									.executes(ServerRaceSystem::clearPlayerRaceFromCommand)
+							)
+					)
+					.then(literal("reset_cooldown")
 								.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
 								.executes(ServerRaceSystem::resetAllRaceAbilityCooldownsFromCommand)
 						)
@@ -1647,8 +1695,211 @@ public final class ServerRaceSystem {
 	private static int resetAllRaceAbilityCooldownsFromCommand(CommandContext<CommandSourceStack> context) {
 		MinecraftServer server = context.getSource().getServer();
 		resetAllRaceAbilityCooldowns(server);
-		context.getSource().sendSuccess(() -> Component.literal("Р’СЃРµ РљР” СЂР°СЃРѕРІС‹С… СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№ СЃР±СЂРѕС€РµРЅС‹"), true);
+		context.getSource().sendSuccess(() -> Component.literal("Р вЂ™РЎРѓР Вµ Р С™Р вЂќ РЎР‚Р В°РЎРѓР С•Р Р†РЎвЂ№РЎвЂ¦ РЎРѓР С—Р С•РЎРѓР С•Р В±Р Р…Р С•РЎРѓРЎвЂљР ВµР в„– РЎРѓР В±РЎР‚Р С•РЎв‚¬Р ВµР Р…РЎвЂ№"), true);
 		return 1;
+	}
+
+	private static int setOwnRaceFromCommand(CommandContext<CommandSourceStack> context) {
+		ServerPlayer target = context.getSource().getPlayer();
+		if (target == null) {
+            context.getSource().sendFailure(Component.literal("Specify a player to change the race for."));
+			return 0;
+		}
+		return setRaceForPlayerFromCommand(context, target);
+	}
+
+	private static int setPlayerRaceFromCommand(CommandContext<CommandSourceStack> context) {
+		try {
+			return setRaceForPlayerFromCommand(context, EntityArgument.getPlayer(context, "player"));
+		} catch (Exception exception) {
+			context.getSource().sendFailure(Component.literal("Failed to resolve player."));
+			return 0;
+		}
+	}
+
+	private static int clearOwnRaceFromCommand(CommandContext<CommandSourceStack> context) {
+		ServerPlayer target = context.getSource().getPlayer();
+		if (target == null) {
+            context.getSource().sendFailure(Component.literal("Specify a player whose race should be cleared."));
+			return 0;
+		}
+		return clearRaceForPlayerFromCommand(context, target);
+	}
+
+	private static int clearPlayerRaceFromCommand(CommandContext<CommandSourceStack> context) {
+		try {
+			return clearRaceForPlayerFromCommand(context, EntityArgument.getPlayer(context, "player"));
+		} catch (Exception exception) {
+			context.getSource().sendFailure(Component.literal("Failed to resolve player."));
+			return 0;
+		}
+	}
+
+	private static int setRaceForPlayerFromCommand(CommandContext<CommandSourceStack> context, ServerPlayer target) {
+		String raceId = StringArgumentType.getString(context, "race_id");
+		PlayerRaceConfig targetRace = findConfiguredRaceById(raceId);
+		if (targetRace == null) {
+            context.getSource().sendFailure(Component.literal("Race '" + raceId + "' was not found."));
+			return 0;
+		}
+		MinecraftServer server = context.getSource().getServer();
+		String targetName = target.getGameProfile().name();
+		String normalizedTargetName = normalizeNickname(targetName);
+		PlayerRaceConfig previousTargetRace = findAssignedRaceByNickname(normalizedTargetName);
+		String previousOwnerNickname = targetRace.ownerNickname == null ? "" : targetRace.ownerNickname.trim();
+		boolean targetAlreadyOwnsRace = normalizeNickname(previousOwnerNickname).equals(normalizedTargetName);
+		if (previousTargetRace != null && previousTargetRace != targetRace) {
+			previousTargetRace.ownerNickname = "";
+		}
+		targetRace.ownerNickname = targetName;
+		RaceConfig.save();
+		rebuildCache();
+		syncGeneratedDialogs(server, true);
+		applyRaceCommandRuntimeRefresh(server, target);
+		if (!previousOwnerNickname.isBlank() && !targetAlreadyOwnsRace) {
+			ServerPlayer previousOwner = server.getPlayerList().getPlayerByName(previousOwnerNickname);
+			if (previousOwner != null && previousOwner != target) {
+				applyRaceCommandRuntimeRefresh(server, previousOwner);
+			}
+		}
+		String displayName = targetRace.displayName == null || targetRace.displayName.isBlank() ? targetRace.id : targetRace.displayName;
+        context.getSource().sendSuccess(() -> Component.literal("Race '")
+                .append(Component.literal(displayName).withStyle(ChatFormatting.GOLD))
+                .append(Component.literal("' is now assigned to "))
+                .append(Component.literal(targetName).withStyle(ChatFormatting.YELLOW)), true);
+		if (context.getSource().getEntity() != target) {
+            target.displayClientMessage(Component.literal("Your race was changed to ")
+                    .append(Component.literal(displayName).withStyle(ChatFormatting.GOLD)), true);
+		}
+		return 1;
+	}
+
+	private static int clearRaceForPlayerFromCommand(CommandContext<CommandSourceStack> context, ServerPlayer target) {
+		MinecraftServer server = context.getSource().getServer();
+		String targetName = target.getGameProfile().name();
+		PlayerRaceConfig previousTargetRace = findAssignedRaceByNickname(normalizeNickname(targetName));
+		if (previousTargetRace == null) {
+            context.getSource().sendFailure(Component.literal("Player " + targetName + " does not have an assigned race."));
+			return 0;
+		}
+		previousTargetRace.ownerNickname = "";
+		RaceConfig.save();
+		rebuildCache();
+		syncGeneratedDialogs(server, true);
+		applyRaceCommandRuntimeRefresh(server, target);
+        context.getSource().sendSuccess(() -> Component.literal("Cleared race for ")
+                .append(Component.literal(targetName).withStyle(ChatFormatting.YELLOW)), true);
+		if (context.getSource().getEntity() != target) {
+            target.displayClientMessage(Component.literal("Your race was cleared by an admin.").withStyle(ChatFormatting.RED), true);
+		}
+		return 1;
+	}
+
+	private static PlayerRaceConfig findConfiguredRaceById(String raceId) {
+		if (raceId == null || raceId.isBlank()) {
+			return null;
+		}
+		String sanitizedRaceId = sanitizePath(raceId);
+		for (PlayerRaceConfig race : RaceConfig.get().races) {
+			if (race == null || race.id == null || race.id.isBlank()) {
+				continue;
+			}
+			if (sanitizePath(race.id).equals(sanitizedRaceId)) {
+				return race;
+			}
+		}
+		return null;
+	}
+
+	private static PlayerRaceConfig findAssignedRaceByNickname(String normalizedNickname) {
+		if (normalizedNickname == null || normalizedNickname.isBlank()) {
+			return null;
+		}
+		for (PlayerRaceConfig race : RaceConfig.get().races) {
+			if (race == null || race.ownerNickname == null || race.ownerNickname.isBlank()) {
+				continue;
+			}
+			if (normalizeNickname(race.ownerNickname).equals(normalizedNickname)) {
+				return race;
+			}
+		}
+		return null;
+	}
+
+	private static void applyRaceCommandRuntimeRefresh(MinecraftServer server, ServerPlayer player) {
+		if (server == null || player == null) {
+			return;
+		}
+		clearRaceCommandRuntimeState(server, player);
+		CartelSecretRecipeBookSystem.syncJoinedPlayer(player);
+		CopperManGogglesSystem.syncPlayerRecipeBook(player);
+		MarkShieldRecipeSystem.syncJoinedPlayer(player);
+		syncWomanShnyagaLinks(server);
+		updateMarkRageHud(player);
+		prewarmCopperManDefenseTint(server, player);
+	}
+
+	private static void clearRaceCommandRuntimeState(MinecraftServer server, ServerPlayer player) {
+		UUID playerId = player.getUUID();
+		clearCartelDisguise(player);
+		clearCopperManDefenseVisual(player);
+		clearCopperManJetpack(player);
+		WOMAN_DEFENSE_SESSIONS.remove(playerId);
+		if (WOMAN_DEFENSE_BLIND_PLAYERS.remove(playerId)) {
+			player.removeEffect(MobEffects.BLINDNESS);
+		}
+		if (WOMAN_DEFENSE_SLOWNESS_PLAYERS.remove(playerId) != null) {
+			player.removeEffect(MobEffects.SLOWNESS);
+		}
+		WOMAN_DEFENSE_PANIC_SOUND_NEXT_TICKS.remove(playerId);
+		WOMAN_DEFENSE_SELF_SOUND_NEXT_TICKS.remove(playerId);
+		WOMAN_DEFENSE_LAST_POSITIONS.remove(playerId);
+		clearWomanUniqueState(server, playerId);
+		clearWomanAttackState(playerId);
+		clearWomanShnyagaPendingState(playerId);
+		clearGennadiyDefense(player);
+		cleanupGennadiyHookSession(server, GENNADIY_HOOK_SESSIONS.remove(playerId));
+		GENNADIY_REPORT_PENDING.remove(playerId);
+		releaseMarkDefenseField(server, MARK_DEFENSE_SESSIONS.remove(playerId), false, null);
+		stopMarkRage(server, player, false);
+		MARK_STOCK_FOOD_SNAPSHOTS.remove(playerId);
+		clearMilkAbsoluteAttack(player);
+		MILK_ABSOLUTE_LOST_HEART_ANIMATIONS.remove(playerId);
+		MILK_DEFENSE_SESSIONS.remove(playerId);
+		cleanupMilkMouseSession(server, playerId, MILK_MOUSE_SESSIONS.remove(playerId), true, true);
+		MILK_STOCK_RETALIATING_MOBS.entrySet().removeIf(entry -> playerId.equals(entry.getValue()));
+		LITTLE_DICTATOR_RETALIATING_MOBS.entrySet().removeIf(entry -> playerId.equals(entry.getValue()));
+		LITTLE_DICTATOR_TAX_CHEST_PENDING.remove(playerId);
+		LITTLE_DICTATOR_SYNCED_MERCHANT_MENUS.remove(playerId);
+		removeLittleDictatorSanctionsFatigue(player);
+		LITTLE_DICTATOR_SANCTIONS.remove(playerId);
+		LITTLE_DICTATOR_TAXES.remove(playerId);
+		if (LITTLE_DICTATOR_PROPAGANDA.containsKey(playerId)) {
+			finishLittleDictatorPropaganda(player, true);
+		}
+		LITTLE_DICTATOR_PING_SESSIONS.remove(playerId);
+		LITTLE_DICTATOR_PING_OVERLAY_ACTIVE.remove(playerId);
+		LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.remove(playerId);
+		LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE_END_TICKS.remove(playerId);
+		LITTLE_DICTATOR_PROPAGANDA_MANAGED_HASTE.remove(playerId);
+		WOMAN_SHNYAGA_REJECTION_SESSIONS.remove(playerId);
+		clearLittleDictatorTaxChestHighlights(player);
+		clearLittleDictatorUniqueTargetState(player);
+		cleanupLittleDictatorUniqueSession(server, playerId, LITTLE_DICTATOR_UNIQUE_SESSIONS.remove(playerId), false);
+		clearLittleDictatorPingEffect(player);
+		syncLittleDictatorDefenseOverlay(player, false, true);
+		recallGennadiyDonkey(server, playerId, false);
+		GENERIC_ABILITY_COOLDOWN_END_TICKS.remove(playerId);
+		GENERIC_ABILITY_INFINITE_COOLDOWNS.remove(playerId);
+		CARTEL_ATTACK_COOLDOWNS.remove(playerId);
+		CARTEL_DEFENSE_COOLDOWNS.remove(playerId);
+		CARTEL_UNIQUE_COOLDOWNS.remove(playerId);
+		COPPER_MAN_DEFENSE_COOLDOWNS.remove(playerId);
+		COPPER_MAN_JETPACK_COOLDOWNS.remove(playerId);
+		GENNADIY_DONKEY_COOLDOWNS.remove(playerId);
+		MARK_ATTACK_COOLDOWNS.remove(playerId);
+		MARK_DEFENSE_COOLDOWNS.remove(playerId);
+		MILK_DEFENSE_COOLDOWNS.remove(playerId);
 	}
 
 	private static boolean canUseMarkRageBarCommand(CommandSourceStack source) {
@@ -1672,7 +1923,7 @@ public final class ServerRaceSystem {
 		}
 		updateMarkRageHud(player);
 		player.displayClientMessage(
-				Component.literal(hidden ? "РЁРєР°Р»Р° СЏСЂРѕСЃС‚Рё СЃРєСЂС‹С‚Р°." : "РЁРєР°Р»Р° СЏСЂРѕСЃС‚Рё РІРєР»СЋС‡РµРЅР°.")
+				Component.literal(hidden ? "Р РЃР С”Р В°Р В»Р В° РЎРЏРЎР‚Р С•РЎРѓРЎвЂљР С‘ РЎРѓР С”РЎР‚РЎвЂ№РЎвЂљР В°." : "Р РЃР С”Р В°Р В»Р В° РЎРЏРЎР‚Р С•РЎРѓРЎвЂљР С‘ Р Р†Р С”Р В»РЎР‹РЎвЂЎР ВµР Р…Р В°.")
 						.withStyle(style -> style.withColor(hidden ? ChatFormatting.GRAY : ChatFormatting.RED).withItalic(false)),
 				true
 		);
@@ -2308,7 +2559,7 @@ public final class ServerRaceSystem {
 			return 1;
 		} catch (Exception exception) {
 			Lg2.LOGGER.error("Failed to activate copper man defense for {}", caster.getGameProfile().name(), exception);
-			caster.sendSystemMessage(Component.literal("РќРµ СѓРґР°Р»РѕСЃСЊ Р°РєС‚РёРІРёСЂРѕРІР°С‚СЊ Р·Р°С‰РёС‚Сѓ."));
+			caster.sendSystemMessage(Component.literal("Р СњР Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р В°Р С”РЎвЂљР С‘Р Р†Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ Р В·Р В°РЎвЂ°Р С‘РЎвЂљРЎС“. Р СџР С•Р С—РЎР‚Р С•Р В±РЎС“Р в„–РЎвЂљР Вµ РЎРѓР Р…Р С•Р Р†Р В°."));
 			return 0;
 		}
 	}
@@ -2337,7 +2588,7 @@ public final class ServerRaceSystem {
 			return 1;
 		} catch (Exception exception) {
 			Lg2.LOGGER.error("Failed to activate copper man jetpack for {}", caster.getGameProfile().name(), exception);
-			caster.sendSystemMessage(Component.literal("РќРµ СѓРґР°Р»РѕСЃСЊ Р°РєС‚РёРІРёСЂРѕРІР°С‚СЊ СЂРµР°РєС‚РёРІРЅС‹Р№ СЂР°РЅРµС†."));
+			caster.sendSystemMessage(Component.literal("Р СњР Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р В°Р С”РЎвЂљР С‘Р Р†Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ РЎР‚Р В°Р Р…Р ВµРЎвЂ . Р СџР С•Р С—РЎР‚Р С•Р В±РЎС“Р в„–РЎвЂљР Вµ РЎРѓР Р…Р С•Р Р†Р В°."));
 			return 0;
 		}
 	}
@@ -3553,6 +3804,82 @@ public final class ServerRaceSystem {
 			this.z = pos.getZ();
 		}
 	}
+	private static final class LongPassiveEffectsPersistedState {
+		private final Map<String, PersistedSanctions> sanctions = new LinkedHashMap<>();
+		private final Map<String, PersistedTaxes> taxes = new LinkedHashMap<>();
+		private final Map<String, PersistedPropaganda> propaganda = new LinkedHashMap<>();
+		private final Map<String, PersistedPing> ping = new LinkedHashMap<>();
+		private final Map<String, PersistedWomanUnique> womanUnique = new LinkedHashMap<>();
+		private final Map<String, PersistedTimedEffect> womanRejection = new LinkedHashMap<>();
+		private final Map<String, PersistedCartelDisguise> cartelDisguise = new LinkedHashMap<>();
+	}
+
+	private static final class PersistedSanctions {
+		private long remainingTicks;
+		private double dropChance;
+	}
+
+	private static final class PersistedTaxes {
+		private String dictatorId;
+		private long remainingTicks;
+		private long nextTaxTicks;
+		private long intervalTicks;
+	}
+
+	private static final class PersistedPropaganda {
+		private long remainingTicks;
+		private double tradeDiscount;
+		private PersistedMobEffect naturalHaste;
+		private Integer managedAmplifier;
+	}
+
+	private static final class PersistedMobEffect {
+		private int amplifier;
+		private long remainingTicks;
+		private boolean infinite;
+		private boolean ambient;
+		private boolean visible;
+		private boolean showIcon;
+	}
+
+	private static final class PersistedPing {
+		private long remainingTicks;
+		private int minPingMs;
+		private int maxPingMs;
+		private int lastSentPingMs;
+	}
+
+	private static final class PersistedWomanUnique {
+		private long remainingTicks;
+		private long nextDropTicks;
+		private long dropMinTicks;
+		private long dropMaxTicks;
+		private double dropChance;
+		private double tradePriceIncrease;
+		private boolean naturalHealingUnlocked;
+		private int lastFoodLevel;
+		private float lastSaturationLevel;
+	}
+
+	private static final class PersistedTimedEffect {
+		private long remainingTicks;
+	}
+
+	private static final class PersistedCartelDisguise {
+		private long remainingTicks;
+		private String disguisedName;
+		private String disguisedPlayerId;
+		private PersistedSkinValue originalSkin;
+		private PersistedSkinValue disguisedSkin;
+	}
+
+	private static final class PersistedSkinValue {
+		private String provider;
+		private String argument;
+		private String variant;
+		private StoredSkinProperty value;
+		private StoredSkinProperty originalValue;
+	}
 
 	private static final class WomanShnyagaWhitelistEntry {
 		private String uuid;
@@ -4181,6 +4508,9 @@ public final class ServerRaceSystem {
 	}
 
 	public static InteractionResult tryHandleLittleDictatorUseInteraction(ServerPlayer player, InteractionHand hand, BlockPos pos) {
+		if (shouldLittleDictatorPreserveVanillaSecondaryUse(player, hand)) {
+			return InteractionResult.PASS;
+		}
 		InteractionResult taxChestResult = tryMarkLittleDictatorTaxChest(player, hand, pos);
 		if (taxChestResult != InteractionResult.PASS) {
 			return taxChestResult;
@@ -4188,22 +4518,23 @@ public final class ServerRaceSystem {
 		return tryUseLittleDictatorStock(player, hand, pos);
 	}
 
-	private static boolean tryToggleLittleDictatorIronDoor(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state) {
-		if (level == null || player == null || state == null || !state.is(Blocks.IRON_DOOR)) {
+	public static boolean shouldLittleDictatorPreserveVanillaSecondaryUse(ServerPlayer player, InteractionHand hand) {
+		if (player == null || hand == null || !player.isSecondaryUseActive()) {
 			return false;
 		}
-		BlockPos lowerPos = state.getValue(DoorBlock.HALF) == DoubleBlockHalf.LOWER ? pos : pos.below();
-		BlockState lowerState = level.getBlockState(lowerPos);
-		BlockState upperState = level.getBlockState(lowerPos.above());
-		if (!lowerState.is(Blocks.IRON_DOOR) || !upperState.is(Blocks.IRON_DOOR)) {
-			return false;
-		}
+		return !player.getMainHandItem().isEmpty() || !player.getOffhandItem().isEmpty();
+	}
 
-		boolean open = !lowerState.getValue(DoorBlock.OPEN);
-		level.setBlock(lowerPos, lowerState.setValue(DoorBlock.OPEN, open), Block.UPDATE_ALL_IMMEDIATE);
-		level.setBlock(lowerPos.above(), upperState.setValue(DoorBlock.OPEN, open), Block.UPDATE_ALL_IMMEDIATE);
-		level.playSound(null, lowerPos, open ? SoundEvents.IRON_DOOR_OPEN : SoundEvents.IRON_DOOR_CLOSE, SoundSource.BLOCKS, 1.0F, 1.0F);
-		level.gameEvent(player, open ? GameEvent.BLOCK_OPEN : GameEvent.BLOCK_CLOSE, lowerPos);
+	private static boolean tryToggleLittleDictatorIronDoor(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state) {
+		if (level == null
+				|| player == null
+				|| state == null
+				|| !state.is(Blocks.IRON_DOOR)
+				|| !(state.getBlock() instanceof DoorBlock doorBlock)) {
+			return false;
+		}
+		boolean open = !state.getValue(DoorBlock.OPEN);
+		doorBlock.setOpen(player, level, state, pos, open);
 		return true;
 	}
 
@@ -4213,10 +4544,34 @@ public final class ServerRaceSystem {
 		}
 
 		boolean open = !state.getValue(TrapDoorBlock.OPEN);
-		level.setBlock(pos, state.setValue(TrapDoorBlock.OPEN, open), Block.UPDATE_ALL_IMMEDIATE);
+		level.setBlock(
+				pos,
+				state.setValue(TrapDoorBlock.OPEN, open),
+				Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE
+		);
 		level.playSound(null, pos, open ? SoundEvents.IRON_TRAPDOOR_OPEN : SoundEvents.IRON_TRAPDOOR_CLOSE, SoundSource.BLOCKS, 1.0F, 1.0F);
 		level.gameEvent(player, open ? GameEvent.BLOCK_OPEN : GameEvent.BLOCK_CLOSE, pos);
 		return true;
+	}
+
+	public static InteractionResult tryHandleLittleDictatorIronMechanism(
+			ServerPlayer player,
+			InteractionHand hand,
+			BlockPos pos
+	) {
+		if (player == null
+				|| hand == null
+				|| pos == null
+				|| !(player.level() instanceof ServerLevel level)
+				|| shouldLittleDictatorPreserveVanillaSecondaryUse(player, hand)
+				|| getLittleDictatorStockAbility(player) == null) {
+			return InteractionResult.PASS;
+		}
+		BlockState state = level.getBlockState(pos);
+		return tryToggleLittleDictatorIronDoor(level, player, pos, state)
+				|| tryToggleLittleDictatorIronTrapdoor(level, player, pos, state)
+				? InteractionResult.CONSUME
+				: InteractionResult.PASS;
 	}
 
 	public static boolean canLittleDictatorBypassInteraction(ServerPlayer player, BlockState state) {
@@ -4469,7 +4824,7 @@ public final class ServerRaceSystem {
 		}
 		if (!hasMilkAbsoluteHeartToSpend(player)) {
 			player.displayClientMessage(
-					Component.literal("РђРєС‚РёРІР°С†РёСЏ РЅРµРІРѕР·РјРѕР¶РЅР°: РѕСЃС‚Р°Р»РѕСЃСЊ РїРѕСЃР»РµРґРЅРµРµ СЃРµСЂРґС†Рµ.")
+					Component.literal("Р СњР ВµР В»РЎРЉР В·РЎРЏ Р В°Р С”РЎвЂљР С‘Р Р†Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ Р С’Р В±РЎРѓР С•Р В»РЎР‹РЎвЂљ РЎРѓ Р С—Р С•РЎРѓР В»Р ВµР Т‘Р Р…Р С‘Р С РЎРѓР ВµРЎР‚Р Т‘РЎвЂ Р ВµР С.")
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
@@ -4528,7 +4883,7 @@ public final class ServerRaceSystem {
 		if (target instanceof ServerPlayer targetPlayer && playerSlownessDurationTicks > 0) {
 			targetPlayer.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, playerSlownessDurationTicks, LITTLE_DICTATOR_ATTACK_PLAYER_SLOWNESS_LEVEL - 1, false, true, true));
 		}
-
+		spawnLittleDictatorAttackTargetParticles(level, target);
 		startGenericAbilityCooldownSeconds(player, RaceAbilitySlot.ATTACK, positiveOrDefault(ability.cooldownSeconds, LITTLE_DICTATOR_ATTACK_DEFAULT_COOLDOWN_SECONDS));
 		Lg2.LOGGER.info(
 				"Player {} used little dictator attack '{}' from race '{}' on target {} and redirected {} mobs",
@@ -4539,6 +4894,15 @@ public final class ServerRaceSystem {
 				redirectedCount
 		);
 		return 1;
+	}
+
+	private static void spawnLittleDictatorAttackTargetParticles(ServerLevel level, LivingEntity target) {
+		if (level == null || target == null) {
+			return;
+		}
+		Vec3 center = target.position().add(0.0D, Math.max(0.45D, target.getBbHeight() * 0.55D), 0.0D);
+		level.sendParticles(ParticleTypes.ENCHANT, center.x, center.y, center.z, 12, 0.22D, 0.28D, 0.22D, 0.02D);
+		level.sendParticles(ParticleTypes.CRIT, center.x, center.y + 0.08D, center.z, 8, 0.18D, 0.22D, 0.18D, 0.01D);
 	}
 
 	private static int useLittleDictatorDefense(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
@@ -4614,6 +4978,7 @@ public final class ServerRaceSystem {
 				activeEndTick,
 				endTick,
 				player.position(),
+				player.isNoGravity(),
 				radius,
 				LITTLE_DICTATOR_UNIQUE_TARGET_SCALE,
 				shockIntervalTicks,
@@ -4652,151 +5017,210 @@ public final class ServerRaceSystem {
 		if (player == null || race == null || ability == null || player.isSpectator() || !player.isAlive()) {
 			return 0;
 		}
-		LITTLE_DICTATOR_TAX_CHEST_PENDING.add(player.getUUID());
-		player.displayClientMessage(
-				Component.literal("Откройте сундук, чтобы назначить его налоговым.")
-						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
-				true
-		);
+		UUID playerId = player.getUUID();
+		if (!LITTLE_DICTATOR_TAX_CHEST_PENDING.add(playerId)) {
+			LITTLE_DICTATOR_TAX_CHEST_PENDING.remove(playerId);
+			return 1;
+		}
+		displayLittleDictatorTaxChestPrompt(player);
 		return 1;
 	}
 
-	private static InteractionResult tryMarkLittleDictatorTaxChest(ServerPlayer player, InteractionHand hand, BlockPos pos) {
-		if (player == null
-				|| hand != InteractionHand.MAIN_HAND
-				|| pos == null
-				|| !LITTLE_DICTATOR_TAX_CHEST_PENDING.contains(player.getUUID())
-				|| !(player.level() instanceof ServerLevel level)) {
-			return InteractionResult.PASS;
-		}
-		if (getLittleDictatorShnyagaAbility(player) == null) {
-			LITTLE_DICTATOR_TAX_CHEST_PENDING.remove(player.getUUID());
-			player.displayClientMessage(
-					Component.literal("Указы недоступны.")
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
-					true
-			);
-			return InteractionResult.SUCCESS;
-		}
+	private static void displayLittleDictatorTaxChestPrompt(ServerPlayer player) {
+	if (player == null) {
+		return;
+	}
+	player.displayClientMessage(
+			Component.literal("Р С›РЎвЂљР С”РЎР‚Р С•Р в„–РЎвЂљР Вµ РЎРѓРЎС“Р Р…Р Т‘РЎС“Р С”, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ РЎРѓР Т‘Р ВµР В»Р В°РЎвЂљРЎРЉ Р ВµР С–Р С• Р Р…Р В°Р В»Р С•Р С–Р С•Р Р†РЎвЂ№Р С.")
+					.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
+			true
+	);
+}
 
-		BlockState state = level.getBlockState(pos);
-		if (!isLittleDictatorTaxChestBlock(state)) {
-			return InteractionResult.PASS;
-		}
-
+private static InteractionResult tryMarkLittleDictatorTaxChest(ServerPlayer player, InteractionHand hand, BlockPos pos) {
+	if (player == null
+			|| hand != InteractionHand.MAIN_HAND
+			|| pos == null
+			|| !LITTLE_DICTATOR_TAX_CHEST_PENDING.contains(player.getUUID())
+			|| !(player.level() instanceof ServerLevel level)) {
+		return InteractionResult.PASS;
+	}
+	if (getLittleDictatorShnyagaAbility(player) == null) {
 		LITTLE_DICTATOR_TAX_CHEST_PENDING.remove(player.getUUID());
-		LittleDictatorTaxChestRef ref = new LittleDictatorTaxChestRef(level.dimension(), pos);
-		LITTLE_DICTATOR_TAX_CHESTS.computeIfAbsent(player.getUUID(), ignored -> new HashSet<>()).add(ref);
-		saveLittleDictatorTaxChests(level.getServer());
-		spawnLittleDictatorDecreeParticles(level, Vec3.atCenterOf(pos));
-		syncLittleDictatorTaxChestHighlights(level.getServer(), player);
 		player.displayClientMessage(
-				Component.literal("Сундук назначен налоговым.")
-						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
-				true
-		);
-
-		MenuProvider provider = state.getMenuProvider(level, pos);
-		if (provider == null) {
-			BlockEntity blockEntity = level.getBlockEntity(pos);
-			if (blockEntity instanceof MenuProvider menuProvider) {
-				provider = menuProvider;
-			}
-		}
-		return provider != null && player.openMenu(provider).isPresent() ? InteractionResult.CONSUME : InteractionResult.SUCCESS;
-	}
-
-	private static boolean isLittleDictatorTaxChestBlock(BlockState state) {
-		return state != null && (state.is(Blocks.CHEST) || state.is(Blocks.TRAPPED_CHEST));
-	}
-
-	private static InteractionResult tryBlockLittleDictatorSanctionedTrade(ServerPlayer player, Entity entity) {
-		if (player == null || entity == null || !isLittleDictatorSanctioned(player) || !(entity instanceof Merchant)) {
-			return InteractionResult.PASS;
-		}
-		player.displayClientMessage(
-				Component.literal("Санкции запрещают торговлю.")
+				Component.literal("Р РЋР С—Р С•РЎРѓР С•Р В±Р Р…Р С•РЎРѓРЎвЂљРЎРЉ Р ВµРЎвЂ°РЎвЂ Р Р…Р Вµ Р С”РЎС“Р С—Р В»Р ВµР Р…Р В°.")
 						.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 				true
 		);
-		return InteractionResult.FAIL;
-	}
-
-	private static InteractionResult tryUseLittleDictatorDecreeOnSelf(ServerPlayer player, InteractionHand hand) {
-		if (player == null || hand == null) {
-			return InteractionResult.PASS;
-		}
-		ItemStack stack = player.getItemInHand(hand);
-		LittleDictatorDecreeType type = getLittleDictatorDecreeType(stack);
-		if (type == null) {
-			return InteractionResult.PASS;
-		}
-		if (getLittleDictatorShnyagaAbility(player) == null) {
-			player.displayClientMessage(
-					Component.literal("Этот указ может использовать только Диктатор с купленными Указами.")
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
-					true
-			);
-			return InteractionResult.SUCCESS;
-		}
-		if (type != LittleDictatorDecreeType.PROPAGANDA) {
-			player.displayClientMessage(
-					Component.literal("Нажмите указом по игроку.")
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
-					true
-			);
-			return InteractionResult.SUCCESS;
-		}
-		applyLittleDictatorPropaganda(player, getLittleDictatorShnyagaAbility(player));
-		consumeLittleDictatorDecree(player, stack);
 		return InteractionResult.SUCCESS;
 	}
 
-	private static InteractionResult tryUseLittleDictatorDecreeOnEntity(ServerPlayer player, InteractionHand hand, Entity entity) {
-		if (player == null || hand == null || entity == null) {
+	BlockState state = level.getBlockState(pos);
+	if (!isLittleDictatorTaxChestBlock(state)) {
+		return InteractionResult.PASS;
+	}
+
+	LITTLE_DICTATOR_TAX_CHEST_PENDING.remove(player.getUUID());
+	LittleDictatorTaxChestRef ref = new LittleDictatorTaxChestRef(level.dimension(), pos);
+	LITTLE_DICTATOR_TAX_CHESTS.computeIfAbsent(player.getUUID(), ignored -> new HashSet<>()).add(ref);
+	saveLittleDictatorTaxChests(level.getServer());
+	spawnLittleDictatorDecreeParticles(level, Vec3.atCenterOf(pos));
+	syncLittleDictatorTaxChestHighlights(level.getServer(), player);
+	player.displayClientMessage(
+			Component.literal("Р СњР В°Р В»Р С•Р С–Р С•Р Р†РЎвЂ№Р в„– РЎРѓРЎС“Р Р…Р Т‘РЎС“Р С” Р Р…Р В°Р В·Р Р…Р В°РЎвЂЎР ВµР Р….")
+					.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
+			true
+	);
+
+	MenuProvider provider = state.getMenuProvider(level, pos);
+	if (provider == null) {
+		BlockEntity blockEntity = level.getBlockEntity(pos);
+		if (blockEntity instanceof MenuProvider menuProvider) {
+			provider = menuProvider;
+		}
+	}
+	return provider != null && player.openMenu(provider).isPresent() ? InteractionResult.CONSUME : InteractionResult.SUCCESS;
+}
+
+private static boolean isLittleDictatorTaxChestBlock(BlockState state) {
+	return state != null && (state.is(Blocks.CHEST) || state.is(Blocks.TRAPPED_CHEST));
+}
+
+private static InteractionResult tryBlockLittleDictatorSanctionedTrade(ServerPlayer player, Entity entity) {
+	if (player == null || entity == null || !isLittleDictatorSanctioned(player) || !(entity instanceof Merchant)) {
+		return InteractionResult.PASS;
+	}
+	player.displayClientMessage(
+			Component.literal("Р СџР С•Р Т‘ РЎРѓР В°Р Р…Р С”РЎвЂ Р С‘РЎРЏР СР С‘ РЎвЂљР С•РЎР‚Р С–Р С•Р Р†Р В»РЎРЏ Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р Р…Р В°.")
+					.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+			true
+	);
+	return InteractionResult.FAIL;
+}
+
+private static InteractionResult tryUseLittleDictatorDecreeOnSelf(ServerPlayer player, InteractionHand hand) {
+	if (player == null || hand == null || hand != InteractionHand.MAIN_HAND) {
+		return InteractionResult.PASS;
+	}
+	ItemStack stack = player.getItemInHand(hand);
+	LittleDictatorDecreeType type = getLittleDictatorDecreeType(stack);
+	if (type == null) {
+		return InteractionResult.PASS;
+	}
+	if (getLittleDictatorShnyagaAbility(player) == null) {
+		player.displayClientMessage(
+				Component.literal("Р РЋР С—Р С•РЎРѓР С•Р В±Р Р…Р С•РЎРѓРЎвЂљРЎРЉ Р ВµРЎвЂ°РЎвЂ Р Р…Р Вµ Р С”РЎС“Р С—Р В»Р ВµР Р…Р В°.")
+						.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+				true
+		);
+		return InteractionResult.SUCCESS;
+	}
+	if (type != LittleDictatorDecreeType.PROPAGANDA) {
+		double targetRange = Math.max(player.blockInteractionRange(), player.entityInteractionRange());
+		LivingEntity target = findLookTarget(player, targetRange);
+		if (target instanceof ServerPlayer && target != player && target.isAlive()) {
 			return InteractionResult.PASS;
 		}
-		ItemStack stack = player.getItemInHand(hand);
-		LittleDictatorDecreeType type = getLittleDictatorDecreeType(stack);
-		if (type == null) {
-			return InteractionResult.PASS;
-		}
-		RaceAbilityConfig ability = getLittleDictatorShnyagaAbility(player);
-		if (ability == null) {
-			player.displayClientMessage(
-					Component.literal("Этот указ может использовать только Диктатор с купленными Указами.")
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
-					true
-			);
-			return InteractionResult.SUCCESS;
-		}
-		if (!(entity instanceof ServerPlayer target)) {
-			player.displayClientMessage(
-					Component.literal(type == LittleDictatorDecreeType.PROPAGANDA ? "Этот указ применяется на себя." : "Указ можно применить только на игрока.")
-							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
-					true
-			);
-			return InteractionResult.SUCCESS;
-		}
+		displayTargetNotSelected(player);
+		return InteractionResult.SUCCESS;
+	}
+	if (isDuplicateLittleDictatorDecreeUse(player)) {
+		return InteractionResult.SUCCESS;
+	}
+	applyLittleDictatorPropaganda(player, getLittleDictatorShnyagaAbility(player));
+	playLittleDictatorDecreeActivationSound(player, player);
+	consumeLittleDictatorDecree(player, stack);
+	return InteractionResult.SUCCESS;
+}
+
+private static InteractionResult tryUseLittleDictatorDecreeOnEntity(ServerPlayer player, InteractionHand hand, Entity entity) {
+	if (player == null || hand == null || hand != InteractionHand.MAIN_HAND || entity == null) {
+		return InteractionResult.PASS;
+	}
+	ItemStack stack = player.getItemInHand(hand);
+	LittleDictatorDecreeType type = getLittleDictatorDecreeType(stack);
+	if (type == null) {
+		return InteractionResult.PASS;
+	}
+	RaceAbilityConfig ability = getLittleDictatorShnyagaAbility(player);
+	if (ability == null) {
+		player.displayClientMessage(
+				Component.literal(localizeAbilityNotPurchased(player, "Р Р€Р С”Р В°Р В·РЎвЂ№"))
+						.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+				true
+		);
+		return InteractionResult.SUCCESS;
+	}
+	ServerPlayer target = resolveLittleDictatorDecreeTarget(entity, player);
+	if (target == null) {
 		if (type == LittleDictatorDecreeType.PROPAGANDA) {
 			player.displayClientMessage(
-					Component.literal("Этот указ применяется на себя.")
+					Component.literal("Р СџРЎР‚Р С•Р С—Р В°Р С–Р В°Р Р…Р Т‘Р В° Р С—РЎР‚Р С‘Р СР ВµР Р…РЎРЏР ВµРЎвЂљРЎРѓРЎРЏ РЎвЂљР С•Р В»РЎРЉР С”Р С• Р Р…Р В° РЎРѓР ВµР В±РЎРЏ.")
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
-			return InteractionResult.SUCCESS;
+		} else {
+			displayTargetNotSelected(player);
 		}
-
-		if (type == LittleDictatorDecreeType.SANCTIONS) {
-			applyLittleDictatorSanctions(player, target, ability);
-		} else if (type == LittleDictatorDecreeType.TAXES) {
-			applyLittleDictatorTaxes(player, target, ability);
-		}
-		consumeLittleDictatorDecree(player, stack);
+		return InteractionResult.SUCCESS;
+	}
+	if (type == LittleDictatorDecreeType.PROPAGANDA) {
+		player.displayClientMessage(
+				Component.literal("Р СџРЎР‚Р С•Р С—Р В°Р С–Р В°Р Р…Р Т‘Р В° Р С—РЎР‚Р С‘Р СР ВµР Р…РЎРЏР ВµРЎвЂљРЎРѓРЎРЏ РЎвЂљР С•Р В»РЎРЉР С”Р С• Р Р…Р В° РЎРѓР ВµР В±РЎРЏ.")
+						.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+				true
+		);
 		return InteractionResult.SUCCESS;
 	}
 
-	private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPlayer target, RaceAbilityConfig ability) {
+	if (isDuplicateLittleDictatorDecreeUse(player)) {
+		return InteractionResult.SUCCESS;
+	}
+	if (type == LittleDictatorDecreeType.SANCTIONS) {
+		applyLittleDictatorSanctions(player, target, ability);
+	} else if (type == LittleDictatorDecreeType.TAXES) {
+		applyLittleDictatorTaxes(player, target, ability);
+	}
+	playLittleDictatorDecreeActivationSound(player, target);
+	consumeLittleDictatorDecree(player, stack);
+	return InteractionResult.SUCCESS;
+}
+
+private static ServerPlayer resolveLittleDictatorDecreeTarget(Entity entity, ServerPlayer user) {
+	if (entity == null) {
+		return null;
+	}
+	if (entity instanceof ServerPlayer playerTarget) {
+		return playerTarget != user && playerTarget.isAlive() ? playerTarget : null;
+	}
+	for (Entity passenger : entity.getPassengers()) {
+		ServerPlayer resolvedPassenger = resolveLittleDictatorDecreeTarget(passenger, user);
+		if (resolvedPassenger != null) {
+			return resolvedPassenger;
+		}
+	}
+	Entity vehicle = entity.getVehicle();
+	if (vehicle != null && vehicle != entity) {
+		ServerPlayer resolvedVehicle = resolveLittleDictatorDecreeTarget(vehicle, user);
+		if (resolvedVehicle != null) {
+			return resolvedVehicle;
+		}
+	}
+	return null;
+}
+
+private static void playLittleDictatorDecreeActivationSound(ServerPlayer dictator, ServerPlayer target) {
+	if (dictator == null) {
+		return;
+	}
+	long seed = dictator.level().getGameTime() ^ dictator.getUUID().getLeastSignificantBits();
+	sendPersonalSound(dictator, SoundEvents.BOOK_PAGE_TURN, SoundSource.PLAYERS, dictator.position(), 0.65F, 1.0F, seed);
+	if (target != null && target != dictator) {
+		sendPersonalSound(target, SoundEvents.BOOK_PAGE_TURN, SoundSource.PLAYERS, target.position(), 0.65F, 1.0F, seed ^ target.getUUID().getMostSignificantBits());
+	}
+}
+
+private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPlayer target, RaceAbilityConfig ability) {
 		if (dictator == null || target == null || ability == null) {
 			return;
 		}
@@ -4810,7 +5234,7 @@ public final class ServerRaceSystem {
 		refreshLittleDictatorSanctionsFatigue(target);
 		spawnLittleDictatorDecreeParticles((ServerLevel) target.level(), target.position().add(0.0D, target.getBbHeight() * 0.55D, 0.0D));
 		dictator.displayClientMessage(
-				Component.literal("Санкции наложены на " + target.getGameProfile().name() + ".")
+				Component.literal("Р РЋР В°Р Р…Р С”РЎвЂ Р С‘Р С‘ Р Р…Р В°Р В»Р С•Р В¶Р ВµР Р…РЎвЂ№ Р Р…Р В° " + target.getGameProfile().name() + ".")
 						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
 				true
 		);
@@ -4820,17 +5244,24 @@ public final class ServerRaceSystem {
 		if (dictator == null || target == null || ability == null) {
 			return;
 		}
-		LITTLE_DICTATOR_TAXES.put(
-				target.getUUID(),
-				new LittleDictatorTaxesSession(
+		long durationTicks = Math.max(1L, asTicks(getLittleDictatorDecreeTaxesDurationSeconds(ability)));
+		long intervalTicks = Math.max(1L, asTicks(getLittleDictatorDecreeTaxesIntervalSeconds(ability)));
+		LittleDictatorTaxesSession existing = LITTLE_DICTATOR_TAXES.get(target.getUUID());
+		if (existing != null) {
+			existing.remainingTicks = durationTicks;
+		} else {
+			LITTLE_DICTATOR_TAXES.put(
+					target.getUUID(),
+					new LittleDictatorTaxesSession(
 						dictator.getUUID(),
-						Math.max(1L, asTicks(getLittleDictatorDecreeTaxesDurationSeconds(ability))),
-						Math.max(1L, asTicks(getLittleDictatorDecreeTaxesIntervalSeconds(ability)))
-				)
-		);
+						durationTicks,
+						intervalTicks
+					)
+			);
+		}
 		spawnLittleDictatorDecreeParticles((ServerLevel) target.level(), target.position().add(0.0D, target.getBbHeight() * 0.55D, 0.0D));
 		dictator.displayClientMessage(
-				Component.literal("Налоги назначены для " + target.getGameProfile().name() + ".")
+				Component.literal("Р СњР В°Р В»Р С•Р С–Р С‘ Р Р…Р В°Р В»Р С•Р В¶Р ВµР Р…РЎвЂ№ Р Р…Р В° " + target.getGameProfile().name() + ".")
 						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
 				true
 		);
@@ -4848,17 +5279,23 @@ public final class ServerRaceSystem {
 						getLittleDictatorDecreePropagandaTradeDiscount(ability)
 				)
 		);
-		MobEffectInstance naturalHaste = copyLittleDictatorPropagandaNaturalHaste(dictator.getEffect(MobEffects.HASTE));
-		if (naturalHaste != null) {
-			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.put(dictator.getUUID(), naturalHaste);
-		}
+		storeLittleDictatorPropagandaNaturalHaste(dictator, dictator.getEffect(MobEffects.HASTE));
 		refreshLittleDictatorPropagandaHaste(dictator);
 		spawnLittleDictatorDecreeParticles(level, dictator.position().add(0.0D, dictator.getBbHeight() * 0.55D, 0.0D));
 		dictator.displayClientMessage(
-				Component.literal("Пропаганда запущена.")
+				Component.literal("Р СџРЎР‚Р С•Р С—Р В°Р С–Р В°Р Р…Р Т‘Р В° Р В°Р С”РЎвЂљР С‘Р Р†Р С‘РЎР‚Р С•Р Р†Р В°Р Р…Р В°.")
 						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
 				true
 		);
+	}
+
+	private static boolean isDuplicateLittleDictatorDecreeUse(ServerPlayer player) {
+		if (player == null || player.level() == null) {
+			return false;
+		}
+		long nowTick = player.level().getGameTime();
+		Long previousTick = LITTLE_DICTATOR_LAST_DECREE_USE_TICKS.put(player.getUUID(), nowTick);
+		return previousTick != null && previousTick == nowTick;
 	}
 
 	private static void consumeLittleDictatorDecree(ServerPlayer player, ItemStack stack) {
@@ -4905,27 +5342,27 @@ public final class ServerRaceSystem {
 
 	private static MutableComponent getLittleDictatorDecreeName(LittleDictatorDecreeType type) {
 		if (type == null) {
-			return Component.literal("Указ").withStyle(style -> style.withColor(ChatFormatting.GOLD).withItalic(false));
+			return Component.literal("Р Р€Р С”Р В°Р В·").withStyle(style -> style.withColor(ChatFormatting.GOLD).withItalic(false));
 		}
 		String name = switch (type) {
-			case SANCTIONS -> "Указ: Санкции";
-			case TAXES -> "Указ: Налоги";
-			case PROPAGANDA -> "Указ: Пропаганда";
+			case SANCTIONS -> "Р Р€Р С”Р В°Р В·: Р РЋР В°Р Р…Р С”РЎвЂ Р С‘Р С‘";
+			case TAXES -> "Р Р€Р С”Р В°Р В·: Р СњР В°Р В»Р С•Р С–Р С‘";
+			case PROPAGANDA -> "Р Р€Р С”Р В°Р В·: Р СџРЎР‚Р С•Р С—Р В°Р С–Р В°Р Р…Р Т‘Р В°";
 		};
 		return Component.literal(name).withStyle(style -> style.withColor(ChatFormatting.GOLD).withItalic(false));
 	}
 
 	private static List<Component> getLittleDictatorDecreeLore(LittleDictatorDecreeType type) {
 		if (type == null) {
-			return List.of(Component.literal("Неизвестный указ.").withStyle(style -> style.withColor(ChatFormatting.GRAY).withItalic(false)));
+			return List.of(Component.literal("Р С›РЎРѓР С•Р В±РЎвЂ№Р в„– РЎС“Р С”Р В°Р В· Р Т‘Р С‘Р С”РЎвЂљР В°РЎвЂљР С•РЎР‚Р В°.").withStyle(style -> style.withColor(ChatFormatting.GRAY).withItalic(false)));
 		}
 		String first = switch (type) {
-			case SANCTIONS -> "ПКМ по игроку: мешает добыче и закрывает торговлю.";
-			case TAXES -> "ПКМ по игроку: периодически отправляет часть вещей в налоговый сундук.";
-			case PROPAGANDA -> "ПКМ: усиливает удачу, добычу, рыбалку и торговлю Диктатора.";
+			case SANCTIONS -> "Р СџР С™Р Сљ Р С—Р С• Р С‘Р С–РЎР‚Р С•Р С”РЎС“: Р Р…Р В° Р Р†РЎР‚Р ВµР СРЎРЏ Р С•РЎРѓР В»Р В°Р В±Р В»РЎРЏР ВµРЎвЂљ Р ВµР С–Р С• Р Т‘Р С•Р В±РЎвЂ№РЎвЂЎРЎС“ Р С‘ Р С•РЎвЂљР С”Р В»РЎР‹РЎвЂЎР В°Р ВµРЎвЂљ РЎвЂљР С•РЎР‚Р С–Р С•Р Р†Р В»РЎР‹ РЎРѓ Р В¶Р С‘РЎвЂљР ВµР В»РЎРЏР СР С‘.";
+			case TAXES -> "Р СџР С™Р Сљ Р С—Р С• Р С‘Р С–РЎР‚Р С•Р С”РЎС“: Р Р…Р В° Р Р†РЎР‚Р ВµР СРЎРЏ Р В·Р В°Р С—РЎС“РЎРѓР С”Р В°Р ВµРЎвЂљ РЎР‚Р ВµР С–РЎС“Р В»РЎРЏРЎР‚Р Р…РЎвЂ№Р в„– РЎРѓР В±Р С•РЎР‚ РЎРѓР В»РЎС“РЎвЂЎР В°Р в„–Р Р…РЎвЂ№РЎвЂ¦ Р С—РЎР‚Р ВµР Т‘Р СР ВµРЎвЂљР С•Р Р† Р Р† Р Р…Р В°Р В»Р С•Р С–Р С•Р Р†РЎвЂ№Р Вµ РЎРѓРЎС“Р Р…Р Т‘РЎС“Р С”Р С‘.";
+			case PROPAGANDA -> "Р СџР С™Р Сљ Р С—Р С• РЎРѓР ВµР В±Р Вµ: Р Р…Р В° Р Р†РЎР‚Р ВµР СРЎРЏ РЎС“РЎРѓР С‘Р В»Р С‘Р Р†Р В°Р ВµРЎвЂљ Р Т‘Р С•Р В±РЎвЂ№РЎвЂЎРЎС“, РЎР‚РЎвЂ№Р В±Р В°Р В»Р С”РЎС“, Р С”Р С•Р С—Р В°Р Р…Р С‘Р Вµ Р С‘ РЎвЂљР С•РЎР‚Р С–Р С•Р Р†Р В»РЎР‹.";
 		};
 		String second = switch (type) {
-			case SANCTIONS, TAXES, PROPAGANDA -> "Действует 1 час онлайн-времени.";
+			case SANCTIONS, TAXES, PROPAGANDA -> "Р СџР С•РЎРѓР В»Р Вµ Р С—РЎР‚Р С‘Р СР ВµР Р…Р ВµР Р…Р С‘РЎРЏ РЎС“Р С”Р В°Р В· РЎР‚Р В°РЎРѓРЎвЂ¦Р С•Р Т‘РЎС“Р ВµРЎвЂљРЎРѓРЎРЏ.";
 		};
 		List<Component> lore = new ArrayList<>();
 		lore.add(Component.literal(first).withStyle(style -> style.withColor(ChatFormatting.GRAY).withItalic(false)));
@@ -4960,6 +5397,9 @@ public final class ServerRaceSystem {
 			tickLittleDictatorTaxes(server, player);
 			tickLittleDictatorPropaganda(player);
 			syncLittleDictatorMerchantOffers(player);
+			if (LITTLE_DICTATOR_TAX_CHEST_PENDING.contains(player.getUUID()) && (nowTick + player.getId()) % 10L == 0L) {
+				displayLittleDictatorTaxChestPrompt(player);
+			}
 			if ((nowTick + player.getId()) % 20L == 0L) {
 				syncLittleDictatorTaxChestHighlights(server, player);
 			}
@@ -4967,9 +5407,6 @@ public final class ServerRaceSystem {
 	}
 
 	private static void tickLittleDictatorSanctions(ServerPlayer player) {
-		if (player == null) {
-			return;
-		}
 		LittleDictatorSanctionsSession session = LITTLE_DICTATOR_SANCTIONS.get(player.getUUID());
 		if (session == null) {
 			return;
@@ -5061,7 +5498,9 @@ public final class ServerRaceSystem {
 		MobEffectInstance current = player.getEffect(MobEffects.HASTE);
 		Integer managedAmplifier = LITTLE_DICTATOR_PROPAGANDA_MANAGED_HASTE.remove(playerId);
 		boolean removeManagedHaste = isLittleDictatorPropagandaManagedHaste(current, managedAmplifier);
-		MobEffectInstance naturalHaste = LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.remove(playerId);
+		MobEffectInstance naturalHaste = getLittleDictatorPropagandaNaturalHaste(player);
+		LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.remove(playerId);
+		LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE_END_TICKS.remove(playerId);
 		if (removeSession) {
 			LITTLE_DICTATOR_PROPAGANDA.remove(playerId);
 		}
@@ -5071,7 +5510,7 @@ public final class ServerRaceSystem {
 		if (naturalHaste != null && (naturalHaste.getDuration() > 0 || naturalHaste.getDuration() == MobEffectInstance.INFINITE_DURATION)) {
 			LITTLE_DICTATOR_PROPAGANDA_APPLYING_HASTE.set(Boolean.TRUE);
 			try {
-				player.addEffect(copyLittleDictatorPropagandaNaturalHaste(naturalHaste));
+				player.addEffect(naturalHaste);
 			} finally {
 				LITTLE_DICTATOR_PROPAGANDA_APPLYING_HASTE.set(Boolean.FALSE);
 			}
@@ -5083,16 +5522,11 @@ public final class ServerRaceSystem {
 			return;
 		}
 		UUID playerId = player.getUUID();
-		MobEffectInstance naturalHaste = LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.get(playerId);
-		if (naturalHaste == null || naturalHaste.getDuration() == MobEffectInstance.INFINITE_DURATION) {
-			return;
-		}
-		int nextDuration = naturalHaste.getDuration() - 1;
-		if (nextDuration <= 0) {
+		MobEffectInstance natural = getLittleDictatorPropagandaNaturalHaste(player);
+		if (natural == null) {
 			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.remove(playerId);
-			return;
+			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE_END_TICKS.remove(playerId);
 		}
-		LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.put(playerId, copyLittleDictatorPropagandaNaturalHaste(naturalHaste, nextDuration));
 	}
 
 	private static void refreshLittleDictatorPropagandaHaste(ServerPlayer player) {
@@ -5100,7 +5534,7 @@ public final class ServerRaceSystem {
 			return;
 		}
 		UUID playerId = player.getUUID();
-		MobEffectInstance naturalHaste = LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.get(playerId);
+		MobEffectInstance naturalHaste = getLittleDictatorPropagandaNaturalHaste(player);
 		int baseAmplifier = naturalHaste == null ? -1 : naturalHaste.getAmplifier();
 		int amplifier = Math.min(MobEffectInstance.MAX_AMPLIFIER, baseAmplifier + 1);
 		MobEffectInstance current = player.getEffect(MobEffects.HASTE);
@@ -5112,10 +5546,10 @@ public final class ServerRaceSystem {
 			player.removeEffect(MobEffects.HASTE);
 		} else if (current != null && current.getEffect().equals(MobEffects.HASTE)) {
 			MobEffectInstance currentNatural = copyLittleDictatorPropagandaNaturalHaste(current);
-			if (currentNatural != null && shouldReplaceLittleDictatorPropagandaNaturalHaste(naturalHaste, currentNatural)) {
-				LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.put(playerId, currentNatural);
-				naturalHaste = currentNatural;
-				baseAmplifier = naturalHaste.getAmplifier();
+			if (currentNatural != null && shouldReplaceLittleDictatorPropagandaNaturalHaste(player, currentNatural)) {
+				storeLittleDictatorPropagandaNaturalHaste(player, currentNatural);
+				naturalHaste = getLittleDictatorPropagandaNaturalHaste(player);
+				baseAmplifier = naturalHaste == null ? -1 : naturalHaste.getAmplifier();
 				amplifier = Math.min(MobEffectInstance.MAX_AMPLIFIER, baseAmplifier + 1);
 			}
 			player.removeEffect(MobEffects.HASTE);
@@ -5170,6 +5604,48 @@ public final class ServerRaceSystem {
 		);
 	}
 
+	private static void storeLittleDictatorPropagandaNaturalHaste(ServerPlayer player, MobEffectInstance effect) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		MobEffectInstance copy = copyLittleDictatorPropagandaNaturalHaste(effect);
+		if (copy == null) {
+			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.remove(playerId);
+			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE_END_TICKS.remove(playerId);
+			return;
+		}
+		LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.put(playerId, copy);
+		long endTick = copy.getDuration() == MobEffectInstance.INFINITE_DURATION
+				? Long.MAX_VALUE
+				: player.level().getGameTime() + copy.getDuration();
+		LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE_END_TICKS.put(playerId, endTick);
+	}
+
+	private static MobEffectInstance getLittleDictatorPropagandaNaturalHaste(ServerPlayer player) {
+		if (player == null) {
+			return null;
+		}
+		UUID playerId = player.getUUID();
+		MobEffectInstance stored = LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.get(playerId);
+		Long endTick = LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE_END_TICKS.get(playerId);
+		if (stored == null || endTick == null) {
+			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.remove(playerId);
+			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE_END_TICKS.remove(playerId);
+			return null;
+		}
+		if (endTick == Long.MAX_VALUE || stored.getDuration() == MobEffectInstance.INFINITE_DURATION) {
+			return copyLittleDictatorPropagandaNaturalHaste(stored, MobEffectInstance.INFINITE_DURATION);
+		}
+		long remaining = endTick - player.level().getGameTime();
+		if (remaining <= 0L) {
+			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.remove(playerId);
+			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE_END_TICKS.remove(playerId);
+			return null;
+		}
+		return copyLittleDictatorPropagandaNaturalHaste(stored, (int) Math.min(Integer.MAX_VALUE, remaining));
+	}
+
 	public static boolean handleLittleDictatorPropagandaIncomingHaste(LivingEntity entity, MobEffectInstance effect) {
 		if (!(entity instanceof ServerPlayer player)
 				|| effect == null
@@ -5182,32 +5658,38 @@ public final class ServerRaceSystem {
 		if (incoming == null) {
 			return true;
 		}
-		UUID playerId = player.getUUID();
-		MobEffectInstance previous = LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.get(playerId);
-		if (shouldReplaceLittleDictatorPropagandaNaturalHaste(previous, incoming)) {
-			LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.put(playerId, incoming);
+		if (shouldReplaceLittleDictatorPropagandaNaturalHaste(player, incoming)) {
+			storeLittleDictatorPropagandaNaturalHaste(player, incoming);
 		}
 		refreshLittleDictatorPropagandaHaste(player);
 		return true;
 	}
 
-	private static boolean shouldReplaceLittleDictatorPropagandaNaturalHaste(MobEffectInstance previous, MobEffectInstance incoming) {
-		if (incoming == null) {
+	private static boolean shouldReplaceLittleDictatorPropagandaNaturalHaste(ServerPlayer player, MobEffectInstance incoming) {
+		if (player == null || incoming == null) {
 			return false;
 		}
+		MobEffectInstance previous = getLittleDictatorPropagandaNaturalHaste(player);
 		if (previous == null) {
 			return true;
 		}
 		if (incoming.getAmplifier() != previous.getAmplifier()) {
 			return incoming.getAmplifier() > previous.getAmplifier();
 		}
-		if (incoming.getDuration() == MobEffectInstance.INFINITE_DURATION) {
+		if (incoming.getDuration() < previous.getDuration() && previous.getDuration() != MobEffectInstance.INFINITE_DURATION) {
 			return true;
 		}
-		if (previous.getDuration() == MobEffectInstance.INFINITE_DURATION) {
+		long incomingEndTick = incoming.getDuration() == MobEffectInstance.INFINITE_DURATION
+				? Long.MAX_VALUE
+				: player.level().getGameTime() + incoming.getDuration();
+		Long previousEndTick = LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE_END_TICKS.get(player.getUUID());
+		if (incomingEndTick == Long.MAX_VALUE) {
+			return previousEndTick == null || previousEndTick != Long.MAX_VALUE;
+		}
+		if (previousEndTick == null || previousEndTick == Long.MAX_VALUE) {
 			return false;
 		}
-		return incoming.getDuration() > previous.getDuration();
+		return incomingEndTick > previousEndTick;
 	}
 
 	private static void collectLittleDictatorTax(MinecraftServer server, ServerPlayer target, UUID dictatorId) {
@@ -5239,7 +5721,13 @@ public final class ServerRaceSystem {
 		if (removed.isEmpty()) {
 			return;
 		}
-		ItemStack remaining = insertIntoLittleDictatorTaxContainer(container, removed);
+		ItemStack remaining = removed;
+		try {
+			remaining = insertIntoLittleDictatorTaxContainer(container, removed);
+			markLittleDictatorTaxContainerChanged(container);
+		} catch (RuntimeException exception) {
+			Lg2.LOGGER.error("Failed to insert little dictator tax into a tax chest", exception);
+		}
 		if (!remaining.isEmpty()) {
 			if (!inventory.add(remaining)) {
 				target.drop(remaining, false);
@@ -5257,9 +5745,13 @@ public final class ServerRaceSystem {
 		List<LittleDictatorTaxChestRef> shuffled = new ArrayList<>(refs);
 		Collections.shuffle(shuffled, new java.util.Random(random == null ? 0L : random.nextLong()));
 		for (LittleDictatorTaxChestRef ref : shuffled) {
-			Container container = getLittleDictatorTaxContainer(server, ref);
-			if (container != null) {
-				return container;
+			try {
+				Container container = getLittleDictatorTaxContainer(server, ref);
+				if (container != null) {
+					return container;
+				}
+			} catch (RuntimeException exception) {
+				Lg2.LOGGER.error("Failed to resolve little dictator tax chest at {}", ref, exception);
 			}
 		}
 		return null;
@@ -5270,11 +5762,33 @@ public final class ServerRaceSystem {
 			return null;
 		}
 		ServerLevel level = server.getLevel(ref.dimension());
-		if (level == null || !isLittleDictatorTaxChestBlock(level.getBlockState(ref.pos()))) {
+		if (level == null) {
+			return null;
+		}
+		level.getChunkAt(ref.pos());
+		BlockState state = level.getBlockState(ref.pos());
+		if (!isLittleDictatorTaxChestBlock(state)) {
 			return null;
 		}
 		BlockEntity blockEntity = level.getBlockEntity(ref.pos());
-		return blockEntity instanceof Container container ? container : null;
+		if (!(blockEntity instanceof Container container)) {
+			return null;
+		}
+		if (!(state.getBlock() instanceof ChestBlock) || !state.hasProperty(ChestBlock.TYPE) || state.getValue(ChestBlock.TYPE) == ChestType.SINGLE) {
+			return container;
+		}
+		Direction facing = state.hasProperty(ChestBlock.FACING) ? state.getValue(ChestBlock.FACING) : Direction.SOUTH;
+		BlockPos connectedPos = findLittleDictatorConnectedChestPos(level, ref.pos(), state, facing);
+		if (connectedPos == null) {
+			return container;
+		}
+		BlockEntity connectedBlockEntity = level.getBlockEntity(connectedPos);
+		if (!(connectedBlockEntity instanceof Container connectedContainer)) {
+			return container;
+		}
+		Container first = ref.pos().asLong() <= connectedPos.asLong() ? container : connectedContainer;
+		Container second = first == container ? connectedContainer : container;
+		return new CompoundContainer(first, second);
 	}
 
 	private static ItemStack insertIntoLittleDictatorTaxContainer(Container container, ItemStack stack) {
@@ -5282,28 +5796,54 @@ public final class ServerRaceSystem {
 			return ItemStack.EMPTY;
 		}
 		ItemStack remaining = stack.copy();
+
+		// Mimic a normal shift-click: top off existing compatible stacks first.
 		for (int slot = 0; slot < container.getContainerSize() && !remaining.isEmpty(); slot++) {
 			ItemStack existing = container.getItem(slot);
-			if (existing.isEmpty()) {
-				int move = Math.min(remaining.getCount(), Math.min(container.getMaxStackSize(), remaining.getMaxStackSize()));
-				ItemStack placed = remaining.copyWithCount(move);
-				container.setItem(slot, placed);
-				remaining.shrink(move);
+			if (existing.isEmpty() || !ItemStack.isSameItemSameComponents(existing, remaining)) {
+				continue;
 			}
+			if (!container.canPlaceItem(slot, remaining)) {
+				continue;
+			}
+			int limit = Math.min(container.getMaxStackSize(), existing.getMaxStackSize());
+			int free = Math.max(0, limit - existing.getCount());
+			if (free <= 0) {
+				continue;
+			}
+			int move = Math.min(remaining.getCount(), free);
+			existing.grow(move);
+			remaining.shrink(move);
+			container.setItem(slot, existing);
 		}
+
+		// Then fill empty slots in order from left to right.
 		for (int slot = 0; slot < container.getContainerSize() && !remaining.isEmpty(); slot++) {
 			ItemStack existing = container.getItem(slot);
-			if (!existing.isEmpty() && ItemStack.isSameItemSameComponents(existing, remaining)) {
-				int limit = Math.min(container.getMaxStackSize(), existing.getMaxStackSize());
-				int move = Math.min(remaining.getCount(), Math.max(0, limit - existing.getCount()));
-				if (move > 0) {
-					existing.grow(move);
-					remaining.shrink(move);
-				}
+			if (!existing.isEmpty() || !container.canPlaceItem(slot, remaining)) {
+				continue;
 			}
+			int move = Math.min(remaining.getCount(), Math.min(container.getMaxStackSize(), remaining.getMaxStackSize()));
+			if (move <= 0) {
+				continue;
+			}
+			container.setItem(slot, remaining.copyWithCount(move));
+			remaining.shrink(move);
 		}
-		container.setChanged();
+
+		markLittleDictatorTaxContainerChanged(container);
 		return remaining;
+	}
+
+	private static void markLittleDictatorTaxContainerChanged(Container container) {
+		if (container == null) {
+			return;
+		}
+		try {
+			container.setChanged();
+		} catch (RuntimeException exception) {
+			Lg2.LOGGER.error("Failed to mark little dictator tax container as changed", exception);
+		}
 	}
 
 	private static boolean pruneLittleDictatorTaxChests(MinecraftServer server) {
@@ -5513,8 +6053,12 @@ public final class ServerRaceSystem {
 	}
 
 	private static Transformation createLittleDictatorTaxChestHighlightTransformation(ServerLevel level, BlockPos pos, BlockState state) {
+		float halfPixel = 0.5F / 16.0F;
+		float quarterPixel = 0.125F / 16.0F;
 		float minX = 1.0F / 16.0F;
 		float maxX = 15.0F / 16.0F;
+		float minY = 0.25F / 16.0F;
+		float maxY = 14.5F / 16.0F;
 		float minZ = 1.0F / 16.0F;
 		float maxZ = 15.0F / 16.0F;
 		if (level != null
@@ -5536,22 +6080,31 @@ public final class ServerRaceSystem {
 			} else if (deltaZ < 0) {
 				minZ = 0.0F;
 			}
+			if (state.hasProperty(ChestBlock.FACING)) {
+				Direction facing = state.getValue(ChestBlock.FACING);
+				if (facing.getAxis() == Direction.Axis.Z) {
+					minX -= halfPixel;
+					maxX += halfPixel;
+				} else {
+					minZ -= halfPixel;
+					maxZ += halfPixel;
+				}
+			}
 		}
 		float centerX = ((minX + maxX) * 0.5F - 0.5F) * LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE;
-		float centerY = (((14.0F / 16.0F) * 0.5F) - 0.5F) * LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE;
+		float centerY = (((minY + maxY) * 0.5F - 0.5F) + quarterPixel) * LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE;
 		float centerZ = ((minZ + maxZ) * 0.5F - 0.5F) * LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE;
 		return new Transformation(
 				new Vector3f(centerX, centerY, centerZ),
 				new Quaternionf(),
 				new Vector3f(
 						(maxX - minX) * LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE,
-						(14.0F / 16.0F) * LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE,
+						(maxY - minY) * LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE,
 						(maxZ - minZ) * LITTLE_DICTATOR_TAX_CHEST_ITEM_DISPLAY_BLOCK_SCALE
 				),
 				new Quaternionf()
 		);
 	}
-
 	@SuppressWarnings("unchecked")
 	private static void sendLittleDictatorTaxChestHighlightSpawn(ServerPlayer owner, Entity entity) {
 		if (owner == null || entity == null || owner.connection == null || !(entity.level() instanceof ServerLevel level)) {
@@ -5861,9 +6414,8 @@ public final class ServerRaceSystem {
 			}
 
 			boolean active = nowTick < session.activeEndTick;
-			if (active) {
-				lockLittleDictatorUniqueCasterMovement(dictator, session);
-			} else {
+			lockLittleDictatorUniqueCasterMovement(dictator, session);
+			if (!active) {
 				endLittleDictatorUniqueActiveEffects(server, session);
 			}
 			double scale = getLittleDictatorUniqueScale(session, nowTick);
@@ -5897,6 +6449,93 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	public static boolean handleLittleDictatorUniqueInputPacket(ServerPlayer player, net.minecraft.world.entity.player.Input input) {
+		if (player == null) {
+			return false;
+		}
+		LittleDictatorUniqueSession casterSession = LITTLE_DICTATOR_UNIQUE_SESSIONS.get(player.getUUID());
+		if (casterSession == null || !casterSession.dimension.equals(player.level().dimension())) {
+			return false;
+		}
+		if (player.level().getGameTime() >= casterSession.endTick) {
+			return false;
+		}
+		boolean shifting = input != null && input.shift();
+		player.setLastClientInput(new net.minecraft.world.entity.player.Input(
+				false,
+				false,
+				false,
+				false,
+				false,
+				shifting,
+				false
+		));
+		player.setShiftKeyDown(shifting);
+		lockLittleDictatorUniqueCasterMovement(player, casterSession);
+		return true;
+	}
+
+	public static ServerboundMovePlayerPacket sanitizeLittleDictatorUniqueMovementPacket(
+			ServerPlayer player,
+			ServerboundMovePlayerPacket packet
+	) {
+		if (player == null || packet == null || !packet.hasPosition()) {
+			return packet;
+		}
+		LittleDictatorUniqueSession session = LITTLE_DICTATOR_UNIQUE_SESSIONS.get(player.getUUID());
+		if (session == null
+				|| !session.dimension.equals(player.level().dimension())
+				|| player.level().getGameTime() >= session.endTick) {
+			return packet;
+		}
+		requestLittleDictatorUniqueCasterClientPositionSync(player, session, packet);
+		double y = packet.getY(player.getY());
+		boolean onGround = packet.isOnGround();
+		boolean horizontalCollision = packet.horizontalCollision();
+		if (packet.hasRotation()) {
+			return new ServerboundMovePlayerPacket.PosRot(
+					session.lockedPosition.x,
+					y,
+					session.lockedPosition.z,
+					packet.getYRot(player.getYRot()),
+					packet.getXRot(player.getXRot()),
+					onGround,
+					horizontalCollision
+			);
+		}
+		return new ServerboundMovePlayerPacket.Pos(
+				session.lockedPosition.x,
+				y,
+				session.lockedPosition.z,
+				onGround,
+				horizontalCollision
+		);
+	}
+
+	private static void requestLittleDictatorUniqueCasterClientPositionSync(
+			ServerPlayer player,
+			LittleDictatorUniqueSession session,
+			ServerboundMovePlayerPacket packet
+	) {
+		if (player == null || player.connection == null || session == null || packet == null || !packet.hasPosition()) {
+			return;
+		}
+		Vec3 lockedPosition = session.lockedPosition;
+		if (lockedPosition == null) {
+			return;
+		}
+		double packetX = packet.getX(player.getX());
+		double packetZ = packet.getZ(player.getZ());
+		if (Math.abs(packetX - lockedPosition.x) <= LITTLE_DICTATOR_UNIQUE_CLIENT_POSITION_EPSILON
+				&& Math.abs(packetZ - lockedPosition.z) <= LITTLE_DICTATOR_UNIQUE_CLIENT_POSITION_EPSILON) {
+			return;
+		}
+		double y = packet.getY(player.getY());
+		float yaw = packet.hasRotation() ? packet.getYRot(player.getYRot()) : player.getYRot();
+		float pitch = packet.hasRotation() ? Mth.clamp(packet.getXRot(player.getXRot()), -90.0F, 90.0F) : player.getXRot();
+		player.connection.teleport(lockedPosition.x, y, lockedPosition.z, yaw, pitch);
+	}
+
 	public static boolean handleLittleDictatorUniqueMovementPacket(ServerPlayer player, ServerboundMovePlayerPacket packet) {
 		if (player == null || packet == null) {
 			return false;
@@ -5906,7 +6545,7 @@ public final class ServerRaceSystem {
 			return false;
 		}
 		LittleDictatorUniqueSession casterSession = LITTLE_DICTATOR_UNIQUE_SESSIONS.get(player.getUUID());
-		if (casterSession != null && casterSession.dimension == player.level().dimension()) {
+		if (casterSession != null && casterSession.dimension.equals(player.level().dimension())) {
 			if (packet.hasRotation()) {
 				float yaw = packet.getYRot(player.getYRot());
 				float pitch = Mth.clamp(packet.getXRot(player.getXRot()), -90.0F, 90.0F);
@@ -5920,10 +6559,14 @@ public final class ServerRaceSystem {
 				player.yBodyRotO = yaw;
 			}
 			lockLittleDictatorUniqueCasterMovement(player, casterSession);
-			return packet.hasPosition() && player.level().getGameTime() < casterSession.activeEndTick;
+			return false;
 		}
-		if (packet.hasRotation() && !packet.hasPosition() && findLittleDictatorUniqueCameraLockDictator(server, player) != null) {
-			return true;
+		if (packet.hasRotation()) {
+			ServerPlayer dictator = findLittleDictatorUniqueCameraLockDictator(server, player);
+			if (dictator != null) {
+				forceLittleDictatorUniqueLookAtCaster(player, dictator, LITTLE_DICTATOR_UNIQUE_LOOK_RETURN_STEP_DEGREES);
+				return !packet.hasPosition();
+			}
 		}
 		return false;
 	}
@@ -5937,7 +6580,7 @@ public final class ServerRaceSystem {
 			return false;
 		}
 		LittleDictatorUniqueSession casterSession = LITTLE_DICTATOR_UNIQUE_SESSIONS.get(player.getUUID());
-		if (casterSession != null && player.level().getGameTime() < casterSession.activeEndTick) {
+		if (casterSession != null && player.level().getGameTime() < casterSession.endTick) {
 			player.stopRiding();
 			lockLittleDictatorUniqueCasterMovement(player);
 			return true;
@@ -5981,22 +6624,29 @@ public final class ServerRaceSystem {
 		if (player == null || player.connection == null) {
 			return;
 		}
-		if (session == null || session.anchorPosition == null || session.dimension != player.level().dimension()) {
+		if (session == null || !session.dimension.equals(player.level().dimension())) {
 			return;
 		}
-		if (player.level().getGameTime() >= session.activeEndTick) {
+		if (player.level().getGameTime() >= session.endTick) {
 			return;
 		}
+		syncLittleDictatorUniqueMovementLock(player, true);
+		player.setNoGravity(false);
 		player.setSprinting(false);
+		player.setYBodyRot(player.getYRot());
+		player.yBodyRotO = player.getYRot();
+		Vec3 lockedPosition = session.lockedPosition;
+		double currentY = player.getY();
+		if (lockedPosition != null
+				&& (Math.abs(player.getX() - lockedPosition.x) > 1.0E-5D
+				|| Math.abs(player.getZ() - lockedPosition.z) > 1.0E-5D)) {
+			player.connection.teleport(lockedPosition.x, currentY, lockedPosition.z, player.getYRot(), player.getXRot());
+		}
 		Vec3 currentVelocity = player.getDeltaMovement();
-		if (Math.abs(currentVelocity.x) > 1.0E-5D || Math.abs(currentVelocity.y) > 1.0E-5D || Math.abs(currentVelocity.z) > 1.0E-5D) {
-			player.setDeltaMovement(Vec3.ZERO);
+		if (Math.abs(currentVelocity.x) > 1.0E-5D || Math.abs(currentVelocity.z) > 1.0E-5D) {
+			player.setDeltaMovement(0.0D, currentVelocity.y, 0.0D);
 			player.hurtMarked = true;
 			player.connection.send(new ClientboundSetEntityMotionPacket(player));
-		}
-		Vec3 anchor = session.anchorPosition;
-		if (player.position().distanceToSqr(anchor) > 1.0E-6D) {
-			player.connection.teleport(anchor.x, anchor.y, anchor.z, player.getYRot(), player.getXRot());
 		}
 	}
 
@@ -6094,7 +6744,38 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private static void syncLittleDictatorUniqueMovementLock(ServerPlayer player, boolean locked) {
+		if (player == null) {
+			return;
+		}
+		syncLittleDictatorUniqueLockAttribute(player.getAttribute(Attributes.JUMP_STRENGTH), LITTLE_DICTATOR_UNIQUE_JUMP_LOCK_MODIFIER_ID, locked);
+	}
+
+	private static void syncLittleDictatorUniqueLockAttribute(AttributeInstance attribute, Identifier modifierId, boolean locked) {
+		if (attribute == null || modifierId == null) {
+			return;
+		}
+		AttributeModifier current = attribute.getModifier(modifierId);
+		if (!locked) {
+			if (current != null) {
+				attribute.removeModifier(modifierId);
+			}
+			return;
+		}
+		if (current == null
+				|| current.operation() != AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
+				|| Double.compare(current.amount(), -1.0D) != 0) {
+			if (current != null) {
+				attribute.removeModifier(modifierId);
+			}
+			attribute.addTransientModifier(new AttributeModifier(modifierId, -1.0D, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+		}
+	}
 	private static void forceLittleDictatorUniqueLookAtCaster(ServerPlayer target, ServerPlayer dictator) {
+		forceLittleDictatorUniqueLookAtCaster(target, dictator, LITTLE_DICTATOR_UNIQUE_LOOK_STEP_DEGREES);
+	}
+
+	private static void forceLittleDictatorUniqueLookAtCaster(ServerPlayer target, ServerPlayer dictator, float stepDegrees) {
 		if (target == null || dictator == null || target.connection == null || target.level() != dictator.level()) {
 			return;
 		}
@@ -6104,8 +6785,9 @@ public final class ServerRaceSystem {
 		}
 		float targetYaw = yawFromDirection(direction);
 		float targetPitch = Mth.clamp(pitchFromDirection(direction), -90.0F, 90.0F);
-		float yaw = approachAngleDegrees(target.getYRot(), targetYaw, LITTLE_DICTATOR_UNIQUE_LOOK_STEP_DEGREES);
-		float pitch = approachDegrees(target.getXRot(), targetPitch, LITTLE_DICTATOR_UNIQUE_LOOK_STEP_DEGREES);
+		float clampedStep = Math.max(0.5F, stepDegrees);
+		float yaw = approachAngleDegrees(target.getYRot(), targetYaw, clampedStep);
+		float pitch = approachDegrees(target.getXRot(), targetPitch, clampedStep);
 		target.setYRot(yaw);
 		target.setXRot(pitch);
 		target.yRotO = yaw;
@@ -6115,12 +6797,31 @@ public final class ServerRaceSystem {
 		target.connection.send(new ClientboundPlayerRotationPacket(yaw, false, pitch, false));
 	}
 
+	private static double getLittleDictatorUniqueVisualScale(ServerPlayer dictator) {
+		if (dictator == null) {
+			return 1.0D;
+		}
+		AttributeInstance scaleAttribute = dictator.getAttribute(Attributes.SCALE);
+		if (scaleAttribute == null) {
+			return 1.0D;
+		}
+		return Math.max(1.0D, scaleAttribute.getValue());
+	}
+
+	private static Vec3 getLittleDictatorUniqueBodyCenter(ServerPlayer dictator) {
+		if (dictator == null) {
+			return Vec3.ZERO;
+		}
+		double visualHeight = Math.max(dictator.getBbHeight(), 1.8D * getLittleDictatorUniqueVisualScale(dictator));
+		return dictator.position().add(0.0D, visualHeight * 0.5D, 0.0D);
+	}
+
 	private static List<ServerPlayer> getLittleDictatorUniquePlayersInRadius(ServerLevel level, ServerPlayer dictator, double radius) {
 		if (level == null || dictator == null || radius <= 0.0D) {
 			return List.of();
 		}
 		double radiusSqr = radius * radius;
-		Vec3 center = dictator.position().add(0.0D, Math.max(0.5D, dictator.getBbHeight() * 0.5D), 0.0D);
+		Vec3 center = getLittleDictatorUniqueBodyCenter(dictator);
 		AABB area = new AABB(
 				center.x - radius,
 				center.y - radius,
@@ -6174,21 +6875,23 @@ public final class ServerRaceSystem {
 			float ratio = (float) (0.10D + 0.10D * targets.size());
 			for (ServerPlayer target : targets) {
 				float health = target.getHealth();
-				if (health <= 1.0F) {
+				int damage = Math.max(0, Math.round(health * ratio));
+				if (damage <= 0) {
 					continue;
 				}
-				float damage = Math.min(health - 1.0F, health * ratio);
-				if (damage > 0.0F) {
-					target.invulnerableTime = 0;
-					target.setLastHurtByPlayer(dictator, 100);
-					target.setLastHurtByMob(dictator);
-					dictator.setLastHurtMob(target);
-					target.setHealth(Math.max(1.0F, health - damage));
-					target.hurtMarked = true;
+				target.invulnerableTime = 0;
+				target.setLastHurtByPlayer(dictator, 100);
+				target.setLastHurtByMob(dictator);
+				dictator.setLastHurtMob(target);
+				if (damage >= health) {
+					target.setHealth(0.0F);
+				} else {
+					target.setHealth(Math.max(0.0F, health - damage));
 				}
+				target.hurtMarked = true;
 			}
 		}
-		Vec3 origin = dictator.position().add(0.0D, Math.max(1.0D, dictator.getBbHeight() * 0.45D), 0.0D);
+		Vec3 origin = getLittleDictatorUniqueBodyCenter(dictator);
 		for (ServerPlayer target : targets) {
 			shakeLittleDictatorUniqueScreen(target, origin);
 		}
@@ -6197,6 +6900,7 @@ public final class ServerRaceSystem {
 		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.GENERIC_EXPLODE, SoundSource.PLAYERS, 2.3F, 0.55F);
 		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.ANVIL_LAND, SoundSource.PLAYERS, 1.8F, 0.45F);
 		spawnLittleDictatorUniqueShockParticles(level, origin, session.radius);
+		startLittleDictatorUniqueShockWave(level, dictator, Math.max(3.0D, session.radius));
 	}
 
 	private static void shakeLittleDictatorUniqueScreen(ServerPlayer player, Vec3 origin) {
@@ -6353,15 +7057,15 @@ public final class ServerRaceSystem {
 		if (level == null || dictator == null) {
 			return;
 		}
-		Vec3 base = dictator.position().add(0.0D, 0.12D, 0.0D);
+		Vec3 base = getLittleDictatorUniqueBodyCenter(dictator);
 		DustParticleOptions dust = new DustParticleOptions(0x520019, 1.25F);
-		for (int i = 0; i < 48; i++) {
-			double angle = (Math.PI * 2.0D * i) / 48.0D;
+		for (int i = 0; i < 32; i++) {
+			double angle = (Math.PI * 2.0D * i) / 32.0D;
 			double x = base.x + Math.cos(angle) * 1.15D;
 			double z = base.z + Math.sin(angle) * 1.15D;
 			level.sendParticles(dust, x, base.y, z, 0, 0.0D, 0.055D, 0.0D, 1.0D);
 		}
-		level.sendParticles(ParticleTypes.SMOKE, dictator.getX(), dictator.getY() + 0.25D, dictator.getZ(), 24, 0.45D, 0.1D, 0.45D, 0.045D);
+		level.sendParticles(ParticleTypes.SMOKE, base.x, base.y, base.z, 16, 0.45D, 0.1D, 0.45D, 0.045D);
 	}
 
 	private static void spawnLittleDictatorUniqueGrowthParticles(ServerLevel level, ServerPlayer dictator, double scale) {
@@ -6369,12 +7073,13 @@ public final class ServerRaceSystem {
 			return;
 		}
 		double radius = Math.min(4.5D, 0.22D * Math.max(1.0D, scale));
-		double y = dictator.getY() + Math.min(dictator.getBbHeight() * 0.75D, Math.max(0.5D, scale * 0.32D));
+		Vec3 center = getLittleDictatorUniqueBodyCenter(dictator);
+		double y = center.y;
 		DustParticleOptions dust = new DustParticleOptions(0x7A0026, 0.9F);
 		for (int i = 0; i < 18; i++) {
 			double angle = (Math.PI * 2.0D * i) / 18.0D + level.random.nextDouble() * 0.08D;
-			double x = dictator.getX() + Math.cos(angle) * radius;
-			double z = dictator.getZ() + Math.sin(angle) * radius;
+			double x = center.x + Math.cos(angle) * radius;
+			double z = center.z + Math.sin(angle) * radius;
 			level.sendParticles(dust, x, y, z, 0, 0.0D, 0.035D, 0.0D, 1.0D);
 		}
 	}
@@ -6385,33 +7090,32 @@ public final class ServerRaceSystem {
 		}
 		double maxRadius = Math.max(3.0D, radius);
 		level.sendParticles(ParticleTypes.SONIC_BOOM, origin.x, origin.y, origin.z, 1, 0.0D, 0.0D, 0.0D, 0.0D);
-		level.sendParticles(ParticleTypes.EXPLOSION, origin.x, origin.y, origin.z, 26, 3.2D, 1.2D, 3.2D, 0.0D);
-		level.sendParticles(ParticleTypes.LARGE_SMOKE, origin.x, origin.y, origin.z, 240, 4.4D, 1.35D, 4.4D, 0.11D);
-		level.sendParticles(ParticleTypes.CLOUD, origin.x, origin.y - 0.1D, origin.z, 180, 2.8D, 0.55D, 2.8D, 0.38D);
+		level.sendParticles(ParticleTypes.EXPLOSION, origin.x, origin.y, origin.z, 8, 2.4D, 0.9D, 2.4D, 0.0D);
+		level.sendParticles(ParticleTypes.LARGE_SMOKE, origin.x, origin.y, origin.z, 70, 3.6D, 1.1D, 3.6D, 0.11D);
+		level.sendParticles(ParticleTypes.CLOUD, origin.x, origin.y - 0.1D, origin.z, 70, 2.4D, 0.45D, 2.4D, 0.34D);
 
 		DustParticleOptions edge = new DustParticleOptions(0xE22B34, 1.7F);
 		DustParticleOptions flash = new DustParticleOptions(0xF7FCFF, 1.25F);
 		DustParticleOptions blue = new DustParticleOptions(0x2F8CFF, 1.45F);
-		for (int i = 0; i < 260; i++) {
-			double angle = (Math.PI * 2.0D * i) / 260.0D;
+		for (int i = 0; i < 72; i++) {
+			double angle = (Math.PI * 2.0D * i) / 72.0D;
 			double cos = Math.cos(angle);
 			double sin = Math.sin(angle);
 			double y = origin.y + (i % 9 - 4) * 0.12D;
 			DustParticleOptions dust = i % 5 == 0 ? flash : (i % 2 == 0 ? blue : edge);
 			level.sendParticles(dust, origin.x + cos * 1.55D, y, origin.z + sin * 1.55D, 0, cos * 1.05D, 0.08D, sin * 1.05D, 1.0D);
 		}
-		startLittleDictatorUniqueShockWave(level, origin, maxRadius);
 		spawnLittleDictatorUniqueShockWaveFrame(level, origin, maxRadius, 0.03D, 0);
 	}
 
-	private static void startLittleDictatorUniqueShockWave(ServerLevel level, Vec3 origin, double radius) {
-		if (level == null || origin == null || radius <= 0.0D) {
+	private static void startLittleDictatorUniqueShockWave(ServerLevel level, ServerPlayer dictator, double radius) {
+		if (level == null || dictator == null || radius <= 0.0D) {
 			return;
 		}
 		long startTick = level.getGameTime();
 		LITTLE_DICTATOR_UNIQUE_SHOCK_WAVES.add(new LittleDictatorUniqueShockWaveSession(
 				level.dimension(),
-				origin,
+				dictator.getUUID(),
 				startTick,
 				startTick + LITTLE_DICTATOR_UNIQUE_SHOCK_WAVE_TICKS,
 				radius
@@ -6435,9 +7139,19 @@ public final class ServerRaceSystem {
 				iterator.remove();
 				continue;
 			}
+			long ageTicks = nowTick - session.startTick();
+			if (ageTicks > 0L && nowTick < session.endTick() && ageTicks % LITTLE_DICTATOR_UNIQUE_SHOCK_WAVE_FRAME_INTERVAL_TICKS != 0L) {
+				continue;
+			}
 			double duration = Math.max(1.0D, session.endTick() - session.startTick());
-			double progress = Mth.clamp((nowTick - session.startTick()) / duration, 0.0D, 1.0D);
-			spawnLittleDictatorUniqueShockWaveFrame(level, session.origin(), session.maxRadius(), progress, (int) (nowTick - session.startTick()));
+			double progress = Mth.clamp(ageTicks / duration, 0.0D, 1.0D);
+			ServerPlayer dictator = server.getPlayerList().getPlayer(session.dictatorId());
+			if (dictator == null || !dictator.isAlive() || dictator.isSpectator() || dictator.level() != level) {
+				iterator.remove();
+				continue;
+			}
+			Vec3 origin = getLittleDictatorUniqueBodyCenter(dictator);
+			spawnLittleDictatorUniqueShockWaveFrame(level, origin, session.maxRadius(), progress, (int) ageTicks);
 		}
 	}
 
@@ -6447,67 +7161,63 @@ public final class ServerRaceSystem {
 		}
 		double eased = 1.0D - Math.pow(1.0D - Mth.clamp(progress, 0.0D, 1.0D), 1.8D);
 		double frontRadius = Math.max(0.9D, maxRadius * eased);
-		double thickness = 0.38D + frontRadius * 0.018D;
+		double thickness = 0.45D + frontRadius * 0.014D;
 		double goldenAngle = Math.PI * (3.0D - Math.sqrt(5.0D));
-		double phase = ageTicks * 0.31D;
-		double outwardSpeed = 0.45D + progress * 0.72D;
+		double phase = ageTicks * 0.34D;
+		double outwardSpeed = 0.58D + progress * 0.62D;
 
-		DustParticleOptions core = new DustParticleOptions(0xFFFFFF, 2.65F);
-		DustParticleOptions red = new DustParticleOptions(0xD9152D, 2.15F);
-		DustParticleOptions blue = new DustParticleOptions(0x1C76FF, 1.85F);
-		DustParticleOptions flash = new DustParticleOptions(0xF7FCFF, 1.35F);
-		DustParticleOptions paleBlue = new DustParticleOptions(0x9ED8FF, 1.5F);
+		DustParticleOptions core = new DustParticleOptions(0xFFFFFF, 3.05F);
+		DustParticleOptions red = new DustParticleOptions(0xD9152D, 2.35F);
+		DustParticleOptions blue = new DustParticleOptions(0x1C76FF, 2.2F);
+		DustParticleOptions flash = new DustParticleOptions(0xF7FCFF, 1.65F);
+		DustParticleOptions paleBlue = new DustParticleOptions(0x9ED8FF, 1.8F);
 
-		for (int layer = -2; layer <= 2; layer++) {
-			double layerRadius = Math.max(0.35D, frontRadius + layer * thickness * 0.42D);
-			int samples = Math.max(300, Math.min(760, (int) Math.round(layerRadius * 13.0D)));
-			for (int i = 0; i < samples; i++) {
-				double unitY = 1.0D - 2.0D * ((i + 0.5D) / samples);
-				double horizontal = Math.sqrt(Math.max(0.0D, 1.0D - unitY * unitY));
-				double angle = i * goldenAngle + phase + layer * 0.27D;
-				Vec3 normal = new Vec3(Math.cos(angle) * horizontal, unitY * 0.9D, Math.sin(angle) * horizontal).normalize();
-				double ripple = Math.sin(i * 0.23D + ageTicks * 0.9D + layer) * thickness * 0.32D;
-				Vec3 pos = origin.add(normal.scale(layerRadius + ripple));
-				Vec3 velocity = normal.scale(outwardSpeed + level.random.nextDouble() * 0.12D);
-				DustParticleOptions dust = switch (Math.floorMod(i + layer + ageTicks, 6)) {
-					case 0 -> flash;
-					case 1 -> blue;
-					case 2 -> paleBlue;
-					case 3 -> red;
-					default -> core;
-				};
-				level.sendParticles(dust, pos.x, pos.y, pos.z, 0, velocity.x, velocity.y, velocity.z, 1.0D);
-				if ((i + ageTicks + layer) % 3 == 0) {
-					level.sendParticles(ParticleTypes.CLOUD, pos.x, pos.y, pos.z, 0, velocity.x * 1.18D, velocity.y * 0.72D, velocity.z * 1.18D, 1.0D);
-				}
-				if ((i + ageTicks + layer) % 8 == 0) {
-					level.sendParticles(ParticleTypes.LARGE_SMOKE, pos.x, pos.y, pos.z, 2, 0.09D, 0.09D, 0.09D, 0.035D);
-				}
+		// Keep the wave visually heavy, but avoid thousands of one-particle packets per tick.
+		int shellSamples = Math.max(64, Math.min(120, (int) Math.round(frontRadius * 2.35D)));
+		for (int i = 0; i < shellSamples; i++) {
+			double unitY = 1.0D - 2.0D * ((i + 0.5D) / shellSamples);
+			double horizontal = Math.sqrt(Math.max(0.0D, 1.0D - unitY * unitY));
+			double angle = i * goldenAngle + phase;
+			Vec3 normal = new Vec3(Math.cos(angle) * horizontal, unitY * 0.86D, Math.sin(angle) * horizontal).normalize();
+			double ripple = Math.sin(i * 0.31D + ageTicks * 0.85D) * thickness * 0.55D;
+			Vec3 pos = origin.add(normal.scale(frontRadius + ripple));
+			Vec3 velocity = normal.scale(outwardSpeed + level.random.nextDouble() * 0.16D);
+			DustParticleOptions dust = switch (Math.floorMod(i + ageTicks, 6)) {
+				case 0 -> flash;
+				case 1 -> blue;
+				case 2 -> paleBlue;
+				case 3 -> red;
+				default -> core;
+			};
+			level.sendParticles(dust, pos.x, pos.y, pos.z, 0, velocity.x, velocity.y, velocity.z, 1.0D);
+			if ((i + ageTicks) % 4 == 0) {
+				level.sendParticles(ParticleTypes.CLOUD, pos.x, pos.y, pos.z, 1, 0.035D, 0.035D, 0.035D, 0.015D);
 			}
 		}
 
-		for (int rib = 0; rib < 9; rib++) {
-			double tilt = -0.72D + rib * 0.18D;
-			int points = Math.max(160, Math.min(360, (int) Math.round(frontRadius * 8.0D)));
-			double ribPhase = phase + rib * 0.7D;
+		int ribs = 5;
+		int points = Math.max(34, Math.min(58, (int) Math.round(frontRadius * 1.15D)));
+		for (int rib = 0; rib < ribs; rib++) {
+			double tilt = -0.55D + rib * 0.275D;
+			double ribPhase = phase + rib * 0.82D;
 			for (int i = 0; i < points; i++) {
 				double angle = (Math.PI * 2.0D * i) / points + ribPhase;
-				double serration = Math.sin(angle * 5.0D + ageTicks * 0.6D) * thickness * 0.6D;
-				Vec3 direction = new Vec3(Math.cos(angle), tilt + Math.sin(angle * 2.0D + rib) * 0.08D, Math.sin(angle)).normalize();
+				double serration = Math.sin(angle * 5.0D + ageTicks * 0.65D) * thickness * 0.78D;
+				Vec3 direction = new Vec3(Math.cos(angle), tilt + Math.sin(angle * 2.0D + rib) * 0.09D, Math.sin(angle)).normalize();
 				Vec3 pos = origin.add(direction.scale(frontRadius + serration));
-				Vec3 velocity = direction.scale(outwardSpeed * 0.82D);
+				Vec3 velocity = direction.scale(outwardSpeed * 0.9D);
 				level.sendParticles((i + rib) % 4 == 0 ? flash : (i % 2 == 0 ? blue : paleBlue), pos.x, pos.y, pos.z, 0, velocity.x, velocity.y, velocity.z, 1.0D);
 			}
 		}
 
-		int debris = Math.max(180, Math.min(460, (int) Math.round(frontRadius * 7.5D)));
+		int debris = Math.max(36, Math.min(72, (int) Math.round(frontRadius * 1.35D)));
 		for (int i = 0; i < debris; i++) {
 			double distance = Math.max(0.45D, frontRadius - level.random.nextDouble() * Math.max(0.5D, thickness * 4.0D));
 			double angle = level.random.nextDouble() * Math.PI * 2.0D;
 			double unitY = -0.7D + level.random.nextDouble() * 1.4D;
 			Vec3 direction = new Vec3(Math.cos(angle), unitY, Math.sin(angle)).normalize();
 			Vec3 pos = origin.add(direction.scale(distance));
-			Vec3 velocity = direction.scale(0.22D + progress * 0.36D);
+			Vec3 velocity = direction.scale(0.28D + progress * 0.34D);
 			DustParticleOptions dust = switch (level.random.nextInt(4)) {
 				case 0 -> red;
 				case 1 -> blue;
@@ -6537,7 +7247,7 @@ public final class ServerRaceSystem {
 			return;
 		}
 		Vec3 start = target.position().add(0.0D, Math.max(0.7D, target.getBbHeight() * 0.55D), 0.0D);
-		Vec3 end = dictator.position().add(0.0D, Math.max(1.0D, dictator.getBbHeight() * 0.45D), 0.0D);
+		Vec3 end = getLittleDictatorUniqueBodyCenter(dictator);
 		Vec3 delta = end.subtract(start);
 		double length = delta.length();
 		if (length <= 1.0E-6D) {
@@ -6551,30 +7261,20 @@ public final class ServerRaceSystem {
 			right = right.normalize();
 		}
 		Vec3 up = right.cross(axis).normalize();
-		int steps = Math.max(28, Math.min(72, (int) Math.round(length * 4.2D)));
+		int steps = Math.max(14, Math.min(32, (int) Math.round(length * 1.7D)));
 		double phase = level.random.nextDouble() * Math.PI * 2.0D;
 		DustParticleOptions life = new DustParticleOptions(0x86FF12, 1.55F);
 		DustParticleOptions darkLife = new DustParticleOptions(0x1F8A16, 1.25F);
 		DustParticleOptions hunger = new DustParticleOptions(0xB7FF38, 1.35F);
 		DustParticleOptions spoiledHunger = new DustParticleOptions(0x2D6F20, 1.12F);
 		DustParticleOptions core = new DustParticleOptions(0xD8FF7A, 1.05F);
-		for (int ring = 0; ring < 4; ring++) {
-			double ringRadius = 0.55D + ring * 0.22D;
-			int points = 18 + ring * 8;
-			for (int i = 0; i < points; i++) {
-				double angle = phase + (Math.PI * 2.0D * i) / points + ring * 0.35D;
-				Vec3 pos = start
-						.add(right.scale(Math.cos(angle) * ringRadius))
-						.add(up.scale(Math.sin(angle) * ringRadius));
-				Vec3 toCenter = start.subtract(pos).normalize().scale(0.08D + ring * 0.018D).add(axis.scale(0.18D + ring * 0.04D));
-				level.sendParticles((ring & 1) == 0 ? life : hunger, pos.x, pos.y, pos.z, 0, toCenter.x, toCenter.y, toCenter.z, 1.0D);
-			}
-		}
+
 		for (int i = 1; i <= steps; i++) {
 			double t = i / (double) steps;
 			Vec3 base = start.add(delta.scale(t));
 			double taper = Math.sin(Math.PI * t);
-			double radius = 0.24D + taper * 1.08D;
+			double victimFlare = Math.pow(1.0D - t, 2.0D) * 0.44D;
+			double radius = 0.16D + victimFlare + taper * 0.78D;
 			double angle = phase + t * Math.PI * 11.5D;
 			Vec3 swirlA = base.add(right.scale(Math.cos(angle) * radius)).add(up.scale(Math.sin(angle) * radius));
 			Vec3 swirlB = base.add(right.scale(Math.cos(angle + Math.PI) * radius * 0.72D)).add(up.scale(Math.sin(angle + Math.PI) * radius * 0.72D));
@@ -6582,19 +7282,23 @@ public final class ServerRaceSystem {
 			Vec3 swirlD = base.add(right.scale(Math.cos(angle + Math.PI * 1.35D) * radius * 0.94D)).add(up.scale(Math.sin(angle + Math.PI * 1.35D) * radius * 0.94D));
 			Vec3 streamVelocity = axis.scale(0.36D + taper * 0.18D);
 			level.sendParticles(i % 3 == 0 ? darkLife : life, swirlA.x, swirlA.y, swirlA.z, 0, streamVelocity.x, streamVelocity.y, streamVelocity.z, 1.0D);
-			level.sendParticles(i % 4 == 0 ? spoiledHunger : hunger, swirlB.x, swirlB.y, swirlB.z, 0, streamVelocity.x * 0.82D, streamVelocity.y * 0.82D, streamVelocity.z * 0.82D, 1.0D);
-			level.sendParticles((i & 1) == 0 ? darkLife : spoiledHunger, swirlD.x, swirlD.y, swirlD.z, 0, streamVelocity.x * 0.64D, streamVelocity.y * 0.64D, streamVelocity.z * 0.64D, 1.0D);
-			if (i % 2 == 0) {
+			if (t > 0.08D || (i & 1) == 0) {
+				level.sendParticles(i % 4 == 0 ? spoiledHunger : hunger, swirlB.x, swirlB.y, swirlB.z, 0, streamVelocity.x * 0.82D, streamVelocity.y * 0.82D, streamVelocity.z * 0.82D, 1.0D);
+			}
+			if (t > 0.16D && i % 3 == 0) {
+				level.sendParticles((i & 1) == 0 ? darkLife : spoiledHunger, swirlD.x, swirlD.y, swirlD.z, 0, streamVelocity.x * 0.64D, streamVelocity.y * 0.64D, streamVelocity.z * 0.64D, 1.0D);
+			}
+			if (i % 4 == 0) {
 				level.sendParticles(core, swirlC.x, swirlC.y, swirlC.z, 0, streamVelocity.x * 1.08D, streamVelocity.y * 1.08D, streamVelocity.z * 1.08D, 1.0D);
 			}
-			if (i % 3 == 0) {
-				level.sendParticles(ParticleTypes.SMOKE, base.x, base.y, base.z, 4, radius * 0.26D, radius * 0.2D, radius * 0.26D, 0.022D);
+            if (i % 6 == 0) {
+                level.sendParticles(ParticleTypes.SMOKE, base.x, base.y, base.z, 2, radius * 0.22D, radius * 0.16D, radius * 0.22D, 0.018D);
 			}
-			if (i % 5 == 0) {
-				level.sendParticles(ParticleTypes.WITCH, base.x, base.y, base.z, 2, radius * 0.18D, radius * 0.12D, radius * 0.18D, 0.026D);
+            if (i % 8 == 0) {
+                level.sendParticles(ParticleTypes.WITCH, base.x, base.y, base.z, 1, radius * 0.16D, radius * 0.1D, radius * 0.16D, 0.022D);
 			}
 		}
-		for (int i = 0; i < 42; i++) {
+		for (int i = 0; i < 12; i++) {
 			double angle = phase + i * 0.57D;
 			double ringRadius = 0.45D + (i % 6) * 0.12D;
 			Vec3 pos = end
@@ -6603,9 +7307,9 @@ public final class ServerRaceSystem {
 			Vec3 inward = end.subtract(pos).normalize().scale(0.12D).add(axis.scale(0.1D));
 			level.sendParticles(i % 2 == 0 ? life : hunger, pos.x, pos.y, pos.z, 0, inward.x, inward.y, inward.z, 1.0D);
 		}
-		level.sendParticles(life, end.x, end.y, end.z, 34, 0.68D, 0.5D, 0.68D, 0.065D);
-		level.sendParticles(hunger, end.x, end.y - 0.15D, end.z, 26, 0.58D, 0.42D, 0.58D, 0.052D);
-		level.sendParticles(ParticleTypes.SMOKE, end.x, end.y, end.z, 16, 0.46D, 0.34D, 0.46D, 0.032D);
+		level.sendParticles(life, end.x, end.y, end.z, 12, 0.58D, 0.42D, 0.58D, 0.055D);
+		level.sendParticles(hunger, end.x, end.y - 0.15D, end.z, 10, 0.5D, 0.36D, 0.5D, 0.046D);
+		level.sendParticles(ParticleTypes.SMOKE, end.x, end.y, end.z, 6, 0.38D, 0.28D, 0.38D, 0.028D);
 	}
 
 	private static void cleanupAllLittleDictatorUniqueSessions(MinecraftServer server) {
@@ -6639,9 +7343,12 @@ public final class ServerRaceSystem {
 		endLittleDictatorUniqueActiveEffects(server, session);
 		ServerPlayer dictator = server == null ? null : server.getPlayerList().getPlayer(dictatorId);
 		if (dictator != null) {
+			dictator.setNoGravity(session.originalNoGravity);
+			syncLittleDictatorUniqueMovementLock(dictator, false);
 			syncLittleDictatorUniqueScale(dictator, 1.0D);
 			if (emitParticles && dictator.level() instanceof ServerLevel level) {
-				level.sendParticles(ParticleTypes.SMOKE, dictator.getX(), dictator.getY() + 1.0D, dictator.getZ(), 24, 0.45D, 0.6D, 0.45D, 0.025D);
+				Vec3 center = getLittleDictatorUniqueBodyCenter(dictator);
+				level.sendParticles(ParticleTypes.SMOKE, center.x, center.y, center.z, 24, 0.45D, 0.6D, 0.45D, 0.025D);
 			}
 		}
 		if (server != null) {
@@ -6761,13 +7468,8 @@ public final class ServerRaceSystem {
 			Map.Entry<UUID, LittleDictatorPingSession> entry = iterator.next();
 			UUID playerId = entry.getKey();
 			LittleDictatorPingSession session = entry.getValue();
-			if (session == null || nowTick >= session.endTick()) {
-				ServerPlayer onlinePlayer = server.getPlayerList().getPlayer(playerId);
-				if (onlinePlayer != null) {
-					clearLittleDictatorPingEffect(onlinePlayer);
-				} else {
-					LITTLE_DICTATOR_PING_OVERLAY_ACTIVE.remove(playerId);
-				}
+			if (session == null) {
+				LITTLE_DICTATOR_PING_OVERLAY_ACTIVE.remove(playerId);
 				LITTLE_DICTATOR_LAST_DELAYED_PACKET_RELEASE_TICKS.remove(playerId);
 				iterator.remove();
 				continue;
@@ -6775,6 +7477,19 @@ public final class ServerRaceSystem {
 
 			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
 			if (player == null || player.connection == null) {
+				entry.setValue(new LittleDictatorPingSession(
+						session.endTick() + 1L,
+						session.minPingMs(),
+						session.maxPingMs(),
+						session.nextUpdateTick() + 1L,
+						session.lastSentPingMs()
+				));
+				continue;
+			}
+			if (nowTick >= session.endTick()) {
+				clearLittleDictatorPingEffect(player);
+				LITTLE_DICTATOR_LAST_DELAYED_PACKET_RELEASE_TICKS.remove(playerId);
+				iterator.remove();
 				continue;
 			}
 			if (isLittleDictatorPlayer(player)) {
@@ -7291,7 +8006,8 @@ public final class ServerRaceSystem {
 		}
 		if (MILK_MOUSE_SESSIONS.containsKey(player.getUUID())) {
 			player.displayClientMessage(
-					Component.literal("Р’С‹ СѓР¶Рµ РІ С„РѕСЂРјРµ С‡РµС€СѓР№РЅРёС†С‹.").withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+					Component.literal("Р СљР С‘РЎРѓРЎвЂљР ВµРЎР‚ Р СљРЎвЂ№РЎв‚¬Р В° РЎС“Р В¶Р Вµ Р В°Р С”РЎвЂљР С‘Р Р†Р ВµР Р….")
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
 			return 0;
@@ -7356,7 +8072,7 @@ public final class ServerRaceSystem {
 		List<ServerPlayer> candidates = collectMilkPocketInviteCandidates(player);
 		if (candidates.isEmpty()) {
 			player.displayClientMessage(
-					Component.literal("РќРµРєРѕРіРѕ РїСЂРёРіР»Р°С€Р°С‚СЊ.")
+					Component.literal("Р СњР ВµР С”Р С•Р С–Р С• Р С—РЎР‚Р С‘Р С–Р В»Р В°РЎв‚¬Р В°РЎвЂљРЎРЉ.")
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
@@ -8994,13 +9710,21 @@ public final class ServerRaceSystem {
 		while (iterator.hasNext()) {
 			Map.Entry<UUID, WomanShnyagaRejectionSession> entry = iterator.next();
 			WomanShnyagaRejectionSession session = entry.getValue();
-			if (session == null || nowTick >= session.endTick()) {
+			if (session == null) {
 				iterator.remove();
 				continue;
 			}
 
 			ServerPlayer woman = server.getPlayerList().getPlayer(entry.getKey());
-			if (woman == null || !woman.isAlive() || woman.isSpectator()) {
+			if (woman == null) {
+				entry.setValue(new WomanShnyagaRejectionSession(session.endTick() + 1L));
+				continue;
+			}
+			if (nowTick >= session.endTick()) {
+				iterator.remove();
+				continue;
+			}
+			if (!woman.isAlive() || woman.isSpectator()) {
 				continue;
 			}
 
@@ -9424,6 +10148,398 @@ public final class ServerRaceSystem {
 		return server.getWorldPath(LevelResource.ROOT).resolve("data").resolve(WOMAN_SHNYAGA_STATE_FILE_NAME);
 	}
 
+	private static void tickLongPassiveEffectsPersistence(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		long nowTick = server.overworld().getGameTime();
+		if (longPassiveEffectsNextSaveTick != Long.MIN_VALUE && nowTick < longPassiveEffectsNextSaveTick) {
+			return;
+		}
+		longPassiveEffectsNextSaveTick = nowTick + LONG_PASSIVE_EFFECTS_AUTOSAVE_INTERVAL_TICKS;
+		saveLongPassiveEffects(server);
+	}
+
+	private static void saveLongPassiveEffects(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		long nowTick = server.overworld().getGameTime();
+		LongPassiveEffectsPersistedState state = new LongPassiveEffectsPersistedState();
+		for (Map.Entry<UUID, LittleDictatorSanctionsSession> entry : LITTLE_DICTATOR_SANCTIONS.entrySet()) {
+			if (entry.getKey() == null || entry.getValue() == null || entry.getValue().remainingTicks <= 0L) {
+				continue;
+			}
+			PersistedSanctions stored = new PersistedSanctions();
+			stored.remainingTicks = entry.getValue().remainingTicks;
+			stored.dropChance = entry.getValue().dropChance;
+			state.sanctions.put(entry.getKey().toString(), stored);
+		}
+		for (Map.Entry<UUID, LittleDictatorTaxesSession> entry : LITTLE_DICTATOR_TAXES.entrySet()) {
+			LittleDictatorTaxesSession session = entry.getValue();
+			if (entry.getKey() == null || session == null || session.remainingTicks <= 0L || session.dictatorId == null) {
+				continue;
+			}
+			PersistedTaxes stored = new PersistedTaxes();
+			stored.dictatorId = session.dictatorId.toString();
+			stored.remainingTicks = session.remainingTicks;
+			stored.nextTaxTicks = Math.max(1L, session.nextTaxTicks);
+			stored.intervalTicks = Math.max(1L, session.intervalTicks);
+			state.taxes.put(entry.getKey().toString(), stored);
+		}
+		for (Map.Entry<UUID, LittleDictatorPropagandaSession> entry : LITTLE_DICTATOR_PROPAGANDA.entrySet()) {
+			UUID playerId = entry.getKey();
+			LittleDictatorPropagandaSession session = entry.getValue();
+			if (playerId == null || session == null || session.remainingTicks <= 0L) {
+				continue;
+			}
+			PersistedPropaganda stored = new PersistedPropaganda();
+			stored.remainingTicks = session.remainingTicks;
+			stored.tradeDiscount = session.tradeDiscount;
+			stored.managedAmplifier = LITTLE_DICTATOR_PROPAGANDA_MANAGED_HASTE.get(playerId);
+			stored.naturalHaste = persistLittleDictatorPropagandaNaturalHaste(playerId, nowTick);
+			state.propaganda.put(playerId.toString(), stored);
+		}
+		for (Map.Entry<UUID, LittleDictatorPingSession> entry : LITTLE_DICTATOR_PING_SESSIONS.entrySet()) {
+			LittleDictatorPingSession session = entry.getValue();
+			if (entry.getKey() == null || session == null) {
+				continue;
+			}
+			long remainingTicks = Math.max(0L, session.endTick() - nowTick);
+			if (remainingTicks <= 0L) {
+				continue;
+			}
+			PersistedPing stored = new PersistedPing();
+			stored.remainingTicks = remainingTicks;
+			stored.minPingMs = session.minPingMs();
+			stored.maxPingMs = session.maxPingMs();
+			stored.lastSentPingMs = session.lastSentPingMs();
+			state.ping.put(entry.getKey().toString(), stored);
+		}
+		for (Map.Entry<UUID, WomanUniqueSession> entry : WOMAN_UNIQUE_SESSIONS.entrySet()) {
+			WomanUniqueSession session = entry.getValue();
+			if (entry.getKey() == null || session == null) {
+				continue;
+			}
+			long remainingTicks = Math.max(0L, session.endTick - nowTick);
+			if (remainingTicks <= 0L) {
+				continue;
+			}
+			PersistedWomanUnique stored = new PersistedWomanUnique();
+			stored.remainingTicks = remainingTicks;
+			stored.nextDropTicks = Math.max(1L, session.nextDropCheckTick - nowTick);
+			stored.dropMinTicks = Math.max(1L, session.dropMinTicks);
+			stored.dropMaxTicks = Math.max(stored.dropMinTicks, session.dropMaxTicks);
+			stored.dropChance = session.dropChance;
+			stored.tradePriceIncrease = session.tradePriceIncrease;
+			stored.naturalHealingUnlocked = session.naturalHealingUnlocked;
+			if (session.lastFoodSnapshot != null) {
+				stored.lastFoodLevel = session.lastFoodSnapshot.foodLevel();
+				stored.lastSaturationLevel = session.lastFoodSnapshot.saturationLevel();
+			}
+			state.womanUnique.put(entry.getKey().toString(), stored);
+		}
+		for (Map.Entry<UUID, WomanShnyagaRejectionSession> entry : WOMAN_SHNYAGA_REJECTION_SESSIONS.entrySet()) {
+			WomanShnyagaRejectionSession session = entry.getValue();
+			if (entry.getKey() == null || session == null) {
+				continue;
+			}
+			long remainingTicks = Math.max(0L, session.endTick() - nowTick);
+			if (remainingTicks <= 0L) {
+				continue;
+			}
+			PersistedTimedEffect stored = new PersistedTimedEffect();
+			stored.remainingTicks = remainingTicks;
+			state.womanRejection.put(entry.getKey().toString(), stored);
+		}
+		for (Map.Entry<UUID, CartelDisguiseSession> entry : CARTEL_DISGUISE_SESSIONS.entrySet()) {
+			CartelDisguiseSession session = entry.getValue();
+			if (entry.getKey() == null || session == null || session.originalSkin == null || session.disguisedSkin == null) {
+				continue;
+			}
+			PersistedCartelDisguise stored = new PersistedCartelDisguise();
+			stored.remainingTicks = Math.max(0L, session.endTick - nowTick);
+			stored.disguisedName = session.disguisedName;
+			stored.disguisedPlayerId = session.disguisedPlayerId == null ? null : session.disguisedPlayerId.toString();
+			stored.originalSkin = persistSkinValue(session.originalSkin);
+			stored.disguisedSkin = persistSkinValue(session.disguisedSkin);
+			if (stored.originalSkin != null && stored.disguisedSkin != null) {
+				state.cartelDisguise.put(entry.getKey().toString(), stored);
+			}
+		}
+		Path path = getLongPassiveEffectsStatePath(server);
+		try {
+			Files.createDirectories(path.getParent());
+			Files.writeString(path, GSON.toJson(state), StandardCharsets.UTF_8);
+		} catch (IOException exception) {
+			Lg2.LOGGER.error("Failed to save long passive race effects to {}", path, exception);
+		}
+	}
+
+	private static void loadLongPassiveEffects(MinecraftServer server) {
+		LITTLE_DICTATOR_SANCTIONS.clear();
+		LITTLE_DICTATOR_TAXES.clear();
+		LITTLE_DICTATOR_PROPAGANDA.clear();
+		LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.clear();
+		LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE_END_TICKS.clear();
+		LITTLE_DICTATOR_PROPAGANDA_MANAGED_HASTE.clear();
+		LITTLE_DICTATOR_PING_SESSIONS.clear();
+		WOMAN_UNIQUE_SESSIONS.clear();
+		WOMAN_SHNYAGA_REJECTION_SESSIONS.clear();
+		CARTEL_DISGUISE_SESSIONS.clear();
+		longPassiveEffectsNextSaveTick = Long.MIN_VALUE;
+		if (server == null) {
+			return;
+		}
+		Path path = getLongPassiveEffectsStatePath(server);
+		if (!Files.exists(path)) {
+			return;
+		}
+		long nowTick = server.overworld().getGameTime();
+		try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+			LongPassiveEffectsPersistedState state = GSON.fromJson(reader, LongPassiveEffectsPersistedState.class);
+			if (state == null) {
+				return;
+			}
+			if (state.sanctions != null) {
+				for (Map.Entry<String, PersistedSanctions> entry : state.sanctions.entrySet()) {
+					UUID playerId = parseUuidOrNull(entry.getKey());
+					PersistedSanctions stored = entry.getValue();
+					if (playerId != null && stored != null && stored.remainingTicks > 0L) {
+						LITTLE_DICTATOR_SANCTIONS.put(playerId, new LittleDictatorSanctionsSession(stored.remainingTicks, stored.dropChance));
+					}
+				}
+			}
+			if (state.taxes != null) {
+				for (Map.Entry<String, PersistedTaxes> entry : state.taxes.entrySet()) {
+					UUID playerId = parseUuidOrNull(entry.getKey());
+					PersistedTaxes stored = entry.getValue();
+					UUID dictatorId = stored == null ? null : parseUuidOrNull(stored.dictatorId);
+					if (playerId != null && dictatorId != null && stored.remainingTicks > 0L) {
+						LittleDictatorTaxesSession session = new LittleDictatorTaxesSession(dictatorId, stored.remainingTicks, Math.max(1L, stored.intervalTicks));
+						session.nextTaxTicks = Math.max(1L, stored.nextTaxTicks);
+						LITTLE_DICTATOR_TAXES.put(playerId, session);
+					}
+				}
+			}
+			if (state.propaganda != null) {
+				for (Map.Entry<String, PersistedPropaganda> entry : state.propaganda.entrySet()) {
+					UUID playerId = parseUuidOrNull(entry.getKey());
+					PersistedPropaganda stored = entry.getValue();
+					if (playerId != null && stored != null && stored.remainingTicks > 0L) {
+						LITTLE_DICTATOR_PROPAGANDA.put(playerId, new LittleDictatorPropagandaSession(stored.remainingTicks, stored.tradeDiscount));
+						if (stored.managedAmplifier != null) {
+							LITTLE_DICTATOR_PROPAGANDA_MANAGED_HASTE.put(playerId, stored.managedAmplifier);
+						}
+						loadLittleDictatorPropagandaNaturalHaste(playerId, stored.naturalHaste, nowTick);
+					}
+				}
+			}
+			if (state.ping != null) {
+				for (Map.Entry<String, PersistedPing> entry : state.ping.entrySet()) {
+					UUID playerId = parseUuidOrNull(entry.getKey());
+					PersistedPing stored = entry.getValue();
+					if (playerId != null && stored != null && stored.remainingTicks > 0L) {
+						LITTLE_DICTATOR_PING_SESSIONS.put(playerId, new LittleDictatorPingSession(nowTick + stored.remainingTicks, stored.minPingMs, stored.maxPingMs, 0L, stored.lastSentPingMs));
+					}
+				}
+			}
+			if (state.womanUnique != null) {
+				for (Map.Entry<String, PersistedWomanUnique> entry : state.womanUnique.entrySet()) {
+					UUID playerId = parseUuidOrNull(entry.getKey());
+					PersistedWomanUnique stored = entry.getValue();
+					if (playerId != null && stored != null && stored.remainingTicks > 0L) {
+						WomanUniqueSession session = new WomanUniqueSession(
+								playerId,
+								nowTick + stored.remainingTicks,
+								nowTick + Math.max(1L, stored.nextDropTicks),
+								Math.max(1L, stored.dropMinTicks),
+								Math.max(Math.max(1L, stored.dropMinTicks), stored.dropMaxTicks),
+								stored.dropChance,
+								stored.tradePriceIncrease,
+								new FoodDataSnapshot(Math.max(0, stored.lastFoodLevel), Math.max(0.0F, stored.lastSaturationLevel))
+						);
+						session.naturalHealingUnlocked = stored.naturalHealingUnlocked;
+						WOMAN_UNIQUE_SESSIONS.put(playerId, session);
+					}
+				}
+			}
+			if (state.womanRejection != null) {
+				for (Map.Entry<String, PersistedTimedEffect> entry : state.womanRejection.entrySet()) {
+					UUID playerId = parseUuidOrNull(entry.getKey());
+					PersistedTimedEffect stored = entry.getValue();
+					if (playerId != null && stored != null && stored.remainingTicks > 0L) {
+						WOMAN_SHNYAGA_REJECTION_SESSIONS.put(playerId, new WomanShnyagaRejectionSession(nowTick + stored.remainingTicks));
+					}
+				}
+			}
+			if (state.cartelDisguise != null) {
+				for (Map.Entry<String, PersistedCartelDisguise> entry : state.cartelDisguise.entrySet()) {
+					UUID playerId = parseUuidOrNull(entry.getKey());
+					PersistedCartelDisguise stored = entry.getValue();
+					SkinValue originalSkin = stored == null ? null : restoreSkinValue(stored.originalSkin);
+					SkinValue disguisedSkin = stored == null ? null : restoreSkinValue(stored.disguisedSkin);
+					if (playerId != null && stored != null && originalSkin != null && disguisedSkin != null) {
+						CARTEL_DISGUISE_SESSIONS.put(playerId, new CartelDisguiseSession(
+								originalSkin,
+								disguisedSkin,
+								parseUuidOrNull(stored.disguisedPlayerId),
+								nonBlank(stored.disguisedName, ""),
+								nowTick + Math.max(0L, stored.remainingTicks)
+						));
+					}
+				}
+			}
+		} catch (Exception exception) {
+			Lg2.LOGGER.error("Failed to load long passive race effects from {}", path, exception);
+		}
+	}
+
+	private static void cleanupLongPassiveEffectsForShutdown(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			removeLittleDictatorSanctionsFatigue(player);
+			if (LITTLE_DICTATOR_PROPAGANDA.containsKey(player.getUUID())) {
+				finishLittleDictatorPropaganda(player, false);
+			}
+			clearLittleDictatorPingEffect(player);
+			restoreWomanUniqueMerchantOffers(player);
+		}
+	}
+
+	private static void restoreLongPassiveEffectsForPlayer(MinecraftServer server, ServerPlayer player) {
+		if (server == null || player == null) {
+			return;
+		}
+		long nowTick = server.overworld().getGameTime();
+		UUID playerId = player.getUUID();
+		if (LITTLE_DICTATOR_SANCTIONS.containsKey(playerId)) {
+			refreshLittleDictatorSanctionsFatigue(player);
+		}
+		if (LITTLE_DICTATOR_PROPAGANDA.containsKey(playerId)) {
+			refreshLittleDictatorPropagandaHaste(player);
+		}
+		LittleDictatorPingSession pingSession = LITTLE_DICTATOR_PING_SESSIONS.get(playerId);
+		if (pingSession != null && nowTick < pingSession.endTick()) {
+			syncLittleDictatorDefenseOverlay(player, true, true);
+		}
+		WomanUniqueSession womanUniqueSession = WOMAN_UNIQUE_SESSIONS.get(playerId);
+		if (womanUniqueSession != null && nowTick < womanUniqueSession.endTick) {
+			syncWomanUniqueWeakness(player, womanUniqueSession.endTick - nowTick);
+			syncWomanUniqueMerchantOffers(player, womanUniqueSession);
+		}
+		WomanShnyagaRejectionSession rejectionSession = WOMAN_SHNYAGA_REJECTION_SESSIONS.get(playerId);
+		if (rejectionSession != null && nowTick < rejectionSession.endTick()) {
+			applyWomanShnyagaRejectionEffects(player, rejectionSession.endTick() - nowTick);
+		}
+		CartelDisguiseSession disguiseSession = CARTEL_DISGUISE_SESSIONS.get(playerId);
+		if (disguiseSession != null) {
+			if (nowTick >= disguiseSession.endTick) {
+				restoreCartelDisguise(server, player, disguiseSession);
+				CARTEL_DISGUISE_SESSIONS.remove(playerId);
+			} else {
+				applySkin(server, player, disguiseSession.disguisedSkin);
+				if (disguiseSession.disguisedPlayerId != null) {
+					CartelWebcamBridge.beginDisguise(playerId, disguiseSession.disguisedPlayerId);
+				}
+			}
+		}
+	}
+
+	private static PersistedMobEffect persistLittleDictatorPropagandaNaturalHaste(UUID playerId, long nowTick) {
+		if (playerId == null) {
+			return null;
+		}
+		MobEffectInstance stored = LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.get(playerId);
+		Long endTick = LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE_END_TICKS.get(playerId);
+		if (stored == null || endTick == null) {
+			return null;
+		}
+		PersistedMobEffect persisted = new PersistedMobEffect();
+		persisted.amplifier = stored.getAmplifier();
+		persisted.infinite = stored.getDuration() == MobEffectInstance.INFINITE_DURATION || endTick == Long.MAX_VALUE;
+		persisted.remainingTicks = persisted.infinite ? -1L : Math.max(1L, endTick - nowTick);
+		persisted.ambient = stored.isAmbient();
+		persisted.visible = stored.isVisible();
+		persisted.showIcon = stored.showIcon();
+		return persisted;
+	}
+
+	private static void loadLittleDictatorPropagandaNaturalHaste(UUID playerId, PersistedMobEffect persisted, long nowTick) {
+		if (playerId == null || persisted == null) {
+			return;
+		}
+		int duration = persisted.infinite ? MobEffectInstance.INFINITE_DURATION : (int) Math.min(Integer.MAX_VALUE, Math.max(1L, persisted.remainingTicks));
+		MobEffectInstance effect = new MobEffectInstance(MobEffects.HASTE, duration, persisted.amplifier, persisted.ambient, persisted.visible, persisted.showIcon);
+		LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE.put(playerId, effect);
+		LITTLE_DICTATOR_PROPAGANDA_NATURAL_HASTE_END_TICKS.put(playerId, persisted.infinite ? Long.MAX_VALUE : nowTick + Math.max(1L, persisted.remainingTicks));
+	}
+
+	private static PersistedSkinValue persistSkinValue(SkinValue skinValue) {
+		if (skinValue == null || skinValue.value() == null) {
+			return null;
+		}
+		PersistedSkinValue stored = new PersistedSkinValue();
+		stored.provider = skinValue.provider();
+		stored.argument = skinValue.argument();
+		stored.variant = skinValue.variant() == null ? SkinVariant.CLASSIC.name() : skinValue.variant().name();
+		stored.value = persistProperty(skinValue.value());
+		stored.originalValue = persistProperty(skinValue.originalValue());
+		return stored.value == null ? null : stored;
+	}
+
+	private static SkinValue restoreSkinValue(PersistedSkinValue stored) {
+		if (stored == null) {
+			return null;
+		}
+		Property value = restoreProperty(stored.value);
+		if (value == null) {
+			return null;
+		}
+		Property originalValue = restoreProperty(stored.originalValue);
+		SkinVariant variant = SkinVariant.CLASSIC;
+		try {
+			if (stored.variant != null && !stored.variant.isBlank()) {
+				variant = SkinVariant.valueOf(stored.variant);
+			}
+		} catch (IllegalArgumentException ignored) {
+			variant = SkinVariant.CLASSIC;
+		}
+		return new SkinValue(nonBlank(stored.provider, "lg2_persisted_skin"), nonBlank(stored.argument, ""), variant, value, originalValue == null ? value : originalValue);
+	}
+
+	private static StoredSkinProperty persistProperty(Property property) {
+		if (property == null || property.name() == null || property.value() == null || property.value().isBlank()) {
+			return null;
+		}
+		return new StoredSkinProperty(property.name(), property.value(), property.signature());
+	}
+
+	private static Property restoreProperty(StoredSkinProperty stored) {
+		if (stored == null || stored.name() == null || stored.value() == null || stored.value().isBlank()) {
+			return null;
+		}
+		return stored.signature() == null || stored.signature().isBlank()
+				? new Property(stored.name(), stored.value())
+				: new Property(stored.name(), stored.value(), stored.signature());
+	}
+
+	private static UUID parseUuidOrNull(String value) {
+		if (value == null || value.isBlank()) {
+			return null;
+		}
+		try {
+			return UUID.fromString(value);
+		} catch (IllegalArgumentException exception) {
+			return null;
+		}
+	}
+
+	private static Path getLongPassiveEffectsStatePath(MinecraftServer server) {
+		return server.getWorldPath(LevelResource.ROOT).resolve("data").resolve(LONG_PASSIVE_EFFECTS_STATE_FILE_NAME);
+	}
 	private static void saveLittleDictatorTaxChests(MinecraftServer server) {
 		if (server == null) {
 			return;
@@ -9548,7 +10664,17 @@ public final class ServerRaceSystem {
 			UUID targetId = entry.getKey();
 			WomanUniqueSession session = entry.getValue();
 			ServerPlayer target = server.getPlayerList().getPlayer(targetId);
-			if (target == null || nowTick >= session.endTick) {
+			if (session == null) {
+				cleanupWomanUniqueState(server, targetId);
+				iterator.remove();
+				continue;
+			}
+			if (target == null) {
+				session.endTick++;
+				session.nextDropCheckTick++;
+				continue;
+			}
+			if (nowTick >= session.endTick) {
 				cleanupWomanUniqueState(server, targetId);
 				iterator.remove();
 				continue;
@@ -10117,6 +11243,7 @@ public final class ServerRaceSystem {
 
 	public static void handlePlayerInputPacket(ServerPlayer player) {
 		syncGennadiyDefenseHeadLock(player);
+		lockLittleDictatorUniqueCasterMovement(player);
 	}
 
 	public static boolean handleGennadiyDefenseMovementPacket(ServerPlayer player) {
@@ -10641,7 +11768,8 @@ public final class ServerRaceSystem {
 		ItemStack held = player.getMainHandItem();
 		if (!isMarkThrowableAxe(held)) {
 			player.displayClientMessage(
-					Component.literal("Р’РѕР·СЊРјРёС‚Рµ РІ СЂСѓРєСѓ С‚РѕРїРѕСЂ, С‡С‚РѕР±С‹ Р±СЂРѕСЃРёС‚СЊ РµРіРѕ.").withStyle(ChatFormatting.RED),
+					Component.literal("Р вЂ™Р С•Р В·РЎРЉР СР С‘РЎвЂљР Вµ Р Р† РЎР‚РЎС“Р С”РЎС“ РЎвЂљР С•Р С—Р С•РЎР‚, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Р В±РЎР‚Р С•РЎРѓР С‘РЎвЂљРЎРЉ Р ВµР С–Р С•.")
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
 			return 0;
@@ -10787,7 +11915,8 @@ public final class ServerRaceSystem {
 		double points = getMarkRagePoints(playerId, ability);
 		if (points <= 0.0D) {
 			player.displayClientMessage(
-					Component.literal("Р’С‹ СЃР»РёС€РєРѕРј СЃРїРѕРєРѕР№РЅС‹, С‡С‚РѕР±С‹ РІРѕР№С‚Рё РІ СЏСЂРѕСЃС‚СЊ.").withStyle(ChatFormatting.RED),
+					Component.literal("Р вЂ™РЎвЂ№ РЎРѓР С—Р С•Р С”Р С•Р в„–Р Р…РЎвЂ№, РЎРѓР С—Р С•РЎРѓР С•Р В±Р Р…Р С•РЎРѓРЎвЂљРЎРЉ Р Р…Р ВµР В»РЎРЉР В·РЎРЏ Р В°Р С”РЎвЂљР С‘Р Р†Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ.")
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
 			return 0;
@@ -10812,7 +11941,8 @@ public final class ServerRaceSystem {
 		MarkShieldBashSelection shield = findMarkShieldBashSelection(player);
 		if (shield == null) {
 			player.displayClientMessage(
-					Component.literal("Р’РѕР·СЊРјРёС‚Рµ Р¶РµР»РµР·РЅС‹Р№, Р·РѕР»РѕС‚РѕР№, Р°Р»РјР°Р·РЅС‹Р№ РёР»Рё РЅРµР·РµСЂРёС‚РѕРІС‹Р№ С‰РёС‚ РІ СЂСѓРєСѓ.").withStyle(ChatFormatting.RED),
+					Component.literal("Р вЂ™Р С•Р В·РЎРЉР СР С‘РЎвЂљР Вµ Р Р† РЎР‚РЎС“Р С”РЎС“ Р С—Р С•Р Т‘РЎвЂ¦Р С•Р Т‘РЎРЏРЎвЂ°Р С‘Р в„– РЎвЂ°Р С‘РЎвЂљ, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ РЎРѓР Т‘Р ВµР В»Р В°РЎвЂљРЎРЉ РЎР‚РЎвЂ№Р Р†Р С•Р С”.")
+							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
 			return 0;
@@ -13121,7 +14251,6 @@ public final class ServerRaceSystem {
 		boolean publicPickup = nowTick >= session.publicPickupTick;
 		boolean ownerPickup = player.getUUID().equals(session.ownerId);
 		if (!publicPickup && !ownerPickup) {
-			player.displayClientMessage(Component.literal("Р­С‚РѕС‚ С‚РѕРїРѕСЂ РјРѕР¶РµС‚ Р·Р°Р±СЂР°С‚СЊ С‚РѕР»СЊРєРѕ РњР°СЂРє.").withStyle(ChatFormatting.RED), true);
 			return InteractionResult.SUCCESS;
 		}
 
@@ -13576,13 +14705,13 @@ public final class ServerRaceSystem {
 		}
 		MinecraftServer server = player.level().getServer();
 		if (hasActiveGennadiyReport(server)) {
-			displayGennadiyReportActionbar(player, "РЈР¶Рµ РµСЃС‚СЊ Р°РєС‚РёРІРЅС‹Р№ REPORT. РЈРЅРёС‡С‚РѕР¶СЊС‚Рµ С‚РµРєСѓС‰РёР№ РїСЂРµРґРјРµС‚, С‡С‚РѕР±С‹ СЃРѕР·РґР°С‚СЊ РЅРѕРІС‹Р№.");
+			displayGennadiyReportActionbar(player, "Р Р€Р В¶Р Вµ Р ВµРЎРѓРЎвЂљРЎРЉ Р В°Р С”РЎвЂљР С‘Р Р†Р Р…РЎвЂ№Р в„– REPORT. Р Р€Р Р…Р С‘РЎвЂЎРЎвЂљР С•Р В¶РЎРЉРЎвЂљР Вµ РЎвЂљР ВµР С”РЎС“РЎвЂ°Р С‘Р в„– Р С—РЎР‚Р ВµР Т‘Р СР ВµРЎвЂљ, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ РЎРѓР С•Р В·Р Т‘Р В°РЎвЂљРЎРЉ Р Р…Р С•Р Р†РЎвЂ№Р в„–.");
 			return 0;
 		}
 
 		InteractionHand hand = selectGennadiyReportHand(player);
 		if (hand == null) {
-			displayGennadiyReportActionbar(player, "Р’РѕР·СЊРјРёС‚Рµ РїСЂРµРґРјРµС‚ РІ СЂСѓРєСѓ, С‡С‚РѕР±С‹ СЃРѕР·РґР°С‚СЊ REPORT.");
+			displayGennadiyReportActionbar(player, "Р вЂ™Р С•Р В·РЎРЉР СР С‘РЎвЂљР Вµ Р С—РЎР‚Р ВµР Т‘Р СР ВµРЎвЂљ Р Р† РЎР‚РЎС“Р С”РЎС“, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ РЎРѓР С•Р В·Р Т‘Р В°РЎвЂљРЎРЉ REPORT.");
 			return 0;
 		}
 
@@ -13591,50 +14720,43 @@ public final class ServerRaceSystem {
 		// REPORT confirmation itself intentionally lives until disconnect or the next proposal.
 		GENNADIY_REPORT_PENDING.put(player.getUUID(), new GennadiyReportPending(hand, Long.MAX_VALUE));
 		Component itemName = stack.getHoverName().copy().withStyle(style -> style.withColor(ChatFormatting.DARK_RED).withItalic(false));
-		MutableComponent message = centeredGennadiyReportLiteral("Р’С‹ СѓРІРµСЂРµРЅС‹, С‡С‚Рѕ С…РѕС‚РёС‚Рµ РЅР°Р»РѕР¶РёС‚СЊ", ChatFormatting.RED)
+		MutableComponent message = centeredGennadiyReportLiteral("Р вЂ™РЎвЂ№ РЎС“Р Р†Р ВµРЎР‚Р ВµР Р…РЎвЂ№, РЎвЂЎРЎвЂљР С• РЎвЂ¦Р С•РЎвЂљР С‘РЎвЂљР Вµ Р Р…Р В°Р В»Р С•Р В¶Р С‘РЎвЂљРЎРЉ Р С—РЎР‚Р С•Р С”Р В»РЎРЏРЎвЂљР С‘Р Вµ REPORT", ChatFormatting.RED)
 				.append(Component.literal("\n"))
-				.append(centeredGennadiyReportLineWithItem(
-						"РїСЂРѕРєР»СЏС‚РёРµ REPORT РЅР° ",
-						itemName,
-						stack.getHoverName().getString(),
-						"?"
-				))
+				.append(centeredGennadiyReportLineWithItem("Р Р…Р В° Р С—РЎР‚Р ВµР Т‘Р СР ВµРЎвЂљ ", itemName, stack.getHoverName().getString(), "?"))
 				.append(Component.literal("\n"))
-				.append(centeredGennadiyReportLiteral("Р’ РјРёСЂРµ РјРѕР¶РµС‚ СЃСѓС‰РµСЃС‚РІРѕРІР°С‚СЊ С‚РѕР»СЊРєРѕ РѕРґРёРЅ REPORT.", ChatFormatting.RED))
+				.append(centeredGennadiyReportLiteral("Р вЂ™ Р СР С‘РЎР‚Р Вµ Р СР С•Р В¶Р ВµРЎвЂљ РЎРѓРЎС“РЎвЂ°Р ВµРЎРѓРЎвЂљР Р†Р С•Р Р†Р В°РЎвЂљРЎРЉ РЎвЂљР С•Р В»РЎРЉР С”Р С• Р С•Р Т‘Р С‘Р Р… REPORT.", ChatFormatting.RED))
 				.append(Component.literal("\n"))
-				.append(centeredGennadiyReportLiteral("РќРѕРІС‹Р№ РјРѕР¶РЅРѕ СЃРѕР·РґР°С‚СЊ С‚РѕР»СЊРєРѕ РїРѕСЃР»Рµ", ChatFormatting.RED))
-				.append(Component.literal("\n"))
-				.append(centeredGennadiyReportLiteral("СѓРЅРёС‡С‚РѕР¶РµРЅРёСЏ СЃС‚Р°СЂРѕРіРѕ.", ChatFormatting.RED));
-		MutableComponent button = Component.literal("[РџРѕРґС‚РІРµСЂРґРёС‚СЊ]")
+				.append(centeredGennadiyReportLiteral("Р В§РЎвЂљР С•Р В±РЎвЂ№ РЎРѓР С•Р В·Р Т‘Р В°РЎвЂљРЎРЉ Р Р…Р С•Р Р†РЎвЂ№Р в„–, Р Р…РЎС“Р В¶Р Р…Р С• РЎС“Р Р…Р С‘РЎвЂЎРЎвЂљР С•Р В¶Р С‘РЎвЂљРЎРЉ РЎРѓРЎвЂљР В°РЎР‚РЎвЂ№Р в„–.", ChatFormatting.RED));
+		MutableComponent button = Component.literal("[Р СџР С•Р Т‘РЎвЂљР Р†Р ВµРЎР‚Р Т‘Р С‘РЎвЂљРЎРЉ]")
 				.withStyle(style -> style
 						.withColor(ChatFormatting.DARK_RED)
 						.withBold(true)
 						.withClickEvent(new ClickEvent.RunCommand("/race gennadiy_report confirm")));
-		player.sendSystemMessage(message.append(Component.literal("\n")).append(centeredGennadiyReportComponent(button, "[РџРѕРґС‚РІРµСЂРґРёС‚СЊ]")));
-		Lg2.LOGGER.info("Player {} requested gennadiy REPORT curse for race '{}'", player.getGameProfile().name(), race.id);
+		player.sendSystemMessage(message.append(Component.literal("\n")).append(centeredGennadiyReportComponent(button, "")));
+		Lg2.LOGGER.info("Queued Gennadiy REPORT confirmation for {} ({})", player.getGameProfile().name(), race.id);
 		return 1;
 	}
 
-	private static int confirmGennadiyReport(CommandContext<CommandSourceStack> context) {
+private static int confirmGennadiyReport(CommandContext<CommandSourceStack> context) {
 		ServerPlayer player = context.getSource().getPlayer();
 		if (player == null) {
-			context.getSource().sendFailure(Component.literal("Player only."));
+			context.getSource().sendFailure(Component.literal("Р С™Р С•Р СР В°Р Р…Р Т‘Р В° Р Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р Р…Р В° РЎвЂљР С•Р В»РЎРЉР С”Р С• Р С‘Р С–РЎР‚Р С•Р С”РЎС“."));
 			return 0;
 		}
 
 		GennadiyReportPending pending = GENNADIY_REPORT_PENDING.remove(player.getUUID());
 		if (pending == null) {
-			displayGennadiyReportActionbar(player, "РЎРЅР°С‡Р°Р»Р° РІС‹Р±РµСЂРёС‚Рµ РїСЂРµРґРјРµС‚ РґР»СЏ REPORT.");
+			displayGennadiyReportActionbar(player, "Р СџР С•Р Т‘РЎвЂљР Р†Р ВµРЎР‚Р В¶Р Т‘Р ВµР Р…Р С‘Р Вµ REPORT Р Р…Р Вµ Р Р…Р В°Р в„–Р Т‘Р ВµР Р…Р С•.");
 			return 0;
 		}
 		if (hasActiveGennadiyReport(player.level().getServer())) {
-			displayGennadiyReportActionbar(player, "РЈР¶Рµ РµСЃС‚СЊ Р°РєС‚РёРІРЅС‹Р№ REPORT. РЈРЅРёС‡С‚РѕР¶СЊС‚Рµ С‚РµРєСѓС‰РёР№ РїСЂРµРґРјРµС‚, С‡С‚РѕР±С‹ СЃРѕР·РґР°С‚СЊ РЅРѕРІС‹Р№.");
+			displayGennadiyReportActionbar(player, "Р Р€Р В¶Р Вµ Р ВµРЎРѓРЎвЂљРЎРЉ Р В°Р С”РЎвЂљР С‘Р Р†Р Р…РЎвЂ№Р в„– REPORT. Р Р€Р Р…Р С‘РЎвЂЎРЎвЂљР С•Р В¶РЎРЉРЎвЂљР Вµ РЎвЂљР ВµР С”РЎС“РЎвЂ°Р С‘Р в„– Р С—РЎР‚Р ВµР Т‘Р СР ВµРЎвЂљ, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ РЎРѓР С•Р В·Р Т‘Р В°РЎвЂљРЎРЉ Р Р…Р С•Р Р†РЎвЂ№Р в„–.");
 			return 0;
 		}
 
 		ItemStack selected = player.getItemInHand(pending.hand());
 		if (selected.isEmpty()) {
-			displayGennadiyReportActionbar(player, "Р’РѕР·СЊРјРёС‚Рµ РїСЂРµРґРјРµС‚ РІ СЂСѓРєСѓ, С‡С‚РѕР±С‹ СЃРѕР·РґР°С‚СЊ REPORT.");
+			displayGennadiyReportActionbar(player, "Р вЂ™РЎвЂ№Р В±РЎР‚Р В°Р Р…Р Р…РЎвЂ№Р в„– Р С—РЎР‚Р ВµР Т‘Р СР ВµРЎвЂљ Р В±Р С•Р В»РЎРЉРЎв‚¬Р Вµ Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р ВµР Р….");
 			return 0;
 		}
 
@@ -13658,7 +14780,7 @@ public final class ServerRaceSystem {
 		return 1;
 	}
 
-	private static InteractionHand selectGennadiyReportHand(ServerPlayer player) {
+private static InteractionHand selectGennadiyReportHand(ServerPlayer player) {
 		if (player == null) {
 			return null;
 		}
@@ -13894,7 +15016,6 @@ public final class ServerRaceSystem {
 
 		Donkey donkey = spawnGennadiyDonkey(level, player, state);
 		if (donkey == null) {
-			player.sendSystemMessage(Component.literal("РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёР·РІР°С‚СЊ Р±РѕРµРІРѕРіРѕ РѕСЃР»РёРєР°."));
 			return 0;
 		}
 
@@ -16201,7 +17322,6 @@ public final class ServerRaceSystem {
 			displayRemainingCooldown(attacker, remainingTicks);
 			return;
 		}
-		target.connection.disconnect(Component.literal("Р’Р°СЃ Р·Р°СЂРµРїРѕСЂС‚РёР» " + attacker.getGameProfile().name() + "."));
 	}
 
 	public static void handleGennadiyRageMeleeDamage(ServerLevel level, LivingEntity victim, DamageSource damageSource, float damage, boolean applied) {
@@ -17382,19 +18502,19 @@ public final class ServerRaceSystem {
 	}
 
 	private static final CartelManualPage[] CARTEL_MANUAL_PAGES_RU = {
-			new CartelManualPage("1. Р›РёС‡РЅР°СЏ РєРЅРёРіР°", "Р­С‚Рѕ С‚РІРѕСЏ Р›РР§РќРђРЇ РєРЅРёРіР°. РќРёРєРѕРјСѓ РЅРµ РїРѕРєР°Р·С‹РІР°Р№ СЂРµС†РµРїС‚С‹. Р•СЃР»Рё РґСЂСѓРіРёРµ СѓР·РЅР°СЋС‚, РєР°Рє С‚С‹ РґРµР»Р°РµС€СЊ С‚РѕРІР°СЂ, РѕРЅРё СЃРјРѕРіСѓС‚ РєРѕРЅРєСѓСЂРёСЂРѕРІР°С‚СЊ СЃ С‚РѕР±РѕР№. РљСЂР°С„С‚С‹ РґРѕСЃС‚СѓРїРЅС‹ РІСЃРµРј, РЅРѕ Р·РЅР°РµС€СЊ РёС… РўРћР›Р¬РљРћ РўР«.", -1, ""),
-			new CartelManualPage("2. РўСЂР°РІРєР°", "", 0, "РџРѕСЃР°РґРё РѕР±С‹С‡РЅС‹Р№ РїР°РїРѕСЂРѕС‚РЅРёРє. РљРѕРіРґР° РѕРЅ РІС‹СЂР°СЃС‚РµС‚, РµСЃС‚СЊ С€Р°РЅСЃ РїРѕР»СѓС‡РёС‚СЊ В«РўСЂР°РІРєСѓВ». РљРѕСЃС‚РЅР°СЏ РјСѓРєР° СѓСЃРєРѕСЂСЏРµС‚ СЂРѕСЃС‚."),
-			new CartelManualPage("3. РЎСѓС€РєР°", "РћР±С‹С‡РЅР°СЏ С‚СЂР°РІРєР° РЅРµ РіРѕРґРёС‚СЃСЏ РґР»СЏ СЂРµС†РµРїС‚РѕРІ.", 1, "Р”Р»СЏ СЃРѕР·РґР°РЅРёСЏ С‚РѕРІР°СЂР° РІС‹СЃСѓС€Рё РµС‘ РІ РїРµС‡Рё."),
-			new CartelManualPage("4. РљРѕСЃСЏС‡РѕРє", "РЎРІРµСЂС…Сѓ Рё СЃРЅРёР·Сѓ РїРѕ 3 Р±СѓРјР°РіРё. Р’ С†РµРЅС‚СЂРµ 3 СЃСѓС€С‘РЅРЅРѕР№ С‚СЂР°РІРєРё. РќР° РІС‹С…РѕРґРµ РїРѕР»СѓС‡РёС€СЊ В«РљРѕСЃСЏС‡РѕРєВ».", 2, ""),
-			new CartelManualPage("5. РџСЂРёРєСѓСЂРёРІР°РЅРёРµ", "Р’РѕР·СЊРјРё РІ РѕРґРЅСѓ СЂСѓРєСѓ Р·Р°Р¶РёРіР°Р»РєСѓ, РІРѕ РІС‚РѕСЂСѓСЋ вЂ” РєРѕСЃСЏС‡РѕРє. РќР°Р¶РјРё РџРљРњ РґР»СЏ РїСЂРёРєСѓСЂРёРІР°РЅРёСЏ. Р§С‚РѕР±С‹ Р·Р°С‚СЏРЅСѓС‚СЊСЃСЏ, Р·Р°Р¶РјРё РџРљРњ: С‡РµРј РґРѕР»СЊС€Рµ Р·Р°С‚СЏРі, С‚РµРј Р±РѕР»СЊС€Рµ РґС‹РјР°.", -1, ""),
-			new CartelManualPage("6. РљРѕРєР°РёРЅ", "Р’ РєРѕС‚С‘Р» СЃ РІРѕРґРѕР№ РґРѕР±Р°РІСЊ СЃСѓС€С‘РЅРЅСѓСЋ С‚СЂР°РІРєСѓ Рё РєРѕСЃС‚РЅСѓСЋ РјСѓРєСѓ РІ РїСЂРѕРїРѕСЂС†РёРё 1:1.", 3, "РљР°Рє РёС‚РѕРі вЂ” РїРѕР»СѓС‡РёС€СЊ В«РљРѕРєР°РёРЅВ»."),
-			new CartelManualPage("7. РџР°СЂС‚РёРё", "РљР°Р¶РґР°СЏ РѕРїРµСЂР°С†РёСЏ С‚СЂР°С‚РёС‚ РЅРµРјРЅРѕРіРѕ РІРѕРґС‹ РёР· РєРѕС‚Р»Р°. Р’С‹РіРѕРґРЅРµРµ Р·Р°РіСЂСѓР¶Р°С‚СЊ СЃСЂР°Р·Сѓ РјРЅРѕРіРѕ СЃС‹СЂСЊСЏ, РЅР°РїСЂРёРјРµСЂ: 16 РєРѕСЃС‚РЅРѕР№ РјСѓРєРё + 16 СЃСѓС€С‘РЅРЅРѕР№ С‚СЂР°РІРєРё = 16 РєРѕРєР°РёРЅР°. Р’РѕРґС‹ РІ РєРѕС‚Р»Рµ С…РІР°С‚Р°РµС‚ РЅР° 48 РєРѕРєР°РёРЅР°, РЅРѕ РїСЂРё РјР°Р»С‹С… РїР°СЂС‚РёСЏС… РѕРЅР° СЂР°СЃС…РѕРґСѓРµС‚СЃСЏ Р±С‹СЃС‚СЂРµРµ.", -1, ""),
-			new CartelManualPage("8. Р—Р°СѓСЂСЏРґРЅРѕРµ Р·РµР»СЊРµ", "Р’ РІР°СЂРѕС‡РЅРѕР№ СЃС‚РѕР№РєРµ: РїСѓР·С‹СЂС‘Рє СЃ РІРѕРґРѕР№ + Р»СЋР±РѕР№ РёРЅРіСЂРµРґРёРµРЅС‚ РёР· СЃРїРёСЃРєР°: РїР°СѓС‡РёР№ РіР»Р°Р·, СЃРІРµСЂРєР°СЋС‰РёР№ Р»РѕРјС‚РёРє Р°СЂР±СѓР·Р°, СЃР°С…Р°СЂ, РѕРіРЅРµРЅРЅС‹Р№ РїРѕСЂРѕС€РѕРє, РјР°РіРјРѕРІС‹Р№ РєСЂРµРј, СЃР»РµР·Р° РіР°СЃС‚Р°, РєСЂРѕР»РёС‡СЊСЏ Р»Р°РїРєР°, СЃС‚РµСЂР¶РµРЅСЊ РІРёС…СЂСЏ, Р±Р»РѕРє СЃР»РёР·Рё, РєР°РјРµРЅСЊ РёР»Рё РїР°СѓС‚РёРЅР°.", -1, ""),
-			new CartelManualPage("9. РњРµС‚Р°РґРѕРЅ", "Р’Р°СЂРёС‚СЃСЏ РІ Р·РµР»СЊРµРІР°СЂРєРµ. Р’ Р·Р°СѓСЂСЏРґРЅРѕРµ Р·РµР»СЊРµ РґРѕР±Р°РІСЊ РєРѕРєР°РёРЅ. РќР° РІС‹С…РѕРґРµ РїРѕР»СѓС‡РёС€СЊ В«РњРµС‚Р°РґРѕРЅВ».", 4, ""),
-			new CartelManualPage("10. Р—Р°РІРёСЃРёРјРѕСЃС‚СЊ", "РўРµР±Рµ РјРµС‚Р°РґРѕРЅ РґР°С‘С‚ РїРѕР»РѕР¶РёС‚РµР»СЊРЅС‹Рµ СЌС„С„РµРєС‚С‹. Р”СЂСѓРіРёРј вЂ” Р·Р°РІРёСЃРёРјРѕСЃС‚СЊ. РџРµСЂРІС‹Рµ СѓРєРѕР»С‹ РґР»СЏ РґСЂСѓРіРёС… РґР°СЋС‚ РЅРµРіР°С‚РёРІРЅС‹Рµ СЌС„С„РµРєС‚С‹, РїРѕСЃР»РµРґСѓСЋС‰РёРµ вЂ” РїРѕР»РѕР¶РёС‚РµР»СЊРЅС‹Рµ. Р•СЃР»Рё Р·Р°РІРёСЃРёРјС‹Р№ РґРѕР»РіРѕ РЅРµ РєРѕР»РµС‚ РјРµС‚Р°РґРѕРЅ, Сѓ РЅРµРіРѕ РЅР°С‡РёРЅР°РµС‚СЃСЏ Р»РѕРјРєР°.", -1, "")
+			new CartelManualPage("1. Р вЂєР С‘РЎвЂЎР Р…Р В°РЎРЏ Р С”Р Р…Р С‘Р С–Р В°", "Р В­РЎвЂљР С• Р Р†Р В°РЎв‚¬Р В° Р вЂєР ВР В§Р СњР С’Р Р‡ Р С”Р Р…Р С‘Р С–Р В°. Р СњР Вµ Р С—Р С•Р С”Р В°Р В·РЎвЂ№Р Р†Р В°Р в„–РЎвЂљР Вµ РЎР‚Р ВµРЎвЂ Р ВµР С—РЎвЂљРЎвЂ№ Р Т‘РЎР‚РЎС“Р С–Р С‘Р С. Р вЂўРЎРѓР В»Р С‘ Р С•РЎРѓРЎвЂљР В°Р В»РЎРЉР Р…РЎвЂ№Р Вµ РЎС“Р В·Р Р…Р В°РЎР‹РЎвЂљ, Р С”Р В°Р С” Р Р†РЎвЂ№ Р Т‘Р ВµР В»Р В°Р ВµРЎвЂљР Вµ РЎвЂљР С•Р Р†Р В°РЎР‚, Р С•Р Р…Р С‘ РЎРѓР СР С•Р С–РЎС“РЎвЂљ РЎРѓ Р Р†Р В°Р СР С‘ Р С”Р С•Р Р…Р С”РЎС“РЎР‚Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ. Р С™РЎР‚Р В°РЎвЂћРЎвЂљРЎвЂ№ РЎР‚Р В°Р В±Р С•РЎвЂљР В°РЎР‹РЎвЂљ Р Т‘Р В»РЎРЏ Р Р†РЎРѓР ВµРЎвЂ¦, Р Р…Р С• Р В·Р Р…Р В°Р ВµРЎвЂљР Вµ Р С‘РЎвЂ¦ РЎвЂљР С•Р В»РЎРЉР С”Р С• Р вЂ™Р В«.", -1, ""),
+			new CartelManualPage("2. Р СћРЎР‚Р В°Р Р†Р С”Р В°", "", 0, "Р СџР С•РЎРѓР В°Р Т‘Р С‘РЎвЂљР Вµ Р С•Р В±РЎвЂ№РЎвЂЎР Р…РЎвЂ№Р в„– Р С—Р В°Р С—Р С•РЎР‚Р С•РЎвЂљР Р…Р С‘Р С”. Р С™Р С•Р С–Р Т‘Р В° Р С•Р Р… Р Р†РЎвЂ№РЎР‚Р В°РЎРѓРЎвЂљР ВµРЎвЂљ, РЎС“ Р Р…Р ВµР С–Р С• Р ВµРЎРѓРЎвЂљРЎРЉ РЎв‚¬Р В°Р Р…РЎРѓ Р Т‘РЎР‚Р С•Р С—Р Р…РЎС“РЎвЂљРЎРЉ Р СћРЎР‚Р В°Р Р†Р С”РЎС“. Р С™Р С•РЎРѓРЎвЂљР Р…Р В°РЎРЏ Р СРЎС“Р С”Р В° РЎС“РЎРѓР С”Р С•РЎР‚РЎРЏР ВµРЎвЂљ РЎР‚Р С•РЎРѓРЎвЂљ."),
+			new CartelManualPage("3. Р РЋРЎС“РЎв‚¬Р С”Р В°", "Р РЋРЎвЂ№РЎР‚Р В°РЎРЏ Р СћРЎР‚Р В°Р Р†Р С”Р В° Р Р…Р Вµ Р С—Р С•Р Т‘РЎвЂ¦Р С•Р Т‘Р С‘РЎвЂљ Р Т‘Р В»РЎРЏ РЎР‚Р ВµРЎвЂ Р ВµР С—РЎвЂљР С•Р Р†.", 1, "Р вЂ™РЎвЂ№РЎРѓРЎС“РЎв‚¬Р С‘РЎвЂљР Вµ Р ВµРЎвЂ Р Р† Р С—Р ВµРЎвЂЎР С‘, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Р С—Р С•Р В»РЎС“РЎвЂЎР С‘РЎвЂљРЎРЉ РЎвЂљР С•Р Р†Р В°РЎР‚."),
+			new CartelManualPage("4. Р С™Р С•РЎРѓРЎРЏР С”", "Р СџР С•Р В»Р С•Р В¶Р С‘РЎвЂљР Вµ 3 Р В±РЎС“Р СР В°Р С–Р С‘ Р Р† Р Р†Р ВµРЎР‚РЎвЂ¦Р Р…Р С‘Р в„– Р С‘ Р Р…Р С‘Р В¶Р Р…Р С‘Р в„– РЎР‚РЎРЏР Т‘РЎвЂ№. Р вЂ™ РЎвЂ Р ВµР Р…РЎвЂљРЎР‚Р В°Р В»РЎРЉР Р…РЎвЂ№Р в„– РЎР‚РЎРЏР Т‘ Р С—Р С•Р В»Р С•Р В¶Р С‘РЎвЂљР Вµ 3 Р РЋРЎС“РЎв‚¬РЎвЂР Р…Р С•Р в„– Р СћРЎР‚Р В°Р Р†Р С”Р С‘. Р В Р ВµР В·РЎС“Р В»РЎРЉРЎвЂљР В°РЎвЂљ: Р С™Р С•РЎРѓРЎРЏР С”.", 2, ""),
+			new CartelManualPage("5. Р В Р В°РЎРѓР С”РЎС“РЎР‚", "Р вЂќР ВµРЎР‚Р В¶Р С‘РЎвЂљР Вµ Р С”РЎР‚Р ВµР СР ВµР Р…РЎРЉ Р С‘ Р С•Р С–Р Р…Р С‘Р Р†Р С• Р Р† Р С•Р Т‘Р Р…Р С•Р в„– РЎР‚РЎС“Р С”Р Вµ, Р В° Р С™Р С•РЎРѓРЎРЏР С” Р Р† Р Т‘РЎР‚РЎС“Р С–Р С•Р в„–. Р СњР В°Р В¶Р СР С‘РЎвЂљР Вµ Р СџР С™Р Сљ, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Р С—Р С•Р Т‘Р В¶Р ВµРЎвЂЎРЎРЉ Р ВµР С–Р С•. Р Р€Р Т‘Р ВµРЎР‚Р В¶Р С‘Р Р†Р В°Р в„–РЎвЂљР Вµ Р СџР С™Р Сљ, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Р В·Р В°РЎвЂљРЎРЏР Р…РЎС“РЎвЂљРЎРЉРЎРѓРЎРЏ: РЎвЂЎР ВµР С Р Т‘Р С•Р В»РЎРЉРЎв‚¬Р Вµ Р В·Р В°РЎвЂљРЎРЏР С–Р С‘Р Р†Р В°Р ВµРЎвЂљР ВµРЎРѓРЎРЉ, РЎвЂљР ВµР С Р В±Р С•Р В»РЎРЉРЎв‚¬Р Вµ Р Т‘РЎвЂ№Р СР В°.", -1, ""),
+			new CartelManualPage("6. Р С™Р С•Р С”Р В°Р С‘Р Р…", "Р вЂќР С•Р В±Р В°Р Р†РЎРЉРЎвЂљР Вµ Р РЋРЎС“РЎв‚¬РЎвЂР Р…РЎС“РЎР‹ Р СћРЎР‚Р В°Р Р†Р С”РЎС“ Р С‘ Р С”Р С•РЎРѓРЎвЂљР Р…РЎС“РЎР‹ Р СРЎС“Р С”РЎС“ Р Р† Р С”Р С•РЎвЂљРЎвЂР В» РЎРѓ Р Р†Р С•Р Т‘Р С•Р в„– Р Р† Р С—РЎР‚Р С•Р С—Р С•РЎР‚РЎвЂ Р С‘Р С‘ 1:1.", 3, "Р В Р ВµР В·РЎС“Р В»РЎРЉРЎвЂљР В°РЎвЂљ: Р С™Р С•Р С”Р В°Р С‘Р Р…."),
+			new CartelManualPage("7. Р СџР В°РЎР‚РЎвЂљР С‘Р С‘", "Р С™Р В°Р В¶Р Т‘Р В°РЎРЏ Р С•Р С—Р ВµРЎР‚Р В°РЎвЂ Р С‘РЎРЏ РЎвЂљРЎР‚Р В°РЎвЂљР С‘РЎвЂљ Р Р†Р С•Р Т‘РЎС“ Р С‘Р В· Р С”Р С•РЎвЂљР В»Р В°. Р вЂ™РЎвЂ№Р С–Р С•Р Т‘Р Р…Р ВµР Вµ Р В·Р В°Р С–РЎР‚РЎС“Р В¶Р В°РЎвЂљРЎРЉ Р СР Р…Р С•Р С–Р С• Р С‘Р Р…Р С–РЎР‚Р ВµР Т‘Р С‘Р ВµР Р…РЎвЂљР С•Р Р† РЎРѓРЎР‚Р В°Р В·РЎС“, Р Р…Р В°Р С—РЎР‚Р С‘Р СР ВµРЎР‚: 16 Р С”Р С•РЎРѓРЎвЂљР Р…Р С•Р в„– Р СРЎС“Р С”Р С‘ + 16 Р РЋРЎС“РЎв‚¬РЎвЂР Р…Р С•Р в„– Р СћРЎР‚Р В°Р Р†Р С”Р С‘ = 16 Р С™Р С•Р С”Р В°Р С‘Р Р…Р В°. Р СџР С•Р В»Р Р…Р С•Р С–Р С• Р С”Р С•РЎвЂљР В»Р В° РЎвЂ¦Р Р†Р В°РЎвЂљР В°Р ВµРЎвЂљ Р Р…Р В° 48 Р С™Р С•Р С”Р В°Р С‘Р Р…Р В°, Р Р…Р С• Р СР В°Р В»Р ВµР Р…РЎРЉР С”Р С‘Р Вµ Р С—Р В°РЎР‚РЎвЂљР С‘Р С‘ РЎР‚Р В°РЎРѓРЎвЂ¦Р С•Р Т‘РЎС“РЎР‹РЎвЂљ Р Р†Р С•Р Т‘РЎС“ Р В±РЎвЂ№РЎРѓРЎвЂљРЎР‚Р ВµР Вµ.", -1, ""),
+			new CartelManualPage("8. Р СњР ВµР С—РЎР‚Р С‘Р СР ВµРЎвЂЎР В°РЎвЂљР ВµР В»РЎРЉР Р…Р С•Р Вµ Р В·Р ВµР В»РЎРЉР Вµ", "Р вЂ™ Р Р†Р В°РЎР‚Р С•РЎвЂЎР Р…Р С•Р в„– РЎРѓРЎвЂљР С•Р в„–Р С”Р Вµ: Р С—РЎС“Р В·РЎвЂ№РЎР‚РЎвЂР С” Р Р†Р С•Р Т‘РЎвЂ№ + Р В»РЎР‹Р В±Р С•Р в„– Р С‘Р Р…Р С–РЎР‚Р ВµР Т‘Р С‘Р ВµР Р…РЎвЂљ Р С‘Р В· РЎРѓР С—Р С‘РЎРѓР С”Р В°: Р С—Р В°РЎС“РЎвЂЎР С‘Р в„– Р С–Р В»Р В°Р В·, РЎРѓР Р†Р ВµРЎР‚Р С”Р В°РЎР‹РЎвЂ°Р С‘Р в„– Р В»Р С•Р СРЎвЂљР С‘Р С” Р В°РЎР‚Р В±РЎС“Р В·Р В°, РЎРѓР В°РЎвЂ¦Р В°РЎР‚, Р С•Р С–Р Р…Р ВµР Р…Р Р…РЎвЂ№Р в„– Р С—Р С•РЎР‚Р С•РЎв‚¬Р С•Р С”, Р СР В°Р С–Р СР С•Р Р†РЎвЂ№Р в„– Р С”РЎР‚Р ВµР С, РЎРѓР В»Р ВµР В·Р В° Р С–Р В°РЎРѓРЎвЂљР В°, Р С”РЎР‚Р С•Р В»Р С‘РЎвЂЎРЎРЉРЎРЏ Р В»Р В°Р С—Р С”Р В°, РЎРѓРЎвЂљР ВµРЎР‚Р В¶Р ВµР Р…РЎРЉ Р В±РЎР‚Р С‘Р В·Р В°, Р В±Р В»Р С•Р С” РЎРѓР В»Р С‘Р В·Р С‘, Р С”Р В°Р СР ВµР Р…РЎРЉ Р С‘Р В»Р С‘ Р С—Р В°РЎС“РЎвЂљР С‘Р Р…Р В°.", -1, ""),
+			new CartelManualPage("9. Р СљР ВµРЎвЂљР В°Р Т‘Р С•Р Р…", "Р РЋР Р†Р В°РЎР‚Р С‘РЎвЂљР Вµ Р ВµР С–Р С• Р Р† Р Р†Р В°РЎР‚Р С•РЎвЂЎР Р…Р С•Р в„– РЎРѓРЎвЂљР С•Р в„–Р С”Р Вµ. Р вЂќР С•Р В±Р В°Р Р†РЎРЉРЎвЂљР Вµ Р С™Р С•Р С”Р В°Р С‘Р Р… Р Р† Р СњР ВµР С—РЎР‚Р С‘Р СР ВµРЎвЂЎР В°РЎвЂљР ВµР В»РЎРЉР Р…Р С•Р Вµ Р В·Р ВµР В»РЎРЉР Вµ. Р В Р ВµР В·РЎС“Р В»РЎРЉРЎвЂљР В°РЎвЂљ: Р СљР ВµРЎвЂљР В°Р Т‘Р С•Р Р….", 4, ""),
+			new CartelManualPage("10. Р вЂ”Р В°Р Р†Р С‘РЎРѓР С‘Р СР С•РЎРѓРЎвЂљРЎРЉ", "Р СљР ВµРЎвЂљР В°Р Т‘Р С•Р Р… Р Т‘Р В°РЎвЂРЎвЂљ Р Р†Р В°Р С Р С—Р С•Р В»Р С•Р В¶Р С‘РЎвЂљР ВµР В»РЎРЉР Р…РЎвЂ№Р Вµ РЎРЊРЎвЂћРЎвЂћР ВµР С”РЎвЂљРЎвЂ№. Р вЂќР В»РЎРЏ Р С•РЎРѓРЎвЂљР В°Р В»РЎРЉР Р…РЎвЂ№РЎвЂ¦ Р С•Р Р… Р Р†РЎвЂ№Р В·РЎвЂ№Р Р†Р В°Р ВµРЎвЂљ Р В·Р В°Р Р†Р С‘РЎРѓР С‘Р СР С•РЎРѓРЎвЂљРЎРЉ. Р СџР ВµРЎР‚Р Р†РЎвЂ№Р Вµ Р С‘Р Р…РЎР‰Р ВµР С”РЎвЂ Р С‘Р С‘ Р Т‘Р В°РЎР‹РЎвЂљ Р Р…Р ВµР С–Р В°РЎвЂљР С‘Р Р†Р Р…РЎвЂ№Р Вµ РЎРЊРЎвЂћРЎвЂћР ВµР С”РЎвЂљРЎвЂ№, Р С—Р С•Р В·Р Т‘Р Р…Р С‘Р Вµ РЎРѓРЎвЂљР В°Р Р…Р С•Р Р†РЎРЏРЎвЂљРЎРѓРЎРЏ Р С—Р С•Р В»Р С•Р В¶Р С‘РЎвЂљР ВµР В»РЎРЉР Р…РЎвЂ№Р СР С‘. Р вЂўРЎРѓР В»Р С‘ Р В·Р В°Р Р†Р С‘РЎРѓР С‘Р СРЎвЂ№Р в„– Р С‘Р С–РЎР‚Р С•Р С” РЎРѓР В»Р С‘РЎв‚¬Р С”Р С•Р С Р Т‘Р С•Р В»Р С–Р С• Р Р…Р Вµ Р С”Р С•Р В»Р ВµРЎвЂљ Р СљР ВµРЎвЂљР В°Р Т‘Р С•Р Р…, Р Р…Р В°РЎвЂЎР С‘Р Р…Р В°Р ВµРЎвЂљРЎРѓРЎРЏ Р В»Р С•Р СР С”Р В°.", -1, "")
 	};
 
-	private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
+private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 			new CartelManualPage("1. Personal Book", "This is your PERSONAL book. Do not show the recipes. If others learn how you make the goods, they can compete with you. The crafts work for everyone, but ONLY YOU know them.", -1, ""),
 			new CartelManualPage("2. Travka", "", 0, "Plant a normal fern. When it grows, it has a chance to drop Travka. Bone meal speeds up the growth."),
 			new CartelManualPage("3. Drying", "Raw Travka is not good for recipes.", 1, "Dry it in a furnace to make goods."),
@@ -17512,6 +18632,7 @@ public final class ServerRaceSystem {
 				new CartelDisguiseSession(
 						originalSkin,
 						targetSkin,
+						target.getUUID(),
 						target.getGameProfile().name(),
 						nowTick + Math.max(1L, durationTicks)
 				)
@@ -17546,8 +18667,9 @@ public final class ServerRaceSystem {
 
 			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
 			if (player == null) {
+				session.endTick++;
 				CartelWebcamBridge.endDisguise(entry.getKey());
-				return true;
+				return false;
 			}
 			if (nowTick < session.endTick) {
 				return false;
@@ -18272,7 +19394,7 @@ public final class ServerRaceSystem {
 		ItemStack stack = new ItemStack(Items.ARROW);
 		stack.set(
 				DataComponents.CUSTOM_NAME,
-				Component.literal(next ? "РЎР»РµРґСѓСЋС‰РёР№" : "РџСЂРµРґС‹РґСѓС‰РёР№")
+				Component.literal(next ? "Р РЋР В»Р ВµР Т‘РЎС“РЎР‹РЎвЂ°Р С‘Р в„– Р С‘Р С–РЎР‚Р С•Р С”" : "Р СџРЎР‚Р ВµР Т‘РЎвЂ№Р Т‘РЎС“РЎвЂ°Р С‘Р в„– Р С‘Р С–РЎР‚Р С•Р С”")
 						.withStyle(style -> style.withItalic(false))
 		);
 		return stack;
@@ -18294,7 +19416,7 @@ public final class ServerRaceSystem {
 		stack.set(DataComponents.PROFILE, ResolvableProfile.createResolved(profile));
 		stack.set(
 				DataComponents.CUSTOM_NAME,
-				Component.literal("РџСЂРёРіР»Р°СЃРёС‚СЊ")
+				Component.literal("Р СџРЎР‚Р С‘Р С–Р В»Р В°РЎРѓР С‘РЎвЂљРЎРЉ")
 						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false).withBold(true))
 		);
 		return stack;
@@ -18302,7 +19424,7 @@ public final class ServerRaceSystem {
 
 	private static ItemStack buildMilkPocketInviteEmptyState() {
 		ItemStack stack = new ItemStack(Items.BARRIER);
-		stack.set(DataComponents.CUSTOM_NAME, Component.literal("РќРµРєРѕРіРѕ РїСЂРёРіР»Р°С€Р°С‚СЊ"));
+		stack.set(DataComponents.CUSTOM_NAME, Component.literal("Р СњР ВµРЎвЂљ Р Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р Р…РЎвЂ№РЎвЂ¦ Р С‘Р С–РЎР‚Р С•Р С”Р С•Р Р†"));
 		return stack;
 	}
 
@@ -18312,9 +19434,9 @@ public final class ServerRaceSystem {
 					.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(MILK_POCKET_MENU_OVERLAY_FONT));
 		}
 		if (target == null) {
-			return Component.literal("РљР°СЂРјР°РЅРЅРѕРµ РёР·РјРµСЂРµРЅРёРµ");
+			return Component.literal("Р С™Р В°РЎР‚Р СР В°Р Р…Р Р…Р С•Р Вµ Р С‘Р В·Р СР ВµРЎР‚Р ВµР Р…Р С‘Р Вµ");
 		}
-		return Component.literal("РџСЂРёРіР»Р°СЃРёС‚СЊ: " + target.getGameProfile().name());
+		return Component.literal("Р СџРЎР‚Р С‘Р С–Р В»Р В°РЎРѓР С‘РЎвЂљРЎРЉ: " + target.getGameProfile().name());
 	}
 
 	private static String buildWomanShnyagaTitleAdvance(int targetX) {
@@ -18566,334 +19688,94 @@ public final class ServerRaceSystem {
 		return " ".repeat(spaces);
 	}
 
+	private static String normalizeCartelDisguiseLocale(ServerPlayer player) {
+		String language = player == null || player.clientInformation() == null ? null : player.clientInformation().language();
+		if (language == null || language.isBlank()) {
+			return "en_us";
+		}
+		return language.toLowerCase(Locale.ROOT);
+	}
+
+	private static Component localizedRaceMessage(ServerPlayer player, String key, Object... args) {
+		String text = localizeRaceMessageText(player, key);
+		if (args != null && args.length > 0) {
+			text = String.format(text, args);
+		}
+		return Component.literal(text).withStyle(style -> style.withItalic(false));
+	}
+
 	private static String localizeCartelDisguiseText(ServerPlayer player, String key) {
 		String locale = normalizeCartelDisguiseLocale(player);
-		if (locale.startsWith("rpr")) {
-			return switch (key) {
-				case "passport" -> "РџР°СЃРїРѕСЂС‚СЉ";
-				case "accept" -> "РџСЂРёРЅСЏС‚Рё";
-				case "previous" -> "РџСЂРµРґС‹РґСѓС‰iР№";
-				case "next" -> "РЎР»СЈРґСѓСЋС‰iР№";
-				case "empty" -> "РќСЈС‚СЉ РёРіСЂРѕРєРѕРІСЉ";
-				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂСЈ РЅРёРєРѕРіРѕ РЅСЈС‚СЉ";
-				default -> "";
-			};
-		}
-		if (locale.startsWith("uk")) {
-			return switch (key) {
-				case "passport" -> "РџР°СЃРїРѕСЂС‚";
-				case "accept" -> "РџСЂРёР№РЅСЏС‚Рё";
-				case "previous" -> "РџРѕРїРµСЂРµРґРЅС–Р№";
-				case "next" -> "РќР°СЃС‚СѓРїРЅРёР№";
-				case "empty" -> "РќРµРјР°С” РіСЂР°РІС†С–РІ";
-				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂС– РЅС–РєРѕРіРѕ РЅРµРјР°С”";
-				default -> "";
-			};
-		}
-		if (locale.startsWith("ja")) {
-			return switch (key) {
-				case "passport" -> "гѓ‘г‚№гѓќгѓјгѓ€";
-				case "accept" -> "ж‰їиЄЌ";
-				case "previous" -> "е‰ЌгЃё";
-				case "next" -> "ж¬ЎгЃё";
-				case "empty" -> "гѓ—гѓ¬г‚¤гѓ¤гѓјгЃЊгЃ„гЃѕгЃ›г‚“";
-				case "no_players_online" -> "г‚µгѓјгѓђгѓјгЃ«иЄ°г‚‚гЃ„гЃѕгЃ›г‚“";
-				default -> "";
-			};
-		}
-		if (locale.startsWith("ru")) {
-			return switch (key) {
-				case "passport" -> "РџР°СЃРїРѕСЂС‚";
-				case "accept" -> "РџСЂРёРЅСЏС‚СЊ";
-				case "previous" -> "РџСЂРµРґС‹РґСѓС‰РёР№";
-				case "next" -> "РЎР»РµРґСѓСЋС‰РёР№";
-				case "empty" -> "РќРµС‚ РёРіСЂРѕРєРѕРІ";
-				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂРµ РЅРёРєРѕРіРѕ РЅРµС‚";
-				default -> "";
-			};
-		}
+		boolean english = locale.startsWith("en");
 		return switch (key) {
-			case "passport" -> "Passport";
-			case "accept" -> "Accept";
-			case "previous" -> "Previous";
-			case "next" -> "Next";
-			case "empty" -> "No players";
-			case "no_players_online" -> "There is nobody on the server";
+			case "passport" -> english ? "Passport" : "Р СџР В°РЎРѓР С—Р С•РЎР‚РЎвЂљ";
+			case "accept" -> english ? "Accept" : "Р СџРЎР‚Р С‘Р Р…РЎРЏРЎвЂљРЎРЉ";
+			case "previous" -> english ? "Previous" : "Р СњР В°Р В·Р В°Р Т‘";
+			case "next" -> english ? "Next" : "Р вЂќР В°Р В»Р ВµР Вµ";
+			case "empty" -> english ? "No players" : "Р СњР ВµРЎвЂљ Р С‘Р С–РЎР‚Р С•Р С”Р С•Р Р†";
+			case "no_players_online" -> english ? "There is nobody on the server" : "Р СњР В° РЎРѓР ВµРЎР‚Р Р†Р ВµРЎР‚Р Вµ Р Р…Р С‘Р С”Р С•Р С–Р С• Р Р…Р ВµРЎвЂљ";
 			default -> "";
 		};
 	}
 
 	private static String localizeWomanShnyagaMenuText(ServerPlayer player, String key) {
 		String locale = normalizeCartelDisguiseLocale(player);
-		if (locale.startsWith("rpr")) {
-			return switch (key) {
-				case "recipient" -> "РџРѕР»СѓС‡Р°С‚РµР»СЊ: ";
-				case "select" -> "Р’С‹Р±СЂР°С‚СЊ";
-				case "previous" -> "РџСЂРµРґС‹РґСѓС‰iР№";
-				case "next" -> "РЎР»СЈРґСѓСЋС‰iР№";
-				case "empty" -> "РќСЈС‚СЉ РёРіСЂРѕРєРѕРІСЉ";
-				default -> "";
-			};
-		}
-		if (locale.startsWith("uk")) {
-			return switch (key) {
-				case "recipient" -> "РћРґРµСЂР¶СѓРІР°С‡: ";
-				case "select" -> "Р’РёР±СЂР°С‚Рё";
-				case "previous" -> "РџРѕРїРµСЂРµРґРЅС–Р№";
-				case "next" -> "РќР°СЃС‚СѓРїРЅРёР№";
-				case "empty" -> "РќРµРјР°С” РіСЂР°РІС†С–РІ";
-				default -> "";
-			};
-		}
-		if (locale.startsWith("ja")) {
-			return switch (key) {
-				case "recipient" -> "е®›е…€: ";
-				case "select" -> "йЃёжЉћ";
-				case "previous" -> "е‰ЌгЃё";
-				case "next" -> "ж¬ЎгЃё";
-				case "empty" -> "гѓ—гѓ¬г‚¤гѓ¤гѓјгЃЊгЃ„гЃѕгЃ›г‚“";
-				default -> "";
-			};
-		}
-		if (locale.startsWith("ru")) {
-			return switch (key) {
-				case "recipient" -> "РџРѕР»СѓС‡Р°С‚РµР»СЊ: ";
-				case "select" -> "Р’С‹Р±СЂР°С‚СЊ";
-				case "previous" -> "РџСЂРµРґС‹РґСѓС‰РёР№";
-				case "next" -> "РЎР»РµРґСѓСЋС‰РёР№";
-				case "empty" -> "РќРµС‚ РёРіСЂРѕРєРѕРІ";
-				default -> "";
-			};
-		}
+		boolean english = locale.startsWith("en");
 		return switch (key) {
-			case "recipient" -> "Recipient: ";
+			case "recipient" -> english ? "Recipient: " : "Р СџР С•Р В»РЎС“РЎвЂЎР В°РЎвЂљР ВµР В»РЎРЉ: ";
 			case "select" -> "Select";
-			case "previous" -> "Previous";
-			case "next" -> "Next";
-			case "empty" -> "No players";
+			case "previous" -> english ? "Previous" : "Р СњР В°Р В·Р В°Р Т‘";
+			case "next" -> english ? "Next" : "Р вЂќР В°Р В»Р ВµР Вµ";
+			case "empty" -> english ? "No players" : "Р СњР ВµРЎвЂљ Р С‘Р С–РЎР‚Р С•Р С”Р С•Р Р†";
 			default -> "";
 		};
 	}
 
 	private static String localizeWomanShnyagaText(ServerPlayer player, String key) {
 		String locale = normalizeCartelDisguiseLocale(player);
-		if (locale.startsWith("rpr")) {
-			return switch (key) {
-				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂСЈ РЅСЈС‚СЉ РїРѕРґС…РѕРґСЏС‰РёС…СЉ РёРіСЂРѕРєРѕРІСЉ";
-				case "already_linked" -> "РЎРІСЏР·СЊ СѓР¶Рµ РёРјСЈРµС‚СЃСЏ";
-				case "target_already_linked" -> "РЎРµР№ РёРіСЂРѕРєСЉ СѓР¶Рµ СЃРІСЏР·Р°РЅСЉ";
-				case "target_busy" -> "РЎРµР№ РёРіСЂРѕРєСЉ СѓР¶Рµ РїРѕР»СѓС‡РёР»СЉ РёРЅРѕРµ РїСЂРµРґР»РѕР¶РµРЅС–Рµ";
-				case "write_prompt" -> "РќР°РїРёС€РёС‚Рµ РїРѕСЃР»Р°РЅС–Рµ РґР»СЏ РёР·Р±СЂР°РЅРЅР°РіРѕ РїР°СЂРЅСЏ РІСЉ С‡Р°С‚СЉ.";
-				case "target_unavailable" -> "РР·Р±СЂР°РЅРЅС‹Р№ РёРіСЂРѕРєСЉ Р±РѕР»СЈРµ РЅРµРґРѕСЃС‚СѓРїРµРЅСЉ";
-				case "proposal_sent" -> "РџСЂРµРґР»РѕР¶РµРЅС–Рµ РѕС‚РїСЂР°РІР»РµРЅРѕ.";
-				case "no_pending_proposal" -> "РќСЈС‚СЉ РѕР¶РёРґР°СЋС‰Р°РіРѕ РїСЂРµРґР»РѕР¶РµРЅС–СЏ.";
-				case "proposal_expired" -> "РџСЂРµРґР»РѕР¶РµРЅС–Рµ СѓР¶Рµ РЅРµРґСЈР№СЃС‚РІРµРЅРЅРѕ.";
-				case "proposal_on_cooldown" -> "РќС‹РЅСЈ РѕС‚РІСЈС‚СЉ РЅРµРІРѕР·РјРѕР¶РµРЅСЉ: СѓРјСЈРЅС–Рµ РІСЉ РѕС…Р»Р°Р¶РґРµРЅС–Рё.";
-				case "accepted_woman" -> "%s СЃРѕРіР»Р°СЃРёР»СЃСЏ. РЎРІСЏР·СЊ СѓСЃС‚Р°РЅРѕРІР»РµРЅР°.";
-				case "accepted_target" -> "Р’С‹ СЃС‚Р°Р»Рё РїР°СЂРЅРµРјСЉ %s. РЎРІСЏР·СЊ СѓСЃС‚Р°РЅРѕРІР»РµРЅР°.";
-				case "rejected_woman" -> "Р’Р°СЃСЉ РѕС‚С€РёР»СЉ %s.";
-				case "rejected_target" -> "Р’С‹ РѕС‚С€РёР»Рё %s.";
-				case "warning_line" -> "Р’РќРРњРђРќР†Р•!";
-				case "warning_suffix" -> "РёР·Р±СЂР°Р»Р° РўР•Р‘РЇ.";
-				case "accept_button" -> "[вќ¤ РЎРѕРіР»Р°СЃРёС‚СЊСЃСЏ]";
-				case "reject_button" -> "[рџ’” РћС‚С€РёС‚СЊ]";
-				case "link_broken_kill_woman" -> "Р’Р°СЃСЉ СѓР±РёР»СЉ %s. РћС‚РЅРѕС€РµРЅС–СЏ СЂР°Р·СЂСѓС€РµРЅС‹.";
-				case "link_broken_kill_target" -> "Р’С‹ Р±СЂРѕСЃРёР»Рё %s, РїСЂРµРґР°С‚РµР»СЊСЃРєРё СѓР±РёРІ РµС‘!";
-				case "link_broken_whitelist_woman" -> "%s РёСЃРєР»СЋС‡РёР»Рё СЃСЉ СЃРµСЂРІРµСЂР°. РћС‚РЅРѕС€РµРЅС–СЏ СЂР°Р·СЂСѓС€РµРЅС‹.";
-				case "link_broken_whitelist_target" -> "Р’С‹ Р±СЂРѕСЃРёР»Рё %s: РІС‹ СѓРґР°Р»РµРЅС‹ РёР· whitelist.";
-				case "link_broken_whitelist_target_woman_removed" -> "%s РёСЃРєР»СЋС‡РёР»Рё СЃСЉ СЃРµСЂРІРµСЂР°. РћС‚РЅРѕС€РµРЅС–СЏ СЂР°Р·СЂСѓС€РµРЅС‹.";
-				default -> "";
-			};
-		}
-		if (locale.startsWith("uk")) {
-			return switch (key) {
-				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂС– РЅРµРјР°С” РІС–РґРїРѕРІС–РґРЅРёС… РіСЂР°РІС†С–РІ";
-				case "already_linked" -> "РЈ РІР°СЃ СѓР¶Рµ С” Р·РІ'СЏР·РѕРє";
-				case "target_already_linked" -> "Р¦РµР№ РіСЂР°РІРµС†СЊ СѓР¶Рµ РїРѕРІ'СЏР·Р°РЅРёР№";
-				case "target_busy" -> "Р¦РµР№ РіСЂР°РІРµС†СЊ СѓР¶Рµ РѕС‚СЂРёРјР°РІ С–РЅС€Сѓ РїСЂРѕРїРѕР·РёС†С–СЋ";
-				case "write_prompt" -> "РќР°РїРёС€С–С‚СЊ РїРѕРІС–РґРѕРјР»РµРЅРЅСЏ РґР»СЏ РІРёР±СЂР°РЅРѕРіРѕ С…Р»РѕРїС†СЏ РІ С‡Р°С‚.";
-				case "target_unavailable" -> "Р’РёР±СЂР°РЅРёР№ РіСЂР°РІРµС†СЊ Р±С–Р»СЊС€Рµ РЅРµРґРѕСЃС‚СѓРїРЅРёР№";
-				case "proposal_sent" -> "РџСЂРѕРїРѕР·РёС†С–СЋ РІС–РґРїСЂР°РІР»РµРЅРѕ.";
-				case "no_pending_proposal" -> "РќРµРјР°С” Р°РєС‚РёРІРЅРѕС— РїСЂРѕРїРѕР·РёС†С–С—.";
-				case "proposal_expired" -> "РџСЂРѕРїРѕР·РёС†С–СЏ РІР¶Рµ РЅРµРґС–Р№СЃРЅР°.";
-				case "proposal_on_cooldown" -> "Р’С–РґРїРѕРІС–РґСЊ Р·Р°СЂР°Р· РЅРµРјРѕР¶Р»РёРІР°: Р·РґС–Р±РЅС–СЃС‚СЊ РЅР° РІС–РґРЅРѕРІР»РµРЅРЅС–.";
-				case "accepted_woman" -> "%s РїРѕРіРѕРґРёРІСЃСЏ. Р—РІ'СЏР·РѕРє РІСЃС‚Р°РЅРѕРІР»РµРЅРѕ.";
-				case "accepted_target" -> "Р’Рё СЃС‚Р°Р»Рё С…Р»РѕРїС†РµРј %s. Р—РІ'СЏР·РѕРє РІСЃС‚Р°РЅРѕРІР»РµРЅРѕ.";
-				case "rejected_woman" -> "Р’Р°СЃ РІС–РґС€РёРІ %s.";
-				case "rejected_target" -> "Р’Рё РІС–РґС€РёР»Рё %s.";
-				case "warning_line" -> "РЈР’РђР“Рђ!";
-				case "warning_suffix" -> "РѕР±СЂР°Р»Р° РўР•Р‘Р•.";
-				case "accept_button" -> "[вќ¤ РџРѕРіРѕРґРёС‚РёСЃСЏ]";
-				case "reject_button" -> "[рџ’” Р’С–РґС€РёС‚Рё]";
-				case "link_broken_kill_woman" -> "Р’Р°СЃ СѓР±РёРІ %s. РЎС‚РѕСЃСѓРЅРєРё Р·СЂСѓР№РЅРѕРІР°РЅРѕ.";
-				case "link_broken_kill_target" -> "Р’Рё РєРёРЅСѓР»Рё %s, РїС–РґСЃС‚СѓРїРЅРѕ РІР±РёРІС€Рё С—С—!";
-				case "link_broken_whitelist_woman" -> "%s РІРёРєР»СЋС‡РёР»Рё Р· СЃРµСЂРІРµСЂР°. РЎС‚РѕСЃСѓРЅРєРё Р·СЂСѓР№РЅРѕРІР°РЅРѕ.";
-				case "link_broken_whitelist_target" -> "Р’Рё РєРёРЅСѓР»Рё %s: РІР°СЃ РІРёРґР°Р»РµРЅРѕ Р· whitelist.";
-				case "link_broken_whitelist_target_woman_removed" -> "%s РІРёРєР»СЋС‡РёР»Рё Р· СЃРµСЂРІРµСЂР°. РЎС‚РѕСЃСѓРЅРєРё Р·СЂСѓР№РЅРѕРІР°РЅРѕ.";
-				default -> "";
-			};
-		}
-		if (locale.startsWith("ja")) {
-			return switch (key) {
-				case "no_players_online" -> "еЇѕи±ЎгЃ«гЃ§гЃЌг‚‹гѓ—гѓ¬г‚¤гѓ¤гѓјгЃЊгЃ„гЃѕгЃ›г‚“";
-				case "already_linked" -> "гЃ™гЃ§гЃ«зµ†гЃЊгЃ‚г‚ЉгЃѕгЃ™";
-				case "target_already_linked" -> "гЃќгЃ®гѓ—гѓ¬г‚¤гѓ¤гѓјгЃЇгЃ™гЃ§гЃ«зµђгЃ°г‚ЊгЃ¦гЃ„гЃѕгЃ™";
-				case "target_busy" -> "гЃќгЃ®гѓ—гѓ¬г‚¤гѓ¤гѓјгЃ«гЃЇе€ҐгЃ®з”ігЃ—иѕјгЃїгЃЊгЃ‚г‚ЉгЃѕгЃ™";
-				case "write_prompt" -> "йЃёг‚“гЃ з›ёж‰‹гЃёгЃ®гѓЎгѓѓг‚»гѓјг‚ёг‚’гѓЃгѓЈгѓѓгѓ€гЃ«е…ҐеЉ›гЃ—гЃ¦гЃЏгЃ гЃ•гЃ„гЂ‚";
-				case "target_unavailable" -> "йЃёг‚“гЃ гѓ—гѓ¬г‚¤гѓ¤гѓјгЃЇг‚‚гЃ†е€©з”ЁгЃ§гЃЌгЃѕгЃ›г‚“";
-				case "proposal_sent" -> "з”ігЃ—иѕјгЃїг‚’йЂЃг‚ЉгЃѕгЃ—гЃџгЂ‚";
-				case "no_pending_proposal" -> "иї”з­”гЃ™г‚‹з”ігЃ—иѕјгЃїгЃЊгЃ‚г‚ЉгЃѕгЃ›г‚“гЂ‚";
-				case "proposal_expired" -> "гЃќгЃ®з”ігЃ—иѕјгЃїгЃЇг‚‚гЃ†з„ЎеЉ№гЃ§гЃ™гЂ‚";
-				case "proposal_on_cooldown" -> "д»ЉгЃЇиї”з­”гЃ§гЃЌгЃѕгЃ›г‚“гЂ‚гЃ“гЃ®иѓЅеЉ›гЃЇг‚Їгѓјгѓ«гѓЂг‚¦гѓідё­гЃ§гЃ™гЂ‚";
-				case "accepted_woman" -> "%s гЃЊж‰їи«ѕгЃ—гЃѕгЃ—гЃџгЂ‚зµ†гЃЊзµђгЃ°г‚ЊгЃѕгЃ—гЃџгЂ‚";
-				case "accepted_target" -> "гЃ‚гЃЄгЃџгЃЇ %s гЃ®еЅјж°ЏгЃ«гЃЄг‚ЉгЃѕгЃ—гЃџгЂ‚зµ†гЃЊзµђгЃ°г‚ЊгЃѕгЃ—гЃџгЂ‚";
-				case "rejected_woman" -> "%s гЃ«жЊЇг‚‰г‚ЊгЃѕгЃ—гЃџгЂ‚";
-				case "rejected_target" -> "гЃ‚гЃЄгЃџгЃЇ %s г‚’жЊЇг‚ЉгЃѕгЃ—гЃџгЂ‚";
-				case "warning_line" -> "и­¦е‘Љ!";
-				case "warning_suffix" -> "гЃЊгЃ‚гЃЄгЃџг‚’йЃёгЃігЃѕгЃ—гЃџгЂ‚";
-				case "accept_button" -> "[вќ¤ ж‰їи«ѕгЃ™г‚‹]";
-				case "reject_button" -> "[рџ’” жЊЇг‚‹]";
-				case "link_broken_kill_woman" -> "%s гЃ«ж®єгЃ•г‚ЊгЃѕгЃ—гЃџгЂ‚й–ўдї‚гЃЇеЈЉг‚ЊгЃѕгЃ—гЃџгЂ‚";
-				case "link_broken_kill_target" -> "%s г‚’иЈЏе€‡гЃЈгЃ¦ж®єгЃ—гЂЃжЊЇг‚ЉгЃѕгЃ—гЃџгЂ‚";
-				case "link_broken_whitelist_woman" -> "%s гЃЊг‚µгѓјгѓђгѓјгЃ‹г‚‰й™¤е¤–гЃ•г‚ЊгЃѕгЃ—гЃџгЂ‚й–ўдї‚гЃЇеЈЉг‚ЊгЃѕгЃ—гЃџгЂ‚";
-				case "link_broken_whitelist_target" -> "%s г‚’жЊЇг‚ЉгЃѕгЃ—гЃџ: гЃ‚гЃЄгЃџгЃЊ whitelist гЃ‹г‚‰е‰Љй™¤гЃ•г‚ЊгЃѕгЃ—гЃџгЂ‚";
-				case "link_broken_whitelist_target_woman_removed" -> "%s гЃЊг‚µгѓјгѓђгѓјгЃ‹г‚‰й™¤е¤–гЃ•г‚ЊгЃѕгЃ—гЃџгЂ‚й–ўдї‚гЃЇеЈЉг‚ЊгЃѕгЃ—гЃџгЂ‚";
-				default -> "";
-			};
-		}
-		if (locale.startsWith("ru")) {
-			return switch (key) {
-				case "no_players_online" -> "РќР° СЃРµСЂРІРµСЂРµ РЅРµС‚ РїРѕРґС…РѕРґСЏС‰РёС… РёРіСЂРѕРєРѕРІ";
-				case "already_linked" -> "РЈ РІР°СЃ СѓР¶Рµ РµСЃС‚СЊ СЃРІСЏР·СЊ";
-				case "target_already_linked" -> "Р­С‚РѕС‚ РёРіСЂРѕРє СѓР¶Рµ СЃРІСЏР·Р°РЅ";
-				case "target_busy" -> "Р­С‚РѕС‚ РёРіСЂРѕРє СѓР¶Рµ РїРѕР»СѓС‡РёР» РґСЂСѓРіРѕРµ РїСЂРµРґР»РѕР¶РµРЅРёРµ";
-				case "write_prompt" -> "РќР°РїРёС€РёС‚Рµ СЃРѕРѕР±С‰РµРЅРёРµ РґР»СЏ РІС‹Р±СЂР°РЅРЅРѕРіРѕ РїР°СЂРЅСЏ РІ С‡Р°С‚.";
-				case "target_unavailable" -> "Р’С‹Р±СЂР°РЅРЅС‹Р№ РёРіСЂРѕРє Р±РѕР»СЊС€Рµ РЅРµРґРѕСЃС‚СѓРїРµРЅ";
-				case "proposal_sent" -> "РџСЂРµРґР»РѕР¶РµРЅРёРµ РѕС‚РїСЂР°РІР»РµРЅРѕ.";
-				case "no_pending_proposal" -> "РќРµС‚ Р°РєС‚РёРІРЅРѕРіРѕ РїСЂРµРґР»РѕР¶РµРЅРёСЏ.";
-				case "proposal_expired" -> "РџСЂРµРґР»РѕР¶РµРЅРёРµ СѓР¶Рµ РЅРµРґРµР№СЃС‚РІРёС‚РµР»СЊРЅРѕ.";
-				case "proposal_on_cooldown" -> "РЎРµР№С‡Р°СЃ РѕС‚РІРµС‚РёС‚СЊ РЅРµР»СЊР·СЏ: СЃРїРѕСЃРѕР±РЅРѕСЃС‚СЊ Р¶РµРЅС‰РёРЅС‹ РІ РљР”.";
-				case "accepted_woman" -> "%s СЃРѕРіР»Р°СЃРёР»СЃСЏ. РЎРІСЏР·СЊ СѓСЃС‚Р°РЅРѕРІР»РµРЅР°.";
-				case "accepted_target" -> "Р’С‹ СЃС‚Р°Р»Рё РїР°СЂРЅРµРј %s. РЎРІСЏР·СЊ СѓСЃС‚Р°РЅРѕРІР»РµРЅР°.";
-				case "rejected_woman" -> "Р’Р°СЃ РѕС‚С€РёР» %s.";
-				case "rejected_target" -> "Р’С‹ РѕС‚С€РёР»Рё %s.";
-				case "warning_line" -> "Р’РќРРњРђРќРР•!";
-				case "warning_suffix" -> "РІС‹Р±СЂР°Р»Р° РўР•Р‘РЇ.";
-				case "accept_button" -> "[вќ¤ РЎРѕРіР»Р°СЃРёС‚СЊСЃСЏ]";
-				case "reject_button" -> "[рџ’” РћС‚С€РёС‚СЊ]";
-				case "link_broken_kill_woman" -> "Р’Р°СЃ СѓР±РёР» %s. РћС‚РЅРѕС€РµРЅРёСЏ СЂР°Р·СЂСѓС€РµРЅС‹.";
-				case "link_broken_kill_target" -> "Р’С‹ Р±СЂРѕСЃРёР»Рё %s, РїСЂРµРґР°С‚РµР»СЊСЃРєРё СѓР±РёРІ РµС‘!";
-				case "link_broken_whitelist_woman" -> "%s РёСЃРєР»СЋС‡РёР»Рё СЃ СЃРµСЂРІРµСЂР°. РћС‚РЅРѕС€РµРЅРёСЏ СЂР°Р·СЂСѓС€РµРЅС‹.";
-				case "link_broken_whitelist_target" -> "Р’С‹ Р±СЂРѕСЃРёР»Рё %s: РІР°СЃ СѓРґР°Р»РёР»Рё РёР· whitelist.";
-				case "link_broken_whitelist_target_woman_removed" -> "%s РёСЃРєР»СЋС‡РёР»Рё СЃ СЃРµСЂРІРµСЂР°. РћС‚РЅРѕС€РµРЅРёСЏ СЂР°Р·СЂСѓС€РµРЅС‹.";
-				default -> "";
-			};
-		}
+		boolean english = locale.startsWith("en");
 		return switch (key) {
-			case "no_players_online" -> "There are no suitable players on the server";
-			case "already_linked" -> "You already have a bond";
-			case "target_already_linked" -> "That player is already bonded";
-			case "target_busy" -> "That player already has another proposal";
-			case "write_prompt" -> "Write a message for the selected guy in chat.";
-			case "target_unavailable" -> "The selected player is no longer available";
-			case "proposal_sent" -> "Proposal sent.";
-			case "no_pending_proposal" -> "There is no active proposal.";
-			case "proposal_expired" -> "That proposal is no longer valid.";
-			case "proposal_on_cooldown" -> "You can't answer right now: her ability is on cooldown.";
-			case "accepted_woman" -> "%s accepted. The bond is established.";
-			case "accepted_target" -> "You became %s's boyfriend. The bond is established.";
-			case "rejected_woman" -> "You were dumped by %s.";
-			case "rejected_target" -> "You dumped %s.";
-			case "warning_line" -> "WARNING!";
-			case "warning_suffix" -> "chose YOU.";
-			case "accept_button" -> "[вќ¤ Accept]";
-			case "reject_button" -> "[рџ’” Reject]";
-			case "link_broken_kill_woman" -> "%s killed you. The relationship is ruined.";
-			case "link_broken_kill_target" -> "You dumped %s by treacherously killing her!";
-			case "link_broken_whitelist_woman" -> "%s was removed from the server. The relationship is ruined.";
-			case "link_broken_whitelist_target" -> "You broke up with %s: you were removed from the whitelist.";
-			case "link_broken_whitelist_target_woman_removed" -> "%s was removed from the server. The relationship is ruined.";
+			case "no_players_online" -> english ? "There are no suitable players on the server" : "Р СњР В° РЎРѓР ВµРЎР‚Р Р†Р ВµРЎР‚Р Вµ Р Р…Р ВµРЎвЂљ Р С—Р С•Р Т‘РЎвЂ¦Р С•Р Т‘РЎРЏРЎвЂ°Р С‘РЎвЂ¦ Р С‘Р С–РЎР‚Р С•Р С”Р С•Р Р†";
+			case "already_linked" -> english ? "You already have a bond" : "Р Р€ Р Р†Р В°РЎРѓ РЎС“Р В¶Р Вµ Р ВµРЎРѓРЎвЂљРЎРЉ РЎРѓР Р†РЎРЏР В·РЎРЉ.";
+			case "target_already_linked" -> english ? "That player is already bonded" : "Р В­РЎвЂљР С•РЎвЂљ Р С‘Р С–РЎР‚Р С•Р С” РЎС“Р В¶Р Вµ РЎРѓР Р†РЎРЏР В·Р В°Р Р….";
+			case "target_busy" -> english ? "That player already has another proposal" : "Р Р€ РЎРЊРЎвЂљР С•Р С–Р С• Р С‘Р С–РЎР‚Р С•Р С”Р В° РЎС“Р В¶Р Вµ Р ВµРЎРѓРЎвЂљРЎРЉ Р Т‘РЎР‚РЎС“Р С–Р С•Р Вµ Р С—РЎР‚Р ВµР Т‘Р В»Р С•Р В¶Р ВµР Р…Р С‘Р Вµ.";
+			case "write_prompt" -> english ? "Write a message for the selected guy in chat." : "Р СњР В°Р С—Р С‘РЎв‚¬Р С‘РЎвЂљР Вµ РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘Р Вµ Р Р†РЎвЂ№Р В±РЎР‚Р В°Р Р…Р Р…Р С•Р СРЎС“ Р С—Р В°РЎР‚Р Р…РЎР‹ Р Р† РЎвЂЎР В°РЎвЂљ.";
+			case "target_unavailable" -> english ? "The selected player is no longer available" : "Р вЂ™РЎвЂ№Р В±РЎР‚Р В°Р Р…Р Р…РЎвЂ№Р в„– Р С‘Р С–РЎР‚Р С•Р С” Р В±Р С•Р В»РЎРЉРЎв‚¬Р Вµ Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р ВµР Р….";
+			case "proposal_sent" -> english ? "Proposal sent." : "Р СџРЎР‚Р ВµР Т‘Р В»Р С•Р В¶Р ВµР Р…Р С‘Р Вµ Р С•РЎвЂљР С—РЎР‚Р В°Р Р†Р В»Р ВµР Р…Р С•.";
+			case "no_pending_proposal" -> english ? "There is no active proposal." : "Р С’Р С”РЎвЂљР С‘Р Р†Р Р…Р С•Р С–Р С• Р С—РЎР‚Р ВµР Т‘Р В»Р С•Р В¶Р ВµР Р…Р С‘РЎРЏ Р Р…Р ВµРЎвЂљ.";
+			case "proposal_expired" -> english ? "That proposal is no longer valid." : "Р СџРЎР‚Р ВµР Т‘Р В»Р С•Р В¶Р ВµР Р…Р С‘Р Вµ Р В±Р С•Р В»РЎРЉРЎв‚¬Р Вµ Р Р…Р ВµР Т‘Р ВµР в„–РЎРѓРЎвЂљР Р†Р С‘РЎвЂљР ВµР В»РЎРЉР Р…Р С•.";
+			case "proposal_on_cooldown" -> english ? "You can't answer right now: her ability is on cooldown." : "Р РЋР ВµР в„–РЎвЂЎР В°РЎРѓ Р Р…Р ВµР В»РЎРЉР В·РЎРЏ Р С•РЎвЂљР Р†Р ВµРЎвЂљР С‘РЎвЂљРЎРЉ: Р ВµРЎвЂ РЎРѓР С—Р С•РЎРѓР С•Р В±Р Р…Р С•РЎРѓРЎвЂљРЎРЉ Р Р…Р В° Р С—Р ВµРЎР‚Р ВµР В·Р В°РЎР‚РЎРЏР Т‘Р С”Р Вµ.";
+			case "accepted_woman" -> english ? "%s accepted. The bond is established." : "%s Р С—РЎР‚Р С‘Р Р…РЎРЏР В» Р С—РЎР‚Р ВµР Т‘Р В»Р С•Р В¶Р ВµР Р…Р С‘Р Вµ. Р РЋР Р†РЎРЏР В·РЎРЉ РЎС“РЎРѓРЎвЂљР В°Р Р…Р С•Р Р†Р В»Р ВµР Р…Р В°.";
+			case "accepted_target" -> english ? "You became %s's boyfriend. The bond is established." : "Р вЂ™РЎвЂ№ РЎРѓРЎвЂљР В°Р В»Р С‘ Р С—Р В°РЎР‚Р Р…Р ВµР С %s. Р РЋР Р†РЎРЏР В·РЎРЉ РЎС“РЎРѓРЎвЂљР В°Р Р…Р С•Р Р†Р В»Р ВµР Р…Р В°.";
+			case "rejected_woman" -> english ? "You were dumped by %s." : "%s Р Р†Р В°РЎРѓ Р С•РЎвЂљР Р†Р ВµРЎР‚Р С–.";
+			case "rejected_target" -> english ? "You dumped %s." : "Р вЂ™РЎвЂ№ Р С•РЎвЂљР Р†Р ВµРЎР‚Р С–Р В»Р С‘ %s.";
+			case "warning_suffix" -> english ? "chose YOU." : "Р Р†РЎвЂ№Р В±РЎР‚Р В°Р В»Р В° Р вЂ™Р С’Р РЋ.";
+			case "accept_button" -> english ? "[Accept]" : "[Р СџРЎР‚Р С‘Р Р…РЎРЏРЎвЂљРЎРЉ]";
+			case "reject_button" -> english ? "[Reject]" : "[Р С›РЎвЂљР С”Р В»Р С•Р Р…Р С‘РЎвЂљРЎРЉ]";
+			case "warning_line" -> english ? "WARNING!" : "Р вЂ™Р СњР ВР СљР С’Р СњР ВР вЂў!";
+			case "link_broken_kill_target" -> english ? "You dumped %s by treacherously killing her!" : "Р вЂ™РЎвЂ№ РЎР‚Р В°Р В·РЎР‚РЎС“РЎв‚¬Р С‘Р В»Р С‘ РЎРѓР Р†РЎРЏР В·РЎРЉ, Р С—РЎР‚Р ВµР Т‘Р В°РЎвЂљР ВµР В»РЎРЉРЎРѓР С”Р С‘ РЎС“Р В±Р С‘Р Р† %s!";
+			case "link_broken_whitelist_woman" -> english ? "%s was removed from the server. The relationship is ruined." : "%s РЎС“Р Т‘Р В°Р В»РЎвЂР Р…(Р В°) РЎРѓ РЎРѓР ВµРЎР‚Р Р†Р ВµРЎР‚Р В°. Р РЋР Р†РЎРЏР В·РЎРЉ РЎР‚Р В°Р В·РЎР‚РЎС“РЎв‚¬Р ВµР Р…Р В°.";
+			case "link_broken_whitelist_target" -> english ? "You broke up with %s: you were removed from the whitelist." : "Р вЂ™РЎвЂ№ РЎР‚Р В°Р В·Р С•РЎР‚Р Р†Р В°Р В»Р С‘ РЎРѓР Р†РЎРЏР В·РЎРЉ РЎРѓ %s: Р Р†Р В°РЎРѓ РЎС“Р В±РЎР‚Р В°Р В»Р С‘ Р С‘Р В· Р Р†Р В°Р в„–РЎвЂљР В»Р С‘РЎРѓРЎвЂљР В°.";
+			case "link_broken_whitelist_target_woman_removed" -> english ? "%s was removed from the server. The relationship is ruined." : "%s РЎС“Р Т‘Р В°Р В»РЎвЂР Р…(Р В°) РЎРѓ РЎРѓР ВµРЎР‚Р Р†Р ВµРЎР‚Р В°. Р РЋР Р†РЎРЏР В·РЎРЉ РЎР‚Р В°Р В·РЎР‚РЎС“РЎв‚¬Р ВµР Р…Р В°.";
 			default -> "";
 		};
 	}
 
-	private static String normalizeCartelDisguiseLocale(ServerPlayer player) {
-		if (player == null || player.clientInformation() == null || player.clientInformation().language() == null) {
-			return "ru_ru";
-		}
-		return player.clientInformation().language().toLowerCase(Locale.ROOT);
-	}
-
 	private static String localizeAbilityNotPurchased(ServerPlayer player, String abilityName) {
 		String locale = normalizeCartelDisguiseLocale(player);
-		return switch (locale) {
-			case "rpr" -> "РЈРјСЈРЅС–Рµ В«" + abilityName + "В» РЅРµ СЃС‚СЏР¶Р°РЅРѕ";
-			case "uk", "uk_ua" -> "Р—РґС–Р±РЅС–СЃС‚СЊ В«" + abilityName + "В» С‰Рµ РЅРµ РєСѓРїР»РµРЅР°";
-			case "ja", "ja_jp" -> "иѓЅеЉ›гЂЊ" + abilityName + "гЂЌгЃЇгЃѕгЃ иіје…ҐгЃ•г‚ЊгЃ¦гЃ„гЃѕгЃ›г‚“";
-			case "ru", "ru_ru" -> "РЎРїРѕСЃРѕР±РЅРѕСЃС‚СЊ В«" + abilityName + "В» РЅРµ РєСѓРїР»РµРЅР°";
-			default -> "Ability \"" + abilityName + "\" is not purchased yet";
-		};
-	}
-
-	private static MutableComponent localizedRaceMessage(ServerPlayer player, String key, String... args) {
-		if (player != null && PolymerResourcePackUtils.hasMainPack(player)) {
-			Object[] translatedArgs = new Object[args == null ? 0 : args.length];
-			for (int index = 0; index < translatedArgs.length; index++) {
-				translatedArgs[index] = Component.literal(args[index]);
-			}
-			return Component.translatable("message.lg2.race." + key, translatedArgs);
-		}
-
-		String text = localizeRaceMessageText(player, key);
-		if (args != null && args.length > 0) {
-			text = String.format(Locale.ROOT, text, (Object[]) args);
-		}
-		return Component.literal(text);
+		return locale.startsWith("en")
+				? "Ability \"" + abilityName + "\" is not purchased yet"
+				: "Р РЋР С—Р С•РЎРѓР С•Р В±Р Р…Р С•РЎРѓРЎвЂљРЎРЉ \"" + abilityName + "\" Р ВµРЎвЂ°РЎвЂ Р Р…Р Вµ Р С”РЎС“Р С—Р В»Р ВµР Р…Р В°";
 	}
 
 	private static String localizeRaceMessageText(ServerPlayer player, String key) {
 		String locale = normalizeCartelDisguiseLocale(player);
-		if (locale.startsWith("rpr")) {
-			return switch (key) {
-				case "player_only" -> "РЎС–СЋ РєРѕРјР°РЅРґСѓ РјРѕР¶РµС‚СЉ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ С‚РѕРєРјРѕ РёРіСЂРѕРєСЉ";
-				case "no_race" -> "РЈ С‚РµР±СЏ РїРѕРєР° РЅСЈС‚СЉ РЅР°Р·РЅР°С‡РµРЅРЅРѕР№ СЂР°СЃС‹";
-				case "no_menu" -> "РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ РјРµРЅСЋ СЂР°СЃС‹. РСЃРїРѕР»РЅРё /race reload";
-				case "ability_disabled" -> "РЈРјСЈРЅС–Рµ %s РЅС‹РЅСЈ РЅРµРґРѕСЃС‚СѓРїРЅРѕ";
-				default -> "";
-			};
-		}
-		if (locale.startsWith("uk")) {
-			return switch (key) {
-				case "player_only" -> "Р¦СЋ РєРѕРјР°РЅРґСѓ РјРѕР¶Рµ РІРёРєРѕСЂРёСЃС‚РѕРІСѓРІР°С‚Рё Р»РёС€Рµ РіСЂР°РІРµС†СЊ";
-				case "no_race" -> "РЈ С‚РµР±Рµ РїРѕРєРё РЅРµРјР°С” РїСЂРёР·РЅР°С‡РµРЅРѕС— СЂР°СЃРё";
-				case "no_menu" -> "РќРµ РІРґР°Р»РѕСЃСЏ РІС–РґРєСЂРёС‚Рё РјРµРЅСЋ СЂР°СЃРё. Р’РёРєРѕРЅР°Р№ /race reload";
-				case "ability_disabled" -> "Р—РґС–Р±РЅС–СЃС‚СЊ %s Р·Р°СЂР°Р· РЅРµРґРѕСЃС‚СѓРїРЅР°";
-				default -> "";
-			};
-		}
-		if (locale.startsWith("ja")) {
-			return switch (key) {
-				case "player_only" -> "гЃ“гЃ®г‚ігѓћгѓігѓ‰гЃЇгѓ—гѓ¬г‚¤гѓ¤гѓјгЃ®гЃїдЅїз”ЁгЃ§гЃЌгЃѕгЃ™";
-				case "no_race" -> "гЃѕгЃ зЁ®ж—ЏгЃЊе‰Іг‚ЉеЅ“гЃ¦г‚‰г‚ЊгЃ¦гЃ„гЃѕгЃ›г‚“";
-				case "no_menu" -> "зЁ®ж—ЏгѓЎгѓ‹гѓҐгѓјг‚’й–‹гЃ‘гЃѕгЃ›г‚“гЃ§гЃ—гЃџгЂ‚/race reload г‚’е®џиЎЊгЃ—гЃ¦гЃЏгЃ гЃ•гЃ„";
-				case "ability_disabled" -> "иѓЅеЉ› %s гЃЇзЏѕењЁдЅїз”ЁгЃ§гЃЌгЃѕгЃ›г‚“";
-				default -> "";
-			};
-		}
-		if (locale.startsWith("ru")) {
-			return switch (key) {
-				case "player_only" -> "Р­С‚Сѓ РєРѕРјР°РЅРґСѓ РјРѕР¶РµС‚ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ С‚РѕР»СЊРєРѕ РёРіСЂРѕРє";
-				case "no_race" -> "РЈ С‚РµР±СЏ РїРѕРєР° РЅРµС‚ РЅР°Р·РЅР°С‡РµРЅРЅРѕР№ СЂР°СЃС‹";
-				case "no_menu" -> "РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ РјРµРЅСЋ СЂР°СЃС‹. Р’С‹РїРѕР»РЅРё /race reload";
-				case "ability_disabled" -> "РЎРїРѕСЃРѕР±РЅРѕСЃС‚СЊ %s СЃРµР№С‡Р°СЃ РЅРµРґРѕСЃС‚СѓРїРЅР°";
-				default -> "";
-			};
-		}
+		boolean english = locale.startsWith("en");
 		return switch (key) {
-			case "player_only" -> "Only a player can use this command";
-			case "no_race" -> "You do not have a race assigned yet";
-			case "no_menu" -> "Failed to open race menu. Run /race reload";
-			case "ability_disabled" -> "Ability %s is currently unavailable";
+			case "player_only" -> english ? "Only a player can use this command" : "Р В­РЎвЂљРЎС“ Р С”Р С•Р СР В°Р Р…Р Т‘РЎС“ Р СР С•Р В¶Р ВµРЎвЂљ Р С‘РЎРѓР С—Р С•Р В»РЎРЉР В·Р С•Р Р†Р В°РЎвЂљРЎРЉ РЎвЂљР С•Р В»РЎРЉР С”Р С• Р С‘Р С–РЎР‚Р С•Р С”";
+			case "no_race" -> english ? "You do not have a race assigned yet" : "Р Р€ Р Р†Р В°РЎРѓ Р С—Р С•Р С”Р В° Р Р…Р ВµРЎвЂљ Р Р…Р В°Р В·Р Р…Р В°РЎвЂЎР ВµР Р…Р Р…Р С•Р в„– РЎР‚Р В°РЎРѓРЎвЂ№";
+			case "no_menu" -> english ? "Failed to open race menu. Run /race reload" : "Р СњР Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р С•РЎвЂљР С”РЎР‚РЎвЂ№РЎвЂљРЎРЉ Р СР ВµР Р…РЎР‹ РЎР‚Р В°РЎРѓРЎвЂ№. Р вЂ™РЎвЂ№Р С—Р С•Р В»Р Р…Р С‘РЎвЂљР Вµ /race reload";
+			case "ability_disabled" -> english ? "Ability %s is currently unavailable" : "Р РЋР С—Р С•РЎРѓР С•Р В±Р Р…Р С•РЎРѓРЎвЂљРЎРЉ %s РЎРѓР ВµР в„–РЎвЂЎР В°РЎРѓ Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р Р…Р В°";
 			default -> "";
 		};
 	}
@@ -20030,7 +20912,7 @@ public final class ServerRaceSystem {
 		if (player == null) {
 			return;
 		}
-		player.displayClientMessage(Component.literal("Р¦РµР»СЊ РЅРµ РІС‹Р±СЂР°РЅР°").withStyle(ChatFormatting.RED), true);
+		player.displayClientMessage(Component.literal("Р В¦Р ВµР В»РЎРЉ Р Р…Р Вµ Р Р†РЎвЂ№Р В±РЎР‚Р В°Р Р…Р В°").withStyle(ChatFormatting.RED), true);
 	}
 
 	private static boolean displayInfiniteCooldown(ServerPlayer player) {
@@ -20727,12 +21609,3 @@ public final class ServerRaceSystem {
 		}
 	}
 }
-
-
-
-
-
-
-
-
-
