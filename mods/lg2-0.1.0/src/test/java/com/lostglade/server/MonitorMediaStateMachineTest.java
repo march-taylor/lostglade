@@ -4,8 +4,10 @@ import com.lostglade.server.monitor.MonitorYoutubeMusicCache;
 import com.lostglade.server.monitor.MonitorAppRegistry;
 import com.lostglade.server.monitor.MonitorAppRole;
 import com.lostglade.server.monitor.MonitorBackgroundPlaybackPolicy;
+import com.lostglade.server.monitor.MonitorMediaApp;
 import com.lostglade.server.monitor.MonitorSberDronesCatalog;
 import com.lostglade.server.progress.TaskProgress;
+import net.minecraft.nbt.CompoundTag;
 
 import javax.imageio.ImageIO;
 import java.awt.Color;
@@ -17,6 +19,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.List;
 
 public final class MonitorMediaStateMachineTest {
 	private MonitorMediaStateMachineTest() {
@@ -34,6 +37,9 @@ public final class MonitorMediaStateMachineTest {
 		youtubeMusicNeedsCompleteMarkerBeforeReportingFullCache();
 		youtubeMusicRejectsLegacyMarkerWithoutVerifiedFinalSize();
 		youtubeMusicDirectThumbnailUsesStableYoutubeCoverUrl();
+		persistedMediaTagCopyKeepsWallpaperState();
+		hydratedBackgroundsRetryMissingDecodedMedia();
+		powerOffResetKeepsDecodedBackgroundMedia();
 		sberDronesUsesDedicatedLiveCameraCatalog();
 		galleryRuntimePolicyIgnoresLiveCameraOnlyCollections();
 		galleryRuntimePolicyRetainsOnlyActiveDecodedMedia();
@@ -427,6 +433,115 @@ public final class MonitorMediaStateMachineTest {
 						"gallery://background"
 				),
 				"unused decoded gallery media should be eligible for eviction"
+		);
+	}
+
+	private static void persistedMediaTagCopyKeepsWallpaperState() {
+		CompoundTag sourceRoot = new CompoundTag();
+		CompoundTag sourceMedia = new CompoundTag();
+		sourceMedia.putInt(MonitorScreenSystem.PERSISTED_GALLERY_COUNT_TAG, 0);
+		sourceMedia.putString(MonitorScreenSystem.PERSISTED_WALLPAPER_URL_TAG, "gallery://wallpaper");
+		sourceMedia.putString(MonitorScreenSystem.PERSISTED_WALLPAPER_SCALE_TAG, "cover");
+		sourceMedia.putString(MonitorScreenSystem.PERSISTED_WALLPAPER_BACKGROUND_MODE_TAG, "blur");
+		sourceRoot.put(MonitorScreenSystem.PERSISTED_MEDIA_ROOT_TAG, sourceMedia);
+
+		CompoundTag targetRoot = new CompoundTag();
+		MonitorScreenSystem.copyPersistedMediaTag(sourceRoot, targetRoot);
+
+		CompoundTag copiedMedia = targetRoot.getCompoundOrEmpty(MonitorScreenSystem.PERSISTED_MEDIA_ROOT_TAG);
+		require(
+				"gallery://wallpaper".equals(copiedMedia.getStringOr(MonitorScreenSystem.PERSISTED_WALLPAPER_URL_TAG, "")),
+				"recreated monitor maps must keep the selected wallpaper URL"
+		);
+		require(
+				"cover".equals(copiedMedia.getStringOr(MonitorScreenSystem.PERSISTED_WALLPAPER_SCALE_TAG, "")),
+				"recreated monitor maps must keep the selected wallpaper scale mode"
+		);
+		sourceMedia.putString(MonitorScreenSystem.PERSISTED_WALLPAPER_URL_TAG, "gallery://changed");
+		require(
+				"gallery://wallpaper".equals(copiedMedia.getStringOr(MonitorScreenSystem.PERSISTED_WALLPAPER_URL_TAG, "")),
+				"persisted media copies must not share mutable wallpaper tags"
+		);
+	}
+
+	private static void hydratedBackgroundsRetryMissingDecodedMedia() {
+		MediaRuntimeState state = MediaRuntimeState.fresh(ScreenViewMode.HOME, "", () -> {});
+		state.wallpaperHydrated = true;
+		state.wallpaperUrl = "gallery://wallpaper";
+		state.wallpaperMedia = null;
+		state.wallpaperLoading = false;
+		require(
+				MonitorScreenMediaHydration.shouldRetryWallpaperLoadLocked(state),
+				"a hydrated wallpaper with metadata but no decoded media must retry loading"
+		);
+		state.wallpaperLoading = true;
+		require(
+				!MonitorScreenMediaHydration.shouldRetryWallpaperLoadLocked(state),
+				"active wallpaper loads must not be duplicated"
+		);
+		state.wallpaperLoading = false;
+		state.wallpaperUrl = "";
+		require(
+				!MonitorScreenMediaHydration.shouldRetryWallpaperLoadLocked(state),
+				"blank wallpaper metadata must not retry loading"
+		);
+
+		state.playerBackgroundHydrated = true;
+		state.playerBackgroundUrl = "gallery://background";
+		state.playerBackgroundMedia = null;
+		state.playerBackgroundLoading = false;
+		require(
+				MonitorScreenMediaHydration.shouldRetryPlayerBackgroundLoadLocked(state),
+				"a hydrated player background with metadata but no decoded media must retry loading"
+		);
+		state.playerBackgroundLoading = true;
+		require(
+				!MonitorScreenMediaHydration.shouldRetryPlayerBackgroundLoadLocked(state),
+				"active player background loads must not be duplicated"
+		);
+	}
+
+	private static void powerOffResetKeepsDecodedBackgroundMedia() {
+		BufferedImage frame = new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB);
+		MonitorMediaApp.LoadedMedia loadedMedia = new MonitorMediaApp.LoadedMedia(List.of(frame), List.of(1000), 2, 2, false);
+		MediaRuntimeState state = MediaRuntimeState.fresh(ScreenViewMode.GALLERY, "", () -> {});
+		state.wallpaperUrl = "gallery://wallpaper";
+		state.wallpaperMedia = loadedMedia;
+		state.wallpaperHydrated = true;
+		state.playerBackgroundUrl = "gallery://background";
+		state.playerBackgroundMedia = loadedMedia;
+		state.playerBackgroundHydrated = true;
+		state.galleryItems.add(new GalleryItem("Wallpaper", "", "gallery://wallpaper", "wallpaper.png", loadedMedia, frame, GalleryItemKind.MEDIA));
+		state.galleryItems.add(new GalleryItem("Background", "", "gallery://background", "background.png", loadedMedia, frame, GalleryItemKind.MEDIA));
+
+		MonitorScreenMediaSessionLifecycle.restorePersistedBackgroundStateAfterPowerOffLocked(
+				state,
+				new PersistedWallpaperState("gallery://wallpaper", MediaScaleMode.FIT, PlayerBackgroundMode.EMPTY),
+				new PersistedPlayerBackgroundState("gallery://background", MediaScaleMode.FIT)
+		);
+
+		require(
+				state.wallpaperMedia == loadedMedia && state.wallpaperHydrated,
+				"power-off reset must keep decoded wallpaper media for the same persisted URL"
+		);
+		require(
+				state.playerBackgroundMedia == loadedMedia && state.playerBackgroundHydrated,
+				"power-off reset must keep decoded player background media for the same persisted URL"
+		);
+
+		MonitorScreenMediaSessionLifecycle.restorePersistedBackgroundStateAfterPowerOffLocked(
+				state,
+				new PersistedWallpaperState("gallery://new", MediaScaleMode.FIT, PlayerBackgroundMode.EMPTY),
+				new PersistedPlayerBackgroundState("gallery://background", MediaScaleMode.FIT)
+		);
+
+		require(
+				state.wallpaperMedia == null && !state.wallpaperHydrated,
+				"power-off reset must drop decoded wallpaper media when the persisted URL changes"
+		);
+		require(
+				state.playerBackgroundMedia == loadedMedia && state.playerBackgroundHydrated,
+				"power-off reset should still reuse other unchanged decoded background media"
 		);
 	}
 

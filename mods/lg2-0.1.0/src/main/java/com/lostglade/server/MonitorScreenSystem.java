@@ -2326,10 +2326,34 @@ public final class MonitorScreenSystem {
 
 		ItemStack replacement = createScreenMap(level, state);
 		if (!replacement.isEmpty()) {
+			copyPersistedMediaState(stack, replacement);
 			frame.setItem(replacement, false);
 			return replacement;
 		}
 		return stack;
+	}
+
+	static void copyPersistedMediaState(ItemStack source, ItemStack target) {
+		if (source == null || source.isEmpty() || target == null || target.isEmpty()) {
+			return;
+		}
+		CustomData customData = source.get(DataComponents.CUSTOM_DATA);
+		if (customData == null) {
+			return;
+		}
+		CompoundTag sourceRoot = customData.copyTag();
+		CustomData.update(DataComponents.CUSTOM_DATA, target, targetRoot -> copyPersistedMediaTag(sourceRoot, targetRoot));
+	}
+
+	static void copyPersistedMediaTag(CompoundTag sourceRoot, CompoundTag targetRoot) {
+		if (sourceRoot == null || targetRoot == null || !sourceRoot.contains(PERSISTED_MEDIA_ROOT_TAG)) {
+			return;
+		}
+		CompoundTag mediaTag = sourceRoot.getCompoundOrEmpty(PERSISTED_MEDIA_ROOT_TAG);
+		if (mediaTag.isEmpty()) {
+			return;
+		}
+		targetRoot.put(PERSISTED_MEDIA_ROOT_TAG, mediaTag.copy());
 	}
 
 	static ItemStack createScreenMap(ServerLevel level, ScreenTileState state) {
