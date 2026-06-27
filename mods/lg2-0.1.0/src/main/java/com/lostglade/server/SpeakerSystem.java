@@ -64,6 +64,7 @@ public final class SpeakerSystem {
 	private static final int SHARED_SOURCE_TARGET_LEAD_FRAMES = 256;
 	private static final long PROCESS_STARTUP_TIMEOUT_MS = 4_000L;
 	private static final long PROCESS_STALL_TIMEOUT_MS = 3_000L;
+	private static final long PROCESS_EOF_EXIT_TIMEOUT_MS = 1_000L;
 	private static final long PROCESS_SHUTDOWN_TIMEOUT_MS = 200L;
 	private static final long CONNECTED_SPEAKER_CACHE_TTL_TICKS = 4L;
 	private static final short[] SILENCE_FRAME = new short[AUDIO_FRAME_SAMPLES];
@@ -915,6 +916,7 @@ public final class SpeakerSystem {
 		private String relaySessionId;
 		private String audioStreamUrl;
 		private boolean liveStream;
+		private boolean loop;
 		private boolean paused;
 		private long processBasePositionMs;
 		private long audioSyncToken;
@@ -923,6 +925,7 @@ public final class SpeakerSystem {
 		private long processStartedAtMillis;
 		private long lastFrameAtMillis;
 		private long generation;
+		private boolean processEndedCleanly;
 
 		private SharedSourceFeed(String sourceKey) {
 			this.sourceKey = sourceKey;
@@ -974,7 +977,7 @@ public final class SpeakerSystem {
 				if (shouldRestartLocked(source)) {
 					return restartProcessLocked(source);
 				}
-				return this.process != null;
+				return this.process != null || this.processEndedCleanly;
 			}
 		}
 
@@ -1012,11 +1015,23 @@ public final class SpeakerSystem {
 
 		private boolean shouldRestartLocked(SpeakerAudioSource source) {
 			if (this.process == null || !this.process.isAlive()) {
-				return true;
+				return SpeakerAudioPlaybackPolicy.shouldRestartAfterProcessExit(
+						this.processEndedCleanly,
+						isNetworkAudioInput(this.audioStreamUrl),
+						this.liveStream,
+						this.loop,
+						this.relaySessionId,
+						source.relaySessionId(),
+						this.audioStreamUrl,
+						source.audioStreamUrl(),
+						this.audioSyncToken,
+						source.audioSyncToken()
+				);
 			}
 			if (!Objects.equals(this.relaySessionId, source.relaySessionId())
 					|| !Objects.equals(this.audioStreamUrl, source.audioStreamUrl())
 					|| this.liveStream != source.liveStream()
+					|| this.loop != source.loop()
 					|| this.audioSyncToken != source.audioSyncToken()) {
 				return true;
 			}
@@ -1065,6 +1080,7 @@ public final class SpeakerSystem {
 			this.relaySessionId = source.relaySessionId();
 			this.audioStreamUrl = source.audioStreamUrl();
 			this.liveStream = source.liveStream();
+			this.loop = source.loop();
 			this.paused = false;
 			this.processBasePositionMs = Math.max(0L, source.positionMs());
 			this.audioSyncToken = source.audioSyncToken();
@@ -1072,6 +1088,7 @@ public final class SpeakerSystem {
 			this.playbackEpochNanos = 0L;
 			this.processStartedAtMillis = 0L;
 			this.lastFrameAtMillis = 0L;
+			this.processEndedCleanly = false;
 			this.generation++;
 
 			List<String> command = new ArrayList<>();
@@ -1143,6 +1160,7 @@ public final class SpeakerSystem {
 			this.relaySessionId = source.relaySessionId();
 			this.audioStreamUrl = source.audioStreamUrl();
 			this.liveStream = source.liveStream();
+			this.loop = source.loop();
 			this.paused = true;
 			this.processBasePositionMs = Math.max(0L, source.positionMs());
 			this.audioSyncToken = source.audioSyncToken();
@@ -1150,6 +1168,7 @@ public final class SpeakerSystem {
 			this.playbackEpochNanos = 0L;
 			this.processStartedAtMillis = 0L;
 			this.lastFrameAtMillis = 0L;
+			this.processEndedCleanly = false;
 			return true;
 		}
 
@@ -1159,8 +1178,13 @@ public final class SpeakerSystem {
 
 		private void readLoop(Process processToRead) {
 			byte[] buffer = new byte[AUDIO_FRAME_BYTES];
+			boolean exhaustedInput = false;
 			try (InputStream input = processToRead.getInputStream()) {
-				while (!this.closed && readFully(input, buffer)) {
+				while (!this.closed) {
+					if (!readFully(input, buffer)) {
+						exhaustedInput = true;
+						break;
+					}
 					short[] frame = decodePcmFrame(buffer);
 					long sleepMillis = 0L;
 					synchronized (this.lock) {
@@ -1196,8 +1220,19 @@ public final class SpeakerSystem {
 				}
 			} catch (IOException ignored) {
 			} finally {
+				boolean processEndedCleanly = false;
+				if (exhaustedInput) {
+					try {
+						processEndedCleanly = processToRead.waitFor(PROCESS_EOF_EXIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+								&& processToRead.exitValue() == 0;
+					} catch (InterruptedException exception) {
+						Thread.currentThread().interrupt();
+					} catch (Exception ignored) {
+					}
+				}
 				synchronized (this.lock) {
 					if (this.process == processToRead) {
+						this.processEndedCleanly = processEndedCleanly;
 						this.process = null;
 						this.readerThread = null;
 						this.processStartedAtMillis = 0L;
@@ -1214,6 +1249,7 @@ public final class SpeakerSystem {
 			this.readerThread = null;
 			this.processStartedAtMillis = 0L;
 			this.lastFrameAtMillis = 0L;
+			this.processEndedCleanly = false;
 			if (currentProcess == null) {
 				return;
 			}
