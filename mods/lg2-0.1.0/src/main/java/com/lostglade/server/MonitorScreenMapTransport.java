@@ -190,6 +190,7 @@ final class MonitorScreenMapTransport {
 		ServerLevel mapStorageLevel = photoMapLevel(level.getServer(), level);
 		List<MapPacketUpdate> changedUpdates = new ArrayList<>();
 		byte[][] renderedTiles = preparedTiles.renderedTiles();
+		TileFramePatch[] tilePatches = resolvePreparedRenderedTilePatches(mediaState, preparedTiles);
 		boolean changed = false;
 		for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
 			ItemFrame frame = entry.getKey();
@@ -211,10 +212,20 @@ final class MonitorScreenMapTransport {
 			if (tileFrame == null || tileFrame.length < MAP_SIZE * MAP_SIZE) {
 				continue;
 			}
-			MapPacketUpdate update = buildMapUpdate(mapId, mapData.scale, mapData.locked, mapData.colors, tileFrame);
-			if (update == null) {
+			TileFramePatch tilePatch = tilePatches != null && tileIndex < tilePatches.length ? tilePatches[tileIndex] : null;
+			if (tilePatch == null || tilePatch.frame() == null || tilePatch.width() <= 0 || tilePatch.height() <= 0) {
 				continue;
 			}
+			MapPacketUpdate update = new MapPacketUpdate(
+					mapId,
+					mapData.scale,
+					mapData.locked,
+					tilePatch.startX(),
+					tilePatch.startY(),
+					tilePatch.width(),
+					tilePatch.height(),
+					tilePatch.frame()
+			);
 			changed = true;
 			LAST_RENDERED_MAP_FRAMES.put(mapId.id(), tileFrame);
 			applyPatchToMap(mapData, update);
@@ -236,19 +247,34 @@ final class MonitorScreenMapTransport {
 		if (preparedTiles == null || preparedTiles.renderedTiles() == null) {
 			return new TileFramePatch[0];
 		}
+		TileFramePatch[] preparedPatches = preparedTiles.tilePatches();
+		boolean hasCompletePreparedPatchSet = preparedPatches != null && preparedPatches.length == preparedTiles.renderedTiles().length;
 		if (state == null) {
-			return preparedTiles.tilePatches();
+			return hasCompletePreparedPatchSet ? preparedPatches : fullFrameTilePatches(preparedTiles.renderedTiles());
 		}
-		byte[][] displayedTiles;
 		long displayedGeneration;
 		synchronized (state) {
-			displayedTiles = state.liveCameraDisplayedTiles;
 			displayedGeneration = state.liveCameraDisplayedGeneration;
 		}
-		if (displayedGeneration == preparedTiles.baselineGeneration()) {
-			return preparedTiles.tilePatches();
+		if (displayedGeneration == preparedTiles.baselineGeneration() && hasCompletePreparedPatchSet) {
+			return preparedPatches;
 		}
-		return buildTileFramePatches(displayedTiles, preparedTiles.renderedTiles());
+		return fullFrameTilePatches(preparedTiles.renderedTiles());
+	}
+
+	private static TileFramePatch[] fullFrameTilePatches(byte[][] renderedTiles) {
+		if (renderedTiles == null || renderedTiles.length == 0) {
+			return new TileFramePatch[0];
+		}
+		TileFramePatch[] patches = new TileFramePatch[renderedTiles.length];
+		for (int tileIndex = 0; tileIndex < renderedTiles.length; tileIndex++) {
+			byte[] tileFrame = renderedTiles[tileIndex];
+			if (tileFrame == null || tileFrame.length < MAP_SIZE * MAP_SIZE) {
+				continue;
+			}
+			patches[tileIndex] = new TileFramePatch(0, 0, MAP_SIZE, MAP_SIZE, tileFrame);
+		}
+		return patches;
 	}
 
 	static MapPacketUpdate buildRenderedMapUpdate(MapId mapId, byte scale, boolean locked, byte[] tileFrame) {

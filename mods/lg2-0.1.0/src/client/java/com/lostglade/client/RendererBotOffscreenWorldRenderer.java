@@ -149,7 +149,7 @@ public final class RendererBotOffscreenWorldRenderer {
 					RendererBotCoolElytraCompat.beginCameraRoll(request.sessionId(), followTarget);
 			try {
 				CameraState cameraState = resolveCameraState(client, renderLevel, request, sessionState, followTarget);
-				if (cameraState == null || !isWorldReady(renderLevel, cameraState)) {
+				if (cameraState == null || !isWorldReady(renderLevel, cameraState, request)) {
 					sessionState.renderInProgress = false;
 					return false;
 				}
@@ -299,7 +299,9 @@ public final class RendererBotOffscreenWorldRenderer {
 			return new CameraState(camera);
 		}
 
-		Vec3 eyePosition = new Vec3(request.x(), request.y() + STATIC_CAMERA_EYE_HEIGHT, request.z());
+		Vec3 eyePosition = request.absoluteCameraPosition()
+				? new Vec3(request.x(), request.y(), request.z())
+				: new Vec3(request.x(), request.y() + STATIC_CAMERA_EYE_HEIGHT, request.z());
 		Marker anchor = sessionState.ensureStaticAnchor(renderLevel);
 		anchor.snapTo(eyePosition, request.yaw(), request.pitch());
 		anchor.setOldPosAndRot(eyePosition, request.yaw(), request.pitch());
@@ -357,15 +359,16 @@ public final class RendererBotOffscreenWorldRenderer {
 		state.staticAnchor = null;
 	}
 
-	private static boolean isWorldReady(ClientLevel renderLevel, CameraState cameraState) {
+	private static boolean isWorldReady(ClientLevel renderLevel, CameraState cameraState, RenderRequest request) {
 		if (renderLevel == null || cameraState == null || cameraState.camera() == null) {
 			return false;
 		}
 		Vec3 position = cameraState.camera().position();
 		int centerChunkX = SectionPos.blockToSectionCoord(Mth.floor(position.x));
 		int centerChunkZ = SectionPos.blockToSectionCoord(Mth.floor(position.z));
-		for (int dx = -MIN_READY_CHUNK_RADIUS; dx <= MIN_READY_CHUNK_RADIUS; dx++) {
-			for (int dz = -MIN_READY_CHUNK_RADIUS; dz <= MIN_READY_CHUNK_RADIUS; dz++) {
+		int readyChunkRadius = request != null && request.absoluteCameraPosition() ? 0 : MIN_READY_CHUNK_RADIUS;
+		for (int dx = -readyChunkRadius; dx <= readyChunkRadius; dx++) {
+			for (int dz = -readyChunkRadius; dz <= readyChunkRadius; dz++) {
 				LevelChunk chunk = renderLevel.getChunkSource().getChunk(centerChunkX + dx, centerChunkZ + dz, ChunkStatus.FULL, false);
 				if (chunk == null) {
 					return false;
@@ -386,7 +389,8 @@ public final class RendererBotOffscreenWorldRenderer {
 			float pitch,
 			int fovDegrees,
 			int renderWidth,
-			int renderHeight
+			int renderHeight,
+			boolean absoluteCameraPosition
 	) {
 	}
 

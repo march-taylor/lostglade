@@ -54,6 +54,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -1265,10 +1266,60 @@ public final class RendererBotCameraSystem {
 		syncCameraHotbarWarmupStreams(server);
 		cleanupOrphanedLiveStreams(server);
 		cleanupOrphanedAudioCaptures(server);
+		syncLiveStreamPoseUpdates(server);
 		if (!hasActiveShadowSyncWork(server)) {
 			return;
 		}
 		syncShadowWorlds(server);
+	}
+
+	private static void syncLiveStreamPoseUpdates(MinecraftServer server) {
+		if (server == null || ACTIVE_LIVE_STREAMS.isEmpty()) {
+			return;
+		}
+		ServerPlayer bot = selectBot(server);
+		if (bot == null
+				|| !READY_BOTS.containsKey(bot.getUUID())
+				|| !ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotLiveStreamPoseS2CPayload.TYPE)) {
+			return;
+		}
+		UUID botUuid = bot.getUUID();
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null || !botUuid.equals(stream.botUuid())) {
+				continue;
+			}
+			LiveStreamSpec spec = stream.spec();
+			if (spec == null || spec.followEntityUuid() == null) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(
+					server,
+					spec.dimension(),
+					spec.expectedX(),
+					spec.expectedY(),
+					spec.expectedZ(),
+					spec.expectedYaw(),
+					spec.expectedPitch(),
+					spec.followEntityUuid()
+			);
+			if (target == null || target.followTarget() == null || target.followTarget() instanceof ServerPlayer) {
+				continue;
+			}
+			Vec3 cameraPosition = DroneSystem.isDroneCameraAnchor(target.followTarget())
+					? target.followTarget().position()
+					: target.followTarget().getEyePosition(1.0F);
+			ServerPlayNetworking.send(
+					bot,
+					new RendererBotPayloads.RendererBotLiveStreamPoseS2CPayload(
+							stream.streamId(),
+							cameraPosition.x,
+							cameraPosition.y,
+							cameraPosition.z,
+							target.yaw(),
+							target.pitch()
+					)
+			);
+		}
 	}
 
 	private static boolean hasActiveShadowSyncWork(MinecraftServer server) {
@@ -1525,17 +1576,20 @@ public final class RendererBotCameraSystem {
 		UUID botUuid = bot.getUUID();
 		ChunkPos center = null;
 
-		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
-			if (stream == null || !botUuid.equals(stream.botUuid())) {
-				continue;
-			}
-			LiveStreamSpec spec = stream.spec();
-			if (spec == null || spec.dimension() == null || !botLevel.dimension().equals(spec.dimension())) {
-				continue;
-			}
-			if (spec.cameraPos() != null && !isCameraPlayerLoaded(botLevel, spec.cameraPos())) {
-				continue;
-			}
+			for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+				if (stream == null || !botUuid.equals(stream.botUuid())) {
+					continue;
+				}
+				LiveStreamSpec spec = stream.spec();
+				if (spec == null || spec.dimension() == null || !botLevel.dimension().equals(spec.dimension())) {
+					continue;
+				}
+				if (spec.followEntityUuid() != null) {
+					return null;
+				}
+				if (spec.cameraPos() != null && !isCameraPlayerLoaded(botLevel, spec.cameraPos())) {
+					continue;
+				}
 			ScheduledServiceTarget target = resolveServiceTarget(
 					server,
 					spec.dimension(),
@@ -1576,25 +1630,31 @@ public final class RendererBotCameraSystem {
 			}
 		}
 
-		for (PendingCapture capture : PENDING_CAPTURES.values()) {
-			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.isDone()) {
-				continue;
-			}
-			ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.x(), capture.y(), capture.z(), capture.yaw(), capture.pitch(), capture.followEntityUuid());
-			center = mergePositionedVirtualCenter(center, botLevel, target);
-			if (center == null && target != null) {
-				return null;
+			for (PendingCapture capture : PENDING_CAPTURES.values()) {
+				if (capture == null || !botUuid.equals(capture.botUuid()) || capture.isDone()) {
+					continue;
+				}
+				if (capture.followEntityUuid() != null) {
+					return null;
+				}
+				ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.x(), capture.y(), capture.z(), capture.yaw(), capture.pitch(), capture.followEntityUuid());
+				center = mergePositionedVirtualCenter(center, botLevel, target);
+				if (center == null && target != null) {
+					return null;
 			}
 		}
 
-		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
-			if (recording == null || !botUuid.equals(recording.botUuid()) || recording.stopRequested() || recording.completionFuture().isDone()) {
-				continue;
-			}
-			ScheduledServiceTarget target = resolveServiceTarget(server, recording.dimension(), recording.x(), recording.y(), recording.z(), recording.yaw(), recording.pitch(), recording.followEntityUuid());
-			center = mergePositionedVirtualCenter(center, botLevel, target);
-			if (center == null && target != null) {
-				return null;
+			for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
+				if (recording == null || !botUuid.equals(recording.botUuid()) || recording.stopRequested() || recording.completionFuture().isDone()) {
+					continue;
+				}
+				if (recording.followEntityUuid() != null) {
+					return null;
+				}
+				ScheduledServiceTarget target = resolveServiceTarget(server, recording.dimension(), recording.x(), recording.y(), recording.z(), recording.yaw(), recording.pitch(), recording.followEntityUuid());
+				center = mergePositionedVirtualCenter(center, botLevel, target);
+				if (center == null && target != null) {
+					return null;
 			}
 		}
 

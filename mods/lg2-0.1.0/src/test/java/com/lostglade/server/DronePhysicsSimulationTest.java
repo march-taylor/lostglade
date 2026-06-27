@@ -28,6 +28,7 @@ public final class DronePhysicsSimulationTest {
 		glancingSlideDoesNotBreakDrone();
 		verifiedGroundContactCanAccumulateWear();
 		sourceUsesClientAuthoritativeDronePose();
+		sourcePreservesDronePoseAcrossControlHandoff();
 		System.out.println("Drone physics simulation passed");
 	}
 
@@ -366,9 +367,47 @@ public final class DronePhysicsSimulationTest {
 		require(server.contains("clearControlledOperatorMovementState"), "orphaned controlled players should clear their forced movement state");
 		require(server.contains("restoreControlledOperatorClientState"), "player camera and inventory restore should share one resync path");
 		require(server.contains("ServerMechanicsGateSystem.syncPlayerInventory(player);"), "leaving drone control must force an inventory resync");
-		require(server.contains("private static final float DRONE_DISPLAY_CONTROLLED_Y_OFFSET = 0.0F;"), "controlled display must not be offset away from the physical root hitbox");
+		require(!server.contains("DRONE_DISPLAY_CONTROLLED_Y_OFFSET"), "controlled display must not reintroduce a separate controlled-only Y offset");
+		require(server.contains("return DRONE_DISPLAY_Y_OFFSET + resolveDroneVisualLift(type);"), "controlled display must share the physical root display offset path");
 		require(geometry.contains("public static final float WIDTH = 0.78F;"), "drone collision width should match the display model more closely");
 		require(geometry.contains("public static final float HEIGHT = 0.28F;"), "drone collision height should match the display model more closely");
+	}
+
+	private static void sourcePreservesDronePoseAcrossControlHandoff() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String server = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/DroneSystem.java"));
+		String startControl = section(server, "private static boolean startControlling", "private static void stopControlling");
+		String movePacket = section(server, "private static void applyControlledMovePacket", "private static void prepareControlledDroneBody");
+
+		require(startControl.contains("Vec3 dronePos = root.position();"), "control entry must snapshot the drone position before any setup changes");
+		require(startControl.contains("float droneYaw = root.getYRot();"), "control entry must preserve the drone yaw instead of inheriting the operator head yaw");
+		require(startControl.contains("float dronePitch = root.getXRot();"), "control entry must preserve the drone pitch instead of inheriting the operator head pitch");
+		require(!startControl.contains("root.setDeltaMovement(Vec3.ZERO);"), "control entry must not zero a flying drone's velocity");
+		require(startControl.contains("session.setVelocity(incomingVelocity);"), "control entry must seed the session with the drone's incoming velocity");
+		require(
+				startControl.contains("session.suppressStartupRotationUntil(droneLevel.getGameTime() + CONTROLLED_DRONE_START_ROTATION_SUPPRESSION_TICKS);"),
+				"control entry must suppress stale operator rotation packets until the forced drone view is acknowledged"
+		);
+		require(
+				movePacket.contains("boolean suppressStartupRotation = hasRotation && session.shouldSuppressStartupRotation(gameTime);")
+						&& movePacket.contains("float yaw = suppressStartupRotation ? session.controlYaw() : packetYaw;")
+						&& movePacket.contains("float pitch = suppressStartupRotation ? session.controlPitch() : packetPitch;"),
+				"controlled movement must keep drone facing while startup rotation packets are stale"
+		);
+		require(
+				server.contains("session.acknowledgeStartupViewSync(gameTime);"),
+				"teleport acknowledgements must release the startup rotation suppression promptly"
+		);
+		require(
+				server.contains("session.setVelocity(finiteVecOr(worldVelocity, seededVelocity));"),
+				"seeding drive from world velocity must preserve the real velocity for release handoff"
+		);
+		require(
+				server.contains("root.setYRot(session.proxyYaw());")
+						&& server.contains("root.setXRot(session.proxyPitch());")
+						&& server.contains("Vec3 releasedVelocity = finiteVecOr(session.velocity(), Vec3.ZERO);"),
+				"control exit must release the drone with the operator's final facing and velocity"
+		);
 	}
 
 	private static boolean legacyHardSyncWouldFire(Vec3 intendedMovement, Vec3 actualMovement) {
@@ -443,6 +482,14 @@ public final class DronePhysicsSimulationTest {
 		if (!condition) {
 			throw new AssertionError(message);
 		}
+	}
+
+	private static String section(String source, String startMarker, String endMarker) {
+		int start = source.indexOf(startMarker);
+		require(start >= 0, "source section start marker not found: " + startMarker);
+		int end = source.indexOf(endMarker, start + startMarker.length());
+		require(end > start, "source section end marker not found: " + endMarker);
+		return source.substring(start, end);
 	}
 
 	private static final class SimState {

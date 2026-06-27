@@ -802,7 +802,7 @@ final class MonitorScreenInputController {
 				rerenderCurrent = !liveCameraPlayback;
 			}
 		} else if (component.viewMode() == ScreenViewMode.CAMERA_APP) {
-			if (!MonitorCameraRuntime.handleTouch(server, component, layout, touchPoint)) {
+			if (!MonitorCameraRuntime.handleTouch(server, player, component, layout, touchPoint)) {
 				nextMode = ScreenViewMode.HOME;
 			}
 		} else if (component.viewMode() == ScreenViewMode.MAX) {

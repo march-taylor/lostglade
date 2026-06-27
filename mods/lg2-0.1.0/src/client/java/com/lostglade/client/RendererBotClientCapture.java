@@ -73,6 +73,10 @@ public final class RendererBotClientCapture {
 				(payload, context) -> context.client().execute(() -> beginLiveStream(payload, context.client()))
 		);
 		ClientPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotLiveStreamPoseS2CPayload.TYPE,
+				(payload, context) -> context.client().execute(() -> updateLiveStreamPose(payload))
+		);
+		ClientPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotLiveStreamStopS2CPayload.TYPE,
 				(payload, context) -> context.client().execute(() -> clearLiveStreamSession(payload.streamId()))
 		);
@@ -128,6 +132,24 @@ public final class RendererBotClientCapture {
 				renderHeight,
 				warmupFrames
 		);
+	}
+
+	private static void updateLiveStreamPose(RendererBotPayloads.RendererBotLiveStreamPoseS2CPayload payload) {
+		if (payload == null || payload.streamId() == null) {
+			return;
+		}
+		synchronized (LOCK) {
+			LiveStreamSession session = LIVE_STREAM_SESSIONS.get(payload.streamId());
+			if (session != null) {
+				session.updatePose(new LiveStreamPose(
+						payload.x(),
+						payload.y(),
+						payload.z(),
+						payload.yaw(),
+						payload.pitch()
+				));
+			}
+		}
 	}
 
 	private static void onClientTick(Minecraft client) {
@@ -214,12 +236,12 @@ public final class RendererBotClientCapture {
 			boolean rendered = RendererBotGpuCaptureBackend.isAvailable()
 					? RendererBotOffscreenWorldRenderer.renderToTarget(
 							client,
-							liveRenderRequest(liveStream.payload()),
+							liveRenderRequest(liveStream),
 							renderTarget -> dispatchGpuLiveStream(client, liveStream, renderTarget)
 					)
 					: RendererBotOffscreenWorldRenderer.render(
 							client,
-							liveRenderRequest(liveStream.payload()),
+							liveRenderRequest(liveStream),
 							image -> CAPTURE_EXECUTOR.submit(() -> processSharedFrame(client, List.of(), List.of(liveStream), image))
 					);
 			if (!rendered) {
@@ -798,25 +820,29 @@ public final class RendererBotClientCapture {
 				payload.expectedPitch(),
 				payload.fovDegrees(),
 				renderWidth,
-				renderHeight
+				renderHeight,
+				false
 		);
 	}
 
-	private static RendererBotOffscreenWorldRenderer.RenderRequest liveRenderRequest(RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload) {
+	private static RendererBotOffscreenWorldRenderer.RenderRequest liveRenderRequest(LiveStreamSession session) {
+		RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload = session.payload();
+		LiveStreamPose pose = session.pose();
 		int renderWidth = computeLiveRenderWidth(payload);
 		int renderHeight = computeLiveRenderHeight(payload, renderWidth);
 		return new RendererBotOffscreenWorldRenderer.RenderRequest(
 				payload.renderSessionId(),
 				payload.dimensionId(),
-				payload.followEntityUuid(),
-				payload.expectedX(),
-				payload.expectedY(),
-				payload.expectedZ(),
-				payload.expectedYaw(),
-				payload.expectedPitch(),
+				pose == null ? payload.followEntityUuid() : null,
+				pose == null ? payload.expectedX() : pose.x(),
+				pose == null ? payload.expectedY() : pose.y(),
+				pose == null ? payload.expectedZ() : pose.z(),
+				pose == null ? payload.expectedYaw() : pose.yaw(),
+				pose == null ? payload.expectedPitch() : pose.pitch(),
 				payload.fovDegrees(),
 				renderWidth,
-				renderHeight
+				renderHeight,
+				pose != null
 		);
 	}
 
@@ -870,6 +896,7 @@ public final class RendererBotClientCapture {
 		private int remainingWarmupFrames;
 		private long lastFrameAtNanos;
 		private boolean frameInFlight;
+		private LiveStreamPose pose;
 
 		private LiveStreamSession(
 				RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload,
@@ -909,6 +936,14 @@ public final class RendererBotClientCapture {
 			return this.frameInFlight;
 		}
 
+		private LiveStreamPose pose() {
+			return this.pose;
+		}
+
+		private void updatePose(LiveStreamPose pose) {
+			this.pose = pose;
+		}
+
 		private void markFrameInFlight(long nowNanos) {
 			this.lastFrameAtNanos = nowNanos;
 			this.frameInFlight = true;
@@ -917,6 +952,9 @@ public final class RendererBotClientCapture {
 		private void clearFrameInFlight() {
 			this.frameInFlight = false;
 		}
+	}
+
+	private record LiveStreamPose(double x, double y, double z, float yaw, float pitch) {
 	}
 
 	private record CapturedFrame(

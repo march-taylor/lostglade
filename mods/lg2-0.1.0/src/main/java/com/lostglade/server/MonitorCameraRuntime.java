@@ -92,6 +92,7 @@ final class MonitorCameraRuntime {
 		long version;
 		boolean shouldStopPreview;
 		boolean chromeHidden;
+		boolean droneControlVisible;
 		synchronized (state) {
 			String previousCameraUrl = state.selectedCameraUrl;
 			normalizeSelectionLocked(state, cameras, microphones);
@@ -115,6 +116,7 @@ final class MonitorCameraRuntime {
 			cameraScroll = state.cameraScroll;
 			microphoneScroll = state.microphoneScroll;
 			chromeHidden = state.chromeHidden;
+			droneControlVisible = controllableSelectedDroneLocked(state, cameras) != null;
 			preview = copyBufferedImage(state.previewFrame);
 			version = state.version + (recording && !paused ? System.currentTimeMillis() / 250L : 0L);
 			shouldStopPreview = cameraSelectionChanged || selectedCameraIndex < 0;
@@ -142,6 +144,7 @@ final class MonitorCameraRuntime {
 				elapsedMs,
 				deviceMenuOpen,
 				chromeHidden,
+				droneControlVisible,
 				statusText == null ? "" : statusText
 		);
 	}
@@ -159,6 +162,9 @@ final class MonitorCameraRuntime {
 		}
 		drawMediaCloseButton(graphics, mediaCloseRect(layout), layout, MediaButtonSegment.SINGLE);
 		drawCameraMenuButton(graphics, cameraMenuButtonRect(layout), layout, state.deviceMenuOpen());
+		if (state.droneControlVisible()) {
+			drawCameraDroneControlButton(graphics, cameraDroneControlButtonRect(layout), layout);
+		}
 		if (state.deviceMenuOpen()) {
 			drawDevicePicker(graphics, layout, runtimeKey, state);
 			drawStatus(graphics, layout, state);
@@ -169,7 +175,7 @@ final class MonitorCameraRuntime {
 		drawStatus(graphics, layout, state);
 	}
 
-	static boolean handleTouch(MinecraftServer server, ScreenComponent component, UiLayout layout, UiPoint touchPoint) {
+	static boolean handleTouch(MinecraftServer server, ServerPlayer player, ScreenComponent component, UiLayout layout, UiPoint touchPoint) {
 		if (server == null || component == null || layout == null || touchPoint == null) {
 			return false;
 		}
@@ -205,6 +211,22 @@ final class MonitorCameraRuntime {
 				state.version++;
 			}
 			requestRuntimeRender(server, component.runtimeKey());
+			return true;
+		}
+		LiveCameraReference controllableDrone;
+		synchronized (state) {
+			controllableDrone = controllableSelectedDroneLocked(state, cameras);
+		}
+		if (player != null
+				&& controllableDrone != null
+				&& cameraDroneControlButtonRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			boolean started = DroneSystem.tryStartControllingDrone(
+					player,
+					controllableDrone.sourceUuid(),
+					controllableDrone.dimension() != null ? controllableDrone.dimension() : component.runtimeKey().dimension(),
+					controllableDrone.pos()
+			);
+			setStatus(server, component.runtimeKey(), state, started ? "Подключаюсь к дрону" : "Дрон недоступен");
 			return true;
 		}
 		if (photoModeRect(layout).contains(touchPoint.x(), touchPoint.y())) {
@@ -374,7 +396,7 @@ final class MonitorCameraRuntime {
 	}
 
 	private static CameraAppVisualSnapshot emptySnapshot() {
-		return new CameraAppVisualSnapshot(0L, null, List.of(), List.of(), 0, 0, -1, -1, 0, 0, CameraAppCaptureMode.PHOTO, false, false, 0L, false, false, "");
+		return new CameraAppVisualSnapshot(0L, null, List.of(), List.of(), 0, 0, -1, -1, 0, 0, CameraAppCaptureMode.PHOTO, false, false, 0L, false, false, false, "");
 	}
 
 	private static void setMode(MinecraftServer server, ScreenRuntimeKey key, CameraRuntimeState state, CameraAppCaptureMode mode) {
@@ -915,6 +937,22 @@ final class MonitorCameraRuntime {
 		return state.selectedMicrophoneIndices.isEmpty() ? List.of() : List.copyOf(state.selectedMicrophoneIndices);
 	}
 
+	private static LiveCameraReference selectedCameraReferenceLocked(CameraRuntimeState state, List<LiveCameraReference> cameras) {
+		int selectedIndex = selectedCameraIndexLocked(state, cameras);
+		return selectedIndex >= 0 && cameras != null && selectedIndex < cameras.size() ? cameras.get(selectedIndex) : null;
+	}
+
+	private static LiveCameraReference controllableSelectedDroneLocked(CameraRuntimeState state, List<LiveCameraReference> cameras) {
+		LiveCameraReference selected = selectedCameraReferenceLocked(state, cameras);
+		if (selected == null
+				|| selected.sourceType() != LiveCameraSourceType.DRONE
+				|| selected.sourceUuid() == null
+				|| DroneSystem.hasActiveController(selected.sourceUuid())) {
+			return null;
+		}
+		return selected;
+	}
+
 	private static List<CameraAppDeviceSnapshot> cameraSnapshots(MinecraftServer server, CameraRuntimeState state, List<LiveCameraReference> cameras) {
 		if (cameras == null || cameras.isEmpty()) {
 			return List.of();
@@ -1040,6 +1078,12 @@ final class MonitorCameraRuntime {
 		for (int index = 0; index < 3; index++) {
 			graphics.fillRoundRect(icon.x() + icon.width() / 6, y + index * gap, icon.width() * 2 / 3, lineHeight, lineHeight, lineHeight);
 		}
+	}
+
+	private static void drawCameraDroneControlButton(Graphics2D graphics, UiRect rect, UiLayout layout) {
+		Color color = drawMediaHeaderControlBase(graphics, rect, MediaButtonSegment.SINGLE);
+		UiRect iconRect = mediaChromeIconRect(rect, layout).inset(Math.max(1, layout.unit() / 6));
+		drawGamepadGlyph(graphics, iconRect, color, Math.max(1.25F, mediaChromeStrokeWidth(rect) * 0.72F));
 	}
 
 	private static void drawDeviceMenu(Graphics2D graphics, UiLayout layout, CameraAppVisualSnapshot state) {
@@ -1522,6 +1566,11 @@ final class MonitorCameraRuntime {
 	private static UiRect cameraMenuButtonRect(UiLayout layout) {
 		UiRect close = mediaCloseRect(layout);
 		return new UiRect(layout.canvasWidth() - close.width() - layout.unit() / 2, close.y(), close.width(), close.height());
+	}
+
+	private static UiRect cameraDroneControlButtonRect(UiLayout layout) {
+		UiRect menu = cameraMenuButtonRect(layout);
+		return new UiRect(menu.x(), menu.bottom() + gap(layout), menu.width(), menu.height());
 	}
 
 	private static UiRect deviceMenuRect(UiLayout layout) {

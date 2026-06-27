@@ -148,6 +148,19 @@ public final class BluetoothLinkSystem {
 		return List.copyOf(linked);
 	}
 
+	static void refreshDroneEndpoint(MinecraftServer server, ResourceKey<Level> dimension, BlockPos pos, UUID droneUuid) {
+		Endpoint endpoint = droneEndpoint(dimension, pos, droneUuid);
+		if (server == null || endpoint == null) {
+			return;
+		}
+		ensureLoaded(server);
+		if (!replaceEndpointMetadata(endpoint)) {
+			return;
+		}
+		updateSelectedEndpoints(endpoint, endpoint);
+		dirty = true;
+	}
+
 	public static boolean unlinkEndpoints(MinecraftServer server, Endpoint first, Endpoint second) {
 		if (first == null || second == null) {
 			return false;
@@ -374,6 +387,48 @@ public final class BluetoothLinkSystem {
 			dirty = true;
 		}
 		return removed;
+	}
+
+	private static boolean replaceEndpointMetadata(Endpoint endpoint) {
+		if (endpoint == null) {
+			return false;
+		}
+		Endpoint stored = findStoredEndpoint(endpoint);
+		if (stored == null || sameEndpointMetadata(stored, endpoint)) {
+			return false;
+		}
+		LinkedHashSet<Endpoint> linked = LINKS.remove(stored);
+		if (linked != null) {
+			LINKS.put(endpoint, linked);
+		}
+		for (LinkedHashSet<Endpoint> otherLinks : LINKS.values()) {
+			if (otherLinks == null || !otherLinks.remove(stored)) {
+				continue;
+			}
+			otherLinks.add(endpoint);
+		}
+		return true;
+	}
+
+	private static Endpoint findStoredEndpoint(Endpoint endpoint) {
+		if (endpoint == null) {
+			return null;
+		}
+		for (Endpoint candidate : LINKS.keySet()) {
+			if (candidate != null && candidate.equals(endpoint)) {
+				return candidate;
+			}
+		}
+		return null;
+	}
+
+	private static boolean sameEndpointMetadata(Endpoint first, Endpoint second) {
+		return Objects.equals(first.dimension(), second.dimension())
+				&& first.type() == second.type()
+				&& Objects.equals(first.pos(), second.pos())
+				&& Objects.equals(first.facing(), second.facing())
+				&& Objects.equals(first.screenId(), second.screenId())
+				&& Objects.equals(first.deviceUuid(), second.deviceUuid());
 	}
 
 	private static void consumeBluetoothAdapter(ServerPlayer player) {

@@ -171,6 +171,7 @@ record CameraAppVisualSnapshot(
 		long elapsedMs,
 		boolean deviceMenuOpen,
 		boolean chromeHidden,
+		boolean droneControlVisible,
 		String statusText
 ) {
 	boolean dynamic() {
