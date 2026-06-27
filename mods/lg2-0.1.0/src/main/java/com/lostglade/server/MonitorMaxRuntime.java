@@ -4713,15 +4713,20 @@ final class MonitorMaxRuntime {
 
 	private static void drawMaxCameraPicker(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MaxCallVisualSnapshot call) {
 		UiRect panel = maxAvatarPickerPanelRect(layout);
-		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 230));
-		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
+		boolean ultra = ultraCompactScreenLayout(layout);
+		fillRoundedRect(graphics, panel, ultra ? clampInt(layout.unit(), 6, 10) : clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 230));
+		strokeRoundedRect(graphics, panel, ultra ? clampInt(layout.unit(), 6, 10) : clampInt(layout.unit() * 2, 14, 28), ultra ? 0.85F : 1.0F, new Color(255, 255, 255, 54));
 		drawOverlayCloseButton(graphics, maxOverlayCloseRect(layout), layout);
 		UiRect title = maxAvatarPickerTitleRect(layout);
-		drawVerticalText(graphics, "УСТРОЙСТВА", new UiRect(title.x(), title.y(), title.width() / 2, title.height()), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
-		drawCenteredTextFitted(graphics, maxCallDeviceCountLabel(call), new UiRect(title.x() + title.width() / 2, title.y(), title.width() / 2, title.height()), new Color(188, 204, 218, 224), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 5);
+		if (!ultra) {
+			drawVerticalText(graphics, "УСТРОЙСТВА", new UiRect(title.x(), title.y(), title.width() / 2, title.height()), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
+			drawCenteredTextFitted(graphics, maxCallDeviceCountLabel(call), new UiRect(title.x() + title.width() / 2, title.y(), title.width() / 2, title.height()), new Color(188, 204, 218, 224), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 5);
+		}
 
 		UiRect cameraTitle = maxCallDeviceCameraTitleRect(layout);
-		drawVerticalText(graphics, "КАМЕРЫ " + call.connectedCameraCount() + " · ДРОНЫ " + call.connectedDroneCount(), cameraTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		if (!ultra) {
+			drawVerticalText(graphics, "КАМЕРЫ " + call.connectedCameraCount() + " · ДРОНЫ " + call.connectedDroneCount(), cameraTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		}
 		List<MaxCameraOptionSnapshot> cameras = call.cameras();
 		int cameraCapacity = maxCallDeviceCameraCapacity(layout);
 		int cameraScroll = clampInt(call.cameraScroll(), 0, Math.max(0, (cameras == null ? 0 : cameras.size()) - cameraCapacity));
@@ -4737,7 +4742,9 @@ final class MonitorMaxRuntime {
 			drawMaxDeviceScrollButton(graphics, maxCallDeviceCameraScrollRightRect(layout), -Math.PI / 2.0D, layout, cameraScroll + cameraCapacity < cameras.size());
 		}
 		if (cameras == null || cameras.isEmpty()) {
-			drawCenteredText(graphics, "Подключи камеру или дрон к экрану", maxCallDeviceCameraGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			if (!ultra) {
+				drawCenteredText(graphics, "Подключи камеру или дрон к экрану", maxCallDeviceCameraGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			}
 		} else {
 			int baseIndex = cameraVisualScroll.anchorIndex();
 			int xOffset = -(int) Math.round(cameraVisualScroll.fraction() * maxCallDeviceCameraCellStep(layout));
@@ -4759,15 +4766,19 @@ final class MonitorMaxRuntime {
 				if (camera.selected()) {
 					strokeRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), 1.5F, new Color(255, 255, 255, 172));
 				}
-				UiRect label = new UiRect(rect.x() + layout.unit() / 2, rect.bottom() - clampInt(layout.unit() * 3, 24, 38), rect.width() - layout.unit(), clampInt(layout.unit() * 2, 18, 28));
-				fillRoundedRect(graphics, label, label.height(), new Color(0, 0, 0, 112));
-				drawCenteredTextFitted(graphics, camera.title() + " " + camera.subtitle(), label.inset(2), camera.online() ? new Color(248, 251, 255, 238) : new Color(248, 251, 255, 136), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
+				if (!ultra) {
+					UiRect label = new UiRect(rect.x() + layout.unit() / 2, rect.bottom() - clampInt(layout.unit() * 3, 24, 38), rect.width() - layout.unit(), clampInt(layout.unit() * 2, 18, 28));
+					fillRoundedRect(graphics, label, label.height(), new Color(0, 0, 0, 112));
+					drawCenteredTextFitted(graphics, camera.title() + " " + camera.subtitle(), label.inset(2), camera.online() ? new Color(248, 251, 255, 238) : new Color(248, 251, 255, 136), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
+				}
 			}
 			graphics.setClip(previousClip);
 		}
 
 		UiRect microphoneTitle = maxCallDeviceMicrophoneTitleRect(layout);
-		drawVerticalText(graphics, "МИКРОФОНЫ", microphoneTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		if (!ultra) {
+			drawVerticalText(graphics, "МИКРОФОНЫ", microphoneTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		}
 		List<MaxMicrophoneOptionSnapshot> microphones = call.microphones();
 		int microphoneCapacity = maxCallDeviceMicrophoneCapacity(layout);
 		int microphoneScroll = clampInt(call.microphoneScroll(), 0, Math.max(0, (microphones == null ? 0 : microphones.size()) - microphoneCapacity));
@@ -4783,7 +4794,9 @@ final class MonitorMaxRuntime {
 			drawMaxDeviceScrollButton(graphics, maxCallDeviceMicrophoneScrollDownRect(layout), 0.0D, layout, microphoneScroll + microphoneCapacity < microphones.size());
 		}
 		if (microphones == null || microphones.isEmpty()) {
-			drawCenteredText(graphics, "Подключи микрофон к экрану", maxCallDeviceMicrophoneListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			if (!ultra) {
+				drawCenteredText(graphics, "Подключи микрофон к экрану", maxCallDeviceMicrophoneListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			}
 			return;
 		}
 		int microphoneBaseIndex = microphoneVisualScroll.anchorIndex();
@@ -4803,11 +4816,12 @@ final class MonitorMaxRuntime {
 	}
 
 	private static void drawMaxDeviceMicrophoneRow(Graphics2D graphics, UiLayout layout, UiRect rect, MaxMicrophoneOptionSnapshot microphone) {
-		int arc = clampInt(layout.unit(), 8, 16);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int arc = ultra ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit(), 8, 16);
 		fillRoundedRect(graphics, rect, arc, new Color(255, 255, 255, microphone.selected() ? 30 : 14));
-		strokeRoundedRect(graphics, rect, arc, 1.0F, microphone.selected() ? new Color(255, 255, 255, 128) : new Color(255, 255, 255, 42));
-		int iconSize = clampInt(layout.unit() * 2, 18, 28);
-		int gap = Math.max(4, layout.unit() / 2);
+		strokeRoundedRect(graphics, rect, arc, ultra ? 0.85F : 1.0F, microphone.selected() ? new Color(255, 255, 255, 128) : new Color(255, 255, 255, 42));
+		int iconSize = ultra ? Math.max(8, Math.min(12, rect.height() - 2)) : clampInt(layout.unit() * 2, 18, 28);
+		int gap = maxCallDeviceGap(layout);
 		UiRect check = new UiRect(rect.x() + gap, rect.y() + (rect.height() - iconSize) / 2, iconSize, iconSize);
 		Color checkColor = drawSmallMediaButtonBase(graphics, check, MediaButtonSegment.SINGLE, microphone.selected(), mediaChromeStrokeWidth(check));
 		if (microphone.selected()) {
@@ -4815,6 +4829,9 @@ final class MonitorMaxRuntime {
 		}
 		UiRect micIcon = new UiRect(check.right() + gap, rect.y() + (rect.height() - iconSize) / 2, iconSize, iconSize);
 		drawPlayerUiIcon(graphics, micIcon.inset(Math.max(2, layout.unit() / 5)), PlayerUiIcon.MIC, new Color(238, 244, 250, 214));
+		if (ultra) {
+			return;
+		}
 		UiRect textRect = new UiRect(micIcon.right() + gap, rect.y() + Math.max(2, layout.unit() / 4), Math.max(8, rect.right() - micIcon.right() - gap * 2), rect.height() - Math.max(4, layout.unit() / 2));
 		int titleHeight = Math.max(10, textRect.height() / 2);
 		drawWrappedText(graphics, microphone.title(), new UiRect(textRect.x(), textRect.y(), textRect.width(), titleHeight), new Color(248, 251, 255, 232), Font.BOLD, clampInt(layout.unit() - 1, 8, 13), 1);
@@ -4827,6 +4844,9 @@ final class MonitorMaxRuntime {
 
 	private static void drawMaxDeviceScrollStatus(Graphics2D graphics, UiRect titleRect, UiLayout layout, int offset, int visibleCount, int totalCount) {
 		if (totalCount <= visibleCount || visibleCount <= 0) {
+			return;
+		}
+		if (ultraCompactScreenLayout(layout)) {
 			return;
 		}
 		int width = clampInt(layout.unit() * 4, 30, 56);
@@ -5611,6 +5631,10 @@ final class MonitorMaxRuntime {
 
 	private static UiRect maxAvatarPickerPanelRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
+		if (ultraCompactScreenLayout(layout)) {
+			int inset = Math.max(2, layout.unit() / 3);
+			return new UiRect(canvas.x() + inset, canvas.y() + inset, canvas.width() - inset * 2, canvas.height() - inset * 2);
+		}
 		return new UiRect(canvas.x() + layout.unit(), canvas.y() + clampInt(layout.unit() * 3, 24, 48), canvas.width() - layout.unit() * 2, canvas.height() - clampInt(layout.unit() * 4, 32, 60));
 	}
 
@@ -5711,14 +5735,14 @@ final class MonitorMaxRuntime {
 
 	private static UiRect maxCallDeviceCameraTitleRect(UiLayout layout) {
 		UiRect content = maxCallDeviceContentRect(layout);
-		int height = clampInt(layout.unit() + 4, 14, 22);
+		int height = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 3, 7, 8) : clampInt(layout.unit() + 4, 14, 22);
 		return new UiRect(content.x(), content.y(), content.width(), height);
 	}
 
 	private static UiRect maxCallDeviceCameraGridRect(UiLayout layout) {
 		UiRect content = maxCallDeviceContentRect(layout);
 		UiRect title = maxCallDeviceCameraTitleRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = maxCallDeviceGap(layout);
 		int height = maxCallDeviceCameraHeight(layout);
 		return new UiRect(content.x(), title.bottom() + gap, content.width(), height);
 	}
@@ -5726,21 +5750,21 @@ final class MonitorMaxRuntime {
 	private static UiRect maxCallDeviceMicrophoneTitleRect(UiLayout layout) {
 		UiRect cameraGrid = maxCallDeviceCameraGridRect(layout);
 		UiRect content = maxCallDeviceContentRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
-		int height = clampInt(layout.unit() + 4, 14, 22);
+		int gap = maxCallDeviceGap(layout);
+		int height = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 3, 7, 8) : clampInt(layout.unit() + 4, 14, 22);
 		return new UiRect(content.x(), cameraGrid.bottom() + gap, content.width(), height);
 	}
 
 	private static UiRect maxCallDeviceMicrophoneListRect(UiLayout layout) {
 		UiRect content = maxCallDeviceContentRect(layout);
 		UiRect title = maxCallDeviceMicrophoneTitleRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = maxCallDeviceGap(layout);
 		return new UiRect(content.x(), title.bottom() + gap, content.width(), Math.max(18, content.bottom() - title.bottom() - gap));
 	}
 
 	private static UiRect maxCallDeviceScrollButtonRect(UiRect titleRect, int indexFromRight, UiLayout layout) {
-		int gap = Math.max(4, layout.unit() / 2);
-		int size = Math.min(titleRect.height(), clampInt(layout.unit() * 2, 18, 30));
+		int gap = maxCallDeviceGap(layout);
+		int size = Math.min(titleRect.height(), ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 3, 7, 8) : clampInt(layout.unit() * 2, 18, 30));
 		int x = titleRect.right() - size - indexFromRight * (size + gap);
 		return new UiRect(x, titleRect.y(), size, titleRect.height());
 	}
@@ -5761,30 +5785,40 @@ final class MonitorMaxRuntime {
 		return maxCallDeviceScrollButtonRect(maxCallDeviceMicrophoneTitleRect(layout), 0, layout);
 	}
 
+	private static int maxCallDeviceGap(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : Math.max(4, layout.unit() / 2);
+	}
+
 	private static int maxCallDeviceCameraHeight(UiLayout layout) {
 		UiRect content = maxCallDeviceContentRect(layout);
 		UiRect title = maxCallDeviceCameraTitleRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = maxCallDeviceGap(layout);
+		if (ultraCompactScreenLayout(layout)) {
+			int microphoneTitleHeight = clampInt(layout.unit() + 3, 7, 8);
+			int available = Math.max(36, content.height() - title.height() - microphoneTitleHeight - gap * 3);
+			int preferred = (int) Math.round(available * 0.44D);
+			return clampInt(preferred, 28, Math.max(28, available - 18));
+		}
 		int preferred = Math.max(clampInt(layout.unit() * 7, 56, 112), (content.height() - title.height() - gap * 3) / 2);
 		return Math.min(preferred, Math.max(18, content.bottom() - title.bottom() - gap));
 	}
 
 	private static int maxCallDeviceCameraCapacity(UiLayout layout) {
 		UiRect grid = maxCallDeviceCameraGridRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = maxCallDeviceGap(layout);
 		int cell = Math.max(1, maxCallDeviceCameraHeight(layout));
 		return clippedListCapacity(grid, cell, gap, true);
 	}
 
 	private static UiRect maxCallDeviceCameraRect(UiLayout layout, int index) {
 		UiRect grid = maxCallDeviceCameraGridRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = maxCallDeviceGap(layout);
 		int cell = Math.max(1, maxCallDeviceCameraHeight(layout));
 		return new UiRect(grid.x() + index * (cell + gap), grid.y(), cell, cell);
 	}
 
 	private static int maxCallDeviceCameraCellStep(UiLayout layout) {
-		return Math.max(1, maxCallDeviceCameraHeight(layout)) + Math.max(4, layout.unit() / 2);
+		return Math.max(1, maxCallDeviceCameraHeight(layout)) + maxCallDeviceGap(layout);
 	}
 
 	private static int maxCallDeviceCameraIndexAt(UiLayout layout, int cameraCount, int cameraScroll, UiPoint point) {
@@ -5811,24 +5845,24 @@ final class MonitorMaxRuntime {
 
 	private static int maxCallDeviceMicrophoneCapacity(UiLayout layout) {
 		UiRect list = maxCallDeviceMicrophoneListRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = maxCallDeviceGap(layout);
 		int rowHeight = maxCallDeviceMicrophoneRowHeight(layout);
 		return clippedListCapacity(list, rowHeight, gap, false);
 	}
 
 	private static int maxCallDeviceMicrophoneRowHeight(UiLayout layout) {
-		return clampInt(layout.unit() * 3, 28, 44);
+		return ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 3 + 1, 16, 18) : clampInt(layout.unit() * 3, 28, 44);
 	}
 
 	private static UiRect maxCallDeviceMicrophoneRowRect(UiLayout layout, int index) {
 		UiRect list = maxCallDeviceMicrophoneListRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = maxCallDeviceGap(layout);
 		int height = maxCallDeviceMicrophoneRowHeight(layout);
 		return new UiRect(list.x(), list.y() + index * (height + gap), list.width(), height);
 	}
 
 	private static int maxCallDeviceMicrophoneRowStep(UiLayout layout) {
-		return maxCallDeviceMicrophoneRowHeight(layout) + Math.max(4, layout.unit() / 2);
+		return maxCallDeviceMicrophoneRowHeight(layout) + maxCallDeviceGap(layout);
 	}
 
 	private static int maxCallDeviceMicrophoneIndexAt(UiLayout layout, int microphoneCount, int microphoneScroll, UiPoint point) {

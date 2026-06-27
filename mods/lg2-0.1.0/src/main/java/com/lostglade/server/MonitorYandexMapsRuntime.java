@@ -339,21 +339,30 @@ final class MonitorYandexMapsRuntime {
 
 	private static void drawMapHeader(Graphics2D graphics, UiLayout layout, MonitorApp app, YandexMapsVisualSnapshot snapshot) {
 		UiRect canvas = mediaCanvasRect(layout);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit() / 2, 4, 10);
+		int height = ultra ? clampInt(layout.unit() * 2 + 4, 12, 16) : clampInt(layout.unit() * 3, 30, 46);
+		int headerX = ultra ? mediaCloseRect(layout).right() + mediaHeaderControlGap(layout) : canvas.x() + inset;
 		UiRect header = new UiRect(
-				canvas.x() + clampInt(layout.unit() / 2, 4, 10),
-				canvas.y() + clampInt(layout.unit() / 2, 4, 10),
-				Math.min(canvas.width() - clampInt(layout.unit(), 8, 20), clampInt(layout.unit() * 24, 168, 310)),
-				clampInt(layout.unit() * 3, 30, 46)
+				headerX,
+				canvas.y() + inset,
+				Math.min(canvas.right() - headerX - inset, ultra ? clampInt(layout.unit() * 24, 88, 124) : clampInt(layout.unit() * 24, 168, 310)),
+				height
 		);
 		fillRoundedRect(graphics, header, header.height(), new Color(250, 252, 248, 226));
 		strokeRoundedRect(graphics, header, header.height(), 1.0F, new Color(0, 0, 0, 36));
-		UiRect iconRect = new UiRect(header.x() + 4, header.y() + 4, header.height() - 8, header.height() - 8);
+		int iconInset = ultra ? Math.max(2, header.height() / 7) : 4;
+		UiRect iconRect = new UiRect(header.x() + iconInset, header.y() + iconInset, header.height() - iconInset * 2, header.height() - iconInset * 2);
 		drawAppIcon(graphics, app, iconRect, 0);
 		String coords = snapshot != null
 				? Math.round(snapshot.centerX()) + ", " + Math.round(snapshot.centerZ()) + "  |  " + formatZoom(snapshot.zoomBlocks())
 				: "Карта загружается";
-		drawVerticalText(graphics, "Яндекс Карты", new UiRect(iconRect.right() + 6, header.y() + 1, header.right() - iconRect.right() - 10, header.height() / 2), new Color(30, 34, 36), Font.BOLD, clampInt(layout.unit() - 1, 9, 13));
-		drawVerticalText(graphics, coords, new UiRect(iconRect.right() + 6, header.y() + header.height() / 2 - 2, header.right() - iconRect.right() - 10, header.height() / 2), new Color(78, 86, 92), Font.PLAIN, clampInt(layout.unit() - 3, 7, 10));
+		if (ultra) {
+			drawVerticalText(graphics, coords, new UiRect(iconRect.right() + 3, header.y(), Math.max(8, header.right() - iconRect.right() - 6), header.height()), new Color(58, 64, 68), Font.BOLD, clampInt(layout.unit() + 1, 6, 8));
+		} else {
+			drawVerticalText(graphics, "Яндекс Карты", new UiRect(iconRect.right() + 6, header.y() + 1, header.right() - iconRect.right() - 10, header.height() / 2), new Color(30, 34, 36), Font.BOLD, clampInt(layout.unit() - 1, 9, 13));
+			drawVerticalText(graphics, coords, new UiRect(iconRect.right() + 6, header.y() + header.height() / 2 - 2, header.right() - iconRect.right() - 10, header.height() / 2), new Color(78, 86, 92), Font.PLAIN, clampInt(layout.unit() - 3, 7, 10));
+		}
 		drawMediaCloseButton(graphics, mediaCloseRect(layout), layout);
 	}
 
@@ -365,9 +374,10 @@ final class MonitorYandexMapsRuntime {
 	}
 
 	private static void drawMapIconButton(Graphics2D graphics, UiRect rect, PlayerUiIcon icon, UiLayout layout) {
-		fillRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 14), new Color(250, 252, 248, 232));
-		strokeRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 14), 1.0F, new Color(0, 0, 0, 42));
-		int inset = clampInt(rect.width() / 5, 5, 9);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		fillRoundedRect(graphics, rect, ultra ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit(), 8, 14), new Color(250, 252, 248, 232));
+		strokeRoundedRect(graphics, rect, ultra ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit(), 8, 14), ultra ? 0.85F : 1.0F, new Color(0, 0, 0, 42));
+		int inset = ultra ? clampInt(rect.width() / 5, 2, 3) : clampInt(rect.width() / 5, 5, 9);
 		drawPlayerUiIcon(graphics, rect.inset(inset), icon, new Color(20, 24, 26, 238));
 	}
 
@@ -387,26 +397,27 @@ final class MonitorYandexMapsRuntime {
 
 	private static UiRect yandexZoomInRect(UiLayout layout) {
 		UiRect minus = yandexZoomOutRect(layout);
-		int gap = Math.max(2, layout.unit() / 3);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 5) : Math.max(2, layout.unit() / 3);
 		return new UiRect(minus.x(), minus.y() - gap - minus.height(), minus.width(), minus.height());
 	}
 
 	private static UiRect yandexZoomOutRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(layout.unit() * 3, 28, 42);
-		int inset = clampInt(layout.unit(), 8, 16);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int size = ultra ? clampInt(layout.unit() * 2 + 4, 12, 16) : clampInt(layout.unit() * 3, 28, 42);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 16);
 		return new UiRect(canvas.right() - inset - size, canvas.bottom() - inset - size, size, size);
 	}
 
 	private static UiRect yandexGeoRect(UiLayout layout) {
 		UiRect plus = yandexZoomInRect(layout);
-		int gap = Math.max(2, layout.unit() / 3);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 5) : Math.max(2, layout.unit() / 3);
 		return new UiRect(plus.x(), plus.y() - gap - plus.height(), plus.width(), plus.height());
 	}
 
 	private static UiRect yandexWorldCenterRect(UiLayout layout) {
 		UiRect current = yandexGeoRect(layout);
-		int gap = Math.max(2, layout.unit() / 3);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 5) : Math.max(2, layout.unit() / 3);
 		return new UiRect(current.x(), current.y() - gap - current.height(), current.width(), current.height());
 	}
 

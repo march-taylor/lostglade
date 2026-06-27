@@ -3775,18 +3775,26 @@ public final class MonitorScreenSystem {
 		if (panel == null || layout == null) {
 			return new UiRect(0, 0, 0, 0);
 		}
-		int size = clampInt(layout.unit() * 2 + 4, 24, 36);
-		return new UiRect(panel.right() - size - layout.unit(), panel.y() + layout.unit(), size, size);
+		int size = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 2, 12, 18)
+				: clampInt(layout.unit() * 2 + 4, 24, 36);
+		int inset = ultraCompactScreenLayout(layout)
+				? Math.max(2, layout.unit() / 3)
+				: layout.unit();
+		return new UiRect(panel.right() - size - inset, panel.y() + inset, size, size);
 	}
 
 	static UiRect overlayPanelTitleRect(UiRect panel, UiRect closeRect, UiLayout layout) {
 		if (panel == null || closeRect == null || layout == null) {
 			return new UiRect(0, 0, 0, 0);
 		}
+		int inset = ultraCompactScreenLayout(layout)
+				? Math.max(2, layout.unit() / 3)
+				: layout.unit();
 		return new UiRect(
-				panel.x() + layout.unit(),
+				panel.x() + inset,
 				closeRect.y(),
-				Math.max(1, closeRect.x() - panel.x() - layout.unit() * 2),
+				Math.max(1, closeRect.x() - panel.x() - inset * 2),
 				closeRect.height()
 		);
 	}
@@ -3795,8 +3803,14 @@ public final class MonitorScreenSystem {
 		if (panel == null || closeRect == null || layout == null) {
 			return new UiRect(0, 0, 0, 0);
 		}
-		int y = closeRect.bottom() + Math.max(4, layout.unit() / 2);
-		return new UiRect(panel.x() + layout.unit(), y, panel.width() - layout.unit() * 2, Math.max(18, panel.bottom() - y - layout.unit()));
+		int inset = ultraCompactScreenLayout(layout)
+				? Math.max(2, layout.unit() / 3)
+				: layout.unit();
+		int gap = ultraCompactScreenLayout(layout)
+				? Math.max(1, layout.unit() / 4)
+				: Math.max(4, layout.unit() / 2);
+		int y = closeRect.bottom() + gap;
+		return new UiRect(panel.x() + inset, y, panel.width() - inset * 2, Math.max(18, panel.bottom() - y - inset));
 	}
 
 	static int clippedListCapacity(int viewportExtent, int itemExtent, int gap) {
@@ -3876,8 +3890,9 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect mediaChromeIconRect(UiRect rect, UiLayout layout) {
-		int inset = clampInt(layout.unit() / 2, 4, 8);
-		int iconSize = clampInt(layout.unit() + 3, 11, 15);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int inset = ultra ? clampInt(layout.unit() / 3, 2, 4) : clampInt(layout.unit() / 2, 4, 8);
+		int iconSize = ultra ? clampInt(layout.unit() + 2, 7, 10) : clampInt(layout.unit() + 3, 11, 15);
 		iconSize = Math.min(iconSize, Math.max(8, Math.min(rect.width() - inset * 2, rect.height() - inset * 2)));
 		int offsetX = Math.max(0, iconSize / 14);
 		return new UiRect(
@@ -3889,7 +3904,11 @@ public final class MonitorScreenSystem {
 	}
 
 	static float mediaChromeStrokeWidth(UiRect rect) {
-		return clampFloat(Math.min(rect.width(), rect.height()) / 12.0F, 1.5F, 2.2F);
+		int minSide = Math.min(rect.width(), rect.height());
+		if (minSide <= 16) {
+			return clampFloat(minSide / 12.0F, 0.85F, 1.35F);
+		}
+		return clampFloat(minSide / 12.0F, 1.5F, 2.2F);
 	}
 
 	static MediaButtonSegment mediaButtonSegment(int index, int total) {
@@ -3923,21 +3942,29 @@ public final class MonitorScreenSystem {
 	static void drawMediaSearchBar(Graphics2D graphics, UiRect rect, String placeholder, boolean compact, UiLayout layout, MediaButtonSegment segment) {
 		drawMediaHeaderControlBase(graphics, rect, segment);
 
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int iconSize = ultra ? clampInt(layout.unit() + 2, 7, 9) : clampInt(layout.unit() + 2, 10, 16);
+		int iconInset = ultra ? clampInt(layout.unit() / 3, 2, 4) : clampInt(layout.unit() / 2, 5, 10);
 		UiRect iconRect = new UiRect(
-				rect.x() + clampInt(layout.unit() / 2, 5, 10),
-				rect.y() + (rect.height() - clampInt(layout.unit() + 2, 10, 16)) / 2,
-				clampInt(layout.unit() + 2, 10, 16),
-				clampInt(layout.unit() + 2, 10, 16)
+				rect.x() + iconInset,
+				rect.y() + (rect.height() - iconSize) / 2,
+				iconSize,
+				iconSize
 		);
 		drawSearchGlyph(graphics, iconRect, new Color(248, 251, 255, compact ? 214 : 236));
 
+		int textGap = ultra ? Math.max(2, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
+		int rightReserve = ultra ? clampInt(layout.unit(), 4, 8) : clampInt(layout.unit() * 4, 20, 52);
 		UiRect textRect = new UiRect(
-				iconRect.right() + clampInt(layout.unit() / 2, 4, 8),
+				iconRect.right() + textGap,
 				rect.y(),
-				rect.right() - iconRect.right() - clampInt(layout.unit() * 4, 20, 52),
+				Math.max(4, rect.right() - iconRect.right() - textGap - rightReserve),
 				rect.height()
 		);
-		drawVerticalText(graphics, placeholder, textRect, new Color(248, 251, 255, compact ? 214 : 236), Font.BOLD, clampInt(layout.unit() - (compact ? 1 : 0), 9, compact ? 14 : 18));
+		int fontSize = ultra
+				? clampInt(layout.unit() + (compact ? 0 : 1), 6, 8)
+				: clampInt(layout.unit() - (compact ? 1 : 0), 9, compact ? 14 : 18);
+		drawVerticalText(graphics, placeholder, textRect, new Color(248, 251, 255, compact ? 214 : 236), Font.BOLD, fontSize);
 	}
 
 	static void drawMediaActionButton(Graphics2D graphics, UiRect rect, boolean deleteMode, UiLayout layout) {
@@ -3957,18 +3984,19 @@ public final class MonitorScreenSystem {
 	}
 
 	static void drawMediaTitleBar(Graphics2D graphics, UiRect rect, String title, UiLayout layout, MediaButtonSegment segment) {
+		boolean ultra = ultraCompactScreenLayout(layout);
 		drawVerticalText(
 				graphics,
 				(title == null || title.isBlank()) ? "ГАЛЕРЕЯ" : title,
 				new UiRect(
-						rect.x() + clampInt(layout.unit() / 3, 3, 6),
+						rect.x() + (ultra ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 3, 3, 6)),
 						rect.y(),
-						rect.width() - clampInt(layout.unit() / 2, 4, 10),
+						rect.width() - (ultra ? Math.max(2, layout.unit() / 2) : clampInt(layout.unit() / 2, 4, 10)),
 						rect.height()
 				),
 				new Color(248, 251, 255, 236),
 				Font.BOLD,
-				clampInt(layout.unit() - (compactScreenLayout(layout) ? 1 : 0), 8, 16)
+				ultra ? clampInt(layout.unit() + 1, 6, 9) : clampInt(layout.unit() - (compactScreenLayout(layout) ? 1 : 0), 8, 16)
 		);
 	}
 
@@ -4814,6 +4842,24 @@ public final class MonitorScreenSystem {
 		}
 		String safeTitle = title != null ? title : "";
 		String safeSubtitle = subtitle != null ? subtitle : "";
+		if (ultraCompactScreenLayout(layout)) {
+			UiRect headerTitleRect = new UiRect(
+					header.x() + Math.max(2, layout.unit() / 3),
+					header.y(),
+					Math.max(10, header.width() - clampInt(layout.unit() * 4, 16, 22)),
+					header.height()
+			);
+			drawCenteredTextFitted(
+					graphics,
+					safeTitle,
+					headerTitleRect,
+					new Color(248, 240, 244, 226),
+					Font.BOLD,
+					clampInt(layout.unit() + 1, 6, 8),
+					5
+			);
+			return;
+		}
 		UiRect headerTitleRect = new UiRect(header.x(), header.y(), header.width(), Math.max(12, header.height() / 2));
 		UiRect headerSubtitleRect = new UiRect(header.x(), headerTitleRect.bottom() - 1, header.width(), Math.max(10, header.bottom() - headerTitleRect.bottom() + 1));
 		drawCenteredTextFitted(
@@ -4871,28 +4917,31 @@ public final class MonitorScreenSystem {
 		if (graphics == null || layout == null || rect == null || icon == null) {
 			return;
 		}
+		boolean ultra = ultraCompactScreenLayout(layout);
 		Color fill = selected
 				? new Color(248, 246, 246, 236)
 				: enabled ? new Color(255, 255, 255, 10) : new Color(255, 255, 255, 6);
 		Color titleColor = selected
 				? new Color(22, 20, 24, 244)
 				: danger && enabled ? new Color(255, 142, 150, 238) : enabled ? new Color(248, 240, 244, 236) : new Color(200, 208, 218, 150);
-		int arc = clampInt(layout.unit() * 2, 12, 18);
+		int arc = ultra ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit() * 2, 12, 18);
 		fillRoundedRect(graphics, rect, arc, fill);
+		int iconSize = ultra ? clampInt(layout.unit() + 5, 9, 11) : clampInt(layout.unit() + 6, 14, 22);
+		int sideInset = ultra ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 14);
 		UiRect iconRect = new UiRect(
-				rect.x() + clampInt(layout.unit(), 8, 14),
-				rect.y() + (rect.height() - clampInt(layout.unit() + 6, 14, 22)) / 2,
-				clampInt(layout.unit() + 6, 14, 22),
-				clampInt(layout.unit() + 6, 14, 22)
+				rect.x() + sideInset,
+				rect.y() + (rect.height() - iconSize) / 2,
+				iconSize,
+				iconSize
 		);
 		drawPlayerUiIcon(graphics, iconRect, icon, titleColor);
 		UiRect titleRect = new UiRect(
-				iconRect.right() + clampInt(layout.unit(), 8, 14),
+				iconRect.right() + (ultra ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 14)),
 				rect.y(),
-				Math.max(24, rect.width() - (iconRect.right() - rect.x()) - clampInt(layout.unit() * 2, 16, 24)),
+				Math.max(12, rect.width() - (iconRect.right() - rect.x()) - (ultra ? Math.max(4, layout.unit()) : clampInt(layout.unit() * 2, 16, 24))),
 				rect.height()
 		);
-		drawVerticalText(graphics, title, titleRect, titleColor, Font.BOLD, compactScreenLayout(layout) ? clampInt(layout.unit() + 1, 9, 14) : clampInt(layout.unit() + 2, 11, 18));
+		drawVerticalText(graphics, title, titleRect, titleColor, Font.BOLD, ultra ? clampInt(layout.unit() + 2, 7, 8) : compactScreenLayout(layout) ? clampInt(layout.unit() + 1, 9, 14) : clampInt(layout.unit() + 2, 11, 18));
 	}
 
 	static void drawPlayerBackgroundWindow(Graphics2D graphics, UiLayout layout, MediaOverlayWindowSnapshot window) {
@@ -4936,18 +4985,21 @@ public final class MonitorScreenSystem {
 		if (graphics == null || layout == null || rect == null || mode == null) {
 			return;
 		}
+		boolean ultra = ultraCompactScreenLayout(layout);
 		Color fill = selected
 				? new Color(248, 246, 246, 236)
 				: enabled ? new Color(255, 255, 255, 10) : new Color(255, 255, 255, 6);
 		Color titleColor = selected ? new Color(22, 20, 24, 244) : enabled ? new Color(248, 240, 244, 236) : new Color(200, 208, 218, 166);
 		Color subtitleColor = selected ? new Color(68, 60, 66, 216) : enabled ? new Color(214, 221, 230, 184) : new Color(164, 174, 186, 140);
-		int arc = clampInt(layout.unit() * 2, 12, 18);
+		int arc = ultra ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit() * 2, 12, 18);
 		fillRoundedRect(graphics, rect, arc, fill);
+		int iconSize = ultra ? clampInt(layout.unit() + 5, 9, 11) : clampInt(layout.unit() + 6, 14, 22);
+		int sideInset = ultra ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 14);
 		UiRect iconRect = new UiRect(
-				rect.x() + clampInt(layout.unit(), 8, 14),
-				rect.y() + (rect.height() - clampInt(layout.unit() + 6, 14, 22)) / 2,
-				clampInt(layout.unit() + 6, 14, 22),
-				clampInt(layout.unit() + 6, 14, 22)
+				rect.x() + sideInset,
+				rect.y() + (rect.height() - iconSize) / 2,
+				iconSize,
+				iconSize
 		);
 		if (selected) {
 			drawPlayerUiIcon(graphics, iconRect, PlayerUiIcon.CHECK, titleColor);
@@ -4959,6 +5011,16 @@ public final class MonitorScreenSystem {
 			strokeRoundedRect(graphics, iconRect, clampInt(layout.unit(), 8, 12), mediaChromeStrokeWidth(iconRect), titleColor);
 		} else {
 			fillRoundedRect(graphics, iconRect, clampInt(layout.unit(), 8, 12), titleColor);
+		}
+		if (ultra) {
+			UiRect titleRect = new UiRect(
+					iconRect.right() + Math.max(2, layout.unit() / 3),
+					rect.y(),
+					Math.max(12, rect.width() - (iconRect.right() - rect.x()) - Math.max(4, layout.unit()) - (reserveScaleButtonsSpace ? playerBackgroundScaleButtonReserveWidth(layout) : 0)),
+					rect.height()
+			);
+			drawVerticalText(graphics, playerBackgroundModeTitle(mode), titleRect, titleColor, Font.BOLD, clampInt(layout.unit() + 2, 7, 8));
+			return;
 		}
 		UiRect titleRect = new UiRect(
 				iconRect.right() + clampInt(layout.unit(), 8, 14),
@@ -6226,21 +6288,27 @@ public final class MonitorScreenSystem {
 
 	static UiRect mediaCloseRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(layout.unit() * 2, 18, 28);
-		return new UiRect(canvas.x() + layout.unit() / 2, canvas.y() + layout.unit() / 2, size, size);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int size = ultra ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2, 18, 28);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
+		return new UiRect(canvas.x() + inset, canvas.y() + inset, size, size);
 	}
 
 	static UiRect mediaPlayerMenuRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(layout.unit() * 2, 18, 28);
-		return new UiRect(canvas.right() - size - layout.unit() / 2, canvas.y() + layout.unit() / 2, size, size);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int size = ultra ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2, 18, 28);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
+		return new UiRect(canvas.right() - size - inset, canvas.y() + inset, size, size);
 	}
 
 	static UiRect mediaOverlayToggleRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int width = clampInt(layout.unit() * 4, 34, 58);
-		int height = clampInt(layout.unit() * 2, 18, 28);
-		return new UiRect(canvas.right() - width - layout.unit() / 2, canvas.y() + layout.unit() / 2, width, height);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int width = ultra ? clampInt(layout.unit() * 4, 20, 28) : clampInt(layout.unit() * 4, 34, 58);
+		int height = ultra ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2, 18, 28);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
+		return new UiRect(canvas.right() - width - inset, canvas.y() + inset, width, height);
 	}
 
 	static UiRect mediaLinkRect(UiLayout layout) {
@@ -6260,10 +6328,13 @@ public final class MonitorScreenSystem {
 			);
 		}
 		UiRect closeRect = mediaCloseRect(layout);
-		int height = clampInt(layout.unit() * 2, 18, 28);
+		int height = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 2, 12, 14)
+				: clampInt(layout.unit() * 2, 18, 28);
 		int x = closeRect.right() + mediaHeaderControlGap(layout);
-		int width = Math.max(48, canvas.right() - x - layout.unit() / 2);
-		return new UiRect(x, canvas.y() + layout.unit() / 2, width, height);
+		int sideInset = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
+		int width = Math.max(24, canvas.right() - x - sideInset);
+		return new UiRect(x, canvas.y() + sideInset, width, height);
 	}
 
 	static UiRect mediaActionRect(UiLayout layout, boolean hasMedia) {
@@ -6289,19 +6360,24 @@ public final class MonitorScreenSystem {
 	static UiRect mediaGalleryBrowserLinkRect(UiLayout layout, boolean bulkDeleteVisible) {
 		UiRect closeRect = mediaGalleryBrowserCloseRect(layout);
 		UiRect canvas = mediaCanvasRect(layout);
-		int height = clampInt(layout.unit() * 2, 18, 28);
+		int height = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 2, 12, 14)
+				: clampInt(layout.unit() * 2, 18, 28);
 		int x = closeRect.right() + mediaHeaderControlGap(layout);
 		int right = (bulkDeleteVisible ? mediaGalleryBrowserBulkDeleteRect(layout) : mediaGalleryBrowserSelectionRect(layout)).x() - mediaHeaderControlGap(layout);
-		int width = Math.max(48, right - x);
-		return new UiRect(x, canvas.y() + layout.unit() / 2, width, height);
+		int width = Math.max(24, right - x);
+		int sideInset = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
+		return new UiRect(x, canvas.y() + sideInset, width, height);
 	}
 
 	static UiRect mediaGalleryBrowserSelectionRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(layout.unit() * 2, 18, 28);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int size = ultra ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2, 18, 28);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
 		return new UiRect(
-				canvas.right() - size - layout.unit() / 2,
-				canvas.y() + layout.unit() / 2,
+				canvas.right() - size - inset,
+				canvas.y() + inset,
 				size,
 				size
 		);
@@ -6339,8 +6415,10 @@ public final class MonitorScreenSystem {
 
 	static UiRect mediaScaleRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(layout.unit() * 2, 18, 28);
-		return new UiRect(canvas.right() - size - layout.unit() / 2, canvas.bottom() - size - layout.unit() / 2, size, size);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int size = ultra ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2, 18, 28);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
+		return new UiRect(canvas.right() - size - inset, canvas.bottom() - size - inset, size, size);
 	}
 
 	static UiRect mediaWallpaperActionRect(UiLayout layout, MediaRuntimeState state) {
@@ -6571,12 +6649,15 @@ public final class MonitorScreenSystem {
 		UiRect scaleRect = mediaScaleRect(layout);
 		UiRect downloadRect = mediaDownloadRect(layout);
 		UiRect queueToggleRect = mediaQueueToggleRect(layout, mode);
-		int left = canvas.x() + layout.unit() / 2;
+		int sideInset = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
+		int left = canvas.x() + sideInset;
 		int right = Math.min(Math.min(scaleRect.x(), queueToggleRect.x()), downloadRect.x()) - clampInt(layout.unit() / 2, 4, 8);
-		int height = clampInt(layout.unit() * 2, 18, 28);
+		int height = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 2, 12, 14)
+				: clampInt(layout.unit() * 2, 18, 28);
 		return new UiRect(
 				left,
-				canvas.bottom() - height - layout.unit() / 2,
+				canvas.bottom() - height - sideInset,
 				Math.max(44, right - left),
 				height
 		);
@@ -6852,6 +6933,12 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect galleryFileMenuPanelRect(UiLayout layout) {
+		if (ultraCompactScreenLayout(layout)) {
+			UiRect canvas = mediaCanvasRect(layout);
+			int inset = Math.max(2, layout.unit() / 3);
+			int top = canvas.y() + clampInt(layout.unit() * 4, 18, 22);
+			return new UiRect(canvas.x() + inset, top, canvas.width() - inset * 2, Math.max(42, canvas.bottom() - top - inset));
+		}
 		return centeredOverlayPanelRect(
 				layout,
 				ultraCompactScreenLayout(layout) ? 13.0D / 16.0D : compactScreenLayout(layout) ? 3.0D / 4.0D : 2.0D / 3.0D,
@@ -6862,6 +6949,12 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect playerBackgroundPanelRect(UiLayout layout) {
+		if (ultraCompactScreenLayout(layout)) {
+			UiRect canvas = mediaCanvasRect(layout);
+			int inset = Math.max(2, layout.unit() / 3);
+			int top = canvas.y() + clampInt(layout.unit() * 4, 18, 22);
+			return new UiRect(canvas.x() + inset, top, canvas.width() - inset * 2, Math.max(42, canvas.bottom() - top - inset));
+		}
 		return centeredOverlayPanelRect(
 				layout,
 				ultraCompactScreenLayout(layout) ? 13.0D / 16.0D : compactScreenLayout(layout) ? 3.0D / 4.0D : 11.0D / 16.0D,
@@ -7040,18 +7133,19 @@ public final class MonitorScreenSystem {
 		UiRect canvas = mediaCanvasRect(layout);
 		UiRect panel = galleryFileMenuPanelRect(layout);
 		int height = ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 4, 26, 38)
+				? clampInt(layout.unit() * 2 + 4, 12, 16)
 				: compactScreenLayout(layout)
 				? clampInt(layout.unit() * 5, 34, 52)
 				: clampInt(layout.unit() * 6, 44, 66);
-		int y = Math.max(canvas.y() + clampInt(layout.unit() / 2, 4, 8), panel.y() - height - clampInt(layout.unit(), 8, 16));
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit(), 8, 16);
+		int y = Math.max(canvas.y() + (ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit() / 2, 4, 8)), panel.y() - height - gap);
 		return new UiRect(panel.x(), y, panel.width(), height);
 	}
 
 	static UiRect galleryFileMenuCloseRect(UiLayout layout) {
 		UiRect header = galleryFileMenuHeaderRect(layout);
-		int size = clampInt(layout.unit() * 2 + 2, 22, 34);
-		int inset = clampInt(layout.unit() / 2, 4, 8);
+		int size = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2 + 2, 22, 34);
+		int inset = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
 		return new UiRect(
 				header.right() - size - inset,
 				header.y() + Math.max(0, (header.height() - size) / 2),
@@ -7068,7 +7162,7 @@ public final class MonitorScreenSystem {
 		UiRect body = galleryFileMenuBodyRect(layout);
 		int actionCount = 5;
 		int safeIndex = clampInt(index, 0, actionCount - 1);
-		int gap = clampInt(layout.unit() / 2, 4, 8);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
 		int height = Math.max(16, (body.height() - gap * (actionCount - 1)) / actionCount);
 		return new UiRect(
 				body.x(),
@@ -7082,18 +7176,19 @@ public final class MonitorScreenSystem {
 		UiRect canvas = mediaCanvasRect(layout);
 		UiRect panel = playerBackgroundPanelRect(layout);
 		int height = ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 4, 26, 38)
+				? clampInt(layout.unit() * 2 + 4, 12, 16)
 				: compactScreenLayout(layout)
 				? clampInt(layout.unit() * 5, 34, 52)
 				: clampInt(layout.unit() * 6, 44, 66);
-		int y = Math.max(canvas.y() + clampInt(layout.unit() / 2, 4, 8), panel.y() - height - clampInt(layout.unit(), 8, 16));
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit(), 8, 16);
+		int y = Math.max(canvas.y() + (ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit() / 2, 4, 8)), panel.y() - height - gap);
 		return new UiRect(panel.x(), y, panel.width(), height);
 	}
 
 	static UiRect playerBackgroundCloseRect(UiLayout layout) {
 		UiRect header = playerBackgroundHeaderRect(layout);
-		int size = clampInt(layout.unit() * 2 + 2, 22, 34);
-		int inset = clampInt(layout.unit() / 2, 4, 8);
+		int size = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2 + 2, 22, 34);
+		int inset = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
 		return new UiRect(
 				header.right() - size - inset,
 				header.y() + Math.max(0, (header.height() - size) / 2),
@@ -7110,7 +7205,7 @@ public final class MonitorScreenSystem {
 		UiRect body = playerBackgroundBodyRect(layout);
 		int optionCount = 4;
 		int safeIndex = clampInt(index, 0, optionCount - 1);
-		int gap = clampInt(layout.unit() / 2, 4, 8);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
 		int height = Math.max(16, (body.height() - gap * (optionCount - 1)) / optionCount);
 		return new UiRect(
 				body.x(),
@@ -7125,13 +7220,15 @@ public final class MonitorScreenSystem {
 	}
 
 	static int playerBackgroundScaleButtonWidth(UiLayout layout) {
-		return clampInt(layout.unit() * 2 + 2, 18, 28);
+		return ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 2, 12, 14)
+				: clampInt(layout.unit() * 2 + 2, 18, 28);
 	}
 
 	static UiRect playerBackgroundScaleButtonRect(UiLayout layout, PlayerBackgroundMode mode) {
 		UiRect option = playerBackgroundOptionRect(layout, mode == PlayerBackgroundMode.ARTWORK ? 0 : 1);
-		int gap = clampInt(layout.unit() / 2, 4, 8);
-		int buttonHeight = Math.max(14, option.height() - clampInt(layout.unit() / 2, 4, 8));
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
+		int buttonHeight = Math.max(ultraCompactScreenLayout(layout) ? 12 : 14, option.height() - gap * 2);
 		int buttonWidth = playerBackgroundScaleButtonWidth(layout);
 		return new UiRect(
 				option.right() - buttonWidth - gap,
