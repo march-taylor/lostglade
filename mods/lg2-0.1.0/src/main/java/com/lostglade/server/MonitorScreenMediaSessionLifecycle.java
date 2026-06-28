@@ -290,7 +290,7 @@ final class MonitorScreenMediaSessionLifecycle {
 				&& persistedPlayerBackground.url() != null
 				&& !persistedPlayerBackground.url().isBlank()) {
 			state.playerBackgroundUrl = persistedPlayerBackground.url();
-			state.playerBackgroundScaleMode = persistedPlayerBackground.scaleMode() != null ? persistedPlayerBackground.scaleMode() : MediaScaleMode.FIT;
+			state.playerBackgroundScaleMode = persistedPlayerBackground.scaleMode() != null ? persistedPlayerBackground.scaleMode() : MediaScaleMode.FILL;
 			state.playerBackgroundMedia = preservedPlayerBackgroundMedia;
 			state.playerBackgroundFrameIndex = 0;
 			state.playerBackgroundLoading = false;

@@ -1,6 +1,7 @@
 package com.lostglade.server;
 
 import com.lostglade.Lg2;
+import com.lostglade.block.ModBlocks;
 import com.lostglade.item.CameraPhotoSettings;
 import com.lostglade.item.ModItems;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -12,19 +13,28 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 
+import java.io.BufferedOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 public final class CameraVideoRecordingSystem {
 	private static final int MAX_TARGET_FPS = 20;
 	private static final int TARGET_FPS = 10;
 	private static final int MAX_DURATION_SECONDS = 10 * 60;
 	private static final long MIN_STOP_DELAY_MS = 1_000L;
+	private static final int AUDIO_SAMPLE_RATE = 48_000;
 	private static final Map<UUID, ActiveRecording> RECORDINGS_BY_PLAYER = new ConcurrentHashMap<>();
 
 	private CameraVideoRecordingSystem() {
@@ -72,6 +82,26 @@ public final class CameraVideoRecordingSystem {
 			player.displayClientMessage(Component.literal("Нет активного renderer-клиента для записи видео."), true);
 			return false;
 		}
+		HandCameraAudioTrack audioTrack = null;
+		MicrophoneSystem.MicrophonePcmRecorder audioRecorder = null;
+		if (isHoldingCameraWithMicrophoneInOtherHand(player)) {
+			try {
+				audioTrack = HandCameraAudioTrack.create(handle.requestId().toString());
+				audioRecorder = MicrophoneSystem.startPlayerPcmRecorder(player, audioTrack::writeFrame);
+				if (audioRecorder == null) {
+					audioTrack.abort();
+					audioTrack = null;
+				} else {
+					audioTrack.attach(audioRecorder);
+				}
+			} catch (Exception exception) {
+				Lg2.LOGGER.warn("Failed to start hand camera audio recording for {}", player.getUUID(), exception);
+				if (audioTrack != null) {
+					audioTrack.abortQuietly();
+				}
+				audioTrack = null;
+			}
+		}
 
 		ActiveRecording state = new ActiveRecording(
 				player.getUUID(),
@@ -82,7 +112,8 @@ public final class CameraVideoRecordingSystem {
 				player.position().z,
 				settings.mapsWide(),
 				settings.mapsHigh(),
-				System.currentTimeMillis()
+				System.currentTimeMillis(),
+				audioTrack
 		);
 		RECORDINGS_BY_PLAYER.put(player.getUUID(), state);
 		handle.completionFuture().whenComplete((result, throwable) -> {
@@ -149,6 +180,16 @@ public final class CameraVideoRecordingSystem {
 		return player.getMainHandItem().is(ModItems.CAMERA) || player.getOffhandItem().is(ModItems.CAMERA);
 	}
 
+	private static boolean isHoldingCameraWithMicrophoneInOtherHand(ServerPlayer player) {
+		if (player == null) {
+			return false;
+		}
+		ItemStack mainHand = player.getMainHandItem();
+		ItemStack offHand = player.getOffhandItem();
+		return mainHand.is(ModItems.CAMERA) && offHand.is(ModBlocks.MICROPHONE_ITEM)
+				|| offHand.is(ModItems.CAMERA) && mainHand.is(ModBlocks.MICROPHONE_ITEM);
+	}
+
 	private static void finishRecording(
 			MinecraftServer server,
 			ActiveRecording state,
@@ -161,6 +202,7 @@ public final class CameraVideoRecordingSystem {
 		RECORDINGS_BY_PLAYER.remove(state.playerId(), state);
 		ServerPlayer player = server.getPlayerList().getPlayer(state.playerId());
 		if (throwable != null || result == null) {
+			state.abortAudioCapture();
 			if (player != null) {
 				player.displayClientMessage(Component.literal("Запись видео не удалась."), true);
 			}
@@ -168,14 +210,30 @@ public final class CameraVideoRecordingSystem {
 		}
 
 		if (player == null) {
+			state.abortAudioCapture();
 			return;
 		}
+		Path finishedAudioPath;
 		try {
-			persistCompletedVideoFile(state.requestId().toString(), result.videoPath());
+			finishedAudioPath = state.finishAudioCapture();
+		} catch (IOException exception) {
+			Lg2.LOGGER.warn("Failed to finish hand camera audio file for {}", state.requestId(), exception);
+			finishedAudioPath = null;
+		}
+		boolean audioMuxFailed = false;
+		Path videoPath;
+		try {
+			videoPath = persistCompletedVideoFile(state.requestId().toString(), result.videoPath());
+			if (finishedAudioPath != null) {
+				audioMuxFailed = !muxAudioIntoVideo(videoPath, finishedAudioPath, state.requestId().toString());
+			}
 		} catch (IOException exception) {
 			Lg2.LOGGER.warn("Failed to persist camera video file for {}", state.requestId(), exception);
+			state.deleteAudioCapture();
 			player.displayClientMessage(Component.literal("Видео записалось, но файл не сохранился на сервере."), true);
 			return;
+		} finally {
+			state.deleteAudioCapture();
 		}
 
 		ItemStack videoItem = CameraAnimatedMapPlaybackSystem.createVideoItem(
@@ -198,10 +256,10 @@ public final class CameraVideoRecordingSystem {
 
 		giveOrDrop(player, videoItem);
 		ServerMechanicsGateSystem.syncPlayerInventory(player);
-		player.displayClientMessage(Component.literal("Видео готово."), true);
+		player.displayClientMessage(Component.literal(audioMuxFailed ? "Видео готово, но звук не удалось добавить." : "Видео готово."), true);
 	}
 
-	private static void persistCompletedVideoFile(String sourceKey, String rawSourcePath) throws IOException {
+	private static Path persistCompletedVideoFile(String sourceKey, String rawSourcePath) throws IOException {
 		if (sourceKey == null || sourceKey.isBlank()) {
 			throw new IOException("Video source key is missing");
 		}
@@ -217,7 +275,7 @@ public final class CameraVideoRecordingSystem {
 			if (Files.size(target) <= 0L) {
 				throw new IOException("Renderer video file is empty");
 			}
-			return;
+			return target;
 		}
 		Path temp = CameraMediaCache.tempVideoSourcePath(sourceKey);
 		Files.copy(source, temp, StandardCopyOption.REPLACE_EXISTING);
@@ -229,6 +287,71 @@ public final class CameraVideoRecordingSystem {
 			Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
 		} catch (IOException ignored) {
 			Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+		}
+		return target;
+	}
+
+	private static boolean muxAudioIntoVideo(Path videoPath, Path audioPath, String sourceKey) throws IOException {
+		if (videoPath == null || audioPath == null || !Files.isRegularFile(audioPath)) {
+			return false;
+		}
+		if (!Files.isRegularFile(videoPath) || Files.size(videoPath) <= 0L) {
+			throw new IOException("Video output is empty");
+		}
+		if (Files.size(audioPath) <= 44L) {
+			return false;
+		}
+		Path muxPath = videoPath.resolveSibling(videoPath.getFileName().toString() + ".mux.mp4");
+		Files.deleteIfExists(muxPath);
+		List<String> command = List.of(
+				"ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+				"-i", videoPath.toAbsolutePath().toString(),
+				"-i", audioPath.toAbsolutePath().toString(),
+				"-map", "0:v:0",
+				"-map", "1:a:0",
+				"-c:v", "copy",
+				"-c:a", "aac",
+				"-af", "apad",
+				"-shortest",
+				"-movflags", "+faststart",
+				muxPath.toAbsolutePath().toString()
+		);
+		Process process = new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+		try {
+			if (!process.waitFor(10, TimeUnit.SECONDS)) {
+				process.destroyForcibly();
+				Lg2.LOGGER.warn("Hand camera audio mux timed out for {}", sourceKey);
+				deleteQuietly(muxPath);
+				return false;
+			}
+		} catch (InterruptedException exception) {
+			Thread.currentThread().interrupt();
+			deleteQuietly(muxPath);
+			throw new IOException("Hand camera audio mux interrupted", exception);
+		}
+		if (process.exitValue() != 0 || !Files.isRegularFile(muxPath) || Files.size(muxPath) <= 0L) {
+			deleteQuietly(muxPath);
+			return false;
+		}
+		replaceOutput(muxPath, videoPath);
+		return true;
+	}
+
+	private static void replaceOutput(Path source, Path target) throws IOException {
+		try {
+			Files.move(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+		} catch (IOException ignored) {
+			Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+		}
+	}
+
+	private static void deleteQuietly(Path path) {
+		if (path == null) {
+			return;
+		}
+		try {
+			Files.deleteIfExists(path);
+		} catch (IOException ignored) {
 		}
 	}
 
@@ -255,6 +378,7 @@ public final class CameraVideoRecordingSystem {
 		private final int mapsWide;
 		private final int mapsHigh;
 		private final long startedAtMs;
+		private final HandCameraAudioTrack audioTrack;
 		private volatile boolean stopRequested;
 
 		private ActiveRecording(
@@ -266,7 +390,8 @@ public final class CameraVideoRecordingSystem {
 				double z,
 				int mapsWide,
 				int mapsHigh,
-				long startedAtMs
+				long startedAtMs,
+				HandCameraAudioTrack audioTrack
 		) {
 			this.playerId = playerId;
 			this.requestId = requestId;
@@ -277,6 +402,7 @@ public final class CameraVideoRecordingSystem {
 			this.mapsWide = mapsWide;
 			this.mapsHigh = mapsHigh;
 			this.startedAtMs = startedAtMs;
+			this.audioTrack = audioTrack;
 			this.stopRequested = false;
 		}
 
@@ -322,6 +448,149 @@ public final class CameraVideoRecordingSystem {
 
 		private void markStopRequested() {
 			this.stopRequested = true;
+		}
+
+		private Path finishAudioCapture() throws IOException {
+			return this.audioTrack != null ? this.audioTrack.finish() : null;
+		}
+
+		private void abortAudioCapture() {
+			if (this.audioTrack != null) {
+				this.audioTrack.abortQuietly();
+			}
+		}
+
+		private void deleteAudioCapture() {
+			if (this.audioTrack != null) {
+				this.audioTrack.deleteQuietly();
+			}
+		}
+	}
+
+	private static final class HandCameraAudioTrack {
+		private final Path path;
+		private final OutputStream output;
+		private long samplesWritten;
+		private MicrophoneSystem.MicrophonePcmRecorder recorder;
+		private boolean closed;
+
+		private HandCameraAudioTrack(Path path) throws IOException {
+			this.path = path;
+			this.output = new BufferedOutputStream(Files.newOutputStream(path));
+			this.output.write(wavHeader(0L));
+		}
+
+		private static HandCameraAudioTrack create(String sourceKey) throws IOException {
+			CameraMediaCache.ensureVideoParent(sourceKey);
+			Path tempVideoPath = CameraMediaCache.tempVideoSourcePath(sourceKey);
+			Path audioPath = tempVideoPath.resolveSibling(tempVideoPath.getFileName().toString() + ".audio.wav");
+			Files.deleteIfExists(audioPath);
+			return new HandCameraAudioTrack(audioPath);
+		}
+
+		private synchronized void attach(MicrophoneSystem.MicrophonePcmRecorder recorder) {
+			this.recorder = recorder;
+		}
+
+		private synchronized void writeFrame(MicrophoneSystem.PcmFrame frame) {
+			if (this.closed || frame == null || frame.samples() == null || frame.samples().length == 0) {
+				return;
+			}
+			try {
+				short[] samples = frame.samples();
+				ByteBuffer buffer = ByteBuffer.allocate(samples.length * 2).order(ByteOrder.LITTLE_ENDIAN);
+				for (short sample : samples) {
+					buffer.putShort(sample);
+				}
+				this.output.write(buffer.array());
+				this.samplesWritten += samples.length;
+			} catch (IOException exception) {
+				this.closed = true;
+				MicrophoneSystem.MicrophonePcmRecorder current = this.recorder;
+				this.recorder = null;
+				if (current != null) {
+					current.close();
+				}
+				try {
+					this.output.close();
+				} catch (IOException ignored) {
+				}
+			}
+		}
+
+		private Path finish() throws IOException {
+			MicrophoneSystem.MicrophonePcmRecorder current;
+			synchronized (this) {
+				current = this.recorder;
+				this.recorder = null;
+			}
+			if (current != null) {
+				current.finishAndJoin();
+			}
+			long dataBytes;
+			synchronized (this) {
+				if (!this.closed) {
+					this.closed = true;
+					this.output.close();
+				}
+				dataBytes = this.samplesWritten * 2L;
+			}
+			try (SeekableByteChannel channel = Files.newByteChannel(this.path, StandardOpenOption.WRITE)) {
+				channel.position(0L);
+				channel.write(ByteBuffer.wrap(wavHeader(dataBytes)));
+			}
+			return dataBytes > 0L ? this.path : null;
+		}
+
+		private void abort() throws IOException {
+			closeImmediately();
+			CameraVideoRecordingSystem.deleteQuietly(this.path);
+		}
+
+		private void abortQuietly() {
+			try {
+				abort();
+			} catch (IOException ignored) {
+			}
+		}
+
+		private void deleteQuietly() {
+			CameraVideoRecordingSystem.deleteQuietly(this.path);
+		}
+
+		private void closeImmediately() throws IOException {
+			MicrophoneSystem.MicrophonePcmRecorder current;
+			synchronized (this) {
+				if (this.closed) {
+					return;
+				}
+				this.closed = true;
+				current = this.recorder;
+				this.recorder = null;
+			}
+			if (current != null) {
+				current.close();
+			}
+			synchronized (this) {
+				this.output.close();
+			}
+		}
+
+		private static byte[] wavHeader(long dataBytes) {
+			ByteBuffer header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
+			header.put(new byte[]{'R', 'I', 'F', 'F'});
+			header.putInt((int) Math.min(Integer.MAX_VALUE, 36L + dataBytes));
+			header.put(new byte[]{'W', 'A', 'V', 'E', 'f', 'm', 't', ' '});
+			header.putInt(16);
+			header.putShort((short) 1);
+			header.putShort((short) 1);
+			header.putInt(AUDIO_SAMPLE_RATE);
+			header.putInt(AUDIO_SAMPLE_RATE * 2);
+			header.putShort((short) 2);
+			header.putShort((short) 16);
+			header.put(new byte[]{'d', 'a', 't', 'a'});
+			header.putInt((int) Math.min(Integer.MAX_VALUE, dataBytes));
+			return header.array();
 		}
 	}
 }

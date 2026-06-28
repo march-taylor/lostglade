@@ -344,7 +344,7 @@ final class MonitorScreenMediaHydration {
 					return;
 				}
 				state.playerBackgroundUrl = persisted.url();
-				state.playerBackgroundScaleMode = persisted.scaleMode() != null ? persisted.scaleMode() : MediaScaleMode.FIT;
+				state.playerBackgroundScaleMode = persisted.scaleMode() != null ? persisted.scaleMode() : MediaScaleMode.FILL;
 				state.playerBackgroundMedia = currentGalleryItemMatchingUrlLocked(state, state.playerBackgroundUrl)
 						.map(GalleryItem::media)
 						.orElse(null);

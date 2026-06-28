@@ -68,6 +68,7 @@ public final class MicrophoneSystem {
 	private static final Set<MicrophoneKey> KNOWN_MICROPHONES = ConcurrentHashMap.newKeySet();
 	private static final ConcurrentHashMap<MicrophoneKey, MicrophoneRuntime> ACTIVE_MICROPHONES = new ConcurrentHashMap<>();
 	private static final ConcurrentHashMap<String, CallMicrophoneRouteRuntime> ACTIVE_CALL_ROUTES = new ConcurrentHashMap<>();
+	private static final ConcurrentHashMap<UUID, PlayerMicrophoneFeed> ACTIVE_PLAYER_FEEDS = new ConcurrentHashMap<>();
 	private static volatile long tickCounter = 0L;
 
 	private MicrophoneSystem() {
@@ -101,7 +102,7 @@ public final class MicrophoneSystem {
 	}
 
 	public static void onMicrophonePacket(MicrophonePacketEvent event) {
-		if (event == null || ACTIVE_MICROPHONES.isEmpty() || !ServerVoicechatIntegration.isLoaded()) {
+		if (event == null || !ServerVoicechatIntegration.isLoaded()) {
 			return;
 		}
 		VoicechatApi voicechatApi = ServerVoicechatIntegration.getApi();
@@ -116,13 +117,23 @@ public final class MicrophoneSystem {
 		if (!(rawPlayer instanceof ServerPlayer senderPlayer)) {
 			return;
 		}
-		Position senderPosition = senderConnection.getPlayer().getPosition();
 		byte[] opusData = event.getPacket() != null ? event.getPacket().getOpusEncodedData() : null;
-		if (senderPosition == null || opusData == null || opusData.length == 0) {
+		if (opusData == null || opusData.length == 0) {
+			return;
+		}
+		UUID senderUuid = senderConnection.getPlayer().getUuid();
+		PlayerMicrophoneFeed playerFeed = ACTIVE_PLAYER_FEEDS.get(senderUuid);
+		if (playerFeed != null) {
+			playerFeed.offerVoicePacket(senderUuid, opusData, voicechatApi);
+		}
+		if (ACTIVE_MICROPHONES.isEmpty()) {
+			return;
+		}
+		Position senderPosition = senderConnection.getPlayer().getPosition();
+		if (senderPosition == null) {
 			return;
 		}
 		boolean whispering = event.getPacket().isWhispering();
-		UUID senderUuid = senderConnection.getPlayer().getUuid();
 		ServerLevel level = (ServerLevel) senderPlayer.level();
 		for (MicrophoneRuntime runtime : ACTIVE_MICROPHONES.values()) {
 			runtime.offerVoicePacket(level, senderPosition, senderUuid, whispering, opusData, voicechatApi);
@@ -280,6 +291,10 @@ public final class MicrophoneSystem {
 			runtime.close();
 		}
 		ACTIVE_CALL_ROUTES.clear();
+		for (PlayerMicrophoneFeed feed : ACTIVE_PLAYER_FEEDS.values()) {
+			feed.close();
+		}
+		ACTIVE_PLAYER_FEEDS.clear();
 	}
 
 	private static void synchronizeCallRoutes(MinecraftServer server) {
@@ -430,6 +445,55 @@ public final class MicrophoneSystem {
 		return recorder;
 	}
 
+	public static MicrophonePcmRecorder startPlayerPcmRecorder(ServerPlayer player, Consumer<PcmFrame> frameConsumer) {
+		if (player == null || frameConsumer == null || !ServerVoicechatIntegration.isLoaded() || ServerVoicechatIntegration.getApi() == null) {
+			return null;
+		}
+		UUID playerId = player.getUUID();
+		if (playerId == null) {
+			return null;
+		}
+		PlayerMicrophoneFeed playerFeed = retainPlayerMicrophoneFeed(playerId);
+		if (playerFeed == null) {
+			return null;
+		}
+		MicrophonePcmRecorder recorder = new MicrophonePcmRecorder(
+				List.of(playerFeed.feed()),
+				null,
+				frameConsumer,
+				() -> releasePlayerMicrophoneFeed(playerId, playerFeed)
+		);
+		recorder.start();
+		return recorder;
+	}
+
+	private static PlayerMicrophoneFeed retainPlayerMicrophoneFeed(UUID playerId) {
+		if (playerId == null) {
+			return null;
+		}
+		return ACTIVE_PLAYER_FEEDS.compute(playerId, (ignored, existing) -> {
+			PlayerMicrophoneFeed feed = existing != null && !existing.closed() ? existing : new PlayerMicrophoneFeed();
+			feed.retain();
+			return feed;
+		});
+	}
+
+	private static void releasePlayerMicrophoneFeed(UUID playerId, PlayerMicrophoneFeed feed) {
+		if (playerId == null || feed == null) {
+			return;
+		}
+		ACTIVE_PLAYER_FEEDS.computeIfPresent(playerId, (ignored, existing) -> {
+			if (existing != feed) {
+				return existing;
+			}
+			if (!existing.release()) {
+				return existing;
+			}
+			existing.close();
+			return null;
+		});
+	}
+
 	private static List<SharedMicrophoneFeed> selectedMicrophoneFeeds(
 			List<Map.Entry<MicrophoneKey, MicrophoneRuntime>> microphones,
 			Collection<Integer> selectedMicrophoneIndices
@@ -540,15 +604,22 @@ public final class MicrophoneSystem {
 		private final List<SharedMicrophoneFeed> feeds;
 		private final Supplier<PcmTimelineAnchor> timelineAnchorSupplier;
 		private final Consumer<PcmFrame> frameConsumer;
+		private final Runnable closeCallback;
 		private volatile boolean finishRequested;
 		private volatile long finishAtNanos = Long.MAX_VALUE;
 		private volatile boolean closed;
+		private volatile boolean closeCallbackRan;
 		private Thread thread;
 
 		private MicrophonePcmRecorder(List<SharedMicrophoneFeed> feeds, Supplier<PcmTimelineAnchor> timelineAnchorSupplier, Consumer<PcmFrame> frameConsumer) {
+			this(feeds, timelineAnchorSupplier, frameConsumer, null);
+		}
+
+		private MicrophonePcmRecorder(List<SharedMicrophoneFeed> feeds, Supplier<PcmTimelineAnchor> timelineAnchorSupplier, Consumer<PcmFrame> frameConsumer, Runnable closeCallback) {
 			this.feeds = feeds != null ? feeds : List.of();
 			this.timelineAnchorSupplier = timelineAnchorSupplier;
 			this.frameConsumer = frameConsumer;
+			this.closeCallback = closeCallback;
 		}
 
 		private void start() {
@@ -559,42 +630,46 @@ public final class MicrophoneSystem {
 		}
 
 		private void run() {
-			PcmTimelineAnchor timelineAnchor = awaitTimelineAnchor();
-			if (this.closed || timelineAnchor == null && this.timelineAnchorSupplier != null) {
-				return;
-			}
-			boolean videoSynced = timelineAnchor != null;
-			long sourceFrameAt = videoSynced ? timelineAnchor.serverStartNanos() : System.nanoTime();
-			long nextEmitAt = Math.max(System.nanoTime(), sourceFrameAt + RECORDER_CAPTURE_LATENCY_NANOS);
-			while (!this.closed) {
-				if (this.finishRequested && sourceFrameAt >= this.finishAtNanos) {
+			try {
+				PcmTimelineAnchor timelineAnchor = awaitTimelineAnchor();
+				if (this.closed || timelineAnchor == null && this.timelineAnchorSupplier != null) {
 					return;
 				}
-				long sleepNanos = nextEmitAt - System.nanoTime();
-				if (sleepNanos > 0L) {
-					try {
-						TimeUnit.NANOSECONDS.sleep(sleepNanos);
-					} catch (InterruptedException exception) {
-						if (this.closed) {
-							Thread.currentThread().interrupt();
-							return;
+				boolean videoSynced = timelineAnchor != null;
+				long sourceFrameAt = videoSynced ? timelineAnchor.serverStartNanos() : System.nanoTime();
+				long nextEmitAt = Math.max(System.nanoTime(), sourceFrameAt + RECORDER_CAPTURE_LATENCY_NANOS);
+				while (!this.closed) {
+					if (this.finishRequested && sourceFrameAt >= this.finishAtNanos) {
+						return;
+					}
+					long sleepNanos = nextEmitAt - System.nanoTime();
+					if (sleepNanos > 0L) {
+						try {
+							TimeUnit.NANOSECONDS.sleep(sleepNanos);
+						} catch (InterruptedException exception) {
+							if (this.closed) {
+								Thread.currentThread().interrupt();
+								return;
+							}
 						}
 					}
+					if (this.closed || this.finishRequested && sourceFrameAt >= this.finishAtNanos) {
+						return;
+					}
+					short[] frame = videoSynced
+							? this.videoFrameAt(sourceFrameAt, rendererClientNanosAt(timelineAnchor, sourceFrameAt))
+							: this.frameAt(sourceFrameAt);
+					this.frameConsumer.accept(new PcmFrame(frame != null ? frame.clone() : SILENCE_FRAME.clone(), sourceFrameAt));
+					sourceFrameAt += AUDIO_FRAME_NANOS;
+					nextEmitAt += AUDIO_FRAME_NANOS;
+					if (!videoSynced && nextEmitAt < System.nanoTime() - AUDIO_FRAME_NANOS * 8L) {
+						long now = System.nanoTime();
+						sourceFrameAt = now - RECORDER_CAPTURE_LATENCY_NANOS;
+						nextEmitAt = now;
+					}
 				}
-				if (this.closed || this.finishRequested && sourceFrameAt >= this.finishAtNanos) {
-					return;
-				}
-				short[] frame = videoSynced
-						? this.videoFrameAt(sourceFrameAt, rendererClientNanosAt(timelineAnchor, sourceFrameAt))
-						: this.frameAt(sourceFrameAt);
-				this.frameConsumer.accept(new PcmFrame(frame != null ? frame.clone() : SILENCE_FRAME.clone(), sourceFrameAt));
-				sourceFrameAt += AUDIO_FRAME_NANOS;
-				nextEmitAt += AUDIO_FRAME_NANOS;
-				if (!videoSynced && nextEmitAt < System.nanoTime() - AUDIO_FRAME_NANOS * 8L) {
-					long now = System.nanoTime();
-					sourceFrameAt = now - RECORDER_CAPTURE_LATENCY_NANOS;
-					nextEmitAt = now;
-				}
+			} finally {
+				runCloseCallback();
 			}
 		}
 
@@ -690,6 +765,65 @@ public final class MicrophoneSystem {
 			if (current != null) {
 				current.interrupt();
 			}
+			runCloseCallback();
+		}
+
+		private void runCloseCallback() {
+			if (this.closeCallback == null || this.closeCallbackRan) {
+				return;
+			}
+			synchronized (this) {
+				if (this.closeCallbackRan) {
+					return;
+				}
+				this.closeCallbackRan = true;
+			}
+			this.closeCallback.run();
+		}
+	}
+
+	private static final class PlayerMicrophoneFeed {
+		private final SharedMicrophoneFeed feed = new SharedMicrophoneFeed();
+		private int references;
+		private volatile boolean closed;
+
+		private synchronized void retain() {
+			if (!this.closed) {
+				this.references++;
+			}
+		}
+
+		private synchronized boolean release() {
+			if (this.references > 0) {
+				this.references--;
+			}
+			return this.references <= 0;
+		}
+
+		private synchronized boolean closed() {
+			return this.closed;
+		}
+
+		private SharedMicrophoneFeed feed() {
+			return this.feed;
+		}
+
+		private void offerVoicePacket(UUID senderUuid, byte[] opusData, VoicechatApi voicechatApi) {
+			if (this.closed || senderUuid == null || opusData == null || opusData.length == 0 || voicechatApi == null) {
+				return;
+			}
+			this.feed.offerPacket(senderUuid, opusData, 1.0F, voicechatApi);
+		}
+
+		private void close() {
+			synchronized (this) {
+				if (this.closed) {
+					return;
+				}
+				this.closed = true;
+				this.references = 0;
+			}
+			this.feed.close();
 		}
 	}
 

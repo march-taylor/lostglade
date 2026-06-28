@@ -49,9 +49,12 @@ import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.item.component.ItemLore;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.level.storage.LevelResource;
 import xyz.nucleoid.packettweaker.PacketContext;
 
@@ -1315,9 +1318,26 @@ public final class ServerUpgradeUiSystem {
 		int total = 0;
 		Inventory inventory = player.getInventory();
 		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
-			ItemStack stack = inventory.getItem(slot);
-			if (stack.is(ModItems.BITCOIN)) {
-				total += stack.getCount();
+			total += countBitcoinsInStack(inventory.getItem(slot));
+		}
+		return total;
+	}
+
+	private static int countBitcoinsInStack(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return 0;
+		}
+		if (stack.is(ModItems.BITCOIN)) {
+			return stack.getCount();
+		}
+		ItemContainerContents contents = shulkerContents(stack);
+		if (contents == null) {
+			return 0;
+		}
+		int total = 0;
+		for (ItemStack contained : contents.nonEmptyItems()) {
+			if (contained != null && !contained.isEmpty() && contained.is(ModItems.BITCOIN)) {
+				total += contained.getCount();
 			}
 		}
 		return total;
@@ -1346,9 +1366,55 @@ public final class ServerUpgradeUiSystem {
 			}
 			remaining -= remove;
 		}
+		for (int slot = 0; slot < inventory.getContainerSize() && remaining > 0; slot++) {
+			remaining -= consumeBitcoinsFromShulker(inventory.getItem(slot), remaining);
+		}
 
 		inventory.setChanged();
 		return remaining <= 0;
+	}
+
+	private static int consumeBitcoinsFromShulker(ItemStack stack, int amount) {
+		if (amount <= 0 || stack == null || stack.isEmpty()) {
+			return 0;
+		}
+		ItemContainerContents contents = shulkerContents(stack);
+		if (contents == null) {
+			return 0;
+		}
+		List<ItemStack> items = contents.stream().toList();
+		if (items.isEmpty()) {
+			return 0;
+		}
+		List<ItemStack> updatedItems = new ArrayList<>(items.size());
+		for (ItemStack item : items) {
+			updatedItems.add(item == null ? ItemStack.EMPTY : item.copy());
+		}
+		int removed = 0;
+		for (int index = 0; index < updatedItems.size() && removed < amount; index++) {
+			ItemStack contained = updatedItems.get(index);
+			if (contained == null || contained.isEmpty() || !contained.is(ModItems.BITCOIN)) {
+				continue;
+			}
+			int remove = Math.min(amount - removed, contained.getCount());
+			contained.shrink(remove);
+			if (contained.isEmpty()) {
+				updatedItems.set(index, ItemStack.EMPTY);
+			}
+			removed += remove;
+		}
+		if (removed > 0) {
+			stack.set(DataComponents.CONTAINER, ItemContainerContents.fromItems(updatedItems));
+		}
+		return removed;
+	}
+
+	private static ItemContainerContents shulkerContents(ItemStack stack) {
+		if (stack == null || stack.isEmpty() || !(stack.getItem() instanceof BlockItem blockItem) || !(blockItem.getBlock() instanceof ShulkerBoxBlock)) {
+			return null;
+		}
+		ItemContainerContents contents = stack.get(DataComponents.CONTAINER);
+		return contents != null && contents != ItemContainerContents.EMPTY ? contents : null;
 	}
 
 	private static boolean isWithinButtonHitbox(

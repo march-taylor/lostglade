@@ -2523,7 +2523,7 @@ public final class MonitorScreenSystem {
 		}
 		return new PersistedPlayerBackgroundState(
 				url,
-				parsePersistedScaleMode(mediaTag.getStringOr(PERSISTED_PLAYER_BACKGROUND_SCALE_TAG, MediaScaleMode.FIT.name()))
+				parsePersistedScaleMode(mediaTag.getStringOr(PERSISTED_PLAYER_BACKGROUND_SCALE_TAG, MediaScaleMode.FILL.name()))
 		);
 	}
 
@@ -2898,7 +2898,7 @@ public final class MonitorScreenSystem {
 				isPlaybackPausedLocked(state),
 				state.overlayMode,
 				state.scaleMode,
-				state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FIT,
+				state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FILL,
 				playerBackgroundMode,
 				galleryBackgroundAvailable,
 				state.statusText,
@@ -4739,14 +4739,16 @@ public final class MonitorScreenSystem {
 				UiRect rowRect = offsetRect(mediaQueueRowRect(layout, visibleIndex), 0, rowOffset);
 				UiRect removeRect = mediaQueueRemoveRect(rowRect, layout);
 				UiRect cacheStatusRect = mediaQueueCacheStatusRect(rowRect, removeRect, layout);
-				UiRect titleRect = mediaQueueTitleRect(rowRect, cacheStatusRect, layout);
-				UiRect metaRect = mediaQueueMetaRect(rowRect, cacheStatusRect, layout);
+				UiRect previewRect = mediaQueueThumbnailRect(rowRect, item.previewFrame(), item.squarePreviewFallback(), layout);
+				UiRect titleRect = mediaQueueTitleRect(rowRect, cacheStatusRect, previewRect, layout);
+				UiRect metaRect = mediaQueueMetaRect(rowRect, cacheStatusRect, previewRect, layout);
 				String secondaryLine = queueItemSecondaryLabel(item);
 				Color fill = item.current() ? new Color(248, 246, 246, 238) : new Color(255, 255, 255, 8);
 				Color primaryText = item.current() ? new Color(24, 20, 24, 244) : new Color(248, 240, 244, 236);
 				Color secondaryText = item.current() ? new Color(64, 56, 62, 220) : new Color(244, 232, 236, 164);
 				int rowArc = clampInt(layout.unit() * 2, 12, 18);
 				fillRoundedRect(graphics, rowRect, rowArc, fill);
+				drawQueueThumbnail(graphics, previewRect, item.previewFrame(), item.squarePreviewFallback(), item.current(), layout);
 				drawWrappedText(
 						graphics,
 						item.title(),
@@ -4927,6 +4929,21 @@ public final class MonitorScreenSystem {
 		);
 	}
 
+	static void drawQueueThumbnail(Graphics2D graphics, UiRect rect, BufferedImage preview, boolean squareFallback, boolean current, UiLayout layout) {
+		if (graphics == null || rect == null || layout == null || rect.width() <= 0 || rect.height() <= 0) {
+			return;
+		}
+		int arc = clampInt(Math.min(rect.width(), rect.height()) / 4, 5, 8);
+		Color fill = current ? new Color(26, 22, 28, 36) : new Color(255, 255, 255, 14);
+		fillRoundedRect(graphics, rect, arc, fill);
+		if (preview != null) {
+			drawRoundedScaledImage(graphics, preview, rect, MediaScaleMode.FILL, arc);
+			return;
+		}
+		PlayerUiIcon icon = squareFallback ? PlayerUiIcon.FILE_MUSIC : PlayerUiIcon.MEDIA_VIDEO;
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), icon, current ? new Color(32, 26, 32, 150) : new Color(248, 251, 255, 122));
+	}
+
 	static void drawGalleryFileMenuActionButton(
 			Graphics2D graphics,
 			UiLayout layout,
@@ -5069,7 +5086,7 @@ public final class MonitorScreenSystem {
 		if (!playerBackgroundModeHasScaleButton(window.playerBackgroundMode())) {
 			return;
 		}
-		MediaScaleMode current = window.playerBackgroundScaleMode() != null ? window.playerBackgroundScaleMode() : MediaScaleMode.FIT;
+		MediaScaleMode current = window.playerBackgroundScaleMode() != null ? window.playerBackgroundScaleMode() : MediaScaleMode.FILL;
 		UiRect rect = playerBackgroundScaleButtonRect(layout, window.playerBackgroundMode());
 		float strokeWidth = mediaChromeStrokeWidth(rect);
 		fillRoundedRect(graphics, rect, clampInt(layout.unit() + 1, 10, 16), new Color(22, 20, 24, 40));
@@ -5466,7 +5483,7 @@ public final class MonitorScreenSystem {
 		}
 		if (waitingForLink) {
 			if (galleryBackgroundSelected && galleryBackgroundAvailable && playerBackgroundFrame != null) {
-				drawCleanPlayerBackground(graphics, canvasRect, playerBackgroundFrame, state != null ? state.playerBackgroundScaleMode() : MediaScaleMode.FIT);
+				drawCleanPlayerBackground(graphics, canvasRect, playerBackgroundFrame, state != null ? state.playerBackgroundScaleMode() : MediaScaleMode.FILL);
 				return;
 			}
 			clearRectToTransparent(graphics, canvasRect);
@@ -5478,7 +5495,7 @@ public final class MonitorScreenSystem {
 				return;
 			}
 			if (galleryBackgroundSelected && galleryBackgroundAvailable && playerBackgroundFrame != null) {
-				drawCleanPlayerBackground(graphics, canvasRect, playerBackgroundFrame, state != null ? state.playerBackgroundScaleMode() : MediaScaleMode.FIT);
+				drawCleanPlayerBackground(graphics, canvasRect, playerBackgroundFrame, state != null ? state.playerBackgroundScaleMode() : MediaScaleMode.FILL);
 				return;
 			}
 			clearRectToTransparent(graphics, canvasRect);
@@ -5489,7 +5506,7 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		if (galleryBackgroundSelected && galleryBackgroundAvailable && playerBackgroundFrame != null) {
-			drawCleanPlayerBackground(graphics, canvasRect, playerBackgroundFrame, state != null ? state.playerBackgroundScaleMode() : MediaScaleMode.FIT);
+			drawCleanPlayerBackground(graphics, canvasRect, playerBackgroundFrame, state != null ? state.playerBackgroundScaleMode() : MediaScaleMode.FILL);
 			return;
 		}
 		if (darkPlayerSurface || playerBackgroundMode == PlayerBackgroundMode.BLACK) {
@@ -7340,9 +7357,49 @@ public final class MonitorScreenSystem {
 		return new UiRect(removeRect.x() - gap - size, removeRect.y(), size, size);
 	}
 
-	static UiRect mediaQueueTitleRect(UiRect rowRect, UiRect rightControlRect, UiLayout layout) {
+	static UiRect mediaQueueThumbnailRect(UiRect rowRect, BufferedImage preview, boolean squareFallback, UiLayout layout) {
+		if (rowRect == null || layout == null || rowRect.width() <= 0 || rowRect.height() <= 0) {
+			return new UiRect(0, 0, 0, 0);
+		}
 		int leftInset = clampInt(layout.unit(), 8, 14);
-		int x = rowRect.x() + leftInset;
+		int verticalInset = clampInt(layout.unit() / 2, 4, 8);
+		int maxHeight = Math.max(12, rowRect.height() - verticalInset * 2);
+		double aspect = queueThumbnailAspect(preview, squareFallback);
+		int availableWidth = Math.max(0, rowRect.width() - leftInset * 2);
+		if (availableWidth < 8) {
+			return new UiRect(0, 0, 0, 0);
+		}
+		int maxWidth = Math.min(Math.max(12, rowRect.width() / 3), availableWidth);
+		int width = Math.max(12, (int) Math.round(maxHeight * aspect));
+		int height = maxHeight;
+		if (width > maxWidth) {
+			width = maxWidth;
+			height = Math.max(12, (int) Math.round(width / aspect));
+		}
+		return new UiRect(
+				rowRect.x() + leftInset,
+				rowRect.y() + (rowRect.height() - height) / 2,
+				width,
+				height
+		);
+	}
+
+	static double queueThumbnailAspect(BufferedImage preview, boolean squareFallback) {
+		if (preview != null && preview.getWidth() > 0 && preview.getHeight() > 0) {
+			return clampDouble(preview.getWidth() / (double) preview.getHeight(), 0.75D, 2.2D);
+		}
+		return squareFallback ? 1.0D : 16.0D / 9.0D;
+	}
+
+	static UiRect mediaQueueTitleRect(UiRect rowRect, UiRect rightControlRect, UiLayout layout) {
+		return mediaQueueTitleRect(rowRect, rightControlRect, null, layout);
+	}
+
+	static UiRect mediaQueueTitleRect(UiRect rowRect, UiRect rightControlRect, UiRect previewRect, UiLayout layout) {
+		int leftInset = clampInt(layout.unit(), 8, 14);
+		int x = previewRect != null && previewRect.width() > 0
+				? previewRect.right() + clampInt(layout.unit() / 2, 4, 8)
+				: rowRect.x() + leftInset;
 		int width = Math.max(18, rightControlRect.x() - x - clampInt(layout.unit(), 8, 12));
 		return new UiRect(
 				x,
@@ -7353,8 +7410,14 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect mediaQueueMetaRect(UiRect rowRect, UiRect rightControlRect, UiLayout layout) {
+		return mediaQueueMetaRect(rowRect, rightControlRect, null, layout);
+	}
+
+	static UiRect mediaQueueMetaRect(UiRect rowRect, UiRect rightControlRect, UiRect previewRect, UiLayout layout) {
 		int leftInset = clampInt(layout.unit(), 8, 14);
-		int x = rowRect.x() + leftInset;
+		int x = previewRect != null && previewRect.width() > 0
+				? previewRect.right() + clampInt(layout.unit() / 2, 4, 8)
+				: rowRect.x() + leftInset;
 		int width = Math.max(18, rightControlRect.x() - x - clampInt(layout.unit(), 8, 12));
 		int y = rowRect.y() + rowRect.height() / 2;
 		return new UiRect(
@@ -8393,11 +8456,19 @@ public final class MonitorScreenSystem {
 					cacheComplete = status.complete();
 				}
 			}
+			BufferedImage preview = null;
+			if (url != null && !url.isBlank()) {
+				preview = youtubeMusicQueue
+						? MonitorYoutubeMusicCache.queueEntryPreview(url)
+						: MonitorYoutubeRelayClient.queueEntryPreview(url);
+			}
 			items.add(new YoutubeQueueItemSnapshot(
 					index,
 					item != null ? item.title() : "YouTube",
 					item != null ? item.subtitle() : "",
 					item != null ? item.durationMs() : 0L,
+					preview,
+					youtubeMusicQueue,
 					index == state.youtubeQueueIndex,
 					cacheFraction,
 					cacheActive,
@@ -8419,6 +8490,8 @@ public final class MonitorScreenSystem {
 					item != null ? item.title() : "Gallery",
 					item != null ? item.subtitle() : "",
 					0L,
+					null,
+					false,
 					index == state.galleryIndex,
 					0.0F,
 					false,
@@ -8665,7 +8738,7 @@ public final class MonitorScreenSystem {
 				false,
 				backgroundMode != null ? backgroundMode : PlayerBackgroundMode.BLACK,
 				galleryBackgroundAvailable,
-				selectedBackgroundScaleMode != null ? selectedBackgroundScaleMode : MediaScaleMode.FIT
+				selectedBackgroundScaleMode != null ? selectedBackgroundScaleMode : MediaScaleMode.FILL
 		);
 	}
 
@@ -9210,7 +9283,7 @@ public final class MonitorScreenSystem {
 		}
 		state.playerBackgroundMedia = null;
 		state.playerBackgroundUrl = null;
-		state.playerBackgroundScaleMode = MediaScaleMode.FIT;
+		state.playerBackgroundScaleMode = MediaScaleMode.FILL;
 		state.playerBackgroundFrameIndex = 0;
 		state.nextPlayerBackgroundFrameAtMillis = 0L;
 		state.playerBackgroundLoading = false;
@@ -9590,7 +9663,7 @@ public final class MonitorScreenSystem {
 		}
 		return new PersistedPlayerBackgroundState(
 				state.playerBackgroundUrl,
-				state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FIT
+				state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FILL
 		);
 	}
 
@@ -9637,7 +9710,7 @@ public final class MonitorScreenSystem {
 		}
 		return switch (backgroundMode != null ? backgroundMode : resolvedPlayerBackgroundModeLocked(state)) {
 			case ARTWORK -> state.scaleMode != null ? state.scaleMode : MediaScaleMode.FIT;
-			case GALLERY -> state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FIT;
+			case GALLERY -> state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FILL;
 			case BLACK, EMPTY -> MediaScaleMode.FIT;
 		};
 	}

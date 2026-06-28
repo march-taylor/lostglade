@@ -40,6 +40,9 @@ public final class MonitorMediaStateMachineTest {
 		youtubeMusicDirectThumbnailCandidatesCoverReportedTracks();
 		youtubeMusicFallbackMetadataForcesCoverRefresh();
 		youtubeMusicQuickLoadAttemptsRealCoverBeforeFallbackPlayback();
+		youtubeQueuesExposeCachedPreviewsToRows();
+		maxCallParticipantAccentUsesStableAvatarFrame();
+		maxFileShareSendButtonDoesNotOverlapCloseButton();
 		persistedMediaTagCopyKeepsWallpaperState();
 		hydratedBackgroundsRetryMissingDecodedMedia();
 		powerOffResetKeepsDecodedBackgroundMedia();
@@ -496,6 +499,64 @@ public final class MonitorMediaStateMachineTest {
 			);
 		} catch (IOException exception) {
 			throw new AssertionError("Failed to inspect YouTube Music quick-load cover path", exception);
+		}
+	}
+
+	private static void youtubeQueuesExposeCachedPreviewsToRows() {
+		BufferedImage square = new BufferedImage(32, 32, BufferedImage.TYPE_INT_ARGB);
+		BufferedImage wide = new BufferedImage(160, 90, BufferedImage.TYPE_INT_ARGB);
+		require(Math.abs(MonitorScreenSystem.queueThumbnailAspect(square, false) - 1.0D) < 0.001D, "square queue covers must stay square");
+		require(Math.abs(MonitorScreenSystem.queueThumbnailAspect(wide, false) - (16.0D / 9.0D)) < 0.001D, "wide queue previews must keep the video aspect ratio");
+		require(Math.abs(MonitorScreenSystem.queueThumbnailAspect(null, true) - 1.0D) < 0.001D, "YouTube Music placeholder covers must be square");
+		require(Math.abs(MonitorScreenSystem.queueThumbnailAspect(null, false) - (16.0D / 9.0D)) < 0.001D, "YouTube video placeholder covers must be wide");
+		try {
+			String source = Files.readString(Path.of("").toAbsolutePath().resolve("src/main/java/com/lostglade/server/MonitorScreenSystem.java"));
+			require(
+					source.contains("MonitorYoutubeMusicCache.queueEntryPreview(url)")
+							&& source.contains("MonitorYoutubeRelayClient.queueEntryPreview(url)")
+							&& source.contains("drawQueueThumbnail(graphics, previewRect, item.previewFrame(), item.squarePreviewFallback(), item.current(), layout)")
+							&& source.contains("mediaQueueTitleRect(rowRect, cacheStatusRect, previewRect, layout)")
+							&& source.contains("mediaQueueMetaRect(rowRect, cacheStatusRect, previewRect, layout)"),
+					"YouTube queue rows must draw cached music/video previews to the left of their text"
+			);
+		} catch (IOException exception) {
+			throw new AssertionError("Failed to inspect YouTube queue preview rendering", exception);
+		}
+	}
+
+	private static void maxCallParticipantAccentUsesStableAvatarFrame() {
+		try {
+			String source = Files.readString(Path.of("").toAbsolutePath().resolve("src/main/java/com/lostglade/server/MonitorMaxRuntime.java"));
+			int helperIndex = source.indexOf("private static Color stableAvatarAccentLocked");
+			int helperEnd = helperIndex >= 0 ? source.indexOf("private static int currentAvatarFrameIndexLocked", helperIndex) : -1;
+			String helper = helperIndex >= 0 && helperEnd > helperIndex ? source.substring(helperIndex, helperEnd) : "";
+			require(
+					source.contains("accent = stableAvatarAccentLocked(participantState, code);")
+							&& source.contains("participant.accentColor()")
+							&& helper.contains("state.avatarFrame")
+							&& !helper.contains("currentAvatarFrameLocked"),
+					"MAX participant background color must be sampled from the stable base avatar frame, not the current animated frame"
+			);
+		} catch (IOException exception) {
+			throw new AssertionError("Failed to inspect MAX participant accent pipeline", exception);
+		}
+	}
+
+	private static void maxFileShareSendButtonDoesNotOverlapCloseButton() {
+		try {
+			String source = Files.readString(Path.of("").toAbsolutePath().resolve("src/main/java/com/lostglade/server/MonitorMaxRuntime.java"));
+			int sendIndex = source.indexOf("private static UiRect maxFileShareSendRect");
+			int titleIndex = source.indexOf("private static UiRect maxFileShareTitleRect");
+			String sendMethod = sendIndex >= 0 && titleIndex > sendIndex ? source.substring(sendIndex, titleIndex) : "";
+			require(
+					sendMethod.contains("UiRect close = maxOverlayCloseRect(layout);")
+							&& sendMethod.contains("close.x() - close.width() - gap")
+							&& source.contains("drawVerticalText(graphics, title, maxFileShareTitleRect(layout)")
+							&& !sendMethod.contains("panel.right() - size"),
+					"MAX file share send button must sit beside the close button instead of reusing the close button position"
+			);
+		} catch (IOException exception) {
+			throw new AssertionError("Failed to inspect MAX file share button layout", exception);
 		}
 	}
 

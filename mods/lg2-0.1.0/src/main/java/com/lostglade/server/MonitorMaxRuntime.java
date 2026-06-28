@@ -1519,6 +1519,7 @@ final class MonitorMaxRuntime {
 			String code = call.participantCode(participantKey);
 			String displayName = defaultAccountName(code);
 			BufferedImage avatar = null;
+			Color accent = participantAccent(code, null);
 			boolean avatarAnimated = false;
 			BufferedImage video = null;
 			boolean cameraEnabled = false;
@@ -1528,6 +1529,7 @@ final class MonitorMaxRuntime {
 					code = participantState.accountCode == null || participantState.accountCode.isBlank() ? code : participantState.accountCode;
 					displayName = participantState.accountName == null || participantState.accountName.isBlank() ? defaultAccountName(code) : participantState.accountName;
 					avatar = currentAvatarFrameLocked(participantState);
+					accent = stableAvatarAccentLocked(participantState, code);
 					avatarAnimated = avatarAnimatedLocked(participantState);
 					cameraEnabled = participantState.cameraEnabled;
 					microphoneEnabled = participantState.microphoneEnabled;
@@ -1542,6 +1544,7 @@ final class MonitorMaxRuntime {
 					code,
 					displayName,
 					avatar,
+					accent,
 					avatarAnimated,
 					video,
 					self,
@@ -3482,6 +3485,13 @@ final class MonitorMaxRuntime {
 		return avatarFrame(media, currentAvatarFrameIndexLocked(state, System.currentTimeMillis()), state.avatarFrame);
 	}
 
+	private static Color stableAvatarAccentLocked(MaxRuntimeState state, String fallbackCode) {
+		String code = state != null && state.accountCode != null && !state.accountCode.isBlank()
+				? state.accountCode
+				: fallbackCode;
+		return participantAccent(code, state != null ? state.avatarFrame : null);
+	}
+
 	private static int currentAvatarFrameIndexLocked(MaxRuntimeState state, long nowMillis) {
 		MonitorMediaApp.LoadedMedia media = state != null ? state.avatarMedia : null;
 		if (media == null || media.frameCount() <= 1) {
@@ -4381,6 +4391,7 @@ final class MonitorMaxRuntime {
 				state.accountCode(),
 				state.accountName(),
 				state.avatarFrame(),
+				null,
 				state.animatedAvatars(),
 				call.localPreviewFrame(),
 				true,
@@ -4393,6 +4404,7 @@ final class MonitorMaxRuntime {
 					call.peerCode(),
 					call.peerDisplayName(),
 					call.peerAvatarFrame(),
+					null,
 					call.peerAvatarAnimated(),
 					call.remoteFrame(),
 					false,
@@ -4425,7 +4437,7 @@ final class MonitorMaxRuntime {
 				return participant;
 			}
 		}
-		return new MaxCallParticipantSnapshot(state.accountCode(), state.accountName(), state.avatarFrame(), state.animatedAvatars(), call.localPreviewFrame(), true, call.cameraEnabled(), call.microphoneEnabled(), false);
+		return new MaxCallParticipantSnapshot(state.accountCode(), state.accountName(), state.avatarFrame(), null, state.animatedAvatars(), call.localPreviewFrame(), true, call.cameraEnabled(), call.microphoneEnabled(), false);
 	}
 
 	private static boolean sameMaxParticipant(MaxCallParticipantSnapshot left, MaxCallParticipantSnapshot right) {
@@ -4452,6 +4464,7 @@ final class MonitorMaxRuntime {
 				rect,
 				participant.displayName(),
 				participant.avatarFrame(),
+				participant.accentColor(),
 				participant.videoFrame(),
 				focused,
 				participant.cameraEnabled(),
@@ -4466,6 +4479,7 @@ final class MonitorMaxRuntime {
 			UiRect rect,
 			String code,
 			BufferedImage avatar,
+			Color accent,
 			BufferedImage video,
 			boolean focused,
 			boolean cameraEnabled,
@@ -4482,8 +4496,8 @@ final class MonitorMaxRuntime {
 		if (cameraEnabled && video != null) {
 			drawScaledImage(graphics, video, rect, scaleMode);
 		} else {
-			Color accent = participantAccent(code, avatar);
-			graphics.setColor(accent);
+			Color accentColor = accent != null ? accent : participantAccent(code, avatar);
+			graphics.setColor(accentColor);
 			graphics.fillRect(rect.x(), rect.y(), rect.width(), rect.height());
 			int maxAvatar = Math.max(12, Math.min(rect.width(), rect.height()) - 6);
 			int avatarSize = clampInt(Math.min(rect.width(), rect.height()) / (focused ? 4 : 3), Math.min(18, maxAvatar), Math.min(focused ? 116 : 72, maxAvatar));
@@ -4964,7 +4978,7 @@ final class MonitorMaxRuntime {
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
 		drawOverlayCloseButton(graphics, maxOverlayCloseRect(layout), layout);
 		String title = state.fileShareFileCount() <= 1 ? "ОТПРАВИТЬ ФАЙЛ" : "ОТПРАВИТЬ ФАЙЛЫ";
-		drawVerticalText(graphics, title, maxAvatarPickerTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		drawVerticalText(graphics, title, maxFileShareTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
 		UiRect send = maxFileShareSendRect(layout);
 		Color sendColor = drawMediaHeaderControlBase(graphics, send, MediaButtonSegment.SINGLE);
 		drawPlayerUiIcon(graphics, mediaChromeIconRect(send, layout), PlayerUiIcon.SEND_PLANE, sendColor);
@@ -5942,13 +5956,22 @@ final class MonitorMaxRuntime {
 	}
 
 	private static UiRect maxFileShareSendRect(UiLayout layout) {
+		UiRect close = maxOverlayCloseRect(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		return new UiRect(close.x() - close.width() - gap, close.y(), close.width(), close.height());
+	}
+
+	private static UiRect maxFileShareTitleRect(UiLayout layout) {
 		UiRect panel = maxAvatarPickerPanelRect(layout);
-		int size = clampInt(layout.unit() * 2 + 4, 24, 36);
-		return new UiRect(panel.right() - size - layout.unit(), panel.y() + layout.unit(), size, size);
+		UiRect send = maxFileShareSendRect(layout);
+		int inset = ultraCompactScreenLayout(layout)
+				? Math.max(2, layout.unit() / 3)
+				: layout.unit();
+		return new UiRect(panel.x() + inset, send.y(), Math.max(1, send.x() - panel.x() - inset * 2), send.height());
 	}
 
 	private static UiRect maxFileShareHintRect(UiLayout layout) {
-		UiRect title = maxAvatarPickerTitleRect(layout);
+		UiRect title = maxFileShareTitleRect(layout);
 		UiRect send = maxFileShareSendRect(layout);
 		return new UiRect(title.x(), title.bottom(), Math.max(1, send.x() - title.x() - layout.unit()), clampInt(layout.unit() * 2, 16, 24));
 	}

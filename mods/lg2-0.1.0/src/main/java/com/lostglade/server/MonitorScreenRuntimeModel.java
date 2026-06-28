@@ -6,6 +6,7 @@ import com.lostglade.server.progress.TaskProgress;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.saveddata.maps.MapId;
 
+import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -276,6 +277,7 @@ record MaxCallParticipantSnapshot(
 		String code,
 		String displayName,
 		BufferedImage avatarFrame,
+		Color accentColor,
 		boolean avatarAnimated,
 		BufferedImage videoFrame,
 		boolean self,
@@ -367,6 +369,8 @@ record YoutubeQueueItemSnapshot(
 		String title,
 		String subtitle,
 		long durationMs,
+		BufferedImage previewFrame,
+		boolean squarePreviewFallback,
 		boolean current,
 		float cacheFraction,
 		boolean cacheActive,
@@ -826,7 +830,7 @@ final class MediaRuntimeState {
 		this.wallpaperLoading = false;
 		this.playerBackgroundMedia = null;
 		this.playerBackgroundUrl = null;
-		this.playerBackgroundScaleMode = MediaScaleMode.FIT;
+		this.playerBackgroundScaleMode = MediaScaleMode.FILL;
 		this.playerBackgroundFrameIndex = 0;
 		this.playerBackgroundLoading = false;
 		this.galleryPendingOpenUrl = null;

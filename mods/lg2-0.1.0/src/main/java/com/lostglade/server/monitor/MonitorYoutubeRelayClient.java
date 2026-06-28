@@ -139,7 +139,7 @@ public final class MonitorYoutubeRelayClient {
 				sourceId == null || sourceId.isBlank() ? videoInput.trim() : sourceId.trim(),
 				title == null || title.isBlank() ? "Video" : title.trim(),
 				videoInput.trim(),
-				audioInput == null || audioInput.isBlank() ? videoInput.trim() : audioInput.trim(),
+				audioInput == null ? "" : audioInput.trim(),
 				Math.max(0L, durationMs),
 				staticFrame,
 				Math.max(FRAME_WIDTH, preferredFrameWidth)

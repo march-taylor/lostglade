@@ -482,7 +482,7 @@ final class MonitorScreenMediaActions {
 				return;
 			}
 			state.playerBackgroundUrl = item.url();
-			state.playerBackgroundScaleMode = state.scaleMode != null ? state.scaleMode : MediaScaleMode.FIT;
+			state.playerBackgroundScaleMode = state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FILL;
 			state.playerBackgroundFrameIndex = 0;
 			state.playerBackgroundHydrated = true;
 			if (item.media() != null) {
