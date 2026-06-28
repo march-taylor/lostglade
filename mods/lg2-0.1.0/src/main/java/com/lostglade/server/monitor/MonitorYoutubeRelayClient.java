@@ -161,6 +161,17 @@ public final class MonitorYoutubeRelayClient {
 		return session.snapshotWithPrefetch(knownFrameSequence);
 	}
 
+	public static void updateStaticFrame(String sessionId, String sourceId, BufferedImage staticFrame) {
+		if (sessionId == null || sessionId.isBlank() || staticFrame == null) {
+			return;
+		}
+		RelaySession session = SESSIONS.get(sessionId);
+		if (session == null) {
+			return;
+		}
+		session.updateStaticFrame(sourceId, staticFrame);
+	}
+
 	public static void pause(String sessionId) throws IOException {
 		requireSession(sessionId).pause();
 	}
@@ -1842,6 +1853,24 @@ public final class MonitorYoutubeRelayClient {
 			SessionSnapshot snapshot = snapshot(knownFrameSequence);
 			ensurePrefetchStarted();
 			return snapshot;
+		}
+
+		private void updateStaticFrame(String sourceId, BufferedImage staticFrame) {
+			if (staticFrame == null) {
+				return;
+			}
+			synchronized (this.lock) {
+				if (!this.staticVisual || closedOrUnloadedLocked()) {
+					return;
+				}
+				if (sourceId != null && !sourceId.isBlank() && !Objects.equals(this.sourceUrl, sourceId)) {
+					return;
+				}
+				this.latestFrame = staticFrame;
+				this.latestFrameBucketMs = 0L;
+				this.frameSequence++;
+				this.lastAccessAtMillis = System.currentTimeMillis();
+			}
 		}
 
 		private void pause() {

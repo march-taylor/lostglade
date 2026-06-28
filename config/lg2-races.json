@@ -4,7 +4,7 @@
       "enabled": true,
       "id": "mister_cartel_49",
       "displayName": "Мистер Картель",
-      "ownerNickname": "pines0",
+      "ownerNickname": "sdf",
       "description": "Глава всего преступного мира.",
       "attack": {
         "enabled": true,
@@ -67,7 +67,7 @@
       "enabled": true,
       "id": "copper_man",
       "displayName": "Медный Человек",
-      "ownerNickname": "pines1",
+      "ownerNickname": "sd",
       "description": "Искал медь сгорел медведь.",
       "attack": {
         "enabled": true,
@@ -171,7 +171,7 @@
       "enabled": true,
       "id": "woman",
       "displayName": "ЖЕНЩИНА!!!",
-      "ownerNickname": "pines3",
+      "ownerNickname": "march_taylor",
       "description": "Хрупкая снаружи, но опасная внутри.",
       "attack": {
         "enabled": true,
@@ -235,7 +235,7 @@
       "enabled": true,
       "id": "gennadiy_sharoyobov",
       "displayName": "Генадий Шароёбов",
-      "ownerNickname": "pines4",
+      "ownerNickname": "sd",
       "description": "Дотер придет...",
       "attack": {
         "enabled": true,
@@ -301,7 +301,7 @@
       "enabled": true,
       "id": "mark_potroshitel",
       "displayName": "Марк Потрошитель",
-      "ownerNickname": "pines5",
+      "ownerNickname": "sd",
       "description": "У всех нас есть сила в руках для того, чтобы убить, но большинство боится ее использовать.",
       "attack": {
         "enabled": true,
@@ -369,7 +369,7 @@
       "enabled": true,
       "id": "milk_oligarch",
       "displayName": "Молочный Олигарх",
-      "ownerNickname": "pines6",
+      "ownerNickname": "march_taylor",
       "description": "Никогда бизнесс не бывает белым, даже молочный.",
       "attack": {
         "enabled": true,

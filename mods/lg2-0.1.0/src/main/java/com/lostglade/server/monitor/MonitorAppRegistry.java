@@ -6,7 +6,6 @@ public final class MonitorAppRegistry {
 	private static final List<MonitorApp> APPS = List.of(
 			new MonitorMediaApp(),
 			new MonitorCameraApp(),
-			new MonitorSberDronesApp(),
 			new MonitorMaxApp(),
 			new MonitorYandexMapsApp(),
 			new MonitorYoutubeApp(),

@@ -8,7 +8,7 @@ public final class MonitorCameraApp implements MonitorApp {
 
 	@Override
 	public String title() {
-		return "MI camera";
+		return "MI Камера";
 	}
 
 	@Override
@@ -33,7 +33,7 @@ public final class MonitorCameraApp implements MonitorApp {
 
 	@Override
 	public String screenTitle() {
-		return "MI camera";
+		return "MI Камера";
 	}
 
 	@Override

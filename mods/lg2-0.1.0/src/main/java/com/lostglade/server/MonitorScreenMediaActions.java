@@ -841,6 +841,9 @@ final class MonitorScreenMediaActions {
 			return;
 		}
 		boolean changed = false;
+		String relaySessionIdToUpdate = null;
+		String relaySourceUrlToUpdate = null;
+		BufferedImage relayCoverToUpdate = null;
 		synchronized (state) {
 			int index = resolveGalleryItemIndex(state, url, state.galleryIndex);
 			if (index >= 0 && index < state.galleryItems.size()) {
@@ -869,11 +872,19 @@ final class MonitorScreenMediaActions {
 				if (state.mode == ScreenViewMode.YOUTUBE_MUSIC) {
 					state.loadingBackdropFrame = copyBufferedImage(cover);
 				}
+				if (state.relaySessionId != null && !state.relaySessionId.isBlank()) {
+					relaySessionIdToUpdate = state.relaySessionId;
+					relaySourceUrlToUpdate = state.sourceUrl;
+					relayCoverToUpdate = copyBufferedImage(cover);
+				}
 				changed = true;
 			}
 			if (changed) {
 				state.version++;
 			}
+		}
+		if (relaySessionIdToUpdate != null && relayCoverToUpdate != null) {
+			MonitorYoutubeRelayClient.updateStaticFrame(relaySessionIdToUpdate, relaySourceUrlToUpdate, relayCoverToUpdate);
 		}
 		if (changed) {
 			requestRuntimeRender(server, key);
