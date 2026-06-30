@@ -4,7 +4,7 @@
       "enabled": true,
       "id": "mister_cartel_49",
       "displayName": "Мистер Картель",
-      "ownerNickname": "pines0",
+      "ownerNickname": "sdf",
       "description": "Глава всего преступного мира.",
       "attack": {
         "enabled": true,
@@ -235,7 +235,7 @@
       "enabled": true,
       "id": "gennadiy_sharoyobov",
       "displayName": "Генадий Шароёбов",
-      "ownerNickname": "",
+      "ownerNickname": "sd",
       "description": "Дотер придет...",
       "attack": {
         "enabled": true,
@@ -301,7 +301,7 @@
       "enabled": true,
       "id": "mark_potroshitel",
       "displayName": "Марк Потрошитель",
-      "ownerNickname": "pines5",
+      "ownerNickname": "sd",
       "description": "У всех нас есть сила в руках для того, чтобы убить, но большинство боится ее использовать.",
       "attack": {
         "enabled": true,

@@ -227,34 +227,7 @@ final class MonitorScreenMediaSessionLifecycle {
 				}
 				clearTransientPlaybackStateLocked(state, true);
 				compactGalleryRuntimeMediaLocked(state);
-				if (persistedWallpaper != null
-						&& persistedWallpaper.url() != null
-						&& !persistedWallpaper.url().isBlank()) {
-					state.wallpaperUrl = persistedWallpaper.url();
-					state.wallpaperScaleMode = persistedWallpaper.scaleMode() != null ? persistedWallpaper.scaleMode() : MediaScaleMode.FIT;
-					state.wallpaperBackgroundMode = safeWallpaperBackgroundMode(persistedWallpaper.backgroundMode());
-					state.wallpaperMedia = null;
-					state.wallpaperFrameIndex = 0;
-					state.wallpaperLoading = false;
-					// Keep wallpaper metadata, but require a fresh media hydrate after power-on.
-					state.wallpaperHydrated = false;
-				} else {
-					clearWallpaperLocked(state);
-					state.wallpaperHydrated = true;
-				}
-				if (persistedPlayerBackground != null
-						&& persistedPlayerBackground.url() != null
-						&& !persistedPlayerBackground.url().isBlank()) {
-					state.playerBackgroundUrl = persistedPlayerBackground.url();
-					state.playerBackgroundScaleMode = persistedPlayerBackground.scaleMode() != null ? persistedPlayerBackground.scaleMode() : MediaScaleMode.FIT;
-					state.playerBackgroundMedia = null;
-					state.playerBackgroundFrameIndex = 0;
-					state.playerBackgroundLoading = false;
-					state.playerBackgroundHydrated = false;
-				} else {
-					clearPlayerBackgroundLocked(state);
-					state.playerBackgroundHydrated = true;
-				}
+				restorePersistedBackgroundStateAfterPowerOffLocked(state, persistedWallpaper, persistedPlayerBackground);
 				state.playerBackgroundMode = persistedPlayerBackgroundMode;
 				state.playerBackgroundModeHydrated = persistedPlayerBackgroundMode != null;
 				state.playerBackgroundMenuOpen = false;
@@ -281,6 +254,69 @@ final class MonitorScreenMediaSessionLifecycle {
 		releaseYoutubeRelaySession(relaySessionId);
 		clearMediaSessionBindings(server, key);
 		refreshConnectedSpeakersNow(server, key, false);
+	}
+
+	static void restorePersistedBackgroundStateAfterPowerOffLocked(
+			MediaRuntimeState state,
+			PersistedWallpaperState persistedWallpaper,
+			PersistedPlayerBackgroundState persistedPlayerBackground
+	) {
+		if (state == null) {
+			return;
+		}
+		MonitorMediaApp.LoadedMedia preservedWallpaperMedia = reusableBackgroundMediaLocked(
+				state,
+				persistedWallpaper != null ? persistedWallpaper.url() : null
+		);
+		MonitorMediaApp.LoadedMedia preservedPlayerBackgroundMedia = reusableBackgroundMediaLocked(
+				state,
+				persistedPlayerBackground != null ? persistedPlayerBackground.url() : null
+		);
+		if (persistedWallpaper != null
+				&& persistedWallpaper.url() != null
+				&& !persistedWallpaper.url().isBlank()) {
+			state.wallpaperUrl = persistedWallpaper.url();
+			state.wallpaperScaleMode = persistedWallpaper.scaleMode() != null ? persistedWallpaper.scaleMode() : MediaScaleMode.FIT;
+			state.wallpaperBackgroundMode = safeWallpaperBackgroundMode(persistedWallpaper.backgroundMode());
+			state.wallpaperMedia = preservedWallpaperMedia;
+			state.wallpaperFrameIndex = 0;
+			state.wallpaperLoading = false;
+			state.wallpaperHydrated = preservedWallpaperMedia != null;
+		} else {
+			clearWallpaperLocked(state);
+			state.wallpaperHydrated = true;
+		}
+		if (persistedPlayerBackground != null
+				&& persistedPlayerBackground.url() != null
+				&& !persistedPlayerBackground.url().isBlank()) {
+			state.playerBackgroundUrl = persistedPlayerBackground.url();
+			state.playerBackgroundScaleMode = persistedPlayerBackground.scaleMode() != null ? persistedPlayerBackground.scaleMode() : MediaScaleMode.FILL;
+			state.playerBackgroundMedia = preservedPlayerBackgroundMedia;
+			state.playerBackgroundFrameIndex = 0;
+			state.playerBackgroundLoading = false;
+			state.playerBackgroundHydrated = preservedPlayerBackgroundMedia != null;
+		} else {
+			clearPlayerBackgroundLocked(state);
+			state.playerBackgroundHydrated = true;
+		}
+	}
+
+	static MonitorMediaApp.LoadedMedia reusableBackgroundMediaLocked(MediaRuntimeState state, String url) {
+		if (state == null || url == null || url.isBlank()) {
+			return null;
+		}
+		if (Objects.equals(state.wallpaperUrl, url) && state.wallpaperMedia != null) {
+			return state.wallpaperMedia;
+		}
+		if (Objects.equals(state.playerBackgroundUrl, url) && state.playerBackgroundMedia != null) {
+			return state.playerBackgroundMedia;
+		}
+		for (GalleryItem item : state.galleryItems) {
+			if (item != null && Objects.equals(item.url(), url) && item.media() != null) {
+				return item.media();
+			}
+		}
+		return null;
 	}
 
 	static void releaseYoutubeRelaySession(String relaySessionId) {

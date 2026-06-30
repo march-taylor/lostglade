@@ -1,12 +1,23 @@
 package com.lostglade.server;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.lostglade.server.map.TextureAssetManager;
 import com.lostglade.server.monitor.MonitorApp;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.PlayerChatMessage;
+import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.decoration.ItemFrame;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.phys.Vec3;
 
 import java.awt.BasicStroke;
 import java.awt.Color;
@@ -16,9 +27,16 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.Stroke;
 import java.awt.image.BufferedImage;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -36,15 +54,125 @@ final class MonitorYandexMapsRuntime {
 	private static final long TILE_READY_RENDER_DEBOUNCE_MS = 35L;
 	private static final long DISPLAY_OVERLAY_CACHE_MS = 750L;
 	private static final int DISPLAY_OVERLAY_CAPTURE_PADDING_PX = MAP_SIZE;
+	private static final int MAP_MARKER_ICON_SIZE = 32;
+	private static final int MAP_MARKER_SCREEN_ICON_SIZE = 16;
 	private static final int STATE_CLEANUP_INTERVAL_TICKS = 40;
 	private static final Map<ScreenRuntimeKey, YandexMapState> STATES = new ConcurrentHashMap<>();
+	private static final Map<String, BufferedImage> ITEM_MARKER_ICON_CACHE = new ConcurrentHashMap<>();
+	private static final Map<UUID, PendingMarkerTitleRequest> PENDING_MARKER_TITLES = new ConcurrentHashMap<>();
+	private static final TextureAssetManager MAP_ASSETS = TextureAssetManager.get();
+	private static final BufferedImage EMPTY_MARKER_ICON = new BufferedImage(MAP_MARKER_ICON_SIZE, MAP_MARKER_ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
 
 	private MonitorYandexMapsRuntime() {
 	}
 
 	static void clearRuntime() {
 		STATES.clear();
+		PENDING_MARKER_TITLES.clear();
+		PlayerHeadRenderSystem.clearRuntime();
 		MonitorYandexMapsBlueMapRenderer.clear(null);
+	}
+
+	static void deactivateRuntime(ScreenRuntimeKey key) {
+		if (key == null) {
+			return;
+		}
+		STATES.remove(key);
+		clearPendingMarkerTitleRequests(key);
+	}
+
+	static boolean consumeMarkerTitleChatMessage(MinecraftServer server, PlayerChatMessage message, ServerPlayer sender) {
+		if (server == null || message == null || sender == null) {
+			return false;
+		}
+		PendingMarkerTitleRequest pending = PENDING_MARKER_TITLES.remove(sender.getUUID());
+		if (pending == null) {
+			return false;
+		}
+		UUID markerId = pending.markerId();
+		ScreenRuntimeKey runtimeKey = pending.screenKey();
+		YandexMapMarkerStore.YandexMapMarker marker = markerId == null ? null : YandexMapMarkerStore.marker(markerId);
+		if (runtimeKey == null || marker == null) {
+			sender.displayClientMessage(Component.empty(), true);
+			return true;
+		}
+		String nextTitle = sanitizeMarkerTitle(message.signedContent(), sender);
+		YandexMapMarkerStore.YandexMapMarker updated = YandexMapMarkerStore.updateTitle(server, markerId, nextTitle);
+		if (updated == null) {
+			sender.displayClientMessage(Component.empty(), true);
+			return true;
+		}
+		YandexMapState state = STATES.get(runtimeKey);
+		if (state != null) {
+			synchronized (state) {
+				if (Objects.equals(state.editorMarkerId, markerId)) {
+					state.version++;
+				}
+			}
+		}
+		requestRuntimeRender(server, runtimeKey);
+		sender.displayClientMessage(Component.empty(), true);
+		return true;
+	}
+
+	private static void requestMarkerTitlePrompt(ServerPlayer player, ScreenRuntimeKey key, UUID markerId) {
+		if (player == null || key == null || markerId == null) {
+			return;
+		}
+		PENDING_MEDIA_LINKS.remove(player.getUUID());
+		PENDING_GALLERY_RENAMES.remove(player.getUUID());
+		PENDING_MARKER_TITLES.put(player.getUUID(), new PendingMarkerTitleRequest(key, markerId));
+		player.displayClientMessage(Component.literal(markerTitlePromptMessage(player)), true);
+	}
+
+	private static void clearPendingMarkerTitleRequests(ScreenRuntimeKey key) {
+		if (key == null || PENDING_MARKER_TITLES.isEmpty()) {
+			return;
+		}
+		PENDING_MARKER_TITLES.entrySet().removeIf(entry -> Objects.equals(entry.getValue().screenKey(), key));
+	}
+
+	private static String markerTitlePromptMessage(ServerPlayer player) {
+		String locale = MonitorScreenMessages.locale(player);
+		if (locale.startsWith("uk")) {
+			return "Я.Карти: напиши назву мітки в чат";
+		}
+		if (locale.startsWith("ja")) {
+			return "ヤンデックス地図: マーカー名をチャットに入力して";
+		}
+		if (locale.startsWith("ru")) {
+			return "Я.Карты: напиши название метки в чат";
+		}
+		return "Yandex Maps: type the marker title in chat";
+	}
+
+	private static String defaultMarkerTitle(ServerPlayer player) {
+		String locale = MonitorScreenMessages.locale(player);
+		if (locale.startsWith("uk")) {
+			return "Нова мітка";
+		}
+		if (locale.startsWith("ja")) {
+			return "新しいマーカー";
+		}
+		if (locale.startsWith("ru")) {
+			return "Новая метка";
+		}
+		return "New marker";
+	}
+
+	private static String sanitizeMarkerTitle(String rawTitle, ServerPlayer player) {
+		if (rawTitle == null) {
+			return defaultMarkerTitle(player);
+		}
+		String normalized = rawTitle.trim().replaceAll("\\s+", " ");
+		if (normalized.isEmpty()) {
+			return defaultMarkerTitle(player);
+		}
+		if (normalized.length() <= 64) {
+			return normalized;
+		}
+		String truncated = normalized.substring(0, 64).trim();
+		return truncated.isEmpty() ? defaultMarkerTitle(player) : truncated;
 	}
 
 	static YandexMapsVisualSnapshot captureSnapshot(MinecraftServer server, ScreenComponent component) {
@@ -199,9 +327,11 @@ final class MonitorYandexMapsRuntime {
 					: "BlueMap renderer недоступен";
 			drawCenteredText(graphics, statusText, canvas, new Color(230, 238, 244), Font.BOLD, Math.max(12, Math.min(canvas.width(), canvas.height()) / 12));
 		}
+		drawMarkers(graphics, layout, effectiveSnapshot, runtimeKey, server);
 		drawMapHeader(graphics, layout, app, effectiveSnapshot);
 		drawZoomControls(graphics, layout);
 		drawCenterReticle(graphics, layout);
+		drawMarkerEditor(graphics, layout, runtimeKey, server);
 	}
 
 	static boolean handleTouch(ServerPlayer player, ServerLevel level, ScreenComponent component, UiLayout layout, UiPoint touchPoint) {
@@ -213,10 +343,14 @@ final class MonitorYandexMapsRuntime {
 			return false;
 		}
 		if (mediaCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			deactivateRuntime(component.runtimeKey());
 			applyTransientComponentViewState(server, level, component, ScreenViewMode.HOME, component.launcherPage());
 			return true;
 		}
 		YandexMapState state = STATES.computeIfAbsent(component.runtimeKey(), ignored -> new YandexMapState());
+		if (handleMarkerEditorTouch(player, server, component, layout, touchPoint, state)) {
+			return true;
+		}
 		if (yandexZoomInRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 			synchronized (state) {
 				initializeStateLocked(state, component);
@@ -254,6 +388,38 @@ final class MonitorYandexMapsRuntime {
 			schedulePanAnimationFrame(server, component.runtimeKey());
 			return true;
 		}
+		if (yandexAddMarkerRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			synchronized (state) {
+				initializeStateLocked(state, component);
+				state.editorMarkerId = createMarkerAtCenter(level, player, state);
+				state.version++;
+			}
+			clearPendingMarkerTitleRequests(component.runtimeKey());
+			requestRuntimeRender(server, component.runtimeKey());
+			return true;
+		}
+		ProjectedMarker tappedMarker;
+		synchronized (state) {
+			initializeStateLocked(state, component);
+			tappedMarker = markerAtTouch(
+					component.runtimeKey().dimension(),
+					layout,
+					state.centerX,
+					state.centerZ,
+					state.blocksPerPixel,
+					state.editorMarkerId,
+					touchPoint
+			);
+		}
+		if (tappedMarker != null) {
+			synchronized (state) {
+				state.editorMarkerId = tappedMarker.markerId();
+				state.version++;
+			}
+			clearPendingMarkerTitleRequests(component.runtimeKey());
+			requestRuntimeRender(server, component.runtimeKey());
+			return true;
+		}
 		UiRect canvas = mediaCanvasRect(layout);
 		if (canvas.contains(touchPoint.x(), touchPoint.y())) {
 			synchronized (state) {
@@ -275,13 +441,14 @@ final class MonitorYandexMapsRuntime {
 		if (server == null || STATES.isEmpty()) {
 			return;
 		}
+		refreshObservedMarkerHovers(server);
 		if (Math.floorMod(server.getTickCount(), STATE_CLEANUP_INTERVAL_TICKS) != 0) {
 			return;
 		}
 		for (ScreenRuntimeKey key : List.copyOf(STATES.keySet())) {
 			ScreenComponent component = resolveScreenComponent(server, key);
 			if (component == null || component.viewMode() != ScreenViewMode.YANDEX_MAPS || !component.powered()) {
-				STATES.remove(key);
+				deactivateRuntime(key);
 			}
 		}
 	}
@@ -309,6 +476,120 @@ final class MonitorYandexMapsRuntime {
 		}
 		requestRuntimeRender(server, component.runtimeKey());
 		return true;
+	}
+
+	private static void refreshObservedMarkerHovers(MinecraftServer server) {
+		Map<ScreenRuntimeKey, Set<UUID>> nextObservedByScreen = new HashMap<>();
+		Map<ScreenRuntimeKey, List<ProjectedMarker>> projectedByScreen = new HashMap<>();
+		Map<ScreenRuntimeKey, MarkerProjectionState> projectionStateByScreen = new HashMap<>();
+		for (ScreenRuntimeKey key : List.copyOf(STATES.keySet())) {
+			ScreenComponent component = resolveScreenComponent(server, key);
+			YandexMapState state = STATES.get(key);
+			if (component == null || state == null || component.viewMode() != ScreenViewMode.YANDEX_MAPS || !component.powered()) {
+				continue;
+			}
+			nextObservedByScreen.put(key, new HashSet<>());
+		}
+		if (nextObservedByScreen.isEmpty()) {
+			return;
+		}
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			ObservedYandexMapUiTarget target = findObservedYandexMapUiTarget(player);
+			if (target == null || target.component() == null || target.touchPoint() == null) {
+				continue;
+			}
+			ScreenRuntimeKey key = target.component().runtimeKey();
+			Set<UUID> observed = nextObservedByScreen.get(key);
+			YandexMapState state = STATES.get(key);
+			if (observed == null || state == null) {
+				continue;
+			}
+			MarkerProjectionState projectionState = projectionStateByScreen.computeIfAbsent(
+					key,
+					ignored -> captureProjectionState(state, target.component())
+			);
+			List<ProjectedMarker> projected = projectedByScreen.computeIfAbsent(
+					key,
+					ignored -> projectVisibleMarkers(
+							key.dimension(),
+							target.layout(),
+							projectionState.centerX(),
+							projectionState.centerZ(),
+							projectionState.zoomBlocks()
+					)
+			);
+			ProjectedMarker marker = markerAtTouch(projected, target.layout(), projectionState.editorMarkerId(), target.touchPoint());
+			if (marker != null && marker.markerId() != null) {
+				observed.add(marker.markerId());
+			}
+		}
+		for (Map.Entry<ScreenRuntimeKey, Set<UUID>> entry : nextObservedByScreen.entrySet()) {
+			ScreenRuntimeKey key = entry.getKey();
+			YandexMapState state = STATES.get(key);
+			if (state == null) {
+				continue;
+			}
+			Set<UUID> observed = entry.getValue().isEmpty() ? Set.of() : Set.copyOf(entry.getValue());
+			boolean changed;
+			synchronized (state) {
+				changed = !Objects.equals(state.observedMarkerIds, observed);
+				if (changed) {
+					state.observedMarkerIds = observed;
+				}
+			}
+			if (changed) {
+				requestRuntimeRender(server, key);
+			}
+		}
+	}
+
+	private static MarkerProjectionState captureProjectionState(YandexMapState state, ScreenComponent component) {
+		synchronized (state) {
+			initializeStateLocked(state, component);
+			return new MarkerProjectionState(state.centerX, state.centerZ, state.blocksPerPixel, state.editorMarkerId);
+		}
+	}
+
+	private static ObservedYandexMapUiTarget findObservedYandexMapUiTarget(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return null;
+		}
+		Vec3 eye = player.getEyePosition();
+		Vec3 rayEnd = eye.add(player.getLookAngle().scale(MEDIA_CONTROL_DISTANCE));
+		ScreenComponent nearestComponent = null;
+		ItemFrame nearestFrame = null;
+		TileCoord nearestTile = null;
+		Vec3 nearestHit = null;
+		double nearestDistanceSqr = Double.POSITIVE_INFINITY;
+		for (ScreenComponent component : cachedComponents(level)) {
+			if (component == null || !component.powered() || component.viewMode() != ScreenViewMode.YANDEX_MAPS) {
+				continue;
+			}
+			for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
+				ItemFrame frame = entry.getKey();
+				if (frame == null || !frame.isAlive()) {
+					continue;
+				}
+				Optional<Vec3> hit = frame.getBoundingBox().inflate(0.08D).clip(eye, rayEnd);
+				if (hit.isEmpty() || hit.get().distanceToSqr(eye) > MEDIA_CONTROL_DISTANCE * MEDIA_CONTROL_DISTANCE) {
+					continue;
+				}
+				double hitDistanceSqr = eye.distanceToSqr(hit.get());
+				if (hitDistanceSqr < nearestDistanceSqr) {
+					nearestDistanceSqr = hitDistanceSqr;
+					nearestComponent = component;
+					nearestFrame = frame;
+					nearestTile = entry.getValue();
+					nearestHit = hit.get();
+				}
+			}
+		}
+		if (nearestComponent == null || nearestFrame == null || nearestTile == null || nearestHit == null) {
+			return null;
+		}
+		UiLayout layout = createUiLayout(nearestComponent.width(), nearestComponent.height());
+		UiPoint touchPoint = screenTouchPoint(nearestFrame, nearestHit, nearestTile, nearestComponent.width(), nearestComponent.height());
+		return touchPoint == null ? null : new ObservedYandexMapUiTarget(nearestComponent, layout, touchPoint);
 	}
 
 	static void notifyTileReady(MinecraftServer server, ScreenRuntimeKey key) {
@@ -339,21 +620,30 @@ final class MonitorYandexMapsRuntime {
 
 	private static void drawMapHeader(Graphics2D graphics, UiLayout layout, MonitorApp app, YandexMapsVisualSnapshot snapshot) {
 		UiRect canvas = mediaCanvasRect(layout);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit() / 2, 4, 10);
+		int height = ultra ? clampInt(layout.unit() * 2 + 4, 12, 16) : clampInt(layout.unit() * 3, 30, 46);
+		int headerX = ultra ? mediaCloseRect(layout).right() + mediaHeaderControlGap(layout) : canvas.x() + inset;
 		UiRect header = new UiRect(
-				canvas.x() + clampInt(layout.unit() / 2, 4, 10),
-				canvas.y() + clampInt(layout.unit() / 2, 4, 10),
-				Math.min(canvas.width() - clampInt(layout.unit(), 8, 20), clampInt(layout.unit() * 24, 168, 310)),
-				clampInt(layout.unit() * 3, 30, 46)
+				headerX,
+				canvas.y() + inset,
+				Math.min(canvas.right() - headerX - inset, ultra ? clampInt(layout.unit() * 24, 88, 124) : clampInt(layout.unit() * 24, 168, 310)),
+				height
 		);
 		fillRoundedRect(graphics, header, header.height(), new Color(250, 252, 248, 226));
 		strokeRoundedRect(graphics, header, header.height(), 1.0F, new Color(0, 0, 0, 36));
-		UiRect iconRect = new UiRect(header.x() + 4, header.y() + 4, header.height() - 8, header.height() - 8);
+		int iconInset = ultra ? Math.max(2, header.height() / 7) : 4;
+		UiRect iconRect = new UiRect(header.x() + iconInset, header.y() + iconInset, header.height() - iconInset * 2, header.height() - iconInset * 2);
 		drawAppIcon(graphics, app, iconRect, 0);
 		String coords = snapshot != null
 				? Math.round(snapshot.centerX()) + ", " + Math.round(snapshot.centerZ()) + "  |  " + formatZoom(snapshot.zoomBlocks())
 				: "Карта загружается";
-		drawVerticalText(graphics, "Яндекс Карты", new UiRect(iconRect.right() + 6, header.y() + 1, header.right() - iconRect.right() - 10, header.height() / 2), new Color(30, 34, 36), Font.BOLD, clampInt(layout.unit() - 1, 9, 13));
-		drawVerticalText(graphics, coords, new UiRect(iconRect.right() + 6, header.y() + header.height() / 2 - 2, header.right() - iconRect.right() - 10, header.height() / 2), new Color(78, 86, 92), Font.PLAIN, clampInt(layout.unit() - 3, 7, 10));
+		if (ultra) {
+			drawVerticalText(graphics, coords, new UiRect(iconRect.right() + 3, header.y(), Math.max(8, header.right() - iconRect.right() - 6), header.height()), new Color(58, 64, 68), Font.BOLD, clampInt(layout.unit() + 1, 6, 8));
+		} else {
+			drawVerticalText(graphics, "Яндекс Карты", new UiRect(iconRect.right() + 6, header.y() + 1, header.right() - iconRect.right() - 10, header.height() / 2), new Color(30, 34, 36), Font.BOLD, clampInt(layout.unit() - 1, 9, 13));
+			drawVerticalText(graphics, coords, new UiRect(iconRect.right() + 6, header.y() + header.height() / 2 - 2, header.right() - iconRect.right() - 10, header.height() / 2), new Color(78, 86, 92), Font.PLAIN, clampInt(layout.unit() - 3, 7, 10));
+		}
 		drawMediaCloseButton(graphics, mediaCloseRect(layout), layout);
 	}
 
@@ -362,12 +652,14 @@ final class MonitorYandexMapsRuntime {
 		drawMapIconButton(graphics, yandexZoomOutRect(layout), PlayerUiIcon.MINUS, layout);
 		drawMapIconButton(graphics, yandexGeoRect(layout), PlayerUiIcon.AIMING_2, layout);
 		drawMapIconButton(graphics, yandexWorldCenterRect(layout), PlayerUiIcon.LOCATION, layout);
+		drawMapIconButton(graphics, yandexAddMarkerRect(layout), PlayerUiIcon.DIRECTIONS_2_LINE, layout);
 	}
 
 	private static void drawMapIconButton(Graphics2D graphics, UiRect rect, PlayerUiIcon icon, UiLayout layout) {
-		fillRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 14), new Color(250, 252, 248, 232));
-		strokeRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 14), 1.0F, new Color(0, 0, 0, 42));
-		int inset = clampInt(rect.width() / 5, 5, 9);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		fillRoundedRect(graphics, rect, ultra ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit(), 8, 14), new Color(250, 252, 248, 232));
+		strokeRoundedRect(graphics, rect, ultra ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit(), 8, 14), ultra ? 0.85F : 1.0F, new Color(0, 0, 0, 42));
+		int inset = ultra ? clampInt(rect.width() / 5, 2, 3) : clampInt(rect.width() / 5, 5, 9);
 		drawPlayerUiIcon(graphics, rect.inset(inset), icon, new Color(20, 24, 26, 238));
 	}
 
@@ -387,27 +679,686 @@ final class MonitorYandexMapsRuntime {
 
 	private static UiRect yandexZoomInRect(UiLayout layout) {
 		UiRect minus = yandexZoomOutRect(layout);
-		int gap = Math.max(2, layout.unit() / 3);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 5) : Math.max(2, layout.unit() / 3);
 		return new UiRect(minus.x(), minus.y() - gap - minus.height(), minus.width(), minus.height());
 	}
 
 	private static UiRect yandexZoomOutRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(layout.unit() * 3, 28, 42);
-		int inset = clampInt(layout.unit(), 8, 16);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int size = ultra ? clampInt(layout.unit() * 2 + 4, 12, 16) : clampInt(layout.unit() * 3, 28, 42);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 16);
 		return new UiRect(canvas.right() - inset - size, canvas.bottom() - inset - size, size, size);
 	}
 
 	private static UiRect yandexGeoRect(UiLayout layout) {
 		UiRect plus = yandexZoomInRect(layout);
-		int gap = Math.max(2, layout.unit() / 3);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 5) : Math.max(2, layout.unit() / 3);
 		return new UiRect(plus.x(), plus.y() - gap - plus.height(), plus.width(), plus.height());
 	}
 
 	private static UiRect yandexWorldCenterRect(UiLayout layout) {
 		UiRect current = yandexGeoRect(layout);
-		int gap = Math.max(2, layout.unit() / 3);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 5) : Math.max(2, layout.unit() / 3);
 		return new UiRect(current.x(), current.y() - gap - current.height(), current.width(), current.height());
+	}
+
+	private static UiRect yandexAddMarkerRect(UiLayout layout) {
+		UiRect current = yandexWorldCenterRect(layout);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 5) : Math.max(2, layout.unit() / 3);
+		return new UiRect(current.x(), current.y() - gap - current.height(), current.width(), current.height());
+	}
+
+	private static UUID createMarkerAtCenter(ServerLevel level, ServerPlayer player, YandexMapState state) {
+		if (level == null || player == null || state == null) {
+			return null;
+		}
+		int blockX = net.minecraft.util.Mth.floor(state.centerX);
+		int blockZ = net.minecraft.util.Mth.floor(state.centerZ);
+		int blockY = level.getHeight(Heightmap.Types.WORLD_SURFACE, blockX, blockZ);
+		YandexMapMarkerStore.YandexMapMarker marker = YandexMapMarkerStore.create(
+				level,
+				new BlockPos(blockX, blockY, blockZ),
+				player,
+				defaultMarkerTitle(player),
+				""
+		);
+		return marker != null ? marker.markerId() : null;
+	}
+
+	private static boolean handleMarkerEditorTouch(
+			ServerPlayer player,
+			MinecraftServer server,
+			ScreenComponent component,
+			UiLayout layout,
+			UiPoint touchPoint,
+			YandexMapState state
+	) {
+		if (player == null || server == null || component == null || layout == null || touchPoint == null || state == null) {
+			return false;
+		}
+		UUID markerId;
+		synchronized (state) {
+			markerId = state.editorMarkerId;
+		}
+		if (markerId == null) {
+			return false;
+		}
+		YandexMapMarkerStore.YandexMapMarker marker = YandexMapMarkerStore.marker(markerId);
+		if (marker == null) {
+			synchronized (state) {
+				state.editorMarkerId = null;
+				state.version++;
+			}
+			clearPendingMarkerTitleRequests(component.runtimeKey());
+			requestRuntimeRender(server, component.runtimeKey());
+			return true;
+		}
+		UiRect panel = markerEditorPanelRect(layout);
+		UiRect close = markerEditorCloseRect(layout);
+		if (close.contains(touchPoint.x(), touchPoint.y()) || !panel.contains(touchPoint.x(), touchPoint.y())) {
+			synchronized (state) {
+				state.editorMarkerId = null;
+				state.version++;
+			}
+			PENDING_MARKER_TITLES.remove(player.getUUID());
+			requestRuntimeRender(server, component.runtimeKey());
+			return true;
+		}
+		if (markerEditorTitleRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			requestMarkerTitlePrompt(player, component.runtimeKey(), markerId);
+			return true;
+		}
+		if (markerEditorIconRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			YandexMapMarkerStore.updateIcon(server, markerId, resolveHeldMarkerIconItemId(player.getMainHandItem()));
+			synchronized (state) {
+				state.version++;
+			}
+			requestRuntimeRender(server, component.runtimeKey());
+			return true;
+		}
+		if (markerEditorDeleteRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			YandexMapMarkerStore.remove(server, markerId);
+			synchronized (state) {
+				state.editorMarkerId = null;
+				state.version++;
+			}
+			PENDING_MARKER_TITLES.remove(player.getUUID());
+			requestRuntimeRender(server, component.runtimeKey());
+			return true;
+		}
+		return true;
+	}
+
+	private static void drawMarkers(Graphics2D graphics, UiLayout layout, YandexMapsVisualSnapshot snapshot, ScreenRuntimeKey runtimeKey, MinecraftServer server) {
+		if (graphics == null || layout == null || snapshot == null || runtimeKey == null) {
+			return;
+		}
+		UUID editorMarkerId = null;
+		Set<UUID> observedMarkerIds = Set.of();
+		YandexMapState state = STATES.get(runtimeKey);
+		if (state != null) {
+			synchronized (state) {
+				editorMarkerId = state.editorMarkerId;
+				observedMarkerIds = state.observedMarkerIds;
+			}
+		}
+		for (ProjectedMarker marker : projectVisibleMarkers(
+				runtimeKey.dimension(),
+				layout,
+				snapshot.centerX(),
+				snapshot.centerZ(),
+				snapshot.zoomBlocks()
+		)) {
+			drawMarker(
+					graphics,
+					layout,
+					marker,
+					Objects.equals(editorMarkerId, marker.markerId()) || observedMarkerIds.contains(marker.markerId()),
+					server,
+					runtimeKey
+			);
+		}
+	}
+
+	private static void drawMarker(
+			Graphics2D graphics,
+			UiLayout layout,
+			ProjectedMarker projected,
+			boolean expanded,
+			MinecraftServer server,
+			ScreenRuntimeKey runtimeKey
+	) {
+		if (graphics == null || layout == null || projected == null || projected.marker() == null) {
+			return;
+		}
+		boolean ultra = ultraCompactScreenLayout(layout);
+		UiRect canvas = mediaCanvasRect(layout);
+		UiRect baseIconRect = projected.iconRect();
+		if (!expanded) {
+			drawMarkerIcon(graphics, baseIconRect, projected.marker());
+			return;
+		}
+
+		int pad = ultra ? 2 : clampInt(layout.unit() / 2, 4, 8);
+		int rowGap = ultra ? 1 : Math.max(2, layout.unit() / 3);
+		int titleFontSize = ultra ? clampInt(layout.unit() + 1, 6, 8) : clampInt(layout.unit(), 9, 13);
+		int metaFontSize = ultra ? clampInt(layout.unit(), 6, 7) : clampInt(layout.unit() - 2, 8, 10);
+		int headSize = ultra ? clampInt(layout.unit() + 1, 7, 9) : clampInt(layout.unit() + 2, 10, 14);
+		int maxChipWidth = Math.max(MAP_MARKER_SCREEN_ICON_SIZE + pad * 2, Math.min(canvas.width() - pad * 2, ultra ? 96 : 188));
+		Font previousFont = graphics.getFont();
+		Font titleFont = new Font(Font.SANS_SERIF, Font.BOLD, titleFontSize);
+		Font metaFont = new Font(Font.SANS_SERIF, Font.PLAIN, metaFontSize);
+		graphics.setFont(titleFont);
+		var titleMetrics = graphics.getFontMetrics();
+		int topTextMaxWidth = Math.max(16, maxChipWidth - MAP_MARKER_SCREEN_ICON_SIZE - pad * 3);
+		String title = truncateWithEllipsis(titleMetrics, projected.marker().title(), topTextMaxWidth);
+		graphics.setFont(metaFont);
+		var metaMetrics = graphics.getFontMetrics();
+		int creatorTextMaxWidth = Math.max(16, maxChipWidth - headSize - pad * 3);
+		String creatorName = truncateWithEllipsis(metaMetrics, projected.marker().creatorName(), creatorTextMaxWidth);
+		int topRowWidth = MAP_MARKER_SCREEN_ICON_SIZE + pad + titleMetrics.stringWidth(title);
+		int creatorRowWidth = headSize + pad + metaMetrics.stringWidth(creatorName);
+		int creatorRowHeight = Math.max(headSize, metaMetrics.getHeight());
+		int topRowHeight = Math.max(MAP_MARKER_SCREEN_ICON_SIZE, titleMetrics.getHeight());
+		int chipWidth = Math.min(maxChipWidth, Math.max(topRowWidth, creatorRowWidth) + pad * 2);
+		int chipHeight = topRowHeight + creatorRowHeight + pad * 2 + rowGap;
+		int markerCenterX = baseIconRect.x() + baseIconRect.width() / 2;
+		int markerCenterY = baseIconRect.y() + baseIconRect.height() / 2;
+		UiRect chipRect = new UiRect(
+				clampInt(markerCenterX - chipWidth / 2, canvas.x(), Math.max(canvas.x(), canvas.right() - chipWidth)),
+				clampInt(markerCenterY - chipHeight / 2, canvas.y(), Math.max(canvas.y(), canvas.bottom() - chipHeight)),
+				chipWidth,
+				chipHeight
+		);
+		UiRect iconRect = new UiRect(
+				chipRect.x() + pad,
+				chipRect.y() + pad + (topRowHeight - MAP_MARKER_SCREEN_ICON_SIZE) / 2,
+				MAP_MARKER_SCREEN_ICON_SIZE,
+				MAP_MARKER_SCREEN_ICON_SIZE
+		);
+		fillRoundedRect(graphics, chipRect, clampInt(chipRect.height() / 2, 8, 16), new Color(250, 252, 248, 236));
+		strokeRoundedRect(graphics, chipRect, clampInt(chipRect.height() / 2, 8, 16), 1.0F, new Color(0, 0, 0, 44));
+		drawMarkerIcon(graphics, iconRect, projected.marker());
+
+		UiRect titleRect = new UiRect(
+				iconRect.right() + pad,
+				chipRect.y() + pad,
+				Math.max(16, chipRect.right() - iconRect.right() - pad * 2),
+				topRowHeight
+		);
+		graphics.setFont(titleFont);
+		drawVerticalText(graphics, title, titleRect, new Color(26, 30, 34, 244), Font.BOLD, titleFontSize);
+
+		UiRect creatorRowRect = new UiRect(
+				chipRect.x() + pad,
+				chipRect.y() + pad + topRowHeight + rowGap,
+				chipRect.width() - pad * 2,
+				creatorRowHeight
+		);
+		BufferedImage creatorHead = PlayerHeadRenderSystem.resolveHead(server, projected.marker().creatorUuid(), projected.marker().creatorName(), markerImageReadyCallback(server, runtimeKey));
+		drawMarkerCreatorRow(graphics, layout, creatorRowRect, creatorHead, creatorName, metaFontSize);
+		graphics.setFont(previousFont);
+	}
+
+	private static void drawMarkerCreatorRow(Graphics2D graphics, UiLayout layout, UiRect rect, BufferedImage head, String creatorName, int fontSize) {
+		if (graphics == null || layout == null || rect == null) {
+			return;
+		}
+		int headSize = Math.min(rect.height(), ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 1, 7, 9) : clampInt(layout.unit() + 2, 10, 14));
+		UiRect headRect = new UiRect(rect.x(), rect.y() + (rect.height() - headSize) / 2, headSize, headSize);
+		fillRoundedRect(graphics, headRect, clampInt(headSize / 3, 3, 6), new Color(18, 22, 28, 34));
+		if (head != null) {
+			drawContainedImageNearest(graphics, head, headRect, 0);
+		}
+		UiRect textRect = new UiRect(
+				headRect.right() + Math.max(2, layout.unit() / 3),
+				rect.y(),
+				Math.max(1, rect.right() - headRect.right() - Math.max(2, layout.unit() / 3)),
+				rect.height()
+		);
+		String fittedName = truncateWithEllipsis(graphics.getFontMetrics(new Font(Font.SANS_SERIF, Font.PLAIN, fontSize)), creatorName, textRect.width());
+		drawVerticalText(graphics, fittedName, textRect, new Color(72, 80, 88, 228), Font.PLAIN, fontSize);
+	}
+
+	private static Runnable markerImageReadyCallback(MinecraftServer server, ScreenRuntimeKey runtimeKey) {
+		if (server == null || runtimeKey == null) {
+			return null;
+		}
+		return () -> server.execute(() -> requestRuntimeRender(server, runtimeKey));
+	}
+
+	private static void drawMarkerIcon(Graphics2D graphics, UiRect rect, YandexMapMarkerStore.YandexMapMarker marker) {
+		if (graphics == null || rect == null || marker == null) {
+			return;
+		}
+		int inset = Math.max(2, rect.width() / 6);
+		BufferedImage icon = markerItemIcon(marker.iconItemId());
+		if (icon != null) {
+			drawContainedImageNearest(graphics, icon, rect, inset);
+			return;
+		}
+		drawPlayerUiIcon(graphics, rect.inset(inset), PlayerUiIcon.DIRECTIONS_2_LINE, new Color(20, 24, 26, 236));
+	}
+
+	private static void drawMarkerEditor(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MinecraftServer server) {
+		if (graphics == null || layout == null || runtimeKey == null) {
+			return;
+		}
+		YandexMapState state = STATES.get(runtimeKey);
+		if (state == null) {
+			return;
+		}
+		UUID markerId;
+		synchronized (state) {
+			markerId = state.editorMarkerId;
+		}
+		if (markerId == null) {
+			return;
+		}
+		YandexMapMarkerStore.YandexMapMarker marker = YandexMapMarkerStore.marker(markerId);
+		if (marker == null) {
+			return;
+		}
+
+		UiRect canvas = mediaCanvasRect(layout);
+		UiRect panel = markerEditorPanelRect(layout);
+		UiRect header = markerEditorHeaderRect(layout);
+		UiRect closeRect = markerEditorCloseRect(layout);
+		UiRect creatorRect = markerEditorCreatorRect(layout);
+		UiRect titleRect = markerEditorTitleRect(layout);
+		UiRect iconRect = markerEditorIconRect(layout);
+		UiRect deleteRect = markerEditorDeleteRect(layout);
+		drawOverlayBackdrop(graphics, canvas);
+		drawOverlayWindowHeaderText(graphics, layout, header, marker.title(), "");
+		drawCloseGlyph(graphics, mediaChromeIconRect(closeRect, layout), new Color(248, 251, 255, 236));
+
+		BufferedImage creatorHead = PlayerHeadRenderSystem.resolveHead(server, marker.creatorUuid(), marker.creatorName(), markerImageReadyCallback(server, runtimeKey));
+		drawMarkerEditorCreatorCard(graphics, layout, creatorRect, creatorHead, marker.creatorName());
+		drawMarkerEditorTitleField(graphics, layout, titleRect, marker.title());
+		drawMarkerEditorIconField(graphics, layout, iconRect, marker);
+		drawGalleryFileMenuActionButton(graphics, layout, deleteRect, PlayerUiIcon.TRASH, "УДАЛИТЬ", "", true, false, true);
+	}
+
+	private static List<ProjectedMarker> projectVisibleMarkers(
+			ResourceKey<Level> dimension,
+			UiLayout layout,
+			double centerX,
+			double centerZ,
+			double zoomBlocks
+	) {
+		if (dimension == null || layout == null || !Double.isFinite(centerX) || !Double.isFinite(centerZ) || !Double.isFinite(zoomBlocks) || zoomBlocks <= 0.0D) {
+			return List.of();
+		}
+		UiRect canvas = mediaCanvasRect(layout);
+		if (canvas.width() <= 0 || canvas.height() <= 0) {
+			return List.of();
+		}
+		int iconSize = MAP_MARKER_SCREEN_ICON_SIZE;
+		double horizontalMargin = iconSize * zoomBlocks * 1.5D;
+		double verticalMargin = iconSize * zoomBlocks * 1.5D;
+		double minX = centerX - canvas.width() * zoomBlocks * 0.5D - horizontalMargin;
+		double maxX = centerX + canvas.width() * zoomBlocks * 0.5D + horizontalMargin;
+		double minZ = centerZ - canvas.height() * zoomBlocks * 0.5D - verticalMargin;
+		double maxZ = centerZ + canvas.height() * zoomBlocks * 0.5D + verticalMargin;
+		int centerScreenX = canvas.x() + canvas.width() / 2;
+		int centerScreenY = canvas.y() + canvas.height() / 2;
+		List<ProjectedMarker> projected = new ArrayList<>();
+		for (YandexMapMarkerStore.YandexMapMarker marker : YandexMapMarkerStore.markers(dimension)) {
+			if (marker == null || marker.centerX() < minX || marker.centerX() > maxX || marker.centerZ() < minZ || marker.centerZ() > maxZ) {
+				continue;
+			}
+			int markerScreenX = net.minecraft.util.Mth.floor(centerScreenX + (marker.centerX() - centerX) / zoomBlocks);
+			int markerScreenY = net.minecraft.util.Mth.floor(centerScreenY + (marker.centerZ() - centerZ) / zoomBlocks);
+			UiRect iconRect = new UiRect(markerScreenX - iconSize / 2, markerScreenY - iconSize / 2, iconSize, iconSize);
+			projected.add(new ProjectedMarker(marker.markerId(), marker, iconRect));
+		}
+		return projected;
+	}
+
+	private static ProjectedMarker markerAtTouch(
+			ResourceKey<Level> dimension,
+			UiLayout layout,
+			double centerX,
+			double centerZ,
+			double zoomBlocks,
+			UUID editorMarkerId,
+			UiPoint touchPoint
+	) {
+		if (touchPoint == null) {
+			return null;
+		}
+		List<ProjectedMarker> projectedMarkers = projectVisibleMarkers(dimension, layout, centerX, centerZ, zoomBlocks);
+		return markerAtTouch(projectedMarkers, layout, editorMarkerId, touchPoint);
+	}
+
+	private static ProjectedMarker markerAtTouch(
+			List<ProjectedMarker> projectedMarkers,
+			UiLayout layout,
+			UUID editorMarkerId,
+			UiPoint touchPoint
+	) {
+		if (touchPoint == null || projectedMarkers == null || projectedMarkers.isEmpty()) {
+			return null;
+		}
+		ProjectedMarker fallback = null;
+		for (ProjectedMarker projected : projectedMarkers) {
+			UiRect hitRect = markerHitRect(projected, layout);
+			if (!hitRect.contains(touchPoint.x(), touchPoint.y())) {
+				continue;
+			}
+			if (fallback == null || Objects.equals(projected.markerId(), editorMarkerId)) {
+				fallback = projected;
+			}
+		}
+		return fallback;
+	}
+
+	private static UiRect markerHitRect(ProjectedMarker projected, UiLayout layout) {
+		if (projected == null || projected.iconRect() == null || layout == null) {
+			return new UiRect(0, 0, 0, 0);
+		}
+		int expandX = Math.max(2, layout.unit() / 3);
+		int expandY = Math.max(2, layout.unit() / 3);
+		return new UiRect(
+				projected.iconRect().x() - expandX,
+				projected.iconRect().y() - expandY,
+				projected.iconRect().width() + expandX * 2,
+				projected.iconRect().height() + expandY * 2
+		);
+	}
+
+	private static UiRect markerEditorPanelRect(UiLayout layout) {
+		if (ultraCompactScreenLayout(layout)) {
+			return mediaCanvasRect(layout);
+		}
+		return centeredOverlayPanelRect(
+				layout,
+				compactScreenLayout(layout) ? 0.78D : 0.64D,
+				compactScreenLayout(layout) ? 0.72D : 0.58D,
+				120,
+				98
+		);
+	}
+
+	private static UiRect markerEditorHeaderRect(UiLayout layout) {
+		UiRect panel = markerEditorPanelRect(layout);
+		int inset = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 14);
+		int height = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 6, 16, 20)
+				: compactScreenLayout(layout)
+				? clampInt(layout.unit() * 4, 28, 40)
+				: clampInt(layout.unit() * 5, 34, 48);
+		return new UiRect(panel.x() + inset, panel.y() + inset, panel.width() - inset * 2, height);
+	}
+
+	private static UiRect markerEditorCloseRect(UiLayout layout) {
+		UiRect header = markerEditorHeaderRect(layout);
+		int size = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2 + 2, 22, 34);
+		int inset = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
+		return new UiRect(header.right() - size - inset, header.y() + Math.max(0, (header.height() - size) / 2), size, size);
+	}
+
+	private static UiRect markerEditorBodyRect(UiLayout layout) {
+		UiRect panel = markerEditorPanelRect(layout);
+		UiRect header = markerEditorHeaderRect(layout);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
+		int inset = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 14);
+		int top = header.bottom() + gap;
+		return new UiRect(panel.x() + inset, top, panel.width() - inset * 2, Math.max(20, panel.bottom() - inset - top));
+	}
+
+	private static UiRect markerEditorCreatorRect(UiLayout layout) {
+		UiRect body = markerEditorBodyRect(layout);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
+		int creatorHeight = clampInt(body.height() / 4, ultraCompactScreenLayout(layout) ? 18 : 24, ultraCompactScreenLayout(layout) ? 24 : 42);
+		return new UiRect(body.x(), body.y(), body.width(), creatorHeight);
+	}
+
+	private static UiRect markerEditorFieldsRowRect(UiLayout layout) {
+		UiRect body = markerEditorBodyRect(layout);
+		UiRect creator = markerEditorCreatorRect(layout);
+		UiRect delete = markerEditorDeleteRect(layout);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
+		int top = creator.bottom() + gap;
+		return new UiRect(body.x(), top, body.width(), Math.max(20, delete.y() - gap - top));
+	}
+
+	private static UiRect markerEditorIconRect(UiLayout layout) {
+		UiRect row = markerEditorFieldsRowRect(layout);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
+		int width = clampInt(row.height(), ultraCompactScreenLayout(layout) ? 24 : 36, Math.max(24, row.width() / 3));
+		width = Math.min(width, Math.max(24, row.width() / 2 - gap));
+		return new UiRect(row.x(), row.y(), width, row.height());
+	}
+
+	private static UiRect markerEditorTitleRect(UiLayout layout) {
+		UiRect row = markerEditorFieldsRowRect(layout);
+		UiRect icon = markerEditorIconRect(layout);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
+		return new UiRect(icon.right() + gap, row.y(), Math.max(20, row.right() - icon.right() - gap), row.height());
+	}
+
+	private static UiRect markerEditorDeleteRect(UiLayout layout) {
+		UiRect panel = markerEditorPanelRect(layout);
+		UiRect body = markerEditorBodyRect(layout);
+		int height = clampInt(body.height() / 4, ultraCompactScreenLayout(layout) ? 16 : 22, ultraCompactScreenLayout(layout) ? 22 : 38);
+		return new UiRect(body.x(), body.bottom() - height, body.width(), height);
+	}
+
+	private static void drawMarkerEditorCreatorCard(Graphics2D graphics, UiLayout layout, UiRect rect, BufferedImage head, String creatorName) {
+		if (graphics == null || layout == null || rect == null) {
+			return;
+		}
+		int arc = ultraCompactScreenLayout(layout) ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit() * 2, 12, 18);
+		fillRoundedRect(graphics, rect, arc, new Color(255, 255, 255, 10));
+		int pad = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 14);
+		int headSize = Math.min(rect.height() - pad * 2, compactScreenLayout(layout) ? clampInt(layout.unit() * 3, 16, 24) : clampInt(layout.unit() * 4, 24, 34));
+		UiRect headRect = new UiRect(rect.x() + pad, rect.y() + (rect.height() - headSize) / 2, headSize, headSize);
+		fillRoundedRect(graphics, headRect, clampInt(headSize / 3, 4, 8), new Color(255, 255, 255, 18));
+		if (head != null) {
+			drawContainedImageNearest(graphics, head, headRect, 0);
+		}
+		UiRect textRect = new UiRect(headRect.right() + pad, rect.y(), Math.max(16, rect.right() - headRect.right() - pad * 2), rect.height());
+		int fontSize = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 1, 7, 8) : compactScreenLayout(layout) ? clampInt(layout.unit() + 1, 9, 13) : clampInt(layout.unit() + 2, 11, 16);
+		Font font = new Font(Font.SANS_SERIF, Font.BOLD, fontSize);
+		String fittedName = truncateWithEllipsis(graphics.getFontMetrics(font), creatorName, textRect.width());
+		drawVerticalText(
+				graphics,
+				fittedName,
+				textRect,
+				new Color(248, 240, 244, 236),
+				Font.BOLD,
+				fontSize
+		);
+	}
+
+	private static void drawMarkerEditorTitleField(Graphics2D graphics, UiLayout layout, UiRect rect, String title) {
+		if (graphics == null || layout == null || rect == null) {
+			return;
+		}
+		int arc = ultraCompactScreenLayout(layout) ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit() * 2, 12, 18);
+		fillRoundedRect(graphics, rect, arc, new Color(255, 255, 255, 10));
+		int iconSize = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 5, 9, 11) : clampInt(layout.unit() + 6, 14, 20);
+		int pad = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 14);
+		UiRect iconRect = new UiRect(rect.x() + pad, rect.y() + (rect.height() - iconSize) / 2, iconSize, iconSize);
+		drawPlayerUiIcon(graphics, iconRect, PlayerUiIcon.EDIT, new Color(248, 240, 244, 236));
+		UiRect textRect = new UiRect(iconRect.right() + pad, rect.y(), Math.max(16, rect.right() - iconRect.right() - pad * 2), rect.height());
+		int fontSize = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 1, 7, 8) : compactScreenLayout(layout) ? clampInt(layout.unit() + 1, 9, 13) : clampInt(layout.unit() + 2, 11, 16);
+		Font font = new Font(Font.SANS_SERIF, Font.BOLD, fontSize);
+		String fittedTitle = truncateWithEllipsis(graphics.getFontMetrics(font), title, textRect.width());
+		drawVerticalText(
+				graphics,
+				fittedTitle,
+				textRect,
+				new Color(248, 240, 244, 236),
+				Font.BOLD,
+				fontSize
+		);
+	}
+
+	private static void drawMarkerEditorIconField(Graphics2D graphics, UiLayout layout, UiRect rect, YandexMapMarkerStore.YandexMapMarker marker) {
+		if (graphics == null || layout == null || rect == null || marker == null) {
+			return;
+		}
+		int arc = ultraCompactScreenLayout(layout) ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit() * 2, 12, 18);
+		fillRoundedRect(graphics, rect, arc, new Color(255, 255, 255, 10));
+		UiRect previewRect = rect.inset(Math.max(2, rect.width() / 6));
+		drawMarkerIcon(graphics, previewRect, marker);
+	}
+
+	private static String resolveHeldMarkerIconItemId(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return "";
+		}
+		Identifier itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
+		return itemId == null ? "" : itemId.toString();
+	}
+
+	private static BufferedImage markerItemIcon(String iconItemId) {
+		if (iconItemId == null || iconItemId.isBlank()) {
+			return null;
+		}
+		BufferedImage cached = ITEM_MARKER_ICON_CACHE.computeIfAbsent(
+				iconItemId,
+				key -> {
+					BufferedImage loaded = loadItemMarkerIcon(key);
+					return loaded != null ? loaded : EMPTY_MARKER_ICON;
+				}
+		);
+		return cached == EMPTY_MARKER_ICON ? null : cached;
+	}
+
+	private static BufferedImage loadItemMarkerIcon(String iconItemId) {
+		Identifier itemId = Identifier.tryParse(iconItemId);
+		if (itemId == null) {
+			return null;
+		}
+		Identifier modelId = Identifier.fromNamespaceAndPath(itemId.getNamespace(), "item/" + itemId.getPath());
+		ItemModelResolution resolution = resolveItemModel(modelId, new HashSet<>());
+		if (resolution == null) {
+			return null;
+		}
+		List<BufferedImage> layers = new ArrayList<>();
+		for (int layerIndex = 0; layerIndex < 5; layerIndex++) {
+			Identifier textureId = resolveItemModelTexture(resolution, "layer" + layerIndex, new HashSet<>());
+			if (textureId == null) {
+				continue;
+			}
+			BufferedImage texture = MAP_ASSETS.loadTexture(textureId);
+			if (texture != null) {
+				layers.add(texture);
+			}
+		}
+		if (layers.isEmpty()) {
+			Identifier fallbackTexture = resolveFallbackItemTexture(resolution);
+			if (fallbackTexture != null) {
+				BufferedImage texture = MAP_ASSETS.loadTexture(fallbackTexture);
+				if (texture != null) {
+					layers.add(texture);
+				}
+			}
+		}
+		if (layers.isEmpty()) {
+			return null;
+		}
+		BufferedImage icon = new BufferedImage(MAP_MARKER_ICON_SIZE, MAP_MARKER_ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = icon.createGraphics();
+		configurePixelArtGraphics(graphics);
+		for (BufferedImage layer : layers) {
+			graphics.drawImage(layer, 0, 0, MAP_MARKER_ICON_SIZE, MAP_MARKER_ICON_SIZE, null);
+		}
+		graphics.dispose();
+		return icon;
+	}
+
+	private static ItemModelResolution resolveItemModel(Identifier modelId, Set<String> resolving) {
+		if (modelId == null || resolving == null) {
+			return null;
+		}
+		String cacheKey = modelId.toString();
+		if (!resolving.add(cacheKey)) {
+			return null;
+		}
+		try {
+			JsonObject json = MAP_ASSETS.loadModel(modelId);
+			if (json == null) {
+				return null;
+			}
+			Map<String, String> textures = new HashMap<>();
+			Identifier parentId = null;
+			if (json.has("parent")) {
+				parentId = Identifier.tryParse(json.get("parent").getAsString());
+				if (parentId != null && !"builtin/generated".equals(parentId.toString())) {
+					ItemModelResolution parent = resolveItemModel(parentId, resolving);
+					if (parent != null) {
+						textures.putAll(parent.textures());
+					}
+				}
+			}
+			if (json.has("textures")) {
+				for (Map.Entry<String, JsonElement> entry : json.getAsJsonObject("textures").entrySet()) {
+					textures.put(entry.getKey(), entry.getValue().getAsString());
+				}
+			}
+			return new ItemModelResolution(modelId.getNamespace(), textures);
+		} finally {
+			resolving.remove(cacheKey);
+		}
+	}
+
+	private static Identifier resolveItemModelTexture(ItemModelResolution resolution, String key, Set<String> resolving) {
+		if (resolution == null || key == null || key.isBlank()) {
+			return null;
+		}
+		if (!resolving.add(key)) {
+			return null;
+		}
+		try {
+			String texture = resolution.textures().get(key);
+			if (texture == null || texture.isBlank()) {
+				return null;
+			}
+			if (texture.startsWith("#")) {
+				return resolveItemModelTexture(resolution, texture.substring(1), resolving);
+			}
+			return textureIdentifier(resolution.namespace(), texture);
+		} finally {
+			resolving.remove(key);
+		}
+	}
+
+	private static Identifier resolveFallbackItemTexture(ItemModelResolution resolution) {
+		if (resolution == null) {
+			return null;
+		}
+		Identifier particle = resolveItemModelTexture(resolution, "particle", new HashSet<>());
+		if (particle != null) {
+			return particle;
+		}
+		for (String key : List.of("all", "side", "top", "front", "end", "texture")) {
+			Identifier resolved = resolveItemModelTexture(resolution, key, new HashSet<>());
+			if (resolved != null) {
+				return resolved;
+			}
+		}
+		for (String key : resolution.textures().keySet()) {
+			Identifier resolved = resolveItemModelTexture(resolution, key, new HashSet<>());
+			if (resolved != null) {
+				return resolved;
+			}
+		}
+		return null;
+	}
+
+	private static Identifier textureIdentifier(String defaultNamespace, String rawTexture) {
+		if (rawTexture == null || rawTexture.isBlank()) {
+			return null;
+		}
+		if (rawTexture.contains(":")) {
+			return Identifier.tryParse(rawTexture);
+		}
+		return Identifier.fromNamespaceAndPath(defaultNamespace == null || defaultNamespace.isBlank() ? "minecraft" : defaultNamespace, rawTexture);
 	}
 
 	private static String formatZoom(double blocksPerPixel) {
@@ -635,8 +1586,51 @@ final class MonitorYandexMapsRuntime {
 		graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 	}
 
+	private static void configurePixelArtGraphics(Graphics2D graphics) {
+		graphics.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION, RenderingHints.VALUE_ALPHA_INTERPOLATION_SPEED);
+		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+		graphics.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING, RenderingHints.VALUE_COLOR_RENDER_SPEED);
+		graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+		graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_SPEED);
+		graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+	}
+
 	private static YandexMapsVisualSnapshot emptySnapshot() {
 		return new YandexMapsVisualSnapshot(0L, null, "", "", 0, 0, DEFAULT_BLOCKS_PER_PIXEL, List.of(), false);
+	}
+
+	private record ProjectedMarker(
+			UUID markerId,
+			YandexMapMarkerStore.YandexMapMarker marker,
+			UiRect iconRect
+	) {
+	}
+
+	private record ItemModelResolution(
+			String namespace,
+			Map<String, String> textures
+	) {
+	}
+
+	private record PendingMarkerTitleRequest(
+			ScreenRuntimeKey screenKey,
+			UUID markerId
+	) {
+	}
+
+	private record ObservedYandexMapUiTarget(
+			ScreenComponent component,
+			UiLayout layout,
+			UiPoint touchPoint
+	) {
+	}
+
+	private record MarkerProjectionState(
+			double centerX,
+			double centerZ,
+			double zoomBlocks,
+			UUID editorMarkerId
+	) {
 	}
 
 	private static final class YandexMapState {
@@ -662,5 +1656,7 @@ final class MonitorYandexMapsRuntime {
 		private double displayOverlayHalfWidth;
 		private double displayOverlayHalfHeight;
 		private List<MonitorYandexMapsBlueMapRenderer.DisplayOverlay> cachedDisplayOverlays = List.of();
+		private UUID editorMarkerId;
+		private Set<UUID> observedMarkerIds = Set.of();
 	}
 }

@@ -1,0 +1,191 @@
+package com.lostglade.server;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.Level;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.UUID;
+
+public final class DroneScreenLinkPolicyTest {
+	private DroneScreenLinkPolicyTest() {
+	}
+
+	public static void main(String[] args) throws Exception {
+		droneEndpointIdentitySurvivesPositionRefresh();
+		poweredLinkedScreensKeepDronesLoadedWithoutLivePreview();
+		liveCameraScreenApplyUsesAsyncPreparedPatches();
+		droneLiveStreamUsesPoseUpdatesInsteadOfShadowEntityCamera();
+		cameraAppOffersControlButtonForFreeDrone();
+		unloadedDroneControlUsesRememberedLocation();
+		System.out.println("Drone screen-link policy checks passed");
+	}
+
+	private static void droneEndpointIdentitySurvivesPositionRefresh() {
+		UUID droneUuid = UUID.fromString("00000000-0000-0000-0000-000000000123");
+		ResourceKey<Level> dimension = ResourceKey.create(Registries.DIMENSION, Identifier.parse("minecraft:overworld"));
+		BluetoothLinkSystem.Endpoint first = BluetoothLinkSystem.droneEndpoint(dimension, new BlockPos(10, 64, -4), droneUuid);
+		BluetoothLinkSystem.Endpoint moved = BluetoothLinkSystem.droneEndpoint(dimension, new BlockPos(42, 72, 11), droneUuid);
+
+		require(first != null && moved != null, "drone endpoint factories must produce endpoints for valid data");
+		require(first.equals(moved), "drone endpoint identity must stay tied to UUID so metadata can refresh after movement");
+		require(first.hashCode() == moved.hashCode(), "drone endpoint hash must stay stable across metadata refresh");
+		require(!first.pos().equals(moved.pos()), "metadata refresh regression test must use a genuinely moved drone position");
+	}
+
+	private static void poweredLinkedScreensKeepDronesLoadedWithoutLivePreview() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String droneSystem = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/DroneSystem.java"));
+		String wireConnectivity = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/MonitorScreenWireConnectivity.java"));
+		String rendererBot = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/RendererBotCameraSystem.java"));
+
+		require(
+				wireConnectivity.contains("collectPoweredLinkedDroneStreams(server, streams);"),
+				"active drone screen streams must include powered bluetooth-linked screens even without live preview playback"
+		);
+		require(
+				!wireConnectivity.contains("MEDIA_STATES.isEmpty()"),
+				"powered linked drones must not disappear just because no media runtime is open"
+		);
+		require(
+				droneSystem.contains("POWERED_SCREEN_LINKED_DRONES.addAll(activeScreenStreamDrones);"),
+				"drone ticket refresh must keep track of powered screen-linked drones"
+		);
+		require(
+				droneSystem.contains("boolean holdWithoutGravity = heldByReleaseGlide || heldByScreenStream || heldByPoweredScreen;"),
+				"uncontrolled drones must hover while a powered linked screen is holding them"
+		);
+		require(
+				droneSystem.contains("boolean omnidirectionalChunkLoading = cameraAnchorUuid == null;"),
+				"loaded drone live feeds should only keep full omnidirectional chunk loading as a fallback when no follow anchor exists"
+		);
+		require(
+				droneSystem.contains("if (root == null || !root.isAlive() || !isDroneHeldByScreen(root))"),
+				"screen-held drones must continue receiving chunk tickets even when nobody is actively watching the preview"
+		);
+		require(
+				rendererBot.contains("if (spec.followEntityUuid() != null)") && rendererBot.contains("return null;"),
+				"follow-entity streams must bypass the square positioned tracking shortcut and keep their exact virtual chunk shape"
+		);
+	}
+
+	private static void cameraAppOffersControlButtonForFreeDrone() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String cameraRuntime = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/MonitorCameraRuntime.java"));
+		String runtimeModel = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/MonitorScreenRuntimeModel.java"));
+		String inputController = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/MonitorScreenInputController.java"));
+
+		require(
+				runtimeModel.contains("boolean droneControlVisible"),
+				"camera runtime snapshot must carry the drone-control button visibility flag"
+		);
+		require(
+				cameraRuntime.contains("drawCameraDroneControlButton"),
+				"camera UI must render a dedicated drone-control button"
+		);
+		require(
+				cameraRuntime.contains("DroneSystem.hasActiveController(selected.sourceUuid())"),
+				"camera app must only offer drone takeover when the selected drone has no active operator"
+		);
+		require(
+				cameraRuntime.contains("DroneSystem.tryStartControllingDrone("),
+				"camera control button must enter the existing drone control flow"
+		);
+		require(
+				inputController.contains("MonitorCameraRuntime.handleTouch(server, player, component, layout, touchPoint)"),
+				"camera app touches must include the player so drone takeover can assign an operator"
+		);
+	}
+
+	private static void liveCameraScreenApplyUsesAsyncPreparedPatches() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String mapTransport = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/MonitorScreenMapTransport.java"));
+
+		require(
+				mapTransport.contains("TileFramePatch[] tilePatches = resolvePreparedRenderedTilePatches(mediaState, preparedTiles);"),
+				"live camera screen apply must use async-prepared tile patches instead of diffing map pixels on the server tick"
+		);
+		require(
+				!mapTransport.contains("buildMapUpdate(mapId, mapData.scale, mapData.locked, mapData.colors, tileFrame)"),
+				"live camera screen apply must not scan current map pixels on the server tick"
+		);
+		require(
+				mapTransport.contains("return fullFrameTilePatches(preparedTiles.renderedTiles());"),
+				"live camera baseline races should fall back to full-tile patches without recomputing pixel diffs on the server tick"
+		);
+		require(
+				mapTransport.contains("hasCompletePreparedPatchSet"),
+				"live camera buffered-frame reapply must fall back to full-tile patches when no async patch set is attached"
+		);
+	}
+
+	private static void droneLiveStreamUsesPoseUpdatesInsteadOfShadowEntityCamera() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String payloads = Files.readString(projectDir.resolve("src/main/java/com/lostglade/network/RendererBotPayloads.java"));
+		String rendererBot = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/RendererBotCameraSystem.java"));
+		String clientCapture = Files.readString(projectDir.resolve("src/client/java/com/lostglade/client/RendererBotClientCapture.java"));
+		String offscreenRenderer = Files.readString(projectDir.resolve("src/client/java/com/lostglade/client/RendererBotOffscreenWorldRenderer.java"));
+		String droneSystem = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/DroneSystem.java"));
+
+		require(
+				payloads.contains("RendererBotLiveStreamPoseS2CPayload"),
+				"renderer bot protocol must expose lightweight live-stream pose updates"
+		);
+		require(
+				rendererBot.contains("syncLiveStreamPoseUpdates(server);")
+						&& rendererBot.contains("DroneSystem.isDroneCameraAnchor(target.followTarget())")
+						&& rendererBot.contains("new RendererBotPayloads.RendererBotLiveStreamPoseS2CPayload("),
+				"drone live streams must send current camera-anchor pose without waiting for shadow entity camera sync"
+		);
+		require(
+				clientCapture.contains("updateLiveStreamPose")
+						&& clientCapture.contains("pose == null ? payload.followEntityUuid() : null")
+						&& clientCapture.contains("pose != null"),
+				"renderer client live streams must render pose-updated streams as absolute camera poses"
+		);
+		require(
+				offscreenRenderer.contains("request.absoluteCameraPosition()"),
+				"offscreen renderer must support exact camera positions without adding static eye height"
+		);
+		require(
+				offscreenRenderer.contains("request != null && request.absoluteCameraPosition() ? 0 : MIN_READY_CHUNK_RADIUS"),
+				"pose-updated live drone rendering must not wait for a full 5x5 ready-chunk square before every frame"
+		);
+		require(
+				droneSystem.contains("public static boolean isDroneCameraAnchor(Entity entity)"),
+				"drone system must expose camera-anchor detection for renderer live stream pose updates"
+		);
+	}
+
+	private static void unloadedDroneControlUsesRememberedLocation() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String droneSystem = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/DroneSystem.java"));
+		String bluetoothLinks = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/BluetoothLinkSystem.java"));
+
+		require(
+				droneSystem.contains("DroneLiveFeedState liveFeedState = resolveLiveFeedState(server, droneUuid, dimension, fallbackPos);"),
+				"starting control for an unloaded drone must still resolve its last known location"
+		);
+		require(
+				droneSystem.contains("BluetoothLinkSystem.refreshDroneEndpoint(level.getServer(), level.dimension(), currentBlockPos, root.getUUID());"),
+				"loaded drone movement must refresh the persisted bluetooth endpoint position"
+		);
+		require(
+				bluetoothLinks.contains("static void refreshDroneEndpoint(MinecraftServer server, ResourceKey<Level> dimension, BlockPos pos, UUID droneUuid)"),
+				"bluetooth links must expose a metadata refresh path for moved drones"
+		);
+		require(
+				bluetoothLinks.contains("replaceEndpointMetadata(endpoint)"),
+				"bluetooth endpoint refresh must replace stored endpoint metadata instead of dropping the link"
+		);
+	}
+
+	private static void require(boolean condition, String message) {
+		if (!condition) {
+			throw new AssertionError(message);
+		}
+	}
+}

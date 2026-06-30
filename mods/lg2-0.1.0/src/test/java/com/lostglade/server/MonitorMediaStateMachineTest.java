@@ -2,10 +2,11 @@ package com.lostglade.server;
 
 import com.lostglade.server.monitor.MonitorYoutubeMusicCache;
 import com.lostglade.server.monitor.MonitorAppRegistry;
-import com.lostglade.server.monitor.MonitorAppRole;
 import com.lostglade.server.monitor.MonitorBackgroundPlaybackPolicy;
+import com.lostglade.server.monitor.MonitorMediaApp;
 import com.lostglade.server.monitor.MonitorSberDronesCatalog;
 import com.lostglade.server.progress.TaskProgress;
+import net.minecraft.nbt.CompoundTag;
 
 import javax.imageio.ImageIO;
 import java.awt.Color;
@@ -17,6 +18,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.List;
 
 public final class MonitorMediaStateMachineTest {
 	private MonitorMediaStateMachineTest() {
@@ -34,6 +36,16 @@ public final class MonitorMediaStateMachineTest {
 		youtubeMusicNeedsCompleteMarkerBeforeReportingFullCache();
 		youtubeMusicRejectsLegacyMarkerWithoutVerifiedFinalSize();
 		youtubeMusicDirectThumbnailUsesStableYoutubeCoverUrl();
+		youtubeMusicDirectThumbnailCandidatesUseVideoIdWithoutYtDlp();
+		youtubeMusicDirectThumbnailCandidatesCoverReportedTracks();
+		youtubeMusicFallbackMetadataForcesCoverRefresh();
+		youtubeMusicQuickLoadAttemptsRealCoverBeforeFallbackPlayback();
+		youtubeQueuesExposeCachedPreviewsToRows();
+		maxCallParticipantAccentUsesStableAvatarFrame();
+		maxFileShareSendButtonDoesNotOverlapCloseButton();
+		persistedMediaTagCopyKeepsWallpaperState();
+		hydratedBackgroundsRetryMissingDecodedMedia();
+		powerOffResetKeepsDecodedBackgroundMedia();
 		sberDronesUsesDedicatedLiveCameraCatalog();
 		galleryRuntimePolicyIgnoresLiveCameraOnlyCollections();
 		galleryRuntimePolicyRetainsOnlyActiveDecodedMedia();
@@ -42,6 +54,7 @@ public final class MonitorMediaStateMachineTest {
 		audioTransportPolicyKeepsSeekTargetUntilRelaySettles();
 		audioTransportPolicyDropsExpiredLocalTransportOverride();
 		directAudioSourcesDoNotResyncFromStaleMonitorPosition();
+		localDirectAudioEofDoesNotRestartSameTrack();
 		downloadedYoutubeVideoDoesNotUseStaticVisual();
 		System.out.println("Monitor media state-machine checks passed");
 	}
@@ -339,29 +352,226 @@ public final class MonitorMediaStateMachineTest {
 
 	private static void youtubeMusicDirectThumbnailUsesStableYoutubeCoverUrl() {
 		require(
-				"https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg".equals(
+				"https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg".equals(
 						MonitorYoutubeMusicCache.directThumbnailUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PL123")
 				),
 				"watch URLs must resolve to the stable direct YouTube thumbnail"
 		);
 		require(
-				"https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg".equals(
+				"https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg".equals(
 						MonitorYoutubeMusicCache.directThumbnailUrl("https://youtu.be/dQw4w9WgXcQ?si=test")
 				),
 				"youtu.be URLs must resolve to the stable direct YouTube thumbnail"
 		);
 		require(
-				"https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg".equals(
+				"https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg".equals(
 						MonitorYoutubeMusicCache.directThumbnailUrl("https://music.youtube.com/watch?v=dQw4w9WgXcQ&si=test")
 				),
 				"YouTube Music URLs must resolve to the stable direct YouTube thumbnail"
 		);
 	}
 
+	private static void youtubeMusicDirectThumbnailCandidatesUseVideoIdWithoutYtDlp() {
+		List<String> expected = List.of(
+				"https://i.ytimg.com/vi/HoI9uOgYmT4/maxresdefault.jpg",
+				"https://img.youtube.com/vi/HoI9uOgYmT4/maxresdefault.jpg",
+				"https://i.ytimg.com/vi/HoI9uOgYmT4/hqdefault.jpg",
+				"https://img.youtube.com/vi/HoI9uOgYmT4/hqdefault.jpg",
+				"https://i.ytimg.com/vi/HoI9uOgYmT4/sddefault.jpg",
+				"https://img.youtube.com/vi/HoI9uOgYmT4/sddefault.jpg",
+				"https://i.ytimg.com/vi/HoI9uOgYmT4/mqdefault.jpg",
+				"https://img.youtube.com/vi/HoI9uOgYmT4/mqdefault.jpg",
+				"https://i.ytimg.com/vi/HoI9uOgYmT4/default.jpg",
+				"https://img.youtube.com/vi/HoI9uOgYmT4/default.jpg"
+		);
+		require(
+				expected.equals(MonitorYoutubeMusicCache.directThumbnailUrls("https://music.youtube.com/watch?v=HoI9uOgYmT4&si=4icXvNZBuS6VWGIR")),
+				"YouTube Music covers must try classic direct thumbnail URLs before metadata fallback"
+		);
+		require(
+				expected.equals(MonitorYoutubeMusicCache.directThumbnailUrls("HoI9uOgYmT4")),
+				"raw YouTube video ids must be enough to build direct thumbnail URLs"
+		);
+	}
+
+	private static void youtubeMusicDirectThumbnailCandidatesCoverReportedTracks() {
+		require(
+				MonitorYoutubeMusicCache.directThumbnailUrl("https://music.youtube.com/watch?v=Kj8nOCaLudo&si=ysbHd5B6N1dpm_01")
+						.equals("https://i.ytimg.com/vi/Kj8nOCaLudo/maxresdefault.jpg"),
+				"the reported YouTube Music URL must resolve directly to the visible maxres cover"
+		);
+		require(
+				MonitorYoutubeMusicCache.directThumbnailUrl("https://music.youtube.com/watch?v=u13PruASvx8&si=QvWoAJuc_CShdGuE")
+						.equals("https://i.ytimg.com/vi/u13PruASvx8/maxresdefault.jpg"),
+				"first verification URL must resolve directly to maxres cover"
+		);
+		require(
+				MonitorYoutubeMusicCache.directThumbnailUrl("https://music.youtube.com/watch?v=B8H0htUJiOY&si=PMqVlirOlWdHMRIj")
+						.equals("https://i.ytimg.com/vi/B8H0htUJiOY/maxresdefault.jpg"),
+				"second verification URL must resolve directly to maxres cover"
+		);
+		require(
+				MonitorYoutubeMusicCache.directThumbnailUrl("https://music.youtube.com/watch?v=dFkDDeXXs0w&si=2yID9uMJOXntVyW5")
+						.equals("https://i.ytimg.com/vi/dFkDDeXXs0w/maxresdefault.jpg"),
+				"third verification URL must resolve directly to maxres cover"
+		);
+	}
+
+	private static void youtubeMusicFallbackMetadataForcesCoverRefresh() {
+		Path tempRoot = null;
+		String url = "https://music.youtube.com/watch?v=Kj8nOCaLudo&si=ysbHd5B6N1dpm_01";
+		Path originalCacheRoot = defaultYoutubeMusicCacheRoot();
+		try {
+			tempRoot = Files.createTempDirectory("lg2-ytmusic-fallback-cover-test");
+			MonitorYoutubeMusicCache.setCacheDirectory(tempRoot);
+			MonitorYoutubeMusicCache.deletePersistentTrack(url);
+			Path entryDir = youtubeMusicEntryDir(tempRoot, url);
+			Files.createDirectories(entryDir);
+			writeCover(entryDir.resolve("cover.png"));
+			Files.writeString(
+					entryDir.resolve("meta.json"),
+					"""
+					{"title":"Old Fallback","artist":"","durationMs":1234,"thumbnailUrl":"","fallbackCover":true}
+					""".trim(),
+					StandardCharsets.UTF_8
+			);
+			require(
+					MonitorYoutubeMusicCache.queueEntryPreview(url) == null,
+					"persisted YouTube Music fallback metadata must not be treated as a real queue preview"
+			);
+
+			Files.writeString(
+					entryDir.resolve("meta.json"),
+					"""
+					{"title":"Real Cover","artist":"","durationMs":1234,"thumbnailUrl":"","fallbackCover":false}
+					""".trim(),
+					StandardCharsets.UTF_8
+			);
+			require(
+					MonitorYoutubeMusicCache.queueEntryPreview(url) != null,
+					"a persisted non-fallback YouTube Music cover should remain usable"
+			);
+		} catch (IOException exception) {
+			throw new AssertionError("Failed to prepare YouTube Music fallback cover metadata test", exception);
+		} finally {
+			MonitorYoutubeMusicCache.setCacheDirectory(originalCacheRoot);
+			deleteDirectoryQuietly(tempRoot);
+		}
+	}
+
+	private static void youtubeMusicQuickLoadAttemptsRealCoverBeforeFallbackPlayback() {
+		try {
+			String cacheSource = Files.readString(Path.of("").toAbsolutePath().resolve("src/main/java/com/lostglade/server/monitor/MonitorYoutubeMusicCache.java"));
+			int quickDirectIndex = cacheSource.indexOf("BufferedImage directCover = refreshCoverFromDirectThumbnailUrls(url, null, directThumbnailUrls);");
+			int quickMetadataIndex = cacheSource.indexOf("JsonObject metadata = resolveMetadata(url);");
+			int cachedPlayableIndex = cacheSource.indexOf("LoadedTrack cached = loadPlayableTrackIfPresent(this.url, progress);");
+			int cachedRefreshIndex = cacheSource.indexOf("cached = refreshLoadedTrackCoverFromCache(this.url, cached);", cachedPlayableIndex);
+			int fullMethodIndex = cacheSource.indexOf("private static LoadedTrack buildFullTrack");
+			int fullDirectIndex = cacheSource.indexOf("BufferedImage directCover = refreshCoverFromDirectThumbnailUrls(url, null, directThumbnailUrls);", fullMethodIndex);
+			int fullMetadataIndex = cacheSource.indexOf("JsonObject metadata = resolveMetadata(url);", fullMethodIndex);
+			int refreshMethodIndex = cacheSource.indexOf("public static BufferedImage refreshCover");
+			int refreshDirectIndex = cacheSource.indexOf("BufferedImage cover = refreshCoverFromDirectThumbnailUrls(url, metadata);", refreshMethodIndex);
+			int refreshMetadataIndex = cacheSource.indexOf("JsonObject resolvedMetadata = resolveMetadata(url);", refreshMethodIndex);
+			require(
+					cacheSource.contains("if (coverNeedsRefresh(url, cover)) {")
+							&& quickDirectIndex >= 0
+							&& quickMetadataIndex > quickDirectIndex
+							&& cachedRefreshIndex > cachedPlayableIndex
+							&& fullDirectIndex >= 0
+							&& fullMetadataIndex > fullDirectIndex
+							&& cacheSource.contains("snapshot != null && snapshot.complete() && !metadataMarksFallbackCover(this.url)")
+							&& cacheSource.contains("List<String> fallbackThumbnailUrls = attemptedDirectCover ? resolveMetadataFallbackThumbnailUrls(url, metadata) : thumbnailUrls;")
+							&& cacheSource.contains("refreshedCover = downloadCoverWithYtDlp(url, null);")
+							&& cacheSource.contains("\"--write-thumbnail\"")
+							&& cacheSource.contains("return cover == null || isFallbackCoverImage(cover) || metadataMarksFallbackCover(url);")
+							&& cacheSource.contains("if (refreshedCover != null) {")
+							&& cacheSource.contains("cover = refreshedCover;"),
+					"the first quick or cached YouTube Music load must try direct cover URLs before metadata fallback or returning fallback artwork"
+			);
+			require(
+					refreshDirectIndex >= 0 && refreshMetadataIndex > refreshDirectIndex,
+					"async YouTube Music cover refresh must try direct cover URLs before resolving metadata"
+			);
+			String actionsSource = Files.readString(Path.of("").toAbsolutePath().resolve("src/main/java/com/lostglade/server/MonitorScreenMediaActions.java"));
+			require(
+					actionsSource.contains("MonitorYoutubeRelayClient.updateStaticFrame(relaySessionIdToUpdate, relaySourceUrlToUpdate, relayCoverToUpdate);"),
+					"async YouTube Music cover refresh must update the active static playback frame"
+			);
+		} catch (IOException exception) {
+			throw new AssertionError("Failed to inspect YouTube Music quick-load cover path", exception);
+		}
+	}
+
+	private static void youtubeQueuesExposeCachedPreviewsToRows() {
+		BufferedImage square = new BufferedImage(32, 32, BufferedImage.TYPE_INT_ARGB);
+		BufferedImage wide = new BufferedImage(160, 90, BufferedImage.TYPE_INT_ARGB);
+		require(Math.abs(MonitorScreenSystem.queueThumbnailAspect(square, false) - 1.0D) < 0.001D, "square queue covers must stay square");
+		require(Math.abs(MonitorScreenSystem.queueThumbnailAspect(wide, false) - (16.0D / 9.0D)) < 0.001D, "wide queue previews must keep the video aspect ratio");
+		require(Math.abs(MonitorScreenSystem.queueThumbnailAspect(null, true) - 1.0D) < 0.001D, "YouTube Music placeholder covers must be square");
+		require(Math.abs(MonitorScreenSystem.queueThumbnailAspect(null, false) - (16.0D / 9.0D)) < 0.001D, "YouTube video placeholder covers must be wide");
+		try {
+			String source = Files.readString(Path.of("").toAbsolutePath().resolve("src/main/java/com/lostglade/server/MonitorScreenSystem.java"));
+			require(
+					source.contains("MonitorYoutubeMusicCache.queueEntryPreview(url)")
+							&& source.contains("MonitorYoutubeRelayClient.queueEntryPreview(url)")
+							&& source.contains("drawQueueThumbnail(graphics, previewRect, item.previewFrame(), item.squarePreviewFallback(), item.current(), layout)")
+							&& source.contains("mediaQueueTitleRect(rowRect, cacheStatusRect, previewRect, layout)")
+							&& source.contains("mediaQueueMetaRect(rowRect, cacheStatusRect, previewRect, layout)"),
+					"YouTube queue rows must draw cached music/video previews to the left of their text"
+			);
+		} catch (IOException exception) {
+			throw new AssertionError("Failed to inspect YouTube queue preview rendering", exception);
+		}
+	}
+
+	private static void maxCallParticipantAccentUsesStableAvatarFrame() {
+		try {
+			String source = Files.readString(Path.of("").toAbsolutePath().resolve("src/main/java/com/lostglade/server/MonitorMaxRuntime.java"));
+			int helperIndex = source.indexOf("private static Color stableAvatarAccentLocked");
+			int helperEnd = helperIndex >= 0 ? source.indexOf("private static int currentAvatarFrameIndexLocked", helperIndex) : -1;
+			String helper = helperIndex >= 0 && helperEnd > helperIndex ? source.substring(helperIndex, helperEnd) : "";
+			require(
+					source.contains("accent = stableAvatarAccentLocked(participantState, code);")
+							&& source.contains("participant.accentColor()")
+							&& helper.contains("state.avatarFrame")
+							&& !helper.contains("currentAvatarFrameLocked"),
+					"MAX participant background color must be sampled from the stable base avatar frame, not the current animated frame"
+			);
+		} catch (IOException exception) {
+			throw new AssertionError("Failed to inspect MAX participant accent pipeline", exception);
+		}
+	}
+
+	private static void maxFileShareSendButtonDoesNotOverlapCloseButton() {
+		try {
+			String source = Files.readString(Path.of("").toAbsolutePath().resolve("src/main/java/com/lostglade/server/MonitorMaxRuntime.java"));
+			int sendIndex = source.indexOf("private static UiRect maxFileShareSendRect");
+			int titleIndex = source.indexOf("private static UiRect maxFileShareTitleRect");
+			String sendMethod = sendIndex >= 0 && titleIndex > sendIndex ? source.substring(sendIndex, titleIndex) : "";
+			require(
+					sendMethod.contains("UiRect close = maxOverlayCloseRect(layout);")
+							&& sendMethod.contains("close.x() - close.width() - gap")
+							&& source.contains("drawVerticalText(graphics, title, maxFileShareTitleRect(layout)")
+							&& !sendMethod.contains("panel.right() - size"),
+					"MAX file share send button must sit beside the close button instead of reusing the close button position"
+			);
+		} catch (IOException exception) {
+			throw new AssertionError("Failed to inspect MAX file share button layout", exception);
+		}
+	}
+
 	private static void sberDronesUsesDedicatedLiveCameraCatalog() {
 		require(
-				MonitorAppRegistry.findById("sberdrones").role() == MonitorAppRole.SBER_DRONES,
-				"Sber Drones must be routed through the dedicated live-camera app role"
+				MonitorAppRegistry.findById("sberdrones") == null,
+				"legacy Sber Drones launcher tile must stay removed"
+		);
+		require(
+				MonitorAppRegistry.findById("cameraapp") != null,
+				"MI Camera launcher tile must remain available after removing Sber Drones"
+		);
+		require(
+				ScreenViewMode.fromTag("sberdrones") == ScreenViewMode.CAMERA_APP,
+				"legacy persisted Sber Drones screen state must reopen inside the MI Camera app"
 		);
 		MonitorSberDronesCatalog.Source camera = MonitorSberDronesCatalog.Source.camera("minecraft:overworld", 1, 64, -3);
 		String cameraUrl = MonitorSberDronesCatalog.url(camera);
@@ -427,6 +637,115 @@ public final class MonitorMediaStateMachineTest {
 						"gallery://background"
 				),
 				"unused decoded gallery media should be eligible for eviction"
+		);
+	}
+
+	private static void persistedMediaTagCopyKeepsWallpaperState() {
+		CompoundTag sourceRoot = new CompoundTag();
+		CompoundTag sourceMedia = new CompoundTag();
+		sourceMedia.putInt(MonitorScreenSystem.PERSISTED_GALLERY_COUNT_TAG, 0);
+		sourceMedia.putString(MonitorScreenSystem.PERSISTED_WALLPAPER_URL_TAG, "gallery://wallpaper");
+		sourceMedia.putString(MonitorScreenSystem.PERSISTED_WALLPAPER_SCALE_TAG, "cover");
+		sourceMedia.putString(MonitorScreenSystem.PERSISTED_WALLPAPER_BACKGROUND_MODE_TAG, "blur");
+		sourceRoot.put(MonitorScreenSystem.PERSISTED_MEDIA_ROOT_TAG, sourceMedia);
+
+		CompoundTag targetRoot = new CompoundTag();
+		MonitorScreenSystem.copyPersistedMediaTag(sourceRoot, targetRoot);
+
+		CompoundTag copiedMedia = targetRoot.getCompoundOrEmpty(MonitorScreenSystem.PERSISTED_MEDIA_ROOT_TAG);
+		require(
+				"gallery://wallpaper".equals(copiedMedia.getStringOr(MonitorScreenSystem.PERSISTED_WALLPAPER_URL_TAG, "")),
+				"recreated monitor maps must keep the selected wallpaper URL"
+		);
+		require(
+				"cover".equals(copiedMedia.getStringOr(MonitorScreenSystem.PERSISTED_WALLPAPER_SCALE_TAG, "")),
+				"recreated monitor maps must keep the selected wallpaper scale mode"
+		);
+		sourceMedia.putString(MonitorScreenSystem.PERSISTED_WALLPAPER_URL_TAG, "gallery://changed");
+		require(
+				"gallery://wallpaper".equals(copiedMedia.getStringOr(MonitorScreenSystem.PERSISTED_WALLPAPER_URL_TAG, "")),
+				"persisted media copies must not share mutable wallpaper tags"
+		);
+	}
+
+	private static void hydratedBackgroundsRetryMissingDecodedMedia() {
+		MediaRuntimeState state = MediaRuntimeState.fresh(ScreenViewMode.HOME, "", () -> {});
+		state.wallpaperHydrated = true;
+		state.wallpaperUrl = "gallery://wallpaper";
+		state.wallpaperMedia = null;
+		state.wallpaperLoading = false;
+		require(
+				MonitorScreenMediaHydration.shouldRetryWallpaperLoadLocked(state),
+				"a hydrated wallpaper with metadata but no decoded media must retry loading"
+		);
+		state.wallpaperLoading = true;
+		require(
+				!MonitorScreenMediaHydration.shouldRetryWallpaperLoadLocked(state),
+				"active wallpaper loads must not be duplicated"
+		);
+		state.wallpaperLoading = false;
+		state.wallpaperUrl = "";
+		require(
+				!MonitorScreenMediaHydration.shouldRetryWallpaperLoadLocked(state),
+				"blank wallpaper metadata must not retry loading"
+		);
+
+		state.playerBackgroundHydrated = true;
+		state.playerBackgroundUrl = "gallery://background";
+		state.playerBackgroundMedia = null;
+		state.playerBackgroundLoading = false;
+		require(
+				MonitorScreenMediaHydration.shouldRetryPlayerBackgroundLoadLocked(state),
+				"a hydrated player background with metadata but no decoded media must retry loading"
+		);
+		state.playerBackgroundLoading = true;
+		require(
+				!MonitorScreenMediaHydration.shouldRetryPlayerBackgroundLoadLocked(state),
+				"active player background loads must not be duplicated"
+		);
+	}
+
+	private static void powerOffResetKeepsDecodedBackgroundMedia() {
+		BufferedImage frame = new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB);
+		MonitorMediaApp.LoadedMedia loadedMedia = new MonitorMediaApp.LoadedMedia(List.of(frame), List.of(1000), 2, 2, false);
+		MediaRuntimeState state = MediaRuntimeState.fresh(ScreenViewMode.GALLERY, "", () -> {});
+		state.wallpaperUrl = "gallery://wallpaper";
+		state.wallpaperMedia = loadedMedia;
+		state.wallpaperHydrated = true;
+		state.playerBackgroundUrl = "gallery://background";
+		state.playerBackgroundMedia = loadedMedia;
+		state.playerBackgroundHydrated = true;
+		state.galleryItems.add(new GalleryItem("Wallpaper", "", "gallery://wallpaper", "wallpaper.png", loadedMedia, frame, GalleryItemKind.MEDIA));
+		state.galleryItems.add(new GalleryItem("Background", "", "gallery://background", "background.png", loadedMedia, frame, GalleryItemKind.MEDIA));
+
+		MonitorScreenMediaSessionLifecycle.restorePersistedBackgroundStateAfterPowerOffLocked(
+				state,
+				new PersistedWallpaperState("gallery://wallpaper", MediaScaleMode.FIT, PlayerBackgroundMode.EMPTY),
+				new PersistedPlayerBackgroundState("gallery://background", MediaScaleMode.FIT)
+		);
+
+		require(
+				state.wallpaperMedia == loadedMedia && state.wallpaperHydrated,
+				"power-off reset must keep decoded wallpaper media for the same persisted URL"
+		);
+		require(
+				state.playerBackgroundMedia == loadedMedia && state.playerBackgroundHydrated,
+				"power-off reset must keep decoded player background media for the same persisted URL"
+		);
+
+		MonitorScreenMediaSessionLifecycle.restorePersistedBackgroundStateAfterPowerOffLocked(
+				state,
+				new PersistedWallpaperState("gallery://new", MediaScaleMode.FIT, PlayerBackgroundMode.EMPTY),
+				new PersistedPlayerBackgroundState("gallery://background", MediaScaleMode.FIT)
+		);
+
+		require(
+				state.wallpaperMedia == null && !state.wallpaperHydrated,
+				"power-off reset must drop decoded wallpaper media when the persisted URL changes"
+		);
+		require(
+				state.playerBackgroundMedia == loadedMedia && state.playerBackgroundHydrated,
+				"power-off reset should still reuse other unchanged decoded background media"
 		);
 	}
 
@@ -525,6 +844,54 @@ public final class MonitorMediaStateMachineTest {
 		require(
 				SpeakerAudioPlaybackPolicy.shouldResyncPosition(false, false, true, 1800L, 100L, 500L),
 				"authoritative stream positions should still resync when drift exceeds tolerance"
+		);
+	}
+
+	private static void localDirectAudioEofDoesNotRestartSameTrack() {
+		require(
+				!SpeakerAudioPlaybackPolicy.shouldRestartAfterProcessExit(
+						true,
+						false,
+						false,
+						false,
+						"relay-a",
+						"relay-a",
+						"/tmp/audio.ogg",
+						"/tmp/audio.ogg",
+						41L,
+						41L
+				),
+				"a clean EOF on the same local direct track must not restart speaker playback and loop the tail"
+		);
+		require(
+				SpeakerAudioPlaybackPolicy.shouldRestartAfterProcessExit(
+						true,
+						false,
+						false,
+						false,
+						"relay-a",
+						"relay-a",
+						"/tmp/audio.ogg",
+						"/tmp/audio.ogg",
+						41L,
+						42L
+				),
+				"a new audio sync token after EOF must restart playback so replay and seek still work"
+		);
+		require(
+				SpeakerAudioPlaybackPolicy.shouldRestartAfterProcessExit(
+						true,
+						true,
+						false,
+						false,
+						"relay-a",
+						"relay-a",
+						"https://audio.test/stream",
+						"https://audio.test/stream",
+						41L,
+						41L
+				),
+				"network-backed inputs should still restart after disconnect-like process exits"
 		);
 	}
 

@@ -6,6 +6,7 @@ import com.lostglade.server.progress.TaskProgress;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.saveddata.maps.MapId;
 
+import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -23,6 +24,12 @@ record OverlayWindowCacheKey(MediaOverlayWindowSnapshot snapshot, int width, int
 }
 
 record OverlayWindowFamilyKey(MediaOverlayWindowType type, int width, int height, int unit) {
+}
+
+record WindowedSnapshot<T>(List<T> items, int totalCount, int windowStartIndex) {
+	static <T> WindowedSnapshot<T> empty() {
+		return new WindowedSnapshot<>(List.of(), 0, 0);
+	}
 }
 
 record MediaVisualSnapshot(
@@ -64,8 +71,8 @@ record MediaVisualSnapshot(
 		String mediaTitle,
 		String mediaSubtitle,
 		TaskProgress.Snapshot progress,
-		List<YoutubeQueueItemSnapshot> mediaListItems,
-		List<GalleryCardSnapshot> galleryCards,
+		WindowedSnapshot<YoutubeQueueItemSnapshot> mediaListItems,
+		WindowedSnapshot<GalleryCardSnapshot> galleryCards,
 		boolean actionVisible,
 		MediaActionGlyph actionGlyph,
 		MediaActionVisualState actionState,
@@ -114,6 +121,8 @@ record MediaOverlayWindowSnapshot(
 		String title,
 		String subtitle,
 		List<YoutubeQueueItemSnapshot> items,
+		int totalItemCount,
+		int itemWindowStartIndex,
 		GalleryFileMenuSnapshot galleryFile,
 		int scroll,
 		int currentIndex,
@@ -171,6 +180,7 @@ record CameraAppVisualSnapshot(
 		long elapsedMs,
 		boolean deviceMenuOpen,
 		boolean chromeHidden,
+		boolean droneControlVisible,
 		String statusText
 ) {
 	boolean dynamic() {
@@ -193,19 +203,21 @@ record MaxVisualSnapshot(
 		String accountCode,
 		String accountName,
 		BufferedImage avatarFrame,
-		List<MaxContactSnapshot> contacts,
+		WindowedSnapshot<MaxContactSnapshot> contacts,
 		MaxCallVisualSnapshot call,
-		List<MaxAvatarCandidateSnapshot> avatarCandidates,
+		WindowedSnapshot<MaxAvatarCandidateSnapshot> avatarCandidates,
 		int avatarPickerScroll,
-		List<MaxRingtoneCandidateSnapshot> ringtoneCandidates,
+		WindowedSnapshot<MaxRingtoneCandidateSnapshot> ringtoneCandidates,
 		int ringtonePickerScroll,
-		List<MaxFileShareContactSnapshot> fileShareContacts,
+		WindowedSnapshot<MaxFileShareContactSnapshot> fileShareContacts,
 		int fileSharePickerScroll,
-		MaxIncomingFileSnapshot incomingFile,
+		WindowedSnapshot<MaxIncomingFileSnapshot> incomingFiles,
+		int notificationScroll,
 		int notificationCount,
 		int fileShareFileCount,
 		int fileShareSelectedCount,
 		String fileShareTitle,
+		WindowedSnapshot<MaxContactSnapshot> callContactCandidates,
 		boolean avatarPickerOpen,
 		boolean ringtonePickerOpen,
 		boolean fileSharePickerOpen,
@@ -215,7 +227,7 @@ record MaxVisualSnapshot(
 		String statusText
 ) {
 	boolean dynamic() {
-		return this.animatedAvatars || (this.call != null && this.call.dynamic()) || this.ringtonePreviewPlaying;
+		return this.animatedAvatars || (this.call != null && this.call.dynamic()) || this.ringtonePreviewPlaying || this.notificationsOpen;
 	}
 }
 
@@ -226,7 +238,9 @@ record MaxContactSnapshot(
 		boolean avatarAnimated,
 		boolean online,
 		boolean ringing,
-		boolean active
+		boolean active,
+		int notificationCount,
+		boolean savedContact
 ) {
 }
 
@@ -275,6 +289,7 @@ record MaxCallParticipantSnapshot(
 		String code,
 		String displayName,
 		BufferedImage avatarFrame,
+		Color accentColor,
 		boolean avatarAnimated,
 		BufferedImage videoFrame,
 		boolean self,
@@ -333,13 +348,20 @@ record MaxFileShareContactSnapshot(
 }
 
 record MaxIncomingFileSnapshot(
+		String id,
 		String senderCode,
 		String senderDisplayName,
 		BufferedImage senderAvatarFrame,
 		boolean senderAvatarAnimated,
 		String fileName,
 		String subtitle,
-		GalleryItemKind kind
+		GalleryItemKind kind,
+		BufferedImage previewFrame,
+		boolean squarePreviewFallback,
+		boolean previewPlayable,
+		boolean previewActive,
+		boolean previewPlaying,
+		boolean previewLoading
 ) {
 }
 
@@ -366,6 +388,8 @@ record YoutubeQueueItemSnapshot(
 		String title,
 		String subtitle,
 		long durationMs,
+		BufferedImage previewFrame,
+		boolean squarePreviewFallback,
 		boolean current,
 		float cacheFraction,
 		boolean cacheActive,
@@ -625,6 +649,7 @@ enum PlayerUiIcon {
 	AIMING_2("/assets/lg2/textures/monitor/ui_icons/aiming_2.png"),
 	ADD("/assets/lg2/textures/monitor/ui_icons/add.png"),
 	MINUS("/assets/lg2/textures/monitor/ui_icons/minus.png"),
+	DIRECTIONS_2_LINE("/assets/lg2/textures/monitor/ui_icons/directions_2_line.png"),
 	SEND_PLANE("/assets/lg2/textures/monitor/ui_icons/send_plane.png"),
 	NOTIFICATION("/assets/lg2/textures/monitor/ui_icons/notification.png"),
 	TARGET("/assets/lg2/textures/monitor/ui_icons/target.png");
@@ -756,6 +781,7 @@ final class MediaRuntimeState {
 	int youtubeMusicShuffleCursor;
 	int youtubeQueueIndex;
 	int youtubeQueueScroll;
+	long youtubeQueueTotalDurationMs;
 	boolean youtubeQueueOpen;
 	boolean youtubeQueueCacheStatusRefreshScheduled;
 	boolean youtubeReturnToGallery;
@@ -825,7 +851,7 @@ final class MediaRuntimeState {
 		this.wallpaperLoading = false;
 		this.playerBackgroundMedia = null;
 		this.playerBackgroundUrl = null;
-		this.playerBackgroundScaleMode = MediaScaleMode.FIT;
+		this.playerBackgroundScaleMode = MediaScaleMode.FILL;
 		this.playerBackgroundFrameIndex = 0;
 		this.playerBackgroundLoading = false;
 		this.galleryPendingOpenUrl = null;
@@ -857,6 +883,7 @@ final class MediaRuntimeState {
 		this.youtubeMusicShuffleCursor = -1;
 		this.youtubeQueueIndex = -1;
 		this.youtubeQueueScroll = 0;
+		this.youtubeQueueTotalDurationMs = 0L;
 		this.youtubeQueueOpen = false;
 		this.youtubeQueueCacheStatusRefreshScheduled = false;
 		this.youtubeReturnToGallery = false;

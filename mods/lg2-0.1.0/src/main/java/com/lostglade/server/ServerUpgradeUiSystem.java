@@ -49,9 +49,13 @@ import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.BundleContents;
+import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.item.component.ItemLore;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.level.storage.LevelResource;
 import xyz.nucleoid.packettweaker.PacketContext;
 
@@ -111,6 +115,7 @@ public final class ServerUpgradeUiSystem {
 	private static final int MAIN_SCREEN_DVD_FRAME_TICKS = 4;
 	private static final int MAIN_SCREEN_ARCHIVE_FRAME_TICKS = 2;
 	private static final int MAIN_SCREEN_SPIN_FRAME_TICKS = 2;
+	private static final int BITCOIN_CONTAINER_SCAN_MAX_DEPTH = 8;
 	private static final int MAIN_SCREEN_OVERLAY_GLYPH_ADVANCE = 119;
 	private static final int ERAS_OVERLAY_GLYPH_ADVANCE = 150;
 	private static final double MAIN_SCREEN_ARCHIVE_VARIANT_CHANCE = 0.0001D;
@@ -1315,9 +1320,33 @@ public final class ServerUpgradeUiSystem {
 		int total = 0;
 		Inventory inventory = player.getInventory();
 		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
-			ItemStack stack = inventory.getItem(slot);
-			if (stack.is(ModItems.BITCOIN)) {
-				total += stack.getCount();
+			total += countBitcoinsInStack(inventory.getItem(slot));
+		}
+		return total;
+	}
+
+	private static int countBitcoinsInStack(ItemStack stack) {
+		return countBitcoinsInStack(stack, 0);
+	}
+
+	private static int countBitcoinsInStack(ItemStack stack, int depth) {
+		if (stack == null || stack.isEmpty()) {
+			return 0;
+		}
+		int total = stack.is(ModItems.BITCOIN) ? stack.getCount() : 0;
+		if (depth >= BITCOIN_CONTAINER_SCAN_MAX_DEPTH) {
+			return total;
+		}
+		ItemContainerContents shulkerContents = shulkerContents(stack);
+		if (shulkerContents != null) {
+			for (ItemStack contained : shulkerContents.nonEmptyItems()) {
+				total += countBitcoinsInStack(contained, depth + 1);
+			}
+		}
+		BundleContents bundleContents = bundleContents(stack);
+		if (bundleContents != null) {
+			for (ItemStack contained : bundleContents.itemsCopy()) {
+				total += countBitcoinsInStack(contained, depth + 1);
 			}
 		}
 		return total;
@@ -1334,21 +1363,123 @@ public final class ServerUpgradeUiSystem {
 		int remaining = amount;
 		Inventory inventory = player.getInventory();
 		for (int slot = 0; slot < inventory.getContainerSize() && remaining > 0; slot++) {
-			ItemStack stack = inventory.getItem(slot);
-			if (!stack.is(ModItems.BITCOIN) || stack.isEmpty()) {
-				continue;
-			}
-
-			int remove = Math.min(remaining, stack.getCount());
-			stack.shrink(remove);
-			if (stack.isEmpty()) {
+			remaining -= consumeBitcoinsFromStack(inventory.getItem(slot), remaining, 0);
+			if (inventory.getItem(slot).isEmpty()) {
 				inventory.setItem(slot, ItemStack.EMPTY);
 			}
-			remaining -= remove;
 		}
 
 		inventory.setChanged();
 		return remaining <= 0;
+	}
+
+	private static int consumeBitcoinsFromStack(ItemStack stack, int amount, int depth) {
+		if (amount <= 0 || stack == null || stack.isEmpty()) {
+			return 0;
+		}
+		if (stack.is(ModItems.BITCOIN)) {
+			int removed = Math.min(amount, stack.getCount());
+			stack.shrink(removed);
+			return removed;
+		}
+		if (depth >= BITCOIN_CONTAINER_SCAN_MAX_DEPTH) {
+			return 0;
+		}
+		int removed = consumeBitcoinsFromShulker(stack, amount, depth);
+		if (removed >= amount) {
+			return removed;
+		}
+		return removed + consumeBitcoinsFromBundle(stack, amount - removed, depth);
+	}
+
+	private static int consumeBitcoinsFromShulker(ItemStack stack, int amount, int depth) {
+		if (amount <= 0 || stack == null || stack.isEmpty()) {
+			return 0;
+		}
+		ItemContainerContents contents = shulkerContents(stack);
+		if (contents == null) {
+			return 0;
+		}
+		List<ItemStack> items = contents.stream().toList();
+		if (items.isEmpty()) {
+			return 0;
+		}
+		List<ItemStack> updatedItems = new ArrayList<>(items.size());
+		for (ItemStack item : items) {
+			updatedItems.add(item == null ? ItemStack.EMPTY : item.copy());
+		}
+		int removed = 0;
+		for (int index = 0; index < updatedItems.size() && removed < amount; index++) {
+			ItemStack contained = updatedItems.get(index);
+			if (contained == null || contained.isEmpty()) {
+				continue;
+			}
+			int consume = consumeBitcoinsFromStack(contained, amount - removed, depth + 1);
+			if (contained.isEmpty()) {
+				updatedItems.set(index, ItemStack.EMPTY);
+			}
+			removed += consume;
+		}
+		if (removed > 0) {
+			stack.set(DataComponents.CONTAINER, ItemContainerContents.fromItems(updatedItems));
+		}
+		return removed;
+	}
+
+	private static int consumeBitcoinsFromBundle(ItemStack stack, int amount, int depth) {
+		if (amount <= 0 || stack == null || stack.isEmpty()) {
+			return 0;
+		}
+		BundleContents contents = bundleContents(stack);
+		if (contents == null) {
+			return 0;
+		}
+		List<ItemStack> updatedItems = new ArrayList<>();
+		for (ItemStack item : contents.itemsCopy()) {
+			updatedItems.add(item == null ? ItemStack.EMPTY : item.copy());
+		}
+		if (updatedItems.isEmpty()) {
+			return 0;
+		}
+		int removed = 0;
+		for (int index = 0; index < updatedItems.size() && removed < amount; index++) {
+			ItemStack contained = updatedItems.get(index);
+			if (contained == null || contained.isEmpty()) {
+				continue;
+			}
+			int consume = consumeBitcoinsFromStack(contained, amount - removed, depth + 1);
+			if (contained.isEmpty()) {
+				updatedItems.set(index, ItemStack.EMPTY);
+			}
+			removed += consume;
+		}
+		if (removed > 0) {
+			BundleContents.Mutable mutable = new BundleContents.Mutable(contents);
+			mutable.clearItems();
+			for (ItemStack updated : updatedItems) {
+				if (updated != null && !updated.isEmpty()) {
+					mutable.tryInsert(updated);
+				}
+			}
+			stack.set(DataComponents.BUNDLE_CONTENTS, mutable.toImmutable());
+		}
+		return removed;
+	}
+
+	private static ItemContainerContents shulkerContents(ItemStack stack) {
+		if (stack == null || stack.isEmpty() || !(stack.getItem() instanceof BlockItem blockItem) || !(blockItem.getBlock() instanceof ShulkerBoxBlock)) {
+			return null;
+		}
+		ItemContainerContents contents = stack.get(DataComponents.CONTAINER);
+		return contents != null && contents != ItemContainerContents.EMPTY ? contents : null;
+	}
+
+	private static BundleContents bundleContents(ItemStack stack) {
+		if (stack == null || stack.isEmpty() || !stack.has(DataComponents.BUNDLE_CONTENTS)) {
+			return null;
+		}
+		BundleContents contents = stack.get(DataComponents.BUNDLE_CONTENTS);
+		return contents != null && !contents.isEmpty() ? contents : null;
 	}
 
 	private static boolean isWithinButtonHitbox(

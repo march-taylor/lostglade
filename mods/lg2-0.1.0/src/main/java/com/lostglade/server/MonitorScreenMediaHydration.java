@@ -231,38 +231,44 @@ final class MonitorScreenMediaHydration {
 		boolean shouldRender = false;
 		synchronized (state) {
 			if (state.wallpaperHydrated) {
-				return;
-			}
-			PersistedWallpaperState persisted = null;
-			PersistedGalleryItem persistedWallpaperItem = null;
-			ScreenComponent component = resolveScreenComponent(server, key);
-			if (component != null) {
-				persisted = resolvePersistedWallpaperState(component);
-				if (persisted != null && persisted.url() != null && !persisted.url().isBlank()) {
-					for (PersistedGalleryItem galleryItem : resolvePersistedGalleryState(component)) {
-						if (galleryItem != null && Objects.equals(galleryItem.url(), persisted.url())) {
-							persistedWallpaperItem = galleryItem;
-							break;
+				if (shouldRetryWallpaperLoadLocked(state)) {
+					wallpaperUrl = state.wallpaperUrl;
+					wallpaperLocalMediaKey = currentGalleryItemMatchingUrlLocked(state, wallpaperUrl)
+							.map(GalleryItem::localMediaKey)
+							.orElse(null);
+				}
+			} else {
+				PersistedWallpaperState persisted = null;
+				PersistedGalleryItem persistedWallpaperItem = null;
+				ScreenComponent component = resolveScreenComponent(server, key);
+				if (component != null) {
+					persisted = resolvePersistedWallpaperState(component);
+					if (persisted != null && persisted.url() != null && !persisted.url().isBlank()) {
+						for (PersistedGalleryItem galleryItem : resolvePersistedGalleryState(component)) {
+							if (galleryItem != null && Objects.equals(galleryItem.url(), persisted.url())) {
+								persistedWallpaperItem = galleryItem;
+								break;
+							}
 						}
 					}
 				}
+				state.wallpaperHydrated = true;
+				state.wallpaperFrameIndex = 0;
+				if (persisted == null || persisted.url() == null || persisted.url().isBlank()) {
+					clearWallpaperLocked(state);
+					return;
+				}
+				state.wallpaperUrl = persisted.url();
+				state.wallpaperScaleMode = persisted.scaleMode() != null ? persisted.scaleMode() : MediaScaleMode.FIT;
+				state.wallpaperBackgroundMode = safeWallpaperBackgroundMode(persisted.backgroundMode());
+				state.wallpaperMedia = currentGalleryItemMatchingUrlLocked(state, state.wallpaperUrl)
+						.map(GalleryItem::media)
+						.orElse(null);
+				wallpaperLocalMediaKey = persistedWallpaperItem != null ? persistedWallpaperItem.localMediaKey() : null;
+				wallpaperUrl = state.wallpaperMedia == null ? state.wallpaperUrl : null;
+				shouldRender = state.wallpaperMedia != null;
+				state.version++;
 			}
-			state.wallpaperHydrated = true;
-			state.wallpaperFrameIndex = 0;
-			if (persisted == null || persisted.url() == null || persisted.url().isBlank()) {
-				clearWallpaperLocked(state);
-				return;
-			}
-			state.wallpaperUrl = persisted.url();
-			state.wallpaperScaleMode = persisted.scaleMode() != null ? persisted.scaleMode() : MediaScaleMode.FIT;
-			state.wallpaperBackgroundMode = safeWallpaperBackgroundMode(persisted.backgroundMode());
-			state.wallpaperMedia = currentGalleryItemMatchingUrlLocked(state, state.wallpaperUrl)
-					.map(GalleryItem::media)
-					.orElse(null);
-			wallpaperLocalMediaKey = persistedWallpaperItem != null ? persistedWallpaperItem.localMediaKey() : null;
-			wallpaperUrl = state.wallpaperMedia == null ? state.wallpaperUrl : null;
-			shouldRender = state.wallpaperMedia != null;
-			state.version++;
 		}
 		if (wallpaperUrl != null) {
 			scheduleWallpaperLoad(server, key, wallpaperUrl, wallpaperLocalMediaKey);
@@ -270,6 +276,15 @@ final class MonitorScreenMediaHydration {
 		if (shouldRender) {
 			requestRuntimeRender(server, key);
 		}
+	}
+
+	static boolean shouldRetryWallpaperLoadLocked(MediaRuntimeState state) {
+		return state != null
+				&& state.wallpaperHydrated
+				&& state.wallpaperUrl != null
+				&& !state.wallpaperUrl.isBlank()
+				&& state.wallpaperMedia == null
+				&& !state.wallpaperLoading;
 	}
 
 	static void ensurePlayerBackgroundModeHydrated(MinecraftServer server, ScreenRuntimeKey key, MediaRuntimeState state) {
@@ -301,37 +316,43 @@ final class MonitorScreenMediaHydration {
 		boolean shouldRender = false;
 		synchronized (state) {
 			if (state.playerBackgroundHydrated) {
-				return;
-			}
-			PersistedPlayerBackgroundState persisted = null;
-			PersistedGalleryItem persistedBackgroundItem = null;
-			ScreenComponent component = resolveScreenComponent(server, key);
-			if (component != null) {
-				persisted = resolvePersistedPlayerBackgroundState(component);
-				if (persisted != null && persisted.url() != null && !persisted.url().isBlank()) {
-					for (PersistedGalleryItem galleryItem : resolvePersistedGalleryState(component)) {
-						if (galleryItem != null && Objects.equals(galleryItem.url(), persisted.url())) {
-							persistedBackgroundItem = galleryItem;
-							break;
+				if (shouldRetryPlayerBackgroundLoadLocked(state)) {
+					playerBackgroundUrl = state.playerBackgroundUrl;
+					playerBackgroundLocalMediaKey = currentGalleryItemMatchingUrlLocked(state, playerBackgroundUrl)
+							.map(GalleryItem::localMediaKey)
+							.orElse(null);
+				}
+			} else {
+				PersistedPlayerBackgroundState persisted = null;
+				PersistedGalleryItem persistedBackgroundItem = null;
+				ScreenComponent component = resolveScreenComponent(server, key);
+				if (component != null) {
+					persisted = resolvePersistedPlayerBackgroundState(component);
+					if (persisted != null && persisted.url() != null && !persisted.url().isBlank()) {
+						for (PersistedGalleryItem galleryItem : resolvePersistedGalleryState(component)) {
+							if (galleryItem != null && Objects.equals(galleryItem.url(), persisted.url())) {
+								persistedBackgroundItem = galleryItem;
+								break;
+							}
 						}
 					}
 				}
+				state.playerBackgroundHydrated = true;
+				state.playerBackgroundFrameIndex = 0;
+				if (persisted == null || persisted.url() == null || persisted.url().isBlank()) {
+					clearPlayerBackgroundLocked(state);
+					return;
+				}
+				state.playerBackgroundUrl = persisted.url();
+				state.playerBackgroundScaleMode = persisted.scaleMode() != null ? persisted.scaleMode() : MediaScaleMode.FILL;
+				state.playerBackgroundMedia = currentGalleryItemMatchingUrlLocked(state, state.playerBackgroundUrl)
+						.map(GalleryItem::media)
+						.orElse(null);
+				playerBackgroundLocalMediaKey = persistedBackgroundItem != null ? persistedBackgroundItem.localMediaKey() : null;
+				playerBackgroundUrl = state.playerBackgroundMedia == null ? state.playerBackgroundUrl : null;
+				shouldRender = state.playerBackgroundMedia != null;
+				state.version++;
 			}
-			state.playerBackgroundHydrated = true;
-			state.playerBackgroundFrameIndex = 0;
-			if (persisted == null || persisted.url() == null || persisted.url().isBlank()) {
-				clearPlayerBackgroundLocked(state);
-				return;
-			}
-			state.playerBackgroundUrl = persisted.url();
-			state.playerBackgroundScaleMode = persisted.scaleMode() != null ? persisted.scaleMode() : MediaScaleMode.FIT;
-			state.playerBackgroundMedia = currentGalleryItemMatchingUrlLocked(state, state.playerBackgroundUrl)
-					.map(GalleryItem::media)
-					.orElse(null);
-			playerBackgroundLocalMediaKey = persistedBackgroundItem != null ? persistedBackgroundItem.localMediaKey() : null;
-			playerBackgroundUrl = state.playerBackgroundMedia == null ? state.playerBackgroundUrl : null;
-			shouldRender = state.playerBackgroundMedia != null;
-			state.version++;
 		}
 		if (playerBackgroundUrl != null) {
 			schedulePlayerBackgroundLoad(server, key, playerBackgroundUrl, playerBackgroundLocalMediaKey);
@@ -339,6 +360,15 @@ final class MonitorScreenMediaHydration {
 		if (shouldRender) {
 			requestRuntimeRender(server, key);
 		}
+	}
+
+	static boolean shouldRetryPlayerBackgroundLoadLocked(MediaRuntimeState state) {
+		return state != null
+				&& state.playerBackgroundHydrated
+				&& state.playerBackgroundUrl != null
+				&& !state.playerBackgroundUrl.isBlank()
+				&& state.playerBackgroundMedia == null
+				&& !state.playerBackgroundLoading;
 	}
 
 	static void scheduleGalleryPreloadStatusRefreshes(MinecraftServer server, ScreenRuntimeKey key) {
@@ -458,14 +488,11 @@ final class MonitorScreenMediaHydration {
 			return false;
 		}
 		boolean youtubeMusicQueue = isYoutubeMusicMode(state.mode);
-		for (YoutubeQueueItem item : state.youtubeQueue) {
-			String url = item != null ? item.url() : "";
+		Set<String> activeUrls = youtubeMusicQueue ? state.retainedYoutubeMusicUrls : state.retainedYoutubePreloadUrls;
+		for (String url : activeUrls) {
 			if (url == null || url.isBlank()) {
 				continue;
 			}
-			boolean retained = youtubeMusicQueue
-					? state.retainedYoutubeMusicUrls.contains(url)
-					: state.retainedYoutubePreloadUrls.contains(url);
 			if (youtubeMusicQueue) {
 				MonitorYoutubeMusicCache.QueueEntryCacheStatus status = MonitorYoutubeMusicCache.queueEntryCacheStatus(url);
 				if (!status.complete() && status.active()) {
@@ -473,7 +500,7 @@ final class MonitorScreenMediaHydration {
 				}
 			} else {
 				MonitorYoutubeRelayClient.QueueEntryCacheStatus status = MonitorYoutubeRelayClient.queueEntryCacheStatus(url);
-				if (!status.complete() && (status.active() || retained)) {
+				if (!status.complete() && status.active()) {
 					return true;
 				}
 			}

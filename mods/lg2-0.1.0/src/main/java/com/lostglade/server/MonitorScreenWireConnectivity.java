@@ -182,11 +182,11 @@ final class MonitorScreenWireConnectivity {
 	}
 
 	public static List<DroneSystem.DroneScreenStreamReference> collectActiveDroneScreenStreams(MinecraftServer server) {
-		if (server == null || MEDIA_STATES.isEmpty()) {
+		if (server == null) {
 			return List.of();
 		}
-		List<DroneSystem.DroneScreenStreamReference> streams = new ArrayList<>();
-		Set<UUID> emittedDrones = new HashSet<>();
+		Map<UUID, DroneSystem.DroneScreenStreamReference> streams = new LinkedHashMap<>();
+		collectPoweredLinkedDroneStreams(server, streams);
 		for (Map.Entry<ScreenRuntimeKey, MediaRuntimeState> entry : MEDIA_STATES.entrySet()) {
 			ScreenRuntimeKey runtimeKey = entry.getKey();
 			MediaRuntimeState state = entry.getValue();
@@ -217,15 +217,69 @@ final class MonitorScreenWireConnectivity {
 			LiveCameraReference cameraRef = liveCameraGalleryReference(sourceUrl, runtimeKey.dimension());
 			if (cameraRef == null
 					|| cameraRef.sourceType() != LiveCameraSourceType.DRONE
-					|| cameraRef.sourceUuid() == null
-					|| !emittedDrones.add(cameraRef.sourceUuid())) {
+					|| cameraRef.sourceUuid() == null) {
 				continue;
 			}
-			ResourceKey<Level> dimension = cameraRef.dimension() == null ? runtimeKey.dimension() : cameraRef.dimension();
-			BlockPos pos = cameraRef.pos() == null ? BlockPos.ZERO : cameraRef.pos().immutable();
-			streams.add(new DroneSystem.DroneScreenStreamReference(cameraRef.sourceUuid(), dimension, pos));
+			addDroneScreenStreamReference(streams, server, cameraRef.sourceUuid(), cameraRef.dimension(), cameraRef.pos(), runtimeKey.dimension());
 		}
-		return streams;
+		return List.copyOf(streams.values());
+	}
+
+	private static void collectPoweredLinkedDroneStreams(
+			MinecraftServer server,
+			Map<UUID, DroneSystem.DroneScreenStreamReference> streams
+	) {
+		if (server == null || streams == null || LEVEL_STATES.isEmpty()) {
+			return;
+		}
+		for (MonitorLevelState monitorState : LEVEL_STATES.values()) {
+			if (monitorState == null) {
+				continue;
+			}
+			ServerLevel level = server.getLevel(monitorState.dimension());
+			if (level == null) {
+				continue;
+			}
+			for (ScreenComponent component : monitorState.components().values()) {
+				if (component == null || !component.powered()) {
+					continue;
+				}
+				BluetoothLinkSystem.Endpoint screenEndpoint = bluetoothScreenEndpoint(level, component);
+				if (screenEndpoint == null) {
+					continue;
+				}
+				for (BluetoothLinkSystem.Endpoint linked : BluetoothLinkSystem.linkedEndpoints(screenEndpoint)) {
+					if (linked == null || linked.type() != BluetoothLinkSystem.EndpointType.DRONE || linked.deviceUuid() == null) {
+						continue;
+					}
+					addDroneScreenStreamReference(streams, server, linked.deviceUuid(), linked.dimension(), linked.pos(), level.dimension());
+				}
+			}
+		}
+	}
+
+	private static void addDroneScreenStreamReference(
+			Map<UUID, DroneSystem.DroneScreenStreamReference> streams,
+			MinecraftServer server,
+			UUID droneUuid,
+			ResourceKey<Level> fallbackDimension,
+			BlockPos fallbackPos,
+			ResourceKey<Level> defaultDimension
+	) {
+		if (streams == null || server == null || droneUuid == null || streams.containsKey(droneUuid)) {
+			return;
+		}
+		DroneSystem.DroneLiveFeedState droneState = DroneSystem.resolveLiveFeedState(server, droneUuid, fallbackDimension, fallbackPos);
+		ResourceKey<Level> dimension = droneState != null && droneState.dimension() != null
+				? droneState.dimension()
+				: fallbackDimension != null ? fallbackDimension : defaultDimension;
+		BlockPos pos = droneState != null && droneState.pos() != null
+				? droneState.pos().immutable()
+				: fallbackPos != null ? fallbackPos.immutable() : BlockPos.ZERO;
+		if (dimension == null) {
+			return;
+		}
+		streams.put(droneUuid, new DroneSystem.DroneScreenStreamReference(droneUuid, dimension, pos));
 	}
 
 	static void triggerLiveCameraTargets(MinecraftServer server, Set<ScreenRuntimeKey> targets) {

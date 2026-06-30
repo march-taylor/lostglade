@@ -285,6 +285,7 @@ final class MonitorScreenInputController {
 				synchronized (mediaState) {
 					int visibleRows = mediaQueueVisibleRows(layout);
 					int maxScroll = Math.max(0, mediaState.youtubeQueue.size() - visibleRows);
+					int renderableRows = mediaQueueRenderableRows(layout);
 					mediaState.youtubeQueueScroll = clampInt(mediaState.youtubeQueueScroll, 0, maxScroll);
 					if (!mediaQueuePanelRect(layout).contains(touchPoint.x(), touchPoint.y())
 							|| mediaQueueCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
@@ -304,8 +305,13 @@ final class MonitorScreenInputController {
 								mediaState.youtubeQueue.size(),
 								touchPoint.y()
 						);
+						MonitorScrollAnimationSystem.snap(
+								component.runtimeKey(),
+								MonitorScrollAnimationSystem.ScrollChannel.MEDIA_QUEUE_WINDOW,
+								mediaState.youtubeQueueScroll
+						);
 					} else {
-						int rowCount = Math.min(visibleRows + 1, Math.max(0, mediaState.youtubeQueue.size() - mediaState.youtubeQueueScroll));
+						int rowCount = Math.min(renderableRows, Math.max(0, mediaState.youtubeQueue.size() - mediaState.youtubeQueueScroll));
 						for (int visibleIndex = 0; visibleIndex < rowCount; visibleIndex++) {
 							UiRect rowRect = mediaQueueRowRect(layout, visibleIndex);
 							if (!rowRect.contains(touchPoint.x(), touchPoint.y())) {
@@ -319,6 +325,7 @@ final class MonitorScreenInputController {
 							if (removeRect.contains(touchPoint.x(), touchPoint.y())) {
 								boolean removedCurrent = queueIndex == mediaState.youtubeQueueIndex;
 								mediaState.youtubeQueue.remove(queueIndex);
+								recalculateYoutubeQueueDurationLocked(mediaState);
 								if (mediaState.youtubeQueue.isEmpty()) {
 									cancelPlaybackLocked(mediaState);
 									clearYoutubePlaybackLocked(mediaState);
@@ -802,7 +809,7 @@ final class MonitorScreenInputController {
 				rerenderCurrent = !liveCameraPlayback;
 			}
 		} else if (component.viewMode() == ScreenViewMode.CAMERA_APP) {
-			if (!MonitorCameraRuntime.handleTouch(server, component, layout, touchPoint)) {
+			if (!MonitorCameraRuntime.handleTouch(server, player, component, layout, touchPoint)) {
 				nextMode = ScreenViewMode.HOME;
 			}
 		} else if (component.viewMode() == ScreenViewMode.MAX) {
@@ -873,6 +880,8 @@ final class MonitorScreenInputController {
 				} else if (!preserveRuntimeTransition) {
 					deactivateMediaSession(level.getServer(), component.runtimeKey());
 				}
+			} else if (nextMode != component.viewMode()) {
+				deactivateAuxiliaryAppRuntimes(level.getServer(), component.runtimeKey());
 			}
 			if (isPlayerMode(nextMode) && component.viewMode() != nextMode) {
 				openMediaSession(player, component.runtimeKey(), nextMode);

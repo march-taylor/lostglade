@@ -323,6 +323,8 @@ public final class DroneSystem {
 	private static final byte ENTITY_FLAG_INVISIBLE = 0x20;
 	private static final byte ENTITY_FLAG_FALL_FLYING = (byte) 0x80;
 	private static final int CONTROLLED_VIEW_TELEPORT_ID_BASE = 1_000_000_000;
+	private static final long CONTROLLED_DRONE_START_ROTATION_SUPPRESSION_TICKS = 20L;
+	private static final long CONTROLLED_DRONE_TELEPORT_ACK_ROTATION_GRACE_TICKS = 2L;
 	private static final double CONTROLLED_DRONE_BLOCKED_MOVEMENT_EPSILON = 1.0E-5D;
 	private static final double CONTROLLED_DRONE_MAX_REPORTED_MOVE_BLOCKS = 4.0D;
 	private static final long POST_CONTROL_MOVE_PACKET_SUPPRESSION_TICKS = 20L;
@@ -399,6 +401,7 @@ public final class DroneSystem {
 	private static final Map<DroneChunkTicketKey, Integer> ACTIVE_DRONE_CHUNK_TICKETS = new HashMap<>();
 	private static final Map<UUID, DroneScreenStreamLoadState> SCREEN_STREAM_DRONE_LOAD_STATES = new HashMap<>();
 	private static final Map<UUID, DroneScreenStreamLoadState> LAST_KNOWN_DRONE_FEED_STATES = new HashMap<>();
+	private static final Set<UUID> POWERED_SCREEN_LINKED_DRONES = new HashSet<>();
 	private static final Map<UUID, PendingDroneControlStart> PENDING_CONTROL_STARTS = new HashMap<>();
 	private static final Map<UUID, OperatorBodyMirror> OPERATOR_BODY_MIRRORS = new HashMap<>();
 	private static final Map<UUID, Long> NEXT_DRONE_SOUND_TICK = new HashMap<>();
@@ -532,6 +535,7 @@ public final class DroneSystem {
 			ACTIVE_DRONE_CHUNK_TICKETS.clear();
 			SCREEN_STREAM_DRONE_LOAD_STATES.clear();
 			LAST_KNOWN_DRONE_FEED_STATES.clear();
+			POWERED_SCREEN_LINKED_DRONES.clear();
 			PENDING_CONTROL_STARTS.clear();
 			OPERATOR_BODY_MIRRORS.clear();
 			NEXT_DRONE_ARM_ALLOWED_TICK.clear();
@@ -637,6 +641,7 @@ public final class DroneSystem {
 		UncontrolledDroneState uncontrolledState = new UncontrolledDroneState(root.getUUID(), serverLevel.dimension(), Vec3.ZERO, yRot, 0.0F);
 		uncontrolledState.setLastPosition(root.position());
 		UNCONTROLLED_DRONES.put(root.getUUID(), uncontrolledState);
+		rememberLastKnownDroneFeedState(root);
 
 		if (!player.getAbilities().instabuild) {
 			context.getItemInHand().shrink(1);
@@ -826,7 +831,12 @@ public final class DroneSystem {
 		if (session == null) {
 			return false;
 		}
-		return teleportId >= CONTROLLED_VIEW_TELEPORT_ID_BASE;
+		if (teleportId < CONTROLLED_VIEW_TELEPORT_ID_BASE) {
+			return false;
+		}
+		long gameTime = player.level() == null ? Long.MIN_VALUE : player.level().getGameTime();
+		session.acknowledgeStartupViewSync(gameTime);
+		return true;
 	}
 
 	public static ChunkTrackingView createVirtualChunkTrackingView(ServerPlayer player) {
@@ -1012,6 +1022,18 @@ public final class DroneSystem {
 		return resolveLiveFeedState(server, endpoint.deviceUuid(), endpoint.dimension(), endpoint.pos());
 	}
 
+	public static boolean isDroneCameraAnchor(Entity entity) {
+		if (entity == null) {
+			return false;
+		}
+		for (String tag : entity.getTags()) {
+			if (tag != null && tag.startsWith(DRONE_CAMERA_OWNER_TAG_PREFIX)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	public static DroneLiveFeedState resolveLiveFeedState(
 			MinecraftServer server,
 			UUID droneUuid,
@@ -1084,17 +1106,18 @@ public final class DroneSystem {
 		rememberDroneScreenStreamLoadState(root);
 		UUID controllerId = resolveAuthoritativeDroneControllerId(root.getUUID());
 		ServerPlayer controller = controllerId == null ? null : server.getPlayerList().getPlayer(controllerId);
-		Entity cameraAnchor = ensureDroneCameraAnchor(root);
-		Vec3 cameraOrigin = cameraAnchor != null ? cameraAnchor.position() : resolveDroneCameraPosition(root);
-		float cameraYaw = cameraAnchor != null ? cameraAnchor.getYRot() : resolveDroneCameraYaw(root);
-		float cameraPitch = cameraAnchor != null ? cameraAnchor.getXRot() : resolveDroneCameraPitch(root);
-		UUID cameraAnchorUuid = cameraAnchor != null ? cameraAnchor.getUUID() : null;
-		Set<UUID> hiddenEntities = hiddenDroneCameraEntityUuids(root, null);
-		if (controller != null && ACTIVE_SESSIONS.containsKey(controller.getUUID())) {
-			DroneControlSession session = ACTIVE_SESSIONS.get(controller.getUUID());
-			if (session != null
-					&& Objects.equals(session.droneUuid(), root.getUUID())
-					&& controller.level() == droneLevel) {
+			Entity cameraAnchor = ensureDroneCameraAnchor(root);
+			Vec3 cameraOrigin = cameraAnchor != null ? cameraAnchor.position() : resolveDroneCameraPosition(root);
+			float cameraYaw = cameraAnchor != null ? cameraAnchor.getYRot() : resolveDroneCameraYaw(root);
+			float cameraPitch = cameraAnchor != null ? cameraAnchor.getXRot() : resolveDroneCameraPitch(root);
+			UUID cameraAnchorUuid = cameraAnchor != null ? cameraAnchor.getUUID() : null;
+			Set<UUID> hiddenEntities = hiddenDroneCameraEntityUuids(root, null);
+			boolean omnidirectionalChunkLoading = cameraAnchorUuid == null;
+			if (controller != null && ACTIVE_SESSIONS.containsKey(controller.getUUID())) {
+				DroneControlSession session = ACTIVE_SESSIONS.get(controller.getUUID());
+				if (session != null
+						&& Objects.equals(session.droneUuid(), root.getUUID())
+						&& controller.level() == droneLevel) {
 				return new DroneLiveFeedState(
 						root.getUUID(),
 						droneLevel.dimension(),
@@ -1103,16 +1126,16 @@ public final class DroneSystem {
 						cameraOrigin.x,
 						cameraOrigin.y,
 						cameraOrigin.z,
-						cameraYaw,
-						cameraPitch,
-						cameraAnchorUuid,
-						hiddenEntities,
-						true,
-						controller.getScoreboardName()
-				);
+							cameraYaw,
+							cameraPitch,
+							cameraAnchorUuid,
+							hiddenEntities,
+							omnidirectionalChunkLoading,
+							controller.getScoreboardName()
+					);
+				}
 			}
-		}
-		return new DroneLiveFeedState(
+			return new DroneLiveFeedState(
 				root.getUUID(),
 				droneLevel.dimension(),
 				root.blockPosition(),
@@ -1120,14 +1143,14 @@ public final class DroneSystem {
 				cameraOrigin.x,
 				cameraOrigin.y,
 				cameraOrigin.z,
-				cameraYaw,
-				cameraPitch,
-				cameraAnchorUuid,
-				hiddenEntities,
-				true,
-				null
-		);
-	}
+					cameraYaw,
+					cameraPitch,
+					cameraAnchorUuid,
+					hiddenEntities,
+					omnidirectionalChunkLoading,
+					null
+			);
+		}
 
 	private static Set<UUID> hiddenDroneCameraEntityUuids(Entity root, ServerPlayer controller) {
 		if (root == null) {
@@ -1160,17 +1183,22 @@ public final class DroneSystem {
 		if (previousPos == null) {
 			previousPos = root.position();
 		}
+		long gameTime = root.level() == null ? Long.MIN_VALUE : root.level().getGameTime();
 		float previousYaw = session.proxyYaw();
 		float previousPitch = session.proxyPitch();
-		float yaw = packet.hasRotation() ? packet.getYRot(session.controlYaw()) : session.controlYaw();
-		float pitch = packet.hasRotation()
+		boolean hasRotation = packet.hasRotation();
+		float packetYaw = hasRotation ? packet.getYRot(session.controlYaw()) : session.controlYaw();
+		float packetPitch = hasRotation
 				? net.minecraft.util.Mth.clamp(packet.getXRot(session.controlPitch()), -90.0F, 90.0F)
 				: session.controlPitch();
-		if (packet.hasRotation()) {
+		boolean suppressStartupRotation = hasRotation && session.shouldSuppressStartupRotation(gameTime);
+		float yaw = suppressStartupRotation ? session.controlYaw() : packetYaw;
+		float pitch = suppressStartupRotation ? session.controlPitch() : packetPitch;
+		if (hasRotation && !suppressStartupRotation) {
 			session.recordManualLookDelta(
 					net.minecraft.util.Mth.wrapDegrees(yaw - previousYaw),
 					pitch - previousPitch,
-					root.level() == null ? Long.MIN_VALUE : root.level().getGameTime()
+					gameTime
 			);
 		}
 		session.setControlYaw(yaw);
@@ -1274,7 +1302,7 @@ public final class DroneSystem {
 			return false;
 		}
 		UncontrolledDroneState state = UNCONTROLLED_DRONES.get(root.getUUID());
-		if (state != null && (isUncontrolledReleaseGlideActive(root, state) || isDroneScreenStreamActive(root))) {
+		if (state != null && (isUncontrolledReleaseGlideActive(root, state) || isDroneHeldByScreen(root))) {
 			return false;
 		}
 		return root.onGround() || hasSupportingBlockBelow(root);
@@ -1339,6 +1367,8 @@ public final class DroneSystem {
 			}
 			addDroneChunkTickets(server, desiredRefs, loadState);
 		}
+		POWERED_SCREEN_LINKED_DRONES.clear();
+		POWERED_SCREEN_LINKED_DRONES.addAll(activeScreenStreamDrones);
 		SCREEN_STREAM_DRONE_LOAD_STATES.keySet().removeIf(droneUuid -> !activeScreenStreamDrones.contains(droneUuid));
 
 		for (Map.Entry<UUID, DroneControlSession> entry : ACTIVE_SESSIONS.entrySet()) {
@@ -1378,10 +1408,10 @@ public final class DroneSystem {
 				continue;
 			}
 			Entity root = findDroneRoot(server, state.dimension(), state.droneUuid());
-			if (root == null || !root.isAlive() || !isDroneStreamingToScreen(root)) {
+			if (root == null || !root.isAlive() || !isDroneHeldByScreen(root)) {
 				continue;
 			}
-			rememberDroneScreenStreamLoadState(root);
+			rememberLastKnownDroneFeedState(root);
 			addDroneChunkTickets(server, desiredRefs, root);
 		}
 
@@ -1500,11 +1530,28 @@ public final class DroneSystem {
 		);
 	}
 
+	private static DroneScreenStreamLoadState rememberLastKnownDroneFeedState(Entity root) {
+		DroneScreenStreamLoadState state = captureDroneScreenStreamLoadState(root);
+		if (state != null) {
+			LAST_KNOWN_DRONE_FEED_STATES.put(root.getUUID(), state);
+		}
+		return state;
+	}
+
 	private static DroneScreenStreamLoadState rememberDroneScreenStreamLoadState(Entity root) {
+		DroneScreenStreamLoadState state = rememberLastKnownDroneFeedState(root);
+		if (state == null) {
+			return null;
+		}
+		SCREEN_STREAM_DRONE_LOAD_STATES.put(root.getUUID(), state);
+		return state;
+	}
+
+	private static DroneScreenStreamLoadState captureDroneScreenStreamLoadState(Entity root) {
 		if (root == null || !(root.level() instanceof ServerLevel level)) {
 			return null;
 		}
-		DroneScreenStreamLoadState state = new DroneScreenStreamLoadState(
+		return new DroneScreenStreamLoadState(
 				root.getUUID(),
 				level.dimension(),
 				root.position(),
@@ -1512,9 +1559,6 @@ public final class DroneSystem {
 				resolveDroneCameraYaw(root),
 				resolveDroneCameraPitch(root)
 		);
-		SCREEN_STREAM_DRONE_LOAD_STATES.put(root.getUUID(), state);
-		LAST_KNOWN_DRONE_FEED_STATES.put(root.getUUID(), state);
-		return state;
 	}
 
 	private static DroneScreenStreamLoadState createDroneScreenStreamLoadState(DroneScreenStreamReference reference) {
@@ -1750,37 +1794,13 @@ public final class DroneSystem {
 	}
 
 	private static void synchronizeControlledOperatorAudio(MinecraftServer server) {
-		if (server == null) {
+		if (server == null || CONTROLLED_OPERATOR_AUDIO.isEmpty()) {
 			return;
 		}
-		if (ACTIVE_SESSIONS.isEmpty()) {
-			shutdownAllControlledOperatorAudio();
-			return;
-		}
-
-		Set<UUID> activePlayers = new HashSet<>();
-		for (Map.Entry<UUID, DroneControlSession> entry : new ArrayList<>(ACTIVE_SESSIONS.entrySet())) {
-			UUID playerId = entry.getKey();
-			DroneControlSession session = entry.getValue();
-			ServerPlayer player = playerId == null ? null : server.getPlayerList().getPlayer(playerId);
-			if (player == null || session == null || !player.isAlive() || player.isSpectator()) {
-				stopControlledOperatorAudio(playerId);
-				continue;
-			}
-			activePlayers.add(playerId);
-			ControlledOperatorAudioRuntime runtime = CONTROLLED_OPERATOR_AUDIO.computeIfAbsent(
-					playerId,
-					ignored -> new ControlledOperatorAudioRuntime(playerId)
-			);
-			if (!runtime.sync(server, player, session)) {
-				stopControlledOperatorAudio(playerId);
-			}
-		}
-		for (UUID playerId : new ArrayList<>(CONTROLLED_OPERATOR_AUDIO.keySet())) {
-			if (!activePlayers.contains(playerId)) {
-				stopControlledOperatorAudio(playerId);
-			}
-		}
+		// While controlling a drone the operator should hear only the drone-side scene.
+		// Keeping a second body-side voice feed active makes the parked body act like a
+		// parallel listener, which is exactly the "кукла" echo the player asked to remove.
+		shutdownAllControlledOperatorAudio();
 	}
 
 	public static void onVoicechatMicrophonePacket(MicrophonePacketEvent event) {
@@ -1800,9 +1820,8 @@ public final class DroneSystem {
 		if (!(rawPlayer instanceof ServerPlayer senderPlayer) || !(senderPlayer.level() instanceof ServerLevel senderLevel)) {
 			return;
 		}
-		Position senderPosition = senderConnection.getPlayer().getPosition();
 		byte[] opusData = event.getPacket().getOpusEncodedData();
-		if (senderPosition == null || opusData == null || opusData.length == 0) {
+		if (opusData == null || opusData.length == 0) {
 			return;
 		}
 		MinecraftServer server = senderLevel.getServer();
@@ -1811,18 +1830,8 @@ public final class DroneSystem {
 		}
 		UUID senderUuid = senderConnection.getPlayer().getUuid();
 		boolean whispering = event.getPacket().isWhispering();
-		net.minecraft.resources.ResourceKey<Level> senderDimension = senderLevel.dimension();
 		byte[] copiedOpusData = opusData.clone();
 		server.execute(() -> {
-			routeControlledOperatorBodyVoice(
-					server,
-					senderDimension,
-					senderPosition,
-					senderUuid,
-					whispering,
-					copiedOpusData,
-					voicechatApi
-			);
 			relayControlledOperatorDroneMicrophoneVoice(
 					server,
 					senderUuid,
@@ -2235,7 +2244,7 @@ public final class DroneSystem {
 		session.setDisplayStrafeDrive(strafeDrive);
 		Vec3 seededVelocity = DroneFlightPhysics.step(pitch, yaw, forwardDrive, strafeDrive);
 		session.setIntendedVelocity(seededVelocity);
-		session.setVelocity(seededVelocity);
+		session.setVelocity(finiteVecOr(worldVelocity, seededVelocity));
 	}
 
 	private static void restoreControlledDrivesFromUncontrolledState(
@@ -2976,7 +2985,8 @@ public final class DroneSystem {
 		}
 		boolean heldByReleaseGlide = isUncontrolledReleaseGlideActive(root, state);
 		boolean heldByScreenStream = isDroneStreamingToScreen(root);
-		boolean holdWithoutGravity = heldByReleaseGlide || heldByScreenStream;
+		boolean heldByPoweredScreen = isDroneHeldByPoweredScreen(root);
+		boolean holdWithoutGravity = heldByReleaseGlide || heldByScreenStream || heldByPoweredScreen;
 		if (!holdWithoutGravity && isUncontrolledDroneSettled(root, state.velocity()) && !hasUncontrolledDroneEnvironmentalMotion(root)) {
 			decayUncontrolledDroneSurfaceWear(state, gameTime);
 			settleUncontrolledDrone(root, state);
@@ -3080,6 +3090,7 @@ public final class DroneSystem {
 		}
 		syncDroneDisplay(root, root.getYRot(), root.getXRot(), displayForwardDrive, displayStrafeDrive, holdWithoutGravity);
 		syncDroneCameraAnchor(root, actualMovement);
+		syncPersistentDroneLocation(root, state.lastPosition());
 		state.setLastPosition(root.position());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
 	}
@@ -3100,6 +3111,14 @@ public final class DroneSystem {
 			rememberDroneScreenStreamLoadState(root);
 		}
 		return streaming;
+	}
+
+	private static boolean isDroneHeldByPoweredScreen(Entity root) {
+		return root != null && root.isAlive() && POWERED_SCREEN_LINKED_DRONES.contains(root.getUUID());
+	}
+
+	private static boolean isDroneHeldByScreen(Entity root) {
+		return isDroneStreamingToScreen(root) || isDroneHeldByPoweredScreen(root);
 	}
 
 	private static boolean isDroneScreenStreamActive(Entity root) {
@@ -3471,6 +3490,7 @@ public final class DroneSystem {
 		root.hurtMarked = true;
 		syncDroneDisplay(root, root.getYRot(), 0.0F, 0.0D, 0.0D, false);
 		syncDroneCameraAnchor(root, Vec3.ZERO);
+		syncPersistentDroneLocation(root, state.lastPosition());
 		state.setLastPosition(root.position());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
 	}
@@ -3639,6 +3659,7 @@ public final class DroneSystem {
 		);
 		uncontrolledState.setLastPosition(root.position());
 		UNCONTROLLED_DRONES.putIfAbsent(root.getUUID(), uncontrolledState);
+		rememberLastKnownDroneFeedState(root);
 		syncDroneDisplayLayers(root);
 		syncDroneDisplay(root, root.getYRot(), root.getXRot(), 0.0D, 0.0D, false);
 		syncDroneCameraAnchor(root, root.getDeltaMovement());
@@ -5097,29 +5118,46 @@ public final class DroneSystem {
 		ServerRaceSystem.suspendCopperManJetpackForDrone(player);
 		player.closeContainer();
 		UncontrolledDroneState previousUncontrolledState = UNCONTROLLED_DRONES.remove(root.getUUID());
+		Vec3 dronePos = root.position();
+		float droneYaw = root.getYRot();
+		float dronePitch = root.getXRot();
+		Vec3 fallbackVelocity = finiteVecOr(root.getDeltaMovement(), Vec3.ZERO);
+		Vec3 incomingVelocity = finiteVecOr(
+				previousUncontrolledState == null ? fallbackVelocity : previousUncontrolledState.velocity(),
+				fallbackVelocity
+		);
 		prepareControlledDroneBody(root);
 		syncDroneDisplayLayers(root);
-		root.setDeltaMovement(Vec3.ZERO);
+		root.setYRot(droneYaw);
+		root.setXRot(dronePitch);
+		root.setDeltaMovement(incomingVelocity);
 		droneLevel.getChunkAt(root.blockPosition());
 		setHotbarVisualHidden(player, true);
-		syncDroneCameraAnchor(root, Vec3.ZERO);
+		syncDroneCameraAnchor(root, incomingVelocity);
 
 		DroneControlSession session = new DroneControlSession(
 				root.getUUID(),
 				droneLevel.dimension()
 		);
-		session.setProxyPos(root.position());
-		session.setControlYaw(root.getYRot());
-		session.setControlPitch(root.getXRot());
-		session.setProxyYaw(root.getYRot());
-		session.setProxyPitch(root.getXRot());
+		session.setProxyPos(dronePos);
+		session.setControlYaw(droneYaw);
+		session.setControlPitch(dronePitch);
+		session.setProxyYaw(droneYaw);
+		session.setProxyPitch(dronePitch);
+		session.setIntendedVelocity(incomingVelocity);
+		session.setVelocity(incomingVelocity);
 		session.refreshKnownDroneLocation(root);
 		session.setTurretInputSuppressedUntilTick(droneLevel.getGameTime() + DRONE_TURRET_CONTROL_START_SUPPRESS_TICKS);
+		session.suppressStartupRotationUntil(droneLevel.getGameTime() + CONTROLLED_DRONE_START_ROTATION_SUPPRESSION_TICKS);
 		if (previousUncontrolledState != null) {
 			session.setAutoAimTarget(previousUncontrolledState.autoAimTarget());
-			restoreControlledDrivesFromUncontrolledState(session, previousUncontrolledState, root.getYRot(), root.getXRot());
+			restoreControlledDrivesFromUncontrolledState(session, previousUncontrolledState, droneYaw, dronePitch);
+		} else {
+			seedControlledDrivesFromWorldVelocity(session, incomingVelocity, droneYaw, dronePitch);
 		}
-		syncDroneDisplay(root, root.getYRot(), root.getXRot(), session.displayForwardDrive(), session.displayStrafeDrive(), true);
+		root.setDeltaMovement(finiteVecOr(session.velocity(), incomingVelocity));
+		syncDroneCameraAnchor(root, session.velocity());
+		syncDroneDisplay(root, droneYaw, dronePitch, session.displayForwardDrive(), session.displayStrafeDrive(), true);
 		VISUALLY_CONTROLLED_PLAYERS.add(player.getUUID());
 		ACTIVE_SESSIONS.put(player.getUUID(), session);
 		INPUTS.put(player.getUUID(), DroneInputState.EMPTY);
@@ -7002,7 +7040,7 @@ public final class DroneSystem {
 		if (root == null || !root.isAlive()) {
 			return false;
 		}
-		if (isDroneActivelyControlled(root) || isDroneScreenStreamActive(root)) {
+		if (isDroneActivelyControlled(root) || isDroneHeldByScreen(root)) {
 			return true;
 		}
 		UncontrolledDroneState state = UNCONTROLLED_DRONES.get(root.getUUID());
@@ -7198,6 +7236,19 @@ public final class DroneSystem {
 				level.getServer(),
 				BluetoothLinkSystem.droneEndpoint(level.dimension(), root.blockPosition(), root.getUUID())
 		);
+	}
+
+	private static void syncPersistentDroneLocation(Entity root, Vec3 previousPos) {
+		if (root == null || !root.isAlive() || !(root.level() instanceof ServerLevel level)) {
+			return;
+		}
+		BlockPos previousBlockPos = previousPos == null ? null : BlockPos.containing(previousPos);
+		BlockPos currentBlockPos = root.blockPosition();
+		rememberLastKnownDroneFeedState(root);
+		if (Objects.equals(previousBlockPos, currentBlockPos)) {
+			return;
+		}
+		BluetoothLinkSystem.refreshDroneEndpoint(level.getServer(), level.dimension(), currentBlockPos, root.getUUID());
 	}
 
 	private static Entity findDroneRoot(MinecraftServer server, net.minecraft.resources.ResourceKey<Level> dimension, UUID droneUuid) {
@@ -7533,6 +7584,7 @@ public final class DroneSystem {
 		private DroneAutoAimTarget autoAimTarget;
 		private long lastManualLookTick = Long.MIN_VALUE;
 		private long turretInputSuppressedUntilTick = Long.MIN_VALUE;
+		private long startupRotationSuppressedUntilTick = Long.MIN_VALUE;
 
 		private DroneControlSession(
 				UUID droneUuid,
@@ -7588,6 +7640,7 @@ public final class DroneSystem {
 			if (root == null || !root.isAlive()) {
 				return;
 			}
+			syncPersistentDroneLocation(root, this.lastKnownDronePos);
 			this.lastKnownDronePos = root.position();
 			this.lastKnownCameraTarget = resolveDroneCameraChunkTarget(root);
 			this.missingRootSinceTick = Long.MIN_VALUE;
@@ -7633,6 +7686,41 @@ public final class DroneSystem {
 
 		private void setProxyPitch(float proxyPitch) {
 			this.proxyPitch = proxyPitch;
+		}
+
+		private void suppressStartupRotationUntil(long gameTime) {
+			if (gameTime == Long.MIN_VALUE) {
+				return;
+			}
+			this.startupRotationSuppressedUntilTick = Math.max(this.startupRotationSuppressedUntilTick, gameTime);
+		}
+
+		private boolean shouldSuppressStartupRotation(long gameTime) {
+			if (this.startupRotationSuppressedUntilTick == Long.MIN_VALUE) {
+				return false;
+			}
+			if (gameTime == Long.MIN_VALUE) {
+				return true;
+			}
+			if (gameTime <= this.startupRotationSuppressedUntilTick) {
+				return true;
+			}
+			this.startupRotationSuppressedUntilTick = Long.MIN_VALUE;
+			return false;
+		}
+
+		private void acknowledgeStartupViewSync(long gameTime) {
+			if (this.startupRotationSuppressedUntilTick == Long.MIN_VALUE) {
+				return;
+			}
+			if (gameTime == Long.MIN_VALUE) {
+				this.startupRotationSuppressedUntilTick = Long.MIN_VALUE;
+				return;
+			}
+			this.startupRotationSuppressedUntilTick = Math.min(
+					this.startupRotationSuppressedUntilTick,
+					gameTime + CONTROLLED_DRONE_TELEPORT_ACK_ROTATION_GRACE_TICKS
+			);
 		}
 
 		private void recordManualLookDelta(float yawDelta, float pitchDelta, long gameTime) {

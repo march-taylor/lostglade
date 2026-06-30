@@ -4,6 +4,8 @@ import com.lostglade.Lg2;
 import com.lostglade.block.CameraBlock;
 import com.lostglade.server.monitor.MonitorApp;
 import com.lostglade.server.monitor.MonitorMediaApp;
+import com.lostglade.server.monitor.MonitorYoutubeMusicCache;
+import com.lostglade.server.monitor.MonitorYoutubeRelayClient;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.Holder;
 import net.minecraft.core.BlockPos;
@@ -47,7 +49,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -89,6 +93,9 @@ final class MonitorMaxRuntime {
 	private static final String MAX_INCOMING_FILE_PREFIX = "incoming_file_";
 	private static final String MAX_INCOMING_FILE_ID_TAG = "id";
 	private static final String MAX_INCOMING_FILE_SENDER_TAG = "sender";
+	private static final String MAX_INCOMING_FILE_SENDER_NAME_TAG = "sender_name";
+	private static final String MAX_INCOMING_FILE_SENDER_AVATAR_URL_TAG = "sender_avatar_url";
+	private static final String MAX_INCOMING_FILE_SENDER_AVATAR_LOCAL_MEDIA_TAG = "sender_avatar_local_media";
 	private static final String MAX_INCOMING_FILE_TITLE_TAG = "title";
 	private static final String MAX_INCOMING_FILE_SUBTITLE_TAG = "subtitle";
 	private static final String MAX_INCOMING_FILE_URL_TAG = "url";
@@ -101,6 +108,7 @@ final class MonitorMaxRuntime {
 	private static final String MAX_PENDING_CALL_INVITE_STATUS = "Напиши MAX id или ник, чтобы добавить контакт и пригласить в звонок";
 	private static final String MAX_RINGTONE_SOURCE_PREFIX = "max:ring:";
 	private static final String MAX_RINGTONE_PREVIEW_SOURCE_PREFIX = "max:ring-preview:";
+	private static final String MAX_NOTIFICATION_PREVIEW_SOURCE_PREFIX = "max:notification-preview:";
 	private static final String MAX_DEFAULT_RINGTONE_URL = "max:default-ringtone";
 	private static final String MAX_TRANSFER_URL_PREFIX = "max:file:";
 	private static final String MAX_TRANSFER_LOCAL_KEY_PREFIX = "max_transfer_";
@@ -108,11 +116,13 @@ final class MonitorMaxRuntime {
 	private static final SoundEvent MAX_NOTIFICATION_SOUND = SoundEvent.createVariableRangeEvent(MAX_NOTIFICATION_SOUND_ID);
 	private static final long MAX_RINGTONE_PREVIEW_TIMELINE_MS = 30_000L;
 	private static final long MAX_AVATAR_ANIMATION_RENDER_DELAY_MS = 80L;
+	private static final long MAX_NOTIFICATION_PREVIEW_RENDER_FALLBACK_DELAY_MS = 120L;
 	private static final Path DEFAULT_PROJECT_RINGTONE = Path.of(System.getProperty("user.dir"), "server-assets", "max", "default-ringtone.mp3");
 	private static final Path DEFAULT_SOURCE_RINGTONE = Path.of("/home/mart/Downloads/Rington_-_na_zvonok_(SkySound.cc).mp3");
 	private static final Map<ScreenRuntimeKey, MaxRuntimeState> MAX_STATES = new ConcurrentHashMap<>();
 	private static final Map<String, ScreenRuntimeKey> ACCOUNT_INDEX = new ConcurrentHashMap<>();
 	private static final Map<String, ScreenRuntimeKey> ACCOUNT_NAME_INDEX = new ConcurrentHashMap<>();
+	private static final Map<String, MaxStoredAccountProfile> ACCOUNT_PROFILE_INDEX = new ConcurrentHashMap<>();
 	private static final Map<UUID, ScreenRuntimeKey> PENDING_CONTACT_CODE_INPUTS = new ConcurrentHashMap<>();
 	private static final Map<UUID, ScreenRuntimeKey> PENDING_ACCOUNT_NAME_INPUTS = new ConcurrentHashMap<>();
 	private static final Map<UUID, ScreenRuntimeKey> PENDING_CALL_CONTACT_INVITES = new ConcurrentHashMap<>();
@@ -133,7 +143,8 @@ final class MonitorMaxRuntime {
 		boolean sanitizedContacts;
 		List<LiveCameraReference> cameras = connectedCameraReferences(server, component);
 		synchronized (state) {
-			sanitizedContacts = sanitizeContactsLocked(state);
+			boolean incomingSendersAdded = ensureIncomingSendersAsContactsLocked(state);
+			sanitizedContacts = sanitizeContactsLocked(state) || incomingSendersAdded;
 			if (sanitizedContacts) {
 				state.version++;
 			}
@@ -149,33 +160,78 @@ final class MonitorMaxRuntime {
 		if (sanitizedContacts) {
 			persistState(server, component.runtimeKey(), state);
 		}
+		ScreenRuntimeKey runtimeKey = component.runtimeKey();
+		MaxCallSession call = currentCall(runtimeKey);
 		MaxCallVisualSnapshot callSnapshot = captureCallSnapshot(server, component, state, cameras);
 		UiLayout overlayLayout = createUiLayout(component.width(), component.height());
-		List<MaxContactSnapshot> contacts = captureContactSnapshots(server, state, component.runtimeKey());
-		List<MaxAvatarCandidateSnapshot> avatarCandidates;
+		WindowedSnapshot<MaxContactSnapshot> contacts = contactFeedSnapshots(server, state, runtimeKey, overlayLayout);
+		WindowedSnapshot<MaxAvatarCandidateSnapshot> avatarCandidates = WindowedSnapshot.empty();
 		int avatarPickerScroll;
-		List<MaxRingtoneCandidateSnapshot> ringtoneCandidates;
+		WindowedSnapshot<MaxRingtoneCandidateSnapshot> ringtoneCandidates = WindowedSnapshot.empty();
 		int ringtonePickerScroll;
-		List<MaxFileShareContactSnapshot> fileShareContacts;
+		WindowedSnapshot<MaxFileShareContactSnapshot> fileShareContacts = WindowedSnapshot.empty();
 		int fileSharePickerScroll;
-		MaxIncomingFileSnapshot incomingFile;
+		WindowedSnapshot<MaxContactSnapshot> callContactCandidates = WindowedSnapshot.empty();
+		boolean avatarPickerOpen;
+		boolean ringtonePickerOpen;
+		boolean fileSharePickerOpen;
+		boolean callContactPickerOpen;
+		boolean notificationsOpen;
+		String notificationContactCode;
+		List<MaxIncomingFile> notificationEntries;
+		MaxNotificationPreviewVisualState notificationPreviewState;
+		WindowedSnapshot<MaxIncomingFileSnapshot> incomingFiles;
+		int notificationScroll;
 		synchronized (state) {
-			List<MaxAvatarCandidateSnapshot> availableAvatarCandidates = state.avatarPickerOpen ? avatarCandidates(component) : List.of();
-			normalizeAvatarPickerScrollLocked(state, overlayLayout, availableAvatarCandidates.size());
-			avatarCandidates = availableAvatarCandidates;
+			pruneIncomingPreviewCacheLocked(state);
+			avatarPickerOpen = state.avatarPickerOpen;
+			ringtonePickerOpen = state.ringtonePickerOpen;
+			fileSharePickerOpen = state.fileSharePickerOpen;
+			callContactPickerOpen = state.callContactPickerOpen;
+			if (state.notificationsOpen && maxNotificationRawIndexesForActiveContactLocked(state).isEmpty()) {
+				closeNotificationsLocked(state);
+				state.version++;
+			}
+			notificationsOpen = state.notificationsOpen;
+			notificationContactCode = state.notificationContactCode;
+			notificationEntries = notificationsOpen ? List.copyOf(state.incomingFiles) : List.of();
+			notificationPreviewState = notificationsOpen
+					? new MaxNotificationPreviewVisualState(
+							state.notificationPreviewFileId,
+							currentNotificationPreviewFrameLocked(state, null),
+							state.notificationPreviewPlaying,
+							state.notificationPreviewLoading
+					)
+					: null;
+		}
+		if (avatarPickerOpen) {
+			avatarCandidates = avatarCandidateSnapshots(component, state, overlayLayout, runtimeKey);
+		}
+		if (ringtonePickerOpen) {
+			ringtoneCandidates = ringtoneCandidateSnapshots(component, state, overlayLayout, runtimeKey);
+		}
+		if (fileSharePickerOpen) {
+			fileShareContacts = fileShareContactSnapshots(server, state, runtimeKey, overlayLayout, runtimeKey);
+		}
+		if (callContactPickerOpen && call != null) {
+			callContactCandidates = callContactCandidateSnapshots(server, state, call, runtimeKey, overlayLayout, runtimeKey);
+		}
+		incomingFiles = notificationsOpen
+				? incomingFileSnapshots(server, runtimeKey, state, notificationContactCode, notificationEntries, notificationPreviewState, overlayLayout)
+				: WindowedSnapshot.empty();
+		synchronized (state) {
+			state.avatarPickerScroll = clampInt(state.avatarPickerScroll, 0, maxAvatarPickerScroll(overlayLayout, avatarCandidates.totalCount()));
 			avatarPickerScroll = state.avatarPickerScroll;
-			List<MaxRingtoneCandidateSnapshot> availableRingtoneCandidates = state.ringtonePickerOpen ? ringtoneCandidates(component, state) : List.of();
-			normalizeRingtonePickerScrollLocked(state, overlayLayout, availableRingtoneCandidates.size());
-			ringtoneCandidates = availableRingtoneCandidates;
+			state.ringtonePickerScroll = clampInt(state.ringtonePickerScroll, 0, maxRingtonePickerScroll(overlayLayout, ringtoneCandidates.totalCount()));
 			ringtonePickerScroll = state.ringtonePickerScroll;
-			List<MaxFileShareContactSnapshot> availableFileShareContacts = state.fileSharePickerOpen ? fileShareContacts(server, state, component.runtimeKey()) : List.of();
-			normalizeFileSharePickerScrollLocked(state, overlayLayout, availableFileShareContacts.size());
-			fileShareContacts = availableFileShareContacts;
+			state.fileSharePickerScroll = clampInt(state.fileSharePickerScroll, 0, maxContactPickerScroll(overlayLayout, fileShareContacts.totalCount()));
 			fileSharePickerScroll = state.fileSharePickerScroll;
-			incomingFile = state.notificationsOpen ? incomingFileSnapshot(server, state) : null;
-			boolean animatedAvatars = maxAnimatedAvatarsVisible(component, state, contacts, callSnapshot, incomingFile);
+			state.callContactPickerScroll = clampInt(state.callContactPickerScroll, 0, maxCallContactPickerScroll(overlayLayout, callContactCandidates.totalCount()));
+			state.notificationScroll = clampInt(state.notificationScroll, 0, maxNotificationScroll(overlayLayout, incomingFiles.totalCount()));
+			notificationScroll = state.notificationScroll;
+			boolean animatedAvatars = maxAnimatedAvatarsVisible(component, state, contacts.items(), callSnapshot, incomingFiles.items());
 			if (animatedAvatars) {
-				scheduleAvatarAnimationRender(server, component.runtimeKey(), state);
+				scheduleAvatarAnimationRender(server, runtimeKey, state);
 			}
 			return new MaxVisualSnapshot(
 					state.version,
@@ -190,11 +246,13 @@ final class MonitorMaxRuntime {
 					ringtonePickerScroll,
 					fileShareContacts,
 					fileSharePickerScroll,
-					incomingFile,
+					incomingFiles,
+					notificationScroll,
 					state.incomingFiles.size(),
 					state.fileShareFiles.size(),
 					state.fileShareSelectedContacts.size(),
 					fileShareTitleLocked(state),
+					callContactCandidates,
 					state.avatarPickerOpen,
 					state.ringtonePickerOpen,
 					state.fileSharePickerOpen,
@@ -219,6 +277,7 @@ final class MonitorMaxRuntime {
 			return false;
 		}
 		if (mediaCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			deactivateRuntime(server, component.runtimeKey());
 			applyTransientComponentViewState(server, level, component, ScreenViewMode.HOME, component.launcherPage());
 			return true;
 		}
@@ -282,24 +341,12 @@ final class MonitorMaxRuntime {
 				state.ringtonePickerOpen = true;
 				state.ringtonePickerScroll = 0;
 				state.avatarPickerOpen = false;
-				state.notificationsOpen = false;
+				closeNotificationsLocked(state);
 				state.fileSharePickerOpen = false;
 				state.statusText = "";
 				state.version++;
 			}
-			requestRuntimeRender(server, component.runtimeKey());
-			return true;
-		}
-		if (maxNotificationsRect(layout).contains(touchPoint.x(), touchPoint.y())) {
-			synchronized (state) {
-				state.notificationsOpen = true;
-				state.notificationScroll = 0;
-				state.avatarPickerOpen = false;
-				state.ringtonePickerOpen = false;
-				state.fileSharePickerOpen = false;
-				state.statusText = state.incomingFiles.isEmpty() ? "Нет уведомлений" : "";
-				state.version++;
-			}
+			refreshConnectedSpeakersNow(server, component.runtimeKey());
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
@@ -315,13 +362,19 @@ final class MonitorMaxRuntime {
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
-		int contactIndex = maxContactIndexAt(layout, state.contacts.size(), touchPoint);
+		List<MaxContactSnapshot> contactSnapshots = captureContactSnapshots(server, state, component.runtimeKey());
+		int contactIndex = maxContactIndexAt(layout, contactSnapshots.size(), touchPoint);
 		if (contactIndex >= 0) {
-			String contactCode;
-			synchronized (state) {
-				contactCode = contactIndex < state.contacts.size() ? state.contacts.get(contactIndex) : null;
+			MaxContactSnapshot contact = contactIndex < contactSnapshots.size() ? contactSnapshots.get(contactIndex) : null;
+			String contactCode = contact != null ? contact.code() : null;
+			UiRect contactRow = maxContactRowRect(layout, contactIndex);
+			if (contact != null
+					&& contact.notificationCount() > 0
+					&& maxContactNotificationRect(contactRow, layout, contact.notificationCount(), contact.savedContact()).contains(touchPoint.x(), touchPoint.y())) {
+				openContactNotifications(server, component.runtimeKey(), state, contact.code());
+				return true;
 			}
-			if (maxContactDeleteRect(layout, contactIndex).contains(touchPoint.x(), touchPoint.y())) {
+			if (contact != null && contact.savedContact() && maxContactDeleteRect(contactRow, layout).contains(touchPoint.x(), touchPoint.y())) {
 				removeContact(server, component.runtimeKey(), state, contactCode);
 				return true;
 			}
@@ -476,13 +529,13 @@ final class MonitorMaxRuntime {
 				return true;
 			}
 		}
-		if (notificationsOpen && maxAvatarPickerPanelRect(layout).contains(touchPoint.x(), touchPoint.y())) {
-			int notificationCount;
+		if (notificationsOpen && maxNotificationFeedRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			int maxScroll;
 			synchronized (state) {
-				notificationCount = state.incomingFiles.size();
+				maxScroll = maxNotificationScroll(layout, maxNotificationRawIndexesForActiveContactLocked(state).size());
 			}
-			if (notificationCount > 1) {
-				scrollNotifications(server, component.runtimeKey(), state, notificationCount, -delta);
+			if (maxScroll > 0) {
+				scrollNotifications(server, component.runtimeKey(), state, maxScroll, -delta * maxNotificationScrollDelta(layout));
 				return true;
 			}
 		}
@@ -853,6 +906,10 @@ final class MonitorMaxRuntime {
 				if (preview != null) {
 					sources.add(preview);
 				}
+				SpeakerAudioSource notificationPreview = notificationPreviewSource(component.runtimeKey(), state);
+				if (notificationPreview != null) {
+					sources.add(notificationPreview);
+				}
 			}
 			MaxCallSession call = currentCall(component.runtimeKey());
 			if (call == null || !call.isRinging(component.runtimeKey())) {
@@ -923,7 +980,7 @@ final class MonitorMaxRuntime {
 			state.fileShareSelectedContacts.clear();
 			state.fileSharePickerScroll = 0;
 			state.fileSharePickerOpen = true;
-			state.notificationsOpen = false;
+			closeNotificationsLocked(state);
 			state.avatarPickerOpen = false;
 			state.ringtonePickerOpen = false;
 			state.ringtonePreviewPlaying = false;
@@ -1041,6 +1098,90 @@ final class MonitorMaxRuntime {
 	}
 
 	static void closeRuntime(MinecraftServer server, ScreenRuntimeKey key) {
+		closeRuntime(server, key, false);
+	}
+
+	static void deactivateRuntime(MinecraftServer server, ScreenRuntimeKey key) {
+		if (key == null) {
+			return;
+		}
+		boolean hadActiveCall = CALL_BY_SCREEN.containsKey(key);
+		endCall(server, key);
+		RendererBotCameraSystem.stopLiveStream(maxVideoStreamOwnerId(key));
+		RendererBotCameraSystem.stopLiveStream(maxLocalVideoStreamOwnerId(key));
+		MaxRuntimeState state = MAX_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		boolean changed = false;
+		boolean speakerActivity = hadActiveCall;
+		synchronized (state) {
+			speakerActivity = speakerActivity || state.ringtonePreviewPlaying || state.notificationPreviewPlaying;
+			closeNotificationsLocked(state);
+			if (state.avatarPickerOpen
+					|| state.avatarPickerScroll != 0
+					|| state.ringtonePickerOpen
+					|| state.ringtonePickerScroll != 0
+					|| state.ringtonePreviewPlaying
+					|| state.ringtonePreviewStartedAtMillis != 0L
+					|| state.callMenuOpen
+					|| state.cameraPickerOpen
+					|| state.cameraPickerScroll != 0
+					|| state.microphonePickerScroll != 0
+					|| state.callMiniParticipantScroll != 0
+					|| state.callContactPickerOpen
+					|| state.callContactPickerScroll != 0
+					|| state.callMiniParticipantsHidden
+					|| state.focusSelf
+					|| state.focusPeer
+					|| state.focusedPeerKey != null
+					|| state.fileSharePickerOpen
+					|| state.fileSharePickerScroll != 0
+					|| !state.fileShareFiles.isEmpty()
+					|| !state.fileShareSelectedContacts.isEmpty()
+					|| state.localFrame != null
+					|| !state.localVideoUrl.isBlank()
+					|| state.remoteFrame != null
+					|| !state.remoteVideoUrl.isBlank()
+					|| !state.statusText.isBlank()) {
+				changed = true;
+			}
+			state.avatarPickerOpen = false;
+			state.avatarPickerScroll = 0;
+			state.ringtonePickerOpen = false;
+			state.ringtonePickerScroll = 0;
+			state.ringtonePreviewPlaying = false;
+			state.ringtonePreviewStartedAtMillis = 0L;
+			state.callMenuOpen = false;
+			state.cameraPickerOpen = false;
+			state.cameraPickerScroll = 0;
+			state.microphonePickerScroll = 0;
+			state.callMiniParticipantScroll = 0;
+			state.callContactPickerOpen = false;
+			state.callContactPickerScroll = 0;
+			state.callMiniParticipantsHidden = false;
+			state.focusSelf = false;
+			state.focusPeer = false;
+			state.focusedPeerKey = null;
+			state.fileSharePickerOpen = false;
+			state.fileSharePickerScroll = 0;
+			state.fileShareFiles.clear();
+			state.fileShareSelectedContacts.clear();
+			state.statusText = "";
+			state.localFrame = null;
+			state.localVideoUrl = "";
+			state.remoteFrame = null;
+			state.remoteVideoUrl = "";
+			if (changed) {
+				state.version++;
+			}
+		}
+		if (speakerActivity) {
+			refreshConnectedSpeakersNow(server, key);
+		}
+	}
+
+	static void closeRuntime(MinecraftServer server, ScreenRuntimeKey key, boolean contentDestroyed) {
 		if (key == null) {
 			return;
 		}
@@ -1048,15 +1189,72 @@ final class MonitorMaxRuntime {
 		RendererBotCameraSystem.stopLiveStream(maxVideoStreamOwnerId(key));
 		RendererBotCameraSystem.stopLiveStream(maxLocalVideoStreamOwnerId(key));
 		MaxRuntimeState removed = MAX_STATES.remove(key);
-		if (removed != null && removed.accountCode != null) {
-			ACCOUNT_INDEX.remove(removed.accountCode, key);
+		String removedAccountCode = "";
+		String removedAccountName = "";
+		if (removed != null) {
+			synchronized (removed) {
+				removedAccountCode = normalizeAccountCode(removed.accountCode);
+				removedAccountName = removed.accountName == null ? "" : removed.accountName;
+			}
 		}
-		if (removed != null && removed.accountName != null) {
-			ACCOUNT_NAME_INDEX.remove(accountNameLookupKey(removed.accountName), key);
+		if (!removedAccountCode.isBlank()) {
+			ACCOUNT_INDEX.remove(removedAccountCode, key);
+		}
+		if (!removedAccountName.isBlank()) {
+			ACCOUNT_NAME_INDEX.remove(accountNameLookupKey(removedAccountName), key);
+		}
+		if (contentDestroyed && !removedAccountCode.isBlank()) {
+			ACCOUNT_PROFILE_INDEX.remove(removedAccountCode);
 		}
 		PENDING_CONTACT_CODE_INPUTS.entrySet().removeIf(entry -> key.equals(entry.getValue()));
 		PENDING_ACCOUNT_NAME_INPUTS.entrySet().removeIf(entry -> key.equals(entry.getValue()));
 		PENDING_CALL_CONTACT_INVITES.entrySet().removeIf(entry -> key.equals(entry.getValue()));
+		if (contentDestroyed && !removedAccountCode.isBlank()) {
+			removePendingIncomingFilesFromSender(server, removedAccountCode);
+		}
+	}
+
+	private static void removePendingIncomingFilesFromSender(MinecraftServer server, String senderCode) {
+		String normalizedSender = normalizeAccountCode(senderCode);
+		if (normalizedSender.isBlank()) {
+			return;
+		}
+		for (Map.Entry<ScreenRuntimeKey, MaxRuntimeState> entry : MAX_STATES.entrySet()) {
+			ScreenRuntimeKey recipientKey = entry.getKey();
+			MaxRuntimeState recipientState = entry.getValue();
+			if (recipientKey == null || recipientState == null) {
+				continue;
+			}
+			List<MaxIncomingFile> removedFiles = new ArrayList<>();
+			boolean changed = false;
+			synchronized (recipientState) {
+				for (int index = 0; index < recipientState.incomingFiles.size(); ) {
+					MaxIncomingFile incoming = recipientState.incomingFiles.get(index);
+					if (incoming != null && Objects.equals(normalizedSender, normalizeAccountCode(incoming.senderCode()))) {
+						removedFiles.add(incoming);
+						recipientState.incomingFiles.remove(index);
+						changed = true;
+						continue;
+					}
+					index++;
+				}
+				if (changed) {
+					pruneIncomingPreviewCacheLocked(recipientState);
+					if (Objects.equals(normalizedSender, normalizeAccountCode(recipientState.notificationContactCode))) {
+						closeNotificationsLocked(recipientState);
+					}
+					recipientState.version++;
+				}
+			}
+			for (MaxIncomingFile removedFile : removedFiles) {
+				deleteTransferLocalMediaIfTemporary(removedFile);
+			}
+			if (changed && server != null) {
+				persistState(server, recipientKey, recipientState);
+				refreshConnectedSpeakersNow(server, recipientKey);
+				requestRuntimeRender(server, recipientKey);
+			}
+		}
 	}
 
 	static void clearRuntime() {
@@ -1067,6 +1265,7 @@ final class MonitorMaxRuntime {
 		MAX_STATES.clear();
 		ACCOUNT_INDEX.clear();
 		ACCOUNT_NAME_INDEX.clear();
+		ACCOUNT_PROFILE_INDEX.clear();
 		PENDING_CONTACT_CODE_INPUTS.clear();
 		PENDING_ACCOUNT_NAME_INPUTS.clear();
 		PENDING_CALL_CONTACT_INVITES.clear();
@@ -1086,10 +1285,6 @@ final class MonitorMaxRuntime {
 			drawMaxFileSharePicker(graphics, layout, runtimeKey, state);
 			return;
 		}
-		if (state.notificationsOpen()) {
-			drawMaxNotificationsScreen(graphics, layout, state);
-			return;
-		}
 		if (state.avatarPickerOpen()) {
 			drawMaxAvatarPicker(graphics, layout, runtimeKey, state);
 			return;
@@ -1100,13 +1295,16 @@ final class MonitorMaxRuntime {
 		}
 		if (state.call() != null && state.call().phase() != MaxCallPhase.IDLE) {
 			drawMaxCallScreen(graphics, layout, runtimeKey, state);
-			return;
+		} else {
+			drawMaxFeedScreen(graphics, layout, app, state);
 		}
-		drawMaxFeedScreen(graphics, layout, app, state);
+		if (state.notificationsOpen()) {
+			drawMaxNotificationsScreen(graphics, layout, runtimeKey, state);
+		}
 	}
 
 	private static MaxVisualSnapshot emptySnapshot() {
-		return new MaxVisualSnapshot(0L, "MAX-000000", "000000", null, List.of(), null, List.of(), 0, List.of(), 0, List.of(), 0, null, 0, 0, 0, "", false, false, false, false, false, false, "");
+		return new MaxVisualSnapshot(0L, "MAX-000000", "000000", null, WindowedSnapshot.empty(), null, WindowedSnapshot.empty(), 0, WindowedSnapshot.empty(), 0, WindowedSnapshot.empty(), 0, WindowedSnapshot.empty(), 0, 0, 0, 0, "", WindowedSnapshot.empty(), false, false, false, false, false, false, "");
 	}
 
 	private static MaxRuntimeState ensureState(MinecraftServer server, ScreenComponent component) {
@@ -1130,31 +1328,41 @@ final class MonitorMaxRuntime {
 				state.cameraEnabled = persisted == null || persisted.cameraEnabled();
 				state.microphoneEnabled = persisted == null || persisted.microphoneEnabled();
 				state.ringtoneUrl = persisted != null ? persisted.ringtoneUrl() : "";
-				state.ringtoneLocalMediaKey = persisted != null ? persisted.ringtoneLocalMediaKey() : "";
-				state.ringtoneTitle = persisted != null ? persisted.ringtoneTitle() : "";
-				state.incomingFiles.clear();
-				if (persisted != null) {
-					state.incomingFiles.addAll(persisted.incomingFiles());
-				}
-				state.contacts.clear();
-				if (persisted != null) {
-					for (String contact : persisted.contacts()) {
-						String normalized = normalizeAccountCode(contact);
-						if (!normalized.isBlank() && !Objects.equals(normalized, state.accountCode) && !state.contacts.contains(normalized)) {
-							state.contacts.add(normalized);
+					state.ringtoneLocalMediaKey = persisted != null ? persisted.ringtoneLocalMediaKey() : "";
+					state.ringtoneTitle = persisted != null ? persisted.ringtoneTitle() : "";
+					state.incomingFiles.clear();
+					if (persisted != null) {
+						state.incomingFiles.addAll(persisted.incomingFiles());
+					}
+					pruneIncomingPreviewCacheLocked(state);
+					state.contacts.clear();
+					if (persisted != null) {
+						for (String contact : persisted.contacts()) {
+							String normalized = normalizeAccountCode(contact);
+							if (!normalized.isBlank() && !Objects.equals(normalized, state.accountCode) && !state.contacts.contains(normalized)) {
+								state.contacts.add(normalized);
+							}
 						}
 					}
+					ensureIncomingSendersAsContactsLocked(state);
+					state.avatarMedia = loadAvatarMedia(component, state.avatarUrl, state.avatarLocalMediaKey);
+					state.avatarFrame = avatarFrame(state.avatarMedia, 0, null);
+					state.avatarAnimationStartedAtMillis = System.currentTimeMillis();
+					state.hydrated = true;
+					state.version++;
+					ACCOUNT_INDEX.put(state.accountCode, component.runtimeKey());
+					ACCOUNT_NAME_INDEX.put(accountNameLookupKey(state.accountName), component.runtimeKey());
+					cacheAccountProfile(
+							state.accountCode,
+							state.accountName,
+							state.avatarUrl,
+							state.avatarLocalMediaKey,
+							currentAvatarFrameLocked(state),
+							avatarAnimatedLocked(state)
+					);
+					persistState(server, component.runtimeKey(), state);
 				}
-				state.avatarMedia = loadAvatarMedia(component, state.avatarUrl, state.avatarLocalMediaKey);
-				state.avatarFrame = avatarFrame(state.avatarMedia, 0, null);
-				state.avatarAnimationStartedAtMillis = System.currentTimeMillis();
-				state.hydrated = true;
-				state.version++;
-				ACCOUNT_INDEX.put(state.accountCode, component.runtimeKey());
-				ACCOUNT_NAME_INDEX.put(accountNameLookupKey(state.accountName), component.runtimeKey());
-				persistState(server, component.runtimeKey(), state);
 			}
-		}
 		return state;
 	}
 
@@ -1206,6 +1414,9 @@ final class MonitorMaxRuntime {
 			CompoundTag fileTag = maxTag.getCompoundOrEmpty(MAX_INCOMING_FILE_PREFIX + index);
 			String id = fileTag.getStringOr(MAX_INCOMING_FILE_ID_TAG, "");
 			String sender = normalizeAccountCode(fileTag.getStringOr(MAX_INCOMING_FILE_SENDER_TAG, ""));
+			String senderName = sanitizeAccountName(fileTag.getStringOr(MAX_INCOMING_FILE_SENDER_NAME_TAG, ""));
+			String senderAvatarUrl = fileTag.getStringOr(MAX_INCOMING_FILE_SENDER_AVATAR_URL_TAG, "");
+			String senderAvatarLocalMediaKey = fileTag.getStringOr(MAX_INCOMING_FILE_SENDER_AVATAR_LOCAL_MEDIA_TAG, "");
 			String title = fileTag.getStringOr(MAX_INCOMING_FILE_TITLE_TAG, "");
 			String subtitle = fileTag.getStringOr(MAX_INCOMING_FILE_SUBTITLE_TAG, "");
 			String url = fileTag.getStringOr(MAX_INCOMING_FILE_URL_TAG, "");
@@ -1216,6 +1427,9 @@ final class MonitorMaxRuntime {
 				incomingFiles.add(new MaxIncomingFile(
 						id == null || id.isBlank() ? UUID.randomUUID().toString() : id,
 						sender,
+						senderName,
+						senderAvatarUrl,
+						senderAvatarLocalMediaKey,
 						title,
 						subtitle,
 						url,
@@ -1247,6 +1461,21 @@ final class MonitorMaxRuntime {
 		if (server == null || key == null || state == null) {
 			return;
 		}
+		String accountCode;
+		String accountName;
+		String avatarUrl;
+		String avatarLocalMediaKey;
+		BufferedImage avatarFrame;
+		boolean avatarAnimated;
+		synchronized (state) {
+			accountCode = state.accountCode;
+			accountName = state.accountName;
+			avatarUrl = state.avatarUrl;
+			avatarLocalMediaKey = state.avatarLocalMediaKey;
+			avatarFrame = currentAvatarFrameLocked(state);
+			avatarAnimated = avatarAnimatedLocked(state);
+		}
+		cacheAccountProfile(accountCode, accountName, avatarUrl, avatarLocalMediaKey, avatarFrame, avatarAnimated);
 		ScreenComponent component = resolveScreenComponent(server, key);
 		if (component == null) {
 			return;
@@ -1320,23 +1549,39 @@ final class MonitorMaxRuntime {
 				maxTag.putString(MAX_CONTACT_PREFIX + index, contacts.get(index));
 			}
 			List<MaxIncomingFile> incomingFiles = state.incomingFiles() != null ? state.incomingFiles() : List.of();
-			maxTag.putInt(MAX_INCOMING_FILE_COUNT_TAG, incomingFiles.size());
-			for (int index = 0; index < incomingFiles.size(); index++) {
-				MaxIncomingFile incoming = incomingFiles.get(index);
+			int persistedIncomingFileCount = 0;
+			for (MaxIncomingFile incoming : incomingFiles) {
 				if (incoming == null) {
 					continue;
 				}
+				String senderCode = normalizeAccountCode(incoming.senderCode());
+				String url = Objects.toString(incoming.url(), "");
+				String localMediaKey = Objects.toString(incoming.localMediaKey(), "");
+				if (senderCode.isBlank() || url.isBlank() && localMediaKey.isBlank()) {
+					continue;
+				}
 				CompoundTag fileTag = new CompoundTag();
-				fileTag.putString(MAX_INCOMING_FILE_ID_TAG, incoming.id());
-				fileTag.putString(MAX_INCOMING_FILE_SENDER_TAG, incoming.senderCode());
-				fileTag.putString(MAX_INCOMING_FILE_TITLE_TAG, incoming.title());
-				fileTag.putString(MAX_INCOMING_FILE_SUBTITLE_TAG, incoming.subtitle());
-				fileTag.putString(MAX_INCOMING_FILE_URL_TAG, incoming.url());
-				fileTag.putString(MAX_INCOMING_FILE_LOCAL_MEDIA_TAG, incoming.localMediaKey());
+					fileTag.putString(MAX_INCOMING_FILE_ID_TAG, incoming.id() == null || incoming.id().isBlank() ? UUID.randomUUID().toString() : incoming.id());
+					fileTag.putString(MAX_INCOMING_FILE_SENDER_TAG, senderCode);
+					if (incoming.senderDisplayName() != null && !incoming.senderDisplayName().isBlank()) {
+						fileTag.putString(MAX_INCOMING_FILE_SENDER_NAME_TAG, incoming.senderDisplayName());
+					}
+					if (incoming.senderAvatarUrl() != null && !incoming.senderAvatarUrl().isBlank()) {
+						fileTag.putString(MAX_INCOMING_FILE_SENDER_AVATAR_URL_TAG, incoming.senderAvatarUrl());
+					}
+					if (incoming.senderAvatarLocalMediaKey() != null && !incoming.senderAvatarLocalMediaKey().isBlank()) {
+						fileTag.putString(MAX_INCOMING_FILE_SENDER_AVATAR_LOCAL_MEDIA_TAG, incoming.senderAvatarLocalMediaKey());
+					}
+					fileTag.putString(MAX_INCOMING_FILE_TITLE_TAG, Objects.toString(incoming.title(), ""));
+				fileTag.putString(MAX_INCOMING_FILE_SUBTITLE_TAG, Objects.toString(incoming.subtitle(), ""));
+				fileTag.putString(MAX_INCOMING_FILE_URL_TAG, url);
+				fileTag.putString(MAX_INCOMING_FILE_LOCAL_MEDIA_TAG, localMediaKey);
 				fileTag.putString(MAX_INCOMING_FILE_KIND_TAG, (incoming.kind() != null ? incoming.kind() : GalleryItemKind.MEDIA).persistedName());
 				fileTag.putLong(MAX_INCOMING_FILE_CREATED_TAG, incoming.createdAtMillis());
-				maxTag.put(MAX_INCOMING_FILE_PREFIX + index, fileTag);
+				maxTag.put(MAX_INCOMING_FILE_PREFIX + persistedIncomingFileCount, fileTag);
+				persistedIncomingFileCount++;
 			}
+			maxTag.putInt(MAX_INCOMING_FILE_COUNT_TAG, persistedIncomingFileCount);
 			tag.put(PERSISTED_MAX_ROOT_TAG, maxTag);
 		});
 	}
@@ -1519,6 +1764,7 @@ final class MonitorMaxRuntime {
 			String code = call.participantCode(participantKey);
 			String displayName = defaultAccountName(code);
 			BufferedImage avatar = null;
+			Color accent = participantAccent(code, null);
 			boolean avatarAnimated = false;
 			BufferedImage video = null;
 			boolean cameraEnabled = false;
@@ -1528,6 +1774,7 @@ final class MonitorMaxRuntime {
 					code = participantState.accountCode == null || participantState.accountCode.isBlank() ? code : participantState.accountCode;
 					displayName = participantState.accountName == null || participantState.accountName.isBlank() ? defaultAccountName(code) : participantState.accountName;
 					avatar = currentAvatarFrameLocked(participantState);
+					accent = stableAvatarAccentLocked(participantState, code);
 					avatarAnimated = avatarAnimatedLocked(participantState);
 					cameraEnabled = participantState.cameraEnabled;
 					microphoneEnabled = participantState.microphoneEnabled;
@@ -1542,6 +1789,7 @@ final class MonitorMaxRuntime {
 					code,
 					displayName,
 					avatar,
+					accent,
 					avatarAnimated,
 					video,
 					self,
@@ -1555,40 +1803,197 @@ final class MonitorMaxRuntime {
 
 	private static List<MaxContactSnapshot> captureContactSnapshots(MinecraftServer server, MaxRuntimeState state, ScreenRuntimeKey selfKey) {
 		List<String> contacts;
+		Map<String, Integer> notificationCounts;
+		Map<String, MaxIncomingFile> incomingProfiles;
 		synchronized (state) {
 			contacts = List.copyOf(state.contacts);
+			notificationCounts = incomingNotificationCountsBySenderLocked(state);
+			incomingProfiles = incomingProfileBySenderLocked(state);
 		}
 		if (contacts.isEmpty()) {
 			return List.of();
 		}
 		List<MaxContactSnapshot> snapshots = new ArrayList<>(contacts.size());
 		for (String contact : contacts) {
-			ScreenRuntimeKey key = ACCOUNT_INDEX.get(contact);
-			MaxRuntimeState peerState = key != null ? MAX_STATES.get(key) : null;
-			ScreenComponent component = key != null ? resolveScreenComponent(server, key) : null;
-			MaxCallSession call = key != null ? currentCall(key) : null;
-			String displayName = defaultAccountName(contact);
-			BufferedImage avatar = null;
-			boolean avatarAnimated = false;
-			if (peerState != null) {
-				synchronized (peerState) {
-					displayName = peerState.accountName == null || peerState.accountName.isBlank() ? defaultAccountName(contact) : peerState.accountName;
-					avatar = currentAvatarFrameLocked(peerState);
-					avatarAnimated = avatarAnimatedLocked(peerState);
-				}
+			MaxContactSnapshot snapshot = captureContactSnapshot(server, selfKey, contact, notificationCounts, incomingProfiles);
+			if (snapshot != null) {
+				snapshots.add(snapshot);
 			}
-			boolean sameCall = call != null && call.isParticipant(selfKey);
-			snapshots.add(new MaxContactSnapshot(
-					contact,
-					displayName,
-					avatar,
-					avatarAnimated,
-					component != null && component.powered(),
-					sameCall && call.isRinging(key),
-					sameCall && call.isAccepted(key)
-			));
 		}
 		return snapshots;
+	}
+
+	private static MaxContactSnapshot captureContactSnapshot(
+			MinecraftServer server,
+			ScreenRuntimeKey selfKey,
+			String contact,
+			Map<String, Integer> notificationCounts,
+			Map<String, MaxIncomingFile> incomingProfiles
+	) {
+		String contactCode = normalizeAccountCode(contact);
+		if (contactCode.isBlank()) {
+			return null;
+		}
+		ScreenRuntimeKey key = ACCOUNT_INDEX.get(contactCode);
+		MaxRuntimeState peerState = key != null ? MAX_STATES.get(key) : null;
+		ScreenComponent component = key != null ? resolveScreenComponent(server, key) : null;
+		MaxCallSession call = key != null ? currentCall(key) : null;
+		String displayName = defaultAccountName(contactCode);
+		BufferedImage avatar = null;
+		boolean avatarAnimated = false;
+		String avatarUrl = "";
+		String avatarLocalMediaKey = "";
+		if (peerState != null) {
+			synchronized (peerState) {
+				displayName = peerState.accountName == null || peerState.accountName.isBlank() ? defaultAccountName(contactCode) : peerState.accountName;
+				avatar = currentAvatarFrameLocked(peerState);
+				avatarAnimated = avatarAnimatedLocked(peerState);
+				avatarUrl = peerState.avatarUrl == null ? "" : peerState.avatarUrl;
+				avatarLocalMediaKey = peerState.avatarLocalMediaKey == null ? "" : peerState.avatarLocalMediaKey;
+			}
+			cacheAccountProfile(contactCode, displayName, avatarUrl, avatarLocalMediaKey, avatar, avatarAnimated);
+		} else {
+			MaxStoredAccountProfile storedProfile = resolveStoredAccountProfile(server, contactCode);
+			if (storedProfile != null) {
+				if (storedProfile.displayName() != null && !storedProfile.displayName().isBlank()) {
+					displayName = storedProfile.displayName();
+				}
+				avatar = storedProfile.avatarFrame();
+				avatarAnimated = storedProfile.avatarAnimated();
+			} else {
+				MaxIncomingFile incomingProfile = incomingProfiles.get(contactCode);
+				if (incomingProfile != null) {
+					if (incomingProfile.senderDisplayName() != null && !incomingProfile.senderDisplayName().isBlank()) {
+						displayName = incomingProfile.senderDisplayName();
+					}
+					MonitorMediaApp.LoadedMedia avatarMedia = loadAvatarMedia(null, incomingProfile.senderAvatarUrl(), incomingProfile.senderAvatarLocalMediaKey());
+					avatar = avatarFrame(avatarMedia, 0, null);
+					avatarAnimated = avatarMedia != null && avatarMedia.frameCount() > 1;
+				}
+			}
+		}
+		boolean sameCall = call != null && call.isParticipant(selfKey);
+		return new MaxContactSnapshot(
+				contactCode,
+				displayName,
+				avatar,
+				avatarAnimated,
+				component != null && component.powered(),
+				sameCall && call.isRinging(key),
+				sameCall && call.isAccepted(key),
+				notificationCounts != null ? notificationCounts.getOrDefault(contactCode, 0) : 0,
+				true
+		);
+	}
+
+	private static Map<String, Integer> incomingNotificationCountsBySenderLocked(MaxRuntimeState state) {
+		if (state == null || state.incomingFiles.isEmpty()) {
+			return Map.of();
+		}
+		Map<String, Integer> counts = new LinkedHashMap<>();
+		for (MaxIncomingFile incoming : state.incomingFiles) {
+			String senderCode = incoming == null ? "" : normalizeAccountCode(incoming.senderCode());
+			if (senderCode.isBlank()) {
+				continue;
+			}
+			counts.merge(senderCode, 1, Integer::sum);
+		}
+		return counts.isEmpty() ? Map.of() : Map.copyOf(counts);
+	}
+
+	private static Map<String, MaxIncomingFile> incomingProfileBySenderLocked(MaxRuntimeState state) {
+		if (state == null || state.incomingFiles.isEmpty()) {
+			return Map.of();
+		}
+		Map<String, MaxIncomingFile> profiles = new LinkedHashMap<>();
+		for (MaxIncomingFile incoming : state.incomingFiles) {
+			String senderCode = incoming == null ? "" : normalizeAccountCode(incoming.senderCode());
+			if (senderCode.isBlank()) {
+				continue;
+			}
+			profiles.putIfAbsent(senderCode, incoming);
+		}
+		return profiles.isEmpty() ? Map.of() : Map.copyOf(profiles);
+	}
+
+	private static int incomingCountForSenderLocked(MaxRuntimeState state, String senderCode) {
+		if (state == null || state.incomingFiles.isEmpty()) {
+			return 0;
+		}
+		String normalizedSender = normalizeAccountCode(senderCode);
+		if (normalizedSender.isBlank()) {
+			return 0;
+		}
+		int count = 0;
+		for (MaxIncomingFile incoming : state.incomingFiles) {
+			if (incoming != null && Objects.equals(normalizedSender, normalizeAccountCode(incoming.senderCode()))) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	private static void cacheAccountProfile(
+			String accountCode,
+			String displayName,
+			String avatarUrl,
+			String avatarLocalMediaKey,
+			BufferedImage avatarFrame,
+			boolean avatarAnimated
+	) {
+		String normalizedCode = normalizeAccountCode(accountCode);
+		if (normalizedCode.isBlank()) {
+			return;
+		}
+		String normalizedName = displayName == null || displayName.isBlank() ? defaultAccountName(normalizedCode) : displayName;
+		ACCOUNT_PROFILE_INDEX.put(
+				normalizedCode,
+				new MaxStoredAccountProfile(
+						normalizedCode,
+						normalizedName,
+						avatarUrl == null ? "" : avatarUrl,
+						avatarLocalMediaKey == null ? "" : avatarLocalMediaKey,
+						avatarFrame,
+						avatarAnimated
+				)
+		);
+	}
+
+	private static MaxStoredAccountProfile resolveStoredAccountProfile(MinecraftServer server, String accountCode) {
+		String normalizedCode = normalizeAccountCode(accountCode);
+		if (normalizedCode.isBlank()) {
+			return null;
+		}
+		MaxStoredAccountProfile cached = ACCOUNT_PROFILE_INDEX.get(normalizedCode);
+		if (cached != null && cached.hasVisualIdentity()) {
+			return cached;
+		}
+		if (server == null) {
+			return cached;
+		}
+		for (ServerLevel level : server.getAllLevels()) {
+			for (ScreenComponent component : cachedComponents(level)) {
+				if (component == null) {
+					continue;
+				}
+				PersistedMaxState persisted = resolvePersistedMaxState(component);
+				if (persisted == null || !Objects.equals(normalizedCode, normalizeAccountCode(persisted.accountCode()))) {
+					continue;
+				}
+				MonitorMediaApp.LoadedMedia avatarMedia = loadAvatarMedia(component, persisted.avatarUrl(), persisted.avatarLocalMediaKey());
+				MaxStoredAccountProfile resolved = new MaxStoredAccountProfile(
+						normalizedCode,
+						persisted.accountName() == null || persisted.accountName().isBlank() ? defaultAccountName(normalizedCode) : persisted.accountName(),
+						persisted.avatarUrl() == null ? "" : persisted.avatarUrl(),
+						persisted.avatarLocalMediaKey() == null ? "" : persisted.avatarLocalMediaKey(),
+						avatarFrame(avatarMedia, 0, null),
+						avatarMedia != null && avatarMedia.frameCount() > 1
+				);
+				ACCOUNT_PROFILE_INDEX.put(normalizedCode, resolved);
+				return resolved;
+			}
+		}
+		return cached;
 	}
 
 	private static List<MaxFileShareContactSnapshot> fileShareContacts(MinecraftServer server, MaxRuntimeState state, ScreenRuntimeKey selfKey) {
@@ -1613,32 +2018,970 @@ final class MonitorMaxRuntime {
 		return snapshots.isEmpty() ? List.of() : List.copyOf(snapshots);
 	}
 
-	private static MaxIncomingFileSnapshot incomingFileSnapshot(MinecraftServer server, MaxRuntimeState state) {
-		if (state == null || state.incomingFiles.isEmpty()) {
+	private static List<MaxIncomingFileSnapshot> incomingFileSnapshots(
+			MinecraftServer server,
+			ScreenRuntimeKey key,
+			MaxRuntimeState state,
+			String activeContactCode,
+			List<MaxIncomingFile> incomingFiles,
+			MaxNotificationPreviewVisualState previewState
+	) {
+		if (incomingFiles == null || incomingFiles.isEmpty()) {
+			return List.of();
+		}
+		String activeSender = normalizeAccountCode(activeContactCode);
+		List<MaxIncomingFileSnapshot> snapshots = new ArrayList<>(incomingFiles.size());
+		for (MaxIncomingFile incoming : incomingFiles) {
+			if (incoming == null) {
+				continue;
+			}
+			if (!activeSender.isBlank() && !Objects.equals(activeSender, normalizeAccountCode(incoming.senderCode()))) {
+				continue;
+			}
+			MaxIncomingFileSnapshot snapshot = incomingFileSnapshot(server, key, state, incoming, previewState);
+			if (snapshot != null) {
+				snapshots.add(snapshot);
+			}
+		}
+		return snapshots.isEmpty() ? List.of() : List.copyOf(snapshots);
+	}
+
+	private static MaxIncomingFileSnapshot incomingFileSnapshot(
+			MinecraftServer server,
+			ScreenRuntimeKey key,
+			MaxRuntimeState state,
+			MaxIncomingFile incoming,
+			MaxNotificationPreviewVisualState previewState
+	) {
+		if (incoming == null) {
 			return null;
 		}
-		normalizeNotificationScrollLocked(state);
-		MaxIncomingFile incoming = state.incomingFiles.get(state.notificationScroll);
-		MaxRuntimeState senderState = MAX_STATES.get(ACCOUNT_INDEX.get(incoming.senderCode()));
-		String senderDisplayName = defaultAccountName(incoming.senderCode());
+		String id = incoming.id() == null || incoming.id().isBlank() ? "" : incoming.id();
+		String senderCode = normalizeAccountCode(incoming.senderCode());
+		ScreenRuntimeKey senderKey = senderCode.isBlank() ? null : ACCOUNT_INDEX.get(senderCode);
+		MaxRuntimeState senderState = senderKey != null ? MAX_STATES.get(senderKey) : null;
+		String senderDisplayName = defaultAccountName(senderCode);
 		BufferedImage senderAvatar = null;
 		boolean senderAvatarAnimated = false;
 		if (senderState != null) {
+			String avatarUrl;
+			String avatarLocalMediaKey;
 			synchronized (senderState) {
-				senderDisplayName = senderState.accountName == null || senderState.accountName.isBlank() ? defaultAccountName(incoming.senderCode()) : senderState.accountName;
+				senderDisplayName = senderState.accountName == null || senderState.accountName.isBlank() ? defaultAccountName(senderCode) : senderState.accountName;
 				senderAvatar = currentAvatarFrameLocked(senderState);
 				senderAvatarAnimated = avatarAnimatedLocked(senderState);
+				avatarUrl = senderState.avatarUrl == null ? "" : senderState.avatarUrl;
+				avatarLocalMediaKey = senderState.avatarLocalMediaKey == null ? "" : senderState.avatarLocalMediaKey;
+			}
+			cacheAccountProfile(senderCode, senderDisplayName, avatarUrl, avatarLocalMediaKey, senderAvatar, senderAvatarAnimated);
+		} else {
+			MaxStoredAccountProfile storedProfile = resolveStoredAccountProfile(server, senderCode);
+			if (storedProfile != null) {
+				senderDisplayName = storedProfile.displayName();
+				senderAvatar = storedProfile.avatarFrame();
+				senderAvatarAnimated = storedProfile.avatarAnimated();
+			} else {
+				if (incoming.senderDisplayName() != null && !incoming.senderDisplayName().isBlank()) {
+					senderDisplayName = incoming.senderDisplayName();
+				}
+				MonitorMediaApp.LoadedMedia avatarMedia = loadAvatarMedia(null, incoming.senderAvatarUrl(), incoming.senderAvatarLocalMediaKey());
+				senderAvatar = avatarFrame(avatarMedia, 0, null);
+				senderAvatarAnimated = avatarMedia != null && avatarMedia.frameCount() > 1;
+				cacheAccountProfile(senderCode, senderDisplayName, incoming.senderAvatarUrl(), incoming.senderAvatarLocalMediaKey(), senderAvatar, senderAvatarAnimated);
 			}
 		}
+		GalleryItemKind kind = incoming.kind() != null ? incoming.kind() : GalleryItemKind.MEDIA;
+		boolean previewPlayable = notificationPreviewPlayable(kind, incoming);
+		boolean previewActive = previewState != null && !id.isBlank() && Objects.equals(id, previewState.fileId());
+		BufferedImage previewFrame = previewActive ? previewState.frame() : null;
+		if (previewFrame == null) {
+			previewFrame = cachedIncomingFilePreview(state, id);
+		}
+		if (previewFrame == null) {
+			ensureIncomingFilePreviewAsync(server, key, state, incoming);
+		}
 		return new MaxIncomingFileSnapshot(
-				incoming.senderCode(),
+				id,
+				senderCode,
 				senderDisplayName,
 				senderAvatar,
 				senderAvatarAnimated,
-				incoming.title() == null || incoming.title().isBlank() ? defaultSharedFileTitle(incoming.kind()) : incoming.title(),
+				incoming.title() == null || incoming.title().isBlank() ? defaultSharedFileTitle(kind) : incoming.title(),
 				incoming.subtitle() == null ? "" : incoming.subtitle(),
-				incoming.kind() != null ? incoming.kind() : GalleryItemKind.MEDIA
+				kind,
+				previewFrame,
+				kind == GalleryItemKind.AUDIO,
+				previewPlayable,
+				previewActive,
+				previewActive && previewState != null && previewState.playing(),
+				previewActive && previewState != null && previewState.loading()
 		);
+	}
+
+	private static int rowSnapshotWindowStartIndex(
+			ScreenRuntimeKey runtimeKey,
+			MonitorScrollAnimationSystem.ScrollChannel channel,
+			int scroll,
+			int maxScroll,
+			int totalCount
+	) {
+		if (totalCount <= 0) {
+			return 0;
+		}
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(runtimeKey, channel, scroll, maxScroll);
+		return clampInt(Math.min(scroll, visualScroll.anchorIndex()) - 1, 0, totalCount);
+	}
+
+	private static int rowSnapshotWindowEndExclusive(
+			ScreenRuntimeKey runtimeKey,
+			MonitorScrollAnimationSystem.ScrollChannel channel,
+			int scroll,
+			int maxScroll,
+			int visibleCount,
+			int totalCount,
+			int startIndex
+	) {
+		if (totalCount <= 0) {
+			return 0;
+		}
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(runtimeKey, channel, scroll, maxScroll);
+		int endExclusive = Math.max(scroll, visualScroll.anchorIndex()) + visibleCount + (visualScroll.animated() ? 1 : 0) + 1;
+		return clampInt(Math.max(startIndex, endExclusive), 0, totalCount);
+	}
+
+	private static int gridSnapshotWindowStartIndex(
+			ScreenRuntimeKey runtimeKey,
+			MonitorScrollAnimationSystem.ScrollChannel channel,
+			int scroll,
+			int maxScroll,
+			int columns,
+			int totalCount
+	) {
+		if (totalCount <= 0) {
+			return 0;
+		}
+		int safeColumns = Math.max(1, columns);
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(runtimeKey, channel, scroll, maxScroll);
+		double displayRow = visualScroll.displayValue() / safeColumns;
+		int anchorRow = clampInt((int) Math.floor(displayRow + 1.0E-6D), 0, Math.max(0, (int) Math.ceil(totalCount / (double) safeColumns)));
+		return clampInt((Math.min(scroll / safeColumns, anchorRow) - 1) * safeColumns, 0, totalCount);
+	}
+
+	private static int gridSnapshotWindowEndExclusive(
+			ScreenRuntimeKey runtimeKey,
+			MonitorScrollAnimationSystem.ScrollChannel channel,
+			int scroll,
+			int maxScroll,
+			int columns,
+			int visibleRows,
+			int totalCount,
+			int startIndex
+	) {
+		if (totalCount <= 0) {
+			return 0;
+		}
+		int safeColumns = Math.max(1, columns);
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(runtimeKey, channel, scroll, maxScroll);
+		double displayRow = visualScroll.displayValue() / safeColumns;
+		int anchorRow = clampInt((int) Math.floor(displayRow + 1.0E-6D), 0, Math.max(0, (int) Math.ceil(totalCount / (double) safeColumns)));
+		double rowFraction = clampDouble(displayRow - anchorRow, 0.0D, 0.999999D);
+		int endRowExclusive = Math.max(scroll / safeColumns, anchorRow) + visibleRows + (rowFraction > 1.0E-4D ? 1 : 0) + 1;
+		return clampInt(Math.max(startIndex, endRowExclusive * safeColumns), 0, totalCount);
+	}
+
+	private static int pixelSnapshotWindowStartIndex(
+			ScreenRuntimeKey runtimeKey,
+			MonitorScrollAnimationSystem.ScrollChannel channel,
+			int scroll,
+			int maxScroll,
+			int stride,
+			int totalCount
+	) {
+		if (totalCount <= 0 || stride <= 0) {
+			return 0;
+		}
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(runtimeKey, channel, scroll, maxScroll);
+		int minOffset = (int) Math.floor(Math.min(scroll, visualScroll.displayValue()));
+		return clampInt(minOffset / stride - 1, 0, totalCount);
+	}
+
+	private static int pixelSnapshotWindowEndExclusive(
+			ScreenRuntimeKey runtimeKey,
+			MonitorScrollAnimationSystem.ScrollChannel channel,
+			int scroll,
+			int maxScroll,
+			int stride,
+			int viewportHeight,
+			int totalCount,
+			int startIndex
+	) {
+		if (totalCount <= 0 || stride <= 0) {
+			return 0;
+		}
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(runtimeKey, channel, scroll, maxScroll);
+		int maxOffset = (int) Math.ceil(Math.max(scroll, visualScroll.displayValue())) + Math.max(0, viewportHeight);
+		int endExclusive = (int) Math.ceil(maxOffset / (double) stride) + 1;
+		return clampInt(Math.max(startIndex, endExclusive), 0, totalCount);
+	}
+
+	private static WindowedSnapshot<MaxContactSnapshot> contactFeedSnapshots(
+			MinecraftServer server,
+			MaxRuntimeState state,
+			ScreenRuntimeKey selfKey,
+			UiLayout layout
+	) {
+		if (state == null || layout == null) {
+			return WindowedSnapshot.empty();
+		}
+		List<String> contacts;
+		Map<String, Integer> notificationCounts;
+		Map<String, MaxIncomingFile> incomingProfiles;
+		synchronized (state) {
+			contacts = List.copyOf(state.contacts);
+			notificationCounts = incomingNotificationCountsBySenderLocked(state);
+			incomingProfiles = incomingProfileBySenderLocked(state);
+		}
+		if (contacts.isEmpty()) {
+			return WindowedSnapshot.empty();
+		}
+		int visibleCount = Math.min(contacts.size(), maxVisibleContactRows(layout));
+		List<MaxContactSnapshot> snapshots = new ArrayList<>(visibleCount);
+		for (int index = 0; index < visibleCount; index++) {
+			MaxContactSnapshot snapshot = captureContactSnapshot(server, selfKey, contacts.get(index), notificationCounts, incomingProfiles);
+			if (snapshot != null) {
+				snapshots.add(snapshot);
+			}
+		}
+		return new WindowedSnapshot<>(List.copyOf(snapshots), contacts.size(), 0);
+	}
+
+	private static WindowedSnapshot<MaxAvatarCandidateSnapshot> avatarCandidateSnapshots(
+			ScreenComponent component,
+			MaxRuntimeState state,
+			UiLayout layout,
+			ScreenRuntimeKey runtimeKey
+	) {
+		if (component == null || state == null || layout == null) {
+			return WindowedSnapshot.empty();
+		}
+		List<PersistedGalleryItem> eligible = new ArrayList<>();
+		for (PersistedGalleryItem item : resolvePersistedGalleryState(component)) {
+			if (item == null || effectiveGalleryItemKind(item) != GalleryItemKind.MEDIA || item.url() == null || item.url().isBlank()) {
+				continue;
+			}
+			eligible.add(item);
+		}
+		if (eligible.isEmpty()) {
+			return WindowedSnapshot.empty();
+		}
+		int totalCount = eligible.size();
+		int scroll;
+		synchronized (state) {
+			scroll = clampInt(state.avatarPickerScroll, 0, maxAvatarPickerScroll(layout, totalCount));
+		}
+		int startIndex = gridSnapshotWindowStartIndex(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_AVATAR_PICKER, scroll, maxAvatarPickerScroll(layout, totalCount), maxAvatarPickerColumns(layout), totalCount);
+		int endExclusive = gridSnapshotWindowEndExclusive(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_AVATAR_PICKER, scroll, maxAvatarPickerScroll(layout, totalCount), maxAvatarPickerColumns(layout), maxAvatarPickerVisibleRows(layout), totalCount, startIndex);
+		List<MaxAvatarCandidateSnapshot> snapshots = new ArrayList<>(Math.max(0, endExclusive - startIndex));
+		for (int index = startIndex; index < endExclusive; index++) {
+			PersistedGalleryItem item = eligible.get(index);
+			BufferedImage preview = persistedGalleryPreviewForDisplay(item, GalleryItemKind.MEDIA);
+			snapshots.add(new MaxAvatarCandidateSnapshot(
+					item.title() == null || item.title().isBlank() ? "Аватар" : item.title(),
+					item.url(),
+					item.localMediaKey(),
+					preview
+			));
+		}
+		return new WindowedSnapshot<>(List.copyOf(snapshots), totalCount, startIndex);
+	}
+
+	private static WindowedSnapshot<MaxRingtoneCandidateSnapshot> ringtoneCandidateSnapshots(
+			ScreenComponent component,
+			MaxRuntimeState state,
+			UiLayout layout,
+			ScreenRuntimeKey runtimeKey
+	) {
+		if (component == null || state == null || layout == null) {
+			return WindowedSnapshot.empty();
+		}
+		List<PersistedGalleryItem> audioItems = new ArrayList<>();
+		for (PersistedGalleryItem item : resolvePersistedGalleryState(component)) {
+			if (item != null && effectiveGalleryItemKind(item) == GalleryItemKind.AUDIO) {
+				audioItems.add(item);
+			}
+		}
+		int totalCount = 1 + audioItems.size();
+		int scroll;
+		synchronized (state) {
+			scroll = clampInt(state.ringtonePickerScroll, 0, maxRingtonePickerScroll(layout, totalCount));
+		}
+		int maxScroll = maxRingtonePickerScroll(layout, totalCount);
+		int startIndex = rowSnapshotWindowStartIndex(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_RINGTONE_PICKER, scroll, maxScroll, totalCount);
+		int endExclusive = rowSnapshotWindowEndExclusive(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_RINGTONE_PICKER, scroll, maxScroll, maxRingtonePickerCapacity(layout), totalCount, startIndex);
+		List<MaxRingtoneCandidateSnapshot> snapshots = new ArrayList<>(Math.max(0, endExclusive - startIndex));
+		for (int index = startIndex; index < endExclusive; index++) {
+			if (index == 0) {
+				snapshots.add(ringtoneCandidate(state, "Стандартный рингтон", "MAX", MAX_DEFAULT_RINGTONE_URL, ""));
+				continue;
+			}
+			PersistedGalleryItem item = audioItems.get(index - 1);
+			String title = item.title() == null || item.title().isBlank() ? "Аудиотрек" : item.title();
+			String subtitle = item.subtitle() == null || item.subtitle().isBlank() ? "Галерея" : item.subtitle();
+			String url = item.url() == null || item.url().isBlank() ? "max:gallery:" + Objects.toString(item.localMediaKey(), title) : item.url();
+			snapshots.add(ringtoneCandidate(state, title, subtitle, url, item.localMediaKey()));
+		}
+		return new WindowedSnapshot<>(List.copyOf(snapshots), totalCount, startIndex);
+	}
+
+	private static WindowedSnapshot<MaxFileShareContactSnapshot> fileShareContactSnapshots(
+			MinecraftServer server,
+			MaxRuntimeState state,
+			ScreenRuntimeKey selfKey,
+			UiLayout layout,
+			ScreenRuntimeKey runtimeKey
+	) {
+		if (state == null || layout == null) {
+			return WindowedSnapshot.empty();
+		}
+		List<String> contacts;
+		Map<String, Integer> notificationCounts;
+		Map<String, MaxIncomingFile> incomingProfiles;
+		Set<String> selected;
+		int scroll;
+		synchronized (state) {
+			contacts = List.copyOf(state.contacts);
+			notificationCounts = incomingNotificationCountsBySenderLocked(state);
+			incomingProfiles = incomingProfileBySenderLocked(state);
+			selected = Set.copyOf(state.fileShareSelectedContacts);
+			scroll = clampInt(state.fileSharePickerScroll, 0, maxContactPickerScroll(layout, contacts.size()));
+		}
+		if (contacts.isEmpty()) {
+			return WindowedSnapshot.empty();
+		}
+		int maxScroll = maxContactPickerScroll(layout, contacts.size());
+		int startIndex = rowSnapshotWindowStartIndex(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_FILE_SHARE_PICKER, scroll, maxScroll, contacts.size());
+		int endExclusive = rowSnapshotWindowEndExclusive(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_FILE_SHARE_PICKER, scroll, maxScroll, maxContactPickerCapacity(layout), contacts.size(), startIndex);
+		List<MaxFileShareContactSnapshot> snapshots = new ArrayList<>(Math.max(0, endExclusive - startIndex));
+		for (int index = startIndex; index < endExclusive; index++) {
+			MaxContactSnapshot contact = captureContactSnapshot(server, selfKey, contacts.get(index), notificationCounts, incomingProfiles);
+			if (contact == null) {
+				continue;
+			}
+			snapshots.add(new MaxFileShareContactSnapshot(
+					contact.code(),
+					contact.displayName(),
+					contact.avatarFrame(),
+					contact.online(),
+					selected.contains(contact.code())
+			));
+		}
+		return new WindowedSnapshot<>(List.copyOf(snapshots), contacts.size(), startIndex);
+	}
+
+	private static WindowedSnapshot<MaxContactSnapshot> callContactCandidateSnapshots(
+			MinecraftServer server,
+			MaxRuntimeState state,
+			MaxCallSession call,
+			ScreenRuntimeKey selfKey,
+			UiLayout layout,
+			ScreenRuntimeKey runtimeKey
+	) {
+		if (state == null || call == null || layout == null) {
+			return WindowedSnapshot.empty();
+		}
+		List<String> contacts;
+		Map<String, Integer> notificationCounts;
+		Map<String, MaxIncomingFile> incomingProfiles;
+		int scroll;
+		synchronized (state) {
+			contacts = List.copyOf(state.contacts);
+			notificationCounts = incomingNotificationCountsBySenderLocked(state);
+			incomingProfiles = incomingProfileBySenderLocked(state);
+			scroll = clampInt(state.callContactPickerScroll, 0, maxCallContactPickerScroll(layout, contacts.size()));
+		}
+		if (contacts.isEmpty()) {
+			return WindowedSnapshot.empty();
+		}
+		String peerCode = call.peerCode(selfKey);
+		List<String> candidates = new ArrayList<>(contacts.size());
+		for (String contact : contacts) {
+			String contactCode = normalizeAccountCode(contact);
+			if (contactCode.isBlank()) {
+				continue;
+			}
+			ScreenRuntimeKey key = ACCOUNT_INDEX.get(contactCode);
+			MaxCallSession current = key != null ? currentCall(key) : null;
+			boolean active = current != null && current.isParticipant(selfKey) && current.isAccepted(key);
+			boolean ringing = current != null && current.isParticipant(selfKey) && current.isRinging(key);
+			if (active || ringing || Objects.equals(contactCode, peerCode) || (key != null && call.isParticipant(key))) {
+				continue;
+			}
+			candidates.add(contact);
+		}
+		int totalCount = candidates.size();
+		if (totalCount <= 0) {
+			return WindowedSnapshot.empty();
+		}
+		int maxScroll = maxCallContactPickerScroll(layout, totalCount);
+		scroll = clampInt(scroll, 0, maxScroll);
+		int startIndex = rowSnapshotWindowStartIndex(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_CALL_CONTACT_PICKER, scroll, maxScroll, totalCount);
+		int endExclusive = rowSnapshotWindowEndExclusive(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_CALL_CONTACT_PICKER, scroll, maxScroll, maxCallContactPickerCapacity(layout), totalCount, startIndex);
+		List<MaxContactSnapshot> snapshots = new ArrayList<>(Math.max(0, endExclusive - startIndex));
+		for (int index = startIndex; index < endExclusive; index++) {
+			MaxContactSnapshot snapshot = captureContactSnapshot(server, selfKey, candidates.get(index), notificationCounts, incomingProfiles);
+			if (snapshot != null) {
+				snapshots.add(snapshot);
+			}
+		}
+		return new WindowedSnapshot<>(List.copyOf(snapshots), totalCount, startIndex);
+	}
+
+	private static WindowedSnapshot<MaxIncomingFileSnapshot> incomingFileSnapshots(
+			MinecraftServer server,
+			ScreenRuntimeKey key,
+			MaxRuntimeState state,
+			String activeContactCode,
+			List<MaxIncomingFile> incomingFiles,
+			MaxNotificationPreviewVisualState previewState,
+			UiLayout layout
+	) {
+		if (incomingFiles == null || incomingFiles.isEmpty()) {
+			return WindowedSnapshot.empty();
+		}
+		String activeSender = normalizeAccountCode(activeContactCode);
+		List<MaxIncomingFile> filtered = new ArrayList<>(incomingFiles.size());
+		for (MaxIncomingFile incoming : incomingFiles) {
+			if (incoming == null) {
+				continue;
+			}
+			if (!activeSender.isBlank() && !Objects.equals(activeSender, normalizeAccountCode(incoming.senderCode()))) {
+				continue;
+			}
+			filtered.add(incoming);
+		}
+		int totalCount = filtered.size();
+		if (totalCount <= 0 || state == null || layout == null) {
+			return new WindowedSnapshot<>(List.of(), totalCount, 0);
+		}
+		int itemStride = maxNotificationItemHeight(layout) + maxNotificationItemGap(layout);
+		int maxScroll = maxNotificationScroll(layout, totalCount);
+		int scroll;
+		synchronized (state) {
+			scroll = clampInt(state.notificationScroll, 0, maxScroll);
+		}
+		int startIndex = pixelSnapshotWindowStartIndex(key, MonitorScrollAnimationSystem.ScrollChannel.MAX_NOTIFICATION_FEED, scroll, maxScroll, itemStride, totalCount);
+		int endExclusive = pixelSnapshotWindowEndExclusive(key, MonitorScrollAnimationSystem.ScrollChannel.MAX_NOTIFICATION_FEED, scroll, maxScroll, itemStride, maxNotificationFeedRect(layout).height(), totalCount, startIndex);
+		List<MaxIncomingFileSnapshot> snapshots = new ArrayList<>(Math.max(0, endExclusive - startIndex));
+		for (int index = startIndex; index < endExclusive; index++) {
+			MaxIncomingFileSnapshot snapshot = incomingFileSnapshot(server, key, state, filtered.get(index), previewState);
+			if (snapshot != null) {
+				snapshots.add(snapshot);
+			}
+		}
+		return new WindowedSnapshot<>(List.copyOf(snapshots), totalCount, startIndex);
+	}
+
+	private static BufferedImage incomingFilePreview(MaxIncomingFile incoming, GalleryItemKind kind) {
+		if (incoming == null || kind == null) {
+			return null;
+		}
+		String url = incoming.url() == null ? "" : incoming.url().trim();
+		String localMediaKey = incoming.localMediaKey() == null ? "" : incoming.localMediaKey().trim();
+		if (kind == GalleryItemKind.YOUTUBE) {
+			BufferedImage youtubePreview = !url.isBlank() ? MonitorYoutubeRelayClient.queueEntryPreview(url) : null;
+			if (youtubePreview != null) {
+				return youtubePreview;
+			}
+		}
+		if (kind == GalleryItemKind.AUDIO && !url.isBlank()) {
+			BufferedImage musicPreview = MonitorYoutubeMusicCache.looksLikeSupportedUrl(url)
+					? MonitorYoutubeMusicCache.queueEntryPreview(url)
+					: null;
+			if (musicPreview != null) {
+				return musicPreview;
+			}
+		}
+		PersistedGalleryItem persisted = new PersistedGalleryItem(
+				incoming.title() == null || incoming.title().isBlank() ? defaultSharedFileTitle(kind) : incoming.title(),
+				incoming.subtitle() == null ? "" : incoming.subtitle(),
+				url,
+				kind,
+				localMediaKey
+		);
+		return persistedGalleryPreviewForDisplay(persisted, kind);
+	}
+
+	private static BufferedImage cachedIncomingFilePreview(MaxRuntimeState state, String fileId) {
+		if (state == null || fileId == null || fileId.isBlank()) {
+			return null;
+		}
+		synchronized (state) {
+			MaxIncomingPreviewCacheEntry entry = state.incomingPreviewCache.get(fileId);
+			return entry != null ? entry.previewFrame : null;
+		}
+	}
+
+	private static void ensureIncomingFilePreviewAsync(MinecraftServer server, ScreenRuntimeKey key, MaxRuntimeState state, MaxIncomingFile incoming) {
+		if (server == null || key == null || state == null || incoming == null) {
+			return;
+		}
+		String fileId = notificationFileId(incoming);
+		if (fileId.isBlank()) {
+			return;
+		}
+		synchronized (state) {
+			MaxIncomingPreviewCacheEntry entry = state.incomingPreviewCache.computeIfAbsent(fileId, ignored -> new MaxIncomingPreviewCacheEntry());
+			if (entry.loading || entry.resolved) {
+				return;
+			}
+			entry.loading = true;
+		}
+		GalleryItemKind kind = incoming.kind() != null ? incoming.kind() : GalleryItemKind.MEDIA;
+		ensureExecutors();
+		CompletableFuture
+				.supplyAsync(() -> new MaxIncomingPreviewLoadResult(key, fileId, incomingFilePreview(incoming, kind)), mediaIoExecutor)
+				.thenAccept(result -> server.execute(() -> applyIncomingFilePreviewLoadResult(server, result)));
+	}
+
+	private static void applyIncomingFilePreviewLoadResult(MinecraftServer server, MaxIncomingPreviewLoadResult result) {
+		if (server == null || result == null || result.key() == null || result.fileId() == null || result.fileId().isBlank()) {
+			return;
+		}
+		MaxRuntimeState state = MAX_STATES.get(result.key());
+		if (state == null) {
+			return;
+		}
+		boolean shouldRender;
+		synchronized (state) {
+			MaxIncomingPreviewCacheEntry entry = state.incomingPreviewCache.computeIfAbsent(result.fileId(), ignored -> new MaxIncomingPreviewCacheEntry());
+			entry.loading = false;
+			entry.resolved = true;
+			if (hasIncomingFileLocked(state, result.fileId()) && result.previewFrame() != null) {
+				entry.previewFrame = result.previewFrame();
+			}
+			shouldRender = state.notificationsOpen && hasIncomingFileLocked(state, result.fileId());
+			if (shouldRender) {
+				state.version++;
+			}
+		}
+		if (shouldRender) {
+			requestRuntimeRender(server, result.key());
+		}
+	}
+
+	private static boolean hasIncomingFileLocked(MaxRuntimeState state, String fileId) {
+		if (state == null || fileId == null || fileId.isBlank()) {
+			return false;
+		}
+		for (MaxIncomingFile incoming : state.incomingFiles) {
+			if (Objects.equals(fileId, notificationFileId(incoming))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static void pruneIncomingPreviewCacheLocked(MaxRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		Set<String> activeIds = new HashSet<>();
+		for (MaxIncomingFile incoming : state.incomingFiles) {
+			String fileId = notificationFileId(incoming);
+			if (!fileId.isBlank()) {
+				activeIds.add(fileId);
+			}
+		}
+		state.incomingPreviewCache.entrySet().removeIf(entry -> !activeIds.contains(entry.getKey()));
+		if (!state.notificationPreviewFileId.isBlank() && !activeIds.contains(state.notificationPreviewFileId)) {
+			clearNotificationPreviewLocked(state);
+		}
+	}
+
+	private static boolean notificationPreviewPlayable(GalleryItemKind kind, MaxIncomingFile incoming) {
+		if (incoming == null) {
+			return false;
+		}
+		GalleryItemKind resolvedKind = kind != null ? kind : GalleryItemKind.MEDIA;
+		if (resolvedKind != GalleryItemKind.AUDIO && resolvedKind != GalleryItemKind.VIDEO) {
+			return false;
+		}
+		String url = incoming.url() == null ? "" : incoming.url().trim();
+		String localMediaKey = incoming.localMediaKey() == null ? "" : incoming.localMediaKey().trim();
+		return !url.isBlank() || !localMediaKey.isBlank();
+	}
+
+	private static BufferedImage currentNotificationPreviewFrameLocked(MaxRuntimeState state, BufferedImage fallback) {
+		if (state == null || state.notificationPreviewMedia == null || state.notificationPreviewMedia.frameCount() <= 0) {
+			return fallback;
+		}
+		int frameIndex = notificationPreviewFrameIndexLocked(state, System.currentTimeMillis());
+		BufferedImage frame = state.notificationPreviewMedia.frame(frameIndex);
+		return frame != null ? frame : fallback;
+	}
+
+	private static int notificationPreviewFrameIndexLocked(MaxRuntimeState state, long now) {
+		if (state == null || state.notificationPreviewMedia == null || state.notificationPreviewMedia.frameCount() <= 1) {
+			return 0;
+		}
+		return notificationPreviewFrameIndex(state.notificationPreviewMedia, notificationPreviewPositionMillisLocked(state, now));
+	}
+
+	private static int notificationPreviewFrameIndex(MonitorMediaApp.LoadedMedia media, long positionMillis) {
+		if (media == null || media.frameCount() <= 1) {
+			return 0;
+		}
+		long loopDuration = notificationPreviewLoopDurationMillis(media);
+		if (loopDuration <= 0L) {
+			return 0;
+		}
+		long normalizedPosition = Math.floorMod(Math.max(0L, positionMillis), loopDuration);
+		long elapsed = 0L;
+		for (int index = 0; index < media.frameCount(); index++) {
+			elapsed += notificationPreviewFrameDelayMillis(media, index);
+			if (normalizedPosition < elapsed) {
+				return index;
+			}
+		}
+		return Math.max(0, media.frameCount() - 1);
+	}
+
+	private static long notificationPreviewLoopDurationMillis(MonitorMediaApp.LoadedMedia media) {
+		if (media == null || media.frameCount() <= 0) {
+			return 0L;
+		}
+		long total = 0L;
+		for (int index = 0; index < media.frameCount(); index++) {
+			total += notificationPreviewFrameDelayMillis(media, index);
+		}
+		return Math.max(1L, total);
+	}
+
+	private static long notificationPreviewFrameDelayMillis(MonitorMediaApp.LoadedMedia media, int frameIndex) {
+		if (media == null || media.frameCount() <= 0) {
+			return MAX_NOTIFICATION_PREVIEW_RENDER_FALLBACK_DELAY_MS;
+		}
+		int safeIndex = clampInt(frameIndex, 0, media.frameCount() - 1);
+		return Math.max(1L, media.delayMillis(safeIndex));
+	}
+
+	private static long notificationPreviewMillisUntilNextFrameLocked(MaxRuntimeState state, long now) {
+		if (state == null || state.notificationPreviewMedia == null || state.notificationPreviewMedia.frameCount() <= 1) {
+			return MAX_NOTIFICATION_PREVIEW_RENDER_FALLBACK_DELAY_MS;
+		}
+		MonitorMediaApp.LoadedMedia media = state.notificationPreviewMedia;
+		long loopDuration = notificationPreviewLoopDurationMillis(media);
+		if (loopDuration <= 0L) {
+			return MAX_NOTIFICATION_PREVIEW_RENDER_FALLBACK_DELAY_MS;
+		}
+		long normalizedPosition = Math.floorMod(notificationPreviewPositionMillisLocked(state, now), loopDuration);
+		long elapsed = 0L;
+		for (int index = 0; index < media.frameCount(); index++) {
+			elapsed += notificationPreviewFrameDelayMillis(media, index);
+			if (normalizedPosition < elapsed) {
+				return Math.max(1L, elapsed - normalizedPosition);
+			}
+		}
+		return MAX_NOTIFICATION_PREVIEW_RENDER_FALLBACK_DELAY_MS;
+	}
+
+	private static void toggleNotificationPreview(MinecraftServer server, ScreenRuntimeKey key, MaxRuntimeState state, int index) {
+		if (server == null || key == null || state == null) {
+			return;
+		}
+		MaxIncomingFile incoming;
+		long generationToLoad = -1L;
+		boolean startLoad = false;
+		boolean scheduleFrames = false;
+		synchronized (state) {
+			if (index < 0 || index >= state.incomingFiles.size()) {
+				return;
+			}
+			incoming = state.incomingFiles.get(index);
+			if (!notificationPreviewPlayable(incoming.kind(), incoming)) {
+				return;
+			}
+			String fileId = notificationFileId(incoming);
+			if (fileId.isBlank()) {
+				return;
+			}
+			long now = System.currentTimeMillis();
+			if (Objects.equals(fileId, state.notificationPreviewFileId)) {
+				if (state.notificationPreviewLoading) {
+					state.notificationPreviewPlaying = !state.notificationPreviewPlaying;
+					if (state.notificationPreviewPlaying) {
+						state.notificationPreviewStartedAtMillis = Math.max(1L, now - Math.max(0L, state.notificationPreviewPausedPositionMs));
+					} else {
+						state.notificationPreviewPausedPositionMs = notificationPreviewPositionMillisLocked(state, now);
+					}
+					state.version++;
+				} else if (state.notificationPreviewMedia != null || !state.notificationPreviewAudioInput.isBlank()) {
+					if (state.notificationPreviewPlaying) {
+						state.notificationPreviewPausedPositionMs = notificationPreviewPositionMillisLocked(state, now);
+						state.notificationPreviewPlaying = false;
+					} else {
+						state.notificationPreviewStartedAtMillis = Math.max(1L, now - Math.max(0L, state.notificationPreviewPausedPositionMs));
+						state.notificationPreviewPlaying = true;
+						scheduleFrames = state.notificationPreviewMedia != null && state.notificationPreviewMedia.frameCount() > 1;
+					}
+					state.version++;
+				} else {
+					generationToLoad = beginNotificationPreviewLoadLocked(state, incoming, now);
+					startLoad = true;
+				}
+			} else {
+				generationToLoad = beginNotificationPreviewLoadLocked(state, incoming, now);
+				startLoad = true;
+			}
+		}
+		requestRuntimeRender(server, key);
+		refreshConnectedSpeakersNow(server, key);
+		if (scheduleFrames) {
+			scheduleNotificationPreviewRender(server, key, state);
+		}
+		if (startLoad) {
+			loadNotificationPreviewAsync(server, key, incoming, generationToLoad);
+		}
+	}
+
+	private static long beginNotificationPreviewLoadLocked(MaxRuntimeState state, MaxIncomingFile incoming, long now) {
+		clearNotificationPreviewLocked(state);
+		state.notificationPreviewFileId = notificationFileId(incoming);
+		state.notificationPreviewLoading = true;
+		state.notificationPreviewPlaying = true;
+		state.notificationPreviewStartedAtMillis = Math.max(1L, now);
+		state.notificationPreviewPausedPositionMs = 0L;
+		state.notificationPreviewLoadGeneration++;
+		state.version++;
+		return state.notificationPreviewLoadGeneration;
+	}
+
+	private static void loadNotificationPreviewAsync(MinecraftServer server, ScreenRuntimeKey key, MaxIncomingFile incoming, long generation) {
+		if (server == null || key == null || incoming == null || generation <= 0L) {
+			return;
+		}
+		ensureExecutors();
+		CompletableFuture
+				.supplyAsync(() -> loadNotificationPreview(key, incoming, generation), mediaIoExecutor)
+				.thenAccept(result -> server.execute(() -> applyNotificationPreviewLoadResult(server, result)));
+	}
+
+	private static MaxNotificationPreviewLoadResult loadNotificationPreview(ScreenRuntimeKey key, MaxIncomingFile incoming, long generation) {
+		String fileId = notificationFileId(incoming);
+		GalleryItemKind kind = incoming.kind() != null ? incoming.kind() : GalleryItemKind.MEDIA;
+		String url = incoming.url() == null ? "" : incoming.url().trim();
+		String localMediaKey = incoming.localMediaKey() == null ? "" : incoming.localMediaKey().trim();
+		try {
+			if (kind == GalleryItemKind.AUDIO) {
+				MonitorMediaApp.LoadedVideo video;
+				if (MonitorYoutubeMusicCache.looksLikeSupportedUrl(url) && localMediaKey.isBlank()) {
+					video = MonitorYoutubeMusicCache.load(url, null).video();
+				} else {
+					MonitorMediaApp.LoadedAudioTrack track = !localMediaKey.isBlank()
+							? MonitorMediaApp.loadSavedGalleryAudio(localMediaKey, null)
+							: MonitorMediaApp.loadAudioFromUrl(url, null);
+					video = track.video();
+				}
+				return new MaxNotificationPreviewLoadResult(
+						key,
+						fileId,
+						generation,
+						singleFrameNotificationPreviewMedia(video != null ? video.preview() : null),
+						video != null && video.audioInput() != null ? video.audioInput() : "",
+						null
+				);
+			}
+			if (kind == GalleryItemKind.VIDEO) {
+				MonitorMediaApp.LoadedVideo video = loadGalleryVideo(url, localMediaKey, null);
+				MonitorMediaApp.LoadedMedia media = loadNotificationVideoPreviewMedia(url, localMediaKey);
+				if (media == null) {
+					media = singleFrameNotificationPreviewMedia(video != null ? video.preview() : null);
+				}
+				return new MaxNotificationPreviewLoadResult(
+						key,
+						fileId,
+						generation,
+						media,
+						video != null && video.audioInput() != null ? video.audioInput() : "",
+						null
+				);
+			}
+			return new MaxNotificationPreviewLoadResult(key, fileId, generation, null, "", null);
+		} catch (Exception exception) {
+			return new MaxNotificationPreviewLoadResult(key, fileId, generation, null, "", sanitizeMediaError(exception.getMessage()));
+		}
+	}
+
+	private static MonitorMediaApp.LoadedMedia loadNotificationVideoPreviewMedia(String url, String localMediaKey) {
+		try {
+			if (localMediaKey != null && !localMediaKey.isBlank()) {
+				return MonitorMediaApp.loadSavedGalleryVideoAsMedia(localMediaKey, null);
+			}
+			if (isCameraGalleryVideoUrl(url)) {
+				return loadCameraGalleryVideoMedia(url, localMediaKey, null);
+			}
+		} catch (Exception exception) {
+			Lg2.LOGGER.debug("Failed to decode MAX notification video preview {}: {}", Objects.toString(localMediaKey, url), sanitizeMediaError(exception.getMessage()));
+		}
+		return null;
+	}
+
+	private static MonitorMediaApp.LoadedMedia singleFrameNotificationPreviewMedia(BufferedImage frame) {
+		if (frame == null) {
+			return null;
+		}
+		return new MonitorMediaApp.LoadedMedia(List.of(frame), List.of((int) MAX_NOTIFICATION_PREVIEW_RENDER_FALLBACK_DELAY_MS), frame.getWidth(), frame.getHeight(), false);
+	}
+
+	private static void applyNotificationPreviewLoadResult(MinecraftServer server, MaxNotificationPreviewLoadResult result) {
+		if (server == null || result == null || result.key() == null) {
+			return;
+		}
+		MaxRuntimeState state = MAX_STATES.get(result.key());
+		if (state == null) {
+			return;
+		}
+		boolean scheduleFrames = false;
+		synchronized (state) {
+			if (!state.notificationsOpen
+					|| !Objects.equals(state.notificationPreviewFileId, result.fileId())
+					|| state.notificationPreviewLoadGeneration != result.generation()) {
+				return;
+			}
+			state.notificationPreviewLoading = false;
+			if (result.error() == null) {
+				state.notificationPreviewMedia = result.media();
+				state.notificationPreviewAudioInput = result.audioInput() == null ? "" : result.audioInput();
+				state.notificationPreviewFrameIndex = 0;
+				if (state.notificationPreviewPlaying && state.notificationPreviewStartedAtMillis <= 0L) {
+					state.notificationPreviewStartedAtMillis = System.currentTimeMillis();
+				}
+				scheduleFrames = state.notificationPreviewPlaying
+						&& state.notificationPreviewMedia != null
+						&& state.notificationPreviewMedia.frameCount() > 1;
+			} else {
+				state.notificationPreviewPlaying = false;
+				state.notificationPreviewPausedPositionMs = 0L;
+			}
+			state.version++;
+		}
+		requestRuntimeRender(server, result.key());
+		refreshConnectedSpeakersNow(server, result.key());
+		if (scheduleFrames) {
+			scheduleNotificationPreviewRender(server, result.key(), state);
+		}
+	}
+
+	private static void scheduleNotificationPreviewRender(MinecraftServer server, ScreenRuntimeKey key, MaxRuntimeState state) {
+		if (server == null || key == null || state == null) {
+			return;
+		}
+		long delayMillis;
+		synchronized (state) {
+			if (state.notificationPreviewRenderScheduled || !state.notificationPreviewPlaying || state.notificationPreviewMedia == null || state.notificationPreviewMedia.frameCount() <= 1) {
+				return;
+			}
+			delayMillis = notificationPreviewMillisUntilNextFrameLocked(state, System.currentTimeMillis());
+			state.notificationPreviewRenderScheduled = true;
+		}
+		ensureExecutors();
+		mediaScheduler.schedule(() -> server.execute(() -> advanceNotificationPreviewFrame(server, key)), Math.max(1L, delayMillis), TimeUnit.MILLISECONDS);
+	}
+
+	private static void advanceNotificationPreviewFrame(MinecraftServer server, ScreenRuntimeKey key) {
+		if (server == null || key == null) {
+			return;
+		}
+		MaxRuntimeState state = MAX_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		boolean shouldRender = false;
+		boolean shouldContinue = false;
+		synchronized (state) {
+			state.notificationPreviewRenderScheduled = false;
+			if (state.notificationsOpen
+					&& state.notificationPreviewPlaying
+					&& state.notificationPreviewMedia != null
+					&& state.notificationPreviewMedia.frameCount() > 1) {
+				state.notificationPreviewFrameIndex = notificationPreviewFrameIndexLocked(state, System.currentTimeMillis());
+				state.version++;
+				shouldRender = true;
+				shouldContinue = true;
+			}
+		}
+		if (shouldRender) {
+			requestRuntimeRender(server, key);
+		}
+		if (shouldContinue) {
+			scheduleNotificationPreviewRender(server, key, state);
+		}
+	}
+
+	private static void clearNotificationPreviewLocked(MaxRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		state.notificationPreviewFileId = "";
+		state.notificationPreviewLoading = false;
+		state.notificationPreviewPlaying = false;
+		state.notificationPreviewAudioInput = "";
+		state.notificationPreviewMedia = null;
+		state.notificationPreviewFrameIndex = 0;
+		state.notificationPreviewStartedAtMillis = 0L;
+		state.notificationPreviewPausedPositionMs = 0L;
+		state.notificationPreviewLoadGeneration++;
+		state.notificationPreviewRenderScheduled = false;
+	}
+
+	private static void openContactNotifications(MinecraftServer server, ScreenRuntimeKey key, MaxRuntimeState state, String contactCode) {
+		if (server == null || key == null || state == null) {
+			return;
+		}
+		String normalizedContact = normalizeAccountCode(contactCode);
+		if (normalizedContact.isBlank()) {
+			return;
+		}
+		synchronized (state) {
+			state.notificationsOpen = true;
+			state.notificationContactCode = normalizedContact;
+			state.notificationScroll = 0;
+			state.avatarPickerOpen = false;
+			state.ringtonePickerOpen = false;
+			state.fileSharePickerOpen = false;
+			state.statusText = "";
+			clearNotificationPreviewLocked(state);
+			state.version++;
+		}
+		refreshConnectedSpeakersNow(server, key);
+		requestRuntimeRender(server, key);
+	}
+
+	private static void closeNotificationsLocked(MaxRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		state.notificationsOpen = false;
+		state.notificationContactCode = "";
+		state.notificationScroll = 0;
+		clearNotificationPreviewLocked(state);
+	}
+
+	private static String notificationFileId(MaxIncomingFile incoming) {
+		return incoming == null || incoming.id() == null ? "" : incoming.id().trim();
+	}
+
+	private static long notificationPreviewPositionMillisLocked(MaxRuntimeState state, long now) {
+		if (state == null) {
+			return 0L;
+		}
+		if (!state.notificationPreviewPlaying) {
+			return Math.max(0L, state.notificationPreviewPausedPositionMs);
+		}
+		if (state.notificationPreviewStartedAtMillis <= 0L) {
+			return 0L;
+		}
+		return Math.max(0L, now - state.notificationPreviewStartedAtMillis);
 	}
 
 	private static List<MaxContactSnapshot> contactInviteCandidates(MinecraftServer server, MaxRuntimeState state, MaxCallSession call, ScreenRuntimeKey selfKey) {
@@ -2347,11 +3690,11 @@ final class MonitorMaxRuntime {
 		state.fileSharePickerScroll = clampInt(state.fileSharePickerScroll, 0, maxContactPickerScroll(layout, contactCount));
 	}
 
-	private static void normalizeNotificationScrollLocked(MaxRuntimeState state) {
-		if (state == null) {
+	private static void normalizeNotificationScrollLocked(MaxRuntimeState state, UiLayout layout) {
+		if (state == null || layout == null) {
 			return;
 		}
-		state.notificationScroll = clampInt(state.notificationScroll, 0, Math.max(0, state.incomingFiles.size() - 1));
+		state.notificationScroll = clampInt(state.notificationScroll, 0, maxNotificationScroll(layout, maxNotificationRawIndexesForActiveContactLocked(state).size()));
 	}
 
 	private static void scrollAvatarPicker(MinecraftServer server, ScreenRuntimeKey key, MaxRuntimeState state, UiLayout layout, int candidateCount, int deltaRows) {
@@ -2431,14 +3774,13 @@ final class MonitorMaxRuntime {
 		}
 	}
 
-	private static void scrollNotifications(MinecraftServer server, ScreenRuntimeKey key, MaxRuntimeState state, int notificationCount, int delta) {
-		if (server == null || key == null || state == null || delta == 0) {
+	private static void scrollNotifications(MinecraftServer server, ScreenRuntimeKey key, MaxRuntimeState state, int maxScroll, int deltaPixels) {
+		if (server == null || key == null || state == null || deltaPixels == 0) {
 			return;
 		}
 		boolean changed = false;
 		synchronized (state) {
-			normalizeNotificationScrollLocked(state);
-			int nextScroll = clampInt(state.notificationScroll + delta, 0, Math.max(0, notificationCount - 1));
+			int nextScroll = clampInt(state.notificationScroll + deltaPixels, 0, Math.max(0, maxScroll));
 			if (nextScroll != state.notificationScroll) {
 				state.notificationScroll = nextScroll;
 				state.version++;
@@ -3032,31 +4374,41 @@ final class MonitorMaxRuntime {
 			MinecraftServer server,
 			ScreenComponent component,
 			MaxRuntimeState state,
-			UiLayout layout,
-			UiPoint touchPoint
+		UiLayout layout,
+		UiPoint touchPoint
 	) {
-		if (maxOverlayCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+		if (maxNotificationPopupCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 			synchronized (state) {
-				state.notificationsOpen = false;
+				closeNotificationsLocked(state);
 				state.version++;
 			}
+			refreshConnectedSpeakersNow(server, component.runtimeKey());
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
-		if (!maxAvatarPickerPanelRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+		if (!maxNotificationPopupRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 			synchronized (state) {
-				state.notificationsOpen = false;
+				closeNotificationsLocked(state);
 				state.version++;
 			}
+			refreshConnectedSpeakersNow(server, component.runtimeKey());
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
-		if (maxNotificationAcceptRect(layout).contains(touchPoint.x(), touchPoint.y())) {
-			acceptFirstIncomingFile(server, component.runtimeKey());
-			return true;
-		}
-		if (maxNotificationDeclineRect(layout).contains(touchPoint.x(), touchPoint.y())) {
-			ignoreFirstIncomingFile(server, component.runtimeKey());
+		MaxNotificationHit hit = maxNotificationHitAt(layout, state, touchPoint);
+		if (hit != null) {
+			if (hit.acceptRect().contains(touchPoint.x(), touchPoint.y())) {
+				acceptIncomingFile(server, component.runtimeKey(), hit.index());
+				return true;
+			}
+			if (hit.declineRect().contains(touchPoint.x(), touchPoint.y())) {
+				ignoreIncomingFile(server, component.runtimeKey(), hit.index());
+				return true;
+			}
+			if (hit.previewRect().contains(touchPoint.x(), touchPoint.y())) {
+				toggleNotificationPreview(server, component.runtimeKey(), state, hit.index());
+				return true;
+			}
 			return true;
 		}
 		return true;
@@ -3081,13 +4433,25 @@ final class MonitorMaxRuntime {
 		if (senderState == null) {
 			return;
 		}
-		String senderCode;
-		List<MaxSharedGalleryFile> files;
-		List<String> recipients;
-		synchronized (senderState) {
-			senderCode = senderState.accountCode;
-			files = List.copyOf(senderState.fileShareFiles);
-			recipients = List.copyOf(senderState.fileShareSelectedContacts);
+			String senderCode;
+			String senderDisplayName;
+			String senderAvatarUrl;
+			String senderAvatarLocalMediaKey;
+			List<MaxSharedGalleryFile> files;
+			List<String> recipients;
+			synchronized (senderState) {
+				senderCode = normalizeAccountCode(senderState.accountCode);
+			if (senderCode.isBlank()) {
+				senderState.statusText = "Аккаунт MAX не готов";
+				senderState.version++;
+				requestRuntimeRender(server, senderKey);
+				return;
+				}
+				senderDisplayName = senderState.accountName == null || senderState.accountName.isBlank() ? defaultAccountName(senderCode) : senderState.accountName;
+				senderAvatarUrl = senderState.avatarUrl == null ? "" : senderState.avatarUrl;
+				senderAvatarLocalMediaKey = senderState.avatarLocalMediaKey == null ? "" : senderState.avatarLocalMediaKey;
+				files = List.copyOf(senderState.fileShareFiles);
+				recipients = List.copyOf(senderState.fileShareSelectedContacts);
 			if (files.isEmpty()) {
 				senderState.statusText = "Нет файлов для отправки";
 				senderState.version++;
@@ -3103,16 +4467,24 @@ final class MonitorMaxRuntime {
 			senderState.statusText = "Отправка...";
 			senderState.version++;
 		}
-		requestRuntimeRender(server, senderKey);
-		ensureExecutors();
-		CompletableFuture
-				.supplyAsync(() -> prepareFileDeliveries(senderCode, recipients, files), mediaIoExecutor)
-				.thenAccept(deliveries -> server.execute(() -> applyPreparedFileDeliveries(server, senderKey, deliveries)));
-	}
+			requestRuntimeRender(server, senderKey);
+			ensureExecutors();
+			CompletableFuture
+					.supplyAsync(() -> prepareFileDeliveries(senderCode, senderDisplayName, senderAvatarUrl, senderAvatarLocalMediaKey, recipients, files), mediaIoExecutor)
+					.thenAccept(deliveries -> server.execute(() -> applyPreparedFileDeliveries(server, senderKey, deliveries)));
+		}
 
-	private static List<MaxPreparedFileDelivery> prepareFileDeliveries(String senderCode, List<String> recipients, List<MaxSharedGalleryFile> files) {
-		if (senderCode == null || senderCode.isBlank() || recipients == null || recipients.isEmpty() || files == null || files.isEmpty()) {
-			return List.of();
+		private static List<MaxPreparedFileDelivery> prepareFileDeliveries(
+				String senderCode,
+				String senderDisplayName,
+				String senderAvatarUrl,
+				String senderAvatarLocalMediaKey,
+				List<String> recipients,
+				List<MaxSharedGalleryFile> files
+		) {
+			String normalizedSenderCode = normalizeAccountCode(senderCode);
+			if (normalizedSenderCode.isBlank() || recipients == null || recipients.isEmpty() || files == null || files.isEmpty()) {
+				return List.of();
 		}
 		List<MaxPreparedFileDelivery> deliveries = new ArrayList<>();
 		for (String recipient : recipients) {
@@ -3130,9 +4502,12 @@ final class MonitorMaxRuntime {
 				deliveries.add(new MaxPreparedFileDelivery(
 						normalizedRecipient,
 						new MaxIncomingFile(
-								id,
-								senderCode,
-								file.title(),
+									id,
+									normalizedSenderCode,
+									senderDisplayName == null || senderDisplayName.isBlank() ? defaultAccountName(normalizedSenderCode) : senderDisplayName,
+									senderAvatarUrl == null ? "" : senderAvatarUrl,
+									senderAvatarLocalMediaKey == null ? "" : senderAvatarLocalMediaKey,
+									file.title(),
 								file.subtitle(),
 								url,
 								transferLocalMediaKey.isBlank() ? file.localMediaKey() : transferLocalMediaKey,
@@ -3168,6 +4543,11 @@ final class MonitorMaxRuntime {
 	private static void applyPreparedFileDeliveries(MinecraftServer server, ScreenRuntimeKey senderKey, List<MaxPreparedFileDelivery> deliveries) {
 		MaxRuntimeState senderState = MAX_STATES.get(senderKey);
 		if (server == null || senderKey == null || senderState == null) {
+			for (MaxPreparedFileDelivery delivery : deliveries == null ? List.<MaxPreparedFileDelivery>of() : deliveries) {
+				if (delivery != null) {
+					deleteTransferLocalMediaIfTemporary(delivery.file());
+				}
+			}
 			return;
 		}
 		int delivered = 0;
@@ -3176,7 +4556,12 @@ final class MonitorMaxRuntime {
 			if (delivery == null || delivery.file() == null) {
 				continue;
 			}
-			ScreenRuntimeKey recipientKey = ACCOUNT_INDEX.get(delivery.recipientCode());
+			String recipientCode = normalizeAccountCode(delivery.recipientCode());
+			if (recipientCode.isBlank()) {
+				deleteTransferLocalMediaIfTemporary(delivery.file());
+				continue;
+			}
+			ScreenRuntimeKey recipientKey = ACCOUNT_INDEX.get(recipientCode);
 			ScreenComponent recipientComponent = recipientKey != null ? resolveScreenComponent(server, recipientKey) : null;
 			if (recipientKey == null || recipientComponent == null || !recipientComponent.powered()) {
 				deleteTransferLocalMediaIfTemporary(delivery.file());
@@ -3186,11 +4571,15 @@ final class MonitorMaxRuntime {
 			if (recipientState == null) {
 				deleteTransferLocalMediaIfTemporary(delivery.file());
 				continue;
-			}
-			synchronized (recipientState) {
-				recipientState.incomingFiles.add(delivery.file());
-				recipientState.version++;
-			}
+				}
+				synchronized (recipientState) {
+					String senderCode = normalizeAccountCode(delivery.file().senderCode());
+					if (!senderCode.isBlank() && !Objects.equals(senderCode, recipientState.accountCode) && !recipientState.contacts.contains(senderCode)) {
+						recipientState.contacts.add(senderCode);
+					}
+					recipientState.incomingFiles.add(delivery.file());
+					recipientState.version++;
+				}
 			persistState(server, recipientKey, recipientState);
 			playNotificationSound(server, recipientComponent);
 			requestRuntimeRender(server, recipientKey);
@@ -3208,7 +4597,7 @@ final class MonitorMaxRuntime {
 		}
 	}
 
-	private static void acceptFirstIncomingFile(MinecraftServer server, ScreenRuntimeKey key) {
+	private static void acceptIncomingFile(MinecraftServer server, ScreenRuntimeKey key, int index) {
 		if (server == null || key == null) {
 			return;
 		}
@@ -3216,31 +4605,38 @@ final class MonitorMaxRuntime {
 		if (state == null) {
 			return;
 		}
+		ScreenComponent component = resolveScreenComponent(server, key);
+		UiLayout layout = component != null ? createUiLayout(component.width(), component.height()) : null;
 		MaxIncomingFile incoming;
-		synchronized (state) {
-			if (state.incomingFiles.isEmpty()) {
-				state.statusText = "Нет уведомлений";
-				state.notificationsOpen = false;
-				state.version++;
-				requestRuntimeRender(server, key);
-				return;
+			synchronized (state) {
+				if (state.incomingFiles.isEmpty()) {
+					state.statusText = "Нет уведомлений";
+					closeNotificationsLocked(state);
+					state.version++;
+					requestRuntimeRender(server, key);
+					refreshConnectedSpeakersNow(server, key);
+					return;
+				}
+			int safeIndex = clampInt(index, 0, state.incomingFiles.size() - 1);
+			incoming = state.incomingFiles.remove(safeIndex);
+			if (Objects.equals(notificationFileId(incoming), state.notificationPreviewFileId)) {
+				clearNotificationPreviewLocked(state);
 			}
-			normalizeNotificationScrollLocked(state);
-			incoming = state.incomingFiles.remove(state.notificationScroll);
+			pruneIncomingPreviewCacheLocked(state);
 			state.statusText = saveIncomingFileToGallery(server, key, incoming) ? "Файл сохранён" : "Не удалось сохранить файл";
-			if (state.incomingFiles.isEmpty()) {
-				state.notificationsOpen = false;
-				state.notificationScroll = 0;
-			} else {
-				normalizeNotificationScrollLocked(state);
+			if (state.incomingFiles.isEmpty() || incomingCountForSenderLocked(state, state.notificationContactCode) <= 0) {
+				closeNotificationsLocked(state);
+			} else if (layout != null) {
+				normalizeNotificationScrollLocked(state, layout);
 			}
 			state.version++;
 		}
 		persistState(server, key, state);
+		refreshConnectedSpeakersNow(server, key);
 		requestRuntimeRender(server, key);
 	}
 
-	private static void ignoreFirstIncomingFile(MinecraftServer server, ScreenRuntimeKey key) {
+	private static void ignoreIncomingFile(MinecraftServer server, ScreenRuntimeKey key, int index) {
 		if (server == null || key == null) {
 			return;
 		}
@@ -3248,28 +4644,35 @@ final class MonitorMaxRuntime {
 		if (state == null) {
 			return;
 		}
+		ScreenComponent component = resolveScreenComponent(server, key);
+		UiLayout layout = component != null ? createUiLayout(component.width(), component.height()) : null;
 		MaxIncomingFile ignored;
-		synchronized (state) {
-			if (state.incomingFiles.isEmpty()) {
-				state.statusText = "Нет уведомлений";
-				state.notificationsOpen = false;
-				state.version++;
-				requestRuntimeRender(server, key);
-				return;
+			synchronized (state) {
+				if (state.incomingFiles.isEmpty()) {
+					state.statusText = "Нет уведомлений";
+					closeNotificationsLocked(state);
+					state.version++;
+					requestRuntimeRender(server, key);
+					refreshConnectedSpeakersNow(server, key);
+					return;
+				}
+			int safeIndex = clampInt(index, 0, state.incomingFiles.size() - 1);
+			ignored = state.incomingFiles.remove(safeIndex);
+			if (Objects.equals(notificationFileId(ignored), state.notificationPreviewFileId)) {
+				clearNotificationPreviewLocked(state);
 			}
-			normalizeNotificationScrollLocked(state);
-			ignored = state.incomingFiles.remove(state.notificationScroll);
+			pruneIncomingPreviewCacheLocked(state);
 			state.statusText = "Файл отклонён";
-			if (state.incomingFiles.isEmpty()) {
-				state.notificationsOpen = false;
-				state.notificationScroll = 0;
-			} else {
-				normalizeNotificationScrollLocked(state);
+			if (state.incomingFiles.isEmpty() || incomingCountForSenderLocked(state, state.notificationContactCode) <= 0) {
+				closeNotificationsLocked(state);
+			} else if (layout != null) {
+				normalizeNotificationScrollLocked(state, layout);
 			}
 			state.version++;
 		}
 		deleteTransferLocalMediaIfTemporary(ignored);
 		persistState(server, key, state);
+		refreshConnectedSpeakersNow(server, key);
 		requestRuntimeRender(server, key);
 	}
 
@@ -3482,6 +4885,13 @@ final class MonitorMaxRuntime {
 		return avatarFrame(media, currentAvatarFrameIndexLocked(state, System.currentTimeMillis()), state.avatarFrame);
 	}
 
+	private static Color stableAvatarAccentLocked(MaxRuntimeState state, String fallbackCode) {
+		String code = state != null && state.accountCode != null && !state.accountCode.isBlank()
+				? state.accountCode
+				: fallbackCode;
+		return participantAccent(code, state != null ? state.avatarFrame : null);
+	}
+
 	private static int currentAvatarFrameIndexLocked(MaxRuntimeState state, long nowMillis) {
 		MonitorMediaApp.LoadedMedia media = state != null ? state.avatarMedia : null;
 		if (media == null || media.frameCount() <= 1) {
@@ -3523,7 +4933,7 @@ final class MonitorMaxRuntime {
 			MaxRuntimeState state,
 			List<MaxContactSnapshot> contacts,
 			MaxCallVisualSnapshot call,
-			MaxIncomingFileSnapshot incomingFile
+			List<MaxIncomingFileSnapshot> incomingFiles
 	) {
 		if (component == null) {
 			return false;
@@ -3542,8 +4952,12 @@ final class MonitorMaxRuntime {
 				}
 			}
 		}
-		if (incomingFile != null && incomingFile.senderAvatarAnimated()) {
-			return true;
+		if (incomingFiles != null) {
+			for (MaxIncomingFileSnapshot incomingFile : incomingFiles) {
+				if (incomingFile != null && incomingFile.senderAvatarAnimated()) {
+					return true;
+				}
+			}
 		}
 		if (call != null) {
 			if (call.peerAvatarAnimated()) {
@@ -3792,6 +5206,22 @@ final class MonitorMaxRuntime {
 				changed = true;
 			}
 			index++;
+		}
+		return changed;
+	}
+
+	private static boolean ensureIncomingSendersAsContactsLocked(MaxRuntimeState state) {
+		if (state == null || state.incomingFiles.isEmpty()) {
+			return false;
+		}
+		boolean changed = false;
+		for (MaxIncomingFile incoming : state.incomingFiles) {
+			String senderCode = incoming == null ? "" : normalizeAccountCode(incoming.senderCode());
+			if (senderCode.isBlank() || Objects.equals(senderCode, state.accountCode) || state.contacts.contains(senderCode)) {
+				continue;
+			}
+			state.contacts.add(senderCode);
+			changed = true;
 		}
 		return changed;
 	}
@@ -4242,6 +5672,45 @@ final class MonitorMaxRuntime {
 		);
 	}
 
+	private static SpeakerAudioSource notificationPreviewSource(ScreenRuntimeKey key, MaxRuntimeState state) {
+		if (key == null || state == null) {
+			return null;
+		}
+		String fileId;
+		String audioInput;
+		long positionMs;
+		long syncToken;
+		synchronized (state) {
+			if (!state.notificationsOpen
+					|| !state.notificationPreviewPlaying
+					|| state.notificationPreviewLoading
+					|| state.notificationPreviewAudioInput == null
+					|| state.notificationPreviewAudioInput.isBlank()) {
+				return null;
+			}
+			fileId = state.notificationPreviewFileId;
+			audioInput = state.notificationPreviewAudioInput;
+			positionMs = notificationPreviewPositionMillisLocked(state, System.currentTimeMillis());
+			syncToken = state.notificationPreviewStartedAtMillis;
+		}
+		if (fileId == null || fileId.isBlank() || audioInput == null || audioInput.isBlank()) {
+			return null;
+		}
+		String sourceKey = MAX_NOTIFICATION_PREVIEW_SOURCE_PREFIX + componentGroupId(key) + ":" + fileId;
+		return new SpeakerAudioSource(
+				sourceKey,
+				sourceKey,
+				audioInput,
+				positionMs,
+				syncToken,
+				false,
+				false,
+				false,
+				true,
+				false
+		);
+	}
+
 	private static String maxVideoStreamOwnerId(ScreenRuntimeKey key) {
 		return "max-call|" + liveCameraStreamOwnerId(key);
 	}
@@ -4258,11 +5727,11 @@ final class MonitorMaxRuntime {
 		drawVerticalText(graphics, "MAX", maxAppTitleRect(layout), new Color(248, 251, 255, 240), Font.BOLD, clampInt(layout.unit() + 2, 13, 22));
 		drawEllipsizedVerticalText(graphics, state.accountName(), maxProfileCodeRect(layout), new Color(214, 232, 244, 232), Font.BOLD, clampInt(layout.unit(), 10, 17));
 		drawMaxAddContactButton(graphics, maxAddContactRect(layout), layout);
-		drawMaxNotificationsButton(graphics, maxNotificationsRect(layout), state.notificationCount(), layout);
 		drawMaxRingtoneControls(graphics, layout, state);
 
 		UiRect listRect = maxContactListRect(layout);
-		List<MaxContactSnapshot> contacts = state.contacts();
+		WindowedSnapshot<MaxContactSnapshot> contactsWindow = state.contacts() != null ? state.contacts() : WindowedSnapshot.empty();
+		List<MaxContactSnapshot> contacts = contactsWindow.items();
 		if (contacts.isEmpty()) {
 			drawMaxEmptyContacts(graphics, layout, listRect);
 		} else {
@@ -4381,6 +5850,7 @@ final class MonitorMaxRuntime {
 				state.accountCode(),
 				state.accountName(),
 				state.avatarFrame(),
+				null,
 				state.animatedAvatars(),
 				call.localPreviewFrame(),
 				true,
@@ -4393,6 +5863,7 @@ final class MonitorMaxRuntime {
 					call.peerCode(),
 					call.peerDisplayName(),
 					call.peerAvatarFrame(),
+					null,
 					call.peerAvatarAnimated(),
 					call.remoteFrame(),
 					false,
@@ -4425,7 +5896,7 @@ final class MonitorMaxRuntime {
 				return participant;
 			}
 		}
-		return new MaxCallParticipantSnapshot(state.accountCode(), state.accountName(), state.avatarFrame(), state.animatedAvatars(), call.localPreviewFrame(), true, call.cameraEnabled(), call.microphoneEnabled(), false);
+		return new MaxCallParticipantSnapshot(state.accountCode(), state.accountName(), state.avatarFrame(), null, state.animatedAvatars(), call.localPreviewFrame(), true, call.cameraEnabled(), call.microphoneEnabled(), false);
 	}
 
 	private static boolean sameMaxParticipant(MaxCallParticipantSnapshot left, MaxCallParticipantSnapshot right) {
@@ -4452,6 +5923,7 @@ final class MonitorMaxRuntime {
 				rect,
 				participant.displayName(),
 				participant.avatarFrame(),
+				participant.accentColor(),
 				participant.videoFrame(),
 				focused,
 				participant.cameraEnabled(),
@@ -4466,6 +5938,7 @@ final class MonitorMaxRuntime {
 			UiRect rect,
 			String code,
 			BufferedImage avatar,
+			Color accent,
 			BufferedImage video,
 			boolean focused,
 			boolean cameraEnabled,
@@ -4482,8 +5955,8 @@ final class MonitorMaxRuntime {
 		if (cameraEnabled && video != null) {
 			drawScaledImage(graphics, video, rect, scaleMode);
 		} else {
-			Color accent = participantAccent(code, avatar);
-			graphics.setColor(accent);
+			Color accentColor = accent != null ? accent : participantAccent(code, avatar);
+			graphics.setColor(accentColor);
 			graphics.fillRect(rect.x(), rect.y(), rect.width(), rect.height());
 			int maxAvatar = Math.max(12, Math.min(rect.width(), rect.height()) - 6);
 			int avatarSize = clampInt(Math.min(rect.width(), rect.height()) / (focused ? 4 : 3), Math.min(18, maxAvatar), Math.min(focused ? 116 : 72, maxAvatar));
@@ -4668,20 +6141,22 @@ final class MonitorMaxRuntime {
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 50));
 		drawOverlayCloseButton(graphics, maxOverlayCloseRect(layout), layout);
 		drawVerticalText(graphics, "ВЫБЕРИ АВАТАР", maxAvatarPickerTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
-		List<MaxAvatarCandidateSnapshot> candidates = state.avatarCandidates();
-		if (candidates.isEmpty()) {
+		WindowedSnapshot<MaxAvatarCandidateSnapshot> candidatesWindow = state.avatarCandidates() != null ? state.avatarCandidates() : WindowedSnapshot.empty();
+		List<MaxAvatarCandidateSnapshot> candidates = candidatesWindow.items();
+		int totalCandidateCount = candidatesWindow.totalCount();
+		if (totalCandidateCount <= 0) {
 			drawCenteredText(graphics, "В галерее нет картинок или GIF", maxAvatarPickerGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
 		int columns = maxAvatarPickerColumns(layout);
 		int visibleRows = maxAvatarPickerVisibleRows(layout);
-		int totalRows = Math.max(0, (candidates.size() + columns - 1) / columns);
-		int scroll = clampInt(state.avatarPickerScroll(), 0, maxAvatarPickerScroll(layout, candidates.size()));
+		int totalRows = Math.max(0, (totalCandidateCount + columns - 1) / columns);
+		int scroll = clampInt(state.avatarPickerScroll(), 0, maxAvatarPickerScroll(layout, totalCandidateCount));
 		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
 				runtimeKey,
 				MonitorScrollAnimationSystem.ScrollChannel.MAX_AVATAR_PICKER,
 				scroll,
-				maxAvatarPickerScroll(layout, candidates.size())
+				maxAvatarPickerScroll(layout, totalCandidateCount)
 		);
 		double displayRow = visualScroll.displayValue() / Math.max(1, columns);
 		int baseRow = clampInt((int) Math.floor(displayRow + 1.0E-6D), 0, Math.max(0, totalRows - visibleRows));
@@ -4693,14 +6168,15 @@ final class MonitorMaxRuntime {
 		);
 		Shape previousClip = graphics.getClip();
 		UiRect grid = maxAvatarPickerGridRect(layout);
-		graphics.setClip(grid.x(), grid.y(), grid.width(), grid.height());
-		for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
-			for (int column = 0; column < columns; column++) {
-				int index = (baseRow + visibleRow) * columns + column;
-				if (index < 0 || index >= candidates.size()) {
-					continue;
-				}
-				UiRect rect = offsetRect(maxAvatarCandidateRect(layout, visibleRow * columns + column), 0, rowOffset);
+			graphics.setClip(grid.x(), grid.y(), grid.width(), grid.height());
+			for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
+				for (int column = 0; column < columns; column++) {
+					int absoluteIndex = (baseRow + visibleRow) * columns + column;
+					int index = absoluteIndex - candidatesWindow.windowStartIndex();
+					if (index < 0 || index >= candidates.size()) {
+						continue;
+					}
+					UiRect rect = offsetRect(maxAvatarCandidateRect(layout, visibleRow * columns + column), 0, rowOffset);
 				MaxAvatarCandidateSnapshot candidate = candidates.get(index);
 				fillRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), new Color(255, 255, 255, 18));
 				if (candidate.preview() != null) {
@@ -4713,15 +6189,20 @@ final class MonitorMaxRuntime {
 
 	private static void drawMaxCameraPicker(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MaxCallVisualSnapshot call) {
 		UiRect panel = maxAvatarPickerPanelRect(layout);
-		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 230));
-		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
+		boolean ultra = ultraCompactScreenLayout(layout);
+		fillRoundedRect(graphics, panel, ultra ? clampInt(layout.unit(), 6, 10) : clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 230));
+		strokeRoundedRect(graphics, panel, ultra ? clampInt(layout.unit(), 6, 10) : clampInt(layout.unit() * 2, 14, 28), ultra ? 0.85F : 1.0F, new Color(255, 255, 255, 54));
 		drawOverlayCloseButton(graphics, maxOverlayCloseRect(layout), layout);
 		UiRect title = maxAvatarPickerTitleRect(layout);
-		drawVerticalText(graphics, "УСТРОЙСТВА", new UiRect(title.x(), title.y(), title.width() / 2, title.height()), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
-		drawCenteredTextFitted(graphics, maxCallDeviceCountLabel(call), new UiRect(title.x() + title.width() / 2, title.y(), title.width() / 2, title.height()), new Color(188, 204, 218, 224), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 5);
+		if (!ultra) {
+			drawVerticalText(graphics, "УСТРОЙСТВА", new UiRect(title.x(), title.y(), title.width() / 2, title.height()), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
+			drawCenteredTextFitted(graphics, maxCallDeviceCountLabel(call), new UiRect(title.x() + title.width() / 2, title.y(), title.width() / 2, title.height()), new Color(188, 204, 218, 224), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 5);
+		}
 
 		UiRect cameraTitle = maxCallDeviceCameraTitleRect(layout);
-		drawVerticalText(graphics, "КАМЕРЫ " + call.connectedCameraCount() + " · ДРОНЫ " + call.connectedDroneCount(), cameraTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		if (!ultra) {
+			drawVerticalText(graphics, "КАМЕРЫ " + call.connectedCameraCount() + " · ДРОНЫ " + call.connectedDroneCount(), cameraTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		}
 		List<MaxCameraOptionSnapshot> cameras = call.cameras();
 		int cameraCapacity = maxCallDeviceCameraCapacity(layout);
 		int cameraScroll = clampInt(call.cameraScroll(), 0, Math.max(0, (cameras == null ? 0 : cameras.size()) - cameraCapacity));
@@ -4737,7 +6218,9 @@ final class MonitorMaxRuntime {
 			drawMaxDeviceScrollButton(graphics, maxCallDeviceCameraScrollRightRect(layout), -Math.PI / 2.0D, layout, cameraScroll + cameraCapacity < cameras.size());
 		}
 		if (cameras == null || cameras.isEmpty()) {
-			drawCenteredText(graphics, "Подключи камеру или дрон к экрану", maxCallDeviceCameraGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			if (!ultra) {
+				drawCenteredText(graphics, "Подключи камеру или дрон к экрану", maxCallDeviceCameraGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			}
 		} else {
 			int baseIndex = cameraVisualScroll.anchorIndex();
 			int xOffset = -(int) Math.round(cameraVisualScroll.fraction() * maxCallDeviceCameraCellStep(layout));
@@ -4759,15 +6242,19 @@ final class MonitorMaxRuntime {
 				if (camera.selected()) {
 					strokeRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), 1.5F, new Color(255, 255, 255, 172));
 				}
-				UiRect label = new UiRect(rect.x() + layout.unit() / 2, rect.bottom() - clampInt(layout.unit() * 3, 24, 38), rect.width() - layout.unit(), clampInt(layout.unit() * 2, 18, 28));
-				fillRoundedRect(graphics, label, label.height(), new Color(0, 0, 0, 112));
-				drawCenteredTextFitted(graphics, camera.title() + " " + camera.subtitle(), label.inset(2), camera.online() ? new Color(248, 251, 255, 238) : new Color(248, 251, 255, 136), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
+				if (!ultra) {
+					UiRect label = new UiRect(rect.x() + layout.unit() / 2, rect.bottom() - clampInt(layout.unit() * 3, 24, 38), rect.width() - layout.unit(), clampInt(layout.unit() * 2, 18, 28));
+					fillRoundedRect(graphics, label, label.height(), new Color(0, 0, 0, 112));
+					drawCenteredTextFitted(graphics, camera.title() + " " + camera.subtitle(), label.inset(2), camera.online() ? new Color(248, 251, 255, 238) : new Color(248, 251, 255, 136), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
+				}
 			}
 			graphics.setClip(previousClip);
 		}
 
 		UiRect microphoneTitle = maxCallDeviceMicrophoneTitleRect(layout);
-		drawVerticalText(graphics, "МИКРОФОНЫ", microphoneTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		if (!ultra) {
+			drawVerticalText(graphics, "МИКРОФОНЫ", microphoneTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		}
 		List<MaxMicrophoneOptionSnapshot> microphones = call.microphones();
 		int microphoneCapacity = maxCallDeviceMicrophoneCapacity(layout);
 		int microphoneScroll = clampInt(call.microphoneScroll(), 0, Math.max(0, (microphones == null ? 0 : microphones.size()) - microphoneCapacity));
@@ -4783,7 +6270,9 @@ final class MonitorMaxRuntime {
 			drawMaxDeviceScrollButton(graphics, maxCallDeviceMicrophoneScrollDownRect(layout), 0.0D, layout, microphoneScroll + microphoneCapacity < microphones.size());
 		}
 		if (microphones == null || microphones.isEmpty()) {
-			drawCenteredText(graphics, "Подключи микрофон к экрану", maxCallDeviceMicrophoneListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			if (!ultra) {
+				drawCenteredText(graphics, "Подключи микрофон к экрану", maxCallDeviceMicrophoneListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			}
 			return;
 		}
 		int microphoneBaseIndex = microphoneVisualScroll.anchorIndex();
@@ -4803,11 +6292,12 @@ final class MonitorMaxRuntime {
 	}
 
 	private static void drawMaxDeviceMicrophoneRow(Graphics2D graphics, UiLayout layout, UiRect rect, MaxMicrophoneOptionSnapshot microphone) {
-		int arc = clampInt(layout.unit(), 8, 16);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int arc = ultra ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit(), 8, 16);
 		fillRoundedRect(graphics, rect, arc, new Color(255, 255, 255, microphone.selected() ? 30 : 14));
-		strokeRoundedRect(graphics, rect, arc, 1.0F, microphone.selected() ? new Color(255, 255, 255, 128) : new Color(255, 255, 255, 42));
-		int iconSize = clampInt(layout.unit() * 2, 18, 28);
-		int gap = Math.max(4, layout.unit() / 2);
+		strokeRoundedRect(graphics, rect, arc, ultra ? 0.85F : 1.0F, microphone.selected() ? new Color(255, 255, 255, 128) : new Color(255, 255, 255, 42));
+		int iconSize = ultra ? Math.max(8, Math.min(12, rect.height() - 2)) : clampInt(layout.unit() * 2, 18, 28);
+		int gap = maxCallDeviceGap(layout);
 		UiRect check = new UiRect(rect.x() + gap, rect.y() + (rect.height() - iconSize) / 2, iconSize, iconSize);
 		Color checkColor = drawSmallMediaButtonBase(graphics, check, MediaButtonSegment.SINGLE, microphone.selected(), mediaChromeStrokeWidth(check));
 		if (microphone.selected()) {
@@ -4815,6 +6305,9 @@ final class MonitorMaxRuntime {
 		}
 		UiRect micIcon = new UiRect(check.right() + gap, rect.y() + (rect.height() - iconSize) / 2, iconSize, iconSize);
 		drawPlayerUiIcon(graphics, micIcon.inset(Math.max(2, layout.unit() / 5)), PlayerUiIcon.MIC, new Color(238, 244, 250, 214));
+		if (ultra) {
+			return;
+		}
 		UiRect textRect = new UiRect(micIcon.right() + gap, rect.y() + Math.max(2, layout.unit() / 4), Math.max(8, rect.right() - micIcon.right() - gap * 2), rect.height() - Math.max(4, layout.unit() / 2));
 		int titleHeight = Math.max(10, textRect.height() / 2);
 		drawWrappedText(graphics, microphone.title(), new UiRect(textRect.x(), textRect.y(), textRect.width(), titleHeight), new Color(248, 251, 255, 232), Font.BOLD, clampInt(layout.unit() - 1, 8, 13), 1);
@@ -4827,6 +6320,9 @@ final class MonitorMaxRuntime {
 
 	private static void drawMaxDeviceScrollStatus(Graphics2D graphics, UiRect titleRect, UiLayout layout, int offset, int visibleCount, int totalCount) {
 		if (totalCount <= visibleCount || visibleCount <= 0) {
+			return;
+		}
+		if (ultraCompactScreenLayout(layout)) {
 			return;
 		}
 		int width = clampInt(layout.unit() * 4, 30, 56);
@@ -4849,30 +6345,37 @@ final class MonitorMaxRuntime {
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
 		drawOverlayCloseButton(graphics, maxOverlayCloseRect(layout), layout);
 		drawVerticalText(graphics, "РИНГТОН", maxAvatarPickerTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
-		List<MaxRingtoneCandidateSnapshot> candidates = state.ringtoneCandidates();
-		if (candidates == null || candidates.isEmpty()) {
+		WindowedSnapshot<MaxRingtoneCandidateSnapshot> candidatesWindow = state.ringtoneCandidates() != null ? state.ringtoneCandidates() : WindowedSnapshot.empty();
+		List<MaxRingtoneCandidateSnapshot> candidates = candidatesWindow.items();
+		int totalCandidateCount = candidatesWindow.totalCount();
+		if (totalCandidateCount <= 0) {
 			drawCenteredText(graphics, "В галерее нет аудиофайлов", maxAvatarPickerGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
 		int visibleRows = maxRingtonePickerCapacity(layout);
-		int scroll = clampInt(state.ringtonePickerScroll(), 0, maxRingtonePickerScroll(layout, candidates.size()));
+		int scroll = clampInt(state.ringtonePickerScroll(), 0, maxRingtonePickerScroll(layout, totalCandidateCount));
 		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
 				runtimeKey,
 				MonitorScrollAnimationSystem.ScrollChannel.MAX_RINGTONE_PICKER,
 				scroll,
-				maxRingtonePickerScroll(layout, candidates.size())
+				maxRingtonePickerScroll(layout, totalCandidateCount)
 		);
 		int baseIndex = visualScroll.anchorIndex();
 		int yOffset = -(int) Math.round(visualScroll.fraction() * maxRingtonePickerRowStep(layout));
 		int count = Math.min(
-				Math.max(0, candidates.size() - baseIndex),
-				visibleRows + (visualScroll.animated() && baseIndex + visibleRows < candidates.size() ? 1 : 0)
+				Math.max(0, totalCandidateCount - baseIndex),
+				visibleRows + (visualScroll.animated() && baseIndex + visibleRows < totalCandidateCount ? 1 : 0)
 		);
 		Shape previousClip = graphics.getClip();
 		UiRect list = maxAvatarPickerGridRect(layout);
 		graphics.setClip(list.x(), list.y(), list.width(), list.height());
 		for (int index = 0; index < count; index++) {
-			drawMaxRingtoneCandidate(graphics, layout, offsetRect(maxRingtoneCandidateRect(layout, index), 0, yOffset), candidates.get(baseIndex + index));
+			int absoluteIndex = baseIndex + index;
+			int windowIndex = absoluteIndex - candidatesWindow.windowStartIndex();
+			if (windowIndex < 0 || windowIndex >= candidates.size()) {
+				continue;
+			}
+			drawMaxRingtoneCandidate(graphics, layout, offsetRect(maxRingtoneCandidateRect(layout, index), 0, yOffset), candidates.get(windowIndex));
 		}
 		graphics.setClip(previousClip);
 	}
@@ -4904,36 +6407,36 @@ final class MonitorMaxRuntime {
 				participantCodes.add(participant.code());
 			}
 		}
-		List<MaxContactSnapshot> contacts = state.contacts() != null ? state.contacts() : List.of();
-		List<MaxContactSnapshot> candidates = contacts.stream()
-				.filter(contact -> contact != null
-						&& !contact.active()
-						&& !contact.ringing()
-						&& !Objects.equals(contact.code(), call.peerCode())
-						&& !participantCodes.contains(contact.code()))
-				.toList();
-		if (candidates.isEmpty()) {
+		WindowedSnapshot<MaxContactSnapshot> candidatesWindow = state.callContactCandidates() != null ? state.callContactCandidates() : WindowedSnapshot.empty();
+		List<MaxContactSnapshot> candidates = candidatesWindow.items();
+		int totalCandidateCount = candidatesWindow.totalCount();
+		if (totalCandidateCount <= 0) {
 			drawCenteredText(graphics, "Нет контактов для приглашения", maxCallContactPickerGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
-		int contactScroll = clampInt(call.contactPickerScroll(), 0, maxCallContactPickerScroll(layout, candidates.size()));
+		int contactScroll = clampInt(call.contactPickerScroll(), 0, maxCallContactPickerScroll(layout, totalCandidateCount));
 		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
 				runtimeKey,
 				MonitorScrollAnimationSystem.ScrollChannel.MAX_CALL_CONTACT_PICKER,
 				contactScroll,
-				maxCallContactPickerScroll(layout, candidates.size())
+				maxCallContactPickerScroll(layout, totalCandidateCount)
 		);
 		int baseIndex = visualScroll.anchorIndex();
 		int yOffset = -(int) Math.round(visualScroll.fraction() * maxContactPickerRowStep(layout));
 		int count = Math.min(
-				Math.max(0, candidates.size() - baseIndex),
-				maxCallContactPickerCapacity(layout) + (visualScroll.animated() && baseIndex + maxCallContactPickerCapacity(layout) < candidates.size() ? 1 : 0)
+				Math.max(0, totalCandidateCount - baseIndex),
+				maxCallContactPickerCapacity(layout) + (visualScroll.animated() && baseIndex + maxCallContactPickerCapacity(layout) < totalCandidateCount ? 1 : 0)
 		);
 		Shape previousClip = graphics.getClip();
 		UiRect list = maxCallContactPickerGridRect(layout);
 		graphics.setClip(list.x(), list.y(), list.width(), list.height());
 		for (int index = 0; index < count; index++) {
-			drawMaxContactRow(graphics, layout, offsetRect(maxCallContactPickerRowRect(layout, index), 0, yOffset), candidates.get(baseIndex + index), false);
+			int absoluteIndex = baseIndex + index;
+			int windowIndex = absoluteIndex - candidatesWindow.windowStartIndex();
+			if (windowIndex < 0 || windowIndex >= candidates.size()) {
+				continue;
+			}
+			drawMaxContactRow(graphics, layout, offsetRect(maxCallContactPickerRowRect(layout, index), 0, yOffset), candidates.get(windowIndex), false);
 		}
 		graphics.setClip(previousClip);
 	}
@@ -4944,37 +6447,44 @@ final class MonitorMaxRuntime {
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
 		drawOverlayCloseButton(graphics, maxOverlayCloseRect(layout), layout);
 		String title = state.fileShareFileCount() <= 1 ? "ОТПРАВИТЬ ФАЙЛ" : "ОТПРАВИТЬ ФАЙЛЫ";
-		drawVerticalText(graphics, title, maxAvatarPickerTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
+		drawVerticalText(graphics, title, maxFileShareTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
 		UiRect send = maxFileShareSendRect(layout);
 		Color sendColor = drawMediaHeaderControlBase(graphics, send, MediaButtonSegment.SINGLE);
 		drawPlayerUiIcon(graphics, mediaChromeIconRect(send, layout), PlayerUiIcon.SEND_PLANE, sendColor);
 
-		List<MaxFileShareContactSnapshot> contacts = state.fileShareContacts() != null ? state.fileShareContacts() : List.of();
-		if (contacts.isEmpty()) {
+		WindowedSnapshot<MaxFileShareContactSnapshot> contactsWindow = state.fileShareContacts() != null ? state.fileShareContacts() : WindowedSnapshot.empty();
+		List<MaxFileShareContactSnapshot> contacts = contactsWindow.items();
+		int totalContactCount = contactsWindow.totalCount();
+		if (totalContactCount <= 0) {
 			drawCenteredText(graphics, "Добавь контакты в MAX", maxContactPickerListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
 		UiRect hint = maxFileShareHintRect(layout);
 		String fileLabel = state.fileShareFileCount() <= 1 ? state.fileShareTitle() : "Файлов: " + state.fileShareFileCount();
 		drawCenteredTextFitted(graphics, fileLabel, hint, new Color(176, 202, 220, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
-		int scroll = clampInt(state.fileSharePickerScroll(), 0, maxContactPickerScroll(layout, contacts.size()));
+		int scroll = clampInt(state.fileSharePickerScroll(), 0, maxContactPickerScroll(layout, totalContactCount));
 		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
 				runtimeKey,
 				MonitorScrollAnimationSystem.ScrollChannel.MAX_FILE_SHARE_PICKER,
 				scroll,
-				maxContactPickerScroll(layout, contacts.size())
+				maxContactPickerScroll(layout, totalContactCount)
 		);
 		int baseIndex = visualScroll.anchorIndex();
 		int yOffset = -(int) Math.round(visualScroll.fraction() * maxContactPickerRowStep(layout));
 		int count = Math.min(
-				Math.max(0, contacts.size() - baseIndex),
-				maxContactPickerCapacity(layout) + (visualScroll.animated() && baseIndex + maxContactPickerCapacity(layout) < contacts.size() ? 1 : 0)
+				Math.max(0, totalContactCount - baseIndex),
+				maxContactPickerCapacity(layout) + (visualScroll.animated() && baseIndex + maxContactPickerCapacity(layout) < totalContactCount ? 1 : 0)
 		);
 		Shape previousClip = graphics.getClip();
 		UiRect list = maxContactPickerListRect(layout);
 		graphics.setClip(list.x(), list.y(), list.width(), list.height());
 		for (int index = 0; index < count; index++) {
-			drawMaxFileShareContactRow(graphics, layout, offsetRect(maxContactPickerRowRect(layout, index), 0, yOffset), contacts.get(baseIndex + index));
+			int absoluteIndex = baseIndex + index;
+			int windowIndex = absoluteIndex - contactsWindow.windowStartIndex();
+			if (windowIndex < 0 || windowIndex >= contacts.size()) {
+				continue;
+			}
+			drawMaxFileShareContactRow(graphics, layout, offsetRect(maxContactPickerRowRect(layout, index), 0, yOffset), contacts.get(windowIndex));
 		}
 		graphics.setClip(previousClip);
 	}
@@ -4986,7 +6496,7 @@ final class MonitorMaxRuntime {
 		drawAvatar(graphics, avatarRect, contact.avatarFrame(), layout);
 		UiRect checkRect = maxFileShareContactCheckRect(rect, layout);
 		int textRight = checkRect.x();
-		UiRect codeRect = new UiRect(avatarRect.right() + layout.unit(), rect.y() + layout.unit() / 3, textRight - avatarRect.right() - layout.unit() * 2, rect.height() / 2);
+		UiRect codeRect = new UiRect(avatarRect.right() + layout.unit(), rect.y() + layout.unit() / 3, Math.max(1, textRight - avatarRect.right() - layout.unit() * 2), rect.height() / 2);
 		drawEllipsizedVerticalText(graphics, contact.displayName(), codeRect, new Color(248, 251, 255, 238), Font.BOLD, clampInt(layout.unit(), 10, 16));
 		drawVerticalText(graphics, contact.online() ? "доступен" : "недоступен", new UiRect(codeRect.x(), codeRect.bottom(), codeRect.width(), rect.height() / 3), new Color(178, 202, 218, 218), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11));
 		fillRoundedRect(graphics, checkRect, checkRect.height(), contact.selected() ? new Color(248, 251, 255, 232) : new Color(255, 255, 255, 16));
@@ -4994,41 +6504,94 @@ final class MonitorMaxRuntime {
 		drawPlayerUiIcon(graphics, mediaChromeIconRect(checkRect, layout), contact.selected() ? PlayerUiIcon.CHECKBOX_FILL : PlayerUiIcon.CHECKBOX_LINE, contact.selected() ? new Color(20, 24, 30, 238) : new Color(248, 251, 255, 220));
 	}
 
-	private static void drawMaxNotificationsScreen(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot state) {
-		UiRect panel = maxAvatarPickerPanelRect(layout);
-		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 232));
-		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
-		drawOverlayCloseButton(graphics, maxOverlayCloseRect(layout), layout);
-		drawVerticalText(graphics, "УВЕДОМЛЕНИЯ", maxAvatarPickerTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
-		MaxIncomingFileSnapshot incoming = state.incomingFile();
-		if (incoming == null) {
-			drawCenteredText(graphics, "Нет входящих файлов", maxAvatarPickerGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+	private static void drawMaxNotificationsScreen(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MaxVisualSnapshot state) {
+		UiRect panel = maxNotificationPopupRect(layout);
+		fillRoundedRect(graphics, panel, clampInt(layout.unit(), 8, 18), new Color(6, 10, 14, 236));
+		WindowedSnapshot<MaxIncomingFileSnapshot> incomingFilesWindow = state.incomingFiles() != null ? state.incomingFiles() : WindowedSnapshot.empty();
+		List<MaxIncomingFileSnapshot> incomingFiles = incomingFilesWindow.items();
+		if (!incomingFiles.isEmpty()) {
+			drawMaxNotificationPopupHeader(graphics, layout, incomingFiles.get(0));
+		} else {
+			drawMaxNotificationPopupHeader(graphics, layout, null);
 			return;
 		}
-		UiRect card = maxNotificationCardRect(layout);
-		fillRoundedRect(graphics, card, clampInt(layout.unit() * 2, 14, 28), new Color(255, 255, 255, 18));
-		strokeRoundedRect(graphics, card, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 46));
-		UiRect avatar = maxNotificationAvatarRect(layout);
-		drawAvatar(graphics, avatar, incoming.senderAvatarFrame(), layout);
-		drawCenteredTextFitted(graphics, incoming.senderDisplayName(), maxNotificationSenderRect(layout), new Color(248, 251, 255, 240), Font.BOLD, clampInt(layout.unit() + 2, 12, 20), 8);
-		drawCenteredTextFitted(graphics, incoming.fileName(), maxNotificationFileRect(layout), new Color(220, 238, 248, 232), Font.BOLD, clampInt(layout.unit(), 9, 15), 7);
-		String subtitle = incoming.subtitle() == null || incoming.subtitle().isBlank() ? notificationKindLabel(incoming.kind()) : incoming.subtitle();
-		drawCenteredTextFitted(graphics, subtitle, maxNotificationSubtitleRect(layout), new Color(166, 194, 214, 218), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 6);
-		drawRoundCallButton(graphics, maxNotificationAcceptRect(layout), PlayerUiIcon.CHECK, new Color(74, 214, 142), new Color(8, 18, 13, 238), layout);
-		drawRoundCallButton(graphics, maxNotificationDeclineRect(layout), PlayerUiIcon.CLOSE, new Color(240, 88, 96), new Color(255, 248, 248, 246), layout);
-		if (state.notificationCount() > 1) {
-			drawCenteredTextFitted(graphics, "Ещё: " + (state.notificationCount() - 1), maxNotificationQueueRect(layout), new Color(210, 224, 236, 210), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
+		UiRect feed = maxNotificationFeedRect(layout);
+		int maxScroll = maxNotificationScroll(layout, incomingFilesWindow.totalCount());
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MAX_NOTIFICATION_FEED,
+				clampInt(state.notificationScroll(), 0, maxScroll),
+				maxScroll
+		);
+		Shape previousClip = graphics.getClip();
+		graphics.setClip(feed.x(), feed.y(), feed.width(), feed.height());
+		int itemHeight = maxNotificationItemHeight(layout);
+		int itemGap = maxNotificationItemGap(layout);
+		int y = feed.y() - (int) Math.round(visualScroll.displayValue()) + incomingFilesWindow.windowStartIndex() * (itemHeight + itemGap);
+		for (MaxIncomingFileSnapshot incoming : incomingFiles) {
+			UiRect itemRect = new UiRect(feed.x(), y, feed.width(), itemHeight);
+			if (rectIntersects(itemRect, feed)) {
+				drawMaxNotificationItem(graphics, layout, itemRect, incoming);
+			}
+			y += itemHeight + itemGap;
 		}
+		graphics.setClip(previousClip);
 	}
 
-	private static String notificationKindLabel(GalleryItemKind kind) {
-		return switch (kind != null ? kind : GalleryItemKind.MEDIA) {
-			case AUDIO -> "аудиофайл";
-			case VIDEO -> "видео";
-			case YOUTUBE -> "ссылка YouTube";
-			case LIVE_CAMERA -> "камера";
-			case MEDIA -> "файл из галереи";
-		};
+	private static void drawMaxNotificationPopupHeader(Graphics2D graphics, UiLayout layout, MaxIncomingFileSnapshot sender) {
+		UiRect header = maxNotificationPopupHeaderRect(layout);
+		UiRect close = maxNotificationPopupCloseRect(layout);
+		int pad = maxNotificationPopupPadding(layout);
+		int avatarSize = clampInt(header.height() - pad * 2, 18, 34);
+		UiRect avatar = new UiRect(header.x() + pad, header.y() + (header.height() - avatarSize) / 2, avatarSize, avatarSize);
+		drawAvatarNoStroke(graphics, avatar, sender != null ? sender.senderAvatarFrame() : null, layout);
+		UiRect name = new UiRect(
+				avatar.right() + Math.max(4, layout.unit() / 2),
+				header.y(),
+				Math.max(1, close.x() - avatar.right() - pad),
+				header.height()
+		);
+		drawEllipsizedVerticalText(graphics, sender != null ? sender.senderDisplayName() : "", name, new Color(248, 251, 255, 238), Font.BOLD, clampInt(layout.unit(), 9, 15));
+		Color closeColor = drawMediaHeaderControlBase(graphics, close, MediaButtonSegment.SINGLE);
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(close, layout), PlayerUiIcon.CLOSE, closeColor);
+	}
+
+	private static void drawMaxNotificationItem(Graphics2D graphics, UiLayout layout, UiRect item, MaxIncomingFileSnapshot incoming) {
+		if (graphics == null || layout == null || item == null || incoming == null || item.width() <= 0 || item.height() <= 0) {
+			return;
+		}
+		UiRect accept = maxNotificationItemAcceptRect(item, layout);
+		UiRect decline = maxNotificationItemDeclineRect(item, layout);
+		UiRect preview = maxNotificationItemPreviewRect(item, incoming.previewFrame(), incoming.squarePreviewFallback(), layout);
+		drawQueueThumbnail(graphics, preview, incoming.previewFrame(), incoming.squarePreviewFallback(), false, layout);
+		drawNotificationPreviewTitle(graphics, layout, preview, incoming.fileName());
+		if (incoming.previewActive() && incoming.previewPlayable()) {
+			drawNotificationPreviewOverlay(graphics, layout, preview, incoming.previewPlaying(), incoming.previewLoading());
+		}
+		Color acceptColor = drawMediaHeaderControlBase(graphics, accept, MediaButtonSegment.SINGLE);
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(accept, layout), PlayerUiIcon.CHECK, acceptColor);
+		Color declineColor = drawMediaHeaderControlBase(graphics, decline, MediaButtonSegment.SINGLE);
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(decline, layout), PlayerUiIcon.CLOSE, declineColor);
+	}
+
+	private static void drawNotificationPreviewTitle(Graphics2D graphics, UiLayout layout, UiRect preview, String title) {
+		if (graphics == null || layout == null || preview == null || preview.width() <= 0 || preview.height() <= 0) {
+			return;
+		}
+		int titleHeight = clampInt(layout.unit() * 2, 16, 28);
+		UiRect titleRect = new UiRect(preview.x(), preview.bottom() - titleHeight, preview.width(), titleHeight);
+		fillRoundedRect(graphics, titleRect, clampInt(Math.min(titleRect.width(), titleRect.height()) / 3, 5, 8), new Color(0, 0, 0, 132));
+		drawEllipsizedVerticalText(graphics, title == null ? "" : title, titleRect.inset(Math.max(2, layout.unit() / 4)), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit() - 1, 8, 13));
+	}
+
+	private static void drawNotificationPreviewOverlay(Graphics2D graphics, UiLayout layout, UiRect preview, boolean playing, boolean loading) {
+		if (graphics == null || layout == null || preview == null || preview.width() <= 0 || preview.height() <= 0) {
+			return;
+		}
+		int size = clampInt(Math.min(preview.width(), preview.height()) / 3, 24, 44);
+		UiRect button = new UiRect(preview.x() + (preview.width() - size) / 2, preview.y() + (preview.height() - size) / 2, size, size);
+		fillRoundedRect(graphics, button, size, new Color(0, 0, 0, loading ? 118 : 146));
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(button, layout), playing ? PlayerUiIcon.PAUSE : PlayerUiIcon.PLAY, new Color(248, 251, 255, loading ? 188 : 236));
 	}
 
 	private static void drawMaxAtmosphere(Graphics2D graphics, UiRect canvas, UiLayout layout) {
@@ -5042,6 +6605,14 @@ final class MonitorMaxRuntime {
 	}
 
 	private static void drawAvatar(Graphics2D graphics, UiRect rect, BufferedImage avatar, UiLayout layout) {
+		drawAvatar(graphics, rect, avatar, layout, true);
+	}
+
+	private static void drawAvatarNoStroke(Graphics2D graphics, UiRect rect, BufferedImage avatar, UiLayout layout) {
+		drawAvatar(graphics, rect, avatar, layout, false);
+	}
+
+	private static void drawAvatar(Graphics2D graphics, UiRect rect, BufferedImage avatar, UiLayout layout, boolean stroke) {
 		Shape previousClip = graphics.getClip();
 		Ellipse2D.Float circle = new Ellipse2D.Float(rect.x(), rect.y(), rect.width(), rect.height());
 		graphics.setClip(circle);
@@ -5052,6 +6623,9 @@ final class MonitorMaxRuntime {
 			graphics.fillOval(rect.x(), rect.y(), rect.width(), rect.height());
 		}
 		graphics.setClip(previousClip);
+		if (!stroke) {
+			return;
+		}
 		Stroke previousStroke = graphics.getStroke();
 		graphics.setStroke(new BasicStroke(Math.max(1.0F, layout.unit() / 8.0F)));
 		graphics.setColor(new Color(255, 255, 255, 86));
@@ -5062,14 +6636,6 @@ final class MonitorMaxRuntime {
 	private static void drawMaxAddContactButton(Graphics2D graphics, UiRect rect, UiLayout layout) {
 		Color color = drawMediaHeaderControlBase(graphics, rect, MediaButtonSegment.SINGLE);
 		drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), PlayerUiIcon.CONTACT_ADD, color);
-	}
-
-	private static void drawMaxNotificationsButton(Graphics2D graphics, UiRect rect, int count, UiLayout layout) {
-		Color color = drawMediaHeaderControlBase(graphics, rect, MediaButtonSegment.SINGLE);
-		drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), PlayerUiIcon.NOTIFICATION, color);
-		if (count > 0) {
-			drawNotificationBadge(graphics, maxNotificationButtonBadgeRect(rect, layout), count, layout);
-		}
 	}
 
 	private static void drawMaxRingtoneControls(Graphics2D graphics, UiLayout layout, MaxVisualSnapshot state) {
@@ -5089,15 +6655,31 @@ final class MonitorMaxRuntime {
 		UiRect avatarRect = new UiRect(rect.x() + layout.unit(), rect.y() + layout.unit() / 2, rect.height() - layout.unit(), rect.height() - layout.unit());
 		drawAvatar(graphics, avatarRect, contact.avatarFrame(), layout);
 		UiRect deleteRect = maxContactDeleteRect(rect, layout);
-		int textRight = deleteVisible ? deleteRect.x() : rect.right() - layout.unit();
-		UiRect codeRect = new UiRect(avatarRect.right() + layout.unit(), rect.y() + layout.unit() / 3, textRight - avatarRect.right() - layout.unit() * 2, rect.height() / 2);
+		boolean showDelete = deleteVisible && contact.savedContact();
+		UiRect notificationRect = deleteVisible && contact.notificationCount() > 0 ? maxContactNotificationRect(rect, layout, contact.notificationCount(), showDelete) : null;
+		int textRight = rect.right() - layout.unit();
+		if (showDelete) {
+			textRight = deleteRect.x();
+		}
+		if (notificationRect != null) {
+			textRight = notificationRect.x();
+		}
+		UiRect codeRect = new UiRect(avatarRect.right() + layout.unit(), rect.y() + layout.unit() / 3, Math.max(1, textRight - avatarRect.right() - layout.unit() * 2), rect.height() / 2);
 		drawEllipsizedVerticalText(graphics, contact.displayName(), codeRect, new Color(248, 251, 255, 238), Font.BOLD, clampInt(layout.unit(), 10, 16));
 		String status = contact.active() ? "в вызове" : contact.ringing() ? "звонит" : contact.online() ? "доступен" : "недоступен";
 		drawVerticalText(graphics, status, new UiRect(codeRect.x(), codeRect.bottom(), codeRect.width(), rect.height() / 3), new Color(178, 202, 218, 218), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11));
-		if (deleteVisible) {
+		if (notificationRect != null) {
+			drawMaxContactNotificationButton(graphics, notificationRect, contact.notificationCount(), layout);
+		}
+		if (showDelete) {
 			Color deleteColor = drawMediaHeaderControlBase(graphics, deleteRect, MediaButtonSegment.SINGLE);
 			drawPlayerUiIcon(graphics, mediaChromeIconRect(deleteRect, layout), PlayerUiIcon.TRASH, deleteColor);
 		}
+	}
+
+	private static void drawMaxContactNotificationButton(Graphics2D graphics, UiRect rect, int count, UiLayout layout) {
+		Color color = drawMediaHeaderControlBase(graphics, rect, MediaButtonSegment.SINGLE);
+		drawCenteredTextFitted(graphics, Integer.toString(Math.max(0, count)), rect.inset(Math.max(1, layout.unit() / 6)), color, Font.BOLD, clampInt(layout.unit(), 9, 14), 6);
 	}
 
 	private static void drawMaxEmptyContacts(Graphics2D graphics, UiLayout layout, UiRect rect) {
@@ -5182,18 +6764,6 @@ final class MonitorMaxRuntime {
 		return new UiRect(panel.right() - height - layout.unit(), panel.y() + (panel.height() - height) / 2, height, height);
 	}
 
-	private static UiRect maxNotificationsRect(UiLayout layout) {
-		UiRect add = maxAddContactRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
-		return new UiRect(add.x() - add.width() - gap, add.y(), add.width(), add.height());
-	}
-
-	private static UiRect maxNotificationButtonBadgeRect(UiRect button, UiLayout layout) {
-		int height = clampInt(layout.unit() + 4, 12, 18);
-		int width = clampInt(height + layout.unit() / 2, height, 30);
-		return new UiRect(button.right() - width / 2, button.y() - height / 3, width, height);
-	}
-
 	private static UiRect maxRingtoneControlsRect(UiLayout layout) {
 		UiRect header = maxProfilePanelRect(layout);
 		int height = clampInt(layout.unit() * 2 + 4, 24, 34);
@@ -5245,6 +6815,15 @@ final class MonitorMaxRuntime {
 	private static UiRect maxContactDeleteRect(UiRect row, UiLayout layout) {
 		int size = clampInt(layout.unit() * 2 + 4, 24, 34);
 		return new UiRect(row.right() - size - layout.unit(), row.y() + (row.height() - size) / 2, size, size);
+	}
+
+	private static UiRect maxContactNotificationRect(UiRect row, UiLayout layout, int count, boolean deleteVisible) {
+		int size = clampInt(layout.unit() * 2 + 4, 24, 34);
+		int digits = Integer.toString(Math.max(0, count)).length();
+		int width = size + Math.max(0, digits - 2) * Math.max(4, layout.unit() / 2);
+		int gap = Math.max(4, layout.unit() / 2);
+		int right = deleteVisible ? maxContactDeleteRect(row, layout).x() - gap : row.right() - layout.unit();
+		return new UiRect(right - width, row.y() + (row.height() - size) / 2, width, size);
 	}
 
 	private static int maxContactIndexAt(UiLayout layout, int contactCount, UiPoint point) {
@@ -5611,6 +7190,10 @@ final class MonitorMaxRuntime {
 
 	private static UiRect maxAvatarPickerPanelRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
+		if (ultraCompactScreenLayout(layout)) {
+			int inset = Math.max(2, layout.unit() / 3);
+			return new UiRect(canvas.x() + inset, canvas.y() + inset, canvas.width() - inset * 2, canvas.height() - inset * 2);
+		}
 		return new UiRect(canvas.x() + layout.unit(), canvas.y() + clampInt(layout.unit() * 3, 24, 48), canvas.width() - layout.unit() * 2, canvas.height() - clampInt(layout.unit() * 4, 32, 60));
 	}
 
@@ -5711,14 +7294,14 @@ final class MonitorMaxRuntime {
 
 	private static UiRect maxCallDeviceCameraTitleRect(UiLayout layout) {
 		UiRect content = maxCallDeviceContentRect(layout);
-		int height = clampInt(layout.unit() + 4, 14, 22);
+		int height = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 3, 7, 8) : clampInt(layout.unit() + 4, 14, 22);
 		return new UiRect(content.x(), content.y(), content.width(), height);
 	}
 
 	private static UiRect maxCallDeviceCameraGridRect(UiLayout layout) {
 		UiRect content = maxCallDeviceContentRect(layout);
 		UiRect title = maxCallDeviceCameraTitleRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = maxCallDeviceGap(layout);
 		int height = maxCallDeviceCameraHeight(layout);
 		return new UiRect(content.x(), title.bottom() + gap, content.width(), height);
 	}
@@ -5726,21 +7309,21 @@ final class MonitorMaxRuntime {
 	private static UiRect maxCallDeviceMicrophoneTitleRect(UiLayout layout) {
 		UiRect cameraGrid = maxCallDeviceCameraGridRect(layout);
 		UiRect content = maxCallDeviceContentRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
-		int height = clampInt(layout.unit() + 4, 14, 22);
+		int gap = maxCallDeviceGap(layout);
+		int height = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 3, 7, 8) : clampInt(layout.unit() + 4, 14, 22);
 		return new UiRect(content.x(), cameraGrid.bottom() + gap, content.width(), height);
 	}
 
 	private static UiRect maxCallDeviceMicrophoneListRect(UiLayout layout) {
 		UiRect content = maxCallDeviceContentRect(layout);
 		UiRect title = maxCallDeviceMicrophoneTitleRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = maxCallDeviceGap(layout);
 		return new UiRect(content.x(), title.bottom() + gap, content.width(), Math.max(18, content.bottom() - title.bottom() - gap));
 	}
 
 	private static UiRect maxCallDeviceScrollButtonRect(UiRect titleRect, int indexFromRight, UiLayout layout) {
-		int gap = Math.max(4, layout.unit() / 2);
-		int size = Math.min(titleRect.height(), clampInt(layout.unit() * 2, 18, 30));
+		int gap = maxCallDeviceGap(layout);
+		int size = Math.min(titleRect.height(), ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 3, 7, 8) : clampInt(layout.unit() * 2, 18, 30));
 		int x = titleRect.right() - size - indexFromRight * (size + gap);
 		return new UiRect(x, titleRect.y(), size, titleRect.height());
 	}
@@ -5761,30 +7344,40 @@ final class MonitorMaxRuntime {
 		return maxCallDeviceScrollButtonRect(maxCallDeviceMicrophoneTitleRect(layout), 0, layout);
 	}
 
+	private static int maxCallDeviceGap(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : Math.max(4, layout.unit() / 2);
+	}
+
 	private static int maxCallDeviceCameraHeight(UiLayout layout) {
 		UiRect content = maxCallDeviceContentRect(layout);
 		UiRect title = maxCallDeviceCameraTitleRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = maxCallDeviceGap(layout);
+		if (ultraCompactScreenLayout(layout)) {
+			int microphoneTitleHeight = clampInt(layout.unit() + 3, 7, 8);
+			int available = Math.max(36, content.height() - title.height() - microphoneTitleHeight - gap * 3);
+			int preferred = (int) Math.round(available * 0.44D);
+			return clampInt(preferred, 28, Math.max(28, available - 18));
+		}
 		int preferred = Math.max(clampInt(layout.unit() * 7, 56, 112), (content.height() - title.height() - gap * 3) / 2);
 		return Math.min(preferred, Math.max(18, content.bottom() - title.bottom() - gap));
 	}
 
 	private static int maxCallDeviceCameraCapacity(UiLayout layout) {
 		UiRect grid = maxCallDeviceCameraGridRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = maxCallDeviceGap(layout);
 		int cell = Math.max(1, maxCallDeviceCameraHeight(layout));
 		return clippedListCapacity(grid, cell, gap, true);
 	}
 
 	private static UiRect maxCallDeviceCameraRect(UiLayout layout, int index) {
 		UiRect grid = maxCallDeviceCameraGridRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = maxCallDeviceGap(layout);
 		int cell = Math.max(1, maxCallDeviceCameraHeight(layout));
 		return new UiRect(grid.x() + index * (cell + gap), grid.y(), cell, cell);
 	}
 
 	private static int maxCallDeviceCameraCellStep(UiLayout layout) {
-		return Math.max(1, maxCallDeviceCameraHeight(layout)) + Math.max(4, layout.unit() / 2);
+		return Math.max(1, maxCallDeviceCameraHeight(layout)) + maxCallDeviceGap(layout);
 	}
 
 	private static int maxCallDeviceCameraIndexAt(UiLayout layout, int cameraCount, int cameraScroll, UiPoint point) {
@@ -5811,24 +7404,24 @@ final class MonitorMaxRuntime {
 
 	private static int maxCallDeviceMicrophoneCapacity(UiLayout layout) {
 		UiRect list = maxCallDeviceMicrophoneListRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = maxCallDeviceGap(layout);
 		int rowHeight = maxCallDeviceMicrophoneRowHeight(layout);
 		return clippedListCapacity(list, rowHeight, gap, false);
 	}
 
 	private static int maxCallDeviceMicrophoneRowHeight(UiLayout layout) {
-		return clampInt(layout.unit() * 3, 28, 44);
+		return ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 3 + 1, 16, 18) : clampInt(layout.unit() * 3, 28, 44);
 	}
 
 	private static UiRect maxCallDeviceMicrophoneRowRect(UiLayout layout, int index) {
 		UiRect list = maxCallDeviceMicrophoneListRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = maxCallDeviceGap(layout);
 		int height = maxCallDeviceMicrophoneRowHeight(layout);
 		return new UiRect(list.x(), list.y() + index * (height + gap), list.width(), height);
 	}
 
 	private static int maxCallDeviceMicrophoneRowStep(UiLayout layout) {
-		return maxCallDeviceMicrophoneRowHeight(layout) + Math.max(4, layout.unit() / 2);
+		return maxCallDeviceMicrophoneRowHeight(layout) + maxCallDeviceGap(layout);
 	}
 
 	private static int maxCallDeviceMicrophoneIndexAt(UiLayout layout, int microphoneCount, int microphoneScroll, UiPoint point) {
@@ -5908,13 +7501,22 @@ final class MonitorMaxRuntime {
 	}
 
 	private static UiRect maxFileShareSendRect(UiLayout layout) {
+		UiRect close = maxOverlayCloseRect(layout);
+		int gap = Math.max(4, layout.unit() / 2);
+		return new UiRect(close.x() - close.width() - gap, close.y(), close.width(), close.height());
+	}
+
+	private static UiRect maxFileShareTitleRect(UiLayout layout) {
 		UiRect panel = maxAvatarPickerPanelRect(layout);
-		int size = clampInt(layout.unit() * 2 + 4, 24, 36);
-		return new UiRect(panel.right() - size - layout.unit(), panel.y() + layout.unit(), size, size);
+		UiRect send = maxFileShareSendRect(layout);
+		int inset = ultraCompactScreenLayout(layout)
+				? Math.max(2, layout.unit() / 3)
+				: layout.unit();
+		return new UiRect(panel.x() + inset, send.y(), Math.max(1, send.x() - panel.x() - inset * 2), send.height());
 	}
 
 	private static UiRect maxFileShareHintRect(UiLayout layout) {
-		UiRect title = maxAvatarPickerTitleRect(layout);
+		UiRect title = maxFileShareTitleRect(layout);
 		UiRect send = maxFileShareSendRect(layout);
 		return new UiRect(title.x(), title.bottom(), Math.max(1, send.x() - title.x() - layout.unit()), clampInt(layout.unit() * 2, 16, 24));
 	}
@@ -5924,53 +7526,169 @@ final class MonitorMaxRuntime {
 		return new UiRect(row.right() - size - layout.unit(), row.y() + (row.height() - size) / 2, size, size);
 	}
 
-	private static UiRect maxNotificationCardRect(UiLayout layout) {
-		UiRect grid = maxAvatarPickerGridRect(layout);
-		int verticalInset = clampInt(layout.unit(), 6, 18);
-		return new UiRect(grid.x(), grid.y() + verticalInset, grid.width(), Math.max(1, grid.height() - verticalInset * 2));
+	private static UiRect maxNotificationPopupRect(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		if (ultraCompactScreenLayout(layout)) {
+			return canvas;
+		}
+		int inset = clampInt(layout.unit(), 8, 18);
+		int availableWidth = Math.max(1, canvas.width() - inset * 2);
+		int availableHeight = Math.max(1, canvas.height() - inset * 2);
+		int width = Math.min(availableWidth, clampInt(layout.unit() * 24, 190, 340));
+		int height = Math.min(availableHeight, clampInt(layout.unit() * 28, 190, 380));
+		return new UiRect(canvas.right() - inset - width, canvas.y() + inset, width, height);
 	}
 
-	private static UiRect maxNotificationAvatarRect(UiLayout layout) {
-		UiRect card = maxNotificationCardRect(layout);
-		int size = clampInt(Math.min(card.width(), card.height()) / 4, 34, 92);
-		return new UiRect(card.x() + (card.width() - size) / 2, card.y() + clampInt(layout.unit() * 2, 12, 28), size, size);
+	private static int maxNotificationPopupPadding(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 4) : clampInt(layout.unit() / 2, 5, 9);
 	}
 
-	private static UiRect maxNotificationSenderRect(UiLayout layout) {
-		UiRect avatar = maxNotificationAvatarRect(layout);
-		UiRect card = maxNotificationCardRect(layout);
-		return new UiRect(card.x() + layout.unit(), avatar.bottom() + layout.unit(), card.width() - layout.unit() * 2, clampInt(layout.unit() * 3, 24, 38));
+	private static UiRect maxNotificationPopupHeaderRect(UiLayout layout) {
+		UiRect panel = maxNotificationPopupRect(layout);
+		int pad = maxNotificationPopupPadding(layout);
+		int height = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 3, 24, 34)
+				: clampInt(layout.unit() * 4, 34, 52);
+		return new UiRect(panel.x() + pad, panel.y() + pad, Math.max(1, panel.width() - pad * 2), Math.min(height, Math.max(1, panel.height() - pad * 2)));
 	}
 
-	private static UiRect maxNotificationFileRect(UiLayout layout) {
-		UiRect sender = maxNotificationSenderRect(layout);
-		UiRect card = maxNotificationCardRect(layout);
-		return new UiRect(card.x() + layout.unit(), sender.bottom(), card.width() - layout.unit() * 2, clampInt(layout.unit() * 3, 24, 38));
+	private static UiRect maxNotificationPopupCloseRect(UiLayout layout) {
+		UiRect header = maxNotificationPopupHeaderRect(layout);
+		int size = clampInt(layout.unit() * 2 + 4, 24, 34);
+		size = Math.min(size, Math.max(1, header.height() - Math.max(2, layout.unit() / 4)));
+		return new UiRect(header.right() - size, header.y() + (header.height() - size) / 2, size, size);
 	}
 
-	private static UiRect maxNotificationSubtitleRect(UiLayout layout) {
-		UiRect file = maxNotificationFileRect(layout);
-		UiRect card = maxNotificationCardRect(layout);
-		return new UiRect(card.x() + layout.unit(), file.bottom(), card.width() - layout.unit() * 2, clampInt(layout.unit() * 2, 16, 28));
+	private static UiRect maxNotificationFeedRect(UiLayout layout) {
+		UiRect panel = maxNotificationPopupRect(layout);
+		UiRect header = maxNotificationPopupHeaderRect(layout);
+		int pad = maxNotificationPopupPadding(layout);
+		int gap = maxNotificationItemGap(layout);
+		int y = header.bottom() + gap;
+		return new UiRect(panel.x() + pad, y, Math.max(1, panel.width() - pad * 2), Math.max(1, panel.bottom() - y - pad));
 	}
 
-	private static UiRect maxNotificationAcceptRect(UiLayout layout) {
-		UiRect card = maxNotificationCardRect(layout);
-		int gap = clampInt(layout.unit(), 6, 18);
-		int size = clampInt(Math.min(card.width(), card.height()) / 6, 22, 48);
-		int y = card.bottom() - size - clampInt(layout.unit() * 2, 12, 28);
-		return new UiRect(card.x() + (card.width() - size * 2 - gap) / 2, y, size, size);
+	private static int maxNotificationItemHeight(UiLayout layout) {
+		UiRect feed = maxNotificationFeedRect(layout);
+		int preferred = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 10, 74, 120)
+				: clampInt(layout.unit() * 12, 104, 168);
+		return Math.min(preferred, Math.max(58, feed.height()));
 	}
 
-	private static UiRect maxNotificationDeclineRect(UiLayout layout) {
-		UiRect accept = maxNotificationAcceptRect(layout);
-		return new UiRect(accept.right() + clampInt(layout.unit(), 6, 18), accept.y(), accept.width(), accept.height());
+	private static int maxNotificationItemGap(UiLayout layout) {
+		return Math.max(4, layout.unit() / 2);
 	}
 
-	private static UiRect maxNotificationQueueRect(UiLayout layout) {
-		UiRect accept = maxNotificationAcceptRect(layout);
-		UiRect card = maxNotificationCardRect(layout);
-		return new UiRect(card.x() + layout.unit(), accept.y() - clampInt(layout.unit() * 2, 16, 26), card.width() - layout.unit() * 2, clampInt(layout.unit() * 2, 16, 26));
+	private static int maxNotificationScrollDelta(UiLayout layout) {
+		return Math.max(24, maxNotificationItemHeight(layout) / 2);
+	}
+
+	private static int maxNotificationContentHeight(UiLayout layout, int itemCount) {
+		if (layout == null || itemCount <= 0) {
+			return 0;
+		}
+		return itemCount * maxNotificationItemHeight(layout) + Math.max(0, itemCount - 1) * maxNotificationItemGap(layout);
+	}
+
+	private static int maxNotificationScroll(UiLayout layout, int itemCount) {
+		if (layout == null) {
+			return 0;
+		}
+		return Math.max(0, maxNotificationContentHeight(layout, itemCount) - maxNotificationFeedRect(layout).height());
+	}
+
+	private static UiRect maxNotificationItemAcceptRect(UiRect item, UiLayout layout) {
+		int inset = clampInt(layout.unit() / 2, 4, 8);
+		int size = clampInt(layout.unit() * 2 + 2, 24, 34);
+		int gap = Math.max(4, layout.unit() / 2);
+		int totalHeight = size * 2 + gap;
+		int y = item.y() + Math.max(inset, (item.height() - totalHeight) / 2);
+		return new UiRect(item.right() - inset - size, y, size, size);
+	}
+
+	private static UiRect maxNotificationItemDeclineRect(UiRect item, UiLayout layout) {
+		UiRect accept = maxNotificationItemAcceptRect(item, layout);
+		return new UiRect(accept.x(), accept.bottom() + Math.max(4, layout.unit() / 2), accept.width(), accept.height());
+	}
+
+	private static UiRect maxNotificationItemPreviewRect(UiRect item, BufferedImage preview, boolean squareFallback, UiLayout layout) {
+		int inset = clampInt(layout.unit() / 2, 4, 8);
+		UiRect accept = maxNotificationItemAcceptRect(item, layout);
+		int availableWidth = Math.max(12, accept.x() - item.x() - inset * 2 - Math.max(4, layout.unit() / 2));
+		double aspect = queueThumbnailAspect(preview, squareFallback);
+		int maxHeight = Math.max(20, item.height() - inset * 2);
+		int width = Math.max(24, (int) Math.round(maxHeight * aspect));
+		int height = maxHeight;
+		if (width > availableWidth) {
+			width = availableWidth;
+			height = Math.max(20, (int) Math.round(width / aspect));
+		}
+		return new UiRect(item.x() + inset, item.y() + (item.height() - height) / 2, width, height);
+	}
+
+	private static MaxNotificationHit maxNotificationHitAt(UiLayout layout, MaxRuntimeState state, UiPoint touchPoint) {
+		if (layout == null || state == null || touchPoint == null || !maxNotificationFeedRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			return null;
+		}
+		List<Integer> indexes;
+		int scroll;
+		synchronized (state) {
+			indexes = maxNotificationRawIndexesForActiveContactLocked(state);
+			scroll = clampInt(state.notificationScroll, 0, maxNotificationScroll(layout, indexes.size()));
+		}
+		UiRect feed = maxNotificationFeedRect(layout);
+		int y = feed.y() - scroll;
+		int itemHeight = maxNotificationItemHeight(layout);
+		int itemGap = maxNotificationItemGap(layout);
+		for (int itemIndex : indexes) {
+			UiRect itemRect = new UiRect(feed.x(), y, feed.width(), itemHeight);
+			if (itemRect.contains(touchPoint.x(), touchPoint.y())) {
+				return new MaxNotificationHit(
+						itemIndex,
+						maxNotificationItemPreviewRect(itemRect, null, notificationFileSquareFallbackLocked(state, itemIndex), layout),
+						maxNotificationItemAcceptRect(itemRect, layout),
+						maxNotificationItemDeclineRect(itemRect, layout)
+				);
+			}
+			y += itemHeight + itemGap;
+		}
+		return null;
+	}
+
+	private static List<Integer> maxNotificationRawIndexesForActiveContactLocked(MaxRuntimeState state) {
+		if (state == null || state.incomingFiles.isEmpty()) {
+			return List.of();
+		}
+		String senderCode = normalizeAccountCode(state.notificationContactCode);
+		if (senderCode.isBlank()) {
+			return List.of();
+		}
+		List<Integer> indexes = new ArrayList<>();
+		for (int index = 0; index < state.incomingFiles.size(); index++) {
+			MaxIncomingFile incoming = state.incomingFiles.get(index);
+			if (incoming != null && Objects.equals(senderCode, normalizeAccountCode(incoming.senderCode()))) {
+				indexes.add(index);
+			}
+		}
+		return indexes.isEmpty() ? List.of() : List.copyOf(indexes);
+	}
+
+	private static boolean notificationFileSquareFallbackLocked(MaxRuntimeState state, int index) {
+		if (state == null || index < 0 || index >= state.incomingFiles.size()) {
+			return false;
+		}
+		MaxIncomingFile incoming = state.incomingFiles.get(index);
+		return incoming != null && incoming.kind() == GalleryItemKind.AUDIO;
+	}
+
+	private static boolean rectIntersects(UiRect first, UiRect second) {
+		return first != null
+				&& second != null
+				&& first.right() > second.x()
+				&& first.x() < second.right()
+				&& first.bottom() > second.y()
+				&& first.y() < second.bottom();
 	}
 
 	private static int maxContactPickerCapacity(UiLayout layout) {
@@ -6041,6 +7759,22 @@ final class MonitorMaxRuntime {
 		return Math.max(0, contactCount - maxCallContactPickerCapacity(layout));
 	}
 
+	private record MaxStoredAccountProfile(
+			String accountCode,
+			String displayName,
+			String avatarUrl,
+			String avatarLocalMediaKey,
+			BufferedImage avatarFrame,
+			boolean avatarAnimated
+	) {
+		boolean hasVisualIdentity() {
+			return (displayName != null && !displayName.isBlank())
+					|| avatarFrame != null
+					|| (avatarUrl != null && !avatarUrl.isBlank())
+					|| (avatarLocalMediaKey != null && !avatarLocalMediaKey.isBlank());
+		}
+	}
+
 	private record PersistedMaxState(
 			String accountCode,
 			String accountName,
@@ -6106,7 +7840,19 @@ final class MonitorMaxRuntime {
 		private String remoteVideoUrl = "";
 		private final List<MaxIncomingFile> incomingFiles = new ArrayList<>();
 		private boolean notificationsOpen;
+		private String notificationContactCode = "";
 		private int notificationScroll;
+		private String notificationPreviewFileId = "";
+		private boolean notificationPreviewLoading;
+		private boolean notificationPreviewPlaying;
+		private String notificationPreviewAudioInput = "";
+		private MonitorMediaApp.LoadedMedia notificationPreviewMedia;
+		private int notificationPreviewFrameIndex;
+		private long notificationPreviewStartedAtMillis;
+		private long notificationPreviewPausedPositionMs;
+		private long notificationPreviewLoadGeneration;
+		private boolean notificationPreviewRenderScheduled;
+		private final Map<String, MaxIncomingPreviewCacheEntry> incomingPreviewCache = new HashMap<>();
 		private boolean fileSharePickerOpen;
 		private int fileSharePickerScroll;
 		private final List<MaxSharedGalleryFile> fileShareFiles = new ArrayList<>();
@@ -6125,6 +7871,9 @@ final class MonitorMaxRuntime {
 	private record MaxIncomingFile(
 			String id,
 			String senderCode,
+			String senderDisplayName,
+			String senderAvatarUrl,
+			String senderAvatarLocalMediaKey,
 			String title,
 			String subtitle,
 			String url,
@@ -6135,6 +7884,40 @@ final class MonitorMaxRuntime {
 	}
 
 	private record MaxPreparedFileDelivery(String recipientCode, MaxIncomingFile file) {
+	}
+
+	private record MaxNotificationPreviewLoadResult(
+			ScreenRuntimeKey key,
+			String fileId,
+			long generation,
+			MonitorMediaApp.LoadedMedia media,
+			String audioInput,
+			String error
+	) {
+	}
+
+	private record MaxNotificationHit(int index, UiRect previewRect, UiRect acceptRect, UiRect declineRect) {
+	}
+
+	private record MaxNotificationPreviewVisualState(
+			String fileId,
+			BufferedImage frame,
+			boolean playing,
+			boolean loading
+	) {
+	}
+
+	private record MaxIncomingPreviewLoadResult(
+			ScreenRuntimeKey key,
+			String fileId,
+			BufferedImage previewFrame
+	) {
+	}
+
+	private static final class MaxIncomingPreviewCacheEntry {
+		private BufferedImage previewFrame;
+		private boolean loading;
+		private boolean resolved;
 	}
 
 	private record ObservedCallUiTarget(ScreenComponent component, UiLayout layout, UiPoint touchPoint) {

@@ -68,6 +68,20 @@ final class MonitorCameraRuntime {
 		STATES.clear();
 	}
 
+	static void deactivateRuntime(ScreenRuntimeKey key) {
+		if (key == null) {
+			return;
+		}
+		stopPreview(key);
+		CameraRuntimeState removed = STATES.remove(key);
+		if (removed == null) {
+			return;
+		}
+		synchronized (removed) {
+			removed.close();
+		}
+	}
+
 	static CameraAppVisualSnapshot captureSnapshot(MinecraftServer server, ScreenComponent component) {
 		if (server == null || component == null) {
 			return emptySnapshot();
@@ -92,6 +106,7 @@ final class MonitorCameraRuntime {
 		long version;
 		boolean shouldStopPreview;
 		boolean chromeHidden;
+		boolean droneControlVisible;
 		synchronized (state) {
 			String previousCameraUrl = state.selectedCameraUrl;
 			normalizeSelectionLocked(state, cameras, microphones);
@@ -115,6 +130,7 @@ final class MonitorCameraRuntime {
 			cameraScroll = state.cameraScroll;
 			microphoneScroll = state.microphoneScroll;
 			chromeHidden = state.chromeHidden;
+			droneControlVisible = controllableSelectedDroneLocked(state, cameras) != null;
 			preview = copyBufferedImage(state.previewFrame);
 			version = state.version + (recording && !paused ? System.currentTimeMillis() / 250L : 0L);
 			shouldStopPreview = cameraSelectionChanged || selectedCameraIndex < 0;
@@ -142,6 +158,7 @@ final class MonitorCameraRuntime {
 				elapsedMs,
 				deviceMenuOpen,
 				chromeHidden,
+				droneControlVisible,
 				statusText == null ? "" : statusText
 		);
 	}
@@ -159,6 +176,9 @@ final class MonitorCameraRuntime {
 		}
 		drawMediaCloseButton(graphics, mediaCloseRect(layout), layout, MediaButtonSegment.SINGLE);
 		drawCameraMenuButton(graphics, cameraMenuButtonRect(layout), layout, state.deviceMenuOpen());
+		if (state.droneControlVisible()) {
+			drawCameraDroneControlButton(graphics, cameraDroneControlButtonRect(layout), layout);
+		}
 		if (state.deviceMenuOpen()) {
 			drawDevicePicker(graphics, layout, runtimeKey, state);
 			drawStatus(graphics, layout, state);
@@ -169,7 +189,7 @@ final class MonitorCameraRuntime {
 		drawStatus(graphics, layout, state);
 	}
 
-	static boolean handleTouch(MinecraftServer server, ScreenComponent component, UiLayout layout, UiPoint touchPoint) {
+	static boolean handleTouch(MinecraftServer server, ServerPlayer player, ScreenComponent component, UiLayout layout, UiPoint touchPoint) {
 		if (server == null || component == null || layout == null || touchPoint == null) {
 			return false;
 		}
@@ -205,6 +225,22 @@ final class MonitorCameraRuntime {
 				state.version++;
 			}
 			requestRuntimeRender(server, component.runtimeKey());
+			return true;
+		}
+		LiveCameraReference controllableDrone;
+		synchronized (state) {
+			controllableDrone = controllableSelectedDroneLocked(state, cameras);
+		}
+		if (player != null
+				&& controllableDrone != null
+				&& cameraDroneControlButtonRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			boolean started = DroneSystem.tryStartControllingDrone(
+					player,
+					controllableDrone.sourceUuid(),
+					controllableDrone.dimension() != null ? controllableDrone.dimension() : component.runtimeKey().dimension(),
+					controllableDrone.pos()
+			);
+			setStatus(server, component.runtimeKey(), state, started ? "Подключаюсь к дрону" : "Дрон недоступен");
 			return true;
 		}
 		if (photoModeRect(layout).contains(touchPoint.x(), touchPoint.y())) {
@@ -374,7 +410,7 @@ final class MonitorCameraRuntime {
 	}
 
 	private static CameraAppVisualSnapshot emptySnapshot() {
-		return new CameraAppVisualSnapshot(0L, null, List.of(), List.of(), 0, 0, -1, -1, 0, 0, CameraAppCaptureMode.PHOTO, false, false, 0L, false, false, "");
+		return new CameraAppVisualSnapshot(0L, null, List.of(), List.of(), 0, 0, -1, -1, 0, 0, CameraAppCaptureMode.PHOTO, false, false, 0L, false, false, false, "");
 	}
 
 	private static void setMode(MinecraftServer server, ScreenRuntimeKey key, CameraRuntimeState state, CameraAppCaptureMode mode) {
@@ -915,6 +951,22 @@ final class MonitorCameraRuntime {
 		return state.selectedMicrophoneIndices.isEmpty() ? List.of() : List.copyOf(state.selectedMicrophoneIndices);
 	}
 
+	private static LiveCameraReference selectedCameraReferenceLocked(CameraRuntimeState state, List<LiveCameraReference> cameras) {
+		int selectedIndex = selectedCameraIndexLocked(state, cameras);
+		return selectedIndex >= 0 && cameras != null && selectedIndex < cameras.size() ? cameras.get(selectedIndex) : null;
+	}
+
+	private static LiveCameraReference controllableSelectedDroneLocked(CameraRuntimeState state, List<LiveCameraReference> cameras) {
+		LiveCameraReference selected = selectedCameraReferenceLocked(state, cameras);
+		if (selected == null
+				|| selected.sourceType() != LiveCameraSourceType.DRONE
+				|| selected.sourceUuid() == null
+				|| DroneSystem.hasActiveController(selected.sourceUuid())) {
+			return null;
+		}
+		return selected;
+	}
+
 	private static List<CameraAppDeviceSnapshot> cameraSnapshots(MinecraftServer server, CameraRuntimeState state, List<LiveCameraReference> cameras) {
 		if (cameras == null || cameras.isEmpty()) {
 			return List.of();
@@ -1042,6 +1094,12 @@ final class MonitorCameraRuntime {
 		}
 	}
 
+	private static void drawCameraDroneControlButton(Graphics2D graphics, UiRect rect, UiLayout layout) {
+		Color color = drawMediaHeaderControlBase(graphics, rect, MediaButtonSegment.SINGLE);
+		UiRect iconRect = mediaChromeIconRect(rect, layout).inset(Math.max(1, layout.unit() / 6));
+		drawGamepadGlyph(graphics, iconRect, color, Math.max(1.25F, mediaChromeStrokeWidth(rect) * 0.72F));
+	}
+
 	private static void drawDeviceMenu(Graphics2D graphics, UiLayout layout, CameraAppVisualSnapshot state) {
 		UiRect panel = deviceMenuRect(layout);
 		fillRoundedRect(graphics, panel, clampInt(layout.unit(), 8, 18), new Color(12, 14, 18, 216));
@@ -1052,12 +1110,15 @@ final class MonitorCameraRuntime {
 
 	private static void drawDevicePicker(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, CameraAppVisualSnapshot state) {
 		UiRect panel = devicePickerPanelRect(layout);
-		fillRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 232));
-		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
+		boolean ultra = ultraCompactScreenLayout(layout);
+		fillRoundedRect(graphics, panel, ultra ? clampInt(layout.unit(), 6, 10) : clampInt(layout.unit() * 2, 14, 28), new Color(6, 10, 14, 232));
+		strokeRoundedRect(graphics, panel, ultra ? clampInt(layout.unit(), 6, 10) : clampInt(layout.unit() * 2, 14, 28), ultra ? 0.85F : 1.0F, new Color(255, 255, 255, 54));
 		drawOverlayCloseButton(graphics, devicePickerCloseRect(layout), layout);
 		UiRect title = devicePickerTitleRect(layout);
-		drawVerticalText(graphics, "УСТРОЙСТВА", new UiRect(title.x(), title.y(), title.width() / 2, title.height()), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
-		drawCenteredTextFitted(graphics, deviceCountLabel(state), new UiRect(title.x() + title.width() / 2, title.y(), title.width() / 2, title.height()), new Color(188, 204, 218, 224), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 5);
+		if (!ultra) {
+			drawVerticalText(graphics, "УСТРОЙСТВА", new UiRect(title.x(), title.y(), title.width() / 2, title.height()), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
+			drawCenteredTextFitted(graphics, deviceCountLabel(state), new UiRect(title.x() + title.width() / 2, title.y(), title.width() / 2, title.height()), new Color(188, 204, 218, 224), Font.PLAIN, clampInt(layout.unit() - 2, 7, 11), 5);
+		}
 
 		UiRect cameraTitle = devicePickerCameraTitleRect(layout);
 		List<CameraAppDeviceSnapshot> cameras = state.cameras();
@@ -1075,7 +1136,9 @@ final class MonitorCameraRuntime {
 			drawPickerScrollButton(graphics, cameraPickerScrollRightRect(layout), -Math.PI / 2.0D, layout, cameraScroll + cameraCapacity < cameras.size());
 		}
 		if (cameras == null || cameras.isEmpty()) {
-			drawCenteredText(graphics, "Подключи камеру или дрон к экрану", devicePickerCameraGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			if (!ultra) {
+				drawCenteredText(graphics, "Подключи камеру или дрон к экрану", devicePickerCameraGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			}
 		} else {
 			int baseIndex = cameraVisualScroll.anchorIndex();
 			int xOffset = -(int) Math.round(cameraVisualScroll.fraction() * cameraPickerCellStep(layout));
@@ -1098,15 +1161,19 @@ final class MonitorCameraRuntime {
 				if (camera.selected()) {
 					strokeRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), 1.5F, new Color(255, 255, 255, 172));
 				}
-				UiRect label = new UiRect(rect.x() + layout.unit() / 2, rect.bottom() - clampInt(layout.unit() * 3, 24, 38), rect.width() - layout.unit(), clampInt(layout.unit() * 2, 18, 28));
-				fillRoundedRect(graphics, label, label.height(), new Color(0, 0, 0, 112));
-				drawCenteredTextFitted(graphics, camera.title() + " " + camera.subtitle(), label.inset(2), camera.online() ? new Color(248, 251, 255, 238) : new Color(248, 251, 255, 136), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
+				if (!ultra) {
+					UiRect label = new UiRect(rect.x() + layout.unit() / 2, rect.bottom() - clampInt(layout.unit() * 3, 24, 38), rect.width() - layout.unit(), clampInt(layout.unit() * 2, 18, 28));
+					fillRoundedRect(graphics, label, label.height(), new Color(0, 0, 0, 112));
+					drawCenteredTextFitted(graphics, camera.title() + " " + camera.subtitle(), label.inset(2), camera.online() ? new Color(248, 251, 255, 238) : new Color(248, 251, 255, 136), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
+				}
 			}
 			graphics.setClip(previousClip);
 		}
 
 		UiRect microphoneTitle = devicePickerMicrophoneTitleRect(layout);
-		drawVerticalText(graphics, "МИКРОФОНЫ " + (state.microphones() != null ? state.microphones().size() : 0), microphoneTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		if (!ultra) {
+			drawVerticalText(graphics, "МИКРОФОНЫ " + (state.microphones() != null ? state.microphones().size() : 0), microphoneTitle, new Color(188, 204, 218, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11));
+		}
 		List<CameraAppDeviceSnapshot> microphones = state.microphones();
 		int microphoneCapacity = devicePickerMicrophoneCapacity(layout);
 		int microphoneScroll = clampInt(state.microphoneScroll(), 0, Math.max(0, (microphones == null ? 0 : microphones.size()) - microphoneCapacity));
@@ -1122,7 +1189,9 @@ final class MonitorCameraRuntime {
 			drawPickerScrollButton(graphics, microphonePickerScrollDownRect(layout), 0.0D, layout, microphoneScroll + microphoneCapacity < microphones.size());
 		}
 		if (microphones == null || microphones.isEmpty()) {
-			drawCenteredText(graphics, "Подключи микрофон к экрану", devicePickerMicrophoneListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			if (!ultra) {
+				drawCenteredText(graphics, "Подключи микрофон к экрану", devicePickerMicrophoneListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
+			}
 			return;
 		}
 		int microphoneBaseIndex = microphoneVisualScroll.anchorIndex();
@@ -1142,11 +1211,12 @@ final class MonitorCameraRuntime {
 	}
 
 	private static void drawDevicePickerMicrophoneRow(Graphics2D graphics, UiLayout layout, UiRect rect, CameraAppDeviceSnapshot microphone) {
-		int arc = clampInt(layout.unit(), 8, 16);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int arc = ultra ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit(), 8, 16);
 		fillRoundedRect(graphics, rect, arc, new Color(255, 255, 255, microphone.selected() ? 30 : 14));
-		strokeRoundedRect(graphics, rect, arc, 1.0F, microphone.selected() ? new Color(255, 255, 255, 128) : new Color(255, 255, 255, 42));
-		int iconSize = clampInt(layout.unit() * 2, 18, 28);
-		int gap = Math.max(4, layout.unit() / 2);
+		strokeRoundedRect(graphics, rect, arc, ultra ? 0.85F : 1.0F, microphone.selected() ? new Color(255, 255, 255, 128) : new Color(255, 255, 255, 42));
+		int iconSize = ultra ? Math.max(8, Math.min(12, rect.height() - 2)) : clampInt(layout.unit() * 2, 18, 28);
+		int gap = devicePickerCameraGap(layout);
 		UiRect check = new UiRect(rect.x() + gap, rect.y() + (rect.height() - iconSize) / 2, iconSize, iconSize);
 		Color checkColor = drawSmallMediaButtonBase(graphics, check, MediaButtonSegment.SINGLE, microphone.selected(), mediaChromeStrokeWidth(check));
 		if (microphone.selected()) {
@@ -1154,6 +1224,9 @@ final class MonitorCameraRuntime {
 		}
 		UiRect micIcon = new UiRect(check.right() + gap, rect.y() + (rect.height() - iconSize) / 2, iconSize, iconSize);
 		drawPlayerUiIcon(graphics, micIcon.inset(Math.max(2, layout.unit() / 5)), PlayerUiIcon.MIC, new Color(238, 244, 250, 214));
+		if (ultra) {
+			return;
+		}
 		UiRect textRect = new UiRect(micIcon.right() + gap, rect.y() + Math.max(2, layout.unit() / 4), Math.max(8, rect.right() - micIcon.right() - gap * 2), rect.height() - Math.max(4, layout.unit() / 2));
 		int titleHeight = Math.max(10, textRect.height() / 2);
 		drawWrappedText(graphics, microphone.title(), new UiRect(textRect.x(), textRect.y(), textRect.width(), titleHeight), new Color(248, 251, 255, 232), Font.BOLD, clampInt(layout.unit() - 1, 8, 13), 1);
@@ -1166,6 +1239,9 @@ final class MonitorCameraRuntime {
 
 	private static void drawPickerScrollStatus(Graphics2D graphics, UiRect titleRect, UiLayout layout, int offset, int visibleCount, int totalCount) {
 		if (totalCount <= visibleCount || visibleCount <= 0) {
+			return;
+		}
+		if (ultraCompactScreenLayout(layout)) {
 			return;
 		}
 		int width = clampInt(layout.unit() * 4, 30, 56);
@@ -1239,12 +1315,13 @@ final class MonitorCameraRuntime {
 
 	private static void drawModeWord(Graphics2D graphics, UiRect rect, String label, boolean active, UiLayout layout) {
 		Color color = active ? new Color(255, 255, 255, 245) : new Color(255, 255, 255, 128);
-		drawCenteredText(graphics, label, rect, color, active ? Font.BOLD : Font.PLAIN, clampInt(layout.unit(), 9, 15));
+		drawCenteredText(graphics, label, rect, color, active ? Font.BOLD : Font.PLAIN, ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 1, 6, 8) : clampInt(layout.unit(), 9, 15));
 		if (active) {
 			int underlineWidth = Math.max(rect.width() / 3, layout.unit());
 			int underlineX = rect.x() + (rect.width() - underlineWidth) / 2;
 			graphics.setColor(new Color(236, 46, 58, 220));
-			graphics.fillRoundRect(underlineX, rect.bottom() - Math.max(2, layout.unit() / 5), underlineWidth, Math.max(2, layout.unit() / 6), 4, 4);
+			int lineHeight = ultraCompactScreenLayout(layout) ? 1 : Math.max(2, layout.unit() / 6);
+			graphics.fillRoundRect(underlineX, rect.bottom() - Math.max(1, layout.unit() / 5), underlineWidth, lineHeight, 4, 4);
 		}
 	}
 
@@ -1262,10 +1339,10 @@ final class MonitorCameraRuntime {
 		}
 		UiRect rect = recordingPillRect(layout);
 		fillRoundedRect(graphics, rect, rect.height(), new Color(10, 12, 16, 164));
-		int dotSize = Math.max(5, rect.height() / 3);
+		int dotSize = ultraCompactScreenLayout(layout) ? Math.max(3, rect.height() / 3) : Math.max(5, rect.height() / 3);
 		graphics.setColor(new Color(236, 46, 58, 245));
 		graphics.fillOval(rect.x() + rect.height() / 3, rect.y() + (rect.height() - dotSize) / 2, dotSize, dotSize);
-		drawVerticalText(graphics, formatCameraTime(state.elapsedMs()), new UiRect(rect.x() + rect.height(), rect.y(), rect.width() - rect.height(), rect.height()), new Color(255, 255, 255, 235), Font.BOLD, clampInt(layout.unit() - 1, 9, 14));
+		drawVerticalText(graphics, formatCameraTime(state.elapsedMs()), new UiRect(rect.x() + rect.height(), rect.y(), rect.width() - rect.height(), rect.height()), new Color(255, 255, 255, 235), Font.BOLD, ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 1, 6, 8) : clampInt(layout.unit() - 1, 9, 14));
 	}
 
 	private static UiRect previewRect(UiLayout layout) {
@@ -1274,6 +1351,10 @@ final class MonitorCameraRuntime {
 
 	private static UiRect devicePickerPanelRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
+		if (ultraCompactScreenLayout(layout)) {
+			int inset = Math.max(2, layout.unit() / 3);
+			return new UiRect(canvas.x() + inset, canvas.y() + inset, canvas.width() - inset * 2, canvas.height() - inset * 2);
+		}
 		return new UiRect(canvas.x() + layout.unit(), canvas.y() + clampInt(layout.unit() * 3, 24, 48), canvas.width() - layout.unit() * 2, canvas.height() - clampInt(layout.unit() * 4, 32, 60));
 	}
 
@@ -1291,7 +1372,7 @@ final class MonitorCameraRuntime {
 
 	private static UiRect devicePickerCameraTitleRect(UiLayout layout) {
 		UiRect content = devicePickerContentRect(layout);
-		int height = clampInt(layout.unit() + 4, 14, 22);
+		int height = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 3, 7, 8) : clampInt(layout.unit() + 4, 14, 22);
 		return new UiRect(content.x(), content.y(), content.width(), height);
 	}
 
@@ -1306,21 +1387,21 @@ final class MonitorCameraRuntime {
 	private static UiRect devicePickerMicrophoneTitleRect(UiLayout layout) {
 		UiRect cameraGrid = devicePickerCameraGridRect(layout);
 		UiRect content = devicePickerContentRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
-		int height = clampInt(layout.unit() + 4, 14, 22);
+		int gap = devicePickerCameraGap(layout);
+		int height = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 3, 7, 8) : clampInt(layout.unit() + 4, 14, 22);
 		return new UiRect(content.x(), cameraGrid.bottom() + gap, content.width(), height);
 	}
 
 	private static UiRect devicePickerMicrophoneListRect(UiLayout layout) {
 		UiRect content = devicePickerContentRect(layout);
 		UiRect title = devicePickerMicrophoneTitleRect(layout);
-		int gap = Math.max(4, layout.unit() / 2);
+		int gap = devicePickerCameraGap(layout);
 		return new UiRect(content.x(), title.bottom() + gap, content.width(), Math.max(18, content.bottom() - title.bottom() - gap));
 	}
 
 	private static UiRect pickerScrollButtonRect(UiRect titleRect, int indexFromRight, UiLayout layout) {
 		int gap = devicePickerCameraGap(layout);
-		int size = Math.min(titleRect.height(), clampInt(layout.unit() * 2, 18, 30));
+		int size = Math.min(titleRect.height(), ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 3, 7, 8) : clampInt(layout.unit() * 2, 18, 30));
 		int x = titleRect.right() - size - indexFromRight * (size + gap);
 		return new UiRect(x, titleRect.y(), size, titleRect.height());
 	}
@@ -1342,13 +1423,19 @@ final class MonitorCameraRuntime {
 	}
 
 	private static int devicePickerCameraGap(UiLayout layout) {
-		return Math.max(4, layout.unit() / 2);
+		return ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : Math.max(4, layout.unit() / 2);
 	}
 
 	private static int devicePickerCameraHeight(UiLayout layout) {
 		UiRect content = devicePickerContentRect(layout);
 		UiRect title = devicePickerCameraTitleRect(layout);
 		int gap = devicePickerCameraGap(layout);
+		if (ultraCompactScreenLayout(layout)) {
+			int microphoneTitleHeight = clampInt(layout.unit() + 3, 7, 8);
+			int available = Math.max(36, content.height() - title.height() - microphoneTitleHeight - gap * 3);
+			int preferred = (int) Math.round(available * 0.44D);
+			return clampInt(preferred, 28, Math.max(28, available - 18));
+		}
 		int preferred = Math.max(clampInt(layout.unit() * 7, 56, 112), (content.height() - title.height() - gap * 3) / 2);
 		return Math.min(preferred, Math.max(18, content.bottom() - title.bottom() - gap));
 	}
@@ -1405,7 +1492,7 @@ final class MonitorCameraRuntime {
 	}
 
 	private static int devicePickerMicrophoneRowHeight(UiLayout layout) {
-		return clampInt(layout.unit() * 3, 28, 44);
+		return ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 3 + 1, 16, 18) : clampInt(layout.unit() * 3, 28, 44);
 	}
 
 	private static UiRect devicePickerMicrophoneRowRect(UiLayout layout, int index) {
@@ -1495,6 +1582,11 @@ final class MonitorCameraRuntime {
 		return new UiRect(layout.canvasWidth() - close.width() - layout.unit() / 2, close.y(), close.width(), close.height());
 	}
 
+	private static UiRect cameraDroneControlButtonRect(UiLayout layout) {
+		UiRect menu = cameraMenuButtonRect(layout);
+		return new UiRect(menu.x(), menu.bottom() + gap(layout), menu.width(), menu.height());
+	}
+
 	private static UiRect deviceMenuRect(UiLayout layout) {
 		UiRect menu = cameraMenuButtonRect(layout);
 		int width = Math.max(layout.unit() * 12, layout.canvasWidth() / 4);
@@ -1504,8 +1596,8 @@ final class MonitorCameraRuntime {
 
 	private static UiRect modeDockRect(UiLayout layout) {
 		int width = Math.min(layout.canvasWidth() - layout.unit() * 2, Math.max(layout.unit() * 15, layout.canvasWidth() / 3));
-		int recordSize = clampInt(layout.unit() * 4, 36, 64);
-		int wordHeight = clampInt(layout.unit() * 2, 18, 32);
+		int recordSize = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 4, 18, 20) : clampInt(layout.unit() * 4, 36, 64);
+		int wordHeight = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 2, 10, 12) : clampInt(layout.unit() * 2, 18, 32);
 		int height = recordSize + gap(layout) + wordHeight;
 		return new UiRect((layout.canvasWidth() - width) / 2, layout.canvasHeight() - height - layout.unit(), width, height);
 	}
@@ -1530,13 +1622,13 @@ final class MonitorCameraRuntime {
 
 	private static UiRect recordButtonRect(UiLayout layout) {
 		UiRect dock = modeDockRect(layout);
-		int size = clampInt(layout.unit() * 4, 36, 64);
+		int size = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 4, 18, 20) : clampInt(layout.unit() * 4, 36, 64);
 		return new UiRect(dock.x() + (dock.width() - size) / 2, dock.y(), size, size);
 	}
 
 	private static UiRect pauseButtonRect(UiLayout layout) {
 		UiRect record = recordButtonRect(layout);
-		int size = Math.max(24, record.width() * 3 / 4);
+		int size = ultraCompactScreenLayout(layout) ? Math.max(12, record.width() * 3 / 4) : Math.max(24, record.width() * 3 / 4);
 		return new UiRect(record.x() - size - gap(layout), record.y() + (record.height() - size) / 2, size, size);
 	}
 
@@ -1546,14 +1638,14 @@ final class MonitorCameraRuntime {
 	}
 
 	private static UiRect recordingPillRect(UiLayout layout) {
-		int width = clampInt(layout.unit() * 7, 58, 104);
-		int height = clampInt(layout.unit() * 2, 18, 30);
+		int width = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 7, 34, 42) : clampInt(layout.unit() * 7, 58, 104);
+		int height = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2, 18, 30);
 		UiRect close = mediaCloseRect(layout);
 		return new UiRect(close.right() + gap(layout), close.y() + (close.height() - height) / 2, width, height);
 	}
 
 	private static int gap(UiLayout layout) {
-		return Math.max(4, layout.unit() / 2);
+		return ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : Math.max(4, layout.unit() / 2);
 	}
 
 	private static void drawStopGlyph(Graphics2D graphics, UiRect rect, Color color) {

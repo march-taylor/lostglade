@@ -464,7 +464,7 @@ public final class MonitorMediaApp implements MonitorApp {
 				Math.max(1, metadata.width()),
 				Math.max(1, metadata.height()),
 				input,
-				input
+				metadata.hasAudioStream() ? input : ""
 		);
 	}
 
@@ -1317,10 +1317,8 @@ public final class MonitorMediaApp implements MonitorApp {
 				ffprobeBin(),
 				"-v",
 				"error",
-				"-select_streams",
-				"v:0",
 				"-show_entries",
-				"stream=width,height:format=duration",
+				"stream=codec_type,width,height:format=duration",
 				"-of",
 				"json",
 				input
@@ -1331,10 +1329,21 @@ public final class MonitorMediaApp implements MonitorApp {
 				: null;
 		int width = 0;
 		int height = 0;
-		if (streams != null && !streams.isEmpty() && streams.get(0).isJsonObject()) {
-			JsonObject stream = streams.get(0).getAsJsonObject();
-			width = getInt(stream, "width", 0);
-			height = getInt(stream, "height", 0);
+		boolean hasAudioStream = false;
+		if (streams != null) {
+			for (int index = 0; index < streams.size(); index++) {
+				if (!streams.get(index).isJsonObject()) {
+					continue;
+				}
+				JsonObject stream = streams.get(index).getAsJsonObject();
+				String codecType = getString(stream, "codec_type", "");
+				if ("video".equalsIgnoreCase(codecType) && width <= 0 && height <= 0) {
+					width = getInt(stream, "width", 0);
+					height = getInt(stream, "height", 0);
+				} else if ("audio".equalsIgnoreCase(codecType)) {
+					hasAudioStream = true;
+				}
+			}
 		}
 		JsonObject format = root != null && root.has("format") && root.get("format").isJsonObject()
 				? root.getAsJsonObject("format")
@@ -1343,7 +1352,7 @@ public final class MonitorMediaApp implements MonitorApp {
 		if (width <= 0 || height <= 0) {
 			throw new IOException("Unsupported video");
 		}
-		return new VideoMetadata(width, height, Math.max(0L, durationMs));
+		return new VideoMetadata(width, height, Math.max(0L, durationMs), hasAudioStream);
 	}
 
 	private static AudioMetadata probeAudioMetadata(String input, String fallbackTitle) throws IOException {
@@ -1830,7 +1839,7 @@ public final class MonitorMediaApp implements MonitorApp {
 	private record DownloadToFileResult(Path tempPath, String mediaKey) {
 	}
 
-	private record VideoMetadata(int width, int height, long durationMs) {
+	private record VideoMetadata(int width, int height, long durationMs, boolean hasAudioStream) {
 	}
 
 	private record AudioMetadata(String title, String artist, long durationMs) {

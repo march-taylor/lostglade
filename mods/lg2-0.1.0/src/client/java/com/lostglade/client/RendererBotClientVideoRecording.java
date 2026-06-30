@@ -625,7 +625,8 @@ public final class RendererBotClientVideoRecording {
 				payload.expectedPitch(),
 				payload.fovDegrees(),
 				captureWidth,
-				captureHeight
+				captureHeight,
+				false
 		);
 	}
 

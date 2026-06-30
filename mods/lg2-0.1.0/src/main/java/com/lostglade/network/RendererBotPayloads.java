@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 14;
+	public static final int PROTOCOL_VERSION = 15;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
@@ -37,6 +37,7 @@ public final class RendererBotPayloads {
 		PayloadTypeRegistry.playC2S().register(RendererBotAudioCaptureFailureC2SPayload.TYPE, RendererBotAudioCaptureFailureC2SPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotCaptureRequestS2CPayload.TYPE, RendererBotCaptureRequestS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotLiveStreamStartS2CPayload.TYPE, RendererBotLiveStreamStartS2CPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playS2C().register(RendererBotLiveStreamPoseS2CPayload.TYPE, RendererBotLiveStreamPoseS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotLiveStreamStopS2CPayload.TYPE, RendererBotLiveStreamStopS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotVideoRecordingStartS2CPayload.TYPE, RendererBotVideoRecordingStartS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotVideoRecordingStopS2CPayload.TYPE, RendererBotVideoRecordingStopS2CPayload.STREAM_CODEC);
@@ -252,6 +253,44 @@ public final class RendererBotPayloads {
 
 		@Override
 		public Type<RendererBotLiveStreamStopS2CPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotLiveStreamPoseS2CPayload(
+			UUID streamId,
+			double x,
+			double y,
+			double z,
+			float yaw,
+			float pitch
+	) implements CustomPacketPayload {
+		public static final Type<RendererBotLiveStreamPoseS2CPayload> TYPE = new Type<>(id("renderer_bot_live_stream_pose"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotLiveStreamPoseS2CPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotLiveStreamPoseS2CPayload::write, RendererBotLiveStreamPoseS2CPayload::new);
+
+		public RendererBotLiveStreamPoseS2CPayload(FriendlyByteBuf buffer) {
+			this(
+					buffer.readUUID(),
+					buffer.readDouble(),
+					buffer.readDouble(),
+					buffer.readDouble(),
+					buffer.readFloat(),
+					buffer.readFloat()
+			);
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUUID(this.streamId);
+			buffer.writeDouble(this.x);
+			buffer.writeDouble(this.y);
+			buffer.writeDouble(this.z);
+			buffer.writeFloat(this.yaw);
+			buffer.writeFloat(this.pitch);
+		}
+
+		@Override
+		public Type<RendererBotLiveStreamPoseS2CPayload> type() {
 			return TYPE;
 		}
 	}

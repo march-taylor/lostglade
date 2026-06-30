@@ -200,10 +200,19 @@ tasks.register("runYandexMapTopDownRenderTest", JavaExec) {
 	dependsOn(tasks.named("testClasses"))
 }
 
+tasks.register("runDroneScreenLinkPolicyTest", JavaExec) {
+	group = "verification"
+	description = "Runs powered screen-link and unloaded drone control regression checks."
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = "com.lostglade.server.DroneScreenLinkPolicyTest"
+	dependsOn(tasks.named("testClasses"))
+}
+
 tasks.named("check") {
 	dependsOn(tasks.named("runDronePhysicsSimulationTest"))
 	dependsOn(tasks.named("runMonitorMediaStateMachineTest"))
 	dependsOn(tasks.named("runYandexMapTopDownRenderTest"))
+	dependsOn(tasks.named("runDroneScreenLinkPolicyTest"))
 }
 
 java {

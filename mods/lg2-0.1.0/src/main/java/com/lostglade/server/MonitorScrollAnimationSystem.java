@@ -42,6 +42,21 @@ final class MonitorScrollAnimationSystem {
 		}
 	}
 
+	static void snap(ScreenRuntimeKey runtimeKey, ScrollChannel channel, int target) {
+		if (runtimeKey == null || channel == null) {
+			return;
+		}
+		long now = System.nanoTime();
+		ScrollAnimationKey key = new ScrollAnimationKey(runtimeKey, channel);
+		ScrollAnimationState state = STATES.computeIfAbsent(key, ignored -> new ScrollAnimationState(target, now));
+		synchronized (state) {
+			state.value = target;
+			state.target = target;
+			state.lastUpdateAtNanos = now;
+			state.lastTouchedAtNanos = now;
+		}
+	}
+
 	static void tick(MinecraftServer server) {
 		if (server == null || STATES.isEmpty()) {
 			return;
@@ -115,6 +130,7 @@ final class MonitorScrollAnimationSystem {
 		MAX_AVATAR_PICKER,
 		MAX_RINGTONE_PICKER,
 		MAX_FILE_SHARE_PICKER,
+		MAX_NOTIFICATION_FEED,
 		MAX_CALL_MINI_PARTICIPANTS,
 		MAX_CALL_CAMERA_PICKER,
 		MAX_CALL_MICROPHONE_PICKER,

@@ -93,6 +93,8 @@ import java.awt.Paint;
 import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.Stroke;
+import java.awt.geom.Area;
+import java.awt.geom.Ellipse2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
@@ -592,7 +594,7 @@ public final class MonitorScreenSystem {
 			}
 		}
 		for (ScreenRuntimeKey replaced : replacedRuntimes) {
-			removeCachedRuntime(state, replaced, component.runtimeKey());
+			removeCachedRuntime(level.getServer(), state, replaced, component.runtimeKey(), false);
 			closeMediaSession(level.getServer(), replaced);
 		}
 		if (previousComponent != null) {
@@ -624,7 +626,7 @@ public final class MonitorScreenSystem {
 		if (level == null || runtimeKey == null) {
 			return;
 		}
-		ScreenComponent removed = removeCachedRuntime(levelState(level.dimension()), runtimeKey, null);
+		ScreenComponent removed = removeCachedRuntime(level.getServer(), levelState(level.dimension()), runtimeKey, null, permanentRemoval);
 		if (removed == null) {
 			if (removedFrameKey != null) {
 				enqueueNeighborSync(level, removedFrameKey.pos(), removedFrameKey.direction());
@@ -652,7 +654,7 @@ public final class MonitorScreenSystem {
 		}
 	}
 
-	static ScreenComponent removeCachedRuntime(MonitorLevelState state, ScreenRuntimeKey runtimeKey, ScreenRuntimeKey replacementKey) {
+	static ScreenComponent removeCachedRuntime(MinecraftServer server, MonitorLevelState state, ScreenRuntimeKey runtimeKey, ScreenRuntimeKey replacementKey, boolean contentDestroyed) {
 		if (state == null || runtimeKey == null) {
 			return null;
 		}
@@ -660,7 +662,7 @@ public final class MonitorScreenSystem {
 		if (removed == null) {
 			return null;
 		}
-		MonitorMaxRuntime.closeRuntime(null, runtimeKey);
+		MonitorMaxRuntime.closeRuntime(server, runtimeKey, contentDestroyed);
 		state.connectedCameraPositions().remove(runtimeKey);
 		for (ItemFrame frame : removed.frameCoords().keySet()) {
 			ScreenKey frameKey = new ScreenKey(frame.blockPosition(), frame.getDirection());
@@ -1455,6 +1457,7 @@ public final class MonitorScreenSystem {
 				&& forcedLauncherPage == null
 				&& shouldResetToHomeAfterPhysicalInteraction(component, powered)) {
 			resetMediaSessionsForPhysicalInteraction(level.getServer(), component.runtimeKey(), previousRuntimeKeys);
+			resetAuxiliaryAppRuntimesForPhysicalInteraction(level.getServer(), component.runtimeKey(), previousRuntimeKeys);
 			viewMode = ScreenViewMode.HOME;
 			launcherPage = 0;
 		}
@@ -1467,6 +1470,7 @@ public final class MonitorScreenSystem {
 			viewMode = ScreenViewMode.HOME;
 			launcherPage = 0;
 			resetMediaSessionForPowerOff(level.getServer(), component.runtimeKey(), persistedGallery, persistedWallpaper, persistedPlayerBackground, persistedPlayerBackgroundMode);
+			deactivateAuxiliaryAppRuntimes(level.getServer(), component.runtimeKey());
 		}
 		int effectiveLauncherPage = viewMode == ScreenViewMode.HOME
 				? clampInt(launcherPage, 0, homeMaxScroll(createUiLayout(component.width(), component.height())))
@@ -1628,6 +1632,37 @@ public final class MonitorScreenSystem {
 		}
 		if (resetCurrent && currentRuntimeKey != null && MEDIA_STATES.containsKey(currentRuntimeKey)) {
 			deactivateMediaSession(server, currentRuntimeKey);
+		}
+	}
+
+	static void deactivateAuxiliaryAppRuntimes(MinecraftServer server, ScreenRuntimeKey key) {
+		if (key == null) {
+			return;
+		}
+		MonitorMaxRuntime.deactivateRuntime(server, key);
+		MonitorYandexMapsRuntime.deactivateRuntime(key);
+		MonitorCameraRuntime.deactivateRuntime(key);
+	}
+
+	static void resetAuxiliaryAppRuntimesForPhysicalInteraction(
+			MinecraftServer server,
+			ScreenRuntimeKey currentRuntimeKey,
+			Set<ScreenRuntimeKey> previousRuntimeKeys
+	) {
+		boolean resetCurrent = previousRuntimeKeys == null || previousRuntimeKeys.isEmpty();
+		if (previousRuntimeKeys != null) {
+			for (ScreenRuntimeKey previousRuntimeKey : previousRuntimeKeys) {
+				if (previousRuntimeKey == null) {
+					continue;
+				}
+				deactivateAuxiliaryAppRuntimes(server, previousRuntimeKey);
+				if (previousRuntimeKey.equals(currentRuntimeKey)) {
+					resetCurrent = false;
+				}
+			}
+		}
+		if (resetCurrent) {
+			deactivateAuxiliaryAppRuntimes(server, currentRuntimeKey);
 		}
 	}
 
@@ -2326,10 +2361,34 @@ public final class MonitorScreenSystem {
 
 		ItemStack replacement = createScreenMap(level, state);
 		if (!replacement.isEmpty()) {
+			copyPersistedMediaState(stack, replacement);
 			frame.setItem(replacement, false);
 			return replacement;
 		}
 		return stack;
+	}
+
+	static void copyPersistedMediaState(ItemStack source, ItemStack target) {
+		if (source == null || source.isEmpty() || target == null || target.isEmpty()) {
+			return;
+		}
+		CustomData customData = source.get(DataComponents.CUSTOM_DATA);
+		if (customData == null) {
+			return;
+		}
+		CompoundTag sourceRoot = customData.copyTag();
+		CustomData.update(DataComponents.CUSTOM_DATA, target, targetRoot -> copyPersistedMediaTag(sourceRoot, targetRoot));
+	}
+
+	static void copyPersistedMediaTag(CompoundTag sourceRoot, CompoundTag targetRoot) {
+		if (sourceRoot == null || targetRoot == null || !sourceRoot.contains(PERSISTED_MEDIA_ROOT_TAG)) {
+			return;
+		}
+		CompoundTag mediaTag = sourceRoot.getCompoundOrEmpty(PERSISTED_MEDIA_ROOT_TAG);
+		if (mediaTag.isEmpty()) {
+			return;
+		}
+		targetRoot.put(PERSISTED_MEDIA_ROOT_TAG, mediaTag.copy());
 	}
 
 	static ItemStack createScreenMap(ServerLevel level, ScreenTileState state) {
@@ -2499,7 +2558,7 @@ public final class MonitorScreenSystem {
 		}
 		return new PersistedPlayerBackgroundState(
 				url,
-				parsePersistedScaleMode(mediaTag.getStringOr(PERSISTED_PLAYER_BACKGROUND_SCALE_TAG, MediaScaleMode.FIT.name()))
+				parsePersistedScaleMode(mediaTag.getStringOr(PERSISTED_PLAYER_BACKGROUND_SCALE_TAG, MediaScaleMode.FILL.name()))
 		);
 	}
 
@@ -2765,7 +2824,7 @@ public final class MonitorScreenSystem {
 
 	static MediaVisualSnapshot captureMediaSnapshot(MinecraftServer server, MediaRuntimeState state, ScreenComponent component) {
 		if (state == null) {
-			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, null, false, true, false, false, 0, false, false, false, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, MediaScaleMode.FIT, PlayerBackgroundMode.BLACK, false, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, false, 0, -1, null);
+			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, null, false, true, false, false, 0, false, false, false, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, MediaScaleMode.FIT, PlayerBackgroundMode.BLACK, false, "", "ВСТАВЬ URL", "", "", null, WindowedSnapshot.empty(), WindowedSnapshot.empty(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, false, 0, -1, null);
 		}
 		boolean youtubeMode = state.mode == ScreenViewMode.YOUTUBE;
 		boolean youtubeMusicMode = state.mode == ScreenViewMode.YOUTUBE_MUSIC;
@@ -2778,10 +2837,13 @@ public final class MonitorScreenSystem {
 		boolean galleryBackedYoutube = isGalleryBackedYoutubeLocked(state);
 		boolean streamPlayback = isStreamPlaybackLocked(state);
 		boolean liveCameraPlayback = state.streamKind == PlaybackStreamKind.LIVE_CAMERA;
+		UiLayout snapshotLayout = component != null ? createUiLayout(component.width(), component.height()) : null;
 		BufferedImage liveControlsFrame = liveCameraPlayback && state.overlayMode == MediaOverlayMode.CONTROLS && component != null
 				? mapPaletteImage(state.liveCameraBufferedTiles, component.width(), component.height())
 				: null;
-		List<GalleryCardSnapshot> galleryCards = galleryBrowser ? galleryCardSnapshots(server, component, state) : List.of();
+		WindowedSnapshot<GalleryCardSnapshot> galleryCards = galleryBrowser
+				? galleryCardSnapshots(server, component, state, component != null ? component.runtimeKey() : null, snapshotLayout)
+				: WindowedSnapshot.empty();
 		BufferedImage frame = streamPlayback
 				? liveControlsFrame != null ? liveControlsFrame : state.streamFrame
 				: !galleryBrowser && state.loadedMedia != null ? state.loadedMedia.frame(state.frameIndex) : null;
@@ -2793,7 +2855,7 @@ public final class MonitorScreenSystem {
 				: null;
 		boolean hasMedia = streamPlayback
 				? hasDisplayableMediaLocked(state)
-				: galleryBrowser ? !galleryCards.isEmpty() : state.loadedMedia != null;
+				: galleryBrowser ? galleryCards.totalCount() > 0 : state.loadedMedia != null;
 		boolean playbackControlsVisible = mediaControlUiVisibleLocked(state);
 		boolean timelineVisible = (streamPlayback && !liveCameraPlayback) || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.frameCount() > 1);
 		boolean centerPlayPauseVisible = (streamPlayback && !liveCameraPlayback) || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.animated());
@@ -2818,7 +2880,6 @@ public final class MonitorScreenSystem {
 				? state.liveStream ? "LIVE" : formatPlaybackTime(state.positionMs) + " / " + formatPlaybackTime(state.durationMs)
 				: (!galleryBrowser && timelineCount > 0 ? (timelineIndex + 1) + "/" + Math.max(1, timelineCount) : "");
 		boolean youtubeQueueWindowOpen = youtubeFamilyMode && state.youtubeQueueOpen;
-		List<YoutubeQueueItemSnapshot> queueItems = youtubeQueueWindowOpen ? youtubeQueueSnapshots(state) : List.of();
 		MediaActionGlyph actionGlyph = resolvedActionGlyph(state);
 		MediaActionVisualState actionState = resolvedActionVisualState(state);
 		boolean actionVisible = resolvedActionVisible(state);
@@ -2839,7 +2900,7 @@ public final class MonitorScreenSystem {
 						playerBackgroundScaleButtonModeLocked(state, playerBackgroundMode)
 				)
 				: youtubeQueueWindowOpen
-				? youtubeQueueWindowSnapshot(state, queueItems)
+				? youtubeQueueWindowSnapshot(component.runtimeKey(), state, snapshotLayout)
 				: galleryMode && state.galleryDeleteConfirmOpen
 				? galleryDeleteConfirmWindowSnapshot(state)
 				: null;
@@ -2874,7 +2935,7 @@ public final class MonitorScreenSystem {
 				isPlaybackPausedLocked(state),
 				state.overlayMode,
 				state.scaleMode,
-				state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FIT,
+				state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FILL,
 				playerBackgroundMode,
 				galleryBackgroundAvailable,
 				state.statusText,
@@ -2882,7 +2943,7 @@ public final class MonitorScreenSystem {
 				state.mediaTitle != null ? state.mediaTitle : "",
 				state.mediaSubtitle != null ? state.mediaSubtitle : "",
 				state.progress.snapshot(),
-				queueItems,
+				WindowedSnapshot.empty(),
 				galleryCards,
 				actionVisible,
 				actionGlyph,
@@ -3516,10 +3577,11 @@ public final class MonitorScreenSystem {
 			drawGalleryHeaderIconButton(graphics, selectionRect, layout, selectionMode ? PlayerUiIcon.CHECKBOX_FILL : PlayerUiIcon.CHECKBOX_LINE, selectionMode, MediaButtonSegment.RIGHT);
 		}
 
-		List<GalleryCardSnapshot> cards = state != null ? state.galleryCards() : List.of();
+		WindowedSnapshot<GalleryCardSnapshot> cardsWindow = state != null ? state.galleryCards() : WindowedSnapshot.empty();
+		List<GalleryCardSnapshot> cards = cardsWindow.items();
 		int columns = mediaGalleryColumns(layout);
 		int visibleRows = mediaGalleryVisibleRows(layout);
-		int totalRows = mediaGalleryTotalRows(cards.size(), layout);
+		int totalRows = mediaGalleryTotalRows(cardsWindow.totalCount(), layout);
 		int scroll = state != null ? clampInt(state.mediaListScroll(), 0, Math.max(0, totalRows - visibleRows)) : 0;
 		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
 				runtimeKey,
@@ -3548,7 +3610,8 @@ public final class MonitorScreenSystem {
 			try {
 				for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
 					for (int column = 0; column < columns; column++) {
-						int index = (baseRow + visibleRow) * columns + column;
+						int absoluteIndex = (baseRow + visibleRow) * columns + column;
+						int index = absoluteIndex - cardsWindow.windowStartIndex();
 						if (index < 0 || index >= cards.size()) {
 							continue;
 						}
@@ -3585,7 +3648,8 @@ public final class MonitorScreenSystem {
 	) {
 		drawMediaCloseButton(graphics, closeRect, layout, MediaButtonSegment.LEFT);
 
-		List<GalleryCardSnapshot> cards = state != null ? state.galleryCards() : List.of();
+		WindowedSnapshot<GalleryCardSnapshot> cardsWindow = state != null ? state.galleryCards() : WindowedSnapshot.empty();
+		List<GalleryCardSnapshot> cards = cardsWindow.items();
 		int cameraCount = 0;
 		int droneCount = 0;
 		for (GalleryCardSnapshot card : cards) {
@@ -3634,7 +3698,7 @@ public final class MonitorScreenSystem {
 
 		int columns = mediaGalleryColumns(layout);
 		int visibleRows = mediaGalleryVisibleRows(layout);
-		int totalRows = mediaGalleryTotalRows(cards.size(), layout);
+		int totalRows = mediaGalleryTotalRows(cardsWindow.totalCount(), layout);
 		int scroll = state != null ? clampInt(state.mediaListScroll(), 0, Math.max(0, totalRows - visibleRows)) : 0;
 		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
 				runtimeKey,
@@ -3656,7 +3720,8 @@ public final class MonitorScreenSystem {
 			try {
 				for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
 					for (int column = 0; column < columns; column++) {
-						int index = (baseRow + visibleRow) * columns + column;
+						int absoluteIndex = (baseRow + visibleRow) * columns + column;
+						int index = absoluteIndex - cardsWindow.windowStartIndex();
 						if (index < 0 || index >= cards.size()) {
 							continue;
 						}
@@ -3775,18 +3840,26 @@ public final class MonitorScreenSystem {
 		if (panel == null || layout == null) {
 			return new UiRect(0, 0, 0, 0);
 		}
-		int size = clampInt(layout.unit() * 2 + 4, 24, 36);
-		return new UiRect(panel.right() - size - layout.unit(), panel.y() + layout.unit(), size, size);
+		int size = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 2, 12, 18)
+				: clampInt(layout.unit() * 2 + 4, 24, 36);
+		int inset = ultraCompactScreenLayout(layout)
+				? Math.max(2, layout.unit() / 3)
+				: layout.unit();
+		return new UiRect(panel.right() - size - inset, panel.y() + inset, size, size);
 	}
 
 	static UiRect overlayPanelTitleRect(UiRect panel, UiRect closeRect, UiLayout layout) {
 		if (panel == null || closeRect == null || layout == null) {
 			return new UiRect(0, 0, 0, 0);
 		}
+		int inset = ultraCompactScreenLayout(layout)
+				? Math.max(2, layout.unit() / 3)
+				: layout.unit();
 		return new UiRect(
-				panel.x() + layout.unit(),
+				panel.x() + inset,
 				closeRect.y(),
-				Math.max(1, closeRect.x() - panel.x() - layout.unit() * 2),
+				Math.max(1, closeRect.x() - panel.x() - inset * 2),
 				closeRect.height()
 		);
 	}
@@ -3795,8 +3868,14 @@ public final class MonitorScreenSystem {
 		if (panel == null || closeRect == null || layout == null) {
 			return new UiRect(0, 0, 0, 0);
 		}
-		int y = closeRect.bottom() + Math.max(4, layout.unit() / 2);
-		return new UiRect(panel.x() + layout.unit(), y, panel.width() - layout.unit() * 2, Math.max(18, panel.bottom() - y - layout.unit()));
+		int inset = ultraCompactScreenLayout(layout)
+				? Math.max(2, layout.unit() / 3)
+				: layout.unit();
+		int gap = ultraCompactScreenLayout(layout)
+				? Math.max(1, layout.unit() / 4)
+				: Math.max(4, layout.unit() / 2);
+		int y = closeRect.bottom() + gap;
+		return new UiRect(panel.x() + inset, y, panel.width() - inset * 2, Math.max(18, panel.bottom() - y - inset));
 	}
 
 	static int clippedListCapacity(int viewportExtent, int itemExtent, int gap) {
@@ -3846,11 +3925,11 @@ public final class MonitorScreenSystem {
 	}
 
 	static void drawRoundMediaButtonBase(Graphics2D graphics, UiRect rect, Color fill) {
-		int arc = Math.min(rect.width(), rect.height());
+		Shape shape = mediaSingleButtonShape(rect);
 		if (fill != null && fill.getAlpha() > 0) {
-			fillRoundedRect(graphics, rect, arc, fill);
+			fillShape(graphics, shape, fill);
 		}
-		strokeRoundedRect(graphics, rect, arc, 1.0F, new Color(255, 255, 255, 44));
+		strokeShape(graphics, shape, 1.0F, new Color(255, 255, 255, 44));
 	}
 
 	static Color drawSmallMediaButtonBase(Graphics2D graphics, UiRect rect, MediaButtonSegment segment, boolean active, float strokeWidth) {
@@ -3876,8 +3955,9 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect mediaChromeIconRect(UiRect rect, UiLayout layout) {
-		int inset = clampInt(layout.unit() / 2, 4, 8);
-		int iconSize = clampInt(layout.unit() + 3, 11, 15);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int inset = ultra ? clampInt(layout.unit() / 3, 2, 4) : clampInt(layout.unit() / 2, 4, 8);
+		int iconSize = ultra ? clampInt(layout.unit() + 2, 7, 10) : clampInt(layout.unit() + 3, 11, 15);
 		iconSize = Math.min(iconSize, Math.max(8, Math.min(rect.width() - inset * 2, rect.height() - inset * 2)));
 		int offsetX = Math.max(0, iconSize / 14);
 		return new UiRect(
@@ -3889,7 +3969,11 @@ public final class MonitorScreenSystem {
 	}
 
 	static float mediaChromeStrokeWidth(UiRect rect) {
-		return clampFloat(Math.min(rect.width(), rect.height()) / 12.0F, 1.5F, 2.2F);
+		int minSide = Math.min(rect.width(), rect.height());
+		if (minSide <= 16) {
+			return clampFloat(minSide / 12.0F, 0.85F, 1.35F);
+		}
+		return clampFloat(minSide / 12.0F, 1.5F, 2.2F);
 	}
 
 	static MediaButtonSegment mediaButtonSegment(int index, int total) {
@@ -3912,8 +3996,16 @@ public final class MonitorScreenSystem {
 			case LEFT -> roundedRectShape(rect, outer, inner, inner, outer);
 			case MIDDLE -> roundedRectShape(rect, inner, inner, inner, inner);
 			case RIGHT -> roundedRectShape(rect, inner, outer, outer, inner);
-			case SINGLE -> roundedRectShape(rect, outer, outer, outer, outer);
+			case SINGLE -> mediaSingleButtonShape(rect);
 		};
+	}
+
+	static Shape mediaSingleButtonShape(UiRect rect) {
+		if (rect != null && Math.abs(rect.width() - rect.height()) <= 1) {
+			return new Ellipse2D.Float(rect.x(), rect.y(), rect.width(), rect.height());
+		}
+		int outer = rect != null ? Math.max(2, Math.min(rect.width(), rect.height()) / 2) : 2;
+		return roundedRectShape(rect, outer, outer, outer, outer);
 	}
 
 	static void drawMediaSearchBar(Graphics2D graphics, UiRect rect, String placeholder, boolean compact, UiLayout layout) {
@@ -3923,21 +4015,29 @@ public final class MonitorScreenSystem {
 	static void drawMediaSearchBar(Graphics2D graphics, UiRect rect, String placeholder, boolean compact, UiLayout layout, MediaButtonSegment segment) {
 		drawMediaHeaderControlBase(graphics, rect, segment);
 
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int iconSize = ultra ? clampInt(layout.unit() + 2, 7, 9) : clampInt(layout.unit() + 2, 10, 16);
+		int iconInset = ultra ? clampInt(layout.unit() / 3, 2, 4) : clampInt(layout.unit() / 2, 5, 10);
 		UiRect iconRect = new UiRect(
-				rect.x() + clampInt(layout.unit() / 2, 5, 10),
-				rect.y() + (rect.height() - clampInt(layout.unit() + 2, 10, 16)) / 2,
-				clampInt(layout.unit() + 2, 10, 16),
-				clampInt(layout.unit() + 2, 10, 16)
+				rect.x() + iconInset,
+				rect.y() + (rect.height() - iconSize) / 2,
+				iconSize,
+				iconSize
 		);
 		drawSearchGlyph(graphics, iconRect, new Color(248, 251, 255, compact ? 214 : 236));
 
+		int textGap = ultra ? Math.max(2, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
+		int rightReserve = ultra ? clampInt(layout.unit(), 4, 8) : clampInt(layout.unit() * 4, 20, 52);
 		UiRect textRect = new UiRect(
-				iconRect.right() + clampInt(layout.unit() / 2, 4, 8),
+				iconRect.right() + textGap,
 				rect.y(),
-				rect.right() - iconRect.right() - clampInt(layout.unit() * 4, 20, 52),
+				Math.max(4, rect.right() - iconRect.right() - textGap - rightReserve),
 				rect.height()
 		);
-		drawVerticalText(graphics, placeholder, textRect, new Color(248, 251, 255, compact ? 214 : 236), Font.BOLD, clampInt(layout.unit() - (compact ? 1 : 0), 9, compact ? 14 : 18));
+		int fontSize = ultra
+				? clampInt(layout.unit() + (compact ? 0 : 1), 6, 8)
+				: clampInt(layout.unit() - (compact ? 1 : 0), 9, compact ? 14 : 18);
+		drawVerticalText(graphics, placeholder, textRect, new Color(248, 251, 255, compact ? 214 : 236), Font.BOLD, fontSize);
 	}
 
 	static void drawMediaActionButton(Graphics2D graphics, UiRect rect, boolean deleteMode, UiLayout layout) {
@@ -3957,18 +4057,19 @@ public final class MonitorScreenSystem {
 	}
 
 	static void drawMediaTitleBar(Graphics2D graphics, UiRect rect, String title, UiLayout layout, MediaButtonSegment segment) {
+		boolean ultra = ultraCompactScreenLayout(layout);
 		drawVerticalText(
 				graphics,
 				(title == null || title.isBlank()) ? "ГАЛЕРЕЯ" : title,
 				new UiRect(
-						rect.x() + clampInt(layout.unit() / 3, 3, 6),
+						rect.x() + (ultra ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 3, 3, 6)),
 						rect.y(),
-						rect.width() - clampInt(layout.unit() / 2, 4, 10),
+						rect.width() - (ultra ? Math.max(2, layout.unit() / 2) : clampInt(layout.unit() / 2, 4, 10)),
 						rect.height()
 				),
 				new Color(248, 251, 255, 236),
 				Font.BOLD,
-				clampInt(layout.unit() - (compactScreenLayout(layout) ? 1 : 0), 8, 16)
+				ultra ? clampInt(layout.unit() + 1, 6, 9) : clampInt(layout.unit() - (compactScreenLayout(layout) ? 1 : 0), 8, 16)
 		);
 	}
 
@@ -4645,12 +4746,15 @@ public final class MonitorScreenSystem {
 		UiRect footer = mediaQueueFooterRect(layout);
 		UiRect scrollbarTrackRect = mediaQueueScrollbarTrackRect(layout);
 		int visibleRows = mediaQueueVisibleRows(layout);
-		int scroll = clampInt(window.scroll(), 0, Math.max(0, window.items().size() - visibleRows));
+		int renderableRows = mediaQueueRenderableRows(layout);
+		int totalItems = Math.max(0, window.totalItemCount());
+		int windowStartIndex = clampInt(window.itemWindowStartIndex(), 0, totalItems);
+		int scroll = clampInt(window.scroll(), 0, Math.max(0, totalItems - visibleRows));
 		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
 				runtimeKey,
 				MonitorScrollAnimationSystem.ScrollChannel.MEDIA_QUEUE_WINDOW,
 				scroll,
-				Math.max(0, window.items().size() - visibleRows)
+				Math.max(0, totalItems - visibleRows)
 		);
 		drawCenteredTextFitted(
 				graphics,
@@ -4671,30 +4775,40 @@ public final class MonitorScreenSystem {
 				clampInt(layout.unit(), 8, 14)
 		);
 
-		if (window.items().isEmpty()) {
+		if (totalItems <= 0) {
 			drawCenteredText(graphics, "Очередь пуста", list, new Color(210, 218, 226, 214), Font.PLAIN, compact ? clampInt(layout.unit() + 1, 9, 13) : clampInt(layout.unit() + 2, 12, 18));
 		} else {
 			int baseRow = visualScroll.anchorIndex();
 			int rowOffset = -(int) Math.round(visualScroll.fraction() * mediaQueueRowHeight(layout));
 			int rowCount = Math.min(
-					Math.max(0, window.items().size() - baseRow),
-					visibleRows + (visualScroll.animated() && baseRow + visibleRows < window.items().size() ? 1 : 0)
+					Math.max(0, totalItems - baseRow),
+					renderableRows + (visualScroll.animated() && baseRow + renderableRows < totalItems ? 1 : 0)
 			);
 			Shape previousClip = graphics.getClip();
 			graphics.clipRect(list.x(), list.y(), list.width(), list.height());
 			for (int visibleIndex = 0; visibleIndex < rowCount; visibleIndex++) {
-				YoutubeQueueItemSnapshot item = window.items().get(baseRow + visibleIndex);
+				int queueIndex = baseRow + visibleIndex;
+				int windowIndex = queueIndex - windowStartIndex;
+				if (windowIndex < 0 || windowIndex >= window.items().size()) {
+					continue;
+				}
+				YoutubeQueueItemSnapshot item = window.items().get(windowIndex);
+				if (item == null) {
+					continue;
+				}
 				UiRect rowRect = offsetRect(mediaQueueRowRect(layout, visibleIndex), 0, rowOffset);
 				UiRect removeRect = mediaQueueRemoveRect(rowRect, layout);
 				UiRect cacheStatusRect = mediaQueueCacheStatusRect(rowRect, removeRect, layout);
-				UiRect titleRect = mediaQueueTitleRect(rowRect, cacheStatusRect, layout);
-				UiRect metaRect = mediaQueueMetaRect(rowRect, cacheStatusRect, layout);
+				UiRect previewRect = mediaQueueThumbnailRect(rowRect, item.previewFrame(), item.squarePreviewFallback(), layout);
+				UiRect titleRect = mediaQueueTitleRect(rowRect, cacheStatusRect, previewRect, layout);
+				UiRect metaRect = mediaQueueMetaRect(rowRect, cacheStatusRect, previewRect, layout);
 				String secondaryLine = queueItemSecondaryLabel(item);
 				Color fill = item.current() ? new Color(248, 246, 246, 238) : new Color(255, 255, 255, 8);
 				Color primaryText = item.current() ? new Color(24, 20, 24, 244) : new Color(248, 240, 244, 236);
 				Color secondaryText = item.current() ? new Color(64, 56, 62, 220) : new Color(244, 232, 236, 164);
 				int rowArc = clampInt(layout.unit() * 2, 12, 18);
 				fillRoundedRect(graphics, rowRect, rowArc, fill);
+				drawQueueThumbnail(graphics, previewRect, item.previewFrame(), item.squarePreviewFallback(), item.current(), layout);
 				drawWrappedText(
 						graphics,
 						item.title(),
@@ -4720,7 +4834,7 @@ public final class MonitorScreenSystem {
 				drawCloseGlyph(graphics, mediaChromeIconRect(removeRect, layout), item.current() ? new Color(36, 28, 32, 220) : removeIconColor);
 			}
 			graphics.setClip(previousClip);
-			drawQueueScrollbar(graphics, scrollbarTrackRect, visualScroll.displayValue(), visibleRows, window.items().size(), layout);
+			drawQueueScrollbar(graphics, scrollbarTrackRect, visualScroll.displayValue(), visibleRows, totalItems, layout);
 		}
 
 		drawYoutubeMusicShuffleButton(graphics, shuffleRect, window.shuffleEnabled(), layout, MediaButtonSegment.SINGLE);
@@ -4729,24 +4843,25 @@ public final class MonitorScreenSystem {
 	}
 
 	static void drawGalleryDeleteConfirmWindow(Graphics2D graphics, UiLayout layout, MediaOverlayWindowSnapshot window) {
-		UiRect panel = galleryDeleteConfirmPanelRect(layout);
+		UiRect canvas = mediaCanvasRect(layout);
 		UiRect header = galleryDeleteConfirmHeaderRect(layout);
 		UiRect closeRect = galleryDeleteConfirmCloseRect(layout);
-		UiRect bodyRect = galleryDeleteConfirmBodyRect(layout);
+		UiRect infoRect = galleryDeleteConfirmInfoRect(layout);
 		UiRect cancelRect = galleryDeleteConfirmCancelRect(layout);
 		UiRect confirmRect = galleryDeleteConfirmConfirmRect(layout);
 
-		drawOverlayModalBase(graphics, layout, panel, header, closeRect, window.title(), window.subtitle());
-		drawCenteredText(
+		drawOverlayBackdrop(graphics, canvas);
+		drawCloseGlyph(graphics, mediaChromeIconRect(closeRect, layout), new Color(248, 251, 255, 236));
+		drawOverlayWindowHeaderText(
 				graphics,
-				"Это удалит медиа из галереи этого экрана.",
-				bodyRect,
-				new Color(230, 236, 244, 232),
-				Font.PLAIN,
-				clampInt(layout.unit() + (compactScreenLayout(layout) ? 0 : 1), 9, 15)
+				layout,
+				header,
+				window != null && window.subtitle() != null && !window.subtitle().isBlank() ? window.subtitle() : "Медиа",
+				"Удаление"
 		);
-		drawOverlayModalActionButton(graphics, cancelRect, "ОТМЕНА", false, layout);
-		drawOverlayModalActionButton(graphics, confirmRect, "УДАЛИТЬ", true, layout);
+		drawGalleryFileMenuActionButton(graphics, layout, infoRect, PlayerUiIcon.TRASH, "ЭТО УДАЛИТ МЕДИА ИЗ ГАЛЕРЕИ", "", false, false, false);
+		drawGalleryFileMenuActionButton(graphics, layout, cancelRect, PlayerUiIcon.CLOSE, "ОТМЕНА", "", true, false, false);
+		drawGalleryFileMenuActionButton(graphics, layout, confirmRect, PlayerUiIcon.TRASH, "УДАЛИТЬ", "", true, false, true);
 	}
 
 	static void drawGalleryDeleteConfirmWindowPlaceholder(Graphics2D graphics, UiLayout layout) {
@@ -4758,6 +4873,8 @@ public final class MonitorScreenSystem {
 						"УДАЛИТЬ?",
 						"Подтверждение",
 						List.of(),
+						0,
+						0,
 						null,
 						0,
 						-1,
@@ -4814,6 +4931,24 @@ public final class MonitorScreenSystem {
 		}
 		String safeTitle = title != null ? title : "";
 		String safeSubtitle = subtitle != null ? subtitle : "";
+		if (ultraCompactScreenLayout(layout)) {
+			UiRect headerTitleRect = new UiRect(
+					header.x() + Math.max(2, layout.unit() / 3),
+					header.y(),
+					Math.max(10, header.width() - clampInt(layout.unit() * 4, 16, 22)),
+					header.height()
+			);
+			drawCenteredTextFitted(
+					graphics,
+					safeTitle,
+					headerTitleRect,
+					new Color(248, 240, 244, 226),
+					Font.BOLD,
+					clampInt(layout.unit() + 1, 6, 8),
+					5
+			);
+			return;
+		}
 		UiRect headerTitleRect = new UiRect(header.x(), header.y(), header.width(), Math.max(12, header.height() / 2));
 		UiRect headerSubtitleRect = new UiRect(header.x(), headerTitleRect.bottom() - 1, header.width(), Math.max(10, header.bottom() - headerTitleRect.bottom() + 1));
 		drawCenteredTextFitted(
@@ -4845,6 +4980,8 @@ public final class MonitorScreenSystem {
 						"ФАЙЛ",
 						"Медиа",
 						List.of(),
+						0,
+						0,
 						new GalleryFileMenuSnapshot("Медиа", "", false, false, false, false, false),
 						0,
 						-1,
@@ -4855,6 +4992,21 @@ public final class MonitorScreenSystem {
 						MediaScaleMode.FIT
 				)
 		);
+	}
+
+	static void drawQueueThumbnail(Graphics2D graphics, UiRect rect, BufferedImage preview, boolean squareFallback, boolean current, UiLayout layout) {
+		if (graphics == null || rect == null || layout == null || rect.width() <= 0 || rect.height() <= 0) {
+			return;
+		}
+		int arc = clampInt(Math.min(rect.width(), rect.height()) / 4, 5, 8);
+		Color fill = current ? new Color(26, 22, 28, 36) : new Color(255, 255, 255, 14);
+		fillRoundedRect(graphics, rect, arc, fill);
+		if (preview != null) {
+			drawRoundedScaledImage(graphics, preview, rect, MediaScaleMode.FILL, arc);
+			return;
+		}
+		PlayerUiIcon icon = squareFallback ? PlayerUiIcon.FILE_MUSIC : PlayerUiIcon.MEDIA_VIDEO;
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), icon, current ? new Color(32, 26, 32, 150) : new Color(248, 251, 255, 122));
 	}
 
 	static void drawGalleryFileMenuActionButton(
@@ -4871,28 +5023,31 @@ public final class MonitorScreenSystem {
 		if (graphics == null || layout == null || rect == null || icon == null) {
 			return;
 		}
+		boolean ultra = ultraCompactScreenLayout(layout);
 		Color fill = selected
 				? new Color(248, 246, 246, 236)
 				: enabled ? new Color(255, 255, 255, 10) : new Color(255, 255, 255, 6);
 		Color titleColor = selected
 				? new Color(22, 20, 24, 244)
 				: danger && enabled ? new Color(255, 142, 150, 238) : enabled ? new Color(248, 240, 244, 236) : new Color(200, 208, 218, 150);
-		int arc = clampInt(layout.unit() * 2, 12, 18);
+		int arc = ultra ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit() * 2, 12, 18);
 		fillRoundedRect(graphics, rect, arc, fill);
+		int iconSize = ultra ? clampInt(layout.unit() + 5, 9, 11) : clampInt(layout.unit() + 6, 14, 22);
+		int sideInset = ultra ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 14);
 		UiRect iconRect = new UiRect(
-				rect.x() + clampInt(layout.unit(), 8, 14),
-				rect.y() + (rect.height() - clampInt(layout.unit() + 6, 14, 22)) / 2,
-				clampInt(layout.unit() + 6, 14, 22),
-				clampInt(layout.unit() + 6, 14, 22)
+				rect.x() + sideInset,
+				rect.y() + (rect.height() - iconSize) / 2,
+				iconSize,
+				iconSize
 		);
 		drawPlayerUiIcon(graphics, iconRect, icon, titleColor);
 		UiRect titleRect = new UiRect(
-				iconRect.right() + clampInt(layout.unit(), 8, 14),
+				iconRect.right() + (ultra ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 14)),
 				rect.y(),
-				Math.max(24, rect.width() - (iconRect.right() - rect.x()) - clampInt(layout.unit() * 2, 16, 24)),
+				Math.max(12, rect.width() - (iconRect.right() - rect.x()) - (ultra ? Math.max(4, layout.unit()) : clampInt(layout.unit() * 2, 16, 24))),
 				rect.height()
 		);
-		drawVerticalText(graphics, title, titleRect, titleColor, Font.BOLD, compactScreenLayout(layout) ? clampInt(layout.unit() + 1, 9, 14) : clampInt(layout.unit() + 2, 11, 18));
+		drawVerticalText(graphics, title, titleRect, titleColor, Font.BOLD, ultra ? clampInt(layout.unit() + 2, 7, 8) : compactScreenLayout(layout) ? clampInt(layout.unit() + 1, 9, 14) : clampInt(layout.unit() + 2, 11, 18));
 	}
 
 	static void drawPlayerBackgroundWindow(Graphics2D graphics, UiLayout layout, MediaOverlayWindowSnapshot window) {
@@ -4920,6 +5075,8 @@ public final class MonitorScreenSystem {
 						"ФОН ПЛЕЕРА",
 						"Для видео, музыки, картинок и трансляций",
 						List.of(),
+						0,
+						0,
 						null,
 						0,
 						-1,
@@ -4936,18 +5093,21 @@ public final class MonitorScreenSystem {
 		if (graphics == null || layout == null || rect == null || mode == null) {
 			return;
 		}
+		boolean ultra = ultraCompactScreenLayout(layout);
 		Color fill = selected
 				? new Color(248, 246, 246, 236)
 				: enabled ? new Color(255, 255, 255, 10) : new Color(255, 255, 255, 6);
 		Color titleColor = selected ? new Color(22, 20, 24, 244) : enabled ? new Color(248, 240, 244, 236) : new Color(200, 208, 218, 166);
 		Color subtitleColor = selected ? new Color(68, 60, 66, 216) : enabled ? new Color(214, 221, 230, 184) : new Color(164, 174, 186, 140);
-		int arc = clampInt(layout.unit() * 2, 12, 18);
+		int arc = ultra ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit() * 2, 12, 18);
 		fillRoundedRect(graphics, rect, arc, fill);
+		int iconSize = ultra ? clampInt(layout.unit() + 5, 9, 11) : clampInt(layout.unit() + 6, 14, 22);
+		int sideInset = ultra ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 14);
 		UiRect iconRect = new UiRect(
-				rect.x() + clampInt(layout.unit(), 8, 14),
-				rect.y() + (rect.height() - clampInt(layout.unit() + 6, 14, 22)) / 2,
-				clampInt(layout.unit() + 6, 14, 22),
-				clampInt(layout.unit() + 6, 14, 22)
+				rect.x() + sideInset,
+				rect.y() + (rect.height() - iconSize) / 2,
+				iconSize,
+				iconSize
 		);
 		if (selected) {
 			drawPlayerUiIcon(graphics, iconRect, PlayerUiIcon.CHECK, titleColor);
@@ -4959,6 +5119,16 @@ public final class MonitorScreenSystem {
 			strokeRoundedRect(graphics, iconRect, clampInt(layout.unit(), 8, 12), mediaChromeStrokeWidth(iconRect), titleColor);
 		} else {
 			fillRoundedRect(graphics, iconRect, clampInt(layout.unit(), 8, 12), titleColor);
+		}
+		if (ultra) {
+			UiRect titleRect = new UiRect(
+					iconRect.right() + Math.max(2, layout.unit() / 3),
+					rect.y(),
+					Math.max(12, rect.width() - (iconRect.right() - rect.x()) - Math.max(4, layout.unit()) - (reserveScaleButtonsSpace ? playerBackgroundScaleButtonReserveWidth(layout) : 0)),
+					rect.height()
+			);
+			drawVerticalText(graphics, playerBackgroundModeTitle(mode), titleRect, titleColor, Font.BOLD, clampInt(layout.unit() + 2, 7, 8));
+			return;
 		}
 		UiRect titleRect = new UiRect(
 				iconRect.right() + clampInt(layout.unit(), 8, 14),
@@ -4983,7 +5153,7 @@ public final class MonitorScreenSystem {
 		if (!playerBackgroundModeHasScaleButton(window.playerBackgroundMode())) {
 			return;
 		}
-		MediaScaleMode current = window.playerBackgroundScaleMode() != null ? window.playerBackgroundScaleMode() : MediaScaleMode.FIT;
+		MediaScaleMode current = window.playerBackgroundScaleMode() != null ? window.playerBackgroundScaleMode() : MediaScaleMode.FILL;
 		UiRect rect = playerBackgroundScaleButtonRect(layout, window.playerBackgroundMode());
 		float strokeWidth = mediaChromeStrokeWidth(rect);
 		fillRoundedRect(graphics, rect, clampInt(layout.unit() + 1, 10, 16), new Color(22, 20, 24, 40));
@@ -5081,7 +5251,7 @@ public final class MonitorScreenSystem {
 		drawCenteredTextFitted(graphics, "3 трека", headerTitleRect, new Color(248, 240, 244, 232), Font.BOLD, compact ? clampInt(layout.unit() + 2, 9, 16) : clampInt(layout.unit() + 4, 14, 22), clampInt(layout.unit(), 8, 14));
 		drawCenteredTextFitted(graphics, "09:41", headerSubtitleRect, new Color(188, 198, 212, 176), Font.PLAIN, compact ? clampInt(layout.unit(), 8, 11) : clampInt(layout.unit() + 1, 10, 14), clampInt(layout.unit(), 8, 14));
 
-		int visibleRows = Math.min(4, mediaQueueVisibleRows(layout) + 1);
+		int visibleRows = Math.min(4, mediaQueueRenderableRows(layout));
 		Shape previousClip = graphics.getClip();
 		graphics.clipRect(list.x(), list.y(), list.width(), list.height());
 		for (int rowIndex = 0; rowIndex < visibleRows; rowIndex++) {
@@ -5330,7 +5500,13 @@ public final class MonitorScreenSystem {
 		Composite previousComposite = graphics.getComposite();
 		try {
 			RoundRectangle2D.Float clip = new RoundRectangle2D.Float(rect.x(), rect.y(), rect.width(), rect.height(), arc, arc);
-			graphics.setClip(clip);
+			if (previousClip != null) {
+				Area combinedClip = new Area(previousClip);
+				combinedClip.intersect(new Area(clip));
+				graphics.setClip(combinedClip);
+			} else {
+				graphics.setClip(clip);
+			}
 			if (composite != null) {
 				graphics.setComposite(composite);
 			}
@@ -5380,7 +5556,7 @@ public final class MonitorScreenSystem {
 		}
 		if (waitingForLink) {
 			if (galleryBackgroundSelected && galleryBackgroundAvailable && playerBackgroundFrame != null) {
-				drawCleanPlayerBackground(graphics, canvasRect, playerBackgroundFrame, state != null ? state.playerBackgroundScaleMode() : MediaScaleMode.FIT);
+				drawCleanPlayerBackground(graphics, canvasRect, playerBackgroundFrame, state != null ? state.playerBackgroundScaleMode() : MediaScaleMode.FILL);
 				return;
 			}
 			clearRectToTransparent(graphics, canvasRect);
@@ -5392,7 +5568,7 @@ public final class MonitorScreenSystem {
 				return;
 			}
 			if (galleryBackgroundSelected && galleryBackgroundAvailable && playerBackgroundFrame != null) {
-				drawCleanPlayerBackground(graphics, canvasRect, playerBackgroundFrame, state != null ? state.playerBackgroundScaleMode() : MediaScaleMode.FIT);
+				drawCleanPlayerBackground(graphics, canvasRect, playerBackgroundFrame, state != null ? state.playerBackgroundScaleMode() : MediaScaleMode.FILL);
 				return;
 			}
 			clearRectToTransparent(graphics, canvasRect);
@@ -5403,7 +5579,7 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		if (galleryBackgroundSelected && galleryBackgroundAvailable && playerBackgroundFrame != null) {
-			drawCleanPlayerBackground(graphics, canvasRect, playerBackgroundFrame, state != null ? state.playerBackgroundScaleMode() : MediaScaleMode.FIT);
+			drawCleanPlayerBackground(graphics, canvasRect, playerBackgroundFrame, state != null ? state.playerBackgroundScaleMode() : MediaScaleMode.FILL);
 			return;
 		}
 		if (darkPlayerSurface || playerBackgroundMode == PlayerBackgroundMode.BLACK) {
@@ -5855,6 +6031,22 @@ public final class MonitorScreenSystem {
 		graphics.drawImage(image, drawX, drawY, drawWidth, drawHeight, null);
 	}
 
+	static void drawContainedImageNearest(Graphics2D graphics, BufferedImage image, UiRect rect, int padding) {
+		if (graphics == null || image == null || rect == null) {
+			return;
+		}
+		Object previousInterpolation = graphics.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+		try {
+			graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+			drawContainedImage(graphics, image, rect, padding);
+		} finally {
+			graphics.setRenderingHint(
+					RenderingHints.KEY_INTERPOLATION,
+					previousInterpolation != null ? previousInterpolation : RenderingHints.VALUE_INTERPOLATION_BILINEAR
+			);
+		}
+	}
+
 	static BufferedImage loadAppIcon(MonitorApp app) {
 		if (app == null) {
 			return null;
@@ -6226,21 +6418,27 @@ public final class MonitorScreenSystem {
 
 	static UiRect mediaCloseRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(layout.unit() * 2, 18, 28);
-		return new UiRect(canvas.x() + layout.unit() / 2, canvas.y() + layout.unit() / 2, size, size);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int size = ultra ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2, 18, 28);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
+		return new UiRect(canvas.x() + inset, canvas.y() + inset, size, size);
 	}
 
 	static UiRect mediaPlayerMenuRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(layout.unit() * 2, 18, 28);
-		return new UiRect(canvas.right() - size - layout.unit() / 2, canvas.y() + layout.unit() / 2, size, size);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int size = ultra ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2, 18, 28);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
+		return new UiRect(canvas.right() - size - inset, canvas.y() + inset, size, size);
 	}
 
 	static UiRect mediaOverlayToggleRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int width = clampInt(layout.unit() * 4, 34, 58);
-		int height = clampInt(layout.unit() * 2, 18, 28);
-		return new UiRect(canvas.right() - width - layout.unit() / 2, canvas.y() + layout.unit() / 2, width, height);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int width = ultra ? clampInt(layout.unit() * 4, 20, 28) : clampInt(layout.unit() * 4, 34, 58);
+		int height = ultra ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2, 18, 28);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
+		return new UiRect(canvas.right() - width - inset, canvas.y() + inset, width, height);
 	}
 
 	static UiRect mediaLinkRect(UiLayout layout) {
@@ -6260,10 +6458,13 @@ public final class MonitorScreenSystem {
 			);
 		}
 		UiRect closeRect = mediaCloseRect(layout);
-		int height = clampInt(layout.unit() * 2, 18, 28);
+		int height = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 2, 12, 14)
+				: clampInt(layout.unit() * 2, 18, 28);
 		int x = closeRect.right() + mediaHeaderControlGap(layout);
-		int width = Math.max(48, canvas.right() - x - layout.unit() / 2);
-		return new UiRect(x, canvas.y() + layout.unit() / 2, width, height);
+		int sideInset = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
+		int width = Math.max(24, canvas.right() - x - sideInset);
+		return new UiRect(x, canvas.y() + sideInset, width, height);
 	}
 
 	static UiRect mediaActionRect(UiLayout layout, boolean hasMedia) {
@@ -6289,19 +6490,24 @@ public final class MonitorScreenSystem {
 	static UiRect mediaGalleryBrowserLinkRect(UiLayout layout, boolean bulkDeleteVisible) {
 		UiRect closeRect = mediaGalleryBrowserCloseRect(layout);
 		UiRect canvas = mediaCanvasRect(layout);
-		int height = clampInt(layout.unit() * 2, 18, 28);
+		int height = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 2, 12, 14)
+				: clampInt(layout.unit() * 2, 18, 28);
 		int x = closeRect.right() + mediaHeaderControlGap(layout);
 		int right = (bulkDeleteVisible ? mediaGalleryBrowserBulkDeleteRect(layout) : mediaGalleryBrowserSelectionRect(layout)).x() - mediaHeaderControlGap(layout);
-		int width = Math.max(48, right - x);
-		return new UiRect(x, canvas.y() + layout.unit() / 2, width, height);
+		int width = Math.max(24, right - x);
+		int sideInset = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
+		return new UiRect(x, canvas.y() + sideInset, width, height);
 	}
 
 	static UiRect mediaGalleryBrowserSelectionRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(layout.unit() * 2, 18, 28);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int size = ultra ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2, 18, 28);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
 		return new UiRect(
-				canvas.right() - size - layout.unit() / 2,
-				canvas.y() + layout.unit() / 2,
+				canvas.right() - size - inset,
+				canvas.y() + inset,
 				size,
 				size
 		);
@@ -6339,8 +6545,10 @@ public final class MonitorScreenSystem {
 
 	static UiRect mediaScaleRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
-		int size = clampInt(layout.unit() * 2, 18, 28);
-		return new UiRect(canvas.right() - size - layout.unit() / 2, canvas.bottom() - size - layout.unit() / 2, size, size);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int size = ultra ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2, 18, 28);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
+		return new UiRect(canvas.right() - size - inset, canvas.bottom() - size - inset, size, size);
 	}
 
 	static UiRect mediaWallpaperActionRect(UiLayout layout, MediaRuntimeState state) {
@@ -6571,12 +6779,15 @@ public final class MonitorScreenSystem {
 		UiRect scaleRect = mediaScaleRect(layout);
 		UiRect downloadRect = mediaDownloadRect(layout);
 		UiRect queueToggleRect = mediaQueueToggleRect(layout, mode);
-		int left = canvas.x() + layout.unit() / 2;
+		int sideInset = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : layout.unit() / 2;
+		int left = canvas.x() + sideInset;
 		int right = Math.min(Math.min(scaleRect.x(), queueToggleRect.x()), downloadRect.x()) - clampInt(layout.unit() / 2, 4, 8);
-		int height = clampInt(layout.unit() * 2, 18, 28);
+		int height = ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 2, 12, 14)
+				: clampInt(layout.unit() * 2, 18, 28);
 		return new UiRect(
 				left,
-				canvas.bottom() - height - layout.unit() / 2,
+				canvas.bottom() - height - sideInset,
 				Math.max(44, right - left),
 				height
 		);
@@ -6842,16 +7053,16 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect galleryDeleteConfirmPanelRect(UiLayout layout) {
-		return centeredOverlayPanelRect(
-				layout,
-				ultraCompactScreenLayout(layout) ? 3.0D / 4.0D : compactScreenLayout(layout) ? 11.0D / 16.0D : 5.0D / 8.0D,
-				ultraCompactScreenLayout(layout) ? 7.0D / 18.0D : compactScreenLayout(layout) ? 2.0D / 5.0D : 11.0D / 24.0D,
-				84,
-				54
-		);
+		return galleryFileMenuPanelRect(layout);
 	}
 
 	static UiRect galleryFileMenuPanelRect(UiLayout layout) {
+		if (ultraCompactScreenLayout(layout)) {
+			UiRect canvas = mediaCanvasRect(layout);
+			int inset = Math.max(2, layout.unit() / 3);
+			int top = canvas.y() + clampInt(layout.unit() * 4, 18, 22);
+			return new UiRect(canvas.x() + inset, top, canvas.width() - inset * 2, Math.max(42, canvas.bottom() - top - inset));
+		}
 		return centeredOverlayPanelRect(
 				layout,
 				ultraCompactScreenLayout(layout) ? 13.0D / 16.0D : compactScreenLayout(layout) ? 3.0D / 4.0D : 2.0D / 3.0D,
@@ -6862,6 +7073,12 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect playerBackgroundPanelRect(UiLayout layout) {
+		if (ultraCompactScreenLayout(layout)) {
+			UiRect canvas = mediaCanvasRect(layout);
+			int inset = Math.max(2, layout.unit() / 3);
+			int top = canvas.y() + clampInt(layout.unit() * 4, 18, 22);
+			return new UiRect(canvas.x() + inset, top, canvas.width() - inset * 2, Math.max(42, canvas.bottom() - top - inset));
+		}
 		return centeredOverlayPanelRect(
 				layout,
 				ultraCompactScreenLayout(layout) ? 13.0D / 16.0D : compactScreenLayout(layout) ? 3.0D / 4.0D : 11.0D / 16.0D,
@@ -6985,73 +7202,64 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect galleryDeleteConfirmHeaderRect(UiLayout layout) {
-		UiRect panel = overlayWindowRect(layout, MediaOverlayWindowType.GALLERY_DELETE_CONFIRM);
-		int inset = clampInt(layout.unit() / 2, 4, 8);
-		int height = ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 2, 18, 24)
-				: compactScreenLayout(layout)
-				? clampInt(layout.unit() * 2 + 2, 22, 30)
-				: clampInt(layout.unit() * 3, 26, 38);
-		return new UiRect(panel.x() + inset, panel.y() + inset, panel.width() - inset * 2, height);
+		return galleryFileMenuHeaderRect(layout);
 	}
 
 	static UiRect galleryDeleteConfirmCloseRect(UiLayout layout) {
-		UiRect header = galleryDeleteConfirmHeaderRect(layout);
-		int size = Math.max(16, header.height() - clampInt(layout.unit() / 2, 4, 8));
-		return new UiRect(header.right() - size - clampInt(layout.unit() / 3, 3, 6), header.y() + (header.height() - size) / 2, size, size);
+		return galleryFileMenuCloseRect(layout);
 	}
 
 	static UiRect galleryDeleteConfirmBodyRect(UiLayout layout) {
-		UiRect panel = overlayWindowRect(layout, MediaOverlayWindowType.GALLERY_DELETE_CONFIRM);
-		UiRect header = galleryDeleteConfirmHeaderRect(layout);
-		UiRect buttons = galleryDeleteConfirmButtonsRowRect(layout);
-		int sideInset = clampInt(layout.unit(), 8, 14);
-		int top = header.bottom() + clampInt(layout.unit() / 2, 4, 8);
-		int bottom = buttons.y() - clampInt(layout.unit() / 2, 4, 8);
-		return new UiRect(panel.x() + sideInset, top, panel.width() - sideInset * 2, Math.max(18, bottom - top));
+		return galleryDeleteConfirmPanelRect(layout);
 	}
 
 	static UiRect galleryDeleteConfirmButtonsRowRect(UiLayout layout) {
-		UiRect panel = overlayWindowRect(layout, MediaOverlayWindowType.GALLERY_DELETE_CONFIRM);
-		int inset = clampInt(layout.unit(), 8, 14);
-		int height = ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 2 + 1, 18, 24)
-				: compactScreenLayout(layout)
-				? clampInt(layout.unit() * 2 + 2, 22, 28)
-				: clampInt(layout.unit() * 2 + 4, 26, 34);
-		return new UiRect(panel.x() + inset, panel.bottom() - height - inset, panel.width() - inset * 2, height);
+		return galleryDeleteConfirmActionRect(layout, 1);
+	}
+
+	static UiRect galleryDeleteConfirmInfoRect(UiLayout layout) {
+		return galleryDeleteConfirmActionRect(layout, 0);
 	}
 
 	static UiRect galleryDeleteConfirmCancelRect(UiLayout layout) {
-		UiRect row = galleryDeleteConfirmButtonsRowRect(layout);
-		int gap = clampInt(layout.unit() / 2, 4, 8);
-		int width = Math.max(28, (row.width() - gap) / 2);
-		return new UiRect(row.x(), row.y(), width, row.height());
+		return galleryDeleteConfirmActionRect(layout, 1);
 	}
 
 	static UiRect galleryDeleteConfirmConfirmRect(UiLayout layout) {
-		UiRect row = galleryDeleteConfirmButtonsRowRect(layout);
-		UiRect cancel = galleryDeleteConfirmCancelRect(layout);
-		int gap = clampInt(layout.unit() / 2, 4, 8);
-		return new UiRect(cancel.right() + gap, row.y(), Math.max(28, row.right() - cancel.right() - gap), row.height());
+		return galleryDeleteConfirmActionRect(layout, 2);
+	}
+
+	static UiRect galleryDeleteConfirmActionRect(UiLayout layout, int index) {
+		UiRect body = galleryDeleteConfirmBodyRect(layout);
+		int actionCount = 3;
+		int safeIndex = clampInt(index, 0, actionCount - 1);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
+		int height = Math.max(16, (body.height() - gap * (actionCount - 1)) / actionCount);
+		return new UiRect(
+				body.x(),
+				body.y() + safeIndex * (height + gap),
+				body.width(),
+				height
+		);
 	}
 
 	static UiRect galleryFileMenuHeaderRect(UiLayout layout) {
 		UiRect canvas = mediaCanvasRect(layout);
 		UiRect panel = galleryFileMenuPanelRect(layout);
 		int height = ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 4, 26, 38)
+				? clampInt(layout.unit() * 2 + 4, 12, 16)
 				: compactScreenLayout(layout)
 				? clampInt(layout.unit() * 5, 34, 52)
 				: clampInt(layout.unit() * 6, 44, 66);
-		int y = Math.max(canvas.y() + clampInt(layout.unit() / 2, 4, 8), panel.y() - height - clampInt(layout.unit(), 8, 16));
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit(), 8, 16);
+		int y = Math.max(canvas.y() + (ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit() / 2, 4, 8)), panel.y() - height - gap);
 		return new UiRect(panel.x(), y, panel.width(), height);
 	}
 
 	static UiRect galleryFileMenuCloseRect(UiLayout layout) {
 		UiRect header = galleryFileMenuHeaderRect(layout);
-		int size = clampInt(layout.unit() * 2 + 2, 22, 34);
-		int inset = clampInt(layout.unit() / 2, 4, 8);
+		int size = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2 + 2, 22, 34);
+		int inset = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
 		return new UiRect(
 				header.right() - size - inset,
 				header.y() + Math.max(0, (header.height() - size) / 2),
@@ -7068,7 +7276,7 @@ public final class MonitorScreenSystem {
 		UiRect body = galleryFileMenuBodyRect(layout);
 		int actionCount = 5;
 		int safeIndex = clampInt(index, 0, actionCount - 1);
-		int gap = clampInt(layout.unit() / 2, 4, 8);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
 		int height = Math.max(16, (body.height() - gap * (actionCount - 1)) / actionCount);
 		return new UiRect(
 				body.x(),
@@ -7082,18 +7290,19 @@ public final class MonitorScreenSystem {
 		UiRect canvas = mediaCanvasRect(layout);
 		UiRect panel = playerBackgroundPanelRect(layout);
 		int height = ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 4, 26, 38)
+				? clampInt(layout.unit() * 2 + 4, 12, 16)
 				: compactScreenLayout(layout)
 				? clampInt(layout.unit() * 5, 34, 52)
 				: clampInt(layout.unit() * 6, 44, 66);
-		int y = Math.max(canvas.y() + clampInt(layout.unit() / 2, 4, 8), panel.y() - height - clampInt(layout.unit(), 8, 16));
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit(), 8, 16);
+		int y = Math.max(canvas.y() + (ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit() / 2, 4, 8)), panel.y() - height - gap);
 		return new UiRect(panel.x(), y, panel.width(), height);
 	}
 
 	static UiRect playerBackgroundCloseRect(UiLayout layout) {
 		UiRect header = playerBackgroundHeaderRect(layout);
-		int size = clampInt(layout.unit() * 2 + 2, 22, 34);
-		int inset = clampInt(layout.unit() / 2, 4, 8);
+		int size = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2 + 2, 22, 34);
+		int inset = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
 		return new UiRect(
 				header.right() - size - inset,
 				header.y() + Math.max(0, (header.height() - size) / 2),
@@ -7110,7 +7319,7 @@ public final class MonitorScreenSystem {
 		UiRect body = playerBackgroundBodyRect(layout);
 		int optionCount = 4;
 		int safeIndex = clampInt(index, 0, optionCount - 1);
-		int gap = clampInt(layout.unit() / 2, 4, 8);
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
 		int height = Math.max(16, (body.height() - gap * (optionCount - 1)) / optionCount);
 		return new UiRect(
 				body.x(),
@@ -7125,13 +7334,15 @@ public final class MonitorScreenSystem {
 	}
 
 	static int playerBackgroundScaleButtonWidth(UiLayout layout) {
-		return clampInt(layout.unit() * 2 + 2, 18, 28);
+		return ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 2 + 2, 12, 14)
+				: clampInt(layout.unit() * 2 + 2, 18, 28);
 	}
 
 	static UiRect playerBackgroundScaleButtonRect(UiLayout layout, PlayerBackgroundMode mode) {
 		UiRect option = playerBackgroundOptionRect(layout, mode == PlayerBackgroundMode.ARTWORK ? 0 : 1);
-		int gap = clampInt(layout.unit() / 2, 4, 8);
-		int buttonHeight = Math.max(14, option.height() - clampInt(layout.unit() / 2, 4, 8));
+		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
+		int buttonHeight = Math.max(ultraCompactScreenLayout(layout) ? 12 : 14, option.height() - gap * 2);
 		int buttonWidth = playerBackgroundScaleButtonWidth(layout);
 		return new UiRect(
 				option.right() - buttonWidth - gap,
@@ -7219,9 +7430,49 @@ public final class MonitorScreenSystem {
 		return new UiRect(removeRect.x() - gap - size, removeRect.y(), size, size);
 	}
 
-	static UiRect mediaQueueTitleRect(UiRect rowRect, UiRect rightControlRect, UiLayout layout) {
+	static UiRect mediaQueueThumbnailRect(UiRect rowRect, BufferedImage preview, boolean squareFallback, UiLayout layout) {
+		if (rowRect == null || layout == null || rowRect.width() <= 0 || rowRect.height() <= 0) {
+			return new UiRect(0, 0, 0, 0);
+		}
 		int leftInset = clampInt(layout.unit(), 8, 14);
-		int x = rowRect.x() + leftInset;
+		int verticalInset = clampInt(layout.unit() / 2, 4, 8);
+		int maxHeight = Math.max(12, rowRect.height() - verticalInset * 2);
+		double aspect = queueThumbnailAspect(preview, squareFallback);
+		int availableWidth = Math.max(0, rowRect.width() - leftInset * 2);
+		if (availableWidth < 8) {
+			return new UiRect(0, 0, 0, 0);
+		}
+		int maxWidth = Math.min(Math.max(12, rowRect.width() / 3), availableWidth);
+		int width = Math.max(12, (int) Math.round(maxHeight * aspect));
+		int height = maxHeight;
+		if (width > maxWidth) {
+			width = maxWidth;
+			height = Math.max(12, (int) Math.round(width / aspect));
+		}
+		return new UiRect(
+				rowRect.x() + leftInset,
+				rowRect.y() + (rowRect.height() - height) / 2,
+				width,
+				height
+		);
+	}
+
+	static double queueThumbnailAspect(BufferedImage preview, boolean squareFallback) {
+		if (preview != null && preview.getWidth() > 0 && preview.getHeight() > 0) {
+			return clampDouble(preview.getWidth() / (double) preview.getHeight(), 0.75D, 2.2D);
+		}
+		return squareFallback ? 1.0D : 16.0D / 9.0D;
+	}
+
+	static UiRect mediaQueueTitleRect(UiRect rowRect, UiRect rightControlRect, UiLayout layout) {
+		return mediaQueueTitleRect(rowRect, rightControlRect, null, layout);
+	}
+
+	static UiRect mediaQueueTitleRect(UiRect rowRect, UiRect rightControlRect, UiRect previewRect, UiLayout layout) {
+		int leftInset = clampInt(layout.unit(), 8, 14);
+		int x = previewRect != null && previewRect.width() > 0
+				? previewRect.right() + clampInt(layout.unit() / 2, 4, 8)
+				: rowRect.x() + leftInset;
 		int width = Math.max(18, rightControlRect.x() - x - clampInt(layout.unit(), 8, 12));
 		return new UiRect(
 				x,
@@ -7232,8 +7483,14 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect mediaQueueMetaRect(UiRect rowRect, UiRect rightControlRect, UiLayout layout) {
+		return mediaQueueMetaRect(rowRect, rightControlRect, null, layout);
+	}
+
+	static UiRect mediaQueueMetaRect(UiRect rowRect, UiRect rightControlRect, UiRect previewRect, UiLayout layout) {
 		int leftInset = clampInt(layout.unit(), 8, 14);
-		int x = rowRect.x() + leftInset;
+		int x = previewRect != null && previewRect.width() > 0
+				? previewRect.right() + clampInt(layout.unit() / 2, 4, 8)
+				: rowRect.x() + leftInset;
 		int width = Math.max(18, rightControlRect.x() - x - clampInt(layout.unit(), 8, 12));
 		int y = rowRect.y() + rowRect.height() / 2;
 		return new UiRect(
@@ -8226,6 +8483,19 @@ public final class MonitorScreenSystem {
 		return 5;
 	}
 
+	static boolean mediaQueueHasPartialBottomRow(UiLayout layout) {
+		if (layout == null) {
+			return false;
+		}
+		UiRect list = mediaQueueListRect(layout);
+		int rowHeight = Math.max(1, mediaQueueRowHeight(layout));
+		return list.height() % rowHeight != 0;
+	}
+
+	static int mediaQueueRenderableRows(UiLayout layout) {
+		return mediaQueueVisibleRows(layout) + (mediaQueueHasPartialBottomRow(layout) ? 1 : 0);
+	}
+
 	static int galleryColumnsPreview(UiLayout layout) {
 		return layout != null ? Math.max(1, mediaGalleryColumns(layout)) : 2;
 	}
@@ -8247,43 +8517,94 @@ public final class MonitorScreenSystem {
 		return Math.max(0, index / Math.max(1, galleryColumnsPreview(layout)));
 	}
 
-	static List<YoutubeQueueItemSnapshot> youtubeQueueSnapshots(MediaRuntimeState state) {
+	static int youtubeQueueSnapshotWindowStartIndex(ScreenRuntimeKey runtimeKey, MediaRuntimeState state, UiLayout layout) {
 		if (state == null || state.youtubeQueue.isEmpty()) {
-			return List.of();
+			return 0;
 		}
-		List<YoutubeQueueItemSnapshot> items = new ArrayList<>(state.youtubeQueue.size());
-		for (int index = 0; index < state.youtubeQueue.size(); index++) {
-			YoutubeQueueItem item = state.youtubeQueue.get(index);
-			String url = item != null ? item.url() : "";
-			boolean youtubeMusicQueue = isYoutubeMusicMode(state.mode);
-			float cacheFraction = 0.0F;
-			boolean cacheActive = false;
-			boolean cacheComplete = false;
-			if (url != null && !url.isBlank()) {
-				if (youtubeMusicQueue) {
-					MonitorYoutubeMusicCache.QueueEntryCacheStatus status = MonitorYoutubeMusicCache.queueEntryCacheStatus(url);
-					cacheFraction = status.fraction();
-					cacheActive = status.active();
-					cacheComplete = status.complete();
-				} else {
-					MonitorYoutubeRelayClient.QueueEntryCacheStatus status = MonitorYoutubeRelayClient.queueEntryCacheStatus(url);
-					cacheFraction = status.fraction();
-					cacheActive = status.active();
-					cacheComplete = status.complete();
-				}
-			}
-			items.add(new YoutubeQueueItemSnapshot(
-					index,
-					item != null ? item.title() : "YouTube",
-					item != null ? item.subtitle() : "",
-					item != null ? item.durationMs() : 0L,
-					index == state.youtubeQueueIndex,
-					cacheFraction,
-					cacheActive,
-					cacheComplete
-			));
+		int visibleRows = layout != null ? mediaQueueVisibleRows(layout) : youtubeQueueVisibleRowsPreview(state);
+		int maxScroll = Math.max(0, state.youtubeQueue.size() - visibleRows);
+		int scroll = clampInt(state.youtubeQueueScroll, 0, maxScroll);
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MEDIA_QUEUE_WINDOW,
+				scroll,
+				maxScroll
+		);
+		int renderableRows = layout != null ? mediaQueueRenderableRows(layout) : visibleRows + 1;
+		int windowPadding = 2;
+		return clampInt(
+				Math.min(scroll, visualScroll.anchorIndex()) - windowPadding,
+				0,
+				Math.max(0, state.youtubeQueue.size() - Math.max(1, renderableRows))
+		);
+	}
+
+	static int youtubeQueueSnapshotWindowEndExclusive(ScreenRuntimeKey runtimeKey, MediaRuntimeState state, UiLayout layout, int startIndex) {
+		if (state == null || state.youtubeQueue.isEmpty()) {
+			return 0;
 		}
-		return items;
+		int visibleRows = layout != null ? mediaQueueVisibleRows(layout) : youtubeQueueVisibleRowsPreview(state);
+		int maxScroll = Math.max(0, state.youtubeQueue.size() - visibleRows);
+		int scroll = clampInt(state.youtubeQueueScroll, 0, maxScroll);
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MEDIA_QUEUE_WINDOW,
+				scroll,
+				maxScroll
+		);
+		int renderableRows = layout != null ? mediaQueueRenderableRows(layout) : visibleRows + 1;
+		int windowPadding = 2;
+		int coverageEndExclusive = Math.max(scroll, visualScroll.anchorIndex())
+				+ renderableRows
+				+ (visualScroll.animated() ? 1 : 0)
+				+ windowPadding;
+		return clampInt(Math.max(startIndex, coverageEndExclusive), 0, state.youtubeQueue.size());
+	}
+
+	static int galleryCardSnapshotWindowStartIndex(ScreenRuntimeKey runtimeKey, MediaRuntimeState state, UiLayout layout, int totalCount) {
+		if (state == null || layout == null || totalCount <= 0) {
+			return 0;
+		}
+		int columns = mediaGalleryColumns(layout);
+		int visibleRows = mediaGalleryVisibleRows(layout);
+		int totalRows = mediaGalleryTotalRows(totalCount, layout);
+		int maxScroll = Math.max(0, totalRows - visibleRows);
+		int scroll = clampInt(state.galleryScroll, 0, maxScroll);
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MEDIA_LIBRARY_BROWSER,
+				scroll,
+				maxScroll
+		);
+		int windowPaddingRows = 1;
+		return clampInt(
+				(Math.min(scroll, visualScroll.anchorIndex()) - windowPaddingRows) * Math.max(1, columns),
+				0,
+				totalCount
+		);
+	}
+
+	static int galleryCardSnapshotWindowEndExclusive(ScreenRuntimeKey runtimeKey, MediaRuntimeState state, UiLayout layout, int totalCount, int startIndex) {
+		if (state == null || layout == null || totalCount <= 0) {
+			return 0;
+		}
+		int columns = mediaGalleryColumns(layout);
+		int visibleRows = mediaGalleryVisibleRows(layout);
+		int totalRows = mediaGalleryTotalRows(totalCount, layout);
+		int maxScroll = Math.max(0, totalRows - visibleRows);
+		int scroll = clampInt(state.galleryScroll, 0, maxScroll);
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MEDIA_LIBRARY_BROWSER,
+				scroll,
+				maxScroll
+		);
+		int windowPaddingRows = 1;
+		int endRowExclusive = Math.max(scroll, visualScroll.anchorIndex())
+				+ visibleRows
+				+ (visualScroll.animated() ? 1 : 0)
+				+ windowPaddingRows;
+		return clampInt(Math.max(startIndex, endRowExclusive * Math.max(1, columns)), 0, totalCount);
 	}
 
 	static List<YoutubeQueueItemSnapshot> galleryItemSnapshots(MediaRuntimeState state) {
@@ -8298,6 +8619,8 @@ public final class MonitorScreenSystem {
 					item != null ? item.title() : "Gallery",
 					item != null ? item.subtitle() : "",
 					0L,
+					null,
+					false,
 					index == state.galleryIndex,
 					0.0F,
 					false,
@@ -8307,50 +8630,90 @@ public final class MonitorScreenSystem {
 		return items;
 	}
 
-	static List<GalleryCardSnapshot> galleryCardSnapshots(MinecraftServer server, ScreenComponent component, MediaRuntimeState state) {
+	static WindowedSnapshot<GalleryCardSnapshot> galleryCardSnapshots(
+			MinecraftServer server,
+			ScreenComponent component,
+			MediaRuntimeState state,
+			ScreenRuntimeKey runtimeKey,
+			UiLayout layout
+	) {
 		if (state == null || state.galleryItems.isEmpty()) {
-			return List.of();
+			return WindowedSnapshot.empty();
 		}
 		normalizeGalleryBulkSelectionLocked(state);
 		boolean metadataVisible = isSberDronesMode(state.mode);
 		List<Integer> visibleIndexes = galleryBrowserVisibleIndexesLocked(state);
-		List<GalleryCardSnapshot> items = new ArrayList<>(visibleIndexes.size());
-		for (int index : visibleIndexes) {
-			GalleryItem item = state.galleryItems.get(index);
-			MonitorMediaApp.LoadedMedia media = item != null ? item.media() : null;
-			BufferedImage preview = media != null ? media.frame(0) : item != null ? item.preview() : null;
-			GalleryItemKind itemKind = effectiveGalleryItemKind(item);
-			boolean youtubeLoaded = item != null
-					&& ((itemKind == GalleryItemKind.YOUTUBE && MonitorYoutubeRelayClient.isQueueEntryLoaded(item.url()))
-					|| (itemKind == GalleryItemKind.AUDIO && item.url() != null && !item.url().isBlank() && MonitorYoutubeMusicCache.isQueueEntryLoaded(item.url())))
-					&& item.url() != null
-					&& !item.url().isBlank();
-			if (metadataVisible && itemKind == GalleryItemKind.LIVE_CAMERA) {
-				items.add(buildLiveCameraGalleryCardSnapshot(server, component, state, index, item, preview));
-				continue;
-			}
-			items.add(new GalleryCardSnapshot(
-					index,
-					item != null ? item.title() : "Gallery",
-					item != null ? item.subtitle() : "",
-					"",
-					"",
-					false,
-					"",
-					metadataVisible,
-					itemKind,
-					media != null && media.animated(),
-					(item != null && (itemKind == GalleryItemKind.YOUTUBE || itemKind == GalleryItemKind.VIDEO || itemKind == GalleryItemKind.AUDIO || itemKind == GalleryItemKind.LIVE_CAMERA))
-							|| (media != null && media.animated()),
-					preview,
-					index == state.galleryIndex,
-					state.galleryBulkSelectionMode,
-					galleryBulkItemSelectedLocked(state, index),
-					youtubeLoaded || itemKind == GalleryItemKind.LIVE_CAMERA,
-					false
-			));
+		if (visibleIndexes.isEmpty()) {
+			return WindowedSnapshot.empty();
 		}
-		return items;
+		if (metadataVisible || layout == null) {
+			List<GalleryCardSnapshot> items = new ArrayList<>(visibleIndexes.size());
+			for (int index : visibleIndexes) {
+				GalleryCardSnapshot snapshot = buildGalleryCardSnapshot(server, component, state, metadataVisible, index);
+				if (snapshot != null) {
+					items.add(snapshot);
+				}
+			}
+			return items.isEmpty() ? WindowedSnapshot.empty() : new WindowedSnapshot<>(List.copyOf(items), items.size(), 0);
+		}
+		int totalCount = visibleIndexes.size();
+		int startIndex = galleryCardSnapshotWindowStartIndex(runtimeKey, state, layout, totalCount);
+		int endExclusive = galleryCardSnapshotWindowEndExclusive(runtimeKey, state, layout, totalCount, startIndex);
+		List<GalleryCardSnapshot> items = new ArrayList<>(Math.max(0, endExclusive - startIndex));
+		for (int visibleIndex = startIndex; visibleIndex < endExclusive; visibleIndex++) {
+			int index = visibleIndexes.get(visibleIndex);
+			GalleryCardSnapshot snapshot = buildGalleryCardSnapshot(server, component, state, false, index);
+			if (snapshot != null) {
+				items.add(snapshot);
+			}
+		}
+		return items.isEmpty()
+				? new WindowedSnapshot<>(List.of(), totalCount, startIndex)
+				: new WindowedSnapshot<>(List.copyOf(items), totalCount, startIndex);
+	}
+
+	static GalleryCardSnapshot buildGalleryCardSnapshot(
+			MinecraftServer server,
+			ScreenComponent component,
+			MediaRuntimeState state,
+			boolean metadataVisible,
+			int index
+	) {
+		if (state == null || index < 0 || index >= state.galleryItems.size()) {
+			return null;
+		}
+		GalleryItem item = state.galleryItems.get(index);
+		MonitorMediaApp.LoadedMedia media = item != null ? item.media() : null;
+		BufferedImage preview = media != null ? media.frame(0) : item != null ? item.preview() : null;
+		GalleryItemKind itemKind = effectiveGalleryItemKind(item);
+		boolean youtubeLoaded = item != null
+				&& ((itemKind == GalleryItemKind.YOUTUBE && MonitorYoutubeRelayClient.isQueueEntryLoaded(item.url()))
+				|| (itemKind == GalleryItemKind.AUDIO && item.url() != null && !item.url().isBlank() && MonitorYoutubeMusicCache.isQueueEntryLoaded(item.url())))
+				&& item.url() != null
+				&& !item.url().isBlank();
+		if (metadataVisible && itemKind == GalleryItemKind.LIVE_CAMERA) {
+			return buildLiveCameraGalleryCardSnapshot(server, component, state, index, item, preview);
+		}
+		return new GalleryCardSnapshot(
+				index,
+				item != null ? item.title() : "Gallery",
+				item != null ? item.subtitle() : "",
+				"",
+				"",
+				false,
+				"",
+				metadataVisible,
+				itemKind,
+				media != null && media.animated(),
+				(item != null && (itemKind == GalleryItemKind.YOUTUBE || itemKind == GalleryItemKind.VIDEO || itemKind == GalleryItemKind.AUDIO || itemKind == GalleryItemKind.LIVE_CAMERA))
+						|| (media != null && media.animated()),
+				preview,
+				index == state.galleryIndex,
+				state.galleryBulkSelectionMode,
+				galleryBulkItemSelectedLocked(state, index),
+				youtubeLoaded || itemKind == GalleryItemKind.LIVE_CAMERA,
+				false
+		);
 	}
 
 	static GalleryCardSnapshot buildLiveCameraGalleryCardSnapshot(
@@ -8429,24 +8792,58 @@ public final class MonitorScreenSystem {
 		return indexes;
 	}
 
-	static MediaOverlayWindowSnapshot youtubeQueueWindowSnapshot(MediaRuntimeState state, List<YoutubeQueueItemSnapshot> items) {
+	static MediaOverlayWindowSnapshot youtubeQueueWindowSnapshot(ScreenRuntimeKey runtimeKey, MediaRuntimeState state, UiLayout layout) {
 		if (state == null) {
 			return null;
 		}
-		int totalItems = items != null ? items.size() : 0;
-		long totalDurationMs = 0L;
-		if (items != null) {
-			for (YoutubeQueueItemSnapshot item : items) {
-				if (item != null) {
-					totalDurationMs += Math.max(0L, item.durationMs());
+		int totalItems = state.youtubeQueue.size();
+		int windowStartIndex = youtubeQueueSnapshotWindowStartIndex(runtimeKey, state, layout);
+		int windowEndExclusive = youtubeQueueSnapshotWindowEndExclusive(runtimeKey, state, layout, windowStartIndex);
+		boolean youtubeMusicQueue = isYoutubeMusicMode(state.mode);
+		List<YoutubeQueueItemSnapshot> items = new ArrayList<>(Math.max(0, windowEndExclusive - windowStartIndex));
+		long totalDurationMs = Math.max(0L, state.youtubeQueueTotalDurationMs);
+		for (int index = windowStartIndex; index < windowEndExclusive; index++) {
+			YoutubeQueueItem item = state.youtubeQueue.get(index);
+			String url = item != null ? item.url() : "";
+			float cacheFraction = 0.0F;
+			boolean cacheActive = false;
+			boolean cacheComplete = false;
+			if (url != null && !url.isBlank()) {
+				if (youtubeMusicQueue) {
+					MonitorYoutubeMusicCache.QueueEntryCacheStatus status = MonitorYoutubeMusicCache.queueEntryCacheStatus(url);
+					cacheFraction = status.fraction();
+					cacheActive = status.active();
+					cacheComplete = status.complete();
+				} else {
+					MonitorYoutubeRelayClient.QueueEntryCacheStatus status = MonitorYoutubeRelayClient.queueEntryCacheStatus(url);
+					cacheFraction = status.fraction();
+					cacheActive = status.active();
+					cacheComplete = status.complete();
 				}
 			}
+			BufferedImage preview = url != null && !url.isBlank()
+					? youtubeMusicQueue ? MonitorYoutubeMusicCache.queueEntryPreview(url) : MonitorYoutubeRelayClient.queueEntryPreview(url)
+					: null;
+			items.add(new YoutubeQueueItemSnapshot(
+					index,
+					item != null ? item.title() : "YouTube",
+					item != null ? item.subtitle() : "",
+					item != null ? item.durationMs() : 0L,
+					preview,
+					youtubeMusicQueue,
+					index == state.youtubeQueueIndex,
+					cacheFraction,
+					cacheActive,
+					cacheComplete
+			));
 		}
 		return new MediaOverlayWindowSnapshot(
 				MediaOverlayWindowType.YOUTUBE_QUEUE,
 				totalItems + " " + pluralizeQueueItems(totalItems, state.mode),
 				totalItems <= 0 ? formatPlaybackTime(0L) : totalDurationMs > 0L ? formatPlaybackTime(totalDurationMs) : "Длина неизвестна",
-				items != null ? List.copyOf(items) : List.of(),
+				List.copyOf(items),
+				totalItems,
+				windowStartIndex,
 				null,
 				Math.max(0, state.youtubeQueueScroll),
 				Math.max(-1, state.youtubeQueueIndex),
@@ -8468,6 +8865,8 @@ public final class MonitorScreenSystem {
 				"УДАЛИТЬ?",
 				target,
 				List.of(),
+				0,
+				0,
 				null,
 				0,
 				-1,
@@ -8502,6 +8901,8 @@ public final class MonitorScreenSystem {
 				"ФАЙЛ",
 				title,
 				List.of(),
+				0,
+				0,
 				file,
 				0,
 				Math.max(-1, state.galleryIndex),
@@ -8537,6 +8938,8 @@ public final class MonitorScreenSystem {
 				"ФОН ПЛЕЕРА",
 				"Для видео, музыки, картинок и трансляций",
 				List.of(),
+				0,
+				0,
 				null,
 				0,
 				-1,
@@ -8544,7 +8947,7 @@ public final class MonitorScreenSystem {
 				false,
 				backgroundMode != null ? backgroundMode : PlayerBackgroundMode.BLACK,
 				galleryBackgroundAvailable,
-				selectedBackgroundScaleMode != null ? selectedBackgroundScaleMode : MediaScaleMode.FIT
+				selectedBackgroundScaleMode != null ? selectedBackgroundScaleMode : MediaScaleMode.FILL
 		);
 	}
 
@@ -8984,11 +9387,25 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		state.youtubeQueue.clear();
+		state.youtubeQueueTotalDurationMs = 0L;
 		clearYoutubeMusicShuffleOrderLocked(state);
 		state.youtubeQueueIndex = -1;
 		state.youtubeQueueScroll = 0;
 		state.youtubeQueueOpen = false;
 		state.youtubeQueueCacheStatusRefreshScheduled = false;
+	}
+
+	static void recalculateYoutubeQueueDurationLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		long totalDurationMs = 0L;
+		for (YoutubeQueueItem item : state.youtubeQueue) {
+			if (item != null) {
+				totalDurationMs += Math.max(0L, item.durationMs());
+			}
+		}
+		state.youtubeQueueTotalDurationMs = totalDurationMs;
 	}
 
 	static void clearYoutubePlaybackLocked(MediaRuntimeState state) {
@@ -9089,7 +9506,7 @@ public final class MonitorScreenSystem {
 		}
 		state.playerBackgroundMedia = null;
 		state.playerBackgroundUrl = null;
-		state.playerBackgroundScaleMode = MediaScaleMode.FIT;
+		state.playerBackgroundScaleMode = MediaScaleMode.FILL;
 		state.playerBackgroundFrameIndex = 0;
 		state.nextPlayerBackgroundFrameAtMillis = 0L;
 		state.playerBackgroundLoading = false;
@@ -9469,7 +9886,7 @@ public final class MonitorScreenSystem {
 		}
 		return new PersistedPlayerBackgroundState(
 				state.playerBackgroundUrl,
-				state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FIT
+				state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FILL
 		);
 	}
 
@@ -9516,7 +9933,7 @@ public final class MonitorScreenSystem {
 		}
 		return switch (backgroundMode != null ? backgroundMode : resolvedPlayerBackgroundModeLocked(state)) {
 			case ARTWORK -> state.scaleMode != null ? state.scaleMode : MediaScaleMode.FIT;
-			case GALLERY -> state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FIT;
+			case GALLERY -> state.playerBackgroundScaleMode != null ? state.playerBackgroundScaleMode : MediaScaleMode.FILL;
 			case BLACK, EMPTY -> MediaScaleMode.FIT;
 		};
 	}
@@ -9971,6 +10388,7 @@ public final class MonitorScreenSystem {
 				String nextSubtitle = state.mediaSubtitle != null && !state.mediaSubtitle.isBlank() ? state.mediaSubtitle : current.subtitle();
 				long nextDurationMs = state.durationMs > 0L ? state.durationMs : current.durationMs();
 				state.youtubeQueue.set(state.youtubeQueueIndex, new YoutubeQueueItem(nextTitle, nextSubtitle, nextDurationMs, state.sourceUrl));
+				recalculateYoutubeQueueDurationLocked(state);
 				syncYoutubeMusicShuffleStateLocked(state, true);
 				return;
 			}
@@ -9982,6 +10400,7 @@ public final class MonitorScreenSystem {
 				String nextSubtitle = state.mediaSubtitle != null && !state.mediaSubtitle.isBlank() ? state.mediaSubtitle : item.subtitle();
 				long nextDurationMs = state.durationMs > 0L ? state.durationMs : item.durationMs();
 				state.youtubeQueue.set(index, new YoutubeQueueItem(nextTitle, nextSubtitle, nextDurationMs, state.sourceUrl));
+				recalculateYoutubeQueueDurationLocked(state);
 				state.youtubeQueueIndex = index;
 				syncYoutubeMusicShuffleStateLocked(state, true);
 				return;
@@ -9990,6 +10409,7 @@ public final class MonitorScreenSystem {
 		String title = state.mediaTitle != null && !state.mediaTitle.isBlank() ? state.mediaTitle : "YouTube";
 		String subtitle = state.mediaSubtitle != null ? state.mediaSubtitle : "";
 		state.youtubeQueue.add(new YoutubeQueueItem(title, subtitle, Math.max(0L, state.durationMs), state.sourceUrl));
+		recalculateYoutubeQueueDurationLocked(state);
 		state.youtubeQueueIndex = state.youtubeQueue.size() - 1;
 		syncYoutubeMusicShuffleStateLocked(state, true);
 	}
