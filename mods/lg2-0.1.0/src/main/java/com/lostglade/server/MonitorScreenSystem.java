@@ -6031,6 +6031,22 @@ public final class MonitorScreenSystem {
 		graphics.drawImage(image, drawX, drawY, drawWidth, drawHeight, null);
 	}
 
+	static void drawContainedImageNearest(Graphics2D graphics, BufferedImage image, UiRect rect, int padding) {
+		if (graphics == null || image == null || rect == null) {
+			return;
+		}
+		Object previousInterpolation = graphics.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+		try {
+			graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+			drawContainedImage(graphics, image, rect, padding);
+		} finally {
+			graphics.setRenderingHint(
+					RenderingHints.KEY_INTERPOLATION,
+					previousInterpolation != null ? previousInterpolation : RenderingHints.VALUE_INTERPOLATION_BILINEAR
+			);
+		}
+	}
+
 	static BufferedImage loadAppIcon(MonitorApp app) {
 		if (app == null) {
 			return null;
