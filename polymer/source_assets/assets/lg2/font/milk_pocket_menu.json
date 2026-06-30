@@ -3,8 +3,8 @@
     {
       "type": "bitmap",
       "file": "lg2:font/milk_pocket_menu.png",
-      "ascent": 9,
-      "height": 79,
+      "ascent": 61,
+      "height": 204,
       "chars": [
         "\uef30"
       ]

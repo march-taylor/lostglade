@@ -55,6 +55,14 @@
       }
     ]
   },
+  "little_dictator_unique_shock": {
+    "sounds": [
+      {
+        "name": "lg2:little_dictator_unique_shock",
+        "preload": true
+      }
+    ]
+  },
   "cartel_attack_finger": {
     "sounds": [
       {

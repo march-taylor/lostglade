@@ -67,7 +67,7 @@
       "enabled": true,
       "id": "copper_man",
       "displayName": "Медный Человек",
-      "ownerNickname": "pines1",
+      "ownerNickname": "",
       "description": "Искал медь сгорел медведь.",
       "attack": {
         "enabled": true,
@@ -171,7 +171,7 @@
       "enabled": true,
       "id": "woman",
       "displayName": "ЖЕНЩИНА!!!",
-      "ownerNickname": "Rajas_YT",
+      "ownerNickname": "",
       "description": "Хрупкая снаружи, но опасная внутри.",
       "attack": {
         "enabled": true,
@@ -369,7 +369,7 @@
       "enabled": true,
       "id": "milk_oligarch",
       "displayName": "Молочный Олигарх",
-      "ownerNickname": "pines6",
+      "ownerNickname": "Rajas_YT",
       "description": "Никогда бизнесс не бывает белым, даже молочный.",
       "attack": {
         "enabled": true,
