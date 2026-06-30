@@ -137,6 +137,7 @@ final class MonitorScreenYoutubeQueueRuntime {
 		boolean shouldStartPlayback = false;
 		int startQueueIndex = -1;
 		int addedCount = 0;
+		List<String> previewUrls = List.of();
 		List<String> releasedQueueUrls = List.of();
 		List<String> releasedMusicQueueUrls = List.of();
 		YoutubeQueuePreloadDiff preloadDiff = YoutubeQueuePreloadDiff.EMPTY;
@@ -159,6 +160,7 @@ final class MonitorScreenYoutubeQueueRuntime {
 			} else {
 				List<MonitorYoutubeRelayClient.QueueEntry> resolvedEntries = result.queueResponse().entries();
 				addedCount = resolvedEntries.size();
+				List<String> previewCandidates = new ArrayList<>(resolvedEntries.size());
 				if (result.action() == YoutubeLinkRequestAction.REPLACE_QUEUE) {
 					releasedQueueUrls = retainedYoutubePreloadUrlsLocked(state);
 					releasedMusicQueueUrls = retainedYoutubeMusicPreloadUrlsLocked(state);
@@ -174,6 +176,7 @@ final class MonitorScreenYoutubeQueueRuntime {
 					if (entry == null || entry.url() == null || entry.url().isBlank()) {
 						continue;
 					}
+					previewCandidates.add(entry.url());
 					String title = entry.title() == null || entry.title().isBlank()
 							? (result.mode() == ScreenViewMode.YOUTUBE_MUSIC ? "Track" : "YouTube")
 							: entry.title();
@@ -185,6 +188,7 @@ final class MonitorScreenYoutubeQueueRuntime {
 					));
 				}
 				syncYoutubeMusicShuffleStateLocked(state, true);
+				previewUrls = List.copyOf(previewCandidates);
 				if (result.action() == YoutubeLinkRequestAction.REPLACE_QUEUE) {
 					state.youtubeQueueIndex = state.youtubeQueue.isEmpty() ? -1 : 0;
 					alignYoutubeQueueScrollToCurrentTopLocked(state, youtubeQueueVisibleRowsPreview(state));
@@ -209,6 +213,7 @@ final class MonitorScreenYoutubeQueueRuntime {
 		}
 		releaseYoutubeQueuePreloads(releasedQueueUrls);
 		releaseYoutubeMusicQueuePreloads(releasedMusicQueueUrls);
+		primeQueuePreviews(result.mode(), previewUrls);
 		applyYoutubeQueuePreloadDiff(preloadDiff);
 		applyYoutubeMusicQueuePreloadDiff(musicPreloadDiff);
 		scheduleYoutubeQueueCacheStatusRefreshes(server, result.screenKey());
@@ -325,6 +330,7 @@ final class MonitorScreenYoutubeQueueRuntime {
 		String url;
 		String title;
 		int resolvedIndex;
+		BufferedImage previewBackdrop = null;
 		TaskProgress progress = null;
 		YoutubeQueuePreloadDiff preloadDiff = YoutubeQueuePreloadDiff.EMPTY;
 		YoutubeMusicQueuePreloadDiff musicPreloadDiff = YoutubeMusicQueuePreloadDiff.EMPTY;
@@ -369,6 +375,20 @@ final class MonitorScreenYoutubeQueueRuntime {
 				state.version++;
 				url = item.url();
 				title = state.mediaTitle;
+			}
+		}
+		if (url != null && !url.isBlank()) {
+			MonitorYoutubeMusicCache.primeQueueEntryPreview(url);
+			previewBackdrop = MonitorYoutubeMusicCache.queueEntryPreview(url);
+		}
+		if (previewBackdrop != null) {
+			synchronized (state) {
+				if (Objects.equals(state.sourceUrl, url)
+						&& state.mode == ScreenViewMode.YOUTUBE_MUSIC
+						&& state.loading) {
+					state.loadingBackdropFrame = copyBufferedImage(previewBackdrop);
+					state.version++;
+				}
 			}
 		}
 		applyYoutubeQueuePreloadDiff(preloadDiff);
@@ -455,6 +475,22 @@ final class MonitorScreenYoutubeQueueRuntime {
 				true
 		);
 		scheduleAudioCoverRefresh(server, result.screenKey(), result.url(), "", result.title(), result.loadedVideo().audioInput());
+	}
+
+	private static void primeQueuePreviews(ScreenViewMode mode, List<String> urls) {
+		if (urls == null || urls.isEmpty()) {
+			return;
+		}
+		for (String url : urls) {
+			if (url == null || url.isBlank()) {
+				continue;
+			}
+			if (mode == ScreenViewMode.YOUTUBE_MUSIC) {
+				MonitorYoutubeMusicCache.primeQueueEntryPreview(url);
+			} else if (mode == ScreenViewMode.YOUTUBE) {
+				MonitorYoutubeRelayClient.primeQueueEntryPreview(url);
+			}
+		}
 	}
 
 	static boolean youtubeMusicLoadResultStillCurrentLocked(MediaRuntimeState state, YoutubeMusicLoadResult result) {

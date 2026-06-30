@@ -47,6 +47,13 @@ final class MonitorYandexMapsRuntime {
 		MonitorYandexMapsBlueMapRenderer.clear(null);
 	}
 
+	static void deactivateRuntime(ScreenRuntimeKey key) {
+		if (key == null) {
+			return;
+		}
+		STATES.remove(key);
+	}
+
 	static YandexMapsVisualSnapshot captureSnapshot(MinecraftServer server, ScreenComponent component) {
 		if (server == null || component == null) {
 			return emptySnapshot();
@@ -213,6 +220,7 @@ final class MonitorYandexMapsRuntime {
 			return false;
 		}
 		if (mediaCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			deactivateRuntime(component.runtimeKey());
 			applyTransientComponentViewState(server, level, component, ScreenViewMode.HOME, component.launcherPage());
 			return true;
 		}

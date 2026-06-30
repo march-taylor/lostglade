@@ -68,6 +68,20 @@ final class MonitorCameraRuntime {
 		STATES.clear();
 	}
 
+	static void deactivateRuntime(ScreenRuntimeKey key) {
+		if (key == null) {
+			return;
+		}
+		stopPreview(key);
+		CameraRuntimeState removed = STATES.remove(key);
+		if (removed == null) {
+			return;
+		}
+		synchronized (removed) {
+			removed.close();
+		}
+	}
+
 	static CameraAppVisualSnapshot captureSnapshot(MinecraftServer server, ScreenComponent component) {
 		if (server == null || component == null) {
 			return emptySnapshot();

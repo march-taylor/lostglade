@@ -115,6 +115,8 @@ record MediaOverlayWindowSnapshot(
 		String title,
 		String subtitle,
 		List<YoutubeQueueItemSnapshot> items,
+		int totalItemCount,
+		int itemWindowStartIndex,
 		GalleryFileMenuSnapshot galleryFile,
 		int scroll,
 		int currentIndex,
@@ -203,7 +205,8 @@ record MaxVisualSnapshot(
 		int ringtonePickerScroll,
 		List<MaxFileShareContactSnapshot> fileShareContacts,
 		int fileSharePickerScroll,
-		MaxIncomingFileSnapshot incomingFile,
+		List<MaxIncomingFileSnapshot> incomingFiles,
+		int notificationScroll,
 		int notificationCount,
 		int fileShareFileCount,
 		int fileShareSelectedCount,
@@ -217,7 +220,7 @@ record MaxVisualSnapshot(
 		String statusText
 ) {
 	boolean dynamic() {
-		return this.animatedAvatars || (this.call != null && this.call.dynamic()) || this.ringtonePreviewPlaying;
+		return this.animatedAvatars || (this.call != null && this.call.dynamic()) || this.ringtonePreviewPlaying || this.notificationsOpen;
 	}
 }
 
@@ -228,7 +231,9 @@ record MaxContactSnapshot(
 		boolean avatarAnimated,
 		boolean online,
 		boolean ringing,
-		boolean active
+		boolean active,
+		int notificationCount,
+		boolean savedContact
 ) {
 }
 
@@ -336,13 +341,20 @@ record MaxFileShareContactSnapshot(
 }
 
 record MaxIncomingFileSnapshot(
+		String id,
 		String senderCode,
 		String senderDisplayName,
 		BufferedImage senderAvatarFrame,
 		boolean senderAvatarAnimated,
 		String fileName,
 		String subtitle,
-		GalleryItemKind kind
+		GalleryItemKind kind,
+		BufferedImage previewFrame,
+		boolean squarePreviewFallback,
+		boolean previewPlayable,
+		boolean previewActive,
+		boolean previewPlaying,
+		boolean previewLoading
 ) {
 }
 

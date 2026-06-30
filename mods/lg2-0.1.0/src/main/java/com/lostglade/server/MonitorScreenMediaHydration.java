@@ -488,14 +488,11 @@ final class MonitorScreenMediaHydration {
 			return false;
 		}
 		boolean youtubeMusicQueue = isYoutubeMusicMode(state.mode);
-		for (YoutubeQueueItem item : state.youtubeQueue) {
-			String url = item != null ? item.url() : "";
+		Set<String> activeUrls = youtubeMusicQueue ? state.retainedYoutubeMusicUrls : state.retainedYoutubePreloadUrls;
+		for (String url : activeUrls) {
 			if (url == null || url.isBlank()) {
 				continue;
 			}
-			boolean retained = youtubeMusicQueue
-					? state.retainedYoutubeMusicUrls.contains(url)
-					: state.retainedYoutubePreloadUrls.contains(url);
 			if (youtubeMusicQueue) {
 				MonitorYoutubeMusicCache.QueueEntryCacheStatus status = MonitorYoutubeMusicCache.queueEntryCacheStatus(url);
 				if (!status.complete() && status.active()) {
@@ -503,7 +500,7 @@ final class MonitorScreenMediaHydration {
 				}
 			} else {
 				MonitorYoutubeRelayClient.QueueEntryCacheStatus status = MonitorYoutubeRelayClient.queueEntryCacheStatus(url);
-				if (!status.complete() && (status.active() || retained)) {
+				if (!status.complete() && status.active()) {
 					return true;
 				}
 			}
