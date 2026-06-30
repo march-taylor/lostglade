@@ -187,6 +187,7 @@ final class MonitorScreenYoutubeQueueRuntime {
 							entry.url()
 					));
 				}
+				recalculateYoutubeQueueDurationLocked(state);
 				syncYoutubeMusicShuffleStateLocked(state, true);
 				previewUrls = List.copyOf(previewCandidates);
 				if (result.action() == YoutubeLinkRequestAction.REPLACE_QUEUE) {

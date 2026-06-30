@@ -26,6 +26,12 @@ record OverlayWindowCacheKey(MediaOverlayWindowSnapshot snapshot, int width, int
 record OverlayWindowFamilyKey(MediaOverlayWindowType type, int width, int height, int unit) {
 }
 
+record WindowedSnapshot<T>(List<T> items, int totalCount, int windowStartIndex) {
+	static <T> WindowedSnapshot<T> empty() {
+		return new WindowedSnapshot<>(List.of(), 0, 0);
+	}
+}
+
 record MediaVisualSnapshot(
 		ScreenViewMode mode,
 		long version,
@@ -65,8 +71,8 @@ record MediaVisualSnapshot(
 		String mediaTitle,
 		String mediaSubtitle,
 		TaskProgress.Snapshot progress,
-		List<YoutubeQueueItemSnapshot> mediaListItems,
-		List<GalleryCardSnapshot> galleryCards,
+		WindowedSnapshot<YoutubeQueueItemSnapshot> mediaListItems,
+		WindowedSnapshot<GalleryCardSnapshot> galleryCards,
 		boolean actionVisible,
 		MediaActionGlyph actionGlyph,
 		MediaActionVisualState actionState,
@@ -197,20 +203,21 @@ record MaxVisualSnapshot(
 		String accountCode,
 		String accountName,
 		BufferedImage avatarFrame,
-		List<MaxContactSnapshot> contacts,
+		WindowedSnapshot<MaxContactSnapshot> contacts,
 		MaxCallVisualSnapshot call,
-		List<MaxAvatarCandidateSnapshot> avatarCandidates,
+		WindowedSnapshot<MaxAvatarCandidateSnapshot> avatarCandidates,
 		int avatarPickerScroll,
-		List<MaxRingtoneCandidateSnapshot> ringtoneCandidates,
+		WindowedSnapshot<MaxRingtoneCandidateSnapshot> ringtoneCandidates,
 		int ringtonePickerScroll,
-		List<MaxFileShareContactSnapshot> fileShareContacts,
+		WindowedSnapshot<MaxFileShareContactSnapshot> fileShareContacts,
 		int fileSharePickerScroll,
-		List<MaxIncomingFileSnapshot> incomingFiles,
+		WindowedSnapshot<MaxIncomingFileSnapshot> incomingFiles,
 		int notificationScroll,
 		int notificationCount,
 		int fileShareFileCount,
 		int fileShareSelectedCount,
 		String fileShareTitle,
+		WindowedSnapshot<MaxContactSnapshot> callContactCandidates,
 		boolean avatarPickerOpen,
 		boolean ringtonePickerOpen,
 		boolean fileSharePickerOpen,
@@ -773,6 +780,7 @@ final class MediaRuntimeState {
 	int youtubeMusicShuffleCursor;
 	int youtubeQueueIndex;
 	int youtubeQueueScroll;
+	long youtubeQueueTotalDurationMs;
 	boolean youtubeQueueOpen;
 	boolean youtubeQueueCacheStatusRefreshScheduled;
 	boolean youtubeReturnToGallery;
@@ -874,6 +882,7 @@ final class MediaRuntimeState {
 		this.youtubeMusicShuffleCursor = -1;
 		this.youtubeQueueIndex = -1;
 		this.youtubeQueueScroll = 0;
+		this.youtubeQueueTotalDurationMs = 0L;
 		this.youtubeQueueOpen = false;
 		this.youtubeQueueCacheStatusRefreshScheduled = false;
 		this.youtubeReturnToGallery = false;

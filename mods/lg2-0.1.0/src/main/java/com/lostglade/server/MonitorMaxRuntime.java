@@ -160,35 +160,34 @@ final class MonitorMaxRuntime {
 		if (sanitizedContacts) {
 			persistState(server, component.runtimeKey(), state);
 		}
+		ScreenRuntimeKey runtimeKey = component.runtimeKey();
+		MaxCallSession call = currentCall(runtimeKey);
 		MaxCallVisualSnapshot callSnapshot = captureCallSnapshot(server, component, state, cameras);
 		UiLayout overlayLayout = createUiLayout(component.width(), component.height());
-		List<MaxContactSnapshot> contacts = captureContactSnapshots(server, state, component.runtimeKey());
-		List<MaxAvatarCandidateSnapshot> avatarCandidates;
+		WindowedSnapshot<MaxContactSnapshot> contacts = contactFeedSnapshots(server, state, runtimeKey, overlayLayout);
+		WindowedSnapshot<MaxAvatarCandidateSnapshot> avatarCandidates = WindowedSnapshot.empty();
 		int avatarPickerScroll;
-		List<MaxRingtoneCandidateSnapshot> ringtoneCandidates;
+		WindowedSnapshot<MaxRingtoneCandidateSnapshot> ringtoneCandidates = WindowedSnapshot.empty();
 		int ringtonePickerScroll;
-		List<MaxFileShareContactSnapshot> fileShareContacts;
+		WindowedSnapshot<MaxFileShareContactSnapshot> fileShareContacts = WindowedSnapshot.empty();
 		int fileSharePickerScroll;
+		WindowedSnapshot<MaxContactSnapshot> callContactCandidates = WindowedSnapshot.empty();
+		boolean avatarPickerOpen;
+		boolean ringtonePickerOpen;
+		boolean fileSharePickerOpen;
+		boolean callContactPickerOpen;
 		boolean notificationsOpen;
 		String notificationContactCode;
 		List<MaxIncomingFile> notificationEntries;
 		MaxNotificationPreviewVisualState notificationPreviewState;
-		List<MaxIncomingFileSnapshot> incomingFiles;
+		WindowedSnapshot<MaxIncomingFileSnapshot> incomingFiles;
 		int notificationScroll;
 		synchronized (state) {
 			pruneIncomingPreviewCacheLocked(state);
-			List<MaxAvatarCandidateSnapshot> availableAvatarCandidates = state.avatarPickerOpen ? avatarCandidates(component) : List.of();
-			normalizeAvatarPickerScrollLocked(state, overlayLayout, availableAvatarCandidates.size());
-			avatarCandidates = availableAvatarCandidates;
-			avatarPickerScroll = state.avatarPickerScroll;
-			List<MaxRingtoneCandidateSnapshot> availableRingtoneCandidates = state.ringtonePickerOpen ? ringtoneCandidates(component, state) : List.of();
-			normalizeRingtonePickerScrollLocked(state, overlayLayout, availableRingtoneCandidates.size());
-			ringtoneCandidates = availableRingtoneCandidates;
-			ringtonePickerScroll = state.ringtonePickerScroll;
-			List<MaxFileShareContactSnapshot> availableFileShareContacts = state.fileSharePickerOpen ? fileShareContacts(server, state, component.runtimeKey()) : List.of();
-			normalizeFileSharePickerScrollLocked(state, overlayLayout, availableFileShareContacts.size());
-			fileShareContacts = availableFileShareContacts;
-			fileSharePickerScroll = state.fileSharePickerScroll;
+			avatarPickerOpen = state.avatarPickerOpen;
+			ringtonePickerOpen = state.ringtonePickerOpen;
+			fileSharePickerOpen = state.fileSharePickerOpen;
+			callContactPickerOpen = state.callContactPickerOpen;
 			if (state.notificationsOpen && maxNotificationRawIndexesForActiveContactLocked(state).isEmpty()) {
 				closeNotificationsLocked(state);
 				state.version++;
@@ -204,16 +203,35 @@ final class MonitorMaxRuntime {
 							state.notificationPreviewLoading
 					)
 					: null;
-			normalizeNotificationScrollLocked(state, overlayLayout);
-			notificationScroll = state.notificationScroll;
+		}
+		if (avatarPickerOpen) {
+			avatarCandidates = avatarCandidateSnapshots(component, state, overlayLayout, runtimeKey);
+		}
+		if (ringtonePickerOpen) {
+			ringtoneCandidates = ringtoneCandidateSnapshots(component, state, overlayLayout, runtimeKey);
+		}
+		if (fileSharePickerOpen) {
+			fileShareContacts = fileShareContactSnapshots(server, state, runtimeKey, overlayLayout, runtimeKey);
+		}
+		if (callContactPickerOpen && call != null) {
+			callContactCandidates = callContactCandidateSnapshots(server, state, call, runtimeKey, overlayLayout, runtimeKey);
 		}
 		incomingFiles = notificationsOpen
-				? incomingFileSnapshots(server, component.runtimeKey(), state, notificationContactCode, notificationEntries, notificationPreviewState)
-				: List.of();
+				? incomingFileSnapshots(server, runtimeKey, state, notificationContactCode, notificationEntries, notificationPreviewState, overlayLayout)
+				: WindowedSnapshot.empty();
 		synchronized (state) {
-			boolean animatedAvatars = maxAnimatedAvatarsVisible(component, state, contacts, callSnapshot, incomingFiles);
+			state.avatarPickerScroll = clampInt(state.avatarPickerScroll, 0, maxAvatarPickerScroll(overlayLayout, avatarCandidates.totalCount()));
+			avatarPickerScroll = state.avatarPickerScroll;
+			state.ringtonePickerScroll = clampInt(state.ringtonePickerScroll, 0, maxRingtonePickerScroll(overlayLayout, ringtoneCandidates.totalCount()));
+			ringtonePickerScroll = state.ringtonePickerScroll;
+			state.fileSharePickerScroll = clampInt(state.fileSharePickerScroll, 0, maxContactPickerScroll(overlayLayout, fileShareContacts.totalCount()));
+			fileSharePickerScroll = state.fileSharePickerScroll;
+			state.callContactPickerScroll = clampInt(state.callContactPickerScroll, 0, maxCallContactPickerScroll(overlayLayout, callContactCandidates.totalCount()));
+			state.notificationScroll = clampInt(state.notificationScroll, 0, maxNotificationScroll(overlayLayout, incomingFiles.totalCount()));
+			notificationScroll = state.notificationScroll;
+			boolean animatedAvatars = maxAnimatedAvatarsVisible(component, state, contacts.items(), callSnapshot, incomingFiles.items());
 			if (animatedAvatars) {
-				scheduleAvatarAnimationRender(server, component.runtimeKey(), state);
+				scheduleAvatarAnimationRender(server, runtimeKey, state);
 			}
 			return new MaxVisualSnapshot(
 					state.version,
@@ -234,6 +252,7 @@ final class MonitorMaxRuntime {
 					state.fileShareFiles.size(),
 					state.fileShareSelectedContacts.size(),
 					fileShareTitleLocked(state),
+					callContactCandidates,
 					state.avatarPickerOpen,
 					state.ringtonePickerOpen,
 					state.fileSharePickerOpen,
@@ -1285,7 +1304,7 @@ final class MonitorMaxRuntime {
 	}
 
 	private static MaxVisualSnapshot emptySnapshot() {
-		return new MaxVisualSnapshot(0L, "MAX-000000", "000000", null, List.of(), null, List.of(), 0, List.of(), 0, List.of(), 0, List.of(), 0, 0, 0, 0, "", false, false, false, false, false, false, "");
+		return new MaxVisualSnapshot(0L, "MAX-000000", "000000", null, WindowedSnapshot.empty(), null, WindowedSnapshot.empty(), 0, WindowedSnapshot.empty(), 0, WindowedSnapshot.empty(), 0, WindowedSnapshot.empty(), 0, 0, 0, 0, "", WindowedSnapshot.empty(), false, false, false, false, false, false, "");
 	}
 
 	private static MaxRuntimeState ensureState(MinecraftServer server, ScreenComponent component) {
@@ -1796,62 +1815,75 @@ final class MonitorMaxRuntime {
 		}
 		List<MaxContactSnapshot> snapshots = new ArrayList<>(contacts.size());
 		for (String contact : contacts) {
-			String contactCode = normalizeAccountCode(contact);
-			if (contactCode.isBlank()) {
-				continue;
+			MaxContactSnapshot snapshot = captureContactSnapshot(server, selfKey, contact, notificationCounts, incomingProfiles);
+			if (snapshot != null) {
+				snapshots.add(snapshot);
 			}
-			ScreenRuntimeKey key = ACCOUNT_INDEX.get(contactCode);
-			MaxRuntimeState peerState = key != null ? MAX_STATES.get(key) : null;
-			ScreenComponent component = key != null ? resolveScreenComponent(server, key) : null;
-			MaxCallSession call = key != null ? currentCall(key) : null;
-			String displayName = defaultAccountName(contactCode);
-			BufferedImage avatar = null;
-			boolean avatarAnimated = false;
-			String avatarUrl = "";
-			String avatarLocalMediaKey = "";
-			if (peerState != null) {
-				synchronized (peerState) {
-					displayName = peerState.accountName == null || peerState.accountName.isBlank() ? defaultAccountName(contactCode) : peerState.accountName;
-					avatar = currentAvatarFrameLocked(peerState);
-					avatarAnimated = avatarAnimatedLocked(peerState);
-					avatarUrl = peerState.avatarUrl == null ? "" : peerState.avatarUrl;
-					avatarLocalMediaKey = peerState.avatarLocalMediaKey == null ? "" : peerState.avatarLocalMediaKey;
-				}
-				cacheAccountProfile(contactCode, displayName, avatarUrl, avatarLocalMediaKey, avatar, avatarAnimated);
-			} else {
-				MaxStoredAccountProfile storedProfile = resolveStoredAccountProfile(server, contactCode);
-				if (storedProfile != null) {
-					if (storedProfile.displayName() != null && !storedProfile.displayName().isBlank()) {
-						displayName = storedProfile.displayName();
-					}
-					avatar = storedProfile.avatarFrame();
-					avatarAnimated = storedProfile.avatarAnimated();
-				} else {
-					MaxIncomingFile incomingProfile = incomingProfiles.get(contactCode);
-					if (incomingProfile != null) {
-						if (incomingProfile.senderDisplayName() != null && !incomingProfile.senderDisplayName().isBlank()) {
-							displayName = incomingProfile.senderDisplayName();
-						}
-						MonitorMediaApp.LoadedMedia avatarMedia = loadAvatarMedia(null, incomingProfile.senderAvatarUrl(), incomingProfile.senderAvatarLocalMediaKey());
-						avatar = avatarFrame(avatarMedia, 0, null);
-						avatarAnimated = avatarMedia != null && avatarMedia.frameCount() > 1;
-					}
-				}
-			}
-			boolean sameCall = call != null && call.isParticipant(selfKey);
-			snapshots.add(new MaxContactSnapshot(
-					contactCode,
-					displayName,
-					avatar,
-					avatarAnimated,
-					component != null && component.powered(),
-					sameCall && call.isRinging(key),
-					sameCall && call.isAccepted(key),
-					notificationCounts.getOrDefault(contactCode, 0),
-					true
-			));
 		}
 		return snapshots;
+	}
+
+	private static MaxContactSnapshot captureContactSnapshot(
+			MinecraftServer server,
+			ScreenRuntimeKey selfKey,
+			String contact,
+			Map<String, Integer> notificationCounts,
+			Map<String, MaxIncomingFile> incomingProfiles
+	) {
+		String contactCode = normalizeAccountCode(contact);
+		if (contactCode.isBlank()) {
+			return null;
+		}
+		ScreenRuntimeKey key = ACCOUNT_INDEX.get(contactCode);
+		MaxRuntimeState peerState = key != null ? MAX_STATES.get(key) : null;
+		ScreenComponent component = key != null ? resolveScreenComponent(server, key) : null;
+		MaxCallSession call = key != null ? currentCall(key) : null;
+		String displayName = defaultAccountName(contactCode);
+		BufferedImage avatar = null;
+		boolean avatarAnimated = false;
+		String avatarUrl = "";
+		String avatarLocalMediaKey = "";
+		if (peerState != null) {
+			synchronized (peerState) {
+				displayName = peerState.accountName == null || peerState.accountName.isBlank() ? defaultAccountName(contactCode) : peerState.accountName;
+				avatar = currentAvatarFrameLocked(peerState);
+				avatarAnimated = avatarAnimatedLocked(peerState);
+				avatarUrl = peerState.avatarUrl == null ? "" : peerState.avatarUrl;
+				avatarLocalMediaKey = peerState.avatarLocalMediaKey == null ? "" : peerState.avatarLocalMediaKey;
+			}
+			cacheAccountProfile(contactCode, displayName, avatarUrl, avatarLocalMediaKey, avatar, avatarAnimated);
+		} else {
+			MaxStoredAccountProfile storedProfile = resolveStoredAccountProfile(server, contactCode);
+			if (storedProfile != null) {
+				if (storedProfile.displayName() != null && !storedProfile.displayName().isBlank()) {
+					displayName = storedProfile.displayName();
+				}
+				avatar = storedProfile.avatarFrame();
+				avatarAnimated = storedProfile.avatarAnimated();
+			} else {
+				MaxIncomingFile incomingProfile = incomingProfiles.get(contactCode);
+				if (incomingProfile != null) {
+					if (incomingProfile.senderDisplayName() != null && !incomingProfile.senderDisplayName().isBlank()) {
+						displayName = incomingProfile.senderDisplayName();
+					}
+					MonitorMediaApp.LoadedMedia avatarMedia = loadAvatarMedia(null, incomingProfile.senderAvatarUrl(), incomingProfile.senderAvatarLocalMediaKey());
+					avatar = avatarFrame(avatarMedia, 0, null);
+					avatarAnimated = avatarMedia != null && avatarMedia.frameCount() > 1;
+				}
+			}
+		}
+		boolean sameCall = call != null && call.isParticipant(selfKey);
+		return new MaxContactSnapshot(
+				contactCode,
+				displayName,
+				avatar,
+				avatarAnimated,
+				component != null && component.powered(),
+				sameCall && call.isRinging(key),
+				sameCall && call.isAccepted(key),
+				notificationCounts != null ? notificationCounts.getOrDefault(contactCode, 0) : 0,
+				true
+		);
 	}
 
 	private static Map<String, Integer> incomingNotificationCountsBySenderLocked(MaxRuntimeState state) {
@@ -2084,6 +2116,369 @@ final class MonitorMaxRuntime {
 				previewActive && previewState != null && previewState.playing(),
 				previewActive && previewState != null && previewState.loading()
 		);
+	}
+
+	private static int rowSnapshotWindowStartIndex(
+			ScreenRuntimeKey runtimeKey,
+			MonitorScrollAnimationSystem.ScrollChannel channel,
+			int scroll,
+			int maxScroll,
+			int totalCount
+	) {
+		if (totalCount <= 0) {
+			return 0;
+		}
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(runtimeKey, channel, scroll, maxScroll);
+		return clampInt(Math.min(scroll, visualScroll.anchorIndex()) - 1, 0, totalCount);
+	}
+
+	private static int rowSnapshotWindowEndExclusive(
+			ScreenRuntimeKey runtimeKey,
+			MonitorScrollAnimationSystem.ScrollChannel channel,
+			int scroll,
+			int maxScroll,
+			int visibleCount,
+			int totalCount,
+			int startIndex
+	) {
+		if (totalCount <= 0) {
+			return 0;
+		}
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(runtimeKey, channel, scroll, maxScroll);
+		int endExclusive = Math.max(scroll, visualScroll.anchorIndex()) + visibleCount + (visualScroll.animated() ? 1 : 0) + 1;
+		return clampInt(Math.max(startIndex, endExclusive), 0, totalCount);
+	}
+
+	private static int gridSnapshotWindowStartIndex(
+			ScreenRuntimeKey runtimeKey,
+			MonitorScrollAnimationSystem.ScrollChannel channel,
+			int scroll,
+			int maxScroll,
+			int columns,
+			int totalCount
+	) {
+		if (totalCount <= 0) {
+			return 0;
+		}
+		int safeColumns = Math.max(1, columns);
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(runtimeKey, channel, scroll, maxScroll);
+		double displayRow = visualScroll.displayValue() / safeColumns;
+		int anchorRow = clampInt((int) Math.floor(displayRow + 1.0E-6D), 0, Math.max(0, (int) Math.ceil(totalCount / (double) safeColumns)));
+		return clampInt((Math.min(scroll / safeColumns, anchorRow) - 1) * safeColumns, 0, totalCount);
+	}
+
+	private static int gridSnapshotWindowEndExclusive(
+			ScreenRuntimeKey runtimeKey,
+			MonitorScrollAnimationSystem.ScrollChannel channel,
+			int scroll,
+			int maxScroll,
+			int columns,
+			int visibleRows,
+			int totalCount,
+			int startIndex
+	) {
+		if (totalCount <= 0) {
+			return 0;
+		}
+		int safeColumns = Math.max(1, columns);
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(runtimeKey, channel, scroll, maxScroll);
+		double displayRow = visualScroll.displayValue() / safeColumns;
+		int anchorRow = clampInt((int) Math.floor(displayRow + 1.0E-6D), 0, Math.max(0, (int) Math.ceil(totalCount / (double) safeColumns)));
+		double rowFraction = clampDouble(displayRow - anchorRow, 0.0D, 0.999999D);
+		int endRowExclusive = Math.max(scroll / safeColumns, anchorRow) + visibleRows + (rowFraction > 1.0E-4D ? 1 : 0) + 1;
+		return clampInt(Math.max(startIndex, endRowExclusive * safeColumns), 0, totalCount);
+	}
+
+	private static int pixelSnapshotWindowStartIndex(
+			ScreenRuntimeKey runtimeKey,
+			MonitorScrollAnimationSystem.ScrollChannel channel,
+			int scroll,
+			int maxScroll,
+			int stride,
+			int totalCount
+	) {
+		if (totalCount <= 0 || stride <= 0) {
+			return 0;
+		}
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(runtimeKey, channel, scroll, maxScroll);
+		int minOffset = (int) Math.floor(Math.min(scroll, visualScroll.displayValue()));
+		return clampInt(minOffset / stride - 1, 0, totalCount);
+	}
+
+	private static int pixelSnapshotWindowEndExclusive(
+			ScreenRuntimeKey runtimeKey,
+			MonitorScrollAnimationSystem.ScrollChannel channel,
+			int scroll,
+			int maxScroll,
+			int stride,
+			int viewportHeight,
+			int totalCount,
+			int startIndex
+	) {
+		if (totalCount <= 0 || stride <= 0) {
+			return 0;
+		}
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(runtimeKey, channel, scroll, maxScroll);
+		int maxOffset = (int) Math.ceil(Math.max(scroll, visualScroll.displayValue())) + Math.max(0, viewportHeight);
+		int endExclusive = (int) Math.ceil(maxOffset / (double) stride) + 1;
+		return clampInt(Math.max(startIndex, endExclusive), 0, totalCount);
+	}
+
+	private static WindowedSnapshot<MaxContactSnapshot> contactFeedSnapshots(
+			MinecraftServer server,
+			MaxRuntimeState state,
+			ScreenRuntimeKey selfKey,
+			UiLayout layout
+	) {
+		if (state == null || layout == null) {
+			return WindowedSnapshot.empty();
+		}
+		List<String> contacts;
+		Map<String, Integer> notificationCounts;
+		Map<String, MaxIncomingFile> incomingProfiles;
+		synchronized (state) {
+			contacts = List.copyOf(state.contacts);
+			notificationCounts = incomingNotificationCountsBySenderLocked(state);
+			incomingProfiles = incomingProfileBySenderLocked(state);
+		}
+		if (contacts.isEmpty()) {
+			return WindowedSnapshot.empty();
+		}
+		int visibleCount = Math.min(contacts.size(), maxVisibleContactRows(layout));
+		List<MaxContactSnapshot> snapshots = new ArrayList<>(visibleCount);
+		for (int index = 0; index < visibleCount; index++) {
+			MaxContactSnapshot snapshot = captureContactSnapshot(server, selfKey, contacts.get(index), notificationCounts, incomingProfiles);
+			if (snapshot != null) {
+				snapshots.add(snapshot);
+			}
+		}
+		return new WindowedSnapshot<>(List.copyOf(snapshots), contacts.size(), 0);
+	}
+
+	private static WindowedSnapshot<MaxAvatarCandidateSnapshot> avatarCandidateSnapshots(
+			ScreenComponent component,
+			MaxRuntimeState state,
+			UiLayout layout,
+			ScreenRuntimeKey runtimeKey
+	) {
+		if (component == null || state == null || layout == null) {
+			return WindowedSnapshot.empty();
+		}
+		List<PersistedGalleryItem> eligible = new ArrayList<>();
+		for (PersistedGalleryItem item : resolvePersistedGalleryState(component)) {
+			if (item == null || effectiveGalleryItemKind(item) != GalleryItemKind.MEDIA || item.url() == null || item.url().isBlank()) {
+				continue;
+			}
+			eligible.add(item);
+		}
+		if (eligible.isEmpty()) {
+			return WindowedSnapshot.empty();
+		}
+		int totalCount = eligible.size();
+		int scroll;
+		synchronized (state) {
+			scroll = clampInt(state.avatarPickerScroll, 0, maxAvatarPickerScroll(layout, totalCount));
+		}
+		int startIndex = gridSnapshotWindowStartIndex(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_AVATAR_PICKER, scroll, maxAvatarPickerScroll(layout, totalCount), maxAvatarPickerColumns(layout), totalCount);
+		int endExclusive = gridSnapshotWindowEndExclusive(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_AVATAR_PICKER, scroll, maxAvatarPickerScroll(layout, totalCount), maxAvatarPickerColumns(layout), maxAvatarPickerVisibleRows(layout), totalCount, startIndex);
+		List<MaxAvatarCandidateSnapshot> snapshots = new ArrayList<>(Math.max(0, endExclusive - startIndex));
+		for (int index = startIndex; index < endExclusive; index++) {
+			PersistedGalleryItem item = eligible.get(index);
+			BufferedImage preview = persistedGalleryPreviewForDisplay(item, GalleryItemKind.MEDIA);
+			snapshots.add(new MaxAvatarCandidateSnapshot(
+					item.title() == null || item.title().isBlank() ? "Аватар" : item.title(),
+					item.url(),
+					item.localMediaKey(),
+					preview
+			));
+		}
+		return new WindowedSnapshot<>(List.copyOf(snapshots), totalCount, startIndex);
+	}
+
+	private static WindowedSnapshot<MaxRingtoneCandidateSnapshot> ringtoneCandidateSnapshots(
+			ScreenComponent component,
+			MaxRuntimeState state,
+			UiLayout layout,
+			ScreenRuntimeKey runtimeKey
+	) {
+		if (component == null || state == null || layout == null) {
+			return WindowedSnapshot.empty();
+		}
+		List<PersistedGalleryItem> audioItems = new ArrayList<>();
+		for (PersistedGalleryItem item : resolvePersistedGalleryState(component)) {
+			if (item != null && effectiveGalleryItemKind(item) == GalleryItemKind.AUDIO) {
+				audioItems.add(item);
+			}
+		}
+		int totalCount = 1 + audioItems.size();
+		int scroll;
+		synchronized (state) {
+			scroll = clampInt(state.ringtonePickerScroll, 0, maxRingtonePickerScroll(layout, totalCount));
+		}
+		int maxScroll = maxRingtonePickerScroll(layout, totalCount);
+		int startIndex = rowSnapshotWindowStartIndex(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_RINGTONE_PICKER, scroll, maxScroll, totalCount);
+		int endExclusive = rowSnapshotWindowEndExclusive(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_RINGTONE_PICKER, scroll, maxScroll, maxRingtonePickerCapacity(layout), totalCount, startIndex);
+		List<MaxRingtoneCandidateSnapshot> snapshots = new ArrayList<>(Math.max(0, endExclusive - startIndex));
+		for (int index = startIndex; index < endExclusive; index++) {
+			if (index == 0) {
+				snapshots.add(ringtoneCandidate(state, "Стандартный рингтон", "MAX", MAX_DEFAULT_RINGTONE_URL, ""));
+				continue;
+			}
+			PersistedGalleryItem item = audioItems.get(index - 1);
+			String title = item.title() == null || item.title().isBlank() ? "Аудиотрек" : item.title();
+			String subtitle = item.subtitle() == null || item.subtitle().isBlank() ? "Галерея" : item.subtitle();
+			String url = item.url() == null || item.url().isBlank() ? "max:gallery:" + Objects.toString(item.localMediaKey(), title) : item.url();
+			snapshots.add(ringtoneCandidate(state, title, subtitle, url, item.localMediaKey()));
+		}
+		return new WindowedSnapshot<>(List.copyOf(snapshots), totalCount, startIndex);
+	}
+
+	private static WindowedSnapshot<MaxFileShareContactSnapshot> fileShareContactSnapshots(
+			MinecraftServer server,
+			MaxRuntimeState state,
+			ScreenRuntimeKey selfKey,
+			UiLayout layout,
+			ScreenRuntimeKey runtimeKey
+	) {
+		if (state == null || layout == null) {
+			return WindowedSnapshot.empty();
+		}
+		List<String> contacts;
+		Map<String, Integer> notificationCounts;
+		Map<String, MaxIncomingFile> incomingProfiles;
+		Set<String> selected;
+		int scroll;
+		synchronized (state) {
+			contacts = List.copyOf(state.contacts);
+			notificationCounts = incomingNotificationCountsBySenderLocked(state);
+			incomingProfiles = incomingProfileBySenderLocked(state);
+			selected = Set.copyOf(state.fileShareSelectedContacts);
+			scroll = clampInt(state.fileSharePickerScroll, 0, maxContactPickerScroll(layout, contacts.size()));
+		}
+		if (contacts.isEmpty()) {
+			return WindowedSnapshot.empty();
+		}
+		int maxScroll = maxContactPickerScroll(layout, contacts.size());
+		int startIndex = rowSnapshotWindowStartIndex(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_FILE_SHARE_PICKER, scroll, maxScroll, contacts.size());
+		int endExclusive = rowSnapshotWindowEndExclusive(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_FILE_SHARE_PICKER, scroll, maxScroll, maxContactPickerCapacity(layout), contacts.size(), startIndex);
+		List<MaxFileShareContactSnapshot> snapshots = new ArrayList<>(Math.max(0, endExclusive - startIndex));
+		for (int index = startIndex; index < endExclusive; index++) {
+			MaxContactSnapshot contact = captureContactSnapshot(server, selfKey, contacts.get(index), notificationCounts, incomingProfiles);
+			if (contact == null) {
+				continue;
+			}
+			snapshots.add(new MaxFileShareContactSnapshot(
+					contact.code(),
+					contact.displayName(),
+					contact.avatarFrame(),
+					contact.online(),
+					selected.contains(contact.code())
+			));
+		}
+		return new WindowedSnapshot<>(List.copyOf(snapshots), contacts.size(), startIndex);
+	}
+
+	private static WindowedSnapshot<MaxContactSnapshot> callContactCandidateSnapshots(
+			MinecraftServer server,
+			MaxRuntimeState state,
+			MaxCallSession call,
+			ScreenRuntimeKey selfKey,
+			UiLayout layout,
+			ScreenRuntimeKey runtimeKey
+	) {
+		if (state == null || call == null || layout == null) {
+			return WindowedSnapshot.empty();
+		}
+		List<String> contacts;
+		Map<String, Integer> notificationCounts;
+		Map<String, MaxIncomingFile> incomingProfiles;
+		int scroll;
+		synchronized (state) {
+			contacts = List.copyOf(state.contacts);
+			notificationCounts = incomingNotificationCountsBySenderLocked(state);
+			incomingProfiles = incomingProfileBySenderLocked(state);
+			scroll = clampInt(state.callContactPickerScroll, 0, maxCallContactPickerScroll(layout, contacts.size()));
+		}
+		if (contacts.isEmpty()) {
+			return WindowedSnapshot.empty();
+		}
+		String peerCode = call.peerCode(selfKey);
+		List<String> candidates = new ArrayList<>(contacts.size());
+		for (String contact : contacts) {
+			String contactCode = normalizeAccountCode(contact);
+			if (contactCode.isBlank()) {
+				continue;
+			}
+			ScreenRuntimeKey key = ACCOUNT_INDEX.get(contactCode);
+			MaxCallSession current = key != null ? currentCall(key) : null;
+			boolean active = current != null && current.isParticipant(selfKey) && current.isAccepted(key);
+			boolean ringing = current != null && current.isParticipant(selfKey) && current.isRinging(key);
+			if (active || ringing || Objects.equals(contactCode, peerCode) || (key != null && call.isParticipant(key))) {
+				continue;
+			}
+			candidates.add(contact);
+		}
+		int totalCount = candidates.size();
+		if (totalCount <= 0) {
+			return WindowedSnapshot.empty();
+		}
+		int maxScroll = maxCallContactPickerScroll(layout, totalCount);
+		scroll = clampInt(scroll, 0, maxScroll);
+		int startIndex = rowSnapshotWindowStartIndex(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_CALL_CONTACT_PICKER, scroll, maxScroll, totalCount);
+		int endExclusive = rowSnapshotWindowEndExclusive(runtimeKey, MonitorScrollAnimationSystem.ScrollChannel.MAX_CALL_CONTACT_PICKER, scroll, maxScroll, maxCallContactPickerCapacity(layout), totalCount, startIndex);
+		List<MaxContactSnapshot> snapshots = new ArrayList<>(Math.max(0, endExclusive - startIndex));
+		for (int index = startIndex; index < endExclusive; index++) {
+			MaxContactSnapshot snapshot = captureContactSnapshot(server, selfKey, candidates.get(index), notificationCounts, incomingProfiles);
+			if (snapshot != null) {
+				snapshots.add(snapshot);
+			}
+		}
+		return new WindowedSnapshot<>(List.copyOf(snapshots), totalCount, startIndex);
+	}
+
+	private static WindowedSnapshot<MaxIncomingFileSnapshot> incomingFileSnapshots(
+			MinecraftServer server,
+			ScreenRuntimeKey key,
+			MaxRuntimeState state,
+			String activeContactCode,
+			List<MaxIncomingFile> incomingFiles,
+			MaxNotificationPreviewVisualState previewState,
+			UiLayout layout
+	) {
+		if (incomingFiles == null || incomingFiles.isEmpty()) {
+			return WindowedSnapshot.empty();
+		}
+		String activeSender = normalizeAccountCode(activeContactCode);
+		List<MaxIncomingFile> filtered = new ArrayList<>(incomingFiles.size());
+		for (MaxIncomingFile incoming : incomingFiles) {
+			if (incoming == null) {
+				continue;
+			}
+			if (!activeSender.isBlank() && !Objects.equals(activeSender, normalizeAccountCode(incoming.senderCode()))) {
+				continue;
+			}
+			filtered.add(incoming);
+		}
+		int totalCount = filtered.size();
+		if (totalCount <= 0 || state == null || layout == null) {
+			return new WindowedSnapshot<>(List.of(), totalCount, 0);
+		}
+		int itemStride = maxNotificationItemHeight(layout) + maxNotificationItemGap(layout);
+		int maxScroll = maxNotificationScroll(layout, totalCount);
+		int scroll;
+		synchronized (state) {
+			scroll = clampInt(state.notificationScroll, 0, maxScroll);
+		}
+		int startIndex = pixelSnapshotWindowStartIndex(key, MonitorScrollAnimationSystem.ScrollChannel.MAX_NOTIFICATION_FEED, scroll, maxScroll, itemStride, totalCount);
+		int endExclusive = pixelSnapshotWindowEndExclusive(key, MonitorScrollAnimationSystem.ScrollChannel.MAX_NOTIFICATION_FEED, scroll, maxScroll, itemStride, maxNotificationFeedRect(layout).height(), totalCount, startIndex);
+		List<MaxIncomingFileSnapshot> snapshots = new ArrayList<>(Math.max(0, endExclusive - startIndex));
+		for (int index = startIndex; index < endExclusive; index++) {
+			MaxIncomingFileSnapshot snapshot = incomingFileSnapshot(server, key, state, filtered.get(index), previewState);
+			if (snapshot != null) {
+				snapshots.add(snapshot);
+			}
+		}
+		return new WindowedSnapshot<>(List.copyOf(snapshots), totalCount, startIndex);
 	}
 
 	private static BufferedImage incomingFilePreview(MaxIncomingFile incoming, GalleryItemKind kind) {
@@ -5335,7 +5730,8 @@ final class MonitorMaxRuntime {
 		drawMaxRingtoneControls(graphics, layout, state);
 
 		UiRect listRect = maxContactListRect(layout);
-		List<MaxContactSnapshot> contacts = state.contacts();
+		WindowedSnapshot<MaxContactSnapshot> contactsWindow = state.contacts() != null ? state.contacts() : WindowedSnapshot.empty();
+		List<MaxContactSnapshot> contacts = contactsWindow.items();
 		if (contacts.isEmpty()) {
 			drawMaxEmptyContacts(graphics, layout, listRect);
 		} else {
@@ -5745,20 +6141,22 @@ final class MonitorMaxRuntime {
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 50));
 		drawOverlayCloseButton(graphics, maxOverlayCloseRect(layout), layout);
 		drawVerticalText(graphics, "ВЫБЕРИ АВАТАР", maxAvatarPickerTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
-		List<MaxAvatarCandidateSnapshot> candidates = state.avatarCandidates();
-		if (candidates.isEmpty()) {
+		WindowedSnapshot<MaxAvatarCandidateSnapshot> candidatesWindow = state.avatarCandidates() != null ? state.avatarCandidates() : WindowedSnapshot.empty();
+		List<MaxAvatarCandidateSnapshot> candidates = candidatesWindow.items();
+		int totalCandidateCount = candidatesWindow.totalCount();
+		if (totalCandidateCount <= 0) {
 			drawCenteredText(graphics, "В галерее нет картинок или GIF", maxAvatarPickerGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
 		int columns = maxAvatarPickerColumns(layout);
 		int visibleRows = maxAvatarPickerVisibleRows(layout);
-		int totalRows = Math.max(0, (candidates.size() + columns - 1) / columns);
-		int scroll = clampInt(state.avatarPickerScroll(), 0, maxAvatarPickerScroll(layout, candidates.size()));
+		int totalRows = Math.max(0, (totalCandidateCount + columns - 1) / columns);
+		int scroll = clampInt(state.avatarPickerScroll(), 0, maxAvatarPickerScroll(layout, totalCandidateCount));
 		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
 				runtimeKey,
 				MonitorScrollAnimationSystem.ScrollChannel.MAX_AVATAR_PICKER,
 				scroll,
-				maxAvatarPickerScroll(layout, candidates.size())
+				maxAvatarPickerScroll(layout, totalCandidateCount)
 		);
 		double displayRow = visualScroll.displayValue() / Math.max(1, columns);
 		int baseRow = clampInt((int) Math.floor(displayRow + 1.0E-6D), 0, Math.max(0, totalRows - visibleRows));
@@ -5770,14 +6168,15 @@ final class MonitorMaxRuntime {
 		);
 		Shape previousClip = graphics.getClip();
 		UiRect grid = maxAvatarPickerGridRect(layout);
-		graphics.setClip(grid.x(), grid.y(), grid.width(), grid.height());
-		for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
-			for (int column = 0; column < columns; column++) {
-				int index = (baseRow + visibleRow) * columns + column;
-				if (index < 0 || index >= candidates.size()) {
-					continue;
-				}
-				UiRect rect = offsetRect(maxAvatarCandidateRect(layout, visibleRow * columns + column), 0, rowOffset);
+			graphics.setClip(grid.x(), grid.y(), grid.width(), grid.height());
+			for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
+				for (int column = 0; column < columns; column++) {
+					int absoluteIndex = (baseRow + visibleRow) * columns + column;
+					int index = absoluteIndex - candidatesWindow.windowStartIndex();
+					if (index < 0 || index >= candidates.size()) {
+						continue;
+					}
+					UiRect rect = offsetRect(maxAvatarCandidateRect(layout, visibleRow * columns + column), 0, rowOffset);
 				MaxAvatarCandidateSnapshot candidate = candidates.get(index);
 				fillRoundedRect(graphics, rect, clampInt(layout.unit(), 8, 16), new Color(255, 255, 255, 18));
 				if (candidate.preview() != null) {
@@ -5946,30 +6345,37 @@ final class MonitorMaxRuntime {
 		strokeRoundedRect(graphics, panel, clampInt(layout.unit() * 2, 14, 28), 1.0F, new Color(255, 255, 255, 54));
 		drawOverlayCloseButton(graphics, maxOverlayCloseRect(layout), layout);
 		drawVerticalText(graphics, "РИНГТОН", maxAvatarPickerTitleRect(layout), new Color(248, 251, 255, 236), Font.BOLD, clampInt(layout.unit(), 10, 16));
-		List<MaxRingtoneCandidateSnapshot> candidates = state.ringtoneCandidates();
-		if (candidates == null || candidates.isEmpty()) {
+		WindowedSnapshot<MaxRingtoneCandidateSnapshot> candidatesWindow = state.ringtoneCandidates() != null ? state.ringtoneCandidates() : WindowedSnapshot.empty();
+		List<MaxRingtoneCandidateSnapshot> candidates = candidatesWindow.items();
+		int totalCandidateCount = candidatesWindow.totalCount();
+		if (totalCandidateCount <= 0) {
 			drawCenteredText(graphics, "В галерее нет аудиофайлов", maxAvatarPickerGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
 		int visibleRows = maxRingtonePickerCapacity(layout);
-		int scroll = clampInt(state.ringtonePickerScroll(), 0, maxRingtonePickerScroll(layout, candidates.size()));
+		int scroll = clampInt(state.ringtonePickerScroll(), 0, maxRingtonePickerScroll(layout, totalCandidateCount));
 		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
 				runtimeKey,
 				MonitorScrollAnimationSystem.ScrollChannel.MAX_RINGTONE_PICKER,
 				scroll,
-				maxRingtonePickerScroll(layout, candidates.size())
+				maxRingtonePickerScroll(layout, totalCandidateCount)
 		);
 		int baseIndex = visualScroll.anchorIndex();
 		int yOffset = -(int) Math.round(visualScroll.fraction() * maxRingtonePickerRowStep(layout));
 		int count = Math.min(
-				Math.max(0, candidates.size() - baseIndex),
-				visibleRows + (visualScroll.animated() && baseIndex + visibleRows < candidates.size() ? 1 : 0)
+				Math.max(0, totalCandidateCount - baseIndex),
+				visibleRows + (visualScroll.animated() && baseIndex + visibleRows < totalCandidateCount ? 1 : 0)
 		);
 		Shape previousClip = graphics.getClip();
 		UiRect list = maxAvatarPickerGridRect(layout);
 		graphics.setClip(list.x(), list.y(), list.width(), list.height());
 		for (int index = 0; index < count; index++) {
-			drawMaxRingtoneCandidate(graphics, layout, offsetRect(maxRingtoneCandidateRect(layout, index), 0, yOffset), candidates.get(baseIndex + index));
+			int absoluteIndex = baseIndex + index;
+			int windowIndex = absoluteIndex - candidatesWindow.windowStartIndex();
+			if (windowIndex < 0 || windowIndex >= candidates.size()) {
+				continue;
+			}
+			drawMaxRingtoneCandidate(graphics, layout, offsetRect(maxRingtoneCandidateRect(layout, index), 0, yOffset), candidates.get(windowIndex));
 		}
 		graphics.setClip(previousClip);
 	}
@@ -6001,36 +6407,36 @@ final class MonitorMaxRuntime {
 				participantCodes.add(participant.code());
 			}
 		}
-		List<MaxContactSnapshot> contacts = state.contacts() != null ? state.contacts() : List.of();
-		List<MaxContactSnapshot> candidates = contacts.stream()
-				.filter(contact -> contact != null
-						&& !contact.active()
-						&& !contact.ringing()
-						&& !Objects.equals(contact.code(), call.peerCode())
-						&& !participantCodes.contains(contact.code()))
-				.toList();
-		if (candidates.isEmpty()) {
+		WindowedSnapshot<MaxContactSnapshot> candidatesWindow = state.callContactCandidates() != null ? state.callContactCandidates() : WindowedSnapshot.empty();
+		List<MaxContactSnapshot> candidates = candidatesWindow.items();
+		int totalCandidateCount = candidatesWindow.totalCount();
+		if (totalCandidateCount <= 0) {
 			drawCenteredText(graphics, "Нет контактов для приглашения", maxCallContactPickerGridRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
-		int contactScroll = clampInt(call.contactPickerScroll(), 0, maxCallContactPickerScroll(layout, candidates.size()));
+		int contactScroll = clampInt(call.contactPickerScroll(), 0, maxCallContactPickerScroll(layout, totalCandidateCount));
 		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
 				runtimeKey,
 				MonitorScrollAnimationSystem.ScrollChannel.MAX_CALL_CONTACT_PICKER,
 				contactScroll,
-				maxCallContactPickerScroll(layout, candidates.size())
+				maxCallContactPickerScroll(layout, totalCandidateCount)
 		);
 		int baseIndex = visualScroll.anchorIndex();
 		int yOffset = -(int) Math.round(visualScroll.fraction() * maxContactPickerRowStep(layout));
 		int count = Math.min(
-				Math.max(0, candidates.size() - baseIndex),
-				maxCallContactPickerCapacity(layout) + (visualScroll.animated() && baseIndex + maxCallContactPickerCapacity(layout) < candidates.size() ? 1 : 0)
+				Math.max(0, totalCandidateCount - baseIndex),
+				maxCallContactPickerCapacity(layout) + (visualScroll.animated() && baseIndex + maxCallContactPickerCapacity(layout) < totalCandidateCount ? 1 : 0)
 		);
 		Shape previousClip = graphics.getClip();
 		UiRect list = maxCallContactPickerGridRect(layout);
 		graphics.setClip(list.x(), list.y(), list.width(), list.height());
 		for (int index = 0; index < count; index++) {
-			drawMaxContactRow(graphics, layout, offsetRect(maxCallContactPickerRowRect(layout, index), 0, yOffset), candidates.get(baseIndex + index), false);
+			int absoluteIndex = baseIndex + index;
+			int windowIndex = absoluteIndex - candidatesWindow.windowStartIndex();
+			if (windowIndex < 0 || windowIndex >= candidates.size()) {
+				continue;
+			}
+			drawMaxContactRow(graphics, layout, offsetRect(maxCallContactPickerRowRect(layout, index), 0, yOffset), candidates.get(windowIndex), false);
 		}
 		graphics.setClip(previousClip);
 	}
@@ -6046,32 +6452,39 @@ final class MonitorMaxRuntime {
 		Color sendColor = drawMediaHeaderControlBase(graphics, send, MediaButtonSegment.SINGLE);
 		drawPlayerUiIcon(graphics, mediaChromeIconRect(send, layout), PlayerUiIcon.SEND_PLANE, sendColor);
 
-		List<MaxFileShareContactSnapshot> contacts = state.fileShareContacts() != null ? state.fileShareContacts() : List.of();
-		if (contacts.isEmpty()) {
+		WindowedSnapshot<MaxFileShareContactSnapshot> contactsWindow = state.fileShareContacts() != null ? state.fileShareContacts() : WindowedSnapshot.empty();
+		List<MaxFileShareContactSnapshot> contacts = contactsWindow.items();
+		int totalContactCount = contactsWindow.totalCount();
+		if (totalContactCount <= 0) {
 			drawCenteredText(graphics, "Добавь контакты в MAX", maxContactPickerListRect(layout), new Color(210, 224, 236, 224), Font.BOLD, clampInt(layout.unit(), 9, 14));
 			return;
 		}
 		UiRect hint = maxFileShareHintRect(layout);
 		String fileLabel = state.fileShareFileCount() <= 1 ? state.fileShareTitle() : "Файлов: " + state.fileShareFileCount();
 		drawCenteredTextFitted(graphics, fileLabel, hint, new Color(176, 202, 220, 224), Font.BOLD, clampInt(layout.unit() - 2, 7, 11), 6);
-		int scroll = clampInt(state.fileSharePickerScroll(), 0, maxContactPickerScroll(layout, contacts.size()));
+		int scroll = clampInt(state.fileSharePickerScroll(), 0, maxContactPickerScroll(layout, totalContactCount));
 		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
 				runtimeKey,
 				MonitorScrollAnimationSystem.ScrollChannel.MAX_FILE_SHARE_PICKER,
 				scroll,
-				maxContactPickerScroll(layout, contacts.size())
+				maxContactPickerScroll(layout, totalContactCount)
 		);
 		int baseIndex = visualScroll.anchorIndex();
 		int yOffset = -(int) Math.round(visualScroll.fraction() * maxContactPickerRowStep(layout));
 		int count = Math.min(
-				Math.max(0, contacts.size() - baseIndex),
-				maxContactPickerCapacity(layout) + (visualScroll.animated() && baseIndex + maxContactPickerCapacity(layout) < contacts.size() ? 1 : 0)
+				Math.max(0, totalContactCount - baseIndex),
+				maxContactPickerCapacity(layout) + (visualScroll.animated() && baseIndex + maxContactPickerCapacity(layout) < totalContactCount ? 1 : 0)
 		);
 		Shape previousClip = graphics.getClip();
 		UiRect list = maxContactPickerListRect(layout);
 		graphics.setClip(list.x(), list.y(), list.width(), list.height());
 		for (int index = 0; index < count; index++) {
-			drawMaxFileShareContactRow(graphics, layout, offsetRect(maxContactPickerRowRect(layout, index), 0, yOffset), contacts.get(baseIndex + index));
+			int absoluteIndex = baseIndex + index;
+			int windowIndex = absoluteIndex - contactsWindow.windowStartIndex();
+			if (windowIndex < 0 || windowIndex >= contacts.size()) {
+				continue;
+			}
+			drawMaxFileShareContactRow(graphics, layout, offsetRect(maxContactPickerRowRect(layout, index), 0, yOffset), contacts.get(windowIndex));
 		}
 		graphics.setClip(previousClip);
 	}
@@ -6094,7 +6507,8 @@ final class MonitorMaxRuntime {
 	private static void drawMaxNotificationsScreen(Graphics2D graphics, UiLayout layout, ScreenRuntimeKey runtimeKey, MaxVisualSnapshot state) {
 		UiRect panel = maxNotificationPopupRect(layout);
 		fillRoundedRect(graphics, panel, clampInt(layout.unit(), 8, 18), new Color(6, 10, 14, 236));
-		List<MaxIncomingFileSnapshot> incomingFiles = state.incomingFiles() != null ? state.incomingFiles() : List.of();
+		WindowedSnapshot<MaxIncomingFileSnapshot> incomingFilesWindow = state.incomingFiles() != null ? state.incomingFiles() : WindowedSnapshot.empty();
+		List<MaxIncomingFileSnapshot> incomingFiles = incomingFilesWindow.items();
 		if (!incomingFiles.isEmpty()) {
 			drawMaxNotificationPopupHeader(graphics, layout, incomingFiles.get(0));
 		} else {
@@ -6102,7 +6516,7 @@ final class MonitorMaxRuntime {
 			return;
 		}
 		UiRect feed = maxNotificationFeedRect(layout);
-		int maxScroll = maxNotificationScroll(layout, incomingFiles.size());
+		int maxScroll = maxNotificationScroll(layout, incomingFilesWindow.totalCount());
 		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
 				runtimeKey,
 				MonitorScrollAnimationSystem.ScrollChannel.MAX_NOTIFICATION_FEED,
@@ -6111,9 +6525,9 @@ final class MonitorMaxRuntime {
 		);
 		Shape previousClip = graphics.getClip();
 		graphics.setClip(feed.x(), feed.y(), feed.width(), feed.height());
-		int y = feed.y() - (int) Math.round(visualScroll.displayValue());
 		int itemHeight = maxNotificationItemHeight(layout);
 		int itemGap = maxNotificationItemGap(layout);
+		int y = feed.y() - (int) Math.round(visualScroll.displayValue()) + incomingFilesWindow.windowStartIndex() * (itemHeight + itemGap);
 		for (MaxIncomingFileSnapshot incoming : incomingFiles) {
 			UiRect itemRect = new UiRect(feed.x(), y, feed.width(), itemHeight);
 			if (rectIntersects(itemRect, feed)) {

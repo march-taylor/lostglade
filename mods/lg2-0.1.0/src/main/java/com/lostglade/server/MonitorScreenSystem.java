@@ -2824,7 +2824,7 @@ public final class MonitorScreenSystem {
 
 	static MediaVisualSnapshot captureMediaSnapshot(MinecraftServer server, MediaRuntimeState state, ScreenComponent component) {
 		if (state == null) {
-			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, null, false, true, false, false, 0, false, false, false, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, MediaScaleMode.FIT, PlayerBackgroundMode.BLACK, false, "", "ВСТАВЬ URL", "", "", null, List.of(), List.of(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, false, 0, -1, null);
+			return new MediaVisualSnapshot(ScreenViewMode.GALLERY, 0L, null, null, null, false, true, false, false, 0, false, false, false, false, false, false, false, false, false, false, false, 0, 0, 0.0F, 0.0F, 0.0F, "", false, MediaOverlayMode.CONTROLS, MediaScaleMode.FIT, MediaScaleMode.FIT, PlayerBackgroundMode.BLACK, false, "", "ВСТАВЬ URL", "", "", null, WindowedSnapshot.empty(), WindowedSnapshot.empty(), false, MediaActionGlyph.DOWNLOAD, MediaActionVisualState.IDLE, false, MediaActionGlyph.WALLPAPER, MediaActionVisualState.IDLE, false, false, 0, -1, null);
 		}
 		boolean youtubeMode = state.mode == ScreenViewMode.YOUTUBE;
 		boolean youtubeMusicMode = state.mode == ScreenViewMode.YOUTUBE_MUSIC;
@@ -2837,10 +2837,13 @@ public final class MonitorScreenSystem {
 		boolean galleryBackedYoutube = isGalleryBackedYoutubeLocked(state);
 		boolean streamPlayback = isStreamPlaybackLocked(state);
 		boolean liveCameraPlayback = state.streamKind == PlaybackStreamKind.LIVE_CAMERA;
+		UiLayout snapshotLayout = component != null ? createUiLayout(component.width(), component.height()) : null;
 		BufferedImage liveControlsFrame = liveCameraPlayback && state.overlayMode == MediaOverlayMode.CONTROLS && component != null
 				? mapPaletteImage(state.liveCameraBufferedTiles, component.width(), component.height())
 				: null;
-		List<GalleryCardSnapshot> galleryCards = galleryBrowser ? galleryCardSnapshots(server, component, state) : List.of();
+		WindowedSnapshot<GalleryCardSnapshot> galleryCards = galleryBrowser
+				? galleryCardSnapshots(server, component, state, component != null ? component.runtimeKey() : null, snapshotLayout)
+				: WindowedSnapshot.empty();
 		BufferedImage frame = streamPlayback
 				? liveControlsFrame != null ? liveControlsFrame : state.streamFrame
 				: !galleryBrowser && state.loadedMedia != null ? state.loadedMedia.frame(state.frameIndex) : null;
@@ -2852,7 +2855,7 @@ public final class MonitorScreenSystem {
 				: null;
 		boolean hasMedia = streamPlayback
 				? hasDisplayableMediaLocked(state)
-				: galleryBrowser ? !galleryCards.isEmpty() : state.loadedMedia != null;
+				: galleryBrowser ? galleryCards.totalCount() > 0 : state.loadedMedia != null;
 		boolean playbackControlsVisible = mediaControlUiVisibleLocked(state);
 		boolean timelineVisible = (streamPlayback && !liveCameraPlayback) || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.frameCount() > 1);
 		boolean centerPlayPauseVisible = (streamPlayback && !liveCameraPlayback) || (!galleryBrowser && state.loadedMedia != null && state.loadedMedia.animated());
@@ -2876,7 +2879,6 @@ public final class MonitorScreenSystem {
 		String timelineLabel = streamPlayback
 				? state.liveStream ? "LIVE" : formatPlaybackTime(state.positionMs) + " / " + formatPlaybackTime(state.durationMs)
 				: (!galleryBrowser && timelineCount > 0 ? (timelineIndex + 1) + "/" + Math.max(1, timelineCount) : "");
-		UiLayout snapshotLayout = component != null ? createUiLayout(component.width(), component.height()) : null;
 		boolean youtubeQueueWindowOpen = youtubeFamilyMode && state.youtubeQueueOpen;
 		MediaActionGlyph actionGlyph = resolvedActionGlyph(state);
 		MediaActionVisualState actionState = resolvedActionVisualState(state);
@@ -2941,7 +2943,7 @@ public final class MonitorScreenSystem {
 				state.mediaTitle != null ? state.mediaTitle : "",
 				state.mediaSubtitle != null ? state.mediaSubtitle : "",
 				state.progress.snapshot(),
-				List.of(),
+				WindowedSnapshot.empty(),
 				galleryCards,
 				actionVisible,
 				actionGlyph,
@@ -3575,10 +3577,11 @@ public final class MonitorScreenSystem {
 			drawGalleryHeaderIconButton(graphics, selectionRect, layout, selectionMode ? PlayerUiIcon.CHECKBOX_FILL : PlayerUiIcon.CHECKBOX_LINE, selectionMode, MediaButtonSegment.RIGHT);
 		}
 
-		List<GalleryCardSnapshot> cards = state != null ? state.galleryCards() : List.of();
+		WindowedSnapshot<GalleryCardSnapshot> cardsWindow = state != null ? state.galleryCards() : WindowedSnapshot.empty();
+		List<GalleryCardSnapshot> cards = cardsWindow.items();
 		int columns = mediaGalleryColumns(layout);
 		int visibleRows = mediaGalleryVisibleRows(layout);
-		int totalRows = mediaGalleryTotalRows(cards.size(), layout);
+		int totalRows = mediaGalleryTotalRows(cardsWindow.totalCount(), layout);
 		int scroll = state != null ? clampInt(state.mediaListScroll(), 0, Math.max(0, totalRows - visibleRows)) : 0;
 		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
 				runtimeKey,
@@ -3607,7 +3610,8 @@ public final class MonitorScreenSystem {
 			try {
 				for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
 					for (int column = 0; column < columns; column++) {
-						int index = (baseRow + visibleRow) * columns + column;
+						int absoluteIndex = (baseRow + visibleRow) * columns + column;
+						int index = absoluteIndex - cardsWindow.windowStartIndex();
 						if (index < 0 || index >= cards.size()) {
 							continue;
 						}
@@ -3644,7 +3648,8 @@ public final class MonitorScreenSystem {
 	) {
 		drawMediaCloseButton(graphics, closeRect, layout, MediaButtonSegment.LEFT);
 
-		List<GalleryCardSnapshot> cards = state != null ? state.galleryCards() : List.of();
+		WindowedSnapshot<GalleryCardSnapshot> cardsWindow = state != null ? state.galleryCards() : WindowedSnapshot.empty();
+		List<GalleryCardSnapshot> cards = cardsWindow.items();
 		int cameraCount = 0;
 		int droneCount = 0;
 		for (GalleryCardSnapshot card : cards) {
@@ -3693,7 +3698,7 @@ public final class MonitorScreenSystem {
 
 		int columns = mediaGalleryColumns(layout);
 		int visibleRows = mediaGalleryVisibleRows(layout);
-		int totalRows = mediaGalleryTotalRows(cards.size(), layout);
+		int totalRows = mediaGalleryTotalRows(cardsWindow.totalCount(), layout);
 		int scroll = state != null ? clampInt(state.mediaListScroll(), 0, Math.max(0, totalRows - visibleRows)) : 0;
 		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
 				runtimeKey,
@@ -3715,7 +3720,8 @@ public final class MonitorScreenSystem {
 			try {
 				for (int visibleRow = 0; visibleRow < rowCount; visibleRow++) {
 					for (int column = 0; column < columns; column++) {
-						int index = (baseRow + visibleRow) * columns + column;
+						int absoluteIndex = (baseRow + visibleRow) * columns + column;
+						int index = absoluteIndex - cardsWindow.windowStartIndex();
 						if (index < 0 || index >= cards.size()) {
 							continue;
 						}
@@ -8539,6 +8545,52 @@ public final class MonitorScreenSystem {
 		return clampInt(Math.max(startIndex, coverageEndExclusive), 0, state.youtubeQueue.size());
 	}
 
+	static int galleryCardSnapshotWindowStartIndex(ScreenRuntimeKey runtimeKey, MediaRuntimeState state, UiLayout layout, int totalCount) {
+		if (state == null || layout == null || totalCount <= 0) {
+			return 0;
+		}
+		int columns = mediaGalleryColumns(layout);
+		int visibleRows = mediaGalleryVisibleRows(layout);
+		int totalRows = mediaGalleryTotalRows(totalCount, layout);
+		int maxScroll = Math.max(0, totalRows - visibleRows);
+		int scroll = clampInt(state.galleryScroll, 0, maxScroll);
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MEDIA_LIBRARY_BROWSER,
+				scroll,
+				maxScroll
+		);
+		int windowPaddingRows = 1;
+		return clampInt(
+				(Math.min(scroll, visualScroll.anchorIndex()) - windowPaddingRows) * Math.max(1, columns),
+				0,
+				totalCount
+		);
+	}
+
+	static int galleryCardSnapshotWindowEndExclusive(ScreenRuntimeKey runtimeKey, MediaRuntimeState state, UiLayout layout, int totalCount, int startIndex) {
+		if (state == null || layout == null || totalCount <= 0) {
+			return 0;
+		}
+		int columns = mediaGalleryColumns(layout);
+		int visibleRows = mediaGalleryVisibleRows(layout);
+		int totalRows = mediaGalleryTotalRows(totalCount, layout);
+		int maxScroll = Math.max(0, totalRows - visibleRows);
+		int scroll = clampInt(state.galleryScroll, 0, maxScroll);
+		MonitorScrollAnimationSystem.ScrollVisualState visualScroll = MonitorScrollAnimationSystem.sample(
+				runtimeKey,
+				MonitorScrollAnimationSystem.ScrollChannel.MEDIA_LIBRARY_BROWSER,
+				scroll,
+				maxScroll
+		);
+		int windowPaddingRows = 1;
+		int endRowExclusive = Math.max(scroll, visualScroll.anchorIndex())
+				+ visibleRows
+				+ (visualScroll.animated() ? 1 : 0)
+				+ windowPaddingRows;
+		return clampInt(Math.max(startIndex, endRowExclusive * Math.max(1, columns)), 0, totalCount);
+	}
+
 	static List<YoutubeQueueItemSnapshot> galleryItemSnapshots(MediaRuntimeState state) {
 		if (state == null || state.galleryItems.isEmpty()) {
 			return List.of();
@@ -8562,50 +8614,90 @@ public final class MonitorScreenSystem {
 		return items;
 	}
 
-	static List<GalleryCardSnapshot> galleryCardSnapshots(MinecraftServer server, ScreenComponent component, MediaRuntimeState state) {
+	static WindowedSnapshot<GalleryCardSnapshot> galleryCardSnapshots(
+			MinecraftServer server,
+			ScreenComponent component,
+			MediaRuntimeState state,
+			ScreenRuntimeKey runtimeKey,
+			UiLayout layout
+	) {
 		if (state == null || state.galleryItems.isEmpty()) {
-			return List.of();
+			return WindowedSnapshot.empty();
 		}
 		normalizeGalleryBulkSelectionLocked(state);
 		boolean metadataVisible = isSberDronesMode(state.mode);
 		List<Integer> visibleIndexes = galleryBrowserVisibleIndexesLocked(state);
-		List<GalleryCardSnapshot> items = new ArrayList<>(visibleIndexes.size());
-		for (int index : visibleIndexes) {
-			GalleryItem item = state.galleryItems.get(index);
-			MonitorMediaApp.LoadedMedia media = item != null ? item.media() : null;
-			BufferedImage preview = media != null ? media.frame(0) : item != null ? item.preview() : null;
-			GalleryItemKind itemKind = effectiveGalleryItemKind(item);
-			boolean youtubeLoaded = item != null
-					&& ((itemKind == GalleryItemKind.YOUTUBE && MonitorYoutubeRelayClient.isQueueEntryLoaded(item.url()))
-					|| (itemKind == GalleryItemKind.AUDIO && item.url() != null && !item.url().isBlank() && MonitorYoutubeMusicCache.isQueueEntryLoaded(item.url())))
-					&& item.url() != null
-					&& !item.url().isBlank();
-			if (metadataVisible && itemKind == GalleryItemKind.LIVE_CAMERA) {
-				items.add(buildLiveCameraGalleryCardSnapshot(server, component, state, index, item, preview));
-				continue;
-			}
-			items.add(new GalleryCardSnapshot(
-					index,
-					item != null ? item.title() : "Gallery",
-					item != null ? item.subtitle() : "",
-					"",
-					"",
-					false,
-					"",
-					metadataVisible,
-					itemKind,
-					media != null && media.animated(),
-					(item != null && (itemKind == GalleryItemKind.YOUTUBE || itemKind == GalleryItemKind.VIDEO || itemKind == GalleryItemKind.AUDIO || itemKind == GalleryItemKind.LIVE_CAMERA))
-							|| (media != null && media.animated()),
-					preview,
-					index == state.galleryIndex,
-					state.galleryBulkSelectionMode,
-					galleryBulkItemSelectedLocked(state, index),
-					youtubeLoaded || itemKind == GalleryItemKind.LIVE_CAMERA,
-					false
-			));
+		if (visibleIndexes.isEmpty()) {
+			return WindowedSnapshot.empty();
 		}
-		return items;
+		if (metadataVisible || layout == null) {
+			List<GalleryCardSnapshot> items = new ArrayList<>(visibleIndexes.size());
+			for (int index : visibleIndexes) {
+				GalleryCardSnapshot snapshot = buildGalleryCardSnapshot(server, component, state, metadataVisible, index);
+				if (snapshot != null) {
+					items.add(snapshot);
+				}
+			}
+			return items.isEmpty() ? WindowedSnapshot.empty() : new WindowedSnapshot<>(List.copyOf(items), items.size(), 0);
+		}
+		int totalCount = visibleIndexes.size();
+		int startIndex = galleryCardSnapshotWindowStartIndex(runtimeKey, state, layout, totalCount);
+		int endExclusive = galleryCardSnapshotWindowEndExclusive(runtimeKey, state, layout, totalCount, startIndex);
+		List<GalleryCardSnapshot> items = new ArrayList<>(Math.max(0, endExclusive - startIndex));
+		for (int visibleIndex = startIndex; visibleIndex < endExclusive; visibleIndex++) {
+			int index = visibleIndexes.get(visibleIndex);
+			GalleryCardSnapshot snapshot = buildGalleryCardSnapshot(server, component, state, false, index);
+			if (snapshot != null) {
+				items.add(snapshot);
+			}
+		}
+		return items.isEmpty()
+				? new WindowedSnapshot<>(List.of(), totalCount, startIndex)
+				: new WindowedSnapshot<>(List.copyOf(items), totalCount, startIndex);
+	}
+
+	static GalleryCardSnapshot buildGalleryCardSnapshot(
+			MinecraftServer server,
+			ScreenComponent component,
+			MediaRuntimeState state,
+			boolean metadataVisible,
+			int index
+	) {
+		if (state == null || index < 0 || index >= state.galleryItems.size()) {
+			return null;
+		}
+		GalleryItem item = state.galleryItems.get(index);
+		MonitorMediaApp.LoadedMedia media = item != null ? item.media() : null;
+		BufferedImage preview = media != null ? media.frame(0) : item != null ? item.preview() : null;
+		GalleryItemKind itemKind = effectiveGalleryItemKind(item);
+		boolean youtubeLoaded = item != null
+				&& ((itemKind == GalleryItemKind.YOUTUBE && MonitorYoutubeRelayClient.isQueueEntryLoaded(item.url()))
+				|| (itemKind == GalleryItemKind.AUDIO && item.url() != null && !item.url().isBlank() && MonitorYoutubeMusicCache.isQueueEntryLoaded(item.url())))
+				&& item.url() != null
+				&& !item.url().isBlank();
+		if (metadataVisible && itemKind == GalleryItemKind.LIVE_CAMERA) {
+			return buildLiveCameraGalleryCardSnapshot(server, component, state, index, item, preview);
+		}
+		return new GalleryCardSnapshot(
+				index,
+				item != null ? item.title() : "Gallery",
+				item != null ? item.subtitle() : "",
+				"",
+				"",
+				false,
+				"",
+				metadataVisible,
+				itemKind,
+				media != null && media.animated(),
+				(item != null && (itemKind == GalleryItemKind.YOUTUBE || itemKind == GalleryItemKind.VIDEO || itemKind == GalleryItemKind.AUDIO || itemKind == GalleryItemKind.LIVE_CAMERA))
+						|| (media != null && media.animated()),
+				preview,
+				index == state.galleryIndex,
+				state.galleryBulkSelectionMode,
+				galleryBulkItemSelectedLocked(state, index),
+				youtubeLoaded || itemKind == GalleryItemKind.LIVE_CAMERA,
+				false
+		);
 	}
 
 	static GalleryCardSnapshot buildLiveCameraGalleryCardSnapshot(
@@ -8693,13 +8785,9 @@ public final class MonitorScreenSystem {
 		int windowEndExclusive = youtubeQueueSnapshotWindowEndExclusive(runtimeKey, state, layout, windowStartIndex);
 		boolean youtubeMusicQueue = isYoutubeMusicMode(state.mode);
 		List<YoutubeQueueItemSnapshot> items = new ArrayList<>(Math.max(0, windowEndExclusive - windowStartIndex));
-		long totalDurationMs = 0L;
-		for (int index = 0; index < totalItems; index++) {
+		long totalDurationMs = Math.max(0L, state.youtubeQueueTotalDurationMs);
+		for (int index = windowStartIndex; index < windowEndExclusive; index++) {
 			YoutubeQueueItem item = state.youtubeQueue.get(index);
-			totalDurationMs += item != null ? Math.max(0L, item.durationMs()) : 0L;
-			if (index < windowStartIndex || index >= windowEndExclusive) {
-				continue;
-			}
 			String url = item != null ? item.url() : "";
 			float cacheFraction = 0.0F;
 			boolean cacheActive = false;
@@ -9283,11 +9371,25 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		state.youtubeQueue.clear();
+		state.youtubeQueueTotalDurationMs = 0L;
 		clearYoutubeMusicShuffleOrderLocked(state);
 		state.youtubeQueueIndex = -1;
 		state.youtubeQueueScroll = 0;
 		state.youtubeQueueOpen = false;
 		state.youtubeQueueCacheStatusRefreshScheduled = false;
+	}
+
+	static void recalculateYoutubeQueueDurationLocked(MediaRuntimeState state) {
+		if (state == null) {
+			return;
+		}
+		long totalDurationMs = 0L;
+		for (YoutubeQueueItem item : state.youtubeQueue) {
+			if (item != null) {
+				totalDurationMs += Math.max(0L, item.durationMs());
+			}
+		}
+		state.youtubeQueueTotalDurationMs = totalDurationMs;
 	}
 
 	static void clearYoutubePlaybackLocked(MediaRuntimeState state) {
@@ -10270,6 +10372,7 @@ public final class MonitorScreenSystem {
 				String nextSubtitle = state.mediaSubtitle != null && !state.mediaSubtitle.isBlank() ? state.mediaSubtitle : current.subtitle();
 				long nextDurationMs = state.durationMs > 0L ? state.durationMs : current.durationMs();
 				state.youtubeQueue.set(state.youtubeQueueIndex, new YoutubeQueueItem(nextTitle, nextSubtitle, nextDurationMs, state.sourceUrl));
+				recalculateYoutubeQueueDurationLocked(state);
 				syncYoutubeMusicShuffleStateLocked(state, true);
 				return;
 			}
@@ -10281,6 +10384,7 @@ public final class MonitorScreenSystem {
 				String nextSubtitle = state.mediaSubtitle != null && !state.mediaSubtitle.isBlank() ? state.mediaSubtitle : item.subtitle();
 				long nextDurationMs = state.durationMs > 0L ? state.durationMs : item.durationMs();
 				state.youtubeQueue.set(index, new YoutubeQueueItem(nextTitle, nextSubtitle, nextDurationMs, state.sourceUrl));
+				recalculateYoutubeQueueDurationLocked(state);
 				state.youtubeQueueIndex = index;
 				syncYoutubeMusicShuffleStateLocked(state, true);
 				return;
@@ -10289,6 +10393,7 @@ public final class MonitorScreenSystem {
 		String title = state.mediaTitle != null && !state.mediaTitle.isBlank() ? state.mediaTitle : "YouTube";
 		String subtitle = state.mediaSubtitle != null ? state.mediaSubtitle : "";
 		state.youtubeQueue.add(new YoutubeQueueItem(title, subtitle, Math.max(0L, state.durationMs), state.sourceUrl));
+		recalculateYoutubeQueueDurationLocked(state);
 		state.youtubeQueueIndex = state.youtubeQueue.size() - 1;
 		syncYoutubeMusicShuffleStateLocked(state, true);
 	}

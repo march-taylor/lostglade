@@ -325,6 +325,7 @@ final class MonitorScreenInputController {
 							if (removeRect.contains(touchPoint.x(), touchPoint.y())) {
 								boolean removedCurrent = queueIndex == mediaState.youtubeQueueIndex;
 								mediaState.youtubeQueue.remove(queueIndex);
+								recalculateYoutubeQueueDurationLocked(mediaState);
 								if (mediaState.youtubeQueue.isEmpty()) {
 									cancelPlaybackLocked(mediaState);
 									clearYoutubePlaybackLocked(mediaState);
