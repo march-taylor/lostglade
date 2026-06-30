@@ -35,7 +35,7 @@ import java.util.UUID;
 public final class ServerRespectSystem {
 	private static final String OBJECTIVE_NAME = "lg2_respects";
 	private static final String TAB_RESPECT_RELATIONAL_PLACEHOLDER = "%rel_lg2_respect_suffix%";
-	private static final Component OBJECTIVE_TITLE = Component.literal("Р РµСЃРїРµРєС‚С‹");
+	private static final Component OBJECTIVE_TITLE = Component.literal("Респекты");
 	private static final double RESPECT_PARTICLE_VIEW_DISTANCE_SQR = 32.0D * 32.0D;
 	private static final String PACK_ACTIONBAR_EN = "\uEE00\uEE01\uEE02\uEE03\uEE04\uEE05\uEE06\uEE07";
 	private static final String PACK_ACTIONBAR_RU = "\uEE10\uEE11\uEE12\uEE13\uEE14\uEE15\uEE16\uEE17";
@@ -255,7 +255,7 @@ public final class ServerRespectSystem {
 			return "Повага!";
 		}
 		if (locale.startsWith("ja")) {
-			return "リスペクト!";
+			return "?????!";
 		}
 		if (locale.startsWith("ru")) {
 			return "Респект!";
@@ -421,3 +421,4 @@ public final class ServerRespectSystem {
 	private record RespectInteractionKey(UUID actor, UUID target) {
 	}
 }
+

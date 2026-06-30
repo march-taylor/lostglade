@@ -171,7 +171,11 @@
       "enabled": true,
       "id": "woman",
       "displayName": "ЖЕНЩИНА!!!",
+<<<<<<< HEAD
       "ownerNickname": "march_taylor",
+=======
+      "ownerNickname": "Rajas_YT",
+>>>>>>> origin/main
       "description": "Хрупкая снаружи, но опасная внутри.",
       "attack": {
         "enabled": true,
@@ -235,7 +239,11 @@
       "enabled": true,
       "id": "gennadiy_sharoyobov",
       "displayName": "Генадий Шароёбов",
+<<<<<<< HEAD
       "ownerNickname": "sd",
+=======
+      "ownerNickname": "",
+>>>>>>> origin/main
       "description": "Дотер придет...",
       "attack": {
         "enabled": true,
@@ -418,7 +426,7 @@
       "enabled": true,
       "id": "little_dictator",
       "displayName": "Маленький Диктатор",
-      "ownerNickname": "Rajas_YT",
+      "ownerNickname": "",
       "description": "",
       "attack": {
         "enabled": true,

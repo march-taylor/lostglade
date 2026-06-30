@@ -15,9 +15,20 @@ public abstract class ServerGamePacketListenerCopperManJetpackMixin {
 	@Shadow
 	public ServerPlayer player;
 
-	@Inject(method = "handlePlayerInput", at = @At("HEAD"))
+	@Inject(
+			method = "handlePlayerInput",
+			at = @At(
+					value = "INVOKE",
+					target = "Lnet/minecraft/server/level/ServerPlayer;setLastClientInput(Lnet/minecraft/world/entity/player/Input;)V"
+			),
+			cancellable = true
+	)
 	private void lg2$trackCopperManJetpackInput(ServerboundPlayerInputPacket packet, CallbackInfo ci) {
 		if (packet == null) {
+			return;
+		}
+		if (ServerRaceSystem.handleLittleDictatorUniqueInputPacket(this.player, packet.input())) {
+			ci.cancel();
 			return;
 		}
 		ServerRaceSystem.handleCopperManJetpackInput(this.player, packet.input());

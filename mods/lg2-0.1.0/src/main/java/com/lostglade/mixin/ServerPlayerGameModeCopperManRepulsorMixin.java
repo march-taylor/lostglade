@@ -60,6 +60,15 @@ public abstract class ServerPlayerGameModeCopperManRepulsorMixin {
 			BlockHitResult hitResult,
 			CallbackInfoReturnable<InteractionResult> cir
 	) {
+		InteractionResult dictatorResult = ServerRaceSystem.tryHandleLittleDictatorIronMechanism(
+				player,
+				hand,
+				hitResult == null ? null : hitResult.getBlockPos()
+		);
+		if (dictatorResult != InteractionResult.PASS) {
+			cir.setReturnValue(dictatorResult);
+			return;
+		}
 		if (DroneSystem.handleControlledUseItemOn(player, hand, hitResult)) {
 			cir.setReturnValue(InteractionResult.SUCCESS);
 			return;

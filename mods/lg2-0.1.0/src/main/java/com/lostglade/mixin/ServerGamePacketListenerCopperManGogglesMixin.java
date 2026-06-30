@@ -14,6 +14,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ServerGamePacketListenerImpl.class)
@@ -72,6 +73,19 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 			return;
 		}
 		CopperManGogglesSystem.handleSelectedSlotChangeApplied(this.player, packet.getSlot());
+	}
+
+	@ModifyVariable(
+			method = "handleMovePlayer",
+			at = @At(
+					value = "INVOKE",
+					target = "Lnet/minecraft/network/protocol/game/ServerboundMovePlayerPacket;getX(D)D",
+					ordinal = 0
+			),
+			argsOnly = true
+	)
+	private ServerboundMovePlayerPacket lg2$lockLittleDictatorHorizontalMovement(ServerboundMovePlayerPacket packet) {
+		return ServerRaceSystem.sanitizeLittleDictatorUniqueMovementPacket(this.player, packet);
 	}
 
 	@Inject(method = "handleMovePlayer", at = @At("TAIL"))
