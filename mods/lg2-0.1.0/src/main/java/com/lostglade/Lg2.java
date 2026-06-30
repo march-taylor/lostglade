@@ -45,6 +45,7 @@ import com.lostglade.server.ServerUnusedMobSpawnSystem;
 import com.lostglade.server.ServerUpgradeUiSystem;
 import com.lostglade.server.ServerVoicechatIntegration;
 import com.lostglade.server.ServerWebcamIntegration;
+import com.lostglade.server.YandexMapMarkerStore;
 import com.lostglade.worldgen.ModWorldGen;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
@@ -77,6 +78,7 @@ public class Lg2 implements ModInitializer {
 		ModBlocks.register();
 		CameraOrientationStore.register();
 		PlacedDeviceNameStore.register();
+		YandexMapMarkerStore.register();
 		ModWorldGen.register();
 		ServerBossBarVisibilitySystem.register();
 		MapImageRenderSystem.register();

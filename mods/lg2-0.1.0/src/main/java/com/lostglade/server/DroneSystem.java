@@ -1794,37 +1794,13 @@ public final class DroneSystem {
 	}
 
 	private static void synchronizeControlledOperatorAudio(MinecraftServer server) {
-		if (server == null) {
+		if (server == null || CONTROLLED_OPERATOR_AUDIO.isEmpty()) {
 			return;
 		}
-		if (ACTIVE_SESSIONS.isEmpty()) {
-			shutdownAllControlledOperatorAudio();
-			return;
-		}
-
-		Set<UUID> activePlayers = new HashSet<>();
-		for (Map.Entry<UUID, DroneControlSession> entry : new ArrayList<>(ACTIVE_SESSIONS.entrySet())) {
-			UUID playerId = entry.getKey();
-			DroneControlSession session = entry.getValue();
-			ServerPlayer player = playerId == null ? null : server.getPlayerList().getPlayer(playerId);
-			if (player == null || session == null || !player.isAlive() || player.isSpectator()) {
-				stopControlledOperatorAudio(playerId);
-				continue;
-			}
-			activePlayers.add(playerId);
-			ControlledOperatorAudioRuntime runtime = CONTROLLED_OPERATOR_AUDIO.computeIfAbsent(
-					playerId,
-					ignored -> new ControlledOperatorAudioRuntime(playerId)
-			);
-			if (!runtime.sync(server, player, session)) {
-				stopControlledOperatorAudio(playerId);
-			}
-		}
-		for (UUID playerId : new ArrayList<>(CONTROLLED_OPERATOR_AUDIO.keySet())) {
-			if (!activePlayers.contains(playerId)) {
-				stopControlledOperatorAudio(playerId);
-			}
-		}
+		// While controlling a drone the operator should hear only the drone-side scene.
+		// Keeping a second body-side voice feed active makes the parked body act like a
+		// parallel listener, which is exactly the "кукла" echo the player asked to remove.
+		shutdownAllControlledOperatorAudio();
 	}
 
 	public static void onVoicechatMicrophonePacket(MicrophonePacketEvent event) {
@@ -1844,9 +1820,8 @@ public final class DroneSystem {
 		if (!(rawPlayer instanceof ServerPlayer senderPlayer) || !(senderPlayer.level() instanceof ServerLevel senderLevel)) {
 			return;
 		}
-		Position senderPosition = senderConnection.getPlayer().getPosition();
 		byte[] opusData = event.getPacket().getOpusEncodedData();
-		if (senderPosition == null || opusData == null || opusData.length == 0) {
+		if (opusData == null || opusData.length == 0) {
 			return;
 		}
 		MinecraftServer server = senderLevel.getServer();
@@ -1855,18 +1830,8 @@ public final class DroneSystem {
 		}
 		UUID senderUuid = senderConnection.getPlayer().getUuid();
 		boolean whispering = event.getPacket().isWhispering();
-		net.minecraft.resources.ResourceKey<Level> senderDimension = senderLevel.dimension();
 		byte[] copiedOpusData = opusData.clone();
 		server.execute(() -> {
-			routeControlledOperatorBodyVoice(
-					server,
-					senderDimension,
-					senderPosition,
-					senderUuid,
-					whispering,
-					copiedOpusData,
-					voicechatApi
-			);
 			relayControlledOperatorDroneMicrophoneVoice(
 					server,
 					senderUuid,

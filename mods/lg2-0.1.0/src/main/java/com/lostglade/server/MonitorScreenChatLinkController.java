@@ -37,6 +37,9 @@ final class MonitorScreenChatLinkController {
 		if (!MonitorMaxRuntime.onAllowChatMessage(message, sender, params)) {
 			return false;
 		}
+		if (MonitorYandexMapsRuntime.consumeMarkerTitleChatMessage(server, message, sender)) {
+			return false;
+		}
 		PendingGalleryRenameRequest rename = PENDING_GALLERY_RENAMES.remove(sender.getUUID());
 		if (rename != null) {
 			return handleGalleryRenameChatMessage(server, message, sender, rename);

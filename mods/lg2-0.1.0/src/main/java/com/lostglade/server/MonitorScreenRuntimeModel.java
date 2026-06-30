@@ -649,6 +649,7 @@ enum PlayerUiIcon {
 	AIMING_2("/assets/lg2/textures/monitor/ui_icons/aiming_2.png"),
 	ADD("/assets/lg2/textures/monitor/ui_icons/add.png"),
 	MINUS("/assets/lg2/textures/monitor/ui_icons/minus.png"),
+	DIRECTIONS_2_LINE("/assets/lg2/textures/monitor/ui_icons/directions_2_line.png"),
 	SEND_PLANE("/assets/lg2/textures/monitor/ui_icons/send_plane.png"),
 	NOTIFICATION("/assets/lg2/textures/monitor/ui_icons/notification.png"),
 	TARGET("/assets/lg2/textures/monitor/ui_icons/target.png");
