@@ -51,6 +51,7 @@ import net.minecraft.core.Holder;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Relative;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.gamerules.GameRules;
@@ -98,6 +99,7 @@ public final class RendererBotCameraSystem {
 	private static final float MAP_TILE_TOP_DOWN_PITCH = 90.0F;
 	private static final long LIVE_STREAM_STALE_MS = 1_500L;
 	private static final long MAP_TILE_CAPTURE_TIMEOUT_MS = 60_000L;
+	private static final long ITEM_ICON_CAPTURE_TIMEOUT_MS = 30_000L;
 	private static final long AUDIO_CAPTURE_STALE_MS = 8_000L;
 	private static final long LIVE_STREAM_ORPHAN_CLEANUP_MS = 15_000L;
 	private static final long AUDIO_CAPTURE_ORPHAN_CLEANUP_MS = 15_000L;
@@ -122,6 +124,7 @@ public final class RendererBotCameraSystem {
 	private static final Map<UUID, ActiveLiveStream> ACTIVE_LIVE_STREAMS = new ConcurrentHashMap<>();
 	private static final Map<String, UUID> LIVE_STREAMS_BY_OWNER = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingMapTileCapture> PENDING_MAP_TILE_CAPTURES = new ConcurrentHashMap<>();
+	private static final Map<UUID, PendingItemIconCapture> PENDING_ITEM_ICON_CAPTURES = new ConcurrentHashMap<>();
 	private static final Map<UUID, ActiveAudioCapture> ACTIVE_AUDIO_CAPTURES = new ConcurrentHashMap<>();
 	private static final Map<String, UUID> AUDIO_CAPTURES_BY_OWNER = new ConcurrentHashMap<>();
 	private static final Map<CameraChunkTicketKey, Integer> ACTIVE_CAMERA_CHUNK_TICKETS = new HashMap<>();
@@ -139,6 +142,7 @@ public final class RendererBotCameraSystem {
 			READY_BOTS.remove(botUuid);
 			failCapturesForBot(botUuid, "Renderer bot disconnected during capture");
 			failMapTileCapturesForBot(botUuid, "Renderer bot disconnected during map tile render");
+			failItemIconCapturesForBot(botUuid, "Renderer bot disconnected during item icon render");
 			failVideoRecordingsForBot(botUuid, "Renderer bot disconnected during video recording");
 			failLiveStreamsForBot(botUuid, "Renderer bot disconnected during live stream");
 			failAudioCapturesForBot(botUuid, "Renderer bot disconnected during audio capture");
@@ -260,6 +264,23 @@ public final class RendererBotCameraSystem {
 				}
 		);
 		ServerPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotItemIconC2SPayload.TYPE,
+				(payload, context) -> {
+					MinecraftServer server = context.player().level().getServer();
+					if (server == null) {
+						return;
+					}
+					server.execute(() -> {
+						PendingItemIconCapture capture = PENDING_ITEM_ICON_CAPTURES.get(payload.requestId());
+						if (capture == null || !capture.botUuid().equals(context.player().getUUID())) {
+							return;
+						}
+						capture.pixelsFuture().complete(payload.argbPixels());
+						PENDING_ITEM_ICON_CAPTURES.remove(payload.requestId(), capture);
+					});
+				}
+		);
+		ServerPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotLiveStreamFailureC2SPayload.TYPE,
 				(payload, context) -> {
 					ActiveLiveStream stream = ACTIVE_LIVE_STREAMS.get(payload.streamId());
@@ -306,6 +327,22 @@ public final class RendererBotCameraSystem {
 						recording.completionFuture().complete(new VideoRecordingResult(payload.durationMs(), payload.fps(), payload.videoPath(), payload.previewPixels(), payload.fullPixels()));
 						PENDING_VIDEO_RECORDINGS.remove(payload.requestId());
 						releaseBotCameraIfNeeded(recording.server(), recording.botUuid(), recording.resetCameraOnFinish());
+					});
+				}
+		);
+		ServerPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotItemIconFailureC2SPayload.TYPE,
+				(payload, context) -> {
+					PendingItemIconCapture capture = PENDING_ITEM_ICON_CAPTURES.get(payload.requestId());
+					if (capture == null || !capture.botUuid().equals(context.player().getUUID())) {
+						return;
+					}
+					context.player().level().getServer().execute(() -> {
+						PendingItemIconCapture current = PENDING_ITEM_ICON_CAPTURES.remove(payload.requestId());
+						if (current == null || !current.botUuid().equals(context.player().getUUID())) {
+							return;
+						}
+						current.pixelsFuture().completeExceptionally(new IllegalStateException(payload.message()));
 					});
 				}
 		);
@@ -377,6 +414,10 @@ public final class RendererBotCameraSystem {
 				capture.pixelsFuture().completeExceptionally(new IllegalStateException("Renderer bot map tile aborted: server stopping"));
 			}
 			PENDING_MAP_TILE_CAPTURES.clear();
+			for (PendingItemIconCapture capture : PENDING_ITEM_ICON_CAPTURES.values()) {
+				capture.pixelsFuture().completeExceptionally(new IllegalStateException("Renderer bot item icon aborted: server stopping"));
+			}
+			PENDING_ITEM_ICON_CAPTURES.clear();
 			for (ActiveAudioCapture capture : ACTIVE_AUDIO_CAPTURES.values()) {
 				capture.onFailure().accept("Renderer bot audio capture aborted: server stopping");
 			}
@@ -613,6 +654,48 @@ public final class RendererBotCameraSystem {
 						Math.max(0, priorityScore),
 						activeView
 				)
+		);
+		return future;
+	}
+
+	public static CompletableFuture<byte[]> requestItemIcon(MinecraftServer server, ItemStack stack, int iconSize) {
+		CompletableFuture<byte[]> future = new CompletableFuture<>();
+		if (server == null) {
+			future.completeExceptionally(new IllegalStateException("Сервер камеры недоступен"));
+			return future;
+		}
+		if (stack == null || stack.isEmpty()) {
+			future.completeExceptionally(new IllegalStateException("Предмет для иконки пуст"));
+			return future;
+		}
+		ServerPlayer bot = selectBot(server);
+		if (bot == null) {
+			future.completeExceptionally(new IllegalStateException("Нет активного клиента камеры"));
+			return future;
+		}
+		if (!ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotItemIconRequestS2CPayload.TYPE)) {
+			future.completeExceptionally(new IllegalStateException("Клиент камеры не поддерживает иконки предметов"));
+			return future;
+		}
+
+		UUID requestId = UUID.randomUUID();
+		int safeIconSize = Mth.clamp(iconSize, 8, 128);
+		ItemStack iconStack = stack.copyWithCount(1);
+		PendingItemIconCapture capture = new PendingItemIconCapture(
+				requestId,
+				server,
+				bot.getUUID(),
+				safeIconSize,
+				future
+		);
+		PENDING_ITEM_ICON_CAPTURES.put(requestId, capture);
+		future.orTimeout(ITEM_ICON_CAPTURE_TIMEOUT_MS, TimeUnit.MILLISECONDS).exceptionally(throwable -> {
+			PENDING_ITEM_ICON_CAPTURES.remove(requestId, capture);
+			return null;
+		});
+		ServerPlayNetworking.send(
+				bot,
+				new RendererBotPayloads.RendererBotItemIconRequestS2CPayload(requestId, iconStack, safeIconSize)
 		);
 		return future;
 	}
@@ -1297,6 +1380,22 @@ public final class RendererBotCameraSystem {
 				continue;
 			}
 			if (PENDING_MAP_TILE_CAPTURES.remove(entry.getKey(), capture)) {
+				capture.pixelsFuture().completeExceptionally(failure);
+			}
+		}
+	}
+
+	private static void failItemIconCapturesForBot(UUID botUuid, String message) {
+		if (botUuid == null) {
+			return;
+		}
+		IllegalStateException failure = new IllegalStateException(message);
+		for (Map.Entry<UUID, PendingItemIconCapture> entry : PENDING_ITEM_ICON_CAPTURES.entrySet()) {
+			PendingItemIconCapture capture = entry.getValue();
+			if (capture == null || !botUuid.equals(capture.botUuid())) {
+				continue;
+			}
+			if (PENDING_ITEM_ICON_CAPTURES.remove(entry.getKey(), capture)) {
 				capture.pixelsFuture().completeExceptionally(failure);
 			}
 		}
@@ -4197,6 +4296,48 @@ public final class RendererBotCameraSystem {
 
 		private boolean activeView() {
 			return this.activeView;
+		}
+
+		private CompletableFuture<byte[]> pixelsFuture() {
+			return this.pixelsFuture;
+		}
+	}
+
+	private static final class PendingItemIconCapture {
+		private final UUID requestId;
+		private final MinecraftServer server;
+		private final UUID botUuid;
+		private final int iconSize;
+		private final CompletableFuture<byte[]> pixelsFuture;
+
+		private PendingItemIconCapture(
+				UUID requestId,
+				MinecraftServer server,
+				UUID botUuid,
+				int iconSize,
+				CompletableFuture<byte[]> pixelsFuture
+		) {
+			this.requestId = requestId;
+			this.server = server;
+			this.botUuid = botUuid;
+			this.iconSize = iconSize;
+			this.pixelsFuture = pixelsFuture;
+		}
+
+		private UUID requestId() {
+			return this.requestId;
+		}
+
+		private MinecraftServer server() {
+			return this.server;
+		}
+
+		private UUID botUuid() {
+			return this.botUuid;
+		}
+
+		private int iconSize() {
+			return this.iconSize;
 		}
 
 		private CompletableFuture<byte[]> pixelsFuture() {

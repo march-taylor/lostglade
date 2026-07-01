@@ -1,6 +1,8 @@
 package com.lostglade.mixin.client;
 
 import net.minecraft.client.Camera;
+import net.minecraft.client.gui.render.GuiRenderer;
+import net.minecraft.client.gui.render.state.GuiRenderState;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.PerspectiveProjectionMatrixBuffer;
 import net.minecraft.client.renderer.fog.FogRenderer;
@@ -21,6 +23,12 @@ public interface GameRendererRenderLevelInvoker {
 
 	@Accessor("levelProjectionMatrixBuffer")
 	PerspectiveProjectionMatrixBuffer lg2$getLevelProjectionMatrixBuffer();
+
+	@Accessor("guiRenderState")
+	GuiRenderState lg2$getGuiRenderState();
+
+	@Accessor("guiRenderer")
+	GuiRenderer lg2$getGuiRenderer();
 
 	@Invoker("getProjectionMatrixForCulling")
 	Matrix4f lg2$getProjectionMatrixForCulling(float fovDegrees);

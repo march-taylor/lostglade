@@ -5,7 +5,6 @@ import com.google.gson.JsonObject;
 import com.lostglade.server.map.TextureAssetManager;
 import com.lostglade.server.monitor.MonitorApp;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.resources.Identifier;
@@ -54,9 +53,12 @@ final class MonitorYandexMapsRuntime {
 	private static final long TILE_READY_RENDER_DEBOUNCE_MS = 35L;
 	private static final int MAP_MARKER_ICON_SIZE = 32;
 	private static final int MAP_MARKER_SCREEN_ICON_SIZE = 16;
+	private static final int MARKER_ICON_ALPHA_BOUNDS_THRESHOLD = 1;
 	private static final int STATE_CLEANUP_INTERVAL_TICKS = 40;
 	private static final Map<ScreenRuntimeKey, YandexMapState> STATES = new ConcurrentHashMap<>();
-	private static final Map<String, BufferedImage> ITEM_MARKER_ICON_CACHE = new ConcurrentHashMap<>();
+	private static final Map<UUID, BufferedImage> ITEM_MARKER_ICON_CACHE = new ConcurrentHashMap<>();
+	private static final Set<UUID> PENDING_MARKER_ICON_RENDERS = ConcurrentHashMap.newKeySet();
+	private static final Map<String, BufferedImage> LEGACY_ITEM_MARKER_ICON_CACHE = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingMarkerTitleRequest> PENDING_MARKER_TITLES = new ConcurrentHashMap<>();
 	private static final TextureAssetManager MAP_ASSETS = TextureAssetManager.get();
 	private static final BufferedImage EMPTY_MARKER_ICON = new BufferedImage(MAP_MARKER_ICON_SIZE, MAP_MARKER_ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
@@ -770,7 +772,8 @@ final class MonitorYandexMapsRuntime {
 			return true;
 		}
 		if (markerEditorIconRect(layout).contains(touchPoint.x(), touchPoint.y())) {
-			YandexMapMarkerStore.updateIcon(server, markerId, resolveHeldMarkerIconItemId(player.getMainHandItem()));
+			YandexMapMarkerStore.updateIcon(server, markerId, player.getMainHandItem());
+			invalidateMarkerIcon(markerId);
 			synchronized (state) {
 				state.version++;
 			}
@@ -779,6 +782,7 @@ final class MonitorYandexMapsRuntime {
 		}
 		if (markerEditorDeleteRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 			YandexMapMarkerStore.remove(server, markerId);
+			invalidateMarkerIcon(markerId);
 			synchronized (state) {
 				state.editorMarkerId = null;
 				state.version++;
@@ -836,7 +840,7 @@ final class MonitorYandexMapsRuntime {
 		UiRect canvas = mediaCanvasRect(layout);
 		UiRect baseIconRect = projected.iconRect();
 		if (!expanded) {
-			drawMarkerIcon(graphics, baseIconRect, projected.marker());
+			drawMarkerIcon(graphics, baseIconRect, projected.marker(), server, runtimeKey);
 			return;
 		}
 
@@ -879,7 +883,7 @@ final class MonitorYandexMapsRuntime {
 		);
 		fillRoundedRect(graphics, chipRect, clampInt(chipRect.height() / 2, 8, 16), new Color(250, 252, 248, 236));
 		strokeRoundedRect(graphics, chipRect, clampInt(chipRect.height() / 2, 8, 16), 1.0F, new Color(0, 0, 0, 44));
-		drawMarkerIcon(graphics, iconRect, projected.marker());
+		drawMarkerIcon(graphics, iconRect, projected.marker(), server, runtimeKey);
 
 		UiRect titleRect = new UiRect(
 				iconRect.right() + pad,
@@ -928,14 +932,14 @@ final class MonitorYandexMapsRuntime {
 		return () -> server.execute(() -> requestRuntimeRender(server, runtimeKey));
 	}
 
-	private static void drawMarkerIcon(Graphics2D graphics, UiRect rect, YandexMapMarkerStore.YandexMapMarker marker) {
+	private static void drawMarkerIcon(Graphics2D graphics, UiRect rect, YandexMapMarkerStore.YandexMapMarker marker, MinecraftServer server, ScreenRuntimeKey runtimeKey) {
 		if (graphics == null || rect == null || marker == null) {
 			return;
 		}
 		int inset = Math.max(2, rect.width() / 6);
-		BufferedImage icon = markerItemIcon(marker.iconItemId());
+		BufferedImage icon = markerItemIcon(marker, server, runtimeKey);
 		if (icon != null) {
-			drawContainedImageNearest(graphics, icon, rect, inset);
+			drawContainedImageNearest(graphics, icon, rect, 0);
 			return;
 		}
 		drawPlayerUiIcon(graphics, rect.inset(inset), PlayerUiIcon.DIRECTIONS_2_LINE, new Color(20, 24, 26, 236));
@@ -976,7 +980,7 @@ final class MonitorYandexMapsRuntime {
 		BufferedImage creatorHead = PlayerHeadRenderSystem.resolveHead(server, marker.creatorUuid(), marker.creatorName(), markerImageReadyCallback(server, runtimeKey));
 		drawMarkerEditorCreatorCard(graphics, layout, creatorRect, creatorHead, marker.creatorName());
 		drawMarkerEditorTitleField(graphics, layout, titleRect, marker.title());
-		drawMarkerEditorIconField(graphics, layout, iconRect, marker);
+		drawMarkerEditorIconField(graphics, layout, iconRect, marker, server, runtimeKey);
 		drawGalleryFileMenuActionButton(graphics, layout, deleteRect, PlayerUiIcon.TRASH, "УДАЛИТЬ", "", true, false, true);
 	}
 
@@ -1197,29 +1201,40 @@ final class MonitorYandexMapsRuntime {
 		);
 	}
 
-	private static void drawMarkerEditorIconField(Graphics2D graphics, UiLayout layout, UiRect rect, YandexMapMarkerStore.YandexMapMarker marker) {
+	private static void drawMarkerEditorIconField(
+			Graphics2D graphics,
+			UiLayout layout,
+			UiRect rect,
+			YandexMapMarkerStore.YandexMapMarker marker,
+			MinecraftServer server,
+			ScreenRuntimeKey runtimeKey
+	) {
 		if (graphics == null || layout == null || rect == null || marker == null) {
 			return;
 		}
 		int arc = ultraCompactScreenLayout(layout) ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit() * 2, 12, 18);
 		fillRoundedRect(graphics, rect, arc, new Color(255, 255, 255, 10));
 		UiRect previewRect = rect.inset(Math.max(2, rect.width() / 6));
-		drawMarkerIcon(graphics, previewRect, marker);
+		drawMarkerIcon(graphics, previewRect, marker, server, runtimeKey);
 	}
 
-	private static String resolveHeldMarkerIconItemId(ItemStack stack) {
-		if (stack == null || stack.isEmpty()) {
-			return "";
+	private static BufferedImage markerItemIcon(YandexMapMarkerStore.YandexMapMarker marker, MinecraftServer server, ScreenRuntimeKey runtimeKey) {
+		if (marker == null || marker.iconCacheKey().isBlank()) {
+			return null;
 		}
-		Identifier itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
-		return itemId == null ? "" : itemId.toString();
+		BufferedImage cached = ITEM_MARKER_ICON_CACHE.get(marker.markerId());
+		if (cached != null) {
+			return cached == EMPTY_MARKER_ICON ? null : cached;
+		}
+		requestMarkerItemIcon(marker, server, runtimeKey);
+		return legacyMarkerItemIcon(marker.iconItemId());
 	}
 
-	private static BufferedImage markerItemIcon(String iconItemId) {
+	private static BufferedImage legacyMarkerItemIcon(String iconItemId) {
 		if (iconItemId == null || iconItemId.isBlank()) {
 			return null;
 		}
-		BufferedImage cached = ITEM_MARKER_ICON_CACHE.computeIfAbsent(
+		BufferedImage cached = LEGACY_ITEM_MARKER_ICON_CACHE.computeIfAbsent(
 				iconItemId,
 				key -> {
 					BufferedImage loaded = loadItemMarkerIcon(key);
@@ -1227,6 +1242,125 @@ final class MonitorYandexMapsRuntime {
 				}
 		);
 		return cached == EMPTY_MARKER_ICON ? null : cached;
+	}
+
+	private static void requestMarkerItemIcon(YandexMapMarkerStore.YandexMapMarker marker, MinecraftServer server, ScreenRuntimeKey runtimeKey) {
+		if (marker == null || server == null || runtimeKey == null || marker.iconCacheKey().isBlank()) {
+			return;
+		}
+		UUID markerId = marker.markerId();
+		if (markerId == null || !PENDING_MARKER_ICON_RENDERS.add(markerId)) {
+			return;
+		}
+		String requestedIconKey = marker.iconCacheKey();
+		ItemStack iconStack = YandexMapMarkerStore.markerIconStack(server, marker);
+		if (iconStack.isEmpty()) {
+			ITEM_MARKER_ICON_CACHE.put(markerId, EMPTY_MARKER_ICON);
+			PENDING_MARKER_ICON_RENDERS.remove(markerId);
+			return;
+		}
+		RendererBotCameraSystem.requestItemIcon(server, iconStack, MAP_MARKER_ICON_SIZE).whenComplete((pixels, throwable) ->
+				server.execute(() -> {
+					try {
+						YandexMapMarkerStore.YandexMapMarker current = YandexMapMarkerStore.marker(markerId);
+						if (current == null || !Objects.equals(current.iconCacheKey(), requestedIconKey)) {
+							return;
+						}
+						if (throwable != null) {
+							BufferedImage fallback = legacyMarkerItemIcon(marker.iconItemId());
+							if (fallback != null) {
+								ITEM_MARKER_ICON_CACHE.put(markerId, fallback);
+							}
+							requestRuntimeRender(server, runtimeKey);
+							return;
+						}
+						BufferedImage icon = decodeMarkerIconArgb(pixels, MAP_MARKER_ICON_SIZE);
+						ITEM_MARKER_ICON_CACHE.put(markerId, icon != null ? icon : EMPTY_MARKER_ICON);
+						requestRuntimeRender(server, runtimeKey);
+					} finally {
+						PENDING_MARKER_ICON_RENDERS.remove(markerId);
+					}
+				})
+		);
+	}
+
+	private static void invalidateMarkerIcon(UUID markerId) {
+		if (markerId == null) {
+			return;
+		}
+		ITEM_MARKER_ICON_CACHE.remove(markerId);
+		PENDING_MARKER_ICON_RENDERS.remove(markerId);
+	}
+
+	private static BufferedImage decodeMarkerIconArgb(byte[] pixels, int iconSize) {
+		int safeIconSize = Math.max(1, iconSize);
+		if (pixels == null || pixels.length < safeIconSize * safeIconSize * 4) {
+			return null;
+		}
+		BufferedImage icon = new BufferedImage(safeIconSize, safeIconSize, BufferedImage.TYPE_INT_ARGB);
+		int[] argb = new int[safeIconSize * safeIconSize];
+		for (int i = 0; i < argb.length; i++) {
+			int offset = i * 4;
+			argb[i] = (Byte.toUnsignedInt(pixels[offset]) << 24)
+					| (Byte.toUnsignedInt(pixels[offset + 1]) << 16)
+					| (Byte.toUnsignedInt(pixels[offset + 2]) << 8)
+					| Byte.toUnsignedInt(pixels[offset + 3]);
+		}
+		icon.setRGB(0, 0, safeIconSize, safeIconSize, argb, 0, safeIconSize);
+		return fitMarkerIconToAlphaBounds(icon);
+	}
+
+	private static BufferedImage fitMarkerIconToAlphaBounds(BufferedImage icon) {
+		if (icon == null || icon.getWidth() <= 1 || icon.getHeight() <= 1) {
+			return icon;
+		}
+		int minX = icon.getWidth();
+		int minY = icon.getHeight();
+		int maxX = -1;
+		int maxY = -1;
+		for (int y = 0; y < icon.getHeight(); y++) {
+			for (int x = 0; x < icon.getWidth(); x++) {
+				int alpha = (icon.getRGB(x, y) >>> 24) & 0xFF;
+				if (alpha <= MARKER_ICON_ALPHA_BOUNDS_THRESHOLD) {
+					continue;
+				}
+				minX = Math.min(minX, x);
+				minY = Math.min(minY, y);
+				maxX = Math.max(maxX, x);
+				maxY = Math.max(maxY, y);
+			}
+		}
+		if (maxX < minX || maxY < minY) {
+			return icon;
+		}
+		if (minX == 0 && minY == 0 && maxX == icon.getWidth() - 1 && maxY == icon.getHeight() - 1) {
+			return icon;
+		}
+		int sourceWidth = maxX - minX + 1;
+		int sourceHeight = maxY - minY + 1;
+		int targetSize = Math.min(icon.getWidth(), icon.getHeight());
+		double scale = Math.min(targetSize / (double) sourceWidth, targetSize / (double) sourceHeight);
+		int drawWidth = clampInt((int) Math.round(sourceWidth * scale), 1, targetSize);
+		int drawHeight = clampInt((int) Math.round(sourceHeight * scale), 1, targetSize);
+		int drawX = (targetSize - drawWidth) / 2;
+		int drawY = (targetSize - drawHeight) / 2;
+		BufferedImage fitted = new BufferedImage(targetSize, targetSize, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = fitted.createGraphics();
+		configurePixelArtGraphics(graphics);
+		graphics.drawImage(
+				icon,
+				drawX,
+				drawY,
+				drawX + drawWidth,
+				drawY + drawHeight,
+				minX,
+				minY,
+				maxX + 1,
+				maxY + 1,
+				null
+		);
+		graphics.dispose();
+		return fitted;
 	}
 
 	private static BufferedImage loadItemMarkerIcon(String iconItemId) {

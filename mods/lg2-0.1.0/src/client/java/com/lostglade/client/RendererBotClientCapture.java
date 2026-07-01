@@ -1,17 +1,29 @@
 package com.lostglade.client;
 
 import com.lostglade.Lg2;
+import com.lostglade.mixin.client.GameRendererRenderLevelInvoker;
+import com.lostglade.mixin.client.MinecraftMainRenderTargetAccessor;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.server.CameraMediaCache;
 import com.lostglade.server.map.MapPaletteQuantizer;
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.pipeline.TextureTarget;
+import com.mojang.blaze3d.platform.Lighting;
 import com.mojang.blaze3d.platform.NativeImage;
+import com.mojang.blaze3d.platform.Window;
+import com.mojang.blaze3d.systems.CommandEncoder;
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.render.GuiRenderer;
+import net.minecraft.client.gui.render.state.GuiRenderState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
+import net.minecraft.client.renderer.fog.FogRenderer;
 import net.minecraft.util.Mth;
+import net.minecraft.world.item.ItemStack;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -39,9 +51,11 @@ public final class RendererBotClientCapture {
 	private static final int MAX_RENDER_HEIGHT = Math.max(MIN_RENDER_HEIGHT, Integer.getInteger("lg2.rendererBotMaxRenderHeight", 2048));
 	private static final int MAX_LIVE_STREAM_FPS = 20;
 	private static final long MAP_TILE_TIMEOUT_MS = Long.getLong("lg2.rendererBotMapTileTimeoutMs", 60_000L);
+	private static final long ITEM_ICON_TIMEOUT_MS = Long.getLong("lg2.rendererBotItemIconTimeoutMs", 30_000L);
 	private static final int MAP_TILE_WARMUP_FRAMES = Math.max(0, Integer.getInteger("lg2.rendererBotMapTileWarmupFrames", 8));
 	private static final int MAP_TILE_BLANK_RETRY_WARMUP_FRAMES = Math.max(1, Integer.getInteger("lg2.rendererBotMapTileBlankRetryWarmupFrames", 4));
 	private static final int MAP_TILE_MAX_BLANK_RETRIES = Math.max(0, Integer.getInteger("lg2.rendererBotMapTileMaxBlankRetries", 8));
+	private static final int ITEM_ICON_ALPHA_THRESHOLD = 6;
 	private static final boolean LIVE_STREAM_DITHERING = Boolean.getBoolean("lg2.rendererBotLiveStreamDithering");
 	private static final int LIVE_STREAM_PARALLEL_PIXELS_THRESHOLD = Math.max(65_536, Integer.getInteger("lg2.rendererBotLiveParallelPixelsThreshold", 131_072));
 	private static final ExecutorService CAPTURE_EXECUTOR = Executors.newFixedThreadPool(CAPTURE_THREADS, runnable -> {
@@ -54,7 +68,9 @@ public final class RendererBotClientCapture {
 	private static final Map<UUID, PendingCapture> PENDING_CAPTURES = new HashMap<>();
 	private static final Map<UUID, LiveStreamSession> LIVE_STREAM_SESSIONS = new HashMap<>();
 	private static final Map<UUID, PendingMapTile> PENDING_MAP_TILES = new HashMap<>();
+	private static final Map<UUID, PendingItemIcon> PENDING_ITEM_ICONS = new HashMap<>();
 	private static volatile CapturedFrame latestFrame;
+	private static TextureTarget itemIconRenderTarget;
 
 	private RendererBotClientCapture() {
 	}
@@ -88,6 +104,10 @@ public final class RendererBotClientCapture {
 		ClientPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotMapTileRequestS2CPayload.TYPE,
 				(payload, context) -> context.client().execute(() -> beginMapTile(payload))
+		);
+		ClientPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotItemIconRequestS2CPayload.TYPE,
+				(payload, context) -> context.client().execute(() -> beginItemIcon(payload))
 		);
 	}
 
@@ -170,14 +190,25 @@ public final class RendererBotClientCapture {
 		}
 	}
 
+	private static void beginItemIcon(RendererBotPayloads.RendererBotItemIconRequestS2CPayload payload) {
+		if (payload == null || payload.requestId() == null || payload.stack() == null || payload.stack().isEmpty()) {
+			return;
+		}
+		synchronized (LOCK) {
+			PENDING_ITEM_ICONS.put(payload.requestId(), new PendingItemIcon(payload, System.currentTimeMillis()));
+		}
+	}
+
 	private static void onClientTick(Minecraft client) {
 		List<PendingCapture> captures;
 		List<LiveStreamSession> liveStreams;
 		List<PendingMapTile> mapTiles;
+		List<PendingItemIcon> itemIcons;
 		synchronized (LOCK) {
 			captures = new ArrayList<>(PENDING_CAPTURES.values());
 			liveStreams = new ArrayList<>(LIVE_STREAM_SESSIONS.values());
 			mapTiles = new ArrayList<>(PENDING_MAP_TILES.values());
+			itemIcons = new ArrayList<>(PENDING_ITEM_ICONS.values());
 		}
 		long now = System.currentTimeMillis();
 		for (PendingCapture capture : captures) {
@@ -204,8 +235,117 @@ public final class RendererBotClientCapture {
 				clearPendingMapTile(mapTile.payload().requestId());
 			}
 		}
+		for (PendingItemIcon itemIcon : itemIcons) {
+			if (itemIcon == null || itemIcon.rendering()) {
+				continue;
+			}
+			if (now - itemIcon.requestStartedAt() >= ITEM_ICON_TIMEOUT_MS) {
+				sendItemIconFailure(itemIcon.payload(), "Renderer bot item icon did not render in time");
+				clearPendingItemIcon(itemIcon.payload().requestId());
+			}
+		}
+		dispatchReadyItemIconRender(client);
 		dispatchReadyMapTileRender(client);
 		dispatchReadyRenders(client, System.nanoTime());
+	}
+
+	private static void dispatchReadyItemIconRender(Minecraft client) {
+		if (client == null || client.gameRenderer == null || RendererBotOffscreenWorldRenderer.isOffscreenRenderActive()) {
+			return;
+		}
+		PendingItemIcon selected = null;
+		synchronized (LOCK) {
+			for (PendingItemIcon candidate : PENDING_ITEM_ICONS.values()) {
+				if (candidate == null || candidate.rendering()) {
+					continue;
+				}
+				if (selected == null || candidate.requestStartedAt() < selected.requestStartedAt()) {
+					selected = candidate;
+				}
+			}
+			if (selected == null) {
+				return;
+			}
+			selected.markRendering();
+		}
+		dispatchItemIcon(client, selected);
+	}
+
+	private static void dispatchItemIcon(Minecraft client, PendingItemIcon itemIcon) {
+		RendererBotPayloads.RendererBotItemIconRequestS2CPayload payload = itemIcon.payload();
+		try {
+			TextureTarget blackTarget = renderItemIconToTarget(client, payload.stack(), payload.iconSize(), 0xFF000000);
+			if (blackTarget == null) {
+				sendItemIconFailure(payload, "Renderer bot item icon target was not available");
+				clearPendingItemIcon(payload.requestId());
+				return;
+			}
+			takeScreenshotFuture(blackTarget).whenComplete((blackImage, blackThrowable) -> client.execute(() -> {
+				if (blackThrowable != null) {
+					if (blackImage != null) {
+						blackImage.close();
+					}
+					sendItemIconFailure(payload, blackThrowable.getMessage() != null ? blackThrowable.getMessage() : blackThrowable.getClass().getSimpleName());
+					clearPendingItemIcon(payload.requestId());
+					return;
+				}
+				try {
+					TextureTarget whiteTarget = renderItemIconToTarget(client, payload.stack(), payload.iconSize(), 0xFFFFFFFF);
+					if (whiteTarget == null) {
+						blackImage.close();
+						sendItemIconFailure(payload, "Renderer bot item icon target was not available");
+						clearPendingItemIcon(payload.requestId());
+						return;
+					}
+					takeScreenshotFuture(whiteTarget).whenComplete((whiteImage, whiteThrowable) -> {
+						if (whiteThrowable != null) {
+							blackImage.close();
+							if (whiteImage != null) {
+								whiteImage.close();
+							}
+							client.execute(() -> {
+								sendItemIconFailure(payload, whiteThrowable.getMessage() != null ? whiteThrowable.getMessage() : whiteThrowable.getClass().getSimpleName());
+								clearPendingItemIcon(payload.requestId());
+							});
+							return;
+						}
+						CompletableFuture<byte[]> pixelsFuture = CompletableFuture.supplyAsync(() -> {
+							try (blackImage; whiteImage) {
+								if (blackImage.getWidth() != whiteImage.getWidth() || blackImage.getHeight() != whiteImage.getHeight()) {
+									throw new IllegalStateException("Renderer bot item icon matte sizes differ");
+								}
+								return encodeMattedArgbFrame(
+										blackImage.makePixelArray(),
+										whiteImage.makePixelArray(),
+										blackImage.getWidth(),
+										blackImage.getHeight()
+								);
+							}
+						}, CAPTURE_EXECUTOR);
+						pixelsFuture.whenComplete((pixels, throwable) -> client.execute(() -> {
+							if (throwable != null) {
+								sendItemIconFailure(payload, throwable.getMessage() != null ? throwable.getMessage() : throwable.getClass().getSimpleName());
+								clearPendingItemIcon(payload.requestId());
+								return;
+							}
+							ClientPlayNetworking.send(new RendererBotPayloads.RendererBotItemIconC2SPayload(
+									payload.requestId(),
+									Math.max(1, payload.iconSize()),
+									pixels
+							));
+							clearPendingItemIcon(payload.requestId());
+						}));
+					});
+				} catch (Throwable throwable) {
+					blackImage.close();
+					sendItemIconFailure(payload, throwable.getMessage() != null ? throwable.getMessage() : throwable.getClass().getSimpleName());
+					clearPendingItemIcon(payload.requestId());
+				}
+			}));
+		} catch (Throwable throwable) {
+			sendItemIconFailure(payload, throwable.getMessage() != null ? throwable.getMessage() : throwable.getClass().getSimpleName());
+			clearPendingItemIcon(payload.requestId());
+		}
 	}
 
 	private static void dispatchReadyMapTileRender(Minecraft client) {
@@ -532,6 +672,68 @@ public final class RendererBotClientCapture {
 		return future;
 	}
 
+	private static TextureTarget renderItemIconToTarget(Minecraft client, ItemStack stack, int requestedIconSize, int clearColor) {
+		if (client == null || client.gameRenderer == null || stack == null || stack.isEmpty()) {
+			return null;
+		}
+		int iconSize = Mth.clamp(requestedIconSize, 8, 128);
+		TextureTarget renderTarget = ensureItemIconRenderTarget(iconSize);
+		if (renderTarget == null) {
+			return null;
+		}
+		Window window = client.getWindow();
+		if (window == null) {
+			return null;
+		}
+		GameRendererRenderLevelInvoker gameRendererAccessor = (GameRendererRenderLevelInvoker) client.gameRenderer;
+		GuiRenderState guiRenderState = gameRendererAccessor.lg2$getGuiRenderState();
+		GuiRenderer guiRenderer = gameRendererAccessor.lg2$getGuiRenderer();
+		if (guiRenderState == null || guiRenderer == null) {
+			return null;
+		}
+		RenderTarget previousRenderTarget = client.getMainRenderTarget();
+		try {
+			((MinecraftMainRenderTargetAccessor) client).lg2$setMainRenderTarget(renderTarget);
+			RenderSystem.backupProjectionMatrix();
+			CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+			encoder.clearColorAndDepthTextures(renderTarget.getColorTexture(), clearColor, renderTarget.getDepthTexture(), 1.0D);
+			client.gameRenderer.getLighting().setupFor(Lighting.Entry.ITEMS_3D);
+			guiRenderState.reset();
+
+			int guiWidth = Math.max(1, window.getGuiScaledWidth());
+			int guiHeight = Math.max(1, window.getGuiScaledHeight());
+			float scaleX = guiWidth / 16.0F;
+			float scaleY = guiHeight / 16.0F;
+			GuiGraphics graphics = new GuiGraphics(client, guiRenderState, guiWidth, guiHeight);
+			graphics.pose().pushMatrix();
+			try {
+				graphics.pose().scale(scaleX, scaleY);
+				graphics.renderFakeItem(stack.copyWithCount(1), 0, 0, 0);
+			} finally {
+				graphics.pose().popMatrix();
+			}
+			guiRenderer.render(gameRendererAccessor.lg2$getFogRenderer().getBuffer(FogRenderer.FogMode.NONE));
+			guiRenderer.incrementFrameNumber();
+			return renderTarget;
+		} finally {
+			((MinecraftMainRenderTargetAccessor) client).lg2$setMainRenderTarget(previousRenderTarget);
+			RenderSystem.restoreProjectionMatrix();
+		}
+	}
+
+	private static TextureTarget ensureItemIconRenderTarget(int iconSize) {
+		int safeIconSize = Mth.clamp(iconSize, 8, 128);
+		if (itemIconRenderTarget == null
+				|| itemIconRenderTarget.width != safeIconSize
+				|| itemIconRenderTarget.height != safeIconSize) {
+			if (itemIconRenderTarget != null) {
+				itemIconRenderTarget.destroyBuffers();
+			}
+			itemIconRenderTarget = new TextureTarget("lg2_renderer_bot_item_icon", safeIconSize, safeIconSize, true);
+		}
+		return itemIconRenderTarget;
+	}
+
 	private static void processSharedFrame(Minecraft client, List<PendingCapture> captures, List<LiveStreamSession> liveStreams, NativeImage image) {
 		try {
 			int width = image.getWidth();
@@ -659,6 +861,42 @@ public final class RendererBotClientCapture {
 			writeRgb(output, i, sourcePixels[i] & 0xFFFFFF);
 		}
 		return output;
+	}
+
+	private static byte[] encodeMattedArgbFrame(int[] blackPixels, int[] whitePixels, int width, int height) {
+		byte[] output = new byte[Math.max(1, width * height * 4)];
+		for (int i = 0; i < width * height; i++) {
+			int black = blackPixels[i];
+			int white = whitePixels[i];
+			int blackRed = (black >>> 16) & 0xFF;
+			int blackGreen = (black >>> 8) & 0xFF;
+			int blackBlue = black & 0xFF;
+			int whiteRed = (white >>> 16) & 0xFF;
+			int whiteGreen = (white >>> 8) & 0xFF;
+			int whiteBlue = white & 0xFF;
+			int delta = clampInt(((whiteRed - blackRed) + (whiteGreen - blackGreen) + (whiteBlue - blackBlue)) / 3, 0, 255);
+			int alpha = 255 - delta;
+			int red = 0;
+			int green = 0;
+			int blue = 0;
+			if (alpha > ITEM_ICON_ALPHA_THRESHOLD) {
+				red = Mth.clamp((blackRed * 255 + alpha / 2) / alpha, 0, 255);
+				green = Mth.clamp((blackGreen * 255 + alpha / 2) / alpha, 0, 255);
+				blue = Mth.clamp((blackBlue * 255 + alpha / 2) / alpha, 0, 255);
+			} else {
+				alpha = 0;
+			}
+			int offset = i * 4;
+			output[offset] = (byte) alpha;
+			output[offset + 1] = (byte) red;
+			output[offset + 2] = (byte) green;
+			output[offset + 3] = (byte) blue;
+		}
+		return output;
+	}
+
+	private static int clampInt(int value, int min, int max) {
+		return Math.max(min, Math.min(max, value));
 	}
 
 	private static byte[] encodeNearestRgbFrame(int[] sourcePixels, int sourceWidth, int sourceHeight, int outputWidth, int outputHeight) {
@@ -936,6 +1174,16 @@ public final class RendererBotClientCapture {
 		}
 	}
 
+	private static void clearPendingItemIcon(UUID requestId) {
+		synchronized (LOCK) {
+			if (requestId == null) {
+				PENDING_ITEM_ICONS.clear();
+				return;
+			}
+			PENDING_ITEM_ICONS.remove(requestId);
+		}
+	}
+
 	private static void clearPendingMapTileRendering(UUID requestId) {
 		synchronized (LOCK) {
 			PendingMapTile pending = PENDING_MAP_TILES.get(requestId);
@@ -973,7 +1221,12 @@ public final class RendererBotClientCapture {
 			PENDING_CAPTURES.clear();
 			LIVE_STREAM_SESSIONS.clear();
 			PENDING_MAP_TILES.clear();
+			PENDING_ITEM_ICONS.clear();
 			latestFrame = null;
+		}
+		if (itemIconRenderTarget != null) {
+			itemIconRenderTarget.destroyBuffers();
+			itemIconRenderTarget = null;
 		}
 		RendererBotOffscreenWorldRenderer.clearCaches();
 	}
@@ -991,6 +1244,14 @@ public final class RendererBotClientCapture {
 		ClientPlayNetworking.send(new RendererBotPayloads.RendererBotMapTileFailureC2SPayload(
 				payload.requestId(),
 				message == null || message.isBlank() ? "Renderer bot map tile failed" : message
+		));
+	}
+
+	private static void sendItemIconFailure(RendererBotPayloads.RendererBotItemIconRequestS2CPayload payload, String message) {
+		Lg2.LOGGER.warn("Renderer bot failing item icon {}: {}", payload.requestId(), message);
+		ClientPlayNetworking.send(new RendererBotPayloads.RendererBotItemIconFailureC2SPayload(
+				payload.requestId(),
+				message == null || message.isBlank() ? "Renderer bot item icon failed" : message
 		));
 	}
 
@@ -1149,6 +1410,34 @@ public final class RendererBotClientCapture {
 
 		private void clearRendering() {
 			this.rendering = false;
+		}
+	}
+
+	private static final class PendingItemIcon {
+		private final RendererBotPayloads.RendererBotItemIconRequestS2CPayload payload;
+		private final long requestStartedAt;
+		private boolean rendering;
+
+		private PendingItemIcon(RendererBotPayloads.RendererBotItemIconRequestS2CPayload payload, long requestStartedAt) {
+			this.payload = payload;
+			this.requestStartedAt = requestStartedAt;
+			this.rendering = false;
+		}
+
+		private RendererBotPayloads.RendererBotItemIconRequestS2CPayload payload() {
+			return this.payload;
+		}
+
+		private long requestStartedAt() {
+			return this.requestStartedAt;
+		}
+
+		private boolean rendering() {
+			return this.rendering;
+		}
+
+		private void markRendering() {
+			this.rendering = true;
 		}
 	}
 
