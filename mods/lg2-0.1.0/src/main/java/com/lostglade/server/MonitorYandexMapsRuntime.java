@@ -61,7 +61,9 @@ final class MonitorYandexMapsRuntime {
 	private static final Map<String, BufferedImage> LEGACY_ITEM_MARKER_ICON_CACHE = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingMarkerTitleRequest> PENDING_MARKER_TITLES = new ConcurrentHashMap<>();
 	private static final TextureAssetManager MAP_ASSETS = TextureAssetManager.get();
+	private static final Identifier DEFAULT_MARKER_ICON_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "map/decorations/red_banner");
 	private static final BufferedImage EMPTY_MARKER_ICON = new BufferedImage(MAP_MARKER_ICON_SIZE, MAP_MARKER_ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
+	private static volatile BufferedImage defaultMarkerIcon;
 
 	private MonitorYandexMapsRuntime() {
 	}
@@ -394,6 +396,7 @@ final class MonitorYandexMapsRuntime {
 			synchronized (state) {
 				initializeStateLocked(state, component);
 				state.editorMarkerId = createMarkerAtCenter(level, player, state);
+				state.markerDeleteConfirmMarkerId = null;
 				state.version++;
 			}
 			clearPendingMarkerTitleRequests(component.runtimeKey());
@@ -416,6 +419,7 @@ final class MonitorYandexMapsRuntime {
 		if (tappedMarker != null) {
 			synchronized (state) {
 				state.editorMarkerId = tappedMarker.markerId();
+				state.markerDeleteConfirmMarkerId = null;
 				state.version++;
 			}
 			clearPendingMarkerTitleRequests(component.runtimeKey());
@@ -750,44 +754,76 @@ final class MonitorYandexMapsRuntime {
 		if (marker == null) {
 			synchronized (state) {
 				state.editorMarkerId = null;
+				state.markerDeleteConfirmMarkerId = null;
 				state.version++;
 			}
 			clearPendingMarkerTitleRequests(component.runtimeKey());
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
-		UiRect panel = markerEditorPanelRect(layout);
-		UiRect close = markerEditorCloseRect(layout);
+		boolean deleteConfirmOpen;
+		synchronized (state) {
+			deleteConfirmOpen = Objects.equals(state.markerDeleteConfirmMarkerId, markerId);
+		}
+		if (deleteConfirmOpen) {
+			UiRect confirmPanel = markerEditorDeleteConfirmPanelRect(layout, marker);
+			if (markerEditorDeleteConfirmConfirmRect(layout, marker).contains(touchPoint.x(), touchPoint.y())) {
+				YandexMapMarkerStore.remove(server, markerId);
+				invalidateMarkerIcon(markerId);
+				synchronized (state) {
+					state.editorMarkerId = null;
+					state.markerDeleteConfirmMarkerId = null;
+					state.version++;
+				}
+				PENDING_MARKER_TITLES.remove(player.getUUID());
+				requestRuntimeRender(server, component.runtimeKey());
+				return true;
+			}
+			if (markerEditorDeleteConfirmCancelRect(layout, marker).contains(touchPoint.x(), touchPoint.y())
+					|| !confirmPanel.contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (state) {
+					state.markerDeleteConfirmMarkerId = null;
+					state.version++;
+				}
+				requestRuntimeRender(server, component.runtimeKey());
+				return true;
+			}
+			return true;
+		}
+		UiRect panel = markerEditorPanelRect(layout, marker);
+		UiRect close = markerEditorCloseRect(layout, marker);
 		if (close.contains(touchPoint.x(), touchPoint.y()) || !panel.contains(touchPoint.x(), touchPoint.y())) {
 			synchronized (state) {
 				state.editorMarkerId = null;
+				state.markerDeleteConfirmMarkerId = null;
 				state.version++;
 			}
 			PENDING_MARKER_TITLES.remove(player.getUUID());
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
-		if (markerEditorTitleRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+		if (markerEditorTitleRect(layout, marker).contains(touchPoint.x(), touchPoint.y())) {
+			synchronized (state) {
+				state.markerDeleteConfirmMarkerId = null;
+			}
 			requestMarkerTitlePrompt(player, component.runtimeKey(), markerId);
 			return true;
 		}
-		if (markerEditorIconRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+		if (markerEditorIconRect(layout, marker).contains(touchPoint.x(), touchPoint.y())) {
 			YandexMapMarkerStore.updateIcon(server, markerId, player.getMainHandItem());
 			invalidateMarkerIcon(markerId);
 			synchronized (state) {
+				state.markerDeleteConfirmMarkerId = null;
 				state.version++;
 			}
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
-		if (markerEditorDeleteRect(layout).contains(touchPoint.x(), touchPoint.y())) {
-			YandexMapMarkerStore.remove(server, markerId);
-			invalidateMarkerIcon(markerId);
+		if (markerEditorDeleteRect(layout, marker).contains(touchPoint.x(), touchPoint.y())) {
 			synchronized (state) {
-				state.editorMarkerId = null;
+				state.markerDeleteConfirmMarkerId = markerId;
 				state.version++;
 			}
-			PENDING_MARKER_TITLES.remove(player.getUUID());
 			requestRuntimeRender(server, component.runtimeKey());
 			return true;
 		}
@@ -848,7 +884,6 @@ final class MonitorYandexMapsRuntime {
 		int rowGap = ultra ? 1 : Math.max(2, layout.unit() / 3);
 		int titleFontSize = ultra ? clampInt(layout.unit() + 1, 6, 8) : clampInt(layout.unit(), 9, 13);
 		int metaFontSize = ultra ? clampInt(layout.unit(), 6, 7) : clampInt(layout.unit() - 2, 8, 10);
-		int headSize = ultra ? clampInt(layout.unit() + 1, 7, 9) : clampInt(layout.unit() + 2, 10, 14);
 		int maxChipWidth = Math.max(MAP_MARKER_SCREEN_ICON_SIZE + pad * 2, Math.min(canvas.width() - pad * 2, ultra ? 96 : 188));
 		Font previousFont = graphics.getFont();
 		Font titleFont = new Font(Font.SANS_SERIF, Font.BOLD, titleFontSize);
@@ -859,14 +894,14 @@ final class MonitorYandexMapsRuntime {
 		String title = truncateWithEllipsis(titleMetrics, projected.marker().title(), topTextMaxWidth);
 		graphics.setFont(metaFont);
 		var metaMetrics = graphics.getFontMetrics();
-		int creatorTextMaxWidth = Math.max(16, maxChipWidth - headSize - pad * 3);
-		String creatorName = truncateWithEllipsis(metaMetrics, projected.marker().creatorName(), creatorTextMaxWidth);
+		int metaTextMaxWidth = Math.max(16, maxChipWidth - pad * 2);
+		String coordinates = truncateWithEllipsis(metaMetrics, markerCoordinateLabel(projected.marker()), metaTextMaxWidth);
 		int topRowWidth = MAP_MARKER_SCREEN_ICON_SIZE + pad + titleMetrics.stringWidth(title);
-		int creatorRowWidth = headSize + pad + metaMetrics.stringWidth(creatorName);
-		int creatorRowHeight = Math.max(headSize, metaMetrics.getHeight());
+		int metaRowWidth = metaMetrics.stringWidth(coordinates);
+		int metaRowHeight = metaMetrics.getHeight();
 		int topRowHeight = Math.max(MAP_MARKER_SCREEN_ICON_SIZE, titleMetrics.getHeight());
-		int chipWidth = Math.min(maxChipWidth, Math.max(topRowWidth, creatorRowWidth) + pad * 2);
-		int chipHeight = topRowHeight + creatorRowHeight + pad * 2 + rowGap;
+		int chipWidth = Math.min(maxChipWidth, Math.max(topRowWidth, metaRowWidth) + pad * 2);
+		int chipHeight = topRowHeight + metaRowHeight + pad * 2 + rowGap;
 		int markerCenterX = baseIconRect.x() + baseIconRect.width() / 2;
 		int markerCenterY = baseIconRect.y() + baseIconRect.height() / 2;
 		UiRect chipRect = new UiRect(
@@ -894,14 +929,13 @@ final class MonitorYandexMapsRuntime {
 		graphics.setFont(titleFont);
 		drawVerticalText(graphics, title, titleRect, new Color(26, 30, 34, 244), Font.BOLD, titleFontSize);
 
-		UiRect creatorRowRect = new UiRect(
+		UiRect coordinatesRect = new UiRect(
 				chipRect.x() + pad,
 				chipRect.y() + pad + topRowHeight + rowGap,
 				chipRect.width() - pad * 2,
-				creatorRowHeight
+				metaRowHeight
 		);
-		BufferedImage creatorHead = PlayerHeadRenderSystem.resolveHead(server, projected.marker().creatorUuid(), projected.marker().creatorName(), markerImageReadyCallback(server, runtimeKey));
-		drawMarkerCreatorRow(graphics, layout, creatorRowRect, creatorHead, creatorName, metaFontSize);
+		drawVerticalText(graphics, coordinates, coordinatesRect, new Color(72, 80, 88, 228), Font.PLAIN, metaFontSize);
 		graphics.setFont(previousFont);
 	}
 
@@ -936,12 +970,17 @@ final class MonitorYandexMapsRuntime {
 		if (graphics == null || rect == null || marker == null) {
 			return;
 		}
-		int inset = Math.max(2, rect.width() / 6);
 		BufferedImage icon = markerItemIcon(marker, server, runtimeKey);
 		if (icon != null) {
 			drawContainedImageNearest(graphics, icon, rect, 0);
 			return;
 		}
+		BufferedImage defaultIcon = defaultMarkerIcon();
+		if (defaultIcon != null) {
+			drawContainedImageNearest(graphics, defaultIcon, rect, 0);
+			return;
+		}
+		int inset = Math.max(2, rect.width() / 6);
 		drawPlayerUiIcon(graphics, rect.inset(inset), PlayerUiIcon.DIRECTIONS_2_LINE, new Color(20, 24, 26, 236));
 	}
 
@@ -966,22 +1005,27 @@ final class MonitorYandexMapsRuntime {
 		}
 
 		UiRect canvas = mediaCanvasRect(layout);
-		UiRect panel = markerEditorPanelRect(layout);
-		UiRect header = markerEditorHeaderRect(layout);
-		UiRect closeRect = markerEditorCloseRect(layout);
-		UiRect creatorRect = markerEditorCreatorRect(layout);
-		UiRect titleRect = markerEditorTitleRect(layout);
-		UiRect iconRect = markerEditorIconRect(layout);
-		UiRect deleteRect = markerEditorDeleteRect(layout);
+		boolean deleteConfirmOpen;
+		synchronized (state) {
+			deleteConfirmOpen = Objects.equals(state.markerDeleteConfirmMarkerId, markerId);
+		}
+		UiRect closeRect = markerEditorCloseRect(layout, marker);
+		UiRect creatorRect = markerEditorCreatorRect(layout, marker);
+		UiRect titleRect = markerEditorTitleRect(layout, marker);
+		UiRect iconRect = markerEditorIconRect(layout, marker);
+		UiRect coordinatesRect = markerEditorCoordinatesRect(layout, marker);
 		drawOverlayBackdrop(graphics, canvas);
-		drawOverlayWindowHeaderText(graphics, layout, header, marker.title(), "");
+		if (deleteConfirmOpen) {
+			drawMarkerEditorDeleteConfirm(graphics, layout, marker);
+			return;
+		}
+		drawMarkerEditorTitleHeader(graphics, layout, titleRect, marker.title());
 		drawCloseGlyph(graphics, mediaChromeIconRect(closeRect, layout), new Color(248, 251, 255, 236));
 
 		BufferedImage creatorHead = PlayerHeadRenderSystem.resolveHead(server, marker.creatorUuid(), marker.creatorName(), markerImageReadyCallback(server, runtimeKey));
 		drawMarkerEditorCreatorCard(graphics, layout, creatorRect, creatorHead, marker.creatorName());
-		drawMarkerEditorTitleField(graphics, layout, titleRect, marker.title());
 		drawMarkerEditorIconField(graphics, layout, iconRect, marker, server, runtimeKey);
-		drawGalleryFileMenuActionButton(graphics, layout, deleteRect, PlayerUiIcon.TRASH, "УДАЛИТЬ", "", true, false, true);
+		drawMarkerEditorCoordinatesRow(graphics, layout, coordinatesRect, marker, markerCoordinateLabel(marker));
 	}
 
 	private static List<ProjectedMarker> projectVisibleMarkers(
@@ -1072,101 +1116,223 @@ final class MonitorYandexMapsRuntime {
 		);
 	}
 
-	private static UiRect markerEditorPanelRect(UiLayout layout) {
+	private static UiRect markerEditorPanelRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		UiRect canvas = mediaCanvasRect(layout);
 		if (ultraCompactScreenLayout(layout)) {
-			return mediaCanvasRect(layout);
+			return canvas;
 		}
-		return centeredOverlayPanelRect(
-				layout,
-				compactScreenLayout(layout) ? 0.78D : 0.64D,
-				compactScreenLayout(layout) ? 0.72D : 0.58D,
-				120,
-				98
+		int inset = clampInt(layout.unit(), 8, 16);
+		int availableWidth = Math.max(1, canvas.width() - inset * 2);
+		int availableHeight = Math.max(1, canvas.height() - inset * 2);
+		int targetSquare = compactScreenLayout(layout) ? clampInt(layout.unit() * 20, 132, 190) : clampInt(layout.unit() * 24, 170, 260);
+		int square = Math.min(Math.min(availableWidth, availableHeight), targetSquare);
+		int maxWidth = Math.min(availableWidth, Math.max(square, compactScreenLayout(layout) ? square + layout.unit() * 8 : square + layout.unit() * 12));
+		int requiredWidth = markerEditorEstimatedPanelWidth(layout, marker);
+		int width = requiredWidth > square ? Math.min(maxWidth, requiredWidth) : square;
+		return new UiRect(
+				canvas.x() + Math.max(0, (canvas.width() - width) / 2),
+				canvas.y() + Math.max(0, (canvas.height() - square) / 2),
+				width,
+				square
 		);
 	}
 
-	private static UiRect markerEditorHeaderRect(UiLayout layout) {
-		UiRect panel = markerEditorPanelRect(layout);
-		int inset = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 14);
-		int height = ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 2 + 6, 16, 20)
-				: compactScreenLayout(layout)
-				? clampInt(layout.unit() * 4, 28, 40)
-				: clampInt(layout.unit() * 5, 34, 48);
-		return new UiRect(panel.x() + inset, panel.y() + inset, panel.width() - inset * 2, height);
+	private static int markerEditorEstimatedPanelWidth(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		String title = marker != null && marker.title() != null ? marker.title() : "";
+		int codePoints = title.codePointCount(0, title.length());
+		int titleWidth = Math.max(layout.unit() * 4, codePoints * markerEditorTitleFontSize(layout) * 11 / 16);
+		int inset = markerEditorInset(layout);
+		int gap = markerEditorGap(layout);
+		return titleWidth + markerEditorEditIconSize(layout) + markerEditorCloseButtonSize(layout) + inset * 2 + gap * 4;
 	}
 
-	private static UiRect markerEditorCloseRect(UiLayout layout) {
-		UiRect header = markerEditorHeaderRect(layout);
-		int size = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2 + 2, 22, 34);
-		int inset = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
-		return new UiRect(header.right() - size - inset, header.y() + Math.max(0, (header.height() - size) / 2), size, size);
+	private static int markerEditorPanelArc(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 2, 8, 14) : clampInt(layout.unit() * 3, 16, 24);
 	}
 
-	private static UiRect markerEditorBodyRect(UiLayout layout) {
-		UiRect panel = markerEditorPanelRect(layout);
-		UiRect header = markerEditorHeaderRect(layout);
-		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
-		int inset = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 14);
-		int top = header.bottom() + gap;
-		return new UiRect(panel.x() + inset, top, panel.width() - inset * 2, Math.max(20, panel.bottom() - inset - top));
+	private static int markerEditorInset(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? Math.max(3, layout.unit() / 2) : clampInt(layout.unit(), 8, 14);
 	}
 
-	private static UiRect markerEditorCreatorRect(UiLayout layout) {
-		UiRect body = markerEditorBodyRect(layout);
-		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
-		int creatorHeight = clampInt(body.height() / 4, ultraCompactScreenLayout(layout) ? 18 : 24, ultraCompactScreenLayout(layout) ? 24 : 42);
-		return new UiRect(body.x(), body.y(), body.width(), creatorHeight);
+	private static int markerEditorGap(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 5) : clampInt(layout.unit() / 3, 2, 6);
 	}
 
-	private static UiRect markerEditorFieldsRowRect(UiLayout layout) {
-		UiRect body = markerEditorBodyRect(layout);
-		UiRect creator = markerEditorCreatorRect(layout);
-		UiRect delete = markerEditorDeleteRect(layout);
-		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
+	private static int markerEditorTitleFontSize(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? clampInt(layout.unit(), 6, 8) : compactScreenLayout(layout) ? clampInt(layout.unit() + 1, 9, 13) : clampInt(layout.unit() + 2, 12, 17);
+	}
+
+	private static int markerEditorMetaFontSize(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? clampInt(layout.unit(), 6, 7) : compactScreenLayout(layout) ? clampInt(layout.unit(), 7, 10) : clampInt(layout.unit(), 9, 12);
+	}
+
+	private static int markerEditorEditIconSize(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? clampInt(layout.unit(), 6, 8) : clampInt(layout.unit() + 1, 7, 10);
+	}
+
+	private static int markerEditorCloseButtonSize(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 2 + 2, 12, 14) : clampInt(layout.unit() * 2 + 2, 18, 26);
+	}
+
+	private static int markerEditorHeaderHeight(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 2 + 2, 14, 18) : compactScreenLayout(layout) ? clampInt(layout.unit() * 2 + 6, 20, 28) : clampInt(layout.unit() * 3, 24, 32);
+	}
+
+	private static UiRect markerEditorHeaderRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		UiRect panel = markerEditorPanelRect(layout, marker);
+		int inset = markerEditorInset(layout);
+		return new UiRect(panel.x() + inset, panel.y() + inset, Math.max(20, panel.width() - inset * 2), markerEditorHeaderHeight(layout));
+	}
+
+	private static UiRect markerEditorCloseRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		UiRect header = markerEditorHeaderRect(layout, marker);
+		int size = markerEditorCloseButtonSize(layout);
+		return new UiRect(header.right() - size, header.y() + Math.max(0, (header.height() - size) / 2), size, size);
+	}
+
+	private static UiRect markerEditorTitleRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		UiRect header = markerEditorHeaderRect(layout, marker);
+		UiRect close = markerEditorCloseRect(layout, marker);
+		int gap = markerEditorGap(layout);
+		return new UiRect(header.x(), header.y(), Math.max(16, close.x() - header.x() - gap), header.height());
+	}
+
+	private static UiRect markerEditorCreatorRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		UiRect header = markerEditorHeaderRect(layout, marker);
+		UiRect panel = markerEditorPanelRect(layout, marker);
+		int inset = markerEditorInset(layout);
+		int gap = markerEditorGap(layout);
+		int height = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 2, 14, 18) : compactScreenLayout(layout) ? clampInt(layout.unit() * 2 + 2, 16, 22) : clampInt(layout.unit() * 3, 20, 28);
+		return new UiRect(panel.x() + inset, header.bottom() + gap, Math.max(20, panel.width() - inset * 2), height);
+	}
+
+	private static UiRect markerEditorCoordinatesRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		UiRect panel = markerEditorPanelRect(layout, marker);
+		int inset = markerEditorInset(layout);
+		int height = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 4, 12, 16) : compactScreenLayout(layout) ? clampInt(layout.unit() + 4, 14, 20) : clampInt(layout.unit() * 2, 16, 24);
+		return new UiRect(panel.x() + inset, panel.bottom() - inset - height, Math.max(20, panel.width() - inset * 2), height);
+	}
+
+	private static UiRect markerEditorIconRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		UiRect creator = markerEditorCreatorRect(layout, marker);
+		UiRect coordinates = markerEditorCoordinatesRect(layout, marker);
+		UiRect panel = markerEditorPanelRect(layout, marker);
+		int gap = markerEditorGap(layout);
 		int top = creator.bottom() + gap;
-		return new UiRect(body.x(), top, body.width(), Math.max(20, delete.y() - gap - top));
+		int bottom = coordinates.y() - gap;
+		int availableWidth = Math.max(24, panel.width() - markerEditorInset(layout) * 2);
+		int availableHeight = Math.max(24, bottom - top);
+		int size = Math.max(22, Math.min(availableWidth, availableHeight) - Math.max(1, layout.unit() / 2));
+		return new UiRect(panel.x() + Math.max(0, (panel.width() - size) / 2), top + Math.max(0, (availableHeight - size) / 2), size, size);
 	}
 
-	private static UiRect markerEditorIconRect(UiLayout layout) {
-		UiRect row = markerEditorFieldsRowRect(layout);
-		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
-		int width = clampInt(row.height(), ultraCompactScreenLayout(layout) ? 24 : 36, Math.max(24, row.width() / 3));
-		width = Math.min(width, Math.max(24, row.width() / 2 - gap));
-		return new UiRect(row.x(), row.y(), width, row.height());
+	private static int markerEditorDeleteIconSize(UiLayout layout, UiRect rect) {
+		if (layout == null || rect == null) {
+			return 0;
+		}
+		return Math.min(rect.height(), ultraCompactScreenLayout(layout) ? clampInt(layout.unit() * 2, 12, 16) : clampInt(layout.unit() * 2 + 2, 14, 22));
 	}
 
-	private static UiRect markerEditorTitleRect(UiLayout layout) {
-		UiRect row = markerEditorFieldsRowRect(layout);
-		UiRect icon = markerEditorIconRect(layout);
-		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
-		return new UiRect(icon.right() + gap, row.y(), Math.max(20, row.right() - icon.right() - gap), row.height());
+	private static UiRect markerEditorDeleteRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		UiRect coordinates = markerEditorCoordinatesRect(layout, marker);
+		if (layout == null || marker == null || coordinates == null) {
+			return new UiRect(0, 0, 0, 0);
+		}
+		int gap = Math.max(2, markerEditorGap(layout) * 2);
+		int size = markerEditorDeleteIconSize(layout, coordinates);
+		String label = markerCoordinateLabel(marker);
+		int fontSize = markerEditorMetaFontSize(layout);
+		int estimatedTextWidth = Math.max(12, Math.min(coordinates.width() - size - gap, label.codePointCount(0, label.length()) * fontSize * 11 / 16));
+		int groupWidth = estimatedTextWidth + gap + size;
+		int groupX = coordinates.x() + Math.max(0, (coordinates.width() - groupWidth) / 2);
+		int iconX = groupX + estimatedTextWidth + gap;
+		int iconY = coordinates.y() + Math.max(0, (coordinates.height() - size) / 2);
+		int padding = Math.max(12, layout.unit() * 2);
+		int left = Math.max(coordinates.x() + coordinates.width() / 2, iconX - padding);
+		int top = Math.max(coordinates.y(), iconY - padding);
+		int right = Math.min(coordinates.right(), iconX + size + padding);
+		int bottom = Math.min(coordinates.bottom(), iconY + size + padding);
+		return new UiRect(left, top, Math.max(1, right - left), Math.max(1, bottom - top));
 	}
 
-	private static UiRect markerEditorDeleteRect(UiLayout layout) {
-		UiRect panel = markerEditorPanelRect(layout);
-		UiRect body = markerEditorBodyRect(layout);
-		int height = clampInt(body.height() / 4, ultraCompactScreenLayout(layout) ? 16 : 22, ultraCompactScreenLayout(layout) ? 22 : 38);
-		return new UiRect(body.x(), body.bottom() - height, body.width(), height);
+	private static UiRect markerEditorDeleteConfirmPanelRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		UiRect editor = markerEditorPanelRect(layout, marker);
+		if (layout == null || marker == null || editor == null || ultraCompactScreenLayout(layout)) {
+			return editor != null ? editor : new UiRect(0, 0, 0, 0);
+		}
+		int side = Math.max(1, Math.min(editor.width(), editor.height()));
+		return new UiRect(
+				editor.x() + Math.max(0, (editor.width() - side) / 2),
+				editor.y() + Math.max(0, (editor.height() - side) / 2),
+				side,
+				side
+		);
+	}
+
+	private static UiRect markerEditorDeleteConfirmHeaderRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		return new UiRect(0, 0, 0, 0);
+	}
+
+	private static UiRect markerEditorDeleteConfirmBodyRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		UiRect panel = markerEditorDeleteConfirmPanelRect(layout, marker);
+		int inset = markerEditorInset(layout);
+		return new UiRect(
+				panel.x() + inset,
+				panel.y() + inset,
+				Math.max(12, panel.width() - inset * 2),
+				Math.max(16, panel.height() - inset * 2)
+		);
+	}
+
+	private static UiRect markerEditorDeleteConfirmInfoRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		return markerEditorDeleteConfirmActionRect(layout, marker, 0);
+	}
+
+	private static UiRect markerEditorDeleteConfirmCancelRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		return markerEditorDeleteConfirmActionRect(layout, marker, 1);
+	}
+
+	private static UiRect markerEditorDeleteConfirmConfirmRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		return markerEditorDeleteConfirmActionRect(layout, marker, 2);
+	}
+
+	private static UiRect markerEditorDeleteConfirmCloseRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		return new UiRect(0, 0, 0, 0);
+	}
+
+	private static UiRect markerEditorDeleteConfirmActionRect(UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker, int index) {
+		UiRect body = markerEditorDeleteConfirmBodyRect(layout, marker);
+		int actionCount = 3;
+		int safeIndex = clampInt(index, 0, actionCount - 1);
+		int gap = markerEditorGap(layout);
+		int height = Math.max(16, (body.height() - gap * (actionCount - 1)) / actionCount);
+		return new UiRect(
+				body.x(),
+				body.y() + safeIndex * (height + gap),
+				body.width(),
+				height
+		);
 	}
 
 	private static void drawMarkerEditorCreatorCard(Graphics2D graphics, UiLayout layout, UiRect rect, BufferedImage head, String creatorName) {
 		if (graphics == null || layout == null || rect == null) {
 			return;
 		}
-		int arc = ultraCompactScreenLayout(layout) ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit() * 2, 12, 18);
-		fillRoundedRect(graphics, rect, arc, new Color(255, 255, 255, 10));
-		int pad = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 14);
-		int headSize = Math.min(rect.height() - pad * 2, compactScreenLayout(layout) ? clampInt(layout.unit() * 3, 16, 24) : clampInt(layout.unit() * 4, 24, 34));
-		UiRect headRect = new UiRect(rect.x() + pad, rect.y() + (rect.height() - headSize) / 2, headSize, headSize);
-		fillRoundedRect(graphics, headRect, clampInt(headSize / 3, 4, 8), new Color(255, 255, 255, 18));
+		int gap = markerEditorGap(layout);
+		int headSize = Math.max(8, Math.min(rect.height(), compactScreenLayout(layout) ? clampInt(layout.unit() * 2 - 1, 10, 16) : clampInt(layout.unit() * 3 - 2, 14, 20)));
+		int fontSize = markerEditorMetaFontSize(layout);
+		Font font = new Font(Font.SANS_SERIF, Font.BOLD, fontSize);
+		var metrics = graphics.getFontMetrics(font);
+		String fittedName = truncateWithEllipsis(metrics, creatorName, Math.max(12, rect.width() - headSize - gap));
+		int nameWidth = Math.max(1, metrics.stringWidth(fittedName));
+		int rowWidth = headSize + gap + nameWidth;
+		int startX = rect.x() + Math.max(0, (rect.width() - rowWidth) / 2);
+		UiRect headRect = new UiRect(startX, rect.y() + (rect.height() - headSize) / 2, headSize, headSize);
+		fillRoundedRect(graphics, headRect, clampInt(headSize / 3, 3, 6), new Color(255, 255, 255, 14));
 		if (head != null) {
 			drawContainedImageNearest(graphics, head, headRect, 0);
 		}
-		UiRect textRect = new UiRect(headRect.right() + pad, rect.y(), Math.max(16, rect.right() - headRect.right() - pad * 2), rect.height());
-		int fontSize = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 1, 7, 8) : compactScreenLayout(layout) ? clampInt(layout.unit() + 1, 9, 13) : clampInt(layout.unit() + 2, 11, 16);
-		Font font = new Font(Font.SANS_SERIF, Font.BOLD, fontSize);
-		String fittedName = truncateWithEllipsis(graphics.getFontMetrics(font), creatorName, textRect.width());
+		UiRect textRect = new UiRect(headRect.right() + gap, rect.y(), nameWidth, rect.height());
 		drawVerticalText(
 				graphics,
 				fittedName,
@@ -1177,20 +1343,23 @@ final class MonitorYandexMapsRuntime {
 		);
 	}
 
-	private static void drawMarkerEditorTitleField(Graphics2D graphics, UiLayout layout, UiRect rect, String title) {
+	private static void drawMarkerEditorTitleHeader(Graphics2D graphics, UiLayout layout, UiRect rect, String title) {
 		if (graphics == null || layout == null || rect == null) {
 			return;
 		}
-		int arc = ultraCompactScreenLayout(layout) ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit() * 2, 12, 18);
-		fillRoundedRect(graphics, rect, arc, new Color(255, 255, 255, 10));
-		int iconSize = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 5, 9, 11) : clampInt(layout.unit() + 6, 14, 20);
-		int pad = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit(), 8, 14);
-		UiRect iconRect = new UiRect(rect.x() + pad, rect.y() + (rect.height() - iconSize) / 2, iconSize, iconSize);
-		drawPlayerUiIcon(graphics, iconRect, PlayerUiIcon.EDIT, new Color(248, 240, 244, 236));
-		UiRect textRect = new UiRect(iconRect.right() + pad, rect.y(), Math.max(16, rect.right() - iconRect.right() - pad * 2), rect.height());
-		int fontSize = ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 1, 7, 8) : compactScreenLayout(layout) ? clampInt(layout.unit() + 1, 9, 13) : clampInt(layout.unit() + 2, 11, 16);
+		int fontSize = markerEditorTitleFontSize(layout);
+		int iconSize = markerEditorEditIconSize(layout);
+		int gap = markerEditorGap(layout);
 		Font font = new Font(Font.SANS_SERIF, Font.BOLD, fontSize);
-		String fittedTitle = truncateWithEllipsis(graphics.getFontMetrics(font), title, textRect.width());
+		var metrics = graphics.getFontMetrics(font);
+		int textMaxWidth = Math.max(12, rect.width() - iconSize - gap);
+		String fittedTitle = truncateWithEllipsis(metrics, title, textMaxWidth);
+		int titleWidth = Math.min(textMaxWidth, metrics.stringWidth(fittedTitle));
+		int groupWidth = iconSize + gap + titleWidth;
+		int groupX = rect.x() + Math.max(0, (rect.width() - groupWidth) / 2);
+		UiRect iconRect = new UiRect(groupX, rect.y() + Math.max(0, (rect.height() - iconSize) / 2), iconSize, iconSize);
+		drawPlayerUiIcon(graphics, iconRect, PlayerUiIcon.EDIT, new Color(248, 240, 244, 204));
+		UiRect textRect = new UiRect(iconRect.right() + gap, rect.y(), titleWidth, rect.height());
 		drawVerticalText(
 				graphics,
 				fittedTitle,
@@ -1212,10 +1381,68 @@ final class MonitorYandexMapsRuntime {
 		if (graphics == null || layout == null || rect == null || marker == null) {
 			return;
 		}
-		int arc = ultraCompactScreenLayout(layout) ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit() * 2, 12, 18);
+		int arc = ultraCompactScreenLayout(layout) ? clampInt(layout.unit(), 5, 8) : clampInt(layout.unit() * 2, 10, 16);
 		fillRoundedRect(graphics, rect, arc, new Color(255, 255, 255, 10));
-		UiRect previewRect = rect.inset(Math.max(2, rect.width() / 6));
+		strokeRoundedRect(graphics, rect, arc, 1.0F, new Color(255, 255, 255, 28));
+		UiRect previewRect = rect.inset(Math.max(1, rect.width() / 28));
 		drawMarkerIcon(graphics, previewRect, marker, server, runtimeKey);
+	}
+
+	private static void drawMarkerEditorCoordinatesRow(Graphics2D graphics, UiLayout layout, UiRect rect, YandexMapMarkerStore.YandexMapMarker marker, String coordinates) {
+		if (graphics == null || layout == null || rect == null || marker == null) {
+			return;
+		}
+		int gap = Math.max(2, markerEditorGap(layout) * 2);
+		int fontSize = markerEditorMetaFontSize(layout);
+		Font font = new Font(Font.SANS_SERIF, Font.PLAIN, fontSize);
+		var metrics = graphics.getFontMetrics(font);
+		int iconSize = markerEditorDeleteIconSize(layout, rect);
+		String fitted = truncateWithEllipsis(metrics, coordinates, Math.max(12, rect.width() - iconSize - gap));
+		int textWidth = Math.max(1, metrics.stringWidth(fitted));
+		int groupWidth = textWidth + gap + iconSize;
+		int groupX = rect.x() + Math.max(0, (rect.width() - groupWidth) / 2);
+		UiRect textRect = new UiRect(groupX, rect.y(), textWidth, rect.height());
+		drawVerticalText(graphics, fitted, textRect, new Color(218, 226, 236, 210), Font.PLAIN, fontSize);
+		UiRect deleteIconRect = new UiRect(textRect.right() + gap, rect.y() + Math.max(0, (rect.height() - iconSize) / 2), iconSize, iconSize);
+		drawMarkerEditorDeleteIconButton(graphics, layout, deleteIconRect);
+	}
+
+	private static void drawMarkerEditorDeleteIconButton(Graphics2D graphics, UiLayout layout, UiRect rect) {
+		if (graphics == null || layout == null || rect == null) {
+			return;
+		}
+		int arc = clampInt(rect.width() / 3, 5, 9);
+		fillRoundedRect(graphics, rect, arc, new Color(255, 255, 255, 12));
+		drawPlayerUiIcon(graphics, mediaChromeIconRect(rect, layout), PlayerUiIcon.TRASH, new Color(255, 142, 150, 236));
+	}
+
+	private static void drawMarkerEditorDeleteConfirm(Graphics2D graphics, UiLayout layout, YandexMapMarkerStore.YandexMapMarker marker) {
+		if (graphics == null || layout == null || marker == null) {
+			return;
+		}
+		UiRect infoRect = markerEditorDeleteConfirmInfoRect(layout, marker);
+		UiRect cancelRect = markerEditorDeleteConfirmCancelRect(layout, marker);
+		UiRect confirmRect = markerEditorDeleteConfirmConfirmRect(layout, marker);
+		drawGalleryDeleteConfirmInfo(graphics, layout, infoRect);
+		drawGalleryFileMenuActionButton(graphics, layout, cancelRect, PlayerUiIcon.CLOSE, "ОТМЕНА", "", true, false, false, 28, 16);
+		drawGalleryFileMenuActionButton(graphics, layout, confirmRect, PlayerUiIcon.TRASH, "УДАЛИТЬ", "", true, false, true, 28, 16);
+	}
+
+	private static String markerCoordinateLabel(YandexMapMarkerStore.YandexMapMarker marker) {
+		if (marker == null) {
+			return "";
+		}
+		return marker.blockX() + ", " + marker.blockY() + ", " + marker.blockZ();
+	}
+
+	private static BufferedImage defaultMarkerIcon() {
+		BufferedImage cached = defaultMarkerIcon;
+		if (cached == null) {
+			BufferedImage loaded = MAP_ASSETS.loadTexture(DEFAULT_MARKER_ICON_TEXTURE);
+			cached = loaded != null ? loaded : EMPTY_MARKER_ICON;
+			defaultMarkerIcon = cached;
+		}
+		return cached == EMPTY_MARKER_ICON ? null : cached;
 	}
 
 	private static BufferedImage markerItemIcon(YandexMapMarkerStore.YandexMapMarker marker, MinecraftServer server, ScreenRuntimeKey runtimeKey) {
@@ -1728,6 +1955,7 @@ final class MonitorYandexMapsRuntime {
 		private boolean panFrameScheduled;
 		private boolean tileReadyRenderScheduled;
 		private UUID editorMarkerId;
+		private UUID markerDeleteConfirmMarkerId;
 		private Set<UUID> observedMarkerIds = Set.of();
 	}
 }

@@ -4565,6 +4565,9 @@ public final class MonitorScreenSystem {
 		if (graphics == null || layout == null || window == null) {
 			return;
 		}
+		if (window.type() == MediaOverlayWindowType.GALLERY_DELETE_CONFIRM) {
+			drawOverlayBackdrop(graphics, mediaCanvasRect(layout));
+		}
 		BufferedImage image = overlayWindowImage(server, runtimeKey, window, layout);
 		UiRect rect = overlayWindowRect(layout, window.type());
 		graphics.drawImage(image, rect.x(), rect.y(), null);
@@ -4857,25 +4860,62 @@ public final class MonitorScreenSystem {
 	}
 
 	static void drawGalleryDeleteConfirmWindow(Graphics2D graphics, UiLayout layout, MediaOverlayWindowSnapshot window) {
-		UiRect canvas = mediaCanvasRect(layout);
 		UiRect header = galleryDeleteConfirmHeaderRect(layout);
 		UiRect closeRect = galleryDeleteConfirmCloseRect(layout);
 		UiRect infoRect = galleryDeleteConfirmInfoRect(layout);
 		UiRect cancelRect = galleryDeleteConfirmCancelRect(layout);
 		UiRect confirmRect = galleryDeleteConfirmConfirmRect(layout);
-
-		drawOverlayBackdrop(graphics, canvas);
-		drawCloseGlyph(graphics, mediaChromeIconRect(closeRect, layout), new Color(248, 251, 255, 236));
-		drawOverlayWindowHeaderText(
+		drawDeleteConfirmWindow(
 				graphics,
 				layout,
-				header,
 				window != null && window.subtitle() != null && !window.subtitle().isBlank() ? window.subtitle() : "Медиа",
-				"Удаление"
+				"Удаление",
+				header,
+				closeRect,
+				infoRect,
+				cancelRect,
+				confirmRect,
+				10,
+				6
 		);
-		drawGalleryFileMenuActionButton(graphics, layout, infoRect, PlayerUiIcon.TRASH, "ЭТО УДАЛИТ МЕДИА ИЗ ГАЛЕРЕИ", "", false, false, false);
-		drawGalleryFileMenuActionButton(graphics, layout, cancelRect, PlayerUiIcon.CLOSE, "ОТМЕНА", "", true, false, false);
-		drawGalleryFileMenuActionButton(graphics, layout, confirmRect, PlayerUiIcon.TRASH, "УДАЛИТЬ", "", true, false, true);
+	}
+
+	static void drawDeleteConfirmWindow(
+			Graphics2D graphics,
+			UiLayout layout,
+			String title,
+			String subtitle,
+			UiRect header,
+			UiRect closeRect,
+			UiRect infoRect,
+			UiRect cancelRect,
+			UiRect confirmRect,
+			int enabledFillAlpha,
+			int disabledFillAlpha
+	) {
+		if (graphics == null || layout == null || header == null || closeRect == null || infoRect == null || cancelRect == null || confirmRect == null) {
+			return;
+		}
+		drawCloseGlyph(graphics, mediaChromeIconRect(closeRect, layout), new Color(248, 251, 255, 236));
+		drawOverlayWindowHeaderText(graphics, layout, header, title, subtitle);
+		drawGalleryDeleteConfirmInfo(graphics, layout, infoRect);
+		drawGalleryFileMenuActionButton(graphics, layout, cancelRect, PlayerUiIcon.CLOSE, "ОТМЕНА", "", true, false, false, enabledFillAlpha, disabledFillAlpha);
+		drawGalleryFileMenuActionButton(graphics, layout, confirmRect, PlayerUiIcon.TRASH, "УДАЛИТЬ", "", true, false, true, enabledFillAlpha, disabledFillAlpha);
+	}
+
+	static void drawGalleryDeleteConfirmInfo(Graphics2D graphics, UiLayout layout, UiRect rect) {
+		if (graphics == null || layout == null || rect == null) {
+			return;
+		}
+		drawCenteredTextFitted(
+				graphics,
+				"Вы хотите удалить это?",
+				rect,
+				new Color(248, 240, 244, 238),
+				Font.BOLD,
+				ultraCompactScreenLayout(layout) ? clampInt(layout.unit() + 1, 7, 9) : compactScreenLayout(layout) ? clampInt(layout.unit() + 2, 10, 16) : clampInt(layout.unit() + 3, 14, 20),
+				7
+		);
 	}
 
 	static void drawGalleryDeleteConfirmWindowPlaceholder(Graphics2D graphics, UiLayout layout) {
@@ -4931,10 +4971,10 @@ public final class MonitorScreenSystem {
 		graphics.setPaint(new GradientPaint(
 				rect.x(),
 				rect.y(),
-				new Color(10, 12, 18, 164),
+				new Color(10, 12, 18, 198),
 				rect.x(),
 				rect.bottom(),
-				new Color(10, 12, 18, 124)
+				new Color(10, 12, 18, 166)
 		));
 		graphics.fillRect(rect.x(), rect.y(), rect.width(), rect.height());
 	}
@@ -5034,13 +5074,29 @@ public final class MonitorScreenSystem {
 			boolean selected,
 			boolean danger
 	) {
+		drawGalleryFileMenuActionButton(graphics, layout, rect, icon, title, subtitle, enabled, selected, danger, 10, 6);
+	}
+
+	static void drawGalleryFileMenuActionButton(
+			Graphics2D graphics,
+			UiLayout layout,
+			UiRect rect,
+			PlayerUiIcon icon,
+			String title,
+			String subtitle,
+			boolean enabled,
+			boolean selected,
+			boolean danger,
+			int enabledFillAlpha,
+			int disabledFillAlpha
+	) {
 		if (graphics == null || layout == null || rect == null || icon == null) {
 			return;
 		}
 		boolean ultra = ultraCompactScreenLayout(layout);
 		Color fill = selected
 				? new Color(248, 246, 246, 236)
-				: enabled ? new Color(255, 255, 255, 10) : new Color(255, 255, 255, 6);
+				: enabled ? new Color(255, 255, 255, clampInt(enabledFillAlpha, 0, 255)) : new Color(255, 255, 255, clampInt(disabledFillAlpha, 0, 255));
 		Color titleColor = selected
 				? new Color(22, 20, 24, 244)
 				: danger && enabled ? new Color(255, 142, 150, 238) : enabled ? new Color(248, 240, 244, 236) : new Color(200, 208, 218, 150);
