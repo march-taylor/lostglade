@@ -258,9 +258,6 @@ public final class MonitorScreenSystem {
 		MonitorYoutubeRelayClient.setCacheDirectory(cacheRoot.resolve("youtube-preload"));
 		MonitorYoutubeMusicCache.setCacheDirectory(cacheRoot.resolve("youtube-music"));
 		MonitorYandexMapsClientTileRenderer.configure(server);
-		if (Lg2Config.get().monitorYandexMapsClearCacheOnServerStart) {
-			MonitorYandexMapsClientTileRenderer.clearPersistentCache(server);
-		}
 	}
 
 	static Path monitorCacheRoot() {
@@ -445,6 +442,9 @@ public final class MonitorScreenSystem {
 			trackScreenFrame(level, frame);
 			return;
 		}
+		if (entity instanceof Display.ItemDisplay) {
+			MonitorYandexMapsClientTileRenderer.markChunkDirty(level, entity.chunkPosition());
+		}
 		if (entity instanceof Display.ItemDisplay display && display.getTags().contains(DISPLAY_ROOT_TAG)) {
 			BlockPos pos = parsePositionTag(display.getTags());
 			Direction facing = parseFacingTag(display.getTags());
@@ -455,6 +455,9 @@ public final class MonitorScreenSystem {
 	}
 
 	static void onEntityUnload(Entity entity, ServerLevel level) {
+		if (level != null && entity instanceof Display.ItemDisplay) {
+			MonitorYandexMapsClientTileRenderer.markChunkDirty(level, entity.chunkPosition());
+		}
 		if (level == null || !(entity instanceof ItemFrame frame) || readScreenState(frame.getItem()) == null) {
 			return;
 		}
@@ -462,6 +465,7 @@ public final class MonitorScreenSystem {
 	}
 
 	static void onChunkLoad(ServerLevel level, LevelChunk chunk) {
+		MonitorYandexMapsClientTileRenderer.onChunkLoad(level, chunk);
 		scanChunkForScreenFrames(level, chunk);
 		cleanupChunkDisplays(level, chunk);
 	}

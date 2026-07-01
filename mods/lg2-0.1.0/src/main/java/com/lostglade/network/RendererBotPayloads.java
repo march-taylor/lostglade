@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 16;
+	public static final int PROTOCOL_VERSION = 17;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
@@ -270,7 +270,9 @@ public final class RendererBotPayloads {
 			long tileZ,
 			double centerX,
 			double centerZ,
-			double blocksPerPixel
+			double blocksPerPixel,
+			int priorityScore,
+			boolean activeView
 	) implements CustomPacketPayload {
 		public static final Type<RendererBotMapTileRequestS2CPayload> TYPE = new Type<>(id("renderer_bot_map_tile_request"));
 		public static final StreamCodec<FriendlyByteBuf, RendererBotMapTileRequestS2CPayload> STREAM_CODEC =
@@ -287,7 +289,9 @@ public final class RendererBotPayloads {
 					buffer.readLong(),
 					buffer.readDouble(),
 					buffer.readDouble(),
-					buffer.readDouble()
+					buffer.readDouble(),
+					buffer.readVarInt(),
+					buffer.readBoolean()
 			);
 		}
 
@@ -302,6 +306,8 @@ public final class RendererBotPayloads {
 			buffer.writeDouble(this.centerX);
 			buffer.writeDouble(this.centerZ);
 			buffer.writeDouble(this.blocksPerPixel);
+			buffer.writeVarInt(this.priorityScore);
+			buffer.writeBoolean(this.activeView);
 		}
 
 		@Override

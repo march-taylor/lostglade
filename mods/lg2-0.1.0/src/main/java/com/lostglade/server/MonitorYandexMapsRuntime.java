@@ -45,7 +45,7 @@ import static com.lostglade.server.MonitorScreenSystem.*;
 
 final class MonitorYandexMapsRuntime {
 	private static final double DEFAULT_BLOCKS_PER_PIXEL = 2.0D;
-	private static final double MIN_BLOCKS_PER_PIXEL = 1.0D / 16.0D;
+	private static final double MIN_BLOCKS_PER_PIXEL = 1.0D / 256.0D;
 	private static final double MAX_BLOCKS_PER_PIXEL = 512.0D;
 	private static final double BUTTON_ZOOM_FACTOR = 2.0D;
 	private static final double WHEEL_ZOOM_FACTOR = 1.25D;
@@ -76,6 +76,7 @@ final class MonitorYandexMapsRuntime {
 			return;
 		}
 		STATES.remove(key);
+		MonitorYandexMapsClientTileRenderer.deactivateView(key);
 		clearPendingMarkerTitleRequests(key);
 	}
 
@@ -287,7 +288,8 @@ final class MonitorYandexMapsRuntime {
 						Math.max(1, layout.canvasWidth()),
 						Math.max(1, layout.canvasHeight()),
 						snapshot.zoomBlocks(),
-						() -> notifyTileReady(server, runtimeKey)
+						() -> notifyTileReady(server, runtimeKey),
+						runtimeKey
 				);
 				frame = rendered.image();
 				effectiveSnapshot = new YandexMapsVisualSnapshot(

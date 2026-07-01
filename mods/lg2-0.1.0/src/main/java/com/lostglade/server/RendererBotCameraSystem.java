@@ -547,7 +547,9 @@ public final class RendererBotCameraSystem {
 			double centerX,
 			double centerZ,
 			int tileSize,
-			double blocksPerPixel
+			double blocksPerPixel,
+			int priorityScore,
+			boolean activeView
 	) {
 		CompletableFuture<byte[]> future = new CompletableFuture<>();
 		MinecraftServer server = level != null ? level.getServer() : null;
@@ -586,6 +588,8 @@ public final class RendererBotCameraSystem {
 				tileZ,
 				clampedTileSize,
 				safeBlocksPerPixel,
+				Math.max(0, priorityScore),
+				activeView,
 				future
 		);
 		PENDING_MAP_TILE_CAPTURES.put(requestId, capture);
@@ -605,7 +609,9 @@ public final class RendererBotCameraSystem {
 						tileZ,
 						centerX,
 						centerZ,
-						safeBlocksPerPixel
+						safeBlocksPerPixel,
+						Math.max(0, priorityScore),
+						activeView
 				)
 		);
 		return future;
@@ -2178,6 +2184,7 @@ public final class RendererBotCameraSystem {
 			return;
 		}
 		DIRTY_SHADOW_CHUNKS.add(new ChunkTicketKey(level.dimension(), pos.toLong()));
+		MonitorYandexMapsClientTileRenderer.markChunkDirty(level, pos);
 	}
 
 	private static void syncShadowWorlds(MinecraftServer server) {
@@ -4098,6 +4105,8 @@ public final class RendererBotCameraSystem {
 		private final long tileZ;
 		private final int tileSize;
 		private final double blocksPerPixel;
+		private final int priorityScore;
+		private final boolean activeView;
 		private final CompletableFuture<byte[]> pixelsFuture;
 
 		private PendingMapTileCapture(
@@ -4113,6 +4122,8 @@ public final class RendererBotCameraSystem {
 				long tileZ,
 				int tileSize,
 				double blocksPerPixel,
+				int priorityScore,
+				boolean activeView,
 				CompletableFuture<byte[]> pixelsFuture
 		) {
 			this.requestId = requestId;
@@ -4127,6 +4138,8 @@ public final class RendererBotCameraSystem {
 			this.tileZ = tileZ;
 			this.tileSize = tileSize;
 			this.blocksPerPixel = blocksPerPixel;
+			this.priorityScore = priorityScore;
+			this.activeView = activeView;
 			this.pixelsFuture = pixelsFuture;
 		}
 
@@ -4176,6 +4189,14 @@ public final class RendererBotCameraSystem {
 
 		private double blocksPerPixel() {
 			return this.blocksPerPixel;
+		}
+
+		private int priorityScore() {
+			return this.priorityScore;
+		}
+
+		private boolean activeView() {
+			return this.activeView;
 		}
 
 		private CompletableFuture<byte[]> pixelsFuture() {
