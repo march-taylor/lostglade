@@ -38,6 +38,11 @@ public final class RendererBotClientCapture {
 	private static final int MAX_RENDER_WIDTH = Math.max(MIN_RENDER_WIDTH, Integer.getInteger("lg2.rendererBotMaxRenderWidth", 3072));
 	private static final int MAX_RENDER_HEIGHT = Math.max(MIN_RENDER_HEIGHT, Integer.getInteger("lg2.rendererBotMaxRenderHeight", 2048));
 	private static final int MAX_LIVE_STREAM_FPS = 20;
+	private static final long MAP_TILE_TIMEOUT_MS = Long.getLong("lg2.rendererBotMapTileTimeoutMs", 60_000L);
+	private static final int MAP_TILE_WARMUP_FRAMES = Math.max(0, Integer.getInteger("lg2.rendererBotMapTileWarmupFrames", 8));
+	private static final int MAP_TILE_BLANK_RETRY_WARMUP_FRAMES = Math.max(1, Integer.getInteger("lg2.rendererBotMapTileBlankRetryWarmupFrames", 4));
+	private static final int MAP_TILE_MAX_BLANK_RETRIES = Math.max(0, Integer.getInteger("lg2.rendererBotMapTileMaxBlankRetries", 8));
+	private static final boolean MAP_TILE_GPU_CAPTURE = Boolean.getBoolean("lg2.rendererBotMapTileGpuCapture");
 	private static final boolean LIVE_STREAM_DITHERING = Boolean.getBoolean("lg2.rendererBotLiveStreamDithering");
 	private static final int LIVE_STREAM_PARALLEL_PIXELS_THRESHOLD = Math.max(65_536, Integer.getInteger("lg2.rendererBotLiveParallelPixelsThreshold", 131_072));
 	private static final ExecutorService CAPTURE_EXECUTOR = Executors.newFixedThreadPool(CAPTURE_THREADS, runnable -> {
@@ -49,6 +54,7 @@ public final class RendererBotClientCapture {
 
 	private static final Map<UUID, PendingCapture> PENDING_CAPTURES = new HashMap<>();
 	private static final Map<UUID, LiveStreamSession> LIVE_STREAM_SESSIONS = new HashMap<>();
+	private static final Map<UUID, PendingMapTile> PENDING_MAP_TILES = new HashMap<>();
 	private static volatile CapturedFrame latestFrame;
 
 	private RendererBotClientCapture() {
@@ -79,6 +85,10 @@ public final class RendererBotClientCapture {
 		ClientPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotLiveStreamStopS2CPayload.TYPE,
 				(payload, context) -> context.client().execute(() -> clearLiveStreamSession(payload.streamId()))
+		);
+		ClientPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotMapTileRequestS2CPayload.TYPE,
+				(payload, context) -> context.client().execute(() -> beginMapTile(payload))
 		);
 	}
 
@@ -152,12 +162,23 @@ public final class RendererBotClientCapture {
 		}
 	}
 
+	private static void beginMapTile(RendererBotPayloads.RendererBotMapTileRequestS2CPayload payload) {
+		if (payload == null || payload.requestId() == null) {
+			return;
+		}
+		synchronized (LOCK) {
+			PENDING_MAP_TILES.put(payload.requestId(), new PendingMapTile(payload, System.currentTimeMillis()));
+		}
+	}
+
 	private static void onClientTick(Minecraft client) {
 		List<PendingCapture> captures;
 		List<LiveStreamSession> liveStreams;
+		List<PendingMapTile> mapTiles;
 		synchronized (LOCK) {
 			captures = new ArrayList<>(PENDING_CAPTURES.values());
 			liveStreams = new ArrayList<>(LIVE_STREAM_SESSIONS.values());
+			mapTiles = new ArrayList<>(PENDING_MAP_TILES.values());
 		}
 		long now = System.currentTimeMillis();
 		for (PendingCapture capture : captures) {
@@ -175,7 +196,110 @@ public final class RendererBotClientCapture {
 				clearLiveStreamSession(liveStream.payload().streamId());
 			}
 		}
+		for (PendingMapTile mapTile : mapTiles) {
+			if (mapTile == null || mapTile.rendering()) {
+				continue;
+			}
+			if (now - mapTile.requestStartedAt() >= MAP_TILE_TIMEOUT_MS) {
+				sendMapTileFailure(mapTile.payload(), "Renderer bot map tile did not become ready in time");
+				clearPendingMapTile(mapTile.payload().requestId());
+			}
+		}
+		dispatchReadyMapTileRender(client);
 		dispatchReadyRenders(client, System.nanoTime());
+	}
+
+	private static void dispatchReadyMapTileRender(Minecraft client) {
+		if (client == null || client.level == null || RendererBotOffscreenWorldRenderer.isOffscreenRenderActive()) {
+			return;
+		}
+		PendingMapTile selected = null;
+		synchronized (LOCK) {
+			for (PendingMapTile candidate : PENDING_MAP_TILES.values()) {
+				if (candidate == null || candidate.rendering()) {
+					continue;
+				}
+				RendererBotPayloads.RendererBotMapTileRequestS2CPayload payload = candidate.payload();
+				RendererBotTopDownMapRenderer.TileRequest request = mapTileRenderRequest(payload);
+				if (!RendererBotTopDownMapRenderer.hasRequiredChunks(client, request)) {
+					continue;
+				}
+				candidate.markRendering();
+				selected = candidate;
+				break;
+			}
+		}
+		if (selected == null) {
+			return;
+		}
+		dispatchTopDownMapTile(client, selected);
+	}
+
+	private static void dispatchTopDownMapTile(Minecraft client, PendingMapTile mapTile) {
+		RendererBotPayloads.RendererBotMapTileRequestS2CPayload payload = mapTile.payload();
+		try {
+			if (mapTile.remainingWarmupFrames() > 0) {
+				boolean warmed = RendererBotTopDownMapRenderer.renderToTarget(client, mapTileRenderRequest(payload), ignored -> {
+				});
+				if (warmed) {
+					mapTile.decrementWarmupFrames();
+				}
+				clearPendingMapTileRendering(payload.requestId());
+				return;
+			}
+			boolean rendered = RendererBotTopDownMapRenderer.renderToTarget(client, mapTileRenderRequest(payload), renderTarget -> {
+				try {
+					CompletableFuture<byte[]> pixelsFuture = MAP_TILE_GPU_CAPTURE && RendererBotGpuCaptureBackend.isAvailable()
+							? RendererBotGpuCaptureBackend.captureQuantizedFrame(renderTarget, payload.tileSize(), payload.tileSize(), false)
+							: takeScreenshotFuture(renderTarget).thenApplyAsync(image -> {
+								try (image) {
+									int[] sourcePixels = image.makePixelArray();
+									if (image.getWidth() == payload.tileSize() && image.getHeight() == payload.tileSize()) {
+										return quantizeExactFrame(sourcePixels, image.getWidth(), image.getHeight(), false, true);
+									}
+									return quantizeScaledFrame(sourcePixels, image.getWidth(), image.getHeight(), payload.tileSize(), payload.tileSize(), false, true);
+								}
+							}, CAPTURE_EXECUTOR);
+					pixelsFuture.whenComplete((pixels, throwable) -> client.execute(() -> {
+						if (throwable != null) {
+							sendMapTileFailure(payload, throwable.getMessage() != null ? throwable.getMessage() : throwable.getClass().getSimpleName());
+							clearPendingMapTile(payload.requestId());
+							return;
+						}
+						if (isProbablyBlankMapTile(pixels)) {
+							if (retryPendingMapTileAfterBlank(payload.requestId())) {
+								Lg2.LOGGER.debug("Renderer bot map tile {} lod {} {},{} was still blank; warming up vanilla sections again",
+										payload.requestId(), payload.lod(), payload.tileX(), payload.tileZ());
+								return;
+							}
+							sendMapTileFailure(payload, "Renderer bot vanilla top-down tile stayed blank after warmup");
+							clearPendingMapTile(payload.requestId());
+							return;
+						}
+						ClientPlayNetworking.send(new RendererBotPayloads.RendererBotMapTileC2SPayload(
+								payload.requestId(),
+								payload.lod(),
+								payload.tileX(),
+								payload.tileZ(),
+								System.nanoTime(),
+								pixels
+						));
+						clearPendingMapTile(payload.requestId());
+					}));
+				} catch (Throwable throwable) {
+					client.execute(() -> {
+						sendMapTileFailure(payload, throwable.getMessage() != null ? throwable.getMessage() : throwable.getClass().getSimpleName());
+						clearPendingMapTile(payload.requestId());
+					});
+				}
+			});
+			if (!rendered) {
+				clearPendingMapTileRendering(payload.requestId());
+			}
+		} catch (Throwable throwable) {
+			sendMapTileFailure(payload, throwable.getMessage() != null ? throwable.getMessage() : throwable.getClass().getSimpleName());
+			clearPendingMapTile(payload.requestId());
+		}
 	}
 
 	private static void dispatchReadyRenders(Minecraft client, long nowNanos) {
@@ -755,6 +879,37 @@ public final class RendererBotClientCapture {
 		}
 	}
 
+	private static void clearPendingMapTile(UUID requestId) {
+		synchronized (LOCK) {
+			if (requestId == null) {
+				PENDING_MAP_TILES.clear();
+				return;
+			}
+			PENDING_MAP_TILES.remove(requestId);
+		}
+	}
+
+	private static void clearPendingMapTileRendering(UUID requestId) {
+		synchronized (LOCK) {
+			PendingMapTile pending = PENDING_MAP_TILES.get(requestId);
+			if (pending != null) {
+				pending.clearRendering();
+			}
+		}
+	}
+
+	private static boolean retryPendingMapTileAfterBlank(UUID requestId) {
+		synchronized (LOCK) {
+			PendingMapTile pending = PENDING_MAP_TILES.get(requestId);
+			if (pending == null || !pending.recordBlankRetry()) {
+				return false;
+			}
+			pending.resetWarmupFrames(MAP_TILE_BLANK_RETRY_WARMUP_FRAMES);
+			pending.clearRendering();
+			return true;
+		}
+	}
+
 	private static boolean markLiveStreamFrameInFlight(UUID streamId, long nowNanos) {
 		synchronized (LOCK) {
 			LiveStreamSession session = LIVE_STREAM_SESSIONS.get(streamId);
@@ -770,6 +925,7 @@ public final class RendererBotClientCapture {
 		synchronized (LOCK) {
 			PENDING_CAPTURES.clear();
 			LIVE_STREAM_SESSIONS.clear();
+			PENDING_MAP_TILES.clear();
 			latestFrame = null;
 		}
 		RendererBotOffscreenWorldRenderer.clearCaches();
@@ -780,6 +936,14 @@ public final class RendererBotClientCapture {
 		ClientPlayNetworking.send(new RendererBotPayloads.RendererBotCaptureFailureC2SPayload(
 				payload.requestId(),
 				message == null || message.isBlank() ? "Renderer bot capture failed" : message
+		));
+	}
+
+	private static void sendMapTileFailure(RendererBotPayloads.RendererBotMapTileRequestS2CPayload payload, String message) {
+		Lg2.LOGGER.warn("Renderer bot failing map tile {} lod {} {},{}: {}", payload.requestId(), payload.lod(), payload.tileX(), payload.tileZ(), message);
+		ClientPlayNetworking.send(new RendererBotPayloads.RendererBotMapTileFailureC2SPayload(
+				payload.requestId(),
+				message == null || message.isBlank() ? "Renderer bot map tile failed" : message
 		));
 	}
 
@@ -821,7 +985,10 @@ public final class RendererBotClientCapture {
 				payload.fovDegrees(),
 				renderWidth,
 				renderHeight,
-				false
+				false,
+				false,
+				0.0D,
+				0.0D
 		);
 	}
 
@@ -842,8 +1009,100 @@ public final class RendererBotClientCapture {
 				payload.fovDegrees(),
 				renderWidth,
 				renderHeight,
-				pose != null
+				pose != null,
+				false,
+				0.0D,
+				0.0D
 		);
+	}
+
+	private static RendererBotTopDownMapRenderer.TileRequest mapTileRenderRequest(RendererBotPayloads.RendererBotMapTileRequestS2CPayload payload) {
+		return new RendererBotTopDownMapRenderer.TileRequest(
+				payload.renderSessionId(),
+				payload.dimensionId(),
+				payload.centerX(),
+				payload.centerZ(),
+				Math.max(1, payload.tileSize()),
+				Math.max(1, payload.tileSize()),
+				Math.max(1.0D / 16.0D, payload.blocksPerPixel())
+		);
+	}
+
+	private static boolean isProbablyBlankMapTile(byte[] pixels) {
+		if (pixels == null || pixels.length < 1024) {
+			return false;
+		}
+		int[] counts = new int[256];
+		int dominantCount = 0;
+		int unique = 0;
+		for (byte pixel : pixels) {
+			int packed = Byte.toUnsignedInt(pixel);
+			if (counts[packed] == 0) {
+				unique++;
+			}
+			int count = ++counts[packed];
+			if (count > dominantCount) {
+				dominantCount = count;
+			}
+		}
+		return dominantCount >= pixels.length * 995L / 1000L
+				|| (unique <= 3 && dominantCount >= pixels.length * 980L / 1000L);
+	}
+
+	private static final class PendingMapTile {
+		private final RendererBotPayloads.RendererBotMapTileRequestS2CPayload payload;
+		private final long requestStartedAt;
+		private int remainingWarmupFrames;
+		private int blankRetries;
+		private boolean rendering;
+
+		private PendingMapTile(RendererBotPayloads.RendererBotMapTileRequestS2CPayload payload, long requestStartedAt) {
+			this.payload = payload;
+			this.requestStartedAt = requestStartedAt;
+			this.remainingWarmupFrames = MAP_TILE_WARMUP_FRAMES;
+			this.blankRetries = 0;
+			this.rendering = false;
+		}
+
+		private RendererBotPayloads.RendererBotMapTileRequestS2CPayload payload() {
+			return this.payload;
+		}
+
+		private long requestStartedAt() {
+			return this.requestStartedAt;
+		}
+
+		private boolean rendering() {
+			return this.rendering;
+		}
+
+		private int remainingWarmupFrames() {
+			return this.remainingWarmupFrames;
+		}
+
+		private void decrementWarmupFrames() {
+			this.remainingWarmupFrames = Math.max(0, this.remainingWarmupFrames - 1);
+		}
+
+		private void resetWarmupFrames(int warmupFrames) {
+			this.remainingWarmupFrames = Math.max(this.remainingWarmupFrames, warmupFrames);
+		}
+
+		private boolean recordBlankRetry() {
+			if (this.blankRetries >= MAP_TILE_MAX_BLANK_RETRIES) {
+				return false;
+			}
+			this.blankRetries++;
+			return true;
+		}
+
+		private void markRendering() {
+			this.rendering = true;
+		}
+
+		private void clearRendering() {
+			this.rendering = false;
+		}
 	}
 
 	private static final class PendingCapture {

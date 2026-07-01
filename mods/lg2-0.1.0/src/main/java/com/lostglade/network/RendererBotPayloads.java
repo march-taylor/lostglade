@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 15;
+	public static final int PROTOCOL_VERSION = 16;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
@@ -30,15 +30,18 @@ public final class RendererBotPayloads {
 		PayloadTypeRegistry.playC2S().register(RendererBotPreviewFrameC2SPayload.TYPE, RendererBotPreviewFrameC2SPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playC2S().registerLarge(RendererBotFullFrameC2SPayload.TYPE, RendererBotFullFrameC2SPayload.STREAM_CODEC, MAX_CAPTURE_PAYLOAD_BYTES);
 		PayloadTypeRegistry.playC2S().registerLarge(RendererBotLiveFrameC2SPayload.TYPE, RendererBotLiveFrameC2SPayload.STREAM_CODEC, MAX_CAPTURE_PAYLOAD_BYTES);
+		PayloadTypeRegistry.playC2S().registerLarge(RendererBotMapTileC2SPayload.TYPE, RendererBotMapTileC2SPayload.STREAM_CODEC, MAX_CAPTURE_PAYLOAD_BYTES);
 		PayloadTypeRegistry.playC2S().registerLarge(RendererBotVideoRecordingCompleteC2SPayload.TYPE, RendererBotVideoRecordingCompleteC2SPayload.STREAM_CODEC, MAX_CAPTURE_PAYLOAD_BYTES);
 		PayloadTypeRegistry.playC2S().register(RendererBotAudioFrameC2SPayload.TYPE, RendererBotAudioFrameC2SPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playC2S().register(RendererBotCaptureFailureC2SPayload.TYPE, RendererBotCaptureFailureC2SPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playC2S().register(RendererBotLiveStreamFailureC2SPayload.TYPE, RendererBotLiveStreamFailureC2SPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playC2S().register(RendererBotMapTileFailureC2SPayload.TYPE, RendererBotMapTileFailureC2SPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playC2S().register(RendererBotAudioCaptureFailureC2SPayload.TYPE, RendererBotAudioCaptureFailureC2SPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotCaptureRequestS2CPayload.TYPE, RendererBotCaptureRequestS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotLiveStreamStartS2CPayload.TYPE, RendererBotLiveStreamStartS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotLiveStreamPoseS2CPayload.TYPE, RendererBotLiveStreamPoseS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotLiveStreamStopS2CPayload.TYPE, RendererBotLiveStreamStopS2CPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playS2C().register(RendererBotMapTileRequestS2CPayload.TYPE, RendererBotMapTileRequestS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotVideoRecordingStartS2CPayload.TYPE, RendererBotVideoRecordingStartS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotVideoRecordingStopS2CPayload.TYPE, RendererBotVideoRecordingStopS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().register(RendererBotAudioCaptureStartS2CPayload.TYPE, RendererBotAudioCaptureStartS2CPayload.STREAM_CODEC);
@@ -257,6 +260,56 @@ public final class RendererBotPayloads {
 		}
 	}
 
+	public record RendererBotMapTileRequestS2CPayload(
+			UUID requestId,
+			UUID renderSessionId,
+			String dimensionId,
+			int tileSize,
+			int lod,
+			long tileX,
+			long tileZ,
+			double centerX,
+			double centerZ,
+			double blocksPerPixel
+	) implements CustomPacketPayload {
+		public static final Type<RendererBotMapTileRequestS2CPayload> TYPE = new Type<>(id("renderer_bot_map_tile_request"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotMapTileRequestS2CPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotMapTileRequestS2CPayload::write, RendererBotMapTileRequestS2CPayload::new);
+
+		public RendererBotMapTileRequestS2CPayload(FriendlyByteBuf buffer) {
+			this(
+					buffer.readUUID(),
+					buffer.readUUID(),
+					buffer.readUtf(),
+					buffer.readVarInt(),
+					buffer.readVarInt(),
+					buffer.readLong(),
+					buffer.readLong(),
+					buffer.readDouble(),
+					buffer.readDouble(),
+					buffer.readDouble()
+			);
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUUID(this.requestId);
+			buffer.writeUUID(this.renderSessionId);
+			buffer.writeUtf(this.dimensionId);
+			buffer.writeVarInt(this.tileSize);
+			buffer.writeVarInt(this.lod);
+			buffer.writeLong(this.tileX);
+			buffer.writeLong(this.tileZ);
+			buffer.writeDouble(this.centerX);
+			buffer.writeDouble(this.centerZ);
+			buffer.writeDouble(this.blocksPerPixel);
+		}
+
+		@Override
+		public Type<RendererBotMapTileRequestS2CPayload> type() {
+			return TYPE;
+		}
+	}
+
 	public record RendererBotLiveStreamPoseS2CPayload(
 			UUID streamId,
 			double x,
@@ -312,6 +365,44 @@ public final class RendererBotPayloads {
 
 		@Override
 		public Type<RendererBotLiveFrameC2SPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotMapTileC2SPayload(
+			UUID requestId,
+			int lod,
+			long tileX,
+			long tileZ,
+			long clientFrameNanos,
+			byte[] pixels
+	) implements CustomPacketPayload {
+		public static final Type<RendererBotMapTileC2SPayload> TYPE = new Type<>(id("renderer_bot_map_tile"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotMapTileC2SPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotMapTileC2SPayload::write, RendererBotMapTileC2SPayload::new);
+
+		public RendererBotMapTileC2SPayload(FriendlyByteBuf buffer) {
+			this(
+					buffer.readUUID(),
+					buffer.readVarInt(),
+					buffer.readLong(),
+					buffer.readLong(),
+					buffer.readVarLong(),
+					buffer.readByteArray()
+			);
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUUID(this.requestId);
+			buffer.writeVarInt(this.lod);
+			buffer.writeLong(this.tileX);
+			buffer.writeLong(this.tileZ);
+			buffer.writeVarLong(this.clientFrameNanos);
+			buffer.writeByteArray(this.pixels);
+		}
+
+		@Override
+		public Type<RendererBotMapTileC2SPayload> type() {
 			return TYPE;
 		}
 	}
@@ -460,6 +551,26 @@ public final class RendererBotPayloads {
 
 		@Override
 		public Type<RendererBotLiveStreamFailureC2SPayload> type() {
+			return TYPE;
+		}
+	}
+
+	public record RendererBotMapTileFailureC2SPayload(UUID requestId, String message) implements CustomPacketPayload {
+		public static final Type<RendererBotMapTileFailureC2SPayload> TYPE = new Type<>(id("renderer_bot_map_tile_failure"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotMapTileFailureC2SPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotMapTileFailureC2SPayload::write, RendererBotMapTileFailureC2SPayload::new);
+
+		public RendererBotMapTileFailureC2SPayload(FriendlyByteBuf buffer) {
+			this(buffer.readUUID(), buffer.readUtf(512));
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUUID(this.requestId);
+			buffer.writeUtf(this.message, 512);
+		}
+
+		@Override
+		public Type<RendererBotMapTileFailureC2SPayload> type() {
 			return TYPE;
 		}
 	}

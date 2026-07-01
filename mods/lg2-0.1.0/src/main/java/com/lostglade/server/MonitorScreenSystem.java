@@ -257,6 +257,10 @@ public final class MonitorScreenSystem {
 		MonitorMediaApp.setCacheDirectory(cacheRoot.resolve("media"));
 		MonitorYoutubeRelayClient.setCacheDirectory(cacheRoot.resolve("youtube-preload"));
 		MonitorYoutubeMusicCache.setCacheDirectory(cacheRoot.resolve("youtube-music"));
+		MonitorYandexMapsClientTileRenderer.configure(server);
+		if (Lg2Config.get().monitorYandexMapsClearCacheOnServerStart) {
+			MonitorYandexMapsClientTileRenderer.clearPersistentCache(server);
+		}
 	}
 
 	static Path monitorCacheRoot() {

@@ -48,6 +48,7 @@ import net.minecraft.server.level.TicketType;
 import net.minecraft.util.Mth;
 import net.minecraft.world.Difficulty;
 import net.minecraft.core.Holder;
+import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.level.ChunkPos;
@@ -94,6 +95,7 @@ public final class RendererBotCameraSystem {
 	private static final int SHADOW_VIEW_DISTANCE_MARGIN_CHUNKS = 6;
 	private static final int SHADOW_REAR_VIEW_CHUNKS = 2;
 	private static final long LIVE_STREAM_STALE_MS = 1_500L;
+	private static final long MAP_TILE_CAPTURE_TIMEOUT_MS = 60_000L;
 	private static final long AUDIO_CAPTURE_STALE_MS = 8_000L;
 	private static final long LIVE_STREAM_ORPHAN_CLEANUP_MS = 15_000L;
 	private static final long AUDIO_CAPTURE_ORPHAN_CLEANUP_MS = 15_000L;
@@ -117,6 +119,7 @@ public final class RendererBotCameraSystem {
 	private static final Map<UUID, PendingVideoRecording> PENDING_VIDEO_RECORDINGS = new ConcurrentHashMap<>();
 	private static final Map<UUID, ActiveLiveStream> ACTIVE_LIVE_STREAMS = new ConcurrentHashMap<>();
 	private static final Map<String, UUID> LIVE_STREAMS_BY_OWNER = new ConcurrentHashMap<>();
+	private static final Map<UUID, PendingMapTileCapture> PENDING_MAP_TILE_CAPTURES = new ConcurrentHashMap<>();
 	private static final Map<UUID, ActiveAudioCapture> ACTIVE_AUDIO_CAPTURES = new ConcurrentHashMap<>();
 	private static final Map<String, UUID> AUDIO_CAPTURES_BY_OWNER = new ConcurrentHashMap<>();
 	private static final Map<CameraChunkTicketKey, Integer> ACTIVE_CAMERA_CHUNK_TICKETS = new HashMap<>();
@@ -133,6 +136,7 @@ public final class RendererBotCameraSystem {
 			clearShadowSyncState(server, botUuid, false);
 			READY_BOTS.remove(botUuid);
 			failCapturesForBot(botUuid, "Renderer bot disconnected during capture");
+			failMapTileCapturesForBot(botUuid, "Renderer bot disconnected during map tile render");
 			failVideoRecordingsForBot(botUuid, "Renderer bot disconnected during video recording");
 			failLiveStreamsForBot(botUuid, "Renderer bot disconnected during live stream");
 			failAudioCapturesForBot(botUuid, "Renderer bot disconnected during audio capture");
@@ -209,6 +213,23 @@ public final class RendererBotCameraSystem {
 				}
 		);
 		ServerPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotMapTileC2SPayload.TYPE,
+				(payload, context) -> {
+					MinecraftServer server = context.player().level().getServer();
+					if (server == null) {
+						return;
+					}
+					server.execute(() -> {
+						PendingMapTileCapture capture = PENDING_MAP_TILE_CAPTURES.get(payload.requestId());
+						if (capture == null || !capture.botUuid().equals(context.player().getUUID())) {
+							return;
+						}
+						capture.pixelsFuture().complete(payload.pixels());
+						PENDING_MAP_TILE_CAPTURES.remove(payload.requestId(), capture);
+					});
+				}
+		);
+		ServerPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotCaptureFailureC2SPayload.TYPE,
 				(payload, context) -> {
 					MinecraftServer server = context.player().level().getServer();
@@ -249,6 +270,22 @@ public final class RendererBotCameraSystem {
 							return;
 						}
 						stopLiveStreamInternal(current, payload.message(), true);
+					});
+				}
+		);
+		ServerPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotMapTileFailureC2SPayload.TYPE,
+				(payload, context) -> {
+					PendingMapTileCapture capture = PENDING_MAP_TILE_CAPTURES.get(payload.requestId());
+					if (capture == null || !capture.botUuid().equals(context.player().getUUID())) {
+						return;
+					}
+					context.player().level().getServer().execute(() -> {
+						PendingMapTileCapture current = PENDING_MAP_TILE_CAPTURES.remove(payload.requestId());
+						if (current == null || !current.botUuid().equals(context.player().getUUID())) {
+							return;
+						}
+						current.pixelsFuture().completeExceptionally(new IllegalStateException(payload.message()));
 					});
 				}
 		);
@@ -324,6 +361,7 @@ public final class RendererBotCameraSystem {
 				capture.fullFuture().completeExceptionally(failure);
 			}
 			PENDING_CAPTURES.clear();
+
 			for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
 				recording.completionFuture().completeExceptionally(new IllegalStateException("Renderer bot recording aborted: server stopping"));
 			}
@@ -333,6 +371,10 @@ public final class RendererBotCameraSystem {
 			}
 			ACTIVE_LIVE_STREAMS.clear();
 			LIVE_STREAMS_BY_OWNER.clear();
+			for (PendingMapTileCapture capture : PENDING_MAP_TILE_CAPTURES.values()) {
+				capture.pixelsFuture().completeExceptionally(new IllegalStateException("Renderer bot map tile aborted: server stopping"));
+			}
+			PENDING_MAP_TILE_CAPTURES.clear();
 			for (ActiveAudioCapture capture : ACTIVE_AUDIO_CAPTURES.values()) {
 				capture.onFailure().accept("Renderer bot audio capture aborted: server stopping");
 			}
@@ -493,6 +535,78 @@ public final class RendererBotCameraSystem {
 		);
 
 		return new ClientCaptureHandle(requestId, previewFuture, fullFuture);
+	}
+
+	public static CompletableFuture<byte[]> requestTopDownMapTile(
+			ServerLevel level,
+			int lod,
+			long tileX,
+			long tileZ,
+			double centerX,
+			double centerZ,
+			int tileSize,
+			double blocksPerPixel
+	) {
+		CompletableFuture<byte[]> future = new CompletableFuture<>();
+		MinecraftServer server = level != null ? level.getServer() : null;
+		if (server == null) {
+			future.completeExceptionally(new IllegalStateException("Сервер карты недоступен"));
+			return future;
+		}
+		ServerPlayer bot = selectBot(server);
+		if (bot == null) {
+			future.completeExceptionally(new IllegalStateException("Нет активного клиента камеры"));
+			return future;
+		}
+		if (!canBotRenderLevel(bot, level)) {
+			future.completeExceptionally(new IllegalStateException("Клиент камеры не может рендерить этот мир"));
+			return future;
+		}
+		if (!ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotMapTileRequestS2CPayload.TYPE)) {
+			future.completeExceptionally(new IllegalStateException("Клиент камеры не поддерживает тайлы карты"));
+			return future;
+		}
+
+		UUID requestId = UUID.randomUUID();
+		UUID renderSessionId = resolveMapRenderSessionId(level.dimension());
+		int clampedTileSize = Math.max(1, tileSize);
+		double safeBlocksPerPixel = Math.max(1.0D / 16.0D, blocksPerPixel);
+		PendingMapTileCapture capture = new PendingMapTileCapture(
+				requestId,
+				renderSessionId,
+				server,
+				bot.getUUID(),
+				level.dimension(),
+				centerX,
+				centerZ,
+				Math.max(0, lod),
+				tileX,
+				tileZ,
+				clampedTileSize,
+				safeBlocksPerPixel,
+				future
+		);
+		PENDING_MAP_TILE_CAPTURES.put(requestId, capture);
+		future.orTimeout(MAP_TILE_CAPTURE_TIMEOUT_MS, TimeUnit.MILLISECONDS).exceptionally(throwable -> {
+			PENDING_MAP_TILE_CAPTURES.remove(requestId, capture);
+			return null;
+		});
+		ServerPlayNetworking.send(
+				bot,
+				new RendererBotPayloads.RendererBotMapTileRequestS2CPayload(
+						requestId,
+						renderSessionId,
+						level.dimension().identifier().toString(),
+						clampedTileSize,
+						Math.max(0, lod),
+						tileX,
+						tileZ,
+						centerX,
+						centerZ,
+						safeBlocksPerPixel
+				)
+		);
+		return future;
 	}
 
 	public static boolean ensureLiveStream(
@@ -1036,6 +1150,14 @@ public final class RendererBotCameraSystem {
 				return true;
 			}
 		}
+		for (PendingMapTileCapture capture : PENDING_MAP_TILE_CAPTURES.values()) {
+			if (capture != null
+					&& botUuid.equals(capture.botUuid())
+					&& !capture.pixelsFuture().isDone()
+					&& dimension.equals(capture.dimension())) {
+				return true;
+			}
+		}
 		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
 			if (recording != null
 					&& botUuid.equals(recording.botUuid())
@@ -1152,6 +1274,22 @@ public final class RendererBotCameraSystem {
 			if (PENDING_CAPTURES.remove(entry.getKey(), capture)) {
 				capture.previewFuture().completeExceptionally(failure);
 				capture.fullFuture().completeExceptionally(failure);
+			}
+		}
+	}
+
+	private static void failMapTileCapturesForBot(UUID botUuid, String message) {
+		if (botUuid == null) {
+			return;
+		}
+		IllegalStateException failure = new IllegalStateException(message);
+		for (Map.Entry<UUID, PendingMapTileCapture> entry : PENDING_MAP_TILE_CAPTURES.entrySet()) {
+			PendingMapTileCapture capture = entry.getValue();
+			if (capture == null || !botUuid.equals(capture.botUuid())) {
+				continue;
+			}
+			if (PENDING_MAP_TILE_CAPTURES.remove(entry.getKey(), capture)) {
+				capture.pixelsFuture().completeExceptionally(failure);
 			}
 		}
 	}
@@ -1326,6 +1464,7 @@ public final class RendererBotCameraSystem {
 		return !ACTIVE_LIVE_STREAMS.isEmpty()
 				|| !ACTIVE_AUDIO_CAPTURES.isEmpty()
 				|| !PENDING_CAPTURES.isEmpty()
+				|| !PENDING_MAP_TILE_CAPTURES.isEmpty()
 				|| !PENDING_VIDEO_RECORDINGS.isEmpty()
 				|| !ACTIVE_SHADOW_SYNC_STATES.isEmpty()
 				|| !ACTIVE_CAMERA_CHUNK_TICKETS.isEmpty()
@@ -1505,6 +1644,15 @@ public final class RendererBotCameraSystem {
 		);
 	}
 
+	private static UUID resolveMapRenderSessionId(ResourceKey<Level> dimension) {
+		if (dimension == null) {
+			return UUID.randomUUID();
+		}
+		return UUID.nameUUIDFromBytes(
+				("lg2:render-session:yandex-map:" + dimension.identifier()).getBytes(StandardCharsets.UTF_8)
+		);
+	}
+
 	private static int resolveViewDistance(ServerPlayer bot) {
 		MinecraftServer server = bot != null && bot.level() != null ? bot.level().getServer() : null;
 		return Mth.clamp(
@@ -1525,6 +1673,22 @@ public final class RendererBotCameraSystem {
 	public static int resolveCameraShadowViewDistance(MinecraftServer server) {
 		ServerPlayer bot = selectBot(server);
 		return bot == null ? 2 : resolveShadowViewDistance(bot);
+	}
+
+	private static int mapTileViewDistance(PendingMapTileCapture capture) {
+		if (capture == null) {
+			return 2;
+		}
+		double halfBlocks = Math.max(1, capture.tileSize()) * Math.max(1.0D / 16.0D, capture.blocksPerPixel()) * 0.5D;
+		int radius = (int) Math.ceil(halfBlocks / 16.0D) + 2;
+		return Mth.clamp(radius, 2, 32);
+	}
+
+	private static double mapTileCameraY(ServerLevel level) {
+		if (level == null) {
+			return 256.0D;
+		}
+		return Math.max(level.getMinY() + 1.0D, level.getMaxY() - 0.5D);
 	}
 
 	public static ChunkTrackingView createCameraChunkTrackingView(
@@ -1576,20 +1740,20 @@ public final class RendererBotCameraSystem {
 		UUID botUuid = bot.getUUID();
 		ChunkPos center = null;
 
-			for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
-				if (stream == null || !botUuid.equals(stream.botUuid())) {
-					continue;
-				}
-				LiveStreamSpec spec = stream.spec();
-				if (spec == null || spec.dimension() == null || !botLevel.dimension().equals(spec.dimension())) {
-					continue;
-				}
-				if (spec.followEntityUuid() != null) {
-					return null;
-				}
-				if (spec.cameraPos() != null && !isCameraPlayerLoaded(botLevel, spec.cameraPos())) {
-					continue;
-				}
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null || !botUuid.equals(stream.botUuid())) {
+				continue;
+			}
+			LiveStreamSpec spec = stream.spec();
+			if (spec == null || spec.dimension() == null || !botLevel.dimension().equals(spec.dimension())) {
+				continue;
+			}
+			if (spec.followEntityUuid() != null) {
+				return null;
+			}
+			if (spec.cameraPos() != null && !isCameraPlayerLoaded(botLevel, spec.cameraPos())) {
+				continue;
+			}
 			ScheduledServiceTarget target = resolveServiceTarget(
 					server,
 					spec.dimension(),
@@ -1630,31 +1794,51 @@ public final class RendererBotCameraSystem {
 			}
 		}
 
-			for (PendingCapture capture : PENDING_CAPTURES.values()) {
-				if (capture == null || !botUuid.equals(capture.botUuid()) || capture.isDone()) {
-					continue;
-				}
-				if (capture.followEntityUuid() != null) {
-					return null;
-				}
-				ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.x(), capture.y(), capture.z(), capture.yaw(), capture.pitch(), capture.followEntityUuid());
-				center = mergePositionedVirtualCenter(center, botLevel, target);
-				if (center == null && target != null) {
-					return null;
+		for (PendingCapture capture : PENDING_CAPTURES.values()) {
+			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.isDone()) {
+				continue;
+			}
+			if (capture.followEntityUuid() != null) {
+				return null;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.x(), capture.y(), capture.z(), capture.yaw(), capture.pitch(), capture.followEntityUuid());
+			center = mergePositionedVirtualCenter(center, botLevel, target);
+			if (center == null && target != null) {
+				return null;
 			}
 		}
 
-			for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
-				if (recording == null || !botUuid.equals(recording.botUuid()) || recording.stopRequested() || recording.completionFuture().isDone()) {
-					continue;
-				}
-				if (recording.followEntityUuid() != null) {
-					return null;
-				}
-				ScheduledServiceTarget target = resolveServiceTarget(server, recording.dimension(), recording.x(), recording.y(), recording.z(), recording.yaw(), recording.pitch(), recording.followEntityUuid());
-				center = mergePositionedVirtualCenter(center, botLevel, target);
-				if (center == null && target != null) {
-					return null;
+		for (PendingMapTileCapture capture : PENDING_MAP_TILE_CAPTURES.values()) {
+			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.pixelsFuture().isDone()) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(
+					server,
+					capture.dimension(),
+					capture.centerX(),
+					mapTileCameraY(botLevel),
+					capture.centerZ(),
+					0.0F,
+					90.0F,
+					null
+			);
+			center = mergePositionedVirtualCenter(center, botLevel, target);
+			if (center == null && target != null) {
+				return null;
+			}
+		}
+
+		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
+			if (recording == null || !botUuid.equals(recording.botUuid()) || recording.stopRequested() || recording.completionFuture().isDone()) {
+				continue;
+			}
+			if (recording.followEntityUuid() != null) {
+				return null;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, recording.dimension(), recording.x(), recording.y(), recording.z(), recording.yaw(), recording.pitch(), recording.followEntityUuid());
+			center = mergePositionedVirtualCenter(center, botLevel, target);
+			if (center == null && target != null) {
+				return null;
 			}
 		}
 
@@ -1743,6 +1927,16 @@ public final class RendererBotCameraSystem {
 				continue;
 			}
 			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance, false, false);
+		}
+		for (PendingMapTileCapture capture : PENDING_MAP_TILE_CAPTURES.values()) {
+			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.pixelsFuture().isDone()) {
+				continue;
+			}
+			ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.centerX(), mapTileCameraY(botLevel), capture.centerZ(), 0.0F, 90.0F, null);
+			if (target == null || target.level() != botLevel) {
+				continue;
+			}
+			appendVirtualTargetChunks(chunks, botLevel, target, mapTileViewDistance(capture), true, false);
 		}
 		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
 			if (recording == null || !botUuid.equals(recording.botUuid()) || recording.stopRequested() || recording.completionFuture().isDone()) {
@@ -2176,6 +2370,34 @@ public final class RendererBotCameraSystem {
 			accumulateShadowDesiredState(desiredStates, botUuid, capture.renderSessionId(), target, viewDistance, Set.of(), false, false);
 		}
 
+		for (Map.Entry<UUID, PendingMapTileCapture> entry : PENDING_MAP_TILE_CAPTURES.entrySet()) {
+			PendingMapTileCapture capture = entry.getValue();
+			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.pixelsFuture().isDone()) {
+				continue;
+			}
+			ServerLevel level = server.getLevel(capture.dimension());
+			if (level == null) {
+				failMapTileCapture(entry.getKey(), capture, "Renderer bot map tile target is unavailable");
+				continue;
+			}
+			ScheduledServiceTarget target = new ScheduledServiceTarget(
+					level,
+					capture.centerX(),
+					mapTileCameraY(level),
+					capture.centerZ(),
+					0.0F,
+					90.0F,
+					null
+			);
+			accumulateMapTileShadowDesiredState(
+					desiredStates,
+					botUuid,
+					capture.renderSessionId(),
+					target,
+					mapTileViewDistance(capture)
+			);
+		}
+
 		for (Map.Entry<UUID, PendingVideoRecording> entry : PENDING_VIDEO_RECORDINGS.entrySet()) {
 			PendingVideoRecording recording = entry.getValue();
 			if (recording == null || !botUuid.equals(recording.botUuid()) || recording.stopRequested() || recording.completionFuture().isDone()) {
@@ -2250,6 +2472,29 @@ public final class RendererBotCameraSystem {
 				omnidirectionalChunkLoading,
 				staticCameraChunkBuffer
 		);
+	}
+
+	private static void accumulateMapTileShadowDesiredState(
+			Map<ShadowSyncKey, ShadowDesiredState> desiredStates,
+			UUID botUuid,
+			UUID sessionId,
+			ScheduledServiceTarget target,
+			int viewDistance
+	) {
+		if (desiredStates == null || botUuid == null || sessionId == null || target == null || !(target.level() instanceof ServerLevel level)) {
+			return;
+		}
+		ShadowSyncKey key = new ShadowSyncKey(botUuid, sessionId);
+		ShadowDesiredState desiredState = desiredStates.get(key);
+		if (desiredState == null) {
+			desiredState = new ShadowDesiredState(sessionId, level);
+			desiredStates.put(key, desiredState);
+		}
+		if (desiredState.level() != level) {
+			return;
+		}
+		desiredState.setItemDisplaysOnly(true);
+		desiredState.addTarget(target, viewDistance, Set.of(), true, false);
 	}
 
 	private static void syncShadowState(
@@ -2744,6 +2989,9 @@ public final class RendererBotCameraSystem {
 		if (entity instanceof ServerPlayer player && RendererBotPresenceSystem.isRendererBot(player)) {
 			return false;
 		}
+		if (desiredState.itemDisplaysOnly()) {
+			return entity instanceof Display.ItemDisplay;
+		}
 		double entityRangeBlocks = Math.max(16.0D, entity.getType().clientTrackingRange() * 16.0D);
 		double entityRangeSq = entityRangeBlocks * entityRangeBlocks;
 		for (ScheduledServiceTarget target : desiredState.targets()) {
@@ -3066,6 +3314,16 @@ public final class RendererBotCameraSystem {
 		}
 	}
 
+	private static void failMapTileCapture(UUID requestId, PendingMapTileCapture capture, String message) {
+		if (capture == null || requestId == null) {
+			return;
+		}
+		IllegalStateException failure = new IllegalStateException(message);
+		if (PENDING_MAP_TILE_CAPTURES.remove(requestId, capture)) {
+			capture.pixelsFuture().completeExceptionally(failure);
+		}
+	}
+
 	private static void failVideoRecording(UUID requestId, PendingVideoRecording recording, String message) {
 		if (recording == null || requestId == null) {
 			return;
@@ -3083,6 +3341,11 @@ public final class RendererBotCameraSystem {
 		}
 		for (PendingCapture capture : PENDING_CAPTURES.values()) {
 			if (capture != null && botUuid.equals(capture.botUuid()) && !capture.isDone()) {
+				return true;
+			}
+		}
+		for (PendingMapTileCapture capture : PENDING_MAP_TILE_CAPTURES.values()) {
+			if (capture != null && botUuid.equals(capture.botUuid()) && !capture.pixelsFuture().isDone()) {
 				return true;
 			}
 		}
@@ -3303,6 +3566,7 @@ public final class RendererBotCameraSystem {
 		private final Set<UUID> hiddenEntityUuids = new HashSet<>();
 		private final LongOpenHashSet trackedChunks = new LongOpenHashSet();
 		private final Map<CameraChunkTicketKey, Integer> chunkTickets = new HashMap<>();
+		private boolean itemDisplaysOnly;
 		private int requestedViewDistance;
 		private int viewDistance = 2;
 		private int centerChunkX;
@@ -3349,6 +3613,14 @@ public final class RendererBotCameraSystem {
 
 		private Set<UUID> hiddenEntityUuids() {
 			return this.hiddenEntityUuids;
+		}
+
+		private boolean itemDisplaysOnly() {
+			return this.itemDisplaysOnly;
+		}
+
+		private void setItemDisplaysOnly(boolean itemDisplaysOnly) {
+			this.itemDisplaysOnly = itemDisplaysOnly;
 		}
 
 		private LongOpenHashSet trackedChunks() {
@@ -3808,6 +4080,104 @@ public final class RendererBotCameraSystem {
 
 		private void markDispatched(long now) {
 			this.lastDispatchAtMillis = now;
+		}
+	}
+
+	private static final class PendingMapTileCapture {
+		private final UUID requestId;
+		private final UUID renderSessionId;
+		private final MinecraftServer server;
+		private final UUID botUuid;
+		private final ResourceKey<Level> dimension;
+		private final double centerX;
+		private final double centerZ;
+		private final int lod;
+		private final long tileX;
+		private final long tileZ;
+		private final int tileSize;
+		private final double blocksPerPixel;
+		private final CompletableFuture<byte[]> pixelsFuture;
+
+		private PendingMapTileCapture(
+				UUID requestId,
+				UUID renderSessionId,
+				MinecraftServer server,
+				UUID botUuid,
+				ResourceKey<Level> dimension,
+				double centerX,
+				double centerZ,
+				int lod,
+				long tileX,
+				long tileZ,
+				int tileSize,
+				double blocksPerPixel,
+				CompletableFuture<byte[]> pixelsFuture
+		) {
+			this.requestId = requestId;
+			this.renderSessionId = renderSessionId;
+			this.server = server;
+			this.botUuid = botUuid;
+			this.dimension = dimension;
+			this.centerX = centerX;
+			this.centerZ = centerZ;
+			this.lod = lod;
+			this.tileX = tileX;
+			this.tileZ = tileZ;
+			this.tileSize = tileSize;
+			this.blocksPerPixel = blocksPerPixel;
+			this.pixelsFuture = pixelsFuture;
+		}
+
+		private UUID requestId() {
+			return this.requestId;
+		}
+
+		private UUID renderSessionId() {
+			return this.renderSessionId;
+		}
+
+		private MinecraftServer server() {
+			return this.server;
+		}
+
+		private UUID botUuid() {
+			return this.botUuid;
+		}
+
+		private ResourceKey<Level> dimension() {
+			return this.dimension;
+		}
+
+		private double centerX() {
+			return this.centerX;
+		}
+
+		private double centerZ() {
+			return this.centerZ;
+		}
+
+		private int lod() {
+			return this.lod;
+		}
+
+		private long tileX() {
+			return this.tileX;
+		}
+
+		private long tileZ() {
+			return this.tileZ;
+		}
+
+		private int tileSize() {
+			return this.tileSize;
+		}
+
+		private double blocksPerPixel() {
+			return this.blocksPerPixel;
+		}
+
+		private CompletableFuture<byte[]> pixelsFuture() {
+			return this.pixelsFuture;
 		}
 	}
 
