@@ -3152,12 +3152,26 @@ public final class MonitorScreenSystem {
 			int tileRowStart = localY * MAP_SIZE;
 			for (int localX = 0; localX < MAP_SIZE; localX++) {
 				int globalX = tileOriginX + localX;
-				int rgb = rgbPixels[rowStart + localX] & 0xFFFFFF;
+				int rgb = compositeArgbOverBlack(rgbPixels[rowStart + localX]);
 				tile[tileRowStart + localX] = dither
 						? MapPaletteQuantizer.quantizeDithered(rgb, globalX, globalY)
 						: MapPaletteQuantizer.quantize(rgb);
 			}
 		}
+	}
+
+	static int compositeArgbOverBlack(int argb) {
+		int alpha = (argb >>> 24) & 0xFF;
+		if (alpha <= MAP_TRANSPARENT_ALPHA_THRESHOLD) {
+			return 0;
+		}
+		if (alpha >= 0xFF) {
+			return argb & 0xFFFFFF;
+		}
+		int red = (((argb >>> 16) & 0xFF) * alpha + 127) / 255;
+		int green = (((argb >>> 8) & 0xFF) * alpha + 127) / 255;
+		int blue = ((argb & 0xFF) * alpha + 127) / 255;
+		return ((red & 0xFF) << 16) | ((green & 0xFF) << 8) | (blue & 0xFF);
 	}
 
 	static void drawBaseBackground(Graphics2D graphics, int width, int height, boolean powered) {
@@ -5262,15 +5276,7 @@ public final class MonitorScreenSystem {
 		if (backgroundMode == PlayerBackgroundMode.EMPTY) {
 			clearRectToTransparent(graphics, rect);
 		} else if (backgroundMode == PlayerBackgroundMode.BLACK) {
-			graphics.setPaint(new GradientPaint(
-					rect.x(),
-					rect.y(),
-					new Color(6, 8, 12, 222),
-					rect.right(),
-					rect.bottom(),
-					new Color(14, 18, 24, 248)
-			));
-			graphics.fillRect(rect.x(), rect.y(), rect.width(), rect.height());
+			drawBlackPlayerBackground(graphics, rect);
 		} else if (backgroundMode == PlayerBackgroundMode.ARTWORK) {
 			drawYoutubeMusicArtworkBackground(
 					graphics,
@@ -5629,6 +5635,10 @@ public final class MonitorScreenSystem {
 				drawCleanPlayerBackground(graphics, canvasRect, playerBackgroundFrame, state != null ? state.playerBackgroundScaleMode() : MediaScaleMode.FILL);
 				return;
 			}
+			if (playerBackgroundMode == PlayerBackgroundMode.BLACK || darkPlayerSurface) {
+				drawBlackPlayerBackground(graphics, canvasRect);
+				return;
+			}
 			clearRectToTransparent(graphics, canvasRect);
 			return;
 		}
@@ -5641,7 +5651,7 @@ public final class MonitorScreenSystem {
 				drawCleanPlayerBackground(graphics, canvasRect, playerBackgroundFrame, state != null ? state.playerBackgroundScaleMode() : MediaScaleMode.FILL);
 				return;
 			}
-			clearRectToTransparent(graphics, canvasRect);
+			drawBlackPlayerBackground(graphics, canvasRect);
 			return;
 		}
 		if (artworkBackgroundVisible && mediaBackgroundFrame != null) {
@@ -5653,10 +5663,18 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		if (darkPlayerSurface || playerBackgroundMode == PlayerBackgroundMode.BLACK) {
-			clearRectToTransparent(graphics, canvasRect);
+			drawBlackPlayerBackground(graphics, canvasRect);
 			return;
 		}
 		clearRectToTransparent(graphics, canvasRect);
+	}
+
+	static void drawBlackPlayerBackground(Graphics2D graphics, UiRect rect) {
+		if (graphics == null || rect == null) {
+			return;
+		}
+		graphics.setColor(Color.BLACK);
+		graphics.fillRect(rect.x(), rect.y(), rect.width(), rect.height());
 	}
 
 	static void drawArtworkPlayerBackground(Graphics2D graphics, UiRect rect, BufferedImage frame, MediaScaleMode scaleMode, boolean musicLayout) {
