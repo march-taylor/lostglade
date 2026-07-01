@@ -20,6 +20,11 @@ final class RendererBotTopDownMapRenderer {
 	private static final double TOP_DOWN_CAMERA_HEADROOM_BLOCKS = 16.0D;
 	private static final float TOP_DOWN_YAW = 180.0F;
 	private static final float TOP_DOWN_PITCH = 90.0F;
+	private static final int TOP_DOWN_TILE_RENDER_SCALE = Mth.clamp(Integer.getInteger("lg2.rendererBotMapTileRenderScale", 4), 1, 8);
+	private static final int TOP_DOWN_TILE_MAX_RENDER_PIXELS = Math.max(
+			16_384,
+			Integer.getInteger("lg2.rendererBotMapTileMaxRenderPixels", 1_048_576)
+	);
 
 	private RendererBotTopDownMapRenderer() {
 	}
@@ -68,23 +73,28 @@ final class RendererBotTopDownMapRenderer {
 		int width = Math.max(1, request.width());
 		int height = Math.max(1, request.height());
 		double blocksPerPixel = safeBlocksPerPixel(request.blocksPerPixel());
+		double centerX = snapCenterToPixelGrid(request.centerX(), width, blocksPerPixel);
+		double centerZ = snapCenterToPixelGrid(request.centerZ(), height, blocksPerPixel);
 		double worldWidth = width * blocksPerPixel;
 		double worldHeight = height * blocksPerPixel;
-		double cameraY = cameraYForTile(level, request, blocksPerPixel);
+		double cameraY = cameraYForTile(level, centerX, centerZ, width, height, blocksPerPixel);
+		int renderScale = renderScaleForTile(width, height);
+		int renderWidth = Math.max(1, width * renderScale);
+		int renderHeight = Math.max(1, height * renderScale);
 		return RendererBotOffscreenWorldRenderer.renderToTarget(
 				client,
 				new RendererBotOffscreenWorldRenderer.RenderRequest(
 						request.sessionId(),
 						request.dimensionId(),
 						null,
-						request.centerX(),
+						centerX,
 						cameraY,
-						request.centerZ(),
+						centerZ,
 						TOP_DOWN_YAW,
 						TOP_DOWN_PITCH,
 						70,
-						width,
-						height,
+						renderWidth,
+						renderHeight,
 						true,
 						true,
 						worldWidth,
@@ -106,16 +116,33 @@ final class RendererBotTopDownMapRenderer {
 		return Mth.clamp(blocksPerPixel, MIN_BLOCKS_PER_PIXEL, MAX_BLOCKS_PER_PIXEL);
 	}
 
-	private static double cameraYForTile(ClientLevel level, TileRequest request, double blocksPerPixel) {
-		if (level == null || request == null) {
+	private static double snapCenterToPixelGrid(double center, int pixels, double blocksPerPixel) {
+		if (!Double.isFinite(center) || !Double.isFinite(blocksPerPixel) || blocksPerPixel <= 0.0D) {
+			return center;
+		}
+		double worldSize = pixels * blocksPerPixel;
+		double left = center - worldSize * 0.5D;
+		return Math.rint(left / blocksPerPixel) * blocksPerPixel + worldSize * 0.5D;
+	}
+
+	private static int renderScaleForTile(int width, int height) {
+		int scale = TOP_DOWN_TILE_RENDER_SCALE;
+		while (scale > 1 && (long) width * scale * height * scale > TOP_DOWN_TILE_MAX_RENDER_PIXELS) {
+			scale--;
+		}
+		return Math.max(1, scale);
+	}
+
+	private static double cameraYForTile(ClientLevel level, double centerX, double centerZ, int width, int height, double blocksPerPixel) {
+		if (level == null) {
 			return 256.0D;
 		}
-		double halfWidth = request.width() * blocksPerPixel * 0.5D;
-		double halfHeight = request.height() * blocksPerPixel * 0.5D;
-		int minBlockX = Mth.floor(request.centerX() - halfWidth);
-		int maxBlockX = Mth.floor(request.centerX() + halfWidth - 1.0E-6D);
-		int minBlockZ = Mth.floor(request.centerZ() - halfHeight);
-		int maxBlockZ = Mth.floor(request.centerZ() + halfHeight - 1.0E-6D);
+		double halfWidth = width * blocksPerPixel * 0.5D;
+		double halfHeight = height * blocksPerPixel * 0.5D;
+		int minBlockX = Mth.floor(centerX - halfWidth);
+		int maxBlockX = Mth.floor(centerX + halfWidth - 1.0E-6D);
+		int minBlockZ = Mth.floor(centerZ - halfHeight);
+		int maxBlockZ = Mth.floor(centerZ + halfHeight - 1.0E-6D);
 		int minChunkX = SectionPos.blockToSectionCoord(minBlockX);
 		int maxChunkX = SectionPos.blockToSectionCoord(maxBlockX);
 		int minChunkZ = SectionPos.blockToSectionCoord(minBlockZ);

@@ -281,7 +281,7 @@ public final class RendererBotOffscreenWorldRenderer {
 					client.getDeltaTracker(),
 					client.options.getMenuBackgroundBlurriness(),
 					cameraState.camera(),
-					client.options.textureFiltering().get() == TextureFilteringMethod.RGSS
+					!request.topDownMap() && client.options.textureFiltering().get() == TextureFilteringMethod.RGSS
 			);
 			levelRenderer.renderLevel(
 					GraphicsResourceAllocator.UNPOOLED,

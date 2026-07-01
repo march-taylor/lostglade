@@ -303,7 +303,7 @@ final class MonitorYandexMapsRuntime {
 			}
 		}
 		if (frame != null) {
-			graphics.drawImage(frame, canvas.x(), canvas.y(), canvas.width(), canvas.height(), null);
+			drawMapFrameNearest(graphics, frame, canvas);
 		} else {
 			graphics.setPaint(new GradientPaint(canvas.x(), canvas.y(), new Color(0x182026), canvas.right(), canvas.bottom(), new Color(0x071014)));
 			graphics.fillRect(canvas.x(), canvas.y(), canvas.width(), canvas.height());
@@ -317,6 +317,19 @@ final class MonitorYandexMapsRuntime {
 		drawZoomControls(graphics, layout);
 		drawCenterReticle(graphics, layout);
 		drawMarkerEditor(graphics, layout, runtimeKey, server);
+	}
+
+	private static void drawMapFrameNearest(Graphics2D graphics, BufferedImage frame, UiRect canvas) {
+		Object previousInterpolation = graphics.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+		try {
+			graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+			graphics.drawImage(frame, canvas.x(), canvas.y(), canvas.width(), canvas.height(), null);
+		} finally {
+			graphics.setRenderingHint(
+					RenderingHints.KEY_INTERPOLATION,
+					previousInterpolation != null ? previousInterpolation : RenderingHints.VALUE_INTERPOLATION_BILINEAR
+			);
+		}
 	}
 
 	static boolean handleTouch(ServerPlayer player, ServerLevel level, ScreenComponent component, UiLayout layout, UiPoint touchPoint) {

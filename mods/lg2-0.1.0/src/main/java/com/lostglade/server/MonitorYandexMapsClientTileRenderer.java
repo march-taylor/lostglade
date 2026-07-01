@@ -41,7 +41,7 @@ final class MonitorYandexMapsClientTileRenderer {
 	private static final int MAX_MISSING_TILES_PER_DIMENSION = 65_536;
 	private static final int MAX_BASE_TILE_REQUESTS_PER_FRAME = 4;
 	private static final long BASE_TILE_REFRESH_MS = 30L * 60_000L;
-	private static final String CACHE_DIR_NAME = "lg2-yandex-map-client-tiles-v10";
+	private static final String CACHE_DIR_NAME = "lg2-yandex-map-client-tiles-v11";
 	private static final int MISSING_RGB = 0x18242B;
 	private static final Object LOCK = new Object();
 	private static final Map<WorldCacheKey, DimensionTileCache> CACHES = new LinkedHashMap<>(8, 0.75F, true);
@@ -85,6 +85,7 @@ final class MonitorYandexMapsClientTileRenderer {
 			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v7"));
 			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v8"));
 			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v9"));
+			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v10"));
 		}
 		clear(null);
 	}
