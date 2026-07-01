@@ -18,6 +18,8 @@ final class RendererBotTopDownMapRenderer {
 	private static final double MIN_BLOCKS_PER_PIXEL = 1.0D / 16.0D;
 	private static final double MAX_BLOCKS_PER_PIXEL = 512.0D;
 	private static final double TOP_DOWN_CAMERA_HEADROOM_BLOCKS = 16.0D;
+	private static final float TOP_DOWN_YAW = 180.0F;
+	private static final float TOP_DOWN_PITCH = 90.0F;
 
 	private RendererBotTopDownMapRenderer() {
 	}
@@ -78,8 +80,8 @@ final class RendererBotTopDownMapRenderer {
 						request.centerX(),
 						cameraY,
 						request.centerZ(),
-						0.0F,
-						90.0F,
+						TOP_DOWN_YAW,
+						TOP_DOWN_PITCH,
 						70,
 						width,
 						height,

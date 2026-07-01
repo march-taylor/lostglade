@@ -42,7 +42,6 @@ public final class RendererBotClientCapture {
 	private static final int MAP_TILE_WARMUP_FRAMES = Math.max(0, Integer.getInteger("lg2.rendererBotMapTileWarmupFrames", 8));
 	private static final int MAP_TILE_BLANK_RETRY_WARMUP_FRAMES = Math.max(1, Integer.getInteger("lg2.rendererBotMapTileBlankRetryWarmupFrames", 4));
 	private static final int MAP_TILE_MAX_BLANK_RETRIES = Math.max(0, Integer.getInteger("lg2.rendererBotMapTileMaxBlankRetries", 8));
-	private static final boolean MAP_TILE_GPU_CAPTURE = Boolean.getBoolean("lg2.rendererBotMapTileGpuCapture");
 	private static final boolean LIVE_STREAM_DITHERING = Boolean.getBoolean("lg2.rendererBotLiveStreamDithering");
 	private static final int LIVE_STREAM_PARALLEL_PIXELS_THRESHOLD = Math.max(65_536, Integer.getInteger("lg2.rendererBotLiveParallelPixelsThreshold", 131_072));
 	private static final ExecutorService CAPTURE_EXECUTOR = Executors.newFixedThreadPool(CAPTURE_THREADS, runnable -> {
@@ -249,17 +248,15 @@ public final class RendererBotClientCapture {
 			}
 			boolean rendered = RendererBotTopDownMapRenderer.renderToTarget(client, mapTileRenderRequest(payload), renderTarget -> {
 				try {
-					CompletableFuture<byte[]> pixelsFuture = MAP_TILE_GPU_CAPTURE && RendererBotGpuCaptureBackend.isAvailable()
-							? RendererBotGpuCaptureBackend.captureQuantizedFrame(renderTarget, payload.tileSize(), payload.tileSize(), false)
-							: takeScreenshotFuture(renderTarget).thenApplyAsync(image -> {
-								try (image) {
-									int[] sourcePixels = image.makePixelArray();
-									if (image.getWidth() == payload.tileSize() && image.getHeight() == payload.tileSize()) {
-										return quantizeExactFrame(sourcePixels, image.getWidth(), image.getHeight(), false, true);
-									}
-									return quantizeScaledFrame(sourcePixels, image.getWidth(), image.getHeight(), payload.tileSize(), payload.tileSize(), false, true);
-								}
-							}, CAPTURE_EXECUTOR);
+					CompletableFuture<byte[]> pixelsFuture = takeScreenshotFuture(renderTarget).thenApplyAsync(image -> {
+						try (image) {
+							int[] sourcePixels = image.makePixelArray();
+							if (image.getWidth() == payload.tileSize() && image.getHeight() == payload.tileSize()) {
+								return encodeExactRgbFrame(sourcePixels, image.getWidth(), image.getHeight());
+							}
+							return encodeNearestRgbFrame(sourcePixels, image.getWidth(), image.getHeight(), payload.tileSize(), payload.tileSize());
+						}
+					}, CAPTURE_EXECUTOR);
 					pixelsFuture.whenComplete((pixels, throwable) -> client.execute(() -> {
 						if (throwable != null) {
 							sendMapTileFailure(payload, throwable.getMessage() != null ? throwable.getMessage() : throwable.getClass().getSimpleName());
@@ -631,6 +628,33 @@ public final class RendererBotClientCapture {
 
 	private static byte[] quantizeScaledFrame(int[] sourcePixels, int sourceWidth, int sourceHeight, int outputWidth, int outputHeight) {
 		return quantizeScaledFrame(sourcePixels, sourceWidth, sourceHeight, outputWidth, outputHeight, true, false);
+	}
+
+	private static byte[] encodeExactRgbFrame(int[] sourcePixels, int width, int height) {
+		byte[] output = new byte[Math.max(1, width * height * 3)];
+		for (int i = 0; i < width * height; i++) {
+			writeRgb(output, i, sourcePixels[i] & 0xFFFFFF);
+		}
+		return output;
+	}
+
+	private static byte[] encodeNearestRgbFrame(int[] sourcePixels, int sourceWidth, int sourceHeight, int outputWidth, int outputHeight) {
+		byte[] output = new byte[Math.max(1, outputWidth * outputHeight * 3)];
+		for (int y = 0; y < outputHeight; y++) {
+			int sourceY = Mth.clamp((int) Math.floor(((y + 0.5D) * sourceHeight) / Math.max(1.0D, outputHeight)), 0, sourceHeight - 1);
+			for (int x = 0; x < outputWidth; x++) {
+				int sourceX = Mth.clamp((int) Math.floor(((x + 0.5D) * sourceWidth) / Math.max(1.0D, outputWidth)), 0, sourceWidth - 1);
+				writeRgb(output, y * outputWidth + x, sourcePixels[sourceY * sourceWidth + sourceX] & 0xFFFFFF);
+			}
+		}
+		return output;
+	}
+
+	private static void writeRgb(byte[] output, int pixelIndex, int rgb) {
+		int offset = pixelIndex * 3;
+		output[offset] = (byte) ((rgb >> 16) & 0xFF);
+		output[offset + 1] = (byte) ((rgb >> 8) & 0xFF);
+		output[offset + 2] = (byte) (rgb & 0xFF);
 	}
 
 	private static byte[] quantizeScaledFrame(int[] sourcePixels, int sourceWidth, int sourceHeight, int outputWidth, int outputHeight, boolean dither, boolean allowParallel) {
@@ -1029,24 +1053,24 @@ public final class RendererBotClientCapture {
 	}
 
 	private static boolean isProbablyBlankMapTile(byte[] pixels) {
-		if (pixels == null || pixels.length < 1024) {
+		if (pixels == null || pixels.length < 1024 * 3) {
 			return false;
 		}
-		int[] counts = new int[256];
+		Map<Integer, Integer> counts = new HashMap<>();
 		int dominantCount = 0;
-		int unique = 0;
-		for (byte pixel : pixels) {
-			int packed = Byte.toUnsignedInt(pixel);
-			if (counts[packed] == 0) {
-				unique++;
-			}
-			int count = ++counts[packed];
+		int pixelCount = pixels.length / 3;
+		for (int i = 0; i < pixelCount; i++) {
+			int offset = i * 3;
+			int rgb = (Byte.toUnsignedInt(pixels[offset]) << 16)
+					| (Byte.toUnsignedInt(pixels[offset + 1]) << 8)
+					| Byte.toUnsignedInt(pixels[offset + 2]);
+			int count = counts.merge(rgb, 1, Integer::sum);
 			if (count > dominantCount) {
 				dominantCount = count;
 			}
 		}
-		return dominantCount >= pixels.length * 995L / 1000L
-				|| (unique <= 3 && dominantCount >= pixels.length * 980L / 1000L);
+		return dominantCount >= pixelCount * 995L / 1000L
+				|| (counts.size() <= 3 && dominantCount >= pixelCount * 980L / 1000L);
 	}
 
 	private static final class PendingMapTile {

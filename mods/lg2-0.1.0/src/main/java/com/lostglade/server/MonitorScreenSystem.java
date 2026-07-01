@@ -3072,9 +3072,10 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		int tileCount = work.width() * work.height();
+		boolean dither = work.viewMode() != ScreenViewMode.YANDEX_MAPS;
 		if (tileCount <= 1 || quantizeExecutor == null) {
 			for (int tileIndex = 0; tileIndex < tileCount; tileIndex++) {
-				quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex], work.transparentOutput());
+				quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex], work.transparentOutput(), dither);
 			}
 			return;
 		}
@@ -3082,7 +3083,7 @@ public final class MonitorScreenSystem {
 		int workerCount = Math.max(1, Math.min(tileCount, monitorTileQuantizerThreads()));
 		if (workerCount <= 1) {
 			for (int tileIndex = 0; tileIndex < tileCount; tileIndex++) {
-				quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex], work.transparentOutput());
+				quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex], work.transparentOutput(), dither);
 			}
 			return;
 		}
@@ -3097,19 +3098,19 @@ public final class MonitorScreenSystem {
 			}
 			futures[workerIndex] = CompletableFuture.runAsync(() -> {
 				for (int tileIndex = startTileIndex; tileIndex < endTileIndex; tileIndex++) {
-					quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex], work.transparentOutput());
+					quantizeSingleTile(work.width(), rgbPixels, pixelWidth, tileIndex, tiles[tileIndex], work.transparentOutput(), dither);
 				}
 			}, quantizeExecutor);
 		}
 		CompletableFuture.allOf(futures).join();
 	}
 
-	static void quantizeSingleTile(int tilesWide, int[] rgbPixels, int pixelWidth, int tileIndex, byte[] tile, boolean transparentOutput) {
+	static void quantizeSingleTile(int tilesWide, int[] rgbPixels, int pixelWidth, int tileIndex, byte[] tile, boolean transparentOutput, boolean dither) {
 		if (tilesWide <= 0 || rgbPixels == null || tile == null) {
 			return;
 		}
 		if (!transparentOutput) {
-			quantizeSingleTileOpaque(tilesWide, rgbPixels, pixelWidth, tileIndex, tile);
+			quantizeSingleTileOpaque(tilesWide, rgbPixels, pixelWidth, tileIndex, tile, dither);
 			return;
 		}
 		int tileX = Math.floorMod(tileIndex, tilesWide);
@@ -3129,12 +3130,14 @@ public final class MonitorScreenSystem {
 					continue;
 				}
 				int rgb = argb & 0xFFFFFF;
-				tile[tileRowStart + localX] = MapPaletteQuantizer.quantizeDithered(rgb, globalX, globalY);
+				tile[tileRowStart + localX] = dither
+						? MapPaletteQuantizer.quantizeDithered(rgb, globalX, globalY)
+						: MapPaletteQuantizer.quantize(rgb);
 			}
 		}
 	}
 
-	static void quantizeSingleTileOpaque(int tilesWide, int[] rgbPixels, int pixelWidth, int tileIndex, byte[] tile) {
+	static void quantizeSingleTileOpaque(int tilesWide, int[] rgbPixels, int pixelWidth, int tileIndex, byte[] tile, boolean dither) {
 		int tileX = Math.floorMod(tileIndex, tilesWide);
 		int tileY = tileIndex / tilesWide;
 		int tileOriginX = tileX * MAP_SIZE;
@@ -3145,7 +3148,10 @@ public final class MonitorScreenSystem {
 			int tileRowStart = localY * MAP_SIZE;
 			for (int localX = 0; localX < MAP_SIZE; localX++) {
 				int globalX = tileOriginX + localX;
-				tile[tileRowStart + localX] = MapPaletteQuantizer.quantizeDithered(rgbPixels[rowStart + localX] & 0xFFFFFF, globalX, globalY);
+				int rgb = rgbPixels[rowStart + localX] & 0xFFFFFF;
+				tile[tileRowStart + localX] = dither
+						? MapPaletteQuantizer.quantizeDithered(rgb, globalX, globalY)
+						: MapPaletteQuantizer.quantize(rgb);
 			}
 		}
 	}

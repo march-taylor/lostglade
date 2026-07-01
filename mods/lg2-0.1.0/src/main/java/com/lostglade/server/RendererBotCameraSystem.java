@@ -94,6 +94,8 @@ public final class RendererBotCameraSystem {
 	private static final int CAMERA_CHUNK_TICKET_UNIQUE_FLAG = 128;
 	private static final int SHADOW_VIEW_DISTANCE_MARGIN_CHUNKS = 6;
 	private static final int SHADOW_REAR_VIEW_CHUNKS = 2;
+	private static final float MAP_TILE_TOP_DOWN_YAW = 180.0F;
+	private static final float MAP_TILE_TOP_DOWN_PITCH = 90.0F;
 	private static final long LIVE_STREAM_STALE_MS = 1_500L;
 	private static final long MAP_TILE_CAPTURE_TIMEOUT_MS = 60_000L;
 	private static final long AUDIO_CAPTURE_STALE_MS = 8_000L;
@@ -1818,8 +1820,8 @@ public final class RendererBotCameraSystem {
 					capture.centerX(),
 					mapTileCameraY(botLevel),
 					capture.centerZ(),
-					0.0F,
-					90.0F,
+					MAP_TILE_TOP_DOWN_YAW,
+					MAP_TILE_TOP_DOWN_PITCH,
 					null
 			);
 			center = mergePositionedVirtualCenter(center, botLevel, target);
@@ -1932,7 +1934,7 @@ public final class RendererBotCameraSystem {
 			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.pixelsFuture().isDone()) {
 				continue;
 			}
-			ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.centerX(), mapTileCameraY(botLevel), capture.centerZ(), 0.0F, 90.0F, null);
+			ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.centerX(), mapTileCameraY(botLevel), capture.centerZ(), MAP_TILE_TOP_DOWN_YAW, MAP_TILE_TOP_DOWN_PITCH, null);
 			if (target == null || target.level() != botLevel) {
 				continue;
 			}
@@ -2385,8 +2387,8 @@ public final class RendererBotCameraSystem {
 					capture.centerX(),
 					mapTileCameraY(level),
 					capture.centerZ(),
-					0.0F,
-					90.0F,
+					MAP_TILE_TOP_DOWN_YAW,
+					MAP_TILE_TOP_DOWN_PITCH,
 					null
 			);
 			accumulateMapTileShadowDesiredState(

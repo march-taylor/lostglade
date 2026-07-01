@@ -1,13 +1,11 @@
 package com.lostglade.server;
 
 import com.lostglade.Lg2;
-import com.lostglade.server.map.MapPaletteQuantizer;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.material.MapColor;
 import net.minecraft.world.level.storage.LevelResource;
 
 import java.awt.image.BufferedImage;
@@ -37,13 +35,14 @@ final class MonitorYandexMapsClientTileRenderer {
 	private static final int MAX_ZOOM_EXPONENT = MAX_LOD;
 	private static final int DIRECT_RENDER_MAX_LOD = 0;
 	private static final double BASE_BLOCKS_PER_PIXEL = 1.0D / 16.0D;
-	private static final int MAX_CACHED_TILES_PER_DIMENSION = 16_384;
+	private static final int RGB_BYTES_PER_PIXEL = 3;
+	private static final int TILE_RGB_BYTES = TILE_SIZE * TILE_SIZE * RGB_BYTES_PER_PIXEL;
+	private static final int MAX_CACHED_TILES_PER_DIMENSION = 4_096;
 	private static final int MAX_MISSING_TILES_PER_DIMENSION = 65_536;
 	private static final int MAX_BASE_TILE_REQUESTS_PER_FRAME = 4;
 	private static final long BASE_TILE_REFRESH_MS = 30L * 60_000L;
-	private static final String CACHE_DIR_NAME = "lg2-yandex-map-client-tiles-v8";
+	private static final String CACHE_DIR_NAME = "lg2-yandex-map-client-tiles-v10";
 	private static final int MISSING_RGB = 0x18242B;
-	private static final int MISSING_PACKED = Byte.toUnsignedInt(MapPaletteQuantizer.quantize(MISSING_RGB));
 	private static final Object LOCK = new Object();
 	private static final Map<WorldCacheKey, DimensionTileCache> CACHES = new LinkedHashMap<>(8, 0.75F, true);
 	private static volatile Path persistentRoot;
@@ -84,6 +83,8 @@ final class MonitorYandexMapsClientTileRenderer {
 			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v5"));
 			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v6"));
 			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v7"));
+			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v8"));
+			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v9"));
 		}
 		clear(null);
 	}
@@ -155,12 +156,11 @@ final class MonitorYandexMapsClientTileRenderer {
 			int row = screenY * width;
 			for (int screenX = 0; screenX < width; screenX++) {
 				double worldX = worldLeft + (screenX + 0.5D) * safeBlocksPerPixel;
-				int packed = cache.sample(worldX, worldZ, lod);
-				if (packed < 0) {
-					packed = MISSING_PACKED;
+				int rgb = cache.sample(worldX, worldZ, lod);
+				if (rgb < 0) {
+					rgb = MISSING_RGB;
 					missingPixels++;
 				}
-				int rgb = MapColor.getColorFromPackedId(packed) & 0xFFFFFF;
 				pixels[row + screenX] = 0xFF000000 | rgb;
 			}
 		}
@@ -295,7 +295,7 @@ final class MonitorYandexMapsClientTileRenderer {
 
 	private record TileImage(byte[] pixels, long renderedAt) {
 		private boolean valid() {
-			return this.pixels != null && this.pixels.length >= TILE_SIZE * TILE_SIZE;
+			return this.pixels != null && this.pixels.length >= TILE_RGB_BYTES;
 		}
 
 		private int sample(int x, int y) {
@@ -304,7 +304,10 @@ final class MonitorYandexMapsClientTileRenderer {
 			}
 			int safeX = Mth.clamp(x, 0, TILE_SIZE - 1);
 			int safeY = Mth.clamp(y, 0, TILE_SIZE - 1);
-			return Byte.toUnsignedInt(this.pixels[safeY * TILE_SIZE + safeX]);
+			int offset = (safeY * TILE_SIZE + safeX) * RGB_BYTES_PER_PIXEL;
+			return (Byte.toUnsignedInt(this.pixels[offset]) << 16)
+					| (Byte.toUnsignedInt(this.pixels[offset + 1]) << 8)
+					| Byte.toUnsignedInt(this.pixels[offset + 2]);
 		}
 	}
 
@@ -375,10 +378,10 @@ final class MonitorYandexMapsClientTileRenderer {
 						Lg2.LOGGER.debug("Yandex map tile render failed at lod {} {},{}: {}", key.lod(), key.tileX(), key.tileZ(), throwable.toString());
 						return;
 					}
-					if (pixels == null || pixels.length < TILE_SIZE * TILE_SIZE) {
+					if (pixels == null || pixels.length < TILE_RGB_BYTES) {
 						return;
 					}
-					TileImage image = new TileImage(Arrays.copyOf(pixels, TILE_SIZE * TILE_SIZE), System.currentTimeMillis());
+					TileImage image = new TileImage(Arrays.copyOf(pixels, TILE_RGB_BYTES), System.currentTimeMillis());
 					storeTile(key, image);
 					rebuildAncestors(key);
 				} finally {
@@ -448,7 +451,7 @@ final class MonitorYandexMapsClientTileRenderer {
 				}
 				children[index++] = image;
 			}
-			byte[] pixels = new byte[TILE_SIZE * TILE_SIZE];
+			byte[] pixels = new byte[TILE_RGB_BYTES];
 			int[] colors = new int[4];
 			for (int y = 0; y < TILE_SIZE; y++) {
 				for (int x = 0; x < TILE_SIZE; x++) {
@@ -460,11 +463,10 @@ final class MonitorYandexMapsClientTileRenderer {
 							int childX = combinedX >= TILE_SIZE ? 1 : 0;
 							int childY = combinedY >= TILE_SIZE ? 1 : 0;
 							TileImage child = children[childY * 2 + childX];
-							int packed = child.sample(combinedX & (TILE_SIZE - 1), combinedY & (TILE_SIZE - 1));
-							colors[count++] = MapColor.getColorFromPackedId(packed) & 0xFFFFFF;
+							colors[count++] = child.sample(combinedX & (TILE_SIZE - 1), combinedY & (TILE_SIZE - 1));
 						}
 					}
-					pixels[y * TILE_SIZE + x] = MapPaletteQuantizer.quantizeAverage(colors, count);
+					writeRgb(pixels, y * TILE_SIZE + x, averageRgb(colors, count));
 				}
 			}
 			storeTile(key, new TileImage(pixels, System.currentTimeMillis()));
@@ -551,11 +553,11 @@ final class MonitorYandexMapsClientTileRenderer {
 			}
 			try {
 				byte[] pixels = Files.readAllBytes(path);
-				if (pixels.length < TILE_SIZE * TILE_SIZE) {
+				if (pixels.length < TILE_RGB_BYTES) {
 					return null;
 				}
 				long modifiedAt = Files.getLastModifiedTime(path).toMillis();
-				return new TileImage(Arrays.copyOf(pixels, TILE_SIZE * TILE_SIZE), modifiedAt);
+				return new TileImage(Arrays.copyOf(pixels, TILE_RGB_BYTES), modifiedAt);
 			} catch (IOException exception) {
 				Lg2.LOGGER.debug("Failed to load Yandex map tile {}", path, exception);
 				return null;
@@ -599,6 +601,36 @@ final class MonitorYandexMapsClientTileRenderer {
 			return "unknown";
 		}
 		return raw.replaceAll("[^A-Za-z0-9._-]+", "_");
+	}
+
+	private static int averageRgb(int[] colors, int count) {
+		if (colors == null || count <= 0) {
+			return MISSING_RGB;
+		}
+		int red = 0;
+		int green = 0;
+		int blue = 0;
+		for (int i = 0; i < Math.min(count, colors.length); i++) {
+			int rgb = colors[i];
+			red += (rgb >> 16) & 0xFF;
+			green += (rgb >> 8) & 0xFF;
+			blue += rgb & 0xFF;
+		}
+		int safeCount = Math.min(count, colors.length);
+		return ((red / safeCount) << 16) | ((green / safeCount) << 8) | (blue / safeCount);
+	}
+
+	private static void writeRgb(byte[] pixels, int pixelIndex, int rgb) {
+		if (pixels == null || pixelIndex < 0) {
+			return;
+		}
+		int offset = pixelIndex * RGB_BYTES_PER_PIXEL;
+		if (offset + 2 >= pixels.length) {
+			return;
+		}
+		pixels[offset] = (byte) ((rgb >> 16) & 0xFF);
+		pixels[offset + 1] = (byte) ((rgb >> 8) & 0xFF);
+		pixels[offset + 2] = (byte) (rgb & 0xFF);
 	}
 
 	private static void notifyReady(Runnable onTileReady) {
