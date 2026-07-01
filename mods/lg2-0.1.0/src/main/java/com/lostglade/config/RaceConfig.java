@@ -249,6 +249,8 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.littleDictatorUniqueRadiusBlocks, value -> ability.littleDictatorUniqueRadiusBlocks = value);
 		changed |= normalizeNonNegative(ability.littleDictatorUniqueDurationSeconds, value -> ability.littleDictatorUniqueDurationSeconds = value);
 		changed |= normalizeNonNegative(ability.littleDictatorUniqueShockIntervalSeconds, value -> ability.littleDictatorUniqueShockIntervalSeconds = value);
+		changed |= normalizeNonNegative(ability.littleDictatorUniqueShockTargetCountMultiplierMin, value -> ability.littleDictatorUniqueShockTargetCountMultiplierMin = value);
+		changed |= normalizeNonNegative(ability.littleDictatorUniqueShockTargetCountMultiplierMax, value -> ability.littleDictatorUniqueShockTargetCountMultiplierMax = value);
 		changed |= normalizeNonNegative(ability.littleDictatorUniqueXpPerHealth, value -> ability.littleDictatorUniqueXpPerHealth = value);
 		changed |= normalizeNonNegative(ability.littleDictatorUniqueFoodPerHealth, value -> ability.littleDictatorUniqueFoodPerHealth = value);
 		changed |= normalizeNonNegative(ability.littleDictatorDecreeSanctionsDurationSeconds, value -> ability.littleDictatorDecreeSanctionsDurationSeconds = value);
@@ -467,6 +469,8 @@ public final class RaceConfig {
 			addDoubleIfNonZero(json, "littleDictatorUniqueRadiusBlocks", ability.littleDictatorUniqueRadiusBlocks);
 			addDoubleIfNonZero(json, "littleDictatorUniqueDurationSeconds", ability.littleDictatorUniqueDurationSeconds);
 			addDoubleIfNonZero(json, "littleDictatorUniqueShockIntervalSeconds", ability.littleDictatorUniqueShockIntervalSeconds);
+			addDoubleIfNonZero(json, "littleDictatorUniqueShockTargetCountMultiplierMin", ability.littleDictatorUniqueShockTargetCountMultiplierMin);
+			addDoubleIfNonZero(json, "littleDictatorUniqueShockTargetCountMultiplierMax", ability.littleDictatorUniqueShockTargetCountMultiplierMax);
 			addDoubleIfNonZero(json, "littleDictatorUniqueXpPerHealth", ability.littleDictatorUniqueXpPerHealth);
 			addDoubleIfNonZero(json, "littleDictatorUniqueFoodPerHealth", ability.littleDictatorUniqueFoodPerHealth);
 			addDoubleIfNonZero(json, "littleDictatorDecreeSanctionsDurationSeconds", ability.littleDictatorDecreeSanctionsDurationSeconds);
@@ -663,6 +667,8 @@ public final class RaceConfig {
 		public double littleDictatorUniqueRadiusBlocks = 0.0D;
 		public double littleDictatorUniqueDurationSeconds = 0.0D;
 		public double littleDictatorUniqueShockIntervalSeconds = 0.0D;
+		public double littleDictatorUniqueShockTargetCountMultiplierMin = 0.0D;
+		public double littleDictatorUniqueShockTargetCountMultiplierMax = 0.0D;
 		public double littleDictatorUniqueXpPerHealth = 0.0D;
 		public double littleDictatorUniqueFoodPerHealth = 0.0D;
 		public double littleDictatorDecreeSanctionsDurationSeconds = 0.0D;

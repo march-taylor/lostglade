@@ -235,7 +235,7 @@
       "enabled": true,
       "id": "gennadiy_sharoyobov",
       "displayName": "Генадий Шароёбов",
-      "ownerNickname": "sd",
+      "ownerNickname": "",
       "description": "Дотер придет...",
       "attack": {
         "enabled": true,
@@ -369,7 +369,7 @@
       "enabled": true,
       "id": "milk_oligarch",
       "displayName": "Молочный Олигарх",
-      "ownerNickname": "Rajas_YT",
+      "ownerNickname": "",
       "description": "Никогда бизнесс не бывает белым, даже молочный.",
       "attack": {
         "enabled": true,
@@ -418,7 +418,7 @@
       "enabled": true,
       "id": "little_dictator",
       "displayName": "Маленький Диктатор",
-      "ownerNickname": "",
+      "ownerNickname": "Rajas_YT",
       "description": "",
       "attack": {
         "enabled": true,
@@ -451,9 +451,11 @@
         "description": "",
         "priceBitcoins": 1000,
         "cooldownSeconds": 900.0,
-        "littleDictatorUniqueRadiusBlocks": 48.0,
+        "littleDictatorUniqueRadiusBlocks": 96.0,
         "littleDictatorUniqueDurationSeconds": 60.0,
         "littleDictatorUniqueShockIntervalSeconds": 10.0,
+        "littleDictatorUniqueShockTargetCountMultiplierMin": 0.15,
+        "littleDictatorUniqueShockTargetCountMultiplierMax": 0.05,
         "littleDictatorUniqueXpPerHealth": 25.0,
         "littleDictatorUniqueFoodPerHealth": 4.0
       },

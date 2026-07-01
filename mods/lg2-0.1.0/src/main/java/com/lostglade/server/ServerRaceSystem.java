@@ -517,6 +517,8 @@ public final class ServerRaceSystem {
 	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_DURATION_SECONDS = 60.0D;
 	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_COOLDOWN_SECONDS = 900.0D;
 	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_SHOCK_INTERVAL_SECONDS = 10.0D;
+	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_SHOCK_TARGET_COUNT_MULTIPLIER_MIN = 0.15D;
+	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_SHOCK_TARGET_COUNT_MULTIPLIER_MAX = 0.05D;
 	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_XP_PER_HEALTH = 25.0D;
 	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_FOOD_PER_HEALTH = 4.0D;
 	private static final double LITTLE_DICTATOR_UNIQUE_TARGET_SCALE = 16.0D;
@@ -1132,6 +1134,8 @@ public final class ServerRaceSystem {
 		private final boolean originalNoGravity;
 		private final double radius;
 		private final double targetScale;
+		private final double shockTargetCountMultiplierMin;
+		private final double shockTargetCountMultiplierMax;
 		private final double xpPerHealth;
 		private final double foodPerHealth;
 		private final Set<UUID> gazeLockedPlayers = new HashSet<>();
@@ -1154,6 +1158,8 @@ public final class ServerRaceSystem {
 				boolean originalNoGravity,
 				double radius,
 				double targetScale,
+				double shockTargetCountMultiplierMin,
+				double shockTargetCountMultiplierMax,
 				long shockIntervalTicks,
 				double xpPerHealth,
 				double foodPerHealth
@@ -1167,6 +1173,8 @@ public final class ServerRaceSystem {
 			this.originalNoGravity = originalNoGravity;
 			this.radius = radius;
 			this.targetScale = targetScale;
+			this.shockTargetCountMultiplierMin = Math.max(0.0D, shockTargetCountMultiplierMin);
+			this.shockTargetCountMultiplierMax = Math.max(0.0D, shockTargetCountMultiplierMax);
 			this.shockIntervalTicks = Math.max(1L, shockIntervalTicks);
 			this.nextShockTick = startTick + this.shockIntervalTicks;
 			this.nextDrainTick = startTick + LITTLE_DICTATOR_UNIQUE_DRAIN_INTERVAL_TICKS;
@@ -4979,6 +4987,8 @@ public final class ServerRaceSystem {
 		long growthEndTick = Math.min(activeEndTick, nowTick + LITTLE_DICTATOR_UNIQUE_GROWTH_TICKS);
 		long shockIntervalTicks = Math.max(1L, asTicks(getLittleDictatorUniqueShockIntervalSeconds(ability)));
 		double radius = getLittleDictatorUniqueRadiusBlocks(ability);
+		double shockTargetCountMultiplierMin = getLittleDictatorUniqueShockTargetCountMultiplierMin(ability);
+		double shockTargetCountMultiplierMax = getLittleDictatorUniqueShockTargetCountMultiplierMax(ability);
 		double xpPerHealth = getLittleDictatorUniqueXpPerHealth(ability);
 		double foodPerHealth = getLittleDictatorUniqueFoodPerHealth(ability);
 		LittleDictatorUniqueSession session = new LittleDictatorUniqueSession(
@@ -4991,6 +5001,8 @@ public final class ServerRaceSystem {
 				player.isNoGravity(),
 				radius,
 				LITTLE_DICTATOR_UNIQUE_TARGET_SCALE,
+				shockTargetCountMultiplierMin,
+				shockTargetCountMultiplierMax,
 				shockIntervalTicks,
 				xpPerHealth,
 				foodPerHealth
@@ -5385,20 +5397,12 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		if (type == null) {
 			return List.of(Component.literal("Особый указ диктатора.").withStyle(style -> style.withColor(ChatFormatting.GRAY).withItalic(false)));
 		}
-		String first = switch (type) {
-			case SANCTIONS -> "ПКМ по игроку: на время ослабляет его добычу и отключает торговлю с жителями.";
-			case TAXES -> "ПКМ по игроку: на время запускает регулярный сбор случайных предметов в налоговые сундуки.";
-			case PROPAGANDA -> "ПКМ по себе: на время усиливает добычу, рыбалку, копание и торговлю.";
-		};
-		String second = switch (type) {
-			case SANCTIONS, TAXES, PROPAGANDA -> "После применения указ расходуется.";
-		};
-		List<Component> lore = new ArrayList<>();
-		lore.add(Component.literal(first).withStyle(style -> style.withColor(ChatFormatting.GRAY).withItalic(false)));
-		if (!second.isBlank()) {
-			lore.add(Component.literal(second).withStyle(style -> style.withColor(ChatFormatting.DARK_GRAY).withItalic(false)));
-		}
-		return lore;
+        String first = switch (type) {
+            case SANCTIONS -> "ПКМ по игроку: ослабляет его добычу и отключает торговлю с жителями.";
+            case TAXES -> "ПКМ по игроку: запускает регулярный сбор случайных предметов в налоговые сундуки.";
+            case PROPAGANDA -> "ПКМ для себя: усиливает добычу, рыбалку, копание и торговлю.";
+        };
+        return List.of(Component.literal(first).withStyle(style -> style.withColor(ChatFormatting.GRAY).withItalic(false)));
 	}
 
 	private static LittleDictatorDecreeType getLittleDictatorDecreeType(ItemStack stack) {
@@ -6296,6 +6300,27 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		return player != null && LITTLE_DICTATOR_PROPAGANDA.containsKey(player.getUUID());
 	}
 
+    public static float getLittleDictatorUniqueVoiceIntensity(ServerPlayer player) {
+        if (player == null || !(player.level() instanceof ServerLevel level)) {
+            return 0.0F;
+        }
+        LittleDictatorUniqueSession session = LITTLE_DICTATOR_UNIQUE_SESSIONS.get(player.getUUID());
+        if (session == null || !level.dimension().equals(session.dimension)) {
+            return 0.0F;
+        }
+        double scale = getLittleDictatorUniqueScale(session, level.getGameTime());
+        if (scale <= 1.001D) {
+            return 0.0F;
+        }
+        double targetScale = Math.max(1.0D, session.targetScale);
+        double normalized = targetScale <= 1.0D ? 1.0D : Mth.clamp((scale - 1.0D) / (targetScale - 1.0D), 0.0D, 1.0D);
+        return (float) normalized;
+    }
+
+    public static float getLittleDictatorUniqueVoicePitchFactor(ServerPlayer player) {
+        return (float) Mth.lerp(getLittleDictatorUniqueVoiceIntensity(player), 1.0D, 0.7D);
+    }
+
 	public static void beginLittleDictatorBlockLootContext(ServerPlayer player) {
 		LITTLE_DICTATOR_DROP_CONTEXT_PLAYER.set(player);
 		LITTLE_DICTATOR_ENCHANTMENT_CONTEXT_PLAYER.set(player);
@@ -6914,8 +6939,9 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 				.filter(target -> target != dictator)
 				.toList();
 		if (!targets.isEmpty()) {
-			float ratio = (float) (0.10D + 0.10D * targets.size());
 			for (ServerPlayer target : targets) {
+				double targetCountMultiplier = getLittleDictatorUniqueShockTargetCountMultiplier(session.shockTargetCountMultiplierMin, session.shockTargetCountMultiplierMax, dictator, target, session.radius);
+				float ratio = (float) (0.10D + targetCountMultiplier * targets.size());
 				float health = target.getHealth();
 				int damage = Math.max(0, Math.round(health * ratio));
 				if (damage <= 0) {
@@ -7227,14 +7253,16 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		DustParticleOptions red = new DustParticleOptions(0xD91E36, 2.0F);
 		for (int layer = 0; layer < 3; layer++) {
 			int points = 82 + layer * 34;
-			double spawnRadius = 0.9D + layer * 0.42D;
 			for (int i = 0; i < points; i++) {
-				double unitY = 1.0D - 2.0D * ((i + 0.5D) / points);
+				double radialStep = (i + 0.5D) / points;
+				double ySeed = radialStep * 1.618033988749895D + layer * 0.17D;
+				double unitY = 1.0D - 2.0D * (ySeed - Math.floor(ySeed));
 				double horizontal = Math.sqrt(Math.max(0.0D, 1.0D - unitY * unitY));
 				double angle = i * 2.399963229728653D + layer * 0.4D;
 				Vec3 normal = new Vec3(Math.cos(angle) * horizontal, unitY, Math.sin(angle) * horizontal);
+				double spawnRadius = maxRadius * (0.04D + 0.24D * Math.pow(radialStep, 1.72D)) + layer * 0.16D;
 				Vec3 pos = origin.add(normal.scale(spawnRadius));
-				Vec3 velocity = normal.scale(0.36D + layer * 0.12D + (i % 3) * 0.045D);
+				Vec3 velocity = normal.scale(0.22D + spawnRadius / maxRadius * 0.42D + layer * 0.05D);
 				DustParticleOptions dust = switch ((i + layer) % 6) {
 					case 0, 3 -> whiteHot;
 					case 1, 4 -> blue;
@@ -7326,13 +7354,15 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 		int coreBursts = Math.max(78, Math.min(190, (int) Math.round(frontRadius * 4.9D)));
 		for (int i = 0; i < coreBursts; i++) {
-			double unitY = 1.0D - 2.0D * ((i + 0.5D) / coreBursts);
+			double radialStep = (i + 0.5D) / coreBursts;
+			double ySeed = radialStep * 1.618033988749895D;
+			double unitY = 1.0D - 2.0D * (ySeed - Math.floor(ySeed));
 			double horizontal = Math.sqrt(Math.max(0.0D, 1.0D - unitY * unitY));
 			double angle = i * 2.399963229728653D - phase * 0.65D;
 			Vec3 normal = new Vec3(Math.cos(angle) * horizontal, unitY, Math.sin(angle) * horizontal);
-			double burstRadius = frontRadius * (0.25D + (i % 5) * 0.09D);
+			double burstRadius = frontRadius * (0.08D + 0.66D * Math.pow(radialStep, 1.85D));
 			Vec3 pos = origin.add(normal.scale(burstRadius));
-			Vec3 velocity = normal.scale(0.1D + progress * 0.28D + (i % 4) * 0.025D);
+			Vec3 velocity = normal.scale(0.08D + progress * 0.2D + burstRadius / Math.max(1.0D, frontRadius) * 0.16D);
 			DustParticleOptions dust = switch (i % 6) {
 				case 0, 3 -> whiteHot;
 				case 1, 4 -> blue;
@@ -7347,7 +7377,8 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			double angle = phase * 0.72D + i * 2.399963229728653D;
 			Vec3 dir = new Vec3(Math.cos(angle) * horizontal, unitY, Math.sin(angle) * horizontal);
 			for (int segment = 1; segment <= 5; segment++) {
-				double distance = frontRadius * (0.28D + segment * 0.18D);
+				double segmentStep = segment / 5.0D;
+				double distance = frontRadius * (0.12D + 0.88D * Math.pow(segmentStep, 1.55D));
 				Vec3 pos = origin.add(dir.scale(distance));
 				DustParticleOptions dust = segment >= 4 ? whiteHot : (segment % 2 == 0 ? blue : red);
 				level.sendParticles(dust, pos.x, pos.y, pos.z, 0, dir.x * 0.22D, dir.y * 0.22D, dir.z * 0.22D, 1.0D);
@@ -7364,7 +7395,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		if (level == null || dictator == null || session == null) {
 			return;
 		}
-		List<ServerPlayer> targets = getLittleDictatorUniquePlayersInRadius(level, dictator, Math.min(session.radius, 18.0D)).stream()
+		List<ServerPlayer> targets = getLittleDictatorUniquePlayersInRadius(level, dictator, session.radius).stream()
 				.filter(target -> target != dictator && hasLittleDictatorUniqueLineOfSight(level, dictator, target))
 				.toList();
 		for (ServerPlayer target : targets) {
@@ -9224,6 +9255,34 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 				ability == null ? 0.0D : ability.littleDictatorUniqueShockIntervalSeconds,
 				LITTLE_DICTATOR_UNIQUE_DEFAULT_SHOCK_INTERVAL_SECONDS
 		);
+	}
+
+	private static double getLittleDictatorUniqueShockTargetCountMultiplierMin(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorUniqueShockTargetCountMultiplierMin,
+				LITTLE_DICTATOR_UNIQUE_DEFAULT_SHOCK_TARGET_COUNT_MULTIPLIER_MIN
+		);
+	}
+
+	private static double getLittleDictatorUniqueShockTargetCountMultiplierMax(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorUniqueShockTargetCountMultiplierMax,
+				LITTLE_DICTATOR_UNIQUE_DEFAULT_SHOCK_TARGET_COUNT_MULTIPLIER_MAX
+		);
+	}
+
+	private static double getLittleDictatorUniqueShockTargetCountMultiplier(
+			double min,
+			double max,
+			ServerPlayer dictator,
+			ServerPlayer target,
+			double radius
+	) {
+		if (dictator == null || target == null || radius <= 1.0E-6D) {
+			return max;
+		}
+		double normalizedDistance = Mth.clamp(dictator.position().distanceTo(target.position()) / radius, 0.0D, 1.0D);
+		return Mth.lerp(normalizedDistance, min, max);
 	}
 
 	private static double getLittleDictatorUniqueXpPerHealth(RaceAbilityConfig ability) {
