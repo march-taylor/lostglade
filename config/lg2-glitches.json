@@ -9,7 +9,7 @@
       "maxStabilityPercent": 70.0,
       "chancePerCheck": 0.2,
       "stabilityInfluence": 1.0,
-      "minCooldownTicks": 20,
+      "minCooldownTicks": 300,
       "maxCooldownTicks": 3600,
       "settings": {
         "minTargetPlayers": 1,

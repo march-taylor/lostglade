@@ -63,7 +63,7 @@ public abstract class ServerPlayerGameModeCopperManRepulsorMixin {
 		InteractionResult dictatorResult = ServerRaceSystem.tryHandleLittleDictatorIronMechanism(
 				player,
 				hand,
-				hitResult == null ? null : hitResult.getBlockPos()
+				hitResult
 		);
 		if (dictatorResult != InteractionResult.PASS) {
 			cir.setReturnValue(dictatorResult);

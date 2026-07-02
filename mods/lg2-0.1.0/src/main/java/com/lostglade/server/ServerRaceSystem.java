@@ -69,6 +69,8 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
+import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
@@ -224,6 +226,7 @@ import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import net.minecraft.world.scores.PlayerTeam;
 import net.minecraft.world.scores.Scoreboard;
 import net.minecraft.world.scores.Team;
@@ -517,6 +520,8 @@ public final class ServerRaceSystem {
 	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_DURATION_SECONDS = 60.0D;
 	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_COOLDOWN_SECONDS = 900.0D;
 	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_SHOCK_INTERVAL_SECONDS = 10.0D;
+	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_SHOCK_TARGET_COUNT_MULTIPLIER_MIN = 0.15D;
+	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_SHOCK_TARGET_COUNT_MULTIPLIER_MAX = 0.05D;
 	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_XP_PER_HEALTH = 25.0D;
 	private static final double LITTLE_DICTATOR_UNIQUE_DEFAULT_FOOD_PER_HEALTH = 4.0D;
 	private static final double LITTLE_DICTATOR_UNIQUE_TARGET_SCALE = 16.0D;
@@ -955,6 +960,8 @@ public final class ServerRaceSystem {
 	private static final List<LittleDictatorUniqueShockWaveSession> LITTLE_DICTATOR_UNIQUE_SHOCK_WAVES = new ArrayList<>();
 	private static final List<LittleDictatorDelayedPacket> LITTLE_DICTATOR_DELAYED_PACKETS = new ArrayList<>();
 	private static final Map<UUID, Long> LITTLE_DICTATOR_LAST_DELAYED_PACKET_RELEASE_TICKS = new HashMap<>();
+	private static final Map<UUID, LittleDictatorIronMechanismClientSpoof> LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS = new HashMap<>();
+	private static final Map<UUID, Integer> LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS = new HashMap<>();
 	private static final Map<UUID, LittleDictatorUniqueSession> LITTLE_DICTATOR_UNIQUE_SESSIONS = new LinkedHashMap<>();
 	private static final Set<UUID> LITTLE_DICTATOR_TAX_CHEST_PENDING = new HashSet<>();
 	private static final Map<UUID, Set<LittleDictatorTaxChestRef>> LITTLE_DICTATOR_TAX_CHESTS = new LinkedHashMap<>();
@@ -1068,6 +1075,13 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private record LittleDictatorIronMechanismClientSpoof(ResourceKey<Level> dimension, BlockPos pos, BlockPos secondaryPos) {
+		private LittleDictatorIronMechanismClientSpoof {
+			pos = pos == null ? BlockPos.ZERO : pos.immutable();
+			secondaryPos = secondaryPos == null ? null : secondaryPos.immutable();
+		}
+	}
+
 	private record LittleDictatorTaxChestRef(ResourceKey<Level> dimension, BlockPos pos) {
 		private LittleDictatorTaxChestRef {
 			pos = pos == null ? BlockPos.ZERO : pos.immutable();
@@ -1132,6 +1146,8 @@ public final class ServerRaceSystem {
 		private final boolean originalNoGravity;
 		private final double radius;
 		private final double targetScale;
+		private final double shockTargetCountMultiplierMin;
+		private final double shockTargetCountMultiplierMax;
 		private final double xpPerHealth;
 		private final double foodPerHealth;
 		private final Set<UUID> gazeLockedPlayers = new HashSet<>();
@@ -1154,6 +1170,8 @@ public final class ServerRaceSystem {
 				boolean originalNoGravity,
 				double radius,
 				double targetScale,
+				double shockTargetCountMultiplierMin,
+				double shockTargetCountMultiplierMax,
 				long shockIntervalTicks,
 				double xpPerHealth,
 				double foodPerHealth
@@ -1167,6 +1185,8 @@ public final class ServerRaceSystem {
 			this.originalNoGravity = originalNoGravity;
 			this.radius = radius;
 			this.targetScale = targetScale;
+			this.shockTargetCountMultiplierMin = Math.max(0.0D, shockTargetCountMultiplierMin);
+			this.shockTargetCountMultiplierMax = Math.max(0.0D, shockTargetCountMultiplierMax);
 			this.shockIntervalTicks = Math.max(1L, shockIntervalTicks);
 			this.nextShockTick = startTick + this.shockIntervalTicks;
 			this.nextDrainTick = startTick + LITTLE_DICTATOR_UNIQUE_DRAIN_INTERVAL_TICKS;
@@ -1574,7 +1594,7 @@ public final class ServerRaceSystem {
 			if (!(player instanceof ServerPlayer serverPlayer) || world.isClientSide()) {
 				return InteractionResult.PASS;
 			}
-			InteractionResult dictatorResult = tryHandleLittleDictatorUseInteraction(serverPlayer, hand, hitResult.getBlockPos());
+			InteractionResult dictatorResult = tryHandleLittleDictatorUseInteraction(serverPlayer, hand, hitResult);
 			if (dictatorResult != InteractionResult.PASS) {
 				return dictatorResult;
 			}
@@ -1626,6 +1646,7 @@ public final class ServerRaceSystem {
 			tickLittleDictatorDefense(server);
 			tickLittleDictatorUnique(server);
 			tickLittleDictatorShnyaga(server);
+			tickLittleDictatorIronMechanismClientSpoofs(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
 			tickLongPassiveEffectsPersistence(server);
@@ -4494,12 +4515,6 @@ public final class ServerRaceSystem {
 		}
 
 		BlockState state = level.getBlockState(pos);
-		if (tryToggleLittleDictatorIronDoor(level, player, pos, state)) {
-			return InteractionResult.CONSUME;
-		}
-		if (tryToggleLittleDictatorIronTrapdoor(level, player, pos, state)) {
-			return InteractionResult.CONSUME;
-		}
 		if (!canLittleDictatorOpenStorage(state)) {
 			return InteractionResult.PASS;
 		}
@@ -4516,8 +4531,12 @@ public final class ServerRaceSystem {
 		}
 		return player.openMenu(provider).isPresent() ? InteractionResult.CONSUME : InteractionResult.PASS;
 	}
-
-	public static InteractionResult tryHandleLittleDictatorUseInteraction(ServerPlayer player, InteractionHand hand, BlockPos pos) {
+	public static InteractionResult tryHandleLittleDictatorUseInteraction(ServerPlayer player, InteractionHand hand, BlockHitResult hitResult) {
+		BlockPos pos = hitResult == null ? null : hitResult.getBlockPos();
+		InteractionResult ironMechanismResult = tryHandleLittleDictatorIronMechanism(player, hand, hitResult);
+		if (ironMechanismResult != InteractionResult.PASS) {
+			return ironMechanismResult;
+		}
 		if (shouldLittleDictatorPreserveVanillaSecondaryUse(player, hand)) {
 			return InteractionResult.PASS;
 		}
@@ -4534,21 +4553,32 @@ public final class ServerRaceSystem {
 		}
 		return !player.getMainHandItem().isEmpty() || !player.getOffhandItem().isEmpty();
 	}
-
-	private static boolean tryToggleLittleDictatorIronDoor(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state) {
+	private static boolean tryToggleLittleDictatorIronDoor(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state, BlockHitResult hitResult) {
 		if (level == null
 				|| player == null
 				|| state == null
 				|| !state.is(Blocks.IRON_DOOR)
-				|| !(state.getBlock() instanceof DoorBlock doorBlock)) {
+				|| !(state.getBlock() instanceof DoorBlock)) {
 			return false;
 		}
 		boolean open = !state.getValue(DoorBlock.OPEN);
-		doorBlock.setOpen(player, level, state, pos, open);
+		BlockPos lowerPos = state.getValue(DoorBlock.HALF) == DoubleBlockHalf.UPPER ? pos.below() : pos;
+		BlockPos upperPos = lowerPos.above();
+		BlockState lowerState = level.getBlockState(lowerPos);
+		BlockState upperState = level.getBlockState(upperPos);
+		if (lowerState.is(Blocks.IRON_DOOR)) {
+			level.setBlock(lowerPos, lowerState.setValue(DoorBlock.OPEN, open), Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
+		}
+		if (upperState.is(Blocks.IRON_DOOR)) {
+			level.setBlock(upperPos, upperState.setValue(DoorBlock.OPEN, open), Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
+		}
+		level.playSound(null, lowerPos, open ? SoundEvents.IRON_DOOR_OPEN : SoundEvents.IRON_DOOR_CLOSE, SoundSource.BLOCKS, 1.0F, 1.0F);
+		level.gameEvent(player, open ? GameEvent.BLOCK_OPEN : GameEvent.BLOCK_CLOSE, lowerPos);
+		resyncLittleDictatorIronMechanismUse(player, level, pos, hitResult);
 		return true;
 	}
 
-	private static boolean tryToggleLittleDictatorIronTrapdoor(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state) {
+	private static boolean tryToggleLittleDictatorIronTrapdoor(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state, BlockHitResult hitResult) {
 		if (level == null || player == null || state == null || !state.is(Blocks.IRON_TRAPDOOR) || !(state.getBlock() instanceof TrapDoorBlock)) {
 			return false;
 		}
@@ -4561,25 +4591,264 @@ public final class ServerRaceSystem {
 		);
 		level.playSound(null, pos, open ? SoundEvents.IRON_TRAPDOOR_OPEN : SoundEvents.IRON_TRAPDOOR_CLOSE, SoundSource.BLOCKS, 1.0F, 1.0F);
 		level.gameEvent(player, open ? GameEvent.BLOCK_OPEN : GameEvent.BLOCK_CLOSE, pos);
+		resyncLittleDictatorIronMechanismUse(player, level, pos, hitResult);
 		return true;
+	}
+
+	private static void resyncLittleDictatorIronMechanismUse(ServerPlayer player, ServerLevel level, BlockPos pos, BlockHitResult hitResult) {
+		if (level == null || pos == null) {
+			return;
+		}
+		BlockState current = level.getBlockState(pos);
+		level.sendBlockUpdated(pos, current, current, Block.UPDATE_CLIENTS);
+		if (hitResult != null && hitResult.getDirection() != null) {
+			BlockPos placementPos = pos.relative(hitResult.getDirection());
+			BlockState placementState = level.getBlockState(placementPos);
+			level.sendBlockUpdated(placementPos, placementState, placementState, Block.UPDATE_CLIENTS);
+		}
+		syncLittleDictatorIronMechanismLookSpoof(player, createLittleDictatorIronMechanismSpoof(level, pos), true);
+		if (player != null) {
+			LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS.put(player.getUUID(), 6);
+		}
+	}
+
+	public static void updateLittleDictatorIronMechanismLookSpoof(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level) || getLittleDictatorStockAbility(player) == null) {
+			clearLittleDictatorIronMechanismLookSpoof(player);
+			return;
+		}
+		LittleDictatorIronMechanismClientSpoof desired = findLookedLittleDictatorIronMechanism(level, player);
+		if (desired == null) {
+			LittleDictatorIronMechanismClientSpoof previous = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(player.getUUID());
+			if (isStillLookingAtLittleDictatorIronMechanismShape(level, player, previous)) {
+				desired = previous;
+			}
+		}
+		syncLittleDictatorIronMechanismLookSpoof(player, desired, false);
+	}
+
+	private static LittleDictatorIronMechanismClientSpoof findLookedLittleDictatorIronMechanism(ServerLevel level, ServerPlayer player) {
+		if (level == null || player == null) {
+			return null;
+		}
+		Vec3 start = player.getEyePosition();
+		double reach = Math.max(4.5D, player.getAttributeValue(Attributes.BLOCK_INTERACTION_RANGE));
+		Vec3 end = start.add(player.getLookAngle().scale(reach));
+		BlockHitResult hit = level.clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
+		if (hit == null || hit.getType() != HitResult.Type.BLOCK) {
+			return null;
+		}
+		return createLittleDictatorIronMechanismSpoof(level, hit.getBlockPos());
+	}
+
+	private static boolean isStillLookingAtLittleDictatorIronMechanismShape(ServerLevel level, ServerPlayer player, LittleDictatorIronMechanismClientSpoof spoof) {
+		if (level == null || player == null || spoof == null || player.level() != level || !level.dimension().equals(spoof.dimension())) {
+			return false;
+		}
+		Vec3 start = player.getEyePosition();
+		double reach = Math.max(4.5D, player.getAttributeValue(Attributes.BLOCK_INTERACTION_RANGE));
+		Vec3 end = start.add(player.getLookAngle().scale(reach));
+		return isLookingAtLittleDictatorIronMechanismShape(level, player, start, end, spoof.pos())
+				|| (spoof.secondaryPos() != null && isLookingAtLittleDictatorIronMechanismShape(level, player, start, end, spoof.secondaryPos()));
+	}
+
+	private static boolean isLookingAtLittleDictatorIronMechanismShape(ServerLevel level, ServerPlayer player, Vec3 start, Vec3 end, BlockPos pos) {
+		if (level == null || start == null || end == null || pos == null) {
+			return false;
+		}
+		BlockState state = level.getBlockState(pos);
+		if (getLittleDictatorClientIronMechanismState(state) == null) {
+			return false;
+		}
+		VoxelShape shape = state.getShape(level, pos, CollisionContext.of(player));
+		return shape != null && !shape.isEmpty() && shape.clip(start, end, pos) != null;
+	}
+	private static LittleDictatorIronMechanismClientSpoof createLittleDictatorIronMechanismSpoof(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null) {
+			return null;
+		}
+		BlockState state = level.getBlockState(pos);
+		if (state.is(Blocks.IRON_DOOR)) {
+			BlockPos lowerPos = state.getValue(DoorBlock.HALF) == DoubleBlockHalf.UPPER ? pos.below() : pos;
+			return new LittleDictatorIronMechanismClientSpoof(level.dimension(), lowerPos, lowerPos.above());
+		}
+		if (state.is(Blocks.IRON_TRAPDOOR)) {
+			return new LittleDictatorIronMechanismClientSpoof(level.dimension(), pos, null);
+		}
+		return null;
+	}
+
+	private static void syncLittleDictatorIronMechanismLookSpoof(ServerPlayer player, LittleDictatorIronMechanismClientSpoof desired, boolean forceResend) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		LittleDictatorIronMechanismClientSpoof previous = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(playerId);
+		if (Objects.equals(previous, desired) && !forceResend) {
+			return;
+		}
+		LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.remove(playerId);
+		if (!forceResend || !Objects.equals(previous, desired)) {
+			sendLittleDictatorIronMechanismActualState(player, previous);
+		}
+		MinecraftServer server = player.level() == null ? null : player.level().getServer();
+		if (desired != null && server != null) {
+			ServerLevel level = server.getLevel(desired.dimension());
+			if (level != null && player.level() == level) {
+				LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.put(playerId, desired);
+				sendLittleDictatorIronMechanismClientSpoof(player, level, desired.pos());
+				if (desired.secondaryPos() != null) {
+					sendLittleDictatorIronMechanismClientSpoof(player, level, desired.secondaryPos());
+				}
+			}
+		}
+	}
+
+	private static void tickLittleDictatorIronMechanismClientSpoofs(MinecraftServer server) {
+		if (server == null || LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS.isEmpty()) {
+			return;
+		}
+		Iterator<Map.Entry<UUID, Integer>> iterator = LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, Integer> entry = iterator.next();
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			LittleDictatorIronMechanismClientSpoof spoof = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(entry.getKey());
+			if (player == null || spoof == null || getLittleDictatorStockAbility(player) == null) {
+				iterator.remove();
+				continue;
+			}
+			resendActiveLittleDictatorIronMechanismSpoof(player);
+			int remaining = entry.getValue() == null ? 0 : entry.getValue() - 1;
+			if (remaining <= 0) {
+				iterator.remove();
+			} else {
+				entry.setValue(remaining);
+			}
+		}
+	}
+	private static void clearLittleDictatorIronMechanismLookSpoof(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS.remove(playerId);
+		LittleDictatorIronMechanismClientSpoof previous = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.remove(playerId);
+		sendLittleDictatorIronMechanismActualState(player, previous);
+	}
+
+	private static void sendLittleDictatorIronMechanismActualState(ServerPlayer player, LittleDictatorIronMechanismClientSpoof spoof) {
+		if (player == null || player.connection == null || spoof == null || player.level() == null || player.level().getServer() == null) {
+			return;
+		}
+		ServerLevel level = player.level().getServer().getLevel(spoof.dimension());
+		if (level == null || player.level() != level) {
+			return;
+		}
+		player.connection.send(new ClientboundBlockUpdatePacket(level, spoof.pos()));
+		if (spoof.secondaryPos() != null) {
+			player.connection.send(new ClientboundBlockUpdatePacket(level, spoof.secondaryPos()));
+		}
+	}
+
+	private static void sendLittleDictatorIronMechanismClientSpoof(ServerPlayer player, ServerLevel level, BlockPos pos) {
+		if (player == null || player.connection == null || level == null || pos == null || player.level() != level || getLittleDictatorStockAbility(player) == null) {
+			return;
+		}
+		BlockState fakeState = getLittleDictatorClientIronMechanismState(level.getBlockState(pos));
+		if (fakeState != null) {
+			player.connection.send(new ClientboundBlockUpdatePacket(pos, fakeState));
+		}
+	}
+
+	public static boolean shouldReplayLittleDictatorIronMechanismSectionUpdate(ServerPlayer receiver, ClientboundSectionBlocksUpdatePacket packet) {
+		if (receiver == null || packet == null || getLittleDictatorStockAbility(receiver) == null) {
+			return false;
+		}
+		LittleDictatorIronMechanismClientSpoof spoof = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(receiver.getUUID());
+		if (spoof == null || !receiver.level().dimension().equals(spoof.dimension())) {
+			return false;
+		}
+		boolean[] matches = {false};
+		packet.runUpdates((pos, state) -> {
+			if (matches[0]) {
+				return;
+			}
+			matches[0] = spoof.pos().equals(pos) || Objects.equals(spoof.secondaryPos(), pos);
+		});
+		return matches[0];
+	}
+
+	public static void resendActiveLittleDictatorIronMechanismSpoof(ServerPlayer receiver) {
+		if (receiver == null || getLittleDictatorStockAbility(receiver) == null) {
+			return;
+		}
+		LittleDictatorIronMechanismClientSpoof spoof = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(receiver.getUUID());
+		if (spoof == null || receiver.level() == null || receiver.level().getServer() == null || !receiver.level().dimension().equals(spoof.dimension())) {
+			return;
+		}
+		ServerLevel level = receiver.level().getServer().getLevel(spoof.dimension());
+		if (level == null || receiver.level() != level) {
+			return;
+		}
+		sendLittleDictatorIronMechanismClientSpoof(receiver, level, spoof.pos());
+		if (spoof.secondaryPos() != null) {
+			sendLittleDictatorIronMechanismClientSpoof(receiver, level, spoof.secondaryPos());
+		}
+	}
+	public static ClientboundBlockUpdatePacket rewriteLittleDictatorIronMechanismBlockUpdate(ServerPlayer receiver, ClientboundBlockUpdatePacket packet) {
+		if (receiver == null || packet == null || getLittleDictatorStockAbility(receiver) == null) {
+			return packet;
+		}
+		LittleDictatorIronMechanismClientSpoof spoof = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(receiver.getUUID());
+		if (spoof == null || (!spoof.pos().equals(packet.getPos()) && !Objects.equals(spoof.secondaryPos(), packet.getPos())) || !receiver.level().dimension().equals(spoof.dimension())) {
+			return packet;
+		}
+		BlockState fakeState = getLittleDictatorClientIronMechanismState(packet.getBlockState());
+		if (fakeState == null && receiver.level() instanceof ServerLevel level) {
+			fakeState = getLittleDictatorClientIronMechanismState(level.getBlockState(packet.getPos()));
+		}
+		return fakeState == null ? packet : new ClientboundBlockUpdatePacket(packet.getPos(), fakeState);
+	}
+
+	private static BlockState getLittleDictatorClientIronMechanismState(BlockState state) {
+		if (state == null) {
+			return null;
+		}
+		if (state.is(Blocks.IRON_DOOR)) {
+			return Blocks.OAK_DOOR.defaultBlockState()
+					.setValue(DoorBlock.FACING, state.getValue(DoorBlock.FACING))
+					.setValue(DoorBlock.OPEN, state.getValue(DoorBlock.OPEN))
+					.setValue(DoorBlock.HINGE, state.getValue(DoorBlock.HINGE))
+					.setValue(DoorBlock.POWERED, state.getValue(DoorBlock.POWERED))
+					.setValue(DoorBlock.HALF, state.getValue(DoorBlock.HALF));
+		}
+		if (state.is(Blocks.IRON_TRAPDOOR)) {
+			return Blocks.OAK_TRAPDOOR.defaultBlockState()
+					.setValue(TrapDoorBlock.FACING, state.getValue(TrapDoorBlock.FACING))
+					.setValue(TrapDoorBlock.OPEN, state.getValue(TrapDoorBlock.OPEN))
+					.setValue(TrapDoorBlock.HALF, state.getValue(TrapDoorBlock.HALF))
+					.setValue(TrapDoorBlock.POWERED, state.getValue(TrapDoorBlock.POWERED))
+					.setValue(TrapDoorBlock.WATERLOGGED, state.getValue(TrapDoorBlock.WATERLOGGED));
+		}
+		return null;
 	}
 
 	public static InteractionResult tryHandleLittleDictatorIronMechanism(
 			ServerPlayer player,
 			InteractionHand hand,
-			BlockPos pos
+			BlockHitResult hitResult
 	) {
+		BlockPos pos = hitResult == null ? null : hitResult.getBlockPos();
 		if (player == null
 				|| hand == null
 				|| pos == null
 				|| !(player.level() instanceof ServerLevel level)
-				|| shouldLittleDictatorPreserveVanillaSecondaryUse(player, hand)
 				|| getLittleDictatorStockAbility(player) == null) {
 			return InteractionResult.PASS;
 		}
 		BlockState state = level.getBlockState(pos);
-		return tryToggleLittleDictatorIronDoor(level, player, pos, state)
-				|| tryToggleLittleDictatorIronTrapdoor(level, player, pos, state)
+		return tryToggleLittleDictatorIronDoor(level, player, pos, state, hitResult)
+				|| tryToggleLittleDictatorIronTrapdoor(level, player, pos, state, hitResult)
 				? InteractionResult.CONSUME
 				: InteractionResult.PASS;
 	}
@@ -4979,6 +5248,8 @@ public final class ServerRaceSystem {
 		long growthEndTick = Math.min(activeEndTick, nowTick + LITTLE_DICTATOR_UNIQUE_GROWTH_TICKS);
 		long shockIntervalTicks = Math.max(1L, asTicks(getLittleDictatorUniqueShockIntervalSeconds(ability)));
 		double radius = getLittleDictatorUniqueRadiusBlocks(ability);
+		double shockTargetCountMultiplierMin = getLittleDictatorUniqueShockTargetCountMultiplierMin(ability);
+		double shockTargetCountMultiplierMax = getLittleDictatorUniqueShockTargetCountMultiplierMax(ability);
 		double xpPerHealth = getLittleDictatorUniqueXpPerHealth(ability);
 		double foodPerHealth = getLittleDictatorUniqueFoodPerHealth(ability);
 		LittleDictatorUniqueSession session = new LittleDictatorUniqueSession(
@@ -4991,6 +5262,8 @@ public final class ServerRaceSystem {
 				player.isNoGravity(),
 				radius,
 				LITTLE_DICTATOR_UNIQUE_TARGET_SCALE,
+				shockTargetCountMultiplierMin,
+				shockTargetCountMultiplierMax,
 				shockIntervalTicks,
 				xpPerHealth,
 				foodPerHealth
@@ -5385,20 +5658,12 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		if (type == null) {
 			return List.of(Component.literal("Особый указ диктатора.").withStyle(style -> style.withColor(ChatFormatting.GRAY).withItalic(false)));
 		}
-		String first = switch (type) {
-			case SANCTIONS -> "ПКМ по игроку: на время ослабляет его добычу и отключает торговлю с жителями.";
-			case TAXES -> "ПКМ по игроку: на время запускает регулярный сбор случайных предметов в налоговые сундуки.";
-			case PROPAGANDA -> "ПКМ по себе: на время усиливает добычу, рыбалку, копание и торговлю.";
-		};
-		String second = switch (type) {
-			case SANCTIONS, TAXES, PROPAGANDA -> "После применения указ расходуется.";
-		};
-		List<Component> lore = new ArrayList<>();
-		lore.add(Component.literal(first).withStyle(style -> style.withColor(ChatFormatting.GRAY).withItalic(false)));
-		if (!second.isBlank()) {
-			lore.add(Component.literal(second).withStyle(style -> style.withColor(ChatFormatting.DARK_GRAY).withItalic(false)));
-		}
-		return lore;
+        String first = switch (type) {
+            case SANCTIONS -> "ПКМ по игроку: ослабляет его добычу и отключает торговлю с жителями.";
+            case TAXES -> "ПКМ по игроку: запускает регулярный сбор случайных предметов в налоговые сундуки.";
+            case PROPAGANDA -> "ПКМ для себя: усиливает добычу, рыбалку, копание и торговлю.";
+        };
+        return List.of(Component.literal(first).withStyle(style -> style.withColor(ChatFormatting.GRAY).withItalic(false)));
 	}
 
 	private static LittleDictatorDecreeType getLittleDictatorDecreeType(ItemStack stack) {
@@ -6296,6 +6561,27 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		return player != null && LITTLE_DICTATOR_PROPAGANDA.containsKey(player.getUUID());
 	}
 
+    public static float getLittleDictatorUniqueVoiceIntensity(ServerPlayer player) {
+        if (player == null || !(player.level() instanceof ServerLevel level)) {
+            return 0.0F;
+        }
+        LittleDictatorUniqueSession session = LITTLE_DICTATOR_UNIQUE_SESSIONS.get(player.getUUID());
+        if (session == null || !level.dimension().equals(session.dimension)) {
+            return 0.0F;
+        }
+        double scale = getLittleDictatorUniqueScale(session, level.getGameTime());
+        if (scale <= 1.001D) {
+            return 0.0F;
+        }
+        double targetScale = Math.max(1.0D, session.targetScale);
+        double normalized = targetScale <= 1.0D ? 1.0D : Mth.clamp((scale - 1.0D) / (targetScale - 1.0D), 0.0D, 1.0D);
+        return (float) normalized;
+    }
+
+    public static float getLittleDictatorUniqueVoicePitchFactor(ServerPlayer player) {
+        return (float) Mth.lerp(getLittleDictatorUniqueVoiceIntensity(player), 1.0D, 0.7D);
+    }
+
 	public static void beginLittleDictatorBlockLootContext(ServerPlayer player) {
 		LITTLE_DICTATOR_DROP_CONTEXT_PLAYER.set(player);
 		LITTLE_DICTATOR_ENCHANTMENT_CONTEXT_PLAYER.set(player);
@@ -6914,8 +7200,9 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 				.filter(target -> target != dictator)
 				.toList();
 		if (!targets.isEmpty()) {
-			float ratio = (float) (0.10D + 0.10D * targets.size());
 			for (ServerPlayer target : targets) {
+				double targetCountMultiplier = getLittleDictatorUniqueShockTargetCountMultiplier(session.shockTargetCountMultiplierMin, session.shockTargetCountMultiplierMax, dictator, target, session.radius);
+				float ratio = (float) (0.10D + targetCountMultiplier * targets.size());
 				float health = target.getHealth();
 				int damage = Math.max(0, Math.round(health * ratio));
 				if (damage <= 0) {
@@ -7227,14 +7514,16 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		DustParticleOptions red = new DustParticleOptions(0xD91E36, 2.0F);
 		for (int layer = 0; layer < 3; layer++) {
 			int points = 82 + layer * 34;
-			double spawnRadius = 0.9D + layer * 0.42D;
 			for (int i = 0; i < points; i++) {
-				double unitY = 1.0D - 2.0D * ((i + 0.5D) / points);
+				double radialStep = (i + 0.5D) / points;
+				double ySeed = radialStep * 1.618033988749895D + layer * 0.17D;
+				double unitY = 1.0D - 2.0D * (ySeed - Math.floor(ySeed));
 				double horizontal = Math.sqrt(Math.max(0.0D, 1.0D - unitY * unitY));
 				double angle = i * 2.399963229728653D + layer * 0.4D;
 				Vec3 normal = new Vec3(Math.cos(angle) * horizontal, unitY, Math.sin(angle) * horizontal);
+				double spawnRadius = maxRadius * (0.04D + 0.24D * Math.pow(radialStep, 1.72D)) + layer * 0.16D;
 				Vec3 pos = origin.add(normal.scale(spawnRadius));
-				Vec3 velocity = normal.scale(0.36D + layer * 0.12D + (i % 3) * 0.045D);
+				Vec3 velocity = normal.scale(0.22D + spawnRadius / maxRadius * 0.42D + layer * 0.05D);
 				DustParticleOptions dust = switch ((i + layer) % 6) {
 					case 0, 3 -> whiteHot;
 					case 1, 4 -> blue;
@@ -7326,13 +7615,15 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 		int coreBursts = Math.max(78, Math.min(190, (int) Math.round(frontRadius * 4.9D)));
 		for (int i = 0; i < coreBursts; i++) {
-			double unitY = 1.0D - 2.0D * ((i + 0.5D) / coreBursts);
+			double radialStep = (i + 0.5D) / coreBursts;
+			double ySeed = radialStep * 1.618033988749895D;
+			double unitY = 1.0D - 2.0D * (ySeed - Math.floor(ySeed));
 			double horizontal = Math.sqrt(Math.max(0.0D, 1.0D - unitY * unitY));
 			double angle = i * 2.399963229728653D - phase * 0.65D;
 			Vec3 normal = new Vec3(Math.cos(angle) * horizontal, unitY, Math.sin(angle) * horizontal);
-			double burstRadius = frontRadius * (0.25D + (i % 5) * 0.09D);
+			double burstRadius = frontRadius * (0.08D + 0.66D * Math.pow(radialStep, 1.85D));
 			Vec3 pos = origin.add(normal.scale(burstRadius));
-			Vec3 velocity = normal.scale(0.1D + progress * 0.28D + (i % 4) * 0.025D);
+			Vec3 velocity = normal.scale(0.08D + progress * 0.2D + burstRadius / Math.max(1.0D, frontRadius) * 0.16D);
 			DustParticleOptions dust = switch (i % 6) {
 				case 0, 3 -> whiteHot;
 				case 1, 4 -> blue;
@@ -7347,7 +7638,8 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			double angle = phase * 0.72D + i * 2.399963229728653D;
 			Vec3 dir = new Vec3(Math.cos(angle) * horizontal, unitY, Math.sin(angle) * horizontal);
 			for (int segment = 1; segment <= 5; segment++) {
-				double distance = frontRadius * (0.28D + segment * 0.18D);
+				double segmentStep = segment / 5.0D;
+				double distance = frontRadius * (0.12D + 0.88D * Math.pow(segmentStep, 1.55D));
 				Vec3 pos = origin.add(dir.scale(distance));
 				DustParticleOptions dust = segment >= 4 ? whiteHot : (segment % 2 == 0 ? blue : red);
 				level.sendParticles(dust, pos.x, pos.y, pos.z, 0, dir.x * 0.22D, dir.y * 0.22D, dir.z * 0.22D, 1.0D);
@@ -7364,7 +7656,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		if (level == null || dictator == null || session == null) {
 			return;
 		}
-		List<ServerPlayer> targets = getLittleDictatorUniquePlayersInRadius(level, dictator, Math.min(session.radius, 18.0D)).stream()
+		List<ServerPlayer> targets = getLittleDictatorUniquePlayersInRadius(level, dictator, session.radius).stream()
 				.filter(target -> target != dictator && hasLittleDictatorUniqueLineOfSight(level, dictator, target))
 				.toList();
 		for (ServerPlayer target : targets) {
@@ -9224,6 +9516,34 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 				ability == null ? 0.0D : ability.littleDictatorUniqueShockIntervalSeconds,
 				LITTLE_DICTATOR_UNIQUE_DEFAULT_SHOCK_INTERVAL_SECONDS
 		);
+	}
+
+	private static double getLittleDictatorUniqueShockTargetCountMultiplierMin(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorUniqueShockTargetCountMultiplierMin,
+				LITTLE_DICTATOR_UNIQUE_DEFAULT_SHOCK_TARGET_COUNT_MULTIPLIER_MIN
+		);
+	}
+
+	private static double getLittleDictatorUniqueShockTargetCountMultiplierMax(RaceAbilityConfig ability) {
+		return positiveOrDefault(
+				ability == null ? 0.0D : ability.littleDictatorUniqueShockTargetCountMultiplierMax,
+				LITTLE_DICTATOR_UNIQUE_DEFAULT_SHOCK_TARGET_COUNT_MULTIPLIER_MAX
+		);
+	}
+
+	private static double getLittleDictatorUniqueShockTargetCountMultiplier(
+			double min,
+			double max,
+			ServerPlayer dictator,
+			ServerPlayer target,
+			double radius
+	) {
+		if (dictator == null || target == null || radius <= 1.0E-6D) {
+			return max;
+		}
+		double normalizedDistance = Mth.clamp(dictator.position().distanceTo(target.position()) / radius, 0.0D, 1.0D);
+		return Mth.lerp(normalizedDistance, min, max);
 	}
 
 	private static double getLittleDictatorUniqueXpPerHealth(RaceAbilityConfig ability) {
@@ -11350,6 +11670,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		syncGennadiyDonkeyManualVisual(player);
 		syncGennadiyDefenseHeadLock(player);
 		lockLittleDictatorUniqueCasterMovement(player);
+		updateLittleDictatorIronMechanismLookSpoof(player);
 		WomanAttackChargeSession session = WOMAN_ATTACK_CHARGE_SESSIONS.get(player.getUUID());
 		if (session != null) {
 			syncWomanAttackAirTrigger(player, session);
@@ -11359,6 +11680,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 	public static void handlePlayerInputPacket(ServerPlayer player) {
 		syncGennadiyDefenseHeadLock(player);
 		lockLittleDictatorUniqueCasterMovement(player);
+		updateLittleDictatorIronMechanismLookSpoof(player);
 	}
 
 	public static boolean handleGennadiyDefenseMovementPacket(ServerPlayer player) {

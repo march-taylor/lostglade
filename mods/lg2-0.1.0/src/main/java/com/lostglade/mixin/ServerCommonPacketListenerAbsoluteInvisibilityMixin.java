@@ -4,6 +4,8 @@ import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
 import com.lostglade.server.ServerBossBarVisibilitySystem;
 import io.netty.channel.ChannelFutureListener;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundBossEventPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
@@ -48,6 +50,39 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 			return;
 		}
 
+		if (packet instanceof ClientboundBlockUpdatePacket blockUpdatePacket) {
+			ClientboundBlockUpdatePacket replacement = com.lostglade.server.ServerRaceSystem.rewriteLittleDictatorIronMechanismBlockUpdate(receiver, blockUpdatePacket);
+			if (replacement != blockUpdatePacket) {
+				ci.cancel();
+				LG2_ABSOLUTE_INVISIBILITY_BYPASS.set(true);
+				try {
+					if (listener == null) {
+						gameListener.send(replacement);
+					} else {
+						gameListener.send(replacement, listener);
+					}
+				} finally {
+					LG2_ABSOLUTE_INVISIBILITY_BYPASS.remove();
+				}
+				return;
+			}
+		}
+		if (packet instanceof ClientboundSectionBlocksUpdatePacket sectionBlocksUpdatePacket
+				&& com.lostglade.server.ServerRaceSystem.shouldReplayLittleDictatorIronMechanismSectionUpdate(receiver, sectionBlocksUpdatePacket)) {
+			ci.cancel();
+			LG2_ABSOLUTE_INVISIBILITY_BYPASS.set(true);
+			try {
+				if (listener == null) {
+					gameListener.send(sectionBlocksUpdatePacket);
+				} else {
+					gameListener.send(sectionBlocksUpdatePacket, listener);
+				}
+				com.lostglade.server.ServerRaceSystem.resendActiveLittleDictatorIronMechanismSpoof(receiver);
+			} finally {
+				LG2_ABSOLUTE_INVISIBILITY_BYPASS.remove();
+			}
+			return;
+		}
 		if (packet instanceof ClientboundSetEntityDataPacket entityDataPacket) {
 			ServerAbsoluteInvisibilitySystem.maskSprintingMetadataForViewer(receiver, entityDataPacket);
 		}

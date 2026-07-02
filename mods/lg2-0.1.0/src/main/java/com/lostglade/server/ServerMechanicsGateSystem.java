@@ -172,7 +172,7 @@ public final class ServerMechanicsGateSystem {
 				return InteractionResult.PASS;
 			}
 
-			InteractionResult dictatorInteraction = ServerRaceSystem.tryHandleLittleDictatorUseInteraction(serverPlayer, hand, hitResult.getBlockPos());
+			InteractionResult dictatorInteraction = ServerRaceSystem.tryHandleLittleDictatorUseInteraction(serverPlayer, hand, hitResult);
 			if (dictatorInteraction != InteractionResult.PASS) {
 				return dictatorInteraction;
 			}
