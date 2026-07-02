@@ -238,8 +238,9 @@ final class MonitorScreenMediaSessionLifecycle {
 				state.waitingForLink = false;
 				state.userPaused = false;
 				state.galleryItems.clear();
-				state.galleryItems.addAll(displayGalleryItemsFromPersisted(persistedGallery != null ? persistedGallery : List.of()));
-				state.galleryHydrated = true;
+				state.galleryHydrationLoading = false;
+				state.galleryHydrationRequestId++;
+				state.galleryHydrated = persistedGallery == null || persistedGallery.isEmpty();
 				state.galleryIndex = -1;
 				state.galleryScroll = 0;
 				state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
@@ -364,6 +365,8 @@ final class MonitorScreenMediaSessionLifecycle {
 			return;
 		}
 		state.galleryLoadingUrls.clear();
+		state.galleryHydrationLoading = false;
+		state.galleryHydrationRequestId++;
 		state.wallpaperLoading = false;
 		state.playerBackgroundLoading = false;
 	}

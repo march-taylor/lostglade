@@ -749,6 +749,7 @@ final class MediaRuntimeState {
 	boolean userPaused;
 	boolean waitingForLink;
 	boolean loading;
+	boolean galleryHydrationLoading;
 	boolean galleryDeleteConfirmOpen;
 	boolean galleryFileMenuOpen;
 	boolean playerBackgroundMenuOpen;
@@ -829,6 +830,7 @@ final class MediaRuntimeState {
 	ScheduledFuture<?> backgroundFuture;
 	long nextProgressRenderAtMillis;
 	long sessionGeneration;
+	long galleryHydrationRequestId;
 	Boolean pendingAudioPauseState;
 	boolean pendingAudioPositionActive;
 	long pendingAudioPositionMs;
@@ -848,6 +850,7 @@ final class MediaRuntimeState {
 		this.userPaused = false;
 		this.waitingForLink = false;
 		this.loading = false;
+		this.galleryHydrationLoading = false;
 		this.galleryDeleteConfirmOpen = false;
 		this.galleryFileMenuOpen = false;
 		this.playerBackgroundMenuOpen = false;
@@ -932,6 +935,7 @@ final class MediaRuntimeState {
 		this.nextProgressRenderAtMillis = 0L;
 		this.backgroundFuture = null;
 		this.sessionGeneration = 1L;
+		this.galleryHydrationRequestId = 0L;
 		this.progressListener = progressListener;
 		this.progress = new TaskProgress(progressListener);
 	}

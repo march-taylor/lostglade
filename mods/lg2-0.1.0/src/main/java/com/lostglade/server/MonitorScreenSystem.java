@@ -1287,6 +1287,7 @@ public final class MonitorScreenSystem {
 		boolean hasPersistedWallpaper;
 		boolean hasPersistedPlayerBackground;
 		boolean hasPersistedGalleryItems;
+		boolean homeRender = viewMode == ScreenViewMode.HOME;
 		if (mediaState != null) {
 			boolean wallpaperNeedsPersistedRead;
 			boolean playerBackgroundNeedsPersistedRead;
@@ -1295,9 +1296,10 @@ public final class MonitorScreenSystem {
 				hasPersistedWallpaper = mediaState.wallpaperUrl != null && !mediaState.wallpaperUrl.isBlank();
 				hasPersistedPlayerBackground = mediaState.playerBackgroundUrl != null && !mediaState.playerBackgroundUrl.isBlank();
 				hasPersistedGalleryItems = hasSavedGalleryItemsLocked(mediaState);
-				wallpaperNeedsPersistedRead = !hasPersistedWallpaper && !mediaState.wallpaperHydrated;
-				playerBackgroundNeedsPersistedRead = !hasPersistedPlayerBackground && !mediaState.playerBackgroundHydrated;
-				galleryNeedsPersistedRead = viewMode != ScreenViewMode.SBER_DRONES
+				wallpaperNeedsPersistedRead = !homeRender && !hasPersistedWallpaper && !mediaState.wallpaperHydrated;
+				playerBackgroundNeedsPersistedRead = !homeRender && !hasPersistedPlayerBackground && !mediaState.playerBackgroundHydrated;
+				galleryNeedsPersistedRead = !homeRender
+						&& viewMode != ScreenViewMode.SBER_DRONES
 						&& !hasPersistedGalleryItems
 						&& !mediaState.galleryHydrated;
 			}
@@ -1310,6 +1312,10 @@ public final class MonitorScreenSystem {
 			if (galleryNeedsPersistedRead) {
 				hasPersistedGalleryItems = !resolvePersistedGalleryState(component).isEmpty();
 			}
+		} else if (homeRender) {
+			hasPersistedWallpaper = false;
+			hasPersistedPlayerBackground = false;
+			hasPersistedGalleryItems = false;
 		} else {
 			hasPersistedWallpaper = resolvePersistedWallpaperState(component) != null;
 			hasPersistedPlayerBackground = resolvePersistedPlayerBackgroundState(component) != null;
@@ -1325,11 +1331,13 @@ public final class MonitorScreenSystem {
 			synchronized (mediaState) {
 				mediaState.mode = viewMode;
 			}
-			ensureWallpaperStateHydrated(server, component.runtimeKey(), mediaState);
-			ensurePlayerBackgroundModeHydrated(server, component.runtimeKey(), mediaState);
-			ensurePlayerBackgroundStateHydrated(server, component.runtimeKey(), mediaState);
-			if (hasPersistedGalleryItems && viewMode == ScreenViewMode.GALLERY) {
-				ensureGalleryStateHydrated(server, component.runtimeKey(), mediaState);
+			if (!homeRender) {
+				ensureWallpaperStateHydrated(server, component.runtimeKey(), mediaState);
+				ensurePlayerBackgroundModeHydrated(server, component.runtimeKey(), mediaState);
+				ensurePlayerBackgroundStateHydrated(server, component.runtimeKey(), mediaState);
+				if (hasPersistedGalleryItems && viewMode == ScreenViewMode.GALLERY) {
+					ensureGalleryStateHydrated(server, component.runtimeKey(), mediaState);
+				}
 			}
 		}
 		if (isPlayerMode(viewMode)) {
@@ -1564,6 +1572,9 @@ public final class MonitorScreenSystem {
 
 		boolean powered = component.frameCoords().keySet().stream()
 				.anyMatch(frame -> frame != null && frame.isAlive() && isPowered(level, frame));
+		boolean previouslyPowered = component.byCoord().values().stream()
+				.map(ScreenFrame::state)
+				.anyMatch(ScreenTileState::powered);
 		Set<ScreenRuntimeKey> previousRuntimeKeys = previousRuntimeKeysForComponent(level, component);
 		ScreenViewMode viewMode = ScreenViewMode.normalize(forcedViewMode != null ? forcedViewMode : component.viewMode());
 		int launcherPage = forcedLauncherPage != null ? forcedLauncherPage : component.launcherPage();
@@ -1575,10 +1586,15 @@ public final class MonitorScreenSystem {
 			viewMode = ScreenViewMode.HOME;
 			launcherPage = 0;
 		}
-		List<PersistedGalleryItem> persistedGallery = resolvePersistedGalleryState(component);
-		PersistedWallpaperState persistedWallpaper = resolvePersistedWallpaperState(component);
-		PersistedPlayerBackgroundState persistedPlayerBackground = resolvePersistedPlayerBackgroundState(component);
-		PlayerBackgroundMode persistedPlayerBackgroundMode = resolvePersistedPlayerBackgroundMode(component);
+		boolean fastHomePowerOn = forcedViewMode == null
+				&& forcedLauncherPage == null
+				&& powered
+				&& !previouslyPowered
+				&& viewMode == ScreenViewMode.HOME;
+		List<PersistedGalleryItem> persistedGallery = fastHomePowerOn ? List.of() : resolvePersistedGalleryState(component);
+		PersistedWallpaperState persistedWallpaper = fastHomePowerOn ? null : resolvePersistedWallpaperState(component);
+		PersistedPlayerBackgroundState persistedPlayerBackground = fastHomePowerOn ? null : resolvePersistedPlayerBackgroundState(component);
+		PlayerBackgroundMode persistedPlayerBackgroundMode = fastHomePowerOn ? null : resolvePersistedPlayerBackgroundMode(component);
 		String persistedGroupId = resolvePersistedGroupId(component);
 		if (!powered) {
 			viewMode = ScreenViewMode.HOME;
@@ -1603,7 +1619,10 @@ public final class MonitorScreenSystem {
 		);
 		boolean immediateRenderRequested = forcedViewMode != null || forcedLauncherPage != null;
 		ServerLevel mapLevel = photoMapLevel(level.getServer(), level);
-		synchronizeRuntimeGalleryState(component.runtimeKey(), persistedGallery);
+		boolean synchronizePersistedMedia = !fastHomePowerOn;
+		if (synchronizePersistedMedia && powered) {
+			synchronizeRuntimeGalleryState(level.getServer(), component.runtimeKey(), persistedGallery);
+		}
 		boolean rerenderMaps = false;
 
 		cacheComponent(level, renderedComponent);
@@ -1629,43 +1648,50 @@ public final class MonitorScreenSystem {
 			}
 
 			int connectionMask = connectionMask(component.byCoord(), tileCoord.x(), tileCoord.y());
-				ScreenTileState updatedState = new ScreenTileState(
-						CONNECTION_ALL,
-						component.width(),
-						component.height(),
-						tileCoord.x(),
-						tileCoord.y(),
-						connectionMask,
-						powered,
-						viewMode,
-						effectiveLauncherPage,
-						persistedGroupId
-				);
+			ScreenTileState updatedState = new ScreenTileState(
+					CONNECTION_ALL,
+					component.width(),
+					component.height(),
+					tileCoord.x(),
+					tileCoord.y(),
+					connectionMask,
+					powered,
+					viewMode,
+					effectiveLauncherPage,
+					persistedGroupId
+			);
 
 			if (missingMap || !currentState.sameRenderState(updatedState)) {
 				rerenderMaps = true;
 			}
-			List<PersistedGalleryItem> currentGalleryState = readPersistedGalleryState(ensured);
-			PersistedWallpaperState currentWallpaperState = readPersistedWallpaperState(ensured);
-			PersistedPlayerBackgroundState currentPlayerBackgroundState = readPersistedPlayerBackgroundState(ensured);
-			PlayerBackgroundMode currentPlayerBackgroundMode = readPersistedPlayerBackgroundMode(ensured);
-			boolean galleryChanged = !Objects.equals(currentGalleryState, persistedGallery);
-			boolean wallpaperChanged = !Objects.equals(currentWallpaperState, persistedWallpaper);
-			boolean playerBackgroundChanged = !Objects.equals(currentPlayerBackgroundState, persistedPlayerBackground)
-					|| currentPlayerBackgroundMode != persistedPlayerBackgroundMode;
+			boolean galleryChanged = false;
+			boolean wallpaperChanged = false;
+			boolean playerBackgroundChanged = false;
+			if (synchronizePersistedMedia) {
+				List<PersistedGalleryItem> currentGalleryState = readPersistedGalleryState(ensured);
+				PersistedWallpaperState currentWallpaperState = readPersistedWallpaperState(ensured);
+				PersistedPlayerBackgroundState currentPlayerBackgroundState = readPersistedPlayerBackgroundState(ensured);
+				PlayerBackgroundMode currentPlayerBackgroundMode = readPersistedPlayerBackgroundMode(ensured);
+				galleryChanged = !Objects.equals(currentGalleryState, persistedGallery);
+				wallpaperChanged = !Objects.equals(currentWallpaperState, persistedWallpaper);
+				playerBackgroundChanged = !Objects.equals(currentPlayerBackgroundState, persistedPlayerBackground)
+						|| currentPlayerBackgroundMode != persistedPlayerBackgroundMode;
+			}
 			if (galleryChanged || wallpaperChanged || playerBackgroundChanged) {
 				rerenderMaps = true;
 			}
 			if (!currentState.equals(updatedState) || galleryChanged || wallpaperChanged || playerBackgroundChanged) {
 				ItemStack updated = ensured.copy();
 				writeScreenState(updated, updatedState);
-				writePersistedGalleryState(
-						updated,
-						galleryItemsFromPersisted(persistedGallery),
-						persistedWallpaper,
-						persistedPlayerBackground,
-						persistedPlayerBackgroundMode
-				);
+				if (synchronizePersistedMedia) {
+					writePersistedMediaState(
+							updated,
+							persistedGallery,
+							persistedWallpaper,
+							persistedPlayerBackground,
+							persistedPlayerBackgroundMode
+					);
+				}
 				frame.setItem(updated, false);
 			}
 			ensureDisplay(level, frame, connectionMask);
@@ -2230,8 +2256,8 @@ public final class MonitorScreenSystem {
 		return fallback != null ? fallback : "";
 	}
 
-	static void synchronizeRuntimeGalleryState(ScreenRuntimeKey key, List<PersistedGalleryItem> persistedItems) {
-		if (key == null) {
+	static void synchronizeRuntimeGalleryState(MinecraftServer server, ScreenRuntimeKey key, List<PersistedGalleryItem> persistedItems) {
+		if (server == null || key == null) {
 			return;
 		}
 		MediaRuntimeState state = MEDIA_STATES.get(key);
@@ -2239,6 +2265,11 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		List<PersistedGalleryItem> normalizedItems = persistedItems != null ? persistedItems : List.of();
+		long requestId = 0L;
+		long sessionGeneration = 0L;
+		String selectedUrl = null;
+		int preferredIndex = -1;
+		boolean scheduleDisplayHydration = false;
 		synchronized (state) {
 			if (state.mode == ScreenViewMode.SBER_DRONES) {
 				return;
@@ -2246,20 +2277,26 @@ public final class MonitorScreenSystem {
 			if (Objects.equals(persistedGalleryItems(state.galleryItems), normalizedItems)) {
 				return;
 			}
-			String selectedUrl = currentGalleryItemLocked(state) != null ? currentGalleryItemLocked(state).url() : null;
-			int preferredIndex = state.galleryIndex;
-			state.galleryItems.clear();
-			state.galleryItems.addAll(displayGalleryItemsFromPersisted(normalizedItems));
-			state.galleryHydrated = true;
-			state.galleryIndex = resolveGalleryItemIndex(state, selectedUrl, preferredIndex);
-			if (state.gallerySurfaceMode == GallerySurfaceMode.PLAYER && state.galleryIndex < 0 && !state.galleryItems.isEmpty()) {
-				state.galleryIndex = 0;
-			}
-			if (state.galleryItems.isEmpty()) {
+			selectedUrl = currentGalleryItemLocked(state) != null ? currentGalleryItemLocked(state).url() : null;
+			preferredIndex = state.galleryIndex;
+			if (normalizedItems.isEmpty()) {
+				state.galleryItems.clear();
+				state.galleryHydrationLoading = false;
+				state.galleryHydrationRequestId++;
+				state.galleryHydrated = true;
 				state.galleryIndex = -1;
 				state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+				state.version++;
+				return;
 			}
-			state.version++;
+			state.galleryHydrationLoading = true;
+			requestId = ++state.galleryHydrationRequestId;
+			sessionGeneration = state.sessionGeneration;
+			state.galleryHydrated = true;
+			scheduleDisplayHydration = true;
+		}
+		if (scheduleDisplayHydration) {
+			scheduleGalleryDisplayHydration(server, key, normalizedItems, sessionGeneration, requestId, selectedUrl, preferredIndex, true);
 		}
 	}
 
@@ -2473,7 +2510,7 @@ public final class MonitorScreenSystem {
 			return stack;
 		}
 
-		ItemStack replacement = createScreenMap(level, state);
+		ItemStack replacement = createScreenMap(level, state, false);
 		if (!replacement.isEmpty()) {
 			copyPersistedMediaState(stack, replacement);
 			frame.setItem(replacement, false);
@@ -2506,6 +2543,10 @@ public final class MonitorScreenSystem {
 	}
 
 	static ItemStack createScreenMap(ServerLevel level, ScreenTileState state) {
+		return createScreenMap(level, state, true);
+	}
+
+	static ItemStack createScreenMap(ServerLevel level, ScreenTileState state, boolean renderInitialFrame) {
 		ServerLevel mapLevel = photoMapLevel(level.getServer(), level);
 		ItemStack generated = MapItem.create(mapLevel, PHOTO_MAP_CENTER, PHOTO_MAP_CENTER, (byte) 0, false, false);
 		MapId mapId = generated.get(DataComponents.MAP_ID);
@@ -2517,7 +2558,7 @@ public final class MonitorScreenSystem {
 		screenMap.set(DataComponents.MAP_ID, mapId);
 		writeScreenState(screenMap, state);
 		MapItemSavedData mapData = mapLevel.getMapData(mapId);
-		if (mapData != null) {
+		if (renderInitialFrame && mapData != null) {
 			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null, null, null, null, null, false, null, List.of()));
 			applyFrameToMap(mapData, tiles[0]);
 		}
@@ -2710,22 +2751,32 @@ public final class MonitorScreenSystem {
 			PersistedPlayerBackgroundState playerBackgroundState,
 			PlayerBackgroundMode playerBackgroundMode
 	) {
+		writePersistedMediaState(stack, persistedGalleryItems(galleryItems), wallpaperState, playerBackgroundState, playerBackgroundMode);
+	}
+
+	static void writePersistedMediaState(
+			ItemStack stack,
+			List<PersistedGalleryItem> persistedItems,
+			PersistedWallpaperState wallpaperState,
+			PersistedPlayerBackgroundState playerBackgroundState,
+			PlayerBackgroundMode playerBackgroundMode
+	) {
 		if (stack == null || stack.isEmpty()) {
 			return;
 		}
-		List<PersistedGalleryItem> persistedItems = persistedGalleryItems(galleryItems);
+		List<PersistedGalleryItem> normalizedItems = persistedItems != null ? persistedItems : List.of();
 		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
 			tag.remove(PERSISTED_MEDIA_ROOT_TAG);
 			boolean hasWallpaperState = wallpaperState != null && wallpaperState.url() != null && !wallpaperState.url().isBlank();
 			boolean hasPlayerBackgroundState = playerBackgroundState != null && playerBackgroundState.url() != null && !playerBackgroundState.url().isBlank();
 			boolean hasPlayerBackgroundMode = playerBackgroundMode != null;
-			if (persistedItems.isEmpty() && !hasWallpaperState && !hasPlayerBackgroundState && !hasPlayerBackgroundMode) {
+			if (normalizedItems.isEmpty() && !hasWallpaperState && !hasPlayerBackgroundState && !hasPlayerBackgroundMode) {
 				return;
 			}
 			CompoundTag mediaTag = new CompoundTag();
-			mediaTag.putInt(PERSISTED_GALLERY_COUNT_TAG, persistedItems.size());
-			for (int index = 0; index < persistedItems.size(); index++) {
-				PersistedGalleryItem item = persistedItems.get(index);
+			mediaTag.putInt(PERSISTED_GALLERY_COUNT_TAG, normalizedItems.size());
+			for (int index = 0; index < normalizedItems.size(); index++) {
+				PersistedGalleryItem item = normalizedItems.get(index);
 				CompoundTag itemTag = new CompoundTag();
 				itemTag.putString(PERSISTED_GALLERY_TITLE_TAG, item.title() == null ? "" : item.title());
 				itemTag.putString(PERSISTED_GALLERY_SUBTITLE_TAG, item.subtitle() == null ? "" : item.subtitle());
@@ -2766,10 +2817,9 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		List<PersistedGalleryItem> persistedItems = readPersistedGalleryState(stack);
-		List<GalleryItem> galleryItems = galleryItemsFromPersisted(persistedItems);
-		writePersistedGalleryState(
+		writePersistedMediaState(
 				stack,
-				galleryItems,
+				persistedItems,
 				wallpaperState,
 				readPersistedPlayerBackgroundState(stack),
 				readPersistedPlayerBackgroundMode(stack)
@@ -2781,10 +2831,9 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		List<PersistedGalleryItem> persistedItems = readPersistedGalleryState(stack);
-		List<GalleryItem> galleryItems = galleryItemsFromPersisted(persistedItems);
-		writePersistedGalleryState(
+		writePersistedMediaState(
 				stack,
-				galleryItems,
+				persistedItems,
 				readPersistedWallpaperState(stack),
 				playerBackgroundState,
 				readPersistedPlayerBackgroundMode(stack)
@@ -2796,10 +2845,9 @@ public final class MonitorScreenSystem {
 			return;
 		}
 		List<PersistedGalleryItem> persistedItems = readPersistedGalleryState(stack);
-		List<GalleryItem> galleryItems = galleryItemsFromPersisted(persistedItems);
-		writePersistedGalleryState(
+		writePersistedMediaState(
 				stack,
-				galleryItems,
+				persistedItems,
 				readPersistedWallpaperState(stack),
 				readPersistedPlayerBackgroundState(stack),
 				playerBackgroundMode
@@ -10396,6 +10444,8 @@ public final class MonitorScreenSystem {
 		clearDownloadStateLocked(state);
 		state.galleryItems.clear();
 		state.galleryLoadingUrls.clear();
+		state.galleryHydrationLoading = false;
+		state.galleryHydrationRequestId++;
 		state.galleryDeleteConfirmOpen = false;
 		state.galleryFileMenuOpen = false;
 		state.galleryHydrated = false;
