@@ -194,6 +194,9 @@ public final class MonitorScreenSystem {
 	static final long MEDIA_FOCUS_CLEANUP_INTERVAL_TICKS = 20L;
 	static final long RENDER_CACHE_CLEANUP_INTERVAL_TICKS = 200L;
 	static final int MAX_TILE_CACHE_ENTRIES = 128;
+	static final boolean DEBUG_AIM_CURSOR_ENABLED = false;
+	static final int DEBUG_AIM_CURSOR_REFRESH_TICKS = 2;
+	static final int DEBUG_AIM_CURSOR_MOVE_THRESHOLD_PIXELS = 1;
 	static final String CAMERA_GALLERY_URL_PREFIX = "lg2-camera:";
 	static final String LIVE_CAMERA_GALLERY_URL_PREFIX = MonitorSberDronesCatalog.URL_PREFIX;
 	static final double RENDERER_BOT_EYE_HEIGHT = 1.62D;
@@ -211,6 +214,7 @@ public final class MonitorScreenSystem {
 	static final Map<PlayerUiIcon, BufferedImage> PLAYER_UI_ICON_CACHE = new ConcurrentHashMap<>();
 	static final Map<PlayerUiIconTintKey, BufferedImage> PLAYER_UI_ICON_TINT_CACHE = new ConcurrentHashMap<>();
 	static final Map<ScreenRuntimeKey, MediaRuntimeState> MEDIA_STATES = new ConcurrentHashMap<>();
+	static final Map<ScreenRuntimeKey, UiPoint> DEBUG_AIM_CURSORS = new ConcurrentHashMap<>();
 	static final Map<UUID, PendingMediaLinkRequest> PENDING_MEDIA_LINKS = new ConcurrentHashMap<>();
 	static final Map<UUID, PendingGalleryRenameRequest> PENDING_GALLERY_RENAMES = new ConcurrentHashMap<>();
 	static final Map<UUID, InFlightMediaLinkRequest> IN_FLIGHT_MEDIA_LINKS = new ConcurrentHashMap<>();
@@ -228,6 +232,9 @@ public final class MonitorScreenSystem {
 	static volatile BufferedImage onBaseImage;
 	static final Composite REPLACING_IMAGE_COMPOSITE = AlphaComposite.getInstance(AlphaComposite.SRC);
 	static final Composite PRESERVE_TRANSPARENCY_COMPOSITE = AlphaComposite.getInstance(AlphaComposite.SRC_ATOP);
+
+	private record DebugAimTarget(ScreenRuntimeKey runtimeKey, UiPoint point, double distanceSqr) {
+	}
 
 	private MonitorScreenSystem() {
 	}
@@ -391,6 +398,7 @@ public final class MonitorScreenSystem {
 		IN_FLIGHT_MEDIA_LINKS.clear();
 		ACTIVE_MEDIA_ACTIONBARS.clear();
 		PLAYER_MEDIA_FOCUS.clear();
+		DEBUG_AIM_CURSORS.clear();
 		MonitorMaxRuntime.clearRuntime();
 		MonitorYandexMapsRuntime.clearRuntime();
 		MonitorCameraRuntime.clearRuntime();
@@ -763,6 +771,86 @@ public final class MonitorScreenSystem {
 			return List.of();
 		}
 		return new ArrayList<>(levelState(level.dimension()).components().values());
+	}
+
+	static void updateDebugAimCursors(MinecraftServer server) {
+		if (!DEBUG_AIM_CURSOR_ENABLED || server == null) {
+			return;
+		}
+		if (DEBUG_AIM_CURSOR_REFRESH_TICKS > 1 && Math.floorMod(server.getTickCount(), DEBUG_AIM_CURSOR_REFRESH_TICKS) != 0) {
+			return;
+		}
+
+		Map<ScreenRuntimeKey, UiPoint> nextCursors = new HashMap<>();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			DebugAimTarget target = findDebugAimTarget(player);
+			if (target != null) {
+				nextCursors.put(target.runtimeKey(), target.point());
+			}
+		}
+
+		Set<ScreenRuntimeKey> touchedKeys = new HashSet<>();
+		for (Map.Entry<ScreenRuntimeKey, UiPoint> entry : nextCursors.entrySet()) {
+			ScreenRuntimeKey key = entry.getKey();
+			UiPoint nextPoint = entry.getValue();
+			UiPoint previousPoint = DEBUG_AIM_CURSORS.get(key);
+			if (!sameDebugAimPoint(previousPoint, nextPoint)) {
+				DEBUG_AIM_CURSORS.put(key, nextPoint);
+				touchedKeys.add(key);
+			}
+		}
+		for (ScreenRuntimeKey key : new ArrayList<>(DEBUG_AIM_CURSORS.keySet())) {
+			if (!nextCursors.containsKey(key) && DEBUG_AIM_CURSORS.remove(key) != null) {
+				touchedKeys.add(key);
+			}
+		}
+		for (ScreenRuntimeKey key : touchedKeys) {
+			requestRuntimeRender(server, key);
+		}
+	}
+
+	private static DebugAimTarget findDebugAimTarget(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return null;
+		}
+		Vec3 eye = player.getEyePosition();
+		Vec3 rayEnd = eye.add(player.getLookAngle().scale(MEDIA_CONTROL_DISTANCE));
+		DebugAimTarget nearestTarget = null;
+		for (ScreenComponent component : cachedComponents(level)) {
+			if (component == null || !component.powered()) {
+				continue;
+			}
+			for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
+				ItemFrame frame = entry.getKey();
+				if (frame == null || !frame.isAlive()) {
+					continue;
+				}
+				Optional<Vec3> hit = frame.getBoundingBox().inflate(TOUCH_TOLERANCE).clip(eye, rayEnd);
+				if (hit.isEmpty()) {
+					continue;
+				}
+				double distanceSqr = eye.distanceToSqr(hit.get());
+				if (distanceSqr > MEDIA_CONTROL_DISTANCE * MEDIA_CONTROL_DISTANCE) {
+					continue;
+				}
+				if (nearestTarget != null && distanceSqr >= nearestTarget.distanceSqr()) {
+					continue;
+				}
+				UiPoint point = screenTouchPoint(frame, player, entry.getValue(), component.width(), component.height());
+				if (point != null) {
+					nearestTarget = new DebugAimTarget(component.runtimeKey(), point, distanceSqr);
+				}
+			}
+		}
+		return nearestTarget;
+	}
+
+	private static boolean sameDebugAimPoint(UiPoint previousPoint, UiPoint nextPoint) {
+		if (previousPoint == null || nextPoint == null) {
+			return previousPoint == nextPoint;
+		}
+		return Math.abs(previousPoint.x() - nextPoint.x()) <= DEBUG_AIM_CURSOR_MOVE_THRESHOLD_PIXELS
+				&& Math.abs(previousPoint.y() - nextPoint.y()) <= DEBUG_AIM_CURSOR_MOVE_THRESHOLD_PIXELS;
 	}
 
 	public static InteractionResult tryPlaceScreen(UseOnContext context) {
@@ -2412,7 +2500,7 @@ public final class MonitorScreenSystem {
 		writeScreenState(screenMap, state);
 		MapItemSavedData mapData = mapLevel.getMapData(mapId);
 		if (mapData != null) {
-			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null, null, null, null, null, false, List.of()));
+			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null, null, null, null, null, false, null, List.of()));
 			applyFrameToMap(mapData, tiles[0]);
 		}
 		return screenMap;
@@ -2770,6 +2858,7 @@ public final class MonitorScreenSystem {
 				yandexMapsSnapshot,
 				wallpaperSnapshot,
 				transparentOutput,
+				DEBUG_AIM_CURSOR_ENABLED ? DEBUG_AIM_CURSORS.get(component.runtimeKey()) : null,
 				captureRenderTileTargets(server, component)
 		);
 	}
@@ -2986,7 +3075,7 @@ public final class MonitorScreenSystem {
 		if (work == null) {
 			return new byte[0][];
 		}
-		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null && work.cameraAppSnapshot() == null && work.maxSnapshot() == null && work.yandexMapsSnapshot() == null) {
+		if (staticRenderCacheable(work)) {
 			RenderCacheKey key = new RenderCacheKey(work.powered(), work.viewMode(), work.launcherPage(), work.width(), work.height());
 			byte[][] cached = TILE_CACHE.get(key);
 			if (cached != null) {
@@ -3021,6 +3110,7 @@ public final class MonitorScreenSystem {
 				MonitorMaxRuntime.drawCallOverlay(graphics, layout, work.runtimeKey(), work.maxSnapshot());
 			}
 		}
+		drawDebugAimCursor(graphics, work.debugAimCursor(), pixelWidth, pixelHeight);
 		graphics.dispose();
 
 		int[] rgbPixels = canvas.getRaster().getDataBuffer() instanceof DataBufferInt dataBuffer
@@ -3029,15 +3119,28 @@ public final class MonitorScreenSystem {
 		byte[][] tiles = new byte[work.width() * work.height()][MAP_SIZE * MAP_SIZE];
 		quantizeTiles(work, rgbPixels, pixelWidth, tiles);
 
-		if (!isPlayerMode(work.viewMode()) && work.wallpaperSnapshot() == null && work.cameraAppSnapshot() == null && work.maxSnapshot() == null && work.yandexMapsSnapshot() == null) {
+		if (staticRenderCacheable(work)) {
 			TILE_CACHE.put(new RenderCacheKey(work.powered(), work.viewMode(), work.launcherPage(), work.width(), work.height()), tiles);
 		}
 		return tiles;
 	}
 
+	static boolean staticRenderCacheable(RenderWork work) {
+		return work != null
+				&& work.debugAimCursor() == null
+				&& !isPlayerMode(work.viewMode())
+				&& work.wallpaperSnapshot() == null
+				&& work.cameraAppSnapshot() == null
+				&& work.maxSnapshot() == null
+				&& work.yandexMapsSnapshot() == null;
+	}
+
 	static boolean dynamicRenderWork(RenderWork work) {
 		if (work == null) {
 			return false;
+		}
+		if (work.debugAimCursor() != null) {
+			return true;
 		}
 		if (work.maxSnapshot() != null && work.maxSnapshot().dynamic()) {
 			return true;
@@ -3056,6 +3159,40 @@ public final class MonitorScreenSystem {
 				|| state.frameCount() > 1
 				|| work.wallpaperSnapshot() != null
 				|| queueCacheAnimationActive(state.overlayWindow());
+	}
+
+	static void drawDebugAimCursor(Graphics2D graphics, UiPoint point, int width, int height) {
+		if (!DEBUG_AIM_CURSOR_ENABLED || graphics == null || point == null || width <= 0 || height <= 0) {
+			return;
+		}
+		int x = clampInt(point.x(), 0, width - 1);
+		int y = clampInt(point.y(), 0, height - 1);
+		int radius = clampInt(Math.min(width, height) / 22, 5, 14);
+		int gap = Math.max(2, radius / 3);
+		Stroke previousStroke = graphics.getStroke();
+		Color previousColor = graphics.getColor();
+
+		graphics.setStroke(new BasicStroke(4.0F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.setColor(new Color(0, 0, 0, 210));
+		graphics.drawLine(x - radius, y, x - gap, y);
+		graphics.drawLine(x + gap, y, x + radius, y);
+		graphics.drawLine(x, y - radius, x, y - gap);
+		graphics.drawLine(x, y + gap, x, y + radius);
+		graphics.drawOval(x - gap, y - gap, gap * 2, gap * 2);
+
+		graphics.setStroke(new BasicStroke(2.0F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		graphics.setColor(new Color(0, 255, 255, 245));
+		graphics.drawLine(x - radius, y, x - gap, y);
+		graphics.drawLine(x + gap, y, x + radius, y);
+		graphics.drawLine(x, y - radius, x, y - gap);
+		graphics.drawLine(x, y + gap, x, y + radius);
+		graphics.setColor(new Color(255, 40, 190, 245));
+		graphics.drawOval(x - gap, y - gap, gap * 2, gap * 2);
+		graphics.setColor(Color.WHITE);
+		graphics.fillOval(x - 1, y - 1, 3, 3);
+
+		graphics.setStroke(previousStroke);
+		graphics.setColor(previousColor);
 	}
 
 	static void configureUiGraphics(Graphics2D graphics) {
@@ -8121,19 +8258,112 @@ public final class MonitorScreenSystem {
 		return builder + ellipsis;
 	}
 
-	static UiPoint screenTouchPoint(ItemFrame frame, Vec3 hitLocation, TileCoord tileCoord, int gridWidth, int gridHeight) {
-		if (frame == null || hitLocation == null || tileCoord == null) {
+	static UiPoint screenTouchPoint(ItemFrame frame, ServerPlayer player, Vec3 fallbackHitLocation, TileCoord tileCoord, int gridWidth, int gridHeight) {
+		if (frame == null || tileCoord == null) {
 			return null;
 		}
+		if (player != null) {
+			double maxDistance = MEDIA_CONTROL_DISTANCE;
+			if (fallbackHitLocation != null) {
+				maxDistance = Math.max(maxDistance, player.getEyePosition().distanceTo(fallbackHitLocation) + TOUCH_TOLERANCE);
+			}
+			UiPoint projectedPoint = screenTouchPoint(
+					frame.blockPosition(),
+					frame.getDirection(),
+					player.getEyePosition(),
+					player.getLookAngle(),
+					tileCoord,
+					gridWidth,
+					gridHeight,
+					maxDistance
+			);
+			if (projectedPoint != null) {
+				return projectedPoint;
+			}
+		}
+		return screenTouchPoint(frame, fallbackHitLocation, tileCoord, gridWidth, gridHeight);
+	}
 
-		double localX = hitLocation.x - frame.blockPosition().getX();
-		double localY = hitLocation.y - frame.blockPosition().getY();
-		double localZ = hitLocation.z - frame.blockPosition().getZ();
+	static UiPoint screenTouchPoint(ItemFrame frame, ServerPlayer player, TileCoord tileCoord, int gridWidth, int gridHeight) {
+		if (frame == null || player == null || tileCoord == null) {
+			return null;
+		}
+		return screenTouchPoint(
+				frame.blockPosition(),
+				frame.getDirection(),
+				player.getEyePosition(),
+				player.getLookAngle(),
+				tileCoord,
+				gridWidth,
+				gridHeight,
+				MEDIA_CONTROL_DISTANCE
+		);
+	}
+
+	static UiPoint screenTouchPoint(ItemFrame frame, Vec3 hitLocation, TileCoord tileCoord, int gridWidth, int gridHeight) {
+		if (frame == null) {
+			return null;
+		}
+		return screenTouchPoint(frame.blockPosition(), frame.getDirection(), hitLocation, tileCoord, gridWidth, gridHeight);
+	}
+
+	static UiPoint screenTouchPoint(BlockPos framePos, Direction facing, Vec3 hitLocation, TileCoord tileCoord, int gridWidth, int gridHeight) {
+		if (framePos == null || facing == null || hitLocation == null || tileCoord == null) {
+			return null;
+		}
+		PlacementSurfacePoint hit = boundedScreenSurfacePoint(framePos, facing, hitLocation);
+		return hit == null ? null : screenPointFromSurface(hit, tileCoord, gridWidth, gridHeight);
+	}
+
+	static UiPoint screenTouchPoint(
+			BlockPos framePos,
+			Direction facing,
+			Vec3 rayStart,
+			Vec3 rayDirection,
+			TileCoord tileCoord,
+			int gridWidth,
+			int gridHeight,
+			double maxDistance
+	) {
+		Vec3 hitLocation = screenPlaneIntersection(framePos, facing, rayStart, rayDirection, maxDistance);
+		return screenTouchPoint(framePos, facing, hitLocation, tileCoord, gridWidth, gridHeight);
+	}
+
+	static Vec3 screenPlaneIntersection(BlockPos framePos, Direction facing, Vec3 rayStart, Vec3 rayDirection, double maxDistance) {
+		if (framePos == null || facing == null || rayStart == null || rayDirection == null || !facing.getAxis().isHorizontal()) {
+			return null;
+		}
+		Vec3 normal = new Vec3(facing.getStepX(), facing.getStepY(), facing.getStepZ());
+		double denominator = rayDirection.dot(normal);
+		if (!Double.isFinite(denominator) || Math.abs(denominator) < 1.0E-6D) {
+			return null;
+		}
+		Vec3 planePoint = screenPlaneCenter(framePos, facing);
+		double distance = planePoint.subtract(rayStart).dot(normal) / denominator;
+		if (!Double.isFinite(distance) || distance < -TOUCH_TOLERANCE || distance > maxDistance + TOUCH_TOLERANCE) {
+			return null;
+		}
+		return rayStart.add(rayDirection.scale(Math.max(0.0D, distance)));
+	}
+
+	static Vec3 screenPlaneCenter(BlockPos framePos, Direction facing) {
+		Direction mountSide = facing.getOpposite();
+		return Vec3.atCenterOf(framePos).add(
+				mountSide.getStepX() * DISPLAY_PLANE_OFFSET,
+				mountSide.getStepY() * DISPLAY_PLANE_OFFSET,
+				mountSide.getStepZ() * DISPLAY_PLANE_OFFSET
+		);
+	}
+
+	private static PlacementSurfacePoint boundedScreenSurfacePoint(BlockPos framePos, Direction facing, Vec3 hitLocation) {
+		double localX = hitLocation.x - framePos.getX();
+		double localY = hitLocation.y - framePos.getY();
+		double localZ = hitLocation.z - framePos.getZ();
 		if (localY < -TOUCH_TOLERANCE || localY > 1.0D + TOUCH_TOLERANCE) {
 			return null;
 		}
 
-		double u = switch (frame.getDirection()) {
+		double u = switch (facing) {
 			case SOUTH -> localX;
 			case NORTH -> 1.0D - localX;
 			case EAST -> 1.0D - localZ;
@@ -8143,10 +8373,18 @@ public final class MonitorScreenSystem {
 		if (!Double.isFinite(u) || u < -TOUCH_TOLERANCE || u > 1.0D + TOUCH_TOLERANCE) {
 			return null;
 		}
+		return new PlacementSurfacePoint(
+				clampDouble(u, 0.0D, 1.0D),
+				clampDouble(1.0D - localY, 0.0D, 1.0D)
+		);
+	}
 
-		double v = 1.0D - localY;
-		int pixelX = tileCoord.x() * MAP_SIZE + clampInt((int) Math.floor(clampDouble(u, 0.0D, 1.0D) * (MAP_SIZE - 1)), 0, MAP_SIZE - 1);
-		int pixelY = tileCoord.y() * MAP_SIZE + clampInt((int) Math.floor(clampDouble(v, 0.0D, 1.0D) * (MAP_SIZE - 1)), 0, MAP_SIZE - 1);
+	private static UiPoint screenPointFromSurface(PlacementSurfacePoint hit, TileCoord tileCoord, int gridWidth, int gridHeight) {
+		if (hit == null || tileCoord == null) {
+			return null;
+		}
+		int pixelX = tileCoord.x() * MAP_SIZE + clampInt((int) Math.floor(hit.u() * (MAP_SIZE - 1)), 0, MAP_SIZE - 1);
+		int pixelY = tileCoord.y() * MAP_SIZE + clampInt((int) Math.floor(hit.v() * (MAP_SIZE - 1)), 0, MAP_SIZE - 1);
 		int maxX = Math.max(0, gridWidth * MAP_SIZE - 1);
 		int maxY = Math.max(0, gridHeight * MAP_SIZE - 1);
 		return new UiPoint(clampInt(pixelX, 0, maxX), clampInt(pixelY, 0, maxY));

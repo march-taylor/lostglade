@@ -52,7 +52,7 @@ final class MonitorScreenInputController {
 			return InteractionResult.SUCCESS;
 		}
 
-		UiPoint touchPoint = screenTouchPoint(frame, hitResult != null ? hitResult.getLocation() : null, tileCoord, component.width(), component.height());
+		UiPoint touchPoint = screenTouchPoint(frame, player, hitResult != null ? hitResult.getLocation() : null, tileCoord, component.width(), component.height());
 		if (touchPoint == null) {
 			return InteractionResult.SUCCESS;
 		}

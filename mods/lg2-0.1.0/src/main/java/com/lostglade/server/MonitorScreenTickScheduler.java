@@ -29,6 +29,7 @@ final class MonitorScreenTickScheduler {
 		processPendingScreenSyncs(server);
 		processPendingCameraRefreshes(server);
 		MonitorScrollAnimationSystem.tick(server);
+		updateDebugAimCursors(server);
 		processPendingComponentSyncs(server);
 		processPendingSpeakerRefreshes(server);
 		MonitorYandexMapsClientTileRenderer.tick(server);

@@ -158,6 +158,7 @@ record RenderWork(
 		YandexMapsVisualSnapshot yandexMapsSnapshot,
 		WallpaperVisualSnapshot wallpaperSnapshot,
 		boolean transparentOutput,
+		UiPoint debugAimCursor,
 		List<RenderTileTarget> tileTargets
 ) {
 }
