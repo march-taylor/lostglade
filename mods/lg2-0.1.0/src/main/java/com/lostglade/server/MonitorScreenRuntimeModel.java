@@ -43,6 +43,7 @@ record MediaVisualSnapshot(
 		boolean galleryPickerMode,
 		boolean gallerySelectionMode,
 		int gallerySelectionCount,
+		boolean gallerySlideshowEnabled,
 		boolean galleryCurrentSaved,
 		boolean galleryBackedYoutube,
 		boolean musicPlayerLayout,
@@ -80,6 +81,7 @@ record MediaVisualSnapshot(
 		MediaActionGlyph wallpaperActionGlyph,
 		MediaActionVisualState wallpaperActionState,
 		boolean youtubeMusicShuffleEnabled,
+		MediaRepeatMode repeatMode,
 		boolean youtubeQueueOpen,
 		int mediaListScroll,
 		int currentMediaListIndex,
@@ -123,10 +125,11 @@ record MediaOverlayWindowSnapshot(
 		int totalItemCount,
 		int itemWindowStartIndex,
 		GalleryFileMenuSnapshot galleryFile,
+		GallerySlideshowSettingsSnapshot gallerySlideshow,
 		int scroll,
 		int currentIndex,
 		boolean shuffleEnabled,
-		boolean repeatOneEnabled,
+		MediaRepeatMode repeatMode,
 		PlayerBackgroundMode playerBackgroundMode,
 		boolean galleryBackgroundAvailable,
 		MediaScaleMode playerBackgroundScaleMode
@@ -141,6 +144,14 @@ record GalleryFileMenuSnapshot(
 		boolean canShare,
 		boolean canWallpaper,
 		boolean wallpaperSelected
+) {
+}
+
+record GallerySlideshowSettingsSnapshot(
+		boolean enabled,
+		int durationSeconds,
+		int minDurationSeconds,
+		int maxDurationSeconds
 ) {
 }
 
@@ -600,13 +611,16 @@ enum MediaBottomAction {
 	WALLPAPER,
 	PRIMARY,
 	QUEUE,
+	REPEAT,
 	SCALE
 }
 
 enum PlayerUiIcon {
 	SEARCH("/assets/lg2/textures/monitor/ui_icons/search.png"),
 	SHUFFLE("/assets/lg2/textures/monitor/ui_icons/shuffle.png"),
+	REPEAT("/assets/lg2/textures/monitor/ui_icons/repeat.png"),
 	REPEAT_ONE("/assets/lg2/textures/monitor/ui_icons/repeat_one.png"),
+	VIDEO_AI("/assets/lg2/textures/monitor/ui_icons/video_ai.png"),
 	DROPDOWN("/assets/lg2/textures/monitor/ui_icons/dropdown.png"),
 	MENU("/assets/lg2/textures/monitor/ui_icons/menu.png"),
 	QUEUE("/assets/lg2/textures/monitor/ui_icons/queue.png"),
@@ -614,10 +628,15 @@ enum PlayerUiIcon {
 	TRASH("/assets/lg2/textures/monitor/ui_icons/trash.png"),
 	EDIT("/assets/lg2/textures/monitor/ui_icons/edit.png"),
 	SETTINGS("/assets/lg2/textures/monitor/ui_icons/settings.png"),
+	SETTINGS_3("/assets/lg2/textures/monitor/ui_icons/settings_3.png"),
 	WALLPAPER("/assets/lg2/textures/monitor/ui_icons/wallpaper.png"),
 	CHECK("/assets/lg2/textures/monitor/ui_icons/check.png"),
 	CHECKBOX_LINE("/assets/lg2/textures/monitor/ui_icons/checkbox_line.png"),
 	CHECKBOX_FILL("/assets/lg2/textures/monitor/ui_icons/checkbox_fill.png"),
+	LIST_CHECK_3_LINE("/assets/lg2/textures/monitor/ui_icons/list_check_3_line.png"),
+	LIST_CHECK_3_FILL("/assets/lg2/textures/monitor/ui_icons/list_check_3_fill.png"),
+	TOGGLE_LEFT("/assets/lg2/textures/monitor/ui_icons/toggle_left.png"),
+	TOGGLE_RIGHT("/assets/lg2/textures/monitor/ui_icons/toggle_right.png"),
 	PLAY("/assets/lg2/textures/monitor/ui_icons/play.png"),
 	PAUSE("/assets/lg2/textures/monitor/ui_icons/pause.png"),
 	FILE_MUSIC("/assets/lg2/textures/monitor/ui_icons/file_music.png"),
@@ -734,6 +753,7 @@ final class MediaRuntimeState {
 	boolean galleryDeleteConfirmOpen;
 	boolean galleryFileMenuOpen;
 	boolean playerBackgroundMenuOpen;
+	boolean gallerySlideshowSettingsOpen;
 	String statusText;
 	boolean galleryHydrated;
 	boolean wallpaperHydrated;
@@ -762,6 +782,9 @@ final class MediaRuntimeState {
 	final Set<String> galleryBulkSelectedKeys;
 	boolean galleryPreloadStatusRefreshScheduled;
 	int galleryPreloadStatusRefreshStep;
+	boolean gallerySlideshowEnabled;
+	int gallerySlideshowDurationSeconds;
+	long gallerySlideshowAdvanceAtMillis;
 	boolean playerBackgroundGalleryPickerOpen;
 	ScreenViewMode playerBackgroundGalleryPickerReturnMode;
 	GallerySurfaceMode playerBackgroundGalleryPickerReturnSurfaceMode;
@@ -776,7 +799,7 @@ final class MediaRuntimeState {
 	final Set<String> retainedYoutubePreloadUrls;
 	final Set<String> retainedYoutubeMusicUrls;
 	boolean youtubeMusicShuffleEnabled;
-	boolean youtubeRepeatOneEnabled;
+	MediaRepeatMode repeatMode;
 	final List<Integer> youtubeMusicShuffleOrder;
 	int youtubeMusicShuffleCursor;
 	int youtubeQueueIndex;
@@ -829,6 +852,7 @@ final class MediaRuntimeState {
 		this.galleryDeleteConfirmOpen = false;
 		this.galleryFileMenuOpen = false;
 		this.playerBackgroundMenuOpen = false;
+		this.gallerySlideshowSettingsOpen = false;
 		this.pendingAudioPauseState = null;
 		this.pendingAudioPositionActive = false;
 		this.pendingAudioPositionMs = 0L;
@@ -864,6 +888,9 @@ final class MediaRuntimeState {
 		this.galleryBulkSelectedKeys = new LinkedHashSet<>();
 		this.galleryPreloadStatusRefreshScheduled = false;
 		this.galleryPreloadStatusRefreshStep = 0;
+		this.gallerySlideshowEnabled = false;
+		this.gallerySlideshowDurationSeconds = 25;
+		this.gallerySlideshowAdvanceAtMillis = 0L;
 		this.playerBackgroundGalleryPickerOpen = false;
 		this.playerBackgroundGalleryPickerReturnMode = null;
 		this.playerBackgroundGalleryPickerReturnSurfaceMode = null;
@@ -878,7 +905,7 @@ final class MediaRuntimeState {
 		this.retainedYoutubePreloadUrls = new HashSet<>();
 		this.retainedYoutubeMusicUrls = new HashSet<>();
 		this.youtubeMusicShuffleEnabled = false;
-		this.youtubeRepeatOneEnabled = false;
+		this.repeatMode = MediaRepeatMode.OFF;
 		this.youtubeMusicShuffleOrder = new ArrayList<>();
 		this.youtubeMusicShuffleCursor = -1;
 		this.youtubeQueueIndex = -1;

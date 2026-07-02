@@ -138,13 +138,18 @@ final class MonitorScreenMediaFrameRuntime {
 
 		boolean shouldRender = false;
 		boolean shouldContinue;
+		Integer galleryAdvanceIndex = null;
 		synchronized (state) {
 			state.playbackFuture = null;
 			long now = System.currentTimeMillis();
 			boolean streamPlaybackActive = hasActiveStreamPlaybackLocked(state) && !state.waitingForLink;
 			boolean mediaActive = !streamPlaybackActive && loadedMediaAnimationActiveLocked(state);
+			boolean slideshowActive = !streamPlaybackActive && gallerySlideshowPlaybackActiveLocked(state);
 			if (!mediaActive) {
 				state.nextLoadedMediaFrameAtMillis = 0L;
+			}
+			if (!slideshowActive) {
+				state.gallerySlideshowAdvanceAtMillis = 0L;
 			}
 			if (mediaActive
 					&& state.nextLoadedMediaFrameAtMillis > 0L
@@ -155,9 +160,22 @@ final class MonitorScreenMediaFrameRuntime {
 				state.nextLoadedMediaFrameAtMillis = now + sanitizedAnimationDelayMillis(state.loadedMedia.delayMillis(state.frameIndex));
 				shouldRender = true;
 			}
-			shouldContinue = mediaActive;
+			if (slideshowActive) {
+				long slideshowDeadlineMillis = state.gallerySlideshowAdvanceAtMillis;
+				if (slideshowDeadlineMillis > 0L && now >= slideshowDeadlineMillis) {
+					galleryAdvanceIndex = nextGallerySlideshowIndexLocked(state);
+					state.gallerySlideshowAdvanceAtMillis = 0L;
+				} else {
+					state.gallerySlideshowAdvanceAtMillis = nextGallerySlideshowDeadlineMillisLocked(state, now);
+				}
+			}
+			shouldContinue = galleryAdvanceIndex == null && (mediaActive || slideshowActive);
 		}
 
+		if (galleryAdvanceIndex != null) {
+			continueGalleryPlaybackAtIndex(server, key, galleryAdvanceIndex);
+			return;
+		}
 		if (shouldRender) {
 			requestRuntimeRender(server, key);
 		}
@@ -235,7 +253,7 @@ final class MonitorScreenMediaFrameRuntime {
 				if (state.relaySessionId == null) {
 					return;
 				}
-			} else if (!loadedMediaAnimationActiveLocked(state)) {
+			} else if (!loadedMediaAnimationActiveLocked(state) && !gallerySlideshowPlaybackActiveLocked(state)) {
 				return;
 			}
 		}
@@ -284,6 +302,7 @@ final class MonitorScreenMediaFrameRuntime {
 		boolean shouldBumpVersion = false;
 		boolean speakerRefreshNeeded = false;
 		Integer queueAdvanceIndex = null;
+		Integer galleryAdvanceIndex = null;
 		synchronized (state) {
 			if (!isStreamPlaybackLocked(state)) {
 				return;
@@ -357,12 +376,13 @@ final class MonitorScreenMediaFrameRuntime {
 				}
 				// Keep YouTube playback on the GIF-like path: new frames should queue the next render,
 				// not invalidate an in-flight large-screen render job every poll.
-				shouldReschedule = true;
-				if (isYoutubeFamilyMode(state.mode) && result.snapshot().ended() && !state.youtubeQueue.isEmpty()) {
-					queueAdvanceIndex = state.youtubeRepeatOneEnabled
-							? normalizeYoutubeQueueIndexLocked(state, state.youtubeQueueIndex)
-							: adjacentYoutubeQueueIndexLocked(state, 1);
-					shouldReschedule = false;
+				shouldReschedule = !result.snapshot().ended();
+				if (result.snapshot().ended()) {
+					if (isYoutubeFamilyMode(state.mode)) {
+						queueAdvanceIndex = endedQueueAdvanceIndexLocked(state);
+					} else if (state.mode == ScreenViewMode.GALLERY && state.gallerySurfaceMode == GallerySurfaceMode.PLAYER) {
+						galleryAdvanceIndex = endedGalleryAdvanceIndexLocked(state);
+					}
 				}
 			} else {
 				state.loading = false;
@@ -385,6 +405,10 @@ final class MonitorScreenMediaFrameRuntime {
 			}
 			return;
 		}
+		if (galleryAdvanceIndex != null) {
+			continueGalleryPlaybackAtIndex(server, result.screenKey(), galleryAdvanceIndex);
+			return;
+		}
 		if (speakerRefreshNeeded) {
 			refreshConnectedSpeakersNow(server, result.screenKey());
 		}
@@ -396,6 +420,76 @@ final class MonitorScreenMediaFrameRuntime {
 		}
 		if (shouldReschedule) {
 			scheduleNextMediaFrame(server, result.screenKey());
+		}
+	}
+
+	static Integer endedQueueAdvanceIndexLocked(MediaRuntimeState state) {
+		if (state == null || state.youtubeQueue.isEmpty()) {
+			return null;
+		}
+		int currentIndex = normalizeYoutubeQueueIndexLocked(state, Math.max(0, state.youtubeQueueIndex));
+		return switch (resolvedRepeatModeLocked(state)) {
+			case ONE -> currentIndex;
+			case ALL -> normalizeYoutubeQueueIndexLocked(state, currentIndex + 1);
+			case OFF -> currentIndex + 1 < state.youtubeQueue.size() ? currentIndex + 1 : null;
+		};
+	}
+
+	static Integer endedGalleryAdvanceIndexLocked(MediaRuntimeState state) {
+		if (state == null
+				|| state.mode != ScreenViewMode.GALLERY
+				|| state.gallerySurfaceMode != GallerySurfaceMode.PLAYER
+				|| state.galleryItems.isEmpty()) {
+			return null;
+		}
+		return adjacentGalleryPlaybackIndexLocked(state, 1);
+	}
+
+	static void continueGalleryPlaybackAtIndex(MinecraftServer server, ScreenRuntimeKey key, int requestedIndex) {
+		if (server == null || key == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		ScreenComponent component = resolveScreenComponent(server, key);
+		UiLayout layout = component != null ? createUiLayout(component.width(), component.height()) : createUiLayout(1, 1);
+		String title = null;
+		String url = null;
+		String localMediaKey = null;
+		GalleryItemKind kind = GalleryItemKind.MEDIA;
+		boolean selected = false;
+		synchronized (state) {
+			int index = normalizeGalleryIndexLocked(state, requestedIndex);
+			if (index < 0 || index >= state.galleryItems.size()) {
+				return;
+			}
+			GalleryItem item = state.galleryItems.get(index);
+			if (item == null) {
+				return;
+			}
+			kind = effectiveGalleryItemKind(item);
+			title = item.title();
+			url = item.url();
+			localMediaKey = item.localMediaKey();
+			if (kind != GalleryItemKind.YOUTUBE && selectGalleryItemLocked(state, index, layout)) {
+				state.statusText = "";
+				state.version++;
+				selected = true;
+			}
+		}
+		if (selected) {
+			requestRuntimeRender(server, key);
+			resumeMediaPlaybackIfNeeded(server, key);
+			return;
+		}
+		if (kind == GalleryItemKind.YOUTUBE && url != null && !url.isBlank()) {
+			startGalleryYoutubePlayback(server, key, null, title, url, requestedIndex);
+			return;
+		}
+		if (url != null && !url.isBlank()) {
+			scheduleGalleryItemLoad(server, key, title, url, localMediaKey, kind, true, requestedIndex);
 		}
 	}
 
@@ -569,6 +663,7 @@ final class MonitorScreenMediaFrameRuntime {
 
 		boolean handled = false;
 		Long youtubeSeekTargetMs = null;
+		String youtubeSeekSessionId = null;
 		synchronized (state) {
 			if (!state.loading
 					&& !state.waitingForLink
@@ -603,6 +698,7 @@ final class MonitorScreenMediaFrameRuntime {
 					markPendingAudioPositionLocked(state, youtubeSeekTargetMs);
 					bumpAudioSyncTokenLocked(state);
 					markStreamSeekBufferingLocked(state);
+					youtubeSeekSessionId = state.relaySessionId;
 					handled = true;
 				} else if (state.loadedMedia != null && state.loadedMedia.animated() && state.loadedMedia.frameCount() > 1) {
 					cancelPlaybackLocked(state);
@@ -620,11 +716,14 @@ final class MonitorScreenMediaFrameRuntime {
 		requestComponentRender(server, component, component.viewMode(), component.launcherPage());
 		if (youtubeSeekTargetMs != null) {
 			long seekTargetMs = youtubeSeekTargetMs;
+			String sessionId = youtubeSeekSessionId != null && !youtubeSeekSessionId.isBlank()
+					? youtubeSeekSessionId
+					: relaySessionId(component.runtimeKey());
 			refreshConnectedSpeakersNow(server, component.runtimeKey());
 			ensureExecutors();
 			CompletableFuture.runAsync(() -> {
 				try {
-					MonitorYoutubeRelayClient.seek(relaySessionId(component.runtimeKey()), seekTargetMs);
+					MonitorYoutubeRelayClient.seek(sessionId, seekTargetMs);
 				} catch (Exception ignored) {
 				}
 			}, mediaIoExecutor).thenRun(() -> server.execute(() -> {

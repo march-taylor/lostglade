@@ -52,7 +52,10 @@ final class MonitorScreenInputController {
 			return InteractionResult.SUCCESS;
 		}
 
-		UiPoint touchPoint = screenTouchPoint(frame, player, hitResult != null ? hitResult.getLocation() : null, tileCoord, component.width(), component.height());
+		if (hitResult == null) {
+			return InteractionResult.SUCCESS;
+		}
+		UiPoint touchPoint = screenTouchPoint(frame, player, hitResult.getLocation(), tileCoord, component.width(), component.height());
 		if (touchPoint == null) {
 			return InteractionResult.SUCCESS;
 		}
@@ -73,8 +76,11 @@ final class MonitorScreenInputController {
 		boolean galleryPhotoPrintImportRequested = false;
 		boolean persistGallery = false;
 		Integer galleryDeferredLoadIndex = null;
+		Integer gallerySlideshowStartIndex = null;
 		Boolean youtubePauseAction = null;
+		String youtubePauseSessionId = null;
 		Long youtubeSeekTargetMs = null;
+		String youtubeSeekSessionId = null;
 		Integer youtubeQueuePlayIndex = null;
 		boolean galleryDownloadRequested = false;
 		boolean galleryWallpaperRequested = false;
@@ -135,6 +141,7 @@ final class MonitorScreenInputController {
 			boolean galleryDeleteConfirmOpen;
 			boolean galleryFileMenuOpen;
 			boolean playerBackgroundMenuOpen;
+			boolean gallerySlideshowSettingsOpen;
 			boolean playerUiVisible;
 			boolean controlsWereHidden = false;
 			synchronized (mediaState) {
@@ -144,6 +151,7 @@ final class MonitorScreenInputController {
 				galleryDeleteConfirmOpen = mediaState.galleryDeleteConfirmOpen;
 				galleryFileMenuOpen = mediaState.galleryFileMenuOpen;
 				playerBackgroundMenuOpen = mediaState.playerBackgroundMenuOpen;
+				gallerySlideshowSettingsOpen = mediaState.gallerySlideshowSettingsOpen;
 				playerUiVisible = mediaControlUiVisibleLocked(mediaState);
 			}
 			if (!galleryBrowser && (playerUiVisible || mediaState.loading) && overlayMode == MediaOverlayMode.VIEW) {
@@ -253,7 +261,9 @@ final class MonitorScreenInputController {
 						PlayerBackgroundMode currentBackgroundMode = resolvedPlayerBackgroundModeLocked(mediaState);
 						if (playerBackgroundScaleButtonContains(layout, currentBackgroundMode, touchPoint)) {
 							if (currentBackgroundMode == PlayerBackgroundMode.ARTWORK) {
-								mediaState.scaleMode = mediaState.scaleMode != null ? mediaState.scaleMode.next() : MediaScaleMode.FILL;
+								mediaState.playerBackgroundScaleMode = mediaState.playerBackgroundScaleMode != null
+										? mediaState.playerBackgroundScaleMode.next()
+										: MediaScaleMode.FILL;
 							} else if (currentBackgroundMode == PlayerBackgroundMode.GALLERY) {
 								mediaState.playerBackgroundScaleMode = mediaState.playerBackgroundScaleMode != null
 										? mediaState.playerBackgroundScaleMode.next()
@@ -281,6 +291,22 @@ final class MonitorScreenInputController {
 					}
 				}
 				rerenderCurrent = true;
+			} else if (gallerySlideshowSettingsOpen) {
+				synchronized (mediaState) {
+					UiRect panelRect = gallerySlideshowPanelRect(layout);
+					UiRect headerRect = gallerySlideshowHeaderRect(layout);
+					UiRect closeRect = gallerySlideshowCloseRect(layout);
+					boolean insideWindow = panelRect.contains(touchPoint.x(), touchPoint.y()) || headerRect.contains(touchPoint.x(), touchPoint.y());
+					if (closeRect.contains(touchPoint.x(), touchPoint.y()) || !insideWindow) {
+						mediaState.gallerySlideshowSettingsOpen = false;
+						mediaState.version++;
+					} else if (gallerySlideshowDurationRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+						mediaState.gallerySlideshowDurationSeconds = gallerySlideshowDurationSecondsForPoint(layout, touchPoint);
+						resetGallerySlideshowDeadlineLocked(mediaState);
+						mediaState.version++;
+					}
+				}
+				rerenderCurrent = true;
 			} else if (playerUiVisible && isYoutubeFamilyMode(mediaState.mode) && mediaState.youtubeQueueOpen) {
 				synchronized (mediaState) {
 					int visibleRows = mediaQueueVisibleRows(layout);
@@ -296,7 +322,7 @@ final class MonitorScreenInputController {
 						youtubeQueuePreloadDiff = syncYoutubeQueuePreloadsLocked(mediaState);
 						youtubeMusicQueuePreloadDiff = syncYoutubeMusicQueuePreloadsLocked(mediaState);
 					} else if (mediaQueueRepeatRect(layout).contains(touchPoint.x(), touchPoint.y())) {
-						mediaState.youtubeRepeatOneEnabled = !mediaState.youtubeRepeatOneEnabled;
+						mediaState.repeatMode = resolvedRepeatModeLocked(mediaState).next();
 					} else if (scrollbarVisible(visibleRows, mediaState.youtubeQueue.size())
 							&& mediaQueueScrollbarTrackRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 						mediaState.youtubeQueueScroll = scrollValueForTrack(
@@ -373,6 +399,9 @@ final class MonitorScreenInputController {
 			} else if (galleryBrowser && mediaGalleryBrowserCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					nextMode = restorePlayerBackgroundGalleryPickerLocked(mediaState) ? mediaState.mode : ScreenViewMode.HOME;
+					mediaState.gallerySlideshowEnabled = false;
+					mediaState.gallerySlideshowSettingsOpen = false;
+					mediaState.gallerySlideshowAdvanceAtMillis = 0L;
 					clearGalleryBulkSelectionLocked(mediaState);
 					mediaState.version++;
 				}
@@ -386,6 +415,41 @@ final class MonitorScreenInputController {
 					mediaState.version++;
 				}
 				rerenderCurrent = true;
+			} else if (galleryBrowser
+					&& mediaState.mode == ScreenViewMode.GALLERY
+					&& !mediaState.playerBackgroundGalleryPickerOpen
+					&& mediaState.galleryBulkSelectionMode
+					&& mediaGalleryBrowserSelectAllRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					setGalleryBulkAllSelectedLocked(mediaState, !allGalleryBulkItemsSelectedLocked(mediaState));
+					mediaState.statusText = "";
+					mediaState.version++;
+				}
+				rerenderCurrent = true;
+			} else if (galleryBrowser
+					&& mediaState.mode == ScreenViewMode.GALLERY
+					&& !mediaState.playerBackgroundGalleryPickerOpen
+					&& mediaState.galleryBulkSelectionMode
+					&& mediaGalleryBrowserSlideshowRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					List<Integer> slideshowIndexes = selectedGallerySlideshowIndexesLocked(mediaState);
+					if (slideshowIndexes.isEmpty()) {
+						mediaState.statusText = mediaState.galleryBulkSelectedKeys.isEmpty() ? "Ничего не выбрано" : "Нет подходящих файлов";
+					} else {
+						mediaState.gallerySlideshowEnabled = true;
+						mediaState.gallerySlideshowSettingsOpen = false;
+						mediaState.galleryFileMenuOpen = false;
+						mediaState.playerBackgroundMenuOpen = false;
+						mediaState.galleryDeleteConfirmOpen = false;
+						mediaState.youtubeQueueOpen = false;
+						mediaState.statusText = "";
+						mediaState.gallerySlideshowDurationSeconds = sanitizedGallerySlideshowDurationSeconds(mediaState.gallerySlideshowDurationSeconds);
+						resetGallerySlideshowDeadlineLocked(mediaState);
+						gallerySlideshowStartIndex = slideshowIndexes.get(0);
+					}
+					mediaState.version++;
+				}
+				rerenderCurrent = gallerySlideshowStartIndex == null;
 			} else if (galleryBrowser
 					&& mediaState.mode == ScreenViewMode.GALLERY
 					&& !mediaState.playerBackgroundGalleryPickerOpen
@@ -549,6 +613,12 @@ final class MonitorScreenInputController {
 						}
 						cancelPlaybackLocked(mediaState);
 						clearYoutubePlaybackLocked(mediaState);
+						if (mediaState.mode == ScreenViewMode.GALLERY) {
+							mediaState.gallerySlideshowEnabled = false;
+							mediaState.gallerySlideshowSettingsOpen = false;
+							mediaState.gallerySlideshowAdvanceAtMillis = 0L;
+							clearGalleryBulkSelectionLocked(mediaState);
+						}
 						mediaState.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
 						mediaState.overlayMode = MediaOverlayMode.CONTROLS;
 						mediaState.statusText = "";
@@ -573,9 +643,25 @@ final class MonitorScreenInputController {
 					}
 				}
 			} else if (!galleryBrowser
+					&& playerUiVisible
+					&& gallerySlideshowSettingsButtonVisibleLocked(mediaState)
+					&& mediaGallerySettingsRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+				synchronized (mediaState) {
+					mediaState.gallerySlideshowSettingsOpen = !mediaState.gallerySlideshowSettingsOpen;
+					mediaState.galleryFileMenuOpen = false;
+					mediaState.playerBackgroundMenuOpen = false;
+					mediaState.galleryDeleteConfirmOpen = false;
+					mediaState.youtubeQueueOpen = false;
+					if (mediaState.gallerySlideshowSettingsOpen) {
+						resetGallerySlideshowDeadlineLocked(mediaState);
+					}
+					mediaState.version++;
+				}
+				rerenderCurrent = true;
+			} else if (!galleryBrowser
 					&& mediaState.mode == ScreenViewMode.GALLERY
 					&& (usesMusicPlayerLayoutLocked(mediaState)
-					? mediaYoutubeMusicActionButtonRect(layout, 0, 1)
+					? mediaGalleryMusicPrimaryActionRect(layout)
 					: mediaPrimaryActionRect(layout, mediaState)).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					if (currentGalleryItemSavedLocked(mediaState)) {
@@ -610,15 +696,19 @@ final class MonitorScreenInputController {
 			} else if (playerUiVisible
 					&& canTogglePlaybackLocked(mediaState)
 					&& (mediaCenterPlayPauseRect(layout, mediaChromeMode(mediaState)).contains(touchPoint.x(), touchPoint.y())
-					|| mediaPlayPauseRect(layout, mediaChromeMode(mediaState)).contains(touchPoint.x(), touchPoint.y()))) {
+					|| mediaPlayPauseRect(layout, mediaState).contains(touchPoint.x(), touchPoint.y()))) {
 				synchronized (mediaState) {
-					if (isStreamPlaybackLocked(mediaState) && mediaState.relaySessionId != null) {
+					if (isStreamPlaybackLocked(mediaState)) {
 						boolean shouldPause = !isPlaybackPausedLocked(mediaState);
 						cancelPlaybackLocked(mediaState);
 						markPendingAudioPauseLocked(mediaState, shouldPause);
 						markPendingAudioPositionLocked(mediaState, mediaState.positionMs);
 						bumpAudioSyncTokenLocked(mediaState);
-						youtubePauseAction = shouldPause;
+						if (mediaState.relaySessionId != null && !mediaState.relaySessionId.isBlank()) {
+							youtubePauseAction = shouldPause;
+							youtubePauseSessionId = mediaState.relaySessionId;
+						}
+						mediaState.version++;
 					} else if (mediaState.loadedMedia != null && mediaState.loadedMedia.animated()) {
 						if (isPlaybackPausedLocked(mediaState)) {
 							mediaState.userPaused = false;
@@ -635,15 +725,19 @@ final class MonitorScreenInputController {
 					if (isYoutubeFamilyMode(mediaState.mode) && !mediaState.youtubeQueue.isEmpty()) {
 						youtubeQueuePlayIndex = adjacentYoutubeQueueIndexLocked(mediaState, -1);
 					} else if (isLibraryAppMode(mediaState.mode) && !mediaState.galleryItems.isEmpty()) {
-						if (!selectGalleryItemLocked(
-								mediaState,
-								mediaState.galleryIndex >= 0 ? mediaState.galleryIndex - 1 : mediaState.galleryItems.size() - 1,
-								layout
-						)) {
-							galleryDeferredLoadIndex = normalizeGalleryIndexLocked(
+						Integer targetIndex = adjacentGalleryPlaybackIndexLocked(mediaState, -1);
+						if (targetIndex == null) {
+							targetIndex = normalizeGalleryIndexLocked(
 									mediaState,
 									mediaState.galleryIndex >= 0 ? mediaState.galleryIndex - 1 : mediaState.galleryItems.size() - 1
 							);
+						}
+						if (!selectGalleryItemLocked(
+								mediaState,
+								targetIndex,
+								layout
+						)) {
+							galleryDeferredLoadIndex = targetIndex;
 						}
 						mediaState.version++;
 					} else if (mediaState.loadedMedia != null && mediaState.loadedMedia.frameCount() > 1) {
@@ -658,15 +752,19 @@ final class MonitorScreenInputController {
 					if (isYoutubeFamilyMode(mediaState.mode) && !mediaState.youtubeQueue.isEmpty()) {
 						youtubeQueuePlayIndex = adjacentYoutubeQueueIndexLocked(mediaState, 1);
 					} else if (isLibraryAppMode(mediaState.mode) && !mediaState.galleryItems.isEmpty()) {
-						if (!selectGalleryItemLocked(
-								mediaState,
-								mediaState.galleryIndex >= 0 ? mediaState.galleryIndex + 1 : 0,
-								layout
-						)) {
-							galleryDeferredLoadIndex = normalizeGalleryIndexLocked(
+						Integer targetIndex = adjacentGalleryPlaybackIndexLocked(mediaState, 1);
+						if (targetIndex == null) {
+							targetIndex = normalizeGalleryIndexLocked(
 									mediaState,
 									mediaState.galleryIndex >= 0 ? mediaState.galleryIndex + 1 : 0
 							);
+						}
+						if (!selectGalleryItemLocked(
+								mediaState,
+								targetIndex,
+								layout
+						)) {
+							galleryDeferredLoadIndex = targetIndex;
 						}
 						mediaState.version++;
 					} else if (mediaState.loadedMedia != null && mediaState.loadedMedia.frameCount() > 1) {
@@ -676,13 +774,14 @@ final class MonitorScreenInputController {
 					}
 				}
 				rerenderCurrent = true;
-			} else if (playerUiVisible && mediaTimelineHitRect(layout, mediaChromeMode(mediaState)).contains(touchPoint.x(), touchPoint.y())) {
+			} else if (playerUiVisible && mediaTimelineHitRect(layout, mediaState).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					if (isStreamPlaybackLocked(mediaState) && canSeekTimelineLocked(mediaState)) {
-						youtubeSeekTargetMs = youtubePositionForFraction(mediaState, mediaTimelineFraction(layout, touchPoint, mediaChromeMode(mediaState)));
+						youtubeSeekTargetMs = youtubePositionForFraction(mediaState, mediaTimelineFraction(layout, touchPoint, mediaState));
 						markPendingAudioPositionLocked(mediaState, youtubeSeekTargetMs);
 						bumpAudioSyncTokenLocked(mediaState);
 						markStreamSeekBufferingLocked(mediaState);
+						youtubeSeekSessionId = mediaState.relaySessionId;
 					} else if (mediaState.loadedMedia != null && mediaState.loadedMedia.frameCount() > 1) {
 						mediaState.frameIndex = mediaFrameIndexForFraction(mediaState.loadedMedia, mediaTimelineFraction(layout, touchPoint, mediaChromeMode(mediaState)));
 						mediaState.version++;
@@ -724,14 +823,30 @@ final class MonitorScreenInputController {
 					if (mediaState.mode == ScreenViewMode.GALLERY && mediaState.gallerySurfaceMode == GallerySurfaceMode.PLAYER) {
 						mediaState.galleryFileMenuOpen = !mediaState.galleryFileMenuOpen;
 						mediaState.playerBackgroundMenuOpen = false;
+						mediaState.gallerySlideshowSettingsOpen = false;
 					} else {
 						mediaState.playerBackgroundMenuOpen = !mediaState.playerBackgroundMenuOpen;
 						mediaState.galleryFileMenuOpen = false;
+						mediaState.gallerySlideshowSettingsOpen = false;
 					}
-					if (mediaState.playerBackgroundMenuOpen || mediaState.galleryFileMenuOpen) {
+					if (mediaState.playerBackgroundMenuOpen || mediaState.galleryFileMenuOpen || mediaState.gallerySlideshowSettingsOpen) {
 						mediaState.galleryDeleteConfirmOpen = false;
 						mediaState.youtubeQueueOpen = false;
 					}
+					mediaState.version++;
+				}
+				rerenderCurrent = true;
+			} else if ((((playerUiVisible || isYoutubeMusicMode(mediaState.mode))
+					&& mediaState.mode == ScreenViewMode.YOUTUBE_MUSIC
+					&& !isYoutubeHomePromptLocked(mediaState)
+					&& !isGalleryBackedYoutubeLocked(mediaState)
+					&& mediaYoutubeMusicRepeatRect(layout).contains(touchPoint.x(), touchPoint.y()))
+					|| (playerUiVisible
+					&& repeatButtonVisibleLocked(mediaState)
+					&& !usesMusicPlayerLayoutLocked(mediaState)
+					&& mediaRepeatActionRect(layout, mediaState).contains(touchPoint.x(), touchPoint.y())))) {
+				synchronized (mediaState) {
+					mediaState.repeatMode = resolvedRepeatModeLocked(mediaState).next();
 					mediaState.version++;
 				}
 				rerenderCurrent = true;
@@ -974,17 +1089,20 @@ final class MonitorScreenInputController {
 		}
 		if (server != null && youtubePauseAction != null) {
 			boolean shouldPause = youtubePauseAction;
+			String sessionId = youtubePauseSessionId != null && !youtubePauseSessionId.isBlank()
+					? youtubePauseSessionId
+					: relaySessionId(component.runtimeKey());
 			refreshConnectedSpeakersNow(server, component.runtimeKey());
 			ensureExecutors();
 			CompletableFuture.runAsync(() -> {
 				try {
 					if (shouldPause) {
-						MonitorYoutubeRelayClient.pause(relaySessionId(component.runtimeKey()));
+						MonitorYoutubeRelayClient.pause(sessionId);
 					} else {
-						MonitorYoutubeRelayClient.resume(relaySessionId(component.runtimeKey()));
+						MonitorYoutubeRelayClient.resume(sessionId);
 					}
 				} catch (Exception exception) {
-					Lg2.LOGGER.debug("Failed to {} YouTube session {}", shouldPause ? "pause" : "resume", component.runtimeKey(), exception);
+					Lg2.LOGGER.debug("Failed to {} YouTube session {}", shouldPause ? "pause" : "resume", sessionId, exception);
 				}
 			}, mediaIoExecutor).thenRun(() -> server.execute(() -> {
 				refreshConnectedSpeakersNow(server, component.runtimeKey());
@@ -993,13 +1111,16 @@ final class MonitorScreenInputController {
 		}
 		if (server != null && youtubeSeekTargetMs != null) {
 			long seekTargetMs = youtubeSeekTargetMs;
+			String sessionId = youtubeSeekSessionId != null && !youtubeSeekSessionId.isBlank()
+					? youtubeSeekSessionId
+					: relaySessionId(component.runtimeKey());
 			refreshConnectedSpeakersNow(server, component.runtimeKey());
 			ensureExecutors();
 			CompletableFuture.runAsync(() -> {
 				try {
-					MonitorYoutubeRelayClient.seek(relaySessionId(component.runtimeKey()), seekTargetMs);
+					MonitorYoutubeRelayClient.seek(sessionId, seekTargetMs);
 				} catch (Exception exception) {
-					Lg2.LOGGER.debug("Failed to seek YouTube session {} to {}", component.runtimeKey(), seekTargetMs, exception);
+					Lg2.LOGGER.debug("Failed to seek YouTube session {} to {}", sessionId, seekTargetMs, exception);
 				}
 			}, mediaIoExecutor).thenRun(() -> server.execute(() -> {
 				refreshConnectedSpeakersNow(server, component.runtimeKey());
@@ -1019,6 +1140,9 @@ final class MonitorScreenInputController {
 		}
 		if (server != null && galleryYoutubeUrl != null) {
 			startGalleryYoutubePlayback(server, component.runtimeKey(), player.getUUID(), galleryYoutubeTitle, galleryYoutubeUrl, galleryYoutubeIndex);
+		}
+		if (server != null && gallerySlideshowStartIndex != null) {
+			continueGalleryPlaybackAtIndex(server, component.runtimeKey(), gallerySlideshowStartIndex);
 		}
 			if (server != null && droneControlRequested != null && droneControlRequested.sourceType() == LiveCameraSourceType.DRONE) {
 				DroneSystem.tryStartControllingDrone(

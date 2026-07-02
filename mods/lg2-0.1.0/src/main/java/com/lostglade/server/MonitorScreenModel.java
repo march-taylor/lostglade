@@ -94,7 +94,8 @@ enum MediaOverlayWindowType {
 	YOUTUBE_QUEUE,
 	GALLERY_DELETE_CONFIRM,
 	GALLERY_FILE_MENU,
-	PLAYER_BACKGROUND
+	PLAYER_BACKGROUND,
+	GALLERY_SLIDESHOW
 }
 
 enum YoutubeLinkRequestAction {
@@ -124,6 +125,25 @@ enum MediaScaleMode {
 	MediaScaleMode next() {
 		MediaScaleMode[] values = values();
 		return values[(this.ordinal() + 1) % values.length];
+	}
+}
+
+enum MediaRepeatMode {
+	OFF,
+	ALL,
+	ONE;
+
+	MediaRepeatMode next() {
+		MediaRepeatMode[] values = values();
+		return values[(this.ordinal() + 1) % values.length];
+	}
+
+	boolean enabled() {
+		return this != OFF;
+	}
+
+	boolean repeatCurrent() {
+		return this == ONE;
 	}
 }
 
