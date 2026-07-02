@@ -634,7 +634,6 @@ enum PlayerUiIcon {
 	CHECKBOX_LINE("/assets/lg2/textures/monitor/ui_icons/checkbox_line.png"),
 	CHECKBOX_FILL("/assets/lg2/textures/monitor/ui_icons/checkbox_fill.png"),
 	LIST_CHECK_3_LINE("/assets/lg2/textures/monitor/ui_icons/list_check_3_line.png"),
-	LIST_CHECK_3_FILL("/assets/lg2/textures/monitor/ui_icons/list_check_3_fill.png"),
 	TOGGLE_LEFT("/assets/lg2/textures/monitor/ui_icons/toggle_left.png"),
 	TOGGLE_RIGHT("/assets/lg2/textures/monitor/ui_icons/toggle_right.png"),
 	PLAY("/assets/lg2/textures/monitor/ui_icons/play.png"),

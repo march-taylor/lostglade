@@ -3790,20 +3790,20 @@ public final class MonitorScreenSystem {
 		} else {
 			drawMediaSearchBar(graphics, linkRect, state != null ? state.linkPlaceholder() : "ВСТАВЬ URL", true, layout, MediaButtonSegment.MIDDLE);
 		}
-		if (!galleryPickerMode && !droneMode) {
-			if (selectionMode) {
-				drawGalleryHeaderIconButton(graphics, deleteRect, layout, PlayerUiIcon.TRASH, selectionCount > 0, MediaButtonSegment.MIDDLE);
-				drawGalleryHeaderIconButton(graphics, sendRect, layout, PlayerUiIcon.SEND_PLANE, selectionCount > 0, MediaButtonSegment.MIDDLE);
-				drawGalleryHeaderIconButton(graphics, slideshowRect, layout, PlayerUiIcon.VIDEO_AI, selectionCount > 0, MediaButtonSegment.MIDDLE);
-				drawGalleryHeaderIconButton(
-						graphics,
-						selectAllRect,
-						layout,
-						allSelected ? PlayerUiIcon.LIST_CHECK_3_FILL : PlayerUiIcon.LIST_CHECK_3_LINE,
-						allSelected,
-						MediaButtonSegment.MIDDLE
-				);
-			}
+			if (!galleryPickerMode && !droneMode) {
+				if (selectionMode) {
+					drawGalleryHeaderIconButton(graphics, deleteRect, layout, PlayerUiIcon.TRASH, false, MediaButtonSegment.MIDDLE);
+					drawGalleryHeaderIconButton(graphics, sendRect, layout, PlayerUiIcon.SEND_PLANE, false, MediaButtonSegment.MIDDLE);
+					drawGalleryHeaderIconButton(graphics, slideshowRect, layout, PlayerUiIcon.VIDEO_AI, false, MediaButtonSegment.MIDDLE);
+					drawGalleryHeaderIconButton(
+							graphics,
+							selectAllRect,
+							layout,
+							PlayerUiIcon.LIST_CHECK_3_LINE,
+							allSelected,
+							MediaButtonSegment.MIDDLE
+					);
+				}
 			drawGalleryHeaderIconButton(graphics, selectionRect, layout, selectionMode ? PlayerUiIcon.CHECKBOX_FILL : PlayerUiIcon.CHECKBOX_LINE, selectionMode, MediaButtonSegment.RIGHT);
 		}
 
@@ -6863,7 +6863,8 @@ public final class MonitorScreenSystem {
 
 	static UiRect mediaGallerySettingsRect(UiLayout layout) {
 		UiRect menuRect = mediaPlayerMenuRect(layout);
-		return new UiRect(menuRect.x() - menuRect.width(), menuRect.y(), menuRect.width(), menuRect.height());
+		int gap = mediaHeaderControlGap(layout);
+		return new UiRect(menuRect.x() - menuRect.width() - gap, menuRect.y(), menuRect.width(), menuRect.height());
 	}
 
 	static UiRect mediaOverlayToggleRect(UiLayout layout) {
@@ -6978,7 +6979,7 @@ public final class MonitorScreenSystem {
 	}
 
 	static int mediaHeaderControlGap(UiLayout layout) {
-		return clampInt(layout.unit() / 5, 1, 3);
+		return clampInt(layout.unit() / 3, 2, 6);
 	}
 
 	static UiRect mediaGalleryPlayerTitleRect(UiLayout layout) {
@@ -7148,7 +7149,7 @@ public final class MonitorScreenSystem {
 		}
 		int count = mediaBottomActionCount(wallpaperVisible, primaryVisible, queueVisible, repeatVisible, scaleVisible);
 		UiRect scaleAnchor = mediaScaleRect(layout);
-		int gap = 0;
+		int gap = mediaHeaderControlGap(layout);
 		int groupWidth = scaleAnchor.width() * count + gap * Math.max(0, count - 1);
 		int x = scaleAnchor.right() - groupWidth + index * (scaleAnchor.width() + gap);
 		return new UiRect(x, scaleAnchor.y(), scaleAnchor.width(), scaleAnchor.height());
