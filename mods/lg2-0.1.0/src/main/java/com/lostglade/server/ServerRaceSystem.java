@@ -69,6 +69,8 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
+import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
@@ -224,6 +226,7 @@ import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import net.minecraft.world.scores.PlayerTeam;
 import net.minecraft.world.scores.Scoreboard;
 import net.minecraft.world.scores.Team;
@@ -957,6 +960,8 @@ public final class ServerRaceSystem {
 	private static final List<LittleDictatorUniqueShockWaveSession> LITTLE_DICTATOR_UNIQUE_SHOCK_WAVES = new ArrayList<>();
 	private static final List<LittleDictatorDelayedPacket> LITTLE_DICTATOR_DELAYED_PACKETS = new ArrayList<>();
 	private static final Map<UUID, Long> LITTLE_DICTATOR_LAST_DELAYED_PACKET_RELEASE_TICKS = new HashMap<>();
+	private static final Map<UUID, LittleDictatorIronMechanismClientSpoof> LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS = new HashMap<>();
+	private static final Map<UUID, Integer> LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS = new HashMap<>();
 	private static final Map<UUID, LittleDictatorUniqueSession> LITTLE_DICTATOR_UNIQUE_SESSIONS = new LinkedHashMap<>();
 	private static final Set<UUID> LITTLE_DICTATOR_TAX_CHEST_PENDING = new HashSet<>();
 	private static final Map<UUID, Set<LittleDictatorTaxChestRef>> LITTLE_DICTATOR_TAX_CHESTS = new LinkedHashMap<>();
@@ -1067,6 +1072,13 @@ public final class ServerRaceSystem {
 				}
 			}
 			return null;
+		}
+	}
+
+	private record LittleDictatorIronMechanismClientSpoof(ResourceKey<Level> dimension, BlockPos pos, BlockPos secondaryPos) {
+		private LittleDictatorIronMechanismClientSpoof {
+			pos = pos == null ? BlockPos.ZERO : pos.immutable();
+			secondaryPos = secondaryPos == null ? null : secondaryPos.immutable();
 		}
 	}
 
@@ -1582,7 +1594,7 @@ public final class ServerRaceSystem {
 			if (!(player instanceof ServerPlayer serverPlayer) || world.isClientSide()) {
 				return InteractionResult.PASS;
 			}
-			InteractionResult dictatorResult = tryHandleLittleDictatorUseInteraction(serverPlayer, hand, hitResult.getBlockPos());
+			InteractionResult dictatorResult = tryHandleLittleDictatorUseInteraction(serverPlayer, hand, hitResult);
 			if (dictatorResult != InteractionResult.PASS) {
 				return dictatorResult;
 			}
@@ -1634,6 +1646,7 @@ public final class ServerRaceSystem {
 			tickLittleDictatorDefense(server);
 			tickLittleDictatorUnique(server);
 			tickLittleDictatorShnyaga(server);
+			tickLittleDictatorIronMechanismClientSpoofs(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
 			tickLongPassiveEffectsPersistence(server);
@@ -4502,12 +4515,6 @@ public final class ServerRaceSystem {
 		}
 
 		BlockState state = level.getBlockState(pos);
-		if (tryToggleLittleDictatorIronDoor(level, player, pos, state)) {
-			return InteractionResult.CONSUME;
-		}
-		if (tryToggleLittleDictatorIronTrapdoor(level, player, pos, state)) {
-			return InteractionResult.CONSUME;
-		}
 		if (!canLittleDictatorOpenStorage(state)) {
 			return InteractionResult.PASS;
 		}
@@ -4524,8 +4531,12 @@ public final class ServerRaceSystem {
 		}
 		return player.openMenu(provider).isPresent() ? InteractionResult.CONSUME : InteractionResult.PASS;
 	}
-
-	public static InteractionResult tryHandleLittleDictatorUseInteraction(ServerPlayer player, InteractionHand hand, BlockPos pos) {
+	public static InteractionResult tryHandleLittleDictatorUseInteraction(ServerPlayer player, InteractionHand hand, BlockHitResult hitResult) {
+		BlockPos pos = hitResult == null ? null : hitResult.getBlockPos();
+		InteractionResult ironMechanismResult = tryHandleLittleDictatorIronMechanism(player, hand, hitResult);
+		if (ironMechanismResult != InteractionResult.PASS) {
+			return ironMechanismResult;
+		}
 		if (shouldLittleDictatorPreserveVanillaSecondaryUse(player, hand)) {
 			return InteractionResult.PASS;
 		}
@@ -4542,21 +4553,32 @@ public final class ServerRaceSystem {
 		}
 		return !player.getMainHandItem().isEmpty() || !player.getOffhandItem().isEmpty();
 	}
-
-	private static boolean tryToggleLittleDictatorIronDoor(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state) {
+	private static boolean tryToggleLittleDictatorIronDoor(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state, BlockHitResult hitResult) {
 		if (level == null
 				|| player == null
 				|| state == null
 				|| !state.is(Blocks.IRON_DOOR)
-				|| !(state.getBlock() instanceof DoorBlock doorBlock)) {
+				|| !(state.getBlock() instanceof DoorBlock)) {
 			return false;
 		}
 		boolean open = !state.getValue(DoorBlock.OPEN);
-		doorBlock.setOpen(player, level, state, pos, open);
+		BlockPos lowerPos = state.getValue(DoorBlock.HALF) == DoubleBlockHalf.UPPER ? pos.below() : pos;
+		BlockPos upperPos = lowerPos.above();
+		BlockState lowerState = level.getBlockState(lowerPos);
+		BlockState upperState = level.getBlockState(upperPos);
+		if (lowerState.is(Blocks.IRON_DOOR)) {
+			level.setBlock(lowerPos, lowerState.setValue(DoorBlock.OPEN, open), Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
+		}
+		if (upperState.is(Blocks.IRON_DOOR)) {
+			level.setBlock(upperPos, upperState.setValue(DoorBlock.OPEN, open), Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
+		}
+		level.playSound(null, lowerPos, open ? SoundEvents.IRON_DOOR_OPEN : SoundEvents.IRON_DOOR_CLOSE, SoundSource.BLOCKS, 1.0F, 1.0F);
+		level.gameEvent(player, open ? GameEvent.BLOCK_OPEN : GameEvent.BLOCK_CLOSE, lowerPos);
+		resyncLittleDictatorIronMechanismUse(player, level, pos, hitResult);
 		return true;
 	}
 
-	private static boolean tryToggleLittleDictatorIronTrapdoor(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state) {
+	private static boolean tryToggleLittleDictatorIronTrapdoor(ServerLevel level, ServerPlayer player, BlockPos pos, BlockState state, BlockHitResult hitResult) {
 		if (level == null || player == null || state == null || !state.is(Blocks.IRON_TRAPDOOR) || !(state.getBlock() instanceof TrapDoorBlock)) {
 			return false;
 		}
@@ -4569,25 +4591,264 @@ public final class ServerRaceSystem {
 		);
 		level.playSound(null, pos, open ? SoundEvents.IRON_TRAPDOOR_OPEN : SoundEvents.IRON_TRAPDOOR_CLOSE, SoundSource.BLOCKS, 1.0F, 1.0F);
 		level.gameEvent(player, open ? GameEvent.BLOCK_OPEN : GameEvent.BLOCK_CLOSE, pos);
+		resyncLittleDictatorIronMechanismUse(player, level, pos, hitResult);
 		return true;
+	}
+
+	private static void resyncLittleDictatorIronMechanismUse(ServerPlayer player, ServerLevel level, BlockPos pos, BlockHitResult hitResult) {
+		if (level == null || pos == null) {
+			return;
+		}
+		BlockState current = level.getBlockState(pos);
+		level.sendBlockUpdated(pos, current, current, Block.UPDATE_CLIENTS);
+		if (hitResult != null && hitResult.getDirection() != null) {
+			BlockPos placementPos = pos.relative(hitResult.getDirection());
+			BlockState placementState = level.getBlockState(placementPos);
+			level.sendBlockUpdated(placementPos, placementState, placementState, Block.UPDATE_CLIENTS);
+		}
+		syncLittleDictatorIronMechanismLookSpoof(player, createLittleDictatorIronMechanismSpoof(level, pos), true);
+		if (player != null) {
+			LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS.put(player.getUUID(), 6);
+		}
+	}
+
+	public static void updateLittleDictatorIronMechanismLookSpoof(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level) || getLittleDictatorStockAbility(player) == null) {
+			clearLittleDictatorIronMechanismLookSpoof(player);
+			return;
+		}
+		LittleDictatorIronMechanismClientSpoof desired = findLookedLittleDictatorIronMechanism(level, player);
+		if (desired == null) {
+			LittleDictatorIronMechanismClientSpoof previous = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(player.getUUID());
+			if (isStillLookingAtLittleDictatorIronMechanismShape(level, player, previous)) {
+				desired = previous;
+			}
+		}
+		syncLittleDictatorIronMechanismLookSpoof(player, desired, false);
+	}
+
+	private static LittleDictatorIronMechanismClientSpoof findLookedLittleDictatorIronMechanism(ServerLevel level, ServerPlayer player) {
+		if (level == null || player == null) {
+			return null;
+		}
+		Vec3 start = player.getEyePosition();
+		double reach = Math.max(4.5D, player.getAttributeValue(Attributes.BLOCK_INTERACTION_RANGE));
+		Vec3 end = start.add(player.getLookAngle().scale(reach));
+		BlockHitResult hit = level.clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
+		if (hit == null || hit.getType() != HitResult.Type.BLOCK) {
+			return null;
+		}
+		return createLittleDictatorIronMechanismSpoof(level, hit.getBlockPos());
+	}
+
+	private static boolean isStillLookingAtLittleDictatorIronMechanismShape(ServerLevel level, ServerPlayer player, LittleDictatorIronMechanismClientSpoof spoof) {
+		if (level == null || player == null || spoof == null || player.level() != level || !level.dimension().equals(spoof.dimension())) {
+			return false;
+		}
+		Vec3 start = player.getEyePosition();
+		double reach = Math.max(4.5D, player.getAttributeValue(Attributes.BLOCK_INTERACTION_RANGE));
+		Vec3 end = start.add(player.getLookAngle().scale(reach));
+		return isLookingAtLittleDictatorIronMechanismShape(level, player, start, end, spoof.pos())
+				|| (spoof.secondaryPos() != null && isLookingAtLittleDictatorIronMechanismShape(level, player, start, end, spoof.secondaryPos()));
+	}
+
+	private static boolean isLookingAtLittleDictatorIronMechanismShape(ServerLevel level, ServerPlayer player, Vec3 start, Vec3 end, BlockPos pos) {
+		if (level == null || start == null || end == null || pos == null) {
+			return false;
+		}
+		BlockState state = level.getBlockState(pos);
+		if (getLittleDictatorClientIronMechanismState(state) == null) {
+			return false;
+		}
+		VoxelShape shape = state.getShape(level, pos, CollisionContext.of(player));
+		return shape != null && !shape.isEmpty() && shape.clip(start, end, pos) != null;
+	}
+	private static LittleDictatorIronMechanismClientSpoof createLittleDictatorIronMechanismSpoof(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null) {
+			return null;
+		}
+		BlockState state = level.getBlockState(pos);
+		if (state.is(Blocks.IRON_DOOR)) {
+			BlockPos lowerPos = state.getValue(DoorBlock.HALF) == DoubleBlockHalf.UPPER ? pos.below() : pos;
+			return new LittleDictatorIronMechanismClientSpoof(level.dimension(), lowerPos, lowerPos.above());
+		}
+		if (state.is(Blocks.IRON_TRAPDOOR)) {
+			return new LittleDictatorIronMechanismClientSpoof(level.dimension(), pos, null);
+		}
+		return null;
+	}
+
+	private static void syncLittleDictatorIronMechanismLookSpoof(ServerPlayer player, LittleDictatorIronMechanismClientSpoof desired, boolean forceResend) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		LittleDictatorIronMechanismClientSpoof previous = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(playerId);
+		if (Objects.equals(previous, desired) && !forceResend) {
+			return;
+		}
+		LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.remove(playerId);
+		if (!forceResend || !Objects.equals(previous, desired)) {
+			sendLittleDictatorIronMechanismActualState(player, previous);
+		}
+		MinecraftServer server = player.level() == null ? null : player.level().getServer();
+		if (desired != null && server != null) {
+			ServerLevel level = server.getLevel(desired.dimension());
+			if (level != null && player.level() == level) {
+				LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.put(playerId, desired);
+				sendLittleDictatorIronMechanismClientSpoof(player, level, desired.pos());
+				if (desired.secondaryPos() != null) {
+					sendLittleDictatorIronMechanismClientSpoof(player, level, desired.secondaryPos());
+				}
+			}
+		}
+	}
+
+	private static void tickLittleDictatorIronMechanismClientSpoofs(MinecraftServer server) {
+		if (server == null || LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS.isEmpty()) {
+			return;
+		}
+		Iterator<Map.Entry<UUID, Integer>> iterator = LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, Integer> entry = iterator.next();
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			LittleDictatorIronMechanismClientSpoof spoof = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(entry.getKey());
+			if (player == null || spoof == null || getLittleDictatorStockAbility(player) == null) {
+				iterator.remove();
+				continue;
+			}
+			resendActiveLittleDictatorIronMechanismSpoof(player);
+			int remaining = entry.getValue() == null ? 0 : entry.getValue() - 1;
+			if (remaining <= 0) {
+				iterator.remove();
+			} else {
+				entry.setValue(remaining);
+			}
+		}
+	}
+	private static void clearLittleDictatorIronMechanismLookSpoof(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS.remove(playerId);
+		LittleDictatorIronMechanismClientSpoof previous = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.remove(playerId);
+		sendLittleDictatorIronMechanismActualState(player, previous);
+	}
+
+	private static void sendLittleDictatorIronMechanismActualState(ServerPlayer player, LittleDictatorIronMechanismClientSpoof spoof) {
+		if (player == null || player.connection == null || spoof == null || player.level() == null || player.level().getServer() == null) {
+			return;
+		}
+		ServerLevel level = player.level().getServer().getLevel(spoof.dimension());
+		if (level == null || player.level() != level) {
+			return;
+		}
+		player.connection.send(new ClientboundBlockUpdatePacket(level, spoof.pos()));
+		if (spoof.secondaryPos() != null) {
+			player.connection.send(new ClientboundBlockUpdatePacket(level, spoof.secondaryPos()));
+		}
+	}
+
+	private static void sendLittleDictatorIronMechanismClientSpoof(ServerPlayer player, ServerLevel level, BlockPos pos) {
+		if (player == null || player.connection == null || level == null || pos == null || player.level() != level || getLittleDictatorStockAbility(player) == null) {
+			return;
+		}
+		BlockState fakeState = getLittleDictatorClientIronMechanismState(level.getBlockState(pos));
+		if (fakeState != null) {
+			player.connection.send(new ClientboundBlockUpdatePacket(pos, fakeState));
+		}
+	}
+
+	public static boolean shouldReplayLittleDictatorIronMechanismSectionUpdate(ServerPlayer receiver, ClientboundSectionBlocksUpdatePacket packet) {
+		if (receiver == null || packet == null || getLittleDictatorStockAbility(receiver) == null) {
+			return false;
+		}
+		LittleDictatorIronMechanismClientSpoof spoof = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(receiver.getUUID());
+		if (spoof == null || !receiver.level().dimension().equals(spoof.dimension())) {
+			return false;
+		}
+		boolean[] matches = {false};
+		packet.runUpdates((pos, state) -> {
+			if (matches[0]) {
+				return;
+			}
+			matches[0] = spoof.pos().equals(pos) || Objects.equals(spoof.secondaryPos(), pos);
+		});
+		return matches[0];
+	}
+
+	public static void resendActiveLittleDictatorIronMechanismSpoof(ServerPlayer receiver) {
+		if (receiver == null || getLittleDictatorStockAbility(receiver) == null) {
+			return;
+		}
+		LittleDictatorIronMechanismClientSpoof spoof = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(receiver.getUUID());
+		if (spoof == null || receiver.level() == null || receiver.level().getServer() == null || !receiver.level().dimension().equals(spoof.dimension())) {
+			return;
+		}
+		ServerLevel level = receiver.level().getServer().getLevel(spoof.dimension());
+		if (level == null || receiver.level() != level) {
+			return;
+		}
+		sendLittleDictatorIronMechanismClientSpoof(receiver, level, spoof.pos());
+		if (spoof.secondaryPos() != null) {
+			sendLittleDictatorIronMechanismClientSpoof(receiver, level, spoof.secondaryPos());
+		}
+	}
+	public static ClientboundBlockUpdatePacket rewriteLittleDictatorIronMechanismBlockUpdate(ServerPlayer receiver, ClientboundBlockUpdatePacket packet) {
+		if (receiver == null || packet == null || getLittleDictatorStockAbility(receiver) == null) {
+			return packet;
+		}
+		LittleDictatorIronMechanismClientSpoof spoof = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(receiver.getUUID());
+		if (spoof == null || (!spoof.pos().equals(packet.getPos()) && !Objects.equals(spoof.secondaryPos(), packet.getPos())) || !receiver.level().dimension().equals(spoof.dimension())) {
+			return packet;
+		}
+		BlockState fakeState = getLittleDictatorClientIronMechanismState(packet.getBlockState());
+		if (fakeState == null && receiver.level() instanceof ServerLevel level) {
+			fakeState = getLittleDictatorClientIronMechanismState(level.getBlockState(packet.getPos()));
+		}
+		return fakeState == null ? packet : new ClientboundBlockUpdatePacket(packet.getPos(), fakeState);
+	}
+
+	private static BlockState getLittleDictatorClientIronMechanismState(BlockState state) {
+		if (state == null) {
+			return null;
+		}
+		if (state.is(Blocks.IRON_DOOR)) {
+			return Blocks.OAK_DOOR.defaultBlockState()
+					.setValue(DoorBlock.FACING, state.getValue(DoorBlock.FACING))
+					.setValue(DoorBlock.OPEN, state.getValue(DoorBlock.OPEN))
+					.setValue(DoorBlock.HINGE, state.getValue(DoorBlock.HINGE))
+					.setValue(DoorBlock.POWERED, state.getValue(DoorBlock.POWERED))
+					.setValue(DoorBlock.HALF, state.getValue(DoorBlock.HALF));
+		}
+		if (state.is(Blocks.IRON_TRAPDOOR)) {
+			return Blocks.OAK_TRAPDOOR.defaultBlockState()
+					.setValue(TrapDoorBlock.FACING, state.getValue(TrapDoorBlock.FACING))
+					.setValue(TrapDoorBlock.OPEN, state.getValue(TrapDoorBlock.OPEN))
+					.setValue(TrapDoorBlock.HALF, state.getValue(TrapDoorBlock.HALF))
+					.setValue(TrapDoorBlock.POWERED, state.getValue(TrapDoorBlock.POWERED))
+					.setValue(TrapDoorBlock.WATERLOGGED, state.getValue(TrapDoorBlock.WATERLOGGED));
+		}
+		return null;
 	}
 
 	public static InteractionResult tryHandleLittleDictatorIronMechanism(
 			ServerPlayer player,
 			InteractionHand hand,
-			BlockPos pos
+			BlockHitResult hitResult
 	) {
+		BlockPos pos = hitResult == null ? null : hitResult.getBlockPos();
 		if (player == null
 				|| hand == null
 				|| pos == null
 				|| !(player.level() instanceof ServerLevel level)
-				|| shouldLittleDictatorPreserveVanillaSecondaryUse(player, hand)
 				|| getLittleDictatorStockAbility(player) == null) {
 			return InteractionResult.PASS;
 		}
 		BlockState state = level.getBlockState(pos);
-		return tryToggleLittleDictatorIronDoor(level, player, pos, state)
-				|| tryToggleLittleDictatorIronTrapdoor(level, player, pos, state)
+		return tryToggleLittleDictatorIronDoor(level, player, pos, state, hitResult)
+				|| tryToggleLittleDictatorIronTrapdoor(level, player, pos, state, hitResult)
 				? InteractionResult.CONSUME
 				: InteractionResult.PASS;
 	}
@@ -11409,6 +11670,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		syncGennadiyDonkeyManualVisual(player);
 		syncGennadiyDefenseHeadLock(player);
 		lockLittleDictatorUniqueCasterMovement(player);
+		updateLittleDictatorIronMechanismLookSpoof(player);
 		WomanAttackChargeSession session = WOMAN_ATTACK_CHARGE_SESSIONS.get(player.getUUID());
 		if (session != null) {
 			syncWomanAttackAirTrigger(player, session);
@@ -11418,6 +11680,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 	public static void handlePlayerInputPacket(ServerPlayer player) {
 		syncGennadiyDefenseHeadLock(player);
 		lockLittleDictatorUniqueCasterMovement(player);
+		updateLittleDictatorIronMechanismLookSpoof(player);
 	}
 
 	public static boolean handleGennadiyDefenseMovementPacket(ServerPlayer player) {

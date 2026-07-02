@@ -4,7 +4,7 @@
       "enabled": true,
       "id": "mister_cartel_49",
       "displayName": "Мистер Картель",
-      "ownerNickname": "sdf",
+      "ownerNickname": "pines1",
       "description": "Глава всего преступного мира.",
       "attack": {
         "enabled": true,
@@ -67,7 +67,7 @@
       "enabled": true,
       "id": "copper_man",
       "displayName": "Медный Человек",
-      "ownerNickname": "",
+      "ownerNickname": "pines2",
       "description": "Искал медь сгорел медведь.",
       "attack": {
         "enabled": true,
@@ -126,7 +126,7 @@
       "enabled": true,
       "id": "no_race",
       "displayName": "Без расы",
-      "ownerNickname": "pines2",
+      "ownerNickname": "pines3",
       "description": "",
       "attack": {
         "enabled": true,
@@ -171,7 +171,7 @@
       "enabled": true,
       "id": "woman",
       "displayName": "ЖЕНЩИНА!!!",
-      "ownerNickname": "",
+      "ownerNickname": "pines4",
       "description": "Хрупкая снаружи, но опасная внутри.",
       "attack": {
         "enabled": true,
@@ -235,7 +235,7 @@
       "enabled": true,
       "id": "gennadiy_sharoyobov",
       "displayName": "Генадий Шароёбов",
-      "ownerNickname": "",
+      "ownerNickname": "pines5",
       "description": "Дотер придет...",
       "attack": {
         "enabled": true,
@@ -301,7 +301,7 @@
       "enabled": true,
       "id": "mark_potroshitel",
       "displayName": "Марк Потрошитель",
-      "ownerNickname": "sd",
+      "ownerNickname": "pines6",
       "description": "У всех нас есть сила в руках для того, чтобы убить, но большинство боится ее использовать.",
       "attack": {
         "enabled": true,
@@ -369,7 +369,7 @@
       "enabled": true,
       "id": "milk_oligarch",
       "displayName": "Молочный Олигарх",
-      "ownerNickname": "",
+      "ownerNickname": "pines7",
       "description": "Никогда бизнесс не бывает белым, даже молочный.",
       "attack": {
         "enabled": true,
@@ -419,7 +419,7 @@
       "id": "little_dictator",
       "displayName": "Маленький Диктатор",
       "ownerNickname": "Rajas_YT",
-      "description": "",
+      "description": "pines8",
       "attack": {
         "enabled": true,
         "abilityId": "little_dictator_attack",
