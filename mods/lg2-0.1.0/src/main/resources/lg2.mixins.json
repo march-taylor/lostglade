@@ -79,6 +79,7 @@
 		"MobTrojanRoosterLeashMixin",
 		"MobXpRewardAccessor",
 		"MobDeathLootMixin",
+		"SheepRainbowWoolShearMixin",
 		"PlayerCocaineSprintMixin",
 		"PlayerContainerMenuAccessor",
 		"PlayerTrackedDataAccessor",
