@@ -233,22 +233,28 @@ final class MonitorYandexMapsClientTileRenderer {
 		TileRequestBudget budget = new TileRequestBudget(MAX_BASE_TILE_REQUESTS_PER_FRAME);
 		boolean activeView = activeViewKey != null;
 		int missingTiles = 0;
+		List<TileKey> refreshTiles = new ArrayList<>();
 		for (TileKey key : visibleTiles) {
-			boolean hasTile = cache.hasUsableTile(key);
-			if (hasTile) {
-				cache.refreshIfStale(server, level, key, budget, onTileReady, 1, activeView);
+			if (cache.needsTileCompletion(key)) {
+				missingTiles++;
+				cache.requestTile(server, level, key, budget, onTileReady, 10, activeView);
 				continue;
 			}
-			missingTiles++;
-			cache.requestTile(server, level, key, budget, onTileReady, 2, activeView);
+			refreshTiles.add(key);
+		}
+		for (TileKey key : refreshTiles) {
+			if (!budget.hasRemaining()) {
+				break;
+			}
+			cache.refreshIfStale(server, level, key, budget, onTileReady, 1, activeView);
 		}
 		if (budget.hasRemaining()) {
 			for (TileKey key : prefetchTiles(visibleTiles, tileBlocksPerPixel, centerX, centerZ)) {
 				if (!budget.hasRemaining()) {
 					break;
 				}
-				if (!cache.hasUsableTile(key)) {
-					cache.requestTile(server, level, key, budget, onTileReady, 2, activeView);
+				if (cache.needsTileCompletion(key)) {
+					cache.requestTile(server, level, key, budget, onTileReady, 6, activeView);
 				}
 			}
 		}
@@ -473,7 +479,17 @@ final class MonitorYandexMapsClientTileRenderer {
 	private record TileKey(int lod, long tileX, long tileZ) {
 	}
 
-	private record TileImage(byte[] pixels, long renderedAt) {
+	private enum TileBuildResult {
+		NONE,
+		PARTIAL,
+		COMPLETE
+	}
+
+	private record TileImage(byte[] pixels, long renderedAt, boolean complete) {
+		private TileImage(byte[] pixels, long renderedAt) {
+			this(pixels, renderedAt, true);
+		}
+
 		private boolean valid() {
 			return this.pixels != null && this.pixels.length >= TILE_RGB_BYTES;
 		}
@@ -507,6 +523,11 @@ final class MonitorYandexMapsClientTileRenderer {
 		private boolean hasUsableTile(TileKey key) {
 			TileImage image = imageFor(key);
 			return image != null && image.valid();
+		}
+
+		private boolean needsTileCompletion(TileKey key) {
+			TileImage image = imageFor(key);
+			return image == null || !image.valid() || !image.complete();
 		}
 
 		private void refreshIfStale(MinecraftServer server, ServerLevel level, TileKey key, TileRequestBudget budget, Runnable onTileReady, int priorityScore, boolean activeView) {
@@ -556,9 +577,13 @@ final class MonitorYandexMapsClientTileRenderer {
 				return;
 			}
 			if (key.lod() > DIRECT_RENDER_MAX_LOD) {
-				if (tryBuildFromChildren(key, System.currentTimeMillis())) {
+				TileBuildResult buildResult = buildFromChildren(key, System.currentTimeMillis());
+				if (buildResult == TileBuildResult.COMPLETE) {
 					notifyReady(onTileReady);
 					return;
+				}
+				if (buildResult == TileBuildResult.PARTIAL) {
+					notifyReady(onTileReady);
 				}
 				for (TileKey child : childKeys(key)) {
 					if (!budget.hasRemaining()) {
@@ -623,6 +648,13 @@ final class MonitorYandexMapsClientTileRenderer {
 			if (image == null || !image.valid()) {
 				return true;
 			}
+			if (!image.complete()) {
+				return true;
+			}
+			return isOutdated(key, image, now);
+		}
+
+		private boolean isOutdated(TileKey key, TileImage image, long now) {
 			Long dirtyAt = this.dirtyAfter.get(key);
 			return (dirtyAt != null && image.renderedAt() < dirtyAt)
 					|| now - image.renderedAt() > BASE_TILE_REFRESH_MS;
@@ -670,18 +702,29 @@ final class MonitorYandexMapsClientTileRenderer {
 			return new TileKey(lod, floorToLong(worldX / size), floorToLong(worldZ / size));
 		}
 
-		private boolean tryBuildFromChildren(TileKey key, long buildStartedAt) {
+		private TileBuildResult buildFromChildren(TileKey key, long buildStartedAt) {
 			if (key == null || key.lod() <= MIN_LOD) {
-				return false;
+				return TileBuildResult.NONE;
 			}
 			TileImage[] children = new TileImage[4];
+			int availableChildren = 0;
+			boolean complete = true;
 			int index = 0;
 			for (TileKey child : childKeys(key)) {
 				TileImage image = imageFor(child);
-				if (image == null || !image.valid() || isStale(child, image, buildStartedAt)) {
-					return false;
+				if (image == null || !image.valid()) {
+					complete = false;
+				} else {
+					children[index] = image;
+					availableChildren++;
+					if (!image.complete() || isOutdated(child, image, buildStartedAt)) {
+						complete = false;
+					}
 				}
-				children[index++] = image;
+				index++;
+			}
+			if (availableChildren <= 0) {
+				return TileBuildResult.NONE;
 			}
 			byte[] pixels = new byte[TILE_RGB_BYTES];
 			int[] colors = new int[4];
@@ -695,20 +738,25 @@ final class MonitorYandexMapsClientTileRenderer {
 							int childX = combinedX >= TILE_SIZE ? 1 : 0;
 							int childY = combinedY >= TILE_SIZE ? 1 : 0;
 							TileImage child = children[childY * 2 + childX];
-							colors[count++] = child.sample(combinedX & (TILE_SIZE - 1), combinedY & (TILE_SIZE - 1));
+							if (child != null) {
+								colors[count++] = child.sample(combinedX & (TILE_SIZE - 1), combinedY & (TILE_SIZE - 1));
+							}
 						}
 					}
 					writeRgb(pixels, y * TILE_SIZE + x, averageRgb(colors, count));
 				}
 			}
-			storeTile(key, new TileImage(pixels, buildStartedAt), buildStartedAt);
-			return true;
+			TileImage existing = this.tileLookup.get(key);
+			if (complete || existing == null || !existing.valid() || !existing.complete()) {
+				storeTile(key, new TileImage(pixels, buildStartedAt, complete), buildStartedAt);
+			}
+			return complete ? TileBuildResult.COMPLETE : TileBuildResult.PARTIAL;
 		}
 
 		private void rebuildAncestors(TileKey key) {
 			long buildStartedAt = System.currentTimeMillis();
 			TileKey parent = parentKey(key);
-			while (parent != null && tryBuildFromChildren(parent, buildStartedAt)) {
+			while (parent != null && buildFromChildren(parent, buildStartedAt) != TileBuildResult.NONE) {
 				parent = parentKey(parent);
 			}
 		}
@@ -755,8 +803,10 @@ final class MonitorYandexMapsClientTileRenderer {
 				}
 				trimToBudget();
 			}
-			clearDirtyMarkerIfCovered(key, freshnessCutoffMillis);
-			if (persist) {
+			if (image.complete()) {
+				clearDirtyMarkerIfCovered(key, freshnessCutoffMillis);
+			}
+			if (persist && image.complete()) {
 				persistTile(key, image);
 			}
 		}
@@ -892,16 +942,29 @@ final class MonitorYandexMapsClientTileRenderer {
 
 		private void trimPendingBaseTilesLocked() {
 			while (this.pendingBaseTiles.size() > MAX_DIRTY_BASE_TILES_PER_DIMENSION) {
-				TileKey discoveryKey = null;
+				TileKey renderedKey = null;
+				TileKey farthestNewKey = null;
+				double farthestNewDistance = Double.NEGATIVE_INFINITY;
 				for (Map.Entry<TileKey, DirtyTileState> entry : this.pendingBaseTiles.entrySet()) {
 					DirtyTileState state = entry.getValue();
-					if (state != null && state.discoveryOnly()) {
-						discoveryKey = entry.getKey();
+					if (state != null && state.renderedBefore()) {
+						renderedKey = entry.getKey();
 						break;
 					}
+					if (state != null) {
+						double distance = baseTileDistanceSquaredToWorldCenter(entry.getKey());
+						if (distance > farthestNewDistance) {
+							farthestNewDistance = distance;
+							farthestNewKey = entry.getKey();
+						}
+					}
 				}
-				if (discoveryKey != null) {
-					this.pendingBaseTiles.remove(discoveryKey);
+				if (renderedKey != null) {
+					this.pendingBaseTiles.remove(renderedKey);
+					continue;
+				}
+				if (farthestNewKey != null) {
+					this.pendingBaseTiles.remove(farthestNewKey);
 					continue;
 				}
 				Iterator<Map.Entry<TileKey, DirtyTileState>> iterator = this.pendingBaseTiles.entrySet().iterator();
@@ -940,7 +1003,7 @@ final class MonitorYandexMapsClientTileRenderer {
 					if (bestKey == null
 							|| score > bestScore
 							|| (score == bestScore && active && !bestActive)
-							|| (score == bestScore && active == bestActive && state.firstMarkedAt() < bestState.firstMarkedAt())) {
+							|| (score == bestScore && active == bestActive && shouldPreferPendingTile(key, state, bestKey, bestState))) {
 						bestKey = key;
 						bestState = state;
 						bestActive = active;
@@ -961,11 +1024,46 @@ final class MonitorYandexMapsClientTileRenderer {
 			if (state == null) {
 				return Integer.MIN_VALUE;
 			}
-			int score = state.renderedBefore() ? 1 : 2;
-			if (active) {
+			int score = state.renderedBefore() ? 1 : 5;
+			if (state.discoveryOnly() && !state.renderedBefore()) {
 				score++;
 			}
+			if (active) {
+				score += 3;
+			}
 			return score;
+		}
+
+		private boolean shouldPreferPendingTile(TileKey key, DirtyTileState state, TileKey bestKey, DirtyTileState bestState) {
+			if (state == null) {
+				return false;
+			}
+			if (bestKey == null || bestState == null) {
+				return true;
+			}
+			boolean newTile = !state.renderedBefore();
+			boolean bestNewTile = !bestState.renderedBefore();
+			if (newTile && bestNewTile) {
+				double distance = baseTileDistanceSquaredToWorldCenter(key);
+				double bestDistance = baseTileDistanceSquaredToWorldCenter(bestKey);
+				if (Double.compare(distance, bestDistance) != 0) {
+					return distance < bestDistance;
+				}
+			}
+			if (state.firstMarkedAt() != bestState.firstMarkedAt()) {
+				return state.firstMarkedAt() < bestState.firstMarkedAt();
+			}
+			return baseTileDistanceSquaredToWorldCenter(key) < baseTileDistanceSquaredToWorldCenter(bestKey);
+		}
+
+		private double baseTileDistanceSquaredToWorldCenter(TileKey key) {
+			if (key == null) {
+				return Double.POSITIVE_INFINITY;
+			}
+			double tileSize = tileWorldSize(key.lod());
+			double centerX = (key.tileX() + 0.5D) * tileSize;
+			double centerZ = (key.tileZ() + 0.5D) * tileSize;
+			return centerX * centerX + centerZ * centerZ;
 		}
 
 		private boolean intersectsActiveView(TileKey key, List<ActiveViewHint> activeViews) {
