@@ -67,7 +67,7 @@
       "enabled": true,
       "id": "copper_man",
       "displayName": "Медный Человек",
-      "ownerNickname": "sd",
+      "ownerNickname": "",
       "description": "Искал медь сгорел медведь.",
       "attack": {
         "enabled": true,
@@ -171,11 +171,7 @@
       "enabled": true,
       "id": "woman",
       "displayName": "ЖЕНЩИНА!!!",
-<<<<<<< HEAD
-      "ownerNickname": "march_taylor",
-=======
-      "ownerNickname": "Rajas_YT",
->>>>>>> origin/main
+      "ownerNickname": "",
       "description": "Хрупкая снаружи, но опасная внутри.",
       "attack": {
         "enabled": true,
@@ -239,11 +235,7 @@
       "enabled": true,
       "id": "gennadiy_sharoyobov",
       "displayName": "Генадий Шароёбов",
-<<<<<<< HEAD
       "ownerNickname": "sd",
-=======
-      "ownerNickname": "",
->>>>>>> origin/main
       "description": "Дотер придет...",
       "attack": {
         "enabled": true,
@@ -377,7 +369,7 @@
       "enabled": true,
       "id": "milk_oligarch",
       "displayName": "Молочный Олигарх",
-      "ownerNickname": "march_taylor",
+      "ownerNickname": "Rajas_YT",
       "description": "Никогда бизнесс не бывает белым, даже молочный.",
       "attack": {
         "enabled": true,

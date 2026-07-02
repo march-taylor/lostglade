@@ -3,10 +3,10 @@
     {
       "type": "bitmap",
       "file": "lg2:font/milk_absolute_indicator.png",
-      "ascent": 8,
-      "height": 16,
+      "ascent": 28,
+      "height": 56,
       "chars": [
-        ""
+        "\ue960"
       ]
     }
   ]

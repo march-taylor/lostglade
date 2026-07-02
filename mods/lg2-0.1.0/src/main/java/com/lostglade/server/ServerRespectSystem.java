@@ -255,7 +255,7 @@ public final class ServerRespectSystem {
 			return "Повага!";
 		}
 		if (locale.startsWith("ja")) {
-			return "?????!";
+			return "リスペクト!";
 		}
 		if (locale.startsWith("ru")) {
 			return "Респект!";

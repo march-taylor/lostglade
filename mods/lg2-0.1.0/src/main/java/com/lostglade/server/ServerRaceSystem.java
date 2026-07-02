@@ -327,10 +327,8 @@ public final class ServerRaceSystem {
 	);
 	private static final String MILK_ABSOLUTE_ATTACK_INDICATOR_GLYPH = "\ue960";
 	private static final int MILK_ABSOLUTE_LOST_HEART_ANIMATION_FIRST_GLYPH = 0xE962;
-	private static final int MILK_ABSOLUTE_LOST_HEART_ANIMATION_FRAME_COUNT = 4;
-	private static final int MILK_ABSOLUTE_LOST_HEART_ANIMATION_FRAME_TICKS = 4;
-	private static final int MILK_ABSOLUTE_LOST_HEART_ANIMATION_STAY_TICKS = 4;
-	private static final int MILK_ABSOLUTE_LOST_HEART_ANIMATION_FADE_OUT_TICKS = 4;
+	private static final int MILK_ABSOLUTE_LOST_HEART_ANIMATION_FRAME_COUNT = 14;
+	private static final int MILK_ABSOLUTE_LOST_HEART_ANIMATION_FRAME_TICKS = 2;
 	private static final BlockParticleOption MILK_ABSOLUTE_LOST_HEART_DROP_PARTICLE = new BlockParticleOption(
 			ParticleTypes.FALLING_DUST,
 			Blocks.REDSTONE_BLOCK.defaultBlockState()
@@ -363,11 +361,11 @@ public final class ServerRaceSystem {
 	private static final int CARTEL_PASSPORT_NAME_CHAR_ADVANCE = 5;
 	private static final String WOMAN_SHNYAGA_NAME_TEXTURE_RESOURCE = "/assets/lg2/textures/font/woman_shnyaga_name.png";
 	private static final String[] WOMAN_SHNYAGA_NAME_FONT_ROWS = {
-			"Р С’Р вЂР вЂ™Р вЂњР вЂќР вЂўР вЂ“Р вЂ”Р ВР в„ўР С™Р вЂєР СљР СњР С›Р Сџ",
-			"Р В Р РЋР СћР Р€Р В¤Р ТђР В¦Р В§Р РЃР В©Р Р„Р В«Р В¬Р В­Р В®Р Р‡",
-			"Р РѓР В°Р В±Р Р†Р С–Р Т‘Р ВµР В¶Р В·Р С‘Р в„–Р С”Р В»Р СР Р…Р С•",
-			"Р С—РЎР‚РЎРѓРЎвЂљРЎС“РЎвЂћРЎвЂ¦РЎвЂ РЎвЂЎРЎв‚¬РЎвЂ°РЎР‰РЎвЂ№РЎРЉРЎРЊРЎР‹",
-			"РЎРЏРЎвЂABCDEFGHIJKLMN",
+			"АБВГДЕЖЗИЙКЛМНОП",
+			"РСТУФХЦЧШЩЪЫЬЭЮЯ",
+			"Ёабвгдежзийклмно",
+			"прстуфхцчшщъыьэю",
+			"яёABCDEFGHIJKLMN",
 			"OPQRSTUVWXYZabcd",
 			"efghijklmnopqrst",
 			"uvwxyz0123456789",
@@ -386,12 +384,12 @@ public final class ServerRaceSystem {
 	// Calibrated letter overlay anchor; keep this position when replacing the texture.
 	private static final int WOMAN_SHNYAGA_LETTER_OVERLAY_X_OFFSET = 189;
 	private static final int WOMAN_SHNYAGA_LETTER_OVERLAY_WIDTH = 134;
-	private static final int MILK_POCKET_MENU_OVERLAY_X_OFFSET = 184;
-	private static final int MILK_POCKET_MENU_OVERLAY_WIDTH = 144;
+	private static final int MILK_POCKET_MENU_OVERLAY_X_OFFSET = 164;
+	private static final int MILK_POCKET_MENU_OVERLAY_WIDTH = 176;
 	private static final double WOMAN_SHNYAGA_SENDER_LINE_CENTER_X = 36.5D;
 	private static final double WOMAN_SHNYAGA_RECIPIENT_LINE_CENTER_X = 122.5D;
-	private static final double WOMAN_SHNYAGA_SENDER_NAME_CORRECTION_X = 6.5D;
-	private static final double WOMAN_SHNYAGA_RECIPIENT_NAME_CORRECTION_X = -2.5D;
+	private static final double WOMAN_SHNYAGA_SENDER_NAME_CORRECTION_X = 4.5D;
+	private static final double WOMAN_SHNYAGA_RECIPIENT_NAME_CORRECTION_X = -0.5D;
 	private static final int MISTER_CARTEL_49_STACK_LIMIT = 49;
 	private static final String CARTEL_SUMMON_TAG = "lg2.cartel_summon";
 	private static final String CARTEL_LAWYER_TAG = "lg2.cartel_lawyer";
@@ -486,7 +484,7 @@ public final class ServerRaceSystem {
 	private static final int LITTLE_DICTATOR_DEFENSE_DEFAULT_MIN_FAKE_PING_MS = 200;
 	private static final int LITTLE_DICTATOR_DEFENSE_DEFAULT_MAX_FAKE_PING_MS = 2000;
 	private static final long LITTLE_DICTATOR_DEFENSE_PING_UPDATE_TICKS = 8L;
-	private static final long LITTLE_DICTATOR_DEFENSE_OVERLAY_FRAME_TICKS = 10L;
+	private static final long LITTLE_DICTATOR_DEFENSE_OVERLAY_FRAME_TICKS = 7L;
 	private static final long LITTLE_DICTATOR_DEFENSE_WAVE_DURATION_TICKS = 16L;
 	private static final int LITTLE_DICTATOR_DEFENSE_TITLE_COLOR = 0xFFFFFF;
 	private static final int LITTLE_DICTATOR_DEFENSE_WAVE_PRIMARY_COLOR = 0x0E6D82;
@@ -498,13 +496,20 @@ public final class ServerRaceSystem {
 			"\uef70",
 			"\uef71",
 			"\uef72",
-			"\uef73"
+			"\uef73",
+			"\uef74",
+			"\uef75",
+			"\uef76",
+			"\uef77"
 	};
 	private static final Identifier LITTLE_DICTATOR_DEFENSE_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "little_dictator_defense");
 	private static final Holder<SoundEvent> LITTLE_DICTATOR_DEFENSE_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(LITTLE_DICTATOR_DEFENSE_SOUND_ID));
 	private static final Holder<SoundEvent> LITTLE_DICTATOR_DEFENSE_FALLBACK_SOUND = Holder.direct(SoundEvents.REDSTONE_TORCH_BURNOUT);
 	private static final float LITTLE_DICTATOR_DEFENSE_SOUND_VOLUME = 1.0F;
 	private static final float LITTLE_DICTATOR_DEFENSE_SOUND_PITCH = 1.0F;
+	private static final float LITTLE_DICTATOR_UNIQUE_SHOCK_SOUND_VOLUME = 4.0F;
+	private static final float LITTLE_DICTATOR_UNIQUE_SHOCK_SOUND_PITCH = 0.75F;
+	private static final double LITTLE_DICTATOR_UNIQUE_SHOCK_SOUND_RANGE_BLOCKS = 96.0D;
 	private static final int LITTLE_DICTATOR_DEFENSE_MIN_PACKET_DELAY_TICKS = 2;
 	private static final int LITTLE_DICTATOR_DEFENSE_MAX_PACKET_DELAY_TICKS = 45;
 	private static final int LITTLE_DICTATOR_DEFENSE_MAX_DELAYED_PACKETS_PER_PLAYER = 4000;
@@ -521,6 +526,7 @@ public final class ServerRaceSystem {
 	private static final long LITTLE_DICTATOR_UNIQUE_DRAIN_PARTICLE_INTERVAL_TICKS = 5L;
 	private static final long LITTLE_DICTATOR_UNIQUE_SHOCK_WAVE_TICKS = 14L;
 	private static final long LITTLE_DICTATOR_UNIQUE_SHOCK_WAVE_FRAME_INTERVAL_TICKS = 2L;
+	private static final long LITTLE_DICTATOR_UNIQUE_LOOK_SYNC_INTERVAL_TICKS = 2L;
 	private static final int LITTLE_DICTATOR_UNIQUE_SLOWNESS_LEVEL = 3;
 	private static final float LITTLE_DICTATOR_UNIQUE_LOOK_STEP_DEGREES = 5.5F;
 	private static final float LITTLE_DICTATOR_UNIQUE_LOOK_RETURN_STEP_DEGREES = 18.0F;
@@ -740,9 +746,12 @@ public final class ServerRaceSystem {
 	private static final double MARK_AXE_PICKUP_TRIGGER_SIZE = 0.72D;
 	private static final float MARK_AXE_DISPLAY_SCALE = 1.0F;
 	private static final int MARK_AXE_DISPLAY_INTERPOLATION_TICKS = 2;
+
+
 	private static final int MARK_AXE_BLOOD_COLOR = 0xB40A18;
 	private static final BlockParticleOption MARK_AXE_BLOOD_DRIP_PARTICLE = new BlockParticleOption(ParticleTypes.FALLING_DUST, Blocks.REDSTONE_BLOCK.defaultBlockState());
 	private static final String MARK_AXE_DISPLAY_TAG = "lg2.mark_throwing_axe";
+
 	private static final String MARK_AXE_TRIGGER_TAG = "lg2.mark_throwing_axe_trigger";
 	private static final double MILK_STOCK_DEFAULT_AVOID_RADIUS_BLOCKS = 5.0D;
 	private static final double MILK_STOCK_SEARCH_EXTRA_BLOCKS = 2.0D;
@@ -864,9 +873,9 @@ public final class ServerRaceSystem {
 	private static final int CARTEL_DISGUISE_PACK_PREVIOUS_SLOT = 12;
 	private static final int CARTEL_DISGUISE_PACK_HEAD_SLOT = 13;
 	private static final int CARTEL_DISGUISE_PACK_NEXT_SLOT = 14;
-	private static final int WOMAN_SHNYAGA_PREVIOUS_SLOT = 12;
+	private static final int WOMAN_SHNYAGA_PREVIOUS_SLOT = 11;
 	private static final int WOMAN_SHNYAGA_HEAD_SLOT = 13;
-	private static final int WOMAN_SHNYAGA_NEXT_SLOT = 14;
+	private static final int WOMAN_SHNYAGA_NEXT_SLOT = 15;
 	private static final int MILK_POCKET_INVITE_PREVIOUS_SLOT = 12;
 	private static final int MILK_POCKET_INVITE_HEAD_SLOT = 13;
 	private static final int MILK_POCKET_INVITE_NEXT_SLOT = 14;
@@ -1133,6 +1142,7 @@ public final class ServerRaceSystem {
 		private double drainedExperienceBank;
 		private double drainedFoodBank;
 		private boolean activeEffectsEnded;
+
 
 		private LittleDictatorUniqueSession(
 				ResourceKey<Level> dimension,
@@ -1695,7 +1705,7 @@ public final class ServerRaceSystem {
 	private static int resetAllRaceAbilityCooldownsFromCommand(CommandContext<CommandSourceStack> context) {
 		MinecraftServer server = context.getSource().getServer();
 		resetAllRaceAbilityCooldowns(server);
-		context.getSource().sendSuccess(() -> Component.literal("Р вЂ™РЎРѓР Вµ Р С™Р вЂќ РЎР‚Р В°РЎРѓР С•Р Р†РЎвЂ№РЎвЂ¦ РЎРѓР С—Р С•РЎРѓР С•Р В±Р Р…Р С•РЎРѓРЎвЂљР ВµР в„– РЎРѓР В±РЎР‚Р С•РЎв‚¬Р ВµР Р…РЎвЂ№"), true);
+		context.getSource().sendSuccess(() -> Component.literal("Все КД расовых способностей сброшены"), true);
 		return 1;
 	}
 
@@ -1923,7 +1933,7 @@ public final class ServerRaceSystem {
 		}
 		updateMarkRageHud(player);
 		player.displayClientMessage(
-				Component.literal(hidden ? "Р РЃР С”Р В°Р В»Р В° РЎРЏРЎР‚Р С•РЎРѓРЎвЂљР С‘ РЎРѓР С”РЎР‚РЎвЂ№РЎвЂљР В°." : "Р РЃР С”Р В°Р В»Р В° РЎРЏРЎР‚Р С•РЎРѓРЎвЂљР С‘ Р Р†Р С”Р В»РЎР‹РЎвЂЎР ВµР Р…Р В°.")
+				Component.literal(hidden ? "Шкала ярости скрыта." : "Шкала ярости включена.")
 						.withStyle(style -> style.withColor(hidden ? ChatFormatting.GRAY : ChatFormatting.RED).withItalic(false)),
 				true
 		);
@@ -2559,7 +2569,7 @@ public final class ServerRaceSystem {
 			return 1;
 		} catch (Exception exception) {
 			Lg2.LOGGER.error("Failed to activate copper man defense for {}", caster.getGameProfile().name(), exception);
-			caster.sendSystemMessage(Component.literal("Р СњР Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р В°Р С”РЎвЂљР С‘Р Р†Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ Р В·Р В°РЎвЂ°Р С‘РЎвЂљРЎС“. Р СџР С•Р С—РЎР‚Р С•Р В±РЎС“Р в„–РЎвЂљР Вµ РЎРѓР Р…Р С•Р Р†Р В°."));
+			caster.sendSystemMessage(Component.literal("Не удалось активировать защиту. Попробуйте снова."));
 			return 0;
 		}
 	}
@@ -2588,7 +2598,7 @@ public final class ServerRaceSystem {
 			return 1;
 		} catch (Exception exception) {
 			Lg2.LOGGER.error("Failed to activate copper man jetpack for {}", caster.getGameProfile().name(), exception);
-			caster.sendSystemMessage(Component.literal("Р СњР Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р В°Р С”РЎвЂљР С‘Р Р†Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ РЎР‚Р В°Р Р…Р ВµРЎвЂ . Р СџР С•Р С—РЎР‚Р С•Р В±РЎС“Р в„–РЎвЂљР Вµ РЎРѓР Р…Р С•Р Р†Р В°."));
+			caster.sendSystemMessage(Component.literal("Не удалось активировать ранец. Попробуйте снова."));
 			return 0;
 		}
 	}
@@ -4824,7 +4834,7 @@ public final class ServerRaceSystem {
 		}
 		if (!hasMilkAbsoluteHeartToSpend(player)) {
 			player.displayClientMessage(
-					Component.literal("Р СњР ВµР В»РЎРЉР В·РЎРЏ Р В°Р С”РЎвЂљР С‘Р Р†Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ Р С’Р В±РЎРѓР С•Р В»РЎР‹РЎвЂљ РЎРѓ Р С—Р С•РЎРѓР В»Р ВµР Т‘Р Р…Р С‘Р С РЎРѓР ВµРЎР‚Р Т‘РЎвЂ Р ВµР С.")
+					Component.literal("Нельзя активировать Абсолют с последним сердцем.")
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
@@ -5031,7 +5041,7 @@ public final class ServerRaceSystem {
 		return;
 	}
 	player.displayClientMessage(
-			Component.literal("Р С›РЎвЂљР С”РЎР‚Р С•Р в„–РЎвЂљР Вµ РЎРѓРЎС“Р Р…Р Т‘РЎС“Р С”, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ РЎРѓР Т‘Р ВµР В»Р В°РЎвЂљРЎРЉ Р ВµР С–Р С• Р Р…Р В°Р В»Р С•Р С–Р С•Р Р†РЎвЂ№Р С.")
+			Component.literal("Откройте сундук, чтобы сделать его налоговым.")
 					.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
 			true
 	);
@@ -5048,7 +5058,7 @@ private static InteractionResult tryMarkLittleDictatorTaxChest(ServerPlayer play
 	if (getLittleDictatorShnyagaAbility(player) == null) {
 		LITTLE_DICTATOR_TAX_CHEST_PENDING.remove(player.getUUID());
 		player.displayClientMessage(
-				Component.literal("Р РЋР С—Р С•РЎРѓР С•Р В±Р Р…Р С•РЎРѓРЎвЂљРЎРЉ Р ВµРЎвЂ°РЎвЂ Р Р…Р Вµ Р С”РЎС“Р С—Р В»Р ВµР Р…Р В°.")
+				Component.literal("Способность ещё не куплена.")
 						.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 				true
 		);
@@ -5067,7 +5077,7 @@ private static InteractionResult tryMarkLittleDictatorTaxChest(ServerPlayer play
 	spawnLittleDictatorDecreeParticles(level, Vec3.atCenterOf(pos));
 	syncLittleDictatorTaxChestHighlights(level.getServer(), player);
 	player.displayClientMessage(
-			Component.literal("Р СњР В°Р В»Р С•Р С–Р С•Р Р†РЎвЂ№Р в„– РЎРѓРЎС“Р Р…Р Т‘РЎС“Р С” Р Р…Р В°Р В·Р Р…Р В°РЎвЂЎР ВµР Р….")
+			Component.literal("Налоговый сундук назначен.")
 					.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
 			true
 	);
@@ -5091,7 +5101,7 @@ private static InteractionResult tryBlockLittleDictatorSanctionedTrade(ServerPla
 		return InteractionResult.PASS;
 	}
 	player.displayClientMessage(
-			Component.literal("Р СџР С•Р Т‘ РЎРѓР В°Р Р…Р С”РЎвЂ Р С‘РЎРЏР СР С‘ РЎвЂљР С•РЎР‚Р С–Р С•Р Р†Р В»РЎРЏ Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р Р…Р В°.")
+			Component.literal("Под санкциями торговля недоступна.")
 					.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 			true
 	);
@@ -5107,9 +5117,13 @@ private static InteractionResult tryUseLittleDictatorDecreeOnSelf(ServerPlayer p
 	if (type == null) {
 		return InteractionResult.PASS;
 	}
+	if (!isLittleDictatorPlayer(player)) {
+		displayLittleDictatorDecreeForbidden(player);
+		return InteractionResult.SUCCESS;
+	}
 	if (getLittleDictatorShnyagaAbility(player) == null) {
 		player.displayClientMessage(
-				Component.literal("Р РЋР С—Р С•РЎРѓР С•Р В±Р Р…Р С•РЎРѓРЎвЂљРЎРЉ Р ВµРЎвЂ°РЎвЂ Р Р…Р Вµ Р С”РЎС“Р С—Р В»Р ВµР Р…Р В°.")
+				Component.literal("Способность ещё не куплена.")
 						.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 				true
 		);
@@ -5133,6 +5147,17 @@ private static InteractionResult tryUseLittleDictatorDecreeOnSelf(ServerPlayer p
 	return InteractionResult.SUCCESS;
 }
 
+private static void displayLittleDictatorDecreeForbidden(ServerPlayer player) {
+	if (player == null) {
+		return;
+	}
+	player.displayClientMessage(
+			Component.literal("\u0412\u044b \u043d\u0435 \u043c\u043e\u0436\u0435\u0442\u0435 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u044c \u044d\u0442\u043e\u0442 \u0443\u043a\u0430\u0437.")
+					.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
+			true
+	);
+}
+
 private static InteractionResult tryUseLittleDictatorDecreeOnEntity(ServerPlayer player, InteractionHand hand, Entity entity) {
 	if (player == null || hand == null || hand != InteractionHand.MAIN_HAND || entity == null) {
 		return InteractionResult.PASS;
@@ -5142,10 +5167,14 @@ private static InteractionResult tryUseLittleDictatorDecreeOnEntity(ServerPlayer
 	if (type == null) {
 		return InteractionResult.PASS;
 	}
+	if (!isLittleDictatorPlayer(player)) {
+		displayLittleDictatorDecreeForbidden(player);
+		return InteractionResult.SUCCESS;
+	}
 	RaceAbilityConfig ability = getLittleDictatorShnyagaAbility(player);
 	if (ability == null) {
 		player.displayClientMessage(
-				Component.literal(localizeAbilityNotPurchased(player, "Р Р€Р С”Р В°Р В·РЎвЂ№"))
+				Component.literal(localizeAbilityNotPurchased(player, "Указы"))
 						.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 				true
 		);
@@ -5155,7 +5184,7 @@ private static InteractionResult tryUseLittleDictatorDecreeOnEntity(ServerPlayer
 	if (target == null) {
 		if (type == LittleDictatorDecreeType.PROPAGANDA) {
 			player.displayClientMessage(
-					Component.literal("Р СџРЎР‚Р С•Р С—Р В°Р С–Р В°Р Р…Р Т‘Р В° Р С—РЎР‚Р С‘Р СР ВµР Р…РЎРЏР ВµРЎвЂљРЎРѓРЎРЏ РЎвЂљР С•Р В»РЎРЉР С”Р С• Р Р…Р В° РЎРѓР ВµР В±РЎРЏ.")
+					Component.literal("Пропаганда применяется только на себя.")
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
@@ -5166,7 +5195,7 @@ private static InteractionResult tryUseLittleDictatorDecreeOnEntity(ServerPlayer
 	}
 	if (type == LittleDictatorDecreeType.PROPAGANDA) {
 		player.displayClientMessage(
-				Component.literal("Р СџРЎР‚Р С•Р С—Р В°Р С–Р В°Р Р…Р Т‘Р В° Р С—РЎР‚Р С‘Р СР ВµР Р…РЎРЏР ВµРЎвЂљРЎРѓРЎРЏ РЎвЂљР С•Р В»РЎРЉР С”Р С• Р Р…Р В° РЎРѓР ВµР В±РЎРЏ.")
+				Component.literal("Пропаганда применяется только на себя.")
 						.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 				true
 		);
@@ -5234,7 +5263,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		refreshLittleDictatorSanctionsFatigue(target);
 		spawnLittleDictatorDecreeParticles((ServerLevel) target.level(), target.position().add(0.0D, target.getBbHeight() * 0.55D, 0.0D));
 		dictator.displayClientMessage(
-				Component.literal("Р РЋР В°Р Р…Р С”РЎвЂ Р С‘Р С‘ Р Р…Р В°Р В»Р С•Р В¶Р ВµР Р…РЎвЂ№ Р Р…Р В° " + target.getGameProfile().name() + ".")
+				Component.literal("Санкции наложены на " + target.getGameProfile().name() + ".")
 						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
 				true
 		);
@@ -5261,7 +5290,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 		spawnLittleDictatorDecreeParticles((ServerLevel) target.level(), target.position().add(0.0D, target.getBbHeight() * 0.55D, 0.0D));
 		dictator.displayClientMessage(
-				Component.literal("Р СњР В°Р В»Р С•Р С–Р С‘ Р Р…Р В°Р В»Р С•Р В¶Р ВµР Р…РЎвЂ№ Р Р…Р В° " + target.getGameProfile().name() + ".")
+				Component.literal("Налоги наложены на " + target.getGameProfile().name() + ".")
 						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
 				true
 		);
@@ -5283,7 +5312,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		refreshLittleDictatorPropagandaHaste(dictator);
 		spawnLittleDictatorDecreeParticles(level, dictator.position().add(0.0D, dictator.getBbHeight() * 0.55D, 0.0D));
 		dictator.displayClientMessage(
-				Component.literal("Р СџРЎР‚Р С•Р С—Р В°Р С–Р В°Р Р…Р Т‘Р В° Р В°Р С”РЎвЂљР С‘Р Р†Р С‘РЎР‚Р С•Р Р†Р В°Р Р…Р В°.")
+				Component.literal("Пропаганда активирована.")
 						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false)),
 				true
 		);
@@ -5342,27 +5371,27 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 
 	private static MutableComponent getLittleDictatorDecreeName(LittleDictatorDecreeType type) {
 		if (type == null) {
-			return Component.literal("Р Р€Р С”Р В°Р В·").withStyle(style -> style.withColor(ChatFormatting.GOLD).withItalic(false));
+			return Component.literal("Указ").withStyle(style -> style.withColor(ChatFormatting.GOLD).withItalic(false));
 		}
 		String name = switch (type) {
-			case SANCTIONS -> "Р Р€Р С”Р В°Р В·: Р РЋР В°Р Р…Р С”РЎвЂ Р С‘Р С‘";
-			case TAXES -> "Р Р€Р С”Р В°Р В·: Р СњР В°Р В»Р С•Р С–Р С‘";
-			case PROPAGANDA -> "Р Р€Р С”Р В°Р В·: Р СџРЎР‚Р С•Р С—Р В°Р С–Р В°Р Р…Р Т‘Р В°";
+			case SANCTIONS -> "Указ: Санкции";
+			case TAXES -> "Указ: Налоги";
+			case PROPAGANDA -> "Указ: Пропаганда";
 		};
 		return Component.literal(name).withStyle(style -> style.withColor(ChatFormatting.GOLD).withItalic(false));
 	}
 
 	private static List<Component> getLittleDictatorDecreeLore(LittleDictatorDecreeType type) {
 		if (type == null) {
-			return List.of(Component.literal("Р С›РЎРѓР С•Р В±РЎвЂ№Р в„– РЎС“Р С”Р В°Р В· Р Т‘Р С‘Р С”РЎвЂљР В°РЎвЂљР С•РЎР‚Р В°.").withStyle(style -> style.withColor(ChatFormatting.GRAY).withItalic(false)));
+			return List.of(Component.literal("Особый указ диктатора.").withStyle(style -> style.withColor(ChatFormatting.GRAY).withItalic(false)));
 		}
 		String first = switch (type) {
-			case SANCTIONS -> "Р СџР С™Р Сљ Р С—Р С• Р С‘Р С–РЎР‚Р С•Р С”РЎС“: Р Р…Р В° Р Р†РЎР‚Р ВµР СРЎРЏ Р С•РЎРѓР В»Р В°Р В±Р В»РЎРЏР ВµРЎвЂљ Р ВµР С–Р С• Р Т‘Р С•Р В±РЎвЂ№РЎвЂЎРЎС“ Р С‘ Р С•РЎвЂљР С”Р В»РЎР‹РЎвЂЎР В°Р ВµРЎвЂљ РЎвЂљР С•РЎР‚Р С–Р С•Р Р†Р В»РЎР‹ РЎРѓ Р В¶Р С‘РЎвЂљР ВµР В»РЎРЏР СР С‘.";
-			case TAXES -> "Р СџР С™Р Сљ Р С—Р С• Р С‘Р С–РЎР‚Р С•Р С”РЎС“: Р Р…Р В° Р Р†РЎР‚Р ВµР СРЎРЏ Р В·Р В°Р С—РЎС“РЎРѓР С”Р В°Р ВµРЎвЂљ РЎР‚Р ВµР С–РЎС“Р В»РЎРЏРЎР‚Р Р…РЎвЂ№Р в„– РЎРѓР В±Р С•РЎР‚ РЎРѓР В»РЎС“РЎвЂЎР В°Р в„–Р Р…РЎвЂ№РЎвЂ¦ Р С—РЎР‚Р ВµР Т‘Р СР ВµРЎвЂљР С•Р Р† Р Р† Р Р…Р В°Р В»Р С•Р С–Р С•Р Р†РЎвЂ№Р Вµ РЎРѓРЎС“Р Р…Р Т‘РЎС“Р С”Р С‘.";
-			case PROPAGANDA -> "Р СџР С™Р Сљ Р С—Р С• РЎРѓР ВµР В±Р Вµ: Р Р…Р В° Р Р†РЎР‚Р ВµР СРЎРЏ РЎС“РЎРѓР С‘Р В»Р С‘Р Р†Р В°Р ВµРЎвЂљ Р Т‘Р С•Р В±РЎвЂ№РЎвЂЎРЎС“, РЎР‚РЎвЂ№Р В±Р В°Р В»Р С”РЎС“, Р С”Р С•Р С—Р В°Р Р…Р С‘Р Вµ Р С‘ РЎвЂљР С•РЎР‚Р С–Р С•Р Р†Р В»РЎР‹.";
+			case SANCTIONS -> "ПКМ по игроку: на время ослабляет его добычу и отключает торговлю с жителями.";
+			case TAXES -> "ПКМ по игроку: на время запускает регулярный сбор случайных предметов в налоговые сундуки.";
+			case PROPAGANDA -> "ПКМ по себе: на время усиливает добычу, рыбалку, копание и торговлю.";
 		};
 		String second = switch (type) {
-			case SANCTIONS, TAXES, PROPAGANDA -> "Р СџР С•РЎРѓР В»Р Вµ Р С—РЎР‚Р С‘Р СР ВµР Р…Р ВµР Р…Р С‘РЎРЏ РЎС“Р С”Р В°Р В· РЎР‚Р В°РЎРѓРЎвЂ¦Р С•Р Т‘РЎС“Р ВµРЎвЂљРЎРѓРЎРЏ.";
+			case SANCTIONS, TAXES, PROPAGANDA -> "После применения указ расходуется.";
 		};
 		List<Component> lore = new ArrayList<>();
 		lore.add(Component.literal(first).withStyle(style -> style.withColor(ChatFormatting.GRAY).withItalic(false)));
@@ -6420,7 +6449,9 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			}
 			double scale = getLittleDictatorUniqueScale(session, nowTick);
 			syncLittleDictatorUniqueScale(dictator, scale);
-			if ((nowTick - session.startTick) % 4L == 0L) {
+
+			boolean visualTransition = nowTick < session.startTick + LITTLE_DICTATOR_UNIQUE_GROWTH_TICKS || !active;
+			if (visualTransition && (nowTick - session.startTick) % 3L == 0L) {
 				spawnLittleDictatorUniqueGrowthParticles(level, dictator, scale);
 			}
 
@@ -6564,7 +6595,9 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		if (packet.hasRotation()) {
 			ServerPlayer dictator = findLittleDictatorUniqueCameraLockDictator(server, player);
 			if (dictator != null) {
-				forceLittleDictatorUniqueLookAtCaster(player, dictator, LITTLE_DICTATOR_UNIQUE_LOOK_RETURN_STEP_DEGREES);
+				if (shouldSyncLittleDictatorUniqueLook(player)) {
+					forceLittleDictatorUniqueLookAtCaster(player, dictator, LITTLE_DICTATOR_UNIQUE_LOOK_RETURN_STEP_DEGREES);
+				}
 				return !packet.hasPosition();
 			}
 		}
@@ -6666,7 +6699,9 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			currentTargets.add(targetId);
 			session.gazeLockedPlayers.add(targetId);
 			applyLittleDictatorUniqueSlowness(target, session);
-			forceLittleDictatorUniqueLookAtCaster(target, dictator);
+			if (shouldSyncLittleDictatorUniqueLook(target)) {
+				forceLittleDictatorUniqueLookAtCaster(target, dictator);
+			}
 		}
 		for (UUID targetId : new ArrayList<>(session.gazeLockedPlayers)) {
 			if (currentTargets.contains(targetId)) {
@@ -6687,9 +6722,16 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 		MinecraftServer server = target.level() == null ? null : target.level().getServer();
 		ServerPlayer dictator = findLittleDictatorUniqueCameraLockDictator(server, target);
-		if (dictator != null) {
+		if (dictator != null && shouldSyncLittleDictatorUniqueLook(target)) {
 			forceLittleDictatorUniqueLookAtCaster(target, dictator);
 		}
+	}
+
+	private static boolean shouldSyncLittleDictatorUniqueLook(ServerPlayer target) {
+		if (target == null || target.level() == null) {
+			return false;
+		}
+		return target.level().getGameTime() % LITTLE_DICTATOR_UNIQUE_LOOK_SYNC_INTERVAL_TICKS == 0L;
 	}
 
 	private static boolean hasLittleDictatorUniqueLineOfSight(ServerLevel level, ServerPlayer dictator, ServerPlayer target) {
@@ -6896,9 +6938,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			shakeLittleDictatorUniqueScreen(target, origin);
 		}
 		shakeLittleDictatorUniqueScreen(dictator, origin);
-		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.WARDEN_SONIC_BOOM, SoundSource.PLAYERS, 4.0F, 0.72F);
-		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.GENERIC_EXPLODE, SoundSource.PLAYERS, 2.3F, 0.55F);
-		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.ANVIL_LAND, SoundSource.PLAYERS, 1.8F, 0.45F);
+		playLittleDictatorUniqueShockSound(level, origin);
 		spawnLittleDictatorUniqueShockParticles(level, origin, session.radius);
 		startLittleDictatorUniqueShockWave(level, dictator, Math.max(3.0D, session.radius));
 	}
@@ -6910,6 +6950,52 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		Vec3 direction = player.position().subtract(origin);
 		float yaw = direction.lengthSqr() <= 1.0E-6D ? player.getYRot() : yawFromDirection(direction);
 		player.connection.send(new ClientboundHurtAnimationPacket(player.getId(), yaw));
+	}
+
+	private static void playLittleDictatorUniqueShockSound(ServerLevel level, Vec3 origin) {
+		if (level == null || origin == null) {
+			return;
+		}
+		double maxDistanceSqr = LITTLE_DICTATOR_UNIQUE_SHOCK_SOUND_RANGE_BLOCKS * LITTLE_DICTATOR_UNIQUE_SHOCK_SOUND_RANGE_BLOCKS;
+		long seed = level.getRandom().nextLong();
+		for (ServerPlayer player : level.players()) {
+			if (player == null || player.connection == null || player.isSpectator() || !player.isAlive()) {
+				continue;
+			}
+			if (player.distanceToSqr(origin.x, origin.y, origin.z) > maxDistanceSqr) {
+				continue;
+			}
+			player.connection.send(new ClientboundSoundPacket(
+					BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.WARDEN_SONIC_BOOM),
+					SoundSource.PLAYERS,
+					origin.x,
+					origin.y,
+					origin.z,
+					4.0F,
+					0.72F,
+					seed
+			));
+			player.connection.send(new ClientboundSoundPacket(
+					BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.GENERIC_EXPLODE.value()),
+					SoundSource.PLAYERS,
+					origin.x,
+					origin.y,
+					origin.z,
+					2.3F,
+					0.55F,
+					seed + 1L
+			));
+			player.connection.send(new ClientboundSoundPacket(
+					BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.ANVIL_LAND),
+					SoundSource.PLAYERS,
+					origin.x,
+					origin.y,
+					origin.z,
+					1.8F,
+					0.45F,
+					seed + 2L
+			));
+		}
 	}
 
 	private static void performLittleDictatorUniqueDrain(ServerLevel level, ServerPlayer dictator, LittleDictatorUniqueSession session) {
@@ -7057,31 +7143,74 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		if (level == null || dictator == null) {
 			return;
 		}
-		Vec3 base = getLittleDictatorUniqueBodyCenter(dictator);
-		DustParticleOptions dust = new DustParticleOptions(0x520019, 1.25F);
-		for (int i = 0; i < 32; i++) {
-			double angle = (Math.PI * 2.0D * i) / 32.0D;
-			double x = base.x + Math.cos(angle) * 1.15D;
-			double z = base.z + Math.sin(angle) * 1.15D;
-			level.sendParticles(dust, x, base.y, z, 0, 0.0D, 0.055D, 0.0D, 1.0D);
+		Vec3 center = getLittleDictatorUniqueBodyCenter(dictator);
+		double visualScale = Math.max(1.0D, getLittleDictatorUniqueVisualScale(dictator));
+		double radius = Math.min(4.7D, 0.24D * visualScale + 1.45D);
+		DustParticleOptions crimson = new DustParticleOptions(0x8C0A24, 2.05F);
+		DustParticleOptions blue = new DustParticleOptions(0x316DFF, 1.9F);
+		DustParticleOptions whiteHot = new DustParticleOptions(0xF8FCFF, 1.7F);
+		for (int layer = 0; layer < 3; layer++) {
+			double layerFactor = 0.34D + layer * 0.26D;
+			int points = 52 + layer * 34;
+			for (int i = 0; i < points; i++) {
+				double unitY = 1.0D - 2.0D * ((i + 0.5D) / points);
+				double horizontal = Math.sqrt(Math.max(0.0D, 1.0D - unitY * unitY));
+				double angle = i * 2.399963229728653D + layer * 0.63D;
+				Vec3 normal = new Vec3(Math.cos(angle) * horizontal, unitY * 0.95D, Math.sin(angle) * horizontal);
+				double wobble = Math.sin(angle * 3.2D + layer * 1.4D) * 0.16D;
+				Vec3 pos = center.add(normal.scale(radius * layerFactor + wobble));
+				Vec3 velocity = normal.scale(0.16D + layer * 0.05D + (i % 4) * 0.015D);
+				DustParticleOptions dust = switch ((i + layer) % 6) {
+					case 0, 3 -> whiteHot;
+					case 1, 4 -> blue;
+					default -> crimson;
+				};
+				level.sendParticles(dust, pos.x, pos.y, pos.z, 0, velocity.x, velocity.y + 0.025D, velocity.z, 1.0D);
+			}
 		}
-		level.sendParticles(ParticleTypes.SMOKE, base.x, base.y, base.z, 16, 0.45D, 0.1D, 0.45D, 0.045D);
+		for (int i = 0; i < 34; i++) {
+			double angle = (Math.PI * 2.0D * i) / 34.0D;
+			double ringRadius = radius * (0.44D + 0.08D * Math.sin(i * 0.7D));
+			double x = dictator.getX() + Math.cos(angle) * ringRadius;
+			double z = dictator.getZ() + Math.sin(angle) * ringRadius;
+			level.sendParticles(i % 2 == 0 ? ParticleTypes.END_ROD : ParticleTypes.ENCHANT, x, dictator.getY() + 0.08D, z, 1, 0.03D, 0.34D, 0.03D, 0.02D);
+		}
+		level.sendParticles(ParticleTypes.REVERSE_PORTAL, center.x, center.y, center.z, 44, 0.85D, 1.15D, 0.85D, 0.06D);
+		level.sendParticles(ParticleTypes.SMOKE, center.x, center.y, center.z, 28, 0.6D, 0.95D, 0.6D, 0.03D);
+		level.sendParticles(ParticleTypes.CLOUD, center.x, center.y, center.z, 24, 0.5D, 0.85D, 0.5D, 0.03D);
 	}
 
 	private static void spawnLittleDictatorUniqueGrowthParticles(ServerLevel level, ServerPlayer dictator, double scale) {
 		if (level == null || dictator == null) {
 			return;
 		}
-		double radius = Math.min(4.5D, 0.22D * Math.max(1.0D, scale));
 		Vec3 center = getLittleDictatorUniqueBodyCenter(dictator);
-		double y = center.y;
-		DustParticleOptions dust = new DustParticleOptions(0x7A0026, 0.9F);
-		for (int i = 0; i < 18; i++) {
-			double angle = (Math.PI * 2.0D * i) / 18.0D + level.random.nextDouble() * 0.08D;
-			double x = center.x + Math.cos(angle) * radius;
-			double z = center.z + Math.sin(angle) * radius;
-			level.sendParticles(dust, x, y, z, 0, 0.0D, 0.035D, 0.0D, 1.0D);
+		double visualScale = Math.max(1.0D, scale);
+		double visualHeight = Math.max(dictator.getBbHeight(), 1.8D * getLittleDictatorUniqueVisualScale(dictator));
+		double pulse = Mth.clamp((visualScale - 1.0D) / Math.max(0.001D, LITTLE_DICTATOR_UNIQUE_TARGET_SCALE - 1.0D), 0.0D, 1.0D);
+		double burstRadius = 0.55D + pulse * 1.85D;
+		double phase = (level.getGameTime() - dictator.getId() * 0.23D) * 0.28D;
+		DustParticleOptions crimson = new DustParticleOptions(0x8B001F, 1.38F);
+		DustParticleOptions blue = new DustParticleOptions(0x245FFF, 1.22F);
+		DustParticleOptions whiteHot = new DustParticleOptions(0xF6FBFF, 1.08F);
+		for (int i = 0; i < 28; i++) {
+			double t = i / 28.0D;
+			double angle = phase + t * Math.PI * 7.2D;
+			double y = dictator.getY() + 0.18D + visualHeight * t;
+			double radius = burstRadius * (0.22D + t * 0.56D);
+			Vec3 pos = new Vec3(center.x + Math.cos(angle) * radius, y, center.z + Math.sin(angle) * radius);
+			DustParticleOptions dust = i % 5 == 0 ? whiteHot : (i % 2 == 0 ? blue : crimson);
+			level.sendParticles(dust, pos.x, pos.y, pos.z, 0, 0.0D, 0.055D + t * 0.01D, 0.0D, 1.0D);
 		}
+		for (int i = 0; i < 18; i++) {
+			double unitY = -0.2D + 1.4D * (i / 17.0D);
+			double angle = phase * 1.4D + i * 2.399963229728653D;
+			double horizontal = 0.25D + pulse * 0.55D;
+			Vec3 pos = new Vec3(center.x + Math.cos(angle) * horizontal, dictator.getY() + visualHeight * (0.08D + i / 22.0D), center.z + Math.sin(angle) * horizontal);
+			level.sendParticles(i % 3 == 0 ? ParticleTypes.END_ROD : ParticleTypes.ENCHANT, pos.x, pos.y, pos.z, 1, 0.01D, 0.05D, 0.01D, 0.01D);
+		}
+	}
+	private static void spawnLittleDictatorUniqueAuraParticles(ServerLevel level, ServerPlayer dictator, LittleDictatorUniqueSession session, double scale, boolean active) {
 	}
 
 	private static void spawnLittleDictatorUniqueShockParticles(ServerLevel level, Vec3 origin, double radius) {
@@ -7090,20 +7219,29 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 		double maxRadius = Math.max(3.0D, radius);
 		level.sendParticles(ParticleTypes.SONIC_BOOM, origin.x, origin.y, origin.z, 1, 0.0D, 0.0D, 0.0D, 0.0D);
-		level.sendParticles(ParticleTypes.EXPLOSION, origin.x, origin.y, origin.z, 8, 2.4D, 0.9D, 2.4D, 0.0D);
-		level.sendParticles(ParticleTypes.LARGE_SMOKE, origin.x, origin.y, origin.z, 70, 3.6D, 1.1D, 3.6D, 0.11D);
-		level.sendParticles(ParticleTypes.CLOUD, origin.x, origin.y - 0.1D, origin.z, 70, 2.4D, 0.45D, 2.4D, 0.34D);
-
-		DustParticleOptions edge = new DustParticleOptions(0xE22B34, 1.7F);
-		DustParticleOptions flash = new DustParticleOptions(0xF7FCFF, 1.25F);
-		DustParticleOptions blue = new DustParticleOptions(0x2F8CFF, 1.45F);
-		for (int i = 0; i < 72; i++) {
-			double angle = (Math.PI * 2.0D * i) / 72.0D;
-			double cos = Math.cos(angle);
-			double sin = Math.sin(angle);
-			double y = origin.y + (i % 9 - 4) * 0.12D;
-			DustParticleOptions dust = i % 5 == 0 ? flash : (i % 2 == 0 ? blue : edge);
-			level.sendParticles(dust, origin.x + cos * 1.55D, y, origin.z + sin * 1.55D, 0, cos * 1.05D, 0.08D, sin * 1.05D, 1.0D);
+		level.sendParticles(ParticleTypes.EXPLOSION, origin.x, origin.y, origin.z, 22, 3.5D, 1.9D, 3.5D, 0.0D);
+		level.sendParticles(ParticleTypes.LARGE_SMOKE, origin.x, origin.y, origin.z, 104, 3.2D, 2.0D, 3.2D, 0.11D);
+		level.sendParticles(ParticleTypes.CLOUD, origin.x, origin.y, origin.z, 68, 3.1D, 1.8D, 3.1D, 0.11D);
+		DustParticleOptions whiteHot = new DustParticleOptions(0xF8FDFF, 2.1F);
+		DustParticleOptions blue = new DustParticleOptions(0x2F82FF, 2.0F);
+		DustParticleOptions red = new DustParticleOptions(0xD91E36, 2.0F);
+		for (int layer = 0; layer < 3; layer++) {
+			int points = 82 + layer * 34;
+			double spawnRadius = 0.9D + layer * 0.42D;
+			for (int i = 0; i < points; i++) {
+				double unitY = 1.0D - 2.0D * ((i + 0.5D) / points);
+				double horizontal = Math.sqrt(Math.max(0.0D, 1.0D - unitY * unitY));
+				double angle = i * 2.399963229728653D + layer * 0.4D;
+				Vec3 normal = new Vec3(Math.cos(angle) * horizontal, unitY, Math.sin(angle) * horizontal);
+				Vec3 pos = origin.add(normal.scale(spawnRadius));
+				Vec3 velocity = normal.scale(0.36D + layer * 0.12D + (i % 3) * 0.045D);
+				DustParticleOptions dust = switch ((i + layer) % 6) {
+					case 0, 3 -> whiteHot;
+					case 1, 4 -> blue;
+					default -> red;
+				};
+				level.sendParticles(dust, pos.x, pos.y, pos.z, 0, velocity.x, velocity.y, velocity.z, 1.0D);
+			}
 		}
 		spawnLittleDictatorUniqueShockWaveFrame(level, origin, maxRadius, 0.03D, 0);
 	}
@@ -7160,71 +7298,65 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			return;
 		}
 		double eased = 1.0D - Math.pow(1.0D - Mth.clamp(progress, 0.0D, 1.0D), 1.8D);
-		double frontRadius = Math.max(0.9D, maxRadius * eased);
-		double thickness = 0.45D + frontRadius * 0.014D;
-		double goldenAngle = Math.PI * (3.0D - Math.sqrt(5.0D));
-		double phase = ageTicks * 0.34D;
-		double outwardSpeed = 0.58D + progress * 0.62D;
-
-		DustParticleOptions core = new DustParticleOptions(0xFFFFFF, 3.05F);
-		DustParticleOptions red = new DustParticleOptions(0xD9152D, 2.35F);
-		DustParticleOptions blue = new DustParticleOptions(0x1C76FF, 2.2F);
-		DustParticleOptions flash = new DustParticleOptions(0xF7FCFF, 1.65F);
-		DustParticleOptions paleBlue = new DustParticleOptions(0x9ED8FF, 1.8F);
-
-		// Keep the wave visually heavy, but avoid thousands of one-particle packets per tick.
-		int shellSamples = Math.max(64, Math.min(120, (int) Math.round(frontRadius * 2.35D)));
-		for (int i = 0; i < shellSamples; i++) {
-			double unitY = 1.0D - 2.0D * ((i + 0.5D) / shellSamples);
+		double frontRadius = Math.max(1.0D, maxRadius * eased);
+		double shellThickness = 0.55D + frontRadius * 0.03D;
+		double phase = ageTicks * 0.22D;
+		DustParticleOptions whiteHot = new DustParticleOptions(0xF8FDFF, 2.45F);
+		DustParticleOptions blue = new DustParticleOptions(0x2F82FF, 2.25F);
+		DustParticleOptions red = new DustParticleOptions(0xD61D34, 2.25F);
+		int shellPoints = Math.max(230, Math.min(560, (int) Math.round(frontRadius * 13.6D)));
+		for (int layer = 0; layer < 4; layer++) {
+			double layerOffset = (layer - 1.5D) * shellThickness * 0.58D;
+			double layerVelocity = 0.18D + progress * 0.34D + layer * 0.035D;
+			for (int i = 0; i < shellPoints; i++) {
+				double unitY = 1.0D - 2.0D * ((i + 0.5D) / shellPoints);
+				double horizontal = Math.sqrt(Math.max(0.0D, 1.0D - unitY * unitY));
+				double angle = i * 2.399963229728653D + phase + layer * 0.31D;
+				Vec3 normal = new Vec3(Math.cos(angle) * horizontal, unitY, Math.sin(angle) * horizontal);
+				double ripple = Math.sin(angle * 4.6D + ageTicks * 0.78D + layer * 0.7D) * shellThickness * 0.34D;
+				Vec3 pos = origin.add(normal.scale(frontRadius + layerOffset + ripple));
+				Vec3 velocity = normal.scale(layerVelocity);
+				DustParticleOptions dust = switch ((i + layer) % 6) {
+					case 0, 3 -> whiteHot;
+					case 1, 4 -> blue;
+					default -> red;
+				};
+				level.sendParticles(dust, pos.x, pos.y, pos.z, 0, velocity.x, velocity.y, velocity.z, 1.0D);
+			}
+		}
+		int coreBursts = Math.max(78, Math.min(190, (int) Math.round(frontRadius * 4.9D)));
+		for (int i = 0; i < coreBursts; i++) {
+			double unitY = 1.0D - 2.0D * ((i + 0.5D) / coreBursts);
 			double horizontal = Math.sqrt(Math.max(0.0D, 1.0D - unitY * unitY));
-			double angle = i * goldenAngle + phase;
-			Vec3 normal = new Vec3(Math.cos(angle) * horizontal, unitY * 0.86D, Math.sin(angle) * horizontal).normalize();
-			double ripple = Math.sin(i * 0.31D + ageTicks * 0.85D) * thickness * 0.55D;
-			Vec3 pos = origin.add(normal.scale(frontRadius + ripple));
-			Vec3 velocity = normal.scale(outwardSpeed + level.random.nextDouble() * 0.16D);
-			DustParticleOptions dust = switch (Math.floorMod(i + ageTicks, 6)) {
-				case 0 -> flash;
-				case 1 -> blue;
-				case 2 -> paleBlue;
-				case 3 -> red;
-				default -> core;
+			double angle = i * 2.399963229728653D - phase * 0.65D;
+			Vec3 normal = new Vec3(Math.cos(angle) * horizontal, unitY, Math.sin(angle) * horizontal);
+			double burstRadius = frontRadius * (0.25D + (i % 5) * 0.09D);
+			Vec3 pos = origin.add(normal.scale(burstRadius));
+			Vec3 velocity = normal.scale(0.1D + progress * 0.28D + (i % 4) * 0.025D);
+			DustParticleOptions dust = switch (i % 6) {
+				case 0, 3 -> whiteHot;
+				case 1, 4 -> blue;
+				default -> red;
 			};
 			level.sendParticles(dust, pos.x, pos.y, pos.z, 0, velocity.x, velocity.y, velocity.z, 1.0D);
-			if ((i + ageTicks) % 4 == 0) {
-				level.sendParticles(ParticleTypes.CLOUD, pos.x, pos.y, pos.z, 1, 0.035D, 0.035D, 0.035D, 0.015D);
+		}
+		int shockRays = 64;
+		for (int i = 0; i < shockRays; i++) {
+			double unitY = 1.0D - 2.0D * ((i + 0.5D) / shockRays);
+			double horizontal = Math.sqrt(Math.max(0.0D, 1.0D - unitY * unitY));
+			double angle = phase * 0.72D + i * 2.399963229728653D;
+			Vec3 dir = new Vec3(Math.cos(angle) * horizontal, unitY, Math.sin(angle) * horizontal);
+			for (int segment = 1; segment <= 5; segment++) {
+				double distance = frontRadius * (0.28D + segment * 0.18D);
+				Vec3 pos = origin.add(dir.scale(distance));
+				DustParticleOptions dust = segment >= 4 ? whiteHot : (segment % 2 == 0 ? blue : red);
+				level.sendParticles(dust, pos.x, pos.y, pos.z, 0, dir.x * 0.22D, dir.y * 0.22D, dir.z * 0.22D, 1.0D);
 			}
 		}
-
-		int ribs = 5;
-		int points = Math.max(34, Math.min(58, (int) Math.round(frontRadius * 1.15D)));
-		for (int rib = 0; rib < ribs; rib++) {
-			double tilt = -0.55D + rib * 0.275D;
-			double ribPhase = phase + rib * 0.82D;
-			for (int i = 0; i < points; i++) {
-				double angle = (Math.PI * 2.0D * i) / points + ribPhase;
-				double serration = Math.sin(angle * 5.0D + ageTicks * 0.65D) * thickness * 0.78D;
-				Vec3 direction = new Vec3(Math.cos(angle), tilt + Math.sin(angle * 2.0D + rib) * 0.09D, Math.sin(angle)).normalize();
-				Vec3 pos = origin.add(direction.scale(frontRadius + serration));
-				Vec3 velocity = direction.scale(outwardSpeed * 0.9D);
-				level.sendParticles((i + rib) % 4 == 0 ? flash : (i % 2 == 0 ? blue : paleBlue), pos.x, pos.y, pos.z, 0, velocity.x, velocity.y, velocity.z, 1.0D);
-			}
-		}
-
-		int debris = Math.max(36, Math.min(72, (int) Math.round(frontRadius * 1.35D)));
-		for (int i = 0; i < debris; i++) {
-			double distance = Math.max(0.45D, frontRadius - level.random.nextDouble() * Math.max(0.5D, thickness * 4.0D));
-			double angle = level.random.nextDouble() * Math.PI * 2.0D;
-			double unitY = -0.7D + level.random.nextDouble() * 1.4D;
-			Vec3 direction = new Vec3(Math.cos(angle), unitY, Math.sin(angle)).normalize();
-			Vec3 pos = origin.add(direction.scale(distance));
-			Vec3 velocity = direction.scale(0.28D + progress * 0.34D);
-			DustParticleOptions dust = switch (level.random.nextInt(4)) {
-				case 0 -> red;
-				case 1 -> blue;
-				case 2 -> paleBlue;
-				default -> core;
-			};
-			level.sendParticles(dust, pos.x, pos.y, pos.z, 0, velocity.x, velocity.y + 0.03D, velocity.z, 1.0D);
+		if ((ageTicks & 1) == 0) {
+			level.sendParticles(ParticleTypes.CLOUD, origin.x, origin.y, origin.z, 42, frontRadius * 0.38D, frontRadius * 0.38D, frontRadius * 0.38D, 0.1D);
+			level.sendParticles(ParticleTypes.POOF, origin.x, origin.y, origin.z, 28, frontRadius * 0.3D, frontRadius * 0.3D, frontRadius * 0.3D, 0.055D);
+			level.sendParticles(ParticleTypes.EXPLOSION, origin.x, origin.y, origin.z, 5, frontRadius * 0.22D, frontRadius * 0.22D, frontRadius * 0.22D, 0.0D);
 		}
 	}
 
@@ -7261,55 +7393,36 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			right = right.normalize();
 		}
 		Vec3 up = right.cross(axis).normalize();
-		int steps = Math.max(14, Math.min(32, (int) Math.round(length * 1.7D)));
-		double phase = level.random.nextDouble() * Math.PI * 2.0D;
-		DustParticleOptions life = new DustParticleOptions(0x86FF12, 1.55F);
-		DustParticleOptions darkLife = new DustParticleOptions(0x1F8A16, 1.25F);
-		DustParticleOptions hunger = new DustParticleOptions(0xB7FF38, 1.35F);
-		DustParticleOptions spoiledHunger = new DustParticleOptions(0x2D6F20, 1.12F);
-		DustParticleOptions core = new DustParticleOptions(0xD8FF7A, 1.05F);
-
+		int steps = Math.max(7, Math.min(12, (int)Math.round(length * 0.82D)));
+		double phase = level.getGameTime() * 0.32D + target.getId() * 0.45D;
+		DustParticleOptions life = new DustParticleOptions(0x7EFF22, 1.45F);
+		DustParticleOptions darkLife = new DustParticleOptions(0x2F8F1B, 1.18F);
+		DustParticleOptions hunger = new DustParticleOptions(0xBFFF40, 1.18F);
+		DustParticleOptions core = new DustParticleOptions(0xE2FF96, 0.95F);
 		for (int i = 1; i <= steps; i++) {
 			double t = i / (double) steps;
 			Vec3 base = start.add(delta.scale(t));
-			double taper = Math.sin(Math.PI * t);
-			double victimFlare = Math.pow(1.0D - t, 2.0D) * 0.44D;
-			double radius = 0.16D + victimFlare + taper * 0.78D;
-			double angle = phase + t * Math.PI * 11.5D;
-			Vec3 swirlA = base.add(right.scale(Math.cos(angle) * radius)).add(up.scale(Math.sin(angle) * radius));
-			Vec3 swirlB = base.add(right.scale(Math.cos(angle + Math.PI) * radius * 0.72D)).add(up.scale(Math.sin(angle + Math.PI) * radius * 0.72D));
-			Vec3 swirlC = base.add(right.scale(Math.cos(angle + Math.PI * 0.52D) * radius * 0.48D)).add(up.scale(Math.sin(angle + Math.PI * 0.52D) * radius * 0.48D));
-			Vec3 swirlD = base.add(right.scale(Math.cos(angle + Math.PI * 1.35D) * radius * 0.94D)).add(up.scale(Math.sin(angle + Math.PI * 1.35D) * radius * 0.94D));
-			Vec3 streamVelocity = axis.scale(0.36D + taper * 0.18D);
-			level.sendParticles(i % 3 == 0 ? darkLife : life, swirlA.x, swirlA.y, swirlA.z, 0, streamVelocity.x, streamVelocity.y, streamVelocity.z, 1.0D);
-			if (t > 0.08D || (i & 1) == 0) {
-				level.sendParticles(i % 4 == 0 ? spoiledHunger : hunger, swirlB.x, swirlB.y, swirlB.z, 0, streamVelocity.x * 0.82D, streamVelocity.y * 0.82D, streamVelocity.z * 0.82D, 1.0D);
-			}
-			if (t > 0.16D && i % 3 == 0) {
-				level.sendParticles((i & 1) == 0 ? darkLife : spoiledHunger, swirlD.x, swirlD.y, swirlD.z, 0, streamVelocity.x * 0.64D, streamVelocity.y * 0.64D, streamVelocity.z * 0.64D, 1.0D);
-			}
-			if (i % 4 == 0) {
-				level.sendParticles(core, swirlC.x, swirlC.y, swirlC.z, 0, streamVelocity.x * 1.08D, streamVelocity.y * 1.08D, streamVelocity.z * 1.08D, 1.0D);
-			}
-            if (i % 6 == 0) {
-                level.sendParticles(ParticleTypes.SMOKE, base.x, base.y, base.z, 2, radius * 0.22D, radius * 0.16D, radius * 0.22D, 0.018D);
-			}
-            if (i % 8 == 0) {
-                level.sendParticles(ParticleTypes.WITCH, base.x, base.y, base.z, 1, radius * 0.16D, radius * 0.1D, radius * 0.16D, 0.022D);
+			double radius = 0.1D + (1.0D - t) * 0.22D + Math.sin(Math.PI * t) * 0.28D;
+			double angleA = phase + t * Math.PI * 7.0D;
+			double angleB = angleA + Math.PI;
+			Vec3 a = base.add(right.scale(Math.cos(angleA) * radius)).add(up.scale(Math.sin(angleA) * radius));
+			Vec3 b = base.add(right.scale(Math.cos(angleB) * radius * 0.8D)).add(up.scale(Math.sin(angleB) * radius * 0.8D));
+			Vec3 c = base.add(right.scale(Math.cos(angleA + Math.PI * 0.5D) * radius * 0.4D)).add(up.scale(Math.sin(angleA + Math.PI * 0.5D) * radius * 0.4D));
+			Vec3 velocity = axis.scale(0.22D + (1.0D - t) * 0.1D);
+			level.sendParticles(i % 2 == 0 ? life : darkLife, a.x, a.y, a.z, 0, velocity.x, velocity.y, velocity.z, 1.0D);
+			level.sendParticles(i % 3 == 0 ? core : hunger, b.x, b.y, b.z, 0, velocity.x * 0.86D, velocity.y * 0.86D, velocity.z * 0.86D, 1.0D);
+			if (i % 3 == 0) {
+				level.sendParticles(core, c.x, c.y, c.z, 0, velocity.x, velocity.y, velocity.z, 1.0D);
 			}
 		}
-		for (int i = 0; i < 12; i++) {
-			double angle = phase + i * 0.57D;
-			double ringRadius = 0.45D + (i % 6) * 0.12D;
-			Vec3 pos = end
-					.add(right.scale(Math.cos(angle) * ringRadius))
-					.add(up.scale(Math.sin(angle) * ringRadius));
-			Vec3 inward = end.subtract(pos).normalize().scale(0.12D).add(axis.scale(0.1D));
+		for (int i = 0; i < 5; i++) {
+			double angle = phase + i * (Math.PI * 2.0D / 8.0D);
+			double radius = 0.38D + i * 0.04D;
+			Vec3 pos = end.add(right.scale(Math.cos(angle) * radius)).add(up.scale(Math.sin(angle) * radius));
+			Vec3 inward = end.subtract(pos).normalize().scale(0.16D).add(axis.scale(0.08D));
 			level.sendParticles(i % 2 == 0 ? life : hunger, pos.x, pos.y, pos.z, 0, inward.x, inward.y, inward.z, 1.0D);
 		}
-		level.sendParticles(life, end.x, end.y, end.z, 12, 0.58D, 0.42D, 0.58D, 0.055D);
-		level.sendParticles(hunger, end.x, end.y - 0.15D, end.z, 10, 0.5D, 0.36D, 0.5D, 0.046D);
-		level.sendParticles(ParticleTypes.SMOKE, end.x, end.y, end.z, 6, 0.38D, 0.28D, 0.38D, 0.028D);
+		level.sendParticles(core, end.x, end.y, end.z, 4, 0.22D, 0.18D, 0.22D, 0.022D);
 	}
 
 	private static void cleanupAllLittleDictatorUniqueSessions(MinecraftServer server) {
@@ -8006,7 +8119,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 		if (MILK_MOUSE_SESSIONS.containsKey(player.getUUID())) {
 			player.displayClientMessage(
-					Component.literal("Р СљР С‘РЎРѓРЎвЂљР ВµРЎР‚ Р СљРЎвЂ№РЎв‚¬Р В° РЎС“Р В¶Р Вµ Р В°Р С”РЎвЂљР С‘Р Р†Р ВµР Р….")
+					Component.literal("Мистер Мыша уже активен.")
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
@@ -8072,7 +8185,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		List<ServerPlayer> candidates = collectMilkPocketInviteCandidates(player);
 		if (candidates.isEmpty()) {
 			player.displayClientMessage(
-					Component.literal("Р СњР ВµР С”Р С•Р С–Р С• Р С—РЎР‚Р С‘Р С–Р В»Р В°РЎв‚¬Р В°РЎвЂљРЎРЉ.")
+					Component.literal("Некого приглашать.")
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
@@ -8530,6 +8643,9 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 				player.getUUID(),
 				new MilkLostHeartAnimationSession(level.getGameTime(), 0)
 		);
+		MILK_ABSOLUTE_ATTACK_HUD_VISIBLE.remove(player.getUUID());
+		player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 0, 0));
+		player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
 		player.connection.send(new ClientboundSetSubtitleTextPacket(Component.empty()));
 		sendMilkLostHeartAnimationFrame(player, 0);
 	}
@@ -8552,7 +8668,9 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			MilkLostHeartAnimationSession session = entry.getValue();
 			long elapsed = Math.max(0L, nowTick - session.startTick());
 			long animationTicks = (long) MILK_ABSOLUTE_LOST_HEART_ANIMATION_FRAME_COUNT * MILK_ABSOLUTE_LOST_HEART_ANIMATION_FRAME_TICKS;
-			if (elapsed > animationTicks + MILK_ABSOLUTE_LOST_HEART_ANIMATION_FADE_OUT_TICKS) {
+			if (elapsed >= animationTicks) {
+				player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 0, 0));
+				player.connection.send(new ClientboundSetSubtitleTextPacket(Component.empty()));
 				iterator.remove();
 				continue;
 			}
@@ -8561,8 +8679,8 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 					MILK_ABSOLUTE_LOST_HEART_ANIMATION_FRAME_COUNT - 1,
 					(int) (elapsed / MILK_ABSOLUTE_LOST_HEART_ANIMATION_FRAME_TICKS)
 			);
+			sendMilkLostHeartAnimationFrame(player, frame);
 			if (frame != session.lastFrame()) {
-				sendMilkLostHeartAnimationFrame(player, frame);
 				entry.setValue(new MilkLostHeartAnimationSession(session.startTick(), frame));
 			}
 		}
@@ -8574,16 +8692,13 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 
 		int clampedFrame = Math.max(0, Math.min(MILK_ABSOLUTE_LOST_HEART_ANIMATION_FRAME_COUNT - 1, frame));
-		player.connection.send(new ClientboundSetTitlesAnimationPacket(
-				0,
-				MILK_ABSOLUTE_LOST_HEART_ANIMATION_STAY_TICKS,
-				MILK_ABSOLUTE_LOST_HEART_ANIMATION_FADE_OUT_TICKS
-		));
+		player.connection.send(new ClientboundSetTitlesAnimationPacket(0, MILK_ABSOLUTE_LOST_HEART_ANIMATION_FRAME_TICKS + 8, 0));
+		player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
 		Component lostHeart = PolymerResourcePackUtils.hasMainPack(player)
 				? Component.literal(new String(Character.toChars(MILK_ABSOLUTE_LOST_HEART_ANIMATION_FIRST_GLYPH + clampedFrame)))
 						.withStyle(style -> style.withFont(MILK_ABSOLUTE_LOST_HEART_ANIMATION_FONT).withColor(0xFFFFFF).withItalic(false).withShadowColor(0x00000000))
 				: Component.literal("\uD83D\uDC94").withStyle(style -> style.withColor(0xD6354A).withItalic(false));
-		player.connection.send(new ClientboundSetTitleTextPacket(lostHeart));
+		player.connection.send(new ClientboundSetSubtitleTextPacket(lostHeart));
 	}
 
 	private static void spawnMilkLostHeartDropParticles(ServerLevel level, ServerPlayer player) {
@@ -8592,17 +8707,17 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 
 		RandomSource random = player.getRandom();
-		double baseY = player.getY() + Math.max(0.4D, player.getBbHeight() * 0.82D);
-		double radius = Math.max(0.22D, player.getBbWidth() * 0.46D);
+		double eyeY = player.getEyeY();
+		double radius = Math.max(0.46D, player.getBbWidth() * 0.78D);
 		for (int i = 0; i < MILK_ABSOLUTE_LOST_HEART_DROP_PARTICLE_COUNT; i++) {
-			double angle = random.nextDouble() * Math.PI * 2.0D;
-			double distance = random.nextDouble() * radius;
-			double x = player.getX() + Math.cos(angle) * distance;
-			double y = baseY + (random.nextDouble() - 0.5D) * 0.45D;
-			double z = player.getZ() + Math.sin(angle) * distance;
-			double velocityX = (random.nextDouble() - 0.5D) * 0.025D;
-			double velocityY = -0.055D - random.nextDouble() * 0.085D;
-			double velocityZ = (random.nextDouble() - 0.5D) * 0.025D;
+			double angle = (Math.PI * 2.0D * i) / MILK_ABSOLUTE_LOST_HEART_DROP_PARTICLE_COUNT;
+			double ringJitter = (random.nextDouble() - 0.5D) * 0.035D;
+			double x = player.getX() + Math.cos(angle) * (radius + ringJitter);
+			double y = eyeY + (random.nextDouble() - 0.5D) * 0.08D;
+			double z = player.getZ() + Math.sin(angle) * (radius + ringJitter);
+			double velocityX = Math.cos(angle) * 0.004D;
+			double velocityY = -0.045D - random.nextDouble() * 0.035D;
+			double velocityZ = Math.sin(angle) * 0.004D;
 			level.sendParticles(MILK_ABSOLUTE_LOST_HEART_DROP_PARTICLE, x, y, z, 0, velocityX, velocityY, velocityZ, 1.0D);
 		}
 	}
@@ -11768,7 +11883,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		ItemStack held = player.getMainHandItem();
 		if (!isMarkThrowableAxe(held)) {
 			player.displayClientMessage(
-					Component.literal("Р вЂ™Р С•Р В·РЎРЉР СР С‘РЎвЂљР Вµ Р Р† РЎР‚РЎС“Р С”РЎС“ РЎвЂљР С•Р С—Р С•РЎР‚, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Р В±РЎР‚Р С•РЎРѓР С‘РЎвЂљРЎРЉ Р ВµР С–Р С•.")
+					Component.literal("Возьмите в руку топор, чтобы бросить его.")
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
@@ -11915,7 +12030,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		double points = getMarkRagePoints(playerId, ability);
 		if (points <= 0.0D) {
 			player.displayClientMessage(
-					Component.literal("Р вЂ™РЎвЂ№ РЎРѓР С—Р С•Р С”Р С•Р в„–Р Р…РЎвЂ№, РЎРѓР С—Р С•РЎРѓР С•Р В±Р Р…Р С•РЎРѓРЎвЂљРЎРЉ Р Р…Р ВµР В»РЎРЉР В·РЎРЏ Р В°Р С”РЎвЂљР С‘Р Р†Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ.")
+					Component.literal("Вы спокойны, способность нельзя активировать.")
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
@@ -11941,7 +12056,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		MarkShieldBashSelection shield = findMarkShieldBashSelection(player);
 		if (shield == null) {
 			player.displayClientMessage(
-					Component.literal("Р вЂ™Р С•Р В·РЎРЉР СР С‘РЎвЂљР Вµ Р Р† РЎР‚РЎС“Р С”РЎС“ Р С—Р С•Р Т‘РЎвЂ¦Р С•Р Т‘РЎРЏРЎвЂ°Р С‘Р в„– РЎвЂ°Р С‘РЎвЂљ, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ РЎРѓР Т‘Р ВµР В»Р В°РЎвЂљРЎРЉ РЎР‚РЎвЂ№Р Р†Р С•Р С”.")
+					Component.literal("Возьмите в руку подходящий щит, чтобы сделать рывок.")
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
@@ -14705,13 +14820,13 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 		MinecraftServer server = player.level().getServer();
 		if (hasActiveGennadiyReport(server)) {
-			displayGennadiyReportActionbar(player, "Р Р€Р В¶Р Вµ Р ВµРЎРѓРЎвЂљРЎРЉ Р В°Р С”РЎвЂљР С‘Р Р†Р Р…РЎвЂ№Р в„– REPORT. Р Р€Р Р…Р С‘РЎвЂЎРЎвЂљР С•Р В¶РЎРЉРЎвЂљР Вµ РЎвЂљР ВµР С”РЎС“РЎвЂ°Р С‘Р в„– Р С—РЎР‚Р ВµР Т‘Р СР ВµРЎвЂљ, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ РЎРѓР С•Р В·Р Т‘Р В°РЎвЂљРЎРЉ Р Р…Р С•Р Р†РЎвЂ№Р в„–.");
+			displayGennadiyReportActionbar(player, "Уже есть активный REPORT. Уничтожьте текущий предмет, чтобы создать новый.");
 			return 0;
 		}
 
 		InteractionHand hand = selectGennadiyReportHand(player);
 		if (hand == null) {
-			displayGennadiyReportActionbar(player, "Р вЂ™Р С•Р В·РЎРЉР СР С‘РЎвЂљР Вµ Р С—РЎР‚Р ВµР Т‘Р СР ВµРЎвЂљ Р Р† РЎР‚РЎС“Р С”РЎС“, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ РЎРѓР С•Р В·Р Т‘Р В°РЎвЂљРЎРЉ REPORT.");
+			displayGennadiyReportActionbar(player, "Возьмите предмет в руку, чтобы создать REPORT.");
 			return 0;
 		}
 
@@ -14720,14 +14835,14 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		// REPORT confirmation itself intentionally lives until disconnect or the next proposal.
 		GENNADIY_REPORT_PENDING.put(player.getUUID(), new GennadiyReportPending(hand, Long.MAX_VALUE));
 		Component itemName = stack.getHoverName().copy().withStyle(style -> style.withColor(ChatFormatting.DARK_RED).withItalic(false));
-		MutableComponent message = centeredGennadiyReportLiteral("Р вЂ™РЎвЂ№ РЎС“Р Р†Р ВµРЎР‚Р ВµР Р…РЎвЂ№, РЎвЂЎРЎвЂљР С• РЎвЂ¦Р С•РЎвЂљР С‘РЎвЂљР Вµ Р Р…Р В°Р В»Р С•Р В¶Р С‘РЎвЂљРЎРЉ Р С—РЎР‚Р С•Р С”Р В»РЎРЏРЎвЂљР С‘Р Вµ REPORT", ChatFormatting.RED)
+		MutableComponent message = centeredGennadiyReportLiteral("Вы уверены, что хотите наложить проклятие REPORT", ChatFormatting.RED)
 				.append(Component.literal("\n"))
-				.append(centeredGennadiyReportLineWithItem("Р Р…Р В° Р С—РЎР‚Р ВµР Т‘Р СР ВµРЎвЂљ ", itemName, stack.getHoverName().getString(), "?"))
+				.append(centeredGennadiyReportLineWithItem("на предмет ", itemName, stack.getHoverName().getString(), "?"))
 				.append(Component.literal("\n"))
-				.append(centeredGennadiyReportLiteral("Р вЂ™ Р СР С‘РЎР‚Р Вµ Р СР С•Р В¶Р ВµРЎвЂљ РЎРѓРЎС“РЎвЂ°Р ВµРЎРѓРЎвЂљР Р†Р С•Р Р†Р В°РЎвЂљРЎРЉ РЎвЂљР С•Р В»РЎРЉР С”Р С• Р С•Р Т‘Р С‘Р Р… REPORT.", ChatFormatting.RED))
+				.append(centeredGennadiyReportLiteral("В мире может существовать только один REPORT.", ChatFormatting.RED))
 				.append(Component.literal("\n"))
-				.append(centeredGennadiyReportLiteral("Р В§РЎвЂљР С•Р В±РЎвЂ№ РЎРѓР С•Р В·Р Т‘Р В°РЎвЂљРЎРЉ Р Р…Р С•Р Р†РЎвЂ№Р в„–, Р Р…РЎС“Р В¶Р Р…Р С• РЎС“Р Р…Р С‘РЎвЂЎРЎвЂљР С•Р В¶Р С‘РЎвЂљРЎРЉ РЎРѓРЎвЂљР В°РЎР‚РЎвЂ№Р в„–.", ChatFormatting.RED));
-		MutableComponent button = Component.literal("[Р СџР С•Р Т‘РЎвЂљР Р†Р ВµРЎР‚Р Т‘Р С‘РЎвЂљРЎРЉ]")
+				.append(centeredGennadiyReportLiteral("Чтобы создать новый, нужно уничтожить старый.", ChatFormatting.RED));
+		MutableComponent button = Component.literal("[Подтвердить]")
 				.withStyle(style -> style
 						.withColor(ChatFormatting.DARK_RED)
 						.withBold(true)
@@ -14740,23 +14855,23 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 private static int confirmGennadiyReport(CommandContext<CommandSourceStack> context) {
 		ServerPlayer player = context.getSource().getPlayer();
 		if (player == null) {
-			context.getSource().sendFailure(Component.literal("Р С™Р С•Р СР В°Р Р…Р Т‘Р В° Р Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р Р…Р В° РЎвЂљР С•Р В»РЎРЉР С”Р С• Р С‘Р С–РЎР‚Р С•Р С”РЎС“."));
+			context.getSource().sendFailure(Component.literal("Команда доступна только игроку."));
 			return 0;
 		}
 
 		GennadiyReportPending pending = GENNADIY_REPORT_PENDING.remove(player.getUUID());
 		if (pending == null) {
-			displayGennadiyReportActionbar(player, "Р СџР С•Р Т‘РЎвЂљР Р†Р ВµРЎР‚Р В¶Р Т‘Р ВµР Р…Р С‘Р Вµ REPORT Р Р…Р Вµ Р Р…Р В°Р в„–Р Т‘Р ВµР Р…Р С•.");
+			displayGennadiyReportActionbar(player, "Подтверждение REPORT не найдено.");
 			return 0;
 		}
 		if (hasActiveGennadiyReport(player.level().getServer())) {
-			displayGennadiyReportActionbar(player, "Р Р€Р В¶Р Вµ Р ВµРЎРѓРЎвЂљРЎРЉ Р В°Р С”РЎвЂљР С‘Р Р†Р Р…РЎвЂ№Р в„– REPORT. Р Р€Р Р…Р С‘РЎвЂЎРЎвЂљР С•Р В¶РЎРЉРЎвЂљР Вµ РЎвЂљР ВµР С”РЎС“РЎвЂ°Р С‘Р в„– Р С—РЎР‚Р ВµР Т‘Р СР ВµРЎвЂљ, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ РЎРѓР С•Р В·Р Т‘Р В°РЎвЂљРЎРЉ Р Р…Р С•Р Р†РЎвЂ№Р в„–.");
+			displayGennadiyReportActionbar(player, "Уже есть активный REPORT. Уничтожьте текущий предмет, чтобы создать новый.");
 			return 0;
 		}
 
 		ItemStack selected = player.getItemInHand(pending.hand());
 		if (selected.isEmpty()) {
-			displayGennadiyReportActionbar(player, "Р вЂ™РЎвЂ№Р В±РЎР‚Р В°Р Р…Р Р…РЎвЂ№Р в„– Р С—РЎР‚Р ВµР Т‘Р СР ВµРЎвЂљ Р В±Р С•Р В»РЎРЉРЎв‚¬Р Вµ Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р ВµР Р….");
+			displayGennadiyReportActionbar(player, "Выбранный предмет больше недоступен.");
 			return 0;
 		}
 
@@ -18502,16 +18617,16 @@ private static InteractionHand selectGennadiyReportHand(ServerPlayer player) {
 	}
 
 	private static final CartelManualPage[] CARTEL_MANUAL_PAGES_RU = {
-			new CartelManualPage("1. Р вЂєР С‘РЎвЂЎР Р…Р В°РЎРЏ Р С”Р Р…Р С‘Р С–Р В°", "Р В­РЎвЂљР С• Р Р†Р В°РЎв‚¬Р В° Р вЂєР ВР В§Р СњР С’Р Р‡ Р С”Р Р…Р С‘Р С–Р В°. Р СњР Вµ Р С—Р С•Р С”Р В°Р В·РЎвЂ№Р Р†Р В°Р в„–РЎвЂљР Вµ РЎР‚Р ВµРЎвЂ Р ВµР С—РЎвЂљРЎвЂ№ Р Т‘РЎР‚РЎС“Р С–Р С‘Р С. Р вЂўРЎРѓР В»Р С‘ Р С•РЎРѓРЎвЂљР В°Р В»РЎРЉР Р…РЎвЂ№Р Вµ РЎС“Р В·Р Р…Р В°РЎР‹РЎвЂљ, Р С”Р В°Р С” Р Р†РЎвЂ№ Р Т‘Р ВµР В»Р В°Р ВµРЎвЂљР Вµ РЎвЂљР С•Р Р†Р В°РЎР‚, Р С•Р Р…Р С‘ РЎРѓР СР С•Р С–РЎС“РЎвЂљ РЎРѓ Р Р†Р В°Р СР С‘ Р С”Р С•Р Р…Р С”РЎС“РЎР‚Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ. Р С™РЎР‚Р В°РЎвЂћРЎвЂљРЎвЂ№ РЎР‚Р В°Р В±Р С•РЎвЂљР В°РЎР‹РЎвЂљ Р Т‘Р В»РЎРЏ Р Р†РЎРѓР ВµРЎвЂ¦, Р Р…Р С• Р В·Р Р…Р В°Р ВµРЎвЂљР Вµ Р С‘РЎвЂ¦ РЎвЂљР С•Р В»РЎРЉР С”Р С• Р вЂ™Р В«.", -1, ""),
-			new CartelManualPage("2. Р СћРЎР‚Р В°Р Р†Р С”Р В°", "", 0, "Р СџР С•РЎРѓР В°Р Т‘Р С‘РЎвЂљР Вµ Р С•Р В±РЎвЂ№РЎвЂЎР Р…РЎвЂ№Р в„– Р С—Р В°Р С—Р С•РЎР‚Р С•РЎвЂљР Р…Р С‘Р С”. Р С™Р С•Р С–Р Т‘Р В° Р С•Р Р… Р Р†РЎвЂ№РЎР‚Р В°РЎРѓРЎвЂљР ВµРЎвЂљ, РЎС“ Р Р…Р ВµР С–Р С• Р ВµРЎРѓРЎвЂљРЎРЉ РЎв‚¬Р В°Р Р…РЎРѓ Р Т‘РЎР‚Р С•Р С—Р Р…РЎС“РЎвЂљРЎРЉ Р СћРЎР‚Р В°Р Р†Р С”РЎС“. Р С™Р С•РЎРѓРЎвЂљР Р…Р В°РЎРЏ Р СРЎС“Р С”Р В° РЎС“РЎРѓР С”Р С•РЎР‚РЎРЏР ВµРЎвЂљ РЎР‚Р С•РЎРѓРЎвЂљ."),
-			new CartelManualPage("3. Р РЋРЎС“РЎв‚¬Р С”Р В°", "Р РЋРЎвЂ№РЎР‚Р В°РЎРЏ Р СћРЎР‚Р В°Р Р†Р С”Р В° Р Р…Р Вµ Р С—Р С•Р Т‘РЎвЂ¦Р С•Р Т‘Р С‘РЎвЂљ Р Т‘Р В»РЎРЏ РЎР‚Р ВµРЎвЂ Р ВµР С—РЎвЂљР С•Р Р†.", 1, "Р вЂ™РЎвЂ№РЎРѓРЎС“РЎв‚¬Р С‘РЎвЂљР Вµ Р ВµРЎвЂ Р Р† Р С—Р ВµРЎвЂЎР С‘, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Р С—Р С•Р В»РЎС“РЎвЂЎР С‘РЎвЂљРЎРЉ РЎвЂљР С•Р Р†Р В°РЎР‚."),
-			new CartelManualPage("4. Р С™Р С•РЎРѓРЎРЏР С”", "Р СџР С•Р В»Р С•Р В¶Р С‘РЎвЂљР Вµ 3 Р В±РЎС“Р СР В°Р С–Р С‘ Р Р† Р Р†Р ВµРЎР‚РЎвЂ¦Р Р…Р С‘Р в„– Р С‘ Р Р…Р С‘Р В¶Р Р…Р С‘Р в„– РЎР‚РЎРЏР Т‘РЎвЂ№. Р вЂ™ РЎвЂ Р ВµР Р…РЎвЂљРЎР‚Р В°Р В»РЎРЉР Р…РЎвЂ№Р в„– РЎР‚РЎРЏР Т‘ Р С—Р С•Р В»Р С•Р В¶Р С‘РЎвЂљР Вµ 3 Р РЋРЎС“РЎв‚¬РЎвЂР Р…Р С•Р в„– Р СћРЎР‚Р В°Р Р†Р С”Р С‘. Р В Р ВµР В·РЎС“Р В»РЎРЉРЎвЂљР В°РЎвЂљ: Р С™Р С•РЎРѓРЎРЏР С”.", 2, ""),
-			new CartelManualPage("5. Р В Р В°РЎРѓР С”РЎС“РЎР‚", "Р вЂќР ВµРЎР‚Р В¶Р С‘РЎвЂљР Вµ Р С”РЎР‚Р ВµР СР ВµР Р…РЎРЉ Р С‘ Р С•Р С–Р Р…Р С‘Р Р†Р С• Р Р† Р С•Р Т‘Р Р…Р С•Р в„– РЎР‚РЎС“Р С”Р Вµ, Р В° Р С™Р С•РЎРѓРЎРЏР С” Р Р† Р Т‘РЎР‚РЎС“Р С–Р С•Р в„–. Р СњР В°Р В¶Р СР С‘РЎвЂљР Вµ Р СџР С™Р Сљ, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Р С—Р С•Р Т‘Р В¶Р ВµРЎвЂЎРЎРЉ Р ВµР С–Р С•. Р Р€Р Т‘Р ВµРЎР‚Р В¶Р С‘Р Р†Р В°Р в„–РЎвЂљР Вµ Р СџР С™Р Сљ, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Р В·Р В°РЎвЂљРЎРЏР Р…РЎС“РЎвЂљРЎРЉРЎРѓРЎРЏ: РЎвЂЎР ВµР С Р Т‘Р С•Р В»РЎРЉРЎв‚¬Р Вµ Р В·Р В°РЎвЂљРЎРЏР С–Р С‘Р Р†Р В°Р ВµРЎвЂљР ВµРЎРѓРЎРЉ, РЎвЂљР ВµР С Р В±Р С•Р В»РЎРЉРЎв‚¬Р Вµ Р Т‘РЎвЂ№Р СР В°.", -1, ""),
-			new CartelManualPage("6. Р С™Р С•Р С”Р В°Р С‘Р Р…", "Р вЂќР С•Р В±Р В°Р Р†РЎРЉРЎвЂљР Вµ Р РЋРЎС“РЎв‚¬РЎвЂР Р…РЎС“РЎР‹ Р СћРЎР‚Р В°Р Р†Р С”РЎС“ Р С‘ Р С”Р С•РЎРѓРЎвЂљР Р…РЎС“РЎР‹ Р СРЎС“Р С”РЎС“ Р Р† Р С”Р С•РЎвЂљРЎвЂР В» РЎРѓ Р Р†Р С•Р Т‘Р С•Р в„– Р Р† Р С—РЎР‚Р С•Р С—Р С•РЎР‚РЎвЂ Р С‘Р С‘ 1:1.", 3, "Р В Р ВµР В·РЎС“Р В»РЎРЉРЎвЂљР В°РЎвЂљ: Р С™Р С•Р С”Р В°Р С‘Р Р…."),
-			new CartelManualPage("7. Р СџР В°РЎР‚РЎвЂљР С‘Р С‘", "Р С™Р В°Р В¶Р Т‘Р В°РЎРЏ Р С•Р С—Р ВµРЎР‚Р В°РЎвЂ Р С‘РЎРЏ РЎвЂљРЎР‚Р В°РЎвЂљР С‘РЎвЂљ Р Р†Р С•Р Т‘РЎС“ Р С‘Р В· Р С”Р С•РЎвЂљР В»Р В°. Р вЂ™РЎвЂ№Р С–Р С•Р Т‘Р Р…Р ВµР Вµ Р В·Р В°Р С–РЎР‚РЎС“Р В¶Р В°РЎвЂљРЎРЉ Р СР Р…Р С•Р С–Р С• Р С‘Р Р…Р С–РЎР‚Р ВµР Т‘Р С‘Р ВµР Р…РЎвЂљР С•Р Р† РЎРѓРЎР‚Р В°Р В·РЎС“, Р Р…Р В°Р С—РЎР‚Р С‘Р СР ВµРЎР‚: 16 Р С”Р С•РЎРѓРЎвЂљР Р…Р С•Р в„– Р СРЎС“Р С”Р С‘ + 16 Р РЋРЎС“РЎв‚¬РЎвЂР Р…Р С•Р в„– Р СћРЎР‚Р В°Р Р†Р С”Р С‘ = 16 Р С™Р С•Р С”Р В°Р С‘Р Р…Р В°. Р СџР С•Р В»Р Р…Р С•Р С–Р С• Р С”Р С•РЎвЂљР В»Р В° РЎвЂ¦Р Р†Р В°РЎвЂљР В°Р ВµРЎвЂљ Р Р…Р В° 48 Р С™Р С•Р С”Р В°Р С‘Р Р…Р В°, Р Р…Р С• Р СР В°Р В»Р ВµР Р…РЎРЉР С”Р С‘Р Вµ Р С—Р В°РЎР‚РЎвЂљР С‘Р С‘ РЎР‚Р В°РЎРѓРЎвЂ¦Р С•Р Т‘РЎС“РЎР‹РЎвЂљ Р Р†Р С•Р Т‘РЎС“ Р В±РЎвЂ№РЎРѓРЎвЂљРЎР‚Р ВµР Вµ.", -1, ""),
-			new CartelManualPage("8. Р СњР ВµР С—РЎР‚Р С‘Р СР ВµРЎвЂЎР В°РЎвЂљР ВµР В»РЎРЉР Р…Р С•Р Вµ Р В·Р ВµР В»РЎРЉР Вµ", "Р вЂ™ Р Р†Р В°РЎР‚Р С•РЎвЂЎР Р…Р С•Р в„– РЎРѓРЎвЂљР С•Р в„–Р С”Р Вµ: Р С—РЎС“Р В·РЎвЂ№РЎР‚РЎвЂР С” Р Р†Р С•Р Т‘РЎвЂ№ + Р В»РЎР‹Р В±Р С•Р в„– Р С‘Р Р…Р С–РЎР‚Р ВµР Т‘Р С‘Р ВµР Р…РЎвЂљ Р С‘Р В· РЎРѓР С—Р С‘РЎРѓР С”Р В°: Р С—Р В°РЎС“РЎвЂЎР С‘Р в„– Р С–Р В»Р В°Р В·, РЎРѓР Р†Р ВµРЎР‚Р С”Р В°РЎР‹РЎвЂ°Р С‘Р в„– Р В»Р С•Р СРЎвЂљР С‘Р С” Р В°РЎР‚Р В±РЎС“Р В·Р В°, РЎРѓР В°РЎвЂ¦Р В°РЎР‚, Р С•Р С–Р Р…Р ВµР Р…Р Р…РЎвЂ№Р в„– Р С—Р С•РЎР‚Р С•РЎв‚¬Р С•Р С”, Р СР В°Р С–Р СР С•Р Р†РЎвЂ№Р в„– Р С”РЎР‚Р ВµР С, РЎРѓР В»Р ВµР В·Р В° Р С–Р В°РЎРѓРЎвЂљР В°, Р С”РЎР‚Р С•Р В»Р С‘РЎвЂЎРЎРЉРЎРЏ Р В»Р В°Р С—Р С”Р В°, РЎРѓРЎвЂљР ВµРЎР‚Р В¶Р ВµР Р…РЎРЉ Р В±РЎР‚Р С‘Р В·Р В°, Р В±Р В»Р С•Р С” РЎРѓР В»Р С‘Р В·Р С‘, Р С”Р В°Р СР ВµР Р…РЎРЉ Р С‘Р В»Р С‘ Р С—Р В°РЎС“РЎвЂљР С‘Р Р…Р В°.", -1, ""),
-			new CartelManualPage("9. Р СљР ВµРЎвЂљР В°Р Т‘Р С•Р Р…", "Р РЋР Р†Р В°РЎР‚Р С‘РЎвЂљР Вµ Р ВµР С–Р С• Р Р† Р Р†Р В°РЎР‚Р С•РЎвЂЎР Р…Р С•Р в„– РЎРѓРЎвЂљР С•Р в„–Р С”Р Вµ. Р вЂќР С•Р В±Р В°Р Р†РЎРЉРЎвЂљР Вµ Р С™Р С•Р С”Р В°Р С‘Р Р… Р Р† Р СњР ВµР С—РЎР‚Р С‘Р СР ВµРЎвЂЎР В°РЎвЂљР ВµР В»РЎРЉР Р…Р С•Р Вµ Р В·Р ВµР В»РЎРЉР Вµ. Р В Р ВµР В·РЎС“Р В»РЎРЉРЎвЂљР В°РЎвЂљ: Р СљР ВµРЎвЂљР В°Р Т‘Р С•Р Р….", 4, ""),
-			new CartelManualPage("10. Р вЂ”Р В°Р Р†Р С‘РЎРѓР С‘Р СР С•РЎРѓРЎвЂљРЎРЉ", "Р СљР ВµРЎвЂљР В°Р Т‘Р С•Р Р… Р Т‘Р В°РЎвЂРЎвЂљ Р Р†Р В°Р С Р С—Р С•Р В»Р С•Р В¶Р С‘РЎвЂљР ВµР В»РЎРЉР Р…РЎвЂ№Р Вµ РЎРЊРЎвЂћРЎвЂћР ВµР С”РЎвЂљРЎвЂ№. Р вЂќР В»РЎРЏ Р С•РЎРѓРЎвЂљР В°Р В»РЎРЉР Р…РЎвЂ№РЎвЂ¦ Р С•Р Р… Р Р†РЎвЂ№Р В·РЎвЂ№Р Р†Р В°Р ВµРЎвЂљ Р В·Р В°Р Р†Р С‘РЎРѓР С‘Р СР С•РЎРѓРЎвЂљРЎРЉ. Р СџР ВµРЎР‚Р Р†РЎвЂ№Р Вµ Р С‘Р Р…РЎР‰Р ВµР С”РЎвЂ Р С‘Р С‘ Р Т‘Р В°РЎР‹РЎвЂљ Р Р…Р ВµР С–Р В°РЎвЂљР С‘Р Р†Р Р…РЎвЂ№Р Вµ РЎРЊРЎвЂћРЎвЂћР ВµР С”РЎвЂљРЎвЂ№, Р С—Р С•Р В·Р Т‘Р Р…Р С‘Р Вµ РЎРѓРЎвЂљР В°Р Р…Р С•Р Р†РЎРЏРЎвЂљРЎРѓРЎРЏ Р С—Р С•Р В»Р С•Р В¶Р С‘РЎвЂљР ВµР В»РЎРЉР Р…РЎвЂ№Р СР С‘. Р вЂўРЎРѓР В»Р С‘ Р В·Р В°Р Р†Р С‘РЎРѓР С‘Р СРЎвЂ№Р в„– Р С‘Р С–РЎР‚Р С•Р С” РЎРѓР В»Р С‘РЎв‚¬Р С”Р С•Р С Р Т‘Р С•Р В»Р С–Р С• Р Р…Р Вµ Р С”Р С•Р В»Р ВµРЎвЂљ Р СљР ВµРЎвЂљР В°Р Т‘Р С•Р Р…, Р Р…Р В°РЎвЂЎР С‘Р Р…Р В°Р ВµРЎвЂљРЎРѓРЎРЏ Р В»Р С•Р СР С”Р В°.", -1, "")
+			new CartelManualPage("1. Личная книга", "Это ваша ЛИЧНАЯ книга. Не показывайте рецепты другим. Если остальные узнают, как вы делаете товар, они смогут с вами конкурировать. Крафты работают для всех, но знаете их только ВЫ.", -1, ""),
+			new CartelManualPage("2. Травка", "", 0, "Посадите обычный папоротник. Когда он вырастет, у него есть шанс дропнуть Травку. Костная мука ускоряет рост."),
+			new CartelManualPage("3. Сушка", "Сырая Травка не подходит для рецептов.", 1, "Высушите её в печи, чтобы получить товар."),
+			new CartelManualPage("4. Косяк", "Положите 3 бумаги в верхний и нижний ряды. В центральный ряд положите 3 Сушёной Травки. Результат: Косяк.", 2, ""),
+			new CartelManualPage("5. Раскур", "Держите кремень и огниво в одной руке, а Косяк в другой. Нажмите ПКМ, чтобы поджечь его. Удерживайте ПКМ, чтобы затянуться: чем дольше затягиваетесь, тем больше дыма.", -1, ""),
+			new CartelManualPage("6. Кокаин", "Добавьте Сушёную Травку и костную муку в котёл с водой в пропорции 1:1.", 3, "Результат: Кокаин."),
+			new CartelManualPage("7. Партии", "Каждая операция тратит воду из котла. Выгоднее загружать много ингредиентов сразу, например: 16 костной муки + 16 Сушёной Травки = 16 Кокаина. Полного котла хватает на 48 Кокаина, но маленькие партии расходуют воду быстрее.", -1, ""),
+			new CartelManualPage("8. Непримечательное зелье", "В варочной стойке: пузырёк воды + любой ингредиент из списка: паучий глаз, сверкающий ломтик арбуза, сахар, огненный порошок, магмовый крем, слеза гаста, кроличья лапка, стержень бриза, блок слизи, камень или паутина.", -1, ""),
+			new CartelManualPage("9. Метадон", "Сварите его в варочной стойке. Добавьте Кокаин в Непримечательное зелье. Результат: Метадон.", 4, ""),
+			new CartelManualPage("10. Зависимость", "Метадон даёт вам положительные эффекты. Для остальных он вызывает зависимость. Первые инъекции дают негативные эффекты, поздние становятся положительными. Если зависимый игрок слишком долго не колет Метадон, начинается ломка.", -1, "")
 	};
 
 private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
@@ -19379,11 +19494,11 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 				.append(Component.literal(buildWomanShnyagaTitleAdvance(senderStartX))
 						.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
 				.append(Component.literal(senderText)
-						.withStyle(style -> style.withColor(0xC88D62).withItalic(false).withFont(WOMAN_SHNYAGA_NAME_FONT)))
+						.withStyle(style -> style.withColor(0xA06F4A).withItalic(false).withFont(WOMAN_SHNYAGA_NAME_FONT)))
 				.append(Component.literal(buildHorizontalAdvance(recipientStartX - (senderStartX + senderWidth)))
 						.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
 				.append(Component.literal(recipientText)
-						.withStyle(style -> style.withColor(0xC88D62).withItalic(false).withFont(WOMAN_SHNYAGA_NAME_FONT)));
+						.withStyle(style -> style.withColor(0xA06F4A).withItalic(false).withFont(WOMAN_SHNYAGA_NAME_FONT)));
 	}
 
 	private static ItemStack buildMilkPocketInviteArrow(ServerPlayer viewer, boolean next) {
@@ -19394,7 +19509,7 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 		ItemStack stack = new ItemStack(Items.ARROW);
 		stack.set(
 				DataComponents.CUSTOM_NAME,
-				Component.literal(next ? "Р РЋР В»Р ВµР Т‘РЎС“РЎР‹РЎвЂ°Р С‘Р в„– Р С‘Р С–РЎР‚Р С•Р С”" : "Р СџРЎР‚Р ВµР Т‘РЎвЂ№Р Т‘РЎС“РЎвЂ°Р С‘Р в„– Р С‘Р С–РЎР‚Р С•Р С”")
+				Component.literal(next ? "Следующий игрок" : "Предыдущий игрок")
 						.withStyle(style -> style.withItalic(false))
 		);
 		return stack;
@@ -19416,7 +19531,7 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 		stack.set(DataComponents.PROFILE, ResolvableProfile.createResolved(profile));
 		stack.set(
 				DataComponents.CUSTOM_NAME,
-				Component.literal("Р СџРЎР‚Р С‘Р С–Р В»Р В°РЎРѓР С‘РЎвЂљРЎРЉ")
+				Component.literal("Пригласить")
 						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false).withBold(true))
 		);
 		return stack;
@@ -19424,7 +19539,7 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 
 	private static ItemStack buildMilkPocketInviteEmptyState() {
 		ItemStack stack = new ItemStack(Items.BARRIER);
-		stack.set(DataComponents.CUSTOM_NAME, Component.literal("Р СњР ВµРЎвЂљ Р Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р Р…РЎвЂ№РЎвЂ¦ Р С‘Р С–РЎР‚Р С•Р С”Р С•Р Р†"));
+		stack.set(DataComponents.CUSTOM_NAME, Component.literal("Нет доступных игроков"));
 		return stack;
 	}
 
@@ -19434,9 +19549,9 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 					.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(MILK_POCKET_MENU_OVERLAY_FONT));
 		}
 		if (target == null) {
-			return Component.literal("Р С™Р В°РЎР‚Р СР В°Р Р…Р Р…Р С•Р Вµ Р С‘Р В·Р СР ВµРЎР‚Р ВµР Р…Р С‘Р Вµ");
+			return Component.literal("Карманное измерение");
 		}
-		return Component.literal("Р СџРЎР‚Р С‘Р С–Р В»Р В°РЎРѓР С‘РЎвЂљРЎРЉ: " + target.getGameProfile().name());
+		return Component.literal("Пригласить: " + target.getGameProfile().name());
 	}
 
 	private static String buildWomanShnyagaTitleAdvance(int targetX) {
@@ -19708,12 +19823,12 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 		String locale = normalizeCartelDisguiseLocale(player);
 		boolean english = locale.startsWith("en");
 		return switch (key) {
-			case "passport" -> english ? "Passport" : "Р СџР В°РЎРѓР С—Р С•РЎР‚РЎвЂљ";
-			case "accept" -> english ? "Accept" : "Р СџРЎР‚Р С‘Р Р…РЎРЏРЎвЂљРЎРЉ";
-			case "previous" -> english ? "Previous" : "Р СњР В°Р В·Р В°Р Т‘";
-			case "next" -> english ? "Next" : "Р вЂќР В°Р В»Р ВµР Вµ";
-			case "empty" -> english ? "No players" : "Р СњР ВµРЎвЂљ Р С‘Р С–РЎР‚Р С•Р С”Р С•Р Р†";
-			case "no_players_online" -> english ? "There is nobody on the server" : "Р СњР В° РЎРѓР ВµРЎР‚Р Р†Р ВµРЎР‚Р Вµ Р Р…Р С‘Р С”Р С•Р С–Р С• Р Р…Р ВµРЎвЂљ";
+			case "passport" -> english ? "Passport" : "Паспорт";
+			case "accept" -> english ? "Accept" : "Принять";
+			case "previous" -> english ? "Previous" : "Назад";
+			case "next" -> english ? "Next" : "Далее";
+			case "empty" -> english ? "No players" : "Нет игроков";
+			case "no_players_online" -> english ? "There is nobody on the server" : "На сервере никого нет";
 			default -> "";
 		};
 	}
@@ -19722,11 +19837,11 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 		String locale = normalizeCartelDisguiseLocale(player);
 		boolean english = locale.startsWith("en");
 		return switch (key) {
-			case "recipient" -> english ? "Recipient: " : "Р СџР С•Р В»РЎС“РЎвЂЎР В°РЎвЂљР ВµР В»РЎРЉ: ";
+			case "recipient" -> english ? "Recipient: " : "Получатель: ";
 			case "select" -> "Select";
-			case "previous" -> english ? "Previous" : "Р СњР В°Р В·Р В°Р Т‘";
-			case "next" -> english ? "Next" : "Р вЂќР В°Р В»Р ВµР Вµ";
-			case "empty" -> english ? "No players" : "Р СњР ВµРЎвЂљ Р С‘Р С–РЎР‚Р С•Р С”Р С•Р Р†";
+			case "previous" -> english ? "Previous" : "Назад";
+			case "next" -> english ? "Next" : "Далее";
+			case "empty" -> english ? "No players" : "Нет игроков";
 			default -> "";
 		};
 	}
@@ -19735,28 +19850,28 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 		String locale = normalizeCartelDisguiseLocale(player);
 		boolean english = locale.startsWith("en");
 		return switch (key) {
-			case "no_players_online" -> english ? "There are no suitable players on the server" : "Р СњР В° РЎРѓР ВµРЎР‚Р Р†Р ВµРЎР‚Р Вµ Р Р…Р ВµРЎвЂљ Р С—Р С•Р Т‘РЎвЂ¦Р С•Р Т‘РЎРЏРЎвЂ°Р С‘РЎвЂ¦ Р С‘Р С–РЎР‚Р С•Р С”Р С•Р Р†";
-			case "already_linked" -> english ? "You already have a bond" : "Р Р€ Р Р†Р В°РЎРѓ РЎС“Р В¶Р Вµ Р ВµРЎРѓРЎвЂљРЎРЉ РЎРѓР Р†РЎРЏР В·РЎРЉ.";
-			case "target_already_linked" -> english ? "That player is already bonded" : "Р В­РЎвЂљР С•РЎвЂљ Р С‘Р С–РЎР‚Р С•Р С” РЎС“Р В¶Р Вµ РЎРѓР Р†РЎРЏР В·Р В°Р Р….";
-			case "target_busy" -> english ? "That player already has another proposal" : "Р Р€ РЎРЊРЎвЂљР С•Р С–Р С• Р С‘Р С–РЎР‚Р С•Р С”Р В° РЎС“Р В¶Р Вµ Р ВµРЎРѓРЎвЂљРЎРЉ Р Т‘РЎР‚РЎС“Р С–Р С•Р Вµ Р С—РЎР‚Р ВµР Т‘Р В»Р С•Р В¶Р ВµР Р…Р С‘Р Вµ.";
-			case "write_prompt" -> english ? "Write a message for the selected guy in chat." : "Р СњР В°Р С—Р С‘РЎв‚¬Р С‘РЎвЂљР Вµ РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘Р Вµ Р Р†РЎвЂ№Р В±РЎР‚Р В°Р Р…Р Р…Р С•Р СРЎС“ Р С—Р В°РЎР‚Р Р…РЎР‹ Р Р† РЎвЂЎР В°РЎвЂљ.";
-			case "target_unavailable" -> english ? "The selected player is no longer available" : "Р вЂ™РЎвЂ№Р В±РЎР‚Р В°Р Р…Р Р…РЎвЂ№Р в„– Р С‘Р С–РЎР‚Р С•Р С” Р В±Р С•Р В»РЎРЉРЎв‚¬Р Вµ Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р ВµР Р….";
-			case "proposal_sent" -> english ? "Proposal sent." : "Р СџРЎР‚Р ВµР Т‘Р В»Р С•Р В¶Р ВµР Р…Р С‘Р Вµ Р С•РЎвЂљР С—РЎР‚Р В°Р Р†Р В»Р ВµР Р…Р С•.";
-			case "no_pending_proposal" -> english ? "There is no active proposal." : "Р С’Р С”РЎвЂљР С‘Р Р†Р Р…Р С•Р С–Р С• Р С—РЎР‚Р ВµР Т‘Р В»Р С•Р В¶Р ВµР Р…Р С‘РЎРЏ Р Р…Р ВµРЎвЂљ.";
-			case "proposal_expired" -> english ? "That proposal is no longer valid." : "Р СџРЎР‚Р ВµР Т‘Р В»Р С•Р В¶Р ВµР Р…Р С‘Р Вµ Р В±Р С•Р В»РЎРЉРЎв‚¬Р Вµ Р Р…Р ВµР Т‘Р ВµР в„–РЎРѓРЎвЂљР Р†Р С‘РЎвЂљР ВµР В»РЎРЉР Р…Р С•.";
-			case "proposal_on_cooldown" -> english ? "You can't answer right now: her ability is on cooldown." : "Р РЋР ВµР в„–РЎвЂЎР В°РЎРѓ Р Р…Р ВµР В»РЎРЉР В·РЎРЏ Р С•РЎвЂљР Р†Р ВµРЎвЂљР С‘РЎвЂљРЎРЉ: Р ВµРЎвЂ РЎРѓР С—Р С•РЎРѓР С•Р В±Р Р…Р С•РЎРѓРЎвЂљРЎРЉ Р Р…Р В° Р С—Р ВµРЎР‚Р ВµР В·Р В°РЎР‚РЎРЏР Т‘Р С”Р Вµ.";
-			case "accepted_woman" -> english ? "%s accepted. The bond is established." : "%s Р С—РЎР‚Р С‘Р Р…РЎРЏР В» Р С—РЎР‚Р ВµР Т‘Р В»Р С•Р В¶Р ВµР Р…Р С‘Р Вµ. Р РЋР Р†РЎРЏР В·РЎРЉ РЎС“РЎРѓРЎвЂљР В°Р Р…Р С•Р Р†Р В»Р ВµР Р…Р В°.";
-			case "accepted_target" -> english ? "You became %s's boyfriend. The bond is established." : "Р вЂ™РЎвЂ№ РЎРѓРЎвЂљР В°Р В»Р С‘ Р С—Р В°РЎР‚Р Р…Р ВµР С %s. Р РЋР Р†РЎРЏР В·РЎРЉ РЎС“РЎРѓРЎвЂљР В°Р Р…Р С•Р Р†Р В»Р ВµР Р…Р В°.";
-			case "rejected_woman" -> english ? "You were dumped by %s." : "%s Р Р†Р В°РЎРѓ Р С•РЎвЂљР Р†Р ВµРЎР‚Р С–.";
-			case "rejected_target" -> english ? "You dumped %s." : "Р вЂ™РЎвЂ№ Р С•РЎвЂљР Р†Р ВµРЎР‚Р С–Р В»Р С‘ %s.";
-			case "warning_suffix" -> english ? "chose YOU." : "Р Р†РЎвЂ№Р В±РЎР‚Р В°Р В»Р В° Р вЂ™Р С’Р РЋ.";
-			case "accept_button" -> english ? "[Accept]" : "[Р СџРЎР‚Р С‘Р Р…РЎРЏРЎвЂљРЎРЉ]";
-			case "reject_button" -> english ? "[Reject]" : "[Р С›РЎвЂљР С”Р В»Р С•Р Р…Р С‘РЎвЂљРЎРЉ]";
-			case "warning_line" -> english ? "WARNING!" : "Р вЂ™Р СњР ВР СљР С’Р СњР ВР вЂў!";
-			case "link_broken_kill_target" -> english ? "You dumped %s by treacherously killing her!" : "Р вЂ™РЎвЂ№ РЎР‚Р В°Р В·РЎР‚РЎС“РЎв‚¬Р С‘Р В»Р С‘ РЎРѓР Р†РЎРЏР В·РЎРЉ, Р С—РЎР‚Р ВµР Т‘Р В°РЎвЂљР ВµР В»РЎРЉРЎРѓР С”Р С‘ РЎС“Р В±Р С‘Р Р† %s!";
-			case "link_broken_whitelist_woman" -> english ? "%s was removed from the server. The relationship is ruined." : "%s РЎС“Р Т‘Р В°Р В»РЎвЂР Р…(Р В°) РЎРѓ РЎРѓР ВµРЎР‚Р Р†Р ВµРЎР‚Р В°. Р РЋР Р†РЎРЏР В·РЎРЉ РЎР‚Р В°Р В·РЎР‚РЎС“РЎв‚¬Р ВµР Р…Р В°.";
-			case "link_broken_whitelist_target" -> english ? "You broke up with %s: you were removed from the whitelist." : "Р вЂ™РЎвЂ№ РЎР‚Р В°Р В·Р С•РЎР‚Р Р†Р В°Р В»Р С‘ РЎРѓР Р†РЎРЏР В·РЎРЉ РЎРѓ %s: Р Р†Р В°РЎРѓ РЎС“Р В±РЎР‚Р В°Р В»Р С‘ Р С‘Р В· Р Р†Р В°Р в„–РЎвЂљР В»Р С‘РЎРѓРЎвЂљР В°.";
-			case "link_broken_whitelist_target_woman_removed" -> english ? "%s was removed from the server. The relationship is ruined." : "%s РЎС“Р Т‘Р В°Р В»РЎвЂР Р…(Р В°) РЎРѓ РЎРѓР ВµРЎР‚Р Р†Р ВµРЎР‚Р В°. Р РЋР Р†РЎРЏР В·РЎРЉ РЎР‚Р В°Р В·РЎР‚РЎС“РЎв‚¬Р ВµР Р…Р В°.";
+			case "no_players_online" -> english ? "There are no suitable players on the server" : "На сервере нет подходящих игроков";
+			case "already_linked" -> english ? "You already have a bond" : "У вас уже есть связь.";
+			case "target_already_linked" -> english ? "That player is already bonded" : "Этот игрок уже связан.";
+			case "target_busy" -> english ? "That player already has another proposal" : "У этого игрока уже есть другое предложение.";
+			case "write_prompt" -> english ? "Write a message for the selected guy in chat." : "Напишите сообщение выбранному парню в чат.";
+			case "target_unavailable" -> english ? "The selected player is no longer available" : "Выбранный игрок больше недоступен.";
+			case "proposal_sent" -> english ? "Proposal sent." : "Предложение отправлено.";
+			case "no_pending_proposal" -> english ? "There is no active proposal." : "Активного предложения нет.";
+			case "proposal_expired" -> english ? "That proposal is no longer valid." : "Предложение больше недействительно.";
+			case "proposal_on_cooldown" -> english ? "You can't answer right now: her ability is on cooldown." : "Сейчас нельзя ответить: её способность на перезарядке.";
+			case "accepted_woman" -> english ? "%s accepted. The bond is established." : "%s принял предложение. Связь установлена.";
+			case "accepted_target" -> english ? "You became %s's boyfriend. The bond is established." : "Вы стали парнем %s. Связь установлена.";
+			case "rejected_woman" -> english ? "You were dumped by %s." : "%s вас отверг.";
+			case "rejected_target" -> english ? "You dumped %s." : "Вы отвергли %s.";
+			case "warning_suffix" -> english ? "chose YOU." : "выбрала ВАС.";
+			case "accept_button" -> english ? "[Accept]" : "[Принять]";
+			case "reject_button" -> english ? "[Reject]" : "[Отклонить]";
+			case "warning_line" -> english ? "WARNING!" : "ВНИМАНИЕ!";
+			case "link_broken_kill_target" -> english ? "You dumped %s by treacherously killing her!" : "Вы разрушили связь, предательски убив %s!";
+			case "link_broken_whitelist_woman" -> english ? "%s was removed from the server. The relationship is ruined." : "%s удалён(а) с сервера. Связь разрушена.";
+			case "link_broken_whitelist_target" -> english ? "You broke up with %s: you were removed from the whitelist." : "Вы разорвали связь с %s: вас убрали из вайтлиста.";
+			case "link_broken_whitelist_target_woman_removed" -> english ? "%s was removed from the server. The relationship is ruined." : "%s удалён(а) с сервера. Связь разрушена.";
 			default -> "";
 		};
 	}
@@ -19765,17 +19880,17 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 		String locale = normalizeCartelDisguiseLocale(player);
 		return locale.startsWith("en")
 				? "Ability \"" + abilityName + "\" is not purchased yet"
-				: "Р РЋР С—Р С•РЎРѓР С•Р В±Р Р…Р С•РЎРѓРЎвЂљРЎРЉ \"" + abilityName + "\" Р ВµРЎвЂ°РЎвЂ Р Р…Р Вµ Р С”РЎС“Р С—Р В»Р ВµР Р…Р В°";
+				: "Способность \"" + abilityName + "\" ещё не куплена";
 	}
 
 	private static String localizeRaceMessageText(ServerPlayer player, String key) {
 		String locale = normalizeCartelDisguiseLocale(player);
 		boolean english = locale.startsWith("en");
 		return switch (key) {
-			case "player_only" -> english ? "Only a player can use this command" : "Р В­РЎвЂљРЎС“ Р С”Р С•Р СР В°Р Р…Р Т‘РЎС“ Р СР С•Р В¶Р ВµРЎвЂљ Р С‘РЎРѓР С—Р С•Р В»РЎРЉР В·Р С•Р Р†Р В°РЎвЂљРЎРЉ РЎвЂљР С•Р В»РЎРЉР С”Р С• Р С‘Р С–РЎР‚Р С•Р С”";
-			case "no_race" -> english ? "You do not have a race assigned yet" : "Р Р€ Р Р†Р В°РЎРѓ Р С—Р С•Р С”Р В° Р Р…Р ВµРЎвЂљ Р Р…Р В°Р В·Р Р…Р В°РЎвЂЎР ВµР Р…Р Р…Р С•Р в„– РЎР‚Р В°РЎРѓРЎвЂ№";
-			case "no_menu" -> english ? "Failed to open race menu. Run /race reload" : "Р СњР Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р С•РЎвЂљР С”РЎР‚РЎвЂ№РЎвЂљРЎРЉ Р СР ВµР Р…РЎР‹ РЎР‚Р В°РЎРѓРЎвЂ№. Р вЂ™РЎвЂ№Р С—Р С•Р В»Р Р…Р С‘РЎвЂљР Вµ /race reload";
-			case "ability_disabled" -> english ? "Ability %s is currently unavailable" : "Р РЋР С—Р С•РЎРѓР С•Р В±Р Р…Р С•РЎРѓРЎвЂљРЎРЉ %s РЎРѓР ВµР в„–РЎвЂЎР В°РЎРѓ Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р Р…Р В°";
+			case "player_only" -> english ? "Only a player can use this command" : "Эту команду может использовать только игрок";
+			case "no_race" -> english ? "You do not have a race assigned yet" : "У вас пока нет назначенной расы";
+			case "no_menu" -> english ? "Failed to open race menu. Run /race reload" : "Не удалось открыть меню расы. Выполните /race reload";
+			case "ability_disabled" -> english ? "Ability %s is currently unavailable" : "Способность %s сейчас недоступна";
 			default -> "";
 		};
 	}
@@ -20912,7 +21027,7 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 		if (player == null) {
 			return;
 		}
-		player.displayClientMessage(Component.literal("Р В¦Р ВµР В»РЎРЉ Р Р…Р Вµ Р Р†РЎвЂ№Р В±РЎР‚Р В°Р Р…Р В°").withStyle(ChatFormatting.RED), true);
+		player.displayClientMessage(Component.literal("Цель не выбрана").withStyle(ChatFormatting.RED), true);
 	}
 
 	private static boolean displayInfiniteCooldown(ServerPlayer player) {
