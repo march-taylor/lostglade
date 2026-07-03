@@ -364,6 +364,7 @@ public final class ModBlocks {
 					new Item.Properties().setId(RAINBOW_BED_ITEM_KEY).useBlockDescriptionPrefix(),
 					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "rainbow_bed"),
 					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "rainbow_bed_display"),
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "brown_bed_display"),
 					"Rainbow Bed",
 					"Разноцветная кровать",
 					"Радужная кровать",
@@ -479,7 +480,7 @@ public final class ModBlocks {
 	}
 
 	private static BlockBehaviour.Properties createRainbowBedProperties() {
-		return BlockBehaviour.Properties.ofFullCopy(Blocks.WHITE_BED)
+		return BlockBehaviour.Properties.ofFullCopy(Blocks.BROWN_BED)
 				.setId(RAINBOW_BED_KEY);
 	}
 

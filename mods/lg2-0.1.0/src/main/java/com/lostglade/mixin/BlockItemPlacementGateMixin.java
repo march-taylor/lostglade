@@ -1,5 +1,6 @@
 package com.lostglade.mixin;
 
+import com.lostglade.server.BrownBedDisplaySystem;
 import com.lostglade.server.ServerMechanicsGateSystem;
 import com.lostglade.server.ServerMilkPocketDimensionSystem;
 import com.lostglade.server.ServerRaceSystem;
@@ -110,6 +111,11 @@ public abstract class BlockItemPlacementGateMixin {
 				if (placedPos != null) {
 					ServerRaceSystem.onFernPlaced(serverPlayer, placedPos);
 				}
+			}
+			if (blockItem.getBlock() == Blocks.BROWN_BED
+					&& cir.getReturnValue().consumesAction()
+					&& context != null) {
+				BrownBedDisplaySystem.onPotentialBrownBedPlacement(context.getLevel(), lg2$resolvePlacementPos(context));
 			}
 		} finally {
 			LG2_CARTEL_FERN_PLACEMENT_POS.remove();

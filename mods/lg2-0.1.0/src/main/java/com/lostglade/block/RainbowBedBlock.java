@@ -1,8 +1,6 @@
 package com.lostglade.block;
 
 import com.mojang.serialization.MapCodec;
-import eu.pb4.polymer.blocks.api.BlockModelType;
-import eu.pb4.polymer.blocks.api.PolymerBlockResourceUtils;
 import eu.pb4.polymer.core.api.block.PolymerBlock;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.BlockPos;
@@ -28,11 +26,9 @@ import xyz.nucleoid.packettweaker.PacketContext;
 
 public final class RainbowBedBlock extends BedBlock implements PolymerBlock {
 	public static final MapCodec<BedBlock> CODEC = simpleCodec(RainbowBedBlock::new);
-	private final BlockState hiddenPackState;
 
 	public RainbowBedBlock(BlockBehaviour.Properties settings) {
-		super(DyeColor.WHITE, settings);
-		this.hiddenPackState = PolymerBlockResourceUtils.requestEmpty(BlockModelType.TRIPWIRE_BLOCK);
+		super(DyeColor.BROWN, settings);
 	}
 
 	@Override
@@ -43,7 +39,7 @@ public final class RainbowBedBlock extends BedBlock implements PolymerBlock {
 	@Override
 	public BlockState getPolymerBlockState(BlockState state, PacketContext context) {
 		if (PolymerResourcePackUtils.hasMainPack(context)) {
-			return this.hiddenPackState;
+			return getPackBedState(state);
 		}
 		return getFallbackBedState(state);
 	}
@@ -53,11 +49,24 @@ public final class RainbowBedBlock extends BedBlock implements PolymerBlock {
 		return getFallbackBedState(state);
 	}
 
+	private static BlockState getPackBedState(BlockState state) {
+		return copyBedState(Blocks.BROWN_BED.defaultBlockState(), state);
+	}
+
 	private static BlockState getFallbackBedState(BlockState state) {
-		return Blocks.WHITE_BED.defaultBlockState()
+		return copyBedState(Blocks.WHITE_BED.defaultBlockState(), state);
+	}
+
+	private static BlockState copyBedState(BlockState baseState, BlockState state) {
+		return baseState
 				.setValue(FACING, state.getValue(FACING))
 				.setValue(PART, state.getValue(PART))
 				.setValue(OCCUPIED, state.getValue(OCCUPIED));
+	}
+
+	@Override
+	protected void spawnDestroyParticles(Level level, Player player, BlockPos pos, BlockState state) {
+		level.levelEvent(player, 2001, pos, Block.getId(getFallbackBedState(state)));
 	}
 
 	@Override
