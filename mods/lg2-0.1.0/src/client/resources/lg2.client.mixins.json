@@ -15,6 +15,7 @@
 		"LevelRendererRenderStateAccessor",
 		"MinecraftOffscreenWorldAccessor",
 		"MinecraftMainRenderTargetAccessor",
+		"SpriteContentsImageAccessor",
 		"RendererBotMinecraftAuthMixin",
 		"RendererBotGlfwMixin",
 		"RendererBotSkinManagerMixin",

@@ -129,42 +129,56 @@ final class MonitorScreenMediaHydration {
 		YoutubeQueuePreloadDiff preloadDiff = YoutubeQueuePreloadDiff.EMPTY;
 		boolean shouldRender = false;
 		boolean alreadyHydrated = false;
+		boolean scheduleDisplayHydration = false;
+		long hydrationRequestId = 0L;
+		long sessionGeneration = 0L;
+		String selectedUrl = null;
+		int preferredIndex = -1;
 		synchronized (state) {
 			if (state.galleryHydrated) {
 				alreadyHydrated = true;
 				if (hasLiveCameraItemsLocked(state)) {
-					persistedItems = resolvePersistedGalleryState(resolveScreenComponent(server, key));
-					state.galleryItems.clear();
-					state.galleryItems.addAll(displayGalleryItemsFromPersisted(persistedItems));
-					state.galleryIndex = resolveGalleryItemIndex(state, state.sourceUrl, state.galleryIndex);
-					state.galleryScroll = 0;
-					if (state.galleryIndex < 0) {
-						clearGallerySelectionLocked(state);
-						state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+					if (state.galleryHydrationLoading) {
+						return;
 					}
-					if (state.galleryItems.isEmpty()) {
+					persistedItems = resolvePersistedGalleryState(resolveScreenComponent(server, key));
+					if (persistedItems.isEmpty()) {
+						state.galleryItems.clear();
 						state.galleryIndex = -1;
 						state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+						preloadDiff = syncYoutubeQueuePreloadsLocked(state);
+						state.version++;
+						shouldRender = true;
+					} else {
+						selectedUrl = currentGalleryItemLocked(state) != null ? currentGalleryItemLocked(state).url() : state.sourceUrl;
+						preferredIndex = state.galleryIndex;
+						state.galleryHydrationLoading = true;
+						hydrationRequestId = ++state.galleryHydrationRequestId;
+						sessionGeneration = state.sessionGeneration;
+						scheduleDisplayHydration = true;
 					}
-					preloadDiff = syncYoutubeQueuePreloadsLocked(state);
-					state.version++;
-					shouldRender = true;
 				}
 			} else if (!state.galleryItems.isEmpty() && !hasLiveCameraItemsLocked(state)) {
 				state.galleryHydrated = true;
 				preloadDiff = syncYoutubeQueuePreloadsLocked(state);
 			} else {
+				if (state.galleryHydrationLoading) {
+					return;
+				}
 				ScreenComponent component = resolveScreenComponent(server, key);
 				persistedItems = resolvePersistedGalleryState(component);
 				state.galleryHydrated = true;
 				if (!persistedItems.isEmpty()) {
 					state.galleryItems.clear();
-					state.galleryItems.addAll(displayGalleryItemsFromPersisted(persistedItems));
 					state.galleryIndex = -1;
 					state.galleryScroll = 0;
 					state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+					state.galleryHydrationLoading = true;
+					hydrationRequestId = ++state.galleryHydrationRequestId;
+					sessionGeneration = state.sessionGeneration;
 					state.version++;
 					shouldRender = true;
+					scheduleDisplayHydration = true;
 				}
 				preloadDiff = syncYoutubeQueuePreloadsLocked(state);
 			}
@@ -174,9 +188,104 @@ final class MonitorScreenMediaHydration {
 		}
 		applyYoutubeQueuePreloadDiff(preloadDiff);
 		scheduleGalleryPreloadStatusRefreshes(server, key);
+		if (scheduleDisplayHydration) {
+			scheduleGalleryDisplayHydration(server, key, persistedItems, sessionGeneration, hydrationRequestId, selectedUrl, preferredIndex, false);
+		}
 		if (shouldRender) {
 			requestRuntimeRender(server, key);
 		}
+	}
+
+	static void scheduleGalleryDisplayHydration(
+			MinecraftServer server,
+			ScreenRuntimeKey key,
+			List<PersistedGalleryItem> persistedItems,
+			long sessionGeneration,
+			long requestId,
+			String selectedUrl,
+			int preferredIndex,
+			boolean replaceDifferentState
+	) {
+		if (server == null || key == null || persistedItems == null || persistedItems.isEmpty()) {
+			return;
+		}
+		List<PersistedGalleryItem> snapshot = List.copyOf(persistedItems);
+		ensureExecutors();
+		CompletableFuture
+				.supplyAsync(() -> displayGalleryItemsFromPersisted(snapshot), mediaIoExecutor)
+				.handle((items, exception) -> new GalleryDisplayHydrationResult(
+						snapshot,
+						items != null ? items : List.of(),
+						sessionGeneration,
+						requestId,
+						selectedUrl,
+						preferredIndex,
+						replaceDifferentState,
+						exception
+				))
+				.thenAccept(result -> server.execute(() -> applyGalleryDisplayHydration(server, key, result)));
+	}
+
+	private static void applyGalleryDisplayHydration(MinecraftServer server, ScreenRuntimeKey key, GalleryDisplayHydrationResult result) {
+		if (server == null || key == null || result == null) {
+			return;
+		}
+		MediaRuntimeState state = MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		YoutubeQueuePreloadDiff preloadDiff = YoutubeQueuePreloadDiff.EMPTY;
+		boolean shouldRender = false;
+		synchronized (state) {
+			if (result.sessionGeneration() != state.sessionGeneration
+					|| result.requestId() != state.galleryHydrationRequestId) {
+				return;
+			}
+			state.galleryHydrationLoading = false;
+			if (result.exception() != null) {
+				Lg2.LOGGER.debug("Failed to hydrate monitor gallery previews for {}", key, result.exception());
+			}
+			if (state.galleryHydrated
+					&& !result.replaceDifferentState()
+					&& !state.galleryItems.isEmpty()
+					&& !hasLiveCameraItemsLocked(state)
+					&& !Objects.equals(persistedGalleryItems(state.galleryItems), result.persistedItems())) {
+				return;
+			}
+			state.galleryItems.clear();
+			state.galleryItems.addAll(result.items());
+			state.galleryHydrated = true;
+			state.galleryIndex = resolveGalleryItemIndex(state, result.selectedUrl(), result.preferredIndex());
+			if (state.galleryIndex < 0) {
+				clearGallerySelectionLocked(state);
+				state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+			}
+			if (state.galleryItems.isEmpty()) {
+				state.galleryIndex = -1;
+				state.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+			}
+			state.galleryScroll = 0;
+			preloadDiff = syncYoutubeQueuePreloadsLocked(state);
+			state.version++;
+			shouldRender = true;
+		}
+		applyYoutubeQueuePreloadDiff(preloadDiff);
+		scheduleGalleryPreloadStatusRefreshes(server, key);
+		if (shouldRender) {
+			requestRuntimeRender(server, key);
+		}
+	}
+
+	private record GalleryDisplayHydrationResult(
+			List<PersistedGalleryItem> persistedItems,
+			List<GalleryItem> items,
+			long sessionGeneration,
+			long requestId,
+			String selectedUrl,
+			int preferredIndex,
+			boolean replaceDifferentState,
+			Throwable exception
+	) {
 	}
 
 	static void ensureSberDronesStateHydrated(MinecraftServer server, ScreenRuntimeKey key, MediaRuntimeState state) {

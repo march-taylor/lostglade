@@ -1,11 +1,13 @@
 package com.lostglade.mixin;
 
+import com.lostglade.block.ModBlocks;
 import com.lostglade.item.ModItems;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.animal.sheep.Sheep;
 import net.minecraft.world.entity.monster.Giant;
 import net.minecraft.world.entity.monster.illager.Illusioner;
 import net.minecraft.world.item.ItemStack;
@@ -71,5 +73,18 @@ public abstract class MobDeathLootMixin {
 			illusioner.spawnAtLocation(level, new ItemStack(Items.EMERALD));
 		}
 		illusioner.spawnAtLocation(level, new ItemStack(ModItems.ABSOLUTE_INVISIBILITY_POTION));
+	}
+
+	@Inject(method = "dropCustomDeathLoot", at = @At("TAIL"))
+	private void lg2$dropRainbowWool(ServerLevel level, DamageSource damageSource, boolean causedByPlayer, CallbackInfo ci) {
+		if (!((Object) this instanceof Sheep sheep)
+				|| sheep.isBaby()
+				|| sheep.isSheared()
+				|| !sheep.hasCustomName()
+				|| !"jeb_".equalsIgnoreCase(sheep.getCustomName().getString())) {
+			return;
+		}
+
+		sheep.spawnAtLocation(level, new ItemStack(ModBlocks.RAINBOW_WOOL));
 	}
 }

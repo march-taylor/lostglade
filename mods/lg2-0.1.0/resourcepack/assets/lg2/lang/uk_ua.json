@@ -1,4 +1,10 @@
 {
+    "block.lg2.rainbow_wool": "Різнокольорова вовна",
+    "block.lg2.rainbow_carpet": "Різнокольоровий килим",
+    "block.lg2.rainbow_bed": "Різнокольорове ліжко",
+    "item.lg2.rainbow_wool": "Різнокольорова вовна",
+    "item.lg2.rainbow_carpet": "Різнокольоровий килим",
+    "item.lg2.rainbow_bed": "Різнокольорове ліжко",
     "dialog.lg2.race_quick_actions.rp.attack_1":  "",
     "dialog.lg2.race_quick_actions.rp.attack_2":  "",
     "dialog.lg2.race_quick_actions.rp.attack_3":  "▲",

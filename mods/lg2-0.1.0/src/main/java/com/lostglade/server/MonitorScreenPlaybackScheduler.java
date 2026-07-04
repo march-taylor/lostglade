@@ -368,16 +368,34 @@ final class MonitorScreenPlaybackScheduler {
 
 			long now = System.currentTimeMillis();
 			boolean mediaActive = loadedMediaAnimationActiveLocked(state);
+			boolean slideshowActive = gallerySlideshowPlaybackActiveLocked(state);
 			if (!mediaActive) {
 				state.nextLoadedMediaFrameAtMillis = 0L;
+			}
+			if (!slideshowActive) {
+				state.gallerySlideshowAdvanceAtMillis = 0L;
+			}
+			if (!mediaActive && !slideshowActive) {
 				return;
 			}
-			state.nextLoadedMediaFrameAtMillis = nextAnimationDeadlineMillis(
+			if (mediaActive) {
+				state.nextLoadedMediaFrameAtMillis = nextAnimationDeadlineMillis(
+						state.nextLoadedMediaFrameAtMillis,
+						now,
+						state.loadedMedia.delayMillis(state.frameIndex)
+				);
+			}
+			if (slideshowActive) {
+				state.gallerySlideshowAdvanceAtMillis = nextGallerySlideshowDeadlineMillisLocked(state, now);
+			}
+			long nextDeadlineMillis = earliestPositiveDeadlineMillis(
 					state.nextLoadedMediaFrameAtMillis,
-					now,
-					state.loadedMedia.delayMillis(state.frameIndex)
+					state.gallerySlideshowAdvanceAtMillis
 			);
-			long delayMillis = Math.max(1L, state.nextLoadedMediaFrameAtMillis - now);
+			if (nextDeadlineMillis <= 0L) {
+				return;
+			}
+			long delayMillis = Math.max(1L, nextDeadlineMillis - now);
 			state.playbackFuture = mediaScheduler.schedule(() -> server.execute(() -> advanceMediaFrame(server, key)), delayMillis, TimeUnit.MILLISECONDS);
 		}
 	}

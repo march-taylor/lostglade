@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "group": "bed",
+  "key": {
+    "#": "lg2:rainbow_wool",
+    "X": "#minecraft:planks"
+  },
+  "pattern": [
+    "###",
+    "XXX"
+  ],
+  "result": {
+    "count": 1,
+    "id": "lg2:rainbow_bed"
+  }
+}

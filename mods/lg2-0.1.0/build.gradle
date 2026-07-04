@@ -208,11 +208,20 @@ tasks.register("runDroneScreenLinkPolicyTest", JavaExec) {
 	dependsOn(tasks.named("testClasses"))
 }
 
+tasks.register("runMonitorScreenTouchProjectionTest", JavaExec) {
+	group = "verification"
+	description = "Runs monitor screen touch ray-to-plane projection regression checks."
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = "com.lostglade.server.MonitorScreenTouchProjectionTest"
+	dependsOn(tasks.named("testClasses"))
+}
+
 tasks.named("check") {
 	dependsOn(tasks.named("runDronePhysicsSimulationTest"))
 	dependsOn(tasks.named("runMonitorMediaStateMachineTest"))
 	dependsOn(tasks.named("runYandexMapTopDownRenderTest"))
 	dependsOn(tasks.named("runDroneScreenLinkPolicyTest"))
+	dependsOn(tasks.named("runMonitorScreenTouchProjectionTest"))
 }
 
 java {

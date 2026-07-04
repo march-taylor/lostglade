@@ -288,7 +288,7 @@ final class MonitorScreenGalleryRuntime {
 		ScreenComponent component = resolveScreenComponent(server, result.screenKey());
 		UiLayout layout = component != null ? createUiLayout(component.width(), component.height()) : null;
 		boolean shouldRender = false;
-		boolean shouldAnimate = false;
+		boolean shouldSchedulePlayback = false;
 		boolean shouldPersistLocalMedia = false;
 		boolean shouldPersistLocalVideo = false;
 		boolean shouldPersistLocalAudio = false;
@@ -348,7 +348,8 @@ final class MonitorScreenGalleryRuntime {
 					state.progress.complete("READY");
 					if (selectGalleryItemLocked(state, targetIndex, layout)) {
 						state.overlayMode = MediaOverlayMode.CONTROLS;
-						shouldAnimate = result.loadedMedia().animated() && result.loadedMedia().frameCount() > 1;
+						shouldSchedulePlayback = (result.loadedMedia().animated() && result.loadedMedia().frameCount() > 1)
+								|| gallerySlideshowPlaybackActiveLocked(state);
 					}
 				}
 				state.version++;
@@ -430,7 +431,7 @@ final class MonitorScreenGalleryRuntime {
 		if (shouldRender) {
 			requestRuntimeRender(server, result.screenKey());
 		}
-		if (shouldAnimate) {
+		if (shouldSchedulePlayback) {
 			scheduleNextMediaFrame(server, result.screenKey());
 		}
 		if (loadedVideoToOpen != null) {

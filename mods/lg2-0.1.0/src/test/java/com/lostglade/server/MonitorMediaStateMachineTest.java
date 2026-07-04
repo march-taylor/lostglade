@@ -50,11 +50,19 @@ public final class MonitorMediaStateMachineTest {
 		galleryRuntimePolicyIgnoresLiveCameraOnlyCollections();
 		galleryRuntimePolicyRetainsOnlyActiveDecodedMedia();
 		backgroundPlaybackPolicyIgnoresViewVisibility();
+		audioTransportPolicyPrefersFreshLocalPauseIntent();
 		audioTransportPolicyPrefersFreshLocalTransportIntent();
 		audioTransportPolicyKeepsSeekTargetUntilRelaySettles();
 		audioTransportPolicyDropsExpiredLocalTransportOverride();
 		directAudioSourcesDoNotResyncFromStaleMonitorPosition();
 		localDirectAudioEofDoesNotRestartSameTrack();
+		repeatModesAdvanceYoutubeQueueOnlyWhenExpected();
+		galleryPlaybackAlwaysWrapsWithoutRepeatControls();
+		galleryBackedYoutubeDoesNotShowRepeatButton();
+		gallerySlideshowOnlyTargetsDecodedImagesAndGifs();
+		gallerySlideshowWrapsToTheNextGalleryItem();
+		gallerySlideshowUsesSelectedQueueWhenPresent();
+		gallerySlideshowDurationIsClampedToSecondBounds();
 		downloadedYoutubeVideoDoesNotUseStaticVisual();
 		System.out.println("Monitor media state-machine checks passed");
 	}
@@ -784,6 +792,26 @@ public final class MonitorMediaStateMachineTest {
 		);
 	}
 
+	private static void audioTransportPolicyPrefersFreshLocalPauseIntent() {
+		MonitorAudioTransportPolicy.Resolution resolution = MonitorAudioTransportPolicy.reconcile(
+				false,
+				12_000L,
+				Boolean.TRUE,
+				true,
+				12_000L,
+				1_000L,
+				2_000L
+		);
+		require(
+				resolution.paused(),
+				"a fresh local pause should not be overwritten by an older playing relay snapshot"
+		);
+		require(
+				Boolean.TRUE.equals(resolution.pendingPauseState()),
+				"pause override should stay pending until the relay catches up"
+		);
+	}
+
 	private static void audioTransportPolicyKeepsSeekTargetUntilRelaySettles() {
 		MonitorAudioTransportPolicy.Resolution resolution = MonitorAudioTransportPolicy.reconcile(
 				false,
@@ -892,6 +920,172 @@ public final class MonitorMediaStateMachineTest {
 						41L
 				),
 				"network-backed inputs should still restart after disconnect-like process exits"
+		);
+	}
+
+	private static void repeatModesAdvanceYoutubeQueueOnlyWhenExpected() {
+		MediaRuntimeState state = MediaRuntimeState.fresh(ScreenViewMode.YOUTUBE, "", () -> {
+		});
+		state.youtubeQueue.add(new YoutubeQueueItem("One", "", 1000L, "https://youtube.test/1"));
+		state.youtubeQueue.add(new YoutubeQueueItem("Two", "", 1000L, "https://youtube.test/2"));
+		state.youtubeQueue.add(new YoutubeQueueItem("Three", "", 1000L, "https://youtube.test/3"));
+
+		state.youtubeQueueIndex = 1;
+		state.repeatMode = MediaRepeatMode.OFF;
+		require(
+				Integer.valueOf(2).equals(MonitorScreenMediaFrameRuntime.endedQueueAdvanceIndexLocked(state)),
+				"repeat off should advance to the next queued entry while one exists"
+		);
+
+		state.youtubeQueueIndex = 2;
+		require(
+				MonitorScreenMediaFrameRuntime.endedQueueAdvanceIndexLocked(state) == null,
+				"repeat off should stop at the end of the queue instead of wrapping"
+		);
+
+		state.repeatMode = MediaRepeatMode.ALL;
+		require(
+				Integer.valueOf(0).equals(MonitorScreenMediaFrameRuntime.endedQueueAdvanceIndexLocked(state)),
+				"repeat all should wrap queued playback back to the first entry"
+		);
+
+		state.repeatMode = MediaRepeatMode.ONE;
+		require(
+				Integer.valueOf(2).equals(MonitorScreenMediaFrameRuntime.endedQueueAdvanceIndexLocked(state)),
+				"repeat one should replay the current queued entry"
+		);
+	}
+
+	private static void galleryPlaybackAlwaysWrapsWithoutRepeatControls() {
+		MediaRuntimeState state = MediaRuntimeState.fresh(ScreenViewMode.GALLERY, "", () -> {
+		});
+		state.gallerySurfaceMode = GallerySurfaceMode.PLAYER;
+		state.galleryItems.add(new GalleryItem("One", "", "gallery://1", null, null, null, GalleryItemKind.VIDEO));
+		state.galleryItems.add(new GalleryItem("Two", "", "gallery://2", null, null, null, GalleryItemKind.AUDIO));
+
+		state.galleryIndex = 0;
+		require(
+				Integer.valueOf(1).equals(MonitorScreenMediaFrameRuntime.endedGalleryAdvanceIndexLocked(state)),
+				"gallery playback should advance while another item exists"
+		);
+
+		state.galleryIndex = 1;
+		require(
+				Integer.valueOf(0).equals(MonitorScreenMediaFrameRuntime.endedGalleryAdvanceIndexLocked(state)),
+				"gallery playback should wrap to the first item without a repeat mode"
+		);
+
+		state.repeatMode = MediaRepeatMode.ONE;
+		require(
+				Integer.valueOf(0).equals(MonitorScreenMediaFrameRuntime.endedGalleryAdvanceIndexLocked(state)),
+				"gallery repeat mode should not affect gallery playback"
+		);
+	}
+
+	private static void galleryBackedYoutubeDoesNotShowRepeatButton() {
+		MediaRuntimeState state = MediaRuntimeState.fresh(ScreenViewMode.GALLERY, "", () -> {
+		});
+		state.gallerySurfaceMode = GallerySurfaceMode.PLAYER;
+		state.galleryIndex = 0;
+		state.streamKind = PlaybackStreamKind.YOUTUBE;
+		state.sourceUrl = "https://youtube.test/watch?v=gallery-backed";
+		state.galleryItems.add(new GalleryItem(
+				"Gallery YouTube",
+				"",
+				state.sourceUrl,
+				null,
+				null,
+				null,
+				GalleryItemKind.YOUTUBE
+		));
+		require(
+				!MonitorScreenSystem.repeatButtonVisibleLocked(state),
+				"gallery-backed YouTube playback should use gallery wrapping instead of a repeat control"
+		);
+	}
+
+	private static void gallerySlideshowOnlyTargetsDecodedImagesAndGifs() {
+		MediaRuntimeState imageState = MediaRuntimeState.fresh(ScreenViewMode.GALLERY, "", () -> {
+		});
+		imageState.gallerySurfaceMode = GallerySurfaceMode.PLAYER;
+		imageState.galleryIndex = 0;
+		imageState.loadedMedia = new MonitorMediaApp.LoadedMedia(
+				List.of(new BufferedImage(4, 4, BufferedImage.TYPE_INT_ARGB)),
+				List.of(100),
+				4,
+				4,
+				false
+		);
+		imageState.galleryItems.add(new GalleryItem("Image", "", "gallery://image", null, imageState.loadedMedia, null, GalleryItemKind.MEDIA));
+		require(
+				MonitorScreenSystem.gallerySlideshowEligibleLocked(imageState),
+				"decoded gallery images should be eligible for slideshow timing"
+		);
+
+		MediaRuntimeState videoState = MediaRuntimeState.fresh(ScreenViewMode.GALLERY, "", () -> {
+		});
+		videoState.gallerySurfaceMode = GallerySurfaceMode.PLAYER;
+		videoState.galleryIndex = 0;
+		videoState.streamKind = PlaybackStreamKind.DIRECT_VIDEO;
+		videoState.galleryItems.add(new GalleryItem("Video", "", "gallery://video", null, null, null, GalleryItemKind.VIDEO));
+		require(
+				!MonitorScreenSystem.gallerySlideshowEligibleLocked(videoState),
+				"video items must keep using the normal playback flow instead of image slideshow timing"
+		);
+	}
+
+	private static void gallerySlideshowWrapsToTheNextGalleryItem() {
+		MediaRuntimeState state = MediaRuntimeState.fresh(ScreenViewMode.GALLERY, "", () -> {
+		});
+		state.gallerySurfaceMode = GallerySurfaceMode.PLAYER;
+		state.galleryIndex = 2;
+		state.gallerySlideshowEnabled = true;
+		state.loadedMedia = new MonitorMediaApp.LoadedMedia(
+				List.of(new BufferedImage(4, 4, BufferedImage.TYPE_INT_ARGB)),
+				List.of(100),
+				4,
+				4,
+				false
+		);
+		state.galleryItems.add(new GalleryItem("One", "", "gallery://1", null, null, null, GalleryItemKind.MEDIA));
+		state.galleryItems.add(new GalleryItem("Two", "", "gallery://2", null, null, null, GalleryItemKind.VIDEO));
+		state.galleryItems.add(new GalleryItem("Three", "", "gallery://3", null, state.loadedMedia, null, GalleryItemKind.MEDIA));
+		require(
+				Integer.valueOf(0).equals(MonitorScreenSystem.nextGallerySlideshowIndexLocked(state)),
+				"slideshow timing should wrap back to the first gallery item after the last image or GIF"
+		);
+	}
+
+	private static void gallerySlideshowUsesSelectedQueueWhenPresent() {
+		MediaRuntimeState state = MediaRuntimeState.fresh(ScreenViewMode.GALLERY, "", () -> {
+		});
+		state.gallerySurfaceMode = GallerySurfaceMode.PLAYER;
+		state.galleryIndex = 0;
+		state.gallerySlideshowEnabled = true;
+		state.galleryItems.add(new GalleryItem("One", "", "gallery://1", null, null, null, GalleryItemKind.MEDIA));
+		state.galleryItems.add(new GalleryItem("Two", "", "gallery://2", null, null, null, GalleryItemKind.MEDIA));
+		state.galleryItems.add(new GalleryItem("Three", "", "gallery://3", null, null, null, GalleryItemKind.MEDIA));
+		state.galleryBulkSelectedKeys.add(MonitorScreenSystem.galleryBulkSelectionKey(state.galleryItems.get(0), 0));
+		state.galleryBulkSelectedKeys.add(MonitorScreenSystem.galleryBulkSelectionKey(state.galleryItems.get(2), 2));
+
+		require(
+				Integer.valueOf(2).equals(MonitorScreenSystem.nextGallerySlideshowIndexLocked(state)),
+				"selected slideshow playback should skip unselected gallery items"
+		);
+	}
+
+	private static void gallerySlideshowDurationIsClampedToSecondBounds() {
+		require(
+				MonitorScreenSystem.sanitizedGallerySlideshowDurationSeconds(-10) == 3,
+				"slideshow duration should clamp to the 3 second lower bound"
+		);
+		require(
+				MonitorScreenSystem.sanitizedGallerySlideshowDurationSeconds(42) == 42,
+				"slideshow duration should allow intermediate whole-second values"
+		);
+		require(
+				MonitorScreenSystem.sanitizedGallerySlideshowDurationSeconds(240) == 120,
+				"slideshow duration should clamp to the 120 second upper bound"
 		);
 	}
 

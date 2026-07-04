@@ -3,6 +3,7 @@ package com.lostglade.block;
 import com.lostglade.Lg2;
 import com.lostglade.mixin.BlockEntityTypeAccessor;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
+import net.fabricmc.fabric.api.registry.FlammableBlockRegistry;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
@@ -34,6 +35,9 @@ public final class ModBlocks {
 	private static final Identifier MICROPHONE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "microphone");
 	private static final Identifier CAMERA_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera");
 	private static final Identifier MILK_POCKET_PHANTOM_FLOOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "milk_pocket_phantom_floor");
+	private static final Identifier RAINBOW_WOOL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "rainbow_wool");
+	private static final Identifier RAINBOW_CARPET_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "rainbow_carpet");
+	private static final Identifier RAINBOW_BED_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "rainbow_bed");
 
 	private static final ResourceKey<Block> BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, BITCOIN_ORE_ID);
 	private static final ResourceKey<Block> DEEPSLATE_BITCOIN_ORE_KEY = ResourceKey.create(Registries.BLOCK, DEEPSLATE_BITCOIN_ORE_ID);
@@ -49,6 +53,9 @@ public final class ModBlocks {
 	private static final ResourceKey<Block> MICROPHONE_KEY = ResourceKey.create(Registries.BLOCK, MICROPHONE_ID);
 	private static final ResourceKey<Block> CAMERA_KEY = ResourceKey.create(Registries.BLOCK, CAMERA_ID);
 	private static final ResourceKey<Block> MILK_POCKET_PHANTOM_FLOOR_KEY = ResourceKey.create(Registries.BLOCK, MILK_POCKET_PHANTOM_FLOOR_ID);
+	private static final ResourceKey<Block> RAINBOW_WOOL_KEY = ResourceKey.create(Registries.BLOCK, RAINBOW_WOOL_ID);
+	private static final ResourceKey<Block> RAINBOW_CARPET_KEY = ResourceKey.create(Registries.BLOCK, RAINBOW_CARPET_ID);
+	private static final ResourceKey<Block> RAINBOW_BED_KEY = ResourceKey.create(Registries.BLOCK, RAINBOW_BED_ID);
 	private static final ResourceKey<Item> BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> DEEPSLATE_BITCOIN_ORE_ITEM_KEY = ResourceKey.create(Registries.ITEM, DEEPSLATE_BITCOIN_ORE_ID);
 	private static final ResourceKey<Item> BACKROOMS_BLOCK_ITEM_KEY = ResourceKey.create(Registries.ITEM, BACKROOMS_BLOCK_ID);
@@ -58,6 +65,9 @@ public final class ModBlocks {
 	private static final ResourceKey<Item> SERVER_ITEM_KEY = ResourceKey.create(Registries.ITEM, SERVER_ID);
 	private static final ResourceKey<Item> SPEAKER_ITEM_KEY = ResourceKey.create(Registries.ITEM, SPEAKER_ID);
 	private static final ResourceKey<Item> MICROPHONE_ITEM_KEY = ResourceKey.create(Registries.ITEM, MICROPHONE_ID);
+	private static final ResourceKey<Item> RAINBOW_WOOL_ITEM_KEY = ResourceKey.create(Registries.ITEM, RAINBOW_WOOL_ID);
+	private static final ResourceKey<Item> RAINBOW_CARPET_ITEM_KEY = ResourceKey.create(Registries.ITEM, RAINBOW_CARPET_ID);
+	private static final ResourceKey<Item> RAINBOW_BED_ITEM_KEY = ResourceKey.create(Registries.ITEM, RAINBOW_BED_ID);
 
 	private static final ResourceKey<CreativeModeTab> NATURAL_BLOCKS_TAB = ResourceKey.create(
 			Registries.CREATIVE_MODE_TAB,
@@ -116,6 +126,30 @@ public final class ModBlocks {
 			BuiltInRegistries.BLOCK,
 			MILK_POCKET_PHANTOM_FLOOR_ID,
 			new MilkPocketPhantomFloorBlock(createMilkPocketPhantomFloorProperties())
+	);
+
+	public static final Block RAINBOW_WOOL = Registry.register(
+			BuiltInRegistries.BLOCK,
+			RAINBOW_WOOL_ID,
+			new RainbowWoolBlock(
+					createRainbowWoolProperties(),
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/rainbow_wool")
+			)
+	);
+
+	public static final Block RAINBOW_CARPET = Registry.register(
+			BuiltInRegistries.BLOCK,
+			RAINBOW_CARPET_ID,
+			new RainbowCarpetBlock(
+					createRainbowCarpetProperties(),
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/rainbow_carpet")
+			)
+	);
+
+	public static final Block RAINBOW_BED = Registry.register(
+			BuiltInRegistries.BLOCK,
+			RAINBOW_BED_ID,
+			new RainbowBedBlock(createRainbowBedProperties())
 	);
 
 	public static final Block BACKROOMS_BLOCK = Registry.register(
@@ -309,20 +343,77 @@ public final class ModBlocks {
 			)
 	);
 
+	public static final Item RAINBOW_WOOL_ITEM = Registry.register(
+			BuiltInRegistries.ITEM,
+			RAINBOW_WOOL_ID,
+			new BackroomsBlockItem(
+					RAINBOW_WOOL,
+					new Item.Properties().setId(RAINBOW_WOOL_ITEM_KEY).useBlockDescriptionPrefix(),
+					Items.WHITE_WOOL,
+					true,
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "rainbow_wool"),
+					"Rainbow Wool",
+					"Разноцветная шерсть",
+					"Радужная шерсть",
+					"Різнокольорова вовна",
+					"レインボーウール"
+			)
+	);
+
+	public static final Item RAINBOW_CARPET_ITEM = Registry.register(
+			BuiltInRegistries.ITEM,
+			RAINBOW_CARPET_ID,
+			new BackroomsBlockItem(
+					RAINBOW_CARPET,
+					new Item.Properties().setId(RAINBOW_CARPET_ITEM_KEY).useBlockDescriptionPrefix(),
+					Items.WHITE_CARPET,
+					true,
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "rainbow_carpet"),
+					"Rainbow Carpet",
+					"Разноцветный ковёр",
+					"Радужный ковёр",
+					"Різнокольоровий килим",
+					"レインボーカーペット"
+			)
+	);
+
+	public static final Item RAINBOW_BED_ITEM = Registry.register(
+			BuiltInRegistries.ITEM,
+			RAINBOW_BED_ID,
+			new RainbowBedItem(
+					RAINBOW_BED,
+					new Item.Properties().setId(RAINBOW_BED_ITEM_KEY).useBlockDescriptionPrefix(),
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "rainbow_bed"),
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "rainbow_bed_display"),
+					"Rainbow Bed",
+					"Разноцветная кровать",
+					"Радужная кровать",
+					"Різнокольорове ліжко",
+					"レインボーベッド"
+			)
+	);
+
 	private ModBlocks() {
 	}
 
 	public static void register() {
 		((BlockEntityTypeAccessor) (Object) BlockEntityType.SIGN).lg2$getValidBlocks().add(EXIT_SIGN);
 		((BlockEntityTypeAccessor) (Object) BlockEntityType.SIGN).lg2$getValidBlocks().add(EXIT_WALL_SIGN);
+		((BlockEntityTypeAccessor) (Object) BlockEntityType.BED).lg2$getValidBlocks().add(RAINBOW_BED);
+		FlammableBlockRegistry.getDefaultInstance().add(RAINBOW_WOOL, 30, 60);
+		FlammableBlockRegistry.getDefaultInstance().add(RAINBOW_CARPET, 60, 20);
+		FlammableBlockRegistry.getDefaultInstance().add(RAINBOW_BED, 5, 20);
 
 		ItemGroupEvents.modifyEntriesEvent(NATURAL_BLOCKS_TAB).register(entries -> {
+			entries.prepend(RAINBOW_CARPET_ITEM);
+			entries.prepend(RAINBOW_WOOL_ITEM);
 			entries.prepend(BACKROOMS_LIGHTBLOCK_ITEM);
 			entries.prepend(BACKROOMS_BLOCK_ITEM);
 			entries.prepend(DEEPSLATE_BITCOIN_ORE_ITEM);
 			entries.prepend(BITCOIN_ORE_ITEM);
 		});
 		ItemGroupEvents.modifyEntriesEvent(FUNCTIONAL_BLOCKS_TAB).register(entries -> {
+			entries.prepend(RAINBOW_BED_ITEM);
 			entries.prepend(MICROPHONE_ITEM);
 			entries.prepend(SPEAKER_ITEM);
 			entries.prepend(EXIT_SIGN_ITEM);
@@ -394,6 +485,23 @@ public final class ModBlocks {
 				.noLootTable()
 				.noOcclusion()
 				.setId(MILK_POCKET_PHANTOM_FLOOR_KEY);
+	}
+
+	private static BlockBehaviour.Properties createRainbowWoolProperties() {
+		return BlockBehaviour.Properties.ofFullCopy(Blocks.WHITE_WOOL)
+				.sound(SoundType.WOOL)
+				.setId(RAINBOW_WOOL_KEY);
+	}
+
+	private static BlockBehaviour.Properties createRainbowCarpetProperties() {
+		return BlockBehaviour.Properties.ofFullCopy(Blocks.WHITE_CARPET)
+				.sound(SoundType.WOOL)
+				.setId(RAINBOW_CARPET_KEY);
+	}
+
+	private static BlockBehaviour.Properties createRainbowBedProperties() {
+		return BlockBehaviour.Properties.ofFullCopy(Blocks.WHITE_BED)
+				.setId(RAINBOW_BED_KEY);
 	}
 
 	public static BlockState getRandomizedBackroomsBlockState(long seed) {

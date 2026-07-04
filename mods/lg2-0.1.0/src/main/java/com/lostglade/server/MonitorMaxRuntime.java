@@ -476,7 +476,7 @@ final class MonitorMaxRuntime {
 			return null;
 		}
 		UiLayout layout = createUiLayout(nearestComponent.width(), nearestComponent.height());
-		UiPoint touchPoint = screenTouchPoint(nearestFrame, nearestHit, nearestTile, nearestComponent.width(), nearestComponent.height());
+		UiPoint touchPoint = screenTouchPoint(nearestFrame, player, nearestHit, nearestTile, nearestComponent.width(), nearestComponent.height());
 		return touchPoint == null ? null : new ObservedCallUiTarget(nearestComponent, layout, touchPoint);
 	}
 

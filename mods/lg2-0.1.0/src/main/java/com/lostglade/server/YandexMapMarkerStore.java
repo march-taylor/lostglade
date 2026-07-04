@@ -7,14 +7,17 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.lostglade.Lg2;
+import com.mojang.serialization.JsonOps;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.LevelResource;
 
@@ -70,10 +73,19 @@ public final class YandexMapMarkerStore {
 	}
 
 	public static YandexMapMarker create(ServerLevel level, BlockPos pos, ServerPlayer creator, String title, String iconItemId) {
+		return create(level, pos, creator, title, markerIconData(level != null ? level.getServer() : null, iconItemId));
+	}
+
+	public static YandexMapMarker create(ServerLevel level, BlockPos pos, ServerPlayer creator, String title, ItemStack iconStack) {
+		return create(level, pos, creator, title, markerIconData(level != null ? level.getServer() : null, iconStack));
+	}
+
+	private static YandexMapMarker create(ServerLevel level, BlockPos pos, ServerPlayer creator, String title, MarkerIconData iconData) {
 		if (level == null || pos == null || creator == null) {
 			return null;
 		}
 		ensureLoaded(level.getServer());
+		MarkerIconData safeIcon = iconData == null ? MarkerIconData.EMPTY : iconData;
 		YandexMapMarker marker = new YandexMapMarker(
 				UUID.randomUUID(),
 				level.dimension(),
@@ -81,7 +93,8 @@ public final class YandexMapMarkerStore {
 				pos.getY(),
 				pos.getZ(),
 				normalizeTitle(title),
-				normalizeIconItemId(iconItemId),
+				safeIcon.iconItemId(),
+				safeIcon.iconStackJson(),
 				creator.getUUID(),
 				safeCreatorName(creator)
 		);
@@ -115,16 +128,25 @@ public final class YandexMapMarkerStore {
 	}
 
 	public static YandexMapMarker updateIcon(MinecraftServer server, UUID markerId, String iconItemId) {
+		return updateIcon(server, markerId, markerIconData(server, iconItemId));
+	}
+
+	public static YandexMapMarker updateIcon(MinecraftServer server, UUID markerId, ItemStack iconStack) {
+		return updateIcon(server, markerId, markerIconData(server, iconStack));
+	}
+
+	private static YandexMapMarker updateIcon(MinecraftServer server, UUID markerId, MarkerIconData iconData) {
 		if (server == null || markerId == null) {
 			return null;
 		}
 		ensureLoaded(server);
+		MarkerIconData safeIcon = iconData == null ? MarkerIconData.EMPTY : iconData;
 		synchronized (MARKERS_BY_ID) {
 			YandexMapMarker current = MARKERS_BY_ID.get(markerId);
 			if (current == null) {
 				return null;
 			}
-			YandexMapMarker updated = current.withIconItemId(normalizeIconItemId(iconItemId));
+			YandexMapMarker updated = current.withIcon(safeIcon.iconItemId(), safeIcon.iconStackJson());
 			if (Objects.equals(current, updated)) {
 				return current;
 			}
@@ -133,6 +155,17 @@ public final class YandexMapMarkerStore {
 			dirty = true;
 			return updated;
 		}
+	}
+
+	public static ItemStack markerIconStack(MinecraftServer server, YandexMapMarker marker) {
+		if (marker == null) {
+			return ItemStack.EMPTY;
+		}
+		ItemStack decoded = decodeIconStack(server, marker.iconStackJson());
+		if (!decoded.isEmpty()) {
+			return decoded.copyWithCount(1);
+		}
+		return itemStackFromId(marker.iconItemId());
 	}
 
 	public static boolean remove(MinecraftServer server, UUID markerId) {
@@ -194,6 +227,7 @@ public final class YandexMapMarkerStore {
 							readInt(object, "z"),
 							title,
 							normalizeIconItemId(readString(object, "icon_item_id")),
+							readJsonElementString(object, "icon_stack"),
 							creatorId,
 							creatorName
 					);
@@ -227,6 +261,13 @@ public final class YandexMapMarkerStore {
 					object.addProperty("z", marker.blockZ());
 					object.addProperty("title", marker.title());
 					object.addProperty("icon_item_id", marker.iconItemId());
+					if (!marker.iconStackJson().isBlank()) {
+						try {
+							object.add("icon_stack", JsonParser.parseString(marker.iconStackJson()));
+						} catch (RuntimeException ignored) {
+							object.addProperty("icon_stack", marker.iconStackJson());
+						}
+					}
 					object.addProperty("creator_uuid", marker.creatorUuid().toString());
 					object.addProperty("creator_name", marker.creatorName());
 					entries.add(object);
@@ -290,8 +331,71 @@ public final class YandexMapMarkerStore {
 		return identifier == null ? "" : identifier.toString();
 	}
 
+	private static MarkerIconData markerIconData(MinecraftServer server, String iconItemId) {
+		return new MarkerIconData(normalizeIconItemId(iconItemId), "");
+	}
+
+	private static MarkerIconData markerIconData(MinecraftServer server, ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return MarkerIconData.EMPTY;
+		}
+		Identifier itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
+		String iconItemId = itemId == null ? "" : itemId.toString();
+		String iconStackJson = encodeIconStack(server, stack);
+		return new MarkerIconData(iconItemId, iconStackJson);
+	}
+
+	private static String encodeIconStack(MinecraftServer server, ItemStack stack) {
+		if (server == null || stack == null || stack.isEmpty()) {
+			return "";
+		}
+		ItemStack copy = stack.copyWithCount(1);
+		return ItemStack.OPTIONAL_CODEC
+				.encodeStart(server.registryAccess().createSerializationContext(JsonOps.INSTANCE), copy)
+				.resultOrPartial(message -> Lg2.LOGGER.warn("Failed to encode Yandex map marker item stack: {}", message))
+				.map(GSON::toJson)
+				.orElse("");
+	}
+
+	private static ItemStack decodeIconStack(MinecraftServer server, String iconStackJson) {
+		if (server == null || iconStackJson == null || iconStackJson.isBlank()) {
+			return ItemStack.EMPTY;
+		}
+		try {
+			JsonElement json = JsonParser.parseString(iconStackJson);
+			return ItemStack.OPTIONAL_CODEC
+					.parse(server.registryAccess().createSerializationContext(JsonOps.INSTANCE), json)
+					.resultOrPartial(message -> Lg2.LOGGER.warn("Failed to decode Yandex map marker item stack: {}", message))
+					.orElse(ItemStack.EMPTY);
+		} catch (RuntimeException exception) {
+			Lg2.LOGGER.warn("Failed to parse Yandex map marker item stack JSON", exception);
+			return ItemStack.EMPTY;
+		}
+	}
+
+	private static ItemStack itemStackFromId(String iconItemId) {
+		Identifier identifier = Identifier.tryParse(normalizeIconItemId(iconItemId));
+		if (identifier == null) {
+			return ItemStack.EMPTY;
+		}
+		return BuiltInRegistries.ITEM.getOptional(identifier)
+				.map(item -> new ItemStack(item, 1))
+				.orElse(ItemStack.EMPTY);
+	}
+
 	private static String readString(JsonObject object, String key) {
 		return object != null && object.has(key) ? object.get(key).getAsString() : "";
+	}
+
+	private static String readJsonElementString(JsonObject object, String key) {
+		if (object == null || !object.has(key) || object.get(key).isJsonNull()) {
+			return "";
+		}
+		JsonElement element = object.get(key);
+		if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
+			return element.getAsString();
+		}
+		return GSON.toJson(element);
 	}
 
 	private static int readInt(JsonObject object, String key) {
@@ -324,6 +428,15 @@ public final class YandexMapMarkerStore {
 		return ResourceKey.create(Registries.DIMENSION, identifier);
 	}
 
+	private record MarkerIconData(String iconItemId, String iconStackJson) {
+		private static final MarkerIconData EMPTY = new MarkerIconData("", "");
+
+		private MarkerIconData {
+			iconItemId = normalizeIconItemId(iconItemId);
+			iconStackJson = iconStackJson == null ? "" : iconStackJson.trim();
+		}
+	}
+
 	public record YandexMapMarker(
 			UUID markerId,
 			ResourceKey<Level> dimension,
@@ -332,6 +445,7 @@ public final class YandexMapMarkerStore {
 			int blockZ,
 			String title,
 			String iconItemId,
+			String iconStackJson,
 			UUID creatorUuid,
 			String creatorName
 	) {
@@ -344,12 +458,17 @@ public final class YandexMapMarkerStore {
 					this.blockZ,
 					nextTitle,
 					this.iconItemId,
+					this.iconStackJson,
 					this.creatorUuid,
 					this.creatorName
 			);
 		}
 
 		public YandexMapMarker withIconItemId(String nextIconItemId) {
+			return withIcon(nextIconItemId, "");
+		}
+
+		public YandexMapMarker withIcon(String nextIconItemId, String nextIconStackJson) {
 			return new YandexMapMarker(
 					this.markerId,
 					this.dimension,
@@ -357,10 +476,15 @@ public final class YandexMapMarkerStore {
 					this.blockY,
 					this.blockZ,
 					this.title,
-					nextIconItemId,
+					normalizeIconItemId(nextIconItemId),
+					nextIconStackJson == null ? "" : nextIconStackJson.trim(),
 					this.creatorUuid,
 					this.creatorName
 			);
+		}
+
+		public String iconCacheKey() {
+			return this.iconStackJson == null || this.iconStackJson.isBlank() ? this.iconItemId : this.iconStackJson;
 		}
 
 		public double centerX() {

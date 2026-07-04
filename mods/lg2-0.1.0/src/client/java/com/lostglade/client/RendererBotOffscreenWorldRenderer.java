@@ -15,6 +15,7 @@ import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Camera;
+import net.minecraft.client.CloudStatus;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -48,6 +49,7 @@ public final class RendererBotOffscreenWorldRenderer {
 	private static final Object LOCK = new Object();
 	private static final double STATIC_CAMERA_EYE_HEIGHT = 1.62D;
 	private static final int MIN_READY_CHUNK_RADIUS = 2;
+	private static final double TOP_DOWN_CAMERA_HEADROOM_BLOCKS = 16.0D;
 	private static final Map<UUID, OffscreenSessionState> SESSION_STATES = new HashMap<>();
 	private static boolean offscreenRenderActive;
 
@@ -67,6 +69,7 @@ public final class RendererBotOffscreenWorldRenderer {
 			}
 			SESSION_STATES.clear();
 		}
+		RendererBotTopDownMapRenderer.clearCaches();
 		RendererBotCoolElytraCompat.clearCaches();
 	}
 
@@ -81,15 +84,23 @@ public final class RendererBotOffscreenWorldRenderer {
 	}
 
 	public static void onBlockChanged(ClientLevel level, BlockPos pos, BlockState oldState, BlockState newState, int flags) {
+		RendererBotTopDownMapRenderer.invalidateBlock(level, pos);
 	}
 
 	public static void onBlockDirty(ClientLevel level, BlockPos pos, BlockState oldState, BlockState newState) {
+		RendererBotTopDownMapRenderer.invalidateBlock(level, pos);
 	}
 
 	public static void onSectionDirtyWithNeighbors(ClientLevel level, int sectionX, int sectionY, int sectionZ) {
+		for (int dz = -1; dz <= 1; dz++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				RendererBotTopDownMapRenderer.invalidateChunk(level, sectionX + dx, sectionZ + dz);
+			}
+		}
 	}
 
 	public static void onSectionDirty(ClientLevel level, int sectionX, int sectionY, int sectionZ) {
+		RendererBotTopDownMapRenderer.invalidateChunk(level, sectionX, sectionZ);
 	}
 
 	public static void onSectionRangeDirty(
@@ -101,18 +112,30 @@ public final class RendererBotOffscreenWorldRenderer {
 			int maxSectionY,
 			int maxSectionZ
 	) {
+		for (int sectionZ = minSectionZ; sectionZ <= maxSectionZ; sectionZ++) {
+			for (int sectionX = minSectionX; sectionX <= maxSectionX; sectionX++) {
+				RendererBotTopDownMapRenderer.invalidateChunk(level, sectionX, sectionZ);
+			}
+		}
 	}
 
 	public static void onSectionBecomingNonEmpty(ClientLevel level, long sectionPos) {
+		RendererBotTopDownMapRenderer.invalidateChunk(level, SectionPos.x(sectionPos), SectionPos.z(sectionPos));
 	}
 
 	public static void onDestroyBlockProgress(ClientLevel level, int breakerId, BlockPos pos, int progress) {
 	}
 
 	public static void onChunkUnloaded(ClientLevel level, LevelChunk chunk) {
+		if (chunk != null) {
+			RendererBotTopDownMapRenderer.invalidateChunk(level, chunk.getPos().x, chunk.getPos().z);
+		}
 	}
 
 	public static void onChunkReadyToRender(ClientLevel level, ChunkPos pos) {
+		if (pos != null) {
+			RendererBotTopDownMapRenderer.invalidateChunk(level, pos.x, pos.z);
+		}
 	}
 
 	public static boolean render(Minecraft client, RenderRequest request, Consumer<NativeImage> imageConsumer) {
@@ -162,11 +185,19 @@ public final class RendererBotOffscreenWorldRenderer {
 				ParticleEngine previousParticleEngine = worldAccessor.lg2$getParticleEngine();
 				Entity previousCameraEntity = client.getCameraEntity();
 				Camera previousMainCamera = client.gameRenderer.getMainCamera();
+				boolean previousSmartCull = client.smartCull;
 				boolean screenshotQueued = false;
 
 				try {
 					offscreenRenderActive = true;
 					RenderSystem.backupProjectionMatrix();
+					if (request.topDownMap()) {
+						client.smartCull = false;
+						if (!sessionState.topDownRendererPrimed) {
+							levelRenderer.allChanged();
+							sessionState.topDownRendererPrimed = true;
+						}
+					}
 					((MinecraftMainRenderTargetAccessor) client).lg2$setMainRenderTarget(renderTarget);
 					worldAccessor.lg2$setLevel(renderLevel);
 					worldAccessor.lg2$setLevelRenderer(levelRenderer);
@@ -174,7 +205,7 @@ public final class RendererBotOffscreenWorldRenderer {
 					client.setCameraEntity(cameraState.camera().entity());
 					((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(cameraState.camera());
 					RendererBotShadowWorldManager.updateCameraContext(request.sessionId(), cameraState.camera());
-					renderOffscreenWorld(client, renderLevel, levelRenderer, session.featureRenderDispatcher(), request, cameraState, renderTarget);
+					renderOffscreenWorld(client, renderLevel, levelRenderer, session.featureRenderDispatcher(), session.particleEngine(), request, cameraState, renderTarget);
 					renderTargetConsumer.accept(renderTarget);
 					screenshotQueued = true;
 					return true;
@@ -188,6 +219,7 @@ public final class RendererBotOffscreenWorldRenderer {
 					worldAccessor.lg2$setParticleEngine(previousParticleEngine);
 					client.setCameraEntity(previousCameraEntity);
 					((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(previousMainCamera);
+					client.smartCull = previousSmartCull;
 					RenderSystem.restoreProjectionMatrix();
 					RenderSystem.setShaderFog(((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$getFogRenderer().getBuffer(FogRenderer.FogMode.NONE));
 					offscreenRenderActive = false;
@@ -204,61 +236,81 @@ public final class RendererBotOffscreenWorldRenderer {
 			ClientLevel renderLevel,
 			LevelRenderer levelRenderer,
 			net.minecraft.client.renderer.feature.FeatureRenderDispatcher featureRenderDispatcher,
+			ParticleEngine particleEngine,
 			RenderRequest request,
 			CameraState cameraState,
 			TextureTarget renderTarget
 	) {
-		GameRendererRenderLevelInvoker gameRendererAccessor = (GameRendererRenderLevelInvoker) client.gameRenderer;
-		FogRenderer fogRenderer = gameRendererAccessor.lg2$getFogRenderer();
-		float partialTick = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
-		cameraState.camera().tick();
-		client.gameRenderer.lightTexture().updateLightTexture(1.0F);
-		gameRendererAccessor.lg2$extractCamera(partialTick);
-		levelRenderer.tick(cameraState.camera());
-		applyLevelRenderCameraState(levelRenderer, cameraState.camera(), partialTick);
-		Matrix4f projectionMatrix = client.gameRenderer.getProjectionMatrix(request.fovDegrees());
-		Matrix4f cullingMatrix = gameRendererAccessor.lg2$getProjectionMatrixForCulling(request.fovDegrees());
-		Matrix4f viewMatrix = new Matrix4f().rotation(new Quaternionf(cameraState.camera().rotation()).conjugate());
-		Vector4f fogColor = fogRenderer.setupFog(
-				cameraState.camera(),
-				client.options.getEffectiveRenderDistance(),
-				client.getDeltaTracker(),
-				gameRendererAccessor.lg2$getDarkenWorldAmount(partialTick),
-				renderLevel
-		);
-		GpuBufferSlice projectionMatrixSlice = gameRendererAccessor.lg2$getLevelProjectionMatrixBuffer().getBuffer(projectionMatrix);
-		GpuBufferSlice fogBuffer = fogRenderer.getBuffer(FogRenderer.FogMode.WORLD);
-		double gamma = client.options.gamma().get();
-		long dayTime = renderLevel.getDayTime();
-		CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-		encoder.clearColorAndDepthTextures(renderTarget.getColorTexture(), 0, renderTarget.getDepthTexture(), 1.0D);
+		TopDownEnvironment topDownEnvironment = request.topDownMap()
+				? beginTopDownEnvironment(client, renderLevel, particleEngine)
+				: null;
+		try {
+			GameRendererRenderLevelInvoker gameRendererAccessor = (GameRendererRenderLevelInvoker) client.gameRenderer;
+			FogRenderer fogRenderer = gameRendererAccessor.lg2$getFogRenderer();
+			float partialTick = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
+			cameraState.camera().tick();
+			client.gameRenderer.lightTexture().updateLightTexture(1.0F);
+			gameRendererAccessor.lg2$extractCamera(partialTick);
+			levelRenderer.tick(cameraState.camera());
+			applyLevelRenderCameraState(levelRenderer, cameraState.camera(), partialTick);
+			Matrix4f projectionMatrix = request.topDownMap()
+					? topDownProjectionMatrix(renderLevel, request)
+					: client.gameRenderer.getProjectionMatrix(request.fovDegrees());
+			Matrix4f cullingMatrix = request.topDownMap()
+					? new Matrix4f(projectionMatrix)
+					: gameRendererAccessor.lg2$getProjectionMatrixForCulling(request.fovDegrees());
+			Matrix4f viewMatrix = new Matrix4f().rotation(new Quaternionf(cameraState.camera().rotation()).conjugate());
+			Vector4f fogColor = fogRenderer.setupFog(
+					cameraState.camera(),
+					client.options.getEffectiveRenderDistance(),
+					client.getDeltaTracker(),
+					request.topDownMap() ? 0.0F : gameRendererAccessor.lg2$getDarkenWorldAmount(partialTick),
+					renderLevel
+			);
+			GpuBufferSlice projectionMatrixSlice = gameRendererAccessor.lg2$getLevelProjectionMatrixBuffer().getBuffer(projectionMatrix);
+			GpuBufferSlice fogBuffer = fogRenderer.getBuffer(request.topDownMap() ? FogRenderer.FogMode.NONE : FogRenderer.FogMode.WORLD);
+			CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+			encoder.clearColorAndDepthTextures(renderTarget.getColorTexture(), 0, renderTarget.getDepthTexture(), 1.0D);
 
-		RenderSystem.setProjectionMatrix(projectionMatrixSlice, ProjectionType.PERSPECTIVE);
-		client.gameRenderer.getGlobalSettingsUniform().update(
-				request.renderWidth(),
-				request.renderHeight(),
-				client.options.glintStrength().get(),
-				renderLevel.getGameTime(),
-				client.getDeltaTracker(),
-				client.options.getMenuBackgroundBlurriness(),
-				cameraState.camera(),
-				client.options.textureFiltering().get() == TextureFilteringMethod.RGSS
-		);
-		levelRenderer.renderLevel(
-				GraphicsResourceAllocator.UNPOOLED,
-				client.getDeltaTracker(),
-				false,
-				cameraState.camera(),
-				viewMatrix,
-				projectionMatrix,
-				cullingMatrix,
-				fogBuffer,
-				fogColor,
-				client.gui == null || !client.gui.getBossOverlay().shouldCreateWorldFog()
-		);
-		featureRenderDispatcher.endFrame();
-		levelRenderer.endFrame();
-		fogRenderer.endFrame();
+			RenderSystem.setProjectionMatrix(projectionMatrixSlice, request.topDownMap() ? ProjectionType.ORTHOGRAPHIC : ProjectionType.PERSPECTIVE);
+			client.gameRenderer.getGlobalSettingsUniform().update(
+					request.renderWidth(),
+					request.renderHeight(),
+					client.options.glintStrength().get(),
+					renderLevel.getGameTime(),
+					client.getDeltaTracker(),
+					client.options.getMenuBackgroundBlurriness(),
+					cameraState.camera(),
+					!request.topDownMap() && client.options.textureFiltering().get() == TextureFilteringMethod.RGSS
+			);
+			levelRenderer.renderLevel(
+					GraphicsResourceAllocator.UNPOOLED,
+					client.getDeltaTracker(),
+					false,
+					cameraState.camera(),
+					viewMatrix,
+					projectionMatrix,
+					cullingMatrix,
+					fogBuffer,
+					fogColor,
+					!request.topDownMap() && (client.gui == null || !client.gui.getBossOverlay().shouldCreateWorldFog())
+			);
+			featureRenderDispatcher.endFrame();
+			levelRenderer.endFrame();
+			fogRenderer.endFrame();
+		} finally {
+			if (topDownEnvironment != null) {
+				topDownEnvironment.restore(client, renderLevel);
+			}
+		}
+	}
+
+	private static Matrix4f topDownProjectionMatrix(ClientLevel level, RenderRequest request) {
+		float halfWidth = (float) Math.max(0.5D, request.orthographicWidthBlocks() * 0.5D);
+		float halfHeight = (float) Math.max(0.5D, request.orthographicHeightBlocks() * 0.5D);
+		double cameraY = clampTopDownCameraY(level, request.y());
+		float depth = (float) Math.max(64.0D, cameraY - level.getMinY() + TOP_DOWN_CAMERA_HEADROOM_BLOCKS);
+		return new Matrix4f().setOrtho(-halfWidth, halfWidth, -halfHeight, halfHeight, 0.01F, depth);
 	}
 
 	private static void applyLevelRenderCameraState(LevelRenderer levelRenderer, Camera camera, float partialTick) {
@@ -299,7 +351,13 @@ public final class RendererBotOffscreenWorldRenderer {
 			return new CameraState(camera);
 		}
 
-		Vec3 eyePosition = request.absoluteCameraPosition()
+		Vec3 eyePosition = request.topDownMap()
+				? new Vec3(
+						request.x(),
+						clampTopDownCameraY(renderLevel, request.y()),
+						request.z()
+				)
+				: request.absoluteCameraPosition()
 				? new Vec3(request.x(), request.y(), request.z())
 				: new Vec3(request.x(), request.y() + STATIC_CAMERA_EYE_HEIGHT, request.z());
 		Marker anchor = sessionState.ensureStaticAnchor(renderLevel);
@@ -310,6 +368,15 @@ public final class RendererBotOffscreenWorldRenderer {
 		Camera camera = sessionState.staticCamera;
 		camera.setup(renderLevel, anchor, false, false, partialTick);
 		return new CameraState(camera);
+	}
+
+	private static double clampTopDownCameraY(ClientLevel level, double requestedY) {
+		if (level == null || !Double.isFinite(requestedY)) {
+			return requestedY;
+		}
+		double minimumY = level.getMinY() + 1.0D;
+		double maximumY = level.getMaxY() + TOP_DOWN_CAMERA_HEADROOM_BLOCKS;
+		return Mth.clamp(requestedY, minimumY, maximumY);
 	}
 
 	private static Entity resolveFollowTarget(ClientLevel renderLevel, UUID followEntityUuid) {
@@ -366,7 +433,7 @@ public final class RendererBotOffscreenWorldRenderer {
 		Vec3 position = cameraState.camera().position();
 		int centerChunkX = SectionPos.blockToSectionCoord(Mth.floor(position.x));
 		int centerChunkZ = SectionPos.blockToSectionCoord(Mth.floor(position.z));
-		int readyChunkRadius = request != null && request.absoluteCameraPosition() ? 0 : MIN_READY_CHUNK_RADIUS;
+		int readyChunkRadius = request != null && (request.absoluteCameraPosition() || request.topDownMap()) ? 0 : MIN_READY_CHUNK_RADIUS;
 		for (int dx = -readyChunkRadius; dx <= readyChunkRadius; dx++) {
 			for (int dz = -readyChunkRadius; dz <= readyChunkRadius; dz++) {
 				LevelChunk chunk = renderLevel.getChunkSource().getChunk(centerChunkX + dx, centerChunkZ + dz, ChunkStatus.FULL, false);
@@ -390,8 +457,56 @@ public final class RendererBotOffscreenWorldRenderer {
 			int fovDegrees,
 			int renderWidth,
 			int renderHeight,
-			boolean absoluteCameraPosition
+			boolean absoluteCameraPosition,
+			boolean topDownMap,
+			double orthographicWidthBlocks,
+			double orthographicHeightBlocks
 	) {
+	}
+
+	private record TopDownEnvironment(
+			long gameTime,
+			long dayTime,
+			boolean raining,
+			float rainLevel,
+			float thunderLevel,
+			CloudStatus cloudStatus
+	) {
+		private void restore(Minecraft client, ClientLevel level) {
+			if (level != null) {
+				level.setTimeFromServer(this.gameTime, this.dayTime, false);
+				level.getLevelData().setRaining(this.raining);
+				level.setRainLevel(this.rainLevel);
+				level.setThunderLevel(this.thunderLevel);
+			}
+			if (client != null && client.options != null && this.cloudStatus != null) {
+				client.options.cloudStatus().set(this.cloudStatus);
+			}
+		}
+	}
+
+	private static TopDownEnvironment beginTopDownEnvironment(Minecraft client, ClientLevel level, ParticleEngine particleEngine) {
+		TopDownEnvironment previous = new TopDownEnvironment(
+				level != null ? level.getGameTime() : 0L,
+				level != null ? level.getDayTime() : 6000L,
+				level != null && level.getLevelData().isRaining(),
+				level != null ? level.getRainLevel(1.0F) : 0.0F,
+				level != null ? level.getThunderLevel(1.0F) : 0.0F,
+				client != null && client.options != null ? client.options.cloudStatus().get() : null
+		);
+		if (particleEngine != null) {
+			particleEngine.clearParticles();
+		}
+		if (level != null) {
+			level.setTimeFromServer(level.getGameTime(), 6000L, false);
+			level.getLevelData().setRaining(false);
+			level.setRainLevel(0.0F);
+			level.setThunderLevel(0.0F);
+		}
+		if (client != null && client.options != null) {
+			client.options.cloudStatus().set(CloudStatus.OFF);
+		}
+		return previous;
 	}
 
 	private record CameraState(Camera camera) {
@@ -405,6 +520,7 @@ public final class RendererBotOffscreenWorldRenderer {
 		private final Camera staticCamera = new Camera();
 		private final Camera followCamera = new Camera();
 		private boolean renderInProgress;
+		private boolean topDownRendererPrimed;
 
 		private Marker ensureStaticAnchor(ClientLevel level) {
 			if (this.staticAnchor == null || this.staticAnchor.level() != level) {

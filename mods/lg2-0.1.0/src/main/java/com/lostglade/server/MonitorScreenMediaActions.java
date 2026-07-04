@@ -140,6 +140,8 @@ final class MonitorScreenMediaActions {
 			if (mode == ScreenViewMode.SBER_DRONES && state.mode != ScreenViewMode.SBER_DRONES) {
 				clearTransientPlaybackStateLocked(state, false);
 				state.galleryItems.clear();
+				state.galleryHydrationLoading = false;
+				state.galleryHydrationRequestId++;
 				state.galleryHydrated = false;
 				state.galleryIndex = -1;
 				state.galleryScroll = 0;
@@ -147,6 +149,8 @@ final class MonitorScreenMediaActions {
 			} else if (mode == ScreenViewMode.GALLERY && state.mode == ScreenViewMode.SBER_DRONES) {
 				clearTransientPlaybackStateLocked(state, false);
 				state.galleryItems.clear();
+				state.galleryHydrationLoading = false;
+				state.galleryHydrationRequestId++;
 				state.galleryHydrated = false;
 				state.galleryIndex = -1;
 				state.galleryScroll = 0;

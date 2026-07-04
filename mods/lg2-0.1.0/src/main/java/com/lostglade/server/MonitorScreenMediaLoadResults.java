@@ -244,7 +244,7 @@ final class MonitorScreenMediaLoadResults {
 				state.statusText = "";
 				state.progress.complete("READY");
 				animated = result.loadedMedia().animated();
-				schedulePlayback = animated && result.loadedMedia().frameCount() > 1;
+				schedulePlayback = (animated && result.loadedMedia().frameCount() > 1) || gallerySlideshowPlaybackActiveLocked(state);
 			} else if (directVideo != null) {
 				directVideoTitle = result.title() != null && !result.title().isBlank()
 						? result.title()
@@ -296,12 +296,18 @@ final class MonitorScreenMediaLoadResults {
 		boolean shouldFadeProgress = false;
 		boolean staleResult = false;
 		String staleSessionId = null;
+		Boolean pendingLoadedPauseAction = null;
+		String pendingLoadedPauseSessionId = null;
 
 		synchronized (state) {
 			if (!youtubeLoadResultStillCurrentLocked(state, result)) {
 				staleResult = true;
 				staleSessionId = result.loadResponse() != null ? result.loadResponse().sessionId() : null;
 			} else {
+				Boolean pendingPauseState = state.pendingAudioPauseState;
+				boolean pendingPositionActive = state.pendingAudioPositionActive;
+				long pendingPositionMs = state.pendingAudioPositionMs;
+				long pendingIssuedAtMillis = state.pendingAudioIssuedAtMillis;
 				boolean youtubeStream = result.streamKind() == PlaybackStreamKind.YOUTUBE;
 				boolean galleryBacked = result.targetMode() == ScreenViewMode.GALLERY
 						&& state.gallerySurfaceMode == GallerySurfaceMode.PLAYER
@@ -341,6 +347,17 @@ final class MonitorScreenMediaLoadResults {
 					state.audioPlaceholder = result.streamKind() != PlaybackStreamKind.DIRECT_VIDEO;
 					state.loading = !result.loadResponse().ready();
 					state.userPaused = false;
+					if (pendingPauseState != null || pendingPositionActive) {
+						state.pendingAudioPauseState = pendingPauseState;
+						state.pendingAudioPositionActive = pendingPositionActive;
+						state.pendingAudioPositionMs = pendingPositionMs;
+						state.pendingAudioIssuedAtMillis = pendingIssuedAtMillis;
+						reconcilePendingAudioTransportLocked(state, false, state.positionMs);
+						if (state.pendingAudioPauseState != null && state.relaySessionId != null && !state.relaySessionId.isBlank()) {
+							pendingLoadedPauseAction = state.pendingAudioPauseState;
+							pendingLoadedPauseSessionId = state.relaySessionId;
+						}
+					}
 					state.statusText = result.loadResponse().status();
 					bumpAudioSyncTokenLocked(state);
 					if (result.loadResponse().ready()) {
@@ -379,6 +396,26 @@ final class MonitorScreenMediaLoadResults {
 		if (requester != null) {
 			ACTIVE_MEDIA_ACTIONBARS.remove(requester.getUUID());
 			requester.displayClientMessage(Component.empty(), true);
+		}
+		if (pendingLoadedPauseAction != null && pendingLoadedPauseSessionId != null && !pendingLoadedPauseSessionId.isBlank()) {
+			boolean shouldPause = pendingLoadedPauseAction;
+			String sessionId = pendingLoadedPauseSessionId;
+			refreshConnectedSpeakersNow(server, result.screenKey());
+			ensureExecutors();
+			CompletableFuture.runAsync(() -> {
+				try {
+					if (shouldPause) {
+						MonitorYoutubeRelayClient.pause(sessionId);
+					} else {
+						MonitorYoutubeRelayClient.resume(sessionId);
+					}
+				} catch (Exception exception) {
+					Lg2.LOGGER.debug("Failed to apply pending {} to loaded session {}", shouldPause ? "pause" : "resume", sessionId, exception);
+				}
+			}, mediaIoExecutor).thenRun(() -> server.execute(() -> {
+				refreshConnectedSpeakersNow(server, result.screenKey());
+				scheduleYoutubeRefresh(server, result.screenKey(), 0L);
+			}));
 		}
 		requestRuntimeRender(server, result.screenKey());
 		refreshConnectedSpeakersNow(server, result.screenKey());
