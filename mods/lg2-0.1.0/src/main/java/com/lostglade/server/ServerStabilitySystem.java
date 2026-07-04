@@ -23,7 +23,6 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
-import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerBossEvent;
@@ -76,9 +75,10 @@ public final class ServerStabilitySystem {
 	private static final Map<FeedSoundSourceKey, ActiveFeedSoundSource> ACTIVE_FEED_SOUND_SOURCES = new HashMap<>();
 	private static final int BITCOIN_FEED_SCAN_RADIUS = 1;
 	private static final double BITCOIN_FEED_RADIUS = 0.3D;
-	private static final Identifier FEED_MUSIC_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "bitcoin_billionaire_meloboom");
-	private static final Holder<SoundEvent> FEED_MUSIC_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(FEED_MUSIC_SOUND_ID));
 	private static final double FEED_MUSIC_SOUND_RADIUS = 64.0D;
+	private static final int FEED_MUSIC_SEGMENT_TICKS = 10;
+	private static final int FEED_MUSIC_SEGMENT_COUNT = 23;
+	private static final Holder<SoundEvent>[] FEED_MUSIC_SEGMENTS = createFeedMusicSegments();
 	private static final long FEED_SOUND_BASE_DURATION_TICKS = 226L;
 	private static final float FEED_MUSIC_SOUND_VOLUME = 1.0F;
 	private static final float FEED_XP_SOUND_VOLUME = 1.0F;
@@ -103,18 +103,33 @@ public final class ServerStabilitySystem {
 
 	private static final class ActiveFeedSoundSource {
 		private final FeedSoundSourceKey key;
+		private final long startTick;
 		private final long endTick;
 		private final float pitch;
 		private final long seed;
 		private final Set<UUID> listeners = new HashSet<>();
 
-		private ActiveFeedSoundSource(FeedSoundSourceKey key, long endTick, float pitch, long seed) {
+		private ActiveFeedSoundSource(FeedSoundSourceKey key, long startTick, long endTick, float pitch, long seed) {
 			this.key = key;
+			this.startTick = startTick;
 			this.endTick = endTick;
 			this.pitch = pitch;
 			this.seed = seed;
 		}
 	}
+	@SuppressWarnings("unchecked")
+	private static Holder<SoundEvent>[] createFeedMusicSegments() {
+		Holder<SoundEvent>[] segments = new Holder[FEED_MUSIC_SEGMENT_COUNT];
+		for (int i = 0; i < segments.length; i++) {
+			Identifier id = Identifier.fromNamespaceAndPath(
+					Lg2.MOD_ID,
+					String.format(Locale.ROOT, "bitcoin_billionaire_meloboom_part_%02d", i)
+			);
+			segments[i] = Holder.direct(SoundEvent.createVariableRangeEvent(id));
+		}
+		return segments;
+	}
+
 	private ServerStabilitySystem() {
 	}
 
@@ -500,7 +515,7 @@ public final class ServerStabilitySystem {
 		long soundDurationTicks = getFeedSoundCooldownTicks(pitch);
 		if (canPlayPackMusic) {
 			nextFeedSoundAllowedTick = tickNow + soundDurationTicks;
-			startFeedSoundSource(level, serverPos, tickNow + soundDurationTicks, pitch, level.getRandom().nextLong());
+			startFeedSoundSource(level, serverPos, tickNow, tickNow + soundDurationTicks, pitch, level.getRandom().nextLong());
 		}
 
 		for (ServerPlayer player : level.players()) {
@@ -520,14 +535,14 @@ public final class ServerStabilitySystem {
 		}
 	}
 
-	private static void startFeedSoundSource(ServerLevel level, BlockPos serverPos, long endTick, float pitch, long seed) {
+	private static void startFeedSoundSource(ServerLevel level, BlockPos serverPos, long startTick, long endTick, float pitch, long seed) {
 		FeedSoundSourceKey key = new FeedSoundSourceKey(level.dimension(), serverPos.immutable());
 		ActiveFeedSoundSource previous = ACTIVE_FEED_SOUND_SOURCES.remove(key);
 		if (previous != null) {
 			stopFeedSoundForListeners(level.getServer(), previous);
 		}
 
-		ActiveFeedSoundSource source = new ActiveFeedSoundSource(key, endTick, pitch, seed);
+		ActiveFeedSoundSource source = new ActiveFeedSoundSource(key, startTick, endTick, pitch, seed);
 		ACTIVE_FEED_SOUND_SOURCES.put(key, source);
 		syncFeedSoundSource(level, source);
 	}
@@ -560,18 +575,24 @@ public final class ServerStabilitySystem {
 		double x = source.key.pos().getX() + 0.5D;
 		double y = source.key.pos().getY() + 0.5D;
 		double z = source.key.pos().getZ() + 0.5D;
+		long now = level.getGameTime();
+		int segmentTicks = getFeedMusicSegmentTicks(source.pitch);
+		int segmentIndex = (int) ((now - source.startTick) / segmentTicks);
+		if (segmentIndex < 0 || segmentIndex >= FEED_MUSIC_SEGMENT_COUNT) {
+			return;
+		}
+
 		for (ServerPlayer player : level.players()) {
 			onlineInLevel.add(player.getUUID());
+			UUID playerId = player.getUUID();
 			boolean shouldHear = PolymerResourcePackUtils.hasMainPack(player)
 					&& player.distanceToSqr(x, y, z) <= FEED_MUSIC_SOUND_RADIUS * FEED_MUSIC_SOUND_RADIUS;
-			boolean hearing = source.listeners.contains(player.getUUID());
-			if (shouldHear && !hearing) {
-				playFeedMusicForPlayer(player, x, y, z, source.pitch, source.seed);
-				source.listeners.add(player.getUUID());
-			} else if (!shouldHear && hearing) {
-				stopFeedMusicForPlayer(player);
-				source.listeners.remove(player.getUUID());
+			if (!shouldHear || source.listeners.contains(playerId)) {
+				continue;
 			}
+
+			playFeedMusicSegmentForPlayer(player, x, y, z, segmentIndex, source.pitch, source.seed + segmentIndex);
+			source.listeners.add(playerId);
 		}
 
 		List<UUID> staleListeners = new ArrayList<>();
@@ -581,21 +602,11 @@ public final class ServerStabilitySystem {
 			}
 		}
 		for (UUID playerId : staleListeners) {
-			ServerPlayer player = level.getServer().getPlayerList().getPlayer(playerId);
-			if (player != null) {
-				stopFeedMusicForPlayer(player);
-			}
 			source.listeners.remove(playerId);
 		}
 	}
 
 	private static void stopFeedSoundForListeners(MinecraftServer server, ActiveFeedSoundSource source) {
-		for (UUID playerId : new HashSet<>(source.listeners)) {
-			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
-			if (player != null) {
-				stopFeedMusicForPlayer(player);
-			}
-		}
 		source.listeners.clear();
 	}
 
@@ -606,9 +617,17 @@ public final class ServerStabilitySystem {
 		ACTIVE_FEED_SOUND_SOURCES.clear();
 	}
 
-	private static void playFeedMusicForPlayer(ServerPlayer player, double x, double y, double z, float pitch, long seed) {
+	private static void playFeedMusicSegmentForPlayer(
+			ServerPlayer player,
+			double x,
+			double y,
+			double z,
+			int segmentIndex,
+			float pitch,
+			long seed
+	) {
 		player.connection.send(new ClientboundSoundPacket(
-				FEED_MUSIC_SOUND,
+				FEED_MUSIC_SEGMENTS[segmentIndex],
 				SoundSource.AMBIENT,
 				x,
 				y,
@@ -619,9 +638,6 @@ public final class ServerStabilitySystem {
 		));
 	}
 
-	private static void stopFeedMusicForPlayer(ServerPlayer player) {
-		player.connection.send(new ClientboundStopSoundPacket(FEED_MUSIC_SOUND_ID, SoundSource.AMBIENT));
-	}
 	private static SimpleParticleType resolveFeedParticle() {
 		ParticleType<?> byId = BuiltInRegistries.PARTICLE_TYPE.getValue(
 				Identifier.fromNamespaceAndPath("minecraft", "trial_spawner_detection")
@@ -895,6 +911,13 @@ public final class ServerStabilitySystem {
 
 		long scaled = (long) Math.ceil(FEED_SOUND_BASE_DURATION_TICKS / pitch);
 		return Math.max(FEED_SOUND_BASE_DURATION_TICKS, scaled);
+	}
+
+	private static int getFeedMusicSegmentTicks(float pitch) {
+		if (pitch <= 0.01F) {
+			return FEED_MUSIC_SEGMENT_TICKS;
+		}
+		return Math.max(1, (int) Math.ceil(FEED_MUSIC_SEGMENT_TICKS / pitch));
 	}
 
 	private static int clamp(int value) {
