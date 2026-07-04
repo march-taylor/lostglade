@@ -128,6 +128,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 public final class MonitorScreenSystem {
+	static final String IT_SCREEN = "it_screen";
 	static final String SCREEN_ROOT_TAG = "lg2_monitor_screen";
 	static final String LINK_LOCKED_TAG = "link_locked";
 	static final String ATTACHMENT_MASK_TAG = "attachment_mask";
@@ -866,6 +867,10 @@ public final class MonitorScreenSystem {
 		if (!(context.getLevel() instanceof ServerLevel level) || !(context.getPlayer() instanceof ServerPlayer player)) {
 			return InteractionResult.PASS;
 		}
+		if (!ServerUpgradeUiSystem.hasUpgrade(player, IT_SCREEN)) {
+			player.displayClientMessage(screenUpgradeLockedMessage(player), true);
+			return InteractionResult.FAIL;
+		}
 
 		Direction facing = context.getClickedFace();
 		if (facing == null || !facing.getAxis().isHorizontal()) {
@@ -914,6 +919,24 @@ public final class MonitorScreenSystem {
 			context.getItemInHand().shrink(1);
 		}
 		return InteractionResult.CONSUME;
+	}
+
+	private static Component screenUpgradeLockedMessage(ServerPlayer player) {
+		String upgradeName = ServerUpgradeUiSystem.getUpgradeDisplayName(player, IT_SCREEN);
+		String resolvedName = upgradeName == null || upgradeName.isBlank() ? "Screen" : upgradeName;
+		String locale = player != null && player.clientInformation() != null && player.clientInformation().language() != null
+				? player.clientInformation().language().toLowerCase(Locale.ROOT)
+				: "en_us";
+		if (locale.startsWith("ja")) {
+			return Component.literal("先に「" + resolvedName + "」を購入してください。");
+		}
+		if (locale.startsWith("uk")) {
+			return Component.literal("Спочатку купи " + resolvedName + ".");
+		}
+		if (locale.startsWith("ru") || locale.startsWith("rpr")) {
+			return Component.literal("Сначала купи " + resolvedName + ".");
+		}
+		return Component.literal("Buy " + resolvedName + " first.");
 	}
 
 	public static boolean onFrameBroken(ServerLevel level, ItemFrame frame, Entity breaker, boolean shouldDropScreen) {

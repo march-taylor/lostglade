@@ -56,6 +56,7 @@ public final class ServerMechanicsGateSystem {
 	private static final String IT_CAMERA = "it_camera";
 	private static final String IT_MICROPHONE = "it_microphone";
 	private static final String IT_SPEAKER = "it_speaker";
+	private static final String IT_SCREEN = "it_screen";
 	private static final String IT_DRONE = "it_drone_scout";
 	private static final String IT_DRONE_KAMIKAZE = "it_drone_kamikaze";
 	private static final String IT_BLUETOOTH_ADAPTER = "it_bluetooth_adapter";
@@ -408,6 +409,9 @@ public final class ServerMechanicsGateSystem {
 		Item item = stack.getItem();
 		if (item == ModItems.CAMERA) {
 			return IT_CAMERA;
+		}
+		if (item == ModItems.MONITOR) {
+			return IT_SCREEN;
 		}
 		if (item == ModItems.BLUETOOTH_ADAPTER) {
 			return IT_BLUETOOTH_ADAPTER;

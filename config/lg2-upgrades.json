@@ -3171,24 +3171,24 @@
           "lore": {
             "values": {
               "en_us": [
-                "Camera sits at the top of the branch.",
-                "Microphone and speaker feed the drone, then Bluetooth closes the chain."
+                "Camera starts the branch.",
+                "Speaker and microphone unlock the screen, then the drone, then Bluetooth closes the chain."
               ],
               "ru_ru": [
-                "Камера стоит в вершине ветки.",
-                "Микрофон и динамик питают дрон, а Bluetooth завершает цепочку."
+                "Камера начинает эту ветку.",
+                "Динамик и микрофон открывают экран, потом дрон, и цепочку завершает Bluetooth."
               ],
               "uk_ua": [
-                "Камера стоїть на вершині гілки.",
-                "Мікрофон і динамік живлять дрон, а Bluetooth замикає ланцюг."
+                "Камера починає цю гілку.",
+                "Динамік і мікрофон відкривають екран, потім дрон, а ланцюг замикає Bluetooth."
               ],
               "ja_jp": [
-                "カメラが枝の最上部にあります。",
-                "マイクとスピーカーがドローンへ信号を渡し、最後にBluetoothが鎖を閉じます。"
+                "カメラがこの系統の起点です。",
+                "スピーカーとマイクで画面が開き、その後にドローン、最後にBluetoothで鎖が閉じます。"
               ],
               "rpr": [
-                "Камера стоитъ на вершинѣ вѣтви.",
-                "Микрофонъ и громкогласъ питаютъ дронъ, а Bluetooth замыкаетъ цѣпь."
+                "Камера начинаетъ сiю вѣтвь.",
+                "Громкогласъ и микрофонъ отворяютъ экранъ, потомъ дронъ, а Bluetooth замыкаетъ цѣпь."
               ]
             }
           },
@@ -3639,7 +3639,7 @@
         },
         "camera": {
           "enabled": true,
-          "slot": 30,
+          "slot": 37,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -3705,7 +3705,7 @@
         },
         "microphone": {
           "enabled": true,
-          "slot": 37,
+          "slot": 47,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -3745,23 +3745,23 @@
             "values": {
               "en_us": [
                 "Captures live voice and ambient sound for remote listening.",
-                "Unlocks one of the two signal feeds that must exist before the drone."
+                "Together with the speaker, unlocks the screen step of the branch."
               ],
               "ru_ru": [
                 "Снимает живой голос и окружающий звук для удалённого прослушивания.",
-                "Открывает один из двух сигнальных каналов, без которых дрон не собрать."
+                "Вместе с динамиком открывает этап экрана в этой ветке."
               ],
               "uk_ua": [
                 "Знімає живий голос і навколишній звук для віддаленого прослуховування.",
-                "Відкриває один із двох сигнальних каналів, без яких дрон не зібрати."
+                "Разом із динаміком відкриває етап екрана в цій гілці."
               ],
               "ja_jp": [
                 "遠隔で聞き取るための声と環境音をその場で拾います。",
-                "ドローン解禁前に必要な2本の信号系統のうち1本を開きます。"
+                "スピーカーと合わせて、この枝の画面段階を開放します。"
               ],
               "rpr": [
                 "Снимаетъ живой голосъ и окрестный шумъ для дальняго слушанья.",
-                "Отворяетъ одинъ изъ двухъ сигнальныхъ ходовъ, безъ коихъ дрона не собрать."
+                "Вмѣстѣ съ громкогласомъ отворяетъ ступень экрана въ сей вѣтви."
               ]
             }
           },
@@ -3776,7 +3776,7 @@
         },
         "speaker": {
           "enabled": true,
-          "slot": 41,
+          "slot": 29,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -3816,23 +3816,23 @@
             "values": {
               "en_us": [
                 "Pushes voice and alerts back into the world around the operator.",
-                "Forms the second signal feed required before the drone line opens."
+                "Together with the microphone, unlocks the screen step of the branch."
               ],
               "ru_ru": [
                 "Возвращает голос и сигналы обратно в мир вокруг оператора.",
-                "Это второй сигнальный канал, который нужен перед открытием ветки дрона."
+                "Вместе с микрофоном открывает этап экрана в этой ветке."
               ],
               "uk_ua": [
                 "Повертає голос і сигнали назад у світ навколо оператора.",
-                "Це другий сигнальний канал, який потрібен перед відкриттям гілки дрона."
+                "Разом із мікрофоном відкриває етап екрана в цій гілці."
               ],
               "ja_jp": [
                 "操作者の周囲の世界へ音声や警告を返します。",
-                "ドローン系統を開く前に必要な2本目の信号ラインです。"
+                "マイクと合わせて、この枝の画面段階を開放します。"
               ],
               "rpr": [
                 "Возвращаетъ голосъ и сигналы въ мiръ вокругъ оператора.",
-                "Сей второй сигнальный ходъ нуженъ прежде отворенiя дроновой вѣтви."
+                "Вмѣстѣ съ микрофономъ отворяетъ ступень экрана въ сей вѣтви."
               ]
             }
           },
@@ -3845,9 +3845,84 @@
           "requirementGroups": [],
           "closeAfterClick": false
         },
+        "screen": {
+          "enabled": true,
+          "slot": 39,
+          "hitboxWidth": 1,
+          "hitboxHeight": 1,
+          "type": "purchase_upgrade",
+          "targetScreenId": "",
+          "upgradeId": "it_screen",
+          "pricesBitcoins": [
+            1000
+          ],
+          "icon": {
+            "fallbackItem": "lg2:monitor",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "lockedIcon": {
+            "fallbackItem": "lg2:monitor",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": false
+          },
+          "maxedIcon": {
+            "fallbackItem": "lg2:monitor",
+            "packModel": "lg2:gui/button/invisible",
+            "count": 1,
+            "foil": true
+          },
+          "name": {
+            "values": {
+              "en_us": "Screen",
+              "ru_ru": "Экран",
+              "uk_ua": "Екран",
+              "ja_jp": "画面",
+              "rpr": "Экранъ"
+            }
+          },
+          "lore": {
+            "values": {
+              "en_us": [
+                "Displays photo and video from the camera and sound from the microphone.",
+                "Needs both the speaker and microphone before the drone step can open."
+              ],
+              "ru_ru": [
+                "Показывает фото и видео с камеры и выводит звук с микрофона.",
+                "Требует и динамик, и микрофон, прежде чем откроется этап дрона."
+              ],
+              "uk_ua": [
+                "Показує фото й відео з камери та виводить звук з мікрофона.",
+                "Потребує і динамік, і мікрофон, перш ніж відкриється етап дрона."
+              ],
+              "ja_jp": [
+                "カメラの写真や映像、マイクの音声を表示します。",
+                "ドローン段階を開く前に、スピーカーとマイクの両方が必要です。"
+              ],
+              "rpr": [
+                "Показываетъ фото да видео съ камеры и выводитъ звукъ съ микрофона.",
+                "Требуетъ и громкогласъ, и микрофонъ прежде, чѣмъ отворится ступень дрона."
+              ]
+            }
+          },
+          "requirements": [
+            {
+              "upgradeId": "it_speaker",
+              "minLevel": 1
+            },
+            {
+              "upgradeId": "it_microphone",
+              "minLevel": 1
+            }
+          ],
+          "requirementGroups": [],
+          "closeAfterClick": false
+        },
         "drone": {
           "enabled": true,
-          "slot": 43,
+          "slot": 41,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -3909,11 +3984,7 @@
           },
           "requirements": [
             {
-              "upgradeId": "it_microphone",
-              "minLevel": 1
-            },
-            {
-              "upgradeId": "it_speaker",
+              "upgradeId": "it_screen",
               "minLevel": 1
             }
           ],
@@ -3922,7 +3993,7 @@
         },
         "bluetooth_adapter": {
           "enabled": true,
-          "slot": 48,
+          "slot": 43,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -3961,23 +4032,23 @@
           "lore": {
             "values": {
               "en_us": [
-                "Unlocks pairing for drones, cameras, microphones and speakers.",
+                "Unlocks pairing for drones, cameras, microphones, speakers and screens.",
                 "Without it, the devices exist, but they still cannot be linked together."
               ],
               "ru_ru": [
-                "Открывает сопряжение дронов, камер, микрофонов и динамиков.",
+                "Открывает сопряжение дронов, камер, микрофонов, динамиков и экранов.",
                 "Без него устройства существуют, но всё ещё не могут связаться друг с другом."
               ],
               "uk_ua": [
-                "Відкриває сполучення дронів, камер, мікрофонів і динаміків.",
+                "Відкриває сполучення дронів, камер, мікрофонів, динаміків і екранів.",
                 "Без нього пристрої існують, але все ще не можуть зв'язатися між собою."
               ],
               "ja_jp": [
-                "ドローン、カメラ、マイク、スピーカーのペアリングを開放します。",
+                "ドローン、カメラ、マイク、スピーカー、画面のペアリングを開放します。",
                 "これがないと装置があっても、まだ互いに接続できません。"
               ],
               "rpr": [
-                "Отворяетъ сопряженiе дроновъ, камеръ, микрофоновъ и громкогласовъ.",
+                "Отворяетъ сопряженiе дроновъ, камеръ, микрофоновъ, громкогласовъ и экрановъ.",
                 "Безъ него приборы существуютъ, да межъ собою связаться всё ещё не могутъ."
               ]
             }
@@ -5560,24 +5631,24 @@
           "lore": {
             "values": {
               "en_us": [
-                "Buy the scout drone in the IT branch first, then unlock this chain from top to bottom.",
-                "Every module below stays inactive until its own purchase is completed."
+                "Buy the scout drone in the IT branch first, then choose any module independently.",
+                "Each module is purchased separately and only needs the base drone."
               ],
               "ru_ru": [
-                "Сначала купи разведдрон в IT-ветке, а потом открывай эту цепочку сверху вниз.",
-                "Каждый модуль ниже остаётся нерабочим, пока его покупка не завершена."
+                "Сначала купи разведдрон в IT-ветке, а потом выбирай любой модуль независимо.",
+                "Каждый модуль покупается отдельно и требует только базовый дрон."
               ],
               "uk_ua": [
-                "Спершу купи розвіддрон в IT-гілці, а потім відкривай цей ланцюг зверху вниз.",
-                "Кожен модуль нижче лишається неактивним, доки його покупка не завершена."
+                "Спершу купи розвіддрон в IT-гілці, а потім обирай будь-який модуль незалежно.",
+                "Кожен модуль купується окремо й потребує лише базовий дрон."
               ],
               "ja_jp": [
-                "まずIT系統で偵察ドローンを購入し、その後このチェーンを上から順に解放してください。",
-                "各モジュールは自身の購入が完了するまで動作しません。"
+                "まずIT系統で偵察ドローンを購入し、その後は好きなモジュールを個別に選べます。",
+                "各モジュールは別々に購入し、必要なのは基本ドローンだけです。"
               ],
               "rpr": [
-                "Сперва купи развѣд-дронъ въ машинной вѣтви, а послѣ отворяй сiю цѣпь сверху внизъ.",
-                "Всякiй модуль ниже бездѣйственъ, доколѣ его покупка не совершена."
+                "Сперва купи развѣд-дронъ въ машинной вѣтви, а послѣ избирай всякiй модуль порознь.",
+                "Всякiй модуль выкупается особо и требуетъ лишь базовый дронъ."
               ]
             }
           },
@@ -6028,7 +6099,7 @@
         },
         "kamikaze": {
           "enabled": true,
-          "slot": 13,
+          "slot": 27,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -6099,7 +6170,7 @@
         },
         "combat": {
           "enabled": true,
-          "slot": 22,
+          "slot": 31,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -6139,29 +6210,29 @@
             "values": {
               "en_us": [
                 "Unlocks a turreted combat frame for ranged suppression.",
-                "Install it with a dispenser once the kamikaze upgrade is already bought."
+                "Install it with a dispenser whenever you want after buying the base scout drone."
               ],
               "ru_ru": [
                 "Открывает боевую раму с турелью для дальнего подавления.",
-                "Ставится через раздатчик после покупки ветки камикадзе."
+                "Ставится через раздатчик в любой момент после покупки базового разведдрона."
               ],
               "uk_ua": [
                 "Відкриває бойову раму з туреллю для дальнього придушення.",
-                "Ставиться через роздавач після покупки гілки камікадзе."
+                "Ставиться через роздавач у будь-який момент після покупки базового розвіддрона."
               ],
               "ja_jp": [
                 "遠距離制圧用の砲塔付き戦闘フレームを開放します。",
-                "カミカゼ改造を購入した後、ディスペンサーで搭載します。"
+                "基本スカウトドローン購入後なら、好きな時にディスペンサーで搭載できます。"
               ],
               "rpr": [
                 "Отворяетъ боевую раму съ турелью для дальняго подавленiя.",
-                "Ставится чрезъ раздатчикъ послѣ покупки ветви камикадзе."
+                "Ставится чрезъ раздатчикъ въ любой часъ послѣ покупки базоваго развѣд-дрона."
               ]
             }
           },
           "requirements": [
             {
-              "upgradeId": "it_drone_kamikaze",
+              "upgradeId": "it_drone_scout",
               "minLevel": 1
             }
           ],
@@ -6170,7 +6241,7 @@
         },
         "paint": {
           "enabled": true,
-          "slot": 31,
+          "slot": 35,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -6232,7 +6303,7 @@
           },
           "requirements": [
             {
-              "upgradeId": "it_drone_combat",
+              "upgradeId": "it_drone_scout",
               "minLevel": 1
             }
           ],
@@ -6241,7 +6312,7 @@
         },
         "microphone_module": {
           "enabled": true,
-          "slot": 40,
+          "slot": 54,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -6303,7 +6374,7 @@
           },
           "requirements": [
             {
-              "upgradeId": "it_drone_paint",
+              "upgradeId": "it_drone_scout",
               "minLevel": 1
             }
           ],
@@ -6312,7 +6383,7 @@
         },
         "night_vision": {
           "enabled": true,
-          "slot": 49,
+          "slot": 58,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -6374,7 +6445,7 @@
           },
           "requirements": [
             {
-              "upgradeId": "it_drone_microphone",
+              "upgradeId": "it_drone_scout",
               "minLevel": 1
             }
           ],
@@ -6383,7 +6454,7 @@
         },
         "auto_aim": {
           "enabled": true,
-          "slot": 58,
+          "slot": 62,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -6445,7 +6516,7 @@
           },
           "requirements": [
             {
-              "upgradeId": "it_drone_night_vision",
+              "upgradeId": "it_drone_scout",
               "minLevel": 1
             }
           ],

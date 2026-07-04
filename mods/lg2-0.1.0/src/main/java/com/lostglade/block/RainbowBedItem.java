@@ -22,8 +22,12 @@ import xyz.nucleoid.packettweaker.PacketContext;
 
 public final class RainbowBedItem extends BedItem implements PolymerItem {
 	private static final String DISPLAY_ONLY_TAG = "lg2_rainbow_bed_display_only";
+	private static final String DISPLAY_VARIANT_TAG = "lg2_rainbow_bed_display_variant";
+	private static final String DISPLAY_VARIANT_RAINBOW = "rainbow";
+	private static final String DISPLAY_VARIANT_BROWN = "brown";
 	private final Identifier modelId;
 	private final Identifier displayModelId;
+	private final Identifier brownDisplayModelId;
 	private final String englishName;
 	private final String russianName;
 	private final String rprName;
@@ -35,6 +39,7 @@ public final class RainbowBedItem extends BedItem implements PolymerItem {
 			Item.Properties settings,
 			Identifier modelId,
 			Identifier displayModelId,
+			Identifier brownDisplayModelId,
 			String englishName,
 			String russianName,
 			String rprName,
@@ -44,6 +49,7 @@ public final class RainbowBedItem extends BedItem implements PolymerItem {
 		super(block, settings);
 		this.modelId = modelId;
 		this.displayModelId = displayModelId;
+		this.brownDisplayModelId = brownDisplayModelId;
 		this.englishName = englishName;
 		this.russianName = russianName;
 		this.rprName = rprName;
@@ -53,8 +59,9 @@ public final class RainbowBedItem extends BedItem implements PolymerItem {
 
 	@Override
 	public Item getPolymerItem(ItemStack stack, PacketContext context) {
-		if (isDisplayOnly(stack) && !PolymerResourcePackUtils.hasMainPack(context)) {
-			return Items.AIR;
+		String displayVariant = getDisplayVariant(stack);
+		if (displayVariant != null && !PolymerResourcePackUtils.hasMainPack(context)) {
+			return DISPLAY_VARIANT_BROWN.equals(displayVariant) ? Items.BROWN_BED : Items.WHITE_BED;
 		}
 		return Items.WHITE_BED;
 	}
@@ -64,7 +71,14 @@ public final class RainbowBedItem extends BedItem implements PolymerItem {
 		if (!PolymerResourcePackUtils.hasMainPack(context)) {
 			return null;
 		}
-		return isRainbowBedDisplayOnly(stack) ? this.displayModelId : this.modelId;
+		String displayVariant = getDisplayVariant(stack);
+		if (DISPLAY_VARIANT_BROWN.equals(displayVariant)) {
+			return this.brownDisplayModelId;
+		}
+		if (DISPLAY_VARIANT_RAINBOW.equals(displayVariant)) {
+			return this.displayModelId;
+		}
+		return this.modelId;
 	}
 
 	@Override
@@ -91,21 +105,36 @@ public final class RainbowBedItem extends BedItem implements PolymerItem {
 	}
 
 	static ItemStack createDisplayStack() {
+		return createDisplayStack(DISPLAY_VARIANT_RAINBOW);
+	}
+
+	static ItemStack createBrownDisplayStack() {
+		return createDisplayStack(DISPLAY_VARIANT_BROWN);
+	}
+
+	private static ItemStack createDisplayStack(String variant) {
 		ItemStack stack = new ItemStack(ModBlocks.RAINBOW_BED_ITEM);
-		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> tag.putBoolean(DISPLAY_ONLY_TAG, true));
+		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
+			tag.putBoolean(DISPLAY_ONLY_TAG, true);
+			tag.putString(DISPLAY_VARIANT_TAG, variant);
+		});
 		return stack;
 	}
 
 	private static boolean isDisplayOnly(ItemStack stack) {
-		return isRainbowBedDisplayOnly(stack);
+		return getDisplayVariant(stack) != null;
 	}
 
-	private static boolean isRainbowBedDisplayOnly(ItemStack stack) {
+	private static String getDisplayVariant(ItemStack stack) {
 		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
 		if (customData == null || customData.isEmpty()) {
-			return false;
+			return null;
 		}
-		return customData.copyTag().getBooleanOr(DISPLAY_ONLY_TAG, false);
+		var tag = customData.copyTag();
+		if (!tag.getBooleanOr(DISPLAY_ONLY_TAG, false)) {
+			return null;
+		}
+		return tag.getString(DISPLAY_VARIANT_TAG).orElse(DISPLAY_VARIANT_RAINBOW);
 	}
 
 	private MutableComponent getLocalizedName(PacketContext context) {
