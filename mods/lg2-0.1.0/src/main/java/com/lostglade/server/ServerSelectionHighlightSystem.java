@@ -2,6 +2,7 @@ package com.lostglade.server;
 
 import com.lostglade.Lg2;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
+import com.lostglade.util.ItemDisplayHitboxHelper;
 import com.mojang.math.Transformation;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
@@ -147,6 +148,7 @@ public final class ServerSelectionHighlightSystem {
 		display.setItemStack(stack.copy());
 		display.setItemTransform(blueprint.displayContext());
 		display.setBillboardConstraints(Display.BillboardConstraints.FIXED);
+		ItemDisplayHitboxHelper.clear(display);
 		return display;
 	}
 

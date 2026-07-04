@@ -103,6 +103,7 @@
 		"ServerGamePacketListenerCopperManJetpackMixin",
 		"ServerGamePacketListenerDroneControlMixin",
 		"ServerGamePacketListenerImplAccessor",
+		"ServerGamePacketListenerItemDisplayHitboxMixin",
 		"ServerGamePacketListenerLittleDictatorLagMixin",
 		"ServerGamePacketListenerMonitorTimelineMixin",
 		"ServerChunkCacheRendererBotShadowDirtyMixin",

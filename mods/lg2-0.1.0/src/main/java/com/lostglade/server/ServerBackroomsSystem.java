@@ -93,7 +93,7 @@ public final class ServerBackroomsSystem {
 	private static final int ACTIVE_RESPAWN_CHUNK_HOLD_TICKS = 200;
 	private static final int BACKROOMS_SUPPORT_TICK_INTERVAL = 2;
 	private static final int LADDER_CRAWL_GRACE_TICKS = 6;
-	private static final Identifier BACKROOMS_AMBIENT_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "custom.backrooms_ambient_loop");
+	private static final Identifier BACKROOMS_AMBIENT_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_ambient_loop");
 	// 12s file at 20 TPS ~= 240 ticks. Start every 200 ticks for ~2s overlap.
 	private static final int BACKROOMS_AMBIENT_LOOP_TICKS = 200;
 	private static final float[] BACKROOMS_AMBIENT_FADE_IN = new float[]{0.35F, 0.55F, 0.75F, 0.85F};

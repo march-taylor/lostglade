@@ -1,5 +1,6 @@
 package com.lostglade.server;
 
+import com.lostglade.Lg2;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.entity.BackroomsStalkerEntity;
 import com.lostglade.worldgen.BackroomsSpecialRooms;
@@ -46,7 +47,7 @@ public final class ServerBackroomsStalkerSystem {
 	// Must match BackroomsLayout floor model: floor index = floorDiv(y - 64, 5).
 	private static final int BACKROOMS_FLOOR_BASE_Y = 64;
 	private static final int BACKROOMS_FLOOR_HEIGHT = 5;
-	private static final Identifier STALKER_RUN_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "custom.backrooms_stalker_approach");
+	private static final Identifier STALKER_RUN_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_stalker_approach");
 	private static final double STALKER_RUN_HEAR_RADIUS_SQR = 32.0D * 32.0D;
 	private static final float STALKER_RUN_VOLUME = 1.50F;
 	private static final float STALKER_RUN_PITCH = 1.0F;

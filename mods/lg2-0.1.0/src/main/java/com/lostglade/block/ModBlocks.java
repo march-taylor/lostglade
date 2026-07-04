@@ -26,6 +26,8 @@ public final class ModBlocks {
 	private static final Identifier BACKROOMS_BLOCK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_block");
 	private static final Identifier BACKROOMS_LIGHTBLOCK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_lightblock");
 	private static final Identifier BACKROOMS_DOOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "backrooms_door");
+	private static final Identifier DICTATOR_IRON_DOOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "dictator_iron_door");
+	private static final Identifier DICTATOR_IRON_TRAPDOOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "dictator_iron_trapdoor");
 	private static final Identifier EXIT_SIGN_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "exit_sign");
 	private static final Identifier EXIT_WALL_SIGN_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "exit_wall_sign");
 	private static final Identifier SERVER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "server");
@@ -42,6 +44,8 @@ public final class ModBlocks {
 	private static final ResourceKey<Block> BACKROOMS_BLOCK_KEY = ResourceKey.create(Registries.BLOCK, BACKROOMS_BLOCK_ID);
 	private static final ResourceKey<Block> BACKROOMS_LIGHTBLOCK_KEY = ResourceKey.create(Registries.BLOCK, BACKROOMS_LIGHTBLOCK_ID);
 	private static final ResourceKey<Block> BACKROOMS_DOOR_KEY = ResourceKey.create(Registries.BLOCK, BACKROOMS_DOOR_ID);
+	private static final ResourceKey<Block> DICTATOR_IRON_DOOR_KEY = ResourceKey.create(Registries.BLOCK, DICTATOR_IRON_DOOR_ID);
+	private static final ResourceKey<Block> DICTATOR_IRON_TRAPDOOR_KEY = ResourceKey.create(Registries.BLOCK, DICTATOR_IRON_TRAPDOOR_ID);
 	private static final ResourceKey<Block> EXIT_SIGN_KEY = ResourceKey.create(Registries.BLOCK, EXIT_SIGN_ID);
 	private static final ResourceKey<Block> EXIT_WALL_SIGN_KEY = ResourceKey.create(Registries.BLOCK, EXIT_WALL_SIGN_ID);
 	private static final ResourceKey<Block> SERVER_KEY = ResourceKey.create(Registries.BLOCK, SERVER_ID);
@@ -186,7 +190,24 @@ public final class ModBlocks {
 					Blocks.WARPED_DOOR
 			)
 	);
-
+	public static final Block DICTATOR_IRON_DOOR = Registry.register(
+			BuiltInRegistries.BLOCK,
+			DICTATOR_IRON_DOOR_ID,
+			new DictatorIronDoorBlock(
+					createDictatorIronDoorProperties(),
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/dictator_iron_door"),
+					Blocks.IRON_DOOR
+			)
+	);
+	public static final Block DICTATOR_IRON_TRAPDOOR = Registry.register(
+			BuiltInRegistries.BLOCK,
+			DICTATOR_IRON_TRAPDOOR_ID,
+			new DictatorIronTrapdoorBlock(
+					createDictatorIronTrapdoorProperties(),
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/dictator_iron_trapdoor"),
+					Blocks.IRON_TRAPDOOR
+			)
+	);
 	public static final Block EXIT_SIGN = Registry.register(
 			BuiltInRegistries.BLOCK,
 			EXIT_SIGN_ID,
@@ -520,7 +541,14 @@ public final class ModBlocks {
 				.ignitedByLava()
 				.setId(BACKROOMS_DOOR_KEY);
 	}
-
+	private static BlockBehaviour.Properties createDictatorIronDoorProperties() {
+		return BlockBehaviour.Properties.ofFullCopy(Blocks.IRON_DOOR)
+				.setId(DICTATOR_IRON_DOOR_KEY);
+	}
+	private static BlockBehaviour.Properties createDictatorIronTrapdoorProperties() {
+		return BlockBehaviour.Properties.ofFullCopy(Blocks.IRON_TRAPDOOR)
+				.setId(DICTATOR_IRON_TRAPDOOR_KEY);
+	}
 	private static BlockBehaviour.Properties createExitSignProperties() {
 		return BlockBehaviour.Properties.ofFullCopy(Blocks.PALE_OAK_SIGN)
 				.strength(30.0f, 1200.0f)

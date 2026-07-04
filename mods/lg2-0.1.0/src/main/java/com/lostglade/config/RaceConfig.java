@@ -228,6 +228,9 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.markStockHostileKillHearts, value -> ability.markStockHostileKillHearts = value);
 		changed |= normalizeNonNegative(ability.markStockBossKillHearts, value -> ability.markStockBossKillHearts = value);
 		changed |= normalizeNonNegative(ability.markStockPlayerKillHearts, value -> ability.markStockPlayerKillHearts = value);
+		changed |= normalizeNonNegative(ability.markStockFirstHitDamageMultiplier, value -> ability.markStockFirstHitDamageMultiplier = value);
+		changed |= normalizeNonNegative(ability.markStockFirstHitResetSeconds, value -> ability.markStockFirstHitResetSeconds = value);
+		changed |= normalizeNonNegative(ability.markStockMovementSpeedPenaltyRatio, value -> ability.markStockMovementSpeedPenaltyRatio = value);
 		changed |= normalizeNonNegative(ability.markShieldBashRangeBlocks, value -> ability.markShieldBashRangeBlocks = value);
 		changed |= normalizeNonNegative(ability.markShieldBashAngleDegrees, value -> ability.markShieldBashAngleDegrees = value);
 		changed |= normalizeNonNegative(ability.markShieldBashForwardImpulseBlocks, value -> ability.markShieldBashForwardImpulseBlocks = value);
@@ -448,6 +451,9 @@ public final class RaceConfig {
 			addDoubleIfNonZero(json, "markStockHostileKillHearts", ability.markStockHostileKillHearts);
 			addDoubleIfNonZero(json, "markStockBossKillHearts", ability.markStockBossKillHearts);
 			addDoubleIfNonZero(json, "markStockPlayerKillHearts", ability.markStockPlayerKillHearts);
+			addDoubleIfNonZero(json, "markStockFirstHitDamageMultiplier", ability.markStockFirstHitDamageMultiplier);
+			addDoubleIfNonZero(json, "markStockFirstHitResetSeconds", ability.markStockFirstHitResetSeconds);
+			addDoubleIfNonZero(json, "markStockMovementSpeedPenaltyRatio", ability.markStockMovementSpeedPenaltyRatio);
 			addDoubleIfNonZero(json, "markShieldBashRangeBlocks", ability.markShieldBashRangeBlocks);
 			addDoubleIfNonZero(json, "markShieldBashAngleDegrees", ability.markShieldBashAngleDegrees);
 			addDoubleIfNonZero(json, "markShieldBashForwardImpulseBlocks", ability.markShieldBashForwardImpulseBlocks);
@@ -646,6 +652,9 @@ public final class RaceConfig {
 		public double markStockHostileKillHearts = 0.0D;
 		public double markStockBossKillHearts = 0.0D;
 		public double markStockPlayerKillHearts = 0.0D;
+		public double markStockFirstHitDamageMultiplier = 0.0D;
+		public double markStockFirstHitResetSeconds = 0.0D;
+		public double markStockMovementSpeedPenaltyRatio = 0.0D;
 		public double markShieldBashRangeBlocks = 0.0D;
 		public double markShieldBashAngleDegrees = 0.0D;
 		public double markShieldBashForwardImpulseBlocks = 0.0D;

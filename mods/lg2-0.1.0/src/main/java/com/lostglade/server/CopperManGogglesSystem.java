@@ -6,6 +6,7 @@ import com.lostglade.config.RaceConfig.PlayerRaceConfig;
 import com.lostglade.config.RaceConfig.RaceAbilityConfig;
 import com.lostglade.config.RaceConfig.RaceAbilitySlot;
 import com.lostglade.item.ModItems;
+import com.lostglade.util.ItemDisplayHitboxHelper;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
 import com.lostglade.mixin.LivingEntityTrackedDataAccessor;
 import com.mojang.math.Transformation;
@@ -1285,6 +1286,7 @@ public final class CopperManGogglesSystem {
 		display.setItemStack(createHighlightCarrierStack());
 		display.setItemTransform(ItemDisplayContext.FIXED);
 		display.setBillboardConstraints(Display.BillboardConstraints.FIXED);
+		ItemDisplayHitboxHelper.clear(display);
 		return display;
 	}
 

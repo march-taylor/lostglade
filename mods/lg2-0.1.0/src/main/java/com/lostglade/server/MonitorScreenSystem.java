@@ -23,6 +23,7 @@ import com.lostglade.config.Lg2Config;
 import com.lostglade.item.ModItems;
 import com.lostglade.item.MonitorItem;
 import com.lostglade.item.PhotoPrintData;
+import com.lostglade.util.ItemDisplayHitboxHelper;
 import com.lostglade.server.map.MapPaletteQuantizer;
 import com.lostglade.server.monitor.MonitorApp;
 import com.lostglade.server.monitor.MonitorAppRole;
@@ -455,6 +456,7 @@ public final class MonitorScreenSystem {
 			MonitorYandexMapsClientTileRenderer.markChunkDirty(level, entity.chunkPosition());
 		}
 		if (entity instanceof Display.ItemDisplay display && display.getTags().contains(DISPLAY_ROOT_TAG)) {
+			ItemDisplayHitboxHelper.clear(display);
 			BlockPos pos = parsePositionTag(display.getTags());
 			Direction facing = parseFacingTag(display.getTags());
 			if (pos == null || facing == null || findScreenFrame(level, pos, facing) == null) {
@@ -510,6 +512,7 @@ public final class MonitorScreenSystem {
 		}
 		AABB box = chunkEntityBox(level, chunk);
 		for (Display.ItemDisplay display : level.getEntitiesOfClass(Display.ItemDisplay.class, box, candidate -> candidate.getTags().contains(DISPLAY_ROOT_TAG))) {
+			ItemDisplayHitboxHelper.clear(display);
 			BlockPos pos = parsePositionTag(display.getTags());
 			Direction facing = parseFacingTag(display.getTags());
 			if (pos == null || facing == null || findScreenFrame(level, pos, facing) == null) {
@@ -978,6 +981,7 @@ public final class MonitorScreenSystem {
 			return resolveBluetoothScreenEndpoint(level, itemFrame);
 		}
 		if (entity instanceof Display.ItemDisplay display && display.getTags().contains(DISPLAY_ROOT_TAG)) {
+			ItemDisplayHitboxHelper.clear(display);
 			BlockPos pos = parsePositionTag(display.getTags());
 			Direction facing = parseFacingTag(display.getTags());
 			if (pos == null || facing == null) {
@@ -9243,12 +9247,12 @@ public final class MonitorScreenSystem {
 	static void ensureDisplay(ServerLevel level, ItemFrame frame, int connectionMask) {
 		List<Display.ItemDisplay> displays = findDisplays(level, frame.blockPosition(), frame.getDirection());
 		Display.ItemDisplay display;
-		if (displays.isEmpty()) {
+		boolean created = displays.isEmpty();
+		if (created) {
 			display = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
 			display.addTag(DISPLAY_ROOT_TAG);
 			display.addTag(positionTag(frame.blockPosition()));
 			display.addTag(facingTag(frame.getDirection()));
-			level.addFreshEntity(display);
 		} else {
 			display = displays.get(0);
 			for (int i = 1; i < displays.size(); i++) {
@@ -9279,6 +9283,10 @@ public final class MonitorScreenSystem {
 		display.setShadowRadius(0.0F);
 		display.setShadowStrength(0.0F);
 		display.setViewRange(1.0F);
+		ItemDisplayHitboxHelper.clear(display);
+		if (created) {
+			level.addFreshEntity(display);
+		}
 	}
 
 	static void cleanupOrphanDisplays(ServerLevel level) {

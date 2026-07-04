@@ -1,5 +1,6 @@
 package com.lostglade.mixin;
 
+import com.lostglade.server.ServerMechanicsGateSystem;
 import com.lostglade.server.ServerRaceSystem;
 import net.minecraft.network.protocol.game.ServerboundContainerButtonClickPacket;
 import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
@@ -60,6 +61,10 @@ public abstract class ServerGamePacketListenerLittleDictatorLagMixin {
 
 	@Inject(method = "handlePlayerAction", at = @At("HEAD"), cancellable = true)
 	private void lg2$delayLittleDictatorPlayerAction(ServerboundPlayerActionPacket packet, CallbackInfo ci) {
+		if (ServerMechanicsGateSystem.handleLittleDictatorIronDoorPlayerAction(this.player, packet)) {
+			ci.cancel();
+			return;
+		}
 		delay(packet, () -> ((ServerGamePacketListenerImpl) (Object) this).handlePlayerAction(packet), ci);
 	}
 

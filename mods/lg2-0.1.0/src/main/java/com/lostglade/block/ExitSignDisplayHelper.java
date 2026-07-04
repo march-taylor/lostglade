@@ -1,6 +1,7 @@
 package com.lostglade.block;
 
 import com.mojang.math.Transformation;
+import com.lostglade.util.ItemDisplayHitboxHelper;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Display;
@@ -31,11 +32,11 @@ public final class ExitSignDisplayHelper {
 
 		List<Display.ItemDisplay> displays = findDisplays(level, pos);
 		Display.ItemDisplay display;
-		if (displays.isEmpty()) {
+		boolean created = displays.isEmpty();
+		if (created) {
 			display = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
 			display.addTag(ROOT_TAG);
 			display.addTag(getPosTag(pos));
-			level.addFreshEntity(display);
 		} else {
 			display = displays.get(0);
 			for (int i = 1; i < displays.size(); i++) {
@@ -44,10 +45,13 @@ public final class ExitSignDisplayHelper {
 		}
 
 		configureDisplay(display, signBlock, pos, state);
+		if (created) {
+			level.addFreshEntity(display);
+		}
 	}
 
 	public static void ensureDisplay(ServerLevel level, BlockPos pos, BlockState state) {
-		if (!(state.getBlock() instanceof SignBlock)) {
+		if (!(state.getBlock() instanceof SignBlock signBlock)) {
 			return;
 		}
 
@@ -57,11 +61,13 @@ public final class ExitSignDisplayHelper {
 			return;
 		}
 
+		Display.ItemDisplay display = displays.get(0);
 		if (displays.size() > 1) {
 			for (int i = 1; i < displays.size(); i++) {
 				displays.get(i).discard();
 			}
 		}
+		configureDisplay(display, signBlock, pos, state);
 	}
 
 	public static void remove(ServerLevel level, BlockPos pos) {
@@ -97,6 +103,7 @@ public final class ExitSignDisplayHelper {
 		display.setShadowRadius(0.0F);
 		display.setShadowStrength(0.0F);
 		display.setViewRange(1.0F);
+		ItemDisplayHitboxHelper.clear(display);
 	}
 
 	private static List<Display.ItemDisplay> findDisplays(ServerLevel level, BlockPos pos) {

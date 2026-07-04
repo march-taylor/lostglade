@@ -1,5 +1,6 @@
 package com.lostglade.block;
 
+import com.lostglade.util.ItemDisplayHitboxHelper;
 import com.lostglade.server.ServerStructureBreakSystem;
 import com.lostglade.server.ServerStabilitySystem;
 import com.lostglade.server.ServerUpgradeUiSystem;
@@ -119,6 +120,7 @@ public class ServerBlock extends SimplePolymerBlock {
 		display.getSlot(0).set(new ItemStack(ModBlocks.SERVER_ITEM));
 		ServerStructureBreakSystem.applyStructureDisplayTags(display, origin, axis);
 		applyFixedItemDisplayTransform(display, level);
+		ItemDisplayHitboxHelper.clear(display);
 		level.addFreshEntity(display);
 	}
 
