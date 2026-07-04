@@ -49,7 +49,7 @@
       "enabled": true,
       "id": "mister_cartel_49",
       "displayName": "Мистер Картель",
-      "ownerNickname": "vghnnnn4",
+      "ownerNickname": "",
       "description": "Глава всего преступного мира.",
       "attack": {
         "enabled": true,
@@ -216,7 +216,7 @@
       "enabled": true,
       "id": "woman",
       "displayName": "ЖЕНЩИНА!!!",
-      "ownerNickname": "pines4",
+      "ownerNickname": "",
       "description": "Хрупкая снаружи, но опасная внутри.",
       "attack": {
         "enabled": true,
@@ -346,7 +346,7 @@
       "enabled": true,
       "id": "mark_potroshitel",
       "displayName": "Марк Потрошитель",
-      "ownerNickname": "Rajas_YT",
+      "ownerNickname": "",
       "description": "У всех нас есть сила в руках для того, чтобы убить, но большинство боится ее использовать.",
       "attack": {
         "enabled": true,
@@ -459,7 +459,7 @@
         "abilityId": "milk_oligarch_stock",
         "name": "Слишком крутой",
         "description": "Слишком крут, чтобы с кем-то драться, даже эффекты не нужны.",
-        "milkStockAvoidRadiusBlocks": 16.0
+        "milkStockAvoidRadiusBlocks": 12.0
       }
     },
     {
@@ -524,6 +524,47 @@
         "enabled": true,
         "abilityId": "little_dictator_stock",
         "name": "Сток",
+        "description": ""
+      }
+    },
+    {
+      "enabled": true,
+      "id": "kilka",
+      "displayName": "Килька",
+      "ownerNickname": "Rajas_YT",
+      "description": "",
+      "attack": {
+        "enabled": true,
+        "abilityId": "kilka_attack",
+        "name": "Радиационный выборс",
+        "description": "",
+        "priceBitcoins": 300
+      },
+      "defense": {
+        "enabled": true,
+        "abilityId": "kilka_defense",
+        "name": "Водный шар",
+        "description": "",
+        "priceBitcoins": 600
+      },
+      "uniqueAbility": {
+        "enabled": true,
+        "abilityId": "kilka_unique",
+        "name": "Истинный облик",
+        "description": "",
+        "priceBitcoins": 1000
+      },
+      "shnyaga": {
+        "enabled": true,
+        "abilityId": "kilka_shnyaga",
+        "name": "Зона 51",
+        "description": "",
+        "priceBitcoins": 1500
+      },
+      "stock": {
+        "enabled": true,
+        "abilityId": "kilka_stock",
+        "name": "Гидробионт",
         "description": ""
       }
     }

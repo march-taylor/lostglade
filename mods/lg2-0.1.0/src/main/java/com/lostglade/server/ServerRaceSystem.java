@@ -192,6 +192,7 @@ import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.item.component.UseCooldown;
 import net.minecraft.world.item.enchantment.Enchantments;
+import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.food.FoodData;
 import net.minecraft.world.food.FoodProperties;
@@ -301,6 +302,7 @@ public final class ServerRaceSystem {
 	private static final String MARK_POTROSHITEL_RACE_ID = "mark_potroshitel";
 	private static final String MILK_OLIGARCH_RACE_ID = "milk_oligarch";
 	private static final String LITTLE_DICTATOR_RACE_ID = "little_dictator";
+	private static final String KILKA_RACE_ID = "kilka";
 	private static final String TITLE_OVERLAY_SHIFT = "\ue905";
 	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
 	private static final int TITLE_OVERLAY_TARGET_ADVANCE = 168;
@@ -697,6 +699,8 @@ public final class ServerRaceSystem {
 	private static final double MARK_STOCK_DEFAULT_FIRST_HIT_RESET_SECONDS = 8.0D;
 	private static final double MARK_STOCK_DEFAULT_MOVEMENT_SPEED_PENALTY_RATIO = 0.15D;
 	private static final Identifier MARK_STOCK_SPEED_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "mark_stock_speed_penalty");
+	private static final Identifier KILKA_STOCK_LAND_MINING_PENALTY_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "kilka_stock_land_mining_penalty");
+	private static final Identifier KILKA_STOCK_UNDERWATER_MINING_BONUS_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "kilka_stock_underwater_mining_bonus");
 	private static final double MARK_SHIELD_BASH_DEFAULT_RANGE_BLOCKS = 2.0D;
 	private static final double MARK_SHIELD_BASH_DEFAULT_ANGLE_DEGREES = 90.0D;
 	private static final double MARK_SHIELD_BASH_DEFAULT_FORWARD_IMPULSE_BLOCKS = 1.0D;
@@ -971,6 +975,7 @@ public final class ServerRaceSystem {
 	private static final List<LittleDictatorUniqueShockWaveSession> LITTLE_DICTATOR_UNIQUE_SHOCK_WAVES = new ArrayList<>();
 	private static final List<LittleDictatorDelayedPacket> LITTLE_DICTATOR_DELAYED_PACKETS = new ArrayList<>();
 	private static final Map<UUID, Long> LITTLE_DICTATOR_LAST_DELAYED_PACKET_RELEASE_TICKS = new HashMap<>();
+	private static final Set<UUID> KILKA_STOCK_NIGHT_VISION = new HashSet<>();
 	private static final Map<UUID, LittleDictatorUniqueSession> LITTLE_DICTATOR_UNIQUE_SESSIONS = new LinkedHashMap<>();
 	private static final Set<UUID> LITTLE_DICTATOR_TAX_CHEST_PENDING = new HashSet<>();
 	private static final Map<UUID, Set<LittleDictatorTaxChestRef>> LITTLE_DICTATOR_TAX_CHESTS = new LinkedHashMap<>();
@@ -1650,6 +1655,7 @@ public final class ServerRaceSystem {
 			tickMilkOligarchUnique(server);
 			tickMilkOligarchStock(server);
 			tickLittleDictatorStock(server);
+			tickKilkaStock(server);
 			tickLittleDictatorDefense(server);
 			tickLittleDictatorUnique(server);
 			tickLittleDictatorShnyaga(server);
@@ -5074,6 +5080,19 @@ public final class ServerRaceSystem {
 
 		PlayerRaceConfig race = raceOptional.get();
 		if (!LITTLE_DICTATOR_RACE_ID.equals(sanitizePath(race.id)) || race.stock == null || !race.stock.enabled) {
+			return null;
+		}
+		return race.stock;
+	}
+
+	private static RaceAbilityConfig getKilkaStockAbility(ServerPlayer player) {
+		Optional<PlayerRaceConfig> raceOptional = getRace(player);
+		if (raceOptional.isEmpty()) {
+			return null;
+		}
+
+		PlayerRaceConfig race = raceOptional.get();
+		if (!KILKA_RACE_ID.equals(sanitizePath(race.id)) || race.stock == null || !race.stock.enabled) {
 			return null;
 		}
 		return race.stock;
@@ -13364,6 +13383,172 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			MARK_STOCK_FOOD_SNAPSHOTS.put(playerId, getFoodDataSnapshot(player));
 		}
 		MARK_STOCK_FOOD_SNAPSHOTS.keySet().removeIf(playerId -> !activePlayers.contains(playerId));
+	}
+
+	private static void tickKilkaStock(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		Set<UUID> activePlayers = new HashSet<>();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			updateKilkaStockMiningModifiers(player);
+			if (player.isAlive() && !player.isSpectator() && getKilkaStockAbility(player) != null && isKilkaHeadUnderwater(player)) {
+				UUID playerId = player.getUUID();
+				activePlayers.add(playerId);
+				MobEffectInstance current = player.getEffect(MobEffects.NIGHT_VISION);
+				boolean managed = KILKA_STOCK_NIGHT_VISION.contains(playerId);
+				if (managed && (current == null || !current.isInfiniteDuration() || current.isVisible() || current.showIcon())) {
+					KILKA_STOCK_NIGHT_VISION.remove(playerId);
+					if (current != null && current.getAmplifier() == 0) {
+						player.removeEffect(MobEffects.NIGHT_VISION);
+					}
+					managed = false;
+					current = player.getEffect(MobEffects.NIGHT_VISION);
+				}
+				if (!managed) {
+					if (current != null && current.getAmplifier() == 0) {
+						player.removeEffect(MobEffects.NIGHT_VISION);
+					}
+					player.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION, MobEffectInstance.INFINITE_DURATION, 0, false, false, false));
+					KILKA_STOCK_NIGHT_VISION.add(playerId);
+				}
+			} else {
+				clearKilkaStockNightVision(player);
+			}
+		}
+		KILKA_STOCK_NIGHT_VISION.removeIf(playerId -> !activePlayers.contains(playerId) && server.getPlayerList().getPlayer(playerId) == null);
+	}
+
+	private static void clearKilkaStockNightVision(ServerPlayer player) {
+		if (player == null || !KILKA_STOCK_NIGHT_VISION.remove(player.getUUID())) {
+			return;
+		}
+		MobEffectInstance current = player.getEffect(MobEffects.NIGHT_VISION);
+		if (current != null && current.getAmplifier() == 0 && current.getDuration() == MobEffectInstance.INFINITE_DURATION) {
+			player.removeEffect(MobEffects.NIGHT_VISION);
+		}
+	}
+
+
+	private static void updateKilkaStockMiningModifiers(ServerPlayer player) {
+		if (player == null || !player.isAlive() || player.isSpectator() || getKilkaStockAbility(player) == null) {
+			removeKilkaStockMiningModifiers(player);
+			return;
+		}
+
+		AttributeInstance blockBreakSpeed = player.getAttribute(Attributes.BLOCK_BREAK_SPEED);
+		AttributeInstance submergedMiningSpeed = player.getAttribute(Attributes.SUBMERGED_MINING_SPEED);
+		boolean headUnderwater = isKilkaHeadUnderwater(player);
+		boolean hasAquaAffinity = hasKilkaAquaAffinity(player);
+
+		if (headUnderwater) {
+			removeAttributeModifier(blockBreakSpeed, KILKA_STOCK_LAND_MINING_PENALTY_MODIFIER_ID);
+			removeAttributeModifier(submergedMiningSpeed, KILKA_STOCK_UNDERWATER_MINING_BONUS_MODIFIER_ID);
+			if (!hasAquaAffinity && submergedMiningSpeed != null) {
+				double missingSpeed = Math.max(0.0D, 1.0D - submergedMiningSpeed.getValue());
+				if (missingSpeed > 1.0E-6D) {
+					syncKilkaStockAttributeModifier(
+							submergedMiningSpeed,
+							KILKA_STOCK_UNDERWATER_MINING_BONUS_MODIFIER_ID,
+							missingSpeed,
+							AttributeModifier.Operation.ADD_VALUE
+					);
+				}
+			}
+			return;
+		}
+
+		removeAttributeModifier(submergedMiningSpeed, KILKA_STOCK_UNDERWATER_MINING_BONUS_MODIFIER_ID);
+		if (hasAquaAffinity) {
+			removeAttributeModifier(blockBreakSpeed, KILKA_STOCK_LAND_MINING_PENALTY_MODIFIER_ID);
+		} else {
+			syncKilkaStockAttributeModifier(
+					blockBreakSpeed,
+					KILKA_STOCK_LAND_MINING_PENALTY_MODIFIER_ID,
+					-0.8D,
+					AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
+			);
+		}
+	}
+
+	private static void removeKilkaStockMiningModifiers(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		removeAttributeModifier(player.getAttribute(Attributes.BLOCK_BREAK_SPEED), KILKA_STOCK_LAND_MINING_PENALTY_MODIFIER_ID);
+		removeAttributeModifier(player.getAttribute(Attributes.SUBMERGED_MINING_SPEED), KILKA_STOCK_UNDERWATER_MINING_BONUS_MODIFIER_ID);
+	}
+
+	private static void syncKilkaStockAttributeModifier(AttributeInstance attribute, Identifier modifierId, double amount, AttributeModifier.Operation operation) {
+		if (attribute == null || modifierId == null || operation == null) {
+			return;
+		}
+		AttributeModifier current = attribute.getModifier(modifierId);
+		if (current == null || Math.abs(current.amount() - amount) > 1.0E-6D || current.operation() != operation) {
+			if (current != null) {
+				attribute.removeModifier(modifierId);
+			}
+			attribute.addTransientModifier(new AttributeModifier(modifierId, amount, operation));
+		}
+	}
+
+	private static void removeAttributeModifier(AttributeInstance attribute, Identifier modifierId) {
+		if (attribute != null && modifierId != null && attribute.getModifier(modifierId) != null) {
+			attribute.removeModifier(modifierId);
+		}
+	}
+
+	private static boolean hasKilkaAquaAffinity(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		ItemStack helmet = player.getItemBySlot(EquipmentSlot.HEAD);
+		if (helmet.isEmpty()) {
+			return false;
+		}
+		Holder<Enchantment> aquaAffinity = level.registryAccess()
+				.lookupOrThrow(Registries.ENCHANTMENT)
+				.getOrThrow(Enchantments.AQUA_AFFINITY);
+		return EnchantmentHelper.getItemEnchantmentLevel(aquaAffinity, helmet) > 0;
+	}
+
+	public static boolean isKilkaStockEnabled(ServerPlayer player) {
+		return player != null && getKilkaStockAbility(player) != null;
+	}
+
+	public static boolean isKilkaHeadUnderwater(ServerPlayer player) {
+		return player != null && player.isEyeInFluid(net.minecraft.tags.FluidTags.WATER);
+	}
+
+	public static boolean isKilkaInWaterOrRain(ServerPlayer player) {
+		if (player == null) {
+			return false;
+		}
+		if (isKilkaHeadUnderwater(player)) {
+			return true;
+		}
+		return player.level() instanceof ServerLevel level && level.isRainingAt(player.blockPosition());
+	}
+
+	public static void handleKilkaStockAirTick(ServerPlayer player, int previousAirSupply) {
+		if (!isKilkaStockEnabled(player) || !player.isAlive() || player.isSpectator()) {
+			return;
+		}
+		int maxAir = player.getMaxAirSupply();
+		if (isKilkaInWaterOrRain(player)) {
+			player.setAirSupply(Math.min(maxAir, previousAirSupply + 8));
+			return;
+		}
+
+		int air = previousAirSupply - 1;
+		if (air <= -20) {
+			player.setAirSupply(0);
+			if (player.level() instanceof ServerLevel level) {
+				player.hurtServer(level, player.damageSources().drown(), 2.0F);
+			}
+			return;
+		}
+		player.setAirSupply(air);
 	}
 
 	private static void tickMilkOligarchStock(MinecraftServer server) {
