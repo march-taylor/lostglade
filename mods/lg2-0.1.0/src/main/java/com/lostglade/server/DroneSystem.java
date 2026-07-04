@@ -48,6 +48,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.RemoteChatSession;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
@@ -78,6 +79,7 @@ import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ChunkTrackingView;
+import net.minecraft.server.level.ServerEntity;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.TicketType;
@@ -308,6 +310,22 @@ public final class DroneSystem {
 	private static final int PLAYER_HOTBAR_MENU_SLOT_START = 36;
 	private static final int PLAYER_OFFHAND_MENU_SLOT = 45;
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
+	private static final ServerEntity.Synchronizer DRONE_RELEASE_VISUAL_RESYNC_NOOP_SYNCHRONIZER = new ServerEntity.Synchronizer() {
+		@Override
+		public void sendToTrackingPlayers(Packet<? super ClientGamePacketListener> packet) {
+		}
+
+		@Override
+		public void sendToTrackingPlayersAndSelf(Packet<? super ClientGamePacketListener> packet) {
+		}
+
+		@Override
+		public void sendToTrackingPlayersFiltered(
+				Packet<? super ClientGamePacketListener> packet,
+				java.util.function.Predicate<ServerPlayer> predicate
+		) {
+		}
+	};
 	private static final long DRONE_HUD_REFRESH_TICKS = 2L;
 	private static final int DRONE_HUD_GRID_SIZE = 11;
 	private static final int DRONE_HUD_GLYPH_BASE = 0xE700;
@@ -4067,6 +4085,53 @@ public final class DroneSystem {
 		runWithControlledOperatorPacketRewriteBypass(() -> player.connection.send(packet));
 	}
 
+	private static void rebuildReleasedDroneVisualEntitiesForOperator(ServerPlayer player, Entity root) {
+		if (player == null || player.connection == null || root == null || !root.isAlive()) {
+			return;
+		}
+		List<Entity> visualEntities = new ArrayList<>();
+		visualEntities.add(root);
+		for (Display.ItemDisplay display : findDroneDisplayLayers(root)) {
+			if (display != null && display.isAlive()) {
+				visualEntities.add(display);
+			}
+		}
+		int[] entityIds = new int[visualEntities.size()];
+		for (int i = 0; i < visualEntities.size(); i++) {
+			entityIds[i] = visualEntities.get(i).getId();
+		}
+		sendControlledOperatorPacket(player, new ClientboundRemoveEntitiesPacket(entityIds));
+		for (Entity entity : visualEntities) {
+			sendSingleViewerEntityPairingData(player, entity);
+			sendControlledOperatorPacket(player, ClientboundEntityPositionSyncPacket.of(entity));
+			if (entity == root) {
+				sendControlledOperatorPacket(player, new ClientboundSetEntityMotionPacket(root.getId(), root.getDeltaMovement()));
+				sendControlledOperatorPacket(player, buildPassengerPacket(root, root.getId(), new int[0]));
+			}
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private static void sendSingleViewerEntityPairingData(ServerPlayer player, Entity entity) {
+		if (player == null || player.connection == null || entity == null || !entity.isAlive() || !(entity.level() instanceof ServerLevel level)) {
+			return;
+		}
+		ServerEntity tracker = new ServerEntity(
+				level,
+				entity,
+				1,
+				false,
+				DRONE_RELEASE_VISUAL_RESYNC_NOOP_SYNCHRONIZER
+		);
+		tracker.sendPairingData(player, packet ->
+				sendControlledOperatorPacket(player, (Packet<? super ClientGamePacketListener>) packet)
+		);
+		List<SynchedEntityData.DataValue<?>> values = entity.getEntityData().getNonDefaultValues();
+		if (values != null && !values.isEmpty()) {
+			sendControlledOperatorPacket(player, new ClientboundSetEntityDataPacket(entity.getId(), values));
+		}
+	}
+
 	private static void refreshControlledOperatorActualView(ServerPlayer player) {
 		refreshControlledOperatorActualView(player, true);
 	}
@@ -5257,6 +5322,7 @@ public final class DroneSystem {
 		}
 		clearDroneHud(player, session, true);
 		restoreControlledOperatorClientState(player);
+		rebuildReleasedDroneVisualEntitiesForOperator(player, root);
 		schedulePostControlClientResync(player);
 		VISUALLY_CONTROLLED_PLAYERS.remove(player.getUUID());
 

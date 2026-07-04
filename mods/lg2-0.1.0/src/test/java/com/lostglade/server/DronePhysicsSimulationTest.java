@@ -378,6 +378,8 @@ public final class DronePhysicsSimulationTest {
 		String server = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/DroneSystem.java"));
 		String startControl = section(server, "private static boolean startControlling", "private static void stopControlling");
 		String movePacket = section(server, "private static void applyControlledMovePacket", "private static void prepareControlledDroneBody");
+		String stopControl = section(server, "private static void stopControlling", "private static boolean isDroneStationaryForBreakPickup");
+		String releasedVisualRebuild = section(server, "private static void rebuildReleasedDroneVisualEntitiesForOperator", "private static void refreshControlledOperatorActualView");
 
 		require(startControl.contains("Vec3 dronePos = root.position();"), "control entry must snapshot the drone position before any setup changes");
 		require(startControl.contains("float droneYaw = root.getYRot();"), "control entry must preserve the drone yaw instead of inheriting the operator head yaw");
@@ -407,6 +409,19 @@ public final class DronePhysicsSimulationTest {
 						&& server.contains("root.setXRot(session.proxyPitch());")
 						&& server.contains("Vec3 releasedVelocity = finiteVecOr(session.velocity(), Vec3.ZERO);"),
 				"control exit must release the drone with the operator's final facing and velocity"
+		);
+		require(
+				stopControl.contains("rebuildReleasedDroneVisualEntitiesForOperator(player, root);"),
+				"control exit must rebuild released drone visuals for the former operator"
+		);
+		require(
+				releasedVisualRebuild.contains("visualEntities.add(root)")
+						&& releasedVisualRebuild.contains("findDroneDisplayLayers(root)")
+						&& releasedVisualRebuild.contains("new ClientboundRemoveEntitiesPacket(entityIds)")
+						&& releasedVisualRebuild.contains("sendSingleViewerEntityPairingData(player, entity)")
+						&& releasedVisualRebuild.contains("ClientboundEntityPositionSyncPacket.of(entity)")
+						&& releasedVisualRebuild.contains("new ClientboundSetEntityMotionPacket(root.getId(), root.getDeltaMovement())"),
+				"exit visual rebuild must respawn root and display layers from authoritative world state"
 		);
 	}
 
