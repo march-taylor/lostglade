@@ -1,6 +1,7 @@
-﻿{
+{
     "replace":  false,
     "values":  [
-                   "lg2:backrooms_door"
+                   "lg2:backrooms_door",
+                   "lg2:dictator_iron_door"
                ]
 }

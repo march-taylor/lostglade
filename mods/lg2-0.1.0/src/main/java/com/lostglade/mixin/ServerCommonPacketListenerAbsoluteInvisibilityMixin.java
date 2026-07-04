@@ -5,6 +5,7 @@ import com.lostglade.server.ServerBossBarVisibilitySystem;
 import io.netty.channel.ChannelFutureListener;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundBossEventPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
@@ -50,6 +51,22 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 			return;
 		}
 
+		if (packet instanceof ClientboundLevelChunkWithLightPacket chunkPacket
+				&& com.lostglade.server.ServerRaceSystem.shouldRewriteLittleDictatorIronMechanismPackets(receiver)) {
+			ci.cancel();
+			LG2_ABSOLUTE_INVISIBILITY_BYPASS.set(true);
+			try {
+				if (listener == null) {
+					gameListener.send(chunkPacket);
+				} else {
+					gameListener.send(chunkPacket, listener);
+				}
+				com.lostglade.server.ServerRaceSystem.sendLittleDictatorIronMechanismChunkOverlay(receiver, chunkPacket);
+			} finally {
+				LG2_ABSOLUTE_INVISIBILITY_BYPASS.remove();
+			}
+			return;
+		}
 		if (packet instanceof ClientboundBlockUpdatePacket blockUpdatePacket) {
 			ClientboundBlockUpdatePacket replacement = com.lostglade.server.ServerRaceSystem.rewriteLittleDictatorIronMechanismBlockUpdate(receiver, blockUpdatePacket);
 			if (replacement != blockUpdatePacket) {
@@ -67,21 +84,16 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 				return;
 			}
 		}
-		if (packet instanceof ClientboundSectionBlocksUpdatePacket sectionBlocksUpdatePacket
-				&& com.lostglade.server.ServerRaceSystem.shouldReplayLittleDictatorIronMechanismSectionUpdate(receiver, sectionBlocksUpdatePacket)) {
-			ci.cancel();
+		if (packet instanceof ClientboundSectionBlocksUpdatePacket sectionBlocksUpdatePacket) {
 			LG2_ABSOLUTE_INVISIBILITY_BYPASS.set(true);
 			try {
-				if (listener == null) {
-					gameListener.send(sectionBlocksUpdatePacket);
-				} else {
-					gameListener.send(sectionBlocksUpdatePacket, listener);
+				if (com.lostglade.server.ServerRaceSystem.handleLittleDictatorIronMechanismSectionUpdate(receiver, sectionBlocksUpdatePacket)) {
+					ci.cancel();
+					return;
 				}
-				com.lostglade.server.ServerRaceSystem.resendActiveLittleDictatorIronMechanismSpoof(receiver);
 			} finally {
 				LG2_ABSOLUTE_INVISIBILITY_BYPASS.remove();
 			}
-			return;
 		}
 		if (packet instanceof ClientboundSetEntityDataPacket entityDataPacket) {
 			ServerAbsoluteInvisibilitySystem.maskSprintingMetadataForViewer(receiver, entityDataPacket);

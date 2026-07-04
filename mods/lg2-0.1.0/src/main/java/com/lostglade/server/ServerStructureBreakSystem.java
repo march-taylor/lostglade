@@ -2,6 +2,7 @@ package com.lostglade.server;
 
 import com.lostglade.block.ModBlocks;
 import com.lostglade.item.ModItems;
+import com.lostglade.util.ItemDisplayHitboxHelper;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
@@ -84,6 +85,10 @@ public final class ServerStructureBreakSystem {
 
 		ServerTickEvents.END_SERVER_TICK.register(ServerStructureBreakSystem::tickBreakSessions);
 		ServerEntityEvents.ENTITY_LOAD.register((entity, world) -> {
+			if (entity instanceof Display.ItemDisplay display && display.getTags().contains(DISPLAY_ROOT_TAG)) {
+				ItemDisplayHitboxHelper.clear(display);
+				return;
+			}
 			if (!(entity instanceof ItemEntity itemEntity)) {
 				return;
 			}

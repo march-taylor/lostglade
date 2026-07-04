@@ -10,7 +10,7 @@ import com.lostglade.item.DroneItem;
 import com.lostglade.item.ModItems;
 import com.lostglade.mixin.ClientboundMoveEntityPacketAccessor;
 import com.lostglade.mixin.ClientboundSetPassengersPacketAccessor;
-import com.lostglade.mixin.DisplayAccessor;
+import com.lostglade.util.ItemDisplayHitboxHelper;
 import com.lostglade.mixin.DisplayTrackedDataAccessor;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
 import com.lostglade.mixin.PlayerTrackedDataAccessor;
@@ -6628,15 +6628,7 @@ public final class DroneSystem {
 	}
 
 	private static void collapseDroneDisplayHitbox(Display.ItemDisplay display) {
-		if (display == null) {
-			return;
-		}
-		display.noPhysics = true;
-		((DisplayAccessor) display).lg2$setDisplayWidth(0.0F);
-		((DisplayAccessor) display).lg2$setDisplayHeight(0.0F);
-		display.refreshDimensions();
-		Vec3 position = display.position();
-		display.setBoundingBox(new AABB(position.x, position.y, position.z, position.x, position.y, position.z));
+		ItemDisplayHitboxHelper.clear(display);
 	}
 
 	private static Transformation buildDroneDisplayTransformation(Entity root, double forwardDrive, double strafeDrive) {

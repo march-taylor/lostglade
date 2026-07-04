@@ -151,5 +151,39 @@
         "preload": true
       }
     ]
+  },
+  "bitcoin_billionaire_meloboom": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "backrooms_ambient_loop": {
+    "sounds": [
+      {
+        "name": "lg2:backrooms_ambient_loop",
+        "preload": true,
+        "volume": 0.85
+      }
+    ]
+  },
+  "backrooms_stalker_approach": {
+    "sounds": [
+      {
+        "name": "lg2:backrooms_stalker_approach",
+        "preload": true,
+        "volume": 0.75
+      }
+    ]
+  },
+  "trojan_rooster_theme": {
+    "sounds": [
+      {
+        "name": "lg2:trojan_rooster_theme"
+      }
+    ]
   }
 }

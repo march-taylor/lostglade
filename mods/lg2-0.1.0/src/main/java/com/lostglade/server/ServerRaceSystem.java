@@ -1,5 +1,7 @@
 package com.lostglade.server;
 
+import com.lostglade.block.ModBlocks;
+
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.gson.Gson;
@@ -17,7 +19,7 @@ import com.lostglade.item.ModItems;
 import com.lostglade.item.TubochkaItem;
 import com.lostglade.mixin.AbstractArrowAccessor;
 import com.lostglade.mixin.ArmorStandAccessor;
-import com.lostglade.mixin.DisplayAccessor;
+import com.lostglade.util.ItemDisplayHitboxHelper;
 import com.lostglade.mixin.EntityTrackedDataAccessor;
 import com.lostglade.mixin.EntityPassengerAccessor;
 import com.lostglade.mixin.MerchantMenuAccessor;
@@ -70,6 +72,7 @@ import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
@@ -689,6 +692,10 @@ public final class ServerRaceSystem {
 	private static final double MARK_STOCK_DEFAULT_HOSTILE_KILL_HEARTS = 1.0D;
 	private static final double MARK_STOCK_DEFAULT_BOSS_KILL_HEARTS = 5.0D;
 	private static final double MARK_STOCK_DEFAULT_PLAYER_KILL_HEARTS = 10.0D;
+	private static final double MARK_STOCK_DEFAULT_FIRST_HIT_DAMAGE_MULTIPLIER = 1.5D;
+	private static final double MARK_STOCK_DEFAULT_FIRST_HIT_RESET_SECONDS = 8.0D;
+	private static final double MARK_STOCK_DEFAULT_MOVEMENT_SPEED_PENALTY_RATIO = 0.15D;
+	private static final Identifier MARK_STOCK_SPEED_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "mark_stock_speed_penalty");
 	private static final double MARK_SHIELD_BASH_DEFAULT_RANGE_BLOCKS = 2.0D;
 	private static final double MARK_SHIELD_BASH_DEFAULT_ANGLE_DEGREES = 90.0D;
 	private static final double MARK_SHIELD_BASH_DEFAULT_FORWARD_IMPULSE_BLOCKS = 1.0D;
@@ -943,6 +950,7 @@ public final class ServerRaceSystem {
 	private static final Set<UUID> MARK_RAGE_OVERLAY_ACTIVE = new HashSet<>();
 	private static final Map<UUID, Long> MARK_HANDLED_KILL_TICKS = new LinkedHashMap<>();
 	private static final Map<UUID, FoodDataSnapshot> MARK_STOCK_FOOD_SNAPSHOTS = new HashMap<>();
+	private static final Map<UUID, Long> MARK_STOCK_LAST_MELEE_HIT_TICKS = new HashMap<>();
 	private static final Set<UUID> MILK_ABSOLUTE_ATTACK_READY = new HashSet<>();
 	private static final Set<UUID> MILK_ABSOLUTE_ATTACK_HUD_VISIBLE = new HashSet<>();
 	private static final Map<UUID, MilkLostHeartAnimationSession> MILK_ABSOLUTE_LOST_HEART_ANIMATIONS = new LinkedHashMap<>();
@@ -960,8 +968,6 @@ public final class ServerRaceSystem {
 	private static final List<LittleDictatorUniqueShockWaveSession> LITTLE_DICTATOR_UNIQUE_SHOCK_WAVES = new ArrayList<>();
 	private static final List<LittleDictatorDelayedPacket> LITTLE_DICTATOR_DELAYED_PACKETS = new ArrayList<>();
 	private static final Map<UUID, Long> LITTLE_DICTATOR_LAST_DELAYED_PACKET_RELEASE_TICKS = new HashMap<>();
-	private static final Map<UUID, LittleDictatorIronMechanismClientSpoof> LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS = new HashMap<>();
-	private static final Map<UUID, Integer> LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS = new HashMap<>();
 	private static final Map<UUID, LittleDictatorUniqueSession> LITTLE_DICTATOR_UNIQUE_SESSIONS = new LinkedHashMap<>();
 	private static final Set<UUID> LITTLE_DICTATOR_TAX_CHEST_PENDING = new HashSet<>();
 	private static final Map<UUID, Set<LittleDictatorTaxChestRef>> LITTLE_DICTATOR_TAX_CHESTS = new LinkedHashMap<>();
@@ -1074,14 +1080,6 @@ public final class ServerRaceSystem {
 			return null;
 		}
 	}
-
-	private record LittleDictatorIronMechanismClientSpoof(ResourceKey<Level> dimension, BlockPos pos, BlockPos secondaryPos) {
-		private LittleDictatorIronMechanismClientSpoof {
-			pos = pos == null ? BlockPos.ZERO : pos.immutable();
-			secondaryPos = secondaryPos == null ? null : secondaryPos.immutable();
-		}
-	}
-
 	private record LittleDictatorTaxChestRef(ResourceKey<Level> dimension, BlockPos pos) {
 		private LittleDictatorTaxChestRef {
 			pos = pos == null ? BlockPos.ZERO : pos.immutable();
@@ -1451,6 +1449,7 @@ public final class ServerRaceSystem {
 			MARK_BLEEDING_SESSIONS.clear();
 			MARK_HANDLED_KILL_TICKS.clear();
 			MARK_STOCK_FOOD_SNAPSHOTS.clear();
+			MARK_STOCK_LAST_MELEE_HIT_TICKS.clear();
 			MILK_ABSOLUTE_ATTACK_READY.clear();
 			MILK_ABSOLUTE_ATTACK_HUD_VISIBLE.clear();
 			MILK_ABSOLUTE_LOST_HEART_ANIMATIONS.clear();
@@ -1538,6 +1537,8 @@ public final class ServerRaceSystem {
 			releaseMarkDefenseField(server, MARK_DEFENSE_SESSIONS.remove(handler.player.getUUID()), false, null);
 			stopMarkRage(server, handler.player, false);
 			MARK_STOCK_FOOD_SNAPSHOTS.remove(handler.player.getUUID());
+			MARK_STOCK_LAST_MELEE_HIT_TICKS.remove(handler.player.getUUID());
+			removeMarkStockSpeedPenalty(handler.player);
 			clearMilkAbsoluteAttack(handler.player);
 			MILK_ABSOLUTE_LOST_HEART_ANIMATIONS.remove(handler.player.getUUID());
 			MILK_DEFENSE_SESSIONS.remove(handler.player.getUUID());
@@ -1563,6 +1564,8 @@ public final class ServerRaceSystem {
 				releaseMarkDefenseField(newPlayer.level().getServer(), MARK_DEFENSE_SESSIONS.remove(newPlayer.getUUID()), false, null);
 				stopMarkRage(newPlayer.level().getServer(), newPlayer, false);
 				MARK_STOCK_FOOD_SNAPSHOTS.remove(newPlayer.getUUID());
+				MARK_STOCK_LAST_MELEE_HIT_TICKS.remove(newPlayer.getUUID());
+				removeMarkStockSpeedPenalty(newPlayer);
 				clearMilkAbsoluteAttack(newPlayer);
 				MILK_ABSOLUTE_LOST_HEART_ANIMATIONS.remove(newPlayer.getUUID());
 				MILK_DEFENSE_SESSIONS.remove(newPlayer.getUUID());
@@ -1646,7 +1649,6 @@ public final class ServerRaceSystem {
 			tickLittleDictatorDefense(server);
 			tickLittleDictatorUnique(server);
 			tickLittleDictatorShnyaga(server);
-			tickLittleDictatorIronMechanismClientSpoofs(server);
 			CocaineItem.tick(server);
 			MethadoneItem.tick(server);
 			tickLongPassiveEffectsPersistence(server);
@@ -1894,6 +1896,8 @@ public final class ServerRaceSystem {
 		releaseMarkDefenseField(server, MARK_DEFENSE_SESSIONS.remove(playerId), false, null);
 		stopMarkRage(server, player, false);
 		MARK_STOCK_FOOD_SNAPSHOTS.remove(playerId);
+		MARK_STOCK_LAST_MELEE_HIT_TICKS.remove(playerId);
+		removeMarkStockSpeedPenalty(player);
 		clearMilkAbsoluteAttack(player);
 		MILK_ABSOLUTE_LOST_HEART_ANIMATIONS.remove(playerId);
 		MILK_DEFENSE_SESSIONS.remove(playerId);
@@ -4572,7 +4576,7 @@ public final class ServerRaceSystem {
 		if (upperState.is(Blocks.IRON_DOOR)) {
 			level.setBlock(upperPos, upperState.setValue(DoorBlock.OPEN, open), Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
 		}
-		level.playSound(null, lowerPos, open ? SoundEvents.IRON_DOOR_OPEN : SoundEvents.IRON_DOOR_CLOSE, SoundSource.BLOCKS, 1.0F, 1.0F);
+		level.playSound(null, lowerPos, open ? SoundEvents.IRON_DOOR_OPEN : SoundEvents.IRON_DOOR_CLOSE, SoundSource.BLOCKS, 1.0F, level.getRandom().nextFloat() * 0.1F + 0.9F);
 		level.gameEvent(player, open ? GameEvent.BLOCK_OPEN : GameEvent.BLOCK_CLOSE, lowerPos);
 		resyncLittleDictatorIronMechanismUse(player, level, pos, hitResult);
 		return true;
@@ -4589,7 +4593,7 @@ public final class ServerRaceSystem {
 				state.setValue(TrapDoorBlock.OPEN, open),
 				Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE
 		);
-		level.playSound(null, pos, open ? SoundEvents.IRON_TRAPDOOR_OPEN : SoundEvents.IRON_TRAPDOOR_CLOSE, SoundSource.BLOCKS, 1.0F, 1.0F);
+		level.playSound(null, pos, open ? SoundEvents.IRON_TRAPDOOR_OPEN : SoundEvents.IRON_TRAPDOOR_CLOSE, SoundSource.BLOCKS, 1.0F, level.getRandom().nextFloat() * 0.1F + 0.9F);
 		level.gameEvent(player, open ? GameEvent.BLOCK_OPEN : GameEvent.BLOCK_CLOSE, pos);
 		resyncLittleDictatorIronMechanismUse(player, level, pos, hitResult);
 		return true;
@@ -4606,216 +4610,73 @@ public final class ServerRaceSystem {
 			BlockState placementState = level.getBlockState(placementPos);
 			level.sendBlockUpdated(placementPos, placementState, placementState, Block.UPDATE_CLIENTS);
 		}
-		syncLittleDictatorIronMechanismLookSpoof(player, createLittleDictatorIronMechanismSpoof(level, pos), true);
-		if (player != null) {
-			LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS.put(player.getUUID(), 6);
-		}
 	}
 
-	public static void updateLittleDictatorIronMechanismLookSpoof(ServerPlayer player) {
-		if (player == null || !(player.level() instanceof ServerLevel level) || getLittleDictatorStockAbility(player) == null) {
-			clearLittleDictatorIronMechanismLookSpoof(player);
+	public static boolean shouldRewriteLittleDictatorIronMechanismPackets(ServerPlayer receiver) {
+		return receiver != null && getLittleDictatorStockAbility(receiver) != null;
+	}
+
+	public static void sendLittleDictatorIronMechanismChunkOverlay(ServerPlayer receiver, ClientboundLevelChunkWithLightPacket packet) {
+		if (receiver == null || packet == null || receiver.connection == null || !shouldRewriteLittleDictatorIronMechanismPackets(receiver) || !(receiver.level() instanceof ServerLevel level)) {
 			return;
 		}
-		LittleDictatorIronMechanismClientSpoof desired = findLookedLittleDictatorIronMechanism(level, player);
-		if (desired == null) {
-			LittleDictatorIronMechanismClientSpoof previous = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(player.getUUID());
-			if (isStillLookingAtLittleDictatorIronMechanismShape(level, player, previous)) {
-				desired = previous;
-			}
-		}
-		syncLittleDictatorIronMechanismLookSpoof(player, desired, false);
-	}
-
-	private static LittleDictatorIronMechanismClientSpoof findLookedLittleDictatorIronMechanism(ServerLevel level, ServerPlayer player) {
-		if (level == null || player == null) {
-			return null;
-		}
-		Vec3 start = player.getEyePosition();
-		double reach = Math.max(4.5D, player.getAttributeValue(Attributes.BLOCK_INTERACTION_RANGE));
-		Vec3 end = start.add(player.getLookAngle().scale(reach));
-		BlockHitResult hit = level.clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
-		if (hit == null || hit.getType() != HitResult.Type.BLOCK) {
-			return null;
-		}
-		return createLittleDictatorIronMechanismSpoof(level, hit.getBlockPos());
-	}
-
-	private static boolean isStillLookingAtLittleDictatorIronMechanismShape(ServerLevel level, ServerPlayer player, LittleDictatorIronMechanismClientSpoof spoof) {
-		if (level == null || player == null || spoof == null || player.level() != level || !level.dimension().equals(spoof.dimension())) {
-			return false;
-		}
-		Vec3 start = player.getEyePosition();
-		double reach = Math.max(4.5D, player.getAttributeValue(Attributes.BLOCK_INTERACTION_RANGE));
-		Vec3 end = start.add(player.getLookAngle().scale(reach));
-		return isLookingAtLittleDictatorIronMechanismShape(level, player, start, end, spoof.pos())
-				|| (spoof.secondaryPos() != null && isLookingAtLittleDictatorIronMechanismShape(level, player, start, end, spoof.secondaryPos()));
-	}
-
-	private static boolean isLookingAtLittleDictatorIronMechanismShape(ServerLevel level, ServerPlayer player, Vec3 start, Vec3 end, BlockPos pos) {
-		if (level == null || start == null || end == null || pos == null) {
-			return false;
-		}
-		BlockState state = level.getBlockState(pos);
-		if (getLittleDictatorClientIronMechanismState(state) == null) {
-			return false;
-		}
-		VoxelShape shape = state.getShape(level, pos, CollisionContext.of(player));
-		return shape != null && !shape.isEmpty() && shape.clip(start, end, pos) != null;
-	}
-	private static LittleDictatorIronMechanismClientSpoof createLittleDictatorIronMechanismSpoof(ServerLevel level, BlockPos pos) {
-		if (level == null || pos == null) {
-			return null;
-		}
-		BlockState state = level.getBlockState(pos);
-		if (state.is(Blocks.IRON_DOOR)) {
-			BlockPos lowerPos = state.getValue(DoorBlock.HALF) == DoubleBlockHalf.UPPER ? pos.below() : pos;
-			return new LittleDictatorIronMechanismClientSpoof(level.dimension(), lowerPos, lowerPos.above());
-		}
-		if (state.is(Blocks.IRON_TRAPDOOR)) {
-			return new LittleDictatorIronMechanismClientSpoof(level.dimension(), pos, null);
-		}
-		return null;
-	}
-
-	private static void syncLittleDictatorIronMechanismLookSpoof(ServerPlayer player, LittleDictatorIronMechanismClientSpoof desired, boolean forceResend) {
-		if (player == null) {
+		LevelChunk chunk = level.getChunkSource().getChunkNow(packet.getX(), packet.getZ());
+		if (chunk == null) {
 			return;
 		}
-		UUID playerId = player.getUUID();
-		LittleDictatorIronMechanismClientSpoof previous = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(playerId);
-		if (Objects.equals(previous, desired) && !forceResend) {
-			return;
-		}
-		LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.remove(playerId);
-		if (!forceResend || !Objects.equals(previous, desired)) {
-			sendLittleDictatorIronMechanismActualState(player, previous);
-		}
-		MinecraftServer server = player.level() == null ? null : player.level().getServer();
-		if (desired != null && server != null) {
-			ServerLevel level = server.getLevel(desired.dimension());
-			if (level != null && player.level() == level) {
-				LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.put(playerId, desired);
-				sendLittleDictatorIronMechanismClientSpoof(player, level, desired.pos());
-				if (desired.secondaryPos() != null) {
-					sendLittleDictatorIronMechanismClientSpoof(player, level, desired.secondaryPos());
+		BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+		int minX = chunk.getPos().getMinBlockX();
+		int minZ = chunk.getPos().getMinBlockZ();
+		int minY = level.getMinY();
+		int maxY = level.getMaxY();
+		for (int x = minX; x < minX + 16; x++) {
+			for (int z = minZ; z < minZ + 16; z++) {
+				for (int y = minY; y < maxY; y++) {
+					cursor.set(x, y, z);
+					BlockState fakeState = getLittleDictatorClientIronMechanismState(chunk.getBlockState(cursor));
+					if (fakeState != null) {
+						receiver.connection.send(new ClientboundBlockUpdatePacket(cursor.immutable(), fakeState));
+					}
 				}
 			}
 		}
 	}
-
-	private static void tickLittleDictatorIronMechanismClientSpoofs(MinecraftServer server) {
-		if (server == null || LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS.isEmpty()) {
-			return;
-		}
-		Iterator<Map.Entry<UUID, Integer>> iterator = LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS.entrySet().iterator();
-		while (iterator.hasNext()) {
-			Map.Entry<UUID, Integer> entry = iterator.next();
-			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
-			LittleDictatorIronMechanismClientSpoof spoof = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(entry.getKey());
-			if (player == null || spoof == null || getLittleDictatorStockAbility(player) == null) {
-				iterator.remove();
-				continue;
-			}
-			resendActiveLittleDictatorIronMechanismSpoof(player);
-			int remaining = entry.getValue() == null ? 0 : entry.getValue() - 1;
-			if (remaining <= 0) {
-				iterator.remove();
-			} else {
-				entry.setValue(remaining);
-			}
-		}
-	}
-	private static void clearLittleDictatorIronMechanismLookSpoof(ServerPlayer player) {
-		if (player == null) {
-			return;
-		}
-		UUID playerId = player.getUUID();
-		LITTLE_DICTATOR_IRON_MECHANISM_RESPOOF_TICKS.remove(playerId);
-		LittleDictatorIronMechanismClientSpoof previous = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.remove(playerId);
-		sendLittleDictatorIronMechanismActualState(player, previous);
-	}
-
-	private static void sendLittleDictatorIronMechanismActualState(ServerPlayer player, LittleDictatorIronMechanismClientSpoof spoof) {
-		if (player == null || player.connection == null || spoof == null || player.level() == null || player.level().getServer() == null) {
-			return;
-		}
-		ServerLevel level = player.level().getServer().getLevel(spoof.dimension());
-		if (level == null || player.level() != level) {
-			return;
-		}
-		player.connection.send(new ClientboundBlockUpdatePacket(level, spoof.pos()));
-		if (spoof.secondaryPos() != null) {
-			player.connection.send(new ClientboundBlockUpdatePacket(level, spoof.secondaryPos()));
-		}
-	}
-
-	private static void sendLittleDictatorIronMechanismClientSpoof(ServerPlayer player, ServerLevel level, BlockPos pos) {
-		if (player == null || player.connection == null || level == null || pos == null || player.level() != level || getLittleDictatorStockAbility(player) == null) {
-			return;
-		}
-		BlockState fakeState = getLittleDictatorClientIronMechanismState(level.getBlockState(pos));
-		if (fakeState != null) {
-			player.connection.send(new ClientboundBlockUpdatePacket(pos, fakeState));
-		}
-	}
-
-	public static boolean shouldReplayLittleDictatorIronMechanismSectionUpdate(ServerPlayer receiver, ClientboundSectionBlocksUpdatePacket packet) {
-		if (receiver == null || packet == null || getLittleDictatorStockAbility(receiver) == null) {
+	public static boolean handleLittleDictatorIronMechanismSectionUpdate(ServerPlayer receiver, ClientboundSectionBlocksUpdatePacket packet) {
+		if (receiver == null || packet == null || receiver.connection == null || getLittleDictatorStockAbility(receiver) == null) {
 			return false;
 		}
-		LittleDictatorIronMechanismClientSpoof spoof = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(receiver.getUUID());
-		if (spoof == null || !receiver.level().dimension().equals(spoof.dimension())) {
-			return false;
-		}
-		boolean[] matches = {false};
+		List<Map.Entry<BlockPos, BlockState>> updates = new ArrayList<>();
+		boolean[] hasReplacement = {false};
 		packet.runUpdates((pos, state) -> {
-			if (matches[0]) {
-				return;
+			BlockPos immutablePos = pos.immutable();
+			updates.add(Map.entry(immutablePos, state));
+			if (getLittleDictatorClientIronMechanismState(state) != null) {
+				hasReplacement[0] = true;
 			}
-			matches[0] = spoof.pos().equals(pos) || Objects.equals(spoof.secondaryPos(), pos);
 		});
-		return matches[0];
+		if (!hasReplacement[0]) {
+			return false;
+		}
+		for (Map.Entry<BlockPos, BlockState> update : updates) {
+			BlockState fakeState = getLittleDictatorClientIronMechanismState(update.getValue());
+			receiver.connection.send(new ClientboundBlockUpdatePacket(update.getKey(), fakeState == null ? update.getValue() : fakeState));
+		}
+		return true;
 	}
 
-	public static void resendActiveLittleDictatorIronMechanismSpoof(ServerPlayer receiver) {
-		if (receiver == null || getLittleDictatorStockAbility(receiver) == null) {
-			return;
-		}
-		LittleDictatorIronMechanismClientSpoof spoof = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(receiver.getUUID());
-		if (spoof == null || receiver.level() == null || receiver.level().getServer() == null || !receiver.level().dimension().equals(spoof.dimension())) {
-			return;
-		}
-		ServerLevel level = receiver.level().getServer().getLevel(spoof.dimension());
-		if (level == null || receiver.level() != level) {
-			return;
-		}
-		sendLittleDictatorIronMechanismClientSpoof(receiver, level, spoof.pos());
-		if (spoof.secondaryPos() != null) {
-			sendLittleDictatorIronMechanismClientSpoof(receiver, level, spoof.secondaryPos());
-		}
-	}
 	public static ClientboundBlockUpdatePacket rewriteLittleDictatorIronMechanismBlockUpdate(ServerPlayer receiver, ClientboundBlockUpdatePacket packet) {
 		if (receiver == null || packet == null || getLittleDictatorStockAbility(receiver) == null) {
 			return packet;
 		}
-		LittleDictatorIronMechanismClientSpoof spoof = LITTLE_DICTATOR_IRON_MECHANISM_CLIENT_SPOOFS.get(receiver.getUUID());
-		if (spoof == null || (!spoof.pos().equals(packet.getPos()) && !Objects.equals(spoof.secondaryPos(), packet.getPos())) || !receiver.level().dimension().equals(spoof.dimension())) {
-			return packet;
-		}
 		BlockState fakeState = getLittleDictatorClientIronMechanismState(packet.getBlockState());
-		if (fakeState == null && receiver.level() instanceof ServerLevel level) {
-			fakeState = getLittleDictatorClientIronMechanismState(level.getBlockState(packet.getPos()));
-		}
 		return fakeState == null ? packet : new ClientboundBlockUpdatePacket(packet.getPos(), fakeState);
 	}
-
 	private static BlockState getLittleDictatorClientIronMechanismState(BlockState state) {
 		if (state == null) {
 			return null;
 		}
 		if (state.is(Blocks.IRON_DOOR)) {
-			return Blocks.OAK_DOOR.defaultBlockState()
+			return ModBlocks.DICTATOR_IRON_DOOR.defaultBlockState()
 					.setValue(DoorBlock.FACING, state.getValue(DoorBlock.FACING))
 					.setValue(DoorBlock.OPEN, state.getValue(DoorBlock.OPEN))
 					.setValue(DoorBlock.HINGE, state.getValue(DoorBlock.HINGE))
@@ -4823,7 +4684,7 @@ public final class ServerRaceSystem {
 					.setValue(DoorBlock.HALF, state.getValue(DoorBlock.HALF));
 		}
 		if (state.is(Blocks.IRON_TRAPDOOR)) {
-			return Blocks.OAK_TRAPDOOR.defaultBlockState()
+			return ModBlocks.DICTATOR_IRON_TRAPDOOR.defaultBlockState()
 					.setValue(TrapDoorBlock.FACING, state.getValue(TrapDoorBlock.FACING))
 					.setValue(TrapDoorBlock.OPEN, state.getValue(TrapDoorBlock.OPEN))
 					.setValue(TrapDoorBlock.HALF, state.getValue(TrapDoorBlock.HALF))
@@ -6343,6 +6204,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		display.setItemStack(ServerSelectionHighlightSystem.createHighlightCarrierStack());
 		display.setItemTransform(ItemDisplayContext.FIXED);
 		display.setBillboardConstraints(Display.BillboardConstraints.FIXED);
+		ItemDisplayHitboxHelper.clear(display);
 		return display;
 	}
 
@@ -11670,7 +11532,6 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		syncGennadiyDonkeyManualVisual(player);
 		syncGennadiyDefenseHeadLock(player);
 		lockLittleDictatorUniqueCasterMovement(player);
-		updateLittleDictatorIronMechanismLookSpoof(player);
 		WomanAttackChargeSession session = WOMAN_ATTACK_CHARGE_SESSIONS.get(player.getUUID());
 		if (session != null) {
 			syncWomanAttackAirTrigger(player, session);
@@ -11680,7 +11541,6 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 	public static void handlePlayerInputPacket(ServerPlayer player) {
 		syncGennadiyDefenseHeadLock(player);
 		lockLittleDictatorUniqueCasterMovement(player);
-		updateLittleDictatorIronMechanismLookSpoof(player);
 	}
 
 	public static boolean handleGennadiyDefenseMovementPacket(ServerPlayer player) {
@@ -13203,15 +13063,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 	}
 
 	private static void clearMarkAxeDisplayHitbox(Display.ItemDisplay display) {
-		if (display == null) {
-			return;
-		}
-		display.noPhysics = true;
-		((DisplayAccessor) display).lg2$setDisplayWidth(0.0F);
-		((DisplayAccessor) display).lg2$setDisplayHeight(0.0F);
-		display.refreshDimensions();
-		Vec3 position = display.position();
-		display.setBoundingBox(new AABB(position.x, position.y, position.z, position.x, position.y, position.z));
+		ItemDisplayHitboxHelper.clear(display);
 	}
 
 	private static void updateMarkAxeDisplay(Display.ItemDisplay display, MarkThrownAxeSession session, Vec3 visualDirection) {
@@ -13321,6 +13173,24 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		tickMarkThrownAxes(server);
 		tickMarkBleedingSessions(server);
 		tickMarkRage(server);
+		tickMarkStockMovementSpeed(server);
+	}
+
+	private static void tickMarkStockMovementSpeed(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		Set<UUID> activePlayers = new HashSet<>();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			RaceAbilityConfig stock = getMarkStockAbility(player);
+			if (stock == null || !player.isAlive() || player.isSpectator()) {
+				removeMarkStockSpeedPenalty(player);
+				continue;
+			}
+			activePlayers.add(player.getUUID());
+			applyMarkStockSpeedPenalty(player, getMarkStockMovementSpeedPenaltyRatio(stock));
+		}
+		MARK_STOCK_LAST_MELEE_HIT_TICKS.keySet().removeIf(playerId -> !activePlayers.contains(playerId));
 	}
 
 	private static void tickMarkStockHungerLocks(MinecraftServer server) {
@@ -13333,12 +13203,16 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			RaceAbilityConfig stock = getMarkStockAbility(player);
 			if (stock == null || !player.isAlive() || player.isSpectator()) {
 				MARK_STOCK_FOOD_SNAPSHOTS.remove(playerId);
+				MARK_STOCK_LAST_MELEE_HIT_TICKS.remove(playerId);
+				removeMarkStockSpeedPenalty(player);
 				continue;
 			}
 			activePlayers.add(playerId);
 			FoodData foodData = player.getFoodData();
 			if (foodData == null) {
 				MARK_STOCK_FOOD_SNAPSHOTS.remove(playerId);
+				MARK_STOCK_LAST_MELEE_HIT_TICKS.remove(playerId);
+				removeMarkStockSpeedPenalty(player);
 				continue;
 			}
 
@@ -14858,6 +14732,18 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		return positiveOrDefault(stock == null ? 0.0D : stock.markStockPlayerKillHearts, MARK_STOCK_DEFAULT_PLAYER_KILL_HEARTS);
 	}
 
+	private static double getMarkStockFirstHitDamageMultiplier(RaceAbilityConfig stock) {
+		return positiveOrDefault(stock == null ? 0.0D : stock.markStockFirstHitDamageMultiplier, MARK_STOCK_DEFAULT_FIRST_HIT_DAMAGE_MULTIPLIER);
+	}
+
+	private static long getMarkStockFirstHitResetTicks(RaceAbilityConfig stock) {
+		return Math.max(1L, asTicks(positiveOrDefault(stock == null ? 0.0D : stock.markStockFirstHitResetSeconds, MARK_STOCK_DEFAULT_FIRST_HIT_RESET_SECONDS)));
+	}
+
+	private static double getMarkStockMovementSpeedPenaltyRatio(RaceAbilityConfig stock) {
+		return Math.max(0.0D, Math.min(1.0D, positiveOrDefault(stock == null ? 0.0D : stock.markStockMovementSpeedPenaltyRatio, MARK_STOCK_DEFAULT_MOVEMENT_SPEED_PENALTY_RATIO)));
+	}
+
 	private static double getMilkStockAvoidRadius(RaceAbilityConfig stock) {
 		return positiveOrDefault(stock == null ? 0.0D : stock.milkStockAvoidRadiusBlocks, MILK_STOCK_DEFAULT_AVOID_RADIUS_BLOCKS);
 	}
@@ -15127,10 +15013,11 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			return false;
 		}
 		if (target.getTags().contains(GENNADIY_DONKEY_TAG)) {
-			return false;
+			return true;
 		}
 		return !(target instanceof ServerPlayer targetPlayer) || !caster.isAlliedTo(targetPlayer);
 	}
+
 
 	private static Vec3 getGennadiyHookOrigin(ServerPlayer player) {
 		return player.getEyePosition().subtract(0.0D, 0.12D, 0.0D);
@@ -16288,10 +16175,13 @@ private static InteractionHand selectGennadiyReportHand(ServerPlayer player) {
 		if (level == null || player == null || target == null || session == null) {
 			return;
 		}
-		if (session.damage > 0.0D) {
+		boolean battleDonkey = target.getTags().contains(GENNADIY_DONKEY_TAG);
+		if (!battleDonkey && session.damage > 0.0D) {
 			target.hurtServer(level, gennadiyHookDamageSource(level, player), (float) session.damage);
 		}
-		target.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, (int) Math.min(Integer.MAX_VALUE, session.slownessTicks), 2, false, true, true));
+		if (!battleDonkey) {
+			target.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, (int) Math.min(Integer.MAX_VALUE, session.slownessTicks), 2, false, true, true));
+		}
 		Vec3 center = target.position().add(0.0D, Math.max(0.25D, target.getBbHeight() * 0.55D), 0.0D);
 		level.sendParticles(
 				ParticleTypes.CRIT,
@@ -16469,15 +16359,7 @@ private static InteractionHand selectGennadiyReportHand(ServerPlayer player) {
 	}
 
 	private static void clearGennadiyHookChainHitbox(Display.ItemDisplay display) {
-		if (display == null) {
-			return;
-		}
-		display.noPhysics = true;
-		((DisplayAccessor) display).lg2$setDisplayWidth(0.0F);
-		((DisplayAccessor) display).lg2$setDisplayHeight(0.0F);
-		display.refreshDimensions();
-		Vec3 position = display.position();
-		display.setBoundingBox(new AABB(position.x, position.y, position.z, position.x, position.y, position.z));
+		ItemDisplayHitboxHelper.clear(display);
 	}
 
 	private static void trimGennadiyHookSegments(MinecraftServer server, GennadiyHookSession session, int desiredCount) {
@@ -17880,6 +17762,59 @@ private static InteractionHand selectGennadiyReportHand(ServerPlayer player) {
 		return victim.getLastHurtByMob();
 	}
 
+	public static float modifyMarkStockFirstHitDamage(ServerLevel level, LivingEntity victim, DamageSource damageSource, float damage) {
+		if (level == null || victim == null || damageSource == null || damage <= 0.0F || !damageSource.is(DamageTypes.PLAYER_ATTACK)) {
+			return damage;
+		}
+		if (!(damageSource.getEntity() instanceof ServerPlayer attacker) || attacker == victim || !attacker.isAlive() || attacker.isSpectator()) {
+			return damage;
+		}
+		RaceAbilityConfig stock = getMarkStockAbility(attacker);
+		if (stock == null) {
+			return damage;
+		}
+		long nowTick = level.getGameTime();
+		long resetTicks = getMarkStockFirstHitResetTicks(stock);
+		Long lastHitTick = MARK_STOCK_LAST_MELEE_HIT_TICKS.put(attacker.getUUID(), nowTick);
+		if (lastHitTick == null || nowTick - lastHitTick >= resetTicks) {
+			return (float) Math.max(0.0D, damage * getMarkStockFirstHitDamageMultiplier(stock));
+		}
+		return damage;
+	}
+
+	private static void applyMarkStockSpeedPenalty(ServerPlayer player, double penaltyRatio) {
+		if (player == null) {
+			return;
+		}
+		AttributeInstance attribute = player.getAttribute(Attributes.MOVEMENT_SPEED);
+		if (attribute == null) {
+			return;
+		}
+		double amount = -Math.max(0.0D, Math.min(1.0D, penaltyRatio));
+		AttributeModifier current = attribute.getModifier(MARK_STOCK_SPEED_MODIFIER_ID);
+		if (amount >= 0.0D) {
+			if (current != null) {
+				attribute.removeModifier(MARK_STOCK_SPEED_MODIFIER_ID);
+			}
+			return;
+		}
+		if (current == null || Math.abs(current.amount() - amount) > 1.0E-6D || current.operation() != AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL) {
+			if (current != null) {
+				attribute.removeModifier(MARK_STOCK_SPEED_MODIFIER_ID);
+			}
+			attribute.addTransientModifier(new AttributeModifier(MARK_STOCK_SPEED_MODIFIER_ID, amount, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+		}
+	}
+
+	private static void removeMarkStockSpeedPenalty(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		AttributeInstance attribute = player.getAttribute(Attributes.MOVEMENT_SPEED);
+		if (attribute != null && attribute.getModifier(MARK_STOCK_SPEED_MODIFIER_ID) != null) {
+			attribute.removeModifier(MARK_STOCK_SPEED_MODIFIER_ID);
+		}
+	}
 	private static void handleMarkStockKillRecovery(ServerPlayer player, LivingEntity victim) {
 		RaceAbilityConfig stock = getMarkStockAbility(player);
 		if (stock == null || victim == null || player == victim) {
@@ -21101,9 +21036,6 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 		double bestDistanceSqr = Double.MAX_VALUE;
 		for (Entity entity : player.level().getEntities(player, searchBox, entity -> entity instanceof LivingEntity living && living.isAlive() && !living.isSpectator())) {
 			if (!(entity instanceof LivingEntity living)) {
-				continue;
-			}
-			if (entity.getTags().contains(CARTEL_SUMMON_TAG) || entity.getTags().contains(CARTEL_LAWYER_TAG)) {
 				continue;
 			}
 			if (!player.hasLineOfSight(living)) {

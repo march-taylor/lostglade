@@ -14,6 +14,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
@@ -34,7 +35,9 @@ import net.minecraft.world.level.block.BasePressurePlateBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ButtonBlock;
+import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.Set;
@@ -226,6 +229,70 @@ public final class ServerMechanicsGateSystem {
 		ServerTickEvents.END_SERVER_TICK.register(ServerMechanicsGateSystem::tickIllegalItems);
 	}
 
+	public static boolean handleLittleDictatorIronDoorPlayerAction(ServerPlayer player, ServerboundPlayerActionPacket packet) {
+		if (player == null || packet == null || !(player.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		ServerboundPlayerActionPacket.Action action = packet.getAction();
+		if (action != ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK
+				&& !(player.isCreative() && action == ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK)) {
+			return false;
+		}
+		BlockPos pos = packet.getPos();
+		BlockState state = level.getBlockState(pos);
+		return handleLittleDictatorIronDoorBreak(level, player, pos, state)
+				|| handleLittleDictatorIronTrapdoorBreak(level, player, pos, state);
+	}
+
+	private static boolean handleLittleDictatorIronDoorBreak(Level world, ServerPlayer player, BlockPos pos, BlockState state) {
+		if (!(world instanceof ServerLevel level)
+				|| player == null
+				|| pos == null
+				|| state == null
+				|| !state.is(Blocks.IRON_DOOR)
+				|| !ServerRaceSystem.canLittleDictatorBypassInteraction(player, state)) {
+			return false;
+		}
+
+		BlockPos lowerPos = state.getValue(DoorBlock.HALF) == DoubleBlockHalf.UPPER ? pos.below() : pos;
+		BlockPos upperPos = lowerPos.above();
+		BlockState lowerState = level.getBlockState(lowerPos);
+		BlockState upperState = level.getBlockState(upperPos);
+		boolean breakingUpperHalf = state.getValue(DoorBlock.HALF) == DoubleBlockHalf.UPPER;
+		boolean shouldDrop = !player.isCreative()
+				&& (breakingUpperHalf || player.getMainHandItem().isCorrectToolForDrops(lowerState));
+
+		BlockPos brokenPos = breakingUpperHalf ? upperPos : lowerPos;
+		BlockPos silentOtherPos = breakingUpperHalf ? lowerPos : upperPos;
+		if (level.getBlockState(brokenPos).is(Blocks.IRON_DOOR)) {
+			level.destroyBlock(brokenPos, false, player);
+		}
+		if (level.getBlockState(silentOtherPos).is(Blocks.IRON_DOOR)) {
+			level.removeBlock(silentOtherPos, false);
+		}
+		if (shouldDrop) {
+			Block.popResource(level, lowerPos, new ItemStack(Items.IRON_DOOR));
+		}
+		return true;
+	}
+
+	private static boolean handleLittleDictatorIronTrapdoorBreak(Level world, ServerPlayer player, BlockPos pos, BlockState state) {
+		if (!(world instanceof ServerLevel level)
+				|| player == null
+				|| pos == null
+				|| state == null
+				|| !state.is(Blocks.IRON_TRAPDOOR)
+				|| !ServerRaceSystem.canLittleDictatorBypassInteraction(player, state)) {
+			return false;
+		}
+
+		boolean shouldDrop = !player.isCreative() && player.getMainHandItem().isCorrectToolForDrops(state);
+		level.destroyBlock(pos, false, player);
+		if (shouldDrop) {
+			Block.popResource(level, pos, new ItemStack(Items.IRON_TRAPDOOR));
+		}
+		return true;
+	}
 	public static boolean canTakeCraftResult(ServerPlayer player, ItemStack stack) {
 		if (player == null) {
 			return true;

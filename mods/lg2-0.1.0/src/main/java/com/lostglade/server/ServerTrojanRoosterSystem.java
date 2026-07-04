@@ -74,7 +74,7 @@ public final class ServerTrojanRoosterSystem {
 	private static final String DISPLAY_ROOT_TAG = "lg2_trojan_rooster_display";
 	private static final String BAN_REASON = "Вага-бага-ждуби-ду >:D";
 	private static final SimpleParticleType FEED_PARTICLE = resolveFeedParticle();
-	private static final Identifier TROJAN_THEME_SOUND_ID = Identifier.fromNamespaceAndPath("minecraft", "custom.trojan_rooster_theme");
+	private static final Identifier TROJAN_THEME_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "trojan_rooster_theme");
 	private static final Holder<SoundEvent> TROJAN_THEME_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(TROJAN_THEME_SOUND_ID));
 	private static final Identifier LAVA_CHICKEN_SOUND_ID = BuiltInRegistries.SOUND_EVENT.getKey(SoundEvents.MUSIC_DISC_LAVA_CHICKEN.value());
 	private static final Set<ItemEntity> TRACKED_BITCOIN_ITEMS = ConcurrentHashMap.newKeySet();
@@ -525,6 +525,9 @@ public final class ServerTrojanRoosterSystem {
 		if (dashIntoTargetIfClose(level, chicken, target, targetX, targetY, targetZ, state)) {
 			return;
 		}
+		if (applyAirChaseMovement(level, chicken, targetX, targetZ, state)) {
+			return;
+		}
 		if (now >= state.nextNavigationRetargetTick || hasTargetMovedEnough(targetX, targetY, targetZ, state)) {
 			chicken.getNavigation().moveTo(target, 1.0D);
 			state.lastTargetX = targetX;
@@ -556,6 +559,27 @@ public final class ServerTrojanRoosterSystem {
 		state.lastTargetX = targetX;
 		state.lastTargetY = targetY;
 		state.lastTargetZ = targetZ;
+		state.nextNavigationRetargetTick = level.getGameTime() + 1L;
+		return true;
+	}
+
+	private static boolean applyAirChaseMovement(ServerLevel level, Chicken chicken, double targetX, double targetZ, TrojanRoosterState state) {
+		if (chicken.onGround()) {
+			return false;
+		}
+
+		double dx = targetX - chicken.getX();
+		double dz = targetZ - chicken.getZ();
+		double horizontalDistanceSqr = dx * dx + dz * dz;
+		if (horizontalDistanceSqr < 1.0E-6D) {
+			return false;
+		}
+
+		double inverseDistance = Mth.invSqrt(horizontalDistanceSqr);
+		Vec3 movement = chicken.getDeltaMovement();
+		chicken.getNavigation().stop();
+		chicken.setDeltaMovement(dx * inverseDistance * CHASE_SPEED_PER_TICK, movement.y, dz * inverseDistance * CHASE_SPEED_PER_TICK);
+		chicken.hurtMarked = true;
 		state.nextNavigationRetargetTick = level.getGameTime() + 1L;
 		return true;
 	}
