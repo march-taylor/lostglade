@@ -134,6 +134,7 @@ public final class ServerUpgradeUiSystem {
 	private static final String RACE_DEFENSE_BUTTON_ID = "defense";
 	private static final String RACE_ABILITY_BUTTON_ID = "ability";
 	private static final String RACE_SHNYAGA_BUTTON_ID = "shnyaga";
+	private static final String IT_DRONE_SCOUT_UPGRADE_ID = "it_drone_scout";
 	private static final int RACE_ATTACK_SLOT = 37;
 	private static final int RACE_DEFENSE_SLOT = 39;
 	private static final int RACE_ABILITY_SLOT = 41;
@@ -248,6 +249,10 @@ public final class ServerUpgradeUiSystem {
 
 	public static boolean openScreen(ServerPlayer player, String screenId) {
 		if (player == null || screenId == null || screenId.isBlank()) {
+			return false;
+		}
+		if ("it_drones".equals(screenId) && !hasUpgrade(player, IT_DRONE_SCOUT_UPGRADE_ID)) {
+			playPurchaseBlockedSound(player);
 			return false;
 		}
 

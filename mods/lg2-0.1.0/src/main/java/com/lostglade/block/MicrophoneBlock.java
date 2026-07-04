@@ -62,6 +62,11 @@ public final class MicrophoneBlock extends SimplePolymerBlock implements Polymer
 	}
 
 	@Override
+	public boolean forceLightUpdates(BlockState blockState) {
+		return true;
+	}
+
+	@Override
 	protected BlockState rotate(BlockState state, Rotation rotation) {
 		return state;
 	}

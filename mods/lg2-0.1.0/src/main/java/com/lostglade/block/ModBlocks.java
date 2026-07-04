@@ -443,6 +443,7 @@ public final class ModBlocks {
 				.mapColor(MapColor.METAL)
 				.strength(1.2F, 3.0F)
 				.sound(SoundType.STONE)
+				.lightLevel(state -> 1)
 				.noLootTable()
 				.noOcclusion()
 				.setId(MICROPHONE_KEY);
