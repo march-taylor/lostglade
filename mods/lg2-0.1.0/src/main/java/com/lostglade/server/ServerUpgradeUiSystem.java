@@ -685,7 +685,7 @@ public final class ServerUpgradeUiSystem {
 			ButtonState state,
 			boolean hasPack
 	) {
-		if (shouldShowPurchaseLock(viewer, screenId, button, state)) {
+		if (shouldShowPurchaseLock(viewer, button, state)) {
 			return MENU_LOCK_ICON;
 		}
 
@@ -694,14 +694,10 @@ public final class ServerUpgradeUiSystem {
 
 	private static boolean shouldShowPurchaseLock(
 			ServerPlayer player,
-			String screenId,
 			UpgradeUiConfig.ButtonConfig button,
 			ButtonState state
 	) {
 		if (button == null || !UpgradeUiConfig.ButtonType.PURCHASE_UPGRADE.id.equals(button.type)) {
-			return false;
-		}
-		if (usesInvisibleTreePurchaseVisuals(screenId)) {
 			return false;
 		}
 		if (state == ButtonState.MAXED) {
@@ -711,10 +707,6 @@ public final class ServerUpgradeUiSystem {
 			return true;
 		}
 		return getUpgradeLevel(player, button.upgradeId) <= 0;
-	}
-
-	private static boolean usesInvisibleTreePurchaseVisuals(String screenId) {
-		return "it_hub".equals(screenId) || "it_drones".equals(screenId);
 	}
 
 	private static Component buildTooltipNameComponent(
