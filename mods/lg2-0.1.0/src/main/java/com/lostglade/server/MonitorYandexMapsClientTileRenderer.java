@@ -1,6 +1,7 @@
 package com.lostglade.server;
 
 import com.lostglade.Lg2;
+import net.minecraft.core.SectionPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -43,20 +44,20 @@ final class MonitorYandexMapsClientTileRenderer {
 	private static final int MAX_CACHED_TILES_PER_DIMENSION = 4_096;
 	private static final int MAX_MISSING_TILES_PER_DIMENSION = 65_536;
 	private static final int MAX_BASE_TILE_REQUESTS_PER_FRAME = 4;
+	private static final int RENDERER_BOT_MAP_TILE_PRIORITY_SCORE = 0;
+	private static final int MIN_LOD_REBUILT_FROM_BASE_CHILDREN = MIN_LOD + 1;
+	private static final int VISIBLE_DISCOVERY_CHUNK_SCAN_LIMIT = Math.max(16, Integer.getInteger("lg2.yandexMapVisibleDiscoveryChunkScanLimit", 512));
 	private static final long BACKGROUND_REFRESH_INTERVAL_TICKS = 20L;
 	private static final int BACKGROUND_BASE_TILE_REQUESTS_PER_PASS_MIN = Math.max(1, Integer.getInteger("lg2.yandexMapBackgroundBaseTileRequestsPerPassMin", 2));
 	private static final int BACKGROUND_BASE_TILE_REQUESTS_PER_PASS_MAX = Math.max(BACKGROUND_BASE_TILE_REQUESTS_PER_PASS_MIN, Integer.getInteger("lg2.yandexMapBackgroundBaseTileRequestsPerPassMax", 4));
 	private static final int BACKGROUND_DISCOVERY_BACKLOG_THRESHOLD = Math.max(128, Integer.getInteger("lg2.yandexMapBackgroundDiscoveryBacklogThreshold", 1_024));
 	private static final long BACKGROUND_STALE_BACKLOG_MS = 90L * 60_000L;
-	private static final long ACTIVE_VIEW_HINT_TTL_MS = 20_000L;
-	private static final int ACTIVE_VIEW_PRIORITY_TILE_MARGIN = 2;
 	private static final int MAX_DIRTY_BASE_TILES_PER_DIMENSION = 32_768;
 	private static final long BASE_TILE_REFRESH_MS = 30L * 60_000L;
 	private static final String CACHE_DIR_NAME = "lg2-yandex-map-client-tiles-v12";
 	private static final int MISSING_RGB = 0x18242B;
 	private static final Object LOCK = new Object();
 	private static final Map<WorldCacheKey, DimensionTileCache> CACHES = new LinkedHashMap<>(8, 0.75F, true);
-	private static final Map<ScreenRuntimeKey, ActiveViewHint> ACTIVE_VIEW_HINTS = new ConcurrentHashMap<>();
 	private static volatile Path persistentRoot;
 
 	private MonitorYandexMapsClientTileRenderer() {
@@ -82,6 +83,10 @@ final class MonitorYandexMapsClientTileRenderer {
 			}
 			caches = new ArrayList<>(CACHES.values());
 		}
+		caches.removeIf(cache -> cache == null || !isMapDimension(cache.worldKey.dimension()));
+		if (caches.isEmpty()) {
+			return;
+		}
 		caches.sort(Comparator.comparingLong(DimensionTileCache::oldestPendingBaseTileAt));
 		int pendingBaseTiles = 0;
 		long oldestPendingAt = Long.MAX_VALUE;
@@ -93,12 +98,6 @@ final class MonitorYandexMapsClientTileRenderer {
 			oldestPendingAt = Math.min(oldestPendingAt, cache.oldestPendingBaseTileAt());
 		}
 		TileRequestBudget budget = new TileRequestBudget(backgroundBaseTileRequestsPerPass(server, pendingBaseTiles, oldestPendingAt));
-		for (DimensionTileCache cache : caches) {
-			if (cache == null || !budget.hasRemaining()) {
-				break;
-			}
-			cache.refreshDirtyBaseTiles(server, budget, true);
-		}
 		boolean progressed;
 		do {
 			progressed = false;
@@ -106,16 +105,16 @@ final class MonitorYandexMapsClientTileRenderer {
 				if (cache == null || !budget.hasRemaining()) {
 					break;
 				}
-				progressed |= cache.refreshDirtyBaseTiles(server, budget, false);
+				progressed |= cache.refreshDirtyBaseTiles(server, budget);
 			}
 		} while (progressed && budget.hasRemaining());
 	}
 
 	static void onChunkLoad(ServerLevel level, LevelChunk chunk) {
-		if (level == null || chunk == null || !chunk.isUnsaved()) {
+		if (level == null || chunk == null || !isMapDimension(level.dimension())) {
 			return;
 		}
-		markChunkDirty(level, chunk.getPos(), true);
+		markChunkDiscovered(level, chunk.getPos());
 	}
 
 	static void markChunkDirty(ServerLevel level, ChunkPos pos) {
@@ -123,20 +122,14 @@ final class MonitorYandexMapsClientTileRenderer {
 	}
 
 	static void deactivateView(ScreenRuntimeKey key) {
-		if (key == null) {
-			return;
-		}
-		ACTIVE_VIEW_HINTS.remove(key);
 	}
 
 	static void clear(ResourceKey<Level> dimension) {
 		synchronized (LOCK) {
 			if (dimension == null) {
 				CACHES.clear();
-				ACTIVE_VIEW_HINTS.clear();
 			} else {
 				CACHES.keySet().removeIf(key -> dimension.equals(key.dimension()));
-				ACTIVE_VIEW_HINTS.entrySet().removeIf(entry -> entry.getKey() == null || dimension.equals(entry.getKey().dimension()));
 			}
 		}
 	}
@@ -166,7 +159,7 @@ final class MonitorYandexMapsClientTileRenderer {
 	}
 
 	private static void markChunkDirty(ServerLevel level, ChunkPos pos, boolean discoveryOnly) {
-		if (level == null || pos == null) {
+		if (level == null || pos == null || !isMapDimension(level.dimension())) {
 			return;
 		}
 		MinecraftServer server = level.getServer();
@@ -175,6 +168,18 @@ final class MonitorYandexMapsClientTileRenderer {
 		}
 		configure(server);
 		cacheFor(worldCacheKey(server, level)).markChunkDirty(pos, System.currentTimeMillis(), discoveryOnly);
+	}
+
+	private static void markChunkDiscovered(ServerLevel level, ChunkPos pos) {
+		if (level == null || pos == null || !isMapDimension(level.dimension())) {
+			return;
+		}
+		MinecraftServer server = level.getServer();
+		if (server == null) {
+			return;
+		}
+		configure(server);
+		cacheFor(worldCacheKey(server, level)).markChunkDiscovered(pos, System.currentTimeMillis());
 	}
 
 	private static void deleteDirectory(Path root) {
@@ -220,44 +225,25 @@ final class MonitorYandexMapsClientTileRenderer {
 		if (server == null || level == null || width <= 0 || height <= 0 || !Double.isFinite(blocksPerPixel) || blocksPerPixel <= 0.0D) {
 			return Frame.failure(null, "Карта недоступна");
 		}
+		if (!isMapDimension(level.dimension())) {
+			return Frame.failure(null, "Карта доступна только в верхнем мире");
+		}
 		configure(server);
 		WorldCacheKey worldKey = worldCacheKey(server, level);
 		double safeBlocksPerPixel = snapBlocksPerPixel(blocksPerPixel);
-		recordActiveView(worldKey, activeViewKey, centerX, centerZ, width, height, safeBlocksPerPixel);
 		int lod = lodForBlocksPerPixel(safeBlocksPerPixel);
 		double tileBlocksPerPixel = blocksPerPixelForLod(lod);
 		double worldLeft = centerX - width * safeBlocksPerPixel * 0.5D;
 		double worldTop = centerZ - height * safeBlocksPerPixel * 0.5D;
 		DimensionTileCache cache = cacheFor(worldKey);
 		List<TileKey> visibleTiles = visibleTiles(lod, tileBlocksPerPixel, worldLeft, worldTop, width, height, safeBlocksPerPixel, centerX, centerZ);
+		cache.discoverLoadedViewportBaseTiles(level, worldLeft, worldTop, width, height, safeBlocksPerPixel, System.currentTimeMillis());
+		cache.buildVisibleTilesFromAvailableChildren(visibleTiles);
 		TileRequestBudget budget = new TileRequestBudget(MAX_BASE_TILE_REQUESTS_PER_FRAME);
-		boolean activeView = activeViewKey != null;
-		int missingTiles = 0;
-		List<TileKey> refreshTiles = new ArrayList<>();
-		for (TileKey key : visibleTiles) {
-			if (cache.needsTileCompletion(key)) {
-				missingTiles++;
-				cache.requestTile(server, level, key, budget, onTileReady, 10, activeView);
-				continue;
-			}
-			refreshTiles.add(key);
-		}
-		for (TileKey key : refreshTiles) {
-			if (!budget.hasRemaining()) {
-				break;
-			}
-			cache.refreshIfStale(server, level, key, budget, onTileReady, 1, activeView);
-		}
-		if (budget.hasRemaining()) {
-			for (TileKey key : prefetchTiles(visibleTiles, tileBlocksPerPixel, centerX, centerZ)) {
-				if (!budget.hasRemaining()) {
-					break;
-				}
-				if (cache.needsTileCompletion(key)) {
-					cache.requestTile(server, level, key, budget, onTileReady, 6, activeView);
-				}
-			}
-		}
+		boolean progressed;
+		do {
+			progressed = cache.refreshDirtyBaseTiles(server, budget, onTileReady);
+		} while (progressed && budget.hasRemaining());
 
 		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
 		int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
@@ -276,11 +262,11 @@ final class MonitorYandexMapsClientTileRenderer {
 			}
 		}
 		String status;
-		boolean needsCamera = missingTiles > 0 || missingPixels > 0;
+		boolean needsCamera = missingPixels > 0 || cache.pendingBaseTileCount() > 0;
 		if (!RendererBotCameraSystem.hasReadyBot(server) && needsCamera) {
 			status = "Нет клиента камеры";
 		} else if (needsCamera) {
-			status = "Рендер карты: " + Math.max(0, budget.used()) + " тайл.";
+			status = "Очередь карты: " + cache.pendingBaseTileCount() + " тайл.";
 		} else {
 			status = "Client camera tiles";
 		}
@@ -305,6 +291,18 @@ final class MonitorYandexMapsClientTileRenderer {
 	static double blocksPerPixelForZoomExponent(int exponent) {
 		int clamped = Mth.clamp(exponent, MIN_ZOOM_EXPONENT, MAX_ZOOM_EXPONENT);
 		return Math.scalb(BASE_BLOCKS_PER_PIXEL, clamped);
+	}
+
+	static boolean isMapDimension(ResourceKey<Level> dimension) {
+		return Level.OVERWORLD.equals(dimension);
+	}
+
+	static int rendererBotMapTilePriorityScore(int internalPriorityScore) {
+		return RENDERER_BOT_MAP_TILE_PRIORITY_SCORE;
+	}
+
+	static boolean rendererBotMapTileActiveView(boolean activeView) {
+		return false;
 	}
 
 	private static DimensionTileCache cacheFor(WorldCacheKey key) {
@@ -337,55 +335,6 @@ final class MonitorYandexMapsClientTileRenderer {
 			budget++;
 		}
 		return Mth.clamp(budget, BACKGROUND_BASE_TILE_REQUESTS_PER_PASS_MIN, BACKGROUND_BASE_TILE_REQUESTS_PER_PASS_MAX);
-	}
-
-	private static void recordActiveView(
-			WorldCacheKey worldKey,
-			ScreenRuntimeKey activeViewKey,
-			double centerX,
-			double centerZ,
-			int width,
-			int height,
-			double blocksPerPixel
-	) {
-		if (worldKey == null
-				|| activeViewKey == null
-				|| width <= 0
-				|| height <= 0
-				|| !Double.isFinite(centerX)
-				|| !Double.isFinite(centerZ)
-				|| !Double.isFinite(blocksPerPixel)
-				|| blocksPerPixel <= 0.0D) {
-			return;
-		}
-		long now = System.currentTimeMillis();
-		pruneExpiredActiveViews(now);
-		ACTIVE_VIEW_HINTS.put(
-				activeViewKey,
-				new ActiveViewHint(worldKey, centerX, centerZ, width, height, blocksPerPixel, now + ACTIVE_VIEW_HINT_TTL_MS)
-		);
-	}
-
-	private static void pruneExpiredActiveViews(long now) {
-		if (ACTIVE_VIEW_HINTS.isEmpty()) {
-			return;
-		}
-		ACTIVE_VIEW_HINTS.entrySet().removeIf(entry -> entry.getValue() == null || entry.getValue().expiresAtMillis() < now);
-	}
-
-	private static List<ActiveViewHint> activeViewHintsFor(WorldCacheKey worldKey) {
-		if (worldKey == null || ACTIVE_VIEW_HINTS.isEmpty()) {
-			return List.of();
-		}
-		long now = System.currentTimeMillis();
-		pruneExpiredActiveViews(now);
-		List<ActiveViewHint> hints = new ArrayList<>();
-		for (ActiveViewHint hint : ACTIVE_VIEW_HINTS.values()) {
-			if (hint != null && worldKey.equals(hint.worldKey())) {
-				hints.add(hint);
-			}
-		}
-		return hints;
 	}
 
 	static int lodForBlocksPerPixel(double blocksPerPixel) {
@@ -427,36 +376,6 @@ final class MonitorYandexMapsClientTileRenderer {
 				keys.add(new TileKey(lod, tileX, tileZ));
 			}
 		}
-		keys.sort(Comparator.comparingDouble(key -> {
-			double tileCenterX = (key.tileX() + 0.5D) * tileSize;
-			double tileCenterZ = (key.tileZ() + 0.5D) * tileSize;
-			double dx = tileCenterX - centerX;
-			double dz = tileCenterZ - centerZ;
-			return dx * dx + dz * dz;
-		}));
-		return keys;
-	}
-
-	private static List<TileKey> prefetchTiles(List<TileKey> visibleTiles, double tileBlocksPerPixel, double centerX, double centerZ) {
-		if (visibleTiles == null || visibleTiles.isEmpty()) {
-			return List.of();
-		}
-		Set<TileKey> seen = new HashSet<>(visibleTiles);
-		List<TileKey> keys = new ArrayList<>();
-		for (TileKey visible : visibleTiles) {
-			for (int dz = -1; dz <= 1; dz++) {
-				for (int dx = -1; dx <= 1; dx++) {
-					if (dx == 0 && dz == 0) {
-						continue;
-					}
-					TileKey candidate = new TileKey(visible.lod(), visible.tileX() + dx, visible.tileZ() + dz);
-					if (seen.add(candidate)) {
-						keys.add(candidate);
-					}
-				}
-			}
-		}
-		double tileSize = TILE_SIZE * tileBlocksPerPixel;
 		keys.sort(Comparator.comparingDouble(key -> {
 			double tileCenterX = (key.tileX() + 0.5D) * tileSize;
 			double tileCenterZ = (key.tileZ() + 0.5D) * tileSize;
@@ -530,16 +449,11 @@ final class MonitorYandexMapsClientTileRenderer {
 			return image == null || !image.valid() || !image.complete();
 		}
 
-		private void refreshIfStale(MinecraftServer server, ServerLevel level, TileKey key, TileRequestBudget budget, Runnable onTileReady, int priorityScore, boolean activeView) {
-			TileImage image = imageFor(key);
-			long now = System.currentTimeMillis();
-			if (image == null || !isStale(key, image, now)) {
-				return;
-			}
-			requestTile(server, level, key, budget, onTileReady, priorityScore, activeView);
+		private boolean refreshDirtyBaseTiles(MinecraftServer server, TileRequestBudget budget) {
+			return refreshDirtyBaseTiles(server, budget, null);
 		}
 
-		private boolean refreshDirtyBaseTiles(MinecraftServer server, TileRequestBudget budget, boolean prioritizeActiveViews) {
+		private boolean refreshDirtyBaseTiles(MinecraftServer server, TileRequestBudget budget, Runnable onTileReady) {
 			if (server == null || budget == null || !budget.hasRemaining()) {
 				return false;
 			}
@@ -547,7 +461,7 @@ final class MonitorYandexMapsClientTileRenderer {
 			if (level == null) {
 				return false;
 			}
-			PendingBaseTile pending = pollNextPendingBaseTile(prioritizeActiveViews);
+			PendingBaseTile pending = pollNextPendingBaseTile();
 			if (pending == null) {
 				return false;
 			}
@@ -559,12 +473,16 @@ final class MonitorYandexMapsClientTileRenderer {
 				queuePendingBaseTile(key, this.dirtyAfter.getOrDefault(key, System.currentTimeMillis()), pending.discoveryOnly());
 				return false;
 			}
+			if (key.lod() == MIN_LOD && !isBaseTileAreaLoaded(level, key)) {
+				budget.tryConsume();
+				return true;
+			}
 			if (hasUsableTile(key) && !isStale(key)) {
 				clearDirtyMarkerIfCovered(key, System.currentTimeMillis());
 				return true;
 			}
 			int usedBefore = budget.used();
-			requestTile(server, level, key, budget, null, pending.priorityScore(), pending.activeView());
+			requestTile(server, level, key, budget, onTileReady, pending.priorityScore(), false);
 			if (budget.used() == usedBefore) {
 				queuePendingBaseTile(key, this.dirtyAfter.getOrDefault(key, System.currentTimeMillis()), pending.discoveryOnly());
 				return false;
@@ -591,6 +509,10 @@ final class MonitorYandexMapsClientTileRenderer {
 					}
 					requestTile(server, level, child, budget, onTileReady, priorityScore, activeView);
 				}
+				TileBuildResult rebuiltResult = buildFromChildren(key, System.currentTimeMillis());
+				if (rebuiltResult != TileBuildResult.NONE) {
+					notifyReady(onTileReady);
+				}
 				return;
 			}
 			if (hasUsableTile(key) && !isStale(key)) {
@@ -613,8 +535,8 @@ final class MonitorYandexMapsClientTileRenderer {
 					centerZ,
 					TILE_SIZE,
 					bpp,
-					Math.max(0, priorityScore),
-					activeView
+					rendererBotMapTilePriorityScore(priorityScore),
+					rendererBotMapTileActiveView(activeView)
 			);
 			future.whenComplete((pixels, throwable) -> {
 				try {
@@ -712,6 +634,12 @@ final class MonitorYandexMapsClientTileRenderer {
 			int index = 0;
 			for (TileKey child : childKeys(key)) {
 				TileImage image = imageFor(child);
+				if ((image == null || !image.valid()) && child.lod() == MIN_LOD_REBUILT_FROM_BASE_CHILDREN) {
+					TileBuildResult childBuildResult = buildFromChildren(child, buildStartedAt);
+					if (childBuildResult != TileBuildResult.NONE) {
+						image = imageFor(child);
+					}
+				}
 				if (image == null || !image.valid()) {
 					complete = false;
 				} else {
@@ -756,7 +684,11 @@ final class MonitorYandexMapsClientTileRenderer {
 		private void rebuildAncestors(TileKey key) {
 			long buildStartedAt = System.currentTimeMillis();
 			TileKey parent = parentKey(key);
-			while (parent != null && buildFromChildren(parent, buildStartedAt) != TileBuildResult.NONE) {
+			while (parent != null) {
+				TileBuildResult result = buildFromChildren(parent, buildStartedAt);
+				if (result != TileBuildResult.COMPLETE) {
+					return;
+				}
 				parent = parentKey(parent);
 			}
 		}
@@ -892,6 +824,97 @@ final class MonitorYandexMapsClientTileRenderer {
 			}
 		}
 
+		private void discoverLoadedViewportBaseTiles(
+				ServerLevel level,
+				double worldLeft,
+				double worldTop,
+				int width,
+				int height,
+				double blocksPerPixel,
+				long discoveredAt
+		) {
+			if (level == null
+					|| width <= 0
+					|| height <= 0
+					|| !Double.isFinite(worldLeft)
+					|| !Double.isFinite(worldTop)
+					|| !Double.isFinite(blocksPerPixel)
+					|| blocksPerPixel <= 0.0D) {
+				return;
+			}
+			int minBlockX = Mth.floor(worldLeft);
+			int maxBlockX = Mth.floor(worldLeft + width * blocksPerPixel - 1.0E-6D);
+			int minBlockZ = Mth.floor(worldTop);
+			int maxBlockZ = Mth.floor(worldTop + height * blocksPerPixel - 1.0E-6D);
+			int minChunkX = SectionPos.blockToSectionCoord(minBlockX);
+			int maxChunkX = SectionPos.blockToSectionCoord(maxBlockX);
+			int minChunkZ = SectionPos.blockToSectionCoord(minBlockZ);
+			int maxChunkZ = SectionPos.blockToSectionCoord(maxBlockZ);
+			if (maxChunkX < minChunkX || maxChunkZ < minChunkZ) {
+				return;
+			}
+			Set<ChunkPos> chunks = discoverLoadedChunksNearWorldCenter(level, minChunkX, maxChunkX, minChunkZ, maxChunkZ);
+			for (ChunkPos chunk : chunks) {
+				markChunkDiscovered(chunk, discoveredAt);
+			}
+		}
+
+		private Set<ChunkPos> discoverLoadedChunksNearWorldCenter(ServerLevel level, int minChunkX, int maxChunkX, int minChunkZ, int maxChunkZ) {
+			Set<ChunkPos> chunks = new HashSet<>();
+			int centerChunkX = Mth.clamp(0, minChunkX, maxChunkX);
+			int centerChunkZ = Mth.clamp(0, minChunkZ, maxChunkZ);
+			long chunkColumns = (long) maxChunkX - minChunkX + 1L;
+			long chunkRows = (long) maxChunkZ - minChunkZ + 1L;
+			if (chunkColumns <= VISIBLE_DISCOVERY_CHUNK_SCAN_LIMIT
+					&& chunkRows <= VISIBLE_DISCOVERY_CHUNK_SCAN_LIMIT
+					&& chunkColumns <= VISIBLE_DISCOVERY_CHUNK_SCAN_LIMIT / Math.max(1L, chunkRows)) {
+				for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+					for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+						addLoadedDiscoveryChunk(level, chunks, chunkX, chunkZ);
+					}
+				}
+				return chunks;
+			}
+			int maxRadius = Math.max(
+					Math.max(Math.abs(centerChunkX - minChunkX), Math.abs(centerChunkX - maxChunkX)),
+					Math.max(Math.abs(centerChunkZ - minChunkZ), Math.abs(centerChunkZ - maxChunkZ))
+			);
+			int checked = 0;
+			for (int radius = 0; radius <= maxRadius && checked < VISIBLE_DISCOVERY_CHUNK_SCAN_LIMIT; radius++) {
+				for (int chunkZ = centerChunkZ - radius; chunkZ <= centerChunkZ + radius && checked < VISIBLE_DISCOVERY_CHUNK_SCAN_LIMIT; chunkZ++) {
+					for (int chunkX = centerChunkX - radius; chunkX <= centerChunkX + radius && checked < VISIBLE_DISCOVERY_CHUNK_SCAN_LIMIT; chunkX++) {
+						if (radius > 0 && chunkX > centerChunkX - radius && chunkX < centerChunkX + radius && chunkZ > centerChunkZ - radius && chunkZ < centerChunkZ + radius) {
+							continue;
+						}
+						if (chunkX < minChunkX || chunkX > maxChunkX || chunkZ < minChunkZ || chunkZ > maxChunkZ) {
+							continue;
+						}
+						checked++;
+						addLoadedDiscoveryChunk(level, chunks, chunkX, chunkZ);
+					}
+				}
+			}
+			return chunks;
+		}
+
+		private void addLoadedDiscoveryChunk(ServerLevel level, Set<ChunkPos> chunks, int chunkX, int chunkZ) {
+			if (level != null && chunks != null && level.getChunkSource().getChunkNow(chunkX, chunkZ) != null) {
+				chunks.add(new ChunkPos(chunkX, chunkZ));
+			}
+		}
+
+		private void buildVisibleTilesFromAvailableChildren(List<TileKey> visibleTiles) {
+			if (visibleTiles == null || visibleTiles.isEmpty()) {
+				return;
+			}
+			long buildStartedAt = System.currentTimeMillis();
+			for (TileKey key : visibleTiles) {
+				if (key != null && key.lod() > MIN_LOD && needsTileCompletion(key)) {
+					buildFromChildren(key, buildStartedAt);
+				}
+			}
+		}
+
 		private void markChunkDirty(ChunkPos pos, long dirtyAt, boolean discoveryOnly) {
 			if (pos == null) {
 				return;
@@ -907,6 +930,24 @@ final class MonitorYandexMapsClientTileRenderer {
 			}
 		}
 
+		private void markChunkDiscovered(ChunkPos pos, long discoveredAt) {
+			if (pos == null) {
+				return;
+			}
+			long minTileX = floorToLong(((double) (pos.x << 4)) / BASE_TILE_BLOCK_SPAN);
+			long maxTileX = floorToLong(((double) ((pos.x << 4) + 15)) / BASE_TILE_BLOCK_SPAN);
+			long minTileZ = floorToLong(((double) (pos.z << 4)) / BASE_TILE_BLOCK_SPAN);
+			long maxTileZ = floorToLong(((double) ((pos.z << 4) + 15)) / BASE_TILE_BLOCK_SPAN);
+			for (long tileZ = minTileZ; tileZ <= maxTileZ; tileZ++) {
+				for (long tileX = minTileX; tileX <= maxTileX; tileX++) {
+					TileKey key = new TileKey(MIN_LOD, tileX, tileZ);
+					if (!queueMissingBaseTile(key, discoveredAt)) {
+						queueLoadedStaleBaseTile(key, discoveredAt);
+					}
+				}
+			}
+		}
+
 		private void markTileDirtyCascade(TileKey key, long dirtyAt, boolean discoveryOnly) {
 			TileKey current = key;
 			while (current != null) {
@@ -914,6 +955,33 @@ final class MonitorYandexMapsClientTileRenderer {
 				current = parentKey(current);
 			}
 			queuePendingBaseTile(key, dirtyAt, discoveryOnly);
+		}
+
+		private boolean queueMissingBaseTile(TileKey key, long discoveredAt) {
+			if (key == null || key.lod() != MIN_LOD || hasUsableTile(key) || tileWasRenderedBefore(key)) {
+				return false;
+			}
+			synchronized (LOCK) {
+				if (this.pendingBaseTiles.containsKey(key)) {
+					return true;
+				}
+				this.pendingBaseTiles.put(key, new DirtyTileState(discoveredAt, discoveredAt, true, false));
+				trimPendingBaseTilesLocked();
+			}
+			return true;
+		}
+
+		private void queueLoadedStaleBaseTile(TileKey key, long discoveredAt) {
+			if (key == null || key.lod() != MIN_LOD) {
+				return;
+			}
+			TileImage image = imageFor(key);
+			if (image == null || !image.valid() || !isStale(key, image, discoveredAt)) {
+				return;
+			}
+			Long dirtyAt = this.dirtyAfter.get(key);
+			long queuedAt = dirtyAt != null && dirtyAt > image.renderedAt() ? dirtyAt : image.renderedAt();
+			queuePendingBaseTile(key, queuedAt, true);
 		}
 
 		private void queuePendingBaseTile(TileKey key, long dirtyAt, boolean discoveryOnly) {
@@ -976,15 +1044,10 @@ final class MonitorYandexMapsClientTileRenderer {
 			}
 		}
 
-		private PendingBaseTile pollNextPendingBaseTile(boolean prioritizeActiveViews) {
+		private PendingBaseTile pollNextPendingBaseTile() {
 			synchronized (LOCK) {
-				List<ActiveViewHint> activeViews = prioritizeActiveViews ? activeViewHintsFor(this.worldKey) : List.of();
-				if (prioritizeActiveViews && activeViews.isEmpty()) {
-					return null;
-				}
 				TileKey bestKey = null;
 				DirtyTileState bestState = null;
-				boolean bestActive = false;
 				int bestScore = Integer.MIN_VALUE;
 				Iterator<Map.Entry<TileKey, DirtyTileState>> iterator = this.pendingBaseTiles.entrySet().iterator();
 				while (iterator.hasNext()) {
@@ -995,18 +1058,12 @@ final class MonitorYandexMapsClientTileRenderer {
 						iterator.remove();
 						continue;
 					}
-					boolean active = !activeViews.isEmpty() && intersectsActiveView(key, activeViews);
-					if (prioritizeActiveViews && !active) {
-						continue;
-					}
-					int score = tilePriorityScore(state, active);
+					int score = tilePriorityScore(state);
 					if (bestKey == null
 							|| score > bestScore
-							|| (score == bestScore && active && !bestActive)
-							|| (score == bestScore && active == bestActive && shouldPreferPendingTile(key, state, bestKey, bestState))) {
+							|| (score == bestScore && shouldPreferPendingTile(key, state, bestKey, bestState))) {
 						bestKey = key;
 						bestState = state;
-						bestActive = active;
 						bestScore = score;
 					}
 				}
@@ -1016,22 +1073,15 @@ final class MonitorYandexMapsClientTileRenderer {
 					return null;
 				}
 				this.pendingBaseTiles.remove(selectedKey);
-				return new PendingBaseTile(selectedKey, selectedState.discoveryOnly(), bestActive, bestScore);
+				return new PendingBaseTile(selectedKey, selectedState.discoveryOnly(), bestScore);
 			}
 		}
 
-		private int tilePriorityScore(DirtyTileState state, boolean active) {
+		private int tilePriorityScore(DirtyTileState state) {
 			if (state == null) {
 				return Integer.MIN_VALUE;
 			}
-			int score = state.renderedBefore() ? 1 : 5;
-			if (state.discoveryOnly() && !state.renderedBefore()) {
-				score++;
-			}
-			if (active) {
-				score += 3;
-			}
-			return score;
+			return state.renderedBefore() ? 0 : 1;
 		}
 
 		private boolean shouldPreferPendingTile(TileKey key, DirtyTileState state, TileKey bestKey, DirtyTileState bestState) {
@@ -1066,30 +1116,15 @@ final class MonitorYandexMapsClientTileRenderer {
 			return centerX * centerX + centerZ * centerZ;
 		}
 
-		private boolean intersectsActiveView(TileKey key, List<ActiveViewHint> activeViews) {
-			if (key == null || key.lod() != MIN_LOD || activeViews == null || activeViews.isEmpty()) {
+		private boolean isBaseTileAreaLoaded(ServerLevel level, TileKey key) {
+			if (level == null || key == null || key.lod() != MIN_LOD) {
 				return false;
 			}
-			double tileMinX = key.tileX() * BASE_TILE_BLOCK_SPAN;
-			double tileMaxX = tileMinX + BASE_TILE_BLOCK_SPAN;
-			double tileMinZ = key.tileZ() * BASE_TILE_BLOCK_SPAN;
-			double tileMaxZ = tileMinZ + BASE_TILE_BLOCK_SPAN;
-			double marginBlocks = BASE_TILE_BLOCK_SPAN * ACTIVE_VIEW_PRIORITY_TILE_MARGIN;
-			for (ActiveViewHint hint : activeViews) {
-				if (hint == null) {
-					continue;
-				}
-				double halfWidth = hint.width() * hint.blocksPerPixel() * 0.5D + marginBlocks;
-				double halfHeight = hint.height() * hint.blocksPerPixel() * 0.5D + marginBlocks;
-				double viewMinX = hint.centerX() - halfWidth;
-				double viewMaxX = hint.centerX() + halfWidth;
-				double viewMinZ = hint.centerZ() - halfHeight;
-				double viewMaxZ = hint.centerZ() + halfHeight;
-				if (tileMaxX > viewMinX && tileMinX < viewMaxX && tileMaxZ > viewMinZ && tileMinZ < viewMaxZ) {
-					return true;
-				}
-			}
-			return false;
+			int blockX = Mth.floor(key.tileX() * BASE_TILE_BLOCK_SPAN);
+			int blockZ = Mth.floor(key.tileZ() * BASE_TILE_BLOCK_SPAN);
+			int chunkX = SectionPos.blockToSectionCoord(blockX);
+			int chunkZ = SectionPos.blockToSectionCoord(blockZ);
+			return level.getChunkSource().getChunkNow(chunkX, chunkZ) != null;
 		}
 
 		private boolean tileWasRenderedBefore(TileKey key) {
@@ -1132,18 +1167,7 @@ final class MonitorYandexMapsClientTileRenderer {
 	private record DirtyTileState(long firstMarkedAt, long lastMarkedAt, boolean discoveryOnly, boolean renderedBefore) {
 	}
 
-	private record PendingBaseTile(TileKey key, boolean discoveryOnly, boolean activeView, int priorityScore) {
-	}
-
-	private record ActiveViewHint(
-			WorldCacheKey worldKey,
-			double centerX,
-			double centerZ,
-			int width,
-			int height,
-			double blocksPerPixel,
-			long expiresAtMillis
-	) {
+	private record PendingBaseTile(TileKey key, boolean discoveryOnly, int priorityScore) {
 	}
 
 	private static Path tilePath(WorldCacheKey worldKey, TileKey key) {
@@ -1162,7 +1186,21 @@ final class MonitorYandexMapsClientTileRenderer {
 		if (raw == null || raw.isBlank()) {
 			return "unknown";
 		}
-		return raw.replaceAll("[^A-Za-z0-9._-]+", "_");
+		StringBuilder sanitized = new StringBuilder(raw.length());
+		for (int index = 0; index < raw.length(); index++) {
+			char ch = raw.charAt(index);
+			if ((ch >= 'A' && ch <= 'Z')
+					|| (ch >= 'a' && ch <= 'z')
+					|| (ch >= '0' && ch <= '9')
+					|| ch == '.'
+					|| ch == '_'
+					|| ch == '-') {
+				sanitized.append(ch);
+			} else {
+				sanitized.append('_');
+			}
+		}
+		return sanitized.toString();
 	}
 
 	private static int averageRgb(int[] colors, int count) {

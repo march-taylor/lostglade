@@ -5,7 +5,9 @@ import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.RedStoneWireBlock;
@@ -14,11 +16,16 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.AttachFace;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.RedstoneSide;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public final class YandexMapTopDownRenderTest {
 	private YandexMapTopDownRenderTest() {
@@ -27,6 +34,12 @@ public final class YandexMapTopDownRenderTest {
 	public static void main(String[] args) throws Exception {
 		SharedConstants.tryDetectVersion();
 		Bootstrap.bootStrap();
+		yandexMapTilesStayInOverworld();
+		yandexMapTilesUseNeutralRendererBotPriority();
+		chunkDiscoveryQueuesOnlyUnrenderedBaseTiles();
+		pendingTileSchedulerPrefersNewTilesNearWorldCenter();
+		coarseLodBuildsImmediatelyFromBaseTiles();
+		highLodBuildDoesNotScanUnboundedBaseDescendants();
 		logUsesTopFace();
 		grassBlockUsesTopTexture();
 		redstoneWireProducesTopPixel();
@@ -49,6 +62,184 @@ public final class YandexMapTopDownRenderTest {
 		mapVisibleItemDisplayModelsProduceTopPixels();
 		serverDisplayModelUsesTopFacingPixels();
 		System.out.println("Yandex map top-down render checks passed");
+	}
+
+	private static void yandexMapTilesStayInOverworld() {
+		require(MonitorYandexMapsClientTileRenderer.isMapDimension(Level.OVERWORLD), "Yandex map tiles must allow overworld rendering");
+		require(!MonitorYandexMapsClientTileRenderer.isMapDimension(Level.NETHER), "Yandex map tiles must not load the nether");
+		require(!MonitorYandexMapsClientTileRenderer.isMapDimension(Level.END), "Yandex map tiles must not load non-overworld dimensions");
+	}
+
+	private static void yandexMapTilesUseNeutralRendererBotPriority() {
+		require(MonitorYandexMapsClientTileRenderer.rendererBotMapTilePriorityScore(10) == 0, "Yandex tile requests must not raise renderer-bot priority");
+		require(!MonitorYandexMapsClientTileRenderer.rendererBotMapTileActiveView(true), "Yandex tile requests must not mark renderer-bot active view priority");
+	}
+
+	private static void chunkDiscoveryQueuesOnlyUnrenderedBaseTiles() throws Exception {
+		Class<?> worldKeyClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$WorldCacheKey");
+		Class<?> cacheClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$DimensionTileCache");
+		Class<?> tileKeyClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$TileKey");
+		Class<?> tileImageClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$TileImage");
+
+		Constructor<?> worldKeyConstructor = worldKeyClass.getDeclaredConstructor(Path.class, ResourceKey.class);
+		worldKeyConstructor.setAccessible(true);
+		Object worldKey = worldKeyConstructor.newInstance(Path.of("/tmp/lg2-yandex-test-discovery"), Level.OVERWORLD);
+
+		Constructor<?> cacheConstructor = cacheClass.getDeclaredConstructor(worldKeyClass);
+		cacheConstructor.setAccessible(true);
+		Object cache = cacheConstructor.newInstance(worldKey);
+
+		Constructor<?> tileKeyConstructor = tileKeyClass.getDeclaredConstructor(int.class, long.class, long.class);
+		tileKeyConstructor.setAccessible(true);
+		Constructor<?> tileImageConstructor = tileImageClass.getDeclaredConstructor(byte[].class, long.class, boolean.class);
+		tileImageConstructor.setAccessible(true);
+		Method cacheTile = cacheClass.getDeclaredMethod("cacheTile", tileKeyClass, tileImageClass, boolean.class, long.class);
+		cacheTile.setAccessible(true);
+		Object renderedKey = tileKeyConstructor.newInstance(0, 0L, 0L);
+		Object renderedImage = tileImageConstructor.newInstance(solidRgbTile(0x336699), 20L, true);
+		cacheTile.invoke(cache, renderedKey, renderedImage, false, 20L);
+
+		Method markChunkDiscovered = cacheClass.getDeclaredMethod("markChunkDiscovered", ChunkPos.class, long.class);
+		markChunkDiscovered.setAccessible(true);
+		markChunkDiscovered.invoke(cache, new ChunkPos(0, 0), 25L);
+
+		Field pendingBaseTilesField = cacheClass.getDeclaredField("pendingBaseTiles");
+		pendingBaseTilesField.setAccessible(true);
+		Object pendingBaseTiles = pendingBaseTilesField.get(cache);
+		require(pendingBaseTiles instanceof Map<?, ?> pendingMap && pendingMap.size() == 3,
+				"chunk discovery must queue only missing base tiles, pending=" + (pendingBaseTiles instanceof Map<?, ?> map ? map.size() : -1));
+
+		Field dirtyAfterField = cacheClass.getDeclaredField("dirtyAfter");
+		dirtyAfterField.setAccessible(true);
+		Object dirtyAfter = dirtyAfterField.get(cache);
+		require(dirtyAfter instanceof Map<?, ?> dirtyMap && dirtyMap.isEmpty(), "chunk discovery must not mark tiles dirty");
+	}
+
+	private static void pendingTileSchedulerPrefersNewTilesNearWorldCenter() throws Exception {
+		Class<?> worldKeyClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$WorldCacheKey");
+		Class<?> cacheClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$DimensionTileCache");
+		Class<?> tileKeyClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$TileKey");
+		Class<?> tileImageClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$TileImage");
+		Class<?> pendingBaseTileClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$PendingBaseTile");
+
+		Constructor<?> worldKeyConstructor = worldKeyClass.getDeclaredConstructor(Path.class, ResourceKey.class);
+		worldKeyConstructor.setAccessible(true);
+		Object worldKey = worldKeyConstructor.newInstance(Path.of("/tmp/lg2-yandex-test-scheduler"), Level.OVERWORLD);
+
+		Constructor<?> cacheConstructor = cacheClass.getDeclaredConstructor(worldKeyClass);
+		cacheConstructor.setAccessible(true);
+		Object cache = cacheConstructor.newInstance(worldKey);
+
+		Constructor<?> tileKeyConstructor = tileKeyClass.getDeclaredConstructor(int.class, long.class, long.class);
+		tileKeyConstructor.setAccessible(true);
+		Constructor<?> tileImageConstructor = tileImageClass.getDeclaredConstructor(byte[].class, long.class, boolean.class);
+		tileImageConstructor.setAccessible(true);
+		Method cacheTile = cacheClass.getDeclaredMethod("cacheTile", tileKeyClass, tileImageClass, boolean.class, long.class);
+		cacheTile.setAccessible(true);
+
+		Object renderedOldKey = tileKeyConstructor.newInstance(0, 0L, 0L);
+		Object renderedOldImage = tileImageConstructor.newInstance(solidRgbTile(0x552211), 1L, true);
+		cacheTile.invoke(cache, renderedOldKey, renderedOldImage, false, 1L);
+
+		Method queueLoadedStaleBaseTile = cacheClass.getDeclaredMethod("queueLoadedStaleBaseTile", tileKeyClass, long.class);
+		queueLoadedStaleBaseTile.setAccessible(true);
+		queueLoadedStaleBaseTile.invoke(cache, renderedOldKey, 2_000_000L);
+
+		Method queueMissingBaseTile = cacheClass.getDeclaredMethod("queueMissingBaseTile", tileKeyClass, long.class);
+		queueMissingBaseTile.setAccessible(true);
+		Object farNewKey = tileKeyConstructor.newInstance(0, 20L, 0L);
+		Object nearNewKey = tileKeyConstructor.newInstance(0, 1L, 0L);
+		queueMissingBaseTile.invoke(cache, farNewKey, 10L);
+		queueMissingBaseTile.invoke(cache, nearNewKey, 11L);
+
+		Method pollNextPendingBaseTile = cacheClass.getDeclaredMethod("pollNextPendingBaseTile");
+		pollNextPendingBaseTile.setAccessible(true);
+		Method pendingKey = pendingBaseTileClass.getDeclaredMethod("key");
+		pendingKey.setAccessible(true);
+		Method tileX = tileKeyClass.getDeclaredMethod("tileX");
+		tileX.setAccessible(true);
+
+		Object first = pendingKey.invoke(pollNextPendingBaseTile.invoke(cache));
+		Object second = pendingKey.invoke(pollNextPendingBaseTile.invoke(cache));
+		Object third = pendingKey.invoke(pollNextPendingBaseTile.invoke(cache));
+		require(((Long) tileX.invoke(first)) == 1L, "new base tile nearest the world center must render first");
+		require(((Long) tileX.invoke(second)) == 20L, "farther new base tile must render before rendered stale updates");
+		require(((Long) tileX.invoke(third)) == 0L, "rendered stale base tile must wait until new tiles are exhausted");
+	}
+
+	private static void coarseLodBuildsImmediatelyFromBaseTiles() throws Exception {
+		Class<?> worldKeyClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$WorldCacheKey");
+		Class<?> cacheClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$DimensionTileCache");
+		Class<?> tileKeyClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$TileKey");
+		Class<?> tileImageClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$TileImage");
+
+		Constructor<?> worldKeyConstructor = worldKeyClass.getDeclaredConstructor(Path.class, ResourceKey.class);
+		worldKeyConstructor.setAccessible(true);
+		Object worldKey = worldKeyConstructor.newInstance(Path.of("/tmp/lg2-yandex-test"), Level.OVERWORLD);
+
+		Constructor<?> cacheConstructor = cacheClass.getDeclaredConstructor(worldKeyClass);
+		cacheConstructor.setAccessible(true);
+		Object cache = cacheConstructor.newInstance(worldKey);
+
+		Constructor<?> tileKeyConstructor = tileKeyClass.getDeclaredConstructor(int.class, long.class, long.class);
+		tileKeyConstructor.setAccessible(true);
+		Constructor<?> tileImageConstructor = tileImageClass.getDeclaredConstructor(byte[].class, long.class, boolean.class);
+		tileImageConstructor.setAccessible(true);
+		Method cacheTile = cacheClass.getDeclaredMethod("cacheTile", tileKeyClass, tileImageClass, boolean.class, long.class);
+		cacheTile.setAccessible(true);
+
+		for (long tileZ = 0; tileZ < 4; tileZ++) {
+			for (long tileX = 0; tileX < 4; tileX++) {
+				int rgb = ((int) tileX * 48 + 32) << 16 | (((int) tileZ * 48 + 32) << 8) | 96;
+				Object baseKey = tileKeyConstructor.newInstance(0, tileX, tileZ);
+				Object baseImage = tileImageConstructor.newInstance(solidRgbTile(rgb), 1L, true);
+				cacheTile.invoke(cache, baseKey, baseImage, false, 1L);
+			}
+		}
+
+		Object parentKey = tileKeyConstructor.newInstance(2, 0L, 0L);
+		Method buildFromChildren = cacheClass.getDeclaredMethod("buildFromChildren", tileKeyClass, long.class);
+		buildFromChildren.setAccessible(true);
+		Object result = buildFromChildren.invoke(cache, parentKey, 2L);
+		require(result instanceof Enum<?> buildResult && "COMPLETE".equals(buildResult.name()), "coarse LOD must build immediately when all base tiles are already cached");
+
+		Method imageFor = cacheClass.getDeclaredMethod("imageFor", tileKeyClass);
+		imageFor.setAccessible(true);
+		Object parentImage = imageFor.invoke(cache, parentKey);
+		Method valid = tileImageClass.getDeclaredMethod("valid");
+		Method complete = tileImageClass.getDeclaredMethod("complete");
+		valid.setAccessible(true);
+		complete.setAccessible(true);
+		require(parentImage != null && (Boolean) valid.invoke(parentImage), "coarse LOD image must be cached after recursive build");
+		require((Boolean) complete.invoke(parentImage), "coarse LOD image must be complete after recursive build");
+	}
+
+	private static void highLodBuildDoesNotScanUnboundedBaseDescendants() throws Exception {
+		Class<?> worldKeyClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$WorldCacheKey");
+		Class<?> cacheClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$DimensionTileCache");
+		Class<?> tileKeyClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$TileKey");
+
+		Constructor<?> worldKeyConstructor = worldKeyClass.getDeclaredConstructor(Path.class, ResourceKey.class);
+		worldKeyConstructor.setAccessible(true);
+		Object worldKey = worldKeyConstructor.newInstance(Path.of("/tmp/lg2-yandex-test"), Level.OVERWORLD);
+
+		Constructor<?> cacheConstructor = cacheClass.getDeclaredConstructor(worldKeyClass);
+		cacheConstructor.setAccessible(true);
+		Object cache = cacheConstructor.newInstance(worldKey);
+
+		Constructor<?> tileKeyConstructor = tileKeyClass.getDeclaredConstructor(int.class, long.class, long.class);
+		tileKeyConstructor.setAccessible(true);
+		Object highLodKey = tileKeyConstructor.newInstance(9, 0L, 0L);
+
+		Method buildFromChildren = cacheClass.getDeclaredMethod("buildFromChildren", tileKeyClass, long.class);
+		buildFromChildren.setAccessible(true);
+		Object result = buildFromChildren.invoke(cache, highLodKey, 2L);
+		require(result instanceof Enum<?> buildResult && "NONE".equals(buildResult.name()), "empty high LOD should not build from missing descendants");
+
+		Field missingTilesField = cacheClass.getDeclaredField("missingTiles");
+		missingTilesField.setAccessible(true);
+		Object missingTiles = missingTilesField.get(cache);
+		require(missingTiles instanceof Set<?> missingSet && missingSet.size() == 4, "empty high LOD must only probe immediate children, missing=" + (missingTiles instanceof Set<?> set ? set.size() : -1));
 	}
 
 	private static void logUsesTopFace() {
@@ -294,6 +485,16 @@ public final class YandexMapTopDownRenderTest {
 				new Vec3(0.0D, -1.0D, 0.0D),
 				new int[]{-1, -1, -1, -1}
 		);
+	}
+
+	private static byte[] solidRgbTile(int rgb) {
+		byte[] pixels = new byte[MonitorScreenSystem.MAP_SIZE * MonitorScreenSystem.MAP_SIZE * 3];
+		for (int offset = 0; offset + 2 < pixels.length; offset += 3) {
+			pixels[offset] = (byte) ((rgb >> 16) & 0xFF);
+			pixels[offset + 1] = (byte) ((rgb >> 8) & 0xFF);
+			pixels[offset + 2] = (byte) (rgb & 0xFF);
+		}
+		return pixels;
 	}
 
 	private static int sampleState(BlockState state, double fracX, double fracZ) throws Exception {

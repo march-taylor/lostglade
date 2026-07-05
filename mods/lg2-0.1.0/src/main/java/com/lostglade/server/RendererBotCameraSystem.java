@@ -99,6 +99,7 @@ public final class RendererBotCameraSystem {
 	private static final float MAP_TILE_TOP_DOWN_PITCH = 90.0F;
 	private static final long LIVE_STREAM_STALE_MS = 1_500L;
 	private static final long MAP_TILE_CAPTURE_TIMEOUT_MS = 60_000L;
+	private static final int MAX_PENDING_MAP_TILE_CAPTURES = Math.max(1, Integer.getInteger("lg2.rendererBotMaxPendingMapTiles", 24));
 	private static final long ITEM_ICON_CAPTURE_TIMEOUT_MS = 30_000L;
 	private static final long AUDIO_CAPTURE_STALE_MS = 8_000L;
 	private static final long LIVE_STREAM_ORPHAN_CLEANUP_MS = 15_000L;
@@ -598,6 +599,10 @@ public final class RendererBotCameraSystem {
 			future.completeExceptionally(new IllegalStateException("Сервер карты недоступен"));
 			return future;
 		}
+		if (!Level.OVERWORLD.equals(level.dimension())) {
+			future.completeExceptionally(new IllegalStateException("Яндекс-карта рендерит только верхний мир"));
+			return future;
+		}
 		ServerPlayer bot = selectBot(server);
 		if (bot == null) {
 			future.completeExceptionally(new IllegalStateException("Нет активного клиента камеры"));
@@ -609,6 +614,10 @@ public final class RendererBotCameraSystem {
 		}
 		if (!ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotMapTileRequestS2CPayload.TYPE)) {
 			future.completeExceptionally(new IllegalStateException("Клиент камеры не поддерживает тайлы карты"));
+			return future;
+		}
+		if (PENDING_MAP_TILE_CAPTURES.size() >= MAX_PENDING_MAP_TILE_CAPTURES) {
+			future.completeExceptionally(new IllegalStateException("Очередь тайлов карты занята"));
 			return future;
 		}
 
@@ -1237,14 +1246,6 @@ public final class RendererBotCameraSystem {
 			if (capture != null
 					&& botUuid.equals(capture.botUuid())
 					&& !capture.isDone()
-					&& dimension.equals(capture.dimension())) {
-				return true;
-			}
-		}
-		for (PendingMapTileCapture capture : PENDING_MAP_TILE_CAPTURES.values()) {
-			if (capture != null
-					&& botUuid.equals(capture.botUuid())
-					&& !capture.pixelsFuture().isDone()
 					&& dimension.equals(capture.dimension())) {
 				return true;
 			}
@@ -1915,26 +1916,6 @@ public final class RendererBotCameraSystem {
 			}
 		}
 
-		for (PendingMapTileCapture capture : PENDING_MAP_TILE_CAPTURES.values()) {
-			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.pixelsFuture().isDone()) {
-				continue;
-			}
-			ScheduledServiceTarget target = resolveServiceTarget(
-					server,
-					capture.dimension(),
-					capture.centerX(),
-					mapTileCameraY(botLevel),
-					capture.centerZ(),
-					MAP_TILE_TOP_DOWN_YAW,
-					MAP_TILE_TOP_DOWN_PITCH,
-					null
-			);
-			center = mergePositionedVirtualCenter(center, botLevel, target);
-			if (center == null && target != null) {
-				return null;
-			}
-		}
-
 		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
 			if (recording == null || !botUuid.equals(recording.botUuid()) || recording.stopRequested() || recording.completionFuture().isDone()) {
 				continue;
@@ -2034,16 +2015,6 @@ public final class RendererBotCameraSystem {
 				continue;
 			}
 			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance, false, false);
-		}
-		for (PendingMapTileCapture capture : PENDING_MAP_TILE_CAPTURES.values()) {
-			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.pixelsFuture().isDone()) {
-				continue;
-			}
-			ScheduledServiceTarget target = resolveServiceTarget(server, capture.dimension(), capture.centerX(), mapTileCameraY(botLevel), capture.centerZ(), MAP_TILE_TOP_DOWN_YAW, MAP_TILE_TOP_DOWN_PITCH, null);
-			if (target == null || target.level() != botLevel) {
-				continue;
-			}
-			appendVirtualTargetChunks(chunks, botLevel, target, mapTileViewDistance(capture), true, false);
 		}
 		for (PendingVideoRecording recording : PENDING_VIDEO_RECORDINGS.values()) {
 			if (recording == null || !botUuid.equals(recording.botUuid()) || recording.stopRequested() || recording.completionFuture().isDone()) {
@@ -2602,7 +2573,7 @@ public final class RendererBotCameraSystem {
 			return;
 		}
 		desiredState.setItemDisplaysOnly(true);
-		desiredState.addTarget(target, viewDistance, Set.of(), true, false);
+		desiredState.addPassiveTarget(target, viewDistance, Set.of(), true, false);
 	}
 
 	private static void syncShadowState(
@@ -3762,6 +3733,27 @@ public final class RendererBotCameraSystem {
 				boolean omnidirectionalChunkLoading,
 				boolean staticCameraChunkBuffer
 		) {
+			addTarget(target, viewDistance, hiddenEntityUuids, omnidirectionalChunkLoading, staticCameraChunkBuffer, true);
+		}
+
+		private void addPassiveTarget(
+				ScheduledServiceTarget target,
+				int viewDistance,
+				Set<UUID> hiddenEntityUuids,
+				boolean omnidirectionalChunkLoading,
+				boolean staticCameraChunkBuffer
+		) {
+			addTarget(target, viewDistance, hiddenEntityUuids, omnidirectionalChunkLoading, staticCameraChunkBuffer, false);
+		}
+
+		private void addTarget(
+				ScheduledServiceTarget target,
+				int viewDistance,
+				Set<UUID> hiddenEntityUuids,
+				boolean omnidirectionalChunkLoading,
+				boolean staticCameraChunkBuffer,
+				boolean addChunkTicket
+		) {
 			if (target == null || target.level() != this.level) {
 				return;
 			}
@@ -3778,12 +3770,14 @@ public final class RendererBotCameraSystem {
 					omnidirectionalChunkLoading,
 					staticCameraChunkBuffer
 			);
-			addCameraChunkTicket(
-					this.chunkTickets,
-					this.level.dimension(),
-					chunkPosAt(target.x(), target.z()),
-					Math.max(2, viewDistance)
-			);
+			if (addChunkTicket) {
+				addCameraChunkTicket(
+						this.chunkTickets,
+						this.level.dimension(),
+						chunkPosAt(target.x(), target.z()),
+						Math.max(2, viewDistance)
+				);
+			}
 			recomputeViewWindow(target);
 		}
 

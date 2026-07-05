@@ -245,8 +245,8 @@ public final class RendererBotClientCapture {
 			}
 		}
 		dispatchReadyItemIconRender(client);
-		dispatchReadyMapTileRender(client);
 		dispatchReadyRenders(client, System.nanoTime());
+		dispatchReadyMapTileRender(client);
 	}
 
 	private static void dispatchReadyItemIconRender(Minecraft client) {
@@ -354,30 +354,11 @@ public final class RendererBotClientCapture {
 		}
 		PendingMapTile selected = null;
 		synchronized (LOCK) {
-			int bestPriorityScore = Integer.MIN_VALUE;
-			boolean bestActiveView = false;
 			for (PendingMapTile candidate : PENDING_MAP_TILES.values()) {
 				if (candidate == null || candidate.rendering()) {
 					continue;
 				}
 				RendererBotPayloads.RendererBotMapTileRequestS2CPayload payload = candidate.payload();
-				if (payload.priorityScore() > bestPriorityScore
-						|| (payload.priorityScore() == bestPriorityScore && payload.activeView() && !bestActiveView)) {
-					bestPriorityScore = payload.priorityScore();
-					bestActiveView = payload.activeView();
-				}
-			}
-			if (bestPriorityScore == Integer.MIN_VALUE) {
-				return;
-			}
-			for (PendingMapTile candidate : PENDING_MAP_TILES.values()) {
-				if (candidate == null || candidate.rendering()) {
-					continue;
-				}
-				RendererBotPayloads.RendererBotMapTileRequestS2CPayload payload = candidate.payload();
-				if (payload.priorityScore() != bestPriorityScore || payload.activeView() != bestActiveView) {
-					continue;
-				}
 				RendererBotTopDownMapRenderer.TileRequest request = mapTileRenderRequest(payload);
 				if (!RendererBotTopDownMapRenderer.hasRequiredChunks(client, request)) {
 					continue;

@@ -51,6 +51,7 @@ final class MonitorYandexMapsRuntime {
 	private static final long PAN_ANIMATION_MS = 320L;
 	private static final long PAN_FRAME_DELAY_MS = 40L;
 	private static final long TILE_READY_RENDER_DEBOUNCE_MS = 35L;
+	private static final ResourceKey<Level> MAP_DIMENSION = Level.OVERWORLD;
 	private static final int MAP_MARKER_ICON_SIZE = 32;
 	private static final int MAP_MARKER_SCREEN_ICON_SIZE = 16;
 	private static final int MARKER_ICON_ALPHA_BOUNDS_THRESHOLD = 1;
@@ -135,6 +136,10 @@ final class MonitorYandexMapsRuntime {
 		PENDING_MARKER_TITLES.entrySet().removeIf(entry -> Objects.equals(entry.getValue().screenKey(), key));
 	}
 
+	private static ServerLevel mapLevel(MinecraftServer server) {
+		return server == null ? null : server.getLevel(MAP_DIMENSION);
+	}
+
 	private static String markerTitlePromptMessage(ServerPlayer player) {
 		String locale = MonitorScreenMessages.locale(player);
 		if (locale.startsWith("uk")) {
@@ -200,13 +205,13 @@ final class MonitorYandexMapsRuntime {
 			version = state.version;
 			status = state.streamStatus;
 		}
-		ServerLevel level = server.getLevel(component.runtimeKey().dimension());
+		ServerLevel level = mapLevel(server);
 		if (level == null) {
 			return new YandexMapsVisualSnapshot(
 					version,
 					fallbackMapFrame(component, "Мир недоступен"),
 					"Мир недоступен",
-					dimensionLabel(component.runtimeKey().dimension()),
+					dimensionLabel(MAP_DIMENSION),
 					centerX,
 					centerZ,
 					blocksPerPixel,
@@ -282,7 +287,7 @@ final class MonitorYandexMapsRuntime {
 		YandexMapsVisualSnapshot effectiveSnapshot = snapshot;
 		BufferedImage frame = snapshot != null ? snapshot.frame() : null;
 		if (frame == null && snapshot != null && server != null && runtimeKey != null) {
-			ServerLevel level = server.getLevel(runtimeKey.dimension());
+			ServerLevel level = mapLevel(server);
 			if (level != null) {
 				MonitorYandexMapsClientTileRenderer.Frame rendered = MonitorYandexMapsClientTileRenderer.render(
 						server,
@@ -393,9 +398,10 @@ final class MonitorYandexMapsRuntime {
 			return true;
 		}
 		if (yandexAddMarkerRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+			ServerLevel mapLevel = mapLevel(server);
 			synchronized (state) {
 				initializeStateLocked(state, component);
-				state.editorMarkerId = createMarkerAtCenter(level, player, state);
+				state.editorMarkerId = createMarkerAtCenter(mapLevel, player, state);
 				state.markerDeleteConfirmMarkerId = null;
 				state.version++;
 			}
@@ -407,7 +413,7 @@ final class MonitorYandexMapsRuntime {
 		synchronized (state) {
 			initializeStateLocked(state, component);
 			tappedMarker = markerAtTouch(
-					component.runtimeKey().dimension(),
+					MAP_DIMENSION,
 					layout,
 					state.centerX,
 					state.centerZ,
@@ -517,7 +523,7 @@ final class MonitorYandexMapsRuntime {
 			List<ProjectedMarker> projected = projectedByScreen.computeIfAbsent(
 					key,
 					ignored -> projectVisibleMarkers(
-							key.dimension(),
+							MAP_DIMENSION,
 							target.layout(),
 							projectionState.centerX(),
 							projectionState.centerZ(),
@@ -844,7 +850,7 @@ final class MonitorYandexMapsRuntime {
 			}
 		}
 		for (ProjectedMarker marker : projectVisibleMarkers(
-				runtimeKey.dimension(),
+				MAP_DIMENSION,
 				layout,
 				snapshot.centerX(),
 				snapshot.centerZ(),
