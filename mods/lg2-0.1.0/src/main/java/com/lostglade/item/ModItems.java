@@ -32,6 +32,7 @@ public final class ModItems {
 	private static final Identifier COPPER_JETPACK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_jetpack");
 	private static final Identifier COPPER_GOGGLES_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "copper_goggles");
 	private static final Identifier BATTLE_DONKEY_TURRET_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "battle_donkey_turret");
+	private static final Identifier RAINBOW_HARNESS_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "rainbow_harness");
 	private static final Identifier LITTLE_DICTATOR_DECREE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "little_dictator_decree");
 	private static final Identifier WOODEN_SHIELD_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "wooden_shield");
 	private static final Identifier STONE_SHIELD_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "stone_shield");
@@ -61,6 +62,7 @@ public final class ModItems {
 	private static final ResourceKey<Item> COPPER_JETPACK_KEY = ResourceKey.create(Registries.ITEM, COPPER_JETPACK_ID);
 	private static final ResourceKey<Item> COPPER_GOGGLES_KEY = ResourceKey.create(Registries.ITEM, COPPER_GOGGLES_ID);
 	private static final ResourceKey<Item> BATTLE_DONKEY_TURRET_KEY = ResourceKey.create(Registries.ITEM, BATTLE_DONKEY_TURRET_ID);
+	private static final ResourceKey<Item> RAINBOW_HARNESS_KEY = ResourceKey.create(Registries.ITEM, RAINBOW_HARNESS_ID);
 	private static final ResourceKey<Item> LITTLE_DICTATOR_DECREE_KEY = ResourceKey.create(Registries.ITEM, LITTLE_DICTATOR_DECREE_ID);
 	private static final ResourceKey<Item> WOODEN_SHIELD_KEY = ResourceKey.create(Registries.ITEM, WOODEN_SHIELD_ID);
 	private static final ResourceKey<Item> STONE_SHIELD_KEY = ResourceKey.create(Registries.ITEM, STONE_SHIELD_ID);
@@ -84,6 +86,10 @@ public final class ModItems {
 	private static final ResourceKey<CreativeModeTab> INGREDIENTS_TAB = ResourceKey.create(
 			Registries.CREATIVE_MODE_TAB,
 			Identifier.fromNamespaceAndPath("minecraft", "ingredients")
+	);
+	private static final ResourceKey<CreativeModeTab> COMBAT_TAB = ResourceKey.create(
+			Registries.CREATIVE_MODE_TAB,
+			Identifier.fromNamespaceAndPath("minecraft", "combat")
 	);
 	private static final Identifier STABILITY_POTION_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "stability_potion");
 	private static final int STABILITY_DURATION_TICKS = 8 * 60 * 20;
@@ -176,6 +182,15 @@ public final class ModItems {
 							.setId(BATTLE_DONKEY_TURRET_KEY)
 							.stacksTo(1)
 							.rarity(Rarity.UNCOMMON)
+			)
+	);
+	public static final Item RAINBOW_HARNESS = Registry.register(
+			BuiltInRegistries.ITEM,
+			RAINBOW_HARNESS_ID,
+			new RainbowHarnessItem(
+					new Item.Properties()
+							.setId(RAINBOW_HARNESS_KEY)
+							.component(DataComponents.EQUIPPABLE, RainbowHarnessItem.createEquippable())
 			)
 	);
 	public static final Item LITTLE_DICTATOR_DECREE = Registry.register(
@@ -426,6 +441,7 @@ public final class ModItems {
 			entries.prepend(CAMERA);
 			entries.prepend(DRONE);
 			entries.prepend(COPPER_GOGGLES);
+			entries.prepend(RAINBOW_HARNESS);
 			entries.prepend(LITTLE_DICTATOR_DECREE);
 			entries.prepend(NETHERITE_SHIELD);
 			entries.prepend(DIAMOND_SHIELD);
@@ -435,6 +451,7 @@ public final class ModItems {
 			entries.prepend(WOODEN_SHIELD);
 			entries.prepend(BITCOIN);
 		});
+		ItemGroupEvents.modifyEntriesEvent(COMBAT_TAB).register(entries -> entries.prepend(RAINBOW_HARNESS));
 	}
 
 	private static Item.Properties shieldProperties(ResourceKey<Item> key, int durability) {

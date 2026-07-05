@@ -14,6 +14,7 @@ import com.lostglade.server.BluetoothLinkSystem;
 import com.lostglade.server.RendererBotCameraSystem;
 import com.lostglade.server.RendererBotPresenceSystem;
 import com.lostglade.server.RendererBotProcessSystem;
+import com.lostglade.server.RainbowHarnessColorSystem;
 import com.lostglade.server.SpeakerSystem;
 import com.lostglade.item.ModItems;
 import com.lostglade.item.ModRecipeSerializers;
@@ -82,6 +83,7 @@ public class Lg2 implements ModInitializer {
 		YandexMapMarkerStore.register();
 		ModWorldGen.register();
 		BrownBedDisplaySystem.register();
+		RainbowHarnessColorSystem.register();
 		ServerBossBarVisibilitySystem.register();
 		MapImageRenderSystem.register();
 		CameraCaptureSystem.register();
