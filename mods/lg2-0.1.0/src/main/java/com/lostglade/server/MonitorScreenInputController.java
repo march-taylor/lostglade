@@ -210,7 +210,7 @@ final class MonitorScreenInputController {
 							mediaState.galleryFileMenuOpen = false;
 							mediaState.statusText = "Введи новое имя файла";
 							mediaState.version++;
-							player.displayClientMessage(Component.literal("Галерея: введи новое имя файла в чат"), true);
+							player.displayClientMessage(galleryRenamePromptMessage(player), true);
 						}
 					} else if (galleryFileMenuActionRect(layout, 1).contains(touchPoint.x(), touchPoint.y())) {
 						GalleryItem item = currentGalleryItemLocked(mediaState);

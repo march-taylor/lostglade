@@ -193,7 +193,7 @@ final class MonitorScreenChatLinkController {
 		String title = sanitizeGalleryRenameTitle(message.signedContent());
 		MediaRuntimeState state = MEDIA_STATES.get(rename.screenKey());
 		if (state == null) {
-			sender.displayClientMessage(Component.literal("Галерея: файл не найден"), true);
+			sender.displayClientMessage(galleryRenameNotFoundMessage(sender), true);
 			return false;
 		}
 		boolean renamed = false;
@@ -230,9 +230,9 @@ final class MonitorScreenChatLinkController {
 		}
 		if (renamed) {
 			persistGalleryState(server, rename.screenKey(), state);
-			sender.displayClientMessage(Component.literal("Галерея: файл переименован"), true);
+			sender.displayClientMessage(galleryRenamedMessage(sender), true);
 		} else {
-			sender.displayClientMessage(Component.literal("Галерея: имя не изменено"), true);
+			sender.displayClientMessage(galleryRenameUnchangedMessage(sender), true);
 		}
 		requestRuntimeRender(server, rename.screenKey());
 		return false;

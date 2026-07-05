@@ -64,7 +64,7 @@ public final class CameraVideoRecordingSystem {
 		if (current != null) {
 			long elapsedMs = System.currentTimeMillis() - current.startedAtMs();
 			if (elapsedMs < MIN_STOP_DELAY_MS) {
-				player.displayClientMessage(Component.literal("Запись видео запускается..."), true);
+				Lg2Messages.actionBar(player, "message.lg2.camera.video.starting");
 				return true;
 			}
 			requestStop(player.level().getServer(), current, true);
@@ -79,7 +79,7 @@ public final class CameraVideoRecordingSystem {
 				MAX_DURATION_SECONDS
 		);
 		if (handle == null) {
-			player.displayClientMessage(Component.literal("Нет активного renderer-клиента для записи видео."), true);
+			Lg2Messages.actionBar(player, "message.lg2.camera.video.no_renderer");
 			return false;
 		}
 		HandCameraAudioTrack audioTrack = null;
@@ -122,7 +122,7 @@ public final class CameraVideoRecordingSystem {
 				server.execute(() -> finishRecording(server, state, result, throwable));
 			}
 		});
-		player.displayClientMessage(Component.literal("Запись видео началась. Нажми камеру ещё раз, чтобы остановить."), true);
+		Lg2Messages.actionBar(player, "message.lg2.camera.video.started");
 		return true;
 	}
 
@@ -168,7 +168,7 @@ public final class CameraVideoRecordingSystem {
 		if (notifyPlayer) {
 			ServerPlayer player = server.getPlayerList().getPlayer(recording.playerId());
 			if (player != null) {
-				player.displayClientMessage(Component.literal("Останавливаю запись видео..."), true);
+				Lg2Messages.actionBar(player, "message.lg2.camera.video.stopping");
 			}
 		}
 	}
@@ -204,7 +204,7 @@ public final class CameraVideoRecordingSystem {
 		if (throwable != null || result == null) {
 			state.abortAudioCapture();
 			if (player != null) {
-				player.displayClientMessage(Component.literal("Запись видео не удалась."), true);
+				Lg2Messages.actionBar(player, "message.lg2.camera.video.failed");
 			}
 			return;
 		}
@@ -230,7 +230,7 @@ public final class CameraVideoRecordingSystem {
 		} catch (IOException exception) {
 			Lg2.LOGGER.warn("Failed to persist camera video file for {}", state.requestId(), exception);
 			state.deleteAudioCapture();
-			player.displayClientMessage(Component.literal("Видео записалось, но файл не сохранился на сервере."), true);
+			Lg2Messages.actionBar(player, "message.lg2.camera.video.persist_failed");
 			return;
 		} finally {
 			state.deleteAudioCapture();
@@ -249,14 +249,17 @@ public final class CameraVideoRecordingSystem {
 		);
 		if (videoItem.isEmpty()) {
 			if (player != null) {
-				player.displayClientMessage(Component.literal("Не удалось собрать видео-карту."), true);
+				Lg2Messages.actionBar(player, "message.lg2.camera.video.map_failed");
 			}
 			return;
 		}
 
 		giveOrDrop(player, videoItem);
 		ServerMechanicsGateSystem.syncPlayerInventory(player);
-		player.displayClientMessage(Component.literal(audioMuxFailed ? "Видео готово, но звук не удалось добавить." : "Видео готово."), true);
+		Lg2Messages.actionBar(
+				player,
+				audioMuxFailed ? "message.lg2.camera.video.ready_audio_failed" : "message.lg2.camera.video.ready"
+		);
 	}
 
 	private static Path persistCompletedVideoFile(String sourceKey, String rawSourcePath) throws IOException {

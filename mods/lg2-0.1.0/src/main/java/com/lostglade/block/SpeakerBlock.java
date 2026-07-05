@@ -2,6 +2,7 @@ package com.lostglade.block;
 
 import com.lostglade.server.SpeakerSystem;
 import com.lostglade.server.BluetoothLinkSystem;
+import com.lostglade.server.Lg2Messages;
 import eu.pb4.polymer.blocks.api.PolymerTexturedBlock;
 import eu.pb4.polymer.core.api.block.SimplePolymerBlock;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
@@ -194,7 +195,7 @@ public final class SpeakerBlock extends SimplePolymerBlock implements PolymerTex
 		int currentVolume = readVolumePercent(state);
 		int nextVolume = Math.max(0, Math.min(100, currentVolume + direction * step));
 		if (nextVolume == currentVolume) {
-			player.displayClientMessage(Component.literal("VOL " + currentVolume + "%"), true);
+			Lg2Messages.actionBar(player, "message.lg2.speaker.volume", currentVolume);
 			return false;
 		}
 
@@ -208,7 +209,7 @@ public final class SpeakerBlock extends SimplePolymerBlock implements PolymerTex
 				0.35F,
 				0.75F + 0.25F * (nextVolume / 100.0F)
 		);
-		player.displayClientMessage(Component.literal("VOL " + nextVolume + "%"), true);
+		Lg2Messages.actionBar(player, "message.lg2.speaker.volume", nextVolume);
 		return true;
 	}
 

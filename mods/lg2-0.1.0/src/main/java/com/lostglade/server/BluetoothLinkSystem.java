@@ -328,11 +328,11 @@ public final class BluetoothLinkSystem {
 		}
 		if (selected.equals(endpoint)) {
 			clearSelectedEndpoint(player, false);
-			player.displayClientMessage(literal("Выбор bluetooth связи сброшен", ChatFormatting.WHITE), true);
+			Lg2Messages.actionBar(player, "message.lg2.bluetooth.selection_cleared");
 			return;
 		}
 		if (!isLinkAllowed(selected.type(), endpoint.type())) {
-			player.displayClientMessage(literal("Эти устройства нельзя связывать", ChatFormatting.RED), true);
+			Lg2Messages.actionBar(player, ChatFormatting.RED, "message.lg2.bluetooth.link_not_allowed");
 			return;
 		}
 
@@ -346,15 +346,12 @@ public final class BluetoothLinkSystem {
 		clearSelectedEndpoint(player, false);
 		notifyEndpointChanged(server, selected);
 		notifyEndpointChanged(server, endpoint);
-		player.displayClientMessage(
-				literal(
-						(removed ? "Отвязано: " : "Связано: ")
-								+ endpointTypeName(selected.type())
-								+ " <> "
-								+ endpointTypeName(endpoint.type()),
-						removed ? ChatFormatting.RED : ChatFormatting.GREEN
-				),
-				true
+		Lg2Messages.actionBar(
+				player,
+				removed ? ChatFormatting.RED : ChatFormatting.GREEN,
+				removed ? "message.lg2.bluetooth.unlinked" : "message.lg2.bluetooth.linked",
+				endpointName(selected.type()),
+				endpointName(endpoint.type())
 		);
 	}
 
@@ -531,11 +528,7 @@ public final class BluetoothLinkSystem {
 		if (player == null || endpoint == null) {
 			return;
 		}
-		player.displayClientMessage(localizedEndpointName(player, endpoint.type()).withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false)), true);
-	}
-
-	private static Component literal(String text, ChatFormatting color) {
-		return Component.literal(text).withStyle(style -> style.withColor(color).withItalic(false));
+		Lg2Messages.actionBar(player, endpointName(endpoint.type()));
 	}
 
 	private static boolean canUseBluetoothAdapter(ServerPlayer player, boolean notify) {
@@ -544,86 +537,27 @@ public final class BluetoothLinkSystem {
 		}
 		if (notify) {
 			String upgradeName = ServerUpgradeUiSystem.getUpgradeDisplayName(player, IT_BLUETOOTH_ADAPTER);
-			player.displayClientMessage(literal(localizedAdapterLockedMessage(player, upgradeName), ChatFormatting.RED), true);
+			Lg2Messages.actionBar(
+					player,
+					ChatFormatting.RED,
+					"message.lg2.bluetooth.upgrade_locked",
+					upgradeName == null || upgradeName.isBlank() ? "Bluetooth Adapter" : upgradeName
+			);
 		}
 		return false;
 	}
 
-	private static String localizedAdapterLockedMessage(ServerPlayer player, String upgradeName) {
-		String resolvedName = upgradeName == null || upgradeName.isBlank() ? "Bluetooth Adapter" : upgradeName;
-		String language = player != null && player.clientInformation() != null ? player.clientInformation().language() : "";
-		String normalized = language == null ? "" : language.toLowerCase(Locale.ROOT);
-		if (normalized.startsWith("ja")) {
-			return "先に「" + resolvedName + "」を購入してください。";
-		}
-		if (normalized.startsWith("uk")) {
-			return "Спочатку купи " + resolvedName + ".";
-		}
-		if (normalized.startsWith("ru") || normalized.startsWith("rpr")) {
-			return "Сначала купи " + resolvedName + ".";
-		}
-		return "Buy " + resolvedName + " first.";
-	}
-
-	private static String endpointTypeName(EndpointType type) {
+	private static MutableComponent endpointName(EndpointType type) {
 		if (type == null) {
-			return "связь";
+			return Lg2Messages.tr("message.lg2.bluetooth.endpoint.generic");
 		}
 		return switch (type) {
-			case SCREEN -> "экран";
-			case SPEAKER -> "динамик";
-			case MICROPHONE -> "микрофон";
-			case CAMERA -> "камера";
-			case DRONE -> "дрон";
+			case SCREEN -> Lg2Messages.tr("message.lg2.bluetooth.endpoint.screen");
+			case SPEAKER -> Lg2Messages.tr("message.lg2.bluetooth.endpoint.speaker");
+			case MICROPHONE -> Lg2Messages.tr("message.lg2.bluetooth.endpoint.microphone");
+			case CAMERA -> Lg2Messages.tr("message.lg2.bluetooth.endpoint.camera");
+			case DRONE -> Lg2Messages.tr("message.lg2.bluetooth.endpoint.drone");
 		};
-	}
-
-	private static MutableComponent localizedEndpointName(ServerPlayer player, EndpointType type) {
-		String language = player != null && player.clientInformation() != null ? player.clientInformation().language() : "";
-		String normalized = language == null ? "" : language.toLowerCase(Locale.ROOT);
-		if (normalized.startsWith("ja")) {
-			return Component.literal(switch (type) {
-				case SCREEN -> "スクリーン";
-				case SPEAKER -> "スピーカー";
-				case MICROPHONE -> "マイク";
-				case CAMERA -> "カメラ";
-				case DRONE -> "ドローン";
-			});
-		}
-		if (normalized.startsWith("uk")) {
-			return Component.literal(switch (type) {
-				case SCREEN -> "Екран";
-				case SPEAKER -> "Динамік";
-				case MICROPHONE -> "Мікрофон";
-				case CAMERA -> "Камера";
-				case DRONE -> "Дрон";
-			});
-		}
-		if (normalized.startsWith("rpr")) {
-			return Component.literal(switch (type) {
-				case SCREEN -> "Экранъ";
-				case SPEAKER -> "Динамикъ";
-				case MICROPHONE -> "Микрофонъ";
-				case CAMERA -> "Камѣра";
-				case DRONE -> "Дронъ";
-			});
-		}
-		if (normalized.startsWith("ru")) {
-			return Component.literal(switch (type) {
-				case SCREEN -> "Экран";
-				case SPEAKER -> "Динамик";
-				case MICROPHONE -> "Микрофон";
-				case CAMERA -> "Камера";
-				case DRONE -> "Дрон";
-			});
-		}
-		return Component.literal(switch (type) {
-			case SCREEN -> "Screen";
-			case SPEAKER -> "Speaker";
-			case MICROPHONE -> "Microphone";
-			case CAMERA -> "Camera";
-			case DRONE -> "Drone";
-		});
 	}
 
 	private static String pairKey(Endpoint first, Endpoint second) {

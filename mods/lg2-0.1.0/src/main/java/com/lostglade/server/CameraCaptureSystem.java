@@ -103,7 +103,12 @@ public final class CameraCaptureSystem {
 			return false;
 		}
 		if (!ServerUpgradeUiSystem.hasUpgrade(player, IT_CAMERA)) {
-			player.displayClientMessage(Component.literal("Сначала открой технологию Камера."), true);
+			String upgradeName = ServerUpgradeUiSystem.getUpgradeDisplayName(player, IT_CAMERA);
+			Lg2Messages.actionBar(
+					player,
+					"message.lg2.camera.upgrade_locked",
+					upgradeName == null || upgradeName.isBlank() ? "Camera" : upgradeName
+			);
 			return false;
 		}
 		CameraPhotoSettings settings = CameraPhotoSettings.read(stack);
@@ -161,112 +166,27 @@ public final class CameraCaptureSystem {
 	}
 
 	private static Component cameraBusyMessage(ServerPlayer player) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return Component.literal("Камѣра уже обрабатываеть предыдущее снимокъ.");
-		}
-		if (locale.startsWith("uk")) {
-			return Component.literal("Камера вже обробляє попередній знімок.");
-		}
-		if (locale.startsWith("ja")) {
-			return Component.literal("カメラは前の写真をまだ処理中です。");
-		}
-		if (locale.startsWith("ru")) {
-			return Component.literal("Камера уже обрабатывает предыдущий снимок.");
-		}
-		return Component.literal("The camera is still processing the previous photo.");
+		return Lg2Messages.tr("message.lg2.camera.busy");
 	}
 
 	private static Component capturePrepareFailedMessage(ServerPlayer player) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return Component.literal("Не удалось подготовить снимокъ.");
-		}
-		if (locale.startsWith("uk")) {
-			return Component.literal("Не вдалося підготувати знімок.");
-		}
-		if (locale.startsWith("ja")) {
-			return Component.literal("写真の準備に失敗しました。");
-		}
-		if (locale.startsWith("ru")) {
-			return Component.literal("Не удалось подготовить снимок.");
-		}
-		return Component.literal("Couldn't prepare the photo.");
+		return Lg2Messages.tr("message.lg2.camera.prepare_failed");
 	}
 
 	private static Component noActiveRendererClientMessage(ServerPlayer player) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return Component.literal("Нѣтъ активнаго рендеръ-кліента для снимка.");
-		}
-		if (locale.startsWith("uk")) {
-			return Component.literal("Немає активного рендер-клієнта для знімка.");
-		}
-		if (locale.startsWith("ja")) {
-			return Component.literal("写真用のアクティブなレンダークライアントがいません。");
-		}
-		if (locale.startsWith("ru")) {
-			return Component.literal("Нет активного рендер-клиента для снимка.");
-		}
-		return Component.literal("No active renderer client is available for photos.");
+		return Lg2Messages.tr("message.lg2.camera.no_renderer");
 	}
 
 	public static Component captureCompletedMessage(ServerPlayer player) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return Component.literal("Снимокъ готовъ.");
-		}
-		if (locale.startsWith("uk")) {
-			return Component.literal("Знімок готовий.");
-		}
-		if (locale.startsWith("ja")) {
-			return Component.literal("写真の準備ができました。");
-		}
-		if (locale.startsWith("ru")) {
-			return Component.literal("Снимок готов.");
-		}
-		return Component.literal("Photo ready.");
+		return Lg2Messages.tr("message.lg2.camera.capture_completed");
 	}
 
 	public static Component queuedForRenderMessage(ServerPlayer player) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return Component.literal("Снимокъ поставленъ въ рендеръ.");
-		}
-		if (locale.startsWith("uk")) {
-			return Component.literal("Знімок поставлено в рендер.");
-		}
-		if (locale.startsWith("ja")) {
-			return Component.literal("写真をレンダーに送信しました。");
-		}
-		if (locale.startsWith("ru")) {
-			return Component.literal("Снимок поставлен в рендер.");
-		}
-		return Component.literal("Photo sent to render.");
+		return Lg2Messages.tr("message.lg2.camera.queued");
 	}
 
 	public static Component addedToRenderQueueMessage(ServerPlayer player) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return Component.literal("Снимокъ добавленъ въ очередь рендера.");
-		}
-		if (locale.startsWith("uk")) {
-			return Component.literal("Знімок додано в чергу рендера.");
-		}
-		if (locale.startsWith("ja")) {
-			return Component.literal("写真をレンダー待ちキューに追加しました。");
-		}
-		if (locale.startsWith("ru")) {
-			return Component.literal("Снимок добавлен в очередь рендера.");
-		}
-		return Component.literal("Photo added to the render queue.");
-	}
-
-	private static String locale(ServerPlayer player) {
-		if (player == null || player.clientInformation() == null || player.clientInformation().language() == null) {
-			return "en_us";
-		}
-		return player.clientInformation().language().toLowerCase(Locale.ROOT);
+		return Lg2Messages.tr("message.lg2.camera.queued_more");
 	}
 
 	private static void playShutterFeedback(ServerPlayer player) {

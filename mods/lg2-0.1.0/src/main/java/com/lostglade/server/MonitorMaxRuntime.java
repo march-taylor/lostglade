@@ -5394,7 +5394,7 @@ final class MonitorMaxRuntime {
 					.append(copyableName)
 					.append(MonitorScreenMessages.literal(". Type a new nickname in chat to change it"));
 		}
-		player.sendSystemMessage(message);
+		player.displayClientMessage(message, true);
 	}
 
 	private static Component maxAddContactPromptMessage(ServerPlayer player) {

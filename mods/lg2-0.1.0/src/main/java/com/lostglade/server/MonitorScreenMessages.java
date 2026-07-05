@@ -81,34 +81,34 @@ final class MonitorScreenMessages {
 
 	static Component linkPromptMessage(ScreenViewMode mode, ServerPlayer player) {
 		if (mode == ScreenViewMode.YOUTUBE) {
-			return literal("Скинь в чат YouTube ссылку");
+			return Lg2Messages.tr("message.lg2.monitor.youtube_link_prompt");
 		}
 		if (mode == ScreenViewMode.YOUTUBE_MUSIC) {
-			return literal("Скинь в чат YouTube или YouTube Music ссылку");
+			return Lg2Messages.tr("message.lg2.monitor.youtube_music_link_prompt");
 		}
-		return literal("Скинь в чат ссылку на картинку, гифку, видео или музыку");
+		return Lg2Messages.tr("message.lg2.monitor.link_prompt");
 	}
 
 	static Component loadingMessage(ScreenViewMode mode, ServerPlayer player) {
 		if (mode == ScreenViewMode.YOUTUBE) {
-			return literal("Подключаю YouTube...");
+			return Lg2Messages.tr("message.lg2.monitor.youtube_loading");
 		}
 		if (mode == ScreenViewMode.YOUTUBE_MUSIC) {
-			return literal("Подключаю YouTube Music...");
+			return Lg2Messages.tr("message.lg2.monitor.youtube_music_loading");
 		}
-		return literal("Открываю медиа...");
+		return Lg2Messages.tr("message.lg2.monitor.loading");
 	}
 
 	static Component mediaLoadedMessage(ServerPlayer player, boolean animated) {
-		return literal(animated ? "Гифка добавлена в галерею" : "Картинка добавлена в галерею");
+		return Lg2Messages.tr(animated ? "message.lg2.monitor.media_loaded.gif" : "message.lg2.monitor.media_loaded.image");
 	}
 
 	static Component youtubeLoadedMessage(ServerPlayer player, boolean live) {
-		return literal(live ? "YouTube стрим подключён" : "YouTube видео подключено");
+		return Lg2Messages.tr(live ? "message.lg2.monitor.youtube_loaded.live" : "message.lg2.monitor.youtube_loaded.video");
 	}
 
 	static Component youtubeMusicLoadedMessage(ServerPlayer player) {
-		return literal("YouTube Music трек подключён");
+		return Lg2Messages.tr("message.lg2.monitor.youtube_music_loaded");
 	}
 
 	static Component youtubeQueueAddedMessage(ServerPlayer player, String title, int addedCount, boolean playlist) {
@@ -131,61 +131,51 @@ final class MonitorScreenMessages {
 
 	static Component mediaLoadFailedMessage(ServerPlayer player, String error) {
 		String reason = error == null || error.isBlank() ? "LOAD FAILED" : error;
-		return literal("Не удалось загрузить: " + reason);
+		return Lg2Messages.tr("message.lg2.monitor.media_load_failed", reason);
 	}
 
 	static Component mediaCancelledMessage(ServerPlayer player, ScreenViewMode mode) {
 		if (mode == ScreenViewMode.YOUTUBE) {
-			return literal("Этот экран уже не ждёт YouTube ссылку");
+			return Lg2Messages.tr("message.lg2.monitor.media_cancelled.youtube");
 		}
 		if (mode == ScreenViewMode.YOUTUBE_MUSIC) {
-			return literal("Этот экран уже не ждёт YouTube Music ссылку");
+			return Lg2Messages.tr("message.lg2.monitor.media_cancelled.youtube_music");
 		}
-		return literal("Этот экран уже не ждёт ссылку");
+		return Lg2Messages.tr("message.lg2.monitor.media_cancelled.generic");
 	}
 
 	static Component mediaInvalidLinkMessage(ServerPlayer player, ScreenViewMode mode) {
 		if (mode == ScreenViewMode.YOUTUBE) {
-			return literal("Нужна нормальная YouTube ссылка");
+			return Lg2Messages.tr("message.lg2.monitor.invalid_link.youtube");
 		}
 		if (mode == ScreenViewMode.YOUTUBE_MUSIC) {
-			return literal("Нужна нормальная YouTube или YouTube Music ссылка");
+			return Lg2Messages.tr("message.lg2.monitor.invalid_link.youtube_music");
 		}
-		return literal("Пустая ссылка не подходит");
+		return Lg2Messages.tr("message.lg2.monitor.invalid_link.generic");
 	}
 
 	static Component wallOnlyMessage(ServerPlayer player) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return literal("Экранъ ставится токмо на стену");
-		}
-		if (locale.startsWith("uk")) {
-			return literal("Екран ставиться лише на стіну");
-		}
-		if (locale.startsWith("ja")) {
-			return literal("モニターは壁にのみ設置できます");
-		}
-		if (locale.startsWith("ru")) {
-			return literal("Экран ставится только на стену");
-		}
-		return literal("The monitor can only be placed on a wall");
+		return Lg2Messages.tr("message.lg2.monitor.wall_only");
 	}
 
 	static Component occupiedMessage(ServerPlayer player) {
-		String locale = locale(player);
-		if (locale.startsWith("rpr")) {
-			return literal("Тутъ уже занято");
-		}
-		if (locale.startsWith("uk")) {
-			return literal("Тут уже зайнято");
-		}
-		if (locale.startsWith("ja")) {
-			return literal("ここには設置できません");
-		}
-		if (locale.startsWith("ru")) {
-			return literal("Тут уже занято");
-		}
-		return literal("That spot is already occupied");
+		return Lg2Messages.tr("message.lg2.monitor.occupied");
+	}
+
+	static Component galleryRenamePromptMessage(ServerPlayer player) {
+		return Lg2Messages.tr("message.lg2.monitor.gallery.rename_prompt");
+	}
+
+	static Component galleryRenameNotFoundMessage(ServerPlayer player) {
+		return Lg2Messages.tr("message.lg2.monitor.gallery.rename_not_found");
+	}
+
+	static Component galleryRenamedMessage(ServerPlayer player) {
+		return Lg2Messages.tr("message.lg2.monitor.gallery.renamed");
+	}
+
+	static Component galleryRenameUnchangedMessage(ServerPlayer player) {
+		return Lg2Messages.tr("message.lg2.monitor.gallery.rename_unchanged");
 	}
 
 	static String locale(ServerPlayer player) {

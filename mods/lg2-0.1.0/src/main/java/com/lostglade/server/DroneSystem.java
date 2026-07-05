@@ -939,7 +939,7 @@ public final class DroneSystem {
 		MinecraftServer server = player.level().getServer();
 		UUID currentControllerId = resolveAuthoritativeDroneControllerId(droneUuid);
 		if (currentControllerId != null && !Objects.equals(currentControllerId, player.getUUID())) {
-			player.sendSystemMessage(Component.literal("Этот дрон уже управляется другим игроком."));
+			Lg2Messages.actionBar(player, "message.lg2.drone.busy");
 			return false;
 		}
 		Entity root = findDroneRoot(server, dimension, droneUuid);
@@ -2310,7 +2310,7 @@ public final class DroneSystem {
 				new PendingDroneControlStart(root.getUUID(), level.dimension(), root.blockPosition(), level.getGameTime())
 		);
 		updateDroneChunkTickets(level.getServer());
-		player.sendSystemMessage(Component.literal("Подготавливаю связь с дроном..."));
+		Lg2Messages.actionBar(player, "message.lg2.drone.preparing_link");
 	}
 
 	private static void queueDroneControlStartPreload(ServerPlayer player, DroneLiveFeedState state) {
@@ -2328,7 +2328,7 @@ public final class DroneSystem {
 				new PendingDroneControlStart(state.droneUuid(), state.dimension(), state.pos(), startedAtTick)
 		);
 		updateDroneChunkTickets(server);
-		player.sendSystemMessage(Component.literal("Подготавливаю связь с дроном..."));
+		Lg2Messages.actionBar(player, "message.lg2.drone.preparing_link");
 	}
 
 	private static void tickPendingControlStarts(MinecraftServer server) {
@@ -2350,7 +2350,7 @@ public final class DroneSystem {
 			UUID currentControllerId = resolveAuthoritativeDroneControllerId(pending.droneUuid());
 			if (currentControllerId != null && !Objects.equals(currentControllerId, player.getUUID())) {
 				PENDING_CONTROL_STARTS.remove(playerUuid);
-				player.sendSystemMessage(Component.literal("Этот дрон уже управляется другим игроком."));
+				Lg2Messages.actionBar(player, "message.lg2.drone.busy");
 				continue;
 			}
 			ServerLevel pendingLevel = server.getLevel(pending.droneDimension());
@@ -2362,7 +2362,7 @@ public final class DroneSystem {
 					continue;
 				}
 				PENDING_CONTROL_STARTS.remove(playerUuid);
-				player.sendSystemMessage(Component.literal("Дрон недоступен."));
+				Lg2Messages.actionBar(player, "message.lg2.drone.unavailable");
 				continue;
 			}
 			boolean ready = isDroneControlStartAreaReady(root, DRONE_CONTROL_PRELOAD_READY_RADIUS_CHUNKS);
@@ -5516,7 +5516,7 @@ public final class DroneSystem {
 		POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.remove(player.getUUID());
 		UUID currentControllerId = resolveAuthoritativeDroneControllerId(root.getUUID());
 		if (currentControllerId != null && !Objects.equals(currentControllerId, player.getUUID())) {
-			player.sendSystemMessage(Component.literal("Этот дрон уже управляется другим игроком."));
+			Lg2Messages.actionBar(player, "message.lg2.drone.busy");
 			return false;
 		}
 
@@ -5582,7 +5582,7 @@ public final class DroneSystem {
 		syncControlledOperatorNightVision(player, session, root);
 		notifyDroneNetworkChanged(root);
 		updateDroneHud(player, session, true);
-		player.sendSystemMessage(Component.literal("Управление дроном начато. Shift — выйти."));
+		Lg2Messages.actionBar(player, "message.lg2.drone.control_started");
 		return true;
 	}
 
@@ -5675,7 +5675,7 @@ public final class DroneSystem {
 		ServerRaceSystem.resumeCopperManJetpackAfterDrone(player);
 
 		if (notify) {
-			player.sendSystemMessage(Component.literal("Управление дроном завершено."));
+			Lg2Messages.actionBar(player, "message.lg2.drone.control_stopped");
 		}
 	}
 
@@ -5967,24 +5967,9 @@ public final class DroneSystem {
 			return true;
 		}
 		String upgradeName = ServerUpgradeUiSystem.getUpgradeDisplayName(player, upgradeId);
-		player.displayClientMessage(Component.literal(localizedDroneTuningUpgradeMessage(player, upgradeName)).withStyle(style -> style.withColor(0xFF6B6B).withItalic(false)), true);
-		return false;
-	}
-
-	private static String localizedDroneTuningUpgradeMessage(ServerPlayer player, String upgradeName) {
 		String resolvedName = upgradeName == null || upgradeName.isBlank() ? "drone tuning module" : upgradeName;
-		String language = player != null && player.clientInformation() != null ? player.clientInformation().language() : "";
-		String normalized = language == null ? "" : language.toLowerCase(Locale.ROOT);
-		if (normalized.startsWith("ja")) {
-			return "先に「" + resolvedName + "」を購入してください。";
-		}
-		if (normalized.startsWith("uk")) {
-			return "Спочатку купи \"" + resolvedName + "\" у тюнінгу дрона.";
-		}
-		if (normalized.startsWith("ru") || normalized.startsWith("rpr")) {
-			return "Сначала купи \"" + resolvedName + "\" в тюнинге дрона.";
-		}
-		return "Buy the \"" + resolvedName + "\" drone tuning upgrade first.";
+		Lg2Messages.actionBar(player, 0xFF6B6B, "message.lg2.drone.tuning_upgrade_locked", resolvedName);
+		return false;
 	}
 
 	private static InteractionResult tryArmDroneWithTnt(ServerPlayer player, Entity root, ItemStack heldStack) {

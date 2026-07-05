@@ -923,20 +923,10 @@ public final class MonitorScreenSystem {
 
 	private static Component screenUpgradeLockedMessage(ServerPlayer player) {
 		String upgradeName = ServerUpgradeUiSystem.getUpgradeDisplayName(player, IT_SCREEN);
-		String resolvedName = upgradeName == null || upgradeName.isBlank() ? "Screen" : upgradeName;
-		String locale = player != null && player.clientInformation() != null && player.clientInformation().language() != null
-				? player.clientInformation().language().toLowerCase(Locale.ROOT)
-				: "en_us";
-		if (locale.startsWith("ja")) {
-			return Component.literal("先に「" + resolvedName + "」を購入してください。");
-		}
-		if (locale.startsWith("uk")) {
-			return Component.literal("Спочатку купи " + resolvedName + ".");
-		}
-		if (locale.startsWith("ru") || locale.startsWith("rpr")) {
-			return Component.literal("Сначала купи " + resolvedName + ".");
-		}
-		return Component.literal("Buy " + resolvedName + " first.");
+		return Lg2Messages.tr(
+				"message.lg2.monitor.upgrade_locked",
+				upgradeName == null || upgradeName.isBlank() ? "Screen" : upgradeName
+		);
 	}
 
 	public static boolean onFrameBroken(ServerLevel level, ItemFrame frame, Entity breaker, boolean shouldDropScreen) {
