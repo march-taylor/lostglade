@@ -29,6 +29,13 @@ public final class DronePhysicsSimulationTest {
 		verifiedGroundContactCanAccumulateWear();
 		sourceUsesClientAuthoritativeDronePose();
 		sourcePreservesDronePoseAcrossControlHandoff();
+		sourceCombatDroneInteractionPrioritizesTuningThenMenuThenControl();
+		sourceControlledOperatorDisplayRewriteAvoidsNearbyEntityScans();
+		sourceTurretInventoryDoesNotDeleteRejectedItems();
+		sourceDroneAutomationSupportsDispensersAndHoppers();
+		sourceTurretPotionsUseStraightNoGravityFlight();
+		sourceDroneEntityLoadCleanupDefersDiscard();
+		sourceControlExitClearsStaleVelocityWhenDrivesAreIdle();
 		System.out.println("Drone physics simulation passed");
 	}
 
@@ -407,7 +414,7 @@ public final class DronePhysicsSimulationTest {
 		require(
 				server.contains("root.setYRot(session.proxyYaw());")
 						&& server.contains("root.setXRot(session.proxyPitch());")
-						&& server.contains("Vec3 releasedVelocity = finiteVecOr(session.velocity(), Vec3.ZERO);"),
+						&& server.contains("Vec3 releasedVelocity = releaseDriveIdle ? Vec3.ZERO : finiteVecOr(session.velocity(), Vec3.ZERO);"),
 				"control exit must release the drone with the operator's final facing and velocity"
 		);
 		require(
@@ -422,6 +429,131 @@ public final class DronePhysicsSimulationTest {
 						&& releasedVisualRebuild.contains("ClientboundEntityPositionSyncPacket.of(entity)")
 						&& releasedVisualRebuild.contains("new ClientboundSetEntityMotionPacket(root.getId(), root.getDeltaMovement())"),
 				"exit visual rebuild must respawn root and display layers from authoritative world state"
+		);
+	}
+
+	private static void sourceCombatDroneInteractionPrioritizesTuningThenMenuThenControl() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String server = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/DroneSystem.java"));
+		String useEntity = section(server, "UseEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {", "AttackEntityCallback.EVENT.register");
+
+		require(
+				!server.contains("private static InteractionResult tryUnloadDroneModule(")
+						&& !server.contains("tryUnloadDroneModule(")
+						&& useEntity.contains("InteractionResult tuningResult = tryTuneDrone(serverPlayer, root, heldStack);")
+						&& useEntity.contains("if (serverPlayer.isShiftKeyDown() && hasDroneTurretModule(root)) {")
+						&& useEntity.contains("openDroneTurretMenu(serverPlayer, root);")
+						&& useEntity.contains("return InteractionResult.CONSUME;")
+						&& !useEntity.contains("tryUnloadDroneModule("),
+				"drone shift interaction must not contain any module-unload path; tuning should fall through to menu or control only"
+		);
+	}
+
+	private static void sourceControlledOperatorDisplayRewriteAvoidsNearbyEntityScans() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String server = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/DroneSystem.java"));
+		String controlledDisplayRewrite = section(server, "private static boolean isControlledOperatorPassengerVisualEntity", "private static void sendControlledOperatorPacket");
+		String passengerPacket = section(server, "private static ClientboundSetPassengersPacket buildControlledOperatorDroneLayerPassengerPacket", "private static void syncControlledOperatorDroneLayerAttachment");
+
+		require(
+				server.contains("DISPLAY_LAYERS_BY_DRONE")
+						&& server.contains("level.getEntity(entityId)")
+						&& controlledDisplayRewrite.contains("return resolveRegisteredDroneDisplayLayer(root, entityId);")
+						&& !controlledDisplayRewrite.contains("findDroneDisplayLayers(root)"),
+				"controlled-operator display rewrite must resolve display layers by registered entity ids instead of nearby scans"
+		);
+		require(
+				passengerPacket.contains("findRegisteredDroneDisplayLayers(root)")
+						&& !passengerPacket.contains("findDroneDisplayLayers(root)"),
+				"controlled passenger packet rewrite must use registered display layers instead of nearby entity scans"
+		);
+	}
+
+	private static void sourceTurretInventoryDoesNotDeleteRejectedItems() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String server = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/DroneSystem.java"));
+		String turretInventory = section(server, "private static final class TurretInventory", "private record ControlledCollisionState");
+
+		require(
+				turretInventory.contains("public boolean canPlaceItem(int slot, ItemStack stack) {")
+						&& turretInventory.contains("return isDroneTurretProjectileStack(stack);")
+						&& !turretInventory.contains("public void setItem(int slot, ItemStack stack)")
+						&& !turretInventory.contains("ItemStack.EMPTY"),
+				"turret inventory must reject unsupported ammo through canPlaceItem without deleting the attempted stack"
+		);
+	}
+
+	private static void sourceDroneAutomationSupportsDispensersAndHoppers() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String server = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/DroneSystem.java"));
+		String register = section(server, "public static void register()", "public static InteractionResult placeDrone");
+		String dispenserHelpers = section(server, "private static void registerDroneDispenseBehaviors()", "public static void handleInput");
+		String hopperHelpers = section(server, "private static void tickDroneTurretAutomation(Entity root)", "private static boolean isUncontrolledReleaseGlideActive");
+
+		require(
+				register.contains("registerDroneDispenseBehaviors();")
+						&& dispenserHelpers.contains("registerDroneDispenseBehavior(ModItems.DRONE, DroneSystem::tryDispensePlaceDrone);")
+						&& dispenserHelpers.contains("registerDroneDispenseBehavior(Items.TNT, DroneSystem::tryDispenseTuneDrone);")
+						&& dispenserHelpers.contains("registerDroneDispenseBehavior(Items.DISPENSER, DroneSystem::tryDispenseTuneDrone);")
+						&& dispenserHelpers.contains("spawnConfiguredDrone(source.level(), stack.copy(), spawnPos, facing.toYRot())")
+						&& dispenserHelpers.contains("findDroneRootInFront(source)")
+						&& dispenserHelpers.contains("DispenserBlock.registerBehavior(item, (source, stack) -> {"),
+				"drone automation must register dispenser behaviors for placing drones and installing tuning modules"
+		);
+		require(
+				hopperHelpers.contains("HopperBlockEntity hopper")
+						&& hopperHelpers.contains("MinecartHopper.class")
+						&& hopperHelpers.contains("insertIntoDroneTurretInventory(target, removed)")
+						&& hopperHelpers.contains("canHopperFeedDrone(root, pos, state)")
+						&& hopperHelpers.contains("transferDroneTurretAmmoFromContainer"),
+				"combat drone turret must auto-load valid ammo from nearby hoppers and hopper minecarts"
+		);
+	}
+
+	private static void sourceTurretPotionsUseStraightNoGravityFlight() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String server = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/DroneSystem.java"));
+		String projectileFactory = section(server, "private static Projectile createDroneTurretProjectile", "private static void syncControlledDroneTurretAirTrigger");
+
+		require(
+				projectileFactory.contains("speed = DRONE_TURRET_POTION_SPEED;")
+						&& projectileFactory.contains("if (isDroneTurretStraightFlightProjectile(item)) {")
+						&& projectileFactory.contains("projectile.setNoGravity(true);")
+						&& projectileFactory.contains("return item == Items.SPLASH_POTION || item == Items.LINGERING_POTION;"),
+				"combat-drone potions must use straight no-gravity flight while staying vanilla projectiles"
+		);
+	}
+
+	private static void sourceDroneEntityLoadCleanupDefersDiscard() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String server = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/DroneSystem.java"));
+		String tick = section(server, "private static void tick(MinecraftServer server)", "private static void updateDroneChunkTickets");
+		String onEntityLoad = section(server, "private static void onEntityLoad(Entity entity, ServerLevel level)", "private static void onEntityUnload");
+
+		require(
+				tick.contains("flushPendingDroneLoadDiscards(server);")
+						&& server.contains("private static void queueDeferredDroneLoadDiscard(Entity entity)")
+						&& server.contains("private static void flushPendingDroneLoadDiscards(MinecraftServer server)")
+						&& onEntityLoad.contains("queueDeferredDroneLoadDiscard(entity);")
+						&& !onEntityLoad.contains("entity.discard();"),
+				"drone entity-load validation must defer discards until after chunk tracking tick instead of mutating trackers inline"
+		);
+	}
+
+	private static void sourceControlExitClearsStaleVelocityWhenDrivesAreIdle() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String server = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/DroneSystem.java"));
+		String stopControl = section(server, "private static void stopControlling(ServerPlayer player, boolean notify, boolean releaseDrone)", "private static boolean isDroneStationaryForBreakPickup");
+
+		require(
+				server.contains("private static final double DRONE_RELEASE_IDLE_DRIVE_EPSILON = 1.0E-4D;")
+						&& server.contains("private static boolean hasIdleReleasedDroneDrive(DroneControlSession session)")
+						&& stopControl.contains("boolean releaseDriveIdle = hasIdleReleasedDroneDrive(session);")
+						&& stopControl.contains("Vec3 releasedVelocity = releaseDriveIdle ? Vec3.ZERO : finiteVecOr(session.velocity(), Vec3.ZERO);")
+						&& stopControl.contains("releaseDriveIdle ? 0.0D : session.forwardDrive()")
+						&& stopControl.contains("releaseDriveIdle ? 0.0D : session.strafeDrive()")
+						&& stopControl.contains("!releaseDriveIdle"),
+				"drone release must drop stale post-exit movement when the operator had already neutralized both drives"
 		);
 	}
 

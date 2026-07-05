@@ -38,9 +38,13 @@ import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.minecraft.core.dispenser.BlockSource;
+import net.minecraft.core.dispenser.DefaultDispenseItemBehavior;
+import net.minecraft.core.dispenser.DispenseItemBehavior;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
+import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.SectionPos;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -91,6 +95,7 @@ import net.minecraft.tags.TagKey;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.Container;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.Display;
@@ -123,6 +128,7 @@ import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownSplas
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.item.PrimedTnt;
+import net.minecraft.world.entity.vehicle.minecart.MinecartHopper;
 import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.item.DyeItem;
 import net.minecraft.world.item.Item;
@@ -140,6 +146,10 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.BubbleColumnBlock;
+import net.minecraft.world.level.block.DispenserBlock;
+import net.minecraft.world.level.block.HopperBlock;
+import net.minecraft.world.level.block.entity.DispenserBlockEntity;
+import net.minecraft.world.level.block.entity.HopperBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
@@ -160,6 +170,7 @@ import org.joml.Vector3fc;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -288,10 +299,14 @@ public final class DroneSystem {
 	private static final int DRONE_TURRET_INVENTORY_SIZE = 9;
 	private static final long DRONE_TURRET_FIRE_COOLDOWN_TICKS = 4L;
 	private static final long DRONE_TURRET_CONTROL_START_SUPPRESS_TICKS = 6L;
+	private static final double DRONE_RELEASE_IDLE_DRIVE_EPSILON = 1.0E-4D;
+	private static final long DRONE_TURRET_AUTOMATION_INTERVAL_TICKS = 8L;
 	private static final float DRONE_TURRET_AIR_TRIGGER_WIDTH = 1.6F;
 	private static final float DRONE_TURRET_AIR_TRIGGER_HEIGHT = 1.6F;
 	private static final double DRONE_TURRET_AIR_TRIGGER_HEAD_FORWARD_OFFSET = 0.24D;
 	private static final double DRONE_TURRET_MUZZLE_FORWARD_OFFSET = 0.62D;
+	private static final float DRONE_TURRET_POTION_SPEED = 1.75F;
+	private static final int DRONE_SURFACE_WEAR_DUST_DEFAULT_COLOR = 0x242424;
 	private static final long DRONE_CONTROL_PRELOAD_TIMEOUT_TICKS = 20L * 8L;
 	private static final int DRONE_CONTROL_PRELOAD_READY_RADIUS_CHUNKS = 2;
 	private static final int DRONE_LOADING_CHUNK_TICKET_UNIQUE_FLAG = 32;
@@ -397,6 +412,7 @@ public final class DroneSystem {
 	private static final Map<UUID, DroneInputState> INPUTS = new HashMap<>();
 	private static final Map<UUID, UUID> CONTROLLERS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UUID> DISPLAYS_BY_DRONE = new HashMap<>();
+	private static final Map<UUID, LinkedHashSet<UUID>> DISPLAY_LAYERS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UUID> CAMERA_ANCHORS_BY_DRONE = new HashMap<>();
 	private static final Set<Item> DRONE_TURRET_PROJECTILES = Set.of(
 			Items.ARROW,
@@ -434,13 +450,16 @@ public final class DroneSystem {
 	private static final Set<UUID> VISUALLY_CONTROLLED_PLAYERS = new HashSet<>();
 	private static final Set<UUID> CONTROLLED_OPERATOR_MANAGED_NIGHT_VISION = new HashSet<>();
 	private static final Set<UUID> CONTROLLED_OPERATOR_AUTO_AIM_HIGHLIGHTS = new HashSet<>();
+	private static final Set<PendingDroneLoadDiscard> PENDING_DRONE_LOAD_DISCARDS = new LinkedHashSet<>();
 	private static final ThreadLocal<Boolean> CONTROLLED_OPERATOR_PACKET_REWRITE_BYPASS = ThreadLocal.withInitial(() -> false);
+	private static final DispenseItemBehavior DEFAULT_DRONE_DISPENSE_FALLBACK = new DefaultDispenseItemBehavior();
 	private static int nextOperatorBodyMirrorEntityId = OPERATOR_BODY_MIRROR_ENTITY_ID_START;
 
 	private DroneSystem() {
 	}
 
 	public static void register() {
+		registerDroneDispenseBehaviors();
 		UseEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
 			if (world.isClientSide() || !(player instanceof ServerPlayer serverPlayer)) {
 				return InteractionResult.PASS;
@@ -461,24 +480,21 @@ public final class DroneSystem {
 			if (root == null) {
 				return InteractionResult.PASS;
 			}
-			if (serverPlayer.getItemInHand(hand).is(ModItems.BLUETOOTH_ADAPTER)) {
+			ItemStack heldStack = serverPlayer.getItemInHand(hand);
+			if (heldStack.is(ModItems.BLUETOOTH_ADAPTER)) {
 				return InteractionResult.PASS;
 			}
 			DroneControlSession activeSession = ACTIVE_SESSIONS.get(serverPlayer.getUUID());
 			if (activeSession != null && Objects.equals(activeSession.droneUuid(), root.getUUID())) {
 				return InteractionResult.CONSUME;
 			}
-			if (serverPlayer.isShiftKeyDown()
-					&& hasDroneTurretModule(root)
-					&& !serverPlayer.getItemInHand(hand).is(Items.DISPENSER)
-					&& openDroneTurretMenu(serverPlayer, root)) {
-				return InteractionResult.SUCCESS;
-			}
-			InteractionResult tuningResult = serverPlayer.isShiftKeyDown()
-					? tryUnloadDroneModule(serverPlayer, root)
-					: tryTuneDrone(serverPlayer, root, serverPlayer.getItemInHand(hand));
+			InteractionResult tuningResult = tryTuneDrone(serverPlayer, root, heldStack);
 			if (tuningResult != InteractionResult.PASS) {
 				return tuningResult;
+			}
+			if (serverPlayer.isShiftKeyDown() && hasDroneTurretModule(root)) {
+				openDroneTurretMenu(serverPlayer, root);
+				return InteractionResult.CONSUME;
 			}
 			String requiredUpgrade = resolveRequiredUpgradeForDroneRoot(root);
 			if (requiredUpgrade != null && !ServerUpgradeUiSystem.hasUpgrade(serverPlayer, requiredUpgrade)) {
@@ -545,6 +561,7 @@ public final class DroneSystem {
 			INPUTS.clear();
 			CONTROLLERS_BY_DRONE.clear();
 			DISPLAYS_BY_DRONE.clear();
+			DISPLAY_LAYERS_BY_DRONE.clear();
 			CAMERA_ANCHORS_BY_DRONE.clear();
 			DRONE_TURRET_INVENTORIES.clear();
 			NEXT_DRONE_TURRET_FIRE_TICK.clear();
@@ -564,6 +581,7 @@ public final class DroneSystem {
 			AUTO_AIM_DISPLAY_ANIMATIONS.clear();
 			DRONE_ENVIRONMENT_DAMAGE.clear();
 			DRONE_MICROPHONE_RELAY_SEQUENCES.clear();
+			PENDING_DRONE_LOAD_DISCARDS.clear();
 			shutdownAllControlledOperatorAudio();
 			CONTROLLED_OPERATOR_MANAGED_NIGHT_VISION.clear();
 			CONTROLLED_OPERATOR_AUTO_AIM_HIGHLIGHTS.clear();
@@ -587,6 +605,20 @@ public final class DroneSystem {
 		if (requiredUpgrade != null && !ServerUpgradeUiSystem.hasUpgrade(player, requiredUpgrade)) {
 			return InteractionResult.FAIL;
 		}
+		if (!spawnConfiguredDrone(serverLevel, placementSnapshot, resolvePlacementPosition(context), player.getYRot())) {
+			return InteractionResult.FAIL;
+		}
+
+		if (!player.getAbilities().instabuild) {
+			context.getItemInHand().shrink(1);
+		}
+		return InteractionResult.CONSUME;
+	}
+
+	private static boolean spawnConfiguredDrone(ServerLevel serverLevel, ItemStack placementSnapshot, Vec3 spawnPos, float yRot) {
+		if (serverLevel == null || placementSnapshot == null || placementSnapshot.isEmpty() || spawnPos == null) {
+			return false;
+		}
 		DroneItem.DroneType droneType = DroneItem.getDroneType(placementSnapshot);
 		int kamikazePower = DroneItem.getKamikazePower(placementSnapshot);
 		boolean nightVision = DroneItem.hasNightVisionModule(placementSnapshot);
@@ -594,13 +626,11 @@ public final class DroneSystem {
 		boolean microphone = DroneItem.hasMicrophoneModule(placementSnapshot);
 		DyeColor paintColor = DroneItem.getPaintColor(placementSnapshot);
 
-		Vec3 spawnPos = resolvePlacementPosition(context);
 		AABB placementBox = droneBoxAt(spawnPos);
 		if (!serverLevel.noCollision(placementBox)) {
-			return InteractionResult.FAIL;
+			return false;
 		}
 
-		float yRot = player.getYRot();
 		Interaction root = new Interaction(EntityType.INTERACTION, serverLevel);
 		root.addTag(DRONE_ROOT_TAG);
 		root.setPos(spawnPos.x, spawnPos.y, spawnPos.z);
@@ -652,6 +682,7 @@ public final class DroneSystem {
 		serverLevel.addFreshEntity(cameraAnchor);
 		display.addTag(DRONE_DISPLAY_OWNER_TAG_PREFIX + root.getUUID());
 		DISPLAYS_BY_DRONE.put(root.getUUID(), display.getUUID());
+		rememberDroneDisplayLayer(root, display);
 		cameraAnchor.addTag(DRONE_CAMERA_OWNER_TAG_PREFIX + root.getUUID());
 		CAMERA_ANCHORS_BY_DRONE.put(root.getUUID(), cameraAnchor.getUUID());
 		syncDroneDisplayLayers(root);
@@ -660,11 +691,215 @@ public final class DroneSystem {
 		uncontrolledState.setLastPosition(root.position());
 		UNCONTROLLED_DRONES.put(root.getUUID(), uncontrolledState);
 		rememberLastKnownDroneFeedState(root);
+		return true;
+	}
 
-		if (!player.getAbilities().instabuild) {
-			context.getItemInHand().shrink(1);
+	private static void registerDroneDispenseBehaviors() {
+		registerDroneDispenseBehavior(ModItems.DRONE, DroneSystem::tryDispensePlaceDrone);
+		registerDroneDispenseBehavior(Items.TNT, DroneSystem::tryDispenseTuneDrone);
+		registerDroneDispenseBehavior(Items.RABBIT_HIDE, DroneSystem::tryDispenseTuneDrone);
+		registerDroneDispenseBehavior(Items.DISPENSER, DroneSystem::tryDispenseTuneDrone);
+		registerDroneDispenseBehavior(Items.SPIDER_EYE, DroneSystem::tryDispenseTuneDrone);
+		registerDroneDispenseBehavior(Items.CALIBRATED_SCULK_SENSOR, DroneSystem::tryDispenseTuneDrone);
+		registerDroneDispenseBehavior(ModBlocks.MICROPHONE_ITEM, DroneSystem::tryDispenseTuneDrone);
+		for (DyeColor color : DyeColor.values()) {
+			Item dyeItem = dyeItemForColor(color);
+			if (dyeItem != null && dyeItem != Items.AIR) {
+				registerDroneDispenseBehavior(dyeItem, DroneSystem::tryDispenseTuneDrone);
+			}
 		}
-		return InteractionResult.CONSUME;
+	}
+
+	private static void registerDroneDispenseBehavior(Item item, DroneDispenseHandler handler) {
+		if (item == null || handler == null) {
+			return;
+		}
+		DispenseItemBehavior fallback = resolveDroneDispenseFallback(item);
+		DispenserBlock.registerBehavior(item, (source, stack) -> {
+			DroneAutomationAction action = handler.apply(source, stack);
+			if (action == DroneAutomationAction.PASS) {
+				return fallback.dispense(source, stack);
+			}
+			playDroneDispenseFeedback(source, action == DroneAutomationAction.SUCCESS);
+			return stack;
+		});
+	}
+
+	private static DispenseItemBehavior resolveDroneDispenseFallback(Item item) {
+		DispenseItemBehavior behavior = item == null ? null : DispenserBlock.DISPENSER_REGISTRY.get(item);
+		return behavior == null ? DEFAULT_DRONE_DISPENSE_FALLBACK : behavior;
+	}
+
+	private static void playDroneDispenseFeedback(BlockSource source, boolean success) {
+		if (source == null) {
+			return;
+		}
+		Direction facing = source.state() != null && source.state().hasProperty(DispenserBlock.FACING)
+				? source.state().getValue(DispenserBlock.FACING)
+				: Direction.NORTH;
+		source.level().levelEvent(success ? 1000 : 1001, source.pos(), 0);
+		source.level().levelEvent(2000, source.pos(), facing.get3DDataValue());
+	}
+
+	private static DroneAutomationAction tryDispensePlaceDrone(BlockSource source, ItemStack stack) {
+		if (source == null || stack == null || stack.isEmpty() || source.state() == null || !source.state().hasProperty(DispenserBlock.FACING)) {
+			return DroneAutomationAction.PASS;
+		}
+		Direction facing = source.state().getValue(DispenserBlock.FACING);
+		Vec3 spawnPos = resolvePlacementPosition(source.pos().relative(facing), facing);
+		if (!spawnConfiguredDrone(source.level(), stack.copy(), spawnPos, facing.toYRot())) {
+			return DroneAutomationAction.FAIL_KEEP;
+		}
+		stack.shrink(1);
+		return DroneAutomationAction.SUCCESS;
+	}
+
+	private static DroneAutomationAction tryDispenseTuneDrone(BlockSource source, ItemStack stack) {
+		if (source == null || stack == null || stack.isEmpty()) {
+			return DroneAutomationAction.PASS;
+		}
+		Entity root = findDroneRootInFront(source);
+		if (root == null) {
+			return DroneAutomationAction.PASS;
+		}
+
+		if (stack.is(Items.TNT)) {
+			if (resolveDroneType(root) != DroneItem.DroneType.KAMIKAZE) {
+				return DroneAutomationAction.FAIL_KEEP;
+			}
+			int currentPower = resolveDroneKamikazePower(root);
+			if (currentPower >= DRONE_KAMIKAZE_MAX_POWER) {
+				return DroneAutomationAction.FAIL_KEEP;
+			}
+			int newPower = net.minecraft.util.Mth.clamp(currentPower + 1, DRONE_KAMIKAZE_MIN_POWER, DRONE_KAMIKAZE_MAX_POWER);
+			setDroneKamikazePower(root, newPower);
+			applyDroneTuningSuccess(root);
+			playDroneKamikazeInsertFeedback(source.level(), droneCameraOrigin(root), newPower);
+			stack.shrink(1);
+			return DroneAutomationAction.SUCCESS;
+		}
+		if (stack.is(Items.RABBIT_HIDE)) {
+			return tryDispenseInstallDroneType(source, root, stack, DroneItem.DroneType.KAMIKAZE);
+		}
+		if (stack.is(Items.DISPENSER)) {
+			return tryDispenseInstallDroneType(source, root, stack, DroneItem.DroneType.COMBAT);
+		}
+		if (stack.is(Items.SPIDER_EYE)) {
+			if (hasDroneNightVisionModule(root)) {
+				return DroneAutomationAction.FAIL_KEEP;
+			}
+			setDroneNightVisionModule(root, true);
+			applyDroneTuningSuccess(root);
+			stack.shrink(1);
+			return DroneAutomationAction.SUCCESS;
+		}
+		if (stack.is(Items.CALIBRATED_SCULK_SENSOR)) {
+			if (hasDroneAutoAimModule(root)) {
+				return DroneAutomationAction.FAIL_KEEP;
+			}
+			setDroneAutoAimModule(root, true);
+			applyDroneTuningSuccess(root);
+			stack.shrink(1);
+			return DroneAutomationAction.SUCCESS;
+		}
+		if (stack.is(ModBlocks.MICROPHONE_ITEM)) {
+			if (hasDroneMicrophoneModule(root)) {
+				return DroneAutomationAction.FAIL_KEEP;
+			}
+			setDroneMicrophoneModule(root, true);
+			applyDroneTuningSuccess(root);
+			stack.shrink(1);
+			return DroneAutomationAction.SUCCESS;
+		}
+		if (stack.getItem() instanceof DyeItem dyeItem) {
+			DyeColor targetColor = normalizeDronePaintColor(dyeItem.getDyeColor());
+			DyeColor currentColor = resolveDronePaintColor(root);
+			if (Objects.equals(currentColor, targetColor)) {
+				return DroneAutomationAction.FAIL_KEEP;
+			}
+			setDronePaintColor(root, targetColor);
+			applyDroneTuningSuccess(root);
+			stack.shrink(1);
+			returnDispensedDroneTuningItem(source, root, dyeItemForColor(currentColor));
+			return DroneAutomationAction.SUCCESS;
+		}
+		return DroneAutomationAction.FAIL_KEEP;
+	}
+
+	private static DroneAutomationAction tryDispenseInstallDroneType(
+			BlockSource source,
+			Entity root,
+			ItemStack stack,
+			DroneItem.DroneType targetType
+	) {
+		if (source == null || root == null || stack == null || stack.isEmpty() || targetType == null) {
+			return DroneAutomationAction.PASS;
+		}
+		DroneItem.DroneType currentType = resolveDroneType(root);
+		if (currentType == targetType) {
+			return DroneAutomationAction.FAIL_KEEP;
+		}
+		if (currentType == DroneItem.DroneType.KAMIKAZE && resolveDroneKamikazePower(root) > 0) {
+			return DroneAutomationAction.FAIL_KEEP;
+		}
+		Item returnedTypeItem = switch (currentType) {
+			case KAMIKAZE -> Items.RABBIT_HIDE;
+			case COMBAT -> Items.DISPENSER;
+			default -> null;
+		};
+		setDroneType(root, targetType);
+		if (targetType != DroneItem.DroneType.KAMIKAZE) {
+			setDroneKamikazePower(root, DRONE_KAMIKAZE_NO_POWER);
+		}
+		applyDroneTuningSuccess(root);
+		stack.shrink(1);
+		returnDispensedDroneTuningItem(source, root, returnedTypeItem);
+		return DroneAutomationAction.SUCCESS;
+	}
+
+	private static void returnDispensedDroneTuningItem(BlockSource source, Entity root, Item item) {
+		if (item == null || item == Items.AIR) {
+			return;
+		}
+		returnDispensedDroneTuningItem(source, root, new ItemStack(item));
+	}
+
+	private static void returnDispensedDroneTuningItem(BlockSource source, Entity root, ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return;
+		}
+		ItemStack remaining = stack.copy();
+		DispenserBlockEntity dispenser = source == null ? null : source.blockEntity();
+		if (dispenser != null) {
+			remaining = dispenser.insertItem(remaining);
+		}
+		if (!remaining.isEmpty() && root != null && root.level() instanceof ServerLevel level) {
+			root.spawnAtLocation(level, remaining);
+		}
+	}
+
+	private static Entity findDroneRootInFront(BlockSource source) {
+		if (source == null || source.state() == null || !source.state().hasProperty(DispenserBlock.FACING)) {
+			return null;
+		}
+		Direction facing = source.state().getValue(DispenserBlock.FACING);
+		AABB searchBox = new AABB(source.pos().relative(facing)).inflate(0.65D, 0.45D, 0.65D);
+		Vec3 center = searchBox.getCenter();
+		Entity selected = null;
+		double bestDistance = Double.MAX_VALUE;
+		Set<UUID> visitedRoots = new HashSet<>();
+		for (Entity candidate : source.level().getEntities((Entity) null, searchBox, entity -> entity != null && entity.isAlive())) {
+			Entity root = resolveDroneRoot(candidate);
+			if (root == null || !root.isAlive() || !visitedRoots.add(root.getUUID())) {
+				continue;
+			}
+			double distance = root.position().distanceToSqr(center);
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				selected = root;
+			}
+		}
+		return selected;
 	}
 
 	public static void handleInput(ServerPlayer player, Input input) {
@@ -1349,6 +1584,7 @@ public final class DroneSystem {
 		if (server == null) {
 			return;
 		}
+		flushPendingDroneLoadDiscards(server);
 		updateDroneChunkTickets(server);
 		tickPendingControlStarts(server);
 		tickControlledSessions(server);
@@ -2186,6 +2422,7 @@ public final class DroneSystem {
 		if (!(root.level() instanceof ServerLevel)) {
 			return;
 		}
+		tickDroneTurretAutomation(root);
 		boolean autoAimAdjustedView = syncControlledOperatorAutoAim(player, session, root);
 		session.setIntendedVelocity(DroneFlightPhysics.step(
 				session.controlPitch(),
@@ -2989,6 +3226,7 @@ public final class DroneSystem {
 		if (root == null || state == null) {
 			return;
 		}
+		tickDroneTurretAutomation(root);
 		long gameTime = root.level() == null ? Long.MIN_VALUE : root.level().getGameTime();
 		if (tickDroneProjectileImpact(root) || tickDroneEnvironmentDamage(root)) {
 			UNCONTROLLED_DRONES.remove(root.getUUID());
@@ -3111,6 +3349,90 @@ public final class DroneSystem {
 		syncPersistentDroneLocation(root, state.lastPosition());
 		state.setLastPosition(root.position());
 		NEXT_DRONE_SOUND_TICK.remove(root.getUUID());
+	}
+
+	private static void tickDroneTurretAutomation(Entity root) {
+		if (root == null || !root.isAlive() || !hasDroneTurretModule(root) || !(root.level() instanceof ServerLevel level)) {
+			return;
+		}
+		if (Math.floorMod(level.getGameTime() + (long) root.getId(), DRONE_TURRET_AUTOMATION_INTERVAL_TICKS) != 0L) {
+			return;
+		}
+		transferDroneTurretAmmoFromNearbyContainers(root, droneTurretInventory(root));
+	}
+
+	private static boolean transferDroneTurretAmmoFromNearbyContainers(Entity root, TurretInventory inventory) {
+		if (root == null || inventory == null || !(root.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		AABB searchBox = root.getBoundingBox().inflate(0.85D, 1.10D, 0.85D);
+		for (BlockPos pos : blockPositionsTouchedBy(searchBox)) {
+			BlockState state = level.getBlockState(pos);
+			if (!(level.getBlockEntity(pos) instanceof HopperBlockEntity hopper) || !canHopperFeedDrone(root, pos, state)) {
+				continue;
+			}
+			if (transferDroneTurretAmmoFromContainer(hopper, inventory)) {
+				return true;
+			}
+		}
+		for (MinecartHopper hopper : level.getEntitiesOfClass(
+				MinecartHopper.class,
+				searchBox,
+				entity -> entity != null && entity.isAlive() && entity.isEnabled()
+		)) {
+			if (transferDroneTurretAmmoFromContainer(hopper, inventory)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean canHopperFeedDrone(Entity root, BlockPos hopperPos, BlockState hopperState) {
+		if (root == null || hopperPos == null || hopperState == null || !hopperState.is(Blocks.HOPPER) || !hopperState.hasProperty(HopperBlock.FACING)) {
+			return false;
+		}
+		BlockPos outputPos = hopperPos.relative(hopperState.getValue(HopperBlock.FACING));
+		return root.getBoundingBox().inflate(0.35D, 0.35D, 0.35D).intersects(new AABB(outputPos));
+	}
+
+	private static boolean transferDroneTurretAmmoFromContainer(Container source, TurretInventory target) {
+		if (source == null || target == null) {
+			return false;
+		}
+		for (int slot = 0; slot < source.getContainerSize(); slot++) {
+			ItemStack sourceStack = source.getItem(slot);
+			if (!isDroneTurretProjectileStack(sourceStack)) {
+				continue;
+			}
+			ItemStack removed = source.removeItem(slot, 1);
+			if (removed.isEmpty()) {
+				continue;
+			}
+			ItemStack remaining = insertIntoDroneTurretInventory(target, removed);
+			if (remaining.isEmpty()) {
+				source.setChanged();
+				target.setChanged();
+				return true;
+			}
+			restoreContainerTransferRemainder(source, slot, remaining);
+			source.setChanged();
+		}
+		return false;
+	}
+
+	private static void restoreContainerTransferRemainder(Container source, int slot, ItemStack remaining) {
+		if (source == null || remaining == null || remaining.isEmpty()) {
+			return;
+		}
+		ItemStack current = source.getItem(slot);
+		if (current.isEmpty()) {
+			source.setItem(slot, remaining);
+			return;
+		}
+		if (ItemStack.isSameItemSameComponents(current, remaining)) {
+			current.grow(remaining.getCount());
+			source.setItem(slot, current);
+		}
 	}
 
 	private static boolean isUncontrolledReleaseGlideActive(Entity root, UncontrolledDroneState state) {
@@ -3420,49 +3742,52 @@ public final class DroneSystem {
 		double particleZ = origin.z - slide.z * DRONE_WIDTH * 0.24D;
 		double wearRatio = net.minecraft.util.Mth.clamp(surfaceWearLevel / DroneImpactModel.SURFACE_WEAR_BREAK_LEVEL, 0.0D, 1.0D);
 		double dangerRatio = wearRatio * wearRatio;
-		int scrapeCount = 1 + (int) Math.round(scrapeStrength * 5.0D + dangerRatio * 5.0D);
-		int sparkCount = pressureFactor > 0.28D
-				? Math.max(1, (int) Math.round(scrapeStrength * pressureFactor * (4.0D + dangerRatio * 5.0D)))
-				: (wearRatio > 0.78D && scrapeStrength > 0.35D ? 1 : 0);
-		double spraySpeed = 0.015D + scrapeStrength * 0.055D;
+		double spraySpeed = 0.012D + scrapeStrength * 0.042D;
+		int smokeCount = 1 + (int) Math.round(scrapeStrength * 2.5D + dangerRatio * 2.0D);
+		int flameCount = pressureFactor > 0.12D || wearRatio > 0.30D
+				? 1 + (int) Math.floor(scrapeStrength * pressureFactor * 2.0D + dangerRatio * 1.5D)
+				: 0;
+		int dustCount = 1 + (int) Math.round(scrapeStrength * 3.0D + dangerRatio * 3.0D);
+		DustParticleOptions dust = new DustParticleOptions(
+				resolveDroneSurfaceWearDustColor(root),
+				0.75F + (float) (scrapeStrength * 0.32D + dangerRatio * 0.18D)
+		);
 
 		level.sendParticles(
-				ParticleTypes.SCRAPE,
+				ParticleTypes.SMOKE,
 				particleX,
-				particleY,
+				particleY + 0.03D,
 				particleZ,
-				scrapeCount,
-				0.10D + scrapeStrength * 0.10D,
-				0.015D,
-				0.10D + scrapeStrength * 0.10D,
+				smokeCount,
+				0.09D + scrapeStrength * 0.08D,
+				0.025D,
+				0.09D + scrapeStrength * 0.08D,
 				spraySpeed
 		);
-		if (sparkCount > 0) {
+		if (flameCount > 0) {
 			level.sendParticles(
-					ParticleTypes.ELECTRIC_SPARK,
+					ParticleTypes.FLAME,
 					particleX,
 					particleY + 0.02D,
 					particleZ,
-					sparkCount,
-					0.06D + scrapeStrength * 0.08D,
-					0.025D,
-					0.06D + scrapeStrength * 0.08D,
-					spraySpeed * 0.8D
+					flameCount,
+					0.06D + scrapeStrength * 0.05D,
+					0.018D,
+					0.06D + scrapeStrength * 0.05D,
+					spraySpeed * 0.85D
 			);
 		}
-		if (scrapeStrength > 0.48D || wearRatio > 0.65D) {
-			level.sendParticles(
-					ParticleTypes.DUST_PLUME,
-					particleX,
-					particleY,
-					particleZ,
-					1 + (int) Math.round(scrapeStrength * 2.0D + dangerRatio * 3.0D),
-					0.08D,
-					0.02D,
-					0.08D,
-					0.005D + scrapeStrength * 0.015D
-			);
-		}
+		level.sendParticles(
+				dust,
+				particleX,
+				particleY + 0.01D,
+				particleZ,
+				dustCount,
+				0.07D + scrapeStrength * 0.07D,
+				0.015D,
+				0.07D + scrapeStrength * 0.07D,
+				0.004D + scrapeStrength * 0.010D
+		);
 	}
 
 	private static void decayControlledDroneSurfaceWear(DroneControlSession session, long gameTime) {
@@ -3626,19 +3951,44 @@ public final class DroneSystem {
 		return current + wrapped * net.minecraft.util.Mth.clamp(delta, 0.0F, 1.0F);
 	}
 
+	private static void queueDeferredDroneLoadDiscard(Entity entity) {
+		if (!(entity != null && entity.level() instanceof ServerLevel level)) {
+			return;
+		}
+		PENDING_DRONE_LOAD_DISCARDS.add(new PendingDroneLoadDiscard(level.dimension(), entity.getUUID()));
+	}
+
+	private static void flushPendingDroneLoadDiscards(MinecraftServer server) {
+		if (server == null || PENDING_DRONE_LOAD_DISCARDS.isEmpty()) {
+			return;
+		}
+		for (PendingDroneLoadDiscard pending : new ArrayList<>(PENDING_DRONE_LOAD_DISCARDS)) {
+			PENDING_DRONE_LOAD_DISCARDS.remove(pending);
+			if (pending == null || pending.dimension() == null || pending.entityUuid() == null) {
+				continue;
+			}
+			ServerLevel level = server.getLevel(pending.dimension());
+			Entity entity = level == null ? null : level.getEntity(pending.entityUuid());
+			if (entity != null && entity.isAlive()) {
+				entity.discard();
+			}
+		}
+	}
+
 	private static void onEntityLoad(Entity entity, ServerLevel level) {
 		if (entity == null) {
 			return;
 		}
 		if (entity.getTags().contains(DRONE_NIGHT_VISION_CAMERA_TAG)) {
-			entity.discard();
+			queueDeferredDroneLoadDiscard(entity);
 			return;
 		}
 		if (entity.getTags().contains(DRONE_DISPLAY_TAG)) {
 			Entity root = resolveDroneRoot(entity);
 			if (root == null || !root.isAlive()) {
-				entity.discard();
+				queueDeferredDroneLoadDiscard(entity);
 			} else if (entity instanceof Display.ItemDisplay display) {
+				rememberDroneDisplayLayer(root, display);
 				collapseDroneDisplayHitbox(display);
 			}
 			return;
@@ -3647,7 +3997,7 @@ public final class DroneSystem {
 			UUID ownerId = resolveTaggedUuid(entity, DRONE_CAMERA_OWNER_TAG_PREFIX);
 			Entity owner = ownerId == null || level == null ? null : level.getEntity(ownerId);
 			if (owner == null || !owner.isAlive() || !owner.getTags().contains(DRONE_ROOT_TAG)) {
-				entity.discard();
+				queueDeferredDroneLoadDiscard(entity);
 			}
 			return;
 		}
@@ -3657,7 +4007,7 @@ public final class DroneSystem {
 					? null
 					: level.getServer().getPlayerList().getPlayer(ownerId);
 			if (owner == null || !isControllingDrone(owner)) {
-				entity.discard();
+				queueDeferredDroneLoadDiscard(entity);
 			}
 			return;
 		}
@@ -3886,7 +4236,7 @@ public final class DroneSystem {
 			return buildPassengerPacket(root, root.getId(), new int[0]);
 		}
 
-		List<Display.ItemDisplay> displays = findDroneDisplayLayers(root);
+		List<Display.ItemDisplay> displays = findRegisteredDroneDisplayLayers(root);
 		int[] passengerIds = new int[displays.size()];
 		int count = 0;
 		for (Display.ItemDisplay display : displays) {
@@ -4070,12 +4420,7 @@ public final class DroneSystem {
 		if (root == null || !root.isAlive()) {
 			return null;
 		}
-		for (Display.ItemDisplay display : findDroneDisplayLayers(root)) {
-			if (display != null && display.isAlive() && display.getId() == entityId) {
-				return display;
-			}
-		}
-		return null;
+		return resolveRegisteredDroneDisplayLayer(root, entityId);
 	}
 
 	private static void sendControlledOperatorPacket(ServerPlayer player, Packet<?> packet) {
@@ -5278,6 +5623,7 @@ public final class DroneSystem {
 		markPostControlMoveSuppressedForPlayer(player);
 		detachAnyDronePassengersFromController(player);
 		if (releaseDrone && root != null) {
+			boolean releaseDriveIdle = hasIdleReleasedDroneDrive(session);
 			Vec3 currentRootPos = root.position();
 			Vec3 proxyPos = finiteVecOr(session.proxyPos(), currentRootPos);
 			if (!isPlausibleControlledDroneMove(proxyPos.subtract(currentRootPos), session.intendedVelocity())) {
@@ -5288,7 +5634,7 @@ public final class DroneSystem {
 			root.setBoundingBox(droneBoxAt(root.position()));
 			root.setYRot(session.proxyYaw());
 			root.setXRot(session.proxyPitch());
-			Vec3 releasedVelocity = finiteVecOr(session.velocity(), Vec3.ZERO);
+			Vec3 releasedVelocity = releaseDriveIdle ? Vec3.ZERO : finiteVecOr(session.velocity(), Vec3.ZERO);
 			if (!isPlausibleControlledDroneMove(releasedVelocity, session.intendedVelocity())) {
 				releasedVelocity = Vec3.ZERO;
 			}
@@ -5303,11 +5649,11 @@ public final class DroneSystem {
 					root.getXRot(),
 					releasedAutoAimTarget,
 					root.level().getGameTime() + UNCONTROLLED_DRONE_RELEASE_GLIDE_TICKS,
-					session.forwardDrive(),
-					session.strafeDrive(),
-					session.displayForwardDrive(),
-					session.displayStrafeDrive(),
-					true
+					releaseDriveIdle ? 0.0D : session.forwardDrive(),
+					releaseDriveIdle ? 0.0D : session.strafeDrive(),
+					releaseDriveIdle ? 0.0D : session.displayForwardDrive(),
+					releaseDriveIdle ? 0.0D : session.displayStrafeDrive(),
+					!releaseDriveIdle
 			);
 			uncontrolledState.setLastPosition(root.position());
 			uncontrolledState.setSurfaceWear(session.surfaceWear());
@@ -5348,6 +5694,12 @@ public final class DroneSystem {
 		double horizontalSpeedSq = velocity.x * velocity.x + velocity.z * velocity.z;
 		return horizontalSpeedSq <= DRONE_STATIONARY_BREAK_HORIZONTAL_SPEED_SQR
 				&& Math.abs(velocity.y) <= DRONE_STATIONARY_BREAK_VERTICAL_SPEED;
+	}
+
+	private static boolean hasIdleReleasedDroneDrive(DroneControlSession session) {
+		return session != null
+				&& Math.abs(session.forwardDrive()) <= DRONE_RELEASE_IDLE_DRIVE_EPSILON
+				&& Math.abs(session.strafeDrive()) <= DRONE_RELEASE_IDLE_DRIVE_EPSILON;
 	}
 
 	private static void dropDroneBreakRecoveryItems(Entity root, ServerLevel level) {
@@ -5434,6 +5786,7 @@ public final class DroneSystem {
 			display.discard();
 		}
 		DISPLAYS_BY_DRONE.remove(root.getUUID());
+		DISPLAY_LAYERS_BY_DRONE.remove(root.getUUID());
 		UUID cameraAnchorId = CAMERA_ANCHORS_BY_DRONE.remove(root.getUUID());
 		Entity cameraAnchor = cameraAnchorId == null ? findDroneCameraAnchor(root) : findEntity(level.getServer(), level.dimension(), cameraAnchorId);
 		if (cameraAnchor != null) {
@@ -5652,9 +6005,8 @@ public final class DroneSystem {
 
 		int newPower = net.minecraft.util.Mth.clamp(currentPower + 1, DRONE_KAMIKAZE_MIN_POWER, DRONE_KAMIKAZE_MAX_POWER);
 		setDroneKamikazePower(root, newPower);
-		triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+		applyDroneTuningSuccess(root);
 		playDroneKamikazeInsertFeedback(level, droneCameraOrigin(root), newPower);
-		notifyDroneNetworkChanged(root);
 
 		if (!player.getAbilities().instabuild) {
 			heldStack.shrink(1);
@@ -5698,8 +6050,7 @@ public final class DroneSystem {
 		if (targetType != DroneItem.DroneType.KAMIKAZE) {
 			setDroneKamikazePower(root, DRONE_KAMIKAZE_NO_POWER);
 		}
-		triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
-		notifyDroneNetworkChanged(root);
+		applyDroneTuningSuccess(root);
 
 		if (!player.getAbilities().instabuild) {
 			heldStack.shrink(1);
@@ -5716,8 +6067,7 @@ public final class DroneSystem {
 			return InteractionResult.PASS;
 		}
 		setDroneNightVisionModule(root, true);
-		triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
-		notifyDroneNetworkChanged(root);
+		applyDroneTuningSuccess(root);
 		if (!player.getAbilities().instabuild) {
 			heldStack.shrink(1);
 		}
@@ -5732,8 +6082,7 @@ public final class DroneSystem {
 			return InteractionResult.PASS;
 		}
 		setDroneAutoAimModule(root, true);
-		triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
-		notifyDroneNetworkChanged(root);
+		applyDroneTuningSuccess(root);
 		if (!player.getAbilities().instabuild) {
 			heldStack.shrink(1);
 		}
@@ -5748,8 +6097,7 @@ public final class DroneSystem {
 			return InteractionResult.PASS;
 		}
 		setDroneMicrophoneModule(root, true);
-		triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
-		notifyDroneNetworkChanged(root);
+		applyDroneTuningSuccess(root);
 		if (!player.getAbilities().instabuild) {
 			heldStack.shrink(1);
 		}
@@ -5772,72 +6120,11 @@ public final class DroneSystem {
 			giveOrDropTuningItem(player, root, dyeItemForColor(currentColor));
 		}
 		setDronePaintColor(root, targetColor);
-		triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
-		notifyDroneNetworkChanged(root);
+		applyDroneTuningSuccess(root);
 		if (!player.getAbilities().instabuild) {
 			heldStack.shrink(1);
 		}
 		return InteractionResult.SUCCESS;
-	}
-
-	private static InteractionResult tryUnloadDroneModule(ServerPlayer player, Entity root) {
-		if (player == null || root == null) {
-			return InteractionResult.PASS;
-		}
-
-		int currentPower = resolveDroneKamikazePower(root);
-		if (currentPower > DRONE_KAMIKAZE_NO_POWER) {
-			setDroneKamikazePower(root, currentPower - 1);
-			giveOrDropTuningItem(player, root, Items.TNT);
-			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
-			notifyDroneNetworkChanged(root);
-			return InteractionResult.SUCCESS;
-		}
-		if (hasDroneNightVisionModule(root)) {
-			setDroneNightVisionModule(root, false);
-			giveOrDropTuningItem(player, root, Items.SPIDER_EYE);
-			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
-			notifyDroneNetworkChanged(root);
-			return InteractionResult.SUCCESS;
-		}
-		if (hasDroneAutoAimModule(root)) {
-			setDroneAutoAimModule(root, false);
-			giveOrDropTuningItem(player, root, Items.CALIBRATED_SCULK_SENSOR);
-			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
-			notifyDroneNetworkChanged(root);
-			return InteractionResult.SUCCESS;
-		}
-		if (hasDroneMicrophoneModule(root)) {
-			setDroneMicrophoneModule(root, false);
-			giveOrDropTuningItem(player, root, ModBlocks.MICROPHONE_ITEM);
-			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
-			notifyDroneNetworkChanged(root);
-			return InteractionResult.SUCCESS;
-		}
-		DyeColor paintColor = resolveDronePaintColor(root);
-		if (paintColor != null) {
-			setDronePaintColor(root, null);
-			giveOrDropTuningItem(player, root, dyeItemForColor(paintColor));
-			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
-			notifyDroneNetworkChanged(root);
-			return InteractionResult.SUCCESS;
-		}
-		DroneItem.DroneType currentType = resolveDroneType(root);
-		if (currentType == DroneItem.DroneType.COMBAT) {
-			setDroneType(root, DroneItem.DroneType.NORMAL);
-			giveOrDropTuningItem(player, root, Items.DISPENSER);
-			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
-			notifyDroneNetworkChanged(root);
-			return InteractionResult.SUCCESS;
-		}
-		if (currentType == DroneItem.DroneType.KAMIKAZE) {
-			setDroneType(root, DroneItem.DroneType.NORMAL);
-			giveOrDropTuningItem(player, root, Items.RABBIT_HIDE);
-			triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
-			notifyDroneNetworkChanged(root);
-			return InteractionResult.SUCCESS;
-		}
-		return InteractionResult.PASS;
 	}
 
 	private static void giveOrDropTuningItem(ServerPlayer player, Entity root, Item item) {
@@ -5855,6 +6142,14 @@ public final class DroneSystem {
 		if (!inserted && root.level() instanceof ServerLevel level) {
 			root.spawnAtLocation(level, stack);
 		}
+	}
+
+	private static void applyDroneTuningSuccess(Entity root) {
+		if (root == null) {
+			return;
+		}
+		triggerDroneDisplayWobble(root, DroneDisplayWobbleType.POSITIVE);
+		notifyDroneNetworkChanged(root);
 	}
 
 	private static Item dyeItemForColor(DyeColor color) {
@@ -6020,6 +6315,44 @@ public final class DroneSystem {
 
 	private static boolean isDroneTurretProjectileStack(ItemStack stack) {
 		return stack != null && !stack.isEmpty() && DRONE_TURRET_PROJECTILES.contains(stack.getItem());
+	}
+
+	private static ItemStack insertIntoDroneTurretInventory(TurretInventory inventory, ItemStack stack) {
+		if (inventory == null || stack == null || stack.isEmpty()) {
+			return ItemStack.EMPTY;
+		}
+		ItemStack remaining = stack.copy();
+
+		for (int slot = 0; slot < inventory.getContainerSize() && !remaining.isEmpty(); slot++) {
+			ItemStack existing = inventory.getItem(slot);
+			if (existing.isEmpty() || !ItemStack.isSameItemSameComponents(existing, remaining) || !inventory.canPlaceItem(slot, remaining)) {
+				continue;
+			}
+			int limit = Math.min(inventory.getMaxStackSize(), existing.getMaxStackSize());
+			int free = Math.max(0, limit - existing.getCount());
+			if (free <= 0) {
+				continue;
+			}
+			int move = Math.min(remaining.getCount(), free);
+			existing.grow(move);
+			remaining.shrink(move);
+			inventory.setItem(slot, existing);
+		}
+
+		for (int slot = 0; slot < inventory.getContainerSize() && !remaining.isEmpty(); slot++) {
+			ItemStack existing = inventory.getItem(slot);
+			if (!existing.isEmpty() || !inventory.canPlaceItem(slot, remaining)) {
+				continue;
+			}
+			int move = Math.min(remaining.getCount(), Math.min(inventory.getMaxStackSize(), remaining.getMaxStackSize()));
+			if (move <= 0) {
+				continue;
+			}
+			inventory.setItem(slot, remaining.copyWithCount(move));
+			remaining.shrink(move);
+		}
+
+		return remaining;
 	}
 
 	private static void dropDroneTurretInventory(Entity root) {
@@ -6258,17 +6591,24 @@ public final class DroneSystem {
 			speed = 1.3F;
 		} else if (item == Items.SPLASH_POTION) {
 			projectile = new ThrownSplashPotion(level, origin.x, origin.y, origin.z, stack);
-			speed = 1.3F;
+			speed = DRONE_TURRET_POTION_SPEED;
 		} else if (item == Items.LINGERING_POTION) {
 			projectile = new ThrownLingeringPotion(level, origin.x, origin.y, origin.z, stack);
-			speed = 1.3F;
+			speed = DRONE_TURRET_POTION_SPEED;
 		} else {
 			return null;
 		}
 		projectile.setOwner(owner);
 		projectile.setPos(origin.x, origin.y, origin.z);
+		if (isDroneTurretStraightFlightProjectile(item)) {
+			projectile.setNoGravity(true);
+		}
 		projectile.shoot(normalized.x, normalized.y, normalized.z, speed, 0.0F);
 		return projectile;
+	}
+
+	private static boolean isDroneTurretStraightFlightProjectile(Item item) {
+		return item == Items.SPLASH_POTION || item == Items.LINGERING_POTION;
 	}
 
 	private static void syncControlledDroneTurretAirTrigger(ServerPlayer player, Entity root) {
@@ -6450,6 +6790,20 @@ public final class DroneSystem {
 		}
 	}
 
+	private static int resolveDroneSurfaceWearDustColor(Entity root) {
+		DyeColor paintColor = resolveDronePaintColor(root);
+		int baseColor = paintColor == null ? DRONE_SURFACE_WEAR_DUST_DEFAULT_COLOR : paintColor.getTextureDiffuseColor();
+		return darkenRgb(baseColor, paintColor == null ? 0.85F : 0.58F);
+	}
+
+	private static int darkenRgb(int rgb, float factor) {
+		float clampedFactor = net.minecraft.util.Mth.clamp(factor, 0.0F, 1.0F);
+		int red = (int) (((rgb >> 16) & 0xFF) * clampedFactor);
+		int green = (int) (((rgb >> 8) & 0xFF) * clampedFactor);
+		int blue = (int) ((rgb & 0xFF) * clampedFactor);
+		return (red << 16) | (green << 8) | blue;
+	}
+
 	private static DyeColor resolveDronePaintColor(Entity root) {
 		if (root == null || !root.getTags().contains(DRONE_ROOT_TAG)) {
 			return null;
@@ -6596,6 +6950,32 @@ public final class DroneSystem {
 			}
 		}
 		return null;
+	}
+
+	private static void rememberDroneDisplayLayer(Entity root, Entity display) {
+		if (root == null || display == null) {
+			return;
+		}
+		DISPLAY_LAYERS_BY_DRONE
+				.computeIfAbsent(root.getUUID(), ignored -> new LinkedHashSet<>())
+				.add(display.getUUID());
+	}
+
+	private static void rememberDroneDisplayLayers(Entity root, Collection<Display.ItemDisplay> displays) {
+		if (root == null || displays == null) {
+			return;
+		}
+		LinkedHashSet<UUID> remembered = new LinkedHashSet<>();
+		for (Display.ItemDisplay display : displays) {
+			if (display != null && display.isAlive()) {
+				remembered.add(display.getUUID());
+			}
+		}
+		if (remembered.isEmpty()) {
+			DISPLAY_LAYERS_BY_DRONE.remove(root.getUUID());
+			return;
+		}
+		DISPLAY_LAYERS_BY_DRONE.put(root.getUUID(), remembered);
 	}
 
 	private static Display.ItemDisplay createDroneDisplay(
@@ -6808,7 +7188,63 @@ public final class DroneSystem {
 		} else if (registeredBaseId != null) {
 			DISPLAYS_BY_DRONE.remove(root.getUUID(), registeredBaseId);
 		}
+		rememberDroneDisplayLayers(root, displays);
 		return displays;
+	}
+
+	private static List<Display.ItemDisplay> findRegisteredDroneDisplayLayers(Entity root) {
+		List<Display.ItemDisplay> displays = new ArrayList<>();
+		if (root == null || !(root.level() instanceof ServerLevel level)) {
+			return displays;
+		}
+
+		LinkedHashSet<UUID> candidateIds = new LinkedHashSet<>();
+		UUID baseDisplayId = DISPLAYS_BY_DRONE.get(root.getUUID());
+		if (baseDisplayId != null) {
+			candidateIds.add(baseDisplayId);
+		}
+		LinkedHashSet<UUID> rememberedIds = DISPLAY_LAYERS_BY_DRONE.get(root.getUUID());
+		if (rememberedIds != null) {
+			candidateIds.addAll(rememberedIds);
+		}
+		if (candidateIds.isEmpty()) {
+			return displays;
+		}
+
+		LinkedHashSet<UUID> aliveIds = new LinkedHashSet<>();
+		String ownerTag = DRONE_DISPLAY_OWNER_TAG_PREFIX + root.getUUID();
+		for (UUID displayId : candidateIds) {
+			Entity candidate = displayId == null ? null : level.getEntity(displayId);
+			if (!(candidate instanceof Display.ItemDisplay display)
+					|| !candidate.isAlive()
+					|| !candidate.getTags().contains(DRONE_DISPLAY_TAG)
+					|| !candidate.getTags().contains(ownerTag)) {
+				continue;
+			}
+			displays.add(display);
+			aliveIds.add(display.getUUID());
+		}
+		if (aliveIds.isEmpty()) {
+			DISPLAY_LAYERS_BY_DRONE.remove(root.getUUID());
+		} else {
+			DISPLAY_LAYERS_BY_DRONE.put(root.getUUID(), aliveIds);
+		}
+		return displays;
+	}
+
+	private static Display.ItemDisplay resolveRegisteredDroneDisplayLayer(Entity root, int entityId) {
+		if (root == null || entityId == Integer.MIN_VALUE || !(root.level() instanceof ServerLevel level)) {
+			return null;
+		}
+		Entity candidate = level.getEntity(entityId);
+		if (!(candidate instanceof Display.ItemDisplay display)
+				|| !candidate.isAlive()
+				|| !candidate.getTags().contains(DRONE_DISPLAY_TAG)
+				|| !candidate.getTags().contains(DRONE_DISPLAY_OWNER_TAG_PREFIX + root.getUUID())) {
+			return null;
+		}
+		rememberDroneDisplayLayer(root, display);
+		return display;
 	}
 
 	private static void collectDroneDisplayLayers(
@@ -6915,6 +7351,7 @@ public final class DroneSystem {
 			);
 			created.addTag(DRONE_DISPLAY_OWNER_TAG_PREFIX + root.getUUID());
 			level.addFreshEntity(created);
+			rememberDroneDisplayLayer(root, created);
 			if (DRONE_DISPLAY_LAYER_BASE.equals(layerKey)) {
 				DISPLAYS_BY_DRONE.put(root.getUUID(), created.getUUID());
 			}
@@ -7242,6 +7679,13 @@ public final class DroneSystem {
 	private static Vec3 resolvePlacementPosition(UseOnContext context) {
 		net.minecraft.core.Direction face = context.getClickedFace();
 		net.minecraft.core.BlockPos anchor = context.getClickedPos().relative(face);
+		return resolvePlacementPosition(anchor, face);
+	}
+
+	private static Vec3 resolvePlacementPosition(BlockPos anchor, Direction face) {
+		if (anchor == null || face == null) {
+			return Vec3.ZERO;
+		}
 		double yOffset = face == net.minecraft.core.Direction.UP ? 0.0D : DRONE_SPAWN_Y_OFFSET;
 		return new Vec3(anchor.getX() + 0.5D, anchor.getY() + yOffset, anchor.getZ() + 0.5D);
 	}
@@ -7598,11 +8042,20 @@ public final class DroneSystem {
 		public boolean canPlaceItem(int slot, ItemStack stack) {
 			return isDroneTurretProjectileStack(stack);
 		}
+	}
 
-		@Override
-		public void setItem(int slot, ItemStack stack) {
-			super.setItem(slot, isDroneTurretProjectileStack(stack) ? stack : ItemStack.EMPTY);
-		}
+	private enum DroneAutomationAction {
+		PASS,
+		SUCCESS,
+		FAIL_KEEP
+	}
+
+	@FunctionalInterface
+	private interface DroneDispenseHandler {
+		DroneAutomationAction apply(BlockSource source, ItemStack stack);
+	}
+
+	private record PendingDroneLoadDiscard(net.minecraft.resources.ResourceKey<Level> dimension, UUID entityUuid) {
 	}
 
 	private record ControlledCollisionState(
