@@ -15,6 +15,7 @@ public final class MonitorScreenTouchProjectionTest {
 		actualHitPointOverridesStaleLookAngle();
 		allHorizontalFacingsProjectConsistently();
 		multiTileOffsetIsPreserved();
+		mediaCanvasRespectsViewportSafeInset();
 		mediaTimelineWidthTracksVisibleButtons();
 		timelineCounterWidthTracksLabelLength();
 		System.out.println("Monitor screen touch projection checks passed");
@@ -93,6 +94,15 @@ public final class MonitorScreenTouchProjectionTest {
 		);
 		require(point != null, "direct plane hit must produce a screen point");
 		require(point.equals(expectedPoint(tile, 0.1D, 0.9D, 3, 3)), "tile offset must be included in the final screen coordinate");
+	}
+
+	private static void mediaCanvasRespectsViewportSafeInset() {
+		UiLayout layout = MonitorScreenSystem.createUiLayout(1, 1);
+		UiRect canvas = MonitorScreenSystem.mediaCanvasRect(layout);
+		require(layout.viewportX() == MonitorScreenSystem.MONITOR_VIEWPORT_SAFE_INSET, "small screens should reserve bezel-safe horizontal padding");
+		require(layout.viewportY() == MonitorScreenSystem.MONITOR_VIEWPORT_SAFE_INSET, "small screens should reserve bezel-safe vertical padding");
+		require(canvas.x() == layout.viewportX() && canvas.y() == layout.viewportY(), "media canvas should start inside the safe viewport");
+		require(canvas.width() == layout.viewportWidth() && canvas.height() == layout.viewportHeight(), "media canvas should match the safe viewport size");
 	}
 
 	private static void mediaTimelineWidthTracksVisibleButtons() {

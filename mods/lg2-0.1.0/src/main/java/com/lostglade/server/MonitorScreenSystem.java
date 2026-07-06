@@ -161,6 +161,7 @@ public final class MonitorScreenSystem {
 	static final String POS_TAG_PREFIX = "lg2_monitor_display_pos:";
 	static final String FACING_TAG_PREFIX = "lg2_monitor_display_facing:";
 	static final int MAP_SIZE = 128;
+	static final int MONITOR_VIEWPORT_SAFE_INSET = 6;
 	static final int MAP_TRANSPARENT_ALPHA_THRESHOLD = 12;
 	static final int PHOTO_MAP_CENTER = 30_000_000;
 	static final int CONNECTION_LEFT = 1;
@@ -6750,15 +6751,25 @@ public final class MonitorScreenSystem {
 	static UiLayout createUiLayout(int width, int height) {
 		int canvasWidth = width * MAP_SIZE;
 		int canvasHeight = height * MAP_SIZE;
-		int viewportWidth = canvasWidth;
-		int viewportHeight = canvasHeight;
-		int viewportX = 0;
-		int viewportY = 0;
+		int viewportInset = monitorViewportInset(width, height);
+		int viewportWidth = Math.max(1, canvasWidth - viewportInset * 2);
+		int viewportHeight = Math.max(1, canvasHeight - viewportInset * 2);
+		int viewportX = Math.max(0, (canvasWidth - viewportWidth) / 2);
+		int viewportY = Math.max(0, (canvasHeight - viewportHeight) / 2);
 		int minSpan = Math.max(1, Math.min(width, height));
 		double scale = 1.0D + Math.max(0, minSpan - 1) * 0.5D;
 		int margin = clampInt((int) Math.round(4.0D * scale), 4, 32);
 		int unit = clampInt((int) Math.round(5.0D * scale), 5, 32);
 		return new UiLayout(canvasWidth, canvasHeight, viewportX, viewportY, viewportWidth, viewportHeight, margin, unit);
+	}
+
+	static int monitorViewportInset(int width, int height) {
+		if (width <= 0 || height <= 0) {
+			return 0;
+		}
+		int maxInset = Math.max(0, Math.min(width * MAP_SIZE, height * MAP_SIZE) / 4);
+		// Matches the 0.75-unit bezel thickness used by the monitor_display item models.
+		return clampInt(MONITOR_VIEWPORT_SAFE_INSET, 0, maxInset);
 	}
 
 	static int smallestScreenTileSpan(UiLayout layout) {
@@ -6914,10 +6925,10 @@ public final class MonitorScreenSystem {
 
 	static UiRect mediaCanvasRect(UiLayout layout) {
 		return new UiRect(
-				0,
-				0,
-				Math.max(16, layout.canvasWidth()),
-				Math.max(16, layout.canvasHeight())
+				layout.viewportX(),
+				layout.viewportY(),
+				Math.max(1, layout.viewportWidth()),
+				Math.max(1, layout.viewportHeight())
 		);
 	}
 

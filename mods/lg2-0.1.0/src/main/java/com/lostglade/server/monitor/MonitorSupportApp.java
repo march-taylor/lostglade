@@ -8,7 +8,7 @@ public final class MonitorSupportApp implements MonitorApp {
 
 	@Override
 	public String title() {
-		return "Поддержка 24/7";
+		return "Поддержка";
 	}
 
 	@Override
