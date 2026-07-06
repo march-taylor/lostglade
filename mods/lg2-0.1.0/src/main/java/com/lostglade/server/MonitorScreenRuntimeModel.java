@@ -167,10 +167,29 @@ record RenderWork(
 		CameraAppVisualSnapshot cameraAppSnapshot,
 		MaxVisualSnapshot maxSnapshot,
 		YandexMapsVisualSnapshot yandexMapsSnapshot,
+		SupportVisualSnapshot supportSnapshot,
 		WallpaperVisualSnapshot wallpaperSnapshot,
 		boolean transparentOutput,
 		UiPoint debugAimCursor,
 		List<RenderTileTarget> tileTargets
+) {
+}
+
+record SupportVisualSnapshot(
+		long version,
+		List<SupportMessageSnapshot> messages,
+		boolean waitingForInput,
+		boolean telegramConfigured,
+		int supportReceiverCount,
+		String statusText
+) {
+}
+
+record SupportMessageSnapshot(
+		boolean fromSupport,
+		String author,
+		String text,
+		long createdAtMillis
 ) {
 }
 

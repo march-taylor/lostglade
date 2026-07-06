@@ -7,6 +7,7 @@ public final class MonitorAppRegistry {
 			new MonitorMediaApp(),
 			new MonitorCameraApp(),
 			new MonitorMaxApp(),
+			new MonitorSupportApp(),
 			new MonitorYandexMapsApp(),
 			new MonitorYoutubeApp(),
 			new MonitorYoutubeMusicApp()

@@ -37,6 +37,9 @@ final class MonitorScreenChatLinkController {
 		if (!MonitorMaxRuntime.onAllowChatMessage(message, sender, params)) {
 			return false;
 		}
+		if (MonitorSupportRuntime.consumeSupportChatMessage(server, message, sender)) {
+			return false;
+		}
 		if (MonitorYandexMapsRuntime.consumeMarkerTitleChatMessage(server, message, sender)) {
 			return false;
 		}

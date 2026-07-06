@@ -2576,7 +2576,7 @@ public final class MonitorScreenSystem {
 		writeScreenState(screenMap, state);
 		MapItemSavedData mapData = mapLevel.getMapData(mapId);
 		if (renderInitialFrame && mapData != null) {
-			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null, null, null, null, null, false, null, List.of()));
+			byte[][] tiles = renderTiles(level.getServer(), new RenderWork(null, state.powered(), state.viewMode(), state.launcherPage(), 1, 1, 0L, null, null, null, null, null, null, false, null, List.of()));
 			applyFrameToMap(mapData, tiles[0]);
 		}
 		return screenMap;
@@ -2920,6 +2920,9 @@ public final class MonitorScreenSystem {
 		YandexMapsVisualSnapshot yandexMapsSnapshot = viewMode == ScreenViewMode.YANDEX_MAPS
 				? MonitorYandexMapsRuntime.captureSnapshot(server, component)
 				: null;
+		SupportVisualSnapshot supportSnapshot = viewMode == ScreenViewMode.SUPPORT
+				? MonitorSupportRuntime.captureSnapshot(server, component)
+				: null;
 		WallpaperVisualSnapshot wallpaperSnapshot = captureWallpaperSnapshot(mediaState, viewMode);
 		long mediaVersion = 0L;
 		if (isPlayerMode(viewMode)) {
@@ -2939,6 +2942,7 @@ public final class MonitorScreenSystem {
 				cameraAppSnapshot,
 				maxSnapshot,
 				yandexMapsSnapshot,
+				supportSnapshot,
 				wallpaperSnapshot,
 				transparentOutput,
 				DEBUG_AIM_CURSOR_ENABLED ? DEBUG_AIM_CURSORS.get(component.runtimeKey()) : null,
@@ -3190,6 +3194,8 @@ public final class MonitorScreenSystem {
 				MonitorMaxRuntime.drawMaxScreen(graphics, layout, appForViewMode(work.viewMode()), work.runtimeKey(), work.maxSnapshot());
 			} else if (work.viewMode() == ScreenViewMode.YANDEX_MAPS) {
 				MonitorYandexMapsRuntime.drawScreen(graphics, layout, appForViewMode(work.viewMode()), work.yandexMapsSnapshot(), server, work.runtimeKey());
+			} else if (work.viewMode() == ScreenViewMode.SUPPORT) {
+				MonitorSupportRuntime.drawScreen(graphics, layout, appForViewMode(work.viewMode()), work.runtimeKey(), work.supportSnapshot());
 			} else {
 				drawAppScreen(graphics, layout, appForViewMode(work.viewMode()), work.runtimeKey(), server, work.mediaSnapshot());
 			}
@@ -3219,7 +3225,8 @@ public final class MonitorScreenSystem {
 				&& work.wallpaperSnapshot() == null
 				&& work.cameraAppSnapshot() == null
 				&& work.maxSnapshot() == null
-				&& work.yandexMapsSnapshot() == null;
+				&& work.yandexMapsSnapshot() == null
+				&& work.supportSnapshot() == null;
 	}
 
 	static boolean dynamicRenderWork(RenderWork work) {
@@ -3236,6 +3243,9 @@ public final class MonitorScreenSystem {
 			return true;
 		}
 		if (work.yandexMapsSnapshot() != null) {
+			return true;
+		}
+		if (work.supportSnapshot() != null) {
 			return true;
 		}
 		if (work.mediaSnapshot() == null) {

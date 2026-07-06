@@ -21,6 +21,7 @@ enum ScreenViewMode {
 	SBER_DRONES("sberdrones"),
 	CAMERA_APP("cameraapp"),
 	MAX("max"),
+	SUPPORT("support"),
 	YANDEX_MAPS("yandexmaps"),
 	YOUTUBE("youtube"),
 	YOUTUBE_MUSIC("youtubemusic");
