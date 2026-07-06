@@ -567,7 +567,7 @@ public final class MonitorMediaApp implements MonitorApp {
 		return cacheDirectory.resolve("url-index").resolve(cacheKey + ".ref");
 	}
 
-	private static Path savedGalleryMediaPath(String mediaKey) {
+	public static Path savedGalleryMediaPath(String mediaKey) {
 		if (mediaKey == null || mediaKey.isBlank()) {
 			return null;
 		}

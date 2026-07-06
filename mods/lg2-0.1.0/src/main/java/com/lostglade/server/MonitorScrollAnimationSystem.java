@@ -134,7 +134,9 @@ final class MonitorScrollAnimationSystem {
 		MAX_CALL_MINI_PARTICIPANTS,
 		MAX_CALL_CAMERA_PICKER,
 		MAX_CALL_MICROPHONE_PICKER,
-		MAX_CALL_CONTACT_PICKER
+		MAX_CALL_CONTACT_PICKER,
+		SUPPORT_CHAT,
+		SUPPORT_ATTACHMENT_PICKER
 	}
 
 	record ScrollVisualState(int anchorIndex, double fraction, double displayValue) {

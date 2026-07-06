@@ -178,10 +178,16 @@ record RenderWork(
 record SupportVisualSnapshot(
 		long version,
 		List<SupportMessageSnapshot> messages,
+		List<SupportAttachmentSnapshot> pendingAttachments,
+		List<SupportGalleryFileSnapshot> galleryFiles,
+		boolean attachmentPickerOpen,
 		boolean waitingForInput,
 		boolean telegramConfigured,
 		int supportReceiverCount,
-		String statusText
+		String statusText,
+		int scrollOffset,
+		int attachmentPickerScroll,
+		int totalMessageCount
 ) {
 }
 
@@ -189,7 +195,34 @@ record SupportMessageSnapshot(
 		boolean fromSupport,
 		String author,
 		String text,
-		long createdAtMillis
+		long createdAtMillis,
+		long ticketId,
+		List<SupportAttachmentSnapshot> attachments,
+		boolean delivered,
+		boolean read
+) {
+}
+
+record SupportAttachmentSnapshot(
+		String id,
+		String title,
+		String subtitle,
+		String url,
+		String localMediaKey,
+		GalleryItemKind kind,
+		BufferedImage preview
+) {
+}
+
+record SupportGalleryFileSnapshot(
+		int index,
+		String title,
+		String subtitle,
+		String url,
+		String localMediaKey,
+		GalleryItemKind kind,
+		BufferedImage preview,
+		boolean selected
 ) {
 }
 

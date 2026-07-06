@@ -1145,6 +1145,7 @@ public final class MonitorScreenSystem {
 		return MonitorMaxRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot)
 				|| MonitorCameraRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot)
 				|| MonitorScreenMediaFrameRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot)
+				|| MonitorSupportRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot)
 				|| MonitorYandexMapsRuntime.onPlayerHotbarScroll(player, previousSlot, currentSlot);
 	}
 
