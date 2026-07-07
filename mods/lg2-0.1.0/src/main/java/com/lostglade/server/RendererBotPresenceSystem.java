@@ -41,7 +41,7 @@ public final class RendererBotPresenceSystem {
 	}
 
 	public static void register() {
-		ServerTabIntegration.registerRendererBotVanishIntegration(player -> RendererBotPresenceSystem.isRendererBot(player) || ServerRaceSystem.isMilkMouseActive(player));
+		ServerTabIntegration.registerRendererBotVanishIntegration(RendererBotPresenceSystem::shouldHideFromPlayerList);
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			rebuildOnlineBotSet(server);
 			ensureHiddenTeam(server.getScoreboard());
@@ -75,6 +75,10 @@ public final class RendererBotPresenceSystem {
 
 	public static boolean isRendererBot(ServerPlayer player) {
 		return player != null && isRendererBotName(player.getScoreboardName());
+	}
+
+	public static boolean shouldHideFromPlayerList(ServerPlayer player) {
+		return isRendererBot(player) || ServerRaceSystem.isMilkMouseActive(player);
 	}
 
 	public static boolean isRendererBotNameAndId(NameAndId entry) {
@@ -208,9 +212,28 @@ public final class RendererBotPresenceSystem {
 		}
 	}
 
-	private static boolean isRendererBotName(String rawName) {
+	public static boolean isRendererBotName(String rawName) {
 		String configured = configuredBotName();
 		return configured != null && rawName != null && configured.equals(rawName.trim().toLowerCase(Locale.ROOT));
+	}
+
+	public static boolean shouldSuppressRendererBotSystemMessage(Component message) {
+		if (message == null) {
+			return false;
+		}
+
+		String configuredName = configuredBotName();
+		if (configuredName == null) {
+			return false;
+		}
+
+		String debugValue = message.toString().toLowerCase(Locale.ROOT);
+		if (!debugValue.contains("multiplayer.player.joined") && !debugValue.contains("multiplayer.player.left")) {
+			return false;
+		}
+
+		String plainValue = message.getString().toLowerCase(Locale.ROOT);
+		return plainValue.contains(configuredName) || debugValue.contains(configuredName);
 	}
 
 	private static LiteralArgumentBuilder<CommandSourceStack> rendererBotStatusCommand(String rootLiteral) {

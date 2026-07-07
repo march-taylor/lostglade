@@ -2,10 +2,14 @@ package com.lostglade.mixin;
 
 import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
 import com.lostglade.server.ServerBossBarVisibilitySystem;
+import com.lostglade.server.ServerTabPacketSystem;
 import io.netty.channel.ChannelFutureListener;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
 import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundBossEventPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
@@ -49,6 +53,39 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 		ServerPlayer receiver = gameListener.player;
 		if (receiver == null) {
 			return;
+		}
+
+		if (packet instanceof ClientboundPlayerInfoUpdatePacket playerInfoUpdatePacket) {
+			ServerTabPacketSystem.RewriteResult rewrite = ServerTabPacketSystem.rewriteOutgoingPlayerInfoPacket(receiver, playerInfoUpdatePacket);
+			if (rewrite != null) {
+				ci.cancel();
+				LG2_ABSOLUTE_INVISIBILITY_BYPASS.set(true);
+				try {
+					boolean listenerApplied = false;
+					if (rewrite.packet() != null) {
+						if (listener == null) {
+							gameListener.send(rewrite.packet());
+						} else {
+							gameListener.send(rewrite.packet(), listener);
+							listenerApplied = true;
+						}
+					}
+					if (!rewrite.removedProfileIds().isEmpty()) {
+						ClientboundPlayerInfoRemovePacket removePacket = new ClientboundPlayerInfoRemovePacket(rewrite.removedProfileIds());
+						if (listener != null && !listenerApplied) {
+							gameListener.send(removePacket, listener);
+						} else {
+							gameListener.send(removePacket);
+						}
+					}
+				} finally {
+					LG2_ABSOLUTE_INVISIBILITY_BYPASS.remove();
+				}
+				return;
+			}
+		}
+		if (packet instanceof ClientboundSetPlayerTeamPacket playerTeamPacket) {
+			ServerTabPacketSystem.stripShadowFromTeamPacket(playerTeamPacket);
 		}
 
 		if (packet instanceof ClientboundLevelChunkWithLightPacket chunkPacket
