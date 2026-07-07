@@ -1,0 +1,17 @@
+{
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "lg2:font/server_logo.png",
+      "ascent": 14,
+      "height": 18,
+      "chars": [
+        "\uef00"
+      ]
+    },
+    {
+      "type": "reference",
+      "id": "minecraft:default"
+    }
+  ]
+}

@@ -7,6 +7,7 @@ import me.neznamy.tab.api.event.player.PlayerLoadEvent;
 import me.neznamy.tab.api.integration.VanishIntegration;
 import me.neznamy.tab.api.placeholder.PlaceholderManager;
 import me.neznamy.tab.api.tablist.TabListFormatManager;
+import me.neznamy.tab.shared.chat.component.TabComponent;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -117,6 +118,19 @@ final class ServerTabIntegrationTabImpl {
 		if (manager != null) {
 			manager.setSuffix(tabPlayer, suffix == null ? "" : suffix);
 		}
+	}
+
+	static void setHeaderFooter(ServerPlayer player, TabComponent header, TabComponent footer) {
+		if (player == null) {
+			return;
+		}
+
+		TabPlayer tabPlayer = getPlayer(player.getUUID());
+		if (!(tabPlayer instanceof me.neznamy.tab.shared.platform.TabPlayer sharedPlayer)) {
+			return;
+		}
+
+		sharedPlayer.getTabList().setPlayerListHeaderFooter(header, footer);
 	}
 
 	static void registerPlayerLoadHandler(Consumer<ServerPlayer> handler) {

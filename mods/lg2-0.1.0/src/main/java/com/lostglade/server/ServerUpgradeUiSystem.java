@@ -1322,6 +1322,10 @@ public final class ServerUpgradeUiSystem {
 		return total;
 	}
 
+	public static int getTabBitcoinBalance(Player player) {
+		return countBitcoins(player);
+	}
+
 	private static int countBitcoinsInStack(ItemStack stack) {
 		return countBitcoinsInStack(stack, 0);
 	}

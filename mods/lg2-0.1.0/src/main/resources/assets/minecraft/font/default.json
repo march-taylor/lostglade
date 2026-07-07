@@ -22,6 +22,33 @@
     },
     {
       "type": "bitmap",
+      "file": "minecraft:font/tab_lostglade_logo.png",
+      "ascent": 36,
+      "height": 44,
+      "chars": [
+        "\ued80\ued85"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/tab_status_icons.png",
+      "ascent": 7,
+      "height": 8,
+      "chars": [
+        "\ued81\ued82"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:font/tab_metanart_small.png",
+      "ascent": 9,
+      "height": 12,
+      "chars": [
+        "\ued90\ued91\ued92\ued93\ued94\ued95\ued96\ued97\ued98\ued99\ued9a\ued9b\ued9c\ued9d"
+      ]
+    },
+    {
+      "type": "bitmap",
       "file": "minecraft:font/stability.png",
       "ascent": 13,
       "height": 55,

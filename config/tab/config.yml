@@ -108,7 +108,7 @@ proxy-support:
     url: 'amqp://guest:guest@localhost:5672/%2F'
 
 components:
-  minimessage-support: true
+  minimessage-support: false
   disable-shadow-for-heads: true
 
 config-version: 5

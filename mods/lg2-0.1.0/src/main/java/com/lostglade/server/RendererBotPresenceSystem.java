@@ -1,14 +1,20 @@
 package com.lostglade.server;
 
 import com.lostglade.config.Lg2Config;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.status.ServerStatus;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.ServerScoreboard;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.permissions.Permissions;
 import net.minecraft.server.players.NameAndId;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
@@ -35,10 +41,10 @@ public final class RendererBotPresenceSystem {
 	}
 
 	public static void register() {
+		ServerTabIntegration.registerRendererBotVanishIntegration(player -> RendererBotPresenceSystem.isRendererBot(player) || ServerRaceSystem.isMilkMouseActive(player));
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			rebuildOnlineBotSet(server);
 			ensureHiddenTeam(server.getScoreboard());
-			ServerTabIntegration.registerRendererBotVanishIntegration(player -> RendererBotPresenceSystem.isRendererBot(player) || ServerRaceSystem.isMilkMouseActive(player));
 			enforceAllBots(server);
 		});
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> ONLINE_BOT_IDS.clear());
@@ -61,6 +67,10 @@ public final class RendererBotPresenceSystem {
 				enforceAllBots(server);
 			}
 		});
+		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+			dispatcher.register(rendererBotStatusCommand("rendererbot"));
+			dispatcher.register(rendererBotStatusCommand("cameraclient"));
+		});
 	}
 
 	public static boolean isRendererBot(ServerPlayer player) {
@@ -73,6 +83,18 @@ public final class RendererBotPresenceSystem {
 
 	public static int getOnlineRendererBotCount() {
 		return ONLINE_BOT_IDS.size();
+	}
+
+	public static ServerPlayer findOnlineRendererBot(MinecraftServer server) {
+		if (server == null) {
+			return null;
+		}
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (isRendererBot(player)) {
+				return player;
+			}
+		}
+		return null;
 	}
 
 	public static ServerStatus sanitizeStatus(ServerStatus original) {
@@ -191,6 +213,36 @@ public final class RendererBotPresenceSystem {
 		return configured != null && rawName != null && configured.equals(rawName.trim().toLowerCase(Locale.ROOT));
 	}
 
+	private static LiteralArgumentBuilder<CommandSourceStack> rendererBotStatusCommand(String rootLiteral) {
+		return Commands.literal(rootLiteral)
+				.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
+				.executes(context -> sendRendererBotStatus(context.getSource()))
+				.then(Commands.literal("status")
+						.executes(context -> sendRendererBotStatus(context.getSource())));
+	}
+
+	private static int sendRendererBotStatus(CommandSourceStack source) {
+		String configuredName = configuredBotNameRaw();
+		if (configuredName == null) {
+			source.sendFailure(Component.literal("Camera client name is not configured."));
+			return 0;
+		}
+
+		MinecraftServer server = source.getServer();
+		ServerPlayer onlineBot = findOnlineRendererBot(server);
+		ServerPlayer readyBot = RendererBotCameraSystem.readyBot(server);
+		String message = "Camera client '" + configuredName + "': process="
+				+ yesNo(RendererBotProcessSystem.isProcessRunning())
+				+ ", online=" + yesNo(onlineBot != null)
+				+ ", ready=" + yesNo(readyBot != null);
+		source.sendSuccess(() -> Component.literal(message), false);
+		return onlineBot != null ? 1 : 0;
+	}
+
+	private static String yesNo(boolean value) {
+		return value ? "yes" : "no";
+	}
+
 	private static String configuredBotName() {
 		String configured = Lg2Config.get().cameraRendererBotPlayerName;
 		if (configured == null) {
@@ -198,5 +250,14 @@ public final class RendererBotPresenceSystem {
 		}
 		String trimmed = configured.trim();
 		return trimmed.isEmpty() ? null : trimmed.toLowerCase(Locale.ROOT);
+	}
+
+	private static String configuredBotNameRaw() {
+		String configured = Lg2Config.get().cameraRendererBotPlayerName;
+		if (configured == null) {
+			return null;
+		}
+		String trimmed = configured.trim();
+		return trimmed.isEmpty() ? null : trimmed;
 	}
 }

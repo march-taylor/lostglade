@@ -84,6 +84,12 @@ public final class RendererBotProcessSystem {
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> stopBot());
 	}
 
+	public static boolean isProcessRunning() {
+		synchronized (LOCK) {
+			return process != null && process.isAlive();
+		}
+	}
+
 	private static void startIfConfigured(MinecraftServer server) {
 		if (!FabricLoader.getInstance().isDevelopmentEnvironment()) {
 			return;

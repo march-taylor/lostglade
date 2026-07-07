@@ -1,5 +1,6 @@
 package com.lostglade.server;
 
+import me.neznamy.tab.shared.chat.component.TabComponent;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -23,6 +24,7 @@ public final class ServerTabIntegration {
 			return;
 		}
 		ServerTabIntegrationTabImpl.register();
+		ServerTabPlaceholders.register();
 	}
 
 	public static List<ServerPlayer> getOnlinePlayers() {
@@ -73,5 +75,12 @@ public final class ServerTabIntegration {
 			return;
 		}
 		ServerTabIntegrationTabImpl.registerRendererBotVanishIntegration(hiddenPredicate);
+	}
+
+	public static void setHeaderFooter(ServerPlayer player, TabComponent header, TabComponent footer) {
+		if (!isAvailable()) {
+			return;
+		}
+		ServerTabIntegrationTabImpl.setHeaderFooter(player, header, footer);
 	}
 }
