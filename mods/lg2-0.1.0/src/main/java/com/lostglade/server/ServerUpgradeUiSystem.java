@@ -29,6 +29,7 @@ import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundContainerClosePacket;
 import net.minecraft.network.protocol.game.ClientboundOpenScreenPacket;
+import net.minecraft.network.protocol.game.ClientboundSetCursorItemPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
@@ -118,6 +119,7 @@ public final class ServerUpgradeUiSystem {
 	private static final int BITCOIN_CONTAINER_SCAN_MAX_DEPTH = 8;
 	private static final int MAIN_SCREEN_OVERLAY_GLYPH_ADVANCE = 119;
 	private static final int ERAS_OVERLAY_GLYPH_ADVANCE = 150;
+	private static final int MENU_LOCK_CURSOR_FLASH_TICKS = 4;
 	private static final double MAIN_SCREEN_ARCHIVE_VARIANT_CHANCE = 0.0001D;
 	private static final int MAIN_SCREEN_VARIANT_GLITCH = 0;
 	private static final int MAIN_SCREEN_VARIANT_DVD = 1;
@@ -177,6 +179,7 @@ public final class ServerUpgradeUiSystem {
 	private static final Map<UUID, String> MAIN_TITLE_SIGNATURES = new HashMap<>();
 	private static final Map<UUID, Integer> MAIN_SCREEN_LOGO_VARIANTS = new HashMap<>();
 	private static final Map<UUID, Integer> PENDING_MENU_VISUAL_RESYNCS = new HashMap<>();
+	private static final Map<UUID, Integer> PENDING_LOCK_CURSOR_RESTORES = new HashMap<>();
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
 
@@ -648,9 +651,22 @@ public final class ServerUpgradeUiSystem {
 			UpgradeUiConfig.ButtonConfig button,
 			boolean hasPack
 	) {
+		return buildButtonStack(viewer, screenId, buttonId, button, hasPack, null);
+	}
+
+	private static ItemStack buildButtonStack(
+			ServerPlayer viewer,
+			String screenId,
+			String buttonId,
+			UpgradeUiConfig.ButtonConfig button,
+			boolean hasPack,
+			UpgradeUiConfig.IconConfig iconOverride
+	) {
 		boolean useCustomTooltip = usesCustomTooltipPresentation(button, hasPack);
 		ButtonState state = getButtonState(viewer, button);
-		UpgradeUiConfig.IconConfig icon = resolveButtonIcon(viewer, screenId, buttonId, button, state, hasPack);
+		UpgradeUiConfig.IconConfig icon = iconOverride != null
+				? iconOverride
+				: resolveButtonIcon(viewer, screenId, buttonId, button, state, hasPack);
 
 		ItemStack stack = createBaseStack(icon, hasPack);
 		Map<String, String> placeholders = buildPlaceholders(viewer, screenId, buttonId, button, state);
@@ -669,6 +685,54 @@ public final class ServerUpgradeUiSystem {
 		}
 
 		return stack;
+	}
+
+	private static int getButtonVisualSlot(
+			ServerPlayer viewer,
+			String screenId,
+			String buttonId,
+			UpgradeUiConfig.ButtonConfig button,
+			boolean hasPack
+	) {
+		if (button == null) {
+			return 0;
+		}
+
+		int anchorSlot = getButtonAnchorSlot(screenId, buttonId, button, hasPack);
+		if (shouldUseCornerPurchaseLockVisual(viewer, screenId, buttonId, button, hasPack)) {
+			int width = Math.max(1, button.hitboxWidth);
+			return anchorSlot + width - 1;
+		}
+		return getDisplaySlot(screenId, buttonId, button, hasPack);
+	}
+
+	private static boolean shouldUseCornerPurchaseLockVisual(
+			ServerPlayer viewer,
+			String screenId,
+			String buttonId,
+			UpgradeUiConfig.ButtonConfig button,
+			boolean hasPack
+	) {
+		if (!hasPack
+				|| viewer == null
+				|| button == null
+				|| !isDimensionPurchaseButton(screenId, buttonId, button)
+				|| Math.max(1, button.hitboxWidth) < 2) {
+			return false;
+		}
+
+		return shouldShowPurchaseLock(viewer, button, getButtonState(viewer, button));
+	}
+
+	private static boolean isDimensionPurchaseButton(
+			String screenId,
+			String buttonId,
+			UpgradeUiConfig.ButtonConfig button
+	) {
+		return "worlds".equals(screenId)
+				&& button != null
+				&& UpgradeUiConfig.ButtonType.PURCHASE_UPGRADE.id.equals(button.type)
+				&& ("nether".equals(buttonId) || "end".equals(buttonId));
 	}
 
 	private static boolean usesCustomTooltipPresentation(UpgradeUiConfig.ButtonConfig button, boolean hasPack) {
@@ -1193,12 +1257,20 @@ public final class ServerUpgradeUiSystem {
 		}
 
 		UpgradeUiConfig.ButtonConfig button = matched.getValue();
-		int anchorSlot = getButtonAnchorSlot(screenId, matched.getKey(), button, hasPack);
-		if (anchorSlot < topSlotCount || getDisplaySlot(screenId, matched.getKey(), button, hasPack) != menuSlot) {
+		String buttonId = matched.getKey();
+		int anchorSlot = getButtonAnchorSlot(screenId, buttonId, button, hasPack);
+		if (anchorSlot < topSlotCount || !isWithinButtonHitbox(menuSlot, screenId, buttonId, button, hasPack)) {
 			return ItemStack.EMPTY;
 		}
 
-		return buildButtonStack(viewer, screenId, matched.getKey(), button, hasPack);
+		int visualSlot = getButtonVisualSlot(viewer, screenId, buttonId, button, hasPack);
+		if (menuSlot == visualSlot) {
+			return buildButtonStack(viewer, screenId, buttonId, button, hasPack);
+		}
+		if (hasPack && (Math.max(1, button.hitboxWidth) > 1 || Math.max(1, button.hitboxHeight) > 1)) {
+			return buildButtonStack(viewer, screenId, buttonId, button, true, MENU_INVISIBLE_ICON);
+		}
+		return ItemStack.EMPTY;
 	}
 
 	private static boolean shouldSuppressClickSound(String screenId, String buttonId) {
@@ -1211,6 +1283,8 @@ public final class ServerUpgradeUiSystem {
 			String buttonId,
 			UpgradeUiConfig.ButtonConfig button
 	) {
+		maybeFlashDimensionPurchaseLockCursor(player, screenId, buttonId, button);
+
 		if (!meetsRequirements(player, button)) {
 			playPurchaseBlockedSound(player);
 			sendPlayerMessage(player, localizeSystem(player, "This upgrade is locked.", "Это улучшение пока заблокировано."));
@@ -1912,6 +1986,25 @@ public final class ServerUpgradeUiSystem {
 		};
 	}
 
+	private static void maybeFlashDimensionPurchaseLockCursor(
+			ServerPlayer player,
+			String screenId,
+			String buttonId,
+			UpgradeUiConfig.ButtonConfig button
+	) {
+		if (player == null
+				|| player.containerMenu == null
+				|| !player.containerMenu.getCarried().isEmpty()
+				|| !shouldUseCornerPurchaseLockVisual(player, screenId, buttonId, button, PolymerResourcePackUtils.hasMainPack(player))) {
+			return;
+		}
+
+		PacketContext.NotNullWithPlayer context = PacketContext.create(player);
+		ItemStack visualLock = toClientVisualStack(createBaseStack(MENU_LOCK_ICON, true), context);
+		player.connection.send(new ClientboundSetCursorItemPacket(visualLock));
+		PENDING_LOCK_CURSOR_RESTORES.put(player.getUUID(), MENU_LOCK_CURSOR_FLASH_TICKS);
+	}
+
 	private static void tickAnimatedErasTitles(MinecraftServer server) {
 		if (server == null) {
 			return;
@@ -1920,6 +2013,7 @@ public final class ServerUpgradeUiSystem {
 		UpgradeUiConfig.ConfigData config = UpgradeUiConfig.get();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			UUID playerId = player.getUUID();
+			tickPendingLockCursorRestore(player);
 			if (!(player.containerMenu instanceof UpgradeMenu menu)) {
 				PENDING_MENU_VISUAL_RESYNCS.remove(playerId);
 				ERAS_TITLE_SIGNATURES.remove(player.getUUID());
@@ -1994,6 +2088,36 @@ public final class ServerUpgradeUiSystem {
 			resyncMenuAfterTitleRefresh(player, menu);
 			ERAS_TITLE_SIGNATURES.put(playerId, signature);
 		}
+	}
+
+	private static void tickPendingLockCursorRestore(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+
+		UUID playerId = player.getUUID();
+		Integer pendingTicks = PENDING_LOCK_CURSOR_RESTORES.get(playerId);
+		if (pendingTicks == null) {
+			return;
+		}
+
+		if (pendingTicks <= 1) {
+			restoreCursorVisual(player);
+			PENDING_LOCK_CURSOR_RESTORES.remove(playerId);
+			return;
+		}
+
+		PENDING_LOCK_CURSOR_RESTORES.put(playerId, pendingTicks - 1);
+	}
+
+	private static void restoreCursorVisual(ServerPlayer player) {
+		if (player == null || player.containerMenu == null) {
+			return;
+		}
+
+		PacketContext.NotNullWithPlayer context = PacketContext.create(player);
+		ItemStack carried = toClientVisualStack(player.containerMenu.getCarried().copy(), context);
+		player.connection.send(new ClientboundSetCursorItemPacket(carried));
 	}
 
 	private static void resyncMenuAfterTitleRefresh(ServerPlayer player, UpgradeMenu menu) {
