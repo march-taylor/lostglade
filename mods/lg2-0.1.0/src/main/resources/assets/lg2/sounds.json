@@ -185,5 +185,212 @@
         "name": "lg2:trojan_rooster_theme"
       }
     ]
+  },
+  "bitcoin_billionaire_meloboom_part_00": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_00",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_01": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_01",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_02": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_02",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_03": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_03",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_04": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_04",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_05": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_05",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_06": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_06",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_07": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_07",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_08": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_08",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_09": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_09",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_10": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_10",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_11": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_11",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_12": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_12",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_13": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_13",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_14": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_14",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_15": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_15",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_16": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_16",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_17": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_17",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_18": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_18",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_19": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_19",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_20": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_20",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_21": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_21",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "bitcoin_billionaire_meloboom_part_22": {
+    "sounds": [
+      {
+        "name": "lg2:bitcoin_billionaire_meloboom_parts/part_22",
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
   }
 }
